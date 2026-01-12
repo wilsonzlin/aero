@@ -2173,7 +2173,12 @@ impl AerogpuD3d9Executor {
                     self.stats.inc_d3d9_shader_cache_persistent_hits();
                 }
                 aero_d3d9::runtime::ShaderCacheSource::Translated => {
-                    self.stats.inc_d3d9_shader_cache_persistent_misses();
+                    // Only count this as a *persistent* cache miss when persistence is actually
+                    // available. If the persistent cache is disabled/unavailable (missing APIs,
+                    // quota issues, etc), `ShaderCacheSource::Translated` can still be returned.
+                    if !self.persistent_shader_cache.is_persistent_disabled() {
+                        self.stats.inc_d3d9_shader_cache_persistent_misses();
+                    }
                     self.stats.inc_d3d9_shader_translate_calls();
                 }
             }
