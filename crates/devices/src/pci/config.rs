@@ -209,6 +209,49 @@ impl PciConfigSpace {
         let index = usize::from(index);
         assert!(index < self.bars.len());
 
+        // BAR layout constraints:
+        // - A 64-bit BAR consumes the next BAR slot as its high dword.
+        // - Therefore, BAR(N) cannot be independently defined when BAR(N-1) is a 64-bit BAR.
+        //
+        // This is a programming-time invariant for device models/profiles; assert to keep the
+        // config space internally consistent and to avoid stale values being exposed via config
+        // reads.
+        if index > 0
+            && matches!(
+                self.bars[index - 1].def,
+                Some(PciBarDefinition::Mmio64 { .. })
+            )
+        {
+            panic!("BAR{index} overlaps 64-bit BAR{} high dword", index - 1);
+        }
+
+        // If we're overwriting an existing 64-bit BAR definition, clear the stale high dword
+        // config bytes now that BAR(N+1) will no longer be treated as the implicit high register.
+        if matches!(self.bars[index].def, Some(PciBarDefinition::Mmio64 { .. }))
+            && index + 1 < self.bars.len()
+        {
+            let hi_off = 0x10 + (index + 1) * 4;
+            self.bytes[hi_off..hi_off + 4].fill(0);
+            self.bars[index + 1].def = None;
+            self.bars[index + 1].base = 0;
+            self.bars[index + 1].probe = false;
+        }
+
+        // If the new BAR is 64-bit, clear and reserve BAR(N+1) as the high dword slot.
+        if matches!(def, PciBarDefinition::Mmio64 { .. }) {
+            assert!(index + 1 < self.bars.len(), "64-bit BAR must not be BAR5");
+            assert!(
+                self.bars[index + 1].def.is_none(),
+                "BAR{} overlaps 64-bit BAR{index}",
+                index + 1
+            );
+            let hi_off = 0x10 + (index + 1) * 4;
+            self.bytes[hi_off..hi_off + 4].fill(0);
+            self.bars[index + 1].def = None;
+            self.bars[index + 1].base = 0;
+            self.bars[index + 1].probe = false;
+        }
+
         self.bars[index].def = Some(def);
         self.bars[index].base = 0;
         self.bars[index].probe = false;
@@ -815,5 +858,58 @@ mod tests {
 
         assert_eq!(restored.bar_range(1).unwrap().base, 0x1234_5660);
         assert_eq!(restored.read(0x14, 4), 0x1234_5661);
+    }
+
+    #[test]
+    fn redefining_a_64bit_bar_clears_the_stale_high_dword_register() {
+        let mut cfg = PciConfigSpace::new(0x1234, 0x5678);
+
+        // Define BAR0 as a 64-bit MMIO BAR and program a base above 4GiB so BAR1 (high dword) is
+        // non-zero.
+        cfg.set_bar_definition(
+            0,
+            PciBarDefinition::Mmio64 {
+                size: 0x4000,
+                prefetchable: false,
+            },
+        );
+        cfg.write(0x10, 4, 0x2345_6000);
+        cfg.write(0x14, 4, 0x0000_0001);
+        assert_eq!(cfg.read(0x10, 4), 0x2345_4004);
+        assert_eq!(cfg.read(0x14, 4), 0x0000_0001);
+
+        // Redefine BAR0 as a 32-bit BAR. BAR1 is no longer part of BAR0 and should read as zero
+        // (stale high bits must not leak through config reads).
+        cfg.set_bar_definition(
+            0,
+            PciBarDefinition::Mmio32 {
+                size: 0x1000,
+                prefetchable: false,
+            },
+        );
+        assert_eq!(cfg.read(0x10, 4), 0);
+        assert_eq!(cfg.read(0x14, 4), 0);
+    }
+
+    #[test]
+    #[should_panic]
+    fn bar_definitions_cannot_overlap_a_64bit_bar_high_dword_slot() {
+        let mut cfg = PciConfigSpace::new(0x1234, 0x5678);
+        cfg.set_bar_definition(
+            0,
+            PciBarDefinition::Mmio64 {
+                size: 0x4000,
+                prefetchable: false,
+            },
+        );
+
+        // BAR1 is consumed as the high dword of BAR0 when BAR0 is 64-bit.
+        cfg.set_bar_definition(
+            1,
+            PciBarDefinition::Mmio32 {
+                size: 0x1000,
+                prefetchable: false,
+            },
+        );
     }
 }
