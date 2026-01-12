@@ -258,6 +258,78 @@ test("agent-env: invalid AERO_CARGO_BUILD_JOBS falls back to the default", { ski
   }
 });
 
+test("agent-env: AERO_TOKIO_WORKER_THREADS defaults to CARGO_BUILD_JOBS", { skip: process.platform === "win32" }, () => {
+  const repoRoot = setupTempRepo();
+  try {
+    const env = { ...process.env };
+    env.AERO_CARGO_BUILD_JOBS = "2";
+    delete env.AERO_TOKIO_WORKER_THREADS;
+
+    const stdout = execFileSync(
+      "bash",
+      ["-c", 'source scripts/agent-env.sh >/dev/null; printf "%s" "$AERO_TOKIO_WORKER_THREADS"'],
+      {
+        cwd: repoRoot,
+        encoding: "utf8",
+        env,
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+
+    assert.equal(stdout, "2");
+  } finally {
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("agent-env: preserves an explicit AERO_TOKIO_WORKER_THREADS", { skip: process.platform === "win32" }, () => {
+  const repoRoot = setupTempRepo();
+  try {
+    const stdout = execFileSync(
+      "bash",
+      ["-c", 'source scripts/agent-env.sh >/dev/null; printf "%s" "$AERO_TOKIO_WORKER_THREADS"'],
+      {
+        cwd: repoRoot,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          AERO_CARGO_BUILD_JOBS: "2",
+          AERO_TOKIO_WORKER_THREADS: "7",
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+
+    assert.equal(stdout, "7");
+  } finally {
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("agent-env: sanitizes invalid AERO_TOKIO_WORKER_THREADS", { skip: process.platform === "win32" }, () => {
+  const repoRoot = setupTempRepo();
+  try {
+    const stdout = execFileSync(
+      "bash",
+      ["-c", 'source scripts/agent-env.sh >/dev/null; printf "%s" "$AERO_TOKIO_WORKER_THREADS"'],
+      {
+        cwd: repoRoot,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          AERO_CARGO_BUILD_JOBS: "2",
+          AERO_TOKIO_WORKER_THREADS: "nope",
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+
+    assert.equal(stdout, "2");
+  } finally {
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
 test("agent-env: NODE_OPTIONS does not include disallowed node flags", { skip: process.platform === "win32" }, () => {
   const repoRoot = setupTempRepo();
   try {

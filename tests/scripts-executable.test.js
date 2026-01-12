@@ -189,6 +189,54 @@ test("safe-run.sh respects AERO_CARGO_BUILD_JOBS (Linux)", { skip: process.platf
   assert.equal(stdout, "2|2");
 });
 
+test("safe-run.sh defaults AERO_TOKIO_WORKER_THREADS based on build jobs (Linux)", { skip: process.platform !== "linux" }, () => {
+  const env = { ...process.env };
+  delete env.CARGO_BUILD_JOBS;
+  delete env.AERO_TOKIO_WORKER_THREADS;
+  env.AERO_CARGO_BUILD_JOBS = "2";
+
+  const stdout = execFileSync(path.join(repoRoot, "scripts/safe-run.sh"), ["bash", "-c", 'printf "%s" "$AERO_TOKIO_WORKER_THREADS"'], {
+    cwd: repoRoot,
+    env,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+
+  assert.equal(stdout, "2");
+});
+
+test("safe-run.sh preserves an explicit AERO_TOKIO_WORKER_THREADS (Linux)", { skip: process.platform !== "linux" }, () => {
+  const env = { ...process.env };
+  delete env.CARGO_BUILD_JOBS;
+  env.AERO_CARGO_BUILD_JOBS = "2";
+  env.AERO_TOKIO_WORKER_THREADS = "7";
+
+  const stdout = execFileSync(path.join(repoRoot, "scripts/safe-run.sh"), ["bash", "-c", 'printf "%s" "$AERO_TOKIO_WORKER_THREADS"'], {
+    cwd: repoRoot,
+    env,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+
+  assert.equal(stdout, "7");
+});
+
+test("safe-run.sh sanitizes invalid AERO_TOKIO_WORKER_THREADS (Linux)", { skip: process.platform !== "linux" }, () => {
+  const env = { ...process.env };
+  delete env.CARGO_BUILD_JOBS;
+  env.AERO_CARGO_BUILD_JOBS = "2";
+  env.AERO_TOKIO_WORKER_THREADS = "nope";
+
+  const stdout = execFileSync(path.join(repoRoot, "scripts/safe-run.sh"), ["bash", "-c", 'printf "%s" "$AERO_TOKIO_WORKER_THREADS"'], {
+    cwd: repoRoot,
+    env,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+
+  assert.equal(stdout, "2");
+});
+
 test("safe-run.sh defaults RUST_TEST_THREADS for cargo test (Linux)", { skip: process.platform !== "linux" }, () => {
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "aero-safe-run-test-threads-"));
   try {
