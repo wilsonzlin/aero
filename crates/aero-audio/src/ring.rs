@@ -26,6 +26,14 @@ pub struct AudioRingBuffer {
     overrun_frames: u64,
 }
 
+/// Maximum ring buffer capacity supported by [`AudioRingBuffer`].
+///
+/// This crate is used in both native and wasm environments. A hostile/misconfigured caller could
+/// otherwise request an arbitrarily large capacity and trigger a multi-gigabyte allocation.
+///
+/// `2^20` frames is ~21s at 48kHz; at stereo f32 this is ~8MiB of sample storage.
+const MAX_CAPACITY_FRAMES: usize = 1_048_576;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RingBufferTelemetry {
     pub capacity_frames: usize,
@@ -39,6 +47,7 @@ pub struct RingBufferTelemetry {
 impl AudioRingBuffer {
     pub fn new_stereo(capacity_frames: usize) -> Self {
         assert!(capacity_frames > 0);
+        let capacity_frames = capacity_frames.min(MAX_CAPACITY_FRAMES);
         let channels = 2;
         Self {
             channels,
