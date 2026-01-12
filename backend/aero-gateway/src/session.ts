@@ -29,17 +29,31 @@ export type SessionManager = Readonly<{
 }>;
 
 function encodeBase64Url(buf: Buffer): string {
-  return buf.toString('base64').replaceAll('=', '').replaceAll('+', '-').replaceAll('/', '_');
+  // Node supports the "base64url" encoding, which omits padding and uses the URL-safe alphabet.
+  return buf.toString('base64url');
 }
 
 function decodeBase64Url(raw: string): Buffer {
-  if (!/^[A-Za-z0-9_-]+$/.test(raw)) throw new Error('Invalid base64url');
-  let base64 = raw.replaceAll('-', '+').replaceAll('_', '/');
-  const mod = base64.length % 4;
-  if (mod === 2) base64 += '==';
-  else if (mod === 3) base64 += '=';
-  else if (mod !== 0) throw new Error('Invalid base64url length');
-  return Buffer.from(base64, 'base64');
+  if (!isBase64Url(raw)) throw new Error('Invalid base64url');
+  // Base64url inputs are unpadded; only lengths mod 4 of 0, 2, or 3 are valid.
+  // (mod 4 of 1 cannot be produced by base64 encoding.)
+  const mod = raw.length % 4;
+  if (mod === 1) throw new Error('Invalid base64url length');
+  return Buffer.from(raw, 'base64url');
+}
+
+function isBase64Url(raw: string): boolean {
+  if (raw.length === 0) return false;
+  for (let i = 0; i < raw.length; i += 1) {
+    const c = raw.charCodeAt(i);
+    const isUpper = c >= 0x41 /* 'A' */ && c <= 0x5a /* 'Z' */;
+    const isLower = c >= 0x61 /* 'a' */ && c <= 0x7a /* 'z' */;
+    const isDigit = c >= 0x30 /* '0' */ && c <= 0x39 /* '9' */;
+    const isDash = c === 0x2d /* '-' */;
+    const isUnderscore = c === 0x5f /* '_' */;
+    if (!isUpper && !isLower && !isDigit && !isDash && !isUnderscore) return false;
+  }
+  return true;
 }
 
 function sign(payloadBase64Url: string, secret: Buffer): Buffer {
@@ -60,9 +74,11 @@ export function mintSessionToken(payload: SessionTokenPayload, secret: Buffer): 
 }
 
 export function verifySessionToken(token: string, secret: Buffer, nowMs = Date.now()): VerifiedSession | null {
-  const parts = token.split('.');
-  if (parts.length !== 2) return null;
-  const [payloadB64, sigB64] = parts;
+  const dot = token.indexOf('.');
+  if (dot <= 0 || dot === token.length - 1) return null;
+  if (token.indexOf('.', dot + 1) !== -1) return null;
+  const payloadB64 = token.slice(0, dot);
+  const sigB64 = token.slice(dot + 1);
 
   let providedSig: Buffer;
   try {
@@ -176,4 +192,3 @@ export class SessionConnectionTracker {
     else this.active.set(sessionId, next);
   }
 }
-
