@@ -144,22 +144,22 @@ async function main() {
   let opfsAvailable = false;
   let opfsFileExists = false;
   if (large) {
-    try {
-      if (navigator.storage && typeof navigator.storage.getDirectory === "function") {
+    if (navigator.storage && typeof navigator.storage.getDirectory === "function") {
+      try {
         const root = await navigator.storage.getDirectory();
         const dir = await root.getDirectoryHandle("aero-gpu-cache", { create: true });
-        const shadersDir = await dir.getDirectoryHandle("shaders");
         opfsAvailable = true;
         try {
+          const shadersDir = await dir.getDirectoryHandle("shaders");
           await shadersDir.getFileHandle(`${key}.json`);
           opfsFileExists = true;
         } catch {
           opfsFileExists = false;
         }
+      } catch {
+        opfsAvailable = false;
+        opfsFileExists = false;
       }
-    } catch {
-      opfsAvailable = false;
-      opfsFileExists = false;
     }
   }
 

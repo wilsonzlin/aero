@@ -66,7 +66,7 @@ test("large shader payload spills to OPFS when available", async ({}, testInfo) 
     page.on("console", (msg) => logs.push(msg.text()));
 
     await page.goto(`${server.baseUrl}/shader_cache_demo.html?large=1`);
-    await page.waitForFunction(() => (window as any).__shaderCacheDemo?.opfsAvailable !== undefined);
+    await page.waitForFunction(() => (window as any).__shaderCacheDemo !== undefined);
 
     const result = await page.evaluate(() => (window as any).__shaderCacheDemo);
     await context.close();
@@ -84,4 +84,3 @@ test("large shader payload spills to OPFS when available", async ({}, testInfo) 
     await server.close();
   }
 });
-
