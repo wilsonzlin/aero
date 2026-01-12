@@ -108,7 +108,8 @@ export function normalizeHostname(rawHost: string): string {
   const ascii = domainToASCII(withoutTrailingDot);
   if (!ascii) throw new Error("Invalid hostname");
 
-  const normalized = ascii.toLowerCase();
+  // Avoid allocating when the IDNA-normalized hostname is already lowercase.
+  const normalized = /[A-Z]/.test(ascii) ? ascii.toLowerCase() : ascii;
   assertValidAsciiHostname(normalized);
   return normalized;
 }
@@ -139,7 +140,7 @@ export function classifyTargetHost(rawHost: string): TargetHost {
   if (version === 4 || version === 6) {
     return {
       kind: "ip",
-      ip: maybeBracketedV6.toLowerCase(),
+      ip: /[A-F]/.test(maybeBracketedV6) ? maybeBracketedV6.toLowerCase() : maybeBracketedV6,
       version,
     };
   }
