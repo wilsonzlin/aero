@@ -328,6 +328,11 @@ impl<B: NetBackend> VirtioNet<B> {
         }
 
         for _ in 0..MAX_RX_FRAMES_PER_FLUSH {
+            if self.rx_buffers.is_empty() {
+                // Stop draining the backend once the guest has no posted buffers. This avoids
+                // dropping frames that could be delivered later when more buffers arrive.
+                break;
+            }
             let Some(pkt) = self.backend.poll_receive() else {
                 break;
             };
@@ -730,6 +735,98 @@ mod tests {
         let irq = dev.flush_rx(&mut queue, &mut mem).unwrap();
         assert!(!irq);
         assert_eq!(dev.backend_mut().polls, 0);
+    }
+
+    #[test]
+    fn rx_frames_are_delivered_after_buffers_are_posted() {
+        #[derive(Default)]
+        struct CountingBackend {
+            polls: usize,
+            rx: VecDeque<Vec<u8>>,
+        }
+
+        impl NetBackend for CountingBackend {
+            fn transmit(&mut self, _packet: Vec<u8>) {}
+
+            fn poll_receive(&mut self) -> Option<Vec<u8>> {
+                self.polls += 1;
+                self.rx.pop_front()
+            }
+        }
+
+        let mut backend = CountingBackend::default();
+        let frame = vec![0x11u8; 14];
+        backend.rx.push_back(frame.clone());
+
+        let mut dev = VirtioNet::new(backend, [0; 6]);
+        dev.set_features(0);
+
+        let mut mem = GuestRam::new(0x10000);
+        let desc_table = 0x1000;
+        let avail = 0x2000;
+        let used = 0x3000;
+        let buf_addr = 0x4000;
+
+        write_desc(
+            &mut mem,
+            desc_table,
+            0,
+            buf_addr,
+            64,
+            VIRTQ_DESC_F_WRITE,
+            0,
+        );
+
+        write_u16_le(&mut mem, avail, 0).unwrap();
+        write_u16_le(&mut mem, avail + 2, 1).unwrap();
+        write_u16_le(&mut mem, avail + 4, 0).unwrap();
+
+        write_u16_le(&mut mem, used, 0).unwrap();
+        write_u16_le(&mut mem, used + 2, 0).unwrap();
+
+        let mut queue = VirtQueue::new(
+            VirtQueueConfig {
+                size: 8,
+                desc_addr: desc_table,
+                avail_addr: avail,
+                used_addr: used,
+            },
+            false,
+        )
+        .unwrap();
+
+        // No RX buffers posted to the device yet, so the backend should not be polled.
+        let irq = dev.flush_rx(&mut queue, &mut mem).unwrap();
+        assert!(!irq);
+        assert_eq!(dev.backend_mut().polls, 0);
+
+        let chain = match queue.pop_descriptor_chain(&mem).unwrap().unwrap() {
+            PoppedDescriptorChain::Chain(chain) => chain,
+            PoppedDescriptorChain::Invalid { error, .. } => {
+                panic!("unexpected descriptor chain parse error: {error:?}")
+            }
+        };
+
+        // Posting a buffer should cause the pending backend frame to be delivered immediately.
+        let irq = dev.process_rx(chain, &mut queue, &mut mem).unwrap();
+        assert!(irq);
+        assert_eq!(dev.backend_mut().polls, 1);
+
+        let used_idx = read_u16_le(&mem, used + 2).unwrap();
+        assert_eq!(used_idx, 1);
+        let len_bytes = mem.get_slice(used + 8, 4).unwrap();
+        let used_len = u32::from_le_bytes(len_bytes.try_into().unwrap());
+        assert_eq!(
+            used_len,
+            (VirtioNetHdr::BASE_LEN + frame.len()) as u32
+        );
+
+        let hdr = mem.get_slice(buf_addr, VirtioNetHdr::BASE_LEN).unwrap();
+        assert_eq!(hdr, vec![0u8; VirtioNetHdr::BASE_LEN]);
+        let payload = mem
+            .get_slice(buf_addr + VirtioNetHdr::BASE_LEN as u64, frame.len())
+            .unwrap();
+        assert_eq!(payload, frame);
     }
 
     #[test]
