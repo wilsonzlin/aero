@@ -203,6 +203,29 @@ test("agent-env: AERO_RUST_CODEGEN_UNITS overrides codegen-units", { skip: proce
   }
 });
 
+test("agent-env: AERO_CODEGEN_UNITS overrides codegen-units (alias)", { skip: process.platform === "win32" }, () => {
+  const repoRoot = setupTempRepo();
+  try {
+    const env = { ...process.env };
+    delete env.RUSTFLAGS;
+    delete env.CARGO_BUILD_JOBS;
+    delete env.AERO_CARGO_BUILD_JOBS;
+    delete env.AERO_RUST_CODEGEN_UNITS;
+    env.AERO_CODEGEN_UNITS = "2";
+
+    const stdout = execFileSync("bash", ["-c", 'source scripts/agent-env.sh >/dev/null; printf "%s" "$RUSTFLAGS"'], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    assert.match(stdout, /-C codegen-units=2\b/);
+  } finally {
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
 test("agent-env: preserves an explicit codegen-units setting in RUSTFLAGS", { skip: process.platform === "win32" }, () => {
   const repoRoot = setupTempRepo();
   try {
