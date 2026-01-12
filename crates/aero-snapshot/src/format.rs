@@ -39,9 +39,13 @@ impl DeviceId {
     pub const RTC: DeviceId = DeviceId(4);
     /// PCI core device state (legacy/compat).
     ///
-    /// Canonical full-system snapshots use split-out outer IDs:
+    /// Canonical full-system snapshots store PCI core state as **split** `DEVICES` entries using
+    /// distinct outer IDs:
     /// - [`DeviceId::PCI_CFG`] for `PciConfigPorts` (`PCPT`)
     /// - [`DeviceId::PCI_INTX_ROUTER`] for `PciIntxRouter` (`INTX`)
+    ///
+    /// This avoids `aero-snapshot`'s `DEVICES` uniqueness constraint on `(DeviceId, version, flags)`
+    /// because both `PCPT` and `INTX` are currently `SnapshotVersion (1.0)`.
     ///
     /// Older snapshots may store PCI core state under this historical ID, either as:
     /// - a combined `PciCoreSnapshot` wrapper (`PCIC`) containing both `PCPT` + `INTX`, or
@@ -63,10 +67,16 @@ impl DeviceId {
     /// PCI config mechanism #1 ports (`0xCF8/0xCFC`) and PCI bus config-space state.
     ///
     /// Canonical full-system snapshots store PCI config-state using this ID (inner `PCPT`).
+    ///
+    /// Using [`DeviceId::PCI_CFG`] (instead of the historical [`DeviceId::PCI`]) avoids collisions
+    /// with the separate [`DeviceId::PCI_INTX_ROUTER`] entry.
     pub const PCI_CFG: DeviceId = DeviceId(14);
     /// PCI INTx (INTA#-INTD#) routing state (asserted levels/refcounts).
     ///
     /// Canonical full-system snapshots store PCI INTx routing using this ID (inner `INTX`).
+    ///
+    /// Using [`DeviceId::PCI_INTX_ROUTER`] (instead of the historical [`DeviceId::PCI`]) avoids
+    /// collisions with the separate [`DeviceId::PCI_CFG`] entry.
     pub const PCI_INTX_ROUTER: DeviceId = DeviceId(15);
     /// Backward compatible alias for [`DeviceId::PCI_INTX_ROUTER`].
     pub const PCI_INTX: DeviceId = DeviceId::PCI_INTX_ROUTER;
