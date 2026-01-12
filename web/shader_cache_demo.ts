@@ -1,6 +1,7 @@
 import {
   PersistentGpuCache,
   ShaderTranslationCache,
+  computePipelineCacheKey,
   computeShaderCacheKey,
   computeWebGpuCapsHash,
   compileWgslModule,
@@ -60,6 +61,11 @@ function buildLargeWgsl(minBytes) {
   const padBytes = enc.encode(padLine).byteLength;
   const repeats = Math.max(0, Math.ceil((minBytes - baseBytes) / padBytes));
   return padLine.repeat(repeats) + base;
+}
+
+function buildLargePipelineDescriptor(minBytes) {
+  const pad = "x".repeat(minBytes);
+  return { kind: "demo-pipeline-desc", version: 1, pad };
 }
 
 async function translateDxbcToWgslSlow(_dxbcBytes, opts) {
@@ -148,12 +154,16 @@ async function main() {
 
   let opfsAvailable = false;
   let opfsFileExists = false;
+  let pipelineKey = null;
+  let pipelineOpfsFileExists = false;
+  let pipelineRoundtripOk = false;
   if (large) {
     if (navigator.storage && typeof navigator.storage.getDirectory === "function") {
       try {
         const root = await navigator.storage.getDirectory();
         const dir = await root.getDirectoryHandle("aero-gpu-cache", { create: true });
         opfsAvailable = true;
+
         try {
           const shadersDir = await dir.getDirectoryHandle("shaders");
           await shadersDir.getFileHandle(`${key}.json`);
@@ -161,9 +171,38 @@ async function main() {
         } catch {
           opfsFileExists = false;
         }
+
+        // Also write a large pipeline descriptor to exercise the pipeline spillover path.
+        try {
+          const pipelineDesc = buildLargePipelineDescriptor(310 * 1024);
+          pipelineKey = await computePipelineCacheKey(pipelineDesc);
+          await cache.putPipelineDescriptor(pipelineKey, pipelineDesc);
+          // Force a persistent read path within the same session.
+          cache.pipelineDescriptors.clear();
+          const gotPipeline = await cache.getPipelineDescriptor(pipelineKey);
+          pipelineRoundtripOk =
+            !!gotPipeline &&
+            gotPipeline.version === pipelineDesc.version &&
+            typeof gotPipeline.pad === "string" &&
+            gotPipeline.pad.length === pipelineDesc.pad.length;
+
+          try {
+            const pipelinesDir = await dir.getDirectoryHandle("pipelines");
+            await pipelinesDir.getFileHandle(`${pipelineKey}.json`);
+            pipelineOpfsFileExists = true;
+          } catch {
+            pipelineOpfsFileExists = false;
+          }
+        } catch {
+          // Ignore; shader OPFS coverage should remain functional even if the
+          // pipeline spillover demo path fails.
+          pipelineOpfsFileExists = false;
+          pipelineRoundtripOk = false;
+        }
       } catch {
         opfsAvailable = false;
         opfsFileExists = false;
+        pipelineOpfsFileExists = false;
       }
     }
   }
@@ -176,6 +215,9 @@ async function main() {
     telemetry: cache.getTelemetry(),
     opfsAvailable,
     opfsFileExists,
+    pipelineKey,
+    pipelineOpfsFileExists,
+    pipelineRoundtripOk,
   };
 }
 
