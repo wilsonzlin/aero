@@ -144,7 +144,8 @@ export class WebHidPassthroughManager {
       if (typeof requested !== "number" || !Number.isInteger(requested) || requested <= 0) {
         return DEFAULT_EXTERNAL_HUB_PORT_COUNT;
       }
-      // Root port 0 hosts an external hub that also carries fixed synthetic HID devices on ports 1..3.
+      // Root port 0 hosts an external hub that also carries fixed synthetic HID devices on
+      // ports 1..=(UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT - 1).
       // Never allow the hub to be configured with fewer downstream ports than that reserved range,
       // otherwise synthetic HID attachments can fail once the runtime hub config is applied.
       return Math.max(UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT - 1, Math.min(255, requested | 0));
@@ -155,7 +156,8 @@ export class WebHidPassthroughManager {
         typeof requested === "number" && Number.isFinite(requested) && Number.isInteger(requested) && requested >= 0
           ? requested
           : UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT - 1;
-      // Never allocate passthrough devices in the synthetic-device port range (ports 1..3).
+      // Never allocate passthrough devices in the synthetic-device port range
+      // (ports 1..=(UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT - 1)).
       const clamped = Math.max(UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT - 1, base | 0);
       return Math.max(0, Math.min(this.#externalHubPortCount, Math.min(255, clamped)));
     })();

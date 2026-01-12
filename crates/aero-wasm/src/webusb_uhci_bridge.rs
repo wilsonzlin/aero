@@ -18,7 +18,7 @@ const REG_USBCMD: u16 = 0x00;
 
 const ROOT_PORT_EXTERNAL_HUB: usize = 0;
 const ROOT_PORT_WEBUSB: usize = 1;
-// Must match `web/src/platform/webhid_passthrough.ts::DEFAULT_EXTERNAL_HUB_PORT_COUNT`.
+// Must match `web/src/usb/uhci_external_hub.ts::DEFAULT_EXTERNAL_HUB_PORT_COUNT`.
 const EXTERNAL_HUB_PORT_COUNT: u8 = 16;
 
 /// Guest memory accessor backed by the module's wasm linear memory.
