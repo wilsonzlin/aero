@@ -1,0 +1,202 @@
+use aero_machine::{Machine, MachineConfig};
+use aero_platform::interrupts::InterruptInput;
+use aero_interrupts::apic::IOAPIC_MMIO_BASE;
+use firmware::bios::PCIE_ECAM_BASE;
+use pretty_assertions::assert_eq;
+
+fn mmio_machine_config() -> MachineConfig {
+    MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: true,
+        enable_reset_ctrl: false,
+        ..Default::default()
+    }
+}
+
+fn enable_a20(m: &mut Machine) {
+    // Fast A20 gate at port 0x92: bit1 enables A20.
+    m.io_write(0x92, 1, 0x02);
+}
+
+fn disable_a20(m: &mut Machine) {
+    // Fast A20 gate at port 0x92: bit1 controls A20, bit0 is a reset pulse.
+    m.io_write(0x92, 1, 0x00);
+}
+
+fn program_ioapic_entry(m: &mut Machine, gsi: u32, low: u32, high: u32) {
+    let redtbl_low = 0x10u32 + gsi * 2;
+    let redtbl_high = redtbl_low + 1;
+    m.write_physical_u32(IOAPIC_MMIO_BASE + 0x00, redtbl_low);
+    m.write_physical_u32(IOAPIC_MMIO_BASE + 0x10, low);
+    m.write_physical_u32(IOAPIC_MMIO_BASE + 0x00, redtbl_high);
+    m.write_physical_u32(IOAPIC_MMIO_BASE + 0x10, high);
+}
+
+fn build_real_mode_imcr_interrupt_wait_boot_sector(
+    vector: u8,
+    flag_addr: u16,
+    flag_value: u8,
+) -> [u8; 512] {
+    let mut sector = [0u8; 512];
+    let mut i = 0usize;
+
+    // xor ax, ax
+    sector[i..i + 2].copy_from_slice(&[0x31, 0xC0]);
+    i += 2;
+    // mov ds, ax
+    sector[i..i + 2].copy_from_slice(&[0x8E, 0xD8]);
+    i += 2;
+    // mov ss, ax
+    sector[i..i + 2].copy_from_slice(&[0x8E, 0xD0]);
+    i += 2;
+    // mov sp, 0x7c00
+    sector[i..i + 3].copy_from_slice(&[0xBC, 0x00, 0x7C]);
+    i += 3;
+
+    let ivt_off = (vector as u16) * 4;
+
+    // mov word ptr [ivt_off], handler_offset (patched later)
+    // C7 06 <addr16> <imm16>
+    let patch_off = i + 4;
+    sector[i..i + 2].copy_from_slice(&[0xC7, 0x06]);
+    sector[i + 2..i + 4].copy_from_slice(&ivt_off.to_le_bytes());
+    sector[i + 4..i + 6].copy_from_slice(&[0, 0]); // placeholder
+    i += 6;
+
+    // mov word ptr [ivt_off+2], 0x0000 (segment)
+    sector[i..i + 2].copy_from_slice(&[0xC7, 0x06]);
+    sector[i + 2..i + 4].copy_from_slice(&(ivt_off + 2).to_le_bytes());
+    sector[i + 4..i + 6].copy_from_slice(&[0, 0]);
+    i += 6;
+
+    // Program IMCR to route interrupts through the APIC/IOAPIC path:
+    //   out 0x22, 0x70; out 0x23, 0x01
+    // mov dx, 0x22
+    sector[i..i + 3].copy_from_slice(&[0xBA, 0x22, 0x00]);
+    i += 3;
+    // mov al, 0x70
+    sector[i..i + 2].copy_from_slice(&[0xB0, 0x70]);
+    i += 2;
+    // out dx, al
+    sector[i] = 0xEE;
+    i += 1;
+    // inc dx
+    sector[i] = 0x42;
+    i += 1;
+    // mov al, 0x01
+    sector[i..i + 2].copy_from_slice(&[0xB0, 0x01]);
+    i += 2;
+    // out dx, al
+    sector[i] = 0xEE;
+    i += 1;
+
+    // sti
+    sector[i] = 0xFB;
+    i += 1;
+
+    // hlt; jmp short $-3 (busy wait at HLT)
+    sector[i..i + 3].copy_from_slice(&[0xF4, 0xEB, 0xFD]);
+    i += 3;
+
+    // Handler lives directly after the loop, still within the boot sector (loaded at 0x7C00).
+    let handler_addr = 0x7C00u16 + (i as u16);
+    sector[patch_off..patch_off + 2].copy_from_slice(&handler_addr.to_le_bytes());
+
+    // mov byte ptr [flag_addr], flag_value
+    sector[i..i + 2].copy_from_slice(&[0xC6, 0x06]);
+    i += 2;
+    sector[i..i + 2].copy_from_slice(&flag_addr.to_le_bytes());
+    i += 2;
+    sector[i] = flag_value;
+    i += 1;
+    // iret
+    sector[i] = 0xCF;
+
+    // Boot signature.
+    sector[510] = 0x55;
+    sector[511] = 0xAA;
+    sector
+}
+
+#[test]
+fn pci_cfg_ports_and_ecam_match_for_host_bridge() {
+    let mut m = Machine::new(mmio_machine_config()).unwrap();
+    enable_a20(&mut m);
+
+    // PCI host bridge lives at 00:00.0. Read vendor/device ID via cfg ports.
+    m.io_write(0xCF8, 4, 0x8000_0000);
+    let id_ports = m.io_read(0xCFC, 4);
+
+    // Read the same register via ECAM MMIO.
+    let id_ecam = m.read_physical_u32(PCIE_ECAM_BASE);
+
+    assert_eq!(id_ecam, id_ports);
+}
+
+#[test]
+fn imcr_port_switch_to_apic_mode_delivers_ioapic_interrupt_programmed_via_mmio() {
+    let vector = 0x60u8;
+    let flag_addr = 0x0504u16;
+    let flag_value = 0xA5u8;
+    let gsi = 10u32;
+
+    let boot = build_real_mode_imcr_interrupt_wait_boot_sector(vector, flag_addr, flag_value);
+
+    let mut m = Machine::new(mmio_machine_config()).unwrap();
+    m.set_disk_image(boot.to_vec()).unwrap();
+    m.reset();
+    enable_a20(&mut m);
+
+    // Route GSI10 -> vector 0x60, edge-triggered, active-low (typical PCI INTx wiring).
+    let low = u32::from(vector) | (1 << 13);
+    program_ioapic_entry(&mut m, gsi, low, 0);
+
+    // Assert the line while still in legacy PIC mode; the guest switches to APIC mode via IMCR.
+    m.platform_interrupts()
+        .unwrap()
+        .borrow_mut()
+        .raise_irq(InterruptInput::Gsi(gsi));
+
+    for _ in 0..50 {
+        let _ = m.run_slice(10_000);
+        if m.read_physical_u8(u64::from(flag_addr)) == flag_value {
+            return;
+        }
+    }
+
+    panic!(
+        "IOAPIC interrupt was not delivered after IMCR switch (flag=0x{:02x})",
+        m.read_physical_u8(u64::from(flag_addr))
+    );
+}
+
+#[test]
+fn a20_gate_masks_bit20_for_physical_accesses() {
+    // Sanity check: with A20 disabled, physical addresses are masked with `!(1<<20)` which
+    // aliases addresses separated by 1MiB.
+    //
+    // Many PC MMIO base addresses rely on bit20, so tests that touch MMIO should explicitly
+    // enable A20 first.
+    let mut m = Machine::new(mmio_machine_config()).unwrap();
+    disable_a20(&mut m);
+
+    let lo = 0x0000_1234u64;
+    let hi = lo | (1u64 << 20);
+
+    // A20 disabled: hi aliases lo.
+    m.write_physical_u8(lo, 0x11);
+    m.write_physical_u8(hi, 0x22);
+    assert_eq!(m.read_physical_u8(lo), 0x22);
+    assert_eq!(m.read_physical_u8(hi), 0x22);
+
+    enable_a20(&mut m);
+
+    // A20 enabled: the same addresses become distinct.
+    m.write_physical_u8(lo, 0x33);
+    m.write_physical_u8(hi, 0x44);
+    assert_eq!(m.read_physical_u8(lo), 0x33);
+    assert_eq!(m.read_physical_u8(hi), 0x44);
+}

@@ -496,7 +496,7 @@ fn restore_device_states_accepts_legacy_pci_device_id_for_pci_cfg_state() {
 }
 
 #[test]
-fn restore_device_states_prefers_pci_over_legacy_pci_cfg_entry() {
+fn restore_device_states_prefers_pci_cfg_over_legacy_pci_entry() {
     let mut src = Machine::new(pc_machine_config()).unwrap();
     let pci_cfg = src.pci_config_ports().expect("pc platform enabled");
     let pci_intx = src.pci_intx_router().expect("pc platform enabled");
@@ -529,23 +529,23 @@ fn restore_device_states_prefers_pci_over_legacy_pci_cfg_entry() {
         .bus_mut()
         .add_device(bdf, Box::new(TestDev { cfg }));
 
-    // Canonical state: BAR0 = 0x8000_0000 stored as a `DeviceId::PCI` wrapper snapshot.
+    // Canonical state: BAR0 = 0x8000_0000 stored under the dedicated `PCI_CFG` device id.
     cfg_write(&mut src, bdf, 0x10, 4, 0x8000_0000);
     let canonical_state = {
-        let mut pci_cfg = pci_cfg.borrow_mut();
-        let mut pci_intx = pci_intx.borrow_mut();
-        let core = aero_devices::pci::PciCoreSnapshot::new(&mut pci_cfg, &mut pci_intx);
-        snapshot::io_snapshot_bridge::device_state_from_io_snapshot(snapshot::DeviceId::PCI, &core)
-    };
-
-    // Legacy state: BAR0 = 0x9000_0000 stored under the old dedicated `PCI_CFG` device id.
-    cfg_write(&mut src, bdf, 0x10, 4, 0x9000_0000);
-    let legacy_state = {
         let pci_cfg = pci_cfg.borrow();
         snapshot::io_snapshot_bridge::device_state_from_io_snapshot(
             snapshot::DeviceId::PCI_CFG,
             &*pci_cfg,
         )
+    };
+
+    // Legacy state: BAR0 = 0x9000_0000 stored under the historical `PCI` wrapper snapshot.
+    cfg_write(&mut src, bdf, 0x10, 4, 0x9000_0000);
+    let legacy_state = {
+        let mut pci_cfg = pci_cfg.borrow_mut();
+        let mut pci_intx = pci_intx.borrow_mut();
+        let core = aero_devices::pci::PciCoreSnapshot::new(&mut pci_cfg, &mut pci_intx);
+        snapshot::io_snapshot_bridge::device_state_from_io_snapshot(snapshot::DeviceId::PCI, &core)
     };
 
     // Restore into a fresh machine and ensure the canonical state wins even if the legacy entry

@@ -38,8 +38,8 @@ use aero_devices::i8042::{I8042Ports, SharedI8042Controller};
 use aero_devices::irq::PlatformIrqLine;
 use aero_devices::pci::{
     bios_post, register_pci_config_ports, PciBdf, PciConfigPorts, PciCoreSnapshot, PciDevice,
-    PciInterruptPin, PciIntxRouter, PciIntxRouterConfig, PciResourceAllocator,
-    PciResourceAllocatorConfig, SharedPciConfigPorts,
+    PciEcamConfig, PciEcamMmio, PciInterruptPin, PciIntxRouter, PciIntxRouterConfig,
+    PciResourceAllocator, PciResourceAllocatorConfig, SharedPciConfigPorts,
 };
 use aero_devices::pic8259::register_pic8259_on_platform_interrupts;
 use aero_devices::pit8254::{register_pit8254, Pit8254, SharedPit8254};
@@ -518,12 +518,18 @@ struct HpetMmio {
 
 impl MmioHandler for HpetMmio {
     fn read(&mut self, offset: u64, size: usize) -> u64 {
+        if !matches!(size, 1 | 2 | 4 | 8) {
+            return 0;
+        }
         let mut hpet = self.hpet.borrow_mut();
         let mut interrupts = self.interrupts.borrow_mut();
         hpet.mmio_read(offset, size, &mut *interrupts)
     }
 
     fn write(&mut self, offset: u64, size: usize, value: u64) {
+        if !matches!(size, 1 | 2 | 4 | 8) {
+            return;
+        }
         let mut hpet = self.hpet.borrow_mut();
         let mut interrupts = self.interrupts.borrow_mut();
         hpet.mmio_write(offset, size, value, &mut *interrupts);
@@ -674,6 +680,47 @@ impl Machine {
         Ok(machine)
     }
 
+    fn map_pc_platform_mmio_regions(&mut self) {
+        if !self.cfg.enable_pc_platform {
+            return;
+        }
+
+        let (Some(interrupts), Some(hpet), Some(pci_cfg)) = (&self.interrupts, &self.hpet, &self.pci_cfg) else {
+            return;
+        };
+
+        let interrupts = interrupts.clone();
+        let hpet = hpet.clone();
+        let pci_cfg = pci_cfg.clone();
+
+        self.mem.map_mmio_once(LAPIC_MMIO_BASE, LAPIC_MMIO_SIZE, || {
+            Box::new(LapicMmio {
+                interrupts: interrupts.clone(),
+            })
+        });
+        self.mem.map_mmio_once(IOAPIC_MMIO_BASE, IOAPIC_MMIO_SIZE, || {
+            Box::new(IoApicMmio {
+                interrupts: interrupts.clone(),
+            })
+        });
+        self.mem.map_mmio_once(hpet::HPET_MMIO_BASE, hpet::HPET_MMIO_SIZE, || {
+            Box::new(HpetMmio {
+                hpet: hpet.clone(),
+                interrupts: interrupts.clone(),
+            })
+        });
+
+        let ecam_cfg = PciEcamConfig {
+            segment: firmware::bios::PCIE_ECAM_SEGMENT,
+            start_bus: firmware::bios::PCIE_ECAM_START_BUS,
+            end_bus: firmware::bios::PCIE_ECAM_END_BUS,
+        };
+        let ecam_len = ecam_cfg.window_size_bytes();
+        self.mem.map_mmio_once(firmware::bios::PCIE_ECAM_BASE, ecam_len, || {
+            Box::new(PciEcamMmio::new(pci_cfg, ecam_cfg))
+        });
+    }
+
     /// Returns the current CPU state.
     pub fn cpu(&self) -> &CpuState {
         &self.cpu.state
@@ -751,11 +798,46 @@ impl Machine {
         self.mem.read_u16(paddr)
     }
 
+    /// Debug/testing helper: read a little-endian u32 from guest physical memory.
+    pub fn read_physical_u32(&mut self, paddr: u64) -> u32 {
+        self.mem.read_u32(paddr)
+    }
+
+    /// Debug/testing helper: read a little-endian u64 from guest physical memory.
+    pub fn read_physical_u64(&mut self, paddr: u64) -> u64 {
+        self.mem.read_u64(paddr)
+    }
+
     /// Debug/testing helper: read a range of guest physical memory into a new buffer.
     pub fn read_physical_bytes(&mut self, paddr: u64, len: usize) -> Vec<u8> {
         let mut out = vec![0u8; len];
         self.mem.read_physical(paddr, &mut out);
         out
+    }
+
+    /// Debug/testing helper: write a single guest physical byte.
+    pub fn write_physical_u8(&mut self, paddr: u64, value: u8) {
+        self.mem.write_u8(paddr, value);
+    }
+
+    /// Debug/testing helper: write a little-endian u16 to guest physical memory.
+    pub fn write_physical_u16(&mut self, paddr: u64, value: u16) {
+        self.mem.write_u16(paddr, value);
+    }
+
+    /// Debug/testing helper: write a little-endian u32 to guest physical memory.
+    pub fn write_physical_u32(&mut self, paddr: u64, value: u32) {
+        self.mem.write_u32(paddr, value);
+    }
+
+    /// Debug/testing helper: write a little-endian u64 to guest physical memory.
+    pub fn write_physical_u64(&mut self, paddr: u64, value: u64) {
+        self.mem.write_u64(paddr, value);
+    }
+
+    /// Debug/testing helper: write a slice into guest physical memory.
+    pub fn write_physical(&mut self, paddr: u64, data: &[u8]) {
+        self.mem.write_physical(paddr, data);
     }
 
     /// Debug/testing helper: read from an I/O port.
@@ -1343,6 +1425,9 @@ impl Machine {
             self.acpi_pm = Some(acpi_pm);
             self.hpet = Some(hpet);
             self.e1000 = e1000;
+
+            // MMIO mappings persist in the physical bus; ensure the canonical PC regions exist.
+            self.map_pc_platform_mmio_regions();
         } else {
             self.platform_clock = None;
             self.interrupts = None;
@@ -1946,6 +2031,16 @@ impl snapshot::SnapshotTarget for Machine {
                 match core_result {
                     Ok(()) => {
                         restored_pci_intx = true;
+                        // Forward compatibility: if a dedicated `PCI_CFG` entry is also present,
+                        // prefer it for config ports even if the combined core wrapper applied
+                        // successfully.
+                        if let Some(cfg_state) = pci_cfg_state.take() {
+                            let mut cfg_ports = pci_cfg.borrow_mut();
+                            let _ = snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
+                                &cfg_state,
+                                &mut *cfg_ports,
+                            );
+                        }
                     }
                     Err(_) => {
                         // Backward compatibility: some snapshots stored `PciConfigPorts` (`PCPT`)
