@@ -27,8 +27,12 @@ Many Aero disk image formats are implemented in the [`aero-storage`](../aero-sto
 behind the [`aero_storage::VirtualDisk`] trait.
 
 To use an `aero-storage` disk with the NVMe controller without duplicating disk abstractions,
-wrap it with [`aero_devices_nvme::AeroStorageDiskAdapter`] (or use the convenience helper
-[`aero_devices_nvme::from_virtual_disk`]).
+wrap it with [`aero_devices_nvme::NvmeDiskFromAeroStorage`]. This adapter enforces 512-byte
+sectors and rejects disks whose byte capacity is not representable as a whole number of 512-byte
+LBAs.
+
+For the common case where the disk is already behind a `Box<dyn aero_storage::VirtualDisk + Send>`,
+you can also use [`aero_devices_nvme::from_virtual_disk`] (returns `DiskResult`).
 
 ## Interrupts
 
