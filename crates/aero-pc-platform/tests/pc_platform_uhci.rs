@@ -11,6 +11,7 @@ use aero_snapshot::io_snapshot_bridge::{
     apply_io_snapshot_to_device, device_state_from_io_snapshot,
 };
 use aero_snapshot::DeviceId;
+use aero_usb::hid::composite::UsbCompositeHidInputHandle;
 use aero_usb::hid::gamepad::UsbHidGamepadHandle;
 use aero_usb::hid::keyboard::UsbHidKeyboardHandle;
 use aero_usb::hid::mouse::UsbHidMouseHandle;
@@ -1570,4 +1571,101 @@ fn pc_platform_uhci_remote_wakeup_sets_resume_detect_and_triggers_intx() {
         .write(bar4_base + REG_USBSTS, 2, u32::from(USBSTS_RESUMEDETECT));
     pc.poll_pci_intx_lines();
     assert_eq!(pc.interrupts.borrow().pic().get_pending_vector(), None);
+}
+
+#[test]
+fn pc_platform_uhci_interrupt_in_reads_composite_hid_reports_via_dma() {
+    let mut pc = PcPlatform::new(2 * 1024 * 1024);
+    let bdf = USB_UHCI_PIIX3.bdf;
+    let bar4_base = read_uhci_bar4_base(&mut pc);
+
+    let composite = UsbCompositeHidInputHandle::new();
+    pc.uhci
+        .as_ref()
+        .expect("UHCI should be enabled")
+        .borrow_mut()
+        .controller_mut()
+        .hub_mut()
+        .attach(0, Box::new(composite.clone()));
+
+    // Enable Bus Mastering so UHCI can DMA the schedule/TD state.
+    let command = read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04) as u16;
+    write_cfg_u16(
+        &mut pc,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        0x04,
+        command | (1 << 2),
+    );
+    pc.tick(0);
+
+    init_frame_list(&mut pc);
+    reset_port(&mut pc, bar4_base, REG_PORTSC1);
+
+    pc.io
+        .write(bar4_base + REG_FLBASEADD, 4, FRAME_LIST_BASE);
+    pc.io.write(bar4_base + REG_FRNUM, 2, 0);
+    pc.io.write(
+        bar4_base + REG_USBCMD,
+        2,
+        u32::from(USBCMD_RS | USBCMD_MAXP),
+    );
+
+    // Enumerate + configure the device at address 5.
+    control_no_data(
+        &mut pc,
+        0,
+        [0x00, 0x05, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00], // SET_ADDRESS(5)
+    );
+    control_no_data(
+        &mut pc,
+        5,
+        [0x00, 0x09, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00], // SET_CONFIGURATION(1)
+    );
+
+    // Keyboard report (endpoint 1 / 0x81).
+    composite.key_event(0x04, true); // 'a'
+    write_td(
+        &mut pc,
+        TD0,
+        1,
+        td_status(true),
+        td_token(PID_IN, 5, 1, 0, 8),
+        BUF_INT,
+    );
+    run_one_frame(&mut pc, TD0);
+    let mut kbd = [0u8; 8];
+    pc.memory.read_physical(BUF_INT as u64, &mut kbd);
+    assert_eq!(kbd, [0x00, 0x00, 0x04, 0, 0, 0, 0, 0]);
+
+    // Mouse report (endpoint 2 / 0x82).
+    composite.mouse_movement(5, -3);
+    write_td(
+        &mut pc,
+        TD0,
+        1,
+        td_status(true),
+        td_token(PID_IN, 5, 2, 0, 4),
+        BUF_INT,
+    );
+    run_one_frame(&mut pc, TD0);
+    let mut mouse = [0u8; 4];
+    pc.memory.read_physical(BUF_INT as u64, &mut mouse);
+    assert_eq!(mouse, [0x00, 5, 0xFD, 0x00]);
+
+    // Gamepad report (endpoint 3 / 0x83).
+    composite.gamepad_set_buttons(0x0001);
+    write_td(
+        &mut pc,
+        TD0,
+        1,
+        td_status(true),
+        td_token(PID_IN, 5, 3, 0, 8),
+        BUF_INT,
+    );
+    run_one_frame(&mut pc, TD0);
+    let mut pad = [0u8; 8];
+    pc.memory.read_physical(BUF_INT as u64, &mut pad);
+    assert_eq!(pad, [0x01, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00]);
 }
