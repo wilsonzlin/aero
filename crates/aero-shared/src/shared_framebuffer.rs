@@ -569,8 +569,9 @@ pub fn dirty_tiles_to_rects(
     let tile_size = layout.tile_size;
 
     for ty in 0..tiles_y {
-        let y = ty as u32 * tile_size;
-        if y >= layout.height {
+        let y = (ty as u64) * u64::from(tile_size);
+        let framebuffer_h = u64::from(layout.height);
+        if y >= framebuffer_h {
             break;
         }
 
@@ -592,22 +593,23 @@ pub fn dirty_tiles_to_rects(
                 tx += 1;
             }
 
-            let x = start_tx as u32 * tile_size;
-            let mut width = (tx - start_tx) as u32 * tile_size;
-            if x + width > layout.width {
-                width = layout.width.saturating_sub(x);
+            let x = (start_tx as u64) * u64::from(tile_size);
+            let framebuffer_w = u64::from(layout.width);
+            let mut width = (tx - start_tx) as u64 * u64::from(tile_size);
+            if x.saturating_add(width) > framebuffer_w {
+                width = framebuffer_w.saturating_sub(x);
             }
 
-            let mut height = tile_size;
-            if y + height > layout.height {
-                height = layout.height.saturating_sub(y);
+            let mut height = u64::from(tile_size);
+            if y.saturating_add(height) > framebuffer_h {
+                height = framebuffer_h.saturating_sub(y);
             }
 
             rects.push(DirtyRect {
-                x,
-                y,
-                width,
-                height,
+                x: x as u32,
+                y: y as u32,
+                width: width as u32,
+                height: height as u32,
             });
         }
     }
@@ -830,6 +832,49 @@ mod tests {
                 height: 32
             }]
         );
+    }
+
+    #[test]
+    fn dirty_tile_rects_clamp_width_when_sum_exceeds_u32_max() {
+        // Regression test: `x + width` can overflow `u32` when the framebuffer width is near
+        // `u32::MAX` and the tile grid rounds up.
+        let tile_size = 1u32 << 30;
+        let layout = SharedFramebufferLayout::new(
+            u32::MAX,
+            1,
+            u32::MAX,
+            FramebufferFormat::Rgba8,
+            tile_size,
+        )
+        .unwrap();
+        assert_eq!(layout.tiles_x, 4);
+        assert_eq!(layout.tiles_y, 1);
+
+        // Mark only the last tile dirty.
+        let dirty_words = [0b1000u32];
+        let rects = dirty_tiles_to_rects(layout, &dirty_words);
+        assert_eq!(rects.len(), 1);
+        assert_eq!(rects[0].x, 3 * tile_size);
+        assert_eq!(rects[0].width, tile_size - 1);
+        assert_eq!(rects[0].height, 1);
+    }
+
+    #[test]
+    fn dirty_tile_rects_clamp_height_when_sum_exceeds_u32_max() {
+        let tile_size = 1u32 << 30;
+        let layout =
+            SharedFramebufferLayout::new(1, u32::MAX, 4, FramebufferFormat::Rgba8, tile_size)
+                .unwrap();
+        assert_eq!(layout.tiles_x, 1);
+        assert_eq!(layout.tiles_y, 4);
+
+        // Mark only the last row tile dirty (tile_index=3).
+        let dirty_words = [0b1000u32];
+        let rects = dirty_tiles_to_rects(layout, &dirty_words);
+        assert_eq!(rects.len(), 1);
+        assert_eq!(rects[0].y, 3 * tile_size);
+        assert_eq!(rects[0].height, tile_size - 1);
+        assert_eq!(rects[0].width, 1);
     }
 }
 
