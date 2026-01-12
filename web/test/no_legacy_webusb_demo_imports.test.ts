@@ -20,12 +20,13 @@ function collectSourceFiles(dir: string): string[] {
   return out;
 }
 
-test("web/src does not import the legacy repo-root WebUSB demo stack (src/platform/webusb_*)", () => {
+test("web/src does not import the legacy repo-root WebUSB demo stack (src/platform/webusb_* or src/platform/legacy/webusb_*)", () => {
   const webSrcDir = fileURLToPath(new URL("../src", import.meta.url));
   const files = collectSourceFiles(webSrcDir);
 
   const offenders: string[] = [];
-  const forbidden = /(?:from\s+|import\s*\()\s*["'][^"']*src\/platform\/webusb_(?:broker|client|protocol)(?:\.ts)?["']/;
+  const forbidden =
+    /(?:from\s+|import\s*\()\s*["'][^"']*src\/platform\/(?:legacy\/)?webusb_(?:broker|client|protocol)(?:\.ts)?["']/;
 
   for (const file of files) {
     const contents = fs.readFileSync(file, "utf8");
@@ -44,10 +45,10 @@ test("web/src does not import the legacy repo-root WebUSB demo stack (src/platfo
       "Found forbidden imports from the legacy repo-root WebUSB demo stack.",
       "",
       "The canonical WebUSB passthrough implementation lives in `web/src/usb/*` + `crates/aero-usb` (ADR 0015).",
+      "The legacy demo RPC stack is quarantined under `src/platform/legacy/*` and must not be used by `web/src/**`.",
       "Do NOT grow a second wire contract under `src/platform/webusb_*`.",
       "",
       ...offenders,
     ].join("\n"),
   );
 });
-
