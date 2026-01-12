@@ -2473,17 +2473,58 @@ function isNetTraceBackend(value: unknown): value is NetTraceBackend {
 }
 
 function resolveNetTraceBackend(): NetTraceBackend {
-  const aero = ((window as unknown as { aero?: Record<string, unknown> }).aero ??= {});
-  const candidate = aero.netTrace;
-  if (isNetTraceBackend(candidate)) return candidate;
+  // Lazily resolve the global backend at call time so the UI keeps working even
+  // if the `WorkerCoordinator` (which installs `window.aero.netTrace`) is created
+  // after the panel is rendered.
+  const resolveInstalled = (): NetTraceBackend | null => {
+    const aero = (window as unknown as { aero?: unknown }).aero;
+    if (!aero || typeof aero !== 'object') return null;
+    const candidate = (aero as { netTrace?: unknown }).netTrace;
+    return isNetTraceBackend(candidate) ? candidate : null;
+  };
+
+  const missingBackendError = () => new Error('Network tracing backend not installed (window.aero.netTrace missing).');
+
   return {
-    isEnabled: () => false,
+    isEnabled: () => resolveInstalled()?.isEnabled() ?? false,
     enable: () => {
-      throw new Error('Network tracing backend not installed (window.aero.netTrace missing).');
+      const backend = resolveInstalled();
+      if (!backend) throw missingBackendError();
+      backend.enable();
     },
-    disable: () => {},
+    disable: () => {
+      resolveInstalled()?.disable();
+    },
     downloadPcapng: async () => {
-      throw new Error('Network tracing backend not installed (window.aero.netTrace missing).');
+      const backend = resolveInstalled();
+      if (!backend) throw missingBackendError();
+      return await backend.downloadPcapng();
+    },
+    clear: async () => {
+      const backend = resolveInstalled();
+      if (!backend) return;
+      if (backend.clear) {
+        await backend.clear();
+      } else {
+        backend.clearCapture?.();
+      }
+    },
+    getStats: async () => {
+      const backend = resolveInstalled();
+      if (!backend?.getStats) {
+        return { enabled: false, records: 0, bytes: 0 };
+      }
+      return await backend.getStats();
+    },
+    // Legacy clear implementation used by earlier backends / UIs.
+    clearCapture: () => {
+      const backend = resolveInstalled();
+      if (!backend) return;
+      if (backend.clearCapture) {
+        backend.clearCapture();
+      } else {
+        void backend.clear?.();
+      }
     },
   };
 }
