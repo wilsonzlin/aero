@@ -1,5 +1,8 @@
 pub use crate::io::storage::error::{DiskError, DiskResult};
 
+use aero_storage::DiskError as StorageDiskError;
+use aero_storage_adapters::AeroVirtualDiskAsNvmeBackend;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiskFormat {
     Raw,
@@ -85,6 +88,105 @@ pub trait DiskBackend {
             lba = lba.saturating_add(sectors);
         }
         Ok(())
+    }
+}
+
+impl DiskBackend for AeroVirtualDiskAsNvmeBackend {
+    fn sector_size(&self) -> u32 {
+        AeroVirtualDiskAsNvmeBackend::SECTOR_SIZE
+    }
+
+    fn total_sectors(&self) -> u64 {
+        // If the disk capacity is not a multiple of 512, expose the largest full-sector span.
+        self.capacity_bytes() / u64::from(self.sector_size())
+    }
+
+    fn read_sectors(&mut self, lba: u64, buf: &mut [u8]) -> DiskResult<()> {
+        let sector_size = self.sector_size() as usize;
+        if !buf.len().is_multiple_of(sector_size) {
+            return Err(DiskError::UnalignedBuffer {
+                len: buf.len(),
+                sector_size: self.sector_size(),
+            });
+        }
+        let sectors = (buf.len() / sector_size) as u64;
+        let end = lba.checked_add(sectors).ok_or(DiskError::OutOfRange {
+            lba,
+            sectors,
+            capacity_sectors: self.total_sectors(),
+        })?;
+        let capacity = self.total_sectors();
+        if end > capacity {
+            return Err(DiskError::OutOfRange {
+                lba,
+                sectors,
+                capacity_sectors: capacity,
+            });
+        }
+
+        self.disk_mut()
+            .read_sectors(lba, buf)
+            .map_err(|err| map_storage_disk_error(err, lba, sectors, capacity))
+    }
+
+    fn write_sectors(&mut self, lba: u64, buf: &[u8]) -> DiskResult<()> {
+        let sector_size = self.sector_size() as usize;
+        if !buf.len().is_multiple_of(sector_size) {
+            return Err(DiskError::UnalignedBuffer {
+                len: buf.len(),
+                sector_size: self.sector_size(),
+            });
+        }
+        let sectors = (buf.len() / sector_size) as u64;
+        let end = lba.checked_add(sectors).ok_or(DiskError::OutOfRange {
+            lba,
+            sectors,
+            capacity_sectors: self.total_sectors(),
+        })?;
+        let capacity = self.total_sectors();
+        if end > capacity {
+            return Err(DiskError::OutOfRange {
+                lba,
+                sectors,
+                capacity_sectors: capacity,
+            });
+        }
+
+        self.disk_mut()
+            .write_sectors(lba, buf)
+            .map_err(|err| map_storage_disk_error(err, lba, sectors, capacity))
+    }
+
+    fn flush(&mut self) -> DiskResult<()> {
+        self.disk_mut()
+            .flush()
+            .map_err(|err| map_storage_disk_error(err, 0, 0, self.total_sectors()))
+    }
+}
+
+fn map_storage_disk_error(
+    err: StorageDiskError,
+    lba: u64,
+    sectors: u64,
+    capacity_sectors: u64,
+) -> DiskError {
+    match err {
+        StorageDiskError::OutOfBounds { .. } => DiskError::OutOfRange {
+            lba,
+            sectors,
+            capacity_sectors,
+        },
+        StorageDiskError::UnalignedLength { len, alignment } => DiskError::UnalignedBuffer {
+            len,
+            sector_size: alignment
+                .try_into()
+                .unwrap_or(AeroVirtualDiskAsNvmeBackend::SECTOR_SIZE),
+        },
+        StorageDiskError::OffsetOverflow => DiskError::Unsupported("offset overflow"),
+        StorageDiskError::InvalidSparseHeader(msg) => DiskError::CorruptImage(msg),
+        StorageDiskError::InvalidConfig(msg) => DiskError::Unsupported(msg),
+        StorageDiskError::CorruptSparseImage(msg) => DiskError::CorruptImage(msg),
+        StorageDiskError::Io(msg) => DiskError::Io(msg.to_string()),
     }
 }
 
