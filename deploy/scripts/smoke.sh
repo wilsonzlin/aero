@@ -424,7 +424,9 @@ if command -v node >/dev/null 2>&1; then
             // If the deploy stack overrides the proxy payload limits via env vars, ensure the
             // gateway surfaces the same values in `POST /session` so browser clients can align
             // their bounds checks.
-            const expectedFrame = parseOptionalPositiveInt(process.env.AERO_L2_MAX_FRAME_PAYLOAD);
+            const expectedFrame =
+              parseOptionalPositiveInt(process.env.AERO_L2_MAX_FRAME_PAYLOAD) ??
+              parseOptionalPositiveInt(process.env.AERO_L2_MAX_FRAME_SIZE);
             if (expectedFrame !== null && expectedFrame !== maxFramePayloadBytes) {
               reject(
                 new Error(
