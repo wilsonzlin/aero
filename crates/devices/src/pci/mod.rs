@@ -68,6 +68,9 @@ impl PciBdf {
     /// This matches the BDF portion of PCI config mechanism #1 (`0xCF8`) after shifting right by 8:
     /// `packed = (cfg_addr >> 8) & 0xFFFF`.
     ///
+    /// This packed form is also used as the stable key for disk controller multiplexing snapshots
+    /// (inner `DSKC`, outer `DeviceId::DISK_CONTROLLER`).
+    ///
     /// # Panics
     ///
     /// Panics in debug builds if `device >= 32` or `function >= 8`.
