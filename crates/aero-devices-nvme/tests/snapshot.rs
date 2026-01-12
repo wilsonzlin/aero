@@ -2,7 +2,8 @@ use std::sync::{Arc, Mutex};
 
 use aero_devices::pci::PciDevice;
 use aero_devices_nvme::{AeroStorageDiskAdapter, NvmePciDevice};
-use aero_io_snapshot::io::state::IoSnapshot;
+use aero_io_snapshot::io::state::codec::Encoder;
+use aero_io_snapshot::io::state::{IoSnapshot, SnapshotVersion, SnapshotWriter};
 use aero_storage::{MemBackend, RawDisk, VirtualDisk, SECTOR_SIZE};
 use memory::MemoryBus;
 
@@ -325,4 +326,53 @@ fn snapshot_restore_preserves_cq_phase_across_wrap() {
     assert_eq!(cqe.cid, 0x12);
     assert_eq!(cqe.status & 0x1, 0);
     assert_eq!(cqe.status & !0x1, 0);
+}
+
+#[test]
+fn snapshot_restore_accepts_legacy_nvmp_1_0_pci_payload() {
+    // The `NvmePciDevice` snapshot format was historically `NVMP 1.0` with a bespoke PCI payload.
+    // Keep a regression test to ensure we never break restore for existing snapshots.
+    let disk = SharedDisk::new(1024);
+    let mut dev = NvmePciDevice::new(Box::new(AeroStorageDiskAdapter::new(Box::new(
+        disk.clone(),
+    ))));
+
+    // Program some config-space state so the legacy PCI payload is non-trivial.
+    dev.config_mut().write(0x04, 4, (0x1234u32 << 16) | 0x0006); // status + command
+    dev.config_mut().write(0x10, 4, 0xfebf_0000);
+    dev.config_mut().write(0x14, 4, 0);
+    dev.config_mut().write(0x10, 4, 0xffff_ffff); // BAR probe mode
+    dev.config_mut().write(0x3c, 1, 0x5a); // interrupt line
+
+    let expected_pci_state = dev.config().snapshot_state();
+
+    // Serialize a legacy NVMP 1.0 snapshot.
+    let bar0 = expected_pci_state.bar_base[0];
+    let bar0_probe = expected_pci_state.bar_probe[0];
+    let command = dev.config().command();
+    let status = 0x1234u16;
+    let interrupt_line = 0x5au8;
+
+    let mut w = SnapshotWriter::new(*b"NVMP", SnapshotVersion::new(1, 0));
+    let pci = Encoder::new()
+        .u64(bar0)
+        .bool(bar0_probe)
+        .u16(command)
+        .u16(status)
+        .u8(interrupt_line)
+        .finish();
+    w.field_bytes(1, pci);
+    w.field_bytes(2, dev.controller.save_state());
+    let legacy = w.finish();
+
+    let mut restored = NvmePciDevice::new(Box::new(AeroStorageDiskAdapter::new(Box::new(
+        disk.clone(),
+    ))));
+    restored.load_state(&legacy).unwrap();
+
+    assert_eq!(
+        restored.config().snapshot_state(),
+        expected_pci_state,
+        "legacy NVMP 1.0 PCI payload should restore into PciConfigSpaceState deterministically"
+    );
 }
