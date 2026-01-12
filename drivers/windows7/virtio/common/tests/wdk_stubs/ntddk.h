@@ -371,3 +371,6 @@ NTSTATUS KeDelayExecutionThread(_In_ KPROCESSOR_MODE WaitMode, _In_ BOOLEAN Aler
  */
 BOOLEAN WdkTestTriggerInterrupt(_In_ PKINTERRUPT InterruptObject);
 BOOLEAN WdkTestRunQueuedDpc(_Inout_ PKDPC Dpc);
+
+/* Test-only hooks for injecting stub failures. */
+VOID WdkTestSetIoConnectInterruptStatus(_In_ NTSTATUS Status);

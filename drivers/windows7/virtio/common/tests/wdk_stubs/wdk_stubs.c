@@ -7,10 +7,17 @@
 static WDK_MMIO_READ_HANDLER g_mmio_read_handler = NULL;
 static WDK_MMIO_WRITE_HANDLER g_mmio_write_handler = NULL;
 
+static NTSTATUS g_IoConnectInterruptStatus = STATUS_SUCCESS;
+
 VOID WdkSetMmioHandlers(_In_opt_ WDK_MMIO_READ_HANDLER ReadHandler, _In_opt_ WDK_MMIO_WRITE_HANDLER WriteHandler)
 {
     g_mmio_read_handler = ReadHandler;
     g_mmio_write_handler = WriteHandler;
+}
+
+VOID WdkTestSetIoConnectInterruptStatus(_In_ NTSTATUS Status)
+{
+    g_IoConnectInterruptStatus = Status;
 }
 
 BOOLEAN WdkMmioRead(_In_ const volatile VOID* Register, _In_ size_t Width, _Out_ ULONGLONG* ValueOut)
@@ -60,6 +67,10 @@ NTSTATUS IoConnectInterrupt(_Out_ PKINTERRUPT* InterruptObject,
 
     if (InterruptObject == NULL || ServiceRoutine == NULL) {
         return STATUS_INVALID_PARAMETER;
+    }
+
+    if (!NT_SUCCESS(g_IoConnectInterruptStatus)) {
+        return g_IoConnectInterruptStatus;
     }
 
     intr = (KINTERRUPT*)calloc(1, sizeof(*intr));

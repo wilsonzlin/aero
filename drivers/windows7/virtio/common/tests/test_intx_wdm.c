@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "virtio_pci_intx_wdm.h"
 
@@ -160,6 +161,38 @@ static void test_connect_descriptor_translation(void)
     assert(intx.InterruptObject->ShareVector == FALSE);
 
     VirtioIntxDisconnect(&intx);
+}
+
+static void test_connect_failure_zeroes_state(void)
+{
+    VIRTIO_INTX intx;
+    volatile UCHAR isr_reg = 0;
+    CM_PARTIAL_RESOURCE_DESCRIPTOR desc;
+    intx_test_ctx_t ctx;
+    NTSTATUS status;
+
+    desc = make_int_desc();
+    RtlZeroMemory(&ctx, sizeof(ctx));
+
+    /*
+     * Ensure VirtioIntxConnect zeroes the output object on failure so teardown
+     * paths can safely call VirtioIntxDisconnect unconditionally.
+     */
+    memset(&intx, 0xA5, sizeof(intx));
+
+    WdkTestSetIoConnectInterruptStatus(STATUS_INSUFFICIENT_RESOURCES);
+    status = VirtioIntxConnect(NULL, &desc, &isr_reg, evt_config, evt_queue, NULL, &ctx, &intx);
+    assert(status == STATUS_INSUFFICIENT_RESOURCES);
+
+    assert(intx.Initialized == FALSE);
+    assert(intx.InterruptObject == NULL);
+    assert(intx.IsrStatusRegister == NULL);
+    assert(intx.Dpc.DeferredRoutine == NULL);
+    assert(intx.PendingIsrStatus == 0);
+    assert(intx.DpcInFlight == 0);
+
+    /* Restore default for other tests. */
+    WdkTestSetIoConnectInterruptStatus(STATUS_SUCCESS);
 }
 
 static void test_disconnect_uninitialized_is_safe(void)
@@ -449,6 +482,7 @@ int main(void)
 {
     test_connect_validation();
     test_connect_descriptor_translation();
+    test_connect_failure_zeroes_state();
     test_disconnect_uninitialized_is_safe();
     test_spurious_interrupt();
     test_null_callbacks_safe();
