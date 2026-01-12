@@ -51,6 +51,20 @@ const DEFAULT_PREVENT_DEFAULT_CODES = new Set<string>([
   "End",
   "Tab",
   "Backspace",
+  // Function keys are commonly bound to browser actions (help, refresh, fullscreen).
+  // Prevent them while the VM capture is active so they can be delivered to the guest.
+  "F1",
+  "F2",
+  "F3",
+  "F4",
+  "F5",
+  "F6",
+  "F7",
+  "F8",
+  "F9",
+  "F10",
+  "F11",
+  "F12",
 ]);
 
 export function shouldPreventDefaultForKeyboardEvent(event: KeyboardEvent): boolean {
