@@ -56,7 +56,10 @@ impl<D: VirtualDisk + Send> DiskBackend for NvmeDiskFromAeroStorage<D> {
     }
 
     fn flush(&mut self) -> DiskResult<()> {
-        self.disk.flush().map_err(|_| DiskError::Io)
+        // Surface any storage-layer error as a generic NVMe I/O error, but keep the match
+        // exhaustive (via `crate::map_storage_error_to_nvme`) so new `aero_storage::DiskError`
+        // variants require an explicit decision here.
+        self.disk.flush().map_err(crate::map_storage_error_to_nvme)
     }
 }
 
@@ -188,7 +191,7 @@ mod tests {
             }
 
             fn flush(&mut self) -> aero_storage::Result<()> {
-                Ok(())
+                Err(StorageDiskError::InvalidConfig("bad config"))
             }
         }
 
@@ -196,5 +199,6 @@ mod tests {
         let mut buf = vec![0u8; SECTOR_SIZE];
         assert_eq!(adapter.read_sectors(0, &mut buf).unwrap_err(), DiskError::Io);
         assert_eq!(adapter.write_sectors(0, &buf).unwrap_err(), DiskError::Io);
+        assert_eq!(adapter.flush().unwrap_err(), DiskError::Io);
     }
 }
