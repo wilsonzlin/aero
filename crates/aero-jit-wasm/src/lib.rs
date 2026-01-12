@@ -132,6 +132,14 @@ impl<'a> Tier1Bus for Tier1SliceBus<'a> {
 
 /// Compile a single Tier-1 basic block starting at `entry_rip`.
 ///
+/// `bitness` controls how x86 instructions are decoded:
+/// - `16`: 16-bit decode (real mode / 16-bit protected mode)
+/// - `32`: 32-bit decode (legacy/protected mode)
+/// - `64`: 64-bit decode (long mode)
+///
+/// For backwards compatibility with older JS call sites, passing `0` (or omitting the argument)
+/// defaults to `64`.
+///
 /// Returns a JS object:
 /// - `wasm_bytes: Uint8Array`
 /// - `code_byte_len: u32`
