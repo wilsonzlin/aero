@@ -50,6 +50,7 @@ const PM1_CNT_SLP_EN: u16 = 1 << 13;
 
 const PM_TIMER_FREQUENCY_HZ: u128 = 3_579_545;
 const PM_TIMER_MASK_24BIT: u32 = 0x00FF_FFFF;
+const NS_PER_SEC: u128 = 1_000_000_000;
 
 #[derive(Debug, Clone, Copy)]
 pub struct AcpiPmConfig {
@@ -126,6 +127,7 @@ pub struct AcpiPmIo<C: Clock = NullClock> {
 
     sci_level: bool,
     timer_base_ns: u64,
+    timer_last_clock_ns: u64,
 }
 
 impl AcpiPmIo<NullClock> {
@@ -156,6 +158,7 @@ impl<C: Clock> AcpiPmIo<C> {
             gpe0_en: vec![0; half],
             sci_level: false,
             timer_base_ns: 0,
+            timer_last_clock_ns: 0,
         };
 
         dev.reset_timer_base();
@@ -184,6 +187,30 @@ impl<C: Clock> AcpiPmIo<C> {
 
     pub fn is_acpi_enabled(&self) -> bool {
         (self.pm1_cnt & PM1_CNT_SCI_EN) != 0
+    }
+
+    /// Advance the ACPI PM timer timebase by `delta_ns` nanoseconds.
+    ///
+    /// The PM timer is a 24-bit free-running counter that increments at 3.579545MHz.
+    /// Unlike the legacy `Instant`-based implementation, this is deterministic and
+    /// driven by the platform's notion of time.
+    ///
+    /// If the PM timer is backed by a deterministic clock (e.g. [`ManualClock`]) that
+    /// is already advanced elsewhere, this method will avoid double-advancing the
+    /// timer and only make up any delta not already covered by the backing clock.
+    pub fn advance_ns(&mut self, delta_ns: u64) {
+        let now = self.clock.now_ns();
+        let clock_delta = now.wrapping_sub(self.timer_last_clock_ns);
+        self.timer_last_clock_ns = now;
+
+        // If the backing clock already advanced far enough, the timer has progressed
+        // implicitly; otherwise, shift the base so that the effective elapsed time
+        // increases by the requested delta.
+        if clock_delta >= delta_ns {
+            return;
+        }
+        let remaining = delta_ns - clock_delta;
+        self.timer_base_ns = self.timer_base_ns.wrapping_sub(remaining);
     }
 
     /// Inject bits into `PM1_STS` and refresh SCI.
@@ -229,7 +256,7 @@ impl<C: Clock> AcpiPmIo<C> {
 
     fn pm_timer_value(&self) -> u32 {
         let elapsed_ns = self.clock.now_ns().wrapping_sub(self.timer_base_ns) as u128;
-        let ticks = elapsed_ns.saturating_mul(PM_TIMER_FREQUENCY_HZ) / 1_000_000_000u128;
+        let ticks = elapsed_ns.saturating_mul(PM_TIMER_FREQUENCY_HZ) / NS_PER_SEC;
         (ticks as u32) & PM_TIMER_MASK_24BIT
     }
 
@@ -238,7 +265,9 @@ impl<C: Clock> AcpiPmIo<C> {
     }
 
     fn reset_timer_base(&mut self) {
-        self.timer_base_ns = self.clock.now_ns();
+        let now = self.clock.now_ns();
+        self.timer_base_ns = now;
+        self.timer_last_clock_ns = now;
     }
 
     fn set_acpi_enabled(&mut self, enabled: bool) {
@@ -468,10 +497,11 @@ impl<C: Clock> IoSnapshot for AcpiPmIo<C> {
             self.gpe0_en.copy_from_slice(buf);
         }
 
+        let now = self.clock.now_ns();
         if let Some(elapsed) = r.u64(TAG_PM_TIMER_ELAPSED_NS)? {
-            let now = self.clock.now_ns();
             self.timer_base_ns = now.wrapping_sub(elapsed);
         }
+        self.timer_last_clock_ns = now;
 
         // Re-drive SCI based on the restored latch/enabled state.
         self.update_sci();

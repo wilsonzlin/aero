@@ -1614,6 +1614,7 @@ impl PcPlatform {
 
     pub fn tick(&mut self, delta_ns: u64) {
         self.clock.advance_ns(delta_ns);
+        self.acpi_pm.borrow_mut().advance_ns(delta_ns);
         self.pit.borrow_mut().advance_ns(delta_ns);
         self.rtc.borrow_mut().tick();
 
