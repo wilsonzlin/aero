@@ -897,6 +897,19 @@ impl PcPlatform {
         )
     }
 
+    pub fn new_with_nvme_disk(ram_size: usize, disk: Box<dyn VirtualDisk + Send>) -> Self {
+        let ram = DenseMemory::new(ram_size as u64).expect("failed to allocate guest RAM");
+        Self::new_with_config_and_ram_inner(
+            Box::new(ram),
+            PcPlatformConfig {
+                enable_nvme: true,
+                ..Default::default()
+            },
+            None,
+            Some(disk),
+        )
+    }
+
     pub fn new_with_ahci(ram_size: usize) -> Self {
         Self::new_with_config(
             ram_size,
@@ -1013,7 +1026,7 @@ impl PcPlatform {
     }
 
     pub fn new_with_config_and_ram(ram: Box<dyn GuestMemory>, config: PcPlatformConfig) -> Self {
-        Self::new_with_config_and_ram_inner(ram, config, None)
+        Self::new_with_config_and_ram_inner(ram, config, None, None)
     }
 
     pub fn new_with_config_and_ram_dirty_tracking(
@@ -1021,13 +1034,14 @@ impl PcPlatform {
         config: PcPlatformConfig,
         page_size: u32,
     ) -> Self {
-        Self::new_with_config_and_ram_inner(ram, config, Some(page_size))
+        Self::new_with_config_and_ram_inner(ram, config, Some(page_size), None)
     }
 
     fn new_with_config_and_ram_inner(
         ram: Box<dyn GuestMemory>,
         config: PcPlatformConfig,
         dirty_page_size: Option<u32>,
+        nvme_disk_override: Option<Box<dyn VirtualDisk + Send>>,
     ) -> Self {
         let chipset = ChipsetState::new(false);
         let filter = AddressFilter::new(chipset.a20());
@@ -1157,16 +1171,17 @@ impl PcPlatform {
             let profile = aero_devices::pci::profile::NVME_CONTROLLER;
             let bdf = profile.bdf;
 
-            // Use an `aero-storage` disk image as the backend for the NVMe controller so the same
-            // underlying disk abstraction can be reused across controllers (AHCI/NVMe/virtio-blk).
-            let disk = RawDisk::create(
-                MemBackend::new(),
-                1024u64 * SECTOR_SIZE as u64,
-            )
-            .expect("failed to allocate in-memory NVMe disk");
+            let disk = nvme_disk_override.unwrap_or_else(|| {
+                // Use an `aero-storage` disk image as the backend for the NVMe controller so the same
+                // underlying disk abstraction can be reused across controllers (AHCI/NVMe/virtio-blk).
+                Box::new(
+                    RawDisk::create(MemBackend::new(), 1024u64 * SECTOR_SIZE as u64)
+                        .expect("failed to allocate in-memory NVMe disk"),
+                )
+            });
             let nvme = Rc::new(RefCell::new(
-                NvmePciDevice::try_new_from_aero_storage(disk)
-                    .expect("in-memory NVMe disk should be 512-byte aligned"),
+                NvmePciDevice::try_new_from_virtual_disk(disk)
+                    .expect("NVMe disk should be 512-byte aligned"),
             ));
 
             {

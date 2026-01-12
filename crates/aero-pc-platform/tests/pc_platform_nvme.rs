@@ -1,5 +1,6 @@
 use aero_devices::pci::profile::NVME_CONTROLLER;
 use aero_pc_platform::PcPlatform;
+use aero_storage::{MemBackend, RawDisk, SECTOR_SIZE};
 use memory::MemoryBus as _;
 
 fn cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
@@ -278,6 +279,51 @@ fn pc_platform_gates_nvme_dma_on_pci_bus_master_enable() {
         .vector_to_irq(pending)
         .expect("pending vector should decode to an IRQ number");
     assert_eq!(irq, 13);
+}
+
+#[test]
+fn pc_platform_new_with_nvme_disk_reflects_backend_capacity_in_identify_namespace() {
+    const DISK_SECTORS: u64 = 2048;
+    let disk = RawDisk::create(MemBackend::new(), DISK_SECTORS * SECTOR_SIZE as u64)
+        .expect("failed to allocate in-memory NVMe disk");
+    let mut pc = PcPlatform::new_with_nvme_disk(2 * 1024 * 1024, Box::new(disk));
+    let bdf = NVME_CONTROLLER.bdf;
+
+    // Enable Memory Space + Bus Mastering so the platform allows DMA processing.
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0006);
+
+    let bar0_base = read_nvme_bar0_base(&mut pc);
+
+    let asq = 0x10000u64;
+    let acq = 0x20000u64;
+    let id_buf = 0x30000u64;
+
+    // Admin SQ/CQ setup and enable.
+    pc.memory.write_u32(bar0_base + 0x0024, 0x000f_000f); // 16/16 queues
+    pc.memory.write_u64(bar0_base + 0x0028, asq);
+    pc.memory.write_u64(bar0_base + 0x0030, acq);
+    pc.memory.write_u32(bar0_base + 0x0014, 1); // CC.EN
+    assert_eq!(pc.memory.read_u32(bar0_base + 0x001c) & 1, 1);
+
+    // Admin IDENTIFY (namespace) command in SQ0 entry 0.
+    let mut cmd = build_command(0x06);
+    set_cid(&mut cmd, 0x5678);
+    set_nsid(&mut cmd, 1);
+    set_prp1(&mut cmd, id_buf);
+    set_cdw10(&mut cmd, 0x00); // CNS=0 (namespace)
+    pc.memory.write_physical(asq, &cmd);
+
+    // Ring SQ0 tail doorbell.
+    pc.memory.write_u32(bar0_base + 0x1000, 1);
+
+    pc.process_nvme();
+
+    let cqe = read_cqe(&mut pc, acq);
+    assert_eq!(cqe.cid, 0x5678);
+    assert_eq!(cqe.status & !0x1, 0);
+
+    let nsze = pc.memory.read_u64(id_buf);
+    assert_eq!(nsze, DISK_SECTORS);
 }
 
 #[test]
