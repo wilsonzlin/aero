@@ -996,6 +996,8 @@ impl E1000Device {
         }
         let base = self.rx_desc_base();
         let buf_len = self.rx_buf_len();
+        let mut head = self.rdh % desc_count;
+        let tail = self.rdt % desc_count;
 
         while let Some(frame) = self.rx_pending.front() {
             if frame.len() < MIN_L2_FRAME_LEN || frame.len() > MAX_L2_FRAME_LEN {
@@ -1006,10 +1008,10 @@ impl E1000Device {
             }
             // The hardware head (RDH) must not catch up to the software tail (RDT).
             // Keep one descriptor unused to avoid ambiguity in full/empty conditions.
-            if self.rdh == self.rdt {
+            if head == tail {
                 break;
             }
-            let idx = (self.rdh % desc_count) as u64;
+            let idx = head as u64;
             let desc_addr = base + idx * RxDesc::LEN as u64;
             let desc_bytes = read_desc::<{ RxDesc::LEN }>(mem, desc_addr);
             let mut desc = RxDesc::from_bytes(desc_bytes);
@@ -1038,11 +1040,13 @@ impl E1000Device {
 
             self.rx_pending.pop_front();
 
-            self.rdh = (self.rdh + 1) % desc_count;
+            head = (head + 1) % desc_count;
 
             self.icr |= ICR_RXT0;
             self.update_irq_level();
         }
+
+        self.rdh = head;
     }
 
     fn queue_tx_frame(&mut self, frame: Vec<u8>) {
@@ -1094,11 +1098,13 @@ impl E1000Device {
             return;
         }
         let base = self.tx_desc_base();
+        let mut head = self.tdh % desc_count;
+        let tail = self.tdt % desc_count;
 
         let mut should_raise_txdw = false;
 
-        while self.tdh != self.tdt {
-            let idx = (self.tdh % desc_count) as u64;
+        while head != tail {
+            let idx = head as u64;
             let desc_addr = base + idx * TxDesc::LEN as u64;
             let mut desc_bytes = read_desc::<{ TxDesc::LEN }>(mem, desc_addr);
 
@@ -1106,7 +1112,7 @@ impl E1000Device {
                 // Unknown descriptor type; best-effort mark completion and move on.
                 desc_bytes[12] |= TXD_STAT_DD;
                 write_desc(mem, desc_addr, &desc_bytes);
-                self.tdh = (self.tdh + 1) % desc_count;
+                head = (head + 1) % desc_count;
                 continue;
             };
 
@@ -1170,7 +1176,7 @@ impl E1000Device {
                             self.tx_drop = false;
                             self.tx_partial.clear();
                             self.tx_state = None;
-                            self.tdh = (self.tdh + 1) % desc_count;
+                            head = (head + 1) % desc_count;
                             continue;
                         }
 
@@ -1178,7 +1184,7 @@ impl E1000Device {
                         else {
                             self.tx_partial.clear();
                             self.tx_state = None;
-                            self.tdh = (self.tdh + 1) % desc_count;
+                            head = (head + 1) % desc_count;
                             continue;
                         };
 
@@ -1243,7 +1249,7 @@ impl E1000Device {
                             self.tx_drop = false;
                             self.tx_partial.clear();
                             self.tx_state = None;
-                            self.tdh = (self.tdh + 1) % desc_count;
+                            head = (head + 1) % desc_count;
                             continue;
                         }
 
@@ -1251,7 +1257,7 @@ impl E1000Device {
                         else {
                             self.tx_partial.clear();
                             self.tx_state = None;
-                            self.tdh = (self.tdh + 1) % desc_count;
+                            head = (head + 1) % desc_count;
                             continue;
                         };
 
@@ -1288,8 +1294,10 @@ impl E1000Device {
                 }
             }
 
-            self.tdh = (self.tdh + 1) % desc_count;
+            head = (head + 1) % desc_count;
         }
+
+        self.tdh = head;
 
         if should_raise_txdw {
             self.icr |= ICR_TXDW;
@@ -1978,6 +1986,26 @@ mod tests {
         let updated = TxDesc::from_bytes(read_desc::<{ TxDesc::LEN }>(&mut mem, 0x1000));
         assert_ne!(updated.status & TXD_STAT_DD, 0);
         assert!(dev.irq_level());
+    }
+
+    #[test]
+    fn tx_poll_does_not_spin_on_out_of_range_tdt() {
+        // Regression test: if the guest writes an out-of-range tail pointer, the model must not
+        // spin forever in `poll()`. Real drivers should never do this, but we still want bounded
+        // behavior for robustness.
+        let mut mem = TestMem::new(0x10_000);
+        let mut dev = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
+
+        dev.tdbal = 0x1000;
+        dev.tdlen = (TxDesc::LEN as u32) * 4;
+        dev.tdh = 1;
+        dev.tdt = 0x1_0000; // far beyond desc_count; tail wraps via modulo
+        dev.tctl = TCTL_EN;
+
+        // Empty descriptors are fine; DMA reads should be small.
+        dev.poll(&mut mem);
+
+        assert_eq!(dev.mmio_read_u32(REG_TDH), dev.tdt % 4);
     }
 
     #[test]
