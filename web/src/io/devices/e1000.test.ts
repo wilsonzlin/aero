@@ -184,7 +184,9 @@ describe("io/devices/E1000PciDevice", () => {
     expect(Array.from(netTx.tryPop()!)).toEqual([0x00]);
 
     dev.tick(1);
-    expect(bridge.pop_tx_frame).toHaveBeenCalledTimes(2);
+    // `E1000PciDevice` may call `pop_tx_frame()` one extra time to detect the end of the TX queue
+    // (i.e. it pops until null/undefined).
+    expect(bridge.pop_tx_frame).toHaveBeenCalledTimes(3);
     expect(Array.from(netTx.tryPop()!)).toEqual([0x02]);
   });
 
