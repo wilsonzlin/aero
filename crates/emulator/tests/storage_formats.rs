@@ -414,6 +414,25 @@ fn detect_aerospar_magic_with_minimally_plausible_header_is_sparse() {
 }
 
 #[test]
+fn detect_aerospar_magic_with_bad_table_offset_is_sparse() {
+    let mut storage = MemStorage::with_len(64);
+    let mut header = [0u8; 64];
+    header[..8].copy_from_slice(b"AEROSPAR");
+    header[8..12].copy_from_slice(&1u32.to_le_bytes()); // version
+    header[12..16].copy_from_slice(&64u32.to_le_bytes()); // header_size
+    header[32..40].copy_from_slice(&0u64.to_le_bytes()); // bad table_offset
+    storage.write_at(0, &header).unwrap();
+
+    assert_eq!(detect_format(&mut storage).unwrap(), DiskFormat::Sparse);
+
+    let res = VirtualDrive::open_auto(storage, 512, WriteCachePolicy::WriteThrough);
+    assert!(matches!(
+        res,
+        Err(DiskError::CorruptImage("unsupported table offset"))
+    ));
+}
+
+#[test]
 fn detect_aerospar_magic_with_truncated_header_is_sparse() {
     let mut storage = MemStorage::with_len(8);
     storage.write_at(0, b"AEROSPAR").unwrap();

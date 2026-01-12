@@ -42,7 +42,7 @@ pub fn detect_format<B: StorageBackend>(backend: &mut B) -> Result<DiskFormat> {
             }
         }
 
-        // AeroSparse: check magic plus minimally plausible header fields.
+        // AeroSparse: check magic plus a minimally plausible version field.
         //
         // We intentionally avoid fully validating the header here; `open_auto` should attempt to
         // open the image and report a corruption/unsupported error instead of silently treating an
@@ -58,14 +58,7 @@ pub fn detect_format<B: StorageBackend>(backend: &mut B) -> Result<DiskFormat> {
             backend.read_at(0, &mut header)?;
 
             let version = u32::from_le_bytes([header[8], header[9], header[10], header[11]]);
-            let header_size =
-                u32::from_le_bytes([header[12], header[13], header[14], header[15]]) as u64;
-            let table_offset = u64::from_le_bytes([
-                header[32], header[33], header[34], header[35], header[36], header[37], header[38],
-                header[39],
-            ]);
-
-            if version == 1 && header_size == 64 && table_offset == 64 {
+            if version == 1 {
                 return Ok(DiskFormat::AeroSparse);
             }
         }

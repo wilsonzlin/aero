@@ -381,6 +381,25 @@ fn detect_format_recognizes_aerosparse_magic_with_minimally_plausible_header() {
 }
 
 #[test]
+fn detect_format_recognizes_aerosparse_magic_with_bad_table_offset() {
+    let mut backend = MemBackend::with_len(64).unwrap();
+    let mut header = [0u8; 64];
+    header[..8].copy_from_slice(b"AEROSPAR");
+    header[8..12].copy_from_slice(&1u32.to_le_bytes()); // version
+    header[12..16].copy_from_slice(&64u32.to_le_bytes()); // header_size
+    header[32..40].copy_from_slice(&0u64.to_le_bytes()); // bad table_offset
+    backend.write_at(0, &header).unwrap();
+
+    assert_eq!(detect_format(&mut backend).unwrap(), DiskFormat::AeroSparse);
+
+    let err = DiskImage::open_auto(backend).err().expect("expected error");
+    assert!(matches!(
+        err,
+        DiskError::InvalidSparseHeader("unsupported table offset")
+    ));
+}
+
+#[test]
 fn detect_format_recognizes_truncated_aerosparse_magic() {
     // Truncated files that still begin with the AeroSparse magic should not silently open as raw.
     let mut backend = MemBackend::with_len(8).unwrap();
