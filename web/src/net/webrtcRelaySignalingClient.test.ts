@@ -237,7 +237,10 @@ describe("net/webrtcRelaySignalingClient", () => {
         return { readyState: "open" } as RTCDataChannel;
       });
 
-      expect(FakeWebSocket.last?.url).toBe("wss://relay.example.com/base/webrtc/signal");
+      // TS 5.5+ may narrow `FakeWebSocket.last` to `null` after the reset assignment above,
+      // so widen via a local binding.
+      const last = FakeWebSocket.last as FakeWebSocket | null;
+      expect(last?.url).toBe("wss://relay.example.com/base/webrtc/signal");
     } finally {
       restoreFetch();
       if (originalPc === undefined) delete g.RTCPeerConnection;
@@ -247,4 +250,3 @@ describe("net/webrtcRelaySignalingClient", () => {
     }
   });
 });
-
