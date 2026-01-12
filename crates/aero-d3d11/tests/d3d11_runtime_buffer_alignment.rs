@@ -58,7 +58,8 @@ fn d3d11_runtime_update_buffer_succeeds_without_copy_dst_usage_flag() {
         writer.create_buffer(1, 4, BufferUsage::UNIFORM); // deliberately omit COPY_DST
         writer.update_buffer(1, 0, &[1u8, 2u8, 3u8, 4u8]);
 
-        rt.execute(&writer.finish())
-            .expect("UpdateBuffer should succeed even if COPY_DST is omitted in CreateBuffer usage");
+        rt.execute(&writer.finish()).expect(
+            "UpdateBuffer should succeed even if COPY_DST is omitted in CreateBuffer usage",
+        );
     });
 }

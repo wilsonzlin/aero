@@ -422,7 +422,9 @@ impl D3D11Runtime {
             size,
             // `wgpu::Queue::write_buffer` requires COPY_DST; to keep the runtime robust against
             // callers that forget to set the bit, always include both COPY_{SRC,DST}.
-            usage: map_buffer_usage(usage) | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+            usage: map_buffer_usage(usage)
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         self.resources
@@ -522,7 +524,9 @@ impl D3D11Runtime {
             // `wgpu::Queue::write_texture` requires COPY_DST. Also include COPY_SRC so test helpers
             // like `read_texture_rgba8` can safely copy out of textures even if the protocol usage
             // omitted it.
-            usage: map_texture_usage(usage) | wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::COPY_DST,
+            usage: map_texture_usage(usage)
+                | wgpu::TextureUsages::COPY_SRC
+                | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
 

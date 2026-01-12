@@ -2112,7 +2112,10 @@ fn aerogpu_cmd_draw_to_x8_srgb_render_target_forces_opaque_alpha() {
             let pixels = exec.read_texture_rgba8(RT).await.unwrap();
             assert_eq!(pixels.len(), 4 * 4 * 4);
             for px in pixels.chunks_exact(4) {
-                assert!(px[0] >= 254 && px[1] >= 254 && px[2] >= 254, "{label}: {px:?}");
+                assert!(
+                    px[0] >= 254 && px[1] >= 254 && px[2] >= 254,
+                    "{label}: {px:?}"
+                );
                 assert_eq!(px[3], 255, "{label}: expected alpha=255, got {px:?}");
             }
         }

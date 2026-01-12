@@ -6444,11 +6444,9 @@ impl AerogpuD3d11Executor {
                     let rt_handle = *render_targets
                         .get(idx)
                         .ok_or_else(|| anyhow!("CLEAR: render target list out of bounds"))?;
-                    let rt_tex = self
-                        .resources
-                        .textures
-                        .get(&rt_handle)
-                        .ok_or_else(|| anyhow!("CLEAR: unknown render target texture {rt_handle}"))?;
+                    let rt_tex = self.resources.textures.get(&rt_handle).ok_or_else(|| {
+                        anyhow!("CLEAR: unknown render target texture {rt_handle}")
+                    })?;
                     let a = if aerogpu_format_is_x8(rt_tex.format_u32) {
                         1.0
                     } else {
