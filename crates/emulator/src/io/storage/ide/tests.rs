@@ -252,7 +252,9 @@ fn ata_lba48_oversized_pio_read_is_rejected_without_entering_data_phase() {
         return;
     }
 
-    let disk = MemDisk::new(1);
+    // Allocate a disk large enough that the transfer would otherwise succeed. This makes the test
+    // sensitive to the MAX_IDE_DATA_BUFFER_BYTES limit rather than failing due to OOB reads.
+    let disk = MemDisk::new(sectors as u64);
     let mut ide = IdeController::new(0xC000);
     ide.attach_primary_master_ata(AtaDevice::new(Box::new(disk), "Aero HDD"));
 
@@ -422,7 +424,10 @@ fn atapi_read_10_returns_correct_bytes() {
 
 #[test]
 fn atapi_read_12_rejects_oversized_transfer_without_allocating_buffer() {
-    let iso = MemIso::new(1);
+    let blocks = (MAX_IDE_DATA_BUFFER_BYTES / 2048) as u32 + 1;
+    // Allocate an ISO large enough that the transfer would otherwise succeed, so we specifically
+    // test the MAX_IDE_DATA_BUFFER_BYTES guard.
+    let iso = MemIso::new(blocks);
     let mut ide = IdeController::new(0xC000);
     ide.attach_secondary_master_atapi(AtapiCdrom::new(Some(Box::new(iso))));
     let sec = super::SECONDARY_PORTS;
@@ -456,7 +461,6 @@ fn atapi_read_12_rejects_oversized_transfer_without_allocating_buffer() {
         let _ = ide.io_read(sec.cmd_base, 2);
     }
 
-    let blocks = (MAX_IDE_DATA_BUFFER_BYTES / 2048) as u32 + 1;
     let mut pkt = [0u8; 12];
     pkt[0] = 0xA8; // READ(12)
     pkt[6..10].copy_from_slice(&blocks.to_be_bytes());

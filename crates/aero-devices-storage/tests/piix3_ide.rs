@@ -115,9 +115,15 @@ fn ata_boot_sector_read_via_legacy_pio_ports() {
 #[test]
 fn ata_lba48_oversized_pio_read_is_rejected_without_entering_data_phase() {
     let sectors = (MAX_IDE_DATA_BUFFER_BYTES / SECTOR_SIZE) as u32 + 1;
-    assert!(sectors < 65536, "test requires sector count < 65536");
+    // The largest possible LBA48 transfer is 65536 sectors (sector_count=0). If the cap ever grows
+    // beyond that, there's nothing for the IDE layer to reject here.
+    if sectors > 65536 {
+        return;
+    }
 
-    let capacity = SECTOR_SIZE as u64;
+    // Allocate a disk large enough that the transfer would otherwise succeed (to ensure we're
+    // testing the MAX_IDE_DATA_BUFFER_BYTES cap rather than an out-of-bounds read).
+    let capacity = u64::from(sectors) * SECTOR_SIZE as u64;
     let disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
 
     let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
@@ -155,7 +161,9 @@ fn ata_lba48_oversized_pio_read_is_rejected_without_entering_data_phase() {
 #[test]
 fn ata_lba48_oversized_pio_write_is_rejected_without_allocating_buffer() {
     let sectors = (MAX_IDE_DATA_BUFFER_BYTES / SECTOR_SIZE) as u32 + 1;
-    assert!(sectors < 65536, "test requires sector count < 65536");
+    if sectors > 65536 {
+        return;
+    }
 
     let capacity = SECTOR_SIZE as u64;
     let disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
@@ -501,7 +509,10 @@ fn atapi_inquiry_and_read_10_pio() {
 
 #[test]
 fn atapi_read_12_rejects_oversized_transfer_without_allocating_buffer() {
-    let iso = MemIso::new(1);
+    let blocks = (MAX_IDE_DATA_BUFFER_BYTES / 2048) as u32 + 1;
+    // Allocate an ISO large enough that the transfer would otherwise succeed, so we specifically
+    // exercise the MAX_IDE_DATA_BUFFER_BYTES cap.
+    let iso = MemIso::new(blocks);
 
     let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
     ide.borrow_mut()
@@ -530,7 +541,6 @@ fn atapi_read_12_rejects_oversized_transfer_without_allocating_buffer() {
         let _ = ioports.read(SECONDARY_PORTS.cmd_base, 2);
     }
 
-    let blocks = (MAX_IDE_DATA_BUFFER_BYTES / 2048) as u32 + 1;
     let mut read12 = [0u8; 12];
     read12[0] = 0xA8; // READ(12)
     read12[6..10].copy_from_slice(&blocks.to_be_bytes());
