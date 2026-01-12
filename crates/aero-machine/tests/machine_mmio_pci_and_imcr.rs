@@ -1,3 +1,4 @@
+use aero_devices::pci::{profile, PciBdf};
 use aero_machine::{Machine, MachineConfig};
 use aero_platform::interrupts::{InterruptController, InterruptInput, PlatformInterruptMode};
 use aero_interrupts::apic::IOAPIC_MMIO_BASE;
@@ -33,6 +34,25 @@ fn program_ioapic_entry(m: &mut Machine, gsi: u32, low: u32, high: u32) {
     m.write_physical_u32(IOAPIC_MMIO_BASE + 0x10, low);
     m.write_physical_u32(IOAPIC_MMIO_BASE + 0x00, redtbl_high);
     m.write_physical_u32(IOAPIC_MMIO_BASE + 0x10, high);
+}
+
+fn cfg_addr(bdf: PciBdf, offset: u16) -> u32 {
+    // PCI config mechanism #1: 0x8000_0000 | bus<<16 | dev<<11 | fn<<8 | (offset & 0xFC)
+    0x8000_0000
+        | (u32::from(bdf.bus) << 16)
+        | (u32::from(bdf.device & 0x1F) << 11)
+        | (u32::from(bdf.function & 0x07) << 8)
+        | (u32::from(offset) & 0xFC)
+}
+
+fn cfg_read(m: &mut Machine, bdf: PciBdf, offset: u16, size: u8) -> u32 {
+    m.io_write(0xCF8, 4, cfg_addr(bdf, offset));
+    m.io_read(0xCFC + (offset & 3), size)
+}
+
+fn cfg_write(m: &mut Machine, bdf: PciBdf, offset: u16, size: u8, value: u32) {
+    m.io_write(0xCF8, 4, cfg_addr(bdf, offset));
+    m.io_write(0xCFC + (offset & 3), size, value);
 }
 
 fn build_real_mode_imcr_interrupt_wait_boot_sector(
@@ -244,4 +264,42 @@ fn a20_gate_masks_bit20_for_physical_accesses() {
     m.write_physical_u8(hi, 0x44);
     assert_eq!(m.read_physical_u8(lo), 0x33);
     assert_eq!(m.read_physical_u8(hi), 0x44);
+}
+
+#[test]
+fn pci_bar_routing_respects_command_bits_for_e1000() {
+    let mut cfg = mmio_machine_config();
+    cfg.enable_e1000 = true;
+    let mut m = Machine::new(cfg).unwrap();
+    enable_a20(&mut m);
+
+    let bdf = profile::NIC_E1000_82540EM.bdf;
+
+    let command = cfg_read(&mut m, bdf, 0x04, 2) as u16;
+    assert!(
+        (command & 0x3) == 0x3,
+        "bios_post should enable IO+MEM decoding (command=0x{command:04x})"
+    );
+
+    let bar0 = cfg_read(&mut m, bdf, 0x10, 4);
+    let bar1 = cfg_read(&mut m, bdf, 0x14, 4);
+    let mmio_base = u64::from(bar0 & !0xF);
+    let io_base = u16::try_from(bar1 & !0x3).expect("IO BAR must fit in u16");
+    assert_ne!(mmio_base, 0);
+    assert_ne!(io_base, 0);
+
+    // With decoding enabled, accesses should route to the E1000 model (not return all-ones).
+    assert_ne!(m.io_read(io_base, 4), 0xFFFF_FFFF);
+    assert_ne!(m.read_physical_u32(mmio_base), 0xFFFF_FFFF);
+
+    // Disable I/O BAR decoding (COMMAND.IO = 0). Port reads should fall back to all-ones.
+    cfg_write(&mut m, bdf, 0x04, 2, u32::from(command & !0x1));
+    assert_eq!(m.io_read(io_base, 4), 0xFFFF_FFFF);
+    // MMIO remains enabled.
+    assert_ne!(m.read_physical_u32(mmio_base), 0xFFFF_FFFF);
+
+    // Disable MMIO BAR decoding (COMMAND.MEM = 0) while re-enabling I/O.
+    cfg_write(&mut m, bdf, 0x04, 2, u32::from(command & !0x2));
+    assert_ne!(m.io_read(io_base, 4), 0xFFFF_FFFF);
+    assert_eq!(m.read_physical_u32(mmio_base), 0xFFFF_FFFF);
 }
