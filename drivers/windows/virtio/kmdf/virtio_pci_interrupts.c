@@ -121,6 +121,7 @@ static NTSTATUS VirtioPciDisableMsixVectors(
     _In_opt_ WDFSPINLOCK CommonCfgLock,
     _In_ ULONG QueueCount)
 {
+    USHORT readVector;
     ULONG q;
 
     if (CommonCfg == NULL) {
@@ -130,13 +131,21 @@ static NTSTATUS VirtioPciDisableMsixVectors(
     VirtioPciAcquireOptSpinLock(CommonCfgLock);
 
     WRITE_REGISTER_USHORT(&CommonCfg->msix_config, VIRTIO_PCI_MSI_NO_VECTOR);
-    (VOID)READ_REGISTER_USHORT(&CommonCfg->msix_config);
+    readVector = READ_REGISTER_USHORT(&CommonCfg->msix_config);
+    if (readVector != VIRTIO_PCI_MSI_NO_VECTOR) {
+        VirtioPciReleaseOptSpinLock(CommonCfgLock);
+        return STATUS_DEVICE_HARDWARE_ERROR;
+    }
 
     for (q = 0; q < QueueCount; q++) {
         WRITE_REGISTER_USHORT(&CommonCfg->queue_select, (USHORT)q);
         (VOID)READ_REGISTER_USHORT(&CommonCfg->queue_select);
         WRITE_REGISTER_USHORT(&CommonCfg->queue_msix_vector, VIRTIO_PCI_MSI_NO_VECTOR);
-        (VOID)READ_REGISTER_USHORT(&CommonCfg->queue_msix_vector);
+        readVector = READ_REGISTER_USHORT(&CommonCfg->queue_msix_vector);
+        if (readVector != VIRTIO_PCI_MSI_NO_VECTOR) {
+            VirtioPciReleaseOptSpinLock(CommonCfgLock);
+            return STATUS_DEVICE_HARDWARE_ERROR;
+        }
     }
 
     VirtioPciReleaseOptSpinLock(CommonCfgLock);
