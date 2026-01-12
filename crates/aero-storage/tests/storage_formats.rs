@@ -129,6 +129,20 @@ fn make_vhd_fixed_with_pattern() -> MemBackend {
     storage
 }
 
+fn make_vhd_fixed_with_footer_copy() -> MemBackend {
+    let virtual_size = 1024 * 1024u64;
+    let mut data = vec![0u8; virtual_size as usize];
+    data[0..10].copy_from_slice(b"hello vhd!");
+
+    let footer = make_vhd_footer(virtual_size, 2, u64::MAX);
+
+    let mut storage = MemBackend::default();
+    storage.write_at(0, &footer).unwrap(); // footer copy at start
+    storage.write_at(512, &data).unwrap();
+    storage.write_at(512 + virtual_size, &footer).unwrap();
+    storage
+}
+
 fn make_vhd_dynamic_empty(virtual_size: u64, block_size: u32) -> MemBackend {
     assert_eq!(virtual_size % SECTOR as u64, 0);
     assert_eq!(block_size as usize % SECTOR, 0);
@@ -205,6 +219,19 @@ fn detect_qcow2_and_vhd() {
 
     let mut vhd = make_vhd_fixed_with_pattern();
     assert_eq!(detect_format(&mut vhd).unwrap(), DiskFormat::Vhd);
+}
+
+#[test]
+fn detect_vhd_fixed_with_footer_copy() {
+    let mut storage = make_vhd_fixed_with_footer_copy();
+    assert_eq!(detect_format(&mut storage).unwrap(), DiskFormat::Vhd);
+
+    let mut disk = DiskImage::open_auto(storage).unwrap();
+    assert_eq!(disk.format(), DiskFormat::Vhd);
+
+    let mut sector = [0u8; SECTOR];
+    disk.read_sectors(0, &mut sector).unwrap();
+    assert_eq!(&sector[..10], b"hello vhd!");
 }
 
 #[test]
