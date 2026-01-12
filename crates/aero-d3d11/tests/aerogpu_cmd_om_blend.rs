@@ -307,3 +307,37 @@ fn aerogpu_cmd_sample_mask_discards_draw() {
         assert_eq!(px, &[255, 0, 0, 255]);
     });
 }
+
+#[test]
+fn aerogpu_cmd_sample_mask_respects_bit0() {
+    pollster::block_on(async {
+        let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+            Ok(exec) => exec,
+            Err(e) => {
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                return;
+            }
+        };
+
+        // Our test render target is single-sample (no MSAA), so only bit 0 controls whether any
+        // samples are written. A non-zero mask that does *not* include bit 0 should behave like 0.
+        let stream = build_stream([0.25; 4], 0x2);
+        let mut guest_mem = VecGuestMemory::new(0);
+        exec.execute_cmd_stream(&stream, None, &mut guest_mem)
+            .expect("execute_cmd_stream should succeed");
+        exec.poll_wait();
+
+        let pixels = exec
+            .read_texture_rgba8(2)
+            .await
+            .expect("readback should succeed");
+        let width = 32usize;
+        let height = 32usize;
+        let x = width / 2;
+        let y = height / 2;
+        let idx = (y * width + x) * 4;
+        let px = &pixels[idx..idx + 4];
+
+        assert_eq!(px, &[255, 0, 0, 255]);
+    });
+}
