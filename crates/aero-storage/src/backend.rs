@@ -60,6 +60,18 @@ impl MemBackend {
         Self { data: Vec::new() }
     }
 
+    /// Construct a `MemBackend` from an existing byte vector without copying.
+    #[must_use]
+    pub fn from_vec(data: Vec<u8>) -> Self {
+        Self { data }
+    }
+
+    /// Consume the backend and return the underlying byte vector.
+    #[must_use]
+    pub fn into_vec(self) -> Vec<u8> {
+        self.data
+    }
+
     pub fn with_len(len: u64) -> Result<Self> {
         let len_usize: usize = len.try_into().map_err(|_| DiskError::OffsetOverflow)?;
         let mut data = Vec::new();

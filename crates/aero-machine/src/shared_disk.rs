@@ -71,10 +71,7 @@ impl SharedDisk {
             bytes.resize(SECTOR_SIZE, 0);
         }
 
-        let capacity_bytes: u64 = bytes.len().try_into().unwrap_or(u64::MAX);
-        let mut disk = RawDisk::create(MemBackend::new(), capacity_bytes)
-            .map_err(|e| MachineError::DiskBackend(e.to_string()))?;
-        disk.write_at(0, &bytes)
+        let disk = RawDisk::open(MemBackend::from_vec(bytes))
             .map_err(|e| MachineError::DiskBackend(e.to_string()))?;
         Ok(Box::new(disk))
     }
