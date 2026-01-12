@@ -36,11 +36,6 @@ impl SharedPciConfigPortsBiosAdapter {
 }
 
 fn cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
-    assert_eq!(
-        offset & 0x3,
-        0,
-        "PCI config dword offset must be 4-byte aligned"
-    );
     0x8000_0000
         | (u32::from(bus) << 16)
         | (u32::from(device) << 11)
