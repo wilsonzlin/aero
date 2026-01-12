@@ -473,11 +473,11 @@ fn validate_report_item(item: &HidReportItem, path: &str) -> Result<u32, HidDesc
     }
 
     if item.is_range {
-        if item.usages.len() < 2 {
+        if item.usages.len() != 2 {
             return Err(HidDescriptorError::at(
                 path,
                 format!(
-                    "isRange=true requires usages.len() >= 2 (min/max), got {}",
+                    "isRange=true requires usages.len() == 2 (min/max), got {}",
                     item.usages.len()
                 ),
             ));
@@ -1875,6 +1875,52 @@ mod tests {
             Err(HidDescriptorError::Validation { path, message }) => {
                 assert_eq!(path, "collections[0].outputReports[0].items[0]");
                 assert!(message.contains("interrupt"));
+            }
+            other => panic!("expected validation error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn synth_rejects_range_item_with_too_many_usages() {
+        let collections = vec![HidCollectionInfo {
+            usage_page: 0x01,
+            usage: 0x02,
+            collection_type: 0x01,
+            input_reports: vec![HidReportInfo {
+                report_id: 0,
+                items: vec![HidReportItem {
+                    is_array: false,
+                    is_absolute: true,
+                    is_buffered_bytes: false,
+                    is_volatile: false,
+                    is_constant: false,
+                    is_wrapped: false,
+                    is_linear: true,
+                    has_preferred_state: true,
+                    has_null: false,
+                    is_range: true,
+                    logical_minimum: 0,
+                    logical_maximum: 1,
+                    physical_minimum: 0,
+                    physical_maximum: 0,
+                    unit_exponent: 0,
+                    unit: 0,
+                    report_size: 1,
+                    report_count: 1,
+                    usage_page: 0x01,
+                    usages: vec![1, 2, 3],
+                }],
+            }],
+            output_reports: vec![],
+            feature_reports: vec![],
+            children: vec![],
+        }];
+
+        match synthesize_report_descriptor(&collections) {
+            Err(HidDescriptorError::Validation { path, message }) => {
+                assert_eq!(path, "collections[0].inputReports[0].items[0]");
+                assert!(message.contains("usages.len()"));
+                assert!(message.contains("== 2"));
             }
             other => panic!("expected validation error, got {other:?}"),
         }

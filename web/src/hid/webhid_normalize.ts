@@ -579,8 +579,8 @@ function validateCollections(collections: readonly NormalizedHidCollectionInfo[]
 
           if (!item.isRange) continue;
           const usagesLen = Array.isArray(item.usages) ? item.usages.length : 0;
-          if (usagesLen < 2) {
-            throw err(itemPath, `isRange=true requires usages.length >= 2 (got ${usagesLen})`);
+          if (usagesLen !== 2) {
+            throw err(itemPath, `isRange=true requires usages.length == 2 (min/max) (got ${usagesLen})`);
           }
           if (item.usages[0] > item.usages[1]) {
             throw err(

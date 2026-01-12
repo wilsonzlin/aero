@@ -174,6 +174,8 @@ Normalized JSON note:
 - In our **normalized** metadata contract (output of `webhid_normalize.ts`), range items are
   represented compactly: when `item.isRange == true`, `item.usages` is always the canonical
   `[usageMinimum, usageMaximum]` form (even when `min == max`).
+  - Therefore, when `item.isRange == true`, callers should treat `item.usages` as a **2-element**
+    array (`[min, max]`).
 - Expanded `usages` lists are not required and are not guaranteed to be preserved for range items.
 
 Synthesis interpretation:
