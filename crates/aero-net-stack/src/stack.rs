@@ -467,10 +467,21 @@ impl NetworkStack {
             .addr
             .filter(|ip| self.cfg.host_policy.allows_ip(*ip));
 
+        // Destructure so we can move `name` into the cache without extra clones.
+        let PendingDns {
+            txid,
+            src_port,
+            name,
+            qname,
+            qtype,
+            qclass,
+            rd,
+        } = pending;
+
         if let Some(addr) = allowed_addr {
             let expires_at_ms = now_ms.saturating_add(resolved.ttl_secs as u64 * 1000);
             self.insert_dns_cache(
-                pending.name.clone(),
+                name,
                 DnsCacheEntry {
                     addr,
                     expires_at_ms,
@@ -484,12 +495,12 @@ impl NetworkStack {
         };
 
         let Ok(dns_payload) = DnsResponseBuilder {
-            id: pending.txid,
-            rd: pending.rd,
+            id: txid,
+            rd,
             rcode,
-            qname: &pending.qname,
-            qtype: pending.qtype,
-            qclass: pending.qclass,
+            qname: &qname,
+            qtype,
+            qclass,
             answer_a,
             ttl: resolved.ttl_secs,
         }
@@ -499,7 +510,7 @@ impl NetworkStack {
 
         let Ok(udp) = UdpPacketBuilder {
             src_port: 53,
-            dst_port: pending.src_port,
+            dst_port: src_port,
             payload: &dns_payload,
         }
         .build_vec(self.cfg.dns_ip, self.cfg.guest_ip) else {
