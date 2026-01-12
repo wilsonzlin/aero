@@ -232,4 +232,78 @@ describe("RuntimeDiskWorker (remote)", () => {
     expect(derivedCacheIds).toHaveLength(2);
     expect(derivedCacheIds[0]).not.toBe(derivedCacheIds[1]);
   });
+
+  it("does not collide caches when opening via openRemote with different blockSize", async () => {
+    vi.resetModules();
+
+    const cacheIds: string[] = [];
+    const openMock = vi.fn(async (_url: string, opts: any) => {
+      cacheIds.push(await RemoteCacheManager.deriveCacheKey(opts.cacheKeyParts));
+      return {
+        sectorSize: 512,
+        capacityBytes: 512,
+        async readSectors() {},
+        async writeSectors() {
+          throw new Error("read-only");
+        },
+        async flush() {},
+      };
+    });
+
+    vi.doMock("./metadata", async (importOriginal) => {
+      const actual = await importOriginal<typeof import("./metadata")>();
+      return {
+        ...actual,
+        hasOpfsSyncAccessHandle: () => true,
+      };
+    });
+
+    vi.doMock("./remote_range_disk", async (importOriginal) => {
+      const actual = await importOriginal<typeof import("./remote_range_disk")>();
+      return {
+        ...actual,
+        RemoteRangeDisk: { open: openMock },
+      };
+    });
+
+    const { RuntimeDiskWorker: MockedWorker } = await import("./runtime_disk_worker_impl");
+    const posted: any[] = [];
+    const worker = new MockedWorker((msg) => posted.push(msg));
+
+    await worker.handleMessage({
+      type: "request",
+      requestId: 1,
+      op: "openRemote",
+      payload: {
+        url: "https://example.invalid/disk.img",
+        options: {
+          cacheBackend: "opfs",
+          cacheImageId: "test-image",
+          cacheVersion: "v1",
+          blockSize: 1024,
+        },
+      },
+    } satisfies RuntimeDiskRequestMessage);
+
+    await worker.handleMessage({
+      type: "request",
+      requestId: 2,
+      op: "openRemote",
+      payload: {
+        url: "https://example.invalid/disk.img",
+        options: {
+          cacheBackend: "opfs",
+          cacheImageId: "test-image",
+          cacheVersion: "v1",
+          blockSize: 2048,
+        },
+      },
+    } satisfies RuntimeDiskRequestMessage);
+
+    expect(openMock).toHaveBeenCalledTimes(2);
+    expect(openMock.mock.calls[0]?.[1]?.cacheKeyParts?.deliveryType).toBe(remoteRangeDeliveryType(1024));
+    expect(openMock.mock.calls[1]?.[1]?.cacheKeyParts?.deliveryType).toBe(remoteRangeDeliveryType(2048));
+    expect(cacheIds).toHaveLength(2);
+    expect(cacheIds[0]).not.toBe(cacheIds[1]);
+  });
 });
