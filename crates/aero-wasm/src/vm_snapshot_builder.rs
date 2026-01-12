@@ -21,17 +21,12 @@ use wasm_bindgen::prelude::*;
 
 use js_sys::{Array, Object, Reflect, Uint8Array};
 
-use aero_snapshot::{CpuState, DeviceId, DeviceState, DiskOverlayRefs, MmuState, SnapshotMeta};
+use aero_snapshot::{CpuState, DeviceState, DiskOverlayRefs, MmuState, SnapshotMeta};
+
+use crate::vm_snapshot_device_kind::{kind_from_device_id, parse_device_kind};
 
 const MAX_STATE_BLOB_BYTES: usize = 4 * 1024 * 1024;
 const MAX_DEVICE_BLOB_BYTES: usize = 4 * 1024 * 1024;
-
-const DEVICE_KIND_USB_UHCI: &str = "usb.uhci";
-const DEVICE_KIND_I8042: &str = "input.i8042";
-const DEVICE_KIND_AUDIO_HDA: &str = "audio.hda";
-const DEVICE_KIND_NET_E1000: &str = "net.e1000";
-const DEVICE_KIND_NET_STACK: &str = "net.stack";
-const DEVICE_KIND_PREFIX_ID: &str = "device.";
 
 fn js_error(message: impl core::fmt::Display) -> JsValue {
     js_sys::Error::new(&message.to_string()).into()
@@ -140,56 +135,6 @@ fn device_version_flags_from_aero_io_snapshot(bytes: &[u8]) -> (u16, u16) {
     }
 
     (1, 0)
-}
-
-fn parse_device_kind(kind: &str) -> Option<DeviceId> {
-    if kind == DEVICE_KIND_USB_UHCI {
-        return Some(DeviceId::USB);
-    }
-    if kind == DEVICE_KIND_I8042 {
-        return Some(DeviceId::I8042);
-    }
-    if kind == DEVICE_KIND_AUDIO_HDA {
-        return Some(DeviceId::HDA);
-    }
-    if kind == DEVICE_KIND_NET_E1000 {
-        return Some(DeviceId::E1000);
-    }
-    if kind == DEVICE_KIND_NET_STACK {
-        return Some(DeviceId::NET_STACK);
-    }
-
-    // For forward compatibility, unknown device ids can be surfaced as `device.<id>` strings.
-    // When a snapshot is re-saved, accept this spelling and preserve the numeric device id.
-    if let Some(rest) = kind.strip_prefix(DEVICE_KIND_PREFIX_ID) {
-        if let Ok(id) = rest.parse::<u32>() {
-            return Some(DeviceId(id));
-        }
-    }
-
-    None
-}
-
-fn kind_from_device_id(id: DeviceId) -> String {
-    if id == DeviceId::USB {
-        return DEVICE_KIND_USB_UHCI.to_string();
-    }
-    if id == DeviceId::I8042 {
-        return DEVICE_KIND_I8042.to_string();
-    }
-    if id == DeviceId::HDA {
-        return DEVICE_KIND_AUDIO_HDA.to_string();
-    }
-    if id == DeviceId::E1000 {
-        return DEVICE_KIND_NET_E1000.to_string();
-    }
-    if id == DeviceId::NET_STACK {
-        return DEVICE_KIND_NET_STACK.to_string();
-    }
-
-    // For unknown device ids, preserve them as `device.<id>` entries so callers can roundtrip them
-    // back through `vm_snapshot_save(_to_opfs)` without losing state.
-    format!("{DEVICE_KIND_PREFIX_ID}{}", id.0)
 }
 
 fn parse_devices_js(devices: JsValue) -> Result<Vec<DeviceState>, JsValue> {

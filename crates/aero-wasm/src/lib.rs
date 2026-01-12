@@ -37,6 +37,9 @@ pub use vm_snapshot_builder::{
 };
 
 #[cfg(any(target_arch = "wasm32", test))]
+mod vm_snapshot_device_kind;
+
+#[cfg(any(target_arch = "wasm32", test))]
 mod demo_renderer;
 
 #[cfg(target_arch = "wasm32")]
