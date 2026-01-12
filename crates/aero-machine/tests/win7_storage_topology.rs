@@ -7,7 +7,7 @@
 
 use aero_devices::pci::profile::{IDE_PIIX3, ISA_PIIX3, SATA_AHCI_ICH9};
 use aero_devices::pci::{
-    PciBarDefinition, PciBdf, PciInterruptPin, PciIntxRouter, PciIntxRouterConfig,
+    PciBarDefinition, PciBarKind, PciBdf, PciInterruptPin, PciIntxRouter, PciIntxRouterConfig,
 };
 use aero_machine::{Machine, MachineConfig};
 
@@ -101,6 +101,34 @@ fn machine_win7_storage_topology_has_stable_bdfs_and_interrupt_lines() {
             cfg.bar_definition(4),
             Some(PciBarDefinition::Io { size: 16 }),
             "IDE_PIIX3 BAR4 definition drifted"
+        );
+
+        // Freeze legacy-compat BAR base assignments so firmware/OSes that assume PC-like port
+        // layouts continue to work. These are documented in `docs/05-storage-topology-win7.md`.
+        assert_eq!(
+            cfg.bar_range(0).map(|r| (r.kind, r.base, r.size)),
+            Some((PciBarKind::Io, 0x1F0, 8)),
+            "IDE_PIIX3 BAR0 (primary cmd block) drifted"
+        );
+        assert_eq!(
+            cfg.bar_range(1).map(|r| (r.kind, r.base, r.size)),
+            Some((PciBarKind::Io, 0x3F4, 4)),
+            "IDE_PIIX3 BAR1 (primary control block base) drifted"
+        );
+        assert_eq!(
+            cfg.bar_range(2).map(|r| (r.kind, r.base, r.size)),
+            Some((PciBarKind::Io, 0x170, 8)),
+            "IDE_PIIX3 BAR2 (secondary cmd block) drifted"
+        );
+        assert_eq!(
+            cfg.bar_range(3).map(|r| (r.kind, r.base, r.size)),
+            Some((PciBarKind::Io, 0x374, 4)),
+            "IDE_PIIX3 BAR3 (secondary control block base) drifted"
+        );
+        assert_eq!(
+            cfg.bar_range(4).map(|r| (r.kind, r.base, r.size)),
+            Some((PciBarKind::Io, 0xC000, 16)),
+            "IDE_PIIX3 BAR4 (bus master IDE) base/size drifted"
         );
     }
 
