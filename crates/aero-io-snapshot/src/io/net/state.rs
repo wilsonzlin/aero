@@ -11,6 +11,7 @@ const MAX_TX_OUT_FRAMES: usize = 256;
 const MIN_L2_FRAME_LEN: usize = 14;
 const MAX_L2_FRAME_LEN: usize = 1522;
 const MAX_TX_PARTIAL_BYTES: usize = 256 * 1024;
+const MAX_RING_DESC_COUNT: u32 = 65_536;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct E1000TxContextState {
@@ -542,11 +543,17 @@ impl IoSnapshot for E1000DeviceState {
         // Validate ring indices to avoid getting stuck in `process_tx`/`flush_rx_pending` after
         // restoring a corrupted snapshot.
         if let Some(desc_count) = desc_count(self.tdlen) {
+            if desc_count > MAX_RING_DESC_COUNT {
+                return Err(SnapshotError::InvalidFieldEncoding("e1000 tx ring too large"));
+            }
             if desc_count == 0 || self.tdh >= desc_count || self.tdt >= desc_count {
                 return Err(SnapshotError::InvalidFieldEncoding("e1000 tx ring indices"));
             }
         }
         if let Some(desc_count) = desc_count(self.rdlen) {
+            if desc_count > MAX_RING_DESC_COUNT {
+                return Err(SnapshotError::InvalidFieldEncoding("e1000 rx ring too large"));
+            }
             if desc_count == 0 || self.rdh >= desc_count || self.rdt >= desc_count {
                 return Err(SnapshotError::InvalidFieldEncoding("e1000 rx ring indices"));
             }

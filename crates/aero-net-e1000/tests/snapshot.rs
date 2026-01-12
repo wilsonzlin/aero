@@ -473,6 +473,54 @@ fn snapshot_rejects_out_of_range_rx_ring_indices() {
 }
 
 #[test]
+fn snapshot_rejects_absurd_tx_ring_len() {
+    // Tags from `aero_io_snapshot::io::net::state::E1000DeviceState`.
+    const TAG_TDLEN: u16 = 52;
+
+    // The snapshot decoder caps the number of descriptors it will accept.
+    // Use a ring just over the limit: 65537 descriptors * 16 bytes/desc.
+    let oversized_len = 65_537u32 * 16;
+
+    let mut w = SnapshotWriter::new(
+        <E1000Device as IoSnapshot>::DEVICE_ID,
+        <E1000Device as IoSnapshot>::DEVICE_VERSION,
+    );
+    w.field_u32(TAG_TDLEN, oversized_len);
+    let bytes = w.finish();
+
+    let mut dev = E1000Device::new([0; 6]);
+    let err = dev.load_state(&bytes).unwrap_err();
+    assert_eq!(
+        err,
+        SnapshotError::InvalidFieldEncoding("e1000 tx ring too large")
+    );
+}
+
+#[test]
+fn snapshot_rejects_absurd_rx_ring_len() {
+    // Tags from `aero_io_snapshot::io::net::state::E1000DeviceState`.
+    const TAG_RDLEN: u16 = 42;
+
+    // The snapshot decoder caps the number of descriptors it will accept.
+    // Use a ring just over the limit: 65537 descriptors * 16 bytes/desc.
+    let oversized_len = 65_537u32 * 16;
+
+    let mut w = SnapshotWriter::new(
+        <E1000Device as IoSnapshot>::DEVICE_ID,
+        <E1000Device as IoSnapshot>::DEVICE_VERSION,
+    );
+    w.field_u32(TAG_RDLEN, oversized_len);
+    let bytes = w.finish();
+
+    let mut dev = E1000Device::new([0; 6]);
+    let err = dev.load_state(&bytes).unwrap_err();
+    assert_eq!(
+        err,
+        SnapshotError::InvalidFieldEncoding("e1000 rx ring too large")
+    );
+}
+
+#[test]
 fn snapshot_rejects_other_regs_duplicate_key() {
     const TAG_OTHER_REGS: u16 = 90;
 
