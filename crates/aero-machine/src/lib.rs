@@ -1348,6 +1348,11 @@ impl snapshot::SnapshotTarget for Machine {
     }
 
     fn post_restore(&mut self) -> snapshot::Result<()> {
+        // Network backends are external host state (e.g. live proxy connections) and are not part
+        // of the snapshot format. Ensure we always drop any previously attached backend after
+        // restoring, even if the caller bypasses the `Machine::restore_snapshot_*` helper methods
+        // and drives snapshot restore directly via `aero_snapshot::restore_snapshot`.
+        self.detach_network();
         self.reset_latch.clear();
         self.assist = AssistContext::default();
         // Reset non-architectural interrupt bookkeeping to a deterministic baseline. If the
@@ -1371,6 +1376,10 @@ mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
     use std::io::{Cursor, Read};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
 
     fn build_serial_boot_sector(message: &[u8]) -> [u8; 512] {
         let mut sector = [0u8; 512];
@@ -1419,6 +1428,39 @@ mod tests {
 
         let out = m.take_serial_output();
         assert_eq!(out, b"OK\n");
+    }
+
+    #[test]
+    fn snapshot_restore_drops_network_backend_even_when_restoring_via_snapshot_crate() {
+        struct DropBackend {
+            dropped: Arc<AtomicUsize>,
+        }
+
+        impl aero_net_backend::NetworkBackend for DropBackend {
+            fn transmit(&mut self, _frame: Vec<u8>) {}
+        }
+
+        impl Drop for DropBackend {
+            fn drop(&mut self) {
+                self.dropped.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+
+        let cfg = MachineConfig {
+            ram_size_bytes: 2 * 1024 * 1024,
+            ..Default::default()
+        };
+        let mut m = Machine::new(cfg).unwrap();
+        let snap = m.take_snapshot_full().unwrap();
+
+        let dropped = Arc::new(AtomicUsize::new(0));
+        m.set_network_backend(Box::new(DropBackend {
+            dropped: dropped.clone(),
+        }));
+
+        // Restore via the snapshot crate directly (bypasses `Machine::restore_snapshot_*` helpers).
+        snapshot::restore_snapshot(&mut Cursor::new(&snap), &mut m).unwrap();
+        assert_eq!(dropped.load(Ordering::SeqCst), 1);
     }
 
     #[test]
