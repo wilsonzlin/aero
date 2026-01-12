@@ -374,7 +374,7 @@ For virtio end-to-end regression testing (recommended):
 4. ☐ Read [`docs/windows-device-contract.md`](../docs/windows-device-contract.md)
 5. ☐ Read [`drivers/windows7/tests/README.md`](../drivers/windows7/tests/README.md) (selftest + harness)
 6. ☐ Read [`drivers/aerogpu/tests/win7/README.md`](../drivers/aerogpu/tests/win7/README.md) (AeroGPU guest validation suite)
-7. ☐ Run contract checks locally (`python3 scripts/ci/check-windows7-virtio-contract-consistency.py`)
+7. ☐ Run contract checks locally (`python3 scripts/ci/check-windows7-virtio-contract-consistency.py`, `python3 scripts/ci/gen-guest-tools-devices-cmd.py --check`)
 8. ☐ Set up Windows build environment (WDK)
 9. ☐ Explore `drivers/aerogpu/` and `drivers/windows7/`
 10. ☐ Build existing drivers to verify toolchain
