@@ -63,7 +63,6 @@ pub struct PagingBus<B, IO = NoIo> {
 }
 
 const PAGE_SIZE: u64 = 4096;
-const SCRATCH_SIZE: usize = PAGE_SIZE as usize;
 
 impl<B> PagingBus<B, NoIo> {
     pub fn new(phys: B) -> PagingBus<B, NoIo> {
@@ -564,21 +563,10 @@ where
             return Ok(true);
         }
 
-        // Bounds-check ranges without panicking on overflow.
         let len_u64 = u64::try_from(len).map_err(|_| Exception::MemoryFault)?;
-        let src_end = match src.checked_add(len_u64) {
-            Some(v) => v,
-            None => return Ok(false),
-        };
-        let dst_end = match dst.checked_add(len_u64) {
-            Some(v) => v,
-            None => return Ok(false),
-        };
+        src.checked_add(len_u64).ok_or(Exception::MemoryFault)?;
+        dst.checked_add(len_u64).ok_or(Exception::MemoryFault)?;
 
-        // Preflight translations with a side-effect-free probe. If any page in the range is
-        // unmapped or fails permission checks, decline the bulk operation so Tier-0 can fall back
-        // to scalar accesses (which will perform architecturally correct A/D bit updates and fault
-        // delivery).
         if !self.preflight_range_probe(src, len, AccessType::Read)? {
             return Ok(false);
         }
@@ -586,35 +574,56 @@ where
             return Ok(false);
         }
 
+        // Memmove semantics: choose copy direction based on overlap.
+        let src_end = src + len_u64;
+        let dst_end = dst + len_u64;
         let overlap = src < dst_end && dst < src_end;
         let copy_backward = overlap && dst > src;
-        // Perform the copy with memmove semantics using a bounded scratch buffer.
-        let mut scratch = [0u8; SCRATCH_SIZE];
 
         if copy_backward {
             let mut remaining = len;
-            while remaining != 0 {
-                let chunk_len = SCRATCH_SIZE.min(remaining);
-                let offset = remaining - chunk_len;
+            while remaining > 0 {
+                let idx = remaining - 1;
+                let src_addr = src + idx as u64;
+                let dst_addr = dst + idx as u64;
 
-                let src_addr = src.wrapping_add(offset as u64);
-                let dst_addr = dst.wrapping_add(offset as u64);
+                let src_page_off = (src_addr & (PAGE_SIZE - 1)) as usize;
+                let dst_page_off = (dst_addr & (PAGE_SIZE - 1)) as usize;
+                let chunk_len = (src_page_off + 1)
+                    .min(dst_page_off + 1)
+                    .min(remaining);
+                let chunk_start = remaining - chunk_len;
 
-                self.read_bytes_access(src_addr, &mut scratch[..chunk_len], AccessType::Read)?;
-                self.write_bytes_access(dst_addr, &scratch[..chunk_len], AccessType::Write)?;
+                let src_chunk_addr = src + chunk_start as u64;
+                let dst_chunk_addr = dst + chunk_start as u64;
+                let src_paddr = self.translate(src_chunk_addr, AccessType::Read)?;
+                let dst_paddr = self.translate(dst_chunk_addr, AccessType::Write)?;
 
-                remaining = offset;
+                for i in (0..chunk_len).rev() {
+                    let b = self.phys.read_u8(src_paddr + i as u64);
+                    self.phys.write_u8(dst_paddr + i as u64, b);
+                }
+
+                remaining -= chunk_len;
             }
         } else {
             let mut offset = 0usize;
             while offset < len {
-                let chunk_len = SCRATCH_SIZE.min(len - offset);
+                let src_addr = src + offset as u64;
+                let dst_addr = dst + offset as u64;
+                let src_paddr = self.translate(src_addr, AccessType::Read)?;
+                let dst_paddr = self.translate(dst_addr, AccessType::Write)?;
 
-                let src_addr = src.wrapping_add(offset as u64);
-                let dst_addr = dst.wrapping_add(offset as u64);
+                let src_page_off = (src_addr & (PAGE_SIZE - 1)) as usize;
+                let dst_page_off = (dst_addr & (PAGE_SIZE - 1)) as usize;
+                let src_page_rem = (PAGE_SIZE as usize) - src_page_off;
+                let dst_page_rem = (PAGE_SIZE as usize) - dst_page_off;
+                let chunk_len = src_page_rem.min(dst_page_rem).min(len - offset);
 
-                self.read_bytes_access(src_addr, &mut scratch[..chunk_len], AccessType::Read)?;
-                self.write_bytes_access(dst_addr, &scratch[..chunk_len], AccessType::Write)?;
+                for i in 0..chunk_len {
+                    let b = self.phys.read_u8(src_paddr + i as u64);
+                    self.phys.write_u8(dst_paddr + i as u64, b);
+                }
 
                 offset += chunk_len;
             }
@@ -636,43 +645,33 @@ where
             .len()
             .checked_mul(repeat)
             .ok_or(Exception::MemoryFault)?;
-
-        // Bounds-check destination range without panicking on overflow.
         let total_u64 = u64::try_from(total).map_err(|_| Exception::MemoryFault)?;
-        if dst.checked_add(total_u64).is_none() {
-            return Ok(false);
-        }
+        dst.checked_add(total_u64).ok_or(Exception::MemoryFault)?;
 
-        // Preflight translations with write intent using a side-effect-free probe.
         if !self.preflight_range_probe(dst, total, AccessType::Write)? {
             return Ok(false);
         }
 
-        // Commit writes in bounded chunks.
-        let mut scratch = [0u8; SCRATCH_SIZE];
         let pat_len = pattern.len();
+        let mut offset = 0usize;
+        while offset < total {
+            let addr = dst + offset as u64;
+            let paddr = self.translate(addr, AccessType::Write)?;
 
-        let mut written = 0usize;
-        while written < total {
-            let chunk_len = SCRATCH_SIZE.min(total - written);
-            let pat_off = written % pat_len;
+            let page_off = (addr & (PAGE_SIZE - 1)) as usize;
+            let page_rem = (PAGE_SIZE as usize) - page_off;
+            let chunk_len = page_rem.min(total - offset);
 
-            if pat_len == 1 {
-                scratch[..chunk_len].fill(pattern[0]);
-            } else {
-                for i in 0..chunk_len {
-                    scratch[i] = pattern[(pat_off + i) % pat_len];
-                }
+            for i in 0..chunk_len {
+                let byte = pattern[(offset + i) % pat_len];
+                self.phys.write_u8(paddr + i as u64, byte);
             }
 
-            let addr = dst.wrapping_add(written as u64);
-            self.write_bytes_access(addr, &scratch[..chunk_len], AccessType::Write)?;
-            written += chunk_len;
+            offset += chunk_len;
         }
 
         Ok(true)
     }
-
     fn atomic_rmw<T, R>(&mut self, vaddr: u64, f: impl FnOnce(T) -> (T, R)) -> Result<R, Exception>
     where
         T: crate::mem::CpuBusValue,
