@@ -408,3 +408,24 @@ fn snapshot_load_rejects_corrupt_or_oversized_fields() {
     let err = dev.load_state(&bytes).unwrap_err();
     assert_eq!(err, SnapshotError::InvalidFieldEncoding("e1000 tx_partial"));
 }
+
+#[test]
+fn snapshot_roundtrip_preserves_pci_bar_probe_flags() {
+    let mut dev = E1000Device::new([0x52, 0x54, 0, 0x12, 0x34, 0x56]);
+
+    // Put both BARs into probe mode (guest writes all-ones).
+    dev.pci_write_u32(0x10, 0xFFFF_FFFF);
+    dev.pci_write_u32(0x14, 0xFFFF_FFFF);
+
+    let snapshot = dev.save_state();
+
+    let mut restored = E1000Device::new([0; 6]);
+    restored.load_state(&snapshot).expect("load_state");
+
+    // Reads should still return size masks (probe response) after restore.
+    assert_eq!(restored.pci_read_u32(0x10), dev.pci_read_u32(0x10));
+    assert_eq!(restored.pci_read_u32(0x14), dev.pci_read_u32(0x14));
+
+    // Deterministic encoding check.
+    assert_eq!(restored.save_state(), snapshot);
+}
