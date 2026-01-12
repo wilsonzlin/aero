@@ -401,6 +401,15 @@ impl CpuBus for PcCpuBus {
     }
 
     fn fetch(&mut self, vaddr: u64, max_len: usize) -> Result<[u8; 15], Exception> {
+        // Reset requests are latched by chipset devices into `PcPlatform::reset_events` during port
+        // I/O. Tier-0 batches would otherwise continue executing past the reset-triggering
+        // instruction until the platform run loop checks `take_reset_events()`.
+        //
+        // Stop at the next instruction boundary once a reset is pending by failing instruction
+        // fetch; the outer machine loop converts the latched reset into a `RunExit::ResetRequested`.
+        if !self.platform.reset_events.borrow().is_empty() {
+            return Err(Exception::Unimplemented("reset requested"));
+        }
         let mut buf = [0u8; 15];
         let len = max_len.min(15);
         self.read_bytes_access(vaddr, &mut buf[..len], AccessType::Execute)?;

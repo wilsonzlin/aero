@@ -585,6 +585,7 @@ impl aero_cpu_core::paging_bus::IoBus for StrictIoPortBus<'_> {
 
 struct MachineCpuBus<'a> {
     a20: A20GateHandle,
+    reset: ResetLatch,
     inner: aero_cpu_core::PagingBus<&'a mut SystemMemory, StrictIoPortBus<'a>>,
 }
 
@@ -707,6 +708,16 @@ impl aero_cpu_core::mem::CpuBus for MachineCpuBus<'_> {
 
     #[inline]
     fn fetch(&mut self, vaddr: u64, max_len: usize) -> Result<[u8; 15], Exception> {
+        // Reset requests (e.g. port 0xCF9, i8042 reset line, A20 gate reset pulse) are latched by
+        // device models during port I/O. Tier-0 batches may otherwise continue executing past the
+        // reset-triggering instruction until the next outer-loop boundary.
+        //
+        // Use an error on instruction fetch to stop execution at the next instruction boundary
+        // once a reset is pending. The enclosing run loop converts the latched reset into a
+        // `RunExit::ResetRequested` result.
+        if self.reset.peek().is_some() {
+            return Err(Exception::Unimplemented("reset requested"));
+        }
         self.inner.fetch(vaddr, max_len)
     }
 
@@ -4401,6 +4412,7 @@ impl Machine {
             std::mem::swap(&mut self.mmu, inner.mmu_mut());
             let mut bus = MachineCpuBus {
                 a20: self.chipset.a20(),
+                reset: self.reset_latch.clone(),
                 inner,
             };
 
@@ -4416,6 +4428,11 @@ impl Machine {
 
             // Deterministically advance platform time based on executed CPU cycles.
             self.tick_platform_from_cycles(batch.executed);
+
+            if let Some(kind) = self.reset_latch.take() {
+                self.flush_serial();
+                return RunExit::ResetRequested { kind, executed };
+            }
 
             match batch.exit {
                 BatchExit::Completed => {
@@ -8580,6 +8597,7 @@ mod tests {
             aero_cpu_core::PagingBus::new_with_io(&mut m.mem, StrictIoPortBus { io: &mut m.io });
         let mut bus = MachineCpuBus {
             a20: m.chipset.a20(),
+            reset: m.reset_latch.clone(),
             inner,
         };
 

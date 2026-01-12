@@ -517,6 +517,10 @@ impl PcMachine {
             // Deterministically advance platform time based on executed CPU cycles.
             self.tick_platform_from_cycles(batch.executed);
 
+            if let Some(kind) = self.take_reset_kind() {
+                return RunExit::ResetRequested { kind, executed };
+            }
+
             match batch.exit {
                 BatchExit::Completed => {
                     // Like `Machine::run_slice`, we may intentionally run smaller Tier-0 batches
