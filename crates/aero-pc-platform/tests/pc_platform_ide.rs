@@ -1,7 +1,6 @@
 use std::io;
 
 use aero_devices::pci::profile::{IDE_PIIX3, ISA_PIIX3};
-use aero_devices_storage::ata::AtaDrive;
 use aero_devices_storage::atapi::{AtapiCdrom, IsoBackend};
 use aero_devices_storage::pci_ide::{PRIMARY_PORTS, SECONDARY_PORTS};
 use aero_pc_platform::PcPlatform;
@@ -124,12 +123,7 @@ fn pc_platform_ide_pio_reads_boot_sector() {
     disk.write_sectors(0, &sector0).unwrap();
 
     let mut pc = PcPlatform::new_with_ide(2 * 1024 * 1024);
-    pc.ide
-        .as_ref()
-        .unwrap()
-        .borrow_mut()
-        .controller
-        .attach_primary_master_ata(AtaDrive::new(Box::new(disk)).unwrap());
+    pc.attach_ide_primary_master_disk(Box::new(disk)).unwrap();
 
     // Issue READ SECTORS for LBA 0, 1 sector.
     pc.io.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0); // master + LBA
@@ -158,12 +152,7 @@ fn pc_platform_ide_dma_and_irq14_routing_work() {
     disk.write_sectors(0, &sector0).unwrap();
 
     let mut pc = PcPlatform::new_with_ide(2 * 1024 * 1024);
-    pc.ide
-        .as_ref()
-        .unwrap()
-        .borrow_mut()
-        .controller
-        .attach_primary_master_ata(AtaDrive::new(Box::new(disk)).unwrap());
+    pc.attach_ide_primary_master_disk(Box::new(disk)).unwrap();
 
     // Unmask IRQ2 (cascade) and IRQ14 so we can observe primary IDE IRQ delivery via the PIC.
     {
@@ -296,12 +285,7 @@ fn pc_platform_enumerates_piix3_ide_at_canonical_bdf_and_atapi_works_on_secondar
     // Attach an ISO-backed CD-ROM as "secondary master" (canonical Win7 install media slot).
     let mut iso = MemIso::new(2);
     iso.data[2048..2053].copy_from_slice(b"WORLD");
-    pc.ide
-        .as_ref()
-        .unwrap()
-        .borrow_mut()
-        .controller
-        .attach_secondary_master_atapi(AtapiCdrom::new(Some(Box::new(iso))));
+    pc.attach_ide_secondary_master_atapi(AtapiCdrom::new(Some(Box::new(iso))));
 
     // Select master on secondary channel.
     pc.io.write(SECONDARY_PORTS.cmd_base + 6, 1, 0xA0);
@@ -354,12 +338,7 @@ fn pc_platform_ide_atapi_dma_raises_secondary_irq15() {
     // Attach ISO with recognizable bytes at sector 0.
     let mut iso = MemIso::new(1);
     iso.data[0..8].copy_from_slice(b"DMATEST!");
-    pc.ide
-        .as_ref()
-        .unwrap()
-        .borrow_mut()
-        .controller
-        .attach_secondary_master_atapi(AtapiCdrom::new(Some(Box::new(iso))));
+    pc.attach_ide_secondary_master_atapi(AtapiCdrom::new(Some(Box::new(iso))));
 
     let bdf = IDE_PIIX3.bdf;
 

@@ -17,6 +17,7 @@ use aero_devices::reset_ctrl::{ResetCtrl, ResetKind, RESET_CTRL_PORT};
 use aero_devices::rtc_cmos::{register_rtc_cmos, RtcCmos, SharedRtcCmos};
 use aero_devices::{hpet, i8042};
 use aero_devices_storage::ata::AtaDrive;
+use aero_devices_storage::atapi::AtapiCdrom;
 use aero_devices_storage::pci_ide::{Piix3IdePciDevice, PRIMARY_PORTS, SECONDARY_PORTS};
 use aero_devices_storage::AhciPciDevice;
 use aero_interrupts::apic::{IOAPIC_MMIO_BASE, IOAPIC_MMIO_SIZE, LAPIC_MMIO_BASE, LAPIC_MMIO_SIZE};
@@ -1092,6 +1093,32 @@ impl PcPlatform {
 
     pub fn attach_ahci_disk_port0(&mut self, disk: Box<dyn VirtualDisk>) -> std::io::Result<()> {
         self.attach_ahci_disk(0, disk)
+    }
+
+    pub fn attach_ide_primary_master_drive(&mut self, drive: AtaDrive) {
+        self.ide
+            .as_ref()
+            .expect("IDE controller is not enabled on this PcPlatform")
+            .borrow_mut()
+            .controller
+            .attach_primary_master_ata(drive);
+    }
+
+    pub fn attach_ide_primary_master_disk(
+        &mut self,
+        disk: Box<dyn VirtualDisk>,
+    ) -> std::io::Result<()> {
+        self.attach_ide_primary_master_drive(AtaDrive::new(disk)?);
+        Ok(())
+    }
+
+    pub fn attach_ide_secondary_master_atapi(&mut self, dev: AtapiCdrom) {
+        self.ide
+            .as_ref()
+            .expect("IDE controller is not enabled on this PcPlatform")
+            .borrow_mut()
+            .controller
+            .attach_secondary_master_atapi(dev);
     }
 
     pub fn process_hda(&mut self, output_frames: usize) {
