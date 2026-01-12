@@ -11,7 +11,7 @@ import {
 
 const PREVIEW_ORIGIN = process.env.AERO_PLAYWRIGHT_PREVIEW_ORIGIN ?? "http://127.0.0.1:4173";
 
-test("IO-worker snapshot resume discards buffered mic samples (stale latency avoidance)", async ({ page }) => {
+test("Worker snapshot resume discards buffered mic samples (stale latency avoidance)", async ({ page }) => {
   test.setTimeout(90_000);
   test.skip(test.info().project.name !== "chromium", "Mic snapshot resume test only runs on Chromium.");
   page.setDefaultTimeout(90_000);
@@ -47,8 +47,6 @@ test("IO-worker snapshot resume discards buffered mic samples (stale latency avo
       // io.worker waits for the first `setBootDisks` message before reporting READY.
       coord.getIoWorker()?.postMessage({ type: "setBootDisks", mounts: {}, hdd: null, cd: null });
 
-      coord.setMicrophoneRingBufferOwner("io");
-
       const capacitySamples = 4096;
       const sab = new SharedArrayBuffer(MIC_HEADER_BYTES + capacitySamples * Float32Array.BYTES_PER_ELEMENT);
       const header = new Uint32Array(sab, 0, MIC_HEADER_U32_LEN);
@@ -61,8 +59,6 @@ test("IO-worker snapshot resume discards buffered mic samples (stale latency avo
       // Expose for subsequent eval steps.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (globalThis as any).__aeroTestMicRingSab = sab;
-
-      coord.setMicrophoneRingBuffer(sab, 48_000);
     },
     {
       MIC_CAPACITY_SAMPLES_INDEX,
@@ -77,12 +73,23 @@ test("IO-worker snapshot resume discards buffered mic samples (stale latency avo
   await page.waitForFunction(() => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const coord = (globalThis as any).__aeroWorkerCoordinator as any;
-    return coord?.getWorkerStatuses?.().io?.state === "ready";
+    const statuses = coord?.getWorkerStatuses?.();
+    // Wait for *all* workers to reach READY so the coordinator won't later re-send
+    // `setMicrophoneRingBuffer(null)` during late READY handling (it re-syncs ring
+    // attachments on every READY event).
+    return (
+      statuses?.cpu?.state === "ready" &&
+      statuses?.io?.state === "ready" &&
+      statuses?.gpu?.state === "ready" &&
+      statuses?.jit?.state === "ready" &&
+      statuses?.net?.state === "ready"
+    );
   });
 
   await page.waitForFunction(() => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const coord = (globalThis as any).__aeroWorkerCoordinator as any;
+    // `io` is required for the IO-worker mic discard path (re-attaching calls into WASM).
     return Boolean(coord?.getWorkerWasmStatus?.("io"));
   });
 
@@ -99,14 +106,6 @@ test("IO-worker snapshot resume discards buffered mic samples (stale latency avo
       const sab = (globalThis as any).__aeroTestMicRingSab as SharedArrayBuffer | undefined;
       if (!sab) throw new Error("Missing test mic SharedArrayBuffer");
       const header = new Uint32Array(sab, 0, MIC_HEADER_U32_LEN);
-
-      // Simulate the host mic producer writing samples while the VM is paused by advancing
-      // `write_pos` without advancing `read_pos`.
-      Atomics.store(header, MIC_READ_POS_INDEX, 0);
-      Atomics.store(header, MIC_WRITE_POS_INDEX, 1000);
-
-      const readBeforePause = Atomics.load(header, MIC_READ_POS_INDEX) >>> 0;
-      const writeBeforePause = Atomics.load(header, MIC_WRITE_POS_INDEX) >>> 0;
 
       const waitFor = (worker: Worker, kind: string, requestId: number) =>
         new Promise<void>((resolve, reject) => {
@@ -133,44 +132,75 @@ test("IO-worker snapshot resume discards buffered mic samples (stale latency avo
           worker.addEventListener("message", onMessage as any);
         });
 
-      // Mirror the coordinator snapshot ordering (CPU → IO) so there are no concurrent guest-side
-      // port/MMIO operations while the IO worker is paused.
-      const pauseCpuId = 1;
-      cpu.postMessage({ kind: "vm.snapshot.pause", requestId: pauseCpuId });
-      await waitFor(cpu, "vm.snapshot.paused", pauseCpuId);
+      let nextId = 1;
 
-      const pauseIoId = 2;
-      io.postMessage({ kind: "vm.snapshot.pause", requestId: pauseIoId });
-      await waitFor(io, "vm.snapshot.paused", pauseIoId);
+      const attachMicTo = (consumer: "cpu" | "io") => {
+        const attach = { type: "setMicrophoneRingBuffer", ringBuffer: sab, sampleRate: 48_000 };
+        const detach = { type: "setMicrophoneRingBuffer", ringBuffer: null, sampleRate: 0 };
+        if (consumer === "cpu") {
+          cpu.postMessage(attach);
+          io.postMessage(detach);
+        } else {
+          io.postMessage(attach);
+          cpu.postMessage(detach);
+        }
+      };
 
-      // While snapshot-paused, the IO worker stops consuming from the mic ring. Advance `write_pos`
-      // again to model time passing / samples being produced.
-      Atomics.store(header, MIC_WRITE_POS_INDEX, 2000);
+      const runCycle = async (consumer: "cpu" | "io") => {
+        attachMicTo(consumer);
 
-      const resumeCpuId = 3;
-      cpu.postMessage({ kind: "vm.snapshot.resume", requestId: resumeCpuId });
-      await waitFor(cpu, "vm.snapshot.resumed", resumeCpuId);
+        // Simulate the host mic producer writing samples while the VM is paused by advancing
+        // `write_pos` without advancing `read_pos`.
+        Atomics.store(header, MIC_READ_POS_INDEX, 0);
+        Atomics.store(header, MIC_WRITE_POS_INDEX, 1000);
 
-      const resumeIoId = 4;
-      io.postMessage({ kind: "vm.snapshot.resume", requestId: resumeIoId });
-      await waitFor(io, "vm.snapshot.resumed", resumeIoId);
+        const readBeforePause = Atomics.load(header, MIC_READ_POS_INDEX) >>> 0;
+        const writeBeforePause = Atomics.load(header, MIC_WRITE_POS_INDEX) >>> 0;
 
-      const readAfterResume = Atomics.load(header, MIC_READ_POS_INDEX) >>> 0;
-      const writeAfterResume = Atomics.load(header, MIC_WRITE_POS_INDEX) >>> 0;
+        // Mirror the coordinator snapshot ordering (CPU → IO) so there are no concurrent guest-side
+        // port/MMIO operations while the IO worker is paused.
+        const pauseCpuId = nextId++;
+        cpu.postMessage({ kind: "vm.snapshot.pause", requestId: pauseCpuId });
+        await waitFor(cpu, "vm.snapshot.paused", pauseCpuId);
+
+        const pauseIoId = nextId++;
+        io.postMessage({ kind: "vm.snapshot.pause", requestId: pauseIoId });
+        await waitFor(io, "vm.snapshot.paused", pauseIoId);
+
+        // While snapshot-paused, the mic producer may continue writing into the ring. Advance
+        // `write_pos` again to model time passing / samples being produced.
+        Atomics.store(header, MIC_WRITE_POS_INDEX, 2000);
+
+        const resumeCpuId = nextId++;
+        cpu.postMessage({ kind: "vm.snapshot.resume", requestId: resumeCpuId });
+        await waitFor(cpu, "vm.snapshot.resumed", resumeCpuId);
+
+        const resumeIoId = nextId++;
+        io.postMessage({ kind: "vm.snapshot.resume", requestId: resumeIoId });
+        await waitFor(io, "vm.snapshot.resumed", resumeIoId);
+
+        const readAfterResume = Atomics.load(header, MIC_READ_POS_INDEX) >>> 0;
+        const writeAfterResume = Atomics.load(header, MIC_WRITE_POS_INDEX) >>> 0;
+
+        return { readBeforePause, writeBeforePause, readAfterResume, writeAfterResume };
+      };
 
       return {
-        readBeforePause,
-        writeBeforePause,
-        readAfterResume,
-        writeAfterResume,
+        io: await runCycle("io"),
+        cpu: await runCycle("cpu"),
       };
     },
     { MIC_HEADER_U32_LEN, MIC_READ_POS_INDEX, MIC_WRITE_POS_INDEX },
   );
 
-  // Ensure the ring actually had a backlog before the pause/resume cycle.
-  expect(result.readBeforePause).toBeLessThan(result.writeBeforePause);
-  // On resume, the IO worker should reattach the mic ring and discard any buffered samples so
-  // capture resumes from the most recent audio.
-  expect(result.readAfterResume).toBe(result.writeAfterResume);
+  const assertDiscarded = (rec: { readBeforePause: number; writeBeforePause: number; readAfterResume: number; writeAfterResume: number }) => {
+    // Ensure the ring actually had a backlog before the pause/resume cycle.
+    expect(rec.readBeforePause).toBeLessThan(rec.writeBeforePause);
+    // On resume, the active mic consumer should discard any buffered samples so capture resumes
+    // from the most recent audio.
+    expect(rec.readAfterResume).toBe(rec.writeAfterResume);
+  };
+
+  assertDiscarded(result.io);
+  assertDiscarded(result.cpu);
 });
