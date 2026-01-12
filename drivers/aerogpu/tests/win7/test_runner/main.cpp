@@ -907,6 +907,7 @@ int main(int argc, char** argv) {
       "scanout_state_sanity",
       "dump_createalloc_sanity",
       "umd_private_sanity",
+      "transfer_feature_sanity",
       "d3d9_raster_status_sanity",
       "d3d9_raster_status_pacing",
       "dwm_flush_pacing",
