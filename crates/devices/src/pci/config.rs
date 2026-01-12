@@ -209,6 +209,30 @@ impl PciConfigSpace {
         let index = usize::from(index);
         assert!(index < self.bars.len());
 
+        match def {
+            PciBarDefinition::Io { size } => {
+                assert!(
+                    size.is_power_of_two(),
+                    "PCI I/O BAR size must be a power of two"
+                );
+                assert!(size >= 4, "PCI I/O BAR size must be at least 4 bytes");
+            }
+            PciBarDefinition::Mmio32 { size, .. } => {
+                assert!(
+                    size.is_power_of_two(),
+                    "PCI MMIO32 BAR size must be a power of two"
+                );
+                assert!(size >= 0x10, "PCI MMIO BAR size must be at least 16 bytes");
+            }
+            PciBarDefinition::Mmio64 { size, .. } => {
+                assert!(
+                    size.is_power_of_two(),
+                    "PCI MMIO64 BAR size must be a power of two"
+                );
+                assert!(size >= 0x10, "PCI MMIO BAR size must be at least 16 bytes");
+            }
+        }
+
         // BAR layout constraints:
         // - A 64-bit BAR consumes the next BAR slot as its high dword.
         // - Therefore, BAR(N) cannot be independently defined when BAR(N-1) is a 64-bit BAR.
@@ -908,6 +932,26 @@ mod tests {
             1,
             PciBarDefinition::Mmio32 {
                 size: 0x1000,
+                prefetchable: false,
+            },
+        );
+    }
+
+    #[test]
+    #[should_panic]
+    fn bar_size_must_be_power_of_two() {
+        let mut cfg = PciConfigSpace::new(0x1234, 0x5678);
+        cfg.set_bar_definition(0, PciBarDefinition::Io { size: 0x30 });
+    }
+
+    #[test]
+    #[should_panic]
+    fn mmio_bar_size_must_be_at_least_16_bytes() {
+        let mut cfg = PciConfigSpace::new(0x1234, 0x5678);
+        cfg.set_bar_definition(
+            0,
+            PciBarDefinition::Mmio32 {
+                size: 0x8,
                 prefetchable: false,
             },
         );
