@@ -314,10 +314,10 @@ The emulator exposes CPU/device state for debugging. See [`docs/16-debugging-and
 # Run BIOS tests
 bash ./scripts/safe-run.sh cargo test -p firmware --locked
 
-# Run device model tests
-bash ./scripts/safe-run.sh cargo test -p devices --locked
-bash ./scripts/safe-run.sh cargo test -p aero-interrupts --locked
-bash ./scripts/safe-run.sh cargo test -p aero-timers --locked
+ # Run device model tests
+ bash ./scripts/safe-run.sh cargo test -p aero-devices --locked
+ bash ./scripts/safe-run.sh cargo test -p aero-interrupts --locked
+ bash ./scripts/safe-run.sh cargo test -p aero-timers --locked
 
 # Boot tests
 # Note: the first `cargo test` in a clean/contended agent sandbox can take >10 minutes.
