@@ -222,7 +222,7 @@ fn aero_snapshot_roundtrip_preserves_ahci_inflight_dma_command_and_allows_resume
     pci_enable_mmio(&mut src.platform, bdf);
     pci_enable_bus_mastering(&mut src.platform, bdf);
 
-    let bar5 = pci_read_bar(&mut src.platform, bdf, 5);
+    let bar5 = pci_read_bar(&mut src.platform, bdf, profile::AHCI_ABAR_BAR_INDEX);
     assert_eq!(bar5.kind, BarKind::Mem32);
     assert_ne!(bar5.base, 0);
 

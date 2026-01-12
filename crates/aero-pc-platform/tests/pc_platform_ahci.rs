@@ -1,4 +1,4 @@
-use aero_devices::pci::profile::SATA_AHCI_ICH9;
+use aero_devices::pci::profile::{AHCI_ABAR_BAR_INDEX, AHCI_ABAR_SIZE, SATA_AHCI_ICH9};
 use aero_devices::pci::{PciDevice, PciInterruptPin, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
 use aero_devices_storage::ata::{ATA_CMD_IDENTIFY, ATA_CMD_READ_DMA_EXT};
 use aero_interrupts::apic::IOAPIC_MMIO_BASE;
@@ -46,7 +46,8 @@ fn write_cfg_u32(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset:
 
 fn read_ahci_bar5_base(pc: &mut PcPlatform) -> u64 {
     let bdf = SATA_AHCI_ICH9.bdf;
-    let bar5 = read_cfg_u32(pc, bdf.bus, bdf.device, bdf.function, 0x24);
+    let off = 0x10u8 + AHCI_ABAR_BAR_INDEX * 4;
+    let bar5 = read_cfg_u32(pc, bdf.bus, bdf.device, bdf.function, off);
     u64::from(bar5 & 0xffff_fff0)
 }
 
@@ -144,7 +145,7 @@ fn pc_platform_enumerates_ahci_and_assigns_bar5() {
 
     let bar5_base = read_ahci_bar5_base(&mut pc);
     assert_ne!(bar5_base, 0, "BAR5 should be assigned during BIOS POST");
-    assert_eq!(bar5_base % 0x2000, 0);
+    assert_eq!(bar5_base % AHCI_ABAR_SIZE, 0);
 
     // Smoke-test that the MMIO route is live (AHCI VS register).
     let vs = pc.memory.read_u32(bar5_base + 0x10);
@@ -415,7 +416,7 @@ fn pc_platform_routes_ahci_mmio_after_bar5_reprogramming() {
 
     let bar5_base = read_ahci_bar5_base(&mut pc);
     let new_base = bar5_base + 0x20_000;
-    assert_eq!(new_base % 0x2000, 0);
+    assert_eq!(new_base % AHCI_ABAR_SIZE, 0);
 
     pc.memory.write_u32(bar5_base + HBA_GHC, GHC_AE | GHC_IE);
     assert_eq!(

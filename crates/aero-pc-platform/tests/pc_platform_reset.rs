@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use aero_devices::pci::profile::{
-    IDE_PIIX3, NVME_CONTROLLER, SATA_AHCI_ICH9, USB_UHCI_PIIX3, VIRTIO_BLK,
+    AHCI_ABAR_BAR_INDEX, IDE_PIIX3, NVME_CONTROLLER, SATA_AHCI_ICH9, USB_UHCI_PIIX3, VIRTIO_BLK,
 };
 use aero_devices::pci::{PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
 use aero_devices::reset_ctrl::{RESET_CTRL_PORT, RESET_CTRL_RESET_VALUE};
@@ -85,7 +85,8 @@ fn write_cfg_u32(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset:
 
 fn read_ahci_bar5_base(pc: &mut PcPlatform) -> u64 {
     let bdf = SATA_AHCI_ICH9.bdf;
-    let bar5 = read_cfg_u32(pc, bdf.bus, bdf.device, bdf.function, 0x24);
+    let off = 0x10u8 + AHCI_ABAR_BAR_INDEX * 4;
+    let bar5 = read_cfg_u32(pc, bdf.bus, bdf.device, bdf.function, off);
     u64::from(bar5 & 0xffff_fff0)
 }
 

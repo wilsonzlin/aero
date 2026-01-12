@@ -122,10 +122,11 @@ fn pci_config_header_fields_and_bar5_size_probe() {
     assert_eq!(class_code, 0x010601);
 
     // BAR5 (ABAR) size probing.
-    let bar5_off = 0x10u16 + 5 * 4;
-    dev.config_mut().write(bar5_off, 4, 0xFFFF_FFFF);
-    let got = dev.config_mut().read(bar5_off, 4);
-    assert_eq!(got, 0xFFFF_E000);
+    let abar_cfg_off = 0x10u16 + u16::from(profile::AHCI_ABAR_BAR_INDEX) * 4;
+    dev.config_mut().write(abar_cfg_off, 4, 0xFFFF_FFFF);
+    let got = dev.config_mut().read(abar_cfg_off, 4);
+    let expected = !(profile::AHCI_ABAR_SIZE_U32 - 1) & 0xFFFF_FFF0;
+    assert_eq!(got, expected);
 }
 
 #[test]

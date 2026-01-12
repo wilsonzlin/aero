@@ -1,4 +1,4 @@
-use aero_devices::pci::profile::{HDA_ICH6, SATA_AHCI_ICH9};
+use aero_devices::pci::profile::{AHCI_ABAR_BAR_INDEX, HDA_ICH6, SATA_AHCI_ICH9};
 use aero_devices::pci::{PciInterruptPin, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
 use aero_interrupts::apic::IOAPIC_MMIO_BASE;
 use aero_pc_platform::{PcPlatform, PcPlatformConfig};
@@ -37,7 +37,8 @@ fn read_hda_bar0_base(pc: &mut PcPlatform) -> u64 {
 
 fn read_ahci_bar5_base(pc: &mut PcPlatform) -> u64 {
     let bdf = SATA_AHCI_ICH9.bdf;
-    let bar5 = read_cfg_u32(pc, bdf.bus, bdf.device, bdf.function, 0x10 + 5 * 4);
+    let off = 0x10u8 + AHCI_ABAR_BAR_INDEX * 4;
+    let bar5 = read_cfg_u32(pc, bdf.bus, bdf.device, bdf.function, off);
     u64::from(bar5 & 0xffff_fff0)
 }
 

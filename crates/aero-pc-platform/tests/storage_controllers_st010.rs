@@ -51,10 +51,10 @@ fn st010_ahci_read_dma_ext_and_intx_routing() {
     );
 
     // BAR assignment (BAR5).
-    let bar5 = pci_read_bar(&mut pc, bdf, 5);
+    let bar5 = pci_read_bar(&mut pc, bdf, profile::AHCI_ABAR_BAR_INDEX);
     assert_eq!(bar5.kind, BarKind::Mem32);
     assert_ne!(bar5.base, 0);
-    assert_eq!(bar5.base % 0x2000, 0);
+    assert_eq!(bar5.base % profile::AHCI_ABAR_SIZE, 0);
 
     // Interrupt Line should match the router-selected GSI.
     assert_eq!(pci_cfg_read_u8(&mut pc, bdf, 0x3C), expected_irq);
@@ -755,7 +755,7 @@ fn st010_ahci_snapshot_roundtrip_preserves_intx_level() {
             .expect("profile should provide interrupt pin");
         u8::try_from(pc.pci_intx.gsi_for_intx(bdf, pin)).unwrap()
     };
-    let bar5 = pci_read_bar(&mut pc, bdf, 5);
+    let bar5 = pci_read_bar(&mut pc, bdf, profile::AHCI_ABAR_BAR_INDEX);
 
     // Enable MMIO + bus mastering.
     let mut cmd = pci_cfg_read_u16(&mut pc, bdf, 0x04);

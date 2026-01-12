@@ -1,6 +1,8 @@
 use std::io;
 
-use aero_devices::pci::profile::{IDE_PIIX3, ISA_PIIX3, SATA_AHCI_ICH9};
+use aero_devices::pci::profile::{
+    AHCI_ABAR_BAR_INDEX, AHCI_ABAR_SIZE, IDE_PIIX3, ISA_PIIX3, SATA_AHCI_ICH9,
+};
 use aero_devices::pci::{PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
 use aero_devices_storage::ata::AtaDrive;
 use aero_devices_storage::atapi::{AtapiCdrom, IsoBackend};
@@ -69,7 +71,8 @@ impl IsoBackend for MemIso {
 
 fn ahci_bar5_base(pc: &mut PcPlatform) -> u64 {
     let bdf = SATA_AHCI_ICH9.bdf;
-    let bar5 = read_cfg_u32(pc, bdf.bus, bdf.device, bdf.function, 0x24);
+    let off = 0x10u8 + AHCI_ABAR_BAR_INDEX * 4;
+    let bar5 = read_cfg_u32(pc, bdf.bus, bdf.device, bdf.function, off);
     u64::from(bar5 & 0xffff_fff0)
 }
 
@@ -161,7 +164,7 @@ fn win7_storage_topology_is_canonical_and_reads_hdd_and_cdrom() {
 
         let bar5 = ahci_bar5_base(&mut pc);
         assert_ne!(bar5, 0);
-        assert_eq!(bar5 % 0x2000, 0);
+        assert_eq!(bar5 % AHCI_ABAR_SIZE, 0);
     }
 
     // --- AHCI: READ DMA EXT of one 512-byte sector ---
