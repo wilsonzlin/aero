@@ -70,8 +70,7 @@ async function fetchWithTimeout(input: string, init: RequestInit, timeoutMs: num
 }
 
 async function fetchIceServers(baseUrl: string, authToken?: string): Promise<RTCIceServer[]> {
-  const url = new URL(baseUrl);
-  url.pathname = `${url.pathname.replace(/\/$/, "")}/webrtc/ice`;
+  const url = toHttpUrl(baseUrl, "/webrtc/ice");
 
   const headers = new Headers();
   addAuthHeader(headers, authToken);
@@ -118,7 +117,20 @@ function addAuthHeader(headers: Headers, authToken?: string): void {
 
 function toWebSocketUrl(baseUrl: string, path: string): URL {
   const url = new URL(baseUrl);
-  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  switch (url.protocol) {
+    case "http:":
+      url.protocol = "ws:";
+      break;
+    case "https:":
+      url.protocol = "wss:";
+      break;
+    case "ws:":
+    case "wss:":
+      // Preserve secure origins (never downgrade wss:// to ws://).
+      break;
+    default:
+      throw new Error(`unsupported relay base URL protocol for WebSocket signaling: ${url.protocol}`);
+  }
   url.pathname = `${url.pathname.replace(/\/$/, "")}${path}`;
   return url;
 }
@@ -131,6 +143,19 @@ function toWebSocketUrlWithQueryAuth(baseUrl: string, path: string, authToken: s
 
 function toHttpUrl(baseUrl: string, path: string): URL {
   const url = new URL(baseUrl);
+  switch (url.protocol) {
+    case "ws:":
+      url.protocol = "http:";
+      break;
+    case "wss:":
+      url.protocol = "https:";
+      break;
+    case "http:":
+    case "https:":
+      break;
+    default:
+      throw new Error(`unsupported relay base URL protocol for HTTP endpoints: ${url.protocol}`);
+  }
   url.pathname = `${url.pathname.replace(/\/$/, "")}${path}`;
   return url;
 }
