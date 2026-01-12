@@ -6,7 +6,15 @@ fn should_scan(path: &Path) -> bool {
     let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
         return false;
     };
-    matches!(ext, "rs" | "md")
+    matches!(
+        ext,
+        // Rust + docs.
+        "rs" | "md" |
+        // Web runtime.
+        "ts" | "tsx" | "js" | "jsx" | "html" |
+        // Config/metadata.
+        "toml" | "json" | "yml" | "yaml"
+    )
 }
 
 fn scan_dir(dir: &Path, legacy: &[u8], hits: &mut Vec<PathBuf>) {
@@ -59,7 +67,13 @@ fn no_lingering_legacy_net_stack_4cc_references_in_docs_and_sources() {
     const LEGACY_4CC: [u8; 4] = [0x4e, 0x53, 0x54, 0x4b];
 
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let roots = [repo_root.join("docs"), repo_root.join("crates")];
+    let roots = [
+        repo_root.join("docs"),
+        repo_root.join("crates"),
+        repo_root.join("web"),
+        repo_root.join("tests"),
+        repo_root.join("instructions"),
+    ];
 
     let mut hits = Vec::new();
     for root in roots {
