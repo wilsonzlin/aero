@@ -5,17 +5,19 @@ import { HEADER_BYTES, HEADER_U32_LEN, READ_FRAME_INDEX, WRITE_FRAME_INDEX } fro
 const PREVIEW_ORIGIN = process.env.AERO_PLAYWRIGHT_PREVIEW_ORIGIN ?? "http://127.0.0.1:4173";
 
 test("WASM HDA snapshot restores AudioWorklet ring indices and clears samples", async ({ page }) => {
-  test.setTimeout(120_000);
+  // WASM compilation can be slow in CI when there is no cached artifact yet; keep generous timeouts.
+  test.setTimeout(180_000);
   test.skip(test.info().project.name !== "chromium", "SharedArrayBuffer + WASM snapshot test only runs on Chromium.");
 
   await page.goto(`${PREVIEW_ORIGIN}/web/?mem=256`, { waitUntil: "load" });
+  page.setDefaultTimeout(120_000);
 
   // Wait for the main-thread WASM API to be available.
   await page.waitForFunction(() => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const api = (globalThis as any).__aeroWasmApi;
     return !!api;
-  }, undefined, { timeout: 60_000 });
+  }, undefined, { timeout: 120_000 });
 
   const res = await page.evaluate(({ HEADER_BYTES, HEADER_U32_LEN, READ_FRAME_INDEX, WRITE_FRAME_INDEX }) => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
