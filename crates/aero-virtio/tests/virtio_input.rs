@@ -1,6 +1,7 @@
 use aero_virtio::devices::input::{
     VirtioInput, VirtioInputDeviceKind, VirtioInputEvent, BTN_LEFT, EV_KEY, EV_LED, EV_REL, KEY_A,
-    REL_X, VIRTIO_INPUT_CFG_EV_BITS, VIRTIO_INPUT_CFG_ID_DEVIDS, VIRTIO_INPUT_CFG_ID_NAME,
+    KEY_F1, KEY_F12, KEY_NUMLOCK, KEY_SCROLLLOCK, REL_X, VIRTIO_INPUT_CFG_EV_BITS,
+    VIRTIO_INPUT_CFG_ID_DEVIDS, VIRTIO_INPUT_CFG_ID_NAME,
 };
 use aero_virtio::memory::{
     read_u16_le, read_u32_le, write_u16_le, write_u32_le, write_u64_le, GuestMemory, GuestRam,
@@ -334,6 +335,17 @@ fn virtio_input_config_exposes_name_devids_and_ev_bits() {
     assert_eq!(size, 128);
     let key_bits = bar_read(&mut dev, caps.device + 8, size);
     assert_ne!(key_bits[(KEY_A / 8) as usize] & (1u8 << (KEY_A % 8)), 0);
+    // Contract-required keys (Win7 virtio-input): function keys + lock keys.
+    assert_ne!(key_bits[(KEY_F1 / 8) as usize] & (1u8 << (KEY_F1 % 8)), 0);
+    assert_ne!(key_bits[(KEY_F12 / 8) as usize] & (1u8 << (KEY_F12 % 8)), 0);
+    assert_ne!(
+        key_bits[(KEY_NUMLOCK / 8) as usize] & (1u8 << (KEY_NUMLOCK % 8)),
+        0
+    );
+    assert_ne!(
+        key_bits[(KEY_SCROLLLOCK / 8) as usize] & (1u8 << (KEY_SCROLLLOCK % 8)),
+        0
+    );
 
     // Mouse variant exposes a different name and capability bitmap.
     let mouse = VirtioInput::new(VirtioInputDeviceKind::Mouse);
