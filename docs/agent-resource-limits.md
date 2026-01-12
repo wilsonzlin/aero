@@ -81,8 +81,25 @@ AERO_TIMEOUT=600 AERO_MEM_LIMIT=32G bash ./scripts/safe-run.sh npm -w web run te
 # If it still fails, disable RLIMIT_AS for that command (still keeps the timeout)
 AERO_TIMEOUT=600 AERO_MEM_LIMIT=unlimited bash ./scripts/safe-run.sh npm -w web run test:unit
 
-# Alternative (no address-space limit, but keep a timeout):
-bash ./scripts/with-timeout.sh 600 bash ./scripts/run_limited.sh --no-as -- npm -w web run test:unit
+ # Alternative (no address-space limit, but keep a timeout):
+ bash ./scripts/with-timeout.sh 600 bash ./scripts/run_limited.sh --no-as -- npm -w web run test:unit
+ ```
+
+### RLIMIT_AS caveat (rustc/LLVM)
+
+Rust builds can also consume large **virtual address space** (via mmap/allocators), even when the
+actual resident memory usage is reasonable. In some sandboxes this can surface as rustc panics like:
+
+- `failed to spawn helper thread: Os { code: 11, kind: WouldBlock, message: "Resource temporarily unavailable" }`
+
+If you hit this under `safe-run.sh`, re-run the command with a larger address-space limit:
+
+```bash
+# Common fix for large Cargo builds/tests
+AERO_TIMEOUT=900 AERO_MEM_LIMIT=32G bash ./scripts/safe-run.sh cargo test --locked
+
+# If your sandbox allows it, you can also disable RLIMIT_AS for that command:
+AERO_TIMEOUT=900 AERO_MEM_LIMIT=unlimited bash ./scripts/safe-run.sh cargo test --locked
 ```
 
 ### Using `run_limited.sh` (Recommended)
@@ -113,7 +130,14 @@ These don't enforce hard limits but reduce memory spikes:
 ```bash
 export CARGO_BUILD_JOBS=1       # Limit parallel rustc (agent default; raise if your sandbox allows)
 export RUSTC_WORKER_THREADS=1   # Limit rustc's internal worker pool (avoid "WouldBlock" rustc ICEs)
-export RUSTFLAGS="-C codegen-units=1"  # Minimize per-crate parallelism (improves reliability under thread/process limits)
+# Optional: reduce per-crate parallelism. Prefer setting this via
+# `AERO_RUST_CODEGEN_UNITS=1` (alias: `AERO_CODEGEN_UNITS`) rather than editing
+# `RUSTFLAGS` directly.
+#
+# Note: explicitly setting `-C codegen-units=...` has been observed to trigger
+# rustc panics like "failed to spawn work/helper thread (WouldBlock)" in some
+# constrained sandboxes. Prefer leaving it unset and relying on `CARGO_BUILD_JOBS`
+# + `RAYON_NUM_THREADS` unless you know your environment supports it.
 ```
 
 `bash ./scripts/safe-run.sh` also includes a small backoff + retry loop for Cargo commands when it
@@ -142,7 +166,6 @@ Recommended memory-friendly Cargo settings live in environment variables (next s
 export CARGO_BUILD_JOBS=1
 export RUSTC_WORKER_THREADS=1   # Limit rustc internal worker threads (reliability under contention)
 export RAYON_NUM_THREADS=1      # Keep rayon pools aligned with Cargo parallelism
-export RUSTFLAGS="-C codegen-units=1"
 export CARGO_INCREMENTAL=1
 
 # Node (if running JS/TS tooling)

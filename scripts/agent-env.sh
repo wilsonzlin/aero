@@ -90,8 +90,12 @@ esac
 #
 # In constrained agent sandboxes we intermittently hit rustc panics like:
 #   "failed to spawn helper thread (WouldBlock)"
-# when Cargo runs too many rustc processes/threads in parallel. Prefer
-# reliability over speed: default to -j1.
+# when Cargo runs too many rustc processes/threads in parallel, or when
+# an address-space limit (RLIMIT_AS) is set too low for rustc/LLVM's virtual
+# memory reservations. Prefer reliability over speed: default to -j1.
+#
+# If you still see rustc thread-spawn panics, try raising `AERO_MEM_LIMIT` for
+# that command (or setting it to `unlimited`).
 #
 # Override:
 #   export AERO_CARGO_BUILD_JOBS=2   # or 4, etc
@@ -130,40 +134,25 @@ export RUSTC_WORKER_THREADS="${RUSTC_WORKER_THREADS:-$CARGO_BUILD_JOBS}"
 # reliable under contention.
 export RAYON_NUM_THREADS="${RAYON_NUM_THREADS:-$CARGO_BUILD_JOBS}"
 
-# Reduce codegen parallelism per crate to limit memory spikes and avoid hitting per-user thread
-# limits in constrained sandboxes.
-# Keep any existing RUSTFLAGS, but don't re-add codegen-units when sourced twice.
+# Optional: reduce per-crate codegen parallelism (can reduce memory spikes).
 #
-# Heuristic: align per-crate parallelism with overall Cargo build parallelism so the total number
-# of rustc worker threads remains bounded.
+# Do NOT force a default `-C codegen-units=...` here. In some constrained sandboxes,
+# explicitly setting codegen-units has been observed to trigger rustc panics like:
+#   "failed to spawn work/helper thread (WouldBlock)".
+#
+# If you want to set codegen-units for a specific shell/session, use:
+#   export AERO_RUST_CODEGEN_UNITS=<n>   # alias: AERO_CODEGEN_UNITS
 if [[ "${RUSTFLAGS:-}" != *"codegen-units="* ]]; then
-  _aero_codegen_units="${CARGO_BUILD_JOBS:-1}"
-  if [[ -n "${AERO_RUST_CODEGEN_UNITS:-}" ]]; then
-    if [[ "${AERO_RUST_CODEGEN_UNITS}" =~ ^[1-9][0-9]*$ ]]; then
-      _aero_codegen_units="${AERO_RUST_CODEGEN_UNITS}"
+  if [[ -n "${AERO_RUST_CODEGEN_UNITS:-}" || -n "${AERO_CODEGEN_UNITS:-}" ]]; then
+    _aero_codegen_units="${AERO_RUST_CODEGEN_UNITS:-${AERO_CODEGEN_UNITS}}"
+    if [[ "${_aero_codegen_units}" =~ ^[1-9][0-9]*$ ]]; then
+      export RUSTFLAGS="${RUSTFLAGS:-} -C codegen-units=${_aero_codegen_units}"
+      export RUSTFLAGS="${RUSTFLAGS# }"
     else
-      echo "warning: invalid AERO_RUST_CODEGEN_UNITS value: ${AERO_RUST_CODEGEN_UNITS} (expected positive integer); using ${_aero_codegen_units}" >&2
+      echo "warning: invalid AERO_RUST_CODEGEN_UNITS/AERO_CODEGEN_UNITS value: ${_aero_codegen_units} (expected positive integer); skipping codegen-units override" >&2
     fi
-  elif [[ -n "${AERO_CODEGEN_UNITS:-}" ]]; then
-    if [[ "${AERO_CODEGEN_UNITS}" =~ ^[1-9][0-9]*$ ]]; then
-      _aero_codegen_units="${AERO_CODEGEN_UNITS}"
-    else
-      echo "warning: invalid AERO_CODEGEN_UNITS value: ${AERO_CODEGEN_UNITS} (expected positive integer); using ${_aero_codegen_units}" >&2
-    fi
+    unset _aero_codegen_units 2>/dev/null || true
   fi
-  if ! [[ "${_aero_codegen_units}" =~ ^[1-9][0-9]*$ ]]; then
-    _aero_codegen_units=1
-  fi
-
-  # cap at 4 to avoid overly slow per-crate codegen when users opt into higher Cargo parallelism.
-  # Opt out via AERO_RUST_CODEGEN_UNITS (or its shorthand alias, AERO_CODEGEN_UNITS).
-  if [[ -z "${AERO_RUST_CODEGEN_UNITS:-}" && -z "${AERO_CODEGEN_UNITS:-}" && "${_aero_codegen_units}" -gt 4 ]]; then
-    _aero_codegen_units=4
-  fi
-
-  export RUSTFLAGS="${RUSTFLAGS:-} -C codegen-units=${_aero_codegen_units}"
-  export RUSTFLAGS="${RUSTFLAGS# }"
-  unset _aero_codegen_units 2>/dev/null || true
 fi
 
 # LLVM lld (used by the pinned Rust toolchain on Linux) defaults to using all available hardware
@@ -210,7 +199,7 @@ echo "Aero agent environment configured:"
 echo "  CARGO_BUILD_JOBS=$CARGO_BUILD_JOBS"
 echo "  RUSTC_WORKER_THREADS=$RUSTC_WORKER_THREADS"
 echo "  RAYON_NUM_THREADS=$RAYON_NUM_THREADS"
-echo "  RUSTFLAGS=$RUSTFLAGS"
+echo "  RUSTFLAGS=${RUSTFLAGS:-}"
 echo "  CARGO_INCREMENTAL=$CARGO_INCREMENTAL"
 if [[ -n "${CARGO_HOME:-}" ]]; then
   echo "  CARGO_HOME=$CARGO_HOME"

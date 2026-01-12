@@ -27,9 +27,13 @@ MEM_LIMIT="${AERO_MEM_LIMIT:-12G}"
 # In constrained agent sandboxes we intermittently hit rustc panics like:
 #   "failed to spawn helper thread (WouldBlock)"
 #   "Unable to install ctrlc handler: ... WouldBlock (Resource temporarily unavailable)"
-# when Cargo/rustc try to create too many threads/processes in parallel.
+# when Cargo/rustc try to create too many threads/processes in parallel, or when
+# the address-space limit (RLIMIT_AS) is set too low for rustc/LLVM's virtual
+# memory reservations.
 #
 # Prefer reliability over speed: default to -j1 unless overridden.
+# If you still hit rustc thread-spawn panics under safe-run, try raising
+# `AERO_MEM_LIMIT` (or setting it to `unlimited`) for that invocation.
 #
 # Override (preferred, shared with scripts/agent-env.sh):
 #   export AERO_CARGO_BUILD_JOBS=2   # or 4, etc
@@ -64,11 +68,14 @@ export RAYON_NUM_THREADS="${RAYON_NUM_THREADS:-$CARGO_BUILD_JOBS}"
 # Keep rustc's worker pool aligned with overall Cargo build parallelism for reliability.
 export RUSTC_WORKER_THREADS="${RUSTC_WORKER_THREADS:-$CARGO_BUILD_JOBS}"
 
-# Reduce codegen parallelism per crate (avoids memory spikes / thread creation failures).
-# Only apply when invoking cargo directly, and don't override an explicit codegen-units setting.
+# Optional: reduce per-crate codegen parallelism (can reduce memory spikes).
 #
-# Heuristic: align per-crate codegen parallelism with overall Cargo build parallelism so the total
-# number of rustc worker threads remains bounded.
+# Do NOT force a default `-C codegen-units=...` here. In some constrained sandboxes,
+# explicitly setting codegen-units has been observed to trigger rustc panics like:
+#   "failed to spawn work/helper thread (WouldBlock)".
+#
+# If you want to set codegen-units for a specific invocation, use:
+#   AERO_RUST_CODEGEN_UNITS=<n> (alias: AERO_CODEGEN_UNITS)
 is_cargo_cmd=false
 _aero_injected_codegen_units=0
 _aero_injected_codegen_units_value=""
@@ -76,40 +83,21 @@ _aero_injected_codegen_units_is_explicit=0
 if [[ "${1:-}" == "cargo" || "${1:-}" == */cargo ]]; then
     is_cargo_cmd=true
     if [[ "${RUSTFLAGS:-}" != *"codegen-units="* ]]; then
-        _aero_codegen_units="${CARGO_BUILD_JOBS:-1}"
-
         # Allow explicit override without requiring users to manually edit RUSTFLAGS.
         # `AERO_CODEGEN_UNITS` is a shorthand alias for `AERO_RUST_CODEGEN_UNITS`.
-        if [[ -n "${AERO_RUST_CODEGEN_UNITS:-}" ]]; then
+        if [[ -n "${AERO_RUST_CODEGEN_UNITS:-}" || -n "${AERO_CODEGEN_UNITS:-}" ]]; then
             _aero_injected_codegen_units_is_explicit=1
-            if [[ "${AERO_RUST_CODEGEN_UNITS}" =~ ^[1-9][0-9]*$ ]]; then
-                _aero_codegen_units="${AERO_RUST_CODEGEN_UNITS}"
+            _aero_codegen_units="${AERO_RUST_CODEGEN_UNITS:-${AERO_CODEGEN_UNITS}}"
+            if [[ "${_aero_codegen_units}" =~ ^[1-9][0-9]*$ ]]; then
+                export RUSTFLAGS="${RUSTFLAGS:-} -C codegen-units=${_aero_codegen_units}"
+                export RUSTFLAGS="${RUSTFLAGS# }"
+                _aero_injected_codegen_units=1
+                _aero_injected_codegen_units_value="${_aero_codegen_units}"
             else
-                echo "[safe-run] warning: invalid AERO_RUST_CODEGEN_UNITS value: ${AERO_RUST_CODEGEN_UNITS} (expected positive integer); using ${_aero_codegen_units}" >&2
+                echo "[safe-run] warning: invalid AERO_RUST_CODEGEN_UNITS/AERO_CODEGEN_UNITS value: ${_aero_codegen_units} (expected positive integer); skipping codegen-units override" >&2
             fi
-        elif [[ -n "${AERO_CODEGEN_UNITS:-}" ]]; then
-            _aero_injected_codegen_units_is_explicit=1
-            if [[ "${AERO_CODEGEN_UNITS}" =~ ^[1-9][0-9]*$ ]]; then
-                _aero_codegen_units="${AERO_CODEGEN_UNITS}"
-            else
-                echo "[safe-run] warning: invalid AERO_CODEGEN_UNITS value: ${AERO_CODEGEN_UNITS} (expected positive integer); using ${_aero_codegen_units}" >&2
-            fi
+            unset _aero_codegen_units 2>/dev/null || true
         fi
-        if ! [[ "${_aero_codegen_units}" =~ ^[1-9][0-9]*$ ]]; then
-            _aero_codegen_units=1
-        fi
-
-        # cap at 4 to avoid overly slow per-crate codegen when users opt into higher Cargo parallelism.
-        # Opt out via AERO_RUST_CODEGEN_UNITS (or its shorthand alias, AERO_CODEGEN_UNITS).
-        if [[ -z "${AERO_RUST_CODEGEN_UNITS:-}" && -z "${AERO_CODEGEN_UNITS:-}" && "${_aero_codegen_units}" -gt 4 ]]; then
-            _aero_codegen_units=4
-        fi
-
-        export RUSTFLAGS="${RUSTFLAGS:-} -C codegen-units=${_aero_codegen_units}"
-        export RUSTFLAGS="${RUSTFLAGS# }"
-        _aero_injected_codegen_units=1
-        _aero_injected_codegen_units_value="${_aero_codegen_units}"
-        unset _aero_codegen_units 2>/dev/null || true
     fi
 
     # LLVM lld defaults to using all available hardware threads when linking. On shared hosts this
@@ -137,7 +125,7 @@ if [[ $# -lt 1 ]]; then
     echo "  AERO_CARGO_BUILD_JOBS=1  Cargo parallelism for agent sandboxes (default: 1; overrides CARGO_BUILD_JOBS if set)" >&2
     echo "  AERO_SAFE_RUN_RUSTC_RETRIES=3  Retries for transient rustc thread spawn panics (default: 3; only for cargo commands)" >&2
     echo "  CARGO_BUILD_JOBS=1       Cargo parallelism override (used when AERO_CARGO_BUILD_JOBS is unset)" >&2
-    echo "  AERO_RUST_CODEGEN_UNITS=4  rustc per-crate codegen-units override (default: min(CARGO_BUILD_JOBS, 4); alias: AERO_CODEGEN_UNITS)" >&2
+    echo "  AERO_RUST_CODEGEN_UNITS=<n>  Optional rustc per-crate codegen-units override (alias: AERO_CODEGEN_UNITS)" >&2
     echo "" >&2
     echo "Examples:" >&2
     echo "  $0 cargo build --locked" >&2
