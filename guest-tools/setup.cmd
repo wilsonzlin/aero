@@ -801,7 +801,7 @@ for /r "%DRIVER_DIR%" %%F in (*.inf) do (
   set /a INF_COUNT+=1
   rem Quote paths to avoid breaking the FOR (...) block on common characters like spaces, parentheses, and &.
   >>"%SCAN_LIST%" echo "%%~fF"
-  call :inf_contains_addservice "%%~fF" "%TARGET_SVC%"
+  call :inf_contains_addservice_findstr "%%~fF" "%TARGET_SVC%"
   if not errorlevel 1 (
     set "FOUND_MATCH=1"
     if not defined MATCH_INF set "MATCH_INF=%%~fF"
@@ -820,6 +820,19 @@ if "%FOUND_MATCH%"=="1" (
   exit /b 0
 )
 
+rem No ASCII/UTF-8 match found. Some driver bundles ship UTF-16LE INFs, which `findstr`
+rem may not be able to scan. Do one PowerShell pass over the scan list (BOM-aware)
+rem before failing with EC_STORAGE_SERVICE_MISMATCH.
+set "PWSH_MATCH_INF="
+call :inf_find_addservice_in_scan_list_powershell "%SCAN_LIST%" "%TARGET_SVC%"
+if not errorlevel 1 (
+  set "FOUND_MATCH=1"
+  set "MATCH_INF=!PWSH_MATCH_INF!"
+  call :log "OK: Found AddService=%TARGET_SVC% in: !MATCH_INF!"
+  del /q "%SCAN_LIST%" >nul 2>&1
+  exit /b 0
+)
+
 call :log "ERROR: Configured AERO_VIRTIO_BLK_SERVICE=%TARGET_SVC% does not match any driver INF AddService name."
 call :log "Expected to find an INF line (case-insensitive) like:"
 call :log "  AddService = %TARGET_SVC%, ..."
@@ -832,6 +845,61 @@ call :log "Scanned INF files:"
 for /f "usebackq delims=" %%I in ("%SCAN_LIST%") do call :log "  - %%~I"
 del /q "%SCAN_LIST%" >nul 2>&1
 exit /b %EC_STORAGE_SERVICE_MISMATCH%
+
+:inf_contains_addservice_findstr
+setlocal EnableDelayedExpansion
+set "INF_FILE=%~1"
+set "TARGET=%~2"
+
+for /f "delims=" %%L in ('"%SYS32%\findstr.exe" /i /c:"AddService" "%INF_FILE%" 2^>nul') do (
+  set "LINE=%%L"
+  rem Ensure the line doesn't contain embedded quotes that would break subsequent parsing.
+  set "LINE=!LINE:"=!"
+  set "LEFT="
+  set "RIGHT="
+  for /f "tokens=1,* delims==" %%A in ("!LINE!") do (
+    set "LEFT=%%A"
+    set "RIGHT=%%B"
+  )
+  if not defined RIGHT (
+    rem Not an AddService assignment (e.g. a section name); ignore.
+  ) else (
+    set "LEFT=!LEFT: =!"
+    if /i "!LEFT!"=="AddService" (
+      set "REST=!RIGHT!"
+      for /f "tokens=* delims= " %%R in ("!REST!") do set "REST=%%R"
+      set "REST=!REST:"=!"
+      for /f "tokens=1 delims=,; " %%S in ("!REST!") do set "SVC=%%S"
+      if /i "!SVC!"=="!TARGET!" (
+        endlocal & exit /b 0
+      )
+    )
+  )
+)
+
+endlocal & exit /b 1
+
+:inf_find_addservice_in_scan_list_powershell
+setlocal EnableDelayedExpansion
+set "SCAN_LIST=%~1"
+set "TARGET=%~2"
+set "MATCH_INF="
+
+set "PWSH=%SYS32%\WindowsPowerShell\v1.0\powershell.exe"
+if not exist "%PWSH%" set "PWSH=powershell.exe"
+
+set "AEROGT_INF_SCAN_LIST=%SCAN_LIST%"
+set "AEROGT_INF_TARGET=%TARGET%"
+
+for /f "usebackq delims=" %%M in (`"%PWSH%" -NoProfile -ExecutionPolicy Bypass -Command "$list=$env:AEROGT_INF_SCAN_LIST; $target=$env:AEROGT_INF_TARGET; try{ $paths=[System.IO.File]::ReadAllLines($list) }catch{ exit 1 }; foreach($p in $paths){ $inf=$p.Trim(); if($inf.Length -ge 2 -and $inf[0] -eq [char]34 -and $inf[$inf.Length-1] -eq [char]34){ $inf=$inf.Substring(1,$inf.Length-2) }; try{ $text=[System.IO.File]::ReadAllText($inf) }catch{ continue }; foreach($line in ($text -split '\r\n|\n|\r')){ if($line.Length -gt 0 -and $line[0] -eq [char]0xFEFF){ $line=$line.Substring(1) }; $noComment=$line.Split(';')[0]; $noComment=$noComment.Replace([char]34,''); if($noComment -match '^\s*AddService\s*=\s*([^,;\s]+)'){ if([string]::Equals($matches[1],$target,[System.StringComparison]::OrdinalIgnoreCase)){ [Console]::WriteLine($inf); exit 0 } } } }; exit 1" 2^>nul`) do (
+  set "MATCH_INF=%%M"
+)
+
+if defined MATCH_INF (
+  endlocal & set "PWSH_MATCH_INF=%MATCH_INF%" & exit /b 0
+)
+
+endlocal & set "PWSH_MATCH_INF=" & exit /b 1
 
 :inf_contains_addservice
 setlocal EnableDelayedExpansion
