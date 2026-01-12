@@ -2408,7 +2408,10 @@ impl Machine {
                 );
                 match &self.ide {
                     Some(ide) => {
-                        *ide.borrow_mut() = Piix3IdePciDevice::new();
+                        // Reset in-place while keeping the `Rc` identity stable for any persistent
+                        // port I/O mappings. This intentionally preserves any attached disk/ISO
+                        // backends so host-provided media remains available across reboots.
+                        ide.borrow_mut().reset();
                         Some(ide.clone())
                     }
                     None => Some(Rc::new(RefCell::new(Piix3IdePciDevice::new()))),
