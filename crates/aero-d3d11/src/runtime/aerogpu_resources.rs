@@ -1286,6 +1286,29 @@ fn upload_texture_from_linear_bytes(
                     std::borrow::Cow::Borrowed(data)
                 };
 
+                let (extent_width, extent_height) = match format_layout_info(desc.texture_format)? {
+                    TextureFormatLayout::BlockCompressed {
+                        block_width,
+                        block_height,
+                        ..
+                    } => {
+                        // WebGPU requires BC uploads to use the physical (block-rounded) size, even
+                        // when the mip itself is smaller than a full block.
+                        let w = linear
+                            .width
+                            .div_ceil(block_width)
+                            .checked_mul(block_width)
+                            .ok_or_else(|| anyhow!("texture upload extent width overflows u32"))?;
+                        let h = linear
+                            .height
+                            .div_ceil(block_height)
+                            .checked_mul(block_height)
+                            .ok_or_else(|| anyhow!("texture upload extent height overflows u32"))?;
+                        (w, h)
+                    }
+                    TextureFormatLayout::Uncompressed { .. } => (linear.width, linear.height),
+                };
+
                 queue.write_texture(
                     wgpu::ImageCopyTexture {
                         texture,
@@ -1304,8 +1327,8 @@ fn upload_texture_from_linear_bytes(
                         rows_per_image: Some(linear.rows),
                     },
                     wgpu::Extent3d {
-                        width: linear.width,
-                        height: linear.height,
+                        width: extent_width,
+                        height: extent_height,
                         depth_or_array_layers: 1,
                     },
                 );

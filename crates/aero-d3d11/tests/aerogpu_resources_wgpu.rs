@@ -551,7 +551,7 @@ fn upload_resource_bc1_direct_when_bc_feature_enabled() -> Result<()> {
                 Ok(v) => v,
                 // Optional: only run when BC compression is available and can be enabled.
                 Err(err) => {
-                    eprintln!("skipping {}: {err:#}", module_path!());
+                    common::skip_or_panic(module_path!(), &format!("{err:#}"));
                     return Ok(());
                 }
             };
@@ -590,6 +590,56 @@ fn upload_resource_bc1_direct_when_bc_feature_enabled() -> Result<()> {
 
         let tex = resources.texture2d(tex_handle)?;
         assert_eq!(tex.desc.format, wgpu::TextureFormat::Bc1RgbaUnorm);
+        assert_eq!(tex.desc.texture_format, wgpu::TextureFormat::Bc1RgbaUnorm);
+
+        Ok(())
+    })
+}
+
+#[test]
+fn upload_resource_bc1_mip_chain_direct_pads_small_mips() -> Result<()> {
+    pollster::block_on(async {
+        let (device, queue, _info) =
+            match create_device_queue_with_features(wgpu::Features::TEXTURE_COMPRESSION_BC).await {
+                Ok(v) => v,
+                Err(err) => {
+                    common::skip_or_panic(module_path!(), &format!("{err:#}"));
+                    return Ok(());
+                }
+            };
+        let mut resources = AerogpuResourceManager::new(device, queue);
+
+        let tex_handle = 10;
+        resources.create_texture2d(
+            tex_handle,
+            Texture2dCreateDesc {
+                usage_flags: AEROGPU_RESOURCE_USAGE_TEXTURE,
+                format: AerogpuFormat::BC1RgbaUnorm as u32,
+                width: 4,
+                height: 4,
+                mip_levels: 2,
+                array_layers: 1,
+                row_pitch_bytes: 8,
+                backing_alloc_id: 0,
+                backing_offset_bytes: 0,
+            },
+        )?;
+
+        // 4x4 BC1 mip chain (mip0 4x4, mip1 2x2): 1 block each.
+        let mut bc_bytes = Vec::new();
+        bc_bytes.extend_from_slice(&[0xAA; 8]); // mip0
+        bc_bytes.extend_from_slice(&[0x55; 8]); // mip1
+
+        resources.upload_resource(
+            tex_handle,
+            DirtyRange {
+                offset_bytes: 0,
+                size_bytes: bc_bytes.len() as u64,
+            },
+            &bc_bytes,
+        )?;
+
+        let tex = resources.texture2d(tex_handle)?;
         assert_eq!(tex.desc.texture_format, wgpu::TextureFormat::Bc1RgbaUnorm);
 
         Ok(())

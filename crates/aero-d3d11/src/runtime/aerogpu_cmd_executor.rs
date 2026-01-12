@@ -579,71 +579,7 @@ pub struct AerogpuD3d11Executor {
 }
 
 impl AerogpuD3d11Executor {
-    pub async fn new_for_tests() -> Result<Self> {
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-
-            let needs_runtime_dir = std::env::var("XDG_RUNTIME_DIR")
-                .ok()
-                .map(|v| v.is_empty())
-                .unwrap_or(true);
-
-            if needs_runtime_dir {
-                let dir = std::env::temp_dir()
-                    .join(format!("aero-d3d11-xdg-runtime-{}", std::process::id()));
-                let _ = std::fs::create_dir_all(&dir);
-                let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
-                std::env::set_var("XDG_RUNTIME_DIR", &dir);
-            }
-        }
-
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            // Prefer GL on Linux CI to avoid crashes in some Vulkan software adapters.
-            backends: if cfg!(target_os = "linux") {
-                wgpu::Backends::GL
-            } else {
-                // Prefer "native" backends; this avoids noisy platform warnings from
-                // initializing GL/WAYLAND stacks in headless CI environments.
-                wgpu::Backends::PRIMARY
-            },
-            ..Default::default()
-        });
-
-        let adapter = match instance
-            .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::LowPower,
-                compatible_surface: None,
-                force_fallback_adapter: true,
-            })
-            .await
-        {
-            Some(adapter) => Some(adapter),
-            None => {
-                instance
-                    .request_adapter(&wgpu::RequestAdapterOptions {
-                        power_preference: wgpu::PowerPreference::LowPower,
-                        compatible_surface: None,
-                        force_fallback_adapter: false,
-                    })
-                    .await
-            }
-        }
-        .ok_or_else(|| anyhow!("wgpu: no suitable adapter found"))?;
-
-        let requested_features = super::negotiated_features(&adapter);
-        let (device, queue) = adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    label: Some("aero-d3d11 aerogpu_cmd test device"),
-                    required_features: requested_features,
-                    required_limits: wgpu::Limits::downlevel_defaults(),
-                },
-                None,
-            )
-            .await
-            .map_err(|e| anyhow!("wgpu: request_device failed: {e:?}"))?;
-
+    pub fn new(device: wgpu::Device, queue: wgpu::Queue) -> Self {
         let dummy_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("aerogpu_cmd dummy texture"),
             size: wgpu::Extent3d {
@@ -747,7 +683,7 @@ impl AerogpuD3d11Executor {
             bindings.stage_mut(stage).clear_dirty();
         }
 
-        Ok(Self {
+        Self {
             device,
             queue,
             resources: AerogpuD3d11Resources::default(),
@@ -768,7 +704,74 @@ impl AerogpuD3d11Executor {
             encoder_used_buffers: HashSet::new(),
             encoder_used_textures: HashSet::new(),
             encoder_has_commands: false,
-        })
+        }
+    }
+
+    pub async fn new_for_tests() -> Result<Self> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            let needs_runtime_dir = std::env::var("XDG_RUNTIME_DIR")
+                .ok()
+                .map(|v| v.is_empty())
+                .unwrap_or(true);
+
+            if needs_runtime_dir {
+                let dir = std::env::temp_dir()
+                    .join(format!("aero-d3d11-xdg-runtime-{}", std::process::id()));
+                let _ = std::fs::create_dir_all(&dir);
+                let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+                std::env::set_var("XDG_RUNTIME_DIR", &dir);
+            }
+        }
+
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            // Prefer GL on Linux CI to avoid crashes in some Vulkan software adapters.
+            backends: if cfg!(target_os = "linux") {
+                wgpu::Backends::GL
+            } else {
+                // Prefer "native" backends; this avoids noisy platform warnings from
+                // initializing GL/WAYLAND stacks in headless CI environments.
+                wgpu::Backends::PRIMARY
+            },
+            ..Default::default()
+        });
+
+        let adapter = match instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::LowPower,
+                compatible_surface: None,
+                force_fallback_adapter: true,
+            })
+            .await
+        {
+            Some(adapter) => Some(adapter),
+            None => {
+                instance
+                    .request_adapter(&wgpu::RequestAdapterOptions {
+                        power_preference: wgpu::PowerPreference::LowPower,
+                        compatible_surface: None,
+                        force_fallback_adapter: false,
+                    })
+                    .await
+            }
+        }
+        .ok_or_else(|| anyhow!("wgpu: no suitable adapter found"))?;
+
+        let requested_features = super::negotiated_features(&adapter);
+        let (device, queue) = adapter
+            .request_device(
+                &wgpu::DeviceDescriptor {
+                    label: Some("aero-d3d11 aerogpu_cmd test device"),
+                    required_features: requested_features,
+                    required_limits: wgpu::Limits::downlevel_defaults(),
+                },
+                None,
+            )
+            .await
+            .map_err(|e| anyhow!("wgpu: request_device failed: {e:?}"))?;
+        Ok(Self::new(device, queue))
     }
 
     pub fn device(&self) -> &wgpu::Device {
@@ -4720,6 +4723,15 @@ impl AerogpuD3d11Executor {
             }
         }
 
+        // WebGPU additionally requires BC copy extents to be block-aligned, even for smaller-than-a-
+        // block mips. (E.g. a 2x2 mip still uses a 4x4 physical extent.) Keep guest-facing
+        // semantics and round up for the host copy.
+        let (wgpu_copy_width, wgpu_copy_height) = if bc_block_bytes(src_desc.format).is_some() {
+            (align_to(width, 4)?, align_to(height, 4)?)
+        } else {
+            (width, height)
+        };
+
         // If the destination is guest-backed and dirty and we're only overwriting a sub-rectangle,
         // upload it now so the untouched pixels remain correct.
         let needs_dst_upload = dst_backing.is_some()
@@ -4877,6 +4889,9 @@ impl AerogpuD3d11Executor {
             let src_block_y = src_y / 4;
             let blocks_w = width.div_ceil(4);
             let blocks_h = height.div_ceil(4);
+            let copy_width_texels = blocks_w
+                .checked_mul(4)
+                .ok_or_else(|| anyhow!("COPY_TEXTURE2D: BC copy width overflows u32"))?;
 
             let row_bytes = blocks_w
                 .checked_mul(block_bytes)
@@ -4925,16 +4940,9 @@ impl AerogpuD3d11Executor {
                     .read(src_addr, &mut row_buf)
                     .map_err(anyhow_guest_mem)?;
 
-                // The last block row may cover a partial 4x4 tile when the copy reaches the mip
-                // edge.
-                let remaining_height = height
-                    .checked_sub(block_row.saturating_mul(4))
-                    .ok_or_else(|| anyhow!("COPY_TEXTURE2D: BC remaining height underflow"))?;
-                let chunk_height_texels = if block_row + 1 == blocks_h {
-                    remaining_height
-                } else {
-                    4
-                };
+                // WebGPU requires BC uploads to use the physical (block-rounded) height even when
+                // the copy reaches the edge of a smaller-than-a-block mip.
+                let chunk_height_texels = 4;
 
                 self.queue.write_texture(
                     wgpu::ImageCopyTexture {
@@ -4954,7 +4962,7 @@ impl AerogpuD3d11Executor {
                         rows_per_image: Some(1),
                     },
                     wgpu::Extent3d {
-                        width,
+                        width: copy_width_texels,
                         height: chunk_height_texels,
                         depth_or_array_layers: 1,
                     },
@@ -5008,8 +5016,8 @@ impl AerogpuD3d11Executor {
                     aspect: wgpu::TextureAspect::All,
                 },
                 wgpu::Extent3d {
-                    width,
-                    height,
+                    width: wgpu_copy_width,
+                    height: wgpu_copy_height,
                     depth_or_array_layers: 1,
                 },
             );
@@ -5044,8 +5052,8 @@ impl AerogpuD3d11Executor {
                         },
                     },
                     wgpu::Extent3d {
-                        width,
-                        height,
+                        width: wgpu_copy_width,
+                        height: wgpu_copy_height,
                         depth_or_array_layers: 1,
                     },
                 );
@@ -6543,6 +6551,9 @@ impl AerogpuD3d11Executor {
         ) -> Result<()> {
             let blocks_w = width.div_ceil(4);
             let blocks_h = height.div_ceil(4);
+            let physical_width_texels = blocks_w
+                .checked_mul(4)
+                .ok_or_else(|| anyhow!("texture upload: BC width overflows u32"))?;
             let unpadded_bpr = blocks_w
                 .checked_mul(block_bytes)
                 .ok_or_else(|| anyhow!("texture upload: BC bytes_per_row overflow"))?;
@@ -6606,16 +6617,9 @@ impl AerogpuD3d11Executor {
                     let origin_y_texels = (y0 as u32)
                         .checked_mul(4)
                         .ok_or_else(|| anyhow!("texture upload: BC origin.y overflow"))?;
-                    let remaining_height = height
-                        .checked_sub(origin_y_texels)
-                        .ok_or_else(|| anyhow!("texture upload: BC origin exceeds mip height"))?;
-                    let chunk_height_texels = if y0 + rows == blocks_h_usize {
-                        remaining_height
-                    } else {
-                        (rows as u32)
-                            .checked_mul(4)
-                            .ok_or_else(|| anyhow!("texture upload: BC extent height overflow"))?
-                    };
+                    let chunk_height_texels = (rows as u32)
+                        .checked_mul(4)
+                        .ok_or_else(|| anyhow!("texture upload: BC extent height overflow"))?;
 
                     queue.write_texture(
                         wgpu::ImageCopyTexture {
@@ -6635,7 +6639,7 @@ impl AerogpuD3d11Executor {
                             rows_per_image: Some(rows as u32),
                         },
                         wgpu::Extent3d {
-                            width,
+                            width: physical_width_texels,
                             height: chunk_height_texels,
                             depth_or_array_layers: 1,
                         },
@@ -6665,16 +6669,9 @@ impl AerogpuD3d11Executor {
                     let origin_y_texels = (y0 as u32)
                         .checked_mul(4)
                         .ok_or_else(|| anyhow!("texture upload: BC origin.y overflow"))?;
-                    let remaining_height = height
-                        .checked_sub(origin_y_texels)
-                        .ok_or_else(|| anyhow!("texture upload: BC origin exceeds mip height"))?;
-                    let chunk_height_texels = if y0 + rows == blocks_h_usize {
-                        remaining_height
-                    } else {
-                        (rows as u32)
-                            .checked_mul(4)
-                            .ok_or_else(|| anyhow!("texture upload: BC extent height overflow"))?
-                    };
+                    let chunk_height_texels = (rows as u32)
+                        .checked_mul(4)
+                        .ok_or_else(|| anyhow!("texture upload: BC extent height overflow"))?;
 
                     queue.write_texture(
                         wgpu::ImageCopyTexture {
@@ -6694,7 +6691,7 @@ impl AerogpuD3d11Executor {
                             rows_per_image: Some(rows as u32),
                         },
                         wgpu::Extent3d {
-                            width,
+                            width: physical_width_texels,
                             height: chunk_height_texels,
                             depth_or_array_layers: 1,
                         },
@@ -7931,6 +7928,13 @@ fn write_texture_subresource_linear(
     force_opaque_alpha: bool,
 ) -> Result<()> {
     let (unpadded_bpr, layout_rows) = write_texture_layout(desc.format, desc.width, desc.height)?;
+    let (extent_width, extent_height) = if bc_block_bytes(desc.format).is_some() {
+        // WebGPU requires BC uploads to use the physical (block-rounded) size, even when the mip
+        // itself is smaller than one block (e.g. 2x2 still copies as 4x4).
+        (align_to(desc.width, 4)?, align_to(desc.height, 4)?)
+    } else {
+        (desc.width, desc.height)
+    };
     if src_bytes_per_row < unpadded_bpr {
         bail!("write_texture: src_bytes_per_row too small");
     }
@@ -7991,8 +7995,8 @@ fn write_texture_subresource_linear(
                     rows_per_image: Some(layout_rows),
                 },
                 wgpu::Extent3d {
-                    width: desc.width,
-                    height: desc.height,
+                    width: extent_width,
+                    height: extent_height,
                     depth_or_array_layers: 1,
                 },
             );
@@ -8015,8 +8019,8 @@ fn write_texture_subresource_linear(
                     rows_per_image: Some(layout_rows),
                 },
                 wgpu::Extent3d {
-                    width: desc.width,
-                    height: desc.height,
+                    width: extent_width,
+                    height: extent_height,
                     depth_or_array_layers: 1,
                 },
             );
@@ -8048,8 +8052,8 @@ fn write_texture_subresource_linear(
                     rows_per_image: Some(layout_rows),
                 },
                 wgpu::Extent3d {
-                    width: desc.width,
-                    height: desc.height,
+                    width: extent_width,
+                    height: extent_height,
                     depth_or_array_layers: 1,
                 },
             );
@@ -8072,8 +8076,8 @@ fn write_texture_subresource_linear(
                     rows_per_image: Some(layout_rows),
                 },
                 wgpu::Extent3d {
-                    width: desc.width,
-                    height: desc.height,
+                    width: extent_width,
+                    height: extent_height,
                     depth_or_array_layers: 1,
                 },
             );
@@ -8115,6 +8119,17 @@ fn try_translate_sm4_signature_driven(
 
 fn align4(len: usize) -> usize {
     (len + 3) & !3
+}
+
+fn align_to(value: u32, alignment: u32) -> Result<u32> {
+    if alignment == 0 || !alignment.is_power_of_two() {
+        bail!("align_to: alignment must be a non-zero power of two (got {alignment})");
+    }
+    let mask = alignment - 1;
+    value
+        .checked_add(mask)
+        .map(|v| v & !mask)
+        .ok_or_else(|| anyhow!("align_to: value overflows u32"))
 }
 
 fn align_copy_buffer_size(size: u64) -> Result<u64> {
