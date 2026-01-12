@@ -213,7 +213,9 @@ export function loadConfig(env: Env = process.env): Config {
     try {
       udpRelayParsed = new URL(udpRelayBaseUrlRaw);
     } catch {
-      throw new Error(`Invalid UDP_RELAY_BASE_URL "${udpRelayBaseUrlRaw}". Expected a URL like "https://relay.example.com".`);
+      throw new Error(
+        `Invalid UDP_RELAY_BASE_URL "${udpRelayBaseUrlRaw}". Expected a URL like "https://relay.example.com" or "wss://relay.example.com".`,
+      );
     }
 
     if (!['http:', 'https:', 'ws:', 'wss:'].includes(udpRelayParsed.protocol)) {
