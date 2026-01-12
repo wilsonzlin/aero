@@ -2430,4 +2430,27 @@ mod tests {
         let err = dev.load_state(&good).unwrap_err();
         assert_eq!(err, SnapshotError::UnexpectedEof);
     }
+
+    #[cfg(feature = "io-snapshot")]
+    #[test]
+    fn snapshot_load_ignores_unknown_tags_for_forward_compat() {
+        let dev = E1000Device::new([0x52, 0x54, 0, 0x12, 0x34, 0x56]);
+        let canonical = dev.save_state();
+
+        // Append a synthetic unknown TLV field. SnapshotReader does not require tags to be ordered.
+        let mut with_unknown = canonical.clone();
+        let tag: u16 = 0xF00D;
+        let payload = [1u8, 2, 3, 4];
+        with_unknown.extend_from_slice(&tag.to_le_bytes());
+        with_unknown.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        with_unknown.extend_from_slice(&payload);
+
+        let mut restored = E1000Device::new([0; 6]);
+        restored
+            .load_state(&with_unknown)
+            .expect("unknown tags should be ignored");
+
+        // Unknown tags are not preserved; the re-saved snapshot should match the canonical bytes.
+        assert_eq!(restored.save_state(), canonical);
+    }
 }
