@@ -8,7 +8,8 @@ metrics and basic health endpoints.
 ## Endpoints
 
 - `GET /healthz` – liveness probe, returns `200 OK` JSON `{ "status": "ok" }`
-- `GET /readyz` – readiness probe, returns `200 OK` JSON `{ "status": "ok" }`
+- `GET /readyz` – readiness probe, returns `200 OK` JSON `{ "status": "ok" }` when ready, and
+  `503 Service Unavailable` JSON `{ "status": "error" }` when not ready
 - `GET /metrics` – Prometheus text exposition format (`text/plain; version=0.0.4`)
 - `GET /v1/images` – list available images
 - `GET /v1/images/:id/meta` – image metadata (size, etag, last_modified, etc)
@@ -20,6 +21,8 @@ Notes:
 - `image_id` is treated as an opaque identifier and must match **`[A-Za-z0-9._-]{1,128}`**.
   Requests with invalid/overlong IDs are rejected early (and the server avoids recording unbounded
   ID values in logs/metrics).
+- The image bytes endpoints are protected by a per-process concurrency cap and may return
+  `429 Too Many Requests` under load (see `--max-concurrent-bytes-requests`).
 
 ## Configuration (canonical)
 
@@ -33,6 +36,7 @@ Configuration is via **CLI flags with env var fallbacks** (powered by `clap`).
 | `--images-root` | `AERO_STORAGE_IMAGE_ROOT` | `./images` |
 | `--require-manifest` | `AERO_STORAGE_REQUIRE_MANIFEST` | `false` |
 | `--log-level` | `AERO_STORAGE_LOG_LEVEL` | `info` |
+| `--max-concurrent-bytes-requests` | `AERO_STORAGE_MAX_CONCURRENT_BYTES_REQUESTS` | `64` (0 = unlimited) |
 | `--max-range-bytes` | `AERO_STORAGE_MAX_RANGE_BYTES` | `8388608` (8 MiB) |
 | `--public-cache-max-age-secs` | `AERO_STORAGE_PUBLIC_CACHE_MAX_AGE_SECS` | `3600` |
 | `--cors-preflight-max-age-secs` | `AERO_STORAGE_CORS_PREFLIGHT_MAX_AGE_SECS` | `86400` |
