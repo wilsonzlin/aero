@@ -1482,18 +1482,31 @@ impl VirtioPciDevice {
 
 impl IoSnapshot for VirtioPciDevice {
     const DEVICE_ID: [u8; 4] = *b"VPCI";
-    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
+    // v1.1: includes MSI-X table + PBA state in addition to PCI config + virtio transport.
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 1);
 
     fn save_state(&self) -> Vec<u8> {
         const TAG_PCI_CONFIG: u16 = 1;
         const TAG_TRANSPORT: u16 = 2;
         const TAG_VIRTIO_DEVICE_TYPE: u16 = 3;
+        const TAG_MSIX_TABLE: u16 = 4;
+        const TAG_MSIX_PBA: u16 = 5;
 
         let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
 
         w.field_u16(TAG_VIRTIO_DEVICE_TYPE, self.device.device_type());
         w.field_bytes(TAG_PCI_CONFIG, self.snapshot_pci_state().encode());
         w.field_bytes(TAG_TRANSPORT, self.snapshot_transport_state().encode());
+
+        if let Some(msix) = self.config.capability::<MsixCapability>() {
+            w.field_bytes(TAG_MSIX_TABLE, msix.snapshot_table().to_vec());
+
+            let mut pba = Vec::with_capacity(msix.snapshot_pba().len().saturating_mul(8));
+            for word in msix.snapshot_pba() {
+                pba.extend_from_slice(&word.to_le_bytes());
+            }
+            w.field_bytes(TAG_MSIX_PBA, pba);
+        }
 
         w.finish()
     }
@@ -1502,6 +1515,8 @@ impl IoSnapshot for VirtioPciDevice {
         const TAG_PCI_CONFIG: u16 = 1;
         const TAG_TRANSPORT: u16 = 2;
         const TAG_VIRTIO_DEVICE_TYPE: u16 = 3;
+        const TAG_MSIX_TABLE: u16 = 4;
+        const TAG_MSIX_PBA: u16 = 5;
 
         let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
         r.ensure_device_major(Self::DEVICE_VERSION.major)?;
@@ -1517,6 +1532,21 @@ impl IoSnapshot for VirtioPciDevice {
         if let Some(buf) = r.bytes(TAG_PCI_CONFIG) {
             let pci = SnapshotPciConfigSpaceState::decode(buf)?;
             self.restore_pci_state(&pci);
+        }
+
+        if r.bytes(TAG_MSIX_TABLE).is_some() || r.bytes(TAG_MSIX_PBA).is_some() {
+            let Some(msix) = self.config.capability_mut::<MsixCapability>() else {
+                return Err(SnapshotError::InvalidFieldEncoding(
+                    "snapshot contains MSI-X state but device has no MSI-X capability",
+                ));
+            };
+
+            if let Some(buf) = r.bytes(TAG_MSIX_TABLE) {
+                msix.restore_table(buf)?;
+            }
+            if let Some(buf) = r.bytes(TAG_MSIX_PBA) {
+                msix.restore_pba_bytes(buf)?;
+            }
         }
 
         let Some(buf) = r.bytes(TAG_TRANSPORT) else {

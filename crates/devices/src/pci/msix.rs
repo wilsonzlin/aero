@@ -1,5 +1,6 @@
 use std::any::Any;
 
+use aero_io_snapshot::io::state::{SnapshotError, SnapshotResult};
 use aero_platform::interrupts::msi::{MsiMessage, MsiTrigger};
 
 use super::capabilities::{PciCapability, PCI_CONFIG_SPACE_SIZE};
@@ -91,6 +92,83 @@ impl MsixCapability {
 
     pub fn pba_len_bytes(&self) -> usize {
         self.pba.len() * 8
+    }
+
+    /// Returns a view of the MSI-X table bytes suitable for snapshotting.
+    ///
+    /// The returned slice is the raw BAR-backed MSI-X table image in little-endian order.
+    pub fn snapshot_table(&self) -> &[u8] {
+        &self.table
+    }
+
+    /// Restore MSI-X table bytes from a snapshot.
+    ///
+    /// Fails if the provided byte slice does not exactly match the expected table length derived
+    /// from [`MsixCapability::table_size`].
+    pub fn restore_table(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
+        let expected = usize::from(self.table_size).saturating_mul(MSIX_TABLE_ENTRY_SIZE);
+        if bytes.len() != expected {
+            return Err(SnapshotError::InvalidFieldEncoding(
+                "invalid MSI-X table length",
+            ));
+        }
+        // `expected` is derived from `table_size`, so `self.table` should already have this length.
+        // Still guard against internal inconsistencies.
+        if self.table.len() != expected {
+            return Err(SnapshotError::InvalidFieldEncoding(
+                "MSI-X table size mismatch",
+            ));
+        }
+        self.table.copy_from_slice(bytes);
+        Ok(())
+    }
+
+    /// Returns a view of the MSI-X Pending Bit Array (PBA) words suitable for snapshotting.
+    pub fn snapshot_pba(&self) -> &[u64] {
+        &self.pba
+    }
+
+    /// Restore MSI-X Pending Bit Array (PBA) words from a snapshot.
+    ///
+    /// Fails if the provided word slice does not exactly match the expected PBA length derived from
+    /// [`MsixCapability::table_size`].
+    pub fn restore_pba(&mut self, words: &[u64]) -> SnapshotResult<()> {
+        let expected = (usize::from(self.table_size).saturating_add(63)) / 64;
+        if words.len() != expected {
+            return Err(SnapshotError::InvalidFieldEncoding(
+                "invalid MSI-X PBA length",
+            ));
+        }
+        if self.pba.len() != expected {
+            return Err(SnapshotError::InvalidFieldEncoding(
+                "MSI-X PBA size mismatch",
+            ));
+        }
+        self.pba.copy_from_slice(words);
+        Ok(())
+    }
+
+    /// Restore MSI-X Pending Bit Array (PBA) bytes from a snapshot.
+    ///
+    /// The bytes are interpreted as a little-endian sequence of u64 words.
+    pub fn restore_pba_bytes(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
+        let expected_words = (usize::from(self.table_size).saturating_add(63)) / 64;
+        let expected_bytes = expected_words.saturating_mul(8);
+        if bytes.len() != expected_bytes {
+            return Err(SnapshotError::InvalidFieldEncoding(
+                "invalid MSI-X PBA length",
+            ));
+        }
+        if self.pba.len() != expected_words {
+            return Err(SnapshotError::InvalidFieldEncoding(
+                "MSI-X PBA size mismatch",
+            ));
+        }
+        for (i, chunk) in bytes.chunks_exact(8).enumerate() {
+            // `chunks_exact(8)` guarantees the slice length.
+            self.pba[i] = u64::from_le_bytes(chunk.try_into().unwrap());
+        }
+        Ok(())
     }
 
     pub fn table_read(&self, offset: u64, data: &mut [u8]) {
@@ -389,4 +467,3 @@ mod tests {
         assert_eq!(bits & (1 << 1), 1 << 1);
     }
 }
-

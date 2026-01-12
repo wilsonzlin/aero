@@ -603,6 +603,137 @@ fn virtio_blk_msix_queue_interrupts_use_programmed_msix_message_and_do_not_fallb
 }
 
 #[test]
+fn virtio_blk_snapshot_restore_preserves_msix_table_and_interrupt_delivery() {
+    let irq0 = TestIrq::default();
+    let (mut dev, caps, mem, backing, flushes, _irq0) = setup_with_irq(irq0);
+
+    // Find MSI-X capability in PCI config space.
+    let mut cfg = [0u8; 256];
+    dev.config_read(0, &mut cfg);
+    let mut ptr = cfg[0x34] as usize;
+    let mut msix_cap_offset = None;
+    while ptr != 0 {
+        if cfg[ptr] == 0x11 {
+            msix_cap_offset = Some(ptr as u16);
+            break;
+        }
+        ptr = cfg[ptr + 1] as usize;
+    }
+    let msix_cap_offset = msix_cap_offset.expect("missing MSI-X capability");
+
+    // Enable MSI-X.
+    let msg_ctl = u16::from_le_bytes([
+        cfg[msix_cap_offset as usize + 0x02],
+        cfg[msix_cap_offset as usize + 0x03],
+    ]);
+    dev.config_write(msix_cap_offset + 0x02, &(msg_ctl | (1 << 15)).to_le_bytes());
+
+    // MSI-X Table register: BIR + offset.
+    let table = u32::from_le_bytes(
+        cfg[msix_cap_offset as usize + 0x04..msix_cap_offset as usize + 0x08]
+            .try_into()
+            .unwrap(),
+    );
+    assert_eq!(table & 0x7, 0, "MSI-X table must live in BAR0");
+    let table_offset = (table & !0x7) as u64;
+
+    // Program table entry 1 (queue 0 vector: index 1 because index 0 is the config vector).
+    let entry = table_offset + 16;
+    bar_write_u32(&mut dev, entry + 0x00, 0xfee0_0000);
+    bar_write_u32(&mut dev, entry + 0x04, 0);
+    bar_write_u32(&mut dev, entry + 0x08, 0x0045);
+    bar_write_u32(&mut dev, entry + 0x0c, 0); // unmasked
+
+    // Assign the queue MSI-X vector.
+    bar_write_u16(&mut dev, caps.common + 0x16, 0); // queue_select
+    bar_write_u16(&mut dev, caps.common + 0x1a, 1); // queue_msix_vector
+
+    // Snapshot the device while MSI-X is enabled and the MSI-X table has been programmed.
+    let snap_bytes = dev.save_state();
+    let mem_snap = mem.clone();
+
+    // Restore into a fresh device instance with the same disk backend and guest memory image.
+    let irq1 = TestIrq::default();
+    let backend = SharedDisk {
+        data: backing.clone(),
+        flushes: flushes.clone(),
+    };
+    let blk = VirtioBlk::new(backend);
+    let mut restored = VirtioPciDevice::new(Box::new(blk), Box::new(irq1.clone()));
+    restored.load_state(&snap_bytes).unwrap();
+
+    assert!(
+        irq1.take_msix_messages().is_empty(),
+        "load_state() must not trigger MSI messages"
+    );
+    assert_eq!(irq1.legacy_count(), 0);
+    assert!(!irq1.legacy_level());
+
+    let mut mem2 = mem_snap.clone();
+    let caps_restored = parse_caps(&mut restored);
+
+    // Sanity check: MSI-X table entry can be read back post-restore.
+    let mut cfg2 = [0u8; 256];
+    restored.config_read(0, &mut cfg2);
+    let mut ptr = cfg2[0x34] as usize;
+    let mut msix_cap_offset2 = None;
+    while ptr != 0 {
+        if cfg2[ptr] == 0x11 {
+            msix_cap_offset2 = Some(ptr as u16);
+            break;
+        }
+        ptr = cfg2[ptr + 1] as usize;
+    }
+    let msix_cap_offset2 = msix_cap_offset2.expect("missing MSI-X capability after restore");
+    let table2 = u32::from_le_bytes(
+        cfg2[msix_cap_offset2 as usize + 0x04..msix_cap_offset2 as usize + 0x08]
+            .try_into()
+            .unwrap(),
+    );
+    let table_offset2 = (table2 & !0x7) as u64;
+    let entry2 = table_offset2 + 16;
+    assert_eq!(bar_read_u32(&mut restored, entry2 + 0x00), 0xfee0_0000);
+    assert_eq!(bar_read_u32(&mut restored, entry2 + 0x04), 0);
+    assert_eq!(bar_read_u32(&mut restored, entry2 + 0x08), 0x0045);
+    assert_eq!(bar_read_u32(&mut restored, entry2 + 0x0c), 0);
+
+    // Build a FLUSH request so completion is observable via `flushes`.
+    let header = 0x7000;
+    let status = 0x9000;
+
+    write_u32_le(&mut mem2, header, VIRTIO_BLK_T_FLUSH).unwrap();
+    write_u32_le(&mut mem2, header + 4, 0).unwrap();
+    write_u64_le(&mut mem2, header + 8, 0).unwrap();
+    mem2.write(status, &[0xff]).unwrap();
+
+    write_desc(&mut mem2, DESC_TABLE, 0, header, 16, 0x0001, 1);
+    write_desc(&mut mem2, DESC_TABLE, 1, status, 1, 0x0002, 0);
+
+    // Initialise rings (flags/idx).
+    write_u16_le(&mut mem2, AVAIL_RING, 0).unwrap();
+    write_u16_le(&mut mem2, AVAIL_RING + 2, 1).unwrap();
+    write_u16_le(&mut mem2, AVAIL_RING + 4, 0).unwrap();
+    write_u16_le(&mut mem2, USED_RING, 0).unwrap();
+    write_u16_le(&mut mem2, USED_RING + 2, 0).unwrap();
+
+    kick_queue0(&mut restored, &caps_restored, &mut mem2);
+    assert_eq!(mem2.get_slice(status, 1).unwrap()[0], 0);
+    assert_eq!(flushes.get(), 1);
+
+    // Queue completion interrupt should be delivered via MSI-X with the exact programmed message,
+    // not INTx.
+    assert_eq!(irq1.legacy_count(), 0);
+    assert!(!irq1.legacy_level());
+    assert_eq!(
+        irq1.take_msix_messages(),
+        vec![MsiMessage {
+            address: 0xfee0_0000,
+            data: 0x0045,
+        }]
+    );
+}
+
+#[test]
 fn virtio_blk_snapshot_restore_preserves_virtqueue_progress_and_does_not_duplicate_requests() {
     let irq0 = TestIrq::default();
     let (mut dev, caps, mut mem, backing, flushes, irq0) = setup_with_irq(irq0);
