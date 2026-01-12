@@ -147,7 +147,7 @@ fn snapshot_restore_preserves_full_pc_platform_device_state() {
 
     // Corrupt the interrupt controller's sink level state so restore must re-drive:
     // - PCI INTx levels via `PciIntxRouter::sync_levels_to_sink()`
-    // - HPET level lines via a post-restore poll.
+    // - HPET level lines via `Hpet::sync_levels_to_sink()`.
     interrupts.borrow_mut().lower_irq(InterruptInput::Gsi(gsi_intx));
     interrupts.borrow_mut().lower_irq(InterruptInput::Gsi(gsi_hpet));
 
@@ -219,4 +219,3 @@ fn snapshot_restore_preserves_full_pc_platform_device_state() {
     restored.tick_platform(1_000_000);
     assert_eq!(interrupts.borrow().get_pending(), Some(pit_vector));
 }
-

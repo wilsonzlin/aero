@@ -176,7 +176,15 @@ impl SnapshotTarget for PcPlatformSnapshotHarness {
             apply_io_snapshot_to_device(&state, &mut *self.platform.rtc().borrow_mut()).unwrap();
         }
         if let Some(state) = hpet {
-            apply_io_snapshot_to_device(&state, &mut *self.platform.hpet().borrow_mut()).unwrap();
+            let hpet = self.platform.hpet();
+            let mut hpet = hpet.borrow_mut();
+            apply_io_snapshot_to_device(&state, &mut *hpet).unwrap();
+
+            // HPET snapshots restore `general_int_status` but cannot touch the interrupt sink. If a
+            // level-triggered timer interrupt was pending at snapshot time, re-drive the line
+            // immediately after restore.
+            let mut interrupts = self.platform.interrupts.borrow_mut();
+            hpet.sync_levels_to_sink(&mut *interrupts);
         }
         if let Some(state) = pci_cfg {
             apply_io_snapshot_to_device(&state, &mut *self.platform.pci_cfg.borrow_mut()).unwrap();

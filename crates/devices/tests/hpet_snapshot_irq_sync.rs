@@ -1,6 +1,6 @@
 use aero_devices::clock::ManualClock;
 use aero_devices::hpet::Hpet;
-use aero_devices::ioapic::{GsiEvent, IoApic};
+use aero_devices::ioapic::{GsiEvent, GsiSink, IoApic};
 use aero_io_snapshot::io::state::IoSnapshot;
 
 const HPET_REG_GENERAL_CONFIG: u64 = 0x010;
@@ -71,3 +71,27 @@ fn hpet_snapshot_restore_sync_levels_to_sink_redrives_pending_level_irq() {
     assert_eq!(sink2.take_events(), vec![GsiEvent::Lower(2)]);
 }
 
+#[test]
+fn hpet_sync_levels_to_sink_does_not_deassert_unrelated_lines_for_irq_disabled_timers() {
+    let clock = ManualClock::new();
+    let mut sink = IoApic::default();
+    let mut hpet = Hpet::new_default(clock.clone());
+
+    // Enable HPET, but do not enable any timer interrupts (default timer2 route is GSI10).
+    hpet.mmio_write(HPET_REG_GENERAL_CONFIG, 8, HPET_GEN_CONF_ENABLE, &mut sink);
+
+    // Simulate another device asserting GSI10 (e.g. PCI INTx).
+    sink.raise_gsi(10);
+    assert!(sink.is_asserted(10));
+    sink.take_events();
+
+    hpet.sync_levels_to_sink(&mut sink);
+    assert!(
+        sink.is_asserted(10),
+        "HPET sync should not lower unrelated GSIs when its timers are not IRQ-enabled"
+    );
+    assert!(
+        sink.take_events().is_empty(),
+        "HPET sync should not generate spurious GSI events for unrelated lines"
+    );
+}
