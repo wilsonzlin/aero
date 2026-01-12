@@ -656,6 +656,71 @@ static void test_negotiate_features_success_and_status_sequence(void)
     VirtioPciModernMmioSimUninstall();
 }
 
+static void test_negotiate_features_write_order(void)
+{
+    uint8_t bar0[TEST_BAR0_SIZE];
+    uint8_t pci_cfg[256];
+    VIRTIO_PCI_DEVICE dev;
+    VIRTIO_PCI_MODERN_MMIO_SIM sim;
+    NTSTATUS st;
+    uint64_t negotiated;
+
+    setup_device(&dev, bar0, pci_cfg);
+
+    VirtioPciModernMmioSimInit(&sim,
+                               dev.CommonCfg,
+                               (volatile uint8_t*)dev.NotifyBase,
+                               dev.NotifyLength,
+                               (volatile uint8_t*)dev.IsrStatus,
+                               dev.IsrLength,
+                               (volatile uint8_t*)dev.DeviceCfg,
+                               dev.DeviceCfgLength);
+
+    sim.host_features = VIRTIO_F_VERSION_1 | (1ull << 0);
+    sim.num_queues = 1;
+
+    VirtioPciModernMmioSimInstall(&sim);
+
+    negotiated = 0;
+    st = VirtioPciNegotiateFeatures(&dev, /*Required=*/0, /*Wanted=*/0, &negotiated);
+    assert(st == STATUS_SUCCESS);
+    assert(negotiated == VIRTIO_F_VERSION_1);
+
+    /*
+     * Ensure the shim programs driver_feature before setting FEATURES_OK.
+     *
+     * We identify the FEATURES_OK status write as the 4th write to device_status
+     * (reset, ACK, ACK|DRIVER, ACK|DRIVER|FEATURES_OK) and assert both driver_feature
+     * writes happened before that point.
+     */
+    {
+        size_t i;
+        size_t status_writes_seen;
+        size_t driver_feature_writes_seen;
+
+        status_writes_seen = 0;
+        driver_feature_writes_seen = 0;
+
+        for (i = 0; i < sim.common_cfg_write_count; i++) {
+            uint16_t off = sim.common_cfg_write_offsets[i];
+            if (off == 0x0C) { /* driver_feature */
+                driver_feature_writes_seen++;
+            }
+            if (off == 0x14) { /* device_status */
+                status_writes_seen++;
+                if (status_writes_seen == 4) {
+                    break;
+                }
+            }
+        }
+
+        assert(status_writes_seen == 4);
+        assert(driver_feature_writes_seen == 2);
+    }
+
+    VirtioPciModernMmioSimUninstall();
+}
+
 static void test_negotiate_features_device_rejects_features_ok(void)
 {
     uint8_t bar0[TEST_BAR0_SIZE];
@@ -2016,6 +2081,7 @@ int main(void)
     test_negotiate_features_requires_version_1();
     test_negotiate_features_version_1_only_succeeds();
     test_negotiate_features_success_and_status_sequence();
+    test_negotiate_features_write_order();
     test_negotiate_features_device_rejects_features_ok();
     test_setup_queue_programs_addresses_and_enables();
     test_setup_queue_write_order();
