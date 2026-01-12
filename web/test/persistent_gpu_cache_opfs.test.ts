@@ -244,6 +244,87 @@ test("PersistentGpuCache OPFS: write failure falls back to IDB and cleans up the
   }
 });
 
+test("PersistentGpuCache OPFS: createWritable option mismatch falls back to default createWritable()", async () => {
+  const realNavigatorStorage = (navigator as any).storage;
+  const hadNavigatorStorage = Object.prototype.hasOwnProperty.call(navigator as any, "storage");
+  const root = installOpfsMock();
+
+  try {
+    try {
+      await PersistentGpuCache.clearAll();
+    } catch {
+      // Ignore.
+    }
+
+    const cache = await PersistentGpuCache.open({
+      shaderLimits: { maxEntries: 16, maxBytes: 8 * 1024 * 1024 },
+      pipelineLimits: { maxEntries: 16, maxBytes: 8 * 1024 * 1024 },
+    });
+
+    const key = "test-shader-key-opfs-createwritable-opts";
+    const padLine = "// padding ................................................................................\n";
+    const wgsl = padLine.repeat(4000) + "@compute @workgroup_size(1) fn main() {}";
+    const reflection = { bindings: [] };
+    assert.ok(new TextEncoder().encode(wgsl).byteLength > 300 * 1024);
+
+    try {
+      // Simulate an OPFS implementation that throws if createWritable receives options,
+      // but succeeds with the default signature.
+      const cacheDir = await root.getDirectoryHandle("aero-gpu-cache");
+      const shadersDir = await cacheDir.getDirectoryHandle("shaders");
+      const handle = await shadersDir.getFileHandle(`${key}.json`, { create: true });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const originalCreateWritable = (handle as any).createWritable;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (handle as any).createWritable = async (...args: any[]) => {
+        if (args.length > 0) throw new Error("synthetic createWritable options not supported");
+        return originalCreateWritable.call(handle);
+      };
+
+      await cache.putShader(key, { wgsl, reflection });
+
+      const tx = (cache as any)._db.transaction(["shaders"], "readonly");
+      const store = tx.objectStore("shaders");
+      const record = await new Promise<any>((resolve, reject) => {
+        const req = store.get(key);
+        req.onerror = () => reject(req.error ?? new Error("IndexedDB get failed"));
+        req.onsuccess = () => resolve(req.result ?? null);
+      });
+      await new Promise<void>((resolve) => {
+        tx.oncomplete = () => resolve();
+        tx.onabort = () => resolve();
+        tx.onerror = () => resolve();
+      });
+
+      assert.ok(record, "expected shader record in IndexedDB");
+      assert.equal(record.storage, "opfs");
+      assert.equal(record.opfsFile, `${key}.json`);
+      assert.equal(typeof record.wgsl, "undefined");
+      assert.equal(typeof record.reflection, "undefined");
+
+      const file = await (await shadersDir.getFileHandle(`${key}.json`)).getFile();
+      assert.ok(file.size > 256 * 1024);
+      const parsed = JSON.parse(await file.text());
+      assert.equal(parsed.wgsl, wgsl);
+      assert.deepEqual(parsed.reflection, reflection);
+    } finally {
+      await cache.close();
+    }
+  } finally {
+    try {
+      await PersistentGpuCache.clearAll();
+    } catch {
+      // Ignore.
+    }
+
+    if (hadNavigatorStorage) {
+      (navigator as any).storage = realNavigatorStorage;
+    } else {
+      delete (navigator as any).storage;
+    }
+  }
+});
+
 test("PersistentGpuCache OPFS: large pipeline descriptor spills to OPFS and can migrate back to IDB", async () => {
   const realNavigatorStorage = (navigator as any).storage;
   const hadNavigatorStorage = Object.prototype.hasOwnProperty.call(navigator as any, "storage");
