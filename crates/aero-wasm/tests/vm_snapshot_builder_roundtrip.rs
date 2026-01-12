@@ -44,8 +44,7 @@ fn build_usb_blob(device_version: SnapshotVersion) -> Vec<u8> {
 fn build_devices_js(kind: &str, bytes: &[u8]) -> JsValue {
     let arr = Array::new();
     let obj = Object::new();
-    Reflect::set(&obj, &JsValue::from_str("kind"), &JsValue::from_str(kind))
-        .expect("set kind");
+    Reflect::set(&obj, &JsValue::from_str("kind"), &JsValue::from_str(kind)).expect("set kind");
     let bytes_js = Uint8Array::from(bytes);
     Reflect::set(&obj, &JsValue::from_str("bytes"), bytes_js.as_ref()).expect("set bytes");
     arr.push(&obj);
@@ -62,8 +61,7 @@ fn vm_snapshot_builder_roundtrips_guest_ram_and_usb_state() {
     let layout = guest_ram_layout(0);
     let guest_base = layout.guest_base();
 
-    let mem_bytes =
-        (core::arch::wasm32::memory_size(0) as u64).saturating_mul(64 * 1024);
+    let mem_bytes = (core::arch::wasm32::memory_size(0) as u64).saturating_mul(64 * 1024);
     let guest_size = mem_bytes
         .saturating_sub(guest_base as u64)
         .try_into()
@@ -71,8 +69,7 @@ fn vm_snapshot_builder_roundtrips_guest_ram_and_usb_state() {
     assert!(guest_size > 0, "guest_size should be non-zero");
 
     // Safety: We just ensured linear memory has at least `guest_base + guest_size` bytes.
-    let guest =
-        unsafe { core::slice::from_raw_parts_mut(guest_base as *mut u8, guest_size) };
+    let guest = unsafe { core::slice::from_raw_parts_mut(guest_base as *mut u8, guest_size) };
 
     for (i, b) in guest.iter_mut().enumerate() {
         *b = ram_pattern_byte(i);
@@ -161,8 +158,8 @@ fn vm_snapshot_builder_roundtrips_guest_ram_and_usb_state() {
     // Clear RAM and restore via the wasm export.
     guest.fill(0);
 
-    let restored = vm_snapshot_restore(Uint8Array::from(snap_a.as_slice()))
-        .expect("vm_snapshot_restore ok");
+    let restored =
+        vm_snapshot_restore(Uint8Array::from(snap_a.as_slice())).expect("vm_snapshot_restore ok");
     let obj: Object = restored.dyn_into().expect("restore result object");
 
     let cpu_out = Reflect::get(&obj, &JsValue::from_str("cpu"))
@@ -179,8 +176,7 @@ fn vm_snapshot_builder_roundtrips_guest_ram_and_usb_state() {
     assert_eq!(cpu_out, cpu_bytes, "CPU state should roundtrip");
     assert_eq!(mmu_out, mmu_bytes, "MMU state should roundtrip");
 
-    let devices_out_val =
-        Reflect::get(&obj, &JsValue::from_str("devices")).expect("devices get");
+    let devices_out_val = Reflect::get(&obj, &JsValue::from_str("devices")).expect("devices get");
     assert!(
         !devices_out_val.is_undefined() && !devices_out_val.is_null(),
         "devices should be present"
@@ -188,10 +184,7 @@ fn vm_snapshot_builder_roundtrips_guest_ram_and_usb_state() {
     let devices_out: Array = devices_out_val.dyn_into().expect("devices array");
     assert_eq!(devices_out.length(), 1, "expected one device state");
 
-    let dev0: Object = devices_out
-        .get(0)
-        .dyn_into()
-        .expect("devices[0] object");
+    let dev0: Object = devices_out.get(0).dyn_into().expect("devices[0] object");
     let kind = Reflect::get(&dev0, &JsValue::from_str("kind"))
         .expect("kind property")
         .as_string()
@@ -208,4 +201,3 @@ fn vm_snapshot_builder_roundtrips_guest_ram_and_usb_state() {
         assert_eq!(b, ram_pattern_byte(i), "RAM mismatch at offset {i}");
     }
 }
-

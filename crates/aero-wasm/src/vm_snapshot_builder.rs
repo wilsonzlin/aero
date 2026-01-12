@@ -156,7 +156,9 @@ fn parse_devices_js(devices: JsValue) -> Result<Vec<DeviceState>, JsValue> {
         let kind_val = Reflect::get(&obj, &kind_key)
             .map_err(|_| js_error(format!("devices[{idx}].kind missing")))?;
         let kind = kind_val.as_string().ok_or_else(|| {
-            js_error(format!("devices[{idx}].kind must be a string (got {kind_val:?})"))
+            js_error(format!(
+                "devices[{idx}].kind must be a string (got {kind_val:?})"
+            ))
         })?;
 
         let bytes_val = Reflect::get(&obj, &bytes_key)
@@ -395,7 +397,11 @@ fn snapshot_restore_from<R: Read>(
     Ok((cpu, mmu, target.devices))
 }
 
-fn build_restore_result(cpu: CpuState, mmu: MmuState, devices: Vec<DeviceState>) -> Result<JsValue, JsValue> {
+fn build_restore_result(
+    cpu: CpuState,
+    mmu: MmuState,
+    devices: Vec<DeviceState>,
+) -> Result<JsValue, JsValue> {
     let mut cpu_bytes = Vec::new();
     cpu.encode_v2(&mut cpu_bytes)
         .map_err(|e| js_error(format!("Failed to encode CPU state v2: {e}")))?;
@@ -477,4 +483,3 @@ pub fn vm_snapshot_restore(bytes: Uint8Array) -> Result<JsValue, JsValue> {
     let (cpu, mmu, devices) = snapshot_restore_from(Cursor::new(data))?;
     build_restore_result(cpu, mmu, devices)
 }
-
