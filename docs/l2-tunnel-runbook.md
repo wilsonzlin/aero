@@ -67,7 +67,7 @@ cargo run --locked -p aero-l2-proxy
 #   - AERO_L2_MAX_CONNECTIONS_PER_SESSION=0      # per-session concurrent tunnel cap (`0` disables; legacy alias: AERO_L2_MAX_TUNNELS_PER_SESSION)
 #
 # - Payload size limits (defense in depth):
-#   - AERO_L2_MAX_FRAME_PAYLOAD=2048             # max FRAME payload bytes (default/recommended: 2048)
+#   - AERO_L2_MAX_FRAME_PAYLOAD=2048             # max FRAME payload bytes (default/recommended: 2048; legacy alias: AERO_L2_MAX_FRAME_SIZE)
 #   - AERO_L2_MAX_CONTROL_PAYLOAD=256            # max control payload bytes (default/recommended: 256)
 #   - Values must be positive integers; `0`/blank are treated as unset (defaults apply).
 #   Note: `backend/aero-gateway` surfaces these values via `POST /session` when the env vars are set,
