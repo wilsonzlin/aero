@@ -1114,6 +1114,8 @@ static void test_reset_device_times_out_dispatch_level(void)
     assert(WdkTestGetDbgPrintExCount() == 1);
     assert(WdkTestGetKeDelayExecutionThreadCount() == 0);
     assert(WdkTestGetKeStallExecutionProcessorCount() != 0);
+    /* Ensure the "high IRQL budget" stays small (should be ~100 stalls today). */
+    assert(WdkTestGetKeStallExecutionProcessorCount() <= 200);
 
     WdkTestSetCurrentIrql(PASSIVE_LEVEL);
     VirtioPciModernMmioSimUninstall();

@@ -279,27 +279,6 @@ static __forceinline VOID KeStallExecutionProcessor(_In_ ULONG Microseconds)
     /* Deterministic host tests: do not actually sleep. */
 }
 
-static __forceinline ULONGLONG KeQueryInterruptTime(VOID)
-{
-    /*
-     * Host tests are single-threaded and do not model real time.
-     * Provide a monotonically increasing timestamp in 100ns units so production
-     * code that uses KeQueryInterruptTime for deadline tracking does not spin
-     * forever.
-     */
-    static ULONGLONG t100ns = 0;
-    t100ns += 10000ull; /* +1ms per call */
-    return t100ns;
-}
-
-static __forceinline ULONG DbgPrintEx(_In_ ULONG ComponentId, _In_ ULONG Level, _In_ const char* Format, ...)
-{
-    (void)ComponentId;
-    (void)Level;
-    (void)Format;
-    return 0;
-}
-
 /* Interlocked primitives (single-process host tests). */
 static __forceinline LONG InterlockedIncrement(volatile LONG* Addend)
 {
