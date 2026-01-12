@@ -46,8 +46,6 @@ export interface PciDevice {
    */
   readonly interruptPin?: 1 | 2 | 3 | 4;
   readonly bars?: ReadonlyArray<PciBar | null>;
-  readonly subsystemVendorId?: number;
-  readonly subsystemId?: number;
   /**
    * PCI header type (standard offset 0x0E). Bit 7 is the multifunction bit.
    *
@@ -216,16 +214,8 @@ export class PciBus implements PortIoHandler {
 
     // Subsystem IDs (type 0 header).
     // Default to the device's own vendor/device IDs (improves guest driver matching).
-    const subsystemVendorId = device.subsystemVendorId ?? device.vendorId;
-    const subsystemId = device.subsystemId ?? device.deviceId;
-    config[0x2c] = subsystemVendorId & 0xff;
-    config[0x2d] = (subsystemVendorId >>> 8) & 0xff;
-    config[0x2e] = subsystemId & 0xff;
-    config[0x2f] = (subsystemId >>> 8) & 0xff;
-
-    // Subsystem IDs.
-    const subsystemVendorId = (device.subsystemVendorId ?? 0x0000) & 0xffff;
-    const subsystemId = (device.subsystemId ?? 0x0000) & 0xffff;
+    const subsystemVendorId = (device.subsystemVendorId ?? device.vendorId) & 0xffff;
+    const subsystemId = (device.subsystemId ?? device.deviceId) & 0xffff;
     config[0x2c] = subsystemVendorId & 0xff;
     config[0x2d] = (subsystemVendorId >>> 8) & 0xff;
     config[0x2e] = subsystemId & 0xff;

@@ -67,6 +67,42 @@ describe("io/bus/pci", () => {
     expect(cfg.readU32(addr.device, addr.function, 0x2c)).toBe(0x5678_1234);
   });
 
+  it("allows overriding Subsystem Vendor ID / Subsystem ID (0x2c..0x2f)", () => {
+    const portBus = new PortIoBus();
+    const mmioBus = new MmioBus();
+    const pciBus = new PciBus(portBus, mmioBus);
+    pciBus.registerToPortBus();
+
+    const dev: PciDevice = {
+      name: "subsys_override",
+      vendorId: 0x1234,
+      deviceId: 0x5678,
+      classCode: 0,
+      subsystemVendorId: 0xaaaa,
+      subsystemId: 0xbbbb,
+    };
+    const addr = pciBus.registerDevice(dev);
+
+    const cfg = makeCfgIo(portBus);
+    expect(cfg.readU32(addr.device, addr.function, 0x2c)).toBe(0xbbbb_aaaa);
+  });
+
+  it("writes Interrupt Pin (0x3d) and defaults to INTA#", () => {
+    const portBus = new PortIoBus();
+    const mmioBus = new MmioBus();
+    const pciBus = new PciBus(portBus, mmioBus);
+    pciBus.registerToPortBus();
+
+    const devDefault: PciDevice = { name: "int_default", vendorId: 0x1111, deviceId: 0x2222, classCode: 0 };
+    const devIntd: PciDevice = { name: "int_intd", vendorId: 0x3333, deviceId: 0x4444, classCode: 0, interruptPin: 4 };
+    const addr0 = pciBus.registerDevice(devDefault, { device: 0, function: 0 });
+    const addr1 = pciBus.registerDevice(devIntd, { device: 1, function: 0 });
+
+    const cfg = makeCfgIo(portBus);
+    expect(cfg.readU8(addr0.device, addr0.function, 0x3d)).toBe(0x01);
+    expect(cfg.readU8(addr1.device, addr1.function, 0x3d)).toBe(0x04);
+  });
+
   it("sets the multifunction bit in header_type (fn0) when additional functions exist", () => {
     const portBus = new PortIoBus();
     const mmioBus = new MmioBus();
@@ -156,4 +192,3 @@ describe("io/bus/pci", () => {
     expect(seen.size).toBe(3);
   });
 });
-
