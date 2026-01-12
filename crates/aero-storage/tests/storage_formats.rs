@@ -325,6 +325,18 @@ fn detect_format_does_not_misclassify_qcow2_magic_with_bad_version() {
 }
 
 #[test]
+fn detect_format_recognizes_truncated_qcow2_magic() {
+    // Truncated files that still begin with QCOW2 magic should not silently open as raw.
+    let mut backend = MemBackend::with_len(4).unwrap();
+    backend.write_at(0, b"QFI\xfb").unwrap();
+
+    assert_eq!(detect_format(&mut backend).unwrap(), DiskFormat::Qcow2);
+
+    let err = DiskImage::open_auto(backend).err().expect("expected error");
+    assert!(matches!(err, DiskError::CorruptImage("qcow2 header truncated")));
+}
+
+#[test]
 fn detect_format_does_not_misclassify_aerosparse_magic_with_bad_header() {
     let mut backend = MemBackend::with_len(64).unwrap();
     backend.write_at(0, b"AEROSPAR").unwrap();

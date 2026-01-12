@@ -21,6 +21,18 @@ const VHD_COOKIE: [u8; 8] = *b"conectix";
 pub fn detect_format<S: ByteStorage>(storage: &mut S) -> DiskResult<DiskFormat> {
     let len = storage.len()?;
 
+    // QCOW2: check the magic and a plausible version field. A QCOW2 header is at least 72 bytes.
+    //
+    // For truncated images (< 8 bytes) that still match the magic, treat them as QCOW2 so callers
+    // get a corruption error instead of silently falling back to raw.
+    if len >= 4 && len < 8 {
+        let mut first4 = [0u8; 4];
+        storage.read_at(0, &mut first4)?;
+        if first4 == QCOW2_MAGIC {
+            return Ok(DiskFormat::Qcow2);
+        }
+    }
+
     if len >= 8 {
         let mut first8 = [0u8; 8];
         storage.read_at(0, &mut first8)?;

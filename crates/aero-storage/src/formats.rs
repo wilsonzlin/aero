@@ -19,8 +19,19 @@ pub enum DiskFormat {
 pub fn detect_format<B: StorageBackend>(backend: &mut B) -> Result<DiskFormat> {
     let len = backend.len()?;
 
-    // QCOW2: check the magic and a plausible version field. A QCOW2 header is at least 72 bytes,
-    // but we only need the first 8 bytes for conservative detection.
+    // QCOW2: check the magic and a plausible version field. A QCOW2 header is at least 72 bytes.
+    //
+    // For truncated images (< 8 bytes) that still match the magic, treat them as QCOW2 so callers
+    // get a corruption error instead of silently falling back to raw. For non-truncated images,
+    // keep detection conservative by only accepting v2/v3.
+    if len >= 4 && len < 8 {
+        let mut first4 = [0u8; 4];
+        backend.read_at(0, &mut first4)?;
+        if first4 == QCOW2_MAGIC {
+            return Ok(DiskFormat::Qcow2);
+        }
+    }
+
     if len >= 8 {
         let mut first8 = [0u8; 8];
         backend.read_at(0, &mut first8)?;

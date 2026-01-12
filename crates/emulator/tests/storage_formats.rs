@@ -321,6 +321,19 @@ fn detect_qcow2_bad_version_falls_back_to_raw() {
 }
 
 #[test]
+fn detect_qcow2_magic_with_truncated_header_is_qcow2() {
+    let mut storage = MemStorage::with_len(4);
+    storage.write_at(0, b"QFI\xfb").unwrap();
+    assert_eq!(detect_format(&mut storage).unwrap(), DiskFormat::Qcow2);
+
+    let res = VirtualDrive::open_auto(storage, 512, WriteCachePolicy::WriteThrough);
+    assert!(matches!(
+        res,
+        Err(DiskError::CorruptImage("qcow2 header truncated"))
+    ));
+}
+
+#[test]
 fn detect_vhd_cookie_without_plausible_footer_is_raw() {
     let mut storage = MemStorage::with_len(512);
     let mut footer = [0u8; 512];
