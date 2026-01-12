@@ -62,7 +62,10 @@ describe("io/devices/HdaPciDevice", () => {
     const dev = new HdaPciDevice({ bridge, irqSink });
     expect(dev.vendorId).toBe(0x8086);
     expect(dev.deviceId).toBe(0x2668);
+    expect(dev.subsystemVendorId).toBe(0x8086);
+    expect(dev.subsystemId).toBe(0x2668);
     expect(dev.classCode).toBe(0x04_03_00);
+    expect(dev.interruptPin).toBe(0x01);
     expect(dev.bdf).toEqual({ bus: 0, device: 4, function: 0 });
     expect(dev.bars).toEqual([{ kind: "mmio32", size: 0x4000 }, null, null, null, null, null]);
   });

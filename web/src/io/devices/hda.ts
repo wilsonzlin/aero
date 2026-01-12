@@ -53,9 +53,12 @@ export class HdaPciDevice implements PciDevice, TickableDevice {
   readonly name = "hda";
   readonly vendorId = 0x8086;
   readonly deviceId = 0x2668; // Intel ICH6 HDA controller
+  readonly subsystemVendorId = 0x8086;
+  readonly subsystemId = 0x2668;
   readonly classCode = HDA_CLASS_CODE;
   readonly revisionId = 0x01;
   readonly irqLine = HDA_IRQ_LINE;
+  readonly interruptPin = 0x01 as const; // INTA#
   readonly bdf = { bus: 0, device: 4, function: 0 };
 
   readonly bars: ReadonlyArray<PciBar | null> = [{ kind: "mmio32", size: HDA_MMIO_BAR_SIZE }, null, null, null, null, null];
