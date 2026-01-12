@@ -81,9 +81,10 @@ impl StorageBackend for MemBackend {
 
     fn set_len(&mut self, len: u64) -> Result<()> {
         let len_usize: usize = len.try_into().map_err(|_| DiskError::OffsetOverflow)?;
-        if len_usize > self.data.capacity() {
+        let cur_len = self.data.len();
+        if len_usize > cur_len {
             self.data
-                .try_reserve_exact(len_usize - self.data.capacity())
+                .try_reserve_exact(len_usize - cur_len)
                 .map_err(|_| DiskError::QuotaExceeded)?;
         }
         self.data.resize(len_usize, 0);
