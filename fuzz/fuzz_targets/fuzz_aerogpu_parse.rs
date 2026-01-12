@@ -1011,6 +1011,91 @@ fuzz_target!(|data: &[u8]| {
     let cmd_proc_handle_in_use = w.finish();
     fuzz_command_processor(&cmd_proc_handle_in_use, Some(&allocs));
 
+    // CommandProcessor edge-case: invalid resource handle 0 is rejected (`InvalidResourceHandle`).
+    let mut w = AerogpuCmdWriter::new();
+    w.export_shared_surface(/*resource_handle=*/ 0, share_token);
+    let cmd_proc_invalid_handle = w.finish();
+    fuzz_command_processor(&cmd_proc_invalid_handle, None);
+
+    // Allocation-backed resource validation paths:
+    //
+    // - InvalidCreateBuffer: size_bytes=0 is rejected
+    let mut w = AerogpuCmdWriter::new();
+    w.create_buffer(
+        buf_handle, /*usage_flags=*/ 0, /*size_bytes=*/ 0, /*backing_alloc_id=*/ 0,
+        /*backing_offset_bytes=*/ 0,
+    );
+    let cmd_proc_invalid_create_buf = w.finish();
+    fuzz_command_processor(&cmd_proc_invalid_create_buf, None);
+
+    // - UnknownAllocId: allocation table does not contain backing_alloc_id
+    let mut w = AerogpuCmdWriter::new();
+    w.create_buffer(
+        buf_handle,
+        /*usage_flags=*/ 0,
+        /*size_bytes=*/ 4,
+        /*backing_alloc_id=*/ alloc_id.wrapping_add(1),
+        /*backing_offset_bytes=*/ 0,
+    );
+    let cmd_proc_unknown_alloc = w.finish();
+    fuzz_command_processor(&cmd_proc_unknown_alloc, Some(&allocs));
+
+    // - AllocationOutOfBounds: resource backing does not fit in allocation
+    let mut w = AerogpuCmdWriter::new();
+    w.create_buffer(
+        buf_handle,
+        /*usage_flags=*/ 0,
+        /*size_bytes=*/ allocs[0].size_bytes.wrapping_add(4),
+        /*backing_alloc_id=*/ alloc_id,
+        /*backing_offset_bytes=*/ 0,
+    );
+    let cmd_proc_alloc_oob = w.finish();
+    fuzz_command_processor(&cmd_proc_alloc_oob, Some(&allocs));
+
+    // - ResourceOutOfBounds: dirty range extends past resource size
+    let mut w = AerogpuCmdWriter::new();
+    w.create_buffer(
+        buf_handle, /*usage_flags=*/ 0, /*size_bytes=*/ 4,
+        /*backing_alloc_id=*/ alloc_id, /*backing_offset_bytes=*/ 0,
+    );
+    w.resource_dirty_range(buf_handle, /*offset_bytes=*/ 0, /*size_bytes=*/ 8);
+    let cmd_proc_resource_oob = w.finish();
+    fuzz_command_processor(&cmd_proc_resource_oob, Some(&allocs));
+
+    // - InvalidCreateTexture2d: guest-backed textures require non-zero row_pitch_bytes
+    let mut w = AerogpuCmdWriter::new();
+    w.create_texture2d(
+        tex_handle,
+        /*usage_flags=*/ 0,
+        pci::AerogpuFormat::B8G8R8A8Unorm as u32,
+        /*width=*/ 4,
+        /*height=*/ 4,
+        /*mip_levels=*/ 1,
+        /*array_layers=*/ 1,
+        /*row_pitch_bytes=*/ 0,
+        alloc_id,
+        /*backing_offset_bytes=*/ 0,
+    );
+    let cmd_proc_invalid_tex = w.finish();
+    fuzz_command_processor(&cmd_proc_invalid_tex, Some(&allocs));
+
+    // - SizeOverflow: large height + pitch with multiple array layers overflows u64 arithmetic
+    let mut w = AerogpuCmdWriter::new();
+    w.create_texture2d(
+        tex_handle,
+        /*usage_flags=*/ 0,
+        pci::AerogpuFormat::B8G8R8A8Unorm as u32,
+        /*width=*/ 1,
+        /*height=*/ u32::MAX,
+        /*mip_levels=*/ 1,
+        /*array_layers=*/ 2,
+        /*row_pitch_bytes=*/ u32::MAX,
+        /*backing_alloc_id=*/ 0,
+        /*backing_offset_bytes=*/ 0,
+    );
+    let cmd_proc_size_overflow = w.finish();
+    fuzz_command_processor(&cmd_proc_size_overflow, None);
+
     // Patched alloc table: force valid magic/version/stride and a self-consistent entry_count.
     let mut alloc_patched = alloc_bytes.to_vec();
     if alloc_patched.len() < ring::AerogpuAllocTableHeader::SIZE_BYTES {
