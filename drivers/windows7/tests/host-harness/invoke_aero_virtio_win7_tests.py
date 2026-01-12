@@ -48,13 +48,14 @@ It:
 For convenience when scraping CI logs, the harness may also emit a host-side virtio-net marker when the guest
 includes large-transfer fields:
 
-- `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_LARGE|PASS/FAIL/INFO|large_ok=...|large_bytes=...|large_fnv1a64=...|large_mbps=...`
+- `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_LARGE|PASS/FAIL/INFO|large_ok=...|large_bytes=...|large_fnv1a64=...|large_mbps=...|upload_ok=...|upload_bytes=...|upload_mbps=...`
 """
 
 from __future__ import annotations
 
 import argparse
 import http.server
+import hashlib
 import json
 import math
 import warnings
@@ -95,6 +96,7 @@ class _QuietHandler(http.server.BaseHTTPRequestHandler):
     socket_timeout_seconds: float = 60.0
     large_chunk_size: int = 64 * 1024
     large_etag: str = '"8505ae4435522325"'
+    large_upload_sha256: str = "fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c83"
 
     def setup(self) -> None:
         super().setup()
@@ -109,6 +111,9 @@ class _QuietHandler(http.server.BaseHTTPRequestHandler):
 
     def do_HEAD(self) -> None:  # noqa: N802
         self._handle_request(send_body=False)
+
+    def do_POST(self) -> None:  # noqa: N802
+        self._handle_large_upload()
 
     def _handle_request(self, *, send_body: bool) -> None:
         etag: Optional[str] = None
@@ -147,6 +152,66 @@ class _QuietHandler(http.server.BaseHTTPRequestHandler):
                 self.wfile.write(mv[i : i + chunk])
         except Exception:
             # Best-effort response; never fail the harness due to a socket send error.
+            return
+
+    def _handle_large_upload(self) -> None:
+        """
+        Accept a deterministic 1 MiB upload to the large endpoint and validate integrity.
+
+        This stresses the guest TX path (in addition to the large GET, which stresses RX).
+        """
+        large_paths = (
+            self.expected_path + "-large",
+            _append_suffix_before_query_fragment(self.expected_path, "-large"),
+        )
+        if self.path not in large_paths:
+            body = b"NOT_FOUND\n"
+            self.send_response(404)
+            self.send_header("Content-Type", "text/plain")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Connection", "close")
+            self.end_headers()
+            try:
+                self.wfile.write(body)
+            except Exception:
+                return
+            return
+
+        expected_len = len(self.large_body)
+        length_str = self.headers.get("Content-Length")
+        try:
+            length = int(length_str) if length_str is not None else 0
+        except Exception:
+            length = 0
+
+        ok = False
+        digest_hex: Optional[str] = None
+        if length == expected_len:
+            sha = hashlib.sha256()
+            remaining = length
+            while remaining > 0:
+                to_read = min(remaining, max(1, int(self.large_chunk_size)))
+                chunk = self.rfile.read(to_read)
+                if not chunk:
+                    break
+                sha.update(chunk)
+                remaining -= len(chunk)
+            digest_hex = sha.hexdigest()
+            ok = remaining == 0 and digest_hex == self.large_upload_sha256
+
+        body = b"OK\n" if ok else b"BAD_UPLOAD\n"
+        self.send_response(200 if ok else 400)
+        self.send_header("Content-Type", "text/plain")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        if digest_hex is not None:
+            self.send_header("X-Aero-Upload-SHA256", digest_hex)
+        self.send_header("Connection", "close")
+        self.end_headers()
+        try:
+            self.wfile.write(body)
+        except Exception:
             return
 
     def log_message(self, fmt: str, *args: object) -> None:
@@ -2398,21 +2463,30 @@ def _emit_virtio_net_large_host_marker(tail: bytes) -> None:
         return
 
     fields = _parse_marker_kv_fields(marker_line)
-    if "large_bytes" not in fields and "large_mbps" not in fields and "large_fnv1a64" not in fields:
+    if (
+        "large_bytes" not in fields
+        and "large_mbps" not in fields
+        and "large_fnv1a64" not in fields
+        and "upload_ok" not in fields
+        and "upload_bytes" not in fields
+        and "upload_mbps" not in fields
+    ):
         return
 
     status = "INFO"
-    if fields.get("large_ok") == "1":
-        status = "PASS"
-    elif fields.get("large_ok") == "0":
+    # Prefer the overall marker PASS/FAIL token so this stays correct even when the
+    # large download passes but the optional large upload fails (TX vs RX stress).
+    if "FAIL" in marker_line.split("|"):
         status = "FAIL"
     elif "PASS" in marker_line.split("|"):
         status = "PASS"
-    elif "FAIL" in marker_line.split("|"):
+    elif fields.get("large_ok") == "0" or fields.get("upload_ok") == "0":
         status = "FAIL"
+    elif fields.get("large_ok") == "1" and fields.get("upload_ok", "1") == "1":
+        status = "PASS"
 
     parts = [f"AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_LARGE|{status}"]
-    for k in ("large_ok", "large_bytes", "large_fnv1a64", "large_mbps"):
+    for k in ("large_ok", "large_bytes", "large_fnv1a64", "large_mbps", "upload_ok", "upload_bytes", "upload_mbps"):
         if k in fields:
             parts.append(f"{k}={_sanitize_marker_value(fields[k])}")
     print("|".join(parts))

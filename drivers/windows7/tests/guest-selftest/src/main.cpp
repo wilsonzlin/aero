@@ -3051,12 +3051,164 @@ static bool HttpGetLargeDeterministic(Logger& log, const std::wstring& url, uint
   return true;
 }
 
+static bool HttpPostLargeDeterministic(Logger& log, const std::wstring& url, uint64_t* bytes_sent_out,
+                                       double* mbps_out) {
+  static const uint64_t kExpectedBytes = 1024ull * 1024ull;
+
+  if (bytes_sent_out) *bytes_sent_out = 0;
+  if (mbps_out) *mbps_out = 0.0;
+
+  URL_COMPONENTS comp{};
+  comp.dwStructSize = sizeof(comp);
+  comp.dwSchemeLength = static_cast<DWORD>(-1);
+  comp.dwHostNameLength = static_cast<DWORD>(-1);
+  comp.dwUrlPathLength = static_cast<DWORD>(-1);
+  comp.dwExtraInfoLength = static_cast<DWORD>(-1);
+
+  if (!WinHttpCrackUrl(url.c_str(), 0, 0, &comp)) {
+    log.Logf("virtio-net: WinHttpCrackUrl failed url=%s err=%lu", WideToUtf8(url).c_str(),
+             GetLastError());
+    return false;
+  }
+
+  std::wstring host(comp.lpszHostName, comp.dwHostNameLength);
+  std::wstring path(comp.lpszUrlPath, comp.dwUrlPathLength);
+  if (comp.dwExtraInfoLength > 0) path.append(comp.lpszExtraInfo, comp.dwExtraInfoLength);
+  const INTERNET_PORT port = comp.nPort;
+
+  const bool secure = (comp.nScheme == INTERNET_SCHEME_HTTPS);
+  if (secure) {
+    log.LogLine("virtio-net: https urls are supported by WinHTTP, but are discouraged for tests "
+                "(certificate store variability). Prefer http.");
+  }
+
+  HINTERNET session =
+      WinHttpOpen(L"AeroVirtioSelftest/1.0", WINHTTP_ACCESS_TYPE_NO_PROXY, WINHTTP_NO_PROXY_NAME,
+                  WINHTTP_NO_PROXY_BYPASS, 0);
+  if (!session) {
+    log.Logf("virtio-net: WinHttpOpen failed err=%lu", GetLastError());
+    return false;
+  }
+
+  WinHttpSetTimeouts(session, 15000, 15000, 15000, 15000);
+
+  HINTERNET connect = WinHttpConnect(session, host.c_str(), port, 0);
+  if (!connect) {
+    log.Logf("virtio-net: WinHttpConnect failed host=%s port=%u err=%lu", WideToUtf8(host).c_str(),
+             port, GetLastError());
+    WinHttpCloseHandle(session);
+    return false;
+  }
+
+  const DWORD flags = secure ? WINHTTP_FLAG_SECURE : 0;
+  HINTERNET request = WinHttpOpenRequest(connect, L"POST", path.c_str(), nullptr, WINHTTP_NO_REFERER,
+                                         WINHTTP_DEFAULT_ACCEPT_TYPES, flags);
+  if (!request) {
+    log.Logf("virtio-net: WinHttpOpenRequest(POST) failed err=%lu", GetLastError());
+    WinHttpCloseHandle(connect);
+    WinHttpCloseHandle(session);
+    return false;
+  }
+
+  static const wchar_t kHeaders[] = L"Content-Type: application/octet-stream\r\n";
+  if (!WinHttpSendRequest(request, kHeaders, static_cast<DWORD>(-1), WINHTTP_NO_REQUEST_DATA, 0,
+                          static_cast<DWORD>(kExpectedBytes), 0)) {
+    log.Logf("virtio-net: WinHttpSendRequest(POST) failed err=%lu", GetLastError());
+    WinHttpCloseHandle(request);
+    WinHttpCloseHandle(connect);
+    WinHttpCloseHandle(session);
+    return false;
+  }
+
+  uint64_t total_written = 0;
+  std::vector<uint8_t> buf(64 * 1024);
+  PerfTimer timer;
+  bool write_ok = true;
+
+  while (total_written < kExpectedBytes) {
+    const size_t remaining = static_cast<size_t>(kExpectedBytes - total_written);
+    const size_t n = std::min(remaining, buf.size());
+    for (size_t i = 0; i < n; i++) {
+      buf[i] = static_cast<uint8_t>((total_written + i) & 0xFFu);
+    }
+    DWORD written = 0;
+    if (!WinHttpWriteData(request, buf.data(), static_cast<DWORD>(n), &written)) {
+      log.Logf("virtio-net: WinHttpWriteData failed err=%lu", GetLastError());
+      write_ok = false;
+      break;
+    }
+    if (written == 0) {
+      log.LogLine("virtio-net: WinHttpWriteData returned 0 bytes written");
+      write_ok = false;
+      break;
+    }
+    total_written += static_cast<uint64_t>(written);
+  }
+
+  if (bytes_sent_out) *bytes_sent_out = total_written;
+
+  if (!write_ok || total_written != kExpectedBytes) {
+    WinHttpCloseHandle(request);
+    WinHttpCloseHandle(connect);
+    WinHttpCloseHandle(session);
+    return false;
+  }
+
+  if (!WinHttpReceiveResponse(request, nullptr)) {
+    log.Logf("virtio-net: WinHttpReceiveResponse(POST) failed err=%lu", GetLastError());
+    WinHttpCloseHandle(request);
+    WinHttpCloseHandle(connect);
+    WinHttpCloseHandle(session);
+    return false;
+  }
+
+  DWORD status = 0;
+  DWORD status_size = sizeof(status);
+  if (!WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+                           WINHTTP_HEADER_NAME_BY_INDEX, &status, &status_size,
+                           WINHTTP_NO_HEADER_INDEX)) {
+    log.Logf("virtio-net: WinHttpQueryHeaders(status) failed err=%lu", GetLastError());
+    WinHttpCloseHandle(request);
+    WinHttpCloseHandle(connect);
+    WinHttpCloseHandle(session);
+    return false;
+  }
+
+  // Read a small response body for diagnostics.
+  std::string resp;
+  DWORD avail = 0;
+  if (WinHttpQueryDataAvailable(request, &avail) && avail > 0) {
+    std::vector<char> tmp(std::min<DWORD>(avail, 256));
+    DWORD read = 0;
+    if (WinHttpReadData(request, tmp.data(), static_cast<DWORD>(tmp.size()), &read) && read > 0) {
+      resp.assign(tmp.data(), tmp.data() + read);
+    }
+  }
+
+  WinHttpCloseHandle(request);
+  WinHttpCloseHandle(connect);
+  WinHttpCloseHandle(session);
+
+  const double sec = std::max(0.000001, timer.SecondsSinceStart());
+  const double mbps = (static_cast<double>(total_written) / (1024.0 * 1024.0)) / sec;
+  if (mbps_out) *mbps_out = mbps;
+
+  log.Logf("virtio-net: HTTP POST large done url=%s status=%lu bytes_sent=%llu sec=%.2f mbps=%.2f resp=%s",
+           WideToUtf8(url).c_str(), status, static_cast<unsigned long long>(total_written), sec, mbps,
+           resp.empty() ? "-" : resp.c_str());
+
+  return status >= 200 && status < 300;
+}
+
 struct VirtioNetTestResult {
   bool ok = false;
   bool large_ok = false;
   uint64_t large_bytes = 0;
   uint64_t large_hash = 0;
   double large_mbps = 0.0;
+  bool upload_ok = false;
+  uint64_t upload_bytes = 0;
+  double upload_mbps = 0.0;
 };
 
 static VirtioNetTestResult VirtioNetTest(Logger& log, const Options& opt) {
@@ -3124,7 +3276,7 @@ static VirtioNetTestResult VirtioNetTest(Logger& log, const Options& opt) {
     for (size_t i = 0; i < chosen->hardware_ids.size(); i++) {
       log.Logf("virtio-net: selected hwid[%zu]=%s", i, WideToUtf8(chosen->hardware_ids[i]).c_str());
     }
-    return false;
+    return out;
   }
   if (!contract_rev01) {
     log.LogLine("virtio-net: note: contract HWID matched but no &REV_01 entry was found");
@@ -3155,6 +3307,9 @@ static VirtioNetTestResult VirtioNetTest(Logger& log, const Options& opt) {
   const std::wstring large_url = UrlAppendSuffix(opt.http_url, L"-large");
   out.large_ok = HttpGetLargeDeterministic(log, large_url, &out.large_bytes, &out.large_hash, &out.large_mbps);
   if (!out.large_ok) return out;
+
+  out.upload_ok = HttpPostLargeDeterministic(log, large_url, &out.upload_bytes, &out.upload_mbps);
+  if (!out.upload_ok) return out;
 
   out.ok = true;
   return out;
@@ -6330,10 +6485,11 @@ int wmain(int argc, wchar_t** argv) {
   } else {
     const auto net = VirtioNetTest(log, opt);
     log.Logf(
-        "AERO_VIRTIO_SELFTEST|TEST|virtio-net|%s|large_ok=%d|large_bytes=%llu|large_fnv1a64=0x%016llx|large_mbps=%.2f",
+        "AERO_VIRTIO_SELFTEST|TEST|virtio-net|%s|large_ok=%d|large_bytes=%llu|large_fnv1a64=0x%016llx|large_mbps=%.2f|"
+        "upload_ok=%d|upload_bytes=%llu|upload_mbps=%.2f",
         net.ok ? "PASS" : "FAIL", net.large_ok ? 1 : 0,
         static_cast<unsigned long long>(net.large_bytes), static_cast<unsigned long long>(net.large_hash),
-        net.large_mbps);
+        net.large_mbps, net.upload_ok ? 1 : 0, static_cast<unsigned long long>(net.upload_bytes), net.upload_mbps);
     all_ok = all_ok && net.ok;
     WSACleanup();
   }

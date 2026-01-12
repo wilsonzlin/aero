@@ -205,39 +205,113 @@ function Try-HandleAeroHttpRequest {
       $stream = $client.GetStream()
       $stream.ReadTimeout = 60000
       $stream.WriteTimeout = 60000
-      $reader = [System.IO.StreamReader]::new($stream, [System.Text.Encoding]::ASCII, $false, 4096, $true)
+      # Use Latin-1 so we can safely read an arbitrary binary upload body via StreamReader
+      # without losing bytes > 0x7F. Headers are ASCII-compatible.
+      $enc = [System.Text.Encoding]::GetEncoding(28591)
+      $reader = [System.IO.StreamReader]::new($stream, $enc, $false, 4096, $true)
       $requestLine = $reader.ReadLine()
       if ($null -eq $requestLine) { return $true }
 
-      # Drain headers.
+      # Read+parse headers.
+      $headers = @{}
       while ($true) {
         $line = $reader.ReadLine()
         if ($null -eq $line -or $line.Length -eq 0) { break }
-      }
-
-      $ok = $false
-      $large = $false
-      if ($requestLine -match "^(GET|HEAD)\s+(\S+)\s+HTTP/") {
-        $reqPath = $Matches[2]
-        if ($reqPath -eq $Path) { $ok = $true }
-        elseif ($reqPath -eq "$Path-large" -or $reqPath -eq (Get-AeroSelftestLargePath -Path $Path)) {
-          $ok = $true
-          $large = $true
+        $idx = $line.IndexOf(":")
+        if ($idx -gt 0) {
+          $name = $line.Substring(0, $idx).Trim().ToLowerInvariant()
+          $value = $line.Substring($idx + 1).Trim()
+          if (-not [string]::IsNullOrEmpty($name)) {
+            $headers[$name] = $value
+          }
         }
       }
 
-      $statusLine = if ($ok) { "HTTP/1.1 200 OK" } else { "HTTP/1.1 404 Not Found" }
+      $method = ""
+      $reqPath = ""
+      if ($requestLine -match "^(GET|HEAD|POST)\s+(\S+)\s+HTTP/") {
+        $method = $Matches[1].ToUpperInvariant()
+        $reqPath = $Matches[2]
+      }
+
+      $isHead = $method -eq "HEAD"
+      $isPost = $method -eq "POST"
+
+      $basePathOk = $reqPath -eq $Path
+      $largePathOk = $reqPath -eq "$Path-large" -or $reqPath -eq (Get-AeroSelftestLargePath -Path $Path)
+
+      $statusCode = 404
+      $statusLine = "HTTP/1.1 404 Not Found"
       $contentType = "text/plain"
-      $bodyBytes = $null
+      $bodyBytes = [System.Text.Encoding]::ASCII.GetBytes("NOT_FOUND`n")
       $etagHeader = $null
-      if ($ok -and $large) {
-        # Deterministic 1 MiB payload (0..255 repeating) for sustained virtio-net TX/RX stress.
-        $contentType = "application/octet-stream"
-        $etagHeader = "ETag: `"8505ae4435522325`""
-        $bodyBytes = Get-AeroSelftestLargePayload
-      } else {
-        $body = if ($ok) { "OK`n" } else { "NOT_FOUND`n" }
-        $bodyBytes = [System.Text.Encoding]::ASCII.GetBytes($body)
+      $extraHeaders = @()
+
+      if (-not [string]::IsNullOrEmpty($method)) {
+        if ($isPost) {
+          # POST is only supported for the large endpoint (upload verification).
+          if ($largePathOk) {
+            $expectedLen = 1048576
+            $cl = 0
+            if ($headers.ContainsKey("content-length")) {
+              [int]::TryParse($headers["content-length"], [ref]$cl) | Out-Null
+            }
+
+            $uploadOk = $false
+            $uploadSha256 = ""
+            if ($cl -eq $expectedLen) {
+              $sha = [System.Security.Cryptography.SHA256]::Create()
+              $emptyBytes = New-Object byte[] 0
+              $charBuf = New-Object char[] 8192
+              $byteBuf = New-Object byte[] 8192
+              $remaining = $expectedLen
+              while ($remaining -gt 0) {
+                $want = [Math]::Min($charBuf.Length, $remaining)
+                $readChars = $reader.Read($charBuf, 0, $want)
+                if ($readChars -le 0) { break }
+                $nBytes = $enc.GetBytes($charBuf, 0, $readChars, $byteBuf, 0)
+                $null = $sha.TransformBlock($byteBuf, 0, $nBytes, $null, 0)
+                $remaining -= $nBytes
+              }
+              if ($remaining -eq 0) {
+                $null = $sha.TransformFinalBlock($emptyBytes, 0, 0)
+                $uploadSha256 = ([System.BitConverter]::ToString($sha.Hash).Replace("-", "").ToLowerInvariant())
+                if ($uploadSha256 -eq "fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c83") {
+                  $uploadOk = $true
+                }
+              }
+              $sha.Dispose()
+            }
+
+            if ($uploadSha256.Length -gt 0) {
+              $extraHeaders += "X-Aero-Upload-SHA256: $uploadSha256"
+            }
+
+            if ($uploadOk) {
+              $statusCode = 200
+              $statusLine = "HTTP/1.1 200 OK"
+              $bodyBytes = [System.Text.Encoding]::ASCII.GetBytes("OK`n")
+            } else {
+              $statusCode = 400
+              $statusLine = "HTTP/1.1 400 Bad Request"
+              $bodyBytes = [System.Text.Encoding]::ASCII.GetBytes("BAD_UPLOAD`n")
+            }
+          }
+        } else {
+          # GET/HEAD.
+          if ($basePathOk) {
+            $statusCode = 200
+            $statusLine = "HTTP/1.1 200 OK"
+            $bodyBytes = [System.Text.Encoding]::ASCII.GetBytes("OK`n")
+          } elseif ($largePathOk) {
+            $statusCode = 200
+            $statusLine = "HTTP/1.1 200 OK"
+            # Deterministic 1 MiB payload (0..255 repeating) for sustained virtio-net TX/RX stress.
+            $contentType = "application/octet-stream"
+            $etagHeader = "ETag: `"8505ae4435522325`""
+            $bodyBytes = Get-AeroSelftestLargePayload
+          }
+        }
       }
 
       $hdrLines = @(
@@ -246,6 +320,7 @@ function Try-HandleAeroHttpRequest {
         "Content-Length: $($bodyBytes.Length)",
         "Cache-Control: no-store",
         $etagHeader,
+        $extraHeaders,
         "Connection: close",
         "",
         ""
@@ -254,7 +329,7 @@ function Try-HandleAeroHttpRequest {
 
       $hdrBytes = [System.Text.Encoding]::ASCII.GetBytes($hdr)
       $stream.Write($hdrBytes, 0, $hdrBytes.Length)
-      if (-not ($requestLine -like "HEAD *")) {
+      if (-not $isHead) {
         # Write in chunks so a large body (1 MiB) can't block forever behind a single large write
         # if the guest stalls mid-transfer. Socket/stream timeouts are still enforced.
         $chunkSize = 65536
@@ -660,22 +735,28 @@ function Try-EmitAeroVirtioNetLargeMarker {
     }
   }
 
-  if (-not ($fields.ContainsKey("large_bytes") -or $fields.ContainsKey("large_mbps") -or $fields.ContainsKey("large_fnv1a64"))) {
+  if (-not (
+      $fields.ContainsKey("large_bytes") -or
+      $fields.ContainsKey("large_mbps") -or
+      $fields.ContainsKey("large_fnv1a64") -or
+      $fields.ContainsKey("upload_ok") -or
+      $fields.ContainsKey("upload_bytes") -or
+      $fields.ContainsKey("upload_mbps")
+    )) {
     return
   }
 
   $status = "INFO"
-  if ($fields.ContainsKey("large_ok")) {
-    if ($fields["large_ok"] -eq "1") { $status = "PASS" }
-    elseif ($fields["large_ok"] -eq "0") { $status = "FAIL" }
-  }
-  if ($status -eq "INFO") {
-    if ($line -match "\|PASS(\||$)") { $status = "PASS" }
-    elseif ($line -match "\|FAIL(\||$)") { $status = "FAIL" }
-  }
+  # Prefer the overall marker PASS/FAIL token so this stays correct even when the
+  # large download passes but the optional large upload fails (TX vs RX stress).
+  if ($line -match "\|FAIL(\||$)") { $status = "FAIL" }
+  elseif ($line -match "\|PASS(\||$)") { $status = "PASS" }
+  elseif ($fields.ContainsKey("large_ok") -and $fields["large_ok"] -eq "0") { $status = "FAIL" }
+  elseif ($fields.ContainsKey("upload_ok") -and $fields["upload_ok"] -eq "0") { $status = "FAIL" }
+  elseif ($fields.ContainsKey("large_ok") -and $fields["large_ok"] -eq "1" -and (-not $fields.ContainsKey("upload_ok") -or $fields["upload_ok"] -eq "1")) { $status = "PASS" }
 
   $out = "AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_LARGE|$status"
-  foreach ($k in @("large_ok", "large_bytes", "large_fnv1a64", "large_mbps")) {
+  foreach ($k in @("large_ok", "large_bytes", "large_fnv1a64", "large_mbps", "upload_ok", "upload_bytes", "upload_mbps")) {
     if ($fields.ContainsKey($k)) {
       $out += "|$k=$(Sanitize-AeroMarkerValue $fields[$k])"
     }

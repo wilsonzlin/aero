@@ -106,6 +106,34 @@ class HarnessHttpLargePayloadTests(unittest.TestCase):
                 # FNV-1a 64-bit (matches the guest selftest constant).
                 self.assertEqual(_fnv1a64(body), 0x8505AE4435522325)
 
+                # Upload the same deterministic payload back to the server (POST) to exercise TX.
+                c = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+                c.request(
+                    "POST",
+                    "/aero-virtio-selftest-large",
+                    body=body,
+                    headers={"Content-Type": "application/octet-stream"},
+                )
+                r = c.getresponse()
+                resp_body = r.read()
+                c.close()
+                self.assertEqual(r.status, 200)
+                self.assertEqual(resp_body, b"OK\n")
+
+                # Corrupt upload should fail.
+                c = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+                c.request(
+                    "POST",
+                    "/aero-virtio-selftest-large",
+                    body=b"\x00" * 1048576,
+                    headers={"Content-Type": "application/octet-stream"},
+                )
+                r = c.getresponse()
+                resp_body = r.read()
+                c.close()
+                self.assertEqual(r.status, 400)
+                self.assertEqual(resp_body, b"BAD_UPLOAD\n")
+
                 # Large endpoint HEAD: headers only, still reports Content-Length.
                 c = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
                 c.request("HEAD", "/aero-virtio-selftest-large")

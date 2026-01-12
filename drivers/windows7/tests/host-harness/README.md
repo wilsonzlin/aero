@@ -328,7 +328,9 @@ only if you explicitly want the base image to be mutated.
     - bytes: repeating `0..255` pattern
     - includes a correct `Content-Length`
     - includes `ETag: "8505ae4435522325"` (FNV-1a 64-bit of the payload) and `Cache-Control: no-store`
-    - used by the guest virtio-net selftest to stress sustained TX/RX and validate data integrity (size + hash)
+    - used by the guest virtio-net selftest to stress sustained RX and validate data integrity (size + hash)
+    - the same `...-large` endpoint also accepts a deterministic 1 MiB HTTP POST upload and validates integrity
+      (stresses sustained TX)
 - Launches QEMU with:
   - `-chardev file,...` + `-serial chardev:...` (guest COM1 → host log)
   - `virtio-net-pci,disable-legacy=on,x-pci-revision=0x01` with `-netdev user` (modern-only; enumerates as `PCI\VEN_1AF4&DEV_1041&REV_01`)
@@ -349,7 +351,7 @@ only if you explicitly want the base image to be mutated.
 The Python/PowerShell harnesses also emit an additional host-side marker after the run for log scraping:
 
 ```
-AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_LARGE|PASS/FAIL/INFO|large_ok=...|large_bytes=...|large_fnv1a64=...|large_mbps=...
+AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_LARGE|PASS/FAIL/INFO|large_ok=...|large_bytes=...|large_fnv1a64=...|large_mbps=...|upload_ok=...|upload_bytes=...|upload_mbps=...
 ```
 
 This mirrors the guest's virtio-net marker fields when present and does not affect overall PASS/FAIL.

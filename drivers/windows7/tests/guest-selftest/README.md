@@ -23,11 +23,14 @@ For the consolidated virtio-input end-to-end validation plan (device model + dri
   - Wait for link + DHCP IPv4 address (non-APIPA).
   - DNS resolution (`getaddrinfo`)
   - HTTP GET to a configurable URL (WinHTTP) to validate basic connectivity.
-  - Deterministic large HTTP download (`<http_url>-large`) to stress sustained TX/RX throughput and verify data integrity:
+  - Deterministic large HTTP download (`<http_url>-large`) to stress sustained RX throughput and verify data integrity:
     - downloads **1 MiB** of bytes `0..255` repeating
     - requires a correct `Content-Length: 1048576`
     - validates both total bytes read and a fixed hash (FNV-1a 64-bit)
     - logs `Content-Type`/`ETag` headers when present for additional diagnostics
+  - Deterministic large HTTP upload (HTTP POST to `<http_url>-large`) to stress sustained TX throughput:
+    - uploads **1 MiB** of bytes `0..255` repeating
+    - expects a 2xx response from the host harness, which validates integrity (SHA-256)
 - **virtio-input**
   - Enumerate HID devices (SetupAPI via `GUID_DEVINTERFACE_HID`).
   - Detect virtio-input devices by matching virtio-input PCI/HID IDs:
@@ -188,6 +191,9 @@ Notes:
   `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP` and `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|disabled`.
 - If capture is disabled via `--disable-snd-capture`, the tool emits
   `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|disabled` (playback behavior unchanged).
+- The `virtio-net` marker includes large transfer diagnostics:
+  - `large_ok`, `large_bytes`, `large_fnv1a64`, `large_mbps`
+  - `upload_ok`, `upload_bytes`, `upload_mbps`
 - The duplex marker (`virtio-snd-duplex`) is emitted whenever the virtio-snd section runs:
   - `SKIP|flag_not_set` when virtio-snd is skipped (and capture smoke testing is not forced).
   - `PASS|frames=...|non_silence=...` when the duplex test runs successfully.
