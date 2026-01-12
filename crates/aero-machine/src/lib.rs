@@ -4464,7 +4464,8 @@ impl Machine {
         //
         // BDA layout (see `firmware::bda`):
         // - screen cols (u16)
-        // - cursor pos for page 0 (row, col)
+        // - active page (u8)
+        // - cursor pos for each page (row, col); we mirror the active page cursor into the CRTC
         // - cursor shape (start, end)
         let cols = BiosDataArea::read_screen_cols(&mut self.mem).max(1);
         let page = BiosDataArea::read_active_page(&mut self.mem);
