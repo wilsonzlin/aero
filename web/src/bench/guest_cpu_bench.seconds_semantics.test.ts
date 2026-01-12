@@ -100,4 +100,37 @@ describe("bench/guest_cpu_bench seconds mode semantics", () => {
       }),
     ).rejects.toThrow(/checksum mismatch/i);
   });
+
+  it("fails fast if the timer source does not advance (hard timeout guard)", async () => {
+    // DEFAULT_WARMUP_RUNS (3) + first measured run = 4 invocations before the hard-timeout trips.
+    mockRuns = [
+      { checksumLo: 0xaaaa_aaaa, retiredLo: 10 }, // warmup 1
+      { checksumLo: 0xaaaa_aaaa, retiredLo: 10 }, // warmup 2
+      { checksumLo: 0xaaaa_aaaa, retiredLo: 10 }, // warmup 3
+      { checksumLo: 0xaaaa_aaaa, retiredLo: 99 }, // measured run
+    ];
+
+    // Simulate a pathological environment where `performance.now()` always returns the same value.
+    vi.spyOn(performance, "now").mockImplementation(() => 0);
+
+    // But keep wall-clock moving so the hard-timeout check triggers immediately.
+    let wall = 0;
+    vi.spyOn(Date, "now").mockImplementation(() => {
+      wall += 2000;
+      return wall;
+    });
+
+    vi.resetModules();
+
+    const { runGuestCpuBench } = await import("./guest_cpu_bench");
+    await expect(
+      runGuestCpuBench({
+        variant: "alu32",
+        mode: "interpreter",
+        // Small time budget so the hard-timeout threshold is the minimum (1000ms).
+        seconds: 0.000001,
+      }),
+    ).rejects.toThrow(/hard timeout/i);
+    expect(runCallCount).toBe(4);
+  });
 });
