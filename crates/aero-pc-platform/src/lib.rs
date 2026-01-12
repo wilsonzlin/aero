@@ -1281,6 +1281,14 @@ impl PcPlatform {
             .attach_secondary_master_atapi(dev);
     }
 
+    pub fn attach_ide_secondary_master_iso(
+        &mut self,
+        disk: Box<dyn VirtualDisk + Send>,
+    ) -> std::io::Result<()> {
+        self.attach_ide_secondary_master_atapi(AtapiCdrom::new_from_virtual_disk(disk)?);
+        Ok(())
+    }
+
     pub fn process_hda(&mut self, output_frames: usize) {
         let Some(hda) = self.hda.as_ref() else {
             return;

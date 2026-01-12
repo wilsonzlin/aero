@@ -1,6 +1,7 @@
 use std::io;
 
 use aero_io_snapshot::io::storage::state::IdeAtapiDeviceState;
+use aero_storage::{DiskError, VirtualDisk};
 
 /// Read-only ISO9660 (or raw CD) backing store.
 ///
@@ -8,6 +9,61 @@ use aero_io_snapshot::io::storage::state::IdeAtapiDeviceState;
 pub trait IsoBackend: Send {
     fn sector_count(&self) -> u32;
     fn read_sectors(&mut self, lba: u32, buf: &mut [u8]) -> io::Result<()>;
+}
+
+/// Adapter that exposes an [`aero_storage::VirtualDisk`] (byte-addressed) as an ATAPI/ISO9660
+/// sector device (2048-byte sectors).
+///
+/// This is useful for attaching a disk image (e.g. a Windows install ISO stored in a generic
+/// storage backend) as an ATAPI CD-ROM.
+pub struct VirtualDiskIsoBackend {
+    disk: Box<dyn VirtualDisk + Send>,
+    sector_count: u32,
+}
+
+impl VirtualDiskIsoBackend {
+    pub fn new(disk: Box<dyn VirtualDisk + Send>) -> io::Result<Self> {
+        let capacity = disk.capacity_bytes();
+        if capacity % AtapiCdrom::SECTOR_SIZE as u64 != 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "ISO disk capacity is not a multiple of 2048-byte sectors",
+            ));
+        }
+
+        let sector_count = capacity / AtapiCdrom::SECTOR_SIZE as u64;
+        let sector_count = u32::try_from(sector_count).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "ISO disk capacity exceeds 32-bit sector count limit",
+            )
+        })?;
+
+        Ok(Self { disk, sector_count })
+    }
+}
+
+impl IsoBackend for VirtualDiskIsoBackend {
+    fn sector_count(&self) -> u32 {
+        self.sector_count
+    }
+
+    fn read_sectors(&mut self, lba: u32, buf: &mut [u8]) -> io::Result<()> {
+        if !buf.len().is_multiple_of(AtapiCdrom::SECTOR_SIZE) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "unaligned buffer length",
+            ));
+        }
+
+        let offset = u64::from(lba)
+            .checked_mul(AtapiCdrom::SECTOR_SIZE as u64)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "offset overflow"))?;
+
+        self.disk
+            .read_at(offset, buf)
+            .map_err(map_disk_error)
+    }
 }
 
 const SENSE_NO_SENSE: u8 = 0x00;
@@ -66,6 +122,15 @@ impl AtapiCdrom {
         self.backend = Some(backend);
         self.tray_open = false;
         self.media_changed = true;
+    }
+
+    pub fn new_from_virtual_disk(disk: Box<dyn VirtualDisk + Send>) -> io::Result<Self> {
+        Ok(Self::new(Some(Box::new(VirtualDiskIsoBackend::new(disk)?))))
+    }
+
+    pub fn insert_virtual_disk(&mut self, disk: Box<dyn VirtualDisk + Send>) -> io::Result<()> {
+        self.insert_media(Box::new(VirtualDiskIsoBackend::new(disk)?));
+        Ok(())
     }
 
     pub fn eject_media(&mut self) {
@@ -504,6 +569,10 @@ impl AtapiCdrom {
             self.backend = None;
         }
     }
+}
+
+fn map_disk_error(err: DiskError) -> io::Error {
+    io::Error::other(err)
 }
 
 #[derive(Debug)]
