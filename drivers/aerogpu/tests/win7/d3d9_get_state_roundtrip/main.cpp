@@ -50,6 +50,19 @@ static bool LightNearlyEqual(const D3DLIGHT9& a, const D3DLIGHT9& b, float eps) 
          NearlyEqual(a.Attenuation2, b.Attenuation2, eps);
 }
 
+static bool ClipStatusEqual(const D3DCLIPSTATUS9& a, const D3DCLIPSTATUS9& b) {
+  return (a.ClipUnion == b.ClipUnion) &&
+         (a.ClipIntersection == b.ClipIntersection) &&
+         (a.Extents.x1 == b.Extents.x1) &&
+         (a.Extents.y1 == b.Extents.y1) &&
+         (a.Extents.x2 == b.Extents.x2) &&
+         (a.Extents.y2 == b.Extents.y2);
+}
+
+static bool GammaRampEqual(const D3DGAMMARAMP& a, const D3DGAMMARAMP& b) {
+  return std::memcmp(&a, &b, sizeof(D3DGAMMARAMP)) == 0;
+}
+
 static HRESULT CreateDeviceExWithFallback(IDirect3D9Ex* d3d,
                                          HWND hwnd,
                                          D3DPRESENT_PARAMETERS* pp,
@@ -465,6 +478,53 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
     }
   }
 
+  // Clip status round-trip (cached state). Some runtimes may reject this legacy
+  // fixed-function path; treat D3DERR_INVALIDCALL as a supported skip.
+  {
+    D3DCLIPSTATUS9 set_cs;
+    ZeroMemory(&set_cs, sizeof(set_cs));
+    set_cs.ClipUnion = 0x3;
+    set_cs.ClipIntersection = 0x1;
+    set_cs.Extents.x1 = 1;
+    set_cs.Extents.y1 = 2;
+    set_cs.Extents.x2 = 3;
+    set_cs.Extents.y2 = 4;
+
+    hr = dev->SetClipStatus(&set_cs);
+    if (FAILED(hr)) {
+      if (hr == D3DERR_INVALIDCALL) {
+        aerogpu_test::PrintfStdout("INFO: %s: skipping Set/GetClipStatus (Set failed hr=0x%08lX)",
+                                   kTestName,
+                                   (unsigned long)hr);
+      } else {
+        return reporter.FailHresult("SetClipStatus", hr);
+      }
+    } else {
+      D3DCLIPSTATUS9 got_cs;
+      ZeroMemory(&got_cs, sizeof(got_cs));
+      hr = dev->GetClipStatus(&got_cs);
+      if (FAILED(hr)) {
+        return reporter.FailHresult("GetClipStatus", hr);
+      }
+      if (!ClipStatusEqual(got_cs, set_cs)) {
+        return reporter.Fail("GetClipStatus mismatch: got={Union=0x%08lX Inter=0x%08lX Ext={%ld,%ld,%ld,%ld}} "
+                             "expected={Union=0x%08lX Inter=0x%08lX Ext={%ld,%ld,%ld,%ld}}",
+                             (unsigned long)got_cs.ClipUnion,
+                             (unsigned long)got_cs.ClipIntersection,
+                             (long)got_cs.Extents.x1,
+                             (long)got_cs.Extents.y1,
+                             (long)got_cs.Extents.x2,
+                             (long)got_cs.Extents.y2,
+                             (unsigned long)set_cs.ClipUnion,
+                             (unsigned long)set_cs.ClipIntersection,
+                             (long)set_cs.Extents.x1,
+                             (long)set_cs.Extents.y1,
+                             (long)set_cs.Extents.x2,
+                             (long)set_cs.Extents.y2);
+      }
+    }
+  }
+
   // StreamSourceFreq (cached state).
   {
     const UINT kStream = 0;
@@ -685,6 +745,82 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
     }
   }
 
+  // Palette entries + current texture palette (cached state). Some runtimes may
+  // reject palette state when palettized textures are unsupported; treat
+  // D3DERR_INVALIDCALL as a supported skip.
+  {
+    const UINT kPalette = 3;
+    PALETTEENTRY entries_set[256];
+    for (int i = 0; i < 256; ++i) {
+      entries_set[i].peRed = static_cast<BYTE>(i);
+      entries_set[i].peGreen = static_cast<BYTE>(255 - i);
+      entries_set[i].peBlue = static_cast<BYTE>(i ^ 0x55);
+      entries_set[i].peFlags = 0;
+    }
+
+    hr = dev->SetPaletteEntries(kPalette, entries_set);
+    if (FAILED(hr)) {
+      if (hr == D3DERR_INVALIDCALL) {
+        aerogpu_test::PrintfStdout("INFO: %s: skipping Set/GetPaletteEntries (Set failed hr=0x%08lX)",
+                                   kTestName,
+                                   (unsigned long)hr);
+      } else {
+        return reporter.FailHresult("SetPaletteEntries", hr);
+      }
+    } else {
+      PALETTEENTRY entries_got[256];
+      std::memset(entries_got, 0, sizeof(entries_got));
+      hr = dev->GetPaletteEntries(kPalette, entries_got);
+      if (FAILED(hr)) {
+        return reporter.FailHresult("GetPaletteEntries", hr);
+      }
+      if (std::memcmp(entries_got, entries_set, sizeof(entries_set)) != 0) {
+        return reporter.Fail("GetPaletteEntries mismatch");
+      }
+    }
+
+    hr = dev->SetCurrentTexturePalette(kPalette);
+    if (FAILED(hr)) {
+      if (hr == D3DERR_INVALIDCALL) {
+        aerogpu_test::PrintfStdout("INFO: %s: skipping Set/GetCurrentTexturePalette (Set failed hr=0x%08lX)",
+                                   kTestName,
+                                   (unsigned long)hr);
+      } else {
+        return reporter.FailHresult("SetCurrentTexturePalette", hr);
+      }
+    } else {
+      UINT got = 0;
+      hr = dev->GetCurrentTexturePalette(&got);
+      if (FAILED(hr)) {
+        return reporter.FailHresult("GetCurrentTexturePalette", hr);
+      }
+      if (got != kPalette) {
+        return reporter.Fail("GetCurrentTexturePalette mismatch: got=%u expected=%u", (unsigned)got, (unsigned)kPalette);
+      }
+    }
+  }
+
+  // Gamma ramp round-trip (cached state). In windowed mode, some runtimes ignore
+  // SetGammaRamp; treat mismatch as a supported skip.
+  {
+    D3DGAMMARAMP ramp_set;
+    ZeroMemory(&ramp_set, sizeof(ramp_set));
+    for (int i = 0; i < 256; ++i) {
+      const WORD v = static_cast<WORD>(i * 257u);
+      ramp_set.red[i] = v;
+      ramp_set.green[i] = static_cast<WORD>((255 - i) * 257u);
+      ramp_set.blue[i] = v;
+    }
+    dev->SetGammaRamp(0, 0, &ramp_set);
+    D3DGAMMARAMP ramp_got;
+    ZeroMemory(&ramp_got, sizeof(ramp_got));
+    dev->GetGammaRamp(0, &ramp_got);
+    if (!GammaRampEqual(ramp_got, ramp_set)) {
+      aerogpu_test::PrintfStdout("INFO: %s: skipping Set/GetGammaRamp (mismatch; runtime may ignore gamma ramp in windowed mode)",
+                                 kTestName);
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // StateBlock round-trip: record state, clobber, apply, validate.
   // ---------------------------------------------------------------------------
@@ -741,6 +877,53 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
   const float npatch_clobber = 0.0f;
   bool npatch_test = false;
 
+  D3DCLIPSTATUS9 clip_status_sb;
+  ZeroMemory(&clip_status_sb, sizeof(clip_status_sb));
+  clip_status_sb.ClipUnion = 0x9;
+  clip_status_sb.ClipIntersection = 0x3;
+  clip_status_sb.Extents.x1 = 5;
+  clip_status_sb.Extents.y1 = 6;
+  clip_status_sb.Extents.x2 = 7;
+  clip_status_sb.Extents.y2 = 8;
+  D3DCLIPSTATUS9 clip_status_clobber = clip_status_sb;
+  clip_status_clobber.ClipUnion = 0x1;
+  clip_status_clobber.Extents.x1 = -1;
+  clip_status_clobber.Extents.y1 = -2;
+  bool clip_status_test = false;
+
+  const UINT palette_idx_sb = 7;
+  const UINT palette_idx_clobber = 1;
+  PALETTEENTRY palette_entries_sb[256];
+  PALETTEENTRY palette_entries_clobber[256];
+  for (int i = 0; i < 256; ++i) {
+    palette_entries_sb[i].peRed = static_cast<BYTE>(i);
+    palette_entries_sb[i].peGreen = static_cast<BYTE>(i ^ 0x3c);
+    palette_entries_sb[i].peBlue = static_cast<BYTE>(255 - i);
+    palette_entries_sb[i].peFlags = 0;
+
+    palette_entries_clobber[i].peRed = static_cast<BYTE>(255 - i);
+    palette_entries_clobber[i].peGreen = static_cast<BYTE>(i);
+    palette_entries_clobber[i].peBlue = static_cast<BYTE>(i ^ 0xa5);
+    palette_entries_clobber[i].peFlags = 0;
+  }
+  bool palette_test = false;
+  bool current_palette_test = false;
+
+  D3DGAMMARAMP gamma_ramp_sb;
+  ZeroMemory(&gamma_ramp_sb, sizeof(gamma_ramp_sb));
+  D3DGAMMARAMP gamma_ramp_clobber;
+  ZeroMemory(&gamma_ramp_clobber, sizeof(gamma_ramp_clobber));
+  for (int i = 0; i < 256; ++i) {
+    gamma_ramp_sb.red[i] = static_cast<WORD>(i * 257u);
+    gamma_ramp_sb.green[i] = static_cast<WORD>(i * 257u);
+    gamma_ramp_sb.blue[i] = static_cast<WORD>(i * 257u);
+
+    gamma_ramp_clobber.red[i] = static_cast<WORD>((255 - i) * 257u);
+    gamma_ramp_clobber.green[i] = static_cast<WORD>((255 - i) * 257u);
+    gamma_ramp_clobber.blue[i] = static_cast<WORD>((255 - i) * 257u);
+  }
+  bool gamma_ramp_test = false;
+
   ComPtr<IDirect3DStateBlock9> sb;
   hr = dev->BeginStateBlock();
   if (FAILED(hr)) {
@@ -778,6 +961,27 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
     return reporter.FailHresult("SetTextureStageState(D3DTSS_COLOROP) (stateblock)", hr);
   }
 
+  hr = dev->SetPaletteEntries(palette_idx_sb, palette_entries_sb);
+  if (FAILED(hr)) {
+    aerogpu_test::PrintfStdout("INFO: %s: skipping StateBlock Set/GetPaletteEntries (Set in stateblock failed hr=0x%08lX)",
+                               kTestName,
+                               (unsigned long)hr);
+  } else {
+    palette_test = true;
+  }
+
+  hr = dev->SetCurrentTexturePalette(palette_idx_sb);
+  if (FAILED(hr)) {
+    aerogpu_test::PrintfStdout(
+        "INFO: %s: skipping StateBlock Set/GetCurrentTexturePalette (Set in stateblock failed hr=0x%08lX)",
+        kTestName,
+        (unsigned long)hr);
+  } else {
+    current_palette_test = true;
+  }
+
+  dev->SetGammaRamp(0, 0, &gamma_ramp_sb);
+
   D3DMATRIX world_sb = world_a;
   world_sb._11 = 111.0f;
   world_sb._22 = 222.0f;
@@ -798,6 +1002,15 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
                                (unsigned long)hr);
   } else {
     clip_plane_test = true;
+  }
+
+  hr = dev->SetClipStatus(&clip_status_sb);
+  if (FAILED(hr)) {
+    aerogpu_test::PrintfStdout("INFO: %s: skipping StateBlock Set/GetClipStatus (Set in stateblock failed hr=0x%08lX)",
+                               kTestName,
+                               (unsigned long)hr);
+  } else {
+    clip_status_test = true;
   }
 
   hr = dev->SetLight(0, &light_sb);
@@ -859,6 +1072,22 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
     return reporter.FailHresult("EndStateBlock", hr);
   }
 
+  // Validate we can observe the gamma ramp in this runtime configuration; some
+  // windowed runtimes ignore SetGammaRamp.
+  {
+    D3DGAMMARAMP got;
+    ZeroMemory(&got, sizeof(got));
+    dev->GetGammaRamp(0, &got);
+    if (!GammaRampEqual(got, gamma_ramp_sb)) {
+      aerogpu_test::PrintfStdout(
+          "INFO: %s: skipping StateBlock Set/GetGammaRamp (runtime may ignore gamma ramp in windowed mode)",
+          kTestName);
+      gamma_ramp_test = false;
+    } else {
+      gamma_ramp_test = true;
+    }
+  }
+
   // Clobber state.
   {
     hr = dev->SetRenderState(D3DRS_ZENABLE, (DWORD)D3DZB_TRUE);
@@ -896,6 +1125,31 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
       return reporter.FailHresult("SetTextureStageState(D3DTSS_COLOROP) (clobber)", hr);
     }
 
+    if (palette_test) {
+      hr = dev->SetPaletteEntries(palette_idx_sb, palette_entries_clobber);
+      if (FAILED(hr)) {
+        aerogpu_test::PrintfStdout("INFO: %s: skipping StateBlock Set/GetPaletteEntries (clobber Set failed hr=0x%08lX)",
+                                   kTestName,
+                                   (unsigned long)hr);
+        palette_test = false;
+      }
+    }
+
+    if (current_palette_test) {
+      hr = dev->SetCurrentTexturePalette(palette_idx_clobber);
+      if (FAILED(hr)) {
+        aerogpu_test::PrintfStdout(
+            "INFO: %s: skipping StateBlock Set/GetCurrentTexturePalette (clobber Set failed hr=0x%08lX)",
+            kTestName,
+            (unsigned long)hr);
+        current_palette_test = false;
+      }
+    }
+
+    if (gamma_ramp_test) {
+      dev->SetGammaRamp(0, 0, &gamma_ramp_clobber);
+    }
+
     hr = dev->SetMaterial(&mat_clobber);
     if (FAILED(hr)) {
       return reporter.FailHresult("SetMaterial (clobber)", hr);
@@ -908,6 +1162,16 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
                                    kTestName,
                                    (unsigned long)hr);
         clip_plane_test = false;
+      }
+    }
+
+    if (clip_status_test) {
+      hr = dev->SetClipStatus(&clip_status_clobber);
+      if (FAILED(hr)) {
+        aerogpu_test::PrintfStdout("INFO: %s: skipping StateBlock Set/GetClipStatus (clobber Set failed hr=0x%08lX)",
+                                   kTestName,
+                                   (unsigned long)hr);
+        clip_status_test = false;
       }
     }
 
@@ -1150,6 +1414,54 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
                              (unsigned)stream_freq_sb);
       }
     }
+
+    if (clip_status_test) {
+      D3DCLIPSTATUS9 got_cs;
+      ZeroMemory(&got_cs, sizeof(got_cs));
+      hr = dev->GetClipStatus(&got_cs);
+      if (FAILED(hr)) {
+        return reporter.FailHresult("GetClipStatus (after Apply)", hr);
+      }
+      if (!ClipStatusEqual(got_cs, clip_status_sb)) {
+        return reporter.Fail("stateblock restore mismatch: ClipStatus");
+      }
+    }
+
+    if (palette_test) {
+      PALETTEENTRY got_entries[256];
+      std::memset(got_entries, 0, sizeof(got_entries));
+      hr = dev->GetPaletteEntries(palette_idx_sb, got_entries);
+      if (FAILED(hr)) {
+        return reporter.FailHresult("GetPaletteEntries (after Apply)", hr);
+      }
+      if (std::memcmp(got_entries, palette_entries_sb, sizeof(palette_entries_sb)) != 0) {
+        return reporter.Fail("stateblock restore mismatch: PaletteEntries");
+      }
+    }
+
+    if (current_palette_test) {
+      UINT got = 0;
+      hr = dev->GetCurrentTexturePalette(&got);
+      if (FAILED(hr)) {
+        return reporter.FailHresult("GetCurrentTexturePalette (after Apply)", hr);
+      }
+      if (got != palette_idx_sb) {
+        return reporter.Fail("stateblock restore mismatch: CurrentTexturePalette got=%u expected=%u",
+                             (unsigned)got,
+                             (unsigned)palette_idx_sb);
+      }
+    }
+
+    if (gamma_ramp_test) {
+      D3DGAMMARAMP got;
+      ZeroMemory(&got, sizeof(got));
+      dev->GetGammaRamp(0, &got);
+      if (!GammaRampEqual(got, gamma_ramp_sb)) {
+        aerogpu_test::PrintfStdout(
+            "INFO: %s: skipping StateBlock GetGammaRamp validate (mismatch; runtime may ignore gamma ramp in windowed mode)",
+            kTestName);
+      }
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -1166,6 +1478,28 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
     hr = dev->SetTransform(D3DTS_WORLD, &world_0);
     if (FAILED(hr)) {
       return reporter.FailHresult("SetTransform (pre CreateStateBlock)", hr);
+    }
+
+    D3DCLIPSTATUS9 clip_status_0;
+    ZeroMemory(&clip_status_0, sizeof(clip_status_0));
+    clip_status_0.ClipUnion = 0x11;
+    clip_status_0.ClipIntersection = 0x22;
+    clip_status_0.Extents.x1 = 10;
+    clip_status_0.Extents.y1 = 20;
+    clip_status_0.Extents.x2 = 30;
+    clip_status_0.Extents.y2 = 40;
+    D3DCLIPSTATUS9 clip_status_1 = clip_status_0;
+    clip_status_1.ClipUnion = 0x33;
+    clip_status_1.Extents.x1 = -5;
+    clip_status_1.Extents.y1 = -6;
+    bool clip_status_ok = false;
+    hr = dev->SetClipStatus(&clip_status_0);
+    if (FAILED(hr)) {
+      aerogpu_test::PrintfStdout("INFO: %s: skipping CreateStateBlock ClipStatus (Set failed hr=0x%08lX)",
+                                 kTestName,
+                                 (unsigned long)hr);
+    } else {
+      clip_status_ok = true;
     }
 
     const UINT freq_0 = 5;
@@ -1242,6 +1576,17 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
         }
       }
 
+      if (clip_status_ok) {
+        hr = dev->SetClipStatus(&clip_status_1);
+        if (FAILED(hr)) {
+          aerogpu_test::PrintfStdout(
+              "INFO: %s: disabling CreateStateBlock ClipStatus baseline check (clobber Set failed hr=0x%08lX)",
+              kTestName,
+              (unsigned long)hr);
+          clip_status_ok = false;
+        }
+      }
+
       hr = sb_vertex->Apply();
       if (FAILED(hr)) {
         return reporter.FailHresult("StateBlock::Apply (vertex baseline)", hr);
@@ -1278,6 +1623,18 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
                                (unsigned)freq_0);
         }
       }
+
+      if (clip_status_ok) {
+        D3DCLIPSTATUS9 got_cs;
+        ZeroMemory(&got_cs, sizeof(got_cs));
+        hr = dev->GetClipStatus(&got_cs);
+        if (FAILED(hr)) {
+          return reporter.FailHresult("GetClipStatus (after Apply vertex baseline)", hr);
+        }
+        if (!ClipStatusEqual(got_cs, clip_status_0)) {
+          return reporter.Fail("CreateStateBlock baseline mismatch: ClipStatus");
+        }
+      }
     }
 
     // Mutate state to a second configuration, then Capture() it.
@@ -1287,6 +1644,16 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
     hr = dev->SetTransform(D3DTS_WORLD, &world_1);
     if (FAILED(hr)) {
       return reporter.FailHresult("SetTransform (pre Capture)", hr);
+    }
+
+    if (clip_status_ok) {
+      hr = dev->SetClipStatus(&clip_status_1);
+      if (FAILED(hr)) {
+        aerogpu_test::PrintfStdout("INFO: %s: disabling CreateStateBlock ClipStatus check (Set pre Capture failed hr=0x%08lX)",
+                                   kTestName,
+                                   (unsigned long)hr);
+        clip_status_ok = false;
+      }
     }
 
     const UINT freq_1 = 9;
@@ -1347,6 +1714,17 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
       return reporter.FailHresult("SetVertexShaderConstantI (pre Apply)", hr);
     }
 
+    if (clip_status_ok) {
+      hr = dev->SetClipStatus(&clip_status_0);
+      if (FAILED(hr)) {
+        aerogpu_test::PrintfStdout(
+            "INFO: %s: disabling CreateStateBlock ClipStatus check (clobber Set failed hr=0x%08lX)",
+            kTestName,
+            (unsigned long)hr);
+        clip_status_ok = false;
+      }
+    }
+
     hr = sb_vertex->Apply();
     if (FAILED(hr)) {
       return reporter.FailHresult("StateBlock::Apply (vertex)", hr);
@@ -1382,6 +1760,18 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
         return reporter.Fail("CreateStateBlock restore mismatch: StreamSourceFreq got=%u expected=%u",
                              (unsigned)got_freq,
                              (unsigned)freq_1);
+      }
+    }
+
+    if (clip_status_ok) {
+      D3DCLIPSTATUS9 got_cs;
+      ZeroMemory(&got_cs, sizeof(got_cs));
+      hr = dev->GetClipStatus(&got_cs);
+      if (FAILED(hr)) {
+        return reporter.FailHresult("GetClipStatus (after Apply vertex)", hr);
+      }
+      if (!ClipStatusEqual(got_cs, clip_status_1)) {
+        return reporter.Fail("CreateStateBlock restore mismatch: ClipStatus");
       }
     }
 
@@ -1461,6 +1851,77 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
       return reporter.FailHresult("SetScissorRect (pre CreateStateBlock pixel)", hr);
     }
 
+    // Palette / gamma ramp are legacy cached-only state. Some runtimes may reject
+    // palettes (when palettized textures are unsupported) and some windowed
+    // runtimes may ignore gamma ramps.
+    const UINT palette_idx_0 = 5;
+    const UINT current_palette_0 = palette_idx_0;
+    const UINT current_palette_1 = palette_idx_0 + 1;
+
+    PALETTEENTRY palette_0[256];
+    PALETTEENTRY palette_1[256];
+    for (int i = 0; i < 256; ++i) {
+      palette_0[i].peRed = static_cast<BYTE>(i);
+      palette_0[i].peGreen = static_cast<BYTE>(255 - i);
+      palette_0[i].peBlue = static_cast<BYTE>(i ^ 0x5a);
+      palette_0[i].peFlags = 0;
+
+      palette_1[i].peRed = static_cast<BYTE>(255 - i);
+      palette_1[i].peGreen = static_cast<BYTE>(i);
+      palette_1[i].peBlue = static_cast<BYTE>(i ^ 0xa5);
+      palette_1[i].peFlags = 0;
+    }
+
+    bool palette_ok = false;
+    hr = dev->SetPaletteEntries(palette_idx_0, palette_0);
+    if (FAILED(hr)) {
+      aerogpu_test::PrintfStdout("INFO: %s: skipping CreateStateBlock PaletteEntries (Set failed hr=0x%08lX)",
+                                 kTestName,
+                                 (unsigned long)hr);
+    } else {
+      palette_ok = true;
+    }
+
+    bool current_palette_ok = false;
+    hr = dev->SetCurrentTexturePalette(current_palette_0);
+    if (FAILED(hr)) {
+      aerogpu_test::PrintfStdout("INFO: %s: skipping CreateStateBlock CurrentTexturePalette (Set failed hr=0x%08lX)",
+                                 kTestName,
+                                 (unsigned long)hr);
+    } else {
+      current_palette_ok = true;
+    }
+
+    D3DGAMMARAMP gamma_0;
+    ZeroMemory(&gamma_0, sizeof(gamma_0));
+    D3DGAMMARAMP gamma_1;
+    ZeroMemory(&gamma_1, sizeof(gamma_1));
+    for (int i = 0; i < 256; ++i) {
+      const WORD v0 = static_cast<WORD>(i * 257u);
+      const WORD v1 = static_cast<WORD>((255 - i) * 257u);
+      gamma_0.red[i] = v0;
+      gamma_0.green[i] = v0;
+      gamma_0.blue[i] = v0;
+      gamma_1.red[i] = v1;
+      gamma_1.green[i] = v1;
+      gamma_1.blue[i] = v1;
+    }
+    bool gamma_ok = false;
+    dev->SetGammaRamp(0, 0, &gamma_0);
+    {
+      D3DGAMMARAMP got;
+      ZeroMemory(&got, sizeof(got));
+      dev->GetGammaRamp(0, &got);
+      if (!GammaRampEqual(got, gamma_0)) {
+        aerogpu_test::PrintfStdout(
+            "INFO: %s: skipping CreateStateBlock GammaRamp (runtime may ignore gamma ramp in windowed mode)",
+            kTestName);
+        gamma_ok = false;
+      } else {
+        gamma_ok = true;
+      }
+    }
+
     // Capture the baseline via CreateStateBlock.
     hr = dev->CreateStateBlock(D3DSBT_PIXELSTATE, sb_pixel.put());
     if (FAILED(hr) || !sb_pixel) {
@@ -1503,6 +1964,32 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
       hr = dev->SetScissorRect(&scissor_clobber);
       if (FAILED(hr)) {
         return reporter.FailHresult("SetScissorRect (clobber pre Apply pixel baseline)", hr);
+      }
+
+      if (palette_ok) {
+        hr = dev->SetPaletteEntries(palette_idx_0, palette_1);
+        if (FAILED(hr)) {
+          aerogpu_test::PrintfStdout(
+              "INFO: %s: disabling CreateStateBlock PaletteEntries baseline check (clobber Set failed hr=0x%08lX)",
+              kTestName,
+              (unsigned long)hr);
+          palette_ok = false;
+        }
+      }
+
+      if (current_palette_ok) {
+        hr = dev->SetCurrentTexturePalette(current_palette_1);
+        if (FAILED(hr)) {
+          aerogpu_test::PrintfStdout(
+              "INFO: %s: disabling CreateStateBlock CurrentTexturePalette baseline check (clobber Set failed hr=0x%08lX)",
+              kTestName,
+              (unsigned long)hr);
+          current_palette_ok = false;
+        }
+      }
+
+      if (gamma_ok) {
+        dev->SetGammaRamp(0, 0, &gamma_1);
       }
 
       hr = sb_pixel->Apply();
@@ -1582,6 +2069,43 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
           got_scissor.right != scissor_0.right || got_scissor.bottom != scissor_0.bottom) {
         return reporter.Fail("CreateStateBlock baseline mismatch: ScissorRect");
       }
+
+      if (palette_ok) {
+        PALETTEENTRY got_pal[256];
+        std::memset(got_pal, 0, sizeof(got_pal));
+        hr = dev->GetPaletteEntries(palette_idx_0, got_pal);
+        if (FAILED(hr)) {
+          return reporter.FailHresult("GetPaletteEntries (after Apply pixel baseline)", hr);
+        }
+        if (std::memcmp(got_pal, palette_0, sizeof(palette_0)) != 0) {
+          return reporter.Fail("CreateStateBlock baseline mismatch: PaletteEntries");
+        }
+      }
+
+      if (current_palette_ok) {
+        UINT got = 0;
+        hr = dev->GetCurrentTexturePalette(&got);
+        if (FAILED(hr)) {
+          return reporter.FailHresult("GetCurrentTexturePalette (after Apply pixel baseline)", hr);
+        }
+        if (got != current_palette_0) {
+          return reporter.Fail("CreateStateBlock baseline mismatch: CurrentTexturePalette got=%u expected=%u",
+                               (unsigned)got,
+                               (unsigned)current_palette_0);
+        }
+      }
+
+      if (gamma_ok) {
+        D3DGAMMARAMP got;
+        ZeroMemory(&got, sizeof(got));
+        dev->GetGammaRamp(0, &got);
+        if (!GammaRampEqual(got, gamma_0)) {
+          aerogpu_test::PrintfStdout(
+              "INFO: %s: disabling CreateStateBlock GammaRamp baseline check (mismatch; runtime may ignore gamma ramp in windowed mode)",
+              kTestName);
+          gamma_ok = false;
+        }
+      }
     }
 
     // Mutate state to a second configuration, then Capture() it.
@@ -1626,6 +2150,32 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
       return reporter.FailHresult("SetScissorRect (pre Capture pixel)", hr);
     }
 
+    if (palette_ok) {
+      hr = dev->SetPaletteEntries(palette_idx_0, palette_1);
+      if (FAILED(hr)) {
+        aerogpu_test::PrintfStdout(
+            "INFO: %s: disabling CreateStateBlock PaletteEntries check (Set pre Capture failed hr=0x%08lX)",
+            kTestName,
+            (unsigned long)hr);
+        palette_ok = false;
+      }
+    }
+
+    if (current_palette_ok) {
+      hr = dev->SetCurrentTexturePalette(current_palette_1);
+      if (FAILED(hr)) {
+        aerogpu_test::PrintfStdout(
+            "INFO: %s: disabling CreateStateBlock CurrentTexturePalette check (Set pre Capture failed hr=0x%08lX)",
+            kTestName,
+            (unsigned long)hr);
+        current_palette_ok = false;
+      }
+    }
+
+    if (gamma_ok) {
+      dev->SetGammaRamp(0, 0, &gamma_1);
+    }
+
     hr = sb_pixel->Capture();
     if (FAILED(hr)) {
       return reporter.FailHresult("StateBlock::Capture (pixel)", hr);
@@ -1668,6 +2218,32 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
     hr = dev->SetScissorRect(&scissor_2);
     if (FAILED(hr)) {
       return reporter.FailHresult("SetScissorRect (pre Apply pixel)", hr);
+    }
+
+    if (palette_ok) {
+      hr = dev->SetPaletteEntries(palette_idx_0, palette_0);
+      if (FAILED(hr)) {
+        aerogpu_test::PrintfStdout(
+            "INFO: %s: disabling CreateStateBlock PaletteEntries check (clobber Set failed hr=0x%08lX)",
+            kTestName,
+            (unsigned long)hr);
+        palette_ok = false;
+      }
+    }
+
+    if (current_palette_ok) {
+      hr = dev->SetCurrentTexturePalette(current_palette_0);
+      if (FAILED(hr)) {
+        aerogpu_test::PrintfStdout(
+            "INFO: %s: disabling CreateStateBlock CurrentTexturePalette check (clobber Set failed hr=0x%08lX)",
+            kTestName,
+            (unsigned long)hr);
+        current_palette_ok = false;
+      }
+    }
+
+    if (gamma_ok) {
+      dev->SetGammaRamp(0, 0, &gamma_0);
     }
 
     hr = sb_pixel->Apply();
@@ -1747,6 +2323,42 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
     if (got_scissor.left != scissor_1.left || got_scissor.top != scissor_1.top ||
         got_scissor.right != scissor_1.right || got_scissor.bottom != scissor_1.bottom) {
       return reporter.Fail("CreateStateBlock restore mismatch: ScissorRect");
+    }
+
+    if (palette_ok) {
+      PALETTEENTRY got_pal[256];
+      std::memset(got_pal, 0, sizeof(got_pal));
+      hr = dev->GetPaletteEntries(palette_idx_0, got_pal);
+      if (FAILED(hr)) {
+        return reporter.FailHresult("GetPaletteEntries (after Apply pixel)", hr);
+      }
+      if (std::memcmp(got_pal, palette_1, sizeof(palette_1)) != 0) {
+        return reporter.Fail("CreateStateBlock restore mismatch: PaletteEntries");
+      }
+    }
+
+    if (current_palette_ok) {
+      UINT got = 0;
+      hr = dev->GetCurrentTexturePalette(&got);
+      if (FAILED(hr)) {
+        return reporter.FailHresult("GetCurrentTexturePalette (after Apply pixel)", hr);
+      }
+      if (got != current_palette_1) {
+        return reporter.Fail("CreateStateBlock restore mismatch: CurrentTexturePalette got=%u expected=%u",
+                             (unsigned)got,
+                             (unsigned)current_palette_1);
+      }
+    }
+
+    if (gamma_ok) {
+      D3DGAMMARAMP got;
+      ZeroMemory(&got, sizeof(got));
+      dev->GetGammaRamp(0, &got);
+      if (!GammaRampEqual(got, gamma_1)) {
+        aerogpu_test::PrintfStdout(
+            "INFO: %s: skipping CreateStateBlock GetGammaRamp validate (mismatch; runtime may ignore gamma ramp in windowed mode)",
+            kTestName);
+      }
     }
   }
 
