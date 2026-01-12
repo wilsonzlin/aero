@@ -62,6 +62,27 @@ test("canonical Machine panel: renders VGA scanout to a canvas", async ({ page }
 
   await page.waitForFunction(() => (window as any).__aeroMachinePanelTest?.framesPresented > 0);
 
+  const vgaMeta = await page.evaluate(() => (window as any).__aeroMachinePanelTest);
+  expect(vgaMeta).toBeTruthy();
+  if (vgaMeta && typeof vgaMeta === "object") {
+    // Transport telemetry is best-effort (older builds may not expose it), but when
+    // present it should indicate a concrete render path once frames are flowing.
+    const transport = (vgaMeta as any).transport;
+    if (transport !== undefined) {
+      expect(transport === "ptr" || transport === "copy").toBe(true);
+    }
+    const width = (vgaMeta as any).width;
+    const height = (vgaMeta as any).height;
+    const strideBytes = (vgaMeta as any).strideBytes;
+    if (typeof width === "number" && typeof height === "number") {
+      expect(width).toBeGreaterThan(0);
+      expect(height).toBeGreaterThan(0);
+    }
+    if (typeof strideBytes === "number") {
+      expect(strideBytes).toBeGreaterThan(0);
+    }
+  }
+
   const sample = await page.evaluate(() => {
     const canvas = document.getElementById("canonical-machine-vga-canvas") as HTMLCanvasElement | null;
     if (!canvas) throw new Error("canonical machine canvas missing");
