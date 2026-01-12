@@ -30,6 +30,12 @@ fn read_ahci_bar5_base(pc: &mut PcPlatform) -> u64 {
     u64::from(bar5 & 0xffff_fff0)
 }
 
+fn write_cfg_u32(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8, value: u32) {
+    pc.io
+        .write(0xCF8, 4, cfg_addr(bus, device, function, offset));
+    pc.io.write(0xCFC, 4, value);
+}
+
 const HBA_GHC: u64 = 0x04;
 
 const PORT_BASE: u64 = 0x100;
@@ -120,6 +126,59 @@ fn pc_platform_enumerates_ahci_and_assigns_bar5() {
     // Smoke-test that the MMIO route is live (AHCI VS register).
     let vs = pc.memory.read_u32(bar5_base + 0x10);
     assert_eq!(vs, 0x0001_0300);
+}
+
+#[test]
+fn pc_platform_gates_ahci_mmio_on_pci_command_register() {
+    let mut pc = PcPlatform::new_with_ahci(2 * 1024 * 1024);
+    let bdf = SATA_AHCI_ICH9.bdf;
+    let bar5_base = read_ahci_bar5_base(&mut pc);
+
+    // Program a known value into GHC with memory decoding enabled.
+    pc.memory
+        .write_u32(bar5_base + HBA_GHC, GHC_AE | GHC_IE);
+    assert_eq!(pc.memory.read_u32(bar5_base + HBA_GHC) & (GHC_AE | GHC_IE), GHC_AE | GHC_IE);
+
+    // Disable PCI memory decoding: MMIO should behave like an unmapped region (reads return 0xFF).
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0000);
+    assert_eq!(pc.memory.read_u32(bar5_base + HBA_GHC), 0xFFFF_FFFF);
+
+    // Writes should be ignored while decoding is disabled.
+    pc.memory.write_u32(bar5_base + HBA_GHC, 0);
+
+    // Re-enable decoding: state should reflect that the write above did not reach the device.
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0002);
+    assert_eq!(pc.memory.read_u32(bar5_base + HBA_GHC) & (GHC_AE | GHC_IE), GHC_AE | GHC_IE);
+}
+
+#[test]
+fn pc_platform_routes_ahci_mmio_after_bar5_reprogramming() {
+    let mut pc = PcPlatform::new_with_ahci(2 * 1024 * 1024);
+    let bdf = SATA_AHCI_ICH9.bdf;
+
+    let bar5_base = read_ahci_bar5_base(&mut pc);
+    let new_base = bar5_base + 0x20_000;
+    assert_eq!(new_base % 0x2000, 0);
+
+    pc.memory
+        .write_u32(bar5_base + HBA_GHC, GHC_AE | GHC_IE);
+    assert_eq!(pc.memory.read_u32(bar5_base + HBA_GHC) & (GHC_AE | GHC_IE), GHC_AE | GHC_IE);
+
+    // Move BAR5 within the platform's PCI MMIO window.
+    write_cfg_u32(
+        &mut pc,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        0x24,
+        new_base as u32,
+    );
+
+    // Old base should no longer decode.
+    assert_eq!(pc.memory.read_u32(bar5_base + HBA_GHC), 0xFFFF_FFFF);
+
+    // New base should decode and preserve controller state.
+    assert_eq!(pc.memory.read_u32(new_base + HBA_GHC) & (GHC_AE | GHC_IE), GHC_AE | GHC_IE);
 }
 
 #[test]
