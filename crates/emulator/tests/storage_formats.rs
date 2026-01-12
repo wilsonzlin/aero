@@ -312,6 +312,20 @@ fn detect_vhd_cookie_without_plausible_footer_is_raw() {
 }
 
 #[test]
+fn detect_fixed_vhd_footer_at_offset0_without_eof_footer_is_raw() {
+    // If a file begins with bytes that resemble a valid fixed VHD footer, but does not contain
+    // the required EOF footer, format detection should not eagerly classify it as a VHD.
+    let current_size = 512u64;
+    let footer = make_vhd_footer(current_size, 2, u64::MAX);
+
+    // File length is only data + a single footer-sized block, which is insufficient to contain a
+    // footer copy and the required EOF footer.
+    let mut storage = MemStorage::with_len((current_size + 512) as usize);
+    storage.write_at(0, &footer).unwrap();
+    assert_eq!(detect_format(&mut storage).unwrap(), DiskFormat::Raw);
+}
+
+#[test]
 fn detect_aerospar_header_is_detected_as_sparse() {
     let storage = MemStorage::default();
     let disk = emulator::io::storage::formats::SparseDisk::create(storage, 512, 32, 1024).unwrap();

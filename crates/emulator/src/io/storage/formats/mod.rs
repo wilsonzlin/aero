@@ -44,7 +44,24 @@ pub fn detect_format<S: ByteStorage>(storage: &mut S) -> DiskResult<DiskFormat> 
         // Dynamic VHDs (and some fixed disks) store a footer copy at offset 0.
         storage.read_at(0, &mut footer)?;
         if looks_like_vhd_footer(&footer, len) {
-            return Ok(DiskFormat::Vhd);
+            // For fixed disks, a valid footer at offset 0 implies an optional footer copy, meaning
+            // the file must be large enough to contain:
+            //   footer_copy (512) + data (current_size) + eof_footer (512)
+            //
+            // Without this check, a raw disk image whose first sector coincidentally resembles a
+            // VHD footer could be misclassified as VHD and then fail to open.
+            let disk_type = be_u32(&footer[60..64]);
+            if disk_type == 2 {
+                let current_size = be_u64(&footer[48..56]);
+                let Some(required) = current_size.checked_add(1024) else {
+                    return Ok(DiskFormat::Raw);
+                };
+                if len >= required {
+                    return Ok(DiskFormat::Vhd);
+                }
+            } else {
+                return Ok(DiskFormat::Vhd);
+            }
         }
     }
 
