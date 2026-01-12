@@ -54,7 +54,13 @@ import {
   type SharedFramebufferLayout,
 } from "../ipc/shared-layout";
 
-import { SCANOUT_SOURCE_WDDM, snapshotScanoutState, type ScanoutStateSnapshot } from "../ipc/scanout_state";
+import {
+  SCANOUT_FORMAT_B8G8R8X8,
+  SCANOUT_SOURCE_WDDM,
+  publishScanoutState,
+  snapshotScanoutState,
+  type ScanoutStateSnapshot,
+} from "../ipc/scanout_state";
 
 import {
   FRAMEBUFFER_FORMAT_RGBA8888,
@@ -693,6 +699,28 @@ const refreshFramebufferViews = (): void => {
 
 const BYTES_PER_PIXEL_RGBA8 = 4;
 const COPY_BYTES_PER_ROW_ALIGNMENT = 256;
+
+const maybePublishWddmScanout = (width: number, height: number): void => {
+  const words = scanoutState;
+  if (!words) return;
+
+  const w = Math.max(0, width | 0) >>> 0;
+  const h = Math.max(0, height | 0) >>> 0;
+  const pitchBytes = Math.imul(w, BYTES_PER_PIXEL_RGBA8) >>> 0;
+  try {
+    publishScanoutState(words, {
+      source: SCANOUT_SOURCE_WDDM,
+      basePaddrLo: 0,
+      basePaddrHi: 0,
+      width: w,
+      height: h,
+      pitchBytes,
+      format: SCANOUT_FORMAT_B8G8R8X8,
+    });
+  } catch {
+    // Best-effort: scanoutState is optional and may be absent/malformed in some harnesses.
+  }
+};
 
 const alignUp = (value: number, align: number): number => {
   if (align <= 0) return value;
@@ -1572,6 +1600,10 @@ const presentOnce = async (): Promise<boolean> => {
 // -----------------------------------------------------------------------------
 
 const presentAerogpuTexture = (tex: AeroGpuCpuTexture): void => {
+  // Best-effort: once the AeroGPU command stream starts presenting, treat scanout as WDDM-owned so
+  // legacy shared-framebuffer demo frames can't "steal" the output.
+  maybePublishWddmScanout(tex.width, tex.height);
+
   if (!presenter) return;
 
   if (tex.width !== presenterSrcWidth || tex.height !== presenterSrcHeight) {
@@ -1730,6 +1762,7 @@ const handleSubmitAerogpu = async (req: GpuRuntimeSubmitAerogpuMessage): Promise
           aerogpuPresentCount += wasmDelta;
           presentCount = aerogpuPresentCount;
           const shot = await wasm.request_screenshot_info();
+          maybePublishWddmScanout(shot.width, shot.height);
           const requiredShotBytes = shot.width * shot.height * BYTES_PER_PIXEL_RGBA8;
           if (shot.width > 0 && shot.height > 0 && shot.rgba8.byteLength >= requiredShotBytes) {
             const frame = { width: shot.width, height: shot.height, rgba8: shot.rgba8 };
