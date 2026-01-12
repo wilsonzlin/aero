@@ -72,7 +72,17 @@ fn create_device() -> Option<(wgpu::Device, wgpu::Queue)> {
         }
     }
 
-    let instance = wgpu::Instance::default();
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+        // Prefer GL on Linux CI to avoid crashes in some Vulkan software adapters.
+        backends: if cfg!(target_os = "linux") {
+            wgpu::Backends::GL
+        } else {
+            wgpu::Backends::all()
+        },
+        dx12_shader_compiler: Default::default(),
+        flags: wgpu::InstanceFlags::default(),
+        gles_minor_version: wgpu::Gles3MinorVersion::Automatic,
+    });
     let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
         power_preference: wgpu::PowerPreference::LowPower,
         compatible_surface: None,
