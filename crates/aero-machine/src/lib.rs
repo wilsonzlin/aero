@@ -29,7 +29,7 @@ use aero_devices::a20_gate::A20Gate as A20GateDevice;
 use aero_devices::i8042::{I8042Ports, SharedI8042Controller};
 use aero_devices::reset_ctrl::{ResetCtrl, RESET_CTRL_PORT};
 use aero_devices::serial::{register_serial16550, Serial16550, SharedSerial16550};
-use aero_devices_input::Ps2MouseButton;
+pub use aero_devices_input::Ps2MouseButton;
 use aero_platform::chipset::{A20GateHandle, ChipsetState};
 use aero_platform::io::IoPortBus;
 use aero_platform::reset::{ResetKind, ResetLatch};
