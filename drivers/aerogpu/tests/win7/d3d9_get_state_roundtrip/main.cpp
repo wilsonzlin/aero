@@ -1152,6 +1152,190 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // CreateStateBlock + Capture round-trip: verify cached-only fixed-function state
+  // is captured/applied via the Create/Capture/Apply path (not just Begin/End).
+  // ---------------------------------------------------------------------------
+  {
+    ComPtr<IDirect3DStateBlock9> sb_vertex;
+
+    // Establish a baseline vertex-state config.
+    D3DMATRIX world_0 = world_a;
+    world_0._11 = 7.0f;
+    world_0._22 = 8.0f;
+    hr = dev->SetTransform(D3DTS_WORLD, &world_0);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetTransform (pre CreateStateBlock)", hr);
+    }
+
+    const UINT freq_0 = 5;
+    bool freq_ok = false;
+    hr = dev->SetStreamSourceFreq(0, freq_0);
+    if (FAILED(hr)) {
+      aerogpu_test::PrintfStdout("INFO: %s: skipping CreateStateBlock StreamSourceFreq (Set failed hr=0x%08lX)",
+                                 kTestName,
+                                 (unsigned long)hr);
+    } else {
+      freq_ok = true;
+    }
+
+    const BOOL swvp_0 = TRUE;
+    bool swvp_ok = false;
+    hr = dev->SetSoftwareVertexProcessing(swvp_0);
+    if (FAILED(hr)) {
+      aerogpu_test::PrintfStdout(
+          "INFO: %s: skipping CreateStateBlock SoftwareVertexProcessing (Set failed hr=0x%08lX)",
+          kTestName,
+          (unsigned long)hr);
+    } else {
+      swvp_ok = true;
+    }
+
+    const float npatch_0 = 2.0f;
+    bool npatch_ok = false;
+    hr = dev->SetNPatchMode(npatch_0);
+    if (FAILED(hr)) {
+      aerogpu_test::PrintfStdout("INFO: %s: skipping CreateStateBlock NPatchMode (Set failed hr=0x%08lX)",
+                                 kTestName,
+                                 (unsigned long)hr);
+    } else {
+      npatch_ok = true;
+    }
+
+    const int vsi_0[4] = {11, 22, 33, 44};
+    hr = dev->SetVertexShaderConstantI(20, vsi_0, 1);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetVertexShaderConstantI (pre CreateStateBlock)", hr);
+    }
+
+    // Capture the baseline via CreateStateBlock.
+    hr = dev->CreateStateBlock(D3DSBT_VERTEXSTATE, sb_vertex.put());
+    if (FAILED(hr) || !sb_vertex) {
+      return reporter.FailHresult("CreateStateBlock(D3DSBT_VERTEXSTATE)", hr);
+    }
+
+    // Mutate state to a second configuration, then Capture() it.
+    D3DMATRIX world_1 = world_0;
+    world_1._11 = -1.0f;
+    world_1._22 = -2.0f;
+    hr = dev->SetTransform(D3DTS_WORLD, &world_1);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetTransform (pre Capture)", hr);
+    }
+
+    const UINT freq_1 = 9;
+    if (freq_ok) {
+      hr = dev->SetStreamSourceFreq(0, freq_1);
+      if (FAILED(hr)) {
+        aerogpu_test::PrintfStdout("INFO: %s: disabling CreateStateBlock StreamSourceFreq check (clobber Set failed hr=0x%08lX)",
+                                   kTestName,
+                                   (unsigned long)hr);
+        freq_ok = false;
+      }
+    }
+
+    if (swvp_ok) {
+      hr = dev->SetSoftwareVertexProcessing(FALSE);
+      if (FAILED(hr)) {
+        aerogpu_test::PrintfStdout(
+            "INFO: %s: disabling CreateStateBlock SoftwareVertexProcessing check (clobber Set failed hr=0x%08lX)",
+            kTestName,
+            (unsigned long)hr);
+        swvp_ok = false;
+      }
+    }
+
+    const float npatch_1 = 0.0f;
+    if (npatch_ok) {
+      hr = dev->SetNPatchMode(npatch_1);
+      if (FAILED(hr)) {
+        aerogpu_test::PrintfStdout("INFO: %s: disabling CreateStateBlock NPatchMode check (clobber Set failed hr=0x%08lX)",
+                                   kTestName,
+                                   (unsigned long)hr);
+        npatch_ok = false;
+      }
+    }
+
+    const int vsi_1[4] = {-1, -2, -3, -4};
+    hr = dev->SetVertexShaderConstantI(20, vsi_1, 1);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetVertexShaderConstantI (pre Capture)", hr);
+    }
+
+    hr = sb_vertex->Capture();
+    if (FAILED(hr)) {
+      return reporter.FailHresult("StateBlock::Capture (vertex)", hr);
+    }
+
+    // Clobber again so Apply has visible effect.
+    D3DMATRIX world_2 = world_0;
+    world_2._11 = 123.0f;
+    world_2._22 = 456.0f;
+    hr = dev->SetTransform(D3DTS_WORLD, &world_2);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetTransform (pre Apply)", hr);
+    }
+    const int vsi_2[4] = {0, 0, 0, 0};
+    hr = dev->SetVertexShaderConstantI(20, vsi_2, 1);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetVertexShaderConstantI (pre Apply)", hr);
+    }
+
+    hr = sb_vertex->Apply();
+    if (FAILED(hr)) {
+      return reporter.FailHresult("StateBlock::Apply (vertex)", hr);
+    }
+
+    // Verify state restored to the captured (world_1 / vsi_1 / etc).
+    D3DMATRIX got_world;
+    ZeroMemory(&got_world, sizeof(got_world));
+    hr = dev->GetTransform(D3DTS_WORLD, &got_world);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("GetTransform (after Apply vertex)", hr);
+    }
+    if (!MatrixEqual(got_world, world_1)) {
+      return reporter.Fail("CreateStateBlock restore mismatch: WORLD matrix");
+    }
+
+    int got_i[4] = {};
+    hr = dev->GetVertexShaderConstantI(20, got_i, 1);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("GetVertexShaderConstantI (after Apply vertex)", hr);
+    }
+    if (std::memcmp(got_i, vsi_1, sizeof(vsi_1)) != 0) {
+      return reporter.Fail("CreateStateBlock restore mismatch: VertexShaderConstantI");
+    }
+
+    if (freq_ok) {
+      UINT got_freq = 0;
+      hr = dev->GetStreamSourceFreq(0, &got_freq);
+      if (FAILED(hr)) {
+        return reporter.FailHresult("GetStreamSourceFreq (after Apply vertex)", hr);
+      }
+      if (got_freq != freq_1) {
+        return reporter.Fail("CreateStateBlock restore mismatch: StreamSourceFreq got=%u expected=%u",
+                             (unsigned)got_freq,
+                             (unsigned)freq_1);
+      }
+    }
+
+    if (swvp_ok) {
+      const BOOL got = dev->GetSoftwareVertexProcessing();
+      if (got) {
+        return reporter.Fail("CreateStateBlock restore mismatch: SoftwareVertexProcessing expected FALSE");
+      }
+    }
+
+    if (npatch_ok) {
+      const float got = dev->GetNPatchMode();
+      if (!NearlyEqual(got, npatch_1, 1e-6f)) {
+        return reporter.Fail("CreateStateBlock restore mismatch: NPatchMode got=%f expected=%f",
+                             (double)got,
+                             (double)npatch_1);
+      }
+    }
+  }
+
   return reporter.Pass();
 }
 
