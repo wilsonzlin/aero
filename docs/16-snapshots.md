@@ -198,6 +198,22 @@ For the browser USB stack (guest-visible UHCI controller + runtime/bridge state)
 
 Restore note: USB snapshots capture guest-visible controller/runtime state only. Any host-side "action" state (e.g. in-flight WebUSB/WebHID requests) should be treated as reset on restore; the host integration is responsible for resuming action execution post-restore.
 
+#### Networking stack (`DeviceId::NET_STACK`)
+
+For the browser networking stack (e.g. tunnel/NAT state managed outside the guest-visible NIC device model), store a single device entry:
+
+- Outer `DeviceState.id = DeviceId::NET_STACK`
+- `DeviceState.data = aero-io-snapshot` TLV blob produced by the networking stack
+- `DeviceState.version` / `DeviceState.flags` mirror the inner device `SnapshotVersion (major, minor)`
+
+#### E1000 (`DeviceId::E1000`)
+
+For the guest-visible Intel E1000 NIC emulation state, store a single device entry:
+
+- Outer `DeviceState.id = DeviceId::E1000`
+- `DeviceState.data = aero-io-snapshot` TLV blob produced by the E1000 device model
+- `DeviceState.version` / `DeviceState.flags` mirror the inner device `SnapshotVersion (major, minor)`
+
 This standardizes device payloads on a deterministic, forward-compatible TLV encoding. `aero-snapshot` provides opt-in helpers behind the `io-snapshot` feature: `aero_snapshot::io_snapshot_bridge::{device_state_from_io_snapshot, apply_io_snapshot_to_device}`.
 
 #### i8042 (`DeviceId::I8042`)

@@ -80,8 +80,10 @@ describe("workers/vm_snapshot_wasm", () => {
 
   it("maps snapshot device kinds/ids for WorkerVmSnapshot", () => {
     expect(vmSnapshotDeviceKindToId(VM_SNAPSHOT_DEVICE_USB_KIND)).toBe(VM_SNAPSHOT_DEVICE_ID_USB);
-    expect(vmSnapshotDeviceIdToKind(VM_SNAPSHOT_DEVICE_ID_USB)).toBe(VM_SNAPSHOT_DEVICE_USB_KIND);
+    expect(vmSnapshotDeviceKindToId(VM_SNAPSHOT_DEVICE_NET_STACK_KIND)).toBe(VM_SNAPSHOT_DEVICE_ID_NET_STACK);
+    expect(vmSnapshotDeviceKindToId(VM_SNAPSHOT_DEVICE_E1000_KIND)).toBe(VM_SNAPSHOT_DEVICE_ID_E1000);
 
+    expect(vmSnapshotDeviceIdToKind(VM_SNAPSHOT_DEVICE_ID_USB)).toBe(VM_SNAPSHOT_DEVICE_USB_KIND);
     expect(vmSnapshotDeviceKindToId(VM_SNAPSHOT_DEVICE_I8042_KIND)).toBe(VM_SNAPSHOT_DEVICE_ID_I8042);
     expect(vmSnapshotDeviceIdToKind(VM_SNAPSHOT_DEVICE_ID_I8042)).toBe(VM_SNAPSHOT_DEVICE_I8042_KIND);
 

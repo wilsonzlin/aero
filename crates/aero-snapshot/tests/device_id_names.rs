@@ -33,4 +33,3 @@ fn platform_device_ids_have_stable_names_and_numbers() {
         assert_eq!(format!("{id}"), format!("{expected_name}({expected_num})"));
     }
 }
-
