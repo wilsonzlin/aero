@@ -90,7 +90,7 @@ static aerogpu_test::TestReportAdapterInfo QueryDefaultAdapterInfo() {
     return info;
   }
   info.present = true;
-  info.description_utf8 = ident.Description;
+  info.description_utf8 = aerogpu_test::NarrowToUtf8FallbackAcp(ident.Description);
   info.vendor_id = (uint32_t)ident.VendorId;
   info.device_id = (uint32_t)ident.DeviceId;
   return info;

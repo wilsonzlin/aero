@@ -59,6 +59,18 @@ static inline std::string WideToUtf8(const std::wstring& w) {
   return out;
 }
 
+// Convert a narrow string to UTF-8.
+//
+// Some Windows APIs (e.g. `D3DADAPTER_IDENTIFIER9::Description`) return strings in the current ANSI
+// code page, while others may already be UTF-8. For JSON output, we need stable UTF-8 bytes, so we
+// attempt to decode as UTF-8 and fall back to ACP if needed.
+static inline std::string NarrowToUtf8FallbackAcp(const char* s) {
+  if (!s || !*s) {
+    return std::string();
+  }
+  return WideToUtf8(Utf8ToWideFallbackAcp(std::string(s)));
+}
+
 static inline std::string FormatStringV(const char* fmt, va_list ap) {
   if (!fmt) {
     return std::string();
@@ -378,7 +390,7 @@ class TestReporter {
 
   void SetAdapterInfoA(const char* desc, uint32_t vid, uint32_t did) {
     report_.adapter.present = true;
-    report_.adapter.description_utf8 = desc ? desc : "";
+    report_.adapter.description_utf8 = NarrowToUtf8FallbackAcp(desc);
     report_.adapter.vendor_id = vid;
     report_.adapter.device_id = did;
   }
