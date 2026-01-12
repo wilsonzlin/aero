@@ -64,20 +64,14 @@ export function installNetTraceBackendOnAeroGlobal(coordinator: WorkerCoordinato
       // Avoid spamming UIs (notably the repo-root harness panel) with errors when
       // the VM/net worker isn't running yet. Return stub stats until the net
       // worker is ready.
-      //
-      // Guard optional calls so unit tests can install a minimal fake coordinator.
-      const state = (coordinator as unknown as { getVmState?: () => string }).getVmState?.();
-      if (state === "stopped" || state === "poweredOff" || state === "failed") {
+      if (!isNetWorkerReady()) {
         return { enabled: coordinator.isNetTraceEnabled(), records: 0, bytes: 0, droppedRecords: 0, droppedBytes: 0 };
       }
-
-      const statuses = (coordinator as unknown as { getWorkerStatuses?: () => { net?: { state?: string } } }).getWorkerStatuses?.();
-      const netState = statuses?.net?.state;
-      if (netState !== undefined && netState !== "ready") {
+      try {
+        return await coordinator.getNetTraceStats();
+      } catch {
         return { enabled: coordinator.isNetTraceEnabled(), records: 0, bytes: 0, droppedRecords: 0, droppedBytes: 0 };
       }
-
-      return await coordinator.getNetTraceStats();
     },
     // Legacy alias kept for older UIs that still call `clearCapture()`.
     clearCapture: () => coordinator.clearNetTrace(),

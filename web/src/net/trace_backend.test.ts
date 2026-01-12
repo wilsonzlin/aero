@@ -66,7 +66,9 @@ describe("net/trace_backend", () => {
         throw new Error("net worker not running");
       },
       clearNetTrace: () => {},
-      getNetTraceStats: async () => ({ enabled: false, records: 0, bytes: 0, droppedRecords: 0, droppedBytes: 0 }),
+      getNetTraceStats: async () => {
+        throw new Error("net worker not running");
+      },
     };
 
     (globalThis as any).window = { aero: {} };
