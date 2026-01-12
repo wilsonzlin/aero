@@ -22,6 +22,13 @@ fn looks_like_etag(value: &str) -> bool {
         return false;
     }
 
+    // We compare/emit ETags as strings (e.g. for `If-None-Match` parsing and JSON metadata), so
+    // require ASCII. This also avoids subtle behavior differences where `HeaderValue` accepts
+    // `obs-text` bytes but `HeaderValue::to_str()` rejects them.
+    if !value.is_ascii() {
+        return false;
+    }
+
     // Reject any whitespace inside the ETag itself (OWS around the value is handled by `trim()`).
     //
     // This also rejects newlines, which prevents header injection and avoids panics when
@@ -365,6 +372,12 @@ mod tests {
     #[test]
     fn etag_header_value_or_fallback_rejects_inner_quotes() {
         let v = etag_header_value_or_fallback(Some("\"a\"b\""), || "W/\"fallback\"".to_string());
+        assert_eq!(v.to_str().unwrap(), "W/\"fallback\"");
+    }
+
+    #[test]
+    fn etag_header_value_or_fallback_rejects_non_ascii() {
+        let v = etag_header_value_or_fallback(Some("\"é\""), || "W/\"fallback\"".to_string());
         assert_eq!(v.to_str().unwrap(), "W/\"fallback\"");
     }
 

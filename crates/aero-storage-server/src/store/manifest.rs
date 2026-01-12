@@ -187,6 +187,17 @@ fn validate_etag(id: &str, etag: &str) -> Result<(), ManifestError> {
         });
     }
 
+    // Our HTTP stack (and cache comparison logic) treats header values as ASCII strings. While
+    // the RFC grammar permits `obs-text`, it is rarely used in practice and can lead to confusing
+    // behaviour (e.g. values that cannot be round-tripped through `HeaderValue::to_str()`).
+    if !etag.is_ascii() {
+        return Err(ManifestError::InvalidEtag {
+            id: super::truncate_for_error(id, super::MAX_IMAGE_ID_LEN),
+            etag: super::truncate_for_error(etag, 512),
+            reason: "etag must be ASCII".to_string(),
+        });
+    }
+
     let header_value = HeaderValue::from_str(etag).map_err(|err| ManifestError::InvalidEtag {
         id: super::truncate_for_error(id, super::MAX_IMAGE_ID_LEN),
         etag: super::truncate_for_error(etag, 512),
@@ -383,6 +394,20 @@ mod tests {
             r#"{
               "images": [
                 { "id": "bad", "file": "bad.img", "name": "Bad", "etag": "unquoted", "public": true }
+              ]
+            }"#,
+        )
+        .unwrap_err();
+
+        assert!(matches!(err, ManifestError::InvalidEtag { .. }));
+    }
+
+    #[test]
+    fn rejects_non_ascii_etag() {
+        let err = Manifest::parse_str(
+            r#"{
+              "images": [
+                { "id": "bad", "file": "bad.img", "name": "Bad", "etag": "\"é\"", "public": true }
               ]
             }"#,
         )
