@@ -184,6 +184,7 @@ L2 tunnel (`/l2`) payload limits (advertised via `POST /session` `limits.l2.*`):
 - `AERO_L2_MAX_CONTROL_PAYLOAD` (default: `256`)
   - Maximum payload bytes for L2 tunnel control messages (`PING`/`PONG`/`ERROR`).
   - This value is surfaced to clients as `limits.l2.maxControlPayloadBytes`.
+  - Values must be positive integers; `0`/blank are treated as unset (defaults apply).
 
 Note: the gateway does **not** terminate `/l2` itself; `aero-l2-proxy` enforces these limits at runtime. Keep
 the gateway's advertised values in sync with the actual proxy configuration.
