@@ -1,4 +1,4 @@
-use aero_io_snapshot::io::state::IoSnapshot;
+use aero_io_snapshot::io::state::{IoSnapshot, SnapshotVersion, SnapshotWriter};
 use aero_net_stack::packet::*;
 use aero_net_stack::{
     Action, DnsResolved, NetworkStack, NetworkStackSnapshotState, StackConfig, TcpRestorePolicy,
@@ -116,6 +116,24 @@ fn snapshot_corrupt_bytes_returns_error() {
     let mut state = NetworkStackSnapshotState::default();
     assert!(state.load_state(&[]).is_err());
     assert!(state.load_state(&[0u8; 16]).is_err());
+}
+
+#[test]
+fn snapshot_loads_legacy_device_id() {
+    // Legacy snapshots accidentally used a different `aero-io-snapshot` 4CC in the header. Ensure we
+    // can still restore them for backward compatibility.
+    const LEGACY_DEVICE_ID: [u8; 4] = [0x4e, 0x53, 0x54, 0x4b];
+
+    // Tag numbers are defined by `NetworkStackSnapshotState`'s TLV schema.
+    const TAG_IP_ASSIGNED: u16 = 2;
+
+    let mut w = SnapshotWriter::new(LEGACY_DEVICE_ID, SnapshotVersion::new(1, 0));
+    w.field_bool(TAG_IP_ASSIGNED, true);
+    let bytes = w.finish();
+
+    let mut decoded = NetworkStackSnapshotState::default();
+    decoded.load_state(&bytes).expect("decode legacy snapshot");
+    assert!(decoded.ip_assigned);
 }
 
 fn dhcp_handshake(stack: &mut NetworkStack, guest_mac: MacAddr) {
