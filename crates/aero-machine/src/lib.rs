@@ -76,7 +76,6 @@ use aero_platform::chipset::{A20GateHandle, ChipsetState};
 use aero_platform::interrupts::{
     InterruptController as PlatformInterruptController, InterruptInput, MsiMessage, PlatformInterrupts,
 };
-use aero_platform::interrupts::msi::MsiMessage;
 use aero_platform::io::{IoPortBus, PortIoDevice as _};
 use aero_platform::memory::MemoryBus as PlatformMemoryBus;
 use aero_platform::reset::{ResetKind, ResetLatch};
