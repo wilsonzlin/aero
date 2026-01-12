@@ -2963,10 +2963,10 @@ impl Machine {
 
                 // Register legacy VGA + Bochs VBE ports.
                 //
-                // - VGA: 0x3C0..0x3DF
+                // - VGA: 0x3B0..0x3DF (includes both mono and color decode ranges)
                 // - Bochs VBE: 0x01CE (index), 0x01CF (data)
                 self.io
-                    .register_range(0x3C0, 0x20, Box::new(VgaPortIo { dev: vga.clone() }));
+                    .register_range(0x3B0, 0x30, Box::new(VgaPortIo { dev: vga.clone() }));
                 self.io.register_shared_range(0x01CE, 2, {
                     let vga = vga.clone();
                     move |_port| Box::new(VgaPortIo { dev: vga.clone() })
