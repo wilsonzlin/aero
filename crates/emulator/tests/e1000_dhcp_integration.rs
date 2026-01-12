@@ -330,7 +330,7 @@ fn dhcp_handshake_end_to_end_e1000_dma_to_netstack() {
     mem.write(TX_BUF0, &discover_frame);
     write_tx_desc(
         &mut mem,
-        TX_RING_BASE + 0 * DESC_LEN,
+        TX_RING_BASE,
         TX_BUF0,
         discover_frame.len() as u16,
         0b0000_1001, // EOP|RS
@@ -344,7 +344,7 @@ fn dhcp_handshake_end_to_end_e1000_dma_to_netstack() {
         "unexpected host actions during DHCPDISCOVER"
     );
 
-    let offer_desc = read_rx_desc(&mut mem, RX_RING_BASE + 0 * DESC_LEN);
+    let offer_desc = read_rx_desc(&mut mem, RX_RING_BASE);
     assert_eq!(
         offer_desc.status & (RXD_STAT_DD | RXD_STAT_EOP),
         RXD_STAT_DD | RXD_STAT_EOP,
@@ -391,7 +391,7 @@ fn dhcp_handshake_end_to_end_e1000_dma_to_netstack() {
     mem.write(TX_BUF1, &request_frame);
     write_tx_desc(
         &mut mem,
-        TX_RING_BASE + 1 * DESC_LEN,
+        TX_RING_BASE + DESC_LEN,
         TX_BUF1,
         request_frame.len() as u16,
         0b0000_1001, // EOP|RS
@@ -423,4 +423,3 @@ fn dhcp_handshake_end_to_end_e1000_dma_to_netstack() {
         "ack yiaddr did not match offer"
     );
 }
-

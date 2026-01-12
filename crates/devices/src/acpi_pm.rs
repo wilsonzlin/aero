@@ -608,7 +608,7 @@ impl<C: Clock> IoSnapshot for AcpiPmIo<C> {
                 if remainder >= NS_PER_SEC {
                     return Err(SnapshotError::InvalidFieldEncoding("pm_timer_remainder"));
                 }
-                let mod_ticks = (u128::from(PM_TIMER_MASK_24BIT) + 1) as u128;
+                let mod_ticks = u128::from(PM_TIMER_MASK_24BIT) + 1;
                 let freq = PM_TIMER_FREQUENCY_HZ;
 
                 let a = mod_ticks.saturating_mul(NS_PER_SEC);

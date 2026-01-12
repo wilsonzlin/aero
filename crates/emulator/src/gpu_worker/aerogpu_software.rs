@@ -4304,7 +4304,7 @@ mod tests {
 
         // Write a 2x2 region at the top-left of the slice.
         let rp = layout.mip0_row_pitch_bytes as usize;
-        src_tex.data[layer1_mip0_offset + 0..layer1_mip0_offset + 8]
+        src_tex.data[layer1_mip0_offset..layer1_mip0_offset + 8]
             .copy_from_slice(&[0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7]);
         src_tex.data[layer1_mip0_offset + rp..layer1_mip0_offset + rp + 8]
             .copy_from_slice(&[0xA8, 0xA9, 0xAA, 0xAB, 0xAC, 0xAD, 0xAE, 0xAF]);
