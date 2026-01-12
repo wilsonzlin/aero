@@ -375,26 +375,34 @@ impl D3D11Runtime {
     }
 
     fn take_bytes(payload: &[u32], fixed_words: usize) -> Result<&[u8]> {
-        if payload.len() < fixed_words + 1 {
+        let bytes_start = fixed_words
+            .checked_add(1)
+            .ok_or_else(|| anyhow!("fixed payload word count overflows usize"))?;
+        if payload.len() < bytes_start {
             bail!(
                 "expected at least {} words for fixed payload + byte len",
                 fixed_words
             );
         }
         let byte_len = payload[fixed_words] as usize;
-        let bytes_start = fixed_words + 1;
         let bytes_words = byte_len.div_ceil(4);
-        if payload.len() < bytes_start + bytes_words {
+        let bytes_end = bytes_start
+            .checked_add(bytes_words)
+            .ok_or_else(|| anyhow!("byte payload length overflows usize"))?;
+        if bytes_end > payload.len() {
             bail!(
                 "truncated byte payload: need {} words, have {}",
                 bytes_words,
-                payload.len() - bytes_start
+                payload.len().saturating_sub(bytes_start)
             );
         }
-        let byte_words = &payload[bytes_start..bytes_start + bytes_words];
+        let byte_words = &payload[bytes_start..bytes_end];
         let bytes_ptr = byte_words.as_ptr() as *const u8;
+        let bytes_len = bytes_words
+            .checked_mul(4)
+            .ok_or_else(|| anyhow!("byte payload size overflows usize"))?;
         // Safety: `u32` slice is properly aligned and we only read within it.
-        let bytes = unsafe { std::slice::from_raw_parts(bytes_ptr, bytes_words * 4) };
+        let bytes = unsafe { std::slice::from_raw_parts(bytes_ptr, bytes_len) };
         Ok(&bytes[..byte_len])
     }
 
@@ -1573,6 +1581,28 @@ impl D3D11Runtime {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn take_bytes_extracts_prefix() {
+        let w0 = u32::from_ne_bytes([1, 2, 3, 4]);
+        let w1 = u32::from_ne_bytes([5, 6, 7, 8]);
+        // fixed_words=3 => payload[3] is byte_len and bytes start at index 4.
+        let payload = [0u32, 0, 0, 5, w0, w1];
+        let bytes = D3D11Runtime::take_bytes(&payload, 3).unwrap();
+        assert_eq!(bytes, &[1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn take_bytes_rejects_truncated_byte_payload() {
+        let w0 = u32::from_ne_bytes([1, 2, 3, 4]);
+        let payload = [0u32, 0, 0, 5, w0];
+        assert!(D3D11Runtime::take_bytes(&payload, 3).is_err());
     }
 }
 

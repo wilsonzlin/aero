@@ -746,7 +746,10 @@ impl CommandProcessor {
                     ));
                 }
 
-                let mut floats = Vec::with_capacity(float_count);
+                let mut floats = Vec::new();
+                floats.try_reserve_exact(float_count).map_err(|_| {
+                    format!("SetConstantsF32 payload too large to allocate (float_count={float_count})")
+                })?;
                 for _ in 0..float_count {
                     floats.push(f32::from_bits(p.read_u32_le().map_err(|e| e.message)?));
                 }
@@ -769,16 +772,24 @@ impl CommandProcessor {
             }
             Opcode::SetVertexDeclaration => {
                 let stride = p.read_u32_le().map_err(|e| e.message)?;
-                let attr_count = p.read_u32_le().map_err(|e| e.message)?;
-                let attr_count = attr_count as usize;
-                if p.remaining() != attr_count * 12 {
+                let attr_count_u32 = p.read_u32_le().map_err(|e| e.message)?;
+                let attr_count = usize::try_from(attr_count_u32).map_err(|_| {
+                    format!("SetVertexDeclaration attr_count={attr_count_u32} is out of range for usize")
+                })?;
+                let expected_bytes = attr_count.checked_mul(12).ok_or_else(|| {
+                    format!("SetVertexDeclaration attr_count={attr_count_u32} is too large")
+                })?;
+                if p.remaining() != expected_bytes {
                     return Err(format!(
-                        "SetVertexDeclaration payload size mismatch (attr_count {attr_count}, remaining {})",
+                        "SetVertexDeclaration payload size mismatch (attr_count {attr_count_u32}, expected {expected_bytes} bytes, got {})",
                         p.remaining()
                     ));
                 }
 
-                let mut attributes = Vec::with_capacity(attr_count);
+                let mut attributes = Vec::new();
+                attributes.try_reserve_exact(attr_count).map_err(|_| {
+                    format!("SetVertexDeclaration payload too large to allocate (attr_count={attr_count_u32})")
+                })?;
                 for _ in 0..attr_count {
                     let location = p.read_u32_le().map_err(|e| e.message)?;
                     let format_raw = p.read_u32_le().map_err(|e| e.message)?;
