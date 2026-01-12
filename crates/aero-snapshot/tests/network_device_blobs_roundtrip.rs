@@ -210,6 +210,8 @@ fn network_device_blobs_roundtrip_is_deterministic_and_ordered() {
     restore_snapshot(&mut Cursor::new(&bytes1), &mut target).unwrap();
 
     assert_eq!(target.device_states.len(), 2);
+    assert_eq!(target.device_states[0].id, DeviceId::E1000);
+    assert_eq!(target.device_states[1].id, DeviceId::NET_STACK);
     assert!(
         target.device_states.iter().any(|s| s.id == DeviceId::E1000),
         "restored snapshot missing E1000 device entry"
