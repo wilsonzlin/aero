@@ -594,8 +594,8 @@ impl Emitter<'_> {
                 };
 
                 // Cross-page accesses use the slow helper for correctness.
-                let cross_limit = crate::PAGE_OFFSET_MASK
-                    .saturating_sub(size_bytes.saturating_sub(1) as u64);
+                let cross_limit =
+                    crate::PAGE_OFFSET_MASK.saturating_sub(size_bytes.saturating_sub(1) as u64);
                 self.func
                     .instruction(&Instruction::LocalGet(self.layout.scratch_vaddr_local()));
                 self.func
@@ -694,8 +694,8 @@ impl Emitter<'_> {
                     Width::W64 => (8u32, self.imported.mem_write_u64),
                 };
 
-                let cross_limit = crate::PAGE_OFFSET_MASK
-                    .saturating_sub(size_bytes.saturating_sub(1) as u64);
+                let cross_limit =
+                    crate::PAGE_OFFSET_MASK.saturating_sub(size_bytes.saturating_sub(1) as u64);
                 self.func
                     .instruction(&Instruction::LocalGet(self.layout.scratch_vaddr_local()));
                 self.func
