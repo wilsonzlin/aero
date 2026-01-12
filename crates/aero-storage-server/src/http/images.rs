@@ -583,7 +583,8 @@ async fn full_response(
     insert_cors_headers(headers, state, req_headers);
     headers.insert(
         header::CONTENT_TYPE,
-        HeaderValue::from_static(meta.content_type),
+        HeaderValue::from_str(meta.content_type)
+            .unwrap_or_else(|_| HeaderValue::from_static(crate::store::CONTENT_TYPE_DISK_IMAGE)),
     );
     headers.insert(
         header::CONTENT_ENCODING,
@@ -648,7 +649,8 @@ async fn single_range_response(
     insert_cors_headers(headers, state, req_headers);
     headers.insert(
         header::CONTENT_TYPE,
-        HeaderValue::from_static(meta.content_type),
+        HeaderValue::from_str(meta.content_type)
+            .unwrap_or_else(|_| HeaderValue::from_static(crate::store::CONTENT_TYPE_DISK_IMAGE)),
     );
     headers.insert(
         header::CONTENT_ENCODING,
