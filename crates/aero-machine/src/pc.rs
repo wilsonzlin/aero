@@ -348,15 +348,19 @@ impl PcMachine {
         }
 
         // 3) Drain host->guest frames.
-        if let Some(backend) = self.network_backend.as_mut() {
-            const MAX_RX_FRAMES_PER_POLL: usize = 256;
-            let mut rx_budget = MAX_RX_FRAMES_PER_POLL;
-            while rx_budget != 0 {
-                let Some(frame) = backend.poll_receive() else {
-                    break;
-                };
-                rx_budget -= 1;
-                self.bus.platform.e1000_enqueue_rx_frame(frame);
+        //
+        // Only poll the backend when E1000 exists; otherwise we'd drop frames on the floor.
+        if self.bus.platform.has_e1000() {
+            if let Some(backend) = self.network_backend.as_mut() {
+                const MAX_RX_FRAMES_PER_POLL: usize = 256;
+                let mut rx_budget = MAX_RX_FRAMES_PER_POLL;
+                while rx_budget != 0 {
+                    let Some(frame) = backend.poll_receive() else {
+                        break;
+                    };
+                    rx_budget -= 1;
+                    self.bus.platform.e1000_enqueue_rx_frame(frame);
+                }
             }
         }
 
