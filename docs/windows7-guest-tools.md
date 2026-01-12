@@ -75,7 +75,7 @@ The exact names vary by Aero version/UI, but the mapping is typically:
 | Network | Intel e1000 | virtio-net | If networking breaks, switch back to e1000 and boot. |
 | Graphics | VGA | Aero GPU | If you get a black screen, switch back to VGA and recover. |
 | Input | PS/2 keyboard + mouse | virtio-input | Optional; switch last. If input breaks, switch back to PS/2. |
-| Audio | HDA (Intel HD Audio) | virtio-snd | Optional; does not affect boot. If audio breaks, keep HDA. |
+| Audio | HDA (Intel HD Audio) | virtio-snd | Optional; does not affect boot. If audio breaks, keep HDA. For baseline HDA validation, see [`docs/testing/audio-windows7.md`](./testing/audio-windows7.md). |
 
 ### Why Windows 7 SP1 matters
 

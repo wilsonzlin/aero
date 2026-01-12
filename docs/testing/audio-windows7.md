@@ -124,6 +124,7 @@ In Windows 7:
 1. Open `Control Panel → Sound` (or run `mmsys.cpl`).
 2. **Playback tab**:
    - Select the default playback device (often `Speakers` / `High Definition Audio Device`).
+   - (If needed) click **Set Default**.
    - Click **Test**.
 
 Alternative (also deterministic):
@@ -142,6 +143,7 @@ Expected outcome:
 
 - You hear the test sound on the host speakers/headphones.
 - Windows shows playback activity (level meter/volume mixer).
+  - If you don’t see the green level meter move, check **Volume Mixer** and make sure the app/device is not muted.
 
 ### 3.2 Observe host-side metrics (AudioWorklet ring buffer)
 
@@ -262,6 +264,7 @@ Collect:
 Collect:
 
 - Audio ring metrics: buffer level + underrun/overrun counters + `AudioContext.state` + `sampleRate`.
+- If available: runtime/worker “producer” counters (how full the emulator-to-worklet ring is from the producer’s point of view).
 - If available: guest HDA stream debug (`LPIB`, `CBL`, position buffer).
 - Browser console logs (preserve timestamps; include `[cpu]`/`[io]` worker logs if present).
 - If Perf tracing is enabled in the build, export a trace (it should include `audio.*` counters when the host is sampling audio metrics).
