@@ -494,15 +494,34 @@ impl UhciRuntime {
         device: &crate::UsbHidPassthroughBridge,
     ) -> Result<(), JsValue> {
         let path = crate::uhci_controller_bridge::parse_usb_path(path)?;
-        if path.len() >= 2 && path[0] as usize == EXTERNAL_HUB_ROOT_PORT {
-            let hub_port = path[1];
-            self.ensure_external_hub(hub_port)?;
+        if path.len() < 2 {
+            return Err(js_error(
+                "USB HID passthrough devices must attach behind the external hub (expected path like [0, <hubPort>])",
+            ));
         }
+        if path[0] as usize != EXTERNAL_HUB_ROOT_PORT {
+            return Err(js_error(
+                "USB HID passthrough devices must attach behind the external hub on root port 0",
+            ));
+        }
+
+        let hub_port = path[1];
+        self.ensure_external_hub(hub_port)?;
+        if self.webhid_hub_ports.contains_key(&hub_port) {
+            return Err(js_error(&format!(
+                "USB HID passthrough device cannot attach to external hub port {hub_port}: port is occupied by a WebHID device"
+            )));
+        }
+
         let dev = device.as_usb_device();
+        crate::uhci_controller_bridge::attach_device_at_path(
+            &mut self.ctrl,
+            &path,
+            Box::new(dev.clone()),
+        )?;
         // Remember the handle so we can reattach it after hub replacement / snapshot restore.
-        self.usb_hid_passthrough_devices
-            .insert(path.clone(), dev.clone());
-        crate::uhci_controller_bridge::attach_device_at_path(&mut self.ctrl, &path, Box::new(dev))
+        self.usb_hid_passthrough_devices.insert(path, dev);
+        Ok(())
     }
 
     pub fn webhid_drain_output_reports(&mut self) -> JsValue {
