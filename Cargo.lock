@@ -548,6 +548,7 @@ dependencies = [
  "aero-io-snapshot",
  "aero-net-e1000",
  "lz4_flex",
+ "memory",
  "proptest",
  "rand 0.8.5",
  "thiserror 1.0.69",
