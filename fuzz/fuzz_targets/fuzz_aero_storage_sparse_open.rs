@@ -1,6 +1,6 @@
 #![no_main]
 
-use aero_storage::{AeroSparseDisk, MemBackend, StorageBackend, VirtualDisk};
+use aero_storage::{AeroSparseDisk, DiskError, Result, StorageBackend, VirtualDisk};
 use arbitrary::Unstructured;
 use libfuzzer_sys::fuzz_target;
 
@@ -9,6 +9,66 @@ const MAX_IO_BYTES: usize = 4096; // 4 KiB
 const MAX_OPS: usize = 32;
 // Keep backend growth limited even if the parsed image claims a large virtual capacity.
 const MAX_TOUCHED_CAP_BYTES: u64 = 4 * 1024 * 1024; // 4 MiB
+// Keep the in-memory backing store from growing too large (even if block_size/data_offset are huge).
+const MAX_BACKEND_BYTES: usize = 16 * 1024 * 1024; // 16 MiB
+
+/// In-memory backend with a hard cap on growth.
+///
+/// This keeps the fuzz target lightweight even if the input claims absurd sparse parameters.
+#[derive(Default)]
+struct CappedBackend {
+    data: Vec<u8>,
+}
+
+impl StorageBackend for CappedBackend {
+    fn len(&mut self) -> Result<u64> {
+        Ok(self.data.len() as u64)
+    }
+
+    fn set_len(&mut self, len: u64) -> Result<()> {
+        if len > MAX_BACKEND_BYTES as u64 {
+            return Err(DiskError::QuotaExceeded);
+        }
+        let len_usize: usize = len.try_into().map_err(|_| DiskError::OffsetOverflow)?;
+        self.data.resize(len_usize, 0);
+        Ok(())
+    }
+
+    fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<()> {
+        let offset_usize: usize = offset.try_into().map_err(|_| DiskError::OffsetOverflow)?;
+        let end = offset_usize
+            .checked_add(buf.len())
+            .ok_or(DiskError::OffsetOverflow)?;
+        if end > self.data.len() {
+            return Err(DiskError::OutOfBounds {
+                offset,
+                len: buf.len(),
+                capacity: self.data.len() as u64,
+            });
+        }
+        buf.copy_from_slice(&self.data[offset_usize..end]);
+        Ok(())
+    }
+
+    fn write_at(&mut self, offset: u64, buf: &[u8]) -> Result<()> {
+        let offset_usize: usize = offset.try_into().map_err(|_| DiskError::OffsetOverflow)?;
+        let end = offset_usize
+            .checked_add(buf.len())
+            .ok_or(DiskError::OffsetOverflow)?;
+        if end > MAX_BACKEND_BYTES {
+            return Err(DiskError::QuotaExceeded);
+        }
+        if end > self.data.len() {
+            self.data.resize(end, 0);
+        }
+        self.data[offset_usize..end].copy_from_slice(buf);
+        Ok(())
+    }
+
+    fn flush(&mut self) -> Result<()> {
+        Ok(())
+    }
+}
 
 fuzz_target!(|data: &[u8]| {
     if data.len() > MAX_INPUT_BYTES {
@@ -16,7 +76,7 @@ fuzz_target!(|data: &[u8]| {
     }
 
     // Treat the fuzzer input as the backing store for a sparse image.
-    let mut backend = MemBackend::new();
+    let mut backend = CappedBackend::default();
     // Ensure the header read always succeeds so the fuzzer can discover valid-looking
     // headers even when the initial corpus input is very small.
     let _ = backend.set_len(64);
