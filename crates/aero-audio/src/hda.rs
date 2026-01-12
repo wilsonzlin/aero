@@ -1091,6 +1091,14 @@ impl HdaController {
         mut sink: Option<&mut dyn AudioSink>,
         capture: &mut dyn AudioCaptureSource,
     ) {
+        // Defensive clamp: callers control `output_frames` and may be untrusted (e.g. JS/WASM APIs).
+        // Bound per-call work so a hostile/misbehaving host cannot request a multi-second advance
+        // that forces huge DMA scratch allocations or long-running decode/resample loops.
+        //
+        // Clamp to <= ~1s worth of host time (based on the current output sample rate).
+        let max_frames = self.output_rate_hz as usize;
+        let output_frames = output_frames.min(max_frames);
+
         self.process_corb(mem);
 
         self.process_output_stream(mem, 0, output_frames);

@@ -367,3 +367,146 @@ fn virtio_snd_rx_invalid_header_buffer_does_not_stall_queue() {
     let status = u32::from_le_bytes(mem.get_slice(resp_addr, 4).unwrap().try_into().unwrap());
     assert_eq!(status, VIRTIO_SND_S_BAD_MSG);
 }
+
+#[test]
+fn virtio_snd_tx_rejects_oversize_pcm_payload_without_stalling_queue() {
+    // Keep this in sync with `aero_virtio::devices::snd`'s internal cap.
+    const MAX_PCM_XFER_BYTES: u32 = 256 * 1024;
+
+    let snd = VirtioSnd::new(aero_audio::ring::AudioRingBuffer::new_stereo(8));
+    let mut dev = VirtioPciDevice::new(Box::new(snd), Box::new(InterruptLog::default()));
+    let caps = parse_caps(&mut dev);
+
+    // Large enough that the payload buffer is in-bounds (so the size cap, not OOB checks, drives
+    // the error).
+    let mut mem = GuestRam::new(0x1_00000);
+    negotiate_features(&mut dev, &mut mem, &caps);
+
+    let tx_desc = 0x1000;
+    let tx_avail = 0x2000;
+    let tx_used = 0x3000;
+    configure_queue(
+        &mut dev,
+        &mut mem,
+        &caps,
+        VIRTIO_SND_QUEUE_TX,
+        tx_desc,
+        tx_avail,
+        tx_used,
+    );
+
+    let hdr_addr = 0x8000;
+    let pcm_addr = 0x9000;
+    let status_addr = 0xa000;
+    write_u32_le(&mut mem, hdr_addr, PLAYBACK_STREAM_ID).unwrap();
+    write_u32_le(&mut mem, hdr_addr + 4, 0).unwrap();
+    mem.write(status_addr, &[0xffu8; 8]).unwrap();
+
+    // Header OUT descriptor, followed by an oversized PCM OUT descriptor, followed by an IN status
+    // descriptor.
+    write_desc(&mut mem, tx_desc, 0, hdr_addr, 8, VIRTQ_DESC_F_NEXT, 1);
+    write_desc(
+        &mut mem,
+        tx_desc,
+        1,
+        pcm_addr,
+        MAX_PCM_XFER_BYTES + 1,
+        VIRTQ_DESC_F_NEXT,
+        2,
+    );
+    write_desc(&mut mem, tx_desc, 2, status_addr, 8, VIRTQ_DESC_F_WRITE, 0);
+
+    write_u16_le(&mut mem, tx_avail + 4, 0).unwrap();
+    write_u16_le(&mut mem, tx_avail + 2, 1).unwrap();
+
+    kick_queue(&mut dev, &mut mem, &caps, VIRTIO_SND_QUEUE_TX);
+
+    let used_idx = u16::from_le_bytes(mem.get_slice(tx_used + 2, 2).unwrap().try_into().unwrap());
+    assert_eq!(used_idx, 1);
+
+    let elem = mem.get_slice(tx_used + 4, 8).unwrap();
+    assert_eq!(u32::from_le_bytes(elem[0..4].try_into().unwrap()), 0);
+    assert_eq!(u32::from_le_bytes(elem[4..8].try_into().unwrap()), 8);
+
+    let status = u32::from_le_bytes(mem.get_slice(status_addr, 4).unwrap().try_into().unwrap());
+    assert_eq!(status, VIRTIO_SND_S_BAD_MSG);
+}
+
+#[test]
+fn virtio_snd_rx_rejects_oversize_payload_and_caps_silence_write() {
+    // Keep this in sync with `aero_virtio::devices::snd`'s internal cap.
+    const MAX_PCM_XFER_BYTES: u32 = 256 * 1024;
+
+    let snd = VirtioSnd::new(aero_audio::ring::AudioRingBuffer::new_stereo(8));
+    let mut dev = VirtioPciDevice::new(Box::new(snd), Box::new(InterruptLog::default()));
+    let caps = parse_caps(&mut dev);
+
+    // Large enough that the payload buffer is in-bounds.
+    let mut mem = GuestRam::new(0x1_00000);
+    negotiate_features(&mut dev, &mut mem, &caps);
+
+    let rx_desc = 0x1000;
+    let rx_avail = 0x2000;
+    let rx_used = 0x3000;
+    configure_queue(
+        &mut dev,
+        &mut mem,
+        &caps,
+        VIRTIO_SND_QUEUE_RX,
+        rx_desc,
+        rx_avail,
+        rx_used,
+    );
+
+    let hdr_addr = 0x8000;
+    let payload_addr = 0x9000;
+    let payload_len = MAX_PCM_XFER_BYTES * 2; // oversized but still an even number of bytes
+    let resp_addr = payload_addr + payload_len as u64;
+
+    write_u32_le(&mut mem, hdr_addr, CAPTURE_STREAM_ID).unwrap();
+    write_u32_le(&mut mem, hdr_addr + 4, 0).unwrap();
+
+    // Seed payload/response with non-zero bytes so we can verify how much gets overwritten.
+    mem.write(payload_addr, &vec![0xffu8; payload_len as usize])
+        .unwrap();
+    mem.write(resp_addr, &[0xffu8; 8]).unwrap();
+
+    write_desc(&mut mem, rx_desc, 0, hdr_addr, 8, VIRTQ_DESC_F_NEXT, 1);
+    write_desc(
+        &mut mem,
+        rx_desc,
+        1,
+        payload_addr,
+        payload_len,
+        VIRTQ_DESC_F_WRITE | VIRTQ_DESC_F_NEXT,
+        2,
+    );
+    write_desc(&mut mem, rx_desc, 2, resp_addr, 8, VIRTQ_DESC_F_WRITE, 0);
+
+    write_u16_le(&mut mem, rx_avail + 4, 0).unwrap();
+    write_u16_le(&mut mem, rx_avail + 2, 1).unwrap();
+
+    kick_queue(&mut dev, &mut mem, &caps, VIRTIO_SND_QUEUE_RX);
+
+    let used_idx = u16::from_le_bytes(mem.get_slice(rx_used + 2, 2).unwrap().try_into().unwrap());
+    assert_eq!(used_idx, 1);
+
+    let elem = mem.get_slice(rx_used + 4, 8).unwrap();
+    assert_eq!(u32::from_le_bytes(elem[0..4].try_into().unwrap()), 0);
+    // Payload write should be capped to MAX_PCM_XFER_BYTES, plus 8 bytes for the response.
+    assert_eq!(
+        u32::from_le_bytes(elem[4..8].try_into().unwrap()),
+        MAX_PCM_XFER_BYTES + 8
+    );
+
+    let payload_head = mem.get_slice(payload_addr, 8).unwrap();
+    assert!(payload_head.iter().all(|&b| b == 0));
+    // Byte just past the cap should remain untouched.
+    let payload_after_cap = mem
+        .get_slice(payload_addr + u64::from(MAX_PCM_XFER_BYTES), 1)
+        .unwrap();
+    assert_eq!(payload_after_cap[0], 0xff);
+
+    let status = u32::from_le_bytes(mem.get_slice(resp_addr, 4).unwrap().try_into().unwrap());
+    assert_eq!(status, VIRTIO_SND_S_BAD_MSG);
+}

@@ -50,6 +50,15 @@ pub const CAPTURE_STREAM_ID: u32 = 1;
 /// The TX and RX PCM payloads are fixed at 48kHz S16_LE in the guest-facing ABI.
 pub const PCM_SAMPLE_RATE_HZ: u32 = 48_000;
 
+/// Maximum PCM payload size accepted in a single TX/RX descriptor chain.
+///
+/// This device is guest-driven and must treat descriptor lengths as untrusted. A malicious guest
+/// could otherwise force the host to allocate unbounded scratch buffers when decoding/resampling.
+///
+/// 256KiB is ~1.3s of stereo S16_LE at 48kHz (and ~2.6s of mono capture), which is plenty for the
+/// minimal Win7 contract while still bounding worst-case allocations.
+const MAX_PCM_XFER_BYTES: u64 = 256 * 1024;
+
 const PLAYBACK_CHANNELS: u8 = 2;
 /// Capture stream channel count.
 ///
@@ -460,6 +469,28 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
     }
 
     fn handle_tx_chain(&mut self, mem: &mut dyn GuestMemory, chain: &DescriptorChain) -> u32 {
+        // Sum the readable descriptor lengths first so we can reject pathological sizes without
+        // attempting to map large slices or allocate large decode buffers.
+        let mut out_bytes_total: u64 = 0;
+        let mut in_response = false;
+        for d in chain.descriptors() {
+            if d.is_write_only() {
+                in_response = true;
+                continue;
+            }
+            if in_response {
+                // Virtio requires all device-writable descriptors to come after readable ones.
+                return VIRTIO_SND_S_BAD_MSG;
+            }
+            out_bytes_total = out_bytes_total.saturating_add(d.len as u64);
+            if out_bytes_total > 8 + MAX_PCM_XFER_BYTES {
+                return VIRTIO_SND_S_BAD_MSG;
+            }
+        }
+        if out_bytes_total < 8 {
+            return VIRTIO_SND_S_BAD_MSG;
+        }
+
         let mut hdr = [0u8; 8];
         let mut hdr_len = 0usize;
         let mut parsed_stream = false;
@@ -634,7 +665,19 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
         let resp_desc = *in_descs.last().unwrap();
         let payload_descs = &in_descs[..in_descs.len().saturating_sub(1)];
 
-        let payload_bytes: usize = payload_descs.iter().map(|d| d.len as usize).sum();
+        let payload_bytes_u64 = payload_descs
+            .iter()
+            .fold(0u64, |acc, d| acc.saturating_add(d.len as u64));
+        if payload_bytes_u64 > MAX_PCM_XFER_BYTES {
+            status = VIRTIO_SND_S_BAD_MSG;
+        }
+        let payload_bytes = match usize::try_from(payload_bytes_u64) {
+            Ok(v) => v,
+            Err(_) => {
+                status = VIRTIO_SND_S_BAD_MSG;
+                0
+            }
+        };
         if !payload_bytes.is_multiple_of(2) {
             status = VIRTIO_SND_S_BAD_MSG;
         }
@@ -649,7 +692,7 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
         } else if status == VIRTIO_SND_S_OK {
             let samples_needed = payload_bytes / 2;
             if samples_needed == 0 {
-                write_payload_silence(mem, payload_descs)
+                write_payload_silence(mem, payload_descs, MAX_PCM_XFER_BYTES as usize)
             } else {
                 self.capture_telemetry.dropped_samples +=
                     self.capture_source.take_dropped_samples();
@@ -727,7 +770,7 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
                 }
             }
         } else {
-            write_payload_silence(mem, payload_descs)
+            write_payload_silence(mem, payload_descs, MAX_PCM_XFER_BYTES as usize)
         };
 
         let resp = virtio_snd_pcm_status(status, 0);
@@ -822,17 +865,29 @@ fn write_all_in(mem: &mut dyn GuestMemory, chain: &DescriptorChain, data: &[u8])
     written as u32
 }
 
-fn write_payload_silence(mem: &mut dyn GuestMemory, descs: &[crate::queue::Descriptor]) -> usize {
+fn write_payload_silence(
+    mem: &mut dyn GuestMemory,
+    descs: &[crate::queue::Descriptor],
+    max_bytes: usize,
+) -> usize {
     let mut written = 0usize;
     for d in descs {
+        if written >= max_bytes {
+            break;
+        }
         if d.len == 0 {
             continue;
         }
-        let Ok(slice) = mem.get_slice_mut(d.addr, d.len as usize) else {
+        let remaining = max_bytes - written;
+        let take = (d.len as usize).min(remaining);
+        if take == 0 {
+            continue;
+        }
+        let Ok(slice) = mem.get_slice_mut(d.addr, take) else {
             break;
         };
         slice.fill(0);
-        written += d.len as usize;
+        written += take;
     }
     written
 }
