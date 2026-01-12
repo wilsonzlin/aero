@@ -76,15 +76,18 @@ export function assertWasmMemoryWiring(opts: {
     );
   }
 
-  const u8 = new Uint8Array(memory.buffer);
-  const prev = readU32LE(u8, linearOffset);
+  // Use a tiny view rather than `new Uint8Array(memory.buffer)` to avoid creating a 4GiB typed array
+  // when the wasm linear memory is at the wasm32 max (65536 pages). Some runtimes reject typed
+  // arrays with length === 2^32 even though the underlying WebAssembly.Memory can be 4GiB.
+  const u8 = new Uint8Array(memory.buffer, linearOffset, 4);
+  const prev = readU32LE(u8, 0);
 
   // Always try to restore the original value so the probe is side-effect-free when it succeeds.
   try {
     // Direction 1: wasm -> JS (mem_store_u32 writes, JS reads).
     const wasmWrite = 0x11223344;
     api.mem_store_u32(linearOffset, wasmWrite);
-    const gotFromJs = readU32LE(u8, linearOffset);
+    const gotFromJs = readU32LE(u8, 0);
     if (gotFromJs !== (wasmWrite >>> 0)) {
       throw new WasmMemoryWiringError(
         [
@@ -99,7 +102,7 @@ export function assertWasmMemoryWiring(opts: {
 
     // Direction 2: JS -> wasm (JS writes, mem_load_u32 reads).
     const jsWrite = 0x55667788;
-    writeU32LE(u8, linearOffset, jsWrite);
+    writeU32LE(u8, 0, jsWrite);
     const gotFromWasm = api.mem_load_u32(linearOffset) >>> 0;
     if (gotFromWasm !== (jsWrite >>> 0)) {
       throw new WasmMemoryWiringError(
@@ -114,10 +117,9 @@ export function assertWasmMemoryWiring(opts: {
     }
   } finally {
     try {
-      writeU32LE(u8, linearOffset, prev);
+      writeU32LE(u8, 0, prev);
     } catch {
       // ignore
     }
   }
 }
-
