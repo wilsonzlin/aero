@@ -130,6 +130,59 @@ pub(crate) fn trim_vs_outputs_to_locations(
 }
 
 pub(crate) fn trim_ps_inputs_to_locations(ps_wgsl: &str, keep_locations: &BTreeSet<u32>) -> String {
+    fn ps_in_has_builtin_members(ps_wgsl: &str) -> bool {
+        let mut in_struct = false;
+        for line in ps_wgsl.lines() {
+            let trimmed = line.trim();
+            if !in_struct {
+                if trimmed == "struct PsIn {" {
+                    in_struct = true;
+                }
+                continue;
+            }
+
+            if trimmed == "};" {
+                break;
+            }
+
+            if trimmed.contains("@builtin(") {
+                return true;
+            }
+        }
+        false
+    }
+
+    if keep_locations.is_empty() && !ps_in_has_builtin_members(ps_wgsl) {
+        // WGSL forbids empty structs. If trimming would remove every struct member, rewrite the
+        // shader to drop `PsIn` entirely and switch `fs_main` to take no parameters.
+        let mut out = String::with_capacity(ps_wgsl.len());
+        let mut in_ps_in = false;
+        for line in ps_wgsl.lines() {
+            let trimmed = line.trim();
+            if !in_ps_in && trimmed == "struct PsIn {" {
+                in_ps_in = true;
+                continue;
+            }
+            if in_ps_in {
+                if trimmed == "};" {
+                    in_ps_in = false;
+                }
+                continue;
+            }
+
+            if trimmed.starts_with("fn fs_main(") && trimmed.contains("input: PsIn") {
+                let replaced = line.replace("fn fs_main(input: PsIn)", "fn fs_main()");
+                out.push_str(&replaced);
+                out.push('\n');
+                continue;
+            }
+
+            out.push_str(line);
+            out.push('\n');
+        }
+        return out;
+    }
+
     let mut out = String::with_capacity(ps_wgsl.len());
     let mut in_ps_in = false;
 
@@ -249,5 +302,23 @@ mod tests {
         let trimmed = trim_ps_inputs_to_locations(wgsl, &keep);
         assert!(!trimmed.contains("@location(1)"));
         assert!(trimmed.contains("@location(2)"));
+    }
+
+    #[test]
+    fn trims_ps_inputs_to_empty_drops_struct_and_param() {
+        let wgsl = r#"
+            struct PsIn {
+                @location(1) v1: vec4<f32>,
+            };
+
+            @fragment
+            fn fs_main(input: PsIn) -> @location(0) vec4<f32> {
+                return vec4<f32>(1.0);
+            }
+        "#;
+        let keep = BTreeSet::new();
+        let trimmed = trim_ps_inputs_to_locations(wgsl, &keep);
+        assert!(!trimmed.contains("struct PsIn"));
+        assert!(trimmed.contains("fn fs_main()"));
     }
 }

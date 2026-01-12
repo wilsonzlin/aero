@@ -119,7 +119,7 @@ fn build_signature_chunk_v1(params: &[SigParam]) -> Vec<u8> {
         out[base + 16..base + 20].copy_from_slice(&p.register.to_le_bytes());
         out[base + 20] = p.mask;
         out[base + 21] = p.mask; // read_write_mask
-        // out[base + 22..base + 24] reserved/padding
+                                 // out[base + 22..base + 24] reserved/padding
         out[base + 24..base + 28].copy_from_slice(&0u32.to_le_bytes()); // stream
         out[base + 28..base + 32].copy_from_slice(&0u32.to_le_bytes()); // min_precision
     }
@@ -134,6 +134,59 @@ fn build_ps_solid_red_dxbc() -> Vec<u8> {
     //   mov o0, l(1, 0, 0, 1)
     //   ret
     let isgn = build_signature_chunk(&[]);
+    let osgn = build_signature_chunk(&[SigParam {
+        semantic_name: "SV_Target",
+        semantic_index: 0,
+        register: 0,
+        mask: 0x0f,
+    }]);
+
+    let version_token = 0x40u32; // ps_4_0
+    let mov_token = 0x01u32 | (8u32 << 11);
+    let ret_token = 0x3eu32 | (1u32 << 11);
+
+    let dst_o0 = 0x0010_f022u32;
+    let imm_vec4 = 0x0000_f042u32;
+
+    let red = 1.0f32.to_bits();
+    let zero = 0.0f32.to_bits();
+    let one = 1.0f32.to_bits();
+
+    let mut tokens = vec![
+        version_token,
+        0, // length patched below
+        mov_token,
+        dst_o0,
+        0, // o0 index
+        imm_vec4,
+        red,
+        zero,
+        zero,
+        one,
+        ret_token,
+    ];
+    tokens[1] = tokens.len() as u32;
+
+    let mut shdr = Vec::with_capacity(tokens.len() * 4);
+    for t in tokens {
+        shdr.extend_from_slice(&t.to_le_bytes());
+    }
+
+    build_dxbc(&[(*b"ISGN", isgn), (*b"OSGN", osgn), (*b"SHDR", shdr)])
+}
+
+fn build_ps_solid_red_with_unused_color_input_dxbc() -> Vec<u8> {
+    // Like `build_ps_solid_red_dxbc`, but declares an unused COLOR0 input at v1.
+    //
+    // This is a regression test helper for the VS↔PS linker: WebGPU requires that the fragment
+    // stage only declares `@location`s that the vertex stage actually outputs, but D3D allows
+    // unused signature parameters.
+    let isgn = build_signature_chunk(&[SigParam {
+        semantic_name: "COLOR",
+        semantic_index: 0,
+        register: 1,
+        mask: 0x0f,
+    }]);
     let osgn = build_signature_chunk(&[SigParam {
         semantic_name: "SV_Target",
         semantic_index: 0,
@@ -1689,7 +1742,8 @@ fn aerogpu_cmd_runtime_signature_driven_constant_buffer_binding() {
         const RTEX: u32 = 6;
 
         rt.create_shader_dxbc(VS, DXBC_VS_MATRIX).unwrap();
-        rt.create_shader_dxbc(PS, &build_ps_solid_red_dxbc()).unwrap();
+        rt.create_shader_dxbc(PS, &build_ps_solid_red_dxbc())
+            .unwrap();
         rt.create_input_layout(IL, &build_ilay_pos3()).unwrap();
 
         let vertices: [VertexPos3; 3] = [
@@ -1982,7 +2036,8 @@ fn aerogpu_cmd_runtime_signature_driven_vs_sig_v1_position_binding() {
 
         rt.create_shader_dxbc(VS, &build_vs_passthrough_pos_sm5_sig_v1_dxbc())
             .unwrap();
-        rt.create_shader_dxbc(PS, &build_ps_solid_red_dxbc()).unwrap();
+        rt.create_shader_dxbc(PS, &build_ps_solid_red_dxbc())
+            .unwrap();
         rt.create_input_layout(IL, &build_ilay_pos3()).unwrap();
 
         let vertices: [VertexPos3; 3] = [
@@ -2277,6 +2332,86 @@ fn aerogpu_cmd_runtime_signature_driven_vs_and_ps_texture_sampler_binding_sm5() 
 
         let pixels = rt.read_texture_rgba8(RTEX).await.unwrap();
         assert_eq!(pixels, vec![0, 255, 0, 255]);
+    });
+}
+
+#[test]
+fn aerogpu_cmd_runtime_signature_driven_trims_unused_ps_inputs_for_linking() {
+    // Regression test: pixel shader declares an unused varying input (v1) that the bound VS does
+    // not output. WebGPU rejects this unless the pipeline linker trims the unused PS input.
+    pollster::block_on(async {
+        let mut rt = match AerogpuCmdRuntime::new_for_tests().await {
+            Ok(rt) => rt,
+            Err(err) => {
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({err:#})"));
+                return;
+            }
+        };
+
+        const VS: u32 = 1;
+        const PS: u32 = 2;
+        const IL: u32 = 3;
+        const VB: u32 = 4;
+        const RTEX: u32 = 5;
+
+        rt.create_shader_dxbc(VS, &build_vs_passthrough_pos_sm5_dxbc())
+            .unwrap();
+        rt.create_shader_dxbc(PS, &build_ps_solid_red_with_unused_color_input_dxbc())
+            .unwrap();
+        rt.create_input_layout(IL, &build_ilay_pos3()).unwrap();
+
+        let vertices: [VertexPos3; 3] = [
+            VertexPos3 {
+                pos: [-1.0, -1.0, 0.0],
+            },
+            VertexPos3 {
+                pos: [3.0, -1.0, 0.0],
+            },
+            VertexPos3 {
+                pos: [-1.0, 3.0, 0.0],
+            },
+        ];
+        rt.create_buffer(
+            VB,
+            std::mem::size_of_val(&vertices) as u64,
+            wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        );
+        rt.write_buffer(VB, 0, bytemuck::bytes_of(&vertices))
+            .unwrap();
+
+        rt.create_texture2d(
+            RTEX,
+            1,
+            1,
+            wgpu::TextureFormat::Rgba8Unorm,
+            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        );
+        let mut colors = [None; 8];
+        colors[0] = Some(RTEX);
+        rt.set_render_targets(&colors, None);
+
+        rt.bind_shaders(Some(VS), Some(PS));
+        rt.set_input_layout(Some(IL));
+        rt.set_vertex_buffers(
+            0,
+            &[VertexBufferBinding {
+                buffer: VB,
+                stride: std::mem::size_of::<VertexPos3>() as u32,
+                offset: 0,
+            }],
+        );
+        rt.set_primitive_topology(PrimitiveTopology::TriangleList);
+        rt.set_rasterizer_state(RasterizerState {
+            cull_mode: None,
+            front_face: wgpu::FrontFace::Ccw,
+            scissor_enable: false,
+        });
+
+        rt.draw(3, 1, 0, 0).unwrap();
+        rt.poll_wait();
+
+        let pixels = rt.read_texture_rgba8(RTEX).await.unwrap();
+        assert_eq!(pixels, vec![255, 0, 0, 255]);
     });
 }
 
