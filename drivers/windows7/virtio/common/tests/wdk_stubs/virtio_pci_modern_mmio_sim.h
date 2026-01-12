@@ -55,6 +55,7 @@ typedef struct VIRTIO_PCI_MODERN_MMIO_SIM {
 
     uint8_t config_generation;
     uint8_t config_generation_step_on_read;
+    uint32_t config_generation_step_reads_remaining; /* 0 = infinite while step_on_read != 0 */
     uint8_t reject_features_ok; /* if set, device clears FEATURES_OK on write */
 
     uint16_t num_queues;

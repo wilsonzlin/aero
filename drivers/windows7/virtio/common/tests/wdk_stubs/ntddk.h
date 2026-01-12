@@ -19,6 +19,7 @@ typedef uint16_t USHORT;
 typedef uint32_t ULONG;
 typedef uint64_t ULONG64;
 typedef int32_t LONG;
+typedef int64_t LONGLONG;
 typedef UCHAR BOOLEAN;
 typedef void* PVOID;
 typedef UCHAR* PUCHAR;
@@ -362,6 +363,18 @@ BOOLEAN KeRemoveQueueDpc(_Inout_ PKDPC Dpc);
 KIRQL KeGetCurrentIrql(VOID);
 
 NTSTATUS KeDelayExecutionThread(_In_ KPROCESSOR_MODE WaitMode, _In_ BOOLEAN Alertable, _In_opt_ PLARGE_INTEGER Interval);
+
+/* Debug / time helpers used by some virtio code paths. */
+ULONGLONG KeQueryInterruptTime(VOID);
+
+#ifndef DPFLTR_IHVDRIVER_ID
+#define DPFLTR_IHVDRIVER_ID 0u
+#endif
+#ifndef DPFLTR_ERROR_LEVEL
+#define DPFLTR_ERROR_LEVEL 0u
+#endif
+
+ULONG DbgPrintEx(_In_ ULONG ComponentId, _In_ ULONG Level, _In_ const char* Format, ...);
 
 /*
  * Test-only helpers for driving the stubs deterministically.

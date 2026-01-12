@@ -254,6 +254,43 @@ static void test_init_invalid_notify_len_too_small_fails(void)
     assert(st == STATUS_DEVICE_CONFIGURATION_ERROR);
 }
 
+static void test_init_invalid_bar0_missing_fails(void)
+{
+    uint8_t bar0[TEST_BAR0_SIZE];
+    uint8_t pci_cfg[256];
+    VIRTIO_PCI_DEVICE dev;
+    NTSTATUS st;
+
+    build_test_pci_config(pci_cfg);
+    memset(bar0, 0, sizeof(bar0));
+
+    /* BAR0 address missing => cap parser should fail. */
+    cfg_write_le32(pci_cfg, 0x10, 0);
+
+    st = VirtioPciModernMiniportInit(&dev, (PUCHAR)bar0, sizeof(bar0), pci_cfg, 256);
+    assert(st == STATUS_DEVICE_CONFIGURATION_ERROR);
+}
+
+static void test_init_64bit_bar0_succeeds(void)
+{
+    uint8_t bar0[TEST_BAR0_SIZE];
+    uint8_t pci_cfg[256];
+    VIRTIO_PCI_DEVICE dev;
+    NTSTATUS st;
+
+    build_test_pci_config(pci_cfg);
+    memset(bar0, 0, sizeof(bar0));
+
+    /* BAR0 as 64-bit memory BAR @ 0x1000. */
+    cfg_write_le32(pci_cfg, 0x10, 0x1004u); /* memType=0x2 (64-bit), base=0x1000 */
+    cfg_write_le32(pci_cfg, 0x14, 0);       /* high dword */
+
+    st = VirtioPciModernMiniportInit(&dev, (PUCHAR)bar0, sizeof(bar0), pci_cfg, 256);
+    assert(st == STATUS_SUCCESS);
+    assert(dev.CommonCfgOffset == TEST_COMMON_CFG_OFF);
+    assert(dev.NotifyOffMultiplier == TEST_NOTIFY_OFF_MULT);
+}
+
 static void test_init_invalid_missing_device_cfg_cap_fails(void)
 {
     uint8_t bar0[TEST_BAR0_SIZE];
@@ -681,6 +718,52 @@ static void test_read_device_config_success(void)
     VirtioPciModernMmioSimUninstall();
 }
 
+static void test_read_device_config_generation_retry_succeeds(void)
+{
+    uint8_t bar0[TEST_BAR0_SIZE];
+    uint8_t pci_cfg[256];
+    VIRTIO_PCI_DEVICE dev;
+    VIRTIO_PCI_MODERN_MMIO_SIM sim;
+    uint8_t buf[8];
+    NTSTATUS st;
+
+    setup_device(&dev, bar0, pci_cfg);
+
+    for (size_t i = 0; i < TEST_DEVICE_CFG_LEN; i++) {
+        bar0[TEST_DEVICE_CFG_OFF + i] = (uint8_t)(0x55u ^ (uint8_t)i);
+    }
+
+    VirtioPciModernMmioSimInit(&sim,
+                               dev.CommonCfg,
+                               (volatile uint8_t*)dev.NotifyBase,
+                               dev.NotifyLength,
+                               (volatile uint8_t*)dev.IsrStatus,
+                               dev.IsrLength,
+                               (volatile uint8_t*)dev.DeviceCfg,
+                               dev.DeviceCfgLength);
+
+    /*
+     * Force a generation mismatch on the first attempt, then stabilize so the
+     * retry succeeds.
+     *
+     * Two generation reads occur per attempt (gen0 + gen1), so step twice.
+     */
+    sim.config_generation = 0;
+    sim.config_generation_step_on_read = 1;
+    sim.config_generation_step_reads_remaining = 2;
+
+    VirtioPciModernMmioSimInstall(&sim);
+
+    memset(buf, 0, sizeof(buf));
+    st = VirtioPciReadDeviceConfig(&dev, 0, buf, (ULONG)sizeof(buf));
+    assert(st == STATUS_SUCCESS);
+    for (size_t i = 0; i < sizeof(buf); i++) {
+        assert(buf[i] == bar0[TEST_DEVICE_CFG_OFF + i]);
+    }
+
+    VirtioPciModernMmioSimUninstall();
+}
+
 static void test_read_device_config_invalid_range(void)
 {
     uint8_t bar0[TEST_BAR0_SIZE];
@@ -964,6 +1047,8 @@ int main(void)
     test_init_invalid_common_cfg_not_in_bar0_fails();
     test_init_invalid_cap_out_of_range_fails();
     test_init_invalid_notify_len_too_small_fails();
+    test_init_invalid_bar0_missing_fails();
+    test_init_64bit_bar0_succeeds();
     test_init_invalid_missing_device_cfg_cap_fails();
     test_init_invalid_unaligned_cap_ptr_fails();
     test_init_invalid_common_cfg_len_too_small_fails();
@@ -977,6 +1062,7 @@ int main(void)
     test_setup_queue_not_found_when_size_zero();
     test_disable_queue_clears_enable();
     test_read_device_config_success();
+    test_read_device_config_generation_retry_succeeds();
     test_read_device_config_invalid_range();
     test_read_device_config_generation_mismatch_times_out();
     test_get_queue_notify_address_respects_multiplier();

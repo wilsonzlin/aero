@@ -106,6 +106,12 @@ static BOOLEAN virtio_modern_mmio_read(const volatile VOID* Register, size_t Wid
                         gen = g_sim->config_generation;
                         if (g_sim->config_generation_step_on_read != 0) {
                             g_sim->config_generation = (uint8_t)(g_sim->config_generation + 1u);
+                            if (g_sim->config_generation_step_reads_remaining != 0) {
+                                g_sim->config_generation_step_reads_remaining--;
+                                if (g_sim->config_generation_step_reads_remaining == 0) {
+                                    g_sim->config_generation_step_on_read = 0;
+                                }
+                            }
                         }
                         /* Keep backing memory consistent for any pass-through users. */
                         mmio_store((volatile VOID*)&g_sim->common_cfg->config_generation, 1, (ULONGLONG)g_sim->config_generation);
