@@ -1,6 +1,11 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
+use aero_gpu::bindings::bind_group_cache::{
+    BindGroupCache, BindGroupCacheEntry, BindGroupCacheResource, BufferId, TextureViewId,
+};
+use aero_gpu::bindings::layout_cache::{BindGroupLayoutCache, CachedBindGroupLayout};
+use aero_gpu::bindings::samplers::SamplerCache;
 use aero_gpu::pipeline_cache::{PipelineCache, PipelineCacheConfig};
 use aero_gpu::pipeline_key::{
     ColorTargetKey, PipelineLayoutKey, RenderPipelineKey, ShaderHash, ShaderStage,
@@ -14,8 +19,12 @@ use crate::input_layout::{
     fnv1a_32, map_layout_to_shader_locations_compact, InputLayoutBinding, InputLayoutDesc,
     VertexBufferLayoutOwned, VsInputSignatureElement, MAX_INPUT_SLOTS,
 };
+use crate::binding_model::{BINDING_BASE_CBUFFER, BINDING_BASE_SAMPLER, BINDING_BASE_TEXTURE};
 use crate::wgsl_bootstrap::translate_sm4_to_wgsl_bootstrap;
-use crate::{parse_signatures, translate_sm4_module_to_wgsl, DxbcFile, Sm4Program};
+use crate::{
+    parse_signatures, translate_sm4_module_to_wgsl, DxbcFile, ShaderReflection, ShaderTranslation,
+    Sm4Program,
+};
 
 use super::aerogpu_state::{
     AerogpuHandle, BlendState, D3D11ShadowState, DepthStencilState, IndexBufferBinding,
@@ -49,6 +58,7 @@ pub struct ShaderResource {
     pub wgsl: String,
     pub hash: ShaderHash,
     pub vs_input_signature: Vec<VsInputSignatureElement>,
+    pub reflection: ShaderReflection,
 }
 
 #[derive(Debug, Clone)]
@@ -60,9 +70,13 @@ pub struct InputLayoutResource {
 pub struct AerogpuResources {
     buffers: HashMap<AerogpuHandle, BufferResource>,
     textures: HashMap<AerogpuHandle, TextureResource>,
+    samplers: HashMap<AerogpuHandle, aero_gpu::bindings::samplers::CachedSampler>,
     shaders: HashMap<AerogpuHandle, ShaderResource>,
     input_layouts: HashMap<AerogpuHandle, InputLayoutResource>,
 }
+
+const DEFAULT_BIND_GROUP_CACHE_CAPACITY: usize = 4096;
+const DUMMY_UNIFORM_SIZE_BYTES: u64 = 4096 * 16;
 
 /// A minimal `aerogpu_cmd`-style executor focused on D3D10/11 rendering.
 ///
@@ -77,6 +91,13 @@ pub struct AerogpuCmdRuntime {
     pub resources: AerogpuResources,
     pipelines: PipelineCache,
     pipeline_layout_cache: PipelineLayoutCache<Arc<wgpu::PipelineLayout>>,
+
+    dummy_uniform: wgpu::Buffer,
+    dummy_texture_view: wgpu::TextureView,
+    sampler_cache: SamplerCache,
+    default_sampler: aero_gpu::bindings::samplers::CachedSampler,
+    bind_group_layout_cache: BindGroupLayoutCache,
+    bind_group_cache: BindGroupCache<Arc<wgpu::BindGroup>>,
 }
 
 impl AerogpuCmdRuntime {
@@ -146,6 +167,68 @@ impl AerogpuCmdRuntime {
         let caps = GpuCapabilities::from_device(&device);
         let pipelines = PipelineCache::new(PipelineCacheConfig::default(), caps);
 
+        let dummy_uniform = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("aero-d3d11 aerogpu dummy uniform"),
+            size: DUMMY_UNIFORM_SIZE_BYTES,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&dummy_uniform, 0, &vec![0u8; DUMMY_UNIFORM_SIZE_BYTES as usize]);
+
+        let dummy_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("aero-d3d11 aerogpu dummy texture"),
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let dummy_texture_view = dummy_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        queue.write_texture(
+            wgpu::ImageCopyTexture {
+                texture: &dummy_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &[0, 0, 0, 255],
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(4),
+                rows_per_image: Some(1),
+            },
+            wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+        );
+
+        let mut sampler_cache = SamplerCache::new();
+        let default_sampler = sampler_cache.get_or_create(
+            &device,
+            &wgpu::SamplerDescriptor {
+                label: Some("aero-d3d11 aerogpu default sampler"),
+                address_mode_u: wgpu::AddressMode::ClampToEdge,
+                address_mode_v: wgpu::AddressMode::ClampToEdge,
+                address_mode_w: wgpu::AddressMode::ClampToEdge,
+                mag_filter: wgpu::FilterMode::Nearest,
+                min_filter: wgpu::FilterMode::Nearest,
+                mipmap_filter: wgpu::FilterMode::Nearest,
+                lod_min_clamp: 0.0,
+                lod_max_clamp: 32.0,
+                compare: None,
+                anisotropy_clamp: 1,
+                border_color: None,
+            },
+        );
+
         Ok(Self {
             device,
             queue,
@@ -153,6 +236,12 @@ impl AerogpuCmdRuntime {
             resources: AerogpuResources::default(),
             pipelines,
             pipeline_layout_cache: PipelineLayoutCache::new(),
+            dummy_uniform,
+            dummy_texture_view,
+            sampler_cache,
+            default_sampler,
+            bind_group_layout_cache: BindGroupLayoutCache::new(),
+            bind_group_cache: BindGroupCache::new(DEFAULT_BIND_GROUP_CACHE_CAPACITY),
         })
     }
 
@@ -246,6 +335,110 @@ impl AerogpuCmdRuntime {
         );
     }
 
+    pub fn create_sampler(
+        &mut self,
+        handle: AerogpuHandle,
+        desc: &wgpu::SamplerDescriptor<'_>,
+    ) -> Result<()> {
+        let sampler = self.sampler_cache.get_or_create(&self.device, desc);
+        self.resources.samplers.insert(handle, sampler);
+        Ok(())
+    }
+
+    pub fn write_texture_rgba8(
+        &self,
+        handle: AerogpuHandle,
+        width: u32,
+        height: u32,
+        bytes_per_row: u32,
+        data: &[u8],
+    ) -> Result<()> {
+        let tex = self
+            .resources
+            .textures
+            .get(&handle)
+            .ok_or_else(|| anyhow!("unknown texture handle {handle}"))?;
+
+        if tex.desc.format != wgpu::TextureFormat::Rgba8Unorm {
+            bail!(
+                "write_texture_rgba8: only supports Rgba8Unorm (got {:?})",
+                tex.desc.format
+            );
+        }
+        if tex.desc.width != width || tex.desc.height != height {
+            bail!(
+                "write_texture_rgba8: size mismatch (expected {}x{}, got {}x{})",
+                tex.desc.width,
+                tex.desc.height,
+                width,
+                height
+            );
+        }
+
+        let unpadded_bpr = width
+            .checked_mul(4)
+            .ok_or_else(|| anyhow!("write_texture_rgba8: bytes_per_row overflow"))?;
+        if bytes_per_row < unpadded_bpr {
+            bail!(
+                "write_texture_rgba8: bytes_per_row too small (bytes_per_row={bytes_per_row} required={unpadded_bpr})"
+            );
+        }
+
+        let required_len = bytes_per_row
+            .checked_mul(height)
+            .ok_or_else(|| anyhow!("write_texture_rgba8: data len overflow"))?
+            as usize;
+        if data.len() < required_len {
+            bail!(
+                "write_texture_rgba8: data too small (len={} required={})",
+                data.len(),
+                required_len
+            );
+        }
+
+        let aligned = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+        let repacked = if height > 1 && bytes_per_row % aligned != 0 {
+            let padded_bpr = unpadded_bpr.div_ceil(aligned) * aligned;
+            let mut repacked = vec![0u8; (padded_bpr * height) as usize];
+            for row in 0..height as usize {
+                let src = row * bytes_per_row as usize;
+                let dst = row * padded_bpr as usize;
+                repacked[dst..dst + unpadded_bpr as usize]
+                    .copy_from_slice(&data[src..src + unpadded_bpr as usize]);
+            }
+            Some((padded_bpr, repacked))
+        } else {
+            None
+        };
+
+        let (bpr, bytes) = match repacked.as_ref() {
+            Some((padded_bpr, repacked)) => (*padded_bpr, repacked.as_slice()),
+            None => (bytes_per_row, &data[..required_len]),
+        };
+
+        self.queue.write_texture(
+            wgpu::ImageCopyTexture {
+                texture: &tex.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            bytes,
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(bpr),
+                rows_per_image: Some(height),
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+
+        Ok(())
+    }
+
     pub fn create_shader_dxbc(&mut self, handle: AerogpuHandle, dxbc_bytes: &[u8]) -> Result<()> {
         let dxbc = DxbcFile::parse(dxbc_bytes).context("parse DXBC")?;
         let program = Sm4Program::parse_from_dxbc(&dxbc).context("parse DXBC shader chunk")?;
@@ -270,12 +463,16 @@ impl AerogpuCmdRuntime {
             Vec::new()
         };
 
-        let wgsl = if signatures.isgn.is_some() && signatures.osgn.is_some() {
-            try_translate_sm4_signature_driven(&dxbc, &program, &signatures)?
+        let (wgsl, reflection) = if signatures.isgn.is_some() && signatures.osgn.is_some() {
+            let translated = try_translate_sm4_signature_driven(&dxbc, &program, &signatures)?;
+            (translated.wgsl, translated.reflection)
         } else {
-            translate_sm4_to_wgsl_bootstrap(&program)
-                .context("translate SM4/5 to WGSL")?
-                .wgsl
+            (
+                translate_sm4_to_wgsl_bootstrap(&program)
+                    .context("translate SM4/5 to WGSL")?
+                    .wgsl,
+                ShaderReflection::default(),
+            )
         };
 
         // Register into the shared PipelineCache shader-module cache.
@@ -293,6 +490,7 @@ impl AerogpuCmdRuntime {
                 wgsl,
                 hash,
                 vs_input_signature,
+                reflection,
             },
         );
         Ok(())
@@ -361,6 +559,30 @@ impl AerogpuCmdRuntime {
 
     pub fn set_rasterizer_state(&mut self, state: RasterizerState) {
         self.state.rasterizer_state = state;
+    }
+
+    pub fn set_vs_constant_buffer(&mut self, slot: u32, buffer: Option<AerogpuHandle>) {
+        let slot = slot as usize;
+        if self.state.bindings.vs.constant_buffers.len() <= slot {
+            self.state.bindings.vs.constant_buffers.resize(slot + 1, None);
+        }
+        self.state.bindings.vs.constant_buffers[slot] = buffer;
+    }
+
+    pub fn set_ps_texture(&mut self, slot: u32, texture: Option<AerogpuHandle>) {
+        let slot = slot as usize;
+        if self.state.bindings.ps.textures.len() <= slot {
+            self.state.bindings.ps.textures.resize(slot + 1, None);
+        }
+        self.state.bindings.ps.textures[slot] = texture;
+    }
+
+    pub fn set_ps_sampler(&mut self, slot: u32, sampler: Option<AerogpuHandle>) {
+        let slot = slot as usize;
+        if self.state.bindings.ps.samplers.len() <= slot {
+            self.state.bindings.ps.samplers.resize(slot + 1, None);
+        }
+        self.state.bindings.ps.samplers[slot] = sampler;
     }
 
     pub fn draw(
@@ -439,11 +661,21 @@ impl AerogpuCmdRuntime {
             wgpu_slot_to_d3d_slot,
         } = build_vertex_state(&self.resources, &self.state, &vs.vs_input_signature)?;
 
-        let layout_key = PipelineLayoutKey::empty();
+        let pipeline_bindings = build_pipeline_bindings_info(
+            &self.device,
+            &mut self.bind_group_layout_cache,
+            [&vs, &ps],
+        )?;
+        let layout_key = pipeline_bindings.layout_key.clone();
+        let bind_group_layout_refs: Vec<&wgpu::BindGroupLayout> = pipeline_bindings
+            .group_layouts
+            .iter()
+            .map(|l| l.layout.as_ref())
+            .collect();
         let pipeline_layout = self.pipeline_layout_cache.get_or_create(
             &self.device,
             layout_key.clone(),
-            &[],
+            &bind_group_layout_refs,
             Some("aero-d3d11 aerogpu pipeline layout"),
         );
 
@@ -519,6 +751,32 @@ impl AerogpuCmdRuntime {
             },
         )?;
 
+        let mut bind_groups: Vec<Arc<wgpu::BindGroup>> =
+            Vec::with_capacity(pipeline_bindings.group_layouts.len());
+        for (group_index, (layout, bindings)) in pipeline_bindings
+            .group_layouts
+            .iter()
+            .zip(pipeline_bindings.group_bindings.iter())
+            .enumerate()
+        {
+            let stage_state = match group_index as u32 {
+                0 => Some(&self.state.bindings.vs),
+                1 => Some(&self.state.bindings.ps),
+                _ => None,
+            };
+            bind_groups.push(build_bind_group(
+                &self.device,
+                &mut self.bind_group_cache,
+                &self.resources,
+                &self.dummy_uniform,
+                &self.dummy_texture_view,
+                &self.default_sampler,
+                layout,
+                bindings,
+                stage_state,
+            )?);
+        }
+
         // Encode the draw.
         let mut encoder = self
             .device
@@ -535,6 +793,10 @@ impl AerogpuCmdRuntime {
         });
 
         pass.set_pipeline(pipeline);
+
+        for (group_index, bind_group) in bind_groups.iter().enumerate() {
+            pass.set_bind_group(group_index as u32, bind_group.as_ref(), &[]);
+        }
 
         // Viewport/scissor are dynamic state; apply on every draw.
         let default_viewport = Viewport {
@@ -1036,16 +1298,216 @@ fn try_translate_sm4_signature_driven(
     dxbc: &DxbcFile<'_>,
     program: &Sm4Program,
     signatures: &crate::ShaderSignatures,
-) -> Result<String> {
+) -> Result<ShaderTranslation> {
     let module = program.decode().context("decode SM4/5 token stream")?;
-    let translated = translate_sm4_module_to_wgsl(dxbc, &module, signatures)
-        .context("signature-driven SM4/5 translation")?;
+    translate_sm4_module_to_wgsl(dxbc, &module, signatures).context("signature-driven SM4/5 translation")
+}
 
-    // NOTE: `AerogpuCmdRuntime` does not yet build bind groups for translated resources. Only
-    // accept the signature-driven path when the shader has no declared bindings.
-    if !translated.reflection.bindings.is_empty() {
-        bail!("shader requires resource bindings (not supported yet)");
+#[derive(Debug, Clone)]
+struct PipelineBindingsInfo {
+    layout_key: PipelineLayoutKey,
+    group_layouts: Vec<CachedBindGroupLayout>,
+    group_bindings: Vec<Vec<crate::Binding>>,
+}
+
+fn build_pipeline_bindings_info(
+    device: &wgpu::Device,
+    bind_group_layout_cache: &mut BindGroupLayoutCache,
+    shaders: [&ShaderResource; 2],
+) -> Result<PipelineBindingsInfo> {
+    let mut groups: BTreeMap<u32, BTreeMap<u32, crate::Binding>> = BTreeMap::new();
+    for shader in shaders {
+        for binding in &shader.reflection.bindings {
+            let group_map = groups.entry(binding.group).or_default();
+            if let Some(existing) = group_map.get_mut(&binding.binding) {
+                if existing.kind != binding.kind {
+                    bail!(
+                        "binding @group({}) @binding({}) kind mismatch across shaders",
+                        binding.group,
+                        binding.binding
+                    );
+                }
+                existing.visibility |= binding.visibility;
+            } else {
+                group_map.insert(binding.binding, binding.clone());
+            }
+        }
     }
 
-    Ok(translated.wgsl)
+    if groups.is_empty() {
+        return Ok(PipelineBindingsInfo {
+            layout_key: PipelineLayoutKey::empty(),
+            group_layouts: Vec::new(),
+            group_bindings: Vec::new(),
+        });
+    }
+
+    let max_group = groups
+        .keys()
+        .copied()
+        .max()
+        .expect("groups.is_empty handled above");
+    let mut group_layouts = Vec::with_capacity(max_group as usize + 1);
+    let mut group_bindings = Vec::with_capacity(max_group as usize + 1);
+
+    for group_index in 0..=max_group {
+        let bindings: Vec<crate::Binding> = groups
+            .get(&group_index)
+            .map(|m| m.values().cloned().collect())
+            .unwrap_or_default();
+
+        let mut entries = Vec::with_capacity(bindings.len());
+        for binding in &bindings {
+            entries.push(binding_to_layout_entry(binding)?);
+        }
+
+        let layout = bind_group_layout_cache.get_or_create(device, &entries);
+        group_layouts.push(layout);
+        group_bindings.push(bindings);
+    }
+
+    let layout_key = PipelineLayoutKey {
+        bind_group_layout_hashes: group_layouts.iter().map(|l| l.hash).collect(),
+    };
+
+    Ok(PipelineBindingsInfo {
+        layout_key,
+        group_layouts,
+        group_bindings,
+    })
+}
+
+fn binding_to_layout_entry(binding: &crate::Binding) -> Result<wgpu::BindGroupLayoutEntry> {
+    let ty = match &binding.kind {
+        crate::BindingKind::ConstantBuffer { slot, reg_count } => {
+            let expected = BINDING_BASE_CBUFFER + slot;
+            if binding.binding != expected {
+                bail!(
+                    "cbuffer slot {slot} expected @binding({expected}), got {}",
+                    binding.binding
+                );
+            }
+            wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: wgpu::BufferSize::new((*reg_count as u64) * 16),
+            }
+        }
+        crate::BindingKind::Texture2D { slot } => {
+            let expected = BINDING_BASE_TEXTURE + slot;
+            if binding.binding != expected {
+                bail!(
+                    "texture slot {slot} expected @binding({expected}), got {}",
+                    binding.binding
+                );
+            }
+            wgpu::BindingType::Texture {
+                multisampled: false,
+                view_dimension: wgpu::TextureViewDimension::D2,
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+            }
+        }
+        crate::BindingKind::Sampler { slot } => {
+            let expected = BINDING_BASE_SAMPLER + slot;
+            if binding.binding != expected {
+                bail!(
+                    "sampler slot {slot} expected @binding({expected}), got {}",
+                    binding.binding
+                );
+            }
+            wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering)
+        }
+    };
+
+    Ok(wgpu::BindGroupLayoutEntry {
+        binding: binding.binding,
+        visibility: binding.visibility,
+        ty,
+        count: None,
+    })
+}
+
+fn build_bind_group(
+    device: &wgpu::Device,
+    cache: &mut BindGroupCache<Arc<wgpu::BindGroup>>,
+    resources: &AerogpuResources,
+    dummy_uniform: &wgpu::Buffer,
+    dummy_texture_view: &wgpu::TextureView,
+    default_sampler: &aero_gpu::bindings::samplers::CachedSampler,
+    layout: &CachedBindGroupLayout,
+    bindings: &[crate::Binding],
+    stage_state: Option<&super::aerogpu_state::StageBindings>,
+) -> Result<Arc<wgpu::BindGroup>> {
+    let mut entries: Vec<BindGroupCacheEntry<'_>> = Vec::with_capacity(bindings.len());
+    for binding in bindings {
+        match &binding.kind {
+            crate::BindingKind::ConstantBuffer { slot, reg_count } => {
+                let slot_usize = *slot as usize;
+                let bound_handle = stage_state
+                    .and_then(|s| s.constant_buffers.get(slot_usize).copied())
+                    .flatten();
+
+                let required_min = (*reg_count as u64).saturating_mul(16);
+                let (id, buffer) = if let Some(handle) = bound_handle {
+                    resources
+                        .buffers
+                        .get(&handle)
+                        .filter(|b| b.size >= required_min)
+                        .map(|b| (BufferId(handle as u64), &b.buffer))
+                        .unwrap_or((BufferId(0), dummy_uniform))
+                } else {
+                    (BufferId(0), dummy_uniform)
+                };
+
+                entries.push(BindGroupCacheEntry {
+                    binding: binding.binding,
+                    resource: BindGroupCacheResource::Buffer {
+                        id,
+                        buffer,
+                        offset: 0,
+                        size: wgpu::BufferSize::new(required_min),
+                    },
+                });
+            }
+            crate::BindingKind::Texture2D { slot } => {
+                let slot_usize = *slot as usize;
+                let bound_handle = stage_state
+                    .and_then(|s| s.textures.get(slot_usize).copied())
+                    .flatten();
+                let (id, view) = if let Some(handle) = bound_handle {
+                    resources
+                        .textures
+                        .get(&handle)
+                        .map(|t| (TextureViewId(handle as u64), &t.view))
+                        .unwrap_or((TextureViewId(0), dummy_texture_view))
+                } else {
+                    (TextureViewId(0), dummy_texture_view)
+                };
+                entries.push(BindGroupCacheEntry {
+                    binding: binding.binding,
+                    resource: BindGroupCacheResource::TextureView { id, view },
+                });
+            }
+            crate::BindingKind::Sampler { slot } => {
+                let slot_usize = *slot as usize;
+                let bound_handle = stage_state
+                    .and_then(|s| s.samplers.get(slot_usize).copied())
+                    .flatten();
+
+                let sampler = bound_handle
+                    .and_then(|handle| resources.samplers.get(&handle))
+                    .unwrap_or(default_sampler);
+
+                entries.push(BindGroupCacheEntry {
+                    binding: binding.binding,
+                    resource: BindGroupCacheResource::Sampler {
+                        id: sampler.id,
+                        sampler: sampler.sampler.as_ref(),
+                    },
+                });
+            }
+        }
+    }
+
+    Ok(cache.get_or_create(device, layout, &entries))
 }
