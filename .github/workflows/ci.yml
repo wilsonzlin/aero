@@ -236,6 +236,9 @@ jobs:
       - name: cargo test (wasm32, aero-gpu-wasm, no-run)
         run: cargo test ${{ steps.setup-rust.outputs.cargo_locked_flag }} --target wasm32-unknown-unknown -p aero-gpu-wasm --tests --no-run
 
+      - name: cargo test (wasm32, aero-wasm, no-run)
+        run: cargo test ${{ steps.setup-rust.outputs.cargo_locked_flag }} --target wasm32-unknown-unknown -p aero-wasm --tests --no-run
+
       - name: Install cargo-nextest
         uses: taiki-e/install-action@v2
         with:
