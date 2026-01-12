@@ -602,10 +602,16 @@ request the ring handles via `{ type: "usb.ringAttachRequest" }`. The production
 re-sending the ring buffers when possible; older brokers may ignore this message and the runtime should keep
 functioning via the `postMessage` path.
 
+If a ring buffer becomes corrupted (e.g. a decode error while popping records) the runtime can request the
+broker to disable the SharedArrayBuffer fast path for that port by sending `{ type: "usb.ringDetach", reason? }`.
+The broker will stop draining the action ring / pushing completions into the completion ring and will fall back
+to `postMessage` (`usb.action` / `usb.completion`). Runtimes should treat `usb.ringDetach` as a signal to detach
+their local ring wrappers and continue proxying via `postMessage`.
+
 Implementation pointers (current code):
 
 - Ring buffer: `web/src/usb/usb_proxy_ring.ts` (`UsbProxyRing`)
-- Protocol schema: `web/src/usb/usb_proxy_protocol.ts` (`usb.ringAttach`)
+- Protocol schema: `web/src/usb/usb_proxy_protocol.ts` (`usb.ringAttach`, `usb.ringAttachRequest`, `usb.ringDetach`)
 - Main thread setup + action-ring drain: `web/src/usb/usb_broker.ts` (`attachRings`, `drainActionRing`)
 - Worker-side attach + action forwarding: `web/src/usb/webusb_passthrough_runtime.ts` (`attachRings`, `pollOnce`)
 - Worker-side completion drain + fan-out: `web/src/usb/usb_proxy_ring_dispatcher.ts`
