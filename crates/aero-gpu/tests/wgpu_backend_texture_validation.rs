@@ -86,4 +86,3 @@ fn wgpu_backend_write_texture_rejects_out_of_range_mip_level() {
     backend.submit(&[]).unwrap();
     backend.destroy_texture(texture).unwrap();
 }
-

@@ -45,7 +45,8 @@ pub fn detect_format<S: ByteStorage>(storage: &mut S) -> DiskResult<DiskFormat> 
             let mut buf8 = [0u8; 8];
             buf8.copy_from_slice(&first12[..8]);
             first8 = Some(buf8);
-            le_version_at_8 = u32::from_le_bytes([first12[8], first12[9], first12[10], first12[11]]);
+            le_version_at_8 =
+                u32::from_le_bytes([first12[8], first12[9], first12[10], first12[11]]);
         } else {
             let mut buf8 = [0u8; 8];
             storage.read_at(0, &mut buf8)?;

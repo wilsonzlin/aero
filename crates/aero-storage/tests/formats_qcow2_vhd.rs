@@ -2347,7 +2347,10 @@ fn vhd_dynamic_rejects_block_size_too_large() {
     let backend = make_vhd_dynamic_empty(virtual_size, block_size);
 
     let err = VhdDisk::open(backend).err().expect("expected error");
-    assert!(matches!(err, DiskError::Unsupported("vhd block_size too large")));
+    assert!(matches!(
+        err,
+        DiskError::Unsupported("vhd block_size too large")
+    ));
 }
 
 #[test]

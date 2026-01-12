@@ -1664,10 +1664,7 @@ export function installAeroTieredMmioTestShims() {
 
         // ECAM hole accesses must route to MMIO (and must not attempt a direct RAM dereference).
         let hole = crate::guest_phys::PCIE_ECAM_BASE;
-        assert_eq!(
-            bus.read_u32(hole).expect("mmio read_u32"),
-            hole as u32
-        );
+        assert_eq!(bus.read_u32(hole).expect("mmio read_u32"), hole as u32);
         bus.write_u16(hole + 0x10, 0x1234).expect("mmio write_u16");
 
         // High-RAM physical addresses >=4GiB should map back into RAM offsets starting at

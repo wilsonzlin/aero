@@ -49,8 +49,7 @@ fn virtio_common_cfg_offset(cfg: &[u8; 256]) -> u64 {
         if cap_id == 0x09 {
             let cfg_type = cfg[ptr + 3];
             if cfg_type == VIRTIO_PCI_CAP_COMMON_CFG {
-                let offset =
-                    u32::from_le_bytes(cfg[ptr + 8..ptr + 12].try_into().unwrap()) as u64;
+                let offset = u32::from_le_bytes(cfg[ptr + 8..ptr + 12].try_into().unwrap()) as u64;
                 return offset;
             }
         }
