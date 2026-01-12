@@ -36,8 +36,8 @@ use aero_io_snapshot::io::storage::state::{
 pub use aero_storage_adapters::AeroVirtualDiskAsNvmeBackend as AeroStorageDiskAdapter;
 use memory::MemoryBus;
 
+#[cfg(test)]
 mod aero_storage_adapter;
-pub use aero_storage_adapter::NvmeDiskFromAeroStorage;
 
 const PAGE_SIZE: usize = 4096;
 

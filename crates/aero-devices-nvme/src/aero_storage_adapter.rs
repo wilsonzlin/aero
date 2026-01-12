@@ -31,14 +31,6 @@ impl<D: VirtualDisk> NvmeDiskFromAeroStorage<D> {
     pub fn into_inner(self) -> D {
         self.disk
     }
-
-    pub fn inner_mut(&mut self) -> &mut D {
-        &mut self.disk
-    }
-
-    pub fn inner(&self) -> &D {
-        &self.disk
-    }
 }
 
 impl<D: VirtualDisk + Send> DiskBackend for NvmeDiskFromAeroStorage<D> {
