@@ -903,6 +903,8 @@ function renderAudioPanel(): HTMLElement {
   let toneTimer: number | null = null;
   let tonePhase = 0;
   const workerCoordinator = new WorkerCoordinator();
+  // Expose for Playwright E2E tests that need to drive low-level worker/device plumbing.
+  (globalThis as typeof globalThis & { __aeroWorkerCoordinator?: unknown }).__aeroWorkerCoordinator = workerCoordinator;
   installNetTraceBackendOnAeroGlobal(workerCoordinator);
   let hdaDemoWorker: Worker | null = null;
   let hdaDemoStats: { [k: string]: unknown } | null = null;

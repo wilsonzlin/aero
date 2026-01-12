@@ -2137,6 +2137,11 @@ type SetBootDisksMessage = {
   cd: DiskImageMetadata | null;
 };
 
+type HdaMicCaptureTestMessage = {
+  type: "hda.micCaptureTest";
+  requestId: number;
+};
+
 type ActiveDisk = { handle: number; sectorSize: number; capacityBytes: number; readOnly: boolean };
 let diskClient: RuntimeDiskClient | null = null;
 let activeDisk: ActiveDisk | null = null;
@@ -2243,6 +2248,138 @@ function attachMicRingBuffer(ringBuffer: SharedArrayBuffer | null, sampleRate?: 
     if (ringBuffer && micSampleRate > 0) {
       dev.setCaptureSampleRateHz(micSampleRate);
     }
+  }
+}
+
+type HdaMicCaptureTestResultMessage =
+  | { type: "hda.micCaptureTest.result"; requestId: number; ok: true; pcm: ArrayBuffer }
+  | { type: "hda.micCaptureTest.result"; requestId: number; ok: false; error: string };
+
+function runHdaMicCaptureTest(requestId: number): void {
+  maybeInitHdaDevice();
+
+  const bridge = hdaControllerBridge as unknown as {
+    mmio_write?: unknown;
+    step_frames?: unknown;
+  } | null;
+  if (!bridge || typeof bridge.mmio_write !== "function" || typeof bridge.step_frames !== "function") {
+    ctx.postMessage({
+      type: "hda.micCaptureTest.result",
+      requestId,
+      ok: false,
+      error: "HDA controller bridge is unavailable.",
+    } satisfies HdaMicCaptureTestResultMessage);
+    return;
+  }
+  if (!micRingBuffer) {
+    ctx.postMessage({
+      type: "hda.micCaptureTest.result",
+      requestId,
+      ok: false,
+      error: "Microphone ring buffer is not attached.",
+    } satisfies HdaMicCaptureTestResultMessage);
+    return;
+  }
+
+  try {
+    // Guest memory layout (avoid low memory regions used by other harness probes).
+    const corbBase = 0x200_000;
+    const rirbBase = 0x201_000;
+    const bdlBase = 0x202_000;
+    const pcmBase = 0x203_000;
+    const pcmBytes = 4096;
+
+    const view = new DataView(guestU8.buffer, guestU8.byteOffset, guestU8.byteLength);
+
+    const ensureRange = (guestOffset: number, len: number) => {
+      const off = guestOffset >>> 0;
+      const end = off + (len >>> 0);
+      if (end > guestU8.byteLength) {
+        throw new Error(
+          `HDA test guest range out of bounds: off=0x${off.toString(16)} len=0x${len.toString(16)} guestBytes=0x${guestU8.byteLength.toString(16)}`,
+        );
+      }
+    };
+
+    const writeU32 = (guestOffset: number, value: number) => {
+      ensureRange(guestOffset, 4);
+      view.setUint32(guestOffset >>> 0, value >>> 0, true);
+    };
+
+    const writeU64 = (guestOffset: number, value: number) => {
+      ensureRange(guestOffset, 8);
+      writeU32(guestOffset, value >>> 0);
+      writeU32(guestOffset + 4, 0);
+    };
+
+    // Clear the PCM target buffer so the test can assert on a non-zero write.
+    ensureRange(pcmBase, pcmBytes);
+    guestU8.fill(0, pcmBase, pcmBase + pcmBytes);
+
+    // One BDL entry pointing at the PCM buffer.
+    ensureRange(bdlBase, 16);
+    writeU64(bdlBase + 0, pcmBase);
+    writeU32(bdlBase + 8, pcmBytes);
+    writeU32(bdlBase + 12, 1); // IOC
+
+    // Program CORB verbs to configure the input converter (NID4) for stream 2, ch0 and a basic format.
+    const cmd = (cad: number, nid: number, verb20: number) => ((cad << 28) | (nid << 20) | (verb20 & 0x000f_ffff)) >>> 0;
+    const setStreamCh = (0x706 << 8) | 0x20; // stream=2, channel=0
+    const setFmt = (0x200 << 8) | 0x10; // 48kHz, 16-bit, mono (matches fmt raw below)
+
+    ensureRange(corbBase, 8);
+    writeU32(corbBase + 0, cmd(0, 4, setStreamCh));
+    writeU32(corbBase + 4, cmd(0, 4, setFmt));
+
+    const mmioWrite = bridge.mmio_write as (offset: number, size: number, value: number) => void;
+    const stepFrames = bridge.step_frames as (frames: number) => void;
+
+    // Bring controller out of reset and configure CORB/RIRB.
+    mmioWrite(0x08, 4, 0x1); // GCTL.CRST
+    mmioWrite(0x40, 4, corbBase); // CORBLBASE
+    mmioWrite(0x44, 4, 0); // CORBUBASE
+    mmioWrite(0x50, 4, rirbBase); // RIRBLBASE
+    mmioWrite(0x54, 4, 0); // RIRBUBASE
+
+    // Set pointers so first command/response lands at entry 0.
+    mmioWrite(0x4a, 2, 0x00ff); // CORBRP
+    mmioWrite(0x58, 2, 0x00ff); // RIRBWP
+
+    // Enable response interrupts (CIS) + global interrupt enable.
+    mmioWrite(0x20, 4, (1 << 31) | (1 << 30)); // INTCTL.GIE | INTCTL.CIE
+    mmioWrite(0x5c, 1, 0x03); // RIRBCTL.RUN | RIRBCTL.RINTCTL
+    mmioWrite(0x4c, 1, 0x02); // CORBCTL.RUN
+
+    // Submit 2 commands (CORBWP=1) and step briefly to service them.
+    mmioWrite(0x48, 2, 0x0001); // CORBWP
+    stepFrames(1);
+
+    // Program capture stream descriptor 1 (SD#1).
+    const sd1Base = 0x80 + 0x20 * 1;
+    const streamId = 2;
+    const fmtRaw = 0x0010; // 48kHz, 16-bit, mono
+    const ctl = (1 << 0) | (1 << 1) | (streamId << 20); // RUN | STRM=2
+
+    mmioWrite(sd1Base + 0x18, 4, bdlBase); // BDPL
+    mmioWrite(sd1Base + 0x1c, 4, 0); // BDPU
+    mmioWrite(sd1Base + 0x08, 4, pcmBytes); // CBL
+    mmioWrite(sd1Base + 0x0c, 2, 0); // LVI
+    mmioWrite(sd1Base + 0x12, 2, fmtRaw); // FMT
+    mmioWrite(sd1Base + 0x00, 4, ctl); // CTL
+
+    // Advance the device and allow the capture DMA to run.
+    stepFrames(1024);
+
+    const pcm = new Uint8Array(pcmBytes);
+    pcm.set(guestU8.subarray(pcmBase, pcmBase + pcmBytes));
+
+    ctx.postMessage(
+      { type: "hda.micCaptureTest.result", requestId, ok: true, pcm: pcm.buffer } satisfies HdaMicCaptureTestResultMessage,
+      [pcm.buffer],
+    );
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    ctx.postMessage({ type: "hda.micCaptureTest.result", requestId, ok: false, error: message } satisfies HdaMicCaptureTestResultMessage);
   }
 }
 
@@ -2990,6 +3127,7 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
       | Partial<SetBootDisksMessage>
       | Partial<SetMicrophoneRingBufferMessage>
       | Partial<SetAudioRingBufferMessage>
+      | Partial<HdaMicCaptureTestMessage>
       | Partial<HidProxyMessage>
       | Partial<UsbRingDetachMessage>
       | Partial<UsbSelectedMessage>
@@ -3127,6 +3265,13 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
     if ((data as Partial<SetAudioRingBufferMessage>).type === "setAudioRingBuffer") {
       const msg = data as Partial<SetAudioRingBufferMessage>;
       attachAudioRingBuffer((msg.ringBuffer as SharedArrayBuffer | null) ?? null, msg.capacityFrames, msg.channelCount, msg.dstSampleRate);
+      return;
+    }
+
+    if ((data as Partial<HdaMicCaptureTestMessage>).type === "hda.micCaptureTest") {
+      const msg = data as Partial<HdaMicCaptureTestMessage>;
+      if (typeof msg.requestId !== "number") return;
+      runHdaMicCaptureTest(msg.requestId);
       return;
     }
 
