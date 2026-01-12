@@ -361,6 +361,118 @@ fn pc_machine_delivers_e1000_pci_intx_via_legacy_pic() {
 }
 
 #[test]
+fn pc_machine_delivers_e1000_pci_intx_after_tx_dma_sets_txdw() {
+    const RAM_SIZE: usize = 2 * 1024 * 1024;
+    const MIN_L2_FRAME_LEN: usize = 14;
+
+    // Create the PC machine, but swap in a platform that includes the E1000 device.
+    let mut pc = PcMachine::new(RAM_SIZE);
+    pc.bus =
+        aero_pc_platform::PcCpuBus::new(aero_pc_platform::PcPlatform::new_with_e1000(RAM_SIZE));
+
+    // E1000 device 00:05.0 INTA# => (pin+device)%4 = (0+5)%4 = 1 => PIRQB => GSI11 (default config).
+    // With PIC offsets 0x20/0x28: IRQ11 => vector 0x2B.
+    let vector = 0x2B_u8;
+
+    let handler_addr = 0x1300u64;
+    let code_base = 0x2300u64;
+    let flag_addr = 0x0503u16;
+    let flag_value = 0x5Bu8;
+
+    install_real_mode_handler(&mut pc, handler_addr, flag_addr, flag_value);
+    install_hlt_loop(&mut pc, code_base);
+    write_ivt_entry(&mut pc, vector, 0x0000, handler_addr as u16);
+
+    setup_real_mode_cpu(&mut pc, code_base);
+
+    // Stop in HLT so the interrupt must be delivered to wake the CPU.
+    assert!(matches!(pc.run_slice(16), RunExit::Halted { .. }));
+
+    // Enable IRQ11 delivery through the legacy PIC.
+    {
+        let mut ints = pc.bus.platform.interrupts.borrow_mut();
+        ints.pic_mut().set_offsets(0x20, 0x28);
+        // Unmask cascade + IRQ11.
+        ints.pic_mut().set_masked(2, false);
+        ints.pic_mut().set_masked(11, false);
+    }
+
+    // Locate BAR0 for the E1000 MMIO window (assigned during BIOS POST) and enable bus mastering
+    // so TX DMA can run in `PcPlatform::process_e1000`.
+    let bar0_base = {
+        let bdf = aero_devices::pci::profile::NIC_E1000_82540EM.bdf;
+        let mut pci_cfg = pc.bus.platform.pci_cfg.borrow_mut();
+        let bus = pci_cfg.bus_mut();
+
+        let cfg = bus
+            .device_config_mut(bdf)
+            .expect("E1000 config function must exist");
+        cfg.set_command(cfg.command() | (1 << 2));
+        assert_ne!(cfg.command() & 0x2, 0, "E1000 MMIO decoding must be enabled");
+        cfg.bar_range(0).expect("E1000 BAR0 must exist").base
+    };
+    assert_ne!(
+        bar0_base, 0,
+        "E1000 BAR0 should be assigned during BIOS POST"
+    );
+
+    // Program a minimal TX ring with one descriptor (ring size must be >= 2 for head!=tail).
+    let tx_desc_base = 0x10_000u64;
+    let tx_buf_addr = 0x11_000u64;
+
+    let frame = vec![0x11u8; MIN_L2_FRAME_LEN];
+    pc.bus.platform.memory.write_physical(tx_buf_addr, &frame);
+
+    // Legacy TX descriptor: buffer_addr + length + cmd(EOP|RS).
+    let mut desc0 = [0u8; 16];
+    desc0[0..8].copy_from_slice(&tx_buf_addr.to_le_bytes());
+    desc0[8..10].copy_from_slice(&(frame.len() as u16).to_le_bytes());
+    desc0[11] = (1 << 0) | (1 << 3); // EOP|RS
+    pc.bus.platform.memory.write_physical(tx_desc_base, &desc0);
+    pc.bus
+        .platform
+        .memory
+        .write_physical(tx_desc_base + 16, &[0u8; 16]);
+
+    // Enable TXDW interrupt cause.
+    const REG_IMS: u64 = 0x00D0;
+    const ICR_TXDW: u32 = 1 << 0;
+    pc.bus.platform.memory.write_u32(bar0_base + REG_IMS, ICR_TXDW);
+
+    // Program E1000 TX registers over MMIO (BAR0).
+    const REG_TCTL: u64 = 0x0400;
+    const REG_TDBAL: u64 = 0x3800;
+    const REG_TDBAH: u64 = 0x3804;
+    const REG_TDLEN: u64 = 0x3808;
+    const REG_TDH: u64 = 0x3810;
+    const REG_TDT: u64 = 0x3818;
+    const TCTL_EN: u32 = 1 << 1;
+
+    let mem = &mut pc.bus.platform.memory;
+    mem.write_u32(bar0_base + REG_TDBAL, tx_desc_base as u32);
+    mem.write_u32(bar0_base + REG_TDBAH, (tx_desc_base >> 32) as u32);
+    mem.write_u32(bar0_base + REG_TDLEN, 32);
+    mem.write_u32(bar0_base + REG_TDH, 0);
+    mem.write_u32(bar0_base + REG_TDT, 0);
+    mem.write_u32(bar0_base + REG_TCTL, TCTL_EN);
+
+    // Doorbell: publish descriptor 0 (TDH=0, TDT=1).
+    mem.write_u32(bar0_base + REG_TDT, 1);
+
+    // Run a single slice. Correct ordering in `PcMachine::run_slice` must ensure:
+    // - E1000 DMA runs first (processing the TX descriptor and setting ICR.TXDW),
+    // - then PCI INTx lines are polled/latched into the PIC,
+    // - then the interrupt is delivered to wake the CPU and execute the handler.
+    let _ = pc.run_slice(512);
+
+    assert_eq!(
+        pc.bus.platform.memory.read_u8(u64::from(flag_addr)),
+        flag_value,
+        "expected E1000 TXDW DMA interrupt to be delivered within the same run_slice call"
+    );
+}
+
+#[test]
 fn pc_machine_delivers_ahci_pci_intx_via_legacy_pic() {
     const RAM_SIZE: usize = 2 * 1024 * 1024;
 
