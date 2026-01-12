@@ -31,6 +31,11 @@ fn write_cfg_u16(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset:
     pc.io.write(0xCFC, 2, u32::from(value));
 }
 
+fn write_cfg_u32(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8, value: u32) {
+    pc.io.write(0xCF8, 4, cfg_addr(bus, device, function, offset));
+    pc.io.write(0xCFC, 4, value);
+}
+
 fn read_io_bar_base(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, bar: u8) -> u16 {
     let off = 0x10 + bar * 4;
     let val = read_cfg_u32(pc, bus, device, function, off);
@@ -586,6 +591,105 @@ fn pc_platform_ide_dma_writes_mark_dirty_pages_when_enabled() {
         dirty.contains(&expected_page),
         "dirty pages should include IDE DMA buffer page (got {dirty:?})"
     );
+}
+
+#[test]
+fn pc_platform_ide_dma_works_after_bus_master_bar4_relocation() {
+    let capacity = 8 * SECTOR_SIZE as u64;
+    let mut disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
+    let mut sector0 = vec![0u8; SECTOR_SIZE];
+    sector0[0..4].copy_from_slice(b"BOOT");
+    disk.write_sectors(0, &sector0).unwrap();
+
+    let mut pc = PcPlatform::new_with_ide(2 * 1024 * 1024);
+    pc.attach_ide_primary_master_disk(Box::new(disk)).unwrap();
+
+    // Unmask IRQ2 (cascade) and IRQ14 so we can observe primary IDE IRQ delivery via the PIC.
+    {
+        let mut interrupts = pc.interrupts.borrow_mut();
+        interrupts.pic_mut().set_offsets(0x20, 0x28);
+        interrupts.pic_mut().set_masked(2, false);
+        interrupts.pic_mut().set_masked(14, false);
+    }
+
+    let bdf = IDE_PIIX3.bdf;
+    let old_bm_base = read_io_bar_base(&mut pc, bdf.bus, bdf.device, bdf.function, 4);
+    assert_ne!(old_bm_base, 0);
+
+    // Enable bus mastering for DMA (keep I/O decoding enabled).
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0005);
+
+    // Relocate BAR4 to a new base within the platform's PCI I/O window. BAR4 is a 16-byte I/O BAR,
+    // so ensure 16-byte alignment.
+    let new_bm_base: u16 = old_bm_base.wrapping_add(0x1000);
+    assert_eq!(new_bm_base % 0x10, 0);
+    write_cfg_u32(
+        &mut pc,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        0x20,
+        u32::from(new_bm_base),
+    );
+    assert_eq!(
+        read_io_bar_base(&mut pc, bdf.bus, bdf.device, bdf.function, 4),
+        new_bm_base
+    );
+
+    // Old base should float high after relocation.
+    assert_eq!(pc.io.read(old_bm_base, 1), 0xFF);
+
+    // PRD table at 0x1000: one entry, end-of-table, 512 bytes.
+    let prd_addr = 0x1000u64;
+    let read_buf = 0x2000u64;
+    pc.memory.write_u32(prd_addr, read_buf as u32);
+    pc.memory.write_u16(prd_addr + 4, SECTOR_SIZE as u16);
+    pc.memory.write_u16(prd_addr + 6, 0x8000);
+
+    pc.io.write(new_bm_base + 4, 4, prd_addr as u32);
+
+    // Issue READ DMA (LBA 0, 1 sector).
+    pc.io.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
+    pc.io.write(PRIMARY_PORTS.cmd_base + 2, 1, 1);
+    pc.io.write(PRIMARY_PORTS.cmd_base + 3, 1, 0);
+    pc.io.write(PRIMARY_PORTS.cmd_base + 4, 1, 0);
+    pc.io.write(PRIMARY_PORTS.cmd_base + 5, 1, 0);
+    pc.io.write(PRIMARY_PORTS.cmd_base + 7, 1, 0xC8); // READ DMA
+
+    // Start bus master (direction = to memory).
+    pc.io.write(new_bm_base, 1, 0x09);
+    pc.process_ide();
+    pc.poll_pci_intx_lines();
+
+    let pending = pc
+        .interrupts
+        .borrow()
+        .pic()
+        .get_pending_vector()
+        .expect("IRQ14 should be pending after IDE DMA completion");
+    let irq = pc
+        .interrupts
+        .borrow()
+        .pic()
+        .vector_to_irq(pending)
+        .expect("pending vector should decode to an IRQ number");
+    assert_eq!(irq, 14);
+
+    // Consume and EOI the interrupt.
+    {
+        let mut interrupts = pc.interrupts.borrow_mut();
+        interrupts.pic_mut().acknowledge(pending);
+        interrupts.pic_mut().eoi(pending);
+    }
+
+    let mut out = [0u8; 4];
+    pc.memory.read_physical(read_buf, &mut out);
+    assert_eq!(&out, b"BOOT");
+
+    // Clear device interrupt and ensure the PIC no longer sees a pending vector.
+    let _ = pc.io.read(PRIMARY_PORTS.cmd_base + 7, 1);
+    pc.poll_pci_intx_lines();
+    assert_eq!(pc.interrupts.borrow().pic().get_pending_vector(), None);
 }
 
 fn send_atapi_packet(pc: &mut PcPlatform, base: u16, features: u8, pkt: &[u8; 12], byte_count: u16) {
