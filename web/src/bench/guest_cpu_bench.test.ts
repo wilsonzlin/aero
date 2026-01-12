@@ -45,6 +45,27 @@ describe("bench/guest_cpu_bench option validation", () => {
     ).rejects.toThrow(/seconds.*> 0/i);
   });
 
+  it("validates iters before rejecting unsupported modes", async () => {
+    await expect(
+      runGuestCpuBench({
+        variant: "alu32",
+        mode: "jit_opt",
+        iters: 0,
+      }),
+    ).rejects.toThrow(/iters.*> 0/i);
+  });
+
+  it("reports mutual exclusivity even if values are invalid", async () => {
+    await expect(
+      runGuestCpuBench({
+        variant: "alu32",
+        mode: "jit_opt",
+        seconds: 0,
+        iters: 0,
+      }),
+    ).rejects.toThrow(/mutually exclusive/i);
+  });
+
   it("rejects non-finite iters", async () => {
     await expect(
       runGuestCpuBench({
