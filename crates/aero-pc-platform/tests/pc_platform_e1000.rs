@@ -135,6 +135,36 @@ fn pc_platform_sets_e1000_intx_line_and_pin_registers() {
 }
 
 #[test]
+fn pc_platform_e1000_bar_probes_return_size_masks() {
+    let mut pc = PcPlatform::new_with_e1000(2 * 1024 * 1024);
+    let bdf = NIC_E1000_82540EM.bdf;
+
+    // BAR0: 0x20_000-byte MMIO.
+    let bar0_orig = read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x10);
+    write_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x10, 0xFFFF_FFFF);
+    let bar0_probe = read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x10);
+    assert_eq!(
+        bar0_probe,
+        0xFFFE_0000,
+        "BAR0 probe should return size mask for 0x20_000-byte MMIO BAR"
+    );
+    write_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x10, bar0_orig);
+    assert_eq!(read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x10), bar0_orig);
+
+    // BAR1: 0x40-byte I/O (IOADDR/IODATA) window.
+    let bar1_orig = read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x14);
+    write_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x14, 0xFFFF_FFFF);
+    let bar1_probe = read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x14);
+    assert_eq!(
+        bar1_probe,
+        0xFFFF_FFC1,
+        "BAR1 probe should return size mask for 0x40-byte I/O BAR"
+    );
+    write_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x14, bar1_orig);
+    assert_eq!(read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x14), bar1_orig);
+}
+
+#[test]
 fn pc_platform_routes_e1000_mmio_through_bar0() {
     let mut pc = PcPlatform::new_with_e1000(2 * 1024 * 1024);
     let bar0_base = read_e1000_bar0_base(&mut pc);
