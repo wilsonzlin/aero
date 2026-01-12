@@ -323,6 +323,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "aero-jit-wasm"
+version = "0.1.0"
+dependencies = [
+ "aero-jit-x86",
+ "js-sys",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "aero-jit-x86"
 version = "0.1.0"
 dependencies = [

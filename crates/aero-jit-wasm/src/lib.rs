@@ -1,0 +1,154 @@
+//! Tier-1 JIT compiler exposed as a standalone wasm-bindgen module.
+//!
+//! This module is meant to run in a browser worker and compile a single x86 basic block into a
+//! standalone WASM module (returned as bytes).
+
+#[cfg(target_arch = "wasm32")]
+use core::cell::Cell;
+
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen::prelude::*;
+
+#[cfg(target_arch = "wasm32")]
+use js_sys::{Object, Reflect, Uint8Array};
+
+#[cfg(target_arch = "wasm32")]
+use aero_jit_x86::{
+    Tier1Bus,
+    compiler::tier1::compile_tier1_block_with_options,
+    tier1::{BlockLimits, Tier1WasmOptions},
+};
+
+#[cfg(target_arch = "wasm32")]
+fn js_error(message: impl AsRef<str>) -> JsValue {
+    js_sys::Error::new(message.as_ref()).into()
+}
+
+/// Hard cap to avoid accidental OOMs from absurd inputs.
+#[cfg(target_arch = "wasm32")]
+const MAX_CODE_BYTES: usize = 1024 * 1024;
+
+#[cfg(target_arch = "wasm32")]
+struct Tier1SliceBus<'a> {
+    entry_rip: u64,
+    code: &'a [u8],
+    first_oob_addr: Cell<Option<u64>>,
+}
+
+#[cfg(target_arch = "wasm32")]
+impl<'a> Tier1SliceBus<'a> {
+    #[inline]
+    fn record_oob(&self, addr: u64) {
+        if self.first_oob_addr.get().is_none() {
+            self.first_oob_addr.set(Some(addr));
+        }
+    }
+
+    #[inline]
+    fn read_oob_zero(&self, addr: u64) -> u8 {
+        self.record_oob(addr);
+        0
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl<'a> Tier1Bus for Tier1SliceBus<'a> {
+    #[inline]
+    fn read_u8(&self, addr: u64) -> u8 {
+        let Some(off) = addr.checked_sub(self.entry_rip) else {
+            return self.read_oob_zero(addr);
+        };
+        let Some(b) = self.code.get(off as usize) else {
+            return self.read_oob_zero(addr);
+        };
+        *b
+    }
+
+    #[inline]
+    fn write_u8(&mut self, addr: u64, _value: u8) {
+        // Tier-1 compilation should not write via the bus. If it does, treat it as out-of-bounds
+        // (deterministic error) since we only have an immutable code slice.
+        self.record_oob(addr);
+    }
+}
+
+/// Compile a single Tier-1 basic block starting at `entry_rip`.
+///
+/// Returns a JS object:
+/// - `wasm_bytes: Uint8Array`
+/// - `code_byte_len: u32`
+/// - `exit_to_interpreter: bool`
+///
+/// On failure, throws a JS `Error`.
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+pub fn compile_tier1_block(
+    entry_rip: u64,
+    code_bytes: Uint8Array,
+    max_insts: u32,
+    max_bytes: u32,
+    inline_tlb: bool,
+    memory_shared: bool,
+) -> Result<JsValue, JsValue> {
+    // `Tier1WasmOptions` does not yet have a `memory_shared` flag (see task description). Keep the
+    // JS surface stable and plumb it through once the option exists.
+    let _ = memory_shared;
+
+    let code_len = code_bytes.length() as usize;
+    if code_len > MAX_CODE_BYTES {
+        return Err(js_error(format!(
+            "compile_tier1_block: code_bytes is too large ({} bytes > {} bytes max)",
+            code_len, MAX_CODE_BYTES
+        )));
+    }
+    let code_end = entry_rip.checked_add(code_len as u64).ok_or_else(|| {
+        js_error("compile_tier1_block: entry_rip + code_bytes.len() overflowed u64")
+    })?;
+
+    let code_vec = code_bytes.to_vec();
+    let bus = Tier1SliceBus {
+        entry_rip,
+        code: &code_vec,
+        first_oob_addr: Cell::new(None),
+    };
+
+    let limits = BlockLimits {
+        max_insts: max_insts as usize,
+        max_bytes: max_bytes as usize,
+    };
+
+    let mut options = Tier1WasmOptions::default();
+    options.inline_tlb = inline_tlb;
+
+    let compilation =
+        compile_tier1_block_with_options(&bus, entry_rip, limits, options).map_err(|e| {
+            js_error(format!(
+                "compile_tier1_block: Tier-1 compilation failed: {e}"
+            ))
+        })?;
+
+    if let Some(addr) = bus.first_oob_addr.get() {
+        return Err(js_error(format!(
+            "compile_tier1_block: attempted to read code byte at guest address {addr:#x}, but provided code_bytes covers [{entry_rip:#x}, {code_end:#x})"
+        )));
+    }
+
+    let result = Object::new();
+    Reflect::set(
+        &result,
+        &JsValue::from_str("wasm_bytes"),
+        &Uint8Array::from(compilation.wasm_bytes.as_slice()).into(),
+    )?;
+    Reflect::set(
+        &result,
+        &JsValue::from_str("code_byte_len"),
+        &JsValue::from(compilation.byte_len),
+    )?;
+    Reflect::set(
+        &result,
+        &JsValue::from_str("exit_to_interpreter"),
+        &JsValue::from(compilation.exit_to_interpreter),
+    )?;
+
+    Ok(result.into())
+}

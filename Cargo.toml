@@ -23,6 +23,7 @@ members = [
     "crates/aero-ipc",
     "crates/aero-wasm",
     "crates/aero-jit-x86",
+    "crates/aero-jit-wasm",
     "crates/aero-jit",
     "crates/aero-microbench",
     "crates/aero-net-e1000",
