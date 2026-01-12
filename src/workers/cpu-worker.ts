@@ -480,6 +480,16 @@ async function runTieredVm(iterations: number, threshold: number) {
     return;
   }
 
+  if ((jitTlbEntries & (jitTlbEntries - 1)) !== 0) {
+    postToMain({
+      type: 'CpuWorkerError',
+      reason: `Invalid jit_tlb_entries (expected power-of-two): ${JSON.stringify({
+        jitTlbEntries,
+      })}`,
+    });
+    return;
+  }
+
   if (commitFlagBytes !== undefined && (commitFlagBytes >>> 0) !== 4) {
     postToMain({
       type: 'CpuWorkerError',
@@ -491,7 +501,19 @@ async function runTieredVm(iterations: number, threshold: number) {
   }
 
   // Sanity checks: ensure the returned values are internally consistent (detect Rust/JS ABI drift).
-  const derivedJitCtxTotalBytes = (jitCtxHeaderBytes + jitTlbEntries * jitTlbEntryBytes) >>> 0;
+  const derivedJitCtxTotalBytesBig = BigInt(jitCtxHeaderBytes) + BigInt(jitTlbEntries) * BigInt(jitTlbEntryBytes);
+  if (derivedJitCtxTotalBytesBig > 0xffff_ffffn) {
+    postToMain({
+      type: 'CpuWorkerError',
+      reason: `Tier-1 jit ctx size overflow (expected <= 4GiB): ${JSON.stringify({
+        jitCtxHeaderBytes,
+        jitTlbEntries,
+        jitTlbEntryBytes,
+      })}`,
+    });
+    return;
+  }
+  const derivedJitCtxTotalBytes = Number(derivedJitCtxTotalBytesBig) >>> 0;
   const exportedJitCtxTotalBytes = readMaybeU32(jitAbi, 'jit_ctx_total_bytes') ?? 0;
   if (exportedJitCtxTotalBytes !== 0 && exportedJitCtxTotalBytes !== derivedJitCtxTotalBytes) {
     postToMain({
