@@ -871,12 +871,9 @@ function renderMachinePanel(): HTMLElement {
           const height = machine.vga_height?.() ?? 0;
           // Some older WASM builds may not expose a stride helper; assume tightly packed RGBA8888.
           let strideBytes = machine.vga_stride_bytes?.() ?? width * 4;
-          let ptr = machine.vga_framebuffer_ptr?.() ?? 0;
-          let lenBytes = machine.vga_framebuffer_len_bytes?.() ?? 0;
 
-          if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return;
-          if (!Number.isFinite(strideBytes) || strideBytes < width * 4) return;
-          if (!Number.isFinite(ptr) || !Number.isFinite(lenBytes) || ptr < 0 || lenBytes < 0) return;
+          if (!Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0) return;
+          if (!Number.isInteger(strideBytes) || strideBytes < width * 4) return;
 
           const requiredDstBytes = width * height * 4;
           let requiredSrcBytes = strideBytes * height;
@@ -892,9 +889,12 @@ function renderMachinePanel(): HTMLElement {
           }
           let src: Uint8Array | null = null;
           if (hasVgaPtr && wasmMemory) {
+            const ptr = machine.vga_framebuffer_ptr?.() ?? 0;
+            const lenBytes = machine.vga_framebuffer_len_bytes?.() ?? 0;
+            if (!Number.isSafeInteger(ptr) || !Number.isSafeInteger(lenBytes) || ptr < 0 || lenBytes < 0) return;
             if (lenBytes < requiredSrcBytes) return;
             const buf = wasmMemory.buffer;
-            if (ptr + lenBytes > buf.byteLength) return;
+            if (ptr > buf.byteLength || lenBytes > buf.byteLength - ptr) return;
             src = new Uint8Array(buf, ptr, requiredSrcBytes);
             testState.transport = "ptr";
           } else if (hasVgaCopy) {
