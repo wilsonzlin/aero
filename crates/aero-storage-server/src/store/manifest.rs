@@ -109,7 +109,10 @@ impl Manifest {
 
 fn validate_id(id: &str) -> Result<(), ManifestError> {
     if id.is_empty() || id.len() > super::MAX_IMAGE_ID_LEN || id == "." || id == ".." {
-        return Err(ManifestError::InvalidId(id.to_string()));
+        return Err(ManifestError::InvalidId(super::truncate_for_error(
+            id,
+            super::MAX_IMAGE_ID_LEN,
+        )));
     }
 
     let is_allowed = id.bytes().all(|b| {
@@ -120,7 +123,10 @@ fn validate_id(id: &str) -> Result<(), ManifestError> {
     });
 
     if !is_allowed {
-        return Err(ManifestError::InvalidId(id.to_string()));
+        return Err(ManifestError::InvalidId(super::truncate_for_error(
+            id,
+            super::MAX_IMAGE_ID_LEN,
+        )));
     }
     Ok(())
 }
@@ -128,8 +134,8 @@ fn validate_id(id: &str) -> Result<(), ManifestError> {
 fn validate_file_path(id: &str, file: &str) -> Result<(), ManifestError> {
     if file.is_empty() || file.len() > 512 || file.contains('\0') {
         return Err(ManifestError::InvalidFilePath {
-            id: id.to_string(),
-            file: file.to_string(),
+            id: super::truncate_for_error(id, super::MAX_IMAGE_ID_LEN),
+            file: super::truncate_for_error(file, 512),
         });
     }
     let path = std::path::Path::new(file);
@@ -138,8 +144,8 @@ fn validate_file_path(id: &str, file: &str) -> Result<(), ManifestError> {
             std::path::Component::Normal(_) | std::path::Component::CurDir => {}
             _ => {
                 return Err(ManifestError::InvalidFilePath {
-                    id: id.to_string(),
-                    file: file.to_string(),
+                    id: super::truncate_for_error(id, super::MAX_IMAGE_ID_LEN),
+                    file: super::truncate_for_error(file, 512),
                 })
             }
         }
@@ -150,15 +156,15 @@ fn validate_file_path(id: &str, file: &str) -> Result<(), ManifestError> {
 fn validate_etag(id: &str, etag: &str) -> Result<(), ManifestError> {
     if etag.is_empty() {
         return Err(ManifestError::InvalidEtag {
-            id: id.to_string(),
-            etag: etag.to_string(),
+            id: super::truncate_for_error(id, super::MAX_IMAGE_ID_LEN),
+            etag: super::truncate_for_error(etag, 512),
             reason: "etag must not be empty".to_string(),
         });
     }
 
     HeaderValue::from_str(etag).map_err(|err| ManifestError::InvalidEtag {
-        id: id.to_string(),
-        etag: etag.to_string(),
+        id: super::truncate_for_error(id, super::MAX_IMAGE_ID_LEN),
+        etag: super::truncate_for_error(etag, 512),
         reason: err.to_string(),
     })?;
     Ok(())
@@ -170,15 +176,15 @@ fn parse_last_modified_rfc3339(id: &str, last_modified: &str) -> Result<SystemTi
         &time::format_description::well_known::Rfc3339,
     )
     .map_err(|err| ManifestError::InvalidLastModified {
-        id: id.to_string(),
-        last_modified: last_modified.to_string(),
+        id: super::truncate_for_error(id, super::MAX_IMAGE_ID_LEN),
+        last_modified: super::truncate_for_error(last_modified, 256),
         reason: err.to_string(),
     })?;
 
     system_time_from_unix_timestamp_nanos(dt.unix_timestamp_nanos()).map_err(|reason| {
         ManifestError::InvalidLastModified {
-            id: id.to_string(),
-            last_modified: last_modified.to_string(),
+            id: super::truncate_for_error(id, super::MAX_IMAGE_ID_LEN),
+            last_modified: super::truncate_for_error(last_modified, 256),
             reason,
         }
     })
@@ -289,5 +295,27 @@ mod tests {
         .unwrap_err();
 
         assert!(matches!(err, ManifestError::InvalidEtag { .. }));
+    }
+
+    #[test]
+    fn invalid_id_error_is_truncated() {
+        let long_id = "a".repeat(super::super::MAX_IMAGE_ID_LEN + 10);
+        let json = format!(
+            r#"{{
+              "images": [
+                {{ "id": "{long_id}", "file": "disk.img", "name": "Disk", "public": true }}
+              ]
+            }}"#
+        );
+
+        let err = Manifest::parse_str(&json).unwrap_err();
+        let ManifestError::InvalidId(id) = err else {
+            panic!("expected InvalidId, got {err:?}");
+        };
+        assert!(
+            id.len() <= super::super::MAX_IMAGE_ID_LEN,
+            "expected truncated id, got len={}",
+            id.len()
+        );
     }
 }
