@@ -54,6 +54,11 @@ npm run dev:web
 
 Open the printed local URL (usually `http://127.0.0.1:5173/`).
 
+Notes:
+
+- `npm run dev:web` runs the **web UI** under `web/`, which includes the **Disks** + **Workers** panels used below.
+- The repo-root harness (`npm run dev`) is primarily used by CI/Playwright and may not expose the full Win7 boot UI.
+
 ### 1.2 Ensure audio can start (autoplay policy)
 
 Most browsers require a **user gesture** to start audio output. Before expecting guest audio:
@@ -272,3 +277,27 @@ a.href = url;
 a.download = "worker-vm-autosave.snap";
 a.click();
 ```
+
+---
+
+## Appendix: what to include in a bug report
+
+When reporting a Win7 audio regression, include (at minimum):
+
+- **Build info**
+  - Git commit SHA (or release version)
+  - Browser + version (e.g. Chrome 123)
+  - OS + audio output device (optional but helpful)
+- **Host capability checks**
+  - `crossOriginIsolated` + `typeof SharedArrayBuffer` (see §Prerequisites)
+  - Output `AudioContext.sampleRate` (from `out.getMetrics().sampleRate` if available)
+- **Guest evidence**
+  - Device Manager screenshot showing:
+    - `High Definition Audio Controller`
+    - `High Definition Audio Device`
+  - Driver Provider on the audio function device (expected: `Microsoft`)
+- **Runtime metrics/logs**
+  - Ring buffer counters (buffer level + underruns + overruns)
+  - Browser console log output during the repro (including worker-prefixed logs like `[cpu]`, `[io]` if present)
+  - If tracing is available, a **trace export** taken during the repro (Perf HUD → Trace Start/Stop → Trace JSON)
+  - Snapshot file exported after repro (if available)
