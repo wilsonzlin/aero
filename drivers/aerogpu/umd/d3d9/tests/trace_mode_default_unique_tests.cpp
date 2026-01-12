@@ -8,18 +8,19 @@ int main() {
     return fail("freopen(stderr) failed");
   }
 
-  set_env("AEROGPU_D3D9_TRACE", "1");
+  // Exercise whitespace trimming in env_bool parsing.
+  set_env("AEROGPU_D3D9_TRACE", " 1 ");
   // Default is "unique"; ensure we don't regress to TRACE_MODE=all.
   set_env("AEROGPU_D3D9_TRACE_MODE", nullptr);
   set_env("AEROGPU_D3D9_TRACE_MAX", "64");
-  set_env("AEROGPU_D3D9_TRACE_DUMP_ON_DETACH", "1");
+  set_env("AEROGPU_D3D9_TRACE_DUMP_ON_DETACH", " 1 ");
   set_env("AEROGPU_D3D9_TRACE_DUMP_ON_FAIL", "0");
   set_env("AEROGPU_D3D9_TRACE_DUMP_ON_STUB", "0");
   set_env("AEROGPU_D3D9_TRACE_DUMP_PRESENT", "0");
   set_env("AEROGPU_D3D9_TRACE_FILTER", nullptr);
   // On Windows, the trace defaults to OutputDebugStringA; enable stderr echo so
   // we can capture output portably.
-  set_env("AEROGPU_D3D9_TRACE_STDERR", "1");
+  set_env("AEROGPU_D3D9_TRACE_STDERR", " 1 ");
 
   aerogpu::d3d9_trace_init_from_env();
 
@@ -60,4 +61,3 @@ int main() {
   std::remove(out_path.c_str());
   return 0;
 }
-

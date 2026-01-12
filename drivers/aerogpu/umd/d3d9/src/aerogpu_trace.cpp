@@ -60,6 +60,25 @@ uint32_t popcount_u32(uint32_t v) {
   return count;
 }
 
+void trim_ascii_whitespace_inplace(char* s) {
+  if (!s) {
+    return;
+  }
+  char* start = s;
+  while (*start && std::isspace(static_cast<unsigned char>(*start))) {
+    ++start;
+  }
+  char* end = start + std::strlen(start);
+  while (end > start && std::isspace(static_cast<unsigned char>(end[-1]))) {
+    --end;
+  }
+  const size_t len = static_cast<size_t>(end - start);
+  if (start != s) {
+    std::memmove(s, start, len);
+  }
+  s[len] = '\0';
+}
+
 bool trace_icontains(const char* s, const char* needle_lower) {
   if (!s || !needle_lower) {
     return false;
@@ -166,6 +185,10 @@ bool env_get(const char* name, char* out, size_t out_size) {
 bool env_bool(const char* name) {
   char buf[32] = {};
   if (!env_get(name, buf, sizeof(buf))) {
+    return false;
+  }
+  trim_ascii_whitespace_inplace(buf);
+  if (!*buf) {
     return false;
   }
 
@@ -624,6 +647,7 @@ void d3d9_trace_init_from_env() {
   std::memset(g_trace_filter, 0, sizeof(g_trace_filter));
   char mode[32] = {};
   if (env_get("AEROGPU_D3D9_TRACE_MODE", mode, sizeof(mode))) {
+    trim_ascii_whitespace_inplace(mode);
     for (char& c : mode) {
       c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     }

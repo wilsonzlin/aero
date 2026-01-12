@@ -10,7 +10,8 @@ int main() {
 
   set_env("AEROGPU_D3D9_TRACE", "1");
   // Use uppercase to verify case-insensitive mode parsing.
-  set_env("AEROGPU_D3D9_TRACE_MODE", "ALL");
+  // Also include extra whitespace to verify trimming.
+  set_env("AEROGPU_D3D9_TRACE_MODE", "  ALL  ");
   set_env("AEROGPU_D3D9_TRACE_MAX", "64");
   set_env("AEROGPU_D3D9_TRACE_DUMP_ON_DETACH", "1");
   set_env("AEROGPU_D3D9_TRACE_DUMP_ON_FAIL", "0");
@@ -60,4 +61,3 @@ int main() {
   std::remove(out_path.c_str());
   return 0;
 }
-
