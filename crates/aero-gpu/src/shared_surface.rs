@@ -239,3 +239,37 @@ impl SharedSurfaceTable {
         Some((underlying, true))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn retires_tokens_when_last_ref_destroyed() {
+        let mut table = SharedSurfaceTable::default();
+        table.register_handle(1).unwrap();
+        table.export(1, 0x10).unwrap();
+        table.export(1, 0x20).unwrap();
+
+        let (underlying, last) = table.destroy_handle(1).expect("destroy must succeed");
+        assert_eq!(underlying, 1);
+        assert!(last);
+
+        assert!(!table.by_token.contains_key(&0x10));
+        assert!(!table.by_token.contains_key(&0x20));
+        assert!(table.retired_tokens.contains(&0x10));
+        assert!(table.retired_tokens.contains(&0x20));
+    }
+
+    #[test]
+    fn release_token_is_idempotent() {
+        let mut table = SharedSurfaceTable::default();
+        table.register_handle(1).unwrap();
+        table.export(1, 0x10).unwrap();
+
+        assert!(table.release_token(0x10));
+        assert!(!table.release_token(0x10));
+        assert!(!table.by_token.contains_key(&0x10));
+        assert!(table.retired_tokens.contains(&0x10));
+    }
+}
