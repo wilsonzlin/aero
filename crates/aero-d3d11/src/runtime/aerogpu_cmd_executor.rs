@@ -1610,6 +1610,7 @@ impl AerogpuD3d11Executor {
             match opcode {
                 OPCODE_DRAW
                 | OPCODE_DRAW_INDEXED
+                | OPCODE_RESOURCE_DIRTY_RANGE
                 | OPCODE_BIND_SHADERS
                 | OPCODE_SET_SHADER_CONSTANTS_F
                 | OPCODE_SET_INPUT_LAYOUT
@@ -1731,6 +1732,107 @@ impl AerogpuD3d11Executor {
                 }
                 let flags = read_u32_le(cmd_bytes, 8)?;
                 if flags != 0 {
+                    break;
+                }
+            }
+
+            if opcode == OPCODE_RESOURCE_DIRTY_RANGE {
+                // `RESOURCE_DIRTY_RANGE` marks allocation-backed resources as requiring a
+                // guest->GPU upload. It can be recorded inside an in-flight render pass only when
+                // the resource is not currently used by the pass, otherwise we would draw with
+                // stale data (or need to upload mid-pass).
+                if cmd_bytes.len() < 32 {
+                    break;
+                }
+                let handle = read_u32_le(cmd_bytes, 8)?;
+                let mut needs_break = false;
+
+                let buffer_backing = self
+                    .resources
+                    .buffers
+                    .get(&handle)
+                    .and_then(|buf| buf.backing);
+                if buffer_backing.is_some() {
+                    for (slot, vb) in self.state.vertex_buffers.iter().enumerate() {
+                        if used_vertex_slots.get(slot).is_some_and(|used| *used)
+                            && vb.is_some_and(|vb| vb.buffer == handle)
+                        {
+                            needs_break = true;
+                            break;
+                        }
+                    }
+                    if !needs_break
+                        && self
+                            .state
+                            .index_buffer
+                            .is_some_and(|ib| ib.buffer == handle)
+                    {
+                        needs_break = true;
+                    }
+                    if !needs_break {
+                        for (stage, used_slots) in [
+                            (ShaderStage::Vertex, &used_cb_vs),
+                            (ShaderStage::Pixel, &used_cb_ps),
+                            (ShaderStage::Compute, &used_cb_cs),
+                        ] {
+                            let stage_bindings = self.bindings.stage(stage);
+                            for (slot, used) in used_slots.iter().copied().enumerate() {
+                                if !used {
+                                    continue;
+                                }
+                                if stage_bindings
+                                    .constant_buffer(slot as u32)
+                                    .is_some_and(|cb| cb.buffer == handle)
+                                {
+                                    needs_break = true;
+                                    break;
+                                }
+                            }
+                            if needs_break {
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                let texture_backing = self
+                    .resources
+                    .textures
+                    .get(&handle)
+                    .and_then(|tex| tex.backing);
+                if !needs_break && texture_backing.is_some() {
+                    if render_targets.iter().any(|&rt| rt == handle)
+                        || depth_stencil.is_some_and(|ds| ds == handle)
+                    {
+                        needs_break = true;
+                    }
+                    if !needs_break {
+                        for (stage, used_slots) in [
+                            (ShaderStage::Vertex, &used_textures_vs),
+                            (ShaderStage::Pixel, &used_textures_ps),
+                            (ShaderStage::Compute, &used_textures_cs),
+                        ] {
+                            let stage_bindings = self.bindings.stage(stage);
+                            for (slot, used) in used_slots.iter().copied().enumerate() {
+                                if !used {
+                                    continue;
+                                }
+                                if stage_bindings
+                                    .texture(slot as u32)
+                                    .is_some_and(|tex| tex.texture == handle)
+                                {
+                                    needs_break = true;
+                                    break;
+                                }
+                            }
+                            if needs_break {
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if needs_break {
                     break;
                 }
             }
@@ -2419,6 +2521,7 @@ impl AerogpuD3d11Executor {
                 OPCODE_BIND_SHADERS => self.exec_bind_shaders(cmd_bytes)?,
                 OPCODE_SET_INPUT_LAYOUT => self.exec_set_input_layout(cmd_bytes)?,
                 OPCODE_SET_RENDER_TARGETS => self.exec_set_render_targets(cmd_bytes)?,
+                OPCODE_RESOURCE_DIRTY_RANGE => self.exec_resource_dirty_range(cmd_bytes)?,
                 OPCODE_CLEAR => {}
                 OPCODE_SET_VERTEX_BUFFERS => {
                     let Ok((cmd, bindings)) = decode_cmd_set_vertex_buffers_bindings_le(cmd_bytes)
