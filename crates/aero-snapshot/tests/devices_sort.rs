@@ -140,7 +140,7 @@ fn restore_snapshot_sorts_devices_by_key_before_passing_to_target() {
         let mut out = Vec::with_capacity(count.min(64));
         for _ in 0..count {
             out.push(
-                snapshot::DeviceState::decode(&mut limited, 64 * 1024 * 1024)
+                snapshot::DeviceState::decode(&mut limited, snapshot::limits::MAX_DEVICE_ENTRY_LEN)
                     .expect("decode device entry"),
             );
         }
