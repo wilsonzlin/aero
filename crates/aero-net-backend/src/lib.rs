@@ -33,3 +33,22 @@ pub trait NetworkBackend {
     }
 }
 
+impl<T: NetworkBackend + ?Sized> NetworkBackend for Box<T> {
+    fn transmit(&mut self, frame: Vec<u8>) {
+        <T as NetworkBackend>::transmit(&mut **self, frame);
+    }
+
+    fn poll_receive(&mut self) -> Option<Vec<u8>> {
+        <T as NetworkBackend>::poll_receive(&mut **self)
+    }
+}
+
+impl<T: NetworkBackend + ?Sized> NetworkBackend for &mut T {
+    fn transmit(&mut self, frame: Vec<u8>) {
+        <T as NetworkBackend>::transmit(&mut **self, frame);
+    }
+
+    fn poll_receive(&mut self) -> Option<Vec<u8>> {
+        <T as NetworkBackend>::poll_receive(&mut **self)
+    }
+}

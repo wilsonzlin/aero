@@ -11,6 +11,34 @@ pub trait FrameRing {
     fn try_pop_vec(&self) -> Result<Vec<u8>, PopError>;
 }
 
+impl<T: FrameRing + ?Sized> FrameRing for &T {
+    fn capacity_bytes(&self) -> usize {
+        <T as FrameRing>::capacity_bytes(&**self)
+    }
+
+    fn try_push(&self, payload: &[u8]) -> Result<(), PushError> {
+        <T as FrameRing>::try_push(&**self, payload)
+    }
+
+    fn try_pop_vec(&self) -> Result<Vec<u8>, PopError> {
+        <T as FrameRing>::try_pop_vec(&**self)
+    }
+}
+
+impl<T: FrameRing + ?Sized> FrameRing for Box<T> {
+    fn capacity_bytes(&self) -> usize {
+        <T as FrameRing>::capacity_bytes(&**self)
+    }
+
+    fn try_push(&self, payload: &[u8]) -> Result<(), PushError> {
+        <T as FrameRing>::try_push(&**self, payload)
+    }
+
+    fn try_pop_vec(&self) -> Result<Vec<u8>, PopError> {
+        <T as FrameRing>::try_pop_vec(&**self)
+    }
+}
+
 impl FrameRing for aero_ipc::ring::RingBuffer {
     fn capacity_bytes(&self) -> usize {
         aero_ipc::ring::RingBuffer::capacity_bytes(self)
@@ -293,4 +321,3 @@ mod tests {
         );
     }
 }
-
