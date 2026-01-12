@@ -72,30 +72,30 @@ mod platform_handle {
 
         match err {
             DiskError::NotSupported(_) | DiskError::Unsupported(_) => {
-                io::Error::new(io::ErrorKind::Unsupported, err.to_string())
+                io::Error::new(io::ErrorKind::Unsupported, err)
             }
             DiskError::BackendUnavailable => {
-                io::Error::new(io::ErrorKind::NotConnected, err.to_string())
+                io::Error::new(io::ErrorKind::NotConnected, err)
             }
-            DiskError::InUse => io::Error::new(io::ErrorKind::ResourceBusy, err.to_string()),
-            DiskError::QuotaExceeded => io::Error::new(io::ErrorKind::StorageFull, err.to_string()),
+            DiskError::InUse => io::Error::new(io::ErrorKind::ResourceBusy, err),
+            DiskError::QuotaExceeded => io::Error::new(io::ErrorKind::StorageFull, err),
             DiskError::InvalidState(_) => {
-                io::Error::new(io::ErrorKind::BrokenPipe, err.to_string())
+                io::Error::new(io::ErrorKind::BrokenPipe, err)
             }
             DiskError::UnalignedLength { .. }
             | DiskError::OutOfBounds { .. }
             | DiskError::OffsetOverflow => {
-                io::Error::new(io::ErrorKind::InvalidInput, err.to_string())
+                io::Error::new(io::ErrorKind::InvalidInput, err)
             }
             DiskError::CorruptImage(_)
             | DiskError::InvalidSparseHeader(_)
             | DiskError::CorruptSparseImage(_) => {
-                io::Error::new(io::ErrorKind::InvalidData, err.to_string())
+                io::Error::new(io::ErrorKind::InvalidData, err)
             }
             DiskError::InvalidConfig(_) => {
-                io::Error::new(io::ErrorKind::InvalidInput, err.to_string())
+                io::Error::new(io::ErrorKind::InvalidInput, err)
             }
-            DiskError::Io(_) => io::Error::new(io::ErrorKind::Other, err.to_string()),
+            DiskError::Io(_) => io::Error::new(io::ErrorKind::Other, err),
         }
     }
 
