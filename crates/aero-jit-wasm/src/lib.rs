@@ -85,7 +85,10 @@ impl<'a> Tier1Bus for Tier1SliceBus<'a> {
         let Some(off) = addr.checked_sub(self.entry_rip) else {
             return self.read_oob_zero(addr);
         };
-        let Some(b) = self.code.get(off as usize) else {
+        let Ok(off) = usize::try_from(off) else {
+            return self.read_oob_zero(addr);
+        };
+        let Some(b) = self.code.get(off) else {
             return self.read_oob_zero(addr);
         };
         *b
@@ -144,6 +147,7 @@ pub fn compile_tier1_block(
     max_bytes: u32,
     inline_tlb: bool,
     memory_shared: bool,
+    bitness: u32,
 ) -> Result<JsValue, JsValue> {
     let code_len = code_bytes.length() as usize;
     if code_len == 0 {
@@ -197,16 +201,17 @@ pub fn compile_tier1_block(
     }
     options.memory_shared = memory_shared;
 
-    // The standalone browser tier-1 compiler currently targets 64-bit decoding.
-    // (The Tier-1 compiler supports 16/32/64-bit bitness via `discover_block_mode`, but this
-    // wasm-bindgen surface does not yet expose a bitness argument.)
-    let compilation = compile_tier1_block_with_options(&bus, entry_rip, 64, limits, options)
-        .map_err(|e| {
-            js_error(format!(
-                "compile_tier1_block: Tier-1 compilation failed: {e}"
-            ))
-        })?;
+    // wasm-bindgen will coerce a missing JS argument (`undefined`) to `0` for `u32`. Treat that as
+    // a backwards-compatible default to 64-bit decoding.
+    let bitness = if bitness == 0 { 64 } else { bitness };
+    if !matches!(bitness, 16 | 32 | 64) {
+        return Err(js_error(format!(
+            "compile_tier1_block: unsupported bitness {bitness} (expected 16, 32, or 64)"
+        )));
+    }
 
+    let compilation = compile_tier1_block_with_options(&bus, entry_rip, bitness, limits, options)
+        .map_err(|e| js_error(format!("compile_tier1_block: Tier-1 compilation failed: {e}")))?;
     let block_end = entry_rip
         .checked_add(compilation.byte_len as u64)
         .ok_or_else(|| {

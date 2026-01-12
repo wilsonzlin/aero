@@ -17,6 +17,7 @@ export interface JitWasmApi {
     maxBytes: number,
     inlineTlb: boolean,
     memoryShared: boolean,
+    bitness?: number,
   ) => Tier1BlockCompilation;
 }
 
