@@ -9,8 +9,12 @@ path = "src/lib.rs"
 
 [features]
 default = []
+io-snapshot = ["dep:aero-io-snapshot"]
 
 [dependencies]
-aero-io-snapshot = { path = "../aero-io-snapshot" }
+aero-io-snapshot = { path = "../aero-io-snapshot", optional = true }
 memory = { path = "../memory" }
 nt-packetlib = { path = "../nt-packetlib" }
+
+[dev-dependencies]
+aero-io-snapshot = { path = "../aero-io-snapshot" }

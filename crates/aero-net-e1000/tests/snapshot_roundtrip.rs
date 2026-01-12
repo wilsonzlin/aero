@@ -1,3 +1,6 @@
+#![cfg(feature = "io-snapshot")]
+
+use aero_io_snapshot::io::net::state::{E1000DeviceState, E1000TxPacketState};
 use aero_io_snapshot::io::state::IoSnapshot;
 use aero_net_e1000::{E1000Device, ICR_RXT0, ICR_TXDW, MIN_L2_FRAME_LEN};
 use memory::MemoryBus;
@@ -388,4 +391,134 @@ fn snapshot_roundtrip_preserves_in_flight_device_state() {
     let icr1 = dev1.mmio_read_u32(0x00C0);
     assert_eq!(icr0 & ICR_RXT0, ICR_RXT0);
     assert_eq!(icr0, icr1);
+}
+
+#[test]
+fn snapshot_state_restore_state_roundtrip_preserves_state_and_continues_dma() {
+    let mut dev = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
+    let mut mem = TestDma::new(0x80_000);
+    dev.pci_config_write(0x04, 2, 0x4); // Bus Master Enable
+
+    // Program a few non-default guest-visible registers.
+    dev.mmio_write_u32(0x00D0, ICR_RXT0 | ICR_TXDW); // IMS
+    dev.mmio_write_u32(0x0018, 0x1234_5678); // CTRL_EXT
+    dev.mmio_write_u32(0x1234, 0xDEAD_BEEF); // other_regs
+
+    // Change MAC + set AV.
+    dev.mmio_write_u32(0x5400, u32::from_le_bytes([0x10, 0x11, 0x12, 0x13]));
+    dev.mmio_write_u32(0x5404, u32::from_le_bytes([0x14, 0x15, 0, 0]) | (1u32 << 31));
+
+    // Exercise IOADDR shadow state.
+    dev.io_write(0x0, 4, 0x0400); // select TCTL
+
+    // Configure RX ring: 2 descriptors at 0x2000.
+    dev.mmio_write_u32(0x2800, 0x2000); // RDBAL
+    dev.mmio_write_u32(0x2804, 0); // RDBAH
+    dev.mmio_write_u32(0x2808, 2 * 16); // RDLEN
+    dev.mmio_write_u32(0x2810, 0); // RDH
+    dev.mmio_write_u32(0x2818, 1); // RDT
+    dev.mmio_write_u32(0x0100, 1 << 1); // RCTL.EN
+    write_rx_desc(&mut mem, 0x2000, 0x3000);
+    write_rx_desc(&mut mem, 0x2010, 0x3400);
+
+    // Configure TX ring: 4 descriptors at 0x1000.
+    dev.mmio_write_u32(0x3800, 0x1000); // TDBAL
+    dev.mmio_write_u32(0x3804, 0); // TDBAH
+    dev.mmio_write_u32(0x3808, 4 * 16); // TDLEN
+    dev.mmio_write_u32(0x3810, 0); // TDH
+    dev.mmio_write_u32(0x3818, 0); // TDT
+    dev.mmio_write_u32(0x0400, 1 << 1); // TCTL.EN
+
+    // Descriptor 0: a complete packet that ends up in tx_out.
+    let tx_frame_a = build_test_frame(b"tx-a");
+    mem.write(0x6000, &tx_frame_a);
+    write_tx_desc(
+        &mut mem,
+        0x1000,
+        0x6000,
+        tx_frame_a.len() as u16,
+        0b0000_1001, // EOP|RS
+    );
+
+    // Descriptor 1: first half of a packet (no EOP) so we snapshot in-flight TX state.
+    let tx_frame_b = build_test_frame(b"tx-b-split-across-descriptors");
+    let split = tx_frame_b.len() / 2;
+    let (tx_b0, tx_b1) = tx_frame_b.split_at(split);
+    mem.write(0x4000, tx_b0);
+    mem.write(0x5000, tx_b1);
+    write_tx_desc(
+        &mut mem,
+        0x1010,
+        0x4000,
+        tx_b0.len() as u16,
+        0b0000_1000, // RS
+    );
+
+    // Process desc0+desc1, leaving desc2 pending.
+    dev.mmio_write_u32(0x3818, 2);
+    dev.poll(&mut mem);
+
+    // Disable TX before advertising the final descriptor.
+    dev.mmio_write_u32(0x0400, 0);
+    write_tx_desc(
+        &mut mem,
+        0x1020,
+        0x5000,
+        tx_b1.len() as u16,
+        0b0000_1001, // EOP|RS
+    );
+    dev.mmio_write_u32(0x3818, 3);
+
+    // Queue an RX frame but don't flush it yet.
+    let rx_frame = build_test_frame(b"rx-pending");
+    dev.enqueue_rx_frame(rx_frame.clone());
+
+    let irq_before = dev.irq_level();
+    let snap = dev.snapshot_state();
+
+    assert_eq!(snap.tx_out, vec![tx_frame_a.clone()]);
+    assert_eq!(snap.rx_pending, vec![rx_frame.clone()]);
+    assert_eq!(snap.tx_partial, tx_b0);
+    assert_eq!(snap.tctl, 0);
+    assert_eq!(snap.tdh, 2);
+    assert_eq!(snap.tdt, 3);
+    assert!(matches!(snap.tx_state, E1000TxPacketState::Legacy { .. }));
+
+    // Ensure roundtrip TLV encoding/decoding is stable.
+    let bytes = snap.save_state();
+    let mut decoded = E1000DeviceState::default();
+    decoded.load_state(&bytes).unwrap();
+    assert_eq!(decoded, snap);
+
+    let mem_snap = mem.clone();
+
+    let mut restored = E1000Device::new([0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF]);
+    restored.restore_state(&decoded);
+    assert_eq!(restored.snapshot_state(), snap);
+    assert_eq!(restored.irq_level(), irq_before);
+
+    let run_to_completion =
+        |dev: &mut E1000Device, mem: &mut TestDma| -> (Vec<Vec<u8>>, Vec<u8>) {
+            // Re-enable TX and let poll process TX + flush RX.
+            dev.mmio_write_u32(0x0400, 1 << 1); // TCTL.EN
+            dev.poll(mem);
+
+            let mut tx_frames = Vec::new();
+            while let Some(frame) = dev.pop_tx_frame() {
+                tx_frames.push(frame);
+            }
+
+            assert_eq!(dev.mmio_read_u32(0x2810), 1, "expected one RX descriptor to be consumed");
+            let rx_buf = mem.read_vec(0x3000, rx_frame.len());
+            (tx_frames, rx_buf)
+        };
+
+    let (expected_tx, expected_rx) = run_to_completion(&mut dev, &mut mem);
+    let mut mem2 = mem_snap;
+    let (actual_tx, actual_rx) = run_to_completion(&mut restored, &mut mem2);
+
+    assert_eq!(actual_tx, expected_tx);
+    assert_eq!(actual_rx, expected_rx);
+    assert_eq!(expected_tx, vec![tx_frame_a, tx_frame_b]);
+    assert_eq!(expected_rx, rx_frame);
 }

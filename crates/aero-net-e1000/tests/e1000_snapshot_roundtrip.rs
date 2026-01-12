@@ -1,3 +1,5 @@
+#![cfg(feature = "io-snapshot")]
+
 use aero_io_snapshot::io::state::codec::Encoder;
 use aero_io_snapshot::io::state::{IoSnapshot, SnapshotError, SnapshotWriter};
 use aero_net_e1000::{E1000Device, ICR_RXT0, ICR_TXDW, MAX_L2_FRAME_LEN, MIN_L2_FRAME_LEN};
