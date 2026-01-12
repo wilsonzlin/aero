@@ -409,6 +409,20 @@ struct Device {
       sampler_states[stage][6] = 1u; // D3DSAMP_MINFILTER
       sampler_states[stage][7] = 0u; // D3DSAMP_MIPFILTER
     }
+
+    // Default stream source frequency is 1 (no instancing).
+    for (uint32_t stream = 0; stream < 16; ++stream) {
+      stream_source_freq[stream] = 1u;
+    }
+
+    // Default transform state is identity for all cached slots.
+    for (uint32_t i = 0; i < kTransformCacheCount; ++i) {
+      float* m = transform_matrices[i];
+      m[0] = 1.0f;
+      m[5] = 1.0f;
+      m[10] = 1.0f;
+      m[15] = 1.0f;
+    }
   }
 
   Adapter* adapter = nullptr;
@@ -457,6 +471,7 @@ struct Device {
   Resource* depth_stencil = nullptr;
   Resource* textures[16] = {};
   DeviceStateStream streams[16] = {};
+  uint32_t stream_source_freq[16] = {};
   Resource* index_buffer = nullptr;
   D3DDDIFORMAT index_format = static_cast<D3DDDIFORMAT>(101); // D3DFMT_INDEX16
   uint32_t index_offset_bytes = 0;
@@ -494,6 +509,19 @@ struct Device {
   RECT scissor_rect = {0, 0, 0, 0};
   BOOL scissor_enabled = FALSE;
 
+  // Misc fixed-function / legacy state (cached for Get*/state-block compatibility).
+  BOOL software_vertex_processing = FALSE;
+  float n_patch_mode = 0.0f;
+
+  // Transform state cache for GetTransform/SetTransform. D3D9 transform state
+  // enums are sparse (WORLD matrices start at 256), so keep a conservative fixed
+  // cache that covers common values.
+  static constexpr uint32_t kTransformCacheCount = 512u;
+  float transform_matrices[kTransformCacheCount][16] = {};
+
+  // Clip plane cache for GetClipPlane/SetClipPlane.
+  float clip_planes[6][4] = {};
+
   // D3D9 state caches used by helper paths (blits, color fills) so they can
   // temporarily override state and restore it afterwards.
   //
@@ -501,6 +529,7 @@ struct Device {
   // 0..255 and the values are cheap to track.
   uint32_t render_states[256] = {};
   uint32_t sampler_states[16][16] = {};
+  uint32_t texture_stage_states[16][256] = {};
 
   // Shader float constant register caches (float4 registers).
   float vs_consts_f[256 * 4] = {};

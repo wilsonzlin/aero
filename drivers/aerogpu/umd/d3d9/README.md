@@ -259,27 +259,22 @@ In WDK builds (`AEROGPU_D3D9_USE_WDK_DDI=1`), the UMD populates every *known* fu
 
 These DDIs are present in the Win7 D3D9UMDDI surface but are not implemented yet:
 
-- `pfnSetTextureStageState` (no-op, returns `S_OK`)
-- `pfnSetTransform` / `pfnMultiplyTransform` / `pfnSetClipPlane` (no-op, returns `S_OK`)
 - `pfnSetShaderConstI` / `pfnSetShaderConstB` (no-op, returns `S_OK`)
 - `pfnSetMaterial` / `pfnSetLight` / `pfnLightEnable` (no-op, returns `S_OK`)
-- `pfnSetNPatchMode` / `pfnSetStreamSourceFreq` / `pfnSetGammaRamp` (no-op, returns `S_OK`)
+- `pfnSetGammaRamp` (no-op, returns `S_OK`)
 - `pfnSetConvolutionMonoKernel` (no-op, returns `S_OK`)
 - `pfnSetAutoGenFilterType`, `pfnGetAutoGenFilterType`, `pfnGenerateMipSubLevels` (stubbed for completeness)
 - `pfnSetPriority` / `pfnGetPriority` (stubbed for completeness)
-- `pfnSetSoftwareVertexProcessing`, `pfnSetCursorProperties` / `pfnSetCursorPosition` / `pfnShowCursor`,
+- `pfnSetCursorProperties` / `pfnSetCursorPosition` / `pfnShowCursor`,
   `pfnSetPaletteEntries` / `pfnSetCurrentTexturePalette`, `pfnSetClipStatus` (no-op, returns `S_OK`)
 - `pfnGetClipStatus` / `pfnGetGammaRamp` (returns `D3DERR_NOTAVAILABLE`)
 - `pfnDrawRectPatch` / `pfnDrawTriPatch` / `pfnDeletePatch` / `pfnProcessVertices`
   (returns `D3DERR_NOTAVAILABLE`)
 - `pfnSetDialogBoxMode` (no-op, returns `S_OK`)
-- `pfnGetSoftwareVertexProcessing`, `pfnGetTransform`, `pfnGetClipPlane`
-  (returns `D3DERR_NOTAVAILABLE`)
 - `pfnGetMaterial`, `pfnGetLight` / `pfnGetLightEnable`,
-  `pfnGetTextureStageState`,
-  `pfnGetPaletteEntries` / `pfnGetCurrentTexturePalette`, `pfnGetNPatchMode`
+  `pfnGetPaletteEntries` / `pfnGetCurrentTexturePalette`
   (returns `D3DERR_NOTAVAILABLE`)
-- `pfnGetStreamSourceFreq`, `pfnGetShaderConstI/B`
+- `pfnGetShaderConstI/B`
   (returns `D3DERR_NOTAVAILABLE`)
 
 ### Caps/feature gating

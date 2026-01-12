@@ -1073,10 +1073,7 @@ std::array<uint64_t, 4> d3d9_stub_trace_args(const Args&... args) {
 
 // Stubbed entrypoints: keep these non-NULL so the Win7 runtime can call into the
 // UMD without crashing. See `drivers/aerogpu/umd/d3d9/README.md`.
-AEROGPU_D3D9_DEFINE_DDI_STUB(pfnSetTextureStageState, D3d9TraceFunc::DeviceSetTextureStageState, S_OK);
-AEROGPU_D3D9_DEFINE_DDI_STUB(pfnSetTransform, D3d9TraceFunc::DeviceSetTransform, S_OK);
-AEROGPU_D3D9_DEFINE_DDI_STUB(pfnMultiplyTransform, D3d9TraceFunc::DeviceMultiplyTransform, S_OK);
-AEROGPU_D3D9_DEFINE_DDI_STUB(pfnSetClipPlane, D3d9TraceFunc::DeviceSetClipPlane, S_OK);
+// (Legacy fixed-function Set*/Get* state is cached and implemented elsewhere.)
 
 // Shader constant paths (int/bool) are not implemented yet; treat as a no-op to
 // keep DWM alive while we bring up shader translation.
@@ -1089,8 +1086,6 @@ AEROGPU_D3D9_DEFINE_DDI_STUB(pfnSetShaderConstB, D3d9TraceFunc::DeviceSetShaderC
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnSetMaterial, D3d9TraceFunc::DeviceSetMaterial, S_OK);
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnSetLight, D3d9TraceFunc::DeviceSetLight, S_OK);
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnLightEnable, D3d9TraceFunc::DeviceLightEnable, S_OK);
-AEROGPU_D3D9_DEFINE_DDI_STUB(pfnSetNPatchMode, D3d9TraceFunc::DeviceSetNPatchMode, S_OK);
-AEROGPU_D3D9_DEFINE_DDI_STUB(pfnSetStreamSourceFreq, D3d9TraceFunc::DeviceSetStreamSourceFreq, S_OK);
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnSetGammaRamp, D3d9TraceFunc::DeviceSetGammaRamp, S_OK);
 
 // D3D9Ex image processing API. Treat as a no-op until the fixed-function path is
@@ -1104,8 +1099,6 @@ AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetPriority, D3d9TraceFunc::DeviceGetPriority, D
 
 // Cursor, palette, and clip-status management is not implemented yet, but these
 // can be treated as benign no-ops for bring-up.
-AEROGPU_D3D9_DEFINE_DDI_STUB(
-    pfnSetSoftwareVertexProcessing, D3d9TraceFunc::DeviceSetSoftwareVertexProcessing, S_OK);
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnSetCursorProperties, D3d9TraceFunc::DeviceSetCursorProperties, S_OK);
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnSetCursorPosition, D3d9TraceFunc::DeviceSetCursorPosition, S_OK);
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnShowCursor, D3d9TraceFunc::DeviceShowCursor, S_OK);
@@ -1132,19 +1125,12 @@ AEROGPU_D3D9_DEFINE_DDI_STUB(pfnSetDialogBoxMode, D3d9TraceFunc::DeviceSetDialog
 // Various state "getters" (largely used by legacy apps). These have output
 // parameters; return a clean failure so callers don't consume uninitialized
 // memory.
-AEROGPU_D3D9_DEFINE_DDI_STUB(
-    pfnGetSoftwareVertexProcessing, D3d9TraceFunc::DeviceGetSoftwareVertexProcessing, D3DERR_NOTAVAILABLE);
-AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetTransform, D3d9TraceFunc::DeviceGetTransform, D3DERR_NOTAVAILABLE);
-AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetClipPlane, D3d9TraceFunc::DeviceGetClipPlane, D3DERR_NOTAVAILABLE);
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetMaterial, D3d9TraceFunc::DeviceGetMaterial, D3DERR_NOTAVAILABLE);
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetLight, D3d9TraceFunc::DeviceGetLight, D3DERR_NOTAVAILABLE);
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetLightEnable, D3d9TraceFunc::DeviceGetLightEnable, D3DERR_NOTAVAILABLE);
-AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetTextureStageState, D3d9TraceFunc::DeviceGetTextureStageState, D3DERR_NOTAVAILABLE);
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetPaletteEntries, D3d9TraceFunc::DeviceGetPaletteEntries, D3DERR_NOTAVAILABLE);
 AEROGPU_D3D9_DEFINE_DDI_STUB(
     pfnGetCurrentTexturePalette, D3d9TraceFunc::DeviceGetCurrentTexturePalette, D3DERR_NOTAVAILABLE);
-AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetNPatchMode, D3d9TraceFunc::DeviceGetNPatchMode, D3DERR_NOTAVAILABLE);
-AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetStreamSourceFreq, D3d9TraceFunc::DeviceGetStreamSourceFreq, D3DERR_NOTAVAILABLE);
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetShaderConstI, D3d9TraceFunc::DeviceGetShaderConstI, D3DERR_NOTAVAILABLE);
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetShaderConstB, D3d9TraceFunc::DeviceGetShaderConstB, D3DERR_NOTAVAILABLE);
 
@@ -9988,6 +9974,399 @@ void d3d9_write_handle(HandleT* out, void* pDrvPrivate) {
   out->pDrvPrivate = pDrvPrivate;
 }
 
+static void d3d9_mul_mat4_row_major(const float a[16], const float b[16], float out[16]) {
+  for (int r = 0; r < 4; ++r) {
+    for (int c = 0; c < 4; ++c) {
+      out[r * 4 + c] =
+          a[r * 4 + 0] * b[0 * 4 + c] +
+          a[r * 4 + 1] * b[1 * 4 + c] +
+          a[r * 4 + 2] * b[2 * 4 + c] +
+          a[r * 4 + 3] * b[3 * 4 + c];
+    }
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Legacy fixed-function/DDI state (cached only)
+// -----------------------------------------------------------------------------
+// These DDIs are not currently consumed by the AeroGPU command stream (fixed
+// function is not implemented), but some legacy D3D9 apps call the corresponding
+// Get* APIs and treat failures as fatal. Cache the values so Set*/Get* round-trip.
+
+template <typename StageT, typename StateT, typename ValueT>
+HRESULT device_set_texture_stage_state_impl(D3DDDI_HDEVICE hDevice, StageT stage, StateT state, ValueT value) {
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceSetTextureStageState,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      d3d9_trace_pack_u32_u32(d3d9_to_u32(stage), d3d9_to_u32(state)),
+                      static_cast<uint64_t>(d3d9_to_u32(value)),
+                      0);
+  if (!hDevice.pDrvPrivate) {
+    return trace.ret(E_INVALIDARG);
+  }
+  const uint32_t st = d3d9_to_u32(stage);
+  const uint32_t ss = d3d9_to_u32(state);
+  if (st >= 16 || ss >= 256) {
+    return trace.ret(kD3DErrInvalidCall);
+  }
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  dev->texture_stage_states[st][ss] = d3d9_to_u32(value);
+  return trace.ret(S_OK);
+}
+
+template <typename... Args>
+HRESULT device_set_texture_stage_state_dispatch(Args... args) {
+  if constexpr (sizeof...(Args) == 4) {
+    return device_set_texture_stage_state_impl(args...);
+  }
+  return D3DERR_NOTAVAILABLE;
+}
+
+template <typename StageT, typename StateT, typename ValueT>
+HRESULT device_get_texture_stage_state_impl(D3DDDI_HDEVICE hDevice, StageT stage, StateT state, ValueT* pValue) {
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceGetTextureStageState,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      d3d9_trace_pack_u32_u32(d3d9_to_u32(stage), d3d9_to_u32(state)),
+                      d3d9_trace_arg_ptr(pValue),
+                      0);
+  d3d9_write_u32(pValue, 0u);
+  if (!hDevice.pDrvPrivate || !pValue) {
+    return trace.ret(E_INVALIDARG);
+  }
+  const uint32_t st = d3d9_to_u32(stage);
+  const uint32_t ss = d3d9_to_u32(state);
+  if (st >= 16 || ss >= 256) {
+    return trace.ret(kD3DErrInvalidCall);
+  }
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  d3d9_write_u32(pValue, dev->texture_stage_states[st][ss]);
+  return trace.ret(S_OK);
+}
+
+template <typename... Args>
+HRESULT device_get_texture_stage_state_dispatch(Args... args) {
+  if constexpr (sizeof...(Args) == 4) {
+    return device_get_texture_stage_state_impl(args...);
+  }
+  return D3DERR_NOTAVAILABLE;
+}
+
+template <typename StateT, typename MatrixT>
+HRESULT device_set_transform_impl(D3DDDI_HDEVICE hDevice, StateT state, const MatrixT* pMatrix) {
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceSetTransform,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      static_cast<uint64_t>(d3d9_to_u32(state)),
+                      d3d9_trace_arg_ptr(pMatrix),
+                      0);
+  if (!hDevice.pDrvPrivate || !pMatrix) {
+    return trace.ret(E_INVALIDARG);
+  }
+  const uint32_t idx = d3d9_to_u32(state);
+  if (idx >= Device::kTransformCacheCount) {
+    return trace.ret(kD3DErrInvalidCall);
+  }
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  std::memcpy(dev->transform_matrices[idx], pMatrix, 16 * sizeof(float));
+  return trace.ret(S_OK);
+}
+
+template <typename... Args>
+HRESULT device_set_transform_dispatch(Args... args) {
+  if constexpr (sizeof...(Args) == 3) {
+    return device_set_transform_impl(args...);
+  }
+  return D3DERR_NOTAVAILABLE;
+}
+
+template <typename StateT, typename MatrixT>
+HRESULT device_multiply_transform_impl(D3DDDI_HDEVICE hDevice, StateT state, const MatrixT* pMatrix) {
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceMultiplyTransform,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      static_cast<uint64_t>(d3d9_to_u32(state)),
+                      d3d9_trace_arg_ptr(pMatrix),
+                      0);
+  if (!hDevice.pDrvPrivate || !pMatrix) {
+    return trace.ret(E_INVALIDARG);
+  }
+  const uint32_t idx = d3d9_to_u32(state);
+  if (idx >= Device::kTransformCacheCount) {
+    return trace.ret(kD3DErrInvalidCall);
+  }
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+
+  float tmp[16];
+  float rhs[16];
+  std::memcpy(rhs, pMatrix, sizeof(rhs));
+  d3d9_mul_mat4_row_major(dev->transform_matrices[idx], rhs, tmp);
+  std::memcpy(dev->transform_matrices[idx], tmp, sizeof(tmp));
+
+  return trace.ret(S_OK);
+}
+
+template <typename... Args>
+HRESULT device_multiply_transform_dispatch(Args... args) {
+  if constexpr (sizeof...(Args) == 3) {
+    return device_multiply_transform_impl(args...);
+  }
+  return D3DERR_NOTAVAILABLE;
+}
+
+template <typename StateT, typename MatrixT>
+HRESULT device_get_transform_impl(D3DDDI_HDEVICE hDevice, StateT state, MatrixT* pMatrix) {
+  // Default to identity so callers never observe uninitialized output.
+  if (pMatrix) {
+    std::memset(pMatrix, 0, 16 * sizeof(float));
+    float* f = reinterpret_cast<float*>(pMatrix);
+    f[0] = 1.0f;
+    f[5] = 1.0f;
+    f[10] = 1.0f;
+    f[15] = 1.0f;
+  }
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceGetTransform,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      static_cast<uint64_t>(d3d9_to_u32(state)),
+                      d3d9_trace_arg_ptr(pMatrix),
+                      0);
+  if (!hDevice.pDrvPrivate || !pMatrix) {
+    return trace.ret(E_INVALIDARG);
+  }
+  const uint32_t idx = d3d9_to_u32(state);
+  if (idx >= Device::kTransformCacheCount) {
+    return trace.ret(kD3DErrInvalidCall);
+  }
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  std::memcpy(pMatrix, dev->transform_matrices[idx], 16 * sizeof(float));
+  return trace.ret(S_OK);
+}
+
+template <typename... Args>
+HRESULT device_get_transform_dispatch(Args... args) {
+  if constexpr (sizeof...(Args) == 3) {
+    return device_get_transform_impl(args...);
+  }
+  return D3DERR_NOTAVAILABLE;
+}
+
+template <typename IndexT, typename PlaneT>
+HRESULT device_set_clip_plane_impl(D3DDDI_HDEVICE hDevice, IndexT index, const PlaneT* pPlane) {
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceSetClipPlane,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      static_cast<uint64_t>(d3d9_to_u32(index)),
+                      d3d9_trace_arg_ptr(pPlane),
+                      0);
+  if (!hDevice.pDrvPrivate || !pPlane) {
+    return trace.ret(E_INVALIDARG);
+  }
+  const uint32_t idx = d3d9_to_u32(index);
+  if (idx >= 6) {
+    return trace.ret(kD3DErrInvalidCall);
+  }
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  std::memcpy(dev->clip_planes[idx], pPlane, 4 * sizeof(float));
+  return trace.ret(S_OK);
+}
+
+template <typename... Args>
+HRESULT device_set_clip_plane_dispatch(Args... args) {
+  if constexpr (sizeof...(Args) == 3) {
+    return device_set_clip_plane_impl(args...);
+  }
+  return D3DERR_NOTAVAILABLE;
+}
+
+template <typename IndexT, typename PlaneT>
+HRESULT device_get_clip_plane_impl(D3DDDI_HDEVICE hDevice, IndexT index, PlaneT* pPlane) {
+  if (pPlane) {
+    std::memset(pPlane, 0, 4 * sizeof(float));
+  }
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceGetClipPlane,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      static_cast<uint64_t>(d3d9_to_u32(index)),
+                      d3d9_trace_arg_ptr(pPlane),
+                      0);
+  if (!hDevice.pDrvPrivate || !pPlane) {
+    return trace.ret(E_INVALIDARG);
+  }
+  const uint32_t idx = d3d9_to_u32(index);
+  if (idx >= 6) {
+    return trace.ret(kD3DErrInvalidCall);
+  }
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  std::memcpy(pPlane, dev->clip_planes[idx], 4 * sizeof(float));
+  return trace.ret(S_OK);
+}
+
+template <typename... Args>
+HRESULT device_get_clip_plane_dispatch(Args... args) {
+  if constexpr (sizeof...(Args) == 3) {
+    return device_get_clip_plane_impl(args...);
+  }
+  return D3DERR_NOTAVAILABLE;
+}
+
+template <typename ValueT>
+HRESULT device_set_software_vertex_processing_impl(D3DDDI_HDEVICE hDevice, ValueT enabled) {
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceSetSoftwareVertexProcessing,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      static_cast<uint64_t>(d3d9_to_u32(enabled)),
+                      0,
+                      0);
+  if (!hDevice.pDrvPrivate) {
+    return trace.ret(E_INVALIDARG);
+  }
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  dev->software_vertex_processing = d3d9_to_u32(enabled) ? TRUE : FALSE;
+  return trace.ret(S_OK);
+}
+
+template <typename... Args>
+HRESULT device_set_software_vertex_processing_dispatch(Args... args) {
+  if constexpr (sizeof...(Args) == 2) {
+    return device_set_software_vertex_processing_impl(args...);
+  }
+  return D3DERR_NOTAVAILABLE;
+}
+
+template <typename ValueT>
+HRESULT device_get_software_vertex_processing_impl(D3DDDI_HDEVICE hDevice, ValueT* pEnabled) {
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceGetSoftwareVertexProcessing,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      d3d9_trace_arg_ptr(pEnabled),
+                      0,
+                      0);
+  d3d9_write_u32(pEnabled, 0u);
+  if (!hDevice.pDrvPrivate || !pEnabled) {
+    return trace.ret(E_INVALIDARG);
+  }
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  d3d9_write_u32(pEnabled, dev->software_vertex_processing ? 1u : 0u);
+  return trace.ret(S_OK);
+}
+
+template <typename... Args>
+HRESULT device_get_software_vertex_processing_dispatch(Args... args) {
+  if constexpr (sizeof...(Args) == 2) {
+    return device_get_software_vertex_processing_impl(args...);
+  }
+  return D3DERR_NOTAVAILABLE;
+}
+
+template <typename ValueT>
+HRESULT device_set_npatch_mode_impl(D3DDDI_HDEVICE hDevice, ValueT mode) {
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceSetNPatchMode,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      static_cast<uint64_t>(d3d9_to_u32(mode)),
+                      0,
+                      0);
+  if (!hDevice.pDrvPrivate) {
+    return trace.ret(E_INVALIDARG);
+  }
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  dev->n_patch_mode = static_cast<float>(mode);
+  return trace.ret(S_OK);
+}
+
+template <typename... Args>
+HRESULT device_set_npatch_mode_dispatch(Args... args) {
+  if constexpr (sizeof...(Args) == 2) {
+    return device_set_npatch_mode_impl(args...);
+  }
+  return D3DERR_NOTAVAILABLE;
+}
+
+template <typename ValueT>
+HRESULT device_get_npatch_mode_impl(D3DDDI_HDEVICE hDevice, ValueT* pMode) {
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceGetNPatchMode,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      d3d9_trace_arg_ptr(pMode),
+                      0,
+                      0);
+  if (pMode) {
+    *pMode = static_cast<ValueT>(0);
+  }
+  if (!hDevice.pDrvPrivate || !pMode) {
+    return trace.ret(E_INVALIDARG);
+  }
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  *pMode = static_cast<ValueT>(dev->n_patch_mode);
+  return trace.ret(S_OK);
+}
+
+template <typename... Args>
+HRESULT device_get_npatch_mode_dispatch(Args... args) {
+  if constexpr (sizeof...(Args) == 2) {
+    return device_get_npatch_mode_impl(args...);
+  }
+  return D3DERR_NOTAVAILABLE;
+}
+
+template <typename StreamT, typename ValueT>
+HRESULT device_set_stream_source_freq_impl(D3DDDI_HDEVICE hDevice, StreamT stream, ValueT value) {
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceSetStreamSourceFreq,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      static_cast<uint64_t>(d3d9_to_u32(stream)),
+                      static_cast<uint64_t>(d3d9_to_u32(value)),
+                      0);
+  if (!hDevice.pDrvPrivate) {
+    return trace.ret(E_INVALIDARG);
+  }
+  const uint32_t st = d3d9_to_u32(stream);
+  if (st >= 16) {
+    return trace.ret(kD3DErrInvalidCall);
+  }
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  dev->stream_source_freq[st] = d3d9_to_u32(value);
+  return trace.ret(S_OK);
+}
+
+template <typename... Args>
+HRESULT device_set_stream_source_freq_dispatch(Args... args) {
+  if constexpr (sizeof...(Args) == 3) {
+    return device_set_stream_source_freq_impl(args...);
+  }
+  return D3DERR_NOTAVAILABLE;
+}
+
+template <typename StreamT, typename ValueT>
+HRESULT device_get_stream_source_freq_impl(D3DDDI_HDEVICE hDevice, StreamT stream, ValueT* pValue) {
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceGetStreamSourceFreq,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      static_cast<uint64_t>(d3d9_to_u32(stream)),
+                      d3d9_trace_arg_ptr(pValue),
+                      0);
+  d3d9_write_u32(pValue, 1u);
+  if (!hDevice.pDrvPrivate || !pValue) {
+    return trace.ret(E_INVALIDARG);
+  }
+  const uint32_t st = d3d9_to_u32(stream);
+  if (st >= 16) {
+    return trace.ret(kD3DErrInvalidCall);
+  }
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  d3d9_write_u32(pValue, dev->stream_source_freq[st]);
+  return trace.ret(S_OK);
+}
+
+template <typename... Args>
+HRESULT device_get_stream_source_freq_dispatch(Args... args) {
+  if constexpr (sizeof...(Args) == 3) {
+    return device_get_stream_source_freq_impl(args...);
+  }
+  return D3DERR_NOTAVAILABLE;
+}
+
 template <typename StateT, typename ValueT>
 HRESULT device_get_render_state_impl(D3DDDI_HDEVICE hDevice, StateT state, ValueT* pValue) {
   D3d9TraceCall trace(D3d9TraceFunc::DeviceGetRenderState,
@@ -10403,6 +10782,201 @@ HRESULT device_get_vertex_decl_dispatch(Args... args) {
   }
   return D3DERR_NOTAVAILABLE;
 }
+
+template <typename Fn>
+struct aerogpu_d3d9_impl_pfnSetTextureStageState;
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnSetTextureStageState<Ret(__stdcall*)(Args...)> {
+  static Ret __stdcall pfnSetTextureStageState(Args... args) {
+    return static_cast<Ret>(device_set_texture_stage_state_dispatch(args...));
+  }
+};
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnSetTextureStageState<Ret(*)(Args...)> {
+  static Ret pfnSetTextureStageState(Args... args) {
+    return static_cast<Ret>(device_set_texture_stage_state_dispatch(args...));
+  }
+};
+
+template <typename Fn>
+struct aerogpu_d3d9_impl_pfnGetTextureStageState;
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnGetTextureStageState<Ret(__stdcall*)(Args...)> {
+  static Ret __stdcall pfnGetTextureStageState(Args... args) {
+    return static_cast<Ret>(device_get_texture_stage_state_dispatch(args...));
+  }
+};
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnGetTextureStageState<Ret(*)(Args...)> {
+  static Ret pfnGetTextureStageState(Args... args) {
+    return static_cast<Ret>(device_get_texture_stage_state_dispatch(args...));
+  }
+};
+
+template <typename Fn>
+struct aerogpu_d3d9_impl_pfnSetTransform;
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnSetTransform<Ret(__stdcall*)(Args...)> {
+  static Ret __stdcall pfnSetTransform(Args... args) {
+    return static_cast<Ret>(device_set_transform_dispatch(args...));
+  }
+};
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnSetTransform<Ret(*)(Args...)> {
+  static Ret pfnSetTransform(Args... args) {
+    return static_cast<Ret>(device_set_transform_dispatch(args...));
+  }
+};
+
+template <typename Fn>
+struct aerogpu_d3d9_impl_pfnMultiplyTransform;
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnMultiplyTransform<Ret(__stdcall*)(Args...)> {
+  static Ret __stdcall pfnMultiplyTransform(Args... args) {
+    return static_cast<Ret>(device_multiply_transform_dispatch(args...));
+  }
+};
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnMultiplyTransform<Ret(*)(Args...)> {
+  static Ret pfnMultiplyTransform(Args... args) {
+    return static_cast<Ret>(device_multiply_transform_dispatch(args...));
+  }
+};
+
+template <typename Fn>
+struct aerogpu_d3d9_impl_pfnGetTransform;
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnGetTransform<Ret(__stdcall*)(Args...)> {
+  static Ret __stdcall pfnGetTransform(Args... args) {
+    return static_cast<Ret>(device_get_transform_dispatch(args...));
+  }
+};
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnGetTransform<Ret(*)(Args...)> {
+  static Ret pfnGetTransform(Args... args) {
+    return static_cast<Ret>(device_get_transform_dispatch(args...));
+  }
+};
+
+template <typename Fn>
+struct aerogpu_d3d9_impl_pfnSetClipPlane;
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnSetClipPlane<Ret(__stdcall*)(Args...)> {
+  static Ret __stdcall pfnSetClipPlane(Args... args) {
+    return static_cast<Ret>(device_set_clip_plane_dispatch(args...));
+  }
+};
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnSetClipPlane<Ret(*)(Args...)> {
+  static Ret pfnSetClipPlane(Args... args) {
+    return static_cast<Ret>(device_set_clip_plane_dispatch(args...));
+  }
+};
+
+template <typename Fn>
+struct aerogpu_d3d9_impl_pfnGetClipPlane;
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnGetClipPlane<Ret(__stdcall*)(Args...)> {
+  static Ret __stdcall pfnGetClipPlane(Args... args) {
+    return static_cast<Ret>(device_get_clip_plane_dispatch(args...));
+  }
+};
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnGetClipPlane<Ret(*)(Args...)> {
+  static Ret pfnGetClipPlane(Args... args) {
+    return static_cast<Ret>(device_get_clip_plane_dispatch(args...));
+  }
+};
+
+template <typename Fn>
+struct aerogpu_d3d9_impl_pfnSetSoftwareVertexProcessing;
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnSetSoftwareVertexProcessing<Ret(__stdcall*)(Args...)> {
+  static Ret __stdcall pfnSetSoftwareVertexProcessing(Args... args) {
+    return static_cast<Ret>(device_set_software_vertex_processing_dispatch(args...));
+  }
+};
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnSetSoftwareVertexProcessing<Ret(*)(Args...)> {
+  static Ret pfnSetSoftwareVertexProcessing(Args... args) {
+    return static_cast<Ret>(device_set_software_vertex_processing_dispatch(args...));
+  }
+};
+
+template <typename Fn>
+struct aerogpu_d3d9_impl_pfnGetSoftwareVertexProcessing;
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnGetSoftwareVertexProcessing<Ret(__stdcall*)(Args...)> {
+  static Ret __stdcall pfnGetSoftwareVertexProcessing(Args... args) {
+    return static_cast<Ret>(device_get_software_vertex_processing_dispatch(args...));
+  }
+};
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnGetSoftwareVertexProcessing<Ret(*)(Args...)> {
+  static Ret pfnGetSoftwareVertexProcessing(Args... args) {
+    return static_cast<Ret>(device_get_software_vertex_processing_dispatch(args...));
+  }
+};
+
+template <typename Fn>
+struct aerogpu_d3d9_impl_pfnSetNPatchMode;
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnSetNPatchMode<Ret(__stdcall*)(Args...)> {
+  static Ret __stdcall pfnSetNPatchMode(Args... args) {
+    return static_cast<Ret>(device_set_npatch_mode_dispatch(args...));
+  }
+};
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnSetNPatchMode<Ret(*)(Args...)> {
+  static Ret pfnSetNPatchMode(Args... args) {
+    return static_cast<Ret>(device_set_npatch_mode_dispatch(args...));
+  }
+};
+
+template <typename Fn>
+struct aerogpu_d3d9_impl_pfnGetNPatchMode;
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnGetNPatchMode<Ret(__stdcall*)(Args...)> {
+  static Ret __stdcall pfnGetNPatchMode(Args... args) {
+    return static_cast<Ret>(device_get_npatch_mode_dispatch(args...));
+  }
+};
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnGetNPatchMode<Ret(*)(Args...)> {
+  static Ret pfnGetNPatchMode(Args... args) {
+    return static_cast<Ret>(device_get_npatch_mode_dispatch(args...));
+  }
+};
+
+template <typename Fn>
+struct aerogpu_d3d9_impl_pfnSetStreamSourceFreq;
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnSetStreamSourceFreq<Ret(__stdcall*)(Args...)> {
+  static Ret __stdcall pfnSetStreamSourceFreq(Args... args) {
+    return static_cast<Ret>(device_set_stream_source_freq_dispatch(args...));
+  }
+};
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnSetStreamSourceFreq<Ret(*)(Args...)> {
+  static Ret pfnSetStreamSourceFreq(Args... args) {
+    return static_cast<Ret>(device_set_stream_source_freq_dispatch(args...));
+  }
+};
+
+template <typename Fn>
+struct aerogpu_d3d9_impl_pfnGetStreamSourceFreq;
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnGetStreamSourceFreq<Ret(__stdcall*)(Args...)> {
+  static Ret __stdcall pfnGetStreamSourceFreq(Args... args) {
+    return static_cast<Ret>(device_get_stream_source_freq_dispatch(args...));
+  }
+};
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnGetStreamSourceFreq<Ret(*)(Args...)> {
+  static Ret pfnGetStreamSourceFreq(Args... args) {
+    return static_cast<Ret>(device_get_stream_source_freq_dispatch(args...));
+  }
+};
 
 template <typename Fn>
 struct aerogpu_d3d9_impl_pfnGetViewport;
@@ -13617,7 +14191,7 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
   if constexpr (aerogpu_has_member_pfnSetTextureStageState<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(
         pfnSetTextureStageState,
-        aerogpu_d3d9_stub_pfnSetTextureStageState<decltype(pDeviceFuncs->pfnSetTextureStageState)>::pfnSetTextureStageState);
+        aerogpu_d3d9_impl_pfnSetTextureStageState<decltype(pDeviceFuncs->pfnSetTextureStageState)>::pfnSetTextureStageState);
   }
   AEROGPU_SET_D3D9DDI_FN(pfnSetSamplerState, device_set_sampler_state);
   AEROGPU_SET_D3D9DDI_FN(pfnSetRenderState, device_set_render_state);
@@ -13636,7 +14210,7 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
   if constexpr (aerogpu_has_member_pfnSetNPatchMode<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(
         pfnSetNPatchMode,
-        aerogpu_d3d9_stub_pfnSetNPatchMode<decltype(pDeviceFuncs->pfnSetNPatchMode)>::pfnSetNPatchMode);
+        aerogpu_d3d9_impl_pfnSetNPatchMode<decltype(pDeviceFuncs->pfnSetNPatchMode)>::pfnSetNPatchMode);
   }
   if constexpr (aerogpu_has_member_pfnSetGammaRamp<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(
@@ -13646,17 +14220,17 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
   if constexpr (aerogpu_has_member_pfnSetTransform<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(
         pfnSetTransform,
-        aerogpu_d3d9_stub_pfnSetTransform<decltype(pDeviceFuncs->pfnSetTransform)>::pfnSetTransform);
+        aerogpu_d3d9_impl_pfnSetTransform<decltype(pDeviceFuncs->pfnSetTransform)>::pfnSetTransform);
   }
   if constexpr (aerogpu_has_member_pfnMultiplyTransform<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(
         pfnMultiplyTransform,
-        aerogpu_d3d9_stub_pfnMultiplyTransform<decltype(pDeviceFuncs->pfnMultiplyTransform)>::pfnMultiplyTransform);
+        aerogpu_d3d9_impl_pfnMultiplyTransform<decltype(pDeviceFuncs->pfnMultiplyTransform)>::pfnMultiplyTransform);
   }
   if constexpr (aerogpu_has_member_pfnSetClipPlane<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(
         pfnSetClipPlane,
-        aerogpu_d3d9_stub_pfnSetClipPlane<decltype(pDeviceFuncs->pfnSetClipPlane)>::pfnSetClipPlane);
+        aerogpu_d3d9_impl_pfnSetClipPlane<decltype(pDeviceFuncs->pfnSetClipPlane)>::pfnSetClipPlane);
   }
 
   AEROGPU_SET_D3D9DDI_FN(pfnCreateVertexDecl, device_create_vertex_decl);
@@ -13709,7 +14283,7 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
   if constexpr (aerogpu_has_member_pfnSetSoftwareVertexProcessing<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(
         pfnSetSoftwareVertexProcessing,
-        aerogpu_d3d9_stub_pfnSetSoftwareVertexProcessing<decltype(
+        aerogpu_d3d9_impl_pfnSetSoftwareVertexProcessing<decltype(
             pDeviceFuncs->pfnSetSoftwareVertexProcessing)>::pfnSetSoftwareVertexProcessing);
   }
   if constexpr (aerogpu_has_member_pfnSetCursorProperties<D3D9DDI_DEVICEFUNCS>::value) {
@@ -13786,7 +14360,7 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
   AEROGPU_SET_D3D9DDI_FN(pfnSetStreamSource, device_set_stream_source);
   if constexpr (aerogpu_has_member_pfnSetStreamSourceFreq<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(pfnSetStreamSourceFreq,
-                           aerogpu_d3d9_stub_pfnSetStreamSourceFreq<decltype(
+                           aerogpu_d3d9_impl_pfnSetStreamSourceFreq<decltype(
                                pDeviceFuncs->pfnSetStreamSourceFreq)>::pfnSetStreamSourceFreq);
   }
   AEROGPU_SET_D3D9DDI_FN(pfnSetIndices, device_set_indices);
@@ -13815,16 +14389,16 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
 
   if constexpr (aerogpu_has_member_pfnGetSoftwareVertexProcessing<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(pfnGetSoftwareVertexProcessing,
-                           aerogpu_d3d9_stub_pfnGetSoftwareVertexProcessing<decltype(
+                           aerogpu_d3d9_impl_pfnGetSoftwareVertexProcessing<decltype(
                                pDeviceFuncs->pfnGetSoftwareVertexProcessing)>::pfnGetSoftwareVertexProcessing);
   }
   if constexpr (aerogpu_has_member_pfnGetTransform<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(pfnGetTransform,
-                           aerogpu_d3d9_stub_pfnGetTransform<decltype(pDeviceFuncs->pfnGetTransform)>::pfnGetTransform);
+                           aerogpu_d3d9_impl_pfnGetTransform<decltype(pDeviceFuncs->pfnGetTransform)>::pfnGetTransform);
   }
   if constexpr (aerogpu_has_member_pfnGetClipPlane<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(pfnGetClipPlane,
-                           aerogpu_d3d9_stub_pfnGetClipPlane<decltype(pDeviceFuncs->pfnGetClipPlane)>::pfnGetClipPlane);
+                           aerogpu_d3d9_impl_pfnGetClipPlane<decltype(pDeviceFuncs->pfnGetClipPlane)>::pfnGetClipPlane);
   }
   if constexpr (aerogpu_has_member_pfnGetViewport<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(
@@ -13875,7 +14449,7 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
   }
   if constexpr (aerogpu_has_member_pfnGetTextureStageState<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(pfnGetTextureStageState,
-                           aerogpu_d3d9_stub_pfnGetTextureStageState<decltype(
+                           aerogpu_d3d9_impl_pfnGetTextureStageState<decltype(
                                pDeviceFuncs->pfnGetTextureStageState)>::pfnGetTextureStageState);
   }
   if constexpr (aerogpu_has_member_pfnGetSamplerState<D3D9DDI_DEVICEFUNCS>::value) {
@@ -13900,7 +14474,7 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
   }
   if constexpr (aerogpu_has_member_pfnGetNPatchMode<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(pfnGetNPatchMode,
-                           aerogpu_d3d9_stub_pfnGetNPatchMode<decltype(pDeviceFuncs->pfnGetNPatchMode)>::pfnGetNPatchMode);
+                           aerogpu_d3d9_impl_pfnGetNPatchMode<decltype(pDeviceFuncs->pfnGetNPatchMode)>::pfnGetNPatchMode);
   }
   if constexpr (aerogpu_has_member_pfnGetFVF<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(
@@ -13919,7 +14493,7 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
   }
   if constexpr (aerogpu_has_member_pfnGetStreamSourceFreq<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(pfnGetStreamSourceFreq,
-                           aerogpu_d3d9_stub_pfnGetStreamSourceFreq<decltype(
+                           aerogpu_d3d9_impl_pfnGetStreamSourceFreq<decltype(
                                pDeviceFuncs->pfnGetStreamSourceFreq)>::pfnGetStreamSourceFreq);
   }
   if constexpr (aerogpu_has_member_pfnGetIndices<D3D9DDI_DEVICEFUNCS>::value) {
