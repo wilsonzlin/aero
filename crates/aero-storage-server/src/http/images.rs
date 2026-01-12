@@ -151,7 +151,13 @@ pub async fn get_image(
     State(state): State<ImagesState>,
     headers: HeaderMap,
 ) -> Response {
-    crate::http::observability::record_image_id(&image_id);
+    if crate::store::validate_image_id(&image_id).is_ok() {
+        crate::http::observability::record_image_id(&image_id);
+    } else {
+        // Avoid recording attacker-controlled invalid values in the span.
+        tracing::Span::current().record("image_id", tracing::field::display("<invalid>"));
+        return response_with_status(StatusCode::NOT_FOUND, &state, &headers);
+    }
     serve_image(image_id, state, headers, true).await
 }
 
@@ -160,7 +166,12 @@ pub async fn head_image(
     State(state): State<ImagesState>,
     headers: HeaderMap,
 ) -> Response {
-    crate::http::observability::record_image_id(&image_id);
+    if crate::store::validate_image_id(&image_id).is_ok() {
+        crate::http::observability::record_image_id(&image_id);
+    } else {
+        tracing::Span::current().record("image_id", tracing::field::display("<invalid>"));
+        return response_with_status(StatusCode::NOT_FOUND, &state, &headers);
+    }
     serve_image(image_id, state, headers, false).await
 }
 
