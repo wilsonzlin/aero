@@ -2459,141 +2459,7 @@ impl PcPlatform {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use memory::{GuestMemory, GuestMemoryError, GuestMemoryResult, SparseMemory};
-
-    const FOUR_GIB: u64 = 1u64 << 32;
-
-    /// GuestMemory wrapper that simulates the PC "PCI hole" + high-RAM remap layout used by Q35.
-    ///
-    /// - Low RAM: `0x0..PCIE_ECAM_BASE` maps to backing RAM `0..PCIE_ECAM_BASE`.
-    /// - PCI hole: `PCIE_ECAM_BASE..0x1_0000_0000` is unmapped (read/write return OutOfRange).
-    /// - High RAM: `0x1_0000_0000..(0x1_0000_0000 + (ram_size_bytes - PCIE_ECAM_BASE))` maps to the
-    ///   remainder of the backing RAM.
-    ///
-    /// `size()` returns the *guest-physical addressable* size including the hole.
-    struct PciHoleRemappedGuestMemory {
-        backing: Box<dyn GuestMemory>,
-        ram_size_bytes: u64,
-        phys_size: u64,
-    }
-
-    impl PciHoleRemappedGuestMemory {
-        fn new(backing: Box<dyn GuestMemory>, ram_size_bytes: u64) -> Self {
-            let high_bytes = ram_size_bytes.saturating_sub(PCIE_ECAM_BASE);
-            let phys_size = if ram_size_bytes > PCIE_ECAM_BASE {
-                FOUR_GIB + high_bytes
-            } else {
-                ram_size_bytes
-            };
-            Self {
-                backing,
-                ram_size_bytes,
-                phys_size,
-            }
-        }
-
-        #[inline]
-        fn check_range(&self, paddr: u64, len: usize) -> GuestMemoryResult<u64> {
-            let size = self.size();
-            let end = paddr
-                .checked_add(len as u64)
-                .ok_or(GuestMemoryError::OutOfRange { paddr, len, size })?;
-            if end > size {
-                return Err(GuestMemoryError::OutOfRange { paddr, len, size });
-            }
-            Ok(end)
-        }
-    }
-
-    impl GuestMemory for PciHoleRemappedGuestMemory {
-        fn size(&self) -> u64 {
-            self.phys_size
-        }
-
-        fn read_into(&self, paddr: u64, dst: &mut [u8]) -> GuestMemoryResult<()> {
-            if dst.is_empty() {
-                return Ok(());
-            }
-
-            let end = self.check_range(paddr, dst.len())?;
-            let high_phys_end = FOUR_GIB + self.ram_size_bytes.saturating_sub(PCIE_ECAM_BASE);
-
-            let mut cur = paddr;
-            let mut pos = 0usize;
-            while pos < dst.len() {
-                if cur < PCIE_ECAM_BASE {
-                    let seg_end = end.min(PCIE_ECAM_BASE);
-                    let seg_len = (seg_end - cur) as usize;
-                    self.backing
-                        .read_into(cur, &mut dst[pos..pos + seg_len])?;
-                    cur += seg_len as u64;
-                    pos += seg_len;
-                    continue;
-                }
-
-                if cur >= FOUR_GIB {
-                    let seg_end = end.min(high_phys_end);
-                    let seg_len = (seg_end - cur) as usize;
-                    let backing_addr = PCIE_ECAM_BASE + (cur - FOUR_GIB);
-                    self.backing
-                        .read_into(backing_addr, &mut dst[pos..pos + seg_len])?;
-                    cur += seg_len as u64;
-                    pos += seg_len;
-                    continue;
-                }
-
-                return Err(GuestMemoryError::OutOfRange {
-                    paddr: cur,
-                    len: dst.len() - pos,
-                    size: self.size(),
-                });
-            }
-
-            Ok(())
-        }
-
-        fn write_from(&mut self, paddr: u64, src: &[u8]) -> GuestMemoryResult<()> {
-            if src.is_empty() {
-                return Ok(());
-            }
-
-            let end = self.check_range(paddr, src.len())?;
-            let high_phys_end = FOUR_GIB + self.ram_size_bytes.saturating_sub(PCIE_ECAM_BASE);
-
-            let mut cur = paddr;
-            let mut pos = 0usize;
-            while pos < src.len() {
-                if cur < PCIE_ECAM_BASE {
-                    let seg_end = end.min(PCIE_ECAM_BASE);
-                    let seg_len = (seg_end - cur) as usize;
-                    self.backing
-                        .write_from(cur, &src[pos..pos + seg_len])?;
-                    cur += seg_len as u64;
-                    pos += seg_len;
-                    continue;
-                }
-
-                if cur >= FOUR_GIB {
-                    let seg_end = end.min(high_phys_end);
-                    let seg_len = (seg_end - cur) as usize;
-                    let backing_addr = PCIE_ECAM_BASE + (cur - FOUR_GIB);
-                    self.backing
-                        .write_from(backing_addr, &src[pos..pos + seg_len])?;
-                    cur += seg_len as u64;
-                    pos += seg_len;
-                    continue;
-                }
-
-                return Err(GuestMemoryError::OutOfRange {
-                    paddr: cur,
-                    len: src.len() - pos,
-                    size: self.size(),
-                });
-            }
-
-            Ok(())
-        }
-    }
+    use memory::SparseMemory;
 
     fn cmos_read_u8(pc: &mut PcPlatform, index: u8) -> u8 {
         pc.io.write(0x70, 1, u32::from(index));
@@ -2612,16 +2478,19 @@ mod tests {
         let ram_size_bytes = PCIE_ECAM_BASE + 8 * 1024 * 1024;
 
         // Don't allocate multi-GB dense RAM; use a sparse backing.
-        let backing = SparseMemory::new(ram_size_bytes).expect("failed to allocate sparse RAM");
-        let ram = PciHoleRemappedGuestMemory::new(Box::new(backing), ram_size_bytes);
-
-        let mut pc = PcPlatform::new_with_config_and_ram_inner(
-            ram_size_bytes,
+        let ram = SparseMemory::new(ram_size_bytes).expect("failed to allocate sparse RAM");
+        let mut pc = PcPlatform::new_with_config_and_ram(
             Box::new(ram),
-            PcPlatformConfig::default(),
-            None,
-            None,
-            None,
+            PcPlatformConfig {
+                enable_hda: false,
+                enable_nvme: false,
+                enable_ahci: false,
+                enable_ide: false,
+                enable_e1000: false,
+                mac_addr: None,
+                enable_uhci: false,
+                enable_virtio_blk: false,
+            },
         );
 
         // Ensure the guest-physical address space is larger than the configured contiguous RAM.
