@@ -509,24 +509,17 @@ if [[ "${is_cargo_cmd}" == "true" ]]; then
     fi
 fi
 
-# Node.js - cap V8 heap to avoid runaway memory.
-#
-# Mirror the defensive defaults from `scripts/agent-env.sh` so `safe-run.sh` can be used
-# standalone (without requiring users to source agent-env first).
-#
-# Keep any existing NODE_OPTIONS (e.g. --import hooks) while ensuring we have a sane
-# max-old-space-size set.
-if [[ "${NODE_OPTIONS:-}" != *"--max-old-space-size="* ]]; then
-    export NODE_OPTIONS="${NODE_OPTIONS:-} --max-old-space-size=4096"
-    export NODE_OPTIONS="${NODE_OPTIONS# }"
-fi
-
-# Node.js test runner defaults to running many test files in parallel, which can multiply memory
-# usage (especially with WASM-heavy tests). Keep it aligned with our overall parallelism knob.
-if [[ "${NODE_OPTIONS:-}" != *"--test-concurrency="* ]]; then
-    export NODE_OPTIONS="${NODE_OPTIONS:-} --test-concurrency=${CARGO_BUILD_JOBS:-1}"
-    export NODE_OPTIONS="${NODE_OPTIONS# }"
-fi
+ # Node.js - cap V8 heap to avoid runaway memory.
+ #
+ # Mirror the defensive defaults from `scripts/agent-env.sh` so `safe-run.sh` can be used
+ # standalone (without requiring users to source agent-env first).
+ #
+ # Keep any existing NODE_OPTIONS (e.g. --import hooks) while ensuring we have a sane
+ # max-old-space-size set.
+ if [[ "${NODE_OPTIONS:-}" != *"--max-old-space-size="* ]]; then
+     export NODE_OPTIONS="${NODE_OPTIONS:-} --max-old-space-size=4096"
+     export NODE_OPTIONS="${NODE_OPTIONS# }"
+ fi
 
 if [[ $# -lt 1 ]]; then
     echo "Usage: $0 <command...>" >&2
