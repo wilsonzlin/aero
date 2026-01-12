@@ -35,6 +35,16 @@ describe("bench/guest_cpu_bench option validation", () => {
     ).rejects.toThrow(/seconds.*> 0/i);
   });
 
+  it("validates seconds before rejecting unsupported modes", async () => {
+    await expect(
+      runGuestCpuBench({
+        variant: "alu32",
+        mode: "jit_opt",
+        seconds: 0,
+      }),
+    ).rejects.toThrow(/seconds.*> 0/i);
+  });
+
   it("rejects non-finite iters", async () => {
     await expect(
       runGuestCpuBench({
@@ -66,4 +76,3 @@ describe("bench/guest_cpu_bench option validation", () => {
     ).rejects.toThrow(/iters.*integer/i);
   });
 });
-
