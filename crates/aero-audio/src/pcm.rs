@@ -614,6 +614,10 @@ mod tests {
         assert_eq!(encode_u8(1.0 / 128.0), 129);
         // Max representable decoded value (255 -> 127/128) should round back to 255.
         assert_eq!(encode_u8(127.0 / 128.0), 255);
+        // Half an LSB (1/256) should round up on the positive side.
+        assert_eq!(encode_u8(1.0 / 256.0), 129);
+        // Half an LSB on the negative side rounds back to 0.0 (128) due to the unsigned bias.
+        assert_eq!(encode_u8(-1.0 / 256.0), 128);
 
         // Non-finite inputs should never panic and should clamp deterministically.
         assert_eq!(encode_u8(f32::INFINITY), 255);
@@ -994,6 +998,33 @@ mod tests {
         assert_eq!(out.len(), 1);
         assert_f32_approx_eq(out[0][0], 1000.0 / 32768.0, 1e-6);
         assert_f32_approx_eq(out[0][1], -1000.0 / 32768.0, 1e-6);
+    }
+
+    #[test]
+    fn decode_pcm_to_stereo_f32_mono_duplicates_for_8bit_and_20bit() {
+        let fmt = StreamFormat {
+            sample_rate_hz: 48_000,
+            bits_per_sample: 8,
+            channels: 1,
+        };
+        let out = decode_pcm_to_stereo_f32(&[0x00, 0x80, 0xFF], fmt);
+        assert_eq!(out.len(), 3);
+        assert_f32_approx_eq(out[0][0], -1.0, 1e-6);
+        assert_f32_approx_eq(out[0][1], -1.0, 1e-6);
+        assert_f32_approx_eq(out[1][0], 0.0, 1e-6);
+        assert_f32_approx_eq(out[1][1], 0.0, 1e-6);
+        assert_f32_approx_eq(out[2][0], 127.0 / 128.0, 1e-6);
+        assert_f32_approx_eq(out[2][1], 127.0 / 128.0, 1e-6);
+
+        let fmt = StreamFormat {
+            sample_rate_hz: 48_000,
+            bits_per_sample: 20,
+            channels: 1,
+        };
+        let out = decode_pcm_to_stereo_f32(&(-524_288i32).to_le_bytes(), fmt);
+        assert_eq!(out.len(), 1);
+        assert_f32_approx_eq(out[0][0], -1.0, 1e-6);
+        assert_f32_approx_eq(out[0][1], -1.0, 1e-6);
     }
 
     #[test]
