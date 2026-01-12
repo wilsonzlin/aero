@@ -546,6 +546,49 @@ if [[ $# -lt 1 ]]; then
     exit 1
 fi
 
+# Node.js test runner defaults to running many test files in parallel, which can multiply memory
+# usage (especially for WASM-heavy test suites). When running node tests under `safe-run.sh`, we
+# prefer reliability over speed and align test concurrency with our overall agent parallelism knob
+# (`CARGO_BUILD_JOBS`, default 1).
+#
+# Note: Node does *not* allow `--test-concurrency` in `NODE_OPTIONS` (it errors out with
+# "is not allowed in NODE_OPTIONS"), so we inject it as a CLI argument only when invoking the test
+# runner (`node --test ...`) and only if the caller didn't specify it already.
+cmd0_arg="${1:-}"
+cmd0_basename="${cmd0_arg##*/}"
+unset cmd0_arg 2>/dev/null || true
+if [[ "${cmd0_basename}" == "node" || "${cmd0_basename}" == "node.exe" ]]; then
+    wants_test=false
+    has_concurrency=false
+    for arg in "${@:2}"; do
+        if [[ "${arg}" == "--test" ]]; then
+            wants_test=true
+            continue
+        fi
+        case "${arg}" in
+            --test-concurrency|--test-concurrency=*)
+                has_concurrency=true
+                break
+                ;;
+        esac
+    done
+
+    if [[ "${wants_test}" == "true" && "${has_concurrency}" == "false" ]]; then
+        injected=false
+        new_args=("${1}")
+        for arg in "${@:2}"; do
+            new_args+=("${arg}")
+            if [[ "${injected}" == "false" && "${arg}" == "--test" ]]; then
+                new_args+=("--test-concurrency=${CARGO_BUILD_JOBS:-1}")
+                injected=true
+            fi
+        done
+        set -- "${new_args[@]}"
+    fi
+    unset wants_test has_concurrency injected new_args 2>/dev/null || true
+fi
+unset cmd0_basename 2>/dev/null || true
+
 # If the working tree is partially broken (e.g. missing tracked files), fail with a
 # clear, copy/paste remediation command.
 for rel in "with-timeout.sh" "run_limited.sh"; do
