@@ -5775,7 +5775,11 @@ impl snapshot::SnapshotTarget for Machine {
             // runtime-only and are not currently serialized in snapshot state. Clear them before
             // applying the transport snapshot, then rewind queue progress so the transport will
             // re-pop the guest-provided buffers post-restore.
-            if let Some(net) = virtio.device_mut::<VirtioNet<Option<Box<dyn NetworkBackend>>>>() {
+            if let Some(net) = virtio.device_mut::<VirtioNet<VirtioNetBackendAdapter>>() {
+                aero_virtio::devices::VirtioDevice::reset(net);
+            } else if let Some(net) =
+                virtio.device_mut::<VirtioNet<Option<Box<dyn NetworkBackend>>>>()
+            {
                 aero_virtio::devices::VirtioDevice::reset(net);
             }
 
