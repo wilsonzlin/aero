@@ -330,6 +330,15 @@ struct SystemMemory {
 }
 
 impl SystemMemory {
+    // Reset/mapping strategy (see task "reset idempotent w.r.t ROM/MMIO mappings"):
+    //
+    // - The physical memory bus (RAM + ROM + MMIO routing) is constructed once in `Machine::new`
+    //   and persists for the lifetime of the machine.
+    // - `Machine::reset()` may be called multiple times, and BIOS POST / platform wiring may
+    //   attempt to (re-)map the same ROM/MMIO windows each time.
+    // - `aero_platform::memory::MemoryBus::map_rom/map_mmio` are strict and reject overlaps, so we
+    //   provide idempotent mapping helpers (`FirmwareMemory::map_rom` and `map_mmio_once`) that
+    //   treat identical re-maps as no-ops while still panicking on unexpected overlaps.
     fn new(ram_size_bytes: u64, a20: A20GateHandle) -> Result<Self, MachineError> {
         // Keep the RAM backing store contiguous in "RAM-offset space" `[0, ram_size_bytes)`, even
         // when the guest physical address space contains the PCI/ECAM/MMIO hole below 4GiB.
@@ -4025,6 +4034,7 @@ mod tests {
     use super::*;
     use aero_cpu_core::state::{gpr, CR0_PE, CR0_PG};
     use aero_devices::pci::PciInterruptPin;
+    use memory::{GuestMemoryMapping, MappedGuestMemory};
     use pretty_assertions::assert_eq;
     use std::io::{Cursor, Read};
     use std::sync::{
