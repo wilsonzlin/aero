@@ -10,6 +10,7 @@ type DispatcherEntry = {
   timer: ReturnType<typeof setInterval> | null;
   drainIntervalMs: number;
   broken: boolean;
+  lastError: unknown | null;
 };
 
 const DEFAULT_DRAIN_INTERVAL_MS = 4;
@@ -38,6 +39,7 @@ function drain(entry: DispatcherEntry): void {
       // Treat ring corruption as a fatal condition for the fast path. Consumers must fall back
       // to `postMessage`-based completions.
       entry.broken = true;
+      entry.lastError = err;
       if (entry.timer) {
         clearInterval(entry.timer);
         entry.timer = null;
@@ -94,6 +96,7 @@ export function subscribeUsbProxyCompletionRing(
       timer: null,
       drainIntervalMs: requestedInterval,
       broken: false,
+      lastError: null,
     };
     completionDispatchers.set(buffer, entry);
   } else if (!entry.broken && requestedInterval < entry.drainIntervalMs) {
@@ -105,14 +108,32 @@ export function subscribeUsbProxyCompletionRing(
     }
   }
 
-  entry.handlers.set(handler, options.onError);
-  ensureTimer(entry);
-
-  // Drain after the current call stack so other runtimes processing the same `usb.ringAttach`
-  // event have a chance to subscribe before we consume entries from the single-consumer ring.
-  queueMicrotask(() => drain(entry));
-
   let unsubscribed = false;
+  entry.handlers.set(handler, options.onError);
+
+  if (entry.broken) {
+    // If the ring was already marked broken (e.g. another runtime detected corruption),
+    // notify new subscribers immediately so they can fall back to postMessage.
+    const onError = options.onError;
+    const err = entry.lastError ?? new Error("USB completion ring dispatcher is broken.");
+    if (onError) {
+      queueMicrotask(() => {
+        if (unsubscribed) return;
+        try {
+          onError(err);
+        } catch {
+          // ignore subscriber errors
+        }
+      });
+    }
+  } else {
+    ensureTimer(entry);
+
+    // Drain after the current call stack so other runtimes processing the same `usb.ringAttach`
+    // event have a chance to subscribe before we consume entries from the single-consumer ring.
+    queueMicrotask(() => drain(entry));
+  }
+
   return () => {
     if (unsubscribed) return;
     unsubscribed = true;

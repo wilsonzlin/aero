@@ -51,19 +51,30 @@ describe("usb/usb_proxy_ring_dispatcher", () => {
     bytes[0] = 0x99;
 
     const seen: number[] = [];
-    const errors: unknown[] = [];
+    const errorsA: unknown[] = [];
+    const errorsB: unknown[] = [];
 
-    const unsubscribe = subscribeUsbProxyCompletionRing(
+    const unsubscribeA = subscribeUsbProxyCompletionRing(
       sab,
       (c) => seen.push(c.id),
-      { drainIntervalMs: 100_000, onError: (err) => errors.push(err) },
+      { drainIntervalMs: 100_000, onError: (err) => errorsA.push(err) },
     );
 
     await Promise.resolve();
 
     expect(seen).toEqual([]);
-    expect(errors).toHaveLength(1);
+    expect(errorsA).toHaveLength(1);
 
-    unsubscribe();
+    // New subscribers should be notified immediately once the ring is marked broken.
+    const unsubscribeB = subscribeUsbProxyCompletionRing(sab, () => undefined, {
+      drainIntervalMs: 100_000,
+      onError: (err) => errorsB.push(err),
+    });
+
+    await Promise.resolve();
+    expect(errorsB).toHaveLength(1);
+
+    unsubscribeA();
+    unsubscribeB();
   });
 });
