@@ -10,6 +10,12 @@ use firmware::bios::{BlockDevice, DiskError as BiosDiskError};
 
 use crate::MachineError;
 
+#[cfg(target_arch = "wasm32")]
+type SharedDiskBackend = Box<dyn VirtualDisk>;
+
+#[cfg(not(target_arch = "wasm32"))]
+type SharedDiskBackend = Box<dyn VirtualDisk + Send>;
+
 /// Cloneable handle to a single underlying virtual disk backend.
 ///
 /// This adapter is intentionally defined in `aero-machine` so both:
@@ -22,15 +28,15 @@ use crate::MachineError;
 #[derive(Clone)]
 pub struct SharedDisk {
     #[cfg(target_arch = "wasm32")]
-    inner: Rc<RefCell<Box<dyn VirtualDisk>>>,
+    inner: Rc<RefCell<SharedDiskBackend>>,
     #[cfg(not(target_arch = "wasm32"))]
-    inner: Arc<Mutex<Box<dyn VirtualDisk + Send>>>,
+    inner: Arc<Mutex<SharedDiskBackend>>,
 }
 
 impl SharedDisk {
     /// Construct a new shared disk wrapper around an existing [`VirtualDisk`] backend.
     #[cfg(target_arch = "wasm32")]
-    pub fn new(backend: Box<dyn VirtualDisk>) -> Self {
+    pub fn new(backend: SharedDiskBackend) -> Self {
         Self {
             inner: Rc::new(RefCell::new(backend)),
         }
@@ -38,7 +44,7 @@ impl SharedDisk {
 
     /// Construct a new shared disk wrapper around an existing [`VirtualDisk`] backend.
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn new(backend: Box<dyn VirtualDisk + Send>) -> Self {
+    pub fn new(backend: SharedDiskBackend) -> Self {
         Self {
             inner: Arc::new(Mutex::new(backend)),
         }
@@ -58,7 +64,7 @@ impl SharedDisk {
     /// controllers that derive ATA IDENTIFY geometry from disk capacity can be rebuilt when the
     /// backend changes.
     #[cfg(target_arch = "wasm32")]
-    pub fn set_backend(&self, backend: Box<dyn VirtualDisk>) {
+    pub fn set_backend(&self, backend: SharedDiskBackend) {
         *self
             .inner
             .try_borrow_mut()
@@ -71,7 +77,7 @@ impl SharedDisk {
     /// controllers that derive ATA IDENTIFY geometry from disk capacity can be rebuilt when the
     /// backend changes.
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn set_backend(&self, backend: Box<dyn VirtualDisk + Send>) {
+    pub fn set_backend(&self, backend: SharedDiskBackend) {
         let mut guard = self
             .inner
             .lock()
@@ -88,9 +94,7 @@ impl SharedDisk {
         Ok(())
     }
 
-    fn virtual_disk_from_bytes(
-        mut bytes: Vec<u8>,
-    ) -> Result<Box<dyn VirtualDisk + Send>, MachineError> {
+    fn virtual_disk_from_bytes(mut bytes: Vec<u8>) -> Result<SharedDiskBackend, MachineError> {
         if !bytes.len().is_multiple_of(SECTOR_SIZE) {
             return Err(MachineError::InvalidDiskSize(bytes.len()));
         }

@@ -420,6 +420,7 @@ async function runTieredVm(iterations: number, threshold: number) {
   const jitTlbFlagWrite = (readMaybeU32(jitAbi, 'jit_tlb_flag_write') ?? 2) >>> 0;
   const jitTlbFlagExec = (readMaybeU32(jitAbi, 'jit_tlb_flag_exec') ?? 4) >>> 0;
   const jitTlbFlagIsRam = (readMaybeU32(jitAbi, 'jit_tlb_flag_is_ram') ?? 8) >>> 0;
+  const pageShift = (readMaybeU32(jitAbi, 'page_shift') ?? 12) >>> 0;
   let tier2CtxBytes = readMaybeU32(jitAbi, 'tier2_ctx_size') ?? 0;
   const tier2CtxOffset = readMaybeU32(jitAbi, 'tier2_ctx_offset');
   let commitFlagOffset = readMaybeU32(jitAbi, 'commit_flag_offset') ?? 0;
@@ -918,6 +919,9 @@ async function runTieredVm(iterations: number, threshold: number) {
     if (!activeWriteLog && onGuestWrite) onGuestWrite(paddrU64, 1);
   };
 
+  const pageShiftBig = BigInt(pageShift);
+  const pageSizeBig = 1n << pageShiftBig;
+
   // Tier-1 imports required by generated blocks (even if the smoke block doesn't use them).
   const env = {
     memory,
@@ -976,7 +980,7 @@ async function runTieredVm(iterations: number, threshold: number) {
     },
     mmu_translate: (_cpuPtr: number, jitCtxPtr: number, vaddr: bigint, _access: number) => {
       const vaddrU = asU64(vaddr);
-      const vpn = vaddrU >> 12n;
+      const vpn = vaddrU >> pageShiftBig;
       const tlbEntriesBig = BigInt(jitTlbEntries);
       const tlbMaskBig = tlbEntriesBig - 1n;
       const idx = Number((tlbEntriesBig & tlbMaskBig) === 0n ? vpn & tlbMaskBig : vpn % tlbEntriesBig) >>> 0;
@@ -984,8 +988,8 @@ async function runTieredVm(iterations: number, threshold: number) {
       const tlbSalt = dv.getBigUint64(jitCtxPtr + jitCtxTlbSaltOffset, true);
       const tag = asU64((vpn ^ tlbSalt) | 1n);
 
-      const physBase = vaddrU & ~0xfffn;
-      const isRam = guestPaddrToLinear(physBase, X86_PAGE_BYTES) !== null;
+      const physBase = vaddrU & -pageSizeBig;
+      const isRam = guestPaddrToLinear(physBase, Number(pageSizeBig)) !== null;
       const flags =
         BigInt(jitTlbFlagRead) |
         BigInt(jitTlbFlagWrite) |

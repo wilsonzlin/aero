@@ -225,8 +225,8 @@ pub fn jit_abi_constants() -> JsValue {
         };
         use aero_jit_x86::jit_ctx::{JitContext, TIER2_CTX_OFFSET, TIER2_CTX_SIZE};
         use aero_jit_x86::{
-            JIT_TLB_ENTRIES, JIT_TLB_ENTRY_SIZE, TLB_FLAG_EXEC, TLB_FLAG_IS_RAM, TLB_FLAG_READ,
-            TLB_FLAG_WRITE,
+            JIT_TLB_ENTRIES, JIT_TLB_ENTRY_SIZE, PAGE_OFFSET_MASK, PAGE_SHIFT, PAGE_SIZE,
+            TLB_FLAG_EXEC, TLB_FLAG_IS_RAM, TLB_FLAG_READ, TLB_FLAG_WRITE,
         };
         use js_sys::Uint32Array;
 
@@ -246,6 +246,9 @@ pub fn jit_abi_constants() -> JsValue {
         set_u32("jit_ctx_tlb_offset", JitContext::TLB_OFFSET);
         set_u32("jit_ctx_header_bytes", JitContext::BYTE_SIZE as u32);
         set_u32("jit_ctx_total_bytes", JitContext::TOTAL_BYTE_SIZE as u32);
+        set_u32("page_shift", PAGE_SHIFT);
+        set_u32("page_size", PAGE_SIZE as u32);
+        set_u32("page_offset_mask", PAGE_OFFSET_MASK as u32);
         set_u32("jit_tlb_entries", JIT_TLB_ENTRIES as u32);
         set_u32("jit_tlb_entry_bytes", JIT_TLB_ENTRY_SIZE as u32);
         set_u32("jit_tlb_flag_read", TLB_FLAG_READ as u32);
@@ -291,8 +294,8 @@ mod jit_abi_constants_tests {
     };
     use aero_jit_x86::jit_ctx::{JitContext, TIER2_CTX_OFFSET, TIER2_CTX_SIZE};
     use aero_jit_x86::{
-        JIT_TLB_ENTRIES, JIT_TLB_ENTRY_SIZE, TLB_FLAG_EXEC, TLB_FLAG_IS_RAM, TLB_FLAG_READ,
-        TLB_FLAG_WRITE,
+        JIT_TLB_ENTRIES, JIT_TLB_ENTRY_SIZE, PAGE_OFFSET_MASK, PAGE_SHIFT, PAGE_SIZE,
+        TLB_FLAG_EXEC, TLB_FLAG_IS_RAM, TLB_FLAG_READ, TLB_FLAG_WRITE,
     };
 
     fn read_u32(obj: &JsValue, key: &str) -> u32 {
@@ -330,6 +333,9 @@ mod jit_abi_constants_tests {
             read_u32(&obj, "jit_ctx_total_bytes"),
             JitContext::TOTAL_BYTE_SIZE as u32
         );
+        assert_eq!(read_u32(&obj, "page_shift"), PAGE_SHIFT);
+        assert_eq!(read_u32(&obj, "page_size"), PAGE_SIZE as u32);
+        assert_eq!(read_u32(&obj, "page_offset_mask"), PAGE_OFFSET_MASK as u32);
         assert_eq!(read_u32(&obj, "jit_tlb_entries"), JIT_TLB_ENTRIES as u32);
         assert_eq!(read_u32(&obj, "jit_tlb_entry_bytes"), JIT_TLB_ENTRY_SIZE);
         assert_eq!(read_u32(&obj, "jit_tlb_flag_read"), TLB_FLAG_READ as u32);

@@ -42,20 +42,26 @@ use std::sync::Mutex;
 
 use aero_storage::{VirtualDisk, SECTOR_SIZE};
 
+#[cfg(target_arch = "wasm32")]
+type NvmeDiskBackend = Box<dyn VirtualDisk>;
+
+#[cfg(not(target_arch = "wasm32"))]
+type NvmeDiskBackend = Box<dyn VirtualDisk + Send>;
+
 /// Adapter wrapper for exposing an [`aero_storage::VirtualDisk`] as an NVMe disk backend.
 ///
 /// The actual `aero_devices_nvme::DiskBackend` implementation is provided by the
 /// `aero-devices-nvme` crate. That crate re-exports this wrapper as
 /// `aero_devices_nvme::AeroStorageDiskAdapter` for ergonomic use at call sites.
 pub struct AeroVirtualDiskAsNvmeBackend {
-    disk: Box<dyn VirtualDisk + Send>,
+    disk: NvmeDiskBackend,
 }
 
 impl AeroVirtualDiskAsNvmeBackend {
     /// NVMe adapters currently only support 512-byte sectors.
     pub const SECTOR_SIZE: u32 = SECTOR_SIZE as u32;
 
-    pub fn new(disk: Box<dyn VirtualDisk + Send>) -> Self {
+    pub fn new(disk: NvmeDiskBackend) -> Self {
         Self { disk }
     }
 
@@ -63,17 +69,17 @@ impl AeroVirtualDiskAsNvmeBackend {
         self.disk.capacity_bytes()
     }
 
-    pub fn disk_mut(&mut self) -> &mut (dyn VirtualDisk + Send) {
+    pub fn disk_mut(&mut self) -> &mut dyn VirtualDisk {
         &mut *self.disk
     }
 
-    pub fn into_inner(self) -> Box<dyn VirtualDisk + Send> {
+    pub fn into_inner(self) -> NvmeDiskBackend {
         self.disk
     }
 }
 
-impl From<Box<dyn VirtualDisk + Send>> for AeroVirtualDiskAsNvmeBackend {
-    fn from(disk: Box<dyn VirtualDisk + Send>) -> Self {
+impl From<NvmeDiskBackend> for AeroVirtualDiskAsNvmeBackend {
+    fn from(disk: NvmeDiskBackend) -> Self {
         Self::new(disk)
     }
 }

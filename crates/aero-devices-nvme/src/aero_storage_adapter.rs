@@ -34,6 +34,7 @@ impl<D: VirtualDisk> NvmeDiskFromAeroStorage<D> {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl<D: VirtualDisk + Send> DiskBackend for NvmeDiskFromAeroStorage<D> {
     fn sector_size(&self) -> u32 {
         SECTOR_SIZE as u32
@@ -59,6 +60,33 @@ impl<D: VirtualDisk + Send> DiskBackend for NvmeDiskFromAeroStorage<D> {
         // Surface any storage-layer error as a generic NVMe I/O error, but keep the match
         // exhaustive (via `crate::map_storage_error_to_nvme`) so new `aero_storage::DiskError`
         // variants require an explicit decision here.
+        self.disk.flush().map_err(crate::map_storage_error_to_nvme)
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl<D: VirtualDisk> DiskBackend for NvmeDiskFromAeroStorage<D> {
+    fn sector_size(&self) -> u32 {
+        SECTOR_SIZE as u32
+    }
+
+    fn total_sectors(&self) -> u64 {
+        self.total_sectors
+    }
+
+    fn read_sectors(&mut self, lba: u64, buffer: &mut [u8]) -> DiskResult<()> {
+        self.disk
+            .read_sectors(lba, buffer)
+            .map_err(|e| map_storage_error(e, lba, buffer.len(), self.total_sectors))
+    }
+
+    fn write_sectors(&mut self, lba: u64, buffer: &[u8]) -> DiskResult<()> {
+        self.disk
+            .write_sectors(lba, buffer)
+            .map_err(|e| map_storage_error(e, lba, buffer.len(), self.total_sectors))
+    }
+
+    fn flush(&mut self) -> DiskResult<()> {
         self.disk.flush().map_err(crate::map_storage_error_to_nvme)
     }
 }

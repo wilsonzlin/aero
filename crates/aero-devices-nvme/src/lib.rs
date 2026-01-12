@@ -91,7 +91,22 @@ pub type DiskResult<T> = Result<T, DiskError>;
 /// [`from_virtual_disk`] / [`NvmeController::try_new_from_virtual_disk`].
 ///
 /// See `docs/20-storage-trait-consolidation.md`.
+#[cfg(not(target_arch = "wasm32"))]
 pub trait DiskBackend: Send {
+    fn sector_size(&self) -> u32;
+    fn total_sectors(&self) -> u64;
+    fn read_sectors(&mut self, lba: u64, buffer: &mut [u8]) -> DiskResult<()>;
+    fn write_sectors(&mut self, lba: u64, buffer: &[u8]) -> DiskResult<()>;
+    fn flush(&mut self) -> DiskResult<()>;
+}
+
+/// wasm32 build: disk backends do not need to be `Send`.
+///
+/// Browser disk handles (OPFS, JS-backed sparse formats, etc.) are often `!Send` because they wrap
+/// JS objects. Keeping this trait `!Send` allows the full-system wasm build to compile while still
+/// preventing accidental cross-thread use of non-`Send` backends.
+#[cfg(target_arch = "wasm32")]
+pub trait DiskBackend {
     fn sector_size(&self) -> u32;
     fn total_sectors(&self) -> u64;
     fn read_sectors(&mut self, lba: u64, buffer: &mut [u8]) -> DiskResult<()>;
@@ -206,11 +221,25 @@ impl DiskBackend for AeroStorageDiskAdapter {
 ///
 /// Returns `Err(DiskError::Io)` if the disk capacity is not a multiple of 512 bytes (NVMe LBAs are
 /// currently fixed at 512 bytes in this device model).
+#[cfg(not(target_arch = "wasm32"))]
 pub fn from_virtual_disk(
     d: Box<dyn aero_storage::VirtualDisk + Send>,
 ) -> DiskResult<Box<dyn DiskBackend>> {
     // NVMe currently reports capacity in whole 512-byte LBAs.
     // Reject disks that cannot be represented losslessly.
+    if !d
+        .capacity_bytes()
+        .is_multiple_of(u64::from(AeroStorageDiskAdapter::SECTOR_SIZE))
+    {
+        return Err(DiskError::Io);
+    }
+    Ok(Box::new(AeroStorageDiskAdapter::new(d)))
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn from_virtual_disk(
+    d: Box<dyn aero_storage::VirtualDisk>,
+) -> DiskResult<Box<dyn DiskBackend>> {
     if !d
         .capacity_bytes()
         .is_multiple_of(u64::from(AeroStorageDiskAdapter::SECTOR_SIZE))
@@ -448,6 +477,7 @@ impl NvmeController {
     ///
     /// This is a convenience wrapper around [`from_virtual_disk`] that returns an error if the
     /// disk capacity is not a multiple of 512 bytes.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn try_new_from_virtual_disk(
         disk: Box<dyn aero_storage::VirtualDisk + Send>,
     ) -> DiskResult<Self> {
@@ -456,9 +486,23 @@ impl NvmeController {
 
     /// Like [`NvmeController::try_new_from_virtual_disk`], but accepts any concrete
     /// `aero_storage` disk type.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn try_new_from_aero_storage<D>(disk: D) -> DiskResult<Self>
     where
         D: aero_storage::VirtualDisk + Send + 'static,
+    {
+        Self::try_new_from_virtual_disk(Box::new(disk))
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub fn try_new_from_virtual_disk(disk: Box<dyn aero_storage::VirtualDisk>) -> DiskResult<Self> {
+        Ok(Self::new(from_virtual_disk(disk)?))
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub fn try_new_from_aero_storage<D>(disk: D) -> DiskResult<Self>
+    where
+        D: aero_storage::VirtualDisk + 'static,
     {
         Self::try_new_from_virtual_disk(Box::new(disk))
     }
@@ -1625,6 +1669,7 @@ impl NvmePciDevice {
     ///
     /// This is a convenience wrapper around [`from_virtual_disk`] that returns an error if the
     /// disk capacity is not a multiple of 512 bytes.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn try_new_from_virtual_disk(
         disk: Box<dyn aero_storage::VirtualDisk + Send>,
     ) -> DiskResult<Self> {
@@ -1633,9 +1678,23 @@ impl NvmePciDevice {
 
     /// Like [`NvmePciDevice::try_new_from_virtual_disk`], but accepts any concrete
     /// `aero_storage` disk type.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn try_new_from_aero_storage<D>(disk: D) -> DiskResult<Self>
     where
         D: aero_storage::VirtualDisk + Send + 'static,
+    {
+        Self::try_new_from_virtual_disk(Box::new(disk))
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub fn try_new_from_virtual_disk(disk: Box<dyn aero_storage::VirtualDisk>) -> DiskResult<Self> {
+        Ok(Self::new(from_virtual_disk(disk)?))
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub fn try_new_from_aero_storage<D>(disk: D) -> DiskResult<Self>
+    where
+        D: aero_storage::VirtualDisk + 'static,
     {
         Self::try_new_from_virtual_disk(Box::new(disk))
     }
