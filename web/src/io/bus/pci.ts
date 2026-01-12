@@ -106,6 +106,16 @@ export interface PciDevice {
    */
   initPciConfig?(config: Uint8Array): void;
 
+  /**
+   * Optional hook invoked during PCI function registration to allow the device
+   * to populate additional config space fields (subsystem IDs, vendor-specific
+   * capability lists, etc).
+   *
+   * This hook runs after the bus has populated the standard header fields
+   * (including subsystem IDs and BAR registers) but before {@link initConfigSpace}.
+   */
+  initPciConfig?(config: Uint8Array): void;
+
   mmioRead?(barIndex: number, offset: bigint, size: number): number;
   mmioWrite?(barIndex: number, offset: bigint, size: number, value: number): void;
   ioRead?(barIndex: number, offset: number, size: number): number;
@@ -318,6 +328,9 @@ export class PciBus implements PortIoHandler {
       bars[i] = { bar: state, part: "low" };
       writeU32LE(config, 0x10 + i * 4, this.#encodeBarValueLow(state));
     }
+
+    // Legacy / device-managed config space hook (subsystem IDs, custom capability lists, etc).
+    device.initPciConfig?.(config);
 
     // Install PCI capabilities (if any).
     if (device.capabilities && device.capabilities.length > 0) {

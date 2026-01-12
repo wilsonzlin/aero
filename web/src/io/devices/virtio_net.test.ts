@@ -1,0 +1,87 @@
+import { describe, expect, it, vi } from "vitest";
+
+import type { IrqSink } from "../device_manager";
+import { VirtioNetPciDevice, type VirtioNetPciBridgeLike } from "./virtio_net";
+
+function readU16LE(buf: Uint8Array, off: number): number {
+  return (buf[off]! | (buf[off + 1]! << 8)) >>> 0;
+}
+
+function readU32LE(buf: Uint8Array, off: number): number {
+  return (buf[off]! | (buf[off + 1]! << 8) | (buf[off + 2]! << 16) | (buf[off + 3]! << 24)) >>> 0;
+}
+
+describe("io/devices/VirtioNetPciDevice", () => {
+  it("writes subsystem IDs + virtio capability chain in initPciConfig()", () => {
+    const bridge: VirtioNetPciBridgeLike = {
+      mmio_read: vi.fn(() => 0),
+      mmio_write: vi.fn(),
+      tick: vi.fn(),
+      irq_level: vi.fn(() => false),
+      free: vi.fn(),
+    };
+    const irqSink: IrqSink = { raiseIrq: vi.fn(), lowerIrq: vi.fn() };
+    const dev = new VirtioNetPciDevice({ bridge, irqSink });
+
+    const config = new Uint8Array(256);
+    dev.initPciConfig(config);
+
+    // Subsystem IDs.
+    expect(readU16LE(config, 0x2c)).toBe(0x1af4);
+    expect(readU16LE(config, 0x2e)).toBe(0x0001);
+
+    // Status: capabilities list bit.
+    expect((readU16LE(config, 0x06) & 0x0010) !== 0).toBe(true);
+    // Capability pointer.
+    expect(config[0x34]).toBe(0x50);
+
+    // COMMON capability at 0x50.
+    expect(config[0x50]).toBe(0x09);
+    expect(config[0x51]).toBe(0x60);
+    expect(config[0x52]).toBe(16);
+    expect(config[0x53]).toBe(1);
+    expect(config[0x54]).toBe(0);
+    expect(readU32LE(config, 0x58)).toBe(0x0000);
+    expect(readU32LE(config, 0x5c)).toBe(0x0100);
+
+    // NOTIFY capability at 0x60.
+    expect(config[0x60]).toBe(0x09);
+    expect(config[0x61]).toBe(0x74);
+    expect(config[0x62]).toBe(20);
+    expect(config[0x63]).toBe(2);
+    expect(config[0x64]).toBe(0);
+    expect(readU32LE(config, 0x68)).toBe(0x1000);
+    expect(readU32LE(config, 0x6c)).toBe(0x0100);
+    expect(readU32LE(config, 0x70)).toBe(4);
+
+    // ISR capability at 0x74.
+    expect(config[0x74]).toBe(0x09);
+    expect(config[0x75]).toBe(0x84);
+    expect(config[0x76]).toBe(16);
+    expect(config[0x77]).toBe(3);
+    expect(config[0x78]).toBe(0);
+    expect(readU32LE(config, 0x7c)).toBe(0x2000);
+    expect(readU32LE(config, 0x80)).toBe(0x0020);
+
+    // DEVICE capability at 0x84.
+    expect(config[0x84]).toBe(0x09);
+    expect(config[0x85]).toBe(0x00);
+    expect(config[0x86]).toBe(16);
+    expect(config[0x87]).toBe(4);
+    expect(config[0x88]).toBe(0);
+    expect(readU32LE(config, 0x8c)).toBe(0x3000);
+    expect(readU32LE(config, 0x90)).toBe(0x0100);
+
+    // Alignment + acyclic traversal.
+    const visited = new Set<number>();
+    let cap = config[0x34]!;
+    while (cap !== 0) {
+      expect(cap % 4).toBe(0);
+      expect(visited.has(cap)).toBe(false);
+      visited.add(cap);
+      expect(config[cap]).toBe(0x09);
+      cap = config[cap + 1]!;
+    }
+    expect(Array.from(visited)).toEqual([0x50, 0x60, 0x74, 0x84]);
+  });
+});
