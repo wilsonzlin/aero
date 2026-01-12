@@ -387,8 +387,11 @@ Fields (subset relevant to the UMD allocation contract; see `win7_wdk_probe` for
   * AeroGPU uses this blob to persist stable allocation IDs and (for shared resources) `share_token`
     values across create/open:
     * `aerogpu_wddm_alloc_priv` / `aerogpu_wddm_alloc_priv_v2` in `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`
-  * Contract rule: treat this as **UMD → KMD input**; do not rely on the KMD writing back into the buffer
-    and expecting the UMD to observe the modified bytes.
+  * On Win7/WDDM 1.1, treat this as an **in/out** blob:
+    * The UMD supplies initial fields (magic/version, `alloc_id`, flags, and `share_token = 0` placeholder).
+    * The KMD writes back stable values (notably `share_token` and `size_bytes`).
+    * dxgkrnl preserves the bytes for shared allocations and returns them verbatim on cross-process `OpenResource`,
+      allowing the opening UMD to recover the same `alloc_id` and `share_token`.
 * `UINT PrivateDriverDataSize`
   * Size of `pPrivateDriverData` in bytes.
 
