@@ -15,7 +15,7 @@
 use crate::irq::{IrqLine, NoIrq};
 use crate::{clock::Clock, clock::NullClock};
 use aero_io_snapshot::io::state::{
-    IoSnapshot, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
+    IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
 };
 use aero_platform::io::{IoPortBus, PortIoDevice};
 use std::cell::RefCell;
@@ -582,7 +582,10 @@ impl<C: Clock> IoSnapshot for AcpiPmIo<C> {
                 // such that:
                 //   (ticks_mod + k*2^24) * 1e9 + remainder
                 // is divisible by `FREQ`.
-                let remainder = rem as u128;
+                let remainder = u128::from(rem);
+                if remainder >= NS_PER_SEC {
+                    return Err(SnapshotError::InvalidFieldEncoding("pm_timer_remainder"));
+                }
                 let mod_ticks = (u128::from(PM_TIMER_MASK_24BIT) + 1) as u128;
                 let freq = PM_TIMER_FREQUENCY_HZ;
 

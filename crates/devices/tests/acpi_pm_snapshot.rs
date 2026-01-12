@@ -4,7 +4,9 @@ use std::rc::Rc;
 use aero_devices::acpi_pm::{AcpiPmCallbacks, AcpiPmConfig, AcpiPmIo, PM1_STS_PWRBTN};
 use aero_devices::clock::{Clock, ManualClock};
 use aero_devices::irq::IrqLine;
-use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader, SnapshotVersion, SnapshotWriter};
+use aero_io_snapshot::io::state::{
+    IoSnapshot, SnapshotError, SnapshotReader, SnapshotVersion, SnapshotWriter,
+};
 use aero_platform::io::PortIoDevice;
 
 #[derive(Clone)]
@@ -365,4 +367,26 @@ fn snapshot_load_is_atomic_on_decode_error() {
     assert_eq!(pm.read(cfg.gpe0_blk + half, 1), gpe0_en_before);
     assert_eq!(pm.sci_level(), sci_before);
     assert_eq!(pm.read(cfg.pm_tmr_blk, 4), tmr_before);
+}
+
+#[test]
+fn snapshot_restore_rejects_invalid_pm_timer_remainder() {
+    const TAG_PM_TIMER_TICKS: u16 = 8;
+    const TAG_PM_TIMER_REMAINDER: u16 = 9;
+
+    let cfg = AcpiPmConfig::default();
+    let mut pm = AcpiPmIo::new(cfg);
+
+    let mut w = SnapshotWriter::new(*b"ACPM", SnapshotVersion::new(1, 0));
+    w.field_u32(TAG_PM_TIMER_TICKS, 0);
+    w.field_u32(TAG_PM_TIMER_REMAINDER, 1_000_000_000);
+    let bytes = w.finish();
+
+    assert!(
+        matches!(
+            pm.load_state(&bytes),
+            Err(SnapshotError::InvalidFieldEncoding("pm_timer_remainder"))
+        ),
+        "invalid remainders must be rejected (expected SnapshotError::InvalidFieldEncoding)"
+    );
 }
