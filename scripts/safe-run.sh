@@ -60,6 +60,42 @@ case "${AERO_ISOLATE_CARGO_HOME:-}" in
     ;;
 esac
 
+# Some environments configure a rustc wrapper (commonly `sccache`) either via environment variables
+# (`RUSTC_WRAPPER=sccache`) or via global Cargo config (`~/.cargo/config.toml`).
+#
+# When the wrapper daemon/socket is unhealthy, Cargo can fail with errors like:
+#
+#   sccache: error: failed to execute compile
+#
+# Mirror the behavior of `scripts/agent-env.sh` so `safe-run.sh` can be used standalone:
+# - By default, disable environment-based *sccache* wrappers (but preserve other wrappers like
+#   `ccache`).
+# - If you need to override a Cargo config `build.rustc-wrapper`, set `AERO_DISABLE_RUSTC_WRAPPER=1`
+#   to export *empty* wrapper variables, which override Cargo config and disable wrappers entirely.
+case "${AERO_DISABLE_RUSTC_WRAPPER:-}" in
+  "" | 0 | false | FALSE | no | NO | off | OFF)
+    # Check each wrapper variable for sccache (compatible with bash and zsh)
+    _aero_check_sccache() {
+      local val="$1"
+      [[ "$val" == "sccache" || "$val" == */sccache || "$val" == "sccache.exe" || "$val" == */sccache.exe ]]
+    }
+    if _aero_check_sccache "${RUSTC_WRAPPER:-}"; then export RUSTC_WRAPPER=; fi
+    if _aero_check_sccache "${RUSTC_WORKSPACE_WRAPPER:-}"; then export RUSTC_WORKSPACE_WRAPPER=; fi
+    if _aero_check_sccache "${CARGO_BUILD_RUSTC_WRAPPER:-}"; then export CARGO_BUILD_RUSTC_WRAPPER=; fi
+    if _aero_check_sccache "${CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER:-}"; then export CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER=; fi
+    unset -f _aero_check_sccache 2>/dev/null || true
+    ;;
+  1 | true | TRUE | yes | YES | on | ON)
+    export RUSTC_WRAPPER=
+    export RUSTC_WORKSPACE_WRAPPER=
+    export CARGO_BUILD_RUSTC_WRAPPER=
+    export CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER=
+    ;;
+  *)
+    echo "[safe-run] warning: unsupported AERO_DISABLE_RUSTC_WRAPPER value: ${AERO_DISABLE_RUSTC_WRAPPER}" >&2
+    ;;
+esac
+
 # Defensive defaults for shared-host agent execution.
 #
 # In constrained agent sandboxes we intermittently hit rustc panics like:
@@ -155,6 +191,7 @@ if [[ $# -lt 1 ]]; then
     echo "  AERO_TIMEOUT=600     Timeout in seconds (default: 600 = 10 min)" >&2
     echo "  AERO_MEM_LIMIT=12G   Memory limit (default: 12G)" >&2
     echo "  AERO_ISOLATE_CARGO_HOME=1  Override CARGO_HOME to ./.cargo-home (opt-in, avoids registry lock contention on shared hosts)" >&2
+    echo "  AERO_DISABLE_RUSTC_WRAPPER=1  Force-disable rustc wrappers (clears RUSTC_WRAPPER env vars; overrides Cargo config build.rustc-wrapper)" >&2
     echo "  AERO_CARGO_BUILD_JOBS=1  Cargo parallelism for agent sandboxes (default: 1; overrides CARGO_BUILD_JOBS if set)" >&2
     echo "  AERO_SAFE_RUN_RUSTC_RETRIES=3  Retries for transient rustc thread spawn panics (default: 3; only for cargo commands)" >&2
     echo "  CARGO_BUILD_JOBS=1       Cargo parallelism override (used when AERO_CARGO_BUILD_JOBS is unset)" >&2

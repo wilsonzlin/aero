@@ -231,6 +231,90 @@ test("safe-run.sh can isolate CARGO_HOME to avoid registry lock contention (Linu
   assert.equal(stdout, path.join(repoRoot, ".cargo-home"));
 });
 
+test("safe-run.sh clears sccache wrappers by default (Linux)", { skip: process.platform !== "linux" }, () => {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "aero-safe-run-sccache-wrapper-"));
+  try {
+    const binDir = path.join(tmpRoot, "bin");
+    fs.mkdirSync(binDir, { recursive: true });
+    const fakeCargo = path.join(binDir, "cargo");
+    fs.writeFileSync(
+      fakeCargo,
+      '#!/usr/bin/env bash\nprintf "%s|%s|%s|%s" "$RUSTC_WRAPPER" "$RUSTC_WORKSPACE_WRAPPER" "$CARGO_BUILD_RUSTC_WRAPPER" "$CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER"\n',
+    );
+    fs.chmodSync(fakeCargo, 0o755);
+
+    const env = { ...process.env };
+    env.RUSTC_WRAPPER = "sccache";
+    env.RUSTC_WORKSPACE_WRAPPER = "sccache";
+    env.CARGO_BUILD_RUSTC_WRAPPER = "sccache";
+    env.CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER = "sccache";
+    delete env.AERO_DISABLE_RUSTC_WRAPPER;
+    env.PATH = `${binDir}${path.delimiter}${env.PATH || ""}`;
+
+    const stdout = execFileSync(path.join(repoRoot, "scripts/safe-run.sh"), ["cargo"], {
+      cwd: repoRoot,
+      env,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    assert.equal(stdout, "|||");
+  } finally {
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
+});
+
+test("safe-run.sh preserves non-sccache rustc wrappers by default (Linux)", { skip: process.platform !== "linux" }, () => {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "aero-safe-run-non-sccache-wrapper-"));
+  try {
+    const binDir = path.join(tmpRoot, "bin");
+    fs.mkdirSync(binDir, { recursive: true });
+    const fakeCargo = path.join(binDir, "cargo");
+    fs.writeFileSync(fakeCargo, '#!/usr/bin/env bash\nprintf "%s" "$RUSTC_WRAPPER"\n');
+    fs.chmodSync(fakeCargo, 0o755);
+
+    const env = { ...process.env };
+    env.RUSTC_WRAPPER = "ccache";
+    delete env.AERO_DISABLE_RUSTC_WRAPPER;
+    env.PATH = `${binDir}${path.delimiter}${env.PATH || ""}`;
+
+    const stdout = execFileSync(path.join(repoRoot, "scripts/safe-run.sh"), ["cargo"], {
+      cwd: repoRoot,
+      env,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    assert.equal(stdout, "ccache");
+  } finally {
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
+});
+
+test("safe-run.sh can force-disable wrappers via AERO_DISABLE_RUSTC_WRAPPER (Linux)", { skip: process.platform !== "linux" }, () => {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "aero-safe-run-disable-wrapper-"));
+  try {
+    const binDir = path.join(tmpRoot, "bin");
+    fs.mkdirSync(binDir, { recursive: true });
+    const fakeCargo = path.join(binDir, "cargo");
+    fs.writeFileSync(fakeCargo, '#!/usr/bin/env bash\nprintf "%s" "$RUSTC_WRAPPER"\n');
+    fs.chmodSync(fakeCargo, 0o755);
+
+    const env = { ...process.env };
+    env.RUSTC_WRAPPER = "ccache";
+    env.AERO_DISABLE_RUSTC_WRAPPER = "1";
+    env.PATH = `${binDir}${path.delimiter}${env.PATH || ""}`;
+
+    const stdout = execFileSync(path.join(repoRoot, "scripts/safe-run.sh"), ["cargo"], {
+      cwd: repoRoot,
+      env,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    assert.equal(stdout, "");
+  } finally {
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
+});
+
 test("safe-run.sh does not force rustc codegen-units by default (Linux)", { skip: process.platform !== "linux" }, () => {
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "aero-safe-run-cargo-env-"));
   try {
