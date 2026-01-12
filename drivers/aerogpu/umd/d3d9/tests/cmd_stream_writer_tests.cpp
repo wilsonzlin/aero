@@ -6672,6 +6672,168 @@ bool TestOpenResourceAcceptsAllocPrivV2() {
   return Check(list[0].AllocationListSlotId == 0, "allocation list slot id == 0");
 }
 
+bool TestOpenResourceReconstructsDxgiSharedSurfaceFromAllocPrivV2() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    D3DDDI_HRESOURCE hResource{};
+    bool has_adapter = false;
+    bool has_device = false;
+    bool has_resource = false;
+
+    ~Cleanup() {
+      if (has_resource && device_funcs.pfnDestroyResource) {
+        device_funcs.pfnDestroyResource(hDevice, hResource);
+      }
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  if (!Check(create_dev.hDevice.pDrvPrivate != nullptr, "CreateDevice returned device handle")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Simulate a WDDM-enabled device so allocation-list tracking is active in
+  // portable builds.
+  dev->wddm_context.hContext = 1;
+  D3DDDI_ALLOCATIONLIST list[4] = {};
+  dev->alloc_list_tracker.rebind(list, 4, 0xFFFFu);
+
+  // Simulate a DXGI/D3D10/11 shared surface opened via D3D9Ex (DWM-style).
+  //
+  // In this case, reserved0 is typically used for a pitch encoding (not a D3D9
+  // descriptor marker), and the v2 blob carries DXGI format + width/height.
+  aerogpu_wddm_alloc_priv_v2 priv{};
+  std::memset(&priv, 0, sizeof(priv));
+  priv.magic = AEROGPU_WDDM_ALLOC_PRIV_MAGIC;
+  priv.version = AEROGPU_WDDM_ALLOC_PRIV_VERSION_2;
+  priv.alloc_id = 0x2345u;
+  priv.flags = AEROGPU_WDDM_ALLOC_PRIV_FLAG_IS_SHARED;
+  priv.share_token = 0x0102030405060708ull;
+  priv.size_bytes = 512ull * 3ull;
+  priv.reserved0 = 512ull; // pitch encoding (no desc marker bit)
+  priv.kind = AEROGPU_WDDM_ALLOC_KIND_TEXTURE2D;
+  priv.width = 100u;
+  priv.height = 3u;
+  priv.format = 87u;         // DXGI_FORMAT_B8G8R8A8_UNORM
+  priv.row_pitch_bytes = 512u;
+  priv.reserved1 = 0;
+
+  D3D9DDIARG_OPENRESOURCE open_res{};
+  open_res.pPrivateDriverData = &priv;
+  open_res.private_driver_data_size = sizeof(priv);
+  open_res.type = 0;
+  open_res.format = 0; // reconstructed from v2 metadata (DXGI->D3D9 mapping)
+  open_res.width = 0;
+  open_res.height = 0;
+  open_res.depth = 1;
+  open_res.mip_levels = 1;
+  open_res.usage = 0;
+  open_res.size = 0;
+  open_res.hResource.pDrvPrivate = nullptr;
+  open_res.wddm_hAllocation = 0xBCDEu;
+
+  hr = cleanup.device_funcs.pfnOpenResource(create_dev.hDevice, &open_res);
+  if (!Check(hr == S_OK, "OpenResource(DXGI v2 metadata)")) {
+    return false;
+  }
+  if (!Check(open_res.hResource.pDrvPrivate != nullptr, "OpenResource returned resource handle")) {
+    return false;
+  }
+
+  cleanup.hResource = open_res.hResource;
+  cleanup.has_resource = true;
+
+  auto* res = reinterpret_cast<Resource*>(open_res.hResource.pDrvPrivate);
+  if (!Check(res != nullptr, "resource pointer")) {
+    return false;
+  }
+
+  // DXGI B8G8R8A8 -> D3D9 A8R8G8B8 (numeric value 21).
+  if (!Check(static_cast<uint32_t>(res->format) == 21u, "DXGI format mapped to D3D9 format")) {
+    return false;
+  }
+  if (!Check(res->width == 100u, "width reconstructed")) {
+    return false;
+  }
+  if (!Check(res->height == 3u, "height reconstructed")) {
+    return false;
+  }
+  if (!Check(res->row_pitch == 512u, "row_pitch uses reserved0 pitch encoding")) {
+    return false;
+  }
+  if (!Check(res->slice_pitch == 512u * 3u, "slice_pitch matches pitch*height")) {
+    return false;
+  }
+  if (!Check(res->size_bytes == 512u * 3u, "size_bytes uses alloc priv size")) {
+    return false;
+  }
+
+  // Verify Lock returns the reconstructed pitch for portable builds.
+  D3D9DDIARG_LOCK lock{};
+  lock.hResource = open_res.hResource;
+  lock.offset_bytes = 0;
+  lock.size_bytes = 0;
+  lock.flags = 0;
+  D3DDDI_LOCKEDBOX locked{};
+  hr = cleanup.device_funcs.pfnLock(create_dev.hDevice, &lock, &locked);
+  if (!Check(hr == S_OK, "Lock(opened resource)")) {
+    return false;
+  }
+  if (!Check(locked.RowPitch == 512u, "Lock reports reconstructed RowPitch")) {
+    return false;
+  }
+
+  D3D9DDIARG_UNLOCK unlock{};
+  unlock.hResource = open_res.hResource;
+  unlock.offset_bytes = 0;
+  unlock.size_bytes = 0;
+  hr = cleanup.device_funcs.pfnUnlock(create_dev.hDevice, &unlock);
+  if (!Check(hr == S_OK, "Unlock(opened resource)")) {
+    return false;
+  }
+
+  return true;
+}
+
 bool TestGuestBackedUnlockEmitsDirtyRangeNotUpload() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
@@ -7502,6 +7664,7 @@ int main() {
   failures += !aerogpu::TestRotateResourceIdentitiesTrackingPreSplitRetainsAllocs();
   failures += !aerogpu::TestOpenResourceCapturesWddmAllocationForTracking();
   failures += !aerogpu::TestOpenResourceAcceptsAllocPrivV2();
+  failures += !aerogpu::TestOpenResourceReconstructsDxgiSharedSurfaceFromAllocPrivV2();
   failures += !aerogpu::TestInvalidPayloadArgs();
   failures += !aerogpu::TestDestroyBoundShaderUnbinds();
   failures += !aerogpu::TestDestroyBoundVertexDeclUnbinds();

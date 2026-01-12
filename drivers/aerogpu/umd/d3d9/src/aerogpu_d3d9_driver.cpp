@@ -6706,6 +6706,27 @@ static HRESULT device_open_resource_impl(
   res->pool = d3d9_resource_pool(*pOpenResource);
   const uint32_t open_size_bytes = d3d9_resource_size(*pOpenResource);
 
+  const aerogpu_wddm_alloc_priv_v2* priv2 = nullptr;
+  if (priv.version == AEROGPU_WDDM_ALLOC_PRIV_VERSION_2 &&
+      priv_data_size >= sizeof(aerogpu_wddm_alloc_priv_v2)) {
+    const auto* tmp = reinterpret_cast<const aerogpu_wddm_alloc_priv_v2*>(priv_data);
+    if (tmp->magic == AEROGPU_WDDM_ALLOC_PRIV_MAGIC && tmp->version == AEROGPU_WDDM_ALLOC_PRIV_VERSION_2) {
+      priv2 = tmp;
+    }
+  }
+
+  // For non-descriptor reserved0 values, the low 32 bits may carry a pitch hint
+  // (used by D3D10/11 shared surfaces). This enables D3D9 consumers (e.g. DWM)
+  // to Lock a shared allocation with the correct row pitch even when the runtime
+  // does not provide it explicitly in the OpenResource DDI struct.
+  uint32_t priv_pitch_bytes = 0;
+  if (!AEROGPU_WDDM_ALLOC_PRIV_DESC_PRESENT(priv.reserved0)) {
+    priv_pitch_bytes = static_cast<uint32_t>(priv.reserved0 & 0xFFFFFFFFull);
+  }
+  if (priv_pitch_bytes == 0 && priv2 && priv2->row_pitch_bytes != 0) {
+    priv_pitch_bytes = static_cast<uint32_t>(priv2->row_pitch_bytes);
+  }
+
   uint32_t desc_format = 0;
   uint32_t desc_width = 0;
   uint32_t desc_height = 0;
@@ -6718,6 +6739,62 @@ static HRESULT device_open_resource_impl(
     }
     if (res->height == 0) {
       res->height = desc_height;
+    }
+  }
+
+  // DXGI/D3D10/11 shared resources opened through the D3D9 runtime may not
+  // provide a D3D9-format description in reserved0. If the caller did not supply
+  // a usable description, fall back to v2 private-data metadata (DXGI format,
+  // width/height) and map to the closest D3D9 format so we can construct a
+  // compatible surface layout for Lock/CPU-side helpers.
+  if (priv2) {
+    if (res->width == 0 && priv2->width != 0) {
+      res->width = static_cast<uint32_t>(priv2->width);
+    }
+    if (res->height == 0 && priv2->height != 0) {
+      res->height = static_cast<uint32_t>(priv2->height);
+    }
+    if (res->format == 0 && priv2->format != 0) {
+      // DXGI_FORMAT subset (numeric values from dxgiformat.h).
+      constexpr uint32_t kDxgiFmtR8G8B8A8Typeless = 27;
+      constexpr uint32_t kDxgiFmtR8G8B8A8Unorm = 28;
+      constexpr uint32_t kDxgiFmtR8G8B8A8UnormSrgb = 29;
+      constexpr uint32_t kDxgiFmtB8G8R8A8Unorm = 87;
+      constexpr uint32_t kDxgiFmtB8G8R8X8Unorm = 88;
+      constexpr uint32_t kDxgiFmtB8G8R8A8Typeless = 90;
+      constexpr uint32_t kDxgiFmtB8G8R8A8UnormSrgb = 91;
+      constexpr uint32_t kDxgiFmtB8G8R8X8Typeless = 92;
+      constexpr uint32_t kDxgiFmtB8G8R8X8UnormSrgb = 93;
+
+      // D3D9 format subset (numeric values from d3d9types.h).
+      constexpr uint32_t kD3d9FmtA8R8G8B8 = 21u;
+      constexpr uint32_t kD3d9FmtX8R8G8B8 = 22u;
+      constexpr uint32_t kD3d9FmtA8B8G8R8 = 32u;
+
+      const uint32_t dxgi_fmt = static_cast<uint32_t>(priv2->format);
+      uint32_t d3d9_fmt = 0;
+      switch (dxgi_fmt) {
+        case kDxgiFmtB8G8R8A8Unorm:
+        case kDxgiFmtB8G8R8A8Typeless:
+        case kDxgiFmtB8G8R8A8UnormSrgb:
+          d3d9_fmt = kD3d9FmtA8R8G8B8;
+          break;
+        case kDxgiFmtB8G8R8X8Unorm:
+        case kDxgiFmtB8G8R8X8Typeless:
+        case kDxgiFmtB8G8R8X8UnormSrgb:
+          d3d9_fmt = kD3d9FmtX8R8G8B8;
+          break;
+        case kDxgiFmtR8G8B8A8Unorm:
+        case kDxgiFmtR8G8B8A8Typeless:
+        case kDxgiFmtR8G8B8A8UnormSrgb:
+          d3d9_fmt = kD3d9FmtA8B8G8R8;
+          break;
+        default:
+          break;
+      }
+      if (d3d9_fmt != 0) {
+        res->format = static_cast<D3DDDIFORMAT>(d3d9_fmt);
+      }
     }
   }
 
@@ -6739,9 +6816,31 @@ static HRESULT device_open_resource_impl(
       return E_OUTOFMEMORY;
     }
 
-    res->row_pitch = layout.row_pitch_bytes;
-    res->slice_pitch = layout.slice_pitch_bytes;
-    res->size_bytes = static_cast<uint32_t>(layout.total_size_bytes);
+    uint32_t row_pitch = layout.row_pitch_bytes;
+    uint32_t slice_pitch = layout.slice_pitch_bytes;
+    uint32_t size_bytes = static_cast<uint32_t>(layout.total_size_bytes);
+
+    // If the private driver data provides an explicit row pitch (either via the
+    // legacy reserved0 pitch encoding or the v2 row_pitch_bytes field), prefer
+    // it for uncompressed single-mip surfaces. This matches the layout the
+    // producing runtime/KMD will use for the shared allocation.
+    if (res->mip_levels == 1 && res->depth == 1 && !is_block_compressed_format(res->format) &&
+        priv_pitch_bytes != 0) {
+      const uint64_t slice_u64 = static_cast<uint64_t>(priv_pitch_bytes) * static_cast<uint64_t>(res->height);
+      if (priv_pitch_bytes >= row_pitch && slice_u64 <= 0x7FFFFFFFull && slice_u64 <= 0xFFFFFFFFull) {
+        row_pitch = priv_pitch_bytes;
+        slice_pitch = static_cast<uint32_t>(slice_u64);
+        if (priv.size_bytes != 0 && priv.size_bytes <= 0x7FFFFFFFu && priv.size_bytes >= slice_u64) {
+          size_bytes = static_cast<uint32_t>(priv.size_bytes);
+        } else {
+          size_bytes = static_cast<uint32_t>(slice_u64);
+        }
+      }
+    }
+
+    res->row_pitch = row_pitch;
+    res->slice_pitch = slice_pitch;
+    res->size_bytes = size_bytes;
   } else if (priv.size_bytes != 0 && priv.size_bytes <= 0x7FFFFFFFu) {
     res->kind = ResourceKind::Surface;
     res->size_bytes = static_cast<uint32_t>(priv.size_bytes);
