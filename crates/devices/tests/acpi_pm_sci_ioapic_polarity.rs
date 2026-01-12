@@ -3,6 +3,7 @@ use aero_devices::acpi_pm::{
     register_acpi_pm, AcpiPmCallbacks, AcpiPmConfig, AcpiPmIo, PM1_STS_PWRBTN,
 };
 use aero_devices::apic::{IoApic, IoApicId, LocalApic};
+use aero_devices::clock::ManualClock;
 use aero_devices::irq::IrqLine;
 use aero_platform::io::IoPortBus;
 use std::cell::RefCell;
@@ -171,7 +172,10 @@ fn acpi_pm_sci_delivers_to_lapic_when_ioapic_polarity_matches_madt_iso() {
         request_power_off: None,
     };
 
-    let pm = Rc::new(RefCell::new(AcpiPmIo::new_with_callbacks(cfg, callbacks)));
+    let clock = ManualClock::new();
+    let pm = Rc::new(RefCell::new(AcpiPmIo::new_with_callbacks_and_clock(
+        cfg, callbacks, clock,
+    )));
     let mut bus = IoPortBus::new();
     register_acpi_pm(&mut bus, pm.clone());
 

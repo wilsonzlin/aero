@@ -5,6 +5,7 @@ use aero_acpi::{AcpiConfig, AcpiPlacement, AcpiTables};
 use aero_devices::acpi_pm::{
     register_acpi_pm, AcpiPmCallbacks, AcpiPmConfig, AcpiPmIo, PM1_STS_PWRBTN,
 };
+use aero_devices::clock::ManualClock;
 use aero_devices::irq::PlatformIrqLine;
 use aero_platform::interrupts::{InterruptController, PlatformInterruptMode, PlatformInterrupts};
 use aero_platform::io::IoPortBus;
@@ -236,7 +237,8 @@ fn acpi_pm_sci_apic_mode_delivers_ioapic_vector_and_respects_remote_irr() {
         request_power_off: None,
     };
 
-    let pm = Rc::new(RefCell::new(AcpiPmIo::new_with_callbacks(
+    let clock = ManualClock::new();
+    let pm = Rc::new(RefCell::new(AcpiPmIo::new_with_callbacks_and_clock(
         AcpiPmConfig {
             pm1a_evt_blk: fadt.pm1a_evt_blk,
             pm1a_cnt_blk: fadt.pm1a_cnt_blk,
@@ -249,6 +251,7 @@ fn acpi_pm_sci_apic_mode_delivers_ioapic_vector_and_respects_remote_irr() {
             start_enabled: false,
         },
         callbacks,
+        clock,
     )));
 
     let mut bus = IoPortBus::new();
@@ -339,7 +342,8 @@ fn acpi_pm_sci_legacy_pic_mode_raises_irq9_vector() {
         request_power_off: None,
     };
 
-    let pm = Rc::new(RefCell::new(AcpiPmIo::new_with_callbacks(
+    let clock = ManualClock::new();
+    let pm = Rc::new(RefCell::new(AcpiPmIo::new_with_callbacks_and_clock(
         AcpiPmConfig {
             pm1a_evt_blk: fadt.pm1a_evt_blk,
             pm1a_cnt_blk: fadt.pm1a_cnt_blk,
@@ -352,6 +356,7 @@ fn acpi_pm_sci_legacy_pic_mode_raises_irq9_vector() {
             start_enabled: false,
         },
         callbacks,
+        clock,
     )));
 
     let mut bus = IoPortBus::new();

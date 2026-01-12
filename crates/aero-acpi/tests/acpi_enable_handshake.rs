@@ -1,5 +1,6 @@
 use aero_acpi::{AcpiConfig, AcpiPlacement, AcpiTables};
-use aero_devices::acpi_pm::{AcpiPmConfig, AcpiPmIo, PM1_CNT_SCI_EN};
+use aero_devices::acpi_pm::{AcpiPmCallbacks, AcpiPmConfig, AcpiPmIo, PM1_CNT_SCI_EN};
+use aero_devices::clock::ManualClock;
 use aero_platform::io::PortIoDevice;
 
 fn read_u32_le(bytes: &[u8], offset: usize) -> u32 {
@@ -19,15 +20,20 @@ fn smi_cmd_enable_write_sets_sci_en() {
     let pm1a_evt_blk = read_u32_le(fadt, 56) as u16;
     let pm1a_cnt_blk = read_u32_le(fadt, 64) as u16;
 
-    let mut pm = AcpiPmIo::new(AcpiPmConfig {
-        pm1a_evt_blk,
-        pm1a_cnt_blk,
-        smi_cmd_port,
-        acpi_enable_cmd,
-        acpi_disable_cmd,
-        start_enabled: false,
-        ..AcpiPmConfig::default()
-    });
+    let clock = ManualClock::new();
+    let mut pm = AcpiPmIo::new_with_callbacks_and_clock(
+        AcpiPmConfig {
+            pm1a_evt_blk,
+            pm1a_cnt_blk,
+            smi_cmd_port,
+            acpi_enable_cmd,
+            acpi_disable_cmd,
+            start_enabled: false,
+            ..AcpiPmConfig::default()
+        },
+        AcpiPmCallbacks::default(),
+        clock,
+    );
 
     assert_eq!(pm.read(pm1a_cnt_blk, 2) as u16 & PM1_CNT_SCI_EN, 0);
 

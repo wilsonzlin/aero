@@ -1,8 +1,9 @@
 use aero_devices::acpi_pm::{
-    AcpiPmConfig, AcpiPmIo, DEFAULT_ACPI_DISABLE, DEFAULT_ACPI_ENABLE, DEFAULT_GPE0_BLK,
-    DEFAULT_GPE0_BLK_LEN, DEFAULT_PM1A_CNT_BLK, DEFAULT_PM1A_EVT_BLK, DEFAULT_PM_TMR_BLK,
-    DEFAULT_SMI_CMD_PORT, PM1_CNT_SCI_EN,
+    AcpiPmCallbacks, AcpiPmConfig, AcpiPmIo, DEFAULT_ACPI_DISABLE, DEFAULT_ACPI_ENABLE,
+    DEFAULT_GPE0_BLK, DEFAULT_GPE0_BLK_LEN, DEFAULT_PM1A_CNT_BLK, DEFAULT_PM1A_EVT_BLK,
+    DEFAULT_PM_TMR_BLK, DEFAULT_SMI_CMD_PORT, PM1_CNT_SCI_EN,
 };
+use aero_devices::clock::ManualClock;
 use aero_platform::io::PortIoDevice;
 use firmware::acpi::{AcpiConfig, AcpiTables};
 
@@ -48,7 +49,8 @@ fn guest_enable_and_disable_writes_toggle_sci_en() {
         acpi_disable_cmd,
         start_enabled: false,
     };
-    let mut pm = AcpiPmIo::new(cfg);
+    let clock = ManualClock::new();
+    let mut pm = AcpiPmIo::new_with_callbacks_and_clock(cfg, AcpiPmCallbacks::default(), clock);
 
     assert_eq!(pm.read(cfg.pm1a_cnt_blk, 2) as u16 & PM1_CNT_SCI_EN, 0);
 

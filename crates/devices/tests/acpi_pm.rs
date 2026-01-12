@@ -1,6 +1,7 @@
 use aero_devices::acpi_pm::{
     register_acpi_pm, AcpiPmCallbacks, AcpiPmConfig, AcpiPmIo, PM1_STS_PWRBTN, SLP_TYP_S5,
 };
+use aero_devices::clock::ManualClock;
 use aero_devices::irq::IrqLine;
 use aero_io_snapshot::io::state::IoSnapshot;
 use aero_platform::io::IoPortBus;
@@ -19,6 +20,7 @@ impl IrqLine for TestIrqLine {
 #[test]
 fn pm1_status_write_one_to_clear_and_sci_level() {
     let cfg = AcpiPmConfig::default();
+    let clock = ManualClock::new();
 
     let sci_log: Rc<RefCell<Vec<bool>>> = Rc::new(RefCell::new(Vec::new()));
 
@@ -27,7 +29,9 @@ fn pm1_status_write_one_to_clear_and_sci_level() {
         request_power_off: None,
     };
 
-    let pm = Rc::new(RefCell::new(AcpiPmIo::new_with_callbacks(cfg, callbacks)));
+    let pm = Rc::new(RefCell::new(AcpiPmIo::new_with_callbacks_and_clock(
+        cfg, callbacks, clock,
+    )));
     let mut bus = IoPortBus::new();
     register_acpi_pm(&mut bus, pm.clone());
 
@@ -51,6 +55,7 @@ fn pm1_status_write_one_to_clear_and_sci_level() {
 #[test]
 fn s5_sleep_requests_poweroff() {
     let cfg = AcpiPmConfig::default();
+    let clock = ManualClock::new();
 
     let power_off_count = Rc::new(Cell::new(0u32));
     let power_off_cb = power_off_count.clone();
@@ -60,7 +65,9 @@ fn s5_sleep_requests_poweroff() {
         ..Default::default()
     };
 
-    let pm = Rc::new(RefCell::new(AcpiPmIo::new_with_callbacks(cfg, callbacks)));
+    let pm = Rc::new(RefCell::new(AcpiPmIo::new_with_callbacks_and_clock(
+        cfg, callbacks, clock,
+    )));
     let mut bus = IoPortBus::new();
     register_acpi_pm(&mut bus, pm);
 
