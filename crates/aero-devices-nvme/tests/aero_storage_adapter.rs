@@ -59,7 +59,7 @@ fn aero_storage_adapter_rejects_unaligned_capacity() {
 }
 
 #[test]
-fn aero_storage_adapter_maps_underlying_disk_error_to_io() {
+fn aero_storage_adapter_maps_underlying_disk_error_to_nvme_errors() {
     struct FaultyDisk {
         capacity_bytes: u64,
     }

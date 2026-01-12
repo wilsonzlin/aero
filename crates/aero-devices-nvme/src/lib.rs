@@ -36,10 +36,10 @@ use aero_io_snapshot::io::storage::state::{
 /// capacity is not a multiple of 512, the trailing partial sector is ignored and
 /// only the largest whole-sector prefix is exposed via [`DiskBackend::total_sectors`].
 pub use aero_storage_adapters::AeroVirtualDiskAsNvmeBackend as AeroStorageDiskAdapter;
-use aero_storage_adapter::NvmeDiskFromAeroStorage;
 use memory::MemoryBus;
 
 mod aero_storage_adapter;
+pub use aero_storage_adapter::NvmeDiskFromAeroStorage;
 
 const PAGE_SIZE: usize = 4096;
 
@@ -338,6 +338,25 @@ impl NvmeController {
             io_cqs: HashMap::new(),
             intx_level: false,
         }
+    }
+
+    /// Construct an NVMe controller from an [`aero_storage::VirtualDisk`].
+    ///
+    /// This is a convenience wrapper around [`from_virtual_disk`] that returns an error if the
+    /// disk capacity is not a multiple of 512 bytes.
+    pub fn try_new_from_virtual_disk(
+        disk: Box<dyn aero_storage::VirtualDisk + Send>,
+    ) -> DiskResult<Self> {
+        Ok(Self::new(from_virtual_disk(disk)?))
+    }
+
+    /// Like [`NvmeController::try_new_from_virtual_disk`], but accepts any concrete
+    /// `aero_storage` disk type.
+    pub fn try_new_from_aero_storage<D>(disk: D) -> DiskResult<Self>
+    where
+        D: aero_storage::VirtualDisk + Send + 'static,
+    {
+        Self::try_new_from_virtual_disk(Box::new(disk))
     }
 
     pub fn bar0_len(&self) -> u64 {
@@ -1129,6 +1148,25 @@ impl NvmePciDevice {
             config,
             controller,
         }
+    }
+
+    /// Construct an NVMe PCI device from an [`aero_storage::VirtualDisk`].
+    ///
+    /// This is a convenience wrapper around [`from_virtual_disk`] that returns an error if the
+    /// disk capacity is not a multiple of 512 bytes.
+    pub fn try_new_from_virtual_disk(
+        disk: Box<dyn aero_storage::VirtualDisk + Send>,
+    ) -> DiskResult<Self> {
+        Ok(Self::new(from_virtual_disk(disk)?))
+    }
+
+    /// Like [`NvmePciDevice::try_new_from_virtual_disk`], but accepts any concrete
+    /// `aero_storage` disk type.
+    pub fn try_new_from_aero_storage<D>(disk: D) -> DiskResult<Self>
+    where
+        D: aero_storage::VirtualDisk + Send + 'static,
+    {
+        Self::try_new_from_virtual_disk(Box::new(disk))
     }
 
     pub fn irq_level(&self) -> bool {

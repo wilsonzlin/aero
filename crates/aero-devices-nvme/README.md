@@ -34,6 +34,10 @@ LBAs.
 For the common case where the disk is already behind a `Box<dyn aero_storage::VirtualDisk + Send>`,
 you can also use [`aero_devices_nvme::from_virtual_disk`] (returns `DiskResult`).
 
+Alternatively, use [`NvmeController::try_new_from_aero_storage`] /
+[`NvmePciDevice::try_new_from_aero_storage`] to construct a controller/device directly from an
+`aero-storage` disk.
+
 ## Interrupts
 
 Only legacy INTx signalling is modelled (`NvmeController::intx_level`). MSI/MSI-X is not yet

@@ -97,6 +97,20 @@ fn map_storage_error(err: StorageDiskError) -> BlockBackendError {
     }
 }
 
+/// Allow `aero-storage` virtual disks to be used directly as virtio-blk backends.
+///
+/// This means platform code can do:
+///
+/// ```rust,ignore
+/// use aero_storage::{MemBackend, RawDisk, SECTOR_SIZE};
+/// use aero_virtio::devices::blk::VirtioBlk;
+///
+/// let disk = RawDisk::create(MemBackend::new(), (1024 * SECTOR_SIZE) as u64).unwrap();
+/// let blk = VirtioBlk::new(Box::new(disk));
+/// ```
+///
+/// The virtio-blk device logic itself still enforces sector-based requests; this adapter is
+/// byte-addressed and forwards directly to the underlying [`VirtualDisk`] `read_at`/`write_at`.
 impl<T: VirtualDisk + ?Sized> BlockBackend for Box<T> {
     fn len(&self) -> u64 {
         (**self).capacity_bytes()
