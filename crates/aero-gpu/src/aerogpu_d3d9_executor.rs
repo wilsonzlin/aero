@@ -349,6 +349,10 @@ impl GuestTextureSubresourceLayout {
 struct TextureWritebackPlan {
     backing: GuestTextureBacking,
     backing_gpa: u64,
+    dst_mip_level: u32,
+    dst_array_layer: u32,
+    dst_subresource_offset_bytes: u64,
+    dst_subresource_row_pitch_bytes: u32,
     dst_x: u32,
     dst_y: u32,
     height: u32,
@@ -1151,7 +1155,7 @@ impl AerogpuD3d9Executor {
                             force_opaque_alpha_rgba8(row_bytes);
                         }
                     }
-                    let row_pitch = plan.backing.row_pitch_bytes as u64;
+                    let row_pitch = plan.dst_subresource_row_pitch_bytes as u64;
                     let dst_x_bytes = (plan.dst_x as u64)
                         .checked_mul(plan.guest_bytes_per_pixel as u64)
                         .ok_or_else(|| {
@@ -1195,7 +1199,11 @@ impl AerogpuD3d9Executor {
                                     "texture writeback row offset overflow".into(),
                                 )
                             })?;
-                        let dst_off = row_off.checked_add(dst_x_bytes).ok_or_else(|| {
+                        let dst_off = plan
+                            .dst_subresource_offset_bytes
+                            .checked_add(row_off)
+                            .and_then(|v| v.checked_add(dst_x_bytes))
+                            .ok_or_else(|| {
                             AerogpuD3d9Error::Validation(
                                 "texture writeback backing overflow".into(),
                             )
@@ -1207,9 +1215,13 @@ impl AerogpuD3d9Executor {
                                 )
                             })?;
                         if dst_end > plan.backing.size_bytes {
-                            return Err(AerogpuD3d9Error::Validation(
-                                "texture writeback backing out of bounds".into(),
-                            ));
+                            return Err(AerogpuD3d9Error::Validation(format!(
+                                "texture writeback backing out of bounds (mip_level={} array_layer={} end=0x{:x} size=0x{:x})",
+                                plan.dst_mip_level,
+                                plan.dst_array_layer,
+                                dst_end,
+                                plan.backing.size_bytes
+                            )));
                         }
 
                         let dst_gpa = plan.backing_gpa.checked_add(dst_off).ok_or_else(|| {
@@ -1263,7 +1275,7 @@ impl AerogpuD3d9Executor {
                             force_opaque_alpha_rgba8(row_bytes);
                         }
                     }
-                    let row_pitch = plan.backing.row_pitch_bytes as u64;
+                    let row_pitch = plan.dst_subresource_row_pitch_bytes as u64;
                     let dst_x_bytes = (plan.dst_x as u64)
                         .checked_mul(plan.guest_bytes_per_pixel as u64)
                         .ok_or_else(|| {
@@ -1307,7 +1319,11 @@ impl AerogpuD3d9Executor {
                                     "texture writeback row offset overflow".into(),
                                 )
                             })?;
-                        let dst_off = row_off.checked_add(dst_x_bytes).ok_or_else(|| {
+                        let dst_off = plan
+                            .dst_subresource_offset_bytes
+                            .checked_add(row_off)
+                            .and_then(|v| v.checked_add(dst_x_bytes))
+                            .ok_or_else(|| {
                             AerogpuD3d9Error::Validation(
                                 "texture writeback backing overflow".into(),
                             )
@@ -1319,9 +1335,13 @@ impl AerogpuD3d9Executor {
                                 )
                             })?;
                         if dst_end > plan.backing.size_bytes {
-                            return Err(AerogpuD3d9Error::Validation(
-                                "texture writeback backing out of bounds".into(),
-                            ));
+                            return Err(AerogpuD3d9Error::Validation(format!(
+                                "texture writeback backing out of bounds (mip_level={} array_layer={} end=0x{:x} size=0x{:x})",
+                                plan.dst_mip_level,
+                                plan.dst_array_layer,
+                                dst_end,
+                                plan.backing.size_bytes
+                            )));
                         }
 
                         let dst_gpa = plan.backing_gpa.checked_add(dst_off).ok_or_else(|| {
@@ -3048,13 +3068,49 @@ impl AerogpuD3d9Executor {
                         let padded_bpr =
                             align_to(host_unpadded_bpr, wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
 
+                        let (dst_subresource_offset_bytes, dst_subresource_row_pitch_bytes) =
+                            if dst_mips == 1 && dst_layers == 1 {
+                                // Single-subresource: allow padded row pitch (the legacy path).
+                                (0u64, dst_backing.row_pitch_bytes)
+                            } else {
+                                // Multi-subresource: MVP assumes tight packing in guest memory.
+                                let layout = GuestTextureSubresourceLayout::new(
+                                    dst_w,
+                                    dst_h,
+                                    dst_mips,
+                                    dst_layers,
+                                    guest_bpp,
+                                );
+                                let offset =
+                                    layout.subresource_offset_bytes(dst_array_layer, dst_mip_level)?;
+                                let row_pitch = layout
+                                    .subresource_row_pitch_bytes(dst_array_layer, dst_mip_level)?;
+
+                                let sub_size = layout.subresource_size_bytes(
+                                    dst_array_layer,
+                                    dst_mip_level,
+                                )?;
+                                let sub_end = offset.checked_add(sub_size).ok_or_else(|| {
+                                    AerogpuD3d9Error::Validation(
+                                        "COPY_TEXTURE2D: dst subresource overflow".into(),
+                                    )
+                                })?;
+                                if sub_end > dst_backing.size_bytes {
+                                    return Err(AerogpuD3d9Error::Validation(
+                                        "COPY_TEXTURE2D: dst subresource out of bounds".into(),
+                                    ));
+                                }
+
+                                (offset, row_pitch)
+                            };
+
                         let dst_x_bytes =
                             (dst_x as u64).checked_mul(guest_bpp as u64).ok_or_else(|| {
                                 AerogpuD3d9Error::Validation(
                                     "COPY_TEXTURE2D: dst_x byte offset overflow".into(),
                                 )
                             })?;
-                        let row_pitch = dst_backing.row_pitch_bytes as u64;
+                        let row_pitch = dst_subresource_row_pitch_bytes as u64;
                         if row_pitch == 0 {
                             return Err(AerogpuD3d9Error::Validation(
                                 "COPY_TEXTURE2D: dst texture row_pitch_bytes is 0".into(),
@@ -3116,6 +3172,10 @@ impl AerogpuD3d9Executor {
                         Some(TextureWritebackPlan {
                             backing: dst_backing,
                             backing_gpa,
+                            dst_mip_level,
+                            dst_array_layer,
+                            dst_subresource_offset_bytes,
+                            dst_subresource_row_pitch_bytes,
                             dst_x,
                             dst_y,
                             height,
