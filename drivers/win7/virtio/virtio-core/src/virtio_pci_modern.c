@@ -28,6 +28,68 @@ VirtioPciReadConfig(
     return 0;
 }
 
+static BOOLEAN
+VirtioPciExtractMemoryResource(
+    _In_ const CM_PARTIAL_RESOURCE_DESCRIPTOR* Desc,
+    _Out_ PHYSICAL_ADDRESS* StartOut,
+    _Out_ SIZE_T* LengthOut)
+{
+    USHORT large;
+    ULONGLONG lenBytes;
+
+    if (StartOut != NULL) {
+        StartOut->QuadPart = 0;
+    }
+    if (LengthOut != NULL) {
+        *LengthOut = 0;
+    }
+
+    if (Desc == NULL || StartOut == NULL || LengthOut == NULL) {
+        return FALSE;
+    }
+
+    lenBytes = 0;
+
+    if (Desc->Type == CmResourceTypeMemory) {
+        *StartOut = Desc->u.Memory.Start;
+        *LengthOut = (SIZE_T)Desc->u.Memory.Length;
+        return TRUE;
+    }
+
+    if (Desc->Type == CmResourceTypeMemoryLarge) {
+        /*
+         * CmResourceTypeMemoryLarge encodes length in scaled units. Decode it
+         * back to bytes per WDK definitions.
+         */
+        large = Desc->Flags & (CM_RESOURCE_MEMORY_LARGE_40 | CM_RESOURCE_MEMORY_LARGE_48 | CM_RESOURCE_MEMORY_LARGE_64);
+        switch (large) {
+            case CM_RESOURCE_MEMORY_LARGE_40:
+                *StartOut = Desc->u.Memory40.Start;
+                lenBytes = ((ULONGLONG)Desc->u.Memory40.Length40) << 8; /* 256B units */
+                break;
+            case CM_RESOURCE_MEMORY_LARGE_48:
+                *StartOut = Desc->u.Memory48.Start;
+                lenBytes = ((ULONGLONG)Desc->u.Memory48.Length48) << 16; /* 64KiB units */
+                break;
+            case CM_RESOURCE_MEMORY_LARGE_64:
+                *StartOut = Desc->u.Memory64.Start;
+                lenBytes = ((ULONGLONG)Desc->u.Memory64.Length64) << 32; /* 4GiB units */
+                break;
+            default:
+                return FALSE;
+        }
+
+        if (lenBytes > (ULONGLONG)(SIZE_T)-1) {
+            return FALSE;
+        }
+
+        *LengthOut = (SIZE_T)lenBytes;
+        return TRUE;
+    }
+
+    return FALSE;
+}
+
 static VOID
 VirtioPciModernUnmapBars(_Inout_ PVIRTIO_PCI_MODERN_DEVICE Dev)
 {
@@ -789,34 +851,42 @@ VirtioPciModernMapBars(
             continue;
         }
 
-        if (rawDesc->Type != CmResourceTypeMemory) {
-            continue;
-        }
+        {
+            PHYSICAL_ADDRESS rawStartPa;
+            PHYSICAL_ADDRESS transStartPa;
+            SIZE_T transLen;
 
-        rawStart = (ULONGLONG)rawDesc->u.Memory.Start.QuadPart;
-        rawLen = (SIZE_T)rawDesc->u.Memory.Length;
-
-        for (bar = 0; bar < VIRTIO_PCI_MAX_BARS; bar++) {
-            if ((requiredMask & (1u << bar)) == 0) {
+            if (!VirtioPciExtractMemoryResource(rawDesc, &rawStartPa, &rawLen) ||
+                !VirtioPciExtractMemoryResource(transDesc, &transStartPa, &transLen)) {
                 continue;
             }
 
-            if (!Dev->Bars[bar].Present || !Dev->Bars[bar].IsMemory || Dev->Bars[bar].IsUpperHalf) {
-                continue;
-            }
+            rawStart = (ULONGLONG)rawStartPa.QuadPart;
 
-            if (Dev->Bars[bar].Base != rawStart) {
-                continue;
-            }
+            UNREFERENCED_PARAMETER(transLen);
 
-            if (Dev->Bars[bar].Length != 0) {
-                VIRTIO_CORE_PRINT("BAR%lu matches multiple resources (keeping first)\n", bar);
-                continue;
-            }
+            for (bar = 0; bar < VIRTIO_PCI_MAX_BARS; bar++) {
+                if ((requiredMask & (1u << bar)) == 0) {
+                    continue;
+                }
 
-            Dev->Bars[bar].RawStart = rawDesc->u.Memory.Start;
-            Dev->Bars[bar].TranslatedStart = transDesc->u.Memory.Start;
-            Dev->Bars[bar].Length = rawLen;
+                if (!Dev->Bars[bar].Present || !Dev->Bars[bar].IsMemory || Dev->Bars[bar].IsUpperHalf) {
+                    continue;
+                }
+
+                if (Dev->Bars[bar].Base != rawStart) {
+                    continue;
+                }
+
+                if (Dev->Bars[bar].Length != 0) {
+                    VIRTIO_CORE_PRINT("BAR%lu matches multiple resources (keeping first)\n", bar);
+                    continue;
+                }
+
+                Dev->Bars[bar].RawStart = rawStartPa;
+                Dev->Bars[bar].TranslatedStart = transStartPa;
+                Dev->Bars[bar].Length = rawLen;
+            }
         }
     }
 
@@ -1005,14 +1075,18 @@ VirtioPciModernMapBarsWdm(
         for (i = 0; i < resCount; i++) {
             ULONGLONG rawStart;
             SIZE_T rawLen;
+            PHYSICAL_ADDRESS rawStartPa;
+            PHYSICAL_ADDRESS transStartPa;
+            SIZE_T transLen;
             ULONG bar;
 
-            if (rawDesc[i].Type != CmResourceTypeMemory) {
+            if (!VirtioPciExtractMemoryResource(&rawDesc[i], &rawStartPa, &rawLen) ||
+                !VirtioPciExtractMemoryResource(&transDesc[i], &transStartPa, &transLen)) {
                 continue;
             }
 
-            rawStart = (ULONGLONG)rawDesc[i].u.Memory.Start.QuadPart;
-            rawLen = (SIZE_T)rawDesc[i].u.Memory.Length;
+            rawStart = (ULONGLONG)rawStartPa.QuadPart;
+            UNREFERENCED_PARAMETER(transLen);
 
             for (bar = 0; bar < VIRTIO_PCI_MAX_BARS; bar++) {
                 if ((requiredMask & (1u << bar)) == 0) {
@@ -1032,8 +1106,8 @@ VirtioPciModernMapBarsWdm(
                     continue;
                 }
 
-                Dev->Bars[bar].RawStart = rawDesc[i].u.Memory.Start;
-                Dev->Bars[bar].TranslatedStart = transDesc[i].u.Memory.Start;
+                Dev->Bars[bar].RawStart = rawStartPa;
+                Dev->Bars[bar].TranslatedStart = transStartPa;
                 Dev->Bars[bar].Length = rawLen;
             }
         }

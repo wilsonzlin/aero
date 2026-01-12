@@ -1542,6 +1542,62 @@ static NTSTATUS APIENTRY AeroGpuDdiAddDevice(_In_ PDEVICE_OBJECT PhysicalDeviceO
     return STATUS_SUCCESS;
 }
 
+static BOOLEAN AeroGpuExtractMemoryResource(_In_ const CM_PARTIAL_RESOURCE_DESCRIPTOR* desc,
+                                            _Out_ PHYSICAL_ADDRESS* startOut,
+                                            _Out_ ULONG* lengthOut)
+{
+    USHORT large;
+    ULONGLONG lenBytes;
+
+    if (startOut != NULL) {
+        startOut->QuadPart = 0;
+    }
+    if (lengthOut != NULL) {
+        *lengthOut = 0;
+    }
+
+    if (desc == NULL || startOut == NULL || lengthOut == NULL) {
+        return FALSE;
+    }
+
+    lenBytes = 0;
+
+    if (desc->Type == CmResourceTypeMemory) {
+        *startOut = desc->u.Memory.Start;
+        *lengthOut = desc->u.Memory.Length;
+        return TRUE;
+    }
+
+    if (desc->Type == CmResourceTypeMemoryLarge) {
+        large = desc->Flags & (CM_RESOURCE_MEMORY_LARGE_40 | CM_RESOURCE_MEMORY_LARGE_48 | CM_RESOURCE_MEMORY_LARGE_64);
+        switch (large) {
+            case CM_RESOURCE_MEMORY_LARGE_40:
+                *startOut = desc->u.Memory40.Start;
+                lenBytes = ((ULONGLONG)desc->u.Memory40.Length40) << 8;
+                break;
+            case CM_RESOURCE_MEMORY_LARGE_48:
+                *startOut = desc->u.Memory48.Start;
+                lenBytes = ((ULONGLONG)desc->u.Memory48.Length48) << 16;
+                break;
+            case CM_RESOURCE_MEMORY_LARGE_64:
+                *startOut = desc->u.Memory64.Start;
+                lenBytes = ((ULONGLONG)desc->u.Memory64.Length64) << 32;
+                break;
+            default:
+                return FALSE;
+        }
+
+        if (lenBytes > 0xFFFFFFFFull) {
+            return FALSE;
+        }
+
+        *lengthOut = (ULONG)lenBytes;
+        return TRUE;
+    }
+
+    return FALSE;
+}
+
 static NTSTATUS APIENTRY AeroGpuDdiStartDevice(_In_ const PVOID MiniportDeviceContext,
                                                _In_ PDXGK_START_INFO DxgkStartInfo,
                                                _In_ PDXGKRNL_INTERFACE DxgkInterface,
@@ -1571,11 +1627,15 @@ static NTSTATUS APIENTRY AeroGpuDdiStartDevice(_In_ const PVOID MiniportDeviceCo
     PCM_PARTIAL_RESOURCE_LIST partial = &full->PartialResourceList;
     for (ULONG i = 0; i < partial->Count; ++i) {
         PCM_PARTIAL_RESOURCE_DESCRIPTOR desc = &partial->PartialDescriptors[i];
-        if (desc->Type == CmResourceTypeMemory) {
-            adapter->Bar0Length = desc->u.Memory.Length;
-            adapter->Bar0 = (PUCHAR)MmMapIoSpace(desc->u.Memory.Start, adapter->Bar0Length, MmNonCached);
-            break;
+        PHYSICAL_ADDRESS start;
+        ULONG length;
+        if (!AeroGpuExtractMemoryResource(desc, &start, &length)) {
+            continue;
         }
+
+        adapter->Bar0Length = length;
+        adapter->Bar0 = (PUCHAR)MmMapIoSpace(start, adapter->Bar0Length, MmNonCached);
+        break;
     }
 
     if (!adapter->Bar0) {

@@ -238,6 +238,56 @@ static ULONGLONG VirtIoSndComputeBar0Base(_In_reads_bytes_(256) const UCHAR *cfg
     return base;
 }
 
+static BOOLEAN VirtIoSndExtractMemoryResource(_In_ const CM_PARTIAL_RESOURCE_DESCRIPTOR *desc,
+                                             _Out_ PHYSICAL_ADDRESS *startOut,
+                                             _Out_ ULONGLONG *lengthBytesOut)
+{
+    USHORT large;
+
+    if (startOut != NULL) {
+        startOut->QuadPart = 0;
+    }
+    if (lengthBytesOut != NULL) {
+        *lengthBytesOut = 0;
+    }
+
+    if (desc == NULL || startOut == NULL || lengthBytesOut == NULL) {
+        return FALSE;
+    }
+
+    if (desc->Type == CmResourceTypeMemory) {
+        *startOut = desc->u.Memory.Start;
+        *lengthBytesOut = (ULONGLONG)desc->u.Memory.Length;
+        return TRUE;
+    }
+
+    if (desc->Type == CmResourceTypeMemoryLarge) {
+        /*
+         * CmResourceTypeMemoryLarge encodes length in scaled units. Decode it
+         * back to bytes per WDK definitions.
+         */
+        large = desc->Flags & (CM_RESOURCE_MEMORY_LARGE_40 | CM_RESOURCE_MEMORY_LARGE_48 | CM_RESOURCE_MEMORY_LARGE_64);
+        switch (large) {
+            case CM_RESOURCE_MEMORY_LARGE_40:
+                *startOut = desc->u.Memory40.Start;
+                *lengthBytesOut = ((ULONGLONG)desc->u.Memory40.Length40) << 8; /* 256B units */
+                return TRUE;
+            case CM_RESOURCE_MEMORY_LARGE_48:
+                *startOut = desc->u.Memory48.Start;
+                *lengthBytesOut = ((ULONGLONG)desc->u.Memory48.Length48) << 16; /* 64KiB units */
+                return TRUE;
+            case CM_RESOURCE_MEMORY_LARGE_64:
+                *startOut = desc->u.Memory64.Start;
+                *lengthBytesOut = ((ULONGLONG)desc->u.Memory64.Length64) << 32; /* 4GiB units */
+                return TRUE;
+            default:
+                return FALSE;
+        }
+    }
+
+    return FALSE;
+}
+
 static NTSTATUS VirtIoSndFindBar0Resource(_In_ ULONGLONG bar0Base,
                                          _In_ PCM_RESOURCE_LIST resourcesRaw,
                                          _In_ PCM_RESOURCE_LIST resourcesTranslated,
@@ -291,24 +341,37 @@ static NTSTATUS VirtIoSndFindBar0Resource(_In_ ULONGLONG bar0Base,
             rawDesc = &rawList->PartialDescriptors[descIndex];
             transDesc = &transList->PartialDescriptors[descIndex];
 
-            if (rawDesc->Type != CmResourceTypeMemory || transDesc->Type != CmResourceTypeMemory) {
-                continue;
-            }
+            {
+                PHYSICAL_ADDRESS rawStartPa;
+                PHYSICAL_ADDRESS transStartPa;
+                ULONGLONG rawLenBytes;
+                ULONGLONG transLenBytes;
 
-            rawStart = (ULONGLONG)rawDesc->u.Memory.Start.QuadPart;
-            if (rawStart != bar0Base) {
-                continue;
-            }
+                if (!VirtIoSndExtractMemoryResource(rawDesc, &rawStartPa, &rawLenBytes) ||
+                    !VirtIoSndExtractMemoryResource(transDesc, &transStartPa, &transLenBytes)) {
+                    continue;
+                }
 
-            len = rawDesc->u.Memory.Length;
-            if (len == 0) {
-                return STATUS_DEVICE_CONFIGURATION_ERROR;
-            }
+                rawStart = (ULONGLONG)rawStartPa.QuadPart;
+                if (rawStart != bar0Base) {
+                    continue;
+                }
 
-            *translatedStartOut = transDesc->u.Memory.Start;
-            *lengthOut = (UINT32)len;
+                UNREFERENCED_PARAMETER(transLenBytes);
+
+                if (rawLenBytes == 0) {
+                    return STATUS_DEVICE_CONFIGURATION_ERROR;
+                }
+                if (rawLenBytes > 0xFFFFFFFFull) {
+                    return STATUS_DEVICE_CONFIGURATION_ERROR;
+                }
+
+                len = (ULONG)rawLenBytes;
+                *translatedStartOut = transStartPa;
+                *lengthOut = (UINT32)len;
             return STATUS_SUCCESS;
         }
+            }
     }
 
     return STATUS_DEVICE_CONFIGURATION_ERROR;
