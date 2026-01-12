@@ -2929,6 +2929,25 @@ static bool HttpGetLargeDeterministic(Logger& log, const std::wstring& url) {
              content_type.empty() ? "-" : WideToUtf8(content_type).c_str(),
              etag.empty() ? "-" : WideToUtf8(etag).c_str());
   }
+  if (!content_type.empty() && !StartsWithInsensitive(content_type, L"application/octet-stream")) {
+    log.Logf("virtio-net: HTTP GET large unexpected Content-Type: %s", WideToUtf8(content_type).c_str());
+  }
+  if (!etag.empty()) {
+    // Best-effort: accept weak ETags and quoted values. Only used for logging/hints; the
+    // pass/fail criteria remains size+hash.
+    std::wstring e = etag;
+    // Trim whitespace.
+    while (!e.empty() && iswspace(e.front())) e.erase(e.begin());
+    while (!e.empty() && iswspace(e.back())) e.pop_back();
+    if (StartsWithInsensitive(e, L"W/")) e.erase(0, 2);
+    if (!e.empty() && e.front() == L'"') e.erase(e.begin());
+    if (!e.empty() && e.back() == L'"') e.pop_back();
+    e = ToLower(std::move(e));
+    if (!e.empty() && e != L"8505ae4435522325") {
+      log.Logf("virtio-net: HTTP GET large unexpected ETag token=%s expected=%s", WideToUtf8(e).c_str(),
+               "8505ae4435522325");
+    }
+  }
 
   uint64_t total_read = 0;
   uint64_t hash = kFnvOffsetBasis;
