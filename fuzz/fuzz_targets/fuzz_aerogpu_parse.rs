@@ -269,6 +269,37 @@ fn fuzz_d3d11_cmd_stream(bytes: &[u8]) {
     }
 }
 
+fn fuzz_bc_decompress(bytes: &[u8]) {
+    // CPU-only BCn decompression + BC-dimension compatibility checks used by backend fallbacks.
+    //
+    // Keep dimensions small and derived from a few bytes so we don't allocate huge output buffers.
+    if bytes.len() < 4 {
+        return;
+    }
+    let width = bytes[0] as u32;
+    let height = bytes[1] as u32;
+    let mip_level_count = (bytes[2] % 16) as u32;
+    let selector = bytes[3] & 3;
+    let data = &bytes[4..];
+
+    let _ = aero_gpu::wgpu_bc_texture_dimensions_compatible(width, height, mip_level_count);
+
+    match selector {
+        0 => {
+            let _ = aero_gpu::decompress_bc1_rgba8(width, height, data);
+        }
+        1 => {
+            let _ = aero_gpu::decompress_bc2_rgba8(width, height, data);
+        }
+        2 => {
+            let _ = aero_gpu::decompress_bc3_rgba8(width, height, data);
+        }
+        _ => {
+            let _ = aero_gpu::decompress_bc7_rgba8(width, height, data);
+        }
+    }
+}
+
 fn fuzz_command_processor(
     cmd_stream_bytes: &[u8],
     allocations: Option<&[AeroGpuSubmissionAllocation]>,
@@ -304,6 +335,7 @@ fuzz_target!(|data: &[u8]| {
     fuzz_alloc_table(alloc_bytes);
     fuzz_ring_layouts(ring_bytes);
     fuzz_d3d11_cmd_stream(ring_bytes);
+    fuzz_bc_decompress(ring_bytes);
 
     // Additionally, try patching the fixed headers to valid magic/version values (while keeping
     // the rest of the input intact) so the fuzzer can reach deeper parsing paths more often.
