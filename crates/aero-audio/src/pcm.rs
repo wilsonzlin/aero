@@ -991,6 +991,56 @@ mod tests {
     }
 
     #[test]
+    fn decode_pcm_to_stereo_f32_into_clears_output_buffer() {
+        let fmt = StreamFormat {
+            sample_rate_hz: 48_000,
+            bits_per_sample: 16,
+            channels: 2,
+        };
+        let mut input = Vec::new();
+        input.extend_from_slice(&1000i16.to_le_bytes());
+        input.extend_from_slice(&(-1000i16).to_le_bytes());
+
+        let mut out = vec![[123.0, 456.0]];
+        decode_pcm_to_stereo_f32_into(&input, fmt, &mut out);
+        assert_eq!(out.len(), 1);
+        assert_f32_approx_eq(out[0][0], 1000.0 / 32768.0, 1e-6);
+        assert_f32_approx_eq(out[0][1], -1000.0 / 32768.0, 1e-6);
+    }
+
+    #[test]
+    fn encode_mono_f32_to_pcm_into_clears_output_buffer() {
+        let fmt = StreamFormat {
+            sample_rate_hz: 48_000,
+            bits_per_sample: 16,
+            channels: 2,
+        };
+        let mut out = vec![0xAA, 0xBB, 0xCC];
+        encode_mono_f32_to_pcm_into(&[0.0], fmt, &mut out);
+        // One frame, 2 channels, 16-bit => 4 bytes.
+        assert_eq!(out, vec![0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn decode_and_encode_handle_zero_channels_without_panicking() {
+        let fmt = StreamFormat {
+            sample_rate_hz: 48_000,
+            bits_per_sample: 16,
+            channels: 0,
+        };
+
+        // Decode should produce no frames (bytes_per_frame=0).
+        let mut decoded = vec![[1.0, 2.0]];
+        decode_pcm_to_stereo_f32_into(&[0xAA, 0xBB], fmt, &mut decoded);
+        assert!(decoded.is_empty());
+
+        // Encode should produce no bytes (bytes_per_frame=0).
+        let mut encoded = vec![0xAA, 0xBB];
+        encode_mono_f32_to_pcm_into(&[0.0, 1.0], fmt, &mut encoded);
+        assert!(encoded.is_empty());
+    }
+
+    #[test]
     fn encode_mono_f32_to_pcm_writes_exact_bytes_for_16bit_clip_and_non_finite() {
         let fmt = StreamFormat {
             sample_rate_hz: 48_000,
