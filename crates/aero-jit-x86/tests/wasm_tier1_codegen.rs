@@ -2,10 +2,10 @@
 
 mod tier1_common;
 
-use aero_cpu_core::state::CpuState;
+use aero_cpu_core::state::{CpuState, RFLAGS_CF, RFLAGS_OF};
 use aero_jit_x86::abi;
 use aero_jit_x86::tier1::ir::interp::execute_block;
-use aero_jit_x86::tier1::ir::{GuestReg, IrBuilder, IrTerminator};
+use aero_jit_x86::tier1::ir::{BinOp, GuestReg, IrBuilder, IrTerminator};
 use aero_jit_x86::tier1::{Tier1WasmCodegen, EXPORT_TIER1_BLOCK_FN};
 use aero_jit_x86::wasm::{
     IMPORT_JIT_EXIT, IMPORT_MEMORY, IMPORT_MEM_READ_U16, IMPORT_MEM_READ_U32, IMPORT_MEM_READ_U64,
@@ -14,7 +14,7 @@ use aero_jit_x86::wasm::{
 };
 use aero_jit_x86::Tier1Bus;
 use aero_jit_x86::{discover_block, translate_block, BlockLimits};
-use aero_types::{Gpr, Width};
+use aero_types::{FlagSet, Gpr, Width};
 use tier1_common::{write_cpu_to_wasm_bytes, write_gpr, CpuSnapshot, SimpleBus};
 
 use wasmi::{Caller, Engine, Func, Linker, Memory, MemoryType, Module, Store, TypedFunc};
@@ -422,4 +422,97 @@ fn wasm_tier1_lea_sib_ret() {
     bus.write(0x8800, Width::W64, 0x5000);
 
     assert_ir_wasm_matches_interp(&code, entry, cpu, bus);
+}
+
+#[test]
+fn wasm_tier1_shift_count_masking_is_x86_correct_for_narrow_widths() {
+    let entry = 0x5000u64;
+
+    // 16-bit shift counts are masked to 5 bits on x86 (like 32-bit), not 4 bits. In particular:
+    //   shl ax, 17
+    // shifts by 17 (resulting in 0 after truncation to 16 bits).
+    let mut b = IrBuilder::new(entry);
+    let v = b.const_int(Width::W16, 0x0001);
+    let c = b.const_int(Width::W16, 17);
+    let res = b.binop(BinOp::Shl, Width::W16, v, c, FlagSet::EMPTY);
+    b.write_reg(
+        GuestReg::Gpr {
+            reg: Gpr::Rax,
+            width: Width::W16,
+            high8: false,
+        },
+        res,
+    );
+    let ir = b.finish(IrTerminator::Jump { target: entry + 1 });
+    ir.validate().unwrap();
+
+    let cpu = CpuState {
+        rip: entry,
+        rflags: abi::RFLAGS_RESERVED1,
+        ..Default::default()
+    };
+    let bus = SimpleBus::new(0x10000);
+
+    // Tier-1 IR interpreter.
+    let mut interp_bus = bus.clone();
+    let mut interp_cpu_bytes = vec![0u8; abi::CPU_STATE_SIZE as usize];
+    write_cpu_to_wasm_bytes(&cpu, &mut interp_cpu_bytes);
+    let _ = execute_block(&ir, &mut interp_cpu_bytes, &mut interp_bus);
+    let interp_cpu = CpuSnapshot::from_wasm_bytes(&interp_cpu_bytes);
+    assert_eq!(interp_cpu.gpr[Gpr::Rax.as_u8() as usize] & 0xffff, 0x0000);
+
+    // Tier-1 WASM codegen + wasmi.
+    let (_, out_cpu, _) = run_wasm(&ir, &cpu, &bus);
+    assert_eq!(out_cpu.gpr[Gpr::Rax.as_u8() as usize] & 0xffff, 0x0000);
+}
+
+#[test]
+fn wasm_tier1_shift_flags_cf_of_match_x86_for_count_1() {
+    let entry = 0x6000u64;
+
+    // For SHL count==1: CF=old MSB, OF=new MSB XOR CF.
+    // 0x81 << 1 = 0x02, CF=1, OF=1.
+    let mut b = IrBuilder::new(entry);
+    let v = b.const_int(Width::W8, 0x81);
+    let c = b.const_int(Width::W8, 1);
+    let res = b.binop(
+        BinOp::Shl,
+        Width::W8,
+        v,
+        c,
+        FlagSet::CF.union(FlagSet::OF),
+    );
+    b.write_reg(
+        GuestReg::Gpr {
+            reg: Gpr::Rax,
+            width: Width::W8,
+            high8: false,
+        },
+        res,
+    );
+    let ir = b.finish(IrTerminator::Jump { target: entry + 1 });
+    ir.validate().unwrap();
+
+    let cpu = CpuState {
+        rip: entry,
+        rflags: abi::RFLAGS_RESERVED1,
+        ..Default::default()
+    };
+    let bus = SimpleBus::new(0x10000);
+
+    // Tier-1 IR interpreter.
+    let mut interp_bus = bus.clone();
+    let mut interp_cpu_bytes = vec![0u8; abi::CPU_STATE_SIZE as usize];
+    write_cpu_to_wasm_bytes(&cpu, &mut interp_cpu_bytes);
+    let _ = execute_block(&ir, &mut interp_cpu_bytes, &mut interp_bus);
+    let interp_cpu = CpuSnapshot::from_wasm_bytes(&interp_cpu_bytes);
+    assert_eq!(interp_cpu.gpr[Gpr::Rax.as_u8() as usize] & 0xff, 0x02);
+    assert!((interp_cpu.rflags & RFLAGS_CF) != 0);
+    assert!((interp_cpu.rflags & RFLAGS_OF) != 0);
+
+    // Tier-1 WASM codegen + wasmi.
+    let (_, out_cpu, _) = run_wasm(&ir, &cpu, &bus);
+    assert_eq!(out_cpu.gpr[Gpr::Rax.as_u8() as usize] & 0xff, 0x02);
+    assert!((out_cpu.rflags & RFLAGS_CF) != 0);
+    assert!((out_cpu.rflags & RFLAGS_OF) != 0);
 }

@@ -79,6 +79,61 @@ fn compute_sub_flags(width: Width, lhs: u64, rhs: u64, result: u64) -> FlagVals 
     }
 }
 
+fn update_shift_flags(
+    cpu: &mut TestCpu,
+    width: Width,
+    op: BinOp,
+    lhs: u64,
+    shift_amt: u32,
+    result: u64,
+    flags: FlagSet,
+) {
+    debug_assert!(matches!(op, BinOp::Shl | BinOp::Shr | BinOp::Sar));
+
+    // x86 shifts do not update any flags when the shift count is 0.
+    if shift_amt == 0 {
+        return;
+    }
+
+    let result = width.truncate(result);
+    let sign_bit = 1u64 << (width.bits() - 1);
+
+    if flags.contains(FlagSet::ZF) {
+        write_flag(cpu, Flag::Zf, result == 0);
+    }
+    if flags.contains(FlagSet::SF) {
+        write_flag(cpu, Flag::Sf, (result & sign_bit) != 0);
+    }
+    if flags.contains(FlagSet::PF) {
+        write_flag(cpu, Flag::Pf, parity_even(result as u8));
+    }
+
+    // CF is defined for shift counts in the range [1, width.bits()]. For counts above the operand
+    // width, CF is architecturally undefined; we conservatively leave it unchanged.
+    if flags.contains(FlagSet::CF) && shift_amt <= width.bits() {
+        let cf = match op {
+            BinOp::Shl => ((lhs >> (width.bits() - shift_amt)) & 1) != 0,
+            BinOp::Shr | BinOp::Sar => ((lhs >> (shift_amt - 1)) & 1) != 0,
+            _ => unreachable!(),
+        };
+        write_flag(cpu, Flag::Cf, cf);
+    }
+
+    // OF is only defined for a shift count of 1. For counts > 1, OF is undefined; leave unchanged.
+    if flags.contains(FlagSet::OF) && shift_amt == 1 {
+        let of = match op {
+            // For SHL count==1: OF = new MSB XOR CF (where CF is the old MSB).
+            BinOp::Shl => ((lhs ^ result) & sign_bit) != 0,
+            // For SHR count==1: OF = old MSB.
+            BinOp::Shr => (lhs & sign_bit) != 0,
+            // For SAR count==1: OF = 0.
+            BinOp::Sar => false,
+            _ => unreachable!(),
+        };
+        write_flag(cpu, Flag::Of, of);
+    }
+}
+
 fn write_flagset(cpu: &mut TestCpu, mask: FlagSet, vals: FlagVals) {
     if mask.contains(FlagSet::CF) {
         write_flag(cpu, Flag::Cf, vals.cf);
@@ -261,7 +316,10 @@ fn execute_block_cpu<B: Tier1Bus>(block: &IrBlock, cpu: &mut TestCpu, bus: &mut 
                 let l = temps[lhs.0 as usize];
                 let r = temps[rhs.0 as usize];
                 let w = *width;
-                let shift_mask = w.bits() - 1;
+                // x86 shift counts are masked to 5 bits for 8/16/32-bit shifts and 6 bits for
+                // 64-bit shifts (regardless of the operand width).
+                let shift_mask: u32 = if w == Width::W64 { 63 } else { 31 };
+                let shift_amt = (r as u32) & shift_mask;
                 let (res, flag_vals) = match op {
                     BinOp::Add => {
                         let res = w.truncate(l.wrapping_add(r));
@@ -284,19 +342,16 @@ fn execute_block_cpu<B: Tier1Bus>(block: &IrBlock, cpu: &mut TestCpu, bus: &mut 
                         (res, Some(compute_logic_flags(w, res)))
                     }
                     BinOp::Shl => {
-                        let amt = (r as u32) & shift_mask;
-                        let res = w.truncate(l << amt);
+                        let res = w.truncate(l << shift_amt);
                         (res, None)
                     }
                     BinOp::Shr => {
-                        let amt = (r as u32) & shift_mask;
-                        let res = w.truncate(l >> amt);
+                        let res = w.truncate(l >> shift_amt);
                         (res, None)
                     }
                     BinOp::Sar => {
-                        let amt = (r as u32) & shift_mask;
                         let signed = w.sign_extend(w.truncate(l)) as i64;
-                        let res = w.truncate((signed >> amt) as u64);
+                        let res = w.truncate((signed >> shift_amt) as u64);
                         (res, None)
                     }
                 };
@@ -304,6 +359,8 @@ fn execute_block_cpu<B: Tier1Bus>(block: &IrBlock, cpu: &mut TestCpu, bus: &mut 
                 if !flags.is_empty() {
                     if let Some(vals) = flag_vals {
                         write_flagset(cpu, *flags, vals);
+                    } else if matches!(op, BinOp::Shl | BinOp::Shr | BinOp::Sar) {
+                        update_shift_flags(cpu, w, *op, l, shift_amt, res, *flags);
                     }
                 }
             }

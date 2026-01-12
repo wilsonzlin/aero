@@ -851,7 +851,9 @@ impl Emitter<'_> {
                         BinOp::And | BinOp::Or | BinOp::Xor => {
                             self.emit_logic_flags(*width, *flags, *dst)
                         }
-                        BinOp::Shl | BinOp::Shr | BinOp::Sar => {}
+                        BinOp::Shl | BinOp::Shr | BinOp::Sar => {
+                            self.emit_shift_flags(*op, *width, *flags, *lhs, *rhs, *dst)
+                        }
                     }
                 }
             }
@@ -1243,7 +1245,10 @@ impl Emitter<'_> {
     }
 
     fn emit_shift_mask(&mut self, width: Width) {
-        let mask = (width.bits() - 1) as i64;
+        // x86 shifts mask the count to 5 bits for 8/16/32-bit operands and 6 bits for 64-bit.
+        // Note: this differs from WASM's built-in masking (which always uses 6 bits for i64
+        // shifts), so we must apply the x86 mask explicitly for narrow widths.
+        let mask = if width == Width::W64 { 63 } else { 31 };
         self.func.instruction(&Instruction::I64Const(mask));
         self.func.instruction(&Instruction::I64And);
     }
@@ -1467,6 +1472,146 @@ impl Emitter<'_> {
                 this.emit_parity_even_i32(res_local);
             });
         }
+    }
+
+    fn emit_shift_flags(
+        &mut self,
+        op: BinOp,
+        width: Width,
+        flags: FlagSet,
+        lhs: ValueId,
+        rhs: ValueId,
+        res: ValueId,
+    ) {
+        debug_assert!(matches!(op, BinOp::Shl | BinOp::Shr | BinOp::Sar));
+
+        // x86 shifts do not update any flags when the (masked) shift count is 0.
+        //
+        // Note: AF is architecturally undefined for shifts. We conservatively leave it unchanged
+        // even if requested.
+        let sign_bit = 1u64 << (width.bits() - 1);
+        let lhs_local = self.layout.value_local(lhs);
+        let rhs_local = self.layout.value_local(rhs);
+        let res_local = self.layout.value_local(res);
+        let amt_local = self.layout.scratch_local();
+
+        // amt = rhs & shift_mask
+        self.func.instruction(&Instruction::LocalGet(rhs_local));
+        self.emit_shift_mask(width);
+        self.func.instruction(&Instruction::LocalTee(amt_local));
+
+        // if amt != 0 { ... }
+        self.func.instruction(&Instruction::I64Eqz);
+        self.func.instruction(&Instruction::I32Eqz);
+        self.func.instruction(&Instruction::If(BlockType::Empty));
+        self.depth += 1;
+        {
+            if flags.contains(FlagSet::ZF) {
+                self.emit_set_flag(Flag::Zf, |this| {
+                    this.func.instruction(&Instruction::LocalGet(res_local));
+                    this.func.instruction(&Instruction::I64Eqz);
+                });
+            }
+            if flags.contains(FlagSet::SF) {
+                self.emit_set_flag(Flag::Sf, |this| {
+                    this.func.instruction(&Instruction::LocalGet(res_local));
+                    this.func
+                        .instruction(&Instruction::I64Const(sign_bit as i64));
+                    this.func.instruction(&Instruction::I64And);
+                    this.func.instruction(&Instruction::I64Const(0));
+                    this.func.instruction(&Instruction::I64Ne);
+                });
+            }
+            if flags.contains(FlagSet::PF) {
+                self.emit_set_flag(Flag::Pf, |this| {
+                    this.emit_parity_even_i32(res_local);
+                });
+            }
+
+            // CF is only defined for shift counts in the range [1, width.bits()]. For larger
+            // counts (possible for 8/16-bit operands due to x86's 5-bit masking), CF is undefined;
+            // conservatively leave it unchanged.
+            if flags.contains(FlagSet::CF) {
+                self.func.instruction(&Instruction::LocalGet(amt_local));
+                self.func
+                    .instruction(&Instruction::I64Const(width.bits() as i64));
+                self.func.instruction(&Instruction::I64LeU);
+                self.func.instruction(&Instruction::If(BlockType::Empty));
+                self.depth += 1;
+                {
+                    self.emit_set_flag(Flag::Cf, |this| match op {
+                        BinOp::Shl => {
+                            // (lhs >> (bits - amt)) & 1
+                            this.func.instruction(&Instruction::LocalGet(lhs_local));
+                            this.func
+                                .instruction(&Instruction::I64Const(width.bits() as i64));
+                            this.func.instruction(&Instruction::LocalGet(amt_local));
+                            this.func.instruction(&Instruction::I64Sub);
+                            this.func.instruction(&Instruction::I64ShrU);
+                            this.func.instruction(&Instruction::I64Const(1));
+                            this.func.instruction(&Instruction::I64And);
+                            this.func.instruction(&Instruction::I64Const(0));
+                            this.func.instruction(&Instruction::I64Ne);
+                        }
+                        BinOp::Shr | BinOp::Sar => {
+                            // (lhs >> (amt - 1)) & 1
+                            this.func.instruction(&Instruction::LocalGet(lhs_local));
+                            this.func.instruction(&Instruction::LocalGet(amt_local));
+                            this.func.instruction(&Instruction::I64Const(1));
+                            this.func.instruction(&Instruction::I64Sub);
+                            this.func.instruction(&Instruction::I64ShrU);
+                            this.func.instruction(&Instruction::I64Const(1));
+                            this.func.instruction(&Instruction::I64And);
+                            this.func.instruction(&Instruction::I64Const(0));
+                            this.func.instruction(&Instruction::I64Ne);
+                        }
+                        _ => unreachable!(),
+                    });
+                }
+                self.func.instruction(&Instruction::End);
+                self.depth -= 1;
+            }
+
+            // OF is only defined for a shift count of 1. For counts > 1, OF is undefined;
+            // conservatively leave it unchanged.
+            if flags.contains(FlagSet::OF) {
+                self.func.instruction(&Instruction::LocalGet(amt_local));
+                self.func.instruction(&Instruction::I64Const(1));
+                self.func.instruction(&Instruction::I64Eq);
+                self.func.instruction(&Instruction::If(BlockType::Empty));
+                self.depth += 1;
+                {
+                    match op {
+                        BinOp::Shl => self.emit_set_flag(Flag::Of, |this| {
+                            // (lhs ^ res) has the sign bit set if MSB(result) != MSB(lhs).
+                            this.func.instruction(&Instruction::LocalGet(lhs_local));
+                            this.func.instruction(&Instruction::LocalGet(res_local));
+                            this.func.instruction(&Instruction::I64Xor);
+                            this.func
+                                .instruction(&Instruction::I64Const(sign_bit as i64));
+                            this.func.instruction(&Instruction::I64And);
+                            this.func.instruction(&Instruction::I64Const(0));
+                            this.func.instruction(&Instruction::I64Ne);
+                        }),
+                        BinOp::Shr => self.emit_set_flag(Flag::Of, |this| {
+                            // OF = old MSB.
+                            this.func.instruction(&Instruction::LocalGet(lhs_local));
+                            this.func
+                                .instruction(&Instruction::I64Const(sign_bit as i64));
+                            this.func.instruction(&Instruction::I64And);
+                            this.func.instruction(&Instruction::I64Const(0));
+                            this.func.instruction(&Instruction::I64Ne);
+                        }),
+                        BinOp::Sar => self.emit_set_flag_const(Flag::Of, false),
+                        _ => unreachable!(),
+                    }
+                }
+                self.func.instruction(&Instruction::End);
+                self.depth -= 1;
+            }
+        }
+        self.func.instruction(&Instruction::End);
+        self.depth -= 1;
     }
 
     fn emit_addsub_flags(
