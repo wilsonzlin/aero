@@ -126,6 +126,7 @@ python3 scripts/ci/check-win7-virtio-header-collisions.py
 # AeroGPU guardrails (fast, no VM required)
 python3 scripts/ci/check-aerogpu-d3d9-def-stdcall.py
 python3 scripts/ci/check-aerogpu-wdk-guards.py
+python3 scripts/ci/check-aero-d3d11-guest-memory-imports.py
 python3 scripts/ci/check-aerogpu-share-token-contract.py
 
 # Ensure no duplicate virtio INFs/projects bind the same HWIDs (requires pwsh)
@@ -213,7 +214,7 @@ Legend:
 | AGPU-003 | Partial | D3D10/11 UMD feature expansion beyond “triangle” bring-up (pipeline/state coverage; Map/Unmap correctness; format support) | `drivers/aerogpu/umd/d3d10_11/` | README: [`drivers/aerogpu/umd/d3d10_11/README.md`](../drivers/aerogpu/umd/d3d10_11/README.md); checklist: [`docs/graphics/win7-d3d11ddi-function-tables.md`](../docs/graphics/win7-d3d11ddi-function-tables.md); host tests: `drivers/aerogpu/umd/d3d10_11/tests/` |
 | AGPU-004 | Remaining | DXGI/D3D10/11 shared-resource interop (export/import shared surfaces, share-token plumbing) | `drivers/aerogpu/umd/d3d10_11/` | Design contract: [`docs/graphics/win7-shared-surfaces-share-token.md`](../docs/graphics/win7-shared-surfaces-share-token.md); related D3D9 tests live under `drivers/aerogpu/tests/win7/` |
 | AGPU-005 | Implemented | AeroGPU Win7 guest-side validation suite (D3D9/D3D10/D3D11 + vblank/fence/ring probes) | `drivers/aerogpu/tests/win7/` | [`drivers/aerogpu/tests/win7/README.md`](../drivers/aerogpu/tests/win7/README.md) |
-| AGPU-006 | Remaining | Ship/stage the DX11-capable AeroGPU package in CI artifacts (`aerogpu_dx11.inf` + WOW64 `aerogpu_d3d10.dll`) | `drivers/aerogpu/ci-package.json`, `drivers/aerogpu/packaging/win7/` | Packaging notes: [`drivers/aerogpu/packaging/win7/README.md`](../drivers/aerogpu/packaging/win7/README.md) (see “0) CI packages vs manual packaging”) |
+| AGPU-006 | Implemented | DX11-capable AeroGPU package is staged by CI (`aerogpu_dx11.inf` + WOW64 `aerogpu_d3d10.dll`) | `drivers/aerogpu/ci-package.json`, `drivers/aerogpu/packaging/win7/` | Packaging notes: [`drivers/aerogpu/packaging/win7/README.md`](../drivers/aerogpu/packaging/win7/README.md) (see “0) CI packages vs manual packaging”) |
 
 ---
 
