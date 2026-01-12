@@ -919,7 +919,11 @@ fn print_devices_section_summary(file: &mut fs::File, section: &SnapshotSectionI
     }
 }
 
-fn decode_bios_device_detail(file: &mut fs::File, data_start: u64, data_end: u64) -> Option<String> {
+fn decode_bios_device_detail(
+    file: &mut fs::File,
+    data_start: u64,
+    data_end: u64,
+) -> Option<String> {
     fn skip_to(file: &mut fs::File, data_end: u64, skip: u64) -> Option<()> {
         let pos = file.stream_position().ok()?;
         let next = pos.checked_add(skip)?;

@@ -155,10 +155,7 @@ fn st010_machine_ahci_read_dma_ext_and_irq12_routing() {
     m.write_physical_u32(bar5_base + PORT_BASE + PORT_FB, fb as u32);
     m.write_physical_u32(bar5_base + PORT_BASE + PORT_FBU, 0);
     m.write_physical_u32(bar5_base + PORT_BASE + PORT_IE, PORT_IS_DHRS);
-    m.write_physical_u32(
-        bar5_base + PORT_BASE + PORT_CMD,
-        PORT_CMD_ST | PORT_CMD_FRE,
-    );
+    m.write_physical_u32(bar5_base + PORT_BASE + PORT_CMD, PORT_CMD_ST | PORT_CMD_FRE);
 
     // Build a single-slot command list: READ DMA EXT (LBA=4, 1 sector).
     const ATA_CMD_READ_DMA_EXT: u8 = aero_devices_storage::ata::ATA_CMD_READ_DMA_EXT;
@@ -289,7 +286,13 @@ fn wait_drq(m: &mut Machine, cmd_base: u16) {
     panic!("timeout waiting for DRQ on IDE port {cmd_base:#x}");
 }
 
-fn atapi_send_packet(m: &mut Machine, cmd_base: u16, features: u8, pkt: &[u8; 12], byte_count: u16) {
+fn atapi_send_packet(
+    m: &mut Machine,
+    cmd_base: u16,
+    features: u8,
+    pkt: &[u8; 12],
+    byte_count: u16,
+) {
     m.io_write(cmd_base + 1, 1, u32::from(features));
     m.io_write(cmd_base + 4, 1, u32::from(byte_count & 0xFF));
     m.io_write(cmd_base + 5, 1, u32::from(byte_count >> 8));
@@ -459,11 +462,13 @@ fn st010_machine_snapshot_includes_disk_controller_dskc_and_restores() {
     dskc.load_state(&disk_state.data).unwrap();
 
     assert!(
-        dskc.get(DiskControllersSnapshot::bdf_tag(0, 2, 0)).is_some(),
+        dskc.get(DiskControllersSnapshot::bdf_tag(0, 2, 0))
+            .is_some(),
         "DSKC missing AHCI (00:02.0) entry"
     );
     assert!(
-        dskc.get(DiskControllersSnapshot::bdf_tag(0, 1, 1)).is_some(),
+        dskc.get(DiskControllersSnapshot::bdf_tag(0, 1, 1))
+            .is_some(),
         "DSKC missing IDE (00:01.1) entry"
     );
 
