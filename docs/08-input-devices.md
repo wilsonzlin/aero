@@ -104,7 +104,10 @@ Input snapshots must preserve any **pending bytes** that the guest has not yet c
   - status register and command byte
   - pending controller command (if awaiting a data byte)
   - output buffer contents (bytes queued for port `0x60`)
-  - IRQ pending flags (keyboard/mouse)
+  - **IRQ behavior**: i8042 IRQ1/IRQ12 are edge-triggered in Aero’s model. The controller device
+    should not snapshot an “IRQ level”; pending interrupts should be captured by the interrupt
+    controller (PIC/APIC) state. On restore, the i8042 device must avoid emitting spurious IRQ
+    pulses for already-buffered output bytes (see [`docs/irq-semantics.md`](./irq-semantics.md)).
 - **PS/2 keyboard and mouse**
   - mode/configuration (scancode set, LEDs, sample rate, resolution, scaling)
   - command parsing state (e.g. “expecting data”)
@@ -113,6 +116,9 @@ Input snapshots must preserve any **pending bytes** that the guest has not yet c
 This ensures that a snapshot taken between a host keypress and guest consumption will restore deterministically.
 
 ## PS/2 Controller (i8042)
+
+> IRQ signaling semantics (edge vs level) in the browser runtime are documented in
+> [`docs/irq-semantics.md`](./irq-semantics.md).
 
 ### Controller Emulation
 
