@@ -1182,6 +1182,9 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
 
   hr = dev->SetPaletteEntries(palette_idx_sb, palette_entries_sb);
   if (FAILED(hr)) {
+    if (strict_checks && hr != D3DERR_INVALIDCALL) {
+      return reporter.FailHresult("SetPaletteEntries (stateblock)", hr);
+    }
     aerogpu_test::PrintfStdout("INFO: %s: skipping StateBlock Set/GetPaletteEntries (Set in stateblock failed hr=0x%08lX)",
                                kTestName,
                                (unsigned long)hr);
@@ -1191,6 +1194,9 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
 
   hr = dev->SetCurrentTexturePalette(palette_idx_sb);
   if (FAILED(hr)) {
+    if (strict_checks && hr != D3DERR_INVALIDCALL) {
+      return reporter.FailHresult("SetCurrentTexturePalette (stateblock)", hr);
+    }
     aerogpu_test::PrintfStdout(
         "INFO: %s: skipping StateBlock Set/GetCurrentTexturePalette (Set in stateblock failed hr=0x%08lX)",
         kTestName,
@@ -1225,6 +1231,9 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
 
   hr = dev->SetClipStatus(&clip_status_sb);
   if (FAILED(hr)) {
+    if (strict_checks) {
+      return reporter.FailHresult("SetClipStatus (stateblock)", hr);
+    }
     aerogpu_test::PrintfStdout("INFO: %s: skipping StateBlock Set/GetClipStatus (Set in stateblock failed hr=0x%08lX)",
                                kTestName,
                                (unsigned long)hr);
@@ -1395,6 +1404,9 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
     if (palette_test) {
       hr = dev->SetPaletteEntries(palette_idx_sb, palette_entries_clobber);
       if (FAILED(hr)) {
+        if (strict_checks) {
+          return reporter.FailHresult("SetPaletteEntries (clobber)", hr);
+        }
         aerogpu_test::PrintfStdout("INFO: %s: skipping StateBlock Set/GetPaletteEntries (clobber Set failed hr=0x%08lX)",
                                    kTestName,
                                    (unsigned long)hr);
@@ -1405,6 +1417,9 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
     if (current_palette_test) {
       hr = dev->SetCurrentTexturePalette(palette_idx_clobber);
       if (FAILED(hr)) {
+        if (strict_checks) {
+          return reporter.FailHresult("SetCurrentTexturePalette (clobber)", hr);
+        }
         aerogpu_test::PrintfStdout(
             "INFO: %s: skipping StateBlock Set/GetCurrentTexturePalette (clobber Set failed hr=0x%08lX)",
             kTestName,
@@ -1435,6 +1450,9 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
     if (clip_status_test) {
       hr = dev->SetClipStatus(&clip_status_clobber);
       if (FAILED(hr)) {
+        if (strict_checks) {
+          return reporter.FailHresult("SetClipStatus (clobber)", hr);
+        }
         aerogpu_test::PrintfStdout("INFO: %s: skipping StateBlock Set/GetClipStatus (clobber Set failed hr=0x%08lX)",
                                    kTestName,
                                    (unsigned long)hr);
