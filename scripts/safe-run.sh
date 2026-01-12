@@ -118,6 +118,7 @@ if [[ $# -lt 1 ]]; then
     echo "  AERO_TIMEOUT=600     Timeout in seconds (default: 600 = 10 min)" >&2
     echo "  AERO_MEM_LIMIT=12G   Memory limit (default: 12G)" >&2
     echo "  AERO_CARGO_BUILD_JOBS=1  Cargo parallelism for agent sandboxes (default: 1; overrides CARGO_BUILD_JOBS if set)" >&2
+    echo "  AERO_SAFE_RUN_RUSTC_RETRIES=3  Retries for transient rustc thread spawn panics (default: 3; only for cargo commands)" >&2
     echo "  CARGO_BUILD_JOBS=1       Cargo parallelism override (used when AERO_CARGO_BUILD_JOBS is unset)" >&2
     echo "  AERO_RUST_CODEGEN_UNITS=4  rustc per-crate codegen-units override (default: min(CARGO_BUILD_JOBS, 4); alias: AERO_CODEGEN_UNITS)" >&2
     echo "" >&2
@@ -148,11 +149,81 @@ echo "[safe-run] Command: $*" >&2
 echo "[safe-run] Timeout: ${TIMEOUT}s, Memory: ${MEM_LIMIT}" >&2
 echo "[safe-run] Started: $(date -Iseconds 2>/dev/null || date)" >&2
 
-# Chain: timeout (with SIGKILL fallback) wraps memory-limited command.
-#
-# Use the shared helper so we support both GNU `timeout` and macOS `gtimeout`
-# consistently across scripts.
-#
-# Note: some agent environments lose executable bits in the working tree. Invoke
-# our helper via `bash` so safe-run still works even if scripts are 0644.
-exec bash "$SCRIPT_DIR/with-timeout.sh" "${TIMEOUT}" bash "$SCRIPT_DIR/run_limited.sh" --as "$MEM_LIMIT" -- "$@"
+should_retry_rustc_thread_error() {
+    local stderr_log="${1:-}"
+    if [[ -z "${stderr_log}" || ! -f "${stderr_log}" ]]; then
+        return 1
+    fi
+
+    # In shared agent sandboxes we intermittently hit rustc panics when it cannot spawn internal
+    # helper threads due to OS thread limits (EAGAIN/WouldBlock). These failures are transient and
+    # typically succeed after a short backoff.
+    #
+    # Example signatures:
+    # - "failed to spawn helper thread: ... Resource temporarily unavailable"
+    # - "failed to spawn work thread: ... Resource temporarily unavailable"
+    # - "Unable to install ctrlc handler: ... Resource temporarily unavailable"
+    if grep -q "failed to spawn helper thread" "${stderr_log}" \
+        || grep -q "failed to spawn work thread" "${stderr_log}" \
+        || grep -q "Unable to install ctrlc handler" "${stderr_log}"
+    then
+        return 0
+    fi
+
+    return 1
+}
+
+run_once() {
+    local stderr_log="${1}"
+    shift
+
+    # Chain: timeout (with SIGKILL fallback) wraps memory-limited command.
+    #
+    # Use the shared helper so we support both GNU `timeout` and macOS `gtimeout`
+    # consistently across scripts.
+    #
+    # Note: some agent environments lose executable bits in the working tree. Invoke
+    # our helper via `bash` so safe-run still works even if scripts are 0644.
+    bash "$SCRIPT_DIR/with-timeout.sh" "${TIMEOUT}" \
+        bash "$SCRIPT_DIR/run_limited.sh" --as "$MEM_LIMIT" -- "$@" \
+        2> >(tee "${stderr_log}" >&2)
+}
+
+# Retry Cargo commands when rustc hits transient OS resource limits. Keep the default small so real
+# failures aren't hidden for too long.
+MAX_RETRIES="${AERO_SAFE_RUN_RUSTC_RETRIES:-3}"
+if ! [[ "${MAX_RETRIES}" =~ ^[0-9]+$ ]] || [[ "${MAX_RETRIES}" -lt 1 ]]; then
+    MAX_RETRIES=1
+fi
+
+attempt=1
+while true; do
+    stderr_log="$(mktemp "${TMPDIR:-/tmp}/aero-safe-run-stderr.XXXXXX")"
+
+    set +e
+    run_once "${stderr_log}" "$@"
+    status=$?
+    set -e
+
+    if [[ "${status}" -eq 0 ]]; then
+        rm -f "${stderr_log}"
+        exit 0
+    fi
+
+    if [[ "${attempt}" -lt "${MAX_RETRIES}" ]] \
+        && [[ "${1:-}" == "cargo" || "${1:-}" == */cargo ]] \
+        && should_retry_rustc_thread_error "${stderr_log}"
+    then
+        # Exponential backoff with jitter (2-4, 4-8, 8-16, ...).
+        base=$((2 ** (attempt - 1)))
+        delay=$((base + RANDOM % (base + 1)))
+        echo "[safe-run] rustc hit transient resource limit; retrying in ${delay}s (attempt $((attempt + 1))/${MAX_RETRIES})" >&2
+        sleep "${delay}"
+        attempt=$((attempt + 1))
+        rm -f "${stderr_log}"
+        continue
+    fi
+
+    rm -f "${stderr_log}"
+    exit "${status}"
+done
