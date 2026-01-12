@@ -488,6 +488,20 @@ impl PcPlatform {
         )
     }
 
+    /// Convenience constructor for the canonical Windows 7 storage topology:
+    /// - AHCI HDD on `00:02.0` (port 0)
+    /// - IDE/ATAPI on `00:01.1` (secondary master is typically used for the install ISO)
+    pub fn new_with_win7_storage(ram_size: usize) -> Self {
+        Self::new_with_config(
+            ram_size,
+            PcPlatformConfig {
+                enable_ahci: true,
+                enable_ide: true,
+                ..Default::default()
+            },
+        )
+    }
+
     pub fn new_with_config(ram_size: usize, config: PcPlatformConfig) -> Self {
         let chipset = ChipsetState::new(false);
         let filter = AddressFilter::new(chipset.a20());
