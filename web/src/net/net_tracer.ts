@@ -256,8 +256,7 @@ export class NetTracer {
             interfaceId: 0,
             timestamp: rec.timestampNs,
             packet: rec.frame,
-            // Also set EPB direction flags for compatibility with readers that use
-            // `epb_flags` instead of (or in addition to) the interface list.
+            // Direction is encoded via the Enhanced Packet Block `epb_flags` option.
             flags: rec.direction === "guest_rx" ? PCAPNG_EPB_DIR_INBOUND : PCAPNG_EPB_DIR_OUTBOUND,
           });
           break;
