@@ -3,9 +3,33 @@
 use aero_net_e1000::{E1000Device, E1000_IO_SIZE};
 use aero_snapshot::io_snapshot_bridge::{apply_io_snapshot_to_device, device_state_from_io_snapshot};
 use aero_snapshot::DeviceId;
+use memory::MemoryBus;
+
+struct TestMem {
+    mem: Vec<u8>,
+}
+
+impl TestMem {
+    fn new(size: usize) -> Self {
+        Self { mem: vec![0; size] }
+    }
+}
+
+impl MemoryBus for TestMem {
+    fn read_physical(&mut self, paddr: u64, buf: &mut [u8]) {
+        let addr = paddr as usize;
+        buf.copy_from_slice(&self.mem[addr..addr + buf.len()]);
+    }
+
+    fn write_physical(&mut self, paddr: u64, buf: &[u8]) {
+        let addr = paddr as usize;
+        self.mem[addr..addr + buf.len()].copy_from_slice(buf);
+    }
+}
 
 #[test]
 fn e1000_io_snapshot_roundtrips_through_bridge() {
+    let mut mem = TestMem::new(0x20_000);
     let mut dev = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
 
     // Program BAR0 and leave BAR1 in probe mode.
@@ -13,25 +37,25 @@ fn e1000_io_snapshot_roundtrips_through_bridge() {
     dev.pci_config_write(0x14, 4, 0xFFFF_FFFF);
 
     // Select an IOADDR register.
-    dev.io_write(0x0, 4, 0x1234);
+    dev.io_write(&mut mem, 0x0, 4, 0x1234);
 
     // Some representative MMIO state (ring pointers + interrupts + one "other" register).
-    dev.mmio_write_u32(0x2800, 0x1111_0000); // RDBAL
-    dev.mmio_write_u32(0x2804, 0x2222_0000); // RDBAH
+    dev.mmio_write_u32(&mut mem, 0x2800, 0x1111_0000); // RDBAL
+    dev.mmio_write_u32(&mut mem, 0x2804, 0x2222_0000); // RDBAH
     // Make the ring length valid so restore doesn't clamp indices back to 0.
-    dev.mmio_write_u32(0x2808, 16 * 256); // RDLEN (16-byte descriptors)
-    dev.mmio_write_u32(0x2810, 0x33); // RDH
-    dev.mmio_write_u32(0x2818, 0x44); // RDT
+    dev.mmio_write_u32(&mut mem, 0x2808, 16 * 256); // RDLEN (16-byte descriptors)
+    dev.mmio_write_u32(&mut mem, 0x2810, 0x33); // RDH
+    dev.mmio_write_u32(&mut mem, 0x2818, 0x44); // RDT
 
-    dev.mmio_write_u32(0x00D0, 0xFFFF_FFFF); // IMS
-    dev.mmio_write_u32(0x00C8, 0x0000_0080); // ICS: RXT0
+    dev.mmio_write_u32(&mut mem, 0x00D0, 0xFFFF_FFFF); // IMS
+    dev.mmio_write_u32(&mut mem, 0x00C8, 0x0000_0080); // ICS: RXT0
     assert!(dev.irq_level());
 
-    dev.mmio_write_u32(0x1234, 0xCAFE_BABE);
+    dev.mmio_write_u32(&mut mem, 0x1234, 0xCAFE_BABE);
 
     // Program the MAC address via RAL0/RAH0.
-    dev.mmio_write_u32(0x5400, 0x4433_2211);
-    dev.mmio_write_u32(0x5404, 0x8000_6655);
+    dev.mmio_write_u32(&mut mem, 0x5400, 0x4433_2211);
+    dev.mmio_write_u32(&mut mem, 0x5404, 0x8000_6655);
 
     let state = device_state_from_io_snapshot(DeviceId::E1000, &dev);
 
