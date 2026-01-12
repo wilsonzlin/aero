@@ -218,9 +218,9 @@ backend.flush()?;
 
 ## Testing
 
-QEMU boot integration tests live under the workspace root `tests/` directory, but are registered
-under the `emulator` crate via `crates/emulator/Cargo.toml` `[[test]]` entries (e.g.
-`path = "../../tests/freedos_boot.rs"`). Always run them via `-p emulator` (not `-p aero`).
+QEMU boot integration tests live under the workspace root crate (`aero`) `tests/` directory (e.g.
+`tests/freedos_boot.rs`). The `emulator` crate also registers these files as `[[test]]` targets,
+but the canonical invocations use `-p aero`.
 
 ```bash
 # Run storage tests

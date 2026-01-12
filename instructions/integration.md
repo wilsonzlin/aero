@@ -355,9 +355,9 @@ The emulator exposes CPU/device state for debugging. See [`docs/16-debugging-and
 
 ## Testing
 
-QEMU boot integration tests live under the workspace root `tests/` directory, but are registered
-under the `emulator` crate via `crates/emulator/Cargo.toml` `[[test]]` entries (e.g.
-`path = "../../tests/boot_sector.rs"`). Always run them via `-p emulator` (not `-p aero`).
+QEMU boot integration tests live under the workspace root crate (`aero`) `tests/` directory (e.g.
+`tests/boot_sector.rs`). The `emulator` crate also registers these files as `[[test]]` targets,
+but the canonical invocations use `-p aero`.
 
 ```bash
 # Run BIOS tests
@@ -369,16 +369,14 @@ bash ./scripts/safe-run.sh cargo test -p aero-interrupts --locked
 bash ./scripts/safe-run.sh cargo test -p aero-timers --locked
 
 # Boot tests
-# Note: these integration tests live under the workspace root `tests/` directory, but are
-# registered under the `emulator` crate via `crates/emulator/Cargo.toml` `[[test]]` entries.
 # Note: the first `cargo test` in a clean/contended agent sandbox can take >10 minutes.
 # If you hit safe-run timeouts during compilation, bump the timeout via AERO_TIMEOUT.
-AERO_TIMEOUT=1200 bash ./scripts/safe-run.sh cargo test -p emulator --test boot_sector --locked
-AERO_TIMEOUT=1200 bash ./scripts/safe-run.sh cargo test -p emulator --test freedos_boot --locked
+AERO_TIMEOUT=1200 bash ./scripts/safe-run.sh cargo test -p aero --test boot_sector --locked
+AERO_TIMEOUT=1200 bash ./scripts/safe-run.sh cargo test -p aero --test freedos_boot --locked
 
 # Full Windows 7 boot (local only; requires a user-supplied Windows 7 disk image)
 bash ./scripts/prepare-windows7.sh
-AERO_TIMEOUT=1200 bash ./scripts/safe-run.sh cargo test -p emulator --test windows7_boot --locked -- --ignored
+AERO_TIMEOUT=1200 bash ./scripts/safe-run.sh cargo test -p aero --test windows7_boot --locked -- --ignored
 ```
 
 ---
