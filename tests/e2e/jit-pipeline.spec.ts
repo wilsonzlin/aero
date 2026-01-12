@@ -210,10 +210,22 @@ test('Tier-1 JIT pipeline compiles, installs, and executes a block', async ({ pa
     }
     test.skip(true, message);
   }
-  test.skip(
-    !HAS_JIT_WASM_BINARY,
-    'aero-jit-wasm package missing. Build it with `npm -w web run wasm:build` (or `npm -w web run wasm:build:single`).',
-  );
+  if (!HAS_JIT_WASM_BINARY) {
+    const message = [
+      'aero-jit-wasm package missing.',
+      '',
+      'Build it with (from the repo root):',
+      '  npm -w web run wasm:build',
+      '',
+      'Expected one of:',
+      `- ${JIT_WASM_BINARY_RELEASE} (+ ${JIT_WASM_JS_RELEASE})`,
+      `- ${JIT_WASM_BINARY_DEV} (+ ${JIT_WASM_JS_DEV})`,
+    ].join('\n');
+    if (process.env.CI) {
+      throw new Error(message);
+    }
+    test.skip(true, message);
+  }
 
   page.setDefaultTimeout(60_000);
 
