@@ -1250,9 +1250,8 @@ function renderAudioPanel(): HTMLElement {
       status.textContent = "Audio initialized and HDA playback demo started in CPU worker.";
       const timer = window.setInterval(() => {
         const metrics = output.getMetrics();
-        const header = output.ringBuffer.header;
-        const read = Atomics.load(header, 0) >>> 0;
-        const write = Atomics.load(header, 1) >>> 0;
+        const read = Atomics.load(output.ringBuffer.readIndex, 0) >>> 0;
+        const write = Atomics.load(output.ringBuffer.writeIndex, 0) >>> 0;
         const demoStats = hdaDemoStats;
         const demoLines: string[] = [];
         if (demoStats) {
@@ -1403,9 +1402,8 @@ function renderAudioPanel(): HTMLElement {
       status.textContent = `Audio initialized and HDA PCI device started (bus=${initInfo.pci.bus} dev=${initInfo.pci.device}).`;
       const timer = window.setInterval(() => {
         const metrics = output.getMetrics();
-        const header = output.ringBuffer.header;
-        const read = Atomics.load(header, 0) >>> 0;
-        const write = Atomics.load(header, 1) >>> 0;
+        const read = Atomics.load(output.ringBuffer.readIndex, 0) >>> 0;
+        const write = Atomics.load(output.ringBuffer.writeIndex, 0) >>> 0;
         status.textContent =
           `AudioContext: ${metrics.state}\n` +
           `sampleRate: ${metrics.sampleRate}\n` +

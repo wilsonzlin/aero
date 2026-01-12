@@ -24,9 +24,13 @@ test("AudioWorklet output runs and receives frames from IO-worker HDA PCI/MMIO d
   const initialIndices = await page.evaluate(() => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const out = (globalThis as any).__aeroAudioOutputHdaPciDevice;
+    const ring = out.ringBuffer as {
+      readIndex: Uint32Array;
+      writeIndex: Uint32Array;
+    };
     return {
-      read: Atomics.load(out.ringBuffer.header, 0) >>> 0,
-      write: Atomics.load(out.ringBuffer.header, 1) >>> 0,
+      read: Atomics.load(ring.readIndex, 0) >>> 0,
+      write: Atomics.load(ring.writeIndex, 0) >>> 0,
     };
   });
   const initialRead = initialIndices.read;
@@ -37,7 +41,8 @@ test("AudioWorklet output runs and receives frames from IO-worker HDA PCI/MMIO d
     (initialRead) => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const out = (globalThis as any).__aeroAudioOutputHdaPciDevice;
-      const read = Atomics.load(out.ringBuffer.header, 0) >>> 0;
+      const ring = out.ringBuffer as { readIndex: Uint32Array };
+      const read = Atomics.load(ring.readIndex, 0) >>> 0;
       return ((read - (initialRead as number)) >>> 0) > 0;
     },
     initialRead,
@@ -49,7 +54,8 @@ test("AudioWorklet output runs and receives frames from IO-worker HDA PCI/MMIO d
     (initialWrite) => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const out = (globalThis as any).__aeroAudioOutputHdaPciDevice;
-      const write = Atomics.load(out.ringBuffer.header, 1) >>> 0;
+      const ring = out.ringBuffer as { writeIndex: Uint32Array };
+      const write = Atomics.load(ring.writeIndex, 0) >>> 0;
       return ((write - (initialWrite as number)) >>> 0) > 0;
     },
     initialWrite,
@@ -63,8 +69,9 @@ test("AudioWorklet output runs and receives frames from IO-worker HDA PCI/MMIO d
     const out = (globalThis as any).__aeroAudioOutputHdaPciDevice;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const backend = (globalThis as any).__aeroAudioToneBackend;
-    const read = Atomics.load(out.ringBuffer.header, 0) >>> 0;
-    const write = Atomics.load(out.ringBuffer.header, 1) >>> 0;
+    const ring = out.ringBuffer as { readIndex: Uint32Array; writeIndex: Uint32Array };
+    const read = Atomics.load(ring.readIndex, 0) >>> 0;
+    const write = Atomics.load(ring.writeIndex, 0) >>> 0;
     return {
       enabled: out?.enabled,
       state: out?.context?.state,
