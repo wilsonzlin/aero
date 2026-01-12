@@ -71,13 +71,13 @@ test("AudioWorklet output runs and receives frames from IO-worker HDA PCI/MMIO d
     () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const out = (globalThis as any).__aeroAudioOutputHdaPciDevice;
-      if (!out?.ringBuffer?.samples || !out?.ringBuffer?.header) return false;
+      if (!out?.ringBuffer?.samples || !out?.ringBuffer?.writeIndex) return false;
       const samples: Float32Array = out.ringBuffer.samples;
-      const header: Uint32Array = out.ringBuffer.header;
+      const writeIndex: Uint32Array = out.ringBuffer.writeIndex;
       const cc = out.ringBuffer.channelCount | 0;
       const cap = out.ringBuffer.capacityFrames | 0;
       if (cc <= 0 || cap <= 0) return false;
-      const write = Atomics.load(header, 1) >>> 0;
+      const write = Atomics.load(writeIndex, 0) >>> 0;
       const framesToInspect = Math.min(1024, cap);
       const startFrame = (write - framesToInspect) >>> 0;
       let maxAbs = 0;
@@ -115,13 +115,13 @@ test("AudioWorklet output runs and receives frames from IO-worker HDA PCI/MMIO d
       underruns: typeof out?.getUnderrunCount === "function" ? out.getUnderrunCount() : null,
       overruns: typeof out?.getOverrunCount === "function" ? out.getOverrunCount() : null,
       maxAbsSample: (() => {
-        if (!out?.ringBuffer?.samples || !out?.ringBuffer?.header) return null;
+        if (!out?.ringBuffer?.samples || !out?.ringBuffer?.writeIndex) return null;
         const samples: Float32Array = out.ringBuffer.samples;
-        const header: Uint32Array = out.ringBuffer.header;
+        const writeIndex: Uint32Array = out.ringBuffer.writeIndex;
         const cc = out.ringBuffer.channelCount | 0;
         const cap = out.ringBuffer.capacityFrames | 0;
         if (cc <= 0 || cap <= 0) return null;
-        const write = Atomics.load(header, 1) >>> 0;
+        const write = Atomics.load(writeIndex, 0) >>> 0;
         const framesToInspect = Math.min(1024, cap);
         const startFrame = (write - framesToInspect) >>> 0;
         let maxAbs = 0;
