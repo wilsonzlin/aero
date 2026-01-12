@@ -156,6 +156,15 @@ fuzz_target!(|data: &[u8]| {
     let pow: u8 = u.int_in_range(0u8..=4).unwrap_or(0);
     let mem_size: usize = (64usize * 1024) << pow;
 
+    // 1..=4 ports to exercise multi-port decode logic without blowing up fuzz runtime.
+    let num_ports: usize = u.int_in_range(1usize..=4).unwrap_or(1);
+    let port_sel_seed: u8 = u.arbitrary().unwrap_or(0);
+    let port_idx: usize = if num_ports == 0 {
+        0
+    } else {
+        (port_sel_seed as usize) % num_ports
+    };
+
     // Seeds used to bias the location of command list/FIS/table/buffers.
     let clb_seed: u64 = u.arbitrary().unwrap_or(0);
     let fb_seed: u64 = u.arbitrary().unwrap_or(0);
@@ -220,14 +229,14 @@ fuzz_target!(|data: &[u8]| {
         Err(_) => return,
     };
 
-    let mut dev = AhciPciDevice::new(1);
-    dev.attach_drive(0, drive);
+    let mut dev = AhciPciDevice::new(num_ports);
+    dev.attach_drive(port_idx, drive);
 
     // Enable PCI bus mastering so `AhciPciDevice::process()` will run DMA.
     // Also set memory space decode (bit 1) for realism.
     dev.config_mut().set_command((1 << 1) | (1 << 2));
 
-    let port_base = PORT_BASE;
+    let port_base = PORT_BASE + (port_idx as u64) * 0x80;
 
     // Program registers with fuzz-controlled values (kept within our guest memory blob) so we can
     // reach deeper parsing logic.
