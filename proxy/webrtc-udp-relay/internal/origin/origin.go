@@ -344,17 +344,29 @@ func isIPv4NumberCandidate(part string) bool {
 }
 
 func parseIPv4Address(input string) (uint32, bool) {
-	parts := strings.Split(input, ".")
-	if len(parts) > 0 && parts[len(parts)-1] == "" {
-		// IPv4 parser removes exactly one trailing empty segment.
-		parts = parts[:len(parts)-1]
-	}
-	if len(parts) == 0 || len(parts) > 4 {
+	if input == "" {
 		return 0, false
 	}
 
-	nums := make([]uint64, 0, len(parts))
-	for _, part := range parts {
+	// IPv4 parser removes exactly one trailing empty segment.
+	if input[len(input)-1] == '.' {
+		input = input[:len(input)-1]
+	}
+	if input == "" {
+		return 0, false
+	}
+
+	var nums [4]uint64
+	count := 0
+	start := 0
+	for i := 0; i <= len(input); i++ {
+		if i != len(input) && input[i] != '.' {
+			continue
+		}
+		if count >= len(nums) {
+			return 0, false
+		}
+		part := input[start:i]
 		if part == "" {
 			return 0, false
 		}
@@ -362,11 +374,18 @@ func parseIPv4Address(input string) (uint32, bool) {
 		if !ok {
 			return 0, false
 		}
-		nums = append(nums, n)
+		nums[count] = n
+		count++
+		start = i + 1
+	}
+	if count == 0 {
+		return 0, false
 	}
 
-	if len(nums) > 1 {
-		for _, n := range nums[:len(nums)-1] {
+	numsSlice := nums[:count]
+
+	if len(numsSlice) > 1 {
+		for _, n := range numsSlice[:len(numsSlice)-1] {
 			if n > 255 {
 				return 0, false
 			}
@@ -374,15 +393,15 @@ func parseIPv4Address(input string) (uint32, bool) {
 	}
 
 	// The last component may use the remaining bytes (e.g. "127.1").
-	last := nums[len(nums)-1]
-	remainingBytes := 5 - len(nums)
+	last := numsSlice[len(numsSlice)-1]
+	remainingBytes := 5 - len(numsSlice)
 	maxLast := (uint64(1) << uint(8*remainingBytes)) - 1
 	if last > maxLast {
 		return 0, false
 	}
 
 	value := last
-	for i, n := range nums[:len(nums)-1] {
+	for i, n := range numsSlice[:len(numsSlice)-1] {
 		shift := uint(8 * (3 - i))
 		value += n << shift
 	}
