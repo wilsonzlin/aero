@@ -8,7 +8,10 @@ Guidelines:
 - Prefer built-in guest OS actions (e.g. Windows Control Panel tests) over external tools.
 - Do **not** commit proprietary artifacts (Windows images/ISOs, driver binaries, etc.). Link to existing repo guidance instead.
 
+For end-to-end subsystem validation plans (device model ↔ guest drivers ↔ web runtime), see:
+
+- [`docs/test-plans/`](../test-plans/)
+
 ## Checklists
 
 - Windows 7 audio (in-box HD Audio / Intel HDA): [`audio-windows7.md`](./audio-windows7.md)
-

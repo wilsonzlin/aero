@@ -11,6 +11,8 @@ This document describes *what* we test and *why*. For the practical, developer-f
 - [`TESTING.md`](./TESTING.md)
 - For deterministic manual smoke-test procedures (when automation isn’t sufficient), see:
   - [`docs/testing/`](./testing/)
+- For “single document” end-to-end subsystem plans (device model ↔ guest drivers ↔ web runtime), see:
+  - [`docs/test-plans/`](./test-plans/) (for example: virtio-input)
 
 ---
 
