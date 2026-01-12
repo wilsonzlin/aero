@@ -53,12 +53,24 @@ pub enum ResetEvent {
     System,
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy)]
 pub struct PcPlatformConfig {
     pub enable_hda: bool,
     pub enable_ahci: bool,
     pub enable_ide: bool,
     pub enable_e1000: bool,
+}
+
+impl Default for PcPlatformConfig {
+    fn default() -> Self {
+        Self {
+            enable_hda: false,
+            // The canonical PC platform always includes an ICH9 AHCI controller so guests can
+            // boot from SATA disks without additional configuration.
+            enable_ahci: true,
+            enable_ide: false,
+        }
+    }
 }
 
 struct HdaPciConfigDevice {
@@ -1234,14 +1246,6 @@ impl PcPlatform {
         bios_post(pci_cfg.bus_mut(), &mut self.pci_allocator).unwrap();
     }
 
-    pub fn attach_ahci_drive(&mut self, port: usize, drive: AtaDrive) {
-        self.ahci
-            .as_ref()
-            .expect("AHCI controller is not enabled on this PcPlatform")
-            .borrow_mut()
-            .attach_drive(port, drive);
-    }
-
     pub fn attach_ahci_drive_port0(&mut self, drive: AtaDrive) {
         self.attach_ahci_drive(0, drive);
     }
@@ -1373,6 +1377,20 @@ impl PcPlatform {
 
         let mut ide = ide.borrow_mut();
         ide.tick(&mut self.memory);
+    }
+
+    pub fn attach_ahci_drive(&mut self, port: usize, drive: AtaDrive) {
+        let Some(ahci) = self.ahci.as_ref() else {
+            return;
+        };
+        ahci.borrow_mut().attach_drive(port, drive);
+    }
+
+    pub fn detach_ahci_drive(&mut self, port: usize) {
+        let Some(ahci) = self.ahci.as_ref() else {
+            return;
+        };
+        ahci.borrow_mut().detach_drive(port);
     }
 
     pub fn poll_pci_intx_lines(&mut self) {

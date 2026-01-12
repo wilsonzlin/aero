@@ -24,16 +24,16 @@ fn write_cfg_u16(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset:
     pc.io.write(0xCFC, 2, u32::from(value));
 }
 
-fn read_ahci_bar5_base(pc: &mut PcPlatform) -> u64 {
-    let bdf = SATA_AHCI_ICH9.bdf;
-    let bar5 = read_cfg_u32(pc, bdf.bus, bdf.device, bdf.function, 0x24);
-    u64::from(bar5 & 0xffff_fff0)
-}
-
 fn write_cfg_u32(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8, value: u32) {
     pc.io
         .write(0xCF8, 4, cfg_addr(bus, device, function, offset));
     pc.io.write(0xCFC, 4, value);
+}
+
+fn read_ahci_bar5_base(pc: &mut PcPlatform) -> u64 {
+    let bdf = SATA_AHCI_ICH9.bdf;
+    let bar5 = read_cfg_u32(pc, bdf.bus, bdf.device, bdf.function, 0x24);
+    u64::from(bar5 & 0xffff_fff0)
 }
 
 const HBA_GHC: u64 = 0x04;
@@ -204,10 +204,28 @@ fn pc_platform_ahci_dma_and_intx_routing_work() {
         interrupts.pic_mut().set_masked(12, false);
     }
 
+    // Reprogram BAR5 within the platform's PCI MMIO window.
+    let bar5_base: u64 = 0xE100_0000;
+    write_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x24, bar5_base as u32);
+
+    // BAR5 MMIO should be gated by COMMAND.MEMORY (bit 1).
+    assert_eq!(
+        pc.memory.read_u32(bar5_base + HBA_GHC) & (GHC_AE | GHC_IE),
+        GHC_AE
+    );
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0000);
+    assert_eq!(pc.memory.read_u32(bar5_base + HBA_GHC), 0xFFFF_FFFF);
+
+    // Writes should be ignored while decoding is disabled.
+    pc.memory.write_u32(bar5_base + HBA_GHC, GHC_AE | GHC_IE);
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0002);
+    assert_eq!(
+        pc.memory.read_u32(bar5_base + HBA_GHC) & (GHC_AE | GHC_IE),
+        GHC_AE
+    );
+
     // Enable bus mastering so DMA is permitted (keep memory decoding enabled).
     write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0006);
-
-    let bar5_base = read_ahci_bar5_base(&mut pc);
 
     // Program HBA + port 0 registers.
     let clb = 0x1000u64;
