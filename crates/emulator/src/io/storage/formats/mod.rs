@@ -108,7 +108,8 @@ pub fn detect_format<S: ByteStorage>(storage: &mut S) -> DiskResult<DiskFormat> 
 
             let mut header = [0u8; 4096];
             storage.read_at(0, &mut header)?;
-            if aerosprs::SparseHeader::decode(&header).is_ok() {
+            let version = u32::from_le_bytes([header[8], header[9], header[10], header[11]]);
+            if version == 1 {
                 return Ok(DiskFormat::Sparse);
             }
         }

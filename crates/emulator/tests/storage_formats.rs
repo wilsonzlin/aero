@@ -457,6 +457,24 @@ fn detect_aerosprs_magic_without_valid_header_is_raw() {
 }
 
 #[test]
+fn detect_aerosprs_magic_with_invalid_sector_size_is_sparse() {
+    let mut storage = MemStorage::with_len(4096);
+    let mut header = [0u8; 4096];
+    header[..8].copy_from_slice(b"AEROSPRS");
+    header[8..12].copy_from_slice(&1u32.to_le_bytes()); // version
+    // Leave sector_size=0 (invalid) so open fails after detection.
+    storage.write_at(0, &header).unwrap();
+
+    assert_eq!(detect_format(&mut storage).unwrap(), DiskFormat::Sparse);
+
+    let res = VirtualDrive::open_auto(storage, 512, WriteCachePolicy::WriteThrough);
+    assert!(matches!(
+        res,
+        Err(DiskError::Unsupported("sector size (expected 512 or 4096)"))
+    ));
+}
+
+#[test]
 fn detect_aerosprs_magic_with_truncated_header_is_sparse() {
     let mut storage = MemStorage::with_len(8);
     storage.write_at(0, b"AEROSPRS").unwrap();
