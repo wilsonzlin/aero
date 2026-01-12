@@ -95,11 +95,25 @@ fn aero_storage_adapter_maps_underlying_disk_error_to_nvme_errors() {
 
     let mut buf = vec![0u8; 512];
     let err = disk.read_sectors(0, &mut buf).unwrap_err();
-    assert_eq!(err, DiskError::Io);
+    assert_eq!(
+        err,
+        DiskError::OutOfRange {
+            lba: 0,
+            sectors: 1,
+            capacity_sectors: 1
+        }
+    );
 
     let payload = vec![0xAAu8; 512];
     let err = disk.write_sectors(0, &payload).unwrap_err();
-    assert_eq!(err, DiskError::Io);
+    assert_eq!(
+        err,
+        DiskError::OutOfRange {
+            lba: 0,
+            sectors: 1,
+            capacity_sectors: 1
+        }
+    );
 
     let err = disk.flush().unwrap_err();
     assert_eq!(err, DiskError::Io);
