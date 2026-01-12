@@ -446,20 +446,6 @@ export interface WasmApi {
         render_frame(frameSeq: number, nowMs: number): number;
         free(): void;
     };
-
-    /**
-     * Deterministic guest CPU payload runner used by the PF-008 benchmark suite.
-     *
-     * Optional while older WASM builds are still in circulation.
-     */
-    GuestCpuBenchHarness?: new () => {
-        payload_info(variant: string): { bitness: number; expected_hi: number; expected_lo: number; uses_scratch: boolean };
-        run_payload_once(
-            variant: string,
-            iters: number,
-        ): { checksum_hi: number; checksum_lo: number; retired_hi: number; retired_lo: number };
-        free(): void;
-    };
     AeroApi: new () => { version(): string; free(): void };
     /**
      * Legacy deterministic stub VM used for snapshotting demos.
@@ -819,7 +805,6 @@ function toApi(mod: RawWasmModule): WasmApi {
         GuestCpuBenchHarness: mod.GuestCpuBenchHarness,
         UsbPassthroughDemo: mod.UsbPassthroughDemo,
         CpuWorkerDemo: mod.CpuWorkerDemo,
-        GuestCpuBenchHarness: mod.GuestCpuBenchHarness,
         AeroApi: mod.AeroApi,
         DemoVm: mod.DemoVm,
         Machine: mod.Machine,
