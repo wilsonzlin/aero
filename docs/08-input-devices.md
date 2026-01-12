@@ -20,6 +20,9 @@ The WASM-facing wrapper exposes input injection methods that map directly to PS/
   - `Machine.inject_mouse_buttons_mask(mask)` uses DOM `MouseEvent.buttons` bitmask:
     - bit0 (`0x01`): left, bit1 (`0x02`): right, bit2 (`0x04`): middle (higher bits ignored)
   - Convenience helpers also exist: `inject_mouse_left/right/middle(pressed)`.
+  - For ergonomics, `crates/aero-wasm` also exports enums that mirror these DOM mappings:
+    - `MouseButton` (`Left=0`, `Middle=1`, `Right=2`)
+    - `MouseButtons` bit values (`Left=1`, `Right=2`, `Middle=4`) which can be OR'd into a mask
 
 Example:
 
