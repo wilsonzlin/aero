@@ -45,7 +45,7 @@ use std::rc::Rc;
 mod cpu_core;
 mod pci_mmio;
 pub use cpu_core::{PcCpuBus, PcInterruptController};
-pub use pci_mmio::{PciBarMmioHandler, PciBarMmioRouter};
+pub use pci_mmio::{PciBarMmioHandler, PciBarMmioRouter, PciConfigSyncedMmioBar};
 
 // AHCI (ICH9) uses BAR5 (ABAR). The device model gates MMIO on its internal PCI command register,
 // while the platform maintains a separate guest-facing PCI config space. Use the generic

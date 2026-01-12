@@ -53,7 +53,10 @@ impl<T: PciBarMmioHandler> PciBarMmioHandler for SharedPciBarMmioHandler<T> {
 ///
 /// This wrapper is BAR-scoped: it syncs the PCI command register and the base of the BAR being
 /// accessed.
-pub(crate) struct PciConfigSyncedMmioBar<T> {
+///
+/// This replaces older one-off wrappers like `PcAhciMmioBar` / `PcNvmeMmioBar` by allowing any
+/// `T: PciDevice + MmioHandler` to be registered via a single generic adapter.
+pub struct PciConfigSyncedMmioBar<T> {
     pci_cfg: SharedPciConfigPorts,
     dev: Rc<RefCell<T>>,
     bdf: PciBdf,
@@ -61,7 +64,7 @@ pub(crate) struct PciConfigSyncedMmioBar<T> {
 }
 
 impl<T> PciConfigSyncedMmioBar<T> {
-    pub(crate) fn new(
+    pub fn new(
         pci_cfg: SharedPciConfigPorts,
         dev: Rc<RefCell<T>>,
         bdf: PciBdf,
