@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { computeGuestRamLayout, guestToLinear } from "./shared_layout";
+import { assertWasmMemoryWiring } from "./wasm_memory_probe";
 import { initWasm } from "./wasm_loader";
 
 function sharedMemorySupported(): boolean {
@@ -52,6 +53,7 @@ describe("runtime/wasm_guest_layout", () => {
         dv.setUint32(linear, 0x12345678, true);
 
         expect(api.mem_load_u32(linear) >>> 0).toBe(0x12345678);
+        assertWasmMemoryWiring({ api, memory, linearOffset: linear, context: `wasm_guest_layout.test:${variant}` });
 
         expect(() => guestToLinear(jsLayout, -1)).toThrow();
         expect(() => guestToLinear(jsLayout, jsLayout.guest_size)).toThrow();

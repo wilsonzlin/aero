@@ -366,6 +366,7 @@ describe("usb/UHCI synthetic HID passthrough integration (WASM)", () => {
       throw err;
     }
 
+    assertWasmMemoryWiring({ api, memory, context: "uhci_synthetic_hid_integration.test (load_state)" });
     if (!api.UhciRuntime) return;
     if (!api.UsbHidPassthroughBridge) return;
 
