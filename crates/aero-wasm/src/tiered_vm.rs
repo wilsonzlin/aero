@@ -84,6 +84,12 @@ extern "C" {
     #[wasm_bindgen(js_namespace = globalThis, js_name = __aero_io_port_write)]
     fn js_io_port_write(port: u32, size: u32, value: u32);
 
+    #[wasm_bindgen(js_namespace = globalThis, js_name = __aero_mmio_read)]
+    fn js_mmio_read(addr: u64, size: u32) -> u32;
+
+    #[wasm_bindgen(js_namespace = globalThis, js_name = __aero_mmio_write)]
+    fn js_mmio_write(addr: u64, size: u32, value: u32);
+
     #[wasm_bindgen(js_namespace = globalThis, js_name = __aero_jit_call)]
     fn js_jit_call(table_index: u32, cpu_ptr: u32, jit_ctx_ptr: u32) -> i64;
 }
@@ -213,6 +219,13 @@ impl WasmBus {
     }
 
     #[inline]
+    fn range_in_ram(&self, vaddr: u64, len: usize) -> bool {
+        vaddr
+            .checked_add(len as u64)
+            .is_some_and(|end| end <= self.guest_size)
+    }
+
+    #[inline]
     fn ptr(&self, vaddr: u64, len: usize) -> Result<*const u8, Exception> {
         let len_u64 = len as u64;
         let end = vaddr.checked_add(len_u64).ok_or(Exception::MemoryFault)?;
@@ -261,75 +274,179 @@ impl WasmBus {
 impl CpuBus for WasmBus {
     #[inline]
     fn read_u8(&mut self, vaddr: u64) -> Result<u8, Exception> {
-        Ok(self.read_scalar::<1>(vaddr)?[0])
+        if self.range_in_ram(vaddr, 1) {
+            Ok(self.read_scalar::<1>(vaddr)?[0])
+        } else {
+            Ok(js_mmio_read(vaddr, 1) as u8)
+        }
     }
 
     #[inline]
     fn read_u16(&mut self, vaddr: u64) -> Result<u16, Exception> {
-        Ok(u16::from_le_bytes(self.read_scalar::<2>(vaddr)?))
+        if self.range_in_ram(vaddr, 2) {
+            Ok(u16::from_le_bytes(self.read_scalar::<2>(vaddr)?))
+        } else {
+            Ok(js_mmio_read(vaddr, 2) as u16)
+        }
     }
 
     #[inline]
     fn read_u32(&mut self, vaddr: u64) -> Result<u32, Exception> {
-        Ok(u32::from_le_bytes(self.read_scalar::<4>(vaddr)?))
+        if self.range_in_ram(vaddr, 4) {
+            Ok(u32::from_le_bytes(self.read_scalar::<4>(vaddr)?))
+        } else {
+            Ok(js_mmio_read(vaddr, 4))
+        }
     }
 
     #[inline]
     fn read_u64(&mut self, vaddr: u64) -> Result<u64, Exception> {
-        Ok(u64::from_le_bytes(self.read_scalar::<8>(vaddr)?))
+        if self.range_in_ram(vaddr, 8) {
+            Ok(u64::from_le_bytes(self.read_scalar::<8>(vaddr)?))
+        } else {
+            let lo = js_mmio_read(vaddr, 4) as u64;
+            let hi_addr = vaddr.checked_add(4).ok_or(Exception::MemoryFault)?;
+            let hi = js_mmio_read(hi_addr, 4) as u64;
+            Ok(lo | (hi << 32))
+        }
     }
 
     #[inline]
     fn read_u128(&mut self, vaddr: u64) -> Result<u128, Exception> {
-        Ok(u128::from_le_bytes(self.read_scalar::<16>(vaddr)?))
+        if self.range_in_ram(vaddr, 16) {
+            Ok(u128::from_le_bytes(self.read_scalar::<16>(vaddr)?))
+        } else {
+            let mut out = 0u128;
+            for i in 0..4u64 {
+                let addr = vaddr
+                    .checked_add(i * 4)
+                    .ok_or(Exception::MemoryFault)?;
+                let part = js_mmio_read(addr, 4) as u128;
+                out |= part << ((i * 32) as u32);
+            }
+            Ok(out)
+        }
     }
 
     #[inline]
     fn write_u8(&mut self, vaddr: u64, val: u8) -> Result<(), Exception> {
-        self.write_scalar::<1>(vaddr, [val])
+        if self.range_in_ram(vaddr, 1) {
+            self.write_scalar::<1>(vaddr, [val])
+        } else {
+            js_mmio_write(vaddr, 1, u32::from(val));
+            Ok(())
+        }
     }
 
     #[inline]
     fn write_u16(&mut self, vaddr: u64, val: u16) -> Result<(), Exception> {
-        self.write_scalar::<2>(vaddr, val.to_le_bytes())
+        if self.range_in_ram(vaddr, 2) {
+            self.write_scalar::<2>(vaddr, val.to_le_bytes())
+        } else {
+            js_mmio_write(vaddr, 2, u32::from(val));
+            Ok(())
+        }
     }
 
     #[inline]
     fn write_u32(&mut self, vaddr: u64, val: u32) -> Result<(), Exception> {
-        self.write_scalar::<4>(vaddr, val.to_le_bytes())
+        if self.range_in_ram(vaddr, 4) {
+            self.write_scalar::<4>(vaddr, val.to_le_bytes())
+        } else {
+            js_mmio_write(vaddr, 4, val);
+            Ok(())
+        }
     }
 
     #[inline]
     fn write_u64(&mut self, vaddr: u64, val: u64) -> Result<(), Exception> {
-        self.write_scalar::<8>(vaddr, val.to_le_bytes())
+        if self.range_in_ram(vaddr, 8) {
+            self.write_scalar::<8>(vaddr, val.to_le_bytes())
+        } else {
+            let lo = val as u32;
+            let hi = (val >> 32) as u32;
+            js_mmio_write(vaddr, 4, lo);
+            let hi_addr = vaddr.checked_add(4).ok_or(Exception::MemoryFault)?;
+            js_mmio_write(hi_addr, 4, hi);
+            Ok(())
+        }
     }
 
     #[inline]
     fn write_u128(&mut self, vaddr: u64, val: u128) -> Result<(), Exception> {
-        self.write_scalar::<16>(vaddr, val.to_le_bytes())
+        if self.range_in_ram(vaddr, 16) {
+            self.write_scalar::<16>(vaddr, val.to_le_bytes())
+        } else {
+            for i in 0..4u64 {
+                let addr = vaddr
+                    .checked_add(i * 4)
+                    .ok_or(Exception::MemoryFault)?;
+                let part = (val >> ((i * 32) as u32)) as u32;
+                js_mmio_write(addr, 4, part);
+            }
+            Ok(())
+        }
     }
 
     fn read_bytes(&mut self, vaddr: u64, dst: &mut [u8]) -> Result<(), Exception> {
-        let ptr = self.ptr(vaddr, dst.len())?;
-        // Safety: `ptr()` bounds-checks.
-        unsafe {
-            core::ptr::copy_nonoverlapping(ptr, dst.as_mut_ptr(), dst.len());
+        if dst.is_empty() {
+            return Ok(());
         }
-        Ok(())
+
+        if self.range_in_ram(vaddr, dst.len()) {
+            let ptr = self.ptr(vaddr, dst.len())?;
+            // Safety: `ptr()` bounds-checks.
+            unsafe {
+                core::ptr::copy_nonoverlapping(ptr, dst.as_mut_ptr(), dst.len());
+            }
+            Ok(())
+        } else {
+            for (i, slot) in dst.iter_mut().enumerate() {
+                let addr = vaddr
+                    .checked_add(i as u64)
+                    .ok_or(Exception::MemoryFault)?;
+                *slot = CpuBus::read_u8(self, addr)?;
+            }
+            Ok(())
+        }
     }
 
     fn write_bytes(&mut self, vaddr: u64, src: &[u8]) -> Result<(), Exception> {
-        let ptr = self.ptr_mut(vaddr, src.len())?;
-        self.log_write(vaddr, src.len());
-        // Safety: `ptr_mut()` bounds-checks.
-        unsafe {
-            core::ptr::copy_nonoverlapping(src.as_ptr(), ptr, src.len());
+        if src.is_empty() {
+            return Ok(());
         }
-        Ok(())
+
+        if self.range_in_ram(vaddr, src.len()) {
+            let ptr = self.ptr_mut(vaddr, src.len())?;
+            self.log_write(vaddr, src.len());
+            // Safety: `ptr_mut()` bounds-checks.
+            unsafe {
+                core::ptr::copy_nonoverlapping(src.as_ptr(), ptr, src.len());
+            }
+            Ok(())
+        } else {
+            self.preflight_write_bytes(vaddr, src.len())?;
+            for (i, byte) in src.iter().copied().enumerate() {
+                let addr = vaddr
+                    .checked_add(i as u64)
+                    .ok_or(Exception::MemoryFault)?;
+                CpuBus::write_u8(self, addr, byte)?;
+            }
+            Ok(())
+        }
     }
 
     fn preflight_write_bytes(&mut self, vaddr: u64, len: usize) -> Result<(), Exception> {
-        let _ = self.ptr_mut(vaddr, len)?;
+        // Validate address arithmetic so callers get a deterministic exception instead of wraparound.
+        let _ = vaddr
+            .checked_add(len as u64)
+            .ok_or(Exception::MemoryFault)?;
+
+        // Only preflight in-RAM pointer ranges. Out-of-RAM ranges are treated as MMIO and cannot be
+        // validated without performing the access.
+        if self.range_in_ram(vaddr, len) {
+            let _ = self.ptr_mut(vaddr, len)?;
+        }
         Ok(())
     }
 
@@ -340,6 +457,9 @@ impl CpuBus for WasmBus {
     fn bulk_copy(&mut self, dst: u64, src: u64, len: usize) -> Result<bool, Exception> {
         if len == 0 || dst == src {
             return Ok(true);
+        }
+        if !self.range_in_ram(dst, len) || !self.range_in_ram(src, len) {
+            return Ok(false);
         }
         let dst_ptr = self.ptr_mut(dst, len)?;
         let src_ptr = self.ptr(src, len)?;
@@ -363,6 +483,9 @@ impl CpuBus for WasmBus {
             .len()
             .checked_mul(repeat)
             .ok_or(Exception::MemoryFault)?;
+        if !self.range_in_ram(dst, total) {
+            return Ok(false);
+        }
         let dst_ptr = self.ptr_mut(dst, total)?;
         self.log_write(dst, total);
         // Safety: `dst_ptr` covers `total` bytes.
@@ -402,11 +525,19 @@ impl CpuBus for WasmBus {
 
 impl Tier1Bus for WasmBus {
     fn read_u8(&self, addr: u64) -> u8 {
-        self.read_scalar::<1>(addr).map(|b| b[0]).unwrap_or(0)
+        if self.range_in_ram(addr, 1) {
+            self.read_scalar::<1>(addr).map(|b| b[0]).unwrap_or(0)
+        } else {
+            js_mmio_read(addr, 1) as u8
+        }
     }
 
     fn write_u8(&mut self, addr: u64, value: u8) {
-        let _ = self.write_scalar::<1>(addr, [value]);
+        if self.range_in_ram(addr, 1) {
+            let _ = self.write_scalar::<1>(addr, [value]);
+        } else {
+            js_mmio_write(addr, 1, u32::from(value));
+        }
     }
 }
 
@@ -1234,4 +1365,112 @@ fn page_snapshot_from_js(obj: JsValue) -> Result<PageVersionSnapshot, JsValue> {
         "snapshot.version",
     )?;
     Ok(PageVersionSnapshot { page, version })
+}
+
+// -----------------------------------------------------------------------------
+// wasm-bindgen tests (MMIO routing)
+// -----------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::WasmBus;
+
+    use aero_cpu_core::CpuBus;
+    use js_sys::{Array, Reflect};
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen::prelude::*;
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    #[wasm_bindgen(inline_js = r#"
+export function installAeroTieredMmioTestShims() {
+  globalThis.__aero_test_tiered_mmio_calls = [];
+
+  globalThis.__aero_mmio_read = function (addr, size) {
+    globalThis.__aero_test_tiered_mmio_calls.push({
+      kind: "read",
+      addr: Number(addr),
+      size: size >>> 0,
+    });
+    return Number(addr) >>> 0;
+  };
+
+  globalThis.__aero_mmio_write = function (addr, size, value) {
+    globalThis.__aero_test_tiered_mmio_calls.push({
+      kind: "write",
+      addr: Number(addr),
+      size: size >>> 0,
+      value: value >>> 0,
+    });
+  };
+
+  if (typeof globalThis.__aero_io_port_read !== "function") {
+    globalThis.__aero_io_port_read = function (_port, _size) { return 0; };
+  }
+  if (typeof globalThis.__aero_io_port_write !== "function") {
+    globalThis.__aero_io_port_write = function (_port, _size, _value) { };
+  }
+  if (typeof globalThis.__aero_jit_call !== "function") {
+    globalThis.__aero_jit_call = function (_tableIndex, _cpuPtr, _jitCtxPtr) { return -1n; };
+  }
+}
+"#)]
+    extern "C" {
+        fn installAeroTieredMmioTestShims();
+    }
+
+    fn mmio_calls() -> Array {
+        let global = js_sys::global();
+        let calls = Reflect::get(&global, &JsValue::from_str("__aero_test_tiered_mmio_calls"))
+            .expect("get __aero_test_tiered_mmio_calls");
+        calls
+            .dyn_into::<Array>()
+            .expect("__aero_test_tiered_mmio_calls must be an Array")
+    }
+
+    fn call_prop_u32(call: &JsValue, key: &str) -> u32 {
+        Reflect::get(call, &JsValue::from_str(key))
+            .expect("prop exists")
+            .as_f64()
+            .expect("prop is number")
+            .round() as u32
+    }
+
+    fn call_prop_str(call: &JsValue, key: &str) -> String {
+        Reflect::get(call, &JsValue::from_str(key))
+            .expect("prop exists")
+            .as_string()
+            .expect("prop is string")
+    }
+
+    #[wasm_bindgen_test]
+    fn wasm_tiered_bus_routes_out_of_ram_accesses_to_mmio() {
+        installAeroTieredMmioTestShims();
+
+        let mut guest = vec![0u8; 0x10];
+        let guest_base = guest.as_mut_ptr() as u32;
+        let guest_size = guest.len() as u64;
+
+        let mut bus = WasmBus::new(guest_base, guest_size);
+
+        bus.write_u32(0, 0x1122_3344).expect("write_u32");
+        assert_eq!(bus.read_u32(0).expect("read_u32"), 0x1122_3344);
+        assert_eq!(mmio_calls().length(), 0, "unexpected MMIO calls for RAM access");
+
+        assert_eq!(bus.read_u32(0x20).expect("mmio read_u32"), 0x20);
+        bus.write_u16(0x30, 0x1234).expect("mmio write_u16");
+
+        let calls = mmio_calls();
+        assert_eq!(calls.length(), 2);
+
+        let c0 = calls.get(0);
+        assert_eq!(call_prop_str(&c0, "kind"), "read");
+        assert_eq!(call_prop_u32(&c0, "addr"), 0x20);
+        assert_eq!(call_prop_u32(&c0, "size"), 4);
+
+        let c1 = calls.get(1);
+        assert_eq!(call_prop_str(&c1, "kind"), "write");
+        assert_eq!(call_prop_u32(&c1, "addr"), 0x30);
+        assert_eq!(call_prop_u32(&c1, "size"), 2);
+        assert_eq!(call_prop_u32(&c1, "value"), 0x1234);
+    }
 }

@@ -166,7 +166,8 @@ fn virtio_net_pci_bridge_smoke_and_irq_latch() {
 
     // Notify queue 1: notify base + notify_mult*1 (notify_mult=4).
     bridge.mmio_write(NOTIFY + 4, 2, 1);
-    // Modern virtio-pci defers queue processing until the device is polled.
+    // Modern virtio-pci transport records the notify and defers queue processing until the
+    // platform integration services queues via `poll()`/`process_notified_queues()`.
     bridge.poll();
 
     assert!(
