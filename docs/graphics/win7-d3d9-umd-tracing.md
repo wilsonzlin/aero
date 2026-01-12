@@ -93,6 +93,8 @@ The dump uses `OutputDebugStringA` by default.
 
 If you are tracing a **console app** (for example one of the Win7 guest validation tests), you can also set `AEROGPU_D3D9_TRACE_STDERR=1` so trace output appears in the console `stderr` stream.
 
+If you run the guest tests via `aerogpu_test_runner.exe --log-dir=...`, enabling `AEROGPU_D3D9_TRACE_STDERR=1` will capture trace dumps into the per-test `*.stderr.txt` files, which is often more convenient than DebugView.
+
 Recommended workflow on Win7:
 
 1. Run **Sysinternals DebugView** as Administrator

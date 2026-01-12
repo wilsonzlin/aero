@@ -266,6 +266,14 @@ set AEROGPU_D3D9_TRACE_STDERR=1
 
 so the dump is echoed to the process `stderr` stream.
 
+This pairs well with the suite runner’s per-test log capture:
+
+```cmd
+bin\\aerogpu_test_runner.exe --log-dir=logs
+```
+
+When `AEROGPU_D3D9_TRACE_STDERR=1` is set, the trace dump will be captured in `logs\\<test>.stderr.txt`.
+
 ### JSON output
 
 To write an aggregated suite report:

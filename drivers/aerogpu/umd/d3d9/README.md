@@ -264,6 +264,11 @@ See:
 
 - `docs/graphics/win7-d3d9-umd-tracing.md`
 
+Notes:
+
+- On Windows, trace dumps are emitted via `OutputDebugStringA` by default (view with DebugView/WinDbg). If you want to capture trace output to a console/CI log, set `AEROGPU_D3D9_TRACE_STDERR=1` to also echo the output to `stderr`.
+- `AEROGPU_D3D9_TRACE_DUMP_ON_STUB=1` is useful for early bring-up: it dumps once on the first stubbed DDI hit (even when the stub returns `S_OK`).
+
 ## Crash-proof D3D9UMDDI vtables (Win7 runtime)
 
 The Win7 D3D9 runtime (and `dwm.exe`) can call a wider set of DDIs than the initial AeroGPU bring-up implementation provides. The UMD **must never** return a partially-populated `D3D9DDI_DEVICEFUNCS` / `D3D9DDI_ADAPTERFUNCS` table where the runtime can call a **NULL** function pointer (that would crash the process before we can even trace the call).
