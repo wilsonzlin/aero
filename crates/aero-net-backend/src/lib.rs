@@ -88,6 +88,20 @@ impl<B: NetworkBackend> NetworkBackend for Option<B> {
     }
 }
 
+impl<T: NetworkBackend + ?Sized> NetworkBackend for std::cell::RefCell<T> {
+    fn transmit(&mut self, frame: Vec<u8>) {
+        self.get_mut().transmit(frame);
+    }
+
+    fn poll_receive(&mut self) -> Option<Vec<u8>> {
+        self.get_mut().poll_receive()
+    }
+
+    fn l2_ring_stats(&self) -> Option<L2TunnelRingBackendStats> {
+        self.borrow().l2_ring_stats()
+    }
+}
+
 impl<T: NetworkBackend + ?Sized> NetworkBackend for std::rc::Rc<std::cell::RefCell<T>> {
     fn transmit(&mut self, frame: Vec<u8>) {
         self.borrow_mut().transmit(frame);
@@ -193,6 +207,49 @@ mod tests {
         assert_eq!(backend.poll_receive(), None);
 
         assert_eq!(inner.borrow().tx, vec![vec![1, 2, 3]]);
+    }
+
+    #[test]
+    fn network_backend_is_implemented_for_refcell() {
+        #[derive(Default)]
+        struct Backend {
+            tx: Vec<Vec<u8>>,
+            rx: VecDeque<Vec<u8>>,
+        }
+
+        impl NetworkBackend for Backend {
+            fn transmit(&mut self, frame: Vec<u8>) {
+                self.tx.push(frame);
+            }
+
+            fn poll_receive(&mut self) -> Option<Vec<u8>> {
+                self.rx.pop_front()
+            }
+
+            fn l2_ring_stats(&self) -> Option<L2TunnelRingBackendStats> {
+                Some(L2TunnelRingBackendStats {
+                    tx_pushed_frames: 1,
+                    ..Default::default()
+                })
+            }
+        }
+
+        let mut backend = RefCell::new(Backend::default());
+        backend.get_mut().rx.push_back(vec![9, 9, 9]);
+
+        backend.transmit(vec![1, 2, 3]);
+
+        assert_eq!(
+            backend.l2_ring_stats(),
+            Some(L2TunnelRingBackendStats {
+                tx_pushed_frames: 1,
+                ..Default::default()
+            })
+        );
+        assert_eq!(backend.poll_receive(), Some(vec![9, 9, 9]));
+        assert_eq!(backend.poll_receive(), None);
+
+        assert_eq!(backend.borrow().tx, vec![vec![1, 2, 3]]);
     }
 
     #[test]

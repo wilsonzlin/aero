@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::sync::{Arc, Mutex};
 
 use aero_ipc::ring::{PopError, PushError};
@@ -83,6 +84,20 @@ impl FrameRing for aero_ipc::ring::RingBuffer {
 
     fn try_pop_vec(&self) -> Result<Vec<u8>, PopError> {
         aero_ipc::ring::RingBuffer::try_pop(self)
+    }
+}
+
+impl<T: FrameRing + ?Sized> FrameRing for RefCell<T> {
+    fn capacity_bytes(&self) -> usize {
+        self.borrow().capacity_bytes()
+    }
+
+    fn try_push(&self, payload: &[u8]) -> Result<(), PushError> {
+        self.borrow().try_push(payload)
+    }
+
+    fn try_pop_vec(&self) -> Result<Vec<u8>, PopError> {
+        self.borrow().try_pop_vec()
     }
 }
 
@@ -272,6 +287,7 @@ impl<TX: FrameRing, RX: FrameRing> NetworkBackend for L2TunnelRingBackend<TX, RX
 #[cfg(test)]
 mod tests {
     use std::cell::Cell;
+    use std::cell::RefCell;
     use std::rc::Rc;
     use std::sync::{Arc, Mutex};
 
@@ -572,6 +588,19 @@ mod tests {
         assert_eq!(tx.try_pop(), Ok(vec![4, 5]));
 
         rx.try_push(&[8]).unwrap();
+        assert_eq!(backend.poll_receive(), Some(vec![8]));
+    }
+
+    #[test]
+    fn backend_works_with_refcell_rings_via_frame_ring_impl() {
+        let tx = Rc::new(RefCell::new(RingBuffer::new(64)));
+        let rx = Rc::new(RefCell::new(RingBuffer::new(64)));
+        let mut backend = L2TunnelRingBackend::new(tx.clone(), rx.clone());
+
+        backend.transmit(vec![4, 5]);
+        assert_eq!(tx.borrow().try_pop(), Ok(vec![4, 5]));
+
+        rx.borrow().try_push(&[8]).unwrap();
         assert_eq!(backend.poll_receive(), Some(vec![8]));
     }
 
