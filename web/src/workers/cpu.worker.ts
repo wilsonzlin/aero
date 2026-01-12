@@ -1044,6 +1044,10 @@ function attachMicrophoneRingBuffer(msg: SetMicrophoneRingBufferMessage): void {
     if (capacity === 0) {
       throw new Error("mic ring buffer capacity must be non-zero");
     }
+    const MAX_CAPACITY_SAMPLES = 1_048_576; // keep in sync with mic_ring.js + Rust MicBridge cap
+    if (capacity > MAX_CAPACITY_SAMPLES) {
+      throw new Error(`mic ring buffer capacity too large: ${capacity} (max ${MAX_CAPACITY_SAMPLES})`);
+    }
 
     const requiredBytes = MIC_HEADER_BYTES + capacity * Float32Array.BYTES_PER_ELEMENT;
     if (ringBuffer.byteLength < requiredBytes) {
