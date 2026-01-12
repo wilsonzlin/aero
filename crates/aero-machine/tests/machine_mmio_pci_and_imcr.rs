@@ -336,3 +336,73 @@ fn hpet_mmio_writes_can_raise_ioapic_interrupt_in_apic_mode() {
     let interrupts = m.platform_interrupts().unwrap();
     assert_eq!(interrupts.borrow().get_pending(), Some(vector));
 }
+
+#[test]
+fn pci_bar_reprogramming_relocates_io_and_mmio_routing_for_e1000() {
+    let mut cfg = mmio_machine_config();
+    cfg.enable_e1000 = true;
+    let mut m = Machine::new(cfg).unwrap();
+    enable_a20(&mut m);
+
+    let bdf = profile::NIC_E1000_82540EM.bdf;
+
+    let bar0 = cfg_read(&mut m, bdf, 0x10, 4);
+    let bar1 = cfg_read(&mut m, bdf, 0x14, 4);
+    let command = cfg_read(&mut m, bdf, 0x04, 2) as u16;
+    assert!(
+        (command & 0x3) == 0x3,
+        "expected IO+MEM decoding enabled before BAR relocation"
+    );
+
+    let mmio_base = u64::from(bar0 & !0xF);
+    let io_base = u16::try_from(bar1 & !0x3).expect("IO BAR must fit in u16");
+    assert_ne!(mmio_base, 0);
+    assert_ne!(io_base, 0);
+
+    // Sanity: the original BAR bases should route to the device.
+    assert_ne!(m.read_physical_u32(mmio_base), 0xFFFF_FFFF);
+    assert_ne!(m.io_read(io_base, 4), 0xFFFF_FFFF);
+
+    // Compute new bases by shifting each BAR by its own size (preserves alignment).
+    let bar0_size = profile::NIC_E1000_82540EM
+        .build_config_space()
+        .bar_definition(0)
+        .expect("E1000 BAR0 definition")
+        .size();
+    let bar1_size = profile::NIC_E1000_82540EM
+        .build_config_space()
+        .bar_definition(1)
+        .expect("E1000 BAR1 definition")
+        .size();
+
+    let new_mmio_base = mmio_base + bar0_size;
+    let new_io_base_u64 = u64::from(io_base) + bar1_size;
+    let new_io_base = u16::try_from(new_io_base_u64).expect("relocated IO BAR must fit in u16");
+
+    // Preserve BAR flag bits.
+    let bar0_flags = bar0 & 0xF;
+    let bar1_flags = bar1 & 0x3;
+
+    cfg_write(
+        &mut m,
+        bdf,
+        0x10,
+        4,
+        (new_mmio_base as u32) | bar0_flags,
+    );
+    cfg_write(
+        &mut m,
+        bdf,
+        0x14,
+        4,
+        (u32::from(new_io_base) & !0x3) | bar1_flags,
+    );
+
+    // Old addresses should now miss the BAR decoders (all-ones reads).
+    assert_eq!(m.read_physical_u32(mmio_base), 0xFFFF_FFFF);
+    assert_eq!(m.io_read(io_base, 4), 0xFFFF_FFFF);
+
+    // New addresses should route again.
+    assert_ne!(m.read_physical_u32(new_mmio_base), 0xFFFF_FFFF);
+    assert_ne!(m.io_read(new_io_base, 4), 0xFFFF_FFFF);
+}
