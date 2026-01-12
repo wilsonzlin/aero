@@ -44,9 +44,11 @@ fn snapshot_roundtrip_preserves_high_memory_contents() {
 
     let mut src = Machine::new(cfg.clone()).unwrap();
 
-    // Dirty snapshots are diffs and require a parent snapshot id. Take a (compressed) full base
-    // snapshot first, then record just the high-memory modifications as a dirty snapshot.
-    let base = src.take_snapshot_full().unwrap();
+    // Dirty snapshots are diffs and require a parent snapshot id. For this regression test we can
+    // avoid taking a full base snapshot (which would otherwise scan ~2.75GiB of RAM) by manually
+    // advancing the snapshot id chain with `snapshot_meta()`.
+    let _ = snapshot::SnapshotSource::take_dirty_pages(&mut src);
+    let base_meta = snapshot::SnapshotSource::snapshot_meta(&mut src);
 
     // Write a recognizable pattern into the remapped high-memory portion (>= 4GiB).
     let pattern: Vec<u8> = (0..0x2000).map(|i| (i as u8).wrapping_mul(37)).collect();
@@ -54,7 +56,7 @@ fn snapshot_roundtrip_preserves_high_memory_contents() {
     let diff = src.take_snapshot_dirty().unwrap();
 
     let mut restored = Machine::new(cfg).unwrap();
-    restored.restore_snapshot_bytes(&base).unwrap();
+    snapshot::SnapshotTarget::restore_meta(&mut restored, base_meta);
     restored.restore_snapshot_bytes(&diff).unwrap();
 
     assert_eq!(
