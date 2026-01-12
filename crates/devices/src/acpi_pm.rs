@@ -492,8 +492,26 @@ impl<C: Clock> IoSnapshot for AcpiPmIo<C> {
         let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
         r.ensure_device_major(Self::DEVICE_VERSION.major)?;
 
-        // Reset dynamic state while keeping `cfg`, `callbacks`, and `clock` attached.
-        self.reset_state();
+        // Reset dynamic register state while keeping `cfg`, `callbacks`, and `clock` attached.
+        //
+        // NOTE: Avoid driving the SCI line low during restore. `Machine::restore_snapshot_*` and
+        // other snapshot consumers may restore into an already-running instance, and introducing a
+        // spurious SCI deassert/reassert edge can create an extra interrupt in edge-triggered PIC
+        // mode (and generally adds non-deterministic timing).
+        self.pm1_sts = 0;
+        self.pm1_en = 0;
+        self.pm1_cnt = if self.cfg.start_enabled {
+            PM1_CNT_SCI_EN
+        } else {
+            0
+        };
+        for b in &mut self.gpe0_sts {
+            *b = 0;
+        }
+        for b in &mut self.gpe0_en {
+            *b = 0;
+        }
+        self.reset_timer_base();
 
         if let Some(v) = r.u16(TAG_PM1_STS)? {
             self.pm1_sts = v;

@@ -104,6 +104,39 @@ fn snapshot_restore_preserves_pm_tmr_phase_and_advances_identically() {
 }
 
 #[test]
+fn snapshot_restore_in_place_does_not_glitch_sci_level() {
+    let cfg = AcpiPmConfig::default();
+    let clock = ManualClock::new();
+
+    let irq = IrqLog::default();
+    let mut pm = AcpiPmIo::new_with_callbacks_and_clock(
+        cfg,
+        AcpiPmCallbacks {
+            sci_irq: Box::new(irq.clone()),
+            request_power_off: None,
+        },
+        clock.clone(),
+    );
+
+    pm.write(cfg.pm1a_evt_blk + 2, 2, u32::from(PM1_STS_PWRBTN));
+    pm.write(cfg.smi_cmd_port, 1, u32::from(cfg.acpi_enable_cmd));
+    pm.trigger_power_button();
+    assert!(pm.sci_level());
+
+    // Clear the initial assertion edge so we can observe what `load_state` does.
+    irq.0.borrow_mut().clear();
+
+    let snapshot = pm.save_state();
+    pm.load_state(&snapshot).unwrap();
+
+    assert!(
+        irq.events().is_empty(),
+        "restoring into an already-asserted instance must not toggle SCI"
+    );
+    assert!(pm.sci_level());
+}
+
+#[test]
 fn snapshot_load_ignores_unknown_tags() {
     let cfg = AcpiPmConfig::default();
     let clock0 = ManualClock::new();
