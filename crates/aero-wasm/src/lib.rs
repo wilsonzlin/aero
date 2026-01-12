@@ -3177,4 +3177,42 @@ mod machine_mouse_button_cache_tests {
         let packet: Vec<u8> = (0..3).map(|_| m.inner.io_read(0x60, 1) as u8).collect();
         assert_eq!(packet, vec![0x09, 0x00, 0x00]);
     }
+
+    #[test]
+    fn inject_mouse_buttons_mask_encodes_back_forward_bits_when_intellimouse_explorer_enabled() {
+        let mut m = Machine::new(16 * 1024 * 1024).expect("Machine::new should succeed");
+
+        fn write_mouse_byte(m: &mut Machine, byte: u8) {
+            m.inner.io_write(0x64, 1, 0xD4);
+            m.inner.io_write(0x60, 1, u32::from(byte));
+            assert_eq!(m.inner.io_read(0x60, 1) as u8, 0xFA);
+        }
+
+        // Enable IntelliMouse Explorer (5-button) extension: 200, 200, 80.
+        write_mouse_byte(&mut m, 0xF3);
+        write_mouse_byte(&mut m, 200);
+        write_mouse_byte(&mut m, 0xF3);
+        write_mouse_byte(&mut m, 200);
+        write_mouse_byte(&mut m, 0xF3);
+        write_mouse_byte(&mut m, 80);
+
+        // Verify the guest-visible device id.
+        m.inner.io_write(0x64, 1, 0xD4);
+        m.inner.io_write(0x60, 1, 0xF2);
+        assert_eq!(m.inner.io_read(0x60, 1) as u8, 0xFA);
+        assert_eq!(m.inner.io_read(0x60, 1) as u8, 0x04);
+
+        // Enable reporting.
+        write_mouse_byte(&mut m, 0xF4);
+
+        // Back button (DOM bit3) should set bit4 in the fourth PS/2 packet byte.
+        m.inject_mouse_buttons_mask(0x08);
+        let packet: Vec<u8> = (0..4).map(|_| m.inner.io_read(0x60, 1) as u8).collect();
+        assert_eq!(packet, vec![0x08, 0x00, 0x00, 0x10]);
+
+        // Forward button (DOM bit4) should set bit5 (and preserve bit4 while back is held).
+        m.inject_mouse_buttons_mask(0x18);
+        let packet: Vec<u8> = (0..4).map(|_| m.inner.io_read(0x60, 1) as u8).collect();
+        assert_eq!(packet, vec![0x08, 0x00, 0x00, 0x30]);
+    }
 }
