@@ -297,8 +297,10 @@ fn snapshot_source_emits_pci_cfg_device_id_for_config_ports() {
         "machine snapshot should include a PCI_CFG entry when pc platform is enabled"
     );
     assert!(
-        devices.iter().any(|d| d.id == snapshot::DeviceId::PCI_INTX),
-        "machine snapshot should include a PCI_INTX entry when pc platform is enabled"
+        devices
+            .iter()
+            .any(|d| d.id == snapshot::DeviceId::PCI_INTX_ROUTER),
+        "machine snapshot should include a PCI_INTX_ROUTER entry when pc platform is enabled"
     );
     assert!(
         devices.iter().all(|d| d.id != snapshot::DeviceId::PCI),
@@ -725,15 +727,15 @@ fn restore_device_states_does_not_sync_pci_intx_when_intx_snapshot_is_invalid() 
     let apic_state =
         snapshot::io_snapshot_bridge::device_state_from_io_snapshot(snapshot::DeviceId::APIC, &*interrupts.borrow());
 
-    // Produce an invalid PCI_INTX state by corrupting the outer version (must match the inner
+    // Produce an invalid PCI_INTX_ROUTER state by corrupting the outer version (must match the inner
     // io-snapshot header version). This forces `apply_io_snapshot_to_device` to fail.
     let mut bad_intx_state = snapshot::io_snapshot_bridge::device_state_from_io_snapshot(
-        snapshot::DeviceId::PCI_INTX,
+        snapshot::DeviceId::PCI_INTX_ROUTER,
         &*pci_intx.borrow(),
     );
     bad_intx_state.version = bad_intx_state.version.wrapping_add(1);
 
-    // Restore into a fresh machine. The invalid PCI_INTX state must *not* cause Machine restore to
+    // Restore into a fresh machine. The invalid PCI_INTX_ROUTER state must *not* cause Machine restore to
     // call `PciIntxRouter::sync_levels_to_sink()`, since the router's state did not apply.
     let mut restored = Machine::new(pc_machine_config()).unwrap();
     snapshot::SnapshotTarget::restore_device_states(&mut restored, vec![apic_state, bad_intx_state]);
@@ -1262,7 +1264,7 @@ fn snapshot_stores_pci_core_under_split_device_ids() {
                 assert_eq!(&hdr[8..12], b"PCPT");
                 skip_exact(&mut r, len.saturating_sub(hdr.len() as u64));
             }
-            aero_snapshot::DeviceId::PCI_INTX => {
+            aero_snapshot::DeviceId::PCI_INTX_ROUTER => {
                 pci_intx_entries += 1;
                 // Verify `PciIntxRouter` (`INTX`).
                 let mut hdr = [0u8; 16];

@@ -2056,7 +2056,7 @@ impl snapshot::SnapshotSource for Machine {
         // Canonical full-machine snapshots store these as separate outer device entries to avoid
         // `DEVICES` duplicate `(id, version, flags)` collisions:
         // - `DeviceId::PCI_CFG` for `PciConfigPorts` (`PCPT`)
-        // - `DeviceId::PCI_INTX` for `PciIntxRouter` (`INTX`)
+        // - `DeviceId::PCI_INTX_ROUTER` for `PciIntxRouter` (`INTX`)
         if let Some(pci_cfg) = &self.pci_cfg {
             // Canonical outer ID for legacy PCI config mechanism #1 ports (`0xCF8/0xCFC`) and
             // PCI bus config-space state.
@@ -2071,7 +2071,7 @@ impl snapshot::SnapshotSource for Machine {
         }
         if let Some(pci_intx) = &self.pci_intx {
             devices.push(snapshot::io_snapshot_bridge::device_state_from_io_snapshot(
-                snapshot::DeviceId::PCI_INTX,
+                snapshot::DeviceId::PCI_INTX_ROUTER,
                 &*pci_intx.borrow(),
             ));
         }
@@ -2244,7 +2244,7 @@ impl snapshot::SnapshotTarget for Machine {
         //
         // Canonical full-machine snapshots store these as separate outer device entries:
         // - `DeviceId::PCI_CFG` for `PciConfigPorts` (`PCPT`)
-        // - `DeviceId::PCI_INTX` for `PciIntxRouter` (`INTX`)
+        // - `DeviceId::PCI_INTX_ROUTER` for `PciIntxRouter` (`INTX`)
         //
         // Backward compatibility: older snapshots stored one or both of these under the historical
         // `DeviceId::PCI` entry, either:
@@ -2253,7 +2253,7 @@ impl snapshot::SnapshotTarget for Machine {
         // - as a single `INTX` (`PciIntxRouter`) payload.
         let pci_state = by_id.remove(&snapshot::DeviceId::PCI);
         let mut pci_cfg_state = by_id.remove(&snapshot::DeviceId::PCI_CFG);
-        let mut pci_intx_state = by_id.remove(&snapshot::DeviceId::PCI_INTX);
+        let mut pci_intx_state = by_id.remove(&snapshot::DeviceId::PCI_INTX_ROUTER);
 
         if let Some(state) = pci_state {
             if let (Some(pci_cfg), Some(pci_intx)) = (&self.pci_cfg, &self.pci_intx) {
@@ -2334,8 +2334,8 @@ impl snapshot::SnapshotTarget for Machine {
             }
         }
 
-        // If we haven't restored the INTx router yet, fall back to a canonical/legacy `PCI_INTX`
-        // entry.
+        // If we haven't restored the INTx router yet, fall back to a canonical/legacy
+        // `PCI_INTX_ROUTER` entry.
         if !restored_pci_intx {
             if let (Some(pci_intx), Some(intx_state)) = (&self.pci_intx, pci_intx_state.take()) {
                 let mut pci_intx = pci_intx.borrow_mut();
