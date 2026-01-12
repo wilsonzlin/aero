@@ -356,6 +356,10 @@ for the full browser backend design.
 | ST-009 | Virtio-blk driver (Win7) (see VIO-011) | P1 | VIO-001..VIO-003 | High    |
 | ST-010 | Storage test suite         | P0       | ST-002       | Medium     |
 
+Note: IndexedDB-based storage is async and is not currently exposed as a synchronous
+`aero_storage::StorageBackend` / `aero_storage::VirtualDisk`. See
+[`docs/19-indexeddb-storage-story.md`](./19-indexeddb-storage-story.md).
+
 
 ### Network Tasks
 

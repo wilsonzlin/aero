@@ -71,6 +71,10 @@ Storage is on the **critical boot path**. Windows 7 cannot start without a worki
 | ST-009 | Virtio-blk device model | P1 | VTP-001..VTP-003 | High |
 | ST-010 | Storage test suite | P0 | ST-002 | Medium |
 
+Note: IndexedDB-based storage is async and is not currently exposed as a synchronous
+`aero_storage::StorageBackend` / `aero_storage::VirtualDisk`. See
+[`docs/19-indexeddb-storage-story.md`](../docs/19-indexeddb-storage-story.md).
+
 ### NVMe Tasks
 
 NVMe is an optional high-performance path. AHCI is sufficient for Windows 7.
