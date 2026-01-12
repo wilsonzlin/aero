@@ -669,11 +669,11 @@ impl AerogpuD3d11Executor {
             .ok_or_else(|| anyhow!("unknown texture {texture_id}"))?;
 
         let needs_bgra_swizzle = match texture.desc.format {
-            wgpu::TextureFormat::Rgba8Unorm => false,
-            wgpu::TextureFormat::Bgra8Unorm => true,
-            other => {
-                bail!("read_texture_rgba8 only supports Rgba8Unorm/Bgra8Unorm (got {other:?})")
-            }
+            wgpu::TextureFormat::Rgba8Unorm | wgpu::TextureFormat::Rgba8UnormSrgb => false,
+            wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb => true,
+            other => bail!(
+                "read_texture_rgba8 only supports Rgba8/Bgra8 Unorm(+Srgb) formats (got {other:?})"
+            ),
         };
 
         let width = texture.desc.width;
