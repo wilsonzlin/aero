@@ -108,6 +108,14 @@ try {
     io.portWrite(0x0cf8, 4, 0x8000_0010);
     const bar0 = io.portRead(0x0cfc, 4);
 
+    // Unimplemented BAR1 (offset 0x14) should read as 0 and ignore writes.
+    io.portWrite(0x0cf8, 4, 0x8000_0014);
+    const bar1Before = io.portRead(0x0cfc, 4);
+    io.portWrite(0x0cf8, 4, 0x8000_0014);
+    io.portWrite(0x0cfc, 4, 0xffff_ffff);
+    io.portWrite(0x0cf8, 4, 0x8000_0014);
+    const bar1After = io.portRead(0x0cfc, 4);
+
     // Enable memory space decoding (PCI command bit1) so the BAR-backed MMIO region is active.
     io.portWrite(0x0cf8, 4, 0x8000_0004);
     io.portWrite(0x0cfc, 2, 0x0002);
@@ -126,6 +134,8 @@ try {
       irqPinBefore,
       irqPinAfter,
       bar0,
+      bar1Before,
+      bar1After,
       mmioReadback,
       irqEvents,
     });

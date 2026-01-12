@@ -42,6 +42,8 @@ test("I/O worker: PCI config (0xCF8/0xCFC) + BAR-backed MMIO dispatch", async ()
       irqPinBefore: number;
       irqPinAfter: number;
       bar0: number;
+      bar1Before: number;
+      bar1After: number;
       mmioReadback: number;
     },
   ];
@@ -55,6 +57,8 @@ test("I/O worker: PCI config (0xCF8/0xCFC) + BAR-backed MMIO dispatch", async ()
   assert.equal(result.irqPinBefore >>> 0, 0x02);
   assert.equal(result.irqPinAfter >>> 0, 0x02);
   assert.equal(result.bar0 >>> 0, 0xe000_0000);
+  assert.equal(result.bar1Before >>> 0, 0x0000_0000);
+  assert.equal(result.bar1After >>> 0, 0x0000_0000);
   assert.equal(result.mmioReadback >>> 0, 0x1234_5678);
 
   await cpuWorker.terminate();

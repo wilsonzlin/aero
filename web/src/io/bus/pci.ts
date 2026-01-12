@@ -336,6 +336,13 @@ export class PciBus implements PortIoHandler {
         writeU32LE(config, 0x10 + (bar.index + 1) * 4, this.#encodeBarValueHigh(bar));
       }
     }
+    // For type-0 headers, any unimplemented BAR registers must read as 0 and ignore guest writes.
+    // Ensure config space reflects that invariant even if init hooks scribbled into those bytes.
+    if ((config[0x0e]! & 0x7f) === 0) {
+      for (let i = 0; i < 6; i++) {
+        if (bars[i] === null) writeU32LE(config, 0x10 + i * 4, 0);
+      }
+    }
 
     const fn: PciFunction = { addr: addrFull, config, device, bars };
     this.#functions[devNum]![fnNum] = fn;
@@ -426,7 +433,8 @@ export class PciBus implements PortIoHandler {
 
   #readConfigDword(fn: PciFunction, alignedOff: number): number {
     // BAR sizing probe support (OS writes all-ones then reads mask).
-    if (alignedOff >= 0x10 && alignedOff <= 0x24) {
+    const headerType = fn.config[0x0e]! & 0x7f;
+    if (headerType === 0 && alignedOff >= 0x10 && alignedOff <= 0x24) {
       const barIndex = (alignedOff - 0x10) >>> 2;
       const slot = fn.bars[barIndex] ?? null;
       if (slot) {
@@ -449,11 +457,12 @@ export class PciBus implements PortIoHandler {
       return;
     }
 
-    if (alignedOff >= 0x10 && alignedOff <= 0x24) {
+    const headerType = fn.config[0x0e]! & 0x7f;
+    if (headerType === 0 && alignedOff >= 0x10 && alignedOff <= 0x24) {
       const barIndex = (alignedOff - 0x10) >>> 2;
       const slot = fn.bars[barIndex] ?? null;
       if (!slot) {
-        writeU32LE(fn.config, alignedOff, value);
+        // Unimplemented BAR: writes have no effect (reads always return 0).
         return;
       }
 
