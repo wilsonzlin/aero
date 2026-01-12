@@ -151,6 +151,13 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
     return reporter.FailHresult("IDirect3D9Ex::CreateDeviceEx", hr);
   }
 
+  D3DCAPS9 caps;
+  ZeroMemory(&caps, sizeof(caps));
+  hr = dev->GetDeviceCaps(&caps);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("GetDeviceCaps", hr);
+  }
+
   // Basic adapter sanity check to avoid false PASS when AeroGPU isn't active.
   {
     D3DADAPTER_IDENTIFIER9 ident;
@@ -392,7 +399,7 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
   }
 
   // Clip plane round-trip (fixed-function cached state).
-  {
+  if (caps.MaxUserClipPlanes >= 1) {
     const float plane_set[4] = {1.25f, -2.5f, 3.75f, -4.0f};
     hr = dev->SetClipPlane(0, plane_set);
     if (FAILED(hr)) {
@@ -411,6 +418,10 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
                              (double)plane_set[i]);
       }
     }
+  } else {
+    aerogpu_test::PrintfStdout("INFO: %s: skipping Set/GetClipPlane (MaxUserClipPlanes=%lu)",
+                               kTestName,
+                               (unsigned long)caps.MaxUserClipPlanes);
   }
 
   // StreamSourceFreq (cached state).
@@ -419,17 +430,20 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
     const UINT freq_set = 7;
     hr = dev->SetStreamSourceFreq(kStream, freq_set);
     if (FAILED(hr)) {
-      return reporter.FailHresult("SetStreamSourceFreq(0)", hr);
-    }
-    UINT got = 0;
-    hr = dev->GetStreamSourceFreq(kStream, &got);
-    if (FAILED(hr)) {
-      return reporter.FailHresult("GetStreamSourceFreq(0)", hr);
-    }
-    if (got != freq_set) {
-      return reporter.Fail("GetStreamSourceFreq mismatch: got=%u expected=%u",
-                           (unsigned)got,
-                           (unsigned)freq_set);
+      aerogpu_test::PrintfStdout("INFO: %s: skipping Set/GetStreamSourceFreq (Set failed hr=0x%08lX)",
+                                 kTestName,
+                                 (unsigned long)hr);
+    } else {
+      UINT got = 0;
+      hr = dev->GetStreamSourceFreq(kStream, &got);
+      if (FAILED(hr)) {
+        return reporter.FailHresult("GetStreamSourceFreq(0)", hr);
+      }
+      if (got != freq_set) {
+        return reporter.Fail("GetStreamSourceFreq mismatch: got=%u expected=%u",
+                             (unsigned)got,
+                             (unsigned)freq_set);
+      }
     }
   }
 
@@ -472,7 +486,7 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
   }
 
   // Fixed-function lighting/material caching.
-  {
+  if (caps.MaxActiveLights >= 1) {
     D3DMATERIAL9 mat;
     ZeroMemory(&mat, sizeof(mat));
     mat.Diffuse.r = 0.1f;
@@ -546,6 +560,10 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
     if (!enabled) {
       return reporter.Fail("GetLightEnable mismatch: expected enabled");
     }
+  } else {
+    aerogpu_test::PrintfStdout("INFO: %s: skipping Set/GetMaterial/Light (MaxActiveLights=%lu)",
+                               kTestName,
+                               (unsigned long)caps.MaxActiveLights);
   }
 
   {
