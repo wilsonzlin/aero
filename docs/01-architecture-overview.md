@@ -220,7 +220,7 @@ requires a segmented/sparse host backing model (or wasm `memory64`).
  │ 0x01F0-0x01F7  │ IDE Primary                                    │
  │ 0x0278-0x027A  │ Parallel Port (LPT)                            │
  │ 0x02F8-0x02FF  │ COM2 Serial                                    │
-│ 0x03C0-0x03DF  │ VGA registers (legacy display)                  │
+│ 0x03B0-0x03DF  │ VGA registers (legacy display)                  │
  │ 0x03F0-0x03F7  │ Floppy Controller                              │
  │ 0x03F8-0x03FF  │ COM1 Serial                                    │
  │ 0x0CF8-0x0CFF  │ PCI Configuration                              │
