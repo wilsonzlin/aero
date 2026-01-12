@@ -19,7 +19,7 @@ mod runtime_alloc;
 mod vm;
 
 #[cfg(target_arch = "wasm32")]
-pub use vm::{WasmTieredVm, WasmVm};
+pub use vm::WasmVm;
 
 #[cfg(target_arch = "wasm32")]
 mod tiered_vm;

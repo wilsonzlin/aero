@@ -12,25 +12,20 @@
 
 use wasm_bindgen::prelude::*;
 
-use js_sys::{Object, Reflect, Uint32Array, Uint8Array};
+use js_sys::{Object, Reflect, Uint8Array};
 
 use aero_cpu_core::{
     CpuBus, CpuCore, Exception, PagingBus,
     assist::AssistContext,
-    exec::{ExecCpu as _, Interpreter as _, Tier0Interpreter, Vcpu},
     interp::tier0::{
         Tier0Config,
         exec::{BatchExit, run_batch_cpu_core_with_assists},
     },
-    jit::runtime::{CompileRequestSink, JitBackend, JitBlockExit, JitConfig, JitRuntime},
     state::{CpuMode, Segment},
 };
 use aero_mmu::{MemoryBus, Mmu};
 
 use crate::{RunExit, RunExitKind};
-
-use std::cell::RefCell;
-use std::rc::Rc;
 
 fn js_error(message: impl AsRef<str>) -> JsValue {
     js_sys::Error::new(message.as_ref()).into()
@@ -51,9 +46,6 @@ extern "C" {
 
     #[wasm_bindgen(js_namespace = globalThis, js_name = __aero_io_port_write)]
     fn js_io_port_write(port: u32, size: u32, value: u32);
-
-    #[wasm_bindgen(js_namespace = globalThis, js_name = __aero_jit_call)]
-    fn js_jit_call(table_index: u32, cpu_ptr: u32, jit_ctx_ptr: u32) -> i64;
 }
 
 fn wasm_memory_byte_len() -> u64 {
@@ -421,257 +413,5 @@ impl WasmVm {
         self.cpu.state.msr.tsc = mmu_state.tsc;
 
         Ok(())
-    }
-}
-
-// -----------------------------------------------------------------------------
-// Tiered VM loop (Tier-0 interpreter + Tier-1 JS-managed JIT blocks)
-// -----------------------------------------------------------------------------
-
-/// Sentinel return value used by Tier-1 blocks to request a one-shot exit back to the interpreter.
-///
-/// See `crates/aero-jit-x86/src/wasm/abi.rs` (`JIT_EXIT_SENTINEL_I64`).
-const JIT_EXIT_SENTINEL_I64: i64 = -1;
-
-/// JIT context layout (header + direct-mapped TLB) shared with JS.
-///
-/// Keep in sync with `crates/aero-jit-x86/src/jit_ctx.rs` + `crates/aero-jit-x86/src/lib.rs`.
-const JIT_TLB_ENTRIES: usize = 256;
-const JIT_CTX_U64_WORDS: usize = 2 + (JIT_TLB_ENTRIES * 2); // header (ram_base, tlb_salt) + (tag,data)*entries
-
-#[derive(Clone, Default)]
-struct SharedCompileQueue(Rc<RefCell<Vec<u64>>>);
-
-impl SharedCompileQueue {
-    fn drain(&self) -> Vec<u64> {
-        let mut borrow = self.0.borrow_mut();
-        let out = borrow.clone();
-        borrow.clear();
-        out
-    }
-}
-
-impl CompileRequestSink for SharedCompileQueue {
-    fn request_compile(&mut self, entry_rip: u64) {
-        self.0.borrow_mut().push(entry_rip);
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-struct JsTier1Backend {
-    jit_ctx_ptr: u32,
-}
-
-impl JitBackend for JsTier1Backend {
-    type Cpu = Vcpu<WasmBus>;
-
-    fn execute(&mut self, table_index: u32, cpu: &mut Self::Cpu) -> JitBlockExit {
-        let cpu_ptr = (&mut cpu.cpu.state as *mut aero_cpu_core::state::CpuState) as u32;
-        let ret = js_jit_call(table_index, cpu_ptr, self.jit_ctx_ptr);
-
-        let exit_to_interpreter = ret == JIT_EXIT_SENTINEL_I64;
-        let next_rip = if exit_to_interpreter {
-            cpu.rip()
-        } else {
-            ret as u64
-        };
-
-        JitBlockExit {
-            next_rip,
-            exit_to_interpreter,
-        }
-    }
-}
-
-#[wasm_bindgen]
-pub struct WasmTieredVm {
-    guest_base: u32,
-    guest_size: u64,
-
-    vcpu: Vcpu<WasmBus>,
-    interp: Tier0Interpreter,
-    jit: JitRuntime<JsTier1Backend, SharedCompileQueue>,
-    jit_config: JitConfig,
-    compile_queue: SharedCompileQueue,
-    force_interpreter: bool,
-
-    jit_ctx: Vec<u64>,
-
-    interp_executions: u64,
-    jit_executions: u64,
-}
-
-#[wasm_bindgen]
-impl WasmTieredVm {
-    #[wasm_bindgen(constructor)]
-    pub fn new(guest_base: u32, guest_size: u32) -> Result<Self, JsValue> {
-        if guest_base == 0 {
-            return Err(JsValue::from_str("guest_base must be non-zero"));
-        }
-
-        let mem_bytes = wasm_memory_byte_len();
-
-        // For parity with other wasm-bindgen APIs, accept `guest_size == 0` as a
-        // "use the remainder of linear memory" sentinel.
-        let guest_size_u64 = if guest_size == 0 {
-            mem_bytes.saturating_sub(guest_base as u64)
-        } else {
-            guest_size as u64
-        };
-
-        let end = (guest_base as u64)
-            .checked_add(guest_size_u64)
-            .ok_or_else(|| JsValue::from_str("guest_base + guest_size overflow"))?;
-        if end > mem_bytes {
-            return Err(JsValue::from_str(&format!(
-                "guest RAM out of bounds: guest_base=0x{guest_base:x} guest_size=0x{guest_size_u64:x} wasm_mem=0x{mem_bytes:x}"
-            )));
-        }
-
-        let bus = WasmBus {
-            guest_base,
-            guest_size: guest_size_u64,
-        };
-        let vcpu = Vcpu::new_with_mode(CpuMode::Real, bus);
-
-        let jit_config = JitConfig {
-            enabled: true,
-            hot_threshold: 32,
-            // Keep the tiered VM cache bounded for the browser smoke harness.
-            cache_max_blocks: 1024,
-            cache_max_bytes: 0,
-        };
-
-        let compile_queue = SharedCompileQueue::default();
-
-        let mut jit_ctx = vec![0u64; JIT_CTX_U64_WORDS];
-        // JitContext header: { ram_base, tlb_salt }.
-        jit_ctx[0] = guest_base as u64;
-        jit_ctx[1] = 0x1234_5678_9abc_def0u64;
-        let jit_ctx_ptr = jit_ctx.as_ptr() as u32;
-
-        let backend = JsTier1Backend { jit_ctx_ptr };
-        let jit = JitRuntime::new(jit_config.clone(), backend, compile_queue.clone());
-
-        Ok(Self {
-            guest_base,
-            guest_size: guest_size_u64,
-
-            vcpu,
-            interp: Tier0Interpreter::new(1024),
-            jit,
-            jit_config,
-            compile_queue,
-            force_interpreter: false,
-
-            jit_ctx,
-
-            interp_executions: 0,
-            jit_executions: 0,
-        })
-    }
-
-    /// Reset CPU state to 16-bit real mode and set `CS:IP = 0x0000:entry_ip`.
-    pub fn reset_real_mode(&mut self, entry_ip: u32) {
-        self.vcpu.exit = None;
-        self.vcpu.cpu = CpuCore::new(CpuMode::Real);
-        self.vcpu.cpu.state.halted = false;
-        self.vcpu.cpu.state.clear_pending_bios_int();
-        self.vcpu.cpu.pending = Default::default();
-
-        self.interp.assist = AssistContext::default();
-
-        // Reset JIT bookkeeping (cache + hotness + pending requests).
-        self.compile_queue.drain();
-        let jit_ctx_ptr = self.jit_ctx.as_ptr() as u32;
-        self.jit = JitRuntime::new(
-            self.jit_config.clone(),
-            JsTier1Backend { jit_ctx_ptr },
-            self.compile_queue.clone(),
-        );
-        self.force_interpreter = false;
-
-        self.interp_executions = 0;
-        self.jit_executions = 0;
-
-        // Real-mode: base = selector<<4, 64KiB limit.
-        set_real_mode_seg(&mut self.vcpu.cpu.state.segments.cs, 0);
-        set_real_mode_seg(&mut self.vcpu.cpu.state.segments.ds, 0);
-        set_real_mode_seg(&mut self.vcpu.cpu.state.segments.es, 0);
-        set_real_mode_seg(&mut self.vcpu.cpu.state.segments.ss, 0);
-        set_real_mode_seg(&mut self.vcpu.cpu.state.segments.fs, 0);
-        set_real_mode_seg(&mut self.vcpu.cpu.state.segments.gs, 0);
-
-        self.vcpu.cpu.state.set_rip(entry_ip as u64);
-    }
-
-    /// Execute up to `blocks` basic blocks, choosing Tier-0 vs Tier-1 per the hotness/JIT cache.
-    pub fn run_blocks(&mut self, blocks: u32) {
-        let mut remaining = u64::from(blocks);
-        while remaining > 0 {
-            // Interrupts are delivered at instruction boundaries.
-            if self.vcpu.maybe_deliver_interrupt() {
-                continue;
-            }
-
-            if self.vcpu.exit.is_some() || self.vcpu.cpu.state.halted {
-                break;
-            }
-
-            let entry_rip = self.vcpu.rip();
-            let compiled = self.jit.prepare_block(entry_rip);
-
-            if self.force_interpreter || compiled.is_none() {
-                let next_rip = self.interp.exec_block(&mut self.vcpu);
-                self.vcpu.set_rip(next_rip);
-                self.force_interpreter = false;
-                self.interp_executions = self.interp_executions.saturating_add(1);
-            } else {
-                let handle = compiled.expect("checked is_some above");
-                let exit = self.jit.execute_block(&mut self.vcpu, &handle);
-                self.vcpu.set_rip(exit.next_rip);
-                self.force_interpreter = exit.exit_to_interpreter;
-                self.jit_executions = self.jit_executions.saturating_add(1);
-            }
-
-            remaining -= 1;
-        }
-    }
-
-    /// Drain queued Tier-1 compilation requests accumulated while running blocks.
-    pub fn drain_compile_requests(&mut self) -> Uint32Array {
-        let drained = self.compile_queue.drain();
-        let out: Vec<u32> = drained
-            .into_iter()
-            .filter_map(|rip| u32::try_from(rip).ok())
-            .collect();
-        Uint32Array::from(out.as_slice())
-    }
-
-    /// Install a compiled Tier-1 block into the runtime JIT cache.
-    pub fn install_tier1_block(&mut self, entry_rip: u32, table_index: u32, code_paddr: u32, byte_len: u32) {
-        let _evicted = self
-            .jit
-            .install_block(entry_rip as u64, table_index, code_paddr as u64, byte_len);
-    }
-
-    #[wasm_bindgen(getter)]
-    pub fn interp_executions(&self) -> u32 {
-        self.interp_executions.min(u64::from(u32::MAX)) as u32
-    }
-
-    #[wasm_bindgen(getter)]
-    pub fn jit_executions(&self) -> u32 {
-        self.jit_executions.min(u64::from(u32::MAX)) as u32
-    }
-
-    #[wasm_bindgen(getter)]
-    pub fn guest_base(&self) -> u32 {
-        self.guest_base
-    }
-
-    #[wasm_bindgen(getter)]
-    pub fn guest_size(&self) -> u32 {
-        self.guest_size.min(u64::from(u32::MAX)) as u32
     }
 }
