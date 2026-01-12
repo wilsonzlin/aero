@@ -480,6 +480,23 @@ impl JitBackend for WasmJitBackend {
         self.sync_cpu_from_abi(&mut cpu.cpu.state);
 
         let exit_to_interpreter = ret == JIT_EXIT_SENTINEL_I64;
+        let committed = if exit_to_interpreter {
+            // The JS host may speculatively execute a Tier-1 block and then roll back CPU+RAM state
+            // when the block triggers a runtime exit (MMIO, bailout, page fault) without deopt
+            // metadata. In those cases, the tiered dispatcher must not retire instructions/time.
+            //
+            // The JS glue sets `globalThis.__aero_jit_last_committed` for the most recent
+            // `__aero_jit_call` invocation. Treat missing/invalid values as "committed" for
+            // backwards-compatibility with older hosts.
+            let global = js_sys::global();
+            let key = JsValue::from_str("__aero_jit_last_committed");
+            match Reflect::get(&global, &key) {
+                Ok(v) => v.as_bool().unwrap_or(true),
+                Err(_) => true,
+            }
+        } else {
+            true
+        };
         let next_rip = if exit_to_interpreter {
             cpu.cpu.state.rip()
         } else {
@@ -489,10 +506,7 @@ impl JitBackend for WasmJitBackend {
         JitBlockExit {
             next_rip,
             exit_to_interpreter,
-            // The browser Tier-1 backend does not currently roll back architectural state on exits;
-            // blocks always commit their effects before returning (including `ExitToInterpreter`
-            // terminators which are emitted as the sentinel return value).
-            committed: true,
+            committed,
         }
     }
 }

@@ -149,6 +149,7 @@ async function runTieredVm(iterations: number, threshold: number) {
   // `env.*` imports consult these while a block is executing.
   let activeExitState: HostExitState | null = null;
   let activeWriteLog: WriteLogEntry[] | null = null;
+  let onGuestWrite: ((paddr: bigint, len: number) => void) | null = null;
 
   // Used for CPU state snapshots + write log byte copies.
   // NOTE: This is a view, not a copy; snapshotting uses `.slice()`.
@@ -189,7 +190,13 @@ async function runTieredVm(iterations: number, threshold: number) {
 
     // Tier-1 contract: sentinel return value requests interpreter fallback.
     const exitToInterpreter = ret === JIT_EXIT_SENTINEL_I64;
-    if (exitToInterpreter && hostExitStateShouldRollback(exitState)) {
+    const shouldRollback = exitToInterpreter && hostExitStateShouldRollback(exitState);
+
+    // Expose whether the last block committed via a global flag so the wasm runtime can avoid
+    // retiring instructions/time on rolled-back exits.
+    (globalThis as unknown as { __aero_jit_last_committed?: unknown }).__aero_jit_last_committed = !shouldRollback;
+
+    if (shouldRollback) {
       // Roll back guest RAM writes (reverse order) and restore pre-block CPU state.
       refreshMemU8();
       for (let i = writeLog.length - 1; i >= 0; i--) {
@@ -197,6 +204,13 @@ async function runTieredVm(iterations: number, threshold: number) {
         memU8.set(entry.old_value_bytes, entry.addr);
       }
       memU8.set(cpuSnapshot, cpuPtr);
+    } else if (writeLog.length && onGuestWrite) {
+      // Notify the tiered runtime of committed guest writes so it can bump code page versions for
+      // self-modifying code invalidation. We intentionally skip this on rolled-back exits.
+      for (const entry of writeLog) {
+        const paddr = entry.addr - guest_base;
+        if (paddr >= 0) onGuestWrite(BigInt(paddr), entry.size);
+      }
     }
 
     return ret;
@@ -257,7 +271,7 @@ async function runTieredVm(iterations: number, threshold: number) {
   }
 
   const dv = new DataView(memory.buffer);
-  const onGuestWrite = (paddr: bigint, len: number) => {
+  onGuestWrite = (paddr: bigint, len: number) => {
     const notify = (vm as unknown as { on_guest_write?: (paddr: bigint, len: number) => void }).on_guest_write;
     if (typeof notify !== 'function') return;
     notify.call(vm, BigInt.asUintN(64, paddr), len >>> 0);
@@ -281,25 +295,26 @@ async function runTieredVm(iterations: number, threshold: number) {
       const linear = guest_base + u64AsNumber(addr);
       logWrite(linear, 1);
       dv.setUint8(linear, value & 0xff);
-      onGuestWrite(addr, 1);
+      // If the helper is used outside a JIT block (unlikely), still bump code versions.
+      if (!activeWriteLog && onGuestWrite) onGuestWrite(addr, 1);
     },
     mem_write_u16: (_cpuPtr: number, addr: bigint, value: number) => {
       const linear = guest_base + u64AsNumber(addr);
       logWrite(linear, 2);
       dv.setUint16(linear, value & 0xffff, true);
-      onGuestWrite(addr, 2);
+      if (!activeWriteLog && onGuestWrite) onGuestWrite(addr, 2);
     },
     mem_write_u32: (_cpuPtr: number, addr: bigint, value: number) => {
       const linear = guest_base + u64AsNumber(addr);
       logWrite(linear, 4);
       dv.setUint32(linear, value >>> 0, true);
-      onGuestWrite(addr, 4);
+      if (!activeWriteLog && onGuestWrite) onGuestWrite(addr, 4);
     },
     mem_write_u64: (_cpuPtr: number, addr: bigint, value: bigint) => {
       const linear = guest_base + u64AsNumber(addr);
       logWrite(linear, 8);
       dv.setBigUint64(linear, BigInt.asUintN(64, value), true);
-      onGuestWrite(addr, 8);
+      if (!activeWriteLog && onGuestWrite) onGuestWrite(addr, 8);
     },
     mmu_translate: (_cpuPtr: number, jitCtxPtr: number, vaddr: bigint, _access: number) => {
       const vaddrU = BigInt.asUintN(64, vaddr);
