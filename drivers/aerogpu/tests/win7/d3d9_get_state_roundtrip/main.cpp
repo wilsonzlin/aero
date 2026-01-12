@@ -1888,6 +1888,88 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
       return reporter.FailHresult("SetTransform (pre CreateStateBlock)", hr);
     }
 
+    // Additional vertex-side cached legacy state (material / light / clip plane).
+    D3DMATERIAL9 mat_0;
+    ZeroMemory(&mat_0, sizeof(mat_0));
+    mat_0.Diffuse.r = 0.12f;
+    mat_0.Diffuse.g = 0.23f;
+    mat_0.Diffuse.b = 0.34f;
+    mat_0.Diffuse.a = 0.45f;
+    mat_0.Power = 8.0f;
+    D3DMATERIAL9 mat_1 = mat_0;
+    mat_1.Diffuse.r = 0.9f;
+    mat_1.Diffuse.g = 0.8f;
+    mat_1.Diffuse.b = 0.7f;
+    mat_1.Diffuse.a = 0.6f;
+    mat_1.Power = 16.0f;
+    D3DMATERIAL9 mat_clobber = mat_0;
+    mat_clobber.Diffuse.r = 0.0f;
+    mat_clobber.Diffuse.g = 0.1f;
+    mat_clobber.Diffuse.b = 0.2f;
+    mat_clobber.Diffuse.a = 0.3f;
+    mat_clobber.Power = 32.0f;
+
+    hr = dev->SetMaterial(&mat_0);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetMaterial (pre CreateStateBlock)", hr);
+    }
+
+    D3DLIGHT9 light_0;
+    ZeroMemory(&light_0, sizeof(light_0));
+    light_0.Type = D3DLIGHT_POINT;
+    light_0.Diffuse.r = 0.25f;
+    light_0.Diffuse.g = 0.5f;
+    light_0.Diffuse.b = 0.75f;
+    light_0.Diffuse.a = 1.0f;
+    light_0.Position.x = 1.0f;
+    light_0.Position.y = 2.0f;
+    light_0.Position.z = 3.0f;
+    light_0.Range = 100.0f;
+    light_0.Attenuation0 = 1.0f;
+    D3DLIGHT9 light_1 = light_0;
+    light_1.Diffuse.r = 0.9f;
+    light_1.Diffuse.g = 0.8f;
+    light_1.Diffuse.b = 0.7f;
+    light_1.Position.x = -1.0f;
+    light_1.Position.y = -2.0f;
+    light_1.Position.z = -3.0f;
+    D3DLIGHT9 light_clobber = light_0;
+    light_clobber.Diffuse.r = 0.1f;
+    light_clobber.Diffuse.g = 0.2f;
+    light_clobber.Diffuse.b = 0.3f;
+    light_clobber.Position.x = 10.0f;
+    light_clobber.Position.y = 20.0f;
+    light_clobber.Position.z = 30.0f;
+    bool light_ok = false;
+    hr = dev->SetLight(0, &light_0);
+    if (FAILED(hr)) {
+      aerogpu_test::PrintfStdout("INFO: %s: skipping CreateStateBlock Light (Set failed hr=0x%08lX)",
+                                 kTestName,
+                                 (unsigned long)hr);
+    } else {
+      hr = dev->LightEnable(0, TRUE);
+      if (FAILED(hr)) {
+        aerogpu_test::PrintfStdout("INFO: %s: skipping CreateStateBlock LightEnable (Enable failed hr=0x%08lX)",
+                                   kTestName,
+                                   (unsigned long)hr);
+      } else {
+        light_ok = true;
+      }
+    }
+
+    const float clip_plane_0[4] = {0.25f, -0.5f, 0.75f, -1.0f};
+    const float clip_plane_1[4] = {-1.0f, 2.0f, -3.0f, 4.0f};
+    const float clip_plane_clobber[4] = {5.0f, 6.0f, 7.0f, 8.0f};
+    bool clip_plane_ok = false;
+    hr = dev->SetClipPlane(0, clip_plane_0);
+    if (FAILED(hr)) {
+      aerogpu_test::PrintfStdout("INFO: %s: skipping CreateStateBlock ClipPlane (Set failed hr=0x%08lX)",
+                                 kTestName,
+                                 (unsigned long)hr);
+    } else {
+      clip_plane_ok = true;
+    }
+
     D3DCLIPSTATUS9 clip_status_0;
     ZeroMemory(&clip_status_0, sizeof(clip_status_0));
     clip_status_0.ClipUnion = 0x11;
@@ -2000,6 +2082,40 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
         return reporter.FailHresult("SetVertexShaderConstantB (clobber pre Apply baseline)", hr);
       }
 
+      hr = dev->SetMaterial(&mat_clobber);
+      if (FAILED(hr)) {
+        return reporter.FailHresult("SetMaterial (clobber pre Apply baseline)", hr);
+      }
+
+      if (light_ok) {
+        hr = dev->SetLight(0, &light_clobber);
+        if (FAILED(hr)) {
+          aerogpu_test::PrintfStdout("INFO: %s: disabling CreateStateBlock Light baseline check (clobber Set failed hr=0x%08lX)",
+                                     kTestName,
+                                     (unsigned long)hr);
+          light_ok = false;
+        } else {
+          hr = dev->LightEnable(0, FALSE);
+          if (FAILED(hr)) {
+            aerogpu_test::PrintfStdout(
+                "INFO: %s: disabling CreateStateBlock Light baseline check (clobber Disable failed hr=0x%08lX)",
+                kTestName,
+                (unsigned long)hr);
+            light_ok = false;
+          }
+        }
+      }
+
+      if (clip_plane_ok) {
+        hr = dev->SetClipPlane(0, clip_plane_clobber);
+        if (FAILED(hr)) {
+          aerogpu_test::PrintfStdout("INFO: %s: disabling CreateStateBlock ClipPlane baseline check (clobber Set failed hr=0x%08lX)",
+                                     kTestName,
+                                     (unsigned long)hr);
+          clip_plane_ok = false;
+        }
+      }
+
       if (freq_ok) {
         hr = dev->SetStreamSourceFreq(0, freq_0 + 1);
         if (FAILED(hr)) {
@@ -2077,6 +2193,52 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
         }
       }
 
+      D3DMATERIAL9 got_mat;
+      ZeroMemory(&got_mat, sizeof(got_mat));
+      hr = dev->GetMaterial(&got_mat);
+      if (FAILED(hr)) {
+        return reporter.FailHresult("GetMaterial (after Apply vertex baseline)", hr);
+      }
+      if (!MaterialNearlyEqual(got_mat, mat_0, 1e-6f)) {
+        return reporter.Fail("CreateStateBlock baseline mismatch: Material");
+      }
+
+      if (light_ok) {
+        D3DLIGHT9 got_light;
+        ZeroMemory(&got_light, sizeof(got_light));
+        hr = dev->GetLight(0, &got_light);
+        if (FAILED(hr)) {
+          return reporter.FailHresult("GetLight (after Apply vertex baseline)", hr);
+        }
+        if (!LightNearlyEqual(got_light, light_0, 1e-6f)) {
+          return reporter.Fail("CreateStateBlock baseline mismatch: Light");
+        }
+        BOOL got_enabled = FALSE;
+        hr = dev->GetLightEnable(0, &got_enabled);
+        if (FAILED(hr)) {
+          return reporter.FailHresult("GetLightEnable (after Apply vertex baseline)", hr);
+        }
+        if (!got_enabled) {
+          return reporter.Fail("CreateStateBlock baseline mismatch: LightEnable expected TRUE");
+        }
+      }
+
+      if (clip_plane_ok) {
+        float got_plane[4] = {};
+        hr = dev->GetClipPlane(0, got_plane);
+        if (FAILED(hr)) {
+          return reporter.FailHresult("GetClipPlane (after Apply vertex baseline)", hr);
+        }
+        for (int i = 0; i < 4; ++i) {
+          if (!NearlyEqual(got_plane[i], clip_plane_0[i], 1e-6f)) {
+            return reporter.Fail("CreateStateBlock baseline mismatch: ClipPlane[%d] got=%f expected=%f",
+                                 i,
+                                 (double)got_plane[i],
+                                 (double)clip_plane_0[i]);
+          }
+        }
+      }
+
       ComPtr<IDirect3DVertexBuffer9> got_vb;
       UINT got_offset = 0;
       UINT got_stride = 0;
@@ -2148,6 +2310,40 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
     hr = dev->SetTransform(D3DTS_WORLD, &world_1);
     if (FAILED(hr)) {
       return reporter.FailHresult("SetTransform (pre Capture)", hr);
+    }
+
+    hr = dev->SetMaterial(&mat_1);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetMaterial (pre Capture)", hr);
+    }
+
+    if (light_ok) {
+      hr = dev->SetLight(0, &light_1);
+      if (FAILED(hr)) {
+        aerogpu_test::PrintfStdout("INFO: %s: disabling CreateStateBlock Light check (Set pre Capture failed hr=0x%08lX)",
+                                   kTestName,
+                                   (unsigned long)hr);
+        light_ok = false;
+      } else {
+        hr = dev->LightEnable(0, FALSE);
+        if (FAILED(hr)) {
+          aerogpu_test::PrintfStdout(
+              "INFO: %s: disabling CreateStateBlock Light check (Disable pre Capture failed hr=0x%08lX)",
+              kTestName,
+              (unsigned long)hr);
+          light_ok = false;
+        }
+      }
+    }
+
+    if (clip_plane_ok) {
+      hr = dev->SetClipPlane(0, clip_plane_1);
+      if (FAILED(hr)) {
+        aerogpu_test::PrintfStdout("INFO: %s: disabling CreateStateBlock ClipPlane check (Set pre Capture failed hr=0x%08lX)",
+                                   kTestName,
+                                   (unsigned long)hr);
+        clip_plane_ok = false;
+      }
     }
 
     if (clip_status_ok) {
@@ -2243,6 +2439,40 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
       return reporter.FailHresult("SetVertexShaderConstantB (pre Apply)", hr);
     }
 
+    hr = dev->SetMaterial(&mat_clobber);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetMaterial (pre Apply)", hr);
+    }
+
+    if (light_ok) {
+      hr = dev->SetLight(0, &light_clobber);
+      if (FAILED(hr)) {
+        aerogpu_test::PrintfStdout("INFO: %s: disabling CreateStateBlock Light check (clobber Set failed hr=0x%08lX)",
+                                   kTestName,
+                                   (unsigned long)hr);
+        light_ok = false;
+      } else {
+        hr = dev->LightEnable(0, TRUE);
+        if (FAILED(hr)) {
+          aerogpu_test::PrintfStdout(
+              "INFO: %s: disabling CreateStateBlock Light check (clobber Enable failed hr=0x%08lX)",
+              kTestName,
+              (unsigned long)hr);
+          light_ok = false;
+        }
+      }
+    }
+
+    if (clip_plane_ok) {
+      hr = dev->SetClipPlane(0, clip_plane_clobber);
+      if (FAILED(hr)) {
+        aerogpu_test::PrintfStdout("INFO: %s: disabling CreateStateBlock ClipPlane check (clobber Set failed hr=0x%08lX)",
+                                   kTestName,
+                                   (unsigned long)hr);
+        clip_plane_ok = false;
+      }
+    }
+
     if (clip_status_ok) {
       hr = dev->SetClipStatus(&clip_status_0);
       if (FAILED(hr)) {
@@ -2307,6 +2537,52 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
                              i,
                              (int)b,
                              (int)a);
+      }
+    }
+
+    D3DMATERIAL9 got_mat;
+    ZeroMemory(&got_mat, sizeof(got_mat));
+    hr = dev->GetMaterial(&got_mat);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("GetMaterial (after Apply vertex)", hr);
+    }
+    if (!MaterialNearlyEqual(got_mat, mat_1, 1e-6f)) {
+      return reporter.Fail("CreateStateBlock restore mismatch: Material");
+    }
+
+    if (light_ok) {
+      D3DLIGHT9 got_light;
+      ZeroMemory(&got_light, sizeof(got_light));
+      hr = dev->GetLight(0, &got_light);
+      if (FAILED(hr)) {
+        return reporter.FailHresult("GetLight (after Apply vertex)", hr);
+      }
+      if (!LightNearlyEqual(got_light, light_1, 1e-6f)) {
+        return reporter.Fail("CreateStateBlock restore mismatch: Light");
+      }
+      BOOL got_enabled = TRUE;
+      hr = dev->GetLightEnable(0, &got_enabled);
+      if (FAILED(hr)) {
+        return reporter.FailHresult("GetLightEnable (after Apply vertex)", hr);
+      }
+      if (got_enabled) {
+        return reporter.Fail("CreateStateBlock restore mismatch: LightEnable expected FALSE");
+      }
+    }
+
+    if (clip_plane_ok) {
+      float got_plane[4] = {};
+      hr = dev->GetClipPlane(0, got_plane);
+      if (FAILED(hr)) {
+        return reporter.FailHresult("GetClipPlane (after Apply vertex)", hr);
+      }
+      for (int i = 0; i < 4; ++i) {
+        if (!NearlyEqual(got_plane[i], clip_plane_1[i], 1e-6f)) {
+          return reporter.Fail("CreateStateBlock restore mismatch: ClipPlane[%d] got=%f expected=%f",
+                               i,
+                               (double)got_plane[i],
+                               (double)clip_plane_1[i]);
+        }
       }
     }
 
