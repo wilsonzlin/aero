@@ -47,15 +47,25 @@ describe("runtime/coordinator (worker VM snapshots)", () => {
     const coordinator = new WorkerCoordinator();
     const cpu = new StubWorker();
     const io = new StubWorker();
-    installReadyWorkers(coordinator, cpu, io);
+    const net = new StubWorker();
+    (coordinator as any).workers = {
+      cpu: { role: "cpu", instanceId: 1, worker: cpu as unknown as Worker, status: { state: "ready" } },
+      io: { role: "io", instanceId: 1, worker: io as unknown as Worker, status: { state: "ready" } },
+      net: { role: "net", instanceId: 1, worker: net as unknown as Worker, status: { state: "ready" } },
+    };
 
     const promise = coordinator.snapshotSaveToOpfs("state/test.snap");
 
     expect(cpu.posted[0]?.message.kind).toBe("vm.snapshot.pause");
     expect(io.posted[0]?.message.kind).toBe("vm.snapshot.pause");
+    expect(net.posted.length).toBe(0);
 
     cpu.emitMessage({ kind: "vm.snapshot.paused", requestId: cpu.posted[0]!.message.requestId, ok: true });
     io.emitMessage({ kind: "vm.snapshot.paused", requestId: io.posted[0]!.message.requestId, ok: true });
+    await flushMicrotasks();
+
+    expect(net.posted[0]?.message.kind).toBe("vm.snapshot.pause");
+    net.emitMessage({ kind: "vm.snapshot.paused", requestId: net.posted[0]!.message.requestId, ok: true });
     await flushMicrotasks();
 
     expect(cpu.posted[1]?.message.kind).toBe("vm.snapshot.getCpuState");
@@ -82,9 +92,11 @@ describe("runtime/coordinator (worker VM snapshots)", () => {
 
     expect(cpu.posted[2]?.message.kind).toBe("vm.snapshot.resume");
     expect(io.posted[2]?.message.kind).toBe("vm.snapshot.resume");
+    expect(net.posted[1]?.message.kind).toBe("vm.snapshot.resume");
 
     cpu.emitMessage({ kind: "vm.snapshot.resumed", requestId: cpu.posted[2]!.message.requestId, ok: true });
     io.emitMessage({ kind: "vm.snapshot.resumed", requestId: io.posted[2]!.message.requestId, ok: true });
+    net.emitMessage({ kind: "vm.snapshot.resumed", requestId: net.posted[1]!.message.requestId, ok: true });
 
     await expect(promise).resolves.toBeUndefined();
   });
@@ -136,7 +148,12 @@ describe("runtime/coordinator (worker VM snapshots)", () => {
     const coordinator = new WorkerCoordinator();
     const cpu = new StubWorker();
     const io = new StubWorker();
-    installReadyWorkers(coordinator, cpu, io);
+    const net = new StubWorker();
+    (coordinator as any).workers = {
+      cpu: { role: "cpu", instanceId: 1, worker: cpu as unknown as Worker, status: { state: "ready" } },
+      io: { role: "io", instanceId: 1, worker: io as unknown as Worker, status: { state: "ready" } },
+      net: { role: "net", instanceId: 1, worker: net as unknown as Worker, status: { state: "ready" } },
+    };
 
     const promise = coordinator.snapshotRestoreFromOpfs("state/test.snap");
 
@@ -144,6 +161,10 @@ describe("runtime/coordinator (worker VM snapshots)", () => {
     expect(io.posted[0]?.message.kind).toBe("vm.snapshot.pause");
     cpu.emitMessage({ kind: "vm.snapshot.paused", requestId: cpu.posted[0]!.message.requestId, ok: true });
     io.emitMessage({ kind: "vm.snapshot.paused", requestId: io.posted[0]!.message.requestId, ok: true });
+    await flushMicrotasks();
+
+    expect(net.posted[0]?.message.kind).toBe("vm.snapshot.pause");
+    net.emitMessage({ kind: "vm.snapshot.paused", requestId: net.posted[0]!.message.requestId, ok: true });
     await flushMicrotasks();
 
     expect(io.posted[1]?.message.kind).toBe("vm.snapshot.restoreFromOpfs");
@@ -169,10 +190,11 @@ describe("runtime/coordinator (worker VM snapshots)", () => {
 
     expect(cpu.posted[2]?.message.kind).toBe("vm.snapshot.resume");
     expect(io.posted[2]?.message.kind).toBe("vm.snapshot.resume");
+    expect(net.posted[1]?.message.kind).toBe("vm.snapshot.resume");
     cpu.emitMessage({ kind: "vm.snapshot.resumed", requestId: cpu.posted[2]!.message.requestId, ok: true });
     io.emitMessage({ kind: "vm.snapshot.resumed", requestId: io.posted[2]!.message.requestId, ok: true });
+    net.emitMessage({ kind: "vm.snapshot.resumed", requestId: net.posted[1]!.message.requestId, ok: true });
 
     await expect(promise).resolves.toBeUndefined();
   });
 });
-

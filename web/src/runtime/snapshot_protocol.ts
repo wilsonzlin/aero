@@ -1,6 +1,6 @@
 /**
  * Low-frequency `postMessage` protocol used to orchestrate VM snapshot save/restore
- * across the browser's multi-worker runtime (CPU + IO workers).
+ * across the browser's multi-worker runtime (CPU + IO + NET workers).
  *
  * High-frequency traffic (port/mmio/disk I/O) continues to use the AIPC command/event
  * rings (`web/src/ipc/*`).
@@ -154,4 +154,3 @@ export function isWorkerToCoordinatorSnapshotMessage(value: unknown): value is W
     msg.kind === "vm.snapshot.restored"
   );
 }
-

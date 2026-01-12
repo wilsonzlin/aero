@@ -22,6 +22,12 @@ import {
   type WorkerRole,
 } from "../runtime/shared_layout";
 import {
+  serializeVmSnapshotError,
+  type CoordinatorToWorkerSnapshotMessage,
+  type VmSnapshotPausedMessage,
+  type VmSnapshotResumedMessage,
+} from "../runtime/snapshot_protocol";
+import {
   type ConfigAckMessage,
   type ConfigUpdateMessage,
   MessageType,
@@ -77,6 +83,8 @@ let l2BootstrapGeneration = 0;
 
 let currentConfig: AeroConfig | null = null;
 let currentConfigVersion = 0;
+
+let snapshotPaused = false;
 
 let perfWriter: PerfWriter | null = null;
 let perfFrameHeader: Int32Array | null = null;
@@ -221,6 +229,7 @@ function clearReconnectTimer(): void {
 }
 
 function scheduleReconnect(): void {
+  if (snapshotPaused) return;
   if (l2TunnelProxyUrl === null) return;
   if (!l2Forwarder) return;
   if (Atomics.load(status, StatusIndex.StopRequested) === 1) return;
@@ -239,6 +248,7 @@ function scheduleReconnect(): void {
   const timer = setTimeout(() => {
     l2ReconnectTimer = null;
     if (Atomics.load(status, StatusIndex.StopRequested) === 1) return;
+    if (snapshotPaused) return;
     if (generation !== l2ReconnectGeneration) return;
     if (l2TunnelProxyUrl !== proxyUrl) return;
 
@@ -343,6 +353,17 @@ function applyL2TunnelConfig(config: AeroConfig | null): void {
   const telemetry = l2TunnelTelemetry;
   if (!forwarder) return;
 
+  // Snapshot orchestration can pause the net worker. While paused, keep the
+  // forwarder stopped (no tunnel traffic) and defer reconnecting until resume.
+  if (snapshotPaused) {
+    clearReconnectTimer();
+    // Ensure any existing tunnel is closed and transient buffers are cleared.
+    telemetry?.onStopped();
+    l2TunnelClient = null;
+    forwarder.stop();
+    return;
+  }
+
   // Ensure we stop/close the previous tunnel when the proxy URL changes.
   if (proxyUrl !== l2TunnelProxyUrl) {
     clearReconnectTimer();
@@ -390,6 +411,37 @@ function applyL2TunnelConfig(config: AeroConfig | null): void {
   }
 
   forwarder.start();
+}
+
+function drainRing(ring: RingBuffer | null): void {
+  if (!ring) return;
+  while (ring.consumeNext(() => {})) {
+    // drop
+  }
+}
+
+function handleSnapshotPause(): void {
+  snapshotPaused = true;
+
+  // Prevent any pending reconnect from running, and invalidate any in-flight backoff timer.
+  clearReconnectTimer();
+  l2ReconnectAttempts = 0;
+  l2ReconnectGeneration += 1;
+
+  // Ignore late events from the currently active tunnel while we close it.
+  l2TunnelClient = null;
+  l2TunnelTelemetry?.onStopped();
+  l2Forwarder?.stop();
+
+  // Clear transient guest<->host ring traffic so snapshot restore doesn't
+  // observe stale frames.
+  drainRing(netTxRing);
+  drainRing(netRxRing);
+}
+
+function handleSnapshotResume(): void {
+  snapshotPaused = false;
+  applyL2TunnelConfig(currentConfig);
 }
 
 function drainRuntimeCommands(): void {
@@ -647,7 +699,9 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
 ctx.onmessage = (ev: MessageEvent<unknown>) => {
   try {
     const msg = ev.data as
-      | Partial<WorkerInitMessage | ConfigUpdateMessage>
+      | Partial<WorkerInitMessage>
+      | Partial<ConfigUpdateMessage>
+      | Partial<CoordinatorToWorkerSnapshotMessage>
       | Partial<{ kind: "net.trace.enable" | "net.trace.disable" | "net.trace.clear" }>
       | Partial<{ kind: "net.trace.take_pcapng" | "net.trace.export_pcapng" | "net.trace.status"; requestId: number }>
       | undefined;
@@ -712,10 +766,55 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
       return;
     }
 
+    const snapshotMsg = msg as Partial<CoordinatorToWorkerSnapshotMessage>;
+    if (typeof snapshotMsg.kind === "string" && snapshotMsg.kind.startsWith("vm.snapshot.")) {
+      const requestId = snapshotMsg.requestId;
+      if (typeof requestId !== "number") return;
+
+      switch (snapshotMsg.kind) {
+        case "vm.snapshot.pause": {
+          try {
+            handleSnapshotPause();
+            ctx.postMessage({ kind: "vm.snapshot.paused", requestId, ok: true } satisfies VmSnapshotPausedMessage);
+          } catch (err) {
+            ctx.postMessage({
+              kind: "vm.snapshot.paused",
+              requestId,
+              ok: false,
+              error: serializeVmSnapshotError(err),
+            } satisfies VmSnapshotPausedMessage);
+          }
+          return;
+        }
+        case "vm.snapshot.resume": {
+          try {
+            handleSnapshotResume();
+            ctx.postMessage({ kind: "vm.snapshot.resumed", requestId, ok: true } satisfies VmSnapshotResumedMessage);
+          } catch (err) {
+            ctx.postMessage({
+              kind: "vm.snapshot.resumed",
+              requestId,
+              ok: false,
+              error: serializeVmSnapshotError(err),
+            } satisfies VmSnapshotResumedMessage);
+          }
+          return;
+        }
+        default:
+          return;
+      }
+    }
+
     if (msg.kind === "config.update") {
       currentConfig = (msg as ConfigUpdateMessage).config;
       currentConfigVersion = (msg as ConfigUpdateMessage).version;
       ctx.postMessage({ kind: "config.ack", version: currentConfigVersion } satisfies ConfigAckMessage);
+
+      if (snapshotPaused) {
+        // Defer applying config changes until snapshot resume to avoid reconnecting
+        // and forwarding frames while paused.
+        return;
+      }
 
       try {
         applyL2TunnelConfig(currentConfig);

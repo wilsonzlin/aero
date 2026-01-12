@@ -614,6 +614,107 @@ describe("workers/net.worker (worker_threads)", () => {
     }
   }, 20000);
 
+  it("pauses forwarding during VM snapshots and drains NET_TX/NET_RX without errors", async () => {
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 1 });
+
+    const netTxRing = openRingByKind(segments.ioIpc, IO_IPC_NET_TX_QUEUE_KIND);
+    const netRxRing = openRingByKind(segments.ioIpc, IO_IPC_NET_RX_QUEUE_KIND);
+
+    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
+    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
+    const worker = new Worker(new URL("./net.worker.ts", import.meta.url), {
+      type: "module",
+      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+    } as unknown as WorkerOptions);
+
+    try {
+      const wsCreated = waitForWorkerMessage(worker, (msg) => (msg as { type?: unknown }).type === "ws.created", 10000);
+      const workerReady = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "net",
+        10000,
+      );
+
+      worker.postMessage({ kind: "config.update", version: 1, config: makeConfig("https://gateway.example.com") });
+      worker.postMessage(makeInit(segments));
+
+      await wsCreated;
+      await workerReady;
+
+      // Fill NET_RX to force an inbound frame into the forwarder's pending buffer.
+      const fillerLen = 64 * 1024;
+      const filler = new Uint8Array(fillerLen);
+      filler.fill(0xaa);
+      let fillerCount = 0;
+      while (netRxRing.tryPush(filler)) fillerCount += 1;
+      expect(fillerCount).toBeGreaterThan(0);
+
+      const pendingInbound = Uint8Array.of(1, 2, 3, 4);
+      worker.postMessage({ type: "ws.inject", data: encodeL2Frame(pendingInbound) });
+
+      // Allow the worker to observe NET_RX full and buffer the inbound frame.
+      await new Promise<void>((resolve) => setTimeout(resolve, 100));
+
+      const pausedPromise = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as { kind?: unknown }).kind === "vm.snapshot.paused",
+        5000,
+      ) as Promise<{ kind: string; requestId: number; ok: boolean }>;
+      worker.postMessage({ kind: "vm.snapshot.pause", requestId: 1 });
+      const paused = await pausedPromise;
+      expect(paused.ok).toBe(true);
+
+      // NET_RX should be drained (filler frames dropped) by the net worker.
+      expect(netRxRing.tryPop()).toBeNull();
+
+      // While paused, guest TX should not be forwarded to the tunnel.
+      expect(netTxRing.tryPush(Uint8Array.of(9, 9, 9))).toBe(true);
+      await expect(waitForWorkerMessage(worker, (msg) => (msg as { type?: unknown }).type === "ws.sent", 200)).rejects.toThrow(/timed out/i);
+
+      const wsCreatedAfterResume = waitForWorkerMessage(worker, (msg) => (msg as { type?: unknown }).type === "ws.created", 10000);
+      const resumedPromise = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as { kind?: unknown }).kind === "vm.snapshot.resumed",
+        5000,
+      ) as Promise<{ kind: string; requestId: number; ok: boolean }>;
+      worker.postMessage({ kind: "vm.snapshot.resume", requestId: 2 });
+      const resumed = await resumedPromise;
+      expect(resumed.ok).toBe(true);
+      await wsCreatedAfterResume;
+
+      // Ensure the pending inbound frame from before pause was cleared (it should not
+      // appear after resume once NET_RX has space).
+      expect(netRxRing.tryPop()).toBeNull();
+
+      // Confirm that normal delivery resumes for new inbound frames.
+      const inbound2 = Uint8Array.of(7, 6, 5);
+      worker.postMessage({ type: "ws.inject", data: encodeL2Frame(inbound2) });
+
+      const rxDeadline = Date.now() + 2000;
+      let received: Uint8Array | null = null;
+      while (!received && Date.now() < rxDeadline) {
+        received = netRxRing.tryPop();
+        if (!received) {
+          await new Promise<void>((resolve) => setTimeout(resolve, 5));
+        }
+      }
+      expect(received).not.toBeNull();
+      expect(Array.from(received!)).toEqual(Array.from(inbound2));
+
+      // Pausing again with empty rings should succeed (drain loops should not throw).
+      const paused2Promise = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as { kind?: unknown }).kind === "vm.snapshot.paused" && (msg as { requestId?: unknown }).requestId === 3,
+        5000,
+      ) as Promise<{ kind: string; requestId: number; ok: boolean }>;
+      worker.postMessage({ kind: "vm.snapshot.pause", requestId: 3 });
+      const paused2 = await paused2Promise;
+      expect(paused2.ok).toBe(true);
+    } finally {
+      await worker.terminate();
+    }
+  }, 20000);
+
   it("wakes promptly on shutdown commands even while pending RX frames are buffered", async () => {
     const segments = allocateSharedMemorySegments({ guestRamMiB: 1 });
 
