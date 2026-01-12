@@ -23,6 +23,7 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
     AEROGPU_RESOURCE_USAGE_RENDER_TARGET, AEROGPU_RESOURCE_USAGE_SCANOUT,
     AEROGPU_RESOURCE_USAGE_TEXTURE, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
 };
+use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
 use aero_protocol::aerogpu::aerogpu_ring::{AerogpuAllocEntry, AEROGPU_ALLOC_FLAG_READONLY};
 use anyhow::{anyhow, bail, Context, Result};
 
@@ -6764,27 +6765,27 @@ fn map_texture_usage_flags(flags: u32) -> wgpu::TextureUsages {
 //
 // NOTE: ABI 1.2 adds sRGB + BC formats. The exact numeric values are part of the protocol and must
 // remain stable once published.
-const AEROGPU_FORMAT_B8G8R8A8_UNORM: u32 = 1;
-const AEROGPU_FORMAT_B8G8R8X8_UNORM: u32 = 2;
-const AEROGPU_FORMAT_R8G8B8A8_UNORM: u32 = 3;
-const AEROGPU_FORMAT_R8G8B8X8_UNORM: u32 = 4;
-const AEROGPU_FORMAT_D24_UNORM_S8_UINT: u32 = 32;
-const AEROGPU_FORMAT_D32_FLOAT: u32 = 33;
+const AEROGPU_FORMAT_B8G8R8A8_UNORM: u32 = AerogpuFormat::B8G8R8A8Unorm as u32;
+const AEROGPU_FORMAT_B8G8R8X8_UNORM: u32 = AerogpuFormat::B8G8R8X8Unorm as u32;
+const AEROGPU_FORMAT_R8G8B8A8_UNORM: u32 = AerogpuFormat::R8G8B8A8Unorm as u32;
+const AEROGPU_FORMAT_R8G8B8X8_UNORM: u32 = AerogpuFormat::R8G8B8X8Unorm as u32;
+const AEROGPU_FORMAT_D24_UNORM_S8_UINT: u32 = AerogpuFormat::D24UnormS8Uint as u32;
+const AEROGPU_FORMAT_D32_FLOAT: u32 = AerogpuFormat::D32Float as u32;
 
 // ABI 1.2 extensions (backwards-compatible).
-const AEROGPU_FORMAT_B8G8R8A8_UNORM_SRGB: u32 = 7;
-const AEROGPU_FORMAT_B8G8R8X8_UNORM_SRGB: u32 = 8;
-const AEROGPU_FORMAT_R8G8B8A8_UNORM_SRGB: u32 = 9;
-const AEROGPU_FORMAT_R8G8B8X8_UNORM_SRGB: u32 = 10;
+const AEROGPU_FORMAT_B8G8R8A8_UNORM_SRGB: u32 = AerogpuFormat::B8G8R8A8UnormSrgb as u32;
+const AEROGPU_FORMAT_B8G8R8X8_UNORM_SRGB: u32 = AerogpuFormat::B8G8R8X8UnormSrgb as u32;
+const AEROGPU_FORMAT_R8G8B8A8_UNORM_SRGB: u32 = AerogpuFormat::R8G8B8A8UnormSrgb as u32;
+const AEROGPU_FORMAT_R8G8B8X8_UNORM_SRGB: u32 = AerogpuFormat::R8G8B8X8UnormSrgb as u32;
 
-const AEROGPU_FORMAT_BC1_RGBA_UNORM: u32 = 64;
-const AEROGPU_FORMAT_BC1_RGBA_UNORM_SRGB: u32 = 65;
-const AEROGPU_FORMAT_BC2_RGBA_UNORM: u32 = 66;
-const AEROGPU_FORMAT_BC2_RGBA_UNORM_SRGB: u32 = 67;
-const AEROGPU_FORMAT_BC3_RGBA_UNORM: u32 = 68;
-const AEROGPU_FORMAT_BC3_RGBA_UNORM_SRGB: u32 = 69;
-const AEROGPU_FORMAT_BC7_RGBA_UNORM: u32 = 70;
-const AEROGPU_FORMAT_BC7_RGBA_UNORM_SRGB: u32 = 71;
+const AEROGPU_FORMAT_BC1_RGBA_UNORM: u32 = AerogpuFormat::BC1RgbaUnorm as u32;
+const AEROGPU_FORMAT_BC1_RGBA_UNORM_SRGB: u32 = AerogpuFormat::BC1RgbaUnormSrgb as u32;
+const AEROGPU_FORMAT_BC2_RGBA_UNORM: u32 = AerogpuFormat::BC2RgbaUnorm as u32;
+const AEROGPU_FORMAT_BC2_RGBA_UNORM_SRGB: u32 = AerogpuFormat::BC2RgbaUnormSrgb as u32;
+const AEROGPU_FORMAT_BC3_RGBA_UNORM: u32 = AerogpuFormat::BC3RgbaUnorm as u32;
+const AEROGPU_FORMAT_BC3_RGBA_UNORM_SRGB: u32 = AerogpuFormat::BC3RgbaUnormSrgb as u32;
+const AEROGPU_FORMAT_BC7_RGBA_UNORM: u32 = AerogpuFormat::BC7RgbaUnorm as u32;
+const AEROGPU_FORMAT_BC7_RGBA_UNORM_SRGB: u32 = AerogpuFormat::BC7RgbaUnormSrgb as u32;
 
 fn map_aerogpu_texture_format(format_u32: u32) -> Result<wgpu::TextureFormat> {
     // NOTE: This executor currently always uses an RGBA8 fallback for BC formats (even when the

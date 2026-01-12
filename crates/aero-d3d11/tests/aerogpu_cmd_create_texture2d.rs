@@ -251,9 +251,6 @@ fn create_texture2d_bc1_guest_backed_upload_succeeds() {
             }
         };
 
-        // Protocol ABI 1.2 extension (see `drivers/aerogpu/protocol/aerogpu_pci.h`).
-        const AEROGPU_FORMAT_BC1_RGBA_UNORM: u32 = 64;
-
         // BC1 4x4 is exactly one 8-byte block.
         let allocs = [AerogpuAllocEntry {
             alloc_id: 1,
@@ -276,7 +273,7 @@ fn create_texture2d_bc1_guest_backed_upload_succeeds() {
         let start = begin_cmd(&mut stream, AerogpuCmdOpcode::CreateTexture2d as u32);
         stream.extend_from_slice(&1u32.to_le_bytes()); // texture_handle
         stream.extend_from_slice(&AEROGPU_RESOURCE_USAGE_TEXTURE.to_le_bytes());
-        stream.extend_from_slice(&AEROGPU_FORMAT_BC1_RGBA_UNORM.to_le_bytes());
+        stream.extend_from_slice(&(AerogpuFormat::BC1RgbaUnorm as u32).to_le_bytes());
         stream.extend_from_slice(&4u32.to_le_bytes()); // width
         stream.extend_from_slice(&4u32.to_le_bytes()); // height
         stream.extend_from_slice(&1u32.to_le_bytes()); // mip_levels
@@ -291,7 +288,7 @@ fn create_texture2d_bc1_guest_backed_upload_succeeds() {
         let start = begin_cmd(&mut stream, AerogpuCmdOpcode::CreateTexture2d as u32);
         stream.extend_from_slice(&2u32.to_le_bytes()); // texture_handle
         stream.extend_from_slice(&AEROGPU_RESOURCE_USAGE_TEXTURE.to_le_bytes());
-        stream.extend_from_slice(&AEROGPU_FORMAT_BC1_RGBA_UNORM.to_le_bytes());
+        stream.extend_from_slice(&(AerogpuFormat::BC1RgbaUnorm as u32).to_le_bytes());
         stream.extend_from_slice(&4u32.to_le_bytes()); // width
         stream.extend_from_slice(&4u32.to_le_bytes()); // height
         stream.extend_from_slice(&1u32.to_le_bytes()); // mip_levels
