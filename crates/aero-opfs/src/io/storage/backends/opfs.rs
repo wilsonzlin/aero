@@ -330,9 +330,9 @@ mod wasm {
     // default.
     //
     // Some consumers require `VirtualDisk + Send` even on wasm (notably the NVMe device model,
-    // which stores its disk backend behind a `Send` trait object for portability). On single-thread
-    // wasm builds (`target-feature=atomics` is **disabled**), it is safe to treat these JS handles
-    // as `Send` because they cannot be used from multiple threads.
+    // which stores its disk backend behind a `Send` trait object for portability, and ATAPI/ISO
+    // adapters). On single-thread wasm builds (`target-feature=atomics` is **disabled**), it is
+    // safe to treat these JS handles as `Send` because they cannot be used from multiple threads.
     //
     // When wasm threads are enabled (`target-feature=+atomics`), this impl is intentionally
     // disabled so we can revisit the safety story.
