@@ -617,9 +617,15 @@ impl<B: StorageBackend> Qcow2Disk<B> {
             .cluster_size()
             .try_into()
             .map_err(|_| DiskError::Unsupported("qcow2 cluster size too large"))?;
-        let mut buf = vec![0u8; cluster_size];
+        let mut buf = Vec::new();
+        buf.try_reserve_exact(cluster_size)
+            .map_err(|_| DiskError::QuotaExceeded)?;
+        buf.resize(cluster_size, 0);
         self.backend_read_at(l2_offset, &mut buf, "qcow2 l2 table truncated")?;
-        let mut entries = Vec::with_capacity(cluster_size / 8);
+        let mut entries = Vec::new();
+        entries
+            .try_reserve_exact(cluster_size / 8)
+            .map_err(|_| DiskError::QuotaExceeded)?;
         for chunk in buf.chunks_exact(8) {
             entries.push(be_u64(chunk));
         }
@@ -706,7 +712,12 @@ impl<B: StorageBackend> Qcow2Disk<B> {
             .l2_entries_per_table()
             .try_into()
             .map_err(|_| DiskError::Unsupported("qcow2 l2 table too large"))?;
-        let _ = self.l2_cache.push(new_l2_offset, vec![0u64; l2_entries]);
+        let mut table = Vec::new();
+        table
+            .try_reserve_exact(l2_entries)
+            .map_err(|_| DiskError::QuotaExceeded)?;
+        table.resize(l2_entries, 0);
+        let _ = self.l2_cache.push(new_l2_offset, table);
 
         Ok(new_l2_offset)
     }
@@ -877,9 +888,15 @@ impl<B: StorageBackend> Qcow2Disk<B> {
             .cluster_size()
             .try_into()
             .map_err(|_| DiskError::Unsupported("qcow2 cluster size too large"))?;
-        let mut buf = vec![0u8; cluster_size];
+        let mut buf = Vec::new();
+        buf.try_reserve_exact(cluster_size)
+            .map_err(|_| DiskError::QuotaExceeded)?;
+        buf.resize(cluster_size, 0);
         self.backend_read_at(block_offset, &mut buf, "qcow2 refcount block truncated")?;
-        let mut entries = Vec::with_capacity(cluster_size / 2);
+        let mut entries = Vec::new();
+        entries
+            .try_reserve_exact(cluster_size / 2)
+            .map_err(|_| DiskError::QuotaExceeded)?;
         for chunk in buf.chunks_exact(2) {
             entries.push(u16::from_be_bytes([chunk[0], chunk[1]]));
         }
