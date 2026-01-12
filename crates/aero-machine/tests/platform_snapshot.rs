@@ -150,6 +150,40 @@ fn snapshot_restore_preserves_pit_phase_and_pulse_accounting() {
 }
 
 #[test]
+fn snapshot_restore_preserves_pit_irq0_pending_pic_vector() {
+    let mut src = Machine::new(pc_machine_config()).unwrap();
+    let interrupts = src.platform_interrupts().unwrap();
+
+    // Put the PIC in a known state and ensure IRQ0 is unmasked.
+    {
+        let mut ints = interrupts.borrow_mut();
+        ints.pic_mut().set_offsets(0x20, 0x28);
+        ints.pic_mut().set_masked(0, false);
+    }
+
+    // Program PIT ch0: access lobyte/hibyte, mode 2 (rate generator), binary. Divisor 100.
+    src.io_write(PIT_CMD, 1, 0x34);
+    src.io_write(PIT_CH0, 1, 100);
+    src.io_write(PIT_CH0, 1, 0);
+
+    assert_eq!(interrupts.borrow().get_pending(), None);
+
+    // Advance exactly one period so we get a single edge-triggered IRQ0 pulse.
+    let pit = src.pit().unwrap();
+    pit.borrow_mut().advance_ticks(100);
+
+    assert_eq!(interrupts.borrow().get_pending(), Some(0x20));
+
+    let snap = src.take_snapshot_full().unwrap();
+
+    let mut restored = Machine::new(pc_machine_config()).unwrap();
+    restored.restore_snapshot_bytes(&snap).unwrap();
+
+    let interrupts = restored.platform_interrupts().unwrap();
+    assert_eq!(interrupts.borrow().get_pending(), Some(0x20));
+}
+
+#[test]
 fn snapshot_restore_preserves_acpi_sci_pending_irq9_vector() {
     let mut src = Machine::new(pc_machine_config()).unwrap();
     let interrupts = src.platform_interrupts().unwrap();
