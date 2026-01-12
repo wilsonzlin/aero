@@ -2278,26 +2278,15 @@ impl Machine {
         nic.pci_config_write(0x04, 2, u32::from(command));
 
         const MAX_FRAMES_PER_POLL: usize = aero_net_pump::DEFAULT_MAX_FRAMES_PER_POLL;
-        if let Some(backend) = self.network_backend.as_mut() {
-            tick_e1000(
-                &mut nic,
-                &mut self.mem,
-                backend,
-                MAX_FRAMES_PER_POLL,
-                MAX_FRAMES_PER_POLL,
-            );
-        } else {
-            // Keep the device model making forward progress even when no host network backend is
-            // attached (e.g. for deterministic guest tests). Any guest TX frames are dropped.
-            let mut no_backend = ();
-            tick_e1000(
-                &mut nic,
-                &mut self.mem,
-                &mut no_backend,
-                MAX_FRAMES_PER_POLL,
-                MAX_FRAMES_PER_POLL,
-            );
-        }
+        // `Option<B>` implements `NetworkBackend`, so when no backend is installed this still
+        // drains guest TX frames (dropping them) while making no forward progress on host RX.
+        tick_e1000(
+            &mut nic,
+            &mut self.mem,
+            &mut self.network_backend,
+            MAX_FRAMES_PER_POLL,
+            MAX_FRAMES_PER_POLL,
+        );
     }
 
     /// Process AHCI (DMA progress) once.
