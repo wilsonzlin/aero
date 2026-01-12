@@ -77,6 +77,85 @@ fn build_set_cursor_boot_sector(row: u8, col: u8) -> [u8; 512] {
     sector
 }
 
+fn build_vbe_palette_boot_sector() -> [u8; 512] {
+    let mut sector = [0u8; 512];
+    let mut i = 0usize;
+
+    // xor ax, ax
+    sector[i..i + 2].copy_from_slice(&[0x31, 0xC0]);
+    i += 2;
+    // mov ds, ax
+    sector[i..i + 2].copy_from_slice(&[0x8E, 0xD8]);
+    i += 2;
+    // mov es, ax
+    sector[i..i + 2].copy_from_slice(&[0x8E, 0xC0]);
+    i += 2;
+
+    // mov ax, 0x4F02
+    sector[i..i + 3].copy_from_slice(&[0xB8, 0x02, 0x4F]);
+    i += 3;
+    // mov bx, 0x4105 (mode 0x105 + LFB requested, 1024x768x8bpp)
+    sector[i..i + 3].copy_from_slice(&[0xBB, 0x05, 0x41]);
+    i += 3;
+    // int 0x10
+    sector[i..i + 2].copy_from_slice(&[0xCD, 0x10]);
+    i += 2;
+
+    // Write one palette entry (B,G,R,0) to 0x0000:0x0500.
+    // We'll set palette index 1 to full red (6-bit component 0x3F).
+    //
+    // mov di, 0x0500
+    sector[i..i + 3].copy_from_slice(&[0xBF, 0x00, 0x05]);
+    i += 3;
+    // mov byte [di], 0x00 (B)
+    sector[i..i + 3].copy_from_slice(&[0xC6, 0x05, 0x00]);
+    i += 3;
+    // inc di
+    sector[i] = 0x47;
+    i += 1;
+    // mov byte [di], 0x00 (G)
+    sector[i..i + 3].copy_from_slice(&[0xC6, 0x05, 0x00]);
+    i += 3;
+    // inc di
+    sector[i] = 0x47;
+    i += 1;
+    // mov byte [di], 0x3F (R)
+    sector[i..i + 3].copy_from_slice(&[0xC6, 0x05, 0x3F]);
+    i += 3;
+    // inc di
+    sector[i] = 0x47;
+    i += 1;
+    // mov byte [di], 0x00 (reserved)
+    sector[i..i + 3].copy_from_slice(&[0xC6, 0x05, 0x00]);
+    i += 3;
+
+    // mov ax, 0x4F09 (set palette data)
+    sector[i..i + 3].copy_from_slice(&[0xB8, 0x09, 0x4F]);
+    i += 3;
+    // mov bx, 0x0000 (BL=0 set palette)
+    sector[i..i + 3].copy_from_slice(&[0xBB, 0x00, 0x00]);
+    i += 3;
+    // mov cx, 0x0001 (count=1)
+    sector[i..i + 3].copy_from_slice(&[0xB9, 0x01, 0x00]);
+    i += 3;
+    // mov dx, 0x0001 (start index=1)
+    sector[i..i + 3].copy_from_slice(&[0xBA, 0x01, 0x00]);
+    i += 3;
+    // mov di, 0x0500
+    sector[i..i + 3].copy_from_slice(&[0xBF, 0x00, 0x05]);
+    i += 3;
+    // int 0x10
+    sector[i..i + 2].copy_from_slice(&[0xCD, 0x10]);
+    i += 2;
+
+    // hlt
+    sector[i] = 0xF4;
+
+    sector[510] = 0x55;
+    sector[511] = 0xAA;
+    sector
+}
+
 #[test]
 fn bios_vbe_sync_mode_and_lfb_base() {
     let cfg = MachineConfig {
@@ -149,4 +228,38 @@ fn bios_text_cursor_sync_updates_vga_crtc() {
 
     let got = ((hi as u16) << 8) | (lo as u16);
     assert_eq!(got, expected);
+}
+
+#[test]
+fn bios_vbe_palette_sync_updates_vga_dac() {
+    let cfg = MachineConfig {
+        ram_size_bytes: 64 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_vga: true,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        enable_e1000: false,
+        ..Default::default()
+    };
+
+    let mut m = Machine::new(cfg).unwrap();
+    m.set_disk_image(build_vbe_palette_boot_sector().to_vec())
+        .unwrap();
+    m.reset();
+    run_until_halt(&mut m);
+
+    // Write palette index 1 to the first pixel in the 8bpp framebuffer.
+    m.write_physical_u8(u64::from(SVGA_LFB_BASE), 1);
+
+    let vga = m.vga().expect("machine should include VGA");
+    let pixel0 = {
+        let mut vga = vga.borrow_mut();
+        vga.present();
+        vga.get_framebuffer()[0]
+    };
+
+    // Palette entry 1 was set to red (B=0,G=0,R=0x3F).
+    assert_eq!(pixel0, 0xFF00_00FF);
 }

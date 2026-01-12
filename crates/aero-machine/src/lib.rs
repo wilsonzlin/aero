@@ -2930,6 +2930,8 @@ impl Machine {
     fn handle_bios_interrupt(&mut self, vector: u8) {
         let ax_before = self.cpu.state.gpr[gpr::RAX] as u16;
         let bx_before = self.cpu.state.gpr[gpr::RBX] as u16;
+        let cx_before = self.cpu.state.gpr[gpr::RCX] as u16;
+        let dx_before = self.cpu.state.gpr[gpr::RDX] as u16;
 
         // Keep the core's A20 view coherent with the chipset latch while executing BIOS services.
         self.cpu.state.a20_enabled = self.chipset.a20().enabled();
@@ -2938,6 +2940,7 @@ impl Machine {
             self.bios
                 .dispatch_interrupt(vector, &mut self.cpu.state, bus, &mut self.disk);
         }
+        let ax_after = self.cpu.state.gpr[gpr::RAX] as u16;
 
         // The BIOS INT 10h implementation is HLE and only updates its internal `firmware::video`
         // state + writes to guest memory; it does not program VGA/VBE ports. Mirror relevant VBE
@@ -2973,6 +2976,44 @@ impl Machine {
                         vga.port_write(0x01CF, 2, u32::from(x_off));
                         vga.port_write(0x01CE, 2, 0x0009);
                         vga.port_write(0x01CF, 2, u32::from(y_off));
+
+                        // Palette updates: INT 10h AX=4F09 "Set Palette Data".
+                        //
+                        // The HLE BIOS stores VBE palette data internally but does not program the
+                        // VGA DAC ports. For 8bpp VBE modes, mirror the updated palette into the
+                        // device's DAC so rendered output matches BIOS state.
+                        //
+                        // Note: The VGA model's DAC programming path accepts 6-bit components; when
+                        // the BIOS is configured for an 8-bit DAC, we downscale (>>2).
+                        let bl = (bx_before & 0x00FF) as u8;
+                        if bpp == 8 && ax_before == 0x4F09 && ax_after == 0x004F && (bl & 0x7F) == 0
+                        {
+                            let start = (dx_before as usize).min(255);
+                            let count = (cx_before as usize).min(256 - start);
+                            if count != 0 {
+                                // Set DAC write index to `start`.
+                                vga.port_write(0x3C8, 1, start as u32);
+
+                                let bits = self.bios.video.vbe.dac_width_bits;
+                                for idx in start..start + count {
+                                    let base = idx * 4;
+                                    let b = self.bios.video.vbe.palette[base];
+                                    let g = self.bios.video.vbe.palette[base + 1];
+                                    let r = self.bios.video.vbe.palette[base + 2];
+
+                                    let (r, g, b) = if bits >= 8 {
+                                        (r >> 2, g >> 2, b >> 2)
+                                    } else {
+                                        (r & 0x3F, g & 0x3F, b & 0x3F)
+                                    };
+
+                                    // VGA DAC write order is R, G, B.
+                                    vga.port_write(0x3C9, 1, r as u32);
+                                    vga.port_write(0x3C9, 1, g as u32);
+                                    vga.port_write(0x3C9, 1, b as u32);
+                                }
+                            }
+                        }
 
                         // The BIOS VBE implementation clears VRAM byte-at-a-time via the
                         // `MemoryBus` before we program the VGA device's VBE enable bits, so those
