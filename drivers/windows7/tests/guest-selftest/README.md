@@ -40,6 +40,8 @@ virtio driver health via **COM1 serial** (host-captured), stdout, and a log file
     - The selftest opens the virtio-input keyboard + mouse HID interfaces and reads **input reports** directly via `ReadFile`
       on the HID device path (no window focus required).
     - Emits a readiness marker (`...|READY`), then waits for injected events and emits `...|PASS` or `...|FAIL|reason=...`.
+    - This marker is intended to be enforced only when the host harness enables input injection; it does **not** affect the
+      overall `AERO_VIRTIO_SELFTEST|RESULT|...` marker.
 - **virtio-snd** (optional; playback runs automatically when a supported virtio-snd device is detected)
   - Detect the virtio-snd PCI function via SetupAPI hardware IDs:
     - `PCI\VEN_1AF4&DEV_1059` (modern; strict INF matches `PCI\VEN_1AF4&DEV_1059&REV_01`)
@@ -127,6 +129,7 @@ AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS|...
 # Optional: end-to-end virtio-input event delivery (requires host-side QMP injection).
 AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|READY
 AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|PASS|...
+# Note: this marker does not affect the overall RESULT marker; without host injection it may FAIL with reason=timeout.
 
 # virtio-snd may be SKIP/PASS/FAIL depending on flags and device presence.
 # Capture is reported separately as "virtio-snd-capture".
