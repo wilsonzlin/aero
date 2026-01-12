@@ -36,10 +36,10 @@ pub trait NetworkBackend {
         None
     }
 
-    /// Return best-effort stats for the [`L2TunnelRingBackend`] (if this backend is one).
+    /// Return best-effort stats for the ring-buffer-backed [`L2TunnelRingBackend`] (if this backend is one).
     ///
     /// This is intentionally optional so alternative backends (e.g. NAT/stack-backed) do not need
-    /// to plumb statistics through this trait.
+    /// to plumb statistics through this trait. The default implementation returns `None`.
     fn l2_ring_stats(&self) -> Option<L2TunnelRingBackendStats> {
         None
     }
