@@ -3,13 +3,18 @@
 //! If you update any of these values, also update:
 //! - `docs/05-storage-topology-win7.md`
 
-use aero_devices::pci::profile::{IDE_PIIX3, NVME_CONTROLLER, SATA_AHCI_ICH9};
+use aero_devices::pci::profile::{IDE_PIIX3, ISA_PIIX3, NVME_CONTROLLER, SATA_AHCI_ICH9};
 use aero_devices::pci::{PciBdf, PciInterruptPin, PciIntxRouter, PciIntxRouterConfig};
 
 #[test]
 fn win7_storage_controllers_have_stable_bdfs_and_intx_gsis() {
     // PCI BDFs (bus:device.function) for storage controllers.
     assert_eq!(IDE_PIIX3.bdf, PciBdf::new(0, 1, 1), "PIIX3 IDE BDF changed");
+    assert_eq!(
+        ISA_PIIX3.bdf,
+        PciBdf::new(0, 1, 0),
+        "PIIX3 ISA bridge BDF changed"
+    );
     assert_eq!(
         SATA_AHCI_ICH9.bdf,
         PciBdf::new(0, 2, 0),
@@ -22,6 +27,20 @@ fn win7_storage_controllers_have_stable_bdfs_and_intx_gsis() {
         NVME_CONTROLLER.bdf,
         PciBdf::new(0, 3, 0),
         "NVMe controller BDF changed"
+    );
+
+    // PIIX3 is a multi-function PCI device. The ISA bridge function at 00:01.0 must set the
+    // multi-function bit in `header_type` so OS enumeration discovers the IDE function at 00:01.1
+    // (and UHCI at 00:01.2).
+    assert_eq!(
+        ISA_PIIX3.header_type, 0x80,
+        "PIIX3 ISA bridge must set multifunction bit (header_type=0x80)"
+    );
+    let mut isa_cfg = ISA_PIIX3.build_config_space();
+    assert_eq!(
+        isa_cfg.read(0x0e, 1),
+        u32::from(ISA_PIIX3.header_type),
+        "PIIX3 ISA header_type byte drifted in config space"
     );
 
     // All canonical profiles use INTA# and rely on the platform INTx router.
