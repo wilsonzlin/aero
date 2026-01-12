@@ -25,30 +25,39 @@ test("shader translation is persisted and skipped on next run", async ({}, testI
       logs: string[];
     }> {
       const logs: string[] = [];
+      if (!userDataDir) throw new Error("userDataDir not set");
       const context = await chromium.launchPersistentContext(userDataDir, {
         headless: true,
         // WebGPU may be behind a flag in some Chromium configurations.
         args: ["--enable-unsafe-webgpu"],
       });
-      const page = await context.newPage();
-      page.on("console", (msg) => logs.push(msg.text()));
+      try {
+        const page = await context.newPage();
+        page.on("console", (msg) => logs.push(msg.text()));
 
-      await page.goto(`${server.baseUrl}/shader_cache_demo.html`);
-      await page.waitForFunction(() => (window as any).__shaderCacheDemo?.translationMs !== undefined);
+        await page.goto(`${server.baseUrl}/shader_cache_demo.html`);
+        await page.waitForFunction(() => (window as any).__shaderCacheDemo?.translationMs !== undefined);
 
-      const result = await page.evaluate(() => (window as any).__shaderCacheDemo);
-      await context.close();
+        const result = await page.evaluate(() => (window as any).__shaderCacheDemo);
+        if (result?.error) {
+          throw new Error(`demo page failed: ${result.error}`);
+        }
 
-      if (result?.error) {
-        throw new Error(`demo page failed: ${result.error}`);
+        return {
+          cacheHit: !!result.cacheHit,
+          translationMs: Number(result.translationMs),
+          telemetry: result.telemetry,
+          logs,
+        };
+      } catch (err) {
+        throw new Error(`${String(err)}\nlogs:\n${logs.join("\n")}`);
+      } finally {
+        try {
+          await context.close();
+        } catch {
+          // Ignore.
+        }
       }
-
-      return {
-        cacheHit: !!result.cacheHit,
-        translationMs: Number(result.translationMs),
-        telemetry: result.telemetry,
-        logs,
-      };
     }
 
     const first = await runOnce();
