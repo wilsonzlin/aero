@@ -93,6 +93,8 @@ describe("io/bus/pci", () => {
 
     // Subsystem Vendor ID (low 16) / Subsystem ID (high 16)
     expect(cfg.readU32(addr.device, addr.function, 0x2c)).toBe(0x5678_1234);
+    expect(cfg.readU16(addr.device, addr.function, 0x2c)).toBe(0x1234);
+    expect(cfg.readU16(addr.device, addr.function, 0x2e)).toBe(0x5678);
   });
 
   it("allows overriding Subsystem Vendor ID / Subsystem ID (0x2c..0x2f)", () => {
