@@ -892,12 +892,20 @@ The browser should **not** embed long-lived relay secrets. Instead, it obtains a
 2. Read the optional `udpRelay` field from the JSON response (only present when `UDP_RELAY_BASE_URL` is configured).
 3. Use `udpRelay.baseUrl` + `udpRelay.endpoints.*` to build relay URLs.
 
+Note: `udpRelay.baseUrl` may be configured as either an **HTTP(S)** or **WebSocket (WS/S)** URL.
+Clients must normalize schemes depending on the endpoint transport:
+
+- HTTP endpoints (`webrtcOffer`, `webrtcIce`): use `http(s)://` (`ws://` → `http://`, `wss://` → `https://`).
+- WebSocket endpoints (`webrtcSignal`, `udp`): use `ws(s)://` (`http://` → `ws://`, `https://` → `wss://`).
+
+In particular, browser `fetch()` does **not** support `ws://` / `wss://` URLs.
+
 Endpoint meanings:
 
-- `webrtcSignal`: WebSocket signaling (trickle ICE): `wss://…/webrtc/signal`
-- `webrtcOffer`: HTTP signaling fallback (non-trickle ICE): `https://…/webrtc/offer`
-- `webrtcIce`: HTTP ICE server discovery: `https://…/webrtc/ice`
-- `udp`: WebSocket UDP fallback (non-WebRTC): `wss://…/udp`
+- `webrtcSignal`: WebSocket signaling (trickle ICE): `ws(s)://…/webrtc/signal`
+- `webrtcOffer`: HTTP signaling fallback (non-trickle ICE): `http(s)://…/webrtc/offer`
+- `webrtcIce`: HTTP ICE server discovery: `http(s)://…/webrtc/ice`
+- `udp`: WebSocket UDP fallback (non-WebRTC): `ws(s)://…/udp`
 
 When `udpRelay.authMode` is:
 
