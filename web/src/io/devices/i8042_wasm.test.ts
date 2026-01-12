@@ -34,14 +34,21 @@ describe("I8042Bridge (wasm)", () => {
     }
 
     const dev = new api.I8042Bridge();
+    const drainIrqs = (() => {
+      const anyDev = dev as unknown as { drain_irqs?: unknown };
+      if (typeof anyDev.drain_irqs !== "function") {
+        throw new Error("I8042Bridge.drain_irqs() is unavailable; rebuild web/src/wasm/pkg-single.");
+      }
+      return () => (anyDev.drain_irqs as (...args: unknown[]) => unknown).call(dev) as number;
+    })();
     try {
-      // No pending output/irqs initially.
-      expect(dev.irq_mask() & 0x03).toBe(0);
+      // No pending IRQ pulses initially.
+      expect(drainIrqs() & 0x03).toBe(0);
 
       // Inject Set-2 make code for 'A' (0x1C). Default command byte enables Set-2->Set-1
       // translation, so the guest should observe Set-1 scancode 0x1E.
       dev.inject_key_scancode_bytes(0x1c, 1);
-      expect(dev.irq_mask() & 0x01).toBe(0x01);
+      expect(drainIrqs() & 0x01).toBe(0x01);
 
       const statusBefore = dev.port_read(0x64);
       expect(statusBefore & 0x01).toBe(0x01); // OBF
@@ -49,7 +56,7 @@ describe("I8042Bridge (wasm)", () => {
 
       const byte = dev.port_read(0x60);
       expect(byte).toBe(0x1e);
-      expect(dev.irq_mask() & 0x01).toBe(0);
+      expect(drainIrqs() & 0x01).toBe(0);
 
       // Enable IRQ12 (bit 1) while keeping translation + IRQ1 enabled (default 0x45 -> 0x47).
       dev.port_write(0x64, 0x60);
@@ -61,11 +68,14 @@ describe("I8042Bridge (wasm)", () => {
       // Drain the mouse ACK (0xFA).
       while ((dev.port_read(0x64) & 0x01) !== 0) {
         dev.port_read(0x60);
+        // ACK bytes may also trigger IRQ pulses; drain them so subsequent assertions are stable.
+        drainIrqs();
       }
+      drainIrqs();
 
       // Inject a small motion packet (dx=5 right, dy=3 up).
       dev.inject_mouse_move(5, 3);
-      expect(dev.irq_mask() & 0x02).toBe(0x02);
+      expect(drainIrqs() & 0x02).toBe(0x02);
 
       const statusMouse = dev.port_read(0x64);
       expect(statusMouse & 0x01).toBe(0x01); // OBF
@@ -85,9 +95,11 @@ describe("I8042Bridge (wasm)", () => {
       dev.inject_mouse_buttons(0x01);
       // Drain the button packet.
       while ((dev.port_read(0x64) & 0x01) !== 0) dev.port_read(0x60);
+      drainIrqs();
       const snap = dev.save_state();
       dev.inject_mouse_buttons(0x00);
       while ((dev.port_read(0x64) & 0x01) !== 0) dev.port_read(0x60);
+      drainIrqs();
 
       dev.load_state(snap);
       // Try to release after restore.

@@ -270,6 +270,24 @@ class I8042WasmController {
   }
 
   #syncIrqs(): void {
+    // Prefer explicit IRQ pulses (edge-triggered semantics) when available.
+    const drain = (this.#bridge as unknown as { drain_irqs?: unknown }).drain_irqs;
+    if (typeof drain === "function") {
+      const pulses = (drain as (...args: unknown[]) => unknown).call(this.#bridge);
+      const mask = (typeof pulses === "number" ? pulses : 0) & 0xff;
+      // bit0: IRQ1, bit1: IRQ12
+      if (mask & 0x01) {
+        this.#irq.raiseIrq(1);
+        this.#irq.lowerIrq(1);
+      }
+      if (mask & 0x02) {
+        this.#irq.raiseIrq(12);
+        this.#irq.lowerIrq(12);
+      }
+      return;
+    }
+
+    // Fallback: derive IRQ line levels from `irq_mask()` (older WASM builds).
     const next = this.#bridge.irq_mask() & 0xff;
     const prev = this.#irqMask;
     if (next === prev) return;

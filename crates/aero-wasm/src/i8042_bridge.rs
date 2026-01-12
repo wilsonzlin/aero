@@ -13,7 +13,7 @@ use std::rc::Rc;
 
 use wasm_bindgen::prelude::*;
 
-use aero_devices_input::{I8042Controller, Ps2MouseButton, SystemControlSink};
+use aero_devices_input::{I8042Controller, IrqSink, Ps2MouseButton, SystemControlSink};
 use aero_io_snapshot::io::state::IoSnapshot;
 
 fn js_error(message: impl core::fmt::Display) -> JsValue {
@@ -24,6 +24,28 @@ fn js_error(message: impl core::fmt::Display) -> JsValue {
 struct SystemState {
     a20_enabled: bool,
     reset_requests: u32,
+}
+
+#[derive(Debug, Default)]
+struct IrqState {
+    /// Pending IRQ pulses since the last drain (bit0=IRQ1, bit1=IRQ12).
+    pending_mask: u8,
+}
+
+#[derive(Clone)]
+struct BridgeIrqSink {
+    state: Rc<RefCell<IrqState>>,
+}
+
+impl IrqSink for BridgeIrqSink {
+    fn raise_irq(&mut self, irq: u8) {
+        let mut state = self.state.borrow_mut();
+        match irq {
+            1 => state.pending_mask |= 0x01,
+            12 => state.pending_mask |= 0x02,
+            _ => {}
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -50,17 +72,26 @@ impl SystemControlSink for BridgeSystemControlSink {
 ///
 /// ## IRQ contract
 ///
-/// The bridge exposes an IRQ "level mask" via [`I8042Bridge::irq_mask`]:
+/// The bridge exposes a queued IRQ pulse stream via [`I8042Bridge::drain_irqs`]:
+/// - bit 0 (`0x01`): IRQ1 pulse (keyboard byte became available)
+/// - bit 1 (`0x02`): IRQ12 pulse (mouse byte became available)
+///
+/// The browser I/O worker should translate each asserted bit into an explicit pulse in the
+/// host `IrqSink` (i.e. `raiseIrq(irq)` followed by `lowerIrq(irq)`).
+///
+/// For compatibility with older consumers, the bridge also exposes an IRQ "level mask" via
+/// [`I8042Bridge::irq_mask`]:
 /// - bit 0 (`0x01`): IRQ1 asserted (keyboard output byte pending)
 /// - bit 1 (`0x02`): IRQ12 asserted (mouse output byte pending)
 ///
-/// The browser I/O worker should translate this into the host `irqRaise`/`irqLower` event stream
-/// by comparing the current mask to the previous mask and emitting level transitions for each bit.
-/// (See `web/src/workers/io.worker.ts`.)
+/// The level mask is useful for debug/observability and legacy fallbacks, but it does **not**
+/// faithfully represent edge-triggered i8042 IRQ pulses when the output buffer is refilled
+/// immediately after a port `0x60` read (multiple bytes pending). Prefer `drain_irqs`.
 #[wasm_bindgen]
 pub struct I8042Bridge {
     ctrl: I8042Controller,
     sys: Rc<RefCell<SystemState>>,
+    irq: Rc<RefCell<IrqState>>,
     mouse_buttons: u8,
 }
 
@@ -69,12 +100,15 @@ impl I8042Bridge {
     #[wasm_bindgen(constructor)]
     pub fn new() -> Self {
         let sys = Rc::new(RefCell::new(SystemState::default()));
+        let irq = Rc::new(RefCell::new(IrqState::default()));
         let mut ctrl = I8042Controller::new();
         ctrl.set_system_control_sink(Box::new(BridgeSystemControlSink { state: sys.clone() }));
+        ctrl.set_irq_sink(Box::new(BridgeIrqSink { state: irq.clone() }));
 
         Self {
             ctrl,
             sys,
+            irq,
             mouse_buttons: 0,
         }
     }
@@ -152,6 +186,20 @@ impl I8042Bridge {
         self.mouse_buttons = next;
     }
 
+    /// Drain pending IRQ pulses since the last call.
+    ///
+    /// Bits:
+    /// - bit0: IRQ1 pulse
+    /// - bit1: IRQ12 pulse
+    ///
+    /// The returned value is cleared after the call.
+    pub fn drain_irqs(&mut self) -> u8 {
+        let mut irq = self.irq.borrow_mut();
+        let mask = irq.pending_mask;
+        irq.pending_mask = 0;
+        mask
+    }
+
     /// IRQ level mask (see module docs).
     pub fn irq_mask(&self) -> u8 {
         let mut mask = 0u8;
@@ -191,6 +239,9 @@ impl I8042Bridge {
         // The snapshot contains the mouse button image; keep our host-side injection tracker in
         // sync so subsequent absolute button-mask injections compute correct deltas.
         self.mouse_buttons = self.ctrl.mouse_buttons_mask() & 0x07;
+        // Snapshot restore should not deliver IRQs for already-buffered bytes; clear any pending
+        // pulses that might have been queued by prior activity.
+        self.irq.borrow_mut().pending_mask = 0;
         Ok(())
     }
 }

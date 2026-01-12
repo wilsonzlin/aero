@@ -315,6 +315,18 @@ export interface WasmApi {
         inject_mouse_wheel(delta: number): void;
 
         /**
+         * Drain pending IRQ pulses since the last call.
+         *
+         * Bits:
+         * - bit0 (0x01): IRQ1 pulse (keyboard byte became available)
+         * - bit1 (0x02): IRQ12 pulse (mouse byte became available)
+         *
+         * Newer builds expose this so edge-triggered i8042 IRQ behavior is represented
+         * faithfully even when the output buffer refills immediately after a port 0x60 read.
+         */
+        drain_irqs?(): number;
+
+        /**
          * IRQ "level mask" for IRQ1/IRQ12.
          *
          * Contract (matches `crates/aero-wasm/src/i8042_bridge.rs`):
