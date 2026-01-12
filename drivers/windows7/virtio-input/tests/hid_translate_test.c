@@ -66,6 +66,14 @@ static void send_key_le(struct hid_translate *t, uint16_t code, uint32_t value) 
   hid_translate_handle_event_le(t, &ev);
 }
 
+static void send_rel_le(struct hid_translate *t, uint16_t code, int32_t delta) {
+  struct virtio_input_event_le ev;
+  ev.type = to_le16(VIRTIO_INPUT_EV_REL);
+  ev.code = to_le16(code);
+  ev.value = to_le32((uint32_t)delta);
+  hid_translate_handle_event_le(t, &ev);
+}
+
 static void send_syn_le(struct hid_translate *t) {
   struct virtio_input_event_le ev;
   ev.type = to_le16(VIRTIO_INPUT_EV_SYN);
@@ -480,6 +488,30 @@ static void test_keyboard_function_key_reports_le(void) {
   expect_report(&cap, 1, expect2, sizeof(expect2));
 }
 
+static void test_mouse_reports_le(void) {
+  struct captured_reports cap;
+  struct hid_translate t;
+
+  cap_clear(&cap);
+  hid_translate_init(&t, capture_emit, &cap);
+
+  /* Left button down. */
+  send_key_le(&t, VIRTIO_INPUT_BTN_LEFT, 1);
+  send_syn_le(&t);
+
+  uint8_t expect1[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0x01, 0x00, 0x00, 0x00};
+  expect_report(&cap, 0, expect1, sizeof(expect1));
+
+  /* Move and wheel. */
+  send_rel_le(&t, VIRTIO_INPUT_REL_X, 5);
+  send_rel_le(&t, VIRTIO_INPUT_REL_Y, -3);
+  send_rel_le(&t, VIRTIO_INPUT_REL_WHEEL, 1);
+  send_syn_le(&t);
+
+  uint8_t expect2[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0x01, 0x05, 0xFD, 0x01};
+  expect_report(&cap, 1, expect2, sizeof(expect2));
+}
+
 static void test_keyboard_overflow_queue(void) {
   struct captured_reports cap;
   struct hid_translate t;
@@ -676,6 +708,7 @@ int main(void) {
   test_keyboard_overflow_queue();
   test_keyboard_overflow_queue_does_not_emit_on_queued_press();
   test_mouse_reports();
+  test_mouse_reports_le();
   test_reset_emits_release_reports();
   test_keyboard_only_enable();
   test_mouse_only_enable();
