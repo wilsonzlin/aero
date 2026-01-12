@@ -494,4 +494,35 @@ describe("usb/WebUsbPassthroughRuntime", () => {
     expect(reset).toHaveBeenCalledTimes(1);
     expect(runtime.getMetrics().lastError).toMatch(/invalid id/);
   });
+
+  it("ignores usb.ringDetach when the runtime never attached rings (postMessage path remains active)", async () => {
+    const port = new FakePort();
+
+    const action: UsbHostAction = { kind: "bulkIn", id: 1, endpoint: 0x81, length: 8 };
+    const push_completion = vi.fn();
+    const reset = vi.fn();
+    const bridge: UsbPassthroughBridgeLike = {
+      drain_actions: vi.fn(() => [action]),
+      push_completion,
+      reset,
+      free: vi.fn(),
+    };
+
+    const runtime = new WebUsbPassthroughRuntime({ bridge, port: port as unknown as MessagePort, pollIntervalMs: 0 });
+
+    const p = runtime.pollOnce();
+    expect(port.posted).toEqual([{ type: "usb.ringAttachRequest" }, { type: "usb.action", action }]);
+
+    // Another runtime on the same port may trigger ring detach; this runtime should not reset/cancel
+    // since it wasn't using rings.
+    port.emit({ type: "usb.ringDetach", reason: "disabled" });
+    expect(reset).not.toHaveBeenCalled();
+
+    port.emit({ type: "usb.completion", completion: { kind: "bulkIn", id: 1, status: "stall" } satisfies UsbHostCompletion });
+    await p;
+
+    expect(push_completion).toHaveBeenCalledTimes(1);
+    expect(push_completion.mock.calls[0]?.[0]).toMatchObject({ kind: "bulkIn", id: 1, status: "stall" });
+    expect(port.posted.filter((m) => (m as { type?: unknown }).type === "usb.ringDetach")).toHaveLength(0);
+  });
 });
