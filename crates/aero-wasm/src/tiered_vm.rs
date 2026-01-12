@@ -1690,6 +1690,47 @@ export function installAeroTieredMmioTestShims() {
     }
 
     #[wasm_bindgen_test]
+    fn wasm_tiered_bus_write_log_overflow_invalidates_full_guest_phys_span() {
+        // This is a regression test for the write-log overflow path. When the write log overflows
+        // we conservatively invalidate the entire guest *physical* RAM region, which (for Q35) can
+        // extend above 4GiB due to the high-RAM remap.
+        //
+        // The test does not require allocating multi-gigabyte guest RAM; we only exercise the
+        // write-log bookkeeping and the computed invalidation bounds.
+        installAeroTieredMmioTestShims();
+
+        let mut guest = vec![0u8; 0x100];
+        let guest_base = guest.as_mut_ptr() as u32;
+
+        let guest_size = crate::guest_phys::PCIE_ECAM_BASE + 0x2000;
+        let expected_end = crate::guest_phys::guest_ram_phys_end_exclusive(guest_size);
+        assert!(
+            expected_end > crate::guest_phys::HIGH_RAM_BASE,
+            "sanity check: expected physical end should exceed 4GiB for this guest_size"
+        );
+
+        let mut bus = WasmBus::new(guest_base, guest_size);
+
+        // Overflow the write log by recording many disjoint 1-byte writes.
+        for i in 0..2048u64 {
+            bus.log_write(i * 2, 1);
+        }
+
+        let mut drained: Vec<(u64, usize)> = Vec::new();
+        bus.drain_write_log_to(|paddr, len| drained.push((paddr, len)));
+        assert!(!drained.is_empty(), "expected at least one invalidation range");
+
+        let mut max_end = 0u64;
+        for (paddr, len) in drained {
+            max_end = max_end.max(paddr.saturating_add(len as u64));
+        }
+        assert_eq!(
+            max_end, expected_end,
+            "write-log overflow invalidation must cover the full guest-physical span (including high RAM)"
+        );
+    }
+
+    #[wasm_bindgen_test]
     fn wasm_tiered_bus_straddling_ram_and_mmio_reads_and_writes_bytewise() {
         installAeroTieredMmioTestShims();
 
