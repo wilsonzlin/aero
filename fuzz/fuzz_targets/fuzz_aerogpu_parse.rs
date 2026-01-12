@@ -330,6 +330,22 @@ fn fuzz_command_processor(
     );
 }
 
+fn fuzz_command_processor_allocations(cmd_stream_bytes: &[u8], alloc_bytes: &[u8]) {
+    // CPU-only: exercise allocation-backed validation paths with a synthetic per-submission
+    // allocation table derived from the fuzzer input.
+    let mut u = Unstructured::new(alloc_bytes);
+    let alloc_count = (u.arbitrary::<u8>().unwrap_or(0) % 32) as usize;
+    let mut allocs = Vec::with_capacity(alloc_count);
+    for _ in 0..alloc_count {
+        allocs.push(AeroGpuSubmissionAllocation {
+            alloc_id: u.arbitrary::<u32>().unwrap_or(0),
+            gpa: u.arbitrary::<u64>().unwrap_or(0),
+            size_bytes: u.arbitrary::<u64>().unwrap_or(0),
+        });
+    }
+    fuzz_command_processor(cmd_stream_bytes, Some(&allocs));
+}
+
 fn fuzz_presenter(bytes: &[u8]) {
     // CPU-only fuzzing for the framebuffer presenter logic (dirty-rect slicing, stride handling,
     // and size calculations).
@@ -426,6 +442,7 @@ fuzz_target!(|data: &[u8]| {
         .copy_from_slice(&(cmd::AerogpuCmdHdr::SIZE_BYTES as u32).to_le_bytes());
     fuzz_cmd_stream(&cmd_patched);
     fuzz_command_processor(&cmd_patched, None);
+    fuzz_command_processor_allocations(&cmd_patched, alloc_bytes);
 
     // Deterministic command stream header/packet layout errors. These are small but help ensure
     // coverage of the host-side parse error mapping logic.

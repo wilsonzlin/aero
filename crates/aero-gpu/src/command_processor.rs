@@ -487,16 +487,15 @@ impl AeroGpuCommandProcessor {
     }
 
     fn lookup_allocation(
-        allocations: Option<&[AeroGpuSubmissionAllocation]>,
+        allocations: Option<&HashMap<u32, AeroGpuSubmissionAllocation>>,
         alloc_id: u32,
     ) -> Result<AeroGpuSubmissionAllocation, CommandProcessorError> {
         let Some(allocations) = allocations else {
             return Err(CommandProcessorError::MissingAllocationTable(alloc_id));
         };
         allocations
-            .iter()
+            .get(&alloc_id)
             .copied()
-            .find(|a| a.alloc_id == alloc_id)
             .ok_or(CommandProcessorError::UnknownAllocId(alloc_id))
     }
 
@@ -584,6 +583,20 @@ impl AeroGpuCommandProcessor {
         let stream = parse_cmd_stream(cmd_stream_bytes)?;
         let mut events = Vec::new();
 
+        // Build an `alloc_id -> allocation` map once per submission to avoid O(n*m) behavior when
+        // processing many resource commands referencing guest allocations.
+        //
+        // Preserve the previous "first match wins" semantics in the presence of duplicate
+        // `alloc_id`s by only inserting the first entry.
+        let allocations_by_id = allocations.map(|allocs| {
+            let mut map = HashMap::with_capacity(allocs.len());
+            for &alloc in allocs {
+                map.entry(alloc.alloc_id).or_insert(alloc);
+            }
+            map
+        });
+        let allocations_by_id = allocations_by_id.as_ref();
+
         for cmd in stream.cmds {
             match cmd {
                 AeroGpuCmd::CreateBuffer {
@@ -621,7 +634,7 @@ impl AeroGpuCommandProcessor {
                     };
 
                     if backing_alloc_id != 0 {
-                        let alloc = Self::lookup_allocation(allocations, backing_alloc_id)?;
+                        let alloc = Self::lookup_allocation(allocations_by_id, backing_alloc_id)?;
                         let offset = u64::from(backing_offset_bytes);
                         Self::validate_range_in_allocation(alloc, offset, size_bytes)?;
                     }
@@ -702,7 +715,7 @@ impl AeroGpuCommandProcessor {
 
                     let resource_size_bytes = desc.size_bytes()?;
                     if backing_alloc_id != 0 {
-                        let alloc = Self::lookup_allocation(allocations, backing_alloc_id)?;
+                        let alloc = Self::lookup_allocation(allocations_by_id, backing_alloc_id)?;
                         let offset = u64::from(backing_offset_bytes);
                         Self::validate_range_in_allocation(alloc, offset, resource_size_bytes)?;
                     }
@@ -781,7 +794,7 @@ impl AeroGpuCommandProcessor {
                         size_bytes,
                     )?;
 
-                    let alloc = Self::lookup_allocation(allocations, entry.backing_alloc_id)?;
+                    let alloc = Self::lookup_allocation(allocations_by_id, entry.backing_alloc_id)?;
                     let alloc_offset = u64::from(entry.backing_offset_bytes)
                         .checked_add(offset_bytes)
                         .ok_or(CommandProcessorError::SizeOverflow)?;
