@@ -1217,4 +1217,32 @@ mod tests {
             "i8042 device state should not be emitted when disabled"
         );
     }
+
+    #[test]
+    fn dirty_snapshot_roundtrip_preserves_i8042_pending_output_bytes() {
+        let cfg = MachineConfig {
+            ram_size_bytes: 2 * 1024 * 1024,
+            ..Default::default()
+        };
+
+        let mut vm = Machine::new(cfg.clone()).unwrap();
+        vm.inject_browser_key("KeyA", true);
+        vm.inject_browser_key("KeyA", false);
+        let base = vm.take_snapshot_full().unwrap();
+
+        vm.inject_browser_key("KeyB", true);
+        vm.inject_browser_key("KeyB", false);
+        let diff = vm.take_snapshot_dirty().unwrap();
+
+        let mut restored = Machine::new(cfg).unwrap();
+        restored.restore_snapshot_bytes(&base).unwrap();
+        restored.restore_snapshot_bytes(&diff).unwrap();
+
+        let ctrl = restored.i8042.as_ref().expect("i8042 enabled").clone();
+        assert_eq!(ctrl.borrow_mut().read_port(0x60), 0x1e);
+        assert_eq!(ctrl.borrow_mut().read_port(0x60), 0x9e);
+        assert_eq!(ctrl.borrow_mut().read_port(0x60), 0x30);
+        assert_eq!(ctrl.borrow_mut().read_port(0x60), 0xB0);
+        assert_eq!(ctrl.borrow_mut().read_port(0x60), 0x00);
+    }
 }
