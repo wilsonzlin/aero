@@ -13,6 +13,8 @@
 // Tip: after capturing probe output for both architectures, you can regenerate
 // this file automatically with:
 //   drivers/aerogpu/umd/d3d10_11/tools/wdk_abi_probe/gen_expected_header.py
+//     - pass `--allow-na` to tolerate optional members reported as `<n/a>`
+//     - pass `--all` to emit all parsed sizeof/offsetof macros (not just curated anchors)
 //
 // NOTE: This file intentionally contains only preprocessor `#define`s so it can be
 // included from any translation unit without pulling in additional headers.
