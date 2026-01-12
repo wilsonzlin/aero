@@ -40,12 +40,26 @@ fn should_scan(path: &Path) -> bool {
         "py" | "sh" | "ps1" | "psm1" | "cmd" |
         // Go (proxy services).
         "go" |
+        // Assembly / boot sectors.
+        "asm" | "S" |
         // Native/driver sources.
         "c" | "cc" | "cpp" | "cxx" | "h" | "hpp" | "hlsl" | "wgsl" |
         // Driver/build metadata (plaintext).
-        "inf" | "sln" | "vcxproj" | "filters" | "props" | "def" | "reg" |
+        "inf" | "sln" | "vcxproj" | "filters" | "props" | "def" | "reg" | "disabled" |
         // Config/metadata.
-        "toml" | "json" | "yml" | "yaml" | "dict" | "lock" | "xml" | "conf" | "tf" | "hcl" |
+        "toml"
+            | "json"
+            | "jsonc"
+            | "yml"
+            | "yaml"
+            | "dict"
+            | "lock"
+            | "xml"
+            | "conf"
+            | "tf"
+            | "hcl"
+            | "example"
+            | "tmpl" |
         // Common dotfile config.
         "gitignore" | "dockerignore" | "gitattributes" | "nvmrc"
     )
