@@ -7,6 +7,7 @@
 //! These tests ensure the historical `emulator::io::net::*` paths remain usable.
 
 use std::sync::Arc;
+use std::sync::Mutex;
 
 use aero_ipc::ring::{PopError, RingBuffer};
 use emulator::io::net::{
@@ -90,6 +91,35 @@ fn ring_backend_stats_are_available_through_network_backend_trait_object() {
     assert_eq!(
         backend.l2_ring_stats(),
         Some(L2TunnelRingBackendStats::default())
+    );
+}
+
+#[test]
+fn network_backend_is_implemented_for_arc_mutex() {
+    let inner = Arc::new(Mutex::new(L2TunnelBackend::with_limits(2, 2, 3)));
+
+    // Guest → host
+    let mut backend = inner.clone();
+    backend.transmit(vec![1, 2, 3]);
+    backend.transmit(vec![4, 5, 6, 7]); // oversize
+
+    assert_eq!(inner.lock().unwrap().drain_tx_frames(), vec![vec![1, 2, 3]]);
+
+    // Host → guest
+    inner.lock().unwrap().push_rx_frame(vec![9, 9, 9]);
+    assert_eq!(backend.poll_receive(), Some(vec![9, 9, 9]));
+    assert_eq!(backend.poll_receive(), None);
+
+    assert_eq!(
+        inner.lock().unwrap().stats(),
+        L2TunnelBackendStats {
+            tx_enqueued_frames: 1,
+            tx_dropped_oversize: 1,
+            tx_dropped_full: 0,
+            rx_enqueued_frames: 1,
+            rx_dropped_oversize: 0,
+            rx_dropped_full: 0,
+        }
     );
 }
 
