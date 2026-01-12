@@ -21,6 +21,76 @@ describe("workers/io_virtio_net_init", () => {
     }).not.toThrow();
   });
 
+  it("prefers the 3-arg VirtioNetPciBridge(guestBase, guestSize, ioIpcSab) constructor in modern mode", () => {
+    const irqSink: IrqSink = { raiseIrq: () => {}, lowerIrq: () => {} };
+    const mgr = new DeviceManager(irqSink);
+
+    let observedArgsLen: number | null = null;
+    class FakeVirtioNetPciBridge {
+      constructor(_guestBase: number, _guestSize: number, _ioIpc: SharedArrayBuffer) {
+        observedArgsLen = arguments.length;
+      }
+
+      mmio_read(_offset: number, _size: number): number {
+        return 0;
+      }
+      mmio_write(_offset: number, _size: number, _value: number): void {}
+      poll(): void {}
+      irq_asserted(): boolean {
+        return false;
+      }
+      free(): void {}
+    }
+
+    const dev = tryInitVirtioNetDevice({
+      api: { VirtioNetPciBridge: FakeVirtioNetPciBridge } as any,
+      mgr,
+      guestBase: 0x1000,
+      guestSize: 0x2000,
+      ioIpc: new SharedArrayBuffer(1024),
+    });
+    expect(dev).not.toBeNull();
+    expect(observedArgsLen).toBe(3);
+    dev?.destroy();
+  });
+
+  it("falls back to the 4-arg VirtioNetPciBridge constructor when the 3-arg form throws (modern mode)", () => {
+    const irqSink: IrqSink = { raiseIrq: () => {}, lowerIrq: () => {} };
+    const mgr = new DeviceManager(irqSink);
+
+    const observed: number[] = [];
+    class FakeVirtioNetPciBridge {
+      constructor(_guestBase: number, _guestSize: number, _ioIpc: SharedArrayBuffer, _mode?: unknown) {
+        observed.push(arguments.length);
+        if (arguments.length === 3) {
+          // Simulate a wasm-bindgen build that enforces 4-arg arity (e.g. transport selector required).
+          throw new Error("expected 4 args");
+        }
+      }
+
+      mmio_read(_offset: number, _size: number): number {
+        return 0;
+      }
+      mmio_write(_offset: number, _size: number, _value: number): void {}
+      poll(): void {}
+      irq_asserted(): boolean {
+        return false;
+      }
+      free(): void {}
+    }
+
+    const dev = tryInitVirtioNetDevice({
+      api: { VirtioNetPciBridge: FakeVirtioNetPciBridge } as any,
+      mgr,
+      guestBase: 0x1000,
+      guestSize: 0x2000,
+      ioIpc: new SharedArrayBuffer(1024),
+    });
+    expect(dev).not.toBeNull();
+    expect(observed).toEqual([3, 4]);
+    dev?.destroy();
+  });
+
   it("registers a virtio-net PCI device with the Aero Win7 contract v1 identity + config", () => {
     const irqSink: IrqSink = { raiseIrq: () => {}, lowerIrq: () => {} };
     const mgr = new DeviceManager(irqSink);
@@ -214,4 +284,3 @@ describe("workers/io_virtio_net_init", () => {
     dev?.destroy();
   });
 });
-
