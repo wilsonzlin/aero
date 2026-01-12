@@ -1,5 +1,7 @@
 #include "../include/aero_virtio_blk.h"
 
+#include "virtio_pci_aero_layout_miniport.h"
+
 static VOID AerovblkCompleteSrb(_In_ PVOID deviceExtension, _Inout_ PSCSI_REQUEST_BLOCK srb, _In_ UCHAR srbStatus);
 
 static VOID AerovblkSetSense(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, _Inout_ PSCSI_REQUEST_BLOCK srb, _In_ UCHAR senseKey, _In_ UCHAR asc,
@@ -60,35 +62,6 @@ static VOID AerovblkWriteBe64(_Out_writes_bytes_(8) UCHAR* p, _In_ ULONGLONG v) 
   p[5] = (UCHAR)(v >> 16);
   p[6] = (UCHAR)(v >> 8);
   p[7] = (UCHAR)v;
-}
-
-static BOOLEAN AerovblkValidateAeroContractV1Layout(_In_ const VIRTIO_PCI_DEVICE* Vdev) {
-  if (Vdev == NULL) {
-    return FALSE;
-  }
-
-  if (Vdev->Bar0Length < (ULONG)AEROVBLK_BAR0_MIN_LEN) {
-    return FALSE;
-  }
-
-  if (Vdev->NotifyOffMultiplier != 4u) {
-    return FALSE;
-  }
-
-  if (Vdev->CommonCfgOffset != 0x0000u || Vdev->CommonCfgLength < 0x0100u) {
-    return FALSE;
-  }
-  if (Vdev->NotifyOffset != 0x1000u || Vdev->NotifyLength < 0x0100u) {
-    return FALSE;
-  }
-  if (Vdev->IsrOffset != 0x2000u || Vdev->IsrLength < 0x0020u) {
-    return FALSE;
-  }
-  if (Vdev->DeviceCfgOffset != 0x3000u || Vdev->DeviceCfgLength < 0x0100u) {
-    return FALSE;
-  }
-
-  return TRUE;
 }
 
 static __forceinline ULONG AerovblkSectorsPerLogicalBlock(_In_ PAEROVBLK_DEVICE_EXTENSION devExt) {
@@ -995,7 +968,7 @@ ULONG AerovblkHwFindAdapter(_In_ PVOID deviceExtension, _In_ PVOID hwContext, _I
   devExt->Vdev.QueueNotifyAddrCache = devExt->QueueNotifyAddrCache;
   devExt->Vdev.QueueNotifyAddrCacheCount = RTL_NUMBER_OF(devExt->QueueNotifyAddrCache);
 
-  if (!AerovblkValidateAeroContractV1Layout(&devExt->Vdev)) {
+  if (!AeroVirtioValidateContractV1Bar0Layout(&devExt->Vdev)) {
     return SP_RETURN_NOT_FOUND;
   }
 

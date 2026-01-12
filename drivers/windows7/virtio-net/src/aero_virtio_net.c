@@ -1,5 +1,7 @@
 #include "../include/aero_virtio_net.h"
 
+#include "virtio_pci_aero_layout_miniport.h"
+
 #define AEROVNET_TAG 'tNvA'
 
 #ifndef PCI_WHICHSPACE_CONFIG
@@ -94,36 +96,6 @@ static USHORT AerovNetReadLe16FromPciCfg(_In_reads_bytes_(256) const UCHAR* Cfg,
 
   RtlCopyMemory(&V, Cfg + Offset, sizeof(V));
   return V;
-}
-
-static BOOLEAN AerovNetValidateAeroContractV1Layout(_In_ const VIRTIO_PCI_DEVICE* Dev) {
-  if (Dev == NULL) {
-    return FALSE;
-  }
-
-  // Contract v1 fixed BAR0 layout + notify multiplier.
-  if (Dev->Bar0Length < AEROVNET_BAR0_MIN_LEN) {
-    return FALSE;
-  }
-
-  if (Dev->NotifyOffMultiplier != 4u) {
-    return FALSE;
-  }
-
-  if (Dev->CommonCfgOffset != 0x0000u || Dev->CommonCfgLength < 0x0100u) {
-    return FALSE;
-  }
-  if (Dev->NotifyOffset != 0x1000u || Dev->NotifyLength < 0x0100u) {
-    return FALSE;
-  }
-  if (Dev->IsrOffset != 0x2000u || Dev->IsrLength < 0x0020u) {
-    return FALSE;
-  }
-  if (Dev->DeviceCfgOffset != 0x3000u || Dev->DeviceCfgLength < 0x0100u) {
-    return FALSE;
-  }
-
-  return TRUE;
 }
 
 static VOID AerovNetFreeTxRequestNoLock(_Inout_ AEROVNET_ADAPTER* Adapter, _Inout_ AEROVNET_TX_REQUEST* TxReq) {
@@ -342,7 +314,7 @@ static NDIS_STATUS AerovNetParseResources(_Inout_ AEROVNET_ADAPTER* Adapter, _In
   Adapter->Vdev.QueueNotifyAddrCache = Adapter->QueueNotifyAddrCache;
   Adapter->Vdev.QueueNotifyAddrCacheCount = (USHORT)RTL_NUMBER_OF(Adapter->QueueNotifyAddrCache);
 
-  if (!AerovNetValidateAeroContractV1Layout(&Adapter->Vdev)) {
+  if (!AeroVirtioValidateContractV1Bar0Layout(&Adapter->Vdev)) {
     NdisMUnmapIoSpace(Adapter->MiniportAdapterHandle, Adapter->Bar0Va, Adapter->Bar0Length);
     Adapter->Bar0Va = NULL;
     Adapter->Bar0Length = 0;
