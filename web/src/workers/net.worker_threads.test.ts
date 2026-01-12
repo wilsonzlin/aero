@@ -444,6 +444,50 @@ describe("workers/net.worker (worker_threads)", () => {
       expect(received).not.toBeNull();
       expect(arraysEqual(received!, rxFrame)).toBe(true);
 
+      // Disabling tracing should prevent subsequent frames from being captured.
+      worker.postMessage({ kind: "net.trace.disable" });
+      const statusDisabledPromise = waitForWorkerMessage(
+        worker,
+        (msg) =>
+          (msg as { kind?: unknown; requestId?: unknown }).kind === "net.trace.status" &&
+          (msg as { requestId?: unknown }).requestId === 98,
+        10000,
+      ) as Promise<{ enabled?: boolean; records?: number }>;
+      worker.postMessage({ kind: "net.trace.status", requestId: 98 });
+      const statusDisabled = await statusDisabledPromise;
+      expect(statusDisabled.enabled).toBe(false);
+      expect(statusDisabled.records).toBe(2);
+
+      const txFrame2 = Uint8Array.of(0xaa, 0xbb, 0xcc, 0xdd);
+      while (!netTxRing.tryPush(txFrame2)) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      }
+      await waitForWorkerMessage(worker, (msg) => {
+        const sent = msg as { type?: unknown; data?: unknown };
+        if (sent.type !== "ws.sent") return false;
+        if (!(sent.data instanceof Uint8Array)) return false;
+        try {
+          const decoded = decodeL2Message(sent.data);
+          return decoded.type === L2_TUNNEL_TYPE_FRAME && arraysEqual(decoded.payload, txFrame2);
+        } catch {
+          return false;
+        }
+      }, 10000);
+
+      // Re-enable tracing so later assertions (and the UI behavior) remain consistent.
+      worker.postMessage({ kind: "net.trace.enable" });
+      const statusReenabledPromise = waitForWorkerMessage(
+        worker,
+        (msg) =>
+          (msg as { kind?: unknown; requestId?: unknown }).kind === "net.trace.status" &&
+          (msg as { requestId?: unknown }).requestId === 97,
+        10000,
+      ) as Promise<{ enabled?: boolean; records?: number }>;
+      worker.postMessage({ kind: "net.trace.status", requestId: 97 });
+      const statusReenabled = await statusReenabledPromise;
+      expect(statusReenabled.enabled).toBe(true);
+      expect(statusReenabled.records).toBe(2);
+
       const pcapngPromise = waitForWorkerMessage(
         worker,
         (msg) => (msg as { kind?: unknown; requestId?: unknown }).kind === "net.trace.pcapng" && (msg as { requestId?: unknown }).requestId === 1,
@@ -461,9 +505,11 @@ describe("workers/net.worker (worker_threads)", () => {
 
       const tx = parsed.packets.find((p) => arraysEqual(p.payload, txFrame));
       const rx = parsed.packets.find((p) => arraysEqual(p.payload, rxFrame));
+      const tx2 = parsed.packets.find((p) => arraysEqual(p.payload, txFrame2));
 
       expect(tx).toBeTruthy();
       expect(rx).toBeTruthy();
+      expect(tx2).toBeFalsy();
 
       // Direction is encoded via `epb_flags` on a single Ethernet interface.
       expect(tx!.interfaceId).toBe(guestEthId);
