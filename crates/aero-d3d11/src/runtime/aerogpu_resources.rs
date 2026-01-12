@@ -956,6 +956,13 @@ fn wgpu_compressed_texture_dimensions_compatible(
         return Ok(true);
     };
 
+    // wgpu/WebGPU validation currently requires the base mip dimensions to be block-aligned, even
+    // when smaller than a full block (e.g. 2x2 BC). Fall back to an uncompressed host format when
+    // the base dimensions are not aligned.
+    if !width.is_multiple_of(block_width) || !height.is_multiple_of(block_height) {
+        return Ok(false);
+    }
+
     for level in 0..mip_levels {
         let w = mip_extent(width, level);
         let h = mip_extent(height, level);
@@ -1495,6 +1502,24 @@ mod tests {
             upload_transform: TextureUploadTransform::Direct,
         };
         assert_eq!(texture_total_size_bytes(&bc3).unwrap(), 48);
+    }
+
+    #[test]
+    fn bc_dimension_compatibility_requires_block_aligned_base_mip() {
+        assert!(!wgpu_compressed_texture_dimensions_compatible(
+            wgpu::TextureFormat::Bc1RgbaUnorm,
+            2,
+            2,
+            1
+        )
+        .unwrap());
+        assert!(wgpu_compressed_texture_dimensions_compatible(
+            wgpu::TextureFormat::Bc1RgbaUnorm,
+            4,
+            4,
+            2
+        )
+        .unwrap());
     }
 
     #[test]
