@@ -409,6 +409,36 @@ fn snapshot_load_rejects_corrupt_or_oversized_fields() {
 }
 
 #[test]
+fn snapshot_load_is_atomic_on_error() {
+    // `E1000Device::load_state` should not partially mutate the live device if decoding fails.
+    //
+    // This matters because snapshot blobs may be loaded from untrusted sources (e.g. downloaded
+    // files), and we want a clear "all-or-nothing" semantics for device restore.
+    let mut dev = E1000Device::new([0x52, 0x54, 0, 0x12, 0x34, 0x56]);
+
+    // Make the device non-trivial so partial application would be observable.
+    dev.pci_config_write(0x10, 4, 0xDEAD_BEEF);
+    dev.mmio_write_u32_reg(REG_IMS, 0xA5A5_5A5A);
+    dev.enqueue_rx_frame(vec![0x11u8; MIN_L2_FRAME_LEN]);
+
+    let before = dev.snapshot_state();
+
+    // Construct a snapshot with a valid header but a malformed MAC field (wrong length).
+    let mut w = SnapshotWriter::new(
+        <E1000Device as IoSnapshot>::DEVICE_ID,
+        <E1000Device as IoSnapshot>::DEVICE_VERSION,
+    );
+    w.field_bytes(80, vec![0u8; 5]); // TAG_MAC_ADDR, must be 6 bytes
+    let bytes = w.finish();
+
+    let err = dev.load_state(&bytes).unwrap_err();
+    assert_eq!(err, SnapshotError::InvalidFieldEncoding("e1000 mac"));
+
+    // The device should remain unchanged.
+    assert_eq!(dev.snapshot_state(), before);
+}
+
+#[test]
 fn snapshot_roundtrip_preserves_pci_bar_probe_flags() {
     let mut dev = E1000Device::new([0x52, 0x54, 0, 0x12, 0x34, 0x56]);
 
