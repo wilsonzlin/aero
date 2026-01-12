@@ -94,6 +94,15 @@ Aero GPU is a custom PCI device (not virtio). It uses project-specific virtual P
   - Windows hardware IDs:
     - `PCI\VEN_A3A0&DEV_0001`
     - `PCI\VEN_A3A0&DEV_0001&SUBSYS_0001A3A0` (optional; only if the INF matches it)
+
+Current canonical machine note:
+
+- The canonical `aero_machine::Machine` reserves `00:07.0` for AeroGPU (`PCI\VEN_A3A0&DEV_0001`) but
+  does **not** yet expose the full AeroGPU WDDM PCI device model.
+- Boot display is currently provided by `aero_gpu_vga` (VGA + Bochs VBE) plus a minimal “Standard
+  VGA”-like PCI stub at `00:0c.0` (`1234:1111`) used only for VBE LFB routing through the PCI MMIO
+  router.
+
 Legacy bring-up ABI note:
 
 - The Win7 KMD still has a compatibility path for the deprecated legacy bring-up AeroGPU ABI (the legacy `"ARGP"` device model; see `docs/abi/aerogpu-pci-identity.md` for the exact PCI identity).
