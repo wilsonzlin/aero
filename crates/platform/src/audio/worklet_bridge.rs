@@ -24,12 +24,18 @@ pub const OVERRUN_COUNT_INDEX: usize = 3;
 /// Total bytes reserved for the header.
 pub const HEADER_BYTES: usize = HEADER_U32_LEN * 4;
 
-/// Maximum ring capacity accepted when restoring snapshot state.
+/// Maximum ring capacity supported by the AudioWorklet ring-buffer helpers.
 ///
-/// Snapshot files may come from untrusted sources; clamping avoids allocating an
-/// arbitrarily large backing buffer when restoring into the pure-Rust
-/// [`InterleavedRingBuffer`] test helper.
-const MAX_RESTORED_CAPACITY_FRAMES: u32 = 1_048_576; // 2^20 frames (~21s at 48kHz)
+/// This module is used in several contexts:
+/// - A pure-Rust [`InterleavedRingBuffer`] used by unit tests and native builds.
+/// - A wasm [`WorkletBridge`] that owns a `SharedArrayBuffer` and typed-array views.
+/// - Snapshot restore logic (`AudioWorkletRingState`) that may come from untrusted sources.
+///
+/// Capping the capacity prevents accidental multi-gigabyte allocations and bounds worst-case
+/// restore behavior.
+///
+/// `2^20` frames is ~21s at 48kHz; at stereo f32 this is ~8MiB of sample storage.
+const MAX_RING_CAPACITY_FRAMES: u32 = 1_048_576;
 
 #[inline]
 pub fn frames_available(read_idx: u32, write_idx: u32) -> u32 {
@@ -77,6 +83,7 @@ impl InterleavedRingBuffer {
     pub fn new(capacity_frames: u32, channel_count: u32) -> Self {
         assert!(capacity_frames > 0, "capacity_frames must be non-zero");
         assert!(channel_count > 0, "channel_count must be non-zero");
+        let capacity_frames = capacity_frames.min(MAX_RING_CAPACITY_FRAMES);
         Self {
             capacity_frames,
             channel_count,
@@ -103,7 +110,7 @@ impl InterleavedRingBuffer {
     /// The ring's sample contents are not restored; storage is cleared to silence.
     pub fn restore_state(&mut self, state: &AudioWorkletRingState) {
         if state.capacity_frames != 0 {
-            let restored_capacity = state.capacity_frames.clamp(1, MAX_RESTORED_CAPACITY_FRAMES);
+            let restored_capacity = state.capacity_frames.clamp(1, MAX_RING_CAPACITY_FRAMES);
             if restored_capacity != self.capacity_frames {
                 self.capacity_frames = restored_capacity;
                 let samples = self.capacity_frames.saturating_mul(self.channel_count) as usize;
@@ -289,8 +296,14 @@ mod tests {
         rb.restore_state(&state);
         assert_eq!(
             rb.snapshot_state().capacity_frames,
-            MAX_RESTORED_CAPACITY_FRAMES
+            MAX_RING_CAPACITY_FRAMES
         );
+    }
+
+    #[test]
+    fn test_new_clamps_excessive_capacity_to_avoid_oom() {
+        let rb = InterleavedRingBuffer::new(u32::MAX, 2);
+        assert_eq!(rb.snapshot_state().capacity_frames, MAX_RING_CAPACITY_FRAMES);
     }
 
     #[test]
@@ -372,6 +385,11 @@ mod wasm {
 
             let (byte_len, sample_capacity) = layout_bytes_u32(capacity_frames, channel_count)
                 .ok_or_else(|| JsValue::from_str("Requested ring buffer layout exceeds 4GiB"))?;
+            if capacity_frames > MAX_RING_CAPACITY_FRAMES {
+                return Err(JsValue::from_str(&format!(
+                    "capacity_frames must be <= {MAX_RING_CAPACITY_FRAMES}"
+                )));
+            }
             let sab = SharedArrayBuffer::new(byte_len);
 
             let header =
@@ -417,6 +435,11 @@ mod wasm {
 
             let (required, sample_capacity) = layout_bytes_u32(capacity_frames, channel_count)
                 .ok_or_else(|| JsValue::from_str("Requested ring buffer layout exceeds 4GiB"))?;
+            if capacity_frames > MAX_RING_CAPACITY_FRAMES {
+                return Err(JsValue::from_str(&format!(
+                    "capacity_frames must be <= {MAX_RING_CAPACITY_FRAMES}"
+                )));
+            }
             if sab.byte_length() < required {
                 return Err(JsValue::from_str(
                     "SharedArrayBuffer is too small for the requested layout",

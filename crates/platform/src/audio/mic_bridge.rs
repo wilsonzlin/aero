@@ -21,6 +21,16 @@ pub const CAPACITY_SAMPLES_INDEX: usize = 3;
 /// Total bytes reserved for the header.
 pub const HEADER_BYTES: usize = HEADER_U32_LEN * 4;
 
+/// Maximum microphone ring capacity supported by the mic bridge helpers.
+///
+/// The mic capture ring is host-driven and can be backed by a `SharedArrayBuffer` in the browser
+/// or an in-memory `Vec<f32>` in the pure-Rust test helper. Even in non-wasm builds, callers may
+/// treat this as untrusted input (e.g. from UI/config), so we clamp to a reasonable upper bound to
+/// avoid multi-gigabyte allocations.
+///
+/// `2^20` mono samples is ~21s at 48kHz and ~4MiB of f32 storage.
+const MAX_RING_CAPACITY_SAMPLES: u32 = 1_048_576;
+
 #[inline]
 pub fn samples_available(read_pos: u32, write_pos: u32) -> u32 {
     write_pos.wrapping_sub(read_pos)
@@ -53,6 +63,7 @@ pub struct MonoRingBuffer {
 impl MonoRingBuffer {
     pub fn new(capacity_samples: u32) -> Self {
         assert!(capacity_samples > 0, "capacity_samples must be non-zero");
+        let capacity_samples = capacity_samples.min(MAX_RING_CAPACITY_SAMPLES);
         Self {
             capacity_samples,
             read_pos: 0,
@@ -170,6 +181,13 @@ mod tests {
         let read = u32::MAX - 10;
         let write = read.wrapping_add(5);
         assert_eq!(samples_available(read, write), 5);
+    }
+
+    #[test]
+    fn test_new_clamps_excessive_capacity_to_avoid_oom() {
+        let rb = MonoRingBuffer::new(u32::MAX);
+        assert_eq!(rb.capacity_samples, MAX_RING_CAPACITY_SAMPLES);
+        assert_eq!(rb.storage.len(), MAX_RING_CAPACITY_SAMPLES as usize);
     }
 
     #[test]
@@ -333,6 +351,11 @@ mod wasm {
             } else {
                 payload_samples
             };
+            if capacity_samples > MAX_RING_CAPACITY_SAMPLES {
+                return Err(JsValue::from_str(&format!(
+                    "SharedArrayBuffer mic ring buffer capacity must be <= {MAX_RING_CAPACITY_SAMPLES}",
+                )));
+            }
 
             let samples = Float32Array::new_with_byte_offset_and_length(
                 &sab,
