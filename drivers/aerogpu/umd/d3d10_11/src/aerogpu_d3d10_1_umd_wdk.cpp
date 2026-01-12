@@ -2864,7 +2864,10 @@ HRESULT AEROGPU_APIENTRY OpenResource(D3D10DDI_HDEVICE hDevice,
   uint32_t priv_size = 0;
   uint32_t num_allocations = 1;
   __if_exists(D3D10DDIARG_OPENRESOURCE::NumAllocations) {
-    num_allocations = pOpenResource->NumAllocations ? static_cast<uint32_t>(pOpenResource->NumAllocations) : 1u;
+    if (pOpenResource->NumAllocations < 1) {
+      return E_INVALIDARG;
+    }
+    num_allocations = static_cast<uint32_t>(pOpenResource->NumAllocations);
   }
 
   // OpenResource DDI structs vary across WDK header vintages. Some headers
