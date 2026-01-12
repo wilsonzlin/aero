@@ -54,6 +54,14 @@ function isSccacheWrapper(value) {
   );
 }
 
+function parsePositiveIntEnv(value) {
+  if (typeof value !== 'string') return null;
+  if (!/^[1-9][0-9]*$/.test(value)) return null;
+  const n = Number.parseInt(value, 10);
+  if (!Number.isFinite(n) || !Number.isSafeInteger(n) || n <= 0) return null;
+  return n;
+}
+
 function getRepoRoot() {
   return path.join(__dirname, '..', '..', '..');
 }
@@ -339,6 +347,32 @@ async function startDiskGatewayServer({ appOrigin, publicFixturePath, privateFix
     DISK_GATEWAY_CORP: 'cross-origin',
     RUST_LOG: process.env.RUST_LOG ?? 'info',
   };
+
+  // Defensive defaults for thread-limited environments:
+  // - Cargo defaults to one build job per CPU core, which can spawn many rustc processes in
+  //   parallel.
+  // - rustc also has internal worker pools (including Rayon) which default to `num_cpus`.
+  //
+  // When running these Playwright tests in constrained CI sandboxes, those defaults can exceed
+  // per-user thread/PID limits and cause intermittent EAGAIN/WouldBlock failures.
+  //
+  // Prefer a conservative default of -j1 unless the caller explicitly overrides via either the
+  // canonical agent knob `AERO_CARGO_BUILD_JOBS` or a valid `CARGO_BUILD_JOBS`.
+  const defaultJobs = 1;
+  const jobsFromAero = parsePositiveIntEnv(env.AERO_CARGO_BUILD_JOBS);
+  if (jobsFromAero !== null) {
+    env.CARGO_BUILD_JOBS = String(jobsFromAero);
+  } else if (parsePositiveIntEnv(env.CARGO_BUILD_JOBS) === null) {
+    env.CARGO_BUILD_JOBS = String(defaultJobs);
+  }
+  const jobs = parsePositiveIntEnv(env.CARGO_BUILD_JOBS) ?? defaultJobs;
+
+  if (parsePositiveIntEnv(env.RUSTC_WORKER_THREADS) === null) {
+    env.RUSTC_WORKER_THREADS = String(jobs);
+  }
+  if (parsePositiveIntEnv(env.RAYON_NUM_THREADS) === null) {
+    env.RAYON_NUM_THREADS = String(jobs);
+  }
 
   // Some environments configure a rustc wrapper (e.g. `sccache`) via global Cargo config.
   // That can make this harness flaky when the wrapper isn't available. Detect `sccache` wrappers
