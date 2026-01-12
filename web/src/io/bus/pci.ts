@@ -739,6 +739,12 @@ export class PciBus implements PortIoHandler {
     if (desc.kind === "mmio32" || desc.kind === "mmio64") {
       const align = BigInt(Math.max(desc.size, 0x1000));
       const base = (this.#nextMmioBase + (align - 1n)) & ~(align - 1n);
+      // 32-bit memory BARs cannot represent bases >= 4GiB; allocating them above
+      // 32-bit space would desync config-space BAR values (which are 32-bit) from
+      // the MMIO bus mapping.
+      if (desc.kind === "mmio32" && base > 0xffff_ffffn) {
+        throw new Error(`mmio32 BAR base overflowed 32-bit address space: base=0x${base.toString(16)} size=${desc.size}`);
+      }
       this.#nextMmioBase = base + BigInt(desc.size);
       return base;
     }

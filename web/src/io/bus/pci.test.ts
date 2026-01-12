@@ -310,6 +310,23 @@ describe("io/bus/pci", () => {
     expect(cfg.readU32(0, 0, 0x14)).toBe(0xffff_ffff);
   });
 
+  it("rejects mmio32 BAR allocations above 4GiB (unrepresentable in config space)", () => {
+    const portBus = new PortIoBus();
+    const mmioBus = new MmioBus();
+    const pciBus = new PciBus(portBus, mmioBus);
+    pciBus.registerToPortBus();
+
+    // Force an allocation that would align up to >= 4GiB starting from the default 0xE000_0000 base.
+    const dev: PciDevice = {
+      name: "mmio32_overflow_dev",
+      vendorId: 0x1234,
+      deviceId: 0x5678,
+      classCode: 0,
+      bars: [{ kind: "mmio32", size: 0x4000_0000 }, null, null, null, null, null],
+    };
+    expect(() => pciBus.registerDevice(dev, { device: 0, function: 0 })).toThrow(/mmio32 BAR base overflow/i);
+  });
+
   it("supports mmio64 sizing probes for BARs > 4GiB (high dword mask)", () => {
     const portBus = new PortIoBus();
     const mmioBus = new MmioBus();
