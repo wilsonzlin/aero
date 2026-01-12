@@ -86,8 +86,30 @@ case "${AERO_DISABLE_RUSTC_WRAPPER:-}" in
     ;;
 esac
 
-# Rust/Cargo - balance speed vs memory
-export CARGO_BUILD_JOBS=4
+# Rust/Cargo - balance speed vs memory (and thread limits)
+#
+# In constrained agent sandboxes we intermittently hit rustc panics like:
+#   "failed to spawn helper thread (WouldBlock)"
+# when Cargo runs too many rustc processes/threads in parallel. Prefer
+# reliability over speed: default to -j1.
+#
+# Override:
+#   export AERO_CARGO_BUILD_JOBS=2   # or 4, etc
+#   source scripts/agent-env.sh
+#
+# (This is intentionally agent-only; CI should not source this script.)
+_aero_default_cargo_build_jobs=1
+if [[ -n "${AERO_CARGO_BUILD_JOBS:-}" ]]; then
+  if [[ "${AERO_CARGO_BUILD_JOBS}" =~ ^[1-9][0-9]*$ ]]; then
+    export CARGO_BUILD_JOBS="${AERO_CARGO_BUILD_JOBS}"
+  else
+    echo "warning: invalid AERO_CARGO_BUILD_JOBS value: ${AERO_CARGO_BUILD_JOBS} (expected positive integer); using ${_aero_default_cargo_build_jobs}" >&2
+    export CARGO_BUILD_JOBS="${_aero_default_cargo_build_jobs}"
+  fi
+else
+  export CARGO_BUILD_JOBS="${_aero_default_cargo_build_jobs}"
+fi
+unset _aero_default_cargo_build_jobs 2>/dev/null || true
 export CARGO_INCREMENTAL=1
 
 # rustc uses Rayon internally for query evaluation and other parallel work.
