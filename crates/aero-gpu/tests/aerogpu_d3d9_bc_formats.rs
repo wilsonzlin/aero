@@ -584,6 +584,55 @@ fn d3d9_cmd_stream_bc2_texture_direct_upload_and_sample() {
     );
 }
 
+#[test]
+fn d3d9_cmd_stream_bc1_texture_direct_create_falls_back_for_tiny_dimensions() {
+    let mut exec = match pollster::block_on(create_executor_with_bc_features()) {
+        Some(exec) => exec,
+        None => {
+            if texture_compression_disabled_by_env() {
+                common::skip_or_panic(
+                    module_path!(),
+                    "AERO_DISABLE_WGPU_TEXTURE_COMPRESSION is set",
+                );
+            } else {
+                common::skip_or_panic(
+                    module_path!(),
+                    "wgpu adapter/device with TEXTURE_COMPRESSION_BC not found",
+                );
+            }
+            return;
+        }
+    };
+
+    const TEX_HANDLE: u32 = 1;
+
+    let mut stream = AerogpuCmdWriter::new();
+    // wgpu validation rejects native BC texture creation when the base mip dimensions are not
+    // 4x4 block-aligned (e.g. 1x1 BC1). Ensure the D3D9 executor falls back to an uncompressed
+    // host texture rather than triggering a validation error.
+    stream.create_texture2d(
+        TEX_HANDLE,
+        AEROGPU_RESOURCE_USAGE_TEXTURE,
+        AEROGPU_FORMAT_BC1_RGBA_UNORM,
+        1,
+        1,
+        1,
+        1,
+        0, // row_pitch_bytes (not needed for host-owned textures)
+        0,
+        0,
+    );
+
+    let mut guest_memory = VecGuestMemory::new(0x1000);
+    exec.execute_cmd_stream_with_guest_memory(&stream.finish(), &mut guest_memory, None)
+        .expect("execute should succeed");
+
+    let (w, h, rgba) = pollster::block_on(exec.readback_texture_rgba8(TEX_HANDLE))
+        .expect("readback should succeed for RGBA8 fallback textures");
+    assert_eq!((w, h), (1, 1));
+    assert_eq!(rgba.len(), 4);
+}
+
 fn run_bc_texture_cpu_fallback_upload_and_sample(
     sample_format: u32,
     sample_row_pitch_bytes: u32,
