@@ -248,6 +248,11 @@ if (existsSync(path.join(aeroJitWasmCratePath, "Cargo.toml"))) {
         // IMPORTANT: the Tier-1 JIT compiler must have its *own* private linear memory so it
         // does not alias the emulator/runtime's `WebAssembly.Memory` (multiple Rust runtimes
         // sharing one linear memory is undefined behaviour).
+        //
+        // Note: wasm-bindgen's "threads" transform currently *requires imported memory*
+        // (it asserts `mem.import.is_some()`). Since we intentionally keep the JIT module's
+        // memory private (non-imported), we also opt it out of the threaded/shared-memory
+        // build path here.
         importMemory: false,
         threaded: false,
     });
@@ -255,6 +260,18 @@ if (existsSync(path.join(aeroJitWasmCratePath, "Cargo.toml"))) {
     console.warn(
         `[wasm] Warning: ${path.relative(repoRoot, aeroJitWasmCratePath)} not found; skipping aero-jit-wasm build.`,
     );
+}
+
+// Sanity-check package config. wasm-bindgen's threads transform requires imported memory, so
+// any package that opts into the threaded build must also opt into imported memory.
+for (const pkg of packages) {
+    if (pkg.threaded && !pkg.importMemory) {
+        die(
+            `[wasm] Internal build config error: package '${pkg.outName}' is marked as threaded, but does not import memory.\n\n` +
+                "wasm-bindgen's threads transform currently requires imported memory (and will panic otherwise). " +
+                "Either set `importMemory: true` for this package or set `threaded: false`.",
+        );
+    }
 }
 
 const allPackageIds = new Set(packages.map((pkg) => pkg.id));
