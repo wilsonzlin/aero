@@ -5,6 +5,7 @@ import { RingBuffer } from "../ipc/ring_buffer";
 import { WebHidPassthroughManager } from "../platform/webhid_passthrough";
 import { StatusIndex } from "../runtime/shared_layout";
 import { HidReportRing, HidReportType } from "../usb/hid_report_ring";
+import { UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT } from "../usb/uhci_external_hub";
 import { decodeHidInputReportRingRecord } from "./hid_input_report_ring";
 import { WebHidBroker } from "./webhid_broker";
 import type { HidAttachMessage, HidInputReportMessage } from "./hid_proxy_protocol";
@@ -112,7 +113,7 @@ describe("hid/WebHidBroker", () => {
     expect(attach).toBeTruthy();
     expect(attach!.guestPort).toBe(0);
     // First downstream hub ports are reserved for Aero's built-in synthetic HID devices (kbd/mouse/gamepad).
-    expect(attach!.guestPath).toEqual([0, 4]);
+    expect(attach!.guestPath).toEqual([0, UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT]);
 
     device.dispatchInputReport(5, Uint8Array.of(1, 2, 3));
 

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT, UHCI_SYNTHETIC_HID_HUB_PORT_COUNT } from "../usb/uhci_external_hub";
 import { isGuestUsbPath, type HidPassthroughMessage } from "./hid_passthrough_protocol";
 import { getNoFreeGuestUsbPortsMessage, mountWebHidPassthroughPanel, WebHidPassthroughManager } from "./webhid_passthrough";
 
@@ -259,7 +260,7 @@ describe("WebHidPassthroughManager UI (mocked WebHID)", () => {
     const attached = manager.getState().attachedDevices;
     expect(attached).toHaveLength(1);
     expect(attached[0]?.device).toBe(device);
-    expect(attached[0]?.guestPath).toEqual([0, 4]);
+    expect(attached[0]?.guestPath).toEqual([0, UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT]);
   });
 
   it("detaches an attached device before calling device.forget()", async () => {
@@ -389,7 +390,8 @@ describe("Guest USB path validator", () => {
 describe("WebHID guest path allocation (external hub on root port 0)", () => {
   it("assigns hub-backed paths when attaching three devices", async () => {
     const target = new TestTarget();
-    const manager = new WebHidPassthroughManager({ hid: null, target, externalHubPortCount: 6 });
+    const externalHubPortCount = UHCI_SYNTHETIC_HID_HUB_PORT_COUNT + 3;
+    const manager = new WebHidPassthroughManager({ hid: null, target, externalHubPortCount });
 
     const devA = makeDevice(1, 1, "A");
     const devB = makeDevice(2, 2, "B");
@@ -400,21 +402,26 @@ describe("WebHID guest path allocation (external hub on root port 0)", () => {
     await manager.attachKnownDevice(devC);
 
     expect(target.messages).toHaveLength(4);
-    expect(target.messages[0]).toMatchObject({ type: "hid:attachHub", guestPath: [0], portCount: 6 });
-    expect(target.messages[1]).toMatchObject({ type: "hid:attach", guestPath: [0, 4] });
-    expect(target.messages[2]).toMatchObject({ type: "hid:attach", guestPath: [0, 5] });
-    expect(target.messages[3]).toMatchObject({ type: "hid:attach", guestPath: [0, 6] });
+    expect(target.messages[0]).toMatchObject({ type: "hid:attachHub", guestPath: [0], portCount: externalHubPortCount });
+    expect(target.messages[1]).toMatchObject({ type: "hid:attach", guestPath: [0, UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT] });
+    expect(target.messages[2]).toMatchObject({ type: "hid:attach", guestPath: [0, UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT + 1] });
+    expect(target.messages[3]).toMatchObject({ type: "hid:attach", guestPath: [0, UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT + 2] });
 
     expect(manager.getState().attachedDevices.map((d) => d.guestPath)).toEqual([
-      [0, 4],
-      [0, 5],
-      [0, 6],
+      [0, UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT],
+      [0, UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT + 1],
+      [0, UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT + 2],
     ]);
+
+    // Sanity: allocations must never use reserved hub ports.
+    for (const path of manager.getState().attachedDevices.map((d) => d.guestPath)) {
+      expect(path[1]).toBeGreaterThanOrEqual(UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT);
+    }
   });
 
   it("frees hub ports on detach and reuses the lowest free hub port", async () => {
     const target = new TestTarget();
-    const manager = new WebHidPassthroughManager({ hid: null, target, externalHubPortCount: 6 });
+    const manager = new WebHidPassthroughManager({ hid: null, target, externalHubPortCount: UHCI_SYNTHETIC_HID_HUB_PORT_COUNT + 3 });
 
     const devA = makeDevice(1, 1, "A");
     const devB = makeDevice(2, 2, "B");
@@ -428,13 +435,14 @@ describe("WebHID guest path allocation (external hub on root port 0)", () => {
     await manager.attachKnownDevice(devD);
 
     expect(target.messages).toHaveLength(6);
-    expect(target.messages[4]).toMatchObject({ type: "hid:detach", guestPath: [0, 5] });
-    expect(target.messages[5]).toMatchObject({ type: "hid:attach", guestPath: [0, 5] });
+    expect(target.messages[4]).toMatchObject({ type: "hid:detach", guestPath: [0, UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT + 1] });
+    expect(target.messages[5]).toMatchObject({ type: "hid:attach", guestPath: [0, UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT + 1] });
   });
 
   it("can resync already-attached devices after an I/O worker restart", async () => {
     const target = new TestTarget();
-    const manager = new WebHidPassthroughManager({ hid: null, target, externalHubPortCount: 6 });
+    const externalHubPortCount = UHCI_SYNTHETIC_HID_HUB_PORT_COUNT + 3;
+    const manager = new WebHidPassthroughManager({ hid: null, target, externalHubPortCount });
 
     const devA = makeDevice(1, 1, "A");
     await manager.attachKnownDevice(devA);
@@ -448,13 +456,14 @@ describe("WebHID guest path allocation (external hub on root port 0)", () => {
     await manager.resyncAttachedDevices();
 
     expect(target.messages).toHaveLength(2);
-    expect(target.messages[0]).toMatchObject({ type: "hid:attachHub", guestPath: [0], portCount: 6 });
-    expect(target.messages[1]).toMatchObject({ type: "hid:attach", guestPath: [0, 4], numericDeviceId });
+    expect(target.messages[0]).toMatchObject({ type: "hid:attachHub", guestPath: [0], portCount: externalHubPortCount });
+    expect(target.messages[1]).toMatchObject({ type: "hid:attach", guestPath: [0, UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT], numericDeviceId });
   });
 
   it("errors once the external hub is full (root port 1 reserved)", async () => {
     const target = new TestTarget();
-    const manager = new WebHidPassthroughManager({ hid: null, target, externalHubPortCount: 5 });
+    const externalHubPortCount = UHCI_SYNTHETIC_HID_HUB_PORT_COUNT + 2;
+    const manager = new WebHidPassthroughManager({ hid: null, target, externalHubPortCount });
 
     const devA = makeDevice(1, 1, "A");
     const devB = makeDevice(2, 2, "B");
@@ -463,13 +472,13 @@ describe("WebHID guest path allocation (external hub on root port 0)", () => {
     await manager.attachKnownDevice(devA);
     await manager.attachKnownDevice(devB);
     await expect(manager.attachKnownDevice(devC)).rejects.toThrow(
-      getNoFreeGuestUsbPortsMessage({ externalHubPortCount: 5, reservedExternalHubPorts: 3 }),
+      getNoFreeGuestUsbPortsMessage({ externalHubPortCount, reservedExternalHubPorts: UHCI_SYNTHETIC_HID_HUB_PORT_COUNT }),
     );
 
     expect(target.messages).toHaveLength(3);
-    expect(target.messages[0]).toMatchObject({ type: "hid:attachHub", guestPath: [0], portCount: 5 });
-    expect(target.messages[1]).toMatchObject({ type: "hid:attach", guestPath: [0, 4] });
-    expect(target.messages[2]).toMatchObject({ type: "hid:attach", guestPath: [0, 5] });
+    expect(target.messages[0]).toMatchObject({ type: "hid:attachHub", guestPath: [0], portCount: externalHubPortCount });
+    expect(target.messages[1]).toMatchObject({ type: "hid:attach", guestPath: [0, UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT] });
+    expect(target.messages[2]).toMatchObject({ type: "hid:attach", guestPath: [0, UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT + 1] });
 
     expect(manager.getState().attachedDevices).toHaveLength(2);
   });
