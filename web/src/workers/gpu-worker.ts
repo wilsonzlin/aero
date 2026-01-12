@@ -1088,8 +1088,16 @@ async function tryDrainWasmEvents(): Promise<GpuRuntimeErrorEvent[]> {
 }
 
 function shouldPollAerogpuWasmTelemetry(): boolean {
-  // Only the wgpu-backed WebGL2 presenter uses `aero-gpu-wasm` for frame presentation.
-  return presenter?.backend === "webgl2_wgpu";
+  // Poll `aero-gpu-wasm` telemetry whenever the wasm module is actually in use.
+  //
+  // - The wgpu-backed WebGL2 presenter (`webgl2_wgpu`) uses `aero-gpu-wasm` for frame presentation.
+  // - The wasm D3D9 executor is also used for AeroGPU command execution on both the WebGPU and
+  //   wgpu-WebGL2 backends.
+  //
+  // Avoid loading the wasm module *only* for telemetry: only poll once the D3D9 executor has been
+  // initialized (or is in the process of initializing), or when the wasm presenter is active.
+  if (presenter?.backend === "webgl2_wgpu") return true;
+  return aerogpuWasmD3d9Backend !== null || aerogpuWasmD3d9InitPromise !== null || aerogpuWasm !== null;
 }
 
 async function tryDrainAerogpuWasmEvents(): Promise<GpuRuntimeErrorEvent[]> {
