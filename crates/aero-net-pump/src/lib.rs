@@ -617,6 +617,64 @@ mod tests {
     }
 
     #[test]
+    fn tick_orders_tx_before_polling_backend_rx() {
+        #[derive(Default)]
+        struct OrderingBackend {
+            events: Vec<&'static str>,
+            tx: Vec<Vec<u8>>,
+            rx: VecDeque<Vec<u8>>,
+        }
+
+        impl NetworkBackend for OrderingBackend {
+            fn transmit(&mut self, frame: Vec<u8>) {
+                self.events.push("tx");
+                self.tx.push(frame);
+            }
+
+            fn poll_receive(&mut self) -> Option<Vec<u8>> {
+                let frame = self.rx.pop_front()?;
+                self.events.push("rx");
+                Some(frame)
+            }
+        }
+
+        let mut mem = TestMem::new(0x80_000);
+        let mut nic = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
+        nic.pci_config_write(0x04, 2, 0x4); // Bus Master Enable
+
+        // One TX frame.
+        configure_tx_ring(&mut nic, 0x1000, 4);
+        let tx_frame = build_test_frame(b"tx-first");
+        mem.write(0x4000, &tx_frame);
+        write_tx_desc(
+            &mut mem,
+            0x1000,
+            0x4000,
+            tx_frame.len() as u16,
+            0b0000_1001, // EOP|RS
+            0,
+        );
+        nic.mmio_write_u32_reg(0x3818, 1); // TDT
+
+        // One RX descriptor.
+        configure_rx_ring(&mut nic, 0x2000, 2, 1);
+        write_rx_desc(&mut mem, 0x2000, 0x3000, 0);
+        write_rx_desc(&mut mem, 0x2010, 0x3400, 0);
+
+        let rx_frame = build_test_frame(b"rx-second");
+
+        let mut backend = OrderingBackend::default();
+        backend.rx.push_back(rx_frame.clone());
+
+        let mut pump = E1000TickPump::new(16, 16);
+        pump.tick(&mut nic, &mut mem, &mut backend);
+
+        assert_eq!(backend.events, vec!["tx", "rx"]);
+        assert_eq!(backend.tx, vec![tx_frame]);
+        assert_eq!(mem.read_vec(0x3000, rx_frame.len()), rx_frame);
+    }
+
+    #[test]
     fn same_poll_backend_response_is_delivered_to_guest() {
         #[derive(Default)]
         struct EchoBackend {
