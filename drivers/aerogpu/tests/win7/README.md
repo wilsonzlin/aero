@@ -324,8 +324,8 @@ In a Win7 VM with AeroGPU installed and working correctly:
 * `d3d9_raster_status_sanity` samples `IDirect3DDevice9::GetRasterStatus` and fails if vblank state never toggles or `ScanLine` is stuck (validates `D3DKMTGetScanLine` → `DxgkDdiGetScanLine` basic correctness)
 * `d3d9_raster_status_pacing` samples `IDirect3DDevice9::GetRasterStatus` and fails if `InVBlank` never becomes true or scanline is stuck (useful for `DxgkDdiGetScanLine` bring-up)
 * `d3d9_validate_device_sanity` creates a D3D9Ex device and calls `IDirect3DDevice9Ex::ValidateDevice` after setting a few common render/sampler states (expects `D3D_OK` and `NumPasses >= 1`; prints a warning if it is not single-pass)
-* `d3d9ex_triangle` renders a green triangle over a red clear and confirms **corner red + center green** via readback
-* `d3d9ex_draw_indexed_primitive_up` draws a green triangle over a red clear using `DrawIndexedPrimitiveUP` (user-pointer vertex/index data) and confirms **corner red + center green** via readback (can dump `*.bmp` / raw BGRA `*.bin` with `--dump`)
+* `d3d9ex_triangle` renders a blue triangle over a red clear and confirms **corner red + center blue** via readback
+* `d3d9ex_draw_indexed_primitive_up` draws a blue triangle over a red clear using `DrawIndexedPrimitiveUP` (user-pointer vertex/index data) and confirms **corner red + center blue** via readback (can dump `*.bmp` / raw BGRA `*.bin` with `--dump`)
 * `d3d9ex_stateblock_sanity` validates `IDirect3DStateBlock9` record/apply/capture behavior by recording device state (texture + pixel shader constants + viewport), mutating it, then verifying `Apply()` restores the recorded state and `Capture()` updates it (validated via readback: **green then red**)
 * `d3d9ex_multiframe_triangle` renders multiple frames using a persistent dynamic vertex buffer and confirms the **center pixel changes across frames** via readback (uses non-symmetric colors to catch channel-order regressions)
 * `d3d9ex_vb_dirty_range` renders a blue triangle using a vertex buffer updated via `Lock/Unlock` and confirms **corner red + center blue** via readback (catches regressions in vertex-buffer dirty-range tracking / upload)
