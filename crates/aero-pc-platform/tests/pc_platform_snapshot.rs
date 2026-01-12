@@ -1,10 +1,18 @@
 use std::io::Cursor;
 
 use aero_devices::ioapic::IoApic;
-use aero_devices::pci::{GsiLevelSink, PciBdf, PciInterruptPin, PciIntxRouter, PciIntxRouterConfig};
+use aero_devices::pci::{
+    GsiLevelSink, PciBdf, PciCoreSnapshot, PciInterruptPin, PciIntxRouter, PciIntxRouterConfig,
+    PCI_CFG_ADDR_PORT,
+};
+use aero_io_snapshot::io::state::codec::Decoder;
+use aero_io_snapshot::io::state::SnapshotReader;
 use aero_pc_platform::{PcPlatform, PcPlatformSnapshotHarness};
 use aero_snapshot::io_snapshot_bridge::{apply_io_snapshot_to_device, device_state_from_io_snapshot};
-use aero_snapshot::{restore_snapshot, save_snapshot, SaveOptions};
+use aero_snapshot::{
+    restore_snapshot, save_snapshot, CpuState, DeviceId, DeviceState, DiskOverlayRefs, MmuState,
+    SaveOptions, SnapshotMeta, SnapshotSource,
+};
 
 fn snapshot_bytes(pc: &mut PcPlatform) -> Vec<u8> {
     let mut out = Cursor::new(Vec::new());
@@ -286,4 +294,125 @@ fn snapshot_restore_keeps_hpet_level_asserted_when_pci_intx_sync_runs() {
         restored.interrupts.borrow().gsi_level(TIMER2_GSI),
         "expected HPET timer2 pending interrupt to assert GSI{TIMER2_GSI} after restore"
     );
+}
+
+#[test]
+fn snapshot_restore_accepts_legacy_apic_and_pci_core_wrapper() {
+    // Regression test for snapshot backward compatibility:
+    // - `DeviceId::APIC` (legacy) for the platform interrupts snapshot.
+    // - `DeviceId::PCI` (legacy) containing a `PciCoreSnapshot` wrapper (`PCIC`) that nests both
+    //   config ports (`PCPT`) and the INTx router (`INTX`).
+    //
+    // Restore must apply the nested PCI core state and re-drive asserted INTx levels into the
+    // restored interrupt controller via `sync_levels_to_sink()`.
+    const RAM_SIZE: usize = 2 * 1024 * 1024;
+
+    struct LegacySource {
+        pc: std::cell::RefCell<PcPlatform>,
+    }
+
+    impl SnapshotSource for LegacySource {
+        fn snapshot_meta(&mut self) -> SnapshotMeta {
+            SnapshotMeta::default()
+        }
+
+        fn cpu_state(&self) -> CpuState {
+            CpuState::default()
+        }
+
+        fn mmu_state(&self) -> MmuState {
+            MmuState::default()
+        }
+
+        fn device_states(&self) -> Vec<DeviceState> {
+            let mut pc = self.pc.borrow_mut();
+
+            let interrupts =
+                device_state_from_io_snapshot(DeviceId::APIC, &*pc.interrupts.borrow());
+
+            // Build a legacy combined PCI core snapshot (`PCIC`) under the historical `DeviceId::PCI`.
+            //
+            // `pc.pci_cfg` is behind a `RefCell`, while `pc.pci_intx` is a plain field. To satisfy the
+            // borrow checker without `unsafe`, temporarily move the router out of the platform while
+            // we borrow `pci_cfg` mutably.
+            let mut intx_router = std::mem::replace(
+                &mut pc.pci_intx,
+                PciIntxRouter::new(PciIntxRouterConfig::default()),
+            );
+            let pci_core = {
+                let mut cfg_ports = pc.pci_cfg.borrow_mut();
+                let core = PciCoreSnapshot::new(&mut cfg_ports, &mut intx_router);
+                device_state_from_io_snapshot(DeviceId::PCI, &core)
+            };
+            pc.pci_intx = intx_router;
+
+            vec![interrupts, pci_core]
+        }
+
+        fn disk_overlays(&self) -> DiskOverlayRefs {
+            DiskOverlayRefs::default()
+        }
+
+        fn ram_len(&self) -> usize {
+            usize::try_from(self.pc.borrow().memory.ram().size()).unwrap_or(0)
+        }
+
+        fn read_ram(&self, offset: u64, buf: &mut [u8]) -> aero_snapshot::Result<()> {
+            self.pc
+                .borrow()
+                .memory
+                .ram()
+                .read_into(offset, buf)
+                .map_err(|_| aero_snapshot::SnapshotError::Corrupt("ram read out of range"))?;
+            Ok(())
+        }
+
+        fn take_dirty_pages(&mut self) -> Option<Vec<u64>> {
+            None
+        }
+    }
+
+    let mut pc = PcPlatform::new(RAM_SIZE);
+
+    // Set PCI config address latch to a non-default value so we can assert it round-trips.
+    pc.io.write(PCI_CFG_ADDR_PORT, 4, 0x8000_0004);
+    let expected_latch = pc.io.read(PCI_CFG_ADDR_PORT, 4);
+
+    // Assert an INTx source via a dummy sink, creating an intentionally inconsistent snapshot
+    // where the router says the line is asserted but the interrupt controller does not.
+    let bdf = PciBdf::new(0, 0, 0);
+    let pin = PciInterruptPin::IntA;
+    let expected_gsi = pc.pci_intx.gsi_for_intx(bdf, pin);
+    pc.pci_intx.assert_intx(bdf, pin, &mut NullSink::default());
+
+    // Sanity: GSI level is low at snapshot time.
+    let intr_state = device_state_from_io_snapshot(DeviceId::APIC, &*pc.interrupts.borrow());
+    let reader = SnapshotReader::parse(&intr_state.data, *b"INTR").unwrap();
+    let levels_buf = reader.bytes(8).expect("TAG_GSI_LEVEL missing");
+    let mut d = Decoder::new(levels_buf);
+    let levels = d.vec_u8().unwrap();
+    d.finish().unwrap();
+    assert_eq!(levels[expected_gsi as usize], 0);
+
+    let mut cursor = Cursor::new(Vec::new());
+    let mut source = LegacySource {
+        pc: std::cell::RefCell::new(pc),
+    };
+    save_snapshot(&mut cursor, &mut source, SaveOptions::default()).unwrap();
+    let snap = cursor.into_inner();
+
+    let mut restored = PcPlatform::new(RAM_SIZE);
+    restore_bytes(&mut restored, &snap);
+
+    // PCI config address latch should be restored from the nested `PCPT` snapshot.
+    assert_eq!(restored.io.read(PCI_CFG_ADDR_PORT, 4), expected_latch);
+
+    // INTx router levels must be re-driven into the interrupt controller after restore.
+    let intr_state = device_state_from_io_snapshot(DeviceId::APIC, &*restored.interrupts.borrow());
+    let reader = SnapshotReader::parse(&intr_state.data, *b"INTR").unwrap();
+    let levels_buf = reader.bytes(8).expect("TAG_GSI_LEVEL missing");
+    let mut d = Decoder::new(levels_buf);
+    let levels = d.vec_u8().unwrap();
+    d.finish().unwrap();
+    assert_eq!(levels[expected_gsi as usize], 1);
 }

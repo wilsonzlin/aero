@@ -1,3 +1,4 @@
+use aero_devices::pci::PciCoreSnapshot;
 use aero_snapshot::io_snapshot_bridge::{
     apply_io_snapshot_to_device, device_state_from_io_snapshot,
 };
@@ -133,81 +134,148 @@ impl SnapshotTarget for PcPlatformSnapshotHarness<'_> {
     fn restore_mmu_state(&mut self, _state: MmuState) {}
 
     fn restore_device_states(&mut self, states: Vec<DeviceState>) {
-        // Restore the interrupt sink first. Some devices require a post-restore sync step
-        // that must run after the sink is restored (e.g. PCI INTx).
-        for state in &states {
-            if state.id == DeviceId::PLATFORM_INTERRUPTS {
-                if apply_io_snapshot_to_device(state, &mut *self.pc.interrupts.borrow_mut())
-                    .is_err()
-                {
-                    self.restore_error = Some(SnapshotError::Corrupt(
-                        "failed to restore platform interrupts state",
-                    ));
-                    return;
-                }
-                self.restored_interrupts = true;
-                break;
-            }
-        }
+        // Restore ordering must be explicit and independent of snapshot file ordering so device
+        // state is deterministic (especially for interrupt lines and PCI INTx routing).
+        let mut interrupts_state = None;
+        let mut pit_state = None;
+        let mut rtc_state = None;
+        let mut hpet_state = None;
+        let mut acpi_pm_state = None;
+        let mut pci_cfg_state = None;
+        let mut pci_intx_state = None;
+        let mut pci_legacy_state = None;
 
         for state in states {
             match state.id {
-                id if id == DeviceId::PLATFORM_INTERRUPTS => {
-                    // Already restored above.
-                }
-                id if id == DeviceId::PIT => {
-                    if apply_io_snapshot_to_device(&state, &mut *self.pc.pit.borrow_mut()).is_err()
-                    {
-                        self.restore_error =
-                            Some(SnapshotError::Corrupt("failed to restore PIT state"));
-                        return;
+                // Prefer the dedicated `PLATFORM_INTERRUPTS` id, but accept the historical `APIC`
+                // id for backward compatibility with older snapshots.
+                DeviceId::PLATFORM_INTERRUPTS => interrupts_state = Some(state),
+                DeviceId::APIC => {
+                    if interrupts_state.is_none() {
+                        interrupts_state = Some(state);
                     }
                 }
-                id if id == DeviceId::RTC => {
-                    if apply_io_snapshot_to_device(&state, &mut *self.pc.rtc.borrow_mut()).is_err()
-                    {
-                        self.restore_error =
-                            Some(SnapshotError::Corrupt("failed to restore RTC state"));
-                        return;
-                    }
-                }
-                id if id == DeviceId::HPET => {
-                    if apply_io_snapshot_to_device(&state, &mut *self.pc.hpet.borrow_mut()).is_err()
-                    {
-                        self.restore_error =
-                            Some(SnapshotError::Corrupt("failed to restore HPET state"));
-                        return;
-                    }
-                    self.restored_hpet = true;
-                }
-                id if id == DeviceId::ACPI_PM => {
-                    if apply_io_snapshot_to_device(&state, &mut *self.pc.acpi_pm.borrow_mut())
-                        .is_err()
-                    {
-                        self.restore_error =
-                            Some(SnapshotError::Corrupt("failed to restore ACPI PM state"));
-                        return;
-                    }
-                }
-                id if id == DeviceId::PCI_CFG => {
-                    if apply_io_snapshot_to_device(&state, &mut *self.pc.pci_cfg.borrow_mut())
-                        .is_err()
-                    {
-                        self.restore_error = Some(SnapshotError::Corrupt(
-                            "failed to restore PCI config ports state",
-                        ));
-                        return;
-                    }
-                }
-                id if id == DeviceId::PCI_INTX_ROUTER => {
-                    if apply_io_snapshot_to_device(&state, &mut self.pc.pci_intx).is_err() {
-                        self.restore_error =
-                            Some(SnapshotError::Corrupt("failed to restore PCI INTx state"));
-                        return;
-                    }
-                    self.restored_pci_intx = true;
-                }
+                DeviceId::PIT => pit_state = Some(state),
+                DeviceId::RTC => rtc_state = Some(state),
+                DeviceId::HPET => hpet_state = Some(state),
+                DeviceId::ACPI_PM => acpi_pm_state = Some(state),
+                DeviceId::PCI_CFG => pci_cfg_state = Some(state),
+                DeviceId::PCI_INTX_ROUTER => pci_intx_state = Some(state),
+                // Backward compatibility: some snapshots stored PCI core state under the
+                // historical `DeviceId::PCI`, either as a combined `PciCoreSnapshot` wrapper
+                // (`PCIC`) or as a single `PCPT`/`INTX` payload.
+                DeviceId::PCI => pci_legacy_state = Some(state),
                 _ => {}
+            }
+        }
+
+        // 1) Restore the platform interrupt sink first so it is valid for post-restore re-drive
+        // steps.
+        if let Some(state) = interrupts_state {
+            if apply_io_snapshot_to_device(&state, &mut *self.pc.interrupts.borrow_mut()).is_err() {
+                self.restore_error = Some(SnapshotError::Corrupt(
+                    "failed to restore platform interrupts state",
+                ));
+                return;
+            }
+            self.restored_interrupts = true;
+        }
+
+        // 2) Restore core timer devices and ACPI PM.
+        if let Some(state) = pit_state {
+            if apply_io_snapshot_to_device(&state, &mut *self.pc.pit.borrow_mut()).is_err() {
+                self.restore_error = Some(SnapshotError::Corrupt("failed to restore PIT state"));
+                return;
+            }
+        }
+        if let Some(state) = rtc_state {
+            if apply_io_snapshot_to_device(&state, &mut *self.pc.rtc.borrow_mut()).is_err() {
+                self.restore_error = Some(SnapshotError::Corrupt("failed to restore RTC state"));
+                return;
+            }
+        }
+        if let Some(state) = hpet_state {
+            if apply_io_snapshot_to_device(&state, &mut *self.pc.hpet.borrow_mut()).is_err() {
+                self.restore_error = Some(SnapshotError::Corrupt("failed to restore HPET state"));
+                return;
+            }
+            self.restored_hpet = true;
+        }
+        if let Some(state) = acpi_pm_state {
+            if apply_io_snapshot_to_device(&state, &mut *self.pc.acpi_pm.borrow_mut()).is_err() {
+                self.restore_error =
+                    Some(SnapshotError::Corrupt("failed to restore ACPI PM state"));
+                return;
+            }
+        }
+
+        // 3) Restore PCI core state.
+        //
+        // Prefer split canonical entries (`PCI_CFG` + `PCI_INTX_ROUTER`) when present, but accept
+        // the historical `PCI` entry as a fallback for legacy snapshots.
+        let has_pci_cfg_state = pci_cfg_state.is_some();
+        let has_pci_intx_state = pci_intx_state.is_some();
+
+        if let Some(state) = pci_cfg_state {
+            if apply_io_snapshot_to_device(&state, &mut *self.pc.pci_cfg.borrow_mut()).is_err() {
+                self.restore_error = Some(SnapshotError::Corrupt(
+                    "failed to restore PCI config ports state",
+                ));
+                return;
+            }
+        }
+        if let Some(state) = pci_intx_state {
+            if apply_io_snapshot_to_device(&state, &mut self.pc.pci_intx).is_err() {
+                self.restore_error =
+                    Some(SnapshotError::Corrupt("failed to restore PCI INTx state"));
+                return;
+            }
+            self.restored_pci_intx = true;
+        }
+
+        if !has_pci_cfg_state && !has_pci_intx_state {
+            if let Some(state) = pci_legacy_state {
+                let inner_id = state
+                    .data
+                    .get(8..12)
+                    .and_then(|buf| <[u8; 4]>::try_from(buf).ok())
+                    .unwrap_or([0u8; 4]);
+
+                match inner_id {
+                    // Combined wrapper: restore both config ports and router.
+                    [b'P', b'C', b'I', b'C'] => {
+                        let mut cfg_ports = self.pc.pci_cfg.borrow_mut();
+                        let mut core = PciCoreSnapshot::new(&mut cfg_ports, &mut self.pc.pci_intx);
+                        if apply_io_snapshot_to_device(&state, &mut core).is_err() {
+                            self.restore_error =
+                                Some(SnapshotError::Corrupt("failed to restore PCI core state"));
+                            return;
+                        }
+                        self.restored_pci_intx = true;
+                    }
+                    // Legacy: config ports stored directly under `DeviceId::PCI`.
+                    [b'P', b'C', b'P', b'T'] => {
+                        if apply_io_snapshot_to_device(&state, &mut *self.pc.pci_cfg.borrow_mut())
+                            .is_err()
+                        {
+                            self.restore_error = Some(SnapshotError::Corrupt(
+                                "failed to restore legacy PCI config ports state",
+                            ));
+                            return;
+                        }
+                    }
+                    // Legacy: INTx router stored directly under `DeviceId::PCI`.
+                    [b'I', b'N', b'T', b'X'] => {
+                        if apply_io_snapshot_to_device(&state, &mut self.pc.pci_intx).is_err() {
+                            self.restore_error = Some(SnapshotError::Corrupt(
+                                "failed to restore legacy PCI INTx router state",
+                            ));
+                            return;
+                        }
+                        self.restored_pci_intx = true;
+                    }
+                    _ => {}
+                }
             }
         }
     }
@@ -272,7 +340,7 @@ impl SnapshotTarget for PcPlatformSnapshotHarness<'_> {
             let mut interrupts = self.pc.interrupts.borrow_mut();
 
             // Same issue for PCI INTx: `PciIntxRouter::load_state()` restores internal bookkeeping
-             // but cannot drive the sink.
+            // but cannot drive the sink.
             if self.restored_pci_intx {
                 self.pc.pci_intx.sync_levels_to_sink(&mut *interrupts);
             }
