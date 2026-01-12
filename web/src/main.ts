@@ -1388,8 +1388,10 @@ function renderMachineWorkerPanel(): HTMLElement {
         status.textContent = `Machine worker demo: ready (transport=${transport})`;
         testState.transport = transport;
 
-        presenter = new VgaPresenter(canvas, { scaleMode: "auto", integerScaling: true, maxPresentHz: 60 });
-        presenter.start();
+        if (!presenter) {
+          presenter = new VgaPresenter(canvas, { scaleMode: "auto", integerScaling: true, maxPresentHz: 60 });
+          presenter.start();
+        }
 
         if (transport === "shared") {
           const sab = msg.framebuffer;
@@ -1401,28 +1403,33 @@ function renderMachineWorkerPanel(): HTMLElement {
           shared = wrapSharedFramebuffer(sab, 0);
           presenter.setSharedFramebuffer(shared);
 
-          if (sharedPollTimer !== null) {
-            window.clearInterval(sharedPollTimer);
+          if (sharedPollTimer === null) {
+            sharedPollTimer = window.setInterval(() => {
+              if (!shared) return;
+              const w = Atomics.load(shared.header, HEADER_INDEX_WIDTH);
+              const h = Atomics.load(shared.header, HEADER_INDEX_HEIGHT);
+              const stride = Atomics.load(shared.header, HEADER_INDEX_STRIDE_BYTES);
+              const frame = Atomics.load(shared.header, HEADER_INDEX_FRAME_COUNTER);
+              vgaInfo.textContent = `vga: ${w}x${h} stride=${stride} frame=${frame}`;
+              const frameCount = Math.max(0, frame | 0);
+              testState.framesPresented = Math.max(testState.framesPresented, frameCount);
+              testState.width = Math.max(0, w | 0);
+              testState.height = Math.max(0, h | 0);
+              testState.strideBytes = Math.max(0, stride | 0);
+              presenter?.presentLatestFrame();
+            }, 50);
+            (sharedPollTimer as unknown as { unref?: () => void }).unref?.();
           }
-          sharedPollTimer = window.setInterval(() => {
-            if (!shared) return;
-            const w = Atomics.load(shared.header, HEADER_INDEX_WIDTH);
-            const h = Atomics.load(shared.header, HEADER_INDEX_HEIGHT);
-            const stride = Atomics.load(shared.header, HEADER_INDEX_STRIDE_BYTES);
-            const frame = Atomics.load(shared.header, HEADER_INDEX_FRAME_COUNTER);
-            vgaInfo.textContent = `vga: ${w}x${h} stride=${stride} frame=${frame}`;
-            testState.framesPresented = Math.max(0, frame | 0);
-            testState.width = Math.max(0, w | 0);
-            testState.height = Math.max(0, h | 0);
-            testState.strideBytes = Math.max(0, stride | 0);
-            presenter?.presentLatestFrame();
-          }, 50);
-          (sharedPollTimer as unknown as { unref?: () => void }).unref?.();
           return;
         }
 
         // Copy-frame transport: presenter will consume frames via `pushCopyFrame`.
+        shared = null;
         presenter.setSharedFramebuffer(null);
+        if (sharedPollTimer !== null) {
+          window.clearInterval(sharedPollTimer);
+          sharedPollTimer = null;
+        }
         return;
       }
 

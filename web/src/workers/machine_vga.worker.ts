@@ -216,9 +216,15 @@ function ensureSharedFramebuffer(): ReturnType<typeof wrapSharedFramebuffer> | n
   const Sab = globalThis.SharedArrayBuffer;
   if (typeof Sab === "undefined") return null;
 
-  // Allocate a single SharedArrayBuffer large enough for any mode up to `MAX_VGA_FRAME_BYTES`.
-  // The active width/height/stride are communicated via the framebuffer protocol header.
-  const bytes = HEADER_BYTE_LENGTH + MAX_VGA_FRAME_BYTES;
+  // Allocate an initial SharedArrayBuffer sized for a "modest" SVGA mode, but allow the
+  // framebuffer to grow dynamically (up to `MAX_VGA_FRAME_BYTES`) when the guest switches to a
+  // larger VBE mode.
+  //
+  // This keeps memory usage reasonable for the typical BIOS/VGA text-mode demo while still
+  // supporting larger scanout modes.
+  const initialMaxWidth = 1024;
+  const initialMaxHeight = 768;
+  const bytes = HEADER_BYTE_LENGTH + initialMaxWidth * initialMaxHeight * 4;
   let sab: SharedArrayBuffer;
   try {
     sab = new SharedArrayBuffer(bytes);
@@ -241,9 +247,57 @@ function ensureSharedFramebuffer(): ReturnType<typeof wrapSharedFramebuffer> | n
   return fb;
 }
 
-function publishSharedFrame(width: number, height: number, strideBytes: number, pixels: Uint8Array): void {
-  const fb = sharedFb;
-  if (!fb) return;
+function publishSharedFrame(width: number, height: number, strideBytes: number, pixels: Uint8Array): boolean {
+  let fb = sharedFb;
+  if (!fb) return false;
+
+  const requiredBytes = strideBytes * height;
+  if (requiredBytes > MAX_VGA_FRAME_BYTES) return false;
+
+  if (requiredBytes > fb.pixelsU8.byteLength) {
+    const Sab = globalThis.SharedArrayBuffer;
+    if (typeof Sab === "undefined") return false;
+
+    // Attempt to grow the shared framebuffer. If allocation fails (or wrap fails), degrade to copy
+    // transport so the demo keeps functioning.
+    const bytes = HEADER_BYTE_LENGTH + requiredBytes;
+    let sab: SharedArrayBuffer;
+    try {
+      sab = new SharedArrayBuffer(bytes);
+    } catch {
+      transport = "copy";
+      sharedSab = null;
+      sharedFb = null;
+      post({ type: "machineVga.ready", transport: "copy" } satisfies MachineVgaWorkerReadyMessage);
+      return false;
+    }
+
+    let next: ReturnType<typeof wrapSharedFramebuffer>;
+    try {
+      next = wrapSharedFramebuffer(sab, 0);
+    } catch {
+      transport = "copy";
+      sharedSab = null;
+      sharedFb = null;
+      post({ type: "machineVga.ready", transport: "copy" } satisfies MachineVgaWorkerReadyMessage);
+      return false;
+    }
+
+    initFramebufferHeader(next.header, {
+      width,
+      height,
+      strideBytes,
+      format: FRAMEBUFFER_FORMAT_RGBA8888,
+    });
+    sharedSab = sab;
+    sharedFb = next;
+    fb = next;
+    sharedWidth = width;
+    sharedHeight = height;
+    sharedStrideBytes = strideBytes;
+
+    post({ type: "machineVga.ready", transport: "shared", framebuffer: sab } satisfies MachineVgaWorkerReadyMessage);
+  }
 
   if (sharedWidth !== width || sharedHeight !== height || sharedStrideBytes !== strideBytes) {
     storeHeaderI32(fb.header, HEADER_INDEX_WIDTH, width);
@@ -256,11 +310,9 @@ function publishSharedFrame(width: number, height: number, strideBytes: number, 
     sharedStrideBytes = strideBytes;
   }
 
-  const requiredBytes = strideBytes * height;
-  if (requiredBytes > MAX_VGA_FRAME_BYTES) return;
-  if (requiredBytes > fb.pixelsU8.byteLength) return;
   fb.pixelsU8.set(pixels.subarray(0, requiredBytes), 0);
   addHeaderI32(fb.header, HEADER_INDEX_FRAME_COUNTER, 1);
+  return true;
 }
 
 function postCopyFrame(width: number, height: number, strideBytes: number, pixels: Uint8Array): void {
@@ -347,10 +399,15 @@ function presentVgaFrame(): void {
   if (!pixels || pixels.byteLength < requiredBytes) return;
 
   if (transport === "shared") {
-    publishSharedFrame(width, height, strideBytes, pixels);
-  } else {
-    postCopyFrame(width, height, strideBytes, pixels);
+    const ok = publishSharedFrame(width, height, strideBytes, pixels);
+    if (!ok && transport !== "shared") {
+      // Shared transport failed and downgraded to copy mode.
+      postCopyFrame(width, height, strideBytes, pixels);
+    }
+    return;
   }
+
+  postCopyFrame(width, height, strideBytes, pixels);
 }
 
 function tick(): void {
