@@ -139,11 +139,14 @@ let irqBitmapLo = 0;
 let irqBitmapHi = 0;
 // Per-IRQ reference counts so multiple devices can share an interrupt input line.
 //
-// The I/O worker transports IRQ activity as discrete `irqRaise`/`irqLower` events which represent
-// *line level transitions* (assert/deassert). We keep a refcount here so:
-// - multiple sources can "wire-OR" onto the same legacy PIC line without one device accidentally
-//   deasserting another device's interrupt, and
-// - we can publish a stable per-line *level* bitmap into shared memory for the WASM CPU core.
+// The I/O worker transports IRQ activity as discrete `irqRaise`/`irqLower` events.
+//
+// In the canonical browser runtime path (`web/src/workers/io.worker.ts`), those events correspond
+// to *aggregated line level transitions* (after wire-OR). We still keep a refcount here as a
+// robustness guard so alternate I/O paths (tests, demos) can safely emit per-device
+// assert/deassert events while still producing a correct wire-OR level bitmap.
+//
+// The bitmap is published into shared memory for the WASM CPU core.
 //
 // Note: A level bitmap alone cannot represent edge-triggered interrupts. Edge-triggered devices
 // (e.g. i8042) are represented as explicit pulses (0→1→0 transitions); the eventual PIC/APIC model

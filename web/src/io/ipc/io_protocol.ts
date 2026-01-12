@@ -4,6 +4,10 @@ export const IO_OP_MMIO_READ = 3;
 export const IO_OP_MMIO_WRITE = 4;
 
 export const IO_OP_RESP = 5;
+// IRQ line level transitions (assert/deassert).
+//
+// Edge-triggered devices are represented as explicit pulses: a raise immediately followed by
+// a lower. See `docs/irq-semantics.md`.
 export const IO_OP_IRQ_RAISE = 6;
 export const IO_OP_IRQ_LOWER = 7;
 export const IO_OP_A20_SET = 8;

@@ -48,6 +48,8 @@ export class IoServer implements IrqSink {
   }
 
   raiseIrq(irq: number): void {
+    // IRQs are transported as line level transitions (assert/deassert). Edge-triggered sources
+    // are represented as explicit pulses (raise then lower). See `docs/irq-semantics.md`.
     this.#sendIrq(IO_OP_IRQ_RAISE, irq);
   }
 
@@ -153,4 +155,3 @@ export class IoServer implements IrqSink {
     if (!ok) throw new Error("pushBlocking unexpectedly timed out sending response");
   }
 }
-

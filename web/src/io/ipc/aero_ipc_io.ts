@@ -2,6 +2,15 @@ import { RingBuffer } from "../../ipc/ring_buffer.ts";
 import { decodeCommand, decodeEvent, encodeCommand, encodeEvent, type Command, type Event } from "../../ipc/protocol.ts";
 import type { IrqSink } from "../device_manager.ts";
 
+/**
+ * IRQ callback invoked by {@link AeroIpcIoClient.poll}.
+ *
+ * `level=true` corresponds to an `irqRaise` event (line asserted) and `level=false` corresponds
+ * to an `irqLower` event (line deasserted). These events model IRQ *line levels*; edge-triggered
+ * interrupts are represented as explicit pulses (0→1→0).
+ *
+ * See `docs/irq-semantics.md`.
+ */
 export type IrqCallback = (irq: number, level: boolean) => void;
 export type A20Callback = (enabled: boolean) => void;
 export type ResetCallback = () => void;
@@ -307,6 +316,8 @@ export class AeroIpcIoServer implements IrqSink {
   }
 
   raiseIrq(irq: number): void {
+    // IRQs are transported as line level transitions (assert/deassert). Edge-triggered sources
+    // are represented as explicit pulses (raise then lower). See `docs/irq-semantics.md`.
     this.#emitEvent(encodeEvent({ kind: "irqRaise", irq: irq & 0xff }));
   }
 

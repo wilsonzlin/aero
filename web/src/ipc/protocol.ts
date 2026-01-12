@@ -23,6 +23,10 @@ export type Event =
   | { kind: "diskReadResp"; id: number; ok: boolean; bytes: number; errorCode?: number }
   | { kind: "diskWriteResp"; id: number; ok: boolean; bytes: number; errorCode?: number }
   | { kind: "frameReady"; frameId: bigint }
+  // IRQ line level transitions (assert/deassert).
+  //
+  // Edge-triggered devices are represented as explicit pulses: `irqRaise` then `irqLower`.
+  // See `docs/irq-semantics.md`.
   | { kind: "irqRaise"; irq: number }
   | { kind: "irqLower"; irq: number }
   | { kind: "a20Set"; enabled: boolean }
