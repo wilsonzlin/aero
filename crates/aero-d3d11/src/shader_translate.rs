@@ -1250,10 +1250,22 @@ fn emit_instructions(
                 sampler,
             } => {
                 let coord = emit_src_vec4(coord, inst_index, "sample", ctx)?;
-                let expr = format!(
-                    "textureSample(t{}, s{}, ({coord}).xy)",
-                    texture.slot, sampler.slot
-                );
+                // WGSL forbids implicit-derivative sampling in the vertex stage, so map D3D-style
+                // `sample` to `textureSampleLevel(..., 0.0)` when translating a vertex shader.
+                //
+                // Note: On real D3D hardware, vertex-stage texture sampling uses an implementation-
+                // defined LOD selection (typically base LOD). Using LOD 0 is a reasonable
+                // approximation and keeps the generated WGSL valid.
+                let expr = match ctx.stage {
+                    ShaderStage::Vertex => format!(
+                        "textureSampleLevel(t{}, s{}, ({coord}).xy, 0.0)",
+                        texture.slot, sampler.slot
+                    ),
+                    _ => format!(
+                        "textureSample(t{}, s{}, ({coord}).xy)",
+                        texture.slot, sampler.slot
+                    ),
+                };
                 let expr = maybe_saturate(dst, expr);
                 emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "sample", ctx)?;
             }
