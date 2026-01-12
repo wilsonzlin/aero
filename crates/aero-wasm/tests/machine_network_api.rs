@@ -16,10 +16,17 @@ fn machine_exposes_l2_tunnel_ring_api() {
     ) {
     }
     fn assert_detach(_: fn(&mut Machine)) {}
+    fn assert_attach_legacy(
+        _: fn(&mut Machine, SharedRingBuffer, SharedRingBuffer) -> Result<(), JsValue>,
+    ) {
+    }
+    fn assert_detach_legacy(_: fn(&mut Machine)) {}
 
     assert_attach(Machine::attach_l2_tunnel_rings);
     assert_attach_sab(Machine::attach_l2_tunnel_from_io_ipc_sab);
     assert_detach(Machine::detach_network);
+    assert_attach_legacy(Machine::attach_net_rings);
+    assert_detach_legacy(Machine::detach_net_rings);
 }
 
 fn build_minimal_io_ipc_sab(net_tx_capacity: u32, net_rx_capacity: u32) -> js_sys::SharedArrayBuffer {

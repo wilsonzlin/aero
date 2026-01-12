@@ -2287,6 +2287,19 @@ impl Machine {
         Ok(())
     }
 
+    /// Legacy/compatibility alias for [`Machine::attach_l2_tunnel_rings`].
+    ///
+    /// Some older JS runtimes refer to these rings as "NET rings" rather than "L2 tunnel rings".
+    /// Prefer [`Machine::attach_l2_tunnel_rings`] for new code.
+    #[cfg(target_arch = "wasm32")]
+    pub fn attach_net_rings(
+        &mut self,
+        net_tx: SharedRingBuffer,
+        net_rx: SharedRingBuffer,
+    ) -> Result<(), JsValue> {
+        self.attach_l2_tunnel_rings(net_tx, net_rx)
+    }
+
     /// Convenience: open `NET_TX`/`NET_RX` rings from an `ioIpcSab` and attach them as an L2 tunnel.
     #[cfg(target_arch = "wasm32")]
     pub fn attach_l2_tunnel_from_io_ipc_sab(
@@ -2304,6 +2317,13 @@ impl Machine {
     /// are intentionally not captured in snapshots.
     pub fn detach_network(&mut self) {
         self.inner.detach_network();
+    }
+
+    /// Legacy/compatibility alias for [`Machine::detach_network`].
+    ///
+    /// Prefer [`Machine::detach_network`] for new code.
+    pub fn detach_net_rings(&mut self) {
+        self.detach_network();
     }
 
     // -------------------------------------------------------------------------
