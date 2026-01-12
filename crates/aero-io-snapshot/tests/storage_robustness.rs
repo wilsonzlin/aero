@@ -1,8 +1,8 @@
 use aero_io_snapshot::io::state::codec::Encoder;
 use aero_io_snapshot::io::state::{IoSnapshot, SnapshotError, SnapshotWriter};
 use aero_io_snapshot::io::storage::state::{
-    DiskBackendState, DiskLayerState, IdeControllerState, LocalDiskBackendKind, LocalDiskBackendState,
-    NvmeControllerState, MAX_IDE_DATA_BUFFER_BYTES,
+    AhciControllerState, DiskBackendState, DiskLayerState, IdeControllerState, LocalDiskBackendKind,
+    LocalDiskBackendState, NvmeControllerState, MAX_IDE_DATA_BUFFER_BYTES,
 };
 
 #[test]
@@ -160,6 +160,28 @@ fn disk_layer_snapshot_rejects_unaligned_disk_size() {
     assert_eq!(
         err,
         SnapshotError::InvalidFieldEncoding("disk_size not multiple of sector_size")
+    );
+}
+
+#[test]
+fn ahci_snapshot_rejects_excessive_port_count() {
+    const TAG_PORTS: u16 = 2;
+
+    let ports = Encoder::new().u32(u32::MAX).finish();
+
+    let mut w = SnapshotWriter::new(
+        AhciControllerState::DEVICE_ID,
+        AhciControllerState::DEVICE_VERSION,
+    );
+    w.field_bytes(TAG_PORTS, ports);
+
+    let mut state = AhciControllerState::default();
+    let err = state
+        .load_state(&w.finish())
+        .expect_err("snapshot should reject excessive AHCI port count");
+    assert_eq!(
+        err,
+        SnapshotError::InvalidFieldEncoding("ahci port count")
     );
 }
 

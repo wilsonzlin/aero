@@ -7,6 +7,7 @@ use aero_io_snapshot::io::network::state::{
 };
 use aero_io_snapshot::io::state::IoSnapshot;
 use aero_io_snapshot::io::storage::state::{
+    AhciControllerState, AhciHbaState, AhciPortState,
     DiskBackendState, DiskCacheState, DiskLayerState, DiskOverlayState, IdeAtaDeviceState,
     IdeAtapiDeviceState, IdeBusMasterChannelState, IdeChannelState, IdeControllerState, IdeDataMode,
     IdeDmaDirection, IdeDmaRequestState, IdeDriveState, IdePioWriteState, IdePortMapState,
@@ -188,6 +189,46 @@ fn ide_state_roundtrip() {
     let mut restored = IdeControllerState::default();
     restored.load_state(&snap).unwrap();
     assert_eq!(ide, restored);
+}
+
+#[test]
+fn ahci_state_roundtrip() {
+    let ahci = AhciControllerState {
+        hba: AhciHbaState {
+            cap: 0x11,
+            ghc: 0x22,
+            cap2: 0x33,
+            bohc: 0x44,
+            vs: 0x55,
+        },
+        ports: vec![
+            AhciPortState {
+                clb: 0x1000,
+                fb: 0x2000,
+                is: 0x0001,
+                ie: 0x0002,
+                cmd: 0x0003,
+                tfd: 0x0004,
+                sig: 0x0005,
+                ssts: 0x0006,
+                sctl: 0x0007,
+                serr: 0x0008,
+                sact: 0x0009,
+                ci: 0x000A,
+            },
+            AhciPortState {
+                clb: 0x1100,
+                fb: 0x2200,
+                ci: 0x55aa,
+                ..Default::default()
+            },
+        ],
+    };
+
+    let snap = ahci.save_state();
+    let mut restored = AhciControllerState::default();
+    restored.load_state(&snap).unwrap();
+    assert_eq!(ahci, restored);
 }
 
 #[test]
