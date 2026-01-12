@@ -309,6 +309,7 @@ describe("io/devices/virtio-net (pci bridge integration)", () => {
       const commonBase = bar0Base + BigInt(caps.commonOff!);
       const notifyBase = bar0Base + BigInt(caps.notifyOff!);
       const deviceBase = bar0Base + BigInt(caps.deviceOff!);
+      const isrBase = bar0Base + BigInt(caps.isrOff!);
 
       // -----------------------------------------------------------------------------------------
       // Virtio modern init (feature negotiation).
@@ -464,6 +465,11 @@ describe("io/devices/virtio-net (pci bridge integration)", () => {
       expect(guestReadU32(txUsed + 4)).toBe(0);
       expect(guestReadU32(txUsed + 8)).toBe(0);
 
+      // ISR region should be mapped (not default 0xFF) and read-to-clear.
+      const isrAfterTx = mmioReadU8(isrBase);
+      expect(isrAfterTx & 0xfc).toBe(0);
+      expect(mmioReadU8(isrBase)).toBe(0);
+
       // -----------------------------------------------------------------------------------------
       // RX: push a frame into NET_RX, post an RX buffer chain, and expect guest RAM filled.
       // -----------------------------------------------------------------------------------------
@@ -501,6 +507,10 @@ describe("io/devices/virtio-net (pci bridge integration)", () => {
       expect(Array.from(guestReadBytes(rxHdrAddr, VIRTIO_NET_HDR_LEN))).toEqual(Array.from(new Uint8Array(VIRTIO_NET_HDR_LEN)));
       expect(Array.from(guestReadBytes(rxPayloadAddr, rxFrame.byteLength))).toEqual(Array.from(rxFrame));
       expect(netRxRing.tryPop()).toBeNull();
+
+      const isrAfterRx = mmioReadU8(isrBase);
+      expect(isrAfterRx & 0xfc).toBe(0);
+      expect(mmioReadU8(isrBase)).toBe(0);
     } finally {
       try {
         dev.destroy();
