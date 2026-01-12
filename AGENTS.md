@@ -70,6 +70,7 @@ bash ./scripts/safe-run.sh cargo test --locked   # Test with timeout + memory li
 # Override defaults if needed:
 #   - AERO_TIMEOUT / AERO_MEM_LIMIT apply to safe-run's timeout + RLIMIT_AS wrapper.
 #   - AERO_CARGO_BUILD_JOBS controls Cargo parallelism (defaults to -j1 for reliability in constrained sandboxes).
+#   - RUST_TEST_THREADS controls Rust's built-in test harness parallelism (libtest). Agent helper scripts default it to CARGO_BUILD_JOBS for reliability under tight thread limits.
 #   - AERO_ISOLATE_CARGO_HOME=1 isolates Cargo registry/cache state per checkout to avoid "Blocking waiting for file lock on package cache" on shared hosts.
 #   - AERO_RUST_CODEGEN_UNITS (alias: AERO_CODEGEN_UNITS) controls rustc per-crate codegen parallelism (`-C codegen-units=<n>`) without manually editing RUSTFLAGS.
 #   - AERO_SAFE_RUN_RUSTC_RETRIES controls how many times safe-run will retry transient rustc thread/process spawn failures (EAGAIN/WouldBlock), including panics like:
