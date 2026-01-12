@@ -1,5 +1,5 @@
 import { defaultReadValue } from "../ipc/io_protocol.ts";
-import type { PciBar, PciCapability, PciDevice } from "../bus/pci.ts";
+import type { PciAddress, PciBar, PciCapability, PciDevice } from "../bus/pci.ts";
 import type { IrqSink } from "../device_manager.ts";
 
 export type VirtioInputPciDeviceLike = {
