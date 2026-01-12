@@ -181,15 +181,13 @@ describe("io/devices/HdaPciDevice audio ring attachment", () => {
     };
 
     const dev = new HdaPciDevice({ bridge, irqSink: irq });
-    // Enable bus mastering so the device tick will advance the HDA model.
-    dev.onPciCommandWrite?.(1 << 2);
 
     // Configure before the first tick so the clock initializes at 44.1kHz.
     dev.setAudioRingBuffer({ ringBuffer: null, capacityFrames: 0, channelCount: 0, dstSampleRateHz: 44_100 });
     expect(setOutputRate).toHaveBeenCalledWith(44_100);
 
-    // Enable Bus Mastering (PCI command bit 2) so the device is allowed to DMA.
-    dev.onPciCommandWrite(1 << 2);
+    // Enable bus mastering so `tick()` actually advances the WASM-side model.
+    dev.onPciCommandWrite?.(1 << 2);
 
     // First tick initializes the internal clock.
     dev.tick(0);
