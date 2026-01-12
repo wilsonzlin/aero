@@ -3,14 +3,30 @@ import { fileURLToPath } from "node:url";
 
 const BASE_URL = "http://127.0.0.1:5173";
 
-const THREADED_WASM_BINARY = fileURLToPath(
+const THREADED_WASM_BINARY_RELEASE = fileURLToPath(
   new URL("../../web/src/wasm/pkg-threaded/aero_wasm_bg.wasm", import.meta.url),
+);
+const THREADED_WASM_JS_RELEASE = fileURLToPath(new URL("../../web/src/wasm/pkg-threaded/aero_wasm.js", import.meta.url));
+const THREADED_WASM_BINARY_DEV = fileURLToPath(
+  new URL("../../web/src/wasm/pkg-threaded-dev/aero_wasm_bg.wasm", import.meta.url),
+);
+const THREADED_WASM_JS_DEV = fileURLToPath(
+  new URL("../../web/src/wasm/pkg-threaded-dev/aero_wasm.js", import.meta.url),
 );
 
 async function hasThreadedWasmBundle(page: import("@playwright/test").Page): Promise<boolean> {
-  // `wasm_loader.ts` fetches this path when instantiating the threaded build.
-  const resp = await page.request.get(`${BASE_URL}/web/src/wasm/pkg-threaded/aero_wasm_bg.wasm`);
-  return resp.ok();
+  // `wasm_loader.ts` fetches these paths when instantiating the threaded build.
+  const check = async (wasmPath: string, jsPath: string): Promise<boolean> => {
+    const wasm = await page.request.get(`${BASE_URL}${wasmPath}`);
+    if (!wasm.ok()) return false;
+    const js = await page.request.get(`${BASE_URL}${jsPath}`);
+    return js.ok();
+  };
+
+  if (await check("/web/src/wasm/pkg-threaded/aero_wasm_bg.wasm", "/web/src/wasm/pkg-threaded/aero_wasm.js")) {
+    return true;
+  }
+  return await check("/web/src/wasm/pkg-threaded-dev/aero_wasm_bg.wasm", "/web/src/wasm/pkg-threaded-dev/aero_wasm.js");
 }
 
 test("runtime UHCI: WebHID + WebUSB passthrough are guest-visible (NAK while pending)", async ({ page }) => {
@@ -23,7 +39,9 @@ test("runtime UHCI: WebHID + WebUSB passthrough are guest-visible (NAK while pen
     const message = [
       "threaded WASM bundle (pkg-threaded) is missing",
       "",
-      `Expected: ${THREADED_WASM_BINARY}`,
+      "Expected one of:",
+      `- ${THREADED_WASM_BINARY_RELEASE} (+ ${THREADED_WASM_JS_RELEASE})`,
+      `- ${THREADED_WASM_BINARY_DEV} (+ ${THREADED_WASM_JS_DEV})`,
       "",
       "Build it with (from the repo root):",
       "  npm -w web run wasm:build",

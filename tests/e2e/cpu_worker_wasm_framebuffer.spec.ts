@@ -2,21 +2,32 @@ import { expect, test, type Page } from "@playwright/test";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-const THREADED_WASM_BINARY = fileURLToPath(
+const THREADED_WASM_BINARY_RELEASE = fileURLToPath(
   new URL("../../web/src/wasm/pkg-threaded/aero_wasm_bg.wasm", import.meta.url),
 );
-const HAS_THREADED_WASM_BINARY = existsSync(THREADED_WASM_BINARY);
+const THREADED_WASM_JS_RELEASE = fileURLToPath(new URL("../../web/src/wasm/pkg-threaded/aero_wasm.js", import.meta.url));
+const THREADED_WASM_BINARY_DEV = fileURLToPath(
+  new URL("../../web/src/wasm/pkg-threaded-dev/aero_wasm_bg.wasm", import.meta.url),
+);
+const THREADED_WASM_JS_DEV = fileURLToPath(
+  new URL("../../web/src/wasm/pkg-threaded-dev/aero_wasm.js", import.meta.url),
+);
+const HAS_THREADED_WASM_BUNDLE =
+  (existsSync(THREADED_WASM_BINARY_RELEASE) && existsSync(THREADED_WASM_JS_RELEASE)) ||
+  (existsSync(THREADED_WASM_BINARY_DEV) && existsSync(THREADED_WASM_JS_DEV));
 
 async function waitForReady(page: Page) {
   await page.waitForFunction(() => (window as any).__aeroTest?.ready === true);
 }
 
 test("cpu worker wasm demo: publishes shared framebuffer frames from WASM", async ({ page }) => {
-  if (!HAS_THREADED_WASM_BINARY) {
+  if (!HAS_THREADED_WASM_BUNDLE) {
     const message = [
       "Threaded WASM package missing (required for shared-memory worker runtime).",
       "",
-      `Expected: ${THREADED_WASM_BINARY}`,
+      "Expected one of:",
+      `- ${THREADED_WASM_BINARY_RELEASE} (+ ${THREADED_WASM_JS_RELEASE})`,
+      `- ${THREADED_WASM_BINARY_DEV} (+ ${THREADED_WASM_JS_DEV})`,
       "",
       "Build it with (from the repo root):",
       "  npm -w web run wasm:build",

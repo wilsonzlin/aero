@@ -5,8 +5,13 @@ import { fileURLToPath } from "node:url";
 
 const thisDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = dirname(dirname(dirname(thisDir)));
-const threadedWasmPath = join(repoRoot, "web", "src", "wasm", "pkg-threaded", "aero_wasm_bg.wasm");
-const hasThreadedWasm = existsSync(threadedWasmPath);
+const threadedWasmBinaryRelease = join(repoRoot, "web", "src", "wasm", "pkg-threaded", "aero_wasm_bg.wasm");
+const threadedWasmJsRelease = join(repoRoot, "web", "src", "wasm", "pkg-threaded", "aero_wasm.js");
+const threadedWasmBinaryDev = join(repoRoot, "web", "src", "wasm", "pkg-threaded-dev", "aero_wasm_bg.wasm");
+const threadedWasmJsDev = join(repoRoot, "web", "src", "wasm", "pkg-threaded-dev", "aero_wasm.js");
+const hasThreadedWasmBundle =
+  (existsSync(threadedWasmBinaryRelease) && existsSync(threadedWasmJsRelease)) ||
+  (existsSync(threadedWasmBinaryDev) && existsSync(threadedWasmJsDev));
 
 test("worker audio fills the shared ring buffer (no postMessage audio copies)", async ({ page }) => {
   await page.goto("/web/blank.html");
@@ -15,11 +20,13 @@ test("worker audio fills the shared ring buffer (no postMessage audio copies)", 
   // `web/src/wasm/pkg-threaded`. When running Playwright in environments that
   // don't build WASM (e.g. `npx vite` without `npm run wasm:build`), skip instead
   // of hanging on an unfilled ring buffer.
-  if (!hasThreadedWasm) {
+  if (!hasThreadedWasmBundle) {
     const message = [
       "Threaded WASM bundle is missing (required for shared-memory worker audio).",
       "",
-      `Expected: ${threadedWasmPath}`,
+      "Expected one of:",
+      `- ${threadedWasmBinaryRelease} (+ ${threadedWasmJsRelease})`,
+      `- ${threadedWasmBinaryDev} (+ ${threadedWasmJsDev})`,
       "",
       "Build it with (from the repo root):",
       "  npm -w web run wasm:build",
