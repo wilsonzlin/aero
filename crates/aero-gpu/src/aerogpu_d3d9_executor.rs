@@ -6859,12 +6859,14 @@ fn create_wgpu_sampler(
     let min_filter = filter(state.min_filter);
     let mag_filter = filter(state.mag_filter);
     let mipmap_filter = filter(state.mip_filter);
-    let lod_min_clamp = state.max_mip_level as f32;
     let lod_max_clamp = if state.mip_filter == d3d9::D3DTEXF_NONE || state.mip_filter == 0 {
         0.0
     } else {
         32.0
     };
+    // Prevent invalid sampler descriptors when the guest sets a huge MAXMIPLEVEL value or when
+    // mipmapping is disabled (MIPFILTER=NONE implies lod_max_clamp=0.0).
+    let lod_min_clamp = (state.max_mip_level as f32).min(lod_max_clamp);
 
     let anisotropy_clamp = if (state.min_filter == d3d9::D3DTEXF_ANISOTROPIC
         || state.mag_filter == d3d9::D3DTEXF_ANISOTROPIC)
