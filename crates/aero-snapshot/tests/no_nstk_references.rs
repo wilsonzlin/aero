@@ -2,6 +2,18 @@
 
 use std::path::{Path, PathBuf};
 
+fn should_skip_dir(path: &Path) -> bool {
+    // Avoid scanning build artifacts / third-party dependencies that may exist in local dev or some
+    // CI jobs, and which are not part of the repo's source-of-truth.
+    //
+    // This guard is intended to keep our *source* tree free of the legacy 4CC spelling; scanning
+    // generated output is both expensive and may introduce accidental false positives.
+    matches!(
+        path.file_name().and_then(|n| n.to_str()),
+        Some("target" | "node_modules")
+    )
+}
+
 fn should_scan(path: &Path) -> bool {
     let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
         return false;
@@ -11,7 +23,9 @@ fn should_scan(path: &Path) -> bool {
         // Rust + docs.
         "rs" | "md" |
         // Web runtime.
-        "ts" | "tsx" | "js" | "jsx" | "mjs" | "cjs" | "html" |
+        "ts" | "tsx" | "mts" | "js" | "jsx" | "mjs" | "cjs" | "html" |
+        // Scripts.
+        "py" | "sh" | "ps1" | "psm1" | "cmd" |
         // Native/driver sources.
         "c" | "cc" | "cpp" | "cxx" | "h" | "hpp" |
         // Config/metadata.
@@ -28,6 +42,9 @@ fn scan_dir(dir: &Path, legacy: &[u8], hits: &mut Vec<PathBuf>) {
     for entry in entries.filter_map(|e| e.ok()) {
         let path = entry.path();
         if path.is_dir() {
+            if should_skip_dir(&path) {
+                continue;
+            }
             scan_dir(&path, legacy, hits);
             continue;
         }
@@ -75,6 +92,11 @@ fn no_lingering_legacy_net_stack_4cc_references_in_repo() {
         repo_root.join("tests"),
         repo_root.join("instructions"),
         repo_root.join("drivers"),
+        repo_root.join("emulator"),
+        repo_root.join("tools"),
+        repo_root.join("xtask"),
+        repo_root.join("scripts"),
+        repo_root.join("ci"),
     ];
 
     let mut hits = Vec::new();
