@@ -269,7 +269,10 @@ impl AhciController {
         if header.prdt_len == 0 {
             return Err(AhciError::InvalidPrdt);
         }
-        let mut prdt = Vec::with_capacity(header.prdt_len as usize);
+        let prdt_len = header.prdt_len as usize;
+        let mut prdt = Vec::new();
+        prdt.try_reserve_exact(prdt_len)
+            .map_err(|_| AhciError::InvalidPrdt)?;
         let mut addr = header.ctba.wrapping_add(0x80);
         for _ in 0..header.prdt_len {
             prdt.push(PrdEntry::read_from(mem, addr));
@@ -351,7 +354,10 @@ impl AhciController {
             .checked_mul(sectors)
             .ok_or(AhciError::InvalidPrdt)?;
 
-        let mut buf = vec![0u8; byte_len];
+        let mut buf = Vec::new();
+        buf.try_reserve_exact(byte_len)
+            .map_err(|_| DiskError::QuotaExceeded)?;
+        buf.resize(byte_len, 0);
         self.disk.read_sectors(fis.lba, &mut buf)?;
 
         let prdt = self.read_prdt(mem, header)?;
@@ -377,7 +383,10 @@ impl AhciController {
             .checked_mul(sectors)
             .ok_or(AhciError::InvalidPrdt)?;
 
-        let mut buf = vec![0u8; byte_len];
+        let mut buf = Vec::new();
+        buf.try_reserve_exact(byte_len)
+            .map_err(|_| DiskError::QuotaExceeded)?;
+        buf.resize(byte_len, 0);
         let prdt = self.read_prdt(mem, header)?;
         let transferred = self.dma_read_from_guest(mem, &prdt, &mut buf)?;
         CommandHeader::write_prdbc(mem, header_addr, transferred as u32);
