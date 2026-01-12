@@ -30,6 +30,9 @@ static ULONG g_ke_remove_queue_dpc_count = 0;
 static ULONG g_ke_remove_queue_dpc_success_count = 0;
 static ULONG g_ke_remove_queue_dpc_fail_count = 0;
 
+static volatile LONG* g_test_auto_complete_dpc_inflight_ptr = NULL;
+static ULONG g_test_auto_complete_dpc_inflight_after_delay_calls = 0;
+
 VOID WdkSetMmioHandlers(_In_opt_ WDK_MMIO_READ_HANDLER ReadHandler, _In_opt_ WDK_MMIO_WRITE_HANDLER WriteHandler)
 {
     g_mmio_read_handler = ReadHandler;
@@ -193,6 +196,18 @@ VOID WdkTestResetDbgPrintExCount(VOID)
     g_dbg_print_ex_count = 0;
 }
 
+VOID WdkTestAutoCompleteDpcInFlightAfterDelayCalls(_Inout_ volatile LONG* DpcInFlight, _In_ ULONG DelayCallCount)
+{
+    g_test_auto_complete_dpc_inflight_ptr = DpcInFlight;
+    g_test_auto_complete_dpc_inflight_after_delay_calls = DelayCallCount;
+}
+
+VOID WdkTestClearAutoCompleteDpcInFlight(VOID)
+{
+    g_test_auto_complete_dpc_inflight_ptr = NULL;
+    g_test_auto_complete_dpc_inflight_after_delay_calls = 0;
+}
+
 NTSTATUS KeDelayExecutionThread(_In_ KPROCESSOR_MODE WaitMode, _In_ BOOLEAN Alertable, _In_opt_ PLARGE_INTEGER Interval)
 {
     (void)WaitMode;
@@ -209,6 +224,15 @@ NTSTATUS KeDelayExecutionThread(_In_ KPROCESSOR_MODE WaitMode, _In_ BOOLEAN Aler
             g_interrupt_time_100ns += (ULONGLONG)(-Interval->QuadPart);
         }
     }
+
+    if (g_test_auto_complete_dpc_inflight_ptr != NULL && g_test_auto_complete_dpc_inflight_after_delay_calls != 0) {
+        g_test_auto_complete_dpc_inflight_after_delay_calls--;
+        if (g_test_auto_complete_dpc_inflight_after_delay_calls == 0) {
+            __atomic_store_n((LONG*)g_test_auto_complete_dpc_inflight_ptr, 0, __ATOMIC_SEQ_CST);
+            g_test_auto_complete_dpc_inflight_ptr = NULL;
+        }
+    }
+
     return STATUS_SUCCESS;
 }
 

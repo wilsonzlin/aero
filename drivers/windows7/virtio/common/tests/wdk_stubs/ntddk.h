@@ -422,3 +422,13 @@ ULONG WdkTestGetKeRemoveQueueDpcCount(VOID);
 ULONG WdkTestGetKeRemoveQueueDpcSuccessCount(VOID);
 ULONG WdkTestGetKeRemoveQueueDpcFailCount(VOID);
 VOID WdkTestResetKeRemoveQueueDpcCounts(VOID);
+
+/*
+ * Test-only hook to help exercise VirtioIntxDisconnect's "wait for in-flight DPC"
+ * loop deterministically without spawning threads.
+ *
+ * When enabled, the KeDelayExecutionThread stub will automatically set the
+ * pointed-to DpcInFlight counter to 0 after the specified number of delay calls.
+ */
+VOID WdkTestAutoCompleteDpcInFlightAfterDelayCalls(_Inout_ volatile LONG* DpcInFlight, _In_ ULONG DelayCallCount);
+VOID WdkTestClearAutoCompleteDpcInFlight(VOID);

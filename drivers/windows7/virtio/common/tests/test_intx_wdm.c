@@ -520,6 +520,43 @@ static void test_disconnect_negative_dpc_inflight_is_sanitized(void)
     assert(WdkTestGetKeDelayExecutionThreadCount() == 0);
 }
 
+static void test_disconnect_waits_for_inflight_dpc(void)
+{
+    VIRTIO_INTX intx;
+    volatile UCHAR isr_reg = 0;
+    CM_PARTIAL_RESOURCE_DESCRIPTOR desc;
+    NTSTATUS status;
+
+    desc = make_int_desc();
+
+    status = VirtioIntxConnect(NULL, &desc, &isr_reg, NULL, NULL, NULL, NULL, &intx);
+    assert(status == STATUS_SUCCESS);
+
+    /*
+     * Simulate a DPC currently running:
+     * - DpcInFlight > 0
+     * - KDPC not queued (Inserted == FALSE)
+     */
+    intx.DpcInFlight = 1;
+    intx.Dpc.Inserted = FALSE;
+
+    WdkTestResetKeDelayExecutionThreadCount();
+    WdkTestAutoCompleteDpcInFlightAfterDelayCalls(&intx.DpcInFlight, 3);
+
+    VirtioIntxDisconnect(&intx);
+
+    assert(intx.Initialized == FALSE);
+    assert(intx.InterruptObject == NULL);
+    assert(intx.IsrStatusRegister == NULL);
+    assert(intx.DpcInFlight == 0);
+    assert(intx.PendingIsrStatus == 0);
+
+    /* Disconnect should have waited at least once. */
+    assert(WdkTestGetKeDelayExecutionThreadCount() != 0);
+
+    WdkTestClearAutoCompleteDpcInFlight();
+}
+
 static void test_null_callbacks_safe(void)
 {
     VIRTIO_INTX intx;
@@ -976,6 +1013,7 @@ int main(void)
     test_dpc_queue_stub_counters();
     test_disconnect_remove_dpc_not_queued_path();
     test_disconnect_negative_dpc_inflight_is_sanitized();
+    test_disconnect_waits_for_inflight_dpc();
     test_null_callbacks_safe();
     test_spurious_interrupt_does_not_affect_pending();
     test_unknown_isr_bits_no_callbacks_without_evt_dpc();
