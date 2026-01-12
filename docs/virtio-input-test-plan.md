@@ -18,6 +18,10 @@ Overview (device model behavior and motivation):
 
 If a test fails, treat the contract as the source of truth; fix code or bump the contract version.
 
+> **Windows images are not distributed.** This repo does not include proprietary Windows 7 images/ISOs.
+> For QEMU/host-harness testing you must supply your own Win7 media or a locally prepared image.
+> See [`docs/FIXTURES.md`](./FIXTURES.md) and [`docs/13-legal-considerations.md`](./13-legal-considerations.md).
+
 ---
 
 ## 1) Rust / device-model tests (host-side)
