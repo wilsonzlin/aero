@@ -329,6 +329,53 @@ fuzz_target!(|data: &[u8]| {
     fuzz_cmd_stream(&cmd_patched);
     fuzz_command_processor(&cmd_patched, None);
 
+    // Deterministic command stream header/packet layout errors. These are small but help ensure
+    // coverage of the host-side parse error mapping logic.
+    let header_size = cmd::AerogpuCmdStreamHeader::SIZE_BYTES;
+    // Bad magic.
+    let mut cmd_bad_magic = vec![0u8; header_size];
+    cmd_bad_magic[0..4].copy_from_slice(&0xDEAD_BEEFu32.to_le_bytes());
+    cmd_bad_magic[4..8].copy_from_slice(&pci::AEROGPU_ABI_VERSION_U32.to_le_bytes());
+    cmd_bad_magic[8..12].copy_from_slice(&(header_size as u32).to_le_bytes());
+    fuzz_cmd_stream(&cmd_bad_magic);
+    // Unsupported ABI major.
+    let mut cmd_bad_abi = vec![0u8; header_size];
+    cmd_bad_abi[0..4].copy_from_slice(&cmd::AEROGPU_CMD_STREAM_MAGIC.to_le_bytes());
+    let unsupported_abi_version = ((pci::AEROGPU_ABI_MAJOR + 1) << 16) | pci::AEROGPU_ABI_MINOR;
+    cmd_bad_abi[4..8].copy_from_slice(&unsupported_abi_version.to_le_bytes());
+    cmd_bad_abi[8..12].copy_from_slice(&(header_size as u32).to_le_bytes());
+    fuzz_cmd_stream(&cmd_bad_abi);
+    // Header size_bytes too small.
+    let mut cmd_bad_size_small = vec![0u8; header_size];
+    cmd_bad_size_small[0..4].copy_from_slice(&cmd::AEROGPU_CMD_STREAM_MAGIC.to_le_bytes());
+    cmd_bad_size_small[4..8].copy_from_slice(&pci::AEROGPU_ABI_VERSION_U32.to_le_bytes());
+    cmd_bad_size_small[8..12].copy_from_slice(&0u32.to_le_bytes());
+    fuzz_cmd_stream(&cmd_bad_size_small);
+    // Header size_bytes larger than provided buffer.
+    let mut cmd_bad_size_large = vec![0u8; header_size];
+    cmd_bad_size_large[0..4].copy_from_slice(&cmd::AEROGPU_CMD_STREAM_MAGIC.to_le_bytes());
+    cmd_bad_size_large[4..8].copy_from_slice(&pci::AEROGPU_ABI_VERSION_U32.to_le_bytes());
+    cmd_bad_size_large[8..12].copy_from_slice(&((header_size as u32) + 4).to_le_bytes());
+    fuzz_cmd_stream(&cmd_bad_size_large);
+    // Packet header with size_bytes < AerogpuCmdHdr::SIZE_BYTES.
+    let mut cmd_bad_cmd_size_small = vec![0u8; header_size + cmd::AerogpuCmdHdr::SIZE_BYTES];
+    let cmd_bad_cmd_size_small_u32 = cmd_bad_cmd_size_small.len() as u32;
+    cmd_bad_cmd_size_small[0..4].copy_from_slice(&cmd::AEROGPU_CMD_STREAM_MAGIC.to_le_bytes());
+    cmd_bad_cmd_size_small[4..8].copy_from_slice(&pci::AEROGPU_ABI_VERSION_U32.to_le_bytes());
+    cmd_bad_cmd_size_small[8..12].copy_from_slice(&cmd_bad_cmd_size_small_u32.to_le_bytes());
+    cmd_bad_cmd_size_small[header_size..header_size + 4].copy_from_slice(&0u32.to_le_bytes());
+    cmd_bad_cmd_size_small[header_size + 4..header_size + 8].copy_from_slice(&4u32.to_le_bytes());
+    fuzz_cmd_stream(&cmd_bad_cmd_size_small);
+    // Packet header with misaligned size_bytes.
+    let mut cmd_bad_cmd_size_align = vec![0u8; header_size + cmd::AerogpuCmdHdr::SIZE_BYTES];
+    let cmd_bad_cmd_size_align_u32 = cmd_bad_cmd_size_align.len() as u32;
+    cmd_bad_cmd_size_align[0..4].copy_from_slice(&cmd::AEROGPU_CMD_STREAM_MAGIC.to_le_bytes());
+    cmd_bad_cmd_size_align[4..8].copy_from_slice(&pci::AEROGPU_ABI_VERSION_U32.to_le_bytes());
+    cmd_bad_cmd_size_align[8..12].copy_from_slice(&cmd_bad_cmd_size_align_u32.to_le_bytes());
+    cmd_bad_cmd_size_align[header_size..header_size + 4].copy_from_slice(&0u32.to_le_bytes());
+    cmd_bad_cmd_size_align[header_size + 4..header_size + 8].copy_from_slice(&10u32.to_le_bytes());
+    fuzz_cmd_stream(&cmd_bad_cmd_size_align);
+
     // Synthetic command stream: a fixed sequence of minimal valid packets using the fuzzer input
     // as filler. This ensures we consistently exercise a broad set of typed decoders.
     const SET_BLEND_STATE_LEGACY_SIZE_BYTES: usize = 28;
