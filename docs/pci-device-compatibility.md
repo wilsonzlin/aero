@@ -119,7 +119,8 @@ For Windows 7 and Linux to bind drivers predictably:
    - `virtio-input` keyboard (function 0) must set `header_type = 0x80` (multi-function bit) so
      guests enumerate the paired mouse function (function 1).
 4. **BAR types and sizes** must be correct:
-   - Example: AHCI’s ABAR must be MMIO and large enough for the implemented port set (Aero uses 8KiB).
+   - Example: AHCI’s ABAR must be MMIO and large enough for the implemented port set (Aero uses 8KiB
+     via `aero_devices::pci::profile::AHCI_ABAR_SIZE` = `0x2000`).
    - Example: HDA MMIO must be 16KiB (`0x4000`) per spec.
 5. **Virtio PCI capabilities** must be present and internally consistent for modern drivers:
    - Virtio vendor-specific capabilities for Common/ISR/Device/Notify regions

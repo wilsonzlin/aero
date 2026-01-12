@@ -180,7 +180,11 @@ Note: `BAR1`/`BAR3` use the PCI IDE convention where the **alt status/devctl por
 
 ### AHCI MMIO (ABAR) expectation
 
-The ICH9 AHCI controller exposes the ABAR register block via **BAR5** (MMIO), size `0x2000`.
+The ICH9 AHCI controller exposes the ABAR register block via **BAR5** (MMIO), size
+`aero_devices::pci::profile::AHCI_ABAR_SIZE` (`0x2000`).
+
+The PCI config space register offset for the ABAR itself is
+`aero_devices::pci::profile::AHCI_ABAR_CFG_OFFSET`.
 
 ---
 
