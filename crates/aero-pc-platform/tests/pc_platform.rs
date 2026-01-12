@@ -1,7 +1,9 @@
 use aero_devices::acpi_pm::PM1_CNT_SCI_EN;
+use aero_devices::clock::Clock;
 use aero_devices::hpet::HPET_MMIO_BASE;
 use aero_devices::pci::PCI_CFG_DATA_PORT;
 use aero_devices::reset_ctrl::RESET_CTRL_RESET_VALUE;
+use aero_io_snapshot::io::state::IoSnapshot;
 use aero_pc_platform::{PcPlatform, ResetEvent, PCIE_ECAM_BASE};
 use memory::MemoryBus as _;
 
@@ -50,4 +52,20 @@ fn pc_platform_wires_canonical_ports_mmio_and_reset_a20() {
     // i8042 reset command (0xFE) also surfaces as a platform reset event.
     pc.io.write_u8(0x64, 0xFE);
     assert_eq!(pc.take_reset_events(), vec![ResetEvent::System]);
+}
+
+#[test]
+fn pc_platform_exposes_snapshot_devices_via_accessors() {
+    let pc = PcPlatform::new(2 * 1024 * 1024);
+
+    // The returned handles must be usable for snapshot adapters (borrow + `IoSnapshot`).
+    let _pit_state = pc.pit().borrow().save_state();
+    let _rtc_state = pc.rtc().borrow().save_state();
+    let _hpet_state = pc.hpet().borrow().save_state();
+
+    // The manual clock is shared across devices; cloning the handle should keep pointing at the
+    // platform timebase.
+    let clock = pc.clock();
+    clock.advance_ns(123);
+    assert_eq!(pc.clock().now_ns(), 123);
 }

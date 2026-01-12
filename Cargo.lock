@@ -477,6 +477,7 @@ dependencies = [
  "aero-devices",
  "aero-devices-storage",
  "aero-interrupts",
+ "aero-io-snapshot",
  "aero-mmu",
  "aero-net-e1000",
  "aero-pc-constants",

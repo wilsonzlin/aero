@@ -1268,6 +1268,42 @@ impl PcPlatform {
         self.i8042.controller()
     }
 
+    /// Snapshot/restore + testing hook: returns a clone of the shared PIT (8254) device.
+    ///
+    /// This accessor exists so external snapshot adapters can read/write the PIT's `IoSnapshot`
+    /// state without exposing internal fields publicly. Most users should interact with the PIT
+    /// through the platform I/O port bus (`PcPlatform::io`).
+    pub fn pit(&self) -> SharedPit8254 {
+        self.pit.clone()
+    }
+
+    /// Snapshot/restore + testing hook: returns a clone of the shared RTC/CMOS device.
+    ///
+    /// This accessor exists so external snapshot adapters can read/write the RTC's `IoSnapshot`
+    /// state without exposing internal fields publicly. Most users should interact with the RTC
+    /// through the platform I/O port bus (`PcPlatform::io`).
+    pub fn rtc(&self) -> SharedRtcCmos<ManualClock, PlatformIrqLine> {
+        self.rtc.clone()
+    }
+
+    /// Snapshot/restore + testing hook: returns a clone of the shared HPET device.
+    ///
+    /// This accessor exists so external snapshot adapters can read/write the HPET's `IoSnapshot`
+    /// state without exposing internal fields publicly. Most users should interact with the HPET
+    /// through the platform MMIO bus (`PcPlatform::memory`).
+    pub fn hpet(&self) -> Rc<RefCell<hpet::Hpet<ManualClock>>> {
+        self.hpet.clone()
+    }
+
+    /// Snapshot/restore + testing hook: returns a clone of the platform's deterministic timebase.
+    ///
+    /// Time-based devices created by [`PcPlatform`] (RTC, HPET, ACPI PM timer, LAPIC timer) are
+    /// wired to a shared [`ManualClock`]. Snapshot/restore code can use this handle to coordinate
+    /// device restores against the same timebase.
+    pub fn clock(&self) -> ManualClock {
+        self.clock.clone()
+    }
+
     pub fn has_e1000(&self) -> bool {
         self.e1000.is_some()
     }
