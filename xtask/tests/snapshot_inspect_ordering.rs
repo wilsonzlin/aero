@@ -68,7 +68,9 @@ fn rewrite_devices_section<F: FnOnce(&mut Vec<DeviceState>)>(snapshot: &mut [u8]
         let count = read_u32_le(&mut r) as usize;
         let mut states = Vec::with_capacity(count);
         for _ in 0..count {
-            states.push(DeviceState::decode(&mut r, aero_snapshot::limits::MAX_DEVICE_ENTRY_LEN).unwrap());
+            states.push(
+                DeviceState::decode(&mut r, aero_snapshot::limits::MAX_DEVICE_ENTRY_LEN).unwrap(),
+            );
         }
         (states, count)
     };

@@ -121,7 +121,7 @@ fn rewrite_snapshot_to_legacy_multi_disk_controller_entries(bytes: &[u8]) -> Vec
                         &mut dev_r,
                         snapshot::limits::MAX_DEVICE_ENTRY_LEN,
                     )
-                        .expect("decode device entry"),
+                    .expect("decode device entry"),
                 );
             }
 
@@ -227,7 +227,7 @@ fn rewrite_snapshot_add_unknown_dskc_entry(bytes: &[u8]) -> Vec<u8> {
                         &mut dev_r,
                         snapshot::limits::MAX_DEVICE_ENTRY_LEN,
                     )
-                        .expect("decode device entry"),
+                    .expect("decode device entry"),
                 );
             }
 
@@ -615,7 +615,7 @@ fn machine_storage_snapshot_roundtrip_preserves_controllers_and_allows_backend_r
         for _ in 0..count {
             let state =
                 snapshot::DeviceState::decode(&mut limited, snapshot::limits::MAX_DEVICE_ENTRY_LEN)
-                .expect("decode device entry");
+                    .expect("decode device entry");
             if state.id == snapshot::DeviceId::DISK_CONTROLLER {
                 disk_controller_entries.push(state);
             }
