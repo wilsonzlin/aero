@@ -264,6 +264,11 @@ aerogpu_add_win7_test(d3d10_map_do_not_wait
 )
 target_link_libraries(d3d10_map_do_not_wait PRIVATE d3d10 dxgi)
 
+aerogpu_add_win7_test(d3d10_shared_surface_ipc
+  d3d10_shared_surface_ipc/main.cpp
+)
+target_link_libraries(d3d10_shared_surface_ipc PRIVATE d3d10 dxgi)
+
 aerogpu_add_win7_test(d3d10_1_triangle
   d3d10_1_triangle/main.cpp
 )
@@ -293,11 +298,6 @@ aerogpu_add_win7_test(d3d11_texture
   d3d11_texture/main.cpp
 )
 target_link_libraries(d3d11_texture PRIVATE user32 gdi32 d3d11 dxgi)
-
-aerogpu_add_win7_test(d3d11_shared_texture_ipc
-  d3d11_shared_texture_ipc/main.cpp
-)
-target_link_libraries(d3d11_shared_texture_ipc PRIVATE d3d11 dxgi)
 
 aerogpu_add_win7_test(d3d11_caps_smoke
   d3d11_caps_smoke/main.cpp
