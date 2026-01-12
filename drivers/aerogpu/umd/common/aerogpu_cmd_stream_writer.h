@@ -67,6 +67,16 @@ class SpanCmdStreamWriter {
     cursor_ = sizeof(aerogpu_cmd_stream_header);
   }
 
+  // Resets the writer state so the next appended packet will re-initialize the
+  // stream header, but does not modify the underlying buffer contents.
+  //
+  // This is useful after a submission when callers still want to inspect the
+  // finalized stream header + packets in the backing buffer (e.g. unit tests).
+  void rewind() {
+    cursor_ = 0;
+    error_ = CmdStreamError::kOk;
+  }
+
   uint8_t* data() {
     return buf_;
   }
@@ -92,6 +102,14 @@ class SpanCmdStreamWriter {
   }
 
   size_t bytes_remaining() const {
+    // When cursor_==0 the stream header has not been (re-)initialized yet, but
+    // it still consumes space in the backing buffer.
+    if (cursor_ == 0) {
+      if (!buf_ || capacity_ < sizeof(aerogpu_cmd_stream_header)) {
+        return 0;
+      }
+      return capacity_ - sizeof(aerogpu_cmd_stream_header);
+    }
     if (cursor_ > capacity_) {
       return 0;
     }
@@ -431,6 +449,19 @@ class CmdStreamWriter {
   void reset() {
     if (mode_ == Mode::Span) {
       span_.reset();
+    } else {
+      vec_.reset();
+    }
+  }
+
+  // Resets writer state without modifying the underlying buffer contents.
+  //
+  // For span-backed streams this preserves the finalized command stream bytes in
+  // the caller-provided backing buffer until the next append. Vector-backed
+  // streams are always reset by re-initializing a fresh header.
+  void rewind() {
+    if (mode_ == Mode::Span) {
+      span_.rewind();
     } else {
       vec_.reset();
     }

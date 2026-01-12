@@ -214,6 +214,63 @@ def _emit_header(x86: ProbeData, x64: ProbeData, *, emit_all: bool) -> str:
         ("D3DDDIARG_SUBMITCOMMAND", "pPatchLocationList"),
         ("D3DDDIARG_SUBMITCOMMAND", "PatchLocationListSize"),
     ]
+    create_device_fields = [
+        ("D3D9DDIARG_CREATEDEVICE", "hAdapter"),
+        ("D3D9DDIARG_CREATEDEVICE", "hDevice"),
+        ("D3D9DDIARG_CREATEDEVICE", "Flags"),
+        ("D3D9DDIARG_CREATEDEVICE", "pCallbacks"),
+    ]
+    create_resource_fields = [
+        ("D3D9DDIARG_CREATERESOURCE", "Type"),
+        ("D3D9DDIARG_CREATERESOURCE", "Format"),
+        ("D3D9DDIARG_CREATERESOURCE", "Width"),
+        ("D3D9DDIARG_CREATERESOURCE", "Height"),
+        ("D3D9DDIARG_CREATERESOURCE", "Depth"),
+        ("D3D9DDIARG_CREATERESOURCE", "MipLevels"),
+        ("D3D9DDIARG_CREATERESOURCE", "Usage"),
+        ("D3D9DDIARG_CREATERESOURCE", "Pool"),
+        ("D3D9DDIARG_CREATERESOURCE", "Size"),
+        ("D3D9DDIARG_CREATERESOURCE", "hResource"),
+        ("D3D9DDIARG_CREATERESOURCE", "pSharedHandle"),
+        ("D3D9DDIARG_CREATERESOURCE", "pPrivateDriverData"),
+        ("D3D9DDIARG_CREATERESOURCE", "PrivateDriverDataSize"),
+        ("D3D9DDIARG_CREATERESOURCE", "hAllocation"),
+    ]
+    open_resource_fields = [
+        ("D3D9DDIARG_OPENRESOURCE", "pPrivateDriverData"),
+        ("D3D9DDIARG_OPENRESOURCE", "PrivateDriverDataSize"),
+        ("D3D9DDIARG_OPENRESOURCE", "hAllocation"),
+        ("D3D9DDIARG_OPENRESOURCE", "hResource"),
+    ]
+    lock_fields = [
+        ("D3D9DDIARG_LOCK", "hResource"),
+        ("D3D9DDIARG_LOCK", "OffsetToLock"),
+        ("D3D9DDIARG_LOCK", "SizeToLock"),
+        ("D3D9DDIARG_LOCK", "Flags"),
+    ]
+    unlock_fields = [
+        ("D3D9DDIARG_UNLOCK", "hResource"),
+        ("D3D9DDIARG_UNLOCK", "OffsetToUnlock"),
+        ("D3D9DDIARG_UNLOCK", "SizeToUnlock"),
+    ]
+    locked_box_fields = [
+        ("D3D9DDI_LOCKED_BOX", "pData"),
+        ("D3D9DDI_LOCKED_BOX", "rowPitch"),
+        ("D3D9DDI_LOCKED_BOX", "slicePitch"),
+    ]
+    present_fields = [
+        ("D3D9DDIARG_PRESENT", "hSrc"),
+        ("D3D9DDIARG_PRESENT", "hSwapChain"),
+        ("D3D9DDIARG_PRESENT", "hWnd"),
+        ("D3D9DDIARG_PRESENT", "SyncInterval"),
+        ("D3D9DDIARG_PRESENT", "Flags"),
+    ]
+    presentex_fields = [
+        ("D3D9DDIARG_PRESENTEX", "hSrc"),
+        ("D3D9DDIARG_PRESENTEX", "hWnd"),
+        ("D3D9DDIARG_PRESENTEX", "SyncInterval"),
+        ("D3D9DDIARG_PRESENTEX", "Flags"),
+    ]
 
     def emit_arch_block(kind: str, data: ProbeData, include_exports: bool) -> list[str]:
         out: list[str] = []
@@ -296,6 +353,47 @@ def _emit_header(x86: ProbeData, x64: ProbeData, *, emit_all: bool) -> str:
             out.append(f"  #define AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_{t}_{m} {_get_off(data, t, m)}")
         out.append("")
         for t, m in submitcommand_fields:
+            out.append(f"  #define AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_{t}_{m} {_get_off(data, t, m)}")
+        out.append("")
+
+        out.append("  // D3D9UMDDI device argument structs (Win7 D3D9 runtime -> UMD).")
+        out.append(f"  #define AEROGPU_D3D9_WDK_ABI_EXPECT_SIZEOF_D3D9DDIARG_CREATEDEVICE {_get_size(data, 'D3D9DDIARG_CREATEDEVICE')}")
+        for t, m in create_device_fields:
+            out.append(f"  #define AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_{t}_{m} {_get_off(data, t, m)}")
+        out.append("")
+
+        out.append(f"  #define AEROGPU_D3D9_WDK_ABI_EXPECT_SIZEOF_D3D9DDIARG_CREATERESOURCE {_get_size(data, 'D3D9DDIARG_CREATERESOURCE')}")
+        for t, m in create_resource_fields:
+            out.append(f"  #define AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_{t}_{m} {_get_off(data, t, m)}")
+        out.append("")
+
+        out.append(f"  #define AEROGPU_D3D9_WDK_ABI_EXPECT_SIZEOF_D3D9DDIARG_OPENRESOURCE {_get_size(data, 'D3D9DDIARG_OPENRESOURCE')}")
+        for t, m in open_resource_fields:
+            out.append(f"  #define AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_{t}_{m} {_get_off(data, t, m)}")
+        out.append("")
+
+        out.append(f"  #define AEROGPU_D3D9_WDK_ABI_EXPECT_SIZEOF_D3D9DDIARG_LOCK {_get_size(data, 'D3D9DDIARG_LOCK')}")
+        for t, m in lock_fields:
+            out.append(f"  #define AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_{t}_{m} {_get_off(data, t, m)}")
+        out.append("")
+
+        out.append(f"  #define AEROGPU_D3D9_WDK_ABI_EXPECT_SIZEOF_D3D9DDIARG_UNLOCK {_get_size(data, 'D3D9DDIARG_UNLOCK')}")
+        for t, m in unlock_fields:
+            out.append(f"  #define AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_{t}_{m} {_get_off(data, t, m)}")
+        out.append("")
+
+        out.append(f"  #define AEROGPU_D3D9_WDK_ABI_EXPECT_SIZEOF_D3D9DDI_LOCKED_BOX {_get_size(data, 'D3D9DDI_LOCKED_BOX')}")
+        for t, m in locked_box_fields:
+            out.append(f"  #define AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_{t}_{m} {_get_off(data, t, m)}")
+        out.append("")
+
+        out.append(f"  #define AEROGPU_D3D9_WDK_ABI_EXPECT_SIZEOF_D3D9DDIARG_PRESENT {_get_size(data, 'D3D9DDIARG_PRESENT')}")
+        for t, m in present_fields:
+            out.append(f"  #define AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_{t}_{m} {_get_off(data, t, m)}")
+        out.append("")
+
+        out.append(f"  #define AEROGPU_D3D9_WDK_ABI_EXPECT_SIZEOF_D3D9DDIARG_PRESENTEX {_get_size(data, 'D3D9DDIARG_PRESENTEX')}")
+        for t, m in presentex_fields:
             out.append(f"  #define AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_{t}_{m} {_get_off(data, t, m)}")
         out.append("")
 

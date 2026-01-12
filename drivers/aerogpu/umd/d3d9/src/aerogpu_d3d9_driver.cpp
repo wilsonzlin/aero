@@ -1105,6 +1105,51 @@ AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetShaderConstI, D3d9TraceFunc::DeviceGetShaderC
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetShaderConstB, D3d9TraceFunc::DeviceGetShaderConstB, D3DERR_NOTAVAILABLE);
 
 #undef AEROGPU_D3D9_DEFINE_DDI_STUB
+
+// -----------------------------------------------------------------------------
+// Type-safe D3D9 DDI thunks (WDK builds)
+// -----------------------------------------------------------------------------
+// The Win7 D3D9 runtime loads the UMD purely by ABI contract. When wiring the
+// D3D9DDI_*FUNCS vtables, avoid function-pointer casts that can mask real
+// signature mismatches with the WDK headers (calling convention / argument
+// types / return types).
+//
+// Instead, assign pointers to compiler-checked thunks. If an implementation
+// signature drifts from what the WDK declares, the build should fail.
+template <typename Fn, auto Impl>
+struct aerogpu_d3d9_ddi_thunk;
+
+template <typename Ret, typename... Args, auto Impl>
+struct aerogpu_d3d9_ddi_thunk<Ret(__stdcall*)(Args...), Impl> {
+  using impl_return_t = decltype(Impl(std::declval<Args>()...));
+  static_assert(std::is_same_v<impl_return_t, Ret>,
+                "D3D9 DDI entrypoint return type mismatch (write an explicit adapter instead of casting)");
+
+  static Ret __stdcall thunk(Args... args) {
+    if constexpr (std::is_same_v<Ret, void>) {
+      Impl(args...);
+      return;
+    } else {
+      return Impl(args...);
+    }
+  }
+};
+
+template <typename Ret, typename... Args, auto Impl>
+struct aerogpu_d3d9_ddi_thunk<Ret(*)(Args...), Impl> {
+  using impl_return_t = decltype(Impl(std::declval<Args>()...));
+  static_assert(std::is_same_v<impl_return_t, Ret>,
+                "D3D9 DDI entrypoint return type mismatch (write an explicit adapter instead of casting)");
+
+  static Ret thunk(Args... args) {
+    if constexpr (std::is_same_v<Ret, void>) {
+      Impl(args...);
+      return;
+    } else {
+      return Impl(args...);
+    }
+  }
+};
 #endif
 
 uint64_t monotonic_ms() {
@@ -4789,7 +4834,7 @@ uint64_t submit(Device* dev, bool is_present) {
 #endif
     const uint64_t fence = dev->last_submission_fence;
     resolve_pending_event_queries(dev, fence);
-    dev->cmd.reset();
+    dev->cmd.rewind();
     dev->alloc_list_tracker.reset();
     dev->wddm_context.reset_submission_buffers();
     return fence;
@@ -5076,7 +5121,7 @@ uint64_t submit(Device* dev, bool is_present) {
 
   dev->last_submission_fence = per_submission_fence;
   resolve_pending_event_queries(dev, per_submission_fence);
-  dev->cmd.reset();
+  dev->cmd.rewind();
   dev->alloc_list_tracker.reset();
   dev->wddm_context.reset_submission_buffers();
   return per_submission_fence;
@@ -11734,12 +11779,11 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
   pDeviceFuncs->pfnLock = device_lock;
   pDeviceFuncs->pfnUnlock = device_unlock;
 
-  // Most entrypoints use ABI-compatible scalar arguments (handles/UINT/BOOL/etc).
-  // Keep using the existing reinterpret_cast wiring for the remaining D3D9 DDIs
-  // until they have been fully audited against the Win7 WDK headers.
-#define AEROGPU_SET_D3D9DDI_FN(member, fn)                                                            \
-  do {                                                                                                \
-    pDeviceFuncs->member = reinterpret_cast<decltype(pDeviceFuncs->member)>(fn);                      \
+  // Assign the remaining entrypoints through type-safe thunks so the compiler
+  // enforces the WDK function pointer signatures.
+#define AEROGPU_SET_D3D9DDI_FN(member, fn)                                                               \
+  do {                                                                                                   \
+    pDeviceFuncs->member = aerogpu_d3d9_ddi_thunk<decltype(pDeviceFuncs->member), fn>::thunk;            \
   } while (0)
 
   AEROGPU_SET_D3D9DDI_FN(pfnSetRenderTarget, device_set_render_target);

@@ -512,6 +512,13 @@ jobs:
           }
           pwsh -NoProfile -ExecutionPolicy Bypass -File 'ci\install-wdk.ps1'
 
+      - name: Validate AeroGPU D3D9 UMD exports (.def stdcall decoration)
+        if: steps.detect.outputs.skip != 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python scripts/ci/check-aerogpu-d3d9-def-stdcall.py
+
       - name: Build drivers (ci/build-drivers.ps1)
         if: steps.detect.outputs.skip != 'true'
         shell: pwsh
