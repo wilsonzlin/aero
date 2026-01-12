@@ -212,8 +212,14 @@ int main() {
     printf("OpenAdapter10_2 => _OpenAdapter10_2@%u\n", stack_bytes);
   }
   __if_not_exists(PFND3D10DDI_OPENADAPTER) {
-    printf("OpenAdapter10   => <typedef PFND3D10DDI_OPENADAPTER not found>\n");
-    printf("OpenAdapter10_2 => <typedef PFND3D10DDI_OPENADAPTER not found>\n");
+    // Some WDK header sets do not expose a PFND3D10DDI_OPENADAPTER typedef. Still
+    // print the decorated export names based on the canonical signature so the
+    // `.def` mapping can be validated and the expected header generator can run.
+    typedef HRESULT(__stdcall* aerogpu_openadapter10_fn)(D3D10DDIARG_OPENADAPTER*);
+    const unsigned stack_bytes = (unsigned)aerogpu_stdcall_stack_bytes<aerogpu_openadapter10_fn>::value;
+    printf("OpenAdapter10   => _OpenAdapter10@%u\n", stack_bytes);
+    printf("OpenAdapter10_2 => _OpenAdapter10_2@%u\n", stack_bytes);
+    printf("note: typedef PFND3D10DDI_OPENADAPTER not found; using canonical signature\n");
   }
 
   __if_exists(PFND3D11DDI_OPENADAPTER) {
@@ -221,7 +227,12 @@ int main() {
     printf("OpenAdapter11   => _OpenAdapter11@%u\n", stack_bytes);
   }
   __if_not_exists(PFND3D11DDI_OPENADAPTER) {
-    printf("OpenAdapter11   => <typedef PFND3D11DDI_OPENADAPTER not found>\n");
+    // Same story as D3D10: if the typedef is missing, fall back to printing the
+    // canonical signature's stack-byte count.
+    typedef HRESULT(__stdcall* aerogpu_openadapter11_fn)(D3D10DDIARG_OPENADAPTER*);
+    const unsigned stack_bytes = (unsigned)aerogpu_stdcall_stack_bytes<aerogpu_openadapter11_fn>::value;
+    printf("OpenAdapter11   => _OpenAdapter11@%u\n", stack_bytes);
+    printf("note: typedef PFND3D11DDI_OPENADAPTER not found; using canonical signature\n");
   }
 #else
   printf("x64: no stdcall decoration\n");
