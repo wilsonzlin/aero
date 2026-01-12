@@ -247,6 +247,8 @@ if [[ ${#MISSING_SCRIPTS[@]} -gt 0 ]]; then
   msg+=$'\n'"  git checkout -- ${RESTORE_TARGETED[*]}"
   msg+=$'\n'"  # or restore just these paths:"
   msg+=$'\n'"  git checkout -- ${MISSING_SCRIPTS[*]}"
+  msg+=$'\n'"  # bigger hammer (resets the whole working tree):"
+  msg+=$'\n'"  git checkout -- ."
   WARNINGS+=("$msg")
 fi
 
@@ -257,8 +259,12 @@ if [[ ${#NONEXEC_SCRIPTS[@]} -gt 0 ]]; then
   msg+=$'\n'"  bash ./scripts/safe-run.sh cargo build --locked"
   msg+=$'\n'"Fix (preferred):"
   msg+=$'\n'"  git checkout -- scripts"
+  msg+=$'\n'"  # bigger hammer (resets the whole working tree):"
+  msg+=$'\n'"  git checkout -- ."
   msg+=$'\n'"Non-git fallback:"
   msg+=$'\n'"  chmod +x ${NONEXEC_SCRIPTS[*]}"
+  msg+=$'\n'"  # or fix all scripts under scripts/:"
+  msg+=$'\n'"  find scripts -name '*.sh' -exec chmod +x {} +"
   WARNINGS+=("$msg")
 else
   echo "  ✓ Script executability looks OK"
