@@ -221,6 +221,27 @@ async function runTieredVm(iterations: number, threshold: number) {
     return;
   }
 
+  // Install safe default shims for the wasm32 VM loop.
+  //
+  // The Tiered VM's bus will call out to these globals on port I/O and MMIO exits. The JIT smoke
+  // harness typically does not exercise those paths, but defining them here avoids surprising
+  // `globalThis.__aero_*` missing traps if the guest code or runtime behavior changes.
+  //
+  // IMPORTANT: wasm `i64` values are represented as JS `bigint`, so `__aero_mmio_*` must use
+  // `bigint` for the address parameter.
+  if (typeof globalThis.__aero_io_port_read !== 'function') {
+    globalThis.__aero_io_port_read = (_port: number, _size: number) => 0;
+  }
+  if (typeof globalThis.__aero_io_port_write !== 'function') {
+    globalThis.__aero_io_port_write = (_port: number, _size: number, _value: number) => {};
+  }
+  if (typeof globalThis.__aero_mmio_read !== 'function') {
+    globalThis.__aero_mmio_read = (_addr: bigint, _size: number) => 0;
+  }
+  if (typeof globalThis.__aero_mmio_write !== 'function') {
+    globalThis.__aero_mmio_write = (_addr: bigint, _size: number, _value: number) => {};
+  }
+
   let api: WasmApi;
   let variant: string;
   try {
