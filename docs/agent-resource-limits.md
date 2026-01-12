@@ -439,6 +439,28 @@ source scripts/agent-env.sh
 echo $CARGO_BUILD_JOBS
 ```
 
+### rustc panics with "failed to spawn helper thread" / "Resource temporarily unavailable"
+
+In heavily contended agent sandboxes, `rustc` (or the linker driver it spawns) can fail with errors like:
+
+- `failed to spawn helper thread (WouldBlock)`
+- `failed to spawn work thread: Resource temporarily unavailable`
+- `could not exec the linker \`cc\`: Resource temporarily unavailable`
+
+These are usually **transient shared-host resource issues** (PID/thread limits), not deterministic build failures.
+
+Mitigations:
+
+- **Wait and retry** (best default).
+- Ensure you're using minimal parallelism (`-j1` is the agent default):
+  ```bash
+  AERO_CARGO_BUILD_JOBS=1 bash ./scripts/safe-run.sh cargo test --locked
+  ```
+- If it still happens, reduce per-crate codegen parallelism further:
+  ```bash
+  RUSTFLAGS="-C codegen-units=1" bash ./scripts/safe-run.sh cargo test --locked
+  ```
+
 ### "Too many open files"
 
 ```bash
