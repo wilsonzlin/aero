@@ -48,18 +48,20 @@ describe("InputCapture wheel handling", () => {
       (capture as any).hasFocus = true;
 
       const preventDefault = vi.fn();
+      const stopPropagation = vi.fn();
 
       // 20px per event in DOM_DELTA_PIXEL mode -> 0.2 "clicks" per event (see input_capture.ts).
       // Ensure we don't lose small deltas entirely.
       for (let i = 0; i < 4; i++) {
-        const ev = { deltaY: 20, deltaMode: 0, preventDefault, timeStamp: i } as unknown as WheelEvent;
+        const ev = { deltaY: 20, deltaMode: 0, preventDefault, stopPropagation, timeStamp: i } as unknown as WheelEvent;
         (capture as any).handleWheel(ev);
         expect((capture as any).queue.size).toBe(0);
       }
 
-      const ev = { deltaY: 20, deltaMode: 0, preventDefault, timeStamp: 5 } as unknown as WheelEvent;
+      const ev = { deltaY: 20, deltaMode: 0, preventDefault, stopPropagation, timeStamp: 5 } as unknown as WheelEvent;
       (capture as any).handleWheel(ev);
       expect((capture as any).queue.size).toBe(1);
+      expect(stopPropagation).toHaveBeenCalledTimes(5);
 
       capture.flushNow();
 
@@ -93,10 +95,12 @@ describe("InputCapture wheel handling", () => {
       (capture as any).hasFocus = true;
 
       const preventDefault = vi.fn();
+      const stopPropagation = vi.fn();
       // 150px + 50px = 200px => 2 wheel "clicks" (100px/click). Old behavior would floor each event and
       // lose the final 0.5 click.
-      (capture as any).handleWheel({ deltaY: 150, deltaMode: 0, preventDefault, timeStamp: 1 } as unknown as WheelEvent);
-      (capture as any).handleWheel({ deltaY: 50, deltaMode: 0, preventDefault, timeStamp: 2 } as unknown as WheelEvent);
+      (capture as any).handleWheel({ deltaY: 150, deltaMode: 0, preventDefault, stopPropagation, timeStamp: 1 } as unknown as WheelEvent);
+      (capture as any).handleWheel({ deltaY: 50, deltaMode: 0, preventDefault, stopPropagation, timeStamp: 2 } as unknown as WheelEvent);
+      expect(stopPropagation).toHaveBeenCalledTimes(2);
 
       capture.flushNow();
 
@@ -111,4 +115,3 @@ describe("InputCapture wheel handling", () => {
     });
   });
 });
-
