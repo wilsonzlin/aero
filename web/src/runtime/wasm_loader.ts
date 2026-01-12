@@ -497,6 +497,14 @@ export interface WasmApi {
         inject_mouse_right?(pressed: boolean): void;
         inject_mouse_middle?(pressed: boolean): void;
         /**
+         * Attach/detach the canonical machine network backend via Aero IPC rings.
+         *
+         * Optional for older WASM builds.
+         */
+        attach_l2_tunnel_rings?(tx: SharedRingBufferHandle, rx: SharedRingBufferHandle): void;
+        attach_l2_tunnel_from_io_ipc_sab?(ioIpc: SharedArrayBuffer): void;
+        detach_network?(): void;
+        /**
          * Optional for older WASM builds; canonical machine snapshot support.
          */
         snapshot_full?(): Uint8Array;
