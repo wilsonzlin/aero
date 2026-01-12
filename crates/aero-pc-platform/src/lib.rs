@@ -2137,9 +2137,6 @@ impl PcPlatform {
         if let Some(uhci) = self.uhci.as_ref() {
             uhci.borrow_mut().reset();
         }
-        if let Some(virtio_blk) = self.virtio_blk.as_ref() {
-            virtio_blk.borrow_mut().reset();
-        }
 
         // Reset optional PCI device models that are part of the platform and do not own external
         // state that needs to survive reset.
