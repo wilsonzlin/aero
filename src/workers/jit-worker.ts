@@ -140,6 +140,26 @@ async function handleCompileRequest(req: CompileBlockRequest & { type: 'CompileB
     return;
   }
 
+  if (!Number.isFinite(req.id) || !Number.isInteger(req.id) || req.id < 0) {
+    postMessageToCpu({
+      type: 'CompileError',
+      id: req.id,
+      entry_rip: req.entry_rip,
+      reason: `invalid request id: ${String(req.id)}`,
+    });
+    return;
+  }
+
+  if (req.mode && req.mode !== 'tier1') {
+    postMessageToCpu({
+      type: 'CompileError',
+      id: req.id,
+      entry_rip: req.entry_rip,
+      reason: `unsupported JIT compile mode: ${String(req.mode)}`,
+    });
+    return;
+  }
+
   if (!Number.isFinite(req.entry_rip) || !Number.isInteger(req.entry_rip) || req.entry_rip < 0 || req.entry_rip > 0xffffffff) {
     postMessageToCpu({
       type: 'CompileError',
