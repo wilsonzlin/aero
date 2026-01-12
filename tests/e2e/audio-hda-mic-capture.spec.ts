@@ -1,5 +1,14 @@
 import { expect, test } from "@playwright/test";
 
+import {
+  CAPACITY_SAMPLES_INDEX as MIC_CAPACITY_SAMPLES_INDEX,
+  DROPPED_SAMPLES_INDEX as MIC_DROPPED_SAMPLES_INDEX,
+  HEADER_BYTES as MIC_HEADER_BYTES,
+  HEADER_U32_LEN as MIC_HEADER_U32_LEN,
+  READ_POS_INDEX as MIC_READ_POS_INDEX,
+  WRITE_POS_INDEX as MIC_WRITE_POS_INDEX,
+} from "../../web/src/audio/mic_ring.js";
+
 const PREVIEW_ORIGIN = process.env.AERO_PLAYWRIGHT_PREVIEW_ORIGIN ?? "http://127.0.0.1:4173";
 
 test("HDA capture stream DMA-writes microphone PCM into guest RAM (synthetic mic)", async ({ page }) => {
@@ -13,7 +22,15 @@ test("HDA capture stream DMA-writes microphone PCM into guest RAM (synthetic mic
     return Boolean((globalThis as any).__aeroWorkerCoordinator);
   });
 
-  await page.evaluate(() => {
+  await page.evaluate(
+    ({
+      MIC_CAPACITY_SAMPLES_INDEX,
+      MIC_DROPPED_SAMPLES_INDEX,
+      MIC_HEADER_BYTES,
+      MIC_HEADER_U32_LEN,
+      MIC_READ_POS_INDEX,
+      MIC_WRITE_POS_INDEX,
+    }) => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const coord = (globalThis as any).__aeroWorkerCoordinator as any;
 
@@ -35,26 +52,32 @@ test("HDA capture stream DMA-writes microphone PCM into guest RAM (synthetic mic
 
     // Create a deterministic mono f32 mic ring buffer and prefill it with samples.
     const capacitySamples = 16_384;
-    const headerU32Len = 4;
-    const headerBytes = headerU32Len * Uint32Array.BYTES_PER_ELEMENT;
-    const sab = new SharedArrayBuffer(headerBytes + capacitySamples * Float32Array.BYTES_PER_ELEMENT);
-    const header = new Uint32Array(sab, 0, headerU32Len);
-    const samples = new Float32Array(sab, headerBytes, capacitySamples);
+    const sab = new SharedArrayBuffer(MIC_HEADER_BYTES + capacitySamples * Float32Array.BYTES_PER_ELEMENT);
+    const header = new Uint32Array(sab, 0, MIC_HEADER_U32_LEN);
+    const samples = new Float32Array(sab, MIC_HEADER_BYTES, capacitySamples);
 
     // Deterministic square wave (-0.75, +0.75, ...).
     for (let i = 0; i < capacitySamples; i++) {
       samples[i] = (i & 1) === 0 ? 0.75 : -0.75;
     }
 
-    // Header layout matches `web/src/audio/mic_ring.js`:
-    // 0=write_pos, 1=read_pos, 2=dropped, 3=capacity.
-    Atomics.store(header, 0, capacitySamples >>> 0);
-    Atomics.store(header, 1, 0);
-    Atomics.store(header, 2, 0);
-    Atomics.store(header, 3, capacitySamples >>> 0);
+    // Header layout matches `web/src/audio/mic_ring.js`.
+    Atomics.store(header, MIC_WRITE_POS_INDEX, capacitySamples >>> 0);
+    Atomics.store(header, MIC_READ_POS_INDEX, 0);
+    Atomics.store(header, MIC_DROPPED_SAMPLES_INDEX, 0);
+    Atomics.store(header, MIC_CAPACITY_SAMPLES_INDEX, capacitySamples >>> 0);
 
     coord.setMicrophoneRingBuffer(sab, 48_000);
-  });
+    },
+    {
+      MIC_CAPACITY_SAMPLES_INDEX,
+      MIC_DROPPED_SAMPLES_INDEX,
+      MIC_HEADER_BYTES,
+      MIC_HEADER_U32_LEN,
+      MIC_READ_POS_INDEX,
+      MIC_WRITE_POS_INDEX,
+    },
+  );
 
   await page.waitForFunction(() => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -107,4 +130,3 @@ test("HDA capture stream DMA-writes microphone PCM into guest RAM (synthetic mic
 
   expect(nonZero).toBeGreaterThan(0);
 });
-
