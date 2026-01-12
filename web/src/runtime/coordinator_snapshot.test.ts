@@ -284,6 +284,9 @@ describe("runtime/coordinator (worker VM snapshots)", () => {
     cpu.emitMessage({ kind: "vm.snapshot.cpuStateSet", requestId: cpu.posted[1]!.message.requestId, ok: true });
     await flushMicrotasks();
 
+    expect(cpu.posted[2]?.message.kind).toBe("vm.snapshot.resume");
+    expect(io.posted[2]?.message.kind).toBe("vm.snapshot.resume");
+    expect(net.posted.some((m) => m.message.kind === "vm.snapshot.resume")).toBe(false);
     cpu.emitMessage({ kind: "vm.snapshot.resumed", requestId: cpu.posted[2]!.message.requestId, ok: true });
     io.emitMessage({ kind: "vm.snapshot.resumed", requestId: io.posted[2]!.message.requestId, ok: true });
     await flushMicrotasks();
