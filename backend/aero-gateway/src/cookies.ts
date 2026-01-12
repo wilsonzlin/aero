@@ -18,8 +18,44 @@ export function isRequestSecure(req: IncomingMessage, opts: { trustProxy: boolea
   const raw = Array.isArray(header) ? header[0] : header;
   if (!raw) return false;
 
-  const proto = raw.split(',')[0]?.trim().toLowerCase();
-  return proto === 'https';
+  return isForwardedProtoHttps(raw);
+}
+
+function isForwardedProtoHttps(raw: string): boolean {
+  // Use only the first token in the X-Forwarded-Proto list.
+  // RFC 7239 OWS is SP / HTAB, but accept any ASCII <= 0x20 as trimming whitespace.
+  let start = 0;
+  let end = raw.length;
+
+  while (start < end && raw.charCodeAt(start) <= 0x20) {
+    start += 1;
+  }
+
+  const comma = raw.indexOf(',', start);
+  if (comma !== -1) end = comma;
+
+  while (end > start && raw.charCodeAt(end - 1) <= 0x20) {
+    end -= 1;
+  }
+
+  if (end - start !== 5) return false;
+
+  // ASCII case-insensitive compare to "https" without allocating a lowercase copy.
+  // https
+  let c0 = raw.charCodeAt(start);
+  let c1 = raw.charCodeAt(start + 1);
+  let c2 = raw.charCodeAt(start + 2);
+  let c3 = raw.charCodeAt(start + 3);
+  let c4 = raw.charCodeAt(start + 4);
+
+  if (c0 >= 0x41 && c0 <= 0x5a) c0 += 0x20;
+  if (c1 >= 0x41 && c1 <= 0x5a) c1 += 0x20;
+  if (c2 >= 0x41 && c2 <= 0x5a) c2 += 0x20;
+  if (c3 >= 0x41 && c3 <= 0x5a) c3 += 0x20;
+  if (c4 >= 0x41 && c4 <= 0x5a) c4 += 0x20;
+
+  return c0 === 0x68 /* 'h' */ && c1 === 0x74 /* 't' */ && c2 === 0x74 /* 't' */ && c3 === 0x70 /* 'p' */ &&
+    c4 === 0x73 /* 's' */;
 }
 
 export function serializeCookie(name: string, value: string, options: CookieOptions = {}): string {
