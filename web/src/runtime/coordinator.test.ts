@@ -108,11 +108,10 @@ describe("runtime/coordinator", () => {
     expect(restartSpy).toHaveBeenCalledTimes(1);
   });
 
-  it("rejects VM start when activeDiskImage is set but OPFS SyncAccessHandle is unavailable", () => {
+  it("allows VM start when activeDiskImage is set even without OPFS SyncAccessHandle", () => {
     const coordinator = new WorkerCoordinator();
 
-    let err: unknown;
-    try {
+    expect(() =>
       coordinator.start(
         {
           guestMemoryMiB: 1,
@@ -139,17 +138,11 @@ describe("runtime/coordinator", () => {
             jit_dynamic_wasm: true,
           },
         },
-      );
-    } catch (e) {
-      err = e;
-    }
-
-    expect(err).toBeInstanceOf(Error);
-    expect((err as Error).message).toMatch(/SyncAccessHandle/i);
-    expect((err as Error).message).toMatch(/IndexedDB/i);
+      ),
+    ).not.toThrow();
   });
 
-  it("stops and emits a fatal event when switching into VM mode via updateConfig without OPFS SyncAccessHandle", () => {
+  it("does not stop when switching into VM mode via updateConfig without OPFS SyncAccessHandle", () => {
     const coordinator = new WorkerCoordinator();
 
     const baseConfig = {
@@ -189,13 +182,12 @@ describe("runtime/coordinator", () => {
 
     coordinator.updateConfig({ ...baseConfig, activeDiskImage: "disk.img" });
 
-    expect(coordinator.getVmState()).toBe("failed");
-    expect(coordinator.getLastFatalEvent()?.message).toMatch(/SyncAccessHandle/i);
-    expect(coordinator.getLastFatalEvent()?.message).toMatch(/IndexedDB/i);
+    expect(coordinator.getVmState()).toBe("running");
+    expect(coordinator.getLastFatalEvent()).toBeNull();
 
     const statuses = coordinator.getWorkerStatuses();
-    expect(statuses.cpu.state).toBe("stopped");
-    expect(statuses.io.state).toBe("stopped");
+    expect(statuses.cpu.state).toBe("starting");
+    expect(statuses.io.state).toBe("starting");
   });
 
   it("forwards audio/mic rings to CPU only in demo mode by default (SPSC)", () => {

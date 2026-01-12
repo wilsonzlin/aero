@@ -6,7 +6,7 @@ import { decodeEvent, encodeCommand, type Command, type Event } from "../ipc/pro
 import { perf } from "../perf/perf";
 import { WorkerKind } from "../perf/record.js";
 import type { PerfChannel } from "../perf/shared.js";
-import { detectPlatformFeatures, type PlatformFeatureReport } from "../platform/features";
+import type { PlatformFeatureReport } from "../platform/features";
 import {
   WORKER_ROLES,
   type WorkerRole,
@@ -417,24 +417,6 @@ export class WorkerCoordinator {
       this.platformFeatures = opts.platformFeatures;
     }
 
-    // VM mode (`activeDiskImage != null`) uses Aero's boot-critical synchronous Rust
-    // disk/controller stack (aero-storage::VirtualDisk + AHCI/IDE). That stack
-    // requires OPFS `FileSystemSyncAccessHandle` / `createSyncAccessHandle()`.
-    // IndexedDB is async-only and cannot safely substitute.
-    //
-    // See:
-    // - docs/19-indexeddb-storage-story.md
-    // - docs/20-storage-trait-consolidation.md
-    if (config.activeDiskImage !== null) {
-      const features = this.platformFeatures ?? detectPlatformFeatures();
-      this.platformFeatures = features;
-      if (!features.opfsSyncAccessHandle) {
-        throw new Error(
-          "Cannot start VM with a disk image: OPFS SyncAccessHandle (FileSystemFileHandle.createSyncAccessHandle) is unavailable. Aero's boot-critical Rust AHCI/IDE controller path requires synchronous disk I/O; IndexedDB cannot be used as a drop-in fallback. Use a Chromium-based browser with SyncAccessHandle support, or run the demo mode without a disk image.",
-        );
-      }
-    }
-
     if (!config.enableWorkers) {
       throw new Error("Workers are disabled by configuration.");
     }
@@ -504,32 +486,6 @@ export class WorkerCoordinator {
       return;
     }
     this.activeConfig = config;
-
-    // It is possible for callers to start the coordinator in demo mode (no disk) and
-    // then later toggle into VM mode via `updateConfig` (for example, if the static
-    // config file loads after workers have already been started).
-    //
-    // VM mode requires OPFS SyncAccessHandle; do not allow an implicit fallback to
-    // async backends (e.g. IndexedDB) for the synchronous Rust disk/controller path.
-    //
-    // See:
-    // - docs/19-indexeddb-storage-story.md
-    // - docs/20-storage-trait-consolidation.md
-    if (config.activeDiskImage !== null && config.enableWorkers) {
-      const features = this.platformFeatures ?? detectPlatformFeatures();
-      this.platformFeatures = features;
-      if (!features.opfsSyncAccessHandle) {
-        const message =
-          "Cannot start VM with a disk image: OPFS SyncAccessHandle (FileSystemFileHandle.createSyncAccessHandle) is unavailable. Aero's boot-critical Rust AHCI/IDE controller path requires synchronous disk I/O; IndexedDB cannot be used as a drop-in fallback. Use a Chromium-based browser with SyncAccessHandle support, or run the demo mode without a disk image.";
-        if (this.shared) {
-          this.recordFatal({ kind: "start_failed", message, atMs: nowMs() });
-          this.cancelPendingRestarts();
-          this.stopWorkersInternal({ clearShared: true });
-          this.setVmState("failed", "opfs_sync_access_handle_required");
-        }
-        return;
-      }
-    }
 
     if (!this.shared) {
       return;
