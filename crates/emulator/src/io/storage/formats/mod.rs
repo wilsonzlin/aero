@@ -88,7 +88,13 @@ pub fn detect_format<S: ByteStorage>(storage: &mut S) -> DiskResult<DiskFormat> 
                 return Ok(DiskFormat::Sparse);
             }
         }
-        if magic == AEROSPRS_MAGIC && len >= 4096 {
+        if magic == AEROSPRS_MAGIC {
+            // If the file is too small to contain a full header, still treat it as sparse so
+            // `open_auto` returns a corruption error rather than silently falling back to raw.
+            if len < 4096 {
+                return Ok(DiskFormat::Sparse);
+            }
+
             let mut header = [0u8; 4096];
             storage.read_at(0, &mut header)?;
             if aerosprs::SparseHeader::decode(&header).is_ok() {

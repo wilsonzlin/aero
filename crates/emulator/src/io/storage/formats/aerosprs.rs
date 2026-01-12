@@ -291,7 +291,13 @@ impl<S: ByteStorage> SparseDisk<S> {
 
     pub fn open(mut storage: S) -> DiskResult<Self> {
         let mut header_buf = [0u8; HEADER_SIZE as usize];
-        storage.read_at(0, &mut header_buf)?;
+        match storage.read_at(0, &mut header_buf) {
+            Ok(()) => {}
+            Err(DiskError::OutOfBounds) => {
+                return Err(DiskError::CorruptImage("sparse header truncated"));
+            }
+            Err(e) => return Err(e),
+        }
         let header = SparseHeader::decode(&header_buf)?;
 
         let file_len = storage.len()?;

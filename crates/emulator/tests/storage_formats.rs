@@ -411,6 +411,19 @@ fn detect_aerosprs_magic_without_valid_header_is_raw() {
 }
 
 #[test]
+fn detect_aerosprs_magic_with_truncated_header_is_sparse() {
+    let mut storage = MemStorage::with_len(8);
+    storage.write_at(0, b"AEROSPRS").unwrap();
+    assert_eq!(detect_format(&mut storage).unwrap(), DiskFormat::Sparse);
+
+    let res = VirtualDrive::open_auto(storage, 512, WriteCachePolicy::WriteThrough);
+    assert!(matches!(
+        res,
+        Err(DiskError::CorruptImage("sparse header truncated"))
+    ));
+}
+
+#[test]
 fn raw_disk_create_and_rw_roundtrip() {
     let storage = MemStorage::default();
     let mut disk = emulator::io::storage::formats::RawDisk::create(storage, 512, 8).unwrap();
