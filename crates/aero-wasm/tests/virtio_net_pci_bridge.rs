@@ -2,6 +2,7 @@
 
 use aero_ipc::ipc::{create_ipc_buffer, IpcQueueSpec};
 use aero_ipc::layout::io_ipc_queue_kind::{NET_RX, NET_TX};
+use aero_ipc::wasm::open_ring_by_kind;
 use aero_virtio::devices::net_offload::VirtioNetHdr;
 use aero_virtio::pci::{
     VIRTIO_PCI_LEGACY_ISR_QUEUE, VIRTIO_STATUS_ACKNOWLEDGE, VIRTIO_STATUS_DRIVER,
@@ -68,6 +69,8 @@ fn virtio_net_pci_bridge_smoke_and_irq_latch() {
         unsafe { core::slice::from_raw_parts_mut(guest_base as *mut u8, guest_size as usize) };
 
     let io_ipc_sab = make_io_ipc_sab();
+    let net_tx_ring = open_ring_by_kind(io_ipc_sab.clone(), NET_TX, 0).expect("open NET_TX ring");
+    let net_rx_ring = open_ring_by_kind(io_ipc_sab.clone(), NET_RX, 0).expect("open NET_RX ring");
     let mut bridge = VirtioNetPciBridge::new(guest_base, guest_size, io_ipc_sab, None)
         .expect("VirtioNetPciBridge::new");
     // PCI Bus Master Enable should start disabled to prevent DMA before the guest explicitly
@@ -114,6 +117,23 @@ fn virtio_net_pci_bridge_smoke_and_irq_latch() {
                 | VIRTIO_STATUS_DRIVER_OK,
         ),
     );
+
+    // Configure RX queue 0.
+    bridge.mmio_write(COMMON + 0x16, 2, 0); // queue_select
+    let qsz_rx = bridge.mmio_read(COMMON + 0x18, 2) as u16;
+    assert!(qsz_rx >= 8);
+
+    let rx_desc = 0x1000u32;
+    let rx_avail = 0x2000u32;
+    let rx_used = 0x3000u32;
+
+    bridge.mmio_write(COMMON + 0x20, 4, rx_desc);
+    bridge.mmio_write(COMMON + 0x24, 4, 0);
+    bridge.mmio_write(COMMON + 0x28, 4, rx_avail);
+    bridge.mmio_write(COMMON + 0x2c, 4, 0);
+    bridge.mmio_write(COMMON + 0x30, 4, rx_used);
+    bridge.mmio_write(COMMON + 0x34, 4, 0);
+    bridge.mmio_write(COMMON + 0x1c, 2, 1); // queue_enable
 
     // Configure TX queue 1.
     bridge.mmio_write(COMMON + 0x16, 2, 1); // queue_select
@@ -169,6 +189,43 @@ fn virtio_net_pci_bridge_smoke_and_irq_latch() {
     write_u16(guest, tx_used, 0);
     write_u16(guest, tx_used + 2, 0);
 
+    // Post a single RX descriptor chain: [virtio_net_hdr(write)][payload(write)].
+    let rx_hdr_addr = 0x7200u32;
+    let rx_payload_addr = 0x7300u32;
+    guest[rx_hdr_addr as usize..rx_hdr_addr as usize + VirtioNetHdr::BASE_LEN].fill(0xAA);
+    guest[rx_payload_addr as usize..rx_payload_addr as usize + 64].fill(0xBB);
+
+    write_desc(
+        guest,
+        rx_desc,
+        0,
+        rx_hdr_addr as u64,
+        VirtioNetHdr::BASE_LEN as u32,
+        VIRTQ_DESC_F_NEXT | aero_virtio::queue::VIRTQ_DESC_F_WRITE,
+        1,
+    );
+    write_desc(
+        guest,
+        rx_desc,
+        1,
+        rx_payload_addr as u64,
+        64,
+        aero_virtio::queue::VIRTQ_DESC_F_WRITE,
+        0,
+    );
+
+    // avail.idx = 1, ring[0] = 0
+    write_u16(guest, rx_avail, 0);
+    write_u16(guest, rx_avail + 2, 1);
+    write_u16(guest, rx_avail + 4, 0);
+    // used.idx = 0
+    write_u16(guest, rx_used, 0);
+    write_u16(guest, rx_used + 2, 0);
+
+    // Inject one host->guest frame into the NET_RX ring while BME is disabled.
+    let rx_frame = b"\xaa\xbb\xcc\xdd\xee\xff\x00\x01\x02\x03\x04\x05\x08\x00";
+    assert!(net_rx_ring.try_push(rx_frame), "push host RX frame");
+
     assert!(!bridge.irq_asserted(), "irq should start deasserted");
 
     // Notify queue 1: notify base + notify_mult*1 (notify_mult=4).
@@ -181,10 +238,19 @@ fn virtio_net_pci_bridge_smoke_and_irq_latch() {
         !bridge.irq_asserted(),
         "irq should remain deasserted while PCI bus mastering is disabled"
     );
+    assert!(
+        net_tx_ring.try_pop().is_none(),
+        "NET_TX ring must remain empty while PCI bus mastering is disabled"
+    );
     assert_eq!(
         read_u16(guest, tx_used + 2),
         0,
         "used.idx should not advance without bus mastering"
+    );
+    assert_eq!(
+        &guest[rx_payload_addr as usize..rx_payload_addr as usize + rx_frame.len()],
+        &[0xBB; 14],
+        "RX payload buffer should not be DMA-written while PCI bus mastering is disabled"
     );
 
     // Enable bus mastering and retry: the pending notify should now be processed via DMA.
@@ -192,6 +258,31 @@ fn virtio_net_pci_bridge_smoke_and_irq_latch() {
     bridge.poll();
 
     assert_eq!(read_u16(guest, tx_used + 2), 1, "expected used.idx to advance");
+    assert_eq!(read_u16(guest, rx_used + 2), 1, "expected RX used.idx to advance");
+    let tx = net_tx_ring
+        .try_pop()
+        .expect("expected one transmitted frame in NET_TX ring after enabling BME");
+    let mut tx_bytes = vec![0u8; tx.length() as usize];
+    tx.copy_to(&mut tx_bytes);
+    assert_eq!(tx_bytes.as_slice(), payload, "TX payload mismatch");
+    assert!(
+        net_tx_ring.try_pop().is_none(),
+        "expected NET_TX ring to contain exactly one frame"
+    );
+    assert!(
+        net_rx_ring.try_pop().is_none(),
+        "expected NET_RX ring to be drained after enabling BME"
+    );
+    assert_eq!(
+        &guest[rx_hdr_addr as usize..rx_hdr_addr as usize + VirtioNetHdr::BASE_LEN],
+        &[0u8; VirtioNetHdr::BASE_LEN],
+        "expected virtio-net RX header to be zeroed by device"
+    );
+    assert_eq!(
+        &guest[rx_payload_addr as usize..rx_payload_addr as usize + rx_frame.len()],
+        rx_frame,
+        "expected host RX frame to be DMA-written after enabling BME"
+    );
     assert!(
         bridge.irq_asserted(),
         "irq should assert after TX completion"
