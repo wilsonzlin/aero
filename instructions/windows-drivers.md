@@ -350,6 +350,7 @@ For AeroGPU:
 - Check display resolution changes
 - Verify DWM composition (Aero glass)
 - Run D3D9/D3D10/D3D11 test apps
+- Run the in-tree Win7 validation suite (`drivers/aerogpu/tests/win7/`), preferably via `bin\\aerogpu_test_runner.exe` (see: [`drivers/aerogpu/tests/win7/README.md`](../drivers/aerogpu/tests/win7/README.md))
 
 For virtio-blk:
 - Verify disk appears in Disk Management
@@ -372,11 +373,12 @@ For virtio end-to-end regression testing (recommended):
 3. ☐ Read [`docs/windows7-virtio-driver-contract.md`](../docs/windows7-virtio-driver-contract.md)
 4. ☐ Read [`docs/windows-device-contract.md`](../docs/windows-device-contract.md)
 5. ☐ Read [`drivers/windows7/tests/README.md`](../drivers/windows7/tests/README.md) (selftest + harness)
-6. ☐ Run contract checks locally (`python3 scripts/ci/check-windows7-virtio-contract-consistency.py`)
-7. ☐ Set up Windows build environment (WDK)
-8. ☐ Explore `drivers/aerogpu/` and `drivers/windows7/`
-9. ☐ Build existing drivers to verify toolchain
-10. ☐ Pick a task from the tables above and begin
+6. ☐ Read [`drivers/aerogpu/tests/win7/README.md`](../drivers/aerogpu/tests/win7/README.md) (AeroGPU guest validation suite)
+7. ☐ Run contract checks locally (`python3 scripts/ci/check-windows7-virtio-contract-consistency.py`)
+8. ☐ Set up Windows build environment (WDK)
+9. ☐ Explore `drivers/aerogpu/` and `drivers/windows7/`
+10. ☐ Build existing drivers to verify toolchain
+11. ☐ Pick a task from the tables above and begin
 
 ---
 
