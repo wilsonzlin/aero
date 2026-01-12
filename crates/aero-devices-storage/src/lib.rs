@@ -5,7 +5,7 @@
 //! - AHCI (SATA) via HBA memory registers and command list DMA
 //!
 //! The goal is to provide enough fidelity for early boot (e.g. FreeDOS via IDE)
-//! and Windows 7 boot (AHCI via `storahci.sys`) when wired into a full emulator.
+//! and Windows 7 boot (AHCI via `msahci.sys`) when wired into a full emulator.
 
 pub mod ahci;
 pub mod ide;

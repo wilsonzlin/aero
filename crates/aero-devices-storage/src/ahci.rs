@@ -1,6 +1,6 @@
 //! AHCI (Advanced Host Controller Interface) controller emulation.
 //!
-//! Windows 7's in-box SATA driver (`storahci.sys`) expects an AHCI HBA with a working
+//! Windows 7's in-box AHCI miniport driver (`msahci.sys`) expects an AHCI HBA with a working
 //! command list engine, PRDT-based DMA into guest memory, and interrupts.
 //!
 //! This module implements enough of the AHCI 1.x programming model for early boot:

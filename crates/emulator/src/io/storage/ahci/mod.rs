@@ -1,8 +1,8 @@
 //! Minimal AHCI (SATA) controller emulation.
 //!
 //! The goal of this module is *not* a full AHCI implementation; it is focused
-//! on the subset needed for Windows 7's inbox AHCI driver (msahci/storahci) to
-//! enumerate a single SATA disk and perform DMA-based I/O reliably.
+//! on the subset needed for Windows 7's inbox AHCI driver (`msahci.sys`; `storahci.sys` on Win8+)
+//! to enumerate a single SATA disk and perform DMA-based I/O reliably.
 
 pub mod command;
 pub mod fis;
