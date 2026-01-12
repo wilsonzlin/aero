@@ -233,9 +233,10 @@ impl<C: Clock> IoSnapshot for Hpet<C> {
                     timer.armed = armed;
 
                     // `irq_asserted` is not snapshotted: it is a runtime handshake with the
-                    // interrupt sink. The first `poll()` after restore (or an explicit
-                    // `sync_levels_to_sink()`) reasserts lines based on `general_int_status`
-                    // and timer configuration.
+                    // interrupt sink. After restore, callers should invoke
+                    // `Hpet::sync_levels_to_sink()` (or perform a `poll()`) to re-drive any
+                    // pending level-triggered interrupts based on `general_int_status` and the
+                    // restored timer configuration.
                     timer.irq_asserted = false;
                 }
             }
@@ -294,21 +295,19 @@ impl<C: Clock> Hpet<C> {
         self.service_timers(sink);
     }
 
-    /// Synchronizes the current level-triggered IRQ line levels into `sink`.
+    /// Synchronizes any pending level-triggered timer interrupts into the provided sink.
     ///
     /// This is primarily intended for snapshot restore flows: [`IoSnapshot::load_state()`]
-    /// restores interrupt status bits and timer configuration, but it cannot access the
-    /// platform interrupt sink. Callers should invoke this after restoring both the HPET
-    /// and the interrupt controller to re-drive any pending level-triggered interrupts
-    /// without advancing the HPET counter.
-    pub fn sync_levels_to_sink(&mut self, sink: &mut impl GsiSink) {
+    /// restores HPET register state (including `general_int_status`), but it does not have
+    /// access to the platform interrupt sink and therefore cannot reassert level-triggered
+    /// lines immediately. Without an explicit sync, a pending level interrupt would not be
+    /// visible until the next [`Hpet::poll()`] or MMIO access.
+    pub fn sync_levels_to_sink(&mut self, sink: &mut dyn GsiSink) {
         let legacy = self.general_config & GEN_CONF_LEGACY_ROUTE != 0;
         let enabled = self.enabled();
 
         for (idx, timer) in self.timers.iter_mut().enumerate() {
             let status_bit = 1u64 << idx;
-            let gsi = apply_legacy_replacement_route(legacy, idx, timer.route());
-
             let pending = self.general_int_status & status_bit != 0;
 
             // Only timers configured for level-triggered interrupts actively drive a persistent
@@ -322,11 +321,12 @@ impl<C: Clock> Hpet<C> {
                 continue;
             }
 
+            let gsi = apply_legacy_replacement_route(legacy, idx, timer.route());
             let should_assert = enabled && pending;
             if should_assert {
                 sink.raise_gsi(gsi);
                 timer.irq_asserted = true;
-            } else {
+            } else if timer.irq_asserted {
                 sink.lower_gsi(gsi);
                 timer.irq_asserted = false;
             }
