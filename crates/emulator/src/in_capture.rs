@@ -299,7 +299,10 @@ impl InputPipeline {
         let Some(i8042) = self.ps2.as_ref() else {
             return;
         };
-        i8042.borrow_mut().inject_mouse_motion(dx, dy, 0);
+        // Input batches use PS/2 convention: +Y is up. The i8042 controller expects browser-style
+        // coordinates where +Y is down (and the PS/2 packet encoder flips the sign). Convert here
+        // so callers can consistently use PS/2 coordinates regardless of the routing policy.
+        i8042.borrow_mut().inject_mouse_motion(dx, -dy, 0);
     }
 
     fn inject_mouse_move_virtio(
@@ -311,19 +314,21 @@ impl InputPipeline {
         let Some(virtio) = self.virtio.as_mut() else {
             return Ok(());
         };
-        virtio.mouse.inject_rel_move(mem, dx, dy)?;
+        // Input events use PS/2 convention (+Y up); virtio-input uses Linux REL_Y where +Y is down.
+        virtio.mouse.inject_rel_move(mem, dx, -dy)?;
         Ok(())
     }
 
     fn inject_mouse_move_usb(&mut self, dx: i32, dy: i32) {
         if let Some(dev) = self.usb_composite.as_ref().filter(|d| d.configured()) {
-            dev.mouse_movement(dx, dy);
+            // Input events use PS/2 convention (+Y up); USB HID uses +Y down.
+            dev.mouse_movement(dx, -dy);
             return;
         }
         let Some(mouse) = self.usb_mouse.as_ref().filter(|m| m.configured()) else {
             return;
         };
-        mouse.movement(dx, dy);
+        mouse.movement(dx, -dy);
     }
 
     fn inject_mouse_button_ps2(&mut self, button: Ps2MouseButton, pressed: bool) {
@@ -551,8 +556,8 @@ mod tests {
     use crate::io::usb::core::UsbInResult;
     use crate::io::usb::{ControlResponse, SetupPacket, UsbDeviceModel};
     use crate::io::virtio::devices::input::{
-        VirtioInputDevice, VirtioInputDeviceKind, VirtioInputEvent, EV_KEY, EV_SYN, KEY_F1,
-        KEY_F12, KEY_NUMLOCK, KEY_SCROLLLOCK, SYN_REPORT, VIRTIO_STATUS_DRIVER_OK,
+        VirtioInputDevice, VirtioInputDeviceKind, VirtioInputEvent, EV_KEY, EV_REL, EV_SYN, KEY_F1,
+        KEY_F12, KEY_NUMLOCK, KEY_SCROLLLOCK, REL_Y, SYN_REPORT, VIRTIO_STATUS_DRIVER_OK,
     };
     use crate::io::virtio::vio_core::{Descriptor, VirtQueue, VRING_DESC_F_WRITE};
     use memory::DenseMemory;
@@ -897,6 +902,121 @@ mod tests {
                 // Pause make only (Set-2 -> Set-1 translation enabled by default).
                 0xE1, 0x1D, 0x45, 0xE1, 0x9D, 0xC5,
             ]
+        );
+    }
+
+    #[test]
+    fn ps2_mouse_routing_inverts_y_to_ps2_convention() {
+        let mut mem = DenseMemory::new(0x8000).unwrap();
+        let ps2 = crate::io::input::i8042::new_shared_controller();
+        let mut pipeline = InputPipeline::new(Some(ps2.clone()), None, InputRoutingPolicy::Ps2Only);
+
+        // Enable mouse reporting (i8042 "write to mouse" prefix + 0xF4).
+        let mut dev = ps2.clone();
+        dev.port_write(0x64, 1, 0xD4);
+        dev.port_write(0x60, 1, 0xF4);
+        // Drain ACK.
+        let _ = drain_i8042_output(&ps2);
+
+        // Input pipeline uses PS/2 convention: +Y is up.
+        pipeline.handle_mouse_move(&mut mem, 0, 1).unwrap();
+        let bytes = drain_i8042_output(&ps2);
+
+        // A 3-byte PS/2 packet: status, dx=0, dy=+1.
+        assert_eq!(bytes, vec![0x08, 0x00, 0x01]);
+    }
+
+    #[test]
+    fn virtio_mouse_routing_inverts_y_to_linux_convention() {
+        let mut mem = DenseMemory::new(0x8000).unwrap();
+
+        let desc_base = 0x1000;
+        let avail = 0x2000;
+        let used = 0x3000;
+        let buf0 = 0x0100;
+        let buf1 = 0x0200;
+
+        write_desc(
+            &mut mem,
+            desc_base,
+            0,
+            Descriptor {
+                addr: buf0,
+                len: VirtioInputEvent::BYTE_SIZE as u32,
+                flags: VRING_DESC_F_WRITE,
+                next: 0,
+            },
+        );
+        write_desc(
+            &mut mem,
+            desc_base,
+            1,
+            Descriptor {
+                addr: buf1,
+                len: VirtioInputEvent::BYTE_SIZE as u32,
+                flags: VRING_DESC_F_WRITE,
+                next: 0,
+            },
+        );
+
+        init_avail(&mut mem, avail, &[0, 1]);
+        init_used(&mut mem, used);
+
+        // Only the mouse device needs a live virtqueue for this test.
+        let keyboard = VirtioInputDevice::new(
+            VirtioInputDeviceKind::Keyboard,
+            VirtQueue::new(8, 0, 0, 0),
+            VirtQueue::new(8, 0, 0, 0),
+        );
+        let mut mouse = VirtioInputDevice::new(
+            VirtioInputDeviceKind::Mouse,
+            VirtQueue::new(8, desc_base, avail, used),
+            VirtQueue::new(8, 0, 0, 0),
+        );
+        mouse.set_status(VIRTIO_STATUS_DRIVER_OK);
+        let virtio = VirtioInputHub::new(keyboard, mouse);
+
+        let mut pipeline = InputPipeline::new(None, Some(virtio), InputRoutingPolicy::VirtioOnly);
+
+        // Input pipeline uses PS/2 convention: +Y is up. Linux REL_Y uses +Y down, so the emitted
+        // virtio-input event should have value=-1 for an "up" motion.
+        pipeline.handle_mouse_move(&mut mem, 0, 1).unwrap();
+
+        assert_eq!(mem.read_u16_le(used + 2).unwrap(), 2);
+
+        let mut bytes = [0u8; VirtioInputEvent::BYTE_SIZE];
+        mem.read_into(buf0, &mut bytes).unwrap();
+        let ev = VirtioInputEvent::from_bytes_le(bytes);
+        assert_eq!(ev.typ, EV_REL);
+        assert_eq!(ev.code, REL_Y);
+        assert_eq!(ev.value, -1);
+
+        mem.read_into(buf1, &mut bytes).unwrap();
+        let ev = VirtioInputEvent::from_bytes_le(bytes);
+        assert_eq!(ev.typ, EV_SYN);
+        assert_eq!(ev.code, SYN_REPORT);
+        assert_eq!(ev.value, 0);
+    }
+
+    #[test]
+    fn usb_mouse_routing_inverts_y_to_hid_convention() {
+        let mut mem = DenseMemory::new(0x8000).unwrap();
+        let mut keyboard = UsbHidKeyboardHandle::new();
+        let mut mouse = UsbHidMouseHandle::new();
+
+        configure_usb_device(&mut keyboard);
+        configure_usb_device(&mut mouse);
+
+        let mut pipeline = InputPipeline::new(None, None, InputRoutingPolicy::UsbOnly)
+            .with_usb_hid(keyboard.clone(), mouse.clone());
+
+        // Input pipeline uses PS/2 convention: +Y is up. HID convention: +Y is down, so the HID
+        // report should contain y=-1 for an "up" motion.
+        pipeline.handle_mouse_move(&mut mem, 0, 1).unwrap();
+
+        assert_eq!(
+            mouse.handle_in_transfer(0x81, 4),
+            UsbInResult::Data(vec![0x00, 0x00, 0xFF, 0x00])
         );
     }
 
