@@ -172,9 +172,9 @@ proptest! {
 #[test]
 fn jit_mmio_access_causes_exit() {
     // Map an MMIO region and execute a program that touches it.
-    let mmio_base = 0xFEC0_0000; // Local APIC (example)
+    let mmio_base = 0xFEE0_0000; // Local APIC (example)
     let program = assemble("
-        mov eax, [0xFEC00030]   ; read APIC register
+        mov eax, [0xFEE00030]   ; read APIC register (e.g. Local APIC version)
         hlt
     ");
 
