@@ -517,19 +517,97 @@ impl CpuBus for PcCpuBus {
     }
 
     fn io_read(&mut self, port: u16, size: u32) -> Result<u64, Exception> {
-        match size {
-            1 | 2 | 4 => Ok(self.platform.io.read(port, size as u8) as u64),
-            _ => Err(Exception::InvalidOpcode),
+        let size_usize = match size {
+            1 | 2 | 4 => size as usize,
+            _ => return Err(Exception::InvalidOpcode),
+        };
+
+        if let Some(e1000) = self.platform.e1000.as_ref().cloned() {
+            let bdf = aero_devices::pci::profile::NIC_E1000_82540EM.bdf;
+            let (io_enabled, bar1) = {
+                let mut pci_cfg = self.platform.pci_cfg.borrow_mut();
+                let bus = pci_cfg.bus_mut();
+                let cfg = bus.device_config(bdf);
+                let io_enabled = cfg.is_some_and(|cfg| (cfg.command() & 0x1) != 0);
+                let bar1 = cfg.and_then(|cfg| cfg.bar_range(1));
+                (io_enabled, bar1)
+            };
+
+            if io_enabled {
+                if let Some(bar1) = bar1 {
+                    if bar1.base != 0 {
+                        let base = u16::try_from(bar1.base).ok();
+                        let bar_size = u16::try_from(bar1.size).ok();
+                        if let (Some(base), Some(bar_size)) = (base, bar_size) {
+                            let Some(port_end) = port.checked_add(size as u16) else {
+                                // I/O access would wrap the 16-bit port space.
+                                return Ok(self.platform.io.read(port, size as u8) as u64);
+                            };
+                            let Some(bar_end) = base.checked_add(bar_size) else {
+                                return Ok(self.platform.io.read(port, size as u8) as u64);
+                            };
+                            if port >= base && port_end <= bar_end {
+                                let offset = u32::from(port - base);
+                                let value = e1000.borrow_mut().io_read(offset, size_usize);
+                                return Ok(u64::from(value));
+                            }
+                        }
+                    }
+                }
+            }
         }
+
+        Ok(self.platform.io.read(port, size as u8) as u64)
     }
 
     fn io_write(&mut self, port: u16, size: u32, val: u64) -> Result<(), Exception> {
-        match size {
-            1 | 2 | 4 => {
-                self.platform.io.write(port, size as u8, val as u32);
-                Ok(())
+        let size_usize = match size {
+            1 | 2 | 4 => size as usize,
+            _ => return Err(Exception::InvalidOpcode),
+        };
+
+        if let Some(e1000) = self.platform.e1000.as_ref().cloned() {
+            let bdf = aero_devices::pci::profile::NIC_E1000_82540EM.bdf;
+            let (io_enabled, bar1) = {
+                let mut pci_cfg = self.platform.pci_cfg.borrow_mut();
+                let bus = pci_cfg.bus_mut();
+                let cfg = bus.device_config(bdf);
+                let io_enabled = cfg.is_some_and(|cfg| (cfg.command() & 0x1) != 0);
+                let bar1 = cfg.and_then(|cfg| cfg.bar_range(1));
+                (io_enabled, bar1)
+            };
+
+            if io_enabled {
+                if let Some(bar1) = bar1 {
+                    if bar1.base != 0 {
+                        let base = u16::try_from(bar1.base).ok();
+                        let bar_size = u16::try_from(bar1.size).ok();
+                        if let (Some(base), Some(bar_size)) = (base, bar_size) {
+                            let Some(port_end) = port.checked_add(size as u16) else {
+                                self.platform.io.write(port, size as u8, val as u32);
+                                return Ok(());
+                            };
+                            let Some(bar_end) = base.checked_add(bar_size) else {
+                                self.platform.io.write(port, size as u8, val as u32);
+                                return Ok(());
+                            };
+                            if port >= base && port_end <= bar_end {
+                                let offset = u32::from(port - base);
+                                e1000.borrow_mut().io_write(
+                                    &mut self.platform.memory,
+                                    offset,
+                                    size_usize,
+                                    val as u32,
+                                );
+                                return Ok(());
+                            }
+                        }
+                    }
+                }
             }
-            _ => Err(Exception::InvalidOpcode),
         }
+
+        self.platform.io.write(port, size as u8, val as u32);
+        Ok(())
     }
 }

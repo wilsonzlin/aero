@@ -25,8 +25,9 @@ use aero_platform::chipset::ChipsetState;
 use aero_platform::interrupts::{InterruptInput, PlatformInterrupts};
 use aero_platform::io::{IoPortBus, PortIoDevice};
 use aero_platform::memory::MemoryBus;
+use aero_net_e1000::E1000Device;
 use aero_storage::VirtualDisk;
-use memory::MmioHandler;
+use memory::{GuestMemory, GuestMemoryError, GuestMemoryResult, MmioHandler};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -55,6 +56,7 @@ pub struct PcPlatformConfig {
     pub enable_hda: bool,
     pub enable_ahci: bool,
     pub enable_ide: bool,
+    pub enable_e1000: bool,
 }
 
 struct HdaPciConfigDevice {
@@ -104,6 +106,35 @@ impl AhciPciConfigDevice {
 }
 
 impl PciDevice for AhciPciConfigDevice {
+    fn config(&self) -> &aero_devices::pci::PciConfigSpace {
+        &self.config
+    }
+
+    fn config_mut(&mut self) -> &mut aero_devices::pci::PciConfigSpace {
+        &mut self.config
+    }
+}
+
+struct E1000PciConfigDevice {
+    config: aero_devices::pci::PciConfigSpace,
+}
+
+impl E1000PciConfigDevice {
+    fn new() -> Self {
+        let mut config = aero_devices::pci::profile::NIC_E1000_82540EM.build_config_space();
+        config.set_bar_definition(
+            0,
+            PciBarDefinition::Mmio32 {
+                size: aero_net_e1000::E1000_MMIO_SIZE,
+                prefetchable: false,
+            },
+        );
+        config.set_bar_definition(1, PciBarDefinition::Io { size: aero_net_e1000::E1000_IO_SIZE });
+        Self { config }
+    }
+}
+
+impl PciDevice for E1000PciConfigDevice {
     fn config(&self) -> &aero_devices::pci::PciConfigSpace {
         &self.config
     }
@@ -215,6 +246,9 @@ struct PciMmioWindow {
     hda_bdf: PciBdf,
     ahci: Option<Rc<RefCell<AhciPciDevice>>>,
     ahci_bdf: PciBdf,
+    e1000: Option<Rc<RefCell<E1000Device>>>,
+    e1000_bdf: PciBdf,
+    e1000_dma: SharedRam,
 }
 
 impl PciMmioWindow {
@@ -267,6 +301,31 @@ impl PciMmioWindow {
 
         Some((ahci, paddr - bar5.base))
     }
+
+    fn e1000_bar0(&self) -> Option<(bool, PciBarRange)> {
+        let mut pci_cfg = self.pci_cfg.borrow_mut();
+        let bus = pci_cfg.bus_mut();
+        let cfg = bus.device_config(self.e1000_bdf)?;
+        let mem_enabled = (cfg.command() & 0x2) != 0;
+        let bar0 = cfg.bar_range(0)?;
+        Some((mem_enabled, bar0))
+    }
+
+    fn map_e1000(&mut self, paddr: u64, size: usize) -> Option<(Rc<RefCell<E1000Device>>, u64)> {
+        let e1000 = self.e1000.as_ref()?.clone();
+        let (mem_enabled, bar0) = self.e1000_bar0()?;
+        if !mem_enabled || bar0.base == 0 {
+            return None;
+        }
+
+        let access_end = paddr.checked_add(size as u64)?;
+        let bar_end = bar0.base.saturating_add(bar0.size);
+        if paddr < bar0.base || access_end > bar_end {
+            return None;
+        }
+
+        Some((e1000, paddr - bar0.base))
+    }
 }
 
 impl MmioHandler for PciMmioWindow {
@@ -281,6 +340,18 @@ impl MmioHandler for PciMmioWindow {
         if let Some((ahci, dev_offset)) = self.map_ahci(paddr, size) {
             let mut ahci = ahci.borrow_mut();
             return ahci.read(dev_offset, size);
+        }
+        if let Some((e1000, dev_offset)) = self.map_e1000(paddr, size) {
+            let mut e1000 = e1000.borrow_mut();
+            return match size {
+                1 | 2 | 4 => u64::from(e1000.mmio_read(dev_offset, size)),
+                8 => {
+                    let lo = e1000.mmio_read(dev_offset, 4) as u64;
+                    let hi = e1000.mmio_read(dev_offset + 4, 4) as u64;
+                    lo | (hi << 32)
+                }
+                _ => all_ones(size),
+            };
         }
         all_ones(size)
     }
@@ -299,6 +370,97 @@ impl MmioHandler for PciMmioWindow {
             ahci.write(dev_offset, size, value);
             return;
         }
+        if let Some((e1000, dev_offset)) = self.map_e1000(paddr, size) {
+            let mut e1000 = e1000.borrow_mut();
+            match size {
+                1 | 2 | 4 => {
+                    e1000.mmio_write(&mut self.e1000_dma, dev_offset, size, value as u32)
+                }
+                8 => {
+                    let lo = (value & 0xffff_ffff) as u32;
+                    let hi = (value >> 32) as u32;
+                    e1000.mmio_write(&mut self.e1000_dma, dev_offset, 4, lo);
+                    e1000.mmio_write(&mut self.e1000_dma, dev_offset + 4, 4, hi);
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+/// Shareable guest RAM backend used when device models need direct physical memory access (DMA)
+/// from within an MMIO handler.
+///
+/// `aero_platform::memory::MemoryBus` routes MMIO by calling `MmioHandler::read/write` without
+/// providing a `MemoryBus` handle. Most devices avoid DMA from within those callbacks, but the
+/// E1000 model performs DMA directly in response to certain MMIO register writes (e.g. TDT/RDT).
+///
+/// To keep the PC platform's memory bus purely safe and avoid re-entrant borrowing problems, we
+/// back guest RAM with a reference-counted buffer that can be accessed independently by device
+/// models.
+#[derive(Clone, Default)]
+struct SharedRam {
+    bytes: Rc<RefCell<Vec<u8>>>,
+}
+
+impl SharedRam {
+    fn new(size: usize) -> Self {
+        Self {
+            bytes: Rc::new(RefCell::new(vec![0u8; size])),
+        }
+    }
+
+    fn range(&self, paddr: u64, len: usize) -> GuestMemoryResult<std::ops::Range<usize>> {
+        let size = self.size();
+        let end = paddr
+            .checked_add(len as u64)
+            .ok_or(GuestMemoryError::OutOfRange { paddr, len, size })?;
+        if end > size {
+            return Err(GuestMemoryError::OutOfRange { paddr, len, size });
+        }
+
+        let start = usize::try_from(paddr).map_err(|_| GuestMemoryError::OutOfRange {
+            paddr,
+            len,
+            size,
+        })?;
+        let end = start.checked_add(len).ok_or(GuestMemoryError::OutOfRange {
+            paddr,
+            len,
+            size,
+        })?;
+
+        Ok(start..end)
+    }
+}
+
+impl GuestMemory for SharedRam {
+    fn size(&self) -> u64 {
+        self.bytes.borrow().len() as u64
+    }
+
+    fn read_into(&self, paddr: u64, dst: &mut [u8]) -> GuestMemoryResult<()> {
+        let range = self.range(paddr, dst.len())?;
+        dst.copy_from_slice(&self.bytes.borrow()[range]);
+        Ok(())
+    }
+
+    fn write_from(&mut self, paddr: u64, src: &[u8]) -> GuestMemoryResult<()> {
+        let range = self.range(paddr, src.len())?;
+        self.bytes.borrow_mut()[range].copy_from_slice(src);
+        Ok(())
+    }
+}
+
+impl memory::MemoryBus for SharedRam {
+    fn read_physical(&mut self, paddr: u64, buf: &mut [u8]) {
+        if self.read_into(paddr, buf).is_err() {
+            buf.fill(0xFF);
+        }
+    }
+
+    fn write_physical(&mut self, paddr: u64, buf: &[u8]) {
+        let _ = self.write_from(paddr, buf);
     }
 }
 
@@ -440,6 +602,7 @@ pub struct PcPlatform {
     pub hda: Option<Rc<RefCell<HdaPciDevice>>>,
     pub ahci: Option<Rc<RefCell<AhciPciDevice>>>,
     pub ide: Option<Rc<RefCell<Piix3IdePciDevice>>>,
+    pub e1000: Option<Rc<RefCell<E1000Device>>>,
 
     pci_intx_sources: Vec<PciIntxSource>,
     pci_allocator: PciResourceAllocator,
@@ -502,12 +665,30 @@ impl PcPlatform {
         )
     }
 
+    pub fn new_with_e1000(ram_size: usize) -> Self {
+        Self::new_with_config(
+            ram_size,
+            PcPlatformConfig {
+                enable_e1000: true,
+                ..Default::default()
+            },
+        )
+    }
+
     pub fn new_with_config(ram_size: usize, config: PcPlatformConfig) -> Self {
         let chipset = ChipsetState::new(false);
         let filter = AddressFilter::new(chipset.a20());
 
         let mut io = IoPortBus::new();
-        let mut memory = MemoryBus::new(filter, ram_size);
+        // The E1000 device model performs DMA from within MMIO handlers. The platform MMIO handler
+        // interface doesn't provide a reference back to `MemoryBus`, so when E1000 is enabled we
+        // back guest RAM with a small shareable implementation (`SharedRam`) that can be accessed
+        // by the device model directly.
+        let shared_ram = config.enable_e1000.then(|| SharedRam::new(ram_size));
+        let mut memory = match shared_ram.as_ref() {
+            Some(ram) => MemoryBus::with_ram(filter, Box::new(ram.clone())),
+            None => MemoryBus::new(filter, ram_size),
+        };
 
         let interrupts = Rc::new(RefCell::new(PlatformInterrupts::new()));
 
@@ -693,6 +874,35 @@ impl PcPlatform {
             None
         };
 
+        let e1000 = if config.enable_e1000 {
+            let profile = aero_devices::pci::profile::NIC_E1000_82540EM;
+            let bdf = profile.bdf;
+
+            let e1000 = Rc::new(RefCell::new(E1000Device::new([
+                0x52, 0x54, 0x00, 0x12, 0x34, 0x56,
+            ])));
+
+            {
+                let e1000_for_intx = e1000.clone();
+                pci_intx_sources.push(PciIntxSource {
+                    bdf,
+                    pin: PciInterruptPin::IntA,
+                    query_level: Box::new(move |_pc| e1000_for_intx.borrow().irq_level()),
+                });
+            }
+
+            let mut dev = E1000PciConfigDevice::new();
+            pci_intx.configure_device_intx(bdf, Some(PciInterruptPin::IntA), dev.config_mut());
+            pci_cfg
+                .borrow_mut()
+                .bus_mut()
+                .add_device(bdf, Box::new(dev));
+
+            Some(e1000)
+        } else {
+            None
+        };
+
         {
             let mut pci_cfg = pci_cfg.borrow_mut();
             bios_post(pci_cfg.bus_mut(), &mut pci_allocator).unwrap();
@@ -782,6 +992,9 @@ impl PcPlatform {
                     hda_bdf: aero_devices::pci::profile::HDA_ICH6.bdf,
                     ahci: ahci.clone(),
                     ahci_bdf: aero_devices::pci::profile::SATA_AHCI_ICH9.bdf,
+                    e1000: e1000.clone(),
+                    e1000_bdf: aero_devices::pci::profile::NIC_E1000_82540EM.bdf,
+                    e1000_dma: shared_ram.unwrap_or_default(),
                 }),
             )
             .unwrap();
@@ -828,6 +1041,7 @@ impl PcPlatform {
             hda,
             ahci,
             ide,
+            e1000,
             pci_intx_sources,
             pci_allocator,
             clock,

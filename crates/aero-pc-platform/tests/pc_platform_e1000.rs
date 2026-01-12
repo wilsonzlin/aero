@@ -1,0 +1,181 @@
+use aero_devices::pci::profile::NIC_E1000_82540EM;
+use aero_net_e1000::ICR_TXDW;
+use aero_pc_platform::PcPlatform;
+use memory::MemoryBus as _;
+
+fn cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
+    0x8000_0000
+        | ((bus as u32) << 16)
+        | ((device as u32) << 11)
+        | ((function as u32) << 8)
+        | (offset as u32 & 0xFC)
+}
+
+fn read_cfg_u32(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8) -> u32 {
+    pc.io
+        .write(0xCF8, 4, cfg_addr(bus, device, function, offset));
+    pc.io.read(0xCFC, 4)
+}
+
+fn write_cfg_u16(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8, value: u16) {
+    pc.io
+        .write(0xCF8, 4, cfg_addr(bus, device, function, offset));
+    pc.io.write(0xCFC, 2, u32::from(value));
+}
+
+fn write_cfg_u32(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8, value: u32) {
+    pc.io
+        .write(0xCF8, 4, cfg_addr(bus, device, function, offset));
+    pc.io.write(0xCFC, 4, value);
+}
+
+fn read_e1000_bar0_base(pc: &mut PcPlatform) -> u64 {
+    let bdf = NIC_E1000_82540EM.bdf;
+    let bar0 = read_cfg_u32(pc, bdf.bus, bdf.device, bdf.function, 0x10);
+    u64::from(bar0 & 0xffff_fff0)
+}
+
+fn read_e1000_bar1_base(pc: &mut PcPlatform) -> u32 {
+    let bdf = NIC_E1000_82540EM.bdf;
+    let bar1 = read_cfg_u32(pc, bdf.bus, bdf.device, bdf.function, 0x14);
+    bar1 & 0xffff_fffc
+}
+
+#[test]
+fn pc_platform_enumerates_e1000_and_assigns_bars() {
+    let mut pc = PcPlatform::new_with_e1000(2 * 1024 * 1024);
+    let bdf = NIC_E1000_82540EM.bdf;
+
+    let id = read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x00);
+    assert_eq!(id & 0xffff, u32::from(NIC_E1000_82540EM.vendor_id));
+    assert_eq!((id >> 16) & 0xffff, u32::from(NIC_E1000_82540EM.device_id));
+
+    let command = read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04) & 0xffff;
+    assert_ne!(command & 0x1, 0, "BIOS POST should enable IO decoding");
+    assert_ne!(command & 0x2, 0, "BIOS POST should enable memory decoding");
+
+    let bar0_base = read_e1000_bar0_base(&mut pc);
+    assert_ne!(bar0_base, 0, "BAR0 should be assigned during BIOS POST");
+    assert_eq!(bar0_base % 0x20_000u64, 0);
+
+    let bar1_base = read_e1000_bar1_base(&mut pc);
+    assert_ne!(bar1_base, 0, "BAR1 should be assigned during BIOS POST");
+    assert_eq!(bar1_base % 0x40, 0);
+}
+
+#[test]
+fn pc_platform_routes_e1000_mmio_through_bar0() {
+    let mut pc = PcPlatform::new_with_e1000(2 * 1024 * 1024);
+    let bar0_base = read_e1000_bar0_base(&mut pc);
+
+    // STATUS register at offset 0x08 should return a real value, not all-ones.
+    let status = pc.memory.read_u32(bar0_base + 0x08);
+    assert_ne!(status, 0xFFFF_FFFF);
+
+    // Ensure the MMIO router supports 64-bit reads by splitting into 32-bit operations.
+    assert_eq!(pc.memory.read_u64(bar0_base + 0x08), u64::from(status));
+}
+
+#[test]
+fn pc_platform_gates_e1000_mmio_on_pci_command_register() {
+    let mut pc = PcPlatform::new_with_e1000(2 * 1024 * 1024);
+    let bdf = NIC_E1000_82540EM.bdf;
+    let bar0_base = read_e1000_bar0_base(&mut pc);
+
+    // IMS should start cleared.
+    assert_eq!(pc.memory.read_u32(bar0_base + 0x00D0), 0);
+
+    // Disable PCI memory decoding but keep IO decoding enabled.
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0001);
+    assert_eq!(pc.memory.read_u32(bar0_base + 0x0008), 0xFFFF_FFFF);
+
+    // Writes should be ignored while decoding is disabled.
+    pc.memory.write_u32(bar0_base + 0x00D0, 0x1234_5678);
+
+    // Re-enable memory decoding: IMS should still be 0.
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0003);
+    assert_eq!(pc.memory.read_u32(bar0_base + 0x00D0), 0);
+}
+
+#[test]
+fn pc_platform_routes_e1000_mmio_after_bar0_reprogramming() {
+    let mut pc = PcPlatform::new_with_e1000(2 * 1024 * 1024);
+    let bdf = NIC_E1000_82540EM.bdf;
+
+    let bar0_base = read_e1000_bar0_base(&mut pc);
+    let new_base = bar0_base + 0x20_000;
+    assert_eq!(new_base % 0x20_000, 0);
+
+    pc.memory.write_u32(bar0_base + 0x00D0, 0xABCD_EF01);
+    assert_eq!(pc.memory.read_u32(bar0_base + 0x00D0), 0xABCD_EF01);
+
+    // Move BAR0 within the platform's PCI MMIO window.
+    write_cfg_u32(
+        &mut pc,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        0x10,
+        new_base as u32,
+    );
+
+    // Old base should no longer decode.
+    assert_eq!(pc.memory.read_u32(bar0_base + 0x00D0), 0xFFFF_FFFF);
+
+    // New base should decode and preserve register state.
+    assert_eq!(pc.memory.read_u32(new_base + 0x00D0), 0xABCD_EF01);
+}
+
+#[test]
+fn pc_platform_respects_pci_interrupt_disable_bit_for_e1000_intx() {
+    let mut pc = PcPlatform::new_with_e1000(2 * 1024 * 1024);
+    let bdf = NIC_E1000_82540EM.bdf;
+    let bar0_base = read_e1000_bar0_base(&mut pc);
+
+    // Unmask IRQ2 (cascade) and IRQ11 so we can observe INTx via the legacy PIC.
+    {
+        let mut interrupts = pc.interrupts.borrow_mut();
+        interrupts.pic_mut().set_offsets(0x20, 0x28);
+        interrupts.pic_mut().set_masked(2, false);
+        interrupts.pic_mut().set_masked(11, false);
+    }
+    assert_eq!(pc.interrupts.borrow().pic().get_pending_vector(), None);
+
+    // Enable TXDW interrupt and set the cause.
+    pc.memory.write_u32(bar0_base + 0x00D0, ICR_TXDW); // IMS
+    pc.memory.write_u32(bar0_base + 0x00C8, ICR_TXDW); // ICS
+
+    // Disable INTx in PCI command register (bit 10), while keeping IO+MEM decoding enabled.
+    write_cfg_u16(
+        &mut pc,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        0x04,
+        0x0003 | (1 << 10),
+    );
+    pc.poll_pci_intx_lines();
+    assert_eq!(
+        pc.interrupts.borrow().pic().get_pending_vector(),
+        None,
+        "INTx should not be delivered when COMMAND.INTX_DISABLE is set"
+    );
+
+    // Re-enable INTx; since the interrupt cause is still pending, it should now be delivered.
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0003);
+    pc.poll_pci_intx_lines();
+
+    let pending = pc
+        .interrupts
+        .borrow()
+        .pic()
+        .get_pending_vector()
+        .expect("IRQ11 should be pending after re-enabling INTx");
+    let irq = pc
+        .interrupts
+        .borrow()
+        .pic()
+        .vector_to_irq(pending)
+        .expect("pending vector should decode to an IRQ number");
+    assert_eq!(irq, 11);
+}
