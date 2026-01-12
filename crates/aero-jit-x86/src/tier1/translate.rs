@@ -99,6 +99,9 @@ fn to_binop(op: AluOp) -> BinOp {
         AluOp::And => BinOp::And,
         AluOp::Or => BinOp::Or,
         AluOp::Xor => BinOp::Xor,
+        AluOp::Shl => BinOp::Shl,
+        AluOp::Shr => BinOp::Shr,
+        AluOp::Sar => BinOp::Sar,
     }
 }
 

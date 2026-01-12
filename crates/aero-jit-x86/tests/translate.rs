@@ -183,26 +183,47 @@ fn exec_x86_block<B: Tier1Bus>(insts: &[DecodedInst], cpu: &mut CpuState, bus: &
                 let (res, flags) = match op {
                     AluOp::Add => {
                         let res = width.truncate(l.wrapping_add(r));
-                        (res, compute_add_flags(*width, l, r, res))
+                        (res, Some(compute_add_flags(*width, l, r, res)))
                     }
                     AluOp::Sub => {
                         let res = width.truncate(l.wrapping_sub(r));
-                        (res, compute_sub_flags(*width, l, r, res))
+                        (res, Some(compute_sub_flags(*width, l, r, res)))
                     }
                     AluOp::And => {
                         let res = width.truncate(l & r);
-                        (res, compute_logic_flags(*width, res))
+                        (res, Some(compute_logic_flags(*width, res)))
                     }
                     AluOp::Or => {
                         let res = width.truncate(l | r);
-                        (res, compute_logic_flags(*width, res))
+                        (res, Some(compute_logic_flags(*width, res)))
                     }
                     AluOp::Xor => {
                         let res = width.truncate(l ^ r);
-                        (res, compute_logic_flags(*width, res))
+                        (res, Some(compute_logic_flags(*width, res)))
+                    }
+                    AluOp::Shl => {
+                        let shift_mask = width.bits() - 1;
+                        let amt = (r as u32) & shift_mask;
+                        let res = width.truncate(l << amt);
+                        (res, None)
+                    }
+                    AluOp::Shr => {
+                        let shift_mask = width.bits() - 1;
+                        let amt = (r as u32) & shift_mask;
+                        let res = width.truncate(l >> amt);
+                        (res, None)
+                    }
+                    AluOp::Sar => {
+                        let shift_mask = width.bits() - 1;
+                        let amt = (r as u32) & shift_mask;
+                        let signed = width.sign_extend(width.truncate(l)) as i64;
+                        let res = width.truncate((signed >> amt) as u64);
+                        (res, None)
                     }
                 };
-                write_flagset(cpu, FlagSet::ALU, flags);
+                if let Some(flags) = flags {
+                    write_flagset(cpu, FlagSet::ALU, flags);
+                }
                 write_op(inst, cpu, bus, dst, *width, res);
                 cpu.rip = next;
             }

@@ -198,6 +198,9 @@ pub mod tier1 {
         And,
         Or,
         Xor,
+        Shl,
+        Shr,
+        Sar,
     }
 
     impl fmt::Display for AluOp {
@@ -208,6 +211,9 @@ pub mod tier1 {
                 AluOp::And => "and",
                 AluOp::Or => "or",
                 AluOp::Xor => "xor",
+                AluOp::Shl => "shl",
+                AluOp::Shr => "shr",
+                AluOp::Sar => "sar",
             };
             f.write_str(s)
         }
@@ -435,13 +441,32 @@ pub mod tier1 {
         (scale_bits, index, base)
     }
 
-    fn op_width(rex: Rex, operand_override: bool) -> Width {
-        if rex.w {
-            Width::W64
-        } else if operand_override {
-            Width::W16
-        } else {
-            Width::W32
+    fn op_width(bitness: u32, rex: Rex, operand_override: bool) -> Width {
+        match bitness {
+            64 => {
+                if rex.w {
+                    Width::W64
+                } else if operand_override {
+                    Width::W16
+                } else {
+                    Width::W32
+                }
+            }
+            32 => {
+                if operand_override {
+                    Width::W16
+                } else {
+                    Width::W32
+                }
+            }
+            16 => {
+                if operand_override {
+                    Width::W32
+                } else {
+                    Width::W16
+                }
+            }
+            _ => Width::W32,
         }
     }
 
@@ -561,7 +586,15 @@ pub mod tier1 {
     /// with a conservative 1-byte length so front-ends can always make progress.
     #[must_use]
     pub fn decode_one(rip: u64, bytes: &[u8]) -> DecodedInst {
-        match decode_one_inner(rip, bytes) {
+        decode_one_mode(rip, bytes, 64)
+    }
+
+    /// Decode a single instruction at `rip` from `bytes`, using the requested x86 bitness.
+    ///
+    /// `bitness` must be one of 16, 32, or 64.
+    #[must_use]
+    pub fn decode_one_mode(rip: u64, bytes: &[u8], bitness: u32) -> DecodedInst {
+        match decode_one_inner(rip, bytes, bitness) {
             Ok(inst) => inst,
             Err(_) => DecodedInst {
                 rip,
@@ -571,7 +604,13 @@ pub mod tier1 {
         }
     }
 
-    fn decode_one_inner(rip: u64, bytes: &[u8]) -> Result<DecodedInst, DecodeError> {
+    fn decode_one_inner(rip: u64, bytes: &[u8], bitness: u32) -> Result<DecodedInst, DecodeError> {
+        if !matches!(bitness, 16 | 32 | 64) {
+            return Err(DecodeError {
+                message: "unsupported bitness",
+            });
+        }
+
         let mut offset = 0usize;
         let mut rex = Rex::none();
         let mut operand_override = false;
@@ -587,7 +626,7 @@ pub mod tier1 {
                     // Ignored for this subset.
                     offset += 1;
                 }
-                0x40..=0x4f => {
+                0x40..=0x4f if bitness == 64 => {
                     rex = Rex::from_byte(b);
                     offset += 1;
                 }
@@ -598,9 +637,33 @@ pub mod tier1 {
         let opcode1 = read_u8(bytes, offset)?;
         offset += 1;
 
-        let width = op_width(rex, operand_override);
+        let width = op_width(bitness, rex, operand_override);
 
         let kind = match opcode1 {
+            0x40..=0x47 if bitness != 64 => {
+                let reg_code = opcode1 - 0x40;
+                let w = op_width(bitness, Rex::none(), operand_override);
+                InstKind::Inc {
+                    dst: Operand::Reg(Reg {
+                        gpr: decode_gpr(reg_code)?,
+                        width: w,
+                        high8: false,
+                    }),
+                    width: w,
+                }
+            }
+            0x48..=0x4f if bitness != 64 => {
+                let reg_code = opcode1 - 0x48;
+                let w = op_width(bitness, Rex::none(), operand_override);
+                InstKind::Dec {
+                    dst: Operand::Reg(Reg {
+                        gpr: decode_gpr(reg_code)?,
+                        width: w,
+                        high8: false,
+                    }),
+                    width: w,
+                }
+            }
             0xb8..=0xbf => {
                 let reg_code = (opcode1 - 0xb8) | if rex.b { 8 } else { 0 };
                 let dst = Reg {
@@ -737,6 +800,50 @@ pub mod tier1 {
                         src,
                         width,
                     }
+                }
+            }
+            0xc1 => {
+                let (dst, modrm) =
+                    decode_modrm_operand(bytes, &mut offset, rex, rex.present, width)?;
+                let group = modrm.reg & 0x7;
+                let imm8 = read_u8(bytes, offset)? as u64;
+                offset += 1;
+                let op = match group {
+                    4 => AluOp::Shl,
+                    5 => AluOp::Shr,
+                    7 => AluOp::Sar,
+                    _ => {
+                        return Err(DecodeError {
+                            message: "unsupported 0xC1 shift group",
+                        })
+                    }
+                };
+                InstKind::Alu {
+                    op,
+                    dst,
+                    src: Operand::Imm(imm8),
+                    width,
+                }
+            }
+            0xd1 => {
+                let (dst, modrm) =
+                    decode_modrm_operand(bytes, &mut offset, rex, rex.present, width)?;
+                let group = modrm.reg & 0x7;
+                let op = match group {
+                    4 => AluOp::Shl,
+                    5 => AluOp::Shr,
+                    7 => AluOp::Sar,
+                    _ => {
+                        return Err(DecodeError {
+                            message: "unsupported 0xD1 shift group",
+                        })
+                    }
+                };
+                InstKind::Alu {
+                    op,
+                    dst,
+                    src: Operand::Imm(1),
+                    width,
                 }
             }
             0x05 | 0x25 | 0x0d | 0x35 | 0x2d | 0x3d | 0xa9 => {
