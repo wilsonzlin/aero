@@ -119,6 +119,51 @@ describe("io/devices/UhciPciDevice", () => {
     expect(bridge.tick_1ms).not.toHaveBeenCalled();
   });
 
+  it("gates DMA stepping on PCI Bus Master Enable (command bit 2)", () => {
+    const bridge: UhciControllerBridgeLike = {
+      io_read: vi.fn(() => 0),
+      io_write: vi.fn(),
+      tick_1ms: vi.fn(),
+      irq_asserted: vi.fn(() => false),
+      free: vi.fn(),
+    };
+    const irqSink: IrqSink = { raiseIrq: vi.fn(), lowerIrq: vi.fn() };
+
+    const dev = new UhciPciDevice({ bridge, irqSink });
+    dev.tick(0);
+    dev.tick(8);
+    expect(bridge.tick_1ms).not.toHaveBeenCalled();
+
+    // Enable bus mastering; the device should start stepping from "now" without catching up.
+    dev.onPciCommandWrite(1 << 2);
+    dev.tick(9);
+    expect(bridge.tick_1ms).toHaveBeenCalledTimes(1);
+  });
+
+  it("suppresses INTx assertion when PCI command INTX_DISABLE bit is set", () => {
+    let irq = true;
+    const bridge: UhciControllerBridgeLike = {
+      io_read: vi.fn(() => 0),
+      io_write: vi.fn(),
+      tick_1ms: vi.fn(),
+      irq_asserted: vi.fn(() => irq),
+      free: vi.fn(),
+    };
+    const irqSink: IrqSink = { raiseIrq: vi.fn(), lowerIrq: vi.fn() };
+    const dev = new UhciPciDevice({ bridge, irqSink });
+
+    // Bus mastering enabled but INTx disabled.
+    dev.onPciCommandWrite((1 << 2) | (1 << 10));
+    dev.tick(0);
+    dev.tick(1);
+    expect(irqSink.raiseIrq).not.toHaveBeenCalled();
+
+    // Re-enable INTx: pending asserted level should become visible.
+    dev.onPciCommandWrite(1 << 2);
+    dev.tick(2);
+    expect(irqSink.raiseIrq).toHaveBeenCalledWith(11);
+  });
+
   it("falls back to step_frame() when tick_1ms() is unavailable", () => {
     const bridge: UhciControllerBridgeLike = {
       io_read: vi.fn(() => 0),
