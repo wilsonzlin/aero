@@ -8,6 +8,11 @@ document.querySelector("#sab").className = sab ? "ok" : "bad";
 
 document.querySelector("#origin").textContent = location.origin;
 
+// This smoke page is often served from the same reverse-proxy base path as the
+// gateway (e.g. https://example.com/aero/). Avoid hard-coded absolute paths like
+// `/session` which would drop the base path prefix.
+const basePath = new URL(".", location.href).pathname.replace(/\/$/, "");
+
 const checks = [
   `Secure context: ${window.isSecureContext}`,
   `COI: ${window.crossOriginIsolated}`,
@@ -22,7 +27,7 @@ document.querySelector("#checks").textContent = checks.join("\n");
 
 // Basic "is the reverse proxy wiring correct?" checks.
 try {
-  const res = await fetch("/healthz", { cache: "no-store" });
+  const res = await fetch(`${basePath}/healthz`, { cache: "no-store" });
   const contentType = res.headers.get("content-type") ?? "";
   let ok = false;
   if (res.ok) {
@@ -46,7 +51,7 @@ try {
 let sessionOk = false;
 let sessionJson = null;
 try {
-  const res = await fetch("/session", {
+  const res = await fetch(`${basePath}/session`, {
     method: "POST",
     cache: "no-store",
     headers: { "content-type": "application/json" },
@@ -65,7 +70,7 @@ try {
 
 try {
   const wsProto = location.protocol === "https:" ? "wss:" : "ws:";
-  const tcpPath = sessionJson?.endpoints?.tcp ?? "/tcp";
+  const tcpPath = sessionJson?.endpoints?.tcp ?? `${basePath}/tcp`;
   const wsUrl = new URL(tcpPath, `${wsProto}//${location.host}`);
   // aero-gateway requires a target host+port for /tcp (v=1 protocol).
   // We use the canonical `host` + `port` form here.
@@ -108,7 +113,7 @@ try {
 
 try {
   const wsProto = location.protocol === "https:" ? "wss:" : "ws:";
-  const l2Path = sessionJson?.endpoints?.l2 ?? "/l2";
+  const l2Path = sessionJson?.endpoints?.l2 ?? `${basePath}/l2`;
   const wsUrl = new URL(l2Path, `${wsProto}//${location.host}`);
   const wsEl = document.querySelector("#ws-l2");
   // `/l2` auth is deployment-dependent:
