@@ -14,7 +14,9 @@ use wasm_bindgen::prelude::*;
 use js_sys::Uint8Array;
 
 use aero_io_snapshot::io::state::IoSnapshot;
-use aero_net_e1000::{E1000Device, E1000_IO_SIZE, E1000_MMIO_SIZE, MAX_L2_FRAME_LEN, MIN_L2_FRAME_LEN};
+use aero_net_e1000::{
+    E1000_IO_SIZE, E1000_MMIO_SIZE, E1000Device, MAX_L2_FRAME_LEN, MIN_L2_FRAME_LEN,
+};
 use memory::MemoryBus;
 
 fn js_error(message: impl core::fmt::Display) -> JsValue {
@@ -139,7 +141,9 @@ impl E1000Bridge {
 
         let mac_addr = if let Some(mac) = mac {
             if mac.length() != 6 {
-                return Err(js_error("E1000Bridge: mac must be a Uint8Array of length 6"));
+                return Err(js_error(
+                    "E1000Bridge: mac must be a Uint8Array of length 6",
+                ));
             }
             let mut out = [0u8; 6];
             mac.copy_to(&mut out);
@@ -151,13 +155,10 @@ impl E1000Bridge {
         let guest_size_u32 = u32::try_from(guest_size_u64)
             .map_err(|_| js_error("guest_size does not fit in u32"))?;
 
-        // The E1000 model gates all DMA on the PCI command Bus Master Enable bit (COMMAND.BME).
-        //
-        // In the web runtime, PCI config space is emulated in TypeScript and is not currently
-        // plumbed through to the Rust device model. Enable BME by default so `poll()` can perform
-        // descriptor/RX buffer DMA once the guest has configured the rings.
-        let mut dev = E1000Device::new(mac_addr);
-        dev.pci_config_write(0x04, 2, 1 << 2);
+        let dev = E1000Device::new(mac_addr);
+        // Leave PCI COMMAND.BME (bit 2) disabled by default. The JS PCI bus mirrors guest config
+        // writes into this device model via `pci_config_write` / `set_pci_command`, and the E1000
+        // model gates all DMA on BME for realism and safety.
 
         Ok(Self {
             dev,
