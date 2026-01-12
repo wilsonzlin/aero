@@ -1854,6 +1854,272 @@ fn aerogpu_cmd_texture_sampling_forces_opaque_alpha_on_x8_srgb_textures() {
 }
 
 #[test]
+fn aerogpu_cmd_draw_to_x8_srgb_render_target_forces_opaque_alpha() {
+    pollster::block_on(async {
+        let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+            Ok(exec) => exec,
+            Err(e) => {
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                return;
+            }
+        };
+
+        const VB: u32 = 1;
+        const RT: u32 = 2;
+        const TEX: u32 = 3;
+        const VS: u32 = 10;
+        const PS: u32 = 11;
+        const IL: u32 = 20;
+
+        let vertices = [
+            Vertex {
+                pos: [-1.0, -1.0, 0.0],
+                color: [1.0, 0.0, 0.0, 1.0],
+            },
+            Vertex {
+                pos: [-1.0, 3.0, 0.0],
+                color: [1.0, 0.0, 0.0, 1.0],
+            },
+            Vertex {
+                pos: [3.0, -1.0, 0.0],
+                color: [1.0, 0.0, 0.0, 1.0],
+            },
+        ];
+        let vb_bytes = bytemuck::bytes_of(&vertices);
+        let vb_size = vb_bytes.len() as u64;
+
+        let dxbc_vs = load_fixture("vs_passthrough.dxbc");
+        let dxbc_ps = build_ps_sample_t0_s0_dxbc(0.5, 0.5);
+        let ilay = load_fixture("ilay_pos3_color.bin");
+
+        // Output texel: opaque white with alpha=0. X8 render targets must still keep alpha=255.
+        let texel = [255u8, 255u8, 255u8, 0u8];
+
+        let cases = [
+            ("rgba_x8_srgb_rt", AEROGPU_FORMAT_R8G8B8X8_UNORM_SRGB),
+            ("bgra_x8_srgb_rt", AEROGPU_FORMAT_B8G8R8X8_UNORM_SRGB),
+        ];
+
+        for (label, rt_format_u32) in cases {
+            exec.reset();
+
+            let mut guest_mem = VecGuestMemory::new(0x1000);
+
+            let mut stream = Vec::new();
+            // Stream header (24 bytes)
+            stream.extend_from_slice(&AEROGPU_CMD_STREAM_MAGIC.to_le_bytes());
+            stream.extend_from_slice(&AEROGPU_ABI_VERSION_U32.to_le_bytes());
+            stream.extend_from_slice(&0u32.to_le_bytes()); // size_bytes (patched later)
+            stream.extend_from_slice(&0u32.to_le_bytes()); // flags
+            stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+            stream.extend_from_slice(&0u32.to_le_bytes()); // reserved1
+
+            // CREATE_BUFFER (VB, host alloc)
+            let start = begin_cmd(&mut stream, OPCODE_CREATE_BUFFER);
+            stream.extend_from_slice(&VB.to_le_bytes());
+            stream.extend_from_slice(&AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER.to_le_bytes());
+            stream.extend_from_slice(&vb_size.to_le_bytes());
+            stream.extend_from_slice(&0u32.to_le_bytes()); // backing_alloc_id
+            stream.extend_from_slice(&0u32.to_le_bytes()); // backing_offset_bytes
+            stream.extend_from_slice(&0u64.to_le_bytes()); // reserved0
+            end_cmd(&mut stream, start);
+
+            // UPLOAD_RESOURCE (VB bytes)
+            let start = begin_cmd(&mut stream, OPCODE_UPLOAD_RESOURCE);
+            stream.extend_from_slice(&VB.to_le_bytes());
+            stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+            stream.extend_from_slice(&0u64.to_le_bytes()); // offset_bytes
+            stream.extend_from_slice(&(vb_bytes.len() as u64).to_le_bytes()); // size_bytes
+            stream.extend_from_slice(vb_bytes);
+            stream.resize(stream.len() + (align4(vb_bytes.len()) - vb_bytes.len()), 0);
+            end_cmd(&mut stream, start);
+
+            // CREATE_TEXTURE2D (RT) - X8 sRGB.
+            let start = begin_cmd(&mut stream, OPCODE_CREATE_TEXTURE2D);
+            stream.extend_from_slice(&RT.to_le_bytes());
+            stream.extend_from_slice(&AEROGPU_RESOURCE_USAGE_RENDER_TARGET.to_le_bytes());
+            stream.extend_from_slice(&rt_format_u32.to_le_bytes());
+            stream.extend_from_slice(&4u32.to_le_bytes()); // width
+            stream.extend_from_slice(&4u32.to_le_bytes()); // height
+            stream.extend_from_slice(&1u32.to_le_bytes()); // mip_levels
+            stream.extend_from_slice(&1u32.to_le_bytes()); // array_layers
+            stream.extend_from_slice(&0u32.to_le_bytes()); // row_pitch_bytes
+            stream.extend_from_slice(&0u32.to_le_bytes()); // backing_alloc_id
+            stream.extend_from_slice(&0u32.to_le_bytes()); // backing_offset_bytes
+            stream.extend_from_slice(&0u64.to_le_bytes()); // reserved0
+            end_cmd(&mut stream, start);
+
+            // CREATE_TEXTURE2D (TEX) - RGBA8 UNORM.
+            let start = begin_cmd(&mut stream, OPCODE_CREATE_TEXTURE2D);
+            stream.extend_from_slice(&TEX.to_le_bytes());
+            stream.extend_from_slice(&AEROGPU_RESOURCE_USAGE_TEXTURE.to_le_bytes());
+            stream.extend_from_slice(&AEROGPU_FORMAT_R8G8B8A8_UNORM.to_le_bytes());
+            stream.extend_from_slice(&1u32.to_le_bytes()); // width
+            stream.extend_from_slice(&1u32.to_le_bytes()); // height
+            stream.extend_from_slice(&1u32.to_le_bytes()); // mip_levels
+            stream.extend_from_slice(&1u32.to_le_bytes()); // array_layers
+            stream.extend_from_slice(&0u32.to_le_bytes()); // row_pitch_bytes
+            stream.extend_from_slice(&0u32.to_le_bytes()); // backing_alloc_id
+            stream.extend_from_slice(&0u32.to_le_bytes()); // backing_offset_bytes
+            stream.extend_from_slice(&0u64.to_le_bytes()); // reserved0
+            end_cmd(&mut stream, start);
+
+            // UPLOAD_RESOURCE (TEX)
+            let start = begin_cmd(&mut stream, OPCODE_UPLOAD_RESOURCE);
+            stream.extend_from_slice(&TEX.to_le_bytes());
+            stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+            stream.extend_from_slice(&0u64.to_le_bytes()); // offset_bytes
+            stream.extend_from_slice(&(texel.len() as u64).to_le_bytes()); // size_bytes
+            stream.extend_from_slice(&texel);
+            end_cmd(&mut stream, start);
+
+            // CREATE_SHADER_DXBC (VS)
+            let start = begin_cmd(&mut stream, OPCODE_CREATE_SHADER_DXBC);
+            stream.extend_from_slice(&VS.to_le_bytes());
+            stream.extend_from_slice(&0u32.to_le_bytes()); // stage = vertex
+            stream.extend_from_slice(&(dxbc_vs.len() as u32).to_le_bytes());
+            stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+            stream.extend_from_slice(&dxbc_vs);
+            stream.resize(stream.len() + (align4(dxbc_vs.len()) - dxbc_vs.len()), 0);
+            end_cmd(&mut stream, start);
+
+            // CREATE_SHADER_DXBC (PS)
+            let start = begin_cmd(&mut stream, OPCODE_CREATE_SHADER_DXBC);
+            stream.extend_from_slice(&PS.to_le_bytes());
+            stream.extend_from_slice(&1u32.to_le_bytes()); // stage = pixel
+            stream.extend_from_slice(&(dxbc_ps.len() as u32).to_le_bytes());
+            stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+            stream.extend_from_slice(&dxbc_ps);
+            stream.resize(stream.len() + (align4(dxbc_ps.len()) - dxbc_ps.len()), 0);
+            end_cmd(&mut stream, start);
+
+            // BIND_SHADERS
+            let start = begin_cmd(&mut stream, OPCODE_BIND_SHADERS);
+            stream.extend_from_slice(&VS.to_le_bytes());
+            stream.extend_from_slice(&PS.to_le_bytes());
+            stream.extend_from_slice(&0u32.to_le_bytes()); // cs
+            stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+            end_cmd(&mut stream, start);
+
+            // CREATE_INPUT_LAYOUT
+            let start = begin_cmd(&mut stream, OPCODE_CREATE_INPUT_LAYOUT);
+            stream.extend_from_slice(&IL.to_le_bytes());
+            stream.extend_from_slice(&(ilay.len() as u32).to_le_bytes());
+            stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+            stream.extend_from_slice(&ilay);
+            stream.resize(stream.len() + (align4(ilay.len()) - ilay.len()), 0);
+            end_cmd(&mut stream, start);
+
+            // SET_INPUT_LAYOUT
+            let start = begin_cmd(&mut stream, OPCODE_SET_INPUT_LAYOUT);
+            stream.extend_from_slice(&IL.to_le_bytes());
+            stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+            end_cmd(&mut stream, start);
+
+            // SET_RENDER_TARGETS
+            let start = begin_cmd(&mut stream, OPCODE_SET_RENDER_TARGETS);
+            stream.extend_from_slice(&1u32.to_le_bytes()); // color_count
+            stream.extend_from_slice(&0u32.to_le_bytes()); // depth_stencil
+            stream.extend_from_slice(&RT.to_le_bytes());
+            for _ in 0..7 {
+                stream.extend_from_slice(&0u32.to_le_bytes());
+            }
+            end_cmd(&mut stream, start);
+
+            // VIEWPORT 0..4
+            let start = begin_cmd(&mut stream, OPCODE_SET_VIEWPORT);
+            stream.extend_from_slice(&0f32.to_bits().to_le_bytes());
+            stream.extend_from_slice(&0f32.to_bits().to_le_bytes());
+            stream.extend_from_slice(&4f32.to_bits().to_le_bytes());
+            stream.extend_from_slice(&4f32.to_bits().to_le_bytes());
+            stream.extend_from_slice(&0f32.to_bits().to_le_bytes());
+            stream.extend_from_slice(&1f32.to_bits().to_le_bytes());
+            end_cmd(&mut stream, start);
+
+            // SCISSOR 0..4
+            let start = begin_cmd(&mut stream, OPCODE_SET_SCISSOR);
+            stream.extend_from_slice(&0i32.to_le_bytes());
+            stream.extend_from_slice(&0i32.to_le_bytes());
+            stream.extend_from_slice(&4i32.to_le_bytes());
+            stream.extend_from_slice(&4i32.to_le_bytes());
+            end_cmd(&mut stream, start);
+
+            // CLEAR (black, alpha=0). X8 formats must behave as if alpha is opaque.
+            let start = begin_cmd(&mut stream, OPCODE_CLEAR);
+            stream.extend_from_slice(&AEROGPU_CLEAR_COLOR.to_le_bytes());
+            stream.extend_from_slice(&0f32.to_bits().to_le_bytes()); // r
+            stream.extend_from_slice(&0f32.to_bits().to_le_bytes()); // g
+            stream.extend_from_slice(&0f32.to_bits().to_le_bytes()); // b
+            stream.extend_from_slice(&0f32.to_bits().to_le_bytes()); // a (ignored for X8)
+            stream.extend_from_slice(&1f32.to_bits().to_le_bytes()); // depth
+            stream.extend_from_slice(&0u32.to_le_bytes()); // stencil
+            end_cmd(&mut stream, start);
+
+            // SET_VERTEX_BUFFERS
+            let start = begin_cmd(&mut stream, OPCODE_SET_VERTEX_BUFFERS);
+            stream.extend_from_slice(&0u32.to_le_bytes()); // start_slot
+            stream.extend_from_slice(&1u32.to_le_bytes()); // buffer_count
+            stream.extend_from_slice(&VB.to_le_bytes());
+            stream.extend_from_slice(&(core::mem::size_of::<Vertex>() as u32).to_le_bytes()); // stride
+            stream.extend_from_slice(&0u32.to_le_bytes()); // offset
+            stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+            end_cmd(&mut stream, start);
+
+            // SET_PRIMITIVE_TOPOLOGY
+            let start = begin_cmd(&mut stream, OPCODE_SET_PRIMITIVE_TOPOLOGY);
+            stream.extend_from_slice(&AEROGPU_TOPOLOGY_TRIANGLELIST.to_le_bytes());
+            stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+            end_cmd(&mut stream, start);
+
+            // SET_TEXTURE (PS t0)
+            let start = begin_cmd(&mut stream, OPCODE_SET_TEXTURE);
+            stream.extend_from_slice(&1u32.to_le_bytes()); // shader_stage = pixel
+            stream.extend_from_slice(&0u32.to_le_bytes()); // slot = 0
+            stream.extend_from_slice(&TEX.to_le_bytes());
+            stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+            end_cmd(&mut stream, start);
+
+            // SET_SAMPLER_STATE (PS s0 = default)
+            let start = begin_cmd(&mut stream, OPCODE_SET_SAMPLER_STATE);
+            stream.extend_from_slice(&1u32.to_le_bytes()); // shader_stage = pixel
+            stream.extend_from_slice(&0u32.to_le_bytes()); // slot = 0
+            stream.extend_from_slice(&0u32.to_le_bytes()); // state
+            stream.extend_from_slice(&0u32.to_le_bytes()); // value
+            end_cmd(&mut stream, start);
+
+            // DRAW
+            let start = begin_cmd(&mut stream, OPCODE_DRAW);
+            stream.extend_from_slice(&3u32.to_le_bytes()); // vertex_count
+            stream.extend_from_slice(&1u32.to_le_bytes()); // instance_count
+            stream.extend_from_slice(&0u32.to_le_bytes()); // first_vertex
+            stream.extend_from_slice(&0u32.to_le_bytes()); // first_instance
+            end_cmd(&mut stream, start);
+
+            // PRESENT
+            let start = begin_cmd(&mut stream, OPCODE_PRESENT);
+            stream.extend_from_slice(&0u32.to_le_bytes()); // scanout_id
+            stream.extend_from_slice(&0u32.to_le_bytes()); // flags
+            end_cmd(&mut stream, start);
+
+            // Patch stream size in header.
+            let total_size = stream.len() as u32;
+            stream[8..12].copy_from_slice(&total_size.to_le_bytes());
+
+            exec.execute_cmd_stream(&stream, None, &mut guest_mem)
+                .unwrap_or_else(|e| panic!("execute_cmd_stream failed for {label}: {e:#}"));
+            exec.poll_wait();
+
+            let pixels = exec.read_texture_rgba8(RT).await.unwrap();
+            assert_eq!(pixels.len(), 4 * 4 * 4);
+            for px in pixels.chunks_exact(4) {
+                assert!(px[0] >= 254 && px[1] >= 254 && px[2] >= 254, "{label}: {px:?}");
+                assert_eq!(px[3], 255, "{label}: expected alpha=255, got {px:?}");
+            }
+        }
+    });
+}
+
+#[test]
 fn aerogpu_cmd_texture_sampling_linearizes_bc1_srgb_textures() {
     pollster::block_on(async {
         let mut exec = match AerogpuD3d11Executor::new_for_tests().await {

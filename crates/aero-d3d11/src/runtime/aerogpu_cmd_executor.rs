@@ -6438,13 +6438,26 @@ impl AerogpuD3d11Executor {
             build_render_pass_attachments(&self.resources, &self.state, wgpu::LoadOp::Load)?;
 
         if flags & AEROGPU_CLEAR_COLOR != 0 {
-            for att in &mut color_attachments {
+            for (idx, att) in color_attachments.iter_mut().enumerate() {
                 if let Some(att) = att.as_mut() {
+                    let rt_handle = *render_targets
+                        .get(idx)
+                        .ok_or_else(|| anyhow!("CLEAR: render target list out of bounds"))?;
+                    let rt_tex = self
+                        .resources
+                        .textures
+                        .get(&rt_handle)
+                        .ok_or_else(|| anyhow!("CLEAR: unknown render target texture {rt_handle}"))?;
+                    let a = if aerogpu_format_is_x8(rt_tex.format_u32) {
+                        1.0
+                    } else {
+                        color[3]
+                    };
                     att.ops.load = wgpu::LoadOp::Clear(wgpu::Color {
                         r: color[0] as f64,
                         g: color[1] as f64,
                         b: color[2] as f64,
-                        a: color[3] as f64,
+                        a: a as f64,
                     });
                 }
             }
@@ -7764,10 +7777,17 @@ fn get_or_create_render_pipeline_for_state<'a>(
             .textures
             .get(&rt)
             .ok_or_else(|| anyhow!("unknown render target texture {rt}"))?;
+        let mut write_mask = state.color_write_mask;
+        if aerogpu_format_is_x8(tex.format_u32) {
+            // X8 formats treat alpha as always opaque; ignore alpha writes so shaders can't
+            // accidentally stomp the stored alpha channel (wgpu uses RGBA/BGRA textures for X8
+            // formats).
+            write_mask &= !wgpu::ColorWrites::ALPHA;
+        }
         let ct = wgpu::ColorTargetState {
             format: tex.desc.format,
             blend: state.blend,
-            write_mask: state.color_write_mask,
+            write_mask,
         };
         color_targets.push(ColorTargetKey {
             format: ct.format,
