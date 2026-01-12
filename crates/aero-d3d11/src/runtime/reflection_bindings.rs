@@ -461,6 +461,150 @@ mod tests {
     }
 
     #[test]
+    fn build_bind_group_falls_back_to_dummy_for_too_small_constant_buffer() {
+        pollster::block_on(async {
+            let rt = match crate::runtime::aerogpu_execute::AerogpuCmdRuntime::new_for_tests().await
+            {
+                Ok(rt) => rt,
+                Err(err) => {
+                    skip_or_panic(module_path!(), &format!("wgpu unavailable ({err:#})"));
+                    return;
+                }
+            };
+
+            let device = rt.device();
+
+            let dummy_uniform = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("reflection_bindings test dummy uniform"),
+                size: 256,
+                usage: wgpu::BufferUsages::UNIFORM,
+                mapped_at_creation: false,
+            });
+            let too_small_uniform = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("reflection_bindings test too-small uniform"),
+                size: 32,
+                usage: wgpu::BufferUsages::UNIFORM,
+                mapped_at_creation: false,
+            });
+
+            let dummy_texture = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("reflection_bindings test dummy texture"),
+                size: wgpu::Extent3d {
+                    width: 1,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            });
+            let dummy_texture_view =
+                dummy_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+            let mut sampler_cache = SamplerCache::new();
+            let default_sampler =
+                sampler_cache.get_or_create(device, &wgpu::SamplerDescriptor::default());
+
+            let binding = crate::Binding {
+                group: 0,
+                binding: BINDING_BASE_CBUFFER,
+                visibility: wgpu::ShaderStages::VERTEX,
+                kind: crate::BindingKind::ConstantBuffer {
+                    slot: 0,
+                    reg_count: 4, // 64 bytes required
+                },
+            };
+
+            let layout_entry = binding_to_layout_entry(&binding).unwrap();
+            let mut layout_cache = BindGroupLayoutCache::new();
+            let layout = layout_cache.get_or_create(device, &[layout_entry]);
+
+            struct TestProvider<'a> {
+                cb: Option<(BufferId, &'a wgpu::Buffer, u64, Option<u64>, u64)>,
+                dummy_uniform: &'a wgpu::Buffer,
+                dummy_texture_view: &'a wgpu::TextureView,
+                default_sampler: &'a CachedSampler,
+            }
+
+            impl BindGroupResourceProvider for TestProvider<'_> {
+                fn constant_buffer(&self, slot: u32) -> Option<BufferBinding<'_>> {
+                    if slot != 0 {
+                        return None;
+                    }
+                    self.cb.map(|(id, buffer, offset, size, total_size)| BufferBinding {
+                        id,
+                        buffer,
+                        offset,
+                        size,
+                        total_size,
+                    })
+                }
+
+                fn constant_buffer_scratch(&self, _slot: u32) -> Option<(BufferId, &wgpu::Buffer)> {
+                    None
+                }
+
+                fn texture2d(&self, _slot: u32) -> Option<(TextureViewId, &wgpu::TextureView)> {
+                    None
+                }
+
+                fn sampler(&self, _slot: u32) -> Option<&CachedSampler> {
+                    None
+                }
+
+                fn dummy_uniform(&self) -> &wgpu::Buffer {
+                    self.dummy_uniform
+                }
+
+                fn dummy_texture_view(&self) -> &wgpu::TextureView {
+                    self.dummy_texture_view
+                }
+
+                fn default_sampler(&self) -> &CachedSampler {
+                    self.default_sampler
+                }
+            }
+
+            let provider_too_small = TestProvider {
+                cb: Some((BufferId(1), &too_small_uniform, 0, None, 32)),
+                dummy_uniform: &dummy_uniform,
+                dummy_texture_view: &dummy_texture_view,
+                default_sampler: &default_sampler,
+            };
+            let provider_none = TestProvider {
+                cb: None,
+                ..provider_too_small
+            };
+
+            let mut bind_group_cache = BindGroupCache::new(32);
+            let bg_fallback = build_bind_group(
+                device,
+                &mut bind_group_cache,
+                &layout,
+                &[binding.clone()],
+                &provider_too_small,
+            )
+            .unwrap();
+            let bg_dummy = build_bind_group(
+                device,
+                &mut bind_group_cache,
+                &layout,
+                &[binding],
+                &provider_none,
+            )
+            .unwrap();
+
+            assert!(
+                Arc::ptr_eq(&bg_fallback, &bg_dummy),
+                "expected too-small constant buffer binding to fall back to the dummy binding"
+            );
+        });
+    }
+
+    #[test]
     fn build_bind_group_uses_scratch_for_unaligned_uniform_offsets() {
         pollster::block_on(async {
             let rt = match crate::runtime::aerogpu_execute::AerogpuCmdRuntime::new_for_tests().await
