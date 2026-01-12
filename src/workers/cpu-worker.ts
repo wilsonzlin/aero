@@ -405,6 +405,10 @@ async function runTieredVm(iterations: number, threshold: number) {
   let jitCtxHeaderBytes = readMaybeU32(jitAbi, 'jit_ctx_header_bytes') ?? 0;
   let jitTlbEntries = readMaybeU32(jitAbi, 'jit_tlb_entries') ?? 0;
   let jitTlbEntryBytes = readMaybeU32(jitAbi, 'jit_tlb_entry_bytes') ?? 0;
+  const jitTlbFlagRead = (readMaybeU32(jitAbi, 'jit_tlb_flag_read') ?? 1) >>> 0;
+  const jitTlbFlagWrite = (readMaybeU32(jitAbi, 'jit_tlb_flag_write') ?? 2) >>> 0;
+  const jitTlbFlagExec = (readMaybeU32(jitAbi, 'jit_tlb_flag_exec') ?? 4) >>> 0;
+  const jitTlbFlagIsRam = (readMaybeU32(jitAbi, 'jit_tlb_flag_is_ram') ?? 8) >>> 0;
   let tier2CtxBytes = readMaybeU32(jitAbi, 'tier2_ctx_size') ?? 0;
   const tier2CtxOffset = readMaybeU32(jitAbi, 'tier2_ctx_offset');
   let commitFlagOffset = readMaybeU32(jitAbi, 'commit_flag_offset') ?? 0;
@@ -858,7 +862,11 @@ async function runTieredVm(iterations: number, threshold: number) {
 
       const isRam = vaddrU < BigInt(guest_size);
       const physBase = vaddrU & ~0xfffn;
-      const flags = 1n | 2n | 4n | (isRam ? 8n : 0n);
+      const flags =
+        BigInt(jitTlbFlagRead) |
+        BigInt(jitTlbFlagWrite) |
+        BigInt(jitTlbFlagExec) |
+        (isRam ? BigInt(jitTlbFlagIsRam) : 0n);
       const data = asU64(physBase | flags);
 
       const entryAddr = jitCtxPtr + jitCtxHeaderBytes + idx * jitTlbEntryBytes;

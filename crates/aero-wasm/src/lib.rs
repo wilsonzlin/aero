@@ -224,7 +224,10 @@ pub fn jit_abi_constants() -> JsValue {
             CPU_GPR_OFF, CPU_RFLAGS_OFF, CPU_RIP_OFF, CPU_STATE_ALIGN, CPU_STATE_SIZE, GPR_COUNT,
         };
         use aero_jit_x86::jit_ctx::{JitContext, TIER2_CTX_OFFSET, TIER2_CTX_SIZE};
-        use aero_jit_x86::{JIT_TLB_ENTRIES, JIT_TLB_ENTRY_SIZE};
+        use aero_jit_x86::{
+            JIT_TLB_ENTRIES, JIT_TLB_ENTRY_SIZE, TLB_FLAG_EXEC, TLB_FLAG_IS_RAM, TLB_FLAG_READ,
+            TLB_FLAG_WRITE,
+        };
         use js_sys::Uint32Array;
 
         let obj = Object::new();
@@ -245,6 +248,10 @@ pub fn jit_abi_constants() -> JsValue {
         set_u32("jit_ctx_total_bytes", JitContext::TOTAL_BYTE_SIZE as u32);
         set_u32("jit_tlb_entries", JIT_TLB_ENTRIES as u32);
         set_u32("jit_tlb_entry_bytes", JIT_TLB_ENTRY_SIZE as u32);
+        set_u32("jit_tlb_flag_read", TLB_FLAG_READ as u32);
+        set_u32("jit_tlb_flag_write", TLB_FLAG_WRITE as u32);
+        set_u32("jit_tlb_flag_exec", TLB_FLAG_EXEC as u32);
+        set_u32("jit_tlb_flag_is_ram", TLB_FLAG_IS_RAM as u32);
         set_u32("tier2_ctx_offset", TIER2_CTX_OFFSET as u32);
         set_u32("tier2_ctx_size", TIER2_CTX_SIZE as u32);
         let commit_flag_offset = TIER2_CTX_OFFSET + TIER2_CTX_SIZE;
@@ -283,7 +290,10 @@ mod jit_abi_constants_tests {
         CPU_GPR_OFF, CPU_RFLAGS_OFF, CPU_RIP_OFF, CPU_STATE_ALIGN, CPU_STATE_SIZE, GPR_COUNT,
     };
     use aero_jit_x86::jit_ctx::{JitContext, TIER2_CTX_OFFSET, TIER2_CTX_SIZE};
-    use aero_jit_x86::{JIT_TLB_ENTRIES, JIT_TLB_ENTRY_SIZE};
+    use aero_jit_x86::{
+        JIT_TLB_ENTRIES, JIT_TLB_ENTRY_SIZE, TLB_FLAG_EXEC, TLB_FLAG_IS_RAM, TLB_FLAG_READ,
+        TLB_FLAG_WRITE,
+    };
 
     fn read_u32(obj: &JsValue, key: &str) -> u32 {
         Reflect::get(obj, &JsValue::from_str(key))
@@ -322,6 +332,10 @@ mod jit_abi_constants_tests {
         );
         assert_eq!(read_u32(&obj, "jit_tlb_entries"), JIT_TLB_ENTRIES as u32);
         assert_eq!(read_u32(&obj, "jit_tlb_entry_bytes"), JIT_TLB_ENTRY_SIZE);
+        assert_eq!(read_u32(&obj, "jit_tlb_flag_read"), TLB_FLAG_READ as u32);
+        assert_eq!(read_u32(&obj, "jit_tlb_flag_write"), TLB_FLAG_WRITE as u32);
+        assert_eq!(read_u32(&obj, "jit_tlb_flag_exec"), TLB_FLAG_EXEC as u32);
+        assert_eq!(read_u32(&obj, "jit_tlb_flag_is_ram"), TLB_FLAG_IS_RAM as u32);
         assert_eq!(read_u32(&obj, "tier2_ctx_offset"), TIER2_CTX_OFFSET);
         assert_eq!(read_u32(&obj, "tier2_ctx_size"), TIER2_CTX_SIZE);
         assert_eq!(

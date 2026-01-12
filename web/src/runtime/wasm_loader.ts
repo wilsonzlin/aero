@@ -134,6 +134,10 @@ export interface WasmApi {
         readonly jit_ctx_total_bytes?: number;
         readonly jit_tlb_entries?: number;
         readonly jit_tlb_entry_bytes?: number;
+        readonly jit_tlb_flag_read?: number;
+        readonly jit_tlb_flag_write?: number;
+        readonly jit_tlb_flag_exec?: number;
+        readonly jit_tlb_flag_is_ram?: number;
         readonly tier2_ctx_offset?: number;
         readonly tier2_ctx_size?: number;
         readonly commit_flag_offset?: number;
