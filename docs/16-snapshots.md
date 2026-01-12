@@ -91,6 +91,30 @@ To keep restore behavior deterministic and avoid ambiguous state merges, the dec
   - `CPUS`: duplicate `apic_id` (must be unique)
 - Dirty RAM snapshots (`RAM` `mode = Dirty`) whose page index list is not **strictly increasing**.
 
+### Format limits / resource bounds
+
+To keep snapshot parsing bounded (and avoid accidentally allocating unbounded memory when restoring untrusted/corrupt files), `aero-snapshot` enforces a set of **hard limits** at restore-time.
+
+The canonical set of limits lives in `crates/aero-snapshot/src/limits.rs` (`aero_snapshot::limits`) and is shared by:
+
+- `aero_snapshot::{save_snapshot,restore_snapshot}` (the library)
+- `cargo xtask snapshot validate` (the tooling)
+
+Current notable limits include:
+
+- Max CPUs: `256`
+- Max device entries: `4096`
+- Max DEVICES section payload: `256 MiB`
+- Max single device entry payload: `64 MiB`
+- Max vCPU internal state blob: `64 MiB`
+- Max disk overlay refs: `256`
+- Max disk path length: `64 KiB`
+- Max META label length: `4 KiB`
+- Max RAM page size: `2 MiB`
+- Max RAM chunk size: `64 MiB`
+
+`save_snapshot` also enforces these bounds so Aero does not produce snapshots it cannot restore itself.
+
 ### Core sections (format v1)
 
 | Section | Contents |
