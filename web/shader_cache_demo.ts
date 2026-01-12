@@ -102,134 +102,136 @@ async function main() {
     shaderLimits: { maxEntries: 64, maxBytes: 4 * 1024 * 1024 },
     pipelineLimits: { maxEntries: 256, maxBytes: 4 * 1024 * 1024 },
   });
-  cache.resetTelemetry();
-  const shaderCache = new ShaderTranslationCache(cache);
+  try {
+    cache.resetTelemetry();
+    const shaderCache = new ShaderTranslationCache(cache);
 
-  const t0 = performance.now();
-  let cacheHit = false;
-  let payload;
-  const result = await shaderCache.getOrTranslate(
-    dxbc,
-    flags,
-    async () => {
-      logLine("shader_translate: begin");
-      const out = await translateDxbcToWgslSlow(dxbc, { large });
-      logLine("shader_translate: end");
-      return out;
-    },
-    device && !large
-      ? {
-          validateWgsl: async (wgsl) => {
-            // Cache-hit corruption defense: validate against current implementation.
-            const compile = await compileWgslModule(device, wgsl);
-            return !!compile.ok;
-          },
-        }
-      : undefined,
-  );
-  payload = result.value;
-  cacheHit = result.source === "persistent";
-  logLine(`shader_cache: ${cacheHit ? "hit" : "miss"} key=${key}`);
-  const t1 = performance.now();
-  if (device && !large) {
-    // Validate cached WGSL against current browser implementation.
-    const compile = await compileWgslModule(device, payload.wgsl);
-    if (!compile.ok) {
-      logLine("wgsl_compile: failed; invalidating cache entry and retranslating");
-      await cache.deleteShader(key);
-      logLine("shader_translate: begin");
-      payload = await translateDxbcToWgslSlow(dxbc, { large });
-      logLine("shader_translate: end");
-      await cache.putShader(key, payload);
-      await compileWgslModule(device, payload.wgsl);
-    } else {
-      logLine("wgsl_compile: ok");
-    }
-  } else {
-    logLine(device ? "wgsl_compile: skipped (large mode)" : "wgsl_compile: skipped (WebGPU unavailable)");
-  }
-
-  const translationMs = t1 - t0;
-  logLine(`shader_cache: done hit=${cacheHit} translation_ms=${translationMs.toFixed(1)}`);
-
-  let opfsAvailable = false;
-  let opfsFileExists = false;
-  let pipelineKey = null;
-  let pipelineOpfsFileExists = false;
-  let pipelineRoundtripOk = false;
-  let pipelineCacheHit = false;
-  if (large) {
-    if (navigator.storage && typeof navigator.storage.getDirectory === "function") {
-      try {
-        const root = await navigator.storage.getDirectory();
-        const dir = await root.getDirectoryHandle("aero-gpu-cache", { create: true });
-        opfsAvailable = true;
-
-        try {
-          const shadersDir = await dir.getDirectoryHandle("shaders");
-          await shadersDir.getFileHandle(`${key}.json`);
-          opfsFileExists = true;
-        } catch {
-          opfsFileExists = false;
-        }
-
-        // Also write a large pipeline descriptor to exercise the pipeline spillover path.
-        try {
-          const pipelineDesc = buildLargePipelineDescriptor(310 * 1024);
-          pipelineKey = await computePipelineCacheKey(pipelineDesc);
-          // `PersistentGpuCache.open()` warms pipeline descriptors into memory.
-          // If the descriptor was persisted previously, this should already be a hit.
-          pipelineCacheHit = cache.pipelineDescriptors.has(pipelineKey);
-          if (!pipelineCacheHit) {
-            await cache.putPipelineDescriptor(pipelineKey, pipelineDesc);
+    const t0 = performance.now();
+    let cacheHit = false;
+    let payload;
+    const result = await shaderCache.getOrTranslate(
+      dxbc,
+      flags,
+      async () => {
+        logLine("shader_translate: begin");
+        const out = await translateDxbcToWgslSlow(dxbc, { large });
+        logLine("shader_translate: end");
+        return out;
+      },
+      device && !large
+        ? {
+            validateWgsl: async (wgsl) => {
+              // Cache-hit corruption defense: validate against current implementation.
+              const compile = await compileWgslModule(device, wgsl);
+              return !!compile.ok;
+            },
           }
-          // Force a persistent read path within the same session.
-          cache.pipelineDescriptors.clear();
-          const gotPipeline = await cache.getPipelineDescriptor(pipelineKey);
-          pipelineRoundtripOk =
-            !!gotPipeline &&
-            gotPipeline.version === pipelineDesc.version &&
-            typeof gotPipeline.pad === "string" &&
-            gotPipeline.pad.length === pipelineDesc.pad.length;
+        : undefined,
+    );
+    payload = result.value;
+    cacheHit = result.source === "persistent";
+    logLine(`shader_cache: ${cacheHit ? "hit" : "miss"} key=${key}`);
+    const t1 = performance.now();
+    if (device && !large) {
+      // Validate cached WGSL against current browser implementation.
+      const compile = await compileWgslModule(device, payload.wgsl);
+      if (!compile.ok) {
+        logLine("wgsl_compile: failed; invalidating cache entry and retranslating");
+        await cache.deleteShader(key);
+        logLine("shader_translate: begin");
+        payload = await translateDxbcToWgslSlow(dxbc, { large });
+        logLine("shader_translate: end");
+        await cache.putShader(key, payload);
+        await compileWgslModule(device, payload.wgsl);
+      } else {
+        logLine("wgsl_compile: ok");
+      }
+    } else {
+      logLine(device ? "wgsl_compile: skipped (large mode)" : "wgsl_compile: skipped (WebGPU unavailable)");
+    }
+
+    const translationMs = t1 - t0;
+    logLine(`shader_cache: done hit=${cacheHit} translation_ms=${translationMs.toFixed(1)}`);
+
+    let opfsAvailable = false;
+    let opfsFileExists = false;
+    let pipelineKey = null;
+    let pipelineOpfsFileExists = false;
+    let pipelineRoundtripOk = false;
+    let pipelineCacheHit = false;
+    if (large) {
+      if (navigator.storage && typeof navigator.storage.getDirectory === "function") {
+        try {
+          const root = await navigator.storage.getDirectory();
+          const dir = await root.getDirectoryHandle("aero-gpu-cache", { create: true });
+          opfsAvailable = true;
 
           try {
-            const pipelinesDir = await dir.getDirectoryHandle("pipelines");
-            await pipelinesDir.getFileHandle(`${pipelineKey}.json`);
-            pipelineOpfsFileExists = true;
+            const shadersDir = await dir.getDirectoryHandle("shaders");
+            await shadersDir.getFileHandle(`${key}.json`);
+            opfsFileExists = true;
           } catch {
+            opfsFileExists = false;
+          }
+
+          // Also write a large pipeline descriptor to exercise the pipeline spillover path.
+          try {
+            const pipelineDesc = buildLargePipelineDescriptor(310 * 1024);
+            pipelineKey = await computePipelineCacheKey(pipelineDesc);
+            // `PersistentGpuCache.open()` warms pipeline descriptors into memory.
+            // If the descriptor was persisted previously, this should already be a hit.
+            pipelineCacheHit = cache.pipelineDescriptors.has(pipelineKey);
+            if (!pipelineCacheHit) {
+              await cache.putPipelineDescriptor(pipelineKey, pipelineDesc);
+            }
+            // Force a persistent read path within the same session.
+            cache.pipelineDescriptors.clear();
+            const gotPipeline = await cache.getPipelineDescriptor(pipelineKey);
+            pipelineRoundtripOk =
+              !!gotPipeline &&
+              gotPipeline.version === pipelineDesc.version &&
+              typeof gotPipeline.pad === "string" &&
+              gotPipeline.pad.length === pipelineDesc.pad.length;
+
+            try {
+              const pipelinesDir = await dir.getDirectoryHandle("pipelines");
+              await pipelinesDir.getFileHandle(`${pipelineKey}.json`);
+              pipelineOpfsFileExists = true;
+            } catch {
+              pipelineOpfsFileExists = false;
+            }
+          } catch {
+            // Ignore; shader OPFS coverage should remain functional even if the
+            // pipeline spillover demo path fails.
             pipelineOpfsFileExists = false;
+            pipelineRoundtripOk = false;
           }
         } catch {
-          // Ignore; shader OPFS coverage should remain functional even if the
-          // pipeline spillover demo path fails.
+          opfsAvailable = false;
+          opfsFileExists = false;
           pipelineOpfsFileExists = false;
-          pipelineRoundtripOk = false;
         }
-      } catch {
-        opfsAvailable = false;
-        opfsFileExists = false;
-        pipelineOpfsFileExists = false;
       }
     }
+
+    // Expose results for Playwright.
+    window.__shaderCacheDemo = {
+      key,
+      cacheHit,
+      translationMs,
+      telemetry: cache.getTelemetry(),
+      opfsAvailable,
+      opfsFileExists,
+      pipelineKey,
+      pipelineOpfsFileExists,
+      pipelineRoundtripOk,
+      pipelineCacheHit,
+    };
+  } finally {
+    // Best-effort: close the IndexedDB handle so persistent-context tests can
+    // cleanly shut down without blocked transactions.
+    await cache.close();
   }
-
-  // Expose results for Playwright.
-  window.__shaderCacheDemo = {
-    key,
-    cacheHit,
-    translationMs,
-    telemetry: cache.getTelemetry(),
-    opfsAvailable,
-    opfsFileExists,
-    pipelineKey,
-    pipelineOpfsFileExists,
-    pipelineRoundtripOk,
-    pipelineCacheHit,
-  };
-
-  // Best-effort: close the IndexedDB handle so persistent-context tests can
-  // cleanly shut down without blocked transactions.
-  await cache.close();
 }
 
 main().catch((err) => {
