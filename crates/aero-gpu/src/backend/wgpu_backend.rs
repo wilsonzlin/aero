@@ -11,6 +11,14 @@ enum Pipeline {
     Compute(wgpu::ComputePipeline),
 }
 
+#[derive(Debug)]
+struct StoredTexture {
+    texture: wgpu::Texture,
+    size: Extent3d,
+    mip_level_count: u32,
+    format: TextureFormat,
+}
+
 const PIPELINE_LAYOUT_CACHE_CAPACITY: usize = 128;
 
 /// `wgpu` implementation of the backend-agnostic HAL.
@@ -23,7 +31,7 @@ pub struct WgpuBackend {
     queue: wgpu::Queue,
 
     buffers: ResourceRegistry<BufferTag, wgpu::Buffer>,
-    textures: ResourceRegistry<TextureTag, wgpu::Texture>,
+    textures: ResourceRegistry<TextureTag, StoredTexture>,
     texture_views: ResourceRegistry<TextureViewTag, wgpu::TextureView>,
     samplers: ResourceRegistry<SamplerTag, wgpu::Sampler>,
     bind_group_layouts: ResourceRegistry<BindGroupLayoutTag, wgpu::BindGroupLayout>,
@@ -341,33 +349,148 @@ impl GpuBackend for WgpuBackend {
     }
 
     fn create_texture(&mut self, desc: TextureDesc) -> Result<TextureId, GpuError> {
+        let size = desc.size;
+        if size.width == 0 || size.height == 0 {
+            return Err(GpuError::Backend(
+                "create_texture width/height must be non-zero".into(),
+            ));
+        }
+        if size.depth_or_array_layers == 0 {
+            return Err(GpuError::Backend(
+                "create_texture depth_or_array_layers must be >= 1".into(),
+            ));
+        }
+        if desc.mip_level_count == 0 {
+            return Err(GpuError::Backend(
+                "create_texture mip_level_count must be >= 1".into(),
+            ));
+        }
+        if desc.sample_count == 0 {
+            return Err(GpuError::Backend(
+                "create_texture sample_count must be >= 1".into(),
+            ));
+        }
+        // WebGPU validation requires `mip_level_count` to be within the possible chain length for
+        // the given dimensions.
+        let max_dim = size.width.max(size.height);
+        let max_mip_levels = 32u32.saturating_sub(max_dim.leading_zeros());
+        if desc.mip_level_count > max_mip_levels {
+            return Err(GpuError::Backend(format!(
+                "create_texture mip_level_count {} exceeds maximum {max_mip_levels} for {}x{} texture",
+                desc.mip_level_count, size.width, size.height
+            )));
+        }
+
+        let format = desc.format;
+        let stored_size = desc.size;
+        let mip_level_count = desc.mip_level_count;
+
         let texture = self.device.create_texture(&wgpu::TextureDescriptor {
             label: desc.label.as_deref(),
             size: wgpu::Extent3d {
-                width: desc.size.width,
-                height: desc.size.height,
-                depth_or_array_layers: desc.size.depth_or_array_layers,
+                width: size.width,
+                height: size.height,
+                depth_or_array_layers: size.depth_or_array_layers,
             },
             mip_level_count: desc.mip_level_count,
             sample_count: desc.sample_count,
             dimension: match desc.dimension {
                 TextureDimension::D2 => wgpu::TextureDimension::D2,
             },
-            format: Self::map_texture_format(desc.format),
+            format: Self::map_texture_format(format),
             usage: Self::map_texture_usages(desc.usage),
             view_formats: &[],
         });
-        Ok(self.textures.insert(texture))
+        Ok(self.textures.insert(StoredTexture {
+            texture,
+            size: stored_size,
+            mip_level_count,
+            format,
+        }))
     }
 
     fn destroy_texture(&mut self, id: TextureId) -> Result<(), GpuError> {
         let texture = self.textures.remove(id)?;
-        texture.destroy();
+        texture.texture.destroy();
         Ok(())
     }
 
     fn write_texture(&mut self, desc: TextureWriteDesc, data: &[u8]) -> Result<(), GpuError> {
-        let texture = self.textures.get(desc.texture)?;
+        fn mip_dim(base: u32, mip_level: u32) -> u32 {
+            base.checked_shr(mip_level).unwrap_or(0).max(1)
+        }
+
+        let stored = self.textures.get(desc.texture)?;
+        if desc.mip_level >= stored.mip_level_count {
+            return Err(GpuError::Backend(format!(
+                "write_texture mip_level {} out of range (mip_level_count={})",
+                desc.mip_level, stored.mip_level_count
+            )));
+        }
+
+        let mip_width = mip_dim(stored.size.width, desc.mip_level);
+        let mip_height = mip_dim(stored.size.height, desc.mip_level);
+
+        if desc.size.width == 0 || desc.size.height == 0 || desc.size.depth_or_array_layers == 0 {
+            return Err(GpuError::Backend(
+                "write_texture width/height/depth_or_array_layers must be non-zero".into(),
+            ));
+        }
+
+        let end_x = desc
+            .origin
+            .x
+            .checked_add(desc.size.width)
+            .ok_or_else(|| GpuError::Backend("write_texture origin.x overflow".into()))?;
+        let end_y = desc
+            .origin
+            .y
+            .checked_add(desc.size.height)
+            .ok_or_else(|| GpuError::Backend("write_texture origin.y overflow".into()))?;
+        let end_z = desc
+            .origin
+            .z
+            .checked_add(desc.size.depth_or_array_layers)
+            .ok_or_else(|| GpuError::Backend("write_texture origin.z overflow".into()))?;
+
+        if end_x > mip_width || end_y > mip_height {
+            return Err(GpuError::Backend(format!(
+                "write_texture region out of bounds for mip {} (origin=({},{}), size={}x{}, mip_size={mip_width}x{mip_height})",
+                desc.mip_level, desc.origin.x, desc.origin.y, desc.size.width, desc.size.height
+            )));
+        }
+        if end_z > stored.size.depth_or_array_layers {
+            return Err(GpuError::Backend(format!(
+                "write_texture array range out of bounds (origin.z={}, depth_or_array_layers={}, total_layers={})",
+                desc.origin.z, desc.size.depth_or_array_layers, stored.size.depth_or_array_layers
+            )));
+        }
+
+        let bytes_per_texel = match stored.format {
+            TextureFormat::Rgba8Unorm | TextureFormat::Bgra8Unorm | TextureFormat::Depth24Plus => {
+                4u32
+            }
+        };
+        let row_size = desc
+            .size
+            .width
+            .checked_mul(bytes_per_texel)
+            .ok_or_else(|| GpuError::Backend("write_texture row_size overflow".into()))?;
+
+        if desc.size.height > 1 || desc.size.depth_or_array_layers > 1 {
+            if desc.layout.bytes_per_row.is_none() {
+                return Err(GpuError::Backend(
+                    "write_texture bytes_per_row is required for multi-row/multi-layer uploads"
+                        .into(),
+                ));
+            }
+        }
+        if desc.size.depth_or_array_layers > 1 && desc.layout.rows_per_image.is_none() {
+            return Err(GpuError::Backend(
+                "write_texture rows_per_image is required for multi-layer uploads".into(),
+            ));
+        }
+
         if desc.layout.bytes_per_row == Some(0) {
             return Err(GpuError::Backend(
                 "ImageDataLayout.bytes_per_row must be non-zero".into(),
@@ -379,9 +502,56 @@ impl GpuBackend for WgpuBackend {
             ));
         }
 
+        let bytes_per_row = desc.layout.bytes_per_row.unwrap_or(row_size);
+        if bytes_per_row < row_size {
+            return Err(GpuError::Backend(format!(
+                "write_texture bytes_per_row {bytes_per_row} smaller than minimum row size {row_size}"
+            )));
+        }
+        let rows_per_image = desc.layout.rows_per_image.unwrap_or(desc.size.height);
+        if rows_per_image < desc.size.height {
+            return Err(GpuError::Backend(format!(
+                "write_texture rows_per_image {rows_per_image} smaller than copy height {}",
+                desc.size.height
+            )));
+        }
+
+        if (desc.size.height > 1 || desc.size.depth_or_array_layers > 1)
+            && !bytes_per_row.is_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
+        {
+            return Err(GpuError::Backend(format!(
+                "write_texture bytes_per_row {bytes_per_row} must be {}-byte aligned for multi-row/multi-layer uploads",
+                wgpu::COPY_BYTES_PER_ROW_ALIGNMENT
+            )));
+        }
+
+        let required_len = {
+            let depth_minus_one = desc.size.depth_or_array_layers.saturating_sub(1);
+            let last_image_rows = (rows_per_image as u64)
+                .checked_mul(depth_minus_one as u64)
+                .ok_or_else(|| GpuError::Backend("write_texture size overflow".into()))?;
+            let last_row_offset = last_image_rows
+                .checked_add((desc.size.height - 1) as u64)
+                .ok_or_else(|| GpuError::Backend("write_texture size overflow".into()))?;
+            let last_row_start = (bytes_per_row as u64)
+                .checked_mul(last_row_offset)
+                .ok_or_else(|| GpuError::Backend("write_texture size overflow".into()))?;
+            desc.layout
+                .offset
+                .checked_add(last_row_start)
+                .and_then(|v| v.checked_add(row_size as u64))
+                .ok_or_else(|| GpuError::Backend("write_texture size overflow".into()))?
+        };
+        if (data.len() as u64) < required_len {
+            return Err(GpuError::Backend(format!(
+                "write_texture data too small: need {required_len} bytes (including offset), got {}",
+                data.len()
+            )));
+        }
+
         self.queue.write_texture(
             wgpu::ImageCopyTexture {
-                texture,
+                texture: &stored.texture,
                 mip_level: desc.mip_level,
                 origin: wgpu::Origin3d {
                     x: desc.origin.x,
@@ -411,7 +581,9 @@ impl GpuBackend for WgpuBackend {
         _desc: TextureViewDesc,
     ) -> Result<TextureViewId, GpuError> {
         let texture = self.textures.get(texture)?;
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let view = texture
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
         Ok(self.texture_views.insert(view))
     }
 
