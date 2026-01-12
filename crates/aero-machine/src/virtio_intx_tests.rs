@@ -1,4 +1,5 @@
 use aero_devices::pci::PciInterruptPin;
+use aero_cpu_core::state::RFLAGS_IF;
 use aero_platform::interrupts::InterruptController as PlatformInterruptController;
 use aero_virtio::devices::net_offload::VirtioNetHdr;
 use aero_virtio::pci::{
@@ -255,4 +256,24 @@ fn pc_virtio_net_intx_is_synced_but_not_acknowledged_when_if0() {
         PlatformInterruptController::get_pending(&*interrupts.borrow()),
         Some(expected_vector)
     );
+
+    // Once IF is set, the queued/pending interrupt should be delivered into the CPU core.
+    //
+    // Install a trivial real-mode ISR for the routed vector:
+    // mov byte ptr [0x2000], 0xAA
+    // iret
+    const HANDLER_IP: u16 = 0x1100;
+    m.write_physical(
+        u64::from(HANDLER_IP),
+        &[0xC6, 0x06, 0x00, 0x20, 0xAA, 0xCF],
+    );
+    let ivt_entry = u64::from(expected_vector) * 4;
+    m.write_physical_u16(ivt_entry, HANDLER_IP);
+    m.write_physical_u16(ivt_entry + 2, 0x0000);
+    m.write_physical(0x2000, &[0x00]);
+
+    init_real_mode_cpu(&mut m, ENTRY_IP, RFLAGS_IF);
+    m.cpu.state.halted = true;
+    let _ = m.run_slice(10);
+    assert_eq!(m.read_physical_u8(0x2000), 0xAA);
 }
