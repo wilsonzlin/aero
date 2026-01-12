@@ -595,6 +595,49 @@ VOID VirtIoSndStopHardware(PVIRTIOSND_DEVICE_EXTENSION Dx)
 }
 
 _Use_decl_annotations_
+VOID VirtIoSndHwResetDeviceForTeardown(PVIRTIOSND_DEVICE_EXTENSION Dx)
+{
+    if (Dx == NULL) {
+        return;
+    }
+
+    if (KeGetCurrentIrql() != PASSIVE_LEVEL) {
+        return;
+    }
+
+    VIRTIOSND_TRACE_ERROR("hw: emergency reset requested (Started=%u Removed=%u)\n", Dx->Started ? 1u : 0u, Dx->Removed ? 1u : 0u);
+
+    /*
+     * Stop accepting new submissions immediately so periodic WaveRT timers don't
+     * race with teardown.
+     */
+    Dx->Started = FALSE;
+
+    /*
+     * Ensure any later queue draining (e.g. in STOP_DEVICE / REMOVE_DEVICE
+     * teardown) cannot invoke a stale capture completion callback with a freed
+     * stream pointer.
+     */
+    if (InterlockedCompareExchange(&Dx->RxEngineInitialized, 0, 0) != 0 && Dx->Rx.Queue != NULL && Dx->Rx.Requests != NULL) {
+        VirtIoSndRxSetCompletionCallback(&Dx->Rx, NULL, NULL);
+    }
+
+    /*
+     * Disconnect INTx and wait for any in-flight DPC to complete. This prevents
+     * further completion delivery while higher layers free their DMA buffers.
+     */
+    VirtIoSndIntxDisconnect(Dx);
+
+    /*
+     * On SURPRISE_REMOVAL the device may already be gone from the PCI bus. Avoid
+     * MMIO accesses (device_status reset handshake) in that case.
+     */
+    if (!Dx->Removed) {
+        VirtIoSndResetDeviceBestEffort(Dx);
+    }
+}
+
+_Use_decl_annotations_
 NTSTATUS VirtIoSndStartHardware(
     PVIRTIOSND_DEVICE_EXTENSION Dx,
     PCM_RESOURCE_LIST RawResources,

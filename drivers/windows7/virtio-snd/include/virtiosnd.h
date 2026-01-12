@@ -148,6 +148,20 @@ VOID
 VirtIoSndStopHardware(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx);
 
 /*
+ * Emergency best-effort reset used by streaming teardown paths when an in-flight
+ * request never completes (e.g. device reset/misbehavior timing).
+ *
+ * This stops further device DMA/completions but intentionally does *not* tear
+ * down the DMA context so higher layers (WaveRT cyclic buffer/MDL owners) can
+ * still free their common buffers safely.
+ *
+ * IRQL: PASSIVE_LEVEL only.
+ */
+_IRQL_requires_max_(PASSIVE_LEVEL)
+VOID
+VirtIoSndHwResetDeviceForTeardown(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx);
+
+/*
  * Hardware-facing protocol helpers intended for use by future PortCls/WaveRT
  * miniports.
  */

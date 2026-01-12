@@ -359,13 +359,36 @@ VirtIoSndWaveRtWaitForRxIdle(_Inout_ PVIRTIOSND_WAVERT_STREAM Stream, _In_opt_ V
     UNREFERENCED_PARAMETER(Stream);
     UNREFERENCED_PARAMETER(Dx);
 #else
+    /*
+     * Bounded teardown wait:
+     *   - In the normal case we observe the in-flight RX completion quickly
+     *     (period-sized, typically 10ms) via INTx or by polling the used ring.
+     *   - In failure cases (device reset/misbehavior) the completion may never
+     *     arrive. Avoid an unbounded hang in PortCls teardown paths by bounding
+     *     the total wait time and forcing a best-effort device reset if needed.
+     */
+    const ULONG totalTimeoutMs = 2000u; /* 2 seconds total */
+    const ULONGLONG timeout100ns = (ULONGLONG)totalTimeoutMs * 10u * 1000u; /* ms -> 100ns */
     LARGE_INTEGER timeout;
+    ULONGLONG start100ns;
+    ULONGLONG now100ns;
+    ULONGLONG deadline100ns;
+    LONG rxInFlight;
+    BOOLEAN timedOut;
+    BOOLEAN deviceGone;
 
     if (Stream == NULL) {
         return;
     }
 
     if (KeGetCurrentIrql() != PASSIVE_LEVEL) {
+        return;
+    }
+
+    rxInFlight = InterlockedCompareExchange(&Stream->RxInFlight, 0, 0);
+    if (rxInFlight == 0) {
+        /* Treat as idle even if the event is out-of-sync. */
+        KeSetEvent(&Stream->RxIdleEvent, IO_NO_INCREMENT, FALSE);
         return;
     }
 
@@ -379,12 +402,68 @@ VirtIoSndWaveRtWaitForRxIdle(_Inout_ PVIRTIOSND_WAVERT_STREAM Stream, _In_opt_ V
      */
     timeout.QuadPart = -(LONGLONG)(10u * 1000u * 10u); /* 10ms */
 
+    start100ns = KeQueryInterruptTime();
+    deadline100ns = start100ns + timeout100ns;
+
+    timedOut = FALSE;
+    deviceGone = FALSE;
+
     while (KeReadStateEvent(&Stream->RxIdleEvent) == 0) {
+        if (Dx != NULL && (Dx->Removed || !Dx->Started)) {
+            deviceGone = TRUE;
+            break;
+        }
+
         if (Dx != NULL) {
             (VOID)VirtIoSndHwDrainRxCompletions(Dx, NULL, NULL);
         }
 
+        if (KeReadStateEvent(&Stream->RxIdleEvent) != 0) {
+            break;
+        }
+
         (VOID)KeWaitForSingleObject(&Stream->RxIdleEvent, Executive, KernelMode, FALSE, &timeout);
+
+        now100ns = KeQueryInterruptTime();
+        if (now100ns >= deadline100ns) {
+            timedOut = TRUE;
+            break;
+        }
+    }
+
+    if (KeReadStateEvent(&Stream->RxIdleEvent) == 0) {
+        rxInFlight = InterlockedCompareExchange(&Stream->RxInFlight, 0, 0);
+
+        if (timedOut) {
+            VIRTIOSND_TRACE_ERROR(
+                "wavert: capture teardown: RX idle wait timed out after %lu ms (Started=%u Removed=%u RxInFlight=%ld)\n",
+                totalTimeoutMs,
+                (Dx != NULL && Dx->Started) ? 1u : 0u,
+                (Dx != NULL && Dx->Removed) ? 1u : 0u,
+                rxInFlight);
+
+            /*
+             * Fail-safe: reset/quiesce the device best-effort so DMA stops and no
+             * further completions can reference this stream.
+             */
+            if (Dx != NULL) {
+                VirtIoSndHwResetDeviceForTeardown(Dx);
+            }
+        } else if (deviceGone) {
+            VIRTIOSND_TRACE_ERROR(
+                "wavert: capture teardown: RX idle wait aborted (device stopped/removed) (Started=%u Removed=%u RxInFlight=%ld)\n",
+                (Dx != NULL && Dx->Started) ? 1u : 0u,
+                (Dx != NULL && Dx->Removed) ? 1u : 0u,
+                rxInFlight);
+        }
+
+        /*
+         * Allow teardown to continue. If we reached this point without observing
+         * a completion, the device has either been reset/stopped or removed, so
+         * it's safe to force the stream into an idle state.
+         */
+        InterlockedExchange(&Stream->RxInFlight, 0);
+        KeSetEvent(&Stream->RxIdleEvent, IO_NO_INCREMENT, FALSE);
     }
 #endif
 }
@@ -1524,12 +1603,25 @@ static ULONG STDMETHODCALLTYPE VirtIoSndWaveRtStream_Release(_In_ IMiniportWaveR
 
                 VirtIoSndWaveRtWaitForRxIdle(stream, dx);
 
-                if (state != KSSTATE_STOP) {
+                /*
+                 * If the RX idle wait timed out, VirtIoSndWaveRtWaitForRxIdle may
+                 * have performed an emergency device reset and dropped Started.
+                 * Avoid issuing further control commands in that case.
+                 */
+                if (state != KSSTATE_STOP && dx->Started && !dx->Removed) {
                     (VOID)VirtioSndCtrlRelease1(&dx->Control);
                 }
             } else {
                 (VOID)InterlockedExchange(&stream->RxInFlight, 0);
                 KeSetEvent(&stream->RxIdleEvent, IO_NO_INCREMENT, FALSE);
+            }
+
+            /*
+             * Ensure a subsequent STOP_DEVICE/REMOVE_DEVICE teardown drain cannot
+             * call back into a freed stream via the rxq completion callback.
+             */
+            if (dx != NULL && InterlockedCompareExchange(&dx->RxEngineInitialized, 0, 0) != 0 && dx->Rx.Queue != NULL && dx->Rx.Requests != NULL) {
+                VirtIoSndRxSetCompletionCallback(&dx->Rx, NULL, NULL);
             }
 #endif
         } else if (stream->Miniport != NULL && stream->Miniport->Backend != NULL) {
@@ -2574,6 +2666,18 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_AllocateBufferWithNotifi
         return STATUS_DEVICE_BUSY;
     }
 
+#if !defined(AERO_VIRTIO_SND_IOPORT_LEGACY)
+    /*
+     * Before reallocating the cyclic capture buffer/MDL, ensure there is no
+     * in-flight RX period that could DMA-write into freed memory.
+     */
+    if (stream->Capture) {
+        VIRTIOSND_PORTCLS_DX dx;
+        dx = (stream->Miniport != NULL) ? stream->Miniport->Dx : NULL;
+        VirtIoSndWaveRtWaitForRxIdle(stream, dx);
+    }
+#endif
+
     bytesPerMs = (stream->Capture ? VIRTIOSND_CAPTURE_AVG_BYTES_PER_SEC : VIRTIOSND_AVG_BYTES_PER_SEC) / 1000;
     if (bytesPerMs == 0) {
         return STATUS_INVALID_DEVICE_STATE;
@@ -2765,6 +2869,18 @@ static VOID STDMETHODCALLTYPE VirtIoSndWaveRtStream_FreeBufferWithNotification(
     KIRQL oldIrql;
 
     VirtIoSndWaveRtStopTimer(stream);
+
+#if !defined(AERO_VIRTIO_SND_IOPORT_LEGACY)
+    /*
+     * Ensure capture RX is idle before freeing the cyclic buffer so no device
+     * DMA can target freed memory.
+     */
+    if (stream->Capture) {
+        VIRTIOSND_PORTCLS_DX dx;
+        dx = (stream->Miniport != NULL) ? stream->Miniport->Dx : NULL;
+        VirtIoSndWaveRtWaitForRxIdle(stream, dx);
+    }
+#endif
 
 #if defined(AERO_VIRTIO_SND_IOPORT_LEGACY)
     RtlZeroMemory(&dummyCtx, sizeof(dummyCtx));
