@@ -135,9 +135,58 @@ function audioWorkletDependenciesPlugin(): Plugin {
   };
 }
 
+function persistentCacheShimPlugin(): Plugin {
+  // `aero-d3d9` uses `#[wasm_bindgen(module = "/js/persistent_cache_shim.js")]`,
+  // so we need to ensure that file exists in dev/preview and in the build output.
+  const srcShimPath = resolve(rootDir, "../crates/aero-d3d9/js/persistent_cache_shim.js");
+  const source = readFileSync(srcShimPath, "utf8");
+
+  const installShimMiddleware = (middlewares: { use: (...args: any[]) => any }) => {
+    middlewares.use(
+      (
+        req: { url?: string },
+        res: {
+          statusCode?: number;
+          setHeader: (name: string, value: string) => void;
+          end: (body?: string) => void;
+        },
+        next: () => void,
+      ) => {
+        const pathname = req.url?.split("?", 1)[0];
+        if (pathname !== "/js/persistent_cache_shim.js") return next();
+        res.statusCode = 200;
+        res.setHeader("Content-Type", "text/javascript; charset=utf-8");
+        res.end(source);
+      },
+    );
+  };
+
+  return {
+    name: "aero-persistent-cache-shim",
+    generateBundle() {
+      this.emitFile({
+        type: "asset",
+        fileName: "js/persistent_cache_shim.js",
+        source,
+      });
+    },
+    configureServer(server) {
+      installShimMiddleware(server.middlewares);
+    },
+    configurePreviewServer(server) {
+      installShimMiddleware(server.middlewares);
+    },
+  };
+}
+
 export default defineConfig({
   assetsInclude: ["**/*.wasm"],
-  plugins: [aeroBuildInfoPlugin(), wasmMimeTypePlugin(), audioWorkletDependenciesPlugin()],
+  plugins: [
+    aeroBuildInfoPlugin(),
+    wasmMimeTypePlugin(),
+    audioWorkletDependenciesPlugin(),
+    persistentCacheShimPlugin(),
+  ],
   server: {
     port: 5173,
     strictPort: true,

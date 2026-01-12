@@ -140,6 +140,44 @@ function audioWorkletDependenciesPlugin(): Plugin {
   };
 }
 
+function persistentCacheShimPlugin(): Plugin {
+  // `wasm-bindgen` supports importing "external modules" via absolute specifiers.
+  // `aero-d3d9` uses `#[wasm_bindgen(module = "/js/persistent_cache_shim.js")]`,
+  // so we need to ensure that file exists in:
+  //  - `vite dev` (served by the dev server)
+  //  - `vite build` output (emitted into `dist/`)
+  //  - `vite preview` (served by the preview server)
+  const srcShimPath = resolve(rootDir, 'crates/aero-d3d9/js/persistent_cache_shim.js');
+  const source = readFileSync(srcShimPath, 'utf8');
+
+  const installShimMiddleware = (middlewares: Connect.Server) => {
+    middlewares.use((req, res, next) => {
+      const pathname = req.url?.split('?', 1)[0];
+      if (pathname !== '/js/persistent_cache_shim.js') return next();
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'text/javascript; charset=utf-8');
+      res.end(source);
+    });
+  };
+
+  return {
+    name: 'aero-persistent-cache-shim',
+    generateBundle() {
+      this.emitFile({
+        type: 'asset',
+        fileName: 'js/persistent_cache_shim.js',
+        source,
+      });
+    },
+    configureServer(server) {
+      installShimMiddleware(server.middlewares);
+    },
+    configurePreviewServer(server) {
+      installShimMiddleware(server.middlewares);
+    },
+  };
+}
+
 export default defineConfig({
   assetsInclude: ['**/*.wasm'],
   build: {
@@ -166,7 +204,12 @@ export default defineConfig({
   // Reuse `web/public` across the repo so test assets and `_headers` templates
   // are consistently available in `vite preview` runs.
   publicDir: 'web/public',
-  plugins: [aeroBuildInfoPlugin(), wasmMimeTypePlugin(), audioWorkletDependenciesPlugin()],
+  plugins: [
+    aeroBuildInfoPlugin(),
+    wasmMimeTypePlugin(),
+    audioWorkletDependenciesPlugin(),
+    persistentCacheShimPlugin(),
+  ],
   // The repo heavily relies on module workers (`type: 'module'` + `import.meta.url`).
   // Keep the harness build aligned with `web/vite.config.ts` so worker bundling
   // supports code-splitting.
