@@ -244,6 +244,36 @@ impl<B: StorageBackend> VhdDisk<B> {
         Ok(())
     }
 
+    fn sector_run_len(
+        bitmap: &[u8],
+        sectors_per_block: u64,
+        within_block: u64,
+        remaining: u64,
+        allocated: bool,
+    ) -> Result<u64> {
+        let start_sector = within_block / SECTOR_SIZE as u64;
+        let limit = within_block
+            .checked_add(remaining)
+            .ok_or(DiskError::OffsetOverflow)?;
+
+        let mut sector = start_sector;
+        let mut end = ((sector + 1) * SECTOR_SIZE as u64).min(limit);
+
+        while end < limit {
+            sector = sector.checked_add(1).ok_or(DiskError::OffsetOverflow)?;
+            if sector >= sectors_per_block {
+                break;
+            }
+            let bit = Self::bitmap_get(bitmap, sector)?;
+            if bit != allocated {
+                break;
+            }
+            end = ((sector + 1) * SECTOR_SIZE as u64).min(limit);
+        }
+
+        Ok(end - within_block)
+    }
+
     fn load_bitmap(&mut self, block_start: u64, bitmap_size: u64) -> Result<Vec<u8>> {
         if let Some(v) = self.bitmap_cache.get(&block_start) {
             return Ok(v.clone());
@@ -430,20 +460,80 @@ impl<B: StorageBackend> VirtualDisk for VhdDisk<B> {
             return Ok(());
         }
 
+        let dyn_hdr = self
+            .dynamic
+            .as_ref()
+            .ok_or(DiskError::CorruptImage("vhd dynamic header missing"))?;
+        let block_size = dyn_hdr.block_size as u64;
         let mut pos = 0usize;
+        let (sectors_per_block, bitmap_size) = self.dyn_params()?;
         while pos < buf.len() {
             let abs = offset
                 .checked_add(pos as u64)
                 .ok_or(DiskError::OffsetOverflow)?;
-            let lba = abs / SECTOR_SIZE as u64;
-            let within = (abs % SECTOR_SIZE as u64) as usize;
-            let chunk_len = (SECTOR_SIZE - within).min(buf.len() - pos);
 
-            let mut sector = [0u8; SECTOR_SIZE];
-            self.read_sector_dyn(lba, &mut sector)?;
-            buf[pos..pos + chunk_len].copy_from_slice(&sector[within..within + chunk_len]);
+            let block_index = (abs / block_size) as usize;
+            let within_block = abs % block_size;
+            let remaining_in_block = block_size - within_block;
+            let chunk_len = remaining_in_block.min((buf.len() - pos) as u64) as usize;
 
-            pos += chunk_len;
+            if block_index >= self.bat.len() {
+                return Err(DiskError::CorruptImage("vhd block index out of range"));
+            }
+            let bat_entry = self.bat[block_index];
+            if bat_entry == u32::MAX {
+                buf[pos..pos + chunk_len].fill(0);
+                pos += chunk_len;
+                continue;
+            }
+
+            let block_start = (bat_entry as u64)
+                .checked_mul(SECTOR_SIZE as u64)
+                .ok_or(DiskError::OffsetOverflow)?;
+            let bitmap = self.load_bitmap(block_start, bitmap_size)?;
+
+            let mut within = within_block;
+            let mut remaining = chunk_len;
+            while remaining > 0 {
+                let sector_in_block = within / SECTOR_SIZE as u64;
+                if sector_in_block >= sectors_per_block {
+                    return Err(DiskError::CorruptImage("vhd sector index out of range"));
+                }
+
+                let allocated = Self::bitmap_get(&bitmap, sector_in_block)?;
+                let run_len_u64 = Self::sector_run_len(
+                    &bitmap,
+                    sectors_per_block,
+                    within,
+                    remaining as u64,
+                    allocated,
+                )?;
+                let run_len: usize = run_len_u64
+                    .try_into()
+                    .map_err(|_| DiskError::Unsupported("vhd read too large"))?;
+
+                if allocated {
+                    let phys = block_start
+                        .checked_add(bitmap_size)
+                        .and_then(|v| v.checked_add(within))
+                        .ok_or(DiskError::OffsetOverflow)?;
+                    self.backend_read_at(
+                        phys,
+                        &mut buf[pos..pos + run_len],
+                        "vhd block data truncated",
+                    )?;
+                } else {
+                    buf[pos..pos + run_len].fill(0);
+                }
+
+                within = within
+                    .checked_add(run_len_u64)
+                    .ok_or(DiskError::OffsetOverflow)?;
+                pos += run_len;
+                remaining -= run_len;
+            }
+
+            debug_assert_eq!(remaining, 0);
         }
 
         Ok(())
