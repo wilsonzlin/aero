@@ -31,7 +31,7 @@ use aero_cpu_core::state::{
 use aero_cpu_core::{CpuBus, CpuCore, Exception};
 
 use aero_jit_x86::jit_ctx::{JitContext, TIER2_CTX_OFFSET, TIER2_CTX_SIZE};
-use aero_jit_x86::{discover_block, BlockLimits, Tier1Bus, JIT_TLB_ENTRIES, JIT_TLB_ENTRY_SIZE};
+use aero_jit_x86::{discover_block_mode, BlockLimits, Tier1Bus, JIT_TLB_ENTRIES, JIT_TLB_ENTRY_SIZE};
 
 use crate::jit_write_log::GuestWriteLog;
 use crate::RunExitKind;
@@ -1011,7 +1011,8 @@ impl WasmTieredVm {
                 max_insts: 64,
                 max_bytes,
             };
-            let block = discover_block(&self.vcpu.bus, entry_rip, limits);
+            let bitness = self.vcpu.cpu.state.bitness();
+            let block = discover_block_mode(&self.vcpu.bus, entry_rip, limits, bitness);
             let mut count = u32::try_from(block.insts.len()).unwrap_or(u32::MAX);
             if matches!(
                 block.end_kind,
@@ -1081,7 +1082,8 @@ impl WasmTieredVm {
                 max_insts: 64,
                 max_bytes,
             };
-            let block = discover_block(&self.vcpu.bus, entry_rip, limits);
+            let bitness = self.vcpu.cpu.state.bitness();
+            let block = discover_block_mode(&self.vcpu.bus, entry_rip, limits, bitness);
             let mut count = u32::try_from(block.insts.len()).unwrap_or(u32::MAX);
             if matches!(
                 block.end_kind,
