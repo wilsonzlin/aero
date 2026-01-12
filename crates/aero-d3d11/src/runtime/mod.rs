@@ -35,6 +35,13 @@ fn negotiated_features(adapter: &wgpu::Adapter) -> wgpu::Features {
     let available = adapter.features();
     let mut requested = wgpu::Features::empty();
 
+    // wgpu's GL backend has historically had shaky support for some texture compression workflows
+    // (notably BC copy paths). Since we prefer GL on Linux for CI stability, keep compression
+    // features disabled on GL unless explicitly requested via a different device creation path.
+    if matches!(adapter.get_info().backend, wgpu::Backend::Gl) {
+        return requested;
+    }
+
     if !wgpu_texture_compression_disabled() {
         // Texture compression is optional but beneficial (guest textures, DDS, etc).
         // Request only features the adapter advertises, otherwise `request_device` will fail.

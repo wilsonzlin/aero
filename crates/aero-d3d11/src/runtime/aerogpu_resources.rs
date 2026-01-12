@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 
-use aero_gpu::{decompress_bc1_rgba8, decompress_bc2_rgba8, decompress_bc3_rgba8, decompress_bc7_rgba8};
 use aero_gpu::guest_memory::GuestMemory;
+use aero_gpu::{
+    decompress_bc1_rgba8, decompress_bc2_rgba8, decompress_bc3_rgba8, decompress_bc7_rgba8,
+};
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuHandle, AerogpuShaderStage, AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER,
     AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL, AEROGPU_RESOURCE_USAGE_INDEX_BUFFER,
@@ -237,6 +239,13 @@ impl AerogpuResourceManager {
             .device
             .features()
             .contains(wgpu::Features::TEXTURE_COMPRESSION_BC);
+        let bc_enabled = bc_enabled
+            && wgpu_compressed_texture_dimensions_compatible(
+                linear_format,
+                width,
+                height,
+                mip_levels,
+            )?;
         let (texture_format, upload_transform) =
             select_texture_format_for_device(linear_format, bc_enabled)?;
 
@@ -826,7 +835,9 @@ pub fn validate_range_in_resource(range: DirtyRange, total_size_bytes: u64) -> R
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TextureFormatLayout {
-    Uncompressed { bytes_per_texel: u32 },
+    Uncompressed {
+        bytes_per_texel: u32,
+    },
     BlockCompressed {
         block_width: u32,
         block_height: u32,
@@ -841,7 +852,9 @@ fn format_layout_info(format: wgpu::TextureFormat) -> Result<TextureFormatLayout
         | wgpu::TextureFormat::Rgba8Unorm
         | wgpu::TextureFormat::Rgba8UnormSrgb
         | wgpu::TextureFormat::Depth24PlusStencil8
-        | wgpu::TextureFormat::Depth32Float => TextureFormatLayout::Uncompressed { bytes_per_texel: 4 },
+        | wgpu::TextureFormat::Depth32Float => {
+            TextureFormatLayout::Uncompressed { bytes_per_texel: 4 }
+        }
 
         wgpu::TextureFormat::Bc1RgbaUnorm | wgpu::TextureFormat::Bc1RgbaUnormSrgb => {
             TextureFormatLayout::BlockCompressed {
@@ -928,8 +941,37 @@ fn select_texture_format_for_device(
     Ok((fallback, transform))
 }
 
+fn wgpu_compressed_texture_dimensions_compatible(
+    format: wgpu::TextureFormat,
+    width: u32,
+    height: u32,
+    mip_levels: u32,
+) -> Result<bool> {
+    let TextureFormatLayout::BlockCompressed {
+        block_width,
+        block_height,
+        ..
+    } = format_layout_info(format)?
+    else {
+        return Ok(true);
+    };
+
+    for level in 0..mip_levels {
+        let w = mip_extent(width, level);
+        let h = mip_extent(height, level);
+        // WebGPU validation requires block-compressed texture dimensions to be block-aligned when
+        // at least one full block is present. (Smaller-than-block mips are allowed.)
+        if (w >= block_width && !w.is_multiple_of(block_width))
+            || (h >= block_height && !h.is_multiple_of(block_height))
+        {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 fn mip_extent(v: u32, level: u32) -> u32 {
-    (v >> level).max(1)
+    v.checked_shr(level).unwrap_or(0).max(1)
 }
 
 fn align_copy_bytes_per_row(bytes_per_row: u32) -> u32 {
@@ -1156,33 +1198,29 @@ fn upload_texture_from_linear_bytes(
                     .width
                     .checked_mul(4)
                     .ok_or_else(|| anyhow!("bytes_per_row overflow"))?;
-                let padded_bytes_per_row = if linear.height > 1
-                    && !unpadded_bytes_per_row.is_multiple_of(align)
-                {
-                    align_copy_bytes_per_row(unpadded_bytes_per_row)
-                } else {
-                    unpadded_bytes_per_row
-                };
-
-                let upload_bytes: std::borrow::Cow<'_, [u8]> =
-                    if padded_bytes_per_row == unpadded_bytes_per_row {
-                        std::borrow::Cow::Owned(rgba)
+                let padded_bytes_per_row =
+                    if linear.height > 1 && !unpadded_bytes_per_row.is_multiple_of(align) {
+                        align_copy_bytes_per_row(unpadded_bytes_per_row)
                     } else {
-                        let mut tmp = vec![
-                            0u8;
-                            padded_bytes_per_row as usize * linear.height as usize
-                        ];
-                        for y in 0..linear.height as usize {
-                            let src_start = y * unpadded_bytes_per_row as usize;
-                            let dst_start = y * padded_bytes_per_row as usize;
-                            tmp[dst_start..dst_start + unpadded_bytes_per_row as usize]
-                                .copy_from_slice(
-                                    &rgba[src_start
-                                        ..src_start + unpadded_bytes_per_row as usize],
-                                );
-                        }
-                        std::borrow::Cow::Owned(tmp)
+                        unpadded_bytes_per_row
                     };
+
+                let upload_bytes: std::borrow::Cow<'_, [u8]> = if padded_bytes_per_row
+                    == unpadded_bytes_per_row
+                {
+                    std::borrow::Cow::Owned(rgba)
+                } else {
+                    let mut tmp = vec![0u8; padded_bytes_per_row as usize * linear.height as usize];
+                    for y in 0..linear.height as usize {
+                        let src_start = y * unpadded_bytes_per_row as usize;
+                        let dst_start = y * padded_bytes_per_row as usize;
+                        tmp[dst_start..dst_start + unpadded_bytes_per_row as usize]
+                            .copy_from_slice(
+                                &rgba[src_start..src_start + unpadded_bytes_per_row as usize],
+                            );
+                    }
+                    std::borrow::Cow::Owned(tmp)
+                };
 
                 queue.write_texture(
                     wgpu::ImageCopyTexture {
@@ -1233,15 +1271,14 @@ fn upload_texture_from_linear_bytes(
                 };
 
                 let upload_bytes: std::borrow::Cow<'_, [u8]> = if needs_repack {
-                    let mut tmp =
-                        vec![0u8; upload_bytes_per_row as usize * linear.rows as usize];
+                    let mut tmp = vec![0u8; upload_bytes_per_row as usize * linear.rows as usize];
                     for y in 0..linear.rows as usize {
                         let src_start = y * linear.row_pitch_bytes as usize;
                         let dst_start = y * upload_bytes_per_row as usize;
                         tmp[dst_start..dst_start + linear.unpadded_bytes_per_row as usize]
                             .copy_from_slice(
-                                &data[src_start
-                                    ..src_start + linear.unpadded_bytes_per_row as usize],
+                                &data
+                                    [src_start..src_start + linear.unpadded_bytes_per_row as usize],
                             );
                     }
                     std::borrow::Cow::Owned(tmp)
@@ -1291,9 +1328,7 @@ fn validate_bc_region_alignment(
 ) -> Result<()> {
     // Origin must be block-aligned.
     if !origin_x.is_multiple_of(4) || !origin_y.is_multiple_of(4) {
-        bail!(
-            "BC-compressed writes must be 4x4 block aligned (origin=({origin_x},{origin_y}))"
-        );
+        bail!("BC-compressed writes must be 4x4 block aligned (origin=({origin_x},{origin_y}))");
     }
 
     // Copy size must be block-aligned unless reaching the edge of the mip.
@@ -1469,8 +1504,8 @@ mod tests {
                 .unwrap_or(true);
 
             if needs_runtime_dir {
-                let dir =
-                    std::env::temp_dir().join(format!("aero-d3d11-xdg-runtime-{}", std::process::id()));
+                let dir = std::env::temp_dir()
+                    .join(format!("aero-d3d11-xdg-runtime-{}", std::process::id()));
                 let _ = std::fs::create_dir_all(&dir);
                 let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
                 std::env::set_var("XDG_RUNTIME_DIR", &dir);

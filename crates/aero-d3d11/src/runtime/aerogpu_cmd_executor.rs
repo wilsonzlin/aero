@@ -199,11 +199,9 @@ impl SharedSurfaceTable {
                 "EXPORT_SHARED_SURFACE: share_token 0x{share_token:016X} was previously released"
             );
         }
-        let underlying = self
-            .handles
-            .get(&resource_handle)
-            .copied()
-            .ok_or_else(|| anyhow!("EXPORT_SHARED_SURFACE: unknown resource handle {resource_handle}"))?;
+        let underlying = self.handles.get(&resource_handle).copied().ok_or_else(|| {
+            anyhow!("EXPORT_SHARED_SURFACE: unknown resource handle {resource_handle}")
+        })?;
 
         if let Some(&existing) = self.by_token.get(&share_token) {
             if existing != underlying {
@@ -226,9 +224,7 @@ impl SharedSurfaceTable {
             bail!("IMPORT_SHARED_SURFACE: invalid share_token 0");
         }
         let Some(&underlying) = self.by_token.get(&share_token) else {
-            bail!(
-                "IMPORT_SHARED_SURFACE: unknown share_token 0x{share_token:016X} (not exported)"
-            );
+            bail!("IMPORT_SHARED_SURFACE: unknown share_token 0x{share_token:016X} (not exported)");
         };
 
         if !self.refcounts.contains_key(&underlying) {
@@ -841,128 +837,319 @@ impl AerogpuD3d11Executor {
         let width = texture.desc.width;
         let height = texture.desc.height;
 
-        // Compute the buffer layout based on the source format. For block-compressed textures, the
-        // copy layout uses block rows (4x4 blocks for BC formats).
-        let (padded_bytes_per_row, rows_per_image, buffer_size, bc_readback_info) =
-            match texture.desc.format {
-                wgpu::TextureFormat::Rgba8Unorm
-                | wgpu::TextureFormat::Rgba8UnormSrgb
-                | wgpu::TextureFormat::Bgra8Unorm
-                | wgpu::TextureFormat::Bgra8UnormSrgb => {
-                    let bytes_per_pixel = 4u32;
-                    let unpadded_bytes_per_row = width
-                        .checked_mul(bytes_per_pixel)
-                        .ok_or_else(|| anyhow!("read_texture_rgba8: bytes_per_row overflow"))?;
-                    let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-                    let padded_bytes_per_row = unpadded_bytes_per_row
-                        .checked_add(align - 1)
-                        .map(|v| v / align)
-                        .and_then(|v| v.checked_mul(align))
-                        .ok_or_else(|| anyhow!("read_texture_rgba8: padded bytes_per_row overflow"))?;
-                    let buffer_size = (padded_bytes_per_row as u64)
-                        .checked_mul(height as u64)
-                        .ok_or_else(|| anyhow!("read_texture_rgba8: staging buffer size overflow"))?;
-                    (
-                        padded_bytes_per_row,
-                        height,
-                        buffer_size,
-                        None::<(AerogpuBcFormat, u32, u32)>,
-                    )
-                }
-                wgpu::TextureFormat::Bc1RgbaUnorm | wgpu::TextureFormat::Bc1RgbaUnormSrgb => {
-                    let block_bytes = 8u32;
-                    let blocks_w = width.div_ceil(4);
-                    let blocks_h = height.div_ceil(4);
-                    let tight_bpr = blocks_w
-                        .checked_mul(block_bytes)
-                        .ok_or_else(|| anyhow!("read_texture_rgba8: BC bytes_per_row overflow"))?;
-                    let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-                    let padded_bpr = tight_bpr
-                        .checked_add(align - 1)
-                        .map(|v| v / align)
-                        .and_then(|v| v.checked_mul(align))
-                        .ok_or_else(|| anyhow!("read_texture_rgba8: BC padded bytes_per_row overflow"))?;
-                    let buffer_size = (padded_bpr as u64)
-                        .checked_mul(blocks_h as u64)
-                        .ok_or_else(|| anyhow!("read_texture_rgba8: BC staging buffer size overflow"))?;
-                    (
-                        padded_bpr,
-                        blocks_h,
-                        buffer_size,
-                        Some((AerogpuBcFormat::Bc1, tight_bpr, blocks_h)),
-                    )
-                }
-                wgpu::TextureFormat::Bc2RgbaUnorm | wgpu::TextureFormat::Bc2RgbaUnormSrgb => {
-                    let block_bytes = 16u32;
-                    let blocks_w = width.div_ceil(4);
-                    let blocks_h = height.div_ceil(4);
-                    let tight_bpr = blocks_w
-                        .checked_mul(block_bytes)
-                        .ok_or_else(|| anyhow!("read_texture_rgba8: BC bytes_per_row overflow"))?;
-                    let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-                    let padded_bpr = tight_bpr
-                        .checked_add(align - 1)
-                        .map(|v| v / align)
-                        .and_then(|v| v.checked_mul(align))
-                        .ok_or_else(|| anyhow!("read_texture_rgba8: BC padded bytes_per_row overflow"))?;
-                    let buffer_size = (padded_bpr as u64)
-                        .checked_mul(blocks_h as u64)
-                        .ok_or_else(|| anyhow!("read_texture_rgba8: BC staging buffer size overflow"))?;
-                    (
-                        padded_bpr,
-                        blocks_h,
-                        buffer_size,
-                        Some((AerogpuBcFormat::Bc2, tight_bpr, blocks_h)),
-                    )
-                }
-                wgpu::TextureFormat::Bc3RgbaUnorm | wgpu::TextureFormat::Bc3RgbaUnormSrgb => {
-                    let block_bytes = 16u32;
-                    let blocks_w = width.div_ceil(4);
-                    let blocks_h = height.div_ceil(4);
-                    let tight_bpr = blocks_w
-                        .checked_mul(block_bytes)
-                        .ok_or_else(|| anyhow!("read_texture_rgba8: BC bytes_per_row overflow"))?;
-                    let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-                    let padded_bpr = tight_bpr
-                        .checked_add(align - 1)
-                        .map(|v| v / align)
-                        .and_then(|v| v.checked_mul(align))
-                        .ok_or_else(|| anyhow!("read_texture_rgba8: BC padded bytes_per_row overflow"))?;
-                    let buffer_size = (padded_bpr as u64)
-                        .checked_mul(blocks_h as u64)
-                        .ok_or_else(|| anyhow!("read_texture_rgba8: BC staging buffer size overflow"))?;
-                    (
-                        padded_bpr,
-                        blocks_h,
-                        buffer_size,
-                        Some((AerogpuBcFormat::Bc3, tight_bpr, blocks_h)),
-                    )
-                }
-                wgpu::TextureFormat::Bc7RgbaUnorm | wgpu::TextureFormat::Bc7RgbaUnormSrgb => {
-                    let block_bytes = 16u32;
-                    let blocks_w = width.div_ceil(4);
-                    let blocks_h = height.div_ceil(4);
-                    let tight_bpr = blocks_w
-                        .checked_mul(block_bytes)
-                        .ok_or_else(|| anyhow!("read_texture_rgba8: BC bytes_per_row overflow"))?;
-                    let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-                    let padded_bpr = tight_bpr
-                        .checked_add(align - 1)
-                        .map(|v| v / align)
-                        .and_then(|v| v.checked_mul(align))
-                        .ok_or_else(|| anyhow!("read_texture_rgba8: BC padded bytes_per_row overflow"))?;
-                    let buffer_size = (padded_bpr as u64)
-                        .checked_mul(blocks_h as u64)
-                        .ok_or_else(|| anyhow!("read_texture_rgba8: BC staging buffer size overflow"))?;
-                    (
-                        padded_bpr,
-                        blocks_h,
-                        buffer_size,
-                        Some((AerogpuBcFormat::Bc7, tight_bpr, blocks_h)),
-                    )
-                }
-                other => bail!("read_texture_rgba8 does not support format {other:?}"),
+        // Some backends (notably GL) can behave strangely when attempting to copy compressed
+        // texture formats directly to a buffer. For tests, we instead render BC textures into an
+        // RGBA8 render target and then read that back.
+        if bc_block_bytes(texture.desc.format).is_some() {
+            let resolved_format = match texture.desc.format {
+                wgpu::TextureFormat::Bc1RgbaUnormSrgb
+                | wgpu::TextureFormat::Bc2RgbaUnormSrgb
+                | wgpu::TextureFormat::Bc3RgbaUnormSrgb
+                | wgpu::TextureFormat::Bc7RgbaUnormSrgb => wgpu::TextureFormat::Rgba8UnormSrgb,
+                _ => wgpu::TextureFormat::Rgba8Unorm,
             };
+
+            let resolved = self.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("aero-d3d11 aerogpu_cmd read_texture resolved"),
+                size: wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: resolved_format,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+                view_formats: &[],
+            });
+            let resolved_view = resolved.create_view(&wgpu::TextureViewDescriptor::default());
+            let src_view = texture.texture.create_view(&wgpu::TextureViewDescriptor {
+                label: Some("aero-d3d11 aerogpu_cmd read_texture src_view"),
+                format: None,
+                dimension: Some(wgpu::TextureViewDimension::D2),
+                aspect: wgpu::TextureAspect::All,
+                base_mip_level: 0,
+                mip_level_count: Some(1),
+                base_array_layer: 0,
+                array_layer_count: Some(1),
+            });
+
+            const SHADER: &str = r#"
+                @group(0) @binding(0) var src: texture_2d<f32>;
+                @group(0) @binding(1) var samp: sampler;
+
+                struct VsOut {
+                    @builtin(position) pos: vec4<f32>,
+                    @location(0) uv: vec2<f32>,
+                };
+
+                @vertex
+                fn vs(@builtin(vertex_index) vid: u32) -> VsOut {
+                    // Full-screen triangle with UVs that cover the full [0,1] range.
+                    var positions = array<vec2<f32>, 3>(
+                        vec2<f32>(-1.0, -3.0),
+                        vec2<f32>( 3.0,  1.0),
+                        vec2<f32>(-1.0,  1.0),
+                    );
+                    var uvs = array<vec2<f32>, 3>(
+                        vec2<f32>(0.0, 2.0),
+                        vec2<f32>(2.0, 0.0),
+                        vec2<f32>(0.0, 0.0),
+                    );
+                    var out: VsOut;
+                    out.pos = vec4<f32>(positions[vid], 0.0, 1.0);
+                    out.uv = uvs[vid];
+                    return out;
+                }
+
+                @fragment
+                fn fs(in: VsOut) -> @location(0) vec4<f32> {
+                    // Use a nearest sampler to sample exact texels without having to reason about
+                    // `@builtin(position)` origin conventions across backends.
+                    return textureSampleLevel(src, samp, in.uv, 0.0);
+                }
+            "#;
+
+            let shader = self
+                .device
+                .create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some("aero-d3d11 aerogpu_cmd read_texture bc shader"),
+                    source: wgpu::ShaderSource::Wgsl(SHADER.into()),
+                });
+
+            let bind_group_layout =
+                self.device
+                    .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                        label: Some("aero-d3d11 aerogpu_cmd read_texture bc bgl"),
+                        entries: &[
+                            wgpu::BindGroupLayoutEntry {
+                                binding: 0,
+                                visibility: wgpu::ShaderStages::FRAGMENT,
+                                ty: wgpu::BindingType::Texture {
+                                    multisampled: false,
+                                    view_dimension: wgpu::TextureViewDimension::D2,
+                                    sample_type: wgpu::TextureSampleType::Float {
+                                        filterable: true,
+                                    },
+                                },
+                                count: None,
+                            },
+                            wgpu::BindGroupLayoutEntry {
+                                binding: 1,
+                                visibility: wgpu::ShaderStages::FRAGMENT,
+                                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                                count: None,
+                            },
+                        ],
+                    });
+            let pipeline_layout =
+                self.device
+                    .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                        label: Some("aero-d3d11 aerogpu_cmd read_texture bc pipeline layout"),
+                        bind_group_layouts: &[&bind_group_layout],
+                        push_constant_ranges: &[],
+                    });
+            let pipeline = self
+                .device
+                .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some("aero-d3d11 aerogpu_cmd read_texture bc pipeline"),
+                    layout: Some(&pipeline_layout),
+                    vertex: wgpu::VertexState {
+                        module: &shader,
+                        entry_point: "vs",
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        buffers: &[],
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: &shader,
+                        entry_point: "fs",
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format: resolved_format,
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                    }),
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::TriangleList,
+                        strip_index_format: None,
+                        front_face: wgpu::FrontFace::Ccw,
+                        cull_mode: None,
+                        polygon_mode: wgpu::PolygonMode::Fill,
+                        unclipped_depth: false,
+                        conservative: false,
+                    },
+                    depth_stencil: None,
+                    multisample: wgpu::MultisampleState::default(),
+                    multiview: None,
+                });
+
+            let sampler = self.device.create_sampler(&wgpu::SamplerDescriptor {
+                label: Some("aero-d3d11 aerogpu_cmd read_texture bc sampler"),
+                address_mode_u: wgpu::AddressMode::ClampToEdge,
+                address_mode_v: wgpu::AddressMode::ClampToEdge,
+                address_mode_w: wgpu::AddressMode::ClampToEdge,
+                mag_filter: wgpu::FilterMode::Nearest,
+                min_filter: wgpu::FilterMode::Nearest,
+                mipmap_filter: wgpu::FilterMode::Nearest,
+                ..Default::default()
+            });
+
+            let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("aero-d3d11 aerogpu_cmd read_texture bc bg"),
+                layout: &bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&src_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&sampler),
+                    },
+                ],
+            });
+
+            let bytes_per_pixel = 4u32;
+            let unpadded_bytes_per_row = width
+                .checked_mul(bytes_per_pixel)
+                .ok_or_else(|| anyhow!("read_texture_rgba8: bytes_per_row overflow"))?;
+            let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+            let padded_bytes_per_row = unpadded_bytes_per_row
+                .checked_add(align - 1)
+                .map(|v| v / align)
+                .and_then(|v| v.checked_mul(align))
+                .ok_or_else(|| anyhow!("read_texture_rgba8: padded bytes_per_row overflow"))?;
+            let buffer_size = (padded_bytes_per_row as u64)
+                .checked_mul(height as u64)
+                .ok_or_else(|| anyhow!("read_texture_rgba8: staging buffer size overflow"))?;
+
+            let staging = self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("aero-d3d11 aerogpu_cmd read_texture bc staging"),
+                size: buffer_size,
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+
+            let mut encoder = self
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("aero-d3d11 aerogpu_cmd read_texture bc encoder"),
+                });
+
+            {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("aero-d3d11 aerogpu_cmd read_texture bc pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &resolved_view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+                pass.set_pipeline(&pipeline);
+                pass.set_bind_group(0, &bind_group, &[]);
+                pass.draw(0..3, 0..1);
+            }
+
+            encoder.copy_texture_to_buffer(
+                wgpu::ImageCopyTexture {
+                    texture: &resolved,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::ImageCopyBuffer {
+                    buffer: &staging,
+                    layout: wgpu::ImageDataLayout {
+                        offset: 0,
+                        bytes_per_row: Some(padded_bytes_per_row),
+                        rows_per_image: Some(height),
+                    },
+                },
+                wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+            );
+
+            self.queue.submit([encoder.finish()]);
+
+            let slice = staging.slice(..);
+            let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
+            slice.map_async(wgpu::MapMode::Read, move |v| {
+                sender.send(v).ok();
+            });
+            self.poll();
+            receiver
+                .receive()
+                .await
+                .ok_or_else(|| anyhow!("wgpu: map_async dropped"))?
+                .context("wgpu: map_async failed")?;
+
+            let mapped = slice.get_mapped_range();
+            let padded_bpr_usize: usize = padded_bytes_per_row
+                .try_into()
+                .map_err(|_| anyhow!("read_texture_rgba8: padded bytes_per_row out of range"))?;
+            let unpadded_bpr_usize: usize = unpadded_bytes_per_row
+                .try_into()
+                .map_err(|_| anyhow!("read_texture_rgba8: bytes_per_row out of range"))?;
+
+            let out_len = (unpadded_bytes_per_row as u64)
+                .checked_mul(height as u64)
+                .ok_or_else(|| anyhow!("read_texture_rgba8: output size overflow"))?;
+            let out_len_usize: usize = out_len
+                .try_into()
+                .map_err(|_| anyhow!("read_texture_rgba8: output size out of range"))?;
+
+            let mut out = Vec::with_capacity(out_len_usize);
+            for row in 0..height as usize {
+                let start = row
+                    .checked_mul(padded_bpr_usize)
+                    .ok_or_else(|| anyhow!("read_texture_rgba8: row offset overflow"))?;
+                let end = start
+                    .checked_add(unpadded_bpr_usize)
+                    .ok_or_else(|| anyhow!("read_texture_rgba8: row end overflow"))?;
+                out.extend_from_slice(
+                    mapped
+                        .get(start..end)
+                        .ok_or_else(|| anyhow!("read_texture_rgba8: staging buffer too small"))?,
+                );
+            }
+
+            drop(mapped);
+            staging.unmap();
+            return Ok(out);
+        }
+
+        let needs_bgra_swizzle = match texture.desc.format {
+            wgpu::TextureFormat::Rgba8Unorm | wgpu::TextureFormat::Rgba8UnormSrgb => false,
+            wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb => true,
+            other => bail!(
+                "read_texture_rgba8 only supports RGBA/BGRA formats or BC formats (got {other:?})"
+            ),
+        };
+
+        let bytes_per_pixel = 4u32;
+        let unpadded_bytes_per_row = width
+            .checked_mul(bytes_per_pixel)
+            .ok_or_else(|| anyhow!("read_texture_rgba8: bytes_per_row overflow"))?;
+        let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+        let padded_bytes_per_row = unpadded_bytes_per_row
+            .checked_add(align - 1)
+            .map(|v| v / align)
+            .and_then(|v| v.checked_mul(align))
+            .ok_or_else(|| anyhow!("read_texture_rgba8: padded bytes_per_row overflow"))?;
+        let buffer_size = (padded_bytes_per_row as u64)
+            .checked_mul(height as u64)
+            .ok_or_else(|| anyhow!("read_texture_rgba8: staging buffer size overflow"))?;
 
         let staging = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("aero-d3d11 aerogpu_cmd read_texture staging"),
@@ -989,7 +1176,7 @@ impl AerogpuD3d11Executor {
                 layout: wgpu::ImageDataLayout {
                     offset: 0,
                     bytes_per_row: Some(padded_bytes_per_row),
-                    rows_per_image: Some(rows_per_image),
+                    rows_per_image: Some(height),
                 },
             },
             wgpu::Extent3d {
@@ -1017,91 +1204,40 @@ impl AerogpuD3d11Executor {
         let padded_bpr_usize: usize = padded_bytes_per_row
             .try_into()
             .map_err(|_| anyhow!("read_texture_rgba8: padded bytes_per_row out of range"))?;
+        let unpadded_bpr_usize: usize = unpadded_bytes_per_row
+            .try_into()
+            .map_err(|_| anyhow!("read_texture_rgba8: bytes_per_row out of range"))?;
 
-        let out = if let Some((bc, tight_bpr, block_rows)) = bc_readback_info {
-            // Extract tight BC bytes (strip `bytes_per_row` padding) and CPU-decompress to RGBA8 so
-            // tests can validate BC textures even when compression features are enabled.
-            let tight_bpr_usize: usize = tight_bpr
-                .try_into()
-                .map_err(|_| anyhow!("read_texture_rgba8: BC bytes_per_row out of range"))?;
-            let block_rows_usize: usize = block_rows
-                .try_into()
-                .map_err(|_| anyhow!("read_texture_rgba8: BC rows out of range"))?;
+        let out_len = (unpadded_bytes_per_row as u64)
+            .checked_mul(height as u64)
+            .ok_or_else(|| anyhow!("read_texture_rgba8: output size overflow"))?;
+        let out_len_usize: usize = out_len
+            .try_into()
+            .map_err(|_| anyhow!("read_texture_rgba8: output size out of range"))?;
 
-            let mut bc_bytes = Vec::with_capacity(
-                tight_bpr_usize
-                    .checked_mul(block_rows_usize)
-                    .ok_or_else(|| anyhow!("read_texture_rgba8: BC output size overflow"))?,
+        let mut out = Vec::with_capacity(out_len_usize);
+        for row in 0..height as usize {
+            let start = row
+                .checked_mul(padded_bpr_usize)
+                .ok_or_else(|| anyhow!("read_texture_rgba8: row offset overflow"))?;
+            let end = start
+                .checked_add(unpadded_bpr_usize)
+                .ok_or_else(|| anyhow!("read_texture_rgba8: row end overflow"))?;
+            out.extend_from_slice(
+                mapped
+                    .get(start..end)
+                    .ok_or_else(|| anyhow!("read_texture_rgba8: staging buffer too small"))?,
             );
-            for row in 0..block_rows_usize {
-                let start = row
-                    .checked_mul(padded_bpr_usize)
-                    .ok_or_else(|| anyhow!("read_texture_rgba8: BC row offset overflow"))?;
-                let end = start
-                    .checked_add(tight_bpr_usize)
-                    .ok_or_else(|| anyhow!("read_texture_rgba8: BC row end overflow"))?;
-                bc_bytes.extend_from_slice(
-                    mapped
-                        .get(start..end)
-                        .ok_or_else(|| anyhow!("read_texture_rgba8: BC staging buffer too small"))?,
-                );
-            }
-
-            match bc {
-                AerogpuBcFormat::Bc1 => aero_gpu::decompress_bc1_rgba8(width, height, &bc_bytes),
-                AerogpuBcFormat::Bc2 => aero_gpu::decompress_bc2_rgba8(width, height, &bc_bytes),
-                AerogpuBcFormat::Bc3 => aero_gpu::decompress_bc3_rgba8(width, height, &bc_bytes),
-                AerogpuBcFormat::Bc7 => aero_gpu::decompress_bc7_rgba8(width, height, &bc_bytes),
-            }
-        } else {
-            let needs_bgra_swizzle = match texture.desc.format {
-                wgpu::TextureFormat::Rgba8Unorm | wgpu::TextureFormat::Rgba8UnormSrgb => false,
-                wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb => true,
-                other => bail!(
-                    "read_texture_rgba8 only supports RGBA/BGRA formats or BC formats (got {other:?})"
-                ),
-            };
-
-            let bytes_per_pixel = 4u32;
-            let unpadded_bytes_per_row = width
-                .checked_mul(bytes_per_pixel)
-                .ok_or_else(|| anyhow!("read_texture_rgba8: bytes_per_row overflow"))?;
-            let out_len = (unpadded_bytes_per_row as u64)
-                .checked_mul(height as u64)
-                .ok_or_else(|| anyhow!("read_texture_rgba8: output size overflow"))?;
-            let out_len_usize: usize = out_len
-                .try_into()
-                .map_err(|_| anyhow!("read_texture_rgba8: output size out of range"))?;
-            let unpadded_bpr_usize: usize = unpadded_bytes_per_row
-                .try_into()
-                .map_err(|_| anyhow!("read_texture_rgba8: bytes_per_row out of range"))?;
-
-            let mut out = Vec::with_capacity(out_len_usize);
-            for row in 0..height as usize {
-                let start = row
-                    .checked_mul(padded_bpr_usize)
-                    .ok_or_else(|| anyhow!("read_texture_rgba8: row offset overflow"))?;
-                let end = start
-                    .checked_add(unpadded_bpr_usize)
-                    .ok_or_else(|| anyhow!("read_texture_rgba8: row end overflow"))?;
-                out.extend_from_slice(
-                    mapped
-                        .get(start..end)
-                        .ok_or_else(|| anyhow!("read_texture_rgba8: staging buffer too small"))?,
-                );
-            }
-
-            if needs_bgra_swizzle {
-                for px in out.chunks_exact_mut(4) {
-                    px.swap(0, 2);
-                }
-            }
-
-            out
-        };
+        }
 
         drop(mapped);
         staging.unmap();
+
+        if needs_bgra_swizzle {
+            for px in out.chunks_exact_mut(4) {
+                px.swap(0, 2);
+            }
+        }
 
         Ok(out)
     }
@@ -1734,13 +1870,18 @@ impl AerogpuD3d11Executor {
         let mut pipeline_bindings = reflection_bindings::build_pipeline_bindings_info(
             &self.device,
             &mut self.bind_group_layout_cache,
-            [vs.reflection.bindings.as_slice(), ps.reflection.bindings.as_slice()],
+            [
+                vs.reflection.bindings.as_slice(),
+                ps.reflection.bindings.as_slice(),
+            ],
         )?;
 
         // `PipelineLayoutKey` is used both for pipeline-layout caching and as part of the pipeline
         // cache key. Avoid cloning the underlying Vec by moving it out of `pipeline_bindings`.
-        let layout_key =
-            std::mem::replace(&mut pipeline_bindings.layout_key, PipelineLayoutKey::empty());
+        let layout_key = std::mem::replace(
+            &mut pipeline_bindings.layout_key,
+            PipelineLayoutKey::empty(),
+        );
 
         let pipeline_layout = {
             let device = &self.device;
@@ -1751,11 +1892,13 @@ impl AerogpuD3d11Executor {
                     .iter()
                     .map(|l| l.layout.as_ref())
                     .collect();
-                Arc::new(device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some("aerogpu_cmd pipeline layout"),
-                    bind_group_layouts: &layout_refs,
-                    push_constant_ranges: &[],
-                }))
+                Arc::new(
+                    device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                        label: Some("aerogpu_cmd pipeline layout"),
+                        bind_group_layouts: &layout_refs,
+                        push_constant_ranges: &[],
+                    }),
+                )
             })
         };
 
@@ -2210,7 +2353,9 @@ impl AerogpuD3d11Executor {
                 if cmd_bytes.len() < 32 {
                     break;
                 }
-                let handle = self.shared_surfaces.resolve_handle(read_u32_le(cmd_bytes, 8)?);
+                let handle = self
+                    .shared_surfaces
+                    .resolve_handle(read_u32_le(cmd_bytes, 8)?);
                 let size_bytes = read_u64_le(cmd_bytes, 24)?;
                 if size_bytes != 0 {
                     if self.resources.buffers.contains_key(&handle) {
@@ -2258,7 +2403,9 @@ impl AerogpuD3d11Executor {
                 if cmd_bytes.len() < 16 {
                     break;
                 }
-                let handle = self.shared_surfaces.resolve_handle(read_u32_le(cmd_bytes, 8)?);
+                let handle = self
+                    .shared_surfaces
+                    .resolve_handle(read_u32_le(cmd_bytes, 8)?);
                 let mut needs_break = false;
 
                 if render_targets.contains(&handle) || depth_stencil.is_some_and(|ds| ds == handle)
@@ -2748,15 +2895,15 @@ impl AerogpuD3d11Executor {
 
             if opcode == OPCODE_SET_INDEX_BUFFER {
                 // `struct aerogpu_cmd_set_index_buffer` (24 bytes)
-                    if cmd_bytes.len() >= 12 {
-                        let buffer = read_u32_le(cmd_bytes, 8)?;
-                        if buffer != 0 {
-                            let buffer = self.shared_surfaces.resolve_handle(buffer);
-                            if let Some(buf) = self.resources.buffers.get(&buffer) {
-                                if buf.backing.is_some()
-                                    && buf.dirty.is_some()
-                                    && self.encoder_used_buffers.contains(&buffer)
-                                {
+                if cmd_bytes.len() >= 12 {
+                    let buffer = read_u32_le(cmd_bytes, 8)?;
+                    if buffer != 0 {
+                        let buffer = self.shared_surfaces.resolve_handle(buffer);
+                        if let Some(buf) = self.resources.buffers.get(&buffer) {
+                            if buf.backing.is_some()
+                                && buf.dirty.is_some()
+                                && self.encoder_used_buffers.contains(&buffer)
+                            {
                                 break;
                             }
                         }
@@ -3556,12 +3703,21 @@ impl AerogpuD3d11Executor {
             }
         }
 
-        let bc_enabled = self
+        let format_layout = aerogpu_texture_format_layout(format_u32)?;
+        let mut bc_enabled = self
             .device
             .features()
             .contains(wgpu::Features::TEXTURE_COMPRESSION_BC);
+        if bc_enabled
+            && format_layout.is_block_compressed()
+            && !wgpu_bc_texture_dimensions_compatible(width, height, mip_levels)
+        {
+            // wgpu/WebGPU require block-compressed texture dimensions to be block-aligned (4x4 for
+            // BC formats) for mip levels that are at least one full block. Fall back to an RGBA8
+            // texture + CPU decompression rather than triggering a wgpu validation panic.
+            bc_enabled = false;
+        }
         let format = map_aerogpu_texture_format(format_u32, bc_enabled)?;
-        let format_layout = aerogpu_texture_format_layout(format_u32)?;
         let usage = map_texture_usage_flags(usage_flags);
         let required_row_pitch = format_layout
             .bytes_per_row_tight(width)
@@ -3670,7 +3826,11 @@ impl AerogpuD3d11Executor {
                         *slot = None;
                     }
                 }
-                if self.state.index_buffer.is_some_and(|b| b.buffer == underlying) {
+                if self
+                    .state
+                    .index_buffer
+                    .is_some_and(|b| b.buffer == underlying)
+                {
                     self.state.index_buffer = None;
                 }
                 for stage in [
@@ -3794,7 +3954,9 @@ impl AerogpuD3d11Executor {
         }
 
         // Preserve command stream ordering relative to any previously encoded GPU work.
-        if self.resources.buffers.contains_key(&handle) || self.resources.textures.contains_key(&handle) {
+        if self.resources.buffers.contains_key(&handle)
+            || self.resources.textures.contains_key(&handle)
+        {
             self.submit_encoder_if_has_commands(
                 encoder,
                 "aerogpu_cmd encoder after UPLOAD_RESOURCE",
@@ -3954,9 +4116,9 @@ impl AerogpuD3d11Executor {
 
                 let mut tight = vec![
                     0u8;
-                    tight_bpr_usize
-                        .checked_mul(rows_usize)
-                        .ok_or_else(|| anyhow!("UPLOAD_RESOURCE: BC data size overflow"))?
+                    tight_bpr_usize.checked_mul(rows_usize).ok_or_else(
+                        || anyhow!("UPLOAD_RESOURCE: BC data size overflow")
+                    )?
                 ];
                 for row in 0..rows_usize {
                     let src_start = row
@@ -3966,9 +4128,10 @@ impl AerogpuD3d11Executor {
                         .checked_mul(tight_bpr_usize)
                         .ok_or_else(|| anyhow!("UPLOAD_RESOURCE: BC dst row offset overflow"))?;
                     tight[dst_start..dst_start + tight_bpr_usize].copy_from_slice(
-                        data.get(src_start..src_start + tight_bpr_usize).ok_or_else(|| {
-                            anyhow!("UPLOAD_RESOURCE: BC source too small for row")
-                        })?,
+                        data.get(src_start..src_start + tight_bpr_usize)
+                            .ok_or_else(|| {
+                                anyhow!("UPLOAD_RESOURCE: BC source too small for row")
+                            })?,
                     );
                 }
 
@@ -4041,8 +4204,9 @@ impl AerogpuD3d11Executor {
             return Ok(());
         }
 
-        let shadow_len =
-            shadow_len.ok_or_else(|| anyhow!("UPLOAD_RESOURCE: partial texture uploads require a prior full upload"))?;
+        let shadow_len = shadow_len.ok_or_else(|| {
+            anyhow!("UPLOAD_RESOURCE: partial texture uploads require a prior full upload")
+        })?;
         if shadow_len != expected_usize {
             bail!("UPLOAD_RESOURCE: internal shadow size mismatch");
         }
@@ -4078,12 +4242,13 @@ impl AerogpuD3d11Executor {
                 .try_into()
                 .map_err(|_| anyhow!("UPLOAD_RESOURCE: BC bytes_per_row out of range"))?;
 
-            let mut tight = vec![
-                0u8;
-                tight_bpr_usize
-                    .checked_mul(rows_usize)
-                    .ok_or_else(|| anyhow!("UPLOAD_RESOURCE: BC data size overflow"))?
-            ];
+            let mut tight =
+                vec![
+                    0u8;
+                    tight_bpr_usize
+                        .checked_mul(rows_usize)
+                        .ok_or_else(|| anyhow!("UPLOAD_RESOURCE: BC data size overflow"))?
+                ];
             for row in 0..rows_usize {
                 let src_start = row
                     .checked_mul(src_bpr_usize)
@@ -4099,7 +4264,9 @@ impl AerogpuD3d11Executor {
             }
 
             let (bc, block_bytes) = match format_layout {
-                AerogpuTextureFormatLayout::BlockCompressed { bc, block_bytes } => (bc, block_bytes),
+                AerogpuTextureFormatLayout::BlockCompressed { bc, block_bytes } => {
+                    (bc, block_bytes)
+                }
                 _ => unreachable!(),
             };
             let expected_len = desc.width.div_ceil(4) as usize
@@ -5965,14 +6132,13 @@ impl AerogpuD3d11Executor {
         allocs: &AllocTable,
         guest_mem: &mut dyn GuestMemory,
     ) -> Result<()> {
-        let (desc, format_u32, row_pitch_bytes, backing) = match self
-            .resources
-            .textures
-            .get(&texture_handle)
-        {
-            Some(tex) if tex.dirty => (tex.desc, tex.format_u32, tex.row_pitch_bytes, tex.backing),
-            _ => return Ok(()),
-        };
+        let (desc, format_u32, row_pitch_bytes, backing) =
+            match self.resources.textures.get(&texture_handle) {
+                Some(tex) if tex.dirty => {
+                    (tex.desc, tex.format_u32, tex.row_pitch_bytes, tex.backing)
+                }
+                _ => return Ok(()),
+            };
 
         let Some(backing) = backing else {
             if let Some(tex) = self.resources.textures.get_mut(&texture_handle) {
@@ -6139,12 +6305,12 @@ impl AerogpuD3d11Executor {
                     if force_opaque_alpha {
                         let unpadded_bpr_usize = unpadded_bpr as usize;
                         for row in 0..rows {
-                            let start = row
-                                .checked_mul(src_row_pitch)
-                                .ok_or_else(|| anyhow!("texture upload row offset overflows usize"))?;
-                            let end = start.checked_add(unpadded_bpr_usize).ok_or_else(|| {
-                                anyhow!("texture upload row end overflows usize")
+                            let start = row.checked_mul(src_row_pitch).ok_or_else(|| {
+                                anyhow!("texture upload row offset overflows usize")
                             })?;
+                            let end = start
+                                .checked_add(unpadded_bpr_usize)
+                                .ok_or_else(|| anyhow!("texture upload row end overflows usize"))?;
                             force_opaque_alpha_rgba8(tmp_slice.get_mut(start..end).ok_or_else(
                                 || anyhow!("texture upload staging buffer too small"),
                             )?);
@@ -6236,13 +6402,15 @@ impl AerogpuD3d11Executor {
                         .ok_or_else(|| anyhow!("texture upload: BC chunk overflows usize"))?;
                     let mut repacked = vec![0u8; repacked_len];
                     for row in 0..rows {
-                        let row_index = y0
-                            .checked_add(row)
-                            .ok_or_else(|| anyhow!("texture upload: BC row index overflows usize"))?;
+                        let row_index = y0.checked_add(row).ok_or_else(|| {
+                            anyhow!("texture upload: BC row index overflows usize")
+                        })?;
                         let row_offset = u64::try_from(row_index)
                             .ok()
                             .and_then(|v| v.checked_mul(u64::from(bytes_per_row)))
-                            .ok_or_else(|| anyhow!("texture upload: BC row offset overflows u64"))?;
+                            .ok_or_else(|| {
+                                anyhow!("texture upload: BC row offset overflows u64")
+                            })?;
                         let src_addr = gpa
                             .checked_add(row_offset)
                             .ok_or_else(|| anyhow!("texture upload: BC address overflows u64"))?;
@@ -6253,8 +6421,9 @@ impl AerogpuD3d11Executor {
                         repacked[dst_start..dst_start + row_buf.len()].copy_from_slice(&row_buf);
                     }
 
-                    let origin_y_texels =
-                        (y0 as u32).checked_mul(4).ok_or_else(|| anyhow!("texture upload: BC origin.y overflow"))?;
+                    let origin_y_texels = (y0 as u32)
+                        .checked_mul(4)
+                        .ok_or_else(|| anyhow!("texture upload: BC origin.y overflow"))?;
                     let remaining_height = height
                         .checked_sub(origin_y_texels)
                         .ok_or_else(|| anyhow!("texture upload: BC origin exceeds mip height"))?;
@@ -6311,8 +6480,9 @@ impl AerogpuD3d11Executor {
                         .read(src_addr, tmp_slice)
                         .map_err(anyhow_guest_mem)?;
 
-                    let origin_y_texels =
-                        (y0 as u32).checked_mul(4).ok_or_else(|| anyhow!("texture upload: BC origin.y overflow"))?;
+                    let origin_y_texels = (y0 as u32)
+                        .checked_mul(4)
+                        .ok_or_else(|| anyhow!("texture upload: BC origin.y overflow"))?;
                     let remaining_height = height
                         .checked_sub(origin_y_texels)
                         .ok_or_else(|| anyhow!("texture upload: BC origin exceeds mip height"))?;
@@ -6405,18 +6575,20 @@ impl AerogpuD3d11Executor {
                         )?;
                     } else {
                         // Read + repack into the tight BC layout expected by the decompressor.
-                        let tight_bpr_usize: usize = tight_bpr
-                            .try_into()
-                            .map_err(|_| anyhow!("texture upload: BC bytes_per_row out of range"))?;
+                        let tight_bpr_usize: usize = tight_bpr.try_into().map_err(|_| {
+                            anyhow!("texture upload: BC bytes_per_row out of range")
+                        })?;
                         let rows_usize: usize = level_rows_u32
                             .try_into()
                             .map_err(|_| anyhow!("texture upload: BC rows out of range"))?;
-                        let src_bpr_usize: usize = level_row_pitch_u32
-                            .try_into()
-                            .map_err(|_| anyhow!("texture upload: BC bytes_per_row out of range"))?;
-                        let tight_len = tight_bpr_usize
-                            .checked_mul(rows_usize)
-                            .ok_or_else(|| anyhow!("texture upload: BC data size overflows usize"))?;
+                        let src_bpr_usize: usize =
+                            level_row_pitch_u32.try_into().map_err(|_| {
+                                anyhow!("texture upload: BC bytes_per_row out of range")
+                            })?;
+                        let tight_len =
+                            tight_bpr_usize.checked_mul(rows_usize).ok_or_else(|| {
+                                anyhow!("texture upload: BC data size overflows usize")
+                            })?;
 
                         let bc_bytes = if level_row_pitch_u32 == tight_bpr {
                             let mut tmp = vec![0u8; tight_len];
@@ -6428,16 +6600,19 @@ impl AerogpuD3d11Executor {
                             for row in 0..rows_usize {
                                 let row_offset = (row as u64)
                                     .checked_mul(u64::from(level_row_pitch_u32))
-                                    .ok_or_else(|| anyhow!("texture upload: BC row offset overflow"))?;
-                                let addr = gpa
-                                    .checked_add(row_offset)
-                                    .ok_or_else(|| anyhow!("texture upload: BC row address overflow"))?;
+                                    .ok_or_else(|| {
+                                        anyhow!("texture upload: BC row offset overflow")
+                                    })?;
+                                let addr = gpa.checked_add(row_offset).ok_or_else(|| {
+                                    anyhow!("texture upload: BC row address overflow")
+                                })?;
                                 guest_mem
                                     .read(addr, &mut row_buf)
                                     .map_err(anyhow_guest_mem)?;
-                                let dst_start = row
-                                    .checked_mul(tight_bpr_usize)
-                                    .ok_or_else(|| anyhow!("texture upload: BC dst offset overflow"))?;
+                                let dst_start =
+                                    row.checked_mul(tight_bpr_usize).ok_or_else(|| {
+                                        anyhow!("texture upload: BC dst offset overflow")
+                                    })?;
                                 tight[dst_start..dst_start + tight_bpr_usize]
                                     .copy_from_slice(&row_buf[..tight_bpr_usize]);
                             }
@@ -6445,8 +6620,7 @@ impl AerogpuD3d11Executor {
                         };
 
                         // Guard against panic in the decompressor (it asserts on length).
-                        let expected_len = level_width
-                            .div_ceil(4) as usize
+                        let expected_len = level_width.div_ceil(4) as usize
                             * level_height.div_ceil(4) as usize
                             * (block_bytes as usize);
                         if bc_bytes.len() != expected_len {
@@ -6483,9 +6657,9 @@ impl AerogpuD3d11Executor {
                             },
                             level,
                             layer,
-                            level_width
-                                .checked_mul(4)
-                                .ok_or_else(|| anyhow!("texture upload: decompressed bytes_per_row overflow"))?,
+                            level_width.checked_mul(4).ok_or_else(|| {
+                                anyhow!("texture upload: decompressed bytes_per_row overflow")
+                            })?,
                             &rgba,
                             false,
                         )?;
@@ -7325,7 +7499,9 @@ enum AerogpuBcFormat {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum AerogpuTextureFormatLayout {
-    Uncompressed { bytes_per_texel: u32 },
+    Uncompressed {
+        bytes_per_texel: u32,
+    },
     BlockCompressed {
         bc: AerogpuBcFormat,
         block_bytes: u32,
@@ -7371,9 +7547,9 @@ fn aerogpu_texture_format_layout(format_u32: u32) -> Result<AerogpuTextureFormat
         | AEROGPU_FORMAT_R8G8B8A8_UNORM_SRGB
         | AEROGPU_FORMAT_R8G8B8X8_UNORM_SRGB
         | AEROGPU_FORMAT_D24_UNORM_S8_UINT
-        | AEROGPU_FORMAT_D32_FLOAT => AerogpuTextureFormatLayout::Uncompressed {
-            bytes_per_texel: 4,
-        },
+        | AEROGPU_FORMAT_D32_FLOAT => {
+            AerogpuTextureFormatLayout::Uncompressed { bytes_per_texel: 4 }
+        }
 
         AEROGPU_FORMAT_BC1_RGBA_UNORM | AEROGPU_FORMAT_BC1_RGBA_UNORM_SRGB => {
             AerogpuTextureFormatLayout::BlockCompressed {
@@ -7517,11 +7693,35 @@ fn bc_block_bytes(format: wgpu::TextureFormat) -> Option<u32> {
     }
 }
 
+fn wgpu_bc_texture_dimensions_compatible(width: u32, height: u32, mip_levels: u32) -> bool {
+    // WebGPU validation requires block-compressed texture dimensions to be block-aligned (4x4 for
+    // BC formats) for mip levels that are at least one full block in size.
+    //
+    // See also: wgpu validation errors like:
+    //   "Width 9 is not a multiple of Bc1RgbaUnorm's block width (4)"
+    fn mip_extent(v: u32, level: u32) -> u32 {
+        v.checked_shr(level).unwrap_or(0).max(1)
+    }
+
+    for level in 0..mip_levels {
+        let w = mip_extent(width, level);
+        let h = mip_extent(height, level);
+        if (w >= 4 && !w.is_multiple_of(4)) || (h >= 4 && !h.is_multiple_of(4)) {
+            return false;
+        }
+    }
+    true
+}
+
 /// Compute the tight `bytes_per_row` and row count for `wgpu::Queue::write_texture`.
 ///
 /// For block-compressed formats this returns layout in *blocks* (4x4 for BC), matching WebGPU's
 /// copy rules: `rows_per_image` counts block rows.
-fn write_texture_layout(format: wgpu::TextureFormat, width: u32, height: u32) -> Result<(u32, u32)> {
+fn write_texture_layout(
+    format: wgpu::TextureFormat,
+    width: u32,
+    height: u32,
+) -> Result<(u32, u32)> {
     if let Some(block_bytes) = bc_block_bytes(format) {
         let blocks_w = width.div_ceil(4);
         let blocks_h = height.div_ceil(4);
@@ -7548,8 +7748,7 @@ fn write_texture_subresource_linear(
     bytes: &[u8],
     force_opaque_alpha: bool,
 ) -> Result<()> {
-    let (unpadded_bpr, layout_rows) =
-        write_texture_layout(desc.format, desc.width, desc.height)?;
+    let (unpadded_bpr, layout_rows) = write_texture_layout(desc.format, desc.width, desc.height)?;
     if src_bytes_per_row < unpadded_bpr {
         bail!("write_texture: src_bytes_per_row too small");
     }
@@ -7587,8 +7786,7 @@ fn write_texture_subresource_linear(
                     .checked_mul(padded_bpr as usize)
                     .ok_or_else(|| anyhow!("write_texture: dst row offset overflow"))?;
                 let row_bytes = &mut repacked[dst_start..dst_start + unpadded_bpr as usize];
-                row_bytes
-                    .copy_from_slice(&bytes[src_start..src_start + unpadded_bpr as usize]);
+                row_bytes.copy_from_slice(&bytes[src_start..src_start + unpadded_bpr as usize]);
                 if force_opaque_alpha {
                     force_opaque_alpha_rgba8(row_bytes);
                 }
@@ -7648,8 +7846,7 @@ fn write_texture_subresource_linear(
                 .try_into()
                 .map_err(|_| anyhow!("write_texture: src_bytes_per_row out of range"))?;
             let mut repacked = vec![0u8; src_stride_usize];
-            repacked[..unpadded_bpr as usize]
-                .copy_from_slice(&bytes[..unpadded_bpr as usize]);
+            repacked[..unpadded_bpr as usize].copy_from_slice(&bytes[..unpadded_bpr as usize]);
             force_opaque_alpha_rgba8(&mut repacked[..unpadded_bpr as usize]);
             queue.write_texture(
                 wgpu::ImageCopyTexture {
