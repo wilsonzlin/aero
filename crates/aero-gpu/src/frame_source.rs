@@ -80,7 +80,20 @@ impl FrameSource {
         memory_base: *mut u8,
         framebuffer_offset_bytes: usize,
     ) -> Result<Self, FrameSourceError> {
+        if memory_base.is_null() {
+            return Err(FrameSourceError::SharedFramebuffer(
+                SharedFramebufferError::NullBasePtr,
+            ));
+        }
+
         let region_base = memory_base.add(framebuffer_offset_bytes);
+        let addr = region_base as usize;
+        if !addr.is_multiple_of(4) {
+            return Err(FrameSourceError::SharedFramebuffer(
+                SharedFramebufferError::UnalignedBasePtr { addr },
+            ));
+        }
+
         let header = &*(region_base as *const SharedFramebufferHeader);
 
         let magic = header.magic.load(Ordering::SeqCst);
@@ -492,5 +505,19 @@ mod tests {
             snapshot.problems[0],
             FrameInspectorProblem::PublishOrderMismatch { .. }
         ));
+    }
+
+    #[test]
+    fn from_shared_memory_rejects_unaligned_offset_without_ub() {
+        // Offset the base by 1 byte so the header pointer is unaligned.
+        let mut bytes = vec![0u8; 128];
+        let err = match unsafe { FrameSource::from_shared_memory(bytes.as_mut_ptr(), 1) } {
+            Ok(_) => panic!("expected error"),
+            Err(err) => err,
+        };
+        match err {
+            FrameSourceError::SharedFramebuffer(SharedFramebufferError::UnalignedBasePtr { .. }) => {}
+            other => panic!("expected UnalignedBasePtr, got {other:?}"),
+        }
     }
 }
