@@ -470,16 +470,24 @@ Expected signal:
 
 ### 5.4 Verify routing switch happens at `DRIVER_OK`
 
-The intended auto-routing policy is implemented by the input capture pipeline:
+In the **web runtime**, input auto-routing is implemented by the IO worker:
 
-- [`crates/emulator/src/in_capture.rs`](../crates/emulator/src/in_capture.rs) (`InputRoutingPolicy::Auto`)
-- It prefers virtio-input only when `virtio.keyboard.driver_ok()` / `virtio.mouse.driver_ok()` becomes true.
+- [`web/src/workers/io.worker.ts`](../web/src/workers/io.worker.ts)
+  - `maybeUpdateKeyboardInputBackend` / `maybeUpdateMouseInputBackend`
+  - It prefers virtio-input only when `virtioInputKeyboard?.driverOk()` / `virtioInputMouse?.driverOk()` becomes true.
+
+The `driverOk()` signal is derived from the virtio status register:
+
+- [`web/src/io/devices/virtio_input.ts`](../web/src/io/devices/virtio_input.ts) (`VirtioInputPciFunction::driverOk`)
+  - Emits a one-time log when it flips true: `"[virtio-input] keyboard driver_ok"` / `"[virtio-input] mouse driver_ok"`.
+- [`crates/aero-wasm/src/virtio_input_bridge.rs`](../crates/aero-wasm/src/virtio_input_bridge.rs) (`VirtioInputPciDeviceCore::driver_ok`)
+  - Reads `device_status` at BAR0+`0x14` and checks `VIRTIO_STATUS_DRIVER_OK` (`0x04`).
 
 Validation steps:
 
 1. While the guest is still booting (or before the virtio-input driver is installed), verify keyboard/mouse still work via the fallback path (PS/2 or USB).
 2. After the driver is installed and the guest is fully booted, verify:
-   - the driver reaches `DRIVER_OK` (virtio status bit 2)
+   - the driver reaches `DRIVER_OK` (virtio status bit 2, value `0x04`)
    - keyboard/mouse input continues working
 3. Confirm that new input is being sent via virtio-input (not the fallback path).
 
@@ -487,16 +495,15 @@ If you need an explicit “device-ready” signal, `DRIVER_OK` is the virtio sta
 
 ### 5.5 Recommended debug signal (when validating routing)
 
-When debugging routing issues, add a one-line log/trace when the virtio-input driver becomes ready:
+For web runtime bring-up, the default debug signal is the one-time console log emitted when the guest sets `DRIVER_OK`:
 
-- log when `VirtioInputDevice::driver_ok()` transitions from false → true
-  - see [`crates/emulator/src/io/virtio/devices/input.rs`](../crates/emulator/src/io/virtio/devices/input.rs) (`driver_ok()`)
+- `"[virtio-input] keyboard driver_ok"` / `"[virtio-input] mouse driver_ok"` (see `VirtioInputPciFunction::driverOk()` in [`web/src/io/devices/virtio_input.ts`](../web/src/io/devices/virtio_input.ts)).
 
-And/or log which backend is selected in `InputRoutingPolicy::Auto`:
+If you need a *routing* signal (not just `DRIVER_OK`), add a one-line log when the backend changes in:
 
-- see the selection points in `crates/emulator/src/in_capture.rs` (keyboard/mouse Auto branches).
+- [`web/src/workers/io.worker.ts`](../web/src/workers/io.worker.ts) (`maybeUpdateKeyboardInputBackend` / `maybeUpdateMouseInputBackend`)
 
-This makes it trivial to confirm “we switched to virtio-input only after DRIVER_OK”.
+Note: the IO worker intentionally avoids switching backends while keys/buttons are held down to prevent “stuck key/button” states in the guest.
 
 ---
 
