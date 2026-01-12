@@ -92,9 +92,7 @@ pub trait BlockBackend {
 
 fn map_storage_error(err: StorageDiskError) -> BlockBackendError {
     match err {
-        StorageDiskError::OutOfBounds { .. } | StorageDiskError::OffsetOverflow => {
-            BlockBackendError::OutOfBounds
-        }
+        StorageDiskError::OutOfBounds { .. } => BlockBackendError::OutOfBounds,
         _ => BlockBackendError::IoError,
     }
 }
@@ -118,28 +116,6 @@ impl<T: VirtualDisk + ?Sized> BlockBackend for Box<T> {
 
     fn flush(&mut self) -> Result<(), BlockBackendError> {
         (**self).flush().map_err(map_storage_error)
-    }
-}
-
-impl BlockBackend for Box<dyn VirtualDisk + Send> {
-    fn len(&self) -> u64 {
-        self.capacity_bytes()
-    }
-
-    fn read_at(&mut self, offset: u64, dst: &mut [u8]) -> Result<(), BlockBackendError> {
-        self.as_mut()
-            .read_at(offset, dst)
-            .map_err(map_storage_error)
-    }
-
-    fn write_at(&mut self, offset: u64, src: &[u8]) -> Result<(), BlockBackendError> {
-        self.as_mut()
-            .write_at(offset, src)
-            .map_err(map_storage_error)
-    }
-
-    fn flush(&mut self) -> Result<(), BlockBackendError> {
-        self.as_mut().flush().map_err(map_storage_error)
     }
 }
 
