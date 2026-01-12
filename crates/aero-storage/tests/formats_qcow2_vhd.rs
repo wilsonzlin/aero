@@ -291,6 +291,31 @@ fn qcow2_rejects_corrupt_magic() {
 }
 
 #[test]
+fn qcow2_rejects_absurd_l1_table_size() {
+    // Ensure we fail fast without attempting to allocate a huge L1 table.
+    let cluster_bits = 9u32; // 512-byte clusters (smallest allowed)
+    let virtual_size = 1u64 << 40; // 1 TiB -> requires an enormous L1 table at 512B clusters
+
+    let mut backend = MemBackend::with_len(104).unwrap();
+    let mut header = [0u8; 104];
+    header[0..4].copy_from_slice(b"QFI\xfb");
+    write_be_u32(&mut header, 4, 3); // version
+    write_be_u32(&mut header, 20, cluster_bits);
+    write_be_u64(&mut header, 24, virtual_size);
+    write_be_u32(&mut header, 36, 0x0200_0000); // l1_size must be >= required_l1 (33,554,432)
+    write_be_u64(&mut header, 40, 0); // l1_table_offset (won't be read on failure)
+    write_be_u64(&mut header, 48, 0); // refcount_table_offset (won't be read on failure)
+    write_be_u32(&mut header, 56, 1); // refcount_table_clusters
+    write_be_u64(&mut header, 72, 0); // incompatible_features
+    write_be_u32(&mut header, 96, 4); // refcount_order
+    write_be_u32(&mut header, 100, 104); // header_length
+    backend.write_at(0, &header).unwrap();
+
+    let err = Qcow2Disk::open(backend).err().expect("expected error");
+    assert!(matches!(err, DiskError::Unsupported(_)));
+}
+
+#[test]
 fn qcow2_zero_writes_do_not_allocate_clusters() {
     let mut backend = make_qcow2_empty(64 * 1024);
     let initial_len = backend.len().unwrap();
@@ -546,6 +571,37 @@ fn vhd_dynamic_write_persists_after_reopen() {
     let mut back = vec![0u8; SECTOR_SIZE];
     reopened.read_sectors(3, &mut back).unwrap();
     assert_eq!(back, data);
+}
+
+#[test]
+fn vhd_rejects_absurd_bat_size() {
+    // Ensure we fail fast without allocating a huge BAT.
+    let virtual_size = 20u64 * 1024 * 1024 * 1024; // 20 GiB virtual disk
+    let dyn_header_offset = SECTOR_SIZE as u64;
+    let table_offset = dyn_header_offset + 1024u64;
+    let file_len = table_offset + SECTOR_SIZE as u64; // footer stored at EOF (overlaps table_offset)
+    let block_size = SECTOR_SIZE as u32; // smallest block size -> BAT grows with virtual size
+    let required_entries = virtual_size / SECTOR_SIZE as u64;
+    assert!(required_entries * 4 > 128 * 1024 * 1024);
+
+    let mut backend = MemBackend::with_len(file_len).unwrap();
+
+    let footer = make_vhd_footer(virtual_size, 3, dyn_header_offset);
+    backend
+        .write_at(file_len - SECTOR_SIZE as u64, &footer)
+        .unwrap();
+
+    let mut dyn_header = [0u8; 1024];
+    dyn_header[0..8].copy_from_slice(b"cxsparse");
+    write_be_u64(&mut dyn_header, 8, u64::MAX);
+    write_be_u64(&mut dyn_header, 16, table_offset);
+    write_be_u32(&mut dyn_header, 24, 0x0001_0000);
+    write_be_u32(&mut dyn_header, 28, required_entries as u32); // max_table_entries
+    write_be_u32(&mut dyn_header, 32, block_size); // block_size
+    backend.write_at(dyn_header_offset, &dyn_header).unwrap();
+
+    let err = VhdDisk::open(backend).err().expect("expected error");
+    assert!(matches!(err, DiskError::Unsupported(_)));
 }
 
 #[test]
