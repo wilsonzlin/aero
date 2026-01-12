@@ -72,13 +72,14 @@ impl SnapshotSource for PcPlatformSnapshotHarness<'_> {
     }
 
     fn ram_len(&self) -> usize {
-        // `PcPlatform` is constructed from a `usize` RAM length, so this should always fit.
-        self.pc.memory.ram().size() as usize
+        usize::try_from(self.pc.ram_size_bytes).unwrap_or(0)
     }
 
     fn read_ram(&self, offset: u64, buf: &mut [u8]) -> Result<()> {
+        const FOUR_GIB: u64 = 0x1_0000_0000;
+        let low_ram_end = crate::PCIE_ECAM_BASE;
         let ram = self.pc.memory.ram();
-        let total_len = ram.size();
+        let total_len = self.pc.ram_size_bytes;
         let end = offset
             .checked_add(buf.len() as u64)
             .ok_or(SnapshotError::Corrupt("ram read overflow"))?;
@@ -87,7 +88,31 @@ impl SnapshotSource for PcPlatformSnapshotHarness<'_> {
         }
 
         // Important: bypass `MemoryBus::read_physical`, which applies A20 gating.
-        ram.read_into(offset, buf)
+        //
+        // Snapshots encode RAM as a dense byte array of length `ram_size_bytes` (not including any
+        // guest-physical MMIO holes). When RAM is remapped above 4GiB to make room for the PCIe
+        // ECAM/PCI hole, translate dense RAM offsets into the corresponding guest-physical
+        // addresses.
+        if total_len <= low_ram_end || buf.is_empty() {
+            ram.read_into(offset, buf)
+                .map_err(|_| SnapshotError::Corrupt("ram read failed"))?;
+            return Ok(());
+        }
+
+        if offset < low_ram_end {
+            let low_len = (low_ram_end - offset) as usize;
+            let first = low_len.min(buf.len());
+            ram.read_into(offset, &mut buf[..first])
+                .map_err(|_| SnapshotError::Corrupt("ram read failed"))?;
+            if first < buf.len() {
+                ram.read_into(FOUR_GIB, &mut buf[first..])
+                    .map_err(|_| SnapshotError::Corrupt("ram read failed"))?;
+            }
+            return Ok(());
+        }
+
+        let phys = FOUR_GIB + (offset - low_ram_end);
+        ram.read_into(phys, buf)
             .map_err(|_| SnapshotError::Corrupt("ram read failed"))?;
         Ok(())
     }
@@ -188,11 +213,13 @@ impl SnapshotTarget for PcPlatformSnapshotHarness<'_> {
     fn restore_disk_overlays(&mut self, _overlays: DiskOverlayRefs) {}
 
     fn ram_len(&self) -> usize {
-        self.pc.memory.ram().size() as usize
+        usize::try_from(self.pc.ram_size_bytes).unwrap_or(0)
     }
 
     fn write_ram(&mut self, offset: u64, data: &[u8]) -> Result<()> {
-        let ram_len = self.pc.memory.ram().size();
+        const FOUR_GIB: u64 = 0x1_0000_0000;
+        let low_ram_end = crate::PCIE_ECAM_BASE;
+        let ram_len = self.pc.ram_size_bytes;
         let end = offset
             .checked_add(data.len() as u64)
             .ok_or(SnapshotError::Corrupt("ram write overflow"))?;
@@ -201,10 +228,27 @@ impl SnapshotTarget for PcPlatformSnapshotHarness<'_> {
         }
 
         // Important: bypass `MemoryBus::write_physical`, which applies A20 gating.
-        self.pc
-            .memory
-            .ram_mut()
-            .write_from(offset, data)
+        let ram = self.pc.memory.ram_mut();
+        if ram_len <= low_ram_end || data.is_empty() {
+            ram.write_from(offset, data)
+                .map_err(|_| SnapshotError::Corrupt("ram write failed"))?;
+            return Ok(());
+        }
+
+        if offset < low_ram_end {
+            let low_len = (low_ram_end - offset) as usize;
+            let first = low_len.min(data.len());
+            ram.write_from(offset, &data[..first])
+                .map_err(|_| SnapshotError::Corrupt("ram write failed"))?;
+            if first < data.len() {
+                ram.write_from(FOUR_GIB, &data[first..])
+                    .map_err(|_| SnapshotError::Corrupt("ram write failed"))?;
+            }
+            return Ok(());
+        }
+
+        let phys = FOUR_GIB + (offset - low_ram_end);
+        ram.write_from(phys, data)
             .map_err(|_| SnapshotError::Corrupt("ram write failed"))?;
         Ok(())
     }

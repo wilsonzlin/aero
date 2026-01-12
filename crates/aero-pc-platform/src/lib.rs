@@ -877,6 +877,12 @@ pub struct PcPlatform {
     pub chipset: ChipsetState,
     pub io: IoPortBus,
     pub memory: MemoryBus,
+    /// Total guest RAM bytes in the dense backing store (excluding any below-4GiB MMIO holes when
+    /// RAM is remapped above 4GiB).
+    ///
+    /// Note: `memory.ram().size()` may be larger than this when the RAM backend is wrapped in
+    /// `MappedGuestMemory` to expose a PC-style non-contiguous guest-physical layout.
+    ram_size_bytes: u64,
     pub interrupts: Rc<RefCell<PlatformInterrupts>>,
 
     pub pci_cfg: SharedPciConfigPorts,
@@ -1800,6 +1806,7 @@ impl PcPlatform {
             chipset,
             io,
             memory,
+            ram_size_bytes: total_ram_size,
             interrupts,
             pci_cfg,
             pci_intx,
@@ -2080,7 +2087,7 @@ impl PcPlatform {
             let irq8 = PlatformIrqLine::isa(self.interrupts.clone(), 8);
             let mut rtc = self.rtc.borrow_mut();
             *rtc = RtcCmos::new(self.clock.clone(), irq8);
-            rtc.set_memory_size_bytes(self.memory.ram().size());
+            rtc.set_memory_size_bytes(self.ram_size_bytes);
         }
 
         // Reset HPET state (MMIO mapping retains the same shared `Rc`).
