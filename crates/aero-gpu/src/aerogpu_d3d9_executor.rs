@@ -2564,7 +2564,9 @@ impl AerogpuD3d9Executor {
                             .contains(wgpu::Features::TEXTURE_COMPRESSION_BC);
 
                         if bc_supported
-                            && wgpu_bc_texture_dimensions_compatible(width, height, mip_levels)
+                            && crate::texture_format::wgpu_bc_texture_dimensions_compatible(
+                                width, height, mip_levels,
+                            )
                         {
                             mapped_format
                         } else {
@@ -8292,22 +8294,6 @@ fn mip_extent(base: u32, mip_level: u32) -> u32 {
     mip_dim(base, mip_level)
 }
 
-fn wgpu_bc_texture_dimensions_compatible(width: u32, height: u32, mip_levels: u32) -> bool {
-    // WebGPU validation requires block-compressed texture dimensions to be block-aligned (4x4 for
-    // BC formats) for mip levels that are at least one full block in size.
-    //
-    // See also: wgpu validation errors like:
-    //   "Width 9 is not a multiple of Bc1RgbaUnorm's block width (4)"
-    for level in 0..mip_levels {
-        let w = mip_dim(width, level);
-        let h = mip_dim(height, level);
-        if (w >= 4 && !w.is_multiple_of(4)) || (h >= 4 && !h.is_multiple_of(4)) {
-            return false;
-        }
-    }
-    true
-}
-
 #[derive(Debug, Clone, Copy)]
 struct TexelBlockInfo {
     block_width: u32,
@@ -9220,18 +9206,6 @@ mod tests {
         assert_eq!(layout.mip_offsets, vec![0, 64]);
         assert_eq!(layout.layer_stride_bytes, 80);
         assert_eq!(layout.total_size_bytes, 80);
-    }
-
-    #[test]
-    fn wgpu_bc_texture_dimensions_compatible_rejects_invalid_mip_shapes() {
-        // mip1 = 6x6 is >= 4 but not block-aligned.
-        assert!(!super::wgpu_bc_texture_dimensions_compatible(12, 12, 2));
-
-        // mip1 = 4x4 is block-aligned.
-        assert!(super::wgpu_bc_texture_dimensions_compatible(8, 8, 2));
-
-        // mip1 = 2x2 is < 4 and does not need to be block-aligned.
-        assert!(super::wgpu_bc_texture_dimensions_compatible(4, 4, 2));
     }
 
     #[test]
