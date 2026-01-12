@@ -418,7 +418,11 @@ fn read_out_chain(mem: &impl GuestMemory, descs: &[Descriptor]) -> Result<Vec<u8
             return Ok(Vec::new());
         }
     }
-    let mut buf = vec![0u8; total];
+    let mut buf = Vec::new();
+    if buf.try_reserve_exact(total).is_err() {
+        return Ok(Vec::new());
+    }
+    buf.resize(total, 0);
     let mut offset = 0usize;
     for desc in descs.iter().filter(|d| d.flags & VRING_DESC_F_WRITE == 0) {
         let len = desc.len as usize;
