@@ -3,51 +3,14 @@ use aero_cpu_core::interrupts::InterruptController as CpuInterruptController;
 use aero_cpu_core::mem::CpuBus;
 use aero_cpu_core::Exception;
 use aero_devices::pci::{PciBarKind, PciBdf, SharedPciConfigPorts};
-use aero_mmu::{AccessType, MemoryBus as MmuBus, Mmu, TranslateFault};
+use aero_mmu::{AccessType, Mmu, TranslateFault};
 use aero_platform::interrupts::{
     InterruptController as PlatformInterruptController, SharedPlatformInterrupts,
 };
-use memory::MemoryBus as PhysicalMemoryBus;
 use std::cell::RefCell;
 use std::rc::Rc;
 
 const PAGE_SIZE: u64 = 4096;
-
-struct PhysBus<'a>(&'a mut aero_platform::memory::MemoryBus);
-
-impl MmuBus for PhysBus<'_> {
-    fn read_u8(&mut self, paddr: u64) -> u8 {
-        self.0.read_u8(paddr)
-    }
-
-    fn read_u16(&mut self, paddr: u64) -> u16 {
-        PhysicalMemoryBus::read_u16(self.0, paddr)
-    }
-
-    fn read_u32(&mut self, paddr: u64) -> u32 {
-        PhysicalMemoryBus::read_u32(self.0, paddr)
-    }
-
-    fn read_u64(&mut self, paddr: u64) -> u64 {
-        PhysicalMemoryBus::read_u64(self.0, paddr)
-    }
-
-    fn write_u8(&mut self, paddr: u64, value: u8) {
-        self.0.write_u8(paddr, value);
-    }
-
-    fn write_u16(&mut self, paddr: u64, value: u16) {
-        PhysicalMemoryBus::write_u16(self.0, paddr, value);
-    }
-
-    fn write_u32(&mut self, paddr: u64, value: u32) {
-        PhysicalMemoryBus::write_u32(self.0, paddr, value);
-    }
-
-    fn write_u64(&mut self, paddr: u64, value: u64) {
-        PhysicalMemoryBus::write_u64(self.0, paddr, value);
-    }
-}
 
 pub struct PcInterruptController {
     interrupts: SharedPlatformInterrupts,
@@ -248,8 +211,10 @@ impl PcCpuBus {
     }
 
     fn translate(&mut self, vaddr: u64, access: AccessType) -> Result<u64, Exception> {
-        let mut phys = PhysBus(&mut self.platform.memory);
-        match self.mmu.translate(&mut phys, vaddr, access, self.cpl) {
+        match self
+            .mmu
+            .translate(&mut self.platform.memory, vaddr, access, self.cpl)
+        {
             Ok(paddr) => Ok(paddr),
             Err(TranslateFault::PageFault(pf)) => Err(Exception::PageFault {
                 addr: pf.addr,

@@ -512,6 +512,7 @@ dependencies = [
  "aero-devices",
  "aero-interrupts",
  "aero-io-snapshot",
+ "aero-mmu",
  "firmware",
  "js-sys",
  "memory",

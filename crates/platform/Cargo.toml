@@ -8,6 +8,7 @@ license = "MIT OR Apache-2.0"
 aero-cpu-core = { path = "../aero-cpu-core" }
 aero-interrupts = { path = "../aero-interrupts" }
 aero-io-snapshot = { path = "../aero-io-snapshot" }
+aero-mmu = { path = "../aero-mmu" }
 memory = { path = "../memory" }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
