@@ -11,6 +11,7 @@
 #![forbid(unsafe_code)]
 
 mod guest_time;
+pub mod virtual_time;
 
 pub use guest_time::{GuestTime, DEFAULT_GUEST_CPU_HZ};
 
