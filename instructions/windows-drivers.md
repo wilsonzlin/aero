@@ -146,12 +146,12 @@ python3 scripts/ci/check-virtqueue-split-driver-builds.py
 python3 scripts/ci/check-win7-virtio-header-collisions.py
 python3 scripts/ci/check-win7-virtio-net-pci-config-access.py
 
-  # AeroGPU guardrails (fast, no VM required)
-  python3 scripts/ci/check-aerogpu-d3d9-def-stdcall.py
-  python3 scripts/ci/check-aerogpu-d3d10-def-stdcall.py
-  python3 scripts/ci/check-aerogpu-wdk-guards.py
-  python3 scripts/ci/check-aero-d3d11-guest-memory-imports.py
-  python3 scripts/ci/check-aerogpu-share-token-contract.py
+# AeroGPU guardrails (fast, no VM required)
+python3 scripts/ci/check-aerogpu-d3d9-def-stdcall.py
+python3 scripts/ci/check-aerogpu-d3d10-def-stdcall.py
+python3 scripts/ci/check-aerogpu-wdk-guards.py
+python3 scripts/ci/check-aero-d3d11-guest-memory-imports.py
+python3 scripts/ci/check-aerogpu-share-token-contract.py
 
 # Repo layout guardrails (includes AeroGPU Win7 test-suite manifest/doc/fallback-list invariants)
 bash scripts/ci/check-repo-layout.sh
