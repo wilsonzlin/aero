@@ -529,6 +529,116 @@ fn machine_ide_primary_dma_read_wakes_halted_cpu_via_ioapic_in_apic_mode() {
 }
 
 #[test]
+fn machine_ide_primary_dma_write_wakes_halted_cpu_via_ioapic_in_apic_mode() {
+    const RAM_SIZE: u64 = 2 * 1024 * 1024;
+    const VECTOR: u8 = 0x63;
+
+    let mut m = Machine::new(MachineConfig {
+        ram_size_bytes: RAM_SIZE,
+        enable_pc_platform: true,
+        enable_ide: true,
+        // Keep this test focused on IDE Bus Master DMA write + IOAPIC/LAPIC delivery.
+        enable_vga: false,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        enable_e1000: false,
+        ..Default::default()
+    })
+    .unwrap();
+
+    // Attach a shared disk so we can verify the DMA commit wrote to the backend.
+    let mut img = vec![0u8; 4 * SECTOR_SIZE];
+    img[0..4].copy_from_slice(b"BOOT");
+    let disk = aero_machine::SharedDisk::from_bytes(img).unwrap();
+    m.attach_ide_primary_master_disk(Box::new(disk.clone()))
+        .unwrap();
+
+    // Route IOAPIC vector into a real-mode handler that writes a flag byte.
+    let handler_addr = 0x8000u64;
+    let code_base = 0x9000u64;
+    let flag_addr = 0x0500u16;
+    let flag_value = 0xD2_u8;
+
+    install_real_mode_handler(&mut m, handler_addr, flag_addr, flag_value);
+    install_hlt_loop(&mut m, code_base);
+    write_ivt_entry(&mut m, VECTOR, 0x0000, handler_addr as u16);
+    setup_real_mode_cpu(&mut m, code_base);
+
+    // Halt the CPU first so the interrupt must wake it.
+    assert!(matches!(m.run_slice(16), RunExit::Halted { .. }));
+
+    // Switch to APIC mode and program IOAPIC redirection entry for GSI14 -> VECTOR.
+    {
+        let interrupts = m
+            .platform_interrupts()
+            .expect("pc platform should provide interrupts");
+        let mut ints = interrupts.borrow_mut();
+        ints.set_mode(PlatformInterruptMode::Apic);
+        program_ioapic_redirection_entry(&mut ints, 14, u32::from(VECTOR), 0);
+    }
+
+    let bdf = IDE_PIIX3.bdf;
+
+    // Read BAR4 so the test is resilient to future default base changes.
+    let bar4_raw = read_cfg_u32(&mut m, bdf.bus, bdf.device, bdf.function, 0x20);
+    let bm_base = (bar4_raw & 0xFFFF_FFFC) as u16;
+    assert_ne!(bm_base, 0, "expected IDE BMIDE BAR4 to be programmed");
+
+    // Prepare a single-entry PRD table (512 bytes, end-of-table).
+    let prd_addr = 0x1000u64;
+    let data_buf = 0x2000u64;
+    m.write_physical_u32(prd_addr, data_buf as u32);
+    m.write_physical_u16(prd_addr + 4, SECTOR_SIZE as u16);
+    m.write_physical_u16(prd_addr + 6, 0x8000);
+
+    // Fill the guest buffer with a pattern to be written to LBA 1.
+    let mut pattern = vec![0u8; SECTOR_SIZE];
+    pattern[0..8].copy_from_slice(b"APICWRT!");
+    for (i, b) in pattern.iter_mut().enumerate().skip(8) {
+        *b = (i as u8).wrapping_mul(3).wrapping_add(0x5D);
+    }
+    m.write_physical(data_buf, &pattern);
+
+    // Enable PCI I/O decode + bus mastering for IDE.
+    write_cfg_u16(&mut m, bdf.bus, bdf.device, bdf.function, 0x04, 0x0005);
+
+    // Program BMIDE (PRDT base + start bit; direction=FromMemory for ATA writes).
+    m.io_write(bm_base + 4, 4, prd_addr as u32);
+    m.io_write(bm_base + 2, 1, 0x06); // clear error/irq bits
+    m.io_write(bm_base, 1, 0x01); // start, direction=0 (from memory)
+
+    // Issue ATA WRITE DMA (0xCA) for LBA 1, count 1, primary master.
+    m.io_write(0x1F2, 1, 1);
+    m.io_write(0x1F3, 1, 1);
+    m.io_write(0x1F4, 1, 0);
+    m.io_write(0x1F5, 1, 0);
+    m.io_write(0x1F6, 1, 0xE0);
+    m.io_write(0x1F7, 1, 0xCA);
+
+    for _ in 0..10 {
+        let _ = m.run_slice(256);
+        if m.read_physical_u8(u64::from(flag_addr)) == flag_value {
+            let mut out = vec![0u8; SECTOR_SIZE];
+            let mut disk_view = disk.clone();
+            disk_view.read_sectors(1, &mut out).unwrap();
+            assert_eq!(out.as_slice(), pattern.as_slice());
+
+            let bm_status = m.io_read(bm_base + 2, 1) as u8;
+            assert_ne!(bm_status & 0x04, 0, "BMIDE status IRQ bit should be set");
+            assert_eq!(bm_status & 0x02, 0, "BMIDE status should not show error");
+            return;
+        }
+    }
+
+    panic!(
+        "IDE primary DMA WRITE did not deliver IOAPIC interrupt (flag=0x{:02x})",
+        m.read_physical_u8(u64::from(flag_addr))
+    );
+}
+
+#[test]
 fn machine_ide_bmide_bar4_routing_tracks_pci_bar_reprogramming() {
     const RAM_SIZE: u64 = 2 * 1024 * 1024;
 
