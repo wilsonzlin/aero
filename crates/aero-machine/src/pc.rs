@@ -113,38 +113,7 @@ pub struct PcMachine {
     disk: SharedDisk,
     mapped_roms: HashMap<u64, usize>,
 
-    network_backend: Option<PcNetworkBackend>,
-}
-
-type DynFrameRing = Box<dyn FrameRing>;
-type DynRingBackend = L2TunnelRingBackend<DynFrameRing, DynFrameRing>;
-
-enum PcNetworkBackend {
-    Ring(DynRingBackend),
-    Other(Box<dyn NetworkBackend>),
-}
-
-impl NetworkBackend for PcNetworkBackend {
-    fn transmit(&mut self, frame: Vec<u8>) {
-        match self {
-            PcNetworkBackend::Ring(backend) => backend.transmit(frame),
-            PcNetworkBackend::Other(backend) => backend.transmit(frame),
-        }
-    }
-
-    fn l2_ring_stats(&self) -> Option<L2TunnelRingBackendStats> {
-        match self {
-            PcNetworkBackend::Ring(backend) => backend.l2_ring_stats(),
-            PcNetworkBackend::Other(backend) => backend.l2_ring_stats(),
-        }
-    }
-
-    fn poll_receive(&mut self) -> Option<Vec<u8>> {
-        match self {
-            PcNetworkBackend::Ring(backend) => backend.poll_receive(),
-            PcNetworkBackend::Other(backend) => backend.poll_receive(),
-        }
-    }
+    network_backend: Option<Box<dyn NetworkBackend>>,
 }
 
 impl PcMachine {
@@ -255,9 +224,7 @@ impl PcMachine {
         tx: TX,
         rx: RX,
     ) {
-        let tx: DynFrameRing = Box::new(tx);
-        let rx: DynFrameRing = Box::new(rx);
-        self.network_backend = Some(PcNetworkBackend::Ring(L2TunnelRingBackend::new(tx, rx)));
+        self.network_backend = Some(Box::new(L2TunnelRingBackend::new(tx, rx)));
     }
 
     /// Convenience for native callers using [`aero_ipc::ring::RingBuffer`].
@@ -282,7 +249,7 @@ impl PcMachine {
 
     /// Install/replace the host-side network backend used by any emulated NICs (currently E1000).
     pub fn set_network_backend(&mut self, backend: Box<dyn NetworkBackend>) {
-        self.network_backend = Some(PcNetworkBackend::Other(backend));
+        self.network_backend = Some(backend);
     }
 
     /// Detach (drop) any currently installed network backend.
