@@ -613,7 +613,9 @@ fn int10_set_active_page_uses_that_pages_cursor_pos_for_vga_cursor() {
     assert_eq!(got_start, expected_start);
 
     let cols = m.read_physical_u16(BDA_SCREEN_COLS_ADDR).max(1);
-    let cell_index = u16::from(row).saturating_mul(cols).saturating_add(u16::from(col));
+    let cell_index = u16::from(row)
+        .saturating_mul(cols)
+        .saturating_add(u16::from(col));
     let expected_cursor = expected_start.wrapping_add(cell_index) & 0x3FFF;
 
     let (start, end, pos) = read_crtc_cursor_regs(&mut m);
