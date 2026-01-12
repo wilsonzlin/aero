@@ -300,15 +300,23 @@ func asciiLowerIfNeeded(s string) string {
 }
 
 func endsInIPv4Number(host string) bool {
-	parts := strings.Split(host, ".")
-	if len(parts) > 0 && parts[len(parts)-1] == "" {
-		// Remove exactly one trailing dot component (WHATWG "ends in a number").
-		parts = parts[:len(parts)-1]
-	}
-	if len(parts) == 0 {
+	if host == "" {
 		return false
 	}
-	return isIPv4NumberCandidate(parts[len(parts)-1])
+
+	// Remove exactly one trailing dot component (WHATWG "ends in a number").
+	if host[len(host)-1] == '.' {
+		host = host[:len(host)-1]
+	}
+	if host == "" {
+		return false
+	}
+
+	// Use the last label as the IPv4 number candidate.
+	if i := strings.LastIndexByte(host, '.'); i >= 0 {
+		host = host[i+1:]
+	}
+	return isIPv4NumberCandidate(host)
 }
 
 func isIPv4NumberCandidate(part string) bool {
