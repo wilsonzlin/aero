@@ -1771,6 +1771,10 @@ impl snapshot::SnapshotTarget for Machine {
         // restoring, even if the caller bypasses the `Machine::restore_snapshot_*` helper methods
         // and drives snapshot restore directly via `aero_snapshot::restore_snapshot`.
         self.detach_network();
+        // `inject_ps2_mouse_buttons` maintains a host-side "previous buttons" cache to synthesize
+        // per-button transitions from an absolute mask. Snapshot restore rewinds guest time, so
+        // discard that cache to avoid suppressing post-restore button updates.
+        self.ps2_mouse_buttons = 0;
         self.reset_latch.clear();
         self.assist = AssistContext::default();
         // Reset non-architectural interrupt bookkeeping to a deterministic baseline. If the
@@ -2546,6 +2550,27 @@ mod tests {
         restored.restore_snapshot_bytes(&diff).unwrap();
 
         assert_eq!(restored.read_physical_bytes(addr, data.len()), data);
+    }
+
+    #[test]
+    fn snapshot_restore_clears_ps2_mouse_button_cache() {
+        let cfg = MachineConfig {
+            ram_size_bytes: 2 * 1024 * 1024,
+            ..Default::default()
+        };
+
+        let mut m = Machine::new(cfg).unwrap();
+        m.inject_ps2_mouse_buttons(0x01);
+        assert_eq!(m.ps2_mouse_buttons, 0x01);
+
+        let snap = m.take_snapshot_full().unwrap();
+
+        // Mutate the cache so we can verify restore resets it.
+        m.inject_ps2_mouse_buttons(0x07);
+        assert_eq!(m.ps2_mouse_buttons, 0x07);
+
+        m.restore_snapshot_bytes(&snap).unwrap();
+        assert_eq!(m.ps2_mouse_buttons, 0x00);
     }
 
     fn write_ivt_entry(m: &mut Machine, vector: u8, offset: u16, segment: u16) {
