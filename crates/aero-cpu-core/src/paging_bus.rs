@@ -132,6 +132,48 @@ impl<B, IO> PagingBus<B, IO> {
         }
     }
 
+    /// Translate a range without performing any guest-visible side effects.
+    ///
+    /// Returns `Ok(true)` when the entire range can be accessed, and `Ok(false)` when translation
+    /// fails with a page fault (callers should fall back to scalar accesses to preserve correct
+    /// architectural partial-progress semantics).
+    ///
+    /// Non-canonical linear addresses are reported as `#GP(0)`, matching the behaviour of normal
+    /// scalar accesses.
+    fn preflight_range_probe(
+        &mut self,
+        vaddr: u64,
+        len: usize,
+        access: AccessType,
+    ) -> Result<bool, Exception>
+    where
+        B: MemoryBus,
+    {
+        if len == 0 {
+            return Ok(true);
+        }
+
+        let mut offset = 0usize;
+        while offset < len {
+            let addr = vaddr + offset as u64;
+            match self
+                .mmu
+                .translate_probe(&mut self.phys, addr, access, self.cpl)
+            {
+                Ok(_paddr) => {}
+                Err(TranslateFault::PageFault(_pf)) => return Ok(false),
+                Err(TranslateFault::NonCanonical(_addr)) => return Err(Exception::gp0()),
+            }
+
+            let page_off = (addr & (PAGE_SIZE - 1)) as usize;
+            let page_rem = (PAGE_SIZE as usize) - page_off;
+            let chunk_len = page_rem.min(len - offset);
+            offset += chunk_len;
+        }
+
+        Ok(true)
+    }
+
     #[inline]
     fn read_u8_access(&mut self, vaddr: u64, access: AccessType) -> Result<u8, Exception>
     where
@@ -707,6 +749,125 @@ where
 
     fn io_write(&mut self, port: u16, size: u32, val: u64) -> Result<(), Exception> {
         self.io.io_write(port, size, val)
+    }
+
+    fn supports_bulk_copy(&self) -> bool {
+        true
+    }
+
+    fn bulk_copy(&mut self, dst: u64, src: u64, len: usize) -> Result<bool, Exception> {
+        if len == 0 || dst == src {
+            return Ok(true);
+        }
+
+        let len_u64 = u64::try_from(len).map_err(|_| Exception::MemoryFault)?;
+        src.checked_add(len_u64).ok_or(Exception::MemoryFault)?;
+        dst.checked_add(len_u64).ok_or(Exception::MemoryFault)?;
+
+        if !self.preflight_range_probe(src, len, AccessType::Read)? {
+            return Ok(false);
+        }
+        if !self.preflight_range_probe(dst, len, AccessType::Write)? {
+            return Ok(false);
+        }
+
+        // Memmove semantics: choose copy direction based on overlap.
+        let src_end = src + len_u64;
+        let dst_end = dst + len_u64;
+        let overlap = src < dst_end && dst < src_end;
+        let copy_backward = overlap && dst > src;
+
+        if copy_backward {
+            let mut remaining = len;
+            while remaining > 0 {
+                let idx = remaining - 1;
+                let src_addr = src + idx as u64;
+                let dst_addr = dst + idx as u64;
+
+                let src_page_off = (src_addr & (PAGE_SIZE - 1)) as usize;
+                let dst_page_off = (dst_addr & (PAGE_SIZE - 1)) as usize;
+                let chunk_len = (src_page_off + 1)
+                    .min(dst_page_off + 1)
+                    .min(remaining);
+                let chunk_start = remaining - chunk_len;
+
+                let src_chunk_addr = src + chunk_start as u64;
+                let dst_chunk_addr = dst + chunk_start as u64;
+                let src_paddr = self.translate(src_chunk_addr, AccessType::Read)?;
+                let dst_paddr = self.translate(dst_chunk_addr, AccessType::Write)?;
+
+                for i in (0..chunk_len).rev() {
+                    let b = self.phys.read_u8(src_paddr + i as u64);
+                    self.phys.write_u8(dst_paddr + i as u64, b);
+                }
+
+                remaining -= chunk_len;
+            }
+        } else {
+            let mut offset = 0usize;
+            while offset < len {
+                let src_addr = src + offset as u64;
+                let dst_addr = dst + offset as u64;
+                let src_paddr = self.translate(src_addr, AccessType::Read)?;
+                let dst_paddr = self.translate(dst_addr, AccessType::Write)?;
+
+                let src_page_off = (src_addr & (PAGE_SIZE - 1)) as usize;
+                let dst_page_off = (dst_addr & (PAGE_SIZE - 1)) as usize;
+                let src_page_rem = (PAGE_SIZE as usize) - src_page_off;
+                let dst_page_rem = (PAGE_SIZE as usize) - dst_page_off;
+                let chunk_len = src_page_rem.min(dst_page_rem).min(len - offset);
+
+                for i in 0..chunk_len {
+                    let b = self.phys.read_u8(src_paddr + i as u64);
+                    self.phys.write_u8(dst_paddr + i as u64, b);
+                }
+
+                offset += chunk_len;
+            }
+        }
+
+        Ok(true)
+    }
+
+    fn supports_bulk_set(&self) -> bool {
+        true
+    }
+
+    fn bulk_set(&mut self, dst: u64, pattern: &[u8], repeat: usize) -> Result<bool, Exception> {
+        if repeat == 0 || pattern.is_empty() {
+            return Ok(true);
+        }
+
+        let total = pattern
+            .len()
+            .checked_mul(repeat)
+            .ok_or(Exception::MemoryFault)?;
+        let total_u64 = u64::try_from(total).map_err(|_| Exception::MemoryFault)?;
+        dst.checked_add(total_u64).ok_or(Exception::MemoryFault)?;
+
+        if !self.preflight_range_probe(dst, total, AccessType::Write)? {
+            return Ok(false);
+        }
+
+        let pat_len = pattern.len();
+        let mut offset = 0usize;
+        while offset < total {
+            let addr = dst + offset as u64;
+            let paddr = self.translate(addr, AccessType::Write)?;
+
+            let page_off = (addr & (PAGE_SIZE - 1)) as usize;
+            let page_rem = (PAGE_SIZE as usize) - page_off;
+            let chunk_len = page_rem.min(total - offset);
+
+            for i in 0..chunk_len {
+                let byte = pattern[(offset + i) % pat_len];
+                self.phys.write_u8(paddr + i as u64, byte);
+            }
+
+            offset += chunk_len;
+        }
+
+        Ok(true)
     }
 }
 
