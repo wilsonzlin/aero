@@ -57,6 +57,7 @@ pub use aero_devices_input::Ps2MouseButton;
 use aero_devices_storage::ata::AtaDrive;
 use aero_devices_storage::atapi::{AtapiCdrom, IsoBackend};
 use aero_devices_storage::pci_ahci::AhciPciDevice;
+use aero_devices_nvme::{NvmeController, NvmePciDevice};
 use aero_devices_storage::pci_ide::{Piix3IdePciDevice, PRIMARY_PORTS, SECONDARY_PORTS};
 use aero_gpu_vga::{DisplayOutput as _, PortIO as _, VgaDevice};
 use aero_interrupts::apic::{IOAPIC_MMIO_BASE, IOAPIC_MMIO_SIZE, LAPIC_MMIO_BASE, LAPIC_MMIO_SIZE};
@@ -75,6 +76,7 @@ use aero_platform::io::{IoPortBus, PortIoDevice as _};
 use aero_platform::memory::MemoryBus as PlatformMemoryBus;
 use aero_platform::reset::{ResetKind, ResetLatch};
 use aero_snapshot as snapshot;
+use aero_virtio::devices::blk::{MemDisk as VirtioMemDisk, VirtioBlk};
 use aero_virtio::devices::net::VirtioNet;
 use aero_virtio::memory::{
     GuestMemory as VirtioGuestMemory, GuestMemoryError as VirtioGuestMemoryError,
@@ -118,6 +120,11 @@ pub struct MachineConfig {
     ///
     /// Requires [`MachineConfig::enable_pc_platform`].
     pub enable_ahci: bool,
+    /// Whether to attach an NVMe controller at the canonical Windows 7 BDF
+    /// (`aero_devices::pci::profile::NVME_CONTROLLER.bdf`, `00:03.0`).
+    ///
+    /// Requires [`MachineConfig::enable_pc_platform`].
+    pub enable_nvme: bool,
     /// Whether to attach an Intel PIIX3 IDE controller at the canonical Windows 7 BDF
     /// (`aero_devices::pci::profile::IDE_PIIX3.bdf`, `00:01.1`).
     ///
@@ -127,6 +134,11 @@ pub struct MachineConfig {
     ///
     /// Requires [`MachineConfig::enable_pc_platform`].
     pub enable_ide: bool,
+    /// Whether to attach a virtio-blk controller at the canonical Windows 7 BDF
+    /// (`aero_devices::pci::profile::VIRTIO_BLK.bdf`, `00:09.0`).
+    ///
+    /// Requires [`MachineConfig::enable_pc_platform`].
+    pub enable_virtio_blk: bool,
     /// Whether to attach an Intel PIIX3 UHCI (USB 1.1) controller at the canonical BDF
     /// (`aero_devices::pci::profile::USB_UHCI_PIIX3.bdf`, `00:01.2`).
     ///
@@ -177,7 +189,9 @@ impl Default for MachineConfig {
             cpu_count: 1,
             enable_pc_platform: false,
             enable_ahci: false,
+            enable_nvme: false,
             enable_ide: false,
+            enable_virtio_blk: false,
             enable_uhci: false,
             enable_vga: true,
             enable_serial: true,
@@ -216,7 +230,9 @@ impl MachineConfig {
             cpu_count: 1,
             enable_pc_platform: true,
             enable_ahci: true,
+            enable_nvme: false,
             enable_ide: true,
+            enable_virtio_blk: false,
             enable_uhci: false,
             enable_vga: true,
             enable_serial: true,
@@ -280,7 +296,9 @@ pub enum MachineError {
     DiskBackend(String),
     GuestMemoryTooLarge(u64),
     AhciRequiresPcPlatform,
+    NvmeRequiresPcPlatform,
     IdeRequiresPcPlatform,
+    VirtioBlkRequiresPcPlatform,
     UhciRequiresPcPlatform,
     E1000RequiresPcPlatform,
     VirtioNetRequiresPcPlatform,
@@ -308,8 +326,14 @@ impl fmt::Display for MachineError {
             MachineError::AhciRequiresPcPlatform => {
                 write!(f, "enable_ahci requires enable_pc_platform=true")
             }
+            MachineError::NvmeRequiresPcPlatform => {
+                write!(f, "enable_nvme requires enable_pc_platform=true")
+            }
             MachineError::IdeRequiresPcPlatform => {
                 write!(f, "enable_ide requires enable_pc_platform=true")
+            }
+            MachineError::VirtioBlkRequiresPcPlatform => {
+                write!(f, "enable_virtio_blk requires enable_pc_platform=true")
             }
             MachineError::UhciRequiresPcPlatform => {
                 write!(f, "enable_uhci requires enable_pc_platform=true")
@@ -716,6 +740,34 @@ impl PciDevice for AhciPciConfigDevice {
     }
 }
 
+struct NvmePciConfigDevice {
+    cfg: aero_devices::pci::PciConfigSpace,
+}
+
+impl NvmePciConfigDevice {
+    fn new() -> Self {
+        let mut cfg = aero_devices::pci::profile::NVME_CONTROLLER.build_config_space();
+        cfg.set_bar_definition(
+            0,
+            PciBarDefinition::Mmio64 {
+                size: NvmeController::bar0_len(),
+                prefetchable: false,
+            },
+        );
+        Self { cfg }
+    }
+}
+
+impl PciDevice for NvmePciConfigDevice {
+    fn config(&self) -> &aero_devices::pci::PciConfigSpace {
+        &self.cfg
+    }
+
+    fn config_mut(&mut self) -> &mut aero_devices::pci::PciConfigSpace {
+        &mut self.cfg
+    }
+}
+
 struct E1000PciConfigDevice {
     cfg: aero_devices::pci::PciConfigSpace,
 }
@@ -751,6 +803,28 @@ impl VirtioNetPciConfigDevice {
 }
 
 impl PciDevice for VirtioNetPciConfigDevice {
+    fn config(&self) -> &aero_devices::pci::PciConfigSpace {
+        &self.cfg
+    }
+
+    fn config_mut(&mut self) -> &mut aero_devices::pci::PciConfigSpace {
+        &mut self.cfg
+    }
+}
+
+struct VirtioBlkPciConfigDevice {
+    cfg: aero_devices::pci::PciConfigSpace,
+}
+
+impl VirtioBlkPciConfigDevice {
+    fn new() -> Self {
+        Self {
+            cfg: aero_devices::pci::profile::VIRTIO_BLK.build_config_space(),
+        }
+    }
+}
+
+impl PciDevice for VirtioBlkPciConfigDevice {
     fn config(&self) -> &aero_devices::pci::PciConfigSpace {
         &self.cfg
     }
@@ -1565,7 +1639,9 @@ pub struct Machine {
     virtio_net: Option<Rc<RefCell<VirtioPciDevice>>>,
     vga: Option<Rc<RefCell<VgaDevice>>>,
     ahci: Option<Rc<RefCell<AhciPciDevice>>>,
+    nvme: Option<Rc<RefCell<NvmePciDevice>>>,
     ide: Option<Rc<RefCell<Piix3IdePciDevice>>>,
+    virtio_blk: Option<Rc<RefCell<VirtioPciDevice>>>,
     uhci: Option<Rc<RefCell<UhciPciDevice>>>,
     uhci_ns_remainder: u64,
     bios: Bios,
@@ -1625,11 +1701,19 @@ impl Machine {
         if cfg.enable_e1000 && cfg.enable_virtio_net {
             return Err(MachineError::MultipleNicsEnabled);
         }
-        if (cfg.enable_ahci || cfg.enable_ide) && !cfg.enable_pc_platform {
+        if (cfg.enable_ahci || cfg.enable_nvme || cfg.enable_ide || cfg.enable_virtio_blk)
+            && !cfg.enable_pc_platform
+        {
             if cfg.enable_ahci {
                 return Err(MachineError::AhciRequiresPcPlatform);
             }
-            return Err(MachineError::IdeRequiresPcPlatform);
+            if cfg.enable_nvme {
+                return Err(MachineError::NvmeRequiresPcPlatform);
+            }
+            if cfg.enable_ide {
+                return Err(MachineError::IdeRequiresPcPlatform);
+            }
+            return Err(MachineError::VirtioBlkRequiresPcPlatform);
         }
         if cfg.enable_uhci && !cfg.enable_pc_platform {
             return Err(MachineError::UhciRequiresPcPlatform);
@@ -1672,7 +1756,9 @@ impl Machine {
             virtio_net: None,
             vga: None,
             ahci: None,
+            nvme: None,
             ide: None,
+            virtio_blk: None,
             uhci: None,
             uhci_ns_remainder: 0,
             bios: Bios::new(BiosConfig::default()),
@@ -2094,6 +2180,11 @@ impl Machine {
         self.ahci.clone()
     }
 
+    /// Returns the NVMe controller, if present.
+    pub fn nvme(&self) -> Option<Rc<RefCell<NvmePciDevice>>> {
+        self.nvme.clone()
+    }
+
     /// Returns the E1000 NIC device, if present.
     pub fn e1000(&self) -> Option<Rc<RefCell<E1000Device>>> {
         self.e1000.clone()
@@ -2108,12 +2199,15 @@ impl Machine {
     pub fn ide(&self) -> Option<Rc<RefCell<Piix3IdePciDevice>>> {
         self.ide.clone()
     }
+    /// Returns the virtio-blk controller, if present.
+    pub fn virtio_blk(&self) -> Option<Rc<RefCell<VirtioPciDevice>>> {
+        self.virtio_blk.clone()
+    }
 
     /// Returns the PIIX3-compatible UHCI (USB 1.1) controller, if present.
     pub fn uhci(&self) -> Option<Rc<RefCell<UhciPciDevice>>> {
         self.uhci.clone()
     }
-
     /// Attach an ATA drive to the canonical AHCI port 0, if the AHCI controller is enabled.
     pub fn attach_ahci_drive_port0(&mut self, drive: AtaDrive) {
         self.attach_ahci_drive(0, drive);
@@ -2466,6 +2560,42 @@ impl Machine {
                 pci_intx.set_intx_level(bdf, pin, level, &mut *interrupts);
             }
 
+            // NVMe legacy INTx (level-triggered).
+            if let Some(nvme) = &self.nvme {
+                let bdf: PciBdf = aero_devices::pci::profile::NVME_CONTROLLER.bdf;
+                let pin = PciInterruptPin::IntA;
+
+                let (command, bar0_base) = self
+                    .pci_cfg
+                    .as_ref()
+                    .map(|pci_cfg| {
+                        let mut pci_cfg = pci_cfg.borrow_mut();
+                        let cfg = pci_cfg.bus_mut().device_config(bdf);
+                        let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
+                        let bar0_base = cfg
+                            .and_then(|cfg| cfg.bar_range(0))
+                            .map(|range| range.base)
+                            .unwrap_or(0);
+                        (command, bar0_base)
+                    })
+                    .unwrap_or((0, 0));
+
+                let mut nvme_dev = nvme.borrow_mut();
+                nvme_dev.config_mut().set_command(command);
+                if bar0_base != 0 {
+                    nvme_dev.config_mut().set_bar_base(0, bar0_base);
+                }
+
+                let mut level = nvme_dev.irq_level();
+
+                // Redundantly gate on the canonical PCI command register as well (defensive).
+                if (command & (1 << 10)) != 0 {
+                    level = false;
+                }
+
+                pci_intx.set_intx_level(bdf, pin, level, &mut *interrupts);
+            }
+
             // Virtio-net legacy INTx (level-triggered).
             if let Some(virtio) = &self.virtio_net {
                 let bdf: PciBdf = aero_devices::pci::profile::VIRTIO_NET.bdf;
@@ -2491,6 +2621,40 @@ impl Machine {
                     virtio.set_pci_command(command);
                     virtio.irq_level()
                 };
+
+                // Redundantly gate on the canonical PCI command register as well (defensive).
+                if (command & (1 << 10)) != 0 {
+                    level = false;
+                }
+
+                pci_intx.set_intx_level(bdf, pin, level, &mut *interrupts);
+            }
+
+            // virtio-blk legacy INTx (level-triggered).
+            if let Some(virtio_blk) = &self.virtio_blk {
+                let bdf: PciBdf = aero_devices::pci::profile::VIRTIO_BLK.bdf;
+                let pin = PciInterruptPin::IntA;
+
+                let command = self
+                    .pci_cfg
+                    .as_ref()
+                    .and_then(|pci_cfg| {
+                        let mut pci_cfg = pci_cfg.borrow_mut();
+                        pci_cfg
+                            .bus_mut()
+                            .device_config(bdf)
+                            .map(|cfg| cfg.command())
+                    })
+                    .unwrap_or(0);
+
+                // Keep the virtio transport's internal PCI command register in sync so it can
+                // respect COMMAND.INTX_DISABLE gating.
+                {
+                    let mut dev = virtio_blk.borrow_mut();
+                    dev.set_pci_command(command);
+                }
+
+                let mut level = virtio_blk.borrow().irq_level();
 
                 // Redundantly gate on the canonical PCI command register as well (defensive).
                 if (command & (1 << 10)) != 0 {
@@ -3094,6 +3258,25 @@ impl Machine {
                 None
             };
 
+            let nvme = if self.cfg.enable_nvme {
+                pci_cfg.borrow_mut().bus_mut().add_device(
+                    aero_devices::pci::profile::NVME_CONTROLLER.bdf,
+                    Box::new(NvmePciConfigDevice::new()),
+                );
+
+                match &self.nvme {
+                    Some(nvme) => {
+                        // Reset in-place while keeping the `Rc` identity stable for any persistent
+                        // MMIO mappings.
+                        nvme.borrow_mut().reset();
+                        Some(nvme.clone())
+                    }
+                    None => Some(Rc::new(RefCell::new(NvmePciDevice::default()))),
+                }
+            } else {
+                None
+            };
+
             // PIIX3 is a multi-function PCI device. Ensure function 0 exists and has the
             // multi-function bit set so OSes enumerate the IDE/UHCI functions at 00:01.1/00:01.2
             // reliably.
@@ -3175,6 +3358,33 @@ impl Machine {
             } else {
                 None
             };
+
+            let virtio_blk = if self.cfg.enable_virtio_blk {
+                pci_cfg.borrow_mut().bus_mut().add_device(
+                    aero_devices::pci::profile::VIRTIO_BLK.bdf,
+                    Box::new(VirtioBlkPciConfigDevice::new()),
+                );
+
+                let mk = || {
+                    VirtioPciDevice::new(
+                        Box::new(VirtioBlk::new(VirtioMemDisk::new(512))),
+                        Box::new(NoopVirtioInterruptSink),
+                    )
+                };
+
+                match &self.virtio_blk {
+                    Some(dev) => {
+                        // Reset in-place while keeping `Rc` identity stable for persistent MMIO
+                        // mappings.
+                        *dev.borrow_mut() = mk();
+                        Some(dev.clone())
+                    }
+                    None => Some(Rc::new(RefCell::new(mk()))),
+                }
+            } else {
+                None
+            };
+
             let e1000 = if self.cfg.enable_e1000 {
                 let mac = self.cfg.e1000_mac_addr.unwrap_or(DEFAULT_E1000_MAC_ADDR);
                 pci_cfg.borrow_mut().bus_mut().add_device(
@@ -3256,6 +3466,92 @@ impl Machine {
                 virtio_net.borrow_mut().set_pci_command(command);
             }
 
+            // Keep storage controller device models' internal PCI config state coherent with the
+            // canonical PCI config space. These devices snapshot their internal PCI config image,
+            // so this ensures `save_state()` sees a consistent view even before the first
+            // `process_*()` call.
+            if let Some(ahci) = ahci.as_ref() {
+                let bdf = aero_devices::pci::profile::SATA_AHCI_ICH9.bdf;
+                let (command, bar5_base) = {
+                    let mut pci_cfg = pci_cfg.borrow_mut();
+                    let cfg = pci_cfg.bus_mut().device_config(bdf);
+                    let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
+                    let bar5_base = cfg
+                        .and_then(|cfg| {
+                            cfg.bar_range(aero_devices_storage::pci_ahci::AHCI_ABAR_BAR_INDEX)
+                        })
+                        .map(|range| range.base)
+                        .unwrap_or(0);
+                    (command, bar5_base)
+                };
+
+                let mut ahci = ahci.borrow_mut();
+                ahci.config_mut().set_command(command);
+                if bar5_base != 0 {
+                    ahci.config_mut().set_bar_base(
+                        aero_devices_storage::pci_ahci::AHCI_ABAR_BAR_INDEX,
+                        bar5_base,
+                    );
+                }
+            }
+            if let Some(nvme) = nvme.as_ref() {
+                let bdf = aero_devices::pci::profile::NVME_CONTROLLER.bdf;
+                let (command, bar0_base) = {
+                    let mut pci_cfg = pci_cfg.borrow_mut();
+                    let cfg = pci_cfg.bus_mut().device_config(bdf);
+                    let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
+                    let bar0_base = cfg
+                        .and_then(|cfg| cfg.bar_range(0))
+                        .map(|range| range.base)
+                        .unwrap_or(0);
+                    (command, bar0_base)
+                };
+
+                let mut nvme = nvme.borrow_mut();
+                nvme.config_mut().set_command(command);
+                if bar0_base != 0 {
+                    nvme.config_mut().set_bar_base(0, bar0_base);
+                }
+            }
+            if let Some(ide) = ide.as_ref() {
+                let bdf = aero_devices::pci::profile::IDE_PIIX3.bdf;
+                let (command, bar4_base) = {
+                    let mut pci_cfg = pci_cfg.borrow_mut();
+                    let cfg = pci_cfg.bus_mut().device_config(bdf);
+                    let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
+                    let bar4_base = cfg
+                        .and_then(|cfg| cfg.bar_range(4))
+                        .map(|range| range.base)
+                        .unwrap_or(0);
+                    (command, bar4_base)
+                };
+
+                let mut ide = ide.borrow_mut();
+                ide.config_mut().set_command(command);
+                if bar4_base != 0 {
+                    ide.config_mut().set_bar_base(4, bar4_base);
+                }
+            }
+            if let Some(virtio_blk) = virtio_blk.as_ref() {
+                let bdf = aero_devices::pci::profile::VIRTIO_BLK.bdf;
+                let (command, bar0_base) = {
+                    let mut pci_cfg = pci_cfg.borrow_mut();
+                    let cfg = pci_cfg.bus_mut().device_config(bdf);
+                    let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
+                    let bar0_base = cfg
+                        .and_then(|cfg| cfg.bar_range(0))
+                        .map(|range| range.base)
+                        .unwrap_or(0);
+                    (command, bar0_base)
+                };
+
+                let mut virtio_blk = virtio_blk.borrow_mut();
+                virtio_blk.set_pci_command(command);
+                if bar0_base != 0 {
+                    virtio_blk.config_mut().set_bar_base(0, bar0_base);
+                }
+            }
+
             let vga = self.vga.clone();
 
             // Map the PCI MMIO window used by `PciResourceAllocator` so BAR relocation is reflected
@@ -3280,6 +3576,14 @@ impl Machine {
                             ),
                         );
                     }
+                    if let Some(nvme) = nvme.clone() {
+                        let bdf = aero_devices::pci::profile::NVME_CONTROLLER.bdf;
+                        router.register_handler(
+                            bdf,
+                            0,
+                            PciConfigSyncedMmioBar::new(pci_cfg.clone(), nvme, bdf, 0),
+                        );
+                    }
                     if let Some(vga) = vga.clone() {
                         router.register_handler(
                             VGA_PCI_BDF,
@@ -3299,6 +3603,13 @@ impl Machine {
                             aero_devices::pci::profile::VIRTIO_NET.bdf,
                             0,
                             VirtioPciBar0Mmio::new(virtio_net),
+                        );
+                    }
+                    if let Some(virtio_blk) = virtio_blk.clone() {
+                        router.register_handler(
+                            aero_devices::pci::profile::VIRTIO_BLK.bdf,
+                            0,
+                            VirtioPciBar0Mmio::new(virtio_blk),
                         );
                     }
                     Box::new(router)
@@ -3420,7 +3731,9 @@ impl Machine {
             self.e1000 = e1000;
             self.virtio_net = virtio_net;
             self.ahci = ahci;
+            self.nvme = nvme;
             self.ide = ide;
+            self.virtio_blk = virtio_blk;
             self.uhci = uhci;
 
             // MMIO mappings persist in the physical bus; ensure the canonical PC regions exist.
@@ -3439,8 +3752,10 @@ impl Machine {
                 self.vga = None;
             }
             self.ahci = None;
+            self.nvme = None;
             self.virtio_net = None;
             self.ide = None;
+            self.virtio_blk = None;
             self.uhci = None;
         }
         if self.cfg.enable_serial {
@@ -3590,6 +3905,66 @@ impl Machine {
         dev.tick(&mut self.mem);
     }
 
+    /// Allow the NVMe controller (if present) to make forward progress (DMA).
+    pub fn process_nvme(&mut self) {
+        let (Some(nvme), Some(pci_cfg)) = (&self.nvme, &self.pci_cfg) else {
+            return;
+        };
+
+        let bdf = aero_devices::pci::profile::NVME_CONTROLLER.bdf;
+        let (command, bar0_base) = {
+            let mut pci_cfg = pci_cfg.borrow_mut();
+            let cfg = pci_cfg.bus_mut().device_config(bdf);
+            let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
+            let bar0_base = cfg
+                .and_then(|cfg| cfg.bar_range(0))
+                .map(|range| range.base)
+                .unwrap_or(0);
+            (command, bar0_base)
+        };
+
+        let bus_master_enabled = (command & (1 << 2)) != 0;
+
+        let mut dev = nvme.borrow_mut();
+        dev.config_mut().set_command(command);
+        if bar0_base != 0 {
+            dev.config_mut().set_bar_base(0, bar0_base);
+        }
+        if bus_master_enabled {
+            dev.process(&mut self.mem);
+        }
+    }
+
+    /// Allow the virtio-blk controller (if present) to make forward progress (DMA).
+    pub fn process_virtio_blk(&mut self) {
+        let (Some(virtio_blk), Some(pci_cfg)) = (&self.virtio_blk, &self.pci_cfg) else {
+            return;
+        };
+
+        let bdf = aero_devices::pci::profile::VIRTIO_BLK.bdf;
+        let command = {
+            let mut pci_cfg = pci_cfg.borrow_mut();
+            pci_cfg
+                .bus_mut()
+                .device_config(bdf)
+                .map(|cfg| cfg.command())
+                .unwrap_or(0)
+        };
+
+        {
+            let mut virtio_blk = virtio_blk.borrow_mut();
+            virtio_blk.set_pci_command(command);
+        }
+
+        // Respect PCI Bus Master Enable (bit 2). Virtio DMA is undefined without it.
+        if (command & (1 << 2)) == 0 {
+            return;
+        }
+
+        let mut dma = VirtioDmaMemory::new(&mut self.mem);
+        virtio_blk.borrow_mut().process_notified_queues(&mut dma);
+    }
+
     /// Poll any enabled NIC + host network backend bridge once.
     ///
     /// This is safe to call even when no NIC is enabled; it will no-op.
@@ -3669,17 +4044,14 @@ impl Machine {
         // `VirtioPciDevice` gates all guest-memory DMA (virtqueue processing) on COMMAND.BME (bit
         // 2), so if we don't mirror the command register the device will never make forward
         // progress even after the guest enables bus mastering via PCI config ports.
-        {
-            let mut virtio = virtio.borrow_mut();
-            virtio.set_pci_command(command);
-        }
+        let mut virtio = virtio.borrow_mut();
+        virtio.set_pci_command(command);
 
         if (command & (1 << 2)) == 0 {
             return;
         }
 
         let mut dma = VirtioDmaMemory::new(&mut self.mem);
-        let mut virtio = virtio.borrow_mut();
         virtio.process_notified_queues(&mut dma);
         virtio.poll(&mut dma);
     }
@@ -3703,9 +4075,13 @@ impl Machine {
             // AHCI completes DMA asynchronously and signals completion via interrupts; those
             // interrupts must be able to wake a HLT'd CPU.
             self.process_ahci();
+            self.process_nvme();
+            self.process_virtio_blk();
 
             self.poll_network();
             self.process_ahci();
+            self.process_nvme();
+            self.process_virtio_blk();
             self.process_ide();
 
             // Poll the platform interrupt controller (PIC/IOAPIC+LAPIC) and enqueue at most one
@@ -3768,7 +4144,8 @@ impl Machine {
                     // `sync_pci_intx_sources_to_interrupts` call here.
                     self.process_ide();
                     self.process_ahci();
-                    self.process_ide();
+                    self.process_nvme();
+                    self.process_virtio_blk();
                     if self.poll_platform_interrupt(MAX_QUEUED_EXTERNAL_INTERRUPTS) {
                         continue;
                     }
@@ -3777,7 +4154,8 @@ impl Machine {
                     self.idle_tick_platform_1ms();
                     self.process_ide();
                     self.process_ahci();
-                    self.process_ide();
+                    self.process_nvme();
+                    self.process_virtio_blk();
                     if self.poll_platform_interrupt(MAX_QUEUED_EXTERNAL_INTERRUPTS) {
                         continue;
                     }
@@ -4206,6 +4584,27 @@ impl snapshot::SnapshotSource for Machine {
             }
             disk_controllers.insert(bdf.pack_u16(), ahci.borrow().save_state());
         }
+        if let Some(nvme) = &self.nvme {
+            let bdf = aero_devices::pci::profile::NVME_CONTROLLER.bdf;
+            if let Some(pci_cfg) = &self.pci_cfg {
+                let (command, bar0_base) = {
+                    let mut pci_cfg = pci_cfg.borrow_mut();
+                    let cfg = pci_cfg.bus_mut().device_config(bdf);
+                    let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
+                    let bar0_base = cfg
+                        .and_then(|cfg| cfg.bar_range(0))
+                        .map(|range| range.base)
+                        .unwrap_or(0);
+                    (command, bar0_base)
+                };
+                let mut nvme = nvme.borrow_mut();
+                nvme.config_mut().set_command(command);
+                if bar0_base != 0 {
+                    nvme.config_mut().set_bar_base(0, bar0_base);
+                }
+            }
+            disk_controllers.insert(bdf.pack_u16(), nvme.borrow().save_state());
+        }
         if let Some(ide) = &self.ide {
             let bdf = aero_devices::pci::profile::IDE_PIIX3.bdf;
             if let Some(pci_cfg) = &self.pci_cfg {
@@ -4226,6 +4625,28 @@ impl snapshot::SnapshotSource for Machine {
                 }
             }
             disk_controllers.insert(bdf.pack_u16(), ide.borrow().save_state());
+        }
+        if let Some(virtio_blk) = &self.virtio_blk {
+            let bdf = aero_devices::pci::profile::VIRTIO_BLK.bdf;
+            if let Some(pci_cfg) = &self.pci_cfg {
+                let (command, bar0_base) = {
+                    let mut pci_cfg = pci_cfg.borrow_mut();
+                    let cfg = pci_cfg.bus_mut().device_config(bdf);
+                    let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
+                    let bar0_base = cfg
+                        .and_then(|cfg| cfg.bar_range(0))
+                        .map(|range| range.base)
+                        .unwrap_or(0);
+                    (command, bar0_base)
+                };
+
+                let mut virtio_blk = virtio_blk.borrow_mut();
+                virtio_blk.set_pci_command(command);
+                if bar0_base != 0 {
+                    virtio_blk.config_mut().set_bar_base(0, bar0_base);
+                }
+            }
+            disk_controllers.insert(bdf.pack_u16(), virtio_blk.borrow().save_state());
         }
         if !disk_controllers.controllers().is_empty() {
             devices.push(snapshot::io_snapshot_bridge::device_state_from_io_snapshot(
@@ -4728,7 +5149,7 @@ impl snapshot::SnapshotTarget for Machine {
             }
         }
 
-        // 4) Restore storage controllers (AHCI + IDE). These must be restored after the interrupt
+        // 4) Restore storage controllers (AHCI + NVMe + IDE + virtio-blk). These must be restored after the interrupt
         // controller + PCI core so any restored interrupt state can be re-driven deterministically.
         for state in disk_controller_states {
             // Canonical encoding: `DeviceId::DISK_CONTROLLER` is a `DSKC` wrapper containing nested
@@ -4747,10 +5168,22 @@ impl snapshot::SnapshotTarget for Machine {
                                 // will actually reattach.
                                 self.ahci_port0_auto_attach_shared_disk = false;
                             }
+                        } else if packed_bdf
+                            == aero_devices::pci::profile::NVME_CONTROLLER.bdf.pack_u16()
+                        {
+                            if let Some(nvme) = &self.nvme {
+                                let _ = nvme.borrow_mut().load_state(nested);
+                            }
                         } else if packed_bdf == aero_devices::pci::profile::IDE_PIIX3.bdf.pack_u16()
                         {
                             if let Some(ide) = &self.ide {
                                 let _ = ide.borrow_mut().load_state(nested);
+                            }
+                        } else if packed_bdf
+                            == aero_devices::pci::profile::VIRTIO_BLK.bdf.pack_u16()
+                        {
+                            if let Some(virtio_blk) = &self.virtio_blk {
+                                let _ = virtio_blk.borrow_mut().load_state(nested);
                             }
                         }
                     }
@@ -4771,6 +5204,30 @@ impl snapshot::SnapshotTarget for Machine {
                     restored = true;
                     // Storage controller snapshots intentionally drop attached host backends.
                     self.ahci_port0_auto_attach_shared_disk = false;
+                }
+            }
+            if !restored {
+                if let Some(nvme) = &self.nvme {
+                    if snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
+                        &state,
+                        &mut *nvme.borrow_mut(),
+                    )
+                    .is_ok()
+                    {
+                        restored = true;
+                    }
+                }
+            }
+            if !restored {
+                if let Some(virtio_blk) = &self.virtio_blk {
+                    if snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
+                        &state,
+                        &mut *virtio_blk.borrow_mut(),
+                    )
+                    .is_ok()
+                    {
+                        restored = true;
+                    }
                 }
             }
             if !restored {
