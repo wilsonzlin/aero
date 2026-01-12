@@ -1,7 +1,5 @@
-use std::io;
-
 use aero_devices::pci::profile::{IDE_PIIX3, ISA_PIIX3};
-use aero_devices_storage::atapi::{AtapiCdrom, IsoBackend};
+use aero_devices_storage::atapi::AtapiCdrom;
 use aero_devices_storage::pci_ide::{PRIMARY_PORTS, SECONDARY_PORTS};
 use aero_pc_platform::PcPlatform;
 use aero_storage::{MemBackend, RawDisk, VirtualDisk, SECTOR_SIZE};
@@ -222,45 +220,6 @@ fn pc_platform_ide_dma_and_irq14_routing_work() {
     assert_eq!(pc.interrupts.borrow().pic().get_pending_vector(), None);
 }
 
-#[derive(Debug)]
-struct MemIso {
-    sector_count: u32,
-    data: Vec<u8>,
-}
-
-impl MemIso {
-    fn new(sectors: u32) -> Self {
-        Self {
-            sector_count: sectors,
-            data: vec![0u8; sectors as usize * 2048],
-        }
-    }
-}
-
-impl IsoBackend for MemIso {
-    fn sector_count(&self) -> u32 {
-        self.sector_count
-    }
-
-    fn read_sectors(&mut self, lba: u32, buf: &mut [u8]) -> io::Result<()> {
-        if !buf.len().is_multiple_of(2048) {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "unaligned buffer length",
-            ));
-        }
-        let start = lba as usize * 2048;
-        let end = start
-            .checked_add(buf.len())
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "overflow"))?;
-        if end > self.data.len() {
-            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "OOB"));
-        }
-        buf.copy_from_slice(&self.data[start..end]);
-        Ok(())
-    }
-}
-
 fn send_atapi_packet(pc: &mut PcPlatform, base: u16, features: u8, pkt: &[u8; 12], byte_count: u16) {
     pc.io.write(base + 1, 1, features as u32);
     pc.io.write(base + 4, 1, (byte_count & 0xFF) as u32);
@@ -283,9 +242,13 @@ fn pc_platform_enumerates_piix3_ide_at_canonical_bdf_and_atapi_works_on_secondar
     assert_eq!((id >> 16) & 0xffff, u32::from(IDE_PIIX3.device_id));
 
     // Attach an ISO-backed CD-ROM as "secondary master" (canonical Win7 install media slot).
-    let mut iso = MemIso::new(2);
-    iso.data[2048..2053].copy_from_slice(b"WORLD");
-    pc.attach_ide_secondary_master_atapi(AtapiCdrom::new(Some(Box::new(iso))));
+    // Use the platform helper that adapts a byte-addressed `VirtualDisk` into ATAPI 2048-byte sectors.
+    let mut iso_disk =
+        RawDisk::create(MemBackend::new(), 2 * AtapiCdrom::SECTOR_SIZE as u64).unwrap();
+    iso_disk
+        .write_at(AtapiCdrom::SECTOR_SIZE as u64, b"WORLD")
+        .unwrap();
+    pc.attach_ide_secondary_master_iso(Box::new(iso_disk)).unwrap();
 
     // Select master on secondary channel.
     pc.io.write(SECONDARY_PORTS.cmd_base + 6, 1, 0xA0);
@@ -336,9 +299,10 @@ fn pc_platform_ide_atapi_dma_raises_secondary_irq15() {
     let mut pc = PcPlatform::new_with_ide(2 * 1024 * 1024);
 
     // Attach ISO with recognizable bytes at sector 0.
-    let mut iso = MemIso::new(1);
-    iso.data[0..8].copy_from_slice(b"DMATEST!");
-    pc.attach_ide_secondary_master_atapi(AtapiCdrom::new(Some(Box::new(iso))));
+    let mut iso_disk =
+        RawDisk::create(MemBackend::new(), AtapiCdrom::SECTOR_SIZE as u64).unwrap();
+    iso_disk.write_at(0, b"DMATEST!").unwrap();
+    pc.attach_ide_secondary_master_iso(Box::new(iso_disk)).unwrap();
 
     let bdf = IDE_PIIX3.bdf;
 
