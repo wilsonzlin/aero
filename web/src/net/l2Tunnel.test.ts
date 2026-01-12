@@ -1,14 +1,14 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  L2_TUNNEL_MAGIC,
-  L2_TUNNEL_TYPE_ERROR,
   L2_TUNNEL_TYPE_FRAME,
   L2_TUNNEL_TYPE_PONG,
   L2_TUNNEL_VERSION,
   decodeL2Message,
+  encodeError,
   encodeL2Frame,
   encodePing,
+  encodeStructuredErrorPayload,
 } from "../shared/l2TunnelProtocol.ts";
 import { L2_TUNNEL_SUBPROTOCOL, WebRtcL2TunnelClient, WebSocketL2TunnelClient, type L2TunnelEvent } from "./l2Tunnel.ts";
 
@@ -184,19 +184,8 @@ describe("net/l2Tunnel", () => {
       await microtask();
 
       const msg = "blocked by policy";
-      const msgBytes = new TextEncoder().encode(msg);
-      const payload = new Uint8Array(4 + msgBytes.byteLength);
-      const dv = new DataView(payload.buffer);
-      dv.setUint16(0, 1234, false);
-      dv.setUint16(2, msgBytes.byteLength, false);
-      payload.set(msgBytes, 4);
-
-      const wire = new Uint8Array(4 + payload.byteLength);
-      wire[0] = L2_TUNNEL_MAGIC;
-      wire[1] = L2_TUNNEL_VERSION;
-      wire[2] = L2_TUNNEL_TYPE_ERROR;
-      wire[3] = 0;
-      wire.set(payload, 4);
+      const payload = encodeStructuredErrorPayload(1234, msg, 256);
+      const wire = encodeError(payload);
 
       channel.emitMessage(wire);
 
