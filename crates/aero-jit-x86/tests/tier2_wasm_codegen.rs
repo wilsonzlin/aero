@@ -462,7 +462,6 @@ fn tier2_code_version_guard_can_inline_version_table_reads() {
         &trace,
         &opt.regalloc,
         Tier2WasmOptions {
-            inline_tlb: false,
             code_version_guard_import: false,
             ..Default::default()
         },

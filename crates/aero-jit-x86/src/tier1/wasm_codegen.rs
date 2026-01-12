@@ -42,11 +42,14 @@ pub struct Tier1WasmOptions {
     ///
     /// Note: shared memories require a declared maximum page count.
     pub memory_shared: bool,
+
     /// Minimum size (in 64KiB pages) of the imported `env.memory`.
     pub memory_min_pages: u32,
+
     /// Maximum size (in 64KiB pages) of the imported `env.memory`.
     ///
-    /// Required when [`Tier1WasmOptions::memory_shared`] is `true`.
+    /// When [`Tier1WasmOptions::memory_shared`] is `true` and this is unset, the code generator
+    /// defaults to 65536 pages (4GiB) so the module can accept any smaller shared memory.
     pub memory_max_pages: Option<u32>,
 }
 
@@ -68,18 +71,18 @@ impl Default for Tier1WasmOptions {
 
 impl Tier1WasmOptions {
     fn validate_memory_import(self) {
-        if let Some(max) = self.memory_max_pages {
+        let effective_max_pages = if self.memory_shared {
+            Some(self.memory_max_pages.unwrap_or(65_536))
+        } else {
+            self.memory_max_pages
+        };
+
+        if let Some(max) = effective_max_pages {
             assert!(
                 self.memory_min_pages <= max,
                 "invalid env.memory import type: min_pages ({}) > max_pages ({})",
                 self.memory_min_pages,
                 max
-            );
-        }
-        if self.memory_shared {
-            assert!(
-                self.memory_max_pages.is_some(),
-                "invalid env.memory import type: shared memories require max_pages"
             );
         }
     }
@@ -216,12 +219,19 @@ impl Tier1WasmCodegen {
 
         options.validate_memory_import();
         let mut imports = ImportSection::new();
+        let memory_max_pages: Option<u64> = if options.memory_shared {
+            // Shared memories require an explicit maximum. Default to 4GiB (the maximum size of a
+            // wasm32 memory) so we can link against any smaller shared memory.
+            Some(u64::from(options.memory_max_pages.unwrap_or(65_536)))
+        } else {
+            options.memory_max_pages.map(u64::from)
+        };
         imports.import(
             IMPORT_MODULE,
             IMPORT_MEMORY,
             MemoryType {
                 minimum: u64::from(options.memory_min_pages),
-                maximum: options.memory_max_pages.map(u64::from),
+                maximum: memory_max_pages,
                 memory64: false,
                 shared: options.memory_shared,
                 page_size_log2: None,
