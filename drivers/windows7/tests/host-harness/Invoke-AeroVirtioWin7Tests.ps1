@@ -44,6 +44,7 @@ param(
   # Note: The guest image must be provisioned with `--test-input-events` (or env var equivalent) so the
   # guest selftest runs the read-report loop.
   [Parameter(Mandatory = $false)]
+  [Alias("WithVirtioInputEvents", "EnableVirtioInputEvents")]
   [switch]$WithInputEvents,
 
   # If set, stream newly captured COM1 serial output to stdout while waiting.
@@ -73,13 +74,8 @@ param(
   [Alias("EnableVirtioSnd")]
   [switch]$WithVirtioSnd,
 
-  # If set, inject deterministic virtio-input keyboard/mouse events via QMP (`input-send-event`) and
-  # require the guest selftest marker `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|PASS`.
-  # The harness also prints a host marker for the injection step:
-  #   AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|PASS/FAIL|...
-  [Parameter(Mandatory = $false)]
-  [Alias("EnableVirtioInputEvents")]
-  [switch]$WithVirtioInputEvents,
+  # NOTE: `-WithVirtioInputEvents` / `-EnableVirtioInputEvents` are accepted as aliases for `-WithInputEvents`
+  # for backwards compatibility.
 
   # Audio backend for virtio-snd.
   # - none: no host audio (device exists)
@@ -1177,7 +1173,7 @@ $httpListener = Start-AeroSelftestHttpServer -Port $HttpPort -Path $HttpPath
 try {
   $qmpPort = $null
   $qmpArgs = @()
-  $needInputEvents = [bool]($WithInputEvents -or $WithVirtioInputEvents)
+  $needInputEvents = [bool]$WithInputEvents
   $needQmp = ($WithVirtioSnd -and $VirtioSndAudioBackend -eq "wav") -or $needInputEvents
   if ($needQmp) {
     # QMP channel:
