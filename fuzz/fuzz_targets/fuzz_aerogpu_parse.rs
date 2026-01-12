@@ -1096,6 +1096,64 @@ fuzz_target!(|data: &[u8]| {
     let cmd_proc_size_overflow = w.finish();
     fuzz_command_processor(&cmd_proc_size_overflow, None);
 
+    // - InvalidCreateTexture2d: unknown format values must be rejected (don't guess layout).
+    let mut w = AerogpuCmdWriter::new();
+    w.create_texture2d(
+        tex_handle,
+        /*usage_flags=*/ 0,
+        /*format=*/ u32::MAX,
+        /*width=*/ 4,
+        /*height=*/ 4,
+        /*mip_levels=*/ 1,
+        /*array_layers=*/ 1,
+        /*row_pitch_bytes=*/ 16,
+        alloc_id,
+        /*backing_offset_bytes=*/ 0,
+    );
+    let cmd_proc_unknown_format = w.finish();
+    fuzz_command_processor(&cmd_proc_unknown_format, Some(&allocs));
+
+    // - Dirty ranges for host-owned resources are ignored (some streams conservatively emit them).
+    let mut w = AerogpuCmdWriter::new();
+    w.create_buffer(
+        buf_handle, /*usage_flags=*/ 0, /*size_bytes=*/ 4, /*backing_alloc_id=*/ 0,
+        /*backing_offset_bytes=*/ 0,
+    );
+    w.resource_dirty_range(buf_handle, /*offset_bytes=*/ 0, /*size_bytes=*/ 4);
+    let cmd_proc_host_owned_dirty = w.finish();
+    fuzz_command_processor(&cmd_proc_host_owned_dirty, None);
+
+    // - MissingAllocationTable can be hit from ResourceDirtyRange, not just CREATE_*.
+    let mut proc = AeroGpuCommandProcessor::new();
+    let mut w = AerogpuCmdWriter::new();
+    w.create_buffer(
+        buf_handle, /*usage_flags=*/ 0, /*size_bytes=*/ 4,
+        /*backing_alloc_id=*/ alloc_id, /*backing_offset_bytes=*/ 0,
+    );
+    let cmd_proc_establish_guest_backed_buf = w.finish();
+    let _ = proc.process_submission_with_allocations(
+        &cmd_proc_establish_guest_backed_buf,
+        Some(&allocs),
+        1,
+    );
+    let mut w = AerogpuCmdWriter::new();
+    w.resource_dirty_range(buf_handle, /*offset_bytes=*/ 0, /*size_bytes=*/ 4);
+    let cmd_proc_dirty_missing_allocs = w.finish();
+    let _ = proc.process_submission_with_allocations(&cmd_proc_dirty_missing_allocs, None, 2);
+
+    // - Underlying shared-surface handles remain reserved while aliases keep the refcount alive.
+    let mut w = AerogpuCmdWriter::new();
+    write_guest_texture2d_4x4_bgra8(&mut w, tex_handle, alloc_id);
+    w.export_shared_surface(tex_handle, share_token);
+    w.import_shared_surface(alias_handle, share_token);
+    w.destroy_resource(tex_handle);
+    w.create_buffer(
+        tex_handle, /*usage_flags=*/ 0, /*size_bytes=*/ 4, /*backing_alloc_id=*/ 0,
+        /*backing_offset_bytes=*/ 0,
+    );
+    let cmd_proc_handle_reuse_after_destroy = w.finish();
+    fuzz_command_processor(&cmd_proc_handle_reuse_after_destroy, Some(&allocs));
+
     // Patched alloc table: force valid magic/version/stride and a self-consistent entry_count.
     let mut alloc_patched = alloc_bytes.to_vec();
     if alloc_patched.len() < ring::AerogpuAllocTableHeader::SIZE_BYTES {
