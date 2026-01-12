@@ -3630,6 +3630,13 @@ impl AerogpuD3d11Executor {
                     "CREATE_BUFFER: buffer_handle {buffer_handle} is already an alias (underlying={existing})"
                 );
             }
+        } else if self.shared_surfaces.refcounts.contains_key(&buffer_handle) {
+            // Underlying handles remain reserved as long as any aliases still reference them.
+            // If the original handle was destroyed, reject reusing it until the underlying resource
+            // is fully released.
+            bail!(
+                "CREATE_BUFFER: buffer_handle {buffer_handle} is still in use (underlying id kept alive by shared surface aliases)"
+            );
         }
 
         let usage = map_buffer_usage_flags(usage_flags);
@@ -3701,6 +3708,13 @@ impl AerogpuD3d11Executor {
                     "CREATE_TEXTURE2D: texture_handle {texture_handle} is already an alias (underlying={existing})"
                 );
             }
+        } else if self.shared_surfaces.refcounts.contains_key(&texture_handle) {
+            // Underlying handles remain reserved as long as any aliases still reference them.
+            // If the original handle was destroyed, reject reusing it until the underlying resource
+            // is fully released.
+            bail!(
+                "CREATE_TEXTURE2D: texture_handle {texture_handle} is still in use (underlying id kept alive by shared surface aliases)"
+            );
         }
 
         let format_layout = aerogpu_texture_format_layout(format_u32)?;
