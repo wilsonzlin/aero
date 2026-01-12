@@ -276,8 +276,9 @@ emulation state) using `aero-io-snapshot` TLVs.
 `DeviceState.version/flags` mirror the inner `aero-io-snapshot` device `(major, minor)`, `PciConfigPorts` (`PCPT`) and `PciIntxRouter`
 (`INTX`) cannot both be stored as separate `(DeviceId::PCI, 1, 0)` entries.
 
-Therefore, **PCI core state must be stored as a single `DeviceId::PCI` entry** whose payload is an `aero-io-snapshot` blob produced by
-the PCI core wrapper (`aero_devices::pci::PciCoreSnapshot`, inner `DEVICE_ID = PCIC`).
+Therefore, PCI core state must **not** be stored as two separate entries under the same outer `DeviceId::PCI` key. Canonical full-machine
+snapshots store PCI core state as a single `DeviceId::PCI` entry whose payload is an `aero-io-snapshot` blob produced by the PCI core
+wrapper (`aero_devices::pci::PciCoreSnapshot`, inner `DEVICE_ID = PCIC`).
 
 That `PCIC` wrapper contains nested io-snapshots as TLV fields:
 
@@ -285,6 +286,11 @@ That `PCIC` wrapper contains nested io-snapshots as TLV fields:
   - `PCF1` — `PciConfigMechanism1` 0xCF8 address latch
   - `PCIB` — `PciBusSnapshot` (per-BDF 256-byte config space image + BAR base/probe state)
 - tag `2`: `INTX` — `PciIntxRouter` (PIRQ routing + asserted INTx levels)
+
+Alternative layout: snapshots may also store these as *split* entries using distinct outer ids:
+
+- `DeviceId::PCI_CFG` (`14`) for `PciConfigPorts` (`PCPT`)
+- `DeviceId::PCI_INTX` (`15`) for `PciIntxRouter` (`INTX`)
 
 Backward compatibility note: older snapshots may store these as split entries (`PCI_CFG` + `PCI_INTX`), or store `PCPT` **or** `INTX`
 directly under the legacy outer id `DeviceId::PCI`. Snapshot restore code should accept those encodings, but snapshot writers should prefer
