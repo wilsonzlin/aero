@@ -319,6 +319,46 @@ Success looks like:
 - Harness exit code `0`
 - Serial log contains `AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS`
 
+### 4.3 Optional: end-to-end input event delivery (QMP injection)
+
+The default `virtio-input` selftest validates **enumeration + report descriptors** only.
+If you want a regression test that covers the full “virtio queues → KMDF HID → user-mode `ReadFile`” path, use the harness’s optional **virtio-input-events** mode.
+
+Guest image requirement:
+
+- Provision the guest selftest to run with `--test-input-events` (or set guest env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_EVENTS=1`).
+  - The host-harness README describes one way to do this via `New-AeroWin7TestImage.ps1 -TestInputEvents`.
+
+PowerShell:
+
+```powershell
+pwsh ./drivers/windows7/tests/host-harness/Invoke-AeroVirtioWin7Tests.ps1 `
+  -QemuSystem qemu-system-x86_64 `
+  -DiskImagePath ./win7-aero-tests.qcow2 `
+  -WithInputEvents `
+  -TimeoutSeconds 600 `
+  -Snapshot
+```
+
+Python:
+
+```bash
+python3 drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py \
+  --qemu-system qemu-system-x86_64 \
+  --disk-image ./win7-aero-tests.qcow2 \
+  --with-input-events \
+  --timeout-seconds 600 \
+  --snapshot
+```
+
+Expected signal:
+
+- Guest serial contains `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|PASS|...`
+- Host harness logs include a marker like `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|PASS|...`
+
+If the guest was not provisioned with `--test-input-events`, the guest will emit:
+`AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|SKIP|flag_not_set`.
+
 ---
 
 ## 5) Web runtime validation (browser → virtio-input routing)
