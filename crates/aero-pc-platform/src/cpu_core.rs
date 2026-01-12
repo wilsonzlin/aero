@@ -1,15 +1,64 @@
-use crate::{PcPlatform, PciIoBarHandler, PciIoBarRouter};
+use crate::{PcPlatform, PciIoBarHandler, PciIoBarRouter, SharedPciIoBarMap};
 use aero_cpu_core::interrupts::InterruptController as CpuInterruptController;
 use aero_cpu_core::mem::CpuBus;
 use aero_cpu_core::Exception;
+use aero_devices::pci::PciBdf;
 use aero_mmu::{AccessType, Mmu, TranslateFault};
 use aero_platform::interrupts::{
     InterruptController as PlatformInterruptController, SharedPlatformInterrupts,
 };
-use std::cell::RefCell;
-use std::rc::Rc;
 
 const PAGE_SIZE: u64 = 4096;
+
+struct PciIoBarFromPortIoDevice {
+    key: (PciBdf, u8),
+    handlers: SharedPciIoBarMap,
+}
+
+impl PciIoBarFromPortIoDevice {
+    fn read_all_ones(size: usize) -> u32 {
+        match size {
+            1 => 0xFF,
+            2 => 0xFFFF,
+            4 => 0xFFFF_FFFF,
+            _ => 0xFFFF_FFFF,
+        }
+    }
+}
+
+impl PciIoBarHandler for PciIoBarFromPortIoDevice {
+    fn io_read(&mut self, offset: u64, size: usize) -> u32 {
+        let size_u8 = match size {
+            1 | 2 | 4 => size as u8,
+            _ => return Self::read_all_ones(size),
+        };
+        let Ok(offset_u16) = u16::try_from(offset) else {
+            return Self::read_all_ones(size);
+        };
+
+        let mut handlers = self.handlers.borrow_mut();
+        let Some(handler) = handlers.get_mut(&self.key) else {
+            return Self::read_all_ones(size);
+        };
+        handler.read(offset_u16, size_u8)
+    }
+
+    fn io_write(&mut self, offset: u64, size: usize, value: u32) {
+        let size_u8 = match size {
+            1 | 2 | 4 => size as u8,
+            _ => return,
+        };
+        let Ok(offset_u16) = u16::try_from(offset) else {
+            return;
+        };
+
+        let mut handlers = self.handlers.borrow_mut();
+        let Some(handler) = handlers.get_mut(&self.key) else {
+            return;
+        };
+        handler.write(offset_u16, size_u8, value);
+    }
+}
 
 pub struct PcInterruptController {
     interrupts: SharedPlatformInterrupts,
@@ -42,27 +91,19 @@ impl PcCpuBus {
     pub fn new(platform: PcPlatform) -> Self {
         let mut pci_io_router = PciIoBarRouter::new(platform.pci_cfg.clone());
 
-        if let Some(e1000) = platform.e1000.as_ref().cloned() {
-            struct E1000IoBar {
-                dev: Rc<RefCell<aero_net_e1000::E1000Device>>,
-            }
-
-            impl PciIoBarHandler for E1000IoBar {
-                fn io_read(&mut self, offset: u64, size: usize) -> u32 {
-                    let offset = u32::try_from(offset).unwrap_or(0);
-                    self.dev.borrow_mut().io_read(offset, size)
-                }
-
-                fn io_write(&mut self, offset: u64, size: usize, value: u32) {
-                    let offset = u32::try_from(offset).unwrap_or(0);
-                    self.dev.borrow_mut().io_write_reg(offset, size, value);
-                }
-            }
-
+        // Register all PCI I/O BAR handlers defined by the platform. Sort for deterministic
+        // dispatch order when devices overlap (misconfigured guests).
+        let pci_io_bars = platform.pci_io_bars.clone();
+        let mut keys: Vec<(PciBdf, u8)> = pci_io_bars.borrow().keys().copied().collect();
+        keys.sort();
+        for (bdf, bar) in keys {
             pci_io_router.register_handler(
-                aero_devices::pci::profile::NIC_E1000_82540EM.bdf,
-                1,
-                E1000IoBar { dev: e1000 },
+                bdf,
+                bar,
+                PciIoBarFromPortIoDevice {
+                    key: (bdf, bar),
+                    handlers: pci_io_bars.clone(),
+                },
             );
         }
 

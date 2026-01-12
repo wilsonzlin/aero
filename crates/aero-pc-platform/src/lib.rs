@@ -598,9 +598,12 @@ struct PciIoWindowPort {
 
 impl PciIoWindowPort {
     fn map_port(&mut self, port: u16, size: u8) -> Option<(PciIoBarKey, u16)> {
-        debug_assert!(matches!(size, 1 | 2 | 4));
         let port_u64 = u64::from(port);
-        let access_end = port_u64.checked_add(u64::from(size))?;
+        let size_u64 = match size {
+            1 | 2 | 4 => u64::from(size),
+            _ => return None,
+        };
+        let access_end = port_u64.checked_add(size_u64)?;
         if access_end > 0x1_0000 {
             // Would wrap the 16-bit I/O port space.
             return None;
@@ -619,10 +622,16 @@ impl PciIoWindowPort {
             let range = mapped.range;
             // Treat port I/O accesses as byte-addressed ranges (like MMIO): require the entire
             // access to fit within the decoded BAR region.
-            if port_u64 >= range.base && access_end <= range.end_exclusive() {
-                let dev_offset = port_u64
+            let Some(bar_end) = range.base.checked_add(range.size) else {
+                continue;
+            };
+            if port_u64 >= range.base && access_end <= bar_end {
+                let Some(dev_offset) = port_u64
                     .checked_sub(range.base)
-                    .and_then(|v| u16::try_from(v).ok())?;
+                    .and_then(|v| u16::try_from(v).ok())
+                else {
+                    continue;
+                };
                 return Some((key, dev_offset));
             }
         }
