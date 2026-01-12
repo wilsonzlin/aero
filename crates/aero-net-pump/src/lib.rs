@@ -1230,6 +1230,15 @@ mod tests {
         }
 
         let mut backend = DeterministicNetStackBackend::new(StackConfig::default());
+        let init_state = backend.stack().export_snapshot_state();
+        assert_eq!(
+            init_state.guest_mac, None,
+            "net stack should not know guest MAC before any frames"
+        );
+        assert!(
+            !init_state.ip_assigned,
+            "net stack should not have an assigned IP before DHCP"
+        );
 
         // --- DHCP DISCOVER → OFFER ---
         let xid = 0x1020_3040;
@@ -1273,6 +1282,16 @@ mod tests {
             backend.tx_log.as_slice(),
             std::slice::from_ref(&discover_frame),
             "backend should have received exactly the DHCPDISCOVER TX frame"
+        );
+        let offer_state = backend.stack().export_snapshot_state();
+        assert_eq!(
+            offer_state.guest_mac,
+            Some(guest_mac),
+            "net stack should learn guest MAC from DHCPDISCOVER"
+        );
+        assert!(
+            !offer_state.ip_assigned,
+            "net stack should not mark IP assigned after DHCP OFFER"
         );
         assert_eq!(
             mem.read_vec(0x10_000, discover_frame.len()),
@@ -1517,6 +1536,16 @@ mod tests {
             backend.tx_log.as_slice(),
             [discover_frame.clone(), request_frame.clone()],
             "backend should have received DHCPDISCOVER then DHCPREQUEST frames"
+        );
+        let ack_state = backend.stack().export_snapshot_state();
+        assert_eq!(
+            ack_state.guest_mac,
+            Some(guest_mac),
+            "net stack should retain guest MAC after DHCP ACK"
+        );
+        assert!(
+            ack_state.ip_assigned,
+            "net stack snapshot state should report ip_assigned=true after DHCP ACK"
         );
         assert_eq!(
             mem.read_vec(0x10_000, discover_frame.len()),
