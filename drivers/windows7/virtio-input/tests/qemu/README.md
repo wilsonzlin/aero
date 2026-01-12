@@ -1,5 +1,9 @@
 # QEMU manual test plan: Windows 7 virtio-input (HID) driver
 
+For the consolidated end-to-end virtio-input validation plan (Rust device model + web runtime + Win7 driver), see:
+
+- [`docs/virtio-input-test-plan.md`](../../../../../docs/virtio-input-test-plan.md)
+
 This document describes a repeatable way to manually validate the virtio-input **HID**
 driver end-to-end on:
 
