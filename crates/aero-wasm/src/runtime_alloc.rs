@@ -31,6 +31,9 @@ use crate::guest_layout::{RUNTIME_RESERVED_BYTES, WASM_PAGE_BYTES};
 // This is intentionally small (<< 1 page) so it doesn't materially reduce available heap.
 const HEAP_TAIL_GUARD_BYTES: usize = 64;
 
+// Ensure the tail guard can host at least two distinct u32 probe words (IO + CPU workers).
+const _: () = assert!(HEAP_TAIL_GUARD_BYTES >= 8);
+
 unsafe extern "C" {
     static __heap_base: u8;
 }
