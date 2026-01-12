@@ -155,3 +155,23 @@ fn disk_controllers_snapshot_rejects_truncated_entry_payload() {
         .expect_err("snapshot should reject truncated disk controller entry payload");
     assert_eq!(err, SnapshotError::UnexpectedEof);
 }
+
+#[test]
+fn disk_controllers_snapshot_rejects_trailing_bytes() {
+    const TAG_CONTROLLERS: u16 = 1;
+
+    // Encode count=0 but include an extra byte. The decoder should reject the trailing data.
+    let controllers = Encoder::new().u32(0).u8(0xAA).finish();
+
+    let mut w = SnapshotWriter::new(
+        DiskControllersSnapshot::DEVICE_ID,
+        DiskControllersSnapshot::DEVICE_VERSION,
+    );
+    w.field_bytes(TAG_CONTROLLERS, controllers);
+
+    let mut state = DiskControllersSnapshot::default();
+    let err = state
+        .load_state(&w.finish())
+        .expect_err("snapshot should reject trailing bytes");
+    assert_eq!(err, SnapshotError::InvalidFieldEncoding("trailing bytes"));
+}
