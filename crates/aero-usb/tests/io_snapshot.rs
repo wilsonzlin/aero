@@ -604,6 +604,178 @@ fn uhci_snapshot_restore_reconstructs_hid_passthrough_device_without_pre_attachi
 }
 
 #[test]
+fn uhci_snapshot_restore_reconstructs_hid_passthrough_device_behind_external_hub() {
+    let mut ctrl = UhciController::new();
+    ctrl.hub_mut()
+        .attach(0, Box::new(UsbHubDevice::new_with_ports(4)));
+
+    let report_desc = vec![
+        0x06, 0x00, 0xff, // Usage Page (Vendor-defined 0xFF00)
+        0x09, 0x01, // Usage (0x01)
+        0xa1, 0x01, // Collection (Application)
+        0x15, 0x00, // Logical Minimum (0)
+        0x26, 0xff, 0x00, // Logical Maximum (255)
+        0x75, 0x08, // Report Size (8)
+        0x95, 0x02, // Report Count (2)
+        0x81, 0x02, // Input (Data,Var,Abs)
+        0xc0, // End Collection
+    ];
+    let hid = UsbHidPassthroughHandle::new(
+        0x1234,
+        0x5678,
+        "Vendor".to_string(),
+        "Product".to_string(),
+        Some("Serial".to_string()),
+        report_desc,
+        false,
+        None,
+        Some(0x01),
+        Some(0x02),
+    );
+    ctrl.hub_mut()
+        .attach_at_path(&[0, 1], Box::new(hid.clone()))
+        .expect("attach passthrough behind hub");
+
+    let mut mem = TestMemory::new(0x20_000);
+
+    // Reset + enable root port 0 so the bus routes packets.
+    ctrl.io_write(REG_PORTSC1, 2, PORTSC_PR as u32);
+    for _ in 0..50 {
+        ctrl.tick_1ms(&mut mem);
+    }
+
+    // Enumerate hub (addr=1, cfg=1).
+    control_no_data(
+        &mut ctrl,
+        0,
+        SetupPacket {
+            bm_request_type: 0x00,
+            b_request: 0x05, // SET_ADDRESS
+            w_value: 1,
+            w_index: 0,
+            w_length: 0,
+        },
+    );
+    control_no_data(
+        &mut ctrl,
+        1,
+        SetupPacket {
+            bm_request_type: 0x00,
+            b_request: 0x09, // SET_CONFIGURATION
+            w_value: 1,
+            w_index: 0,
+            w_length: 0,
+        },
+    );
+
+    // Hub port 1: power + reset, enumerate downstream passthrough HID to addr=2.
+    control_no_data(
+        &mut ctrl,
+        1,
+        SetupPacket {
+            bm_request_type: 0x23,
+            b_request: 0x03, // SET_FEATURE
+            w_value: 8,      // PORT_POWER
+            w_index: 1,
+            w_length: 0,
+        },
+    );
+    control_no_data(
+        &mut ctrl,
+        1,
+        SetupPacket {
+            bm_request_type: 0x23,
+            b_request: 0x03, // SET_FEATURE
+            w_value: 4,      // PORT_RESET
+            w_index: 1,
+            w_length: 0,
+        },
+    );
+    for _ in 0..50 {
+        ctrl.tick_1ms(&mut mem);
+    }
+    control_no_data(
+        &mut ctrl,
+        0,
+        SetupPacket {
+            bm_request_type: 0x00,
+            b_request: 0x05, // SET_ADDRESS
+            w_value: 2,
+            w_index: 0,
+            w_length: 0,
+        },
+    );
+    control_no_data(
+        &mut ctrl,
+        2,
+        SetupPacket {
+            bm_request_type: 0x00,
+            b_request: 0x09, // SET_CONFIGURATION
+            w_value: 1,
+            w_index: 0,
+            w_length: 0,
+        },
+    );
+
+    // Verify descriptor content before snapshot.
+    let dev_desc = control_in(
+        &mut ctrl,
+        2,
+        SetupPacket {
+            bm_request_type: 0x80, // DeviceToHost | Standard | Device
+            b_request: 0x06,       // GET_DESCRIPTOR
+            w_value: 0x0100,       // DEVICE descriptor
+            w_index: 0,
+            w_length: 18,
+        },
+    );
+    assert_eq!(u16::from_le_bytes([dev_desc[8], dev_desc[9]]), 0x1234);
+    assert_eq!(u16::from_le_bytes([dev_desc[10], dev_desc[11]]), 0x5678);
+
+    // Queue one input report.
+    hid.push_input_report(0, &[0xaa, 0xbb]);
+
+    let snap = ctrl.save_state();
+
+    // Restore from the controller snapshot alone (no pre-attached devices).
+    let mut restored = UhciController::new();
+    restored.load_state(&snap).unwrap();
+
+    assert_eq!(
+        restored.save_state(),
+        snap,
+        "UHCI controller snapshot should reconstruct and roundtrip byte-for-byte"
+    );
+
+    let restored_desc = control_in(
+        &mut restored,
+        2,
+        SetupPacket {
+            bm_request_type: 0x80,
+            b_request: 0x06,
+            w_value: 0x0100,
+            w_index: 0,
+            w_length: 18,
+        },
+    );
+    assert_eq!(u16::from_le_bytes([restored_desc[8], restored_desc[9]]), 0x1234);
+    assert_eq!(
+        u16::from_le_bytes([restored_desc[10], restored_desc[11]]),
+        0x5678
+    );
+
+    let dev = restored
+        .hub_mut()
+        .device_mut_for_address(2)
+        .expect("expected passthrough device at address 2");
+    let report = match dev.handle_in(1, 64) {
+        UsbInResult::Data(data) => data,
+        other => panic!("expected interrupt IN report, got {other:?}"),
+    };
+    assert_eq!(report, vec![0xaa, 0xbb]);
+}
+
+#[test]
 fn snapshot_restore_rejects_truncated_bytes() {
     let ctrl = UhciController::new();
     let snap = ctrl.save_state();
