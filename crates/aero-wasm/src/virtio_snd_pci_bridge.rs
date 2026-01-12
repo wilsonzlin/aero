@@ -34,7 +34,7 @@ use aero_platform::interrupts::msi::MsiMessage;
 use aero_virtio::devices::snd::{VIRTIO_SND_QUEUE_EVENT, VirtioSnd};
 use aero_virtio::memory::{GuestMemory, GuestMemoryError};
 use aero_virtio::pci::{
-    InterruptSink, VIRTIO_PCI_LEGACY_QUEUE_NOTIFY, VIRTIO_STATUS_DRIVER_OK, VirtioPciDevice,
+    InterruptSink, VIRTIO_PCI_LEGACY_QUEUE_NOTIFY, VirtioPciDevice,
 };
 
 use crate::guest_phys::{GuestRamRange, guest_ram_phys_end_exclusive, translate_guest_paddr_range};
@@ -581,9 +581,7 @@ impl VirtioSndPciBridge {
 
     /// Whether the guest driver has set `VIRTIO_STATUS_DRIVER_OK`.
     pub fn driver_ok(&mut self) -> bool {
-        // Common_cfg.device_status is at offset 0x14 (contract v1).
-        let status = self.mmio_read(0x14, 1) as u8;
-        (status & VIRTIO_STATUS_DRIVER_OK) != 0
+        self.dev.driver_ok()
     }
 
     /// Whether the PCI INTx line should be asserted.

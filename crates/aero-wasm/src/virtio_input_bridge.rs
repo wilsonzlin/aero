@@ -10,7 +10,7 @@ use aero_platform::interrupts::msi::MsiMessage;
 use aero_virtio::devices::input::{VirtioInput, VirtioInputDeviceKind};
 use aero_virtio::memory::GuestMemory;
 use aero_virtio::pci::{
-    InterruptSink, VIRTIO_PCI_LEGACY_QUEUE_NOTIFY, VIRTIO_STATUS_DRIVER_OK, VirtioPciDevice,
+    InterruptSink, VIRTIO_PCI_LEGACY_QUEUE_NOTIFY, VirtioPciDevice,
 };
 use std::cell::Cell;
 use std::rc::Rc;
@@ -227,8 +227,7 @@ impl VirtioInputPciDeviceCore {
     }
 
     pub fn driver_ok(&mut self) -> bool {
-        let status = self.mmio_read(0x14, 1) as u8;
-        (status & VIRTIO_STATUS_DRIVER_OK) != 0
+        self.pci.driver_ok()
     }
 
     pub fn irq_asserted(&self) -> bool {

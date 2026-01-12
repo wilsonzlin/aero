@@ -272,6 +272,25 @@ impl VirtioPciDevice {
         self.legacy_irq_pending
     }
 
+    /// Current virtio device status byte (`VIRTIO_STATUS_*` bits).
+    ///
+    /// This is a transport-agnostic view of the device's status state machine:
+    /// - modern drivers update it via the common config `device_status` field,
+    /// - legacy drivers update it via the I/O port `STATUS` register.
+    ///
+    /// Unlike BAR reads, this is **not** gated by PCI command decode bits.
+    pub fn device_status(&self) -> u8 {
+        self.device_status
+    }
+
+    /// Whether the guest driver has set `VIRTIO_STATUS_DRIVER_OK`.
+    ///
+    /// This is a transport-agnostic view of the device's status state machine and is **not**
+    /// gated by PCI command decode bits.
+    pub fn driver_ok(&self) -> bool {
+        (self.device_status & VIRTIO_STATUS_DRIVER_OK) != 0
+    }
+
     fn command(&self) -> u16 {
         self.config.command()
     }
@@ -1840,5 +1859,26 @@ mod tests {
 
         // We should have produced 8 used entries.
         assert_eq!(read_u16_le(&mem, used + 2).unwrap(), 8);
+    }
+
+    #[test]
+    fn driver_ok_reflects_status_without_decode_gating() {
+        let mut pci = VirtioPciDevice::new_legacy_only(
+            Box::new(CountingDevice::new(0)),
+            Box::new(NoopInterrupts),
+        );
+
+        // At reset, device_status is 0.
+        assert!(!pci.driver_ok());
+
+        // Legacy status writes are gated on PCI COMMAND.IO (bit 0). Enable it long enough to
+        // program STATUS, then disable it again. `driver_ok()` should reflect the internal status
+        // regardless of decode bits.
+        pci.set_pci_command(1u16 << 0);
+        pci.legacy_io_write(VIRTIO_PCI_LEGACY_STATUS, &[VIRTIO_STATUS_DRIVER_OK]);
+        pci.set_pci_command(0);
+
+        assert!(pci.driver_ok());
+        assert_eq!(pci.device_status(), VIRTIO_STATUS_DRIVER_OK);
     }
 }

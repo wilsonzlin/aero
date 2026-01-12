@@ -101,7 +101,7 @@ Notes:
   - PCI Revision ID `0x01`
   - device IDs in the virtio 1.0+ modern space (`0x1040 + <virtio device id>`)
 - Many upstream virtio-win drivers also match the virtio-pci **transitional** ID range (the older `0x1000..` device IDs),
-  but Aero contract v1 does not require those IDs. The web runtime can optionally expose virtio-net as a **transitional** or **legacy-only** device (including the legacy I/O port BAR) via `virtioNetMode` for compatibility with some virtio-win bundles; see [`16-virtio-pci-legacy-transitional.md`](./16-virtio-pci-legacy-transitional.md).
+  but Aero contract v1 does not require those IDs. The web runtime can optionally expose virtio-net / virtio-input / virtio-snd as **transitional** or **legacy-only** devices (including the legacy I/O port BAR) via `virtioNetMode`, `virtioInputMode`, and `virtioSndMode`; see [`16-virtio-pci-legacy-transitional.md`](./16-virtio-pci-legacy-transitional.md).
 - The Aero contract major version is encoded in the PCI **Revision ID** (contract v1 = `REV_01`). QEMU virtio devices commonly enumerate as `REV_00` by default.
   - Aero’s in-tree Win7 virtio driver packages are revision-gated (`&REV_01`), and some drivers also validate the revision at runtime.
   - For QEMU-based testing with strict contract-v1 drivers, pass `x-pci-revision=0x01` on each `-device virtio-*-pci,...` arg (the Win7 host harness under `drivers/windows7/tests/host-harness/` does this automatically).
