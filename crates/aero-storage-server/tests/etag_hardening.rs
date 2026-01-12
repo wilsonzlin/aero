@@ -252,3 +252,31 @@ async fn non_ascii_store_etag_falls_back_for_bytes_endpoint_and_allows_304() {
 
     assert_eq!(res.status(), StatusCode::NOT_MODIFIED);
 }
+
+#[tokio::test]
+async fn oversized_store_etag_falls_back_for_bytes_endpoint() {
+    let last_modified = UNIX_EPOCH + Duration::from_secs(4_000);
+    let oversized = format!("\"{}\"", "a".repeat(2000));
+    let store = Arc::new(InvalidEtagStore::new(
+        "test.img",
+        b"Hello, world!".to_vec(),
+        oversized,
+        Some(last_modified),
+    ));
+    let app = setup_app(store);
+
+    let res = app
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/v1/images/test.img/data")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(res.status(), StatusCode::OK);
+    let expected = cache::weak_etag_from_size_and_mtime(13, Some(last_modified));
+    assert_eq!(res.headers()[header::ETAG].to_str().unwrap(), expected);
+}

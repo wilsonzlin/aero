@@ -159,11 +159,19 @@ fn validate_file_path(id: &str, file: &str) -> Result<(), ManifestError> {
 
 fn validate_etag(id: &str, etag: &str) -> Result<(), ManifestError> {
     let etag = etag.trim();
+    const MAX_ETAG_LEN: usize = 1024;
     if etag.is_empty() {
         return Err(ManifestError::InvalidEtag {
             id: super::truncate_for_error(id, super::MAX_IMAGE_ID_LEN),
             etag: super::truncate_for_error(etag, 512),
             reason: "etag must not be empty".to_string(),
+        });
+    }
+    if etag.len() > MAX_ETAG_LEN {
+        return Err(ManifestError::InvalidEtag {
+            id: super::truncate_for_error(id, super::MAX_IMAGE_ID_LEN),
+            etag: super::truncate_for_error(etag, 512),
+            reason: "etag is too long".to_string(),
         });
     }
 

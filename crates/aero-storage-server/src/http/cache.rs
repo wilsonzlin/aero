@@ -5,6 +5,10 @@ use sha2::{Digest, Sha256};
 
 use crate::store::ImageMeta;
 
+// Defensive bound for store-provided ETags. This avoids allocating/processing unreasonably large
+// header values if a store backend returns attacker-controlled data.
+const MAX_ETAG_LEN: usize = 1024;
+
 /// Returns `true` if this looks like a syntactically valid HTTP `ETag` header value.
 ///
 /// This is intentionally stricter than `HeaderValue` parsing: we require quoted tags, since an
@@ -12,6 +16,9 @@ use crate::store::ImageMeta;
 fn looks_like_etag(value: &str) -> bool {
     let value = value.trim();
     if value.is_empty() {
+        return false;
+    }
+    if value.len() > MAX_ETAG_LEN {
         return false;
     }
 
