@@ -109,9 +109,11 @@ On Windows 7 / WDDM 1.1 the Direct3D runtimes locate the display driver’s user
 - `aerogpu.inf` (D3D9 only):
   - x86: `InstalledDisplayDrivers = ["aerogpu_d3d9"]`
   - x64: `InstalledDisplayDrivers = ["aerogpu_d3d9_x64"]`, `InstalledDisplayDriversWow = ["aerogpu_d3d9"]`
+  - `FeatureScore = 0xF8`
 - `aerogpu_dx11.inf` (D3D9 + D3D10/11):
   - x86: `UserModeDriverName = "aerogpu_d3d10.dll"`
   - x64: `UserModeDriverName = "aerogpu_d3d10_x64.dll"`, `UserModeDriverNameWow = "aerogpu_d3d10.dll"`
+  - `FeatureScore = 0xF7` (**preferred** by Windows PnP auto-selection if both INFs match the same HWID)
 
 To inspect what was actually written after install, you can query the adapter’s device key from an elevated Command Prompt:
 

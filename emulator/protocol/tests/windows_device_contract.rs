@@ -21,6 +21,15 @@ fn parse_hex_u16(input: &str) -> u16 {
     u16::from_str_radix(no_prefix, 16).unwrap_or_else(|err| panic!("bad hex u16 {input:?}: {err}"))
 }
 
+fn parse_hex_u32(input: &str) -> u32 {
+    let trimmed = input.trim();
+    let no_prefix = trimmed
+        .strip_prefix("0x")
+        .or_else(|| trimmed.strip_prefix("0X"))
+        .unwrap_or(trimmed);
+    u32::from_str_radix(no_prefix, 16).unwrap_or_else(|err| panic!("bad hex u32 {input:?}: {err}"))
+}
+
 fn require_json_str<'a>(v: &'a serde_json::Value, field: &str) -> &'a str {
     v.get(field)
         .unwrap_or_else(|| panic!("missing {field}"))
@@ -146,6 +155,50 @@ fn inf_contains_any_hardware_id_pattern(inf_text: &str, patterns: &[String]) -> 
     }
 
     false
+}
+
+fn inf_feature_scores(inf_text: &str) -> Vec<u32> {
+    let mut out = Vec::new();
+    for raw_line in inf_text.lines() {
+        let trimmed = raw_line.trim();
+        if trimmed.is_empty() || trimmed.starts_with(';') {
+            continue;
+        }
+
+        let line = trimmed.split(';').next().unwrap_or("").trim();
+        if line.is_empty() {
+            continue;
+        }
+
+        // Expected format:
+        //   HKR,,FeatureScore,%REG_DWORD%,0x000000F8
+        //   HKR,,FeatureScore,0x00010001,0x000000F8
+        let parts: Vec<&str> = line.split(',').map(str::trim).collect();
+        if parts.len() < 4 {
+            continue;
+        }
+        if !parts[0].eq_ignore_ascii_case("HKR") {
+            continue;
+        }
+        if !parts[2].eq_ignore_ascii_case("FeatureScore") {
+            continue;
+        }
+
+        let value = parts
+            .last()
+            .unwrap_or(&"")
+            .trim()
+            .trim_matches('"');
+        if value.is_empty() {
+            continue;
+        }
+        if value.starts_with("0x") || value.starts_with("0X") {
+            out.push(parse_hex_u32(value));
+        } else if let Ok(parsed) = value.parse::<u32>() {
+            out.push(parsed);
+        }
+    }
+    out
 }
 
 #[test]
@@ -450,6 +503,64 @@ fn win7_aerogpu_infs_register_umds_with_expected_registry_types() {
                 inf_path.display()
             );
         }
+    }
+}
+
+#[test]
+fn win7_aerogpu_dx11_infs_have_better_feature_score_than_d3d9_infs() {
+    // If both the D3D9-only and DX11-capable INFs match the same HWID, Windows PnP selection can
+    // become ambiguous if their ranks are identical. Keep the DX11-capable INFs strictly better so
+    // they win by default when both are present in the driver store.
+    let root = repo_root();
+
+    let cases = [
+        (
+            root.join("drivers/aerogpu/packaging/win7/aerogpu.inf"),
+            root.join("drivers/aerogpu/packaging/win7/aerogpu_dx11.inf"),
+        ),
+        (
+            root.join("drivers/aerogpu/packaging/win7/legacy/aerogpu.inf"),
+            root.join("drivers/aerogpu/packaging/win7/legacy/aerogpu_dx11.inf"),
+        ),
+    ];
+
+    for (d3d9_inf_path, dx11_inf_path) in cases {
+        let d3d9_text = std::fs::read_to_string(&d3d9_inf_path)
+            .unwrap_or_else(|err| panic!("failed to read {}: {err}", d3d9_inf_path.display()));
+        let dx11_text = std::fs::read_to_string(&dx11_inf_path)
+            .unwrap_or_else(|err| panic!("failed to read {}: {err}", dx11_inf_path.display()));
+
+        let d3d9_scores = inf_feature_scores(&d3d9_text);
+        let dx11_scores = inf_feature_scores(&dx11_text);
+        assert!(
+            !d3d9_scores.is_empty(),
+            "{} must write FeatureScore via AddReg (HKR,,FeatureScore,...)",
+            d3d9_inf_path.display()
+        );
+        assert!(
+            !dx11_scores.is_empty(),
+            "{} must write FeatureScore via AddReg (HKR,,FeatureScore,...)",
+            dx11_inf_path.display()
+        );
+        assert!(
+            d3d9_scores.iter().all(|v| *v == d3d9_scores[0]),
+            "{} must use a consistent FeatureScore across all AddReg sections, got {d3d9_scores:?}",
+            d3d9_inf_path.display()
+        );
+        assert!(
+            dx11_scores.iter().all(|v| *v == dx11_scores[0]),
+            "{} must use a consistent FeatureScore across all AddReg sections, got {dx11_scores:?}",
+            dx11_inf_path.display()
+        );
+
+        let d3d9_score = d3d9_scores[0];
+        let dx11_score = dx11_scores[0];
+        assert!(
+            dx11_score < d3d9_score,
+            "DX11-capable INF {} must have a strictly better (lower) FeatureScore than {} (dx11: {dx11_score:#x}, d3d9: {d3d9_score:#x})",
+            dx11_inf_path.display(),
+            d3d9_inf_path.display(),
+        );
     }
 }
 

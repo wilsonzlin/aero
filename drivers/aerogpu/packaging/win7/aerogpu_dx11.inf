@@ -84,7 +84,7 @@ AeroGPU_UMD_Wow64.CopyFiles = 10,SysWOW64
 ; Registry settings
 ; -------------------------------
 [AeroGPU_Device_AddReg_x86]
-HKR,,FeatureScore,%REG_DWORD%,0x000000F8
+HKR,,FeatureScore,%REG_DWORD%,0x000000F7
 
 ; D3D9 UMD registration (32-bit).
 HKR,,InstalledDisplayDrivers,%REG_MULTI_SZ%,"aerogpu_d3d9"
@@ -93,7 +93,7 @@ HKR,,InstalledDisplayDrivers,%REG_MULTI_SZ%,"aerogpu_d3d9"
 HKR,,UserModeDriverName,%REG_SZ%,"aerogpu_d3d10.dll"
 
 [AeroGPU_Device_AddReg_amd64]
-HKR,,FeatureScore,%REG_DWORD%,0x000000F8
+HKR,,FeatureScore,%REG_DWORD%,0x000000F7
 
 ; D3D9 UMD registration (64-bit + WoW32).
 HKR,,InstalledDisplayDrivers,%REG_MULTI_SZ%,"aerogpu_d3d9_x64"
