@@ -3,7 +3,7 @@
 #
 # This script exists primarily so documentation and CI snippets can run a
 # benchmark comparison step via:
-#   ./scripts/compare-benchmarks.sh
+#   bash ./scripts/compare-benchmarks.sh
 #
 # With no arguments, it tries to auto-detect common Criterion output layouts
 # used by our workflows:
@@ -15,7 +15,7 @@
 #       baseline/target/criterion  vs  target/criterion
 #
 # For full control (including custom paths), pass args through directly:
-#   ./scripts/compare-benchmarks.sh --base <dir> --new <dir> [other flags...]
+#   bash ./scripts/compare-benchmarks.sh --base <dir> --new <dir> [other flags...]
 
 set -euo pipefail
 
@@ -25,7 +25,7 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 usage() {
   cat >&2 <<'EOF'
 Usage:
-  ./scripts/compare-benchmarks.sh [--base <dir> --new <dir> ...]
+  bash ./scripts/compare-benchmarks.sh [--base <dir> --new <dir> ...]
 
 This is a thin wrapper around:
   python3 scripts/bench_compare.py
@@ -34,8 +34,8 @@ If invoked with no args, it auto-detects Criterion result directories in common
 CI/local layouts (see script header for details).
 
 Examples:
-  ./scripts/compare-benchmarks.sh
-  ./scripts/compare-benchmarks.sh --base target/bench-base/criterion --new target/bench-new/criterion --profile pr-smoke
+  bash ./scripts/compare-benchmarks.sh
+  bash ./scripts/compare-benchmarks.sh --base target/bench-base/criterion --new target/bench-new/criterion --profile pr-smoke
 EOF
 }
 
@@ -78,4 +78,3 @@ exec python3 "$SCRIPT_DIR/bench_compare.py" \
   --profile "$profile" \
   --markdown-out "$markdown_out" \
   --json-out "$json_out"
-

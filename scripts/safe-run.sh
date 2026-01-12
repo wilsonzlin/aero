@@ -4,15 +4,15 @@
 # DEFENSIVE: Assumes the command can hang, OOM, or misbehave in any way.
 #
 # Usage:
-#   ./scripts/safe-run.sh <command...>
-#   ./scripts/safe-run.sh cargo build --release --locked
+#   bash ./scripts/safe-run.sh <command...>
+#   bash ./scripts/safe-run.sh cargo build --release --locked
 #
 # Default limits (override via environment):
 #   AERO_TIMEOUT=600      (10 minutes)
 #   AERO_MEM_LIMIT=12G    (12 GB virtual address space)
 #
 # Override example:
-#   AERO_TIMEOUT=1200 AERO_MEM_LIMIT=16G ./scripts/safe-run.sh cargo build --release --locked
+#   AERO_TIMEOUT=1200 AERO_MEM_LIMIT=16G bash ./scripts/safe-run.sh cargo build --release --locked
 
 set -euo pipefail
 

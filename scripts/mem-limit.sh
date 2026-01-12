@@ -4,7 +4,7 @@ set -euo pipefail
 # Backwards-compatible wrapper around `scripts/run_limited.sh`.
 #
 # Historical usage across this repo/docs:
-#   ./scripts/mem-limit.sh 12G <command...>
+#   bash ./scripts/mem-limit.sh 12G <command...>
 #
 # Prefer `scripts/run_limited.sh` directly if you need other limits (CPU/stack).
 

@@ -4,8 +4,8 @@
 # DEFENSIVE: Assumes the command may hang forever or ignore SIGTERM.
 #
 # Usage:
-#   ./scripts/with-timeout.sh <seconds> <command...>
-#   ./scripts/with-timeout.sh 600 cargo build --release --locked
+#   bash ./scripts/with-timeout.sh <seconds> <command...>
+#   bash ./scripts/with-timeout.sh 600 cargo build --release --locked
 #
 # On timeout:
 # 1. Sends SIGTERM to the process
