@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 #[cfg(not(target_arch = "wasm32"))]
 use std::sync::mpsc;
@@ -125,12 +125,12 @@ struct ContextState {
 }
 
 impl ContextState {
-    fn new(device: &wgpu::Device) -> Self {
+    fn new(device: &wgpu::Device, downlevel_flags: wgpu::DownlevelFlags) -> Self {
         Self {
             constants_buffer: create_constants_buffer(device),
             bind_group: None,
             bind_group_dirty: true,
-            samplers_ps: create_default_samplers(device),
+            samplers_ps: create_default_samplers(device, downlevel_flags),
             sampler_state_ps: std::array::from_fn(|_| D3d9SamplerState::default()),
             state: create_default_state(),
         }
@@ -579,8 +579,15 @@ fn create_default_state() -> State {
     state
 }
 
-fn create_default_samplers(device: &wgpu::Device) -> [Arc<wgpu::Sampler>; MAX_SAMPLERS] {
-    let sampler = Arc::new(create_wgpu_sampler(device, &D3d9SamplerState::default()));
+fn create_default_samplers(
+    device: &wgpu::Device,
+    downlevel_flags: wgpu::DownlevelFlags,
+) -> [Arc<wgpu::Sampler>; MAX_SAMPLERS] {
+    let sampler = Arc::new(create_wgpu_sampler(
+        device,
+        downlevel_flags,
+        &D3d9SamplerState::default(),
+    ));
     std::array::from_fn(|_| sampler.clone())
 }
 
@@ -588,6 +595,10 @@ fn create_default_samplers(device: &wgpu::Device) -> [Arc<wgpu::Sampler>; MAX_SA
 struct D3d9SamplerState {
     address_u: u32,
     address_v: u32,
+    address_w: u32,
+    border_color: u32,
+    max_anisotropy: u32,
+    max_mip_level: u32,
     min_filter: u32,
     mag_filter: u32,
     mip_filter: u32,
@@ -596,12 +607,19 @@ struct D3d9SamplerState {
 impl Default for D3d9SamplerState {
     fn default() -> Self {
         // Match D3D9 sampler defaults:
-        // - ADDRESSU/V = WRAP (1)
+        // - ADDRESSU/V/W = WRAP (1)
         // - MIN/MAG = POINT (1)
         // - MIP = NONE (0)
+        // - BORDERCOLOR = 0
+        // - MAXANISOTROPY = 1
+        // - MAXMIPLEVEL = 0
         Self {
             address_u: d3d9::D3DTADDRESS_WRAP,
             address_v: d3d9::D3DTADDRESS_WRAP,
+            address_w: d3d9::D3DTADDRESS_WRAP,
+            border_color: 0,
+            max_anisotropy: 1,
+            max_mip_level: 0,
             min_filter: d3d9::D3DTEXF_POINT,
             mag_filter: d3d9::D3DTEXF_POINT,
             mip_filter: d3d9::D3DTEXF_NONE,
@@ -808,7 +826,7 @@ impl AerogpuD3d9Executor {
             source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(CLEAR_SCISSOR_WGSL)),
         });
 
-        let samplers_ps = create_default_samplers(&device);
+        let samplers_ps = create_default_samplers(&device, downlevel_flags);
         let sampler_state_ps = std::array::from_fn(|_| D3d9SamplerState::default());
 
         Self {
@@ -870,7 +888,7 @@ impl AerogpuD3d9Executor {
         self.bind_group_dirty = true;
         self.sampler_state_ps = std::array::from_fn(|_| D3d9SamplerState::default());
         self.sampler_cache.clear();
-        self.samplers_ps = create_default_samplers(&self.device);
+        self.samplers_ps = create_default_samplers(&self.device, self.downlevel_flags);
         self.state = create_default_state();
         self.encoder = None;
 
@@ -1264,7 +1282,7 @@ impl AerogpuD3d9Executor {
         let mut next = self
             .contexts
             .remove(&context_id)
-            .unwrap_or_else(|| ContextState::new(&self.device));
+            .unwrap_or_else(|| ContextState::new(&self.device, self.downlevel_flags));
 
         std::mem::swap(&mut self.constants_buffer, &mut next.constants_buffer);
         std::mem::swap(&mut self.bind_group, &mut next.bind_group);
@@ -5692,7 +5710,7 @@ impl AerogpuD3d9Executor {
             return sampler.clone();
         }
 
-        let sampler = Arc::new(create_wgpu_sampler(&self.device, &state));
+        let sampler = Arc::new(create_wgpu_sampler(&self.device, self.downlevel_flags, &state));
         self.sampler_cache.insert(state, sampler.clone());
         sampler
     }
@@ -5739,6 +5757,16 @@ impl AerogpuD3d9Executor {
                 affects_sampler = true;
                 affects_bind_group = true;
             }
+            d3d9::D3DSAMP_ADDRESSW => {
+                self.sampler_state_ps[slot].address_w = value;
+                affects_sampler = true;
+                affects_bind_group = true;
+            }
+            d3d9::D3DSAMP_BORDERCOLOR => {
+                self.sampler_state_ps[slot].border_color = value;
+                affects_sampler = true;
+                affects_bind_group = true;
+            }
             d3d9::D3DSAMP_MINFILTER => {
                 self.sampler_state_ps[slot].min_filter = value;
                 affects_sampler = true;
@@ -5751,6 +5779,16 @@ impl AerogpuD3d9Executor {
             }
             d3d9::D3DSAMP_MIPFILTER => {
                 self.sampler_state_ps[slot].mip_filter = value;
+                affects_sampler = true;
+                affects_bind_group = true;
+            }
+            d3d9::D3DSAMP_MAXANISOTROPY => {
+                self.sampler_state_ps[slot].max_anisotropy = value;
+                affects_sampler = true;
+                affects_bind_group = true;
+            }
+            d3d9::D3DSAMP_MAXMIPLEVEL => {
+                self.sampler_state_ps[slot].max_mip_level = value;
                 affects_sampler = true;
                 affects_bind_group = true;
             }
@@ -6373,7 +6411,11 @@ fn create_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
     })
 }
 
-fn create_wgpu_sampler(device: &wgpu::Device, state: &D3d9SamplerState) -> wgpu::Sampler {
+fn create_wgpu_sampler(
+    device: &wgpu::Device,
+    downlevel_flags: wgpu::DownlevelFlags,
+    state: &D3d9SamplerState,
+) -> wgpu::Sampler {
     fn addr(device: &wgpu::Device, value: u32) -> wgpu::AddressMode {
         match value {
             d3d9::D3DTADDRESS_WRAP | 0 => wgpu::AddressMode::Repeat,
@@ -6405,12 +6447,37 @@ fn create_wgpu_sampler(device: &wgpu::Device, state: &D3d9SamplerState) -> wgpu:
 
     let address_mode_u = addr(device, state.address_u);
     let address_mode_v = addr(device, state.address_v);
-    let address_mode_w = wgpu::AddressMode::ClampToEdge;
-    let border_color = if matches!(address_mode_u, wgpu::AddressMode::ClampToBorder)
+    let address_mode_w = addr(device, state.address_w);
+
+    let uses_border = matches!(address_mode_u, wgpu::AddressMode::ClampToBorder)
         || matches!(address_mode_v, wgpu::AddressMode::ClampToBorder)
-        || matches!(address_mode_w, wgpu::AddressMode::ClampToBorder)
+        || matches!(address_mode_w, wgpu::AddressMode::ClampToBorder);
+
+    let border_color = if uses_border
+        && device
+            .features()
+            .contains(wgpu::Features::ADDRESS_MODE_CLAMP_TO_BORDER)
     {
-        Some(wgpu::SamplerBorderColor::TransparentBlack)
+        let mapped = match state.border_color {
+            0x0000_0000 => wgpu::SamplerBorderColor::TransparentBlack,
+            0xFF00_0000 => wgpu::SamplerBorderColor::OpaqueBlack,
+            0xFFFF_FFFF => wgpu::SamplerBorderColor::OpaqueWhite,
+            other => {
+                static SEEN_UNSUPPORTED: OnceLock<std::sync::Mutex<HashSet<u32>>> =
+                    OnceLock::new();
+                let set = SEEN_UNSUPPORTED.get_or_init(|| std::sync::Mutex::new(HashSet::new()));
+                if let Ok(mut guard) = set.lock() {
+                    if guard.insert(other) {
+                        debug!(
+                            value = other,
+                            "unsupported D3D9 border color; mapping to transparent black"
+                        );
+                    }
+                }
+                wgpu::SamplerBorderColor::TransparentBlack
+            }
+        };
+        Some(mapped)
     } else {
         None
     };
@@ -6418,10 +6485,20 @@ fn create_wgpu_sampler(device: &wgpu::Device, state: &D3d9SamplerState) -> wgpu:
     let min_filter = filter(state.min_filter);
     let mag_filter = filter(state.mag_filter);
     let mipmap_filter = filter(state.mip_filter);
+    let lod_min_clamp = state.max_mip_level as f32;
     let lod_max_clamp = if state.mip_filter == d3d9::D3DTEXF_NONE || state.mip_filter == 0 {
         0.0
     } else {
         32.0
+    };
+
+    let anisotropy_clamp = if (state.min_filter == d3d9::D3DTEXF_ANISOTROPIC
+        || state.mag_filter == d3d9::D3DTEXF_ANISOTROPIC)
+        && downlevel_flags.contains(wgpu::DownlevelFlags::ANISOTROPIC_FILTERING)
+    {
+        state.max_anisotropy.clamp(1, 16) as u16
+    } else {
+        1
     };
 
     device.create_sampler(&wgpu::SamplerDescriptor {
@@ -6432,10 +6509,10 @@ fn create_wgpu_sampler(device: &wgpu::Device, state: &D3d9SamplerState) -> wgpu:
         mag_filter,
         min_filter,
         mipmap_filter,
-        lod_min_clamp: 0.0,
+        lod_min_clamp,
         lod_max_clamp,
         compare: None,
-        anisotropy_clamp: 1,
+        anisotropy_clamp,
         border_color,
     })
 }
@@ -6515,9 +6592,13 @@ mod d3d9 {
     // D3DSAMPLERSTATETYPE (subset).
     pub const D3DSAMP_ADDRESSU: u32 = 1;
     pub const D3DSAMP_ADDRESSV: u32 = 2;
+    pub const D3DSAMP_ADDRESSW: u32 = 3;
+    pub const D3DSAMP_BORDERCOLOR: u32 = 4;
     pub const D3DSAMP_MAGFILTER: u32 = 5;
     pub const D3DSAMP_MINFILTER: u32 = 6;
     pub const D3DSAMP_MIPFILTER: u32 = 7;
+    pub const D3DSAMP_MAXMIPLEVEL: u32 = 9;
+    pub const D3DSAMP_MAXANISOTROPY: u32 = 10;
     pub const D3DSAMP_SRGBTEXTURE: u32 = 11;
 
     // D3DTEXTUREADDRESS.
