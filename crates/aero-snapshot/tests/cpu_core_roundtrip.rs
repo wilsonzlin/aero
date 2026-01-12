@@ -1,3 +1,5 @@
+#![cfg(not(target_arch = "wasm32"))]
+
 use std::io::Cursor;
 
 use aero_cpu_core::interp::tier0;

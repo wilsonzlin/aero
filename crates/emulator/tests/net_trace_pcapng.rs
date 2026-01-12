@@ -1,3 +1,5 @@
+#![cfg(not(target_arch = "wasm32"))]
+
 use emulator::io::net::trace::{CaptureArtifactOnPanic, FrameDirection, NetTraceConfig, NetTracer};
 
 #[allow(clippy::too_many_arguments)]
