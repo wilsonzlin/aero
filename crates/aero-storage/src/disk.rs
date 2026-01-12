@@ -45,6 +45,32 @@ pub trait VirtualDisk {
     }
 }
 
+impl<T: VirtualDisk + ?Sized> VirtualDisk for Box<T> {
+    fn capacity_bytes(&self) -> u64 {
+        (**self).capacity_bytes()
+    }
+
+    fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<()> {
+        (**self).read_at(offset, buf)
+    }
+
+    fn write_at(&mut self, offset: u64, buf: &[u8]) -> Result<()> {
+        (**self).write_at(offset, buf)
+    }
+
+    fn flush(&mut self) -> Result<()> {
+        (**self).flush()
+    }
+
+    fn read_sectors(&mut self, lba: u64, buf: &mut [u8]) -> Result<()> {
+        (**self).read_sectors(lba, buf)
+    }
+
+    fn write_sectors(&mut self, lba: u64, buf: &[u8]) -> Result<()> {
+        (**self).write_sectors(lba, buf)
+    }
+}
+
 /// A raw disk image stored in a byte backend (OPFS file, ArrayBuffer, etc.).
 pub struct RawDisk<B> {
     backend: B,

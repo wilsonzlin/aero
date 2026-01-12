@@ -105,3 +105,20 @@ fn block_cache_eviction_writes_back_dirty_blocks() {
     assert!(stats.evictions >= 1);
     assert!(stats.writebacks >= 1);
 }
+
+#[test]
+fn boxed_virtual_disk_can_be_used_in_generic_wrappers() {
+    let raw = RawDisk::create(MemBackend::new(), (SECTOR_SIZE * 8) as u64).unwrap();
+    let boxed: Box<dyn VirtualDisk> = Box::new(raw);
+
+    // This test is primarily a compile-time check that `Box<dyn VirtualDisk>` implements
+    // `VirtualDisk` (so it can be used in generic wrappers like `BlockCachedDisk`).
+    let mut cached = BlockCachedDisk::new(boxed, SECTOR_SIZE, 1).unwrap();
+
+    cached.write_at(0, &[1, 2, 3, 4]).unwrap();
+    cached.flush().unwrap();
+
+    let mut buf = [0u8; 4];
+    cached.read_at(0, &mut buf).unwrap();
+    assert_eq!(&buf, &[1, 2, 3, 4]);
+}
