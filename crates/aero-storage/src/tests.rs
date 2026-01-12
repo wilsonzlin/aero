@@ -1,7 +1,44 @@
 use crate::{
     AeroCowDisk, AeroSparseConfig, AeroSparseDisk, AeroSparseHeader, BlockCachedDisk, DiskError,
-    MemBackend, RawDisk, StorageBackend, VirtualDisk, SECTOR_SIZE,
+    MemBackend, RawDisk, StorageBackend as _, VirtualDisk, SECTOR_SIZE,
 };
+
+fn make_header(
+    disk_size_bytes: u64,
+    block_size_bytes: u32,
+    allocated_blocks: u64,
+) -> AeroSparseHeader {
+    let table_entries = disk_size_bytes.div_ceil(block_size_bytes as u64);
+    let table_bytes = table_entries * 8;
+    let data_offset = (crate::sparse::HEADER_SIZE as u64 + table_bytes)
+        .div_ceil(block_size_bytes as u64)
+        * block_size_bytes as u64;
+    AeroSparseHeader {
+        version: 1,
+        block_size_bytes,
+        disk_size_bytes,
+        table_entries,
+        data_offset,
+        allocated_blocks,
+    }
+}
+
+fn write_table(backend: &mut MemBackend, table: &[u64]) {
+    let mut table_bytes = Vec::with_capacity(table.len() * 8);
+    for &v in table {
+        table_bytes.extend_from_slice(&v.to_le_bytes());
+    }
+    backend
+        .write_at(crate::sparse::HEADER_SIZE as u64, &table_bytes)
+        .unwrap();
+}
+
+fn open_sparse_err(backend: MemBackend) -> DiskError {
+    match AeroSparseDisk::open(backend) {
+        Ok(_) => panic!("expected open to fail"),
+        Err(e) => e,
+    }
+}
 
 #[test]
 fn sector_helpers_validate_alignment_and_bounds() {
@@ -111,8 +148,8 @@ fn boxed_virtual_disk_can_be_used_in_generic_wrappers() {
     let raw = RawDisk::create(MemBackend::new(), (SECTOR_SIZE * 8) as u64).unwrap();
     let boxed: Box<dyn VirtualDisk> = Box::new(raw);
 
-    // This test is primarily a compile-time check that `Box<dyn VirtualDisk>` implements
-    // `VirtualDisk` (so it can be used in generic wrappers like `BlockCachedDisk`).
+    // Compile-time check: `Box<dyn VirtualDisk>` itself implements `VirtualDisk` so it can be used
+    // in generic wrappers like `BlockCachedDisk`.
     let mut cached = BlockCachedDisk::new(boxed, SECTOR_SIZE, 1).unwrap();
 
     cached.write_at(0, &[1, 2, 3, 4]).unwrap();
@@ -126,8 +163,8 @@ fn boxed_virtual_disk_can_be_used_in_generic_wrappers() {
 #[test]
 fn sparse_open_rejects_oversized_allocation_table() {
     // Craft a header that claims an allocation table larger than the hard cap.
-    // The backend only contains the header; `open` must reject the image without
-    // allocating the claimed table size.
+    // The backend only contains the header; `open` must reject the image without allocating the
+    // claimed table size.
     let block_size_bytes = 4096u32;
     let table_entries = (128 * 1024 * 1024 / 8) + 1;
     let disk_size_bytes = table_entries * (block_size_bytes as u64);
@@ -150,38 +187,7 @@ fn sparse_open_rejects_oversized_allocation_table() {
     let mut backend = MemBackend::new();
     backend.write_at(0, &header.encode()).unwrap();
 
-    let err = AeroSparseDisk::open(backend).err().unwrap();
-    assert!(matches!(err, DiskError::Unsupported(_) | DiskError::InvalidSparseHeader(_)));
-}
-
-#[cfg(target_pointer_width = "32")]
-#[test]
-fn sparse_open_rejects_table_size_overflow_usize() {
-    // On 32-bit targets, converting the claimed table size to `usize` must be checked.
-    // This image claims a table of (usize::MAX + 1) bytes.
-    let block_size_bytes = 4096u32;
-    let table_entries = (usize::MAX as u64 / 8) + 1;
-    let disk_size_bytes = table_entries * (block_size_bytes as u64);
-    let table_bytes = table_entries * 8;
-    let data_offset = crate::util::align_up_u64(
-        (crate::sparse::HEADER_SIZE as u64) + table_bytes,
-        block_size_bytes as u64,
-    )
-    .unwrap();
-
-    let header = AeroSparseHeader {
-        version: 1,
-        block_size_bytes,
-        disk_size_bytes,
-        table_entries,
-        data_offset,
-        allocated_blocks: 0,
-    };
-
-    let mut backend = MemBackend::new();
-    backend.write_at(0, &header.encode()).unwrap();
-
-    let err = AeroSparseDisk::open(backend).err().unwrap();
+    let err = open_sparse_err(backend);
     assert!(matches!(err, DiskError::Unsupported(_) | DiskError::InvalidSparseHeader(_)));
 }
 
@@ -208,8 +214,8 @@ fn sparse_open_rejects_allocated_blocks_inconsistent_with_table() {
         allocated_blocks: 2, // but we will only store one non-zero entry
     };
 
-    // Create a backend large enough to cover the one allocated block we reference.
-    let mut backend = MemBackend::with_len(data_offset + block_size_bytes as u64).unwrap();
+    // Create a backend large enough to satisfy the header's claimed allocated block count.
+    let mut backend = MemBackend::with_len(data_offset + 2 * block_size_bytes as u64).unwrap();
     backend.write_at(0, &header.encode()).unwrap();
 
     let mut table = vec![0u8; table_bytes as usize];
@@ -218,6 +224,174 @@ fn sparse_open_rejects_allocated_blocks_inconsistent_with_table() {
         .write_at(crate::sparse::HEADER_SIZE as u64, &table)
         .unwrap();
 
-    let err = AeroSparseDisk::open(backend).err().unwrap();
+    let err = open_sparse_err(backend);
     assert!(matches!(err, DiskError::CorruptSparseImage(_)));
+}
+
+#[test]
+fn sparse_open_rejects_zero_block_size() {
+    let mut backend = MemBackend::new();
+    let mut header = make_header(4096, 4096, 0);
+    header.block_size_bytes = 0;
+    backend.write_at(0, &header.encode()).unwrap();
+    let err = open_sparse_err(backend);
+    assert!(matches!(err, DiskError::InvalidSparseHeader(_)));
+}
+
+#[test]
+fn sparse_open_rejects_non_power_of_two_block_size() {
+    let mut backend = MemBackend::new();
+    let header = make_header(4096, 1536, 0); // multiple of 512 but not power-of-two
+    backend.write_at(0, &header.encode()).unwrap();
+    let err = open_sparse_err(backend);
+    assert!(matches!(err, DiskError::InvalidSparseHeader(_)));
+}
+
+#[test]
+fn sparse_open_rejects_block_size_not_multiple_of_512() {
+    let mut backend = MemBackend::new();
+    let header = make_header(4096, 1025, 0);
+    backend.write_at(0, &header.encode()).unwrap();
+    let err = open_sparse_err(backend);
+    assert!(matches!(err, DiskError::InvalidSparseHeader(_)));
+}
+
+#[test]
+fn sparse_open_rejects_zero_disk_size() {
+    let mut backend = MemBackend::new();
+    let header = make_header(0, 4096, 0);
+    backend.write_at(0, &header.encode()).unwrap();
+    let err = open_sparse_err(backend);
+    assert!(matches!(err, DiskError::InvalidSparseHeader(_)));
+}
+
+#[test]
+fn sparse_open_rejects_disk_size_not_multiple_of_512() {
+    let mut backend = MemBackend::new();
+    let header = make_header(4097, 4096, 0);
+    backend.write_at(0, &header.encode()).unwrap();
+    let err = open_sparse_err(backend);
+    assert!(matches!(err, DiskError::InvalidSparseHeader(_)));
+}
+
+#[test]
+fn sparse_open_rejects_table_entries_mismatch() {
+    let mut backend = MemBackend::new();
+    let mut header = make_header(8192, 4096, 0);
+    header.table_entries += 1;
+    backend.write_at(0, &header.encode()).unwrap();
+    let err = open_sparse_err(backend);
+    assert!(matches!(err, DiskError::InvalidSparseHeader(_)));
+}
+
+#[test]
+fn sparse_open_rejects_bad_data_offset() {
+    let mut backend = MemBackend::new();
+    let mut header = make_header(8192, 4096, 0);
+    header.data_offset -= 512;
+    backend.write_at(0, &header.encode()).unwrap();
+    let err = open_sparse_err(backend);
+    assert!(matches!(err, DiskError::InvalidSparseHeader(_)));
+}
+
+#[test]
+fn sparse_open_rejects_allocated_blocks_gt_table_entries() {
+    let mut backend = MemBackend::new();
+    let header = make_header(4096, 4096, 2);
+    backend.write_at(0, &header.encode()).unwrap();
+    let err = open_sparse_err(backend);
+    assert!(matches!(err, DiskError::InvalidSparseHeader(_)));
+}
+
+#[test]
+fn sparse_open_rejects_truncated_allocation_table() {
+    let mut backend = MemBackend::new();
+    let header = make_header(4096, 4096, 0);
+    backend.write_at(0, &header.encode()).unwrap();
+    // No table bytes written.
+    let err = open_sparse_err(backend);
+    assert!(matches!(err, DiskError::CorruptSparseImage(_)));
+}
+
+#[test]
+fn sparse_open_rejects_unaligned_table_entry() {
+    let mut backend = MemBackend::new();
+    let header = make_header(4096, 4096, 1);
+    backend.write_at(0, &header.encode()).unwrap();
+    write_table(&mut backend, &[header.data_offset + 1]);
+    backend
+        .set_len(header.data_offset + header.block_size_u64())
+        .unwrap();
+
+    let err = open_sparse_err(backend);
+    assert!(matches!(err, DiskError::CorruptSparseImage(_)));
+}
+
+#[test]
+fn sparse_open_rejects_table_entry_before_data_offset() {
+    let mut backend = MemBackend::new();
+    // Use a small block size + many table entries so `data_offset` is larger than a single
+    // block and we can craft a block-aligned offset that still points into metadata.
+    let header = make_header(512 * 100, 512, 1);
+    backend.write_at(0, &header.encode()).unwrap();
+    let phys = header.block_size_u64(); // aligned, non-zero, but < data_offset
+    write_table(
+        &mut backend,
+        &std::iter::once(phys)
+            .chain(std::iter::repeat(0).take(header.table_entries as usize - 1))
+            .collect::<Vec<u64>>(),
+    );
+
+    let err = open_sparse_err(backend);
+    assert!(matches!(err, DiskError::CorruptSparseImage(_)));
+}
+
+#[test]
+fn sparse_open_rejects_table_entry_overflow() {
+    let mut backend = MemBackend::new();
+    let header = make_header(4096, 4096, 1);
+    backend.write_at(0, &header.encode()).unwrap();
+    let phys = u64::MAX - (header.block_size_u64() - 1);
+    write_table(&mut backend, &[phys]);
+    // No need to extend backend len; this should be rejected before checking bounds.
+    let err = open_sparse_err(backend);
+    assert!(matches!(err, DiskError::CorruptSparseImage(_)));
+}
+
+#[test]
+fn sparse_open_rejects_table_entry_past_backend_end() {
+    let mut backend = MemBackend::new();
+    let header = make_header(4096, 4096, 1);
+    backend.write_at(0, &header.encode()).unwrap();
+    write_table(&mut backend, &[header.data_offset]);
+    backend
+        .set_len(header.data_offset + header.block_size_u64() - 1)
+        .unwrap();
+
+    let err = open_sparse_err(backend);
+    assert!(matches!(err, DiskError::CorruptSparseImage(_)));
+}
+
+#[test]
+fn sparse_open_rejects_duplicate_physical_offsets() {
+    let mut backend = MemBackend::new();
+    let header = make_header(8192, 4096, 2);
+    backend.write_at(0, &header.encode()).unwrap();
+    write_table(&mut backend, &[header.data_offset, header.data_offset]);
+    backend
+        .set_len(header.data_offset + 2 * header.block_size_u64())
+        .unwrap();
+
+    let err = open_sparse_err(backend);
+    assert!(matches!(err, DiskError::CorruptSparseImage(_)));
+}
+
+#[test]
+fn sparse_open_rejects_huge_allocation_table() {
+    let mut backend = MemBackend::new();
+    // 1,000,000,000 entries => 8 GiB table.
+    let header = make_header(512 * 1_000_000_000, 512, 0);
+    backend.write_at(0, &header.encode()).unwrap();
+    let err = open_sparse_err(backend);
+    assert!(matches!(err, DiskError::Unsupported(_) | DiskError::InvalidSparseHeader(_)));
 }

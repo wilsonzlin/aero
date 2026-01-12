@@ -8,6 +8,7 @@ const ZERO_BUF: [u8; 4096] = [0; 4096];
 
 // Hard cap to avoid absurd allocations from untrusted images.
 const MAX_TABLE_BYTES: u64 = 128 * 1024 * 1024; // 128 MiB
+const MAX_TABLE_ENTRIES: u64 = MAX_TABLE_BYTES / 8;
 
 /// Parameters used when creating a new sparse disk.
 #[derive(Copy, Clone, Debug)]
@@ -70,6 +71,59 @@ impl AeroSparseHeader {
         let table_entries = u64::from_le_bytes(bytes[40..48].try_into().unwrap());
         let data_offset = u64::from_le_bytes(bytes[48..56].try_into().unwrap());
         let allocated_blocks = u64::from_le_bytes(bytes[56..64].try_into().unwrap());
+
+        // Validate header invariants. This is intentionally strict because the image may be
+        // untrusted/corrupt, and later code assumes these values are sane.
+        let block_size = block_size_bytes as u64;
+        if block_size == 0 || !block_size.is_multiple_of(SECTOR_SIZE as u64) {
+            return Err(DiskError::InvalidSparseHeader(
+                "block_size must be a non-zero multiple of 512",
+            ));
+        }
+        if !block_size_bytes.is_power_of_two() {
+            return Err(DiskError::InvalidSparseHeader(
+                "block_size must be power of two",
+            ));
+        }
+        if disk_size_bytes == 0 || !disk_size_bytes.is_multiple_of(SECTOR_SIZE as u64) {
+            return Err(DiskError::InvalidSparseHeader(
+                "disk_size must be a non-zero multiple of 512",
+            ));
+        }
+        if table_entries == 0 {
+            return Err(DiskError::InvalidSparseHeader(
+                "table_entries must be non-zero",
+            ));
+        }
+
+        let expected_table_entries = div_ceil_u64(disk_size_bytes, block_size)?;
+        if expected_table_entries != table_entries {
+            return Err(DiskError::InvalidSparseHeader("unexpected table_entries"));
+        }
+
+        let expected_table_bytes = table_entries
+            .checked_mul(8)
+            .ok_or(DiskError::OffsetOverflow)?;
+
+        // Reject absurd allocation tables *before* validating `data_offset` so opening a corrupt
+        // image never attempts to compute or allocate based on extreme values.
+        if expected_table_bytes > MAX_TABLE_BYTES || table_entries > MAX_TABLE_ENTRIES {
+            return Err(DiskError::Unsupported("aerosparse allocation table too large"));
+        }
+
+        let table_end = (HEADER_SIZE as u64)
+            .checked_add(expected_table_bytes)
+            .ok_or(DiskError::OffsetOverflow)?;
+        let expected_data_offset = align_up_u64(table_end, block_size)?;
+        if expected_data_offset != data_offset {
+            return Err(DiskError::InvalidSparseHeader("unexpected data_offset"));
+        }
+
+        if allocated_blocks > table_entries {
+            return Err(DiskError::InvalidSparseHeader(
+                "allocated_blocks exceeds table_entries",
+            ));
+        }
 
         Ok(Self {
             version,
@@ -161,50 +215,18 @@ impl<B: StorageBackend> AeroSparseDisk<B> {
 
     pub fn open(mut backend: B) -> Result<Self> {
         let mut header_bytes = [0u8; HEADER_SIZE];
-        backend.read_at(0, &mut header_bytes)?;
+        backend.read_at(0, &mut header_bytes).map_err(|e| match e {
+            DiskError::OutOfBounds { .. } => DiskError::CorruptSparseImage("truncated sparse header"),
+            other => other,
+        })?;
         let header = AeroSparseHeader::decode(&header_bytes)?;
 
-        let backend_len = backend.len()?;
-
         let block_size = header.block_size_u64();
-        if block_size == 0 || !block_size.is_multiple_of(SECTOR_SIZE as u64) {
-            return Err(DiskError::InvalidSparseHeader(
-                "block_size must be a non-zero multiple of 512",
-            ));
-        }
-        if !header.block_size_bytes.is_power_of_two() {
-            return Err(DiskError::InvalidSparseHeader(
-                "block_size must be power of two",
-            ));
-        }
-        if header.disk_size_bytes == 0 || !header.disk_size_bytes.is_multiple_of(SECTOR_SIZE as u64)
-        {
-            return Err(DiskError::InvalidSparseHeader(
-                "disk_size must be a non-zero multiple of 512",
-            ));
-        }
-        if header.table_entries == 0 {
-            return Err(DiskError::InvalidSparseHeader(
-                "table_entries must be non-zero",
-            ));
-        }
-
-        // Validate table_entries matches disk_size_bytes and block_size_bytes.
-        let expected_table_entries = div_ceil_u64(header.disk_size_bytes, block_size)?;
-        if expected_table_entries != header.table_entries {
-            return Err(DiskError::InvalidSparseHeader("unexpected table_entries"));
-        }
-        if header.allocated_blocks > header.table_entries {
-            return Err(DiskError::InvalidSparseHeader(
-                "allocated_blocks exceeds table_entries",
-            ));
-        }
-
         let expected_table_bytes = header
             .table_entries
             .checked_mul(8)
             .ok_or(DiskError::OffsetOverflow)?;
-        if expected_table_bytes > MAX_TABLE_BYTES {
+        if expected_table_bytes > MAX_TABLE_BYTES || header.table_entries > MAX_TABLE_ENTRIES {
             return Err(DiskError::Unsupported("aerosparse allocation table too large"));
         }
         let expected_table_bytes_usize: usize = expected_table_bytes
@@ -218,10 +240,8 @@ impl<B: StorageBackend> AeroSparseDisk<B> {
         let table_end = (HEADER_SIZE as u64)
             .checked_add(expected_table_bytes)
             .ok_or(DiskError::OffsetOverflow)?;
-        let expected_data_offset = align_up_u64(table_end, block_size)?;
-        if expected_data_offset != header.data_offset {
-            return Err(DiskError::InvalidSparseHeader("unexpected data_offset"));
-        }
+
+        let backend_len = backend.len()?;
 
         // Validate the image isn't truncated before reading the allocation table.
         if backend_len < table_end {
@@ -269,7 +289,14 @@ impl<B: StorageBackend> AeroSparseDisk<B> {
         let mut remaining = expected_table_bytes_usize;
         while remaining > 0 {
             let read_len = remaining.min(buf.len());
-            backend.read_at(offset, &mut buf[..read_len])?;
+            backend
+                .read_at(offset, &mut buf[..read_len])
+                .map_err(|e| match e {
+                    DiskError::OutOfBounds { .. } => {
+                        DiskError::CorruptSparseImage("allocation table out of bounds")
+                    }
+                    other => other,
+                })?;
             for chunk in buf[..read_len].chunks_exact(8) {
                 table.push(u64::from_le_bytes(chunk.try_into().unwrap()));
             }
@@ -324,9 +351,9 @@ impl<B: StorageBackend> AeroSparseDisk<B> {
                     "data block offset out of bounds",
                 ));
             }
-            let phys_end = phys
-                .checked_add(block_size)
-                .ok_or(DiskError::OffsetOverflow)?;
+            let phys_end = phys.checked_add(block_size).ok_or(DiskError::CorruptSparseImage(
+                "data block offset out of bounds",
+            ))?;
             if phys_end > expected_min_len {
                 return Err(DiskError::CorruptSparseImage(
                     "data block offset out of bounds",
@@ -366,9 +393,10 @@ impl<B: StorageBackend> AeroSparseDisk<B> {
     }
 
     pub fn is_block_allocated(&self, block_idx: u64) -> bool {
-        self.table
-            .get(block_idx as usize)
-            .is_some_and(|&off| off != 0)
+        let Ok(idx) = usize::try_from(block_idx) else {
+            return false;
+        };
+        self.table.get(idx).is_some_and(|&off| off != 0)
     }
 
     pub fn into_backend(self) -> B {
@@ -376,9 +404,12 @@ impl<B: StorageBackend> AeroSparseDisk<B> {
     }
 
     pub(crate) fn ensure_block_allocated(&mut self, block_idx: u64) -> Result<(u64, bool)> {
+        let block_idx_usize: usize = block_idx
+            .try_into()
+            .map_err(|_| DiskError::CorruptSparseImage("block index out of range"))?;
         let entry = self
             .table
-            .get_mut(block_idx as usize)
+            .get_mut(block_idx_usize)
             .ok_or(DiskError::CorruptSparseImage("block index out of range"))?;
 
         if *entry != 0 {
@@ -481,9 +512,12 @@ impl<B: StorageBackend> VirtualDisk for AeroSparseDisk<B> {
             let remaining = buf.len() - pos;
             let chunk_len = (block_size as usize - within).min(remaining);
 
+            let block_idx_usize: usize = block_idx
+                .try_into()
+                .map_err(|_| DiskError::CorruptSparseImage("block index out of range"))?;
             let phys = *self
                 .table
-                .get(block_idx as usize)
+                .get(block_idx_usize)
                 .ok_or(DiskError::CorruptSparseImage("block index out of range"))?;
             if phys == 0 {
                 buf[pos..pos + chunk_len].fill(0);
