@@ -316,9 +316,9 @@ static void OsMb(void *ctx)
 	/*
 	 * Optional MSI-X vector programming behavior override.
 	 *
-	 * Some virtio devices may refuse vector programming and read back 0xFFFF
-	 * ("no vector"). The transport is expected to detect this via readback
-	 * validation.
+	 * Some virtio devices may refuse vector programming and read back
+	 * VIRTIO_PCI_MSI_NO_VECTOR (0xFFFF). The transport is expected to detect
+	 * this via readback validation.
 	 */
 	if (dev->MbForceMsixConfigNoVector) {
 		common->msix_config = VIRTIO_PCI_MSI_NO_VECTOR;
