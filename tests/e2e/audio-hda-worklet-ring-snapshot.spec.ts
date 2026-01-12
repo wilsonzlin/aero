@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
 
+import { HEADER_BYTES, HEADER_U32_LEN, READ_FRAME_INDEX, WRITE_FRAME_INDEX } from "../../web/src/platform/audio_worklet_ring_layout.js";
+
 const PREVIEW_ORIGIN = process.env.AERO_PLAYWRIGHT_PREVIEW_ORIGIN ?? "http://127.0.0.1:4173";
 
 test("WASM HDA snapshot restores AudioWorklet ring indices and clears samples", async ({ page }) => {
@@ -15,7 +17,7 @@ test("WASM HDA snapshot restores AudioWorklet ring indices and clears samples", 
     return !!api;
   }, undefined, { timeout: 60_000 });
 
-  const res = await page.evaluate(() => {
+  const res = await page.evaluate(({ HEADER_BYTES, HEADER_U32_LEN, READ_FRAME_INDEX, WRITE_FRAME_INDEX }) => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const api = (globalThis as any).__aeroWasmApi as any;
     if (typeof SharedArrayBuffer === "undefined" || typeof Atomics === "undefined") {
@@ -35,15 +37,9 @@ test("WASM HDA snapshot restores AudioWorklet ring indices and clears samples", 
       return { ok: false, reason: "HdaControllerBridge snapshot exports unavailable" };
     }
 
-    // AudioWorklet ring layout (must match `web/src/platform/audio_worklet_ring_layout.js`).
-    const READ_FRAME_INDEX = 0;
-    const WRITE_FRAME_INDEX = 1;
-    const HEADER_U32_LEN = 4;
-    const HEADER_BYTES = 16;
-
     const capacityFrames = 8;
     const channelCount = 2;
-    const sab = new SharedArrayBuffer(HEADER_BYTES + capacityFrames * channelCount * 4);
+    const sab = new SharedArrayBuffer(HEADER_BYTES + capacityFrames * channelCount * Float32Array.BYTES_PER_ELEMENT);
 
     const header = new Uint32Array(sab, 0, HEADER_U32_LEN);
     const samples = new Float32Array(sab, HEADER_BYTES, capacityFrames * channelCount);
@@ -109,7 +105,7 @@ test("WASM HDA snapshot restores AudioWorklet ring indices and clears samples", 
       write2,
       cleared2,
     };
-  });
+  }, { HEADER_BYTES, HEADER_U32_LEN, READ_FRAME_INDEX, WRITE_FRAME_INDEX });
 
   if (!res.ok) {
     throw new Error(`Precondition failed: ${res.reason}`);
