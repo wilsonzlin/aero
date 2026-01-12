@@ -212,11 +212,9 @@ public:
 
   D3d9TraceCall(const D3d9TraceCall&) = delete;
   D3d9TraceCall& operator=(const D3d9TraceCall&) = delete;
-
+ 
   HRESULT ret(HRESULT hr) {
-    if (record_) {
-      hr_ = hr;
-    }
+    hr_ = hr;
     return hr;
   }
 

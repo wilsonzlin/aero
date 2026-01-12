@@ -1,4 +1,3 @@
-#include <cassert>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -55,6 +54,11 @@ std::string make_unique_log_path(const char* stem) {
   std::snprintf(buf, sizeof(buf), "%s.%lu.log", stem, pid);
   return std::string(buf);
 }
+
+int fail(const char* msg) {
+  std::fprintf(stdout, "FAIL: %s\n", msg ? msg : "(null)");
+  return 1;
+}
  
 } // namespace
  
@@ -66,7 +70,9 @@ int main() {
 #else
 int main() {
   const std::string out_path = make_unique_log_path("aerogpu_d3d9_trace_dump_on_fail_tests");
-  assert(std::freopen(out_path.c_str(), "w", stderr) != nullptr);
+  if (!std::freopen(out_path.c_str(), "w", stderr)) {
+    return fail("freopen(stderr) failed");
+  }
  
   // Exercise dump-on-fail in TRACE_MODE=unique. The second call to the same
   // entrypoint would normally be suppressed, so this ensures the dump-on-fail
@@ -96,9 +102,18 @@ int main() {
   std::fflush(stderr);
  
   const std::string output = slurp_file(out_path);
-  assert(output.find("dump reason=Device::CreateResource") != std::string::npos);
-  assert(output.find("a0=0x222") != std::string::npos);
-  assert(output.find("hr=0x80070057") != std::string::npos);
+  if (output.find("dump reason=Device::CreateResource") == std::string::npos) {
+    std::fprintf(stdout, "FAIL: expected dump reason Device::CreateResource (log=%s)\n", out_path.c_str());
+    return 1;
+  }
+  if (output.find("a0=0x222") == std::string::npos) {
+    std::fprintf(stdout, "FAIL: expected failing call arg a0=0x222 (log=%s)\n", out_path.c_str());
+    return 1;
+  }
+  if (output.find("hr=0x80070057") == std::string::npos) {
+    std::fprintf(stdout, "FAIL: expected hr=0x80070057 (E_INVALIDARG) (log=%s)\n", out_path.c_str());
+    return 1;
+  }
  
   std::remove(out_path.c_str());
   return 0;

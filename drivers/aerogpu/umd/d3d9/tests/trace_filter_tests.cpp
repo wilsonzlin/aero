@@ -1,4 +1,3 @@
-#include <cassert>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -56,6 +55,11 @@ std::string make_unique_log_path(const char* stem) {
   std::snprintf(buf, sizeof(buf), "%s.%lu.log", stem, pid);
   return std::string(buf);
 }
+
+int fail(const char* msg) {
+  std::fprintf(stdout, "FAIL: %s\n", msg ? msg : "(null)");
+  return 1;
+}
  
 } // namespace
  
@@ -69,7 +73,9 @@ int main() {
 #else
 int main() {
   const std::string out_path = make_unique_log_path("aerogpu_d3d9_trace_filter_tests");
-  assert(std::freopen(out_path.c_str(), "w", stderr) != nullptr);
+  if (!std::freopen(out_path.c_str(), "w", stderr)) {
+    return fail("freopen(stderr) failed");
+  }
  
   set_env("AEROGPU_D3D9_TRACE", "1");
   set_env("AEROGPU_D3D9_TRACE_MODE", "all");
@@ -97,9 +103,18 @@ int main() {
   std::fflush(stderr);
  
   const std::string output = slurp_file(out_path);
-  assert(output.find("Device::ValidateDevice") != std::string::npos);
-  assert(output.find("Device::CreateResource") == std::string::npos);
-  assert(output.find("filter_on=1") != std::string::npos);
+  if (output.find("Device::ValidateDevice") == std::string::npos) {
+    std::fprintf(stdout, "FAIL: expected output to contain Device::ValidateDevice (log=%s)\n", out_path.c_str());
+    return 1;
+  }
+  if (output.find("Device::CreateResource") != std::string::npos) {
+    std::fprintf(stdout, "FAIL: expected output to NOT contain Device::CreateResource (log=%s)\n", out_path.c_str());
+    return 1;
+  }
+  if (output.find("filter_on=1") == std::string::npos) {
+    std::fprintf(stdout, "FAIL: expected output to contain filter_on=1 (log=%s)\n", out_path.c_str());
+    return 1;
+  }
  
   std::remove(out_path.c_str());
   return 0;
