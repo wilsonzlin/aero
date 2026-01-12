@@ -137,8 +137,9 @@ impl<B, IO> PagingBus<B, IO> {
     /// fails with a page fault (callers should fall back to scalar accesses to preserve correct
     /// architectural partial-progress semantics).
     ///
-    /// Non-canonical linear addresses are reported as `#GP(0)`, matching the behaviour of normal
-    /// scalar accesses.
+    /// Non-canonical linear addresses return `Ok(false)` so callers can fall back to scalar
+    /// accesses, which preserve correct architectural partial-progress semantics (e.g. REP string
+    /// ops that cross the canonical boundary in long mode).
     fn preflight_range_probe(
         &mut self,
         vaddr: u64,
@@ -161,7 +162,7 @@ impl<B, IO> PagingBus<B, IO> {
             {
                 Ok(_paddr) => {}
                 Err(TranslateFault::PageFault(_pf)) => return Ok(false),
-                Err(TranslateFault::NonCanonical(_addr)) => return Err(Exception::gp0()),
+                Err(TranslateFault::NonCanonical(_addr)) => return Ok(false),
             }
 
             let page_off = (addr & (PAGE_SIZE - 1)) as usize;
