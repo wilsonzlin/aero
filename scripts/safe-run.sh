@@ -61,7 +61,9 @@ export RAYON_NUM_THREADS="${RAYON_NUM_THREADS:-$CARGO_BUILD_JOBS}"
 #
 # Heuristic: align per-crate codegen parallelism with overall Cargo build parallelism so the total
 # number of rustc worker threads remains bounded.
+is_cargo_cmd=false
 if [[ "${1:-}" == "cargo" || "${1:-}" == */cargo ]]; then
+    is_cargo_cmd=true
     if [[ "${RUSTFLAGS:-}" != *"codegen-units="* ]]; then
         _aero_codegen_units="${CARGO_BUILD_JOBS:-1}"
 
@@ -160,10 +162,12 @@ should_retry_rustc_thread_error() {
     # typically succeed after a short backoff.
     #
     # Example signatures:
+    # - "failed to create helper thread: ... Resource temporarily unavailable"
     # - "failed to spawn helper thread: ... Resource temporarily unavailable"
     # - "failed to spawn work thread: ... Resource temporarily unavailable"
     # - "Unable to install ctrlc handler: ... Resource temporarily unavailable"
-    if grep -q "failed to spawn helper thread" "${stderr_log}" \
+    if grep -q "failed to create helper thread" "${stderr_log}" \
+        || grep -q "failed to spawn helper thread" "${stderr_log}" \
         || grep -q "failed to spawn work thread" "${stderr_log}" \
         || grep -q "Unable to install ctrlc handler" "${stderr_log}"
     then
