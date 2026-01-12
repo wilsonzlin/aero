@@ -338,3 +338,14 @@ fn decodes_xop_encoded_instruction_via_iced_backend() {
         .iter()
         .any(|op| matches!(op, Operand::Xmm { .. })));
 }
+
+#[test]
+fn rep_prefix_is_ignored_on_far_jmp_in_16bit_mode() {
+    // `REPNE; JMPF ptr16:16` is accepted (and REPNE is ignored) by real hardware + iced-x86.
+    // Some third-party decoders reject it; our decoder should stay aligned with iced-x86 since we
+    // use it as the project-standard reference.
+    let bytes = [0xF2, 0xEA, 0x00, 0x00, 0x00, 0x00];
+    let inst = decode(&bytes, DecodeMode::Bits16, 0).unwrap();
+    assert_eq!(inst.length, 6);
+    assert_eq!(inst.prefixes.rep, Some(RepPrefix::Repne));
+}
