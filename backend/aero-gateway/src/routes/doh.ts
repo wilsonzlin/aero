@@ -9,13 +9,24 @@ import type { SessionManager } from '../session.js';
 import { setupDnsJsonRoutes } from './dnsJson.js';
 
 export function decodeBase64UrlToBuffer(base64url: string): Buffer {
-  if (!/^[A-Za-z0-9_-]+$/.test(base64url)) throw new Error('Invalid base64url');
-  let base64 = base64url.replaceAll('-', '+').replaceAll('_', '/');
-  const mod = base64.length % 4;
-  if (mod === 2) base64 += '==';
-  else if (mod === 3) base64 += '=';
-  else if (mod !== 0) throw new Error('Invalid base64url length');
-  return Buffer.from(base64, 'base64');
+  if (!isBase64Url(base64url)) throw new Error('Invalid base64url');
+  if (base64url.length % 4 === 1) throw new Error('Invalid base64url length');
+  // Node supports "base64url" decoding without padding.
+  return Buffer.from(base64url, 'base64url');
+}
+
+function isBase64Url(raw: string): boolean {
+  if (raw.length === 0) return false;
+  for (let i = 0; i < raw.length; i += 1) {
+    const c = raw.charCodeAt(i);
+    const isUpper = c >= 0x41 /* 'A' */ && c <= 0x5a /* 'Z' */;
+    const isLower = c >= 0x61 /* 'a' */ && c <= 0x7a /* 'z' */;
+    const isDigit = c >= 0x30 /* '0' */ && c <= 0x39 /* '9' */;
+    const isDash = c === 0x2d /* '-' */;
+    const isUnderscore = c === 0x5f /* '_' */;
+    if (!isUpper && !isLower && !isDigit && !isDash && !isUnderscore) return false;
+  }
+  return true;
 }
 
 type DohQuery = { dns?: string };
