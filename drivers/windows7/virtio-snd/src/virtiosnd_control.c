@@ -159,6 +159,14 @@ VirtioSndCtrlCompleteRequest(_Inout_ VIRTIOSND_CTRL_REQUEST* Req, _In_ ULONG Use
 
     Req->UsedLen = UsedLen;
 
+    /*
+     * Ensure device writes are visible before reading response bytes.
+     *
+     * This matches the TX/RX completion handling (used-entry handlers) and
+     * protects against stale reads on alternate virtqueue implementations.
+     */
+    KeMemoryBarrier();
+
     virtioStatus = 0xFFFFFFFFu;
     if (UsedLen >= sizeof(ULONG) && Req->RespBuf != NULL) {
         virtioStatus = *(UNALIGNED const ULONG*)Req->RespBuf;
