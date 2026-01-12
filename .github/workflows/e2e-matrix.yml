@@ -77,6 +77,14 @@ jobs:
         env:
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
 
+      - name: Setup Rust (pinned nightly for threaded WASM)
+        uses: ./.github/actions/setup-rust
+        with:
+          toolchain: nightly
+          targets: wasm32-unknown-unknown
+          components: rust-src
+          locked: always
+
       - name: Setup Playwright (cached)
         uses: ./.github/actions/setup-playwright
         with:
@@ -87,6 +95,9 @@ jobs:
       - name: Run Playwright tests
         env:
           AERO_NODE_DIR: ${{ steps.node-workspace.outputs.dir }}
+          # Ensure the Rust toolchain used by `cargo xtask` stays on pinned stable; the pinned nightly
+          # toolchain is installed above only for threaded WASM builds.
+          RUSTUP_TOOLCHAIN: ${{ steps.setup-rust.outputs.rust_toolchain }}
         run: cargo xtask test-all --skip-rust --skip-wasm --skip-ts --pw-project ${{ matrix.project }} -- --reporter=dot,html --trace=retain-on-failure
 
       - name: Upload Playwright artifacts

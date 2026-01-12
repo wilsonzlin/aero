@@ -21,6 +21,24 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup Rust (pinned stable)
+        uses: ./.github/actions/setup-rust
+        with:
+          toolchain: stable
+          targets: wasm32-unknown-unknown
+          locked: always
+
+      - name: Setup Rust (pinned nightly for threaded WASM)
+        uses: ./.github/actions/setup-rust
+        with:
+          toolchain: nightly
+          targets: wasm32-unknown-unknown
+          components: rust-src
+          locked: always
+
+      - name: Install wasm-pack
+        uses: jetli/wasm-pack-action@v0.4.0
+
       - name: Setup Node workspace
         id: node-workspace
         uses: ./.github/actions/setup-node-workspace
