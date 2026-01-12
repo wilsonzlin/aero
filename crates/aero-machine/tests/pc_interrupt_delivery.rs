@@ -1,8 +1,10 @@
 #![cfg(not(target_arch = "wasm32"))]
 
+use aero_devices::pci::profile::SATA_AHCI_ICH9;
 use aero_machine::pc::PcMachine;
 use aero_machine::RunExit;
 use aero_platform::interrupts::{InterruptInput, PlatformInterruptMode};
+use aero_storage::{MemBackend, RawDisk, VirtualDisk, SECTOR_SIZE};
 use memory::MemoryBus as _;
 
 fn write_u16_le(pc: &mut PcMachine, paddr: u64, value: u16) {
@@ -64,13 +66,89 @@ fn setup_real_mode_cpu(pc: &mut PcMachine, entry_ip: u64) {
     pc.cpu.state.halted = false;
 }
 
-fn program_ioapic_entry(ints: &mut aero_platform::interrupts::PlatformInterrupts, gsi: u32, low: u32, high: u32) {
+fn program_ioapic_entry(
+    ints: &mut aero_platform::interrupts::PlatformInterrupts,
+    gsi: u32,
+    low: u32,
+    high: u32,
+) {
     let redtbl_low = 0x10u32 + gsi * 2;
     let redtbl_high = redtbl_low + 1;
     ints.ioapic_mmio_write(0x00, redtbl_low);
     ints.ioapic_mmio_write(0x10, low);
     ints.ioapic_mmio_write(0x00, redtbl_high);
     ints.ioapic_mmio_write(0x10, high);
+}
+
+// Minimal AHCI constants/helpers for interrupt delivery tests.
+const HBA_GHC: u64 = 0x04;
+const PORT_BASE: u64 = 0x100;
+
+const PORT_REG_CLB: u64 = 0x00;
+const PORT_REG_CLBU: u64 = 0x04;
+const PORT_REG_FB: u64 = 0x08;
+const PORT_REG_FBU: u64 = 0x0C;
+const PORT_REG_IS: u64 = 0x10;
+const PORT_REG_IE: u64 = 0x14;
+const PORT_REG_CMD: u64 = 0x18;
+const PORT_REG_CI: u64 = 0x38;
+
+const GHC_IE: u32 = 1 << 1;
+const GHC_AE: u32 = 1 << 31;
+
+const PORT_CMD_ST: u32 = 1 << 0;
+const PORT_CMD_FRE: u32 = 1 << 4;
+
+const PORT_IS_DHRS: u32 = 1 << 0;
+
+const ATA_CMD_IDENTIFY: u8 = 0xEC;
+
+fn write_cmd_header(pc: &mut PcMachine, clb: u64, slot: usize, ctba: u64, prdtl: u16) {
+    let cfl = 5u32;
+    let flags = cfl | ((prdtl as u32) << 16);
+    let addr = clb + (slot as u64) * 32;
+    pc.bus.platform.memory.write_u32(addr, flags);
+    pc.bus.platform.memory.write_u32(addr + 4, 0); // PRDBC
+    pc.bus.platform.memory.write_u32(addr + 8, ctba as u32);
+    pc.bus
+        .platform
+        .memory
+        .write_u32(addr + 12, (ctba >> 32) as u32);
+}
+
+fn write_prdt(pc: &mut PcMachine, ctba: u64, entry: usize, dba: u64, dbc: u32) {
+    let addr = ctba + 0x80 + (entry as u64) * 16;
+    pc.bus.platform.memory.write_u32(addr, dba as u32);
+    pc.bus
+        .platform
+        .memory
+        .write_u32(addr + 4, (dba >> 32) as u32);
+    pc.bus.platform.memory.write_u32(addr + 8, 0);
+    // DBC field stores byte_count-1 in bits 0..21.
+    pc.bus
+        .platform
+        .memory
+        .write_u32(addr + 12, (dbc - 1) & 0x003F_FFFF);
+}
+
+fn write_cfis(pc: &mut PcMachine, ctba: u64, command: u8, lba: u64, count: u16) {
+    let mut cfis = [0u8; 64];
+    cfis[0] = 0x27;
+    cfis[1] = 0x80;
+    cfis[2] = command;
+    cfis[7] = 0x40; // LBA mode
+
+    cfis[4] = (lba & 0xFF) as u8;
+    cfis[5] = ((lba >> 8) & 0xFF) as u8;
+    cfis[6] = ((lba >> 16) & 0xFF) as u8;
+    cfis[8] = ((lba >> 24) & 0xFF) as u8;
+    cfis[9] = ((lba >> 32) & 0xFF) as u8;
+    cfis[10] = ((lba >> 40) & 0xFF) as u8;
+
+    cfis[12] = (count & 0xFF) as u8;
+    cfis[13] = (count >> 8) as u8;
+
+    pc.bus.platform.memory.write_physical(ctba, &cfis);
 }
 
 #[test]
@@ -162,7 +240,8 @@ fn pc_machine_delivers_e1000_pci_intx_via_legacy_pic() {
 
     // Create the PC machine, but swap in a platform that includes the E1000 device.
     let mut pc = PcMachine::new(RAM_SIZE);
-    pc.bus = aero_pc_platform::PcCpuBus::new(aero_pc_platform::PcPlatform::new_with_e1000(RAM_SIZE));
+    pc.bus =
+        aero_pc_platform::PcCpuBus::new(aero_pc_platform::PcPlatform::new_with_e1000(RAM_SIZE));
 
     // E1000 device 00:05.0 INTA# => (pin+device)%4 = (0+5)%4 = 1 => PIRQB => GSI11 (default config).
     // With PIC offsets 0x20/0x28: IRQ11 => vector 0x2B.
@@ -199,10 +278,17 @@ fn pc_machine_delivers_e1000_pci_intx_via_legacy_pic() {
             .bus_mut()
             .device_config(bdf)
             .expect("E1000 config function must exist");
-        assert_ne!(cfg.command() & 0x2, 0, "E1000 MMIO decoding must be enabled");
+        assert_ne!(
+            cfg.command() & 0x2,
+            0,
+            "E1000 MMIO decoding must be enabled"
+        );
         cfg.bar_range(0).expect("E1000 BAR0 must exist").base
     };
-    assert_ne!(bar0_base, 0, "E1000 BAR0 should be assigned during BIOS POST");
+    assert_ne!(
+        bar0_base, 0,
+        "E1000 BAR0 should be assigned during BIOS POST"
+    );
 
     // Trigger an interrupt inside the E1000 model by enabling IMS and setting ICS.
     //
@@ -212,8 +298,14 @@ fn pc_machine_delivers_e1000_pci_intx_via_legacy_pic() {
     const REG_ICS: u64 = 0x00C8;
     const REG_IMS: u64 = 0x00D0;
     const ICR_TXDW: u32 = 1 << 0;
-    pc.bus.platform.memory.write_u32(bar0_base + REG_IMS, ICR_TXDW);
-    pc.bus.platform.memory.write_u32(bar0_base + REG_ICS, ICR_TXDW);
+    pc.bus
+        .platform
+        .memory
+        .write_u32(bar0_base + REG_IMS, ICR_TXDW);
+    pc.bus
+        .platform
+        .memory
+        .write_u32(bar0_base + REG_ICS, ICR_TXDW);
 
     // Run until the handler executes.
     for _ in 0..10 {
@@ -225,6 +317,151 @@ fn pc_machine_delivers_e1000_pci_intx_via_legacy_pic() {
 
     panic!(
         "real-mode E1000 INTx handler did not run (flag=0x{:02x})",
+        pc.bus.platform.memory.read_u8(u64::from(flag_addr))
+    );
+}
+
+#[test]
+fn pc_machine_delivers_ahci_pci_intx_via_legacy_pic() {
+    const RAM_SIZE: usize = 2 * 1024 * 1024;
+
+    let capacity = 8 * SECTOR_SIZE as u64;
+    let mut disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
+    let mut sector0 = vec![0u8; SECTOR_SIZE];
+    sector0[0..4].copy_from_slice(b"BOOT");
+    disk.write_sectors(0, &sector0).unwrap();
+
+    let mut pc = PcMachine::new(RAM_SIZE);
+    pc.bus
+        .platform
+        .attach_ahci_disk_port0(Box::new(disk))
+        .unwrap();
+
+    // AHCI device 00:02.0 INTA# => (pin+device)%4 = (0+2)%4 = 2 => PIRQC => GSI12 (default config).
+    // With PIC offsets 0x20/0x28: IRQ12 => vector 0x2C.
+    let vector = 0x2C_u8;
+
+    let handler_addr = 0x1300u64;
+    let code_base = 0x2300u64;
+    let flag_addr = 0x0503u16;
+    let flag_value = 0x5Au8;
+
+    install_real_mode_handler(&mut pc, handler_addr, flag_addr, flag_value);
+    install_hlt_loop(&mut pc, code_base);
+    write_ivt_entry(&mut pc, vector, 0x0000, handler_addr as u16);
+
+    setup_real_mode_cpu(&mut pc, code_base);
+
+    // Stop in HLT so the interrupt must be delivered to wake the CPU.
+    assert!(matches!(pc.run_slice(16), RunExit::Halted { .. }));
+
+    // Enable IRQ12 delivery through the legacy PIC.
+    {
+        let mut ints = pc.bus.platform.interrupts.borrow_mut();
+        ints.pic_mut().set_offsets(0x20, 0x28);
+        // Unmask cascade + IRQ12.
+        ints.pic_mut().set_masked(2, false);
+        ints.pic_mut().set_masked(12, false);
+    }
+
+    let bdf = SATA_AHCI_ICH9.bdf;
+
+    // Locate BAR5 for the AHCI MMIO window (assigned during BIOS POST).
+    let bar5_base = {
+        let mut pci_cfg = pc.bus.platform.pci_cfg.borrow_mut();
+        let cfg = pci_cfg
+            .bus_mut()
+            .device_config(bdf)
+            .expect("AHCI config function must exist");
+        assert_ne!(cfg.command() & 0x2, 0, "AHCI MMIO decoding must be enabled");
+        cfg.bar_range(5).expect("AHCI BAR5 must exist").base
+    };
+    assert_ne!(
+        bar5_base, 0,
+        "AHCI BAR5 should be assigned during BIOS POST"
+    );
+
+    // Enable PCI bus mastering so AHCI DMA is permitted.
+    {
+        let mut pci_cfg = pc.bus.platform.pci_cfg.borrow_mut();
+        let bus = pci_cfg.bus_mut();
+        let command = bus
+            .device_config(bdf)
+            .expect("AHCI config function must exist")
+            .command();
+        bus.write_config(bdf, 0x04, 2, u32::from(command | (1 << 2)));
+    }
+
+    // Program HBA + port 0 registers.
+    let clb = 0x3000u64;
+    let fb = 0x4000u64;
+    let ctba = 0x5000u64;
+    let identify_buf = 0x6000u64;
+
+    pc.bus
+        .platform
+        .memory
+        .write_u32(bar5_base + PORT_BASE + PORT_REG_CLB, clb as u32);
+    pc.bus
+        .platform
+        .memory
+        .write_u32(bar5_base + PORT_BASE + PORT_REG_CLBU, (clb >> 32) as u32);
+    pc.bus
+        .platform
+        .memory
+        .write_u32(bar5_base + PORT_BASE + PORT_REG_FB, fb as u32);
+    pc.bus
+        .platform
+        .memory
+        .write_u32(bar5_base + PORT_BASE + PORT_REG_FBU, (fb >> 32) as u32);
+
+    pc.bus
+        .platform
+        .memory
+        .write_u32(bar5_base + HBA_GHC, GHC_AE | GHC_IE);
+    pc.bus
+        .platform
+        .memory
+        .write_u32(bar5_base + PORT_BASE + PORT_REG_IE, PORT_IS_DHRS);
+    pc.bus.platform.memory.write_u32(
+        bar5_base + PORT_BASE + PORT_REG_CMD,
+        PORT_CMD_ST | PORT_CMD_FRE,
+    );
+
+    // Issue an IDENTIFY command; PcMachine's run loop calls `PcPlatform::process_ahci()` so the
+    // device will complete the command and assert INTx.
+    write_cmd_header(&mut pc, clb, 0, ctba, 1);
+    write_cfis(&mut pc, ctba, ATA_CMD_IDENTIFY, 0, 0);
+    write_prdt(
+        &mut pc,
+        ctba,
+        0,
+        identify_buf,
+        SECTOR_SIZE.try_into().unwrap(),
+    );
+    pc.bus
+        .platform
+        .memory
+        .write_u32(bar5_base + PORT_BASE + PORT_REG_CI, 1);
+
+    // Run until the handler executes.
+    for _ in 0..10 {
+        let _ = pc.run_slice(512);
+        if pc.bus.platform.memory.read_u8(u64::from(flag_addr)) == flag_value {
+            // Validate that DMA wrote the IDENTIFY sector.
+            assert_eq!(pc.bus.platform.memory.read_u16(identify_buf), 0x0040);
+
+            // Clear the interrupt so it deasserts (avoid holding IRQ12 asserted indefinitely).
+            pc.bus
+                .platform
+                .memory
+                .write_u32(bar5_base + PORT_BASE + PORT_REG_IS, PORT_IS_DHRS);
+            return;
+        }
+    }
+
+    panic!(
+        "real-mode AHCI INTx handler did not run (flag=0x{:02x})",
         pc.bus.platform.memory.read_u8(u64::from(flag_addr))
     );
 }

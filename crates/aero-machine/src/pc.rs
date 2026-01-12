@@ -283,7 +283,7 @@ impl PcMachine {
     /// This is safe to call even when E1000 is disabled; it will still propagate PCI INTx line
     /// levels into the platform interrupt controller.
     pub fn poll_network(&mut self) {
-        // 1) Process DMA (TX descriptors -> host TX queue, rx_pending -> guest RX ring).
+        // 1) Process guest DMA (TX descriptors -> host TX queue, rx_pending -> guest RX ring).
         //
         // `PcPlatform::process_e1000` gates DMA on PCI command Bus Master Enable and no-ops when
         // E1000 is disabled, so it's safe to call unconditionally.

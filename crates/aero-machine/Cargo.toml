@@ -19,4 +19,6 @@ memory = { path = "../memory" }
 
 [dev-dependencies]
 pretty_assertions = "1"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 aero-storage = { path = "../aero-storage" }
