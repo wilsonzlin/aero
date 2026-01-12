@@ -551,7 +551,8 @@ mod tests {
     use crate::io::usb::core::UsbInResult;
     use crate::io::usb::{ControlResponse, SetupPacket, UsbDeviceModel};
     use crate::io::virtio::devices::input::{
-        VirtioInputDevice, VirtioInputDeviceKind, VirtioInputEvent, EV_KEY,
+        VirtioInputDevice, VirtioInputDeviceKind, VirtioInputEvent, EV_KEY, EV_SYN, KEY_F1,
+        KEY_F12, KEY_NUMLOCK, KEY_SCROLLLOCK, SYN_REPORT, VIRTIO_STATUS_DRIVER_OK,
     };
     use crate::io::virtio::vio_core::{Descriptor, VirtQueue, VRING_DESC_F_WRITE};
     use memory::DenseMemory;
@@ -677,6 +678,193 @@ mod tests {
         mem.read_into(buf0, &mut bytes).unwrap();
         let ev = VirtioInputEvent::from_bytes_le(bytes);
         assert_eq!(ev.typ, EV_KEY);
+    }
+
+    #[test]
+    fn auto_routing_virtio_injects_function_and_lock_keys() {
+        let mut mem = DenseMemory::new(0x8000).unwrap();
+
+        let desc_base = 0x1000;
+        let avail = 0x2000;
+        let used = 0x3000;
+
+        let buf0 = 0x0100;
+        let buf1 = 0x0200;
+        let buf2 = 0x0300;
+        let buf3 = 0x0400;
+        let buf4 = 0x0500;
+        let buf5 = 0x0600;
+        let buf6 = 0x0700;
+        let buf7 = 0x0800;
+
+        write_desc(
+            &mut mem,
+            desc_base,
+            0,
+            Descriptor {
+                addr: buf0,
+                len: VirtioInputEvent::BYTE_SIZE as u32,
+                flags: VRING_DESC_F_WRITE,
+                next: 0,
+            },
+        );
+        write_desc(
+            &mut mem,
+            desc_base,
+            1,
+            Descriptor {
+                addr: buf1,
+                len: VirtioInputEvent::BYTE_SIZE as u32,
+                flags: VRING_DESC_F_WRITE,
+                next: 0,
+            },
+        );
+        write_desc(
+            &mut mem,
+            desc_base,
+            2,
+            Descriptor {
+                addr: buf2,
+                len: VirtioInputEvent::BYTE_SIZE as u32,
+                flags: VRING_DESC_F_WRITE,
+                next: 0,
+            },
+        );
+        write_desc(
+            &mut mem,
+            desc_base,
+            3,
+            Descriptor {
+                addr: buf3,
+                len: VirtioInputEvent::BYTE_SIZE as u32,
+                flags: VRING_DESC_F_WRITE,
+                next: 0,
+            },
+        );
+        write_desc(
+            &mut mem,
+            desc_base,
+            4,
+            Descriptor {
+                addr: buf4,
+                len: VirtioInputEvent::BYTE_SIZE as u32,
+                flags: VRING_DESC_F_WRITE,
+                next: 0,
+            },
+        );
+        write_desc(
+            &mut mem,
+            desc_base,
+            5,
+            Descriptor {
+                addr: buf5,
+                len: VirtioInputEvent::BYTE_SIZE as u32,
+                flags: VRING_DESC_F_WRITE,
+                next: 0,
+            },
+        );
+        write_desc(
+            &mut mem,
+            desc_base,
+            6,
+            Descriptor {
+                addr: buf6,
+                len: VirtioInputEvent::BYTE_SIZE as u32,
+                flags: VRING_DESC_F_WRITE,
+                next: 0,
+            },
+        );
+        write_desc(
+            &mut mem,
+            desc_base,
+            7,
+            Descriptor {
+                addr: buf7,
+                len: VirtioInputEvent::BYTE_SIZE as u32,
+                flags: VRING_DESC_F_WRITE,
+                next: 0,
+            },
+        );
+
+        init_avail(&mut mem, avail, &[0, 1, 2, 3, 4, 5, 6, 7]);
+        init_used(&mut mem, used);
+
+        let keyboard = VirtioInputDevice::new(
+            VirtioInputDeviceKind::Keyboard,
+            VirtQueue::new(8, desc_base, avail, used),
+            VirtQueue::new(8, 0, 0, 0),
+        );
+        let mouse = VirtioInputDevice::new(
+            VirtioInputDeviceKind::Mouse,
+            VirtQueue::new(8, 0, 0, 0),
+            VirtQueue::new(8, 0, 0, 0),
+        );
+        let virtio = VirtioInputHub::new(keyboard, mouse);
+
+        let mut pipeline = InputPipeline::new(None, Some(virtio), InputRoutingPolicy::Auto);
+        pipeline
+            .virtio
+            .as_mut()
+            .unwrap()
+            .keyboard
+            .set_status(VIRTIO_STATUS_DRIVER_OK);
+
+        pipeline.handle_key(&mut mem, "F1", true).unwrap();
+        pipeline.handle_key(&mut mem, "F12", true).unwrap();
+        pipeline.handle_key(&mut mem, "NumLock", true).unwrap();
+        pipeline.handle_key(&mut mem, "ScrollLock", true).unwrap();
+
+        assert_eq!(mem.read_u16_le(used + 2).unwrap(), 8);
+
+        let mut bytes = [0u8; VirtioInputEvent::BYTE_SIZE];
+
+        mem.read_into(buf0, &mut bytes).unwrap();
+        let ev = VirtioInputEvent::from_bytes_le(bytes);
+        assert_eq!(ev.typ, EV_KEY);
+        assert_eq!(ev.code, KEY_F1);
+        assert_eq!(ev.value, 1);
+
+        mem.read_into(buf1, &mut bytes).unwrap();
+        let ev = VirtioInputEvent::from_bytes_le(bytes);
+        assert_eq!(ev.typ, EV_SYN);
+        assert_eq!(ev.code, SYN_REPORT);
+        assert_eq!(ev.value, 0);
+
+        mem.read_into(buf2, &mut bytes).unwrap();
+        let ev = VirtioInputEvent::from_bytes_le(bytes);
+        assert_eq!(ev.typ, EV_KEY);
+        assert_eq!(ev.code, KEY_F12);
+        assert_eq!(ev.value, 1);
+
+        mem.read_into(buf3, &mut bytes).unwrap();
+        let ev = VirtioInputEvent::from_bytes_le(bytes);
+        assert_eq!(ev.typ, EV_SYN);
+        assert_eq!(ev.code, SYN_REPORT);
+        assert_eq!(ev.value, 0);
+
+        mem.read_into(buf4, &mut bytes).unwrap();
+        let ev = VirtioInputEvent::from_bytes_le(bytes);
+        assert_eq!(ev.typ, EV_KEY);
+        assert_eq!(ev.code, KEY_NUMLOCK);
+        assert_eq!(ev.value, 1);
+
+        mem.read_into(buf5, &mut bytes).unwrap();
+        let ev = VirtioInputEvent::from_bytes_le(bytes);
+        assert_eq!(ev.typ, EV_SYN);
+        assert_eq!(ev.code, SYN_REPORT);
+        assert_eq!(ev.value, 0);
+
+        mem.read_into(buf6, &mut bytes).unwrap();
+        let ev = VirtioInputEvent::from_bytes_le(bytes);
+        assert_eq!(ev.typ, EV_KEY);
+        assert_eq!(ev.code, KEY_SCROLLLOCK);
+        assert_eq!(ev.value, 1);
+
+        mem.read_into(buf7, &mut bytes).unwrap();
+        let ev = VirtioInputEvent::from_bytes_le(bytes);
+        assert_eq!(ev.typ, EV_SYN);
+        assert_eq!(ev.code, SYN_REPORT);
+        assert_eq!(ev.value, 0);
     }
 
     #[test]
