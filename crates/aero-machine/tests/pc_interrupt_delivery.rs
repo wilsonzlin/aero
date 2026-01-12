@@ -3,7 +3,9 @@
 use aero_devices::pci::profile::SATA_AHCI_ICH9;
 use aero_machine::pc::PcMachine;
 use aero_machine::RunExit;
-use aero_platform::interrupts::{InterruptInput, PlatformInterruptMode};
+use aero_platform::interrupts::{
+    InterruptController as PlatformInterruptController, InterruptInput, PlatformInterruptMode,
+};
 use aero_storage::{MemBackend, RawDisk, VirtualDisk, SECTOR_SIZE};
 use memory::MemoryBus as _;
 
@@ -189,6 +191,43 @@ fn pc_machine_delivers_pic_interrupt_to_real_mode_ivt_handler() {
     panic!(
         "real-mode PIC interrupt handler did not run (flag=0x{:02x})",
         pc.bus.platform.memory.read_u8(u64::from(flag_addr))
+    );
+}
+
+#[test]
+fn pc_machine_does_not_ack_pic_interrupt_when_if0() {
+    let mut pc = PcMachine::new(2 * 1024 * 1024);
+
+    let vector = 0x21u8; // IRQ1 with PIC base 0x20
+    let code_base = 0x2000u64;
+
+    install_hlt_loop(&mut pc, code_base);
+    setup_real_mode_cpu(&mut pc, code_base);
+    pc.cpu.state.set_rflags(0); // IF=0
+
+    // Run until the CPU executes HLT.
+    assert!(matches!(pc.run_slice(16), RunExit::Halted { .. }));
+
+    // Configure the PIC and raise IRQ1.
+    {
+        let mut ints = pc.bus.platform.interrupts.borrow_mut();
+        ints.pic_mut().set_offsets(0x20, 0x28);
+        ints.pic_mut().set_masked(1, false);
+        ints.raise_irq(InterruptInput::IsaIrq(1));
+    }
+
+    // Sanity: the interrupt controller sees the pending vector.
+    assert_eq!(
+        PlatformInterruptController::get_pending(&*pc.bus.platform.interrupts.borrow()),
+        Some(vector)
+    );
+
+    // While halted with IF=0, the machine should not acknowledge or enqueue the interrupt.
+    assert_eq!(pc.run_slice(16), RunExit::Halted { executed: 0 });
+    assert!(pc.cpu.pending.external_interrupts.is_empty());
+    assert_eq!(
+        PlatformInterruptController::get_pending(&*pc.bus.platform.interrupts.borrow()),
+        Some(vector)
     );
 }
 

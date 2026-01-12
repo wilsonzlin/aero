@@ -14,7 +14,7 @@ use aero_cpu_core::assist::AssistContext;
 use aero_cpu_core::interp::tier0::exec::{run_batch_cpu_core_with_assists, BatchExit};
 use aero_cpu_core::interp::tier0::Tier0Config;
 use aero_cpu_core::interrupts::InterruptController as _;
-use aero_cpu_core::state::{CpuMode, CpuState};
+use aero_cpu_core::state::{CpuMode, CpuState, RFLAGS_IF};
 use aero_cpu_core::CpuCore;
 use aero_net_backend::{FrameRing, L2TunnelRingBackend, NetworkBackend};
 use aero_pc_platform::{PcCpuBus, PcPlatform, PcPlatformConfig, ResetEvent};
@@ -308,7 +308,11 @@ impl PcMachine {
         // are inhibited, etc. Also avoids tight polling loops when a level-triggered interrupt
         // line stays asserted.
         const MAX_QUEUED_EXTERNAL_INTERRUPTS: usize = 1;
-        if self.cpu.pending.external_interrupts.len() >= MAX_QUEUED_EXTERNAL_INTERRUPTS {
+        if self.cpu.pending.external_interrupts.len() >= MAX_QUEUED_EXTERNAL_INTERRUPTS
+            || self.cpu.pending.has_pending_event()
+            || (self.cpu.state.rflags() & RFLAGS_IF) == 0
+            || self.cpu.pending.interrupt_inhibit() != 0
+        {
             return;
         }
 
