@@ -1,4 +1,5 @@
 use aero_devices::pci::profile::NVME_CONTROLLER;
+use aero_devices_nvme::NvmeController;
 use aero_pc_platform::PcPlatform;
 use aero_storage::{MemBackend, RawDisk, SECTOR_SIZE};
 use memory::MemoryBus as _;
@@ -21,6 +22,12 @@ fn write_cfg_u16(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset:
     pc.io
         .write(0xCF8, 4, cfg_addr(bus, device, function, offset));
     pc.io.write(0xCFC, 2, u32::from(value));
+}
+
+fn write_cfg_u32(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8, value: u32) {
+    pc.io
+        .write(0xCF8, 4, cfg_addr(bus, device, function, offset));
+    pc.io.write(0xCFC, 4, value);
 }
 
 fn read_nvme_bar0_base(pc: &mut PcPlatform) -> u64 {
@@ -95,6 +102,110 @@ fn pc_platform_enumerates_nvme_and_assigns_bar0() {
     let bar0_base = read_nvme_bar0_base(&mut pc);
     assert_ne!(bar0_base, 0, "BAR0 should be assigned during BIOS POST");
     assert_eq!(bar0_base % 0x4000, 0);
+}
+
+#[test]
+fn pc_platform_nvme_mmio_is_gated_by_pci_command_mem() {
+    let mut pc = PcPlatform::new_with_nvme(2 * 1024 * 1024);
+    let bdf = NVME_CONTROLLER.bdf;
+    let bar0_base = read_nvme_bar0_base(&mut pc);
+
+    let cap_lo = pc.memory.read_u32(bar0_base + 0x0000);
+    assert_ne!(
+        cap_lo, 0xffff_ffff,
+        "CAP should be readable when COMMAND.MEM is enabled"
+    );
+
+    // Disable Memory Space Enable (COMMAND.MEM = bit 1).
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0000);
+
+    let cap_lo_disabled = pc.memory.read_u32(bar0_base + 0x0000);
+    assert_eq!(
+        cap_lo_disabled, 0xffff_ffff,
+        "BAR0 reads should return all-ones when COMMAND.MEM=0"
+    );
+
+    // Writes while decoding is disabled must not change device state.
+    pc.memory.write_u32(bar0_base + 0x0014, 1); // CC.EN = 1 (would normally be observable via CC)
+
+    // Re-enable memory decoding.
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0002);
+
+    let cap_lo_reenabled = pc.memory.read_u32(bar0_base + 0x0000);
+    assert_ne!(
+        cap_lo_reenabled, 0xffff_ffff,
+        "BAR0 should decode again when COMMAND.MEM is re-enabled"
+    );
+
+    let cc = pc.memory.read_u32(bar0_base + 0x0014);
+    assert_eq!(
+        cc, 0,
+        "writes while COMMAND.MEM=0 should not reach the NVMe controller"
+    );
+
+    // With decoding enabled again, MMIO writes should take effect.
+    pc.memory.write_u32(bar0_base + 0x0014, 1);
+    let cc_after = pc.memory.read_u32(bar0_base + 0x0014);
+    assert_eq!(cc_after & 1, 1);
+}
+
+#[test]
+fn pc_platform_nvme_bar0_relocation_is_honored_by_mmio_routing() {
+    let mut pc = PcPlatform::new_with_nvme(2 * 1024 * 1024);
+    let bdf = NVME_CONTROLLER.bdf;
+
+    // Ensure the platform routes MMIO.
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0002);
+
+    let old_base = read_nvme_bar0_base(&mut pc);
+    assert_ne!(old_base, 0, "BAR0 should be assigned during BIOS POST");
+
+    // Pick a new aligned base within the platform's PCI MMIO window.
+    let bar_len = NvmeController::bar0_len();
+    let new_base = old_base + (bar_len * 16);
+    assert_eq!(
+        new_base % bar_len,
+        0,
+        "new BAR0 base must be aligned to its size"
+    );
+    assert_ne!(new_base, old_base);
+
+    // Program the new BAR0 base (64-bit BAR: low dword then high dword).
+    write_cfg_u32(
+        &mut pc,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        0x10,
+        (new_base as u32) | 0x4,
+    );
+    write_cfg_u32(
+        &mut pc,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        0x14,
+        (new_base >> 32) as u32,
+    );
+    assert_eq!(read_nvme_bar0_base(&mut pc), new_base);
+
+    // Old base must no longer decode.
+    let cap_old = pc.memory.read_u32(old_base + 0x0000);
+    assert_eq!(cap_old, 0xffff_ffff, "old BAR0 base should not route");
+
+    // New base should decode.
+    let cap_new = pc.memory.read_u32(new_base + 0x0000);
+    assert_ne!(cap_new, 0xffff_ffff, "new BAR0 base should route");
+
+    // Writes at the new base should take effect.
+    pc.memory.write_u32(new_base + 0x0024, 0x000f_000f); // AQA
+    let aqa = pc.memory.read_u32(new_base + 0x0024);
+    assert_eq!(aqa, 0x000f_000f);
+
+    // Writes at the old base should be ignored.
+    pc.memory.write_u32(old_base + 0x0024, 0x0001_0001);
+    let aqa_after = pc.memory.read_u32(new_base + 0x0024);
+    assert_eq!(aqa_after, 0x000f_000f);
 }
 
 #[test]
