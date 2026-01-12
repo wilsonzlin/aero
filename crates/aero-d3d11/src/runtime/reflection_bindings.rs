@@ -9,7 +9,10 @@ use aero_gpu::bindings::samplers::CachedSampler;
 use aero_gpu::pipeline_key::PipelineLayoutKey;
 use anyhow::{bail, Result};
 
-use crate::binding_model::{BINDING_BASE_CBUFFER, BINDING_BASE_SAMPLER, BINDING_BASE_TEXTURE};
+use crate::binding_model::{
+    BINDING_BASE_CBUFFER, BINDING_BASE_SAMPLER, BINDING_BASE_TEXTURE, MAX_CBUFFER_SLOTS,
+    MAX_SAMPLER_SLOTS, MAX_TEXTURE_SLOTS,
+};
 
 #[derive(Debug, Clone)]
 pub(super) struct PipelineBindingsInfo {
@@ -33,9 +36,11 @@ where
             if let Some(existing) = group_map.get_mut(&binding.binding) {
                 if existing.kind != binding.kind {
                     bail!(
-                        "binding @group({}) @binding({}) kind mismatch across shaders",
+                        "binding @group({}) @binding({}) kind mismatch across shaders ({:?} vs {:?})",
                         binding.group,
-                        binding.binding
+                        binding.binding,
+                        existing.kind,
+                        binding.kind,
                     );
                 }
                 existing.visibility |= binding.visibility;
@@ -91,6 +96,12 @@ where
 pub(super) fn binding_to_layout_entry(binding: &crate::Binding) -> Result<wgpu::BindGroupLayoutEntry> {
     let ty = match &binding.kind {
         crate::BindingKind::ConstantBuffer { slot, reg_count } => {
+            if *slot >= MAX_CBUFFER_SLOTS {
+                bail!(
+                    "cbuffer slot {slot} is out of range for binding model (max {})",
+                    MAX_CBUFFER_SLOTS - 1
+                );
+            }
             let expected = BINDING_BASE_CBUFFER + slot;
             if binding.binding != expected {
                 bail!(
@@ -105,6 +116,12 @@ pub(super) fn binding_to_layout_entry(binding: &crate::Binding) -> Result<wgpu::
             }
         }
         crate::BindingKind::Texture2D { slot } => {
+            if *slot >= MAX_TEXTURE_SLOTS {
+                bail!(
+                    "texture slot {slot} is out of range for binding model (max {})",
+                    MAX_TEXTURE_SLOTS - 1
+                );
+            }
             let expected = BINDING_BASE_TEXTURE + slot;
             if binding.binding != expected {
                 bail!(
@@ -119,6 +136,12 @@ pub(super) fn binding_to_layout_entry(binding: &crate::Binding) -> Result<wgpu::
             }
         }
         crate::BindingKind::Sampler { slot } => {
+            if *slot >= MAX_SAMPLER_SLOTS {
+                bail!(
+                    "sampler slot {slot} is out of range for binding model (max {})",
+                    MAX_SAMPLER_SLOTS - 1
+                );
+            }
             let expected = BINDING_BASE_SAMPLER + slot;
             if binding.binding != expected {
                 bail!(
@@ -270,3 +293,80 @@ pub(super) fn build_bind_group(
     Ok(cache.get_or_create(device, layout, &entries))
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn require_webgpu() -> bool {
+        let Ok(raw) = std::env::var("AERO_REQUIRE_WEBGPU") else {
+            return false;
+        };
+        let v = raw.trim();
+        v == "1"
+            || v.eq_ignore_ascii_case("true")
+            || v.eq_ignore_ascii_case("yes")
+            || v.eq_ignore_ascii_case("on")
+    }
+
+    fn skip_or_panic(test_name: &str, reason: &str) {
+        if require_webgpu() {
+            panic!("AERO_REQUIRE_WEBGPU is enabled but {test_name} cannot run: {reason}");
+        }
+        eprintln!("skipping {test_name}: {reason}");
+    }
+
+    #[test]
+    fn pipeline_bindings_info_deduplicates_and_unions_visibility() {
+        pollster::block_on(async {
+            let rt = match crate::runtime::aerogpu_execute::AerogpuCmdRuntime::new_for_tests().await
+            {
+                Ok(rt) => rt,
+                Err(err) => {
+                    skip_or_panic(module_path!(), &format!("wgpu unavailable ({err:#})"));
+                    return;
+                }
+            };
+
+            let mut layout_cache = BindGroupLayoutCache::new();
+            let device = rt.device();
+
+            let vs = vec![crate::Binding {
+                group: 0,
+                binding: BINDING_BASE_TEXTURE,
+                visibility: wgpu::ShaderStages::VERTEX,
+                kind: crate::BindingKind::Texture2D { slot: 0 },
+            }];
+            let ps = vec![crate::Binding {
+                group: 0,
+                binding: BINDING_BASE_TEXTURE,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                kind: crate::BindingKind::Texture2D { slot: 0 },
+            }];
+
+            let info_a = build_pipeline_bindings_info(
+                device,
+                &mut layout_cache,
+                [vs.as_slice(), ps.as_slice()],
+            )
+            .unwrap();
+            let info_b = build_pipeline_bindings_info(
+                device,
+                &mut layout_cache,
+                [ps.as_slice(), vs.as_slice()],
+            )
+            .unwrap();
+
+            assert_eq!(
+                info_a.layout_key, info_b.layout_key,
+                "PipelineLayoutKey should be stable regardless of shader iteration order"
+            );
+
+            assert_eq!(info_a.group_bindings.len(), 1);
+            assert_eq!(info_a.group_bindings[0].len(), 1);
+            assert_eq!(
+                info_a.group_bindings[0][0].visibility,
+                wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT
+            );
+        });
+    }
+}
