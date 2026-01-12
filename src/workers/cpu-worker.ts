@@ -310,6 +310,17 @@ async function runTieredVm(iterations: number, threshold: number) {
     return;
   }
 
+  if ((cpu_state_align & (cpu_state_align - 1)) !== 0 || cpu_state_size % cpu_state_align !== 0) {
+    postToMain({
+      type: 'CpuWorkerError',
+      reason: `Invalid jit_abi_constants CpuState size/alignment: ${JSON.stringify({
+        cpu_state_size,
+        cpu_state_align,
+      })}`,
+    });
+    return;
+  }
+
   const cpu_rax_off = cpu_gpr_off[0]! >>> 0;
   if (cpu_rip_off + 8 > cpu_state_size || cpu_rflags_off + 8 > cpu_state_size || cpu_rax_off + 8 > cpu_state_size) {
     postToMain({
