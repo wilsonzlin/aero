@@ -100,15 +100,31 @@ To keep restore behavior deterministic and avoid ambiguous state merges, the dec
 
 - `DeviceState.id`: the *outer* Aero `DeviceId` (assigned by the coordinator)
 - `DeviceState.data`: the raw `aero-io-snapshot` TLV blob returned by `IoSnapshot::save_state()` (including the inner header)
-- `DeviceState.version` / `DeviceState.flags`: mirror the inner `SnapshotVersion` `(major, minor)` from the `aero-io-snapshot` header
+- `DeviceState.version` / `DeviceState.flags`: mirror the inner `SnapshotVersion` from the `aero-io-snapshot` header (`version = major`, `flags = minor`)
+
+#### PcPlatform (full-system) device coverage
+
+A minimal VM can sometimes get away with snapshotting just CPU/MMU + BIOS + RAM, but a full PcPlatform-based machine must also snapshot the platform devices that define interrupt/timer routing and input state.
+
+Beyond BIOS/RAM, a PcPlatform snapshot is expected to include `DEVICES` entries for:
+
+- **Platform interrupt controller complex** (legacy PIC + IOAPIC + LAPIC + IMCR routing)
+- **Timers:** PIT, RTC, and HPET
+- **ACPI PM fixed-function I/O** (SCI + PM_TMR, plus PM1/GPE state)
+- **i8042 controller** (PS/2 keyboard/mouse controller and output-port state)
+
+Restore notes:
+
+- **HPET:** after restoring HPET state, call `Hpet::poll()` (or run one platform tick/poll iteration) to re-drive any pending **level-triggered** interrupt lines based on `general_int_status`. (`load_state()` intentionally does not directly touch the interrupt sink.)
+- **ACPI PM determinism:** `PM_TMR` must be derived from deterministic virtual time for stable snapshot/restore. Avoid basing it on host wall-clock / `Instant` (which will make snapshots nondeterministic and can introduce time jumps on restore).
 
 #### Common platform device ids (outer `DeviceId`)
 
 Some platform devices are snapshotted as their own `DEVICES` entries and use dedicated `DeviceId` constants:
 
-- `DeviceId::PCI` (`5`) — legacy outer id for PCI config mechanism #1 + config-space images (`PciConfigPorts`)
-- `DeviceId::PCI_CFG` (`14`) — PCI config I/O ports (`PciConfigPorts`)
-- `DeviceId::PCI_INTX` (`15`) — PCI INTx router (`PciIntxRouter`)
+- `DeviceId::PCI` (`5`) — PCI core wrapper (store config ports + INTx router together; see `PCI core state` below)
+- `DeviceId::PCI_CFG` (`14`) — optional split-out PCI config I/O ports (`PciConfigPorts`)
+- `DeviceId::PCI_INTX` (`15`) — optional split-out PCI INTx router (`PciIntxRouter`)
 - `DeviceId::ACPI_PM` (`16`) — ACPI power management registers (PM1 + PM timer)
 - `DeviceId::HPET` (`17`) — HPET timer state
 
@@ -145,27 +161,18 @@ device must avoid emitting spurious IRQ pulses purely due to buffered output byt
 
 ### PCI core state (`aero-devices`)
 
-The PCI core in `crates/devices` snapshots only **guest-visible PCI-layer state** (not device-internal emulation state) using `aero-io-snapshot` TLVs.
+The PCI core in `crates/devices` snapshots only **guest-visible PCI-layer state** (not device-internal emulation state).
 
-The inner `aero-io-snapshot` `DEVICE_ID`s used by the PCI core are:
+**Snapshot layout constraint:** `aero_snapshot` rejects duplicate `(DeviceId, version, flags)` tuples in `DEVICES` (see above). Since `DeviceState.version/flags` mirror `aero-io-snapshot` `(major, minor)`, the PCI core must be stored as a **single** `DeviceId::PCI` entry.
+
+That `DeviceId::PCI` entry should contain an `aero-io-snapshot` blob with inner TLVs (nested io-snapshots) for:
 
 - `PCPT` — `PciConfigPorts`: wraps the config mechanism state and per-function config spaces:
   - `PCF1` — `PciConfigMechanism1` 0xCF8 address latch
   - `PCIB` — `PciBusSnapshot` (per-BDF 256-byte config space image + BAR base/probe state)
 - `INTX` — `PciIntxRouter` (PIRQ routing + asserted INTx levels)
 
-Canonical full-machine snapshots store these as **separate** `DEVICES` entries with distinct outer `DeviceId`s:
-
-- `DeviceId::PCI` (`5`) *(or `DeviceId::PCI_CFG` (`14`))* for the `PciConfigPorts` TLV blob (`DEVICE_ID = PCPT`)
-- `DeviceId::PCI_INTX` (`15`) for the `PciIntxRouter` TLV blob (`DEVICE_ID = INTX`)
-
-This split avoids `DEVICES` duplicate key collisions, since the section rejects duplicate `(device_id, version, flags)` tuples and both PCI TLVs commonly share the same inner snapshot `(major, minor)` (e.g. v1.0). It also reflects different restore orchestration: `PciIntxRouter` requires a post-restore `sync_levels_to_sink()` call once the platform interrupt controller/sink is restored (see note below), while the config-ports state can be restored earlier.
-
-Note: some snapshot producers use the historical outer id `DeviceId::PCI` (`5`) for `PciConfigPorts`, while others use the explicit `DeviceId::PCI_CFG` (`14`). Restore code should accept either, but a single snapshot should not store both.
-
-Other canonical platform device entries also have dedicated outer `DeviceId`s (e.g. `DeviceId::ACPI_PM`, `DeviceId::HPET`).
-
-Note: `PciIntxRouter::load_state()` restores internal refcounts but cannot touch the platform interrupt sink; snapshot restore code should call `PciIntxRouter::sync_levels_to_sink()` after restoring the platform interrupt controller to re-drive asserted GSIs.
+Restore ordering note: `PciIntxRouter::load_state()` restores internal refcounts but cannot touch the platform interrupt sink. Snapshot restore code should call `PciIntxRouter::sync_levels_to_sink()` **after restoring the platform interrupt controller complex** to re-drive any asserted GSIs (e.g. level-triggered INTx lines).
 
 ---
 
