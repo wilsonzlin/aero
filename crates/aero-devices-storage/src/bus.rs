@@ -1,4 +1,4 @@
-use aero_devices::irq::IrqLine;
+pub use aero_devices::irq::IrqLine;
 use std::fmt;
 
 use memory::MemoryBus;
