@@ -489,11 +489,16 @@ async function runTieredVm(iterations: number, threshold: number) {
   let activeWriteLog: WriteLogEntry[] | null = null;
   let onGuestWrite: ((paddr: bigint, len: number) => void) | null = null;
 
+  // Shared views into the linear memory buffer. Note that `WebAssembly.Memory.grow` can swap out
+  // `memory.buffer`, so these must be refreshed opportunistically.
+  let dv = new DataView(memory.buffer);
+
   // Used for CPU state snapshots + write log byte copies.
   // NOTE: This is a view, not a copy; snapshotting uses `.slice()`.
   let memU8 = new Uint8Array(memory.buffer);
   const refreshMemU8 = () => {
     if (memU8.buffer === memory.buffer) return;
+    dv = new DataView(memory.buffer);
     memU8 = new Uint8Array(memory.buffer);
   };
 
@@ -639,7 +644,6 @@ async function runTieredVm(iterations: number, threshold: number) {
     return startCompileOn(jitWorker, entry_rip, opts);
   }
 
-  const dv = new DataView(memory.buffer);
   {
     const vmAny = vm as unknown as {
       on_guest_write?: unknown;
