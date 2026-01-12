@@ -898,8 +898,8 @@ fn executor_bc_non_multiple_dimensions_use_physical_copy_extents() {
                 push_u64(out, 0); // reserved0
             });
 
-            // COPY_TEXTURE2D: copy the full mip1 (2x2 logical), which requires a 4x4 physical copy
-            // in wgpu/WebGPU.
+            // COPY_TEXTURE2D: copy the full mip1 (2x2 logical). wgpu/WebGPU validation expects the
+            // copy extent to be the physical block-rounded size (4x4 for BC1).
             emit_packet(out, AerogpuCmdOpcode::CopyTexture2d as u32, |out| {
                 push_u32(out, 2); // dst_texture
                 push_u32(out, 1); // src_texture
@@ -933,6 +933,11 @@ fn executor_bc_non_multiple_dimensions_use_physical_copy_extents() {
             err.is_none(),
             "expected no wgpu validation error for BC mip copies with non-multiple dimensions, got {err:?}"
         );
+
+        // Ensure we actually exercised the native BC path; otherwise the copy wouldn't require any
+        // block padding.
+        let bc_tex = exec.texture(1).expect("BC source texture");
+        assert_wgpu_texture_is_native_bc(exec.device(), exec.queue(), bc_tex).await;
     });
 }
 
