@@ -1042,11 +1042,32 @@ function renderMachineWorkerPanel(): HTMLElement {
 
   const decoder = new TextDecoder();
 
+  // Expose worker demo state for Playwright smoke tests.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const testState = ((globalThis as any).__aeroMachineWorkerPanelTest = {
+    ready: true,
+    running: false,
+    transport: "none" as "none" | "shared" | "copy",
+    framesPresented: 0,
+    width: 0,
+    height: 0,
+    strideBytes: 0,
+    error: null as string | null,
+  });
+
   let worker: Worker | null = null;
   let presenter: VgaPresenter | null = null;
   let shared: ReturnType<typeof wrapSharedFramebuffer> | null = null;
+  let sharedPollTimer: number | null = null;
 
   const stop = (): void => {
+    testState.running = false;
+    testState.transport = "none";
+    testState.framesPresented = 0;
+    testState.width = 0;
+    testState.height = 0;
+    testState.strideBytes = 0;
+
     if (worker) {
       try {
         worker.postMessage({ type: "machineVga.stop" });
@@ -1064,6 +1085,10 @@ function renderMachineWorkerPanel(): HTMLElement {
       presenter.destroy();
       presenter = null;
     }
+    if (sharedPollTimer !== null) {
+      window.clearInterval(sharedPollTimer);
+      sharedPollTimer = null;
+    }
     shared = null;
     vgaInfo.textContent = "";
   };
@@ -1072,6 +1097,8 @@ function renderMachineWorkerPanel(): HTMLElement {
     stop();
     error.textContent = "";
     output.textContent = "";
+    testState.error = null;
+    testState.running = true;
 
     status.textContent = "Machine worker demo: starting…";
     const w = new Worker(new URL("./workers/machine_vga.worker.ts", import.meta.url), { type: "module" });
@@ -1084,6 +1111,7 @@ function renderMachineWorkerPanel(): HTMLElement {
       if (msg.type === "machineVga.ready") {
         const transport = msg.transport === "shared" ? "shared" : "copy";
         status.textContent = `Machine worker demo: ready (transport=${transport})`;
+        testState.transport = transport;
 
         presenter = new VgaPresenter(canvas, { scaleMode: "auto", integerScaling: true, maxPresentHz: 60 });
         presenter.start();
@@ -1092,10 +1120,28 @@ function renderMachineWorkerPanel(): HTMLElement {
           const sab = msg.framebuffer;
           if (typeof SharedArrayBuffer === "undefined" || !(sab instanceof SharedArrayBuffer)) {
             error.textContent = "machineVga.ready missing SharedArrayBuffer framebuffer";
+            testState.error = error.textContent;
             return;
           }
           shared = wrapSharedFramebuffer(sab, 0);
           presenter.setSharedFramebuffer(shared);
+
+          if (sharedPollTimer !== null) {
+            window.clearInterval(sharedPollTimer);
+          }
+          sharedPollTimer = window.setInterval(() => {
+            if (!shared) return;
+            const w = Atomics.load(shared.header, HEADER_INDEX_WIDTH);
+            const h = Atomics.load(shared.header, HEADER_INDEX_HEIGHT);
+            const stride = Atomics.load(shared.header, HEADER_INDEX_STRIDE_BYTES);
+            const frame = Atomics.load(shared.header, HEADER_INDEX_FRAME_COUNTER);
+            vgaInfo.textContent = `vga: ${w}x${h} stride=${stride} frame=${frame}`;
+            testState.framesPresented = Math.max(0, frame | 0);
+            testState.width = Math.max(0, w | 0);
+            testState.height = Math.max(0, h | 0);
+            testState.strideBytes = Math.max(0, stride | 0);
+          }, 50);
+          (sharedPollTimer as unknown as { unref?: () => void }).unref?.();
           return;
         }
 
@@ -1123,6 +1169,7 @@ function renderMachineWorkerPanel(): HTMLElement {
       if (msg.type === "machineVga.error") {
         const message = typeof msg.message === "string" ? msg.message : String(msg.message);
         error.textContent = message;
+        testState.error = message;
         status.textContent = "Machine worker demo: error";
         stop();
         return;
@@ -1132,12 +1179,18 @@ function renderMachineWorkerPanel(): HTMLElement {
         if (!presenter) return;
         presenter.pushCopyFrame(copyFrameFromMessageV1(msg));
         vgaInfo.textContent = `vga: ${msg.width}x${msg.height} stride=${msg.strideBytes} frame=${msg.frameCounter}`;
+        testState.framesPresented += 1;
+        testState.width = msg.width | 0;
+        testState.height = msg.height | 0;
+        testState.strideBytes = msg.strideBytes | 0;
         return;
       }
     });
 
     w.addEventListener("error", (ev) => {
-      error.textContent = String((ev as ErrorEvent).message ?? "Worker error");
+      const message = String((ev as ErrorEvent).message ?? "Worker error");
+      error.textContent = message;
+      testState.error = message;
       status.textContent = "Machine worker demo: error";
       stop();
     });
@@ -1149,8 +1202,8 @@ function renderMachineWorkerPanel(): HTMLElement {
     });
   };
 
-  const startButton = el("button", { text: "Start" }) as HTMLButtonElement;
-  const stopButton = el("button", { text: "Stop" }) as HTMLButtonElement;
+  const startButton = el("button", { id: "canonical-machine-vga-worker-start", text: "Start" }) as HTMLButtonElement;
+  const stopButton = el("button", { id: "canonical-machine-vga-worker-stop", text: "Stop" }) as HTMLButtonElement;
   startButton.addEventListener("click", start);
   stopButton.addEventListener("click", stop);
 

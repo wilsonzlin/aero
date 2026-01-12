@@ -1,6 +1,7 @@
 /// <reference lib="webworker" />
 
 import { initWasmForContext, type WasmApi } from "../runtime/wasm_context";
+import { assertWasmMemoryWiring } from "../runtime/wasm_memory_probe";
 import {
   FRAMEBUFFER_COPY_MESSAGE_TYPE,
   FRAMEBUFFER_FORMAT_RGBA8888,
@@ -77,6 +78,7 @@ const encoder = new TextEncoder();
 let api: WasmApi | null = null;
 let wasmMemory: WebAssembly.Memory | null = null;
 let machine: InstanceType<WasmApi["Machine"]> | null = null;
+let preferredWasmMemory: WebAssembly.Memory | null = null;
 
 let transport: "shared" | "copy" = "copy";
 let sharedSab: SharedArrayBuffer | null = null;
@@ -90,6 +92,8 @@ let copyFrameCounter = 0;
 
 // Avoid pathological allocations/copies if a buggy guest or WASM build reports absurd scanout modes.
 const MAX_VGA_FRAME_BYTES = 32 * 1024 * 1024;
+const RUNTIME_RESERVED_BYTES = 128 * 1024 * 1024;
+const WASM_PAGE_BYTES = 64 * 1024;
 
 function post(msg: MachineVgaWorkerMessage, transfer?: Transferable[]): void {
   if (transfer && transfer.length) {
@@ -342,7 +346,25 @@ async function start(msg: MachineVgaWorkerStartMessage): Promise<void> {
 
   // Prefer single-threaded WASM for this standalone worker demo. It avoids requiring
   // crossOriginIsolated + shared WebAssembly.Memory.
-  const init = await initWasmForContext({ variant: "single" });
+  //
+  // Allocate an explicit memory sized to the runtime-reserved region (128MiB) so the Rust heap
+  // has enough room even if wasm-bindgen's default init uses a tiny memory.
+  //
+  // If the wasm build ignores imported memory (old toolchain output), fall back to wasm-bindgen's
+  // default init so we still get a working `wasmMemory` handle for ptr/len scanout reads.
+  let init: Awaited<ReturnType<typeof initWasmForContext>>;
+  try {
+    if (!preferredWasmMemory) {
+      const pages = RUNTIME_RESERVED_BYTES / WASM_PAGE_BYTES;
+      preferredWasmMemory = new WebAssembly.Memory({ initial: pages, maximum: pages });
+    }
+    init = await initWasmForContext({ variant: "single", memory: preferredWasmMemory });
+    assertWasmMemoryWiring({ api: init.api, memory: preferredWasmMemory, context: "machine_vga.worker" });
+  } catch (err) {
+    console.warn("[machine_vga.worker] Failed to init single-threaded WASM with a preallocated memory; falling back:", err);
+    init = await initWasmForContext();
+  }
+
   api = init.api;
   wasmMemory = init.wasmMemory ?? null;
 

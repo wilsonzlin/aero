@@ -57,6 +57,20 @@ declare global {
      * canonical Machine panel (RGBA8888 + header defined by `display/framebuffer_protocol.ts`).
      */
     __aeroMachineVgaFramebuffer?: SharedArrayBuffer;
+
+    /**
+     * E2E-visible state for the `/web/index.html` canonical Machine worker VGA demo panel.
+     */
+    __aeroMachineWorkerPanelTest?: {
+      ready: boolean;
+      running: boolean;
+      transport: "none" | "shared" | "copy";
+      framesPresented: number;
+      width?: number;
+      height?: number;
+      strideBytes?: number;
+      error: string | null;
+    };
   }
 
   /**
