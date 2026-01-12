@@ -43,6 +43,10 @@ These drivers run **inside the guest Windows 7** and communicate with the emulat
 | `guest-tools/` | Guest tools packaging and installer |
 | `docs/windows-device-contract.{md,json}` | Machine-readable PCI/INF/service binding contract consumed by CI + Guest Tools |
 | `tools/device_contract_validator/` | Rust validator for the device contract (runs in CI) |
+| `tools/packaging/` | Guest Tools packager + packaging specs (ISO/zip builder) |
+| `tools/packaging/aero_packager/` | Deterministic Rust packager implementation + tests |
+| `tools/guest-tools/` | Guest Tools config validation + linters (runs in CI) |
+| `ci/` | CI scripts for Win7 driver builds/signing/packaging (WDK provisioning, catalogs, signing) |
 
 ---
 
@@ -94,6 +98,9 @@ These checks exist specifically to prevent “driver installs but doesn’t bind
 - Virtio protocol crate tests: [`.github/workflows/virtio-protocol.yml`](../.github/workflows/virtio-protocol.yml)
 - Win7 virtio guest selftest build (x86 + x64 EXEs): [`.github/workflows/win7-virtio-selftest.yml`](../.github/workflows/win7-virtio-selftest.yml)
 - Win7 virtio QEMU harness (self-hosted; end-to-end guest run, incl. virtio-snd wav capture): [`.github/workflows/win7-virtio-harness.yml`](../.github/workflows/win7-virtio-harness.yml)
+- Guest Tools packager + spec/config validation: [`.github/workflows/guest-tools-packager.yml`](../.github/workflows/guest-tools-packager.yml)
+- virtio-win packaging smoke tests (optional flow, upstream virtio-win bundles): [`.github/workflows/virtio-win-packaging-smoke.yml`](../.github/workflows/virtio-win-packaging-smoke.yml)
+- Sample virtio driver ISO build + smoke tests: [`.github/workflows/virtio-driver-iso.yml`](../.github/workflows/virtio-driver-iso.yml)
 
 Local equivalents for fast iteration (Linux/macOS host):
 
@@ -121,6 +128,10 @@ cargo run -p device-contract-validator --locked
 
 # Rust virtio protocol unit tests (same as virtio-protocol.yml)
 cargo test --locked --manifest-path drivers/protocol/virtio/Cargo.toml
+
+# Guest Tools packager tests + spec/config validation
+cargo test --locked --manifest-path tools/packaging/aero_packager/Cargo.toml
+python3 tools/guest-tools/validate_config.py --spec tools/packaging/specs/win7-signed.json
 
 # Host-harness Python unit tests (wav verification + QEMU arg quoting)
 python3 -m unittest discover -s drivers/windows7/tests/host-harness/tests -p 'test_*.py'
@@ -180,6 +191,7 @@ Legend:
 | GT-004 | Implemented | Enforce INF ↔ contract ↔ emulator consistency (virtio HWIDs, revision gating, service names) | [`check-windows7-virtio-contract-consistency.py`](../scripts/ci/check-windows7-virtio-contract-consistency.py) | [`drivers-win7.yml`](../.github/workflows/drivers-win7.yml) (guardrails) |
 | GT-005 | Implemented | Enforce virtio contract wiring (contract JSON ↔ INFs ↔ emulator PCI profiles ↔ guest-tools) | [`check-windows-virtio-contract.py`](../scripts/ci/check-windows-virtio-contract.py) | [`windows-virtio-contract.yml`](../.github/workflows/windows-virtio-contract.yml) |
 | GT-006 | Implemented | Contract versioning + policy surfaced in docs and manifests | [`windows-device-contract.md`](../docs/windows-device-contract.md) | [`windows-device-contract.yml`](../.github/workflows/windows-device-contract.yml) |
+| GT-007 | Implemented | Guest Tools packager (ISO/zip) + spec/config validation | `tools/packaging/aero_packager/`, `tools/packaging/specs/`, `tools/guest-tools/` | [`guest-tools-packager.yml`](../.github/workflows/guest-tools-packager.yml) |
 
 ### AeroGPU Driver Tasks
 
