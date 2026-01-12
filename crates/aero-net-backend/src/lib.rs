@@ -29,13 +29,6 @@ pub trait NetworkBackend {
     fn poll_receive(&mut self) -> Option<Vec<u8>> {
         None
     }
-
-    /// If this backend is backed by the shared `NET_TX`/`NET_RX` rings, return its statistics.
-    ///
-    /// Backends that are not ring-backed should return `None` (default).
-    fn l2_ring_stats(&self) -> Option<L2TunnelRingBackendStats> {
-        None
-    }
 }
 
 impl<T: NetworkBackend + ?Sized> NetworkBackend for Box<T> {
