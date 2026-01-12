@@ -19,6 +19,8 @@ fn machine_mouse_injection_exports_forward_without_panicking() {
 
     // Mouse motion + wheel.
     m.inject_mouse_motion(10, 5, 1);
+    // PS/2 coordinate variant (+Y up).
+    m.inject_ps2_mouse_motion(10, 5, 1);
 
     // Button injection via DOM `MouseEvent.button` mapping.
     m.inject_mouse_button(aero_wasm::MouseButton::Left as u8, true);
@@ -40,6 +42,9 @@ fn machine_mouse_injection_exports_forward_without_panicking() {
             | (aero_wasm::MouseButtons::Middle as u8),
     );
     m.inject_mouse_buttons_mask(0x00);
+    // PS/2 alias (same bit mapping).
+    m.inject_ps2_mouse_buttons(aero_wasm::MouseButtons::Left as u8);
+    m.inject_ps2_mouse_buttons(0x00);
 
     // Explicit helpers should also remain callable.
     m.inject_mouse_left(true);
