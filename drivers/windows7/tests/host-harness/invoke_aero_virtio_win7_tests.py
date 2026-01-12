@@ -657,8 +657,21 @@ def main() -> int:
     parser.add_argument("--memory-mb", type=int, default=2048)
     parser.add_argument("--smp", type=int, default=2)
     parser.add_argument("--timeout-seconds", type=int, default=600)
-    parser.add_argument("--http-port", type=int, default=18080)
-    parser.add_argument("--http-path", default="/aero-virtio-selftest")
+    parser.add_argument(
+        "--http-port",
+        type=int,
+        default=18080,
+        help="Host HTTP server port (guest reaches it via slirp at 10.0.2.2:<port>)",
+    )
+    parser.add_argument(
+        "--http-path",
+        default="/aero-virtio-selftest",
+        help=(
+            "HTTP path served by the host harness (e.g. /aero-virtio-selftest). "
+            "The guest virtio-net selftest also requests the deterministic large payload at "
+            "<http_path>-large (1MiB, bytes 0..255 repeating)."
+        ),
+    )
     parser.add_argument(
         "--http-log",
         default=None,

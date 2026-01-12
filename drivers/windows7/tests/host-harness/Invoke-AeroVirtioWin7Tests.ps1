@@ -45,11 +45,16 @@ param(
   [Parameter(Mandatory = $false)]
   [int]$TimeoutSeconds = 600,
 
-  # HTTP server port on the host. Guest reaches it at http://10.0.2.2:<port>/aero-virtio-selftest
+  # HTTP server port on the host.
+  # Guest reaches it at:
+  #   http://10.0.2.2:<port>/aero-virtio-selftest
+  # and the virtio-net selftest also fetches:
+  #   http://10.0.2.2:<port>/aero-virtio-selftest-large
   [Parameter(Mandatory = $false)]
   [int]$HttpPort = 18080,
 
   [Parameter(Mandatory = $false)]
+  # Base HTTP path. The harness also serves a deterministic 1 MiB payload at "${HttpPath}-large".
   [string]$HttpPath = "/aero-virtio-selftest",
 
   # If set, attach a virtio-snd device (virtio-sound-pci / virtio-snd-pci).
