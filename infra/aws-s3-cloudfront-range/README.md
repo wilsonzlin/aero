@@ -75,7 +75,7 @@ tflint
 Tip: from the repo root you can also run the full CI reproduction helper:
 
 ```bash
-./scripts/ci/check-iac.sh
+bash ./scripts/ci/check-iac.sh
 # Or: just check-iac
 ```
 
