@@ -352,6 +352,7 @@ should_retry_rustc_thread_error() {
     # - "failed to spawn coordinator thread: ... Resource temporarily unavailable"
     # - "Unable to install ctrlc handler: ... Resource temporarily unavailable"
     # - "fork: retry: Resource temporarily unavailable"
+    # - "failed to fork: Resource temporarily unavailable" (observed from some native tools)
     # - "ThreadPoolBuildError { ... Resource temporarily unavailable }" (Rayon thread pool init)
     # - "std::system_error: Resource temporarily unavailable" (observed from linkers like lld)
     if grep -q "Unable to install ctrlc handler" "${stderr_log}"; then
@@ -361,6 +362,11 @@ should_retry_rustc_thread_error() {
         return 0
     fi
     if grep -q "fork: retry: Resource temporarily unavailable" "${stderr_log}"; then
+        return 0
+    fi
+    if grep -qi "failed to fork" "${stderr_log}" \
+        && grep -Eq "Resource temporarily unavailable|WouldBlock|os error 11|EAGAIN" "${stderr_log}"
+    then
         return 0
     fi
     # Cargo can also surface EAGAIN process spawn failures as a generic "could not execute process"
