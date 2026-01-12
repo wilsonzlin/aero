@@ -7,6 +7,16 @@ import { fileURLToPath } from "node:url";
 
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 
+function gitFileMode(relPath) {
+  const out = execFileSync("git", ["ls-files", "--stage", "--", relPath], {
+    cwd: repoRoot,
+    encoding: "utf8",
+  }).trim();
+  if (!out) return null;
+  // Format: "<mode> <blob> <stage>\t<path>"
+  return out.split(/\s+/, 1)[0];
+}
+
 function trackedShellScripts() {
   // Enumerate via git so the test doesn't accidentally recurse into large
   // untracked dirs (node_modules/, target/, etc.) in local checkouts.
@@ -90,9 +100,14 @@ test("scripts referenced as ./scripts/*.sh are executable", { skip: process.plat
     const absPath = path.join(repoRoot, relPath);
     assert.ok(fs.existsSync(absPath), `${relPath} is missing`);
 
-    const { mode } = fs.statSync(absPath);
+    const { mode: fsMode } = fs.statSync(absPath);
     // Any executable bit (user/group/other) is good enough.
-    assert.ok((mode & 0o111) !== 0, `${relPath} is not executable (expected chmod +x / git mode 100755)`);
+    assert.ok((fsMode & 0o111) !== 0, `${relPath} is not executable (expected chmod +x / git mode 100755)`);
+
+    const modeInGit = gitFileMode(relPath);
+    if (modeInGit !== null) {
+      assert.equal(modeInGit, "100755", `${relPath} is not executable in git (expected mode 100755)`);
+    }
   }
 });
 
