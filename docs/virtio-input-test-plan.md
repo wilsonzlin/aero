@@ -72,6 +72,7 @@ cargo test -p aero-virtio --locked --test win7_contract_dma_64bit
 cargo test -p aero-virtio --locked --test pci_profile
 cargo test -p aero-devices --locked --test pci_virtio_input_multifunction
 cargo test -p aero-devices --locked --test windows_device_contract_virtio_input
+cargo test -p aero-wasm --locked --test virtio_input_pci_device_core
 ```
 
 Recommended (enforces repo resource limits via `safe-run.sh`):
@@ -83,6 +84,7 @@ bash ./scripts/safe-run.sh cargo test -p aero-virtio --locked --test win7_contra
 bash ./scripts/safe-run.sh cargo test -p aero-virtio --locked --test pci_profile
 bash ./scripts/safe-run.sh cargo test -p aero-devices --locked --test pci_virtio_input_multifunction
 bash ./scripts/safe-run.sh cargo test -p aero-devices --locked --test windows_device_contract_virtio_input
+bash ./scripts/safe-run.sh cargo test -p aero-wasm --locked --test virtio_input_pci_device_core
 ```
 
 ### 1.3 What to expect (key invariants)
