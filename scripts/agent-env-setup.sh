@@ -16,6 +16,11 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+# Some agent environments can end up with a partially broken working tree
+# (lost executable bits, missing tracked fixtures, etc). When that happens, the
+# minimal targeted restore is usually these paths:
+RESTORE_TARGETED=(scripts tools/packaging/aero_packager/testdata tools/disk-streaming-browser-e2e/fixtures)
+
 echo "============================================================"
 echo "  Aero Agent Environment Setup"
 echo "============================================================"
@@ -230,6 +235,8 @@ if [[ ${#MISSING_SCRIPTS[@]} -gt 0 ]]; then
   for rel in "${MISSING_SCRIPTS[@]}"; do msg+=$'\n'"  - ${rel}"; done
   msg+=$'\n'"Fix:"
   msg+=$'\n'"  git checkout -- scripts"
+  msg+=$'\n'"  # or (also restores common fixtures that some tools/tests rely on):"
+  msg+=$'\n'"  git checkout -- ${RESTORE_TARGETED[*]}"
   msg+=$'\n'"  # or restore just these paths:"
   msg+=$'\n'"  git checkout -- ${MISSING_SCRIPTS[*]}"
   WARNINGS+=("$msg")
@@ -254,6 +261,8 @@ if [[ ${#MISSING_FIXTURES[@]} -gt 0 ]]; then
   for rel in "${MISSING_FIXTURES[@]}"; do msg+=$'\n'"  - ${rel}"; done
   msg+=$'\n'"Fix:"
   msg+=$'\n'"  git checkout -- tools/packaging/aero_packager/testdata tools/disk-streaming-browser-e2e/fixtures"
+  msg+=$'\n'"  # or (also restores scripts/ if your checkout lost executable bits):"
+  msg+=$'\n'"  git checkout -- ${RESTORE_TARGETED[*]}"
   msg+=$'\n'"  # bigger hammer (resets the whole working tree):"
   msg+=$'\n'"  git checkout -- ."
   WARNINGS+=("$msg")
