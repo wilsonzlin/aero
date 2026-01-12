@@ -1528,15 +1528,7 @@ impl PcPlatform {
         if let Some(ahci) = ahci.clone() {
             // ICH9 AHCI uses BAR5 (ABAR).
             let bdf = aero_devices::pci::profile::SATA_AHCI_ICH9.bdf;
-            pci_mmio_router.register_handler(
-                bdf,
-                5,
-                PcAhciMmioBar {
-                    pci_cfg: pci_cfg.clone(),
-                    ahci,
-                    bdf,
-                },
-            );
+            pci_mmio_router.register_shared_handler(bdf, 5, ahci);
         }
         if let Some(e1000) = e1000.clone() {
             pci_mmio_router.register_shared_handler(

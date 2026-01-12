@@ -41,6 +41,20 @@ fn build_usb_blob(device_version: SnapshotVersion) -> Vec<u8> {
     w.finish()
 }
 
+fn build_net_stack_blob(device_version: SnapshotVersion) -> Vec<u8> {
+    // Match the `aero-io-snapshot` device id used by `NetworkStackState`.
+    let mut w = SnapshotWriter::new(*b"NETS", device_version);
+    w.field_u32(1, 0xDEAD_BEEF);
+    w.finish()
+}
+
+fn build_net_e1000_blob(device_version: SnapshotVersion) -> Vec<u8> {
+    // Dummy `aero-io-snapshot` blob for the E1000 NIC model.
+    let mut w = SnapshotWriter::new(*b"E1K0", device_version);
+    w.field_u8(1, 0x42);
+    w.finish()
+}
+
 fn build_devices_js(entries: &[(&str, &[u8])]) -> JsValue {
     let arr = Array::new();
     for (kind, bytes) in entries {
@@ -54,7 +68,7 @@ fn build_devices_js(entries: &[(&str, &[u8])]) -> JsValue {
 }
 
 #[wasm_bindgen_test]
-fn vm_snapshot_builder_roundtrips_guest_ram_and_usb_state() {
+fn vm_snapshot_builder_roundtrips_guest_ram_and_device_states() {
     // Ensure we have at least one guest page above the runtime-reserved region (128MiB).
     let _ = common::alloc_guest_region_bytes(64 * 1024);
 
@@ -89,10 +103,16 @@ fn vm_snapshot_builder_roundtrips_guest_ram_and_usb_state() {
     let i8042_blob = SnapshotWriter::new(*b"8042", i8042_version).finish();
     let hda_version = SnapshotVersion::new(9, 1);
     let hda_blob = SnapshotWriter::new(*b"HDA0", hda_version).finish();
+    let net_e1000_version = SnapshotVersion::new(2, 5);
+    let net_e1000_blob = build_net_e1000_blob(net_e1000_version);
+    let net_stack_version = SnapshotVersion::new(1, 0);
+    let net_stack_blob = build_net_stack_blob(net_stack_version);
     let devices_js = build_devices_js(&[
         ("usb.uhci", &usb_blob),
         ("input.i8042", &i8042_blob),
         ("audio.hda", &hda_blob),
+        ("net.e1000", &net_e1000_blob),
+        ("net.stack", &net_stack_blob),
     ]);
 
     let snap_a = vm_snapshot_save(cpu_js.clone(), mmu_js.clone(), devices_js.clone())
@@ -150,6 +170,12 @@ fn vm_snapshot_builder_roundtrips_guest_ram_and_usb_state() {
     )
     .expect("restore_snapshot_checked ok");
 
+    assert_eq!(
+        inspect.devices.len(),
+        5,
+        "snapshot should contain exactly five device states"
+    );
+
     let usb_state = inspect
         .devices
         .iter()
@@ -195,6 +221,36 @@ fn vm_snapshot_builder_roundtrips_guest_ram_and_usb_state() {
         "HDA device blob should be preserved verbatim"
     );
 
+    let net_e1000_state = inspect
+        .devices
+        .iter()
+        .find(|d| d.id == DeviceId::E1000)
+        .expect("snapshot should contain net.e1000 device state");
+    assert_eq!(
+        (net_e1000_state.version, net_e1000_state.flags),
+        (net_e1000_version.major, net_e1000_version.minor),
+        "net.e1000 DeviceState version/flags should reflect aero-io-snapshot header"
+    );
+    assert_eq!(
+        net_e1000_state.data, net_e1000_blob,
+        "net.e1000 device blob should be preserved verbatim"
+    );
+
+    let net_stack_state = inspect
+        .devices
+        .iter()
+        .find(|d| d.id == DeviceId::NET_STACK)
+        .expect("snapshot should contain net.stack device state");
+    assert_eq!(
+        (net_stack_state.version, net_stack_state.flags),
+        (net_stack_version.major, net_stack_version.minor),
+        "net.stack DeviceState version/flags should reflect aero-io-snapshot header"
+    );
+    assert_eq!(
+        net_stack_state.data, net_stack_blob,
+        "net.stack device blob should be preserved verbatim"
+    );
+
     // Clear RAM and restore via the wasm export.
     guest.fill(0);
 
@@ -222,45 +278,165 @@ fn vm_snapshot_builder_roundtrips_guest_ram_and_usb_state() {
         "devices should be present"
     );
     let devices_out: Array = devices_out_val.dyn_into().expect("devices array");
-    assert_eq!(devices_out.length(), 3, "expected three device states");
+    assert_eq!(devices_out.length(), 5, "expected five device states");
 
-    let mut kinds = Vec::new();
-    for idx in 0..devices_out.length() {
-        let dev: Object = devices_out.get(idx).dyn_into().expect("devices entry object");
+    let mut devices_by_kind = std::collections::BTreeMap::<String, Vec<u8>>::new();
+    for (idx, entry) in devices_out.iter().enumerate() {
+        let dev: Object = entry.dyn_into().expect("device object");
         let kind = Reflect::get(&dev, &JsValue::from_str("kind"))
             .expect("kind property")
             .as_string()
-            .expect("kind string");
+            .unwrap_or_else(|| panic!("devices[{idx}].kind must be string"));
         let bytes = Reflect::get(&dev, &JsValue::from_str("bytes"))
             .expect("bytes property")
             .dyn_into::<Uint8Array>()
             .expect("bytes Uint8Array")
             .to_vec();
-        kinds.push((kind, bytes));
+        assert!(
+            devices_by_kind.insert(kind.clone(), bytes).is_none(),
+            "duplicate device kind in restore output: {kind}"
+        );
     }
 
-    let usb_out = kinds
-        .iter()
-        .find(|(kind, _)| kind == "usb.uhci")
-        .map(|(_, bytes)| bytes.clone())
-        .expect("USB device kind should roundtrip");
-    assert_eq!(usb_out, usb_blob, "USB device bytes should roundtrip");
-
-    let i8042_out = kinds
-        .iter()
-        .find(|(kind, _)| kind == "input.i8042")
-        .map(|(_, bytes)| bytes.clone())
-        .expect("i8042 device kind should roundtrip");
-    assert_eq!(i8042_out, i8042_blob, "i8042 device bytes should roundtrip");
-
-    let hda_out = kinds
-        .iter()
-        .find(|(kind, _)| kind == "audio.hda")
-        .map(|(_, bytes)| bytes.clone())
-        .expect("HDA device kind should roundtrip");
-    assert_eq!(hda_out, hda_blob, "HDA device bytes should roundtrip");
+    assert_eq!(
+        devices_by_kind
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>()
+            .as_slice(),
+        &["audio.hda", "input.i8042", "net.e1000", "net.stack", "usb.uhci"],
+        "restored device kinds should match input kinds"
+    );
+    assert_eq!(
+        devices_by_kind.get("usb.uhci").unwrap(),
+        &usb_blob,
+        "USB device bytes should roundtrip"
+    );
+    assert_eq!(
+        devices_by_kind.get("input.i8042").unwrap(),
+        &i8042_blob,
+        "input.i8042 device bytes should roundtrip"
+    );
+    assert_eq!(
+        devices_by_kind.get("audio.hda").unwrap(),
+        &hda_blob,
+        "audio.hda device bytes should roundtrip"
+    );
+    assert_eq!(
+        devices_by_kind.get("net.e1000").unwrap(),
+        &net_e1000_blob,
+        "net.e1000 device bytes should roundtrip"
+    );
+    assert_eq!(
+        devices_by_kind.get("net.stack").unwrap(),
+        &net_stack_blob,
+        "net.stack device bytes should roundtrip"
+    );
 
     for (i, &b) in guest.iter().enumerate() {
         assert_eq!(b, ram_pattern_byte(i), "RAM mismatch at offset {i}");
     }
+}
+
+#[wasm_bindgen_test]
+fn vm_snapshot_builder_roundtrips_unknown_device_id_kind() {
+    // Ensure we have at least one guest page above the runtime-reserved region (128MiB).
+    let _ = common::alloc_guest_region_bytes(64 * 1024);
+
+    let cpu_bytes = build_cpu_bytes();
+    let mmu_bytes = build_mmu_bytes();
+
+    let cpu_js = Uint8Array::from(cpu_bytes.as_slice());
+    let mmu_js = Uint8Array::from(mmu_bytes.as_slice());
+
+    let unknown_id: u32 = 0xCAFE_BABE;
+    let unknown_kind = format!("device.{unknown_id}");
+    let unknown_version = SnapshotVersion::new(9, 4);
+    let unknown_blob = {
+        let mut w = SnapshotWriter::new(*b"UNKN", unknown_version);
+        w.field_u16(1, 0xBEEF);
+        w.finish()
+    };
+
+    let devices_js = build_devices_js(&[(unknown_kind.as_str(), unknown_blob.as_slice())]);
+    let snap = vm_snapshot_save(cpu_js.clone(), mmu_js.clone(), devices_js.clone())
+        .expect("vm_snapshot_save ok")
+        .to_vec();
+
+    #[derive(Default)]
+    struct InspectTarget {
+        ram_len: usize,
+        devices: Vec<DeviceState>,
+    }
+
+    impl SnapshotTarget for InspectTarget {
+        fn restore_cpu_state(&mut self, _state: CpuState) {}
+        fn restore_mmu_state(&mut self, _state: MmuState) {}
+        fn restore_device_states(&mut self, states: Vec<DeviceState>) {
+            self.devices = states;
+        }
+        fn restore_disk_overlays(&mut self, _overlays: DiskOverlayRefs) {}
+
+        fn ram_len(&self) -> usize {
+            self.ram_len
+        }
+
+        fn write_ram(&mut self, _offset: u64, _data: &[u8]) -> aero_snapshot::Result<()> {
+            Ok(())
+        }
+    }
+
+    let layout = guest_ram_layout(0);
+    let guest_base = layout.guest_base();
+    let mem_bytes = (core::arch::wasm32::memory_size(0) as u64).saturating_mul(64 * 1024);
+    let guest_size = mem_bytes
+        .saturating_sub(guest_base as u64)
+        .try_into()
+        .expect("guest_size fits in usize");
+
+    let mut inspect = InspectTarget {
+        ram_len: guest_size,
+        ..Default::default()
+    };
+    aero_snapshot::restore_snapshot_checked(
+        &mut std::io::Cursor::new(snap.as_slice()),
+        &mut inspect,
+        aero_snapshot::RestoreOptions::default(),
+    )
+    .expect("restore_snapshot_checked ok");
+
+    assert_eq!(inspect.devices.len(), 1, "expected exactly one device");
+    let state = &inspect.devices[0];
+    assert_eq!(
+        state.id,
+        DeviceId(unknown_id),
+        "unknown device id should be preserved as numeric DeviceId"
+    );
+    assert_eq!(
+        (state.version, state.flags),
+        (unknown_version.major, unknown_version.minor),
+        "unknown DeviceState version/flags should reflect aero-io-snapshot header"
+    );
+
+    let restored =
+        vm_snapshot_restore(Uint8Array::from(snap.as_slice())).expect("vm_snapshot_restore ok");
+    let obj: Object = restored.dyn_into().expect("restore result object");
+    let devices_out_val = Reflect::get(&obj, &JsValue::from_str("devices")).expect("devices get");
+    let devices_out: Array = devices_out_val.dyn_into().expect("devices array");
+    assert_eq!(devices_out.length(), 1, "expected exactly one device");
+    let dev0: Object = devices_out.get(0).dyn_into().expect("device object");
+    let kind = Reflect::get(&dev0, &JsValue::from_str("kind"))
+        .expect("kind get")
+        .as_string()
+        .expect("kind string");
+    assert_eq!(
+        kind, unknown_kind,
+        "unknown device kind should roundtrip unchanged"
+    );
+    let bytes = Reflect::get(&dev0, &JsValue::from_str("bytes"))
+        .expect("bytes get")
+        .dyn_into::<Uint8Array>()
+        .expect("bytes Uint8Array")
+        .to_vec();
+    assert_eq!(bytes, unknown_blob, "unknown device bytes should roundtrip");
 }
