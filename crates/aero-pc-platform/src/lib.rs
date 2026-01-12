@@ -421,6 +421,12 @@ impl MmioHandler for HpetMmio {
     }
 }
 
+struct PciIntxSource {
+    bdf: PciBdf,
+    pin: PciInterruptPin,
+    query_level: Box<dyn Fn(&PcPlatform) -> bool>,
+}
+
 pub struct PcPlatform {
     pub chipset: ChipsetState,
     pub io: IoPortBus,
@@ -435,6 +441,7 @@ pub struct PcPlatform {
     pub ahci: Option<Rc<RefCell<AhciPciDevice>>>,
     pub ide: Option<Rc<RefCell<Piix3IdePciDevice>>>,
 
+    pci_intx_sources: Vec<PciIntxSource>,
     pci_allocator: PciResourceAllocator,
 
     clock: ManualClock,
@@ -572,11 +579,22 @@ impl PcPlatform {
         let pci_allocator_config = PciResourceAllocatorConfig::default();
         let mut pci_allocator = PciResourceAllocator::new(pci_allocator_config.clone());
 
+        let mut pci_intx_sources: Vec<PciIntxSource> = Vec::new();
+
         let hda = if config.enable_hda {
             let profile = aero_devices::pci::profile::HDA_ICH6;
             let bdf = profile.bdf;
 
             let hda = Rc::new(RefCell::new(HdaPciDevice::new()));
+
+            {
+                let hda_for_intx = hda.clone();
+                pci_intx_sources.push(PciIntxSource {
+                    bdf,
+                    pin: PciInterruptPin::IntA,
+                    query_level: Box::new(move |_pc| hda_for_intx.borrow().irq_level()),
+                });
+            }
 
             let mut dev = HdaPciConfigDevice::new();
             pci_intx.configure_device_intx(bdf, Some(PciInterruptPin::IntA), dev.config_mut());
@@ -595,6 +613,31 @@ impl PcPlatform {
             let bdf = profile.bdf;
 
             let ahci = Rc::new(RefCell::new(AhciPciDevice::new(1)));
+
+            {
+                let ahci_for_intx = ahci.clone();
+                pci_intx_sources.push(PciIntxSource {
+                    bdf,
+                    pin: PciInterruptPin::IntA,
+                    query_level: Box::new(move |pc| {
+                        let command = {
+                            let mut pci_cfg = pc.pci_cfg.borrow_mut();
+                            pci_cfg
+                                .bus_mut()
+                                .device_config(bdf)
+                                .map(|cfg| cfg.command())
+                                .unwrap_or(0)
+                        };
+
+                        // Keep device-side gating consistent when the same device model is also used
+                        // outside the platform (e.g. in unit tests).
+                        let mut ahci = ahci_for_intx.borrow_mut();
+                        ahci.config_mut().set_command(command);
+
+                        ahci.intx_level()
+                    }),
+                });
+            }
 
             let mut dev = AhciPciConfigDevice::new();
             pci_intx.configure_device_intx(bdf, Some(PciInterruptPin::IntA), dev.config_mut());
@@ -771,6 +814,7 @@ impl PcPlatform {
             hda,
             ahci,
             ide,
+            pci_intx_sources,
             pci_allocator,
             clock,
             pit,
@@ -779,6 +823,17 @@ impl PcPlatform {
             i8042: i8042_ports,
             reset_events,
         }
+    }
+
+    pub fn register_pci_intx_source<F>(&mut self, bdf: PciBdf, pin: PciInterruptPin, query_level: F)
+    where
+        F: Fn(&PcPlatform) -> bool + 'static,
+    {
+        self.pci_intx_sources.push(PciIntxSource {
+            bdf,
+            pin,
+            query_level: Box::new(query_level),
+        });
     }
 
     pub fn i8042_controller(&self) -> SharedI8042Controller {
@@ -898,9 +953,8 @@ impl PcPlatform {
     }
 
     pub fn poll_pci_intx_lines(&mut self) {
-        if let Some(hda) = self.hda.as_ref() {
-            let bdf = aero_devices::pci::profile::HDA_ICH6.bdf;
-            let mut level = hda.borrow().irq_level();
+        for src in &self.pci_intx_sources {
+            let mut level = (src.query_level)(self);
 
             // Respect PCI command register Interrupt Disable bit (bit 10). When set, the device must
             // not assert INTx.
@@ -908,52 +962,22 @@ impl PcPlatform {
             // This is important for guests that switch to MSI/MSI-X and disable legacy INTx.
             let intx_disabled = {
                 let mut pci_cfg = self.pci_cfg.borrow_mut();
-                pci_cfg
-                    .bus_mut()
-                    .device_config(bdf)
-                    .is_some_and(|cfg| (cfg.command() & (1 << 10)) != 0)
+                match pci_cfg.bus_mut().device_config(src.bdf) {
+                    Some(cfg) => (cfg.command() & (1 << 10)) != 0,
+                    None => {
+                        // The source is registered but its config-space function is not present;
+                        // treat it as disabled so we don't deliver interrupts for a missing device.
+                        true
+                    }
+                }
             };
             if intx_disabled {
                 level = false;
             }
 
             self.pci_intx.set_intx_level(
-                bdf,
-                PciInterruptPin::IntA,
-                level,
-                &mut *self.interrupts.borrow_mut(),
-            );
-        }
-
-        if let Some(ahci) = self.ahci.as_ref() {
-            let bdf = aero_devices::pci::profile::SATA_AHCI_ICH9.bdf;
-            let command = {
-                let mut pci_cfg = self.pci_cfg.borrow_mut();
-                pci_cfg
-                    .bus_mut()
-                    .device_config(bdf)
-                    .map(|cfg| cfg.command())
-                    .unwrap_or(0)
-            };
-
-            // Keep device-side gating consistent when the same device model is also used outside
-            // the platform (e.g. in unit tests).
-            {
-                let mut ahci = ahci.borrow_mut();
-                ahci.config_mut().set_command(command);
-            }
-
-            let mut level = ahci.borrow().intx_level();
-
-            // Respect PCI command register Interrupt Disable bit (bit 10). When set, the device must
-            // not assert INTx.
-            if (command & (1 << 10)) != 0 {
-                level = false;
-            }
-
-            self.pci_intx.set_intx_level(
-                bdf,
-                PciInterruptPin::IntA,
+                src.bdf,
+                src.pin,
                 level,
                 &mut *self.interrupts.borrow_mut(),
             );
