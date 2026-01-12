@@ -347,7 +347,7 @@ const char* func_name(D3d9TraceFunc func) {
     case D3d9TraceFunc::DeviceSetDialogBoxMode:
       return "Device::SetDialogBoxMode (stub)";
     case D3d9TraceFunc::DeviceDrawIndexedPrimitiveUP:
-      return "Device::DrawIndexedPrimitiveUP (stub)";
+      return "Device::DrawIndexedPrimitiveUP";
     case D3d9TraceFunc::DeviceGetSoftwareVertexProcessing:
       return "Device::GetSoftwareVertexProcessing (stub)";
     case D3d9TraceFunc::DeviceGetTransform:

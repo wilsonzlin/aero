@@ -108,7 +108,8 @@ enum class D3d9TraceFunc : uint16_t {
   DeviceSetFVF,
   DeviceDrawPrimitiveUP,
 
-  // Stubbed DDIs (present in Win7 D3D9UMDDI but not yet implemented by AeroGPU).
+  // DDIs that were originally stubbed during bring-up. Some may become
+  // implemented over time, but trace IDs are stable so entries are not reordered.
   DeviceSetTextureStageState,
   DeviceSetTransform,
   DeviceMultiplyTransform,
