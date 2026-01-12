@@ -11,6 +11,22 @@ driver stack and the Aero emulator’s virtual GPU device model.
 > (`aerogpu_pci.h`/`aerogpu_ring.h`/`aerogpu_cmd.h`). See `docs/abi/aerogpu-pci-identity.md`
 > for the canonical mapping.
 
+## Current status (canonical machine)
+
+This document describes the **AeroGPU** ABI for the `A3A0:0001` PCI device model. The canonical
+full-system machine (`aero_machine::Machine`) reserves `00:07.0` for that identity, but does **not**
+yet expose the full AeroGPU WDDM PCI device function.
+
+Today, boot display in the canonical machine is provided by `aero_gpu_vga` (VGA + Bochs VBE), plus
+a minimal Bochs/QEMU “Standard VGA”-like PCI stub at `00:0c.0` (`1234:1111`) used only for VBE LFB
+MMIO routing.
+
+See:
+
+- [`docs/abi/aerogpu-pci-identity.md`](./abi/aerogpu-pci-identity.md)
+- [`docs/16-aerogpu-vga-vesa-compat.md`](./16-aerogpu-vga-vesa-compat.md)
+- [`docs/pci-device-compatibility.md`](./pci-device-compatibility.md)
+
 ## Normative source-of-truth (and generated mirrors)
 
 The normative, versioned ABI is the C headers under [`drivers/aerogpu/protocol/`](../drivers/aerogpu/protocol/):
