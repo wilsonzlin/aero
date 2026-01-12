@@ -273,6 +273,12 @@ export class InputCapture {
     if (!this.isCapturingMouse()) {
       return;
     }
+    // When pointer lock is not active, only swallow clicks originating from the canvas itself.
+    // (The listener is attached to `document` in capture phase, so without this check we'd
+    // interfere with clicks on unrelated UI while the canvas still has focus.)
+    if (!this.pointerLock.isLocked && event.target !== this.canvas) {
+      return;
+    }
     event.preventDefault();
     const bit = buttonToMask(event.button);
     if (bit === 0) {
@@ -283,6 +289,9 @@ export class InputCapture {
 
   private readonly handleMouseUp = (event: MouseEvent): void => {
     if (!this.isCapturingMouse()) {
+      return;
+    }
+    if (!this.pointerLock.isLocked && event.target !== this.canvas) {
       return;
     }
     event.preventDefault();
