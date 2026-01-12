@@ -394,6 +394,66 @@ static void test_read_device_features(void)
     VirtioPciModernMmioSimUninstall();
 }
 
+static void test_status_helpers(void)
+{
+    uint8_t bar0[TEST_BAR0_SIZE];
+    uint8_t pci_cfg[256];
+    VIRTIO_PCI_DEVICE dev;
+    VIRTIO_PCI_MODERN_MMIO_SIM sim;
+
+    setup_device(&dev, bar0, pci_cfg);
+
+    VirtioPciModernMmioSimInit(&sim,
+                               dev.CommonCfg,
+                               (volatile uint8_t*)dev.NotifyBase,
+                               dev.NotifyLength,
+                               (volatile uint8_t*)dev.IsrStatus,
+                               dev.IsrLength,
+                               (volatile uint8_t*)dev.DeviceCfg,
+                               dev.DeviceCfgLength);
+
+    VirtioPciModernMmioSimInstall(&sim);
+
+    VirtioPciSetStatus(&dev, 0x12);
+    assert(VirtioPciGetStatus(&dev) == 0x12);
+
+    VirtioPciAddStatus(&dev, 0x04);
+    assert(VirtioPciGetStatus(&dev) == (uint8_t)(0x12 | 0x04));
+
+    VirtioPciFailDevice(&dev);
+    assert((VirtioPciGetStatus(&dev) & VIRTIO_STATUS_FAILED) != 0);
+
+    VirtioPciModernMmioSimUninstall();
+}
+
+static void test_write_driver_features_direct(void)
+{
+    uint8_t bar0[TEST_BAR0_SIZE];
+    uint8_t pci_cfg[256];
+    VIRTIO_PCI_DEVICE dev;
+    VIRTIO_PCI_MODERN_MMIO_SIM sim;
+    uint64_t features;
+
+    setup_device(&dev, bar0, pci_cfg);
+
+    VirtioPciModernMmioSimInit(&sim,
+                               dev.CommonCfg,
+                               (volatile uint8_t*)dev.NotifyBase,
+                               dev.NotifyLength,
+                               (volatile uint8_t*)dev.IsrStatus,
+                               dev.IsrLength,
+                               (volatile uint8_t*)dev.DeviceCfg,
+                               dev.DeviceCfgLength);
+
+    VirtioPciModernMmioSimInstall(&sim);
+
+    features = 0x01234567ull | (0x89abcdefull << 32);
+    VirtioPciWriteDriverFeatures(&dev, features);
+    assert(sim.driver_features == features);
+
+    VirtioPciModernMmioSimUninstall();
+}
+
 static void test_negotiate_features_missing_required_fails(void)
 {
     uint8_t bar0[TEST_BAR0_SIZE];
@@ -1268,6 +1328,8 @@ int main(void)
     test_init_invalid_common_cfg_len_too_small_fails();
     test_init_invalid_64bit_bar_in_last_slot_fails();
     test_read_device_features();
+    test_status_helpers();
+    test_write_driver_features_direct();
     test_negotiate_features_missing_required_fails();
     test_negotiate_features_success_and_status_sequence();
     test_negotiate_features_device_rejects_features_ok();
