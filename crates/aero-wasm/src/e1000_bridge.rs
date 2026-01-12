@@ -141,8 +141,16 @@ impl E1000Bridge {
         let guest_size_u32 = u32::try_from(guest_size_u64)
             .map_err(|_| js_error("guest_size does not fit in u32"))?;
 
+        // The E1000 model gates all DMA on the PCI command Bus Master Enable bit (COMMAND.BME).
+        //
+        // In the web runtime, PCI config space is emulated in TypeScript and is not currently
+        // plumbed through to the Rust device model. Enable BME by default so `poll()` can perform
+        // descriptor/RX buffer DMA once the guest has configured the rings.
+        let mut dev = E1000Device::new(mac_addr);
+        dev.pci_config_write(0x04, 2, 1 << 2);
+
         Ok(Self {
-            dev: E1000Device::new(mac_addr),
+            dev,
             mem: LinearGuestMemory {
                 guest_base,
                 guest_size: guest_size_u32,
