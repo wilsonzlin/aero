@@ -1125,11 +1125,11 @@ an Ethernet “pipe” (the same conceptual boundary described in ADR 0013 / Opt
 
 Capture format notes:
 
-- The exported PCAPNG uses a single Ethernet interface named `guest-eth0`.
-- Packet direction is encoded via the Enhanced Packet Block `epb_flags` option:
-  - `1` = inbound (tunnel → guest)
-  - `2` = outbound (guest → tunnel)
-- The current web runtime capture contains only raw Ethernet frames (no proxy-payload pseudo-interfaces), but the capture format matches the Rust tracer and may include additional pseudo-interfaces in future/other runtimes (see above).
+- The exported PCAPNG uses two Ethernet interfaces:
+  - `guest_rx` (tunnel → guest)
+  - `guest_tx` (guest → tunnel)
+- Direction is encoded by the interface, not by PCAPNG `epb_flags`.
+- The current web runtime capture contains only raw Ethernet frames (no proxy-payload pseudo-interfaces).
 - Frames are recorded at the forwarder boundary (best-effort). In particular, the capture may
   include frames that were later dropped due to missing tunnel/backpressure, or because `NET_RX`
   was full.
@@ -1208,9 +1208,8 @@ filters. Common ones when debugging guest bring-up:
 - `dns` (DNS queries/responses)
 - `tcp` / `udp` / `icmp`
 
-Because the capture uses a single Ethernet interface (`guest-eth0`) with direction encoded via the
-Enhanced Packet Block `epb_flags` option, both guest TX and RX traffic will appear under the same
-interface. Use Wireshark’s packet direction column/metadata (inbound vs outbound) as needed.
+Because the capture uses separate interfaces (`guest_rx` and `guest_tx`), Wireshark may show
+conversations split across interfaces. Use “Follow Stream” and per-interface packet lists as needed.
 
 #### Automation API (`window.aero.netTrace`)
 
