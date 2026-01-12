@@ -85,12 +85,21 @@ mod guest_phys {
             let ram = LOW_RAM_END + 0x2000;
 
             // Low RAM is identity-mapped.
-            assert_eq!(translate_guest_paddr_range(ram, LOW_RAM_END - 4, 4), Some(LOW_RAM_END - 4));
+            assert_eq!(
+                translate_guest_paddr_range(ram, LOW_RAM_END - 4, 4),
+                Some(LOW_RAM_END - 4)
+            );
             // Hole rejected.
             assert_eq!(translate_guest_paddr_range(ram, LOW_RAM_END, 4), None);
-            assert_eq!(translate_guest_paddr_range(ram, HIGH_RAM_START - 4, 4), None);
+            assert_eq!(
+                translate_guest_paddr_range(ram, HIGH_RAM_START - 4, 4),
+                None
+            );
             // High RAM remaps above 4GiB.
-            assert_eq!(translate_guest_paddr_range(ram, HIGH_RAM_START, 4), Some(LOW_RAM_END));
+            assert_eq!(
+                translate_guest_paddr_range(ram, HIGH_RAM_START, 4),
+                Some(LOW_RAM_END)
+            );
             assert_eq!(
                 translate_guest_paddr_range(ram, HIGH_RAM_START + 0x1FFC, 4),
                 Some(LOW_RAM_END + 0x1FFC)

@@ -9205,8 +9205,7 @@ mod tests {
             // partial copy into a dirty destination preserves the untouched pixels by uploading the
             // destination from guest memory first.
             let mip1_offset = layout.mip_offsets[1] as usize;
-            let mip1_size =
-                (layout.mip_row_pitches[1] as usize) * (layout.mip_rows[1] as usize);
+            let mip1_size = (layout.mip_row_pitches[1] as usize) * (layout.mip_rows[1] as usize);
 
             let mut src_bytes = vec![0u8; layout.total_size as usize];
             src_bytes[mip1_offset..mip1_offset + mip1_size].fill(0xAA);
@@ -9298,11 +9297,11 @@ mod tests {
                 mapped_at_creation: false,
             });
 
-            let mut read_encoder = exec
-                .device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("aerogpu_cmd test copy mip1 read encoder"),
-                });
+            let mut read_encoder =
+                exec.device
+                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                        label: Some("aerogpu_cmd test copy mip1 read encoder"),
+                    });
             read_encoder.copy_texture_to_buffer(
                 wgpu::ImageCopyTexture {
                     texture: &dst_tex.texture,
