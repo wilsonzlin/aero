@@ -319,6 +319,26 @@ fn detect_format_does_not_misclassify_aerosparse_magic_with_bad_header() {
 }
 
 #[test]
+fn detect_format_recognizes_aerosparse_magic_with_minimally_plausible_header() {
+    // Format detection should be less strict than full header validation: a file that looks like
+    // AeroSparse should be detected as such and then fail open with a structured error, instead
+    // of silently falling back to Raw.
+    let mut backend = MemBackend::with_len(64).unwrap();
+    let mut header = [0u8; 64];
+    header[..8].copy_from_slice(b"AEROSPAR");
+    header[8..12].copy_from_slice(&1u32.to_le_bytes()); // version
+    header[12..16].copy_from_slice(&64u32.to_le_bytes()); // header_size
+    header[32..40].copy_from_slice(&64u64.to_le_bytes()); // table_offset
+    // Leave the rest of the header zero so it fails full validation (block_size_bytes=0).
+    backend.write_at(0, &header).unwrap();
+
+    assert_eq!(detect_format(&mut backend).unwrap(), DiskFormat::AeroSparse);
+
+    let err = DiskImage::open_auto(backend).err().expect("expected error");
+    assert!(matches!(err, DiskError::InvalidSparseHeader(_)));
+}
+
+#[test]
 fn detect_aerosparse_and_raw() {
     let sparse = AeroSparseDisk::create(
         MemBackend::new(),

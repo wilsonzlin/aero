@@ -345,6 +345,26 @@ fn detect_aerospar_magic_without_valid_header_is_raw() {
 }
 
 #[test]
+fn detect_aerospar_magic_with_minimally_plausible_header_is_sparse() {
+    // Detection should be less strict than full header validation: an AeroSparse-looking file
+    // should be detected as sparse so `open_auto` can attempt open and report corruption instead
+    // of silently treating it as raw.
+    let mut storage = MemStorage::with_len(64);
+    let mut header = [0u8; 64];
+    header[..8].copy_from_slice(b"AEROSPAR");
+    header[8..12].copy_from_slice(&1u32.to_le_bytes()); // version
+    header[12..16].copy_from_slice(&64u32.to_le_bytes()); // header_size
+    header[32..40].copy_from_slice(&64u64.to_le_bytes()); // table_offset
+    // Leave other fields zero so the header fails full validation (block_size_bytes=0).
+    storage.write_at(0, &header).unwrap();
+
+    assert_eq!(detect_format(&mut storage).unwrap(), DiskFormat::Sparse);
+
+    let res = VirtualDrive::open_auto(storage, 512, WriteCachePolicy::WriteThrough);
+    assert!(matches!(res, Err(DiskError::CorruptImage(_))));
+}
+
+#[test]
 fn detect_aerosprs_magic_without_valid_header_is_raw() {
     let mut storage = MemStorage::with_len(4096);
     let mut header = [0u8; 4096];
