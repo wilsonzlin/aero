@@ -596,6 +596,31 @@ fn handle_int13(
             cpu.rflags &= !FLAG_CF;
             cpu.gpr[gpr::RAX] &= !0xFF00u64;
         }
+        0x11 => {
+            // Recalibrate drive.
+            //
+            // Real hardware would seek back to cylinder 0. We model disk I/O synchronously, so this
+            // is a no-op that validates drive presence.
+            if !drive_present(bus, drive) {
+                set_error(bios, cpu, 0x01);
+                return;
+            }
+            bios.last_int13_status = 0;
+            cpu.rflags &= !FLAG_CF;
+            cpu.gpr[gpr::RAX] &= !0xFF00u64; // AH=0
+        }
+        0x0D => {
+            // Alternate disk reset (often used for hard disks).
+            //
+            // Treat this as equivalent to AH=00h reset.
+            if !drive_present(bus, drive) {
+                set_error(bios, cpu, 0x01);
+                return;
+            }
+            bios.last_int13_status = 0;
+            cpu.rflags &= !FLAG_CF;
+            cpu.gpr[gpr::RAX] &= !0xFF00u64; // AH=0
+        }
         0x15 => {
             // Get disk type.
             if !drive_present(bus, drive) {
@@ -1605,6 +1630,42 @@ mod tests {
 
         let mut mem = TestMemory::new(2 * 1024 * 1024);
         ivt::init_bda(&mut mem, 0x00);
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
+
+        assert_eq!(cpu.rflags & FLAG_CF, 0);
+        assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0);
+    }
+
+    #[test]
+    fn int13_recalibrate_reports_success() {
+        let mut bios = Bios::new(super::super::BiosConfig::default());
+        let disk_bytes = vec![0u8; 512 * 2880];
+        let mut disk = InMemoryDisk::new(disk_bytes);
+
+        let mut cpu = CpuState::new(CpuMode::Real);
+        cpu.gpr[gpr::RAX] = 0x1100; // AH=11h recalibrate
+        cpu.gpr[gpr::RDX] = 0x0000; // DL=floppy 0
+
+        let mut mem = TestMemory::new(2 * 1024 * 1024);
+        ivt::init_bda(&mut mem, 0x00);
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
+
+        assert_eq!(cpu.rflags & FLAG_CF, 0);
+        assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0);
+    }
+
+    #[test]
+    fn int13_alternate_reset_reports_success() {
+        let mut bios = Bios::new(super::super::BiosConfig::default());
+        let disk_bytes = vec![0u8; 512];
+        let mut disk = InMemoryDisk::new(disk_bytes);
+
+        let mut cpu = CpuState::new(CpuMode::Real);
+        cpu.gpr[gpr::RAX] = 0x0D00; // AH=0Dh alternate reset
+        cpu.gpr[gpr::RDX] = 0x0080; // DL=HDD0
+
+        let mut mem = TestMemory::new(2 * 1024 * 1024);
+        ivt::init_bda(&mut mem, 0x80);
         handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
 
         assert_eq!(cpu.rflags & FLAG_CF, 0);
