@@ -1,6 +1,7 @@
 #![no_main]
 
 use aero_gpu::aerogpu_executor::AllocTable;
+use aero_gpu::protocol_d3d11 as d3d11;
 use aero_gpu::VecGuestMemory;
 use aero_gpu::{AeroGpuCommandProcessor, AeroGpuSubmissionAllocation};
 use aero_protocol::aerogpu::aerogpu_cmd as cmd;
@@ -192,6 +193,56 @@ fn fuzz_ring_layouts(ring_bytes: &[u8]) {
     }
 }
 
+fn fuzz_d3d11_cmd_stream(bytes: &[u8]) {
+    // `protocol_d3d11` defines a separate word-based command protocol used by some higher-level
+    // D3D11 paths. It is pure parsing/validation (no device creation), so it's safe to fuzz here.
+    const MAX_WORDS: usize = 16 * 1024;
+    if bytes.len() < 8 {
+        return;
+    }
+
+    let word_count = (bytes.len() / 4).min(MAX_WORDS);
+    let mut words = Vec::with_capacity(word_count);
+    for chunk in bytes.chunks_exact(4).take(word_count) {
+        words.push(u32::from_le_bytes(chunk.try_into().unwrap()));
+    }
+
+    for pkt in d3d11::CmdStream::new(&words).take(1024) {
+        let Ok(pkt) = pkt else { continue };
+        // Touch a few payload fields to exercise enum/bitflag decoding logic without assuming
+        // the payload is well-formed.
+        match pkt.header.opcode {
+            d3d11::D3D11Opcode::CreateTexture2D => {
+                if let Some(format) = pkt.payload.get(5).copied() {
+                    let _ = d3d11::DxgiFormat::from_word(format);
+                }
+                if let Some(usage) = pkt.payload.get(6).copied() {
+                    let _ = d3d11::TextureUsage::from_bits_truncate(usage);
+                }
+            }
+            d3d11::D3D11Opcode::CreateBuffer => {
+                if let Some(usage) = pkt.payload.get(3).copied() {
+                    let _ = d3d11::BufferUsage::from_bits_truncate(usage);
+                }
+            }
+            d3d11::D3D11Opcode::SetIndexBuffer => {
+                if let Some(format) = pkt.payload.get(1).copied() {
+                    let _ = match format {
+                        x if x == d3d11::IndexFormat::Uint16 as u32 => {
+                            Some(d3d11::IndexFormat::Uint16)
+                        }
+                        x if x == d3d11::IndexFormat::Uint32 as u32 => {
+                            Some(d3d11::IndexFormat::Uint32)
+                        }
+                        _ => None,
+                    };
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 fn fuzz_command_processor(
     cmd_stream_bytes: &[u8],
     allocations: Option<&[AeroGpuSubmissionAllocation]>,
@@ -226,6 +277,7 @@ fuzz_target!(|data: &[u8]| {
     fuzz_cmd_stream(cmd_bytes);
     fuzz_alloc_table(alloc_bytes);
     fuzz_ring_layouts(ring_bytes);
+    fuzz_d3d11_cmd_stream(ring_bytes);
 
     // Additionally, try patching the fixed headers to valid magic/version values (while keeping
     // the rest of the input intact) so the fuzzer can reach deeper parsing paths more often.
