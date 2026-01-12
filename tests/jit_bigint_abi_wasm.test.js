@@ -1,0 +1,119 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+
+import { JIT_BIGINT_ABI_WASM_BYTES, JIT_CODE_PAGE_VERSION_ABI_WASM_BYTES } from "../src/workers/wasm-bytes.ts";
+
+test("jit i64 BigInt ABI: wasm fixture imports/returns use BigInt", async () => {
+  const calls = {
+    mem_read_u64: 0,
+    mem_write_u64: 0,
+    mmu_translate: 0,
+    page_fault: 0,
+    jit_exit_mmio: 0,
+    jit_exit: 0,
+  };
+
+  const memory = new WebAssembly.Memory({ initial: 1, maximum: 4096, shared: true });
+
+  const env = {
+    memory,
+    mem_read_u8(_cpuPtr, addr) {
+      assert.equal(typeof addr, "bigint");
+      return 0;
+    },
+    mem_read_u16(_cpuPtr, addr) {
+      assert.equal(typeof addr, "bigint");
+      return 0;
+    },
+    mem_read_u32(_cpuPtr, addr) {
+      assert.equal(typeof addr, "bigint");
+      return 0;
+    },
+    mem_read_u64(_cpuPtr, addr) {
+      assert.equal(typeof addr, "bigint");
+      calls.mem_read_u64 += 1;
+      return 0n;
+    },
+    mem_write_u8(_cpuPtr, addr, value) {
+      assert.equal(typeof addr, "bigint");
+      assert.equal(typeof value, "number");
+    },
+    mem_write_u16(_cpuPtr, addr, value) {
+      assert.equal(typeof addr, "bigint");
+      assert.equal(typeof value, "number");
+    },
+    mem_write_u32(_cpuPtr, addr, value) {
+      assert.equal(typeof addr, "bigint");
+      assert.equal(typeof value, "number");
+    },
+    mem_write_u64(_cpuPtr, addr, value) {
+      assert.equal(typeof addr, "bigint");
+      assert.equal(typeof value, "bigint");
+      calls.mem_write_u64 += 1;
+    },
+    mmu_translate(_cpuPtr, jitCtxPtr, vaddr, access) {
+      assert.equal(typeof jitCtxPtr, "number");
+      assert.equal(typeof vaddr, "bigint");
+      assert.equal(typeof access, "number");
+      calls.mmu_translate += 1;
+      return 0n;
+    },
+    page_fault(_cpuPtr, addr) {
+      assert.equal(typeof addr, "bigint");
+      calls.page_fault += 1;
+      return -1n;
+    },
+    jit_exit_mmio(_cpuPtr, vaddr, size, isWrite, value, rip) {
+      assert.equal(typeof vaddr, "bigint");
+      assert.equal(typeof size, "number");
+      assert.equal(typeof isWrite, "number");
+      assert.equal(typeof value, "bigint");
+      assert.equal(typeof rip, "bigint");
+      calls.jit_exit_mmio += 1;
+      return rip;
+    },
+    jit_exit(kind, rip) {
+      assert.equal(typeof kind, "number");
+      assert.equal(typeof rip, "bigint");
+      calls.jit_exit += 1;
+      return rip;
+    },
+  };
+
+  const module = await WebAssembly.compile(JIT_BIGINT_ABI_WASM_BYTES);
+  const instance = await WebAssembly.instantiate(module, { env });
+  const { block } = instance.exports;
+  assert.equal(typeof block, "function");
+
+  const ret = block(0, 0);
+  assert.equal(typeof ret, "bigint");
+
+  assert.ok(calls.mem_read_u64 > 0, "expected mem_read_u64 to be called");
+  assert.ok(calls.mem_write_u64 > 0, "expected mem_write_u64 to be called");
+  assert.ok(calls.mmu_translate > 0, "expected mmu_translate to be called");
+  assert.ok(calls.page_fault > 0, "expected page_fault to be called");
+  assert.ok(calls.jit_exit_mmio > 0, "expected jit_exit_mmio to be called");
+  assert.ok(calls.jit_exit > 0, "expected jit_exit to be called");
+});
+
+test("jit i64 BigInt ABI: code_page_version import uses BigInt", async () => {
+  let seenPage = null;
+
+  const env = {
+    code_page_version(_cpuPtr, page) {
+      assert.equal(typeof page, "bigint");
+      seenPage = page;
+      return 0n;
+    },
+  };
+
+  const module = await WebAssembly.compile(JIT_CODE_PAGE_VERSION_ABI_WASM_BYTES);
+  const instance = await WebAssembly.instantiate(module, { env });
+  const { block } = instance.exports;
+  assert.equal(typeof block, "function");
+
+  const ret = block(0, 0);
+  assert.equal(typeof ret, "bigint");
+  assert.equal(seenPage, -1n);
+});
+
