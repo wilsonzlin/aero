@@ -847,6 +847,55 @@ fn restore_snapshot_rejects_excessive_cpu_count() {
 }
 
 #[test]
+fn restore_snapshot_rejects_meta_label_too_long() {
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(SNAPSHOT_MAGIC);
+    bytes.extend_from_slice(&SNAPSHOT_VERSION_V1.to_le_bytes());
+    bytes.push(SNAPSHOT_ENDIANNESS_LITTLE);
+    bytes.push(0);
+    bytes.extend_from_slice(&0u32.to_le_bytes());
+
+    // META payload with label_present=1 but length prefix exceeds MAX_LABEL_LEN (4KiB). No label
+    // bytes are needed because the decoder should reject based on the length prefix alone.
+    let mut meta_payload = Vec::new();
+    meta_payload.extend_from_slice(&1u64.to_le_bytes()); // snapshot_id
+    meta_payload.push(0); // parent_present
+    meta_payload.extend_from_slice(&0u64.to_le_bytes()); // created_unix_ms
+    meta_payload.push(1); // label_present
+    meta_payload.extend_from_slice(&(4u32 * 1024 + 1).to_le_bytes()); // label len
+    push_section(&mut bytes, SectionId::META, 1, 0, &meta_payload);
+
+    let mut target = DummyTarget::new(0);
+    let err = restore_snapshot(&mut Cursor::new(bytes), &mut target).unwrap_err();
+    assert!(matches!(err, SnapshotError::Corrupt("label too long")));
+}
+
+#[test]
+fn restore_snapshot_rejects_disks_base_image_too_long() {
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(SNAPSHOT_MAGIC);
+    bytes.extend_from_slice(&SNAPSHOT_VERSION_V1.to_le_bytes());
+    bytes.push(SNAPSHOT_ENDIANNESS_LITTLE);
+    bytes.push(0);
+    bytes.extend_from_slice(&0u32.to_le_bytes());
+
+    // DISKS payload with base_image length prefix exceeding MAX_DISK_PATH_LEN (64KiB). No string
+    // bytes are needed because the decoder should reject based on the length prefix alone.
+    let mut disks_payload = Vec::new();
+    disks_payload.extend_from_slice(&1u32.to_le_bytes()); // count
+    disks_payload.extend_from_slice(&0u32.to_le_bytes()); // disk_id
+    disks_payload.extend_from_slice(&(64u32 * 1024 + 1).to_le_bytes()); // base_image len
+    push_section(&mut bytes, SectionId::DISKS, 1, 0, &disks_payload);
+
+    let mut target = DummyTarget::new(0);
+    let err = restore_snapshot(&mut Cursor::new(bytes), &mut target).unwrap_err();
+    assert!(matches!(
+        err,
+        SnapshotError::Corrupt("disk base_image too long")
+    ));
+}
+
+#[test]
 fn restore_snapshot_rejects_duplicate_meta_sections() {
     let mut bytes = Vec::new();
     bytes.extend_from_slice(SNAPSHOT_MAGIC);

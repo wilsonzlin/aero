@@ -12,6 +12,19 @@ const MAX_DEVICE_ENTRY_LEN: u64 = 64 * 1024 * 1024;
 const MAX_PENDING_INTERRUPTS: u32 = 1024 * 1024;
 const FXSAVE_AREA_SIZE: usize = 512;
 
+fn decode_string_u32_bounded<R: Read>(
+    r: &mut R,
+    max_len: u32,
+    too_long_error: &'static str,
+) -> Result<String> {
+    let len = r.read_u32_le()?;
+    if len > max_len {
+        return Err(SnapshotError::Corrupt(too_long_error));
+    }
+    let bytes = r.read_exact_vec(len as usize)?;
+    Ok(String::from_utf8(bytes)?)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct SnapshotMeta {
     pub snapshot_id: u64,
@@ -56,7 +69,11 @@ impl SnapshotMeta {
         let label_present = r.read_u8()?;
         let label = match label_present {
             0 => None,
-            1 => Some(r.read_string_u32(MAX_LABEL_LEN)?),
+            1 => Some(decode_string_u32_bounded(
+                r,
+                MAX_LABEL_LEN,
+                "label too long",
+            )?),
             _ => return Err(SnapshotError::Corrupt("invalid label presence tag")),
         };
         Ok(Self {
@@ -946,8 +963,16 @@ impl DiskOverlayRef {
     pub fn decode<R: Read>(r: &mut R) -> Result<Self> {
         Ok(Self {
             disk_id: r.read_u32_le()?,
-            base_image: r.read_string_u32(MAX_DISK_PATH_LEN)?,
-            overlay_image: r.read_string_u32(MAX_DISK_PATH_LEN)?,
+            base_image: decode_string_u32_bounded(
+                r,
+                MAX_DISK_PATH_LEN,
+                "disk base_image too long",
+            )?,
+            overlay_image: decode_string_u32_bounded(
+                r,
+                MAX_DISK_PATH_LEN,
+                "disk overlay_image too long",
+            )?,
         })
     }
 }

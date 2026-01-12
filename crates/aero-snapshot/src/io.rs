@@ -92,19 +92,6 @@ pub trait ReadLeExt: Read {
         self.read_exact(buf)?;
         Ok(())
     }
-
-    fn read_len_prefixed_bytes_u32(&mut self, max_len: u32) -> Result<Vec<u8>> {
-        let len = self.read_u32_le()?;
-        if len > max_len {
-            return Err(SnapshotError::Corrupt("length-prefixed field too large"));
-        }
-        self.read_exact_vec(len as usize)
-    }
-
-    fn read_string_u32(&mut self, max_len: u32) -> Result<String> {
-        let bytes = self.read_len_prefixed_bytes_u32(max_len)?;
-        Ok(String::from_utf8(bytes)?)
-    }
 }
 
 impl<T: Read + ?Sized> ReadLeExt for T {}
