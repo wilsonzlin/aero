@@ -322,15 +322,21 @@ impl PcMachine {
         }
     }
 
-    /// Poll the E1000 + network backend bridge once.
+    /// Poll the E1000 + network backend bridge once (DMA + TX/RX frame pumping).
     ///
-    /// This is safe to call even when E1000 is disabled; it will still propagate PCI INTx line
-    /// levels into the platform interrupt controller.
+    /// Returns quickly when E1000 is disabled/not present, or when no backend is attached.
     pub fn poll_network(&mut self) {
-        // 1) Process guest DMA (TX descriptors -> host TX queue, rx_pending -> guest RX ring).
-        //
-        // `PcPlatform::process_e1000` gates DMA on PCI command Bus Master Enable and no-ops when
-        // E1000 is disabled, so it's safe to call unconditionally.
+        if !self.bus.platform.has_e1000() {
+            return;
+        }
+
+        // Avoid draining TX frames unless we can actually deliver them to a backend.
+        let Some(mut backend) = self.network_backend.take() else {
+            return;
+        };
+
+        // Run DMA once before draining/pushing frames so register-only writes (like updating
+        // TDT/RDT) can take effect.
         self.bus.platform.process_e1000();
 
         // 2) Drain guest->host frames.
@@ -341,34 +347,23 @@ impl PcMachine {
                 break;
             };
             tx_budget -= 1;
-
-            if let Some(backend) = self.network_backend.as_mut() {
-                backend.transmit(frame);
-            }
+            backend.transmit(frame);
         }
  
         // 3) Drain host->guest frames.
-        //
-        // Only poll the backend when E1000 exists; otherwise we'd drop frames on the floor.
-        if self.bus.platform.has_e1000() {
-            if let Some(backend) = self.network_backend.as_mut() {
-                const MAX_RX_FRAMES_PER_POLL: usize = 256;
-                let mut rx_budget = MAX_RX_FRAMES_PER_POLL;
-                while rx_budget != 0 {
-                    let Some(frame) = backend.poll_receive() else {
-                        break;
-                    };
-                    rx_budget -= 1;
-                    self.bus.platform.e1000_enqueue_rx_frame(frame);
-                }
-            }
+        const MAX_RX_FRAMES_PER_POLL: usize = 256;
+        let mut rx_budget = MAX_RX_FRAMES_PER_POLL;
+        while rx_budget != 0 {
+            let Some(frame) = backend.poll_receive() else {
+                break;
+            };
+            rx_budget -= 1;
+            self.bus.platform.e1000_enqueue_rx_frame(frame);
         }
  
         // 4) Flush RX delivery for newly enqueued frames.
         self.bus.platform.process_e1000();
- 
-        // 5) Route PCI INTx lines (including E1000) into the platform interrupt controller.
-        self.bus.platform.poll_pci_intx_lines();
+        self.network_backend = Some(backend);
     }
 
     /// Run the CPU for at most `max_insts` guest instructions.
@@ -385,6 +380,7 @@ impl PcMachine {
             self.bus.platform.process_ide();
 
             self.poll_network();
+            self.bus.platform.poll_pci_intx_lines();
 
             if let Some(kind) = self.take_reset_kind() {
                 return RunExit::ResetRequested { kind, executed };
