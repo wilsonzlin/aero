@@ -867,6 +867,45 @@ fuzz_target!(|data: &[u8]| {
     cmd_synth_misaligned.extend_from_slice(&cmd_synth);
     fuzz_cmd_stream(&cmd_synth_misaligned[1..]);
 
+    // Exercise the host-side parser's legacy/partial SET_BLEND_STATE decoding logic.
+    //
+    // `parse_cmd_stream` accepts a legacy 28-byte packet (hdr + enable/src/dst/op/mask) and
+    // progressively extended variants where the later fields become present.
+    let set_blend_sizes = [
+        28usize,
+        32,
+        36,
+        40,
+        44,
+        48,
+        52,
+        56,
+        cmd::AerogpuCmdSetBlendState::SIZE_BYTES,
+    ];
+    let cmd_blend_variants_size = cmd::AerogpuCmdStreamHeader::SIZE_BYTES
+        + set_blend_sizes.iter().copied().sum::<usize>();
+    let mut cmd_blend_variants = vec![0u8; cmd_blend_variants_size];
+    let cmd_blend_variants_size_u32 = cmd_blend_variants.len() as u32;
+    cmd_blend_variants[0..4].copy_from_slice(&cmd::AEROGPU_CMD_STREAM_MAGIC.to_le_bytes());
+    cmd_blend_variants[4..8].copy_from_slice(&pci::AEROGPU_ABI_VERSION_U32.to_le_bytes());
+    cmd_blend_variants[8..12].copy_from_slice(&cmd_blend_variants_size_u32.to_le_bytes());
+    cmd_blend_variants[12..16].fill(0);
+    cmd_blend_variants[16..24].fill(0);
+    let mut off = cmd::AerogpuCmdStreamHeader::SIZE_BYTES;
+    for &size in &set_blend_sizes {
+        if write_pkt_hdr(
+            cmd_blend_variants.as_mut_slice(),
+            &mut off,
+            cmd::AerogpuCmdOpcode::SetBlendState as u32,
+            size,
+        )
+        .is_none()
+        {
+            break;
+        }
+    }
+    fuzz_cmd_stream(&cmd_blend_variants);
+
     // Synthetic command stream with intentionally inconsistent length/count fields.
     //
     // This deterministically hits error paths in the typed packet decoders (BadSizeBytes /
@@ -1303,6 +1342,75 @@ fuzz_target!(|data: &[u8]| {
     );
     let cmd_proc_unknown_format = w.finish();
     fuzz_command_processor(&cmd_proc_unknown_format, Some(&allocs));
+
+    // - Host-backed textures may omit row_pitch_bytes and use tight pitch for mip0.
+    let mut w = AerogpuCmdWriter::new();
+    w.create_texture2d(
+        tex_handle,
+        /*usage_flags=*/ 0,
+        pci::AerogpuFormat::B8G8R8A8Unorm as u32,
+        /*width=*/ 4,
+        /*height=*/ 4,
+        /*mip_levels=*/ 2,
+        /*array_layers=*/ 1,
+        /*row_pitch_bytes=*/ 0,
+        /*backing_alloc_id=*/ 0,
+        /*backing_offset_bytes=*/ 0,
+    );
+    let cmd_proc_host_tex_tight_pitch = w.finish();
+    fuzz_command_processor(&cmd_proc_host_tex_tight_pitch, None);
+
+    // - Block-compressed formats exercise the BC layout (ceil-div by 4 blocks).
+    let bc_tex_handle = 5u32;
+    let mut w = AerogpuCmdWriter::new();
+    w.create_texture2d(
+        bc_tex_handle,
+        /*usage_flags=*/ 0,
+        pci::AerogpuFormat::BC1RgbaUnorm as u32,
+        /*width=*/ 5,
+        /*height=*/ 5,
+        /*mip_levels=*/ 2,
+        /*array_layers=*/ 1,
+        /*row_pitch_bytes=*/ 16,
+        alloc_id,
+        /*backing_offset_bytes=*/ 0,
+    );
+    let cmd_proc_bc1_guest_backed = w.finish();
+    fuzz_command_processor(&cmd_proc_bc1_guest_backed, Some(&allocs));
+
+    // - InvalidCreateTexture2d: BC formats still enforce minimum row_pitch_bytes for guest backing.
+    let mut w = AerogpuCmdWriter::new();
+    w.create_texture2d(
+        bc_tex_handle,
+        /*usage_flags=*/ 0,
+        pci::AerogpuFormat::BC1RgbaUnorm as u32,
+        /*width=*/ 5,
+        /*height=*/ 5,
+        /*mip_levels=*/ 1,
+        /*array_layers=*/ 1,
+        /*row_pitch_bytes=*/ 8,
+        alloc_id,
+        /*backing_offset_bytes=*/ 0,
+    );
+    let cmd_proc_bc1_invalid_pitch = w.finish();
+    fuzz_command_processor(&cmd_proc_bc1_invalid_pitch, Some(&allocs));
+
+    // - Host-backed BC textures can also use tight pitch (row_pitch_bytes=0).
+    let mut w = AerogpuCmdWriter::new();
+    w.create_texture2d(
+        /*texture_handle=*/ 6,
+        /*usage_flags=*/ 0,
+        pci::AerogpuFormat::BC7RgbaUnorm as u32,
+        /*width=*/ 5,
+        /*height=*/ 5,
+        /*mip_levels=*/ 1,
+        /*array_layers=*/ 1,
+        /*row_pitch_bytes=*/ 0,
+        /*backing_alloc_id=*/ 0,
+        /*backing_offset_bytes=*/ 0,
+    );
+    let cmd_proc_bc7_host_tight_pitch = w.finish();
+    fuzz_command_processor(&cmd_proc_bc7_host_tight_pitch, None);
 
     // - Dirty ranges for host-owned resources are ignored (some streams conservatively emit them).
     let mut w = AerogpuCmdWriter::new();
