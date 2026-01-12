@@ -236,6 +236,19 @@ be captured/restored by the interrupt controller (PIC/APIC) device state. On res
 device must avoid emitting spurious IRQ pulses purely due to buffered output bytes (see
 [`docs/irq-semantics.md`](./irq-semantics.md)).
 
+#### HDA audio (`DeviceId::HDA`)
+
+For the guest-visible Intel HD Audio device model (HDA controller + codec + stream/DMA state), store a single device entry:
+
+- Outer `DeviceState.id = DeviceId::HDA`
+- `DeviceState.data = aero-io-snapshot` TLV blob produced by the HDA stack (inner `DEVICE_ID = HDA0`)
+- `DeviceState.version` / `DeviceState.flags` mirror the inner device `SnapshotVersion (major, minor)`
+
+Restore notes (see also [`docs/06-audio-subsystem.md`](./06-audio-subsystem.md#snapshotrestore-save-states)):
+
+- The browser audio graph (`AudioContext` / `AudioWorkletNode`) is a host resource and is not captured in snapshots. On restore, host code must recreate/reattach the Web Audio pipeline.
+- Audio snapshots preserve **ring buffer indices** (guest-visible progress) but do not restore ring **contents**. The producer should clear the ring to silence on restore to avoid replaying stale samples.
+
 #### Networking (`DeviceId::E1000`, `DeviceId::NET_STACK`)
 
 Networking snapshots in Aero are split into two `DEVICES` entries:

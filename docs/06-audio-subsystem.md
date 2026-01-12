@@ -258,6 +258,16 @@ These are applied when the stream is created (and may be updated later via `Medi
 Audio snapshots must capture guest-visible progress (DMA positions, buffer state) while treating the Web Audio pipeline as a
 host resource that may need reinitialization.
 
+### Outer snapshot identity
+
+In the outer `aero-snapshot` `DEVICES` table, HDA audio state is stored under:
+
+- `DeviceId::HDA` (`18`)
+- JS kind string: `"audio.hda"` (worker snapshot glue)
+
+`DeviceState.data` is an `aero-io-snapshot` TLV blob (`DEVICE_ID = HDA0`) and `DeviceState.version/flags` mirror the inner
+`SnapshotVersion (major, minor)`.
+
 ### What must be captured
 
 - Guest-visible device state (HDA registers, CORB/RIRB, stream descriptors, codec verb-visible state, DMA progress, etc).
