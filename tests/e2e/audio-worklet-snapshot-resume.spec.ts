@@ -9,8 +9,10 @@ test("AudioWorklet producer does not burst after worker-VM snapshot restore", as
   test.setTimeout(180_000);
   test.skip(test.info().project.name !== "chromium", "Snapshot + AudioWorklet test only runs on Chromium.");
 
+  page.setDefaultTimeout(120_000);
+
   // Worker VM snapshots require OPFS SyncAccessHandle. Probe early so unsupported browser variants
-  // skip without paying the cost of loading the full `/web/` app (which kicks off main-thread WASM init).
+  // skip without paying the cost of booting workers + AudioWorklet graphs.
   // We only need an origin context for the OPFS capability probe; avoid waiting for full page load.
   await page.goto(`${PREVIEW_ORIGIN}/`, { waitUntil: "domcontentloaded" });
   const snapshotSupport = await probeOpfsSyncAccessHandle(page);
@@ -24,13 +26,11 @@ test("AudioWorklet producer does not burst after worker-VM snapshot restore", as
     );
   }
 
-  // Use the minimum allowed guest RAM (256 MiB) to keep the snapshot file small enough for CI,
-  // while still exercising the worker snapshot protocol.
-  await page.goto(`${PREVIEW_ORIGIN}/web/?mem=256`, { waitUntil: "load" });
-
-  const workersPanel = page.getByRole("heading", { name: "Workers" }).locator("..");
-  const workersSnapshotLine = workersPanel.locator("div.mono").filter({ hasText: /^snapshot:/ });
-  const workersError = workersPanel.locator("pre").last();
+  // Coordinator is exposed by the repo-root harness (`src/main.ts`).
+  await page.waitForFunction(() => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return !!(globalThis as any).__aeroWorkerCoordinator;
+  });
 
   await page.click("#init-audio-output-worker");
 
@@ -41,25 +41,20 @@ test("AudioWorklet producer does not burst after worker-VM snapshot restore", as
     return out?.enabled === true && out?.context?.state === "running";
   });
 
-  // Wait for the worker side to start producing so we have a baseline.
-  await page.waitForTimeout(500);
+  // Ensure the worker runtime is fully ready before snapshotting.
+  await page.waitForFunction(
+    () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const wc = (globalThis as any).__aeroWorkerCoordinator;
+      if (!wc || typeof wc.getWorkerStatuses !== "function") return false;
+      const statuses = wc.getWorkerStatuses();
+      return statuses?.cpu?.state === "ready" && statuses?.io?.state === "ready";
+    },
+    undefined,
+    { timeout: 120_000 },
+  );
 
-  const snapshotSaveButton = page.getByRole("button", { name: "Save snapshot" });
-  const snapshotLoadButton = page.getByRole("button", { name: "Load snapshot" });
-
-  // Wait for worker VM snapshots to become available. If OPFS sync access handles aren't supported,
-  // the workers panel keeps snapshot disabled; in that case, exit early.
-  try {
-    await expect(snapshotSaveButton).toBeEnabled({ timeout: 60_000 });
-  } catch (err) {
-    const snapshotStatus = await workersSnapshotLine.textContent();
-    if (snapshotStatus?.includes("unavailable")) {
-      test.skip(true, `VM snapshot unavailable in this build (${snapshotStatus}).`);
-    }
-    throw err;
-  }
-
-  const beforeSave = await page.evaluate(() => {
+  const beforeSnapshot = await page.evaluate(() => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const out = (globalThis as any).__aeroAudioOutputWorker;
     if (!out?.enabled) return null;
@@ -78,20 +73,79 @@ test("AudioWorklet producer does not burst after worker-VM snapshot restore", as
       capacity: ring.capacityFrames as number,
     };
   });
+  expect(beforeSnapshot).not.toBeNull();
+
+  // Ensure the AudioWorklet consumer is alive (read index advances).
+  await page.waitForFunction(
+    (baselineRead) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const out = (globalThis as any).__aeroAudioOutputWorker;
+      if (!out?.enabled) return false;
+      const ring = out.ringBuffer as { readIndex: Uint32Array };
+      const read = Atomics.load(ring.readIndex, 0) >>> 0;
+      return ((read - (baselineRead as number)) >>> 0) > 0;
+    },
+    beforeSnapshot!.read,
+    { timeout: 20_000 },
+  );
+
+  // Ensure the worker-side producer is alive (write index advances).
+  await page.waitForFunction(
+    (baselineWrite) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const out = (globalThis as any).__aeroAudioOutputWorker;
+      if (!out?.enabled) return false;
+      const ring = out.ringBuffer as { writeIndex: Uint32Array };
+      const write = Atomics.load(ring.writeIndex, 0) >>> 0;
+      return ((write - (baselineWrite as number)) >>> 0) > 0;
+    },
+    beforeSnapshot!.write,
+    { timeout: 60_000 },
+  );
+
+  // Ensure the producer is writing actual (non-silent) samples into the ring.
+  await waitForAudioOutputNonSilent(page, "__aeroAudioOutputWorker", { threshold: 0.01, timeoutMs: 20_000 });
+
+  // Let the system run for a bit so we catch sustained underruns/overruns (not just “it started once”).
+  await page.waitForTimeout(1000);
+
+  const beforeSave = await page.evaluate(() => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const out = (globalThis as any).__aeroAudioOutputWorker;
+    if (!out?.enabled) return null;
+    const ring = out.ringBuffer as { underrunCount: Uint32Array; overrunCount: Uint32Array; capacityFrames: number };
+    return {
+      underrun: Atomics.load(ring.underrunCount, 0) >>> 0,
+      overrun: Atomics.load(ring.overrunCount, 0) >>> 0,
+      capacity: ring.capacityFrames as number,
+    };
+  });
   expect(beforeSave).not.toBeNull();
   expect(beforeSave!.overrun).toBe(0);
+  // Startup can be racy across CI environments; allow up to one render quantum.
+  expect(beforeSave!.underrun).toBeLessThanOrEqual(128);
 
-  await snapshotSaveButton.click();
-  await expect
-    .poll(async () => (await workersSnapshotLine.textContent()) ?? "", { timeout: 120_000 })
-    .toMatch(/snapshot: (saved|save failed)/);
-  const saveStatus = (await workersSnapshotLine.textContent()) ?? "";
-  if (saveStatus.includes("save failed")) {
-    const errorText = (await workersError.textContent()) ?? "";
-    if (errorText.toLowerCase().includes("unavailable")) {
-      test.skip(true, errorText);
+  const snapshotPath = `state/playwright-worker-tone-snapshot-${Date.now()}-${Math.random().toString(16).slice(2)}.snap`;
+
+  const saveResult = await page.evaluate(async (path) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const coord = (globalThis as any).__aeroWorkerCoordinator;
+    if (!coord || typeof coord.snapshotSaveToOpfs !== "function") {
+      return { ok: false as const, error: "Missing __aeroWorkerCoordinator.snapshotSaveToOpfs()" };
     }
-    throw new Error(`Snapshot save failed: ${errorText || saveStatus}`);
+    try {
+      await coord.snapshotSaveToOpfs(path);
+      return { ok: true as const };
+    } catch (err) {
+      return { ok: false as const, error: err instanceof Error ? err.message : String(err) };
+    }
+  }, snapshotPath);
+
+  if (!saveResult.ok) {
+    if (typeof saveResult.error === "string" && saveResult.error.toLowerCase().includes("unavailable")) {
+      test.skip(true, `VM snapshot save unavailable in this build (${saveResult.error}).`);
+    }
+    throw new Error(`snapshot save failed: ${String(saveResult.error)}`);
   }
 
   // Simulate time passing between save and restore (e.g. user waiting, slow restore, etc.).
@@ -120,18 +174,25 @@ test("AudioWorklet producer does not burst after worker-VM snapshot restore", as
   });
   expect(beforeRestore).not.toBeNull();
 
-  await expect(snapshotLoadButton).toBeEnabled({ timeout: 60_000 });
-  await snapshotLoadButton.click();
-  await expect
-    .poll(async () => (await workersSnapshotLine.textContent()) ?? "", { timeout: 120_000 })
-    .toMatch(/snapshot: (restored|restore failed)/);
-  const restoreStatus = (await workersSnapshotLine.textContent()) ?? "";
-  if (restoreStatus.includes("restore failed")) {
-    const errorText = (await workersError.textContent()) ?? "";
-    if (errorText.toLowerCase().includes("unavailable")) {
-      test.skip(true, errorText);
+  const restoreResult = await page.evaluate(async (path) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const coord = (globalThis as any).__aeroWorkerCoordinator;
+    if (!coord || typeof coord.snapshotRestoreFromOpfs !== "function") {
+      return { ok: false as const, error: "Missing __aeroWorkerCoordinator.snapshotRestoreFromOpfs()" };
     }
-    throw new Error(`Snapshot restore failed: ${errorText || restoreStatus}`);
+    try {
+      await coord.snapshotRestoreFromOpfs(path);
+      return { ok: true as const };
+    } catch (err) {
+      return { ok: false as const, error: err instanceof Error ? err.message : String(err) };
+    }
+  }, snapshotPath);
+
+  if (!restoreResult.ok) {
+    if (typeof restoreResult.error === "string" && restoreResult.error.toLowerCase().includes("unavailable")) {
+      test.skip(true, `VM snapshot restore unavailable in this build (${restoreResult.error}).`);
+    }
+    throw new Error(`snapshot restore failed: ${String(restoreResult.error)}`);
   }
 
   // Give the CPU worker a moment to tick after resume.
@@ -178,5 +239,47 @@ test("AudioWorklet producer does not burst after worker-VM snapshot restore", as
     { timeout: 60_000 },
   );
 
+  // Ensure the AudioWorklet resumes consuming frames after restore (read index advances).
+  await page.waitForFunction(
+    (baselineRead) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const out = (globalThis as any).__aeroAudioOutputWorker;
+      if (!out?.enabled) return false;
+      const ring = out.ringBuffer as { readIndex: Uint32Array };
+      const read = Atomics.load(ring.readIndex, 0) >>> 0;
+      return ((read - (baselineRead as number)) >>> 0) > 0;
+    },
+    afterRestore!.read,
+    { timeout: 20_000 },
+  );
+
   await waitForAudioOutputNonSilent(page, "__aeroAudioOutputWorker", { threshold: 0.01 });
+
+  // Best-effort cleanup: OPFS can persist across runs in some environments.
+  // Ignore failures (missing APIs, already deleted, permission issues, etc.).
+  await page.evaluate(async (path) => {
+    try {
+      const storage = (navigator as Navigator & { storage?: StorageManager | undefined }).storage;
+      const getDir = (storage as StorageManager & { getDirectory?: unknown })?.getDirectory as
+        | ((this: StorageManager) => Promise<FileSystemDirectoryHandle>)
+        | undefined;
+      if (typeof getDir !== "function") return;
+
+      const parts = String(path)
+        .split("/")
+        .map((p) => p.trim())
+        .filter((p) => p.length > 0);
+      if (parts.length === 0) return;
+      const filename = parts.pop();
+      if (!filename) return;
+
+      let dir = await getDir.call(storage);
+      for (const part of parts) {
+        dir = await dir.getDirectoryHandle(part);
+      }
+      await dir.removeEntry(filename);
+    } catch {
+      // ignore
+    }
+  }, snapshotPath);
 });
