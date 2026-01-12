@@ -1,6 +1,6 @@
 use aero_devices::pci::profile::{IDE_PIIX3, NVME_CONTROLLER, SATA_AHCI_ICH9, USB_UHCI_PIIX3};
 use aero_devices::pci::{PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
-use aero_devices::reset_ctrl::RESET_CTRL_RESET_VALUE;
+use aero_devices::reset_ctrl::{RESET_CTRL_PORT, RESET_CTRL_RESET_VALUE};
 use aero_devices_storage::pci_ide::PRIMARY_PORTS;
 use aero_pc_platform::{PcPlatform, ResetEvent};
 use aero_storage::{MemBackend, RawDisk, VirtualDisk, SECTOR_SIZE};
@@ -75,9 +75,9 @@ fn pc_platform_reset_restores_deterministic_power_on_state() {
     assert_ne!(uhci_bar4_after, uhci_bar4_before);
 
     // - Queue a reset event.
-    pc.io.write_u8(0xCF9, RESET_CTRL_RESET_VALUE);
+    pc.io.write_u8(RESET_CTRL_PORT, RESET_CTRL_RESET_VALUE);
     assert_eq!(pc.take_reset_events(), vec![ResetEvent::System]);
-    pc.io.write_u8(0xCF9, RESET_CTRL_RESET_VALUE);
+    pc.io.write_u8(RESET_CTRL_PORT, RESET_CTRL_RESET_VALUE);
 
     // - Disable PCI memory decoding for AHCI and move BAR5.
     let bdf = SATA_AHCI_ICH9.bdf;

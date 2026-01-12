@@ -1,5 +1,7 @@
+use aero_devices::pci::{PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
+use aero_devices::pic8259::MASTER_DATA;
 use aero_machine::{Machine, MachineConfig};
-use aero_platform::interrupts::PlatformInterruptMode;
+use aero_platform::interrupts::{PlatformInterruptMode, IMCR_DATA_PORT, IMCR_INDEX, IMCR_SELECT_PORT};
 use pretty_assertions::assert_eq;
 
 fn pci_cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
@@ -29,22 +31,22 @@ fn snapshot_round_trip_preserves_pci_config_ports_and_interrupt_controller_state
     //
     // Use the host bridge at 00:00.0 and change the COMMAND register (offset 0x04).
     let cfg_addr = pci_cfg_addr(0, 0, 0, 0x04);
-    src.io_write(0xCF8, 4, cfg_addr);
+    src.io_write(PCI_CFG_ADDR_PORT, 4, cfg_addr);
     let command: u16 = 0x0007;
-    src.io_write(0xCFC, 2, u32::from(command));
-    assert_eq!(src.io_read(0xCFC, 2) as u16, command);
+    src.io_write(PCI_CFG_DATA_PORT, 2, u32::from(command));
+    assert_eq!(src.io_read(PCI_CFG_DATA_PORT, 2) as u16, command);
 
     // Mutate interrupt controller state.
     //
     // - Change the PIC master interrupt mask (port 0x21).
     // - Switch IMCR to APIC mode via ports 0x22/0x23 (and keep the selector latched).
     let pic_mask: u8 = 0xAB;
-    src.io_write(0x21, 1, u32::from(pic_mask));
-    assert_eq!(src.io_read(0x21, 1) as u8, pic_mask);
+    src.io_write(MASTER_DATA, 1, u32::from(pic_mask));
+    assert_eq!(src.io_read(MASTER_DATA, 1) as u8, pic_mask);
 
-    src.io_write(0x22, 1, 0x70);
-    src.io_write(0x23, 1, 0x01);
-    assert_eq!(src.io_read(0x23, 1) as u8, 0x01);
+    src.io_write(IMCR_SELECT_PORT, 1, u32::from(IMCR_INDEX));
+    src.io_write(IMCR_DATA_PORT, 1, 0x01);
+    assert_eq!(src.io_read(IMCR_DATA_PORT, 1) as u8, 0x01);
 
     let snap = src.take_snapshot_full().unwrap();
 
@@ -52,15 +54,15 @@ fn snapshot_round_trip_preserves_pci_config_ports_and_interrupt_controller_state
     restored.restore_snapshot_bytes(&snap).unwrap();
 
     // Confirm the PCI config address register and the modified COMMAND value survived snapshot.
-    assert_eq!(restored.io_read(0xCF8, 4), cfg_addr);
-    assert_eq!(restored.io_read(0xCFC, 2) as u16, command);
+    assert_eq!(restored.io_read(PCI_CFG_ADDR_PORT, 4), cfg_addr);
+    assert_eq!(restored.io_read(PCI_CFG_DATA_PORT, 2) as u16, command);
 
     // Confirm PIC mask survived.
-    assert_eq!(restored.io_read(0x21, 1) as u8, pic_mask);
+    assert_eq!(restored.io_read(MASTER_DATA, 1) as u8, pic_mask);
 
     // Confirm IMCR select+data survived (read depends on latched selector).
-    assert_eq!(restored.io_read(0x22, 1) as u8, 0x70);
-    assert_eq!(restored.io_read(0x23, 1) as u8, 0x01);
+    assert_eq!(restored.io_read(IMCR_SELECT_PORT, 1) as u8, IMCR_INDEX);
+    assert_eq!(restored.io_read(IMCR_DATA_PORT, 1) as u8, 0x01);
 
     // Confirm the platform interrupt controller mode (PIC vs APIC) survived.
     let interrupts = restored

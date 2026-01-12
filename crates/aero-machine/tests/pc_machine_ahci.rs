@@ -1,6 +1,7 @@
 #![cfg(not(target_arch = "wasm32"))]
 
 use aero_devices::pci::profile::SATA_AHCI_ICH9;
+use aero_devices::pci::{PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
 use aero_machine::pc::PcMachine;
 use aero_machine::RunExit;
 use aero_storage::{MemBackend, RawDisk, VirtualDisk, SECTOR_SIZE};
@@ -18,16 +19,19 @@ fn write_cfg_u16(pc: &mut PcMachine, bus: u8, device: u8, function: u8, offset: 
     pc.bus
         .platform
         .io
-        .write(0xCF8, 4, cfg_addr(bus, device, function, offset));
-    pc.bus.platform.io.write(0xCFC, 2, u32::from(value));
+        .write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bus, device, function, offset));
+    pc.bus
+        .platform
+        .io
+        .write(PCI_CFG_DATA_PORT, 2, u32::from(value));
 }
 
 fn write_cfg_u32(pc: &mut PcMachine, bus: u8, device: u8, function: u8, offset: u8, value: u32) {
     pc.bus
         .platform
         .io
-        .write(0xCF8, 4, cfg_addr(bus, device, function, offset));
-    pc.bus.platform.io.write(0xCFC, 4, value);
+        .write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bus, device, function, offset));
+    pc.bus.platform.io.write(PCI_CFG_DATA_PORT, 4, value);
 }
 
 fn write_u16_le(pc: &mut PcMachine, paddr: u64, value: u16) {

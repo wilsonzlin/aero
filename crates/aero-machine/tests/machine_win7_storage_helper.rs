@@ -1,5 +1,5 @@
 use aero_devices::pci::profile::{IDE_PIIX3, ISA_PIIX3, SATA_AHCI_ICH9};
-use aero_devices::pci::PciBdf;
+use aero_devices::pci::{PciBdf, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
 use aero_machine::{Machine, MachineConfig};
 use pretty_assertions::assert_eq;
 
@@ -12,8 +12,8 @@ fn pci_cfg_addr(bdf: PciBdf, offset: u8) -> u32 {
 }
 
 fn read_cfg_u32(m: &mut Machine, bdf: PciBdf, offset: u8) -> u32 {
-    m.io_write(0xCF8, 4, pci_cfg_addr(bdf, offset));
-    m.io_read(0xCFC, 4)
+    m.io_write(PCI_CFG_ADDR_PORT, 4, pci_cfg_addr(bdf, offset));
+    m.io_read(PCI_CFG_DATA_PORT, 4)
 }
 
 #[test]

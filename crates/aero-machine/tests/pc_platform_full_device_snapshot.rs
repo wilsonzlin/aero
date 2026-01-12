@@ -1,11 +1,14 @@
 use aero_devices::acpi_pm::{DEFAULT_ACPI_ENABLE, DEFAULT_PM1A_CNT_BLK, DEFAULT_SMI_CMD_PORT};
 use aero_devices::hpet::HPET_MMIO_BASE;
 use aero_devices::i8042::{I8042_DATA_PORT, I8042_STATUS_PORT};
-use aero_devices::pci::{PciBdf, PciInterruptPin};
+use aero_devices::pci::{PciBdf, PciInterruptPin, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
 use aero_devices::pit8254::{PIT_CH0, PIT_CMD};
 use aero_interrupts::apic::IOAPIC_MMIO_BASE;
 use aero_machine::{Machine, MachineConfig};
-use aero_platform::interrupts::{InterruptController, InterruptInput, PlatformInterruptMode};
+use aero_platform::interrupts::{
+    InterruptController, InterruptInput, PlatformInterruptMode, IMCR_DATA_PORT, IMCR_INDEX,
+    IMCR_SELECT_PORT,
+};
 use pretty_assertions::assert_eq;
 
 fn enable_a20(m: &mut Machine) {
@@ -55,8 +58,8 @@ fn snapshot_restore_preserves_full_pc_platform_device_state() {
     enable_a20(&mut src);
 
     // Switch IMCR to APIC mode (and keep selector latched).
-    src.io_write(0x22, 1, 0x70);
-    src.io_write(0x23, 1, 0x01);
+    src.io_write(IMCR_SELECT_PORT, 1, u32::from(IMCR_INDEX));
+    src.io_write(IMCR_DATA_PORT, 1, 0x01);
 
     // Configure IOAPIC redirection entries:
     // - PIT (ISA IRQ0 is mapped to GSI2 by default via ACPI ISO) => edge-triggered, unmasked.
@@ -127,11 +130,11 @@ fn snapshot_restore_preserves_full_pc_platform_device_state() {
     // at 00:00.0 and change the COMMAND register (offset 0x04).
     let cfg_addr = 0x8000_0000u32 | (0u32 << 16) | (0u32 << 11) | (0u32 << 8) | (0x04u32 & 0xFC);
     let command: u16 = 0x0007;
-    src.io_write(0xCF8, 4, cfg_addr);
-    src.io_write(0xCFC, 2, u32::from(command));
+    src.io_write(PCI_CFG_ADDR_PORT, 4, cfg_addr);
+    src.io_write(PCI_CFG_DATA_PORT, 2, u32::from(command));
 
-    let expected_cf8 = src.io_read(0xCF8, 4);
-    let expected_cfc = src.io_read(0xCFC, 2) as u16;
+    let expected_cf8 = src.io_read(PCI_CFG_ADDR_PORT, 4);
+    let expected_cfc = src.io_read(PCI_CFG_DATA_PORT, 2) as u16;
     assert_eq!(expected_cf8, cfg_addr);
     assert_eq!(expected_cfc, command);
 
@@ -165,11 +168,11 @@ fn snapshot_restore_preserves_full_pc_platform_device_state() {
     restored.restore_snapshot_bytes(&snap).unwrap();
 
     // Verify key register/port images round-trip.
-    assert_eq!(restored.io_read(0x22, 1) as u8, 0x70);
-    assert_eq!(restored.io_read(0x23, 1) as u8, 0x01);
+    assert_eq!(restored.io_read(IMCR_SELECT_PORT, 1) as u8, IMCR_INDEX);
+    assert_eq!(restored.io_read(IMCR_DATA_PORT, 1) as u8, 0x01);
 
-    assert_eq!(restored.io_read(0xCF8, 4), expected_cf8);
-    assert_eq!(restored.io_read(0xCFC, 2) as u16, expected_cfc);
+    assert_eq!(restored.io_read(PCI_CFG_ADDR_PORT, 4), expected_cf8);
+    assert_eq!(restored.io_read(PCI_CFG_DATA_PORT, 2) as u16, expected_cfc);
 
     assert_eq!(read_ioapic_entry(&mut restored, gsi_pit), expected_ioapic_pit);
     assert_eq!(read_ioapic_entry(&mut restored, gsi_intx), expected_ioapic_intx);

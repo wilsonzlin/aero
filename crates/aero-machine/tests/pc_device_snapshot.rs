@@ -1,10 +1,9 @@
 use aero_devices::hpet;
+use aero_devices::pci::{PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
+use aero_devices::pic8259::MASTER_CMD;
 use aero_devices::pit8254::{PIT_CH0, PIT_CMD};
 use aero_machine::{Machine, MachineConfig};
 use pretty_assertions::assert_eq;
-
-const PCI_CFG_ADDR_PORT: u16 = 0xCF8;
-const PCI_CFG_DATA_PORT: u16 = 0xCFC;
 
 fn pci_cfg_addr(bus: u8, dev: u8, func: u8, offset: u8) -> u32 {
     let offset = offset & !0x3;
@@ -27,8 +26,8 @@ fn write_pci_command(m: &mut Machine, bus: u8, dev: u8, func: u8, command: u16) 
 
 fn read_pic_irr(m: &mut Machine) -> u8 {
     // OCW3: read IRR.
-    m.io_write(0x20, 1, 0x0A);
-    m.io_read(0x20, 1) as u8
+    m.io_write(MASTER_CMD, 1, 0x0A);
+    m.io_read(MASTER_CMD, 1) as u8
 }
 
 fn read_pit_count_ch0(m: &mut Machine) -> u16 {

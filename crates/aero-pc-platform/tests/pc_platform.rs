@@ -1,9 +1,12 @@
-use aero_devices::acpi_pm::PM1_CNT_SCI_EN;
+use aero_devices::acpi_pm::{
+    DEFAULT_ACPI_ENABLE, DEFAULT_PM1A_CNT_BLK, DEFAULT_SMI_CMD_PORT, PM1_CNT_SCI_EN,
+};
 use aero_devices::clock::Clock;
 use aero_devices::hpet::HPET_MMIO_BASE;
 use aero_devices::i8042::I8042_STATUS_PORT;
 use aero_devices::pci::{PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
-use aero_devices::reset_ctrl::RESET_CTRL_RESET_VALUE;
+use aero_devices::reset_ctrl::{RESET_CTRL_PORT, RESET_CTRL_RESET_VALUE};
+use aero_interrupts::apic::{IOAPIC_MMIO_BASE, LAPIC_MMIO_BASE};
 use aero_io_snapshot::io::state::IoSnapshot;
 use aero_net_e1000::MIN_L2_FRAME_LEN;
 use aero_pc_platform::{PcPlatform, ResetEvent, PCIE_ECAM_BASE};
@@ -24,8 +27,8 @@ fn pc_platform_wires_canonical_ports_mmio_and_reset_a20() {
     assert_eq!(pc.memory.read_u8(0x1_00000), 0xBB);
 
     // ACPI enable handshake toggles PM1_CNT.SCI_EN.
-    pc.io.write_u8(0xB2, 0xA0);
-    let pm1_cnt = pc.io.read(0x0404, 2) as u16;
+    pc.io.write_u8(DEFAULT_SMI_CMD_PORT, DEFAULT_ACPI_ENABLE);
+    let pm1_cnt = pc.io.read(DEFAULT_PM1A_CNT_BLK, 2) as u16;
     assert_ne!(pm1_cnt & PM1_CNT_SCI_EN, 0);
 
     // PCI config mechanism #1 ports (host bridge vendor/device ID).
@@ -38,9 +41,9 @@ fn pc_platform_wires_canonical_ports_mmio_and_reset_a20() {
     assert_eq!(id_ecam & 0xFFFF, 0x8086);
 
     // MMIO smoke: LAPIC ID, IOAPIC select, HPET capabilities.
-    let _lapic_id = pc.memory.read_u32(0xFEE0_0020);
-    pc.memory.write_u32(0xFEC0_0000, 0x01);
-    let _ioapic_ver = pc.memory.read_u32(0xFEC0_0010);
+    let _lapic_id = pc.memory.read_u32(LAPIC_MMIO_BASE + 0x20);
+    pc.memory.write_u32(IOAPIC_MMIO_BASE, 0x01);
+    let _ioapic_ver = pc.memory.read_u32(IOAPIC_MMIO_BASE + 0x10);
 
     // HPET only becomes uniquely addressable once A20 is enabled (it differs from the IOAPIC base
     // by bit20). We enabled A20 above, so this should hit the HPET mapping.
@@ -48,7 +51,7 @@ fn pc_platform_wires_canonical_ports_mmio_and_reset_a20() {
     assert_ne!(hpet_caps, 0);
 
     // Reset control port 0xCF9 generates a reset event.
-    pc.io.write_u8(0xCF9, RESET_CTRL_RESET_VALUE);
+    pc.io.write_u8(RESET_CTRL_PORT, RESET_CTRL_RESET_VALUE);
     assert_eq!(pc.take_reset_events(), vec![ResetEvent::System]);
 
     // i8042 reset command (0xFE) also surfaces as a platform reset event.

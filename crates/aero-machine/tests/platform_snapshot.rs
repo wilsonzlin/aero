@@ -9,7 +9,7 @@ use aero_devices::acpi_pm::{
 };
 use aero_devices::pci::{
     GsiLevelSink, PciBarDefinition, PciBdf, PciConfigSpace, PciCoreSnapshot, PciDevice,
-    PciInterruptPin,
+    PciInterruptPin, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT,
 };
 use aero_devices::pit8254::{PIT_CH0, PIT_CMD};
 
@@ -49,13 +49,13 @@ fn cfg_addr(bdf: PciBdf, offset: u16) -> u32 {
 }
 
 fn cfg_write(m: &mut Machine, bdf: PciBdf, offset: u16, size: u8, value: u32) {
-    m.io_write(0xCF8, 4, cfg_addr(bdf, offset));
-    m.io_write(0xCFC + (offset & 3), size, value);
+    m.io_write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bdf, offset));
+    m.io_write(PCI_CFG_DATA_PORT + (offset & 3), size, value);
 }
 
 fn cfg_read(m: &mut Machine, bdf: PciBdf, offset: u16, size: u8) -> u32 {
-    m.io_write(0xCF8, 4, cfg_addr(bdf, offset));
-    m.io_read(0xCFC + (offset & 3), size)
+    m.io_write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bdf, offset));
+    m.io_read(PCI_CFG_DATA_PORT + (offset & 3), size)
 }
 
 fn reverse_devices_section(bytes: &[u8]) -> Vec<u8> {
@@ -525,11 +525,11 @@ fn snapshot_restore_pci_config_bar_programming_survives() {
 
     // Program BAR0 via the standard PCI config mechanism #1 ports.
     let bar0_addr = 0x8000_0000u32 | (1u32 << 11) | 0x10;
-    src.io_write(0xCF8, 4, bar0_addr);
-    src.io_write(0xCFC, 4, 0x8000_0000);
+    src.io_write(PCI_CFG_ADDR_PORT, 4, bar0_addr);
+    src.io_write(PCI_CFG_DATA_PORT, 4, 0x8000_0000);
 
-    src.io_write(0xCF8, 4, bar0_addr);
-    assert_eq!(src.io_read(0xCFC, 4), 0x8000_0000);
+    src.io_write(PCI_CFG_ADDR_PORT, 4, bar0_addr);
+    assert_eq!(src.io_read(PCI_CFG_DATA_PORT, 4), 0x8000_0000);
 
     let snap = src.take_snapshot_full().unwrap();
 
@@ -551,8 +551,8 @@ fn snapshot_restore_pci_config_bar_programming_survives() {
 
     restored.restore_snapshot_bytes(&snap).unwrap();
 
-    restored.io_write(0xCF8, 4, bar0_addr);
-    assert_eq!(restored.io_read(0xCFC, 4), 0x8000_0000);
+    restored.io_write(PCI_CFG_ADDR_PORT, 4, bar0_addr);
+    assert_eq!(restored.io_read(PCI_CFG_DATA_PORT, 4), 0x8000_0000);
 }
 
 #[test]
@@ -923,8 +923,8 @@ fn restore_device_states_accepts_legacy_pci_device_id_for_combined_pci_core_snap
     // Put the PCI config ports into a non-default state (the 0xCF8 address latch is part of the
     // PCI config mechanism snapshot).
     let addr = cfg_addr(PciBdf::new(0, 1, 0), 0x10);
-    src.io_write(0xCF8, 4, addr);
-    assert_eq!(src.io_read(0xCF8, 4), addr);
+    src.io_write(PCI_CFG_ADDR_PORT, 4, addr);
+    assert_eq!(src.io_read(PCI_CFG_ADDR_PORT, 4), addr);
 
     // Put the INTx router into a non-default state too.
     {
@@ -950,7 +950,7 @@ fn restore_device_states_accepts_legacy_pci_device_id_for_combined_pci_core_snap
     let mut restored = Machine::new(pc_machine_config()).unwrap();
     snapshot::SnapshotTarget::restore_device_states(&mut restored, vec![core_state]);
 
-    assert_eq!(restored.io_read(0xCF8, 4), addr);
+    assert_eq!(restored.io_read(PCI_CFG_ADDR_PORT, 4), addr);
 
     let restored_intx_events = {
         let pci_intx = restored.pci_intx_router().expect("pc platform enabled");

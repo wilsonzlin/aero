@@ -1,4 +1,4 @@
-use aero_devices::pci::{profile, PciBdf};
+use aero_devices::pci::{profile, PciBdf, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
 use aero_machine::{Machine, MachineConfig};
 use aero_platform::interrupts::{InterruptController, InterruptInput, PlatformInterruptMode};
 use aero_devices::hpet::HPET_MMIO_BASE;
@@ -47,13 +47,13 @@ fn cfg_addr(bdf: PciBdf, offset: u16) -> u32 {
 }
 
 fn cfg_read(m: &mut Machine, bdf: PciBdf, offset: u16, size: u8) -> u32 {
-    m.io_write(0xCF8, 4, cfg_addr(bdf, offset));
-    m.io_read(0xCFC + (offset & 3), size)
+    m.io_write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bdf, offset));
+    m.io_read(PCI_CFG_DATA_PORT + (offset & 3), size)
 }
 
 fn cfg_write(m: &mut Machine, bdf: PciBdf, offset: u16, size: u8, value: u32) {
-    m.io_write(0xCF8, 4, cfg_addr(bdf, offset));
-    m.io_write(0xCFC + (offset & 3), size, value);
+    m.io_write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bdf, offset));
+    m.io_write(PCI_CFG_DATA_PORT + (offset & 3), size, value);
 }
 
 fn build_real_mode_imcr_interrupt_wait_boot_sector(
@@ -148,8 +148,8 @@ fn pci_cfg_ports_and_ecam_match_for_host_bridge() {
     enable_a20(&mut m);
 
     // PCI host bridge lives at 00:00.0. Read vendor/device ID via cfg ports.
-    m.io_write(0xCF8, 4, 0x8000_0000);
-    let id_ports = m.io_read(0xCFC, 4);
+    m.io_write(PCI_CFG_ADDR_PORT, 4, 0x8000_0000);
+    let id_ports = m.io_read(PCI_CFG_DATA_PORT, 4);
 
     // Read the same register via ECAM MMIO.
     let id_ecam = m.read_physical_u32(PCIE_ECAM_BASE);
