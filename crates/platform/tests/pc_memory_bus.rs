@@ -90,6 +90,15 @@ fn bios_rom_aliasing_maps_reset_vector_at_top_of_4gib() {
 }
 
 #[test]
+fn map_system_bios_rom_is_idempotent_for_identical_remaps() {
+    let mut bus = new_bus(true, 0);
+    let rom = Arc::<[u8]>::from(vec![0u8; BIOS_ROM_SIZE]);
+
+    assert_eq!(bus.map_system_bios_rom(Arc::clone(&rom)), Ok(()));
+    assert_eq!(bus.map_system_bios_rom(rom), Ok(()));
+}
+
+#[test]
 fn rom_is_read_only_and_does_not_write_through_to_ram() {
     let mut bus = new_bus(true, 2 * 1024 * 1024);
 
