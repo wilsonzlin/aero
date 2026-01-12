@@ -1,5 +1,7 @@
 import { expect, test } from '@playwright/test';
 
+const PREVIEW_ORIGIN = process.env.AERO_PLAYWRIGHT_PREVIEW_ORIGIN ?? 'http://127.0.0.1:4173';
+
 async function assertPerfExportAvailable(url: string, page: import('@playwright/test').Page) {
   await page.goto(url, { waitUntil: 'load' });
 
@@ -46,5 +48,5 @@ test('perf export works on dev server', async ({ page }) => {
 });
 
 test('perf export works on preview server', async ({ page }) => {
-  await assertPerfExportAvailable('http://127.0.0.1:4173/', page);
+  await assertPerfExportAvailable(`${PREVIEW_ORIGIN}/`, page);
 });

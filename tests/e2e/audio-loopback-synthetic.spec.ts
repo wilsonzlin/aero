@@ -1,9 +1,11 @@
 import { expect, test } from "@playwright/test";
 
+const PREVIEW_ORIGIN = process.env.AERO_PLAYWRIGHT_PREVIEW_ORIGIN ?? "http://127.0.0.1:4173";
+
 test("AudioWorklet loopback runs with synthetic microphone source (no underruns)", async ({ page }) => {
   test.skip(test.info().project.name !== "chromium", "AudioWorklet loopback test only runs on Chromium.");
 
-  await page.goto("http://127.0.0.1:4173/", { waitUntil: "load" });
+  await page.goto(`${PREVIEW_ORIGIN}/`, { waitUntil: "load" });
 
   await page.click("#init-audio-loopback-synthetic");
 

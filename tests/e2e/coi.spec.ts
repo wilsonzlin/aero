@@ -6,6 +6,8 @@ import {
   cspHeaders,
 } from '../../scripts/security_headers.mjs';
 
+const PREVIEW_ORIGIN = process.env.AERO_PLAYWRIGHT_PREVIEW_ORIGIN ?? 'http://127.0.0.1:4173';
+
 function assertResponseHeadersContain(actual: Record<string, string>, expected: Record<string, string>): void {
   for (const [key, value] of Object.entries(expected)) {
     expect(actual[key.toLowerCase()]).toBe(value);
@@ -47,7 +49,7 @@ test('dev server is cross-origin isolated (COOP/COEP)', async ({ page }) => {
 });
 
 test('preview server is cross-origin isolated (COOP/COEP)', async ({ page }) => {
-  const resp = await page.goto('http://127.0.0.1:4173/', { waitUntil: 'load' });
+  const resp = await page.goto(`${PREVIEW_ORIGIN}/`, { waitUntil: 'load' });
   expect(resp).toBeTruthy();
   assertResponseHeadersContain(resp!.headers(), crossOriginIsolationHeaders);
   assertResponseHeadersContain(resp!.headers(), baselineSecurityHeaders);

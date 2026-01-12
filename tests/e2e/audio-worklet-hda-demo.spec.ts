@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
 
+const PREVIEW_ORIGIN = process.env.AERO_PLAYWRIGHT_PREVIEW_ORIGIN ?? "http://127.0.0.1:4173";
+
 test("AudioWorklet output runs and does not underrun with HDA DMA demo", async ({ page }) => {
   test.setTimeout(60_000);
   test.skip(test.info().project.name !== "chromium", "AudioWorklet output test only runs on Chromium.");
@@ -9,7 +11,7 @@ test("AudioWorklet output runs and does not underrun with HDA DMA demo", async (
   // longer than Playwright's default 30s timeout.
   page.setDefaultTimeout(60_000);
 
-  await page.goto("http://127.0.0.1:4173/", { waitUntil: "load" });
+  await page.goto(`${PREVIEW_ORIGIN}/`, { waitUntil: "load" });
 
   await page.click("#init-audio-hda-demo");
 

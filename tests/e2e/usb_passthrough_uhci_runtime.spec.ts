@@ -50,6 +50,7 @@ test("runtime UHCI: WebHID + WebUSB passthrough are guest-visible (NAK while pen
 
     const usbActions: unknown[] = [];
     let guestUsbStatus: unknown | null = null;
+    let hidSendReport: { deviceId: number; reportType: string; reportId: number; data: number[] } | null = null;
 
     ioWorker.onmessage = (ev) => {
       const data = ev.data as any;
@@ -73,6 +74,18 @@ test("runtime UHCI: WebHID + WebUSB passthrough are guest-visible (NAK while pen
       }
       if (data.type === "usb.guest.status") {
         guestUsbStatus = data.snapshot;
+        return;
+      }
+      if (data.type === "hid.sendReport") {
+        const report = data as { deviceId?: unknown; reportType?: unknown; reportId?: unknown; data?: unknown };
+        if (typeof report.deviceId !== "number" || typeof report.reportType !== "string" || typeof report.reportId !== "number") return;
+        if (!(report.data instanceof Uint8Array)) return;
+        hidSendReport = {
+          deviceId: report.deviceId,
+          reportType: report.reportType,
+          reportId: report.reportId,
+          data: Array.from(report.data),
+        };
         return;
       }
     };
@@ -549,7 +562,101 @@ test("runtime UHCI: WebHID + WebUSB passthrough are guest-visible (NAK while pen
             self.postMessage({ type: "hid.interruptResult", portIndex, data, nakObserved: nakNotified, ctrlFinal });
             return;
           }
- 
+
+          if (mode === "hidInterruptOut") {
+            const { outData } = ev.data;
+            const outBytes = Array.isArray(outData) ? Uint8Array.from(outData) : new Uint8Array();
+
+            const first = runControlIn(io, dv, QH, setup, inLen, 0);
+            // Interface descriptor begins at offset 9; bInterfaceClass is at offset 9+5.
+            const ifaceClass = first[14] ?? 0;
+
+            const USB_REQUEST_SET_ADDRESS = 0x05;
+            const USB_REQUEST_SET_CONFIGURATION = 0x09;
+            const USB_REQUEST_SET_FEATURE = 0x03;
+            const HUB_PORT_FEATURE_POWER = 8;
+            const HUB_PORT_FEATURE_RESET = 4;
+
+            if (ifaceClass === 0x09) {
+              // Enumerate the hub at addr0 so the downstream HID device at addr0 becomes reachable.
+              runControlNoData(
+                io,
+                dv,
+                QH,
+                { bmRequestType: 0x00, bRequest: USB_REQUEST_SET_ADDRESS, wValue: 1, wIndex: 0, wLength: 0 },
+                0,
+              );
+              runControlNoData(
+                io,
+                dv,
+                QH,
+                { bmRequestType: 0x00, bRequest: USB_REQUEST_SET_CONFIGURATION, wValue: 1, wIndex: 0, wLength: 0 },
+                1,
+              );
+              // Port numbers are 1-based for hub class requests.
+              runControlNoData(
+                io,
+                dv,
+                QH,
+                { bmRequestType: 0x23, bRequest: USB_REQUEST_SET_FEATURE, wValue: HUB_PORT_FEATURE_POWER, wIndex: 1, wLength: 0 },
+                1,
+              );
+              runControlNoData(
+                io,
+                dv,
+                QH,
+                { bmRequestType: 0x23, bRequest: USB_REQUEST_SET_FEATURE, wValue: HUB_PORT_FEATURE_RESET, wIndex: 1, wLength: 0 },
+                1,
+              );
+              sleep(60);
+            } else if (ifaceClass !== 0x03) {
+              self.postMessage({
+                type: "error",
+                message:
+                  "unexpected USB interface class 0x" +
+                  ifaceClass.toString(16) +
+                  " (wanted HID=0x03 or Hub=0x09)",
+              });
+              return;
+            }
+
+            // Now enumerate the HID device at address 0.
+            const HID_ADDR = 2;
+            runControlNoData(
+              io,
+              dv,
+              QH,
+              { bmRequestType: 0x00, bRequest: USB_REQUEST_SET_ADDRESS, wValue: HID_ADDR, wIndex: 0, wLength: 0 },
+              0,
+            );
+            runControlNoData(
+              io,
+              dv,
+              QH,
+              { bmRequestType: 0x00, bRequest: USB_REQUEST_SET_CONFIGURATION, wValue: 1, wIndex: 0, wLength: 0 },
+              HID_ADDR,
+            );
+
+            // Schedule a single interrupt-OUT TD (endpoint 1). The guest should get an ACK and the
+            // host should observe an output report via `webhid_drain_output_reports`.
+            const TD_OUT = 0x3030;
+            const BUF_OUT = 0x4200;
+            const outLen = outBytes.length;
+
+            new Uint8Array(dv.buffer, dv.byteOffset + BUF_OUT, outLen).set(outBytes);
+
+            writeU32(dv, TD_OUT + 0x00, LINK_PTR_T);
+            writeU32(dv, TD_OUT + 0x04, (TD_CTRL_ACTIVE | TD_CTRL_IOC | 0x7ff) >>> 0);
+            writeU32(dv, TD_OUT + 0x08, tdToken(PID_OUT, HID_ADDR, 1, outLen));
+            writeU32(dv, TD_OUT + 0x0c, BUF_OUT);
+
+            writeU32(dv, QH + 0x04, TD_OUT);
+
+            const ctrlFinal = waitForTdInactive(dv, TD_OUT, 10_000);
+            self.postMessage({ type: "hid.outResult", portIndex, ctrlFinal, outLen });
+            return;
+          }
+
           if (mode === "webusbDevice") {
             const setupBytes = setupPacketBytes(setup);
             const chain = setupControlInChain(dv, setupBytes, inLen, 0);
@@ -660,7 +767,44 @@ test("runtime UHCI: WebHID + WebUSB passthrough are guest-visible (NAK while pen
             ],
           },
         ],
-        outputReports: [],
+        outputReports: [
+          {
+            reportId: 0,
+            items: [
+              {
+                usagePage: 0x01,
+                usages: [0x31],
+                usageMinimum: 0,
+                usageMaximum: 0,
+                reportSize: 8,
+                reportCount: 1,
+                unitExponent: 0,
+                unit: 0,
+                logicalMinimum: 0,
+                logicalMaximum: 255,
+                physicalMinimum: 0,
+                physicalMaximum: 255,
+                strings: [],
+                stringMinimum: 0,
+                stringMaximum: 0,
+                designators: [],
+                designatorMinimum: 0,
+                designatorMaximum: 0,
+                isAbsolute: true,
+                isArray: false,
+                isBufferedBytes: false,
+                isConstant: false,
+                isLinear: true,
+                isRange: false,
+                isRelative: false,
+                isVolatile: false,
+                hasNull: false,
+                hasPreferredState: true,
+                isWrapped: false,
+              },
+            ],
+          },
+        ],
         featureReports: [],
       },
     ];
@@ -673,7 +817,7 @@ test("runtime UHCI: WebHID + WebUSB passthrough are guest-visible (NAK while pen
       productName: "Playwright HID",
       guestPort: 0,
       collections,
-      hasInterruptOut: false,
+      hasInterruptOut: true,
     });
 
     const hidResult = await runGuest({
@@ -742,6 +886,61 @@ test("runtime UHCI: WebHID + WebUSB passthrough are guest-visible (NAK while pen
     if (!hidInputSent) {
       throw new Error(`hid interrupt test did not observe NAK (hidNakObserved=${hidNakObserved})`);
     }
+
+    // -------------------------
+    // Phase 1c: Interrupt-OUT should enqueue an output report and the IO worker should forward it.
+    // -------------------------
+
+    const expectedHidOutputReport = [0x33];
+    hidSendReport = null;
+
+    const hidOutWorker = new Worker(guestUrl, { type: "module" });
+    const hidOutResultPromise = new Promise<any>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error("timeout waiting for hid OUT guest worker")), 20_000);
+      hidOutWorker.onmessage = (ev) => {
+        clearTimeout(timeout);
+        resolve(ev.data);
+      };
+      hidOutWorker.onerror = (err) => {
+        clearTimeout(timeout);
+        const e = err as any;
+        const message =
+          typeof e?.message === "string"
+            ? e.message
+            : typeof e?.error?.message === "string"
+              ? e.error.message
+              : String(err);
+        const filename = typeof e?.filename === "string" ? e.filename : "?";
+        const lineno = typeof e?.lineno === "number" ? e.lineno : "?";
+        const colno = typeof e?.colno === "number" ? e.colno : "?";
+        reject(new Error(`hid OUT guest worker error: ${message} (${filename}:${lineno}:${colno})`));
+      };
+    });
+
+    // Wait for the IO worker to forward `hid.sendReport` (guest->host output report).
+    const waitForSendReport = async () => {
+      const deadline = performance.now() + 10_000;
+      while (!hidSendReport && performance.now() < deadline) {
+        await sleep(5);
+      }
+      if (!hidSendReport) throw new Error("timeout waiting for hid.sendReport");
+    };
+
+    hidOutWorker.postMessage({
+      mode: "hidInterruptOut",
+      ioIpc: segments.ioIpc,
+      guestSab,
+      guestBase: views.guestLayout.guest_base,
+      guestSize: views.guestLayout.guest_size,
+      setup: { bmRequestType: 0x80, bRequest: 0x06, wValue: 0x0200, wIndex: 0, wLength: 34 },
+      inLen: 34,
+      forcedPortIndex: 0,
+      outData: expectedHidOutputReport,
+    });
+
+    // Race the guest-side completion with the host-side forwarding.
+    const hidOutResult = await hidOutResultPromise.finally(() => hidOutWorker.terminate());
+    await waitForSendReport();
 
     ioWorker.postMessage({ type: "hid.detach", deviceId: 1 });
 
@@ -846,6 +1045,9 @@ test("runtime UHCI: WebHID + WebUSB passthrough are guest-visible (NAK while pen
       hidResult,
       hidInterruptResult,
       expectedHidInputReport,
+      hidOutResult,
+      expectedHidOutputReport,
+      hidSendReport,
       webusbResult,
       usbActions: usbActions.slice(),
       expectedDeviceDescriptor,
@@ -861,6 +1063,9 @@ test("runtime UHCI: WebHID + WebUSB passthrough are guest-visible (NAK while pen
   if (result.hidInterruptResult?.type === "error") {
     throw new Error(String(result.hidInterruptResult.message));
   }
+  if (result.hidOutResult?.type === "error") {
+    throw new Error(String(result.hidOutResult.message));
+  }
 
   const hidData = (result.hidResult as { data: number[] }).data;
   expect(hidData.length).toBe(34);
@@ -870,6 +1075,12 @@ test("runtime UHCI: WebHID + WebUSB passthrough are guest-visible (NAK while pen
   // HID interrupt-IN should NAK until we inject an input report, then return the expected bytes.
   expect((result.hidInterruptResult as any).nakObserved).toBe(true);
   expect((result.hidInterruptResult as any).data).toEqual(result.expectedHidInputReport);
+
+  // HID interrupt-OUT should be forwarded to the host via `hid.sendReport`.
+  expect((result.hidSendReport as any)?.deviceId).toBe(1);
+  expect((result.hidSendReport as any)?.reportType).toBe("output");
+  expect((result.hidSendReport as any)?.reportId).toBe(0);
+  expect(Array.from((result.hidSendReport as any)?.data ?? [])).toEqual(result.expectedHidOutputReport);
 
   // WebUSB: should emit exactly one controlIn action and the guest TD should NAK until completion.
   expect(result.usbActions).toHaveLength(1);

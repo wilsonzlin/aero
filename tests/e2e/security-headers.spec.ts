@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test';
 
 import { canonicalSecurityHeaders } from '../../scripts/security_headers.mjs';
 
-const PREVIEW_ORIGIN = 'http://127.0.0.1:4173';
+const PREVIEW_ORIGIN = process.env.AERO_PLAYWRIGHT_PREVIEW_ORIGIN ?? 'http://127.0.0.1:4173';
 
 function normalizeHeaderKey(key: string): string {
   return key.toLowerCase();

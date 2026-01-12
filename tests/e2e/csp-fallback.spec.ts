@@ -1,7 +1,9 @@
 import { expect, test } from '@playwright/test';
 
+const CSP_ORIGIN = process.env.AERO_PLAYWRIGHT_CSP_ORIGIN ?? 'http://127.0.0.1:4180';
+
 test('strict CSP disables dynamic wasm compilation, app falls back and still runs', async ({ page }) => {
-  await page.goto('http://127.0.0.1:4180/csp/strict/?bench=1', { waitUntil: 'load' });
+  await page.goto(`${CSP_ORIGIN}/csp/strict/?bench=1`, { waitUntil: 'load' });
 
   await page.waitForFunction(() => (window as any).__aeroWasmJitCspPoc?.ready === true);
 
@@ -14,7 +16,7 @@ test('strict CSP disables dynamic wasm compilation, app falls back and still run
 });
 
 test('wasm-unsafe-eval enables dynamic wasm compilation on engines that implement it', async ({ page }, testInfo) => {
-  await page.goto('http://127.0.0.1:4180/csp/wasm-unsafe-eval/?bench=1', { waitUntil: 'load' });
+  await page.goto(`${CSP_ORIGIN}/csp/wasm-unsafe-eval/?bench=1`, { waitUntil: 'load' });
   await page.waitForFunction(() => (window as any).__aeroWasmJitCspPoc?.ready === true);
 
   const state = await page.evaluate(() => (window as any).__aeroWasmJitCspPoc);
