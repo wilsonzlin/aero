@@ -42,7 +42,7 @@ Run this once per checkout (sanity checks and prints activation instructions):
 
 ```bash
 # From repo root
-./scripts/agent-env-setup.sh
+bash ./scripts/agent-env-setup.sh
 ```
 
 > Troubleshooting: in some agent environments, the working tree can lose executable bits and/or be missing tracked fixtures.
@@ -76,23 +76,23 @@ If you hit this while running JS/TS tooling (for example `npm -w web run test:un
 
 ```bash
 # Try raising the cap first
-AERO_TIMEOUT=600 AERO_MEM_LIMIT=32G ./scripts/safe-run.sh npm -w web run test:unit
+AERO_TIMEOUT=600 AERO_MEM_LIMIT=32G bash ./scripts/safe-run.sh npm -w web run test:unit
 
 # If it still fails, disable RLIMIT_AS for that command (still keeps the timeout)
-AERO_TIMEOUT=600 AERO_MEM_LIMIT=unlimited ./scripts/safe-run.sh npm -w web run test:unit
+AERO_TIMEOUT=600 AERO_MEM_LIMIT=unlimited bash ./scripts/safe-run.sh npm -w web run test:unit
 
 # Alternative (no address-space limit, but keep a timeout):
-./scripts/with-timeout.sh 600 ./scripts/run_limited.sh --no-as -- npm -w web run test:unit
+bash ./scripts/with-timeout.sh 600 bash ./scripts/run_limited.sh --no-as -- npm -w web run test:unit
 ```
 
 ### Using `run_limited.sh` (Recommended)
 
 ```bash
 # Limit to 12GB virtual address space
-./scripts/run_limited.sh --as 12G -- cargo build --release --locked
+bash ./scripts/run_limited.sh --as 12G -- cargo build --release --locked
 
 # Or use safe-run.sh which combines timeout + memory limit
-./scripts/safe-run.sh cargo build --release --locked
+bash ./scripts/safe-run.sh cargo build --release --locked
 ```
 
 ### How it works
@@ -159,11 +159,11 @@ Processes hang. Network calls block. Locks deadlock. Without timeouts, a single 
 cargo build --locked  # Can hang forever
 
 # ALWAYS do this (use safe-run.sh for both timeout + memory limit):
-./scripts/safe-run.sh cargo build --locked
+bash ./scripts/safe-run.sh cargo build --locked
 
 # Or just timeout:
 timeout -k 10 600 cargo build --locked
-./scripts/with-timeout.sh 600 cargo build --locked
+bash ./scripts/with-timeout.sh 600 cargo build --locked
 ```
 
 ### The `-k` flag is critical
@@ -317,7 +317,7 @@ dmesg | tail -20 | grep -i oom
 Retry with:
 
 ```bash
-./scripts/run_limited.sh --as 12G -- cargo build --locked
+bash ./scripts/run_limited.sh --as 12G -- cargo build --locked
 ```
 
 ### Cargo says "Blocking waiting for file lock on package cache"
@@ -458,23 +458,23 @@ The `scripts/` directory contains:
 
 ```bash
 # One-time setup (validates environment, shows warnings)
-./scripts/agent-env-setup.sh
+bash ./scripts/agent-env-setup.sh
 
 # Activate environment in current shell
 source ./scripts/agent-env.sh
 
 # Run a build with full protection (RECOMMENDED)
-./scripts/safe-run.sh cargo build --release --locked
+bash ./scripts/safe-run.sh cargo build --release --locked
 
 # Override defaults
-AERO_TIMEOUT=1200 AERO_MEM_LIMIT=16G ./scripts/safe-run.sh cargo build --release --locked
+AERO_TIMEOUT=1200 AERO_MEM_LIMIT=16G bash ./scripts/safe-run.sh cargo build --release --locked
 
 # Just timeout (always use -k for SIGKILL fallback!)
 timeout -k 10 600 cargo test --locked
-./scripts/with-timeout.sh 600 cargo test --locked
+bash ./scripts/with-timeout.sh 600 cargo test --locked
 
 # Just memory limit (RLIMIT_AS)
-./scripts/run_limited.sh --as 12G -- cargo build --release --locked
+bash ./scripts/run_limited.sh --as 12G -- cargo build --release --locked
 ```
 
 
@@ -563,7 +563,7 @@ echo "[run] Starting: ${CMD[*]}"
 echo "[run] Timeout: ${TIMEOUT}s, Memory limit: $MEM_LIMIT"
 
 # Capture both stdout and stderr, with timeout and memory limit
-if ! AERO_TIMEOUT="$TIMEOUT" AERO_MEM_LIMIT="$MEM_LIMIT" ./scripts/safe-run.sh "${CMD[@]}" 2>&1 | tee build.log; then
+if ! AERO_TIMEOUT="$TIMEOUT" AERO_MEM_LIMIT="$MEM_LIMIT" bash ./scripts/safe-run.sh "${CMD[@]}" 2>&1 | tee build.log; then
     echo "[run] FAILED: ${CMD[*]}" >&2
     echo "[run] Last 50 lines of output:" >&2
     tail -50 build.log >&2
@@ -583,13 +583,13 @@ echo "[run] SUCCESS: ${CMD[*]}"
 
 ```bash
 # Build with all protections
-AERO_TIMEOUT=600 AERO_MEM_LIMIT=12G ./scripts/safe-run.sh cargo build --locked 2>&1 | tee build.log
+AERO_TIMEOUT=600 AERO_MEM_LIMIT=12G bash ./scripts/safe-run.sh cargo build --locked 2>&1 | tee build.log
 
 # Test with timeout (tests should be fast)
-./scripts/with-timeout.sh 300 cargo test --locked 2>&1 | tee test.log
+bash ./scripts/with-timeout.sh 300 cargo test --locked 2>&1 | tee test.log
 
 # npm with timeout (network can hang)
-./scripts/with-timeout.sh 300 npm ci 2>&1 | tee npm.log
+bash ./scripts/with-timeout.sh 300 npm ci 2>&1 | tee npm.log
 ```
 
 ### Recovering from Failures
