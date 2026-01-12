@@ -2756,6 +2756,99 @@ impl Machine {
     }
 
     // -------------------------------------------------------------------------
+    // Snapshot disk overlay refs (DISKS section)
+    // -------------------------------------------------------------------------
+
+    /// Stable `disk_id=0`: primary HDD (AHCI `SATA_AHCI_ICH9` port 0).
+    pub fn disk_id_primary_hdd() -> u32 {
+        aero_machine::Machine::DISK_ID_PRIMARY_HDD
+    }
+
+    /// Stable `disk_id=1`: install media / CD-ROM (IDE `IDE_PIIX3` secondary master ATAPI).
+    pub fn disk_id_install_media() -> u32 {
+        aero_machine::Machine::DISK_ID_INSTALL_MEDIA
+    }
+
+    /// Stable `disk_id=2`: optional IDE primary master ATA disk.
+    pub fn disk_id_ide_primary_master() -> u32 {
+        aero_machine::Machine::DISK_ID_IDE_PRIMARY_MASTER
+    }
+
+    /// Configure the snapshot overlay reference for `disk_id=0` (primary HDD).
+    pub fn set_ahci_port0_disk_overlay_ref(&mut self, base_image: &str, overlay_image: &str) {
+        self.inner
+            .set_ahci_port0_disk_overlay_ref(base_image, overlay_image);
+    }
+
+    /// Clear the snapshot overlay reference for `disk_id=0` (primary HDD).
+    pub fn clear_ahci_port0_disk_overlay_ref(&mut self) {
+        self.inner.clear_ahci_port0_disk_overlay_ref();
+    }
+
+    /// Configure the snapshot overlay reference for `disk_id=1` (install media / CD-ROM).
+    pub fn set_ide_secondary_master_atapi_overlay_ref(
+        &mut self,
+        base_image: &str,
+        overlay_image: &str,
+    ) {
+        self.inner
+            .set_ide_secondary_master_atapi_overlay_ref(base_image, overlay_image);
+    }
+
+    /// Clear the snapshot overlay reference for `disk_id=1` (install media / CD-ROM).
+    pub fn clear_ide_secondary_master_atapi_overlay_ref(&mut self) {
+        self.inner.clear_ide_secondary_master_atapi_overlay_ref();
+    }
+
+    /// Configure the snapshot overlay reference for `disk_id=2` (optional IDE primary master ATA).
+    pub fn set_ide_primary_master_ata_overlay_ref(&mut self, base_image: &str, overlay_image: &str) {
+        self.inner
+            .set_ide_primary_master_ata_overlay_ref(base_image, overlay_image);
+    }
+
+    /// Clear the snapshot overlay reference for `disk_id=2` (optional IDE primary master ATA).
+    pub fn clear_ide_primary_master_ata_overlay_ref(&mut self) {
+        self.inner.clear_ide_primary_master_ata_overlay_ref();
+    }
+
+    /// Take disk overlay refs captured from the most recent snapshot restore.
+    ///
+    /// Storage controller snapshots intentionally drop any attached host backends during restore;
+    /// the JS host/coordinator is responsible for reopening and reattaching the referenced
+    /// disks/ISOs based on these refs.
+    ///
+    /// Returns `null` if no overlays were captured.
+    #[cfg(target_arch = "wasm32")]
+    pub fn take_restored_disk_overlays(&mut self) -> JsValue {
+        let Some(overlays) = self.inner.take_restored_disk_overlays() else {
+            return JsValue::NULL;
+        };
+
+        let arr = js_sys::Array::new();
+        for disk in overlays.disks {
+            let obj = Object::new();
+            let _ = Reflect::set(
+                &obj,
+                &JsValue::from_str("disk_id"),
+                &JsValue::from_f64(disk.disk_id as f64),
+            );
+            let _ = Reflect::set(
+                &obj,
+                &JsValue::from_str("base_image"),
+                &JsValue::from_str(&disk.base_image),
+            );
+            let _ = Reflect::set(
+                &obj,
+                &JsValue::from_str("overlay_image"),
+                &JsValue::from_str(&disk.overlay_image),
+            );
+            arr.push(obj.as_ref());
+        }
+
+        arr.into()
+    }
+
+    // -------------------------------------------------------------------------
     // Snapshots (canonical machine)
     // -------------------------------------------------------------------------
 
