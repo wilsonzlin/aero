@@ -162,4 +162,46 @@ test("AudioWorklet producer does not burst after worker-VM snapshot restore", as
   // The producer should not attempt to "catch up" by writing seconds worth of frames immediately after restore.
   // Allow a small amount of slop (one render quantum worth of frames) for scheduling jitter.
   expect(deltaOverrun).toBeLessThanOrEqual(Math.min(128, beforeRestore!.capacity));
+
+  // Ensure the producer resumes after restore (write index advances) and continues writing real (non-silent) audio.
+  await page.waitForFunction(
+    (baselineWrite) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const out = (globalThis as any).__aeroAudioOutputWorker;
+      if (!out?.enabled) return false;
+      const ring = out.ringBuffer as { writeIndex: Uint32Array };
+      const write = Atomics.load(ring.writeIndex, 0) >>> 0;
+      return ((write - (baselineWrite as number)) >>> 0) > 0;
+    },
+    afterRestore!.write,
+    { timeout: 60_000 },
+  );
+
+  await page.waitForFunction(
+    () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const out = (globalThis as any).__aeroAudioOutputWorker;
+      if (!out?.ringBuffer?.samples || !out?.ringBuffer?.writeIndex) return false;
+      const samples: Float32Array = out.ringBuffer.samples;
+      const writeIndex: Uint32Array = out.ringBuffer.writeIndex;
+      const cc = out.ringBuffer.channelCount | 0;
+      const cap = out.ringBuffer.capacityFrames | 0;
+      if (cc <= 0 || cap <= 0) return false;
+      const write = Atomics.load(writeIndex, 0) >>> 0;
+      const framesToInspect = Math.min(1024, cap);
+      const startFrame = (write - framesToInspect) >>> 0;
+      let maxAbs = 0;
+      for (let i = 0; i < framesToInspect; i++) {
+        const frame = (startFrame + i) % cap;
+        const base = frame * cc;
+        for (let c = 0; c < cc; c++) {
+          const s = samples[base + c] ?? 0;
+          const a = Math.abs(s);
+          if (a > maxAbs) maxAbs = a;
+        }
+      }
+      return maxAbs > 0.01;
+    },
+    { timeout: 10_000 },
+  );
 });
