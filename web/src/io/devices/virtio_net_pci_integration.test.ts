@@ -740,6 +740,11 @@ describe("io/devices/virtio-net (pci bridge integration)", () => {
       // -----------------------------------------------------------------------------------------
       const hostFeatures = ioReadU32(VIRTIO_PCI_LEGACY_HOST_FEATURES);
       expect(hostFeatures).not.toBe(0xffff_ffff);
+      expect((hostFeatures & VIRTIO_NET_F_MAC) !== 0).toBe(true);
+      expect((hostFeatures & VIRTIO_NET_F_STATUS) !== 0).toBe(true);
+      expect((hostFeatures & VIRTIO_F_RING_INDIRECT_DESC) !== 0).toBe(true);
+      expect((hostFeatures & VIRTIO_NET_F_CSUM) !== 0).toBe(false);
+      expect((hostFeatures & VIRTIO_NET_F_MRG_RXBUF) !== 0).toBe(false);
       ioWriteU32(VIRTIO_PCI_LEGACY_GUEST_FEATURES, hostFeatures);
 
       // ACKNOWLEDGE | DRIVER.
@@ -805,6 +810,7 @@ describe("io/devices/virtio-net (pci bridge integration)", () => {
       expect(guestReadU32(txUsed + 8)).toBe(0);
 
       const isrAfterTx = ioReadU8(VIRTIO_PCI_LEGACY_ISR);
+      expect((isrAfterTx & 0x01) !== 0).toBe(true);
       expect(isrAfterTx & 0xfc).toBe(0);
       expect(ioReadU8(VIRTIO_PCI_LEGACY_ISR)).toBe(0);
 
@@ -849,6 +855,7 @@ describe("io/devices/virtio-net (pci bridge integration)", () => {
       expect(netRxRing.tryPop()).toBeNull();
 
       const isrAfterRx = ioReadU8(VIRTIO_PCI_LEGACY_ISR);
+      expect((isrAfterRx & 0x01) !== 0).toBe(true);
       expect(isrAfterRx & 0xfc).toBe(0);
       expect(ioReadU8(VIRTIO_PCI_LEGACY_ISR)).toBe(0);
     } finally {
