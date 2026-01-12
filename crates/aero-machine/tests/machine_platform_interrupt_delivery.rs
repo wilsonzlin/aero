@@ -290,3 +290,67 @@ fn machine_i8042_keyboard_input_raises_irq1_and_wakes_hlt_cpu() {
         m.read_physical_u8(u64::from(flag_addr))
     );
 }
+
+#[test]
+fn machine_i8042_mouse_motion_raises_irq12_and_wakes_hlt_cpu() {
+    // IRQ12 with PIC base 0x28 => vector 0x2C.
+    let vector = 0x2Cu8;
+    let flag_addr = 0x0503u16;
+    let flag_value = 0xDDu8;
+
+    let boot = build_real_mode_interrupt_wait_boot_sector(vector, flag_addr, flag_value);
+
+    let mut cfg = pc_machine_config();
+    cfg.enable_i8042 = true;
+    let mut m = Machine::new(cfg).unwrap();
+    m.set_disk_image(boot.to_vec()).unwrap();
+    m.reset();
+
+    run_until_halt(&mut m);
+
+    // Enable PS/2 mouse data reporting *without* enabling IRQ12 yet. This avoids waking the CPU
+    // due to the mouse ACK byte (0xFA) produced by the enable command itself.
+    m.io_write(0x64, 1, 0xD4); // i8042: next data write goes to mouse
+    m.io_write(0x60, 1, 0xF4); // mouse: enable data reporting (ACK 0xFA)
+    let ack = m.io_read(0x60, 1) as u8;
+    assert_eq!(ack, 0xFA, "expected mouse ACK after enabling data reporting");
+
+    // Enable i8042 IRQ12 generation (command byte bit 1) while keeping the default settings
+    // (IRQ1 enabled + translation enabled).
+    m.io_write(0x64, 1, 0x60); // i8042: write command byte
+    m.io_write(0x60, 1, 0x47); // default 0x45 | IRQ12 enable (bit 1)
+
+    // Configure PIC offsets and unmask cascade (IRQ2) + IRQ12 so the mouse IRQ can be delivered.
+    {
+        let interrupts = m.platform_interrupts().unwrap();
+        let mut ints = interrupts.borrow_mut();
+        ints.pic_mut().set_offsets(0x20, 0x28);
+        ints.pic_mut().set_masked(2, false);
+        ints.pic_mut().set_masked(12, false);
+    }
+
+    // Inject relative mouse motion. The i8042 model should enqueue a PS/2 packet and pulse IRQ12,
+    // waking the halted CPU and delivering vector 0x2C.
+    m.inject_mouse_motion(1, 1, 0);
+
+    {
+        let interrupts = m.platform_interrupts().unwrap();
+        assert_eq!(
+            interrupts.borrow().get_pending(),
+            Some(vector),
+            "i8042 mouse motion did not latch IRQ12 into the PIC"
+        );
+    }
+
+    for _ in 0..10 {
+        let _ = m.run_slice(256);
+        if m.read_physical_u8(u64::from(flag_addr)) == flag_value {
+            return;
+        }
+    }
+
+    panic!(
+        "i8042 IRQ12 interrupt handler did not run (flag=0x{:02x})",
+        m.read_physical_u8(u64::from(flag_addr))
+    );
+}
