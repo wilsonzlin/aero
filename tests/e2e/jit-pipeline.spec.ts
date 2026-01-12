@@ -1,7 +1,14 @@
 import { expect, test } from '@playwright/test';
+import { existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 const PREVIEW_ORIGIN = process.env.AERO_PLAYWRIGHT_PREVIEW_ORIGIN ?? 'http://127.0.0.1:4173';
 const ENTRY_RIP = 0x1000;
+
+const THREADED_AERO_WASM_BINARY = fileURLToPath(new URL('../../web/src/wasm/pkg-threaded/aero_wasm_bg.wasm', import.meta.url));
+const HAS_THREADED_AERO_WASM_BINARY = existsSync(THREADED_AERO_WASM_BINARY);
+const JIT_WASM_BINARY = fileURLToPath(new URL('../../web/src/wasm/pkg-jit-single/aero_jit_wasm_bg.wasm', import.meta.url));
+const HAS_JIT_WASM_BINARY = existsSync(JIT_WASM_BINARY);
 
 function getPath(obj: unknown, path: string): unknown {
   if (!obj || typeof obj !== 'object') return undefined;
@@ -165,6 +172,14 @@ function hasCompiledRip(result: unknown, rip: number): boolean {
 
 test('Tier-1 JIT pipeline compiles, installs, and executes a block', async ({ page, browserName }) => {
   test.skip(browserName !== 'chromium', 'Smoke test currently targets chromium WASM threads support');
+  test.skip(
+    !HAS_THREADED_AERO_WASM_BINARY,
+    'Threaded aero-wasm package missing. Build it with `npm -w web run wasm:build:threaded`.',
+  );
+  test.skip(
+    !HAS_JIT_WASM_BINARY,
+    'aero-jit-wasm package missing. Build it with `npm -w web run wasm:build` (or `npm -w web run wasm:build:single`).',
+  );
 
   await page.goto(`${PREVIEW_ORIGIN}/`, { waitUntil: 'load' });
 
