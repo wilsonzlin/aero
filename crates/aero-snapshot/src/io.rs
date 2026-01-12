@@ -119,7 +119,9 @@ mod tests {
     fn read_exact_into_vec_allocation_failure_returns_error() {
         let mut cursor = Cursor::new(Vec::new());
         let mut buf = Vec::new();
-        let err = cursor.read_exact_into_vec(&mut buf, usize::MAX).unwrap_err();
+        let err = cursor
+            .read_exact_into_vec(&mut buf, usize::MAX)
+            .unwrap_err();
         assert!(matches!(err, SnapshotError::OutOfMemory { .. }));
     }
 }

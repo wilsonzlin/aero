@@ -103,7 +103,9 @@ fn encode_full<W: Write>(
     let mut buf = Vec::new();
     let chunk_size_usize = opts.chunk_size as usize;
     buf.try_reserve_exact(chunk_size_usize)
-        .map_err(|_| SnapshotError::OutOfMemory { len: chunk_size_usize })?;
+        .map_err(|_| SnapshotError::OutOfMemory {
+            len: chunk_size_usize,
+        })?;
     buf.resize(chunk_size_usize, 0);
     let mut compressed = Vec::new();
     if opts.compression == Compression::Lz4 {
@@ -169,7 +171,9 @@ fn encode_dirty<W: Write>(
     let mut buf = Vec::new();
     let page_size_usize = opts.page_size as usize;
     buf.try_reserve_exact(page_size_usize)
-        .map_err(|_| SnapshotError::OutOfMemory { len: page_size_usize })?;
+        .map_err(|_| SnapshotError::OutOfMemory {
+            len: page_size_usize,
+        })?;
     buf.resize(page_size_usize, 0);
     let mut compressed = Vec::new();
     if opts.compression == Compression::Lz4 {
