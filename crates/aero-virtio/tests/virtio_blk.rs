@@ -13,6 +13,7 @@ use aero_virtio::pci::{
     VIRTIO_STATUS_ACKNOWLEDGE, VIRTIO_STATUS_DRIVER, VIRTIO_STATUS_DRIVER_OK,
     VIRTIO_STATUS_FEATURES_OK,
 };
+use aero_platform::interrupts::msi::MsiMessage;
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -76,22 +77,25 @@ fn parse_caps(dev: &mut VirtioPciDevice) -> Caps {
 
     let mut ptr = cfg[0x34] as usize;
     while ptr != 0 {
-        assert_eq!(cfg[ptr], 0x09);
+        let cap_id = cfg[ptr];
         let next = cfg[ptr + 1] as usize;
-        let cap_len = cfg[ptr + 2] as usize;
-        let cfg_type = cfg[ptr + 3];
-        let offset = u32::from_le_bytes(cfg[ptr + 8..ptr + 12].try_into().unwrap()) as u64;
-        match cfg_type {
-            VIRTIO_PCI_CAP_COMMON_CFG => caps.common = offset,
-            VIRTIO_PCI_CAP_NOTIFY_CFG => {
-                caps.notify = offset;
-                caps.notify_mult = u32::from_le_bytes(cfg[ptr + 16..ptr + 20].try_into().unwrap());
+        if cap_id == 0x09 {
+            let cap_len = cfg[ptr + 2] as usize;
+            let cfg_type = cfg[ptr + 3];
+            let offset = u32::from_le_bytes(cfg[ptr + 8..ptr + 12].try_into().unwrap()) as u64;
+            match cfg_type {
+                VIRTIO_PCI_CAP_COMMON_CFG => caps.common = offset,
+                VIRTIO_PCI_CAP_NOTIFY_CFG => {
+                    caps.notify = offset;
+                    caps.notify_mult =
+                        u32::from_le_bytes(cfg[ptr + 16..ptr + 20].try_into().unwrap());
+                }
+                VIRTIO_PCI_CAP_ISR_CFG => caps.isr = offset,
+                VIRTIO_PCI_CAP_DEVICE_CFG => caps.device = offset,
+                _ => {}
             }
-            VIRTIO_PCI_CAP_ISR_CFG => caps.isr = offset,
-            VIRTIO_PCI_CAP_DEVICE_CFG => caps.device = offset,
-            _ => {}
+            assert!(cap_len >= 16);
         }
-        assert!(cap_len >= 16);
         ptr = next;
     }
 
@@ -164,6 +168,7 @@ type Setup = (
 struct TestIrq {
     legacy_count: Rc<Cell<u64>>,
     legacy_level: Rc<Cell<bool>>,
+    msix_messages: Rc<RefCell<Vec<MsiMessage>>>,
 }
 
 impl TestIrq {
@@ -173,6 +178,10 @@ impl TestIrq {
 
     fn legacy_level(&self) -> bool {
         self.legacy_level.get()
+    }
+
+    fn take_msix_messages(&self) -> Vec<MsiMessage> {
+        core::mem::take(&mut *self.msix_messages.borrow_mut())
     }
 }
 
@@ -187,8 +196,8 @@ impl InterruptSink for TestIrq {
         self.legacy_level.set(false);
     }
 
-    fn signal_msix(&mut self, _vector: u16) {
-        // Not exercised by these tests.
+    fn signal_msix(&mut self, message: MsiMessage) {
+        self.msix_messages.borrow_mut().push(message);
     }
 }
 
@@ -499,6 +508,98 @@ fn virtio_blk_flush_calls_backend_flush() {
     assert_eq!(mem.get_slice(status, 1).unwrap()[0], 0);
     assert_eq!(flushes.get(), 1);
     assert_eq!(read_u32_le(&mem, USED_RING + 8).unwrap(), 0);
+}
+
+#[test]
+fn virtio_blk_msix_queue_interrupts_use_programmed_msix_message_and_do_not_fallback_to_intx() {
+    let irq0 = TestIrq::default();
+    let (mut dev, caps, mut mem, _backing, flushes, irq0) = setup_with_irq(irq0);
+
+    // Find MSI-X capability in PCI config space.
+    let mut cfg = [0u8; 256];
+    dev.config_read(0, &mut cfg);
+    let mut ptr = cfg[0x34] as usize;
+    let mut msix_cap_offset = None;
+    while ptr != 0 {
+        if cfg[ptr] == 0x11 {
+            msix_cap_offset = Some(ptr as u16);
+            break;
+        }
+        ptr = cfg[ptr + 1] as usize;
+    }
+    let msix_cap_offset = msix_cap_offset.expect("missing MSI-X capability");
+
+    // Enable MSI-X.
+    let msg_ctl = u16::from_le_bytes([
+        cfg[msix_cap_offset as usize + 0x02],
+        cfg[msix_cap_offset as usize + 0x03],
+    ]);
+    dev.config_write(msix_cap_offset + 0x02, &(msg_ctl | (1 << 15)).to_le_bytes());
+
+    // MSI-X Table register: BIR + offset.
+    let table = u32::from_le_bytes(
+        cfg[msix_cap_offset as usize + 0x04..msix_cap_offset as usize + 0x08]
+            .try_into()
+            .unwrap(),
+    );
+    assert_eq!(table & 0x7, 0, "MSI-X table must live in BAR0");
+    let table_offset = (table & !0x7) as u64;
+
+    // Program table entry 1 (queue 0 vector: index 1 because index 0 is the config vector).
+    let entry = table_offset + 16;
+    bar_write_u32(&mut dev, entry + 0x00, 0xfee0_0000);
+    bar_write_u32(&mut dev, entry + 0x04, 0);
+    bar_write_u32(&mut dev, entry + 0x08, 0x0045);
+    bar_write_u32(&mut dev, entry + 0x0c, 0); // unmasked
+
+    // Build a FLUSH request so completion is observable via `flushes`.
+    let header = 0x7000;
+    let status = 0x9000;
+
+    write_u32_le(&mut mem, header, VIRTIO_BLK_T_FLUSH).unwrap();
+    write_u32_le(&mut mem, header + 4, 0).unwrap();
+    write_u64_le(&mut mem, header + 8, 0).unwrap();
+    mem.write(status, &[0xff]).unwrap();
+
+    write_desc(&mut mem, DESC_TABLE, 0, header, 16, 0x0001, 1);
+    write_desc(&mut mem, DESC_TABLE, 1, status, 1, 0x0002, 0);
+
+    // Initialise rings (flags/idx).
+    write_u16_le(&mut mem, AVAIL_RING, 0).unwrap();
+    write_u16_le(&mut mem, AVAIL_RING + 2, 1).unwrap();
+    write_u16_le(&mut mem, AVAIL_RING + 4, 0).unwrap();
+    write_u16_le(&mut mem, USED_RING, 0).unwrap();
+    write_u16_le(&mut mem, USED_RING + 2, 0).unwrap();
+
+    // With MSI-X enabled but no queue vector assigned, virtio-pci must suppress interrupts and
+    // not fall back to legacy INTx.
+    kick_queue0(&mut dev, &caps, &mut mem);
+    assert_eq!(mem.get_slice(status, 1).unwrap()[0], 0);
+    assert_eq!(flushes.get(), 1);
+    assert_eq!(irq0.legacy_count(), 0);
+    assert!(!irq0.legacy_level());
+    assert!(irq0.take_msix_messages().is_empty());
+
+    // Assign the queue MSI-X vector and submit another request; now the MSI message should fire.
+    bar_write_u16(&mut dev, caps.common + 0x16, 0); // queue_select
+    bar_write_u16(&mut dev, caps.common + 0x1a, 1); // queue_msix_vector
+
+    mem.write(status, &[0xff]).unwrap();
+    write_u16_le(&mut mem, AVAIL_RING + 4 + 2, 0).unwrap(); // ring[1] = head 0
+    write_u16_le(&mut mem, AVAIL_RING + 2, 2).unwrap(); // idx = 2
+
+    kick_queue0(&mut dev, &caps, &mut mem);
+    assert_eq!(mem.get_slice(status, 1).unwrap()[0], 0);
+    assert_eq!(flushes.get(), 2);
+    assert_eq!(irq0.legacy_count(), 0);
+    assert!(!irq0.legacy_level());
+    assert_eq!(
+        irq0.take_msix_messages(),
+        vec![MsiMessage {
+            address: 0xfee0_0000,
+            data: 0x0045,
+        }]
+    );
 }
 
 #[test]

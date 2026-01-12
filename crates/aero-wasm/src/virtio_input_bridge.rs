@@ -8,7 +8,8 @@
 
 use aero_virtio::devices::input::{VirtioInput, VirtioInputDeviceKind};
 use aero_virtio::memory::GuestMemory;
-use aero_virtio::pci::{InterruptSink, VIRTIO_STATUS_DRIVER_OK, VirtioPciDevice};
+use aero_virtio::pci::{InterruptSink, VirtioPciDevice, VIRTIO_STATUS_DRIVER_OK};
+use aero_platform::interrupts::msi::MsiMessage;
 use std::cell::Cell;
 use std::rc::Rc;
 
@@ -68,7 +69,7 @@ impl InterruptSink for InterruptTracker {
         self.asserted.set(false);
     }
 
-    fn signal_msix(&mut self, _vector: u16) {
+    fn signal_msix(&mut self, _message: MsiMessage) {
         // The web runtime currently wires up INTx; keep basic accounting for observability.
         self.msix_count.set(self.msix_count.get().saturating_add(1));
     }

@@ -2,7 +2,8 @@ use crate::devices::VirtioDevice;
 use crate::memory::{read_u16_le, GuestMemory};
 use crate::queue::{PoppedDescriptorChain, VirtQueue, VirtQueueConfig};
 use aero_devices::pci::capabilities::VendorSpecificCapability;
-use aero_devices::pci::{PciBarDefinition, PciConfigSpace, PciInterruptPin, PciSubsystemIds};
+use aero_devices::pci::{MsixCapability, PciBarDefinition, PciConfigSpace, PciInterruptPin, PciSubsystemIds};
+use aero_platform::interrupts::msi::MsiMessage;
 use core::any::Any;
 
 use aero_io_snapshot::io::state::{
@@ -69,14 +70,14 @@ enum TransportMode {
 #[derive(Debug, Default, Clone)]
 pub struct InterruptLog {
     pub legacy_irq_count: u64,
-    pub msix_vectors: Vec<u16>,
+    pub msix_messages: Vec<MsiMessage>,
 }
 
 /// A sink for interrupts produced by virtio devices.
 pub trait InterruptSink {
     fn raise_legacy_irq(&mut self);
     fn lower_legacy_irq(&mut self);
-    fn signal_msix(&mut self, vector: u16);
+    fn signal_msix(&mut self, message: MsiMessage);
 }
 
 /// A very small virtio-pci implementation (modern capabilities + split virtqueues).
@@ -346,6 +347,28 @@ impl VirtioPciDevice {
             data.fill(0);
             return;
         }
+
+        // MSI-X table / PBA live in BAR0 and must be accessible independently of virtio transport
+        // mode. Handle them before dispatching to virtio capability regions.
+        if let Some(msix) = self.config.capability_mut::<MsixCapability>() {
+            if msix.table_bir() == 0 {
+                let base = u64::from(msix.table_offset());
+                let end = base.saturating_add(msix.table_len_bytes() as u64);
+                if offset >= base && offset < end {
+                    msix.table_read(offset - base, data);
+                    return;
+                }
+            }
+            if msix.pba_bir() == 0 {
+                let base = u64::from(msix.pba_offset());
+                let end = base.saturating_add(msix.pba_len_bytes() as u64);
+                if offset >= base && offset < end {
+                    msix.pba_read(offset - base, data);
+                    return;
+                }
+            }
+        }
+
         if offset >= self.bar0_common_offset && offset < self.bar0_common_offset + 0x100 {
             self.common_cfg_read(offset - self.bar0_common_offset, data);
         } else if offset >= self.bar0_isr_offset && offset < self.bar0_isr_offset + 0x20 {
@@ -370,6 +393,27 @@ impl VirtioPciDevice {
         if offset >= self.bar0_size {
             return;
         }
+
+        // MSI-X table / PBA are PCI-level and are not subject to the virtio transport-mode lock.
+        if let Some(msix) = self.config.capability_mut::<MsixCapability>() {
+            if msix.table_bir() == 0 {
+                let base = u64::from(msix.table_offset());
+                let end = base.saturating_add(msix.table_len_bytes() as u64);
+                if offset >= base && offset < end {
+                    msix.table_write(offset - base, data);
+                    return;
+                }
+            }
+            if msix.pba_bir() == 0 {
+                let base = u64::from(msix.pba_offset());
+                let end = base.saturating_add(msix.pba_len_bytes() as u64);
+                if offset >= base && offset < end {
+                    msix.pba_write(offset - base, data);
+                    return;
+                }
+            }
+        }
+
         if !self.lock_transport_mode(TransportMode::Modern, offset, data) {
             return;
         }
@@ -560,6 +604,28 @@ impl VirtioPciDevice {
         self.device.device_features()
     }
 
+    fn msix_enabled(&self) -> bool {
+        self.config
+            .capability::<MsixCapability>()
+            .is_some_and(|cap| cap.enabled())
+    }
+
+    fn sanitize_msix_vector(&self, vector: u16) -> u16 {
+        if vector == 0xffff {
+            return 0xffff;
+        }
+        let Some(msix) = self.config.capability::<MsixCapability>() else {
+            return 0xffff;
+        };
+        if !msix.enabled() {
+            return 0xffff;
+        }
+        if vector >= msix.table_size() {
+            return 0xffff;
+        }
+        vector
+    }
+
     fn negotiated_event_idx(&self) -> bool {
         (self.negotiated_features & VIRTIO_F_RING_EVENT_IDX) != 0
     }
@@ -655,6 +721,32 @@ impl VirtioPciDevice {
             cfg.add_capability(Box::new(VendorSpecificCapability::new(
                 VIRTIO_CAP_DEVICE.to_vec(),
             )));
+
+            // MSI-X capability + table (required for modern virtio drivers on Windows 7).
+            //
+            // We expose one vector for config changes plus one vector per virtqueue.
+            // The table + PBA live inside BAR0 in an unused region after the device-specific config
+            // window.
+            const MSIX_TABLE_BAR0_OFFSET: u64 = 0x3100;
+            const MSIX_ENTRY_SIZE: u64 = 16;
+            let table_size = u16::try_from(self.queues.len().saturating_add(1)).unwrap_or(u16::MAX);
+            let table_bytes = u64::from(table_size).saturating_mul(MSIX_ENTRY_SIZE);
+            let pba_offset = align_up(MSIX_TABLE_BAR0_OFFSET.saturating_add(table_bytes), 8);
+            let pba_bytes = ((u64::from(table_size).saturating_add(63)) / 64).saturating_mul(8);
+            let msix_end = pba_offset.saturating_add(pba_bytes);
+            assert!(
+                msix_end <= self.bar0_size,
+                "virtio-pci BAR0 too small for MSI-X table: end=0x{msix_end:x} bar0_size=0x{:x}",
+                self.bar0_size
+            );
+
+            cfg.add_capability(Box::new(MsixCapability::new(
+                table_size,
+                0,
+                u32::try_from(MSIX_TABLE_BAR0_OFFSET).unwrap(),
+                0,
+                u32::try_from(pba_offset).unwrap(),
+            )));
         }
 
         self.config = cfg;
@@ -676,7 +768,7 @@ impl VirtioPciDevice {
             _ => 0,
         };
         buf[12..16].copy_from_slice(&drf.to_le_bytes());
-        buf[16..18].copy_from_slice(&self.msix_config_vector.to_le_bytes());
+        buf[16..18].copy_from_slice(&self.sanitize_msix_vector(self.msix_config_vector).to_le_bytes());
         buf[18..20].copy_from_slice(&(self.queues.len() as u16).to_le_bytes());
         buf[20] = self.device_status;
         buf[21] = self.config_generation;
@@ -686,7 +778,7 @@ impl VirtioPciDevice {
             // Contract v1 fixes queue sizes; `queue_size` is treated as read-only and always
             // returns the maximum supported size.
             buf[24..26].copy_from_slice(&q.max_size.to_le_bytes());
-            buf[26..28].copy_from_slice(&q.msix_vector.to_le_bytes());
+            buf[26..28].copy_from_slice(&self.sanitize_msix_vector(q.msix_vector).to_le_bytes());
             buf[28..30].copy_from_slice(&(q.enable as u16).to_le_bytes());
             buf[30..32].copy_from_slice(&q.notify_off.to_le_bytes());
             buf[32..40].copy_from_slice(&q.desc_addr.to_le_bytes());
@@ -717,7 +809,10 @@ impl VirtioPciDevice {
                     _ => {}
                 }
             }
-            (0x10, 2) => self.msix_config_vector = u16::from_le_bytes(data.try_into().unwrap()),
+            (0x10, 2) => {
+                let vec = u16::from_le_bytes(data.try_into().unwrap());
+                self.msix_config_vector = self.sanitize_msix_vector(vec);
+            }
             (0x14, 1) => {
                 let new_status = data[0];
                 if new_status == 0 {
@@ -731,8 +826,10 @@ impl VirtioPciDevice {
             }
             (0x16, 2) => self.queue_select = u16::from_le_bytes(data.try_into().unwrap()),
             (0x1a, 2) => {
+                let vec = u16::from_le_bytes(data.try_into().unwrap());
+                let vec = self.sanitize_msix_vector(vec);
                 if let Some(q) = self.selected_queue_mut() {
-                    q.msix_vector = u16::from_le_bytes(data.try_into().unwrap());
+                    q.msix_vector = vec;
                 }
             }
             (0x1c, 2) => {
@@ -970,12 +1067,25 @@ impl VirtioPciDevice {
             .get(queue_index as usize)
             .map(|q| q.msix_vector)
             .unwrap_or(0xffff);
-        if vec != 0xffff {
-            self.interrupts.signal_msix(vec);
-        } else {
-            self.legacy_irq_pending = true;
-            self.sync_legacy_irq_line();
+
+        // When MSI-X is enabled, virtio-pci uses MSI-X exclusively. If no vector is assigned (or
+        // the entry is masked), do not fall back to INTx: modern Windows drivers expect interrupts
+        // to be suppressed until vectors are programmed.
+        if self.msix_enabled() {
+            if vec != 0xffff {
+                let msg = self
+                    .config
+                    .capability_mut::<MsixCapability>()
+                    .and_then(|msix| msix.trigger(vec));
+                if let Some(msg) = msg {
+                    self.interrupts.signal_msix(msg);
+                }
+            }
+            return;
         }
+
+        self.legacy_irq_pending = true;
+        self.sync_legacy_irq_line();
     }
 
     fn sync_legacy_irq_line(&mut self) {
@@ -1270,8 +1380,8 @@ impl InterruptSink for InterruptLog {
         // level-triggered: no-op for the log.
     }
 
-    fn signal_msix(&mut self, vector: u16) {
-        self.msix_vectors.push(vector);
+    fn signal_msix(&mut self, message: MsiMessage) {
+        self.msix_messages.push(message);
     }
 }
 
@@ -1394,7 +1504,7 @@ mod tests {
     impl InterruptSink for NoopInterrupts {
         fn raise_legacy_irq(&mut self) {}
         fn lower_legacy_irq(&mut self) {}
-        fn signal_msix(&mut self, _vector: u16) {}
+        fn signal_msix(&mut self, _message: MsiMessage) {}
     }
 
     struct CountingDevice {

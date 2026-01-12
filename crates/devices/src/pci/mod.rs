@@ -4,6 +4,7 @@ pub mod capabilities;
 pub mod config;
 pub mod irq_router;
 pub mod msi;
+pub mod msix;
 pub mod profile;
 
 mod acpi;
@@ -31,6 +32,7 @@ pub use irq_router::{
     GsiLevelSink, IoApicPicMirrorSink, PciIntxRouter, PciIntxRouterConfig, PicIrqLevelSink,
 };
 pub use msi::MsiCapability;
+pub use msix::MsixCapability;
 pub use platform::{PciHostBridge, PciIsaBridge, PciPlatform};
 pub use ports::{
     register_pci_config_ports, PciConfigPort, PciConfigPorts, SharedPciConfigPorts,

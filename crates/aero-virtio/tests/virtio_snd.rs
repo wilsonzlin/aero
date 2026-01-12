@@ -13,6 +13,7 @@ use aero_virtio::pci::{
     VIRTIO_STATUS_ACKNOWLEDGE, VIRTIO_STATUS_DRIVER, VIRTIO_STATUS_DRIVER_OK,
     VIRTIO_STATUS_FEATURES_OK,
 };
+use aero_platform::interrupts::msi::MsiMessage;
 use aero_virtio::queue::{VIRTQ_DESC_F_NEXT, VIRTQ_DESC_F_WRITE};
 
 use std::cell::RefCell;
@@ -64,7 +65,7 @@ impl InterruptSink for SharedLegacyIrq {
         state.asserted = false;
     }
 
-    fn signal_msix(&mut self, _vector: u16) {}
+    fn signal_msix(&mut self, _message: MsiMessage) {}
 }
 
 #[derive(Default)]
@@ -83,19 +84,24 @@ fn parse_caps(dev: &mut VirtioPciDevice) -> Caps {
 
     let mut ptr = cfg[0x34] as usize;
     while ptr != 0 {
-        assert_eq!(cfg[ptr], 0x09);
+        let cap_id = cfg[ptr];
         let next = cfg[ptr + 1] as usize;
-        let cfg_type = cfg[ptr + 3];
-        let offset = u32::from_le_bytes(cfg[ptr + 8..ptr + 12].try_into().unwrap()) as u64;
-        match cfg_type {
-            VIRTIO_PCI_CAP_COMMON_CFG => caps.common = offset,
-            VIRTIO_PCI_CAP_NOTIFY_CFG => {
-                caps.notify = offset;
-                caps.notify_mult = u32::from_le_bytes(cfg[ptr + 16..ptr + 20].try_into().unwrap());
+        if cap_id == 0x09 {
+            let cap_len = cfg[ptr + 2] as usize;
+            let cfg_type = cfg[ptr + 3];
+            let offset = u32::from_le_bytes(cfg[ptr + 8..ptr + 12].try_into().unwrap()) as u64;
+            match cfg_type {
+                VIRTIO_PCI_CAP_COMMON_CFG => caps.common = offset,
+                VIRTIO_PCI_CAP_NOTIFY_CFG => {
+                    caps.notify = offset;
+                    caps.notify_mult =
+                        u32::from_le_bytes(cfg[ptr + 16..ptr + 20].try_into().unwrap());
+                }
+                VIRTIO_PCI_CAP_ISR_CFG => caps.isr = offset,
+                VIRTIO_PCI_CAP_DEVICE_CFG => caps.device = offset,
+                _ => {}
             }
-            VIRTIO_PCI_CAP_ISR_CFG => caps.isr = offset,
-            VIRTIO_PCI_CAP_DEVICE_CFG => caps.device = offset,
-            _ => {}
+            assert!(cap_len >= 16);
         }
         ptr = next;
     }

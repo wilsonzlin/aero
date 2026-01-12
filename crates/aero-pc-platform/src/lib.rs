@@ -31,6 +31,7 @@ use aero_platform::address_filter::AddressFilter;
 use aero_platform::chipset::ChipsetState;
 use aero_platform::dirty_memory::DEFAULT_DIRTY_PAGE_SIZE;
 use aero_platform::interrupts::PlatformInterrupts;
+use aero_platform::interrupts::msi::MsiMessage;
 use aero_platform::io::{IoPortBus, PortIoDevice};
 use aero_platform::memory::MemoryBus;
 use aero_storage::{MemBackend, RawDisk, VirtualDisk, SECTOR_SIZE};
@@ -677,7 +678,7 @@ impl VirtioInterruptSink for NoopVirtioInterruptSink {
 
     fn lower_legacy_irq(&mut self) {}
 
-    fn signal_msix(&mut self, _vector: u16) {}
+    fn signal_msix(&mut self, _message: MsiMessage) {}
 }
 
 fn all_ones(size: usize) -> u64 {

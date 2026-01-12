@@ -20,6 +20,7 @@ aero-gpu-vga = { path = "../aero-gpu-vga" }
 aero-machine = { path = "../aero-machine" }
 aero-net-backend = { path = "../aero-net-backend" }
 aero-pc-constants = { path = "../aero-pc-constants" }
+aero-platform = { path = "../platform" }
 aero-usb = { path = "../aero-usb" }
 aero-virtio = { path = "../aero-virtio" }
 aero-shared = { path = "../aero-shared", optional = true }
@@ -33,7 +34,6 @@ aero-snapshot = { path = "../aero-snapshot" }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 js-sys = "0.3"
-aero-platform = { path = "../platform" }
 aero-audio = { path = "../aero-audio", features = ["io-snapshot"] }
 aero-mmu = { path = "../aero-mmu" }
 aero-opfs = { path = "../aero-opfs" }

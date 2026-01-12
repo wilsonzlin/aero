@@ -672,6 +672,7 @@ dependencies = [
  "aero-devices",
  "aero-io-snapshot",
  "aero-net-backend",
+ "aero-platform",
  "aero-storage",
  "memory",
  "nt-packetlib",

@@ -180,11 +180,29 @@ fn virtio_vendor_specific_capabilities_match_expected_layout() {
     assert_eq!(cap2[1], 0x74);
     assert_eq!(&cap2[2..], &VIRTIO_CAP_ISR);
 
-    // Device capability @0x74, cap_len 16, next 0x00.
+    // Device capability @0x74, cap_len 16, next 0x84.
     let cap3 = read_cap_bytes(&mut dev, 0x74, 16);
     assert_eq!(cap3[0], 0x09);
-    assert_eq!(cap3[1], 0x00);
+    assert_eq!(cap3[1], 0x84);
     assert_eq!(&cap3[2..], &VIRTIO_CAP_DEVICE);
+
+    // MSI-X capability @0x84, cap_len 12, next 0x00.
+    let cap4 = read_cap_bytes(&mut dev, 0x84, 12);
+    assert_eq!(cap4[0], 0x11);
+    assert_eq!(cap4[1], 0x00);
+
+    // Table size is N-1 in bits 0..=10. virtio-net has 2 virtqueues, and we expose one extra
+    // vector for config changes => 3 total.
+    let msg_ctl = u16::from_le_bytes([cap4[2], cap4[3]]);
+    assert_eq!(msg_ctl & 0x07ff, 2);
+
+    let table = u32::from_le_bytes(cap4[4..8].try_into().unwrap());
+    assert_eq!(table & 0x7, 0);
+    assert_eq!(table & !0x7, 0x3100);
+
+    let pba = u32::from_le_bytes(cap4[8..12].try_into().unwrap());
+    assert_eq!(pba & 0x7, 0);
+    assert_eq!(pba & !0x7, 0x3130);
 }
 
 #[test]

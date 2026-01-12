@@ -10,6 +10,7 @@ use aero_virtio::pci::{
     VIRTIO_STATUS_ACKNOWLEDGE, VIRTIO_STATUS_DRIVER, VIRTIO_STATUS_DRIVER_OK,
 };
 use aero_virtio::queue::{VIRTQ_DESC_F_NEXT, VIRTQ_DESC_F_WRITE};
+use aero_platform::interrupts::msi::MsiMessage;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -18,7 +19,7 @@ struct IrqState {
     asserted: bool,
     raises: u64,
     lowers: u64,
-    msix_vectors: Vec<u16>,
+    msix_messages: Vec<MsiMessage>,
 }
 
 #[derive(Clone, Default)]
@@ -37,8 +38,8 @@ impl InterruptSink for SharedIrq {
         state.lowers += 1;
     }
 
-    fn signal_msix(&mut self, vector: u16) {
-        self.0.borrow_mut().msix_vectors.push(vector);
+    fn signal_msix(&mut self, message: MsiMessage) {
+        self.0.borrow_mut().msix_messages.push(message);
     }
 }
 

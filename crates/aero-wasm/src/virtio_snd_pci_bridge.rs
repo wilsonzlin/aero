@@ -25,6 +25,7 @@ use aero_io_snapshot::io::state::IoSnapshot as _;
 
 use aero_platform::audio::mic_bridge::MicBridge;
 use aero_platform::audio::worklet_bridge::WorkletBridge;
+use aero_platform::interrupts::msi::MsiMessage;
 
 use aero_virtio::devices::snd::{VIRTIO_SND_QUEUE_EVENT, VirtioSnd};
 use aero_virtio::memory::{GuestMemory, GuestMemoryError};
@@ -327,7 +328,7 @@ impl InterruptSink for LegacyIrqLatch {
         self.asserted.set(false);
     }
 
-    fn signal_msix(&mut self, _vector: u16) {
+    fn signal_msix(&mut self, _message: MsiMessage) {
         // MSI-X is not currently surfaced through this bridge.
     }
 }
