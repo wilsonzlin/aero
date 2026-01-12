@@ -433,7 +433,7 @@ async function runTieredVm(iterations: number, threshold: number) {
     memU8 = new Uint8Array(memory.buffer);
   };
 
-  (globalThis as unknown as { __aero_jit_call?: unknown }).__aero_jit_call = (
+  globalThis.__aero_jit_call = (
     tableIndex: number,
     cpuPtr: number,
     jitCtxPtr: number,
@@ -727,9 +727,7 @@ async function runTieredVm(iterations: number, threshold: number) {
 
         const tableIndex = nextTableIndex++;
         jitFns[tableIndex] = block as (cpu_ptr: number, jit_ctx_ptr: number) => bigint;
-        const ret = (
-          globalThis as unknown as { __aero_jit_call: (idx: number, cpu: number, ctx: number) => bigint }
-        ).__aero_jit_call(tableIndex, cpuPtr, jitCtxPtr);
+        const ret = globalThis.__aero_jit_call!(tableIndex, cpuPtr, jitCtxPtr);
         return typeof ret === 'bigint';
       };
 
@@ -802,9 +800,7 @@ async function runTieredVm(iterations: number, threshold: number) {
           return JIT_EXIT_SENTINEL_I64;
         };
 
-        const ret = (
-          globalThis as unknown as { __aero_jit_call: (idx: number, cpu: number, ctx: number) => bigint }
-        ).__aero_jit_call(tableIndex, cpuPtr, 0);
+        const ret = globalThis.__aero_jit_call!(tableIndex, cpuPtr, 0);
         if (ret !== JIT_EXIT_SENTINEL_I64) return false;
 
         refreshMemU8();
@@ -841,9 +837,7 @@ async function runTieredVm(iterations: number, threshold: number) {
       };
       dv.setUint32(cpuPtr + commitFlagOffset, 0, true);
       dv.setBigUint64(cpuPtr + cpu_rax_off, preRax, true);
-      const retCommitted = (
-        globalThis as unknown as { __aero_jit_call: (idx: number, cpu: number, ctx: number) => bigint }
-      ).__aero_jit_call(committedIndex, cpuPtr, 0);
+      const retCommitted = globalThis.__aero_jit_call!(committedIndex, cpuPtr, 0);
       if (retCommitted !== JIT_EXIT_SENTINEL_I64) return false;
       const commitCommitted = dv.getUint32(cpuPtr + commitFlagOffset, true);
       if (commitCommitted !== 1) return false;
