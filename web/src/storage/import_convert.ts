@@ -475,6 +475,8 @@ async function convertRawToSparse(
 const QCOW2_OFFSET_MASK = 0x00ff_ffff_ffff_fe00n;
 const QCOW2_OFLAG_COMPRESSED = 1n << 62n;
 const QCOW2_OFLAG_ZERO = 1n;
+const QCOW2_MAX_L1_BYTES = 128 * 1024 * 1024;
+const QCOW2_MAX_CLUSTER_OFFSETS_BYTES = 128 * 1024 * 1024;
 
 async function convertQcow2ToSparse(
   src: RandomAccessSource,
@@ -827,13 +829,24 @@ class Qcow2 {
     if (nbSnapshots !== 0) throw new Error("qcow2 snapshots unsupported");
 
     const clusterSize = 1 << clusterBits;
-    const l1Bytes = l1Size * 8;
-    const l1 = await src.readAt(l1TableOffset, l1Bytes);
     const l2Entries = clusterSize / 8;
     const totalClusters = divCeil(logicalSize, clusterSize);
-    const clusterOffsets = new Array<number>(totalClusters).fill(0);
+    const requiredL1 = divCeil(totalClusters, l2Entries);
+    if (l1Size < requiredL1) throw new Error("qcow2 l1 table too small");
 
-    for (let l1Index = 0; l1Index < l1Size; l1Index++) {
+    const l1Bytes = requiredL1 * 8;
+    if (!Number.isSafeInteger(l1Bytes) || l1Bytes > QCOW2_MAX_L1_BYTES) {
+      throw new Error("qcow2 l1 table too large");
+    }
+    const clusterOffsetsBytes = totalClusters * 8;
+    if (!Number.isSafeInteger(clusterOffsetsBytes) || clusterOffsetsBytes > QCOW2_MAX_CLUSTER_OFFSETS_BYTES) {
+      throw new Error("qcow2 too many clusters");
+    }
+
+    const l1 = await src.readAt(l1TableOffset, l1Bytes);
+    const clusterOffsets = new Float64Array(totalClusters);
+
+    for (let l1Index = 0; l1Index < requiredL1; l1Index++) {
       const entry = readU64BE(l1, l1Index * 8) & QCOW2_OFFSET_MASK;
       if (entry === 0n) continue;
       const l2Off = Number(entry);
@@ -848,6 +861,7 @@ class Qcow2 {
         if ((val & QCOW2_OFLAG_COMPRESSED) !== 0n) throw new Error("qcow2 compressed clusters unsupported");
         if ((val & QCOW2_OFLAG_ZERO) !== 0n) continue;
         const dataOff = Number(val & QCOW2_OFFSET_MASK);
+        if (!Number.isSafeInteger(dataOff) || dataOff <= 0) throw new Error("invalid qcow2 data offset");
         if (dataOff === 0) continue;
         clusterOffsets[clusterIndex] = dataOff;
       }
@@ -858,9 +872,9 @@ class Qcow2 {
 
   public readonly logicalSize: number;
   public readonly clusterSize: number;
-  public readonly clusterOffsets: number[];
+  public readonly clusterOffsets: Float64Array;
 
-  private constructor(logicalSize: number, clusterSize: number, clusterOffsets: number[]) {
+  private constructor(logicalSize: number, clusterSize: number, clusterOffsets: Float64Array) {
     this.logicalSize = logicalSize;
     this.clusterSize = clusterSize;
     this.clusterOffsets = clusterOffsets;

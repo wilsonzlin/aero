@@ -418,6 +418,25 @@ test("convertToAeroSparse: qcow2 sparse copy preserves logical bytes", async () 
   assert.equal(manifest.checksum.value, sparseChecksumCrc32(parsed));
 });
 
+test("convertToAeroSparse: rejects qcow2 with too many clusters", async () => {
+  // Construct a qcow2 header claiming a huge logical size with tiny clusters (512B).
+  // This would require an enormous cluster offset map and should be rejected up front.
+  const file = new Uint8Array(72);
+  file.set([0x51, 0x46, 0x49, 0xfb], 0); // magic
+  writeU32BE(file, 4, 2); // version
+  writeU32BE(file, 20, 9); // cluster_bits = 9 => 512B clusters
+  writeU64BE(file, 24, 100n * 1024n * 1024n * 1024n); // virtual size = 100 GiB
+  writeU32BE(file, 36, 3_276_800); // l1_size (derived from size/clusterSize and l2 entries)
+  writeU64BE(file, 40, 512n); // l1_table_offset (not actually present in file)
+
+  const src = new MemSource(file);
+  const sync = new MemSyncAccessHandle();
+  await assert.rejects(
+    convertToAeroSparse(src, "qcow2", sync, { blockSizeBytes: 512 }),
+    (err: any) => err instanceof Error && /qcow2 too many clusters/i.test(err.message),
+  );
+});
+
 test("convertToAeroSparse: dynamic VHD respects BAT + sector bitmap", async () => {
   const { file, logical } = buildDynamicVhdFixture();
   const src = new MemSource(file);
