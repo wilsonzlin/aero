@@ -94,7 +94,8 @@ pub struct ChunkManifest {
 
 impl ChunkManifest {
     pub fn sha256_for_chunk(&self, chunk_index: u64) -> Option<[u8; 32]> {
-        self.sha256.get(chunk_index as usize).copied()
+        let idx: usize = chunk_index.try_into().ok()?;
+        self.sha256.get(idx).copied()
     }
 }
 
@@ -619,8 +620,8 @@ impl StreamingDisk {
                 )));
             }
 
-            let expected_chunks = total_size.div_ceil(config.options.chunk_size) as usize;
-            if manifest.sha256.len() != expected_chunks {
+            let expected_chunks = total_size.div_ceil(config.options.chunk_size);
+            if manifest.sha256.len() as u64 != expected_chunks {
                 return Err(StreamingDiskError::Protocol(format!(
                     "manifest chunk count ({}) does not match expected ({expected_chunks})",
                     manifest.sha256.len()
@@ -978,17 +979,20 @@ impl StreamingDisk {
         }
 
         if let Some(manifest) = &self.inner.options.manifest {
-            if let Some(expected) = manifest.sha256_for_chunk(chunk_index) {
-                let actual = Sha256::digest(&bytes);
-                let mut actual_arr = [0u8; 32];
-                actual_arr.copy_from_slice(&actual);
-                if actual_arr != expected {
-                    return Err(StreamingDiskError::Integrity {
-                        chunk_index,
-                        expected: hex::encode(expected),
-                        actual: hex::encode(actual_arr),
-                    });
-                }
+            let expected = manifest.sha256_for_chunk(chunk_index).ok_or_else(|| {
+                StreamingDiskError::Protocol(format!(
+                    "manifest missing sha256 entry for chunk {chunk_index}"
+                ))
+            })?;
+            let actual = Sha256::digest(&bytes);
+            let mut actual_arr = [0u8; 32];
+            actual_arr.copy_from_slice(&actual);
+            if actual_arr != expected {
+                return Err(StreamingDiskError::Integrity {
+                    chunk_index,
+                    expected: hex::encode(expected),
+                    actual: hex::encode(actual_arr),
+                });
             }
         }
 
