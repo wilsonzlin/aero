@@ -1650,7 +1650,6 @@ function renderAudioPanel(): HTMLElement {
         // samples and DMA-write PCM into guest RAM. The default microphone ring-buffer policy
         // routes the mic to the CPU worker when no disk is attached (demo mode), so override it
         // here to ensure the IO worker receives the capture ring.
-        workerCoordinator.setMicrophoneRingBufferOwner("io");
         workerCoordinator.getIoWorker()?.postMessage({ type: 'setBootDisks', mounts: {}, hdd: null, cd: null });
         // Demo mode defaults the mic ring consumer to the CPU worker, but HDA capture lives in the IO worker.
         // Route the microphone ring explicitly so the IO worker is the sole SPSC consumer.
@@ -1800,6 +1799,20 @@ function renderAudioPanel(): HTMLElement {
         result.ok = false;
         status.textContent = message;
       } finally {
+        // Best-effort cleanup: stop the synthetic mic timer and detach the ring buffer so
+        // other demos/tests don't inherit a background capture producer/consumer.
+        try {
+          syntheticMic?.stop();
+        } catch {
+          // ignore
+        }
+        syntheticMic = null;
+        try {
+          workerCoordinator.setMicrophoneRingBuffer(null, 0);
+          workerCoordinator.setMicrophoneRingBufferOwner(null);
+        } catch {
+          // ignore
+        }
         result.done = true;
       }
     },
