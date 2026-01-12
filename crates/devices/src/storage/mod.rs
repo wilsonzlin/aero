@@ -1,5 +1,7 @@
 use std::io;
 
+use aero_storage_adapters::AeroVirtualDiskAsDeviceBackend;
+
 pub trait DiskBackend: Send {
     /// Total disk size in bytes.
     fn len(&self) -> u64;
@@ -11,6 +13,24 @@ pub trait DiskBackend: Send {
     fn read_at(&self, offset: u64, buf: &mut [u8]) -> io::Result<()>;
     fn write_at(&mut self, offset: u64, buf: &[u8]) -> io::Result<()>;
     fn flush(&mut self) -> io::Result<()>;
+}
+
+impl DiskBackend for AeroVirtualDiskAsDeviceBackend {
+    fn len(&self) -> u64 {
+        self.capacity_bytes()
+    }
+
+    fn read_at(&self, offset: u64, buf: &mut [u8]) -> io::Result<()> {
+        self.read_at_aligned(offset, buf)
+    }
+
+    fn write_at(&mut self, offset: u64, buf: &[u8]) -> io::Result<()> {
+        self.write_at_aligned(offset, buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        AeroVirtualDiskAsDeviceBackend::flush(self)
+    }
 }
 
 pub struct VirtualDrive {

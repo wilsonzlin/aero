@@ -27,6 +27,7 @@ use aero_io_snapshot::io::state::{
 use aero_io_snapshot::io::storage::state::{
     NvmeCompletionQueueState, NvmeControllerState, NvmeSubmissionQueueState,
 };
+use aero_storage_adapters::AeroVirtualDiskAsNvmeBackend;
 use memory::MemoryBus;
 
 const PAGE_SIZE: usize = 4096;
@@ -55,6 +56,78 @@ pub trait DiskBackend: Send {
     fn read_sectors(&mut self, lba: u64, buffer: &mut [u8]) -> DiskResult<()>;
     fn write_sectors(&mut self, lba: u64, buffer: &[u8]) -> DiskResult<()>;
     fn flush(&mut self) -> DiskResult<()>;
+}
+
+impl DiskBackend for AeroVirtualDiskAsNvmeBackend {
+    fn sector_size(&self) -> u32 {
+        AeroVirtualDiskAsNvmeBackend::SECTOR_SIZE
+    }
+
+    fn total_sectors(&self) -> u64 {
+        // If the disk capacity is not a multiple of 512, expose the largest full-sector span.
+        self.capacity_bytes() / u64::from(Self::sector_size(self))
+    }
+
+    fn read_sectors(&mut self, lba: u64, buffer: &mut [u8]) -> DiskResult<()> {
+        let sector_size = self.sector_size() as usize;
+        if !buffer.len().is_multiple_of(sector_size) {
+            return Err(DiskError::UnalignedBuffer {
+                len: buffer.len(),
+                sector_size: self.sector_size(),
+            });
+        }
+        let sectors = (buffer.len() / sector_size) as u64;
+        let end_lba = lba.checked_add(sectors).ok_or(DiskError::OutOfRange {
+            lba,
+            sectors,
+            capacity_sectors: self.total_sectors(),
+        })?;
+        let capacity = self.total_sectors();
+        if end_lba > capacity {
+            return Err(DiskError::OutOfRange {
+                lba,
+                sectors,
+                capacity_sectors: capacity,
+            });
+        }
+
+        // Any disk-layer error is surfaced as a generic I/O failure at the NVMe level.
+        self.disk_mut()
+            .read_sectors(lba, buffer)
+            .map_err(|_| DiskError::Io)
+    }
+
+    fn write_sectors(&mut self, lba: u64, buffer: &[u8]) -> DiskResult<()> {
+        let sector_size = self.sector_size() as usize;
+        if !buffer.len().is_multiple_of(sector_size) {
+            return Err(DiskError::UnalignedBuffer {
+                len: buffer.len(),
+                sector_size: self.sector_size(),
+            });
+        }
+        let sectors = (buffer.len() / sector_size) as u64;
+        let end_lba = lba.checked_add(sectors).ok_or(DiskError::OutOfRange {
+            lba,
+            sectors,
+            capacity_sectors: self.total_sectors(),
+        })?;
+        let capacity = self.total_sectors();
+        if end_lba > capacity {
+            return Err(DiskError::OutOfRange {
+                lba,
+                sectors,
+                capacity_sectors: capacity,
+            });
+        }
+
+        self.disk_mut()
+            .write_sectors(lba, buffer)
+            .map_err(|_| DiskError::Io)
+    }
+
+    fn flush(&mut self) -> DiskResult<()> {
+        self.disk_mut().flush().map_err(|_| DiskError::Io)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

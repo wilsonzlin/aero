@@ -1,7 +1,9 @@
 use std::sync::{Arc, Mutex};
 
-use aero_devices_nvme::{DiskBackend, NvmeController};
+use aero_devices_nvme::NvmeController;
 use aero_io_snapshot::io::state::IoSnapshot;
+use aero_storage::{MemBackend, RawDisk, VirtualDisk, SECTOR_SIZE};
+use aero_storage_adapters::AeroVirtualDiskAsNvmeBackend;
 use memory::MemoryBus;
 
 #[derive(Clone)]
@@ -35,99 +37,38 @@ impl MemoryBus for TestMem {
 
 #[derive(Clone)]
 struct SharedDisk {
-    sector_size: u32,
-    data: Arc<Mutex<Vec<u8>>>,
-    flush_count: Arc<Mutex<u32>>,
+    inner: Arc<Mutex<RawDisk<MemBackend>>>,
 }
 
 impl SharedDisk {
     fn new(sectors: u64) -> Self {
-        let sector_size = 512u32;
+        let capacity_bytes = sectors * SECTOR_SIZE as u64;
+        let disk = RawDisk::create(MemBackend::new(), capacity_bytes).unwrap();
         Self {
-            sector_size,
-            data: Arc::new(Mutex::new(vec![
-                0u8;
-                sectors as usize * sector_size as usize
-            ])),
-            flush_count: Arc::new(Mutex::new(0)),
+            inner: Arc::new(Mutex::new(disk)),
         }
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, RawDisk<MemBackend>> {
+        self.inner.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 }
 
-impl DiskBackend for SharedDisk {
-    fn sector_size(&self) -> u32 {
-        self.sector_size
+impl VirtualDisk for SharedDisk {
+    fn capacity_bytes(&self) -> u64 {
+        self.lock().capacity_bytes()
     }
 
-    fn total_sectors(&self) -> u64 {
-        (self.data.lock().unwrap().len() as u64) / (self.sector_size as u64)
+    fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> aero_storage::Result<()> {
+        self.lock().read_at(offset, buf)
     }
 
-    fn read_sectors(&mut self, lba: u64, buffer: &mut [u8]) -> aero_devices_nvme::DiskResult<()> {
-        let sector_size = self.sector_size as usize;
-        if !buffer.len().is_multiple_of(sector_size) {
-            return Err(aero_devices_nvme::DiskError::UnalignedBuffer {
-                len: buffer.len(),
-                sector_size: self.sector_size,
-            });
-        }
-        let sectors = (buffer.len() / sector_size) as u64;
-        let end_lba = lba
-            .checked_add(sectors)
-            .ok_or(aero_devices_nvme::DiskError::OutOfRange {
-                lba,
-                sectors,
-                capacity_sectors: self.total_sectors(),
-            })?;
-        let capacity = self.total_sectors();
-        if end_lba > capacity {
-            return Err(aero_devices_nvme::DiskError::OutOfRange {
-                lba,
-                sectors,
-                capacity_sectors: capacity,
-            });
-        }
-        let offset = lba as usize * sector_size;
-        let end = offset + buffer.len();
-        let data = self.data.lock().unwrap();
-        buffer.copy_from_slice(&data[offset..end]);
-        Ok(())
+    fn write_at(&mut self, offset: u64, buf: &[u8]) -> aero_storage::Result<()> {
+        self.lock().write_at(offset, buf)
     }
 
-    fn write_sectors(&mut self, lba: u64, buffer: &[u8]) -> aero_devices_nvme::DiskResult<()> {
-        let sector_size = self.sector_size as usize;
-        if !buffer.len().is_multiple_of(sector_size) {
-            return Err(aero_devices_nvme::DiskError::UnalignedBuffer {
-                len: buffer.len(),
-                sector_size: self.sector_size,
-            });
-        }
-        let sectors = (buffer.len() / sector_size) as u64;
-        let end_lba = lba
-            .checked_add(sectors)
-            .ok_or(aero_devices_nvme::DiskError::OutOfRange {
-                lba,
-                sectors,
-                capacity_sectors: self.total_sectors(),
-            })?;
-        let capacity = self.total_sectors();
-        if end_lba > capacity {
-            return Err(aero_devices_nvme::DiskError::OutOfRange {
-                lba,
-                sectors,
-                capacity_sectors: capacity,
-            });
-        }
-        let offset = lba as usize * sector_size;
-        let end = offset + buffer.len();
-        let mut data = self.data.lock().unwrap();
-        data[offset..end].copy_from_slice(buffer);
-        Ok(())
-    }
-
-    fn flush(&mut self) -> aero_devices_nvme::DiskResult<()> {
-        *self.flush_count.lock().unwrap() += 1;
-        Ok(())
+    fn flush(&mut self) -> aero_storage::Result<()> {
+        self.lock().flush()
     }
 }
 
@@ -180,7 +121,9 @@ fn read_cqe(mem: &mut TestMem, addr: u64) -> CqEntry {
 #[test]
 fn snapshot_restore_preserves_pending_completion_and_disk_contents() {
     let disk = SharedDisk::new(1024);
-    let mut ctrl = NvmeController::new(Box::new(disk.clone()));
+    let mut ctrl = NvmeController::new(Box::new(AeroVirtualDiskAsNvmeBackend::new(Box::new(
+        disk.clone(),
+    ))));
     let mut mem = TestMem::new(2 * 1024 * 1024);
 
     let asq = 0x10000;
@@ -235,7 +178,9 @@ fn snapshot_restore_preserves_pending_completion_and_disk_contents() {
     let snap = ctrl.save_state();
     let mem_snap = mem.clone();
 
-    let mut restored = NvmeController::new(Box::new(disk.clone()));
+    let mut restored = NvmeController::new(Box::new(AeroVirtualDiskAsNvmeBackend::new(Box::new(
+        disk.clone(),
+    ))));
     let mut mem2 = mem_snap;
     restored.load_state(&snap).unwrap();
 
@@ -275,7 +220,9 @@ fn snapshot_restore_preserves_pending_completion_and_disk_contents() {
 #[test]
 fn snapshot_restore_preserves_cq_phase_across_wrap() {
     let disk = SharedDisk::new(1024);
-    let mut ctrl = NvmeController::new(Box::new(disk.clone()));
+    let mut ctrl = NvmeController::new(Box::new(AeroVirtualDiskAsNvmeBackend::new(Box::new(
+        disk.clone(),
+    ))));
     let mut mem = TestMem::new(2 * 1024 * 1024);
 
     let asq = 0x10000;
@@ -335,7 +282,9 @@ fn snapshot_restore_preserves_cq_phase_across_wrap() {
     let snap = ctrl.save_state();
     let mem_snap = mem.clone();
 
-    let mut restored = NvmeController::new(Box::new(disk.clone()));
+    let mut restored = NvmeController::new(Box::new(AeroVirtualDiskAsNvmeBackend::new(Box::new(
+        disk.clone(),
+    ))));
     let mut mem2 = mem_snap;
     restored.load_state(&snap).unwrap();
 

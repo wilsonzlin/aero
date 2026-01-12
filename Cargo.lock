@@ -167,6 +167,7 @@ dependencies = [
  "aero-io-snapshot",
  "aero-platform",
  "aero-snapshot",
+ "aero-storage-adapters",
  "memory",
  "serde_json",
 ]
@@ -183,6 +184,8 @@ name = "aero-devices-nvme"
 version = "0.1.0"
 dependencies = [
  "aero-io-snapshot",
+ "aero-storage",
+ "aero-storage-adapters",
  "criterion",
  "emulator",
  "memory",
@@ -511,6 +514,13 @@ dependencies = [
  "tokio",
  "tokio-util",
  "url",
+]
+
+[[package]]
+name = "aero-storage-adapters"
+version = "0.1.0"
+dependencies = [
+ "aero-storage",
 ]
 
 [[package]]

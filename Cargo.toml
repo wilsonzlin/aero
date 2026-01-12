@@ -30,6 +30,7 @@ members = [
     "crates/aero-l2-proxy",
     "crates/aero-net-stack",
     "crates/aero-storage",
+    "crates/aero-storage-adapters",
     "crates/aero-mem",
     "crates/aero-perf",
     "crates/aero-mmu",
