@@ -876,6 +876,33 @@ mod tests {
     }
 
     #[test]
+    fn decode_pcm_to_stereo_f32_handles_8bit_and_16bit_frames() {
+        // 8-bit unsigned PCM is biased by 128.
+        let fmt = StreamFormat {
+            sample_rate_hz: 48_000,
+            bits_per_sample: 8,
+            channels: 2,
+        };
+        let out = decode_pcm_to_stereo_f32(&[0x00, 0xFF], fmt);
+        assert_eq!(out.len(), 1);
+        assert_f32_approx_eq(out[0][0], -1.0, 1e-6);
+        assert_f32_approx_eq(out[0][1], 127.0 / 128.0, 1e-6);
+
+        let fmt = StreamFormat {
+            sample_rate_hz: 48_000,
+            bits_per_sample: 16,
+            channels: 2,
+        };
+        let mut input = Vec::new();
+        input.extend_from_slice(&i16::MIN.to_le_bytes());
+        input.extend_from_slice(&i16::MAX.to_le_bytes());
+        let out = decode_pcm_to_stereo_f32(&input, fmt);
+        assert_eq!(out.len(), 1);
+        assert_f32_approx_eq(out[0][0], -1.0, 1e-6);
+        assert_f32_approx_eq(out[0][1], i16::MAX as f32 / 32768.0, 1e-6);
+    }
+
+    #[test]
     fn decode_pcm_to_stereo_f32_handles_20_24_32bit_frames() {
         // These tests exercise the public framing/mixing path, not just `decode_one_sample`.
         let cases: &[(u8, i32, i32, f32, f32)] = &[
@@ -901,18 +928,39 @@ mod tests {
     }
 
     #[test]
-    fn encode_mono_f32_to_pcm_writes_exact_bytes_for_20bit() {
+    fn encode_mono_f32_to_pcm_writes_exact_bytes_for_16bit_clip_and_non_finite() {
         let fmt = StreamFormat {
             sample_rate_hz: 48_000,
-            bits_per_sample: 20,
+            bits_per_sample: 16,
             channels: 2,
         };
-        let input: &[f32] = &[-1.0, 0.0, 1.0, 2.0, f32::NAN];
+        let input: &[f32] = &[
+            -1.0,
+            0.5,
+            -0.5,
+            0.0,
+            1.0,
+            1.1,
+            -1.1,
+            f32::NAN,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+        ];
         let out = encode_mono_f32_to_pcm(input, fmt);
 
         let mut expected = Vec::new();
-        for &v in &[-524_288i32, 0, 524_287, 524_287, 0] {
-            // Duplicated into L/R.
+        for &v in &[
+            i16::MIN,
+            16384,
+            -16384,
+            0,
+            i16::MAX,
+            i16::MAX,
+            i16::MIN,
+            0,
+            i16::MAX,
+            i16::MIN,
+        ] {
             expected.extend_from_slice(&v.to_le_bytes());
             expected.extend_from_slice(&v.to_le_bytes());
         }
@@ -920,46 +968,132 @@ mod tests {
     }
 
     #[test]
-    fn encode_mono_f32_to_pcm_writes_exact_bytes_for_24bit_and_silences_extra_channels() {
+    fn encode_mono_f32_to_pcm_writes_exact_bytes_for_20bit() {
+        let fmt = StreamFormat {
+            sample_rate_hz: 48_000,
+            bits_per_sample: 20,
+            channels: 4,
+        };
+        let input: &[f32] = &[
+            -1.0,
+            0.5,
+            -0.5,
+            0.0,
+            1.0,
+            1.1,
+            -1.1,
+            f32::NAN,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+        ];
+        let out = encode_mono_f32_to_pcm(input, fmt);
+
+        let mut expected = Vec::new();
+        for &v in &[
+            -524_288i32,
+            262_144,
+            -262_144,
+            0,
+            524_287,
+            524_287,
+            -524_288,
+            0,
+            524_287,
+            -524_288,
+        ] {
+            // Duplicated into the first two channels.
+            expected.extend_from_slice(&v.to_le_bytes());
+            expected.extend_from_slice(&v.to_le_bytes());
+            // Remaining channels are silence.
+            expected.extend_from_slice(&0i32.to_le_bytes());
+            expected.extend_from_slice(&0i32.to_le_bytes());
+        }
+        assert_eq!(out, expected);
+    }
+
+    #[test]
+    fn encode_mono_f32_to_pcm_writes_exact_bytes_for_24bit_clip_and_non_finite() {
         let fmt = StreamFormat {
             sample_rate_hz: 48_000,
             bits_per_sample: 24,
             channels: 4,
         };
-        let input: &[f32] = &[0.25];
+        let input: &[f32] = &[
+            -1.0,
+            0.5,
+            -0.5,
+            0.0,
+            1.0,
+            1.1,
+            -1.1,
+            f32::NAN,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+        ];
         let out = encode_mono_f32_to_pcm(input, fmt);
 
         let mut expected = Vec::new();
-        // First two channels duplicate the mono sample.
-        let v = 2_097_152i32; // 0.25 * 2^23
-        expected.extend_from_slice(&v.to_le_bytes());
-        expected.extend_from_slice(&v.to_le_bytes());
-        // Remaining channels are silence.
-        expected.extend_from_slice(&0i32.to_le_bytes());
-        expected.extend_from_slice(&0i32.to_le_bytes());
-
+        for &v in &[
+            -8_388_608i32,
+            4_194_304,
+            -4_194_304,
+            0,
+            8_388_607,
+            8_388_607,
+            -8_388_608,
+            0,
+            8_388_607,
+            -8_388_608,
+        ] {
+            expected.extend_from_slice(&v.to_le_bytes());
+            expected.extend_from_slice(&v.to_le_bytes());
+            expected.extend_from_slice(&0i32.to_le_bytes());
+            expected.extend_from_slice(&0i32.to_le_bytes());
+        }
         assert_eq!(out, expected);
     }
 
     #[test]
-    fn encode_mono_f32_to_pcm_writes_exact_bytes_for_32bit_and_silences_extra_channels() {
+    fn encode_mono_f32_to_pcm_writes_exact_bytes_for_32bit_clip_and_non_finite() {
         let fmt = StreamFormat {
             sample_rate_hz: 48_000,
             bits_per_sample: 32,
             channels: 6,
         };
-        let input: &[f32] = &[-0.5];
+        let input: &[f32] = &[
+            -1.0,
+            0.5,
+            -0.5,
+            0.0,
+            1.0,
+            1.1,
+            -1.1,
+            f32::NAN,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+        ];
         let out = encode_mono_f32_to_pcm(input, fmt);
 
         let mut expected = Vec::new();
-        let v: i32 = -(1 << 30); // -0.5 * 2^31
-        expected.extend_from_slice(&v.to_le_bytes());
-        expected.extend_from_slice(&v.to_le_bytes());
-        expected.extend_from_slice(&0i32.to_le_bytes());
-        expected.extend_from_slice(&0i32.to_le_bytes());
-        expected.extend_from_slice(&0i32.to_le_bytes());
-        expected.extend_from_slice(&0i32.to_le_bytes());
-
+        for &v in &[
+            i32::MIN,
+            1 << 30,
+            -(1 << 30),
+            0,
+            i32::MAX,
+            i32::MAX,
+            i32::MIN,
+            0,
+            i32::MAX,
+            i32::MIN,
+        ] {
+            expected.extend_from_slice(&v.to_le_bytes());
+            expected.extend_from_slice(&v.to_le_bytes());
+            expected.extend_from_slice(&0i32.to_le_bytes());
+            expected.extend_from_slice(&0i32.to_le_bytes());
+            expected.extend_from_slice(&0i32.to_le_bytes());
+            expected.extend_from_slice(&0i32.to_le_bytes());
+        }
         assert_eq!(out, expected);
     }
 
