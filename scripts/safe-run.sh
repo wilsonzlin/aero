@@ -144,9 +144,13 @@ export RUSTC_WORKER_THREADS="${RUSTC_WORKER_THREADS:-$CARGO_BUILD_JOBS}"
 
 # Optional: reduce per-crate codegen parallelism (can reduce memory spikes).
 #
-# Do NOT force a default `-C codegen-units=...` here. In some constrained sandboxes,
-# explicitly setting codegen-units has been observed to trigger rustc panics like:
-#   "failed to spawn work/helper thread (WouldBlock)".
+# Do NOT force a default `-C codegen-units=...` here on the first attempt.
+# In some constrained sandboxes, forcing codegen-units can negatively impact perf.
+#
+# However, when rustc hits a transient thread-spawn failure (EAGAIN/WouldBlock), we
+# opportunistically inject `-C codegen-units=1` on *retries* (only when the user
+# hasn't specified codegen-units themselves). This reduces rustc's per-crate
+# codegen parallelism and makes retries more likely to succeed.
 #
 # If you want to set codegen-units for a specific invocation, use:
 #   AERO_RUST_CODEGEN_UNITS=<n> (alias: AERO_CODEGEN_UNITS)
@@ -216,7 +220,7 @@ if [[ "${is_cargo_cmd}" == "true" ]]; then
                 export RUSTFLAGS="${RUSTFLAGS:-} -C codegen-units=${_aero_codegen_units}"
                 export RUSTFLAGS="${RUSTFLAGS# }"
             else
-                echo "[safe-run] warning: invalid AERO_RUST_CODEGEN_UNITS/AERO_CODEGEN_UNITS value: ${_aero_codegen_units} (expected positive integer); skipping codegen-units override" >&2
+                 echo "[safe-run] warning: invalid AERO_RUST_CODEGEN_UNITS/AERO_CODEGEN_UNITS value: ${_aero_codegen_units} (expected positive integer); skipping codegen-units override" >&2
             fi
             unset _aero_codegen_units 2>/dev/null || true
         fi
@@ -554,6 +558,17 @@ while true; do
         && [[ "${is_retryable_cmd}" == "true" ]] \
         && should_retry_rustc_thread_error "${stderr_log}"
     then
+        # If the user hasn't specified codegen-units, inject the most conservative setting for
+        # retries to reduce rustc's per-crate codegen parallelism.
+        if [[ "${RUSTFLAGS:-}" != *"codegen-units="* ]] \
+            && [[ -z "${AERO_RUST_CODEGEN_UNITS:-}" ]] \
+            && [[ -z "${AERO_CODEGEN_UNITS:-}" ]]
+        then
+            export RUSTFLAGS="${RUSTFLAGS:-} -C codegen-units=1"
+            export RUSTFLAGS="${RUSTFLAGS# }"
+            echo "[safe-run] info: injecting -C codegen-units=1 for retry to mitigate rustc thread spawn failures" >&2
+        fi
+
         # Exponential backoff with jitter (2-4, 4-8, 8-16, ...).
         base=$((2 ** attempt))
         # Cap at 16 so we stay within the documented 16-32s backoff window for 4th+ retries.
