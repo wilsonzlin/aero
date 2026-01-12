@@ -2199,6 +2199,9 @@ mod wasm {
         match name {
             "texture-compression-bc" => Ok(wgpu::Features::TEXTURE_COMPRESSION_BC),
             "texture-compression-etc2" => Ok(wgpu::Features::TEXTURE_COMPRESSION_ETC2),
+            // wgpu exposes ASTC via the `*_ASTC_HDR` flag; browsers treat this as
+            // a single "texture-compression-astc" capability.
+            "texture-compression-astc" => Ok(wgpu::Features::TEXTURE_COMPRESSION_ASTC_HDR),
             "timestamp-query" => {
                 Ok(wgpu::Features::TIMESTAMP_QUERY
                     | wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS)
