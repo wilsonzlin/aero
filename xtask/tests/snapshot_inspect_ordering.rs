@@ -681,3 +681,95 @@ fn snapshot_inspect_decodes_aero_machine_usbc_wrapper_fields() {
             "remainder=500000ns nested=UHCP v1.0",
         ));
 }
+
+struct PcicWrapperDeviceSource;
+
+impl SnapshotSource for PcicWrapperDeviceSource {
+    fn snapshot_meta(&mut self) -> SnapshotMeta {
+        SnapshotMeta {
+            snapshot_id: 7,
+            parent_snapshot_id: Some(6),
+            created_unix_ms: 0,
+            label: Some("inspect-pcic-wrapper".to_string()),
+        }
+    }
+
+    fn cpu_state(&self) -> CpuState {
+        CpuState::default()
+    }
+
+    fn mmu_state(&self) -> MmuState {
+        MmuState::default()
+    }
+
+    fn device_states(&self) -> Vec<DeviceState> {
+        fn io_snapshot_header(id: &[u8; 4]) -> Vec<u8> {
+            let mut out = vec![0u8; 16];
+            out[0..4].copy_from_slice(b"AERO");
+            // io-snapshot format v1.0
+            out[4..6].copy_from_slice(&1u16.to_le_bytes());
+            out[6..8].copy_from_slice(&0u16.to_le_bytes());
+            out[8..12].copy_from_slice(id);
+            // device snapshot version v1.0
+            out[12..14].copy_from_slice(&1u16.to_le_bytes());
+            out[14..16].copy_from_slice(&0u16.to_le_bytes());
+            out
+        }
+
+        let cfg = io_snapshot_header(b"PCPT");
+        let intx = io_snapshot_header(b"INTX");
+
+        let mut data = io_snapshot_header(b"PCIC");
+        // tag 1: cfg ports snapshot bytes
+        data.extend_from_slice(&1u16.to_le_bytes());
+        data.extend_from_slice(&(cfg.len() as u32).to_le_bytes());
+        data.extend_from_slice(&cfg);
+        // tag 2: intx router snapshot bytes
+        data.extend_from_slice(&2u16.to_le_bytes());
+        data.extend_from_slice(&(intx.len() as u32).to_le_bytes());
+        data.extend_from_slice(&intx);
+
+        vec![DeviceState {
+            id: DeviceId::PCI,
+            version: 1,
+            flags: 0,
+            data,
+        }]
+    }
+
+    fn disk_overlays(&self) -> DiskOverlayRefs {
+        DiskOverlayRefs::default()
+    }
+
+    fn ram_len(&self) -> usize {
+        4096
+    }
+
+    fn read_ram(&self, _offset: u64, buf: &mut [u8]) -> aero_snapshot::Result<()> {
+        buf.fill(0);
+        Ok(())
+    }
+
+    fn take_dirty_pages(&mut self) -> Option<Vec<u64>> {
+        None
+    }
+}
+
+#[test]
+fn snapshot_inspect_decodes_legacy_pcic_wrapper_nested_headers() {
+    let tmp = tempfile::tempdir().unwrap();
+    let snap = tmp.path().join("pcic_wrapper.aerosnap");
+
+    let mut source = PcicWrapperDeviceSource;
+    let mut cursor = Cursor::new(Vec::new());
+    save_snapshot(&mut cursor, &mut source, SaveOptions::default()).unwrap();
+    fs::write(&snap, cursor.into_inner()).unwrap();
+
+    Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["snapshot", "inspect", snap.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "cfg=PCPT v1.0 intx=INTX v1.0",
+        ));
+}

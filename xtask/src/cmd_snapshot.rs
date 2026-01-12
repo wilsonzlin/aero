@@ -571,6 +571,111 @@ fn print_devices_section_summary(file: &mut fs::File, section: &SnapshotSectionI
                             detail = Some(format!(" {}", parts.join(" ")));
                         }
                     }
+
+                    // Legacy PCI core wrapper (`PCIC`): tag 1 nests `PCPT`, tag 2 nests `INTX`.
+                    if device_id == b"PCIC" {
+                        let mut cfg: Option<DeviceInnerHeader> = None;
+                        let mut intx: Option<DeviceInnerHeader> = None;
+
+                        loop {
+                            let Ok(pos) = file.stream_position() else {
+                                break;
+                            };
+                            if pos >= data_end {
+                                break;
+                            }
+                            if data_end - pos < 6 {
+                                break;
+                            }
+                            let Ok(tag) = read_u16_le_lossy(file) else {
+                                break;
+                            };
+                            let Ok(field_len) = read_u32_le_lossy(file) else {
+                                break;
+                            };
+                            let Ok(field_start) = file.stream_position() else {
+                                break;
+                            };
+                            let Some(field_end) = field_start.checked_add(u64::from(field_len))
+                            else {
+                                break;
+                            };
+                            if field_end > data_end {
+                                break;
+                            }
+
+                            if tag == 1 || tag == 2 {
+                                let mut hdr = [0u8; 16];
+                                let hdr_len =
+                                    usize::try_from(u64::from(field_len).min(16)).unwrap_or(16);
+                                let parsed = if hdr_len != 0
+                                    && file.read_exact(&mut hdr[..hdr_len]).is_ok()
+                                {
+                                    parse_device_inner_header(&hdr[..hdr_len])
+                                } else {
+                                    None
+                                };
+                                if let Some(parsed) = parsed {
+                                    if tag == 1 {
+                                        cfg = Some(parsed);
+                                    } else {
+                                        intx = Some(parsed);
+                                    }
+                                }
+                            }
+
+                            let _ = file.seek(SeekFrom::Start(field_end));
+                        }
+
+                        let mut parts: Vec<String> = Vec::new();
+                        if let Some(cfg) = cfg {
+                            match cfg {
+                                DeviceInnerHeader::IoSnapshot {
+                                    device_id,
+                                    device_version,
+                                    ..
+                                } => {
+                                    let (major, minor) = device_version;
+                                    parts.push(format!(
+                                        "cfg={} v{}.{}",
+                                        format_fourcc(device_id),
+                                        major,
+                                        minor
+                                    ));
+                                }
+                                DeviceInnerHeader::LegacyAero { version, flags } => {
+                                    parts.push(format!(
+                                        "cfg=legacy-AERO v{version} flags={flags}"
+                                    ));
+                                }
+                            }
+                        }
+                        if let Some(intx) = intx {
+                            match intx {
+                                DeviceInnerHeader::IoSnapshot {
+                                    device_id,
+                                    device_version,
+                                    ..
+                                } => {
+                                    let (major, minor) = device_version;
+                                    parts.push(format!(
+                                        "intx={} v{}.{}",
+                                        format_fourcc(device_id),
+                                        major,
+                                        minor
+                                    ));
+                                }
+                                DeviceInnerHeader::LegacyAero { version, flags } => {
+                                    parts.push(format!(
+                                        "intx=legacy-AERO v{version} flags={flags}"
+                                    ));
+                                }
+                            }
+                        }
+                        if !parts.is_empty() {
+                            detail = Some(format!(" {}", parts.join(" ")));
+                        }
+                    }
                 }
             }
 
