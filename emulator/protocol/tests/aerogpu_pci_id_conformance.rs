@@ -434,3 +434,19 @@ fn aerogpu_sign_test_script_detects_ci_package_root_when_dx11_inf_is_staged() {
     let sign_test_cmd = repo_root.join("drivers/aerogpu/packaging/win7/sign_test.cmd");
     assert_file_contains_noncomment_line(&sign_test_cmd, r#"..\..\aerogpu_dx11.inf"#);
 }
+
+#[test]
+fn aerogpu_ci_staged_legacy_infs_reference_parent_directory_for_payload_files() {
+    let repo_root = repo_root();
+
+    // CI packages stage the legacy-binding INFs under `<package-root>/legacy/`, while the driver
+    // payload files live at the package root. The legacy INFs must keep their SourceDisksNames
+    // path set to `..` so SetupAPI resolves file copy sources correctly.
+    for rel in [
+        "drivers/aerogpu/legacy/aerogpu.inf",
+        "drivers/aerogpu/legacy/aerogpu_dx11.inf",
+    ] {
+        let path = repo_root.join(rel);
+        assert_file_contains_noncomment_line(&path, r#""..""#);
+    }
+}
