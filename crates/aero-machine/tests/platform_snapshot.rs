@@ -488,7 +488,7 @@ fn restore_device_states_prefers_pci_over_legacy_pci_cfg_entry() {
         .bus_mut()
         .add_device(bdf, Box::new(TestDev { cfg }));
 
-    // Canonical state: BAR0 = 0x8000_0000.
+    // Canonical state: BAR0 = 0x8000_0000 stored as a `DeviceId::PCI` wrapper snapshot.
     cfg_write(&mut src, bdf, 0x10, 4, 0x8000_0000);
     let canonical_state = {
         let mut pci_cfg = pci_cfg.borrow_mut();
