@@ -896,6 +896,24 @@ function Read-AeroQmpResponse {
   }
 }
 
+function Invoke-AeroQmpCommand {
+  param(
+    [Parameter(Mandatory = $true)] [System.IO.StreamWriter]$Writer,
+    [Parameter(Mandatory = $true)] [System.IO.StreamReader]$Reader,
+    [Parameter(Mandatory = $true)] $Command
+  )
+
+  $Writer.WriteLine(($Command | ConvertTo-Json -Compress -Depth 10))
+  $resp = Read-AeroQmpResponse -Reader $Reader
+  if ($resp.PSObject.Properties.Name -contains "error") {
+    $desc = ""
+    try { $desc = [string]$resp.error.desc } catch { }
+    if ([string]::IsNullOrEmpty($desc)) { $desc = "unknown" }
+    throw "QMP command failed: $desc"
+  }
+  return $resp
+}
+
 function Try-AeroQmpInjectVirtioInputEvents {
   param(
     [Parameter(Mandatory = $true)] [string]$Host,
@@ -919,8 +937,7 @@ function Try-AeroQmpInjectVirtioInputEvents {
 
       # Greeting.
       $null = $reader.ReadLine()
-      $writer.WriteLine('{"execute":"qmp_capabilities"}')
-      $null = Read-AeroQmpResponse -Reader $reader
+      $null = Invoke-AeroQmpCommand -Writer $writer -Reader $reader -Command @{ execute = "qmp_capabilities" }
 
       # Keyboard: 'a' down/up.
       $cmd = @{
@@ -932,14 +949,12 @@ function Try-AeroQmpInjectVirtioInputEvents {
           )
         }
       }
-      $writer.WriteLine(($cmd | ConvertTo-Json -Compress -Depth 10))
-      $null = Read-AeroQmpResponse -Reader $reader
+      $null = Invoke-AeroQmpCommand -Writer $writer -Reader $reader -Command $cmd
 
       Start-Sleep -Milliseconds 50
 
       $cmd.arguments.events[0].data.down = $false
-      $writer.WriteLine(($cmd | ConvertTo-Json -Compress -Depth 10))
-      $null = Read-AeroQmpResponse -Reader $reader
+      $null = Invoke-AeroQmpCommand -Writer $writer -Reader $reader -Command $cmd
 
       Start-Sleep -Milliseconds 50
 
@@ -954,8 +969,7 @@ function Try-AeroQmpInjectVirtioInputEvents {
           )
         }
       }
-      $writer.WriteLine(($cmdMouseMove | ConvertTo-Json -Compress -Depth 10))
-      $null = Read-AeroQmpResponse -Reader $reader
+      $null = Invoke-AeroQmpCommand -Writer $writer -Reader $reader -Command $cmdMouseMove
 
       Start-Sleep -Milliseconds 50
 
@@ -968,14 +982,12 @@ function Try-AeroQmpInjectVirtioInputEvents {
           )
         }
       }
-      $writer.WriteLine(($cmdMouseBtn | ConvertTo-Json -Compress -Depth 10))
-      $null = Read-AeroQmpResponse -Reader $reader
+      $null = Invoke-AeroQmpCommand -Writer $writer -Reader $reader -Command $cmdMouseBtn
 
       Start-Sleep -Milliseconds 50
 
       $cmdMouseBtn.arguments.events[0].data.down = $false
-      $writer.WriteLine(($cmdMouseBtn | ConvertTo-Json -Compress -Depth 10))
-      $null = Read-AeroQmpResponse -Reader $reader
+      $null = Invoke-AeroQmpCommand -Writer $writer -Reader $reader -Command $cmdMouseBtn
 
       return $true
     } catch {
