@@ -349,7 +349,14 @@ impl AtapiCdrom {
                 ascq: 0,
             };
         }
-        let mut buf = vec![0u8; len];
+        let Some(mut buf) = super::try_alloc_zeroed(len) else {
+            self.set_sense(SENSE_ILLEGAL_REQUEST, 0x21, 0);
+            return PacketResult::Error {
+                sense_key: SENSE_ILLEGAL_REQUEST,
+                asc: 0x21,
+                ascq: 0,
+            };
+        };
         let res = if let Some(backend) = self.backend.as_mut() {
             backend.read_sectors(lba, &mut buf)
         } else {

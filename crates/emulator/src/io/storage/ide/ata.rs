@@ -36,7 +36,7 @@ impl AtaDevice {
         if len > MAX_IDE_DATA_BUFFER_BYTES {
             return Err(DiskError::InvalidBufferLength);
         }
-        Ok(vec![0u8; len])
+        super::try_alloc_zeroed(len).ok_or(DiskError::QuotaExceeded)
     }
 
     pub fn identify_data(&self) -> Vec<u8> {
@@ -124,7 +124,7 @@ impl AtaDevice {
         if len > MAX_IDE_DATA_BUFFER_BYTES {
             return Err(DiskError::InvalidBufferLength);
         }
-        let mut buf = vec![0u8; len];
+        let mut buf = super::try_alloc_zeroed(len).ok_or(DiskError::QuotaExceeded)?;
         self.backend.read_sectors(lba, &mut buf)?;
         Ok(buf)
     }

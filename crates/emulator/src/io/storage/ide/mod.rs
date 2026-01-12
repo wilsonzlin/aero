@@ -43,6 +43,13 @@ const ATA_REG_STATUS_COMMAND: u16 = 7;
 const ATA_CTRL_ALT_STATUS_DEVICE_CTRL: u16 = 0;
 const ATA_CTRL_DRIVE_ADDRESS: u16 = 1;
 
+fn try_alloc_zeroed(len: usize) -> Option<Vec<u8>> {
+    let mut buf = Vec::new();
+    buf.try_reserve_exact(len).ok()?;
+    buf.resize(len, 0);
+    Some(buf)
+}
+
 /// Legacy primary/secondary I/O port assignments.
 #[derive(Debug, Clone, Copy)]
 pub struct IdePortMap {
@@ -368,6 +375,20 @@ impl Channel {
         self.status &= !IDE_STATUS_ERR;
     }
 
+    fn abort_command(&mut self, err: u8) {
+        self.data_mode = DataMode::None;
+        self.transfer_kind = None;
+        self.data.clear();
+        self.data_index = 0;
+        self.pending_dma = None;
+        self.pio_write = None;
+
+        self.set_error(err);
+        self.status &= !(IDE_STATUS_BSY | IDE_STATUS_DRQ);
+        self.status |= IDE_STATUS_DRDY;
+        self.set_irq();
+    }
+
     fn begin_pio_in(&mut self, kind: TransferKind, data: Vec<u8>) {
         self.data = data;
         self.data_index = 0;
@@ -380,7 +401,11 @@ impl Channel {
     }
 
     fn begin_pio_out(&mut self, kind: TransferKind, len: usize) {
-        self.data = vec![0u8; len];
+        let Some(data) = try_alloc_zeroed(len) else {
+            self.abort_command(0x04);
+            return;
+        };
+        self.data = data;
         self.data_index = 0;
         self.data_mode = DataMode::PioOut;
         self.transfer_kind = Some(kind);

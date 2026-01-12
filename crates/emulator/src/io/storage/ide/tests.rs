@@ -285,6 +285,39 @@ fn ata_lba48_oversized_pio_read_is_rejected_without_entering_data_phase() {
 }
 
 #[test]
+fn pio_out_allocation_failure_aborts_command_instead_of_panicking() {
+    let mut chan = super::Channel::new(PRIMARY_PORTS);
+
+    // Seed in-flight state that should get cleared by `abort_command`.
+    chan.status = super::IDE_STATUS_BSY | super::IDE_STATUS_DRQ;
+    chan.data_mode = super::DataMode::PioIn;
+    chan.transfer_kind = Some(super::TransferKind::AtaPioRead);
+    chan.data = vec![1, 2, 3];
+    chan.data_index = 1;
+    chan.irq_pending = false;
+    chan.pending_dma = Some(super::busmaster::DmaRequest::atapi_data_in(vec![0xAA]));
+    chan.pio_write = Some((0x1234, 1));
+
+    // Use a length that deterministically fails `try_reserve_exact` with a capacity overflow,
+    // without actually attempting to allocate an enormous buffer.
+    chan.begin_pio_out(super::TransferKind::AtaPioWrite, usize::MAX);
+
+    assert_eq!(chan.data_mode, super::DataMode::None);
+    assert_eq!(chan.transfer_kind, None);
+    assert!(chan.data.is_empty());
+    assert_eq!(chan.data_index, 0);
+    assert!(chan.pending_dma.is_none());
+    assert!(chan.pio_write.is_none());
+
+    assert_eq!(chan.error, 0x04);
+    assert_ne!(chan.status & super::IDE_STATUS_ERR, 0);
+    assert_ne!(chan.status & super::IDE_STATUS_DRDY, 0);
+    assert_eq!(chan.status & super::IDE_STATUS_BSY, 0);
+    assert_eq!(chan.status & super::IDE_STATUS_DRQ, 0);
+    assert!(chan.irq_pending);
+}
+
+#[test]
 fn ata_lba48_oversized_pio_write_is_rejected_without_allocating_buffer() {
     let sectors = (MAX_IDE_DATA_BUFFER_BYTES / 512) as u32 + 1;
     if sectors > 65536 {
