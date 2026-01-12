@@ -139,9 +139,9 @@ describe("io/devices/E1000PciDevice", () => {
     expect(Array.from(netTx.tryPop()!)).toEqual([0x01]);
   });
 
-  it("clears any pending host-side TX frame and re-syncs the IRQ level on snapshot restore", () => {
+  it("clears pending host-side TX and re-syncs IRQ level on snapshot restore", () => {
     // Capacity 8 bytes: enough for a single 1-byte payload record
-    // (len=1 => record size alignUp(4+1,4)=8).
+    // (len=1 => record size alignUp(4+1,8)=8).
     const { buffer } = createIpcBuffer([
       { kind: IO_IPC_NET_TX_QUEUE_KIND, capacityBytes: 8 },
       { kind: IO_IPC_NET_RX_QUEUE_KIND, capacityBytes: 256 },
@@ -155,7 +155,7 @@ describe("io/devices/E1000PciDevice", () => {
     // First frame becomes pending (ring full); second frame should be the next one flushed after
     // snapshot restore because the pending host-side buffer is intentionally cleared.
     const txQueue: Uint8Array[] = [new Uint8Array([0x01]), new Uint8Array([0x02])];
-    let irq = false;
+    let irq = true;
     const popTxFrame = vi.fn(() => txQueue.shift());
     const bridge: E1000BridgeLike = {
       mmio_read: vi.fn(() => 0),
@@ -168,18 +168,22 @@ describe("io/devices/E1000PciDevice", () => {
       irq_level: vi.fn(() => irq),
       free: vi.fn(),
     };
-    const irqSink: IrqSink = { raiseIrq: vi.fn(), lowerIrq: vi.fn() };
+
+    const irqEvents: string[] = [];
+    const irqSink: IrqSink = {
+      raiseIrq: vi.fn((line) => irqEvents.push(`raise:${line}`)),
+      lowerIrq: vi.fn((line) => irqEvents.push(`lower:${line}`)),
+    };
 
     const dev = new E1000PciDevice({ bridge, irqSink, netTxRing: netTx, netRxRing: netRx });
 
     dev.tick(0);
     expect(popTxFrame).toHaveBeenCalledTimes(1);
+    expect(irqEvents).toEqual(["raise:10"]);
 
     // Snapshot restore should clear transient state and re-drive the INTx level.
-    irq = true;
     dev.onSnapshotRestore();
-    expect(irqSink.raiseIrq).toHaveBeenCalledTimes(1);
-    expect(irqSink.raiseIrq).toHaveBeenCalledWith(10);
+    expect(irqEvents).toEqual(["raise:10", "lower:10", "raise:10"]);
 
     // Consume the old entry so the ring can accept a new frame.
     expect(Array.from(netTx.tryPop()!)).toEqual([0x00]);
@@ -190,6 +194,7 @@ describe("io/devices/E1000PciDevice", () => {
     // call count; assert it advanced beyond the initial "pending" pop.
     expect(popTxFrame.mock.calls.length).toBeGreaterThanOrEqual(2);
     expect(Array.from(netTx.tryPop()!)).toEqual([0x02]);
+    expect(netTx.tryPop()).toBe(null);
   });
 
   it("treats PCI INTx as a level-triggered IRQ and only emits transitions on edges", () => {

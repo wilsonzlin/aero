@@ -219,6 +219,34 @@ export class E1000PciDevice implements PciDevice, TickableDevice {
     }
   }
 
+  /**
+   * Restore JS wrapper state after a VM snapshot restore.
+   *
+   * The WASM `E1000Bridge` snapshot blob does not include transient JS-side state
+   * such as the pending TX frame (already popped from WASM but not yet pushed
+   * into NET_TX) or the cached IRQ line level. Without resetting these fields a
+   * snapshot restore in the same IO worker instance can:
+   * - replay a "future" TX frame after restoring an older device state, and/or
+   * - leave the IRQ sink refcount in an inconsistent asserted/deasserted state.
+   */
+  onSnapshotRestore(): void {
+    if (this.#destroyed) return;
+
+    // Drop any frame that was popped from the WASM device before restore but not
+    // yet emitted to the host network worker.
+    this.#pendingTxFrame = null;
+
+    // Force the IRQ sink back to a clean base level before resyncing. This
+    // avoids leaving the refcount elevated when restore rewinds the device state.
+    if (this.#irqLevel) {
+      this.#irqSink.lowerIrq(this.irqLine);
+      this.#irqLevel = false;
+    }
+
+    // Re-evaluate the restored bridge IRQ level and forward any transition.
+    this.#syncIrq();
+  }
+
   onPciCommandWrite(command: number): void {
     if (this.#destroyed) return;
 
@@ -237,20 +265,6 @@ export class E1000PciDevice implements PciDevice, TickableDevice {
     }
 
     // INTx disable bit can immediately drop the line; keep the sink coherent.
-    this.#syncIrq();
-  }
-
-  /**
-   * Called after VM snapshot restore.
-   *
-   * The WASM bridge restores the guest-visible device model state, but the JS wrapper also holds
-   * some transient host-side state (e.g. a frame temporarily buffered when the NET_TX ring was
-   * full). Clear that state and re-sample the device's INTx level so the I/O worker's IRQ sink
-   * reflects any restored asserted interrupt.
-   */
-  onSnapshotRestore(): void {
-    if (this.#destroyed) return;
-    this.#pendingTxFrame = null;
     this.#syncIrq();
   }
 
