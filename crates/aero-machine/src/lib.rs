@@ -1842,16 +1842,7 @@ impl snapshot::SnapshotSource for Machine {
         }
 
         // CPU_INTERNAL: non-architectural Tier-0 bookkeeping required for deterministic resume.
-        let cpu_internal = snapshot::CpuInternalState {
-            interrupt_inhibit: self.cpu.pending.interrupt_inhibit(),
-            pending_external_interrupts: self
-                .cpu
-                .pending
-                .external_interrupts
-                .iter()
-                .copied()
-                .collect(),
-        };
+        let cpu_internal = snapshot::cpu_internal_state_from_cpu_core(&self.cpu);
         devices.push(
             cpu_internal
                 .to_device_state()
@@ -2159,11 +2150,7 @@ impl snapshot::SnapshotTarget for Machine {
         if let Some(state) = by_id.remove(&snapshot::DeviceId::CPU_INTERNAL) {
             if state.version == snapshot::CpuInternalState::VERSION {
                 if let Ok(decoded) = snapshot::CpuInternalState::from_device_state(&state) {
-                    self.cpu
-                        .pending
-                        .set_interrupt_inhibit(decoded.interrupt_inhibit);
-                    self.cpu.pending.external_interrupts =
-                        decoded.pending_external_interrupts.into_iter().collect();
+                    snapshot::apply_cpu_internal_state_to_cpu_core(&decoded, &mut self.cpu);
                 }
             }
         }

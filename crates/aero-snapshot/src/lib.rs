@@ -10,8 +10,9 @@ mod types;
 pub mod io_snapshot_bridge;
 
 pub use crate::cpu_core::{
-    apply_cpu_state_to_cpu_core, apply_mmu_state_to_cpu_core, cpu_core_from_snapshot,
-    cpu_state_from_cpu_core, mmu_state_from_cpu_core, snapshot_from_cpu_core,
+    apply_cpu_internal_state_to_cpu_core, apply_cpu_state_to_cpu_core, apply_mmu_state_to_cpu_core,
+    cpu_core_from_snapshot, cpu_internal_state_from_cpu_core, cpu_state_from_cpu_core,
+    mmu_state_from_cpu_core, snapshot_from_cpu_core,
 };
 pub use crate::error::{Result, SnapshotError};
 pub use crate::format::{

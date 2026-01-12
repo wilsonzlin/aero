@@ -2,10 +2,28 @@ use aero_cpu_core::fpu::canonicalize_st;
 use aero_cpu_core::sse_state::MXCSR_MASK;
 use aero_cpu_core::state::{gpr as core_gpr, CpuMode as CoreCpuMode, CpuState as CoreCpuState};
 
-use crate::types::{CpuMode, CpuState, FpuState, MmuState, SegmentState};
+use crate::types::{CpuInternalState, CpuMode, CpuState, FpuState, MmuState, SegmentState};
 
 pub fn snapshot_from_cpu_core(core: &CoreCpuState) -> (CpuState, MmuState) {
     (cpu_state_from_cpu_core(core), mmu_state_from_cpu_core(core))
+}
+
+pub fn cpu_internal_state_from_cpu_core(core: &aero_cpu_core::CpuCore) -> CpuInternalState {
+    CpuInternalState {
+        interrupt_inhibit: core.pending.interrupt_inhibit(),
+        pending_external_interrupts: core.pending.external_interrupts.iter().copied().collect(),
+    }
+}
+
+pub fn apply_cpu_internal_state_to_cpu_core(
+    state: &CpuInternalState,
+    core: &mut aero_cpu_core::CpuCore,
+) {
+    core.pending.set_interrupt_inhibit(state.interrupt_inhibit);
+    core.pending.external_interrupts.clear();
+    core.pending
+        .external_interrupts
+        .extend(state.pending_external_interrupts.iter().copied());
 }
 
 pub fn cpu_core_from_snapshot(cpu: &CpuState, mmu: &MmuState) -> CoreCpuState {
