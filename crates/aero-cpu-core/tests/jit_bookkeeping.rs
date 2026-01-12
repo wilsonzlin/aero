@@ -346,6 +346,78 @@ fn inhibit_interrupts_after_block_creates_and_ages_shadow() {
 }
 
 #[test]
+fn rollback_does_not_create_interrupt_shadow_even_if_meta_requests_it() {
+    let entry_rip = 0x1000u64;
+    let vector = 0x20u8;
+    let initial_tsc = 123u64;
+
+    let backend = FixedExitBackend {
+        exit: JitBlockExit {
+            next_rip: entry_rip,
+            exit_to_interpreter: false,
+            committed: false,
+        },
+    };
+    let config = JitConfig {
+        enabled: true,
+        hot_threshold: 1,
+        cache_max_blocks: 16,
+        cache_max_bytes: 0,
+    };
+    let jit = JitRuntime::new(config, backend, NullCompileSink);
+    let mut dispatcher = ExecDispatcher::new(NoopInterpreter::default(), jit);
+
+    // Install a compiled handle that claims it would create an interrupt shadow if the block
+    // retired. Because the backend rolls back (`committed=false`), the dispatcher must not apply
+    // the shadow.
+    {
+        let jit = dispatcher.jit_mut();
+        let mut meta = jit.make_meta(0, 0);
+        meta.instruction_count = 1;
+        meta.inhibit_interrupts_after_block = true;
+        jit.install_handle(CompiledBlockHandle {
+            entry_rip,
+            table_index: 0,
+            meta,
+        });
+    }
+
+    let mut core = CpuCore::new(CpuMode::Real);
+    core.time = TimeSource::new_deterministic(DEFAULT_TSC_HZ);
+    core.time.set_tsc(initial_tsc);
+    core.state.msr.tsc = initial_tsc;
+    core.state.set_rip(entry_rip);
+    core.state.set_flag(RFLAGS_IF, true);
+    core.state.write_gpr16(gpr::RSP, 0x8000);
+
+    let mut bus = FlatTestBus::new(0x20000);
+    install_ivt_entry(&mut bus, vector, 0x0000, 0x1234);
+    let mut cpu = Vcpu::new(core, bus);
+
+    match dispatcher.step(&mut cpu) {
+        StepOutcome::Block {
+            tier,
+            instructions_retired,
+            ..
+        } => {
+            assert_eq!(tier, ExecutedTier::Jit);
+            assert_eq!(instructions_retired, 0);
+        }
+        other => panic!("unexpected outcome: {other:?}"),
+    }
+    assert_eq!(cpu.cpu.state.msr.tsc, initial_tsc);
+    assert_eq!(
+        cpu.cpu.pending.interrupt_inhibit(),
+        0,
+        "rollback must not create an interrupt shadow"
+    );
+
+    // If the shadow was incorrectly applied, this interrupt would be delayed.
+    cpu.cpu.pending.inject_external_interrupt(vector);
+    assert_eq!(dispatcher.step(&mut cpu), StepOutcome::InterruptDelivered);
+}
+
+#[test]
 fn tsc_advances_on_committed_jit_blocks() {
     let entry_rip = 0x1000u64;
     let insts = 5u32;
