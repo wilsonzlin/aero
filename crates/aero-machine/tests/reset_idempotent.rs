@@ -42,7 +42,13 @@ fn reset_is_idempotent_for_bios_rom_mappings() {
     // disk image). BIOS POST always attempts to map the BIOS ROM windows, and the platform memory
     // bus treats overlaps as errors. Ensure repeated resets are safe and don't panic.
     let mut m = Machine::new(MachineConfig {
-        ram_size_bytes: 2 * 1024 * 1024,
+        // Use a small-but-realistic RAM size so BIOS POST can place ACPI/SMBIOS structures without
+        // risking out-of-range writes.
+        ram_size_bytes: 16 * 1024 * 1024,
+        // Enable the canonical PC platform wiring so `reset()` exercises both:
+        // - BIOS ROM re-mapping, and
+        // - MMIO window mapping (LAPIC/IOAPIC/HPET/PCI ECAM, etc.).
+        enable_pc_platform: true,
         ..Default::default()
     })
     .unwrap();
@@ -58,4 +64,3 @@ fn reset_is_idempotent_for_bios_rom_mappings() {
     run_until_halt(&mut m);
     assert_eq!(m.take_serial_output(), b"OK\n");
 }
-
