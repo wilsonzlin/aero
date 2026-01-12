@@ -1526,14 +1526,22 @@ function guestWriteU64(addr: number, value: bigint): void {
 
 async function startHdaCaptureSynthetic(msg: AudioHdaCaptureSyntheticStartMessage): Promise<void> {
   const requestId = msg.requestId >>> 0;
-  // Treat this as a mutually exclusive "HDA harness" operation. Cancelling any pending HDA PCI
-  // output start prevents overlapping CORB/RIRB/stream programming in the shared worker runtime.
-  cancelHdaPciDeviceOps();
-  const token = hdaPciDeviceOpToken;
+  // Treat this as a mutually exclusive "HDA harness" operation. Use the same operation token
+  // used by the HDA PCI playback harness so:
+  // - overlapping playback/capture starts cannot race each other, and
+  // - `audioOutputHdaPciDevice.stop` can cancel an in-flight capture setup.
+  const token = allocHdaPciDeviceToken();
+  pendingHdaPciDeviceStart = null;
+  stopHdaPciDeviceHardware();
   try {
     const ioClient = io;
     if (!ioClient) throw new Error("I/O client is not initialized (CPU worker not ready).");
     if (typeof guestU8 === "undefined") throw new Error("guest memory is not initialized.");
+
+    if (!isHdaPciDeviceTokenActive(token)) {
+      stopHdaPciDeviceHardwareIfToken(token);
+      return;
+    }
 
     // PCI config scan for Intel ICH6 HDA (8086:2668).
     const PCI_ENABLE = 0x8000_0000;
@@ -1556,6 +1564,10 @@ async function startHdaCaptureSynthetic(msg: AudioHdaCaptureSyntheticStartMessag
     // synthetic HDA capture harness due to transient startup latency.
     const deadlineMs = performance.now() + 30_000;
     while (performance.now() < deadlineMs) {
+      if (!isHdaPciDeviceTokenActive(token)) {
+        stopHdaPciDeviceHardwareIfToken(token);
+        return;
+      }
       for (let dev = 0; dev < 32; dev++) {
         const id0 = pciReadDword(0, dev, 0, 0x00);
         const vendor0 = id0 & 0xffff;
@@ -1602,10 +1614,20 @@ async function startHdaCaptureSynthetic(msg: AudioHdaCaptureSyntheticStartMessag
     const cmd = pciReadDword(0, pciDevice, pciFn, 0x04);
     pciWriteDword(0, pciDevice, pciFn, 0x04, (cmd | 0x0000_0006) >>> 0);
 
+    if (!isHdaPciDeviceTokenActive(token)) {
+      stopHdaPciDeviceHardwareIfToken(token);
+      return;
+    }
+
     const mmioBase = BigInt(bar0 >>> 0) & 0xffff_fff0n;
     // Record the BAR0 base so `audioOutputHdaPciDevice.stop` can tear down the capture harness
     // once the main thread is done inspecting guest PCM.
     hdaPciDeviceBar0Base = { base: mmioBase, token };
+
+    if (!isHdaPciDeviceTokenActive(token)) {
+      stopHdaPciDeviceHardwareIfToken(token);
+      return;
+    }
 
     const hdaWrite = (offset: number, size: number, value: number): void => {
       ioClient.mmioWrite(mmioBase + BigInt(offset >>> 0), size, value >>> 0);
@@ -1616,6 +1638,11 @@ async function startHdaCaptureSynthetic(msg: AudioHdaCaptureSyntheticStartMessag
 
     // Bring controller out of reset (GCTL.CRST).
     hdaWrite(0x08, 4, 0x1);
+
+    if (!isHdaPciDeviceTokenActive(token)) {
+      stopHdaPciDeviceHardwareIfToken(token);
+      return;
+    }
 
     // Guest memory layout for this debug harness.
     //
@@ -1687,12 +1714,26 @@ async function startHdaCaptureSynthetic(msg: AudioHdaCaptureSyntheticStartMessag
     hdaWrite(0x5c, 1, 0x02); // RIRBCTL.RUN
     hdaWrite(0x4c, 1, 0x02); // CORBCTL.RUN
 
+    if (!isHdaPciDeviceTokenActive(token)) {
+      stopHdaPciDeviceHardwareIfToken(token);
+      return;
+    }
+
     // Wait (briefly) for the verb to be processed so the capture stream is accepted.
     const rirbDeadline = performance.now() + 1000;
     while (performance.now() < rirbDeadline) {
+      if (!isHdaPciDeviceTokenActive(token)) {
+        stopHdaPciDeviceHardwareIfToken(token);
+        return;
+      }
       const rirbSts = hdaRead(0x5d, 1) & 0xff;
       if ((rirbSts & 0x1) !== 0) break;
       await sleepMs(10);
+    }
+
+    if (!isHdaPciDeviceTokenActive(token)) {
+      stopHdaPciDeviceHardwareIfToken(token);
+      return;
     }
 
     // Program capture stream 1 BDL entry.
@@ -1723,6 +1764,11 @@ async function startHdaCaptureSynthetic(msg: AudioHdaCaptureSyntheticStartMessag
     const ctl = (SD_CTL_SRST | SD_CTL_RUN | (2 << 20)) >>> 0;
     hdaWrite(SD_CTL, 4, ctl);
 
+    if (!isHdaPciDeviceTokenActive(token)) {
+      stopHdaPciDeviceHardwareIfToken(token);
+      return;
+    }
+
     ctx.postMessage({
       type: "audioHdaCaptureSynthetic.ready",
       requestId,
@@ -1737,6 +1783,7 @@ async function startHdaCaptureSynthetic(msg: AudioHdaCaptureSyntheticStartMessag
     } satisfies AudioHdaCaptureSyntheticReadyMessage);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    stopHdaPciDeviceHardwareIfToken(token);
     ctx.postMessage({ type: "audioHdaCaptureSynthetic.error", requestId, message } satisfies AudioHdaCaptureSyntheticErrorMessage);
   }
 }
