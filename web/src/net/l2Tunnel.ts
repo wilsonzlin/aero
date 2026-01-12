@@ -1,5 +1,6 @@
 import {
   L2_TUNNEL_DEFAULT_MAX_FRAME_PAYLOAD,
+  L2_TUNNEL_DATA_CHANNEL_LABEL,
   L2_TUNNEL_TYPE_ERROR,
   L2_TUNNEL_TYPE_FRAME,
   L2_TUNNEL_TYPE_PING,
@@ -13,8 +14,7 @@ import {
   encodePong,
 } from "../shared/l2TunnelProtocol";
 
-export { L2_TUNNEL_SUBPROTOCOL };
-export const L2_TUNNEL_DATA_CHANNEL_LABEL = "l2";
+export { L2_TUNNEL_SUBPROTOCOL, L2_TUNNEL_DATA_CHANNEL_LABEL };
 
 // RFC 6455: Sec-WebSocket-Protocol values must be HTTP "tokens".
 // https://www.rfc-editor.org/rfc/rfc6455#section-4.1

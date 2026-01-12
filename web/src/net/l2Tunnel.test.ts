@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  L2_TUNNEL_DATA_CHANNEL_LABEL,
   L2_TUNNEL_TYPE_FRAME,
   L2_TUNNEL_TYPE_PONG,
   L2_TUNNEL_TOKEN_SUBPROTOCOL_PREFIX,
@@ -20,7 +21,7 @@ function microtask(): Promise<void> {
 }
 
 class FakeRtcDataChannel {
-  label = "l2";
+  label = L2_TUNNEL_DATA_CHANNEL_LABEL;
   ordered = true;
   maxRetransmits: number | null = null;
   maxPacketLifeTime: number | null = null;

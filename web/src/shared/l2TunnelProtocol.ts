@@ -6,6 +6,9 @@ export const L2_TUNNEL_VERSION = 0x03;
 // Keep in sync with docs/l2-tunnel-protocol.md.
 export const L2_TUNNEL_SUBPROTOCOL = "aero-l2-tunnel-v1";
 
+// WebRTC DataChannel label for the L2 tunnel (see docs/l2-tunnel-protocol.md).
+export const L2_TUNNEL_DATA_CHANNEL_LABEL = "l2";
+
 // Optional auth token WebSocket subprotocol prefix (see docs/l2-tunnel-protocol.md).
 //
 // Clients MAY offer an additional `Sec-WebSocket-Protocol` entry

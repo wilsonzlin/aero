@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { connectL2RelaySignaling } from "./l2RelaySignalingClient";
+import { L2_TUNNEL_DATA_CHANNEL_LABEL } from "../shared/l2TunnelProtocol.ts";
 
 type Listener = (evt: Event) => void;
 type WebSocketConstructor = new (url: string, protocols?: string | string[]) => WebSocket;
@@ -214,7 +215,7 @@ describe("net/l2RelaySignalingClient", () => {
       const pc = FakePeerConnection.last;
       if (!pc) throw new Error("expected peer connection to be created");
 
-      expect(pc.createdLabel).toBe("l2");
+      expect(pc.createdLabel).toBe(L2_TUNNEL_DATA_CHANNEL_LABEL);
       expect(pc.createdInit).toBeDefined();
       expect(pc.createdInit?.ordered).toBe(true);
       expect(pc.createdInit?.maxRetransmits).toBeUndefined();
