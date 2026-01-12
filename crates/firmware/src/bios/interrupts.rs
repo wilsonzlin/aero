@@ -536,6 +536,14 @@ fn handle_int16(bios: &mut Bios, cpu: &mut CpuState) {
             cpu.gpr[gpr::RAX] &= !0xFF;
             cpu.rflags &= !FLAG_CF;
         }
+        0x12 => {
+            // Get extended shift flags (returns AX).
+            //
+            // Like AH=02h, we do not currently track keyboard modifier state; report all flags
+            // cleared but indicate success.
+            cpu.gpr[gpr::RAX] &= !0xFFFF;
+            cpu.rflags &= !FLAG_CF;
+        }
         0x01 => {
             // Check for keystroke (ZF=1 if none).
             if let Some(&k) = bios.keyboard_queue.front() {
@@ -1018,6 +1026,18 @@ fn build_e820_map(
 
         assert_eq!(cpu.rflags & FLAG_CF, 0);
         assert_eq!((cpu.gpr[gpr::RAX] & 0xFF) as u8, 0);
+    }
+
+    #[test]
+    fn int16_get_extended_shift_flags_reports_zero() {
+        let mut bios = Bios::new(super::super::BiosConfig::default());
+        let mut cpu = CpuState::new(CpuMode::Real);
+
+        cpu.gpr[gpr::RAX] = 0x1200; // AH=12h
+        handle_int16(&mut bios, &mut cpu);
+
+        assert_eq!(cpu.rflags & FLAG_CF, 0);
+        assert_eq!(cpu.gpr[gpr::RAX] as u16, 0);
     }
 
     #[test]
