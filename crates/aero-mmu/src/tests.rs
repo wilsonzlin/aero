@@ -100,6 +100,24 @@ impl MemoryBus for TestMemory {
     }
 }
 
+fn read_u8_through_generic<B: MemoryBus>(mut bus: B, paddr: u64) -> u8 {
+    bus.read_u8(paddr)
+}
+
+#[test]
+fn memory_bus_is_implemented_for_mut_refs() {
+    // Compile-time assertion: `&mut TestMemory` should satisfy `MemoryBus` bounds. This is relied
+    // on by adapters like `PagingBus` that want to store a `&mut` physical bus directly.
+    let mut mem = TestMemory::new(0x10);
+    mem.data[0] = 0xaa;
+    mem.reset_counters();
+
+    // `B` is inferred as `&mut TestMemory`, so this only compiles if `&mut TestMemory: MemoryBus`.
+    let got = read_u8_through_generic(&mut mem, 0);
+    assert_eq!(got, 0xaa);
+    assert_eq!(mem.reads(), 1);
+}
+
 #[test]
 fn no_paging_is_identity() {
     let mut mmu = Mmu::new();
