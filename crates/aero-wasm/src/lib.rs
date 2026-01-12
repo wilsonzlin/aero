@@ -269,6 +269,72 @@ pub fn jit_abi_constants() -> JsValue {
     }
 }
 
+#[cfg(all(test, target_arch = "wasm32"))]
+mod jit_abi_constants_tests {
+    use super::jit_abi_constants;
+
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen::JsValue;
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    use js_sys::{Reflect, Uint32Array};
+
+    use aero_cpu_core::state::{CPU_STATE_ALIGN, CPU_STATE_SIZE, GPR_COUNT};
+    use aero_jit_x86::jit_ctx::{JitContext, TIER2_CTX_OFFSET, TIER2_CTX_SIZE};
+    use aero_jit_x86::{JIT_TLB_ENTRIES, JIT_TLB_ENTRY_SIZE};
+
+    fn read_u32(obj: &JsValue, key: &str) -> u32 {
+        Reflect::get(obj, &JsValue::from_str(key))
+            .unwrap_or_else(|_| panic!("missing jit_abi_constants key: {key}"))
+            .as_f64()
+            .unwrap_or_else(|| panic!("jit_abi_constants[{key}] must be a number"))
+            .round() as u32
+    }
+
+    #[wasm_bindgen_test]
+    fn exports_expected_jit_abi_constants() {
+        let obj = jit_abi_constants();
+        assert!(obj.is_object(), "jit_abi_constants must return an object");
+
+        assert_eq!(read_u32(&obj, "cpu_state_size"), CPU_STATE_SIZE as u32);
+        assert_eq!(read_u32(&obj, "cpu_state_align"), CPU_STATE_ALIGN as u32);
+
+        assert_eq!(
+            read_u32(&obj, "jit_ctx_ram_base_offset"),
+            JitContext::RAM_BASE_OFFSET
+        );
+        assert_eq!(
+            read_u32(&obj, "jit_ctx_tlb_salt_offset"),
+            JitContext::TLB_SALT_OFFSET
+        );
+        assert_eq!(read_u32(&obj, "jit_ctx_tlb_offset"), JitContext::TLB_OFFSET);
+        assert_eq!(
+            read_u32(&obj, "jit_ctx_header_bytes"),
+            JitContext::BYTE_SIZE as u32
+        );
+        assert_eq!(
+            read_u32(&obj, "jit_ctx_total_bytes"),
+            JitContext::TOTAL_BYTE_SIZE as u32
+        );
+        assert_eq!(read_u32(&obj, "jit_tlb_entries"), JIT_TLB_ENTRIES as u32);
+        assert_eq!(read_u32(&obj, "jit_tlb_entry_bytes"), JIT_TLB_ENTRY_SIZE);
+        assert_eq!(read_u32(&obj, "tier2_ctx_offset"), TIER2_CTX_OFFSET);
+        assert_eq!(read_u32(&obj, "tier2_ctx_size"), TIER2_CTX_SIZE);
+        assert_eq!(
+            read_u32(&obj, "commit_flag_offset"),
+            TIER2_CTX_OFFSET + TIER2_CTX_SIZE
+        );
+        assert_eq!(read_u32(&obj, "commit_flag_bytes"), 4);
+
+        let gpr = Reflect::get(&obj, &JsValue::from_str("cpu_gpr_off"))
+            .expect("cpu_gpr_off missing");
+        let gpr = gpr
+            .dyn_into::<Uint32Array>()
+            .expect("cpu_gpr_off must be Uint32Array");
+        assert_eq!(gpr.length() as usize, GPR_COUNT);
+    }
+}
+
 // -------------------------------------------------------------------------------------------------
 // Guest RAM vs runtime layout contract
 // -------------------------------------------------------------------------------------------------
