@@ -63,8 +63,8 @@ use aero_platform::reset::{ResetKind, ResetLatch};
 use aero_snapshot as snapshot;
 use firmware::bios::{A20Gate, Bios, BiosBus, BiosConfig, BlockDevice, DiskError, FirmwareMemory};
 use memory::{
-    DenseMemory, DirtyGuestMemory, DirtyTracker, GuestMemoryError, MapError, MemoryBus as _,
-    MmioHandler, PhysicalMemoryBus,
+    DenseMemory, DirtyGuestMemory, DirtyTracker, GuestMemoryError, GuestMemoryMapping,
+    MapError, MappedGuestMemory, MemoryBus as _, MmioHandler, PhysicalMemoryBus,
 };
 
 mod pci_firmware;
@@ -285,10 +285,40 @@ struct SystemMemory {
 
 impl SystemMemory {
     fn new(ram_size_bytes: u64, a20: A20GateHandle) -> Result<Self, MachineError> {
+        const FOUR_GIB: u64 = 0x1_0000_0000;
+        let low_ram_end = firmware::bios::PCIE_ECAM_BASE;
+
         let ram = DenseMemory::new(ram_size_bytes)
             .map_err(|_| MachineError::GuestMemoryTooLarge(ram_size_bytes))?;
         let (ram, dirty) = DirtyGuestMemory::new(Box::new(ram), SNAPSHOT_DIRTY_PAGE_SIZE);
-        let inner = PhysicalMemoryBus::new(Box::new(ram));
+        let ram: Box<dyn memory::GuestMemory> = if ram_size_bytes > low_ram_end {
+            // Match the BIOS E820 map behavior: once RAM extends into the PCIe ECAM / PCI hole
+            // below 4GiB, remap the remainder above 4GiB.
+            let high_len = ram_size_bytes - low_ram_end;
+            let phys_size = FOUR_GIB + high_len;
+            Box::new(
+                MappedGuestMemory::new(
+                    Box::new(ram),
+                    phys_size,
+                    vec![
+                        GuestMemoryMapping {
+                            phys_start: 0,
+                            phys_end: low_ram_end,
+                            inner_offset: 0,
+                        },
+                        GuestMemoryMapping {
+                            phys_start: FOUR_GIB,
+                            phys_end: phys_size,
+                            inner_offset: low_ram_end,
+                        },
+                    ],
+                )
+                .expect("valid PC RAM remapping layout"),
+            )
+        } else {
+            Box::new(ram)
+        };
+        let inner = PhysicalMemoryBus::new(ram);
 
         Ok(Self {
             a20,
@@ -2339,20 +2369,42 @@ impl snapshot::SnapshotSource for Machine {
     }
 
     fn read_ram(&self, offset: u64, buf: &mut [u8]) -> snapshot::Result<()> {
+        const FOUR_GIB: u64 = 0x1_0000_0000;
+        let low_ram_end = firmware::bios::PCIE_ECAM_BASE;
         let end = offset
             .checked_add(buf.len() as u64)
             .ok_or(snapshot::SnapshotError::Corrupt("ram offset overflow"))?;
         if end > self.cfg.ram_size_bytes {
             return Err(snapshot::SnapshotError::Corrupt("ram read out of range"));
         }
-        self.mem
-            .inner
-            .borrow()
-            .ram
-            .read_into(offset, buf)
-            .map_err(|_err: GuestMemoryError| {
-                snapshot::SnapshotError::Corrupt("ram read failed")
-            })?;
+
+        // Snapshots encode RAM as a dense byte array of length `ram_size_bytes` (not including any
+        // guest-physical MMIO holes). When RAM is remapped above 4GiB to make room for the PCIe
+        // ECAM/PCI hole, translate dense RAM offsets into the corresponding guest-physical
+        // addresses.
+        let ram = &self.mem.inner.borrow().ram;
+        if self.cfg.ram_size_bytes <= low_ram_end || buf.is_empty() {
+            ram.read_into(offset, buf)
+                .map_err(|_err: GuestMemoryError| snapshot::SnapshotError::Corrupt("ram read failed"))?;
+            return Ok(());
+        }
+
+        if offset < low_ram_end {
+            let low_len = (low_ram_end - offset) as usize;
+            let first = low_len.min(buf.len());
+            ram.read_into(offset, &mut buf[..first])
+                .map_err(|_err: GuestMemoryError| snapshot::SnapshotError::Corrupt("ram read failed"))?;
+            if first < buf.len() {
+                let phys = FOUR_GIB;
+                ram.read_into(phys, &mut buf[first..])
+                    .map_err(|_err: GuestMemoryError| snapshot::SnapshotError::Corrupt("ram read failed"))?;
+            }
+            return Ok(());
+        }
+
+        let phys = FOUR_GIB + (offset - low_ram_end);
+        ram.read_into(phys, buf)
+            .map_err(|_err: GuestMemoryError| snapshot::SnapshotError::Corrupt("ram read failed"))?;
         Ok(())
     }
 
@@ -2706,20 +2758,38 @@ impl snapshot::SnapshotTarget for Machine {
     }
 
     fn write_ram(&mut self, offset: u64, data: &[u8]) -> snapshot::Result<()> {
+        const FOUR_GIB: u64 = 0x1_0000_0000;
+        let low_ram_end = firmware::bios::PCIE_ECAM_BASE;
         let end = offset
             .checked_add(data.len() as u64)
             .ok_or(snapshot::SnapshotError::Corrupt("ram offset overflow"))?;
         if end > self.cfg.ram_size_bytes {
             return Err(snapshot::SnapshotError::Corrupt("ram write out of range"));
         }
-        self.mem
-            .inner
-            .borrow_mut()
-            .ram
-            .write_from(offset, data)
-            .map_err(|_err: GuestMemoryError| {
-                snapshot::SnapshotError::Corrupt("ram write failed")
-            })?;
+
+        let ram = &mut self.mem.inner.borrow_mut().ram;
+        if self.cfg.ram_size_bytes <= low_ram_end || data.is_empty() {
+            ram.write_from(offset, data)
+                .map_err(|_err: GuestMemoryError| snapshot::SnapshotError::Corrupt("ram write failed"))?;
+            return Ok(());
+        }
+
+        if offset < low_ram_end {
+            let low_len = (low_ram_end - offset) as usize;
+            let first = low_len.min(data.len());
+            ram.write_from(offset, &data[..first])
+                .map_err(|_err: GuestMemoryError| snapshot::SnapshotError::Corrupt("ram write failed"))?;
+            if first < data.len() {
+                let phys = FOUR_GIB;
+                ram.write_from(phys, &data[first..])
+                    .map_err(|_err: GuestMemoryError| snapshot::SnapshotError::Corrupt("ram write failed"))?;
+            }
+            return Ok(());
+        }
+
+        let phys = FOUR_GIB + (offset - low_ram_end);
+        ram.write_from(phys, data)
+            .map_err(|_err: GuestMemoryError| snapshot::SnapshotError::Corrupt("ram write failed"))?;
         Ok(())
     }
 

@@ -37,7 +37,7 @@ use aero_virtio::memory::{
     GuestMemory as VirtioGuestMemory, GuestMemoryError as VirtioGuestMemoryError,
 };
 use aero_virtio::pci::{InterruptSink as VirtioInterruptSink, VirtioPciDevice};
-use memory::{DenseMemory, GuestMemory, MmioHandler};
+use memory::{DenseMemory, GuestMemory, GuestMemoryMapping, MappedGuestMemory, MmioHandler};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -1153,11 +1153,40 @@ impl PcPlatform {
         nvme_disk_override: Option<Box<dyn VirtualDisk + Send>>,
         virtio_blk_disk_override: Option<Box<dyn VirtualDisk + Send>>,
     ) -> Self {
+        const FOUR_GIB: u64 = 0x1_0000_0000;
         let chipset = ChipsetState::new(false);
         let filter = AddressFilter::new(chipset.a20());
 
         let mut io = IoPortBus::new();
-        let ram_size = ram.size();
+        // `ram.size()` is treated as the *total guest RAM bytes* (dense backing store). When the
+        // BIOS E820 map remaps RAM above 4GiB to keep the PCIe ECAM + PCI MMIO hole reserved, wrap
+        // the backend in a `MappedGuestMemory` so guest-physical accesses see the same layout.
+        let total_ram_size = ram.size();
+        let ram: Box<dyn GuestMemory> = if total_ram_size > PCIE_ECAM_BASE {
+            let high_len = total_ram_size - PCIE_ECAM_BASE;
+            let phys_size = FOUR_GIB + high_len;
+            Box::new(
+                MappedGuestMemory::new(
+                    ram,
+                    phys_size,
+                    vec![
+                        GuestMemoryMapping {
+                            phys_start: 0,
+                            phys_end: PCIE_ECAM_BASE,
+                            inner_offset: 0,
+                        },
+                        GuestMemoryMapping {
+                            phys_start: FOUR_GIB,
+                            phys_end: phys_size,
+                            inner_offset: PCIE_ECAM_BASE,
+                        },
+                    ],
+                )
+                .expect("valid PC RAM remapping layout"),
+            )
+        } else {
+            ram
+        };
         let mut memory = match dirty_page_size {
             Some(page_size) => MemoryBus::with_ram_dirty_tracking(filter, ram, page_size),
             None => MemoryBus::with_ram(filter, ram),
@@ -1179,7 +1208,9 @@ impl PcPlatform {
 
         let rtc_irq8 = PlatformIrqLine::isa(interrupts.clone(), 8);
         let rtc = Rc::new(RefCell::new(RtcCmos::new(clock.clone(), rtc_irq8)));
-        rtc.borrow_mut().set_memory_size_bytes(ram_size);
+        // Program CMOS with the *actual* guest RAM size (not including the below-4GiB PCI MMIO
+        // hole when RAM is remapped above 4GiB).
+        rtc.borrow_mut().set_memory_size_bytes(total_ram_size);
         register_rtc_cmos(&mut io, rtc.clone());
 
         let i8042_ports = I8042Ports::new();
