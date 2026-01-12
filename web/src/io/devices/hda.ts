@@ -433,18 +433,22 @@ export class HdaPciDevice implements PciDevice, TickableDevice {
     } else {
       // Detach.
       const detach = (this.#bridge as unknown as { detach_mic_ring?: unknown }).detach_mic_ring;
+      let detached = false;
       if (typeof detach === "function") {
         try {
           (detach as () => void).call(this.#bridge);
+          detached = true;
         } catch {
-          // fall through to legacy path
+          detached = false;
         }
       }
 
-      try {
-        this.#bridge.set_mic_ring_buffer(undefined);
-      } catch {
-        // ignore
+      if (!detached) {
+        try {
+          this.#bridge.set_mic_ring_buffer(undefined);
+        } catch {
+          // ignore
+        }
       }
     }
 

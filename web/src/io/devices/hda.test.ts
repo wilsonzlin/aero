@@ -276,16 +276,27 @@ describe("io/devices/HdaPciDevice microphone ring attachment", () => {
       typeof SharedArrayBuffer === "function" ? new SharedArrayBuffer(256) : ({} as unknown as SharedArrayBuffer);
 
     dev.setCaptureSampleRateHz(48_000);
+    expect(setCaptureRate).toHaveBeenCalledWith(48_000);
+    // Ignore any eager detach calls triggered while the ring buffer is not yet attached.
+    attachMic.mockClear();
+    detachMic.mockClear();
+    setMicRing.mockClear();
+    setCaptureRate.mockClear();
+
     dev.setMicRingBuffer(ringBuffer);
 
     expect(attachMic).toHaveBeenCalledTimes(1);
     expect(attachMic).toHaveBeenCalledWith(ringBuffer, 48_000);
     // Ensure we did not attach via the legacy set_mic_ring_buffer(ring) path.
     expect(setMicRing).not.toHaveBeenCalledWith(ringBuffer);
-    // Still plumb capture sample rate.
-    expect(setCaptureRate).toHaveBeenCalledWith(48_000);
+    // `attach_mic_ring` should set sample rate as part of the call; no need to invoke the legacy setter.
+    expect(setCaptureRate).not.toHaveBeenCalled();
 
     dev.setMicRingBuffer(null);
     expect(detachMic).toHaveBeenCalled();
+    // Prefer the explicit detach API when available.
+    expect(setMicRing).not.toHaveBeenCalledWith(undefined);
+    // Keep the capture sample rate in sync even if the ring is detached.
+    expect(setCaptureRate).toHaveBeenCalledWith(48_000);
   });
 });
