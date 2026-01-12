@@ -30,6 +30,8 @@ export interface PciDevice {
   readonly name: string;
   readonly vendorId: number;
   readonly deviceId: number;
+  readonly subsystemVendorId?: number;
+  readonly subsystemId?: number;
   /**
    * Class code packed as 0xBBSSPP (base class, subclass, programming interface).
    * Example: AHCI is 0x010601.
@@ -37,6 +39,12 @@ export interface PciDevice {
   readonly classCode: number;
   readonly revisionId?: number;
   readonly irqLine?: number;
+  /**
+   * PCI interrupt pin number (0x3d): 1=INTA#, 2=INTB#, 3=INTC#, 4=INTD#.
+   *
+   * Defaults to INTA# for endpoint devices.
+   */
+  readonly interruptPin?: 1 | 2 | 3 | 4;
   readonly bars?: ReadonlyArray<PciBar | null>;
   readonly subsystemVendorId?: number;
   readonly subsystemId?: number;
@@ -215,9 +223,17 @@ export class PciBus implements PortIoHandler {
     config[0x2e] = subsystemId & 0xff;
     config[0x2f] = (subsystemId >>> 8) & 0xff;
 
+    // Subsystem IDs.
+    const subsystemVendorId = (device.subsystemVendorId ?? 0x0000) & 0xffff;
+    const subsystemId = (device.subsystemId ?? 0x0000) & 0xffff;
+    config[0x2c] = subsystemVendorId & 0xff;
+    config[0x2d] = (subsystemVendorId >>> 8) & 0xff;
+    config[0x2e] = subsystemId & 0xff;
+    config[0x2f] = (subsystemId >>> 8) & 0xff;
+
     // Interrupt line/pin.
     config[0x3c] = (device.irqLine ?? 0x00) & 0xff;
-    config[0x3d] = 0x01; // INTA#
+    config[0x3d] = (device.interruptPin ?? 0x01) & 0xff;
 
     const bars: Array<PciBarSlot | null> = Array.from({ length: 6 }, () => null);
     const barDescs = device.bars ?? [];
