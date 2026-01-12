@@ -225,16 +225,16 @@ impl AeroGpuAcmdExecutor {
                     });
 
                     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-                     self.textures.insert(
-                         texture_handle,
-                         Texture2d {
-                             width,
-                             height,
-                             format,
-                             is_x8,
-                             texture,
-                             view,
-                         },
+                    self.textures.insert(
+                        texture_handle,
+                        Texture2d {
+                            width,
+                            height,
+                            format,
+                            is_x8,
+                            texture,
+                            view,
+                        },
                     );
 
                     if let Err(e) = self.shared_surfaces.register_handle(texture_handle) {
@@ -582,16 +582,9 @@ mod tests {
                 let tex = 1 + idx as u32;
                 let mut w = AerogpuCmdWriter::new();
                 w.create_texture2d(
-                    tex,
-                    /*usage_flags=*/ 0,
-                    format,
-                    /*width=*/ 1,
-                    /*height=*/ 1,
-                    /*mip_levels=*/ 1,
-                    /*array_layers=*/ 1,
-                    /*row_pitch_bytes=*/ 0,
-                    /*backing_alloc_id=*/ 0,
-                    /*backing_offset_bytes=*/ 0,
+                    tex, /*usage_flags=*/ 0, format, /*width=*/ 1, /*height=*/ 1,
+                    /*mip_levels=*/ 1, /*array_layers=*/ 1, /*row_pitch_bytes=*/ 0,
+                    /*backing_alloc_id=*/ 0, /*backing_offset_bytes=*/ 0,
                 );
                 w.set_render_targets(&[tex], /*depth_stencil=*/ 0);
                 w.clear(
@@ -608,7 +601,9 @@ mod tests {
                 let scanout = exec
                     .read_presented_scanout_rgba8(SCANOUT)
                     .await
-                    .unwrap_or_else(|e| panic!("{label}: read_presented_scanout_rgba8 failed: {e:?}"))
+                    .unwrap_or_else(|e| {
+                        panic!("{label}: read_presented_scanout_rgba8 failed: {e:?}")
+                    })
                     .expect("{label}: scanout should exist after present");
                 assert_eq!((scanout.0, scanout.1), (1, 1), "{label}");
                 assert_eq!(&scanout.2[0..4], &[0, 0, 0, 255], "{label}");
