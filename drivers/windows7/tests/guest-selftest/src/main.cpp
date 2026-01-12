@@ -1684,6 +1684,11 @@ static bool IsVirtioInputHardwareId(const std::vector<std::wstring>& hwids) {
     if (ContainsInsensitive(id, L"VEN_1AF4&DEV_1052")) return true;
     if (ContainsInsensitive(id, L"VEN_1AF4&DEV_1011")) return true;
     // Some stacks may expose HID-style IDs (VID/PID) instead of PCI-style VEN/DEV.
+    // The in-tree Aero virtio-input HID minidriver uses:
+    //   - Keyboard: VID_1AF4&PID_0001
+    //   - Mouse:    VID_1AF4&PID_0002
+    if (ContainsInsensitive(id, L"VID_1AF4&PID_0001")) return true;
+    if (ContainsInsensitive(id, L"VID_1AF4&PID_0002")) return true;
     if (ContainsInsensitive(id, L"VID_1AF4&PID_1052")) return true;
     if (ContainsInsensitive(id, L"VID_1AF4&PID_1011")) return true;
   }
@@ -1693,6 +1698,8 @@ static bool IsVirtioInputHardwareId(const std::vector<std::wstring>& hwids) {
 static bool LooksLikeVirtioInputInterfacePath(const std::wstring& device_path) {
   return ContainsInsensitive(device_path, L"VEN_1AF4&DEV_1052") ||
          ContainsInsensitive(device_path, L"VEN_1AF4&DEV_1011") ||
+         ContainsInsensitive(device_path, L"VID_1AF4&PID_0001") ||
+         ContainsInsensitive(device_path, L"VID_1AF4&PID_0002") ||
          ContainsInsensitive(device_path, L"VID_1AF4&PID_1052") ||
          ContainsInsensitive(device_path, L"VID_1AF4&PID_1011");
 }
