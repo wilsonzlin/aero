@@ -1,0 +1,416 @@
+#![cfg(not(target_arch = "wasm32"))]
+
+use std::fs;
+use std::io::{Cursor, Read};
+
+use aero_snapshot::{
+    save_snapshot, CpuState, DeviceId, DeviceState, DiskOverlayRef, DiskOverlayRefs, MmuState,
+    SaveOptions, SectionId, SnapshotMeta, SnapshotSource, VcpuSnapshot,
+};
+use assert_cmd::Command;
+use predicates::prelude::*;
+
+fn read_u32_le(r: &mut dyn Read) -> u32 {
+    let mut buf = [0u8; 4];
+    r.read_exact(&mut buf).expect("read u32");
+    u32::from_le_bytes(buf)
+}
+
+fn read_u64_le(r: &mut dyn Read) -> u64 {
+    let mut buf = [0u8; 8];
+    r.read_exact(&mut buf).expect("read u64");
+    u64::from_le_bytes(buf)
+}
+
+fn rewrite_disks_section<F: FnOnce(&mut DiskOverlayRefs)>(snapshot: &mut [u8], f: F) {
+    let index = aero_snapshot::inspect_snapshot(&mut Cursor::new(&snapshot)).unwrap();
+    let disks = index
+        .sections
+        .iter()
+        .find(|s| s.id == SectionId::DISKS)
+        .expect("DISKS section missing");
+
+    let start = disks.offset as usize;
+    let len = disks.len as usize;
+    let end = start + len;
+
+    let mut decoded = {
+        let mut r = Cursor::new(&snapshot[start..end]);
+        DiskOverlayRefs::decode(&mut r).unwrap()
+    };
+
+    f(&mut decoded);
+
+    let mut out = Vec::new();
+    decoded.encode(&mut out).unwrap();
+    assert_eq!(
+        out.len(),
+        len,
+        "rewritten DISKS payload must preserve length"
+    );
+    snapshot[start..end].copy_from_slice(&out);
+}
+
+fn rewrite_devices_section<F: FnOnce(&mut Vec<DeviceState>)>(snapshot: &mut [u8], f: F) {
+    let index = aero_snapshot::inspect_snapshot(&mut Cursor::new(&snapshot)).unwrap();
+    let devices = index
+        .sections
+        .iter()
+        .find(|s| s.id == SectionId::DEVICES)
+        .expect("DEVICES section missing");
+
+    let start = devices.offset as usize;
+    let len = devices.len as usize;
+    let end = start + len;
+
+    let (mut states, count) = {
+        let mut r = Cursor::new(&snapshot[start..end]);
+        let count = read_u32_le(&mut r) as usize;
+        let mut states = Vec::with_capacity(count);
+        for _ in 0..count {
+            states.push(DeviceState::decode(&mut r, devices.len).unwrap());
+        }
+        (states, count)
+    };
+
+    assert_eq!(states.len(), count);
+    f(&mut states);
+
+    let mut out = Vec::new();
+    out.extend_from_slice(&(states.len() as u32).to_le_bytes());
+    for s in states {
+        s.encode(&mut out).unwrap();
+    }
+    assert_eq!(
+        out.len(),
+        len,
+        "rewritten DEVICES payload must preserve length"
+    );
+    snapshot[start..end].copy_from_slice(&out);
+}
+
+fn rewrite_cpus_section_reverse(snapshot: &mut [u8]) {
+    let index = aero_snapshot::inspect_snapshot(&mut Cursor::new(&snapshot)).unwrap();
+    let cpus = index
+        .sections
+        .iter()
+        .find(|s| s.id == SectionId::CPUS)
+        .expect("CPUS section missing");
+
+    let start = cpus.offset as usize;
+    let len = cpus.len as usize;
+    let end = start + len;
+
+    let entries = {
+        let mut r = Cursor::new(&snapshot[start..end]);
+        let count = read_u32_le(&mut r) as usize;
+        let mut entries = Vec::with_capacity(count);
+        for _ in 0..count {
+            let entry_len = read_u64_le(&mut r) as usize;
+            let mut entry = vec![0u8; entry_len];
+            r.read_exact(&mut entry).expect("read vCPU entry");
+            entries.push(entry);
+        }
+        entries
+    };
+
+    let mut out = Vec::new();
+    out.extend_from_slice(&(entries.len() as u32).to_le_bytes());
+    for entry in entries.into_iter().rev() {
+        out.extend_from_slice(&(entry.len() as u64).to_le_bytes());
+        out.extend_from_slice(&entry);
+    }
+    assert_eq!(
+        out.len(),
+        len,
+        "rewritten CPUS payload must preserve length"
+    );
+    snapshot[start..end].copy_from_slice(&out);
+}
+
+struct TwoDiskSource;
+
+impl SnapshotSource for TwoDiskSource {
+    fn snapshot_meta(&mut self) -> SnapshotMeta {
+        SnapshotMeta {
+            snapshot_id: 1,
+            parent_snapshot_id: None,
+            created_unix_ms: 0,
+            label: Some("inspect-disks".to_string()),
+        }
+    }
+
+    fn cpu_state(&self) -> CpuState {
+        CpuState::default()
+    }
+
+    fn mmu_state(&self) -> MmuState {
+        MmuState::default()
+    }
+
+    fn device_states(&self) -> Vec<DeviceState> {
+        Vec::new()
+    }
+
+    fn disk_overlays(&self) -> DiskOverlayRefs {
+        DiskOverlayRefs {
+            disks: vec![
+                DiskOverlayRef {
+                    disk_id: 0,
+                    base_image: "base0.img".to_string(),
+                    overlay_image: "overlay0.img".to_string(),
+                },
+                DiskOverlayRef {
+                    disk_id: 1,
+                    base_image: "base1.img".to_string(),
+                    overlay_image: "overlay1.img".to_string(),
+                },
+            ],
+        }
+    }
+
+    fn ram_len(&self) -> usize {
+        4096
+    }
+
+    fn read_ram(&self, _offset: u64, buf: &mut [u8]) -> aero_snapshot::Result<()> {
+        buf.fill(0);
+        Ok(())
+    }
+
+    fn take_dirty_pages(&mut self) -> Option<Vec<u64>> {
+        None
+    }
+}
+
+struct TwoDeviceSource;
+
+impl SnapshotSource for TwoDeviceSource {
+    fn snapshot_meta(&mut self) -> SnapshotMeta {
+        SnapshotMeta {
+            snapshot_id: 2,
+            parent_snapshot_id: Some(1),
+            created_unix_ms: 0,
+            label: Some("inspect-devices".to_string()),
+        }
+    }
+
+    fn cpu_state(&self) -> CpuState {
+        CpuState::default()
+    }
+
+    fn mmu_state(&self) -> MmuState {
+        MmuState::default()
+    }
+
+    fn device_states(&self) -> Vec<DeviceState> {
+        vec![
+            DeviceState {
+                id: DeviceId::PIT,
+                version: 1,
+                flags: 0,
+                data: vec![1],
+            },
+            DeviceState {
+                id: DeviceId::SERIAL,
+                version: 1,
+                flags: 0,
+                data: vec![2, 3],
+            },
+        ]
+    }
+
+    fn disk_overlays(&self) -> DiskOverlayRefs {
+        DiskOverlayRefs::default()
+    }
+
+    fn ram_len(&self) -> usize {
+        4096
+    }
+
+    fn read_ram(&self, _offset: u64, buf: &mut [u8]) -> aero_snapshot::Result<()> {
+        buf.fill(0);
+        Ok(())
+    }
+
+    fn take_dirty_pages(&mut self) -> Option<Vec<u64>> {
+        None
+    }
+}
+
+struct TwoCpuSource;
+
+impl SnapshotSource for TwoCpuSource {
+    fn snapshot_meta(&mut self) -> SnapshotMeta {
+        SnapshotMeta {
+            snapshot_id: 3,
+            parent_snapshot_id: Some(2),
+            created_unix_ms: 0,
+            label: Some("inspect-cpus".to_string()),
+        }
+    }
+
+    fn cpu_state(&self) -> CpuState {
+        CpuState::default()
+    }
+
+    fn cpu_states(&self) -> Vec<VcpuSnapshot> {
+        vec![
+            VcpuSnapshot {
+                apic_id: 0,
+                cpu: CpuState::default(),
+                internal_state: Vec::new(),
+            },
+            VcpuSnapshot {
+                apic_id: 1,
+                cpu: CpuState::default(),
+                internal_state: Vec::new(),
+            },
+        ]
+    }
+
+    fn mmu_state(&self) -> MmuState {
+        MmuState::default()
+    }
+
+    fn device_states(&self) -> Vec<DeviceState> {
+        Vec::new()
+    }
+
+    fn disk_overlays(&self) -> DiskOverlayRefs {
+        DiskOverlayRefs::default()
+    }
+
+    fn ram_len(&self) -> usize {
+        4096
+    }
+
+    fn read_ram(&self, _offset: u64, buf: &mut [u8]) -> aero_snapshot::Result<()> {
+        buf.fill(0);
+        Ok(())
+    }
+
+    fn take_dirty_pages(&mut self) -> Option<Vec<u64>> {
+        None
+    }
+}
+
+#[test]
+fn snapshot_inspect_notes_unsorted_disks_section() {
+    let tmp = tempfile::tempdir().unwrap();
+    let snap = tmp.path().join("unsorted_disks.aerosnap");
+
+    let mut source = TwoDiskSource;
+    let mut cursor = Cursor::new(Vec::new());
+    save_snapshot(&mut cursor, &mut source, SaveOptions::default()).unwrap();
+    let mut bytes = cursor.into_inner();
+
+    rewrite_disks_section(&mut bytes, |disks| disks.disks.reverse());
+    fs::write(&snap, &bytes).unwrap();
+
+    Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["snapshot", "inspect", snap.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "note: DISKS entries are not sorted by disk_id; displaying sorted order",
+        ));
+}
+
+#[test]
+fn snapshot_inspect_warns_duplicate_disk_id_entries() {
+    let tmp = tempfile::tempdir().unwrap();
+    let snap = tmp.path().join("dup_disks.aerosnap");
+
+    let mut source = TwoDiskSource;
+    let mut cursor = Cursor::new(Vec::new());
+    save_snapshot(&mut cursor, &mut source, SaveOptions::default()).unwrap();
+    let mut bytes = cursor.into_inner();
+
+    rewrite_disks_section(&mut bytes, |disks| {
+        if disks.disks.len() >= 2 {
+            disks.disks[1].disk_id = disks.disks[0].disk_id;
+        }
+    });
+    fs::write(&snap, &bytes).unwrap();
+
+    Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["snapshot", "inspect", snap.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "warning: duplicate disk_id entries (snapshot restore would reject this file)",
+        ));
+}
+
+#[test]
+fn snapshot_inspect_notes_unsorted_devices_section() {
+    let tmp = tempfile::tempdir().unwrap();
+    let snap = tmp.path().join("unsorted_devices.aerosnap");
+
+    let mut source = TwoDeviceSource;
+    let mut cursor = Cursor::new(Vec::new());
+    save_snapshot(&mut cursor, &mut source, SaveOptions::default()).unwrap();
+    let mut bytes = cursor.into_inner();
+
+    rewrite_devices_section(&mut bytes, |states| states.reverse());
+    fs::write(&snap, &bytes).unwrap();
+
+    Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["snapshot", "inspect", snap.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "note: DEVICES entries are not sorted by (device_id, version, flags); displaying sorted order",
+        ));
+}
+
+#[test]
+fn snapshot_inspect_warns_duplicate_device_keys() {
+    let tmp = tempfile::tempdir().unwrap();
+    let snap = tmp.path().join("dup_devices.aerosnap");
+
+    let mut source = TwoDeviceSource;
+    let mut cursor = Cursor::new(Vec::new());
+    save_snapshot(&mut cursor, &mut source, SaveOptions::default()).unwrap();
+    let mut bytes = cursor.into_inner();
+
+    rewrite_devices_section(&mut bytes, |states| {
+        if states.len() >= 2 {
+            states[1].id = states[0].id;
+            states[1].version = states[0].version;
+            states[1].flags = states[0].flags;
+        }
+    });
+    fs::write(&snap, &bytes).unwrap();
+
+    Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["snapshot", "inspect", snap.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "warning: duplicate device entries (snapshot restore would reject this file)",
+        ));
+}
+
+#[test]
+fn snapshot_inspect_notes_unsorted_cpus_section() {
+    let tmp = tempfile::tempdir().unwrap();
+    let snap = tmp.path().join("unsorted_cpus.aerosnap");
+
+    let mut source = TwoCpuSource;
+    let mut cursor = Cursor::new(Vec::new());
+    save_snapshot(&mut cursor, &mut source, SaveOptions::default()).unwrap();
+    let mut bytes = cursor.into_inner();
+
+    rewrite_cpus_section_reverse(&mut bytes);
+    fs::write(&snap, &bytes).unwrap();
+
+    Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["snapshot", "inspect", snap.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "note: CPUS entries are not sorted by apic_id; displaying sorted order",
+        ));
+}

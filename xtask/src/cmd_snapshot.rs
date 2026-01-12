@@ -120,6 +120,10 @@ fn cmd_inspect(args: Vec<String>) -> Result<()> {
         println!("DEVICES:");
         print_devices_section_summary(&mut file, devices);
     }
+    if let Some(cpus) = index.sections.iter().find(|s| s.id == SectionId::CPUS) {
+        println!("CPUS:");
+        print_cpus_section_summary(&mut file, cpus);
+    }
     if let Some(disks) = index.sections.iter().find(|s| s.id == SectionId::DISKS) {
         println!("DISKS:");
         print_disks_section_summary(&mut file, disks);
@@ -193,15 +197,21 @@ fn print_devices_section_summary(file: &mut fs::File, section: &SnapshotSectionI
             return;
         }
     };
-    println!("  count: {count}");
+    if count > MAX_DEVICE_COUNT {
+        println!("  <too many devices: {count}>");
+        return;
+    }
 
-    const MAX_LISTED: u32 = 64;
-    for idx in 0..count {
-        if idx >= MAX_LISTED {
-            println!("  ... {} more device entries omitted", count - MAX_LISTED);
-            break;
-        }
+    #[derive(Debug, Clone)]
+    struct DeviceSummaryEntry {
+        id: u32,
+        version: u16,
+        flags: u16,
+        len: u64,
+    }
 
+    let mut entries: Vec<DeviceSummaryEntry> = Vec::with_capacity(count as usize);
+    for _ in 0..count {
         let pos = match file.stream_position() {
             Ok(v) => v,
             Err(e) => {
@@ -263,30 +273,185 @@ fn print_devices_section_summary(file: &mut fs::File, section: &SnapshotSectionI
             }
         };
         if data_end > section_end {
-            println!(
-                "  - {}: {} version={} flags={} len={} <truncated>",
-                idx,
-                DeviceId(id),
-                version,
-                flags,
-                len
-            );
+            println!("  <truncated section>");
             return;
         }
 
-        println!(
-            "  - {}: {} version={} flags={} len={}",
-            idx,
-            DeviceId(id),
+        entries.push(DeviceSummaryEntry {
+            id,
             version,
             flags,
-            len
-        );
+            len,
+        });
 
         if let Err(e) = file.seek(SeekFrom::Start(data_end)) {
             println!("  <failed to skip device payload: {e}>");
             return;
         }
+    }
+
+    let already_sorted = entries
+        .windows(2)
+        .all(|w| (w[0].id, w[0].version, w[0].flags) <= (w[1].id, w[1].version, w[1].flags));
+    entries.sort_by_key(|e| (e.id, e.version, e.flags));
+    if !already_sorted {
+        println!(
+            "  note: DEVICES entries are not sorted by (device_id, version, flags); displaying sorted order"
+        );
+    }
+    if entries
+        .windows(2)
+        .any(|w| (w[0].id, w[0].version, w[0].flags) == (w[1].id, w[1].version, w[1].flags))
+    {
+        println!("  warning: duplicate device entries (snapshot restore would reject this file)");
+    }
+
+    println!("  count: {}", entries.len());
+
+    const MAX_LISTED: usize = 64;
+    for (idx, entry) in entries.iter().take(MAX_LISTED).enumerate() {
+        println!(
+            "  - {}: {} version={} flags={} len={}",
+            idx,
+            DeviceId(entry.id),
+            entry.version,
+            entry.flags,
+            entry.len
+        );
+    }
+    if entries.len() > MAX_LISTED {
+        println!(
+            "  ... {} more device entries omitted",
+            entries.len() - MAX_LISTED
+        );
+    }
+}
+
+fn print_cpus_section_summary(file: &mut fs::File, section: &SnapshotSectionInfo) {
+    const MAX_LISTED: usize = 64;
+
+    if section.version == 0 {
+        println!("  <unsupported CPUS section version {}>", section.version);
+        return;
+    }
+
+    let section_end = match section.offset.checked_add(section.len) {
+        Some(v) => v,
+        None => {
+            println!("  <invalid section length>");
+            return;
+        }
+    };
+
+    if section.len < 4 {
+        println!("  <truncated section>");
+        return;
+    }
+
+    if let Err(e) = file.seek(SeekFrom::Start(section.offset)) {
+        println!("  <failed to seek: {e}>");
+        return;
+    }
+
+    let count = match read_u32_le_lossy(file) {
+        Ok(v) => v,
+        Err(e) => {
+            println!("  <failed to read CPU count: {e}>");
+            return;
+        }
+    };
+    if count > MAX_CPU_COUNT {
+        println!("  <too many CPUs: {count}>");
+        return;
+    }
+
+    #[derive(Debug, Clone)]
+    struct CpuSummaryEntry {
+        apic_id: u32,
+        entry_len: u64,
+    }
+
+    let mut entries = Vec::with_capacity(count as usize);
+    for _ in 0..count {
+        let pos = match file.stream_position() {
+            Ok(v) => v,
+            Err(e) => {
+                println!("  <failed to read CPU entry: {e}>");
+                return;
+            }
+        };
+        if pos >= section_end {
+            println!("  <truncated section>");
+            return;
+        }
+        if section_end - pos < 8 {
+            println!("  <truncated section>");
+            return;
+        }
+
+        let entry_len = match read_u64_le_lossy(file) {
+            Ok(v) => v,
+            Err(e) => {
+                println!("  <failed to read CPU entry length: {e}>");
+                return;
+            }
+        };
+        let entry_start = match file.stream_position() {
+            Ok(v) => v,
+            Err(e) => {
+                println!("  <failed to read CPU entry: {e}>");
+                return;
+            }
+        };
+        let entry_end = match entry_start.checked_add(entry_len) {
+            Some(v) => v,
+            None => {
+                println!("  <cpu entry length overflow>");
+                return;
+            }
+        };
+        if entry_end > section_end {
+            println!("  <truncated section>");
+            return;
+        }
+        if entry_len < 4 {
+            println!("  <truncated CPU entry>");
+            return;
+        }
+
+        let apic_id = match read_u32_le_lossy(file) {
+            Ok(v) => v,
+            Err(e) => {
+                println!("  <failed to read CPU apic_id: {e}>");
+                return;
+            }
+        };
+        entries.push(CpuSummaryEntry { apic_id, entry_len });
+
+        if let Err(e) = file.seek(SeekFrom::Start(entry_end)) {
+            println!("  <failed to skip CPU entry: {e}>");
+            return;
+        }
+    }
+
+    let already_sorted = entries.windows(2).all(|w| w[0].apic_id <= w[1].apic_id);
+    entries.sort_by_key(|e| e.apic_id);
+    if !already_sorted {
+        println!("  note: CPUS entries are not sorted by apic_id; displaying sorted order");
+    }
+    if entries.windows(2).any(|w| w[0].apic_id == w[1].apic_id) {
+        println!("  warning: duplicate apic_id entries (snapshot restore would reject this file)");
+    }
+
+    println!("  count: {}", entries.len());
+    for (idx, entry) in entries.iter().take(MAX_LISTED).enumerate() {
+        println!(
+            "  - {}: apic_id={} entry_len={}",
+            idx, entry.apic_id, entry.entry_len
+        );
+    }
+    if entries.len() > MAX_LISTED {
+        println!("  ... ({} more)", entries.len() - MAX_LISTED);
     }
 }
 
