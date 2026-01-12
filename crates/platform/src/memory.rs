@@ -72,7 +72,7 @@ impl MemoryBus {
                 },
             ],
         )
-        .expect("failed to apply PC high-memory remap");
+        .expect("valid PC RAM remapping layout");
 
         Box::new(mapped)
     }

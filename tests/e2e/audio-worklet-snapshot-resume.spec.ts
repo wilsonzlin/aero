@@ -10,6 +10,35 @@ test("AudioWorklet producer does not burst after worker-VM snapshot restore", as
   // while still exercising the worker snapshot protocol.
   await page.goto(`${PREVIEW_ORIGIN}/web/?mem=256`, { waitUntil: "load" });
 
+  // Worker VM snapshots require OPFS SyncAccessHandle. Probe early so unsupported browser variants
+  // skip without paying the cost of starting the workers + AudioWorklet graph.
+  const snapshotSupport = await page.evaluate(async () => {
+    try {
+      const storage = navigator.storage as StorageManager & { getDirectory?: () => Promise<FileSystemDirectoryHandle> };
+      if (typeof storage?.getDirectory !== "function") {
+        return { ok: true as const, supported: false as const, reason: "navigator.storage.getDirectory unavailable" };
+      }
+
+      const root = await storage.getDirectory();
+      const handle = await root.getFileHandle("aero-sync-access-handle-probe.tmp", { create: true });
+      return {
+        ok: true as const,
+        supported: typeof (handle as unknown as { createSyncAccessHandle?: unknown }).createSyncAccessHandle === "function",
+      };
+    } catch (err) {
+      return { ok: false as const, supported: false as const, reason: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  if (!snapshotSupport.ok || !snapshotSupport.supported) {
+    test.skip(
+      true,
+      snapshotSupport.ok
+        ? `OPFS SyncAccessHandle unsupported in this browser/context (${snapshotSupport.reason ?? "unknown reason"}).`
+        : `Failed to probe OPFS SyncAccessHandle support (${snapshotSupport.reason ?? "unknown error"}).`,
+    );
+  }
+
   await page.click("#init-audio-output-worker");
 
   await page.waitForFunction(() => {
@@ -35,8 +64,7 @@ test("AudioWorklet producer does not burst after worker-VM snapshot restore", as
       return nodes.map((n) => n.textContent ?? "").find((t) => t.startsWith("snapshot:")) ?? null;
     });
     if (snapshotStatus?.includes("unavailable")) {
-      expect(snapshotStatus).toContain("snapshot: unavailable");
-      return;
+      test.skip(true, `VM snapshot unavailable in this build (${snapshotStatus}).`);
     }
     throw err;
   }
