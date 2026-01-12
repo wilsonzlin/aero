@@ -102,7 +102,7 @@ function ascii(bytes: Uint8Array): string {
 
 describe("NetTracer (proxy pseudo-interfaces)", () => {
   it("exports TCP/UDP proxy pseudo packets on user0/user1 with expected headers", () => {
-    const tracer = new NetTracer();
+    const tracer = new NetTracer({ captureTcpProxy: true, captureUdpProxy: true });
     tracer.enable();
 
     tracer.recordTcpProxy("guest_to_remote", 42, Uint8Array.of(1, 2, 3), 1000n);
@@ -149,7 +149,7 @@ describe("NetTracer (proxy pseudo-interfaces)", () => {
   });
 
   it("only creates tcp-proxy interface when TCP proxy records exist", () => {
-    const tracer = new NetTracer();
+    const tracer = new NetTracer({ captureTcpProxy: true });
     tracer.enable();
     tracer.recordTcpProxy("guest_to_remote", 1, Uint8Array.of(1, 2, 3), 1n);
 
@@ -167,7 +167,7 @@ describe("NetTracer (proxy pseudo-interfaces)", () => {
   });
 
   it("only creates udp-proxy interface when UDP proxy records exist", () => {
-    const tracer = new NetTracer();
+    const tracer = new NetTracer({ captureUdpProxy: true });
     tracer.enable();
     tracer.recordUdpProxy("guest_to_remote", "proxy", [192, 0, 2, 1], 1000, 2000, Uint8Array.of(4, 5, 6), 1n);
 
@@ -185,7 +185,7 @@ describe("NetTracer (proxy pseudo-interfaces)", () => {
   });
 
   it("records empty proxy payloads as header-only pseudo packets", () => {
-    const tracer = new NetTracer();
+    const tracer = new NetTracer({ captureTcpProxy: true, captureUdpProxy: true });
     tracer.enable();
 
     tracer.recordTcpProxy("guest_to_remote", 123, new Uint8Array([]), 1n);

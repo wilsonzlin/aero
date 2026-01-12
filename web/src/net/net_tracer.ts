@@ -126,8 +126,10 @@ export class NetTracer {
     const maxBytes = cfg.maxBytes ?? DEFAULT_MAX_BYTES;
     this.maxBytes = Number.isFinite(maxBytes) && maxBytes >= 0 ? maxBytes : DEFAULT_MAX_BYTES;
     this.captureEthernet = cfg.captureEthernet ?? true;
-    this.captureTcpProxy = cfg.captureTcpProxy ?? true;
-    this.captureUdpProxy = cfg.captureUdpProxy ?? true;
+    // Match Rust defaults: proxy payload capture is opt-in (more sensitive than
+    // raw Ethernet framing).
+    this.captureTcpProxy = cfg.captureTcpProxy ?? false;
+    this.captureUdpProxy = cfg.captureUdpProxy ?? false;
   }
 
   enable(): void {
