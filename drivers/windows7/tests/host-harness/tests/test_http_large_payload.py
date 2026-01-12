@@ -68,6 +68,17 @@ class HarnessHttpLargePayloadTests(unittest.TestCase):
                 self.assertEqual(r.getheader("Content-Type"), "text/plain")
                 self.assertEqual(r.getheader("Content-Length"), str(len(body)))
 
+                # HEAD should return headers only.
+                c = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
+                c.request("HEAD", "/aero-virtio-selftest")
+                r = c.getresponse()
+                body = r.read()
+                c.close()
+                self.assertEqual(r.status, 200)
+                self.assertEqual(body, b"")
+                self.assertEqual(r.getheader("Content-Type"), "text/plain")
+                self.assertEqual(r.getheader("Content-Length"), "3")
+
                 # Large deterministic payload endpoint.
                 c = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
                 c.request("GET", "/aero-virtio-selftest-large")
@@ -87,6 +98,17 @@ class HarnessHttpLargePayloadTests(unittest.TestCase):
 
                 # FNV-1a 64-bit (matches the guest selftest constant).
                 self.assertEqual(_fnv1a64(body), 0x8505AE4435522325)
+
+                # Large endpoint HEAD: headers only, still reports Content-Length.
+                c = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
+                c.request("HEAD", "/aero-virtio-selftest-large")
+                r = c.getresponse()
+                body = r.read()
+                c.close()
+                self.assertEqual(r.status, 200)
+                self.assertEqual(body, b"")
+                self.assertEqual(r.getheader("Content-Type"), "application/octet-stream")
+                self.assertEqual(r.getheader("Content-Length"), "1048576")
 
                 # Unknown path should 404.
                 c = http.client.HTTPConnection("127.0.0.1", port, timeout=2)

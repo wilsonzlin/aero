@@ -82,8 +82,24 @@ class _QuietHandler(http.server.BaseHTTPRequestHandler):
     expected_path: str = "/aero-virtio-selftest"
     http_log_path: Optional[Path] = None
     large_body: bytes = bytes(range(256)) * (1024 * 1024 // 256)
+    socket_timeout_seconds: float = 60.0
+    large_chunk_size: int = 64 * 1024
+
+    def setup(self) -> None:
+        super().setup()
+        try:
+            # Avoid hanging indefinitely if the guest connects but stalls (or stops reading mid-body).
+            self.connection.settimeout(self.socket_timeout_seconds)
+        except Exception:
+            pass
 
     def do_GET(self) -> None:  # noqa: N802
+        self._handle_request(send_body=True)
+
+    def do_HEAD(self) -> None:  # noqa: N802
+        self._handle_request(send_body=False)
+
+    def _handle_request(self, *, send_body: bool) -> None:
         if self.path == self.expected_path:
             body = b"OK\n"
             content_type = "text/plain"
@@ -105,7 +121,17 @@ class _QuietHandler(http.server.BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Connection", "close")
         self.end_headers()
-        self.wfile.write(body)
+        if not send_body:
+            return
+
+        try:
+            mv = memoryview(body)
+            chunk = int(self.large_chunk_size) if self.large_chunk_size > 0 else len(mv)
+            for i in range(0, len(mv), chunk):
+                self.wfile.write(mv[i : i + chunk])
+        except Exception:
+            # Best-effort response; never fail the harness due to a socket send error.
+            return
 
     def log_message(self, fmt: str, *args: object) -> None:
         log_path = getattr(self, "http_log_path", None)
