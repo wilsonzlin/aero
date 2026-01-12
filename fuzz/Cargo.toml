@@ -116,3 +116,9 @@ name = "fuzz_aerosparse_open"
 path = "fuzz_targets/fuzz_aerosparse_open.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "fuzz_disk_image_open_auto"
+path = "fuzz_targets/fuzz_disk_image_open_auto.rs"
+test = false
+doc = false
