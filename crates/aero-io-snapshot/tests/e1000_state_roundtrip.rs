@@ -1,5 +1,5 @@
 use aero_io_snapshot::io::net::state::{E1000DeviceState, E1000TxContextState, E1000TxPacketState};
-use aero_io_snapshot::io::state::IoSnapshot;
+use aero_io_snapshot::io::state::{IoSnapshot, SnapshotError, SnapshotWriter};
 
 #[test]
 fn e1000_device_state_roundtrip_is_lossless() {
@@ -92,4 +92,19 @@ fn e1000_device_state_save_is_deterministic_with_unsorted_other_regs() {
         restored.other_regs,
         vec![(0x0000, 0), (0x1000, 1), (0x2000, 2), (0x3000, 3)]
     );
+}
+
+#[test]
+fn e1000_device_state_rejects_unaligned_io_reg() {
+    // TAG_IO_REG = 16.
+    let mut w = SnapshotWriter::new(
+        <E1000DeviceState as IoSnapshot>::DEVICE_ID,
+        <E1000DeviceState as IoSnapshot>::DEVICE_VERSION,
+    );
+    w.field_u32(16, 0x123); // low 2 bits must be 0
+    let bytes = w.finish();
+
+    let mut state = E1000DeviceState::default();
+    let err = state.load_state(&bytes).unwrap_err();
+    assert_eq!(err, SnapshotError::InvalidFieldEncoding("e1000 io_reg"));
 }
