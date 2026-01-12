@@ -183,6 +183,56 @@ fn legacy32_4kb_translation_sets_accessed_and_dirty() {
 }
 
 #[test]
+fn legacy32_4kb_translate_probe_is_side_effect_free() {
+    let mut mmu = Mmu::new();
+    let mut mem = TestMemory::new(0x10000);
+
+    let pd_base = 0x1000u64;
+    let pt_base = 0x2000u64;
+    let page_base = 0x3000u64;
+
+    // PDE[0] -> PT
+    mem.write_u32_raw(pd_base, (pt_base as u32) | (PTE_P | PTE_RW | PTE_US) as u32);
+    // PTE[0] -> page
+    mem.write_u32_raw(
+        pt_base,
+        (page_base as u32) | (PTE_P | PTE_RW | PTE_US) as u32,
+    );
+
+    mmu.set_cr3(pd_base);
+    mmu.set_cr4(0);
+    mmu.set_cr0(CR0_PG);
+
+    let vaddr = 0x123u64;
+    mem.reset_counters();
+    assert_eq!(
+        mmu.translate_probe(&mut mem, vaddr, AccessType::Read, 3),
+        Ok(page_base + vaddr)
+    );
+    assert_eq!(mem.writes(), 0);
+
+    // Probe must not set accessed/dirty bits in guest memory.
+    let pde = mem.read_u32_raw(pd_base);
+    let pte = mem.read_u32_raw(pt_base);
+    assert_eq!(pde & (PTE_A as u32), 0);
+    assert_eq!(pte & (PTE_A as u32), 0);
+    assert_eq!(pte & (PTE_D as u32), 0);
+
+    mem.reset_counters();
+    assert_eq!(
+        mmu.translate_probe(&mut mem, vaddr, AccessType::Write, 3),
+        Ok(page_base + vaddr)
+    );
+    assert_eq!(mem.writes(), 0);
+
+    let pde2 = mem.read_u32_raw(pd_base);
+    let pte2 = mem.read_u32_raw(pt_base);
+    assert_eq!(pde2 & (PTE_A as u32), 0);
+    assert_eq!(pte2 & (PTE_A as u32), 0);
+    assert_eq!(pte2 & (PTE_D as u32), 0);
+}
+
+#[test]
 fn legacy32_4mb_translation_sets_dirty_on_tlb_hit() {
     let mut mmu = Mmu::new();
     let mut mem = TestMemory::new(0x20000);

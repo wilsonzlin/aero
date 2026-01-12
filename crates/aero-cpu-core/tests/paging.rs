@@ -11,6 +11,8 @@ const CR0_WP: u64 = 1 << 16;
 const PTE_P: u64 = 1 << 0;
 const PTE_RW: u64 = 1 << 1;
 const PTE_US: u64 = 1 << 2;
+const PTE_A: u64 = 1 << 5;
+const PTE_D: u64 = 1 << 6;
 const PTE_NX: u64 = 1 << 63;
 
 #[derive(Clone, Debug)]
@@ -687,6 +689,84 @@ fn supervisor_write_respects_wp() {
             error_code: (1 << 0) | (1 << 1),
         })
     );
+}
+
+#[test]
+fn pagingbus_bulk_copy_decline_does_not_update_accessed_or_dirty_bits() -> Result<(), Exception> {
+    // Set up long-mode page tables where the destination range spans an unmapped page. The paging
+    // bus bulk-copy fast path should return `Ok(false)` and must not update guest page table A/D
+    // bits as a side effect of preflight translation.
+    let mut phys = TestMemory::new(0x30000);
+
+    let pml4_base = 0x1000u64;
+    let pdpt_base = 0x2000u64;
+    let pd_base = 0x3000u64;
+    let pt_base = 0x4000u64;
+
+    let src_page0 = 0x5000u64;
+    let src_page1 = 0x6000u64;
+    let dst_page4 = 0x7000u64;
+
+    // Map virtual pages 0 and 1 for the source range.
+    setup_long4_4k(
+        &mut phys,
+        pml4_base,
+        pdpt_base,
+        pd_base,
+        pt_base,
+        src_page0 | PTE_P | PTE_RW | PTE_US,
+        src_page1 | PTE_P | PTE_RW | PTE_US,
+    );
+
+    // Map virtual page 4 (0x4000) for the destination range, but leave page 5 unmapped.
+    phys.write_u64(pt_base + 4 * 8, dst_page4 | PTE_P | PTE_RW | PTE_US);
+
+    // Fill destination with a sentinel pattern so we can confirm no writes occur on `Ok(false)`.
+    phys.load(dst_page4, &[0xCCu8; 32]);
+
+    let mut bus = PagingBus::new(phys);
+    let state = long_state(pml4_base, 0, 3);
+    bus.sync(&state);
+
+    // Snapshot relevant page table entries.
+    let before_pml4e = bus.inner_mut().read_u64(pml4_base);
+    let before_pdpte = bus.inner_mut().read_u64(pdpt_base);
+    let before_pde = bus.inner_mut().read_u64(pd_base);
+    let before_pte0 = bus.inner_mut().read_u64(pt_base);
+    let before_pte1 = bus.inner_mut().read_u64(pt_base + 8);
+    let before_pte4 = bus.inner_mut().read_u64(pt_base + 4 * 8);
+
+    let dst_before = bus.inner_mut().data[dst_page4 as usize..dst_page4 as usize + 32].to_vec();
+
+    // Copy 8KiB from 0x0000 to 0x4000. The second destination page (0x5000) is unmapped, so the
+    // bulk op should decline without side effects.
+    assert_eq!(bus.bulk_copy(0x4000, 0, 0x2000)?, false);
+
+    // Page table entries must be unchanged (no accessed/dirty bits set).
+    let after_pml4e = bus.inner_mut().read_u64(pml4_base);
+    let after_pdpte = bus.inner_mut().read_u64(pdpt_base);
+    let after_pde = bus.inner_mut().read_u64(pd_base);
+    let after_pte0 = bus.inner_mut().read_u64(pt_base);
+    let after_pte1 = bus.inner_mut().read_u64(pt_base + 8);
+    let after_pte4 = bus.inner_mut().read_u64(pt_base + 4 * 8);
+
+    assert_eq!(after_pml4e, before_pml4e);
+    assert_eq!(after_pdpte, before_pdpte);
+    assert_eq!(after_pde, before_pde);
+    assert_eq!(after_pte0, before_pte0);
+    assert_eq!(after_pte1, before_pte1);
+    assert_eq!(after_pte4, before_pte4);
+
+    for entry in [after_pml4e, after_pdpte, after_pde, after_pte0, after_pte1, after_pte4] {
+        assert_eq!(entry & (PTE_A | PTE_D), 0);
+    }
+
+    // Destination memory must remain untouched.
+    assert_eq!(
+        &bus.inner_mut().data[dst_page4 as usize..dst_page4 as usize + 32],
+        dst_before.as_slice()
+    );
+    Ok(())
 }
 
 #[test]

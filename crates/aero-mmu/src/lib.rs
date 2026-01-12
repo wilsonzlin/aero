@@ -503,6 +503,71 @@ impl Mmu {
         }
     }
 
+    /// Translate a linear address to a physical address without performing any
+    /// guest-visible side effects.
+    ///
+    /// This performs the same mapping lookup and permission checks as
+    /// [`Mmu::translate`], but **does not update guest page tables** (it will
+    /// not set accessed/dirty bits).
+    ///
+    /// This is primarily intended for Tier-0 bulk-operation preflights where a
+    /// subsequent fallback path must observe exactly the same guest-visible
+    /// paging state if the bulk operation returns `Ok(false)`.
+    pub fn translate_probe(
+        &mut self,
+        bus: &mut impl MemoryBus,
+        vaddr: u64,
+        access: AccessType,
+        cpl: u8,
+    ) -> Result<u64, TranslateFault> {
+        let is_user = cpl == 3;
+        let mode = self.paging_mode();
+
+        if mode == PagingMode::Disabled {
+            // With paging disabled, x86 uses a 32-bit linear address space (long
+            // mode cannot be active without paging).
+            return Ok(vaddr & 0xffff_ffff);
+        }
+
+        // In non-long paging modes, the linear address is 32-bit.
+        let vaddr = match mode {
+            PagingMode::Legacy32 | PagingMode::Pae => vaddr as u32 as u64,
+            PagingMode::Long4 => vaddr,
+            PagingMode::Disabled => unreachable!(),
+        };
+
+        if mode == PagingMode::Long4 && !is_canonical_48(vaddr) {
+            return Err(TranslateFault::NonCanonical(vaddr));
+        }
+
+        // Probe mode may consult the internal TLB, but must not update guest
+        // page tables (and thus must not lazily set dirty bits on hits).
+        if let Some(entry) = self
+            .tlb
+            .lookup(vaddr, access.is_execute(), self.current_pcid())
+        {
+            match self.check_perms_from_tlb(vaddr, entry, access, is_user) {
+                Ok(()) => return Ok(entry.translate(vaddr)),
+                Err(pf) => return Err(TranslateFault::PageFault(pf)),
+            }
+        }
+
+        // Perform a page walk without setting accessed/dirty bits in guest
+        // memory. We intentionally do not populate the TLB on misses, because a
+        // TLB entry without the corresponding A/D bit updates could suppress
+        // future updates on real accesses (TLB hits do not perform page-table
+        // writes in our model).
+        let walk_res = match mode {
+            PagingMode::Disabled => unreachable!(),
+            PagingMode::Legacy32 => self.walk_legacy32_probe(bus, vaddr, access, is_user),
+            PagingMode::Pae => self.walk_pae_probe(bus, vaddr, access, is_user),
+            PagingMode::Long4 => self.walk_long4_probe(bus, vaddr, access, is_user),
+        };
+
+        walk_res
+            .map_err(TranslateFault::PageFault)
+    }
+
     fn paging_mode(&self) -> PagingMode {
         if self.cr0 & CR0_PG == 0 {
             return PagingMode::Disabled;
@@ -725,6 +790,70 @@ impl Mmu {
         Ok((entry, paddr))
     }
 
+    fn walk_legacy32_probe(
+        &mut self,
+        bus: &mut impl MemoryBus,
+        vaddr: u64,
+        access: AccessType,
+        is_user: bool,
+    ) -> Result<u64, PageFault> {
+        let pd_base = (self.cr3 & 0xffff_ffff) & !0xfff;
+        let pd_index = (vaddr >> 22) & 0x3ff;
+        let pde_addr = pd_base + pd_index * 4;
+        let pde_raw = bus.read_u32(pde_addr) as u64;
+        if pde_raw & PTE_P == 0 {
+            return Err(self.page_fault_not_present(vaddr, access, is_user));
+        }
+
+        let pde_ps = pde_raw & PTE_PS != 0;
+        if pde_ps {
+            // 4MB pages require CR4.PSE; otherwise PS is treated as reserved.
+            if !self.cr4_pse() {
+                return Err(self.page_fault_rsvd(vaddr, access, is_user));
+            }
+            if (pde_raw & LEGACY32_4MB_RESERVED_MASK) != 0 {
+                return Err(self.page_fault_rsvd(vaddr, access, is_user));
+            }
+
+            let pde = pde_raw;
+
+            let user_ok = pde & PTE_US != 0;
+            let writable_ok = pde & PTE_RW != 0;
+            let nx = false;
+
+            self.check_perms(vaddr, user_ok, writable_ok, nx, access, is_user)?;
+
+            let page_size = PageSize::Size4M;
+            let vbase = vaddr & !(page_size.bytes() - 1);
+            let pbase = pde & 0xffc0_0000;
+            let paddr = pbase + (vaddr - vbase);
+            return Ok(paddr);
+        }
+
+        // 4KB pages via PT.
+        let pde = pde_raw;
+        let pt_base = pde & 0xffff_f000;
+        let pt_index = (vaddr >> 12) & 0x3ff;
+        let pte_addr = pt_base + pt_index * 4;
+        let pte_raw = bus.read_u32(pte_addr) as u64;
+        let pte = match self.check_entry32_probe(pte_raw) {
+            Some(v) => v,
+            None => return Err(self.page_fault_not_present(vaddr, access, is_user)),
+        };
+
+        let user_ok = (pde & PTE_US != 0) && (pte & PTE_US != 0);
+        let writable_ok = (pde & PTE_RW != 0) && (pte & PTE_RW != 0);
+        let nx = false;
+
+        self.check_perms(vaddr, user_ok, writable_ok, nx, access, is_user)?;
+
+        let page_size = PageSize::Size4K;
+        let vbase = vaddr & !(page_size.bytes() - 1);
+        let pbase = pte & 0xffff_f000;
+        let paddr = pbase + (vaddr - vbase);
+        Ok(paddr)
+    }
+
     fn walk_pae(
         &mut self,
         bus: &mut impl MemoryBus,
@@ -853,6 +982,86 @@ impl Mmu {
         );
         let paddr = pbase + (vaddr - vbase);
         Ok((entry, paddr))
+    }
+
+    fn walk_pae_probe(
+        &mut self,
+        bus: &mut impl MemoryBus,
+        vaddr: u64,
+        access: AccessType,
+        is_user: bool,
+    ) -> Result<u64, PageFault> {
+        let nx_enabled = self.nx_enabled();
+        let addr_mask = self.phys_addr_mask();
+        let ctx = EntryAccessContext {
+            vaddr,
+            access,
+            is_user,
+        };
+
+        let pdpt_base = (self.cr3 & 0xffff_ffff) & !0x1f;
+        let pdpt_index = (vaddr >> 30) & 0x3;
+        let pdpte_addr = pdpt_base + pdpt_index * 8;
+        let pdpte = bus.read_u64(pdpte_addr);
+
+        let pdpte = match self.check_entry64_probe(pdpte, ctx, EntryKind64::PdptePae)? {
+            Some(v) => v,
+            None => return Err(self.page_fault_not_present(vaddr, access, is_user)),
+        };
+
+        // In IA-32 PAE paging, the PDPT entry does not participate in U/S or
+        // R/W protection checks (bits 1 and 2 are reserved). It can, however,
+        // contribute NX when EFER.NXE is enabled.
+        let mut eff_user = true;
+        let mut eff_writable = true;
+        let mut eff_nx = nx_enabled && (pdpte & PTE_NX != 0);
+
+        let pd_base = (pdpte & addr_mask) & !0xfff;
+        let pd_index = (vaddr >> 21) & 0x1ff;
+        let pde_addr = pd_base + pd_index * 8;
+        let pde = bus.read_u64(pde_addr);
+
+        let pde = match self.check_entry64_probe(pde, ctx, EntryKind64::PdePae)? {
+            Some(v) => v,
+            None => return Err(self.page_fault_not_present(vaddr, access, is_user)),
+        };
+
+        eff_user &= pde & PTE_US64 != 0;
+        eff_writable &= pde & PTE_RW64 != 0;
+        eff_nx |= nx_enabled && (pde & PTE_NX != 0);
+
+        let pde_ps = pde & PTE_PS64 != 0;
+        if pde_ps {
+            self.check_perms(vaddr, eff_user, eff_writable, eff_nx, access, is_user)?;
+
+            let page_size = PageSize::Size2M;
+            let vbase = vaddr & !(page_size.bytes() - 1);
+            let pbase = (pde & addr_mask) & !(page_size.bytes() - 1);
+            let paddr = pbase + (vaddr - vbase);
+            return Ok(paddr);
+        }
+
+        let pt_base = (pde & addr_mask) & !0xfff;
+        let pt_index = (vaddr >> 12) & 0x1ff;
+        let pte_addr = pt_base + pt_index * 8;
+        let pte = bus.read_u64(pte_addr);
+
+        let pte = match self.check_entry64_probe(pte, ctx, EntryKind64::PtePae)? {
+            Some(v) => v,
+            None => return Err(self.page_fault_not_present(vaddr, access, is_user)),
+        };
+
+        eff_user &= pte & PTE_US64 != 0;
+        eff_writable &= pte & PTE_RW64 != 0;
+        eff_nx |= nx_enabled && (pte & PTE_NX != 0);
+
+        self.check_perms(vaddr, eff_user, eff_writable, eff_nx, access, is_user)?;
+
+        let page_size = PageSize::Size4K;
+        let vbase = vaddr & !(page_size.bytes() - 1);
+        let pbase = (pte & addr_mask) & !0xfff;
+        let paddr = pbase + (vaddr - vbase);
+        Ok(paddr)
     }
 
     fn walk_long4(
@@ -1032,6 +1241,108 @@ impl Mmu {
         Ok((entry, paddr))
     }
 
+    fn walk_long4_probe(
+        &mut self,
+        bus: &mut impl MemoryBus,
+        vaddr: u64,
+        access: AccessType,
+        is_user: bool,
+    ) -> Result<u64, PageFault> {
+        let nx_enabled = self.nx_enabled();
+        let addr_mask = self.phys_addr_mask();
+        let ctx = EntryAccessContext {
+            vaddr,
+            access,
+            is_user,
+        };
+
+        let pml4_base = (self.cr3 & addr_mask) & !0xfff;
+        let pml4_index = (vaddr >> 39) & 0x1ff;
+        let pml4e_addr = pml4_base + pml4_index * 8;
+        let pml4e = bus.read_u64(pml4e_addr);
+
+        let pml4e = match self.check_entry64_probe(pml4e, ctx, EntryKind64::Pml4e)? {
+            Some(v) => v,
+            None => return Err(self.page_fault_not_present(vaddr, access, is_user)),
+        };
+
+        let mut eff_user = pml4e & PTE_US64 != 0;
+        let mut eff_writable = pml4e & PTE_RW64 != 0;
+        let mut eff_nx = nx_enabled && (pml4e & PTE_NX != 0);
+
+        let pdpt_base = (pml4e & addr_mask) & !0xfff;
+        let pdpt_index = (vaddr >> 30) & 0x1ff;
+        let pdpte_addr = pdpt_base + pdpt_index * 8;
+        let pdpte = bus.read_u64(pdpte_addr);
+
+        let pdpte = match self.check_entry64_probe(pdpte, ctx, EntryKind64::PdpteLong)? {
+            Some(v) => v,
+            None => return Err(self.page_fault_not_present(vaddr, access, is_user)),
+        };
+
+        eff_user &= pdpte & PTE_US64 != 0;
+        eff_writable &= pdpte & PTE_RW64 != 0;
+        eff_nx |= nx_enabled && (pdpte & PTE_NX != 0);
+
+        let pdpte_ps = pdpte & PTE_PS64 != 0;
+        if pdpte_ps {
+            self.check_perms(vaddr, eff_user, eff_writable, eff_nx, access, is_user)?;
+
+            let page_size = PageSize::Size1G;
+            let vbase = vaddr & !(page_size.bytes() - 1);
+            let pbase = (pdpte & addr_mask) & !(page_size.bytes() - 1);
+            let paddr = pbase + (vaddr - vbase);
+            return Ok(paddr);
+        }
+
+        let pd_base = (pdpte & addr_mask) & !0xfff;
+        let pd_index = (vaddr >> 21) & 0x1ff;
+        let pde_addr = pd_base + pd_index * 8;
+        let pde = bus.read_u64(pde_addr);
+
+        let pde = match self.check_entry64_probe(pde, ctx, EntryKind64::PdeLong)? {
+            Some(v) => v,
+            None => return Err(self.page_fault_not_present(vaddr, access, is_user)),
+        };
+
+        eff_user &= pde & PTE_US64 != 0;
+        eff_writable &= pde & PTE_RW64 != 0;
+        eff_nx |= nx_enabled && (pde & PTE_NX != 0);
+
+        let pde_ps = pde & PTE_PS64 != 0;
+        if pde_ps {
+            self.check_perms(vaddr, eff_user, eff_writable, eff_nx, access, is_user)?;
+
+            let page_size = PageSize::Size2M;
+            let vbase = vaddr & !(page_size.bytes() - 1);
+            let pbase = (pde & addr_mask) & !(page_size.bytes() - 1);
+            let paddr = pbase + (vaddr - vbase);
+            return Ok(paddr);
+        }
+
+        let pt_base = (pde & addr_mask) & !0xfff;
+        let pt_index = (vaddr >> 12) & 0x1ff;
+        let pte_addr = pt_base + pt_index * 8;
+        let pte = bus.read_u64(pte_addr);
+
+        let pte = match self.check_entry64_probe(pte, ctx, EntryKind64::PteLong)? {
+            Some(v) => v,
+            None => return Err(self.page_fault_not_present(vaddr, access, is_user)),
+        };
+
+        eff_user &= pte & PTE_US64 != 0;
+        eff_writable &= pte & PTE_RW64 != 0;
+        eff_nx |= nx_enabled && (pte & PTE_NX != 0);
+
+        self.check_perms(vaddr, eff_user, eff_writable, eff_nx, access, is_user)?;
+
+        let page_size = PageSize::Size4K;
+        let vbase = vaddr & !(page_size.bytes() - 1);
+        let pbase = (pte & addr_mask) & !0xfff;
+        let paddr = pbase + (vaddr - vbase);
+        Ok(paddr)
+    }
+
     fn page_fault_not_present(&self, vaddr: u64, access: AccessType, is_user: bool) -> PageFault {
         PageFault::new(vaddr, pf_error_code(false, access, is_user, false))
     }
@@ -1052,6 +1363,11 @@ impl Mmu {
         }
 
         Some(entry)
+    }
+
+    #[inline]
+    fn check_entry32_probe(&self, entry: u64) -> Option<u64> {
+        if entry & PTE_P == 0 { None } else { Some(entry) }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1077,6 +1393,23 @@ impl Mmu {
         if kind != EntryKind64::PdptePae && (entry & PTE_A64 == 0) {
             entry |= PTE_A64;
             bus.write_u64(entry_addr, entry);
+        }
+
+        Ok(Some(entry))
+    }
+
+    fn check_entry64_probe(
+        &self,
+        entry: u64,
+        ctx: EntryAccessContext,
+        kind: EntryKind64,
+    ) -> Result<Option<u64>, PageFault> {
+        if entry & PTE_P64 == 0 {
+            return Ok(None);
+        }
+
+        if self.has_reserved_bits64(entry, kind) {
+            return Err(self.page_fault_rsvd(ctx.vaddr, ctx.access, ctx.is_user));
         }
 
         Ok(Some(entry))
