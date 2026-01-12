@@ -294,9 +294,11 @@ export class PciBus implements PortIoHandler {
       if (!desc) continue;
 
       if (desc.kind === "mmio64") {
-        if (i >= 5) throw new Error("64-bit BAR cannot start at BAR5");
+        if (i >= 5) {
+          throw new Error(`PCI device ${device.name}: 64-bit BAR cannot start at BAR5`);
+        }
         if (barDescs[i + 1] != null) {
-          throw new Error(`64-bit BAR at BAR${i} consumes BAR${i + 1}; it must be null`);
+          throw new Error(`PCI device ${device.name}: 64-bit BAR at BAR${i} consumes BAR${i + 1}; it must be null`);
         }
 
         const base = this.#allocBarBase(desc);
