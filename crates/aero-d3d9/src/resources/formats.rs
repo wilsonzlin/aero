@@ -54,8 +54,8 @@ pub struct FormatInfo {
 
 impl FormatInfo {
     pub fn mip_dimensions(&self, width: u32, height: u32, level: u32) -> (u32, u32) {
-        let w = (width >> level).max(1);
-        let h = (height >> level).max(1);
+        let w = width.checked_shr(level).unwrap_or(0).max(1);
+        let h = height.checked_shr(level).unwrap_or(0).max(1);
         (w, h)
     }
 
@@ -73,7 +73,7 @@ impl FormatInfo {
     }
 
     pub fn d3d_mip_level_pitch(&self, width: u32, level: u32) -> u32 {
-        let w = (width >> level).max(1);
+        let w = width.checked_shr(level).unwrap_or(0).max(1);
         let blocks = if self.d3d_is_compressed {
             w.div_ceil(self.d3d_block_width)
         } else {
@@ -83,7 +83,7 @@ impl FormatInfo {
     }
 
     pub fn upload_bytes_per_row(&self, width: u32, level: u32) -> u32 {
-        let w = (width >> level).max(1);
+        let w = width.checked_shr(level).unwrap_or(0).max(1);
         let blocks = if self.upload_is_compressed {
             w.div_ceil(self.upload_block_width)
         } else {
@@ -93,7 +93,7 @@ impl FormatInfo {
     }
 
     pub fn upload_rows_per_image(&self, height: u32, level: u32) -> u32 {
-        let h = (height >> level).max(1);
+        let h = height.checked_shr(level).unwrap_or(0).max(1);
         if self.upload_is_compressed {
             h.div_ceil(self.upload_block_height)
         } else {
