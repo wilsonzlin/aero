@@ -140,6 +140,8 @@ mod tests {
                     prefetchable: false,
                 },
             );
+            // Start with decoding disabled so we can observe the wrapper's sync behavior.
+            config.set_command(0);
             Self {
                 config,
                 bar,
@@ -167,7 +169,13 @@ mod tests {
                 .bar_range(self.bar)
                 .map(|range| range.base)
                 .unwrap_or(0);
-            0
+
+            // Model a device that gates MMIO reads on COMMAND.MEM (bit 1), like AHCI.
+            if (self.config.command() & 0x2) != 0 {
+                0xA5A5_A5A5
+            } else {
+                0
+            }
         }
 
         fn write(&mut self, _offset: u64, _size: usize, _value: u64) {
@@ -204,7 +212,7 @@ mod tests {
             cfg.set_command(0x2);
             cfg.set_bar_base(bar, 0x1234_0000);
         }
-        mmio.read(0, 4);
+        assert_eq!(mmio.read(0, 4), 0xA5A5_A5A5);
         {
             let dev = dev.borrow();
             assert_eq!(dev.config.command(), 0x2);
