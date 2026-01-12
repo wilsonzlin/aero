@@ -6,7 +6,7 @@
 //! - `crates/aero-pc-platform/tests/pc_platform_win7_storage.rs`
 
 use aero_devices::pci::profile::{IDE_PIIX3, ISA_PIIX3, SATA_AHCI_ICH9};
-use aero_devices::pci::{PciBdf, PciInterruptPin, PciIntxRouter, PciIntxRouterConfig};
+use aero_devices::pci::{PciBarDefinition, PciBdf, PciInterruptPin, PciIntxRouter, PciIntxRouterConfig};
 use aero_machine::{Machine, MachineConfig};
 
 #[test]
@@ -88,11 +88,17 @@ fn machine_win7_storage_topology_has_stable_bdfs_and_interrupt_lines() {
             expected_gsi as u8,
             "IDE PCI Interrupt Line does not match router swizzle"
         );
+        assert_eq!(
+            cfg.interrupt_pin(),
+            1,
+            "IDE PCI Interrupt Pin drifted (expected INTA#)"
+        );
 
         // Optional guard: ensure the Bus Master IDE BAR is defined.
-        assert!(
-            cfg.bar_definition(4).is_some(),
-            "IDE_PIIX3 BAR4 definition missing"
+        assert_eq!(
+            cfg.bar_definition(4),
+            Some(PciBarDefinition::Io { size: 16 }),
+            "IDE_PIIX3 BAR4 definition drifted"
         );
     }
 
@@ -109,11 +115,20 @@ fn machine_win7_storage_topology_has_stable_bdfs_and_interrupt_lines() {
             expected_gsi as u8,
             "AHCI PCI Interrupt Line does not match router swizzle"
         );
+        assert_eq!(
+            cfg.interrupt_pin(),
+            1,
+            "AHCI PCI Interrupt Pin drifted (expected INTA#)"
+        );
 
         // Optional guard: ensure the AHCI ABAR (BAR5) is defined.
-        assert!(
-            cfg.bar_definition(5).is_some(),
-            "SATA_AHCI_ICH9 BAR5 definition missing"
+        assert_eq!(
+            cfg.bar_definition(5),
+            Some(PciBarDefinition::Mmio32 {
+                size: 0x2000,
+                prefetchable: false
+            }),
+            "SATA_AHCI_ICH9 BAR5 definition drifted"
         );
     }
 }
