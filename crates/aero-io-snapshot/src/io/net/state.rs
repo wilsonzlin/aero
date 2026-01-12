@@ -12,6 +12,8 @@ const MIN_L2_FRAME_LEN: usize = 14;
 const MAX_L2_FRAME_LEN: usize = 1522;
 const MAX_TX_PARTIAL_BYTES: usize = 256 * 1024;
 const MAX_RING_DESC_COUNT: u32 = 65_536;
+// E1000 MMIO BAR size (matches `aero_net_e1000::E1000_MMIO_SIZE`).
+const E1000_MMIO_SIZE: u32 = 0x20_000;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct E1000TxContextState {
@@ -533,6 +535,13 @@ impl IoSnapshot for E1000DeviceState {
                     return Err(SnapshotError::InvalidFieldEncoding("e1000 other_regs key"));
                 }
                 let value = d.u32()?;
+                if key >= E1000_MMIO_SIZE {
+                    // Snapshots may be loaded from untrusted sources. The live device model only
+                    // supports registers within the MMIO BAR window; ignore out-of-range entries so
+                    // corrupted snapshots cannot inflate device state with keys that will never be
+                    // observable.
+                    continue;
+                }
                 if regs.insert(key, value).is_some() {
                     return Err(SnapshotError::InvalidFieldEncoding(
                         "e1000 other_regs duplicate key",

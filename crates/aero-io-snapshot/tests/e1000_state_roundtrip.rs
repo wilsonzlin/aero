@@ -134,6 +134,33 @@ fn e1000_device_state_rejects_unaligned_other_regs_key() {
 }
 
 #[test]
+fn e1000_device_state_drops_out_of_range_other_regs_keys() {
+    // Keep in sync with the E1000 MMIO BAR size.
+    const E1000_MMIO_SIZE: u32 = 0x20_000;
+
+    // TAG_OTHER_REGS = 90.
+    // Encoding: count (u32) then count*(key u32, val u32).
+    let mut w = SnapshotWriter::new(
+        <E1000DeviceState as IoSnapshot>::DEVICE_ID,
+        <E1000DeviceState as IoSnapshot>::DEVICE_VERSION,
+    );
+
+    let mut payload = Vec::new();
+    payload.extend_from_slice(&2u32.to_le_bytes());
+    payload.extend_from_slice(&0x1000u32.to_le_bytes());
+    payload.extend_from_slice(&0x1111_2222u32.to_le_bytes());
+    payload.extend_from_slice(&E1000_MMIO_SIZE.to_le_bytes()); // out of range (>= MMIO size)
+    payload.extend_from_slice(&0xDEAD_BEEFu32.to_le_bytes());
+    w.field_bytes(90, payload);
+
+    let bytes = w.finish();
+    let mut state = E1000DeviceState::default();
+    state.load_state(&bytes).unwrap();
+
+    assert_eq!(state.other_regs, vec![(0x1000, 0x1111_2222)]);
+}
+
+#[test]
 fn e1000_device_state_rejects_unaligned_pci_bar0() {
     // TAG_PCI_BAR0 = 2.
     let mut w = SnapshotWriter::new(
