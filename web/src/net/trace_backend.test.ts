@@ -84,4 +84,34 @@ describe("net/trace_backend", () => {
     expect(snapshot.byteLength).toBeGreaterThan(0);
     expect(Array.from(snapshot.slice(0, 4))).toEqual([0x0a, 0x0d, 0x0d, 0x0a]);
   });
+
+  it("returns stub stats when the VM or net worker is not running yet", async () => {
+    let called = 0;
+    const fakeCoordinator = {
+      getVmState: () => "stopped",
+      getWorkerStatuses: () => ({ net: { state: "starting" } }),
+      isNetTraceEnabled: () => true,
+      setNetTraceEnabled: () => {},
+      takeNetTracePcapng: async () => new Uint8Array(),
+      exportNetTracePcapng: async () => new Uint8Array(),
+      clearNetTrace: () => {},
+      getNetTraceStats: async () => {
+        called += 1;
+        throw new Error("should not be called");
+      },
+    };
+
+    (globalThis as any).window = { aero: {} };
+    installNetTraceBackendOnAeroGlobal(fakeCoordinator as any);
+
+    const netTrace = (globalThis as any).window.aero.netTrace;
+    await expect(netTrace.getStats()).resolves.toEqual({
+      enabled: true,
+      records: 0,
+      bytes: 0,
+      droppedRecords: 0,
+      droppedBytes: 0,
+    });
+    expect(called).toBe(0);
+  });
 });
