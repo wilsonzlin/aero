@@ -19,6 +19,10 @@ use registers::*;
 use aero_io_snapshot::io::state::{IoSnapshot, SnapshotResult, SnapshotVersion};
 use aero_io_snapshot::io::storage::state::{AhciControllerState, AhciHbaState, AhciPortState};
 
+use aero_devices::pci::profile;
+
+const AHCI_ABAR_CFG_OFFSET: u16 = 0x10 + (profile::AHCI_ABAR_BAR_INDEX as u16) * 4;
+
 const ATA_CMD_IDENTIFY_DEVICE: u8 = 0xec;
 const ATA_CMD_SET_FEATURES: u8 = 0xef;
 const ATA_CMD_READ_DMA_EXT: u8 = 0x25;
@@ -235,7 +239,7 @@ pub struct AhciController {
 }
 
 impl AhciController {
-    pub const ABAR_SIZE: u64 = 0x2000;
+    pub const ABAR_SIZE: u64 = profile::AHCI_ABAR_SIZE;
 
     pub fn new(disk: Box<dyn DiskBackend>) -> Self {
         let mut this = Self {
@@ -853,22 +857,27 @@ pub struct AhciPciDevice {
 impl AhciPciDevice {
     pub fn new(controller: AhciController, abar: u32) -> Self {
         let mut config = PciConfigSpace::new();
+        let pci_profile = profile::SATA_AHCI_ICH9;
 
         // Vendor / device (Intel ICH9 AHCI).
-        config.set_u16(0x00, 0x8086);
-        config.set_u16(0x02, 0x2922);
+        config.set_u16(0x00, pci_profile.vendor_id);
+        config.set_u16(0x02, pci_profile.device_id);
 
         // Class code: mass storage / SATA / AHCI 1.0.
-        config.write(0x09, 1, 0x01); // prog IF
-        config.write(0x0a, 1, 0x06); // subclass
-        config.write(0x0b, 1, 0x01); // class
+        config.write(0x09, 1, u32::from(pci_profile.class.prog_if)); // prog IF
+        config.write(0x0a, 1, u32::from(pci_profile.class.sub_class)); // subclass
+        config.write(0x0b, 1, u32::from(pci_profile.class.base_class)); // class
 
-        // BAR5 (ABAR) at 0x24.
+        // BAR5 (ABAR) at the canonical config space BAR offset.
         // Non-prefetchable 32-bit MMIO.
-        config.set_u32(0x24, abar & 0xffff_fff0);
+        config.set_u32(AHCI_ABAR_CFG_OFFSET as usize, abar & 0xffff_fff0);
 
         // Interrupt pin INTA#.
-        config.write(0x3d, 1, 1);
+        let int_pin = pci_profile
+            .interrupt_pin
+            .map(|p| p.to_config_u8())
+            .unwrap_or(0);
+        config.write(0x3d, 1, u32::from(int_pin));
 
         Self {
             config,
@@ -897,9 +906,9 @@ impl AhciPciDevice {
 
 impl PciDevice for AhciPciDevice {
     fn config_read(&self, offset: u16, size: usize) -> u32 {
-        if offset == 0x24 && size == 4 {
+        if offset == AHCI_ABAR_CFG_OFFSET && size == 4 {
             if self.abar_probe {
-                return !(AhciController::ABAR_SIZE as u32 - 1) & 0xffff_fff0;
+                return !(profile::AHCI_ABAR_SIZE_U32 - 1) & 0xffff_fff0;
             }
             return self.abar;
         }
@@ -909,7 +918,7 @@ impl PciDevice for AhciPciDevice {
     fn config_write(&mut self, offset: u16, size: usize, value: u32) {
         let prev_command = self.config.read(0x04, 2) as u16;
         // Allow BAR relocation and command register toggles.
-        if offset == 0x24 && size == 4 {
+        if offset == AHCI_ABAR_CFG_OFFSET && size == 4 {
             if value == 0xffff_ffff {
                 self.abar_probe = true;
                 self.abar = 0;
