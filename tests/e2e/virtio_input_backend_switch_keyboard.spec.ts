@@ -322,7 +322,10 @@ test("IO worker switches keyboard input from i8042 scancodes to virtio-input aft
             mmioWriteU64(commonBase + 0x30n, BigInt(used));
             mmioWriteU16(commonBase + 0x1cn, 1); // queue_enable
 
-            const bufferCount = 8;
+            // Provide >=4 buffers (requirement), but only make the first two available so the queue
+            // deterministically completes exactly one EV_KEY + one EV_SYN pair (used.idx += 2).
+            // The release pair will remain pending in the device until more buffers are posted.
+            const bufferCount = 4;
             for (let i = 0; i < bufferCount; i += 1) {
               const bufAddr = eventBufBase + i * 8;
               guestWriteBytes(bufAddr, new Uint8Array(8).fill(0xaa));
@@ -331,8 +334,9 @@ test("IO worker switches keyboard input from i8042 scancodes to virtio-input aft
 
             // Avail ring: flags=0, idx=bufferCount, ring[i]=descriptor index.
             guestWriteU16(avail + 0, 0);
-            guestWriteU16(avail + 2, bufferCount);
-            for (let i = 0; i < bufferCount; i += 1) {
+            const availCount = 2;
+            guestWriteU16(avail + 2, availCount);
+            for (let i = 0; i < availCount; i += 1) {
               guestWriteU16(avail + 4 + i * 2, i);
             }
 
@@ -503,47 +507,27 @@ test("IO worker switches keyboard input from i8042 scancodes to virtio-input aft
       sendKeyboardAInputBatch();
       await waitForIoInputBatchCounter(batchCounter1, 2000);
 
-      // We expect at least the key-press pair (EV_KEY + EV_SYN). Some implementations may also
-      // deliver the release pair immediately (total 4 events); allow both to keep the test stable
-      // while still proving that virtio-input is the active path.
-      const expectedUsedDeltaMin = 2;
-      const expectedUsedDeltaMax = 4;
+      // With only 2 buffers posted to the eventq, we expect exactly one key-press pair.
+      const expectedUsedDelta = 2;
       await callCpu(
         "waitForVirtioUsedIdx",
-        { initial: virtioUsedIdxInitial, target: virtioUsedIdxInitial + expectedUsedDeltaMin, timeoutMs: 2000 },
+        { initial: virtioUsedIdxInitial, target: virtioUsedIdxInitial + expectedUsedDelta, timeoutMs: 2000 },
         3000,
       );
 
-      // Give the device a brief grace period to flush any additional events (e.g. release) when
-      // enough buffers are available.
-      let virtioRead = (await callCpu("readVirtioEvents", { maxEvents: virtioUsedIdxInitial + expectedUsedDeltaMax }, 2000)) as {
+      // Read back the first two 8-byte virtio-input events (EV_KEY + EV_SYN).
+      const virtioRead = (await callCpu("readVirtioEvents", { maxEvents: virtioUsedIdxInitial + expectedUsedDelta }, 2000)) as {
         usedIdx: number;
         events: Array<{ event: { type: number; code: number; value: number } }>;
       };
-      if ((virtioRead.usedIdx >>> 0) < virtioUsedIdxInitial + expectedUsedDeltaMax) {
-        const start = performance.now();
-        while (performance.now() - start < 200) {
-          await new Promise((resolve) => setTimeout(resolve, 10));
-          virtioRead = (await callCpu("readVirtioEvents", { maxEvents: virtioUsedIdxInitial + expectedUsedDeltaMax }, 2000)) as typeof virtioRead;
-          if ((virtioRead.usedIdx >>> 0) >= virtioUsedIdxInitial + expectedUsedDeltaMax) break;
-        }
-      }
       virtioUsedIdxAfter = virtioRead.usedIdx >>> 0;
       virtioEvents = virtioRead.events.map((e) => e.event);
 
       const drained2 = (await callCpu("drainI8042", {}, 2000)) as { bytes: number[] };
       phase2I8042Bytes = drained2.bytes.length;
 
-      // Ensure we got at least the press+sync pair; release is optional (see comment above).
-      if ((virtioUsedIdxAfter - virtioUsedIdxInitial) >>> 0 < expectedUsedDeltaMin) {
-        throw new Error(
-          `virtio used.idx did not advance by at least ${expectedUsedDeltaMin} (initial=${virtioUsedIdxInitial} after=${virtioUsedIdxAfter})`,
-        );
-      }
-      if ((virtioUsedIdxAfter - virtioUsedIdxInitial) >>> 0 > expectedUsedDeltaMax) {
-        throw new Error(
-          `virtio used.idx advanced too far (expected <=${expectedUsedDeltaMax}): initial=${virtioUsedIdxInitial} after=${virtioUsedIdxAfter}`,
-        );
+      if (((virtioUsedIdxAfter - virtioUsedIdxInitial) >>> 0) !== expectedUsedDelta) {
+        throw new Error(`virtio used.idx delta mismatch: initial=${virtioUsedIdxInitial} after=${virtioUsedIdxAfter}`);
       }
     } finally {
       cpuWorker.terminate();
@@ -571,15 +555,9 @@ test("IO worker switches keyboard input from i8042 scancodes to virtio-input aft
 
   // Phase 2: virtio eventq should receive EV_KEY/EV_SYN pairs for press and release.
   const delta = result.virtioUsedIdxAfter - result.virtioUsedIdxInitial;
-  expect([2, 4]).toContain(delta);
+  expect(delta).toBe(2);
   expect(result.virtioEvents.slice(0, 2)).toEqual([
     { type: 1, code: 30, value: 1 },
     { type: 0, code: 0, value: 0 },
   ]);
-  if (delta === 4) {
-    expect(result.virtioEvents.slice(2, 4)).toEqual([
-      { type: 1, code: 30, value: 0 },
-      { type: 0, code: 0, value: 0 },
-    ]);
-  }
 });
