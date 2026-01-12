@@ -81,7 +81,7 @@ use aero_platform::io::{IoPortBus, PortIoDevice as _};
 use aero_platform::memory::MemoryBus as PlatformMemoryBus;
 use aero_platform::reset::{ResetKind, ResetLatch};
 use aero_snapshot as snapshot;
-use aero_virtio::devices::blk::{MemDisk as VirtioMemDisk, VirtioBlk};
+use aero_virtio::devices::blk::VirtioBlk;
 use aero_virtio::devices::net::VirtioNet;
 use aero_virtio::memory::{
     GuestMemory as VirtioGuestMemory, GuestMemoryError as VirtioGuestMemoryError,
@@ -1963,7 +1963,7 @@ impl Machine {
     /// were derived from the shared disk so IDENTIFY geometry remains coherent.
     pub fn set_disk_backend(
         &mut self,
-        backend: Box<dyn aero_storage::VirtualDisk>,
+        backend: Box<dyn aero_storage::VirtualDisk + Send>,
     ) -> Result<(), MachineError> {
         self.disk.set_backend(backend);
         self.attach_shared_disk_to_storage_controllers()?;
@@ -1990,6 +1990,39 @@ impl Machine {
                 let drive = AtaDrive::new(Box::new(self.disk.clone()))
                     .map_err(|e| MachineError::DiskBackend(e.to_string()))?;
                 ahci.borrow_mut().attach_drive(0, drive);
+            }
+        }
+
+        // Canonical virtio-blk device.
+        if let Some(virtio_blk) = self.virtio_blk.as_ref() {
+            // virtio-blk capacity is derived from the backend size at device creation time, so when
+            // the shared disk backend is replaced we rebuild the device to keep the reported
+            // `VirtioBlkConfig::capacity` coherent.
+            *virtio_blk.borrow_mut() = VirtioPciDevice::new(
+                Box::new(VirtioBlk::new(Box::new(self.disk.clone()))),
+                Box::new(NoopVirtioInterruptSink),
+            );
+
+            // Mirror PCI config state into the transport model so snapshots taken immediately
+            // after swapping the disk backend see a coherent PCI config image.
+            if let Some(pci_cfg) = &self.pci_cfg {
+                let bdf = aero_devices::pci::profile::VIRTIO_BLK.bdf;
+                let (command, bar0_base) = {
+                    let mut pci_cfg = pci_cfg.borrow_mut();
+                    let cfg = pci_cfg.bus_mut().device_config(bdf);
+                    let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
+                    let bar0_base = cfg
+                        .and_then(|cfg| cfg.bar_range(0))
+                        .map(|range| range.base)
+                        .unwrap_or(0);
+                    (command, bar0_base)
+                };
+
+                let mut virtio_blk = virtio_blk.borrow_mut();
+                virtio_blk.set_pci_command(command);
+                if bar0_base != 0 {
+                    virtio_blk.config_mut().set_bar_base(0, bar0_base);
+                }
             }
         }
         Ok(())
@@ -3487,7 +3520,11 @@ impl Machine {
                         nvme.borrow_mut().reset();
                         Some(nvme.clone())
                     }
-                    None => Some(Rc::new(RefCell::new(NvmePciDevice::default()))),
+                    None => {
+                        let dev = NvmePciDevice::try_new_from_virtual_disk(Box::new(self.disk.clone()))
+                            .expect("machine disk should be 512-byte aligned");
+                        Some(Rc::new(RefCell::new(dev)))
+                    }
                 }
             } else {
                 None
@@ -3580,7 +3617,6 @@ impl Machine {
                     aero_devices::pci::profile::VIRTIO_BLK.bdf,
                     Box::new(VirtioBlkPciConfigDevice::new()),
                 );
-
                 match &self.virtio_blk {
                     Some(dev) => {
                         // Reset in-place while keeping `Rc` identity stable for persistent MMIO
@@ -3590,7 +3626,7 @@ impl Machine {
                         Some(dev.clone())
                     }
                     None => Some(Rc::new(RefCell::new(VirtioPciDevice::new(
-                        Box::new(VirtioBlk::new(VirtioMemDisk::new(512))),
+                        Box::new(VirtioBlk::new(Box::new(self.disk.clone()))),
                         Box::new(NoopVirtioInterruptSink),
                     )))),
                 }
