@@ -469,6 +469,101 @@ fn set_disk_backend_does_not_clobber_custom_ahci_port0_backend() {
 }
 
 #[test]
+fn set_disk_image_does_not_clobber_custom_nvme_backend() {
+    let mut m = Machine::new(MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_nvme: true,
+        enable_ahci: false,
+        enable_ide: false,
+        enable_virtio_blk: false,
+        // Keep the machine minimal for deterministic reset behavior.
+        enable_uhci: false,
+        enable_vga: false,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        enable_e1000: false,
+        enable_virtio_net: false,
+        ..Default::default()
+    })
+    .unwrap();
+
+    let dropped = Arc::new(AtomicBool::new(false));
+    let capacity = 16 * SECTOR_SIZE as u64;
+    let disk = DropDetectDisk {
+        inner: RawDisk::create(MemBackend::new(), capacity).unwrap(),
+        dropped: dropped.clone(),
+    };
+
+    // Explicitly attach a custom NVMe disk backend. Updates to the machine's canonical shared disk
+    // (via `set_disk_image`) should not overwrite it.
+    m.attach_nvme_disk(Box::new(disk)).unwrap();
+
+    m.set_disk_image(vec![0u8; SECTOR_SIZE]).unwrap();
+    assert!(
+        !dropped.load(Ordering::SeqCst),
+        "set_disk_image dropped/replaced the custom NVMe backend"
+    );
+
+    // Reset should preserve the host-attached NVMe backend.
+    m.reset();
+    assert!(
+        !dropped.load(Ordering::SeqCst),
+        "machine reset dropped the custom NVMe backend"
+    );
+}
+
+#[test]
+fn set_disk_backend_does_not_clobber_custom_nvme_backend() {
+    let mut m = Machine::new(MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_nvme: true,
+        enable_ahci: false,
+        enable_ide: false,
+        enable_virtio_blk: false,
+        // Keep the machine minimal for deterministic reset behavior.
+        enable_uhci: false,
+        enable_vga: false,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        enable_e1000: false,
+        enable_virtio_net: false,
+        ..Default::default()
+    })
+    .unwrap();
+
+    let dropped = Arc::new(AtomicBool::new(false));
+    let capacity = 16 * SECTOR_SIZE as u64;
+    let disk = DropDetectDisk {
+        inner: RawDisk::create(MemBackend::new(), capacity).unwrap(),
+        dropped: dropped.clone(),
+    };
+
+    // Explicitly attach a custom NVMe disk backend. Updates to the machine's canonical shared disk
+    // (via `set_disk_backend`) should not overwrite it.
+    m.attach_nvme_disk(Box::new(disk)).unwrap();
+
+    let replacement = RawDisk::create(MemBackend::new(), capacity).unwrap();
+    m.set_disk_backend(Box::new(replacement)).unwrap();
+    assert!(
+        !dropped.load(Ordering::SeqCst),
+        "set_disk_backend dropped/replaced the custom NVMe backend"
+    );
+
+    // Reset should preserve the host-attached NVMe backend.
+    m.reset();
+    assert!(
+        !dropped.load(Ordering::SeqCst),
+        "machine reset dropped the custom NVMe backend"
+    );
+}
+
+#[test]
 fn machine_reset_does_not_detach_nvme_disk_backend() {
     let mut m = Machine::new(MachineConfig {
         ram_size_bytes: 2 * 1024 * 1024,
