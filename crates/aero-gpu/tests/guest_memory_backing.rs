@@ -956,12 +956,7 @@ fn copy_texture2d_writeback_roundtrips_bytes() {
                 if in_rect {
                     let sx = src_x + (x - dst_x);
                     let sy = src_y + (y - dst_y);
-                    let expected = [
-                        sx as u8,
-                        sy as u8,
-                        (sx as u8).wrapping_add(sy as u8),
-                        0xFF,
-                    ];
+                    let expected = [sx as u8, sy as u8, (sx as u8).wrapping_add(sy as u8), 0xFF];
                     assert_eq!(px, expected);
                 } else {
                     assert_eq!(px, [0x11, 0x11, 0x11, 0x11]);
