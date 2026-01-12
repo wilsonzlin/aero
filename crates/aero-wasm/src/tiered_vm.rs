@@ -32,7 +32,7 @@ use aero_cpu_core::jit::runtime::{
     CompileRequestSink, JitBackend, JitBlockExit, JitConfig, JitRuntime, PAGE_SHIFT,
 };
 use aero_cpu_core::state::{
-    CPU_GPR_OFF, CPU_RFLAGS_OFF, CPU_RIP_OFF, CPU_STATE_ALIGN, CPU_STATE_SIZE, CpuMode, Segment,
+    CpuMode, Segment, CPU_GPR_OFF, CPU_RFLAGS_OFF, CPU_RIP_OFF, CPU_STATE_ALIGN, CPU_STATE_SIZE,
 };
 use aero_cpu_core::{CpuBus, CpuCore, Exception};
 
@@ -77,7 +77,9 @@ fn js_number_to_u32(value: JsValue, label: &str) -> Result<u32, JsValue> {
         return Err(js_error(format!("{label} must be a number")));
     };
     if !n.is_finite() || n < 0.0 || n.fract() != 0.0 || n > u32::MAX as f64 {
-        return Err(js_error(format!("{label} must be a non-negative u32 integer")));
+        return Err(js_error(format!(
+            "{label} must be a non-negative u32 integer"
+        )));
     }
     Ok(n as u32)
 }
@@ -327,9 +329,7 @@ impl CpuBus for WasmBus {
         } else {
             let mut out = 0u128;
             for i in 0..4u64 {
-                let addr = vaddr
-                    .checked_add(i * 4)
-                    .ok_or(Exception::MemoryFault)?;
+                let addr = vaddr.checked_add(i * 4).ok_or(Exception::MemoryFault)?;
                 let part = js_mmio_read(addr, 4) as u128;
                 out |= part << ((i * 32) as u32);
             }
@@ -387,9 +387,7 @@ impl CpuBus for WasmBus {
             self.write_scalar::<16>(vaddr, val.to_le_bytes())
         } else {
             for i in 0..4u64 {
-                let addr = vaddr
-                    .checked_add(i * 4)
-                    .ok_or(Exception::MemoryFault)?;
+                let addr = vaddr.checked_add(i * 4).ok_or(Exception::MemoryFault)?;
                 let part = (val >> ((i * 32) as u32)) as u32;
                 js_mmio_write(addr, 4, part);
             }
@@ -411,9 +409,7 @@ impl CpuBus for WasmBus {
             Ok(())
         } else {
             for (i, slot) in dst.iter_mut().enumerate() {
-                let addr = vaddr
-                    .checked_add(i as u64)
-                    .ok_or(Exception::MemoryFault)?;
+                let addr = vaddr.checked_add(i as u64).ok_or(Exception::MemoryFault)?;
                 *slot = CpuBus::read_u8(self, addr)?;
             }
             Ok(())
@@ -436,9 +432,7 @@ impl CpuBus for WasmBus {
         } else {
             self.preflight_write_bytes(vaddr, src.len())?;
             for (i, byte) in src.iter().copied().enumerate() {
-                let addr = vaddr
-                    .checked_add(i as u64)
-                    .ok_or(Exception::MemoryFault)?;
+                let addr = vaddr.checked_add(i as u64).ok_or(Exception::MemoryFault)?;
                 CpuBus::write_u8(self, addr, byte)?;
             }
             Ok(())
@@ -1009,11 +1003,14 @@ impl WasmTieredVm {
         meta.instruction_count = instruction_count;
         meta.inhibit_interrupts_after_block = false;
 
-        let evicted = self.dispatcher.jit_mut().install_handle(CompiledBlockHandle {
-            entry_rip,
-            table_index,
-            meta,
-        });
+        let evicted = self
+            .dispatcher
+            .jit_mut()
+            .install_handle(CompiledBlockHandle {
+                entry_rip,
+                table_index,
+                meta,
+            });
 
         let arr = Array::new();
         for rip in evicted {
@@ -1027,10 +1024,7 @@ impl WasmTieredVm {
     }
 
     pub fn cache_len(&mut self) -> u32 {
-        self.dispatcher
-            .jit_mut()
-            .cache_len()
-            .min(u32::MAX as usize) as u32
+        self.dispatcher.jit_mut().cache_len().min(u32::MAX as usize) as u32
     }
 
     /// Notify the tiered runtime that the guest wrote to physical memory.
@@ -1305,26 +1299,47 @@ fn meta_from_js(meta: JsValue) -> Result<CompiledBlockMeta, JsValue> {
     }
     let versions_arr = Array::from(&page_versions_val);
 
-    let mut page_versions = Vec::with_capacity(versions_arr.length() as usize);
-    for entry in versions_arr.iter() {
-        page_versions.push(page_snapshot_from_js(entry)?);
-    }
-
     // Enforce that `page_versions` matches the covered range.
-    // This guards against malformed JS inputs.
-    let expected = if byte_len == 0 {
-        0
+    // This guards against malformed JS inputs and prevents a buggy host from
+    // accidentally snapshotting the wrong pages (which would defeat stale-code
+    // rejection).
+    let (start_page, end_page, expected) = if byte_len == 0 {
+        (0, 0, 0)
     } else {
         let start_page = code_paddr >> PAGE_SHIFT;
         let end = code_paddr.saturating_add(byte_len as u64 - 1);
         let end_page = end >> PAGE_SHIFT;
-        (end_page - start_page + 1) as usize
+        (start_page, end_page, (end_page - start_page + 1) as usize)
     };
-    if expected != page_versions.len() {
+    if expected != versions_arr.length() as usize {
         return Err(js_error(format!(
             "meta.page_versions length mismatch: expected {expected} entries for code_paddr=0x{code_paddr:x} byte_len={byte_len}, got {}",
-            page_versions.len()
+            versions_arr.length()
         )));
+    }
+
+    let mut page_versions = Vec::with_capacity(expected);
+    for (idx, entry) in versions_arr.iter().enumerate() {
+        let snap = page_snapshot_from_js(entry)?;
+
+        // Require the pages to be contiguous and ordered `[start_page..=end_page]`.
+        // This matches `PageVersionTracker::snapshot` and allows `JitRuntime` to
+        // validate staleness without needing to sort/dedup.
+        //
+        // Note: we validate this while parsing so we can safely allocate based on
+        // `expected` (derived from `code_paddr` + `byte_len`) rather than the JS
+        // array length, which could otherwise be attacker-controlled.
+        if expected != 0 {
+            let expected_page = start_page + idx as u64;
+            if snap.page != expected_page {
+                return Err(js_error(format!(
+                    "meta.page_versions[{idx}].page mismatch: expected page {expected_page} (range {start_page}..={end_page}) for code_paddr=0x{code_paddr:x} byte_len={byte_len}, got {}",
+                    snap.page
+                )));
+            }
+        }
+
+        page_versions.push(snap);
     }
 
     Ok(CompiledBlockMeta {
@@ -1359,13 +1374,12 @@ fn page_snapshot_from_js(obj: JsValue) -> Result<PageVersionSnapshot, JsValue> {
 
 #[cfg(test)]
 mod tests {
-    use super::WasmBus;
-    use super::WasmTieredVm;
+    use super::{meta_from_js, WasmBus, WasmTieredVm};
 
     use aero_cpu_core::CpuBus;
-    use js_sys::{Array, Reflect};
-    use wasm_bindgen::JsCast;
+    use js_sys::{Array, Object, Reflect};
     use wasm_bindgen::prelude::*;
+    use wasm_bindgen::JsCast;
     use wasm_bindgen_test::wasm_bindgen_test;
 
     #[wasm_bindgen(inline_js = r#"
@@ -1432,6 +1446,56 @@ export function installAeroTieredMmioTestShims() {
             .expect("prop is string")
     }
 
+    fn js_err_message(err: JsValue) -> String {
+        if let Ok(e) = err.dyn_into::<js_sys::Error>() {
+            return e.message();
+        }
+        if let Some(s) = err.as_string() {
+            return s;
+        }
+        "<non-string js error>".to_string()
+    }
+
+    fn page_snapshot_obj(page: u64, version: u32) -> JsValue {
+        let obj = Object::new();
+        Reflect::set(
+            &obj,
+            &JsValue::from_str("page"),
+            &JsValue::from_f64(page as f64),
+        )
+        .expect("set snapshot.page");
+        Reflect::set(
+            &obj,
+            &JsValue::from_str("version"),
+            &JsValue::from_f64(version as f64),
+        )
+        .expect("set snapshot.version");
+        obj.into()
+    }
+
+    fn meta_obj(code_paddr: u64, byte_len: u32, page_versions: &[JsValue]) -> JsValue {
+        let obj = Object::new();
+        Reflect::set(
+            &obj,
+            &JsValue::from_str("code_paddr"),
+            &JsValue::from_f64(code_paddr as f64),
+        )
+        .expect("set meta.code_paddr");
+        Reflect::set(
+            &obj,
+            &JsValue::from_str("byte_len"),
+            &JsValue::from_f64(byte_len as f64),
+        )
+        .expect("set meta.byte_len");
+        let versions = Array::new();
+        for v in page_versions {
+            versions.push(v);
+        }
+        Reflect::set(&obj, &JsValue::from_str("page_versions"), versions.as_ref())
+            .expect("set meta.page_versions");
+        obj.into()
+    }
+
     #[wasm_bindgen_test]
     fn wasm_tiered_bus_routes_out_of_ram_accesses_to_mmio() {
         installAeroTieredMmioTestShims();
@@ -1444,7 +1508,11 @@ export function installAeroTieredMmioTestShims() {
 
         bus.write_u32(0, 0x1122_3344).expect("write_u32");
         assert_eq!(bus.read_u32(0).expect("read_u32"), 0x1122_3344);
-        assert_eq!(mmio_calls().length(), 0, "unexpected MMIO calls for RAM access");
+        assert_eq!(
+            mmio_calls().length(),
+            0,
+            "unexpected MMIO calls for RAM access"
+        );
 
         assert_eq!(bus.read_u32(0x20).expect("mmio read_u32"), 0x20);
         bus.write_u16(0x30, 0x1234).expect("mmio write_u16");
@@ -1517,6 +1585,34 @@ export function installAeroTieredMmioTestShims() {
         assert_eq!(
             handle2.meta.instruction_count, 2,
             "expected instruction_count to match 16-bit decode after install_handle"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn meta_from_js_rejects_length_mismatch() {
+        let code_paddr = 0x1000u64;
+        let meta = meta_obj(code_paddr, 1, &[]);
+        let err = meta_from_js(meta).expect_err("expected error");
+        let msg = js_err_message(err);
+        assert!(
+            msg.contains("length mismatch"),
+            "unexpected error message: {msg}"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn meta_from_js_rejects_non_contiguous_pages() {
+        let code_paddr = 0x1000u64; // page 1
+        let meta = meta_obj(
+            code_paddr,
+            0x2000, // spans pages 1..=2
+            &[page_snapshot_obj(1, 0), page_snapshot_obj(3, 0)],
+        );
+        let err = meta_from_js(meta).expect_err("expected error");
+        let msg = js_err_message(err);
+        assert!(
+            msg.contains("page mismatch"),
+            "unexpected error message: {msg}"
         );
     }
 }
