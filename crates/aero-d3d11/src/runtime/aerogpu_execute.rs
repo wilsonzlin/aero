@@ -1,15 +1,13 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::sync::Arc;
 
-use aero_gpu::bindings::bind_group_cache::{
-    BindGroupCache, BindGroupCacheEntry, BindGroupCacheResource, BufferId, TextureViewId,
-};
-use aero_gpu::bindings::layout_cache::{BindGroupLayoutCache, CachedBindGroupLayout};
+use aero_gpu::bindings::bind_group_cache::{BindGroupCache, BufferId, TextureViewId};
+use aero_gpu::bindings::layout_cache::BindGroupLayoutCache;
 use aero_gpu::bindings::samplers::SamplerCache;
 use aero_gpu::pipeline_cache::{PipelineCache, PipelineCacheConfig};
 use aero_gpu::pipeline_key::{
-    ColorTargetKey, PipelineLayoutKey, RenderPipelineKey, ShaderHash, ShaderStage,
-    VertexAttributeKey, VertexBufferLayoutKey,
+    ColorTargetKey, RenderPipelineKey, ShaderHash, ShaderStage, VertexAttributeKey,
+    VertexBufferLayoutKey,
 };
 use aero_gpu::stats::PipelineCacheStats;
 use aero_gpu::GpuCapabilities;
@@ -19,7 +17,6 @@ use crate::input_layout::{
     fnv1a_32, map_layout_to_shader_locations_compact, InputLayoutBinding, InputLayoutDesc,
     VertexBufferLayoutOwned, VsInputSignatureElement, MAX_INPUT_SLOTS,
 };
-use crate::binding_model::{BINDING_BASE_CBUFFER, BINDING_BASE_SAMPLER, BINDING_BASE_TEXTURE};
 use crate::wgsl_bootstrap::translate_sm4_to_wgsl_bootstrap;
 use crate::{
     parse_signatures, translate_sm4_module_to_wgsl, DxbcFile, ShaderReflection, ShaderTranslation,
@@ -31,6 +28,7 @@ use super::aerogpu_state::{
     PrimitiveTopology, RasterizerState, ScissorRect, VertexBufferBinding, Viewport,
 };
 use super::pipeline_layout_cache::PipelineLayoutCache;
+use super::reflection_bindings;
 
 #[derive(Debug)]
 pub struct BufferResource {
@@ -661,10 +659,13 @@ impl AerogpuCmdRuntime {
             wgpu_slot_to_d3d_slot,
         } = build_vertex_state(&self.resources, &self.state, &vs.vs_input_signature)?;
 
-        let pipeline_bindings = build_pipeline_bindings_info(
+        let pipeline_bindings = reflection_bindings::build_pipeline_bindings_info(
             &self.device,
             &mut self.bind_group_layout_cache,
-            [&vs, &ps],
+            [
+                vs.reflection.bindings.as_slice(),
+                ps.reflection.bindings.as_slice(),
+            ],
         )?;
         let layout_key = pipeline_bindings.layout_key.clone();
         let bind_group_layout_refs: Vec<&wgpu::BindGroupLayout> = pipeline_bindings
@@ -764,16 +765,19 @@ impl AerogpuCmdRuntime {
                 1 => Some(&self.state.bindings.ps),
                 _ => None,
             };
-            bind_groups.push(build_bind_group(
+            let provider = RuntimeBindGroupProvider {
+                resources: &self.resources,
+                stage_state,
+                dummy_uniform: &self.dummy_uniform,
+                dummy_texture_view: &self.dummy_texture_view,
+                default_sampler: &self.default_sampler,
+            };
+            bind_groups.push(reflection_bindings::build_bind_group(
                 &self.device,
                 &mut self.bind_group_cache,
-                &self.resources,
-                &self.dummy_uniform,
-                &self.dummy_texture_view,
-                &self.default_sampler,
                 layout,
                 bindings,
-                stage_state,
+                &provider,
             )?);
         }
 
@@ -1018,6 +1022,62 @@ enum DrawKind {
         base_vertex: i32,
         first_instance: u32,
     },
+}
+
+struct RuntimeBindGroupProvider<'a> {
+    resources: &'a AerogpuResources,
+    stage_state: Option<&'a super::aerogpu_state::StageBindings>,
+    dummy_uniform: &'a wgpu::Buffer,
+    dummy_texture_view: &'a wgpu::TextureView,
+    default_sampler: &'a aero_gpu::bindings::samplers::CachedSampler,
+}
+
+impl reflection_bindings::BindGroupResourceProvider for RuntimeBindGroupProvider<'_> {
+    fn constant_buffer(&self, slot: u32) -> Option<reflection_bindings::BufferBinding<'_>> {
+        let stage = self.stage_state?;
+        let handle = stage
+            .constant_buffers
+            .get(slot as usize)
+            .copied()
+            .flatten()?;
+        let buf = self.resources.buffers.get(&handle)?;
+        Some(reflection_bindings::BufferBinding {
+            id: BufferId(handle as u64),
+            buffer: &buf.buffer,
+            offset: 0,
+            size: None,
+            total_size: buf.size,
+        })
+    }
+
+    fn constant_buffer_scratch(&self, _slot: u32) -> Option<(BufferId, &wgpu::Buffer)> {
+        None
+    }
+
+    fn texture2d(&self, slot: u32) -> Option<(TextureViewId, &wgpu::TextureView)> {
+        let stage = self.stage_state?;
+        let handle = stage.textures.get(slot as usize).copied().flatten()?;
+        let tex = self.resources.textures.get(&handle)?;
+        Some((TextureViewId(handle as u64), &tex.view))
+    }
+
+    fn sampler(&self, slot: u32) -> Option<&aero_gpu::bindings::samplers::CachedSampler> {
+        let stage = self.stage_state?;
+        let handle = stage.samplers.get(slot as usize).copied().flatten()?;
+        self.resources.samplers.get(&handle)
+    }
+
+    fn dummy_uniform(&self) -> &wgpu::Buffer {
+        self.dummy_uniform
+    }
+
+    fn dummy_texture_view(&self) -> &wgpu::TextureView {
+        self.dummy_texture_view
+    }
+
+    fn default_sampler(&self) -> &aero_gpu::bindings::samplers::CachedSampler {
+        self.default_sampler
+    }
 }
 
 #[derive(Debug)]
@@ -1301,213 +1361,4 @@ fn try_translate_sm4_signature_driven(
 ) -> Result<ShaderTranslation> {
     let module = program.decode().context("decode SM4/5 token stream")?;
     translate_sm4_module_to_wgsl(dxbc, &module, signatures).context("signature-driven SM4/5 translation")
-}
-
-#[derive(Debug, Clone)]
-struct PipelineBindingsInfo {
-    layout_key: PipelineLayoutKey,
-    group_layouts: Vec<CachedBindGroupLayout>,
-    group_bindings: Vec<Vec<crate::Binding>>,
-}
-
-fn build_pipeline_bindings_info(
-    device: &wgpu::Device,
-    bind_group_layout_cache: &mut BindGroupLayoutCache,
-    shaders: [&ShaderResource; 2],
-) -> Result<PipelineBindingsInfo> {
-    let mut groups: BTreeMap<u32, BTreeMap<u32, crate::Binding>> = BTreeMap::new();
-    for shader in shaders {
-        for binding in &shader.reflection.bindings {
-            let group_map = groups.entry(binding.group).or_default();
-            if let Some(existing) = group_map.get_mut(&binding.binding) {
-                if existing.kind != binding.kind {
-                    bail!(
-                        "binding @group({}) @binding({}) kind mismatch across shaders",
-                        binding.group,
-                        binding.binding
-                    );
-                }
-                existing.visibility |= binding.visibility;
-            } else {
-                group_map.insert(binding.binding, binding.clone());
-            }
-        }
-    }
-
-    if groups.is_empty() {
-        return Ok(PipelineBindingsInfo {
-            layout_key: PipelineLayoutKey::empty(),
-            group_layouts: Vec::new(),
-            group_bindings: Vec::new(),
-        });
-    }
-
-    let max_group = groups
-        .keys()
-        .copied()
-        .max()
-        .expect("groups.is_empty handled above");
-    let mut group_layouts = Vec::with_capacity(max_group as usize + 1);
-    let mut group_bindings = Vec::with_capacity(max_group as usize + 1);
-
-    for group_index in 0..=max_group {
-        let bindings: Vec<crate::Binding> = groups
-            .get(&group_index)
-            .map(|m| m.values().cloned().collect())
-            .unwrap_or_default();
-
-        let mut entries = Vec::with_capacity(bindings.len());
-        for binding in &bindings {
-            entries.push(binding_to_layout_entry(binding)?);
-        }
-
-        let layout = bind_group_layout_cache.get_or_create(device, &entries);
-        group_layouts.push(layout);
-        group_bindings.push(bindings);
-    }
-
-    let layout_key = PipelineLayoutKey {
-        bind_group_layout_hashes: group_layouts.iter().map(|l| l.hash).collect(),
-    };
-
-    Ok(PipelineBindingsInfo {
-        layout_key,
-        group_layouts,
-        group_bindings,
-    })
-}
-
-fn binding_to_layout_entry(binding: &crate::Binding) -> Result<wgpu::BindGroupLayoutEntry> {
-    let ty = match &binding.kind {
-        crate::BindingKind::ConstantBuffer { slot, reg_count } => {
-            let expected = BINDING_BASE_CBUFFER + slot;
-            if binding.binding != expected {
-                bail!(
-                    "cbuffer slot {slot} expected @binding({expected}), got {}",
-                    binding.binding
-                );
-            }
-            wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Uniform,
-                has_dynamic_offset: false,
-                min_binding_size: wgpu::BufferSize::new((*reg_count as u64) * 16),
-            }
-        }
-        crate::BindingKind::Texture2D { slot } => {
-            let expected = BINDING_BASE_TEXTURE + slot;
-            if binding.binding != expected {
-                bail!(
-                    "texture slot {slot} expected @binding({expected}), got {}",
-                    binding.binding
-                );
-            }
-            wgpu::BindingType::Texture {
-                multisampled: false,
-                view_dimension: wgpu::TextureViewDimension::D2,
-                sample_type: wgpu::TextureSampleType::Float { filterable: true },
-            }
-        }
-        crate::BindingKind::Sampler { slot } => {
-            let expected = BINDING_BASE_SAMPLER + slot;
-            if binding.binding != expected {
-                bail!(
-                    "sampler slot {slot} expected @binding({expected}), got {}",
-                    binding.binding
-                );
-            }
-            wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering)
-        }
-    };
-
-    Ok(wgpu::BindGroupLayoutEntry {
-        binding: binding.binding,
-        visibility: binding.visibility,
-        ty,
-        count: None,
-    })
-}
-
-fn build_bind_group(
-    device: &wgpu::Device,
-    cache: &mut BindGroupCache<Arc<wgpu::BindGroup>>,
-    resources: &AerogpuResources,
-    dummy_uniform: &wgpu::Buffer,
-    dummy_texture_view: &wgpu::TextureView,
-    default_sampler: &aero_gpu::bindings::samplers::CachedSampler,
-    layout: &CachedBindGroupLayout,
-    bindings: &[crate::Binding],
-    stage_state: Option<&super::aerogpu_state::StageBindings>,
-) -> Result<Arc<wgpu::BindGroup>> {
-    let mut entries: Vec<BindGroupCacheEntry<'_>> = Vec::with_capacity(bindings.len());
-    for binding in bindings {
-        match &binding.kind {
-            crate::BindingKind::ConstantBuffer { slot, reg_count } => {
-                let slot_usize = *slot as usize;
-                let bound_handle = stage_state
-                    .and_then(|s| s.constant_buffers.get(slot_usize).copied())
-                    .flatten();
-
-                let required_min = (*reg_count as u64).saturating_mul(16);
-                let (id, buffer) = if let Some(handle) = bound_handle {
-                    resources
-                        .buffers
-                        .get(&handle)
-                        .filter(|b| b.size >= required_min)
-                        .map(|b| (BufferId(handle as u64), &b.buffer))
-                        .unwrap_or((BufferId(0), dummy_uniform))
-                } else {
-                    (BufferId(0), dummy_uniform)
-                };
-
-                entries.push(BindGroupCacheEntry {
-                    binding: binding.binding,
-                    resource: BindGroupCacheResource::Buffer {
-                        id,
-                        buffer,
-                        offset: 0,
-                        size: wgpu::BufferSize::new(required_min),
-                    },
-                });
-            }
-            crate::BindingKind::Texture2D { slot } => {
-                let slot_usize = *slot as usize;
-                let bound_handle = stage_state
-                    .and_then(|s| s.textures.get(slot_usize).copied())
-                    .flatten();
-                let (id, view) = if let Some(handle) = bound_handle {
-                    resources
-                        .textures
-                        .get(&handle)
-                        .map(|t| (TextureViewId(handle as u64), &t.view))
-                        .unwrap_or((TextureViewId(0), dummy_texture_view))
-                } else {
-                    (TextureViewId(0), dummy_texture_view)
-                };
-                entries.push(BindGroupCacheEntry {
-                    binding: binding.binding,
-                    resource: BindGroupCacheResource::TextureView { id, view },
-                });
-            }
-            crate::BindingKind::Sampler { slot } => {
-                let slot_usize = *slot as usize;
-                let bound_handle = stage_state
-                    .and_then(|s| s.samplers.get(slot_usize).copied())
-                    .flatten();
-
-                let sampler = bound_handle
-                    .and_then(|handle| resources.samplers.get(&handle))
-                    .unwrap_or(default_sampler);
-
-                entries.push(BindGroupCacheEntry {
-                    binding: binding.binding,
-                    resource: BindGroupCacheResource::Sampler {
-                        id: sampler.id,
-                        sampler: sampler.sampler.as_ref(),
-                    },
-                });
-            }
-        }
-    }
-
-    Ok(cache.get_or_create(device, layout, &entries))
 }

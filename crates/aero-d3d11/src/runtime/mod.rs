@@ -5,5 +5,6 @@ pub mod aerogpu_state;
 pub mod bindings;
 pub mod execute;
 pub mod pipeline_layout_cache;
+mod reflection_bindings;
 pub mod resources;
 pub mod state;

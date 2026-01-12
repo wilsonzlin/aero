@@ -1,11 +1,11 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::sync::Arc;
 
 use aero_gpu::bindings::bind_group_cache::{
-    BindGroupCache, BindGroupCacheEntry, BindGroupCacheResource, BufferId, TextureViewId,
+    BindGroupCache, BindGroupCacheEntry, BufferId, TextureViewId,
 };
-use aero_gpu::bindings::layout_cache::{BindGroupLayoutCache, CachedBindGroupLayout};
+use aero_gpu::bindings::layout_cache::BindGroupLayoutCache;
 use aero_gpu::bindings::samplers::SamplerCache;
 use aero_gpu::bindings::CacheStats;
 use aero_gpu::guest_memory::{GuestMemory, GuestMemoryError};
@@ -26,10 +26,7 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
 use aero_protocol::aerogpu::aerogpu_ring::{AerogpuAllocEntry, AEROGPU_ALLOC_FLAG_READONLY};
 use anyhow::{anyhow, bail, Context, Result};
 
-use crate::binding_model::{
-    BINDING_BASE_CBUFFER, BINDING_BASE_SAMPLER, BINDING_BASE_TEXTURE, MAX_CBUFFER_SLOTS,
-    MAX_SAMPLER_SLOTS, MAX_TEXTURE_SLOTS,
-};
+use crate::binding_model::{MAX_SAMPLER_SLOTS, MAX_TEXTURE_SLOTS};
 use crate::input_layout::{
     fnv1a_32, map_layout_to_shader_locations_compact, InputLayoutBinding, InputLayoutDesc,
     VertexBufferLayoutOwned, VsInputSignatureElement, MAX_INPUT_SLOTS,
@@ -41,6 +38,7 @@ use crate::{
 
 use super::bindings::{BindingState, BoundConstantBuffer, BoundSampler, ShaderStage};
 use super::pipeline_layout_cache::PipelineLayoutCache;
+use super::reflection_bindings;
 
 const DEFAULT_MAX_VERTEX_SLOTS: usize = MAX_INPUT_SLOTS as usize;
 // D3D11 exposes 128 SRV slots per stage. Our shader translation keeps the D3D register index as the
@@ -1405,10 +1403,10 @@ impl AerogpuD3d11Executor {
             bail!("shader {ps_handle} is not a pixel shader");
         }
 
-        let pipeline_bindings = build_pipeline_bindings_info(
+        let pipeline_bindings = reflection_bindings::build_pipeline_bindings_info(
             &self.device,
             &mut self.bind_group_layout_cache,
-            [&vs, &ps],
+            [vs.reflection.bindings.as_slice(), ps.reflection.bindings.as_slice()],
         )?;
 
         let pipeline_layout = {
@@ -2535,19 +2533,22 @@ impl AerogpuD3d11Executor {
                                 if stage_bindings.is_dirty()
                                     || current_bind_groups[group_index].is_none()
                                 {
-                                    let bg = build_bind_group(
+                                    let provider = CmdExecutorBindGroupProvider {
+                                        resources: &self.resources,
+                                        legacy_constants: &self.legacy_constants,
+                                        cbuffer_scratch: &self.cbuffer_scratch,
+                                        dummy_uniform: &self.dummy_uniform,
+                                        dummy_texture_view: &self.dummy_texture_view,
+                                        default_sampler: &self.default_sampler,
+                                        stage,
+                                        stage_state: stage_bindings,
+                                    };
+                                    let bg = reflection_bindings::build_bind_group(
                                         &self.device,
                                         &mut self.bind_group_cache,
-                                        &self.resources,
-                                        &self.legacy_constants,
-                                        &self.cbuffer_scratch,
-                                        &self.dummy_uniform,
-                                        &self.dummy_texture_view,
-                                        &self.default_sampler,
-                                        stage,
                                         &pipeline_bindings.group_layouts[group_index],
                                         &pipeline_bindings.group_bindings[group_index],
-                                        stage_bindings,
+                                        &provider,
                                     )?;
                                     let ptr = Arc::as_ptr(&bg);
                                     bind_group_arena.push(bg);
@@ -2649,19 +2650,22 @@ impl AerogpuD3d11Executor {
                                 if stage_bindings.is_dirty()
                                     || current_bind_groups[group_index].is_none()
                                 {
-                                    let bg = build_bind_group(
+                                    let provider = CmdExecutorBindGroupProvider {
+                                        resources: &self.resources,
+                                        legacy_constants: &self.legacy_constants,
+                                        cbuffer_scratch: &self.cbuffer_scratch,
+                                        dummy_uniform: &self.dummy_uniform,
+                                        dummy_texture_view: &self.dummy_texture_view,
+                                        default_sampler: &self.default_sampler,
+                                        stage,
+                                        stage_state: stage_bindings,
+                                    };
+                                    let bg = reflection_bindings::build_bind_group(
                                         &self.device,
                                         &mut self.bind_group_cache,
-                                        &self.resources,
-                                        &self.legacy_constants,
-                                        &self.cbuffer_scratch,
-                                        &self.dummy_uniform,
-                                        &self.dummy_texture_view,
-                                        &self.default_sampler,
-                                        stage,
                                         &pipeline_bindings.group_layouts[group_index],
                                         &pipeline_bindings.group_bindings[group_index],
-                                        stage_bindings,
+                                        &provider,
                                     )?;
                                     let ptr = Arc::as_ptr(&bg);
                                     bind_group_arena.push(bg);
@@ -5047,7 +5051,7 @@ impl AerogpuD3d11Executor {
     fn ensure_bound_resources_uploaded(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
-        pipeline_bindings: &PipelineBindingsInfo,
+        pipeline_bindings: &reflection_bindings::PipelineBindingsInfo,
         allocs: &AllocTable,
         guest_mem: &mut dyn GuestMemory,
     ) -> Result<()> {
@@ -5707,295 +5711,73 @@ fn exec_draw_indexed<'a>(pass: &mut wgpu::RenderPass<'a>, cmd_bytes: &[u8]) -> R
     Ok(())
 }
 
-#[derive(Debug, Clone)]
-struct PipelineBindingsInfo {
-    layout_key: PipelineLayoutKey,
-    group_layouts: Vec<CachedBindGroupLayout>,
-    group_bindings: Vec<Vec<crate::Binding>>,
-}
-
-fn build_pipeline_bindings_info(
-    device: &wgpu::Device,
-    bind_group_layout_cache: &mut BindGroupLayoutCache,
-    shaders: [&ShaderResource; 2],
-) -> Result<PipelineBindingsInfo> {
-    let mut groups: BTreeMap<u32, BTreeMap<u32, crate::Binding>> = BTreeMap::new();
-    for shader in shaders {
-        for binding in &shader.reflection.bindings {
-            let group_map = groups.entry(binding.group).or_default();
-            if let Some(existing) = group_map.get_mut(&binding.binding) {
-                if existing.kind != binding.kind {
-                    bail!(
-                        "binding @group({}) @binding({}) kind mismatch across shaders ({:?} vs {:?})",
-                        binding.group,
-                        binding.binding,
-                        existing.kind,
-                        binding.kind,
-                    );
-                }
-                existing.visibility |= binding.visibility;
-            } else {
-                group_map.insert(binding.binding, binding.clone());
-            }
-        }
-    }
-
-    if groups.is_empty() {
-        return Ok(PipelineBindingsInfo {
-            layout_key: PipelineLayoutKey::empty(),
-            group_layouts: Vec::new(),
-            group_bindings: Vec::new(),
-        });
-    }
-
-    let max_group = groups
-        .keys()
-        .copied()
-        .max()
-        .expect("groups.is_empty handled above");
-    let mut group_layouts = Vec::with_capacity(max_group as usize + 1);
-    let mut group_bindings = Vec::with_capacity(max_group as usize + 1);
-
-    for group_index in 0..=max_group {
-        let bindings: Vec<crate::Binding> = groups
-            .get(&group_index)
-            .map(|m| m.values().cloned().collect())
-            .unwrap_or_default();
-
-        let mut entries = Vec::with_capacity(bindings.len());
-        for binding in &bindings {
-            entries.push(binding_to_layout_entry(binding)?);
-        }
-
-        let layout = bind_group_layout_cache.get_or_create(device, &entries);
-        group_layouts.push(layout);
-        group_bindings.push(bindings);
-    }
-
-    let layout_key = PipelineLayoutKey {
-        bind_group_layout_hashes: group_layouts.iter().map(|l| l.hash).collect(),
-    };
-
-    Ok(PipelineBindingsInfo {
-        layout_key,
-        group_layouts,
-        group_bindings,
-    })
-}
-
-fn binding_to_layout_entry(binding: &crate::Binding) -> Result<wgpu::BindGroupLayoutEntry> {
-    let ty = match &binding.kind {
-        crate::BindingKind::ConstantBuffer { slot, reg_count } => {
-            if *slot >= MAX_CBUFFER_SLOTS {
-                bail!(
-                    "cbuffer slot {slot} is out of range for binding model (max {})",
-                    MAX_CBUFFER_SLOTS - 1
-                );
-            }
-            let expected = BINDING_BASE_CBUFFER + slot;
-            if binding.binding != expected {
-                bail!(
-                    "cbuffer slot {slot} expected @binding({expected}), got {}",
-                    binding.binding
-                );
-            }
-            wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Uniform,
-                has_dynamic_offset: false,
-                min_binding_size: wgpu::BufferSize::new((*reg_count as u64) * 16),
-            }
-        }
-        crate::BindingKind::Texture2D { slot } => {
-            if *slot >= MAX_TEXTURE_SLOTS {
-                bail!(
-                    "texture slot {slot} is out of range for binding model (max {})",
-                    MAX_TEXTURE_SLOTS - 1
-                );
-            }
-            let expected = BINDING_BASE_TEXTURE + slot;
-            if binding.binding != expected {
-                bail!(
-                    "texture slot {slot} expected @binding({expected}), got {}",
-                    binding.binding
-                );
-            }
-            wgpu::BindingType::Texture {
-                multisampled: false,
-                view_dimension: wgpu::TextureViewDimension::D2,
-                sample_type: wgpu::TextureSampleType::Float { filterable: true },
-            }
-        }
-        crate::BindingKind::Sampler { slot } => {
-            if *slot >= MAX_SAMPLER_SLOTS {
-                bail!(
-                    "sampler slot {slot} is out of range for binding model (max {})",
-                    MAX_SAMPLER_SLOTS - 1
-                );
-            }
-            let expected = BINDING_BASE_SAMPLER + slot;
-            if binding.binding != expected {
-                bail!(
-                    "sampler slot {slot} expected @binding({expected}), got {}",
-                    binding.binding
-                );
-            }
-            wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering)
-        }
-    };
-
-    Ok(wgpu::BindGroupLayoutEntry {
-        binding: binding.binding,
-        visibility: binding.visibility,
-        ty,
-        count: None,
-    })
-}
-#[allow(clippy::too_many_arguments)]
-fn build_bind_group(
-    device: &wgpu::Device,
-    cache: &mut BindGroupCache<Arc<wgpu::BindGroup>>,
-    resources: &AerogpuD3d11Resources,
-    legacy_constants: &HashMap<ShaderStage, wgpu::Buffer>,
-    cbuffer_scratch: &HashMap<(ShaderStage, u32), ConstantBufferScratch>,
-    dummy_uniform: &wgpu::Buffer,
-    dummy_texture_view: &wgpu::TextureView,
-    default_sampler: &aero_gpu::bindings::samplers::CachedSampler,
+struct CmdExecutorBindGroupProvider<'a> {
+    resources: &'a AerogpuD3d11Resources,
+    legacy_constants: &'a HashMap<ShaderStage, wgpu::Buffer>,
+    cbuffer_scratch: &'a HashMap<(ShaderStage, u32), ConstantBufferScratch>,
+    dummy_uniform: &'a wgpu::Buffer,
+    dummy_texture_view: &'a wgpu::TextureView,
+    default_sampler: &'a aero_gpu::bindings::samplers::CachedSampler,
     stage: ShaderStage,
-    layout: &CachedBindGroupLayout,
-    bindings: &[crate::Binding],
-    stage_state: &super::bindings::StageBindings,
-) -> Result<Arc<wgpu::BindGroup>> {
-    let uniform_align = device.limits().min_uniform_buffer_offset_alignment as u64;
-    let max_uniform_binding_size = device.limits().max_uniform_buffer_binding_size as u64;
+    stage_state: &'a super::bindings::StageBindings,
+}
 
-    let mut entries: Vec<BindGroupCacheEntry<'_>> = Vec::with_capacity(bindings.len());
-    for binding in bindings {
-        match &binding.kind {
-            crate::BindingKind::ConstantBuffer { slot, reg_count } => {
-                let bound = stage_state.constant_buffer(*slot);
+impl reflection_bindings::BindGroupResourceProvider for CmdExecutorBindGroupProvider<'_> {
+    fn constant_buffer(&self, slot: u32) -> Option<reflection_bindings::BufferBinding<'_>> {
+        let bound = self.stage_state.constant_buffer(slot)?;
 
-                let (mut id, mut buffer, mut offset, mut size) = if let Some(bound) = bound {
-                    if bound.buffer == legacy_constants_buffer_id(stage) {
-                        (
-                            BufferId(bound.buffer as u64),
-                            legacy_constants
-                                .get(&stage)
-                                .expect("legacy constants buffer exists for every stage"),
-                            bound.offset,
-                            bound.size,
-                        )
-                    } else if let Some(buf) = resources.buffers.get(&bound.buffer) {
-                        (
-                            BufferId(bound.buffer as u64),
-                            &buf.buffer,
-                            bound.offset,
-                            bound.size,
-                        )
-                    } else {
-                        (BufferId(0), dummy_uniform, 0, None)
-                    }
-                } else {
-                    (BufferId(0), dummy_uniform, 0, None)
-                };
-
-                if id != BufferId(0) {
-                    let required_min = (*reg_count as u64).saturating_mul(16);
-                    let total_size = if id.0 == legacy_constants_buffer_id(stage) as u64 {
-                        LEGACY_CONSTANTS_SIZE_BYTES
-                    } else {
-                        resources
-                            .buffers
-                            .get(&(id.0 as u32))
-                            .map(|b| b.size)
-                            .unwrap_or(0)
-                    };
-
-                    if offset >= total_size {
-                        id = BufferId(0);
-                        buffer = dummy_uniform;
-                        offset = 0;
-                        size = None;
-                    } else {
-                        let remaining = total_size - offset;
-                        let mut bind_size = size.unwrap_or(remaining).min(remaining);
-                        if bind_size < required_min {
-                            id = BufferId(0);
-                            buffer = dummy_uniform;
-                            offset = 0;
-                            size = None;
-                        } else {
-                            if bind_size > max_uniform_binding_size {
-                                bind_size = max_uniform_binding_size;
-                            }
-                            if bind_size < required_min {
-                                id = BufferId(0);
-                                buffer = dummy_uniform;
-                                offset = 0;
-                                size = None;
-                            } else if offset != 0 && offset % uniform_align != 0 {
-                                if let Some(scratch) = cbuffer_scratch.get(&(stage, *slot)) {
-                                    id = scratch.id;
-                                    buffer = &scratch.buffer;
-                                    offset = 0;
-                                    size = Some(bind_size);
-                                } else {
-                                    id = BufferId(0);
-                                    buffer = dummy_uniform;
-                                    offset = 0;
-                                    size = None;
-                                }
-                            } else {
-                                size = Some(bind_size);
-                            }
-                        }
-                    }
-                }
-
-                entries.push(BindGroupCacheEntry {
-                    binding: binding.binding,
-                    resource: BindGroupCacheResource::Buffer {
-                        id,
-                        buffer,
-                        offset,
-                        size: size.and_then(wgpu::BufferSize::new),
-                    },
-                });
-            }
-            crate::BindingKind::Texture2D { slot } => {
-                let bound = stage_state.texture(*slot);
-                let (id, view) = if let Some(bound) = bound {
-                    resources
-                        .textures
-                        .get(&bound.texture)
-                        .map(|t| (TextureViewId(bound.texture as u64), &t.view))
-                        .unwrap_or((TextureViewId(0), dummy_texture_view))
-                } else {
-                    (TextureViewId(0), dummy_texture_view)
-                };
-
-                entries.push(BindGroupCacheEntry {
-                    binding: binding.binding,
-                    resource: BindGroupCacheResource::TextureView { id, view },
-                });
-            }
-            crate::BindingKind::Sampler { slot } => {
-                let bound = stage_state.sampler(*slot);
-                let sampler = bound
-                    .and_then(|bound| resources.samplers.get(&bound.sampler))
-                    .unwrap_or(default_sampler);
-
-                entries.push(BindGroupCacheEntry {
-                    binding: binding.binding,
-                    resource: BindGroupCacheResource::Sampler {
-                        id: sampler.id,
-                        sampler: sampler.sampler.as_ref(),
-                    },
-                });
-            }
+        if bound.buffer == legacy_constants_buffer_id(self.stage) {
+            let buf = self
+                .legacy_constants
+                .get(&self.stage)
+                .expect("legacy constants buffer exists for every stage");
+            return Some(reflection_bindings::BufferBinding {
+                id: BufferId(bound.buffer as u64),
+                buffer: buf,
+                offset: bound.offset,
+                size: bound.size,
+                total_size: LEGACY_CONSTANTS_SIZE_BYTES,
+            });
         }
+
+        let buf = self.resources.buffers.get(&bound.buffer)?;
+        Some(reflection_bindings::BufferBinding {
+            id: BufferId(bound.buffer as u64),
+            buffer: &buf.buffer,
+            offset: bound.offset,
+            size: bound.size,
+            total_size: buf.size,
+        })
     }
 
-    Ok(cache.get_or_create(device, layout, &entries))
+    fn constant_buffer_scratch(&self, slot: u32) -> Option<(BufferId, &wgpu::Buffer)> {
+        self.cbuffer_scratch
+            .get(&(self.stage, slot))
+            .map(|scratch| (scratch.id, &scratch.buffer))
+    }
+
+    fn texture2d(&self, slot: u32) -> Option<(TextureViewId, &wgpu::TextureView)> {
+        let bound = self.stage_state.texture(slot)?;
+        let tex = self.resources.textures.get(&bound.texture)?;
+        Some((TextureViewId(bound.texture as u64), &tex.view))
+    }
+
+    fn sampler(&self, slot: u32) -> Option<&aero_gpu::bindings::samplers::CachedSampler> {
+        let bound = self.stage_state.sampler(slot)?;
+        self.resources.samplers.get(&bound.sampler)
+    }
+
+    fn dummy_uniform(&self) -> &wgpu::Buffer {
+        self.dummy_uniform
+    }
+
+    fn dummy_texture_view(&self) -> &wgpu::TextureView {
+        self.dummy_texture_view
+    }
+
+    fn default_sampler(&self) -> &aero_gpu::bindings::samplers::CachedSampler {
+        self.default_sampler
+    }
 }
 
 fn get_or_create_render_pipeline_for_state<'a>(

@@ -1,0 +1,272 @@
+use std::collections::BTreeMap;
+use std::sync::Arc;
+
+use aero_gpu::bindings::bind_group_cache::{
+    BindGroupCache, BindGroupCacheEntry, BindGroupCacheResource, BufferId, TextureViewId,
+};
+use aero_gpu::bindings::layout_cache::{BindGroupLayoutCache, CachedBindGroupLayout};
+use aero_gpu::bindings::samplers::CachedSampler;
+use aero_gpu::pipeline_key::PipelineLayoutKey;
+use anyhow::{bail, Result};
+
+use crate::binding_model::{BINDING_BASE_CBUFFER, BINDING_BASE_SAMPLER, BINDING_BASE_TEXTURE};
+
+#[derive(Debug, Clone)]
+pub(super) struct PipelineBindingsInfo {
+    pub layout_key: PipelineLayoutKey,
+    pub group_layouts: Vec<CachedBindGroupLayout>,
+    pub group_bindings: Vec<Vec<crate::Binding>>,
+}
+
+pub(super) fn build_pipeline_bindings_info<'a, I>(
+    device: &wgpu::Device,
+    bind_group_layout_cache: &mut BindGroupLayoutCache,
+    shader_bindings: I,
+) -> Result<PipelineBindingsInfo>
+where
+    I: IntoIterator<Item = &'a [crate::Binding]>,
+{
+    let mut groups: BTreeMap<u32, BTreeMap<u32, crate::Binding>> = BTreeMap::new();
+    for shader in shader_bindings {
+        for binding in shader {
+            let group_map = groups.entry(binding.group).or_default();
+            if let Some(existing) = group_map.get_mut(&binding.binding) {
+                if existing.kind != binding.kind {
+                    bail!(
+                        "binding @group({}) @binding({}) kind mismatch across shaders",
+                        binding.group,
+                        binding.binding
+                    );
+                }
+                existing.visibility |= binding.visibility;
+            } else {
+                group_map.insert(binding.binding, binding.clone());
+            }
+        }
+    }
+
+    if groups.is_empty() {
+        return Ok(PipelineBindingsInfo {
+            layout_key: PipelineLayoutKey::empty(),
+            group_layouts: Vec::new(),
+            group_bindings: Vec::new(),
+        });
+    }
+
+    let max_group = groups
+        .keys()
+        .copied()
+        .max()
+        .expect("groups.is_empty handled above");
+    let mut group_layouts = Vec::with_capacity(max_group as usize + 1);
+    let mut group_bindings = Vec::with_capacity(max_group as usize + 1);
+
+    for group_index in 0..=max_group {
+        let bindings: Vec<crate::Binding> = groups
+            .get(&group_index)
+            .map(|m| m.values().cloned().collect())
+            .unwrap_or_default();
+
+        let mut entries = Vec::with_capacity(bindings.len());
+        for binding in &bindings {
+            entries.push(binding_to_layout_entry(binding)?);
+        }
+
+        let layout = bind_group_layout_cache.get_or_create(device, &entries);
+        group_layouts.push(layout);
+        group_bindings.push(bindings);
+    }
+
+    let layout_key = PipelineLayoutKey {
+        bind_group_layout_hashes: group_layouts.iter().map(|l| l.hash).collect(),
+    };
+
+    Ok(PipelineBindingsInfo {
+        layout_key,
+        group_layouts,
+        group_bindings,
+    })
+}
+
+pub(super) fn binding_to_layout_entry(binding: &crate::Binding) -> Result<wgpu::BindGroupLayoutEntry> {
+    let ty = match &binding.kind {
+        crate::BindingKind::ConstantBuffer { slot, reg_count } => {
+            let expected = BINDING_BASE_CBUFFER + slot;
+            if binding.binding != expected {
+                bail!(
+                    "cbuffer slot {slot} expected @binding({expected}), got {}",
+                    binding.binding
+                );
+            }
+            wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: wgpu::BufferSize::new((*reg_count as u64) * 16),
+            }
+        }
+        crate::BindingKind::Texture2D { slot } => {
+            let expected = BINDING_BASE_TEXTURE + slot;
+            if binding.binding != expected {
+                bail!(
+                    "texture slot {slot} expected @binding({expected}), got {}",
+                    binding.binding
+                );
+            }
+            wgpu::BindingType::Texture {
+                multisampled: false,
+                view_dimension: wgpu::TextureViewDimension::D2,
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+            }
+        }
+        crate::BindingKind::Sampler { slot } => {
+            let expected = BINDING_BASE_SAMPLER + slot;
+            if binding.binding != expected {
+                bail!(
+                    "sampler slot {slot} expected @binding({expected}), got {}",
+                    binding.binding
+                );
+            }
+            wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering)
+        }
+    };
+
+    Ok(wgpu::BindGroupLayoutEntry {
+        binding: binding.binding,
+        visibility: binding.visibility,
+        ty,
+        count: None,
+    })
+}
+
+pub(super) struct BufferBinding<'a> {
+    pub id: BufferId,
+    pub buffer: &'a wgpu::Buffer,
+    pub offset: u64,
+    pub size: Option<u64>,
+    pub total_size: u64,
+}
+
+pub(super) trait BindGroupResourceProvider {
+    fn constant_buffer(&self, slot: u32) -> Option<BufferBinding<'_>>;
+    fn constant_buffer_scratch(&self, slot: u32) -> Option<(BufferId, &wgpu::Buffer)>;
+    fn texture2d(&self, slot: u32) -> Option<(TextureViewId, &wgpu::TextureView)>;
+    fn sampler(&self, slot: u32) -> Option<&CachedSampler>;
+
+    fn dummy_uniform(&self) -> &wgpu::Buffer;
+    fn dummy_texture_view(&self) -> &wgpu::TextureView;
+    fn default_sampler(&self) -> &CachedSampler;
+}
+
+pub(super) fn build_bind_group(
+    device: &wgpu::Device,
+    cache: &mut BindGroupCache<Arc<wgpu::BindGroup>>,
+    layout: &CachedBindGroupLayout,
+    bindings: &[crate::Binding],
+    provider: &impl BindGroupResourceProvider,
+) -> Result<Arc<wgpu::BindGroup>> {
+    let uniform_align = device.limits().min_uniform_buffer_offset_alignment as u64;
+    let max_uniform_binding_size = device.limits().max_uniform_buffer_binding_size as u64;
+
+    let mut entries: Vec<BindGroupCacheEntry<'_>> = Vec::with_capacity(bindings.len());
+    for binding in bindings {
+        match &binding.kind {
+            crate::BindingKind::ConstantBuffer { slot, reg_count } => {
+                let mut id = BufferId(0);
+                let mut buffer = provider.dummy_uniform();
+                let mut offset = 0;
+                let mut size = None;
+                let mut total_size = 0u64;
+
+                if let Some(bound) = provider.constant_buffer(*slot) {
+                    id = bound.id;
+                    buffer = bound.buffer;
+                    offset = bound.offset;
+                    size = bound.size;
+                    total_size = bound.total_size;
+                }
+
+                if id != BufferId(0) {
+                    let required_min = (*reg_count as u64).saturating_mul(16);
+
+                    if offset >= total_size {
+                        id = BufferId(0);
+                        buffer = provider.dummy_uniform();
+                        offset = 0;
+                        size = None;
+                    } else {
+                        let remaining = total_size - offset;
+                        let mut bind_size = size.unwrap_or(remaining).min(remaining);
+                        if bind_size < required_min {
+                            id = BufferId(0);
+                            buffer = provider.dummy_uniform();
+                            offset = 0;
+                            size = None;
+                        } else {
+                            if bind_size > max_uniform_binding_size {
+                                bind_size = max_uniform_binding_size;
+                            }
+                            if bind_size < required_min {
+                                id = BufferId(0);
+                                buffer = provider.dummy_uniform();
+                                offset = 0;
+                                size = None;
+                            } else if offset != 0 && offset % uniform_align != 0 {
+                                if let Some((scratch_id, scratch_buffer)) =
+                                    provider.constant_buffer_scratch(*slot)
+                                {
+                                    id = scratch_id;
+                                    buffer = scratch_buffer;
+                                    offset = 0;
+                                    size = Some(bind_size);
+                                } else {
+                                    id = BufferId(0);
+                                    buffer = provider.dummy_uniform();
+                                    offset = 0;
+                                    size = None;
+                                }
+                            } else {
+                                size = Some(bind_size);
+                            }
+                        }
+                    }
+                }
+
+                entries.push(BindGroupCacheEntry {
+                    binding: binding.binding,
+                    resource: BindGroupCacheResource::Buffer {
+                        id,
+                        buffer,
+                        offset,
+                        size: size.and_then(wgpu::BufferSize::new),
+                    },
+                });
+            }
+            crate::BindingKind::Texture2D { slot } => {
+                let (id, view) = provider
+                    .texture2d(*slot)
+                    .unwrap_or((TextureViewId(0), provider.dummy_texture_view()));
+
+                entries.push(BindGroupCacheEntry {
+                    binding: binding.binding,
+                    resource: BindGroupCacheResource::TextureView { id, view },
+                });
+            }
+            crate::BindingKind::Sampler { slot } => {
+                let sampler = provider
+                    .sampler(*slot)
+                    .unwrap_or_else(|| provider.default_sampler());
+
+                entries.push(BindGroupCacheEntry {
+                    binding: binding.binding,
+                    resource: BindGroupCacheResource::Sampler {
+                        id: sampler.id,
+                        sampler: sampler.sampler.as_ref(),
+                    },
+                });
+            }
+        }
+    }
+
+    Ok(cache.get_or_create(device, layout, &entries))
+}
+
