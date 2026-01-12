@@ -490,10 +490,49 @@ mod tests {
     }
 
     #[test]
+    fn parse_hda_format_reserved_codes_fall_back_safely() {
+        // Reserved multiplier codes fall back to 1x.
+        let fmt = (4 << 11) | (1 << 4) | 0;
+        let parsed = StreamFormat::from_hda_format(fmt);
+        assert_eq!(parsed.sample_rate_hz, 48_000);
+
+        // Divisor codes cover 1..=8; spot-check the upper end.
+        // base=48k, mult=4 (code 3), div=8 (code 7) -> 24k.
+        let fmt = (3 << 11) | (7 << 8) | (1 << 4) | 0;
+        let parsed = StreamFormat::from_hda_format(fmt);
+        assert_eq!(parsed.sample_rate_hz, 24_000);
+
+        // Reserved bits-per-sample codes fall back to 16-bit.
+        let fmt = (5 << 4) | 0;
+        let parsed = StreamFormat::from_hda_format(fmt);
+        assert_eq!(parsed.bits_per_sample, 16);
+        assert_eq!(parsed.bytes_per_sample(), 2);
+    }
+
+    #[test]
     fn pcm_decode_8bit_unsigned_bias() {
         assert_f32_approx_eq(decode_one_sample(&[0], 8), -1.0, 1e-6);
         assert_f32_approx_eq(decode_one_sample(&[128], 8), 0.0, 1e-6);
         assert_f32_approx_eq(decode_one_sample(&[255], 8), 127.0 / 128.0, 1e-6);
+    }
+
+    #[test]
+    fn pcm_8bit_encode_bias_rounding_and_clipping() {
+        fn encode_u8(sample: f32) -> u8 {
+            let mut out = [0u8; 1];
+            encode_one_sample(&mut out, 8, sample);
+            out[0]
+        }
+
+        assert_eq!(encode_u8(-1.0), 0);
+        assert_eq!(encode_u8(0.0), 128);
+        assert_eq!(encode_u8(1.0), 255);
+        assert_eq!(encode_u8(2.0), 255);
+        assert_eq!(encode_u8(-2.0), 0);
+
+        // Values exactly representable with the 1/128 scaling.
+        assert_eq!(encode_u8(0.5), 192);
+        assert_eq!(encode_u8(-0.5), 64);
     }
 
     #[test]
@@ -634,6 +673,25 @@ mod tests {
         ]
         .concat();
         decode_pcm_to_stereo_f32_into(&frame, fmt_4ch, &mut out);
+        assert_eq!(out.len(), 1);
+        assert_f32_approx_eq(out[0][0], 1000.0 / 32768.0, 1e-6);
+        assert_f32_approx_eq(out[0][1], -1000.0 / 32768.0, 1e-6);
+    }
+
+    #[test]
+    fn decode_pcm_to_stereo_f32_ignores_partial_trailing_frame() {
+        // 16-bit stereo => 4 bytes per frame. Provide 1 full frame + 2 extra bytes.
+        let fmt = StreamFormat {
+            sample_rate_hz: 48_000,
+            bits_per_sample: 16,
+            channels: 2,
+        };
+        let mut input = Vec::new();
+        input.extend_from_slice(&1000i16.to_le_bytes());
+        input.extend_from_slice(&(-1000i16).to_le_bytes());
+        input.extend_from_slice(&[0xAA, 0xBB]); // trailing partial frame
+
+        let out = decode_pcm_to_stereo_f32(&input, fmt);
         assert_eq!(out.len(), 1);
         assert_f32_approx_eq(out[0][0], 1000.0 / 32768.0, 1e-6);
         assert_f32_approx_eq(out[0][1], -1000.0 / 32768.0, 1e-6);
