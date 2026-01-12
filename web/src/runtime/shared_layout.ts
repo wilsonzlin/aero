@@ -359,7 +359,7 @@ export function readGuestRamLayoutFromStatus(status: Int32Array): GuestRamLayout
   }
   if (guestSize > GUEST_PCI_MMIO_BASE) {
     throw new Error(
-      `Guest RAM overlaps the PCI MMIO aperture: guest_size=0x${guestSize.toString(16)} PCI_MMIO_BASE=0x${GUEST_PCI_MMIO_BASE.toString(16)}`,
+      `Guest RAM overlaps the PCI MMIO BAR window: guest_size=0x${guestSize.toString(16)} PCI_MMIO_BASE=0x${GUEST_PCI_MMIO_BASE.toString(16)}`,
     );
   }
 

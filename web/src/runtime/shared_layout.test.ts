@@ -161,15 +161,15 @@ describe("runtime/shared_layout", () => {
     expect(snap.format).toBe(SCANOUT_FORMAT_B8G8R8X8);
   });
 
-  it("clamps maximum guest RAM size below the PCI MMIO aperture", () => {
+  it("clamps maximum guest RAM size below the PCI MMIO BAR window", () => {
     // Requesting "as much as possible" (u32 max) should clamp to the start of the fixed
-    // PCI MMIO aperture so PCI BARs can never overlap guest RAM.
+    // PCI MMIO BAR window so PCI BARs can never overlap guest RAM.
     const layout = computeGuestRamLayout(0xffff_ffff);
     expect(layout.guest_size).toBeLessThanOrEqual(PCI_MMIO_BASE);
     expect(layout.guest_size).toBe(PCI_MMIO_BASE);
   });
 
-  it("rejects status guest RAM layouts that overlap the PCI MMIO aperture", () => {
+  it("rejects status guest RAM layouts that overlap the PCI MMIO BAR window", () => {
     const status = new Int32Array(new SharedArrayBuffer(STATUS_BYTES));
     Atomics.store(status, StatusIndex.GuestBase, RUNTIME_RESERVED_BYTES | 0);
     // Intentionally write a value larger than PCI_MMIO_BASE to validate the guard.

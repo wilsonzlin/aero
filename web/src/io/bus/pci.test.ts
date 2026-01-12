@@ -685,7 +685,7 @@ describe("io/bus/pci", () => {
     // BAR0 should reflect the bus-assigned base, not the value written by initPciConfig().
     const bar0 = cfg.readU32(addr.device, addr.function, 0x10);
     expect(bar0 >>> 0).toBe(PCI_MMIO_BASE);
-    // The web runtime clamps guest RAM to live below the PCI MMIO aperture. Ensure
+    // The web runtime clamps guest RAM to live below the PCI MMIO BAR window. Ensure
     // our auto-assigned BAR base is outside the maximum guest RAM region.
     expect(bar0 >>> 0).toBeGreaterThanOrEqual(computeGuestRamLayout(0xffff_ffff).guest_size);
 
