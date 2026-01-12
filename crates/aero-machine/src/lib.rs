@@ -5797,6 +5797,15 @@ mod tests {
             tx_ring.try_pop().is_err(),
             "unexpected TX frame without bus mastering enabled"
         );
+        let stats = m
+            .network_backend_l2_ring_stats()
+            .expect("expected ring backend stats to be available");
+        assert_eq!(stats.tx_pushed_frames, 0);
+        assert_eq!(stats.tx_dropped_oversize, 0);
+        assert_eq!(stats.tx_dropped_full, 0);
+        assert_eq!(stats.rx_popped_frames, 0);
+        assert_eq!(stats.rx_dropped_oversize, 0);
+        assert_eq!(stats.rx_corrupt, 0);
 
         // Now enable Bus Mastering and poll again; the descriptor should be processed and the
         // resulting frame should appear on NET_TX.
@@ -5813,6 +5822,15 @@ mod tests {
 
         m.poll_network();
         assert_eq!(tx_ring.try_pop(), Ok(frame));
+        let stats = m
+            .network_backend_l2_ring_stats()
+            .expect("expected ring backend stats after successful TX");
+        assert_eq!(stats.tx_pushed_frames, 1);
+        assert_eq!(stats.tx_dropped_oversize, 0);
+        assert_eq!(stats.tx_dropped_full, 0);
+        assert_eq!(stats.rx_popped_frames, 0);
+        assert_eq!(stats.rx_dropped_oversize, 0);
+        assert_eq!(stats.rx_corrupt, 0);
     }
 
     #[test]
