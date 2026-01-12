@@ -310,6 +310,31 @@ describe("io/bus/pci", () => {
     expect(cfg.readU32(0, 0, 0x14)).toBe(0xffff_ffff);
   });
 
+  it("supports mmio64 sizing probes for BARs > 4GiB (high dword mask)", () => {
+    const portBus = new PortIoBus();
+    const mmioBus = new MmioBus();
+    const pciBus = new PciBus(portBus, mmioBus);
+    pciBus.registerToPortBus();
+
+    // 8GiB: size mask high dword should not be all-ones.
+    const dev: PciDevice = {
+      name: "mmio64_big_dev",
+      vendorId: 0x1234,
+      deviceId: 0x5678,
+      classCode: 0,
+      bars: [{ kind: "mmio64", size: 0x2_0000_0000 }, null, null, null, null, null],
+    };
+    pciBus.registerDevice(dev, { device: 0, function: 0 });
+
+    const cfg = makeCfgIo(portBus);
+    cfg.writeU32(0, 0, 0x10, 0xffff_ffff);
+    cfg.writeU32(0, 0, 0x14, 0xffff_ffff);
+
+    // size=0x2_0000_0000 => mask=0xFFFF_FFFE_0000_0000.
+    expect(cfg.readU32(0, 0, 0x10)).toBe(0x0000_0004);
+    expect(cfg.readU32(0, 0, 0x14)).toBe(0xffff_fffe);
+  });
+
   it("rejects invalid mmio64 BAR layouts (BAR5 start / missing reserved slot)", () => {
     const portBus = new PortIoBus();
     const mmioBus = new MmioBus();
