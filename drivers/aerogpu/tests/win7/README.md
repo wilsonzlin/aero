@@ -82,6 +82,7 @@ drivers/aerogpu/tests/win7/
   dwm_flush_pacing/
   d3d9ex_triangle/
   d3d9ex_stateblock_sanity/
+  d3d9ex_scissor_sanity/
   d3d9ex_draw_indexed_primitive_up/
   d3d9ex_multiframe_triangle/
   d3d9ex_vb_dirty_range/
@@ -365,6 +366,7 @@ In a Win7 VM with AeroGPU installed and working correctly:
 * `d3d9ex_triangle` renders a blue triangle over a red clear and confirms **corner red + center blue** via readback
 * `d3d9ex_draw_indexed_primitive_up` draws a blue triangle over a red clear using `DrawIndexedPrimitiveUP` (user-pointer vertex/index data) and confirms **corner red + center blue** via readback (can dump `*.bmp` / raw BGRA `*.bin` with `--dump`)
 * `d3d9ex_stateblock_sanity` validates `IDirect3DStateBlock9` record/apply/capture behavior by recording device state (texture + pixel shader constants + viewport), mutating it, then verifying `Apply()` restores the recorded state and `Capture()` updates it (validated via readback: **green then red**)
+* `d3d9ex_scissor_sanity` validates `SetScissorRect` + `D3DRS_SCISSORTESTENABLE` actually clips rendering (expects **corner red + center blue** via readback)
 * `d3d9ex_multiframe_triangle` renders multiple frames using a persistent dynamic vertex buffer and confirms the **center pixel changes across frames** via readback (uses non-symmetric colors to catch channel-order regressions)
 * `d3d9ex_vb_dirty_range` renders a blue triangle using a vertex buffer updated via `Lock/Unlock` and confirms **corner red + center blue** via readback (catches regressions in vertex-buffer dirty-range tracking / upload)
 * `d3d9ex_stretchrect` exercises compositor-critical D3D9Ex DDIs: `ColorFill`, `UpdateSurface`, `StretchRect`, and `UpdateTexture` (validated via readback)

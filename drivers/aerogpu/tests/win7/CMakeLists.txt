@@ -168,6 +168,11 @@ aerogpu_add_win7_test(d3d9ex_stateblock_sanity
 )
 target_link_libraries(d3d9ex_stateblock_sanity PRIVATE user32 gdi32 d3d9)
 
+aerogpu_add_win7_test(d3d9ex_scissor_sanity
+  d3d9ex_scissor_sanity/main.cpp
+)
+target_link_libraries(d3d9ex_scissor_sanity PRIVATE user32 gdi32 d3d9)
+
 aerogpu_add_win7_test(d3d9ex_draw_indexed_primitive_up
   d3d9ex_draw_indexed_primitive_up/main.cpp
 )
