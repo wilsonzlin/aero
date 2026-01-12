@@ -251,8 +251,24 @@ let hdaDemoWasmMemory: WebAssembly.Memory | null = null;
 let hdaDemoClock: AudioFrameClock | null = null;
 let hdaDemoClockStarted = false;
 
-let pendingHdaPciDeviceStart: AudioOutputHdaPciDeviceStartMessage | null = null;
+type PendingHdaPciDeviceStart = { msg: AudioOutputHdaPciDeviceStartMessage; token: number };
+let pendingHdaPciDeviceStart: PendingHdaPciDeviceStart | null = null;
 let hdaPciDeviceBar0Base: bigint | null = null;
+let hdaPciDeviceOpToken = 0;
+
+function allocHdaPciDeviceToken(): number {
+  hdaPciDeviceOpToken = (hdaPciDeviceOpToken + 1) >>> 0;
+  return hdaPciDeviceOpToken;
+}
+
+function cancelHdaPciDeviceOps(): void {
+  hdaPciDeviceOpToken = (hdaPciDeviceOpToken + 1) >>> 0;
+  pendingHdaPciDeviceStart = null;
+}
+
+function isHdaPciDeviceTokenActive(token: number): boolean {
+  return (token >>> 0) === (hdaPciDeviceOpToken >>> 0);
+}
 
 function hdaDemoTargetFrames(capacityFrames: number, sampleRate: number): number {
   // Default to ~200ms buffered, but scale up for larger ring buffers so the demo has
@@ -481,10 +497,7 @@ const HDA_REG_CORBCTL = 0x4cn;
 const HDA_REG_RIRBCTL = 0x5cn;
 const HDA_REG_SD0_CTL = 0x80n;
 
-function stopHdaPciDevice(): void {
-  // Best-effort: stop any in-flight start request first.
-  pendingHdaPciDeviceStart = null;
-
+function stopHdaPciDeviceHardware(): void {
   const client = io;
   const bar0Base = hdaPciDeviceBar0Base;
   hdaPciDeviceBar0Base = null;
@@ -512,14 +525,23 @@ function stopHdaPciDevice(): void {
   }
 }
 
-async function startHdaPciDevice(msg: AudioOutputHdaPciDeviceStartMessage): Promise<void> {
+function stopHdaPciDevice(): void {
+  cancelHdaPciDeviceOps();
+  stopHdaPciDeviceHardware();
+}
+
+async function startHdaPciDevice(msg: AudioOutputHdaPciDeviceStartMessage, token: number): Promise<void> {
   const client = io;
   if (!client) {
     throw new Error("I/O client is not initialized yet");
   }
 
+  if (!isHdaPciDeviceTokenActive(token)) {
+    return;
+  }
+
   // Ensure any previous stream started by this harness is stopped before reprogramming.
-  stopHdaPciDevice();
+  stopHdaPciDeviceHardware();
 
   // Stream descriptor control bits (subset).
   const SD_CTL_SRST = 1 << 0;
@@ -531,6 +553,9 @@ async function startHdaPciDevice(msg: AudioOutputHdaPciDeviceStartMessage): Prom
   const ioReadyIndex = StatusIndex.IoReady;
   const ioReadyDeadline = (typeof performance?.now === "function" ? performance.now() : Date.now()) + 30_000;
   while (Atomics.load(status, ioReadyIndex) !== 1) {
+    if (!isHdaPciDeviceTokenActive(token)) {
+      return;
+    }
     const now = typeof performance?.now === "function" ? performance.now() : Date.now();
     if (now >= ioReadyDeadline) {
       throw new Error("Timed out waiting for IO worker ready while starting HDA PCI device.");
@@ -560,6 +585,9 @@ async function startHdaPciDevice(msg: AudioOutputHdaPciDeviceStartMessage): Prom
   let found: { bus: number; device: number; function: number } | null = null;
   const scanDeadlineMs = (typeof performance?.now === "function" ? performance.now() : Date.now()) + 45_000;
   while ((typeof performance?.now === "function" ? performance.now() : Date.now()) < scanDeadlineMs) {
+    if (!isHdaPciDeviceTokenActive(token)) {
+      return;
+    }
     for (let dev = 0; dev < 32; dev++) {
       const id0 = readDword(0, dev, 0, 0x00);
       const vendor0 = id0 & 0xffff;
@@ -593,6 +621,10 @@ async function startHdaPciDevice(msg: AudioOutputHdaPciDeviceStartMessage): Prom
   }
   if (!found) {
     throw new Error("Timed out waiting for Intel HDA PCI function (8086:2668) to appear on bus0.");
+  }
+
+  if (!isHdaPciDeviceTokenActive(token)) {
+    return;
   }
 
   const { bus, device, function: fn } = found;
@@ -641,6 +673,10 @@ async function startHdaPciDevice(msg: AudioOutputHdaPciDeviceStartMessage): Prom
   client.mmioWrite(bar0Base + REG_GCTL, 4, 0x1);
   const gctlDeadline = (typeof performance?.now === "function" ? performance.now() : Date.now()) + 1_000;
   while ((client.mmioRead(bar0Base + REG_GCTL, 4) & 0x1) === 0) {
+    if (!isHdaPciDeviceTokenActive(token)) {
+      stopHdaPciDeviceHardware();
+      return;
+    }
     const now = typeof performance?.now === "function" ? performance.now() : Date.now();
     if (now >= gctlDeadline) {
       throw new Error("Timed out waiting for HDA GCTL.CRST to become 1.");
@@ -707,6 +743,10 @@ async function startHdaPciDevice(msg: AudioOutputHdaPciDeviceStartMessage): Prom
   // Wait for both verbs to be processed (RIRBWP should advance to 1).
   const rirbDeadline = (typeof performance?.now === "function" ? performance.now() : Date.now()) + 1_000;
   while ((client.mmioRead(bar0Base + REG_RIRBWP, 2) & 0xffff) !== 0x0001) {
+    if (!isHdaPciDeviceTokenActive(token)) {
+      stopHdaPciDeviceHardware();
+      return;
+    }
     const now = typeof performance?.now === "function" ? performance.now() : Date.now();
     if (now >= rirbDeadline) {
       throw new Error("Timed out waiting for HDA CORB/RIRB verb processing.");
@@ -743,6 +783,10 @@ async function startHdaPciDevice(msg: AudioOutputHdaPciDeviceStartMessage): Prom
   guestDv.setUint32(bdlBase + 12, 1, true);
 
   // Program stream descriptor 0.
+  if (!isHdaPciDeviceTokenActive(token)) {
+    stopHdaPciDeviceHardware();
+    return;
+  }
   client.mmioWrite(bar0Base + REG_SD0_BDPL, 4, bdlBase);
   client.mmioWrite(bar0Base + REG_SD0_BDPU, 4, 0);
   client.mmioWrite(bar0Base + REG_SD0_CBL, 4, pcmLenBytes >>> 0);
@@ -1681,17 +1725,19 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
 
   if ((msg as Partial<AudioOutputHdaPciDeviceStartMessage>).type === "audioOutputHdaPciDevice.start") {
     const startMsg = msg as AudioOutputHdaPciDeviceStartMessage;
+    const token = allocHdaPciDeviceToken();
     if (!io) {
-      pendingHdaPciDeviceStart = startMsg;
+      pendingHdaPciDeviceStart = { msg: startMsg, token };
       return;
     }
     pendingHdaPciDeviceStart = null;
-    void startHdaPciDevice(startMsg).catch((err) => {
+    void startHdaPciDevice(startMsg, token).catch((err) => {
+      if (!isHdaPciDeviceTokenActive(token)) return;
       const message = err instanceof Error ? err.message : String(err);
       console.error(err);
       // If the device was partially programmed before failing, ensure we don't leave
       // a running stream/CORB/RIRB behind in the long-lived worker runtime.
-      stopHdaPciDevice();
+      stopHdaPciDeviceHardware();
       ctx.postMessage({ type: "audioOutputHdaPciDevice.error", message } satisfies AudioOutputHdaPciDeviceErrorMessage);
     });
     return;
@@ -1972,9 +2018,11 @@ async function initAndRun(init: WorkerInitMessage): Promise<void> {
       const pending = pendingHdaPciDeviceStart;
       if (pending) {
         pendingHdaPciDeviceStart = null;
-        void startHdaPciDevice(pending).catch((err) => {
+        void startHdaPciDevice(pending.msg, pending.token).catch((err) => {
+          if (!isHdaPciDeviceTokenActive(pending.token)) return;
           const message = err instanceof Error ? err.message : String(err);
           console.error(err);
+          stopHdaPciDeviceHardware();
           ctx.postMessage({ type: "audioOutputHdaPciDevice.error", message } satisfies AudioOutputHdaPciDeviceErrorMessage);
         });
       }
