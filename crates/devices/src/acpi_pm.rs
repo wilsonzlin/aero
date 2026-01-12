@@ -314,13 +314,6 @@ impl<C: Clock> AcpiPmIo<C> {
             };
         }
 
-        // PM_TMR: 32-bit free-running counter, low 24 bits valid.
-        if port >= self.cfg.pm_tmr_blk && port < self.cfg.pm_tmr_blk + PM_TMR_LEN {
-            let off = port - self.cfg.pm_tmr_blk;
-            let v = self.pm_timer_value();
-            return ((v >> (off * 8)) & 0xFF) as u8;
-        }
-
         // GPE0: status (first half) then enable (second half).
         if port >= self.cfg.gpe0_blk && port < self.cfg.gpe0_blk + self.cfg.gpe0_blk_len as u16 {
             let off = (port - self.cfg.gpe0_blk) as usize;
@@ -398,28 +391,31 @@ impl<C: Clock> AcpiPmIo<C> {
 
     fn port_read(&mut self, port: u16, size: u8) -> u32 {
         let size = size.clamp(1, 4);
+        let pm_tmr_base = self.cfg.pm_tmr_blk;
+        let pm_tmr_end = pm_tmr_base + PM_TMR_LEN;
 
-        // PM_TMR is a free-running counter; multi-byte reads should return a stable value even if
-        // the clock advances between per-byte reads.
-        if port >= self.cfg.pm_tmr_blk
-            && port < self.cfg.pm_tmr_blk + PM_TMR_LEN
-            && (port as u32 + size as u32) <= (self.cfg.pm_tmr_blk + PM_TMR_LEN) as u32
-        {
-            let base_off = (port - self.cfg.pm_tmr_blk) as u32;
-            let v = self.pm_timer_value();
-            let mut out = 0u32;
-            for i in 0..(size as u32) {
-                let shift = (base_off + i) * 8;
-                let b = (v >> shift) & 0xFF;
-                out |= b << (i * 8);
+        // Latch the 32-bit PM timer value once per read so byte/word/dword accesses over the
+        // 4-byte window are stable even if the clock advances between individual byte reads.
+        let mut pm_tmr_latch: Option<u32> = None;
+        for i in 0..(size as u16) {
+            let p = port.wrapping_add(i);
+            if p >= pm_tmr_base && p < pm_tmr_end {
+                pm_tmr_latch = Some(self.pm_timer_value());
+                break;
             }
-            return out;
         }
+        let pm_tmr_latch = pm_tmr_latch.unwrap_or(0);
 
         let mut out = 0u32;
         for i in 0..(size as u32) {
-            let b = self.port_read_u8(port.wrapping_add(i as u16)) as u32;
-            out |= b << (i * 8);
+            let p = port.wrapping_add(i as u16);
+            let b = if p >= pm_tmr_base && p < pm_tmr_end {
+                let off = p - pm_tmr_base;
+                ((pm_tmr_latch >> (off * 8)) & 0xFF) as u8
+            } else {
+                self.port_read_u8(p)
+            };
+            out |= (b as u32) << (i * 8);
         }
         out
     }
@@ -459,6 +455,13 @@ impl<C: Clock> IoSnapshot for AcpiPmIo<C> {
         const TAG_GPE0_EN: u16 = 5;
         const TAG_PM_TIMER_ELAPSED_NS: u16 = 6;
         const TAG_SCI_LEVEL: u16 = 7;
+        const TAG_PM_TIMER_TICKS: u16 = 8;
+        const TAG_PM_TIMER_REMAINDER: u16 = 9;
+
+        let elapsed_ns = self.timer_elapsed_ns();
+        let numer = (elapsed_ns as u128).saturating_mul(PM_TIMER_FREQUENCY_HZ);
+        let ticks = ((numer / NS_PER_SEC) as u32) & PM_TIMER_MASK_24BIT;
+        let remainder = (numer % NS_PER_SEC) as u32;
 
         let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
         w.field_u16(TAG_PM1_STS, self.pm1_sts);
@@ -466,7 +469,9 @@ impl<C: Clock> IoSnapshot for AcpiPmIo<C> {
         w.field_u16(TAG_PM1_CNT, self.pm1_cnt);
         w.field_bytes(TAG_GPE0_STS, self.gpe0_sts.clone());
         w.field_bytes(TAG_GPE0_EN, self.gpe0_en.clone());
-        w.field_u64(TAG_PM_TIMER_ELAPSED_NS, self.timer_elapsed_ns());
+        w.field_u64(TAG_PM_TIMER_ELAPSED_NS, elapsed_ns);
+        w.field_u32(TAG_PM_TIMER_TICKS, ticks);
+        w.field_u32(TAG_PM_TIMER_REMAINDER, remainder);
         w.field_bool(TAG_SCI_LEVEL, self.sci_level);
 
         // Host wiring (`callbacks`) and the clock itself are intentionally not serialized.
