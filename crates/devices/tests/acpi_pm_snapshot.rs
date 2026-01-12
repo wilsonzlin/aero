@@ -176,6 +176,38 @@ fn snapshot_restore_without_elapsed_ns_falls_back_to_pm_timer_ticks() {
 }
 
 #[test]
+fn snapshot_restore_from_ticks_only_snapshot_restores_pm_tmr_and_advances() {
+    const TAG_PM_TIMER_TICKS: u16 = 8;
+    const PM_TIMER_MASK_24BIT: u32 = 0x00FF_FFFF;
+    const PM_TIMER_HZ: u32 = 3_579_545;
+
+    let cfg = AcpiPmConfig::default();
+
+    // Use a deterministic clock origin that differs from the snapshotted timer base.
+    let clock = ManualClock::new();
+    clock.set_ns(9_000_000);
+
+    let mut pm = AcpiPmIo::new_with_callbacks_and_clock(cfg, AcpiPmCallbacks::default(), clock);
+
+    // Pick an arbitrary 24-bit tick value (not aligned to a whole tick boundary) to validate the
+    // tick-only restore path.
+    let ticks: u32 = 0x00AB_CDEF;
+
+    // Build a snapshot that omits elapsed-ns and remainder, forcing the tick-only fallback.
+    let mut w = SnapshotWriter::new(*b"ACPM", SnapshotVersion::new(1, 0));
+    w.field_u32(TAG_PM_TIMER_TICKS, ticks);
+    pm.load_state(&w.finish()).unwrap();
+
+    let t0 = pm.read(cfg.pm_tmr_blk, 4) & PM_TIMER_MASK_24BIT;
+    assert_eq!(t0, ticks & PM_TIMER_MASK_24BIT);
+
+    // Ensure the timer continues monotonically after restore.
+    pm.advance_ns(1_000_000_000);
+    let t1 = pm.read(cfg.pm_tmr_blk, 4) & PM_TIMER_MASK_24BIT;
+    assert_eq!(t1, (t0.wrapping_add(PM_TIMER_HZ)) & PM_TIMER_MASK_24BIT);
+}
+
+#[test]
 fn snapshot_encodes_pm_timer_ticks_and_fractional_remainder() {
     const PM_TIMER_HZ: u128 = 3_579_545;
     const NS_PER_SEC: u128 = 1_000_000_000;
