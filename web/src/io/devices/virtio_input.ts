@@ -333,9 +333,11 @@ export function hidUsageToLinuxKeyCode(usage: number): number | null {
     case 0x45:
       return KEY_F12;
 
-    // Navigation.
+    // Locks.
     case 0x47:
       return KEY_SCROLLLOCK;
+
+    // Navigation.
     case 0x49:
       return KEY_INSERT;
     case 0x4a:
@@ -356,6 +358,8 @@ export function hidUsageToLinuxKeyCode(usage: number): number | null {
       return KEY_DOWN;
     case 0x52:
       return KEY_UP;
+
+    // Keypad.
     case 0x53:
       return KEY_NUMLOCK;
 

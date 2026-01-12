@@ -4,25 +4,33 @@ import { keyboardCodeToHidUsage } from "../../input/hid_usage";
 import { hidUsageToLinuxKeyCode } from "./virtio_input";
 
 describe("io/devices/virtio_input hidUsageToLinuxKeyCode", () => {
-  it("maps common punctuation HID usages to Linux KEY_* codes", () => {
-    expect(hidUsageToLinuxKeyCode(0x2d)).toBe(12); // KEY_MINUS
-    expect(hidUsageToLinuxKeyCode(0x2e)).toBe(13); // KEY_EQUAL
-    expect(hidUsageToLinuxKeyCode(0x2f)).toBe(26); // KEY_LEFTBRACE
-    expect(hidUsageToLinuxKeyCode(0x30)).toBe(27); // KEY_RIGHTBRACE
-    expect(hidUsageToLinuxKeyCode(0x31)).toBe(43); // KEY_BACKSLASH
-    expect(hidUsageToLinuxKeyCode(0x33)).toBe(39); // KEY_SEMICOLON
-    expect(hidUsageToLinuxKeyCode(0x34)).toBe(40); // KEY_APOSTROPHE
-    expect(hidUsageToLinuxKeyCode(0x35)).toBe(41); // KEY_GRAVE
-    expect(hidUsageToLinuxKeyCode(0x36)).toBe(51); // KEY_COMMA
-    expect(hidUsageToLinuxKeyCode(0x37)).toBe(52); // KEY_DOT
-    expect(hidUsageToLinuxKeyCode(0x38)).toBe(53); // KEY_SLASH
-  });
+  it("maps punctuation + locks + meta HID usages to Linux KEY_* codes", () => {
+    const cases: Array<{ usage: number; linuxKey: number }> = [
+      // Punctuation.
+      { usage: 0x2d, linuxKey: 12 }, // Minus -> KEY_MINUS
+      { usage: 0x2e, linuxKey: 13 }, // Equal -> KEY_EQUAL
+      { usage: 0x2f, linuxKey: 26 }, // BracketLeft -> KEY_LEFTBRACE
+      { usage: 0x30, linuxKey: 27 }, // BracketRight -> KEY_RIGHTBRACE
+      { usage: 0x31, linuxKey: 43 }, // Backslash -> KEY_BACKSLASH
+      { usage: 0x33, linuxKey: 39 }, // Semicolon -> KEY_SEMICOLON
+      { usage: 0x34, linuxKey: 40 }, // Quote -> KEY_APOSTROPHE
+      { usage: 0x35, linuxKey: 41 }, // Backquote -> KEY_GRAVE
+      { usage: 0x36, linuxKey: 51 }, // Comma -> KEY_COMMA
+      { usage: 0x37, linuxKey: 52 }, // Period -> KEY_DOT
+      { usage: 0x38, linuxKey: 53 }, // Slash -> KEY_SLASH
 
-  it("maps locks and meta keys already advertised by the virtio-input keyboard", () => {
-    expect(hidUsageToLinuxKeyCode(0x47)).toBe(70); // KEY_SCROLLLOCK
-    expect(hidUsageToLinuxKeyCode(0x53)).toBe(69); // KEY_NUMLOCK
-    expect(hidUsageToLinuxKeyCode(0xe3)).toBe(125); // KEY_LEFTMETA
-    expect(hidUsageToLinuxKeyCode(0xe7)).toBe(126); // KEY_RIGHTMETA
+      // Locks.
+      { usage: 0x47, linuxKey: 70 }, // ScrollLock -> KEY_SCROLLLOCK
+      { usage: 0x53, linuxKey: 69 }, // NumLock -> KEY_NUMLOCK
+
+      // Meta.
+      { usage: 0xe3, linuxKey: 125 }, // Left GUI -> KEY_LEFTMETA
+      { usage: 0xe7, linuxKey: 126 }, // Right GUI -> KEY_RIGHTMETA
+    ];
+
+    for (const tc of cases) {
+      expect(hidUsageToLinuxKeyCode(tc.usage)).toBe(tc.linuxKey);
+    }
   });
 
   it("keeps DOM->HID->Linux key mapping consistent for representative keys", () => {
@@ -35,13 +43,10 @@ describe("io/devices/virtio_input hidUsageToLinuxKeyCode", () => {
       { code: "ScrollLock", linuxKey: 70 }, // KEY_SCROLLLOCK
     ];
 
-    for (const c of cases) {
-      const usage = keyboardCodeToHidUsage(c.code);
-      if (usage === null) {
-        throw new Error(`keyboardCodeToHidUsage(${JSON.stringify(c.code)}) unexpectedly returned null`);
-      }
-      expect(hidUsageToLinuxKeyCode(usage)).toBe(c.linuxKey);
+    for (const tc of cases) {
+      const usage = keyboardCodeToHidUsage(tc.code);
+      if (usage === null) throw new Error(`expected keyboardCodeToHidUsage(${JSON.stringify(tc.code)}) to be non-null`);
+      expect(hidUsageToLinuxKeyCode(usage)).toBe(tc.linuxKey);
     }
   });
 });
-
