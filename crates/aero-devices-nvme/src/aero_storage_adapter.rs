@@ -201,4 +201,70 @@ mod tests {
         assert_eq!(adapter.write_sectors(0, &buf).unwrap_err(), DiskError::Io);
         assert_eq!(adapter.flush().unwrap_err(), DiskError::Io);
     }
+
+    #[test]
+    fn nvme_adapter_maps_browser_storage_failures_to_io() {
+        fn quota_exceeded() -> StorageDiskError {
+            StorageDiskError::QuotaExceeded
+        }
+
+        fn in_use() -> StorageDiskError {
+            StorageDiskError::InUse
+        }
+
+        fn invalid_state() -> StorageDiskError {
+            StorageDiskError::InvalidState("closed".to_string())
+        }
+
+        fn backend_unavailable() -> StorageDiskError {
+            StorageDiskError::BackendUnavailable
+        }
+
+        fn not_supported() -> StorageDiskError {
+            StorageDiskError::NotSupported("opfs".to_string())
+        }
+
+        fn io_error() -> StorageDiskError {
+            StorageDiskError::Io("boom".to_string())
+        }
+
+        struct ErrorDisk {
+            err: fn() -> StorageDiskError,
+        }
+
+        impl VirtualDisk for ErrorDisk {
+            fn capacity_bytes(&self) -> u64 {
+                SECTOR_SIZE as u64
+            }
+
+            fn read_at(&mut self, _offset: u64, _buf: &mut [u8]) -> aero_storage::Result<()> {
+                Err((self.err)())
+            }
+
+            fn write_at(&mut self, _offset: u64, _buf: &[u8]) -> aero_storage::Result<()> {
+                Err((self.err)())
+            }
+
+            fn flush(&mut self) -> aero_storage::Result<()> {
+                Err((self.err)())
+            }
+        }
+
+        let errors: &[fn() -> StorageDiskError] = &[
+            quota_exceeded,
+            in_use,
+            invalid_state,
+            backend_unavailable,
+            not_supported,
+            io_error,
+        ];
+
+        for err in errors {
+            let mut adapter = NvmeDiskFromAeroStorage::new(ErrorDisk { err: *err }).unwrap();
+            let mut buf = vec![0u8; SECTOR_SIZE];
+            assert_eq!(adapter.read_sectors(0, &mut buf).unwrap_err(), DiskError::Io);
+            assert_eq!(adapter.write_sectors(0, &buf).unwrap_err(), DiskError::Io);
+            assert_eq!(adapter.flush().unwrap_err(), DiskError::Io);
+        }
+    }
 }

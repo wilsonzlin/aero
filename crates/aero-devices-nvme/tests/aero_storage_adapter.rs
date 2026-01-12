@@ -104,3 +104,70 @@ fn aero_storage_adapter_maps_underlying_disk_error_to_nvme_errors() {
     let err = disk.flush().unwrap_err();
     assert_eq!(err, DiskError::Io);
 }
+
+#[test]
+fn aero_storage_adapter_maps_browser_storage_failures_to_io() {
+    fn quota_exceeded() -> aero_storage::DiskError {
+        aero_storage::DiskError::QuotaExceeded
+    }
+
+    fn in_use() -> aero_storage::DiskError {
+        aero_storage::DiskError::InUse
+    }
+
+    fn invalid_state() -> aero_storage::DiskError {
+        aero_storage::DiskError::InvalidState("closed".to_string())
+    }
+
+    fn backend_unavailable() -> aero_storage::DiskError {
+        aero_storage::DiskError::BackendUnavailable
+    }
+
+    fn not_supported() -> aero_storage::DiskError {
+        aero_storage::DiskError::NotSupported("opfs".to_string())
+    }
+
+    fn io_error() -> aero_storage::DiskError {
+        aero_storage::DiskError::Io("boom".to_string())
+    }
+
+    struct ErrorDisk {
+        err: fn() -> aero_storage::DiskError,
+    }
+
+    impl VirtualDisk for ErrorDisk {
+        fn capacity_bytes(&self) -> u64 {
+            512
+        }
+
+        fn read_at(&mut self, _offset: u64, _buf: &mut [u8]) -> aero_storage::Result<()> {
+            Err((self.err)())
+        }
+
+        fn write_at(&mut self, _offset: u64, _buf: &[u8]) -> aero_storage::Result<()> {
+            Err((self.err)())
+        }
+
+        fn flush(&mut self) -> aero_storage::Result<()> {
+            Err((self.err)())
+        }
+    }
+
+    let errors: &[fn() -> aero_storage::DiskError] = &[
+        quota_exceeded,
+        in_use,
+        invalid_state,
+        backend_unavailable,
+        not_supported,
+        io_error,
+    ];
+
+    for err in errors {
+        let mut disk = from_virtual_disk(Box::new(ErrorDisk { err: *err })).unwrap();
+
+        let mut buf = vec![0u8; 512];
+        assert_eq!(disk.read_sectors(0, &mut buf).unwrap_err(), DiskError::Io);
+        assert_eq!(disk.write_sectors(0, &buf).unwrap_err(), DiskError::Io);
+        assert_eq!(disk.flush().unwrap_err(), DiskError::Io);
+    }
+}
