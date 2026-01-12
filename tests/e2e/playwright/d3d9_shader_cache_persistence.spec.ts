@@ -18,6 +18,7 @@ test("D3D9 shader translation is persisted and skipped on next run", async ({}, 
     persistentMisses: number;
     cacheDisabled: boolean;
     backend: string;
+    capsHash: string;
     logs: string[];
   }> {
     const logs: string[] = [];
@@ -47,6 +48,7 @@ test("D3D9 shader translation is persisted and skipped on next run", async ({}, 
         persistentMisses: Number(result.persistentMisses),
         cacheDisabled: Boolean(result.cacheDisabled),
         backend: String(result.backend),
+        capsHash: typeof result.capsHash === "string" ? result.capsHash : "",
         logs,
       };
     } catch (err) {
@@ -77,6 +79,12 @@ test("D3D9 shader translation is persisted and skipped on next run", async ({}, 
     expect(second.translateCalls).toBe(0);
     expect(second.persistentHits).toBeGreaterThan(0);
     expect(second.persistentMisses).toBe(0);
+    if (first.capsHash || second.capsHash) {
+      testInfo.attach("d3d9-shader-cache-caps-hash", {
+        body: Buffer.from(`first=${first.capsHash}\nsecond=${second.capsHash}\n`),
+        contentType: "text/plain",
+      });
+    }
   } finally {
     try {
       fs.rmSync(userDataDir, { recursive: true, force: true });

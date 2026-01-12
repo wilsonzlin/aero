@@ -13,6 +13,7 @@ declare global {
     __d3d9ShaderCacheDemo?: ShaderCacheCounters & {
       backend: string;
       d3d9TranslatorCacheVersion: number;
+      capsHash?: string;
       error?: string;
     };
   }
@@ -218,6 +219,7 @@ async function main(): Promise<void> {
     baselineReadyResolve = resolve;
   });
 
+  let capsHash = "";
   let submitted = false;
   let resolveCounters!: (c: ShaderCacheCounters) => void;
   let rejectCounters!: (err: unknown) => void;
@@ -246,6 +248,14 @@ async function main(): Promise<void> {
       if (d3d9TranslatorCacheVersion === null) {
         const foundVersion = findTranslatorCacheVersion(msg.wasm);
         if (foundVersion !== null) d3d9TranslatorCacheVersion = foundVersion;
+      }
+      const wasm = msg.wasm as unknown;
+      if (!capsHash && wasm && typeof wasm === "object" && !Array.isArray(wasm)) {
+        const record = wasm as Record<string, unknown>;
+        const vSnake = record.d3d9_shader_cache_caps_hash;
+        const vCamel = record.d3d9ShaderCacheCapsHash;
+        if (typeof vSnake === "string") capsHash = vSnake;
+        else if (typeof vCamel === "string") capsHash = vCamel;
       }
       const found = findShaderCacheCounters(msg.wasm);
       if (!found) return;
@@ -296,6 +306,7 @@ async function main(): Promise<void> {
   window.__d3d9ShaderCacheDemo = {
     backend: ready.backendKind,
     d3d9TranslatorCacheVersion: version,
+    capsHash,
     ...delta,
   };
 
@@ -303,6 +314,7 @@ async function main(): Promise<void> {
     status.textContent =
       `backend=${ready.backendKind}\n` +
       `d3d9TranslatorCacheVersion=${version}\n` +
+      (capsHash ? `capsHash=${capsHash}\n` : "") +
       `translateCalls=${delta.translateCalls}\n` +
       `persistentHits=${delta.persistentHits}\n` +
       `persistentMisses=${delta.persistentMisses}\n` +
@@ -318,6 +330,9 @@ void main().catch((err) => {
     persistentMisses: 0,
     backend: "unknown",
     d3d9TranslatorCacheVersion: -1,
+    capsHash: "",
+    d3d9TranslatorCacheVersion: -1,
+    capsHash: "",
     error: message,
   };
   const status = $("status");

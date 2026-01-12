@@ -152,6 +152,23 @@ mod wasm {
             &JsValue::from_str("d3d9TranslatorCacheVersion"),
             &JsValue::from_f64(aero_d3d9::runtime::D3D9_TRANSLATOR_CACHE_VERSION as f64),
         );
+
+        // Stable backend/device fingerprint used to partition persistent shader cache keys.
+        if let Some(caps_hash) = D3D9_STATE
+            .with(|slot| slot.borrow().as_ref().map(|state| state.shader_cache_caps_hash.clone()))
+        {
+            let _ = Reflect::set(
+                &obj,
+                &JsValue::from_str("d3d9_shader_cache_caps_hash"),
+                &JsValue::from_str(&caps_hash),
+            );
+            let _ = Reflect::set(
+                &obj,
+                &JsValue::from_str("d3d9ShaderCacheCapsHash"),
+                &JsValue::from_str(&caps_hash),
+            );
+        }
+
         obj.into()
     }
 
@@ -819,6 +836,25 @@ mod wasm {
         vendor: Option<String>,
         renderer: Option<String>,
         description: Option<String>,
+    }
+
+    fn backend_kind_str(kind: GpuBackendKind) -> &'static str {
+        match kind {
+            GpuBackendKind::WebGpu => "webgpu",
+            GpuBackendKind::WebGl2 => "webgl2",
+        }
+    }
+
+    fn compute_d3d9_shader_cache_caps_hash(kind: GpuBackendKind, info: &AdapterInfo) -> String {
+        // Keep this short-ish: include the backend kind as a human-readable prefix and hash the
+        // adapter fields (which can be long, e.g. ANGLE renderer strings).
+        let backend = backend_kind_str(kind);
+        let vendor = info.vendor.as_deref().unwrap_or("unknown");
+        let renderer = info.renderer.as_deref().unwrap_or("unknown");
+        let driver = info.description.as_deref().unwrap_or("unknown");
+        let raw = format!("d3d9-wgpu-{backend}-{vendor}-{renderer}-{driver}");
+        let hash = xxhash_rust::xxh3::xxh3_64(raw.as_bytes());
+        format!("d3d9-wgpu-{backend}-{hash:016x}")
     }
 
     struct Presenter {
@@ -2195,6 +2231,7 @@ mod wasm {
     struct AerogpuD3d9State {
         backend_kind: GpuBackendKind,
         adapter_info: AdapterInfo,
+        shader_cache_caps_hash: String,
         executor: AerogpuD3d9Executor,
         presenter: Option<ScanoutPresenter>,
         last_presented_scanout: Option<u32>,
@@ -2589,17 +2626,21 @@ mod wasm {
                 .await
                 {
                     Ok((presenter, device, queue, adapter_info, downlevel_flags)) => {
-                        let executor = AerogpuD3d9Executor::new(
+                        let shader_cache_caps_hash =
+                            compute_d3d9_shader_cache_caps_hash(backend_kind, &adapter_info);
+                        let mut executor = AerogpuD3d9Executor::new(
                             device,
                             queue,
                             downlevel_flags,
                             gpu_stats().clone(),
                         );
+                        executor.set_shader_cache_caps_hash(Some(shader_cache_caps_hash.clone()));
 
                         D3D9_STATE.with(|slot| {
                             *slot.borrow_mut() = Some(AerogpuD3d9State {
                                 backend_kind,
                                 adapter_info,
+                                shader_cache_caps_hash,
                                 executor,
                                 presenter: Some(presenter),
                                 last_presented_scanout: None,
@@ -2669,12 +2710,16 @@ mod wasm {
                 },
             };
 
-            let executor =
+            let shader_cache_caps_hash =
+                compute_d3d9_shader_cache_caps_hash(GpuBackendKind::WebGpu, &adapter_info);
+            let mut executor =
                 AerogpuD3d9Executor::new(device, queue, downlevel_flags, gpu_stats().clone());
+            executor.set_shader_cache_caps_hash(Some(shader_cache_caps_hash.clone()));
             D3D9_STATE.with(|slot| {
                 *slot.borrow_mut() = Some(AerogpuD3d9State {
                     backend_kind: GpuBackendKind::WebGpu,
                     adapter_info,
+                    shader_cache_caps_hash,
                     executor,
                     presenter: None,
                     last_presented_scanout: None,

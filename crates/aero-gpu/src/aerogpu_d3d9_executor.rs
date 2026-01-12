@@ -7,6 +7,10 @@ use std::sync::{Arc, OnceLock};
 use std::sync::mpsc;
 
 use aero_d3d9::shader;
+#[cfg(target_arch = "wasm32")]
+use aero_d3d9::runtime::{
+    ShaderCache as PersistentShaderCache, ShaderTranslationFlags,
+};
 use aero_d3d9::vertex::{StandardLocationMap, VertexDeclaration, VertexLocationMap};
 use aero_protocol::aerogpu::aerogpu_cmd as cmd;
 use aero_protocol::aerogpu::aerogpu_cmd::AEROGPU_COPY_FLAG_WRITEBACK_DST;
@@ -59,13 +63,13 @@ pub struct AerogpuD3d9Executor {
     shader_cache: shader::ShaderCache,
     /// WASM-only persistent shader translation cache (IndexedDB/OPFS).
     #[cfg(target_arch = "wasm32")]
-    persistent_shader_cache: aero_d3d9::runtime::ShaderCache,
+    persistent_shader_cache: PersistentShaderCache,
     /// Translation flags used for persistent shader cache lookups (wasm32 only).
     ///
     /// This includes a stable per-device capabilities hash so cached artifacts are not reused when
     /// WebGPU limits/features differ.
     #[cfg(target_arch = "wasm32")]
-    persistent_shader_cache_flags: aero_d3d9::runtime::ShaderTranslationFlags,
+    persistent_shader_cache_flags: ShaderTranslationFlags,
 
     resources: HashMap<u32, Resource>,
     /// Handle indirection table for shared resources.
@@ -1061,7 +1065,7 @@ impl AerogpuD3d9Executor {
             stats,
             shader_cache: shader::ShaderCache::default(),
             #[cfg(target_arch = "wasm32")]
-            persistent_shader_cache: aero_d3d9::runtime::ShaderCache::new(),
+            persistent_shader_cache: PersistentShaderCache::new(),
             #[cfg(target_arch = "wasm32")]
             persistent_shader_cache_flags,
             resources: HashMap::new(),
@@ -1101,11 +1105,27 @@ impl AerogpuD3d9Executor {
         }
     }
 
+    /// Configure the optional device/backend fingerprint used to partition persistent shader cache
+    /// keys on wasm.
+    ///
+    /// On non-wasm targets this is a no-op (persistent caching is not supported).
+    pub fn set_shader_cache_caps_hash(&mut self, caps_hash: Option<String>) {
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.persistent_shader_cache_flags.caps_hash = caps_hash;
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let _ = caps_hash;
+        }
+    }
+
     pub fn reset(&mut self) {
         self.shader_cache = shader::ShaderCache::default();
         #[cfg(target_arch = "wasm32")]
         {
-            self.persistent_shader_cache = aero_d3d9::runtime::ShaderCache::new();
+            self.persistent_shader_cache = PersistentShaderCache::new();
             // Reset clears the per-session persistence disable flag. If persistence is still
             // unavailable (missing APIs, quota issues, etc) it will be re-disabled on the next
             // lookup.
