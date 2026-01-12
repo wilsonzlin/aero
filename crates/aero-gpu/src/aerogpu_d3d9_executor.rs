@@ -6299,6 +6299,7 @@ impl AerogpuD3d9Executor {
     }
 
     fn sampler_for_state(&mut self, state: D3d9SamplerState) -> Arc<wgpu::Sampler> {
+        let state = self.canonicalize_sampler_state(state);
         if let Some(sampler) = self.sampler_cache.get(&state) {
             return sampler.clone();
         }
@@ -6306,6 +6307,91 @@ impl AerogpuD3d9Executor {
         let sampler = Arc::new(create_wgpu_sampler(&self.device, self.downlevel_flags, &state));
         self.sampler_cache.insert(state, sampler.clone());
         sampler
+    }
+
+    fn canonicalize_sampler_state(&self, mut state: D3d9SamplerState) -> D3d9SamplerState {
+        let border_supported = self
+            .device
+            .features()
+            .contains(wgpu::Features::ADDRESS_MODE_CLAMP_TO_BORDER);
+
+        let mut uses_border = false;
+        for addr in [&mut state.address_u, &mut state.address_v, &mut state.address_w] {
+            *addr = match *addr {
+                // `0` is sometimes used by guests to mean the default WRAP.
+                0 | d3d9::D3DTADDRESS_WRAP => d3d9::D3DTADDRESS_WRAP,
+                d3d9::D3DTADDRESS_MIRROR => d3d9::D3DTADDRESS_MIRROR,
+                d3d9::D3DTADDRESS_CLAMP => d3d9::D3DTADDRESS_CLAMP,
+                d3d9::D3DTADDRESS_BORDER => {
+                    if border_supported {
+                        uses_border = true;
+                        d3d9::D3DTADDRESS_BORDER
+                    } else {
+                        // `create_wgpu_sampler` falls back to ClampToEdge when border mode is
+                        // unsupported; canonicalize so the sampler-cache key matches that.
+                        d3d9::D3DTADDRESS_CLAMP
+                    }
+                }
+                d3d9::D3DTADDRESS_MIRRORONCE => d3d9::D3DTADDRESS_MIRROR,
+                _ => d3d9::D3DTADDRESS_WRAP,
+            };
+        }
+
+        if uses_border {
+            state.border_color = match state.border_color {
+                0x0000_0000 | 0xFF00_0000 | 0xFFFF_FFFF => state.border_color,
+                other => {
+                    log_unsupported_d3d9_border_color_once(other);
+                    0x0000_0000
+                }
+            };
+        } else {
+            // Border color is ignored unless at least one address mode is BORDER.
+            state.border_color = 0;
+        }
+
+        fn canonicalize_filter(value: u32, allow_none: bool) -> u32 {
+            match value {
+                d3d9::D3DTEXF_POINT => d3d9::D3DTEXF_POINT,
+                d3d9::D3DTEXF_LINEAR => d3d9::D3DTEXF_LINEAR,
+                d3d9::D3DTEXF_ANISOTROPIC => d3d9::D3DTEXF_ANISOTROPIC,
+                d3d9::D3DTEXF_NONE => {
+                    if allow_none {
+                        d3d9::D3DTEXF_NONE
+                    } else {
+                        // D3D9 only defines NONE for the mip filter; map it to LINEAR for min/mag.
+                        d3d9::D3DTEXF_LINEAR
+                    }
+                }
+                _ => d3d9::D3DTEXF_LINEAR,
+            }
+        }
+
+        state.min_filter = canonicalize_filter(state.min_filter, false);
+        state.mag_filter = canonicalize_filter(state.mag_filter, false);
+        state.mip_filter = canonicalize_filter(state.mip_filter, true);
+
+        // Mipmap LOD clamp.
+        let max_lod = if state.mip_filter == d3d9::D3DTEXF_NONE {
+            0
+        } else {
+            32
+        };
+        state.max_mip_level = state.max_mip_level.min(max_lod);
+
+        // Anisotropy.
+        let anisotropic_requested = state.min_filter == d3d9::D3DTEXF_ANISOTROPIC
+            || state.mag_filter == d3d9::D3DTEXF_ANISOTROPIC;
+        let anisotropic_supported =
+            self.downlevel_flags
+                .contains(wgpu::DownlevelFlags::ANISOTROPIC_FILTERING);
+        if anisotropic_requested && anisotropic_supported {
+            state.max_anisotropy = state.max_anisotropy.clamp(1, 16);
+        } else {
+            state.max_anisotropy = 1;
+        }
+
+        state
     }
 
     fn set_sampler_state_u32(&mut self, shader_stage: u32, slot: u32, state_id: u32, value: u32) {
@@ -7086,6 +7172,19 @@ fn create_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
     })
 }
 
+fn log_unsupported_d3d9_border_color_once(border_color: u32) {
+    static SEEN_UNSUPPORTED: OnceLock<std::sync::Mutex<HashSet<u32>>> = OnceLock::new();
+    let set = SEEN_UNSUPPORTED.get_or_init(|| std::sync::Mutex::new(HashSet::new()));
+    if let Ok(mut guard) = set.lock() {
+        if guard.insert(border_color) {
+            debug!(
+                value = border_color,
+                "unsupported D3D9 border color; mapping to transparent black"
+            );
+        }
+    }
+}
+
 fn create_wgpu_sampler(
     device: &wgpu::Device,
     downlevel_flags: wgpu::DownlevelFlags,
@@ -7138,17 +7237,7 @@ fn create_wgpu_sampler(
             0xFF00_0000 => wgpu::SamplerBorderColor::OpaqueBlack,
             0xFFFF_FFFF => wgpu::SamplerBorderColor::OpaqueWhite,
             other => {
-                static SEEN_UNSUPPORTED: OnceLock<std::sync::Mutex<HashSet<u32>>> =
-                    OnceLock::new();
-                let set = SEEN_UNSUPPORTED.get_or_init(|| std::sync::Mutex::new(HashSet::new()));
-                if let Ok(mut guard) = set.lock() {
-                    if guard.insert(other) {
-                        debug!(
-                            value = other,
-                            "unsupported D3D9 border color; mapping to transparent black"
-                        );
-                    }
-                }
+                log_unsupported_d3d9_border_color_once(other);
                 wgpu::SamplerBorderColor::TransparentBlack
             }
         };
