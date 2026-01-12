@@ -353,6 +353,18 @@ should_retry_rustc_thread_error() {
         return 0
     fi
 
+    # Cargo/rustc can also surface transient EAGAIN process limits as an inability to exec the
+    # system linker (commonly `cc`). This is typically transient on shared/limited sandboxes.
+    #
+    # Example signatures:
+    # - "error: could not exec the linker `cc`: Resource temporarily unavailable (os error 11)"
+    # - "error: could not execute process `cc` ...: Resource temporarily unavailable (os error 11)"
+    if grep -Eq "could not exec|could not execute process" "${stderr_log}" \
+        && grep -Eq "Resource temporarily unavailable|WouldBlock|os error 11|EAGAIN" "${stderr_log}"
+    then
+        return 0
+    fi
+
     return 1
 }
 
