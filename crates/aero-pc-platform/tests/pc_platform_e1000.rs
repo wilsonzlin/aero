@@ -175,6 +175,67 @@ fn pc_platform_gates_e1000_mmio_on_pci_command_register() {
 }
 
 #[test]
+fn pc_platform_gates_e1000_io_and_mmio_on_independent_pci_command_bits() {
+    let pc = PcPlatform::new_with_e1000(2 * 1024 * 1024);
+    let mut bus = PcCpuBus::new(pc);
+    let bdf = NIC_E1000_82540EM.bdf;
+
+    let bar0_base = read_e1000_bar0_base(&mut bus.platform);
+    let bar1_base = read_e1000_bar1_base(&mut bus.platform);
+    let io_base = u16::try_from(bar1_base).expect("BAR1 should fit in 16-bit I/O port space");
+    let iodata = io_base.checked_add(4).unwrap();
+
+    let status_mmio = bus.platform.memory.read_u32(bar0_base + 0x08);
+    assert_ne!(status_mmio, 0xFFFF_FFFF);
+
+    // With both decodes enabled (BIOS POST), I/O and MMIO should both work.
+    bus.io_write(io_base, 4, 0x08).unwrap();
+    let status_io = bus.io_read(iodata, 4).unwrap() as u32;
+    assert_eq!(status_io, status_mmio);
+
+    let command = (read_cfg_u32(&mut bus.platform, bdf.bus, bdf.device, bdf.function, 0x04) & 0xffff) as u16;
+
+    // Disable PCI memory decoding but keep I/O decoding enabled: MMIO should be gated, I/O should still work.
+    write_cfg_u16(
+        &mut bus.platform,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        0x04,
+        (command & !0x3) | 0x0001,
+    );
+    assert_eq!(bus.platform.memory.read_u32(bar0_base + 0x08), 0xFFFF_FFFF);
+    bus.io_write(io_base, 4, 0x08).unwrap();
+    assert_ne!(bus.io_read(iodata, 4).unwrap() as u32, 0xFFFF_FFFF);
+
+    // Disable PCI I/O decoding but keep memory decoding enabled: I/O should be gated, MMIO should still work.
+    write_cfg_u16(
+        &mut bus.platform,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        0x04,
+        (command & !0x3) | 0x0002,
+    );
+    assert_ne!(bus.platform.memory.read_u32(bar0_base + 0x08), 0xFFFF_FFFF);
+    bus.io_write(io_base, 4, 0x08).unwrap();
+    assert_eq!(bus.io_read(iodata, 4).unwrap() as u32, 0xFFFF_FFFF);
+
+    // Disable both: neither BAR should decode.
+    write_cfg_u16(
+        &mut bus.platform,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        0x04,
+        command & !0x3,
+    );
+    assert_eq!(bus.platform.memory.read_u32(bar0_base + 0x08), 0xFFFF_FFFF);
+    bus.io_write(io_base, 4, 0x08).unwrap();
+    assert_eq!(bus.io_read(iodata, 4).unwrap() as u32, 0xFFFF_FFFF);
+}
+
+#[test]
 fn pc_platform_routes_e1000_mmio_after_bar0_reprogramming() {
     let mut pc = PcPlatform::new_with_e1000(2 * 1024 * 1024);
     let bdf = NIC_E1000_82540EM.bdf;
