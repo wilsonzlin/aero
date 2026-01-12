@@ -579,3 +579,129 @@ fn virtio_net_l2_tunnel_rings_tx_rx_stats_smoke() {
     m.detach_network();
     assert!(m.network_backend_l2_ring_stats().is_none());
 }
+
+#[test]
+fn virtio_net_rx_does_not_overconsume_net_rx_without_buffers() {
+    let cfg = MachineConfig {
+        ram_size_bytes: 8 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_virtio_net: true,
+        virtio_net_mac_addr: Some([0x02, 0x00, 0x00, 0x00, 0x00, 0x01]),
+        enable_e1000: false,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        ..Default::default()
+    };
+    let mut m = Machine::new(cfg).unwrap();
+
+    let tx_ring = Arc::new(RingBuffer::new(1024));
+    let rx_ring = Arc::new(RingBuffer::new(4 * 1024));
+    m.attach_l2_tunnel_rings(tx_ring, rx_ring.clone());
+
+    let bdf = aero_devices::pci::profile::VIRTIO_NET.bdf;
+
+    // Enable PCI Bus Mastering so the device is allowed to DMA.
+    let command = cfg_read(&mut m, bdf, 0x04, 2) as u16;
+    cfg_write(&mut m, bdf, 0x04, 2, u32::from(command | (1 << 2)));
+
+    // Read BAR0 base address via PCI config ports.
+    let bar0_lo = cfg_read(&mut m, bdf, 0x10, 4) as u64;
+    let bar0_hi = cfg_read(&mut m, bdf, 0x14, 4) as u64;
+    let bar0_base = (bar0_hi << 32) | (bar0_lo & !0xFu64);
+    assert_ne!(bar0_base, 0, "expected virtio-net BAR0 to be assigned");
+
+    // Parse virtio vendor-specific caps to find BAR0 offsets.
+    let cfg_bytes = read_config_space_256(&mut m, bdf);
+    let caps = parse_caps(&cfg_bytes);
+    assert_ne!(caps.notify, 0);
+    assert_ne!(caps.notify_mult, 0);
+
+    // Feature negotiation: accept everything the device offers.
+    m.write_physical_u8(bar0_base + caps.common + 0x14, VIRTIO_STATUS_ACKNOWLEDGE);
+    m.write_physical_u8(
+        bar0_base + caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
+    );
+
+    m.write_physical_u32(bar0_base + caps.common, 0);
+    let f0 = m.read_physical_u32(bar0_base + caps.common + 0x04);
+    m.write_physical_u32(bar0_base + caps.common + 0x08, 0);
+    m.write_physical_u32(bar0_base + caps.common + 0x0c, f0);
+
+    m.write_physical_u32(bar0_base + caps.common, 1);
+    let f1 = m.read_physical_u32(bar0_base + caps.common + 0x04);
+    m.write_physical_u32(bar0_base + caps.common + 0x08, 1);
+    m.write_physical_u32(bar0_base + caps.common + 0x0c, f1);
+
+    m.write_physical_u8(
+        bar0_base + caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK,
+    );
+    m.write_physical_u8(
+        bar0_base + caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE
+            | VIRTIO_STATUS_DRIVER
+            | VIRTIO_STATUS_FEATURES_OK
+            | VIRTIO_STATUS_DRIVER_OK,
+    );
+
+    // Place virtqueues in RAM above 2MiB so they are not affected by A20 wrap even if A20 is
+    // disabled.
+    let rx_desc = 0x200000;
+    let rx_avail = 0x201000;
+    let rx_used = 0x202000;
+
+    // Configure RX queue 0.
+    m.write_physical_u16(bar0_base + caps.common + 0x16, 0);
+    m.write_physical_u64(bar0_base + caps.common + 0x20, rx_desc);
+    m.write_physical_u64(bar0_base + caps.common + 0x28, rx_avail);
+    m.write_physical_u64(bar0_base + caps.common + 0x30, rx_used);
+    m.write_physical_u16(bar0_base + caps.common + 0x1c, 1);
+
+    // Post a single RX buffer.
+    let buf_addr = 0x206000;
+    write_desc(
+        &mut m,
+        rx_desc,
+        0,
+        buf_addr,
+        64,
+        VIRTQ_DESC_F_WRITE,
+        0,
+    );
+
+    m.write_physical_u16(rx_avail, 0);
+    m.write_physical_u16(rx_avail + 2, 1);
+    m.write_physical_u16(rx_avail + 4, 0);
+    m.write_physical_u16(rx_used, 0);
+    m.write_physical_u16(rx_used + 2, 0);
+
+    m.write_physical_u16(bar0_base + caps.notify, 0);
+    m.poll_network();
+    assert_eq!(m.read_physical_u16(rx_used + 2), 0);
+
+    // Push two frames into NET_RX and run one poll. The device should only consume one frame (one
+    // posted RX buffer).
+    let frame1 = vec![0x11u8; 14];
+    let frame2 = vec![0x22u8; 14];
+    rx_ring.try_push(&frame1).unwrap();
+    rx_ring.try_push(&frame2).unwrap();
+
+    m.poll_network();
+    assert_eq!(m.read_physical_u16(rx_used + 2), 1);
+
+    // The second frame should still be present in NET_RX.
+    assert_eq!(rx_ring.try_pop(), Ok(frame2.clone()));
+    rx_ring.try_push(&frame2).unwrap();
+
+    // Re-post the same RX buffer and ensure we can receive the second frame.
+    m.write_physical_u16(rx_avail + 2, 2);
+    m.write_physical_u16(rx_avail + 4 + 2, 0);
+    m.write_physical_u16(bar0_base + caps.notify, 0);
+    m.poll_network();
+
+    assert_eq!(m.read_physical_u16(rx_used + 2), 2);
+    assert_eq!(rx_ring.try_pop(), Err(PopError::Empty));
+}
