@@ -335,6 +335,8 @@ When reporting a Win7 audio regression, include (at minimum):
 
 - **Build info**
   - Git commit SHA (or release version)
+    - Recommended: open `/<origin>/aero.version.json` (same origin as the web UI) and attach the JSON.
+    - Or in DevTools Console (if present): `__AERO_BUILD_INFO__`
   - Browser + version (e.g. Chrome 123)
   - OS + audio output device (optional but helpful)
 - **Host capability checks**
