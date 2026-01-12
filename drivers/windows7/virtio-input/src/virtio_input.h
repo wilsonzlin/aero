@@ -140,9 +140,11 @@ __forceinline NTSTATUS VioInputMapUserAddress(
          * Prefer non-executable kernel mappings when the build environment supports it.
          * (MdlMappingNoExecute is not present in older WDKs.)
          */
-        ULONG priority = NormalPagePriority;
+        MM_PAGE_PRIORITY priority;
+
+        priority = NormalPagePriority;
 #ifdef MdlMappingNoExecute
-        priority |= MdlMappingNoExecute;
+        priority = (MM_PAGE_PRIORITY)((ULONG)priority | MdlMappingNoExecute);
 #endif
         systemAddress = MmGetSystemAddressForMdlSafe(mdl, priority);
     }
