@@ -489,7 +489,11 @@ impl<B: StorageBackend> VhdDisk<B> {
         let bytes: usize = bitmap_size
             .try_into()
             .map_err(|_| DiskError::Unsupported("vhd bitmap too large"))?;
-        let mut bitmap = vec![0u8; bytes];
+        let mut bitmap = Vec::new();
+        bitmap
+            .try_reserve_exact(bytes)
+            .map_err(|_| DiskError::QuotaExceeded)?;
+        bitmap.resize(bytes, 0);
         self.backend_read_at(block_start, &mut bitmap, "vhd block bitmap truncated")?;
         let arc = Arc::new(bitmap);
         let _ = self.bitmap_cache.push(block_start, arc.clone());
@@ -780,8 +784,15 @@ impl<B: StorageBackend> VhdDisk<B> {
         let bitmap_size_usize: usize = bitmap_size
             .try_into()
             .map_err(|_| DiskError::Unsupported("vhd bitmap too large"))?;
-        self.bitmap_cache
-            .push(old_footer_offset, Arc::new(vec![0u8; bitmap_size_usize]));
+        let mut bitmap = Vec::new();
+        if bitmap
+            .try_reserve_exact(bitmap_size_usize)
+            .is_ok()
+        {
+            bitmap.resize(bitmap_size_usize, 0);
+            self.bitmap_cache
+                .push(old_footer_offset, Arc::new(bitmap));
+        }
 
         Ok(old_footer_offset)
     }

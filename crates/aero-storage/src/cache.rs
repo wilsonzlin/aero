@@ -65,8 +65,12 @@ impl<D: VirtualDisk> BlockCachedDisk<D> {
         }
         self.stats.misses += 1;
 
+        let mut data = Vec::new();
+        data.try_reserve_exact(self.block_size)
+            .map_err(|_| DiskError::QuotaExceeded)?;
+        data.resize(self.block_size, 0);
         let mut entry = CacheEntry {
-            data: vec![0u8; self.block_size],
+            data,
             dirty: false,
         };
 

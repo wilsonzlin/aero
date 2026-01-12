@@ -160,6 +160,18 @@ fn block_cache_eviction_writes_back_dirty_blocks() {
 }
 
 #[test]
+fn block_cache_reports_allocation_failure_as_quota_exceeded() {
+    // Use an absurd block size that should fail `try_reserve_exact` deterministically (capacity
+    // overflow) without actually attempting to allocate.
+    let raw = RawDisk::create(MemBackend::new(), 512).unwrap();
+    let mut cached = BlockCachedDisk::new(raw, usize::MAX, 1).unwrap();
+
+    let mut buf = [0u8; 1];
+    let err = cached.read_at(0, &mut buf).unwrap_err();
+    assert!(matches!(err, DiskError::QuotaExceeded));
+}
+
+#[test]
 fn boxed_virtual_disk_can_be_used_in_generic_wrappers() {
     let raw = RawDisk::create(MemBackend::new(), (SECTOR_SIZE * 8) as u64).unwrap();
     let boxed: Box<dyn VirtualDisk> = Box::new(raw);
