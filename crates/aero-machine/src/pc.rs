@@ -479,6 +479,9 @@ impl PcMachine {
             self.bus.platform.process_ahci();
             self.bus.platform.process_ide();
 
+            // Ordering note: `poll_network()` runs E1000 DMA (TX/RX descriptor processing), which
+            // may assert PCI INTx lines (e.g. TXDW). We must poll/latch PCI INTx *after* DMA so the
+            // interrupt can be delivered within the same `run_slice` call.
             self.poll_network();
             self.bus.platform.poll_pci_intx_lines();
 
