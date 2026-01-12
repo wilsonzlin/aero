@@ -148,8 +148,8 @@ WASM modules **inside a worker**:
 > See [`docs/vm-crate-map.md`](./vm-crate-map.md) and [ADR 0014](./adr/0014-canonical-machine-stack.md) for the
 > up-to-date mapping.
 
-This pipeline is currently used by the repo-root Playwright smoke tests to validate Tier-1 compilation,
-installation, invalidation (self-modifying code), and execution in real browsers.
+This pipeline is exercised by Playwright E2E smoke tests (for example `tests/e2e/jit-pipeline.spec.ts`) to validate
+Tier-1 compilation, installation, invalidation (self-modifying code), and execution in real browsers.
 
 ---
 
