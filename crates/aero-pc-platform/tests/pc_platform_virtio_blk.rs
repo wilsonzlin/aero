@@ -235,6 +235,44 @@ fn pc_platform_routes_virtio_blk_mmio_after_bar0_reprogramming() {
 }
 
 #[test]
+fn pc_platform_reset_resets_virtio_blk_transport_state() {
+    let mut pc = PcPlatform::new_with_virtio_blk(2 * 1024 * 1024);
+    let bdf = VIRTIO_BLK.bdf;
+
+    // Enable memory decoding so BAR0 MMIO reads/writes reach the device.
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0002);
+
+    let bar0_base = read_bar0_base(&mut pc);
+    assert_ne!(bar0_base, 0);
+
+    const COMMON: u64 = 0x0000;
+    const DEVICE_STATUS: u64 = COMMON + 0x14;
+
+    // Mutate virtio transport state so we can verify platform reset clears it.
+    pc.memory.write_u8(bar0_base + DEVICE_STATUS, 1);
+    assert_eq!(pc.memory.read_u8(bar0_base + DEVICE_STATUS), 1);
+
+    pc.reset();
+
+    // Platform reset starts with A20 disabled; enable it so BAR0 doesn't alias across the 1MiB
+    // boundary.
+    pc.io.write_u8(0x92, 0x02);
+    assert!(pc.chipset.a20().enabled());
+
+    // Re-enable memory decoding in case reset disabled it.
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0002);
+
+    let bar0_base_after = read_bar0_base(&mut pc);
+    assert_ne!(bar0_base_after, 0);
+
+    assert_eq!(
+        pc.memory.read_u8(bar0_base_after + DEVICE_STATUS),
+        0,
+        "virtio transport state (device_status) should be cleared on platform reset"
+    );
+}
+
+#[test]
 fn pc_platform_virtio_blk_device_cfg_reports_capacity_and_block_size() {
     let mut pc = PcPlatform::new_with_virtio_blk(2 * 1024 * 1024);
 

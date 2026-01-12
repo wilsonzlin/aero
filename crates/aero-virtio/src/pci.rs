@@ -1238,6 +1238,13 @@ impl aero_devices::pci::PciDevice for VirtioPciDevice {
     fn config_mut(&mut self) -> &mut PciConfigSpace {
         &mut self.config
     }
+
+    fn reset(&mut self) {
+        // Preserve BAR programming but reset the virtio transport + device state back to its
+        // power-on baseline.
+        self.reset_transport();
+        self.config.set_command(0);
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
