@@ -56,6 +56,13 @@ describe("repo-root Vite harness build outputs", () => {
         // Sanity-check the harness build ran.
         expect(existsSync(path.join(outDir, "aero.version.json"))).toBe(true);
 
+        // `aero-d3d9` uses `#[wasm_bindgen(module = "/js/persistent_cache_shim.js")]`, so
+        // prod builds must emit that absolute module path into `dist/`.
+        const persistentCacheShimPath = path.join(outDir, "js", "persistent_cache_shim.js");
+        expect(existsSync(persistentCacheShimPath)).toBe(true);
+        const persistentCacheShimSource = readFileSync(persistentCacheShimPath, "utf8");
+        expect(persistentCacheShimSource).toContain("computeShaderCacheKey");
+
         // AudioWorklet dependency assets emitted explicitly because Vite doesn't follow ESM imports from worklets.
         expect(existsSync(path.join(outDir, "assets", "mic_ring.js"))).toBe(true);
         expect(existsSync(path.join(outDir, "assets", "audio_worklet_ring_layout.js"))).toBe(true);

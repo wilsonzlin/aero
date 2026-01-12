@@ -51,6 +51,12 @@ describe("web Vite build outputs", () => {
 
       expect(existsSync(path.join(outDir, "webusb_diagnostics.html"))).toBe(true);
       expect(existsSync(path.join(outDir, "webgl2_fallback_demo.html"))).toBe(true);
+      // `aero-d3d9` uses `#[wasm_bindgen(module = "/js/persistent_cache_shim.js")]`, so
+      // prod builds must emit that absolute module path into `dist/`.
+      const persistentCacheShimPath = path.join(outDir, "js", "persistent_cache_shim.js");
+      expect(existsSync(persistentCacheShimPath)).toBe(true);
+      const persistentCacheShimSource = readFileSync(persistentCacheShimPath, "utf8");
+      expect(persistentCacheShimSource).toContain("computeShaderCacheKey");
       // AudioWorklet modules are emitted as static assets; ensure their unbundled
       // dependency files are also present.
       expect(existsSync(path.join(outDir, "assets", "mic_ring.js"))).toBe(true);
