@@ -221,3 +221,48 @@ test("ACMD CREATE_TEXTURE2D rejects unsupported formats (e.g. BC) at creation ti
     /aerogpu: CREATE_TEXTURE2D unsupported format .*BC formats require GPU backend/,
   );
 });
+
+test(
+  "ACMD CREATE_TEXTURE2D accepts *_UNORM_SRGB formats (CPU executor treats them like UNORM)",
+  {
+    // These enum members are introduced in ABI 1.2+. Skip this test when running against older
+    // protocol mirrors.
+    skip: typeof (AerogpuFormat as Record<string, unknown>).R8G8B8A8UnormSrgb !== "number",
+  },
+  () => {
+    const fmt = (AerogpuFormat as Record<string, number>).R8G8B8A8UnormSrgb!;
+    const w = new AerogpuCmdWriter();
+    w.createTexture2d(1, 0, fmt, 1, 1, 1, 1, 0, 0, 0);
+    w.uploadResource(1, 0n, Uint8Array.of(1, 2, 3, 4));
+
+    const state = createAerogpuCpuExecutorState();
+    executeAerogpuCmdStream(state, w.finish().buffer, { allocTable: null, guestU8: null });
+
+    const tex = state.textures.get(1);
+    assert(tex, "texture should exist");
+    assert.deepEqual(Array.from(tex.data.subarray(0, 4)), [1, 2, 3, 4]);
+  },
+);
+
+test(
+  "ACMD CREATE_TEXTURE2D supports B8G8R8X8_UNORM_SRGB and preserves opaque alpha semantics",
+  {
+    // ABI 1.2+ only.
+    skip: typeof (AerogpuFormat as Record<string, unknown>).B8G8R8X8UnormSrgb !== "number",
+  },
+  () => {
+    const fmt = (AerogpuFormat as Record<string, number>).B8G8R8X8UnormSrgb!;
+    const w = new AerogpuCmdWriter();
+    w.createTexture2d(1, 0, fmt, 1, 1, 1, 1, 0, 0, 0);
+    // Source bytes are B,G,R,X
+    w.uploadResource(1, 0n, Uint8Array.of(1, 2, 3, 4));
+
+    const state = createAerogpuCpuExecutorState();
+    executeAerogpuCmdStream(state, w.finish().buffer, { allocTable: null, guestU8: null });
+
+    const tex = state.textures.get(1);
+    assert(tex, "texture should exist");
+    // Stored bytes are always RGBA8. X8 formats should produce alpha=255.
+    assert.deepEqual(Array.from(tex.data.subarray(0, 4)), [3, 2, 1, 255]);
+  },
+);
