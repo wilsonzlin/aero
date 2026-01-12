@@ -55,6 +55,80 @@ fn d3d11_runtime_update_texture2d_rejects_out_of_range_mip_level() {
 }
 
 #[test]
+fn d3d11_runtime_create_texture2d_rejects_exceeding_device_limits() {
+    pollster::block_on(async {
+        let test_name = concat!(
+            module_path!(),
+            "::d3d11_runtime_create_texture2d_rejects_exceeding_device_limits"
+        );
+        let mut rt = match D3D11Runtime::new_for_tests().await {
+            Ok(rt) => rt,
+            Err(err) => {
+                common::skip_or_panic(test_name, &format!("wgpu unavailable ({err:#})"));
+                return;
+            }
+        };
+        let mut w = CmdWriter::new();
+        w.create_texture2d(
+            1,
+            Texture2dDesc {
+                width: u32::MAX,
+                height: 1,
+                array_layers: 1,
+                mip_level_count: 1,
+                format: DxgiFormat::R8G8B8A8Unorm,
+                usage: TextureUsage::TEXTURE_BINDING,
+            },
+        );
+
+        let err = rt
+            .execute(&w.finish())
+            .expect_err("expected CreateTexture2D with oversized dimensions to be rejected");
+        assert!(
+            err.to_string().contains("device limit"),
+            "unexpected error: {err}"
+        );
+    });
+}
+
+#[test]
+fn d3d11_runtime_create_texture2d_rejects_excessive_array_layers() {
+    pollster::block_on(async {
+        let test_name = concat!(
+            module_path!(),
+            "::d3d11_runtime_create_texture2d_rejects_excessive_array_layers"
+        );
+        let mut rt = match D3D11Runtime::new_for_tests().await {
+            Ok(rt) => rt,
+            Err(err) => {
+                common::skip_or_panic(test_name, &format!("wgpu unavailable ({err:#})"));
+                return;
+            }
+        };
+        let mut w = CmdWriter::new();
+        w.create_texture2d(
+            1,
+            Texture2dDesc {
+                width: 1,
+                height: 1,
+                array_layers: u32::MAX,
+                mip_level_count: 1,
+                format: DxgiFormat::R8G8B8A8Unorm,
+                usage: TextureUsage::TEXTURE_BINDING,
+            },
+        );
+
+        let err = rt
+            .execute(&w.finish())
+            .expect_err("expected CreateTexture2D with too many array layers to be rejected");
+        assert!(
+            err.to_string().contains("device limit"),
+            "unexpected error: {err}"
+        );
+    });
+}
+
+#[test]
 fn d3d11_runtime_create_texture_view_rejects_out_of_range_base_mip() {
     pollster::block_on(async {
         let test_name = concat!(

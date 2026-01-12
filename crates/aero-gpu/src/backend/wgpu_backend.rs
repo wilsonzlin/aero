@@ -360,6 +360,21 @@ impl GpuBackend for WgpuBackend {
                 "create_texture depth_or_array_layers must be >= 1".into(),
             ));
         }
+        let limits = self.device.limits();
+        let max_texture_dim = limits.max_texture_dimension_2d;
+        if size.width > max_texture_dim || size.height > max_texture_dim {
+            return Err(GpuError::Backend(format!(
+                "create_texture dimensions {}x{} exceed device limit {max_texture_dim}",
+                size.width, size.height
+            )));
+        }
+        let max_texture_layers = limits.max_texture_array_layers;
+        if size.depth_or_array_layers > max_texture_layers {
+            return Err(GpuError::Backend(format!(
+                "create_texture depth_or_array_layers {} exceeds device limit {max_texture_layers}",
+                size.depth_or_array_layers,
+            )));
+        }
         if desc.mip_level_count == 0 {
             return Err(GpuError::Backend(
                 "create_texture mip_level_count must be >= 1".into(),

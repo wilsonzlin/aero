@@ -45,3 +45,36 @@ fn d3d9_runtime_create_swap_chain_rejects_zero_dimensions() {
         );
     });
 }
+
+#[test]
+fn d3d9_runtime_create_swap_chain_rejects_exceeding_device_limits() {
+    pollster::block_on(async {
+        let require_webgpu = require_webgpu();
+        let mut rt = match D3D9Runtime::new(RuntimeConfig::default()).await {
+            Ok(rt) => rt,
+            Err(err @ (RuntimeError::AdapterNotFound | RuntimeError::RequestDevice(_))) => {
+                if require_webgpu {
+                    panic!("AERO_REQUIRE_WEBGPU is enabled but D3D9Runtime init failed: {err}");
+                }
+                eprintln!("skipping WebGPU-dependent test: D3D9Runtime init failed: {err}");
+                return;
+            }
+            Err(err) => panic!("D3D9Runtime init failed unexpectedly: {err}"),
+        };
+
+        let err = rt
+            .create_swap_chain(
+                1,
+                SwapChainDesc {
+                    width: u32::MAX,
+                    height: 1,
+                    format: ColorFormat::Rgba8Unorm,
+                },
+            )
+            .expect_err("expected create_swap_chain to reject out-of-range dimensions");
+        assert!(
+            matches!(err, RuntimeError::Validation(ref msg) if msg.contains("device limit")),
+            "unexpected error: {err:?}"
+        );
+    });
+}

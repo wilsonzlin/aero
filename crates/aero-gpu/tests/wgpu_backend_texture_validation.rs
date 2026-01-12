@@ -34,6 +34,62 @@ fn wgpu_backend_create_texture_rejects_excessive_mip_level_count() {
 }
 
 #[test]
+fn wgpu_backend_create_texture_rejects_exceeding_device_limits() {
+    common::ensure_xdg_runtime_dir();
+    let mut backend = match pollster::block_on(WgpuBackend::new_headless(BackendKind::WebGpu)) {
+        Ok(backend) => backend,
+        Err(err) => {
+            common::skip_or_panic(module_path!(), &format!("wgpu backend init failed: {err}"));
+            return;
+        }
+    };
+    let err = backend
+        .create_texture(TextureDesc {
+            label: Some("tex-too-large".into()),
+            size: Extent3d {
+                width: u32::MAX,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: TextureDimension::D2,
+            format: TextureFormat::Rgba8Unorm,
+            usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
+        })
+        .expect_err("expected out-of-range texture dimensions to be rejected");
+    assert!(matches!(err, GpuError::Backend(ref msg) if msg.contains("device limit")));
+}
+
+#[test]
+fn wgpu_backend_create_texture_rejects_excessive_array_layers() {
+    common::ensure_xdg_runtime_dir();
+    let mut backend = match pollster::block_on(WgpuBackend::new_headless(BackendKind::WebGpu)) {
+        Ok(backend) => backend,
+        Err(err) => {
+            common::skip_or_panic(module_path!(), &format!("wgpu backend init failed: {err}"));
+            return;
+        }
+    };
+    let err = backend
+        .create_texture(TextureDesc {
+            label: Some("tex-too-many-layers".into()),
+            size: Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: u32::MAX,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: TextureDimension::D2,
+            format: TextureFormat::Rgba8Unorm,
+            usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
+        })
+        .expect_err("expected out-of-range array layer count to be rejected");
+    assert!(matches!(err, GpuError::Backend(ref msg) if msg.contains("device limit")));
+}
+
+#[test]
 fn wgpu_backend_write_texture_rejects_out_of_range_mip_level() {
     common::ensure_xdg_runtime_dir();
     let mut backend = match pollster::block_on(WgpuBackend::new_headless(BackendKind::WebGpu)) {

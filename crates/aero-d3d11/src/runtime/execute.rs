@@ -499,6 +499,19 @@ impl D3D11Runtime {
         if mip_level_count == 0 {
             bail!("CreateTexture2D mip_level_count must be >= 1");
         }
+        let limits = self.device.limits();
+        let max_texture_dim = limits.max_texture_dimension_2d;
+        if width > max_texture_dim || height > max_texture_dim {
+            bail!(
+                "CreateTexture2D dimensions {width}x{height} exceed device limit {max_texture_dim}"
+            );
+        }
+        let max_texture_layers = limits.max_texture_array_layers;
+        if array_layers > max_texture_layers {
+            bail!(
+                "CreateTexture2D array_layers {array_layers} exceed device limit {max_texture_layers}"
+            );
+        }
         // WebGPU validation requires `mip_level_count` to be within the possible chain length for
         // the given dimensions.
         let max_dim = width.max(height);

@@ -632,6 +632,13 @@ impl D3D9Runtime {
                 "create_swap_chain: width/height must be non-zero".into(),
             ));
         }
+        let max_texture_dim = self.device.limits().max_texture_dimension_2d;
+        if desc.width > max_texture_dim || desc.height > max_texture_dim {
+            return Err(RuntimeError::Validation(format!(
+                "create_swap_chain: dimensions {}x{} exceed device limit {max_texture_dim}",
+                desc.width, desc.height
+            )));
+        }
 
         let format = desc.format.to_wgpu();
         let view_formats = if self
@@ -725,6 +732,13 @@ impl D3D9Runtime {
             return Err(RuntimeError::Validation(
                 "create_texture: width/height must be non-zero".into(),
             ));
+        }
+        let max_texture_dim = self.device.limits().max_texture_dimension_2d;
+        if desc.width > max_texture_dim || desc.height > max_texture_dim {
+            return Err(RuntimeError::Validation(format!(
+                "create_texture: dimensions {}x{} exceed device limit {max_texture_dim}",
+                desc.width, desc.height
+            )));
         }
         if desc.mip_level_count == 0 {
             return Err(RuntimeError::Validation(
