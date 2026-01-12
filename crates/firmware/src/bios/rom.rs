@@ -1,6 +1,6 @@
 use super::{
-    BIOS_SIZE, DEFAULT_INT_STUB_OFFSET, INT10_STUB_OFFSET, INT13_STUB_OFFSET, INT15_STUB_OFFSET,
-    INT16_STUB_OFFSET, INT1A_STUB_OFFSET,
+    BIOS_SIZE, DEFAULT_INT_STUB_OFFSET, DISKETTE_PARAM_TABLE_OFFSET, INT10_STUB_OFFSET,
+    INT13_STUB_OFFSET, INT15_STUB_OFFSET, INT16_STUB_OFFSET, INT1A_STUB_OFFSET,
 };
 
 /// Build the 64KiB BIOS ROM image.
@@ -41,6 +41,21 @@ pub fn build_bios_rom() -> Vec<u8> {
     write_stub(&mut rom, INT15_STUB_OFFSET, &stub);
     write_stub(&mut rom, INT16_STUB_OFFSET, &stub);
     write_stub(&mut rom, INT1A_STUB_OFFSET, &stub);
+
+    // Diskette Parameter Table (IVT vector 0x1E).
+    //
+    // This is an 11-byte table traditionally used by DOS-era software to probe or patch floppy
+    // timing/geometry parameters. Our floppy implementation is fully emulated in software, but
+    // providing a reasonable table improves compatibility with guests that expect it to exist.
+    //
+    // Values below match common 1.44MiB defaults:
+    // - 512 bytes/sector, 18 sectors/track.
+    let diskette_param_table: [u8; 11] = [0xAF, 0x02, 0x25, 0x02, 0x12, 0x1B, 0xFF, 0x6C, 0xF6, 0x0F, 0x08];
+    write_stub(
+        &mut rom,
+        DISKETTE_PARAM_TABLE_OFFSET,
+        &diskette_param_table,
+    );
 
     // Optional ROM signature (harmless and convenient for identification).
     rom[BIOS_SIZE - 2] = 0x55;

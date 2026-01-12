@@ -80,6 +80,8 @@ pub const INT15_STUB_OFFSET: u16 = 0xE600;
 pub const INT16_STUB_OFFSET: u16 = 0xE700;
 pub const INT1A_STUB_OFFSET: u16 = 0xE900;
 pub const DEFAULT_INT_STUB_OFFSET: u16 = 0xEF00;
+/// IVT vector 0x1E: diskette parameter table pointer.
+pub const DISKETTE_PARAM_TABLE_OFFSET: u16 = 0xE100;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiskError {
@@ -488,6 +490,13 @@ mod tests {
 
         // ROM signature (optional).
         assert_eq!(&rom_image[BIOS_SIZE - 2..], &[0x55, 0xAA]);
+
+        // Diskette Parameter Table (vector 0x1E).
+        let dpt = DISKETTE_PARAM_TABLE_OFFSET as usize;
+        assert_eq!(
+            &rom_image[dpt..dpt + 11],
+            &[0xAF, 0x02, 0x25, 0x02, 0x12, 0x1B, 0xFF, 0x6C, 0xF6, 0x0F, 0x08]
+        );
     }
 
     #[test]
@@ -509,6 +518,10 @@ mod tests {
         assert_eq!(read_vec(&mut mem, 0x15), (INT15_STUB_OFFSET, BIOS_SEGMENT));
         assert_eq!(read_vec(&mut mem, 0x16), (INT16_STUB_OFFSET, BIOS_SEGMENT));
         assert_eq!(read_vec(&mut mem, 0x1A), (INT1A_STUB_OFFSET, BIOS_SEGMENT));
+        assert_eq!(
+            read_vec(&mut mem, 0x1E),
+            (DISKETTE_PARAM_TABLE_OFFSET, BIOS_SEGMENT)
+        );
     }
 
     #[test]
