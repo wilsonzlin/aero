@@ -1159,6 +1159,97 @@ static void test_reset_device_fast_path(void)
     VirtioPciModernMmioSimUninstall();
 }
 
+static void test_reset_device_clears_after_delay_passive_level(void)
+{
+    uint8_t bar0[TEST_BAR0_SIZE];
+    uint8_t pci_cfg[256];
+    VIRTIO_PCI_DEVICE dev;
+    VIRTIO_PCI_MODERN_MMIO_SIM sim;
+
+    setup_device(&dev, bar0, pci_cfg);
+
+    VirtioPciModernMmioSimInit(&sim,
+                               dev.CommonCfg,
+                               (volatile uint8_t*)dev.NotifyBase,
+                               dev.NotifyLength,
+                               (volatile uint8_t*)dev.IsrStatus,
+                               dev.IsrLength,
+                               (volatile uint8_t*)dev.DeviceCfg,
+                               dev.DeviceCfgLength);
+
+    /*
+     * Make the device appear "stuck" for the initial readback + one poll
+     * iteration, then allow reads to reflect the written status (0) so the loop
+     * exits successfully without printing an error.
+     */
+    sim.device_status_read_override = 1;
+    sim.device_status_read_override_value = 1;
+    sim.device_status_read_override_reads_remaining = 2;
+
+    VirtioPciModernMmioSimInstall(&sim);
+
+    WdkTestResetDbgPrintExCount();
+    WdkTestResetKeDelayExecutionThreadCount();
+    WdkTestResetKeStallExecutionProcessorCount();
+    WdkTestSetCurrentIrql(PASSIVE_LEVEL);
+
+    VirtioPciResetDevice(&dev);
+
+    assert(sim.status_write_count == 1);
+    assert(sim.status_writes[0] == 0);
+    assert(WdkTestGetDbgPrintExCount() == 0);
+    assert(WdkTestGetKeDelayExecutionThreadCount() == 1);
+    assert(WdkTestGetKeStallExecutionProcessorCount() == 0);
+
+    VirtioPciModernMmioSimUninstall();
+}
+
+static void test_reset_device_clears_after_stall_dispatch_level(void)
+{
+    uint8_t bar0[TEST_BAR0_SIZE];
+    uint8_t pci_cfg[256];
+    VIRTIO_PCI_DEVICE dev;
+    VIRTIO_PCI_MODERN_MMIO_SIM sim;
+
+    setup_device(&dev, bar0, pci_cfg);
+
+    VirtioPciModernMmioSimInit(&sim,
+                               dev.CommonCfg,
+                               (volatile uint8_t*)dev.NotifyBase,
+                               dev.NotifyLength,
+                               (volatile uint8_t*)dev.IsrStatus,
+                               dev.IsrLength,
+                               (volatile uint8_t*)dev.DeviceCfg,
+                               dev.DeviceCfgLength);
+
+    /*
+     * Initial readback is non-zero to force the elevated IRQL path, but
+     * subsequent reads reflect the written status (0) so the loop exits after a
+     * single stall.
+     */
+    sim.device_status_read_override = 1;
+    sim.device_status_read_override_value = 1;
+    sim.device_status_read_override_reads_remaining = 1;
+
+    VirtioPciModernMmioSimInstall(&sim);
+
+    WdkTestResetDbgPrintExCount();
+    WdkTestResetKeDelayExecutionThreadCount();
+    WdkTestResetKeStallExecutionProcessorCount();
+    WdkTestSetCurrentIrql(DISPATCH_LEVEL);
+
+    VirtioPciResetDevice(&dev);
+
+    assert(sim.status_write_count == 1);
+    assert(sim.status_writes[0] == 0);
+    assert(WdkTestGetDbgPrintExCount() == 0);
+    assert(WdkTestGetKeDelayExecutionThreadCount() == 0);
+    assert(WdkTestGetKeStallExecutionProcessorCount() == 1);
+
+    WdkTestSetCurrentIrql(PASSIVE_LEVEL);
+    VirtioPciModernMmioSimUninstall();
+}
+
 int main(void)
 {
     test_init_ok();
@@ -1192,6 +1283,8 @@ int main(void)
     test_notify_queue_populates_and_uses_cache();
     test_notify_queue_does_not_write_when_queue_missing();
     test_reset_device_fast_path();
+    test_reset_device_clears_after_delay_passive_level();
+    test_reset_device_clears_after_stall_dispatch_level();
     test_reset_device_times_out_passive_level();
     test_reset_device_times_out_dispatch_level();
 

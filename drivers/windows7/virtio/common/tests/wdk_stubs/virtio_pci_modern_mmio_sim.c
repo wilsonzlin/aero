@@ -98,6 +98,12 @@ static BOOLEAN virtio_modern_mmio_read(const volatile VOID* Register, size_t Wid
                     if (Width == 1) {
                         if (g_sim->device_status_read_override != 0) {
                             *ValueOut = (ULONGLONG)g_sim->device_status_read_override_value;
+                            if (g_sim->device_status_read_override_reads_remaining != 0) {
+                                g_sim->device_status_read_override_reads_remaining--;
+                                if (g_sim->device_status_read_override_reads_remaining == 0) {
+                                    g_sim->device_status_read_override = 0;
+                                }
+                            }
                         } else {
                             *ValueOut = (ULONGLONG)mmio_load(Register, 1);
                         }

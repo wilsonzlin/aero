@@ -55,6 +55,7 @@ typedef struct VIRTIO_PCI_MODERN_MMIO_SIM {
 
     uint8_t device_status_read_override;
     uint8_t device_status_read_override_value;
+    uint32_t device_status_read_override_reads_remaining; /* 0 = infinite while override enabled */
 
     uint8_t config_generation;
     uint8_t config_generation_step_on_read;
