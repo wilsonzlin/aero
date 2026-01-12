@@ -2811,10 +2811,6 @@ impl Machine {
     }
 
     fn idle_tick_platform_1ms(&mut self) {
-        if self.platform_clock.is_none() {
-            return;
-        }
-
         // Only tick while halted when maskable interrupts are enabled; otherwise HLT is expected to
         // be terminal (until NMI/SMI/reset, which we do not model yet).
         if (self.cpu.state.rflags() & aero_cpu_core::state::RFLAGS_IF) == 0 {
@@ -6719,6 +6715,78 @@ mod tests {
                 "unexpected tick count after {elapsed_secs} seconds"
             );
         }
+    }
+
+    #[test]
+    fn halted_run_slice_advances_bios_bda_ticks_without_pc_platform() {
+        use firmware::bios::{BDA_TICK_COUNT_ADDR, TICKS_PER_DAY};
+
+        // This constant is not part of the public BIOS API but is required to compute expected
+        // BDA tick deltas here.
+        const NANOS_PER_DAY: u128 = 86_400_000_000_000;
+
+        let mut m = Machine::new(MachineConfig {
+            ram_size_bytes: 2 * 1024 * 1024,
+            enable_pc_platform: false,
+            enable_serial: false,
+            enable_i8042: false,
+            enable_a20_gate: false,
+            enable_reset_ctrl: false,
+            ..Default::default()
+        })
+        .unwrap();
+
+        // Boot sector: STI; HLT; JMP $-3 (halt loop).
+        let mut sector = [0u8; 512];
+        sector[0] = 0xFB; // sti
+        sector[1] = 0xF4; // hlt
+        sector[2] = 0xEB; // jmp short
+        sector[3] = 0xFD; // -3 (back to hlt)
+        sector[510] = 0x55;
+        sector[511] = 0xAA;
+
+        m.set_disk_image(sector.to_vec()).unwrap();
+        m.reset();
+
+        // Use a small deterministic TSC frequency so `idle_tick_platform_1ms` advances exactly 1ms
+        // per call.
+        m.cpu.time.set_tsc_hz(1000);
+        m.cpu.state.msr.tsc = m.cpu.time.read_tsc();
+
+        // Run until the guest halts.
+        for _ in 0..200 {
+            match m.run_slice(50_000) {
+                RunExit::Halted { .. } => break,
+                RunExit::Completed { .. } => continue,
+                other => panic!("unexpected exit: {other:?}"),
+            }
+        }
+
+        let start = m.read_physical_u32(BDA_TICK_COUNT_ADDR);
+
+        // While halted, each `run_slice` call advances guest time by 1ms (deterministically). After
+        // 200ms, the BIOS tick count (18.2Hz) must have advanced by at least 3 ticks.
+        const IDLE_MS: u64 = 200;
+        for _ in 0..IDLE_MS {
+            assert!(matches!(m.run_slice(1), RunExit::Halted { executed: 0 }));
+        }
+
+        let end = m.read_physical_u32(BDA_TICK_COUNT_ADDR);
+        let delta = end.wrapping_sub(start);
+
+        let expected_min: u32 = (u128::from(IDLE_MS) * 1_000_000u128 * u128::from(TICKS_PER_DAY)
+            / NANOS_PER_DAY)
+            .try_into()
+            .unwrap();
+        assert!(
+            delta >= expected_min,
+            "expected BIOS tick count to advance while halted (delta={delta}, expected >= {expected_min})"
+        );
+        assert!(
+            delta <= expected_min.saturating_add(1),
+            "expected BIOS tick count advance to be bounded (delta={delta}, expected <= {})",
+            expected_min.saturating_add(1)
+        );
     }
 
     #[test]
