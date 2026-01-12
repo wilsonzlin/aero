@@ -813,6 +813,7 @@ function renderMachinePanel(): HTMLElement {
           try {
             machine.inject_browser_key(ev.code, true);
             ev.preventDefault();
+            ev.stopPropagation();
           } catch {
             // ignore
           }
@@ -823,6 +824,7 @@ function renderMachinePanel(): HTMLElement {
           try {
             machine.inject_browser_key(ev.code, false);
             ev.preventDefault();
+            ev.stopPropagation();
           } catch {
             // ignore
           }
@@ -849,6 +851,7 @@ function renderMachinePanel(): HTMLElement {
           try {
             machine.inject_mouse_motion(0, 0, wheel);
             ev.preventDefault();
+            ev.stopPropagation();
           } catch {
             // ignore
           }
@@ -860,6 +863,7 @@ function renderMachinePanel(): HTMLElement {
           try {
             machine.inject_mouse_button(ev.button | 0, true);
             ev.preventDefault();
+            ev.stopPropagation();
           } catch {
             // ignore
           }
@@ -871,6 +875,7 @@ function renderMachinePanel(): HTMLElement {
           try {
             machine.inject_mouse_button(ev.button | 0, false);
             ev.preventDefault();
+            ev.stopPropagation();
           } catch {
             // ignore
           }
@@ -878,6 +883,7 @@ function renderMachinePanel(): HTMLElement {
 
         const onContextMenu = (ev: MouseEvent): void => {
           ev.preventDefault();
+          ev.stopPropagation();
         };
 
         canvas.addEventListener("click", onClick);
@@ -1240,12 +1246,14 @@ function renderMachineWorkerPanel(): HTMLElement {
     if (ev.repeat) return;
     postToWorker({ type: "machineVga.inject_browser_key", code: ev.code, pressed: true });
     ev.preventDefault();
+    ev.stopPropagation();
   };
 
   const onKeyUp = (ev: KeyboardEvent): void => {
     if (!testState.running) return;
     postToWorker({ type: "machineVga.inject_browser_key", code: ev.code, pressed: false });
     ev.preventDefault();
+    ev.stopPropagation();
   };
 
   const onMouseMove = (ev: MouseEvent): void => {
@@ -1256,6 +1264,7 @@ function renderMachineWorkerPanel(): HTMLElement {
     if (dx === 0 && dy === 0) return;
     postToWorker({ type: "machineVga.inject_mouse_motion", dx, dy, wheel: 0 });
     ev.preventDefault();
+    ev.stopPropagation();
   };
 
   const onWheel = (ev: WheelEvent): void => {
@@ -1267,23 +1276,27 @@ function renderMachineWorkerPanel(): HTMLElement {
     if (wheel === 0) return;
     postToWorker({ type: "machineVga.inject_mouse_motion", dx: 0, dy: 0, wheel });
     ev.preventDefault();
+    ev.stopPropagation();
   };
 
   const onMouseDown = (ev: MouseEvent): void => {
     if (!testState.running) return;
     postToWorker({ type: "machineVga.inject_mouse_button", button: ev.button | 0, pressed: true });
     ev.preventDefault();
+    ev.stopPropagation();
   };
 
   const onMouseUp = (ev: MouseEvent): void => {
     if (!testState.running) return;
     postToWorker({ type: "machineVga.inject_mouse_button", button: ev.button | 0, pressed: false });
     ev.preventDefault();
+    ev.stopPropagation();
   };
 
   const onContextMenu = (ev: MouseEvent): void => {
     // Avoid the browser context menu stealing focus.
     ev.preventDefault();
+    ev.stopPropagation();
   };
 
   const detachInput = (): void => {
