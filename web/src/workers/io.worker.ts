@@ -865,6 +865,37 @@ function restoreAudioHdaDeviceState(bytes: Uint8Array): void {
   try {
     load.call(bridge, bytes);
     pendingAudioHdaSnapshotBytes = null;
+
+    // If the host audio output ring buffer is attached (or we at least know the
+    // host output sample rate), re-apply the attachment policy after restore.
+    //
+    // Why:
+    // - The HDA snapshot contains `output_rate_hz` (host output sample rate) for
+    //   determinism, but older snapshots or snapshots taken before the AudioContext
+    //   existed may have a different/default output rate.
+    // - The JS-side {@link HdaPciDevice} wrapper keeps its own notion of the host
+    //   output sample rate (`#outputRateHz`) and drives the device tick clock from it.
+    // - If the bridge restores an output rate that differs from the current host
+    //   AudioContext sample rate (as tracked by `audioOutDstSampleRate`), the wrapper
+    //   and WASM device can diverge and produce incorrect audio pacing (overruns,
+    //   underruns, perceived "fast-forward", etc).
+    //
+    // Calling `setAudioRingBuffer` is idempotent when the same ring buffer is already
+    // attached; it plumbs the current host sample rate and keeps the wrapper's tick
+    // clock consistent.
+    const dev = hdaDevice;
+    if (dev && (audioOutRingBuffer || audioOutDstSampleRate > 0)) {
+      try {
+        dev.setAudioRingBuffer({
+          ringBuffer: audioOutRingBuffer,
+          capacityFrames: audioOutCapacityFrames,
+          channelCount: audioOutChannelCount,
+          dstSampleRateHz: audioOutDstSampleRate,
+        });
+      } catch (err) {
+        console.warn("[io.worker] Failed to reapply audio output ring buffer after HDA snapshot restore", err);
+      }
+    }
   } catch (err) {
     console.warn("[io.worker] HDA audio load_state failed:", err);
     cachePending();
