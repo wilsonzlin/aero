@@ -437,6 +437,88 @@ describe("RemoteChunkedDisk", () => {
     await disk.close();
   });
 
+  it("ignores previously persisted chunks when cacheLimitBytes is 0", async () => {
+    const chunkSize = 1024; // multiple of 512
+    const totalSize = chunkSize;
+    const chunkCount = 1;
+
+    const img = buildTestImageBytes(totalSize);
+    const chunks = [img.slice(0, chunkSize)];
+
+    const manifest = {
+      schema: "aero.chunked-disk-image.v1",
+      imageId: "test",
+      version: "v1",
+      mimeType: "application/octet-stream",
+      totalSize,
+      chunkSize,
+      chunkCount,
+      chunkIndexWidth: 8,
+    };
+
+    const { baseUrl, hits, close } = await withServer((_req, res) => {
+      const url = new URL(_req.url ?? "/", "http://localhost");
+      if (url.pathname === "/manifest.json") {
+        res.statusCode = 200;
+        res.setHeader("content-type", "application/json");
+        res.end(JSON.stringify(manifest));
+        return;
+      }
+
+      if (url.pathname === "/chunks/00000000.bin") {
+        res.statusCode = 200;
+        res.setHeader("content-type", "application/octet-stream");
+        res.end(chunks[0]);
+        return;
+      }
+
+      res.statusCode = 404;
+      res.end("not found");
+    });
+    closeServer = close;
+
+    const manifestUrl = `${baseUrl}/manifest.json`;
+
+    // Prime the persistent (store-backed) cache.
+    const store = new TestMemoryStore();
+    const disk1 = await RemoteChunkedDisk.open(manifestUrl, {
+      store,
+      cacheLimitBytes: null,
+      prefetchSequentialChunks: 0,
+      retryBaseDelayMs: 0,
+    });
+    await disk1.readSectors(0, new Uint8Array(512));
+    expect(hits.get("/chunks/00000000.bin")).toBe(1);
+    await disk1.close();
+
+    const metaKey = Array.from(store.files.keys()).find((k) => k.endsWith("/meta.json"));
+    expect(metaKey).toBeTruthy();
+    const metaBefore = await store.read(metaKey!);
+    expect(metaBefore).toBeTruthy();
+    const storeSizeBefore = store.files.size;
+
+    // Re-open with caching disabled: should still fetch from network and avoid meta updates.
+    const disk2 = await RemoteChunkedDisk.open(manifestUrl, {
+      store,
+      cacheLimitBytes: 0,
+      prefetchSequentialChunks: 0,
+      retryBaseDelayMs: 0,
+    });
+    await disk2.readSectors(0, new Uint8Array(512));
+    expect(hits.get("/chunks/00000000.bin")).toBe(2);
+
+    expect(store.files.size).toBe(storeSizeBefore);
+    const metaAfter = await store.read(metaKey!);
+    expect(metaAfter).toEqual(metaBefore);
+
+    const t = disk2.getTelemetrySnapshot();
+    expect(t.cacheLimitBytes).toBe(0);
+    expect(t.cachedBytes).toBe(0);
+    expect(t.cacheHits).toBe(0);
+
+    await disk2.close();
+  });
+
   it("supports relative manifest URLs by resolving against global location.href", async () => {
     const chunkSize = 1024; // multiple of 512
     const totalSize = chunkSize;
