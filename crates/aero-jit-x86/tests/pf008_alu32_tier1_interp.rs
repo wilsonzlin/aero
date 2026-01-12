@@ -45,15 +45,30 @@ fn run_payload_32(
             snap.rip
         );
 
+        // If we're approaching `stop_rip`, cap the block length so we don't accidentally execute
+        // the `ret` instruction when the last basic block contains non-terminator instructions
+        // before it (e.g. `mov eax, ebx; ret` in `branch_unpred32`).
+        let mut limits = BlockLimits::default();
+        if snap.rip < stop_rip {
+            let max_bytes_to_stop = (stop_rip - snap.rip) as usize;
+            limits.max_bytes = limits.max_bytes.min(max_bytes_to_stop);
+        }
+
         let ir = cache.entry(snap.rip).or_insert_with(|| {
-            let block = discover_block_mode(&bus, snap.rip, BlockLimits::default(), 32);
+            let block = discover_block_mode(&bus, snap.rip, limits, 32);
             translate_block(&block)
         });
 
         match execute_block(ir, &mut cpu_bytes, &mut bus) {
             ExecResult::Continue => {}
             ExecResult::ExitToInterpreter { next_rip } => {
-                panic!("unexpected Tier-1 bailout at 0x{next_rip:x}\nIR:\n{}", ir.to_text());
+                if next_rip == stop_rip {
+                    return CpuSnapshot::from_wasm_bytes(&cpu_bytes);
+                }
+                panic!(
+                    "unexpected Tier-1 bailout at 0x{next_rip:x}\nIR:\n{}",
+                    ir.to_text()
+                );
             }
         }
     }
@@ -130,4 +145,62 @@ fn pf008_call_ret32_checksum() {
     let bus = SimpleBus::new(0x20_000);
     let final_cpu = run_payload_32(entry, stop_rip, &code, 10_000, cpu, bus);
     assert_eq!(final_cpu.gpr[Gpr::Rax.as_u8() as usize] as u32, 0x71df5500);
+}
+
+#[test]
+fn pf008_branch_pred32_checksum() {
+    // From `docs/16-guest-cpu-benchmark-suite.md` (PF-008), `branch_pred32` payload.
+    let code = [
+        0xb8, 0xf0, 0xde, 0xbc, 0x9a, 0xbb, 0x15, 0x7c, 0x4a, 0x7f, 0x31, 0xd2, 0x75, 0x02,
+        0x01, 0xd8, 0x31, 0xd2, 0x75, 0x02, 0x31, 0xd8, 0xd1, 0xe0, 0x83, 0xc0, 0x01, 0x49,
+        0x75, 0xec, 0xc3,
+    ];
+
+    let entry = 0x4000u64;
+    let ret_rip = entry + (code.len() as u64 - 1);
+
+    let cpu = CpuState::default();
+    let bus = SimpleBus::new(0x20000);
+    let final_cpu = run_payload_32(entry, ret_rip, &code, 10_000, cpu, bus);
+    assert_eq!(final_cpu.gpr[Gpr::Rax.as_u8() as usize] as u32, 0xaad6afab);
+}
+
+#[test]
+fn pf008_branch_unpred32_checksum() {
+    // From `docs/16-guest-cpu-benchmark-suite.md` (PF-008), `branch_unpred32` payload.
+    let code = [
+        0xb8, 0xf0, 0xde, 0xbc, 0x9a, 0xbb, 0x08, 0x09, 0x0a, 0x0b, 0x89, 0xc2, 0xc1, 0xe2,
+        0x0d, 0x31, 0xd0, 0x89, 0xc2, 0xc1, 0xea, 0x07, 0x31, 0xd0, 0x89, 0xc2, 0xc1, 0xe2,
+        0x11, 0x31, 0xd0, 0x89, 0xc2, 0x83, 0xe2, 0x01, 0x74, 0x04, 0x01, 0xc3, 0xeb, 0x04,
+        0x31, 0xc3, 0xeb, 0x00, 0x49, 0x75, 0xd9, 0x89, 0xd8, 0xc3,
+    ];
+
+    let entry = 0x5000u64;
+    let ret_rip = entry + (code.len() as u64 - 1);
+
+    let cpu = CpuState::default();
+    let bus = SimpleBus::new(0x20000);
+    let final_cpu = run_payload_32(entry, ret_rip, &code, 10_000, cpu, bus);
+    assert_eq!(final_cpu.gpr[Gpr::Rax.as_u8() as usize] as u32, 0xb1fdf341);
+}
+
+#[test]
+fn pf008_mem_stride32_checksum() {
+    // From `docs/16-guest-cpu-benchmark-suite.md` (PF-008), `mem_stride32` payload.
+    let code = [
+        0xb8, 0xef, 0xcd, 0xab, 0x89, 0x31, 0xf6, 0x8b, 0x14, 0x37, 0x01, 0xd0, 0x31, 0xc2,
+        0x89, 0x14, 0x37, 0x83, 0xc6, 0x40, 0x81, 0xe6, 0xff, 0x0f, 0x00, 0x00, 0x49, 0x75,
+        0xea, 0xc3,
+    ];
+
+    let entry = 0x6000u64;
+    let ret_rip = entry + (code.len() as u64 - 1);
+    let scratch_base = 0x10_000u64;
+
+    let mut cpu = CpuState::default();
+    cpu.gpr[Gpr::Rdi.as_u8() as usize] = scratch_base;
+
+    let bus = SimpleBus::new(0x20_000);
+    let final_cpu = run_payload_32(entry, ret_rip, &code, 10_000, cpu, bus);
+    assert_eq!(final_cpu.gpr[Gpr::Rax.as_u8() as usize] as u32, 0x0da7ebb4);
 }
