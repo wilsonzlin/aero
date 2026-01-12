@@ -25,6 +25,9 @@ fn hole_aware_ram_maps_high_memory_above_4gib_and_hole_is_open_bus() {
 
     // The ECAM base lies in the reserved PCI/ECAM hole; reads must behave like open bus.
     assert_eq!(m.read_physical_u8(firmware::bios::PCIE_ECAM_BASE), 0xFF);
+    // Writes to the hole must be ignored (open bus).
+    m.write_physical_u8(firmware::bios::PCIE_ECAM_BASE, 0x00);
+    assert_eq!(m.read_physical_u8(firmware::bios::PCIE_ECAM_BASE), 0xFF);
 
     // High memory is remapped above 4GiB: guest physical 0x1_0000_0000 corresponds to RAM offset
     // `PCIE_ECAM_BASE` in the contiguous backing store.
