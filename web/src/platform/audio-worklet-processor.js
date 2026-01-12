@@ -1,17 +1,18 @@
-const READ_FRAME_INDEX = 0;
-const WRITE_FRAME_INDEX = 1;
-const UNDERRUN_COUNT = 2;
+import {
+  HEADER_BYTES,
+  HEADER_U32_LEN,
+  READ_FRAME_INDEX,
+  UNDERRUN_COUNT_INDEX,
+  WRITE_FRAME_INDEX,
+  framesAvailableClamped,
+} from "../audio/audio_worklet_ring";
 
 // Atomically add missing frames to the underrun counter. The counter is a u32
 // that wraps naturally at 2^32.
 export function addUnderrunFrames(header, missingFrames) {
   const missing = missingFrames >>> 0;
   // Atomics.add returns the previous value.
-  return (Atomics.add(header, UNDERRUN_COUNT, missing) + missing) >>> 0;
-}
-
-function framesAvailable(readFrameIndex, writeFrameIndex) {
-  return (writeFrameIndex - readFrameIndex) >>> 0;
+  return (Atomics.add(header, UNDERRUN_COUNT_INDEX, missing) + missing) >>> 0;
 }
 
 const WorkletProcessorBase =
@@ -33,8 +34,8 @@ export class AeroAudioProcessor extends WorkletProcessorBase {
 
     if (typeof SharedArrayBuffer !== "undefined" && ringBuffer instanceof SharedArrayBuffer) {
       // Layout is described in `web/src/audio/audio_worklet_ring.ts`.
-      this._header = new Uint32Array(ringBuffer, 0, 4);
-      this._samples = new Float32Array(ringBuffer, 16);
+      this._header = new Uint32Array(ringBuffer, 0, HEADER_U32_LEN);
+      this._samples = new Float32Array(ringBuffer, HEADER_BYTES);
       this._channelCount = typeof channelCount === "number" ? channelCount : null;
       this._capacityFrames = typeof capacityFrames === "number" ? capacityFrames : null;
     } else {
@@ -60,7 +61,7 @@ export class AeroAudioProcessor extends WorkletProcessorBase {
 
     const readFrameIndex = Atomics.load(this._header, READ_FRAME_INDEX) >>> 0;
     const writeFrameIndex = Atomics.load(this._header, WRITE_FRAME_INDEX) >>> 0;
-    const available = Math.min(framesAvailable(readFrameIndex, writeFrameIndex), capacityFrames);
+    const available = framesAvailableClamped(readFrameIndex, writeFrameIndex, capacityFrames);
     const framesToRead = Math.min(framesNeeded, available);
 
     const samples = this._samples;
