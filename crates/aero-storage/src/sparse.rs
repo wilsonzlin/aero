@@ -244,11 +244,21 @@ impl<B: StorageBackend> AeroSparseDisk<B> {
 
         // Read allocation table.
         //
-        // IMPORTANT: Don't allocate a single `Vec<u8>` for the full table.
-        // The table itself (as `Vec<u64>`) can already be large, and allocating an
-        // additional equally-large temporary buffer would double peak memory usage.
-        let mut table = Vec::with_capacity(table_entries_usize);
-        let mut buf = vec![0u8; 64 * 1024]; // must be a multiple of 8
+        // IMPORTANT:
+        // - Don't allocate a single `Vec<u8>` for the full table.
+        // - Use fallible allocations (`try_reserve_exact`) so we return a structured error
+        //   instead of aborting on OOM (especially important on wasm32).
+        let mut table = Vec::new();
+        table
+            .try_reserve_exact(table_entries_usize)
+            .map_err(|_| DiskError::Unsupported("aerosparse allocation table too large"))?;
+
+        // Buffer used to stream the allocation table from the backend.
+        // Must be a multiple of 8 since table entries are u64s.
+        let mut buf: Vec<u8> = Vec::new();
+        buf.try_reserve_exact(64 * 1024)
+            .map_err(|_| DiskError::Unsupported("aerosparse allocation table too large"))?;
+        buf.resize(64 * 1024, 0);
         let mut offset = HEADER_SIZE as u64;
         let mut remaining = expected_table_bytes_usize;
         while remaining > 0 {
@@ -275,7 +285,11 @@ impl<B: StorageBackend> AeroSparseDisk<B> {
             .checked_add(63)
             .ok_or(DiskError::OffsetOverflow)?
             / 64;
-        let mut seen_phys_idx = vec![0u64; bitset_len];
+        let mut seen_phys_idx: Vec<u64> = Vec::new();
+        seen_phys_idx
+            .try_reserve_exact(bitset_len)
+            .map_err(|_| DiskError::Unsupported("aerosparse allocation table too large"))?;
+        seen_phys_idx.resize(bitset_len, 0);
 
         for &phys in &table {
             if phys == 0 {
