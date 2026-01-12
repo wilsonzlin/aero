@@ -294,6 +294,65 @@ fn translates_pixel_texture_sample_and_bindings() {
 }
 
 #[test]
+fn translates_pixel_texture_sample_at_max_slots() {
+    let isgn_params = vec![
+        sig_param("SV_Position", 0, 0, 0b1111),
+        sig_param("TEXCOORD", 0, 1, 0b0011),
+    ];
+    let osgn_params = vec![sig_param("SV_Target", 0, 0, 0b1111)];
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, Vec::new()),
+        (FOURCC_ISGN, build_signature_chunk(&isgn_params)),
+        (FOURCC_OSGN, build_signature_chunk(&osgn_params)),
+    ]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    let tex_slot = MAX_TEXTURE_SLOTS - 1;
+    let samp_slot = MAX_SAMPLER_SLOTS - 1;
+    let module = Sm4Module {
+        stage: ShaderStage::Pixel,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: Vec::new(),
+        instructions: vec![
+            Sm4Inst::Sample {
+                dst: dst(RegFile::Temp, 0, WriteMask::XYZW),
+                coord: src_reg(RegFile::Input, 1),
+                texture: TextureRef { slot: tex_slot },
+                sampler: SamplerRef { slot: samp_slot },
+            },
+            Sm4Inst::Mov {
+                dst: dst(RegFile::Output, 0, WriteMask::XYZW),
+                src: src_reg(RegFile::Temp, 0),
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_parses(&translated.wgsl);
+    assert!(translated
+        .wgsl
+        .contains(&format!("textureSample(t{tex_slot}, s{samp_slot}")));
+
+    let tex_binding = translated
+        .reflection
+        .bindings
+        .iter()
+        .find(|b| matches!(b.kind, BindingKind::Texture2D { slot } if slot == tex_slot))
+        .expect("missing texture binding");
+    assert_eq!(tex_binding.binding, BINDING_BASE_TEXTURE + tex_slot);
+
+    let sampler_binding = translated
+        .reflection
+        .bindings
+        .iter()
+        .find(|b| matches!(b.kind, BindingKind::Sampler { slot } if slot == samp_slot))
+        .expect("missing sampler binding");
+    assert_eq!(sampler_binding.binding, BINDING_BASE_SAMPLER + samp_slot);
+}
+
+#[test]
 fn translates_pixel_legacy_color_output_semantic() {
     let isgn_params = vec![
         sig_param("SV_Position", 0, 0, 0b1111),
