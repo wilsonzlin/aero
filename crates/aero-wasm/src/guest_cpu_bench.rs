@@ -317,6 +317,7 @@ pub struct GuestCpuRunResult {
 #[derive(Debug, Clone)]
 pub enum GuestCpuBenchError {
     UnknownVariant(String),
+    InvalidIters(u32),
     UnexpectedExit { exit: BatchExit, rip: u64 },
 }
 
@@ -324,6 +325,9 @@ impl core::fmt::Display for GuestCpuBenchError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::UnknownVariant(v) => write!(f, "Unknown guest CPU bench variant: {v}"),
+            Self::InvalidIters(iters) => {
+                write!(f, "Invalid guest CPU bench iters value: {iters} (expected > 0)")
+            }
             Self::UnexpectedExit { exit, rip } => {
                 write!(f, "Unexpected Tier-0 batch exit {exit:?} at rip=0x{rip:x}")
             }
@@ -370,6 +374,10 @@ impl GuestCpuBenchCoreRunner {
         payload: &GuestCpuPayload,
         iters: u32,
     ) -> Result<GuestCpuRunResult, GuestCpuBenchError> {
+        if iters == 0 {
+            return Err(GuestCpuBenchError::InvalidIters(iters));
+        }
+
         // Reset guest-visible memory state.
         self.bus.load(CODE_BASE, payload.bytes);
         if payload.uses_scratch {

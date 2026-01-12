@@ -21,3 +21,14 @@ fn guest_cpu_payload_checksums_match_pf008_doc() {
         );
     }
 }
+
+#[test]
+fn guest_cpu_payload_rejects_zero_iters() {
+    let mut runner = GuestCpuBenchCoreRunner::new();
+    let payload = &PAYLOADS[0];
+    let err = runner.run_payload_once(payload, 0).unwrap_err();
+    assert!(
+        matches!(err, aero_wasm::guest_cpu_bench::GuestCpuBenchError::InvalidIters(0)),
+        "unexpected error: {err}"
+    );
+}
