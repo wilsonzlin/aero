@@ -1453,6 +1453,22 @@ mod tests {
             "expected DSDT AML to contain IMCR SystemIO OperationRegion at ports 0x22..0x23"
         );
 
+        // Field (IMCR, ByteAcc, NoLock, Preserve) { IMCS, 8, IMCD, 8 }
+        let field = [
+            &[0x5B, 0x81, 0x0F][..], // FieldOp + pkglen (payload is 15 bytes)
+            &b"IMCR"[..],
+            &[0x01][..], // ByteAcc + NoLock + Preserve
+            &b"IMCS"[..],
+            &[0x08][..],
+            &b"IMCD"[..],
+            &[0x08][..],
+        ]
+        .concat();
+        assert!(
+            contains_subslice(aml, &field),
+            "expected DSDT AML to contain IMCR Field (IMCS/IMCD)"
+        );
+
         // Method (_PIC, 1) {
         //   Store (Arg0, PICM)
         //   Store (0x70, IMCS)

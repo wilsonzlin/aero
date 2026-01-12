@@ -403,6 +403,21 @@ fn dsdt_contains_pci_routing_and_resources() {
         "DSDT AML missing IMCR SystemIO OperationRegion for ports 0x22..0x23"
     );
 
+    let imcr_field = [
+        &[0x5B, 0x81, 0x0F][..], // FieldOp + pkglen
+        &b"IMCR"[..],
+        &[0x01][..], // ByteAcc + NoLock + Preserve
+        &b"IMCS"[..],
+        &[0x08][..],
+        &b"IMCD"[..],
+        &[0x08][..],
+    ]
+    .concat();
+    assert!(
+        find_subslice(aml, &imcr_field).is_some(),
+        "DSDT AML missing IMCR Field (IMCS/IMCD)"
+    );
+
     let pic_body = [
         &b"_PIC"[..],
         &[0x01][..], // 1 arg
