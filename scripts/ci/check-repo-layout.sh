@@ -112,6 +112,7 @@ for md in md_files:
 
     for m in pattern.finditer(text):
         referenced = m.group(1)
+        line_no = text.count("\n", 0, m.start()) + 1
 
         # Ignore glob patterns like `./scripts/*.sh` — these are not literal file
         # paths, and are often used in docs as troubleshooting advice.
@@ -159,14 +160,17 @@ for md in md_files:
 
         if resolved is None:
             tried = ", ".join(tried_candidates) if tried_candidates else "(no repo-local candidates)"
-            errors.append("%s: references '%s', but no such file exists (tried: %s)" % (md, referenced, tried))
+            errors.append(
+                "%s:%d: references '%s', but no such file exists (tried: %s)"
+                % (md, line_no, referenced, tried)
+            )
             continue
 
-        doc_refs.setdefault(resolved, set()).add((md, referenced))
+        doc_refs.setdefault(resolved, set()).add((md, line_no, referenced))
 
 for path in sorted(doc_refs.keys()):
     mode = git_mode(path)
-    refs = ", ".join("%s:%s" % (md, ref) for md, ref in sorted(doc_refs[path]))
+    refs = ", ".join("%s:%d:%s" % (md, line_no, ref) for md, line_no, ref in sorted(doc_refs[path]))
     if mode is None:
         errors.append("%s: referenced by docs but is not present in git (refs: %s)" % (path, refs))
         continue
