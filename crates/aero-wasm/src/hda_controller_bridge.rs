@@ -492,6 +492,39 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
+    fn hda_snapshot_preserves_pending_worklet_ring_state_when_unattached() {
+        let mut guest = vec![0u8; 0x8000];
+        let guest_base = guest.as_mut_ptr() as u32;
+        let guest_size = guest.len() as u32;
+
+        let mut bridge = HdaControllerBridge::new(guest_base, guest_size, None).unwrap();
+        bridge.pending_audio_ring_state = Some(AudioWorkletRingState {
+            capacity_frames: 256,
+            write_pos: 42,
+            read_pos: 7,
+        });
+
+        let snap = bridge.save_state();
+
+        let mut restored = HdaControllerBridge::new(guest_base, guest_size, None).unwrap();
+        restored.load_state(&snap).unwrap();
+        assert_eq!(
+            restored.pending_audio_ring_state,
+            Some(AudioWorkletRingState {
+                capacity_frames: 256,
+                write_pos: 42,
+                read_pos: 7,
+            })
+        );
+
+        // When no worklet ring is attached at restore-time, `load_state` caches the ring indices
+        // until `attach_audio_ring`. Ensure `save_state` still includes those cached indices so
+        // restore→save preserves determinism.
+        let snap2 = restored.save_state();
+        assert_eq!(snap2, snap);
+    }
+
+    #[wasm_bindgen_test]
     fn hda_guest_memory_zero_fills_on_addr_len_overflow() {
         let mut guest = vec![0u8; 16];
         guest[0] = 0xAB;
