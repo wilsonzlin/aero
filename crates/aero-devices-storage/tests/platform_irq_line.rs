@@ -1,6 +1,7 @@
 use aero_devices::irq::PlatformIrqLine;
 use aero_devices_storage::ahci::AhciController;
 use aero_devices_storage::ide::IdeController;
+use aero_devices_storage::pci_ide::PRIMARY_PORTS;
 use aero_platform::interrupts::PlatformInterrupts;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -30,6 +31,6 @@ fn ide_controller_accepts_platform_irq_lines() {
     let mut ide = IdeController::new(Box::new(irq14), Box::new(irq15));
 
     // Simple IO reads/writes should compile and run with platform IRQ lines.
-    let _ = ide.read_u8(0x1F0);
-    ide.write_u8(0x1F0, 0);
+    let _ = ide.read_u8(PRIMARY_PORTS.cmd_base);
+    ide.write_u8(PRIMARY_PORTS.cmd_base, 0);
 }

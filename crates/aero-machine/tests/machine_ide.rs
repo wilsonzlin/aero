@@ -3,6 +3,7 @@
 use aero_cpu_core::state::RFLAGS_IF;
 use aero_devices::pci::{profile, PciBdf, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
 use aero_devices_storage::atapi::AtapiCdrom;
+use aero_devices_storage::pci_ide::{PRIMARY_PORTS, SECONDARY_PORTS};
 use aero_machine::{Machine, MachineConfig, RunExit};
 use aero_platform::interrupts::InterruptController;
 use aero_storage::{MemBackend, RawDisk, VirtualDisk as _, SECTOR_SIZE};
@@ -65,20 +66,20 @@ fn machine_piix3_ide_pio_read_raises_irq14() {
     let bdf = profile::IDE_PIIX3.bdf;
     m.io_write(PCI_CFG_ADDR_PORT, 4, pci_cfg_addr(bdf, 0x04));
     m.io_write(PCI_CFG_DATA_PORT, 2, 0x0000);
-    assert_eq!(m.io_read(0x1F7, 1) as u8, 0xFF);
+    assert_eq!(m.io_read(PRIMARY_PORTS.cmd_base + 7, 1) as u8, 0xFF);
 
     // Enable IDE COMMAND.IO | COMMAND.BME.
     m.io_write(PCI_CFG_ADDR_PORT, 4, pci_cfg_addr(bdf, 0x04));
     m.io_write(PCI_CFG_DATA_PORT, 2, 0x0005);
-    assert_ne!(m.io_read(0x1F7, 1) as u8, 0xFF);
+    assert_ne!(m.io_read(PRIMARY_PORTS.cmd_base + 7, 1) as u8, 0xFF);
 
     // Issue a PIO READ SECTORS (0x20) for LBA 0, count 1, primary master.
-    m.io_write(0x1F2, 1, 1); // sector count
-    m.io_write(0x1F3, 1, 0); // LBA0
-    m.io_write(0x1F4, 1, 0); // LBA1
-    m.io_write(0x1F5, 1, 0); // LBA2
-    m.io_write(0x1F6, 1, 0xE0); // master + LBA mode
-    m.io_write(0x1F7, 1, 0x20); // READ SECTORS
+    m.io_write(PRIMARY_PORTS.cmd_base + 2, 1, 1); // sector count
+    m.io_write(PRIMARY_PORTS.cmd_base + 3, 1, 0); // LBA0
+    m.io_write(PRIMARY_PORTS.cmd_base + 4, 1, 0); // LBA1
+    m.io_write(PRIMARY_PORTS.cmd_base + 5, 1, 0); // LBA2
+    m.io_write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0); // master + LBA mode
+    m.io_write(PRIMARY_PORTS.cmd_base + 7, 1, 0x20); // READ SECTORS
 
     // Poll the machine once so IDE IRQ levels are synchronized into the platform controller.
     // With IF=0, the interrupt should remain pending in the PIC.
@@ -88,8 +89,8 @@ fn machine_piix3_ide_pio_read_raises_irq14() {
     assert_eq!(pending, Some(0x76), "IDE primary should assert ISA IRQ14");
 
     // Consume the first 4 bytes from the data port and validate content.
-    let w0 = m.io_read(0x1F0, 2) as u16;
-    let w1 = m.io_read(0x1F0, 2) as u16;
+    let w0 = m.io_read(PRIMARY_PORTS.cmd_base, 2) as u16;
+    let w1 = m.io_read(PRIMARY_PORTS.cmd_base, 2) as u16;
     let mut out = [0u8; 4];
     out[0..2].copy_from_slice(&w0.to_le_bytes());
     out[2..4].copy_from_slice(&w1.to_le_bytes());
@@ -146,7 +147,7 @@ fn machine_piix3_ide_secondary_identify_aborts_and_raises_irq15() {
     m.io_write(PCI_CFG_DATA_PORT, 2, 0x0001);
 
     // IDENTIFY DEVICE (0xEC) on an ATAPI device aborts and raises an interrupt.
-    m.io_write(0x177, 1, 0xEC);
+    m.io_write(SECONDARY_PORTS.cmd_base + 7, 1, 0xEC);
 
     // Poll once so the IDE IRQ pending state is synchronized into the platform controller. With
     // IF=0, the PIC should retain the interrupt as pending.
