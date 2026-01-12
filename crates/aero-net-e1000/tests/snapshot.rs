@@ -9,6 +9,8 @@ use memory::MemoryBus;
 use nt_packetlib::io::net::packet::checksum::ipv4_header_checksum;
 
 const REG_IMS: u32 = 0x00D0;
+const REG_ICR: u32 = 0x00C0;
+const REG_ICS: u32 = 0x00C8;
 
 const REG_RCTL: u32 = 0x0100;
 const REG_RDBAL: u32 = 0x2800;
@@ -244,6 +246,37 @@ fn snapshot_roundtrip_preserves_key_state() {
 
     assert_eq!(dma.read_vec(rx_buf0, rx1.len()), rx1);
     assert_eq!(dma.read_vec(rx_buf1, rx2.len()), rx2);
+}
+
+#[test]
+fn snapshot_roundtrip_preserves_pci_intx_disable_bit() {
+    let mut dev = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
+
+    // Raise an interrupt cause so the device would normally assert INTx.
+    dev.mmio_write_u32_reg(REG_IMS, ICR_TXDW);
+    dev.mmio_write_u32_reg(REG_ICS, ICR_TXDW);
+    assert!(dev.irq_level());
+
+    // Disable INTx via PCI command bit 10; the line must be deasserted.
+    dev.pci_config_write(0x04, 2, 1 << 10);
+    assert!(!dev.irq_level());
+
+    let snapshot = dev.save_state();
+
+    let mut restored = E1000Device::new([0; 6]);
+    restored.load_state(&snapshot).unwrap();
+
+    // The disable bit should still gate the interrupt line on restore.
+    assert!(!restored.irq_level());
+
+    // Re-enable INTx: since the interrupt cause is still pending, the line should reassert.
+    restored.pci_config_write(0x04, 2, 0);
+    assert!(restored.irq_level());
+
+    // ICR reads have side-effects (clears pending causes) and should match.
+    let icr = restored.mmio_read_u32(REG_ICR);
+    assert_eq!(icr & ICR_TXDW, ICR_TXDW);
+    assert!(!restored.irq_level());
 }
 
 #[test]
