@@ -11,6 +11,12 @@ pub struct CompiledBlockMeta {
     pub code_paddr: u64,
     pub byte_len: u32,
     pub page_versions: Vec<PageVersionSnapshot>,
+    /// Architectural guest instruction count for this block (i.e. number of retired guest
+    /// instructions when the block commits).
+    pub instruction_count: u32,
+    /// Whether the last executed instruction creates an interrupt shadow that inhibits maskable
+    /// interrupts for the following instruction.
+    pub inhibit_interrupts_after_block: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

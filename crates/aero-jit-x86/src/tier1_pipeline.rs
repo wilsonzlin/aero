@@ -159,7 +159,9 @@ where
             self.limits,
             self.wasm_options,
         )?;
-        let meta = shrink_meta(pre_meta, compilation.byte_len);
+        let mut meta = shrink_meta(pre_meta, compilation.byte_len);
+        meta.instruction_count = compilation.instruction_count;
+        meta.inhibit_interrupts_after_block = false;
 
         let table_index = self
             .registry

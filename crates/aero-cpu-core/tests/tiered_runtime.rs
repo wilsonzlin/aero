@@ -153,6 +153,8 @@ fn code_cache_eviction_is_lru_and_size_capped() {
                 code_paddr: entry_rip,
                 byte_len,
                 page_versions: Vec::new(),
+                instruction_count: 0,
+                inhibit_interrupts_after_block: false,
             },
         }
     }
@@ -277,6 +279,7 @@ fn mixed_mode_exit_to_interpreter_forces_one_interpreter_block() {
         JitBlockExit {
             next_rip: 1,
             exit_to_interpreter: true,
+            committed: true,
         }
     });
     backend.install(1, |cpu: &mut TestCpu| {
@@ -284,6 +287,7 @@ fn mixed_mode_exit_to_interpreter_forces_one_interpreter_block() {
         JitBlockExit {
             next_rip: 2,
             exit_to_interpreter: false,
+            committed: true,
         }
     });
 
@@ -340,6 +344,7 @@ fn interrupt_shadow_is_respected_across_jit_blocks() {
         JitBlockExit {
             next_rip: 1,
             exit_to_interpreter: false,
+            committed: true,
         }
     });
 
@@ -385,6 +390,7 @@ fn pending_interrupt_delivered_at_jit_block_boundaries() {
         JitBlockExit {
             next_rip: 1,
             exit_to_interpreter: false,
+            committed: true,
         }
     });
 

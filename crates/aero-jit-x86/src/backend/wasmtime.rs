@@ -268,6 +268,7 @@ where
             return JitBlockExit {
                 next_rip: pre_state.rip,
                 exit_to_interpreter: true,
+                committed: false,
             };
         }
 
@@ -282,6 +283,7 @@ where
         JitBlockExit {
             next_rip,
             exit_to_interpreter,
+            committed: true,
         }
     }
 }

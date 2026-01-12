@@ -11,6 +11,7 @@ use crate::tier1::{
     discover_block, translate_block, BlockLimits, Tier1WasmCodegen, Tier1WasmOptions,
 };
 use crate::Tier1Bus;
+use aero_x86::tier1::InstKind;
 
 #[derive(Debug, Error)]
 pub enum Tier1CompileError {
@@ -23,6 +24,8 @@ pub enum Tier1CompileError {
 pub struct Tier1Compilation {
     pub entry_rip: u64,
     pub byte_len: u32,
+    /// Number of architectural guest instructions executed by the block.
+    pub instruction_count: u32,
     pub wasm_bytes: Vec<u8>,
     pub exit_to_interpreter: bool,
 }
@@ -46,6 +49,13 @@ pub fn compile_tier1_block_with_options<B: Tier1Bus>(
 ) -> Result<Tier1Compilation, Tier1CompileError> {
     let block = discover_block(bus, entry_rip, limits);
     let byte_len: u32 = block.insts.iter().map(|inst| inst.len as u32).sum();
+    let instruction_count = {
+        let mut count = u32::try_from(block.insts.len()).unwrap_or(u32::MAX);
+        if matches!(block.insts.last().map(|inst| &inst.kind), Some(InstKind::Invalid)) {
+            count = count.saturating_sub(1);
+        }
+        count
+    };
     let ir = translate_block(&block);
 
     if let Some(helper) = ir.insts.iter().find_map(|inst| match inst {
@@ -63,6 +73,7 @@ pub fn compile_tier1_block_with_options<B: Tier1Bus>(
     Ok(Tier1Compilation {
         entry_rip,
         byte_len,
+        instruction_count,
         wasm_bytes,
         exit_to_interpreter,
     })

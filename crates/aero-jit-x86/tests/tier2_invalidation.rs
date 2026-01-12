@@ -269,6 +269,7 @@ impl JitBackend for WasmiTraceBackend {
         JitBlockExit {
             next_rip,
             exit_to_interpreter: false,
+            committed: true,
         }
     }
 }

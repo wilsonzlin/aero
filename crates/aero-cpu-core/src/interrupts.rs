@@ -302,6 +302,17 @@ impl PendingEventState {
         }
     }
 
+    /// Bulk version of [`Self::retire_instruction`].
+    ///
+    /// This must match the semantics of calling [`Self::retire_instruction`] `instructions` times.
+    pub fn retire_instructions(&mut self, instructions: u64) {
+        if self.interrupt_inhibit == 0 || instructions == 0 {
+            return;
+        }
+        let dec = instructions.min(self.interrupt_inhibit as u64) as u8;
+        self.interrupt_inhibit -= dec;
+    }
+
     /// Current interrupt inhibition/shadow counter.
     ///
     /// This is non-architectural Tier-0 bookkeeping that must be preserved across

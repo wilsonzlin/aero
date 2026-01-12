@@ -259,6 +259,7 @@ fn wasmtime_backend_executes_inline_tlb_load_store() {
     let exit = backend.execute(idx, &mut cpu);
     assert_eq!(exit.next_rip, 0x2000);
     assert!(!exit.exit_to_interpreter);
+    assert!(exit.committed);
     assert_eq!(cpu.gpr[Gpr::Rax.as_u8() as usize], 0x1122_3344);
 
     let bytes = [
@@ -312,5 +313,6 @@ fn wasmtime_backend_inline_tlb_mmio_exit_sets_next_rip() {
     let exit = backend.execute(idx, &mut cpu);
     assert!(exit.exit_to_interpreter);
     assert_eq!(exit.next_rip, entry);
+    assert!(!exit.committed, "MMIO exit rolls back guest state");
     assert_eq!(cpu.rip, entry);
 }

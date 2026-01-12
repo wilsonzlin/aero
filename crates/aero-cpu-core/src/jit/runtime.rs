@@ -37,6 +37,13 @@ pub trait JitBackend {
 pub struct JitBlockExit {
     pub next_rip: u64,
     pub exit_to_interpreter: bool,
+    /// Whether the block committed architectural side effects (register/memory updates) and thus
+    /// retired guest instructions.
+    ///
+    /// Some backends may speculatively execute a block and then roll back guest state when the
+    /// block performs a runtime/MMIO/page-fault exit without deoptimization metadata. In those
+    /// cases, the execution engine must *not* advance time/TSC or age interrupt-shadow state.
+    pub committed: bool,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -167,6 +174,8 @@ where
             code_paddr,
             byte_len,
             page_versions: self.page_versions.snapshot(code_paddr, byte_len),
+            instruction_count: 0,
+            inhibit_interrupts_after_block: false,
         }
     }
 

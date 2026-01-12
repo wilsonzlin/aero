@@ -8,6 +8,16 @@ pub trait ExecCpu {
     fn rip(&self) -> u64;
     fn set_rip(&mut self, rip: u64);
     fn maybe_deliver_interrupt(&mut self) -> bool;
+    /// Called by the tiered execution dispatcher when a block of guest instructions retires.
+    ///
+    /// Tier-0 (interpreter) backends typically perform per-instruction retirement bookkeeping
+    /// directly. Tier-1+ JIT backends may retire multiple guest instructions at once and need a
+    /// generic way to request the same architectural bookkeeping without knowing the concrete CPU
+    /// type.
+    ///
+    /// Default implementation is a no-op so non-core CPU models used in unit tests remain
+    /// source-compatible.
+    fn on_retire_instructions(&mut self, _instructions: u64, _inhibit_interrupts: bool) {}
 }
 
 pub trait Interpreter<Cpu: ExecCpu> {
@@ -76,6 +86,10 @@ where
 
         let handle = compiled.expect("checked is_some above");
         let exit: JitBlockExit = self.jit.execute_block(cpu, &handle);
+        if exit.committed {
+            let retired = u64::from(handle.meta.instruction_count);
+            cpu.on_retire_instructions(retired, handle.meta.inhibit_interrupts_after_block);
+        }
         cpu.set_rip(exit.next_rip);
         self.force_interpreter = exit.exit_to_interpreter;
 
@@ -166,6 +180,16 @@ impl<B: crate::mem::CpuBus> ExecCpu for Vcpu<B> {
         }
 
         false
+    }
+
+    fn on_retire_instructions(&mut self, instructions: u64, inhibit_interrupts: bool) {
+        self.cpu.pending.retire_instructions(instructions);
+        self.cpu.time.advance_cycles(instructions);
+        let tsc = self.cpu.time.read_tsc();
+        self.cpu.state.msr.tsc = tsc;
+        if inhibit_interrupts {
+            self.cpu.pending.inhibit_interrupts_for_one_instruction();
+        }
     }
 }
 
