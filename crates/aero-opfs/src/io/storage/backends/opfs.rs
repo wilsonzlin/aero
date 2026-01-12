@@ -334,6 +334,9 @@ mod wasm {
     // Mark the backend as `Send` only when the wasm target does not have thread/atomics support.
     // If we ever opt into wasm threads (`target-feature=+atomics`), this impl is intentionally
     // disabled so we can revisit the safety story.
+    //
+    // SAFETY: On wasm32 without atomics, there is no `std::thread::spawn` and no way to move this
+    // value to another thread, so treating it as `Send` is sound in practice.
     #[cfg(not(target_feature = "atomics"))]
     unsafe impl Send for OpfsBackend {}
 
