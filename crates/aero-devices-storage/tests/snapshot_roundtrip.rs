@@ -442,3 +442,51 @@ fn piix3_ide_snapshot_roundtrip_preserves_dma_inflight_and_atapi_sense() {
     assert_eq!(sense[2] & 0x0F, 0x06); // UNIT ATTENTION
     assert_eq!(sense[12], 0x28); // MEDIUM CHANGED
 }
+
+#[test]
+fn piix3_ide_snapshot_roundtrip_preserves_atapi_media_present_false_even_if_backend_is_reattached() {
+    // Attach an ATAPI device with an *empty* tray (no backend, tray closed). Snapshot/restore must
+    // preserve the guest-visible "no media present" state even if the platform reattaches an ISO
+    // backend after restore.
+    let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
+    ide.borrow_mut()
+        .controller
+        .attach_secondary_master_atapi(AtapiCdrom::new(None));
+    ide.borrow_mut().config_mut().set_command(0x0001); // I/O decode
+
+    let snap = ide.borrow().save_state();
+
+    let mut restored = Piix3IdePciDevice::new();
+    restored.load_state(&snap).unwrap();
+    restored.config_mut().set_command(0x0001);
+
+    // Reattach a backend even though the snapshot had no media present.
+    restored
+        .controller
+        .attach_secondary_master_atapi_backend_for_restore(Box::new(MemIso::new(1)));
+
+    let restored = Rc::new(RefCell::new(restored));
+    let mut io = IoPortBus::new();
+    register_piix3_ide_ports(&mut io, restored.clone());
+
+    // TEST UNIT READY should fail with MEDIUM NOT PRESENT.
+    io.write(SECONDARY_PORTS.cmd_base + 6, 1, 0xA0);
+    let tur = [0u8; 12];
+    send_atapi_packet(&mut io, SECONDARY_PORTS.cmd_base, 0, &tur, 0);
+    let _ = io.read(SECONDARY_PORTS.cmd_base + 7, 1);
+
+    io.write(SECONDARY_PORTS.cmd_base + 6, 1, 0xA0);
+    let mut req_sense = [0u8; 12];
+    req_sense[0] = 0x03;
+    req_sense[4] = 18;
+    send_atapi_packet(&mut io, SECONDARY_PORTS.cmd_base, 0, &req_sense, 18);
+
+    let mut sense = [0u8; 18];
+    for i in 0..(18 / 2) {
+        let w = io.read(SECONDARY_PORTS.cmd_base, 2) as u16;
+        sense[i * 2..i * 2 + 2].copy_from_slice(&w.to_le_bytes());
+    }
+
+    assert_eq!(sense[2] & 0x0F, 0x02); // NOT READY
+    assert_eq!(sense[12], 0x3A); // MEDIUM NOT PRESENT
+}

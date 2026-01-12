@@ -95,6 +95,13 @@ impl Sense {
 pub struct AtapiCdrom {
     backend: Option<Box<dyn IsoBackend>>,
     tray_open: bool,
+    /// Guest-visible media presence (independent of whether the host ISO backend is currently
+    /// attached).
+    ///
+    /// On snapshot restore, the device drops the host-side backend reference, but the guest-visible
+    /// state must still round-trip. The platform is expected to re-attach the backend before
+    /// resuming guest execution.
+    media_present: bool,
     media_changed: bool,
     sense: Sense,
     supports_dma: bool,
@@ -104,10 +111,12 @@ impl AtapiCdrom {
     pub const SECTOR_SIZE: usize = 2048;
 
     pub fn new(backend: Option<Box<dyn IsoBackend>>) -> Self {
-        let media_changed = backend.is_some();
+        let media_present = backend.is_some();
+        let media_changed = media_present;
         Self {
             backend,
             tray_open: false,
+            media_present,
             media_changed,
             sense: Sense::ok(),
             supports_dma: true,
@@ -121,6 +130,7 @@ impl AtapiCdrom {
     pub fn insert_media(&mut self, backend: Box<dyn IsoBackend>) {
         self.backend = Some(backend);
         self.tray_open = false;
+        self.media_present = true;
         self.media_changed = true;
     }
 
@@ -136,6 +146,7 @@ impl AtapiCdrom {
     pub fn eject_media(&mut self) {
         self.backend = None;
         self.tray_open = true;
+        self.media_present = false;
         self.media_changed = true;
     }
 
@@ -190,7 +201,7 @@ impl AtapiCdrom {
                 ascq: 0,
             });
         }
-        if self.tray_open || self.backend.is_none() {
+        if self.tray_open || !self.media_present || self.backend.is_none() {
             self.set_sense(SENSE_NOT_READY, ASC_MEDIUM_NOT_PRESENT, 0);
             return Err(PacketResult::Error {
                 sense_key: SENSE_NOT_READY,
@@ -498,7 +509,7 @@ impl AtapiCdrom {
         // Event code 0 = no change. Provide basic media/tray status bits.
         out[4] = 0x00;
         let mut status = 0u8;
-        if self.backend.is_some() {
+        if self.media_present {
             status |= 0x01;
         }
         if self.tray_open {
@@ -568,7 +579,7 @@ impl AtapiCdrom {
         IdeAtapiDeviceState {
             tray_open: self.tray_open,
             media_changed: self.media_changed,
-            media_present: self.backend.is_some(),
+            media_present: self.media_present,
             sense_key: self.sense.key,
             asc: self.sense.asc,
             ascq: self.sense.ascq,
@@ -577,6 +588,7 @@ impl AtapiCdrom {
 
     pub fn restore_state(&mut self, state: &IdeAtapiDeviceState) {
         self.tray_open = state.tray_open;
+        self.media_present = state.media_present;
         self.media_changed = state.media_changed;
         self.sense = Sense {
             key: state.sense_key,
