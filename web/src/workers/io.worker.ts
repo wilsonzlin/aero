@@ -690,9 +690,8 @@ let audioHdaBridge: AudioHdaSnapshotBridgeLike | null = null;
 let pendingAudioHdaSnapshotBytes: Uint8Array | null = null;
 
 function resolveAudioHdaSnapshotBridge(): AudioHdaSnapshotBridgeLike | null {
-  // Preferred: the live guest HDA controller bridge owned by the IO worker.
-  // This is the canonical device instance during real VM runs.
-  if (hdaControllerBridge) return hdaControllerBridge as unknown as AudioHdaSnapshotBridgeLike;
+  // Preferred: the snapshot-capable HDA bridge explicitly provided by the audio integration (usually
+  // the live IO-worker HDA controller bridge, but only when it supports save/load exports).
   if (audioHdaBridge) return audioHdaBridge;
 
   // Allow other runtimes/experiments to attach an HDA bridge via a well-known global.
@@ -731,20 +730,36 @@ function snapshotAudioHdaDeviceState(): { kind: string; bytes: Uint8Array } | nu
 
 function restoreAudioHdaDeviceState(bytes: Uint8Array): void {
   const bridge = resolveAudioHdaSnapshotBridge();
-  if (!bridge) {
-    // The HDA device bridge may not be initialized yet (WASM init races worker init). Cache the
-    // blob and apply it once the bridge becomes available.
+  const cachePending = () => {
+    // Cache a copy: restored snapshot byte arrays may be backed by transferable buffers (e.g. a
+    // transferred ArrayBuffer) or by WASM memory views.
     const copy = new Uint8Array(bytes.byteLength);
     copy.set(bytes);
     pendingAudioHdaSnapshotBytes = copy;
+  };
+  if (!bridge) {
+    // The HDA device bridge may not be initialized yet (WASM init races worker init). Cache the
+    // blob and apply it once the bridge becomes available.
+    cachePending();
     return;
   }
 
   const load =
     (bridge as unknown as { load_state?: unknown }).load_state ?? (bridge as unknown as { restore_state?: unknown }).restore_state;
-  if (typeof load !== "function") return;
-  load.call(bridge, bytes);
-  pendingAudioHdaSnapshotBytes = null;
+  if (typeof load !== "function") {
+    // The bridge exists but doesn't support snapshot restore yet (older WASM build). Keep the blob
+    // cached so it can be applied if a compatible bridge becomes available later (e.g. via a global
+    // hook).
+    cachePending();
+    return;
+  }
+  try {
+    load.call(bridge, bytes);
+    pendingAudioHdaSnapshotBytes = null;
+  } catch (err) {
+    console.warn("[io.worker] HDA audio load_state failed:", err);
+    cachePending();
+  }
 }
 type NetStackSnapshotBridgeLike = {
   save_state?: () => Uint8Array;
