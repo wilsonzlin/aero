@@ -526,6 +526,24 @@ For each inlined memory access:
 
 ### Physical Memory Regions
 
+#### PC/Q35: ECAM + PCI/MMIO holes (non-contiguous RAM)
+
+On the canonical PC platform, guest physical RAM is **not always a single contiguous**
+`[0, total_ram)` region:
+
+- Low RAM is usable up to `aero_pc_constants::PCIE_ECAM_BASE` (`0xB000_0000`).
+- `0xB000_0000..0xC000_0000` is reserved for the PCIe **ECAM/MMCONFIG** window (`PCIE_ECAM_SIZE =
+  0x1000_0000`).
+- `0xC000_0000..0x1_0000_0000` is the below-4 GiB **PCI/MMIO hole** (PCI BARs + chipset MMIO).
+- If `total_ram > 0xB000_0000`, the BIOS remaps the remaining RAM above 4 GiB starting at
+  `0x1_0000_0000` so the configured RAM size is preserved.
+
+This means a RAM backend cannot assume `paddr < ram_size ⇒ RAM`. It must be able to represent a
+**segmented** (non-contiguous) guest-physical RAM layout and treat the holes as unmapped unless an
+MMIO device claims them. Unclaimed hole reads should behave like **open bus** (return `0xFF` bytes).
+
+See: `crates/firmware/src/bios/interrupts.rs::build_e820_map`
+
 Even though `0x000A_0000–0x000B_FFFF` sits in the “conventional memory” area, it must be treated as device memory: the emulator should register an `MmioRegion` for the **AeroGPU legacy VGA window**, so BIOS/bootloader/Windows writes to `0xB8000` (text mode) and VBE LFB modes are visible on the canvas.
 
 See: [AeroGPU Legacy VGA/VBE Compatibility](./16-aerogpu-vga-vesa-compat.md)
@@ -563,11 +581,15 @@ impl MemoryBus {
         }
         
         // Regular RAM
+        //
+        // Note: on PC/Q35 this cannot be a simple `paddr < ram_size` check once ECAM/MMIO holes are
+        // modeled; RAM may be split into low RAM + high RAM above 4GiB. The real implementation
+        // must be hole-aware and translate `paddr -> ram_offset` based on the E820 map.
         if paddr < self.ram_size as u64 {
             return self.read_ram(paddr, size);
         }
         
-        // Unmapped - return all 1s
+        // Unmapped / open bus - return all 1s (byte reads = 0xFF)
         !0u64
     }
     

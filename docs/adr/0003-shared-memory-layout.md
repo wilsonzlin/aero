@@ -93,6 +93,31 @@ Contract:
   - The JS-side probe uses a small **16-word (64 byte)** context-based window (to reduce cross-worker races), which must fit inside the tail guard.
   - See `crates/aero-wasm/src/runtime_alloc.rs` (`HEAP_TAIL_GUARD_BYTES`) and `web/src/runtime/wasm_memory_probe.ts`.
 
+### Addendum: PC/Q35 ECAM + PCI holes (non-contiguous guest RAM)
+
+Once we model the canonical PC/Q35 PCI layout, **identity-mapped guest RAM is not sufficient**:
+
+- Firmware reserves a PCIe ECAM/MMCONFIG window at `0xB000_0000..0xC000_0000`
+  (`aero_pc_constants::PCIE_ECAM_BASE`, `PCIE_ECAM_SIZE`).
+- Firmware reserves the PCI/MMIO hole at `0xC000_0000..0x1_0000_0000` (4 GiB).
+- When `total_ram > 0xB000_0000`, firmware remaps the remainder above 4 GiB starting at
+  `0x1_0000_0000` so the configured RAM size is preserved.
+
+This means guest physical RAM becomes **segmented** (low RAM + high RAM) with **holes** in between.
+Any RAM backend that assumes “RAM is `[0, guest_size)`” will incorrectly back the ECAM/MMIO holes
+with RAM bytes.
+
+Required behavior:
+
+- Hole addresses must not be treated as RAM.
+- If a hole address is not claimed by an MMIO device, reads must behave like **open bus**
+  (return `0xFF` bytes / all-ones).
+
+Source of truth:
+
+- `crates/firmware/src/bios/interrupts.rs::build_e820_map`
+- `crates/aero-pc-constants/src/lib.rs`
+
 Reference implementation:
 
 - Shared-memory segment allocation + layout computation: [`web/src/runtime/shared_layout.ts`](../../web/src/runtime/shared_layout.ts)

@@ -174,16 +174,36 @@ Desktop (explorer.exe)
 
 ## Memory Map
 
-Standard PC memory map that BIOS must report via E820:
+PC/Q35 memory map that BIOS must report via E820 (source of truth:
+`crates/firmware/src/bios/interrupts.rs::build_e820_map`, constants in
+`crates/aero-pc-constants/src/lib.rs`):
 
 ```
-0x00000000 - 0x0009FFFF   640 KB    Conventional memory (usable)
-0x000A0000 - 0x000BFFFF   128 KB    VGA memory (reserved)
-0x000C0000 - 0x000FFFFF   256 KB    ROM area (reserved)
-0x00100000 - 0xXXXXXXXX   ...       Extended memory (usable)
-0xXXXXXXXX - 0xFEFFFFFF   ...       PCI MMIO (reserved)
-0xFF000000 - 0xFFFFFFFF   16 MB     BIOS ROM (reserved)
+0x0000_0000 - 0x0009_EFFF   639 KiB   Conventional memory (usable)
+0x0009_F000 - 0x0009_FFFF     4 KiB   EBDA (reserved)
+0x000A_0000 - 0x000F_FFFF   384 KiB   VGA/BIOS/option ROM window (reserved)
+
+0x0010_0000 - 0xB000_0000   ...       Low RAM (usable; clamped to ECAM base)
+
+0xB000_0000 - 0xC000_0000   256 MiB   PCIe ECAM / MMCONFIG (reserved)
+                              - `aero_pc_constants::PCIE_ECAM_BASE = 0xB000_0000`
+                              - `PCIE_ECAM_SIZE = 0x1000_0000`
+
+0xC000_0000 - 0x1_0000_0000  1 GiB    PCI/MMIO hole (reserved; PCI BARs, APIC/HPET, etc.)
+
+0x1_0000_0000 - ...          ...      High RAM remap (usable, only when RAM > 0xB000_0000)
+                                    High RAM length = `total_ram - 0xB000_0000`
 ```
+
+When the configured guest RAM size exceeds `PCIE_ECAM_BASE` (`0xB000_0000`), the BIOS reserves the
+ECAM window (`0xB000_0000..0xC000_0000`) and the PCI/MMIO hole (`0xC000_0000..0x1_0000_0000`) in
+the E820 map. To preserve the configured RAM size, the remainder is remapped above 4 GiB starting
+at `0x1_0000_0000`.
+
+This implies the emulator’s RAM backend must be **hole-aware**: guest RAM is not a single
+contiguous `[0, total_ram)` region once PCI holes are modeled. Physical addresses in the reserved
+holes must not hit RAM (and if not claimed by an MMIO device, should behave like open bus reads:
+`0xFF` bytes / all-ones).
 
 ---
 

@@ -679,7 +679,45 @@ Clearing the last pending enabled bit (write-1-to-clear in `PM1_STS` / `GPE_STS`
 
 ---
 
-## E820 Memory Map
+## E820 map + PCI holes + high memory
+
+The BIOS reports guest physical memory via **INT 15h, EAX=E820h**. For the canonical PC machine we
+follow a Q35-style layout that reserves PCI configuration/MMIO windows below 4 GiB.
+
+**Source of truth:**
+
+- E820 construction: `crates/firmware/src/bios/interrupts.rs::build_e820_map`
+- ECAM constants shared with the platform/MMIO wiring: `crates/aero-pc-constants/src/lib.rs`
+
+### Constants (PC/Q35)
+
+- `aero_pc_constants::PCIE_ECAM_BASE = 0xB000_0000`
+- `PCIE_ECAM_SIZE = 0x1000_0000` (256 MiB)
+- PCI/MMIO hole starts at `0xC000_0000` and extends to `0x1_0000_0000` (4 GiB)
+
+### Layout diagram (when `total_ram > PCIE_ECAM_BASE`)
+
+```
+guest physical address space
+
+0x0000_0000 --------------------------------------------------------------+
+        low RAM (usable)                                                  |
+0xB000_0000 --------------------------------------------------------------+
+        PCIe ECAM / MMCONFIG (reserved, 256MiB)                           |
+0xC000_0000 --------------------------------------------------------------+
+        PCI/MMIO hole (reserved; PCI BARs, LAPIC/IOAPIC/HPET MMIO, etc.)   |
+0x1_0000_0000 ------------------------------------------------------------+
+        high RAM remap (usable): length = total_ram - 0xB000_0000         |
+0x1_0000_0000 + (total_ram - 0xB000_0000) --------------------------------+
+```
+
+When the configured RAM exceeds `0xB000_0000`, the BIOS **clamps low RAM** to end at
+`PCIE_ECAM_BASE`, reserves the ECAM + PCI/MMIO windows in E820, and **remaps the remainder above
+4 GiB starting at `0x1_0000_0000`** so the guest doesn’t silently lose memory.
+
+This implies the emulator must support a **non-contiguous** guest-physical RAM layout; addresses in
+the reserved holes must not be backed by RAM (and if not handled by an MMIO device, should behave
+like an open bus read).
 
 ```rust
 #[derive(Clone, Copy)]
@@ -699,6 +737,8 @@ pub const E820_UNUSABLE: u32 = 5;
 
 impl Bios {
     fn build_e820_map(&self, total_memory: u64) -> Vec<E820Entry> {
+        // Pseudo-code for illustration; see `crates/firmware/src/bios/interrupts.rs::build_e820_map`
+        // for the exact implementation (including ACPI reserved splits).
         // Reserve a 256MiB PCIe ECAM ("MMCONFIG") window for PCI config space access.
         const PCIE_ECAM_BASE: u64 = 0xB000_0000;
         const PCIE_ECAM_SIZE: u64 = 0x1000_0000;
