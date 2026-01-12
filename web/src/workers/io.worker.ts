@@ -2329,6 +2329,22 @@ async function handleVmSnapshotRestoreFromOpfs(path: string): Promise<{
 async function initWorker(init: WorkerInitMessage): Promise<void> {
   perf.spanBegin("worker:boot");
   try {
+    // Initialize the runtime event ring early so fatal errors during WASM init
+    // can be surfaced via the coordinator's ring log (not just postMessage).
+    //
+    // `worker:init` will re-create the RingBuffer wrapper once the shared layout
+    // views are established; this just ensures `pushEvent*()` has a best-effort
+    // sink from the start of the boot sequence.
+    role = init.role ?? "io";
+    if (!eventRing) {
+      try {
+        const regions = ringRegionsForWorker(role);
+        eventRing = new RingBuffer(init.controlSab, regions.event.byteOffset);
+      } catch {
+        // Ignore if the SAB isn't initialized yet; postMessage ERROR remains a fallback.
+      }
+    }
+
     await perf.spanAsync("wasm:init", async () => {
       try {
         const { api, variant } = await initWasmForContext({
