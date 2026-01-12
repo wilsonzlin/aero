@@ -558,6 +558,8 @@ Supported env vars include:
 - `AERO_L2_ALLOWED_UDP_PORTS` (comma-separated)
 - `AERO_L2_ALLOWED_DOMAINS` / `AERO_L2_BLOCKED_DOMAINS` (comma-separated suffixes)
 - `AERO_L2_ALLOW_PRIVATE_IPS=1` (dev-only; disables private/reserved IP blocking)
+- `AERO_L2_MAX_FRAME_PAYLOAD` (default: `2048`; legacy alias: `AERO_L2_MAX_FRAME_SIZE`)
+- `AERO_L2_MAX_CONTROL_PAYLOAD` (default: `256`)
 - `AERO_L2_MAX_UDP_FLOWS_PER_TUNNEL` (default: `256`; `0` disables)
 - `AERO_L2_UDP_FLOW_IDLE_TIMEOUT_MS` (default: `60000`; `0` disables)
 - `AERO_L2_STACK_MAX_TCP_CONNECTIONS` (default: `1024`)

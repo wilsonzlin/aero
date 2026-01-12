@@ -22,6 +22,7 @@ helm upgrade --install aero-gateway ./deploy/k8s/chart/aero-gateway \
 
 - `gateway.image.repository` / `gateway.image.tag`
 - `l2Proxy.enabled` / `l2Proxy.image.repository` / `l2Proxy.image.tag` (Option C)
+- `l2Tunnel.maxFramePayloadBytes` / `l2Tunnel.maxControlPayloadBytes` (L2 tunnel payload limits)
 - `ingress.host`
 - `ingress.tls.enabled` / `ingress.tls.secretName` (or `certManager.enabled=true`)
 - `ingress.coopCoep.enabled` (or `gateway.crossOriginIsolation.enabled=true`)
@@ -66,6 +67,23 @@ derived Ingress origin (`http(s)://<ingress.host>`), and you can add additional 
 l2Proxy:
   extraAllowedOrigins:
     - "https://another-frontend.example.com"
+```
+
+### Payload limits (`AERO_L2_MAX_FRAME_PAYLOAD` / `AERO_L2_MAX_CONTROL_PAYLOAD`)
+
+The L2 tunnel framing includes per-message payload limits (bytes).
+
+- `aero-l2-proxy` enforces these limits at runtime via the `AERO_L2_MAX_*` env vars.
+- `aero-gateway` surfaces the same values to clients via `POST /session` `limits.l2.*` so web clients can size
+  frames and control messages correctly.
+
+Configure via:
+
+```yaml
+l2Tunnel:
+  # Defaults (recommended): 2048/256
+  maxFramePayloadBytes: 2048
+  maxControlPayloadBytes: 256
 ```
 
 ### Auth mode (`AERO_L2_AUTH_MODE`)

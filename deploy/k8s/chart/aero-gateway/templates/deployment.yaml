@@ -88,6 +88,14 @@ spec:
               value: {{ .Values.gateway.shutdownGraceMs | quote }}
             - name: RATE_LIMIT_REQUESTS_PER_MINUTE
               value: {{ .Values.gateway.rateLimit.requestsPerMinute | quote }}
+            {{- if not (kindIs "invalid" .Values.l2Tunnel.maxFramePayloadBytes) }}
+            - name: AERO_L2_MAX_FRAME_PAYLOAD
+              value: {{ .Values.l2Tunnel.maxFramePayloadBytes | quote }}
+            {{- end }}
+            {{- if not (kindIs "invalid" .Values.l2Tunnel.maxControlPayloadBytes) }}
+            - name: AERO_L2_MAX_CONTROL_PAYLOAD
+              value: {{ .Values.l2Tunnel.maxControlPayloadBytes | quote }}
+            {{- end }}
             - name: TRUST_PROXY
               value: {{ ternary "1" "0" $trustProxy | quote }}
             {{- if or .Values.gateway.publicBaseUrl .Values.ingress.enabled }}

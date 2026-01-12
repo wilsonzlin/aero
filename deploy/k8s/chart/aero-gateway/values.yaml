@@ -72,6 +72,19 @@ gateway:
   affinity: {}
   topologySpreadConstraints: []
 
+## L2 tunnel protocol payload limits (Option C).
+##
+## These values are enforced by `aero-l2-proxy` and surfaced to clients via
+## `aero-gateway` `POST /session` `limits.l2.*`.
+##
+## Leave as `null` to use the protocol recommended defaults (2048/256).
+##
+l2Tunnel:
+  # Max payload bytes for FRAME messages (excluding the 4-byte L2 tunnel header).
+  maxFramePayloadBytes: null
+  # Max payload bytes for control messages (PING/PONG/ERROR) (excluding the 4-byte header).
+  maxControlPayloadBytes: null
+
 ## Optional: L2 tunnel proxy (`aero-l2-proxy`) for Option C (ADR 0005).
 ##
 ## When enabled, this chart deploys a second service that terminates the `/l2` WebSocket tunnel and

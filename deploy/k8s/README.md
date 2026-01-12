@@ -38,6 +38,10 @@ When enabled, the chart's Ingress routes:
 - `/l2` → `aero-l2-proxy` Service (port 8090)
 - everything else → `aero-gateway` Service
 
+If you override the L2 tunnel payload limits (`AERO_L2_MAX_FRAME_PAYLOAD` / `AERO_L2_MAX_CONTROL_PAYLOAD`),
+configure `l2Tunnel.maxFramePayloadBytes` / `l2Tunnel.maxControlPayloadBytes` so both `aero-l2-proxy` (enforcement)
+and `aero-gateway` (advertising via `POST /session` `limits.l2`) stay in sync.
+
 If you manage your Ingress separately, the equivalent nginx Ingress path addition looks like:
 
 ```yaml
