@@ -99,26 +99,12 @@ type GatewaySessionResponse = Readonly<{
 const DEFAULT_KEEPALIVE_MAX_MS = 15_000;
 
 function parseGatewayBaseUrl(gatewayBaseUrl: string): URL {
-  // `AeroConfig.proxyUrl` (and other web runtime entrypoints) allow same-origin
-  // relative URLs like "/base". `connectL2Tunnel()` should accept the same.
-  if (gatewayBaseUrl.startsWith("/")) {
-    const baseHref = (globalThis as unknown as { location?: { href?: unknown } }).location?.href;
-    if (typeof baseHref !== "string" || baseHref.trim().length === 0) {
-      throw new Error(
-        `gatewayBaseUrl is a relative path (${JSON.stringify(gatewayBaseUrl)}) but globalThis.location.href is unavailable; ` +
-          `pass an absolute gateway URL instead`,
-      );
-    }
-    try {
-      return new URL(gatewayBaseUrl, baseHref);
-    } catch (err) {
-      throw new Error(
-        `gatewayBaseUrl is a relative path (${JSON.stringify(gatewayBaseUrl)}) but could not be resolved against location.href (${JSON.stringify(baseHref)}): ${(err as Error).message}`,
-      );
-    }
-  }
-
-  return new URL(gatewayBaseUrl);
+  // `gatewayBaseUrl` is generally an absolute URL, but same-origin deployments may
+  // pass a relative path like `/base`. Browsers can resolve this against
+  // `location.href`; in Node test runners `location` is absent, so fall back to
+  // `new URL(gatewayBaseUrl)` (which will throw on relative input).
+  const baseHref = (globalThis as unknown as { location?: { href?: unknown } }).location?.href;
+  return baseHref && typeof baseHref === "string" ? new URL(gatewayBaseUrl, baseHref) : new URL(gatewayBaseUrl);
 }
 
 function buildSessionUrl(gatewayBaseUrl: string): string {
