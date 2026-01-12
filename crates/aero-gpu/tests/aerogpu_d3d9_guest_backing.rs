@@ -1218,6 +1218,353 @@ fn d3d9_copy_buffer_writeback_rejects_readonly_alloc() {
 }
 
 #[test]
+fn d3d9_copy_buffer_writeback_does_not_consume_dirty_ranges_on_alloc_table_error() {
+    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
+        Ok(exec) => exec,
+        Err(AerogpuD3d9Error::AdapterNotFound) => {
+            common::skip_or_panic(module_path!(), "wgpu adapter not found");
+            return;
+        }
+        Err(err) => panic!("failed to create executor: {err}"),
+    };
+
+    const OPC_CREATE_BUFFER: u32 = AerogpuCmdOpcode::CreateBuffer as u32;
+    const OPC_RESOURCE_DIRTY_RANGE: u32 = AerogpuCmdOpcode::ResourceDirtyRange as u32;
+    const OPC_COPY_BUFFER: u32 = AerogpuCmdOpcode::CopyBuffer as u32;
+
+    const SRC_HANDLE: u32 = 1;
+    const DST_HANDLE: u32 = 2;
+    const OUT_HANDLE: u32 = 3;
+
+    const SRC_ALLOC_ID: u32 = 1;
+    const DST_ALLOC_ID: u32 = 2;
+    const OUT_ALLOC_ID: u32 = 3;
+
+    const SRC_GPA: u64 = 0x1000;
+    const DST_GPA: u64 = 0x2000;
+    const OUT_GPA: u64 = 0x3000;
+
+    let mut guest_memory = VecGuestMemory::new(0x4000);
+
+    let pattern_a = [
+        0x00u8, 0x01, 0x02, 0x03, 0x10, 0x11, 0x12, 0x13, 0x20, 0x21, 0x22, 0x23, 0x30, 0x31, 0x32,
+        0x33,
+    ];
+    let pattern_b = [
+        0x99u8, 0x98, 0x97, 0x96, 0x89, 0x88, 0x87, 0x86, 0x79, 0x78, 0x77, 0x76, 0x69, 0x68, 0x67,
+        0x66,
+    ];
+
+    guest_memory.write(SRC_GPA, &pattern_a).unwrap();
+    guest_memory.write(DST_GPA, &[0xEEu8; 16]).unwrap();
+    guest_memory.write(OUT_GPA, &[0xEEu8; 16]).unwrap();
+
+    let alloc_table_all = AllocTable::new([
+        (
+            SRC_ALLOC_ID,
+            AllocEntry {
+                flags: 0,
+                gpa: SRC_GPA,
+                size_bytes: 0x1000,
+            },
+        ),
+        (
+            DST_ALLOC_ID,
+            AllocEntry {
+                flags: 0,
+                gpa: DST_GPA,
+                size_bytes: 0x1000,
+            },
+        ),
+        (
+            OUT_ALLOC_ID,
+            AllocEntry {
+                flags: 0,
+                gpa: OUT_GPA,
+                size_bytes: 0x1000,
+            },
+        ),
+    ])
+    .expect("alloc table");
+
+    let alloc_table_src_only = AllocTable::new([(
+        SRC_ALLOC_ID,
+        AllocEntry {
+            flags: 0,
+            gpa: SRC_GPA,
+            size_bytes: 0x1000,
+        },
+    )])
+    .expect("alloc table");
+
+    // First submission: create buffers + mark the src dirty (but do not flush yet).
+    let stream_create = build_stream(|out| {
+        emit_packet(out, OPC_CREATE_BUFFER, |out| {
+            push_u32(out, SRC_HANDLE);
+            push_u32(out, 0); // usage_flags
+            push_u64(out, 16); // size_bytes
+            push_u32(out, SRC_ALLOC_ID);
+            push_u32(out, 0); // backing_offset_bytes
+            push_u64(out, 0); // reserved0
+        });
+
+        emit_packet(out, OPC_CREATE_BUFFER, |out| {
+            push_u32(out, DST_HANDLE);
+            push_u32(out, 0); // usage_flags
+            push_u64(out, 16); // size_bytes
+            push_u32(out, DST_ALLOC_ID);
+            push_u32(out, 0); // backing_offset_bytes
+            push_u64(out, 0); // reserved0
+        });
+
+        emit_packet(out, OPC_CREATE_BUFFER, |out| {
+            push_u32(out, OUT_HANDLE);
+            push_u32(out, 0); // usage_flags
+            push_u64(out, 16); // size_bytes
+            push_u32(out, OUT_ALLOC_ID);
+            push_u32(out, 0); // backing_offset_bytes
+            push_u64(out, 0); // reserved0
+        });
+
+        emit_packet(out, OPC_RESOURCE_DIRTY_RANGE, |out| {
+            push_u32(out, SRC_HANDLE);
+            push_u32(out, 0); // reserved0
+            push_u64(out, 0); // offset_bytes
+            push_u64(out, 16); // size_bytes
+        });
+    });
+
+    exec.execute_cmd_stream_with_guest_memory(
+        &stream_create,
+        &mut guest_memory,
+        Some(&alloc_table_all),
+    )
+    .expect("create should succeed");
+
+    // Second submission: attempt WRITEBACK_DST without including the destination alloc in the alloc
+    // table. This must fail *without* consuming the pending dirty range for the source buffer.
+    let stream_invalid = build_stream(|out| {
+        emit_packet(out, OPC_COPY_BUFFER, |out| {
+            push_u32(out, DST_HANDLE);
+            push_u32(out, SRC_HANDLE);
+            push_u64(out, 0); // dst_offset_bytes
+            push_u64(out, 0); // src_offset_bytes
+            push_u64(out, 16); // size_bytes
+            push_u32(out, AEROGPU_COPY_FLAG_WRITEBACK_DST);
+            push_u32(out, 0); // reserved0
+        });
+    });
+
+    exec.execute_cmd_stream_with_guest_memory(
+        &stream_invalid,
+        &mut guest_memory,
+        Some(&alloc_table_src_only),
+    )
+    .expect_err("expected alloc table validation error");
+
+    // Mutate the guest backing for the source buffer without emitting a new dirty range. If the
+    // executor incorrectly flushed + cleared the dirty range during the failing submission above,
+    // the next copy would observe stale GPU data instead of the updated guest memory.
+    guest_memory.write(SRC_GPA, &pattern_b).unwrap();
+
+    // Third submission: valid writeback into OUT_HANDLE should observe the updated bytes.
+    let stream_valid = build_stream(|out| {
+        emit_packet(out, OPC_COPY_BUFFER, |out| {
+            push_u32(out, OUT_HANDLE);
+            push_u32(out, SRC_HANDLE);
+            push_u64(out, 0); // dst_offset_bytes
+            push_u64(out, 0); // src_offset_bytes
+            push_u64(out, 16); // size_bytes
+            push_u32(out, AEROGPU_COPY_FLAG_WRITEBACK_DST);
+            push_u32(out, 0); // reserved0
+        });
+    });
+
+    exec.execute_cmd_stream_with_guest_memory(
+        &stream_valid,
+        &mut guest_memory,
+        Some(&alloc_table_all),
+    )
+    .expect("writeback should succeed");
+
+    let mut out = [0u8; 16];
+    guest_memory.read(OUT_GPA, &mut out).unwrap();
+    assert_eq!(&out, &pattern_b);
+}
+
+#[test]
+fn d3d9_copy_texture2d_writeback_does_not_consume_dirty_ranges_on_alloc_table_error() {
+    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
+        Ok(exec) => exec,
+        Err(AerogpuD3d9Error::AdapterNotFound) => {
+            common::skip_or_panic(module_path!(), "wgpu adapter not found");
+            return;
+        }
+        Err(err) => panic!("failed to create executor: {err}"),
+    };
+
+    const OPC_CREATE_TEXTURE2D: u32 = AerogpuCmdOpcode::CreateTexture2d as u32;
+    const OPC_RESOURCE_DIRTY_RANGE: u32 = AerogpuCmdOpcode::ResourceDirtyRange as u32;
+    const OPC_COPY_TEXTURE2D: u32 = AerogpuCmdOpcode::CopyTexture2d as u32;
+
+    const SRC_HANDLE: u32 = 1;
+    const DST_HANDLE: u32 = 2;
+    const OUT_HANDLE: u32 = 3;
+
+    const SRC_ALLOC_ID: u32 = 1;
+    const DST_ALLOC_ID: u32 = 2;
+    const OUT_ALLOC_ID: u32 = 3;
+
+    const SRC_GPA: u64 = 0x1000;
+    const DST_GPA: u64 = 0x2000;
+    const OUT_GPA: u64 = 0x3000;
+
+    let mut guest_memory = VecGuestMemory::new(0x4000);
+
+    let pixel_a = [1u8, 2, 3, 4];
+    let pixel_b = [5u8, 6, 7, 8];
+    guest_memory.write(SRC_GPA, &pixel_a).unwrap();
+    guest_memory.write(DST_GPA, &[0xEEu8; 4]).unwrap();
+    guest_memory.write(OUT_GPA, &[0xEEu8; 4]).unwrap();
+
+    let alloc_table_all = AllocTable::new([
+        (
+            SRC_ALLOC_ID,
+            AllocEntry {
+                flags: 0,
+                gpa: SRC_GPA,
+                size_bytes: 0x1000,
+            },
+        ),
+        (
+            DST_ALLOC_ID,
+            AllocEntry {
+                flags: 0,
+                gpa: DST_GPA,
+                size_bytes: 0x1000,
+            },
+        ),
+        (
+            OUT_ALLOC_ID,
+            AllocEntry {
+                flags: 0,
+                gpa: OUT_GPA,
+                size_bytes: 0x1000,
+            },
+        ),
+    ])
+    .expect("alloc table");
+
+    let alloc_table_src_only = AllocTable::new([(
+        SRC_ALLOC_ID,
+        AllocEntry {
+            flags: 0,
+            gpa: SRC_GPA,
+            size_bytes: 0x1000,
+        },
+    )])
+    .expect("alloc table");
+
+    // First submission: create textures + mark the src dirty (but do not flush yet).
+    let stream_create = build_stream(|out| {
+        for (handle, alloc_id) in [
+            (SRC_HANDLE, SRC_ALLOC_ID),
+            (DST_HANDLE, DST_ALLOC_ID),
+            (OUT_HANDLE, OUT_ALLOC_ID),
+        ] {
+            emit_packet(out, OPC_CREATE_TEXTURE2D, |out| {
+                push_u32(out, handle);
+                push_u32(out, AEROGPU_RESOURCE_USAGE_TEXTURE); // usage_flags
+                push_u32(out, AerogpuFormat::R8G8B8A8Unorm as u32);
+                push_u32(out, 1); // width
+                push_u32(out, 1); // height
+                push_u32(out, 1); // mip_levels
+                push_u32(out, 1); // array_layers
+                push_u32(out, 4); // row_pitch_bytes
+                push_u32(out, alloc_id);
+                push_u32(out, 0); // backing_offset_bytes
+                push_u64(out, 0); // reserved0
+            });
+        }
+
+        emit_packet(out, OPC_RESOURCE_DIRTY_RANGE, |out| {
+            push_u32(out, SRC_HANDLE);
+            push_u32(out, 0); // reserved0
+            push_u64(out, 0); // offset_bytes
+            push_u64(out, 4); // size_bytes
+        });
+    });
+
+    exec.execute_cmd_stream_with_guest_memory(
+        &stream_create,
+        &mut guest_memory,
+        Some(&alloc_table_all),
+    )
+    .expect("create should succeed");
+
+    // Second submission: attempt WRITEBACK_DST without including the destination alloc in the alloc
+    // table. This must fail *without* consuming the pending dirty range for the source texture.
+    let stream_invalid = build_stream(|out| {
+        emit_packet(out, OPC_COPY_TEXTURE2D, |out| {
+            push_u32(out, DST_HANDLE);
+            push_u32(out, SRC_HANDLE);
+            push_u32(out, 0); // dst_mip_level
+            push_u32(out, 0); // dst_array_layer
+            push_u32(out, 0); // src_mip_level
+            push_u32(out, 0); // src_array_layer
+            push_u32(out, 0); // dst_x
+            push_u32(out, 0); // dst_y
+            push_u32(out, 0); // src_x
+            push_u32(out, 0); // src_y
+            push_u32(out, 1); // width
+            push_u32(out, 1); // height
+            push_u32(out, AEROGPU_COPY_FLAG_WRITEBACK_DST);
+            push_u32(out, 0); // reserved0
+        });
+    });
+
+    exec.execute_cmd_stream_with_guest_memory(
+        &stream_invalid,
+        &mut guest_memory,
+        Some(&alloc_table_src_only),
+    )
+    .expect_err("expected alloc table validation error");
+
+    guest_memory.write(SRC_GPA, &pixel_b).unwrap();
+
+    // Third submission: valid writeback into OUT_HANDLE should observe the updated bytes.
+    let stream_valid = build_stream(|out| {
+        emit_packet(out, OPC_COPY_TEXTURE2D, |out| {
+            push_u32(out, OUT_HANDLE);
+            push_u32(out, SRC_HANDLE);
+            push_u32(out, 0); // dst_mip_level
+            push_u32(out, 0); // dst_array_layer
+            push_u32(out, 0); // src_mip_level
+            push_u32(out, 0); // src_array_layer
+            push_u32(out, 0); // dst_x
+            push_u32(out, 0); // dst_y
+            push_u32(out, 0); // src_x
+            push_u32(out, 0); // src_y
+            push_u32(out, 1); // width
+            push_u32(out, 1); // height
+            push_u32(out, AEROGPU_COPY_FLAG_WRITEBACK_DST);
+            push_u32(out, 0); // reserved0
+        });
+    });
+
+    exec.execute_cmd_stream_with_guest_memory(
+        &stream_valid,
+        &mut guest_memory,
+        Some(&alloc_table_all),
+    )
+    .expect("writeback should succeed");
+
+    let mut out = [0u8; 4];
+    guest_memory.read(OUT_GPA, &mut out).unwrap();
+    assert_eq!(&out, &pixel_b);
+}
+
+#[test]
 fn d3d9_create_buffer_rebind_updates_guest_backing() {
     let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
         Ok(exec) => exec,
