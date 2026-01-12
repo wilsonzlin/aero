@@ -357,4 +357,98 @@ describe("RemoteChunkedDisk (IndexedDB cache)", () => {
 
     await disk.close();
   });
+
+  it("still de-dupes concurrent in-flight reads when cacheLimitBytes is 0", async () => {
+    const chunkSize = 512 * 1024;
+    const totalSize = chunkSize;
+    const chunkCount = 1;
+
+    const img = buildTestImageBytes(totalSize);
+    const chunk0 = img.slice(0, chunkSize);
+
+    // Hold the chunk response open so the second read overlaps the first and
+    // must join the in-flight request (not issue a second network fetch).
+    const pendingChunkResponses: ServerResponse[] = [];
+    let chunkRequestStartedResolve: (() => void) | null = null;
+    const chunkRequestStarted = new Promise<void>((resolve) => {
+      chunkRequestStartedResolve = resolve;
+    });
+    let releaseChunkResponsesResolve: (() => void) | null = null;
+    const releaseChunkResponses = new Promise<void>((resolve) => {
+      releaseChunkResponsesResolve = resolve;
+    });
+
+    const { baseUrl, hits, close } = await withServer((req, res) => {
+      const url = new URL(req.url ?? "/", "http://localhost");
+      if (url.pathname === "/manifest.json") {
+        res.statusCode = 200;
+        res.setHeader("content-type", "application/json");
+        res.setHeader("etag", '"m1"');
+        res.end(
+          JSON.stringify({
+            schema: "aero.chunked-disk-image.v1",
+            imageId: "test",
+            version: "v1",
+            mimeType: "application/octet-stream",
+            totalSize,
+            chunkSize,
+            chunkCount,
+            chunkIndexWidth: 8,
+          }),
+        );
+        return;
+      }
+
+      if (url.pathname === "/chunks/00000000.bin") {
+        pendingChunkResponses.push(res);
+        if (pendingChunkResponses.length === 1) {
+          chunkRequestStartedResolve?.();
+        }
+        res.statusCode = 200;
+        res.setHeader("content-type", "application/octet-stream");
+        void releaseChunkResponses.then(() => {
+          // Best-effort: only end the response once.
+          if (!res.writableEnded) res.end(chunk0);
+        });
+        return;
+      }
+
+      res.statusCode = 404;
+      res.end("not found");
+    });
+    closeServer = close;
+
+    const disk = await RemoteChunkedDisk.open(`${baseUrl}/manifest.json`, {
+      cacheBackend: "idb",
+      cacheLimitBytes: 0,
+      prefetchSequentialChunks: 0,
+      retryBaseDelayMs: 0,
+      maxConcurrentFetches: 1,
+    });
+
+    const buf1 = new Uint8Array(512);
+    const p1 = disk.readSectors(0, buf1);
+    await chunkRequestStarted;
+
+    const buf2 = new Uint8Array(512);
+    const p2 = disk.readSectors(0, buf2);
+
+    // Release all pending chunk responses (there should only be one request).
+    releaseChunkResponsesResolve?.();
+    await Promise.all([p1, p2]);
+
+    expect(buf1).toEqual(img.slice(0, 512));
+    expect(buf2).toEqual(img.slice(0, 512));
+
+    // Only one chunk GET should occur because the second read joins the in-flight fetch.
+    expect(hits.get("/chunks/00000000.bin")).toBe(1);
+
+    const t = disk.getTelemetrySnapshot();
+    expect(t.cacheLimitBytes).toBe(0);
+    expect(t.cachedBytes).toBe(0);
+    expect(t.cacheHits).toBe(0);
+    expect(t.inflightJoins).toBe(1);
+
+    await disk.close();
+  });
 });
