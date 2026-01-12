@@ -533,21 +533,24 @@ where
 
         // Bounds-check ranges without panicking on overflow.
         let len_u64 = u64::try_from(len).map_err(|_| Exception::MemoryFault)?;
-        let src_end = src.checked_add(len_u64).ok_or(Exception::MemoryFault)?;
-        let dst_end = dst.checked_add(len_u64).ok_or(Exception::MemoryFault)?;
+        let src_end = match src.checked_add(len_u64) {
+            Some(v) => v,
+            None => return Ok(false),
+        };
+        let dst_end = match dst.checked_add(len_u64) {
+            Some(v) => v,
+            None => return Ok(false),
+        };
 
-        let overlap = src < dst_end && dst < src_end;
-        let copy_backward = overlap && dst > src;
-
-        // Preflight translations with a side-effect-free probe. If any page in
-        // the range is unmapped or fails permission checks, decline the bulk
-        // operation so Tier-0 can fall back to scalar accesses (which will
-        // perform architecturally correct A/D bit updates and fault delivery).
+        // Preflight translations with a side-effect-free probe. If any page in the range is
+        // unmapped or fails permission checks, decline the bulk operation so Tier-0 can fall back
+        // to scalar accesses (which will perform architecturally correct A/D bit updates and fault
+        // delivery).
         let mut offset = 0usize;
         while offset < len {
             let addr_off = offset as u64;
-            let src_addr = src + addr_off;
-            let dst_addr = dst + addr_off;
+            let src_addr = src.wrapping_add(addr_off);
+            let dst_addr = dst.wrapping_add(addr_off);
 
             if self
                 .mmu
@@ -572,6 +575,8 @@ where
             offset += chunk_len;
         }
 
+        let overlap = src < dst_end && dst < src_end;
+        let copy_backward = overlap && dst > src;
         // Perform the copy with memmove semantics using a bounded scratch buffer.
         let mut scratch = [0u8; SCRATCH_SIZE];
 
@@ -581,8 +586,8 @@ where
                 let chunk_len = SCRATCH_SIZE.min(remaining);
                 let offset = remaining - chunk_len;
 
-                let src_addr = src + offset as u64;
-                let dst_addr = dst + offset as u64;
+                let src_addr = src.wrapping_add(offset as u64);
+                let dst_addr = dst.wrapping_add(offset as u64);
 
                 self.read_bytes_access(src_addr, &mut scratch[..chunk_len], AccessType::Read)?;
                 self.write_bytes_access(dst_addr, &scratch[..chunk_len], AccessType::Write)?;
@@ -594,8 +599,8 @@ where
             while offset < len {
                 let chunk_len = SCRATCH_SIZE.min(len - offset);
 
-                let src_addr = src + offset as u64;
-                let dst_addr = dst + offset as u64;
+                let src_addr = src.wrapping_add(offset as u64);
+                let dst_addr = dst.wrapping_add(offset as u64);
 
                 self.read_bytes_access(src_addr, &mut scratch[..chunk_len], AccessType::Read)?;
                 self.write_bytes_access(dst_addr, &scratch[..chunk_len], AccessType::Write)?;
@@ -623,12 +628,14 @@ where
 
         // Bounds-check destination range without panicking on overflow.
         let total_u64 = u64::try_from(total).map_err(|_| Exception::MemoryFault)?;
-        dst.checked_add(total_u64).ok_or(Exception::MemoryFault)?;
+        if dst.checked_add(total_u64).is_none() {
+            return Ok(false);
+        }
 
         // Preflight translations with write intent using a side-effect-free probe.
         let mut offset = 0usize;
         while offset < total {
-            let addr = dst + offset as u64;
+            let addr = dst.wrapping_add(offset as u64);
             if self
                 .mmu
                 .translate_probe(&mut self.phys, addr, AccessType::Write, self.cpl)
@@ -660,11 +667,8 @@ where
                 }
             }
 
-            self.write_bytes_access(
-                dst + written as u64,
-                &scratch[..chunk_len],
-                AccessType::Write,
-            )?;
+            let addr = dst.wrapping_add(written as u64);
+            self.write_bytes_access(addr, &scratch[..chunk_len], AccessType::Write)?;
             written += chunk_len;
         }
 
