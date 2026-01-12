@@ -3,14 +3,14 @@
 use arbitrary::Unstructured;
 use libfuzzer_sys::fuzz_target;
 
-use aero_devices_storage::ahci::AhciController;
+use aero_devices::pci::PciDevice;
 use aero_devices_storage::ata::{
     AtaDrive, ATA_CMD_FLUSH_CACHE, ATA_CMD_FLUSH_CACHE_EXT, ATA_CMD_IDENTIFY, ATA_CMD_READ_DMA_EXT,
     ATA_CMD_SET_FEATURES, ATA_CMD_WRITE_DMA_EXT,
 };
-use aero_devices::irq::NoIrq;
-use aero_devices_storage::{GuestMemory, GuestMemoryExt};
+use aero_devices_storage::AhciPciDevice;
 use aero_storage::{MemBackend, RawDisk, SECTOR_SIZE, VirtualDisk};
+use memory::MemoryBus;
 
 // AHCI register offsets/bits (mirrors `aero-devices-storage/src/ahci.rs`).
 const HBA_REG_GHC: u64 = 0x04;
@@ -33,30 +33,32 @@ const PORT_CMD_FRE: u32 = 1 << 4;
 
 const PORT_IS_DHRS: u32 = 1 << 0;
 
-/// Guest memory model for fuzzing:
-/// - A finite backing buffer
-/// - Reads beyond the buffer return zeros
-/// - Writes beyond the buffer are dropped
+/// Bounded guest-physical memory for AHCI DMA fuzzing.
 ///
-/// This matches typical emulator bus behavior (unmapped reads are defined) while ensuring the
-/// device model itself cannot cause host-side OOB accesses.
+/// Reads outside the provided buffer return zeros; writes are dropped.
 #[derive(Clone)]
-struct FuzzMemory {
+struct FuzzBus {
     data: Vec<u8>,
 }
 
-impl FuzzMemory {
+impl FuzzBus {
     fn new(size: usize, init: &[u8]) -> Self {
         let mut data = vec![0u8; size];
-        let copy_len = init.len().min(size);
-        data[..copy_len].copy_from_slice(&init[..copy_len]);
+        let n = init.len().min(size);
+        data[..n].copy_from_slice(&init[..n]);
         Self { data }
     }
 }
 
-impl GuestMemory for FuzzMemory {
-    fn read(&self, paddr: u64, buf: &mut [u8]) {
+impl MemoryBus for FuzzBus {
+    fn read_physical(&mut self, paddr: u64, buf: &mut [u8]) {
         buf.fill(0);
+        if buf.is_empty() {
+            return;
+        }
+        if paddr.checked_add(buf.len() as u64).is_none() {
+            return;
+        }
         let Ok(start) = usize::try_from(paddr) else {
             return;
         };
@@ -68,7 +70,13 @@ impl GuestMemory for FuzzMemory {
         buf[..n].copy_from_slice(&self.data[start..start + n]);
     }
 
-    fn write(&mut self, paddr: u64, buf: &[u8]) {
+    fn write_physical(&mut self, paddr: u64, buf: &[u8]) {
+        if buf.is_empty() {
+            return;
+        }
+        if paddr.checked_add(buf.len() as u64).is_none() {
+            return;
+        }
         let Ok(start) = usize::try_from(paddr) else {
             return;
         };
@@ -87,15 +95,23 @@ fn place_region(seed: u64, mem_size: usize, align: usize, size: usize) -> u64 {
     }
     let max_start = mem_size - size;
     let mut off = (seed as usize) % (max_start + 1);
-    // Align down (align must be a power of two).
     if align.is_power_of_two() {
         off &= !(align - 1);
     }
     off as u64
 }
 
+fn decode_size(bits: u8) -> usize {
+    match bits % 4 {
+        0 => 1,
+        1 => 2,
+        2 => 4,
+        _ => 8,
+    }
+}
+
 fn write_cmd_header(
-    mem: &mut dyn GuestMemory,
+    mem: &mut dyn MemoryBus,
     clb: u64,
     slot: usize,
     ctba: u64,
@@ -113,23 +129,23 @@ fn write_cmd_header(
     mem.write_u32(addr + 12, (ctba >> 32) as u32);
 }
 
-fn write_prdt(mem: &mut dyn GuestMemory, ctba: u64, entry: usize, dba: u64, dbc: u32) {
+fn write_prdt(mem: &mut dyn MemoryBus, ctba: u64, entry: usize, dba: u64, dbc: u32) {
     let addr = ctba + 0x80 + (entry as u64) * 16;
     mem.write_u32(addr, dba as u32);
     mem.write_u32(addr + 4, (dba >> 32) as u32);
     mem.write_u32(addr + 8, 0);
     // DBC field stores byte_count-1 in bits 0..21.
-    mem.write_u32(addr + 12, (dbc.saturating_sub(1)) & 0x003F_FFFF);
+    mem.write_u32(addr + 12, dbc.saturating_sub(1) & 0x003F_FFFF);
 }
 
-fn write_cfis(mem: &mut dyn GuestMemory, ctba: u64, cfis: &[u8; 64]) {
-    mem.write(ctba, cfis);
+fn write_cfis(mem: &mut dyn MemoryBus, ctba: u64, cfis: &[u8; 64]) {
+    mem.write_physical(ctba, cfis);
 }
 
 #[derive(Clone, Copy)]
 enum MmioOp {
-    Read { offset: u64 },
-    Write { offset: u64, value: u32 },
+    Read { offset: u64, size: usize },
+    Write { offset: u64, size: usize, value: u64 },
     Process,
 }
 
@@ -166,15 +182,19 @@ fuzz_target!(|data: &[u8]| {
         match kind % 3 {
             0 => {
                 let offset: u16 = u.arbitrary().unwrap_or(0);
+                let size = decode_size(u.arbitrary().unwrap_or(0));
                 ops.push(MmioOp::Read {
                     offset: offset as u64,
+                    size,
                 });
             }
             1 => {
                 let offset: u16 = u.arbitrary().unwrap_or(0);
-                let value: u32 = u.arbitrary().unwrap_or(0);
+                let size = decode_size(u.arbitrary().unwrap_or(0));
+                let value: u64 = u.arbitrary().unwrap_or(0);
                 ops.push(MmioOp::Write {
                     offset: offset as u64,
+                    size,
                     value,
                 });
             }
@@ -185,7 +205,7 @@ fuzz_target!(|data: &[u8]| {
     // Remaining bytes initialize guest RAM.
     let rest_len = u.len();
     let init = u.bytes(rest_len).unwrap_or(&[]);
-    let mut mem = FuzzMemory::new(mem_size, init);
+    let mut mem = FuzzBus::new(mem_size, init);
 
     // Small disk backing (bounded to keep fuzz runs fast).
     let capacity = 64 * SECTOR_SIZE as u64;
@@ -198,33 +218,45 @@ fuzz_target!(|data: &[u8]| {
         Err(_) => return,
     };
 
-    let mut ctl = AhciController::new(Box::new(NoIrq), 1);
-    ctl.attach_drive(0, drive);
+    let mut dev = AhciPciDevice::new(1);
+    dev.attach_drive(0, drive);
+
+    // Enable PCI bus mastering so `AhciPciDevice::process()` will run DMA.
+    // Also set memory space decode (bit 1) for realism.
+    dev.config_mut().set_command((1 << 1) | (1 << 2));
 
     let port_base = PORT_BASE;
 
-    // Program registers with (bounded) fuzz-controlled values.
+    // Program registers with fuzz-controlled values (kept within our guest memory blob).
     let clb = place_region(clb_seed, mem_size, 1024, 1024);
     let fb = place_region(fb_seed, mem_size, 256, 256);
 
-    ctl.write_u32(port_base + PORT_REG_CLB, clb as u32);
-    ctl.write_u32(port_base + PORT_REG_CLBU, (clb >> 32) as u32);
-    ctl.write_u32(port_base + PORT_REG_FB, fb as u32);
-    ctl.write_u32(port_base + PORT_REG_FBU, (fb >> 32) as u32);
+    dev.mmio_write(port_base + PORT_REG_CLB, 4, clb as u64);
+    dev.mmio_write(port_base + PORT_REG_CLBU, 4, (clb >> 32) as u64);
+    dev.mmio_write(port_base + PORT_REG_FB, 4, fb as u64);
+    dev.mmio_write(port_base + PORT_REG_FBU, 4, (fb >> 32) as u64);
 
-    // Always keep AE set so we stay in AHCI mode, but otherwise fuzz the bits that affect IRQs.
-    ctl.write_u32(HBA_REG_GHC, (ghc_seed & (GHC_IE | GHC_AE)) | GHC_AE);
-    ctl.write_u32(port_base + PORT_REG_IE, port_ie_seed | PORT_IS_DHRS);
-    ctl.write_u32(
+    // Keep AE set so the controller is in AHCI mode; fuzz the rest.
+    dev.mmio_write(
+        HBA_REG_GHC,
+        4,
+        ((ghc_seed & (GHC_IE | GHC_AE)) | GHC_AE) as u64,
+    );
+    dev.mmio_write(
+        port_base + PORT_REG_IE,
+        4,
+        (port_ie_seed | PORT_IS_DHRS) as u64,
+    );
+    dev.mmio_write(
         port_base + PORT_REG_CMD,
-        port_cmd_seed | PORT_CMD_ST | PORT_CMD_FRE,
+        4,
+        (port_cmd_seed | PORT_CMD_ST | PORT_CMD_FRE) as u64,
     );
 
     // Optionally overlay a minimally well-formed command list/table so we exercise deeper parsing.
     if synthesize {
         let prdtl = (prdtl_seed as u16 % 8).max(1);
 
-        // Choose a supported command but bound transfer sizes to avoid huge allocations.
         let cmd = match cmd_sel % 6 {
             0 => ATA_CMD_IDENTIFY,
             1 => ATA_CMD_READ_DMA_EXT,
@@ -242,11 +274,9 @@ fuzz_target!(|data: &[u8]| {
         let ctba = place_region(ctba_seed, mem_size, 128, ctba_size);
         let data_base = place_region(data_seed, mem_size, 4, byte_len);
 
-        // Command header for slot 0.
         let is_write = cmd == ATA_CMD_WRITE_DMA_EXT;
         write_cmd_header(&mut mem, clb, 0, ctba, prdtl, is_write);
 
-        // Build CFIS.
         let mut cfis = [0u8; 64];
         cfis[0] = 0x27; // FIS_TYPE_REG_H2D
         cfis[1] = 0x80; // C bit (command)
@@ -255,11 +285,7 @@ fuzz_target!(|data: &[u8]| {
 
         // LBA48.
         let max_lba = capacity / SECTOR_SIZE as u64;
-        let lba = if max_lba == 0 {
-            0
-        } else {
-            lba_seed2 % max_lba
-        };
+        let lba = if max_lba == 0 { 0 } else { lba_seed2 % max_lba };
         cfis[4] = (lba & 0xFF) as u8;
         cfis[5] = ((lba >> 8) & 0xFF) as u8;
         cfis[6] = ((lba >> 16) & 0xFF) as u8;
@@ -267,7 +293,6 @@ fuzz_target!(|data: &[u8]| {
         cfis[9] = ((lba >> 32) & 0xFF) as u8;
         cfis[10] = ((lba >> 40) & 0xFF) as u8;
 
-        // Sector count (low 16).
         cfis[12] = (sector_count & 0xFF) as u8;
         cfis[13] = ((sector_count >> 8) & 0xFF) as u8;
 
@@ -281,7 +306,6 @@ fuzz_target!(|data: &[u8]| {
         let mut cur = data_base;
         for entry in 0..(prdtl as usize) {
             if remaining == 0 {
-                // Keep extra entries around (device should ignore when remaining is exhausted).
                 write_prdt(&mut mem, ctba, entry, cur, 1);
                 continue;
             }
@@ -292,24 +316,26 @@ fuzz_target!(|data: &[u8]| {
         }
 
         // Ensure at least one command is issued.
-        ctl.write_u32(port_base + PORT_REG_CI, 1);
+        dev.mmio_write(port_base + PORT_REG_CI, 4, 1);
     } else {
-        // Purely register-driven fuzzing: issue some random CI bits (bounded so we don't loop too
-        // long) and let the memory blob dictate parsing.
-        ctl.write_u32(port_base + PORT_REG_CI, port_ci_seed & 0xF);
+        dev.mmio_write(port_base + PORT_REG_CI, 4, (port_ci_seed & 0xF) as u64);
     }
 
     // Execute a small mixed sequence of MMIO reads/writes and processing ticks.
     for op in ops {
         match op {
-            MmioOp::Read { offset } => {
-                let _ = ctl.read_u32(offset);
+            MmioOp::Read { offset, size } => {
+                let _ = dev.mmio_read(offset, size);
             }
-            MmioOp::Write { offset, value } => ctl.write_u32(offset, value),
-            MmioOp::Process => ctl.process(&mut mem),
+            MmioOp::Write {
+                offset,
+                size,
+                value,
+            } => dev.mmio_write(offset, size, value),
+            MmioOp::Process => dev.process(&mut mem),
         }
     }
 
-    // Always process at least once so a synthesized command can't be "optimized away" by ops.
-    ctl.process(&mut mem);
+    // Always process at least once so a synthesized command can't be "optimized away".
+    dev.process(&mut mem);
 });

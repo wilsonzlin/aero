@@ -30,6 +30,9 @@ path = "../crates/aero-storage"
 [dependencies.aero-http-range]
 path = "../crates/aero-http-range"
 
+[dependencies.aero-devices]
+path = "../crates/devices"
+
 [[bin]]
 name = "fuzz_mmu_translate"
 path = "fuzz_targets/fuzz_mmu_translate.rs"
