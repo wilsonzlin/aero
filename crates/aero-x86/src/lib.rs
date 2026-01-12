@@ -575,8 +575,12 @@ pub mod tier1 {
         let mut disp: i32 = 0;
         let mut rip_relative = false;
 
-        // Address decoding depends on the address-size, which for this Tier1 decoder matches
-        // `bitness` (address-size override `0x67` is currently ignored).
+        // Address decoding depends on the address-size, which for this Tier1 decoder matches the
+        // requested `bitness`.
+        //
+        // The address-size override prefix (`0x67`) is not currently supported; the Tier-1 decoder
+        // conservatively returns `InstKind::Invalid` when it is present to avoid mis-decoding
+        // ModRM/SIB operands.
         if bitness == 16 {
             // 16-bit ModRM addressing (no SIB byte). Encoding table:
             //   rm=0: [bx+si]   rm=4: [si]
