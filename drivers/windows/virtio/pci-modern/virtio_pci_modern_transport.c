@@ -38,6 +38,12 @@ enum {
 	/* Bounded reset poll (virtio status reset handshake). */
 	VIRTIO_PCI_RESET_TIMEOUT_US = 1000000u,
 	VIRTIO_PCI_RESET_POLL_DELAY_US = 1000u,
+	/*
+	 * When reset is requested at elevated IRQL, cap the total busy-wait budget.
+	 * Long stalls in DPC/DIRQL contexts can severely impact system responsiveness.
+	 */
+	VIRTIO_PCI_RESET_HIGH_IRQL_TIMEOUT_US = 10000u,
+	VIRTIO_PCI_RESET_HIGH_IRQL_POLL_DELAY_US = 100u,
 	VIRTIO_PCI_CONFIG_MAX_READ_RETRIES = 10u,
 
 	/* Standard PCI config offsets */
@@ -620,9 +626,76 @@ VOID VirtioPciModernTransportResetDevice(VIRTIO_PCI_MODERN_TRANSPORT *t)
 	t->CommonCfg->device_status = 0;
 	VirtioPciModernMb(t);
 
+	/* Immediate readback fast-path. */
+	if (t->CommonCfg->device_status == 0) {
+		VirtioPciModernMb(t);
+		return;
+	}
+
+#if VIRTIO_OSDEP_KERNEL_MODE
+	/*
+	 * Reset may be invoked from a variety of driver stacks. Avoid spending up to
+	 * 1 second busy-waiting at DISPATCH/DIRQL.
+	 */
+	{
+		KIRQL irql;
+		irql = KeGetCurrentIrql();
+
+		if (irql == PASSIVE_LEVEL) {
+			const ULONGLONG timeout100ns = (ULONGLONG)VIRTIO_PCI_RESET_TIMEOUT_US * 10ull;
+			const ULONGLONG pollDelay100ns = (ULONGLONG)VIRTIO_PCI_RESET_POLL_DELAY_US * 10ull;
+			const ULONGLONG start100ns = KeQueryInterruptTime();
+			const ULONGLONG deadline100ns = start100ns + timeout100ns;
+
+			for (;;) {
+				ULONGLONG now100ns;
+				ULONGLONG remaining100ns;
+				LARGE_INTEGER delay;
+
+				if (t->CommonCfg->device_status == 0) {
+					VirtioPciModernMb(t);
+					return;
+				}
+
+				now100ns = KeQueryInterruptTime();
+				if (now100ns >= deadline100ns) {
+					break;
+				}
+
+				remaining100ns = deadline100ns - now100ns;
+				if (remaining100ns > pollDelay100ns) {
+					remaining100ns = pollDelay100ns;
+				}
+
+				delay.QuadPart = -((LONGLONG)remaining100ns);
+				(void)KeDelayExecutionThread(KernelMode, FALSE, &delay);
+			}
+
+			VirtioPciModernLog(t, "virtio_pci_modern_transport: reset timeout");
+			return;
+		}
+
+		/*
+		 * Elevated IRQL: only poll for a small budget, then give up.
+		 */
+		for (waited_us = 0; waited_us < VIRTIO_PCI_RESET_HIGH_IRQL_TIMEOUT_US;
+		     waited_us += VIRTIO_PCI_RESET_HIGH_IRQL_POLL_DELAY_US) {
+			if (t->CommonCfg->device_status == 0) {
+				VirtioPciModernMb(t);
+				return;
+			}
+			t->Os->StallUs(t->OsContext, VIRTIO_PCI_RESET_HIGH_IRQL_POLL_DELAY_US);
+		}
+
+		VirtioPciModernLog(t, "virtio_pci_modern_transport: reset timeout (high IRQL)");
+		return;
+	}
+#else
 	/*
 	 * Poll until the device acknowledges reset (bounded).
-	 * Win7 uses this pattern across transports.
+	 *
+	 * Non-kernel builds (host-side tests) do not have IRQL or thread-wait APIs;
+	 * keep the original stall-based loop.
 	 */
 	for (waited_us = 0; waited_us < VIRTIO_PCI_RESET_TIMEOUT_US; waited_us += VIRTIO_PCI_RESET_POLL_DELAY_US) {
 		if (t->CommonCfg->device_status == 0) {
@@ -630,6 +703,7 @@ VOID VirtioPciModernTransportResetDevice(VIRTIO_PCI_MODERN_TRANSPORT *t)
 		}
 		t->Os->StallUs(t->OsContext, VIRTIO_PCI_RESET_POLL_DELAY_US);
 	}
+#endif
 }
 
 UINT8 VirtioPciModernTransportGetStatus(VIRTIO_PCI_MODERN_TRANSPORT *t)
