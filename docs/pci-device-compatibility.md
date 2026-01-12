@@ -13,7 +13,7 @@ We assume a single PCI bus (`bus 0`) with stable device numbers. Not all devices
 | BDF      | Device | Vendor:Device | Class (base/sub/progif) | INTx pin | Notes |
 |----------|--------|---------------|--------------------------|----------|-------|
 | 00:01.0  | ISA    | 8086:7000     | 06/01/00                 | -        | PIIX3-compatible ISA bridge (function 0 of a multi-function slot; `header_type=0x80` so guests discover 00:01.1/00:01.2) |
-| 00:01.1  | IDE    | 8086:7010     | 01/01/8A                 | INTA     | PIIX3-compatible PCI IDE (legacy compatibility mode, bus mastering DMA) |
+| 00:01.1  | IDE    | 8086:7010     | 01/01/8A                 | INTA     | PIIX3-compatible PCI IDE (legacy compatibility mode, bus mastering DMA). Note: ATA/ATAPI completion interrupts are legacy ISA IRQ14/IRQ15 (see below + `docs/05-storage-topology-win7.md`). |
 | 00:01.2  | USB1   | 8086:7020     | 0C/03/00                 | INTA     | UHCI (USB 1.1) |
 | 00:02.0  | SATA   | 8086:2922     | 01/06/01                 | INTA     | AHCI (SATA) |
 | 00:03.0  | NVMe   | 1B36:0010     | 01/08/02                 | INTA     | NVMe controller (optional) |
@@ -47,6 +47,10 @@ Note: virtio-snd is treated as **modern-only** in `AERO-W7-VIRTIO` v1; do not re
 ## IRQ routing (INTx → PIRQ → PIC/APIC)
 
 PCI INTx interrupts are level-triggered and are routed by the chipset via “PIRQ” lines (A–D).
+
+Note: some “legacy” devices (notably PIIX3 IDE) use ISA IRQs (IRQ14/IRQ15) for their data-plane
+interrupts even though they are exposed as PCI functions and have PCI INTx fields in config space.
+Do not assume that every PCI function’s interrupts are delivered via the PIRQ→GSI mapping.
 
 ### 1) INTx swizzle (root bus)
 
