@@ -1,8 +1,8 @@
 //! Protocol-level helpers that are shared between the proxy implementation and tests.
 //!
 //! The canonical wire framing is implemented in `crates/aero-l2-protocol`. This module contains
-//! additional conventions used by the production proxy (structured ERROR payloads), as defined in
-//! `docs/l2-tunnel-protocol.md`.
+//! additional conventions used by the production proxy for `L2_TUNNEL_TYPE_ERROR` messages, as
+//! defined in `docs/l2-tunnel-protocol.md`.
 
 /// Protocol-level error codes carried inside `L2_TUNNEL_TYPE_ERROR` payloads.
 ///
@@ -17,53 +17,21 @@ pub const ERROR_CODE_QUOTA_FPS: u16 = 7;
 pub const ERROR_CODE_QUOTA_CONNECTIONS: u16 = 8;
 pub const ERROR_CODE_BACKPRESSURE: u16 = 9;
 
-/// Encode an `ERROR` payload using the structured binary form:
+/// Encode an `ERROR` payload using the structured binary form.
 ///
-/// ```text
-/// code (u16 BE) | msg_len (u16 BE) | msg (msg_len bytes, UTF-8)
-/// ```
-///
-/// The returned payload is truncated as needed to fit within `max_payload_bytes`.
+/// This is a convenience wrapper around
+/// [`aero_l2_protocol::encode_structured_error_payload`]. Prefer calling that
+/// directly in new code.
 pub fn encode_error_payload(code: u16, message: &str, max_payload_bytes: usize) -> Vec<u8> {
-    // Need space for the 4-byte header (code + msg_len). If the configured max is below that,
-    // return an empty payload so callers can still emit an ERROR control message within their
-    // configured limits (the peer will still see an ERROR type, even if it cannot decode a
-    // structured code/message).
-    if max_payload_bytes < 4 {
-        return Vec::new();
-    }
-    // Need space for the 4-byte header (code + msg_len).
-    let max_msg_len = max_payload_bytes.saturating_sub(4).min(u16::MAX as usize);
-
-    let msg_bytes = message.as_bytes();
-    let mut msg_len = msg_bytes.len().min(max_msg_len);
-    while msg_len > 0 && !message.is_char_boundary(msg_len) {
-        msg_len -= 1;
-    }
-    let msg_bytes = &msg_bytes[..msg_len];
-
-    let msg_len: u16 = msg_bytes.len().try_into().unwrap_or(u16::MAX);
-
-    let mut out = Vec::with_capacity(4 + msg_bytes.len());
-    out.extend_from_slice(&code.to_be_bytes());
-    out.extend_from_slice(&msg_len.to_be_bytes());
-    out.extend_from_slice(msg_bytes);
-    out
+    aero_l2_protocol::encode_structured_error_payload(code, message, max_payload_bytes)
 }
 
 /// Attempt to decode a structured `ERROR` payload.
 ///
-/// Returns `(code, message)` only if the payload matches the exact structured encoding.
+/// This is a convenience wrapper around
+/// [`aero_l2_protocol::decode_structured_error_payload`].
 pub fn decode_error_payload(payload: &[u8]) -> Option<(u16, String)> {
-    let header: [u8; 4] = payload.get(..4)?.try_into().ok()?;
-    let code = u16::from_be_bytes([header[0], header[1]]);
-    let msg_len = u16::from_be_bytes([header[2], header[3]]) as usize;
-    if payload.len() != 4usize.checked_add(msg_len)? {
-        return None;
-    }
-    let msg_bytes = payload.get(4..)?;
-    let msg = String::from_utf8(msg_bytes.to_vec()).ok()?;
-    Some((code, msg))
+    aero_l2_protocol::decode_structured_error_payload(payload)
 }
 
 #[cfg(test)]

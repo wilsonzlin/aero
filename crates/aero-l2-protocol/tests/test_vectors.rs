@@ -109,11 +109,16 @@ fn l2_tunnel_vectors_roundtrip() {
         );
 
         if let Some(structured) = &vector.structured {
-            let mut expected_payload = Vec::new();
-            expected_payload.extend_from_slice(&structured.code.to_be_bytes());
-            expected_payload.extend_from_slice(&(structured.message.len() as u16).to_be_bytes());
-            expected_payload.extend_from_slice(structured.message.as_bytes());
+            let expected_payload = aero_l2_protocol::encode_structured_error_payload(
+                structured.code,
+                &structured.message,
+                usize::MAX,
+            );
             assert_eq!(expected_payload, payload, "{}", vector.name);
+            let decoded = aero_l2_protocol::decode_structured_error_payload(&payload)
+                .expect("expected structured error payload");
+            assert_eq!(decoded.0, structured.code, "{}", vector.name);
+            assert_eq!(decoded.1, structured.message, "{}", vector.name);
         }
 
         let decoded = decode_message(&wire).unwrap_or_else(|err| {
