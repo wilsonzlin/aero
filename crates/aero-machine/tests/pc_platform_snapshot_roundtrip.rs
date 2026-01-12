@@ -1,4 +1,5 @@
 use aero_machine::{Machine, MachineConfig};
+use aero_platform::interrupts::PlatformInterruptMode;
 use pretty_assertions::assert_eq;
 
 fn pci_cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
@@ -60,4 +61,10 @@ fn snapshot_round_trip_preserves_pci_config_ports_and_interrupt_controller_state
     // Confirm IMCR select+data survived (read depends on latched selector).
     assert_eq!(restored.io_read(0x22, 1) as u8, 0x70);
     assert_eq!(restored.io_read(0x23, 1) as u8, 0x01);
+
+    // Confirm the platform interrupt controller mode (PIC vs APIC) survived.
+    let interrupts = restored
+        .platform_interrupts()
+        .expect("pc platform should provide interrupts");
+    assert_eq!(interrupts.borrow().mode(), PlatformInterruptMode::Apic);
 }
