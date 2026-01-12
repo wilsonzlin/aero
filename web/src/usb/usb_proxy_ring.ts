@@ -229,7 +229,11 @@ export class UsbProxyRing {
     while (true) {
       const head = u32(Atomics.load(this.#ctrl, CtrlIndex.Head));
       const tail = u32(Atomics.load(this.#ctrl, CtrlIndex.Tail));
-      if (head === tail) return null;
+      const used = u32(tail - head);
+      if (used > this.#cap) {
+        throw new Error("USB proxy ring corrupted (action ring tail/head out of range).");
+      }
+      if (used === 0) return null;
 
       const headIndex = head % this.#cap;
       const remaining = this.#cap - headIndex;
@@ -245,14 +249,16 @@ export class UsbProxyRing {
       }
 
       const kind = this.#actionTagToKind(kindTag);
-      if (!kind) return null;
+      if (!kind) {
+        throw new Error(`USB proxy ring corrupted (unknown action kind tag: ${kindTag}).`);
+      }
 
       const id = this.#view.getUint32(headIndex + 4, true) >>> 0;
 
       switch (kind) {
         case "controlIn": {
           const total = alignUp(USB_PROXY_ACTION_HEADER_BYTES + SETUP_PACKET_BYTES, USB_PROXY_RING_ALIGN);
-          if (total > remaining) return null;
+          if (total > remaining) throw new Error("USB proxy ring corrupted (controlIn record straddles wrap boundary).");
           const setup = decodeSetupPacket(this.#view, headIndex + USB_PROXY_ACTION_HEADER_BYTES);
           Atomics.store(this.#ctrl, CtrlIndex.Head, u32(head + total) | 0);
           return { kind: "controlIn", id, setup };
@@ -260,12 +266,12 @@ export class UsbProxyRing {
         case "controlOut": {
           const base = headIndex + USB_PROXY_ACTION_HEADER_BYTES;
           const fixed = USB_PROXY_ACTION_HEADER_BYTES + SETUP_PACKET_BYTES + 4;
-          if (fixed > remaining) return null;
+          if (fixed > remaining) throw new Error("USB proxy ring corrupted (controlOut record straddles wrap boundary).");
           const setup = decodeSetupPacket(this.#view, base);
           const dataLen = this.#view.getUint32(base + SETUP_PACKET_BYTES, true) >>> 0;
           const end = fixed + dataLen;
           const total = alignUp(end, USB_PROXY_RING_ALIGN);
-          if (total > remaining) return null;
+          if (total > remaining) throw new Error("USB proxy ring corrupted (controlOut payload exceeds ring segment).");
           const payloadStart = headIndex + fixed;
           const payloadEnd = payloadStart + dataLen;
           const data = this.#data.slice(payloadStart, payloadEnd);
@@ -275,7 +281,7 @@ export class UsbProxyRing {
         case "bulkIn": {
           const fixed = USB_PROXY_ACTION_HEADER_BYTES + 8;
           const total = alignUp(fixed, USB_PROXY_RING_ALIGN);
-          if (total > remaining) return null;
+          if (total > remaining) throw new Error("USB proxy ring corrupted (bulkIn record straddles wrap boundary).");
           const base = headIndex + USB_PROXY_ACTION_HEADER_BYTES;
           const endpoint = this.#view.getUint8(base + 0) >>> 0;
           const length = this.#view.getUint32(base + 4, true) >>> 0;
@@ -285,12 +291,12 @@ export class UsbProxyRing {
         case "bulkOut": {
           const base = headIndex + USB_PROXY_ACTION_HEADER_BYTES;
           const fixed = USB_PROXY_ACTION_HEADER_BYTES + 8;
-          if (fixed > remaining) return null;
+          if (fixed > remaining) throw new Error("USB proxy ring corrupted (bulkOut record straddles wrap boundary).");
           const endpoint = this.#view.getUint8(base + 0) >>> 0;
           const dataLen = this.#view.getUint32(base + 4, true) >>> 0;
           const end = fixed + dataLen;
           const total = alignUp(end, USB_PROXY_RING_ALIGN);
-          if (total > remaining) return null;
+          if (total > remaining) throw new Error("USB proxy ring corrupted (bulkOut payload exceeds ring segment).");
           const payloadStart = headIndex + fixed;
           const payloadEnd = payloadStart + dataLen;
           const data = this.#data.slice(payloadStart, payloadEnd);
@@ -372,7 +378,11 @@ export class UsbProxyRing {
     while (true) {
       const head = u32(Atomics.load(this.#ctrl, CtrlIndex.Head));
       const tail = u32(Atomics.load(this.#ctrl, CtrlIndex.Tail));
-      if (head === tail) return null;
+      const used = u32(tail - head);
+      if (used > this.#cap) {
+        throw new Error("USB proxy ring corrupted (completion ring tail/head out of range).");
+      }
+      if (used === 0) return null;
 
       const headIndex = head % this.#cap;
       const remaining = this.#cap - headIndex;
@@ -388,31 +398,35 @@ export class UsbProxyRing {
       }
 
       const kind = this.#actionTagToKind(kindTag);
-      if (!kind) return null;
+      if (!kind) {
+        throw new Error(`USB proxy ring corrupted (unknown completion kind tag: ${kindTag}).`);
+      }
 
       const statusTag = this.#view.getUint8(headIndex + 1) as UsbCompletionStatusTag;
       const status = this.#completionTagToStatus(statusTag);
-      if (!status) return null;
+      if (!status) {
+        throw new Error(`USB proxy ring corrupted (unknown completion status tag: ${statusTag}).`);
+      }
 
       const id = this.#view.getUint32(headIndex + 4, true) >>> 0;
 
       if (status === "stall") {
         const total = alignUp(USB_PROXY_COMPLETION_HEADER_BYTES, USB_PROXY_RING_ALIGN);
-        if (total > remaining) return null;
+        if (total > remaining) throw new Error("USB proxy ring corrupted (stall record straddles wrap boundary).");
         Atomics.store(this.#ctrl, CtrlIndex.Head, u32(head + total) | 0);
         return { kind, id, status: "stall" };
       }
 
       const bodyIndex = headIndex + USB_PROXY_COMPLETION_HEADER_BYTES;
       const fixed = USB_PROXY_COMPLETION_HEADER_BYTES + 4;
-      if (fixed > remaining) return null;
+      if (fixed > remaining) throw new Error("USB proxy ring corrupted (completion header straddles wrap boundary).");
 
       if (status === "success") {
         if (kind === "controlIn" || kind === "bulkIn") {
           const dataLen = this.#view.getUint32(bodyIndex + 0, true) >>> 0;
           const end = fixed + dataLen;
           const total = alignUp(end, USB_PROXY_RING_ALIGN);
-          if (total > remaining) return null;
+          if (total > remaining) throw new Error("USB proxy ring corrupted (completion payload exceeds ring segment).");
           const payloadStart = headIndex + fixed;
           const payloadEnd = payloadStart + dataLen;
           const data = this.#data.slice(payloadStart, payloadEnd);
@@ -422,7 +436,7 @@ export class UsbProxyRing {
 
         const bytesWritten = this.#view.getUint32(bodyIndex + 0, true) >>> 0;
         const total = alignUp(fixed, USB_PROXY_RING_ALIGN);
-        if (total > remaining) return null;
+        if (total > remaining) throw new Error("USB proxy ring corrupted (completion record straddles wrap boundary).");
         Atomics.store(this.#ctrl, CtrlIndex.Head, u32(head + total) | 0);
         return { kind, id, status: "success", bytesWritten };
       }
@@ -431,7 +445,7 @@ export class UsbProxyRing {
       const msgLen = this.#view.getUint32(bodyIndex + 0, true) >>> 0;
       const end = fixed + msgLen;
       const total = alignUp(end, USB_PROXY_RING_ALIGN);
-      if (total > remaining) return null;
+      if (total > remaining) throw new Error("USB proxy ring corrupted (error payload exceeds ring segment).");
       const payloadStart = headIndex + fixed;
       const payloadEnd = payloadStart + msgLen;
       const msgBytes = this.#data.slice(payloadStart, payloadEnd);

@@ -4,6 +4,7 @@ import {
   isUsbGuestWebUsbStatusMessage,
   isUsbQuerySelectedMessage,
   isUsbRingAttachRequestMessage,
+  isUsbRingDetachMessage,
   isUsbSelectDeviceMessage,
   usbErrorCompletion,
   type UsbActionMessage,
@@ -13,6 +14,7 @@ import {
   type UsbHostAction,
   type UsbHostCompletion,
   type UsbRingAttachMessage,
+  type UsbRingDetachMessage,
   type UsbSelectDeviceMessage,
   type UsbSelectedMessage,
 } from "./usb_proxy_protocol";
@@ -345,6 +347,14 @@ export class UsbBroker {
           return;
         }
 
+        if (isUsbRingDetachMessage(data)) {
+          // Ring buffers are an optional fast path. When a worker detects corruption (or wants to
+          // reduce overhead) it can request disabling the rings and falling back to postMessage.
+          this.detachRingsForPort(port);
+          this.postToPort(port, { type: "usb.ringDetach", reason: data.reason } satisfies UsbRingDetachMessage);
+          return;
+        }
+
         if (isUsbGuestWebUsbStatusMessage(data)) {
           this.guestStatus = data.snapshot;
           this.broadcastGuestStatus({ type: "usb.guest.status", snapshot: data.snapshot });
@@ -450,18 +460,28 @@ export class UsbBroker {
 
   private drainActionRing(port: MessagePort | Worker): void {
     const actionRing = this.actionRings.get(port);
-    const completionRing = this.completionRings.get(port);
-    if (!actionRing || !completionRing) return;
+    if (!actionRing) return;
 
     while (true) {
-      const action = actionRing.popAction();
+      let action: UsbHostAction | null = null;
+      try {
+        action = actionRing.popAction();
+      } catch (err) {
+        this.disableRingsForPort(port, err);
+        break;
+      }
       if (!action) break;
 
       void this.execute(action).then((completion) => {
-        // The port may have been detached while the completion was in-flight.
-        const activeCompletionRing = this.completionRings.get(port);
-        if (!activeCompletionRing) return;
-        if (activeCompletionRing.pushCompletion(completion)) return;
+        // The port may have been detached (or rings disabled) while the completion was in-flight.
+        const activeCompletionRing = this.completionRings.get(port) ?? null;
+        if (activeCompletionRing) {
+          try {
+            if (activeCompletionRing.pushCompletion(completion)) return;
+          } catch (err) {
+            this.disableRingsForPort(port, err);
+          }
+        }
         const msg: UsbCompletionMessage = { type: "usb.completion", completion };
         this.postToPort(port, msg);
       });
@@ -603,7 +623,7 @@ export class UsbBroker {
 
   private postToPort(
     port: MessagePort | Worker,
-    msg: UsbCompletionMessage | UsbSelectedMessage | UsbGuestWebUsbStatusMessage | UsbRingAttachMessage,
+    msg: UsbCompletionMessage | UsbSelectedMessage | UsbGuestWebUsbStatusMessage | UsbRingAttachMessage | UsbRingDetachMessage,
   ): void {
     const transfer = msg.type === "usb.completion" ? getTransferablesForUsbCompletionMessage(msg) : undefined;
     if (transfer) {
@@ -640,6 +660,31 @@ export class UsbBroker {
     for (const port of this.ports) {
       this.postToPort(port, msg);
     }
+  }
+
+  private detachRingsForPort(port: MessagePort | Worker): void {
+    const timer = this.ringDrainTimers.get(port);
+    if (timer) {
+      clearInterval(timer);
+      this.ringDrainTimers.delete(port);
+    }
+    this.actionRings.delete(port);
+    this.completionRings.delete(port);
+  }
+
+  private disableRingsForPort(port: MessagePort | Worker, err: unknown): void {
+    // Avoid spamming `usb.ringDetach` if multiple callbacks notice the failure.
+    if (!this.actionRings.has(port) && !this.completionRings.has(port)) return;
+
+    const message = err instanceof Error ? err.message : String(err);
+    this.detachRingsForPort(port);
+    this.postToPort(
+      port,
+      {
+        type: "usb.ringDetach",
+        reason: `USB proxy rings disabled: ${message}`,
+      } satisfies UsbRingDetachMessage,
+    );
   }
 
   private emitDeviceChange(): void {

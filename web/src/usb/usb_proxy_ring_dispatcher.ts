@@ -2,12 +2,14 @@ import type { UsbHostCompletion } from "./usb_passthrough_types";
 import { UsbProxyRing } from "./usb_proxy_ring";
 
 type CompletionHandler = (completion: UsbHostCompletion) => void;
+type ErrorHandler = (err: unknown) => void;
 
 type DispatcherEntry = {
   ring: UsbProxyRing;
-  handlers: Set<CompletionHandler>;
+  handlers: Map<CompletionHandler, ErrorHandler | undefined>;
   timer: ReturnType<typeof setInterval> | null;
   drainIntervalMs: number;
+  broken: boolean;
 };
 
 const DEFAULT_DRAIN_INTERVAL_MS = 4;
@@ -23,6 +25,7 @@ const DEFAULT_DRAIN_INTERVAL_MS = 4;
 const completionDispatchers = new WeakMap<SharedArrayBuffer, DispatcherEntry>();
 
 function drain(entry: DispatcherEntry): void {
+  if (entry.broken) return;
   const { ring, handlers } = entry;
   if (handlers.size === 0) return;
 
@@ -31,15 +34,28 @@ function drain(entry: DispatcherEntry): void {
     let completion: UsbHostCompletion | null = null;
     try {
       completion = ring.popCompletion();
-    } catch {
-      // Treat ring corruption as a fatal condition for the fast path. Consumers will still
-      // receive any postMessage-based fallbacks.
+    } catch (err) {
+      // Treat ring corruption as a fatal condition for the fast path. Consumers must fall back
+      // to `postMessage`-based completions.
+      entry.broken = true;
+      if (entry.timer) {
+        clearInterval(entry.timer);
+        entry.timer = null;
+      }
+      for (const onError of handlers.values()) {
+        if (!onError) continue;
+        try {
+          onError(err);
+        } catch {
+          // ignore subscriber errors
+        }
+      }
       return;
     }
 
     if (!completion) break;
 
-    for (const handler of handlers) {
+    for (const handler of handlers.keys()) {
       try {
         handler(completion);
       } catch {
@@ -51,6 +67,7 @@ function drain(entry: DispatcherEntry): void {
 }
 
 function ensureTimer(entry: DispatcherEntry): void {
+  if (entry.broken) return;
   if (entry.timer) return;
   entry.timer = setInterval(() => drain(entry), entry.drainIntervalMs);
   (entry.timer as unknown as { unref?: () => void }).unref?.();
@@ -66,19 +83,20 @@ function maybeStopTimer(entry: DispatcherEntry): void {
 export function subscribeUsbProxyCompletionRing(
   buffer: SharedArrayBuffer,
   handler: CompletionHandler,
-  options: { drainIntervalMs?: number } = {},
+  options: { drainIntervalMs?: number; onError?: ErrorHandler } = {},
 ): () => void {
   const requestedInterval = options.drainIntervalMs ?? DEFAULT_DRAIN_INTERVAL_MS;
   let entry = completionDispatchers.get(buffer);
   if (!entry) {
     entry = {
       ring: new UsbProxyRing(buffer),
-      handlers: new Set(),
+      handlers: new Map(),
       timer: null,
       drainIntervalMs: requestedInterval,
+      broken: false,
     };
     completionDispatchers.set(buffer, entry);
-  } else if (requestedInterval < entry.drainIntervalMs) {
+  } else if (!entry.broken && requestedInterval < entry.drainIntervalMs) {
     // Prefer the smallest requested interval to keep latency low when multiple runtimes subscribe.
     entry.drainIntervalMs = requestedInterval;
     if (entry.timer) {
@@ -87,7 +105,7 @@ export function subscribeUsbProxyCompletionRing(
     }
   }
 
-  entry.handlers.add(handler);
+  entry.handlers.set(handler, options.onError);
   ensureTimer(entry);
 
   // Drain after the current call stack so other runtimes processing the same `usb.ringAttach`

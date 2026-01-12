@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { UsbBroker } from "./usb_broker";
 import { WebUsbPassthroughRuntime, type UsbPassthroughBridgeLike } from "./webusb_passthrough_runtime";
 import type { UsbHostAction, UsbHostCompletion } from "./usb_proxy_protocol";
+import { createUsbProxyRingBuffer, USB_PROXY_RING_CTRL_BYTES, UsbProxyRing } from "./usb_proxy_ring";
 
 type Listener = (ev: MessageEvent<unknown>) => void;
 
@@ -215,6 +216,51 @@ describe("usb/WebUSB proxy SAB ring integration", () => {
 
     runtime.destroy();
     broker.detachWorkerPort(brokerPort as unknown as MessagePort);
+  });
+
+  it("requests usb.ringDetach when completion ring decoding fails and falls back to postMessage", async () => {
+    const { brokerPort, workerPort } = createChannel();
+
+    const actions: UsbHostAction[] = [{ kind: "bulkIn", id: 1, endpoint: 0x81, length: 8 }];
+    const push_completion = vi.fn();
+    const bridge: UsbPassthroughBridgeLike = {
+      drain_actions: vi.fn(() => actions),
+      push_completion,
+      reset: vi.fn(),
+      free: vi.fn(),
+    };
+
+    const runtime = new WebUsbPassthroughRuntime({ bridge, port: workerPort as unknown as MessagePort, pollIntervalMs: 0 });
+    workerPort.sent.length = 0;
+
+    // Prepare rings with a corrupted completion record to force popCompletion() to throw.
+    const actionRing = createUsbProxyRingBuffer(256);
+    const completionRing = createUsbProxyRingBuffer(256);
+    const ring = new UsbProxyRing(completionRing);
+    expect(ring.pushCompletion({ kind: "bulkIn", id: 1, status: "success", data: Uint8Array.of(1) })).toBe(true);
+    new Uint8Array(completionRing, USB_PROXY_RING_CTRL_BYTES)[0] = 0x99;
+
+    brokerPort.postMessage({ type: "usb.ringAttach", actionRing, completionRing });
+
+    await Promise.resolve();
+
+    const detachMsgs = workerPort.sent.filter((p) => (p.msg as { type?: unknown }).type === "usb.ringDetach");
+    expect(detachMsgs).toHaveLength(1);
+
+    brokerPort.addEventListener("message", (ev: MessageEvent<unknown>) => {
+      const data = ev.data as { type?: unknown; action?: UsbHostAction };
+      if (data.type !== "usb.action" || !data.action) return;
+      brokerPort.postMessage({ type: "usb.completion", completion: { kind: data.action.kind, id: data.action.id, status: "stall" } });
+    });
+
+    workerPort.sent.length = 0;
+    await withTimeout(runtime.pollOnce(), 250);
+
+    const postedActions = workerPort.sent.filter((p) => (p.msg as { type?: unknown }).type === "usb.action");
+    expect(postedActions).toHaveLength(1);
+    expect(push_completion).toHaveBeenCalledTimes(1);
+
+    runtime.destroy();
   });
 
   it("broadcasts completion ring data to multiple runtimes on the same port", async () => {

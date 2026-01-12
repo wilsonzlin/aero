@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { createUsbProxyRingBuffer, UsbProxyRing } from "./usb_proxy_ring";
+import { createUsbProxyRingBuffer, USB_PROXY_RING_CTRL_BYTES, UsbProxyRing } from "./usb_proxy_ring";
 import { subscribeUsbProxyCompletionRing } from "./usb_proxy_ring_dispatcher";
 
 describe("usb/usb_proxy_ring_dispatcher", () => {
@@ -39,5 +39,31 @@ describe("usb/usb_proxy_ring_dispatcher", () => {
     unsubscribeA();
     unsubscribeB();
   });
-});
 
+  it("invokes onError when completion ring records are corrupted", async () => {
+    const sab = createUsbProxyRingBuffer(256);
+    const ring = new UsbProxyRing(sab);
+
+    expect(ring.pushCompletion({ kind: "bulkIn", id: 1, status: "success", data: Uint8Array.of(1) })).toBe(true);
+
+    // Corrupt the kind tag in the first record so popCompletion throws.
+    const bytes = new Uint8Array(sab, USB_PROXY_RING_CTRL_BYTES);
+    bytes[0] = 0x99;
+
+    const seen: number[] = [];
+    const errors: unknown[] = [];
+
+    const unsubscribe = subscribeUsbProxyCompletionRing(
+      sab,
+      (c) => seen.push(c.id),
+      { drainIntervalMs: 100_000, onError: (err) => errors.push(err) },
+    );
+
+    await Promise.resolve();
+
+    expect(seen).toEqual([]);
+    expect(errors).toHaveLength(1);
+
+    unsubscribe();
+  });
+});

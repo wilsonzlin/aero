@@ -1,6 +1,7 @@
 import {
   isUsbCompletionMessage,
   isUsbRingAttachMessage,
+  isUsbRingDetachMessage,
   isUsbSelectedMessage,
   isUsbSetupPacket,
   isUsbHostAction,
@@ -13,6 +14,7 @@ import {
   type UsbQuerySelectedMessage,
   type UsbRingAttachMessage,
   type UsbRingAttachRequestMessage,
+  type UsbRingDetachMessage,
   type UsbSelectedMessage,
 } from "./usb_proxy_protocol";
 import { UsbProxyRing } from "./usb_proxy_ring";
@@ -340,6 +342,7 @@ export class WebUsbUhciHarnessRuntime {
   #actionRingBuffer: SharedArrayBuffer | null = null;
   #completionRingUnsubscribe: (() => void) | null = null;
   #completionRingBuffer: SharedArrayBuffer | null = null;
+  #ringDetachSent = false;
 
   #tickCount = 0;
   #actionsForwarded = 0;
@@ -384,6 +387,11 @@ export class WebUsbUhciHarnessRuntime {
 
       if (isUsbRingAttachMessage(data)) {
         this.attachRings(data);
+        return;
+      }
+
+      if (isUsbRingDetachMessage(data)) {
+        this.handleRingDetach(data);
         return;
       }
 
@@ -513,20 +521,21 @@ export class WebUsbUhciHarnessRuntime {
       const brokerAction = rewriteActionId(action, brokerId);
 
       const actionRing = this.#actionRing;
-      if (actionRing) {
-        try {
-          if (actionRing.pushAction(brokerAction)) {
-            this.#pending.set(brokerId, { action });
-            this.#pendingHarnessIds.add(id);
-            this.#actionsForwarded += 1;
-            this.#lastAction = action;
-            changed = true;
-            continue;
+        if (actionRing) {
+          try {
+            if (actionRing.pushAction(brokerAction)) {
+              this.#pending.set(brokerId, { action });
+              this.#pendingHarnessIds.add(id);
+              this.#actionsForwarded += 1;
+              this.#lastAction = action;
+              changed = true;
+              continue;
+            }
+          } catch (err) {
+            this.handleRingFailure(`USB action ring push failed: ${formatError(err)}`);
+            return;
           }
-        } catch (err) {
-          this.#lastError = `USB action ring push failed: ${formatError(err)}`;
         }
-      }
 
       const msg: UsbActionMessage = { type: "usb.action", action: brokerAction };
       try {
@@ -659,8 +668,10 @@ export class WebUsbUhciHarnessRuntime {
       this.#actionRing = new UsbProxyRing(msg.actionRing);
       this.#actionRingBuffer = msg.actionRing;
       this.#completionRingBuffer = msg.completionRing;
-      this.#completionRingUnsubscribe = subscribeUsbProxyCompletionRing(msg.completionRing, (completion) =>
-        this.handleCompletion(completion),
+      this.#completionRingUnsubscribe = subscribeUsbProxyCompletionRing(
+        msg.completionRing,
+        (completion) => this.handleCompletion(completion),
+        { onError: (err) => this.handleRingFailure(`USB completion ring pop failed: ${formatError(err)}`) },
       );
     } catch (err) {
       this.#lastError = `Failed to attach USB proxy rings: ${formatError(err)}`;
@@ -670,6 +681,9 @@ export class WebUsbUhciHarnessRuntime {
 
     // Completions are drained by `usb_proxy_ring_dispatcher.ts` so multiple runtimes can
     // coexist on the same MessagePort without stealing completions from each other.
+
+    // Rings are active again; allow future detach requests.
+    this.#ringDetachSent = false;
   }
 
   private detachRings(): void {
@@ -680,5 +694,25 @@ export class WebUsbUhciHarnessRuntime {
     this.#actionRing = null;
     this.#actionRingBuffer = null;
     this.#completionRingBuffer = null;
+  }
+
+  private handleRingDetach(msg: UsbRingDetachMessage): void {
+    const reason = msg.reason ?? "USB proxy rings disabled.";
+    this.handleRingFailure(reason, { notifyBroker: false });
+  }
+
+  private handleRingFailure(reason: string, options: { notifyBroker?: boolean } = {}): void {
+    this.detachRings();
+    this.stop(reason);
+
+    const shouldNotify = options.notifyBroker !== false;
+    if (!shouldNotify) return;
+    if (this.#ringDetachSent) return;
+    this.#ringDetachSent = true;
+    try {
+      this.#port.postMessage({ type: "usb.ringDetach", reason } satisfies UsbRingDetachMessage);
+    } catch {
+      // ignore
+    }
   }
 }

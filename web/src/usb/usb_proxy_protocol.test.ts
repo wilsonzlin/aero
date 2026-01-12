@@ -10,6 +10,7 @@ import {
   isUsbProxyMessage,
   isUsbRingAttachMessage,
   isUsbRingAttachRequestMessage,
+  isUsbRingDetachMessage,
   usbErrorCompletion,
   type UsbActionMessage,
   type UsbCompletionMessage,
@@ -126,6 +127,10 @@ describe("usb/usb_proxy_protocol", () => {
     const ringAttachReq = { type: "usb.ringAttachRequest" };
     expect(isUsbRingAttachRequestMessage(ringAttachReq)).toBe(true);
     expect(isUsbProxyMessage(ringAttachReq)).toBe(true);
+
+    const ringDetach = { type: "usb.ringDetach", reason: "disable fast path" };
+    expect(isUsbRingDetachMessage(ringDetach)).toBe(true);
+    expect(isUsbProxyMessage(ringDetach)).toBe(true);
     expect(
       isUsbProxyMessage({
         type: "usb.guest.status",

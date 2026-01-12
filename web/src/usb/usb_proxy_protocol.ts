@@ -17,6 +17,13 @@ export type UsbRingAttachMessage = {
  * message; the runtime should fall back to `postMessage`-based proxying.
  */
 export type UsbRingAttachRequestMessage = { type: "usb.ringAttachRequest" };
+/**
+ * Disable the SharedArrayBuffer USB proxy rings for this port.
+ *
+ * The SAB fast path is an optimization; runtimes must be able to fall back to `postMessage`-based
+ * proxying at any time (e.g. if a ring becomes corrupted).
+ */
+export type UsbRingDetachMessage = { type: "usb.ringDetach"; reason?: string };
 export type UsbSelectDeviceMessage = { type: "usb.selectDevice"; filters?: USBDeviceFilter[] };
 /**
  * Request the current `usb.selected` state from the broker.
@@ -50,6 +57,7 @@ export type UsbProxyMessage =
   | UsbCompletionMessage
   | UsbRingAttachMessage
   | UsbRingAttachRequestMessage
+  | UsbRingDetachMessage
   | UsbSelectDeviceMessage
   | UsbQuerySelectedMessage
   | UsbSelectedMessage
@@ -207,6 +215,12 @@ export function isUsbRingAttachRequestMessage(value: unknown): value is UsbRingA
   return isRecord(value) && value.type === "usb.ringAttachRequest";
 }
 
+export function isUsbRingDetachMessage(value: unknown): value is UsbRingDetachMessage {
+  if (!isRecord(value) || value.type !== "usb.ringDetach") return false;
+  if (value.reason === undefined) return true;
+  return typeof value.reason === "string";
+}
+
 export function isUsbSelectDeviceMessage(value: unknown): value is UsbSelectDeviceMessage {
   if (!isRecord(value) || value.type !== "usb.selectDevice") return false;
   if (value.filters === undefined) return true;
@@ -250,6 +264,7 @@ export function isUsbProxyMessage(value: unknown): value is UsbProxyMessage {
     isUsbCompletionMessage(value) ||
     isUsbRingAttachMessage(value) ||
     isUsbRingAttachRequestMessage(value) ||
+    isUsbRingDetachMessage(value) ||
     isUsbSelectDeviceMessage(value) ||
     isUsbQuerySelectedMessage(value) ||
     isUsbSelectedMessage(value) ||

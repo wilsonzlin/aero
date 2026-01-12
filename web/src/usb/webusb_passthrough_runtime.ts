@@ -2,6 +2,7 @@ import {
   isUsbCompletionMessage,
   isUsbRingAttachMessage,
   type UsbRingAttachRequestMessage,
+  isUsbRingDetachMessage,
   isUsbSelectedMessage,
   isUsbSetupPacket,
   getTransferablesForUsbActionMessage,
@@ -11,6 +12,7 @@ import {
   type UsbHostCompletion,
   type UsbQuerySelectedMessage,
   type UsbRingAttachMessage,
+  type UsbRingDetachMessage,
   type UsbSelectedMessage,
 } from "./usb_proxy_protocol";
 import { UsbProxyRing } from "./usb_proxy_ring";
@@ -205,6 +207,7 @@ export class WebUsbPassthroughRuntime {
   #actionRingBuffer: SharedArrayBuffer | null = null;
   #completionRingUnsubscribe: (() => void) | null = null;
   #completionRingBuffer: SharedArrayBuffer | null = null;
+  #ringDetachSent = false;
 
   #actionsForwarded = 0;
   #completionsApplied = 0;
@@ -255,6 +258,11 @@ export class WebUsbPassthroughRuntime {
 
       if (isUsbRingAttachMessage(data)) {
         this.attachRings(data);
+        return;
+      }
+
+      if (isUsbRingDetachMessage(data)) {
+        this.handleRingDetach(data);
         return;
       }
 
@@ -505,7 +513,9 @@ export class WebUsbPassthroughRuntime {
               continue;
             }
           } catch (err) {
-            this.#lastError = `USB action ring push failed: ${formatError(err)}`;
+            awaiters.push(deferred.promise);
+            this.handleRingFailure(`USB action ring push failed: ${formatError(err)}`);
+            break;
           }
         }
 
@@ -638,14 +648,19 @@ export class WebUsbPassthroughRuntime {
       this.#actionRing = new UsbProxyRing(msg.actionRing);
       this.#actionRingBuffer = msg.actionRing;
       this.#completionRingBuffer = msg.completionRing;
-      this.#completionRingUnsubscribe = subscribeUsbProxyCompletionRing(msg.completionRing, (completion) =>
-        this.handleCompletion(completion),
+      this.#completionRingUnsubscribe = subscribeUsbProxyCompletionRing(
+        msg.completionRing,
+        (completion) => this.handleCompletion(completion),
+        { onError: (err) => this.handleRingFailure(`USB completion ring pop failed: ${formatError(err)}`) },
       );
     } catch (err) {
       this.#lastError = `Failed to attach USB proxy rings: ${formatError(err)}`;
       this.detachRings();
       return;
     }
+
+    // Rings are active again; allow future detach requests.
+    this.#ringDetachSent = false;
   }
 
   private detachRings(): void {
@@ -656,5 +671,33 @@ export class WebUsbPassthroughRuntime {
     this.#actionRing = null;
     this.#actionRingBuffer = null;
     this.#completionRingBuffer = null;
+  }
+
+  private handleRingDetach(msg: UsbRingDetachMessage): void {
+    const reason = msg.reason ?? "USB proxy rings disabled.";
+    this.handleRingFailure(reason, { notifyBroker: false });
+  }
+
+  private handleRingFailure(reason: string, options: { notifyBroker?: boolean } = {}): void {
+    this.#lastError = reason;
+    this.detachRings();
+    this.cancelPending(reason);
+    this.#backlog = [];
+    this.#backlogIndex = 0;
+    try {
+      this.#bridge.reset();
+    } catch (err) {
+      this.#lastError = `${this.#lastError}; reset failed: ${formatError(err)}`;
+    }
+
+    const shouldNotify = options.notifyBroker !== false;
+    if (!shouldNotify) return;
+    if (this.#ringDetachSent) return;
+    this.#ringDetachSent = true;
+    try {
+      this.#port.postMessage({ type: "usb.ringDetach", reason } satisfies UsbRingDetachMessage);
+    } catch {
+      // ignore
+    }
   }
 }
