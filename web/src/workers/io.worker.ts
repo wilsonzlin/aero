@@ -2548,7 +2548,49 @@ function runHdaMicCaptureTest(requestId: number): void {
     return;
   }
 
+  // The harness drives the WASM HDA model directly via `mmio_write` + `step_frames`, bypassing the
+  // guest's PCI config-space command register writes. Newer WASM builds gate all DMA (CORB/RIRB,
+  // PCM, etc.) on PCI Bus Master Enable (command bit 2), so ensure that bit is set while the test
+  // runs. Do this via the JS PCI config-port model (0xCF8/0xCFC) so the device wrapper's
+  // `onPciCommandWrite` hook (and the WASM bridge's `set_pci_command` mirror) stay coherent.
+  //
+  // Restore both the config-address register and the original command value so the harness does not
+  // perturb any concurrently running guest code.
+  const mgr = deviceManager;
+  const hdaBdf = (hdaDevice as unknown as { bdf?: { bus: number; device: number; function: number } } | null)?.bdf ?? {
+    bus: 0,
+    device: 4,
+    function: 0,
+  };
+  const cfgAddrHdaCommand =
+    (0x8000_0000 |
+      ((hdaBdf.bus & 0xff) << 16) |
+      ((hdaBdf.device & 0x1f) << 11) |
+      ((hdaBdf.function & 0x7) << 8) |
+      0x04) >>> 0;
+  let restorePciAddrReg: number | null = null;
+  let restorePciCommand: number | null = null;
+
   try {
+    if (mgr) {
+      try {
+        restorePciAddrReg = mgr.portRead(0x0cf8, 4) >>> 0;
+        mgr.portWrite(0x0cf8, 4, cfgAddrHdaCommand);
+        restorePciCommand = mgr.portRead(0x0cfc, 2) & 0xffff;
+
+        const withBusMaster = (restorePciCommand | (1 << 2)) & 0xffff;
+        if (withBusMaster !== restorePciCommand) {
+          // Only touch the command word (2 bytes). Avoid writing the full dword, which would risk
+          // clearing RW1C PCI status bits.
+          mgr.portWrite(0x0cfc, 2, withBusMaster);
+        }
+      } finally {
+        if (restorePciAddrReg !== null) {
+          mgr.portWrite(0x0cf8, 4, restorePciAddrReg);
+        }
+      }
+    }
+
     // Guest memory layout.
     //
     // IMPORTANT: Keep this region disjoint from the CPU worker's always-on guest-memory
@@ -2702,6 +2744,21 @@ function runHdaMicCaptureTest(requestId: number): void {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     ctx.postMessage({ type: "hda.micCaptureTest.result", requestId, ok: false, error: message } satisfies HdaMicCaptureTestResultMessage);
+  } finally {
+    if (mgr && restorePciCommand !== null && restorePciAddrReg !== null) {
+      try {
+        mgr.portWrite(0x0cf8, 4, cfgAddrHdaCommand);
+        mgr.portWrite(0x0cfc, 2, restorePciCommand & 0xffff);
+      } catch {
+        // Best-effort; do not mask the harness result.
+      } finally {
+        try {
+          mgr.portWrite(0x0cf8, 4, restorePciAddrReg);
+        } catch {
+          // ignore
+        }
+      }
+    }
   }
 }
 
