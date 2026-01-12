@@ -77,7 +77,19 @@ impl Tier1WasmOptions {
             self.memory_max_pages
         };
 
+        assert!(
+            self.memory_min_pages <= WASM32_MAX_PAGES,
+            "invalid env.memory import type: min_pages ({}) exceeds wasm32 max pages ({})",
+            self.memory_min_pages,
+            WASM32_MAX_PAGES
+        );
         if let Some(max) = effective_max_pages {
+            assert!(
+                max <= WASM32_MAX_PAGES,
+                "invalid env.memory import type: max_pages ({}) exceeds wasm32 max pages ({})",
+                max,
+                WASM32_MAX_PAGES
+            );
             assert!(
                 self.memory_min_pages <= max,
                 "invalid env.memory import type: min_pages ({}) > max_pages ({})",
@@ -222,7 +234,9 @@ impl Tier1WasmCodegen {
         let memory_max_pages: Option<u64> = if options.memory_shared {
             // Shared memories require an explicit maximum. Default to 4GiB (the maximum size of a
             // wasm32 memory) so we can link against any smaller shared memory.
-            Some(u64::from(options.memory_max_pages.unwrap_or(WASM32_MAX_PAGES)))
+            Some(u64::from(
+                options.memory_max_pages.unwrap_or(WASM32_MAX_PAGES),
+            ))
         } else {
             options.memory_max_pages.map(u64::from)
         };

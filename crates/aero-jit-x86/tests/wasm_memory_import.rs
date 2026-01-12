@@ -1,16 +1,14 @@
+#[cfg(feature = "legacy-baseline")]
+use aero_jit_x86::legacy::{
+    ir::{IrBlock as LegacyIrBlock, IrOp as LegacyIrOp, Operand as LegacyOperand},
+    wasm::{LegacyWasmOptions, WasmCodegen as LegacyWasmCodegen},
+};
 use aero_jit_x86::tier1::ir::{IrBlock, IrTerminator};
 use aero_jit_x86::tier1::{Tier1WasmCodegen, Tier1WasmOptions};
 use aero_jit_x86::tier2::ir::{Instr, TraceIr, TraceKind};
 use aero_jit_x86::tier2::opt::RegAllocPlan;
 use aero_jit_x86::tier2::{Tier2WasmCodegen, Tier2WasmOptions};
 use aero_jit_x86::wasm::{IMPORT_MEMORY, IMPORT_MODULE, WASM32_MAX_PAGES};
-#[cfg(feature = "legacy-baseline")]
-use aero_jit_x86::{
-    legacy::{
-        ir::{IrBlock as LegacyIrBlock, IrOp as LegacyIrOp, Operand as LegacyOperand},
-        wasm::{LegacyWasmOptions, WasmCodegen as LegacyWasmCodegen},
-    },
-};
 use wasmparser::{Parser, Payload, TypeRef};
 
 fn imported_memory_type(wasm: &[u8]) -> wasmparser::MemoryType {
@@ -59,10 +57,8 @@ fn trivial_legacy_block() -> LegacyIrBlock {
 
 #[test]
 fn tier1_wasm_memory_import_defaults_to_unshared() {
-    let wasm = Tier1WasmCodegen::new().compile_block_with_options(
-        &trivial_tier1_block(),
-        Tier1WasmOptions::default(),
-    );
+    let wasm = Tier1WasmCodegen::new()
+        .compile_block_with_options(&trivial_tier1_block(), Tier1WasmOptions::default());
     let mem = imported_memory_type(&wasm);
     assert!(!mem.memory64);
     assert!(!mem.shared);
@@ -112,8 +108,11 @@ fn tier1_wasm_memory_import_shared_defaults_to_4gib_maximum_and_respects_minimum
 fn tier2_wasm_memory_import_defaults_to_unshared() {
     let trace = trivial_tier2_trace();
     let plan = RegAllocPlan::default();
-    let wasm =
-        Tier2WasmCodegen::new().compile_trace_with_options(&trace, &plan, Tier2WasmOptions::default());
+    let wasm = Tier2WasmCodegen::new().compile_trace_with_options(
+        &trace,
+        &plan,
+        Tier2WasmOptions::default(),
+    );
     let mem = imported_memory_type(&wasm);
     assert!(!mem.memory64);
     assert!(!mem.shared);
@@ -185,6 +184,33 @@ fn tier2_wasm_memory_import_shared_defaults_to_4gib_maximum_and_respects_minimum
     assert_eq!(mem.page_size_log2, None);
 }
 
+#[test]
+#[should_panic(expected = "exceeds wasm32 max pages")]
+fn tier1_wasm_memory_import_rejects_maximum_above_wasm32_limit() {
+    let _ = Tier1WasmCodegen::new().compile_block_with_options(
+        &trivial_tier1_block(),
+        Tier1WasmOptions {
+            memory_max_pages: Some(WASM32_MAX_PAGES + 1),
+            ..Default::default()
+        },
+    );
+}
+
+#[test]
+#[should_panic(expected = "exceeds wasm32 max pages")]
+fn tier2_wasm_memory_import_rejects_maximum_above_wasm32_limit() {
+    let trace = trivial_tier2_trace();
+    let plan = RegAllocPlan::default();
+    let _ = Tier2WasmCodegen::new().compile_trace_with_options(
+        &trace,
+        &plan,
+        Tier2WasmOptions {
+            memory_max_pages: Some(WASM32_MAX_PAGES + 1),
+            ..Default::default()
+        },
+    );
+}
+
 #[cfg(feature = "legacy-baseline")]
 #[test]
 fn legacy_wasm_memory_import_shared_defaults_to_4gib_maximum() {
@@ -224,4 +250,18 @@ fn legacy_wasm_memory_import_shared_defaults_to_4gib_maximum_and_respects_minimu
     assert_eq!(mem.initial, 9);
     assert_eq!(mem.maximum, Some(u64::from(WASM32_MAX_PAGES)));
     assert_eq!(mem.page_size_log2, None);
+}
+
+#[cfg(feature = "legacy-baseline")]
+#[test]
+#[should_panic(expected = "exceeds wasm32 max pages")]
+fn legacy_wasm_memory_import_rejects_maximum_above_wasm32_limit() {
+    let block = trivial_legacy_block();
+    let _ = LegacyWasmCodegen::new().compile_block_with_options(
+        &block,
+        LegacyWasmOptions {
+            memory_max_pages: Some(WASM32_MAX_PAGES + 1),
+            ..Default::default()
+        },
+    );
 }
