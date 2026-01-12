@@ -82,6 +82,10 @@ test("CPU↔IO AIPC: i8042 port I/O roundtrip in browser workers", async ({ page
   expect(result.statusMid & 0x01).toBe(0x01);
   expect(result.statusAfter & 0x01).toBe(0x00);
   expect(result.irqEvents).toEqual([
+    // i8042 models IRQ1 as an edge-triggered pulse each time the head output byte changes.
+    // Reset returns two bytes (ACK + BAT OK), so we expect two pulses.
+    { irq: 1, level: true },
+    { irq: 1, level: false },
     { irq: 1, level: true },
     { irq: 1, level: false },
   ]);
