@@ -2346,10 +2346,11 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
         // Use a distinct offset from the CPU worker probe so concurrent init cannot race on the
         // same 32-bit word and trigger false-negative wiring failures.
         const memProbeGuestOffset = 0x104;
+        const guestBaseBytes = api.guest_ram_layout(0).guest_base >>> 0;
         assertWasmMemoryWiring({
           api,
           memory: init.guestMemory,
-          linearOffset: guestU8.byteOffset + memProbeGuestOffset,
+          linearOffset: guestBaseBytes + memProbeGuestOffset,
           context: "io.worker",
         });
         wasmApi = api;
