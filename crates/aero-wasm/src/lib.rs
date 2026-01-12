@@ -22,6 +22,13 @@ mod vm;
 #[cfg(target_arch = "wasm32")]
 pub use vm::WasmVm;
 
+#[cfg(target_arch = "wasm32")]
+mod vm_snapshot_builder;
+#[cfg(target_arch = "wasm32")]
+pub use vm_snapshot_builder::{
+    vm_snapshot_restore, vm_snapshot_restore_from_opfs, vm_snapshot_save, vm_snapshot_save_to_opfs,
+};
+
 #[cfg(any(target_arch = "wasm32", test))]
 mod demo_renderer;
 
