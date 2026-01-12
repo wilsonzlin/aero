@@ -996,6 +996,44 @@ static void test_read_device_config_invalid_range(void)
     VirtioPciModernMmioSimUninstall();
 }
 
+static void test_read_device_config_zero_length_noop(void)
+{
+    uint8_t bar0[TEST_BAR0_SIZE];
+    uint8_t pci_cfg[256];
+    VIRTIO_PCI_DEVICE dev;
+    VIRTIO_PCI_MODERN_MMIO_SIM sim;
+    uint32_t before;
+    uint32_t after;
+    NTSTATUS st;
+
+    setup_device(&dev, bar0, pci_cfg);
+
+    VirtioPciModernMmioSimInit(&sim,
+                               dev.CommonCfg,
+                               (volatile uint8_t*)dev.NotifyBase,
+                               dev.NotifyLength,
+                               (volatile uint8_t*)dev.IsrStatus,
+                               dev.IsrLength,
+                               (volatile uint8_t*)dev.DeviceCfg,
+                               dev.DeviceCfgLength);
+
+    /* Ensure config_generation stays stable. */
+    sim.config_generation = 0x42;
+    sim.config_generation_step_on_read = 0;
+
+    VirtioPciModernMmioSimInstall(&sim);
+
+    before = sim.config_generation;
+    st = VirtioPciReadDeviceConfig(&dev, 0, NULL, 0);
+    after = sim.config_generation;
+
+    assert(st == STATUS_SUCCESS);
+    /* No reads should occur, so generation must not change. */
+    assert(before == after);
+
+    VirtioPciModernMmioSimUninstall();
+}
+
 static void test_read_device_config_generation_mismatch_times_out(void)
 {
     uint8_t bar0[TEST_BAR0_SIZE];
@@ -1583,6 +1621,7 @@ int main(void)
     test_read_device_config_success();
     test_read_device_config_generation_retry_succeeds();
     test_read_device_config_invalid_range();
+    test_read_device_config_zero_length_noop();
     test_read_device_config_generation_mismatch_times_out();
     test_get_queue_notify_address_respects_multiplier();
     test_get_queue_notify_address_per_queue();
