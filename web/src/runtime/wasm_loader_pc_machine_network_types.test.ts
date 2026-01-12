@@ -21,6 +21,11 @@ describe("runtime/wasm_loader (PcMachine network typings)", () => {
       free: () => {},
     };
 
+    const ioIpcSab =
+      typeof SharedArrayBuffer !== "undefined"
+        ? new SharedArrayBuffer(0)
+        : (new ArrayBuffer(0) as unknown as SharedArrayBuffer);
+
     const machine = {
       reset: () => {},
       set_disk_image: (_bytes: Uint8Array) => {},
@@ -46,6 +51,8 @@ describe("runtime/wasm_loader (PcMachine network typings)", () => {
 
       // @ts-expect-error attach_net_rings may be undefined
       machine.attach_net_rings(ring, ring);
+      // @ts-expect-error attach_l2_tunnel_from_io_ipc_sab may be undefined
+      machine.attach_l2_tunnel_from_io_ipc_sab(ioIpcSab);
       // @ts-expect-error detach_net_rings may be undefined
       machine.detach_net_rings();
       // @ts-expect-error net_stats may be undefined
@@ -58,6 +65,9 @@ describe("runtime/wasm_loader (PcMachine network typings)", () => {
       m.reset();
       m.set_disk_image(new Uint8Array());
       m.attach_l2_tunnel_rings(ring, ring);
+      if (m.attach_l2_tunnel_from_io_ipc_sab) {
+        m.attach_l2_tunnel_from_io_ipc_sab(ioIpcSab);
+      }
       if (m.attach_net_rings) {
         m.attach_net_rings(ring, ring);
       }
@@ -76,6 +86,9 @@ describe("runtime/wasm_loader (PcMachine network typings)", () => {
     if (machine.attach_net_rings) {
       machine.attach_net_rings(ring, ring);
     }
+    if (machine.attach_l2_tunnel_from_io_ipc_sab) {
+      machine.attach_l2_tunnel_from_io_ipc_sab(ioIpcSab);
+    }
     if (machine.detach_net_rings) {
       machine.detach_net_rings();
     }
@@ -86,4 +99,3 @@ describe("runtime/wasm_loader (PcMachine network typings)", () => {
     expect(true).toBe(true);
   });
 });
-

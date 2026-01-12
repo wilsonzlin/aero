@@ -392,6 +392,12 @@ export interface WasmApi {
         set_disk_image(bytes: Uint8Array): void;
         attach_l2_tunnel_rings(tx: SharedRingBufferHandle, rx: SharedRingBufferHandle): void;
         /**
+         * Convenience: open `NET_TX`/`NET_RX` rings from an `ioIpcSab` and attach them as an L2 tunnel.
+         *
+         * Optional for older WASM builds.
+         */
+        attach_l2_tunnel_from_io_ipc_sab?(ioIpc: SharedArrayBuffer): void;
+        /**
          * Legacy/alternate naming for attaching NET_TX/NET_RX rings.
          *
          * Optional for older WASM builds; prefer {@link attach_l2_tunnel_rings} when available.

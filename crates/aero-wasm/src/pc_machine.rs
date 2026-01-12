@@ -7,8 +7,8 @@
 
 use wasm_bindgen::prelude::*;
 
-use aero_ipc::wasm::SharedRingBuffer;
-use js_sys::{BigInt, Object, Reflect};
+use aero_ipc::wasm::{SharedRingBuffer, open_ring_by_kind};
+use js_sys::{BigInt, Object, Reflect, SharedArrayBuffer};
 
 use crate::RunExit;
 
@@ -60,6 +60,21 @@ impl PcMachine {
     /// views for their own use if needed.
     pub fn attach_l2_tunnel_rings(&mut self, tx: SharedRingBuffer, rx: SharedRingBuffer) {
         self.inner.attach_l2_tunnel_rings(tx, rx);
+    }
+
+    /// Convenience: open `NET_TX`/`NET_RX` rings from an `ioIpcSab` and attach them as an L2 tunnel.
+    pub fn attach_l2_tunnel_from_io_ipc_sab(
+        &mut self,
+        io_ipc: SharedArrayBuffer,
+    ) -> Result<(), JsValue> {
+        let tx = open_ring_by_kind(
+            io_ipc.clone(),
+            aero_ipc::layout::io_ipc_queue_kind::NET_TX,
+            0,
+        )?;
+        let rx = open_ring_by_kind(io_ipc, aero_ipc::layout::io_ipc_queue_kind::NET_RX, 0)?;
+        self.attach_l2_tunnel_rings(tx, rx);
+        Ok(())
     }
 
     /// Legacy/compatibility alias for [`PcMachine::attach_l2_tunnel_rings`].
