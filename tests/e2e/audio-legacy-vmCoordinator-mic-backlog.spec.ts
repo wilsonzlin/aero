@@ -74,8 +74,21 @@ test("Legacy VmCoordinator discards buffered mic samples on attach/resume/step (
       const readAfterAttach = Atomics.load(header, MIC_READ_POS_INDEX) >>> 0;
       const writeAfterAttach = Atomics.load(header, MIC_WRITE_POS_INDEX) >>> 0;
 
+      // Redundant attach messages should not discard live mic samples when the ring SAB hasn't changed.
+      // (i.e. attach/flush should be idempotent w.r.t. the current SAB).
+      Atomics.store(header, MIC_WRITE_POS_INDEX, (writeAfterAttach + 10_000) >>> 0);
+      const readBeforeRedundantAttach = Atomics.load(header, MIC_READ_POS_INDEX) >>> 0;
+      const writeBeforeRedundantAttach = Atomics.load(header, MIC_WRITE_POS_INDEX) >>> 0;
+      vm.setMicrophoneRingBuffer(sab, { sampleRate: 48_000 });
+      // The legacy worker does not ACK ring buffer attachment messages. Force message ordering by
+      // requesting a snapshot: by the time we receive the response, the redundant attach has been
+      // processed (and would have flushed `readPos` if it were not idempotent).
+      await vm.requestSnapshot({ reason: "afterRedundantAttach" });
+      const readAfterRedundantAttach = Atomics.load(header, MIC_READ_POS_INDEX) >>> 0;
+      const writeAfterRedundantAttach = Atomics.load(header, MIC_WRITE_POS_INDEX) >>> 0;
+
       // While paused, advance writePos to model continued mic capture, then resume.
-      const writeBeforeResume = (writeAfterAttach + 200_000) >>> 0;
+      const writeBeforeResume = (writeAfterRedundantAttach + 200_000) >>> 0;
       Atomics.store(header, MIC_WRITE_POS_INDEX, writeBeforeResume);
       const readBeforeResume = Atomics.load(header, MIC_READ_POS_INDEX) >>> 0;
 
@@ -102,6 +115,12 @@ test("Legacy VmCoordinator discards buffered mic samples on attach/resume/step (
 
       return {
         attach: { readAfterAttach, writeAfterAttach },
+        redundantAttach: {
+          readBeforeRedundantAttach,
+          writeBeforeRedundantAttach,
+          readAfterRedundantAttach,
+          writeAfterRedundantAttach,
+        },
         resume: { readBeforeResume, writeBeforeResume, readAfterResume, writeAfterResume },
         step: { readBeforeStep, writeBeforeStep, readAfterStep, writeAfterStep },
       };
@@ -122,6 +141,11 @@ test("Legacy VmCoordinator discards buffered mic samples on attach/resume/step (
   // Resume should discard backlog produced while paused.
   expect(result.resume.readBeforeResume).toBeLessThan(result.resume.writeBeforeResume);
   expect(result.resume.readAfterResume).toBe(result.resume.writeAfterResume);
+
+  // Redundant attach should not drop buffered mic samples when the SAB is unchanged.
+  expect(result.redundantAttach.readBeforeRedundantAttach).toBeLessThan(result.redundantAttach.writeBeforeRedundantAttach);
+  expect(result.redundantAttach.readAfterRedundantAttach).toBe(result.redundantAttach.readBeforeRedundantAttach);
+  expect(result.redundantAttach.writeAfterRedundantAttach).toBe(result.redundantAttach.writeBeforeRedundantAttach);
 
   // Step should also treat the pause boundary as a discard point (avoid replaying stale mic).
   expect(result.step.readBeforeStep).toBeLessThan(result.step.writeBeforeStep);
