@@ -1,5 +1,6 @@
 use aero_devices::acpi_pm::PM1_STS_PWRBTN;
 use aero_devices::pci::PciCoreSnapshot;
+use aero_devices::pit8254::{PIT_CH0, PIT_CMD, PIT_HZ};
 use aero_io_snapshot::io::state::IoSnapshot;
 use aero_pc_platform::PcPlatform;
 use aero_platform::interrupts::{InterruptController, PlatformInterruptMode, PlatformInterrupts};
@@ -32,6 +33,9 @@ fn pc_platform_snapshot_roundtrip_preserves_acpi_sci_interrupt_and_platform_devi
     const RAM_SIZE: usize = 2 * 1024 * 1024;
     const SCI_GSI: u32 = 9;
     const SCI_VECTOR: u8 = 0x60;
+    const PIT_GSI: u32 = 2;
+    const PIT_VECTOR: u8 = 0x40;
+    const PIT_DIVISOR: u16 = 20;
 
     // --- Setup: build a PcPlatform and route SCI through the IOAPIC.
     let mut pc = PcPlatform::new(RAM_SIZE);
@@ -42,7 +46,30 @@ fn pc_platform_snapshot_roundtrip_preserves_acpi_sci_interrupt_and_platform_devi
         // Program SCI (GSI9) to a known vector. ACPI tables specify active-low + level-triggered.
         let low = u32::from(SCI_VECTOR) | (1 << 13) | (1 << 15); // polarity_low + level-triggered
         program_ioapic_entry(&mut ints, SCI_GSI, low, 0);
+
+        // Route PIT IRQ0 (GSI2 in our ACPI/IOAPIC setup) to a known vector.
+        program_ioapic_entry(&mut ints, PIT_GSI, u32::from(PIT_VECTOR), 0);
     }
+
+    // Put the i8042 controller into a non-default state (output buffer filled) so snapshot/restore
+    // exercises the controller state machine.
+    pc.io.write_u8(0x64, 0xAA); // i8042 self-test -> returns 0x55 in output buffer.
+
+    // Put the PCI config ports into a non-default state (address latch set) so PCI core snapshot is
+    // meaningfully exercised.
+    pc.io.write(0xCF8, 4, 0x8000_0000 | (7 << 11) | 0x3C);
+    let expected_pci_addr_latch = pc.io.read(0xCF8, 4);
+
+    // Program PIT channel0 and advance time partway through the period (no IRQ yet).
+    pc.io.write_u8(PIT_CMD, 0x34); // ch0, lobyte/hibyte, mode2, binary
+    pc.io.write_u8(PIT_CH0, (PIT_DIVISOR & 0xFF) as u8);
+    pc.io.write_u8(PIT_CH0, (PIT_DIVISOR >> 8) as u8);
+
+    // Advance ~half a PIT period in a deterministic way.
+    let pit_step_ticks: u64 = u64::from(PIT_DIVISOR / 2);
+    let pit_step_ns: u64 = ((((pit_step_ticks as u128) * 1_000_000_000u128) + (PIT_HZ as u128) - 1)
+        / (PIT_HZ as u128)) as u64;
+    pc.tick(pit_step_ns);
 
     // --- Trigger a level-triggered interrupt source (ACPI power button -> SCI).
     pc.io.write_u8(0xB2, 0xA0); // ACPI enable handshake.
@@ -125,6 +152,12 @@ fn pc_platform_snapshot_roundtrip_preserves_acpi_sci_interrupt_and_platform_devi
 
     // --- Assertions after restore.
     assert_eq!(
+        pc2.io.read(0xCF8, 4),
+        expected_pci_addr_latch,
+        "PCI config address latch should survive snapshot/restore"
+    );
+
+    assert_eq!(
         pc2.interrupts.borrow().get_pending(),
         Some(SCI_VECTOR),
         "pending SCI vector should survive snapshot/restore"
@@ -164,4 +197,21 @@ fn pc_platform_snapshot_roundtrip_preserves_acpi_sci_interrupt_and_platform_devi
             "EOI should clear Remote-IRR once SCI is deasserted"
         );
     }
+
+    // PIT should continue counting from its restored phase and eventually deliver an IRQ0 pulse.
+    pc2.tick(pit_step_ns);
+    assert_eq!(
+        pc2.interrupts.borrow().get_pending(),
+        Some(PIT_VECTOR),
+        "PIT interrupt should be delivered after restore"
+    );
+    pc2.interrupts.borrow_mut().acknowledge(PIT_VECTOR);
+    pc2.interrupts.borrow_mut().eoi(PIT_VECTOR);
+
+    // i8042 output buffer should still contain the self-test response.
+    assert_eq!(
+        pc2.io.read_u8(0x60),
+        0x55,
+        "i8042 output buffer should survive snapshot/restore"
+    );
 }
