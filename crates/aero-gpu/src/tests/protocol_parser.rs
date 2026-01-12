@@ -1127,6 +1127,22 @@ fn protocol_rejects_stream_size_bytes_smaller_than_header() {
 }
 
 #[test]
+fn protocol_accepts_trailing_bytes_after_stream_size_bytes() {
+    let mut stream = build_stream(|out| {
+        emit_packet(out, AeroGpuOpcode::Nop as u32, |_| {});
+    });
+
+    // Forward-compat: buffers may include trailing bytes beyond the declared `size_bytes` (capacity
+    // / page rounding). Append an intentionally malformed tail (not 4-byte aligned) that would
+    // break parsing if the parser walked `stream.len()` instead of `header.size_bytes`.
+    stream.extend_from_slice(&[0xAA, 0xBB, 0xCC]);
+
+    let parsed = parse_cmd_stream(&stream).expect("parse should succeed");
+    assert_eq!(parsed.cmds.len(), 1);
+    assert!(matches!(parsed.cmds[0], AeroGpuCmd::Nop));
+}
+
+#[test]
 fn rejects_unknown_major_abi_version() {
     let bad_major = AEROGPU_ABI_MAJOR + 1;
     let abi_version = (bad_major << 16) | AEROGPU_ABI_MINOR;

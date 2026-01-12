@@ -73,6 +73,38 @@ fn alloc_table_duplicate_alloc_id_is_rejected() {
 }
 
 #[test]
+fn alloc_table_accepts_capacity_larger_than_header_size_bytes() {
+    let gpa = 0x1000u64;
+    let entry_stride = AerogpuAllocEntry::SIZE_BYTES as u32;
+    let used_size_bytes = (AerogpuAllocTableHeader::SIZE_BYTES + AerogpuAllocEntry::SIZE_BYTES) as u32;
+    let capacity_size_bytes = used_size_bytes + 4096;
+
+    let bytes = build_alloc_table_bytes(
+        used_size_bytes,
+        1,
+        entry_stride,
+        &[(1, 0x2000, 0x100)],
+    );
+
+    let mut mem = VecGuestMemory::new(0x6000);
+    mem.write(gpa, &bytes).unwrap();
+
+    // Populate the trailing capacity bytes with non-zero data to ensure the decoder ignores them.
+    mem.write(
+        gpa + used_size_bytes as u64,
+        &vec![0xCCu8; (capacity_size_bytes - used_size_bytes) as usize],
+    )
+    .unwrap();
+
+    let table = AllocTable::decode_from_guest_memory(&mut mem, gpa, capacity_size_bytes)
+        .expect("alloc table decode should ignore trailing capacity bytes");
+
+    let entry = table.get(1).expect("alloc_id 1 should be present");
+    assert_eq!(entry.gpa, 0x2000);
+    assert_eq!(entry.size_bytes, 0x100);
+}
+
+#[test]
 fn alloc_table_header_stride_too_small_is_rejected() {
     let gpa = 0x1000u64;
     let size_bytes = AerogpuAllocTableHeader::SIZE_BYTES as u32;
