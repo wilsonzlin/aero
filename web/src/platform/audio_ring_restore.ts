@@ -1,5 +1,5 @@
 import type { AudioRingBufferLayout } from "./audio";
-import { READ_FRAME_INDEX, WRITE_FRAME_INDEX, clampReadFrameIndexToCapacity } from "../audio/audio_worklet_ring";
+import { clampReadFrameIndexToCapacity } from "../audio/audio_worklet_ring";
 
 /**
  * Snapshot state for the AudioWorklet playback ring buffer.
@@ -50,6 +50,6 @@ export function restoreAudioWorkletRing(ring: AudioRingBufferLayout, state: Audi
   const writePos = state.writePos >>> 0;
   const readPos = clampReadFrameIndexToCapacity(state.readPos, writePos, ringCapacityFrames);
 
-  Atomics.store(ring.header, READ_FRAME_INDEX, readPos);
-  Atomics.store(ring.header, WRITE_FRAME_INDEX, writePos);
+  Atomics.store(ring.readIndex, 0, readPos);
+  Atomics.store(ring.writeIndex, 0, writePos);
 }
