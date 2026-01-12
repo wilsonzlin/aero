@@ -49,8 +49,8 @@ fn control_in(dev: &mut AttachedUsbDevice, setup: SetupPacket, max_packet: usize
 
 #[test]
 fn usb_hub_interrupt_bitmap_and_descriptor_scale_with_port_count() {
-    let mut hub = UsbHubDevice::with_port_count(8);
-    hub.attach(8, Box::new(DummyUsbDevice));
+    let mut hub = UsbHubDevice::with_port_count(16);
+    hub.attach(16, Box::new(DummyUsbDevice));
 
     let mut dev = AttachedUsbDevice::new(Box::new(hub));
 
@@ -66,12 +66,12 @@ fn usb_hub_interrupt_bitmap_and_descriptor_scale_with_port_count() {
         },
     );
 
-    // Interrupt endpoint bitmap should be 2 bytes for 8 ports (9 bits).
-    let UsbInResult::Data(bitmap) = dev.handle_in(1, 2) else {
+    // Interrupt endpoint bitmap should be 3 bytes for 16 ports (17 bits).
+    let UsbInResult::Data(bitmap) = dev.handle_in(1, 3) else {
         panic!("expected Data for hub interrupt endpoint");
     };
-    assert_eq!(bitmap.len(), 2);
-    assert_ne!(bitmap[1] & 0x01, 0, "bit8 (port8) should be set");
+    assert_eq!(bitmap.len(), 3);
+    assert_ne!(bitmap[2] & 0x01, 0, "bit16 (port16) should be set");
 
     // GET_DESCRIPTOR(Hub, type=0x29) via class request.
     let hub_desc = control_in(
@@ -85,13 +85,13 @@ fn usb_hub_interrupt_bitmap_and_descriptor_scale_with_port_count() {
         },
         64,
     );
-    assert_eq!(hub_desc[0], 11);
+    assert_eq!(hub_desc[0], 13);
     assert_eq!(hub_desc[1], 0x29);
-    assert_eq!(hub_desc[2], 8);
+    assert_eq!(hub_desc[2], 16);
 
-    // DeviceRemovable + PortPwrCtrlMask bitmaps for 8 ports are 2 bytes each.
-    assert_eq!(&hub_desc[7..9], &[0x00, 0x00]);
-    assert_eq!(&hub_desc[9..11], &[0xFE, 0x01]);
+    // DeviceRemovable + PortPwrCtrlMask bitmaps for 16 ports are 3 bytes each.
+    assert_eq!(&hub_desc[7..10], &[0x00, 0x00, 0x00]);
+    assert_eq!(&hub_desc[10..13], &[0xFE, 0xFF, 0x01]);
 
     // Interrupt endpoint wMaxPacketSize should match the bitmap length.
     let cfg_desc = control_in(
@@ -105,6 +105,6 @@ fn usb_hub_interrupt_bitmap_and_descriptor_scale_with_port_count() {
         },
         64,
     );
-    assert_eq!(cfg_desc[22], 2);
+    assert_eq!(cfg_desc[22], 3);
     assert_eq!(cfg_desc[23], 0);
 }
