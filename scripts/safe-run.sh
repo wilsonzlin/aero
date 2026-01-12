@@ -516,7 +516,7 @@ if [[ $# -lt 1 ]]; then
     echo "  AERO_ISOLATE_CARGO_HOME=1  Override CARGO_HOME to ./.cargo-home (opt-in, avoids registry lock contention on shared hosts)" >&2
     echo "  AERO_DISABLE_RUSTC_WRAPPER=1  Force-disable rustc wrappers (clears RUSTC_WRAPPER env vars; overrides Cargo config build.rustc-wrapper)" >&2
     echo "  AERO_CARGO_BUILD_JOBS=1  Cargo parallelism for agent sandboxes (default: 1; overrides CARGO_BUILD_JOBS if set)" >&2
-    echo "  AERO_SAFE_RUN_RUSTC_RETRIES=3  Retries for transient rustc/EAGAIN spawn failures (default: 3; for cargo + common wrappers like npm/wasm-pack)" >&2
+    echo "  AERO_SAFE_RUN_RUSTC_RETRIES=3  Retries for transient rustc EAGAIN/WouldBlock spawn panics (including unwrap(EAGAIN) panics) (default: 3; for cargo + common wrappers like npm/wasm-pack)" >&2
     echo "  CARGO_BUILD_JOBS=1       Cargo parallelism override (used when AERO_CARGO_BUILD_JOBS is unset)" >&2
     echo "  RUSTC_WORKER_THREADS=1   rustc internal worker threads (default: CARGO_BUILD_JOBS)" >&2
     echo "  RAYON_NUM_THREADS=1      Rayon global pool size (default: CARGO_BUILD_JOBS)" >&2
