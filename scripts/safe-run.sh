@@ -276,7 +276,6 @@ if [[ "${is_cargo_cmd}" == "true" ]]; then
             # Handle both `-C link-arg=...` and `-Clink-arg=...` spellings.
             export RUSTFLAGS="${RUSTFLAGS//-C link-arg=-Wl,--threads=/-C link-arg=--threads=}"
             export RUSTFLAGS="${RUSTFLAGS//-Clink-arg=-Wl,--threads=/-C link-arg=--threads=}"
-            export RUSTFLAGS="${RUSTFLAGS# }"
         fi
 
         if [[ "${RUSTFLAGS:-}" != *"--threads="* ]]; then

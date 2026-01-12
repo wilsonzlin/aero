@@ -43,6 +43,19 @@ fn validate_mmio_size(size: u32) -> Option<usize> {
     }
 }
 
+/// Defensive upper bound for host-provided sample rates.
+///
+/// Web Audio sample rates are typically 44.1kHz/48kHz (sometimes 96kHz). Since the wasm bridge is
+/// callable from JS, clamp values to avoid allocating multi-gigabyte buffers if a caller passes an
+/// absurd rate.
+///
+/// Keep this consistent with the snapshot restore clamp in `aero-audio`'s HDA model.
+const MAX_HOST_SAMPLE_RATE_HZ: u32 = 384_000;
+
+fn clamp_host_sample_rate_hz(rate_hz: u32) -> u32 {
+    rate_hz.clamp(1, MAX_HOST_SAMPLE_RATE_HZ)
+}
+
 struct WorkletBridgeSink<'a> {
     bridge: &'a WorkletBridge,
     channel_count: u32,
@@ -93,7 +106,7 @@ impl HdaControllerBridge {
 
         let output_sample_rate_hz = match output_sample_rate_hz {
             Some(0) => return Err(js_error("outputSampleRateHz must be non-zero")),
-            Some(v) => v,
+            Some(v) => clamp_host_sample_rate_hz(v),
             None => 48_000,
         };
 
@@ -245,7 +258,8 @@ impl HdaControllerBridge {
         // Ensure capture starts from the most recent sample to avoid "stale mic" latency if the
         // producer wrote into the ring before (or while) the guest was attached.
         bridge.discard_buffered_samples();
-        self.hda.set_capture_sample_rate_hz(sample_rate);
+        self.hda
+            .set_capture_sample_rate_hz(clamp_host_sample_rate_hz(sample_rate));
         self.mic_ring = Some(bridge);
         Ok(())
     }
@@ -259,7 +273,7 @@ impl HdaControllerBridge {
         if rate == 0 {
             return Err(js_error("rate must be non-zero"));
         }
-        self.hda.set_output_rate_hz(rate);
+        self.hda.set_output_rate_hz(clamp_host_sample_rate_hz(rate));
         Ok(())
     }
 
@@ -335,7 +349,8 @@ impl HdaControllerBridge {
         if sample_rate_hz == 0 {
             return;
         }
-        self.hda.set_capture_sample_rate_hz(sample_rate_hz);
+        self.hda
+            .set_capture_sample_rate_hz(clamp_host_sample_rate_hz(sample_rate_hz));
     }
 
     /// Whether the guest-visible interrupt line should be asserted.
@@ -504,6 +519,26 @@ mod tests {
         restored.load_state(&snap).unwrap();
         let snap2 = restored.save_state();
         assert_eq!(snap2, snap);
+    }
+
+    #[wasm_bindgen_test]
+    fn host_provided_sample_rates_are_clamped_to_avoid_oom() {
+        let mut guest = vec![0u8; 0x8000];
+        let guest_base = guest.as_mut_ptr() as u32;
+        let guest_size = guest.len() as u32;
+
+        // Constructor should clamp.
+        let bridge = HdaControllerBridge::new(guest_base, guest_size, Some(u32::MAX)).unwrap();
+        assert_eq!(bridge.output_sample_rate_hz(), MAX_HOST_SAMPLE_RATE_HZ);
+
+        // Setter should clamp.
+        let mut bridge2 = HdaControllerBridge::new(guest_base, guest_size, None).unwrap();
+        bridge2.set_output_rate_hz(u32::MAX).unwrap();
+        assert_eq!(bridge2.output_sample_rate_hz(), MAX_HOST_SAMPLE_RATE_HZ);
+
+        // Capture sample rate setter should clamp too (does not return a value).
+        bridge2.set_capture_sample_rate_hz(u32::MAX);
+        assert_eq!(bridge2.hda.capture_sample_rate_hz(), MAX_HOST_SAMPLE_RATE_HZ);
     }
 
     #[wasm_bindgen_test]
