@@ -1,7 +1,7 @@
 use aero_cpu_core::mem::CpuBus as _;
 use aero_devices::pci::profile::NIC_E1000_82540EM;
 use aero_net_e1000::{ICR_TXDW, MIN_L2_FRAME_LEN};
-use aero_pc_platform::{PcCpuBus, PcPlatform};
+use aero_pc_platform::{PcCpuBus, PcPlatform, PcPlatformConfig};
 use memory::MemoryBus as _;
 
 fn cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
@@ -356,9 +356,20 @@ fn pc_platform_routes_e1000_io_bar_after_bar1_reprogramming() {
 
 #[test]
 fn pc_platform_defers_e1000_dma_until_process_e1000() {
-    let mut pc = PcPlatform::new_with_e1000(2 * 1024 * 1024);
+    let mac = [0x52, 0x54, 0x00, 0x12, 0x34, 0x57];
+    let mut pc = PcPlatform::new_with_config(
+        2 * 1024 * 1024,
+        PcPlatformConfig {
+            enable_e1000: true,
+            mac_addr: Some(mac),
+            ..Default::default()
+        },
+    );
     let bdf = NIC_E1000_82540EM.bdf;
     let bar0_base = read_e1000_bar0_base(&mut pc);
+
+    assert!(pc.has_e1000());
+    assert_eq!(pc.e1000_mac_addr(), Some(mac));
 
     // Enable IO + MEM decoding and Bus Mastering.
     write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0007);
@@ -459,4 +470,14 @@ fn pc_platform_e1000_dma_writes_mark_dirty_pages_when_enabled() {
         dirty.contains(&expected_page),
         "dirty pages should include TX descriptor ring page (got {dirty:?})"
     );
+}
+
+#[test]
+fn pc_platform_e1000_helpers_are_noops_when_disabled() {
+    let mut pc = PcPlatform::new(2 * 1024 * 1024);
+
+    assert!(!pc.has_e1000());
+    assert_eq!(pc.e1000_mac_addr(), None);
+    assert_eq!(pc.e1000_pop_tx_frame(), None);
+    assert!(!pc.e1000_enqueue_rx_frame(vec![0u8; MIN_L2_FRAME_LEN]));
 }
