@@ -368,7 +368,7 @@ bash ./scripts/safe-run.sh cargo test -p aero-devices --locked
 bash ./scripts/safe-run.sh cargo test -p aero-interrupts --locked
 bash ./scripts/safe-run.sh cargo test -p aero-timers --locked
 
-# Boot tests
+# Boot tests (QEMU-based, in workspace root `tests/`)
 # Note: the first `cargo test` in a clean/contended agent sandbox can take >10 minutes.
 # If you hit safe-run timeouts during compilation, bump the timeout via AERO_TIMEOUT.
 AERO_TIMEOUT=1200 bash ./scripts/safe-run.sh cargo test -p aero --test boot_sector --locked
