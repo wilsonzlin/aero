@@ -432,6 +432,35 @@ if [[ "${is_retryable_cmd}" == "true" ]] && [[ "$(uname 2>/dev/null || true)" ==
         export CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS="${CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS:-} -C link-arg=--threads=${CARGO_BUILD_JOBS:-1}"
         export CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS="${CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS# }"
     fi
+
+    # Tools like `wasm-pack`, `npm`, and custom JS build scripts may spawn Cargo/rustc internally
+    # for *native* targets too (build scripts, proc-macros, xtasks, etc). Cap lld's thread count
+    # for the host target preemptively so nested builds don't inherit an unbounded linker thread
+    # pool in constrained sandboxes.
+    #
+    # This is best-effort: if rustc isn't available (or the host triple cannot be detected), we
+    # just skip it.
+    if command -v rustc >/dev/null 2>&1; then
+        _aero_host_target="$(rustc -vV 2>/dev/null | sed -n 's/^host: //p' | head -n1)"
+        if [[ -n "${_aero_host_target}" ]]; then
+            # `CARGO_TARGET_<TRIPLE>_RUSTFLAGS` uses an uppercased triple with `-`/`.` replaced by
+            # `_`. Avoid Bash 4+ `${var^^}` so this script remains compatible with older `/bin/bash`
+            # (notably macOS, which still ships Bash 3.2).
+            _aero_host_target_upper="$(printf '%s' "${_aero_host_target}" | tr '[:lower:]' '[:upper:]')"
+            _aero_host_var="CARGO_TARGET_${_aero_host_target_upper}_RUSTFLAGS"
+            _aero_host_var="${_aero_host_var//-/_}"
+            _aero_host_var="${_aero_host_var//./_}"
+
+            _aero_host_flags="${!_aero_host_var:-}"
+            if [[ "${_aero_host_flags}" != *"--threads="* ]] && [[ "${_aero_host_flags}" != *"-Wl,--threads="* ]]; then
+                _aero_host_flags="${_aero_host_flags} -C link-arg=-Wl,--threads=${CARGO_BUILD_JOBS:-1}"
+                _aero_host_flags="${_aero_host_flags# }"
+                export "${_aero_host_var}=${_aero_host_flags}"
+            fi
+            unset _aero_host_target_upper _aero_host_var _aero_host_flags 2>/dev/null || true
+        fi
+        unset _aero_host_target 2>/dev/null || true
+    fi
 fi
 
 if [[ "${is_cargo_cmd}" == "true" ]]; then
