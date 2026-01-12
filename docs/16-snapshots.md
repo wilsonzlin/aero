@@ -136,6 +136,15 @@ The PCI core in `crates/devices` snapshots only **guest-visible PCI-layer state*
   - `PCIB` — `PciBusSnapshot` (per-BDF 256-byte config space image + BAR base/probe state)
 - `INTX` — `PciIntxRouter` (PIRQ routing + asserted INTx levels)
 
+Canonical full-machine snapshots store these as **separate** `DEVICES` entries with distinct outer `DeviceId`s:
+
+- `DeviceId::PCI_CFG` for the `PciConfigPorts` TLV blob (`DEVICE_ID = PCPT`)
+- `DeviceId::PCI_INTX` for the `PciIntxRouter` TLV blob (`DEVICE_ID = INTX`)
+
+This split avoids `DEVICES` duplicate key collisions, since the section rejects duplicate `(device_id, version, flags)` tuples and both PCI TLVs currently share the same inner snapshot `(major, minor)` (e.g. v1.0).
+
+Other canonical platform device entries also have dedicated outer `DeviceId`s (e.g. `DeviceId::ACPI_PM`, `DeviceId::HPET`).
+
 Note: `PciIntxRouter::load_state()` restores internal refcounts but cannot touch the platform interrupt sink; snapshot restore code should call `PciIntxRouter::sync_levels_to_sink()` after restoring the platform interrupt controller to re-drive asserted GSIs.
 
 ---

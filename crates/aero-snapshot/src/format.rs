@@ -51,6 +51,14 @@ impl DeviceId {
     pub const USB: DeviceId = DeviceId(12);
     /// Legacy i8042 PS/2 controller state.
     pub const I8042: DeviceId = DeviceId(13);
+    /// PCI config mechanism/ports + per-function config space images.
+    pub const PCI_CFG: DeviceId = DeviceId(14);
+    /// PCI INTx router (PIRQ routing + asserted INTx levels).
+    pub const PCI_INTX: DeviceId = DeviceId(15);
+    /// ACPI PM I/O register block (PM timer, enable/status registers, etc.).
+    pub const ACPI_PM: DeviceId = DeviceId(16);
+    /// High Precision Event Timer.
+    pub const HPET: DeviceId = DeviceId(17);
 
     pub fn name(self) -> Option<&'static str> {
         match self {
@@ -67,6 +75,10 @@ impl DeviceId {
             DeviceId::MEMORY => Some("MEMORY"),
             DeviceId::USB => Some("USB"),
             DeviceId::I8042 => Some("I8042"),
+            DeviceId::PCI_CFG => Some("PCI_CFG"),
+            DeviceId::PCI_INTX => Some("PCI_INTX"),
+            DeviceId::ACPI_PM => Some("ACPI_PM"),
+            DeviceId::HPET => Some("HPET"),
             _ => None,
         }
     }
