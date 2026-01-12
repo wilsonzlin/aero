@@ -2506,7 +2506,7 @@ impl AerogpuD3d9Executor {
                     Some(GuestTextureBacking {
                         alloc_id: backing_alloc_id,
                         alloc_offset_bytes: backing_offset,
-                        row_pitch_bytes: row_pitch_bytes,
+                        row_pitch_bytes,
                         size_bytes: required,
                     })
                 };
@@ -3867,22 +3867,26 @@ impl AerogpuD3d9Executor {
                     let texel_block = aerogpu_format_texel_block_info(src_format_raw)?;
                     validate_copy_region_alignment(
                         texel_block,
-                        src_x,
-                        src_y,
-                        width,
-                        height,
-                        src_mip_w,
-                        src_mip_h,
+                        CopyRegion2d {
+                            origin_x: src_x,
+                            origin_y: src_y,
+                            width,
+                            height,
+                            mip_width: src_mip_w,
+                            mip_height: src_mip_h,
+                        },
                         "COPY_TEXTURE2D: src",
                     )?;
                     validate_copy_region_alignment(
                         texel_block,
-                        dst_x,
-                        dst_y,
-                        width,
-                        height,
-                        dst_mip_w,
-                        dst_mip_h,
+                        CopyRegion2d {
+                            origin_x: dst_x,
+                            origin_y: dst_y,
+                            width,
+                            height,
+                            mip_width: dst_mip_w,
+                            mip_height: dst_mip_h,
+                        },
                         "COPY_TEXTURE2D: dst",
                     )?;
 
@@ -6600,9 +6604,7 @@ impl AerogpuD3d9Executor {
             } => (
                 draw,
                 first_vertex,
-                first_vertex
-                    .checked_add(vertex_count)
-                    .unwrap_or(u32::MAX),
+                first_vertex.saturating_add(vertex_count),
                 0i64,
             ),
             DrawParams::Indexed {
@@ -7860,16 +7862,7 @@ impl AerogpuD3d9Executor {
         Ok((colors, depth))
     }
 
-    fn render_target_formats(
-        &self,
-    ) -> Result<
-        (
-            Vec<Option<wgpu::TextureFormat>>,
-            Vec<bool>,
-            Option<wgpu::TextureFormat>,
-        ),
-        AerogpuD3d9Error,
-    > {
+    fn render_target_formats(&self) -> Result<RenderTargetFormats, AerogpuD3d9Error> {
         let srgb_write = self
             .state
             .render_states
@@ -7936,6 +7929,12 @@ impl AerogpuD3d9Executor {
     }
 }
 
+type RenderTargetFormats = (
+    Vec<Option<wgpu::TextureFormat>>,
+    Vec<bool>,
+    Option<wgpu::TextureFormat>,
+);
+
 #[derive(Debug, Clone, Copy)]
 enum DrawParams {
     NonIndexed {
@@ -7999,14 +7998,19 @@ impl TexelBlockInfo {
     }
 }
 
-fn validate_copy_region_alignment(
-    block: TexelBlockInfo,
+#[derive(Debug, Clone, Copy)]
+struct CopyRegion2d {
     origin_x: u32,
     origin_y: u32,
     width: u32,
     height: u32,
     mip_width: u32,
     mip_height: u32,
+}
+
+fn validate_copy_region_alignment(
+    block: TexelBlockInfo,
+    region: CopyRegion2d,
     label: &str,
 ) -> Result<(), AerogpuD3d9Error> {
     // Uncompressed formats have no special alignment constraints.
@@ -8014,9 +8018,19 @@ fn validate_copy_region_alignment(
         return Ok(());
     }
 
+    let CopyRegion2d {
+        origin_x,
+        origin_y,
+        width,
+        height,
+        mip_width,
+        mip_height,
+    } = region;
+
     // Block-compressed copies must use block-aligned origins, and block-aligned extents unless the
     // region reaches the edge of the mip.
-    if origin_x % block.block_width != 0 || origin_y % block.block_height != 0 {
+    if !origin_x.is_multiple_of(block.block_width) || !origin_y.is_multiple_of(block.block_height)
+    {
         return Err(AerogpuD3d9Error::Validation(format!(
             "{label}: BC copy origin must be {}x{}-aligned (origin=({origin_x},{origin_y}))",
             block.block_width, block.block_height
@@ -8030,14 +8044,14 @@ fn validate_copy_region_alignment(
         AerogpuD3d9Error::Validation(format!("{label}: copy region overflow"))
     })?;
 
-    if (width % block.block_width) != 0 && end_x != mip_width {
+    if !width.is_multiple_of(block.block_width) && end_x != mip_width {
         return Err(AerogpuD3d9Error::Validation(format!(
             "{label}: BC copy width must be a multiple of {} unless it reaches the mip edge (origin_x={origin_x} width={width} mip_width={mip_width})",
             block.block_width
         )));
     }
 
-    if (height % block.block_height) != 0 && end_y != mip_height {
+    if !height.is_multiple_of(block.block_height) && end_y != mip_height {
         return Err(AerogpuD3d9Error::Validation(format!(
             "{label}: BC copy height must be a multiple of {} unless it reaches the mip edge (origin_y={origin_y} height={height} mip_height={mip_height})",
             block.block_height
