@@ -63,7 +63,13 @@ test("large shader payload spills to OPFS when available", async ({}, testInfo) 
       opfsFileExists: boolean;
       opfsFileSize: number | null;
       opfsWgslBytes: number | null;
-      idbShaderRecord: { storage: string | null; opfsFile: string | null; hasWgsl: boolean } | null;
+      idbShaderRecord: {
+        storage: string | null;
+        opfsFile: string | null;
+        hasWgsl: boolean;
+        hasReflection: boolean;
+        size: number | null;
+      } | null;
       logs: string[];
     }> {
       const logs: string[] = [];
@@ -144,6 +150,8 @@ test("large shader payload spills to OPFS when available", async ({}, testInfo) 
               storage: typeof record.storage === "string" ? record.storage : null,
               opfsFile: typeof record.opfsFile === "string" ? record.opfsFile : null,
               hasWgsl: typeof record.wgsl === "string",
+              hasReflection: record.reflection !== undefined,
+              size: typeof record.size === "number" && Number.isFinite(record.size) ? record.size : null,
             };
           } finally {
             db.close();
@@ -186,6 +194,9 @@ test("large shader payload spills to OPFS when available", async ({}, testInfo) 
     expect(first.idbShaderRecord?.storage).toBe("opfs");
     expect(first.idbShaderRecord?.opfsFile).toBe(`${first.key}.json`);
     expect(first.idbShaderRecord?.hasWgsl).toBe(false);
+    expect(first.idbShaderRecord?.hasReflection).toBe(false);
+    expect(first.idbShaderRecord?.size).not.toBeNull();
+    expect(first.idbShaderRecord?.size ?? 0).toBeGreaterThan(256 * 1024);
 
     const second = await runOnce();
     expect(second.key).toBe(first.key);
@@ -197,6 +208,8 @@ test("large shader payload spills to OPFS when available", async ({}, testInfo) 
     expect(second.opfsWgslBytes ?? 0).toBeGreaterThan(300 * 1024);
     expect(second.logs.some((l) => l.includes("shader_translate: begin"))).toBe(false);
     expect(second.idbShaderRecord?.storage).toBe("opfs");
+    expect(second.idbShaderRecord?.hasWgsl).toBe(false);
+    expect(second.idbShaderRecord?.hasReflection).toBe(false);
   } finally {
     await server.close();
   }
