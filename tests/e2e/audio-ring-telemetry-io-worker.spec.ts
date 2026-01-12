@@ -127,8 +127,6 @@ test("IO worker publishes AudioWorklet ring telemetry into StatusIndex.Audio*", 
       ioIpcSab,
       sharedFramebuffer,
       sharedFramebufferOffsetBytes: 0,
-      // Keep this test compatible with environments that don't build threaded WASM packages.
-      wasmVariant: "single",
     });
 
     // io.worker waits for `setBootDisks` before reporting READY.
