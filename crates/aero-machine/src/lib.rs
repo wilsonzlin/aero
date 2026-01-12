@@ -663,8 +663,9 @@ impl Machine {
 
     /// Advance deterministic platform time and poll any timer devices.
     ///
-    /// This is a testing/debugging helper; the canonical CPU stepping loop does not currently
-    /// advance platform time automatically.
+    /// This is primarily a testing/debugging helper. When the PC platform is enabled,
+    /// [`Machine::run_slice`] also advances platform time based on executed cycles so timer
+    /// interrupts can wake a halted CPU.
     pub fn tick_platform(&mut self, delta_ns: u64) {
         if let Some(clock) = &self.platform_clock {
             clock.advance_ns(delta_ns);
