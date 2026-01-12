@@ -59,9 +59,14 @@ inline std::string slurp_file_after_closing_stderr(const std::string& path) {
 #if defined(_WIN32)
   // Detach stderr from the capture file without leaving fd 2 closed (to avoid
   // surprising the C runtime during process teardown).
-  std::freopen("NUL", "w", stderr);
+  if (!std::freopen("NUL", "w", stderr)) {
+    // Best-effort: at least close the capture file handle so we can read/delete it.
+    std::fclose(stderr);
+  }
 #else
-  std::freopen("/dev/null", "w", stderr);
+  if (!std::freopen("/dev/null", "w", stderr)) {
+    std::fclose(stderr);
+  }
 #endif
   return slurp_file(path);
 }
