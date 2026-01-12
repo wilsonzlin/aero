@@ -37,6 +37,7 @@ describe("InputCapture preventDefault policy", () => {
 
       for (const code of ["BrowserBack", "BrowserSearch"]) {
         const preventDefault = vi.fn();
+        const stopPropagation = vi.fn();
         const event = {
           code,
           repeat: false,
@@ -46,11 +47,12 @@ describe("InputCapture preventDefault policy", () => {
           shiftKey: false,
           metaKey: false,
           preventDefault,
-          stopPropagation: vi.fn(),
+          stopPropagation,
         } as unknown as KeyboardEvent;
 
         (capture as any).handleKeyDown(event);
         expect(preventDefault).toHaveBeenCalledTimes(1);
+        expect(stopPropagation).toHaveBeenCalledTimes(1);
       }
     });
   });

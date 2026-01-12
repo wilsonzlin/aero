@@ -196,6 +196,7 @@ export class InputCapture {
     if (!sc && usage === null) {
       if (shouldPreventDefault) {
         event.preventDefault();
+        event.stopPropagation();
       }
       return;
     }
@@ -206,6 +207,7 @@ export class InputCapture {
 
     if (shouldPreventDefault) {
       event.preventDefault();
+      event.stopPropagation();
     }
 
     const tsUs = toTimestampUs(event.timeStamp);
@@ -229,6 +231,7 @@ export class InputCapture {
     if (!sc && usage === null) {
       if (shouldPreventDefault) {
         event.preventDefault();
+        event.stopPropagation();
       }
       return;
     }
@@ -237,6 +240,7 @@ export class InputCapture {
 
     if (shouldPreventDefault) {
       event.preventDefault();
+      event.stopPropagation();
     }
 
     const tsUs = toTimestampUs(event.timeStamp);
