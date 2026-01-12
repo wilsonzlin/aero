@@ -201,6 +201,13 @@ impl Metrics {
     }
 
     fn image_id_label<'a>(&'a self, image_id: &'a str) -> &'a str {
+        // `image_id` originates from the URL path; keep label values bounded to avoid unbounded
+        // allocations in the tracking set and to keep Prometheus label values reasonable even if
+        // validation is bypassed elsewhere.
+        if image_id.len() > crate::store::MAX_IMAGE_ID_LEN {
+            return "__other__";
+        }
+
         let mut known = self.known_image_ids.lock().expect("mutex poisoned");
 
         if known.contains(image_id) {
@@ -213,5 +220,25 @@ impl Metrics {
         }
 
         "__other__"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn overly_long_image_id_is_mapped_to_other_metric_label() {
+        let metrics = Metrics::new();
+        let long_id = "a".repeat(crate::store::MAX_IMAGE_ID_LEN + 1);
+
+        metrics.observe_image_bytes_served(&long_id, 42);
+
+        let text = String::from_utf8(metrics.encode()).unwrap();
+        assert!(text.contains("image_bytes_served_total{image_id=\"__other__\"} 42"));
+        assert!(
+            !text.contains(&long_id),
+            "expected metrics output to not contain the raw image_id"
+        );
     }
 }
