@@ -298,6 +298,8 @@ function assertBlockSize(blockSize: number): void {
 const AEROSPAR_MAGIC = "AEROSPAR";
 const AEROSPAR_VERSION = 1;
 const AEROSPAR_HEADER_SIZE = 64;
+const AEROSPAR_MAX_TABLE_BYTES = 128 * 1024 * 1024;
+const AEROSPAR_MAX_TABLE_ENTRIES = AEROSPAR_MAX_TABLE_BYTES / 8;
 
 type AeroSparseHeader = {
   version: number;
@@ -356,7 +358,16 @@ class AeroSparseWriter {
     this.diskSizeBytes = diskSizeBytes;
     this.blockSizeBytes = blockSizeBytes;
     this.tableEntries = divCeil(diskSizeBytes, blockSizeBytes);
+    if (!Number.isSafeInteger(this.tableEntries) || this.tableEntries <= 0) {
+      throw new Error("invalid aerosparse table size");
+    }
+    if (this.tableEntries > AEROSPAR_MAX_TABLE_ENTRIES) {
+      throw new Error("aerosparse allocation table too large");
+    }
     const tableBytes = this.tableEntries * 8;
+    if (!Number.isSafeInteger(tableBytes) || tableBytes > AEROSPAR_MAX_TABLE_BYTES) {
+      throw new Error("aerosparse allocation table too large");
+    }
     this.dataOffset = alignUp(AEROSPAR_HEADER_SIZE + tableBytes, blockSizeBytes);
     this.table = new Float64Array(this.tableEntries);
     this.nextPhys = this.dataOffset;

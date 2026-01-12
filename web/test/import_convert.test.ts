@@ -504,6 +504,27 @@ test("convertToAeroSparse: rejects huge output blockSizeBytes", async () => {
   );
 });
 
+test("convertToAeroSparse: rejects aerosparse allocation table larger than 128MiB", async () => {
+  class HugeZeroSource {
+    readonly size: number;
+    constructor(size: number) {
+      this.size = size;
+    }
+    async readAt(_offset: number, _length: number): Promise<Uint8Array> {
+      throw new Error("unexpected read");
+    }
+  }
+
+  const maxTableEntries = (128 * 1024 * 1024) / 8;
+  const diskSizeBytes = (maxTableEntries + 1) * 512;
+  const src = new HugeZeroSource(diskSizeBytes);
+  const sync = new MemSyncAccessHandle();
+  await assert.rejects(
+    convertToAeroSparse(src as any, "raw", sync, { blockSizeBytes: 512 }),
+    (err: any) => err instanceof Error && /aerosparse allocation table too large/i.test(err.message),
+  );
+});
+
 test("convertToAeroSparse: qcow2 sparse copy preserves logical bytes", async () => {
   const { file, logical } = buildQcow2Fixture();
   const src = new MemSource(file);
