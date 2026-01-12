@@ -3739,13 +3739,15 @@ function maybeUpdateKeyboardInputBackend(opts: { virtioKeyboardOk: boolean }): v
 }
 
 function maybeUpdateMouseInputBackend(opts: { virtioMouseOk: boolean }): void {
+  const ps2Available = !!(i8042Wasm || i8042Ts);
+  const syntheticUsbMouseConfigured = syntheticUsbHidAttached && !!usbHid && safeSyntheticUsbHidConfigured(syntheticUsbMouse);
   mouseInputBackend = chooseMouseInputBackend({
     current: mouseInputBackend,
     buttonsHeld: (mouseButtonsMask & 0x07) !== 0,
     virtioOk: opts.virtioMouseOk && !!virtioInputMouse,
-    // Prefer PS/2 mouse injection whenever an i8042 controller is available so mouse input works
-    // even when the synthetic USB HID mouse is absent/unconfigured.
-    usbOk: !(i8042Wasm || i8042Ts),
+    // Use PS/2 injection until the synthetic USB mouse is configured; once configured, route via
+    // the USB HID bridge to avoid duplicate devices in the guest.
+    usbOk: !!usbHid && (!ps2Available || syntheticUsbMouseConfigured),
   });
 }
 
