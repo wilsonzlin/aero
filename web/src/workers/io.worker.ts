@@ -205,6 +205,10 @@ let syntheticUsbGamepad: UsbHidPassthroughBridge | null = null;
 let syntheticUsbHidAttached = false;
 let syntheticUsbKeyboardPendingReport: Uint8Array | null = null;
 let syntheticUsbGamepadPendingReport: Uint8Array | null = null;
+type KeyboardInputBackend = "ps2" | "usb" | "virtio";
+let keyboardInputBackend: KeyboardInputBackend = "ps2";
+const pressedKeyboardHidUsages = new Uint8Array(256);
+let pressedKeyboardHidUsageCount = 0;
 let wasmApi: WasmApi | null = null;
 let usbPassthroughRuntime: WebUsbPassthroughRuntime | null = null;
 let usbPassthroughDebugTimer: number | undefined;
@@ -2896,6 +2900,7 @@ function startIoIpcServer(): void {
       }
       mgr.tick(vmNowMs);
       flushSyntheticUsbHidPendingInputReports();
+      maybeUpdateKeyboardInputBackend({ virtioKeyboardOk: virtioInputKeyboard?.driverOk() ?? false });
       drainSyntheticUsbHidOutputReports();
       hidGuest.poll?.();
       void usbPassthroughRuntime?.pollOnce();
@@ -3111,6 +3116,43 @@ function diskWrite(diskOffset: bigint, len: number, guestOffset: bigint): AeroIp
   });
 }
 
+function updatePressedKeyboardHidUsage(usage: number, pressed: boolean): void {
+  const u = usage & 0xff;
+  const prev = pressedKeyboardHidUsages[u] ?? 0;
+  if (pressed) {
+    if (prev === 0) {
+      pressedKeyboardHidUsages[u] = 1;
+      pressedKeyboardHidUsageCount += 1;
+    }
+    return;
+  }
+  if (prev !== 0) {
+    pressedKeyboardHidUsages[u] = 0;
+    pressedKeyboardHidUsageCount = Math.max(0, pressedKeyboardHidUsageCount - 1);
+  }
+}
+
+function maybeUpdateKeyboardInputBackend(opts: { virtioKeyboardOk: boolean }): void {
+  // Never switch keyboard input backends while keys are held down. Doing so would risk leaving the
+  // prior backend in a "key down" state (no matching release event), which can manifest as stuck
+  // keys in the guest OS.
+  if (pressedKeyboardHidUsageCount !== 0) return;
+
+  if (opts.virtioKeyboardOk && virtioInputKeyboard) {
+    keyboardInputBackend = "virtio";
+    return;
+  }
+
+  // Prefer the synthetic USB keyboard once it's available so we don't keep relying on PS/2
+  // scancode injection after WASM finishes initializing.
+  if (syntheticUsbHidAttached && usbHid) {
+    keyboardInputBackend = "usb";
+    return;
+  }
+
+  keyboardInputBackend = "ps2";
+}
+
 function drainSyntheticUsbHidReports(): void {
   const source = usbHid;
   if (!source) return;
@@ -3276,6 +3318,7 @@ function handleInputBatch(buffer: ArrayBuffer): void {
   // Ensure synthetic USB HID devices exist (when supported) before processing this batch so we
   // can consistently decide whether to use the legacy PS/2 scancode injection path.
   maybeInitSyntheticUsbHidDevices();
+  maybeUpdateKeyboardInputBackend({ virtioKeyboardOk });
 
   const base = 2;
   for (let i = 0; i < count; i++) {
@@ -3286,12 +3329,15 @@ function handleInputBatch(buffer: ArrayBuffer): void {
         const packed = words[off + 2] >>> 0;
         const usage = packed & 0xff;
         const pressed = ((packed >>> 8) & 1) !== 0;
-        if (virtioKeyboardOk && virtioKeyboard) {
-          const keyCode = hidUsageToLinuxKeyCode(usage);
-          if (keyCode !== null) {
-            virtioKeyboard.injectKey(keyCode, pressed);
+        updatePressedKeyboardHidUsage(usage, pressed);
+        if (keyboardInputBackend === "virtio") {
+          if (virtioKeyboardOk && virtioKeyboard) {
+            const keyCode = hidUsageToLinuxKeyCode(usage);
+            if (keyCode !== null) {
+              virtioKeyboard.injectKey(keyCode, pressed);
+            }
           }
-        } else {
+        } else if (keyboardInputBackend === "usb") {
           usbHid?.keyboard_event(usage, pressed);
         }
         break;
@@ -3347,10 +3393,10 @@ function handleInputBatch(buffer: ArrayBuffer): void {
         // Payload: a=packed bytes LE, b=len.
         const packed = words[off + 2] >>> 0;
         const len = words[off + 3] >>> 0;
-        // When the synthetic USB HID devices are attached, prefer the USB keyboard path and
-        // avoid double-injecting via both PS/2 and USB (which would produce duplicated input
-        // in the guest).
-        if (!virtioKeyboardOk && i8042 && !syntheticUsbHidAttached) {
+        // Only inject PS/2 scancodes when the PS/2 keyboard backend is active. Other backends
+        // (synthetic USB HID / virtio-input) rely on `KeyHidUsage` events and would otherwise
+        // cause duplicated input in the guest.
+        if (!virtioKeyboardOk && i8042 && keyboardInputBackend === "ps2") {
           const bytes = new Uint8Array(len);
           for (let j = 0; j < len; j++) {
             bytes[j] = (packed >>> (j * 8)) & 0xff;
@@ -3364,6 +3410,10 @@ function handleInputBatch(buffer: ArrayBuffer): void {
         break;
     }
   }
+
+  // Re-evaluate backend selection after processing this batch; key-up events can make it safe to
+  // transition away from PS/2 scancode injection.
+  maybeUpdateKeyboardInputBackend({ virtioKeyboardOk });
 
   // Forward newly queued USB HID reports into the guest-visible UHCI USB HID devices.
   drainSyntheticUsbHidReports();
@@ -3421,6 +3471,9 @@ function shutdown(): void {
       syntheticUsbHidAttached = false;
       syntheticUsbKeyboardPendingReport = null;
       syntheticUsbGamepadPendingReport = null;
+      keyboardInputBackend = "ps2";
+      pressedKeyboardHidUsages.fill(0);
+      pressedKeyboardHidUsageCount = 0;
 
       webUsbGuestBridge = null;
 
