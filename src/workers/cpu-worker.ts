@@ -129,7 +129,9 @@ function readMaybeNumber(vm: unknown, key: string): number {
     }
 
     if (typeof value === 'string') {
-      const n = Number(value);
+      const trimmed = value.trim().toLowerCase();
+      if (!trimmed) return 0;
+      const n = trimmed.startsWith('0x') ? Number.parseInt(trimmed.slice(2), 16) : Number.parseInt(trimmed, 10);
       return Number.isFinite(n) ? n : 0;
     }
 
