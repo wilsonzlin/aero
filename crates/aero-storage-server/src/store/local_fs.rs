@@ -26,10 +26,27 @@ pub struct LocalFsImageStore {
 
 impl LocalFsImageStore {
     pub fn new(root: impl Into<PathBuf>) -> Self {
+        let root = root.into();
+        // Canonicalize once so we can safely compare canonicalized image paths against it.
+        //
+        // If canonicalization fails (e.g. the directory doesn't exist yet), we fall back to the
+        // provided path; subsequent image resolutions will fail closed.
+        let root = std::fs::canonicalize(&root).unwrap_or(root);
         Self {
-            root: root.into(),
+            root,
             manifest: std::sync::Arc::new(OnceCell::new()),
         }
+    }
+
+    async fn ensure_within_root(&self, path: &Path) -> Result<PathBuf, StoreError> {
+        // Canonicalize the requested path (resolving symlinks) and ensure it still lives under
+        // our canonical root. This prevents symlink/path-escape attacks where a file inside the
+        // root points outside the configured image directory.
+        let canonical = fs::canonicalize(path).await.map_err(map_not_found)?;
+        if !canonical.starts_with(&self.root) {
+            return Err(StoreError::NotFound);
+        }
+        Ok(canonical)
     }
 
     async fn load_manifest(&self) -> Result<Option<Manifest>, StoreError> {
@@ -93,7 +110,8 @@ impl LocalFsImageStore {
     }
 
     async fn meta_from_path(&self, path: &Path) -> Result<ImageMeta, StoreError> {
-        let meta = fs::metadata(path).await.map_err(map_not_found)?;
+        let path = self.ensure_within_root(path).await?;
+        let meta = fs::metadata(&path).await.map_err(map_not_found)?;
         let last_modified = meta.modified().ok();
         let etag = Some(etag_from_size_and_mtime(meta.len(), last_modified));
 
@@ -220,10 +238,9 @@ impl ImageStore for LocalFsImageStore {
         len: u64,
     ) -> Result<BoxedAsyncRead, StoreError> {
         let resolved = self.resolve_image(image_id).await?;
+        let path = self.ensure_within_root(&resolved.path).await?;
 
-        let mut file = fs::File::open(&resolved.path)
-            .await
-            .map_err(map_not_found)?;
+        let mut file = fs::File::open(&path).await.map_err(map_not_found)?;
         let size = file.metadata().await?.len();
 
         let end = start

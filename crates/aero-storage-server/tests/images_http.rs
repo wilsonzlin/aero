@@ -341,3 +341,46 @@ async fn cors_preflight_allows_range() {
         .unwrap()
         .contains("Range"));
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn symlink_escape_is_blocked() {
+    use std::os::unix::fs::symlink;
+
+    let root_dir = tempdir().expect("tempdir");
+    let outside_dir = tempdir().expect("tempdir");
+
+    let outside_path = outside_dir.path().join("secret.img");
+    let sentinel = b"TOP-SECRET";
+    tokio::fs::write(&outside_path, sentinel)
+        .await
+        .expect("write outside file");
+
+    let link_name = "leak.img";
+    symlink(&outside_path, root_dir.path().join(link_name)).expect("create symlink");
+
+    let store = Arc::new(LocalFsImageStore::new(root_dir.path()));
+    let metrics = Arc::new(Metrics::new());
+    let state = ImagesState::new(store, metrics).with_range_options(RangeOptions {
+        max_total_bytes: 1024,
+    });
+    let app = router_with_state(state);
+
+    let res = app
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri(format!("/v1/images/{link_name}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    assert!(
+        body.is_empty(),
+        "expected empty 404 response body; got {body:?}"
+    );
+}
