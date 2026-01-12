@@ -175,3 +175,184 @@ fn virtio_pci_legacy_pfn_queue_and_isr_read_clears() {
     assert!(irq_state.borrow().asserted);
     assert_eq!(irq_state.borrow().raises, 2);
 }
+
+#[test]
+fn virtio_pci_legacy_dma_is_gated_on_pci_bus_master_enable() {
+    let blk = VirtioBlk::new(MemDisk::new(4096));
+    let irq_state = Rc::new(RefCell::new(IrqState::default()));
+    let irq = SharedIrq(irq_state.clone());
+
+    // Use a *transitional* device (legacy + modern) but exercise the legacy path.
+    let mut dev = VirtioPciDevice::new_transitional(Box::new(blk), Box::new(irq));
+    let mut mem = GuestRam::new(0x20000);
+
+    // Intentionally do *not* enable PCI bus mastering yet. The virtio-pci transport must not touch
+    // guest memory (virtqueue structures + buffers) until the guest sets `PCI COMMAND.BME`.
+
+    // 1) Read device features and accept them (legacy path exposes only low 32 bits).
+    let mut f = [0u8; 4];
+    dev.legacy_io_read(VIRTIO_PCI_LEGACY_HOST_FEATURES, &mut f);
+    let host_features = u32::from_le_bytes(f);
+    // Disable EVENT_IDX so interrupt behavior is purely based on `VIRTQ_AVAIL_F_NO_INTERRUPT`.
+    let guest_features = host_features & !(1u32 << 29);
+
+    dev.legacy_io_write(VIRTIO_PCI_LEGACY_STATUS, &[VIRTIO_STATUS_ACKNOWLEDGE]);
+    dev.legacy_io_write(
+        VIRTIO_PCI_LEGACY_STATUS,
+        &[VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER],
+    );
+    dev.legacy_io_write(
+        VIRTIO_PCI_LEGACY_GUEST_FEATURES,
+        &guest_features.to_le_bytes(),
+    );
+
+    // 2) Configure queue 0 using PFN.
+    dev.legacy_io_write(VIRTIO_PCI_LEGACY_QUEUE_SEL, &0u16.to_le_bytes());
+    let mut qsz_bytes = [0u8; 2];
+    dev.legacy_io_read(VIRTIO_PCI_LEGACY_QUEUE_NUM, &mut qsz_bytes);
+    let qsz = u16::from_le_bytes(qsz_bytes);
+    assert!(qsz >= 8);
+
+    let ring_base = 0x4000u64; // 4096-aligned
+    let pfn = u32::try_from(ring_base >> 12).unwrap();
+    dev.legacy_io_write(VIRTIO_PCI_LEGACY_QUEUE_PFN, &pfn.to_le_bytes());
+
+    dev.legacy_io_write(
+        VIRTIO_PCI_LEGACY_STATUS,
+        &[VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_DRIVER_OK],
+    );
+
+    // 3) Build a minimal FLUSH request chain and kick.
+    let (desc, avail, used) = legacy_vring_addrs(ring_base, qsz);
+
+    let header = 0x1000;
+    let status = 0x2000;
+    write_u32_le(&mut mem, header, VIRTIO_BLK_T_FLUSH).unwrap();
+    write_u32_le(&mut mem, header + 4, 0).unwrap();
+    write_u64_le(&mut mem, header + 8, 0).unwrap();
+    mem.write(status, &[0xff]).unwrap();
+
+    write_desc(&mut mem, desc, 0, header, 16, VIRTQ_DESC_F_NEXT, 1);
+    write_desc(&mut mem, desc, 1, status, 1, VIRTQ_DESC_F_WRITE, 0);
+
+    write_u16_le(&mut mem, avail, 0).unwrap();
+    write_u16_le(&mut mem, avail + 2, 1).unwrap();
+    write_u16_le(&mut mem, avail + 4, 0).unwrap();
+
+    write_u16_le(&mut mem, used, 0).unwrap();
+    write_u16_le(&mut mem, used + 2, 0).unwrap();
+
+    dev.legacy_io_write(VIRTIO_PCI_LEGACY_QUEUE_NOTIFY, &0u16.to_le_bytes());
+    dev.process_notified_queues(&mut mem);
+
+    // Without BME, nothing should be consumed and no interrupt should be raised.
+    assert_eq!(mem.get_slice(status, 1).unwrap()[0], 0xff);
+    assert_eq!(read_u16_le(&mem, used + 2).unwrap(), 0);
+    assert!(!irq_state.borrow().asserted);
+    assert_eq!(irq_state.borrow().raises, 0);
+
+    // Enabling PCI bus mastering should allow the pending notify to be processed.
+    dev.config_write(0x04, &0x0004u16.to_le_bytes());
+    dev.process_notified_queues(&mut mem);
+
+    assert_eq!(mem.get_slice(status, 1).unwrap()[0], 0);
+    assert_eq!(read_u16_le(&mem, used + 2).unwrap(), 1);
+    assert!(irq_state.borrow().asserted);
+    assert_eq!(irq_state.borrow().raises, 1);
+}
+
+#[test]
+fn virtio_pci_legacy_intx_disable_suppresses_line_but_retains_pending() {
+    let blk = VirtioBlk::new(MemDisk::new(4096));
+    let irq_state = Rc::new(RefCell::new(IrqState::default()));
+    let irq = SharedIrq(irq_state.clone());
+
+    // Use a *transitional* device (legacy + modern) but exercise the legacy path.
+    let mut dev = VirtioPciDevice::new_transitional(Box::new(blk), Box::new(irq));
+    let mut mem = GuestRam::new(0x20000);
+
+    // Enable PCI bus mastering (DMA) but disable legacy INTx delivery. The device should retain
+    // the internal pending latch and reassert the line if the guest later re-enables INTx.
+    dev.config_write(0x04, &0x0404u16.to_le_bytes());
+
+    // 1) Read device features and accept them (legacy path exposes only low 32 bits).
+    let mut f = [0u8; 4];
+    dev.legacy_io_read(VIRTIO_PCI_LEGACY_HOST_FEATURES, &mut f);
+    let host_features = u32::from_le_bytes(f);
+    // Disable EVENT_IDX so interrupt behavior is purely based on `VIRTQ_AVAIL_F_NO_INTERRUPT`.
+    let guest_features = host_features & !(1u32 << 29);
+
+    dev.legacy_io_write(VIRTIO_PCI_LEGACY_STATUS, &[VIRTIO_STATUS_ACKNOWLEDGE]);
+    dev.legacy_io_write(
+        VIRTIO_PCI_LEGACY_STATUS,
+        &[VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER],
+    );
+    dev.legacy_io_write(
+        VIRTIO_PCI_LEGACY_GUEST_FEATURES,
+        &guest_features.to_le_bytes(),
+    );
+
+    // 2) Configure queue 0 using PFN.
+    dev.legacy_io_write(VIRTIO_PCI_LEGACY_QUEUE_SEL, &0u16.to_le_bytes());
+    let mut qsz_bytes = [0u8; 2];
+    dev.legacy_io_read(VIRTIO_PCI_LEGACY_QUEUE_NUM, &mut qsz_bytes);
+    let qsz = u16::from_le_bytes(qsz_bytes);
+    assert!(qsz >= 8);
+
+    let ring_base = 0x4000u64; // 4096-aligned
+    let pfn = u32::try_from(ring_base >> 12).unwrap();
+    dev.legacy_io_write(VIRTIO_PCI_LEGACY_QUEUE_PFN, &pfn.to_le_bytes());
+
+    dev.legacy_io_write(
+        VIRTIO_PCI_LEGACY_STATUS,
+        &[VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_DRIVER_OK],
+    );
+
+    // 3) Build a minimal FLUSH request chain and kick.
+    let (desc, avail, used) = legacy_vring_addrs(ring_base, qsz);
+
+    let header = 0x1000;
+    let status = 0x2000;
+    write_u32_le(&mut mem, header, VIRTIO_BLK_T_FLUSH).unwrap();
+    write_u32_le(&mut mem, header + 4, 0).unwrap();
+    write_u64_le(&mut mem, header + 8, 0).unwrap();
+    mem.write(status, &[0xff]).unwrap();
+
+    write_desc(&mut mem, desc, 0, header, 16, VIRTQ_DESC_F_NEXT, 1);
+    write_desc(&mut mem, desc, 1, status, 1, VIRTQ_DESC_F_WRITE, 0);
+
+    write_u16_le(&mut mem, avail, 0).unwrap();
+    write_u16_le(&mut mem, avail + 2, 1).unwrap();
+    write_u16_le(&mut mem, avail + 4, 0).unwrap();
+
+    write_u16_le(&mut mem, used, 0).unwrap();
+    write_u16_le(&mut mem, used + 2, 0).unwrap();
+
+    dev.legacy_io_write(VIRTIO_PCI_LEGACY_QUEUE_NOTIFY, &0u16.to_le_bytes());
+    dev.process_notified_queues(&mut mem);
+
+    // Request should complete, but legacy INTx should be suppressed while INTX_DISABLE is set.
+    assert_eq!(mem.get_slice(status, 1).unwrap()[0], 0);
+    assert_eq!(read_u16_le(&mem, used + 2).unwrap(), 1);
+    assert!(!irq_state.borrow().asserted);
+    assert_eq!(irq_state.borrow().raises, 0);
+    assert!(!dev.irq_level());
+
+    // Re-enable legacy INTx (keep BME set) and ensure the pending interrupt is delivered without
+    // additional device work.
+    dev.config_write(0x04, &0x0004u16.to_le_bytes());
+    assert!(irq_state.borrow().asserted);
+    assert_eq!(irq_state.borrow().raises, 1);
+    assert!(dev.irq_level());
+
+    // Reading the legacy ISR should clear the pending latch and deassert the line.
+    let mut isr = [0u8; 1];
+    dev.legacy_io_read(VIRTIO_PCI_LEGACY_ISR, &mut isr);
+    assert_eq!(
+        isr[0] & VIRTIO_PCI_LEGACY_ISR_QUEUE,
+        VIRTIO_PCI_LEGACY_ISR_QUEUE
+    );
+    assert!(!irq_state.borrow().asserted);
+    assert_eq!(irq_state.borrow().lowers, 1);
+    assert!(!dev.irq_level());
+}
