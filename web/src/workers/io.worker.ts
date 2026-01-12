@@ -3145,7 +3145,7 @@ function maybeUpdateKeyboardInputBackend(opts: { virtioKeyboardOk: boolean }): v
 
   // Prefer the synthetic USB keyboard once it's available so we don't keep relying on PS/2
   // scancode injection after WASM finishes initializing.
-  if (syntheticUsbHidAttached && usbHid) {
+  if (syntheticUsbHidAttached && usbHid && safeSyntheticUsbHidConfigured(syntheticUsbKeyboard)) {
     keyboardInputBackend = "usb";
     return;
   }
