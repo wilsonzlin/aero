@@ -12,6 +12,10 @@
 /// (0x07).
 ///
 /// This uses `code` (physical key position) rather than `key` (layout-dependent character).
+///
+/// Keep in sync with:
+/// - TypeScript host mapping: `web/src/input/hid_usage.ts::keyboardCodeToHidUsage`
+/// - Shared fixture (parity tests): `docs/fixtures/hid_usage_keyboard.json`
 pub fn keyboard_code_to_usage(code: &str) -> Option<u8> {
     if let Some(rest) = code.strip_prefix("Key") {
         let b = rest.as_bytes();

@@ -2,8 +2,11 @@
  * Map DOM `KeyboardEvent.code` strings (physical key positions) to USB HID usages
  * on the Keyboard/Keypad usage page (0x07).
  *
- * This is intentionally not exhaustive; it covers the keys needed for basic
- * desktop/login navigation and common alphanumerics.
+ * This is intentionally not exhaustive; it covers the keys we need today.
+ *
+ * Keep in sync with:
+ * - Rust mapping: `crates/aero-usb/src/hid/usage.rs::keyboard_code_to_usage`
+ * - Shared fixture (parity tests): `docs/fixtures/hid_usage_keyboard.json`
  */
 export function keyboardCodeToHidUsage(code: string): number | null {
   // Letters: KeyA..KeyZ => 0x04..0x1D
