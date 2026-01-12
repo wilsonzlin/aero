@@ -3031,14 +3031,17 @@ impl AeroGpuSoftwareExecutor {
                         Self::record_error(regs);
                         return true;
                     };
-                    if src_mip_level >= src_tex.mip_levels || src_array_layer >= src_tex.array_layers
+                    if src_mip_level >= src_tex.mip_levels
+                        || src_array_layer >= src_tex.array_layers
                     {
                         Self::record_error(regs);
                         return true;
                     }
-                    let Some(src_sub) =
-                        Self::texture_2d_subresource_layout(src_tex, src_mip_level, src_array_layer)
-                    else {
+                    let Some(src_sub) = Self::texture_2d_subresource_layout(
+                        src_tex,
+                        src_mip_level,
+                        src_array_layer,
+                    ) else {
                         Self::record_error(regs);
                         return true;
                     };
@@ -4216,7 +4219,8 @@ mod tests {
 
         let mut packet = vec![0u8; cmd::AerogpuCmdCopyTexture2d::SIZE_BYTES];
         packet[0..4].copy_from_slice(&(cmd::AerogpuCmdOpcode::CopyTexture2d as u32).to_le_bytes());
-        packet[4..8].copy_from_slice(&(cmd::AerogpuCmdCopyTexture2d::SIZE_BYTES as u32).to_le_bytes());
+        packet[4..8]
+            .copy_from_slice(&(cmd::AerogpuCmdCopyTexture2d::SIZE_BYTES as u32).to_le_bytes());
         packet[8..12].copy_from_slice(&dst_handle.to_le_bytes());
         packet[12..16].copy_from_slice(&src_handle.to_le_bytes());
         packet[16..20].copy_from_slice(&0u32.to_le_bytes()); // dst_mip_level
@@ -4244,7 +4248,10 @@ mod tests {
         let off0 = row0 * rp + col * 4;
         let off1 = row1 * rp + col * 4;
         assert_eq!(&dst_tex.data[off0..off0 + 8], &[1, 2, 3, 4, 5, 6, 7, 8]);
-        assert_eq!(&dst_tex.data[off1..off1 + 8], &[9, 10, 11, 12, 13, 14, 15, 16]);
+        assert_eq!(
+            &dst_tex.data[off1..off1 + 8],
+            &[9, 10, 11, 12, 13, 14, 15, 16]
+        );
         assert!(dst_tex.dirty);
     }
 
@@ -4316,7 +4323,8 @@ mod tests {
 
         let mut packet = vec![0u8; cmd::AerogpuCmdCopyTexture2d::SIZE_BYTES];
         packet[0..4].copy_from_slice(&(cmd::AerogpuCmdOpcode::CopyTexture2d as u32).to_le_bytes());
-        packet[4..8].copy_from_slice(&(cmd::AerogpuCmdCopyTexture2d::SIZE_BYTES as u32).to_le_bytes());
+        packet[4..8]
+            .copy_from_slice(&(cmd::AerogpuCmdCopyTexture2d::SIZE_BYTES as u32).to_le_bytes());
         packet[8..12].copy_from_slice(&dst_handle.to_le_bytes());
         packet[12..16].copy_from_slice(&src_handle.to_le_bytes());
         packet[16..20].copy_from_slice(&0u32.to_le_bytes()); // dst_mip_level

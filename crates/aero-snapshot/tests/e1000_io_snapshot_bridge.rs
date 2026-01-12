@@ -1,7 +1,9 @@
 #![cfg(all(feature = "io-snapshot", not(target_arch = "wasm32")))]
 
 use aero_net_e1000::{E1000Device, E1000_IO_SIZE};
-use aero_snapshot::io_snapshot_bridge::{apply_io_snapshot_to_device, device_state_from_io_snapshot};
+use aero_snapshot::io_snapshot_bridge::{
+    apply_io_snapshot_to_device, device_state_from_io_snapshot,
+};
 use aero_snapshot::DeviceId;
 
 #[test]
@@ -18,7 +20,7 @@ fn e1000_io_snapshot_roundtrips_through_bridge() {
     // Some representative MMIO state (ring pointers + interrupts + one "other" register).
     dev.mmio_write_u32_reg(0x2800, 0x1111_0000); // RDBAL
     dev.mmio_write_u32_reg(0x2804, 0x2222_0000); // RDBAH
-    // Make the ring length valid so restore doesn't clamp indices back to 0.
+                                                 // Make the ring length valid so restore doesn't clamp indices back to 0.
     dev.mmio_write_u32_reg(0x2808, 16 * 256); // RDLEN (16-byte descriptors)
     dev.mmio_write_u32_reg(0x2810, 0x33); // RDH
     dev.mmio_write_u32_reg(0x2818, 0x44); // RDT

@@ -4,4 +4,6 @@
 //! by [`super::ring_backend`]. This module exists to preserve the historical module name
 //! introduced during early bring-up.
 
-pub use super::ring_backend::{FrameRing, L2TunnelRingBackend, L2TunnelRingBackendStats, NetworkBackend};
+pub use super::ring_backend::{
+    FrameRing, L2TunnelRingBackend, L2TunnelRingBackendStats, NetworkBackend,
+};

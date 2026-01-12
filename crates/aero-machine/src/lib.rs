@@ -11,8 +11,8 @@
 #![forbid(unsafe_code)]
 
 mod guest_time;
-pub mod virtual_time;
 mod shared_disk;
+pub mod virtual_time;
 
 pub use guest_time::{GuestTime, DEFAULT_GUEST_CPU_HZ};
 pub use shared_disk::SharedDisk;
@@ -43,8 +43,8 @@ use aero_devices::i8042::{I8042Ports, SharedI8042Controller};
 use aero_devices::irq::PlatformIrqLine;
 use aero_devices::pci::{
     bios_post, register_pci_config_ports, GsiLevelSink, PciBarDefinition, PciBarMmioHandler,
-    PciBarMmioRouter, PciBdf, PciConfigPorts, PciCoreSnapshot, PciDevice, PciEcamConfig, PciEcamMmio,
-    PciInterruptPin, PciIntxRouter, PciIntxRouterConfig, PciResourceAllocator,
+    PciBarMmioRouter, PciBdf, PciConfigPorts, PciCoreSnapshot, PciDevice, PciEcamConfig,
+    PciEcamMmio, PciInterruptPin, PciIntxRouter, PciIntxRouterConfig, PciResourceAllocator,
     PciResourceAllocatorConfig, SharedPciConfigPorts,
 };
 use aero_devices::pic8259::register_pic8259_on_platform_interrupts;
@@ -52,15 +52,15 @@ use aero_devices::pit8254::{register_pit8254, Pit8254, SharedPit8254};
 use aero_devices::reset_ctrl::{ResetCtrl, RESET_CTRL_PORT};
 use aero_devices::rtc_cmos::{register_rtc_cmos, RtcCmos, SharedRtcCmos};
 use aero_devices::serial::{register_serial16550, Serial16550, SharedSerial16550};
+pub use aero_devices_input::Ps2MouseButton;
 use aero_devices_storage::ata::AtaDrive;
 use aero_devices_storage::atapi::{AtapiCdrom, IsoBackend};
 use aero_devices_storage::pci_ahci::AhciPciDevice;
 use aero_devices_storage::pci_ide::{Piix3IdePciDevice, PRIMARY_PORTS, SECONDARY_PORTS};
-use aero_io_snapshot::io::state::IoSnapshot;
-use aero_io_snapshot::io::storage::state::DiskControllersSnapshot;
-pub use aero_devices_input::Ps2MouseButton;
 use aero_gpu_vga::{DisplayOutput as _, PortIO as _, VgaDevice};
 use aero_interrupts::apic::{IOAPIC_MMIO_BASE, IOAPIC_MMIO_SIZE, LAPIC_MMIO_BASE, LAPIC_MMIO_SIZE};
+use aero_io_snapshot::io::state::IoSnapshot;
+use aero_io_snapshot::io::storage::state::DiskControllersSnapshot;
 use aero_net_backend::{FrameRing, L2TunnelRingBackend, L2TunnelRingBackendStats, NetworkBackend};
 use aero_net_e1000::E1000Device;
 use aero_net_pump::tick_e1000;
@@ -307,7 +307,8 @@ impl SystemMemory {
         //
         // For large configured sizes, prefer a sparse backend so unit tests can configure RAM just
         // above the ECAM base without allocating multiple GiB.
-        let backing: Box<dyn memory::GuestMemory> = if ram_size_bytes <= SPARSE_RAM_THRESHOLD_BYTES {
+        let backing: Box<dyn memory::GuestMemory> = if ram_size_bytes <= SPARSE_RAM_THRESHOLD_BYTES
+        {
             let ram = DenseMemory::new(ram_size_bytes)
                 .map_err(|_| MachineError::GuestMemoryTooLarge(ram_size_bytes))?;
             Box::new(ram)
@@ -363,7 +364,11 @@ impl SystemMemory {
             .unwrap_or_else(|| panic!("MMIO mapping overflow at 0x{start:016x} (len=0x{len:x})"));
 
         // Fast path: mapping already exists (and was recorded by this helper).
-        if self.mapped_mmio.iter().any(|&(s, e)| s == start && e == end) {
+        if self
+            .mapped_mmio
+            .iter()
+            .any(|&(s, e)| s == start && e == end)
+        {
             return;
         }
 
@@ -1453,7 +1458,9 @@ impl Machine {
 
     /// Return best-effort stats for the attached `NET_TX`/`NET_RX` ring backend (if present).
     pub fn network_backend_l2_ring_stats(&self) -> Option<L2TunnelRingBackendStats> {
-        self.network_backend.as_ref().and_then(|b| b.l2_ring_stats())
+        self.network_backend
+            .as_ref()
+            .and_then(|b| b.l2_ring_stats())
     }
 
     /// Debug/testing helper: read a single guest physical byte.
@@ -1671,7 +1678,9 @@ impl Machine {
         let Some(ide) = &self.ide else {
             return;
         };
-        ide.borrow_mut().controller.attach_secondary_master_atapi(dev);
+        ide.borrow_mut()
+            .controller
+            .attach_secondary_master_atapi(dev);
     }
 
     /// Attach a disk image as an ATAPI CD-ROM ISO on the IDE secondary master, if present.
@@ -2186,13 +2195,15 @@ impl Machine {
                 0x0030, // 0x3B0..0x3DF
                 Box::new(VgaPortWindow { vga: vga.clone() }),
             );
-            self.io.register_range(0x01CE, 0x0002, Box::new(VgaPortWindow { vga: vga.clone() }));
+            self.io
+                .register_range(0x01CE, 0x0002, Box::new(VgaPortWindow { vga: vga.clone() }));
 
             // Map the VBE/SVGA linear framebuffer (fixed physical address in `aero_gpu_vga`).
             let lfb_base = u64::from(aero_gpu_vga::SVGA_LFB_BASE);
             let lfb_len = vga.borrow().vram().len() as u64;
-            self.mem
-                .map_mmio_once(lfb_base, lfb_len, || Box::new(VgaLfbMmio { dev: vga.clone() }));
+            self.mem.map_mmio_once(lfb_base, lfb_len, || {
+                Box::new(VgaLfbMmio { dev: vga.clone() })
+            });
         } else if !self.cfg.enable_pc_platform {
             self.vga = None;
         }
@@ -2308,11 +2319,8 @@ impl Machine {
                 //
                 // - VGA: 0x3C0..0x3DF
                 // - Bochs VBE: 0x01CE (index), 0x01CF (data)
-                self.io.register_range(
-                    0x3C0,
-                    0x20,
-                    Box::new(VgaPortIo { dev: vga.clone() }),
-                );
+                self.io
+                    .register_range(0x3C0, 0x20, Box::new(VgaPortIo { dev: vga.clone() }));
                 self.io.register_shared_range(0x01CE, 2, {
                     let vga = vga.clone();
                     move |_port| Box::new(VgaPortIo { dev: vga.clone() })
@@ -2498,8 +2506,10 @@ impl Machine {
 
             // Map the PCI MMIO window used by `PciResourceAllocator` so BAR relocation is reflected
             // immediately without needing dynamic MMIO unmap/remap support in `PhysicalMemoryBus`.
-            self.mem
-                .map_mmio_once(pci_allocator_cfg.mmio_base, pci_allocator_cfg.mmio_size, || {
+            self.mem.map_mmio_once(
+                pci_allocator_cfg.mmio_base,
+                pci_allocator_cfg.mmio_size,
+                || {
                     let mut router =
                         PciBarMmioRouter::new(pci_allocator_cfg.mmio_base, pci_cfg.clone());
                     if let Some(ahci) = ahci.clone() {
@@ -2529,7 +2539,8 @@ impl Machine {
                         );
                     }
                     Box::new(router)
-                });
+                },
+            );
 
             // Register a dispatcher for the PCI I/O window used by `PciResourceAllocator`.
             //
@@ -2726,7 +2737,7 @@ impl Machine {
             self.bios
                 .post_with_pci(&mut self.cpu.state, bus, &mut self.disk, Some(&mut pci));
         } else {
-        self.bios.post(&mut self.cpu.state, bus, &mut self.disk);
+            self.bios.post(&mut self.cpu.state, bus, &mut self.disk);
         }
         self.cpu.state.a20_enabled = self.chipset.a20().enabled();
         if self.bios.video.vbe.current_mode.is_none() {
@@ -2839,7 +2850,6 @@ impl Machine {
             MAX_FRAMES_PER_POLL,
         );
     }
-
     /// Run the CPU for at most `max_insts` guest instructions.
     pub fn run_slice(&mut self, max_insts: u64) -> RunExit {
         let mut executed = 0u64;
@@ -3383,21 +3393,21 @@ impl snapshot::SnapshotSource for Machine {
         // Always emit entries for the canonical Win7 disks so `disk_id` mapping remains stable
         // even when the host has not populated overlay refs yet.
         disks.push(
-            self.ahci_port0_overlay.clone().unwrap_or(snapshot::DiskOverlayRef {
-                disk_id: Self::DISK_ID_PRIMARY_HDD,
-                base_image: String::new(),
-                overlay_image: String::new(),
-            }),
-        );
-        disks.push(
-            self.ide_secondary_master_atapi_overlay
+            self.ahci_port0_overlay
                 .clone()
                 .unwrap_or(snapshot::DiskOverlayRef {
-                    disk_id: Self::DISK_ID_INSTALL_MEDIA,
+                    disk_id: Self::DISK_ID_PRIMARY_HDD,
                     base_image: String::new(),
                     overlay_image: String::new(),
                 }),
         );
+        disks.push(self.ide_secondary_master_atapi_overlay.clone().unwrap_or(
+            snapshot::DiskOverlayRef {
+                disk_id: Self::DISK_ID_INSTALL_MEDIA,
+                base_image: String::new(),
+                overlay_image: String::new(),
+            },
+        ));
         if let Some(disk) = self.ide_primary_master_overlay.clone() {
             disks.push(disk);
         }
@@ -3439,8 +3449,9 @@ impl snapshot::SnapshotSource for Machine {
                 remaining.len()
             };
 
-            ram.read_into(phys, &mut remaining[..chunk_len])
-                .map_err(|_err: GuestMemoryError| snapshot::SnapshotError::Corrupt("ram read failed"))?;
+            ram.read_into(phys, &mut remaining[..chunk_len]).map_err(
+                |_err: GuestMemoryError| snapshot::SnapshotError::Corrupt("ram read failed"),
+            )?;
             cur_offset += chunk_len as u64;
             remaining = &mut remaining[chunk_len..];
         }
@@ -3544,7 +3555,8 @@ impl snapshot::SnapshotTarget for Machine {
 
                     // Port mappings are part of machine wiring, not the snapshot payload, so
                     // install the default VGA port ranges now.
-                    self.io.register_range(0x3C0, 0x20, Box::new(VgaPortIo { dev: vga.clone() }));
+                    self.io
+                        .register_range(0x3C0, 0x20, Box::new(VgaPortIo { dev: vga.clone() }));
                     self.io.register_shared_range(0x01CE, 2, {
                         let vga = vga.clone();
                         move |_port| Box::new(VgaPortIo { dev: vga.clone() })
@@ -3553,13 +3565,23 @@ impl snapshot::SnapshotTarget for Machine {
                     // MMIO mappings persist in the physical bus; install legacy + LFB.
                     self.mem.map_mmio_once(0xA0000, 0x20000, {
                         let vga = vga.clone();
-                        move || Box::new(VgaMmio { base: 0xA0000, dev: vga })
+                        move || {
+                            Box::new(VgaMmio {
+                                base: 0xA0000,
+                                dev: vga,
+                            })
+                        }
                     });
                     let lfb_base = u64::from(aero_gpu_vga::SVGA_LFB_BASE);
                     let lfb_len = vga.borrow().vram().len() as u64;
                     self.mem.map_mmio_once(lfb_base, lfb_len, {
                         let vga = vga.clone();
-                        move || Box::new(VgaMmio { base: lfb_base, dev: vga })
+                        move || {
+                            Box::new(VgaMmio {
+                                base: lfb_base,
+                                dev: vga,
+                            })
+                        }
                     });
 
                     vga
@@ -3593,22 +3615,27 @@ impl snapshot::SnapshotTarget for Machine {
         if let Some(interrupts) = &self.interrupts {
             let mut interrupts = interrupts.borrow_mut();
             if let Some(state) = interrupts_state {
-                restored_interrupts =
-                    snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(&state, &mut *interrupts)
-                        .is_ok();
+                restored_interrupts = snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
+                    &state,
+                    &mut *interrupts,
+                )
+                .is_ok();
                 if !restored_interrupts {
                     if let Some(state) = apic_state {
-                        restored_interrupts = snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
-                            &state,
-                            &mut *interrupts,
-                        )
-                        .is_ok();
+                        restored_interrupts =
+                            snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
+                                &state,
+                                &mut *interrupts,
+                            )
+                            .is_ok();
                     }
                 }
             } else if let Some(state) = apic_state {
-                restored_interrupts =
-                    snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(&state, &mut *interrupts)
-                        .is_ok();
+                restored_interrupts = snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
+                    &state,
+                    &mut *interrupts,
+                )
+                .is_ok();
             }
         }
 
@@ -3805,8 +3832,7 @@ impl snapshot::SnapshotTarget for Machine {
                             if let Some(ahci) = &self.ahci {
                                 let _ = ahci.borrow_mut().load_state(nested);
                             }
-                        } else if packed_bdf
-                            == aero_devices::pci::profile::IDE_PIIX3.bdf.pack_u16()
+                        } else if packed_bdf == aero_devices::pci::profile::IDE_PIIX3.bdf.pack_u16()
                         {
                             if let Some(ide) = &self.ide {
                                 let _ = ide.borrow_mut().load_state(nested);
@@ -3935,7 +3961,6 @@ impl snapshot::SnapshotTarget for Machine {
                 snapshot::apply_cpu_internal_state_to_cpu_core(&decoded, &mut self.cpu);
             }
         }
-
     }
 
     fn restore_disk_overlays(&mut self, mut overlays: snapshot::DiskOverlayRefs) {
@@ -4000,7 +4025,9 @@ impl snapshot::SnapshotTarget for Machine {
             };
 
             ram.write_from(phys, &remaining[..chunk_len])
-                .map_err(|_err: GuestMemoryError| snapshot::SnapshotError::Corrupt("ram write failed"))?;
+                .map_err(|_err: GuestMemoryError| {
+                    snapshot::SnapshotError::Corrupt("ram write failed")
+                })?;
             cur_offset += chunk_len as u64;
             remaining = &remaining[chunk_len..];
         }
@@ -5379,10 +5406,8 @@ mod tests {
         // mov byte ptr [0x2000], 0xAA
         // iret
         const HANDLER_IP: u16 = 0x1100;
-        m.mem.write_physical(
-            u64::from(HANDLER_IP),
-            &[0xC6, 0x06, 0x00, 0x20, 0xAA, 0xCF],
-        );
+        m.mem
+            .write_physical(u64::from(HANDLER_IP), &[0xC6, 0x06, 0x00, 0x20, 0xAA, 0xCF]);
         write_ivt_entry(&mut m, 0x20, HANDLER_IP, 0x0000);
 
         // Program CPU at 0x1000 with a small NOP sled.
@@ -5440,10 +5465,8 @@ mod tests {
 
         // Simple handler for IRQ0 (vector 0x20): write a byte to RAM and IRET.
         const HANDLER_IP: u16 = 0x1100;
-        m.mem.write_physical(
-            u64::from(HANDLER_IP),
-            &[0xC6, 0x06, 0x00, 0x20, 0xAA, 0xCF],
-        );
+        m.mem
+            .write_physical(u64::from(HANDLER_IP), &[0xC6, 0x06, 0x00, 0x20, 0xAA, 0xCF]);
         write_ivt_entry(&mut m, 0x20, HANDLER_IP, 0x0000);
 
         // Program CPU at 0x1000 with enough NOPs to cover the instruction budgets below.
@@ -5614,10 +5637,8 @@ mod tests {
         // mov byte ptr [0x2000], 0xAA
         // iret
         const HANDLER_IP: u16 = 0x1100;
-        m.mem.write_physical(
-            u64::from(HANDLER_IP),
-            &[0xC6, 0x06, 0x00, 0x20, 0xAA, 0xCF],
-        );
+        m.mem
+            .write_physical(u64::from(HANDLER_IP), &[0xC6, 0x06, 0x00, 0x20, 0xAA, 0xCF]);
         write_ivt_entry(&mut m, expected_vector, HANDLER_IP, 0x0000);
 
         const ENTRY_IP: u16 = 0x1000;
@@ -5879,8 +5900,7 @@ mod tests {
                 .expect("missing E1000 BAR1")
                 .base
         };
-        let ioaddr_port =
-            u16::try_from(bar1_base).expect("E1000 BAR1 should fit in u16 I/O space");
+        let ioaddr_port = u16::try_from(bar1_base).expect("E1000 BAR1 should fit in u16 I/O space");
         let iodata_port = ioaddr_port.wrapping_add(4);
 
         // Install a trivial real-mode ISR for the routed vector.
@@ -6000,10 +6020,8 @@ mod tests {
         // mov byte ptr [0x2000], 0xAA
         // iret
         const HANDLER_IP: u16 = 0x1100;
-        m.mem.write_physical(
-            u64::from(HANDLER_IP),
-            &[0xC6, 0x06, 0x00, 0x20, 0xAA, 0xCF],
-        );
+        m.mem
+            .write_physical(u64::from(HANDLER_IP), &[0xC6, 0x06, 0x00, 0x20, 0xAA, 0xCF]);
         write_ivt_entry(&mut m, VECTOR, HANDLER_IP, 0x0000);
 
         // Program CPU at 0x1000 with enough NOPs to cover the instruction budgets below.
@@ -6305,8 +6323,7 @@ mod tests {
         let phys_size = FOUR_GIB + high_len;
 
         let backing = memory::SparseMemory::new(ram_size_bytes).unwrap();
-        let (backing, _dirty) =
-            DirtyGuestMemory::new(Box::new(backing), SNAPSHOT_DIRTY_PAGE_SIZE);
+        let (backing, _dirty) = DirtyGuestMemory::new(Box::new(backing), SNAPSHOT_DIRTY_PAGE_SIZE);
 
         let mapped = memory::MappedGuestMemory::new(
             Box::new(backing),

@@ -88,7 +88,7 @@ where
                         if v.to_str().is_ok() {
                             return v;
                         }
-    
+
                         let etag_for_log = super::observability::truncate_for_span(trimmed, 256);
                         tracing::warn!(
                             etag = ?etag_for_log.as_ref(),

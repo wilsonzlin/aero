@@ -1,7 +1,9 @@
 use aero_devices::pci::{PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
 use aero_devices::pic8259::MASTER_DATA;
 use aero_machine::{Machine, MachineConfig};
-use aero_platform::interrupts::{PlatformInterruptMode, IMCR_DATA_PORT, IMCR_INDEX, IMCR_SELECT_PORT};
+use aero_platform::interrupts::{
+    PlatformInterruptMode, IMCR_DATA_PORT, IMCR_INDEX, IMCR_SELECT_PORT,
+};
 use pretty_assertions::assert_eq;
 
 fn pci_cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {

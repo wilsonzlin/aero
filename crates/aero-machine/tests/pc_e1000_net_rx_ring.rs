@@ -81,7 +81,11 @@ fn pc_machine_net_rx_ring_backend_delivers_frame_into_e1000_rx_ring() {
     m.platform_mut().memory.read_physical(rx_buf0, &mut out);
     assert_eq!(out, frame);
 
-    let desc0_after = m.platform_mut().memory.read_physical_u128(rx_ring_base).to_le_bytes();
+    let desc0_after = m
+        .platform_mut()
+        .memory
+        .read_physical_u128(rx_ring_base)
+        .to_le_bytes();
     // Unpack: buffer_addr(8) + length(2) + checksum(2) + status(1) + errors(1) + special(2)
     let length = u16::from_le_bytes(desc0_after[8..10].try_into().unwrap());
     let status = desc0_after[12];
@@ -93,4 +97,3 @@ fn pc_machine_net_rx_ring_backend_delivers_frame_into_e1000_rx_ring() {
     // Ensure the NET_RX ring was drained.
     assert_eq!(rx_ring.try_pop(), Err(PopError::Empty));
 }
-

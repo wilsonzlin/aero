@@ -6,11 +6,9 @@ use std::sync::{Arc, OnceLock};
 #[cfg(not(target_arch = "wasm32"))]
 use std::sync::mpsc;
 
-use aero_d3d9::shader;
 #[cfg(target_arch = "wasm32")]
-use aero_d3d9::runtime::{
-    ShaderCache as PersistentShaderCache, ShaderTranslationFlags,
-};
+use aero_d3d9::runtime::{ShaderCache as PersistentShaderCache, ShaderTranslationFlags};
+use aero_d3d9::shader;
 use aero_d3d9::vertex::{StandardLocationMap, VertexDeclaration, VertexLocationMap};
 use aero_protocol::aerogpu::aerogpu_cmd as cmd;
 use aero_protocol::aerogpu::aerogpu_cmd::AEROGPU_COPY_FLAG_WRITEBACK_DST;

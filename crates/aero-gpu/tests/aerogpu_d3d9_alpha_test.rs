@@ -103,10 +103,7 @@ fn assemble_vs_passthrough_pos() -> Vec<u8> {
     // vs_2_0: mov oPos, v0; end
     let mut words = vec![0xFFFE_0200];
     // mov oPos, v0
-    words.extend(enc_inst(
-        0x0001,
-        &[enc_dst(4, 0, 0xF), enc_src(1, 0, 0xE4)],
-    ));
+    words.extend(enc_inst(0x0001, &[enc_dst(4, 0, 0xF), enc_src(1, 0, 0xE4)]));
     words.push(0x0000_FFFF);
     to_bytes(&words)
 }
@@ -126,10 +123,7 @@ fn assemble_ps_solid_red_alpha_25() -> Vec<u8> {
         ],
     ));
     // mov oC0, c0
-    words.extend(enc_inst(
-        0x0001,
-        &[enc_dst(8, 0, 0xF), enc_src(2, 0, 0xE4)],
-    ));
+    words.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(2, 0, 0xE4)]));
     words.push(0x0000_FFFF);
     to_bytes(&words)
 }
@@ -197,7 +191,7 @@ fn d3d9_alpha_test_discards_pixel_output() {
     push_u8(&mut vertex_decl, 0); // method
     push_u8(&mut vertex_decl, 9); // usage = POSITIONT
     push_u8(&mut vertex_decl, 0); // usage_index
-    // End marker.
+                                  // End marker.
     push_u16(&mut vertex_decl, 0x00FF);
     push_u16(&mut vertex_decl, 0);
     push_u8(&mut vertex_decl, 17); // type = UNUSED
@@ -402,4 +396,3 @@ fn d3d9_alpha_test_discards_pixel_output() {
         "expected alpha ~= 64, got {center:?}"
     );
 }
-

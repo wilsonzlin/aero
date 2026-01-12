@@ -216,7 +216,10 @@ fn sparse_open_rejects_oversized_allocation_table() {
     backend.write_at(0, &header.encode()).unwrap();
 
     let err = open_sparse_err(backend);
-    assert!(matches!(err, DiskError::Unsupported(_) | DiskError::InvalidSparseHeader(_)));
+    assert!(matches!(
+        err,
+        DiskError::Unsupported(_) | DiskError::InvalidSparseHeader(_)
+    ));
 }
 
 #[test]
@@ -298,7 +301,10 @@ fn sparse_open_rejects_block_size_too_large() {
     let header = make_header(4096, 32 * 1024 * 1024, 0); // 32 MiB
     backend.write_at(0, &header.encode()).unwrap();
     let err = open_sparse_err(backend);
-    assert!(matches!(err, DiskError::InvalidSparseHeader("block_size too large")));
+    assert!(matches!(
+        err,
+        DiskError::InvalidSparseHeader("block_size too large")
+    ));
 }
 
 #[test]
@@ -314,7 +320,10 @@ fn sparse_create_rejects_block_size_too_large() {
         Ok(_) => panic!("expected create to fail"),
         Err(e) => e,
     };
-    assert!(matches!(err, DiskError::InvalidSparseHeader("block_size too large")));
+    assert!(matches!(
+        err,
+        DiskError::InvalidSparseHeader("block_size too large")
+    ));
 }
 
 #[test]
@@ -454,7 +463,10 @@ fn sparse_open_rejects_huge_allocation_table() {
     let header = make_header(512 * 1_000_000_000, 512, 0);
     backend.write_at(0, &header.encode()).unwrap();
     let err = open_sparse_err(backend);
-    assert!(matches!(err, DiskError::Unsupported(_) | DiskError::InvalidSparseHeader(_)));
+    assert!(matches!(
+        err,
+        DiskError::Unsupported(_) | DiskError::InvalidSparseHeader(_)
+    ));
 }
 
 #[cfg(target_pointer_width = "32")]

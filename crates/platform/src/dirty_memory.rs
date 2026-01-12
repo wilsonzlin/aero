@@ -194,4 +194,3 @@ impl GuestMemory for DirtyTrackingMemory {
         Some(slice)
     }
 }
-

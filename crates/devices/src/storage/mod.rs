@@ -91,8 +91,7 @@ impl DeviceBackendAsAeroVirtualDisk {
     }
 
     fn check_bounds(&self, offset: u64, len: usize) -> aero_storage::Result<()> {
-        let len_u64 =
-            u64::try_from(len).map_err(|_| aero_storage::DiskError::OffsetOverflow)?;
+        let len_u64 = u64::try_from(len).map_err(|_| aero_storage::DiskError::OffsetOverflow)?;
         let end = offset
             .checked_add(len_u64)
             .ok_or(aero_storage::DiskError::OffsetOverflow)?;
@@ -155,13 +154,8 @@ impl VirtualDrive {
     /// This is a convenience for the common case where the disk is already stored behind a
     /// trait object (`Box<dyn VirtualDisk>`). The adapter enforces 512-byte alignment and
     /// bounds checks at the device boundary.
-    pub fn new_from_aero_virtual_disk(
-        disk: Box<dyn aero_storage::VirtualDisk + Send>,
-    ) -> Self {
-        Self::new(
-            512,
-            Box::new(AeroVirtualDiskAsDeviceBackend::new(disk)),
-        )
+    pub fn new_from_aero_virtual_disk(disk: Box<dyn aero_storage::VirtualDisk + Send>) -> Self {
+        Self::new(512, Box::new(AeroVirtualDiskAsDeviceBackend::new(disk)))
     }
 
     pub fn new_from_aero_storage<D>(disk: D) -> Self
@@ -315,7 +309,12 @@ mod tests {
         type ErrorCase = (fn() -> io::Error, fn(&aero_storage::DiskError) -> bool);
         let cases: &[ErrorCase] = &[
             (
-                || io::Error::new(io::ErrorKind::StorageFull, aero_storage::DiskError::QuotaExceeded),
+                || {
+                    io::Error::new(
+                        io::ErrorKind::StorageFull,
+                        aero_storage::DiskError::QuotaExceeded,
+                    )
+                },
                 |e| matches!(e, aero_storage::DiskError::QuotaExceeded),
             ),
             (
@@ -332,13 +331,13 @@ mod tests {
                 |e| matches!(e, aero_storage::DiskError::BackendUnavailable),
             ),
             (
-                || {
-                    io::Error::other(aero_storage::DiskError::InvalidState("closed".to_string()))
+                || io::Error::other(aero_storage::DiskError::InvalidState("closed".to_string())),
+                |e| {
+                    matches!(
+                        e,
+                        aero_storage::DiskError::InvalidState(msg) if msg == "closed"
+                    )
                 },
-                |e| matches!(
-                    e,
-                    aero_storage::DiskError::InvalidState(msg) if msg == "closed"
-                ),
             ),
             (
                 || {
@@ -347,10 +346,12 @@ mod tests {
                         aero_storage::DiskError::NotSupported("opfs".to_string()),
                     )
                 },
-                |e| matches!(
-                    e,
-                    aero_storage::DiskError::NotSupported(msg) if msg == "opfs"
-                ),
+                |e| {
+                    matches!(
+                        e,
+                        aero_storage::DiskError::NotSupported(msg) if msg == "opfs"
+                    )
+                },
             ),
             (
                 || io::Error::other(aero_storage::DiskError::Io("boom".to_string())),

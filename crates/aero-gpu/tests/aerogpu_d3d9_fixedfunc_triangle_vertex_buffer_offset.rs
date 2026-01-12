@@ -202,7 +202,10 @@ fn d3d9_cmd_stream_fixedfunc_poscolor_vertex_buffer_offset_renders_triangle() {
     let stream = build_stream(|out| {
         emit_packet(out, OPC_CREATE_TEXTURE2D, |out| {
             push_u32(out, RT_HANDLE);
-            push_u32(out, AEROGPU_RESOURCE_USAGE_TEXTURE | AEROGPU_RESOURCE_USAGE_RENDER_TARGET);
+            push_u32(
+                out,
+                AEROGPU_RESOURCE_USAGE_TEXTURE | AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
+            );
             push_u32(out, AEROGPU_FORMAT_R8G8B8A8_UNORM);
             push_u32(out, width);
             push_u32(out, height);
@@ -342,4 +345,3 @@ fn d3d9_cmd_stream_fixedfunc_poscolor_vertex_buffer_offset_renders_triangle() {
     // Center pixel should be red.
     assert_eq!(px(width / 2, height / 2), [255, 0, 0, 255]);
 }
-

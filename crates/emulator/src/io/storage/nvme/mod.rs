@@ -1046,8 +1046,14 @@ mod tests {
         assert!(dev.irq_level(), "wrapper forwards IRQ when INTX is enabled");
 
         dev.config_write(0x04, 2, (1 << 1) | (1 << 2) | (1 << 10));
-        assert!(dev.controller.irq_level(), "device model retains pending interrupt");
-        assert!(!dev.irq_level(), "wrapper must suppress IRQ when INTX is disabled");
+        assert!(
+            dev.controller.irq_level(),
+            "device model retains pending interrupt"
+        );
+        assert!(
+            !dev.irq_level(),
+            "wrapper must suppress IRQ when INTX is disabled"
+        );
 
         dev.config_write(0x04, 2, (1 << 1) | (1 << 2));
         assert!(dev.irq_level());

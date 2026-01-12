@@ -187,7 +187,10 @@ mod tests {
             !dev.nic.irq_level(),
             "device model must gate IRQ when INTX is disabled"
         );
-        assert!(!dev.irq_level(), "wrapper must suppress IRQ when INTX is disabled");
+        assert!(
+            !dev.irq_level(),
+            "wrapper must suppress IRQ when INTX is disabled"
+        );
     }
 
     #[test]

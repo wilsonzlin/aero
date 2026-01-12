@@ -81,7 +81,9 @@ fn physical_memory_bus_mmio_defers_dma_until_poll() {
     let mut bus = PhysicalMemoryBus::new(Box::new(ram));
 
     let mmio_base = 0x100_000u64;
-    let dev = Rc::new(RefCell::new(E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56])));
+    let dev = Rc::new(RefCell::new(E1000Device::new([
+        0x52, 0x54, 0x00, 0x12, 0x34, 0x56,
+    ])));
     // Real PCI devices gate DMA behind the Bus Master Enable bit.
     dev.borrow_mut().pci_config_write(0x04, 2, 0x4);
 
@@ -134,11 +136,18 @@ fn physical_memory_bus_mmio_defers_dma_until_poll() {
     assert!(dev.borrow_mut().pop_tx_frame().is_none());
     let mut desc_bytes = [0u8; 16];
     bus.read_physical(0x1000, &mut desc_bytes);
-    assert_eq!(desc_bytes[12] & 0x01, 0, "DD should not be set before poll()");
+    assert_eq!(
+        desc_bytes[12] & 0x01,
+        0,
+        "DD should not be set before poll()"
+    );
 
     dev.borrow_mut().poll(&mut bus);
 
-    assert_eq!(dev.borrow_mut().pop_tx_frame().as_deref(), Some(pkt_out.as_slice()));
+    assert_eq!(
+        dev.borrow_mut().pop_tx_frame().as_deref(),
+        Some(pkt_out.as_slice())
+    );
     bus.read_physical(0x1000, &mut desc_bytes);
     assert_ne!(desc_bytes[12] & 0x01, 0, "DD should be set after poll()");
 

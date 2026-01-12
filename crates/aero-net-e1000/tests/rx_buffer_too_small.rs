@@ -7,7 +7,9 @@ struct TestDma {
 
 impl TestDma {
     fn new(size: usize) -> Self {
-        Self { mem: vec![0u8; size] }
+        Self {
+            mem: vec![0u8; size],
+        }
     }
 
     fn write(&mut self, addr: u64, bytes: &[u8]) {
@@ -102,4 +104,3 @@ fn rx_descriptor_is_marked_error_when_frame_exceeds_configured_buffer_len() {
     assert_eq!(status & 0x03, 0x03, "DD|EOP should be set");
     assert_eq!(errors & 0x80, 0x80, "RXE should be set");
 }
-

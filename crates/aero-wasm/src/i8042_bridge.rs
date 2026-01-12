@@ -192,10 +192,8 @@ impl I8042Bridge {
                 .inject_mouse_button(Ps2MouseButton::Right, (next & 0x02) != 0);
         }
         if (delta & 0x04) != 0 {
-            self.ctrl.inject_mouse_button(
-                Ps2MouseButton::Middle,
-                (next & 0x04) != 0,
-            );
+            self.ctrl
+                .inject_mouse_button(Ps2MouseButton::Middle, (next & 0x04) != 0);
         }
 
         self.mouse_buttons = next;

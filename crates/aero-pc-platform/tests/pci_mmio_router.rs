@@ -1,4 +1,6 @@
-use aero_devices::pci::{PciBarDefinition, PciBdf, PciBus, PciConfigPorts, PciConfigSpace, PciDevice};
+use aero_devices::pci::{
+    PciBarDefinition, PciBdf, PciBus, PciConfigPorts, PciConfigSpace, PciDevice,
+};
 use aero_pc_platform::{PciBarMmioHandler, PciBarMmioRouter};
 use memory::Bus;
 use std::cell::RefCell;
@@ -134,7 +136,9 @@ fn pci_mmio_router_dispatches_and_tracks_bar_reprogramming() {
     // Reprogram device A's BAR0 and ensure dispatch follows the new mapping.
     {
         let mut ports = pci_cfg.borrow_mut();
-        ports.bus_mut().write_config(bdf_a, 0x10, 4, bar_a0_new as u32);
+        ports
+            .bus_mut()
+            .write_config(bdf_a, 0x10, 4, bar_a0_new as u32);
     }
 
     // Old base should no longer decode.

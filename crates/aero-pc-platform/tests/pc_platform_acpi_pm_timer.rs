@@ -18,7 +18,10 @@ fn pc_platform_tick_advances_acpi_pm_timer() {
     const NS_PER_SEC: u128 = 1_000_000_000;
 
     let before = pc.io.read(DEFAULT_PM_TMR_BLK, 4) & MASK_24BIT;
-    assert_eq!(before, 0, "PM_TMR should start from a deterministic 0 value");
+    assert_eq!(
+        before, 0,
+        "PM_TMR should start from a deterministic 0 value"
+    );
 
     // Pick a large delta so we'd clearly diverge if PM_TMR were accidentally driven by wall-clock
     // time rather than by `PcPlatform::tick`.
@@ -31,4 +34,3 @@ fn pc_platform_tick_advances_acpi_pm_timer() {
     let advanced_ticks = after.wrapping_sub(before) & MASK_24BIT;
     assert_eq!(advanced_ticks, expected_ticks);
 }
-

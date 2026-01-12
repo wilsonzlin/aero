@@ -444,7 +444,8 @@ fn piix3_ide_snapshot_roundtrip_preserves_dma_inflight_and_atapi_sense() {
 }
 
 #[test]
-fn piix3_ide_snapshot_roundtrip_preserves_atapi_media_present_false_even_if_backend_is_reattached() {
+fn piix3_ide_snapshot_roundtrip_preserves_atapi_media_present_false_even_if_backend_is_reattached()
+{
     // Attach an ATAPI device with an *empty* tray (no backend, tray closed). Snapshot/restore must
     // preserve the guest-visible "no media present" state even if the platform reattaches an ISO
     // backend after restore.

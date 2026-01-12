@@ -32,15 +32,17 @@ use aero_cpu_core::jit::runtime::{
     CompileRequestSink, JitBackend, JitBlockExit, JitConfig, JitRuntime, PAGE_SHIFT,
 };
 use aero_cpu_core::state::{
-    CpuMode, Segment, CPU_GPR_OFF, CPU_RFLAGS_OFF, CPU_RIP_OFF, CPU_STATE_ALIGN, CPU_STATE_SIZE,
+    CPU_GPR_OFF, CPU_RFLAGS_OFF, CPU_RIP_OFF, CPU_STATE_ALIGN, CPU_STATE_SIZE, CpuMode, Segment,
 };
 use aero_cpu_core::{CpuBus, CpuCore, Exception};
 
 use aero_jit_x86::jit_ctx::{JitContext, TIER2_CTX_OFFSET, TIER2_CTX_SIZE};
-use aero_jit_x86::{discover_block_mode, BlockLimits, Tier1Bus, JIT_TLB_ENTRIES, JIT_TLB_ENTRY_SIZE};
+use aero_jit_x86::{
+    BlockLimits, JIT_TLB_ENTRIES, JIT_TLB_ENTRY_SIZE, Tier1Bus, discover_block_mode,
+};
 
-use crate::jit_write_log::GuestWriteLog;
 use crate::RunExitKind;
+use crate::jit_write_log::GuestWriteLog;
 
 fn js_error(message: impl AsRef<str>) -> JsValue {
     js_sys::Error::new(message.as_ref()).into()
@@ -1386,12 +1388,12 @@ fn page_snapshot_from_js(obj: JsValue) -> Result<PageVersionSnapshot, JsValue> {
 
 #[cfg(test)]
 mod tests {
-    use super::{meta_from_js, WasmBus, WasmTieredVm};
+    use super::{WasmBus, WasmTieredVm, meta_from_js};
 
     use aero_cpu_core::CpuBus;
     use js_sys::{Array, Object, Reflect};
-    use wasm_bindgen::prelude::*;
     use wasm_bindgen::JsCast;
+    use wasm_bindgen::prelude::*;
     use wasm_bindgen_test::wasm_bindgen_test;
 
     #[wasm_bindgen(inline_js = r#"
@@ -1584,9 +1586,7 @@ export function installAeroTieredMmioTestShims() {
         );
 
         // Now install via `snapshot_meta` + `install_handle` and ensure the count is still correct.
-        vm.dispatcher
-            .jit_mut()
-            .invalidate_block(0x1000);
+        vm.dispatcher.jit_mut().invalidate_block(0x1000);
         let meta = vm.snapshot_meta(0x1000, 3).expect("snapshot_meta");
         vm.install_handle(0x1000, 1, meta).expect("install_handle");
         let handle2 = vm
@@ -1670,7 +1670,10 @@ export function installAeroTieredMmioTestShims() {
         }
 
         let exit = vm.run_blocks(64).expect("run_blocks");
-        assert_eq!(call_prop_u32(&exit, "kind"), crate::RunExitKind::Halted as u32);
+        assert_eq!(
+            call_prop_u32(&exit, "kind"),
+            crate::RunExitKind::Halted as u32
+        );
         assert_eq!(
             guest[0x0000_0200], 0x22,
             "A20 enabled: 0x1_00000 should be distinct from 0x0"
@@ -1691,7 +1694,10 @@ export function installAeroTieredMmioTestShims() {
         }
 
         let exit = vm.run_blocks(64).expect("run_blocks");
-        assert_eq!(call_prop_u32(&exit, "kind"), crate::RunExitKind::Halted as u32);
+        assert_eq!(
+            call_prop_u32(&exit, "kind"),
+            crate::RunExitKind::Halted as u32
+        );
         assert_eq!(
             guest[0x0000_0200], 0x11,
             "A20 disabled: 0x1_00000 should alias to 0x0"

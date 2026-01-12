@@ -93,9 +93,7 @@ fn d3d9_guest_backed_mip_chain_dirty_range_uploads_all_subresources() {
 
     // Copy from src mip1 to dst mip0.
     writer.copy_texture2d(
-        DST_HANDLE,
-        SRC_HANDLE,
-        0, // dst_mip_level
+        DST_HANDLE, SRC_HANDLE, 0, // dst_mip_level
         0, // dst_array_layer
         1, // src_mip_level
         0, // src_array_layer
@@ -122,4 +120,3 @@ fn d3d9_guest_backed_mip_chain_dirty_range_uploads_all_subresources() {
     }
     assert_eq!(rgba, expected);
 }
-

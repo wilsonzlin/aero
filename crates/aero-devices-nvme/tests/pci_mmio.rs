@@ -145,7 +145,10 @@ fn nvme_process_is_gated_by_pci_command_bus_master_enable() {
     // With BME disabled, the device must not access guest memory.
     dev.process(&mut mem);
     assert_eq!(mem.reads, 0, "expected no DMA reads while BME is disabled");
-    assert_eq!(mem.writes, 1, "expected only the test's own write_physical call");
+    assert_eq!(
+        mem.writes, 1,
+        "expected only the test's own write_physical call"
+    );
 
     // Enable bus mastering and retry: now DMA should occur.
     dev.config_mut().set_command(0x0006); // MEM + BME

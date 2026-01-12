@@ -89,9 +89,7 @@ impl IoSnapshot for DiskControllersSnapshot {
             // allocations.
             let count = d.u32()? as usize;
             if count > MAX_DISK_CONTROLLER_COUNT {
-                return Err(SnapshotError::InvalidFieldEncoding(
-                    "disk controller count",
-                ));
+                return Err(SnapshotError::InvalidFieldEncoding("disk controller count"));
             }
 
             for _ in 0..count {
@@ -611,10 +609,7 @@ impl IoSnapshot for DiskLayerState {
         if self.size_bytes == 0 {
             return Err(SnapshotError::InvalidFieldEncoding("disk_size"));
         }
-        if !self
-            .size_bytes
-            .is_multiple_of(self.sector_size as u64)
-        {
+        if !self.size_bytes.is_multiple_of(self.sector_size as u64) {
             return Err(SnapshotError::InvalidFieldEncoding(
                 "disk_size not multiple of sector_size",
             ));
@@ -935,10 +930,7 @@ impl IdeChannelState {
             .bool(self.irq_pending);
 
         let data_mode = self.data_mode as u8;
-        let transfer_kind = self
-            .transfer_kind
-            .map(|k| k as u8)
-            .unwrap_or(0);
+        let transfer_kind = self.transfer_kind.map(|k| k as u8).unwrap_or(0);
 
         e = e
             .u8(data_mode)
@@ -1042,7 +1034,9 @@ impl IdeChannelState {
         let data_index = d.u32()?;
         let data_len = d.u32()? as usize;
         if data_len > MAX_IDE_DATA_BUFFER_BYTES {
-            return Err(SnapshotError::InvalidFieldEncoding("ide pio buffer too large"));
+            return Err(SnapshotError::InvalidFieldEncoding(
+                "ide pio buffer too large",
+            ));
         }
         if matches!(transfer_kind, Some(IdeTransferKind::AtapiPacket)) && data_len < 12 {
             return Err(SnapshotError::InvalidFieldEncoding(
@@ -1074,7 +1068,9 @@ impl IdeChannelState {
                 };
                 let len = d.u32()? as usize;
                 if len > MAX_IDE_DATA_BUFFER_BYTES {
-                    return Err(SnapshotError::InvalidFieldEncoding("ide dma buffer too large"));
+                    return Err(SnapshotError::InvalidFieldEncoding(
+                        "ide dma buffer too large",
+                    ));
                 }
                 let buffer = d.bytes(len)?.to_vec();
                 let commit = match d.u8()? {
@@ -1091,7 +1087,11 @@ impl IdeChannelState {
                     commit,
                 })
             }
-            _ => return Err(SnapshotError::InvalidFieldEncoding("ide pending_dma present")),
+            _ => {
+                return Err(SnapshotError::InvalidFieldEncoding(
+                    "ide pending_dma present",
+                ))
+            }
         };
 
         let bus_master = IdeBusMasterChannelState {

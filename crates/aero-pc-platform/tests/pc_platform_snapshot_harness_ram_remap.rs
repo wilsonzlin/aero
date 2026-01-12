@@ -48,7 +48,10 @@ fn pc_platform_snapshot_harness_translates_dense_ram_offsets_when_remap_is_activ
     SnapshotTarget::write_ram(&mut harness, PCIE_ECAM_BASE - 2, &[0xAA, 0xBB, 0xCC, 0xDD]).unwrap();
 
     let mut low = [0u8; 2];
-    harness.platform().memory.read_physical(PCIE_ECAM_BASE - 2, &mut low);
+    harness
+        .platform()
+        .memory
+        .read_physical(PCIE_ECAM_BASE - 2, &mut low);
     let mut high = [0u8; 2];
     harness.platform().memory.read_physical(FOUR_GIB, &mut high);
 

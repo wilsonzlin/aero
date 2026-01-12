@@ -404,7 +404,10 @@ impl PciConfig {
 
     pub fn read(&self, offset: u16, size: usize) -> u32 {
         let offset = offset as usize;
-        if offset.checked_add(size).is_none_or(|end| end > self.regs.len()) {
+        if offset
+            .checked_add(size)
+            .is_none_or(|end| end > self.regs.len())
+        {
             return 0;
         }
 
@@ -451,7 +454,10 @@ impl PciConfig {
 
     pub fn write(&mut self, offset: u16, size: usize, value: u32) {
         let offset = offset as usize;
-        if offset.checked_add(size).is_none_or(|end| end > self.regs.len()) {
+        if offset
+            .checked_add(size)
+            .is_none_or(|end| end > self.regs.len())
+        {
             return;
         }
 
@@ -514,8 +520,9 @@ impl PciConfig {
 
                 match size {
                     1 => self.regs[offset] = value as u8,
-                    2 => self.regs[offset..offset + 2]
-                        .copy_from_slice(&(value as u16).to_le_bytes()),
+                    2 => {
+                        self.regs[offset..offset + 2].copy_from_slice(&(value as u16).to_le_bytes())
+                    }
                     _ => {}
                 }
             }
@@ -2647,7 +2654,10 @@ mod tests {
             mss: 1460,
             hdr_len: 54,
         };
-        dev.tx_state = Some(TxPacketState::Advanced { cmd: 0xaa, popts: 0xbb });
+        dev.tx_state = Some(TxPacketState::Advanced {
+            cmd: 0xaa,
+            popts: 0xbb,
+        });
 
         dev.enqueue_rx_frame(vec![0x11; MIN_L2_FRAME_LEN]);
         dev.tx_out.push_back(vec![0x22; MIN_L2_FRAME_LEN]);

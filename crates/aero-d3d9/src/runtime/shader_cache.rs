@@ -327,9 +327,7 @@ impl ShaderCache {
         }
 
         // Cache miss: translate.
-        let translated = translate_fn()
-            .await
-            .map_err(|e| JsValue::from_str(&e))?;
+        let translated = translate_fn().await.map_err(|e| JsValue::from_str(&e))?;
 
         // Populate the per-session cache regardless of persistent availability.
         self.in_memory.insert(mem_key, translated.clone());

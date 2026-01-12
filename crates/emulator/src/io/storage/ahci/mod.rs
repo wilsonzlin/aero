@@ -1159,8 +1159,14 @@ mod tests {
 
         // INTX_DISABLE suppresses the external line, but does not clear internal state.
         dev.config_write(0x04, 2, (1 << 1) | (1 << 2) | (1 << 10));
-        assert!(dev.controller.irq_level(), "device model retains pending interrupt");
-        assert!(!dev.irq_level(), "wrapper must suppress IRQ when INTX is disabled");
+        assert!(
+            dev.controller.irq_level(),
+            "device model retains pending interrupt"
+        );
+        assert!(
+            !dev.irq_level(),
+            "wrapper must suppress IRQ when INTX is disabled"
+        );
 
         dev.config_write(0x04, 2, (1 << 1) | (1 << 2));
         assert!(dev.irq_level());
@@ -1425,7 +1431,10 @@ mod tests {
             PXCMD_FRE | PXCMD_ST | PXCMD_SUD,
         );
 
-        assert!(!controller.irq_level(), "no pending interrupt before snapshot");
+        assert!(
+            !controller.irq_level(),
+            "no pending interrupt before snapshot"
+        );
 
         let snap = controller.save_state();
 

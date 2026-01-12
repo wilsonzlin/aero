@@ -231,10 +231,7 @@ impl VirtioPciDevice {
     }
 
     pub fn legacy_io_base(&self) -> u32 {
-        self.config
-            .bar_range(2)
-            .map(|r| r.base as u32)
-            .unwrap_or(0)
+        self.config.bar_range(2).map(|r| r.base as u32).unwrap_or(0)
     }
 
     /// Returns whether the device is currently asserting its legacy INTx interrupt line.
@@ -586,7 +583,9 @@ impl VirtioPciDevice {
             cfg.add_capability(Box::new(VendorSpecificCapability::new(
                 VIRTIO_CAP_NOTIFY.to_vec(),
             )));
-            cfg.add_capability(Box::new(VendorSpecificCapability::new(VIRTIO_CAP_ISR.to_vec())));
+            cfg.add_capability(Box::new(VendorSpecificCapability::new(
+                VIRTIO_CAP_ISR.to_vec(),
+            )));
             cfg.add_capability(Box::new(VendorSpecificCapability::new(
                 VIRTIO_CAP_DEVICE.to_vec(),
             )));

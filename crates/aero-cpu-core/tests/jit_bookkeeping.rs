@@ -3,7 +3,9 @@ use aero_cpu_core::exec::{
 };
 use aero_cpu_core::interrupts::CpuCore;
 use aero_cpu_core::jit::cache::CompiledBlockHandle;
-use aero_cpu_core::jit::runtime::{CompileRequestSink, JitBackend, JitBlockExit, JitConfig, JitRuntime};
+use aero_cpu_core::jit::runtime::{
+    CompileRequestSink, JitBackend, JitBlockExit, JitConfig, JitRuntime,
+};
 use aero_cpu_core::mem::{CpuBus, FlatTestBus};
 use aero_cpu_core::state::{gpr, CpuMode, RFLAGS_IF};
 use aero_cpu_core::time::{TimeSource, DEFAULT_TSC_HZ};
@@ -58,7 +60,9 @@ impl JitBackend for FirstExitSecondPanicBackend {
     fn execute(&mut self, table_index: u32, _cpu: &mut Self::Cpu) -> JitBlockExit {
         match table_index {
             0 => self.first_exit,
-            1 => panic!("unexpected JIT execution: exit_to_interpreter should force an interpreter step"),
+            1 => panic!(
+                "unexpected JIT execution: exit_to_interpreter should force an interpreter step"
+            ),
             other => panic!("unexpected JIT table index {other}"),
         }
     }

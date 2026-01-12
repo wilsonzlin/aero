@@ -3,7 +3,10 @@ use std::io;
 use std::rc::Rc;
 
 use aero_devices::pci::profile::IDE_PIIX3;
-use aero_devices::pci::{bios_post, PciBarDefinition, PciDevice, PciPlatform, PciResourceAllocator, PciResourceAllocatorConfig};
+use aero_devices::pci::{
+    bios_post, PciBarDefinition, PciDevice, PciPlatform, PciResourceAllocator,
+    PciResourceAllocatorConfig,
+};
 use aero_devices_storage::ata::AtaDrive;
 use aero_devices_storage::atapi::IsoBackend;
 use aero_devices_storage::pci_ide::{
@@ -136,11 +139,26 @@ fn pci_bar_probing_and_programming_matches_piix3_profile() {
     assert_eq!(read_u8(&mut dev, 0x0a), IDE_PIIX3.class.sub_class);
     assert_eq!(read_u8(&mut dev, 0x0b), IDE_PIIX3.class.base_class);
 
-    assert_eq!(dev.config().bar_definition(0), Some(PciBarDefinition::Io { size: 8 }));
-    assert_eq!(dev.config().bar_definition(1), Some(PciBarDefinition::Io { size: 4 }));
-    assert_eq!(dev.config().bar_definition(2), Some(PciBarDefinition::Io { size: 8 }));
-    assert_eq!(dev.config().bar_definition(3), Some(PciBarDefinition::Io { size: 4 }));
-    assert_eq!(dev.config().bar_definition(4), Some(PciBarDefinition::Io { size: 16 }));
+    assert_eq!(
+        dev.config().bar_definition(0),
+        Some(PciBarDefinition::Io { size: 8 })
+    );
+    assert_eq!(
+        dev.config().bar_definition(1),
+        Some(PciBarDefinition::Io { size: 4 })
+    );
+    assert_eq!(
+        dev.config().bar_definition(2),
+        Some(PciBarDefinition::Io { size: 8 })
+    );
+    assert_eq!(
+        dev.config().bar_definition(3),
+        Some(PciBarDefinition::Io { size: 4 })
+    );
+    assert_eq!(
+        dev.config().bar_definition(4),
+        Some(PciBarDefinition::Io { size: 16 })
+    );
 
     // BAR0 (8-byte I/O).
     dev.config_mut().write(0x10, 4, 0xffff_ffff);
@@ -375,8 +393,16 @@ fn reset_clears_channel_and_bus_master_state_but_preserves_attached_media() {
 
     // Bus Master IDE runtime registers should be reset (active/error/irq cleared, PRD cleared).
     let bm_cmd = ioports.read(bm_base + 0, 1) as u8;
-    assert_eq!(bm_cmd & 0x09, 0, "bus master start/direction bits should be clear");
-    assert_eq!(ioports.read(bm_base + 4, 4), 0, "PRD pointer should reset to 0");
+    assert_eq!(
+        bm_cmd & 0x09,
+        0,
+        "bus master start/direction bits should be clear"
+    );
+    assert_eq!(
+        ioports.read(bm_base + 4, 4),
+        0,
+        "PRD pointer should reset to 0"
+    );
     let bm_st = ioports.read(bm_base + 2, 1) as u8;
     assert_eq!(bm_st & 0x07, 0, "bus master status bits should reset");
 
@@ -1089,7 +1115,11 @@ fn bus_master_status_register_is_rw1c_for_irq_and_error_bits() {
     ide.borrow_mut().tick(&mut mem);
 
     let st = ioports.read(bm_base + 2, 1) as u8;
-    assert_eq!(st & 0x07, 0x04, "interrupt should be set, active/error clear");
+    assert_eq!(
+        st & 0x07,
+        0x04,
+        "interrupt should be set, active/error clear"
+    );
 
     // Clear interrupt (RW1C).
     ioports.write(bm_base + 2, 1, 0x04);
@@ -1236,11 +1266,9 @@ fn atapi_identify_device_aborts_with_signature() {
     let iso = MemIso::new(1);
 
     let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
-    ide.borrow_mut()
-        .controller
-        .attach_secondary_master_atapi(aero_devices_storage::atapi::AtapiCdrom::new(Some(
-            Box::new(iso),
-        )));
+    ide.borrow_mut().controller.attach_secondary_master_atapi(
+        aero_devices_storage::atapi::AtapiCdrom::new(Some(Box::new(iso))),
+    );
     ide.borrow_mut().config_mut().set_command(0x0001); // IO decode
 
     let mut ioports = IoPortBus::new();
@@ -1272,11 +1300,9 @@ fn atapi_inquiry_and_read_10_pio() {
     iso.data[2048..2053].copy_from_slice(b"WORLD");
 
     let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
-    ide.borrow_mut()
-        .controller
-        .attach_secondary_master_atapi(aero_devices_storage::atapi::AtapiCdrom::new(Some(
-            Box::new(iso),
-        )));
+    ide.borrow_mut().controller.attach_secondary_master_atapi(
+        aero_devices_storage::atapi::AtapiCdrom::new(Some(Box::new(iso))),
+    );
     ide.borrow_mut().config_mut().set_command(0x0001); // IO decode
 
     let mut ioports = IoPortBus::new();
@@ -1356,11 +1382,9 @@ fn atapi_read_12_rejects_oversized_transfer_without_allocating_buffer() {
     };
 
     let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
-    ide.borrow_mut()
-        .controller
-        .attach_secondary_master_atapi(aero_devices_storage::atapi::AtapiCdrom::new(Some(
-            Box::new(iso),
-        )));
+    ide.borrow_mut().controller.attach_secondary_master_atapi(
+        aero_devices_storage::atapi::AtapiCdrom::new(Some(Box::new(iso))),
+    );
     ide.borrow_mut().config_mut().set_command(0x0001); // IO decode
 
     let mut ioports = IoPortBus::new();
@@ -1385,21 +1409,12 @@ fn atapi_read_12_rejects_oversized_transfer_without_allocating_buffer() {
     let mut read12 = [0u8; 12];
     read12[0] = 0xA8; // READ(12)
     read12[6..10].copy_from_slice(&blocks.to_be_bytes());
-    send_atapi_packet(
-        &mut ioports,
-        SECONDARY_PORTS.cmd_base,
-        0,
-        &read12,
-        2048,
-    );
+    send_atapi_packet(&mut ioports, SECONDARY_PORTS.cmd_base, 0, &read12, 2048);
 
     // Error completions should still raise an interrupt.
     assert!(ide.borrow().controller.secondary_irq_pending());
     // Interrupt reason: status phase.
-    assert_eq!(
-        ioports.read(SECONDARY_PORTS.cmd_base + 2, 1) as u8,
-        0x03
-    );
+    assert_eq!(ioports.read(SECONDARY_PORTS.cmd_base + 2, 1) as u8, 0x03);
 
     let status = ioports.read(SECONDARY_PORTS.cmd_base + 7, 1) as u8;
     assert_eq!(status & 0x80, 0, "BSY should be clear");
@@ -1435,11 +1450,9 @@ fn atapi_read_10_dma_via_bus_master() {
     iso.data[0..8].copy_from_slice(b"DMATEST!");
 
     let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
-    ide.borrow_mut()
-        .controller
-        .attach_secondary_master_atapi(aero_devices_storage::atapi::AtapiCdrom::new(Some(
-            Box::new(iso),
-        )));
+    ide.borrow_mut().controller.attach_secondary_master_atapi(
+        aero_devices_storage::atapi::AtapiCdrom::new(Some(Box::new(iso))),
+    );
     ide.borrow_mut().config_mut().set_command(0x0005); // IO decode + Bus Master
 
     let mut ioports = IoPortBus::new();
@@ -1504,11 +1517,9 @@ fn bus_master_reset_clears_command_status_and_prd_pointer() {
     iso.data[0..8].copy_from_slice(b"DMATEST!");
 
     let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
-    ide.borrow_mut()
-        .controller
-        .attach_secondary_master_atapi(aero_devices_storage::atapi::AtapiCdrom::new(Some(
-            Box::new(iso),
-        )));
+    ide.borrow_mut().controller.attach_secondary_master_atapi(
+        aero_devices_storage::atapi::AtapiCdrom::new(Some(Box::new(iso))),
+    );
     ide.borrow_mut().config_mut().set_command(0x0005); // IO decode + Bus Master
 
     let mut ioports = IoPortBus::new();
@@ -1736,7 +1747,11 @@ fn bios_post_preserves_piix3_legacy_bar_bases() {
         u64::from(Piix3IdePciDevice::DEFAULT_BUS_MASTER_BASE)
     );
 
-    assert_eq!(cfg.command() & 0x1, 0x1, "bios_post should enable IO decoding");
+    assert_eq!(
+        cfg.command() & 0x1,
+        0x1,
+        "bios_post should enable IO decoding"
+    );
 }
 
 #[test]
@@ -1749,11 +1764,9 @@ fn piix3_ide_atapi_pio_read10_snapshot_roundtrip_mid_data_phase() {
     let expected = iso.data[2048..2048 + 2048].to_vec();
 
     let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
-    ide.borrow_mut()
-        .controller
-        .attach_secondary_master_atapi(aero_devices_storage::atapi::AtapiCdrom::new(Some(
-            Box::new(iso),
-        )));
+    ide.borrow_mut().controller.attach_secondary_master_atapi(
+        aero_devices_storage::atapi::AtapiCdrom::new(Some(Box::new(iso))),
+    );
     ide.borrow_mut().config_mut().set_command(0x0001); // IO decode
 
     let mut ioports = IoPortBus::new();
@@ -1882,12 +1895,20 @@ fn piix3_ide_ata_dma_snapshot_roundtrip_preserves_irq_and_status_bits() {
     assert!(restored.borrow().controller.primary_irq_pending());
     let bm_status = ioports2.read(bm_base2 + 2, 1) as u8;
     assert_ne!(bm_status & 0x04, 0, "BMIDE status IRQ bit should be set");
-    assert_eq!(bm_status & 0x01, 0, "BMIDE status active bit should be clear");
+    assert_eq!(
+        bm_status & 0x01,
+        0,
+        "BMIDE status active bit should be clear"
+    );
 
     // ATA status should report DRDY and not be busy/DRQ.
     let st = ioports2.read(PRIMARY_PORTS.cmd_base + 7, 1) as u8;
     assert_ne!(st & 0x40, 0, "DRDY should be set after DMA completion");
-    assert_eq!(st & 0x88, 0, "BSY and DRQ should be clear after DMA completion");
+    assert_eq!(
+        st & 0x88,
+        0,
+        "BSY and DRQ should be clear after DMA completion"
+    );
 
     // Reading STATUS clears the pending IRQ.
     assert!(!restored.borrow().controller.primary_irq_pending());

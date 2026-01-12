@@ -39,4 +39,3 @@ async fn extremely_long_image_id_does_not_bloat_error_body() {
         body.len()
     );
 }
-

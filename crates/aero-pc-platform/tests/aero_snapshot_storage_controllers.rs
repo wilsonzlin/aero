@@ -6,7 +6,9 @@ use aero_devices_storage::pci_ide::PRIMARY_PORTS;
 use aero_io_snapshot::io::state::IoSnapshot;
 use aero_io_snapshot::io::storage::state::DiskControllersSnapshot;
 use aero_pc_platform::{PcPlatform, PcPlatformConfig};
-use aero_snapshot::io_snapshot_bridge::{apply_io_snapshot_to_device, device_state_from_io_snapshot};
+use aero_snapshot::io_snapshot_bridge::{
+    apply_io_snapshot_to_device, device_state_from_io_snapshot,
+};
 use aero_snapshot::{
     restore_snapshot, save_snapshot, Compression, CpuState, DeviceId, DeviceState, DiskOverlayRefs,
     MmuState, Result as SnapshotResult, SaveOptions, SnapshotMeta, SnapshotSource, SnapshotTarget,
@@ -72,7 +74,10 @@ impl SnapshotSource for PcPlatformStorageSnapshotHarness {
 
         // For this harness we only snapshot the ICH9 AHCI controller at its canonical BDF.
         if let Some(ahci) = &self.platform.ahci {
-            disk_controllers.insert(profile::SATA_AHCI_ICH9.bdf.pack_u16(), ahci.borrow().save_state());
+            disk_controllers.insert(
+                profile::SATA_AHCI_ICH9.bdf.pack_u16(),
+                ahci.borrow().save_state(),
+            );
         }
         if let Some(ide) = &self.platform.ide {
             disk_controllers.insert(profile::IDE_PIIX3.bdf.pack_u16(), ide.borrow().save_state());
@@ -207,7 +212,8 @@ fn aero_snapshot_roundtrip_preserves_ahci_inflight_dma_command_and_allows_resume
 
     // Attach a small in-memory disk with a known marker at LBA 4.
     let mut disk = RawDisk::create(MemBackend::new(), 8 * SECTOR_SIZE as u64).unwrap();
-    disk.write_at(4 * SECTOR_SIZE as u64, &[9, 8, 7, 6]).unwrap();
+    disk.write_at(4 * SECTOR_SIZE as u64, &[9, 8, 7, 6])
+        .unwrap();
     src.platform.attach_ahci_disk_port0(Box::new(disk)).unwrap();
 
     let bdf = profile::SATA_AHCI_ICH9.bdf;
@@ -296,7 +302,9 @@ fn aero_snapshot_roundtrip_preserves_ahci_inflight_dma_command_and_allows_resume
     src.platform.memory.write_u32(prd, data_buf as u32);
     src.platform.memory.write_u32(prd + 4, 0);
     src.platform.memory.write_u32(prd + 8, 0);
-    src.platform.memory.write_u32(prd + 12, (SECTOR_SIZE as u32 - 1) | (1 << 31));
+    src.platform
+        .memory
+        .write_u32(prd + 12, (SECTOR_SIZE as u32 - 1) | (1 << 31));
 
     // Clear any prior interrupt state and issue the command.
     src.platform
@@ -322,7 +330,10 @@ fn aero_snapshot_roundtrip_preserves_ahci_inflight_dma_command_and_allows_resume
     restore_snapshot(&mut Cursor::new(&snap), &mut restored).unwrap();
 
     // Device snapshot blobs should roundtrip byte-identically through the container.
-    assert_eq!(restored.platform.pci_cfg.borrow().save_state(), expected_pci_cfg);
+    assert_eq!(
+        restored.platform.pci_cfg.borrow().save_state(),
+        expected_pci_cfg
+    );
     assert_eq!(
         restored
             .platform
@@ -336,7 +347,8 @@ fn aero_snapshot_roundtrip_preserves_ahci_inflight_dma_command_and_allows_resume
 
     // Host contract: storage controller restore drops attached disks; reattach after restoring state.
     let mut disk = RawDisk::create(MemBackend::new(), 8 * SECTOR_SIZE as u64).unwrap();
-    disk.write_at(4 * SECTOR_SIZE as u64, &[9, 8, 7, 6]).unwrap();
+    disk.write_at(4 * SECTOR_SIZE as u64, &[9, 8, 7, 6])
+        .unwrap();
     restored
         .platform
         .attach_ahci_disk_port0(Box::new(disk))
@@ -354,8 +366,13 @@ fn aero_snapshot_roundtrip_preserves_ahci_inflight_dma_command_and_allows_resume
         let pin = profile::SATA_AHCI_ICH9
             .interrupt_pin
             .expect("profile should provide interrupt pin");
-        u8::try_from(restored.platform.pci_intx.gsi_for_intx(profile::SATA_AHCI_ICH9.bdf, pin))
-            .unwrap()
+        u8::try_from(
+            restored
+                .platform
+                .pci_intx
+                .gsi_for_intx(profile::SATA_AHCI_ICH9.bdf, pin),
+        )
+        .unwrap()
     };
     unmask_pic_irq(&mut restored.platform, expected_irq);
     assert!(
@@ -389,7 +406,9 @@ fn aero_snapshot_roundtrip_preserves_ide_inflight_pio_and_allows_resume() {
     let mut sector0 = vec![0u8; SECTOR_SIZE];
     sector0[0..4].copy_from_slice(b"BOOT");
     disk.write_at(0, &sector0).unwrap();
-    src.platform.attach_ide_primary_master_disk(Box::new(disk)).unwrap();
+    src.platform
+        .attach_ide_primary_master_disk(Box::new(disk))
+        .unwrap();
 
     // Issue READ SECTORS (LBA 0, 1 sector) and consume the first 4 bytes ("BOOT").
     src.platform.io.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
@@ -448,16 +467,14 @@ fn aero_snapshot_roundtrip_preserves_ide_inflight_pio_and_allows_resume() {
 
     // Reading status clears the pending IRQ.
     let _ = restored.platform.io.read(PRIMARY_PORTS.cmd_base + 7, 1);
-    assert!(
-        !restored
-            .platform
-            .ide
-            .as_ref()
-            .unwrap()
-            .borrow()
-            .controller
-            .primary_irq_pending()
-    );
+    assert!(!restored
+        .platform
+        .ide
+        .as_ref()
+        .unwrap()
+        .borrow()
+        .controller
+        .primary_irq_pending());
 
     // Re-attach a backend and perform a WRITE SECTORS PIO to LBA 1, then read it back.
     let disk2 = RawDisk::create(MemBackend::new(), 4 * SECTOR_SIZE as u64).unwrap();
@@ -466,12 +483,18 @@ fn aero_snapshot_roundtrip_preserves_ide_inflight_pio_and_allows_resume() {
         .attach_ide_primary_master_disk(Box::new(disk2))
         .unwrap();
 
-    restored.platform.io.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
+    restored
+        .platform
+        .io
+        .write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
     restored.platform.io.write(PRIMARY_PORTS.cmd_base + 2, 1, 1);
     restored.platform.io.write(PRIMARY_PORTS.cmd_base + 3, 1, 1);
     restored.platform.io.write(PRIMARY_PORTS.cmd_base + 4, 1, 0);
     restored.platform.io.write(PRIMARY_PORTS.cmd_base + 5, 1, 0);
-    restored.platform.io.write(PRIMARY_PORTS.cmd_base + 7, 1, 0x30); // WRITE SECTORS
+    restored
+        .platform
+        .io
+        .write(PRIMARY_PORTS.cmd_base + 7, 1, 0x30); // WRITE SECTORS
 
     restored
         .platform
@@ -486,12 +509,18 @@ fn aero_snapshot_roundtrip_preserves_ide_inflight_pio_and_allows_resume() {
     }
 
     // Read back LBA 1 and verify the first 4 bytes.
-    restored.platform.io.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
+    restored
+        .platform
+        .io
+        .write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
     restored.platform.io.write(PRIMARY_PORTS.cmd_base + 2, 1, 1);
     restored.platform.io.write(PRIMARY_PORTS.cmd_base + 3, 1, 1);
     restored.platform.io.write(PRIMARY_PORTS.cmd_base + 4, 1, 0);
     restored.platform.io.write(PRIMARY_PORTS.cmd_base + 5, 1, 0);
-    restored.platform.io.write(PRIMARY_PORTS.cmd_base + 7, 1, 0x20); // READ SECTORS
+    restored
+        .platform
+        .io
+        .write(PRIMARY_PORTS.cmd_base + 7, 1, 0x20); // READ SECTORS
 
     let w0 = restored.platform.io.read(PRIMARY_PORTS.cmd_base, 2) as u16;
     let w1 = restored.platform.io.read(PRIMARY_PORTS.cmd_base, 2) as u16;

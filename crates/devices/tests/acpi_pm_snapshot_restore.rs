@@ -38,4 +38,3 @@ fn snapshot_restore_does_not_trigger_s5_poweroff_callback() {
     restored.write(cfg.pm1a_cnt_blk + 1, 1, (pm1_cnt >> 8) & 0xFF);
     assert_eq!(power_off_count.get(), 1);
 }
-

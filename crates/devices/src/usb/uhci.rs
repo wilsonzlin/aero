@@ -5,12 +5,12 @@
 
 use crate::pci::profile::USB_UHCI_PIIX3;
 use crate::pci::{PciBarKind, PciConfigSpace, PciConfigSpaceState, PciDevice};
-use aero_platform::io::{IoPortBus, PortIoDevice};
-use aero_platform::memory::MemoryBus;
 use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
 use aero_io_snapshot::io::state::{
     IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
 };
+use aero_platform::io::{IoPortBus, PortIoDevice};
+use aero_platform::memory::MemoryBus;
 use aero_usb::uhci::UhciController;
 pub use aero_usb::uhci::{regs, regs::*};
 use std::cell::RefCell;
@@ -290,15 +290,14 @@ pub fn register_uhci_io_ports(bus: &mut IoPortBus, dev: SharedUhciPciDevice) {
         .io_bar_range()
         .expect("UHCI BAR4 must be programmed before registering I/O ports");
     assert_eq!(
-        len, UhciPciDevice::IO_BAR_SIZE,
+        len,
+        UhciPciDevice::IO_BAR_SIZE,
         "unexpected UHCI BAR size (expected {:x}, got {:x})",
         UhciPciDevice::IO_BAR_SIZE,
         len
     );
 
-    let end = base
-        .checked_add(len)
-        .expect("UHCI BAR port range overflow");
+    let end = base.checked_add(len).expect("UHCI BAR port range overflow");
     for port in base..end {
         bus.register(port, Box::new(UhciPciPort::new(dev.clone(), port)));
     }

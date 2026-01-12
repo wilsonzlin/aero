@@ -3,7 +3,9 @@ use aero_devices::pci::profile::{SATA_AHCI_ICH9, USB_UHCI_PIIX3};
 use aero_devices::pci::{PciBdf, PciInterruptPin, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
 use aero_devices::pit8254::{PIT_CH0, PIT_CMD};
 use aero_pc_platform::{PcPlatform, ResetEvent};
-use aero_platform::interrupts::{InterruptController, IMCR_DATA_PORT, IMCR_INDEX, IMCR_SELECT_PORT};
+use aero_platform::interrupts::{
+    InterruptController, IMCR_DATA_PORT, IMCR_INDEX, IMCR_SELECT_PORT,
+};
 
 const CMOS_INDEX_PORT: u16 = 0x70;
 const CMOS_DATA_PORT: u16 = 0x71;
@@ -70,11 +72,7 @@ fn pci_write_u16(p: &mut PcPlatform, bdf: PciBdf, offset: u8, value: u16) {
         4,
         pci_cfg_addr(bdf.bus, bdf.device, bdf.function, offset),
     );
-    p.io.write(
-        PCI_CFG_DATA_PORT + u16::from(offset & 0x3),
-        2,
-        value as u32,
-    );
+    p.io.write(PCI_CFG_DATA_PORT + u16::from(offset & 0x3), 2, value as u32);
 }
 
 fn pci_write_u32(p: &mut PcPlatform, bdf: PciBdf, offset: u8, value: u32) {
@@ -151,7 +149,8 @@ fn reset_is_deterministic_and_preserves_ram_allocation() {
     plat.io.write_u8(I8042_DATA_PORT, 0x00);
 
     // Mutate ACPI enable state via SMI_CMD.
-    plat.io.write_u8(aero_devices::acpi_pm::DEFAULT_SMI_CMD_PORT, 0xA0);
+    plat.io
+        .write_u8(aero_devices::acpi_pm::DEFAULT_SMI_CMD_PORT, 0xA0);
 
     // Mutate PCI config mechanism and AHCI config space.
     let ahci_bdf = SATA_AHCI_ICH9.bdf;
@@ -209,7 +208,10 @@ fn reset_is_deterministic_and_preserves_ram_allocation() {
         plat.io.read_u8(CMOS_INDEX_PORT),
         fresh.io.read_u8(CMOS_INDEX_PORT)
     );
-    assert_eq!(rtc_read_reg(&mut plat, 0x0B), rtc_read_reg(&mut fresh, 0x0B));
+    assert_eq!(
+        rtc_read_reg(&mut plat, 0x0B),
+        rtc_read_reg(&mut fresh, 0x0B)
+    );
 
     // i8042 reset: status port and command byte should match.
     assert_eq!(
@@ -233,7 +235,10 @@ fn reset_is_deterministic_and_preserves_ram_allocation() {
 
     // LAPIC: Spurious Interrupt Vector Register should match reset value (enabled, vector 0xFF).
     assert_eq!(
-        mmio_read_u32(&mut plat.memory, aero_interrupts::apic::LAPIC_MMIO_BASE + 0xF0),
+        mmio_read_u32(
+            &mut plat.memory,
+            aero_interrupts::apic::LAPIC_MMIO_BASE + 0xF0
+        ),
         mmio_read_u32(
             &mut fresh.memory,
             aero_interrupts::apic::LAPIC_MMIO_BASE + 0xF0
@@ -241,32 +246,26 @@ fn reset_is_deterministic_and_preserves_ram_allocation() {
     );
 
     // IOAPIC: ID and version registers should match.
-    assert_eq!(ioapic_read_reg(&mut plat, 0x00), ioapic_read_reg(&mut fresh, 0x00));
-    assert_eq!(ioapic_read_reg(&mut plat, 0x01), ioapic_read_reg(&mut fresh, 0x01));
+    assert_eq!(
+        ioapic_read_reg(&mut plat, 0x00),
+        ioapic_read_reg(&mut fresh, 0x00)
+    );
+    assert_eq!(
+        ioapic_read_reg(&mut plat, 0x01),
+        ioapic_read_reg(&mut fresh, 0x01)
+    );
 
     // HPET reset: key registers should match.
     // Enable A20 so the HPET base does not alias with the IOAPIC base (differs by bit20).
     plat.io.write_u8(0x92, 0x02);
     fresh.io.write_u8(0x92, 0x02);
     assert_eq!(
-        mmio_read_u64(
-            &mut plat.memory,
-            aero_devices::hpet::HPET_MMIO_BASE + 0x10
-        ),
-        mmio_read_u64(
-            &mut fresh.memory,
-            aero_devices::hpet::HPET_MMIO_BASE + 0x10
-        )
+        mmio_read_u64(&mut plat.memory, aero_devices::hpet::HPET_MMIO_BASE + 0x10),
+        mmio_read_u64(&mut fresh.memory, aero_devices::hpet::HPET_MMIO_BASE + 0x10)
     );
     assert_eq!(
-        mmio_read_u64(
-            &mut plat.memory,
-            aero_devices::hpet::HPET_MMIO_BASE + 0xF0
-        ),
-        mmio_read_u64(
-            &mut fresh.memory,
-            aero_devices::hpet::HPET_MMIO_BASE + 0xF0
-        )
+        mmio_read_u64(&mut plat.memory, aero_devices::hpet::HPET_MMIO_BASE + 0xF0),
+        mmio_read_u64(&mut fresh.memory, aero_devices::hpet::HPET_MMIO_BASE + 0xF0)
     );
 
     // Disable A20 again so the legacy 1MiB wrap behaviour is observable below.
@@ -297,9 +296,7 @@ fn reset_is_deterministic_and_preserves_ram_allocation() {
     // pre-reset assertion above) and would not re-drive the platform GSI, leaving the PIC with no
     // pending IRQ despite the call.
     assert_eq!(plat.interrupts.borrow().get_pending(), None);
-    let gsi = plat
-        .pci_intx
-        .gsi_for_intx(uhci_bdf, PciInterruptPin::IntA);
+    let gsi = plat.pci_intx.gsi_for_intx(uhci_bdf, PciInterruptPin::IntA);
     let irq = u8::try_from(gsi).expect("PCI INTx GSI should fit in an ISA IRQ number");
     {
         let mut interrupts = plat.interrupts.borrow_mut();

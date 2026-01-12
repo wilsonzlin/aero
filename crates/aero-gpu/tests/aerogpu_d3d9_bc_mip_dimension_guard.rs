@@ -137,4 +137,3 @@ fn d3d9_bc_mip_dimension_guard_falls_back_instead_of_triggering_wgpu_validation(
     assert_eq!((w, h), (12, 12));
     assert_eq!(bytes.len(), (12 * 12 * 4) as usize);
 }
-

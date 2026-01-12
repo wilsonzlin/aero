@@ -4,10 +4,10 @@ use aero_gpu::aerogpu_executor::AeroGpuExecutor;
 use aero_gpu::{readback_rgba8, TextureRegion, VecGuestMemory};
 use aero_protocol::aerogpu::{
     aerogpu_cmd::{
-        AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode, AerogpuShaderStage,
-        AerogpuCmdStreamHeader as ProtocolCmdStreamHeader, AEROGPU_CMD_STREAM_MAGIC,
-        AEROGPU_RESOURCE_USAGE_RENDER_TARGET, AEROGPU_RESOURCE_USAGE_TEXTURE,
-        AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
+        AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode,
+        AerogpuCmdStreamHeader as ProtocolCmdStreamHeader, AerogpuShaderStage,
+        AEROGPU_CMD_STREAM_MAGIC, AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
+        AEROGPU_RESOURCE_USAGE_TEXTURE, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
     },
     aerogpu_pci::{AerogpuFormat, AEROGPU_ABI_VERSION_U32},
 };

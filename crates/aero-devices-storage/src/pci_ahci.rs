@@ -3,9 +3,9 @@ use std::sync::{
     Arc,
 };
 
+use aero_devices::irq::IrqLine;
 use aero_devices::pci::capabilities::PCI_CONFIG_SPACE_SIZE;
 use aero_devices::pci::{profile, PciConfigSpace, PciConfigSpaceState, PciDevice};
-use aero_devices::irq::IrqLine;
 use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
 use aero_io_snapshot::io::state::{
     IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
@@ -348,7 +348,10 @@ mod tests {
         state.ports[0].ie = 1; // PxIE.DHRE (enable)
         dev.controller.restore_state(&state);
 
-        assert!(dev.intx_level(), "interrupt should be asserted before the write");
+        assert!(
+            dev.intx_level(),
+            "interrupt should be asserted before the write"
+        );
 
         let px_is_off = 0x100 + 0x10; // PxIS for port 0.
         let before = dev.mmio_read(px_is_off, 4);
@@ -360,6 +363,9 @@ mod tests {
 
         let after = dev.mmio_read(px_is_off, 4);
         assert_eq!(after, before, "size-0 MMIO write must not change PxIS");
-        assert!(dev.intx_level(), "size-0 MMIO write must not change IRQ level");
+        assert!(
+            dev.intx_level(),
+            "size-0 MMIO write must not change IRQ level"
+        );
     }
 }

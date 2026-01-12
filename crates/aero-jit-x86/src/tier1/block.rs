@@ -90,9 +90,7 @@ pub fn discover_block_mode<B: Tier1Bus>(
             InstKind::JccRel { .. } => Some(BlockEndKind::Jcc),
             InstKind::CallRel { .. } => Some(BlockEndKind::Call),
             InstKind::Ret => Some(BlockEndKind::Ret),
-            InstKind::Invalid => Some(BlockEndKind::ExitToInterpreter {
-                next_rip: inst.rip,
-            }),
+            InstKind::Invalid => Some(BlockEndKind::ExitToInterpreter { next_rip: inst.rip }),
             _ => None,
         };
 

@@ -9,10 +9,10 @@
 
 use aero_devices::pci::profile::SATA_AHCI_ICH9;
 use aero_devices::pci::{PciBdf, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
-use aero_machine::{Machine, MachineConfig};
 use aero_devices_storage::ata::AtaDrive;
 use aero_devices_storage::atapi::AtapiCdrom;
 use aero_devices_storage::pci_ide::SECONDARY_PORTS;
+use aero_machine::{Machine, MachineConfig};
 use aero_storage::{MemBackend, RawDisk, VirtualDisk, SECTOR_SIZE};
 use pretty_assertions::assert_eq;
 
@@ -231,7 +231,9 @@ fn machine_reset_preserves_ahci_and_ide_media() {
     {
         let iso_capacity = (AtapiCdrom::SECTOR_SIZE * 2) as u64;
         let mut iso_disk = RawDisk::create(MemBackend::new(), iso_capacity).unwrap();
-        iso_disk.write_at(AtapiCdrom::SECTOR_SIZE as u64, b"WORLD").unwrap();
+        iso_disk
+            .write_at(AtapiCdrom::SECTOR_SIZE as u64, b"WORLD")
+            .unwrap();
         let cd = AtapiCdrom::new_from_virtual_disk(Box::new(iso_disk)).unwrap();
         m.attach_ide_secondary_master_atapi(cd);
     }

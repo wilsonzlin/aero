@@ -30,9 +30,7 @@ pub(crate) enum SharedSurfaceError {
         "shared surface token 0x{share_token:016X} refers to destroyed handle 0x{underlying:08X}"
     )]
     TokenRefersToDestroyed { share_token: u64, underlying: u32 },
-    #[error(
-        "shared surface handle 0x{handle:08X} is already an alias for 0x{underlying:08X}"
-    )]
+    #[error("shared surface handle 0x{handle:08X} is already an alias for 0x{underlying:08X}")]
     HandleIsAlias { handle: u32, underlying: u32 },
     #[error(
         "shared surface handle 0x{0:08X} is still in use (underlying id kept alive by shared surface aliases)"

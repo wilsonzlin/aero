@@ -103,8 +103,12 @@ impl PciBarMmioRouter {
     }
 
     /// Registers a handler for the given PCI BAR backed by an `Rc<RefCell<T>>`.
-    pub fn register_shared_handler<T>(&mut self, bdf: PciBdf, bar_index: u8, handler: Rc<RefCell<T>>)
-    where
+    pub fn register_shared_handler<T>(
+        &mut self,
+        bdf: PciBdf,
+        bar_index: u8,
+        handler: Rc<RefCell<T>>,
+    ) where
         T: PciBarMmioHandler + 'static,
     {
         self.register_handler(bdf, bar_index, SharedPciBarMmioHandler::new(handler));
@@ -474,7 +478,10 @@ mod tests {
         assert_eq!(got, 0xDEAD_BEEF);
 
         let state = state.lock().unwrap();
-        assert_eq!(&state.mem[dev_offset as usize..dev_offset as usize + 4], &[0xEF, 0xBE, 0xAD, 0xDE]);
+        assert_eq!(
+            &state.mem[dev_offset as usize..dev_offset as usize + 4],
+            &[0xEF, 0xBE, 0xAD, 0xDE]
+        );
         assert_eq!(state.writes.len(), 1);
         assert_eq!(state.reads.len(), 1);
     }
@@ -521,7 +528,10 @@ mod tests {
         assert_eq!(got, 0x1122_3344);
 
         let state = state.lock().unwrap();
-        assert_eq!(&state.mem[dev_offset as usize..dev_offset as usize + 4], &[0x44, 0x33, 0x22, 0x11]);
+        assert_eq!(
+            &state.mem[dev_offset as usize..dev_offset as usize + 4],
+            &[0x44, 0x33, 0x22, 0x11]
+        );
         assert_eq!(state.writes.len(), 1);
         assert_eq!(state.reads.len(), 1);
     }

@@ -1,7 +1,7 @@
+use aero_pc_constants::PCIE_ECAM_BASE;
 use aero_platform::address_filter::AddressFilter;
 use aero_platform::memory::MemoryBus;
 use aero_platform::ChipsetState;
-use aero_pc_constants::PCIE_ECAM_BASE;
 use memory::SparseMemory;
 use std::sync::{Arc, Mutex};
 

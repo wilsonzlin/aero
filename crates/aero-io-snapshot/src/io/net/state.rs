@@ -29,8 +29,15 @@ pub struct E1000TxContextState {
 pub enum E1000TxPacketState {
     #[default]
     None,
-    Legacy { cmd: u8, css: u32, cso: u32 },
-    Advanced { cmd: u8, popts: u8 },
+    Legacy {
+        cmd: u8,
+        css: u32,
+        cso: u32,
+    },
+    Advanced {
+        cmd: u8,
+        popts: u8,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -515,7 +522,9 @@ impl IoSnapshot for E1000DeviceState {
             let mut d = Decoder::new(buf);
             let count = d.u32()? as usize;
             if count > MAX_OTHER_REGS {
-                return Err(SnapshotError::InvalidFieldEncoding("e1000 other_regs count"));
+                return Err(SnapshotError::InvalidFieldEncoding(
+                    "e1000 other_regs count",
+                ));
             }
             let mut regs = std::collections::HashMap::new();
             for _ in 0..count {
@@ -540,12 +549,16 @@ impl IoSnapshot for E1000DeviceState {
             let mut d = Decoder::new(buf);
             let count = d.u32()? as usize;
             if count > MAX_RX_PENDING_FRAMES {
-                return Err(SnapshotError::InvalidFieldEncoding("e1000 rx_pending count"));
+                return Err(SnapshotError::InvalidFieldEncoding(
+                    "e1000 rx_pending count",
+                ));
             }
             for _ in 0..count {
                 let len = d.u32()? as usize;
                 if !(MIN_L2_FRAME_LEN..=MAX_L2_FRAME_LEN).contains(&len) {
-                    return Err(SnapshotError::InvalidFieldEncoding("e1000 rx_pending frame"));
+                    return Err(SnapshotError::InvalidFieldEncoding(
+                        "e1000 rx_pending frame",
+                    ));
                 }
                 self.rx_pending.push(d.bytes(len)?.to_vec());
             }
@@ -573,7 +586,9 @@ impl IoSnapshot for E1000DeviceState {
         // restoring a corrupted snapshot.
         if let Some(desc_count) = desc_count(self.tdlen) {
             if desc_count > MAX_RING_DESC_COUNT {
-                return Err(SnapshotError::InvalidFieldEncoding("e1000 tx ring too large"));
+                return Err(SnapshotError::InvalidFieldEncoding(
+                    "e1000 tx ring too large",
+                ));
             }
             if desc_count == 0 || self.tdh >= desc_count || self.tdt >= desc_count {
                 return Err(SnapshotError::InvalidFieldEncoding("e1000 tx ring indices"));
@@ -581,7 +596,9 @@ impl IoSnapshot for E1000DeviceState {
         }
         if let Some(desc_count) = desc_count(self.rdlen) {
             if desc_count > MAX_RING_DESC_COUNT {
-                return Err(SnapshotError::InvalidFieldEncoding("e1000 rx ring too large"));
+                return Err(SnapshotError::InvalidFieldEncoding(
+                    "e1000 rx ring too large",
+                ));
             }
             if desc_count == 0 || self.rdh >= desc_count || self.rdt >= desc_count {
                 return Err(SnapshotError::InvalidFieldEncoding("e1000 rx ring indices"));

@@ -6547,7 +6547,8 @@ fn aerogpu_cmd_upload_resource_first_use_texture_between_draws_does_not_restart_
 }
 
 #[test]
-fn aerogpu_cmd_upload_resource_first_use_vertex_buffer_between_draws_does_not_restart_render_pass() {
+fn aerogpu_cmd_upload_resource_first_use_vertex_buffer_between_draws_does_not_restart_render_pass()
+{
     pollster::block_on(async {
         let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
             Ok(exec) => exec,

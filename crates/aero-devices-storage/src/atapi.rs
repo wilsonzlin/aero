@@ -71,9 +71,7 @@ impl IsoBackend for VirtualDiskIsoBackend {
             .checked_mul(AtapiCdrom::SECTOR_SIZE as u64)
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "offset overflow"))?;
 
-        self.disk
-            .read_at(offset, buf)
-            .map_err(map_disk_error)
+        self.disk.read_at(offset, buf).map_err(map_disk_error)
     }
 }
 
@@ -575,7 +573,7 @@ impl AtapiCdrom {
                     out[0..2].copy_from_slice(&mdl.to_be_bytes());
                     out[2] = 0; // medium type
                     out[3] = 0x80; // write protected
-                    // Block descriptor length = 0 (no descriptors).
+                                   // Block descriptor length = 0 (no descriptors).
                     out[6..8].copy_from_slice(&0u16.to_be_bytes());
                     out[8..].copy_from_slice(&page);
                     Some(out)

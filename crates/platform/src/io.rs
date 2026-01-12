@@ -137,14 +137,7 @@ impl IoPortBus {
             );
         }
 
-        self.ranges.insert(
-            idx,
-            RangeDevice {
-                start,
-                len,
-                dev,
-            },
-        );
+        self.ranges.insert(idx, RangeDevice { start, len, dev });
     }
 
     fn find_range_index(&self, port: u16) -> Option<usize> {
@@ -153,7 +146,10 @@ impl IoPortBus {
             return None;
         }
         let cand = idx - 1;
-        self.ranges.get(cand).is_some_and(|r| r.contains(port)).then_some(cand)
+        self.ranges
+            .get(cand)
+            .is_some_and(|r| r.contains(port))
+            .then_some(cand)
     }
 
     pub fn read(&mut self, port: u16, size: u8) -> u32 {
@@ -235,12 +231,7 @@ impl aero_cpu_core::paging_bus::IoBus for IoPortBus {
         }
     }
 
-    fn io_write(
-        &mut self,
-        port: u16,
-        size: u32,
-        val: u64,
-    ) -> Result<(), aero_cpu_core::Exception> {
+    fn io_write(&mut self, port: u16, size: u32, val: u64) -> Result<(), aero_cpu_core::Exception> {
         match size {
             1 | 2 | 4 => {
                 self.write(port, size as u8, val as u32);

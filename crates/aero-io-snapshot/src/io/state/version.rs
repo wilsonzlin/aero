@@ -205,9 +205,7 @@ impl<'a> SnapshotReader<'a> {
         let mut offset = HEADER_LEN;
         while offset < bytes.len() {
             // Ensure we can read the TLV header (tag + len) without overflowing.
-            let header_end = offset
-                .checked_add(6)
-                .ok_or(SnapshotError::UnexpectedEof)?;
+            let header_end = offset.checked_add(6).ok_or(SnapshotError::UnexpectedEof)?;
             if header_end > bytes.len() {
                 return Err(SnapshotError::UnexpectedEof);
             }

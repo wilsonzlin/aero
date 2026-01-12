@@ -2,8 +2,8 @@ mod common;
 
 use std::sync::Arc;
 
-use aero_gpu::AerogpuD3d9Executor;
 use aero_gpu::stats::GpuStats;
+use aero_gpu::AerogpuD3d9Executor;
 use aero_protocol::aerogpu::aerogpu_cmd as cmd;
 use aero_protocol::aerogpu::aerogpu_pci as pci;
 
@@ -441,7 +441,10 @@ fn d3d9_cmd_stream_two_sided_stencil_mode() {
 
         // Red background; clear stencil to 0.
         emit_packet(out, OPC_CLEAR, |out| {
-            push_u32(out, AEROGPU_CLEAR_COLOR | AEROGPU_CLEAR_DEPTH | AEROGPU_CLEAR_STENCIL);
+            push_u32(
+                out,
+                AEROGPU_CLEAR_COLOR | AEROGPU_CLEAR_DEPTH | AEROGPU_CLEAR_STENCIL,
+            );
             push_f32(out, 1.0);
             push_f32(out, 0.0);
             push_f32(out, 0.0);

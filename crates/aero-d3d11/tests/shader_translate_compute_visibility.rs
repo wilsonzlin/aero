@@ -1,8 +1,8 @@
 use aero_d3d11::binding_model::{MAX_SAMPLER_SLOTS, MAX_TEXTURE_SLOTS};
 use aero_d3d11::shader_translate::reflect_resource_bindings;
 use aero_d3d11::{
-    BindingKind, DstOperand, OperandModifier, RegFile, RegisterRef, ShaderModel, ShaderStage,
-    SamplerRef, ShaderTranslateError, Sm4Decl, Sm4Inst, Sm4Module, SrcKind, SrcOperand, Swizzle,
+    BindingKind, DstOperand, OperandModifier, RegFile, RegisterRef, SamplerRef, ShaderModel,
+    ShaderStage, ShaderTranslateError, Sm4Decl, Sm4Inst, Sm4Module, SrcKind, SrcOperand, Swizzle,
     TextureRef, WriteMask,
 };
 

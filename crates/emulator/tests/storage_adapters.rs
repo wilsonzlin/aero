@@ -5,8 +5,8 @@ use emulator::io::storage::adapters::{
     ByteStorageFromStorageBackend, EmuDiskBackendFromVirtualDisk, StorageBackendFromByteStorage,
     VirtualDiskFromEmuDiskBackend,
 };
-use emulator::io::storage::{ByteStorage, DiskBackend as _, DiskError, DiskResult};
 use emulator::io::storage::disk::MemDisk as EmuMemDisk;
+use emulator::io::storage::{ByteStorage, DiskBackend as _, DiskError, DiskResult};
 
 #[derive(Default, Clone)]
 struct MemByteStorage {
@@ -172,7 +172,10 @@ fn error_mapping_preserves_unsupported_roundtrip() {
     assert_eq!(emu, DiskError::Unsupported("feature"));
 
     let back = emulator_disk_error_to_aero_storage(emu, None, None, None);
-    assert!(matches!(back, aero_storage::DiskError::Unsupported("feature")));
+    assert!(matches!(
+        back,
+        aero_storage::DiskError::Unsupported("feature")
+    ));
 }
 
 #[test]

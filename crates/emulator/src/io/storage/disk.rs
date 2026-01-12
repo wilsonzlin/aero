@@ -1,7 +1,7 @@
 pub use crate::io::storage::error::{DiskError, DiskResult};
 
-use aero_storage_adapters::AeroVirtualDiskAsNvmeBackend;
 use crate::io::storage::adapters::aero_storage_disk_error_to_emulator_with_sector_context;
+use aero_storage_adapters::AeroVirtualDiskAsNvmeBackend;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiskFormat {
@@ -140,11 +140,9 @@ impl DiskBackend for AeroVirtualDiskAsNvmeBackend {
             });
         }
 
-        self.disk_mut()
-            .read_sectors(lba, buf)
-            .map_err(|err| {
-                aero_storage_disk_error_to_emulator_with_sector_context(err, lba, sectors, capacity)
-            })
+        self.disk_mut().read_sectors(lba, buf).map_err(|err| {
+            aero_storage_disk_error_to_emulator_with_sector_context(err, lba, sectors, capacity)
+        })
     }
 
     fn write_sectors(&mut self, lba: u64, buf: &[u8]) -> DiskResult<()> {
@@ -170,24 +168,15 @@ impl DiskBackend for AeroVirtualDiskAsNvmeBackend {
             });
         }
 
-        self.disk_mut()
-            .write_sectors(lba, buf)
-            .map_err(|err| {
-                aero_storage_disk_error_to_emulator_with_sector_context(err, lba, sectors, capacity)
-            })
+        self.disk_mut().write_sectors(lba, buf).map_err(|err| {
+            aero_storage_disk_error_to_emulator_with_sector_context(err, lba, sectors, capacity)
+        })
     }
 
     fn flush(&mut self) -> DiskResult<()> {
-        self.disk_mut()
-            .flush()
-            .map_err(|err| {
-                aero_storage_disk_error_to_emulator_with_sector_context(
-                    err,
-                    0,
-                    0,
-                    self.total_sectors(),
-                )
-            })
+        self.disk_mut().flush().map_err(|err| {
+            aero_storage_disk_error_to_emulator_with_sector_context(err, 0, 0, self.total_sectors())
+        })
     }
 }
 

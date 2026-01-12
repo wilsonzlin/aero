@@ -16,9 +16,8 @@ fn parse_hex_byte(s: &str) -> u8 {
     if s.len() != 2 || !s.as_bytes().iter().all(|b| b.is_ascii_hexdigit()) {
         panic!("Invalid scancode byte {s:?} in scancodes.json. {REGEN_HINT}");
     }
-    u8::from_str_radix(s, 16).unwrap_or_else(|_| {
-        panic!("Invalid scancode byte {s:?} in scancodes.json. {REGEN_HINT}")
-    })
+    u8::from_str_radix(s, 16)
+        .unwrap_or_else(|_| panic!("Invalid scancode byte {s:?} in scancodes.json. {REGEN_HINT}"))
 }
 
 fn parse_byte_array(v: &Value, code: &str, field: &str) -> Vec<u8> {
@@ -64,18 +63,15 @@ fn generated_scancodes_match_source_json() {
         );
     }
 
-    let root: Value =
-        serde_json::from_str(SCANCODES_JSON).unwrap_or_else(|err| {
-            panic!("Failed to parse scancodes.json as JSON: {err}. {REGEN_HINT}")
-        });
+    let root: Value = serde_json::from_str(SCANCODES_JSON).unwrap_or_else(|err| {
+        panic!("Failed to parse scancodes.json as JSON: {err}. {REGEN_HINT}")
+    });
 
     let ps2_set2 = root
         .get("ps2_set2")
         .and_then(|v| v.as_object())
         .unwrap_or_else(|| {
-            panic!(
-                "Expected scancodes.json to contain a top-level `ps2_set2` object. {REGEN_HINT}"
-            )
+            panic!("Expected scancodes.json to contain a top-level `ps2_set2` object. {REGEN_HINT}")
         });
 
     if ps2_set2.len() > MAX_CODE_ENTRIES {
@@ -101,9 +97,7 @@ fn generated_scancodes_match_source_json() {
         };
 
         let actual_make = browser_code_to_set2_bytes(code, true).unwrap_or_else(|| {
-            panic!(
-                "Missing generated scancode mapping for browser code {code:?}. {REGEN_HINT}"
-            )
+            panic!("Missing generated scancode mapping for browser code {code:?}. {REGEN_HINT}")
         });
         assert_eq!(
             actual_make,
@@ -112,9 +106,7 @@ fn generated_scancodes_match_source_json() {
         );
 
         let actual_break = browser_code_to_set2_bytes(code, false).unwrap_or_else(|| {
-            panic!(
-                "Missing generated scancode mapping for browser code {code:?}. {REGEN_HINT}"
-            )
+            panic!("Missing generated scancode mapping for browser code {code:?}. {REGEN_HINT}")
         });
         assert_eq!(
             actual_break,

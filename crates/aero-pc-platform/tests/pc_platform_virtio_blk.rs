@@ -1,17 +1,19 @@
-use aero_devices::pci::profile::{VIRTIO_BLK, VIRTIO_CAP_COMMON, VIRTIO_CAP_DEVICE, VIRTIO_CAP_ISR, VIRTIO_CAP_NOTIFY};
-use aero_devices::pci::{
-    PciInterruptPin, PciIntxRouter, PciIntxRouterConfig, PciResourceAllocatorConfig, PCI_CFG_ADDR_PORT,
-    PCI_CFG_DATA_PORT,
+use aero_devices::pci::profile::{
+    VIRTIO_BLK, VIRTIO_CAP_COMMON, VIRTIO_CAP_DEVICE, VIRTIO_CAP_ISR, VIRTIO_CAP_NOTIFY,
 };
-use aero_io_snapshot::io::state::IoSnapshot;
+use aero_devices::pci::{
+    PciInterruptPin, PciIntxRouter, PciIntxRouterConfig, PciResourceAllocatorConfig,
+    PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT,
+};
 use aero_interrupts::apic::IOAPIC_MMIO_BASE;
+use aero_io_snapshot::io::state::IoSnapshot;
 use aero_pc_platform::{PcPlatform, PcPlatformConfig};
 use aero_platform::interrupts::{
     InterruptController, PlatformInterruptMode, IMCR_DATA_PORT, IMCR_INDEX, IMCR_SELECT_PORT,
 };
 use aero_storage::{MemBackend, RawDisk, VirtualDisk};
-use aero_virtio::devices::VirtioDevice;
 use aero_virtio::devices::blk::{BlockBackend, VirtioBlk, VIRTIO_BLK_SECTOR_SIZE};
+use aero_virtio::devices::VirtioDevice;
 use memory::MemoryBus as _;
 
 fn cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
@@ -23,8 +25,11 @@ fn cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
 }
 
 fn read_cfg_u32(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8) -> u32 {
-    pc.io
-        .write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bus, device, function, offset));
+    pc.io.write(
+        PCI_CFG_ADDR_PORT,
+        4,
+        cfg_addr(bus, device, function, offset),
+    );
     pc.io.read(PCI_CFG_DATA_PORT, 4)
 }
 
@@ -35,14 +40,20 @@ fn read_cfg_u8(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u
 }
 
 fn write_cfg_u16(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8, value: u16) {
-    pc.io
-        .write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bus, device, function, offset));
+    pc.io.write(
+        PCI_CFG_ADDR_PORT,
+        4,
+        cfg_addr(bus, device, function, offset),
+    );
     pc.io.write(PCI_CFG_DATA_PORT, 2, u32::from(value));
 }
 
 fn write_cfg_u32(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8, value: u32) {
-    pc.io
-        .write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bus, device, function, offset));
+    pc.io.write(
+        PCI_CFG_ADDR_PORT,
+        4,
+        cfg_addr(bus, device, function, offset),
+    );
     pc.io.write(PCI_CFG_DATA_PORT, 4, value);
 }
 
@@ -53,7 +64,15 @@ fn read_bar0_base(pc: &mut PcPlatform) -> u64 {
     (u64::from(hi) << 32) | u64::from(lo & 0xffff_fff0)
 }
 
-fn write_desc(pc: &mut PcPlatform, table: u64, index: u16, addr: u64, len: u32, flags: u16, next: u16) {
+fn write_desc(
+    pc: &mut PcPlatform,
+    table: u64,
+    index: u16,
+    addr: u64,
+    len: u32,
+    flags: u16,
+    next: u16,
+) {
     let base = table + u64::from(index) * 16;
     pc.memory.write_u64(base, addr);
     pc.memory.write_u32(base + 8, len);
@@ -100,21 +119,48 @@ fn pc_platform_virtio_blk_bar0_is_mmio64_and_probes_return_size_mask() {
     let bar0_orig_hi = read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x14);
 
     // Probe BAR0 size mask.
-    write_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x10, 0xFFFF_FFFF);
-    write_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x14, 0xFFFF_FFFF);
+    write_cfg_u32(
+        &mut pc,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        0x10,
+        0xFFFF_FFFF,
+    );
+    write_cfg_u32(
+        &mut pc,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        0x14,
+        0xFFFF_FFFF,
+    );
 
     let bar0_probe_lo = read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x10);
     let bar0_probe_hi = read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x14);
     assert_eq!(
-        bar0_probe_lo,
-        0xFFFF_C004,
+        bar0_probe_lo, 0xFFFF_C004,
         "BAR0 probe should return size mask for 0x4000-byte MMIO64 BAR"
     );
     assert_eq!(bar0_probe_hi, 0xFFFF_FFFF);
 
     // Restore the BAR.
-    write_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x10, bar0_orig_lo);
-    write_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x14, bar0_orig_hi);
+    write_cfg_u32(
+        &mut pc,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        0x10,
+        bar0_orig_lo,
+    );
+    write_cfg_u32(
+        &mut pc,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        0x14,
+        bar0_orig_hi,
+    );
     assert_eq!(
         read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x10),
         bar0_orig_lo
@@ -205,10 +251,8 @@ fn pc_platform_virtio_blk_device_cfg_reports_capacity_and_block_size() {
             (backend.len() / VIRTIO_BLK_SECTOR_SIZE, backend.blk_size())
         };
         (
-            capacity,
-            0u32, // size_max (contract v1: unused, must be 0)
-            seg_max,
-            blk_size,
+            capacity, 0u32, // size_max (contract v1: unused, must be 0)
+            seg_max, blk_size,
         )
     };
 
@@ -384,7 +428,8 @@ fn pc_platform_virtio_blk_uses_injected_disk_for_reads_and_writes() {
     let _ = pc.memory.read_u8(bar0_base + ISR);
 
     // Read back.
-    pc.memory.write_physical(data, &[0u8; VIRTIO_BLK_SECTOR_SIZE as usize]);
+    pc.memory
+        .write_physical(data, &[0u8; VIRTIO_BLK_SECTOR_SIZE as usize]);
     pc.memory.write_u32(header, VIRTIO_BLK_T_IN);
     pc.memory.write_u32(header + 4, 0);
     pc.memory.write_u64(header + 8, TEST_SECTOR);
@@ -464,7 +509,11 @@ fn pc_platform_virtio_blk_uses_injected_disk_for_reads_and_writes() {
     pc.memory.write_u16(bar0_base + NOTIFY, 0);
     pc.process_virtio_blk();
 
-    assert_eq!(pc.memory.read_u8(status), 1, "OOB write should return IOERR");
+    assert_eq!(
+        pc.memory.read_u8(status),
+        1,
+        "OOB write should return IOERR"
+    );
     assert_eq!(pc.memory.read_u16(USED_RING + 2), 5);
 }
 
@@ -478,7 +527,8 @@ fn pc_platform_virtio_blk_multi_descriptor_read_write_roundtrip() {
     let mut disk = RawDisk::create(MemBackend::new(), DISK_SECTORS * VIRTIO_BLK_SECTOR_SIZE)
         .expect("failed to allocate in-memory virtio-blk disk");
     disk.write_at(0, &[9, 8, 7, 6]).unwrap();
-    disk.write_at(VIRTIO_BLK_SECTOR_SIZE, &[5, 4, 3, 2]).unwrap();
+    disk.write_at(VIRTIO_BLK_SECTOR_SIZE, &[5, 4, 3, 2])
+        .unwrap();
 
     let mut pc = PcPlatform::new_with_virtio_blk_disk(RAM_SIZE, Box::new(disk));
     let bdf = VIRTIO_BLK.bdf;
@@ -681,7 +731,8 @@ fn pc_platform_virtio_blk_indirect_descriptor_read_write_roundtrip() {
     let mut disk = RawDisk::create(MemBackend::new(), DISK_SECTORS * VIRTIO_BLK_SECTOR_SIZE)
         .expect("failed to allocate in-memory virtio-blk disk");
     disk.write_at(0, &[9, 8, 7, 6]).unwrap();
-    disk.write_at(VIRTIO_BLK_SECTOR_SIZE, &[5, 4, 3, 2]).unwrap();
+    disk.write_at(VIRTIO_BLK_SECTOR_SIZE, &[5, 4, 3, 2])
+        .unwrap();
 
     let mut pc = PcPlatform::new_with_virtio_blk_disk(RAM_SIZE, Box::new(disk));
     let bdf = VIRTIO_BLK.bdf;
@@ -1022,8 +1073,14 @@ fn pc_platform_virtio_blk_processes_queue_and_raises_intx() {
     assert_eq!(prog_if, VIRTIO_BLK.class.prog_if);
 
     let subsystem = read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x2C);
-    assert_eq!(subsystem & 0xFFFF, u32::from(VIRTIO_BLK.subsystem_vendor_id));
-    assert_eq!((subsystem >> 16) & 0xFFFF, u32::from(VIRTIO_BLK.subsystem_id));
+    assert_eq!(
+        subsystem & 0xFFFF,
+        u32::from(VIRTIO_BLK.subsystem_vendor_id)
+    );
+    assert_eq!(
+        (subsystem >> 16) & 0xFFFF,
+        u32::from(VIRTIO_BLK.subsystem_id)
+    );
 
     let header_bist = read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x0C);
     let header_type = ((header_bist >> 16) & 0xFF) as u8;
@@ -1038,8 +1095,20 @@ fn pc_platform_virtio_blk_processes_queue_and_raises_intx() {
         assert!(guard <= 16, "capability list too long or cyclic");
         let cap_id = read_cfg_u8(&mut pc, bdf.bus, bdf.device, bdf.function, cap_ptr);
         assert_eq!(cap_id, 0x09, "unexpected capability ID at {cap_ptr:#x}");
-        let next = read_cfg_u8(&mut pc, bdf.bus, bdf.device, bdf.function, cap_ptr.wrapping_add(1));
-        let cap_len = read_cfg_u8(&mut pc, bdf.bus, bdf.device, bdf.function, cap_ptr.wrapping_add(2));
+        let next = read_cfg_u8(
+            &mut pc,
+            bdf.bus,
+            bdf.device,
+            bdf.function,
+            cap_ptr.wrapping_add(1),
+        );
+        let cap_len = read_cfg_u8(
+            &mut pc,
+            bdf.bus,
+            bdf.device,
+            bdf.function,
+            cap_ptr.wrapping_add(2),
+        );
         assert!(cap_len >= 2, "invalid capability length");
         let payload_len = usize::from(cap_len - 2);
         let mut payload = vec![0u8; payload_len];
@@ -1128,15 +1197,7 @@ fn pc_platform_virtio_blk_processes_queue_and_raises_intx() {
     pc.memory.write_u64(header + 8, 0);
     pc.memory.write_u8(status, 0xff);
 
-    write_desc(
-        &mut pc,
-        DESC_TABLE,
-        0,
-        header,
-        16,
-        VIRTQ_DESC_F_NEXT,
-        1,
-    );
+    write_desc(&mut pc, DESC_TABLE, 0, header, 16, VIRTQ_DESC_F_NEXT, 1);
     write_desc(&mut pc, DESC_TABLE, 1, status, 1, VIRTQ_DESC_F_WRITE, 0);
 
     // avail.flags=0, avail.idx=1, avail.ring[0]=0
@@ -1203,7 +1264,9 @@ fn pc_platform_virtio_blk_processes_queue_and_raises_intx() {
         .borrow()
         .pic()
         .get_pending_vector()
-        .unwrap_or_else(|| panic!("IRQ{expected_irq} should be pending after processing virtio-blk"));
+        .unwrap_or_else(|| {
+            panic!("IRQ{expected_irq} should be pending after processing virtio-blk")
+        });
     let irq = pc
         .interrupts
         .borrow()
@@ -1215,13 +1278,12 @@ fn pc_platform_virtio_blk_processes_queue_and_raises_intx() {
     // Reading the ISR register should clear the interrupt level.
     let isr = pc.memory.read_u8(bar0_base + 0x2000);
     assert_ne!(isr, 0);
-    assert!(
-        !pc.virtio_blk
-            .as_ref()
-            .expect("virtio-blk enabled")
-            .borrow()
-            .irq_level()
-    );
+    assert!(!pc
+        .virtio_blk
+        .as_ref()
+        .expect("virtio-blk enabled")
+        .borrow()
+        .irq_level());
 }
 
 #[test]
@@ -1655,7 +1717,8 @@ fn pc_platform_virtio_blk_snapshot_restore_with_injected_disk_processes_pending_
     pc.memory.write_u32(header, VIRTIO_BLK_T_IN);
     pc.memory.write_u32(header + 4, 0);
     pc.memory.write_u64(header + 8, TEST_SECTOR);
-    pc.memory.write_physical(data, &[0u8; VIRTIO_BLK_SECTOR_SIZE as usize]);
+    pc.memory
+        .write_physical(data, &[0u8; VIRTIO_BLK_SECTOR_SIZE as usize]);
     pc.memory.write_u8(status, 0xff);
 
     // Descriptor 0: header (read-only, NEXT=1).

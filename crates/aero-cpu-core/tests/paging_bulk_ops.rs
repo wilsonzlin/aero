@@ -17,7 +17,9 @@ struct TestMemory {
 
 impl TestMemory {
     fn new(size: usize) -> Self {
-        Self { data: vec![0; size] }
+        Self {
+            data: vec![0; size],
+        }
     }
 
     fn load(&mut self, paddr: u64, bytes: &[u8]) {
@@ -133,7 +135,10 @@ fn pagingbus_bulk_copy_success() -> Result<(), Exception> {
     assert!(bus.supports_bulk_copy());
     assert!(bus.bulk_copy(0x1000, 0, src_data.len())?);
 
-    assert_eq!(bus.inner_mut().slice(page1, src_data.len()), src_data.as_slice());
+    assert_eq!(
+        bus.inner_mut().slice(page1, src_data.len()),
+        src_data.as_slice()
+    );
     Ok(())
 }
 
@@ -266,8 +271,14 @@ fn pagingbus_bulk_set_success_two_pages() -> Result<(), Exception> {
     assert!(bus.supports_bulk_set());
     assert!(bus.bulk_set(0, &[0xAB], PAGE_SIZE * 2)?);
 
-    assert_eq!(bus.inner_mut().slice(page0, PAGE_SIZE), vec![0xAB; PAGE_SIZE]);
-    assert_eq!(bus.inner_mut().slice(page1, PAGE_SIZE), vec![0xAB; PAGE_SIZE]);
+    assert_eq!(
+        bus.inner_mut().slice(page0, PAGE_SIZE),
+        vec![0xAB; PAGE_SIZE]
+    );
+    assert_eq!(
+        bus.inner_mut().slice(page1, PAGE_SIZE),
+        vec![0xAB; PAGE_SIZE]
+    );
     Ok(())
 }
 
@@ -489,7 +500,10 @@ fn pagingbus_bulk_copy_overlap_memmove_backward_tiny_overlap_32b() -> Result<(),
     let mut expected = init;
     expected[4..20].copy_from_slice(&init[0..16]);
 
-    assert_eq!(bus.inner_mut().slice(page0, expected.len()), expected.as_slice());
+    assert_eq!(
+        bus.inner_mut().slice(page0, expected.len()),
+        expected.as_slice()
+    );
     Ok(())
 }
 
@@ -530,6 +544,9 @@ fn pagingbus_bulk_copy_overlap_memmove_forward_tiny_overlap_32b() -> Result<(), 
     let mut expected = init;
     expected[0..16].copy_from_slice(&init[4..20]);
 
-    assert_eq!(bus.inner_mut().slice(page0, expected.len()), expected.as_slice());
+    assert_eq!(
+        bus.inner_mut().slice(page0, expected.len()),
+        expected.as_slice()
+    );
     Ok(())
 }

@@ -2,9 +2,9 @@ use axum::body::Body;
 use axum::extract::{Path, State};
 use axum::http::header::{self, CACHE_CONTROL, ETAG, LAST_MODIFIED};
 use axum::http::HeaderMap;
+use axum::http::HeaderValue;
 use axum::http::Request;
 use axum::http::StatusCode;
-use axum::http::HeaderValue;
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
@@ -145,7 +145,9 @@ fn metadata_cache_headers(state: &AppState, req_headers: &HeaderMap) -> HeaderMa
     state.cors.insert_cors_headers(
         &mut headers,
         req_headers,
-        Some(HeaderValue::from_static("ETag, Last-Modified, Cache-Control")),
+        Some(HeaderValue::from_static(
+            "ETag, Last-Modified, Cache-Control",
+        )),
     );
     headers
 }
@@ -229,9 +231,9 @@ pub async fn get_image_meta(
         return Ok(resp);
     }
 
-    let etag_json = etag_str
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| cache::weak_etag_from_size_and_mtime(image.meta.size, image.meta.last_modified));
+    let etag_json = etag_str.map(|s| s.to_string()).unwrap_or_else(|| {
+        cache::weak_etag_from_size_and_mtime(image.meta.size, image.meta.last_modified)
+    });
     let mut headers = metadata_cache_headers(&state, &req_headers);
     headers.insert(ETAG, etag);
     if let Some(lm) = cache::last_modified_header_value(image.meta.last_modified) {

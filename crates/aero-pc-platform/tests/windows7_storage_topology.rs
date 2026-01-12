@@ -17,14 +17,20 @@ fn cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
 }
 
 fn read_cfg_u32(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8) -> u32 {
-    pc.io
-        .write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bus, device, function, offset));
+    pc.io.write(
+        PCI_CFG_ADDR_PORT,
+        4,
+        cfg_addr(bus, device, function, offset),
+    );
     pc.io.read(PCI_CFG_DATA_PORT, 4)
 }
 
 fn write_cfg_u16(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8, value: u16) {
-    pc.io
-        .write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bus, device, function, offset));
+    pc.io.write(
+        PCI_CFG_ADDR_PORT,
+        4,
+        cfg_addr(bus, device, function, offset),
+    );
     pc.io.write(PCI_CFG_DATA_PORT, 2, u32::from(value));
 }
 
@@ -51,7 +57,10 @@ impl IsoBackend for MemIso {
             .checked_add(buf.len())
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "offset overflow"))?;
         if byte_end > self.bytes.len() {
-            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "read past EOF"));
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "read past EOF",
+            ));
         }
         buf.copy_from_slice(&self.bytes[byte_off..byte_end]);
         Ok(())
@@ -113,7 +122,10 @@ fn win7_storage_topology_is_canonical_and_reads_hdd_and_cdrom() {
         let int_line = (intx & 0xff) as u8;
         let int_pin = ((intx >> 8) & 0xff) as u8;
         assert_eq!(int_pin, 1, "IDE should expose INTA# in PCI config space");
-        assert_eq!(int_line, 11, "default PIRQ swizzle routes 00:01.1 INTA# to GSI11");
+        assert_eq!(
+            int_line, 11,
+            "default PIRQ swizzle routes 00:01.1 INTA# to GSI11"
+        );
 
         // Legacy-compatible BARs.
         let bar0 = read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x10);
@@ -142,7 +154,10 @@ fn win7_storage_topology_is_canonical_and_reads_hdd_and_cdrom() {
         let int_line = (intx & 0xff) as u8;
         let int_pin = ((intx >> 8) & 0xff) as u8;
         assert_eq!(int_pin, 1, "AHCI should expose INTA# in PCI config space");
-        assert_eq!(int_line, 12, "default PIRQ swizzle routes 00:02.0 INTA# to GSI12");
+        assert_eq!(
+            int_line, 12,
+            "default PIRQ swizzle routes 00:02.0 INTA# to GSI12"
+        );
 
         let bar5 = ahci_bar5_base(&mut pc);
         assert_ne!(bar5, 0);
@@ -205,7 +220,8 @@ fn win7_storage_topology_is_canonical_and_reads_hdd_and_cdrom() {
         pc.memory.write_u32(ctba + 0x84, 0);
         pc.memory.write_u32(ctba + 0x88, 0);
         // DBC is byte_count-1 in bits 0..21.
-        pc.memory.write_u32(ctba + 0x8c, (SECTOR_SIZE as u32 - 1) & 0x003f_ffff);
+        pc.memory
+            .write_u32(ctba + 0x8c, (SECTOR_SIZE as u32 - 1) & 0x003f_ffff);
 
         // Issue slot 0.
         pc.memory.write_u32(bar5 + 0x100 + 0x38, 1);

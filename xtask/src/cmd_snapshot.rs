@@ -161,7 +161,10 @@ fn cmd_inspect(args: Vec<String>) -> Result<()> {
 
 fn print_devices_section_summary(file: &mut fs::File, section: &SnapshotSectionInfo) {
     if section.version != 1 {
-        println!("  <unsupported DEVICES section version {}>", section.version);
+        println!(
+            "  <unsupported DEVICES section version {}>",
+            section.version
+        );
         return;
     }
 

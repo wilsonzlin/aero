@@ -154,9 +154,11 @@ mod wasm {
         );
 
         // Stable backend/device fingerprint used to partition persistent shader cache keys.
-        if let Some(caps_hash) = D3D9_STATE
-            .with(|slot| slot.borrow().as_ref().map(|state| state.shader_cache_caps_hash.clone()))
-        {
+        if let Some(caps_hash) = D3D9_STATE.with(|slot| {
+            slot.borrow()
+                .as_ref()
+                .map(|state| state.shader_cache_caps_hash.clone())
+        }) {
             let _ = Reflect::set(
                 &obj,
                 &JsValue::from_str("d3d9_shader_cache_caps_hash"),
@@ -1360,8 +1362,12 @@ mod wasm {
             self.ensure_surface_matches_canvas();
 
             let device = &self.device;
-            let frame =
-                acquire_surface_frame(&mut self.surface, device, &mut self.config, self.backend_kind)?;
+            let frame = acquire_surface_frame(
+                &mut self.surface,
+                device,
+                &mut self.config,
+                self.backend_kind,
+            )?;
             let view = frame
                 .texture
                 .create_view(&wgpu::TextureViewDescriptor::default());
@@ -1858,8 +1864,12 @@ mod wasm {
         ) -> Result<(), JsValue> {
             gpu_stats().inc_presents_attempted();
             self.ensure_surface_matches_canvas(device);
-            let frame =
-                acquire_surface_frame(&mut self.surface, device, &mut self.config, self.backend_kind)?;
+            let frame = acquire_surface_frame(
+                &mut self.surface,
+                device,
+                &mut self.config,
+                self.backend_kind,
+            )?;
             let view = frame
                 .texture
                 .create_view(&wgpu::TextureViewDescriptor::default());
@@ -1920,8 +1930,12 @@ mod wasm {
                 bytemuck::bytes_of(&viewport_transform),
             );
 
-            let frame =
-                acquire_surface_frame(&mut self.surface, device, &mut self.config, self.backend_kind)?;
+            let frame = acquire_surface_frame(
+                &mut self.surface,
+                device,
+                &mut self.config,
+                self.backend_kind,
+            )?;
             let view = frame
                 .texture
                 .create_view(&wgpu::TextureViewDescriptor::default());
@@ -2623,8 +2637,8 @@ mod wasm {
                     filter_mode,
                     clear_color,
                 )
-                    .await
-                    {
+                .await
+                {
                     Ok((presenter, device, queue, adapter_info, downlevel_flags)) => {
                         let stable_caps_hash =
                             compute_d3d9_shader_cache_caps_hash(backend_kind, &adapter_info);

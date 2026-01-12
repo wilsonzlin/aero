@@ -2,12 +2,12 @@ use aero_devices::pci::profile::{IDE_PIIX3, ISA_PIIX3};
 use aero_devices::pci::{PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
 use aero_devices_storage::atapi::AtapiCdrom;
 use aero_devices_storage::pci_ide::{PRIMARY_PORTS, SECONDARY_PORTS};
+use aero_interrupts::apic::IOAPIC_MMIO_BASE;
 use aero_pc_platform::PcPlatform;
 use aero_platform::interrupts::{
     InterruptController, PlatformInterruptMode, IMCR_DATA_PORT, IMCR_INDEX, IMCR_SELECT_PORT,
 };
 use aero_storage::{MemBackend, RawDisk, VirtualDisk, SECTOR_SIZE};
-use aero_interrupts::apic::IOAPIC_MMIO_BASE;
 use memory::MemoryBus as _;
 
 fn program_ioapic_entry(pc: &mut PcPlatform, gsi: u32, low: u32, high: u32) {
@@ -28,8 +28,11 @@ fn cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
 }
 
 fn read_cfg_u32(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8) -> u32 {
-    pc.io
-        .write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bus, device, function, offset));
+    pc.io.write(
+        PCI_CFG_ADDR_PORT,
+        4,
+        cfg_addr(bus, device, function, offset),
+    );
     pc.io.read(PCI_CFG_DATA_PORT, 4)
 }
 
@@ -42,14 +45,20 @@ fn read_header_type(pc: &mut PcPlatform, bus: u8, device: u8, function: u8) -> u
 }
 
 fn write_cfg_u16(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8, value: u16) {
-    pc.io
-        .write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bus, device, function, offset));
+    pc.io.write(
+        PCI_CFG_ADDR_PORT,
+        4,
+        cfg_addr(bus, device, function, offset),
+    );
     pc.io.write(PCI_CFG_DATA_PORT, 2, u32::from(value));
 }
 
 fn write_cfg_u32(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8, value: u32) {
-    pc.io
-        .write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bus, device, function, offset));
+    pc.io.write(
+        PCI_CFG_ADDR_PORT,
+        4,
+        cfg_addr(bus, device, function, offset),
+    );
     pc.io.write(PCI_CFG_DATA_PORT, 4, value);
 }
 
@@ -96,11 +105,26 @@ fn pc_platform_enumerates_ide_and_preserves_legacy_bar_bases() {
     assert_ne!(command & 0x1, 0, "BIOS POST should enable I/O decoding");
 
     // IDE PCI config space should expose legacy compatible BAR assignments.
-    assert_eq!(read_io_bar_base(&mut pc, bdf.bus, bdf.device, bdf.function, 0), 0x1F0);
-    assert_eq!(read_io_bar_base(&mut pc, bdf.bus, bdf.device, bdf.function, 1), 0x3F4);
-    assert_eq!(read_io_bar_base(&mut pc, bdf.bus, bdf.device, bdf.function, 2), 0x170);
-    assert_eq!(read_io_bar_base(&mut pc, bdf.bus, bdf.device, bdf.function, 3), 0x374);
-    assert_eq!(read_io_bar_base(&mut pc, bdf.bus, bdf.device, bdf.function, 4), 0xC000);
+    assert_eq!(
+        read_io_bar_base(&mut pc, bdf.bus, bdf.device, bdf.function, 0),
+        0x1F0
+    );
+    assert_eq!(
+        read_io_bar_base(&mut pc, bdf.bus, bdf.device, bdf.function, 1),
+        0x3F4
+    );
+    assert_eq!(
+        read_io_bar_base(&mut pc, bdf.bus, bdf.device, bdf.function, 2),
+        0x170
+    );
+    assert_eq!(
+        read_io_bar_base(&mut pc, bdf.bus, bdf.device, bdf.function, 3),
+        0x374
+    );
+    assert_eq!(
+        read_io_bar_base(&mut pc, bdf.bus, bdf.device, bdf.function, 4),
+        0xC000
+    );
 }
 
 #[test]
@@ -118,7 +142,10 @@ fn pc_platform_ide_io_decode_bit_gates_legacy_ports_and_bus_master_bar4() {
 
     // With PCI I/O decoding enabled, legacy ports should respond and BAR4 should decode.
     let status = pc.io.read(PRIMARY_PORTS.cmd_base + 7, 1) as u8;
-    assert_ne!(status, 0xFF, "expected IDE status to decode while IO is enabled");
+    assert_ne!(
+        status, 0xFF,
+        "expected IDE status to decode while IO is enabled"
+    );
     assert_eq!(pc.io.read(bm_base, 1), 0, "BMIDE cmd reg should decode");
 
     // Disable PCI I/O decoding: legacy ports and BAR4 should float high.
@@ -137,7 +164,10 @@ fn pc_platform_ide_io_decode_bit_gates_legacy_ports_and_bus_master_bar4() {
     // Re-enable I/O decoding and ensure both regions decode again.
     write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0001);
     let status = pc.io.read(PRIMARY_PORTS.cmd_base + 7, 1) as u8;
-    assert_ne!(status, 0xFF, "status should decode again after IO is enabled");
+    assert_ne!(
+        status, 0xFF,
+        "status should decode again after IO is enabled"
+    );
     assert_eq!(pc.io.read(bm_base, 1), 0, "BMIDE should decode again");
 }
 
@@ -747,7 +777,13 @@ fn pc_platform_ide_dma_works_after_bus_master_bar4_relocation() {
     assert_eq!(pc.interrupts.borrow().pic().get_pending_vector(), None);
 }
 
-fn send_atapi_packet(pc: &mut PcPlatform, base: u16, features: u8, pkt: &[u8; 12], byte_count: u16) {
+fn send_atapi_packet(
+    pc: &mut PcPlatform,
+    base: u16,
+    features: u8,
+    pkt: &[u8; 12],
+    byte_count: u16,
+) {
     pc.io.write(base + 1, 1, features as u32);
     pc.io.write(base + 4, 1, (byte_count & 0xFF) as u32);
     pc.io.write(base + 5, 1, (byte_count >> 8) as u32);
@@ -775,7 +811,8 @@ fn pc_platform_enumerates_piix3_ide_at_canonical_bdf_and_atapi_works_on_secondar
     iso_disk
         .write_at(AtapiCdrom::SECTOR_SIZE as u64, b"WORLD")
         .unwrap();
-    pc.attach_ide_secondary_master_iso(Box::new(iso_disk)).unwrap();
+    pc.attach_ide_secondary_master_iso(Box::new(iso_disk))
+        .unwrap();
 
     // Select master on secondary channel.
     pc.io.write(SECONDARY_PORTS.cmd_base + 6, 1, 0xA0);
@@ -826,10 +863,10 @@ fn pc_platform_ide_atapi_dma_raises_secondary_irq15() {
     let mut pc = PcPlatform::new_with_ide(2 * 1024 * 1024);
 
     // Attach ISO with recognizable bytes at sector 0.
-    let mut iso_disk =
-        RawDisk::create(MemBackend::new(), AtapiCdrom::SECTOR_SIZE as u64).unwrap();
+    let mut iso_disk = RawDisk::create(MemBackend::new(), AtapiCdrom::SECTOR_SIZE as u64).unwrap();
     iso_disk.write_at(0, b"DMATEST!").unwrap();
-    pc.attach_ide_secondary_master_iso(Box::new(iso_disk)).unwrap();
+    pc.attach_ide_secondary_master_iso(Box::new(iso_disk))
+        .unwrap();
 
     let bdf = IDE_PIIX3.bdf;
 
@@ -922,7 +959,8 @@ fn pc_platform_ide_atapi_dma_requires_pci_bus_master_enable() {
     // Attach ISO with recognizable bytes at sector 0.
     let mut iso_disk = RawDisk::create(MemBackend::new(), AtapiCdrom::SECTOR_SIZE as u64).unwrap();
     iso_disk.write_at(0, b"DMATEST!").unwrap();
-    pc.attach_ide_secondary_master_iso(Box::new(iso_disk)).unwrap();
+    pc.attach_ide_secondary_master_iso(Box::new(iso_disk))
+        .unwrap();
 
     let bdf = IDE_PIIX3.bdf;
 
@@ -1042,7 +1080,8 @@ fn pc_platform_ide_secondary_nien_suppresses_irq15_for_atapi_dma() {
     // Attach ISO with recognizable bytes at sector 0.
     let mut iso_disk = RawDisk::create(MemBackend::new(), AtapiCdrom::SECTOR_SIZE as u64).unwrap();
     iso_disk.write_at(0, b"DMATEST!").unwrap();
-    pc.attach_ide_secondary_master_iso(Box::new(iso_disk)).unwrap();
+    pc.attach_ide_secondary_master_iso(Box::new(iso_disk))
+        .unwrap();
 
     let bdf = IDE_PIIX3.bdf;
 
@@ -1233,7 +1272,8 @@ fn pc_platform_routes_ide_irq15_via_ioapic_in_apic_mode() {
     // Attach ISO with recognizable bytes at sector 0.
     let mut iso_disk = RawDisk::create(MemBackend::new(), AtapiCdrom::SECTOR_SIZE as u64).unwrap();
     iso_disk.write_at(0, b"DMATEST!").unwrap();
-    pc.attach_ide_secondary_master_iso(Box::new(iso_disk)).unwrap();
+    pc.attach_ide_secondary_master_iso(Box::new(iso_disk))
+        .unwrap();
 
     // Switch the platform into APIC mode via IMCR.
     pc.io.write_u8(IMCR_SELECT_PORT, IMCR_INDEX);

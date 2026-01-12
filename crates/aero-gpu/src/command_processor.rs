@@ -56,10 +56,7 @@ enum TextureFormatLayout {
 }
 
 impl TextureFormatLayout {
-    fn tight_row_pitch_bytes(
-        self,
-        width_texels: u32,
-    ) -> Result<u64, CommandProcessorError> {
+    fn tight_row_pitch_bytes(self, width_texels: u32) -> Result<u64, CommandProcessorError> {
         match self {
             TextureFormatLayout::Uncompressed { bytes_per_texel } => u64::from(width_texels)
                 .checked_mul(u64::from(bytes_per_texel))
@@ -89,53 +86,69 @@ fn texture_format_layout(format: u32) -> Result<TextureFormatLayout, CommandProc
     // underestimate the required guest backing size for forward-compatible additions (e.g. BCn
     // block compression), weakening bounds validation.
     match format {
-        x if x == AerogpuFormat::B8G8R8A8Unorm as u32 => Ok(TextureFormatLayout::Uncompressed {
-            bytes_per_texel: 4,
-        }),
-        x if x == AerogpuFormat::B8G8R8X8Unorm as u32 => Ok(TextureFormatLayout::Uncompressed {
-            bytes_per_texel: 4,
-        }),
-        x if x == AerogpuFormat::R8G8B8A8Unorm as u32 => Ok(TextureFormatLayout::Uncompressed {
-            bytes_per_texel: 4,
-        }),
-        x if x == AerogpuFormat::R8G8B8X8Unorm as u32 => Ok(TextureFormatLayout::Uncompressed {
-            bytes_per_texel: 4,
-        }),
-        x if x == AerogpuFormat::B8G8R8A8UnormSrgb as u32 => Ok(TextureFormatLayout::Uncompressed {
-            bytes_per_texel: 4,
-        }),
-        x if x == AerogpuFormat::B8G8R8X8UnormSrgb as u32 => Ok(TextureFormatLayout::Uncompressed {
-            bytes_per_texel: 4,
-        }),
-        x if x == AerogpuFormat::R8G8B8A8UnormSrgb as u32 => Ok(TextureFormatLayout::Uncompressed {
-            bytes_per_texel: 4,
-        }),
-        x if x == AerogpuFormat::R8G8B8X8UnormSrgb as u32 => Ok(TextureFormatLayout::Uncompressed {
-            bytes_per_texel: 4,
-        }),
+        x if x == AerogpuFormat::B8G8R8A8Unorm as u32 => {
+            Ok(TextureFormatLayout::Uncompressed { bytes_per_texel: 4 })
+        }
+        x if x == AerogpuFormat::B8G8R8X8Unorm as u32 => {
+            Ok(TextureFormatLayout::Uncompressed { bytes_per_texel: 4 })
+        }
+        x if x == AerogpuFormat::R8G8B8A8Unorm as u32 => {
+            Ok(TextureFormatLayout::Uncompressed { bytes_per_texel: 4 })
+        }
+        x if x == AerogpuFormat::R8G8B8X8Unorm as u32 => {
+            Ok(TextureFormatLayout::Uncompressed { bytes_per_texel: 4 })
+        }
+        x if x == AerogpuFormat::B8G8R8A8UnormSrgb as u32 => {
+            Ok(TextureFormatLayout::Uncompressed { bytes_per_texel: 4 })
+        }
+        x if x == AerogpuFormat::B8G8R8X8UnormSrgb as u32 => {
+            Ok(TextureFormatLayout::Uncompressed { bytes_per_texel: 4 })
+        }
+        x if x == AerogpuFormat::R8G8B8A8UnormSrgb as u32 => {
+            Ok(TextureFormatLayout::Uncompressed { bytes_per_texel: 4 })
+        }
+        x if x == AerogpuFormat::R8G8B8X8UnormSrgb as u32 => {
+            Ok(TextureFormatLayout::Uncompressed { bytes_per_texel: 4 })
+        }
 
-        x if x == AerogpuFormat::B5G6R5Unorm as u32 => Ok(TextureFormatLayout::Uncompressed {
-            bytes_per_texel: 2,
-        }),
-        x if x == AerogpuFormat::B5G5R5A1Unorm as u32 => Ok(TextureFormatLayout::Uncompressed {
-            bytes_per_texel: 2,
-        }),
+        x if x == AerogpuFormat::B5G6R5Unorm as u32 => {
+            Ok(TextureFormatLayout::Uncompressed { bytes_per_texel: 2 })
+        }
+        x if x == AerogpuFormat::B5G5R5A1Unorm as u32 => {
+            Ok(TextureFormatLayout::Uncompressed { bytes_per_texel: 2 })
+        }
 
-        x if x == AerogpuFormat::D24UnormS8Uint as u32 => Ok(TextureFormatLayout::Uncompressed {
-            bytes_per_texel: 4,
-        }),
-        x if x == AerogpuFormat::D32Float as u32 => Ok(TextureFormatLayout::Uncompressed {
-            bytes_per_texel: 4,
-        }),
+        x if x == AerogpuFormat::D24UnormS8Uint as u32 => {
+            Ok(TextureFormatLayout::Uncompressed { bytes_per_texel: 4 })
+        }
+        x if x == AerogpuFormat::D32Float as u32 => {
+            Ok(TextureFormatLayout::Uncompressed { bytes_per_texel: 4 })
+        }
 
-        x if x == AerogpuFormat::BC1RgbaUnorm as u32 => Ok(TextureFormatLayout::BlockCompressed { block_bytes: 8 }),
-        x if x == AerogpuFormat::BC1RgbaUnormSrgb as u32 => Ok(TextureFormatLayout::BlockCompressed { block_bytes: 8 }),
-        x if x == AerogpuFormat::BC2RgbaUnorm as u32 => Ok(TextureFormatLayout::BlockCompressed { block_bytes: 16 }),
-        x if x == AerogpuFormat::BC2RgbaUnormSrgb as u32 => Ok(TextureFormatLayout::BlockCompressed { block_bytes: 16 }),
-        x if x == AerogpuFormat::BC3RgbaUnorm as u32 => Ok(TextureFormatLayout::BlockCompressed { block_bytes: 16 }),
-        x if x == AerogpuFormat::BC3RgbaUnormSrgb as u32 => Ok(TextureFormatLayout::BlockCompressed { block_bytes: 16 }),
-        x if x == AerogpuFormat::BC7RgbaUnorm as u32 => Ok(TextureFormatLayout::BlockCompressed { block_bytes: 16 }),
-        x if x == AerogpuFormat::BC7RgbaUnormSrgb as u32 => Ok(TextureFormatLayout::BlockCompressed { block_bytes: 16 }),
+        x if x == AerogpuFormat::BC1RgbaUnorm as u32 => {
+            Ok(TextureFormatLayout::BlockCompressed { block_bytes: 8 })
+        }
+        x if x == AerogpuFormat::BC1RgbaUnormSrgb as u32 => {
+            Ok(TextureFormatLayout::BlockCompressed { block_bytes: 8 })
+        }
+        x if x == AerogpuFormat::BC2RgbaUnorm as u32 => {
+            Ok(TextureFormatLayout::BlockCompressed { block_bytes: 16 })
+        }
+        x if x == AerogpuFormat::BC2RgbaUnormSrgb as u32 => {
+            Ok(TextureFormatLayout::BlockCompressed { block_bytes: 16 })
+        }
+        x if x == AerogpuFormat::BC3RgbaUnorm as u32 => {
+            Ok(TextureFormatLayout::BlockCompressed { block_bytes: 16 })
+        }
+        x if x == AerogpuFormat::BC3RgbaUnormSrgb as u32 => {
+            Ok(TextureFormatLayout::BlockCompressed { block_bytes: 16 })
+        }
+        x if x == AerogpuFormat::BC7RgbaUnorm as u32 => {
+            Ok(TextureFormatLayout::BlockCompressed { block_bytes: 16 })
+        }
+        x if x == AerogpuFormat::BC7RgbaUnormSrgb as u32 => {
+            Ok(TextureFormatLayout::BlockCompressed { block_bytes: 16 })
+        }
 
         _ => Err(CommandProcessorError::InvalidCreateTexture2d),
     }

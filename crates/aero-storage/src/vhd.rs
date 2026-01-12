@@ -812,13 +812,9 @@ impl<B: StorageBackend> VhdDisk<B> {
             .try_into()
             .map_err(|_| DiskError::Unsupported("vhd bitmap too large"))?;
         let mut bitmap = Vec::new();
-        if bitmap
-            .try_reserve_exact(bitmap_size_usize)
-            .is_ok()
-        {
+        if bitmap.try_reserve_exact(bitmap_size_usize).is_ok() {
             bitmap.resize(bitmap_size_usize, 0);
-            self.bitmap_cache
-                .push(old_footer_offset, Arc::new(bitmap));
+            self.bitmap_cache.push(old_footer_offset, Arc::new(bitmap));
         }
 
         Ok(old_footer_offset)

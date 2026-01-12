@@ -72,4 +72,3 @@ pub(crate) fn append_vary(headers: &mut HeaderMap, tokens: &[&str]) {
         headers.insert(header::VARY, value);
     }
 }
-

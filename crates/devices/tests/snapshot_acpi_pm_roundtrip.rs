@@ -4,9 +4,7 @@ use std::rc::Rc;
 use aero_devices::acpi_pm::{AcpiPmCallbacks, AcpiPmConfig, AcpiPmIo, PM1_STS_PWRBTN};
 use aero_devices::clock::ManualClock;
 use aero_devices::irq::IrqLine;
-use aero_io_snapshot::io::state::{
-    IoSnapshot, SnapshotVersion, SnapshotWriter,
-};
+use aero_io_snapshot::io::state::{IoSnapshot, SnapshotVersion, SnapshotWriter};
 use aero_platform::io::PortIoDevice;
 
 #[derive(Clone, Default)]
@@ -81,17 +79,15 @@ fn snapshot_restore_preserves_pm_tmr_phase_and_advances_identically() {
     let clock = ManualClock::new();
     clock.set_ns(1_000_000_000);
 
-    let mut pm = AcpiPmIo::new_with_callbacks_and_clock(cfg, AcpiPmCallbacks::default(), clock.clone());
+    let mut pm =
+        AcpiPmIo::new_with_callbacks_and_clock(cfg, AcpiPmCallbacks::default(), clock.clone());
     clock.advance_ns(123_456_789);
     let tmr_before = pm.read(cfg.pm_tmr_blk, 4);
 
     let snapshot = pm.save_state();
 
-    let mut restored = AcpiPmIo::new_with_callbacks_and_clock(
-        cfg,
-        AcpiPmCallbacks::default(),
-        clock.clone(),
-    );
+    let mut restored =
+        AcpiPmIo::new_with_callbacks_and_clock(cfg, AcpiPmCallbacks::default(), clock.clone());
     restored.load_state(&snapshot).unwrap();
     let tmr_restored = restored.read(cfg.pm_tmr_blk, 4);
     assert_eq!(tmr_restored, tmr_before);
@@ -278,10 +274,7 @@ fn snapshot_load_short_gpe0_fields_clear_remaining_bytes() {
 
     for i in 1..half {
         assert_eq!(pm.read(cfg.gpe0_blk + i as u16, 1) as u8, 0);
-        assert_eq!(
-            pm.read(cfg.gpe0_blk + half as u16 + i as u16, 1) as u8,
-            0
-        );
+        assert_eq!(pm.read(cfg.gpe0_blk + half as u16 + i as u16, 1) as u8, 0);
     }
 }
 

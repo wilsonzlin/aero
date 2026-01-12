@@ -51,7 +51,9 @@ async fn require_range_rejects_get_without_range_header() {
         "no-store, no-transform"
     );
     assert_eq!(
-        res.headers()["access-control-allow-origin"].to_str().unwrap(),
+        res.headers()["access-control-allow-origin"]
+            .to_str()
+            .unwrap(),
         "*"
     );
 
@@ -84,4 +86,3 @@ async fn require_range_allows_valid_range_requests() {
     let body = res.into_body().collect().await.unwrap().to_bytes();
     assert_eq!(&body[..], b"H");
 }
-

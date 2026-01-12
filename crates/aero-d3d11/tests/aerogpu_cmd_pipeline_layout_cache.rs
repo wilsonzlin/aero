@@ -139,8 +139,7 @@ fn aerogpu_cmd_reuses_pipeline_layout_across_pipeline_misses() {
         stream.extend_from_slice(DXBC_VS_PASSTHROUGH_TEXCOORD);
         stream.resize(
             stream.len()
-                + (align4(DXBC_VS_PASSTHROUGH_TEXCOORD.len())
-                    - DXBC_VS_PASSTHROUGH_TEXCOORD.len()),
+                + (align4(DXBC_VS_PASSTHROUGH_TEXCOORD.len()) - DXBC_VS_PASSTHROUGH_TEXCOORD.len()),
             0,
         );
         end_cmd(&mut stream, start);
@@ -269,4 +268,3 @@ fn aerogpu_cmd_reuses_pipeline_layout_across_pipeline_misses() {
         assert_eq!(stats.pipeline_layouts.entries, 1);
     });
 }
-

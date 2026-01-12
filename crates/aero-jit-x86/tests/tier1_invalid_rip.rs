@@ -26,4 +26,3 @@ fn invalid_instruction_does_not_advance_rip() {
         IrTerminator::ExitToInterpreter { next_rip: 0x1003 }
     );
 }
-

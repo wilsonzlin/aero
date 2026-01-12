@@ -19,4 +19,3 @@ fn pit_snapshot_rejects_excessive_channel_count() {
         other => panic!("expected InvalidFieldEncoding, got {other:?}"),
     }
 }
-

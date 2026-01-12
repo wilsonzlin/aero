@@ -78,19 +78,23 @@ pub fn emulator_disk_error_to_aero_storage(
     capacity: Option<u64>,
 ) -> aero_storage::DiskError {
     match err {
-        DiskError::UnalignedBuffer { len, sector_size } => aero_storage::DiskError::UnalignedLength {
-            len,
-            alignment: sector_size as usize,
-        },
+        DiskError::UnalignedBuffer { len, sector_size } => {
+            aero_storage::DiskError::UnalignedLength {
+                len,
+                alignment: sector_size as usize,
+            }
+        }
         DiskError::InvalidBufferLength => aero_storage::DiskError::UnalignedLength {
             len: len.unwrap_or(0),
             alignment: 1,
         },
-        DiskError::OutOfBounds | DiskError::OutOfRange { .. } => aero_storage::DiskError::OutOfBounds {
-            offset: offset.unwrap_or(0),
-            len: len.unwrap_or(0),
-            capacity: capacity.unwrap_or(0),
-        },
+        DiskError::OutOfBounds | DiskError::OutOfRange { .. } => {
+            aero_storage::DiskError::OutOfBounds {
+                offset: offset.unwrap_or(0),
+                len: len.unwrap_or(0),
+                capacity: capacity.unwrap_or(0),
+            }
+        }
         DiskError::CorruptImage(msg) => aero_storage::DiskError::CorruptImage(msg),
         DiskError::Unsupported("offset overflow") => aero_storage::DiskError::OffsetOverflow,
         DiskError::Unsupported(msg) => aero_storage::DiskError::Unsupported(msg),
@@ -266,9 +270,14 @@ impl<D: aero_storage::VirtualDisk> DiskBackend for EmuDiskBackendFromVirtualDisk
                 capacity_sectors,
             })?;
 
-        self.0
-            .read_at(offset, buf)
-            .map_err(|err| aero_storage_disk_error_to_emulator_with_sector_context(err, lba, sectors, capacity_sectors))
+        self.0.read_at(offset, buf).map_err(|err| {
+            aero_storage_disk_error_to_emulator_with_sector_context(
+                err,
+                lba,
+                sectors,
+                capacity_sectors,
+            )
+        })
     }
 
     fn write_sectors(&mut self, lba: u64, buf: &[u8]) -> DiskResult<()> {
@@ -302,9 +311,14 @@ impl<D: aero_storage::VirtualDisk> DiskBackend for EmuDiskBackendFromVirtualDisk
                 capacity_sectors,
             })?;
 
-        self.0
-            .write_at(offset, buf)
-            .map_err(|err| aero_storage_disk_error_to_emulator_with_sector_context(err, lba, sectors, capacity_sectors))
+        self.0.write_at(offset, buf).map_err(|err| {
+            aero_storage_disk_error_to_emulator_with_sector_context(
+                err,
+                lba,
+                sectors,
+                capacity_sectors,
+            )
+        })
     }
 
     fn flush(&mut self) -> DiskResult<()> {
@@ -356,12 +370,15 @@ impl<B: DiskBackend> aero_storage::VirtualDisk for VirtualDiskFromEmuDiskBackend
         if first_off != 0 {
             let lba = cur_offset / sector_size_u64;
             let mut sector_buf = [0u8; aero_storage::SECTOR_SIZE];
-            self.0
-                .read_sectors(lba, &mut sector_buf)
-                .map_err(|e| emulator_disk_error_to_aero_storage(e, Some(cur_offset), Some(remaining.len()), Some(capacity)))?;
-            let to_copy = remaining
-                .len()
-                .min(aero_storage::SECTOR_SIZE - first_off);
+            self.0.read_sectors(lba, &mut sector_buf).map_err(|e| {
+                emulator_disk_error_to_aero_storage(
+                    e,
+                    Some(cur_offset),
+                    Some(remaining.len()),
+                    Some(capacity),
+                )
+            })?;
+            let to_copy = remaining.len().min(aero_storage::SECTOR_SIZE - first_off);
             remaining[..to_copy].copy_from_slice(&sector_buf[first_off..first_off + to_copy]);
             remaining = &mut remaining[to_copy..];
             cur_offset = cur_offset
@@ -377,7 +394,14 @@ impl<B: DiskBackend> aero_storage::VirtualDisk for VirtualDiskFromEmuDiskBackend
                 let lba = cur_offset / sector_size_u64;
                 self.0
                     .read_sectors(lba, &mut remaining[..aligned_len])
-                    .map_err(|e| emulator_disk_error_to_aero_storage(e, Some(cur_offset), Some(aligned_len), Some(capacity)))?;
+                    .map_err(|e| {
+                        emulator_disk_error_to_aero_storage(
+                            e,
+                            Some(cur_offset),
+                            Some(aligned_len),
+                            Some(capacity),
+                        )
+                    })?;
                 remaining = &mut remaining[aligned_len..];
                 cur_offset = cur_offset
                     .checked_add(aligned_len as u64)
@@ -389,9 +413,14 @@ impl<B: DiskBackend> aero_storage::VirtualDisk for VirtualDiskFromEmuDiskBackend
         if !remaining.is_empty() {
             let lba = cur_offset / sector_size_u64;
             let mut sector_buf = [0u8; aero_storage::SECTOR_SIZE];
-            self.0
-                .read_sectors(lba, &mut sector_buf)
-                .map_err(|e| emulator_disk_error_to_aero_storage(e, Some(cur_offset), Some(remaining.len()), Some(capacity)))?;
+            self.0.read_sectors(lba, &mut sector_buf).map_err(|e| {
+                emulator_disk_error_to_aero_storage(
+                    e,
+                    Some(cur_offset),
+                    Some(remaining.len()),
+                    Some(capacity),
+                )
+            })?;
             remaining.copy_from_slice(&sector_buf[..remaining.len()]);
         }
 
@@ -435,16 +464,24 @@ impl<B: DiskBackend> aero_storage::VirtualDisk for VirtualDiskFromEmuDiskBackend
         if first_off != 0 {
             let lba = cur_offset / sector_size_u64;
             let mut sector_buf = [0u8; aero_storage::SECTOR_SIZE];
-            self.0
-                .read_sectors(lba, &mut sector_buf)
-                .map_err(|e| emulator_disk_error_to_aero_storage(e, Some(cur_offset), Some(remaining.len()), Some(capacity)))?;
-            let to_copy = remaining
-                .len()
-                .min(aero_storage::SECTOR_SIZE - first_off);
+            self.0.read_sectors(lba, &mut sector_buf).map_err(|e| {
+                emulator_disk_error_to_aero_storage(
+                    e,
+                    Some(cur_offset),
+                    Some(remaining.len()),
+                    Some(capacity),
+                )
+            })?;
+            let to_copy = remaining.len().min(aero_storage::SECTOR_SIZE - first_off);
             sector_buf[first_off..first_off + to_copy].copy_from_slice(&remaining[..to_copy]);
-            self.0
-                .write_sectors(lba, &sector_buf)
-                .map_err(|e| emulator_disk_error_to_aero_storage(e, Some(cur_offset), Some(to_copy), Some(capacity)))?;
+            self.0.write_sectors(lba, &sector_buf).map_err(|e| {
+                emulator_disk_error_to_aero_storage(
+                    e,
+                    Some(cur_offset),
+                    Some(to_copy),
+                    Some(capacity),
+                )
+            })?;
             remaining = &remaining[to_copy..];
             cur_offset = cur_offset
                 .checked_add(to_copy as u64)
@@ -459,7 +496,14 @@ impl<B: DiskBackend> aero_storage::VirtualDisk for VirtualDiskFromEmuDiskBackend
                 let lba = cur_offset / sector_size_u64;
                 self.0
                     .write_sectors(lba, &remaining[..aligned_len])
-                    .map_err(|e| emulator_disk_error_to_aero_storage(e, Some(cur_offset), Some(aligned_len), Some(capacity)))?;
+                    .map_err(|e| {
+                        emulator_disk_error_to_aero_storage(
+                            e,
+                            Some(cur_offset),
+                            Some(aligned_len),
+                            Some(capacity),
+                        )
+                    })?;
                 remaining = &remaining[aligned_len..];
                 cur_offset = cur_offset
                     .checked_add(aligned_len as u64)
@@ -471,13 +515,23 @@ impl<B: DiskBackend> aero_storage::VirtualDisk for VirtualDiskFromEmuDiskBackend
         if !remaining.is_empty() {
             let lba = cur_offset / sector_size_u64;
             let mut sector_buf = [0u8; aero_storage::SECTOR_SIZE];
-            self.0
-                .read_sectors(lba, &mut sector_buf)
-                .map_err(|e| emulator_disk_error_to_aero_storage(e, Some(cur_offset), Some(remaining.len()), Some(capacity)))?;
+            self.0.read_sectors(lba, &mut sector_buf).map_err(|e| {
+                emulator_disk_error_to_aero_storage(
+                    e,
+                    Some(cur_offset),
+                    Some(remaining.len()),
+                    Some(capacity),
+                )
+            })?;
             sector_buf[..remaining.len()].copy_from_slice(remaining);
-            self.0
-                .write_sectors(lba, &sector_buf)
-                .map_err(|e| emulator_disk_error_to_aero_storage(e, Some(cur_offset), Some(remaining.len()), Some(capacity)))?;
+            self.0.write_sectors(lba, &sector_buf).map_err(|e| {
+                emulator_disk_error_to_aero_storage(
+                    e,
+                    Some(cur_offset),
+                    Some(remaining.len()),
+                    Some(capacity),
+                )
+            })?;
         }
 
         Ok(())

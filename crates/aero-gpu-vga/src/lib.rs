@@ -209,11 +209,11 @@ impl VgaDevice {
     pub fn set_text_mode_80x25(&mut self) {
         // Attribute mode control: bit0=0 => text.
         self.attribute[0x10] = 1 << 2; // line graphics enable
-        // Enable all 4 color planes by default; otherwise color indices would be masked to 0.
+                                       // Enable all 4 color planes by default; otherwise color indices would be masked to 0.
         self.attribute[0x12] = 0x0F; // color plane enable
-        // Default color select: choose palette page 0.
+                                     // Default color select: choose palette page 0.
         self.attribute[0x14] = 0x00; // color select
-        // Identity palette mapping for indices 0..15.
+                                     // Identity palette mapping for indices 0..15.
         for i in 0..16 {
             self.attribute[i] = i as u8;
         }
@@ -246,7 +246,7 @@ impl VgaDevice {
         self.attribute[0x10] = 0x01;
         self.attribute[0x12] = 0x0F; // color plane enable (not used by mode 13h path, but matches VGA defaults)
         self.attribute[0x14] = 0x00; // color select
-        // Identity palette mapping for indices 0..15; in 256-color mode the mapping is bypassed.
+                                     // Identity palette mapping for indices 0..15; in 256-color mode the mapping is bypassed.
         for i in 0..16 {
             self.attribute[i] = i as u8;
         }

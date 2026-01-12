@@ -1,6 +1,6 @@
 use aero_devices_nvme::{from_virtual_disk, DiskError};
-use aero_storage::{MemBackend, RawDisk};
 use aero_storage::VirtualDisk;
+use aero_storage::{MemBackend, RawDisk};
 
 #[test]
 fn aero_storage_adapter_read_write_roundtrip() {
@@ -55,7 +55,10 @@ fn aero_storage_adapter_maps_unaligned_buffer() {
 fn aero_storage_adapter_rejects_unaligned_capacity() {
     let capacity_bytes = 2u64 * 512 + 1;
     let disk = RawDisk::create(MemBackend::new(), capacity_bytes).unwrap();
-    assert!(matches!(from_virtual_disk(Box::new(disk)), Err(DiskError::Io)));
+    assert!(matches!(
+        from_virtual_disk(Box::new(disk)),
+        Err(DiskError::Io)
+    ));
 }
 
 #[test]
@@ -86,11 +89,15 @@ fn aero_storage_adapter_maps_underlying_disk_error_to_nvme_errors() {
         }
 
         fn flush(&mut self) -> aero_storage::Result<()> {
-            Err(aero_storage::DiskError::Io("forced flush failure".to_string()))
+            Err(aero_storage::DiskError::Io(
+                "forced flush failure".to_string(),
+            ))
         }
     }
 
-    let disk = FaultyDisk { capacity_bytes: 512 };
+    let disk = FaultyDisk {
+        capacity_bytes: 512,
+    };
     let mut disk = from_virtual_disk(Box::new(disk)).unwrap();
 
     let mut buf = vec![0u8; 512];

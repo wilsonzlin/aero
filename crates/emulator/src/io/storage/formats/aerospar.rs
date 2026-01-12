@@ -1,6 +1,5 @@
 use aero_storage::{
-    AeroSparseConfig, AeroSparseDisk as StorageAeroSparseDisk, AeroSparseHeader,
-    VirtualDisk as _,
+    AeroSparseConfig, AeroSparseDisk as StorageAeroSparseDisk, AeroSparseHeader, VirtualDisk as _,
 };
 
 use crate::io::storage::adapters::{

@@ -407,7 +407,10 @@ fn snapshot_state_restore_state_roundtrip_preserves_state_and_continues_dma() {
 
     // Change MAC + set AV.
     dev.mmio_write_u32_reg(0x5400, u32::from_le_bytes([0x10, 0x11, 0x12, 0x13]));
-    dev.mmio_write_u32_reg(0x5404, u32::from_le_bytes([0x14, 0x15, 0, 0]) | (1u32 << 31));
+    dev.mmio_write_u32_reg(
+        0x5404,
+        u32::from_le_bytes([0x14, 0x15, 0, 0]) | (1u32 << 31),
+    );
 
     // Exercise IOADDR shadow state.
     dev.io_write_reg(0x0, 4, 0x0400); // select TCTL
@@ -498,21 +501,24 @@ fn snapshot_state_restore_state_roundtrip_preserves_state_and_continues_dma() {
     assert_eq!(restored.snapshot_state(), snap);
     assert_eq!(restored.irq_level(), irq_before);
 
-    let run_to_completion =
-        |dev: &mut E1000Device, mem: &mut TestDma| -> (Vec<Vec<u8>>, Vec<u8>) {
-            // Re-enable TX and let poll process TX + flush RX.
-            dev.mmio_write_u32_reg(0x0400, 1 << 1); // TCTL.EN
-            dev.poll(mem);
+    let run_to_completion = |dev: &mut E1000Device, mem: &mut TestDma| -> (Vec<Vec<u8>>, Vec<u8>) {
+        // Re-enable TX and let poll process TX + flush RX.
+        dev.mmio_write_u32_reg(0x0400, 1 << 1); // TCTL.EN
+        dev.poll(mem);
 
-            let mut tx_frames = Vec::new();
-            while let Some(frame) = dev.pop_tx_frame() {
-                tx_frames.push(frame);
-            }
+        let mut tx_frames = Vec::new();
+        while let Some(frame) = dev.pop_tx_frame() {
+            tx_frames.push(frame);
+        }
 
-            assert_eq!(dev.mmio_read_u32(0x2810), 1, "expected one RX descriptor to be consumed");
-            let rx_buf = mem.read_vec(0x3000, rx_frame.len());
-            (tx_frames, rx_buf)
-        };
+        assert_eq!(
+            dev.mmio_read_u32(0x2810),
+            1,
+            "expected one RX descriptor to be consumed"
+        );
+        let rx_buf = mem.read_vec(0x3000, rx_frame.len());
+        (tx_frames, rx_buf)
+    };
 
     let (expected_tx, expected_rx) = run_to_completion(&mut dev, &mut mem);
     let mut mem2 = mem_snap;

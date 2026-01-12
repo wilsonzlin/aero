@@ -451,11 +451,9 @@ impl IrBlock {
                     return Err("CondJump cond must be i8".to_string());
                 }
             }
-            IrTerminator::IndirectJump { target } => {
-                match use_val(target)? {
-                    Width::W8 | Width::W16 | Width::W32 | Width::W64 => {}
-                }
-            }
+            IrTerminator::IndirectJump { target } => match use_val(target)? {
+                Width::W8 | Width::W16 | Width::W32 | Width::W64 => {}
+            },
             IrTerminator::ExitToInterpreter { .. } => {}
         }
 

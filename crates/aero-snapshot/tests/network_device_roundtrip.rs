@@ -7,7 +7,6 @@ use aero_io_snapshot::io::state::IoSnapshot;
 use aero_net_e1000::{E1000Device, MIN_L2_FRAME_LEN};
 use aero_net_stack::packet::*;
 use aero_net_stack::{Action, DnsResolved, NetworkStack, StackConfig};
-use core::net::Ipv4Addr;
 use aero_snapshot::io_snapshot_bridge::{
     apply_io_snapshot_to_device, device_state_from_io_snapshot,
 };
@@ -15,6 +14,7 @@ use aero_snapshot::{
     restore_snapshot, save_snapshot, Compression, CpuState, DeviceId, DeviceState, DiskOverlayRefs,
     MmuState, Result, SaveOptions, SnapshotError, SnapshotMeta, SnapshotSource, SnapshotTarget,
 };
+use core::net::Ipv4Addr;
 
 const RAM_LEN: usize = 4096;
 
@@ -424,7 +424,12 @@ fn build_dhcp_discover(xid: u32, mac: MacAddr) -> Vec<u8> {
     out
 }
 
-fn build_dhcp_request(xid: u32, mac: MacAddr, requested_ip: Ipv4Addr, server_id: Ipv4Addr) -> Vec<u8> {
+fn build_dhcp_request(
+    xid: u32,
+    mac: MacAddr,
+    requested_ip: Ipv4Addr,
+    server_id: Ipv4Addr,
+) -> Vec<u8> {
     let mut out = vec![0u8; 240];
     out[0] = 1; // BOOTREQUEST
     out[1] = 1;

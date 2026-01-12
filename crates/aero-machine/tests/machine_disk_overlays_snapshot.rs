@@ -2,8 +2,8 @@
 
 use aero_machine::{Machine, MachineConfig};
 use aero_snapshot as snapshot;
-use pretty_assertions::assert_eq;
 use aero_storage::{MemBackend, RawDisk, SECTOR_SIZE};
+use pretty_assertions::assert_eq;
 
 struct CaptureDiskOverlaysTarget {
     ram: Vec<u8>,
@@ -39,7 +39,9 @@ impl snapshot::SnapshotTarget for CaptureDiskOverlaysTarget {
             .map_err(|_| snapshot::SnapshotError::Corrupt("ram write offset overflow"))?;
         let end = offset
             .checked_add(data.len())
-            .ok_or(snapshot::SnapshotError::Corrupt("ram write offset overflow"))?;
+            .ok_or(snapshot::SnapshotError::Corrupt(
+                "ram write offset overflow",
+            ))?;
         if end > self.ram.len() {
             return Err(snapshot::SnapshotError::Corrupt("ram write out of range"));
         }
@@ -117,7 +119,10 @@ fn machine_snapshot_writes_and_restores_disk_overlay_refs_with_stable_disk_ids()
 
     // The machine should expose the restored refs for post-restore host reattachment.
     assert_eq!(restored.restored_disk_overlays(), Some(&expected));
-    assert_eq!(restored.take_restored_disk_overlays(), Some(expected.clone()));
+    assert_eq!(
+        restored.take_restored_disk_overlays(),
+        Some(expected.clone())
+    );
 
     // Disk overlay config should also be reflected in subsequent snapshots.
     assert_eq!(restored.disk_overlays(), expected);

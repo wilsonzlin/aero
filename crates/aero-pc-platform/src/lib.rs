@@ -1171,7 +1171,14 @@ impl PcPlatform {
         page_size: u32,
     ) -> Self {
         let ram_size_bytes = ram.size();
-        Self::new_with_config_and_ram_inner(ram_size_bytes, ram, config, Some(page_size), None, None)
+        Self::new_with_config_and_ram_inner(
+            ram_size_bytes,
+            ram,
+            config,
+            Some(page_size),
+            None,
+            None,
+        )
     }
 
     fn new_with_config_and_ram_inner(
@@ -2509,8 +2516,8 @@ mod tests {
         const SIXTY_FOUR_KIB: u64 = 64 * 1024;
 
         let base_kb: u16 = 640;
-        let ext_kb = (ram_size_bytes.saturating_sub(ONE_MIB) / 1024)
-            .min(u64::from(u16::MAX)) as u16;
+        let ext_kb =
+            (ram_size_bytes.saturating_sub(ONE_MIB) / 1024).min(u64::from(u16::MAX)) as u16;
         let high_blocks = (ram_size_bytes.saturating_sub(SIXTEEN_MIB) / SIXTY_FOUR_KIB)
             .min(u64::from(u16::MAX)) as u16;
 

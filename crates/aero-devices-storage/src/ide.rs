@@ -1144,10 +1144,7 @@ mod tests {
         // interrupts are disabled.
         ctl.write_u8(PRIMARY_BASE + 6, 0xE0);
         ctl.write_u8(PRIMARY_BASE + 7, ATA_CMD_IDENTIFY);
-        assert!(
-            !irq14.level(),
-            "IRQ line must remain low while nIEN is set"
-        );
+        assert!(!irq14.level(), "IRQ line must remain low while nIEN is set");
 
         let snap = ctl.save_state();
 

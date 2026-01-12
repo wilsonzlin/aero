@@ -17,8 +17,7 @@ use wasm_bindgen::prelude::*;
 use js_sys::{Object, Reflect, Uint8Array};
 
 use aero_cpu_core::{
-    CpuBus,
-    CpuCore, Exception, PagingBus,
+    CpuBus, CpuCore, Exception, PagingBus,
     assist::AssistContext,
     interp::tier0::{
         Tier0Config,
@@ -599,7 +598,11 @@ export function installAeroMmioTestShims() {
         // In-RAM access uses the RAM fast path and must not invoke MMIO shims.
         bus.write_u32(0, 0x1122_3344);
         assert_eq!(bus.read_u32(0), 0x1122_3344);
-        assert_eq!(mmio_calls().length(), 0, "unexpected MMIO calls for RAM access");
+        assert_eq!(
+            mmio_calls().length(),
+            0,
+            "unexpected MMIO calls for RAM access"
+        );
 
         // Out-of-RAM access must invoke MMIO shims.
         assert_eq!(bus.read_u32(0x20), 0x20, "mmio read returns stubbed value");
@@ -638,7 +641,11 @@ export function installAeroMmioTestShims() {
         assert_eq!(value, expected);
 
         let calls = mmio_calls();
-        assert_eq!(calls.length(), 2, "read_u64 should issue two mmio_read calls");
+        assert_eq!(
+            calls.length(),
+            2,
+            "read_u64 should issue two mmio_read calls"
+        );
 
         let c0 = calls.get(0);
         assert_eq!(call_prop_str(&c0, "kind"), "read");
@@ -661,7 +668,11 @@ export function installAeroMmioTestShims() {
         bus.write_u64(0x200, 0x8877_6655_4433_2211);
 
         let calls = mmio_calls();
-        assert_eq!(calls.length(), 2, "write_u64 should issue two mmio_write calls");
+        assert_eq!(
+            calls.length(),
+            2,
+            "write_u64 should issue two mmio_write calls"
+        );
 
         let c0 = calls.get(0);
         assert_eq!(call_prop_str(&c0, "kind"), "write");
@@ -730,7 +741,10 @@ export function installAeroMmioTestShims() {
         guest[0x0000_0200] = 0;
         vm.reset_real_mode(ENTRY_IP);
         let a20_ptr2 = vm.a20_enabled_ptr();
-        assert_eq!(a20_ptr2, a20_ptr, "a20_enabled_ptr must be stable across reset_real_mode");
+        assert_eq!(
+            a20_ptr2, a20_ptr,
+            "a20_enabled_ptr must be stable across reset_real_mode"
+        );
         unsafe {
             (a20_ptr2 as *mut u8).write(0);
         }

@@ -23,8 +23,8 @@ use axum::{
     routing::get,
     Router,
 };
-use http_body::{Body as HttpBody, Frame, SizeHint};
 use futures::Stream;
+use http_body::{Body as HttpBody, Frame, SizeHint};
 use std::{
     pin::Pin,
     sync::Arc,
@@ -176,7 +176,10 @@ pub fn router() -> Router<ImagesState> {
 
 pub fn router_with_state(state: ImagesState) -> Router {
     let router = router().with_state(state.clone());
-    router.route_layer(axum::middleware::from_fn_with_state(state, image_id_path_len_guard))
+    router.route_layer(axum::middleware::from_fn_with_state(
+        state,
+        image_id_path_len_guard,
+    ))
 }
 
 pub async fn get_image(
@@ -261,17 +264,29 @@ async fn serve_image(
             Err(StoreError::Manifest(err)) => {
                 state.metrics.inc_store_error("manifest");
                 tracing::error!(error = %err, "store manifest error");
-                return response_with_status(StatusCode::INTERNAL_SERVER_ERROR, &state, &req_headers);
+                return response_with_status(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &state,
+                    &req_headers,
+                );
             }
             Err(StoreError::Io(err)) => {
                 state.metrics.inc_store_error("meta");
                 tracing::error!(error = %err, "store get_image failed");
-                return response_with_status(StatusCode::INTERNAL_SERVER_ERROR, &state, &req_headers);
+                return response_with_status(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &state,
+                    &req_headers,
+                );
             }
             Err(StoreError::InvalidRange { .. }) => {
                 // `get_image` doesn't currently produce this, but keep mapping defensive.
                 state.metrics.inc_store_error("meta");
-                return response_with_status(StatusCode::INTERNAL_SERVER_ERROR, &state, &req_headers);
+                return response_with_status(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &state,
+                    &req_headers,
+                );
             }
         };
 
@@ -335,11 +350,7 @@ async fn serve_image(
 
                 // RFC 9110 If-Range support: if validator doesn't match, ignore Range and return
                 // `200 OK`. In range-only mode, return `412` instead.
-                if !cache::if_range_allows_range(
-                    &req_headers,
-                    current_etag,
-                    meta.last_modified,
-                ) {
+                if !cache::if_range_allows_range(&req_headers, current_etag, meta.last_modified) {
                     state.metrics.inc_range_request_invalid();
                     return response_with_status(
                         StatusCode::PRECONDITION_FAILED,
@@ -417,7 +428,11 @@ async fn serve_image(
                     RangeParseError::HeaderTooLarge { .. } | RangeParseError::TooManyRanges { .. },
                 ) => {
                     state.metrics.inc_range_request_invalid();
-                    return response_with_status(StatusCode::PAYLOAD_TOO_LARGE, &state, &req_headers);
+                    return response_with_status(
+                        StatusCode::PAYLOAD_TOO_LARGE,
+                        &state,
+                        &req_headers,
+                    );
                 }
                 Err(_) => {
                     // For syntactically invalid ranges, follow our public contract and return `416`.
@@ -433,7 +448,11 @@ async fn serve_image(
                 // huge reads (amplification / resource exhaustion).
                 Err(RangeResolveError::TooManyBytes) => {
                     state.metrics.inc_range_request_invalid();
-                    return response_with_status(StatusCode::PAYLOAD_TOO_LARGE, &state, &req_headers);
+                    return response_with_status(
+                        StatusCode::PAYLOAD_TOO_LARGE,
+                        &state,
+                        &req_headers,
+                    );
                 }
                 // Disk streaming only supports a single range per request.
                 Err(
@@ -717,7 +736,11 @@ fn response_from_store_error(
     }
 }
 
-fn response_with_status(status: StatusCode, state: &ImagesState, req_headers: &HeaderMap) -> Response {
+fn response_with_status(
+    status: StatusCode,
+    state: &ImagesState,
+    req_headers: &HeaderMap,
+) -> Response {
     let mut response = Response::new(Body::empty());
     *response.status_mut() = status;
     let headers = response.headers_mut();
@@ -873,7 +896,10 @@ mod tests {
         let app = Router::new()
             .route("/v1/images/:image_id", get(|| async { StatusCode::OK }))
             .with_state(state.clone())
-            .route_layer(middleware::from_fn_with_state(state, image_id_path_len_guard));
+            .route_layer(middleware::from_fn_with_state(
+                state,
+                image_id_path_len_guard,
+            ));
 
         let too_long_raw = "a".repeat(crate::store::MAX_IMAGE_ID_LEN * 3 + 1);
         let resp = app

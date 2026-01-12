@@ -50,10 +50,7 @@ fn assemble_vs_texld_s0_to_od0() -> Vec<u8> {
     //   mov oD0, r0
     //   end
     let mut words = vec![0xFFFE_0300];
-    words.extend(enc_inst(
-        0x0001,
-        &[enc_dst(4, 0, 0xF), enc_src(1, 0, 0xE4)],
-    ));
+    words.extend(enc_inst(0x0001, &[enc_dst(4, 0, 0xF), enc_src(1, 0, 0xE4)]));
     words.extend(enc_inst(
         0x0042,
         &[
@@ -62,10 +59,7 @@ fn assemble_vs_texld_s0_to_od0() -> Vec<u8> {
             enc_src(10, 0, 0xE4), // s0
         ],
     ));
-    words.extend(enc_inst(
-        0x0001,
-        &[enc_dst(5, 0, 0xF), enc_src(0, 0, 0xE4)],
-    ));
+    words.extend(enc_inst(0x0001, &[enc_dst(5, 0, 0xF), enc_src(0, 0, 0xE4)]));
     words.push(0x0000_FFFF);
     to_bytes(&words)
 }
@@ -75,10 +69,7 @@ fn assemble_ps_mov_oc0_from_v0() -> Vec<u8> {
     //   mov oC0, v0
     //   end
     let mut words = vec![0xFFFF_0200];
-    words.extend(enc_inst(
-        0x0001,
-        &[enc_dst(8, 0, 0xF), enc_src(1, 0, 0xE4)],
-    ));
+    words.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(1, 0, 0xE4)]));
     words.push(0x0000_FFFF);
     to_bytes(&words)
 }
@@ -149,11 +140,14 @@ fn d3d9_cmd_stream_vertex_shader_bc1_texture_sampling() {
     // color0=color1=RGB565(255,0,0)=0xF800 and all indices to 0.
     let bc1_solid_red = [0x00, 0xF8, 0x00, 0xF8, 0x00, 0x00, 0x00, 0x00];
 
-    let alloc_table = AllocTable::new([(TEX_ALLOC_ID, AllocEntry {
-        flags: 0,
-        gpa: TEX_GPA,
-        size_bytes: 0x1000,
-    })])
+    let alloc_table = AllocTable::new([(
+        TEX_ALLOC_ID,
+        AllocEntry {
+            flags: 0,
+            gpa: TEX_GPA,
+            size_bytes: 0x1000,
+        },
+    )])
     .expect("alloc table");
 
     let mut guest_memory = VecGuestMemory::new(0x2000);
@@ -245,8 +239,12 @@ fn d3d9_cmd_stream_vertex_shader_bc1_texture_sampling() {
 
     stream.draw(3, 1, 0, 0);
 
-    exec.execute_cmd_stream_with_guest_memory(&stream.finish(), &mut guest_memory, Some(&alloc_table))
-        .expect("execute should succeed");
+    exec.execute_cmd_stream_with_guest_memory(
+        &stream.finish(),
+        &mut guest_memory,
+        Some(&alloc_table),
+    )
+    .expect("execute should succeed");
 
     let (out_w, out_h, rgba) = pollster::block_on(exec.readback_texture_rgba8(RT_HANDLE))
         .expect("readback should succeed");

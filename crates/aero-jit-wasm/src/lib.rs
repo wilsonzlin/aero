@@ -219,7 +219,11 @@ pub fn compile_tier1_block(
     }
 
     let compilation = compile_tier1_block_with_options(&bus, entry_rip, bitness, limits, options)
-        .map_err(|e| js_error(format!("compile_tier1_block: Tier-1 compilation failed: {e}")))?;
+        .map_err(|e| {
+        js_error(format!(
+            "compile_tier1_block: Tier-1 compilation failed: {e}"
+        ))
+    })?;
     let block_end = entry_rip
         .checked_add(compilation.byte_len as u64)
         .ok_or_else(|| {

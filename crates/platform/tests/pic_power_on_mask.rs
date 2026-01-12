@@ -12,4 +12,3 @@ fn pic_irqs_are_masked_by_default_after_platform_interrupts_new() {
     ints.pic_mut().set_masked(0, false);
     assert_eq!(ints.get_pending(), Some(0x08));
 }
-

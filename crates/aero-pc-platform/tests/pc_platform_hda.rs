@@ -1,12 +1,12 @@
-use aero_devices::pci::{PciInterruptPin, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
 use aero_devices::pci::profile::{HDA_ICH6, SATA_AHCI_ICH9};
+use aero_devices::pci::{PciInterruptPin, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
 use aero_interrupts::apic::IOAPIC_MMIO_BASE;
 use aero_pc_platform::{PcPlatform, PcPlatformConfig};
 use aero_platform::interrupts::{
     InterruptController, PlatformInterruptMode, IMCR_DATA_PORT, IMCR_INDEX, IMCR_SELECT_PORT,
 };
-use memory::{DenseMemory, GuestMemory, GuestMemoryResult};
 use memory::MemoryBus as _;
+use memory::{DenseMemory, GuestMemory, GuestMemoryResult};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -21,8 +21,11 @@ fn cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
 }
 
 fn read_cfg_u32(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8) -> u32 {
-    pc.io
-        .write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bus, device, function, offset));
+    pc.io.write(
+        PCI_CFG_ADDR_PORT,
+        4,
+        cfg_addr(bus, device, function, offset),
+    );
     pc.io.read(PCI_CFG_DATA_PORT, 4)
 }
 
@@ -39,14 +42,20 @@ fn read_ahci_bar5_base(pc: &mut PcPlatform) -> u64 {
 }
 
 fn write_cfg_u16(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8, value: u16) {
-    pc.io
-        .write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bus, device, function, offset));
+    pc.io.write(
+        PCI_CFG_ADDR_PORT,
+        4,
+        cfg_addr(bus, device, function, offset),
+    );
     pc.io.write(PCI_CFG_DATA_PORT, 2, u32::from(value));
 }
 
 fn write_cfg_u32(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8, value: u32) {
-    pc.io
-        .write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bus, device, function, offset));
+    pc.io.write(
+        PCI_CFG_ADDR_PORT,
+        4,
+        cfg_addr(bus, device, function, offset),
+    );
     pc.io.write(PCI_CFG_DATA_PORT, 4, value);
 }
 
@@ -369,10 +378,12 @@ fn pc_platform_routes_hda_intx_via_pci_intx_router() {
     let bdf = HDA_ICH6.bdf;
 
     // Interrupt Line register should report the router-selected GSI for 00:04.0 INTA#.
-    let expected_line =
-        u8::try_from(pc.pci_intx.gsi_for_intx(bdf, PciInterruptPin::IntA)).unwrap();
-    pc.io
-        .write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bdf.bus, bdf.device, bdf.function, 0x3c));
+    let expected_line = u8::try_from(pc.pci_intx.gsi_for_intx(bdf, PciInterruptPin::IntA)).unwrap();
+    pc.io.write(
+        PCI_CFG_ADDR_PORT,
+        4,
+        cfg_addr(bdf.bus, bdf.device, bdf.function, 0x3c),
+    );
     let int_line = pc.io.read(PCI_CFG_DATA_PORT, 1) as u8;
     assert_eq!(int_line, expected_line);
 
@@ -579,7 +590,7 @@ fn pc_platform_hda_dma_writes_mark_dirty_pages_when_enabled() {
     // Enable global + controller interrupts (GIE + CIE).
     pc.memory
         .write_u32(bar0_base + 0x20, 0x8000_0000 | (1 << 30)); // INTCTL
-    // Enable CORB/RIRB DMA engines and response interrupts.
+                                                               // Enable CORB/RIRB DMA engines and response interrupts.
     pc.memory.write_u8(bar0_base + 0x5c, 0x03); // RIRBCTL: RUN + RINTCTL
     pc.memory.write_u8(bar0_base + 0x4c, 0x02); // CORBCTL: RUN
 

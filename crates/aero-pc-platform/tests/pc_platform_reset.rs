@@ -15,8 +15,11 @@ fn cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
 }
 
 fn read_cfg_u32(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8) -> u32 {
-    pc.io
-        .write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bus, device, function, offset));
+    pc.io.write(
+        PCI_CFG_ADDR_PORT,
+        4,
+        cfg_addr(bus, device, function, offset),
+    );
     pc.io.read(PCI_CFG_DATA_PORT, 4)
 }
 
@@ -27,14 +30,20 @@ fn read_io_bar_base(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, bar:
 }
 
 fn write_cfg_u16(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8, value: u16) {
-    pc.io
-        .write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bus, device, function, offset));
+    pc.io.write(
+        PCI_CFG_ADDR_PORT,
+        4,
+        cfg_addr(bus, device, function, offset),
+    );
     pc.io.write(PCI_CFG_DATA_PORT, 2, u32::from(value));
 }
 
 fn write_cfg_u32(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8, value: u32) {
-    pc.io
-        .write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bus, device, function, offset));
+    pc.io.write(
+        PCI_CFG_ADDR_PORT,
+        4,
+        cfg_addr(bus, device, function, offset),
+    );
     pc.io.write(PCI_CFG_DATA_PORT, 4, value);
 }
 
@@ -58,7 +67,13 @@ fn pc_platform_reset_restores_deterministic_power_on_state() {
     // Capture initial PCI state so we can verify it's restored deterministically.
     let bar5_base_before = read_ahci_bar5_base(&mut pc);
     let uhci_bdf = USB_UHCI_PIIX3.bdf;
-    let uhci_bar4_before = read_cfg_u32(&mut pc, uhci_bdf.bus, uhci_bdf.device, uhci_bdf.function, 0x20);
+    let uhci_bar4_before = read_cfg_u32(
+        &mut pc,
+        uhci_bdf.bus,
+        uhci_bdf.device,
+        uhci_bdf.function,
+        0x20,
+    );
 
     // Mutate some state:
     // - Enable A20.
@@ -70,8 +85,21 @@ fn pc_platform_reset_restores_deterministic_power_on_state() {
     assert_eq!(pc.io.read(PCI_CFG_ADDR_PORT, 4), 0x8000_0000);
 
     // - Relocate UHCI BAR4 to a different base (to ensure PCI resources are reset deterministically).
-    write_cfg_u32(&mut pc, uhci_bdf.bus, uhci_bdf.device, uhci_bdf.function, 0x20, 0xD000);
-    let uhci_bar4_after = read_cfg_u32(&mut pc, uhci_bdf.bus, uhci_bdf.device, uhci_bdf.function, 0x20);
+    write_cfg_u32(
+        &mut pc,
+        uhci_bdf.bus,
+        uhci_bdf.device,
+        uhci_bdf.function,
+        0x20,
+        0xD000,
+    );
+    let uhci_bar4_after = read_cfg_u32(
+        &mut pc,
+        uhci_bdf.bus,
+        uhci_bdf.device,
+        uhci_bdf.function,
+        0x20,
+    );
     assert_ne!(uhci_bar4_after, uhci_bar4_before);
 
     // - Queue a reset event.
@@ -104,7 +132,13 @@ fn pc_platform_reset_restores_deterministic_power_on_state() {
     assert_eq!(pc.io.read(PCI_CFG_ADDR_PORT, 4), 0);
 
     // UHCI BAR4 should be restored to its initial BIOS-assigned value.
-    let uhci_bar4_after_reset = read_cfg_u32(&mut pc, uhci_bdf.bus, uhci_bdf.device, uhci_bdf.function, 0x20);
+    let uhci_bar4_after_reset = read_cfg_u32(
+        &mut pc,
+        uhci_bdf.bus,
+        uhci_bdf.device,
+        uhci_bdf.function,
+        0x20,
+    );
     assert_eq!(uhci_bar4_after_reset, uhci_bar4_before);
 
     // BIOS POST should deterministically reassign AHCI BAR5 to its original base.
@@ -178,7 +212,10 @@ fn pc_platform_reset_resets_ide_controller_state() {
     assert_ne!(bm_base, 0);
 
     let status_before = pc.io.read(PRIMARY_PORTS.cmd_base + 7, 1) as u8;
-    assert_ne!(status_before, 0xFF, "IDE status should decode with a drive present");
+    assert_ne!(
+        status_before, 0xFF,
+        "IDE status should decode with a drive present"
+    );
 
     // Mutate Bus Master IDE registers so we can verify they're cleared by reset.
     pc.io.write(bm_base, 1, 0x09);

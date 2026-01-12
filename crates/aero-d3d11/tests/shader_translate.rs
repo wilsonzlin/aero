@@ -490,9 +490,9 @@ fn translates_cbuffer_at_max_slot() {
 
     let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
     assert_wgsl_parses(&translated.wgsl);
-    assert!(translated
-        .wgsl
-        .contains(&format!("@group(1) @binding({slot}) var<uniform> cb{slot}: Cb{slot};")));
+    assert!(translated.wgsl.contains(&format!(
+        "@group(1) @binding({slot}) var<uniform> cb{slot}: Cb{slot};"
+    )));
 
     let cb_binding = translated
         .reflection

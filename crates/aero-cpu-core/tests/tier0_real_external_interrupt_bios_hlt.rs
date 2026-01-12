@@ -47,4 +47,3 @@ fn tier0_external_interrupt_sets_bios_vector_for_hlt_stub_in_real_mode() {
 
     assert_eq!(res.exit, BatchExit::BiosInterrupt(vector));
 }
-

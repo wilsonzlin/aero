@@ -9,7 +9,10 @@ fn hpet_snapshot_rejects_excessive_timer_count() {
     const MAX_HPETS: u32 = 32;
 
     let timers = Encoder::new().u32(MAX_HPETS + 1).finish();
-    let mut w = SnapshotWriter::new(Hpet::<ManualClock>::DEVICE_ID, Hpet::<ManualClock>::DEVICE_VERSION);
+    let mut w = SnapshotWriter::new(
+        Hpet::<ManualClock>::DEVICE_ID,
+        Hpet::<ManualClock>::DEVICE_VERSION,
+    );
     w.field_bytes(TAG_TIMERS, timers);
     let bytes = w.finish();
 
@@ -21,4 +24,3 @@ fn hpet_snapshot_rejects_excessive_timer_count() {
         other => panic!("expected InvalidFieldEncoding, got {other:?}"),
     }
 }
-

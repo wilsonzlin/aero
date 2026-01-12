@@ -58,4 +58,3 @@ fn apply_io_snapshot_to_device_accepts_legacy_net_stack_header_id() {
     let resaved = restored.save_state();
     assert_eq!(&resaved[8..12], b"NETS");
 }
-

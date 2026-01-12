@@ -390,7 +390,9 @@ impl<B: StorageBackend> Qcow2Disk<B> {
             if end > file_len {
                 return Err(DiskError::CorruptImage("qcow2 l2 table truncated"));
             }
-            clusters.try_reserve(1).map_err(|_| DiskError::QuotaExceeded)?;
+            clusters
+                .try_reserve(1)
+                .map_err(|_| DiskError::QuotaExceeded)?;
             clusters.push(l2_offset);
         }
 
@@ -404,7 +406,9 @@ impl<B: StorageBackend> Qcow2Disk<B> {
             if end > file_len {
                 return Err(DiskError::CorruptImage("qcow2 refcount block truncated"));
             }
-            clusters.try_reserve(1).map_err(|_| DiskError::QuotaExceeded)?;
+            clusters
+                .try_reserve(1)
+                .map_err(|_| DiskError::QuotaExceeded)?;
             clusters.push(block_offset);
         }
 

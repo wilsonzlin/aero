@@ -48,7 +48,11 @@ fn cfg_read_u16(m: &mut Machine, bdf: PciBdf, offset: u8) -> u16 {
 
 fn cfg_write_u16(m: &mut Machine, bdf: PciBdf, offset: u8, value: u16) {
     m.io_write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bdf, offset));
-    m.io_write(PCI_CFG_DATA_PORT + u16::from(offset & 3), 2, u32::from(value));
+    m.io_write(
+        PCI_CFG_DATA_PORT + u16::from(offset & 3),
+        2,
+        u32::from(value),
+    );
 }
 
 #[test]
@@ -67,14 +71,19 @@ fn e1000_pci_mmio_tx_rx_are_bridged_via_network_backend_and_gated_by_bme() {
     .unwrap();
 
     let state = Rc::new(RefCell::new(StubNetState::default()));
-    m.set_network_backend(Box::new(StubNetBackend { state: state.clone() }));
+    m.set_network_backend(Box::new(StubNetBackend {
+        state: state.clone(),
+    }));
 
     let bdf = aero_devices::pci::profile::NIC_E1000_82540EM.bdf;
 
     // BAR0 must be assigned by PCI BIOS POST during machine reset.
     let bar0 = cfg_read_u32(&mut m, bdf, 0x10);
     let bar0_base = u64::from(bar0 & 0xFFFF_FFF0);
-    assert!(bar0_base != 0, "expected non-zero BAR0 base after BIOS POST");
+    assert!(
+        bar0_base != 0,
+        "expected non-zero BAR0 base after BIOS POST"
+    );
 
     // ----------------------
     // TX: BME gating (BME=0)
@@ -111,7 +120,11 @@ fn e1000_pci_mmio_tx_rx_are_bridged_via_network_backend_and_gated_by_bme() {
     m.poll_network();
     assert!(state.borrow().tx.is_empty(), "unexpected TX with BME=0");
     let desc_after_bme0 = m.read_physical_bytes(tx_desc_base, 16);
-    assert_eq!(desc_after_bme0[12] & 0x01, 0, "DD should remain clear with BME=0");
+    assert_eq!(
+        desc_after_bme0[12] & 0x01,
+        0,
+        "DD should remain clear with BME=0"
+    );
 
     // -------------------
     // TX: enable BME, poll
@@ -164,7 +177,11 @@ fn e1000_pci_mmio_tx_rx_are_bridged_via_network_backend_and_gated_by_bme() {
     let rx_buf_before_bme = m.read_physical_bytes(rx_buf, rx_frame.len());
     assert_eq!(rx_buf_before_bme, vec![0xaa; rx_frame.len()]);
     let rx_desc_after_bme0 = m.read_physical_bytes(rx_desc_base, 16);
-    assert_eq!(rx_desc_after_bme0[12] & 0x03, 0, "RX desc should not complete while BME=0");
+    assert_eq!(
+        rx_desc_after_bme0[12] & 0x03,
+        0,
+        "RX desc should not complete while BME=0"
+    );
 
     // Re-enable BME: the queued frame should now be DMA'd into the guest RX ring.
     let cmd = cfg_read_u16(&mut m, bdf, 0x04);

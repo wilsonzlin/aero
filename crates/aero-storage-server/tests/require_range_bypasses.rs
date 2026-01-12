@@ -189,4 +189,3 @@ async fn require_range_if_range_mismatch_returns_412_and_does_not_open_range() {
 
     assert_eq!(open_range_calls.load(Ordering::SeqCst), 0);
 }
-

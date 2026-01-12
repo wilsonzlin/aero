@@ -261,7 +261,10 @@ mod tests {
 
         let selection = select_texture_format(TextureFormat::Bc1RgbaUnorm, caps, 9, 9, 1);
         assert_eq!(selection.actual, wgpu::TextureFormat::Rgba8Unorm);
-        assert_eq!(selection.upload_transform, TextureUploadTransform::Bc1ToRgba8);
+        assert_eq!(
+            selection.upload_transform,
+            TextureUploadTransform::Bc1ToRgba8
+        );
     }
 
     #[test]

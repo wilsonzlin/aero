@@ -6,7 +6,7 @@ use aero_platform::audio::worklet_bridge::{
     HEADER_BYTES, HEADER_U32_LEN, OVERRUN_COUNT_INDEX, READ_FRAME_INDEX, UNDERRUN_COUNT_INDEX,
     WRITE_FRAME_INDEX, WorkletBridge,
 };
-use aero_wasm::{attach_mic_bridge, HdaControllerBridge, VirtioSndPciBridge};
+use aero_wasm::{HdaControllerBridge, VirtioSndPciBridge, attach_mic_bridge};
 use js_sys::{Float32Array, SharedArrayBuffer, Uint32Array};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_test::wasm_bindgen_test;
@@ -167,10 +167,7 @@ fn worklet_bridge_restore_clamps_wrapping_indices_when_write_ahead_of_capacity()
         atomics_load_u32(&header, READ_FRAME_INDEX as u32),
         expected_read
     );
-    assert_eq!(
-        atomics_load_u32(&header, WRITE_FRAME_INDEX as u32),
-        write
-    );
+    assert_eq!(atomics_load_u32(&header, WRITE_FRAME_INDEX as u32), write);
     assert_eq!(bridge.buffer_level_frames(), capacity_frames);
 
     for i in 0..samples.length() {
@@ -395,8 +392,8 @@ fn hda_controller_load_state_tolerates_capacity_mismatch_when_ring_attached() {
 #[wasm_bindgen_test]
 fn hda_controller_attach_mic_ring_discards_buffered_samples() {
     let capacity_samples = 16u32;
-    let byte_len = (mic_ring::HEADER_BYTES + capacity_samples as usize * core::mem::size_of::<f32>())
-        as u32;
+    let byte_len =
+        (mic_ring::HEADER_BYTES + capacity_samples as usize * core::mem::size_of::<f32>()) as u32;
     let sab = SharedArrayBuffer::new(byte_len);
     let header =
         Uint32Array::new_with_byte_offset_and_length(&sab, 0, mic_ring::HEADER_U32_LEN as u32);
@@ -405,7 +402,11 @@ fn hda_controller_attach_mic_ring_discards_buffered_samples() {
     atomics_store_u32(&header, mic_ring::WRITE_POS_INDEX as u32, 10);
     atomics_store_u32(&header, mic_ring::READ_POS_INDEX as u32, 4);
     atomics_store_u32(&header, mic_ring::DROPPED_SAMPLES_INDEX as u32, 0);
-    atomics_store_u32(&header, mic_ring::CAPACITY_SAMPLES_INDEX as u32, capacity_samples);
+    atomics_store_u32(
+        &header,
+        mic_ring::CAPACITY_SAMPLES_INDEX as u32,
+        capacity_samples,
+    );
 
     let mut guest = vec![0u8; 0x4000];
     let guest_base = guest.as_mut_ptr() as u32;
@@ -426,8 +427,8 @@ fn hda_controller_attach_mic_ring_discards_buffered_samples() {
 #[wasm_bindgen_test]
 fn hda_controller_load_state_discards_mic_ring_buffered_samples() {
     let capacity_samples = 16u32;
-    let byte_len = (mic_ring::HEADER_BYTES + capacity_samples as usize * core::mem::size_of::<f32>())
-        as u32;
+    let byte_len =
+        (mic_ring::HEADER_BYTES + capacity_samples as usize * core::mem::size_of::<f32>()) as u32;
     let sab = SharedArrayBuffer::new(byte_len);
     let header =
         Uint32Array::new_with_byte_offset_and_length(&sab, 0, mic_ring::HEADER_U32_LEN as u32);
@@ -436,7 +437,11 @@ fn hda_controller_load_state_discards_mic_ring_buffered_samples() {
     atomics_store_u32(&header, mic_ring::WRITE_POS_INDEX as u32, 0);
     atomics_store_u32(&header, mic_ring::READ_POS_INDEX as u32, 0);
     atomics_store_u32(&header, mic_ring::DROPPED_SAMPLES_INDEX as u32, 0);
-    atomics_store_u32(&header, mic_ring::CAPACITY_SAMPLES_INDEX as u32, capacity_samples);
+    atomics_store_u32(
+        &header,
+        mic_ring::CAPACITY_SAMPLES_INDEX as u32,
+        capacity_samples,
+    );
 
     let mut guest = vec![0u8; 0x4000];
     let guest_base = guest.as_mut_ptr() as u32;
@@ -470,8 +475,8 @@ fn hda_controller_load_state_discards_mic_ring_buffered_samples() {
 #[wasm_bindgen_test]
 fn attach_mic_bridge_discards_buffered_samples() {
     let capacity_samples = 16u32;
-    let byte_len = (mic_ring::HEADER_BYTES + capacity_samples as usize * core::mem::size_of::<f32>())
-        as u32;
+    let byte_len =
+        (mic_ring::HEADER_BYTES + capacity_samples as usize * core::mem::size_of::<f32>()) as u32;
     let sab = SharedArrayBuffer::new(byte_len);
     let header =
         Uint32Array::new_with_byte_offset_and_length(&sab, 0, mic_ring::HEADER_U32_LEN as u32);
@@ -480,7 +485,11 @@ fn attach_mic_bridge_discards_buffered_samples() {
     atomics_store_u32(&header, mic_ring::WRITE_POS_INDEX as u32, 10);
     atomics_store_u32(&header, mic_ring::READ_POS_INDEX as u32, 4);
     atomics_store_u32(&header, mic_ring::DROPPED_SAMPLES_INDEX as u32, 0);
-    atomics_store_u32(&header, mic_ring::CAPACITY_SAMPLES_INDEX as u32, capacity_samples);
+    atomics_store_u32(
+        &header,
+        mic_ring::CAPACITY_SAMPLES_INDEX as u32,
+        capacity_samples,
+    );
 
     let bridge = attach_mic_bridge(sab.clone()).unwrap();
 
@@ -494,8 +503,8 @@ fn attach_mic_bridge_discards_buffered_samples() {
 #[wasm_bindgen_test]
 fn virtio_snd_pci_bridge_attach_mic_ring_discards_buffered_samples() {
     let capacity_samples = 16u32;
-    let byte_len = (mic_ring::HEADER_BYTES + capacity_samples as usize * core::mem::size_of::<f32>())
-        as u32;
+    let byte_len =
+        (mic_ring::HEADER_BYTES + capacity_samples as usize * core::mem::size_of::<f32>()) as u32;
     let sab = SharedArrayBuffer::new(byte_len);
     let header =
         Uint32Array::new_with_byte_offset_and_length(&sab, 0, mic_ring::HEADER_U32_LEN as u32);
@@ -504,7 +513,11 @@ fn virtio_snd_pci_bridge_attach_mic_ring_discards_buffered_samples() {
     atomics_store_u32(&header, mic_ring::WRITE_POS_INDEX as u32, 10);
     atomics_store_u32(&header, mic_ring::READ_POS_INDEX as u32, 4);
     atomics_store_u32(&header, mic_ring::DROPPED_SAMPLES_INDEX as u32, 0);
-    atomics_store_u32(&header, mic_ring::CAPACITY_SAMPLES_INDEX as u32, capacity_samples);
+    atomics_store_u32(
+        &header,
+        mic_ring::CAPACITY_SAMPLES_INDEX as u32,
+        capacity_samples,
+    );
 
     let mut guest = vec![0u8; 0x4000];
     let guest_base = guest.as_mut_ptr() as u32;

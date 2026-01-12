@@ -6,9 +6,9 @@ pub mod bindings;
 pub mod execute;
 pub mod pipeline_layout_cache;
 mod reflection_bindings;
-mod wgsl_link;
 pub mod resources;
 pub mod state;
+mod wgsl_link;
 
 fn wgpu_texture_compression_disabled() -> bool {
     // CI sometimes uses flaky/buggy software adapters. Allow forcing compression features off so

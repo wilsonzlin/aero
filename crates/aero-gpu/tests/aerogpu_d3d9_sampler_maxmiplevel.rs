@@ -183,9 +183,15 @@ fn d3d9_cmd_stream_sampler_maxmiplevel_skips_mip0() {
     // Each vertex is: float4 position, float4 texcoord.
     let verts: [[f32; 8]; 3] = [
         // pos.xyzw, tex.xyzw
-        [-1.0f32, -1.0f32, 0.0f32, 1.0f32, 0.0f32, 0.0f32, 0.0f32, 0.0f32],
-        [-1.0f32, 3.0f32, 0.0f32, 1.0f32, 0.0f32, 2.0f32, 0.0f32, 0.0f32],
-        [3.0f32, -1.0f32, 0.0f32, 1.0f32, 2.0f32, 0.0f32, 0.0f32, 0.0f32],
+        [
+            -1.0f32, -1.0f32, 0.0f32, 1.0f32, 0.0f32, 0.0f32, 0.0f32, 0.0f32,
+        ],
+        [
+            -1.0f32, 3.0f32, 0.0f32, 1.0f32, 0.0f32, 2.0f32, 0.0f32, 0.0f32,
+        ],
+        [
+            3.0f32, -1.0f32, 0.0f32, 1.0f32, 2.0f32, 0.0f32, 0.0f32, 0.0f32,
+        ],
     ];
     let mut vb_data = Vec::new();
     for v in verts {

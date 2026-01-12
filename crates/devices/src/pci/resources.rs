@@ -117,9 +117,7 @@ impl PciResourceAllocator {
                     return Ok(base);
                 }
             }
-            PciBarDefinition::Mmio32 { .. } => {
-                self.allocate_mmio(size)
-            }
+            PciBarDefinition::Mmio32 { .. } => self.allocate_mmio(size),
             PciBarDefinition::Mmio64 { .. } => {
                 // We currently only allocate from the 32-bit MMIO window. This keeps the
                 // allocator simple while still supporting devices that prefer 64-bit BARs

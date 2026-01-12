@@ -564,8 +564,7 @@ impl Mmu {
             PagingMode::Long4 => self.walk_long4_probe(bus, vaddr, access, is_user),
         };
 
-        walk_res
-            .map_err(TranslateFault::PageFault)
+        walk_res.map_err(TranslateFault::PageFault)
     }
 
     fn paging_mode(&self) -> PagingMode {
@@ -1367,7 +1366,11 @@ impl Mmu {
 
     #[inline]
     fn check_entry32_probe(&self, entry: u64) -> Option<u64> {
-        if entry & PTE_P == 0 { None } else { Some(entry) }
+        if entry & PTE_P == 0 {
+            None
+        } else {
+            Some(entry)
+        }
     }
 
     #[allow(clippy::too_many_arguments)]

@@ -236,4 +236,3 @@ fn d3d9_cmd_stream_vertex_shader_texture_sampling() {
         "triangle should sample the vertex-stage texture"
     );
 }
-

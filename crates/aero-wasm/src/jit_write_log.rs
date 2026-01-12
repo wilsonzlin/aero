@@ -90,7 +90,10 @@ impl GuestWriteLog {
             return;
         }
 
-        self.entries.push(GuestWrite { paddr: start, len: len_u32 });
+        self.entries.push(GuestWrite {
+            paddr: start,
+            len: len_u32,
+        });
     }
 
     /// Drain the log into `f`.

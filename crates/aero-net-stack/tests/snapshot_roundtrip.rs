@@ -1,7 +1,9 @@
 use aero_io_snapshot::io::state::codec::Encoder;
 use aero_io_snapshot::io::state::{IoSnapshot, SnapshotError, SnapshotWriter};
 use aero_net_stack::packet::*;
-use aero_net_stack::{Action, DnsResolved, NetworkStack, StackConfig, TcpProxyEvent, UdpProxyEvent};
+use aero_net_stack::{
+    Action, DnsResolved, NetworkStack, StackConfig, TcpProxyEvent, UdpProxyEvent,
+};
 use core::net::Ipv4Addr;
 
 #[test]
@@ -102,7 +104,9 @@ fn snapshot_roundtrip_preserves_dns_cache_ttl_and_drops_tcp_state() {
         0,
     );
     assert!(
-        udp_actions.iter().any(|a| matches!(a, Action::EmitFrame(_))),
+        udp_actions
+            .iter()
+            .any(|a| matches!(a, Action::EmitFrame(_))),
         "expected UDP proxy event to produce a guest frame after restore"
     );
 
@@ -163,7 +167,10 @@ fn snapshot_rejects_excessive_dns_cache_entry_count() {
     let err = stack
         .load_state(&w.finish())
         .expect_err("snapshot should reject excessive DNS cache entry count");
-    assert_eq!(err, SnapshotError::InvalidFieldEncoding("too many dns cache entries"));
+    assert_eq!(
+        err,
+        SnapshotError::InvalidFieldEncoding("too many dns cache entries")
+    );
 }
 
 #[test]
@@ -210,7 +217,10 @@ fn snapshot_rejects_excessive_tcp_connection_count() {
     let err = stack
         .load_state(&w.finish())
         .expect_err("snapshot should reject excessive TCP connection count");
-    assert_eq!(err, SnapshotError::InvalidFieldEncoding("too many tcp connections"));
+    assert_eq!(
+        err,
+        SnapshotError::InvalidFieldEncoding("too many tcp connections")
+    );
 }
 
 #[test]
@@ -240,7 +250,10 @@ fn snapshot_rejects_overlong_dns_name() {
     let err = stack
         .load_state(&w.finish())
         .expect_err("snapshot should reject overlong DNS name");
-    assert_eq!(err, SnapshotError::InvalidFieldEncoding("dns name too long"));
+    assert_eq!(
+        err,
+        SnapshotError::InvalidFieldEncoding("dns name too long")
+    );
 }
 
 fn dhcp_handshake(stack: &mut NetworkStack, guest_mac: MacAddr) {
@@ -432,7 +445,12 @@ fn build_dhcp_discover(xid: u32, mac: MacAddr) -> Vec<u8> {
     out
 }
 
-fn build_dhcp_request(xid: u32, mac: MacAddr, requested_ip: Ipv4Addr, server_id: Ipv4Addr) -> Vec<u8> {
+fn build_dhcp_request(
+    xid: u32,
+    mac: MacAddr,
+    requested_ip: Ipv4Addr,
+    server_id: Ipv4Addr,
+) -> Vec<u8> {
     let mut out = vec![0u8; 240];
     out[0] = 1; // BOOTREQUEST
     out[1] = 1;

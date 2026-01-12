@@ -190,9 +190,7 @@ impl HdaControllerBridge {
             return Err(js_error("capacityFrames must be non-zero"));
         }
         if channel_count != 2 {
-            return Err(js_error(
-                "channelCount must be 2 for HDA output (stereo)",
-            ));
+            return Err(js_error("channelCount must be 2 for HDA output (stereo)"));
         }
 
         let bridge = WorkletBridge::from_shared_buffer(ring_sab, capacity_frames, channel_count)?;
@@ -645,7 +643,9 @@ mod tests {
         }
 
         let mut capture = SilenceCaptureSource;
-        bridge.hda.process_with_capture(&mut bridge.mem, 128, &mut capture);
+        bridge
+            .hda
+            .process_with_capture(&mut bridge.mem, 128, &mut capture);
     }
 
     #[wasm_bindgen_test]

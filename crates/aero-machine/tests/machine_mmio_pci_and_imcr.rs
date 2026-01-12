@@ -1,8 +1,8 @@
+use aero_devices::hpet::HPET_MMIO_BASE;
 use aero_devices::pci::{profile, PciBdf, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
+use aero_interrupts::apic::{IOAPIC_MMIO_BASE, LAPIC_MMIO_BASE};
 use aero_machine::{Machine, MachineConfig};
 use aero_platform::interrupts::{InterruptController, InterruptInput, PlatformInterruptMode};
-use aero_devices::hpet::HPET_MMIO_BASE;
-use aero_interrupts::apic::{IOAPIC_MMIO_BASE, LAPIC_MMIO_BASE};
 use firmware::bios::PCIE_ECAM_BASE;
 use pretty_assertions::assert_eq;
 
@@ -383,13 +383,7 @@ fn pci_bar_reprogramming_relocates_io_and_mmio_routing_for_e1000() {
     let bar0_flags = bar0 & 0xF;
     let bar1_flags = bar1 & 0x3;
 
-    cfg_write(
-        &mut m,
-        bdf,
-        0x10,
-        4,
-        (new_mmio_base as u32) | bar0_flags,
-    );
+    cfg_write(&mut m, bdf, 0x10, 4, (new_mmio_base as u32) | bar0_flags);
     cfg_write(
         &mut m,
         bdf,

@@ -8,7 +8,9 @@ use aero_devices::pci::{
 use aero_io_snapshot::io::state::codec::Decoder;
 use aero_io_snapshot::io::state::SnapshotReader;
 use aero_pc_platform::{PcPlatform, PcPlatformSnapshotHarness};
-use aero_snapshot::io_snapshot_bridge::{apply_io_snapshot_to_device, device_state_from_io_snapshot};
+use aero_snapshot::io_snapshot_bridge::{
+    apply_io_snapshot_to_device, device_state_from_io_snapshot,
+};
 use aero_snapshot::{
     restore_snapshot, save_snapshot, CpuState, DeviceId, DeviceState, DiskOverlayRefs, MmuState,
     SaveOptions, SnapshotMeta, SnapshotSource,

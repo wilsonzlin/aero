@@ -40,11 +40,17 @@ fn pc_platform_shared_devices_keep_rc_identity_across_resets() {
 
     let pci_cfg_after = m.pci_config_ports().expect("pc platform enabled");
     let ptr_after = Rc::as_ptr(&pci_cfg_after);
-    assert_eq!(ptr, ptr_after, "pci_config_ports Rc identity changed across reset");
+    assert_eq!(
+        ptr, ptr_after,
+        "pci_config_ports Rc identity changed across reset"
+    );
 
     let vga_after = m.vga().expect("pc platform enabled implies VGA");
     let vga_ptr_after = Rc::as_ptr(&vga_after);
-    assert_eq!(vga_ptr, vga_ptr_after, "VGA Rc identity changed across reset");
+    assert_eq!(
+        vga_ptr, vga_ptr_after,
+        "VGA Rc identity changed across reset"
+    );
 
     // Verify internal state reset happened without swapping the instance.
     {

@@ -365,4 +365,3 @@ fn d3d9_cmd_stream_triangle_fan_nonindexed_expands_to_triangle_list() {
     // TriangleList-mapping behavior would leave this region black.
     assert_eq!(px(16, 48), [0, 255, 0, 255]);
 }
-

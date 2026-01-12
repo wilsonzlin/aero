@@ -123,10 +123,15 @@ impl CountingRam {
         if end > size {
             return Err(GuestMemoryError::OutOfRange { paddr, len, size });
         }
-        let start = usize::try_from(paddr).map_err(|_| GuestMemoryError::OutOfRange { paddr, len, size })?;
-        let end = start
-            .checked_add(len)
-            .ok_or(GuestMemoryError::OutOfRange { paddr, len, size })?;
+        let start = usize::try_from(paddr).map_err(|_| GuestMemoryError::OutOfRange {
+            paddr,
+            len,
+            size,
+        })?;
+        let end =
+            start
+                .checked_add(len)
+                .ok_or(GuestMemoryError::OutOfRange { paddr, len, size })?;
         Ok(start..end)
     }
 }
@@ -209,8 +214,7 @@ fn uhci_pci_snapshot_roundtrip_restores_pci_and_controller_state() {
     dev.config_mut().write(bar_offset, 4, 0xFFFF_FFFF);
 
     // Configure some controller registers.
-    dev.controller_mut()
-        .io_write(regs::REG_SOFMOD, 1, 12u32);
+    dev.controller_mut().io_write(regs::REG_SOFMOD, 1, 12u32);
     dev.controller_mut()
         .io_write(regs::REG_USBINTR, 2, regs::USBINTR_IOC as u32);
     dev.controller_mut().io_write(
@@ -218,8 +222,7 @@ fn uhci_pci_snapshot_roundtrip_restores_pci_and_controller_state() {
         2,
         u32::from(regs::USBCMD_RS | regs::USBCMD_MAXP),
     );
-    dev.controller_mut()
-        .io_write(regs::REG_FRNUM, 2, 0x123u32);
+    dev.controller_mut().io_write(regs::REG_FRNUM, 2, 0x123u32);
 
     let snapshot = dev.save_state();
     assert_eq!(
@@ -234,7 +237,10 @@ fn uhci_pci_snapshot_roundtrip_restores_pci_and_controller_state() {
         .expect("snapshot load should succeed");
 
     // Config-space bytes and BAR probe state should restore exactly.
-    assert_eq!(dev.config().snapshot_state(), restored.config().snapshot_state());
+    assert_eq!(
+        dev.config().snapshot_state(),
+        restored.config().snapshot_state()
+    );
 
     // Reading the BAR should still return the size mask because BAR probing was active.
     let bar_read = restored.config_mut().read(bar_offset, 4);

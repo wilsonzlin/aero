@@ -162,7 +162,9 @@ impl AeroSparseHeader {
         // Reject absurd allocation tables *before* validating `data_offset` so opening a corrupt
         // image never attempts to compute or allocate based on extreme values.
         if expected_table_bytes > MAX_TABLE_BYTES || table_entries > MAX_TABLE_ENTRIES {
-            return Err(DiskError::Unsupported("aerosparse allocation table too large"));
+            return Err(DiskError::Unsupported(
+                "aerosparse allocation table too large",
+            ));
         }
 
         let table_end = (HEADER_SIZE as u64)
@@ -275,7 +277,9 @@ impl<B: StorageBackend> AeroSparseDisk<B> {
     pub fn open(mut backend: B) -> Result<Self> {
         let mut header_bytes = [0u8; HEADER_SIZE];
         backend.read_at(0, &mut header_bytes).map_err(|e| match e {
-            DiskError::OutOfBounds { .. } => DiskError::CorruptSparseImage("truncated sparse header"),
+            DiskError::OutOfBounds { .. } => {
+                DiskError::CorruptSparseImage("truncated sparse header")
+            }
             other => other,
         })?;
         let header = AeroSparseHeader::decode(&header_bytes)?;
@@ -286,7 +290,9 @@ impl<B: StorageBackend> AeroSparseDisk<B> {
             .checked_mul(8)
             .ok_or(DiskError::OffsetOverflow)?;
         if expected_table_bytes > MAX_TABLE_BYTES || header.table_entries > MAX_TABLE_ENTRIES {
-            return Err(DiskError::Unsupported("aerosparse allocation table too large"));
+            return Err(DiskError::Unsupported(
+                "aerosparse allocation table too large",
+            ));
         }
         let expected_table_bytes_usize: usize = expected_table_bytes
             .try_into()
@@ -414,9 +420,11 @@ impl<B: StorageBackend> AeroSparseDisk<B> {
                         "data block offset out of bounds",
                     ));
                 }
-                let phys_end = phys.checked_add(block_size).ok_or(DiskError::CorruptSparseImage(
-                    "data block offset out of bounds",
-                ))?;
+                let phys_end =
+                    phys.checked_add(block_size)
+                        .ok_or(DiskError::CorruptSparseImage(
+                            "data block offset out of bounds",
+                        ))?;
                 if phys_end > expected_min_len {
                     return Err(DiskError::CorruptSparseImage(
                         "data block offset out of bounds",
@@ -431,7 +439,9 @@ impl<B: StorageBackend> AeroSparseDisk<B> {
                 let mask = 1u64 << bit_idx;
                 let word = seen_phys_idx
                     .get_mut(word_idx)
-                    .ok_or(DiskError::CorruptSparseImage("data block offset out of bounds"))?;
+                    .ok_or(DiskError::CorruptSparseImage(
+                        "data block offset out of bounds",
+                    ))?;
                 if (*word & mask) != 0 {
                     return Err(DiskError::CorruptSparseImage("duplicate data block offset"));
                 }

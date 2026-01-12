@@ -282,7 +282,6 @@ impl<TX: FrameRing, RX: FrameRing> NetworkBackend for L2TunnelRingBackend<TX, RX
         }
         None
     }
-
 }
 
 #[cfg(test)]
@@ -334,7 +333,10 @@ mod tests {
         let mut backend: Option<Box<dyn NetworkBackend>> =
             Some(Box::new(L2TunnelRingBackend::new(tx, rx)));
 
-        assert_eq!(backend.l2_ring_stats(), Some(L2TunnelRingBackendStats::default()));
+        assert_eq!(
+            backend.l2_ring_stats(),
+            Some(L2TunnelRingBackendStats::default())
+        );
 
         backend.as_mut().unwrap().transmit(vec![1, 2, 3]);
         assert_eq!(backend.l2_ring_stats().unwrap().tx_pushed_frames, 1);

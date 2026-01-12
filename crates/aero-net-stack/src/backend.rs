@@ -3,9 +3,7 @@ use std::time::Instant;
 
 use aero_net_backend::NetworkBackend;
 
-use crate::{
-    Action, DnsResolved, Millis, NetworkStack, StackConfig, TcpProxyEvent, UdpProxyEvent,
-};
+use crate::{Action, DnsResolved, Millis, NetworkStack, StackConfig, TcpProxyEvent, UdpProxyEvent};
 
 /// NIC-facing backend for [`crate::NetworkStack`].
 ///
@@ -105,4 +103,3 @@ impl NetworkBackend for NetStackBackend {
         self.pending_frames.pop_front()
     }
 }
-

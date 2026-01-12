@@ -184,11 +184,7 @@ fn inf_feature_scores(inf_text: &str) -> Vec<u32> {
             continue;
         }
 
-        let value = parts
-            .last()
-            .unwrap_or(&"")
-            .trim()
-            .trim_matches('"');
+        let value = parts.last().unwrap_or(&"").trim().trim_matches('"');
         if value.is_empty() {
             continue;
         }
@@ -235,10 +231,7 @@ fn windows_device_contract_aerogpu_matches_protocol_constants() {
     assert_eq!(device_id, AEROGPU_PCI_DEVICE_ID);
 
     assert_eq!(require_json_str(aerogpu, "driver_service_name"), "aerogpu");
-    assert_eq!(
-        require_json_str(aerogpu, "inf_name"),
-        "aerogpu_dx11.inf"
-    );
+    assert_eq!(require_json_str(aerogpu, "inf_name"), "aerogpu_dx11.inf");
 
     let expected_hwid_with_subsys = format!(
         "PCI\\VEN_{vendor_id:04X}&DEV_{device_id:04X}&SUBSYS_{subsys_id:04X}{subsys_vendor:04X}",

@@ -1316,7 +1316,9 @@ impl IdeController {
                 }),
             });
 
-            let pio_write = chan.pio_write.map(|(lba, sectors)| IdePioWriteState { lba, sectors });
+            let pio_write = chan
+                .pio_write
+                .map(|(lba, sectors)| IdePioWriteState { lba, sectors });
 
             let drives = core::array::from_fn(|idx| match chan.devices[idx].as_ref() {
                 None => IdeDriveState::None,
@@ -1461,7 +1463,11 @@ impl IdeController {
         self.bus_master_base = state.pci.bus_master_base;
 
         restore_channel(&mut self.primary, &mut self.bus_master[0], &state.primary);
-        restore_channel(&mut self.secondary, &mut self.bus_master[1], &state.secondary);
+        restore_channel(
+            &mut self.secondary,
+            &mut self.bus_master[1],
+            &state.secondary,
+        );
     }
 }
 

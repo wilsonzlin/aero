@@ -1,8 +1,8 @@
+use aero_interrupts::apic::IOAPIC_MMIO_BASE;
 use aero_platform::address_filter::AddressFilter;
 use aero_platform::dirty_memory::DEFAULT_DIRTY_PAGE_SIZE;
 use aero_platform::memory::{MemoryBus, BIOS_RESET_VECTOR_PHYS, BIOS_ROM_BASE, BIOS_ROM_SIZE};
 use aero_platform::ChipsetState;
-use aero_interrupts::apic::IOAPIC_MMIO_BASE;
 use memory::MapError;
 use std::sync::{Arc, Mutex};
 
@@ -216,11 +216,8 @@ fn a20_masking_does_not_apply_to_direct_ram_backend_access() {
 fn dirty_tracking_marks_ram_writes_from_non_cpu_paths() {
     let chipset = ChipsetState::new(true);
     let filter = AddressFilter::new(chipset.a20());
-    let mut bus = MemoryBus::new_with_dirty_tracking(
-        filter,
-        16 * 1024 * 1024,
-        DEFAULT_DIRTY_PAGE_SIZE,
-    );
+    let mut bus =
+        MemoryBus::new_with_dirty_tracking(filter, 16 * 1024 * 1024, DEFAULT_DIRTY_PAGE_SIZE);
 
     // Start clean.
     assert!(bus.take_dirty_pages().unwrap().is_empty());

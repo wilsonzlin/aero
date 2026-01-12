@@ -201,7 +201,11 @@ fn aerogpu_cmd_srgb_render_target_encodes_linear_clear_values() {
                 );
                 assert!(px[1] <= 2, "g mismatch: got={} ({label})", px[1]);
                 assert!(px[2] <= 2, "b mismatch: got={} ({label})", px[2]);
-                assert!(px[3].abs_diff(255) <= 2, "a mismatch: got={} ({label})", px[3]);
+                assert!(
+                    px[3].abs_diff(255) <= 2,
+                    "a mismatch: got={} ({label})",
+                    px[3]
+                );
             }
         }
     });

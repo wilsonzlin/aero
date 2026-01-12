@@ -51,22 +51,26 @@ impl JitContext {
             mem.len()
         );
 
-        let ram_base_off = base.checked_add(Self::RAM_BASE_OFFSET as usize).unwrap_or_else(|| {
-            panic!(
-                "JitContext ram_base offset overflow: base={base} off={} mem_len={}",
-                Self::RAM_BASE_OFFSET,
-                mem.len()
-            )
-        });
+        let ram_base_off = base
+            .checked_add(Self::RAM_BASE_OFFSET as usize)
+            .unwrap_or_else(|| {
+                panic!(
+                    "JitContext ram_base offset overflow: base={base} off={} mem_len={}",
+                    Self::RAM_BASE_OFFSET,
+                    mem.len()
+                )
+            });
         mem[ram_base_off..ram_base_off + 8].copy_from_slice(&self.ram_base.to_le_bytes());
 
-        let tlb_salt_off = base.checked_add(Self::TLB_SALT_OFFSET as usize).unwrap_or_else(|| {
-            panic!(
-                "JitContext tlb_salt offset overflow: base={base} off={} mem_len={}",
-                Self::TLB_SALT_OFFSET,
-                mem.len()
-            )
-        });
+        let tlb_salt_off = base
+            .checked_add(Self::TLB_SALT_OFFSET as usize)
+            .unwrap_or_else(|| {
+                panic!(
+                    "JitContext tlb_salt offset overflow: base={base} off={} mem_len={}",
+                    Self::TLB_SALT_OFFSET,
+                    mem.len()
+                )
+            });
         mem[tlb_salt_off..tlb_salt_off + 8].copy_from_slice(&self.tlb_salt.to_le_bytes());
     }
 }
@@ -158,9 +162,6 @@ mod tests {
         );
 
         let salt_off = base + (JitContext::TLB_SALT_OFFSET as usize);
-        assert_eq!(
-            &mem[salt_off..salt_off + 8],
-            &ctx.tlb_salt.to_le_bytes()
-        );
+        assert_eq!(&mem[salt_off..salt_off + 8], &ctx.tlb_salt.to_le_bytes());
     }
 }

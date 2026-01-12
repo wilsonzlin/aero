@@ -51,7 +51,10 @@ impl Interpreter<TestCpu> for Tier1Interpreter {
         let entry_rip = cpu.rip();
         let block = discover_block(&self.bus, entry_rip, BlockLimits::default());
         let mut instructions_retired = block.insts.len() as u64;
-        if matches!(block.end_kind, aero_jit_x86::BlockEndKind::ExitToInterpreter { .. }) {
+        if matches!(
+            block.end_kind,
+            aero_jit_x86::BlockEndKind::ExitToInterpreter { .. }
+        ) {
             // Tier-1 discovery includes the invalid instruction that triggers the bailout, but the
             // translator emits `ExitToInterpreter` without executing/retiring it.
             instructions_retired = instructions_retired.saturating_sub(1);
@@ -130,8 +133,8 @@ fn tier1_hotness_triggers_compile_and_subsequent_execution_uses_jit() {
     let requested = queue.drain();
     assert_eq!(requested, vec![entry]);
 
-    let mut compiler = Tier1Compiler::new(backend.clone(), backend.clone())
-        .with_wasm_options(Tier1WasmOptions {
+    let mut compiler =
+        Tier1Compiler::new(backend.clone(), backend.clone()).with_wasm_options(Tier1WasmOptions {
             inline_tlb: true,
             ..Default::default()
         });

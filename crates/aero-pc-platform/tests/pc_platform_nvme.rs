@@ -20,20 +20,29 @@ fn cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
 }
 
 fn read_cfg_u32(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8) -> u32 {
-    pc.io
-        .write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bus, device, function, offset));
+    pc.io.write(
+        PCI_CFG_ADDR_PORT,
+        4,
+        cfg_addr(bus, device, function, offset),
+    );
     pc.io.read(PCI_CFG_DATA_PORT, 4)
 }
 
 fn write_cfg_u16(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8, value: u16) {
-    pc.io
-        .write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bus, device, function, offset));
+    pc.io.write(
+        PCI_CFG_ADDR_PORT,
+        4,
+        cfg_addr(bus, device, function, offset),
+    );
     pc.io.write(PCI_CFG_DATA_PORT, 2, u32::from(value));
 }
 
 fn write_cfg_u32(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8, value: u32) {
-    pc.io
-        .write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bus, device, function, offset));
+    pc.io.write(
+        PCI_CFG_ADDR_PORT,
+        4,
+        cfg_addr(bus, device, function, offset),
+    );
     pc.io.write(PCI_CFG_DATA_PORT, 4, value);
 }
 
@@ -445,13 +454,12 @@ fn pc_platform_routes_nvme_intx_via_ioapic_in_apic_mode() {
     // Consume the completion by advancing CQ0 head, which should deassert INTx.
     pc.memory.write_u32(bar0_base + 0x1004, 1); // CQ0 head = 1
     pc.poll_pci_intx_lines();
-    assert!(
-        !pc.nvme
-            .as_ref()
-            .expect("nvme should be enabled")
-            .borrow()
-            .irq_level()
-    );
+    assert!(!pc
+        .nvme
+        .as_ref()
+        .expect("nvme should be enabled")
+        .borrow()
+        .irq_level());
 
     // End-of-interrupt should *not* cause a redelivery now that the line is deasserted.
     pc.interrupts.borrow_mut().eoi(vector as u8);
@@ -1075,10 +1083,8 @@ fn pc_platform_nvme_prp2_cross_page_write_and_read_roundtrip() {
     assert!(len > PAGE_SIZE);
     assert!(len <= PAGE_SIZE + SECTOR_SIZE * 4);
 
-    pc.memory
-        .write_physical(write_page0, &payload[..PAGE_SIZE]);
-    pc.memory
-        .write_physical(write_page1, &payload[PAGE_SIZE..]);
+    pc.memory.write_physical(write_page0, &payload[..PAGE_SIZE]);
+    pc.memory.write_physical(write_page1, &payload[PAGE_SIZE..]);
 
     // WRITE spanning PRP1+PRP2.
     let cid_write: u16 = 0x40;
@@ -1194,8 +1200,7 @@ fn pc_platform_nvme_prp_list_multi_page_write_and_read_roundtrip() {
     pc.memory.write_u64(write_prp_list, write_page1);
     pc.memory.write_u64(write_prp_list + 8, write_page2);
 
-    pc.memory
-        .write_physical(write_page0, &payload[..PAGE_SIZE]);
+    pc.memory.write_physical(write_page0, &payload[..PAGE_SIZE]);
     pc.memory
         .write_physical(write_page1, &payload[PAGE_SIZE..PAGE_SIZE * 2]);
     pc.memory
@@ -1248,7 +1253,8 @@ fn pc_platform_nvme_prp_list_multi_page_write_and_read_roundtrip() {
     pc.memory.read_physical(read_page0, &mut out[..PAGE_SIZE]);
     pc.memory
         .read_physical(read_page1, &mut out[PAGE_SIZE..PAGE_SIZE * 2]);
-    pc.memory.read_physical(read_page2, &mut out[PAGE_SIZE * 2..]);
+    pc.memory
+        .read_physical(read_page2, &mut out[PAGE_SIZE * 2..]);
     assert_eq!(out, payload);
 }
 
@@ -1475,7 +1481,9 @@ fn pc_platform_nvme_snapshot_restore_processes_pending_write_without_renotify() 
     assert_eq!(read_cqe(&mut restored, io_cq + 16).cid, 0);
 
     // READ back and ensure the disk observed the write.
-    restored.memory.write_physical(read_buf, &[0u8; SECTOR_SIZE]);
+    restored
+        .memory
+        .write_physical(read_buf, &[0u8; SECTOR_SIZE]);
     let mut cmd = build_command(0x02);
     set_cid(&mut cmd, cid.wrapping_add(1));
     set_nsid(&mut cmd, 1);

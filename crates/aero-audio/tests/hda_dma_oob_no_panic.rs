@@ -1,6 +1,6 @@
+use aero_audio::capture::SilenceCaptureSource;
 use aero_audio::hda::HdaController;
 use aero_audio::mem::MemoryAccess;
-use aero_audio::capture::SilenceCaptureSource;
 
 /// Guest memory wrapper used by browser/WASM bridges: out-of-bounds DMA must not panic.
 ///
@@ -14,7 +14,9 @@ struct SafeGuestMemory {
 
 impl SafeGuestMemory {
     fn new(size: usize) -> Self {
-        Self { data: vec![0; size] }
+        Self {
+            data: vec![0; size],
+        }
     }
 }
 
@@ -174,7 +176,7 @@ fn hda_capture_dma_write_completes_on_oob_bdl_address() {
         sd.cbl = buf_len;
         sd.lvi = 0;
         sd.fmt = 0x0010; // 48kHz, 16-bit, mono
-        // SRST | RUN | stream number 2.
+                         // SRST | RUN | stream number 2.
         sd.ctl = (1 << 0) | (1 << 1) | (2 << 20);
     }
 
@@ -210,7 +212,7 @@ fn hda_capture_dma_write_completes_on_dma_addr_overflow() {
         sd.cbl = buf_len;
         sd.lvi = 0;
         sd.fmt = 0x0010; // 48kHz, 16-bit, mono
-        // SRST | RUN | stream number 2.
+                         // SRST | RUN | stream number 2.
         sd.ctl = (1 << 0) | (1 << 1) | (2 << 20);
     }
 

@@ -127,11 +127,18 @@ fn build_int13_ext_read_boot_sector(success: u8, fail: u8) -> [u8; 512] {
 
     // Patch branches to `fail`.
     let fail_addr = 0x7C00u16 + u16::try_from(fail_off).unwrap();
-    sector[jc_off_pos] = rel8(0x7C00u16 + u16::try_from(jc_off_pos + 1).unwrap(), fail_addr);
-    sector[jne1_off_pos] =
-        rel8(0x7C00u16 + u16::try_from(jne1_off_pos + 1).unwrap(), fail_addr);
-    sector[jne2_off_pos] =
-        rel8(0x7C00u16 + u16::try_from(jne2_off_pos + 1).unwrap(), fail_addr);
+    sector[jc_off_pos] = rel8(
+        0x7C00u16 + u16::try_from(jc_off_pos + 1).unwrap(),
+        fail_addr,
+    );
+    sector[jne1_off_pos] = rel8(
+        0x7C00u16 + u16::try_from(jne1_off_pos + 1).unwrap(),
+        fail_addr,
+    );
+    sector[jne2_off_pos] = rel8(
+        0x7C00u16 + u16::try_from(jne2_off_pos + 1).unwrap(),
+        fail_addr,
+    );
 
     // Boot signature.
     sector[510] = 0x55;

@@ -1,7 +1,10 @@
 #![cfg(not(target_arch = "wasm32"))]
 
 use aero_storage_server::{
-    store::{BoxedAsyncRead, ImageCatalogEntry, ImageMeta, ImageStore, StoreError, CONTENT_TYPE_DISK_IMAGE},
+    store::{
+        BoxedAsyncRead, ImageCatalogEntry, ImageMeta, ImageStore, StoreError,
+        CONTENT_TYPE_DISK_IMAGE,
+    },
     AppState,
 };
 use axum::{
@@ -129,4 +132,3 @@ async fn invalid_store_content_type_does_not_panic_and_uses_fallback_content_typ
     let body = res.into_body().collect().await.unwrap().to_bytes();
     assert_eq!(&body[..], b"Hello, world!");
 }
-

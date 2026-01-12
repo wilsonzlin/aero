@@ -1,7 +1,7 @@
+use aero_pc_constants::PCIE_ECAM_BASE;
 use aero_platform::address_filter::AddressFilter;
 use aero_platform::memory::MemoryBus;
 use aero_platform::ChipsetState;
-use aero_pc_constants::PCIE_ECAM_BASE;
 use memory::SparseMemory;
 use std::sync::{Arc, Mutex};
 
@@ -18,7 +18,12 @@ struct RecordingMmio {
 impl RecordingMmio {
     fn new() -> (Self, Arc<Mutex<MmioState>>) {
         let state = Arc::new(Mutex::new(MmioState::default()));
-        (Self { state: state.clone() }, state)
+        (
+            Self {
+                state: state.clone(),
+            },
+            state,
+        )
     }
 }
 
@@ -28,7 +33,11 @@ impl memory::MmioHandler for RecordingMmio {
     }
 
     fn write(&mut self, offset: u64, size: usize, value: u64) {
-        self.state.lock().unwrap().writes.push((offset, size, value));
+        self.state
+            .lock()
+            .unwrap()
+            .writes
+            .push((offset, size, value));
     }
 }
 

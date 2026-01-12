@@ -25,9 +25,9 @@ use aero_platform::audio::worklet_bridge::WorkletBridge;
 
 use aero_virtio::devices::snd::VirtioSnd;
 use aero_virtio::memory::{GuestMemory, GuestMemoryError};
-use aero_virtio::pci::{InterruptSink, VirtioPciDevice, VIRTIO_STATUS_DRIVER_OK};
+use aero_virtio::pci::{InterruptSink, VIRTIO_STATUS_DRIVER_OK, VirtioPciDevice};
 
-use crate::guest_phys::{guest_ram_phys_end_exclusive, translate_guest_paddr_range, GuestRamRange};
+use crate::guest_phys::{GuestRamRange, guest_ram_phys_end_exclusive, translate_guest_paddr_range};
 
 fn js_error(message: impl core::fmt::Display) -> JsValue {
     js_sys::Error::new(&message.to_string()).into()
@@ -481,7 +481,8 @@ impl VirtioSndPciBridge {
         if rate == 0 {
             return Err(js_error("rate must be non-zero"));
         }
-        self.snd_mut().set_host_sample_rate_hz(clamp_host_sample_rate_hz(rate));
+        self.snd_mut()
+            .set_host_sample_rate_hz(clamp_host_sample_rate_hz(rate));
         Ok(())
     }
 

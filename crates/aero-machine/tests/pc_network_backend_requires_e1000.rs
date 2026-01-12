@@ -54,4 +54,3 @@ fn pc_machine_poll_network_does_not_poll_backend_when_e1000_is_disabled() {
         "frames must remain queued in the backend when E1000 is disabled"
     );
 }
-

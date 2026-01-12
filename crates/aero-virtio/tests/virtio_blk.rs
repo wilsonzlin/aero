@@ -1,3 +1,5 @@
+use aero_io_snapshot::io::state::IoSnapshot;
+use aero_storage::{DiskError as StorageDiskError, MemBackend, RawDisk, VirtualDisk};
 use aero_virtio::devices::blk::{
     BlockBackend, BlockBackendError, VirtioBlk, VIRTIO_BLK_S_IOERR, VIRTIO_BLK_S_UNSUPP,
     VIRTIO_BLK_T_FLUSH, VIRTIO_BLK_T_IN, VIRTIO_BLK_T_OUT,
@@ -11,8 +13,6 @@ use aero_virtio::pci::{
     VIRTIO_STATUS_ACKNOWLEDGE, VIRTIO_STATUS_DRIVER, VIRTIO_STATUS_DRIVER_OK,
     VIRTIO_STATUS_FEATURES_OK,
 };
-use aero_storage::{DiskError as StorageDiskError, MemBackend, RawDisk, VirtualDisk};
-use aero_io_snapshot::io::state::IoSnapshot;
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -179,7 +179,8 @@ impl TestIrq {
 impl InterruptSink for TestIrq {
     fn raise_legacy_irq(&mut self) {
         self.legacy_level.set(true);
-        self.legacy_count.set(self.legacy_count.get().saturating_add(1));
+        self.legacy_count
+            .set(self.legacy_count.get().saturating_add(1));
     }
 
     fn lower_legacy_irq(&mut self) {
@@ -527,7 +528,10 @@ fn virtio_blk_snapshot_restore_preserves_virtqueue_progress_and_does_not_duplica
     assert_eq!(dev.debug_queue_used_idx(&mem, 0), Some(1));
     assert_eq!(dev.debug_queue_progress(0), Some((1, 1, false)));
     assert_eq!(irq0.legacy_count(), 1);
-    assert!(irq0.legacy_level(), "legacy irq should be asserted after flush completion");
+    assert!(
+        irq0.legacy_level(),
+        "legacy irq should be asserted after flush completion"
+    );
 
     // Snapshot the device + guest memory image after completion.
     let snap_bytes = dev.save_state();
@@ -552,7 +556,11 @@ fn virtio_blk_snapshot_restore_preserves_virtqueue_progress_and_does_not_duplica
     // Kicking the queue without adding new avail entries must not re-run the request.
     let irq_before = irq1.legacy_count();
     kick_queue0(&mut restored, &caps_restored, &mut mem2);
-    assert_eq!(flushes.get(), 1, "duplicate FLUSH should not be executed after restore");
+    assert_eq!(
+        flushes.get(),
+        1,
+        "duplicate FLUSH should not be executed after restore"
+    );
     assert_eq!(restored.debug_queue_used_idx(&mem2, 0), Some(1));
     assert_eq!(irq1.legacy_count(), irq_before);
 
@@ -885,7 +893,11 @@ fn virtio_blk_virtual_disk_backend_maps_browser_storage_failures_to_ioerr() {
         (quota_exceeded, quota_exceeded, quota_exceeded),
         (in_use, in_use, in_use),
         (invalid_state, invalid_state, invalid_state),
-        (backend_unavailable, backend_unavailable, backend_unavailable),
+        (
+            backend_unavailable,
+            backend_unavailable,
+            backend_unavailable,
+        ),
         (not_supported, not_supported, not_supported),
         (io_error, io_error, io_error),
     ];

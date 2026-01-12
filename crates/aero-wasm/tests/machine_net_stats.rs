@@ -74,7 +74,10 @@ fn machine_net_stats_smoke() {
     // Push one host->guest frame into NET_RX and run the network pump once.
     // This should cause the ring backend to pop the frame and increment its RX counters.
     let frame = vec![0u8; aero_net_e1000::MIN_L2_FRAME_LEN];
-    assert!(net_rx_test.try_push(&frame), "NET_RX try_push should succeed");
+    assert!(
+        net_rx_test.try_push(&frame),
+        "NET_RX try_push should succeed"
+    );
     m.poll_network();
 
     let stats = m.net_stats();

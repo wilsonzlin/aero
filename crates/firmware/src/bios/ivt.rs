@@ -79,13 +79,22 @@ pub fn init_bda(bus: &mut dyn BiosBus) {
     // buffered in `Bios::keyboard_queue`), but initializing these fields keeps the BDA in a
     // consistent "no keys pending" state for software that probes them directly.
     bus.write_u16(BDA_BASE + BDA_KEYBOARD_FLAGS_OFFSET, 0);
-    bus.write_u16(BDA_BASE + BDA_KEYBOARD_BUF_HEAD_OFFSET, BDA_KEYBOARD_BUF_START);
-    bus.write_u16(BDA_BASE + BDA_KEYBOARD_BUF_TAIL_OFFSET, BDA_KEYBOARD_BUF_START);
+    bus.write_u16(
+        BDA_BASE + BDA_KEYBOARD_BUF_HEAD_OFFSET,
+        BDA_KEYBOARD_BUF_START,
+    );
+    bus.write_u16(
+        BDA_BASE + BDA_KEYBOARD_BUF_TAIL_OFFSET,
+        BDA_KEYBOARD_BUF_START,
+    );
     bus.write_u16(
         BDA_BASE + BDA_KEYBOARD_BUF_START_PTR_OFFSET,
         BDA_KEYBOARD_BUF_START,
     );
-    bus.write_u16(BDA_BASE + BDA_KEYBOARD_BUF_END_PTR_OFFSET, BDA_KEYBOARD_BUF_END);
+    bus.write_u16(
+        BDA_BASE + BDA_KEYBOARD_BUF_END_PTR_OFFSET,
+        BDA_KEYBOARD_BUF_END,
+    );
 
     // Number of hard disks installed (used by some bootloaders/DOS utilities).
     bus.write_u8(BDA_BASE + BDA_HARD_DISK_COUNT_OFFSET, 1);

@@ -253,9 +253,9 @@ fn ata_lba48_oversized_pio_read_is_rejected_without_entering_data_phase() {
     }
 
     // Use a lightweight backend so the test doesn't allocate a ~16MiB in-memory disk image.
-    let disk = SharedRecordingDisk(std::sync::Arc::new(std::sync::Mutex::new(RecordingDisk::new(
-        sectors as u64,
-    ))));
+    let disk = SharedRecordingDisk(std::sync::Arc::new(std::sync::Mutex::new(
+        RecordingDisk::new(sectors as u64),
+    )));
     let mut ide = IdeController::new(0xC000);
     ide.attach_primary_master_ata(AtaDevice::new(Box::new(disk), "Aero HDD"));
 

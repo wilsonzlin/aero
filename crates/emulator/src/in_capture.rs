@@ -552,7 +552,6 @@ fn js_code_to_linux_key(code: &str) -> Option<u16> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::io::PortIO;
     use crate::io::usb::core::UsbInResult;
     use crate::io::usb::{ControlResponse, SetupPacket, UsbDeviceModel};
     use crate::io::virtio::devices::input::{
@@ -560,6 +559,7 @@ mod tests {
         KEY_F12, KEY_NUMLOCK, KEY_SCROLLLOCK, REL_Y, SYN_REPORT, VIRTIO_STATUS_DRIVER_OK,
     };
     use crate::io::virtio::vio_core::{Descriptor, VirtQueue, VRING_DESC_F_WRITE};
+    use crate::io::PortIO;
     use memory::DenseMemory;
 
     fn write_desc(mem: &mut DenseMemory, base: u64, index: u16, desc: Descriptor) {

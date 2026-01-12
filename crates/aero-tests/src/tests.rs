@@ -785,7 +785,7 @@ fn boot_sector_hello_via_int10() {
 }
 
 #[test]
-    fn boot_sector_hello_via_bios_hypercall_int10() {
+fn boot_sector_hello_via_bios_hypercall_int10() {
     // Same "Hello" boot sector as `boot_sector_hello_via_int10`, but routes INT 10h
     // through the Tier-0 BIOS hypercall mechanism:
     // - IVT[0x10] points at a ROM stub that executes `HLT`

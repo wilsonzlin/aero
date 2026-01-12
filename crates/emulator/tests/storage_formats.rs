@@ -309,8 +309,7 @@ fn detect_vhd_cookie_without_plausible_footer_is_raw() {
 #[test]
 fn detect_aerospar_header_is_detected_as_sparse() {
     let storage = MemStorage::default();
-    let disk =
-        emulator::io::storage::formats::SparseDisk::create(storage, 512, 32, 1024).unwrap();
+    let disk = emulator::io::storage::formats::SparseDisk::create(storage, 512, 32, 1024).unwrap();
     let mut storage = disk.into_storage();
     assert_eq!(detect_format(&mut storage).unwrap(), DiskFormat::Sparse);
 }
@@ -639,12 +638,16 @@ fn vhd_dynamic_rejects_bad_dynamic_header_checksum() {
 
     // Clobber the checksum field (offset 36) without changing the rest of the header.
     let dyn_header_offset = 512u64;
-    storage.write_at(dyn_header_offset + 36, &0u32.to_be_bytes()).unwrap();
+    storage
+        .write_at(dyn_header_offset + 36, &0u32.to_be_bytes())
+        .unwrap();
 
     let res = emulator::io::storage::formats::VhdDisk::open(storage);
     assert!(matches!(
         res,
-        Err(DiskError::CorruptImage("vhd dynamic header checksum mismatch"))
+        Err(DiskError::CorruptImage(
+            "vhd dynamic header checksum mismatch"
+        ))
     ));
 }
 
@@ -654,12 +657,16 @@ fn vhd_dynamic_rejects_bad_dynamic_header_data_offset() {
 
     // The dynamic header's `data_offset` is at 8..16 and must be 0xFFFF..FFFF.
     let dyn_header_offset = 512u64;
-    storage.write_at(dyn_header_offset + 8, &0u64.to_be_bytes()).unwrap();
+    storage
+        .write_at(dyn_header_offset + 8, &0u64.to_be_bytes())
+        .unwrap();
 
     let res = emulator::io::storage::formats::VhdDisk::open(storage);
     assert!(matches!(
         res,
-        Err(DiskError::CorruptImage("vhd dynamic header data_offset invalid"))
+        Err(DiskError::CorruptImage(
+            "vhd dynamic header data_offset invalid"
+        ))
     ));
 }
 

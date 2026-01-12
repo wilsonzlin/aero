@@ -141,7 +141,8 @@ async fn bytes_concurrency_limit_rejects_second_in_flight_request() {
     let resp2 = client.get(&url).send().await.unwrap();
     assert_eq!(resp2.status(), StatusCode::TOO_MANY_REQUESTS);
     assert_eq!(
-        resp2.headers()
+        resp2
+            .headers()
             .get(reqwest::header::CACHE_CONTROL)
             .unwrap()
             .to_str()
@@ -149,7 +150,8 @@ async fn bytes_concurrency_limit_rejects_second_in_flight_request() {
         "no-store, no-transform"
     );
     assert_eq!(
-        resp2.headers()
+        resp2
+            .headers()
             .get("access-control-allow-origin")
             .unwrap()
             .to_str()

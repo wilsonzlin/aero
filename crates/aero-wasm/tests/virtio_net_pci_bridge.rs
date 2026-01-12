@@ -1,6 +1,6 @@
 #![cfg(target_arch = "wasm32")]
 
-use aero_ipc::ipc::{create_ipc_buffer, IpcQueueSpec};
+use aero_ipc::ipc::{IpcQueueSpec, create_ipc_buffer};
 use aero_ipc::layout::io_ipc_queue_kind::{NET_RX, NET_TX};
 use aero_ipc::wasm::open_ring_by_kind;
 use aero_virtio::devices::net_offload::VirtioNetHdr;
@@ -257,8 +257,16 @@ fn virtio_net_pci_bridge_smoke_and_irq_latch() {
     bridge.set_pci_command(0x0004);
     bridge.poll();
 
-    assert_eq!(read_u16(guest, tx_used + 2), 1, "expected used.idx to advance");
-    assert_eq!(read_u16(guest, rx_used + 2), 1, "expected RX used.idx to advance");
+    assert_eq!(
+        read_u16(guest, tx_used + 2),
+        1,
+        "expected used.idx to advance"
+    );
+    assert_eq!(
+        read_u16(guest, rx_used + 2),
+        1,
+        "expected RX used.idx to advance"
+    );
     let tx = net_tx_ring
         .try_pop()
         .expect("expected one transmitted frame in NET_TX ring after enabling BME");

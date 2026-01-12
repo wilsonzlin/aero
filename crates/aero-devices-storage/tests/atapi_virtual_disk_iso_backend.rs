@@ -5,7 +5,8 @@ use aero_storage::{MemBackend, RawDisk, VirtualDisk as _};
 fn virtual_disk_iso_backend_reads_2048_byte_sectors() {
     // Two 2048-byte sectors.
     let mut disk = RawDisk::create(MemBackend::new(), 2 * AtapiCdrom::SECTOR_SIZE as u64).unwrap();
-    disk.write_at(AtapiCdrom::SECTOR_SIZE as u64, b"WORLD").unwrap();
+    disk.write_at(AtapiCdrom::SECTOR_SIZE as u64, b"WORLD")
+        .unwrap();
 
     let mut iso = VirtualDiskIsoBackend::new(Box::new(disk)).unwrap();
     assert_eq!(iso.sector_count(), 2);

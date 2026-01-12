@@ -135,11 +135,8 @@ fn snapshot_restore_without_elapsed_ns_falls_back_to_pm_timer_ticks() {
     let t0 = pm0.read(cfg.pm_tmr_blk, 4);
 
     let snap_full = pm0.save_state();
-    let r = SnapshotReader::parse(
-        &snap_full,
-        <AcpiPmIo<ManualClock> as IoSnapshot>::DEVICE_ID,
-    )
-    .unwrap();
+    let r = SnapshotReader::parse(&snap_full, <AcpiPmIo<ManualClock> as IoSnapshot>::DEVICE_ID)
+        .unwrap();
 
     // Re-encode a snapshot that preserves all fields except elapsed-ns, forcing load_state()
     // to use the tick-count fallback path.
@@ -172,7 +169,10 @@ fn snapshot_restore_without_elapsed_ns_falls_back_to_pm_timer_ticks() {
     pm1.load_state(&snap_no_elapsed).unwrap();
 
     let t1 = pm1.read(cfg.pm_tmr_blk, 4);
-    assert_eq!(t0, t1, "PM_TMR must match after restore from tick-only snapshot");
+    assert_eq!(
+        t0, t1,
+        "PM_TMR must match after restore from tick-only snapshot"
+    );
 }
 
 #[test]
@@ -224,10 +224,7 @@ fn snapshot_encodes_pm_timer_ticks_and_fractional_remainder() {
 
     let elapsed_ns = r.u64(6).unwrap().expect("missing elapsed_ns");
     let ticks = r.u32(8).unwrap().expect("missing pm_timer_ticks");
-    let remainder = r
-        .u32(9)
-        .unwrap()
-        .expect("missing pm_timer_remainder");
+    let remainder = r.u32(9).unwrap().expect("missing pm_timer_remainder");
 
     let numer = (elapsed_ns as u128) * PM_TIMER_HZ;
     let expected_ticks = (numer / NS_PER_SEC) as u32;
@@ -276,7 +273,8 @@ fn snapshot_load_samples_clock_once_for_timer_restore() {
     let cfg = AcpiPmConfig::default();
     let clock = CountingClock::new(1_000_000_000);
 
-    let mut pm = AcpiPmIo::new_with_callbacks_and_clock(cfg, AcpiPmCallbacks::default(), clock.clone());
+    let mut pm =
+        AcpiPmIo::new_with_callbacks_and_clock(cfg, AcpiPmCallbacks::default(), clock.clone());
     clock.reset_calls();
 
     // Normal snapshots: restore via elapsed_ns.

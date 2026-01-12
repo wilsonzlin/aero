@@ -157,16 +157,19 @@ fn worker_vm_snapshot_roundtrip_restores_ram_and_devices() {
         let id = Reflect::get(&dev, &JsValue::from_str("id"))
             .unwrap_or_else(|_| panic!("devices[{idx}].id missing"))
             .as_f64()
-            .unwrap_or_else(|| panic!("devices[{idx}].id must be a number")) as u32;
+            .unwrap_or_else(|| panic!("devices[{idx}].id must be a number"))
+            as u32;
         restore_ids_in_order.push(id);
         let version = Reflect::get(&dev, &JsValue::from_str("version"))
             .unwrap_or_else(|_| panic!("devices[{idx}].version missing"))
             .as_f64()
-            .unwrap_or_else(|| panic!("devices[{idx}].version must be a number")) as u16;
+            .unwrap_or_else(|| panic!("devices[{idx}].version must be a number"))
+            as u16;
         let flags = Reflect::get(&dev, &JsValue::from_str("flags"))
             .unwrap_or_else(|_| panic!("devices[{idx}].flags missing"))
             .as_f64()
-            .unwrap_or_else(|| panic!("devices[{idx}].flags must be a number")) as u16;
+            .unwrap_or_else(|| panic!("devices[{idx}].flags must be a number"))
+            as u16;
 
         let data_val = Reflect::get(&dev, &JsValue::from_str("data"))
             .unwrap_or_else(|_| panic!("devices[{idx}].data missing"));

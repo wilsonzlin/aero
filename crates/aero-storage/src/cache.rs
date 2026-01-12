@@ -69,10 +69,7 @@ impl<D: VirtualDisk> BlockCachedDisk<D> {
         data.try_reserve_exact(self.block_size)
             .map_err(|_| DiskError::QuotaExceeded)?;
         data.resize(self.block_size, 0);
-        let mut entry = CacheEntry {
-            data,
-            dirty: false,
-        };
+        let mut entry = CacheEntry { data, dirty: false };
 
         let start = block_idx
             .checked_mul(self.block_size as u64)
@@ -125,12 +122,9 @@ impl<D: VirtualDisk> VirtualDisk for BlockCachedDisk<D> {
             let chunk_len = (self.block_size - within).min(remaining);
 
             self.ensure_block_cached(block_idx)?;
-            let entry = self
-                .cache
-                .get_mut(&block_idx)
-                .ok_or(DiskError::Io(
-                    "cache missing block after ensure_block_cached".into(),
-                ))?;
+            let entry = self.cache.get_mut(&block_idx).ok_or(DiskError::Io(
+                "cache missing block after ensure_block_cached".into(),
+            ))?;
             buf[pos..pos + chunk_len].copy_from_slice(&entry.data[within..within + chunk_len]);
 
             pos += chunk_len;
@@ -151,12 +145,9 @@ impl<D: VirtualDisk> VirtualDisk for BlockCachedDisk<D> {
             let chunk_len = (self.block_size - within).min(remaining);
 
             self.ensure_block_cached(block_idx)?;
-            let entry = self
-                .cache
-                .get_mut(&block_idx)
-                .ok_or(DiskError::Io(
-                    "cache missing block after ensure_block_cached".into(),
-                ))?;
+            let entry = self.cache.get_mut(&block_idx).ok_or(DiskError::Io(
+                "cache missing block after ensure_block_cached".into(),
+            ))?;
             entry.data[within..within + chunk_len].copy_from_slice(&buf[pos..pos + chunk_len]);
             entry.dirty = true;
 

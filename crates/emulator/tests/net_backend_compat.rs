@@ -11,8 +11,8 @@ use std::sync::Mutex;
 
 use aero_ipc::ring::{PopError, RingBuffer};
 use emulator::io::net::{
-    FrameRing, L2TunnelBackend, L2TunnelBackendStats, L2TunnelRingBackend, L2TunnelRingBackendStats,
-    NetworkBackend,
+    FrameRing, L2TunnelBackend, L2TunnelBackendStats, L2TunnelRingBackend,
+    L2TunnelRingBackendStats, NetworkBackend,
 };
 
 #[test]

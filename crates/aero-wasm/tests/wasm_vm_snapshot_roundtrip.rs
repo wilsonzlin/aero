@@ -1,7 +1,7 @@
 #![cfg(target_arch = "wasm32")]
 
-use aero_wasm::WasmVm;
 use aero_snapshot::CpuInternalState;
+use aero_wasm::WasmVm;
 use js_sys::{Reflect, Uint8Array};
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;

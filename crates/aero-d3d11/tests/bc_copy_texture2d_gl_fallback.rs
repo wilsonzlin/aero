@@ -112,7 +112,11 @@ fn copy_texture2d_bc_uses_cpu_fallback_on_gl() {
 
         if exec.backend() != wgpu::Backend::Gl {
             // Defensive: `create_executor_with_bc_features` should already enforce this.
-            eprintln!("skipping {}: backend is {:?}", module_path!(), exec.backend());
+            eprintln!(
+                "skipping {}: backend is {:?}",
+                module_path!(),
+                exec.backend()
+            );
             return;
         }
 

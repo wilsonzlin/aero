@@ -73,11 +73,13 @@ impl PipelineLayoutCache<Arc<wgpu::PipelineLayout>> {
         label: Option<&str>,
     ) -> Arc<wgpu::PipelineLayout> {
         self.get_or_create_with(key, || {
-            Arc::new(device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label,
-                bind_group_layouts,
-                push_constant_ranges: &[],
-            }))
+            Arc::new(
+                device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label,
+                    bind_group_layouts,
+                    push_constant_ranges: &[],
+                }),
+            )
         })
     }
 }
@@ -159,7 +161,8 @@ mod tests {
     #[test]
     fn pipeline_layout_is_cached_by_key() {
         pollster::block_on(async {
-            let rt = match crate::runtime::aerogpu_execute::AerogpuCmdRuntime::new_for_tests().await {
+            let rt = match crate::runtime::aerogpu_execute::AerogpuCmdRuntime::new_for_tests().await
+            {
                 Ok(rt) => rt,
                 Err(e) => {
                     skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
@@ -187,13 +190,22 @@ mod tests {
                 bind_group_layout_hashes: vec![cached_bgl.hash],
             };
 
-            let mut cache: PipelineLayoutCache<Arc<wgpu::PipelineLayout>> = PipelineLayoutCache::new();
+            let mut cache: PipelineLayoutCache<Arc<wgpu::PipelineLayout>> =
+                PipelineLayoutCache::new();
             let bind_group_layouts = [cached_bgl.layout.as_ref()];
 
-            let a =
-                cache.get_or_create(device, &key, &bind_group_layouts, Some("aero pipeline layout"));
-            let b =
-                cache.get_or_create(device, &key, &bind_group_layouts, Some("aero pipeline layout"));
+            let a = cache.get_or_create(
+                device,
+                &key,
+                &bind_group_layouts,
+                Some("aero pipeline layout"),
+            );
+            let b = cache.get_or_create(
+                device,
+                &key,
+                &bind_group_layouts,
+                Some("aero pipeline layout"),
+            );
 
             assert!(Arc::ptr_eq(&a, &b));
             assert_eq!(

@@ -39,4 +39,3 @@ fn snapshot_ram_bypasses_a20_masking_when_a20_disabled_at_snapshot_time() {
     assert_eq!(restored.read_physical_u8(0x00000), 0x11);
     assert_eq!(restored.read_physical_u8(0x1_00000), 0x22);
 }
-

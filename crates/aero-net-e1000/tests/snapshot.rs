@@ -209,7 +209,10 @@ fn snapshot_roundtrip_preserves_key_state() {
     assert_eq!(restored.pci_read_u32(0x14), 0xC001);
     assert_eq!(restored.mmio_read_u32(REG_IMS), ICR_TXDW);
     assert_eq!(restored.mmio_read_u32(0x1234), 0xDEAD_BEEF);
-    assert!(restored.irq_level(), "irq_level should be recomputed on restore");
+    assert!(
+        restored.irq_level(),
+        "irq_level should be recomputed on restore"
+    );
 
     assert_eq!(restored.pop_tx_frame().as_deref(), Some(tx0.as_slice()));
 
@@ -341,8 +344,8 @@ fn snapshot_roundtrip_restores_advanced_tx_state() {
     let payload = [0x01, 0x02, 0x03, 0x04];
     let ip_total_len = (20 + payload.len()) as u16;
     let mut ipv4 = [
-        0x45, 0x00, 0x00, 0x00, 0x12, 0x34, 0x00, 0x00, 64, 17, 0x00, 0x00, 192, 168, 0, 2,
-        192, 168, 0, 1,
+        0x45, 0x00, 0x00, 0x00, 0x12, 0x34, 0x00, 0x00, 64, 17, 0x00, 0x00, 192, 168, 0, 2, 192,
+        168, 0, 1,
     ];
     ipv4[2..4].copy_from_slice(&ip_total_len.to_be_bytes());
     let expected_csum = ipv4_header_checksum(&ipv4);
@@ -576,7 +579,10 @@ fn snapshot_rejects_pci_bar0_probe_with_nonzero_bar0() {
 
     let mut dev = E1000Device::new([0; 6]);
     let err = dev.load_state(&bytes).unwrap_err();
-    assert_eq!(err, SnapshotError::InvalidFieldEncoding("e1000 pci bar0_probe"));
+    assert_eq!(
+        err,
+        SnapshotError::InvalidFieldEncoding("e1000 pci bar0_probe")
+    );
 }
 
 #[test]
@@ -595,7 +601,10 @@ fn snapshot_rejects_pci_bar1_probe_with_nondefault_bar1() {
 
     let mut dev = E1000Device::new([0; 6]);
     let err = dev.load_state(&bytes).unwrap_err();
-    assert_eq!(err, SnapshotError::InvalidFieldEncoding("e1000 pci bar1_probe"));
+    assert_eq!(
+        err,
+        SnapshotError::InvalidFieldEncoding("e1000 pci bar1_probe")
+    );
 }
 
 #[test]
@@ -754,7 +763,10 @@ fn snapshot_rejects_unaligned_other_regs_key() {
 
     let mut dev = E1000Device::new([0; 6]);
     let err = dev.load_state(&bytes).unwrap_err();
-    assert_eq!(err, SnapshotError::InvalidFieldEncoding("e1000 other_regs key"));
+    assert_eq!(
+        err,
+        SnapshotError::InvalidFieldEncoding("e1000 other_regs key")
+    );
 }
 
 #[test]
@@ -782,7 +794,8 @@ fn snapshot_rejects_inconsistent_irq_level_field() {
 #[test]
 fn snapshot_rejects_unsupported_major_version() {
     // Write a snapshot with the correct device ID but an unsupported major version.
-    let unsupported = SnapshotVersion::new(<E1000Device as IoSnapshot>::DEVICE_VERSION.major + 1, 0);
+    let unsupported =
+        SnapshotVersion::new(<E1000Device as IoSnapshot>::DEVICE_VERSION.major + 1, 0);
     let w = SnapshotWriter::new(<E1000Device as IoSnapshot>::DEVICE_ID, unsupported);
     let bytes = w.finish();
 
@@ -839,8 +852,16 @@ fn snapshot_rejects_unsupported_format_version() {
     bytes.extend_from_slice(&2u16.to_le_bytes()); // unsupported format major
     bytes.extend_from_slice(&0u16.to_le_bytes());
     bytes.extend_from_slice(&<E1000Device as IoSnapshot>::DEVICE_ID);
-    bytes.extend_from_slice(&<E1000Device as IoSnapshot>::DEVICE_VERSION.major.to_le_bytes());
-    bytes.extend_from_slice(&<E1000Device as IoSnapshot>::DEVICE_VERSION.minor.to_le_bytes());
+    bytes.extend_from_slice(
+        &<E1000Device as IoSnapshot>::DEVICE_VERSION
+            .major
+            .to_le_bytes(),
+    );
+    bytes.extend_from_slice(
+        &<E1000Device as IoSnapshot>::DEVICE_VERSION
+            .minor
+            .to_le_bytes(),
+    );
 
     let mut dev = E1000Device::new([0; 6]);
     let err = dev.load_state(&bytes).unwrap_err();

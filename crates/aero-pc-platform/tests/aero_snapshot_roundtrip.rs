@@ -2,14 +2,16 @@ use std::io::Cursor;
 
 use aero_devices::hpet::HPET_MMIO_BASE;
 use aero_devices::ioapic::IoApic;
-use aero_devices::pit8254::{PIT_CH0, PIT_CMD};
 use aero_devices::pci::{
     GsiLevelSink, PciBdf, PciInterruptPin, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT,
 };
+use aero_devices::pit8254::{PIT_CH0, PIT_CMD};
 use aero_io_snapshot::io::state::codec::Decoder;
 use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader};
 use aero_pc_platform::PcPlatform;
-use aero_snapshot::io_snapshot_bridge::{apply_io_snapshot_to_device, device_state_from_io_snapshot};
+use aero_snapshot::io_snapshot_bridge::{
+    apply_io_snapshot_to_device, device_state_from_io_snapshot,
+};
 use aero_snapshot::{
     restore_snapshot, save_snapshot, Compression, CpuState, DeviceId, DeviceState, DiskOverlayRefs,
     MmuState, Result as SnapshotResult, SaveOptions, SnapshotError, SnapshotMeta, SnapshotSource,
@@ -238,9 +240,7 @@ fn aero_snapshot_roundtrip_happy_path() {
 
     // HPET: requires A20 enabled to avoid aliasing with IOAPIC base.
     src.platform.io.write_u8(PORT_A20_FAST, 0x02);
-    src.platform
-        .memory
-        .write_u64(HPET_MMIO_BASE + 0x10, 0x1); // GEN_CONF_ENABLE
+    src.platform.memory.write_u64(HPET_MMIO_BASE + 0x10, 0x1); // GEN_CONF_ENABLE
     src.platform.memory.write_u64(HPET_MMIO_BASE + 0xF0, 0x1234);
     src.platform.tick(123_456);
     src.platform.io.write_u8(PORT_A20_FAST, 0x00);
@@ -292,13 +292,25 @@ fn aero_snapshot_roundtrip_happy_path() {
     restore_snapshot(&mut Cursor::new(&snap1), &mut restored).unwrap();
 
     // Assert device snapshots roundtrip as byte-identical IoSnapshot payloads.
-    assert_eq!(restored.platform.interrupts.borrow().save_state(), expected_intr);
+    assert_eq!(
+        restored.platform.interrupts.borrow().save_state(),
+        expected_intr
+    );
     assert_eq!(restored.platform.pit().borrow().save_state(), expected_pit);
     assert_eq!(restored.platform.rtc().borrow().save_state(), expected_rtc);
-    assert_eq!(restored.platform.hpet().borrow().save_state(), expected_hpet);
-    assert_eq!(restored.platform.pci_cfg.borrow().save_state(), expected_pci_cfg);
+    assert_eq!(
+        restored.platform.hpet().borrow().save_state(),
+        expected_hpet
+    );
+    assert_eq!(
+        restored.platform.pci_cfg.borrow().save_state(),
+        expected_pci_cfg
+    );
     assert_eq!(restored.platform.pci_intx.save_state(), expected_pci_intx);
-    assert_eq!(restored.platform.acpi_pm.borrow().save_state(), expected_acpi_pm);
+    assert_eq!(
+        restored.platform.acpi_pm.borrow().save_state(),
+        expected_acpi_pm
+    );
     assert_eq!(restored.platform.chipset.a20().enabled(), expected_a20);
 
     // Assert raw physical RAM preserved even with A20 disabled.
@@ -342,9 +354,7 @@ fn aero_snapshot_restore_syncs_pci_intx_levels_into_interrupt_controller() {
     let pin = PciInterruptPin::IntA;
     let expected_gsi = src.platform.pci_intx.gsi_for_intx(bdf, pin);
     let mut dummy_sink = DummySink;
-    src.platform
-        .pci_intx
-        .assert_intx(bdf, pin, &mut dummy_sink);
+    src.platform.pci_intx.assert_intx(bdf, pin, &mut dummy_sink);
 
     // Sanity: the interrupt controller snapshot still sees the GSI deasserted at save time.
     let intr_bytes = src.platform.interrupts.borrow().save_state();
@@ -494,9 +504,17 @@ fn aero_snapshot_restore_syncs_hpet_levels_for_non_default_route_into_interrupt_
     let mut hpet = Hpet::new_default(clock.clone());
     let mut dummy_sink = IoApic::default();
 
-    hpet.mmio_write(HPET_REG_GENERAL_CONFIG, 8, HPET_GEN_CONF_ENABLE, &mut dummy_sink);
-    let mut timer0_cfg =
-        hpet.mmio_read(HPET_REG_TIMER0_BASE + HPET_REG_TIMER_CONFIG, 8, &mut dummy_sink);
+    hpet.mmio_write(
+        HPET_REG_GENERAL_CONFIG,
+        8,
+        HPET_GEN_CONF_ENABLE,
+        &mut dummy_sink,
+    );
+    let mut timer0_cfg = hpet.mmio_read(
+        HPET_REG_TIMER0_BASE + HPET_REG_TIMER_CONFIG,
+        8,
+        &mut dummy_sink,
+    );
     timer0_cfg |= HPET_TIMER_CFG_INT_ENABLE | HPET_TIMER_CFG_INT_LEVEL;
     timer0_cfg = (timer0_cfg & !HPET_TIMER_CFG_INT_ROUTE_MASK)
         | (u64::from(EXPECTED_GSI) << HPET_TIMER_CFG_INT_ROUTE_SHIFT);

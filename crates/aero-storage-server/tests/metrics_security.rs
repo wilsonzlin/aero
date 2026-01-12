@@ -45,7 +45,10 @@ async fn metrics_auth_token_is_required() {
         .await
         .unwrap();
     assert!(
-        matches!(unauth.status(), StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN),
+        matches!(
+            unauth.status(),
+            StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN
+        ),
         "expected 401/403, got {}",
         unauth.status()
     );
@@ -62,4 +65,3 @@ async fn metrics_auth_token_is_required() {
         .unwrap();
     assert_eq!(auth.status(), StatusCode::OK);
 }
-

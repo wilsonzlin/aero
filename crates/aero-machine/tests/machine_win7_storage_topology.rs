@@ -22,7 +22,11 @@ fn cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
 }
 
 fn read_cfg_u32(m: &mut Machine, bus: u8, device: u8, function: u8, offset: u8) -> u32 {
-    m.io_write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bus, device, function, offset));
+    m.io_write(
+        PCI_CFG_ADDR_PORT,
+        4,
+        cfg_addr(bus, device, function, offset),
+    );
     m.io_read(PCI_CFG_DATA_PORT, 4)
 }
 

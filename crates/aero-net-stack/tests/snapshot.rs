@@ -1,8 +1,8 @@
 use aero_io_snapshot::io::state::{IoSnapshot, SnapshotVersion, SnapshotWriter};
 use aero_net_stack::packet::*;
 use aero_net_stack::{
-    Action, DnsResolved, NetworkStack, NetworkStackSnapshotState, StackConfig, TcpRestorePolicy,
-    TcpConnectionStatus,
+    Action, DnsResolved, NetworkStack, NetworkStackSnapshotState, StackConfig, TcpConnectionStatus,
+    TcpRestorePolicy,
 };
 use core::net::Ipv4Addr;
 

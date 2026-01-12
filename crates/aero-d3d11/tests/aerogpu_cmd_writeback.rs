@@ -654,7 +654,9 @@ fn copy_texture2d_writeback_encodes_x8_alpha_as_255() {
                 .copy_from_slice(&total_size.to_le_bytes());
 
             exec.execute_cmd_stream(&stream, Some(&allocs), &mut guest_mem)
-                .unwrap_or_else(|e| panic!("execute_cmd_stream should succeed for {format:?}: {e:#}"));
+                .unwrap_or_else(|e| {
+                    panic!("execute_cmd_stream should succeed for {format:?}: {e:#}")
+                });
             exec.poll_wait();
 
             let mut expected_dst = dst_bytes;
@@ -800,7 +802,9 @@ fn x8_texture_upload_forces_alpha_to_255() {
                 .copy_from_slice(&total_size.to_le_bytes());
 
             exec.execute_cmd_stream(&stream, Some(&allocs), &mut guest_mem)
-                .unwrap_or_else(|e| panic!("execute_cmd_stream should succeed for {format:?}: {e:#}"));
+                .unwrap_or_else(|e| {
+                    panic!("execute_cmd_stream should succeed for {format:?}: {e:#}")
+                });
             exec.poll_wait();
 
             let actual = exec
@@ -829,7 +833,10 @@ fn x8_texture_upload_forces_alpha_to_255() {
                 }
             }
 
-            assert_eq!(actual, expected, "format {format:?}: X8 upload should force alpha to opaque");
+            assert_eq!(
+                actual, expected,
+                "format {format:?}: X8 upload should force alpha to opaque"
+            );
         }
     });
 }

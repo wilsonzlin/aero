@@ -475,13 +475,8 @@ mod tests {
     #[test]
     fn parse_hda_format_bits_per_sample_code_mapping() {
         // base=48k, mult/div=1, channels=1.
-        let cases: &[(u16, u8, usize)] = &[
-            (0, 8, 1),
-            (1, 16, 2),
-            (2, 20, 4),
-            (3, 24, 4),
-            (4, 32, 4),
-        ];
+        let cases: &[(u16, u8, usize)] =
+            &[(0, 8, 1), (1, 16, 2), (2, 20, 4), (3, 24, 4), (4, 32, 4)];
         for &(code, bits, bps) in cases {
             let fmt = (code << 4) | 0;
             let parsed = StreamFormat::from_hda_format(fmt);
@@ -836,11 +831,7 @@ mod tests {
         assert_f32_approx_eq(decode_raw_24(-1), -1.0 / 8_388_608.0, 1e-6);
         assert_f32_approx_eq(decode_raw_24(0), 0.0, 1e-6);
         assert_f32_approx_eq(decode_raw_24(1), 1.0 / 8_388_608.0, 1e-6);
-        assert_f32_approx_eq(
-            decode_raw_24(8_388_607),
-            8_388_607.0 / 8_388_608.0,
-            1e-6,
-        );
+        assert_f32_approx_eq(decode_raw_24(8_388_607), 8_388_607.0 / 8_388_608.0, 1e-6);
 
         // Upper bits may contain garbage; decoding should still use only the low 24 bits.
         let neg_one_with_garbage = 0xAA00_0000u32 | 0x00FF_FFFFu32;

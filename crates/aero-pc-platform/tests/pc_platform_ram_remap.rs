@@ -49,4 +49,3 @@ fn pc_platform_remaps_ram_above_4gib_when_total_ram_exceeds_ecam_base() {
     platform.memory.read_physical(last, &mut b);
     assert_eq!(b, [0x42]);
 }
-

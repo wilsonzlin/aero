@@ -1,5 +1,7 @@
 use aero_devices::pci::profile::build_canonical_io_bus;
-use aero_devices::pci::{PciBdf, PciBus, PciConfigMechanism1, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
+use aero_devices::pci::{
+    PciBdf, PciBus, PciConfigMechanism1, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT,
+};
 
 const PCI_VENDOR_ID_VIRTIO: u16 = 0x1af4;
 const PCI_DEVICE_ID_VIRTIO_INPUT_MODERN: u16 = 0x1052;

@@ -17,14 +17,20 @@ fn cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
 }
 
 fn write_cfg_u16(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8, value: u16) {
-    pc.io
-        .write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bus, device, function, offset));
+    pc.io.write(
+        PCI_CFG_ADDR_PORT,
+        4,
+        cfg_addr(bus, device, function, offset),
+    );
     pc.io.write(PCI_CFG_DATA_PORT, 2, u32::from(value));
 }
 
 fn write_cfg_u32(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8, value: u32) {
-    pc.io
-        .write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bus, device, function, offset));
+    pc.io.write(
+        PCI_CFG_ADDR_PORT,
+        4,
+        cfg_addr(bus, device, function, offset),
+    );
     pc.io.write(PCI_CFG_DATA_PORT, 4, value);
 }
 
@@ -113,7 +119,14 @@ fn pci_bar_router_routes_mmio_and_tracks_bar_reprogramming() {
     assert_eq!(base % 0x1000, 0);
 
     // Program BAR0 and enable memory decoding.
-    write_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x10, base as u32);
+    write_cfg_u32(
+        &mut pc,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        0x10,
+        base as u32,
+    );
     write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0002);
 
     pc.memory.write_u32(base + 0x40, 0xaabb_ccdd);

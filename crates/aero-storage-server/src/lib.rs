@@ -26,9 +26,9 @@ use cors::CorsConfig;
 #[cfg(not(target_arch = "wasm32"))]
 use metrics::Metrics;
 #[cfg(not(target_arch = "wasm32"))]
-use store::ImageStore;
-#[cfg(not(target_arch = "wasm32"))]
 use std::time::Duration;
+#[cfg(not(target_arch = "wasm32"))]
+use store::ImageStore;
 
 #[cfg(not(target_arch = "wasm32"))]
 /// Default maximum number of concurrent requests allowed for the image bytes endpoints

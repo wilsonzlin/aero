@@ -267,7 +267,10 @@ fn rewrite_pci_cfg_device_id_to_legacy_pci(bytes: &[u8]) -> Vec<u8> {
             payload.len(),
             "devices section parse did not consume full payload"
         );
-        assert_eq!(rewritten, 1, "expected exactly one PCI_CFG entry to rewrite");
+        assert_eq!(
+            rewritten, 1,
+            "expected exactly one PCI_CFG entry to rewrite"
+        );
 
         let mut new_payload = Vec::with_capacity(payload.len());
         let new_count: u32 = entries.len().try_into().unwrap();
@@ -595,7 +598,10 @@ fn restore_device_states_accepts_legacy_pci_device_id_for_pci_cfg_state() {
 
     let legacy_state = {
         let pci_cfg = pci_cfg.borrow();
-        snapshot::io_snapshot_bridge::device_state_from_io_snapshot(snapshot::DeviceId::PCI, &*pci_cfg)
+        snapshot::io_snapshot_bridge::device_state_from_io_snapshot(
+            snapshot::DeviceId::PCI,
+            &*pci_cfg,
+        )
     };
 
     // Restore into a fresh machine with a different guest-programmed state.
@@ -718,7 +724,10 @@ fn restore_device_states_falls_back_to_legacy_pci_cfg_when_pci_cfg_snapshot_is_i
     // Provide a valid legacy `DeviceId::PCI` (`PCPT`) payload.
     let legacy_state = {
         let pci_cfg = pci_cfg.borrow();
-        snapshot::io_snapshot_bridge::device_state_from_io_snapshot(snapshot::DeviceId::PCI, &*pci_cfg)
+        snapshot::io_snapshot_bridge::device_state_from_io_snapshot(
+            snapshot::DeviceId::PCI,
+            &*pci_cfg,
+        )
     };
 
     // Provide an invalid canonical `PCI_CFG` payload by corrupting the outer version.
@@ -777,7 +786,10 @@ fn restore_device_states_prefers_pci_intx_router_over_legacy_pci_entry() {
     }
     let legacy_state = {
         let pci_intx = pci_intx.borrow();
-        snapshot::io_snapshot_bridge::device_state_from_io_snapshot(snapshot::DeviceId::PCI, &*pci_intx)
+        snapshot::io_snapshot_bridge::device_state_from_io_snapshot(
+            snapshot::DeviceId::PCI,
+            &*pci_intx,
+        )
     };
 
     // Sanity check: the two snapshots should encode distinct asserted GSI sets.
@@ -842,7 +854,10 @@ fn restore_device_states_falls_back_to_legacy_pci_intx_when_pci_intx_router_snap
     };
     let legacy_state = {
         let pci_intx = pci_intx.borrow();
-        snapshot::io_snapshot_bridge::device_state_from_io_snapshot(snapshot::DeviceId::PCI, &*pci_intx)
+        snapshot::io_snapshot_bridge::device_state_from_io_snapshot(
+            snapshot::DeviceId::PCI,
+            &*pci_intx,
+        )
     };
 
     let mut restored = Machine::new(pc_machine_config()).unwrap();
@@ -880,8 +895,10 @@ fn restore_device_states_falls_back_to_legacy_apic_when_platform_interrupts_snap
     }
 
     // Provide a valid legacy APIC device blob.
-    let apic_state =
-        snapshot::io_snapshot_bridge::device_state_from_io_snapshot(snapshot::DeviceId::APIC, &*interrupts.borrow());
+    let apic_state = snapshot::io_snapshot_bridge::device_state_from_io_snapshot(
+        snapshot::DeviceId::APIC,
+        &*interrupts.borrow(),
+    );
 
     // Provide an invalid `PLATFORM_INTERRUPTS` blob by corrupting the outer version.
     let mut bad_platform_state = snapshot::io_snapshot_bridge::device_state_from_io_snapshot(
@@ -930,8 +947,10 @@ fn restore_device_states_does_not_sync_pci_intx_when_intx_snapshot_is_invalid() 
     }
 
     // Snapshot the interrupt controller with GSI10 asserted.
-    let apic_state =
-        snapshot::io_snapshot_bridge::device_state_from_io_snapshot(snapshot::DeviceId::APIC, &*interrupts.borrow());
+    let apic_state = snapshot::io_snapshot_bridge::device_state_from_io_snapshot(
+        snapshot::DeviceId::APIC,
+        &*interrupts.borrow(),
+    );
 
     // Produce an invalid PCI_INTX_ROUTER state by corrupting the outer version (must match the inner
     // io-snapshot header version). This forces `apply_io_snapshot_to_device` to fail.
@@ -944,7 +963,10 @@ fn restore_device_states_does_not_sync_pci_intx_when_intx_snapshot_is_invalid() 
     // Restore into a fresh machine. The invalid PCI_INTX_ROUTER state must *not* cause Machine restore to
     // call `PciIntxRouter::sync_levels_to_sink()`, since the router's state did not apply.
     let mut restored = Machine::new(pc_machine_config()).unwrap();
-    snapshot::SnapshotTarget::restore_device_states(&mut restored, vec![apic_state, bad_intx_state]);
+    snapshot::SnapshotTarget::restore_device_states(
+        &mut restored,
+        vec![apic_state, bad_intx_state],
+    );
 
     let interrupts = restored.platform_interrupts().unwrap();
     assert_eq!(interrupts.borrow().get_pending(), None);
@@ -983,7 +1005,10 @@ fn restore_device_states_accepts_legacy_pci_device_id_for_pci_intx_state() {
     // outer `DeviceId::PCI` key.
     let legacy_state = {
         let pci_intx = pci_intx.borrow();
-        snapshot::io_snapshot_bridge::device_state_from_io_snapshot(snapshot::DeviceId::PCI, &*pci_intx)
+        snapshot::io_snapshot_bridge::device_state_from_io_snapshot(
+            snapshot::DeviceId::PCI,
+            &*pci_intx,
+        )
     };
 
     let mut restored = Machine::new(pc_machine_config()).unwrap();
@@ -1446,7 +1471,9 @@ fn snapshot_stores_pci_core_under_split_device_ids() {
         .expect("missing DEVICES section");
 
     let mut cursor = Cursor::new(&snap);
-    cursor.seek(SeekFrom::Start(devices_section.offset)).unwrap();
+    cursor
+        .seek(SeekFrom::Start(devices_section.offset))
+        .unwrap();
     let mut r = cursor.take(devices_section.len);
 
     let count = read_u32_le(&mut r) as usize;

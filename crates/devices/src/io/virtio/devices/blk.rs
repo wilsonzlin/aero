@@ -534,7 +534,8 @@ mod tests {
         let payload: Vec<u8> = (0..(2 * SECTOR_SIZE)).map(|i| (i & 0xff) as u8).collect();
 
         // 1) WRITE two sectors at LBA 0 via two data descriptors.
-        mem.write_u32_le(write_header_addr, VIRTIO_BLK_T_OUT).unwrap();
+        mem.write_u32_le(write_header_addr, VIRTIO_BLK_T_OUT)
+            .unwrap();
         mem.write_u32_le(write_header_addr + 4, 0).unwrap();
         mem.write_u64_le(write_header_addr + 8, 0).unwrap(); // sector 0
         mem.write_from(write_data1_addr, &payload[..SECTOR_SIZE])

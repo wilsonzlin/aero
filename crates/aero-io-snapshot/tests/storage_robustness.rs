@@ -1,8 +1,8 @@
 use aero_io_snapshot::io::state::codec::Encoder;
 use aero_io_snapshot::io::state::{IoSnapshot, SnapshotError, SnapshotWriter};
 use aero_io_snapshot::io::storage::state::{
-    AhciControllerState, DiskBackendState, DiskLayerState, IdeControllerState, LocalDiskBackendKind,
-    LocalDiskBackendState, NvmeControllerState, MAX_IDE_DATA_BUFFER_BYTES,
+    AhciControllerState, DiskBackendState, DiskLayerState, IdeControllerState,
+    LocalDiskBackendKind, LocalDiskBackendState, NvmeControllerState, MAX_IDE_DATA_BUFFER_BYTES,
 };
 
 #[test]
@@ -103,7 +103,10 @@ fn disk_backend_state_rejects_overlay_disk_size_zero() {
     bytes.extend_from_slice(&512u32.to_le_bytes());
 
     let err = DiskBackendState::decode(&bytes).expect_err("should reject overlay disk_size=0");
-    assert_eq!(err, SnapshotError::InvalidFieldEncoding("overlay disk_size"));
+    assert_eq!(
+        err,
+        SnapshotError::InvalidFieldEncoding("overlay disk_size")
+    );
 }
 
 #[test]
@@ -185,8 +188,8 @@ fn disk_backend_state_rejects_overlay_block_size_not_power_of_two() {
     // overlay.block_size_bytes = 1536 (multiple of 512, but not power-of-two)
     bytes.extend_from_slice(&1536u32.to_le_bytes());
 
-    let err =
-        DiskBackendState::decode(&bytes).expect_err("should reject overlay block_size power_of_two");
+    let err = DiskBackendState::decode(&bytes)
+        .expect_err("should reject overlay block_size power_of_two");
     assert_eq!(
         err,
         SnapshotError::InvalidFieldEncoding("overlay block_size power_of_two")
@@ -309,11 +312,14 @@ fn disk_backend_state_rejects_excessive_chunk_size() {
     bytes.extend_from_slice(b"r");
 
     bytes.push(0); // validator_kind = none
-    // Pick a value that remains 512-byte aligned but exceeds the maximum.
+                   // Pick a value that remains 512-byte aligned but exceeds the maximum.
     bytes.extend_from_slice(&(MAX_CHUNK + 512).to_le_bytes());
 
     let err = DiskBackendState::decode(&bytes).expect_err("should reject excessive chunk_size");
-    assert_eq!(err, SnapshotError::InvalidFieldEncoding("chunk_size too large"));
+    assert_eq!(
+        err,
+        SnapshotError::InvalidFieldEncoding("chunk_size too large")
+    );
 }
 
 #[test]
@@ -540,23 +546,25 @@ fn disk_layer_snapshot_rejects_remote_overlay_disk_size_mismatch() {
     const TAG_SIZE_BYTES: u16 = 3;
     const TAG_BACKEND_STATE: u16 = 8;
 
-    let backend = DiskBackendState::Remote(aero_io_snapshot::io::storage::state::RemoteDiskBackendState {
-        base: aero_io_snapshot::io::storage::state::RemoteDiskBaseState {
-            image_id: "img".to_string(),
-            version: "ver".to_string(),
-            delivery_type: "range".to_string(),
-            expected_validator: None,
-            chunk_size: 1024 * 1024,
+    let backend = DiskBackendState::Remote(
+        aero_io_snapshot::io::storage::state::RemoteDiskBackendState {
+            base: aero_io_snapshot::io::storage::state::RemoteDiskBaseState {
+                image_id: "img".to_string(),
+                version: "ver".to_string(),
+                delivery_type: "range".to_string(),
+                expected_validator: None,
+                chunk_size: 1024 * 1024,
+            },
+            overlay: aero_io_snapshot::io::storage::state::DiskOverlayState {
+                file_name: "remote.overlay".to_string(),
+                disk_size_bytes: 4096,
+                block_size_bytes: 1024 * 1024,
+            },
+            cache: aero_io_snapshot::io::storage::state::DiskCacheState {
+                file_name: "remote.cache".to_string(),
+            },
         },
-        overlay: aero_io_snapshot::io::storage::state::DiskOverlayState {
-            file_name: "remote.overlay".to_string(),
-            disk_size_bytes: 4096,
-            block_size_bytes: 1024 * 1024,
-        },
-        cache: aero_io_snapshot::io::storage::state::DiskCacheState {
-            file_name: "remote.cache".to_string(),
-        },
-    });
+    );
 
     let mut w = SnapshotWriter::new(DiskLayerState::DEVICE_ID, DiskLayerState::DEVICE_VERSION);
     w.field_bytes(TAG_BACKEND_STATE, backend.encode());
@@ -597,10 +605,7 @@ fn ahci_snapshot_rejects_excessive_port_count() {
     let err = state
         .load_state(&w.finish())
         .expect_err("snapshot should reject excessive AHCI port count");
-    assert_eq!(
-        err,
-        SnapshotError::InvalidFieldEncoding("ahci port count")
-    );
+    assert_eq!(err, SnapshotError::InvalidFieldEncoding("ahci port count"));
 }
 
 #[test]
@@ -715,7 +720,10 @@ fn ide_snapshot_rejects_invalid_data_index() {
     let err = state
         .load_state(&w.finish())
         .expect_err("snapshot should reject invalid data_index");
-    assert_eq!(err, SnapshotError::InvalidFieldEncoding("ide pio data_index"));
+    assert_eq!(
+        err,
+        SnapshotError::InvalidFieldEncoding("ide pio data_index")
+    );
 }
 
 #[test]
@@ -816,7 +824,10 @@ fn ide_snapshot_rejects_invalid_transfer_kind_enum() {
     let err = state
         .load_state(&w.finish())
         .expect_err("snapshot should reject invalid transfer_kind");
-    assert_eq!(err, SnapshotError::InvalidFieldEncoding("ide transfer_kind"));
+    assert_eq!(
+        err,
+        SnapshotError::InvalidFieldEncoding("ide transfer_kind")
+    );
 }
 
 #[test]

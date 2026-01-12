@@ -21,7 +21,10 @@ async fn cors_preflight_max_age_is_configurable_for_bytes_and_metadata() {
     let state = AppState::new(store).with_cors_preflight_max_age(Duration::from_secs(123));
     let app = aero_storage_server::app(state);
 
-    for (name, uri) in [("bytes", "/v1/images/test.img"), ("meta", "/v1/images/test.img/meta")] {
+    for (name, uri) in [
+        ("bytes", "/v1/images/test.img"),
+        ("meta", "/v1/images/test.img/meta"),
+    ] {
         let res = app
             .clone()
             .oneshot(

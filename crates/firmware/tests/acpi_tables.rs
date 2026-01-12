@@ -194,11 +194,7 @@ fn fadt_exposes_acpi_pm_blocks_and_reset_register() {
         "GPE0 must be 0x420"
     );
     assert_eq!(fadt[91], 4, "PM_TMR_LEN must be 4");
-    assert_eq!(
-        fadt[92],
-        DEFAULT_GPE0_BLK_LEN,
-        "GPE0_BLK_LEN must be 0x08"
-    );
+    assert_eq!(fadt[92], DEFAULT_GPE0_BLK_LEN, "GPE0_BLK_LEN must be 0x08");
 
     // Offsets per ACPI 2.0+ FADT layout (see `acpi::structures::Fadt`).
     const FLAGS_OFFSET: usize = 112;
@@ -422,8 +418,8 @@ fn dsdt_contains_pci_routing_and_resources() {
     // `_PIC` should program the IMCR (ports 0x22/0x23) so the platform switches
     // between legacy PIC routing and APIC/IOAPIC routing.
     let imcr_opregion = [
-        &[0x5B, 0x80][..], // OperationRegionOp (ExtOpPrefix + Op)
-        &b"IMCR"[..],      // NameSeg
+        &[0x5B, 0x80][..],                   // OperationRegionOp (ExtOpPrefix + Op)
+        &b"IMCR"[..],                        // NameSeg
         &[0x01, 0x0A, 0x22, 0x0A, 0x02][..], // SystemIO, base 0x22, length 2
     ]
     .concat();
@@ -507,8 +503,8 @@ fn shipped_dsdt_aml_matches_aero_acpi_generator() {
     let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     path.push("acpi");
     path.push("dsdt.aml");
-    let on_disk = std::fs::read(&path)
-        .unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
+    let on_disk =
+        std::fs::read(&path).unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
 
     assert_eq!(
         on_disk, generated,

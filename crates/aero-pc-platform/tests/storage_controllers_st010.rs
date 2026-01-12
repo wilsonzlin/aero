@@ -28,7 +28,8 @@ fn st010_ahci_read_dma_ext_and_intx_routing() {
     );
 
     // Attach a small in-memory disk with a known marker at LBA 4.
-    let mut disk = RawDisk::create(MemBackend::new(), 8 * aero_storage::SECTOR_SIZE as u64).unwrap();
+    let mut disk =
+        RawDisk::create(MemBackend::new(), 8 * aero_storage::SECTOR_SIZE as u64).unwrap();
     disk.write_at(4 * aero_storage::SECTOR_SIZE as u64, &[9, 8, 7, 6])
         .unwrap();
     pc.attach_ahci_disk_port0(Box::new(disk)).unwrap();
@@ -219,7 +220,7 @@ fn st010_nvme_admin_identify_and_intx_routing() {
     let dw0 = (opc as u32) | ((cid as u32) << 16);
     pc.memory.write_u32(asq, dw0);
     pc.memory.write_u32(asq + 4, 0); // NSID
-                                      // PRP1/PRP2
+                                     // PRP1/PRP2
     pc.memory.write_u64(asq + 24, identify);
     pc.memory.write_u64(asq + 32, 0);
     pc.memory.write_u32(asq + 40, 1); // CDW10: CNS=1
@@ -741,7 +742,8 @@ fn st010_ahci_snapshot_roundtrip_preserves_intx_level() {
 
     // Attach a small in-memory disk with a known marker at LBA 4 so the port is "present" and
     // snapshot restore won't reset registers when we re-attach the backend.
-    let mut disk = RawDisk::create(MemBackend::new(), 8 * aero_storage::SECTOR_SIZE as u64).unwrap();
+    let mut disk =
+        RawDisk::create(MemBackend::new(), 8 * aero_storage::SECTOR_SIZE as u64).unwrap();
     disk.write_at(4 * aero_storage::SECTOR_SIZE as u64, &[9, 8, 7, 6])
         .unwrap();
     pc.attach_ahci_disk_port0(Box::new(disk)).unwrap();
@@ -827,7 +829,8 @@ fn st010_ahci_snapshot_roundtrip_preserves_intx_level() {
     pc.memory.write_u32(prd, data_buf as u32);
     pc.memory.write_u32(prd + 4, 0);
     pc.memory.write_u32(prd + 8, 0);
-    pc.memory.write_u32(prd + 12, (aero_storage::SECTOR_SIZE as u32 - 1) | (1 << 31));
+    pc.memory
+        .write_u32(prd + 12, (aero_storage::SECTOR_SIZE as u32 - 1) | (1 << 31));
 
     pc.memory
         .write_u32(bar5.base + PORT_BASE + PORT_IS, PORT_IS_DHRS);
@@ -1032,12 +1035,7 @@ fn st010_ide_snapshot_roundtrip_preserves_irq14_level() {
     pc.poll_pci_intx_lines();
     assert_eq!(pic_pending_irq(&pc), Some(14));
 
-    let ide_state = pc
-        .ide
-        .as_ref()
-        .expect("ide enabled")
-        .borrow()
-        .save_state();
+    let ide_state = pc.ide.as_ref().expect("ide enabled").borrow().save_state();
 
     let mut pc2 = PcPlatform::new_with_config(
         2 * 1024 * 1024,

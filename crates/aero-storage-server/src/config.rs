@@ -179,7 +179,8 @@ impl Config {
             .unwrap_or_else(|| "info".to_string());
 
         let require_range = args.require_range || parse_env_bool("AERO_STORAGE_REQUIRE_RANGE");
-        let disable_metrics = args.disable_metrics || parse_env_bool("AERO_STORAGE_DISABLE_METRICS");
+        let disable_metrics =
+            args.disable_metrics || parse_env_bool("AERO_STORAGE_DISABLE_METRICS");
 
         let metrics_auth_token = args
             .metrics_auth_token
@@ -233,4 +234,3 @@ fn parse_env_bool(var: &str) -> bool {
         other => panic!("{var} must be a boolean (got {other:?})"),
     }
 }
-

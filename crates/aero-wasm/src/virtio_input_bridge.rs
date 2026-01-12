@@ -8,7 +8,7 @@
 
 use aero_virtio::devices::input::{VirtioInput, VirtioInputDeviceKind};
 use aero_virtio::memory::GuestMemory;
-use aero_virtio::pci::{InterruptSink, VirtioPciDevice, VIRTIO_STATUS_DRIVER_OK};
+use aero_virtio::pci::{InterruptSink, VIRTIO_STATUS_DRIVER_OK, VirtioPciDevice};
 use std::cell::Cell;
 use std::rc::Rc;
 
@@ -131,13 +131,7 @@ impl VirtioInputPciDeviceCore {
         }
     }
 
-    pub fn mmio_write(
-        &mut self,
-        offset: u64,
-        size: u8,
-        value: u32,
-        mem: &mut dyn GuestMemory,
-    ) {
+    pub fn mmio_write(&mut self, offset: u64, size: u8, value: u32, mem: &mut dyn GuestMemory) {
         let size = validate_mmio_size(size);
         if size == 0 {
             return;
@@ -213,7 +207,9 @@ impl VirtioInputPciDeviceCore {
 mod wasm_guest_memory {
     use aero_virtio::memory::{GuestMemory as VirtioGuestMemory, GuestMemoryError};
 
-    use crate::guest_phys::{GuestRamRange, guest_ram_phys_end_exclusive, translate_guest_paddr_range};
+    use crate::guest_phys::{
+        GuestRamRange, guest_ram_phys_end_exclusive, translate_guest_paddr_range,
+    };
 
     // Cap open-bus slices so a malicious guest cannot force unbounded allocations.
     const OPEN_BUS_SLICE_MAX: usize = 64 * 1024;
@@ -320,11 +316,16 @@ mod wasm_guest_memory {
                 return Err(GuestMemoryError::OutOfBounds { addr: paddr, len });
             }
             let rel = ram_offset - self.ram_offset_base;
-            let rel_usize =
-                usize::try_from(rel).map_err(|_| GuestMemoryError::OutOfBounds { addr: paddr, len })?;
+            let rel_usize = usize::try_from(rel)
+                .map_err(|_| GuestMemoryError::OutOfBounds { addr: paddr, len })?;
 
             // Safety: callers ensure `ram_offset..ram_offset+len` lies within the mapped window.
-            unsafe { Ok(core::slice::from_raw_parts(self.ram_ptr.add(rel_usize), len)) }
+            unsafe {
+                Ok(core::slice::from_raw_parts(
+                    self.ram_ptr.add(rel_usize),
+                    len,
+                ))
+            }
         }
 
         #[inline]
@@ -345,15 +346,24 @@ mod wasm_guest_memory {
                 return Err(GuestMemoryError::OutOfBounds { addr: paddr, len });
             }
             let rel = ram_offset - self.ram_offset_base;
-            let rel_usize =
-                usize::try_from(rel).map_err(|_| GuestMemoryError::OutOfBounds { addr: paddr, len })?;
+            let rel_usize = usize::try_from(rel)
+                .map_err(|_| GuestMemoryError::OutOfBounds { addr: paddr, len })?;
 
             // Safety: callers ensure `ram_offset..ram_offset+len` lies within the mapped window.
-            unsafe { Ok(core::slice::from_raw_parts_mut(self.ram_ptr.add(rel_usize), len)) }
+            unsafe {
+                Ok(core::slice::from_raw_parts_mut(
+                    self.ram_ptr.add(rel_usize),
+                    len,
+                ))
+            }
         }
 
         #[inline]
-        fn open_bus_slice(&self, paddr: u64, len: usize) -> Result<&'static [u8], GuestMemoryError> {
+        fn open_bus_slice(
+            &self,
+            paddr: u64,
+            len: usize,
+        ) -> Result<&'static [u8], GuestMemoryError> {
             if len > OPEN_BUS_SLICE_MAX {
                 return Err(GuestMemoryError::OutOfBounds { addr: paddr, len });
             }
@@ -415,7 +425,10 @@ mod wasm_guest_memory {
                 }
                 // Safety: a zero-length slice may be created from a dangling pointer.
                 return Ok(unsafe {
-                    core::slice::from_raw_parts_mut(core::ptr::NonNull::<u8>::dangling().as_ptr(), 0)
+                    core::slice::from_raw_parts_mut(
+                        core::ptr::NonNull::<u8>::dangling().as_ptr(),
+                        0,
+                    )
                 });
             }
 

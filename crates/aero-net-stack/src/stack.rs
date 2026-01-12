@@ -1692,7 +1692,8 @@ impl NetworkStack {
         // DNS cache: preserve FIFO order and keep output bounded even if internal bookkeeping is
         // somehow inconsistent.
         let now_ms = self.last_now_ms;
-        let max_dns = (self.cfg.max_dns_cache_entries as usize).min(crate::snapshot::MAX_DNS_CACHE_ENTRIES);
+        let max_dns =
+            (self.cfg.max_dns_cache_entries as usize).min(crate::snapshot::MAX_DNS_CACHE_ENTRIES);
         let mut dns_cache = Vec::new();
         if max_dns > 0 {
             let mut seen: HashSet<String> = HashSet::new();
@@ -1936,7 +1937,8 @@ impl NetworkStack {
 // avoids timing-dependent reconnect behavior).
 impl IoSnapshot for NetworkStack {
     const DEVICE_ID: [u8; 4] = <NetworkStackSnapshotState as IoSnapshot>::DEVICE_ID;
-    const DEVICE_VERSION: SnapshotVersion = <NetworkStackSnapshotState as IoSnapshot>::DEVICE_VERSION;
+    const DEVICE_VERSION: SnapshotVersion =
+        <NetworkStackSnapshotState as IoSnapshot>::DEVICE_VERSION;
 
     fn save_state(&self) -> Vec<u8> {
         self.export_snapshot_state().save_state()

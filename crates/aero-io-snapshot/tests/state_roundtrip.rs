@@ -7,13 +7,12 @@ use aero_io_snapshot::io::network::state::{
 };
 use aero_io_snapshot::io::state::IoSnapshot;
 use aero_io_snapshot::io::storage::state::{
-    AhciControllerState, AhciHbaState, AhciPortState,
-    DiskBackendState, DiskCacheState, DiskLayerState, DiskOverlayState, IdeAtaDeviceState,
-    IdeAtapiDeviceState, IdeBusMasterChannelState, IdeChannelState, IdeControllerState, IdeDataMode,
-    IdeDmaDirection, IdeDmaRequestState, IdeDriveState, IdePioWriteState, IdePortMapState,
-    IdeTaskFileState, IdeTransferKind, LocalDiskBackendKind, LocalDiskBackendState,
-    NvmeCompletionQueueState, NvmeControllerState, NvmeInFlightCommandState, NvmeSubmissionQueueState,
-    PciConfigSpaceState,
+    AhciControllerState, AhciHbaState, AhciPortState, DiskBackendState, DiskCacheState,
+    DiskLayerState, DiskOverlayState, IdeAtaDeviceState, IdeAtapiDeviceState,
+    IdeBusMasterChannelState, IdeChannelState, IdeControllerState, IdeDataMode, IdeDmaDirection,
+    IdeDmaRequestState, IdeDriveState, IdePioWriteState, IdePortMapState, IdeTaskFileState,
+    IdeTransferKind, LocalDiskBackendKind, LocalDiskBackendState, NvmeCompletionQueueState,
+    NvmeControllerState, NvmeInFlightCommandState, NvmeSubmissionQueueState, PciConfigSpaceState,
     RemoteDiskBackendState, RemoteDiskBaseState, RemoteDiskValidator,
 };
 

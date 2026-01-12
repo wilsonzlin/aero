@@ -105,4 +105,3 @@ async fn require_manifest_with_manifest_behaves_normally() -> anyhow::Result<()>
     server.shutdown().await?;
     Ok(())
 }
-

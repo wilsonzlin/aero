@@ -41,8 +41,7 @@ fn snapshot_restore_roundtrips_e1000_state_and_redrives_intx_level() {
         let mut ints = interrupts.borrow_mut();
         ints.pic_mut().set_offsets(0x20, 0x28);
         ints.pic_mut().set_masked(2, false); // unmask cascade
-        ints.pic_mut()
-            .set_masked(gsi as u8, false); // unmask the routed IRQ (GSI 10-13)
+        ints.pic_mut().set_masked(gsi as u8, false); // unmask the routed IRQ (GSI 10-13)
 
         (gsi, vector)
     };
@@ -66,7 +65,10 @@ fn snapshot_restore_roundtrips_e1000_state_and_redrives_intx_level() {
 
     let expected_e1000_state = {
         let dev = e1000.borrow();
-        aero_snapshot::io_snapshot_bridge::device_state_from_io_snapshot(aero_snapshot::DeviceId::E1000, &*dev)
+        aero_snapshot::io_snapshot_bridge::device_state_from_io_snapshot(
+            aero_snapshot::DeviceId::E1000,
+            &*dev,
+        )
     };
 
     let snapshot = vm.take_snapshot_full().unwrap();
@@ -81,7 +83,10 @@ fn snapshot_restore_roundtrips_e1000_state_and_redrives_intx_level() {
 
     let mutated_e1000_state = {
         let dev = e1000.borrow();
-        aero_snapshot::io_snapshot_bridge::device_state_from_io_snapshot(aero_snapshot::DeviceId::E1000, &*dev)
+        aero_snapshot::io_snapshot_bridge::device_state_from_io_snapshot(
+            aero_snapshot::DeviceId::E1000,
+            &*dev,
+        )
     };
     assert_ne!(
         mutated_e1000_state.data, expected_e1000_state.data,
@@ -99,7 +104,10 @@ fn snapshot_restore_roundtrips_e1000_state_and_redrives_intx_level() {
 
     let restored_e1000_state = {
         let dev = e1000_after.borrow();
-        aero_snapshot::io_snapshot_bridge::device_state_from_io_snapshot(aero_snapshot::DeviceId::E1000, &*dev)
+        aero_snapshot::io_snapshot_bridge::device_state_from_io_snapshot(
+            aero_snapshot::DeviceId::E1000,
+            &*dev,
+        )
     };
     assert_eq!(restored_e1000_state.data, expected_e1000_state.data);
 

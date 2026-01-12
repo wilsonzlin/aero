@@ -52,8 +52,8 @@ fn keyboard_code_to_usage_matches_shared_fixture() {
     // Ensure the Rust-side mapping does not "accidentally" support additional codes without the
     // shared fixture being updated. Use the PS/2 scancode list as a stable, project-wide superset
     // of common `KeyboardEvent.code` values.
-    let scancodes_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../tools/gen_scancodes/scancodes.json");
+    let scancodes_path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tools/gen_scancodes/scancodes.json");
     let scancodes_text = fs::read_to_string(&scancodes_path)
         .unwrap_or_else(|e| panic!("failed to read scancodes {scancodes_path:?}: {e}"));
     let scancodes: serde_json::Value = serde_json::from_str(&scancodes_text)

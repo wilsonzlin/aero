@@ -109,9 +109,15 @@ fn pc_machine_e1000_network_backend_loopback() {
             .bus_mut()
             .device_config(bdf)
             .expect("E1000 config function must exist");
-        (cfg.bar_range(0).expect("E1000 BAR0 must exist").base, cfg.command())
+        (
+            cfg.bar_range(0).expect("E1000 BAR0 must exist").base,
+            cfg.command(),
+        )
     };
-    assert_ne!(bar0_base, 0, "E1000 BAR0 should be assigned during BIOS POST");
+    assert_ne!(
+        bar0_base, 0,
+        "E1000 BAR0 should be assigned during BIOS POST"
+    );
 
     // Enable Bus Mastering so `PcPlatform::process_e1000` will allow DMA.
     {
@@ -142,10 +148,10 @@ fn pc_machine_e1000_network_backend_loopback() {
     pc.bus.platform.memory.write_physical(tx_buf_addr, &frame);
 
     // TX ring: 2 descriptors, with a single packet in entry 0 (TDH=0, TDT=1).
-    pc.bus
-        .platform
-        .memory
-        .write_physical(tx_desc_base, &build_tx_desc(tx_buf_addr, frame.len() as u16));
+    pc.bus.platform.memory.write_physical(
+        tx_desc_base,
+        &build_tx_desc(tx_buf_addr, frame.len() as u16),
+    );
     pc.bus
         .platform
         .memory
@@ -192,7 +198,10 @@ fn pc_machine_e1000_network_backend_loopback() {
     pc.bus.platform.memory.write_u32(bar0_base + REG_RDLEN, 32);
     pc.bus.platform.memory.write_u32(bar0_base + REG_RDH, 0);
     pc.bus.platform.memory.write_u32(bar0_base + REG_RDT, 1);
-    pc.bus.platform.memory.write_u32(bar0_base + REG_RCTL, RCTL_EN);
+    pc.bus
+        .platform
+        .memory
+        .write_u32(bar0_base + REG_RCTL, RCTL_EN);
 
     // TX.
     pc.bus
@@ -206,7 +215,10 @@ fn pc_machine_e1000_network_backend_loopback() {
     pc.bus.platform.memory.write_u32(bar0_base + REG_TDLEN, 32);
     pc.bus.platform.memory.write_u32(bar0_base + REG_TDH, 0);
     pc.bus.platform.memory.write_u32(bar0_base + REG_TDT, 1);
-    pc.bus.platform.memory.write_u32(bar0_base + REG_TCTL, TCTL_EN);
+    pc.bus
+        .platform
+        .memory
+        .write_u32(bar0_base + REG_TCTL, TCTL_EN);
 
     // Drive one network poll to process TX + loop back RX.
     pc.poll_network();

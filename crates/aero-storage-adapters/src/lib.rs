@@ -194,10 +194,13 @@ fn map_aero_storage_error_to_io(err: aero_storage::DiskError) -> io::Error {
         err @ aero_storage::DiskError::OutOfBounds { .. } => {
             io::Error::new(io::ErrorKind::UnexpectedEof, err)
         }
-        err @ (aero_storage::DiskError::Unsupported(_) | aero_storage::DiskError::NotSupported(_)) => {
+        err @ (aero_storage::DiskError::Unsupported(_)
+        | aero_storage::DiskError::NotSupported(_)) => {
             io::Error::new(io::ErrorKind::Unsupported, err)
         }
-        err @ aero_storage::DiskError::QuotaExceeded => io::Error::new(io::ErrorKind::StorageFull, err),
+        err @ aero_storage::DiskError::QuotaExceeded => {
+            io::Error::new(io::ErrorKind::StorageFull, err)
+        }
         err @ aero_storage::DiskError::InUse => io::Error::new(io::ErrorKind::ResourceBusy, err),
         err @ aero_storage::DiskError::InvalidState(_) => io::Error::other(err),
         err @ aero_storage::DiskError::BackendUnavailable => {
@@ -277,7 +280,10 @@ mod tests {
         assert!(matches!(
             err.get_ref()
                 .and_then(|e| e.downcast_ref::<aero_storage::DiskError>()),
-            Some(aero_storage::DiskError::UnalignedLength { len: 1, alignment: 512 })
+            Some(aero_storage::DiskError::UnalignedLength {
+                len: 1,
+                alignment: 512
+            })
         ));
 
         let err = map_aero_storage_error_to_io(aero_storage::DiskError::OffsetOverflow);
@@ -319,8 +325,7 @@ mod tests {
         let err = map_aero_storage_error_to_io(aero_storage::DiskError::InvalidConfig("bad"));
         assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
 
-        let err =
-            map_aero_storage_error_to_io(aero_storage::DiskError::InvalidSparseHeader("bad"));
+        let err = map_aero_storage_error_to_io(aero_storage::DiskError::InvalidSparseHeader("bad"));
         assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
 
         let err = map_aero_storage_error_to_io(aero_storage::DiskError::OutOfBounds {

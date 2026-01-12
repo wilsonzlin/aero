@@ -175,7 +175,10 @@ fn read_bdl_entry(mem: &dyn MemoryAccess, base: u64, index: usize) -> BdlEntry {
     };
 
     let buf_addr = mem.read_u64(addr);
-    let len = addr.checked_add(8).map(|addr| mem.read_u32(addr)).unwrap_or(0);
+    let len = addr
+        .checked_add(8)
+        .map(|addr| mem.read_u32(addr))
+        .unwrap_or(0);
     let flags = addr
         .checked_add(12)
         .map(|addr| mem.read_u32(addr))

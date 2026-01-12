@@ -51,7 +51,9 @@ impl SharedDisk {
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, RawDisk<MemBackend>> {
-        self.inner.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+        self.inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 }
 
@@ -290,7 +292,10 @@ fn snapshot_restore_replays_unprocessed_admin_sq_doorbell() {
     );
 
     restored.process(&mut mem2);
-    assert!(restored.irq_level(), "processing should post a completion and assert INTx");
+    assert!(
+        restored.irq_level(),
+        "processing should post a completion and assert INTx"
+    );
 
     let cqe = read_cqe(&mut mem2, acq);
     assert_eq!(cqe.cid, 0x1234);
@@ -386,7 +391,10 @@ fn snapshot_restore_replays_unprocessed_io_sq_doorbell_and_persists_write() {
     let mut mem2 = mem_snap;
     restored.process(&mut mem2);
 
-    assert!(restored.irq_level(), "processing should post an IO completion");
+    assert!(
+        restored.irq_level(),
+        "processing should post an IO completion"
+    );
 
     let cqe = read_cqe(&mut mem2, io_cq);
     assert_eq!(cqe.cid, 0x10);
@@ -615,7 +623,10 @@ fn snapshot_restore_preserves_pci_interrupt_disable_masking() {
     dev.controller.mmio_write(0x1008, 4, 1);
     dev.process(&mut mem);
 
-    assert!(dev.controller.intx_level, "controller should have a pending interrupt");
+    assert!(
+        dev.controller.intx_level,
+        "controller should have a pending interrupt"
+    );
     assert!(
         dev.irq_level(),
         "with PCI Interrupt Disable clear, wrapper should expose INTx"

@@ -201,12 +201,20 @@ fn ide_ata_dma_snapshot_roundtrip_preserves_irq_and_status_bits() {
     assert!(restored.primary_irq_pending());
     let bm_status = restored.io_read(bm_base + 2, 1) as u8;
     assert_ne!(bm_status & 0x04, 0, "BMIDE status IRQ bit should be set");
-    assert_eq!(bm_status & 0x01, 0, "BMIDE status active bit should be clear");
+    assert_eq!(
+        bm_status & 0x01,
+        0,
+        "BMIDE status active bit should be clear"
+    );
 
     // ATA status should report DRDY and not be busy/DRQ.
     let st = restored.io_read(PRIMARY_PORTS.cmd_base + 7, 1) as u8;
     assert_ne!(st & 0x40, 0, "DRDY should be set after DMA completion");
-    assert_eq!(st & 0x88, 0, "BSY and DRQ should be clear after DMA completion");
+    assert_eq!(
+        st & 0x88,
+        0,
+        "BSY and DRQ should be clear after DMA completion"
+    );
 
     // Reading STATUS clears the pending IRQ.
     assert!(!restored.primary_irq_pending());

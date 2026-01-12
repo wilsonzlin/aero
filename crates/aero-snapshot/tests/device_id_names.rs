@@ -3,7 +3,8 @@ use aero_snapshot::DeviceId;
 #[test]
 fn usb_device_id_has_stable_name() {
     assert_eq!(
-        DeviceId::USB.0, 12u32,
+        DeviceId::USB.0,
+        12u32,
         "USB DeviceId number changed; must remain stable"
     );
     assert_eq!(DeviceId::USB.name(), Some("USB"));

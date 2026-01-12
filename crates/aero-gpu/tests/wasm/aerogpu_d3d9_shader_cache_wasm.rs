@@ -33,7 +33,10 @@ impl PersistentCacheApiGuard {
         Reflect::set(&global, &api_key, api).unwrap();
         Reflect::set(&global, &store_key, store).unwrap();
 
-        Self { prev_api, prev_store }
+        Self {
+            prev_api,
+            prev_store,
+        }
     }
 }
 
@@ -75,8 +78,18 @@ fn make_persistent_cache_stub() -> (JsValue, JsValue) {
     let store = Object::new();
     let map = Map::new();
     Reflect::set(&store, &JsValue::from_str("map"), &map).unwrap();
-    Reflect::set(&store, &JsValue::from_str("getCalls"), &JsValue::from_f64(0.0)).unwrap();
-    Reflect::set(&store, &JsValue::from_str("putCalls"), &JsValue::from_f64(0.0)).unwrap();
+    Reflect::set(
+        &store,
+        &JsValue::from_str("getCalls"),
+        &JsValue::from_f64(0.0),
+    )
+    .unwrap();
+    Reflect::set(
+        &store,
+        &JsValue::from_str("putCalls"),
+        &JsValue::from_f64(0.0),
+    )
+    .unwrap();
     Reflect::set(
         &store,
         &JsValue::from_str("deleteCalls"),
@@ -153,8 +166,12 @@ fn make_persistent_cache_stub() -> (JsValue, JsValue) {
             inc_counter(&get_store, "getCalls");
             get_map.get(&JsValue::from_str(&key))
         }));
-        Reflect::set(&inner, &JsValue::from_str("getShader"), get_fn.as_ref().unchecked_ref())
-            .unwrap();
+        Reflect::set(
+            &inner,
+            &JsValue::from_str("getShader"),
+            get_fn.as_ref().unchecked_ref(),
+        )
+        .unwrap();
         get_fn.forget();
 
         // putShader(key, value) -> void
@@ -166,8 +183,12 @@ fn make_persistent_cache_stub() -> (JsValue, JsValue) {
                 put_map.set(&JsValue::from_str(&key), &value);
                 JsValue::undefined()
             }));
-        Reflect::set(&inner, &JsValue::from_str("putShader"), put_fn.as_ref().unchecked_ref())
-            .unwrap();
+        Reflect::set(
+            &inner,
+            &JsValue::from_str("putShader"),
+            put_fn.as_ref().unchecked_ref(),
+        )
+        .unwrap();
         put_fn.forget();
 
         // deleteShader(key) -> void

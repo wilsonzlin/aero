@@ -1,6 +1,8 @@
 #![cfg(target_arch = "wasm32")]
 
-use aero_ipc::layout::{ipc_header, io_ipc_queue_kind, queue_desc, ring_ctrl, IPC_MAGIC, IPC_VERSION};
+use aero_ipc::layout::{
+    IPC_MAGIC, IPC_VERSION, io_ipc_queue_kind, ipc_header, queue_desc, ring_ctrl,
+};
 use aero_wasm::{PcMachine, SharedRingBuffer};
 use js_sys::{BigInt, Int32Array, Reflect, SharedArrayBuffer, Uint32Array};
 use wasm_bindgen::JsCast;
@@ -24,8 +26,7 @@ fn make_io_ipc_sab(net_capacity_bytes: u32) -> SharedArrayBuffer {
 
     let queue_count = 2u32;
 
-    let mut offset_bytes =
-        (ipc_header::BYTES + queue_count as usize * queue_desc::BYTES) as u32;
+    let mut offset_bytes = (ipc_header::BYTES + queue_count as usize * queue_desc::BYTES) as u32;
     offset_bytes = (offset_bytes + (align - 1)) & !(align - 1);
 
     let net_tx_off = offset_bytes;
@@ -68,9 +69,11 @@ fn make_io_ipc_sab(net_capacity_bytes: u32) -> SharedArrayBuffer {
     );
     words.set_index(desc1 + queue_desc::RESERVED as u32, 0);
 
-    let ctrl_tx = Int32Array::new_with_byte_offset_and_length(&sab, net_tx_off, ring_ctrl::WORDS as u32);
+    let ctrl_tx =
+        Int32Array::new_with_byte_offset_and_length(&sab, net_tx_off, ring_ctrl::WORDS as u32);
     ctrl_tx.set_index(ring_ctrl::CAPACITY as u32, net_capacity_bytes as i32);
-    let ctrl_rx = Int32Array::new_with_byte_offset_and_length(&sab, net_rx_off, ring_ctrl::WORDS as u32);
+    let ctrl_rx =
+        Int32Array::new_with_byte_offset_and_length(&sab, net_rx_off, ring_ctrl::WORDS as u32);
     ctrl_rx.set_index(ring_ctrl::CAPACITY as u32, net_capacity_bytes as i32);
 
     sab

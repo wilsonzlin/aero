@@ -2,7 +2,9 @@ use aero_devices::pci::profile::{
     build_canonical_io_bus, IDE_PIIX3, ISA_PIIX3, USB_UHCI_PIIX3, VIRTIO_INPUT_KEYBOARD,
     VIRTIO_INPUT_MOUSE,
 };
-use aero_devices::pci::{PciBdf, PciBus, PciConfigMechanism1, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
+use aero_devices::pci::{
+    PciBdf, PciBus, PciConfigMechanism1, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT,
+};
 
 fn cfg_addr(bdf: PciBdf, offset: u16) -> u32 {
     0x8000_0000

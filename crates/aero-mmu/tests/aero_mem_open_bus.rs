@@ -23,4 +23,3 @@ fn aero_mem_bus_unmapped_reads_are_open_bus() {
     // Past the end of RAM with no overlays mapped.
     assert_open_bus_reads(&mut bus, 0x2000);
 }
-

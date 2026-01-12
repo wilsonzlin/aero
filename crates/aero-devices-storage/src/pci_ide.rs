@@ -265,12 +265,20 @@ impl TaskFile {
 
     fn sector_count28(&self) -> u16 {
         let c = self.sector_count as u16;
-        if c == 0 { 256 } else { c }
+        if c == 0 {
+            256
+        } else {
+            c
+        }
     }
 
     fn sector_count48(&self) -> u32 {
         let c = ((self.hob_sector_count as u32) << 8) | self.sector_count as u32;
-        if c == 0 { 65536 } else { c }
+        if c == 0 {
+            65536
+        } else {
+            c
+        }
     }
 }
 
@@ -638,7 +646,10 @@ impl IdeController {
     ///
     /// This is intended for snapshot restore: the controller snapshot restores the ATAPI device's
     /// internal state (tray/sense/media_changed) but drops the host backend reference.
-    pub fn attach_primary_master_atapi_backend_for_restore(&mut self, backend: Box<dyn IsoBackend>) {
+    pub fn attach_primary_master_atapi_backend_for_restore(
+        &mut self,
+        backend: Box<dyn IsoBackend>,
+    ) {
         match self.primary.devices[0].as_mut() {
             Some(IdeDevice::Atapi(dev)) => {
                 dev.attach_backend_for_restore(backend);
@@ -1055,8 +1066,9 @@ impl IdeController {
                 if let Some(DmaCommit::AtaWrite { lba, sectors }) = req.commit.take() {
                     let dev_idx = chan.selected_drive() as usize;
                     ok = match chan.devices[dev_idx].as_mut() {
-                        Some(IdeDevice::Ata(dev)) => ata_pio_write(dev, lba, sectors, &req.buffer)
-                            .is_ok(),
+                        Some(IdeDevice::Ata(dev)) => {
+                            ata_pio_write(dev, lba, sectors, &req.buffer).is_ok()
+                        }
                         _ => false,
                     };
                 }
@@ -1293,9 +1305,11 @@ impl Piix3IdePciDevice {
             let drives = core::array::from_fn(|idx| match chan.devices[idx].as_ref() {
                 None => {
                     if chan.drive_present[idx] {
-                        IdeDriveState::Ata(aero_io_snapshot::io::storage::state::IdeAtaDeviceState {
-                            udma_mode: 2,
-                        })
+                        IdeDriveState::Ata(
+                            aero_io_snapshot::io::storage::state::IdeAtaDeviceState {
+                                udma_mode: 2,
+                            },
+                        )
                     } else {
                         IdeDriveState::None
                     }
@@ -1477,11 +1491,12 @@ impl Piix3IdePciDevice {
         bar_probe[3] = state.pci.bar3_probe;
         bar_probe[4] = state.pci.bar4_probe;
 
-        self.config.restore_state(&aero_devices::pci::PciConfigSpaceState {
-            bytes: state.pci.regs,
-            bar_base,
-            bar_probe,
-        });
+        self.config
+            .restore_state(&aero_devices::pci::PciConfigSpaceState {
+                bytes: state.pci.regs,
+                bar_base,
+                bar_probe,
+            });
 
         // Keep controller and config BAR4 decode consistent.
         self.controller.bus_master_base = state.pci.bus_master_base;

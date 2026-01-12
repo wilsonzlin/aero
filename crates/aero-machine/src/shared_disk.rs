@@ -51,7 +51,9 @@ impl SharedDisk {
         Ok(())
     }
 
-    fn virtual_disk_from_bytes(mut bytes: Vec<u8>) -> Result<Box<dyn VirtualDisk + Send>, MachineError> {
+    fn virtual_disk_from_bytes(
+        mut bytes: Vec<u8>,
+    ) -> Result<Box<dyn VirtualDisk + Send>, MachineError> {
         if !bytes.len().is_multiple_of(SECTOR_SIZE) {
             return Err(MachineError::InvalidDiskSize(bytes.len()));
         }

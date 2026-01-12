@@ -358,9 +358,9 @@ impl AeroGpuAcmdExecutor {
             wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb => true,
             other => {
                 return Err(AeroGpuAcmdExecutorError::Backend(format!(
-                    "read_presented_scanout_rgba8 only supports RGBA/BGRA 8-bit textures (got {:?})",
-                    other
-                )))
+                "read_presented_scanout_rgba8 only supports RGBA/BGRA 8-bit textures (got {:?})",
+                other
+            )))
             }
         };
 

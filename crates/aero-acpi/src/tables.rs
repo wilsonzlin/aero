@@ -721,10 +721,8 @@ fn build_dsdt_aml(cfg: &AcpiConfig) -> Vec<u8> {
     out.extend_from_slice(&aml_name_integer(*b"PICM", 0));
     // OperationRegion (IMCR, SystemIO, 0x22, 0x02)
     out.extend_from_slice(&aml_op_region(
-        *b"IMCR",
-        0x01, // SystemIO
-        0x22,
-        0x02,
+        *b"IMCR", 0x01, // SystemIO
+        0x22, 0x02,
     ));
     // Field (IMCR, ByteAcc, NoLock, Preserve) { IMCS, 8, IMCD, 8 }
     out.extend_from_slice(&aml_field(
@@ -909,7 +907,7 @@ fn aml_method_pic() -> Vec<u8> {
     body.push(0x70); // StoreOp
     body.push(0x68); // Arg0Op
     body.extend_from_slice(b"PICM"); // NameString: NameSeg
-    // Store (0x70, IMCS)
+                                     // Store (0x70, IMCS)
     body.push(0x70); // StoreOp
     body.extend_from_slice(&aml_integer(0x70));
     body.extend_from_slice(b"IMCS");

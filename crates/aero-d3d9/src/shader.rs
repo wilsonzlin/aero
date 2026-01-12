@@ -1311,7 +1311,9 @@ fn emit_inst(
             };
             let mut sample = match stage {
                 // Vertex stage has no implicit derivatives, so use an explicit LOD.
-                ShaderStage::Vertex => format!("textureSampleLevel(tex{}, samp{}, {}, 0.0)", s, s, uv),
+                ShaderStage::Vertex => {
+                    format!("textureSampleLevel(tex{}, samp{}, {}, 0.0)", s, s, uv)
+                }
                 ShaderStage::Pixel => format!("textureSample(tex{}, samp{}, {})", s, s, uv),
             };
             sample = apply_result_modifier(sample, inst.result_modifier);

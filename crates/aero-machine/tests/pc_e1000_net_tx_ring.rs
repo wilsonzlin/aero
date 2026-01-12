@@ -3,8 +3,8 @@
 use std::sync::Arc;
 
 use aero_ipc::ring::RingBuffer;
-use aero_net_backend::L2TunnelRingBackend;
 use aero_machine::{PcMachine, PcMachineConfig};
+use aero_net_backend::L2TunnelRingBackend;
 use memory::MemoryBus as _;
 
 #[test]
@@ -109,10 +109,7 @@ fn pc_machine_network_backend_l2_ring_stats_work_for_boxed_ring_backend() {
     .unwrap();
 
     // Install the ring backend through the generic `NetworkBackend` trait object path.
-    m.set_network_backend(Box::new(L2TunnelRingBackend::new(
-        tx_ring.clone(),
-        rx_ring,
-    )));
+    m.set_network_backend(Box::new(L2TunnelRingBackend::new(tx_ring.clone(), rx_ring)));
 
     let bdf = aero_devices::pci::profile::NIC_E1000_82540EM.bdf;
 

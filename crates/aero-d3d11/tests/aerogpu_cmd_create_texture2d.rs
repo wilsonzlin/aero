@@ -845,9 +845,7 @@ fn create_texture2d_bc7_guest_backed_upload_repacks_padded_row_pitch() {
             reserved0: 0,
         }];
 
-        let bc7_top: [u8; 16] = [
-            0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
-        ];
+        let bc7_top: [u8; 16] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
         let bc7_bottom: [u8; 16] = [
             16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,
         ];
@@ -1423,9 +1421,7 @@ fn create_texture2d_bc7_guest_backed_mip1_uses_tight_row_pitch() {
             reserved0: 0,
         }];
 
-        let bc7_mip0_block: [u8; 16] = [
-            0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
-        ];
+        let bc7_mip0_block: [u8; 16] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
         let bc7_mip1_block: [u8; 16] = [
             16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,
         ];

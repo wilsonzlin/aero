@@ -13,14 +13,20 @@ fn cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
 }
 
 fn read_cfg_u32(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8) -> u32 {
-    pc.io
-        .write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bus, device, function, offset));
+    pc.io.write(
+        PCI_CFG_ADDR_PORT,
+        4,
+        cfg_addr(bus, device, function, offset),
+    );
     pc.io.read(PCI_CFG_DATA_PORT, 4)
 }
 
 fn write_cfg_u16(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8, value: u16) {
-    pc.io
-        .write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bus, device, function, offset));
+    pc.io.write(
+        PCI_CFG_ADDR_PORT,
+        4,
+        cfg_addr(bus, device, function, offset),
+    );
     pc.io.write(PCI_CFG_DATA_PORT, 2, u32::from(value));
 }
 
@@ -142,7 +148,9 @@ fn pc_platform_gates_e1000_dma_on_pci_bus_master_enable() {
         .borrow()
         .pic()
         .get_pending_vector()
-        .unwrap_or_else(|| panic!("IRQ{expected_irq} should be pending after enabling bus mastering"));
+        .unwrap_or_else(|| {
+            panic!("IRQ{expected_irq} should be pending after enabling bus mastering")
+        });
     let irq = pc
         .interrupts
         .borrow()
@@ -245,7 +253,9 @@ fn pc_platform_gates_e1000_tx_dma_on_pci_bus_master_enable() {
         .borrow()
         .pic()
         .get_pending_vector()
-        .unwrap_or_else(|| panic!("IRQ{expected_irq} should be pending after enabling bus mastering"));
+        .unwrap_or_else(|| {
+            panic!("IRQ{expected_irq} should be pending after enabling bus mastering")
+        });
     let irq = pc
         .interrupts
         .borrow()
@@ -303,7 +313,10 @@ fn pc_platform_e1000_dma_writes_mark_dirty_pages_when_enabled() {
         .memory
         .take_dirty_pages()
         .expect("dirty tracking enabled");
-    assert!(dirty.is_empty(), "unexpected dirty pages with BME=0: {dirty:?}");
+    assert!(
+        dirty.is_empty(),
+        "unexpected dirty pages with BME=0: {dirty:?}"
+    );
 
     // Enable bus mastering and poll again: DMA should now deliver the frame and mark the RX buffer
     // page (and descriptor page) dirty.

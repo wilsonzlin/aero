@@ -7,9 +7,8 @@ use aero_protocol::aerogpu::{
         AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode,
         AerogpuCmdStreamHeader as ProtocolCmdStreamHeader, AerogpuPrimitiveTopology,
         AerogpuShaderStage, AEROGPU_CLEAR_COLOR, AEROGPU_CMD_STREAM_MAGIC,
-        AEROGPU_COPY_FLAG_WRITEBACK_DST,
-        AEROGPU_RESOURCE_USAGE_RENDER_TARGET, AEROGPU_RESOURCE_USAGE_TEXTURE,
-        AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
+        AEROGPU_COPY_FLAG_WRITEBACK_DST, AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
+        AEROGPU_RESOURCE_USAGE_TEXTURE, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
     },
     aerogpu_pci::{AerogpuFormat, AEROGPU_ABI_VERSION_U32},
 };
@@ -516,8 +515,12 @@ fn d3d9_cmd_stream_supports_16bit_formats_b5g6r5_and_b5g5r5a1() {
             });
         });
 
-        exec.execute_cmd_stream_with_guest_memory(&stream_dirty, &mut guest_memory, Some(&alloc_table))
-            .unwrap_or_else(|e| panic!("dirty-range path stream for {name} should succeed: {e}"));
+        exec.execute_cmd_stream_with_guest_memory(
+            &stream_dirty,
+            &mut guest_memory,
+            Some(&alloc_table),
+        )
+        .unwrap_or_else(|e| panic!("dirty-range path stream for {name} should succeed: {e}"));
 
         let (_w, _h, rgba) = pollster::block_on(exec.readback_texture_rgba8(rt_handle))
             .unwrap_or_else(|e| panic!("readback dirty-range {name} should succeed: {e}"));

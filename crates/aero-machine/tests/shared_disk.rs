@@ -22,4 +22,3 @@ fn shared_disk_virtualdisk_writes_are_visible_to_bios_blockdevice_reads() {
     bios.read_sector(2, &mut sector).unwrap();
     assert_eq!(&sector[..], &pattern[..]);
 }
-

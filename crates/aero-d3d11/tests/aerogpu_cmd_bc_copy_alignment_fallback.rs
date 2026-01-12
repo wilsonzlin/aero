@@ -155,4 +155,3 @@ fn copy_texture2d_enforces_bc_alignment_even_when_host_falls_back_to_rgba8() {
         );
     });
 }
-

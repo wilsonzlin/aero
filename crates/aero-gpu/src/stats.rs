@@ -50,9 +50,7 @@ impl GpuStats {
         // report `disabled=1`.
         #[cfg(not(target_arch = "wasm32"))]
         {
-            stats
-                .d3d9_shader_cache_disabled
-                .store(1, Ordering::Relaxed);
+            stats.d3d9_shader_cache_disabled.store(1, Ordering::Relaxed);
         }
         stats
     }

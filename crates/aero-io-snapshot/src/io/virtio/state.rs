@@ -155,7 +155,9 @@ impl VirtioPciTransportState {
         let queue_count = d.u32()? as usize;
 
         if queue_count > MAX_VIRTIO_QUEUES {
-            return Err(SnapshotError::InvalidFieldEncoding("too many virtio queues"));
+            return Err(SnapshotError::InvalidFieldEncoding(
+                "too many virtio queues",
+            ));
         }
 
         let expected_len = FIXED_LEN
@@ -218,4 +220,3 @@ pub struct VirtioPciDeviceState {
     pub pci_config: PciConfigSpaceState,
     pub transport: VirtioPciTransportState,
 }
-

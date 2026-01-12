@@ -128,10 +128,16 @@ fn e1000_bridge_smoke_tx_rx_and_bme_gating() {
 
     assert_eq!(&guest[0x3000..0x3000 + pkt_in.len()], pkt_in.as_slice());
 
-    assert!(bridge.irq_level(), "expected IRQ asserted after TX/RX completion");
+    assert!(
+        bridge.irq_level(),
+        "expected IRQ asserted after TX/RX completion"
+    );
     let causes = bridge.mmio_read(0x00C0, 4);
     assert_eq!(causes & (ICR_TXDW | ICR_RXT0), ICR_TXDW | ICR_RXT0);
-    assert!(!bridge.irq_level(), "expected IRQ deasserted after ICR read");
+    assert!(
+        !bridge.irq_level(),
+        "expected IRQ deasserted after ICR read"
+    );
 
     // Invalid host RX frames should be ignored without touching guest memory or asserting IRQ.
     //
@@ -160,8 +166,14 @@ fn e1000_bridge_smoke_tx_rx_and_bme_gating() {
     bridge.poll();
     assert_eq!(&guest[0x3400..0x3400 + pkt_in2.len()], pkt_in2.as_slice());
 
-    assert!(bridge.irq_level(), "expected IRQ asserted after RX delivery");
+    assert!(
+        bridge.irq_level(),
+        "expected IRQ asserted after RX delivery"
+    );
     let causes = bridge.mmio_read(0x00C0, 4); // ICR (read clears)
     assert_eq!(causes & ICR_RXT0, ICR_RXT0);
-    assert!(!bridge.irq_level(), "expected IRQ deasserted after ICR read");
+    assert!(
+        !bridge.irq_level(),
+        "expected IRQ deasserted after ICR read"
+    );
 }

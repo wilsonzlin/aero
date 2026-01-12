@@ -6,7 +6,9 @@ use aero_devices::hpet::Hpet;
 use aero_devices::ioapic::{GsiEvent, IoApic};
 use aero_devices::irq::IrqLine;
 use aero_platform::io::PortIoDevice;
-use aero_snapshot::io_snapshot_bridge::{apply_io_snapshot_to_device, device_state_from_io_snapshot};
+use aero_snapshot::io_snapshot_bridge::{
+    apply_io_snapshot_to_device, device_state_from_io_snapshot,
+};
 use aero_snapshot::{
     restore_snapshot, save_snapshot, Compression, CpuState, DeviceId, DeviceState, DiskOverlayRefs,
     MmuState, Result, SaveOptions, SnapshotMeta, SnapshotSource, SnapshotTarget,
@@ -140,7 +142,11 @@ fn acpi_pm_io_snapshot_roundtrips_through_aero_snapshot_file() {
     // Enable ACPI (SCI_EN) via SMI_CMD handshake.
     pm.write(AcpiPmConfig::default().smi_cmd_port, 1, 0xA0);
     // Enable the power-button status bit and trigger it so SCI is asserted.
-    pm.write(AcpiPmConfig::default().pm1a_evt_blk + 2, 2, PM1_STS_PWRBTN as u32);
+    pm.write(
+        AcpiPmConfig::default().pm1a_evt_blk + 2,
+        2,
+        PM1_STS_PWRBTN as u32,
+    );
     pm.trigger_pm1_event(PM1_STS_PWRBTN);
     assert!(irq0.level(), "SCI should be asserted before snapshot");
 

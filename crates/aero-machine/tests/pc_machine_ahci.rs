@@ -16,10 +16,11 @@ fn cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
 }
 
 fn write_cfg_u16(pc: &mut PcMachine, bus: u8, device: u8, function: u8, offset: u8, value: u16) {
-    pc.bus
-        .platform
-        .io
-        .write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bus, device, function, offset));
+    pc.bus.platform.io.write(
+        PCI_CFG_ADDR_PORT,
+        4,
+        cfg_addr(bus, device, function, offset),
+    );
     pc.bus
         .platform
         .io
@@ -27,10 +28,11 @@ fn write_cfg_u16(pc: &mut PcMachine, bus: u8, device: u8, function: u8, offset: 
 }
 
 fn write_cfg_u32(pc: &mut PcMachine, bus: u8, device: u8, function: u8, offset: u8, value: u32) {
-    pc.bus
-        .platform
-        .io
-        .write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bus, device, function, offset));
+    pc.bus.platform.io.write(
+        PCI_CFG_ADDR_PORT,
+        4,
+        cfg_addr(bus, device, function, offset),
+    );
     pc.bus.platform.io.write(PCI_CFG_DATA_PORT, 4, value);
 }
 
@@ -284,14 +286,17 @@ fn pc_machine_processes_ahci_and_can_wake_a_halted_cpu_via_intx() {
         if pc.bus.platform.memory.read_u8(u64::from(flag_addr)) == flag_value {
             // DMA should have filled the IDENTIFY buffer before raising the interrupt.
             let mut identify = [0u8; SECTOR_SIZE];
-            pc.bus.platform.memory.read_physical(identify_buf, &mut identify);
+            pc.bus
+                .platform
+                .memory
+                .read_physical(identify_buf, &mut identify);
             assert_eq!(identify[0], 0x40);
 
             // Clear the controller interrupt so it doesn't remain asserted across the test suite.
-            pc.bus.platform.memory.write_u32(
-                bar5_base + PORT_BASE + PORT_REG_IS,
-                PORT_IS_DHRS,
-            );
+            pc.bus
+                .platform
+                .memory
+                .write_u32(bar5_base + PORT_BASE + PORT_REG_IS, PORT_IS_DHRS);
             return;
         }
     }

@@ -1,6 +1,6 @@
 use aero_devices::pci::PciDevice as _;
-use aero_devices_storage::AhciPciDevice;
 use aero_devices_storage::ata::AtaDrive;
+use aero_devices_storage::AhciPciDevice;
 use aero_io_snapshot::io::state::codec::Encoder;
 use aero_io_snapshot::io::state::{IoSnapshot, SnapshotError, SnapshotVersion, SnapshotWriter};
 use aero_io_snapshot::io::storage::state::AhciControllerState;
@@ -110,7 +110,10 @@ fn ahci_pci_snapshot_roundtrip_preserves_pci_config_mmio_regs_and_irq_level() {
     dev.mmio_write(PORT_BASE + PORT_REG_CI, 4, 1);
     dev.process(&mut mem);
 
-    assert!(dev.intx_level(), "IRQ should be asserted after command completion");
+    assert!(
+        dev.intx_level(),
+        "IRQ should be asserted after command completion"
+    );
 
     // Snapshot guest-visible register values at snapshot time.
     let regs = [

@@ -1,6 +1,6 @@
 use aero_virtio::devices::input::{KEY_A, VirtioInputDeviceKind};
 use aero_virtio::memory::{
-    read_u16_le, read_u32_le, write_u16_le, write_u32_le, write_u64_le, GuestMemory, GuestRam,
+    GuestMemory, GuestRam, read_u16_le, read_u32_le, write_u16_le, write_u32_le, write_u64_le,
 };
 use aero_virtio::pci::{
     VIRTIO_PCI_LEGACY_ISR_QUEUE, VIRTIO_STATUS_ACKNOWLEDGE, VIRTIO_STATUS_DRIVER,
@@ -150,6 +150,9 @@ fn virtio_input_pci_device_core_can_handshake_post_event_and_toggle_irq() {
 
     // Guest reads ISR (read-to-clear), which must deassert INTx.
     let isr = mmio_read_u8(&mut dev, ISR);
-    assert_eq!(isr & VIRTIO_PCI_LEGACY_ISR_QUEUE, VIRTIO_PCI_LEGACY_ISR_QUEUE);
+    assert_eq!(
+        isr & VIRTIO_PCI_LEGACY_ISR_QUEUE,
+        VIRTIO_PCI_LEGACY_ISR_QUEUE
+    );
     assert!(!dev.irq_asserted());
 }

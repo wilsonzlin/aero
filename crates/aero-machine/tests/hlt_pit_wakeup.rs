@@ -160,6 +160,9 @@ fn pit_irq0_wakes_hlt_and_writes_ok_to_serial() {
         }
     }
 
-    assert!(saw_ok, "guest never printed OK (timers likely not advancing during HLT)");
+    assert!(
+        saw_ok,
+        "guest never printed OK (timers likely not advancing during HLT)"
+    );
     assert_eq!(m.take_serial_output(), b"OK");
 }

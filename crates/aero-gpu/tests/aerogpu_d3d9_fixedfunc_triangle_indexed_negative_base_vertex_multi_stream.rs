@@ -164,14 +164,14 @@ fn d3d9_cmd_stream_fixedfunc_poscolor_draw_indexed_negative_base_vertex_multi_st
     push_u8(&mut vertex_decl, 0); // method
     push_u8(&mut vertex_decl, D3DDECLUSAGE_POSITIONT);
     push_u8(&mut vertex_decl, 0); // usage_index
-    // COLOR0 at stream 1 offset 0.
+                                  // COLOR0 at stream 1 offset 0.
     push_u16(&mut vertex_decl, 1); // stream
     push_u16(&mut vertex_decl, 0); // offset
     push_u8(&mut vertex_decl, D3DDECLTYPE_D3DCOLOR);
     push_u8(&mut vertex_decl, 0); // method
     push_u8(&mut vertex_decl, D3DDECLUSAGE_COLOR);
     push_u8(&mut vertex_decl, 0); // usage_index
-    // End marker.
+                                  // End marker.
     push_u16(&mut vertex_decl, 0x00FF);
     push_u16(&mut vertex_decl, 0);
     push_u8(&mut vertex_decl, D3DDECLTYPE_UNUSED);
@@ -236,7 +236,10 @@ fn d3d9_cmd_stream_fixedfunc_poscolor_draw_indexed_negative_base_vertex_multi_st
     let stream = build_stream(|out| {
         emit_packet(out, OPC_CREATE_TEXTURE2D, |out| {
             push_u32(out, RT_HANDLE);
-            push_u32(out, AEROGPU_RESOURCE_USAGE_TEXTURE | AEROGPU_RESOURCE_USAGE_RENDER_TARGET);
+            push_u32(
+                out,
+                AEROGPU_RESOURCE_USAGE_TEXTURE | AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
+            );
             push_u32(out, AEROGPU_FORMAT_R8G8B8A8_UNORM);
             push_u32(out, width);
             push_u32(out, height);
@@ -338,12 +341,12 @@ fn d3d9_cmd_stream_fixedfunc_poscolor_draw_indexed_negative_base_vertex_multi_st
         emit_packet(out, OPC_SET_VERTEX_BUFFERS, |out| {
             push_u32(out, 0); // start_slot
             push_u32(out, 2); // buffer_count
-            // stream0
+                              // stream0
             push_u32(out, VB_POS_HANDLE);
             push_u32(out, 16); // stride_bytes
             push_u32(out, vb_pos_offset_bytes); // offset_bytes
             push_u32(out, 0); // reserved0
-            // stream1
+                              // stream1
             push_u32(out, VB_COLOR_HANDLE);
             push_u32(out, 4); // stride_bytes
             push_u32(out, vb_color_offset_bytes); // offset_bytes
@@ -425,4 +428,3 @@ fn d3d9_cmd_stream_fixedfunc_poscolor_draw_indexed_negative_base_vertex_multi_st
     // Center pixel should be red.
     assert_eq!(px(width / 2, height / 2), [255, 0, 0, 255]);
 }
-

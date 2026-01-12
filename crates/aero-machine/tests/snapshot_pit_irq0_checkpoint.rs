@@ -34,21 +34,21 @@ fn build_pit_irq0_counter_boot_sector() -> [u8; 512] {
     code.extend_from_slice(&[0xB0, 0x11]); // mov al,0x11
     code.extend_from_slice(&[0xE6, 0x20]); // out 0x20,al
     code.extend_from_slice(&[0xE6, 0xA0]); // out 0xA0,al
-    // ICW2: vector offsets
+                                           // ICW2: vector offsets
     code.extend_from_slice(&[0xB0, 0x08]); // mov al,0x08
     code.extend_from_slice(&[0xE6, 0x21]); // out 0x21,al
     code.extend_from_slice(&[0xB0, 0x70]); // mov al,0x70
     code.extend_from_slice(&[0xE6, 0xA1]); // out 0xA1,al
-    // ICW3: master has a slave on IRQ2; slave identity is 2.
+                                           // ICW3: master has a slave on IRQ2; slave identity is 2.
     code.extend_from_slice(&[0xB0, 0x04]); // mov al,0x04
     code.extend_from_slice(&[0xE6, 0x21]); // out 0x21,al
     code.extend_from_slice(&[0xB0, 0x02]); // mov al,0x02
     code.extend_from_slice(&[0xE6, 0xA1]); // out 0xA1,al
-    // ICW4: 8086 mode
+                                           // ICW4: 8086 mode
     code.extend_from_slice(&[0xB0, 0x01]); // mov al,0x01
     code.extend_from_slice(&[0xE6, 0x21]); // out 0x21,al
     code.extend_from_slice(&[0xE6, 0xA1]); // out 0xA1,al
-    // Unmask only IRQ0 (timer) on the master PIC; mask all on the slave.
+                                           // Unmask only IRQ0 (timer) on the master PIC; mask all on the slave.
     code.extend_from_slice(&[0xB0, 0xFE]); // mov al,0xFE
     code.extend_from_slice(&[0xE6, 0x21]); // out 0x21,al
     code.extend_from_slice(&[0xB0, 0xFF]); // mov al,0xFF
@@ -252,4 +252,3 @@ fn snapshot_restore_preserves_pit_irq0_hlt_checkpoint_continuity() {
     assert_eq!(resumed_out, baseline_out);
     assert_eq!(resumed_ticks, baseline_ticks);
 }
-

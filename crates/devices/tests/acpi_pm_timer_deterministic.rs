@@ -1,6 +1,6 @@
 use aero_devices::acpi_pm::AcpiPmCallbacks;
-use aero_devices::clock::Clock;
 use aero_devices::acpi_pm::{AcpiPmConfig, AcpiPmIo};
+use aero_devices::clock::Clock;
 use aero_devices::clock::ManualClock;
 use aero_platform::io::PortIoDevice;
 use std::cell::Cell;
@@ -81,7 +81,8 @@ fn pm_tmr_4byte_read_uses_single_clock_sample() {
     let cfg = AcpiPmConfig::default();
     let clock = CountingClock::new(1_000_000_000);
 
-    let mut pm = AcpiPmIo::new_with_callbacks_and_clock(cfg, AcpiPmCallbacks::default(), clock.clone());
+    let mut pm =
+        AcpiPmIo::new_with_callbacks_and_clock(cfg, AcpiPmCallbacks::default(), clock.clone());
     clock.reset_calls();
 
     let _ = pm.read(cfg.pm_tmr_blk, 4);

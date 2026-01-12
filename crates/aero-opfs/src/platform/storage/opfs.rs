@@ -144,7 +144,9 @@ mod wasm {
             // `new DOMException(message, name)`
             let ctor = Reflect::get(&js_sys::global(), &JsValue::from_str("DOMException"))
                 .expect("DOMException global should exist");
-            let ctor: Function = ctor.dyn_into().expect("DOMException should be a constructor");
+            let ctor: Function = ctor
+                .dyn_into()
+                .expect("DOMException should be a constructor");
             let args = Array::new();
             args.push(&JsValue::from_str(message));
             args.push(&JsValue::from_str(name));

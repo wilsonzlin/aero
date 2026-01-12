@@ -192,7 +192,12 @@ fn build_dhcp_discover(xid: u32, mac: MacAddr) -> Vec<u8> {
     out
 }
 
-fn build_dhcp_request(xid: u32, mac: MacAddr, requested_ip: Ipv4Addr, server_id: Ipv4Addr) -> Vec<u8> {
+fn build_dhcp_request(
+    xid: u32,
+    mac: MacAddr,
+    requested_ip: Ipv4Addr,
+    server_id: Ipv4Addr,
+) -> Vec<u8> {
     // BOOTP fixed header (236) + magic cookie (4).
     let mut out = vec![0u8; 240];
     out[0] = 1; // BOOTREQUEST
@@ -416,7 +421,11 @@ fn dhcp_handshake_end_to_end_e1000_dma_to_netstack() {
     assert_eq!(ack_desc.errors, 0, "ack RX descriptor has errors");
     let ack_frame = mem.read_vec(ack_desc.buffer_addr, ack_desc.length as usize);
     let ack_msg = parse_dhcp_from_frame(&ack_frame);
-    assert_eq!(ack_msg.message_type, DhcpMessageType::Ack, "expected DHCPACK");
+    assert_eq!(
+        ack_msg.message_type,
+        DhcpMessageType::Ack,
+        "expected DHCPACK"
+    );
     assert_eq!(ack_msg.transaction_id, xid, "ack XID mismatch");
     assert_eq!(
         ack_msg.your_ip, offer_msg.your_ip,

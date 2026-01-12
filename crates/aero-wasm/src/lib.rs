@@ -359,11 +359,11 @@ mod jit_abi_constants_tests {
             layout.jit_tlb_entry_bytes(),
             read_u32(&obj, "jit_tlb_entry_bytes")
         );
-        assert_eq!(layout.tier2_ctx_offset(), read_u32(&obj, "tier2_ctx_offset"));
         assert_eq!(
-            layout.tier2_ctx_bytes(),
-            read_u32(&obj, "tier2_ctx_size")
+            layout.tier2_ctx_offset(),
+            read_u32(&obj, "tier2_ctx_offset")
         );
+        assert_eq!(layout.tier2_ctx_bytes(), read_u32(&obj, "tier2_ctx_size"));
         assert_eq!(
             layout.commit_flag_offset(),
             read_u32(&obj, "commit_flag_offset")
@@ -455,7 +455,10 @@ mod guest_ram_layout_tests {
         // The web runtime reserves the high 512MiB of the 32-bit guest physical address space for
         // PCI MMIO BARs, so guest RAM must never exceed `PCI_MMIO_BASE`.
         let layout = guest_ram_layout(u32::MAX);
-        assert_eq!(layout.guest_size(), guest_layout::GUEST_PCI_MMIO_BASE as u32);
+        assert_eq!(
+            layout.guest_size(),
+            guest_layout::GUEST_PCI_MMIO_BASE as u32
+        );
     }
 }
 
@@ -2851,7 +2854,11 @@ impl Machine {
     }
 
     /// Configure the snapshot overlay reference for `disk_id=2` (optional IDE primary master ATA).
-    pub fn set_ide_primary_master_ata_overlay_ref(&mut self, base_image: &str, overlay_image: &str) {
+    pub fn set_ide_primary_master_ata_overlay_ref(
+        &mut self,
+        base_image: &str,
+        overlay_image: &str,
+    ) {
         self.inner
             .set_ide_primary_master_ata_overlay_ref(base_image, overlay_image);
     }

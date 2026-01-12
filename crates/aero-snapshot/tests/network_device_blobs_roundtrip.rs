@@ -182,7 +182,10 @@ fn network_device_blobs_roundtrip_is_deterministic_and_ordered() {
     // ordering so the output bytes are deterministic.
     let mut source = TestSource {
         meta: meta.clone(),
-        devices: vec![expected_net_stack_state.clone(), expected_e1000_state.clone()],
+        devices: vec![
+            expected_net_stack_state.clone(),
+            expected_e1000_state.clone(),
+        ],
         ram: Vec::new(),
     };
 
@@ -198,7 +201,10 @@ fn network_device_blobs_roundtrip_is_deterministic_and_ordered() {
         let mut cursor = Cursor::new(Vec::new());
         let mut source_sorted = TestSource {
             meta: meta.clone(),
-            devices: vec![expected_e1000_state.clone(), expected_net_stack_state.clone()],
+            devices: vec![
+                expected_e1000_state.clone(),
+                expected_net_stack_state.clone(),
+            ],
             ram: Vec::new(),
         };
         save_snapshot(&mut cursor, &mut source_sorted, save_opts).unwrap();

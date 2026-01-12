@@ -282,14 +282,7 @@ fn rewrite_snapshot_add_unknown_dskc_entry(bytes: &[u8]) -> Vec<u8> {
     out
 }
 
-fn write_cmd_header(
-    m: &mut Machine,
-    clb: u64,
-    slot: usize,
-    ctba: u64,
-    prdtl: u16,
-    write: bool,
-) {
+fn write_cmd_header(m: &mut Machine, clb: u64, slot: usize, ctba: u64, prdtl: u16, write: bool) {
     let cfl = 5u32;
     let w = if write { 1u32 << 6 } else { 0 };
     let flags = cfl | w | ((prdtl as u32) << 16);
@@ -329,13 +322,7 @@ fn write_cfis(m: &mut Machine, ctba: u64, command: u8, lba: u64, count: u16) {
     m.write_physical(ctba, &cfis);
 }
 
-fn send_atapi_packet(
-    m: &mut Machine,
-    base: u16,
-    features: u8,
-    pkt: &[u8; 12],
-    byte_count: u16,
-) {
+fn send_atapi_packet(m: &mut Machine, base: u16, features: u8, pkt: &[u8; 12], byte_count: u16) {
     m.io_write(base + 1, 1, features as u32);
     m.io_write(base + 4, 1, (byte_count & 0xFF) as u32);
     m.io_write(base + 5, 1, (byte_count >> 8) as u32);
@@ -515,13 +502,7 @@ fn machine_storage_snapshot_roundtrip_preserves_controllers_and_allows_backend_r
     let ahci_abar = {
         // BAR5 at offset 0x24. Mask off the low flag bits (MMIO BAR).
         let bdf = profile::SATA_AHCI_ICH9.bdf;
-        u64::from(read_cfg_u32(
-            &mut src,
-            bdf.bus,
-            bdf.device,
-            bdf.function,
-            0x24,
-        ) & 0xFFFF_FFF0)
+        u64::from(read_cfg_u32(&mut src, bdf.bus, bdf.device, bdf.function, 0x24) & 0xFFFF_FFF0)
     };
     assert!(ahci_abar != 0, "AHCI BAR5 must be programmed");
 
@@ -600,7 +581,9 @@ fn machine_storage_snapshot_roundtrip_preserves_controllers_and_allows_backend_r
             .expect("seek to DEVICES payload");
         let mut limited = r.take(devices.len);
         let mut count_buf = [0u8; 4];
-        limited.read_exact(&mut count_buf).expect("read device count");
+        limited
+            .read_exact(&mut count_buf)
+            .expect("read device count");
         let count = u32::from_le_bytes(count_buf) as usize;
         let mut disk_controller_entries = Vec::new();
         for _ in 0..count {
@@ -647,13 +630,9 @@ fn machine_storage_snapshot_roundtrip_preserves_controllers_and_allows_backend_r
 
     let ahci_abar2 = {
         let bdf = profile::SATA_AHCI_ICH9.bdf;
-        u64::from(read_cfg_u32(
-            &mut restored,
-            bdf.bus,
-            bdf.device,
-            bdf.function,
-            0x24,
-        ) & 0xFFFF_FFF0)
+        u64::from(
+            read_cfg_u32(&mut restored, bdf.bus, bdf.device, bdf.function, 0x24) & 0xFFFF_FFF0,
+        )
     };
     assert_eq!(
         ahci_abar2, ahci_abar,

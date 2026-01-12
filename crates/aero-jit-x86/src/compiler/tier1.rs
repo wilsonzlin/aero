@@ -55,7 +55,10 @@ pub fn compile_tier1_block_with_options<B: Tier1Bus>(
     let byte_len: u32 = block.insts.iter().map(|inst| inst.len as u32).sum();
     let instruction_count = {
         let mut count = u32::try_from(block.insts.len()).unwrap_or(u32::MAX);
-        if matches!(block.insts.last().map(|inst| &inst.kind), Some(InstKind::Invalid)) {
+        if matches!(
+            block.insts.last().map(|inst| &inst.kind),
+            Some(InstKind::Invalid)
+        ) {
             count = count.saturating_sub(1);
         }
         count

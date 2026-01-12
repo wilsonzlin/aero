@@ -30,4 +30,3 @@ fn disk_layer_state_attach_aero_storage_disk_roundtrip() {
     let read_back = state.read_sector(0);
     assert_eq!(read_back, sector);
 }
-

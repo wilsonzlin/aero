@@ -52,13 +52,7 @@ impl IsoBackend for MemIso {
     }
 }
 
-fn send_atapi_packet(
-    io: &mut IoPortBus,
-    base: u16,
-    features: u8,
-    pkt: &[u8; 12],
-    byte_count: u16,
-) {
+fn send_atapi_packet(io: &mut IoPortBus, base: u16, features: u8, pkt: &[u8; 12], byte_count: u16) {
     io.write(base + 1, 1, features as u32);
     io.write(base + 4, 1, (byte_count & 0xFF) as u32);
     io.write(base + 5, 1, (byte_count >> 8) as u32);
@@ -95,11 +89,9 @@ fn ide_atapi_pio_read10_snapshot_roundtrip_mid_data_phase() {
     let expected = iso.data[2048..2048 + 2048].to_vec();
 
     let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
-    ide.borrow_mut()
-        .controller
-        .attach_secondary_master_atapi(aero_devices_storage::atapi::AtapiCdrom::new(Some(
-            Box::new(iso),
-        )));
+    ide.borrow_mut().controller.attach_secondary_master_atapi(
+        aero_devices_storage::atapi::AtapiCdrom::new(Some(Box::new(iso))),
+    );
     ide.borrow_mut().config_mut().set_command(0x0001); // IO decode
 
     let mut ioports = IoPortBus::new();
@@ -218,12 +210,20 @@ fn ide_ata_dma_snapshot_roundtrip_preserves_irq_and_status_bits() {
     let bm_base = restored.borrow().bus_master_base();
     let bm_status = ioports2.read(bm_base + 2, 1) as u8;
     assert_ne!(bm_status & 0x04, 0, "BMIDE status IRQ bit should be set");
-    assert_eq!(bm_status & 0x01, 0, "BMIDE status active bit should be clear");
+    assert_eq!(
+        bm_status & 0x01,
+        0,
+        "BMIDE status active bit should be clear"
+    );
 
     // ATA status should report DRDY and not be busy/DRQ.
     let st = ioports2.read(PRIMARY_PORTS.cmd_base + 7, 1) as u8;
     assert_ne!(st & 0x40, 0, "DRDY should be set after DMA completion");
-    assert_eq!(st & 0x88, 0, "BSY and DRQ should be clear after DMA completion");
+    assert_eq!(
+        st & 0x88,
+        0,
+        "BSY and DRQ should be clear after DMA completion"
+    );
 
     // Reading STATUS clears the pending IRQ.
     assert!(!restored.borrow().controller.primary_irq_pending());

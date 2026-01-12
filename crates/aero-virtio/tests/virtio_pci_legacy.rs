@@ -1,5 +1,7 @@
 use aero_virtio::devices::blk::{MemDisk, VirtioBlk, VIRTIO_BLK_T_FLUSH};
-use aero_virtio::memory::{read_u16_le, write_u16_le, write_u32_le, write_u64_le, GuestMemory, GuestRam};
+use aero_virtio::memory::{
+    read_u16_le, write_u16_le, write_u32_le, write_u64_le, GuestMemory, GuestRam,
+};
 use aero_virtio::pci::{
     InterruptSink, VirtioPciDevice, VIRTIO_PCI_LEGACY_GUEST_FEATURES,
     VIRTIO_PCI_LEGACY_HOST_FEATURES, VIRTIO_PCI_LEGACY_ISR, VIRTIO_PCI_LEGACY_ISR_QUEUE,
@@ -92,7 +94,10 @@ fn virtio_pci_legacy_pfn_queue_and_isr_read_clears() {
         VIRTIO_PCI_LEGACY_STATUS,
         &[VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER],
     );
-    dev.legacy_io_write(VIRTIO_PCI_LEGACY_GUEST_FEATURES, &guest_features.to_le_bytes());
+    dev.legacy_io_write(
+        VIRTIO_PCI_LEGACY_GUEST_FEATURES,
+        &guest_features.to_le_bytes(),
+    );
 
     // 2) Configure queue 0 using PFN.
     dev.legacy_io_write(VIRTIO_PCI_LEGACY_QUEUE_SEL, &0u16.to_le_bytes());

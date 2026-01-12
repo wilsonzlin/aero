@@ -125,14 +125,8 @@ fn assemble_vs_dcl_positiont_v0_color_v7() -> Vec<u8> {
         0x001F,
         &[enc_decl_token(10, 0), enc_dst(1, 7, 0xF)],
     ));
-    words.extend(enc_inst(
-        0x0001,
-        &[enc_dst(4, 0, 0xF), enc_src(1, 0, 0xE4)],
-    ));
-    words.extend(enc_inst(
-        0x0001,
-        &[enc_dst(5, 0, 0xF), enc_src(1, 7, 0xE4)],
-    ));
+    words.extend(enc_inst(0x0001, &[enc_dst(4, 0, 0xF), enc_src(1, 0, 0xE4)]));
+    words.extend(enc_inst(0x0001, &[enc_dst(5, 0, 0xF), enc_src(1, 7, 0xE4)]));
     words.push(0x0000_FFFF);
     to_bytes(&words)
 }
@@ -140,10 +134,7 @@ fn assemble_vs_dcl_positiont_v0_color_v7() -> Vec<u8> {
 fn assemble_ps_passthrough_color_v0() -> Vec<u8> {
     // ps_2_0: mov oC0, v0; end
     let mut words = vec![0xFFFF_0200];
-    words.extend(enc_inst(
-        0x0001,
-        &[enc_dst(8, 0, 0xF), enc_src(1, 0, 0xE4)],
-    ));
+    words.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(1, 0, 0xE4)]));
     words.push(0x0000_FFFF);
     to_bytes(&words)
 }
@@ -398,4 +389,3 @@ fn d3d9_cmd_stream_dcl_semantics_map_to_canonical_locations() {
         "center-top probe should be inside the triangle (red)"
     );
 }
-

@@ -120,7 +120,9 @@ where
     })
 }
 
-pub(super) fn binding_to_layout_entry(binding: &crate::Binding) -> Result<wgpu::BindGroupLayoutEntry> {
+pub(super) fn binding_to_layout_entry(
+    binding: &crate::Binding,
+) -> Result<wgpu::BindGroupLayoutEntry> {
     let ty = match &binding.kind {
         crate::BindingKind::ConstantBuffer { slot, reg_count } => {
             if *slot >= MAX_CBUFFER_SLOTS {
@@ -497,9 +499,18 @@ mod tests {
             assert_eq!(info.group_layouts[0].hash, info.group_layouts[1].hash);
 
             assert_eq!(info.layout_key.bind_group_layout_hashes.len(), 3);
-            assert_eq!(info.layout_key.bind_group_layout_hashes[0], info.group_layouts[0].hash);
-            assert_eq!(info.layout_key.bind_group_layout_hashes[1], info.group_layouts[1].hash);
-            assert_eq!(info.layout_key.bind_group_layout_hashes[2], info.group_layouts[2].hash);
+            assert_eq!(
+                info.layout_key.bind_group_layout_hashes[0],
+                info.group_layouts[0].hash
+            );
+            assert_eq!(
+                info.layout_key.bind_group_layout_hashes[1],
+                info.group_layouts[1].hash
+            );
+            assert_eq!(
+                info.layout_key.bind_group_layout_hashes[2],
+                info.group_layouts[2].hash
+            );
         });
     }
 
@@ -574,13 +585,10 @@ mod tests {
                 kind: crate::BindingKind::Texture2D { slot: 0 },
             }];
 
-            let err = build_pipeline_bindings_info(
-                device,
-                &mut layout_cache,
-                [bindings.as_slice()],
-            )
-            .unwrap_err()
-            .to_string();
+            let err =
+                build_pipeline_bindings_info(device, &mut layout_cache, [bindings.as_slice()])
+                    .unwrap_err()
+                    .to_string();
             assert!(
                 err.contains("out of range") && err.contains("binding model"),
                 "unexpected error: {err}"
@@ -606,7 +614,10 @@ mod tests {
             let reg_count = match u32::try_from((max / UNIFORM_BINDING_SIZE_ALIGN) + 1) {
                 Ok(v) => v,
                 Err(_) => {
-                    skip_or_panic(module_path!(), "cannot construct reg_count over device limit");
+                    skip_or_panic(
+                        module_path!(),
+                        "cannot construct reg_count over device limit",
+                    );
                     return;
                 }
             };
@@ -618,13 +629,10 @@ mod tests {
                 kind: crate::BindingKind::ConstantBuffer { slot: 0, reg_count },
             }];
 
-            let err = build_pipeline_bindings_info(
-                device,
-                &mut layout_cache,
-                [bindings.as_slice()],
-            )
-            .unwrap_err()
-            .to_string();
+            let err =
+                build_pipeline_bindings_info(device, &mut layout_cache, [bindings.as_slice()])
+                    .unwrap_err()
+                    .to_string();
 
             assert!(
                 err.contains("exceeds device limit"),
@@ -707,13 +715,14 @@ mod tests {
                     if slot != 0 {
                         return None;
                     }
-                    self.cb.map(|(id, buffer, offset, size, total_size)| BufferBinding {
-                        id,
-                        buffer,
-                        offset,
-                        size,
-                        total_size,
-                    })
+                    self.cb
+                        .map(|(id, buffer, offset, size, total_size)| BufferBinding {
+                            id,
+                            buffer,
+                            offset,
+                            size,
+                            total_size,
+                        })
                 }
 
                 fn constant_buffer_scratch(&self, _slot: u32) -> Option<(BufferId, &wgpu::Buffer)> {
@@ -835,10 +844,12 @@ mod tests {
                 usage: wgpu::TextureUsages::TEXTURE_BINDING,
                 view_formats: &[],
             });
-            let dummy_texture_view = dummy_texture.create_view(&wgpu::TextureViewDescriptor::default());
+            let dummy_texture_view =
+                dummy_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
             let mut sampler_cache = SamplerCache::new();
-            let default_sampler = sampler_cache.get_or_create(device, &wgpu::SamplerDescriptor::default());
+            let default_sampler =
+                sampler_cache.get_or_create(device, &wgpu::SamplerDescriptor::default());
 
             let binding = crate::Binding {
                 group: 0,
@@ -1079,7 +1090,8 @@ mod tests {
     #[test]
     fn pipeline_bindings_merge_and_bind_group_caching() {
         pollster::block_on(async {
-            let rt = match crate::runtime::aerogpu_execute::AerogpuCmdRuntime::new_for_tests().await {
+            let rt = match crate::runtime::aerogpu_execute::AerogpuCmdRuntime::new_for_tests().await
+            {
                 Ok(rt) => rt,
                 Err(err) => {
                     skip_or_panic(module_path!(), &format!("wgpu unavailable ({err:#})"));

@@ -21,7 +21,9 @@
 use std::collections::{BTreeMap, HashMap};
 
 use aero_devices::pci::capabilities::PCI_CONFIG_SPACE_SIZE;
-use aero_devices::pci::{profile, PciBarDefinition, PciConfigSpace, PciConfigSpaceState, PciDevice};
+use aero_devices::pci::{
+    profile, PciBarDefinition, PciConfigSpace, PciConfigSpaceState, PciDevice,
+};
 use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
 use aero_io_snapshot::io::state::{
     IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
@@ -195,7 +197,10 @@ pub fn from_virtual_disk(
 ) -> DiskResult<Box<dyn DiskBackend>> {
     // NVMe currently reports capacity in whole 512-byte LBAs.
     // Reject disks that cannot be represented losslessly.
-    if !d.capacity_bytes().is_multiple_of(u64::from(AeroStorageDiskAdapter::SECTOR_SIZE)) {
+    if !d
+        .capacity_bytes()
+        .is_multiple_of(u64::from(AeroStorageDiskAdapter::SECTOR_SIZE))
+    {
         return Err(DiskError::Io);
     }
     Ok(Box::new(AeroStorageDiskAdapter::new(d)))
@@ -407,11 +412,8 @@ impl NvmeController {
         let mpsmax: u64 = 0;
         let css_nvm: u64 = 1; // NVM command set supported.
 
-        self.cap = (mqes & 0xffff)
-            | (css_nvm << 37)
-            | (mpsmin << 48)
-            | (mpsmax << 52)
-            | (dstrd << 32);
+        self.cap =
+            (mqes & 0xffff) | (css_nvm << 37) | (mpsmin << 48) | (mpsmax << 52) | (dstrd << 32);
         self.vs = 0x0001_0400; // NVMe 1.4.0
         self.intms = 0;
         self.cc = 0;

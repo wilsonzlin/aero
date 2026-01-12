@@ -1311,8 +1311,10 @@ fn fs_main() -> @location(0) vec4<f32> {
                     let mut bytes =
                         self.read_buffer_to_vec_blocking(&staging, staging_size, "COPY_TEXTURE2D")?;
 
-                    let staging_row_bytes_usize: usize =
-                        plan.staging_unpadded_bytes_per_row.try_into().map_err(|_| {
+                    let staging_row_bytes_usize: usize = plan
+                        .staging_unpadded_bytes_per_row
+                        .try_into()
+                        .map_err(|_| {
                             ExecutorError::Validation(
                                 "COPY_TEXTURE2D: row size out of range".into(),
                             )
@@ -1425,8 +1427,10 @@ fn fs_main() -> @location(0) vec4<f32> {
                         .read_buffer_to_vec_async(&staging, staging_size, "COPY_TEXTURE2D")
                         .await?;
 
-                    let staging_row_bytes_usize: usize =
-                        plan.staging_unpadded_bytes_per_row.try_into().map_err(|_| {
+                    let staging_row_bytes_usize: usize = plan
+                        .staging_unpadded_bytes_per_row
+                        .try_into()
+                        .map_err(|_| {
                             ExecutorError::Validation(
                                 "COPY_TEXTURE2D: row size out of range".into(),
                             )

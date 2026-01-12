@@ -1,7 +1,9 @@
 mod common;
 
 use aero_d3d11::runtime::aerogpu_execute::AerogpuCmdRuntime;
-use aero_d3d11::runtime::aerogpu_state::{BlendState, PrimitiveTopology, RasterizerState, VertexBufferBinding};
+use aero_d3d11::runtime::aerogpu_state::{
+    BlendState, PrimitiveTopology, RasterizerState, VertexBufferBinding,
+};
 
 const DXBC_VS_PASSTHROUGH_TEXCOORD: &[u8] = include_bytes!("fixtures/vs_passthrough_texcoord.dxbc");
 const DXBC_PS_SAMPLE: &[u8] = include_bytes!("fixtures/ps_sample.dxbc");
@@ -71,7 +73,8 @@ fn aerogpu_cmd_runtime_reuses_pipeline_layout_across_pipeline_misses() {
             wgpu::TextureFormat::Rgba8Unorm,
             wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         );
-        rt.write_texture_rgba8(TEX, 1, 1, 4, &[255, 0, 0, 255]).unwrap();
+        rt.write_texture_rgba8(TEX, 1, 1, 4, &[255, 0, 0, 255])
+            .unwrap();
         rt.set_ps_texture(0, Some(TEX));
 
         rt.create_texture2d(
@@ -137,4 +140,3 @@ fn aerogpu_cmd_runtime_reuses_pipeline_layout_across_pipeline_misses() {
         assert_eq!(layout_stats.entries, 1);
     });
 }
-

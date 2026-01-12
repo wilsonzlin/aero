@@ -27,10 +27,10 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use aero_ipc::layout::io_ipc_queue_kind::{NET_RX, NET_TX};
-use aero_ipc::wasm::{open_ring_by_kind, SharedRingBuffer};
+use aero_ipc::wasm::{SharedRingBuffer, open_ring_by_kind};
 use aero_virtio::devices::net::{NetBackend, VirtioNet};
 use aero_virtio::memory::{GuestMemory, GuestMemoryError};
-use aero_virtio::pci::{InterruptSink, VirtioPciDevice, VIRTIO_PCI_LEGACY_QUEUE_NOTIFY};
+use aero_virtio::pci::{InterruptSink, VIRTIO_PCI_LEGACY_QUEUE_NOTIFY, VirtioPciDevice};
 
 fn js_error(message: impl core::fmt::Display) -> JsValue {
     js_sys::Error::new(&message.to_string()).into()
@@ -74,7 +74,12 @@ impl WasmGuestMemory {
     }
 
     #[inline]
-    fn linear_offset(&self, addr: u64, ram_offset: u64, len: usize) -> Result<u32, GuestMemoryError> {
+    fn linear_offset(
+        &self,
+        addr: u64,
+        ram_offset: u64,
+        len: usize,
+    ) -> Result<u32, GuestMemoryError> {
         let end = ram_offset
             .checked_add(len as u64)
             .ok_or(GuestMemoryError::OutOfBounds { addr, len })?;
@@ -120,7 +125,9 @@ impl GuestMemory for WasmGuestMemory {
                 Ok(unsafe { core::slice::from_raw_parts(linear as *const u8, len) })
             }
             crate::guest_phys::GuestRamRange::Hole => self.open_bus_slice(addr, len),
-            crate::guest_phys::GuestRamRange::OutOfBounds => Err(GuestMemoryError::OutOfBounds { addr, len }),
+            crate::guest_phys::GuestRamRange::OutOfBounds => {
+                Err(GuestMemoryError::OutOfBounds { addr, len })
+            }
         }
     }
 
@@ -142,7 +149,9 @@ impl GuestMemory for WasmGuestMemory {
                 Ok(unsafe { core::slice::from_raw_parts_mut(linear as *mut u8, len) })
             }
             crate::guest_phys::GuestRamRange::Hole => self.open_bus_slice_mut(addr, len),
-            crate::guest_phys::GuestRamRange::OutOfBounds => Err(GuestMemoryError::OutOfBounds { addr, len }),
+            crate::guest_phys::GuestRamRange::OutOfBounds => {
+                Err(GuestMemoryError::OutOfBounds { addr, len })
+            }
         }
     }
 }
@@ -227,7 +236,9 @@ impl VirtioNetPciTransportMode {
                 0 => Ok(Self::ModernOnly),
                 1 => Ok(Self::Transitional),
                 2 => Ok(Self::LegacyOnly),
-                _ => Err(js_error(format!("invalid virtio-net pci transport mode: {n}"))),
+                _ => Err(js_error(format!(
+                    "invalid virtio-net pci transport mode: {n}"
+                ))),
             };
         }
 

@@ -280,7 +280,10 @@ fn virtio_input_statusq_buffers_are_consumed() {
     write_u16_le(&mut mem, used, 0).unwrap();
     write_u16_le(&mut mem, used + 2, 0).unwrap();
 
-    dev.bar0_write(caps.notify + u64::from(caps.notify_mult), &1u16.to_le_bytes());
+    dev.bar0_write(
+        caps.notify + u64::from(caps.notify_mult),
+        &1u16.to_le_bytes(),
+    );
     dev.process_notified_queues(&mut mem);
 
     assert_eq!(read_u16_le(&mem, used + 2).unwrap(), 1);
@@ -405,7 +408,10 @@ fn virtio_input_config_exposes_name_devids_and_ev_bits() {
         key_bits[(BTN_MIDDLE / 8) as usize] & (1u8 << (BTN_MIDDLE % 8)),
         0
     );
-    assert_ne!(key_bits[(BTN_SIDE / 8) as usize] & (1u8 << (BTN_SIDE % 8)), 0);
+    assert_ne!(
+        key_bits[(BTN_SIDE / 8) as usize] & (1u8 << (BTN_SIDE % 8)),
+        0
+    );
     assert_ne!(
         key_bits[(BTN_EXTRA / 8) as usize] & (1u8 << (BTN_EXTRA % 8)),
         0
@@ -601,7 +607,10 @@ fn virtio_pci_notify_accepts_32bit_writes() {
     write_u16_le(&mut mem, used + 2, 0).unwrap();
 
     // Contract v1 requires notify to accept 32-bit writes too.
-    dev.bar0_write(caps.notify + u64::from(caps.notify_mult), &1u32.to_le_bytes());
+    dev.bar0_write(
+        caps.notify + u64::from(caps.notify_mult),
+        &1u32.to_le_bytes(),
+    );
     dev.process_notified_queues(&mut mem);
 
     assert_eq!(read_u16_le(&mem, used + 2).unwrap(), 1);

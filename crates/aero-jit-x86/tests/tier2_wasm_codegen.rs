@@ -620,7 +620,10 @@ fn tier2_trace_wasm_matches_interpreter_on_sar() {
                 dst: v(0),
                 reg: Gpr::Rax,
             },
-            Instr::Const { dst: v(1), value: 1 },
+            Instr::Const {
+                dst: v(1),
+                value: 1,
+            },
             Instr::BinOp {
                 dst: v(2),
                 op: BinOp::Sar,

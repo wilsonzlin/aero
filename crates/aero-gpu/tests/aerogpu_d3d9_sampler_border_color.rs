@@ -420,4 +420,3 @@ fn d3d9_cmd_stream_sampler_border_color_is_honored() {
     let px: [u8; 4] = rgba[idx..idx + 4].try_into().unwrap();
     assert_eq!(px, [255, 255, 255, 255], "expected border color");
 }
-

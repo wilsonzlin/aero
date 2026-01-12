@@ -1,7 +1,9 @@
 #![cfg(not(target_arch = "wasm32"))]
 
 use aero_storage_server::{
-    store::{BoxedAsyncRead, ImageCatalogEntry, ImageMeta, ImageStore, LocalFsImageStore, StoreError},
+    store::{
+        BoxedAsyncRead, ImageCatalogEntry, ImageMeta, ImageStore, LocalFsImageStore, StoreError,
+    },
     AppState,
 };
 use axum::{

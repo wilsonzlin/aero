@@ -523,7 +523,11 @@ impl<C: Clock> IoSnapshot for AcpiPmIo<C> {
 
         // Restore PM1a_CNT directly. Snapshot loads must not replay guest port writes
         // as those may trigger host callbacks (e.g. S5 shutdown via SLP_TYP/SLP_EN).
-        let mut pm1_cnt = if self.cfg.start_enabled { PM1_CNT_SCI_EN } else { 0 };
+        let mut pm1_cnt = if self.cfg.start_enabled {
+            PM1_CNT_SCI_EN
+        } else {
+            0
+        };
         if let Some(v) = r.u16(TAG_PM1_CNT)? {
             pm1_cnt = v;
         }

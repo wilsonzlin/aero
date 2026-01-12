@@ -34,9 +34,7 @@ pub fn router(state: AppState) -> Router {
 }
 
 fn insert_cors_headers(headers: &mut HeaderMap, state: &AppState, req_headers: &HeaderMap) {
-    state
-        .cors
-        .insert_cors_headers(headers, req_headers, None);
+    state.cors.insert_cors_headers(headers, req_headers, None);
 }
 
 async fn health(State(state): State<AppState>, req_headers: HeaderMap) -> Response {

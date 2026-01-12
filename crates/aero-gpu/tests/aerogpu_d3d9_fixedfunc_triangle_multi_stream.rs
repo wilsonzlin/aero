@@ -3,8 +3,9 @@ mod common;
 use aero_gpu::{AerogpuD3d9Error, AerogpuD3d9Executor};
 use aero_protocol::aerogpu::{
     aerogpu_cmd::{
-        AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode, AerogpuCmdStreamHeader as ProtocolCmdStreamHeader,
-        AerogpuPrimitiveTopology, AEROGPU_CLEAR_COLOR, AEROGPU_CMD_STREAM_MAGIC, AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
+        AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode,
+        AerogpuCmdStreamHeader as ProtocolCmdStreamHeader, AerogpuPrimitiveTopology,
+        AEROGPU_CLEAR_COLOR, AEROGPU_CMD_STREAM_MAGIC, AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
         AEROGPU_RESOURCE_USAGE_TEXTURE, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
     },
     aerogpu_pci::{AerogpuFormat, AEROGPU_ABI_VERSION_U32},
@@ -159,14 +160,14 @@ fn d3d9_cmd_stream_fixedfunc_poscolor_multi_stream_renders_triangle() {
     push_u8(&mut vertex_decl, 0); // method
     push_u8(&mut vertex_decl, D3DDECLUSAGE_POSITIONT);
     push_u8(&mut vertex_decl, 0); // usage_index
-    // COLOR0 at stream 1 offset 0.
+                                  // COLOR0 at stream 1 offset 0.
     push_u16(&mut vertex_decl, 1); // stream
     push_u16(&mut vertex_decl, 0); // offset
     push_u8(&mut vertex_decl, D3DDECLTYPE_D3DCOLOR);
     push_u8(&mut vertex_decl, 0); // method
     push_u8(&mut vertex_decl, D3DDECLUSAGE_COLOR);
     push_u8(&mut vertex_decl, 0); // usage_index
-    // End marker.
+                                  // End marker.
     push_u16(&mut vertex_decl, 0x00FF);
     push_u16(&mut vertex_decl, 0);
     push_u8(&mut vertex_decl, D3DDECLTYPE_UNUSED);
@@ -205,7 +206,10 @@ fn d3d9_cmd_stream_fixedfunc_poscolor_multi_stream_renders_triangle() {
     let stream = build_stream(|out| {
         emit_packet(out, OPC_CREATE_TEXTURE2D, |out| {
             push_u32(out, RT_HANDLE);
-            push_u32(out, AEROGPU_RESOURCE_USAGE_TEXTURE | AEROGPU_RESOURCE_USAGE_RENDER_TARGET);
+            push_u32(
+                out,
+                AEROGPU_RESOURCE_USAGE_TEXTURE | AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
+            );
             push_u32(out, AEROGPU_FORMAT_R8G8B8A8_UNORM);
             push_u32(out, width);
             push_u32(out, height);
@@ -290,12 +294,12 @@ fn d3d9_cmd_stream_fixedfunc_poscolor_multi_stream_renders_triangle() {
         emit_packet(out, OPC_SET_VERTEX_BUFFERS, |out| {
             push_u32(out, 0); // start_slot
             push_u32(out, 2); // buffer_count
-            // binding[0] = stream 0
+                              // binding[0] = stream 0
             push_u32(out, VB_POS_HANDLE);
             push_u32(out, 16); // stride_bytes
             push_u32(out, 0); // offset_bytes
             push_u32(out, 0); // reserved0
-            // binding[1] = stream 1
+                              // binding[1] = stream 1
             push_u32(out, VB_COLOR_HANDLE);
             push_u32(out, 4); // stride_bytes
             push_u32(out, 0); // offset_bytes
@@ -369,4 +373,3 @@ fn d3d9_cmd_stream_fixedfunc_poscolor_multi_stream_renders_triangle() {
     // Center pixel should be red.
     assert_eq!(px(width / 2, height / 2), [255, 0, 0, 255]);
 }
-

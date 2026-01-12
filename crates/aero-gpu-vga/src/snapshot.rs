@@ -407,4 +407,3 @@ impl VgaDevice {
         self.dirty = true;
     }
 }
-

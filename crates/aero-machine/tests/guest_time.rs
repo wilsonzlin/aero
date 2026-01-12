@@ -40,7 +40,10 @@ fn guest_time_split_batches_match_single_batch() {
 
 #[test]
 fn guest_time_default_frequency_matches_cpu_core_default_tsc() {
-    assert_eq!(GuestTime::default().cpu_hz(), aero_cpu_core::time::DEFAULT_TSC_HZ);
+    assert_eq!(
+        GuestTime::default().cpu_hz(),
+        aero_cpu_core::time::DEFAULT_TSC_HZ
+    );
 }
 
 #[test]
@@ -65,8 +68,7 @@ fn pit_irq0_pulse_after_accumulated_guest_time() {
     let ns_needed = ((4u128) * 1_000_000_000u128).div_ceil(PIT_HZ as u128);
 
     // Convert that to the minimum number of cycles needed at `DEFAULT_GUEST_CPU_HZ`.
-    let cycles_needed =
-        (ns_needed * (DEFAULT_GUEST_CPU_HZ as u128)).div_ceil(1_000_000_000u128);
+    let cycles_needed = (ns_needed * (DEFAULT_GUEST_CPU_HZ as u128)).div_ceil(1_000_000_000u128);
 
     for _ in 0..(cycles_needed as u64) {
         let delta_ns = time.advance_guest_time_for_instructions(1);

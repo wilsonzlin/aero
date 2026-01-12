@@ -712,7 +712,9 @@ mod tests {
         let r2 = Rect::new(5, 2, 3, 1);
 
         let mut presenter = Presenter::new(width, height, bpp, RecordingWriter::default());
-        let telemetry = presenter.present(&frame_data, stride, Some(&[r1, r2])).unwrap();
+        let telemetry = presenter
+            .present(&frame_data, stride, Some(&[r1, r2]))
+            .unwrap();
 
         assert_eq!(telemetry.rects_requested, 2);
         assert_eq!(telemetry.rects_after_merge, 2);
@@ -765,7 +767,9 @@ mod tests {
         let merged = Rect::new(0, 0, 15, 15);
 
         let mut presenter = Presenter::new(width, height, bpp, RecordingWriter::default());
-        let telemetry = presenter.present(&frame_data, stride, Some(&[r1, r2])).unwrap();
+        let telemetry = presenter
+            .present(&frame_data, stride, Some(&[r1, r2]))
+            .unwrap();
 
         assert_eq!(telemetry.rects_requested, 2);
         assert_eq!(telemetry.rects_after_merge, 1);
@@ -788,7 +792,10 @@ mod tests {
         let row_last_src = (rect_h - 1) * stride;
         let last_row_dst = (rect_h - 1) * COPY_BYTES_PER_ROW_ALIGNMENT;
 
-        assert_eq!(&call.data[0..row_bytes], &frame_data[row0_src..row0_src + row_bytes]);
+        assert_eq!(
+            &call.data[0..row_bytes],
+            &frame_data[row0_src..row0_src + row_bytes]
+        );
         assert_eq!(
             &call.data[last_row_dst..(last_row_dst + row_bytes)],
             &frame_data[row_last_src..row_last_src + row_bytes]
@@ -810,7 +817,9 @@ mod tests {
 
         let mut presenter = Presenter::new(width, height, bpp, RecordingWriter::default())
             .with_max_rects_per_frame(1);
-        let telemetry = presenter.present(&frame_data, stride, Some(&[r1, r2])).unwrap();
+        let telemetry = presenter
+            .present(&frame_data, stride, Some(&[r1, r2]))
+            .unwrap();
 
         assert_eq!(telemetry.rects_requested, 2);
         assert_eq!(telemetry.rects_after_merge, 2);
@@ -822,13 +831,19 @@ mod tests {
         assert_eq!(call.rect, capped);
         assert_eq!(call.bytes_per_row, COPY_BYTES_PER_ROW_ALIGNMENT);
 
-        let expected_len =
-            required_data_len(COPY_BYTES_PER_ROW_ALIGNMENT, full_row_bytes, height as usize);
+        let expected_len = required_data_len(
+            COPY_BYTES_PER_ROW_ALIGNMENT,
+            full_row_bytes,
+            height as usize,
+        );
         assert_eq!(call.data.len(), expected_len);
         assert_eq!(telemetry.bytes_uploaded, expected_len);
 
         // Spot-check that padding in the source (none here) and destination layout are handled.
-        assert_eq!(&call.data[0..full_row_bytes], &frame_data[0..full_row_bytes]);
+        assert_eq!(
+            &call.data[0..full_row_bytes],
+            &frame_data[0..full_row_bytes]
+        );
         let last_row_dst = (height as usize - 1) * COPY_BYTES_PER_ROW_ALIGNMENT;
         let last_row_src = (height as usize - 1) * stride;
         assert_eq!(
@@ -1036,10 +1051,7 @@ mod tests {
         let rect = Rect::new(0, 0, u32::MAX, 2);
 
         let err = presenter.upload_rect(&[], 0, rect).unwrap_err();
-        assert_eq!(
-            err.to_string(),
-            "bytes_per_row too large (4294967296)"
-        );
+        assert_eq!(err.to_string(), "bytes_per_row too large (4294967296)");
         assert!(matches!(
             err,
             PresentError::BytesPerRowTooLarge {
@@ -1063,7 +1075,9 @@ mod tests {
 
         let mut presenter = Presenter::new(width, height, bpp, RecordingWriter::default())
             .with_max_rects_per_frame(0);
-        let telemetry = presenter.present(&frame_data, stride, Some(&[r1, r2])).unwrap();
+        let telemetry = presenter
+            .present(&frame_data, stride, Some(&[r1, r2]))
+            .unwrap();
 
         assert_eq!(presenter.writer().calls.len(), 0);
         assert_eq!(
@@ -1092,7 +1106,9 @@ mod tests {
         assert_eq!(presenter.last_telemetry(), ok);
 
         // Force an error; last_telemetry should remain unchanged.
-        let err = presenter.present(&frame_data, full_row_bytes - 1, None).unwrap_err();
+        let err = presenter
+            .present(&frame_data, full_row_bytes - 1, None)
+            .unwrap_err();
         assert!(matches!(err, PresentError::StrideTooSmall { .. }));
         assert_eq!(presenter.last_telemetry(), ok);
     }

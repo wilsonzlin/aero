@@ -611,13 +611,22 @@ mod tests {
         pump.nic_mut().mmio_write_u32_reg(0x3818, 3); // TDT
 
         pump.poll(&mut mem);
-        assert_eq!(pump.backend_mut().drain_tx_frames(), vec![frames[0].clone()]);
+        assert_eq!(
+            pump.backend_mut().drain_tx_frames(),
+            vec![frames[0].clone()]
+        );
 
         pump.poll(&mut mem);
-        assert_eq!(pump.backend_mut().drain_tx_frames(), vec![frames[1].clone()]);
+        assert_eq!(
+            pump.backend_mut().drain_tx_frames(),
+            vec![frames[1].clone()]
+        );
 
         pump.poll(&mut mem);
-        assert_eq!(pump.backend_mut().drain_tx_frames(), vec![frames[2].clone()]);
+        assert_eq!(
+            pump.backend_mut().drain_tx_frames(),
+            vec![frames[2].clone()]
+        );
     }
 
     #[test]
@@ -685,9 +694,9 @@ mod tests {
 
         let mut backend = Backend {
             rx: VecDeque::from([
-                vec![],                      // invalid (empty)
-                vec![0xAA; 13],              // invalid (< 14)
-                valid.clone(),               // valid
+                vec![],         // invalid (empty)
+                vec![0xAA; 13], // invalid (< 14)
+                valid.clone(),  // valid
             ]),
         };
 
@@ -1138,11 +1147,7 @@ mod tests {
 
     fn parse_dhcp_from_frame(frame: &[u8]) -> DhcpFrameMeta {
         let eth = EthernetFrame::parse(frame).expect("parse Ethernet frame");
-        assert_eq!(
-            eth.ethertype(),
-            EtherType::IPV4,
-            "expected IPv4 ethertype"
-        );
+        assert_eq!(eth.ethertype(), EtherType::IPV4, "expected IPv4 ethertype");
         let ip = Ipv4Packet::parse(eth.payload()).expect("parse IPv4 packet");
         assert_eq!(ip.protocol(), Ipv4Protocol::UDP, "expected UDP protocol");
         assert!(
@@ -1360,13 +1365,11 @@ mod tests {
         let offer0 = parse_dhcp_from_frame(&offer0_frame);
         let offer1 = parse_dhcp_from_frame(&offer1_frame);
         assert_eq!(
-            offer0.wire_len,
-            rx0_len as usize,
+            offer0.wire_len, rx0_len as usize,
             "offer0 RX descriptor length should match IPv4 total length"
         );
         assert_eq!(
-            offer1.wire_len,
-            rx1_len as usize,
+            offer1.wire_len, rx1_len as usize,
             "offer1 RX descriptor length should match IPv4 total length"
         );
         for (i, offer) in [offer0, offer1].iter().enumerate() {
@@ -1386,8 +1389,7 @@ mod tests {
                 "offer{i} flags mismatch (expected broadcast bit)"
             );
             assert_eq!(
-                offer.dhcp.requested_ip,
-                None,
+                offer.dhcp.requested_ip, None,
                 "offer{i} should not include a requested_ip option"
             );
             assert_eq!(
@@ -1414,7 +1416,8 @@ mod tests {
         for offer in [offer0, offer1] {
             if offer.eth_dst == MacAddr::BROADCAST && offer.ip_dst == Ipv4Addr::BROADCAST {
                 saw_broadcast = true;
-            } else if offer.eth_dst == guest_mac && offer.ip_dst == backend.stack().config().guest_ip
+            } else if offer.eth_dst == guest_mac
+                && offer.ip_dst == backend.stack().config().guest_ip
             {
                 saw_unicast = true;
             } else {
@@ -1430,21 +1433,15 @@ mod tests {
         );
         // Verify no overrun beyond the reported RX length.
         assert!(
-            mem.read_vec(
-                rx_bufs[0] + rx0_len as u64,
-                RX_BUF_SIZE - rx0_len as usize
-            )
-            .iter()
-            .all(|b| *b == RX_SENTINEL),
+            mem.read_vec(rx_bufs[0] + rx0_len as u64, RX_BUF_SIZE - rx0_len as usize)
+                .iter()
+                .all(|b| *b == RX_SENTINEL),
             "RX buffer 0 was modified beyond reported frame length"
         );
         assert!(
-            mem.read_vec(
-                rx_bufs[1] + rx1_len as u64,
-                RX_BUF_SIZE - rx1_len as usize
-            )
-            .iter()
-            .all(|b| *b == RX_SENTINEL),
+            mem.read_vec(rx_bufs[1] + rx1_len as u64, RX_BUF_SIZE - rx1_len as usize)
+                .iter()
+                .all(|b| *b == RX_SENTINEL),
             "RX buffer 1 was modified beyond reported frame length"
         );
 
@@ -1585,13 +1582,11 @@ mod tests {
         let ack0 = parse_dhcp_from_frame(&ack0_frame);
         let ack1 = parse_dhcp_from_frame(&ack1_frame);
         assert_eq!(
-            ack0.wire_len,
-            rx2_len as usize,
+            ack0.wire_len, rx2_len as usize,
             "ack0 RX descriptor length should match IPv4 total length"
         );
         assert_eq!(
-            ack1.wire_len,
-            rx3_len as usize,
+            ack1.wire_len, rx3_len as usize,
             "ack1 RX descriptor length should match IPv4 total length"
         );
         for (i, ack) in [ack0, ack1].iter().enumerate() {
@@ -1611,8 +1606,7 @@ mod tests {
                 "ack{i} flags mismatch (expected broadcast bit)"
             );
             assert_eq!(
-                ack.dhcp.requested_ip,
-                None,
+                ack.dhcp.requested_ip, None,
                 "ack{i} should not include a requested_ip option"
             );
             assert_eq!(ack.dhcp.client_mac, guest_mac, "ack{i} client MAC mismatch");
@@ -1651,21 +1645,15 @@ mod tests {
         );
         // Verify no overrun beyond the reported RX length.
         assert!(
-            mem.read_vec(
-                rx_bufs[2] + rx2_len as u64,
-                RX_BUF_SIZE - rx2_len as usize
-            )
-            .iter()
-            .all(|b| *b == RX_SENTINEL),
+            mem.read_vec(rx_bufs[2] + rx2_len as u64, RX_BUF_SIZE - rx2_len as usize)
+                .iter()
+                .all(|b| *b == RX_SENTINEL),
             "RX buffer 2 was modified beyond reported frame length"
         );
         assert!(
-            mem.read_vec(
-                rx_bufs[3] + rx3_len as u64,
-                RX_BUF_SIZE - rx3_len as usize
-            )
-            .iter()
-            .all(|b| *b == RX_SENTINEL),
+            mem.read_vec(rx_bufs[3] + rx3_len as u64, RX_BUF_SIZE - rx3_len as usize)
+                .iter()
+                .all(|b| *b == RX_SENTINEL),
             "RX buffer 3 was modified beyond reported frame length"
         );
 
@@ -1678,10 +1666,7 @@ mod tests {
                 "unexpected RX desc {i} buffer addr change"
             );
             assert_eq!(len, 0, "unexpected RX desc {i} length (expected unused)");
-            assert_eq!(
-                status, 0,
-                "unexpected RX desc {i} status (expected unused)"
-            );
+            assert_eq!(status, 0, "unexpected RX desc {i} status (expected unused)");
             assert_eq!(
                 errors, 0,
                 "unexpected RX desc {i} errors field (expected unused)"

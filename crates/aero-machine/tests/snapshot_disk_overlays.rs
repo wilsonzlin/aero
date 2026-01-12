@@ -167,7 +167,9 @@ fn restore_sorts_disk_overlay_refs_by_disk_id_even_if_snapshot_file_is_unsorted(
     overlays.disks.reverse();
 
     let mut rewritten = Vec::new();
-    overlays.encode(&mut rewritten).expect("encode DISKS payload");
+    overlays
+        .encode(&mut rewritten)
+        .expect("encode DISKS payload");
     assert_eq!(
         u64::try_from(rewritten.len()).unwrap(),
         disks_len,

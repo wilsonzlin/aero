@@ -6,7 +6,9 @@ use aero_devices::acpi_pm::{AcpiPmCallbacks, AcpiPmConfig, AcpiPmIo};
 use aero_devices::clock::ManualClock;
 use aero_devices::irq::IrqLine;
 use aero_platform::io::PortIoDevice;
-use aero_snapshot::io_snapshot_bridge::{apply_io_snapshot_to_device, device_state_from_io_snapshot};
+use aero_snapshot::io_snapshot_bridge::{
+    apply_io_snapshot_to_device, device_state_from_io_snapshot,
+};
 use aero_snapshot::{
     restore_snapshot, save_snapshot, Compression, CpuState, DeviceId, DeviceState, DiskOverlayRefs,
     MmuState, Result, SaveOptions, SnapshotMeta, SnapshotSource, SnapshotTarget,
@@ -160,11 +162,7 @@ fn acpi_pm_io_snapshot_roundtrips_through_aero_snapshot_file() {
 
     for i in 0..half {
         let v = 1u8 << (i.min(7) as u32);
-        pm0.write(
-            cfg.gpe0_blk + half as u16 + i as u16,
-            1,
-            u32::from(v),
-        );
+        pm0.write(cfg.gpe0_blk + half as u16 + i as u16, 1, u32::from(v));
         pm0.trigger_gpe0(i, v);
     }
 
@@ -263,4 +261,3 @@ fn acpi_pm_io_snapshot_roundtrips_through_aero_snapshot_file() {
         "SCI restore should not glitch low/high; it should assert once based on restored state"
     );
 }
-

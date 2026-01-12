@@ -231,7 +231,10 @@ fn virtio_net_tx_and_rx_complete_via_pci_transport() {
     write_u16_le(&mut mem, tx_used, 0).unwrap();
     write_u16_le(&mut mem, tx_used + 2, 0).unwrap();
 
-    dev.bar0_write(caps.notify + u64::from(caps.notify_mult), &1u16.to_le_bytes());
+    dev.bar0_write(
+        caps.notify + u64::from(caps.notify_mult),
+        &1u16.to_le_bytes(),
+    );
     dev.process_notified_queues(&mut mem);
 
     assert_eq!(backing.borrow().tx_packets, vec![payload.to_vec()]);

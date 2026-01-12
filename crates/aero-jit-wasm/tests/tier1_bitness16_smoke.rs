@@ -1,6 +1,6 @@
+use aero_jit_x86::Tier1Bus;
 use aero_jit_x86::compiler::tier1::compile_tier1_block_with_options;
 use aero_jit_x86::tier1::{BlockLimits, Tier1WasmOptions};
-use aero_jit_x86::Tier1Bus;
 
 /// Simple immutable bus over a byte slice starting at `entry_rip`.
 struct SliceBus {
@@ -33,10 +33,7 @@ fn tier1_can_compile_16bit_decode_mode_blocks() {
     //
     // This is used by the tiered runtime smoke harness.
     let code = vec![0x66, 0x83, 0xc0, 0x01, 0xeb, 0xfa];
-    let bus = SliceBus {
-        entry_rip,
-        code,
-    };
+    let bus = SliceBus { entry_rip, code };
 
     let limits = BlockLimits {
         max_insts: 64,
@@ -57,4 +54,3 @@ fn tier1_can_compile_16bit_decode_mode_blocks() {
         .validate_all(&compilation.wasm_bytes)
         .expect("compiled Tier-1 block must be valid wasm");
 }
-

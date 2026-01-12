@@ -1,6 +1,6 @@
-use aero_cpu_core::interp::tier0::exec::{run_batch, BatchExit};
+use aero_cpu_core::interp::tier0::exec::{BatchExit, run_batch};
 use aero_cpu_core::mem::{CpuBus, FlatTestBus};
-use aero_cpu_core::state::{gpr, CpuMode, CpuState};
+use aero_cpu_core::state::{CpuMode, CpuState, gpr};
 
 /// Canonical iteration count used by PF-008 checksum verification.
 pub const ITERS_PER_RUN_CANONICAL: u32 = 10_000;
@@ -326,7 +326,10 @@ impl core::fmt::Display for GuestCpuBenchError {
         match self {
             Self::UnknownVariant(v) => write!(f, "Unknown guest CPU bench variant: {v}"),
             Self::InvalidIters(iters) => {
-                write!(f, "Invalid guest CPU bench iters value: {iters} (expected > 0)")
+                write!(
+                    f,
+                    "Invalid guest CPU bench iters value: {iters} (expected > 0)"
+                )
             }
             Self::UnexpectedExit { exit, rip } => {
                 write!(f, "Unexpected Tier-0 batch exit {exit:?} at rip=0x{rip:x}")

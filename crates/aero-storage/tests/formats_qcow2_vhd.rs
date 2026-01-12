@@ -1416,7 +1416,10 @@ fn vhd_fixed_rejects_bad_file_format_version() {
     backend.write_at(footer_offset, &footer).unwrap();
 
     let err = VhdDisk::open(backend).err().expect("expected error");
-    assert!(matches!(err, DiskError::Unsupported("vhd file format version")));
+    assert!(matches!(
+        err,
+        DiskError::Unsupported("vhd file format version")
+    ));
 }
 
 #[test]
@@ -1503,7 +1506,10 @@ fn vhd_rejects_footer_truncated_when_backend_len_is_stale() {
         reported_len: SECTOR_SIZE as u64,
     };
     let err = VhdDisk::open(backend).err().expect("expected error");
-    assert!(matches!(err, DiskError::CorruptImage("vhd footer truncated")));
+    assert!(matches!(
+        err,
+        DiskError::CorruptImage("vhd footer truncated")
+    ));
 }
 
 #[test]
@@ -1972,7 +1978,9 @@ fn vhd_rejects_bad_footer_checksum() {
         .write_at((64 * 1024) + (SECTOR_SIZE as u64) - 1, &last)
         .unwrap();
 
-    let err = VhdDisk::open(backend).err().expect("expected vhd open to fail");
+    let err = VhdDisk::open(backend)
+        .err()
+        .expect("expected vhd open to fail");
     assert!(matches!(
         err,
         DiskError::CorruptImage("vhd footer checksum mismatch")

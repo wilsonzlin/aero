@@ -164,7 +164,10 @@ fn snapshot_ram_bypasses_a20_masking() {
         }
     }
     assert!(saw_a20_disabled, "guest never disabled A20");
-    assert!(!vm.cpu().a20_enabled, "expected A20 disabled at snapshot time");
+    assert!(
+        !vm.cpu().a20_enabled,
+        "expected A20 disabled at snapshot time"
+    );
 
     let snap = vm.take_snapshot_full().unwrap();
 

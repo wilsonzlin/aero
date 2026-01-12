@@ -89,4 +89,3 @@ async fn private_manifest_image_range_without_credentials_is_not_publicly_cachea
         "expected Cache-Control to not contain public, got {cache_control:?}"
     );
 }
-

@@ -88,7 +88,10 @@ impl Interpreter<TestCpu> for Tier1Interpreter {
         let entry = cpu.rip();
         let block = discover_block(&self.bus, entry, BlockLimits::default());
         let mut instructions_retired = block.insts.len() as u64;
-        if matches!(block.end_kind, aero_jit_x86::BlockEndKind::ExitToInterpreter { .. }) {
+        if matches!(
+            block.end_kind,
+            aero_jit_x86::BlockEndKind::ExitToInterpreter { .. }
+        ) {
             // Tier-1 discovery includes the invalid instruction that triggers the bailout, but the
             // translator emits `ExitToInterpreter` without executing/retiring it.
             instructions_retired = instructions_retired.saturating_sub(1);

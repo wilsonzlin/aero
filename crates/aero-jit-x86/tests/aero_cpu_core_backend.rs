@@ -247,14 +247,13 @@ fn wasmtime_backend_executes_inline_tlb_load_store() {
     );
     let block = builder.finish(IrTerminator::Jump { target: 0x2000 });
 
-    let wasm = Tier1WasmCodegen::new()
-        .compile_block_with_options(
-            &block,
-            Tier1WasmOptions {
-                inline_tlb: true,
-                ..Default::default()
-            },
-        );
+    let wasm = Tier1WasmCodegen::new().compile_block_with_options(
+        &block,
+        Tier1WasmOptions {
+            inline_tlb: true,
+            ..Default::default()
+        },
+    );
 
     let mut backend: WasmtimeBackend<CpuState> = WasmtimeBackend::new();
     let idx = backend.add_compiled_block(&wasm);
@@ -301,14 +300,13 @@ fn wasmtime_backend_inline_tlb_mmio_exit_sets_next_rip() {
     );
     let block = builder.finish(IrTerminator::Jump { target: 0x2000 });
 
-    let wasm = Tier1WasmCodegen::new()
-        .compile_block_with_options(
-            &block,
-            Tier1WasmOptions {
-                inline_tlb: true,
-                ..Default::default()
-            },
-        );
+    let wasm = Tier1WasmCodegen::new().compile_block_with_options(
+        &block,
+        Tier1WasmOptions {
+            inline_tlb: true,
+            ..Default::default()
+        },
+    );
 
     let mut backend: WasmtimeBackend<CpuState> = WasmtimeBackend::new();
     let idx = backend.add_compiled_block(&wasm);

@@ -1,6 +1,4 @@
-use aero_devices::acpi_pm::{
-    AcpiPmCallbacks, AcpiPmConfig, AcpiPmIo, PM1_STS_PWRBTN, SLP_TYP_S5,
-};
+use aero_devices::acpi_pm::{AcpiPmCallbacks, AcpiPmConfig, AcpiPmIo, PM1_STS_PWRBTN, SLP_TYP_S5};
 use aero_devices::clock::ManualClock;
 use aero_devices::irq::IrqLine;
 use aero_io_snapshot::io::state::IoSnapshot;
@@ -42,11 +40,7 @@ fn acpi_pm_snapshot_roundtrip_preserves_registers_sci_and_timer() {
     }
 
     for (i, &v) in gpe_en.iter().enumerate() {
-        pm.write(
-            cfg.gpe0_blk + half as u16 + i as u16,
-            1,
-            u32::from(v),
-        );
+        pm.write(cfg.gpe0_blk + half as u16 + i as u16, 1, u32::from(v));
     }
     for (i, &v) in gpe_sts.iter().enumerate() {
         pm.trigger_gpe0(i, v);
@@ -59,7 +53,10 @@ fn acpi_pm_snapshot_roundtrip_preserves_registers_sci_and_timer() {
 
     // Standard ACPI enable handshake (sets PM1_CNT.SCI_EN).
     pm.write(cfg.smi_cmd_port, 1, u32::from(cfg.acpi_enable_cmd));
-    assert!(pm.sci_level(), "PM1 event should assert SCI once SCI_EN is set");
+    assert!(
+        pm.sci_level(),
+        "PM1 event should assert SCI once SCI_EN is set"
+    );
 
     // Program S5 sleep bits so a buggy restore path that replays port writes would spuriously
     // invoke the power-off callback.

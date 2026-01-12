@@ -59,10 +59,8 @@ fn constant_time_eq(a: &str, b: &str) -> bool {
 
 fn unauthorized(state: &ImagesState, req_headers: &HeaderMap) -> Response {
     let mut resp = StatusCode::UNAUTHORIZED.into_response();
-    resp.headers_mut().insert(
-        header::WWW_AUTHENTICATE,
-        HeaderValue::from_static("Bearer"),
-    );
+    resp.headers_mut()
+        .insert(header::WWW_AUTHENTICATE, HeaderValue::from_static("Bearer"));
     super::images::insert_cors_headers(resp.headers_mut(), state, req_headers);
     resp
 }
@@ -72,4 +70,3 @@ fn forbidden(state: &ImagesState, req_headers: &HeaderMap) -> Response {
     super::images::insert_cors_headers(resp.headers_mut(), state, req_headers);
     resp
 }
-

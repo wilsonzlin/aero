@@ -330,7 +330,9 @@ async fn create_device_queue_with_features(
             .await
             .filter(|a| a.features().contains(required_features)),
     }
-    .ok_or_else(|| anyhow!("wgpu: no suitable adapter found for required_features={required_features:?}"))?;
+    .ok_or_else(|| {
+        anyhow!("wgpu: no suitable adapter found for required_features={required_features:?}")
+    })?;
     let info = adapter.get_info();
 
     let (device, queue) = adapter

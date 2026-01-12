@@ -604,9 +604,7 @@ where
 
                 let src_page_off = (src_addr & (PAGE_SIZE - 1)) as usize;
                 let dst_page_off = (dst_addr & (PAGE_SIZE - 1)) as usize;
-                let chunk_len = (src_page_off + 1)
-                    .min(dst_page_off + 1)
-                    .min(remaining);
+                let chunk_len = (src_page_off + 1).min(dst_page_off + 1).min(remaining);
                 let chunk_start = remaining - chunk_len;
 
                 let src_chunk_addr = src + chunk_start as u64;

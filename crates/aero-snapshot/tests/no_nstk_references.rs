@@ -50,10 +50,7 @@ fn scan_dir(dir: &Path, legacy: &[u8], hits: &mut Vec<PathBuf>) {
             Ok(v) => v,
             Err(_) => continue,
         };
-        if bytes
-            .windows(legacy.len())
-            .any(|w| w == legacy)
-        {
+        if bytes.windows(legacy.len()).any(|w| w == legacy) {
             hits.push(path);
         }
     }

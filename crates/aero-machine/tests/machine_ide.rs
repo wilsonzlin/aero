@@ -1,7 +1,7 @@
 #![cfg(not(target_arch = "wasm32"))]
 
 use aero_cpu_core::state::RFLAGS_IF;
-use aero_devices::pci::{profile, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT, PciBdf};
+use aero_devices::pci::{profile, PciBdf, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
 use aero_machine::{Machine, MachineConfig, RunExit};
 use aero_platform::interrupts::InterruptController;
 use aero_storage::{MemBackend, RawDisk, VirtualDisk as _, SECTOR_SIZE};

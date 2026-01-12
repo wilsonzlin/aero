@@ -145,7 +145,10 @@ async fn manifest_last_modified_drives_if_modified_since_for_bytes_endpoint() {
         .await
         .unwrap();
     assert_eq!(head.status(), StatusCode::OK);
-    let last_modified = head.headers()[header::LAST_MODIFIED].to_str().unwrap().to_string();
+    let last_modified = head.headers()[header::LAST_MODIFIED]
+        .to_str()
+        .unwrap()
+        .to_string();
 
     // If-Modified-Since uses 1-second resolution; sending the exact Last-Modified value should
     // return 304.
@@ -182,7 +185,10 @@ async fn manifest_last_modified_drives_if_modified_since_for_meta_endpoint() {
         .await
         .unwrap();
     assert_eq!(head.status(), StatusCode::OK);
-    let last_modified = head.headers()[header::LAST_MODIFIED].to_str().unwrap().to_string();
+    let last_modified = head.headers()[header::LAST_MODIFIED]
+        .to_str()
+        .unwrap()
+        .to_string();
 
     let res = app
         .oneshot(

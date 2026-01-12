@@ -475,13 +475,7 @@ fn wasm_tier1_shift_flags_cf_of_match_x86_for_count_1() {
     let mut b = IrBuilder::new(entry);
     let v = b.const_int(Width::W8, 0x81);
     let c = b.const_int(Width::W8, 1);
-    let res = b.binop(
-        BinOp::Shl,
-        Width::W8,
-        v,
-        c,
-        FlagSet::CF.union(FlagSet::OF),
-    );
+    let res = b.binop(BinOp::Shl, Width::W8, v, c, FlagSet::CF.union(FlagSet::OF));
     b.write_reg(
         GuestReg::Gpr {
             reg: Gpr::Rax,

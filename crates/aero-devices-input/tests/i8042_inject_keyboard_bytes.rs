@@ -39,4 +39,3 @@ fn i8042_inject_keyboard_bytes_respects_translation_bit() {
     c.inject_keyboard_bytes(&[0xF0, 0x1C]);
     assert_eq!(drain_output(&mut c), vec![0xF0, 0x1C]);
 }
-

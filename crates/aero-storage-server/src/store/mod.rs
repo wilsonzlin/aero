@@ -87,7 +87,10 @@ pub trait ImageStore: Send + Sync {
 }
 
 pub(crate) fn validate_image_id(image_id: &str) -> Result<(), StoreError> {
-    if image_id.is_empty() || image_id.len() > MAX_IMAGE_ID_LEN || image_id == "." || image_id == ".."
+    if image_id.is_empty()
+        || image_id.len() > MAX_IMAGE_ID_LEN
+        || image_id == "."
+        || image_id == ".."
     {
         return Err(invalid_image_id_error(image_id));
     }

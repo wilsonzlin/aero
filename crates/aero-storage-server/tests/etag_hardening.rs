@@ -2,7 +2,10 @@
 
 use aero_storage_server::{
     http::cache,
-    store::{BoxedAsyncRead, ImageCatalogEntry, ImageMeta, ImageStore, StoreError, CONTENT_TYPE_DISK_IMAGE},
+    store::{
+        BoxedAsyncRead, ImageCatalogEntry, ImageMeta, ImageStore, StoreError,
+        CONTENT_TYPE_DISK_IMAGE,
+    },
     AppState,
 };
 use axum::{
@@ -102,10 +105,16 @@ impl ImageStore for InvalidEtagStore {
             return Err(StoreError::InvalidRange { start, len, size });
         }
 
-        let start =
-            usize::try_from(start_u64).map_err(|_| StoreError::InvalidRange { start: start_u64, len, size })?;
-        let end =
-            usize::try_from(end).map_err(|_| StoreError::InvalidRange { start: start_u64, len, size })?;
+        let start = usize::try_from(start_u64).map_err(|_| StoreError::InvalidRange {
+            start: start_u64,
+            len,
+            size,
+        })?;
+        let end = usize::try_from(end).map_err(|_| StoreError::InvalidRange {
+            start: start_u64,
+            len,
+            size,
+        })?;
         Ok(Box::pin(Cursor::new(self.data[start..end].to_vec())))
     }
 }

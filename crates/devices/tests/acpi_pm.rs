@@ -221,12 +221,18 @@ fn snapshot_roundtrip_preserves_pm1_gpe_sci_and_pm_timer_deterministically() {
     );
 
     // Guest-visible registers should match across snapshot/restore.
-    assert_eq!(bus0.read(cfg.pm1a_evt_blk, 2), bus1.read(cfg.pm1a_evt_blk, 2)); // PM1_STS
+    assert_eq!(
+        bus0.read(cfg.pm1a_evt_blk, 2),
+        bus1.read(cfg.pm1a_evt_blk, 2)
+    ); // PM1_STS
     assert_eq!(
         bus0.read(cfg.pm1a_evt_blk + 2, 2),
         bus1.read(cfg.pm1a_evt_blk + 2, 2)
     ); // PM1_EN
-    assert_eq!(bus0.read(cfg.pm1a_cnt_blk, 2), bus1.read(cfg.pm1a_cnt_blk, 2)); // PM1_CNT
+    assert_eq!(
+        bus0.read(cfg.pm1a_cnt_blk, 2),
+        bus1.read(cfg.pm1a_cnt_blk, 2)
+    ); // PM1_CNT
 
     for i in 0..gpe_half {
         assert_eq!(

@@ -22,8 +22,9 @@ fn machine_tick_advances_bda_tick_count_deterministically() {
     for elapsed_secs in 1u64..=10 {
         m.tick(1_000_000_000);
 
-        let expected_delta =
-            (u64::from(TICKS_PER_DAY) * elapsed_secs / 86_400).try_into().unwrap();
+        let expected_delta = (u64::from(TICKS_PER_DAY) * elapsed_secs / 86_400)
+            .try_into()
+            .unwrap();
         let expected = start.wrapping_add(expected_delta);
 
         assert_eq!(
@@ -33,4 +34,3 @@ fn machine_tick_advances_bda_tick_count_deterministically() {
         );
     }
 }
-

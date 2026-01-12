@@ -21,4 +21,3 @@ fn hda_clamps_host_sample_rates_to_avoid_oom() {
         aero_audio::MAX_HOST_SAMPLE_RATE_HZ
     );
 }
-

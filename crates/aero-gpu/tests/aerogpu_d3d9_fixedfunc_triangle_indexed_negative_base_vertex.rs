@@ -3,9 +3,11 @@ mod common;
 use aero_gpu::{AerogpuD3d9Error, AerogpuD3d9Executor};
 use aero_protocol::aerogpu::{
     aerogpu_cmd::{
-        AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode, AerogpuCmdStreamHeader as ProtocolCmdStreamHeader,
-        AerogpuPrimitiveTopology, AEROGPU_CLEAR_COLOR, AEROGPU_CMD_STREAM_MAGIC, AEROGPU_RESOURCE_USAGE_INDEX_BUFFER,
-        AEROGPU_RESOURCE_USAGE_RENDER_TARGET, AEROGPU_RESOURCE_USAGE_TEXTURE, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
+        AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode,
+        AerogpuCmdStreamHeader as ProtocolCmdStreamHeader, AerogpuPrimitiveTopology,
+        AEROGPU_CLEAR_COLOR, AEROGPU_CMD_STREAM_MAGIC, AEROGPU_RESOURCE_USAGE_INDEX_BUFFER,
+        AEROGPU_RESOURCE_USAGE_RENDER_TARGET, AEROGPU_RESOURCE_USAGE_TEXTURE,
+        AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
     },
     aerogpu_pci::{AerogpuFormat, AEROGPU_ABI_VERSION_U32},
 };
@@ -217,7 +219,10 @@ fn d3d9_cmd_stream_fixedfunc_poscolor_draw_indexed_negative_base_vertex_renders_
     let stream = build_stream(|out| {
         emit_packet(out, OPC_CREATE_TEXTURE2D, |out| {
             push_u32(out, RT_HANDLE);
-            push_u32(out, AEROGPU_RESOURCE_USAGE_TEXTURE | AEROGPU_RESOURCE_USAGE_RENDER_TARGET);
+            push_u32(
+                out,
+                AEROGPU_RESOURCE_USAGE_TEXTURE | AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
+            );
             push_u32(out, AEROGPU_FORMAT_R8G8B8A8_UNORM);
             push_u32(out, width);
             push_u32(out, height);

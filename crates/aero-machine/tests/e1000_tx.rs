@@ -48,9 +48,7 @@ fn e1000_mmio_tx_reaches_backend() {
     };
     {
         let mut pci_cfg = pci_cfg.borrow_mut();
-        pci_cfg
-            .bus_mut()
-            .write_config(bdf, 0x04, 2, cmd | (1 << 2));
+        pci_cfg.bus_mut().write_config(bdf, 0x04, 2, cmd | (1 << 2));
     }
 
     // Resolve BAR0 MMIO base address.

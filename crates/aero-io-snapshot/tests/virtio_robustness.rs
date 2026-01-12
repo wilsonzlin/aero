@@ -120,4 +120,3 @@ fn pci_config_state_roundtrip_and_bounds() {
     let err = PciConfigSpaceState::decode(&bytes[..bytes.len() - 1]).unwrap_err();
     assert!(matches!(err, SnapshotError::InvalidFieldEncoding(_)));
 }
-

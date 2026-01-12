@@ -38,14 +38,7 @@ const GHC_AE: u32 = 1 << 31;
 const PORT_CMD_ST: u32 = 1 << 0;
 const PORT_CMD_FRE: u32 = 1 << 4;
 
-fn write_cmd_header(
-    m: &mut Machine,
-    clb: u64,
-    slot: usize,
-    ctba: u64,
-    prdtl: u16,
-    write: bool,
-) {
+fn write_cmd_header(m: &mut Machine, clb: u64, slot: usize, ctba: u64, prdtl: u16, write: bool) {
     let cfl = 5u32;
     let w = if write { 1u32 << 6 } else { 0 };
     let flags = cfl | w | ((prdtl as u32) << 16);
@@ -173,4 +166,3 @@ fn machine_reset_preserves_ahci_disk_port0_backend() {
     let got = m.read_physical_bytes(read_buf, SECTOR_SIZE);
     assert_eq!(&got[0..8], b"RST-AHCI");
 }
-

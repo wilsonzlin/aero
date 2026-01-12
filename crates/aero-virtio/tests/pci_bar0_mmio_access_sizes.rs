@@ -1,8 +1,8 @@
+use aero_memory::MmioHandler;
 use aero_virtio::devices::blk::{MemDisk, VirtioBlk};
 use aero_virtio::memory::GuestRam;
 use aero_virtio::mmio::VirtioBar0Mmio;
 use aero_virtio::pci::{InterruptLog, VirtioPciDevice, VIRTIO_STATUS_ACKNOWLEDGE};
-use aero_memory::MmioHandler;
 
 #[test]
 fn virtio_bar0_mmio_supports_common_cfg_access_sizes() {
@@ -39,4 +39,3 @@ fn virtio_bar0_mmio_supports_common_cfg_access_sizes() {
     bar0.write(0x30, 8, used_addr);
     assert_eq!(bar0.read(0x30, 8), used_addr);
 }
-

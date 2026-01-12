@@ -14,7 +14,8 @@ fn encode_structured_error_payload_underflow_returns_empty_payload() {
 
 #[test]
 fn encode_structured_error_payload_header_only_when_no_space_for_message() {
-    let payload = encode_structured_error_payload(0x1234, "hello", L2_TUNNEL_ERROR_STRUCTURED_HEADER_LEN);
+    let payload =
+        encode_structured_error_payload(0x1234, "hello", L2_TUNNEL_ERROR_STRUCTURED_HEADER_LEN);
     assert_eq!(payload.len(), L2_TUNNEL_ERROR_STRUCTURED_HEADER_LEN);
     assert_eq!(&payload[..2], &0x1234u16.to_be_bytes());
     assert_eq!(u16::from_be_bytes([payload[2], payload[3]]), 0);
@@ -102,4 +103,3 @@ fn decode_structured_error_payload_rejects_too_short_payloads() {
     assert!(decode_structured_error_payload(&[0x00]).is_none());
     assert!(decode_structured_error_payload(&[0x00, 0x01, 0x02]).is_none());
 }
-

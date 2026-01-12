@@ -161,4 +161,3 @@ fn texture_manager_bc_mip_upload_pads_small_mips() {
         );
     });
 }
-

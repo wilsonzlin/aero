@@ -31,4 +31,3 @@ fn dskc_controller_map_keys_use_pci_bdf_packed_u16_layout() {
         "controller snapshot bytes should roundtrip under packed BDF key"
     );
 }
-

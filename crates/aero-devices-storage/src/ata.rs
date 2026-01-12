@@ -90,7 +90,10 @@ impl AtaDrive {
         aero_io_snapshot::io::storage::state::IdeAtaDeviceState { udma_mode: 2 }
     }
 
-    pub fn restore_state(&mut self, _state: &aero_io_snapshot::io::storage::state::IdeAtaDeviceState) {
+    pub fn restore_state(
+        &mut self,
+        _state: &aero_io_snapshot::io::storage::state::IdeAtaDeviceState,
+    ) {
         // Nothing to restore currently; disk contents are managed by the backing `VirtualDisk`.
         let _ = &self.disk;
     }
@@ -271,6 +274,9 @@ mod tests {
         let disk2 = RawDisk::create(MemBackend::new(), 32 * SECTOR_SIZE as u64).unwrap();
         let mut restored = AtaDrive::new(Box::new(disk2)).unwrap();
         let err = restored.load_state(&snap).unwrap_err();
-        assert_eq!(err, SnapshotError::InvalidFieldEncoding("ata sector_count mismatch"));
+        assert_eq!(
+            err,
+            SnapshotError::InvalidFieldEncoding("ata sector_count mismatch")
+        );
     }
 }

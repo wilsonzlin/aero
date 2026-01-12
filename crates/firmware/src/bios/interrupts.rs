@@ -83,14 +83,24 @@ fn handle_int12(cpu: &mut CpuState, bus: &mut dyn BiosBus) {
     cpu.rflags &= !FLAG_CF;
 }
 
-fn handle_int18(bios: &mut Bios, cpu: &mut CpuState, bus: &mut dyn BiosBus, disk: &mut dyn BlockDevice) {
+fn handle_int18(
+    bios: &mut Bios,
+    cpu: &mut CpuState,
+    bus: &mut dyn BiosBus,
+    disk: &mut dyn BlockDevice,
+) {
     // ROM BASIC / boot failure fallback.
     //
     // When no ROM BASIC is present, many BIOSes chain INT 18h to INT 19h to retry boot.
     handle_int19(bios, cpu, bus, disk);
 }
 
-fn handle_int19(bios: &mut Bios, cpu: &mut CpuState, bus: &mut dyn BiosBus, disk: &mut dyn BlockDevice) {
+fn handle_int19(
+    bios: &mut Bios,
+    cpu: &mut CpuState,
+    bus: &mut dyn BiosBus,
+    disk: &mut dyn BlockDevice,
+) {
     // Bootstrap loader.
     //
     // INT 19h is traditionally used to re-run the boot sequence without a full POST. The real BIOS
@@ -118,7 +128,8 @@ fn handle_int19(bios: &mut Bios, cpu: &mut CpuState, bus: &mut dyn BiosBus, disk
         }
     }
     if sector[510] != 0x55 || sector[511] != 0xAA {
-        bios.tty_output.extend_from_slice(b"Invalid boot signature\n");
+        bios.tty_output
+            .extend_from_slice(b"Invalid boot signature\n");
         cpu.halted = true;
         return;
     }
@@ -1008,7 +1019,7 @@ fn build_e820_map(
 }
 
 #[cfg(test)]
-    mod tests {
+mod tests {
     use super::super::{
         ivt, A20Gate, BiosConfig, InMemoryDisk, TestMemory, BDA_BASE, EBDA_BASE, PCIE_ECAM_BASE,
         PCIE_ECAM_SIZE,

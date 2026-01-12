@@ -79,21 +79,25 @@ impl<S: ByteStorage> DiskBackend for RawDisk<S> {
 
     fn read_sectors(&mut self, lba: u64, buf: &mut [u8]) -> DiskResult<()> {
         let sectors = self.check_range(lba, buf.len())?;
-        let offset = lba.checked_mul(self.sector_size as u64).ok_or(DiskError::OutOfRange {
-            lba,
-            sectors,
-            capacity_sectors: self.total_sectors,
-        })?;
+        let offset = lba
+            .checked_mul(self.sector_size as u64)
+            .ok_or(DiskError::OutOfRange {
+                lba,
+                sectors,
+                capacity_sectors: self.total_sectors,
+            })?;
         self.storage.read_at(offset, buf)
     }
 
     fn write_sectors(&mut self, lba: u64, buf: &[u8]) -> DiskResult<()> {
         let sectors = self.check_range(lba, buf.len())?;
-        let offset = lba.checked_mul(self.sector_size as u64).ok_or(DiskError::OutOfRange {
-            lba,
-            sectors,
-            capacity_sectors: self.total_sectors,
-        })?;
+        let offset = lba
+            .checked_mul(self.sector_size as u64)
+            .ok_or(DiskError::OutOfRange {
+                lba,
+                sectors,
+                capacity_sectors: self.total_sectors,
+            })?;
         self.storage.write_at(offset, buf)
     }
 

@@ -8,8 +8,8 @@ use aero_devices::pit8254::{PIT_CH0, PIT_CMD, PIT_HZ};
 use aero_devices_storage::ata::{AtaDrive, ATA_CMD_READ_DMA_EXT, ATA_CMD_WRITE_DMA_EXT};
 use aero_devices_storage::atapi::{AtapiCdrom, IsoBackend};
 use aero_devices_storage::pci_ide::{PRIMARY_PORTS, SECONDARY_PORTS};
-use aero_io_snapshot::io::state::IoSnapshot;
 use aero_interrupts::apic::IOAPIC_MMIO_BASE;
+use aero_io_snapshot::io::state::IoSnapshot;
 use aero_pc_platform::PcPlatform;
 use aero_platform::interrupts::{
     InterruptController, InterruptInput, PlatformInterruptMode, PlatformInterrupts, IMCR_DATA_PORT,
@@ -69,16 +69,12 @@ fn pc_platform_snapshot_roundtrip_preserves_acpi_sci_interrupt_and_platform_devi
 
     // Put the i8042 controller into a non-default state (output buffer filled) so snapshot/restore
     // exercises the controller state machine.
-    pc.io
-        .write_u8(I8042_STATUS_PORT, 0xAA); // i8042 self-test -> returns 0x55 in output buffer.
+    pc.io.write_u8(I8042_STATUS_PORT, 0xAA); // i8042 self-test -> returns 0x55 in output buffer.
 
     // Put the PCI config ports into a non-default state (address latch set) so PCI core snapshot is
     // meaningfully exercised.
-    pc.io.write(
-        PCI_CFG_ADDR_PORT,
-        4,
-        0x8000_0000 | (7 << 11) | 0x3C,
-    );
+    pc.io
+        .write(PCI_CFG_ADDR_PORT, 4, 0x8000_0000 | (7 << 11) | 0x3C);
     let expected_pci_addr_latch = pc.io.read(PCI_CFG_ADDR_PORT, 4);
 
     // Program PIT channel0 and advance time partway through the period (no IRQ yet).
@@ -93,13 +89,9 @@ fn pc_platform_snapshot_roundtrip_preserves_acpi_sci_interrupt_and_platform_devi
     pc.tick(pit_step_ns);
 
     // --- Trigger a level-triggered interrupt source (ACPI power button -> SCI).
+    pc.io.write_u8(DEFAULT_SMI_CMD_PORT, DEFAULT_ACPI_ENABLE); // ACPI enable handshake.
     pc.io
-        .write_u8(DEFAULT_SMI_CMD_PORT, DEFAULT_ACPI_ENABLE); // ACPI enable handshake.
-    pc.io.write(
-        DEFAULT_PM1A_EVT_BLK + 2,
-        2,
-        u32::from(PM1_STS_PWRBTN),
-    ); // PM1_EN.PWRBTN_EN
+        .write(DEFAULT_PM1A_EVT_BLK + 2, 2, u32::from(PM1_STS_PWRBTN)); // PM1_EN.PWRBTN_EN
     pc.acpi_pm.borrow_mut().trigger_power_button();
 
     assert_eq!(pc.interrupts.borrow().get_pending(), Some(SCI_VECTOR));
@@ -292,7 +284,8 @@ fn pc_platform_snapshot_roundtrip_redrives_hpet_and_pci_intx_levels_after_restor
 
     // --- HPET: configure timer2 to fire once and latch a pending level interrupt.
     let timer_idx: u64 = 2;
-    let timer_cfg_off = HPET_REG_TIMER0_BASE + timer_idx * HPET_TIMER_STRIDE + HPET_REG_TIMER_CONFIG;
+    let timer_cfg_off =
+        HPET_REG_TIMER0_BASE + timer_idx * HPET_TIMER_STRIDE + HPET_REG_TIMER_CONFIG;
     let timer_cmp_off =
         HPET_REG_TIMER0_BASE + timer_idx * HPET_TIMER_STRIDE + HPET_REG_TIMER_COMPARATOR;
 
@@ -410,7 +403,12 @@ fn pc_platform_snapshot_roundtrip_redrives_hpet_and_pci_intx_levels_after_restor
         let mut hpet = hpet.borrow_mut();
         let mut ints = pc2.interrupts.borrow_mut();
         // Timer2 interrupt status is bit2.
-        hpet.mmio_write(HPET_REG_GENERAL_INT_STATUS, 8, 1u64 << timer_idx, &mut *ints);
+        hpet.mmio_write(
+            HPET_REG_GENERAL_INT_STATUS,
+            8,
+            1u64 << timer_idx,
+            &mut *ints,
+        );
     }
     pc2.interrupts.borrow_mut().eoi(HPET_VECTOR);
 
@@ -810,8 +808,7 @@ fn pc_platform_snapshot_roundtrip_preserves_storage_controllers_and_allows_backe
         .write_u32(ahci_abar + PORT_BASE + PORT_REG_FB, fb as u32);
     pc.memory
         .write_u32(ahci_abar + PORT_BASE + PORT_REG_FBU, (fb >> 32) as u32);
-    pc.memory
-        .write_u32(ahci_abar + HBA_GHC, GHC_IE | GHC_AE);
+    pc.memory.write_u32(ahci_abar + HBA_GHC, GHC_IE | GHC_AE);
     pc.memory
         .write_u32(ahci_abar + PORT_BASE + PORT_REG_IE, PORT_IS_DHRS);
     pc.memory.write_u32(
@@ -822,8 +819,7 @@ fn pc_platform_snapshot_roundtrip_preserves_storage_controllers_and_allows_backe
     write_cmd_header(&mut pc.memory, clb, 0, ctba, 1, false);
     write_cfis(&mut pc.memory, ctba, ATA_CMD_READ_DMA_EXT, 4, 1);
     write_prdt(&mut pc.memory, ctba, 0, data_buf, SECTOR_SIZE as u32);
-    pc.memory
-        .write_u32(ahci_abar + PORT_BASE + PORT_REG_CI, 1);
+    pc.memory.write_u32(ahci_abar + PORT_BASE + PORT_REG_CI, 1);
 
     pc.process_ahci();
     pc.poll_pci_intx_lines();

@@ -126,7 +126,10 @@ mod tests {
         let disk = adapter.into_inner();
         let backend = disk.into_backend();
         let off = (lba as usize) * SECTOR_SIZE;
-        assert_eq!(&backend.as_slice()[off..off + SECTOR_SIZE], payload.as_slice());
+        assert_eq!(
+            &backend.as_slice()[off..off + SECTOR_SIZE],
+            payload.as_slice()
+        );
     }
 
     #[test]
@@ -197,7 +200,10 @@ mod tests {
 
         let mut adapter = NvmeDiskFromAeroStorage::new(FaultyDisk).unwrap();
         let mut buf = vec![0u8; SECTOR_SIZE];
-        assert_eq!(adapter.read_sectors(0, &mut buf).unwrap_err(), DiskError::Io);
+        assert_eq!(
+            adapter.read_sectors(0, &mut buf).unwrap_err(),
+            DiskError::Io
+        );
         assert_eq!(adapter.write_sectors(0, &buf).unwrap_err(), DiskError::Io);
         assert_eq!(adapter.flush().unwrap_err(), DiskError::Io);
     }
@@ -262,7 +268,10 @@ mod tests {
         for err in errors {
             let mut adapter = NvmeDiskFromAeroStorage::new(ErrorDisk { err: *err }).unwrap();
             let mut buf = vec![0u8; SECTOR_SIZE];
-            assert_eq!(adapter.read_sectors(0, &mut buf).unwrap_err(), DiskError::Io);
+            assert_eq!(
+                adapter.read_sectors(0, &mut buf).unwrap_err(),
+                DiskError::Io
+            );
             assert_eq!(adapter.write_sectors(0, &buf).unwrap_err(), DiskError::Io);
             assert_eq!(adapter.flush().unwrap_err(), DiskError::Io);
         }

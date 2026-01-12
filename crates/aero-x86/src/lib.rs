@@ -1170,14 +1170,8 @@ pub mod tier1 {
                     operand_width,
                 )?;
                 match group {
-                    0 => InstKind::Inc {
-                        dst: opnd,
-                        width,
-                    },
-                    1 => InstKind::Dec {
-                        dst: opnd,
-                        width,
-                    },
+                    0 => InstKind::Inc { dst: opnd, width },
+                    1 => InstKind::Dec { dst: opnd, width },
                     6 => {
                         if operand_override {
                             // See `0x50..=0x57` case below.
@@ -1264,14 +1258,14 @@ pub mod tier1 {
                 let rel_width = near_branch_disp_width(bitness, operand_override);
                 let rel = read_rel(bytes, offset, rel_width)?;
                 offset += rel_width.bytes();
-                let target =
-                    (rip + offset as u64).wrapping_add(rel as u64) & ip_mask(bitness);
+                let target = (rip + offset as u64).wrapping_add(rel as u64) & ip_mask(bitness);
                 InstKind::JmpRel { target }
             }
             0xeb => {
                 let rel8 = read_u8(bytes, offset)? as i8;
                 offset += 1;
-                let target = (rip + offset as u64).wrapping_add(rel8 as i64 as u64) & ip_mask(bitness);
+                let target =
+                    (rip + offset as u64).wrapping_add(rel8 as i64 as u64) & ip_mask(bitness);
                 InstKind::JmpRel { target }
             }
             0xe8 => {
@@ -1290,14 +1284,18 @@ pub mod tier1 {
                         // when overridden). Tier-1 translation does not currently model per-call
                         // return-address width, so we decode the full instruction length but bail
                         // out to the interpreter when the operand-size override is present.
-                        let rel_width = if operand_override { Width::W16 } else { Width::W32 };
+                        let rel_width = if operand_override {
+                            Width::W16
+                        } else {
+                            Width::W32
+                        };
                         let rel = read_rel(bytes, offset, rel_width)?;
                         offset += rel_width.bytes();
                         if operand_override {
                             InstKind::Invalid
                         } else {
-                            let target = (rip + offset as u64).wrapping_add(rel as u64)
-                                & ip_mask(bitness);
+                            let target =
+                                (rip + offset as u64).wrapping_add(rel as u64) & ip_mask(bitness);
                             InstKind::CallRel { target }
                         }
                     }
@@ -1307,14 +1305,18 @@ pub mod tier1 {
                         // currently model per-call return-address width, so we decode the full
                         // instruction length but bail out to the interpreter for the overridden
                         // form.
-                        let rel_width = if operand_override { Width::W32 } else { Width::W16 };
+                        let rel_width = if operand_override {
+                            Width::W32
+                        } else {
+                            Width::W16
+                        };
                         let rel = read_rel(bytes, offset, rel_width)?;
                         offset += rel_width.bytes();
                         if operand_override {
                             InstKind::Invalid
                         } else {
-                            let target = (rip + offset as u64).wrapping_add(rel as u64)
-                                & ip_mask(bitness);
+                            let target =
+                                (rip + offset as u64).wrapping_add(rel as u64) & ip_mask(bitness);
                             InstKind::CallRel { target }
                         }
                     }
@@ -1338,7 +1340,8 @@ pub mod tier1 {
                 })?;
                 let rel8 = read_u8(bytes, offset)? as i8;
                 offset += 1;
-                let target = (rip + offset as u64).wrapping_add(rel8 as i64 as u64) & ip_mask(bitness);
+                let target =
+                    (rip + offset as u64).wrapping_add(rel8 as i64 as u64) & ip_mask(bitness);
                 InstKind::JccRel { cond, target }
             }
             0x0f => {

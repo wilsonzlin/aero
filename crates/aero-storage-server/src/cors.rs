@@ -1,9 +1,4 @@
-use axum::http::{
-    header,
-    HeaderMap,
-    HeaderName,
-    HeaderValue,
-};
+use axum::http::{header, HeaderMap, HeaderName, HeaderValue};
 use std::{collections::HashSet, sync::Arc, time::Duration};
 
 use crate::headers::append_vary;
@@ -169,7 +164,10 @@ impl CorsConfig {
         // Preflight responses are cacheable and must vary on the incoming preflight request
         // headers. Only vary on `Origin` when the `Access-Control-Allow-Origin` value is
         // origin-dependent (allowlist mode).
-        let mut tokens = vec!["Access-Control-Request-Method", "Access-Control-Request-Headers"];
+        let mut tokens = vec![
+            "Access-Control-Request-Method",
+            "Access-Control-Request-Headers",
+        ];
         if matches!(self.allowlist, CorsAllowlist::Origins(_)) {
             tokens.insert(0, "Origin");
         }

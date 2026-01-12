@@ -162,7 +162,9 @@ impl Texture {
             return;
         }
 
-        if device.features().contains(wgpu::Features::TEXTURE_COMPRESSION_BC)
+        if device
+            .features()
+            .contains(wgpu::Features::TEXTURE_COMPRESSION_BC)
             && matches!(
                 self.desc.format,
                 D3DFormat::Dxt1 | D3DFormat::Dxt3 | D3DFormat::Dxt5

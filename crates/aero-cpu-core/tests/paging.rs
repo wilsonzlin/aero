@@ -759,7 +759,14 @@ fn pagingbus_bulk_copy_decline_does_not_update_accessed_or_dirty_bits() -> Resul
     assert_eq!(after_pte1, before_pte1);
     assert_eq!(after_pte4, before_pte4);
 
-    for entry in [after_pml4e, after_pdpte, after_pde, after_pte0, after_pte1, after_pte4] {
+    for entry in [
+        after_pml4e,
+        after_pdpte,
+        after_pde,
+        after_pte0,
+        after_pte1,
+        after_pte4,
+    ] {
         assert_eq!(entry & (PTE_A | PTE_D), 0);
     }
 

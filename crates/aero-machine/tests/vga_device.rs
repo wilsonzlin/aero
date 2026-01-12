@@ -89,4 +89,3 @@ fn vga_snapshot_roundtrip_preserves_scanout() {
     assert_eq!(restored.display_resolution(), expected_res);
     assert_eq!(restored.display_framebuffer(), expected_fb.as_slice());
 }
-

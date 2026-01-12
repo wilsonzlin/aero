@@ -4,8 +4,9 @@ use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
 use aero_gpu::guest_memory::VecGuestMemory;
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode,
-    AerogpuCmdStreamHeader as ProtocolCmdStreamHeader, AEROGPU_CLEAR_COLOR, AEROGPU_CMD_STREAM_MAGIC,
-    AEROGPU_RESOURCE_USAGE_RENDER_TARGET, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
+    AerogpuCmdStreamHeader as ProtocolCmdStreamHeader, AEROGPU_CLEAR_COLOR,
+    AEROGPU_CMD_STREAM_MAGIC, AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
+    AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
 };
 use aero_protocol::aerogpu::aerogpu_pci::{AerogpuFormat, AEROGPU_ABI_VERSION_U32};
 
@@ -279,7 +280,9 @@ fn aerogpu_cmd_shared_surface_release_retires_token_but_keeps_alias_valid() {
         stream[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
             .copy_from_slice(&total_size.to_le_bytes());
 
-        let err = exec.execute_cmd_stream(&stream, None, &mut guest_mem).unwrap_err();
+        let err = exec
+            .execute_cmd_stream(&stream, None, &mut guest_mem)
+            .unwrap_err();
         let msg = format!("{err:#}");
         assert!(
             msg.contains("IMPORT_SHARED_SURFACE") && msg.contains("unknown share_token"),
@@ -305,7 +308,9 @@ fn aerogpu_cmd_shared_surface_release_retires_token_but_keeps_alias_valid() {
         stream[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
             .copy_from_slice(&total_size.to_le_bytes());
 
-        let err = exec.execute_cmd_stream(&stream, None, &mut guest_mem).unwrap_err();
+        let err = exec
+            .execute_cmd_stream(&stream, None, &mut guest_mem)
+            .unwrap_err();
         let msg = format!("{err:#}");
         assert!(
             msg.contains("EXPORT_SHARED_SURFACE") && msg.contains("previously released"),
@@ -505,7 +510,9 @@ fn aerogpu_cmd_shared_surface_reusing_underlying_handle_while_alias_alive_is_an_
             .copy_from_slice(&total_size.to_le_bytes());
 
         let mut guest_mem = VecGuestMemory::new(0);
-        let err = exec.execute_cmd_stream(&stream, None, &mut guest_mem).unwrap_err();
+        let err = exec
+            .execute_cmd_stream(&stream, None, &mut guest_mem)
+            .unwrap_err();
         let msg = format!("{err:#}");
         assert!(
             msg.contains("CREATE_TEXTURE2D") && msg.contains("still in use"),
@@ -586,7 +593,9 @@ fn aerogpu_cmd_shared_surface_import_into_destroyed_original_handle_is_an_error(
             .copy_from_slice(&total_size.to_le_bytes());
 
         let mut guest_mem = VecGuestMemory::new(0);
-        let err = exec.execute_cmd_stream(&stream, None, &mut guest_mem).unwrap_err();
+        let err = exec
+            .execute_cmd_stream(&stream, None, &mut guest_mem)
+            .unwrap_err();
         let msg = format!("{err:#}");
         assert!(
             msg.contains("IMPORT_SHARED_SURFACE") && msg.contains("still in use"),
@@ -972,7 +981,9 @@ fn aerogpu_cmd_shared_surface_rejects_creating_resource_under_alias_handle() {
             .copy_from_slice(&total_size.to_le_bytes());
 
         let mut guest_mem = VecGuestMemory::new(0);
-        let err = exec.execute_cmd_stream(&stream, None, &mut guest_mem).unwrap_err();
+        let err = exec
+            .execute_cmd_stream(&stream, None, &mut guest_mem)
+            .unwrap_err();
         let msg = format!("{err:#}");
         assert!(
             msg.contains("CREATE_TEXTURE2D") && msg.contains("alias"),
@@ -1035,7 +1046,9 @@ fn aerogpu_cmd_shared_surface_rejects_creating_buffer_over_existing_texture_hand
             .copy_from_slice(&total_size.to_le_bytes());
 
         let mut guest_mem = VecGuestMemory::new(0);
-        let err = exec.execute_cmd_stream(&stream, None, &mut guest_mem).unwrap_err();
+        let err = exec
+            .execute_cmd_stream(&stream, None, &mut guest_mem)
+            .unwrap_err();
         let msg = format!("{err:#}");
         assert!(
             msg.contains("CREATE_BUFFER") && msg.contains("still in use"),

@@ -1014,14 +1014,20 @@ mod tests {
             aero_audio::ring::AudioRingBuffer::new_stereo(8),
             u32::MAX,
         );
-        assert_eq!(snd.host_sample_rate_hz(), aero_audio::MAX_HOST_SAMPLE_RATE_HZ);
+        assert_eq!(
+            snd.host_sample_rate_hz(),
+            aero_audio::MAX_HOST_SAMPLE_RATE_HZ
+        );
         assert_eq!(
             snd.capture_sample_rate_hz(),
             aero_audio::MAX_HOST_SAMPLE_RATE_HZ
         );
 
         snd.set_host_sample_rate_hz(u32::MAX);
-        assert_eq!(snd.host_sample_rate_hz(), aero_audio::MAX_HOST_SAMPLE_RATE_HZ);
+        assert_eq!(
+            snd.host_sample_rate_hz(),
+            aero_audio::MAX_HOST_SAMPLE_RATE_HZ
+        );
 
         snd.set_capture_sample_rate_hz(u32::MAX);
         assert_eq!(

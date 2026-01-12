@@ -7,7 +7,9 @@ struct TestMem {
 
 impl TestMem {
     fn new(size: usize) -> Self {
-        Self { mem: vec![0u8; size] }
+        Self {
+            mem: vec![0u8; size],
+        }
     }
 
     fn read_bytes(&self, addr: u64, len: usize) -> Vec<u8> {
@@ -78,6 +80,9 @@ fn tx_poll_is_bounded_by_max_tx_descs_per_poll() {
     assert_eq!(first[12] & 0x01, 0x01);
     let pending_addr = base + u64::from(MAX_TX_DESCS_PER_POLL) * 16;
     let pending = mem.read_bytes(pending_addr, 16);
-    assert_eq!(pending[12] & 0x01, 0, "descriptor beyond poll budget should remain pending");
+    assert_eq!(
+        pending[12] & 0x01,
+        0,
+        "descriptor beyond poll budget should remain pending"
+    );
 }
-

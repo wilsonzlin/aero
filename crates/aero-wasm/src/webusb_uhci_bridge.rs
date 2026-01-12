@@ -71,8 +71,11 @@ impl MemoryBus for WasmGuestMemory {
 
         while off < buf.len() {
             let remaining = buf.len() - off;
-            let chunk =
-                crate::guest_phys::translate_guest_paddr_chunk(self.guest_size, cur_paddr, remaining);
+            let chunk = crate::guest_phys::translate_guest_paddr_chunk(
+                self.guest_size,
+                cur_paddr,
+                remaining,
+            );
             let chunk_len = match chunk {
                 crate::guest_phys::GuestRamChunk::Ram { ram_offset, len } => {
                     let Some(ptr) = self.linear_ptr(ram_offset, len) else {
@@ -120,8 +123,11 @@ impl MemoryBus for WasmGuestMemory {
 
         while off < buf.len() {
             let remaining = buf.len() - off;
-            let chunk =
-                crate::guest_phys::translate_guest_paddr_chunk(self.guest_size, cur_paddr, remaining);
+            let chunk = crate::guest_phys::translate_guest_paddr_chunk(
+                self.guest_size,
+                cur_paddr,
+                remaining,
+            );
             let chunk_len = match chunk {
                 crate::guest_phys::GuestRamChunk::Ram { ram_offset, len } => {
                     let Some(ptr) = self.linear_ptr_mut(ram_offset, len) else {

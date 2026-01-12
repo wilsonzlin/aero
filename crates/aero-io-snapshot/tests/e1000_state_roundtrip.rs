@@ -127,7 +127,10 @@ fn e1000_device_state_rejects_unaligned_other_regs_key() {
     let bytes = w.finish();
     let mut state = E1000DeviceState::default();
     let err = state.load_state(&bytes).unwrap_err();
-    assert_eq!(err, SnapshotError::InvalidFieldEncoding("e1000 other_regs key"));
+    assert_eq!(
+        err,
+        SnapshotError::InvalidFieldEncoding("e1000 other_regs key")
+    );
 }
 
 #[test]

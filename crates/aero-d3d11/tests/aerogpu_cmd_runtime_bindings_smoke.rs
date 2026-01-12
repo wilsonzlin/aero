@@ -385,4 +385,3 @@ fn aerogpu_cmd_runtime_binds_texture_sampling_smoke() {
         }
     });
 }
-

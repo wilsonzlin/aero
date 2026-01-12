@@ -227,7 +227,10 @@ fn machine_vga_scanout_exports_non_empty_rgba8888_framebuffer() {
     let width = m.vga_width();
     let height = m.vga_height();
     assert!(width > 0, "vga_width must be non-zero when VGA is present");
-    assert!(height > 0, "vga_height must be non-zero when VGA is present");
+    assert!(
+        height > 0,
+        "vga_height must be non-zero when VGA is present"
+    );
 
     assert_eq!(
         m.vga_stride_bytes(),
@@ -250,7 +253,11 @@ fn machine_vga_scanout_exports_non_empty_rgba8888_framebuffer() {
 
     let copy = m.vga_framebuffer_copy_rgba8888();
     assert!(!copy.is_empty(), "copied framebuffer should be non-empty");
-    assert_eq!(copy.len() as u32, len_bytes, "copy length should match len_bytes");
+    assert_eq!(
+        copy.len() as u32,
+        len_bytes,
+        "copy length should match len_bytes"
+    );
 
     let blank = fnv1a_blank_rgba8(copy.len());
     let hash = fnv1a(&copy);

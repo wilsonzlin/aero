@@ -142,24 +142,24 @@ impl ScanoutState {
 
         self.source.store(update.source, Ordering::SeqCst);
         test_yield();
-        self.base_paddr_lo.store(update.base_paddr_lo, Ordering::SeqCst);
+        self.base_paddr_lo
+            .store(update.base_paddr_lo, Ordering::SeqCst);
         test_yield();
-        self.base_paddr_hi.store(update.base_paddr_hi, Ordering::SeqCst);
+        self.base_paddr_hi
+            .store(update.base_paddr_hi, Ordering::SeqCst);
         test_yield();
         self.width.store(update.width, Ordering::SeqCst);
         test_yield();
         self.height.store(update.height, Ordering::SeqCst);
         test_yield();
-        self.pitch_bytes
-            .store(update.pitch_bytes, Ordering::SeqCst);
+        self.pitch_bytes.store(update.pitch_bytes, Ordering::SeqCst);
         test_yield();
         self.format.store(update.format, Ordering::SeqCst);
 
         test_yield();
 
         // Final publish step: increment generation and clear the busy bit.
-        let new_generation =
-            start.wrapping_add(1) & !SCANOUT_STATE_GENERATION_BUSY_BIT;
+        let new_generation = start.wrapping_add(1) & !SCANOUT_STATE_GENERATION_BUSY_BIT;
         self.generation.store(new_generation, Ordering::SeqCst);
         new_generation
     }
@@ -313,9 +313,7 @@ mod tests {
         let state = ScanoutState::new();
 
         // Force the generation near the busy-bit boundary (high bit is reserved).
-        state
-            .generation
-            .store(0x7fff_fffe, Ordering::SeqCst);
+        state.generation.store(0x7fff_fffe, Ordering::SeqCst);
 
         let g0 = state.snapshot().generation;
         assert_eq!(g0, 0x7fff_fffe);

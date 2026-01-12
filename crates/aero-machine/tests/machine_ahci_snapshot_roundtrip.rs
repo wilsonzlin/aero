@@ -65,7 +65,9 @@ fn snapshot_devices(bytes: &[u8]) -> Vec<snapshot::DeviceState> {
         .expect("missing DEVICES section");
 
     let mut cursor = Cursor::new(bytes);
-    cursor.seek(SeekFrom::Start(devices_section.offset)).unwrap();
+    cursor
+        .seek(SeekFrom::Start(devices_section.offset))
+        .unwrap();
     let mut r = cursor.take(devices_section.len);
 
     let count = {
@@ -102,7 +104,8 @@ fn machine_snapshot_roundtrip_preserves_ahci_inflight_dma_command_and_allows_res
 
     // Attach a small in-memory disk with a known marker at LBA 4.
     let mut disk = RawDisk::create(MemBackend::new(), 8 * SECTOR_SIZE as u64).unwrap();
-    disk.write_at(4 * SECTOR_SIZE as u64, &[9, 8, 7, 6]).unwrap();
+    disk.write_at(4 * SECTOR_SIZE as u64, &[9, 8, 7, 6])
+        .unwrap();
     src.attach_ahci_disk_port0(Box::new(disk)).unwrap();
 
     let bdf = SATA_AHCI_ICH9.bdf;
@@ -177,7 +180,11 @@ fn machine_snapshot_roundtrip_preserves_ahci_inflight_dma_command_and_allows_res
         .iter()
         .filter(|d| d.id == snapshot::DeviceId::DISK_CONTROLLER)
         .collect();
-    assert_eq!(disk_entries.len(), 1, "expected exactly one DISK_CONTROLLER entry");
+    assert_eq!(
+        disk_entries.len(),
+        1,
+        "expected exactly one DISK_CONTROLLER entry"
+    );
     let disk_state = disk_entries[0];
     assert_eq!(
         disk_state.data.get(8..12).unwrap_or(&[]),
@@ -198,7 +205,8 @@ fn machine_snapshot_roundtrip_preserves_ahci_inflight_dma_command_and_allows_res
 
     // Host contract: controller restore drops attached disks; reattach after restoring state.
     let mut disk = RawDisk::create(MemBackend::new(), 8 * SECTOR_SIZE as u64).unwrap();
-    disk.write_at(4 * SECTOR_SIZE as u64, &[9, 8, 7, 6]).unwrap();
+    disk.write_at(4 * SECTOR_SIZE as u64, &[9, 8, 7, 6])
+        .unwrap();
     restored.attach_ahci_disk_port0(Box::new(disk)).unwrap();
 
     // Resume device processing and verify the DMA completes.
@@ -208,7 +216,10 @@ fn machine_snapshot_roundtrip_preserves_ahci_inflight_dma_command_and_allows_res
             break;
         }
     }
-    assert_eq!(restored.read_physical_u32(bar5_base + PORT_BASE + PORT_CI), 0);
+    assert_eq!(
+        restored.read_physical_u32(bar5_base + PORT_BASE + PORT_CI),
+        0
+    );
 
     assert_eq!(restored.read_physical_bytes(data_buf, 4), vec![9, 8, 7, 6]);
 }

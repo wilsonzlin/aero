@@ -376,9 +376,7 @@ fn hub_snapshot_roundtrip_preserves_port_reset_timer() {
     let hub_rc = hub_handle.inner();
 
     // Attach something so the port reports a connection.
-    hub_rc
-        .borrow_mut()
-        .attach(1, Box::new(DummyUsbDevice));
+    hub_rc.borrow_mut().attach(1, Box::new(DummyUsbDevice));
 
     let mut hub = AttachedUsbDevice::new(Box::new(hub_handle.clone()));
 
@@ -548,8 +546,7 @@ fn hub_snapshot_roundtrip_preserves_port_reset_timer() {
 #[test]
 fn uhci_snapshot_roundtrip_preserves_regs_and_port_timer() {
     let mut ctrl = UhciController::new();
-    ctrl.hub_mut()
-        .attach(0, Box::new(DummyUsbDevice));
+    ctrl.hub_mut().attach(0, Box::new(DummyUsbDevice));
 
     let mut mem = TestMemory::new(0x4000);
 

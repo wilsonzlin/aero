@@ -107,7 +107,12 @@ async fn preflight_includes_origin_and_acr_vary_tokens_when_origin_specific() {
 
     assert_eq!(resp.status(), StatusCode::NO_CONTENT);
     assert!(has_vary_token(resp.headers(), "origin"));
-    assert!(has_vary_token(resp.headers(), "access-control-request-method"));
-    assert!(has_vary_token(resp.headers(), "access-control-request-headers"));
+    assert!(has_vary_token(
+        resp.headers(),
+        "access-control-request-method"
+    ));
+    assert!(has_vary_token(
+        resp.headers(),
+        "access-control-request-headers"
+    ));
 }
-

@@ -33,7 +33,9 @@ fn e1000_requires_pc_platform() {
         enable_e1000: true,
         ..Default::default()
     }) {
-        Ok(_) => panic!("expected Machine::new to fail when enable_e1000=true but enable_pc_platform=false"),
+        Ok(_) => panic!(
+            "expected Machine::new to fail when enable_e1000=true but enable_pc_platform=false"
+        ),
         Err(err) => err,
     };
 

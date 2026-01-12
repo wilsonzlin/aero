@@ -52,18 +52,20 @@ fn cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
 }
 
 fn read_cfg_u32(pc: &mut PcMachine, bus: u8, device: u8, function: u8, offset: u8) -> u32 {
-    pc.bus
-        .platform
-        .io
-        .write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bus, device, function, offset));
+    pc.bus.platform.io.write(
+        PCI_CFG_ADDR_PORT,
+        4,
+        cfg_addr(bus, device, function, offset),
+    );
     pc.bus.platform.io.read(PCI_CFG_DATA_PORT, 4)
 }
 
 fn write_cfg_u16(pc: &mut PcMachine, bus: u8, device: u8, function: u8, offset: u8, value: u16) {
-    pc.bus
-        .platform
-        .io
-        .write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bus, device, function, offset));
+    pc.bus.platform.io.write(
+        PCI_CFG_ADDR_PORT,
+        4,
+        cfg_addr(bus, device, function, offset),
+    );
     pc.bus
         .platform
         .io
@@ -77,28 +79,46 @@ fn read_e1000_bar0_base(pc: &mut PcMachine) -> u64 {
 }
 
 fn write_u64_le(pc: &mut PcMachine, addr: u64, v: u64) {
-    pc.bus.platform.memory.write_physical(addr, &v.to_le_bytes());
+    pc.bus
+        .platform
+        .memory
+        .write_physical(addr, &v.to_le_bytes());
 }
 
 /// Minimal legacy TX descriptor layout (16 bytes).
 fn write_tx_desc(pc: &mut PcMachine, addr: u64, buf_addr: u64, len: u16, cmd: u8, status: u8) {
     write_u64_le(pc, addr, buf_addr);
-    pc.bus.platform.memory.write_physical(addr + 8, &len.to_le_bytes());
+    pc.bus
+        .platform
+        .memory
+        .write_physical(addr + 8, &len.to_le_bytes());
     pc.bus.platform.memory.write_physical(addr + 10, &[0u8]); // cso
     pc.bus.platform.memory.write_physical(addr + 11, &[cmd]);
     pc.bus.platform.memory.write_physical(addr + 12, &[status]);
     pc.bus.platform.memory.write_physical(addr + 13, &[0u8]); // css
-    pc.bus.platform.memory.write_physical(addr + 14, &0u16.to_le_bytes()); // special
+    pc.bus
+        .platform
+        .memory
+        .write_physical(addr + 14, &0u16.to_le_bytes()); // special
 }
 
 /// Minimal legacy RX descriptor layout (16 bytes).
 fn write_rx_desc(pc: &mut PcMachine, addr: u64, buf_addr: u64, status: u8) {
     write_u64_le(pc, addr, buf_addr);
-    pc.bus.platform.memory.write_physical(addr + 8, &0u16.to_le_bytes()); // length
-    pc.bus.platform.memory.write_physical(addr + 10, &0u16.to_le_bytes()); // checksum
+    pc.bus
+        .platform
+        .memory
+        .write_physical(addr + 8, &0u16.to_le_bytes()); // length
+    pc.bus
+        .platform
+        .memory
+        .write_physical(addr + 10, &0u16.to_le_bytes()); // checksum
     pc.bus.platform.memory.write_physical(addr + 12, &[status]);
     pc.bus.platform.memory.write_physical(addr + 13, &[0u8]); // errors
-    pc.bus.platform.memory.write_physical(addr + 14, &0u16.to_le_bytes()); // special
+    pc.bus
+        .platform
+        .memory
+        .write_physical(addr + 14, &0u16.to_le_bytes()); // special
 }
 
 fn build_test_frame(payload: &[u8]) -> Vec<u8> {
@@ -146,7 +166,8 @@ fn pc_machine_pumps_e1000_frames_through_network_backend() {
 
     // Create the PC machine, but swap in a platform that includes the E1000 device.
     let mut pc = PcMachine::new(RAM_SIZE);
-    pc.bus = aero_pc_platform::PcCpuBus::new(aero_pc_platform::PcPlatform::new_with_e1000(RAM_SIZE));
+    pc.bus =
+        aero_pc_platform::PcCpuBus::new(aero_pc_platform::PcPlatform::new_with_e1000(RAM_SIZE));
 
     // Park the CPU in a halted loop so `run_slice` continues to poll devices without executing
     // arbitrary guest memory.
@@ -228,7 +249,10 @@ fn pc_machine_pumps_e1000_frames_through_network_backend() {
     for _ in 0..10 {
         let _ = pc.run_slice(128);
         let mut status = [0u8; 1];
-        pc.bus.platform.memory.read_physical(0x2000 + 12, &mut status);
+        pc.bus
+            .platform
+            .memory
+            .read_physical(0x2000 + 12, &mut status);
         if (status[0] & 0x01) != 0 {
             break;
         }
@@ -236,7 +260,10 @@ fn pc_machine_pumps_e1000_frames_through_network_backend() {
 
     // Descriptor 0 should be completed with DD|EOP.
     let mut status = [0u8; 1];
-    pc.bus.platform.memory.read_physical(0x2000 + 12, &mut status);
+    pc.bus
+        .platform
+        .memory
+        .read_physical(0x2000 + 12, &mut status);
     assert_ne!(status[0] & 0x01, 0, "RX desc DD should be set");
     assert_ne!(status[0] & 0x02, 0, "RX desc EOP should be set");
 
