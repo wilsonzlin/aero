@@ -6,7 +6,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use aero_devices::pci::PciBdf;
-use aero_ipc::ring::{PopError, RingBuffer};
+use aero_ipc::ring::{PopError, PushError, RingBuffer};
 use aero_machine::{Machine, MachineConfig};
 use aero_net_backend::{L2TunnelRingBackendStats, NetworkBackend};
 use aero_virtio::devices::net_offload::VirtioNetHdr;
@@ -327,7 +327,7 @@ fn virtio_net_l2_tunnel_rings_tx_rx_stats_smoke() {
     let mut m = Machine::new(cfg).unwrap();
 
     let tx_ring = Arc::new(RingBuffer::new(1024));
-    let rx_ring = Arc::new(RingBuffer::new(1024));
+    let rx_ring = Arc::new(RingBuffer::new(4 * 1024));
     m.attach_l2_tunnel_rings(tx_ring.clone(), rx_ring.clone());
 
     assert_eq!(
@@ -504,4 +504,63 @@ fn virtio_net_l2_tunnel_rings_tx_rx_stats_smoke() {
         .network_backend_l2_ring_stats()
         .expect("expected ring backend stats");
     assert_eq!(stats.rx_popped_frames, 1);
+
+    // --------------------------------
+    // Guest -> host drop when NET_TX ring is full
+    // --------------------------------
+    let dummy_frame = vec![0x55u8; 14];
+    let mut filled = 0usize;
+    loop {
+        match tx_ring.try_push(&dummy_frame) {
+            Ok(()) => filled += 1,
+            Err(PushError::Full) => break,
+            Err(err) => panic!("unexpected NET_TX fill error: {err:?}"),
+        }
+    }
+    assert!(filled > 0, "expected NET_TX ring to accept at least one record");
+
+    // Reuse the existing TX descriptor chain but update the payload and avail.idx.
+    let payload2_addr = 0x206200;
+    let payload2 = b"\x02\x02\x02\x02\x02\x02\x03\x03\x03\x03\x03\x03\x08\x00";
+    m.write_physical(payload2_addr, payload2);
+    write_desc(&mut m, tx_desc, 1, payload2_addr, payload2.len() as u32, 0, 0);
+
+    // Publish a second avail entry (idx=2, ring[1]=0) and notify queue 1.
+    m.write_physical_u16(tx_avail + 2, 2);
+    m.write_physical_u16(tx_avail + 4 + 2, 0);
+    m.write_physical_u16(bar0_base + caps.notify + u64::from(caps.notify_mult), 1);
+    m.poll_network();
+
+    // Drain the dummy frames used to saturate the ring; the second TX frame should not appear.
+    for _ in 0..filled {
+        assert_eq!(tx_ring.try_pop(), Ok(dummy_frame.clone()));
+    }
+    assert_eq!(tx_ring.try_pop(), Err(PopError::Empty));
+
+    let stats = m
+        .network_backend_l2_ring_stats()
+        .expect("expected ring backend stats");
+    assert_eq!(stats.tx_pushed_frames, 1);
+    assert_eq!(stats.tx_dropped_full, 1);
+
+    // --------------------------------
+    // Host -> guest drop when NET_RX contains an oversize frame
+    // --------------------------------
+    // Post another RX buffer (idx=2, ring[1]=0), push an oversize frame into NET_RX, and poll.
+    m.write_physical_u16(rx_avail + 2, 2);
+    m.write_physical_u16(rx_avail + 4 + 2, 0);
+    let oversize = vec![0u8; 3000];
+    rx_ring
+        .try_push(&oversize)
+        .expect("NET_RX ring try_push should succeed");
+    m.write_physical_u16(bar0_base + caps.notify, 0);
+    m.poll_network();
+
+    assert_eq!(rx_ring.try_pop(), Err(PopError::Empty));
+
+    let stats = m
+        .network_backend_l2_ring_stats()
+        .expect("expected ring backend stats");
+    assert_eq!(stats.rx_popped_frames, 1);
+    assert_eq!(stats.rx_dropped_oversize, 1);
 }
