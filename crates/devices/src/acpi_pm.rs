@@ -192,7 +192,7 @@ impl<C: Clock> AcpiPmIo<C> {
     /// Advance the ACPI PM timer timebase by `delta_ns` nanoseconds.
     ///
     /// The PM timer is a 24-bit free-running counter that increments at 3.579545MHz.
-    /// Unlike the legacy `Instant`-based implementation, this is deterministic and
+    /// Unlike the legacy wall-clock-based implementation, this is deterministic and
     /// driven by the platform's notion of time.
     ///
     /// If the PM timer is backed by a deterministic clock (e.g. [`ManualClock`]) that
