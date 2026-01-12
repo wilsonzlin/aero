@@ -14,6 +14,7 @@ pub mod serial;
 
 pub mod io;
 pub mod storage;
+pub mod usb;
 
 pub mod hpet;
 pub mod ioapic;

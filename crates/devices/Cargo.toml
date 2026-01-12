@@ -11,6 +11,7 @@ aero-io-snapshot = { path = "../aero-io-snapshot" }
 aero-devices-input = { path = "../aero-devices-input" }
 aero-storage-adapters = { path = "../aero-storage-adapters" }
 aero-storage = { path = "../aero-storage" }
+aero-usb = { path = "../aero-usb" }
 memory = { path = "../memory" }
 
 [dev-dependencies]
