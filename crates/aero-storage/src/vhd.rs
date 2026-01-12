@@ -198,6 +198,14 @@ impl<B: StorageBackend> VhdDisk<B> {
         self.backend
     }
 
+    fn backend_read_at(&mut self, offset: u64, buf: &mut [u8], ctx: &'static str) -> Result<()> {
+        match self.backend.read_at(offset, buf) {
+            Ok(()) => Ok(()),
+            Err(DiskError::OutOfBounds { .. }) => Err(DiskError::CorruptImage(ctx)),
+            Err(e) => Err(e),
+        }
+    }
+
     fn dyn_params(&self) -> Result<(u64, u64)> {
         let dyn_hdr = self
             .dynamic
@@ -243,7 +251,7 @@ impl<B: StorageBackend> VhdDisk<B> {
             .try_into()
             .map_err(|_| DiskError::Unsupported("vhd bitmap too large"))?;
         let mut bitmap = vec![0u8; bytes];
-        self.backend.read_at(block_start, &mut bitmap)?;
+        self.backend_read_at(block_start, &mut bitmap, "vhd block bitmap truncated")?;
         self.bitmap_cache.insert(block_start, bitmap.clone());
         Ok(bitmap)
     }
@@ -301,7 +309,7 @@ impl<B: StorageBackend> VhdDisk<B> {
             .checked_add(bitmap_size)
             .and_then(|v| v.checked_add(sector_in_block * SECTOR_SIZE as u64))
             .ok_or(DiskError::OffsetOverflow)?;
-        self.backend.read_at(data_offset, out)?;
+        self.backend_read_at(data_offset, out, "vhd block data truncated")?;
         Ok(())
     }
 
@@ -414,7 +422,7 @@ impl<B: StorageBackend> VirtualDisk for VhdDisk<B> {
         }
 
         if self.dynamic.is_none() {
-            self.backend.read_at(offset, buf)?;
+            self.backend_read_at(offset, buf, "vhd fixed disk truncated")?;
             return Ok(());
         }
 
@@ -513,4 +521,3 @@ fn write_zeroes<B: StorageBackend>(backend: &mut B, mut offset: u64, mut len: u6
     }
     Ok(())
 }
-

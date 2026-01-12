@@ -3,6 +3,7 @@
 use aero_storage::{
     detect_format, DiskFormat, DiskImage, MemBackend, Qcow2Disk, VhdDisk, VirtualDisk,
     StorageBackend,
+    DiskError,
 };
 use proptest::prelude::*;
 
@@ -207,6 +208,26 @@ fn detect_qcow2_and_vhd() {
 }
 
 #[test]
+fn qcow2_rejects_l1_entries_pointing_past_eof() {
+    let virtual_size = 1024 * 1024;
+    let mut storage = make_qcow2_empty(virtual_size);
+
+    // The fixture uses cluster_bits=16.
+    let cluster_size = 1u64 << 16;
+    let l1_table_offset = cluster_size * 2;
+    let bad_l2_table_offset = cluster_size * 1000; // well beyond EOF
+    let bad_l1_entry = bad_l2_table_offset | QCOW2_OFLAG_COPIED;
+    storage
+        .write_at(l1_table_offset, &bad_l1_entry.to_be_bytes())
+        .unwrap();
+
+    let mut disk = Qcow2Disk::open(storage).unwrap();
+    let mut buf = vec![0u8; SECTOR];
+    let err = disk.read_sectors(0, &mut buf).unwrap_err();
+    assert!(matches!(err, DiskError::CorruptImage(_)));
+}
+
+#[test]
 fn qcow2_unallocated_reads_zero() {
     let storage = make_qcow2_empty(1024 * 1024);
     let mut disk = DiskImage::open_auto(storage).unwrap();
@@ -260,6 +281,23 @@ fn vhd_fixed_fixture_read() {
     let mut sector = [0u8; SECTOR];
     disk.read_sectors(0, &mut sector).unwrap();
     assert_eq!(&sector[..10], b"hello vhd!");
+}
+
+#[test]
+fn vhd_rejects_bat_entries_pointing_past_eof() {
+    let virtual_size = 1024 * 1024;
+    let block_size = 64 * 1024;
+    let mut storage = make_vhd_dynamic_empty(virtual_size, block_size);
+
+    // The fixture writes the BAT at this fixed offset.
+    let table_offset = 512u64 + 1024u64;
+    let bad_sector = 0x10_0000u32; // points far past EOF
+    storage.write_at(table_offset, &bad_sector.to_be_bytes()).unwrap();
+
+    let mut disk = VhdDisk::open(storage).unwrap();
+    let mut buf = vec![0u8; SECTOR];
+    let err = disk.read_sectors(0, &mut buf).unwrap_err();
+    assert!(matches!(err, DiskError::CorruptImage(_)));
 }
 
 #[test]

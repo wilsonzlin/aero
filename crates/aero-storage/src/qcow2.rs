@@ -239,6 +239,14 @@ impl<B: StorageBackend> Qcow2Disk<B> {
         self.backend
     }
 
+    fn backend_read_at(&mut self, offset: u64, buf: &mut [u8], ctx: &'static str) -> Result<()> {
+        match self.backend.read_at(offset, buf) {
+            Ok(()) => Ok(()),
+            Err(DiskError::OutOfBounds { .. }) => Err(DiskError::CorruptImage(ctx)),
+            Err(e) => Err(e),
+        }
+    }
+
     fn cluster_size(&self) -> u64 {
         self.header.cluster_size()
     }
@@ -310,7 +318,7 @@ impl<B: StorageBackend> Qcow2Disk<B> {
             .try_into()
             .map_err(|_| DiskError::Unsupported("qcow2 cluster size too large"))?;
         let mut buf = vec![0u8; cluster_size];
-        self.backend.read_at(l2_offset, &mut buf)?;
+        self.backend_read_at(l2_offset, &mut buf, "qcow2 l2 table truncated")?;
         let mut entries = Vec::with_capacity(cluster_size / 8);
         for chunk in buf.chunks_exact(8) {
             entries.push(be_u64(chunk));
@@ -519,7 +527,7 @@ impl<B: StorageBackend> Qcow2Disk<B> {
             .try_into()
             .map_err(|_| DiskError::Unsupported("qcow2 cluster size too large"))?;
         let mut buf = vec![0u8; cluster_size];
-        self.backend.read_at(block_offset, &mut buf)?;
+        self.backend_read_at(block_offset, &mut buf, "qcow2 refcount block truncated")?;
         let mut entries = Vec::with_capacity(cluster_size / 2);
         for chunk in buf.chunks_exact(2) {
             entries.push(u16::from_be_bytes([chunk[0], chunk[1]]));
@@ -556,8 +564,11 @@ impl<B: StorageBackend> VirtualDisk for Qcow2Disk<B> {
                 let phys = data_cluster
                     .checked_add(offset_in_cluster as u64)
                     .ok_or(DiskError::OffsetOverflow)?;
-                self.backend
-                    .read_at(phys, &mut buf[buf_off..buf_off + chunk_len])?;
+                self.backend_read_at(
+                    phys,
+                    &mut buf[buf_off..buf_off + chunk_len],
+                    "qcow2 data cluster truncated",
+                )?;
             } else {
                 buf[buf_off..buf_off + chunk_len].fill(0);
             }
@@ -634,4 +645,3 @@ fn write_zeroes<B: StorageBackend>(backend: &mut B, mut offset: u64, mut len: u6
     }
     Ok(())
 }
-
