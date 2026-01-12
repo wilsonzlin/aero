@@ -135,6 +135,7 @@ Summary: 18 passed, 0 failed, 0 warned, 2 skipped
 - `Cross-Origin-Resource-Policy` present but with an unexpected value
 - Weak `ETag` validators (If-Range requires strong ETag)
 - Missing recommended content headers (e.g. `X-Content-Type-Options: nosniff`)
+- Unexpected `Content-Encoding` (disk bytes must be served as identity / no compression transforms)
 - Private responses missing `Cache-Control: no-store`
 - `If-Range` mismatch returning `412` instead of `200`
 - `If-Modified-Since` not returning `304` (this check is WARN-only by default)

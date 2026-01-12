@@ -1189,6 +1189,14 @@ def _test_content_headers(
         if "no-transform" not in _csv_tokens(cache_control):
             issues.append(f"Cache-Control missing no-transform: {cache_control!r}")
 
+    content_encoding = _header(resp, "Content-Encoding")
+    if content_encoding is not None:
+        encodings = _csv_tokens(content_encoding)
+        if encodings != {"identity"}:
+            issues.append(
+                f"unexpected Content-Encoding {content_encoding!r} (expected 'identity' or absent)"
+            )
+
     if issues:
         return TestResult(name=name, status="WARN", details="; ".join(issues))
     return TestResult(name=name, status="PASS")
