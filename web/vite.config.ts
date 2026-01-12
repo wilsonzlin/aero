@@ -15,6 +15,11 @@ const rootDir = fileURLToPath(new URL(".", import.meta.url));
 const coopCoepSetting = (process.env.VITE_DISABLE_COOP_COEP ?? "").toLowerCase();
 const coopCoepDisabled = coopCoepSetting === "1" || coopCoepSetting === "true";
 
+const nodeMajor = (() => {
+  const major = Number.parseInt(process.versions.node.split(".", 1)[0] ?? "", 10);
+  return Number.isFinite(major) ? major : 0;
+})();
+
 type AeroBuildInfo = Readonly<{
   version: string;
   gitSha: string;
@@ -227,7 +232,10 @@ export default defineConfig({
         // Keep this conservative: each forked Node process spawns its own worker threads.
         // In heavily sandboxed environments, even a handful of extra threads can push the
         // process over the pthread/rlimit ceiling and crash the Vitest runner.
-        maxForks: 4,
+        //
+        // CI uses Node 22.x; newer majors can be more thread-hungry / unstable in sandboxed
+        // environments, so cap them more aggressively.
+        maxForks: nodeMajor >= 23 ? 4 : 8,
       },
     },
     // Keep Vitest scoped to unit tests under src/, plus any dedicated Vitest
