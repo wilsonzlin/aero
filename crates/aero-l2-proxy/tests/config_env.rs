@@ -44,6 +44,9 @@ fn reset_common_env() -> Vec<EnvVarGuard> {
         EnvVarGuard::unset("AERO_GATEWAY_SESSION_SECRET"),
         EnvVarGuard::unset("SESSION_SECRET"),
         EnvVarGuard::unset("AERO_L2_SESSION_SECRET"),
+        EnvVarGuard::unset("AERO_L2_MAX_FRAME_PAYLOAD"),
+        EnvVarGuard::unset("AERO_L2_MAX_FRAME_SIZE"),
+        EnvVarGuard::unset("AERO_L2_MAX_CONTROL_PAYLOAD"),
         EnvVarGuard::unset("AERO_L2_ALLOWED_ORIGINS"),
         EnvVarGuard::unset("ALLOWED_ORIGINS"),
         EnvVarGuard::unset("AERO_L2_ALLOWED_ORIGINS_EXTRA"),
@@ -215,4 +218,44 @@ fn proxy_config_clamps_zero_send_buffer_sizes() {
         cfg.ws_send_buffer, 64,
         "ws_send_buffer should fall back to default when zero"
     );
+}
+
+#[test]
+fn proxy_config_ignores_zero_l2_payload_limits() {
+    let _lock = ENV_LOCK.lock().unwrap();
+    let _guards = reset_common_env();
+
+    let _open = EnvVarGuard::set("AERO_L2_OPEN", "1");
+    let _insecure = EnvVarGuard::set("AERO_L2_INSECURE_ALLOW_NO_AUTH", "1");
+
+    // `0` is invalid for payload caps (OpenAPI min=1); treat it as unset so deployments that pass
+    // through empty/placeholder env vars don't accidentally disable framing.
+    let _max_frame = EnvVarGuard::set("AERO_L2_MAX_FRAME_PAYLOAD", "0");
+    let _max_control = EnvVarGuard::set("AERO_L2_MAX_CONTROL_PAYLOAD", "0");
+
+    let cfg = ProxyConfig::from_env().expect("expected config to ignore zero payload limits");
+    assert_eq!(
+        cfg.l2_max_frame_payload,
+        aero_l2_protocol::L2_TUNNEL_DEFAULT_MAX_FRAME_PAYLOAD
+    );
+    assert_eq!(
+        cfg.l2_max_control_payload,
+        aero_l2_protocol::L2_TUNNEL_DEFAULT_MAX_CONTROL_PAYLOAD
+    );
+}
+
+#[test]
+fn proxy_config_accepts_custom_l2_payload_limits() {
+    let _lock = ENV_LOCK.lock().unwrap();
+    let _guards = reset_common_env();
+
+    let _open = EnvVarGuard::set("AERO_L2_OPEN", "1");
+    let _insecure = EnvVarGuard::set("AERO_L2_INSECURE_ALLOW_NO_AUTH", "1");
+
+    let _max_frame = EnvVarGuard::set("AERO_L2_MAX_FRAME_PAYLOAD", "1234");
+    let _max_control = EnvVarGuard::set("AERO_L2_MAX_CONTROL_PAYLOAD", "99");
+
+    let cfg = ProxyConfig::from_env().expect("expected config to accept custom payload limits");
+    assert_eq!(cfg.l2_max_frame_payload, 1234);
+    assert_eq!(cfg.l2_max_control_payload, 99);
 }

@@ -442,11 +442,13 @@ impl ProxyConfig {
             .or_else(|_| std::env::var("AERO_L2_MAX_FRAME_SIZE"))
             .ok()
             .and_then(|v| v.parse::<usize>().ok())
+            .filter(|v| *v > 0)
             .unwrap_or(aero_l2_protocol::L2_TUNNEL_DEFAULT_MAX_FRAME_PAYLOAD);
 
         let l2_max_control_payload = std::env::var("AERO_L2_MAX_CONTROL_PAYLOAD")
             .ok()
             .and_then(|v| v.parse::<usize>().ok())
+            .filter(|v| *v > 0)
             .unwrap_or(aero_l2_protocol::L2_TUNNEL_DEFAULT_MAX_CONTROL_PAYLOAD);
 
         let ping_interval = std::env::var("AERO_L2_PING_INTERVAL_MS")
