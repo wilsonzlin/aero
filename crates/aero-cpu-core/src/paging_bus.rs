@@ -466,22 +466,6 @@ impl<B: MemoryBus, IO: IoBus> CpuBus for WriteIntent<'_, B, IO> {
     fn io_write(&mut self, port: u16, size: u32, val: u64) -> Result<(), Exception> {
         self.bus.io_write(port, size, val)
     }
-
-    fn supports_bulk_copy(&self) -> bool {
-        self.bus.supports_bulk_copy()
-    }
-
-    fn bulk_copy(&mut self, dst: u64, src: u64, len: usize) -> Result<bool, Exception> {
-        self.bus.bulk_copy(dst, src, len)
-    }
-
-    fn supports_bulk_set(&self) -> bool {
-        self.bus.supports_bulk_set()
-    }
-
-    fn bulk_set(&mut self, dst: u64, pattern: &[u8], repeat: usize) -> Result<bool, Exception> {
-        self.bus.bulk_set(dst, pattern, repeat)
-    }
 }
 
 impl<B, IO> CpuBus for PagingBus<B, IO>
