@@ -86,6 +86,12 @@ Put disk images under `./images` (or the configured `--images-root`). If a `mani
 under the images root, it is used as the image catalog; otherwise the server falls back to a
 directory listing (development only).
 
+The manifest supports optional per-image cache validator overrides to enable stable browser (OPFS)
+and CDN caching even if filesystem mtimes change during copy/restore:
+
+- `etag`: a quoted HTTP entity-tag (e.g. `"win7-sp1-x64-v1"` or `W/"win7-sp1-x64-v1"`)
+- `last_modified`: an RFC3339 timestamp (e.g. `2026-01-10T00:00:00Z`)
+
 In production, strongly consider enabling `--require-manifest` (or `AERO_STORAGE_REQUIRE_MANIFEST`)
 to **disable directory listing fallback**. This prevents accidentally exposing arbitrary files
 placed in the images directory.
