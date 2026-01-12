@@ -213,4 +213,32 @@ test("IO-worker HDA PCI audio does not fast-forward after worker snapshot restor
     restoreResult.write1,
     { timeout: 10_000 },
   );
+
+  // Best-effort cleanup: OPFS can persist across runs in some environments.
+  // Ignore failures (missing APIs, already deleted, permission issues, etc.).
+  await page.evaluate(async (path) => {
+    try {
+      const storage = (navigator as Navigator & { storage?: StorageManager | undefined }).storage;
+      const getDir = (storage as StorageManager & { getDirectory?: unknown })?.getDirectory as
+        | ((this: StorageManager) => Promise<FileSystemDirectoryHandle>)
+        | undefined;
+      if (typeof getDir !== "function") return;
+
+      const parts = String(path)
+        .split("/")
+        .map((p) => p.trim())
+        .filter((p) => p.length > 0);
+      if (parts.length === 0) return;
+      const filename = parts.pop();
+      if (!filename) return;
+
+      let dir = await getDir.call(storage);
+      for (const part of parts) {
+        dir = await dir.getDirectoryHandle(part);
+      }
+      await dir.removeEntry(filename);
+    } catch {
+      // ignore
+    }
+  }, snapshotPath);
 });
