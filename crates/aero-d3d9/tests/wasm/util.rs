@@ -21,11 +21,33 @@ pub async fn init_manager_with_options(options: ResourceManagerOptions) -> Resou
         .await
         .expect("request_adapter");
 
-    // Opt into BC compression if available so we exercise both code paths across platforms.
-    let mut features = wgpu::Features::empty();
     let supported = adapter.features();
-    if supported.contains(wgpu::Features::TEXTURE_COMPRESSION_BC) {
-        features |= wgpu::Features::TEXTURE_COMPRESSION_BC;
+
+    // Opt into texture compression features when available so we exercise both code paths across
+    // platforms (WebGPU vs WebGL2 fallback). CI can force deterministic CPU fallback via
+    // `AERO_DISABLE_WGPU_TEXTURE_COMPRESSION=1`.
+    let texture_compression_disabled = std::env::var("AERO_DISABLE_WGPU_TEXTURE_COMPRESSION")
+        .ok()
+        .map(|raw| {
+            let v = raw.trim();
+            v == "1"
+                || v.eq_ignore_ascii_case("true")
+                || v.eq_ignore_ascii_case("yes")
+                || v.eq_ignore_ascii_case("on")
+        })
+        .unwrap_or(false);
+
+    let mut features = wgpu::Features::empty();
+    if !texture_compression_disabled {
+        for feature in [
+            wgpu::Features::TEXTURE_COMPRESSION_BC,
+            wgpu::Features::TEXTURE_COMPRESSION_ETC2,
+            wgpu::Features::TEXTURE_COMPRESSION_ASTC_HDR,
+        ] {
+            if supported.contains(feature) {
+                features |= feature;
+            }
+        }
     }
     if supported.contains(wgpu::Features::ADDRESS_MODE_CLAMP_TO_BORDER) {
         features |= wgpu::Features::ADDRESS_MODE_CLAMP_TO_BORDER;
@@ -37,8 +59,8 @@ pub async fn init_manager_with_options(options: ResourceManagerOptions) -> Resou
         .request_device(
             &wgpu::DeviceDescriptor {
                 label: Some("aero-d3d9 wasm tests"),
-                features,
-                limits,
+                required_features: features,
+                required_limits: limits,
             },
             None,
         )
