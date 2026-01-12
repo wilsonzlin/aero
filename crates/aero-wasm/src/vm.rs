@@ -415,3 +415,4 @@ impl WasmVm {
         Ok(())
     }
 }
+// Tiered (Tier-0 + Tier-1) execution lives in `crate::tiered_vm`.
