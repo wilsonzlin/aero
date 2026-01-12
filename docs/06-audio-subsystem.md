@@ -57,10 +57,10 @@ This section describes the *canonical* browser runtime integration.
    - loads `web/src/platform/audio-worklet-processor.js`,
    - constructs an `AudioWorkletNode` with `processorOptions.ringBuffer = sab`.
 2. The coordinator forwards the ring to the worker that will act as the **single producer** via `SetAudioRingBufferMessage`
-   (`web/src/runtime/protocol.ts`, dispatch currently in `web/src/runtime/coordinator.ts`).
-   - Current worker runtime: forwarded to the **CPU worker** (`WorkerCoordinator.setAudioRingBuffer` posts to `this.workers.cpu`).
-   - IO-worker integration path: when the guest audio devices (HDA/virtio-snd) are hosted in the IO worker, the coordinator should
-     forward this message to the IO worker instead so the device model can be the playback-ring producer.
+   (`web/src/runtime/protocol.ts`, policy + dispatch in `web/src/runtime/coordinator.ts`).
+   - The coordinator owns the attachment policy (`RingBufferOwner`) because the playback ring is SPSC (exactly one producer).
+   - Default policy: CPU worker in demo mode (no disk), IO worker when running a real VM (disk present).
+     - See `WorkerCoordinator.defaultAudioRingBufferOwner()` + `syncAudioRingBufferAttachments()`.
    - `ringBuffer`: `SharedArrayBuffer | null` (null detaches)
    - `capacityFrames` / `channelCount`: out-of-band layout parameters
    - `dstSampleRate`: the *actual* `AudioContext.sampleRate`
@@ -73,9 +73,12 @@ This section describes the *canonical* browser runtime integration.
    - allocates a mic `SharedArrayBuffer` ring,
    - starts `web/src/audio/mic-worklet-processor.js` as the low-latency producer.
 2. The coordinator forwards the mic ring via `SetMicrophoneRingBufferMessage`.
+   - The coordinator owns the attachment policy (`RingBufferOwner`) because the mic ring is SPSC (exactly one consumer).
+   - Default policy: CPU worker in demo mode, IO worker in VM mode.
+     - See `WorkerCoordinator.defaultMicrophoneRingBufferOwner()` + `syncMicrophoneRingBufferAttachments()`.
    - `ringBuffer`: `SharedArrayBuffer | null`
    - `sampleRate`: the *actual* capture graph sample rate
-3. The IO worker consumes mic samples via `MicBridge.fromSharedBuffer(...)` (`crates/platform/src/audio/mic_bridge.rs`).
+3. The consumer worker consumes mic samples via `MicBridge.fromSharedBuffer(...)` (`crates/platform/src/audio/mic_bridge.rs`).
 
 ### Device registration (PCI/MMIO)
 
