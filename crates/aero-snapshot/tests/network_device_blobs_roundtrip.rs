@@ -232,6 +232,20 @@ fn network_device_blobs_roundtrip_is_deterministic_and_ordered() {
         "device ordering should be sorted by (id, version, flags)"
     );
 
+    // Ensure the aero-snapshot container preserved the inner IoSnapshot blobs *exactly*.
+    let restored_e1000 = target
+        .device_states
+        .iter()
+        .find(|s| s.id == DeviceId::E1000)
+        .expect("missing E1000 device state");
+    let restored_net_stack = target
+        .device_states
+        .iter()
+        .find(|s| s.id == DeviceId::NET_STACK)
+        .expect("missing NET_STACK device state");
+    assert_eq!(restored_e1000, &expected_e1000_state);
+    assert_eq!(restored_net_stack, &expected_net_stack_state);
+
     // The restored blobs should be applicable to fresh devices without error. Our SnapshotTarget
     // applies them immediately; additionally assert the in-memory state is exactly restored.
     let e1000_resaved = device_state_from_io_snapshot(DeviceId::E1000, &target.e1000);
