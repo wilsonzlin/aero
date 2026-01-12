@@ -11,6 +11,13 @@ function hex32(value: number): string {
   return `0x${(value >>> 0).toString(16).padStart(8, "0")}`;
 }
 
+function describeMemory(memory: WebAssembly.Memory): string {
+  const bytes = memory.buffer.byteLength;
+  const shared =
+    typeof SharedArrayBuffer !== "undefined" && (memory.buffer as unknown as ArrayBufferLike) instanceof SharedArrayBuffer;
+  return `${bytes} bytes (${shared ? "shared" : "unshared"})`;
+}
+
 function readU32LE(u8: Uint8Array, offset: number): number {
   // Manual little-endian load to avoid relying on host endianness.
   const b0 = u8[offset] ?? 0;
@@ -58,7 +65,9 @@ export function computeDefaultWasmMemoryProbeOffset(opts: {
 
   const probeEnd = Math.min(runtimeReserved, memBytes);
   if (probeEnd < 4) {
-    throw new WasmMemoryWiringError(`WASM memory probe offset is out of bounds (memBytes=${memBytes}, runtimeReserved=${runtimeReserved}).`);
+    throw new WasmMemoryWiringError(
+      `WASM memory probe offset is out of bounds (memBytes=${memBytes}, runtimeReserved=${runtimeReserved}, memory=${describeMemory(opts.memory)}).`,
+    );
   }
 
   return (probeEnd - 4) >>> 0;
@@ -82,6 +91,7 @@ export function assertWasmMemoryWiring(opts: {
   const { api, memory, context } = opts;
 
   const memBytes = memory.buffer.byteLength;
+  const memDesc = describeMemory(memory);
   const linearOffset =
     opts.linearOffset ??
     (() => {
@@ -99,7 +109,7 @@ export function assertWasmMemoryWiring(opts: {
 
   if (!Number.isSafeInteger(linearOffset) || linearOffset < 0 || linearOffset + 4 > memBytes) {
     throw new WasmMemoryWiringError(
-      `[${context}] WASM memory probe offset out of bounds: offset=${linearOffset} memBytes=${memBytes}`,
+      `[${context}] WASM memory probe offset out of bounds: offset=${linearOffset} memBytes=${memBytes} memory=${memDesc}`,
     );
   }
 
@@ -120,6 +130,7 @@ export function assertWasmMemoryWiring(opts: {
         [
           `[${context}] WASM memory wiring probe failed (wasm -> JS).`,
           `mem_store_u32(offset=${hex32(linearOffset)}) wrote ${hex32(wasmWrite)} but JS read ${hex32(gotFromJs)} from the provided WebAssembly.Memory.buffer.`,
+          `memory=${memDesc}`,
           "",
           "This usually means the worker instantiated the WASM module with a different WebAssembly.Memory than the coordinator-provided guest memory.",
           "Ensure the worker passes the coordinator-provided WebAssembly.Memory to initWasmForContext/initWasm and that the WASM build imports memory.",
@@ -136,6 +147,7 @@ export function assertWasmMemoryWiring(opts: {
         [
           `[${context}] WASM memory wiring probe failed (JS -> wasm).`,
           `JS wrote ${hex32(jsWrite)} at offset=${hex32(linearOffset)} but mem_load_u32 read ${hex32(gotFromWasm)}.`,
+          `memory=${memDesc}`,
           "",
           "This usually means the worker instantiated the WASM module with a different WebAssembly.Memory than the coordinator-provided guest memory.",
           "Ensure the worker passes the coordinator-provided WebAssembly.Memory to initWasmForContext/initWasm and that the WASM build imports memory.",
