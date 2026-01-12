@@ -117,12 +117,18 @@ mod guest_phys {
                 None
             );
             // Empty slice at the low/high boundary is OK.
-            assert_eq!(translate_guest_paddr_range(ram, LOW_RAM_END, 0), Some(LOW_RAM_END));
+            assert_eq!(
+                translate_guest_paddr_range(ram, LOW_RAM_END, 0),
+                Some(LOW_RAM_END)
+            );
             assert_eq!(
                 translate_guest_paddr_range(ram, HIGH_RAM_START, 0),
                 Some(LOW_RAM_END)
             );
-            assert_eq!(translate_guest_paddr_range(ram, HIGH_RAM_START - 1, 0), None);
+            assert_eq!(
+                translate_guest_paddr_range(ram, HIGH_RAM_START - 1, 0),
+                None
+            );
             // High RAM remaps above 4GiB.
             assert_eq!(
                 translate_guest_paddr_range(ram, HIGH_RAM_START, 4),

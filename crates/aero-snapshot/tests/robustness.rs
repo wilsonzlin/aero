@@ -911,7 +911,7 @@ fn restore_snapshot_rejects_meta_label_truncated_string_bytes() {
     meta_payload.extend_from_slice(&0u64.to_le_bytes()); // created_unix_ms
     meta_payload.push(1); // label_present
     meta_payload.extend_from_slice(&1u32.to_le_bytes()); // label len
-    // Missing label byte.
+                                                         // Missing label byte.
     push_section(&mut bytes, SectionId::META, 1, 0, &meta_payload);
 
     let mut target = DummyTarget::new(0);

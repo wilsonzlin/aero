@@ -758,7 +758,10 @@ fn uhci_snapshot_restore_reconstructs_hid_passthrough_device_behind_external_hub
             w_length: 18,
         },
     );
-    assert_eq!(u16::from_le_bytes([restored_desc[8], restored_desc[9]]), 0x1234);
+    assert_eq!(
+        u16::from_le_bytes([restored_desc[8], restored_desc[9]]),
+        0x1234
+    );
     assert_eq!(
         u16::from_le_bytes([restored_desc[10], restored_desc[11]]),
         0x5678
