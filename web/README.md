@@ -40,6 +40,10 @@ Each variant emits multiple wasm-pack packages under `web/src/wasm/`:
 - Tier-1 compiler / JIT support (`aero-jit-wasm`):
   - **Single-threaded**: `web/src/wasm/pkg-jit-single/`
   - **Threaded**: `web/src/wasm/pkg-jit-threaded/`
+  - Note: the runtime loader (`web/src/runtime/jit_wasm_loader.ts`) intentionally prefers the
+    **single-threaded** package even in `crossOriginIsolated` / WASM-threads-capable environments,
+    because a shared-memory build combined with a large `--max-memory` can cause eager allocation
+    of a multi‑GiB `SharedArrayBuffer` during instantiation.
 
 Dev builds are written to:
 

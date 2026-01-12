@@ -10,53 +10,6 @@ export interface JitWasmApi {
   compile_tier1_block: (...args: any[]) => Uint8Array;
 }
 
-interface ThreadSupport {
-  supported: boolean;
-  reason: string;
-}
-
-function detectThreadSupport(): ThreadSupport {
-  // `crossOriginIsolated` is required for SharedArrayBuffer on the web, but Node-like
-  // runtimes may not expose the flag while still supporting shared memories.
-  const hasCrossOriginIsolated = (globalThis as any).crossOriginIsolated === true;
-  const crossOriginIsolatedKnown = typeof (globalThis as any).crossOriginIsolated === "boolean";
-  if (crossOriginIsolatedKnown && !hasCrossOriginIsolated) {
-    return {
-      supported: false,
-      reason: "crossOriginIsolated is false (missing COOP/COEP headers); SharedArrayBuffer is unavailable",
-    };
-  }
-
-  if (typeof SharedArrayBuffer === "undefined") {
-    return { supported: false, reason: "SharedArrayBuffer is undefined (not supported or not enabled)" };
-  }
-
-  if (typeof Atomics === "undefined") {
-    return { supported: false, reason: "Atomics is undefined (WASM threads are not supported)" };
-  }
-
-  if (typeof WebAssembly === "undefined" || typeof WebAssembly.Memory === "undefined") {
-    return { supported: false, reason: "WebAssembly.Memory is unavailable in this environment" };
-  }
-
-  try {
-    // Even with SAB present, some environments may not support shared WebAssembly.Memory.
-    // This is the most direct capability probe.
-    // eslint-disable-next-line no-new
-    new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return { supported: false, reason: `Shared WebAssembly.Memory is not supported: ${message}` };
-  }
-
-  return {
-    supported: true,
-    reason: hasCrossOriginIsolated
-      ? "crossOriginIsolated + SharedArrayBuffer + Atomics + shared WebAssembly.Memory"
-      : "SharedArrayBuffer + Atomics + shared WebAssembly.Memory",
-  };
-}
-
 type RawJitWasmModule = any;
 
 // `wasm-pack` outputs into `web/src/wasm/pkg-jit-single` and `web/src/wasm/pkg-jit-threaded`.
@@ -182,6 +135,10 @@ async function loadVariant(variant: JitWasmVariant, options: { module?: WebAssem
       [
         `Missing ${variant} aero-jit-wasm package.`,
         "",
+        "Note: The JIT compiler loader intentionally prefers the single-threaded package (pkg-jit-single)",
+        "even when WASM threads are available. The threaded/shared-memory build can allocate an enormous",
+        "SharedArrayBuffer during instantiation if the module's max memory is large (e.g. 4GiB).",
+        "",
         "Build it with (from the repo root):",
         `  npm -w web run wasm:build:${variant}`,
         "",
@@ -202,15 +159,11 @@ export async function initJitWasm(options: { module?: WebAssembly.Module } = {})
   if (initPromise) return await initPromise;
 
   initPromise = (async () => {
-    const threadSupport = detectThreadSupport();
-    if (threadSupport.supported) {
-      try {
-        return await loadVariant("threaded", options);
-      } catch {
-        // Fall back to single if the threaded build isn't present or fails to init.
-      }
-    }
-
+    // The Tier-1 compiler itself is single-threaded and does not benefit from WASM threads. More
+    // importantly, a shared-memory wasm-bindgen build + a large module `--max-memory` can cause
+    // the glue code to eagerly allocate a multi-GiB SharedArrayBuffer when it auto-creates the
+    // module's `WebAssembly.Memory`. Prefer the single-threaded build unconditionally so the JIT
+    // worker stays reliable in COOP/COEP (crossOriginIsolated) environments.
     return await loadVariant("single", options);
   })();
 
@@ -222,4 +175,3 @@ export async function initJitWasm(options: { module?: WebAssembly.Module } = {})
     throw err;
   }
 }
-
