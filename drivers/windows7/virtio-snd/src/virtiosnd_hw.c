@@ -11,6 +11,8 @@
 /* Bounded reset poll (virtio status reset handshake). */
 #define VIRTIOSND_RESET_TIMEOUT_US 1000000u
 #define VIRTIOSND_RESET_POLL_DELAY_US 1000u
+#define VIRTIOSND_RESET_HIGH_IRQL_TIMEOUT_US 10000u
+#define VIRTIOSND_RESET_HIGH_IRQL_POLL_DELAY_US 100u
 
 static __forceinline UCHAR VirtIoSndReadDeviceStatus(_In_ const VIRTIO_PCI_MODERN_TRANSPORT *Transport)
 {
@@ -24,8 +26,9 @@ static __forceinline VOID VirtIoSndWriteDeviceStatus(_In_ const VIRTIO_PCI_MODER
 
 static VOID VirtIoSndResetDeviceBestEffort(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx)
 {
+    KIRQL irql;
     ULONG waitedUs;
-    LARGE_INTEGER delay;
+    UCHAR status;
 
     if (Dx == NULL || Dx->Transport.CommonCfg == NULL) {
         return;
@@ -35,19 +38,69 @@ static VOID VirtIoSndResetDeviceBestEffort(_Inout_ PVIRTIOSND_DEVICE_EXTENSION D
     VirtIoSndWriteDeviceStatus(&Dx->Transport, 0);
     KeMemoryBarrier();
 
-    for (waitedUs = 0; waitedUs < VIRTIOSND_RESET_TIMEOUT_US; waitedUs += VIRTIOSND_RESET_POLL_DELAY_US) {
-        if (VirtIoSndReadDeviceStatus(&Dx->Transport) == 0) {
+    /* Immediate readback fast-path. */
+    status = VirtIoSndReadDeviceStatus(&Dx->Transport);
+    if (status == 0) {
+        KeMemoryBarrier();
+        return;
+    }
+
+    irql = KeGetCurrentIrql();
+    if (irql == PASSIVE_LEVEL) {
+        const ULONGLONG timeout100ns = (ULONGLONG)VIRTIOSND_RESET_TIMEOUT_US * 10ull;
+        const ULONGLONG pollDelay100ns = (ULONGLONG)VIRTIOSND_RESET_POLL_DELAY_US * 10ull;
+        const ULONGLONG start100ns = KeQueryInterruptTime();
+        const ULONGLONG deadline100ns = start100ns + timeout100ns;
+
+        for (;;) {
+            ULONGLONG now100ns;
+            ULONGLONG remaining100ns;
+            LARGE_INTEGER delay;
+
+            status = VirtIoSndReadDeviceStatus(&Dx->Transport);
+            if (status == 0) {
+                KeMemoryBarrier();
+                return;
+            }
+
+            now100ns = KeQueryInterruptTime();
+            if (now100ns >= deadline100ns) {
+                break;
+            }
+
+            remaining100ns = deadline100ns - now100ns;
+            if (remaining100ns > pollDelay100ns) {
+                remaining100ns = pollDelay100ns;
+            }
+
+            delay.QuadPart = -((LONGLONG)remaining100ns);
+            (void)KeDelayExecutionThread(KernelMode, FALSE, &delay);
+        }
+
+        VIRTIOSND_TRACE_ERROR(
+            "reset: device_status did not clear within %lu us (IRQL=%lu), last=%lu\n",
+            (ULONG)VIRTIOSND_RESET_TIMEOUT_US,
+            (ULONG)irql,
+            (ULONG)status);
+        return;
+    }
+
+    for (waitedUs = 0; waitedUs < VIRTIOSND_RESET_HIGH_IRQL_TIMEOUT_US;
+         waitedUs += VIRTIOSND_RESET_HIGH_IRQL_POLL_DELAY_US) {
+        KeStallExecutionProcessor(VIRTIOSND_RESET_HIGH_IRQL_POLL_DELAY_US);
+
+        status = VirtIoSndReadDeviceStatus(&Dx->Transport);
+        if (status == 0) {
             KeMemoryBarrier();
             return;
         }
-
-        if (KeGetCurrentIrql() == PASSIVE_LEVEL) {
-            delay.QuadPart = -(LONGLONG)VIRTIOSND_RESET_POLL_DELAY_US * 10; /* microseconds -> 100ns */
-            KeDelayExecutionThread(KernelMode, FALSE, &delay);
-        } else {
-            KeStallExecutionProcessor(VIRTIOSND_RESET_POLL_DELAY_US);
-        }
     }
+
+    VIRTIOSND_TRACE_ERROR(
+        "reset: device_status did not clear within %lu us at IRQL=%lu, last=%lu\n",
+        (ULONG)VIRTIOSND_RESET_HIGH_IRQL_TIMEOUT_US,
+        (ULONG)irql,
+        (ULONG)status);
 }
 
 static VOID VirtIoSndFailDeviceBestEffort(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx)

@@ -11,6 +11,8 @@
 
 #define VIRTIO_PCI_RESET_TIMEOUT_US        1000000u
 #define VIRTIO_PCI_RESET_POLL_DELAY_US     1000u
+#define VIRTIO_PCI_RESET_HIGH_IRQL_TIMEOUT_US 10000u
+#define VIRTIO_PCI_RESET_HIGH_IRQL_POLL_DELAY_US 100u
 #define VIRTIO_PCI_CONFIG_MAX_READ_RETRIES 10u
 
 static ULONG
@@ -1728,7 +1730,9 @@ _IRQL_requires_max_(PASSIVE_LEVEL)
 VOID
 VirtioPciResetDevice(_Inout_ PVIRTIO_PCI_DEVICE Dev)
 {
+    KIRQL irql;
     ULONG waitedUs;
+    UCHAR status;
 
     if (Dev == NULL || Dev->CommonCfg == NULL) {
         return;
@@ -1738,14 +1742,75 @@ VirtioPciResetDevice(_Inout_ PVIRTIO_PCI_DEVICE Dev)
     VirtioPciWriteDeviceStatus(Dev, 0);
     KeMemoryBarrier();
 
-    for (waitedUs = 0; waitedUs < VIRTIO_PCI_RESET_TIMEOUT_US; waitedUs += VIRTIO_PCI_RESET_POLL_DELAY_US) {
-        if (VirtioPciReadDeviceStatus(Dev) == 0) {
+    /* Immediate readback fast-path. */
+    status = VirtioPciReadDeviceStatus(Dev);
+    if (status == 0) {
+        KeMemoryBarrier();
+        return;
+    }
+
+    irql = KeGetCurrentIrql();
+    if (irql == PASSIVE_LEVEL) {
+        const ULONGLONG timeout100ns = (ULONGLONG)VIRTIO_PCI_RESET_TIMEOUT_US * 10ull;
+        const ULONGLONG pollDelay100ns = (ULONGLONG)VIRTIO_PCI_RESET_POLL_DELAY_US * 10ull;
+        const ULONGLONG start100ns = KeQueryInterruptTime();
+        const ULONGLONG deadline100ns = start100ns + timeout100ns;
+
+        for (;;) {
+            ULONGLONG now100ns;
+            ULONGLONG remaining100ns;
+            LARGE_INTEGER delay;
+
+            status = VirtioPciReadDeviceStatus(Dev);
+            if (status == 0) {
+                KeMemoryBarrier();
+                return;
+            }
+
+            now100ns = KeQueryInterruptTime();
+            if (now100ns >= deadline100ns) {
+                break;
+            }
+
+            remaining100ns = deadline100ns - now100ns;
+            if (remaining100ns > pollDelay100ns) {
+                remaining100ns = pollDelay100ns;
+            }
+
+            delay.QuadPart = -((LONGLONG)remaining100ns);
+            (void)KeDelayExecutionThread(KernelMode, FALSE, &delay);
+        }
+
+        DbgPrintEx(DPFLTR_IHVDRIVER_ID,
+                   DPFLTR_ERROR_LEVEL,
+                   "[virtio-core] reset timeout after %lu us (IRQL=%lu), last=%lu\n",
+                   (ULONG)VIRTIO_PCI_RESET_TIMEOUT_US,
+                   (ULONG)irql,
+                   (ULONG)status);
+        return;
+    }
+
+    /*
+     * Defensive: this helper is documented as PASSIVE_LEVEL only, but avoid
+     * stalling for up to 1s if a caller invokes it at DISPATCH/DIRQL.
+     */
+    for (waitedUs = 0; waitedUs < VIRTIO_PCI_RESET_HIGH_IRQL_TIMEOUT_US;
+         waitedUs += VIRTIO_PCI_RESET_HIGH_IRQL_POLL_DELAY_US) {
+        KeStallExecutionProcessor(VIRTIO_PCI_RESET_HIGH_IRQL_POLL_DELAY_US);
+
+        status = VirtioPciReadDeviceStatus(Dev);
+        if (status == 0) {
             KeMemoryBarrier();
             return;
         }
-
-        KeStallExecutionProcessor(VIRTIO_PCI_RESET_POLL_DELAY_US);
     }
+
+    DbgPrintEx(DPFLTR_IHVDRIVER_ID,
+               DPFLTR_ERROR_LEVEL,
+               "[virtio-core] reset timeout at high IRQL after %lu us (IRQL=%lu), last=%lu\n",
+               (ULONG)VIRTIO_PCI_RESET_HIGH_IRQL_TIMEOUT_US,
+               (ULONG)irql,
+               (ULONG)status);
 }
 
 _IRQL_requires_max_(DISPATCH_LEVEL)
