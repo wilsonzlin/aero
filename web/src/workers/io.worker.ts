@@ -52,6 +52,7 @@ import { E1000PciDevice } from "../io/devices/e1000";
 import { PciTestDevice } from "../io/devices/pci_test_device";
 import { UhciPciDevice, type UhciControllerBridgeLike } from "../io/devices/uhci";
 import { VirtioInputPciFunction, hidUsageToLinuxKeyCode } from "../io/devices/virtio_input";
+import { VirtioNetPciDevice } from "../io/devices/virtio_net";
 import { UART_COM1, Uart16550, type SerialOutputSink } from "../io/devices/uart16550";
 import { AeroIpcIoServer, type AeroIpcIoDiskResult, type AeroIpcIoDispatchTarget } from "../io/ipc/aero_ipc_io";
 import type { MountConfig } from "../storage/metadata";
@@ -150,6 +151,7 @@ import {
   vmSnapshotDeviceIdToKind,
   vmSnapshotDeviceKindToId,
 } from "./vm_snapshot_wasm";
+import { tryInitVirtioNetDevice } from "./io_virtio_net_init";
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 
@@ -171,6 +173,7 @@ let ioCmdRing: RingBuffer | null = null;
 let ioEvtRing: RingBuffer | null = null;
 let netTxRing: RingBuffer | null = null;
 let netRxRing: RingBuffer | null = null;
+let ioIpcSab: SharedArrayBuffer | null = null;
 let hidInRing: RingBuffer | null = null;
 let hidProxyInputRing: RingBuffer | null = null;
 let hidProxyInputRingForwarded = 0;
@@ -204,6 +207,7 @@ let usbPassthroughRuntime: WebUsbPassthroughRuntime | null = null;
 let usbPassthroughDebugTimer: number | undefined;
 let usbUhciHarnessRuntime: WebUsbUhciHarnessRuntime | null = null;
 let uhciDevice: UhciPciDevice | null = null;
+let virtioNetDevice: VirtioNetPciDevice | null = null;
 type UhciControllerBridge = InstanceType<NonNullable<WasmApi["UhciControllerBridge"]>>;
 let uhciControllerBridge: UhciControllerBridge | null = null;
 
@@ -1113,6 +1117,20 @@ function maybeInitSyntheticUsbHidDevices(): void {
   }
 }
 
+function maybeInitVirtioNetDevice(): void {
+  if (virtioNetDevice) return;
+  const dev = tryInitVirtioNetDevice({
+    api: wasmApi,
+    mgr: deviceManager,
+    guestBase,
+    guestSize,
+    ioIpc: ioIpcSab,
+  });
+  if (dev) {
+    virtioNetDevice = dev;
+  }
+}
+
 type UsbPassthroughDemo = InstanceType<NonNullable<WasmApi["UsbPassthroughDemo"]>>;
 let usbDemo: UsbPassthroughDemoRuntime | null = null;
 let usbDemoApi: UsbPassthroughDemo | null = null;
@@ -1923,6 +1941,7 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
         maybeInitUhciDevice();
         maybeInitE1000Device();
         maybeInitVirtioInput();
+        maybeInitVirtioNetDevice();
 
         maybeInitWasmHidGuestBridge();
         if (!api.UhciRuntime && api.UsbPassthroughDemo && !usbDemo) {
@@ -2026,6 +2045,7 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
         sharedFramebuffer: init.sharedFramebuffer!,
         sharedFramebufferOffsetBytes: init.sharedFramebufferOffsetBytes ?? 0,
       };
+      ioIpcSab = segments.ioIpc;
       const views = createSharedMemoryViews(segments);
       status = views.status;
       guestU8 = views.guestU8;
@@ -2036,8 +2056,6 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
       eventRing = new RingBuffer(segments.control, regions.event.byteOffset);
       ioCmdRing = openRingByKind(segments.ioIpc, IO_IPC_CMD_QUEUE_KIND);
       ioEvtRing = openRingByKind(segments.ioIpc, IO_IPC_EVT_QUEUE_KIND);
-      netTxRing = openRingByKind(segments.ioIpc, IO_IPC_NET_TX_QUEUE_KIND);
-      netRxRing = openRingByKind(segments.ioIpc, IO_IPC_NET_RX_QUEUE_KIND);
       try {
         netTxRing = openRingByKind(segments.ioIpc, IO_IPC_NET_TX_QUEUE_KIND);
         netRxRing = openRingByKind(segments.ioIpc, IO_IPC_NET_RX_QUEUE_KIND);
@@ -2126,6 +2144,7 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
       maybeInitUhciDevice();
       maybeInitE1000Device();
       maybeInitVirtioInput();
+      maybeInitVirtioNetDevice();
 
       const uart = new Uart16550(UART_COM1, serialSink);
       mgr.registerPortIo(uart.basePort, uart.basePort + 7, uart);
@@ -3125,6 +3144,8 @@ function shutdown(): void {
       usbUhciHarnessRuntime = null;
       uhciDevice?.destroy();
       uhciDevice = null;
+      virtioNetDevice?.destroy();
+      virtioNetDevice = null;
       uhciControllerBridge = null;
       e1000Device?.destroy();
       e1000Device = null;
@@ -3145,6 +3166,7 @@ function shutdown(): void {
       netTxRing = null;
       netRxRing = null;
       deviceManager = null;
+      ioIpcSab = null;
       i8042 = null;
       pushEvent({ kind: "log", level: "info", message: "worker shutdown" });
       setReadyFlag(status, role, false);

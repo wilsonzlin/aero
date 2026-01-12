@@ -348,6 +348,25 @@ export interface WasmApi {
     };
 
     /**
+     * Guest-visible virtio-net PCI bridge.
+     *
+     * In the browser runtime this is backed by the `NET_TX`/`NET_RX` AIPC rings inside `ioIpcSab`
+     * (see `web/src/runtime/shared_layout.ts`).
+     *
+     * Optional until all deployed WASM builds include virtio networking support.
+     */
+    VirtioNetPciBridge?: new (guestBase: number, guestSize: number, ioIpcSab: SharedArrayBuffer) => {
+        mmio_read(offset: number, size: number): number;
+        mmio_write(offset: number, size: number, value: number): void;
+        io_read(offset: number, size: number): number;
+        io_write(offset: number, size: number, value: number): void;
+        tick(nowMs?: number): void;
+        irq_level(): boolean;
+        irq_asserted?(): boolean;
+        free(): void;
+    };
+
+    /**
      * WebUSB UHCI passthrough enumeration harness (drives UHCI TDs and emits `UsbHostAction`s).
      *
      * Note: optional until all deployed WASM builds include it.
@@ -835,6 +854,7 @@ function toApi(mod: RawWasmModule): WasmApi {
         UsbHidPassthroughBridge: mod.UsbHidPassthroughBridge,
         UsbPassthroughBridge: mod.UsbPassthroughBridge,
         UhciRuntime: mod.UhciRuntime,
+        VirtioNetPciBridge: mod.VirtioNetPciBridge,
         WebUsbUhciPassthroughHarness: mod.WebUsbUhciPassthroughHarness,
         UhciControllerBridge: mod.UhciControllerBridge,
         E1000Bridge: mod.E1000Bridge,
