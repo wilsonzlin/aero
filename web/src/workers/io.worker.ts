@@ -1028,7 +1028,9 @@ function maybeInitVirtioInput(): void {
     // Register as a single multi-function PCI device (fn0 = keyboard, fn1 = mouse).
     mgr.registerPciDevice(keyboardFn);
     keyboardRegistered = true;
+    mgr.addTickable(keyboardFn);
     mgr.registerPciDevice(mouseFn);
+    mgr.addTickable(mouseFn);
 
     virtioInputKeyboard = keyboardFn;
     virtioInputMouse = mouseFn;

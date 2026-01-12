@@ -1,6 +1,6 @@
 import { defaultReadValue } from "../ipc/io_protocol.ts";
 import type { PciAddress, PciBar, PciCapability, PciDevice } from "../bus/pci.ts";
-import type { IrqSink } from "../device_manager.ts";
+import type { IrqSink, TickableDevice } from "../device_manager.ts";
 
 export type VirtioInputPciDeviceLike = {
   mmio_read(offset: number, size: number): number;
@@ -364,7 +364,7 @@ export function hidUsageToLinuxKeyCode(usage: number): number | null {
   }
 }
 
-export class VirtioInputPciFunction implements PciDevice {
+export class VirtioInputPciFunction implements PciDevice, TickableDevice {
   readonly name: string;
   readonly vendorId = VIRTIO_VENDOR_ID;
   readonly deviceId = VIRTIO_INPUT_DEVICE_ID;
@@ -442,6 +442,18 @@ export class VirtioInputPciFunction implements PciDevice {
       this.#dev.mmio_write(off >>> 0, size >>> 0, maskToSize(value >>> 0, size));
     } catch {
       // ignore device errors during guest MMIO
+    }
+    this.#syncIrq();
+  }
+
+  tick(_nowMs: number): void {
+    if (this.#destroyed) return;
+    try {
+      // Drive notified virtqueues (especially `statusq` LED/output events) so the guest
+      // never wedges waiting for completions when no input events are flowing.
+      this.#dev.poll();
+    } catch {
+      // ignore device errors during tick
     }
     this.#syncIrq();
   }
