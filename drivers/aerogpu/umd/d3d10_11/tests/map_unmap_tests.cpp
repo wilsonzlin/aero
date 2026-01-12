@@ -3428,7 +3428,10 @@ bool TestSrgbTexture2DFormatPropagation() {
                                                 /*width=*/4,
                                                 /*height=*/4,
                                                 c.dxgi_format,
-                                                /*cpu_access_flags=*/0,
+                                                // Staging textures require CPU access flags in real D3D11; keep the
+                                                // descriptor valid so this test doesn't start failing if stricter
+                                                // CreateResource validation is added later.
+                                                /*cpu_access_flags=*/AEROGPU_D3D11_CPU_ACCESS_READ,
                                                 &tex),
                "CreateStagingTexture2DWithFormat(srgb)")) {
       return false;
