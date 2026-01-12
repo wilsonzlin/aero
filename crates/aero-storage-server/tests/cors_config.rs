@@ -115,3 +115,78 @@ async fn cors_preflight_for_metadata_endpoints_allows_if_none_match() {
         );
     }
 }
+
+#[tokio::test]
+async fn cors_headers_are_present_on_rejected_pathological_image_ids() {
+    let dir = tempdir().expect("tempdir");
+    tokio::fs::write(dir.path().join("test.img"), b"Hello, world!")
+        .await
+        .expect("write test file");
+
+    let store = Arc::new(LocalFsImageStore::new(dir.path()));
+    let state = AppState::new(store)
+        .with_cors_allow_origin("https://example.com".parse().unwrap())
+        .with_cors_allow_credentials(true);
+    let app = aero_storage_server::app(state);
+
+    const MAX_IMAGE_ID_LEN: usize = 128;
+    let long_raw = "a".repeat(MAX_IMAGE_ID_LEN * 3 + 1);
+
+    // Bytes endpoint guard should return 404 but still include CORS headers so callers don't see
+    // a generic CORS failure.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri(format!("/v1/images/{long_raw}"))
+                .header(header::ORIGIN, "https://example.com")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    assert_eq!(
+        resp.headers()["access-control-allow-origin"]
+            .to_str()
+            .unwrap(),
+        "https://example.com"
+    );
+    assert_eq!(
+        resp.headers()["access-control-allow-credentials"]
+            .to_str()
+            .unwrap(),
+        "true"
+    );
+
+    // Metadata endpoint guard should return 400 and also include CORS headers.
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri(format!("/v1/images/{long_raw}/meta"))
+                .header(header::ORIGIN, "https://example.com")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        resp.headers()["access-control-allow-origin"]
+            .to_str()
+            .unwrap(),
+        "https://example.com"
+    );
+    assert_eq!(
+        resp.headers()["access-control-allow-credentials"]
+            .to_str()
+            .unwrap(),
+        "true"
+    );
+    assert_eq!(
+        resp.headers()[header::CACHE_CONTROL].to_str().unwrap(),
+        "no-cache"
+    );
+}
