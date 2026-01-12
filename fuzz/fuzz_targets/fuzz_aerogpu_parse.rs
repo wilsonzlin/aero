@@ -1345,6 +1345,69 @@ fuzz_target!(|data: &[u8]| {
     let cmd_proc_handle_reuse_after_destroy = w.finish();
     fuzz_command_processor(&cmd_proc_handle_reuse_after_destroy, Some(&allocs));
 
+    // - ExportSharedSurface is idempotent for an already-exported token targeting the same
+    //   underlying handle.
+    let mut w = AerogpuCmdWriter::new();
+    write_guest_texture2d_4x4_bgra8(&mut w, tex_handle, alloc_id);
+    w.export_shared_surface(tex_handle, share_token);
+    w.export_shared_surface(tex_handle, share_token);
+    let cmd_proc_export_idempotent = w.finish();
+    fuzz_command_processor(&cmd_proc_export_idempotent, Some(&allocs));
+
+    // - ImportSharedSurface is idempotent for an alias already bound to the same underlying
+    //   handle.
+    let mut w = AerogpuCmdWriter::new();
+    write_guest_texture2d_4x4_bgra8(&mut w, tex_handle, alloc_id);
+    w.export_shared_surface(tex_handle, share_token);
+    w.import_shared_surface(alias_handle, share_token);
+    w.import_shared_surface(alias_handle, share_token);
+    let cmd_proc_import_idempotent = w.finish();
+    fuzz_command_processor(&cmd_proc_import_idempotent, Some(&allocs));
+
+    // - ReleaseSharedSurface for an unknown token is a no-op (idempotent).
+    let mut w = AerogpuCmdWriter::new();
+    w.release_shared_surface(share_token);
+    let cmd_proc_release_unknown = w.finish();
+    fuzz_command_processor(&cmd_proc_release_unknown, None);
+
+    // - ImportSharedSurface rejects invalid share_token=0 (`InvalidShareToken`).
+    let mut w = AerogpuCmdWriter::new();
+    w.import_shared_surface(alias_handle, /*share_token=*/ 0);
+    let cmd_proc_import_invalid_token = w.finish();
+    fuzz_command_processor(&cmd_proc_import_invalid_token, None);
+
+    // - ImportSharedSurface rejects out_resource_handle=0 (`InvalidResourceHandle`).
+    let mut w = AerogpuCmdWriter::new();
+    w.import_shared_surface(/*out_resource_handle=*/ 0, share_token);
+    let cmd_proc_import_invalid_handle = w.finish();
+    fuzz_command_processor(&cmd_proc_import_invalid_handle, None);
+
+    // - CreateBuffer rejects handle=0 (`InvalidResourceHandle`).
+    let mut w = AerogpuCmdWriter::new();
+    w.create_buffer(
+        /*buffer_handle=*/ 0, /*usage_flags=*/ 0, /*size_bytes=*/ 4,
+        /*backing_alloc_id=*/ 0, /*backing_offset_bytes=*/ 0,
+    );
+    let cmd_proc_create_buf_invalid_handle = w.finish();
+    fuzz_command_processor(&cmd_proc_create_buf_invalid_handle, None);
+
+    // - CreateTexture2d rejects handle=0 (`InvalidResourceHandle`).
+    let mut w = AerogpuCmdWriter::new();
+    w.create_texture2d(
+        /*texture_handle=*/ 0,
+        /*usage_flags=*/ 0,
+        pci::AerogpuFormat::B8G8R8A8Unorm as u32,
+        /*width=*/ 4,
+        /*height=*/ 4,
+        /*mip_levels=*/ 1,
+        /*array_layers=*/ 1,
+        /*row_pitch_bytes=*/ 16,
+        alloc_id,
+        /*backing_offset_bytes=*/ 0,
+    );
+    let cmd_proc_create_tex_invalid_handle = w.finish();
+    fuzz_command_processor(&cmd_proc_create_tex_invalid_handle, Some(&allocs));
+
     // - ImportSharedSurface must reject importing into a handle already used by a non-shared
     //   resource (`SharedSurfaceHandleInUse`).
     let mut w = AerogpuCmdWriter::new();
