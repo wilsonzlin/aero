@@ -2108,6 +2108,239 @@ mod tests {
         sector
     }
 
+    fn build_long_mode_paged_serial_boot_sector(message: &[u8]) -> [u8; 512] {
+        assert!(!message.is_empty());
+        assert!(
+            message.len() <= 64,
+            "test boot sector message too long (must fit in disp8 addressing)"
+        );
+
+        // This boot sector:
+        // - writes `message` into a *different physical page* (`MSG_PHYS_BASE`)
+        // - sets up 4-level (long mode) paging mapping:
+        //     - code page @ 0x7000  -> physical 0x7000 (identity)
+        //     - msg page  @ 0x4000  -> physical MSG_PHYS_BASE
+        // - enables IA-32e long mode (PAE + EFER.LME + CR0.PG + CR0.PE)
+        // - jumps to a 64-bit code segment and prints the message via COM1.
+        //
+        // If paging translation is not active, the guest will read from physical 0x4000 (the page
+        // table page) instead of the message bytes, and the serial output will not match.
+        const PML4_BASE: u16 = 0x1000;
+        const PDPT_BASE: u16 = 0x2000;
+        const PD_BASE: u16 = 0x3000;
+        const PT_BASE: u16 = 0x4000;
+        const MSG_PHYS_BASE: u16 = 0x5000;
+        const MSG_LINEAR_BASE: u32 = 0x4000;
+
+        // GDT + GDTR pointer are embedded in the boot sector (loaded at 0x7C00).
+        const GDTR_OFF: usize = 0x1E0;
+        const GDT_OFF: usize = GDTR_OFF + 6;
+
+        let mut sector = [0u8; 512];
+        let mut i = 0usize;
+
+        fn write_dword(sector: &mut [u8; 512], i: &mut usize, addr: u16, value: u32) {
+            // 66 c7 06 <disp16> <imm32>
+            sector[*i..*i + 9].copy_from_slice(&[
+                0x66,
+                0xC7,
+                0x06,
+                (addr & 0xFF) as u8,
+                (addr >> 8) as u8,
+                (value & 0xFF) as u8,
+                ((value >> 8) & 0xFF) as u8,
+                ((value >> 16) & 0xFF) as u8,
+                ((value >> 24) & 0xFF) as u8,
+            ]);
+            *i += 9;
+        }
+
+        // xor ax, ax
+        sector[i..i + 2].copy_from_slice(&[0x31, 0xC0]);
+        i += 2;
+        // mov ds, ax
+        sector[i..i + 2].copy_from_slice(&[0x8E, 0xD8]);
+        i += 2;
+
+        // Write the message bytes into a physical RAM page (MSG_PHYS_BASE).
+        for (off, &b) in message.iter().enumerate() {
+            let addr = MSG_PHYS_BASE.wrapping_add(off as u16);
+            // mov byte ptr [addr], imm8
+            sector[i..i + 5].copy_from_slice(&[0xC6, 0x06, addr as u8, (addr >> 8) as u8, b]);
+            i += 5;
+        }
+
+        // Build long mode page tables. We only populate the entries needed for:
+        // - the boot sector code/data page at 0x7000, and
+        // - the message page at 0x4000.
+        //
+        // Write the low dword and explicitly zero the high dword so we don't rely on RAM being
+        // pre-zeroed.
+        let pml4e0: u32 = (PDPT_BASE as u32) | 0x7;
+        write_dword(&mut sector, &mut i, PML4_BASE, pml4e0);
+        write_dword(&mut sector, &mut i, PML4_BASE.wrapping_add(4), 0);
+
+        let pdpte0: u32 = (PD_BASE as u32) | 0x7;
+        write_dword(&mut sector, &mut i, PDPT_BASE, pdpte0);
+        write_dword(&mut sector, &mut i, PDPT_BASE.wrapping_add(4), 0);
+
+        let pde0: u32 = (PT_BASE as u32) | 0x7;
+        write_dword(&mut sector, &mut i, PD_BASE, pde0);
+        write_dword(&mut sector, &mut i, PD_BASE.wrapping_add(4), 0);
+
+        let pte_msg_off = PT_BASE.wrapping_add(((MSG_LINEAR_BASE >> 12) * 8) as u16);
+        let pte_msg: u32 = (MSG_PHYS_BASE as u32) | 0x7;
+        write_dword(&mut sector, &mut i, pte_msg_off, pte_msg);
+        write_dword(&mut sector, &mut i, pte_msg_off.wrapping_add(4), 0);
+
+        let pte_code_off = PT_BASE.wrapping_add(((0x7000u32 >> 12) * 8) as u16);
+        let pte_code: u32 = 0x7000 | 0x7;
+        write_dword(&mut sector, &mut i, pte_code_off, pte_code);
+        write_dword(&mut sector, &mut i, pte_code_off.wrapping_add(4), 0);
+
+        // lgdt [0x7C00 + GDTR_OFF]
+        let gdtr_addr: u16 = 0x7C00u16.wrapping_add(GDTR_OFF as u16);
+        sector[i..i + 5].copy_from_slice(&[
+            0x0F,
+            0x01,
+            0x16,
+            gdtr_addr as u8,
+            (gdtr_addr >> 8) as u8,
+        ]);
+        i += 5;
+
+        // Enable CR4.PAE (bit 5) for long mode paging.
+        // mov eax, cr4
+        sector[i..i + 3].copy_from_slice(&[0x0F, 0x20, 0xE0]);
+        i += 3;
+        // or eax, 0x20
+        sector[i..i + 4].copy_from_slice(&[0x66, 0x83, 0xC8, 0x20]);
+        i += 4;
+        // mov cr4, eax
+        sector[i..i + 3].copy_from_slice(&[0x0F, 0x22, 0xE0]);
+        i += 3;
+
+        // Set IA32_EFER.LME via WRMSR (MSR 0xC000_0080).
+        // mov ecx, 0xC000_0080
+        sector[i..i + 6].copy_from_slice(&[0x66, 0xB9, 0x80, 0x00, 0x00, 0xC0]);
+        i += 6;
+        // mov eax, 0x0000_0100 (LME)
+        sector[i..i + 6].copy_from_slice(&[0x66, 0xB8, 0x00, 0x01, 0x00, 0x00]);
+        i += 6;
+        // mov edx, 0
+        sector[i..i + 6].copy_from_slice(&[0x66, 0xBA, 0x00, 0x00, 0x00, 0x00]);
+        i += 6;
+        // wrmsr
+        sector[i..i + 2].copy_from_slice(&[0x0F, 0x30]);
+        i += 2;
+
+        // mov eax, PML4_BASE
+        sector[i..i + 6].copy_from_slice(&[
+            0x66,
+            0xB8,
+            (PML4_BASE & 0xFF) as u8,
+            (PML4_BASE >> 8) as u8,
+            0x00,
+            0x00,
+        ]);
+        i += 6;
+        // mov cr3, eax
+        sector[i..i + 3].copy_from_slice(&[0x0F, 0x22, 0xD8]);
+        i += 3;
+
+        // Enable protected mode + paging (CR0.PE | CR0.PG).
+        // mov eax, cr0
+        sector[i..i + 3].copy_from_slice(&[0x0F, 0x20, 0xC0]);
+        i += 3;
+        // or eax, 0x8000_0001
+        sector[i..i + 6].copy_from_slice(&[0x66, 0x0D, 0x01, 0x00, 0x00, 0x80]);
+        i += 6;
+        // mov cr0, eax
+        sector[i..i + 3].copy_from_slice(&[0x0F, 0x22, 0xC0]);
+        i += 3;
+
+        // Far jump to 64-bit code segment (selector 0x08). This is a 16-bit far jump (offset16 +
+        // selector16) because we're still executing 16-bit code at this point. Keep the target
+        // within the 64KiB window.
+        let long_mode_entry = 0x7C00u16.wrapping_add((i + 5) as u16);
+        sector[i..i + 5].copy_from_slice(&[
+            0xEA,
+            (long_mode_entry & 0xFF) as u8,
+            (long_mode_entry >> 8) as u8,
+            0x08,
+            0x00,
+        ]);
+        i += 5;
+
+        // ---- 64-bit code (long mode) --------------------------------------------------------
+
+        // mov ax, 0x10
+        sector[i..i + 4].copy_from_slice(&[0x66, 0xB8, 0x10, 0x00]);
+        i += 4;
+        // mov ds, ax
+        sector[i..i + 2].copy_from_slice(&[0x8E, 0xD8]);
+        i += 2;
+        // mov es, ax
+        sector[i..i + 2].copy_from_slice(&[0x8E, 0xC0]);
+        i += 2;
+        // mov ss, ax
+        sector[i..i + 2].copy_from_slice(&[0x8E, 0xD0]);
+        i += 2;
+
+        // mov edx, 0x3f8
+        sector[i..i + 5].copy_from_slice(&[0xBA, 0xF8, 0x03, 0x00, 0x00]);
+        i += 5;
+        // mov esi, MSG_LINEAR_BASE
+        sector[i..i + 5].copy_from_slice(&[
+            0xBE,
+            (MSG_LINEAR_BASE & 0xFF) as u8,
+            ((MSG_LINEAR_BASE >> 8) & 0xFF) as u8,
+            ((MSG_LINEAR_BASE >> 16) & 0xFF) as u8,
+            ((MSG_LINEAR_BASE >> 24) & 0xFF) as u8,
+        ]);
+        i += 5;
+
+        for (off, _) in message.iter().enumerate() {
+            let disp = u8::try_from(off).unwrap_or(0);
+            // mov al, byte ptr [rsi + disp8]
+            sector[i..i + 3].copy_from_slice(&[0x8A, 0x46, disp]);
+            i += 3;
+            // out dx, al
+            sector[i] = 0xEE;
+            i += 1;
+        }
+
+        // hlt
+        sector[i] = 0xF4;
+
+        // ---- GDTR + GDT ---------------------------------------------------------------------
+
+        // GDTR (limit=u16, base=u32) at 0x7C00 + GDTR_OFF.
+        let gdt_base = 0x7C00u32 + (GDT_OFF as u32);
+        let gdt_limit: u16 = (3 * 8 - 1) as u16;
+        sector[GDTR_OFF..GDTR_OFF + 6].copy_from_slice(&[
+            (gdt_limit & 0xFF) as u8,
+            (gdt_limit >> 8) as u8,
+            (gdt_base & 0xFF) as u8,
+            ((gdt_base >> 8) & 0xFF) as u8,
+            ((gdt_base >> 16) & 0xFF) as u8,
+            ((gdt_base >> 24) & 0xFF) as u8,
+        ]);
+
+        // Null descriptor.
+        sector[GDT_OFF..GDT_OFF + 8].fill(0);
+        // 64-bit code descriptor (base=0, limit=4GB, L=1, D=0).
+        sector[GDT_OFF + 8..GDT_OFF + 16]
+            .copy_from_slice(&[0xFF, 0xFF, 0x00, 0x00, 0x00, 0x9A, 0xAF, 0x00]);
+        // Data descriptor (base=0, limit=4GB).
+        sector[GDT_OFF + 16..GDT_OFF + 24]
+            .copy_from_slice(&[0xFF, 0xFF, 0x00, 0x00, 0x00, 0x92, 0x8F, 0x00]);
+
+        sector[510] = 0x55;
+        sector[511] = 0xAA;
+        sector
+    }
+
     #[test]
     fn boots_mbr_and_writes_to_serial() {
         let mut m = Machine::new(MachineConfig {
@@ -2199,6 +2432,30 @@ mod tests {
 
         let out = m.take_serial_output();
         assert_eq!(out, b"OK\n");
+    }
+
+    #[test]
+    fn long_mode_paging_translation_and_io_work_together() {
+        let mut m = Machine::new(MachineConfig {
+            ram_size_bytes: 2 * 1024 * 1024,
+            ..Default::default()
+        })
+        .unwrap();
+
+        let boot = build_long_mode_paged_serial_boot_sector(b"LM\n");
+        m.set_disk_image(boot.to_vec()).unwrap();
+        m.reset();
+
+        for _ in 0..200 {
+            match m.run_slice(50_000) {
+                RunExit::Halted { .. } => break,
+                RunExit::Completed { .. } => continue,
+                other => panic!("unexpected exit: {other:?}"),
+            }
+        }
+
+        let out = m.take_serial_output();
+        assert_eq!(out, b"LM\n");
     }
 
     #[test]

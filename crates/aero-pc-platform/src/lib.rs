@@ -650,14 +650,20 @@ impl VirtioGuestMemory for VirtioDmaMemory<'_> {
         self.mem
             .ram()
             .read_into(addr, dst)
-            .map_err(|_| VirtioGuestMemoryError::OutOfBounds { addr, len: dst.len() })
+            .map_err(|_| VirtioGuestMemoryError::OutOfBounds {
+                addr,
+                len: dst.len(),
+            })
     }
 
     fn write(&mut self, addr: u64, src: &[u8]) -> Result<(), VirtioGuestMemoryError> {
         self.mem
             .ram_mut()
             .write_from(addr, src)
-            .map_err(|_| VirtioGuestMemoryError::OutOfBounds { addr, len: src.len() })
+            .map_err(|_| VirtioGuestMemoryError::OutOfBounds {
+                addr,
+                len: src.len(),
+            })
     }
 
     fn get_slice(&self, addr: u64, len: usize) -> Result<&[u8], VirtioGuestMemoryError> {
@@ -667,7 +673,11 @@ impl VirtioGuestMemory for VirtioDmaMemory<'_> {
             .ok_or(VirtioGuestMemoryError::OutOfBounds { addr, len })
     }
 
-    fn get_slice_mut(&mut self, addr: u64, len: usize) -> Result<&mut [u8], VirtioGuestMemoryError> {
+    fn get_slice_mut(
+        &mut self,
+        addr: u64,
+        len: usize,
+    ) -> Result<&mut [u8], VirtioGuestMemoryError> {
         self.mem
             .ram_mut()
             .get_slice_mut(addr, len)
@@ -1806,7 +1816,9 @@ impl PcPlatform {
         }
 
         let mut virtio_blk = virtio_blk.borrow_mut();
-        let mut mem = VirtioDmaMemory { mem: &mut self.memory };
+        let mut mem = VirtioDmaMemory {
+            mem: &mut self.memory,
+        };
         virtio_blk.process_notified_queues(&mut mem);
     }
 
@@ -1830,24 +1842,41 @@ impl PcPlatform {
         };
 
         let bdf = aero_devices::pci::profile::NIC_E1000_82540EM.bdf;
-        let command = {
+        let (command, bar0_base, bar1_base) = {
             let mut pci_cfg = self.pci_cfg.borrow_mut();
-            pci_cfg
-                .bus_mut()
-                .device_config(bdf)
-                .map(|cfg| cfg.command())
-                .unwrap_or(0)
+            let cfg = pci_cfg.bus_mut().device_config(bdf);
+            let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
+            let bar0_base = cfg
+                .and_then(|cfg| cfg.bar_range(0))
+                .map(|range| range.base)
+                .unwrap_or(0);
+            let bar1_base = cfg
+                .and_then(|cfg| cfg.bar_range(1))
+                .map(|range| range.base)
+                .unwrap_or(0);
+            (command, bar0_base, bar1_base)
         };
 
-        // Keep the device model's internal PCI command register in sync with the platform PCI bus.
+        // Keep the device model's internal PCI config state in sync with the platform PCI bus.
         //
         // The E1000 model gates DMA on COMMAND.BME (bit 2) by consulting its own PCI config state,
         // while the PC platform maintains a separate canonical config space for enumeration.
-        // Mirror the live command register into the NIC model before polling so bus-master gating
-        // works without needing a general "config write hook".
-        e1000
-            .borrow_mut()
-            .pci_config_write(0x04, 2, u32::from(command));
+        // Mirror the live config (command + BAR bases) into the NIC model before polling so
+        // bus-master gating works without needing a general "config write hook".
+        {
+            let mut e1000 = e1000.borrow_mut();
+            e1000.pci_config_write(0x04, 2, u32::from(command));
+            if let Ok(bar0_base) = u32::try_from(bar0_base) {
+                if bar0_base != 0 {
+                    e1000.pci_config_write(0x10, 4, bar0_base);
+                }
+            }
+            if let Ok(bar1_base) = u32::try_from(bar1_base) {
+                if bar1_base != 0 {
+                    e1000.pci_config_write(0x14, 4, bar1_base);
+                }
+            }
+        }
 
         // Only allow the device to DMA when Bus Mastering is enabled (PCI command bit 2).
         let bus_master_enabled = (command & (1 << 2)) != 0;
