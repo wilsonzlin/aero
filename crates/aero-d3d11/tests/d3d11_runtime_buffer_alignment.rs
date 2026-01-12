@@ -38,3 +38,27 @@ fn d3d11_runtime_rejects_unaligned_copy_buffer_to_buffer() {
         );
     });
 }
+
+#[test]
+fn d3d11_runtime_update_buffer_succeeds_without_copy_dst_usage_flag() {
+    pollster::block_on(async {
+        let test_name = concat!(
+            module_path!(),
+            "::d3d11_runtime_update_buffer_succeeds_without_copy_dst_usage_flag"
+        );
+        let mut rt = match D3D11Runtime::new_for_tests().await {
+            Ok(rt) => rt,
+            Err(err) => {
+                common::skip_or_panic(test_name, &format!("wgpu unavailable ({err:#})"));
+                return;
+            }
+        };
+
+        let mut writer = CmdWriter::new();
+        writer.create_buffer(1, 4, BufferUsage::UNIFORM); // deliberately omit COPY_DST
+        writer.update_buffer(1, 0, &[1u8, 2u8, 3u8, 4u8]);
+
+        rt.execute(&writer.finish())
+            .expect("UpdateBuffer should succeed even if COPY_DST is omitted in CreateBuffer usage");
+    });
+}

@@ -99,3 +99,50 @@ fn d3d11_runtime_create_texture_view_rejects_out_of_range_base_mip() {
         );
     });
 }
+
+#[test]
+fn d3d11_runtime_update_texture2d_succeeds_without_copy_dst_usage_flag() {
+    pollster::block_on(async {
+        let test_name = concat!(
+            module_path!(),
+            "::d3d11_runtime_update_texture2d_succeeds_without_copy_dst_usage_flag"
+        );
+        let mut rt = match D3D11Runtime::new_for_tests().await {
+            Ok(rt) => rt,
+            Err(err) => {
+                common::skip_or_panic(test_name, &format!("wgpu unavailable ({err:#})"));
+                return;
+            }
+        };
+
+        let mut w = CmdWriter::new();
+        w.create_texture2d(
+            1,
+            Texture2dDesc {
+                width: 4,
+                height: 4,
+                array_layers: 1,
+                mip_level_count: 1,
+                format: DxgiFormat::R8G8B8A8Unorm,
+                // Deliberately omit COPY_DST; D3D11Runtime should still include COPY_DST in the
+                // underlying wgpu texture to keep UpdateTexture2D robust.
+                usage: TextureUsage::TEXTURE_BINDING,
+            },
+        );
+        w.update_texture2d(
+            1,
+            Texture2dUpdate {
+                mip_level: 0,
+                array_layer: 0,
+                width: 1,
+                height: 1,
+                bytes_per_row: 0,
+                data: &[0u8; 4],
+            },
+        );
+
+        rt.execute(&w.finish()).expect(
+            "UpdateTexture2D should succeed even if COPY_DST is omitted in CreateTexture2D usage",
+        );
+    });
+}
