@@ -1322,7 +1322,9 @@ impl IoSnapshot for NvmeController {
 
         fn validate_queue_base(base: u64) -> SnapshotResult<()> {
             if base == 0 || base & (PAGE_SIZE as u64 - 1) != 0 {
-                return Err(SnapshotError::InvalidFieldEncoding("nvme queue base address"));
+                return Err(SnapshotError::InvalidFieldEncoding(
+                    "nvme queue base address",
+                ));
             }
             Ok(())
         }

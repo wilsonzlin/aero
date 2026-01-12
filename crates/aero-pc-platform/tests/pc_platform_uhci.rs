@@ -1551,11 +1551,8 @@ fn pc_platform_uhci_force_global_resume_sets_resume_detect_and_asserts_intx() {
 
     // Pulse USBCMD.FGR (Force Global Resume): should latch USBSTS.RESUMEDETECT.
     let usbcmd = pc.io.read(bar4_base + REG_USBCMD, 2) as u16;
-    pc.io.write(
-        bar4_base + REG_USBCMD,
-        2,
-        u32::from(usbcmd | USBCMD_FGR),
-    );
+    pc.io
+        .write(bar4_base + REG_USBCMD, 2, u32::from(usbcmd | USBCMD_FGR));
 
     assert_ne!(
         pc.io.read(bar4_base + REG_USBSTS, 2) as u16 & USBSTS_RESUMEDETECT,
@@ -1587,11 +1584,8 @@ fn pc_platform_uhci_force_global_resume_sets_resume_detect_and_asserts_intx() {
     }
 
     // Clear RESUMEDETECT (W1C) and ensure the line deasserts.
-    pc.io.write(
-        bar4_base + REG_USBSTS,
-        2,
-        u32::from(USBSTS_RESUMEDETECT),
-    );
+    pc.io
+        .write(bar4_base + REG_USBSTS, 2, u32::from(USBSTS_RESUMEDETECT));
     pc.poll_pci_intx_lines();
     assert_eq!(pc.interrupts.borrow().pic().get_pending_vector(), None);
 }

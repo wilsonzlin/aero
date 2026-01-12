@@ -88,4 +88,3 @@ fn int10_active_page_select_makes_page_visible_via_crtc_start_address() {
     // and this pixel would be black.
     assert_eq!(pixel0, 0xFFAA_0000);
 }
-
