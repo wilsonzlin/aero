@@ -211,3 +211,58 @@ fn ide_ata_dma_snapshot_roundtrip_preserves_irq_and_status_bits() {
     // Reading STATUS clears the pending IRQ.
     assert!(!restored.primary_irq_pending());
 }
+
+#[test]
+fn ide_dma_is_gated_on_pci_bus_master_enable() {
+    let mut disk = MemDisk::new(4);
+    let expected: Vec<u8> = (0..512u32).map(|v| (v & 0xff) as u8).collect();
+    disk.data_mut()[..512].copy_from_slice(&expected);
+
+    let mut ide = IdeController::new(0xC000);
+    ide.attach_primary_master_ata(AtaDevice::new(Box::new(disk), "Aero HDD"));
+
+    let mut mem = VecMemory::new(0x20_000);
+
+    // PRD table at 0x1000, one 512-byte segment to 0x2000.
+    let prd_addr = 0x1000u64;
+    let dma_buf = 0x2000u64;
+    mem.write_u32(prd_addr, dma_buf as u32);
+    mem.write_u16(prd_addr + 4, 512);
+    mem.write_u16(prd_addr + 6, 0x8000);
+
+    let bm_base = ide.bus_master_base();
+    ide.io_write(bm_base + 4, 4, prd_addr as u32);
+
+    // Disable PCI bus mastering (COMMAND.BME bit 2) while keeping I/O decode enabled.
+    let command = ide.pci_config_read(0x04, 2) as u16;
+    ide.pci_config_write(0x04, 2, u32::from(command & !(1 << 2)));
+
+    // Issue READ DMA for LBA 0, 1 sector.
+    ide.io_write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
+    ide.io_write(PRIMARY_PORTS.cmd_base + 2, 1, 1);
+    ide.io_write(PRIMARY_PORTS.cmd_base + 3, 1, 0);
+    ide.io_write(PRIMARY_PORTS.cmd_base + 4, 1, 0);
+    ide.io_write(PRIMARY_PORTS.cmd_base + 5, 1, 0);
+    ide.io_write(PRIMARY_PORTS.cmd_base + 7, 1, 0xC8);
+
+    // Start bus master (direction=read) but DMA must not run until bus mastering is enabled.
+    ide.io_write(bm_base, 1, 0x09);
+    ide.tick(&mut mem);
+
+    let mut prefix = [0u8; 4];
+    mem.read_physical(dma_buf, &mut prefix);
+    assert_eq!(prefix, [0; 4], "DMA buffer should remain untouched");
+    assert!(
+        !ide.primary_irq_pending(),
+        "DMA completion interrupt should not be raised while bus mastering is disabled"
+    );
+
+    // Enable bus mastering and retry; the pending DMA transfer should complete.
+    ide.pci_config_write(0x04, 2, u32::from(command | (1 << 2)));
+    ide.tick(&mut mem);
+
+    let mut out = vec![0u8; 512];
+    mem.read_physical(dma_buf, &mut out);
+    assert_eq!(out, expected);
+    assert!(ide.primary_irq_pending());
+}

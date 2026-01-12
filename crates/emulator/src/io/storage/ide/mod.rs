@@ -1152,6 +1152,15 @@ impl IdeController {
     /// A real device would DMA asynchronously. For emulator simplicity we
     /// complete transfers synchronously when the Bus Master start bit is set.
     pub fn tick(&mut self, mem: &mut dyn MemoryBus) {
+        // Gate DMA on PCI command Bus Master Enable (bit 2).
+        //
+        // This matches the platform-backed `Piix3IdePciDevice` behavior and real PCI semantics:
+        // when the guest clears COMMAND.BME, the device must not perform bus-master DMA even if
+        // the Bus Master IDE engine is started.
+        let command = u16::from_le_bytes(self.pci_regs[0x04..0x06].try_into().unwrap());
+        if (command & (1 << 2)) == 0 {
+            return;
+        }
         Self::tick_channel(&mut self.bus_master[0], &mut self.primary, mem);
         Self::tick_channel(&mut self.bus_master[1], &mut self.secondary, mem);
     }
