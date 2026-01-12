@@ -17,14 +17,19 @@ pub(crate) fn truncate_for_span(value: &str, max_len: usize) -> std::borrow::Cow
         return std::borrow::Cow::Borrowed(value);
     }
 
+    const ELLIPSIS: &str = "...";
+    if max_len <= ELLIPSIS.len() {
+        return std::borrow::Cow::Borrowed(&ELLIPSIS[..max_len]);
+    }
+
     // Truncate at a valid UTF-8 boundary.
-    let mut end = max_len;
+    let mut end = max_len - ELLIPSIS.len();
     while end > 0 && !value.is_char_boundary(end) {
         end -= 1;
     }
 
     let mut out = value[..end].to_string();
-    out.push_str("...");
+    out.push_str(ELLIPSIS);
     std::borrow::Cow::Owned(out)
 }
 

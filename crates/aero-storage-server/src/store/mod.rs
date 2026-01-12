@@ -109,13 +109,18 @@ fn truncate_for_error(value: &str, max_len: usize) -> String {
         return value.to_string();
     }
 
+    const ELLIPSIS: &str = "...";
+    if max_len <= ELLIPSIS.len() {
+        return ELLIPSIS[..max_len].to_string();
+    }
+
     // Truncate at a valid UTF-8 boundary.
-    let mut end = max_len;
+    let mut end = max_len - ELLIPSIS.len();
     while end > 0 && !value.is_char_boundary(end) {
         end -= 1;
     }
 
     let mut out = value[..end].to_string();
-    out.push_str("...");
+    out.push_str(ELLIPSIS);
     out
 }
