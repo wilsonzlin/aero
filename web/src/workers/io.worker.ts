@@ -243,6 +243,7 @@ const WEBUSB_GUEST_ROOT_PORT = 1;
 // Keep PCI Bus/Device/Function assignments stable so guests can match canonical
 // chipset layouts and driver heuristics (e.g. Aero's native chipset profiles).
 const UHCI_PCI_BDF = { bus: 0, device: 1, function: 0 };
+const HDA_PCI_BDF = { bus: 0, device: 4, function: 0 };
 const E1000_PCI_BDF = { bus: 0, device: 5, function: 0 };
 const VIRTIO_INPUT_PCI_DEVICE = 10;
 const SYNTHETIC_USB_HID_KEYBOARD_DEVICE_ID = 0x1000_0001;
@@ -1110,7 +1111,7 @@ function maybeInitHdaDevice(): void {
     const dev = new HdaPciDevice({ bridge: bridge as HdaControllerBridgeLike, irqSink: mgr.irqSink });
     hdaControllerBridge = bridge;
     hdaDevice = dev;
-    mgr.registerPciDevice(dev);
+    mgr.registerPciDevice(dev, HDA_PCI_BDF);
     mgr.addTickable(dev);
 
     // Apply any existing microphone ring-buffer attachment.
