@@ -369,6 +369,13 @@ impl PcMachine {
         let cfg = Tier0Config::from_cpuid(&self.assist.features);
 
         while executed < max_insts {
+            // Allow storage controllers to make forward progress even while the CPU is halted.
+            //
+            // AHCI/IDE complete DMA asynchronously and signal completion via interrupts; those
+            // interrupts must be able to wake a HLT'd CPU.
+            self.bus.platform.process_ahci();
+            self.bus.platform.process_ide();
+
             self.poll_network();
 
             if let Some(kind) = self.take_reset_kind() {

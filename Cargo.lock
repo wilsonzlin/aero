@@ -394,6 +394,7 @@ dependencies = [
  "aero-pc-platform",
  "aero-platform",
  "aero-snapshot",
+ "aero-storage",
  "firmware",
  "memory",
  "pretty_assertions",

@@ -21,3 +21,4 @@ aero-pc-platform = { path = "../aero-pc-platform" }
 
 [dev-dependencies]
 pretty_assertions = "1"
+aero-storage = { path = "../aero-storage" }
