@@ -191,10 +191,20 @@ fn pc_platform_ahci_mmio_syncs_device_command_before_each_access() {
     // Simulate a stale device-side PCI command register copy (the platform maintains a separate
     // guest-facing PCI config space for enumeration).
     let ahci = pc.ahci.as_ref().expect("AHCI is enabled").clone();
-    ahci.borrow_mut().config_mut().set_command(0);
+    {
+        let mut ahci = ahci.borrow_mut();
+        ahci.config_mut().set_command(0);
+        // Also simulate a stale BAR5 base (the platform chooses the canonical BAR assignment).
+        ahci.config_mut().set_bar_base(5, 0);
+    }
 
     // With COMMAND.MEM disabled in the device model, direct MMIO reads return 0xFFFF_FFFF.
     assert_eq!(ahci.borrow_mut().mmio_read(0x10, 4) as u32, 0xFFFF_FFFF);
+    assert_eq!(
+        ahci.borrow().config().bar_range(5).unwrap().base,
+        0,
+        "test setup should leave the device model's BAR5 base desynchronized"
+    );
 
     // But through the platform's MMIO bus, accesses should still succeed because the MMIO router
     // syncs the live PCI command register into the device model before dispatch.
@@ -202,6 +212,11 @@ fn pc_platform_ahci_mmio_syncs_device_command_before_each_access() {
 
     // The above access should have resynchronized the device model's command register.
     assert_eq!(ahci.borrow_mut().mmio_read(0x10, 4) as u32, 0x0001_0300);
+    assert_eq!(
+        ahci.borrow().config().bar_range(5).unwrap().base,
+        bar5_base,
+        "platform MMIO should also sync the device model's BAR5 base"
+    );
 
     // Now toggle COMMAND.MEMORY through the guest-facing config space, and ensure MMIO still works
     // immediately after re-enabling decode (without waiting for `process_ahci()` to sync the
@@ -213,6 +228,11 @@ fn pc_platform_ahci_mmio_syncs_device_command_before_each_access() {
     assert_eq!(ahci.borrow_mut().mmio_read(0x10, 4) as u32, 0xFFFF_FFFF);
     assert_eq!(pc.memory.read_u32(bar5_base + 0x10), 0x0001_0300);
     assert_eq!(ahci.borrow_mut().mmio_read(0x10, 4) as u32, 0x0001_0300);
+    assert_eq!(
+        ahci.borrow().config().bar_range(5).unwrap().base,
+        bar5_base,
+        "platform MMIO should keep BAR5 base synced after COMMAND.MEM toggles"
+    );
 }
 
 #[test]
