@@ -47,6 +47,7 @@ pub fn dispatch_interrupt(
         0x13 => handle_int13(bios, cpu, bus, disk),
         0x15 => handle_int15(bios, cpu, bus),
         0x16 => handle_int16(bios, cpu),
+        0x18 => handle_int18(bios, cpu, bus, disk),
         0x19 => handle_int19(bios, cpu, bus, disk),
         0x1A => handle_int1a(bios, cpu, bus),
         _ => {
@@ -80,6 +81,13 @@ fn handle_int12(cpu: &mut CpuState, bus: &mut dyn BiosBus) {
     let base_mem_kb = bus.read_u16(BDA_BASE + 0x13);
     cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & !0xFFFF) | (base_mem_kb as u64);
     cpu.rflags &= !FLAG_CF;
+}
+
+fn handle_int18(bios: &mut Bios, cpu: &mut CpuState, bus: &mut dyn BiosBus, disk: &mut dyn BlockDevice) {
+    // ROM BASIC / boot failure fallback.
+    //
+    // When no ROM BASIC is present, many BIOSes chain INT 18h to INT 19h to retry boot.
+    handle_int19(bios, cpu, bus, disk);
 }
 
 fn handle_int19(bios: &mut Bios, cpu: &mut CpuState, bus: &mut dyn BiosBus, disk: &mut dyn BlockDevice) {
@@ -1343,6 +1351,28 @@ fn build_e820_map(
         assert_eq!(mem.read_u16(0x7BFA), 0x7C00); // IP
         assert_eq!(mem.read_u16(0x7BFC), 0x0000); // CS
         assert_eq!(mem.read_u16(0x7BFE), 0x0202); // FLAGS
+    }
+
+    #[test]
+    fn int18_chains_to_int19_bootstrap_loader() {
+        let mut bios = Bios::new(BiosConfig {
+            boot_drive: 0x80,
+            ..BiosConfig::default()
+        });
+        let mut cpu = CpuState::new(CpuMode::Real);
+
+        let mut sector = [0u8; 512];
+        sector[0] = 0xAA;
+        sector[510] = 0x55;
+        sector[511] = 0xAA;
+        let mut disk = InMemoryDisk::from_boot_sector(sector);
+        let mut mem = TestMemory::new(2 * 1024 * 1024);
+
+        handle_int18(&mut bios, &mut cpu, &mut mem, &mut disk);
+
+        assert_eq!(cpu.halted, false);
+        assert_eq!(cpu.gpr[gpr::RSP] as u16, 0x7BFA);
+        assert_eq!(mem.read_u8(0x7C00), 0xAA);
     }
 
     #[test]
