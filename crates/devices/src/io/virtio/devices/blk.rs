@@ -511,6 +511,91 @@ mod tests {
     }
 
     #[test]
+    fn aero_storage_adapter_supports_virtio_blk_read_write() {
+        let disk = RawDisk::create(MemBackend::new(), 4096).unwrap();
+        let drive = VirtualDrive::new_from_aero_storage(disk);
+        let vq = VirtQueue::new(8, DESC_ADDR, AVAIL_ADDR, USED_ADDR);
+        let mut dev = VirtioBlkDevice::new(drive, vq);
+
+        let mut mem = DenseMemory::new(0x10000).unwrap();
+
+        let write_header_addr = 0x4000;
+        let write_data1_addr = 0x5000;
+        let write_data2_addr = 0x5010;
+        let write_status_addr = 0x6000;
+
+        let read_header_addr = 0x4100;
+        let read_data1_addr = 0x7000;
+        let read_data2_addr = 0x7010;
+        let read_status_addr = 0x8000;
+
+        // First, write to the disk.
+        mem.write_u32_le(write_header_addr, VIRTIO_BLK_T_OUT).unwrap();
+        mem.write_u32_le(write_header_addr + 4, 0).unwrap();
+        mem.write_u64_le(write_header_addr + 8, 0).unwrap(); // sector 0
+        mem.write_from(write_data1_addr, b"abc").unwrap();
+        mem.write_from(write_data2_addr, b"defgh").unwrap();
+
+        // Then, read the same bytes back.
+        mem.write_u32_le(read_header_addr, VIRTIO_BLK_T_IN).unwrap();
+        mem.write_u32_le(read_header_addr + 4, 0).unwrap();
+        mem.write_u64_le(read_header_addr + 8, 0).unwrap(); // sector 0
+
+        // WRITE chain.
+        write_desc(&mut mem, 0, write_header_addr, 16, VIRTQ_DESC_F_NEXT, 1);
+        write_desc(&mut mem, 1, write_data1_addr, 3, VIRTQ_DESC_F_NEXT, 2);
+        write_desc(&mut mem, 2, write_data2_addr, 5, VIRTQ_DESC_F_NEXT, 3);
+        write_desc(&mut mem, 3, write_status_addr, 1, VIRTQ_DESC_F_WRITE, 0);
+
+        // READ chain.
+        write_desc(&mut mem, 4, read_header_addr, 16, VIRTQ_DESC_F_NEXT, 5);
+        write_desc(
+            &mut mem,
+            5,
+            read_data1_addr,
+            3,
+            VIRTQ_DESC_F_NEXT | VIRTQ_DESC_F_WRITE,
+            6,
+        );
+        write_desc(
+            &mut mem,
+            6,
+            read_data2_addr,
+            5,
+            VIRTQ_DESC_F_NEXT | VIRTQ_DESC_F_WRITE,
+            7,
+        );
+        write_desc(&mut mem, 7, read_status_addr, 1, VIRTQ_DESC_F_WRITE, 0);
+
+        // Two requests in the available ring: WRITE first, then READ.
+        mem.write_u16_le(AVAIL_ADDR, 0).unwrap(); // flags
+        mem.write_u16_le(AVAIL_ADDR + 2, 2).unwrap(); // idx
+        mem.write_u16_le(AVAIL_ADDR + 4, 0).unwrap(); // ring[0]
+        mem.write_u16_le(AVAIL_ADDR + 6, 4).unwrap(); // ring[1]
+
+        let mut irq = TestIrq::default();
+        assert_eq!(dev.process_queue(&mut mem, &mut irq).unwrap(), 2);
+
+        let out = [
+            mem.read_u8_le(read_data1_addr).unwrap(),
+            mem.read_u8_le(read_data1_addr + 1).unwrap(),
+            mem.read_u8_le(read_data1_addr + 2).unwrap(),
+            mem.read_u8_le(read_data2_addr).unwrap(),
+            mem.read_u8_le(read_data2_addr + 1).unwrap(),
+            mem.read_u8_le(read_data2_addr + 2).unwrap(),
+            mem.read_u8_le(read_data2_addr + 3).unwrap(),
+            mem.read_u8_le(read_data2_addr + 4).unwrap(),
+        ];
+        assert_eq!(&out, b"abcdefgh");
+        assert_eq!(mem.read_u8_le(write_status_addr).unwrap(), VIRTIO_BLK_S_OK);
+        assert_eq!(mem.read_u8_le(read_status_addr).unwrap(), VIRTIO_BLK_S_OK);
+        assert_eq!(mem.read_u16_le(USED_ADDR + 2).unwrap(), 2);
+        assert_eq!(read_used_elem(&mem, 0), (0, 1));
+        assert_eq!(read_used_elem(&mem, 1), (4, 9)); // 8 bytes + status
+        assert_eq!(irq.count, 1);
+    }
+
+    #[test]
     fn malformed_chains_return_ioerr_without_panic() {
         let backend = SharedMemBackend::new(4096);
         let drive = VirtualDrive::new(512, Box::new(backend));
