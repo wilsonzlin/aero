@@ -188,6 +188,31 @@ static int RunD3D9ExGettersSanity(int argc, char** argv) {
   }
 
   // --- Viewport ---
+  // Validate the default viewport (full backbuffer) before we set a custom one.
+  {
+    D3DVIEWPORT9 default_vp;
+    ZeroMemory(&default_vp, sizeof(default_vp));
+    hr = dev->GetViewport(&default_vp);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("GetViewport (default)", hr);
+    }
+    if (default_vp.X != 0 || default_vp.Y != 0 ||
+        default_vp.Width != (DWORD)kWidth || default_vp.Height != (DWORD)kHeight ||
+        !NearlyEqual(default_vp.MinZ, 0.0f, 1e-6f) ||
+        !NearlyEqual(default_vp.MaxZ, 1.0f, 1e-6f)) {
+      return reporter.Fail("default viewport mismatch: got {X=%lu Y=%lu W=%lu H=%lu MinZ=%.6f MaxZ=%.6f} "
+                           "expected {X=0 Y=0 W=%lu H=%lu MinZ=0.0 MaxZ=1.0}",
+                           (unsigned long)default_vp.X,
+                           (unsigned long)default_vp.Y,
+                           (unsigned long)default_vp.Width,
+                           (unsigned long)default_vp.Height,
+                           default_vp.MinZ,
+                           default_vp.MaxZ,
+                           (unsigned long)kWidth,
+                           (unsigned long)kHeight);
+    }
+  }
+
   D3DVIEWPORT9 vp;
   ZeroMemory(&vp, sizeof(vp));
   vp.X = 1;

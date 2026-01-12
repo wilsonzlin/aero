@@ -2852,6 +2852,51 @@ inline void stateblock_record_viewport_locked(Device* dev, const D3DDDIVIEWPORTI
   sb->viewport = vp;
 }
 
+// Some D3D9 runtimes rely on the default viewport (full render target) without
+// ever issuing a SetViewport call. D3D9 state blocks and GetViewport should
+// still observe a non-empty viewport in that case. Compute an "effective"
+// viewport that falls back to the current render target / swapchain / adapter
+// dimensions when the cached viewport is unset (Width/Height <= 0).
+//
+// Callers must hold `Device::mutex`.
+inline D3DDDIVIEWPORTINFO viewport_effective_locked(Device* dev) {
+  D3DDDIVIEWPORTINFO vp = {0, 0, 0, 0, 0.0f, 1.0f};
+  if (!dev) {
+    return vp;
+  }
+  vp = dev->viewport;
+  if (vp.Width > 0.0f && vp.Height > 0.0f) {
+    return vp;
+  }
+
+  int32_t w = 0;
+  int32_t h = 0;
+  if (dev->render_targets[0]) {
+    w = static_cast<int32_t>(dev->render_targets[0]->width);
+    h = static_cast<int32_t>(dev->render_targets[0]->height);
+  } else if (dev->current_swapchain) {
+    w = static_cast<int32_t>(dev->current_swapchain->width);
+    h = static_cast<int32_t>(dev->current_swapchain->height);
+  } else if (dev->adapter) {
+    w = static_cast<int32_t>(dev->adapter->primary_width);
+    h = static_cast<int32_t>(dev->adapter->primary_height);
+  }
+
+  if (w > 0 && h > 0) {
+    vp.X = 0.0f;
+    vp.Y = 0.0f;
+    vp.Width = static_cast<float>(w);
+    vp.Height = static_cast<float>(h);
+  }
+  if (vp.Width <= 0.0f) {
+    vp.Width = 1.0f;
+  }
+  if (vp.Height <= 0.0f) {
+    vp.Height = 1.0f;
+  }
+  return vp;
+}
+
 inline void stateblock_record_scissor_locked(Device* dev, const RECT& rect, BOOL enabled) {
   if (!dev || !dev->recording_state_block) {
     return;
@@ -9709,7 +9754,7 @@ static void stateblock_init_for_type_locked(Device* dev, StateBlock* sb, uint32_
     sb->depth_stencil = dev->depth_stencil;
 
     sb->viewport_set = true;
-    sb->viewport = dev->viewport;
+    sb->viewport = viewport_effective_locked(dev);
     sb->scissor_set = true;
     sb->scissor_rect = dev->scissor_rect;
     sb->scissor_rect_user_set = dev->scissor_rect_user_set;
@@ -9945,7 +9990,7 @@ static void stateblock_capture_locked(Device* dev, StateBlock* sb) {
   }
 
   if (sb->viewport_set) {
-    sb->viewport = dev->viewport;
+    sb->viewport = viewport_effective_locked(dev);
   }
   if (sb->scissor_set) {
     sb->scissor_rect = dev->scissor_rect;
@@ -12414,12 +12459,13 @@ HRESULT device_get_viewport_impl(D3DDDI_HDEVICE hDevice, ViewportT* pViewport) {
   }
   auto* dev = as_device(hDevice);
   std::lock_guard<std::mutex> lock(dev->mutex);
-  pViewport->X = static_cast<decltype(pViewport->X)>(dev->viewport.X);
-  pViewport->Y = static_cast<decltype(pViewport->Y)>(dev->viewport.Y);
-  pViewport->Width = static_cast<decltype(pViewport->Width)>(dev->viewport.Width);
-  pViewport->Height = static_cast<decltype(pViewport->Height)>(dev->viewport.Height);
-  pViewport->MinZ = static_cast<decltype(pViewport->MinZ)>(dev->viewport.MinZ);
-  pViewport->MaxZ = static_cast<decltype(pViewport->MaxZ)>(dev->viewport.MaxZ);
+  const D3DDDIVIEWPORTINFO vp = viewport_effective_locked(dev);
+  pViewport->X = static_cast<decltype(pViewport->X)>(vp.X);
+  pViewport->Y = static_cast<decltype(pViewport->Y)>(vp.Y);
+  pViewport->Width = static_cast<decltype(pViewport->Width)>(vp.Width);
+  pViewport->Height = static_cast<decltype(pViewport->Height)>(vp.Height);
+  pViewport->MinZ = static_cast<decltype(pViewport->MinZ)>(vp.MinZ);
+  pViewport->MaxZ = static_cast<decltype(pViewport->MaxZ)>(vp.MaxZ);
   return trace.ret(S_OK);
 }
 
