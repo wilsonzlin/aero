@@ -91,8 +91,11 @@ pub struct E1000DeviceState {
 
 impl Default for E1000DeviceState {
     fn default() -> Self {
+        let mut pci_regs = [0; 256];
+        // BAR1 is an I/O BAR: bit0 is always set.
+        pci_regs[0x14..0x18].copy_from_slice(&0x1u32.to_le_bytes());
         Self {
-            pci_regs: [0; 256],
+            pci_regs,
             pci_bar0: 0,
             pci_bar0_probe: false,
             // BAR1 is an I/O BAR; bit0 must remain set.

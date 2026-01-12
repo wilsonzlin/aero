@@ -374,6 +374,9 @@ impl PciConfig {
         // INTA#
         regs[0x3d] = 0x01;
 
+        // BAR1 is an I/O BAR: bit0 is always set.
+        regs[0x14..0x18].copy_from_slice(&0x1u32.to_le_bytes());
+
         Self {
             regs,
             bar0: 0,
