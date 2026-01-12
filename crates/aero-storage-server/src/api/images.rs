@@ -169,11 +169,11 @@ pub async fn get_image_meta(
     req_headers: HeaderMap,
 ) -> Result<Response, ApiError> {
     let image = state.store.get_image(&id).await?;
-    let etag = cache::etag_or_fallback(&image.meta);
+    let etag = cache::etag_header_value_for_meta(&image.meta);
 
-    if cache::is_not_modified(&req_headers, Some(&etag), image.meta.last_modified) {
+    if cache::is_not_modified(&req_headers, etag.to_str().ok(), image.meta.last_modified) {
         let mut headers = metadata_cache_headers(&state, &req_headers);
-        headers.insert(ETAG, HeaderValue::from_str(&etag).unwrap());
+        headers.insert(ETAG, etag);
         if let Some(lm) = cache::last_modified_header_value(image.meta.last_modified) {
             headers.insert(LAST_MODIFIED, lm);
         }
@@ -183,7 +183,7 @@ pub async fn get_image_meta(
     }
 
     let mut headers = metadata_cache_headers(&state, &req_headers);
-    headers.insert(ETAG, HeaderValue::from_str(&etag).unwrap());
+    headers.insert(ETAG, etag);
     if let Some(lm) = cache::last_modified_header_value(image.meta.last_modified) {
         headers.insert(LAST_MODIFIED, lm);
     }
@@ -224,11 +224,11 @@ pub async fn head_image_meta(
     req_headers: HeaderMap,
 ) -> Result<Response, ApiError> {
     let image = state.store.get_image(&id).await?;
-    let etag = cache::etag_or_fallback(&image.meta);
+    let etag = cache::etag_header_value_for_meta(&image.meta);
 
-    if cache::is_not_modified(&req_headers, Some(&etag), image.meta.last_modified) {
+    if cache::is_not_modified(&req_headers, etag.to_str().ok(), image.meta.last_modified) {
         let mut headers = metadata_cache_headers(&state, &req_headers);
-        headers.insert(ETAG, HeaderValue::from_str(&etag).unwrap());
+        headers.insert(ETAG, etag);
         if let Some(lm) = cache::last_modified_header_value(image.meta.last_modified) {
             headers.insert(LAST_MODIFIED, lm);
         }
@@ -238,7 +238,7 @@ pub async fn head_image_meta(
     }
 
     let mut headers = metadata_cache_headers(&state, &req_headers);
-    headers.insert(ETAG, HeaderValue::from_str(&etag).unwrap());
+    headers.insert(ETAG, etag);
     if let Some(lm) = cache::last_modified_header_value(image.meta.last_modified) {
         headers.insert(LAST_MODIFIED, lm);
     }

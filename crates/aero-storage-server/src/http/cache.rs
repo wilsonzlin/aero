@@ -5,10 +5,78 @@ use sha2::{Digest, Sha256};
 
 use crate::store::ImageMeta;
 
+/// Returns `true` if this looks like a syntactically valid HTTP `ETag` header value.
+///
+/// This is intentionally stricter than `HeaderValue` parsing: we require quoted tags, since an
+/// unquoted value is not a valid entity-tag per RFC 9110.
+fn looks_like_etag(value: &str) -> bool {
+    let value = value.trim();
+    if value.is_empty() {
+        return false;
+    }
+
+    // Reject any whitespace inside the ETag itself (OWS around the value is handled by `trim()`).
+    //
+    // This also rejects newlines, which prevents header injection and avoids panics when
+    // converting to `HeaderValue`.
+    if value.chars().any(|c| c.is_whitespace()) {
+        return false;
+    }
+
+    let tag = if value.starts_with("W/") || value.starts_with("w/") {
+        &value[2..]
+    } else {
+        value
+    };
+
+    tag.len() >= 2 && tag.starts_with('"') && tag.ends_with('"')
+}
+
+/// Build a safe `ETag` header value.
+///
+/// Store backends can theoretically return arbitrary strings for `ImageMeta::etag`; converting
+/// them to `HeaderValue` using `.unwrap()` can panic the server if the value contains invalid
+/// header characters (e.g. newlines).
+///
+/// This helper validates the store-provided tag and falls back to a deterministic safe tag.
+pub fn etag_header_value_or_fallback<F>(etag: Option<&str>, fallback: F) -> HeaderValue
+where
+    F: FnOnce() -> String,
+{
+    if let Some(etag) = etag {
+        let trimmed = etag.trim();
+        if looks_like_etag(trimmed) {
+            if let Ok(v) = HeaderValue::from_str(trimmed) {
+                return v;
+            }
+        }
+    }
+
+    // Deterministic, safe fallback (weak ETag).
+    let fallback = fallback();
+    match HeaderValue::from_str(&fallback) {
+        Ok(v) => v,
+        Err(err) => {
+            // This should never happen (we control the fallback format), but keep it panic-free.
+            tracing::warn!(error = %err, "generated fallback ETag was not a valid header value");
+            HeaderValue::from_static("W/\"0-0-0\"")
+        }
+    }
+}
+
+pub fn etag_header_value_for_meta(meta: &ImageMeta) -> HeaderValue {
+    etag_header_value_or_fallback(meta.etag.as_deref(), || {
+        weak_etag_from_size_and_mtime(meta.size, meta.last_modified)
+    })
+}
+
 pub fn etag_or_fallback(meta: &ImageMeta) -> String {
-    meta.etag
-        .clone()
-        .unwrap_or_else(|| weak_etag_from_size_and_mtime(meta.size, meta.last_modified))
+    // Keep this consistent with the value we would send in `ETag` response headers.
+    let value = etag_header_value_for_meta(meta);
+    match value.to_str() {
+        Ok(s) => s.to_string(),
+        Err(_) => weak_etag_from_size_and_mtime(meta.size, meta.last_modified),
+    }
 }
 
 pub fn weak_etag_from_size_and_mtime(size: u64, mtime: Option<SystemTime>) -> String {

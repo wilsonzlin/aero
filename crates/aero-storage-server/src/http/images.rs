@@ -259,15 +259,14 @@ async fn serve_image(
         let cache_control = data_cache_control_value(&state, &req_headers, image_public);
 
         // Conditional requests (`If-None-Match` / `If-Modified-Since`) are evaluated against the
-        // ETag we would send on success. Some store implementations may not provide an ETag; in that
-        // case fall back to our deterministic weak ETag so `If-None-Match: *` and revalidation still
-        // work.
-        let fallback_etag = meta.etag.is_none().then(|| cache::etag_or_fallback(&meta));
-        let current_etag = meta.etag.as_deref().or(fallback_etag.as_deref());
+        // ETag we would send on success. Some store implementations may not provide an ETag (or
+        // may provide an invalid one); in that case fall back to our deterministic weak ETag so
+        // `If-None-Match: *` and revalidation still work.
+        let current_etag = cache::etag_or_fallback(&meta);
 
         // Conditional requests: if the client has a matching validator, we can return `304` and
         // avoid streaming bytes (RFC 9110).
-        if cache::is_not_modified(&req_headers, current_etag, meta.last_modified) {
+        if cache::is_not_modified(&req_headers, Some(&current_etag), meta.last_modified) {
             return not_modified_response(&state, &req_headers, &meta, cache_control);
         }
 
@@ -280,8 +279,7 @@ async fn serve_image(
         }
         if let Some(range_header) = range_header {
             // RFC 9110 If-Range support: if validator doesn't match, ignore Range and return 200.
-            if !cache::if_range_allows_range(&req_headers, meta.etag.as_deref(), meta.last_modified)
-            {
+            if !cache::if_range_allows_range(&req_headers, Some(&current_etag), meta.last_modified) {
                 return full_response(&state, &req_headers, &image_id, meta, want_body, cache_control)
                     .await;
             }
@@ -646,10 +644,7 @@ fn insert_data_cache_headers(
 ) {
     headers.insert(header::ACCEPT_RANGES, HeaderValue::from_static("bytes"));
     headers.insert(header::CACHE_CONTROL, cache_control);
-    headers.insert(
-        header::ETAG,
-        HeaderValue::from_str(&cache::etag_or_fallback(meta)).unwrap(),
-    );
+    headers.insert(header::ETAG, cache::etag_header_value_for_meta(meta));
     if let Some(last_modified) = cache::last_modified_header_value(meta.last_modified) {
         headers.insert(header::LAST_MODIFIED, last_modified);
     }
