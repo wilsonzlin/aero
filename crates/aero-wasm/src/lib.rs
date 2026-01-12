@@ -376,7 +376,11 @@ mod jit_abi_constants_tests {
             tier2_ctx_offset + tier2_ctx_size,
             "commit_flag_offset must follow tier2 ctx"
         );
-        assert_eq!(commit_flag_offset % 4, 0, "commit_flag_offset must be 4-byte aligned");
+        assert_eq!(
+            commit_flag_offset % 4,
+            0,
+            "commit_flag_offset must be 4-byte aligned"
+        );
 
         let gpr =
             Reflect::get(&obj, &JsValue::from_str("cpu_gpr_off")).expect("cpu_gpr_off missing");
@@ -406,9 +410,21 @@ mod jit_abi_constants_tests {
             jit_tlb_entries.is_power_of_two(),
             "jit_tlb_entries must be power-of-two"
         );
-        assert_eq!(jit_tlb_entry_bytes % 8, 0, "jit_tlb_entry_bytes must be 8-byte aligned");
-        assert_eq!(tier2_ctx_offset % 4, 0, "tier2_ctx_offset must be 4-byte aligned");
-        assert_eq!(tier2_ctx_size % 4, 0, "tier2_ctx_size must be 4-byte aligned");
+        assert_eq!(
+            jit_tlb_entry_bytes % 8,
+            0,
+            "jit_tlb_entry_bytes must be 8-byte aligned"
+        );
+        assert_eq!(
+            tier2_ctx_offset % 4,
+            0,
+            "tier2_ctx_offset must be 4-byte aligned"
+        );
+        assert_eq!(
+            tier2_ctx_size % 4,
+            0,
+            "tier2_ctx_size must be 4-byte aligned"
+        );
     }
 
     #[wasm_bindgen_test]
