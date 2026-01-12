@@ -257,6 +257,27 @@ fn detect_qcow2_and_vhd() {
 }
 
 #[test]
+fn raw_disk_create_and_rw_roundtrip() {
+    let storage = MemStorage::default();
+    let mut disk = emulator::io::storage::formats::RawDisk::create(storage, 512, 8).unwrap();
+
+    let data = vec![0xA5u8; SECTOR_SIZE];
+    disk.write_sectors(1, &data).unwrap();
+
+    let mut back = vec![0u8; SECTOR_SIZE];
+    disk.read_sectors(1, &mut back).unwrap();
+    assert_eq!(back, data);
+}
+
+#[test]
+fn raw_disk_create_rejects_size_overflow() {
+    // u64::MAX * 512 would overflow; `RawDisk::create` should reject instead of saturating.
+    let storage = MemStorage::default();
+    let res = emulator::io::storage::formats::RawDisk::create(storage, 512, u64::MAX);
+    assert!(matches!(res, Err(DiskError::Unsupported("disk size overflow"))));
+}
+
+#[test]
 fn qcow2_unallocated_reads_zero() {
     let storage = make_qcow2_empty(1024 * 1024);
     let mut drive = VirtualDrive::open_auto(storage, 512, WriteCachePolicy::WriteThrough).unwrap();

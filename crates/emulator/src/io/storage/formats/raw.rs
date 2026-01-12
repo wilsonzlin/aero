@@ -12,7 +12,10 @@ impl<S: ByteStorage> RawDisk<S> {
         if sector_size == 0 {
             return Err(DiskError::Unsupported("sector size must be non-zero"));
         }
-        storage.set_len(total_sectors.saturating_mul(sector_size as u64))?;
+        let len = total_sectors
+            .checked_mul(sector_size as u64)
+            .ok_or(DiskError::Unsupported("disk size overflow"))?;
+        storage.set_len(len)?;
         Ok(Self {
             storage,
             sector_size,
@@ -41,7 +44,7 @@ impl<S: ByteStorage> RawDisk<S> {
         self.storage
     }
 
-    fn check_range(&self, lba: u64, bytes: usize) -> DiskResult<()> {
+    fn check_range(&self, lba: u64, bytes: usize) -> DiskResult<u64> {
         if !bytes.is_multiple_of(self.sector_size as usize) {
             return Err(DiskError::UnalignedBuffer {
                 len: bytes,
@@ -61,7 +64,7 @@ impl<S: ByteStorage> RawDisk<S> {
                 capacity_sectors: self.total_sectors,
             });
         }
-        Ok(())
+        Ok(sectors)
     }
 }
 
@@ -75,14 +78,22 @@ impl<S: ByteStorage> DiskBackend for RawDisk<S> {
     }
 
     fn read_sectors(&mut self, lba: u64, buf: &mut [u8]) -> DiskResult<()> {
-        self.check_range(lba, buf.len())?;
-        let offset = lba.saturating_mul(self.sector_size as u64);
+        let sectors = self.check_range(lba, buf.len())?;
+        let offset = lba.checked_mul(self.sector_size as u64).ok_or(DiskError::OutOfRange {
+            lba,
+            sectors,
+            capacity_sectors: self.total_sectors,
+        })?;
         self.storage.read_at(offset, buf)
     }
 
     fn write_sectors(&mut self, lba: u64, buf: &[u8]) -> DiskResult<()> {
-        self.check_range(lba, buf.len())?;
-        let offset = lba.saturating_mul(self.sector_size as u64);
+        let sectors = self.check_range(lba, buf.len())?;
+        let offset = lba.checked_mul(self.sector_size as u64).ok_or(DiskError::OutOfRange {
+            lba,
+            sectors,
+            capacity_sectors: self.total_sectors,
+        })?;
         self.storage.write_at(offset, buf)
     }
 
