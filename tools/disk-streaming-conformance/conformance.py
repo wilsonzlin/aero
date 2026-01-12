@@ -29,6 +29,7 @@ class HttpResponse:
     reason: str
     headers: Mapping[str, str]
     body: bytes
+    body_truncated: bool = False
 
 
 def _collapse_headers(message) -> dict[str, str]:
@@ -53,6 +54,9 @@ def _request(
     follow_redirects: bool = True,
     max_body_bytes: int | None = None,
 ) -> HttpResponse:
+    if max_body_bytes is not None:
+        _require(max_body_bytes > 0, f"max_body_bytes must be > 0, got {max_body_bytes}")
+
     req = urllib.request.Request(url=url, method=method, headers=dict(headers))
     opener = urllib.request.build_opener()
     if not follow_redirects:
@@ -64,35 +68,73 @@ def _request(
                 return None
 
         opener = urllib.request.build_opener(_NoRedirect())
+
+    def _expected_body_len_from_headers(headers: Mapping[str, str]) -> int | None:
+        # For Range requests, Content-Range implies the expected body length.
+        content_range = headers.get("content-range")
+        if content_range is not None:
+            # Example: "bytes 0-0/12345"
+            m = re.fullmatch(r"\s*bytes\s+(\d+)-(\d+)/(\d+)\s*", content_range, flags=re.IGNORECASE)
+            if m:
+                start, end = (int(m.group(1)), int(m.group(2)))
+                if end >= start:
+                    return end - start + 1
+
+        # Otherwise, fall back to Content-Length (works for 200/4xx etc).
+        content_length = headers.get("content-length")
+        if content_length is None:
+            return None
+        try:
+            return int(content_length)
+        except ValueError:
+            return None
+
+    def _read_body(resp, *, method: str, headers: Mapping[str, str]) -> tuple[bytes, bool]:
+        if method == "HEAD":
+            return b"", False
+        if max_body_bytes is None:
+            return resp.read(), False
+
+        body = resp.read(max_body_bytes)
+        expected_len = _expected_body_len_from_headers(headers)
+        if expected_len is not None:
+            return body, expected_len > max_body_bytes
+
+        # If we don't know the expected length (no Content-Length/Content-Range),
+        # consider the body truncated if we hit the cap exactly.
+        return body, len(body) >= max_body_bytes
+
     try:
         with opener.open(req, timeout=timeout_s) as resp:
-            if method == "HEAD":
-                body = b""
-            elif max_body_bytes is None:
-                body = resp.read()
-            else:
-                body = resp.read(max_body_bytes)
+            headers_collapsed = _collapse_headers(resp.headers)
+            body, body_truncated = _read_body(resp, method=method, headers=headers_collapsed)
             return HttpResponse(
                 url=resp.geturl(),
                 status=int(resp.status),
                 reason=getattr(resp, "reason", ""),
-                headers=_collapse_headers(resp.headers),
+                headers=headers_collapsed,
                 body=body,
+                body_truncated=body_truncated,
             )
     except urllib.error.HTTPError as e:
-        if method == "HEAD":
-            body = b""
-        elif max_body_bytes is None:
-            body = e.read()
-        else:
-            body = e.read(max_body_bytes)
-        return HttpResponse(
-            url=e.geturl(),
-            status=int(e.code),
-            reason=str(e.reason),
-            headers=_collapse_headers(e.headers),
-            body=body,
-        )
+        try:
+            headers_collapsed = _collapse_headers(e.headers)
+            body, body_truncated = _read_body(e, method=method, headers=headers_collapsed)
+            return HttpResponse(
+                url=e.geturl(),
+                status=int(e.code),
+                reason=str(e.reason),
+                headers=headers_collapsed,
+                body=body,
+                body_truncated=body_truncated,
+            )
+        finally:
+            # Ensure we promptly close the underlying connection even when we
+            # intentionally read only a prefix of the body.
+            try:
+                e.close()
+            except Exception:
+                pass
     except urllib.error.URLError as e:
         raise TestFailure(f"{method} {url}: {e}") from None
 
@@ -190,6 +232,7 @@ def _test_private_requires_auth(
     base_url: str,
     origin: str | None,
     timeout_s: float,
+    max_body_bytes: int,
 ) -> TestResult:
     name = "private: unauthenticated request is denied (401/403)"
     try:
@@ -204,7 +247,7 @@ def _test_private_requires_auth(
             method="GET",
             headers=headers,
             timeout_s=timeout_s,
-            max_body_bytes=1024,
+            max_body_bytes=max_body_bytes,
         )
         _require_cors(resp, origin)
         _require(resp.status in (401, 403), f"expected 401/403, got {resp.status}")
@@ -289,6 +332,7 @@ def _test_get_valid_range(
     origin: str | None,
     authorization: str | None,
     timeout_s: float,
+    max_body_bytes: int,
     size: int | None,
     strict: bool,
 ) -> TestResult:
@@ -305,6 +349,7 @@ def _test_get_valid_range(
             origin=origin,
             authorization=authorization,
             timeout_s=timeout_s,
+            max_body_bytes=max_body_bytes,
             size=size,
             req_start=req_start,
             req_end=req_end,
@@ -320,6 +365,7 @@ def _test_get_mid_range(
     origin: str | None,
     authorization: str | None,
     timeout_s: float,
+    max_body_bytes: int,
     size: int | None,
     strict: bool,
 ) -> TestResult:
@@ -340,6 +386,7 @@ def _test_get_mid_range(
             origin=origin,
             authorization=authorization,
             timeout_s=timeout_s,
+            max_body_bytes=max_body_bytes,
             size=size,
             req_start=req_start,
             req_end=req_end,
@@ -356,6 +403,7 @@ def _test_get_range(
     origin: str | None,
     authorization: str | None,
     timeout_s: float,
+    max_body_bytes: int,
     size: int,
     req_start: int,
     req_end: int,
@@ -375,17 +423,25 @@ def _test_get_range(
         for k, v in extra_headers.items():
             headers[str(k)] = str(v)
 
-    # Safety: if the server ignores Range and returns a full 200 response, don't download the whole
-    # disk image. We only need `expected_len` bytes to validate conformance.
     expected_len = req_end - req_start + 1
     resp = _request(
         url=base_url,
         method="GET",
         headers=headers,
         timeout_s=timeout_s,
-        max_body_bytes=expected_len + 1,
+        max_body_bytes=max_body_bytes,
     )
-    _require(resp.status == 206, f"expected 206, got {resp.status}")
+    if resp.status != 206:
+        if resp.status == 200:
+            truncated = " (body truncated by safety cap)" if resp.body_truncated else ""
+            content_length = _header(resp, "Content-Length")
+            content_length_msg = f"; Content-Length={content_length}" if content_length is not None else ""
+            raise TestFailure(
+                "expected 206 Partial Content, got 200 OK (server may be ignoring Range); "
+                f"refused to download full response body: read {len(resp.body)} bytes{truncated} "
+                f"(cap {_fmt_bytes(max_body_bytes)}){content_length_msg}"
+            )
+        raise TestFailure(f"expected 206, got {resp.status}")
 
     accept_ranges = _header(resp, "Accept-Ranges")
     _require(accept_ranges is not None, "missing Accept-Ranges header")
@@ -420,6 +476,13 @@ def _test_get_range(
     _require(start == req_start and end == req_end, f"expected bytes {req_start}-{req_end}, got {start}-{end}")
     _require(total == size, f"expected total size {size}, got {total}")
 
+    if resp.body_truncated:
+        raise TestFailure(
+            "response body was truncated by safety cap; "
+            f"expected {expected_len} bytes but only read {len(resp.body)} bytes "
+            f"(cap {_fmt_bytes(max_body_bytes)}). "
+            "Increase --max-body-bytes to debug, or fix server to respect Range."
+        )
     _require(len(resp.body) == expected_len, f"expected body length {expected_len}, got {len(resp.body)}")
 
     content_length = _header(resp, "Content-Length")
@@ -453,6 +516,7 @@ def _test_get_unsatisfiable_range(
     origin: str | None,
     authorization: str | None,
     timeout_s: float,
+    max_body_bytes: int,
     size: int | None,
 ) -> TestResult:
     name = "GET: unsatisfiable Range returns 416 and Content-Range bytes */<size>"
@@ -472,15 +536,24 @@ def _test_get_unsatisfiable_range(
         if authorization is not None:
             headers["Authorization"] = authorization
 
-        # Safety: if Range is ignored and a full 200 is returned, don't download the whole image.
         resp = _request(
             url=base_url,
             method="GET",
             headers=headers,
             timeout_s=timeout_s,
-            max_body_bytes=1024,
+            max_body_bytes=max_body_bytes,
         )
-        _require(resp.status == 416, f"expected 416, got {resp.status}")
+        if resp.status != 416:
+            if resp.status == 200:
+                truncated = " (body truncated by safety cap)" if resp.body_truncated else ""
+                content_length = _header(resp, "Content-Length")
+                content_length_msg = f"; Content-Length={content_length}" if content_length is not None else ""
+                raise TestFailure(
+                    "expected 416 Range Not Satisfiable, got 200 OK (server may be ignoring Range); "
+                    f"refused to download full response body: read {len(resp.body)} bytes{truncated} "
+                    f"(cap {_fmt_bytes(max_body_bytes)}){content_length_msg}"
+                )
+            raise TestFailure(f"expected 416, got {resp.status}")
 
         accept_ranges = _header(resp, "Accept-Ranges")
         _require(accept_ranges is not None, "missing Accept-Ranges header")
@@ -515,6 +588,7 @@ def _test_options_preflight(
     authorization: str | None,
     timeout_s: float,
     etag: str | None,
+    max_body_bytes: int,
 ) -> TestResult:
     required_headers = {"range", "if-range"}
     req_headers: list[str] = ["range", "if-range"]
@@ -545,7 +619,7 @@ def _test_options_preflight(
             },
             timeout_s=timeout_s,
             follow_redirects=False,
-            max_body_bytes=1024,
+            max_body_bytes=max_body_bytes,
         )
         _require(200 <= resp.status < 300, f"expected 2xx, got {resp.status}")
 
@@ -589,6 +663,7 @@ def _test_options_preflight_if_modified_since(
     authorization: str | None,
     timeout_s: float,
     last_modified: str | None,
+    max_body_bytes: int,
 ) -> TestResult:
     name = "OPTIONS: CORS preflight allows If-Modified-Since header"
     if origin is None:
@@ -614,7 +689,7 @@ def _test_options_preflight_if_modified_since(
             },
             timeout_s=timeout_s,
             follow_redirects=False,
-            max_body_bytes=1024,
+            max_body_bytes=max_body_bytes,
         )
         if not (200 <= resp.status < 300):
             return TestResult(name=name, status="WARN", details=f"expected 2xx, got {resp.status}")
@@ -663,6 +738,7 @@ def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
     env_base_url = os.environ.get("BASE_URL")
     env_token = os.environ.get("TOKEN")
     env_origin = os.environ.get("ORIGIN")
+    env_max_body_bytes = os.environ.get("MAX_BODY_BYTES")
 
     parser = argparse.ArgumentParser(
         prog="disk-streaming-conformance",
@@ -684,6 +760,22 @@ def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
         help="Origin to simulate for CORS (env: ORIGIN; default: https://example.com)",
     )
     parser.add_argument("--timeout", type=float, default=30.0, help="Request timeout in seconds (default: 30)")
+    default_max_body_bytes = 1024 * 1024
+    if env_max_body_bytes is not None and env_max_body_bytes.strip() != "":
+        try:
+            default_max_body_bytes = int(env_max_body_bytes)
+        except ValueError:
+            parser.error(f"Invalid MAX_BODY_BYTES {env_max_body_bytes!r} (expected integer)")
+    parser.add_argument(
+        "--max-body-bytes",
+        type=int,
+        default=default_max_body_bytes,
+        help=(
+            "Maximum response body bytes to read per request "
+            f"(env: MAX_BODY_BYTES; default: {default_max_body_bytes}). "
+            "The tool caps reads to avoid accidentally downloading full disk images."
+        ),
+    )
     parser.add_argument(
         "--strict",
         action="store_true",
@@ -717,6 +809,8 @@ def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
         args.expect_corp = args.expect_corp.strip()
         if args.expect_corp == "":
             args.expect_corp = None
+    if args.max_body_bytes <= 0:
+        parser.error("--max-body-bytes must be > 0")
     return args
 
 
@@ -736,6 +830,7 @@ def _test_if_range_matches_etag(
     origin: str | None,
     authorization: str | None,
     timeout_s: float,
+    max_body_bytes: int,
     size: int | None,
     etag: str | None,
     strict: bool,
@@ -761,6 +856,7 @@ def _test_if_range_matches_etag(
             origin=origin,
             authorization=authorization,
             timeout_s=timeout_s,
+            max_body_bytes=max_body_bytes,
             size=size,
             req_start=0,
             req_end=0,
@@ -792,6 +888,7 @@ def _test_if_range_mismatch(
     origin: str | None,
     authorization: str | None,
     timeout_s: float,
+    max_body_bytes: int,
     size: int | None,
     strict: bool,
 ) -> TestResult:
@@ -817,7 +914,7 @@ def _test_if_range_mismatch(
             method="GET",
             headers=headers,
             timeout_s=timeout_s,
-            max_body_bytes=1024,
+            max_body_bytes=max_body_bytes,
         )
         _require_cors(resp, origin)
 
@@ -854,6 +951,7 @@ def _test_conditional_if_none_match(
     authorization: str | None,
     timeout_s: float,
     etag: str | None,
+    max_body_bytes: int,
 ) -> TestResult:
     name = "GET: If-None-Match returns 304 Not Modified"
     if etag is None:
@@ -875,7 +973,7 @@ def _test_conditional_if_none_match(
             headers=headers,
             timeout_s=timeout_s,
             # Safety: a broken server might ignore If-None-Match and return a giant 200.
-            max_body_bytes=1024,
+            max_body_bytes=max_body_bytes,
         )
         _require_cors(resp, origin)
         _require(resp.status == 304, f"expected 304, got {resp.status}")
@@ -928,6 +1026,7 @@ def _test_conditional_if_modified_since(
     authorization: str | None,
     timeout_s: float,
     last_modified: str | None,
+    max_body_bytes: int,
     strict: bool,
 ) -> TestResult:
     name = "GET: If-Modified-Since returns 304 Not Modified"
@@ -949,7 +1048,7 @@ def _test_conditional_if_modified_since(
             method="GET",
             headers=headers,
             timeout_s=timeout_s,
-            max_body_bytes=1024,
+            max_body_bytes=max_body_bytes,
         )
         _require_cors(resp, origin)
 
@@ -1193,6 +1292,7 @@ def _test_corp_on_get(
     authorization: str | None,
     timeout_s: float,
     expect_corp: str | None,
+    max_body_bytes: int,
 ) -> TestResult:
     name = "GET: Cross-Origin-Resource-Policy is set"
     try:
@@ -1209,7 +1309,7 @@ def _test_corp_on_get(
             method="GET",
             headers=headers,
             timeout_s=timeout_s,
-            max_body_bytes=2,
+            max_body_bytes=max_body_bytes,
         )
         # If Range is supported this should be 206, but CORP is meaningful on any successful GET.
         _require(200 <= resp.status < 400, f"expected <400, got {resp.status}")
@@ -1224,6 +1324,7 @@ def _test_private_cache_control(
     origin: str | None,
     authorization: str | None,
     timeout_s: float,
+    max_body_bytes: int,
     strict: bool,
 ) -> TestResult:
     name = "private: 206 responses are not publicly cacheable (Cache-Control)"
@@ -1244,7 +1345,7 @@ def _test_private_cache_control(
             method="GET",
             headers=headers,
             timeout_s=timeout_s,
-            max_body_bytes=2,
+            max_body_bytes=max_body_bytes,
         )
         _require_cors(resp, origin)
         _require(resp.status == 206, f"expected 206, got {resp.status}")
@@ -1276,6 +1377,7 @@ def main(argv: Sequence[str]) -> int:
     timeout_s: float = args.timeout
     strict: bool = bool(args.strict)
     expect_corp: str | None = args.expect_corp
+    max_body_bytes: int = int(args.max_body_bytes)
 
     token: str | None = args.token
     authorization: str | None = _authorization_value(token) if token else None
@@ -1285,6 +1387,7 @@ def main(argv: Sequence[str]) -> int:
     print(f"  ORIGIN:   {origin or '(none)'}")
     print(f"  STRICT:   {strict}")
     print(f"  CORP:     {expect_corp or '(not required)'}")
+    print(f"  MAX_BODY_BYTES: {max_body_bytes} ({_fmt_bytes(max_body_bytes)})")
     if authorization is None:
         print("  AUTH:     (none)")
     else:
@@ -1295,7 +1398,14 @@ def main(argv: Sequence[str]) -> int:
     results: list[TestResult] = []
 
     if authorization is not None:
-        results.append(_test_private_requires_auth(base_url=base_url, origin=origin, timeout_s=timeout_s))
+        results.append(
+            _test_private_requires_auth(
+                base_url=base_url,
+                origin=origin,
+                timeout_s=timeout_s,
+                max_body_bytes=max_body_bytes,
+            )
+        )
 
     head_result, head_info = _test_head(
         base_url=base_url,
@@ -1362,6 +1472,7 @@ def main(argv: Sequence[str]) -> int:
             authorization=authorization,
             timeout_s=timeout_s,
             expect_corp=expect_corp,
+            max_body_bytes=max_body_bytes,
         )
     )
     results.append(
@@ -1379,6 +1490,7 @@ def main(argv: Sequence[str]) -> int:
             origin=origin,
             authorization=authorization,
             timeout_s=timeout_s,
+            max_body_bytes=max_body_bytes,
             size=size,
             strict=strict,
         )
@@ -1389,6 +1501,7 @@ def main(argv: Sequence[str]) -> int:
             origin=origin,
             authorization=authorization,
             timeout_s=timeout_s,
+            max_body_bytes=max_body_bytes,
             strict=strict,
         )
     )
@@ -1398,6 +1511,7 @@ def main(argv: Sequence[str]) -> int:
             origin=origin,
             authorization=authorization,
             timeout_s=timeout_s,
+            max_body_bytes=max_body_bytes,
             size=size,
             strict=strict,
         )
@@ -1408,6 +1522,7 @@ def main(argv: Sequence[str]) -> int:
             origin=origin,
             authorization=authorization,
             timeout_s=timeout_s,
+            max_body_bytes=max_body_bytes,
             size=size,
         )
     )
@@ -1417,6 +1532,7 @@ def main(argv: Sequence[str]) -> int:
             origin=origin,
             authorization=authorization,
             timeout_s=timeout_s,
+            max_body_bytes=max_body_bytes,
             size=size,
             etag=etag,
             strict=strict,
@@ -1428,6 +1544,7 @@ def main(argv: Sequence[str]) -> int:
             origin=origin,
             authorization=authorization,
             timeout_s=timeout_s,
+            max_body_bytes=max_body_bytes,
             size=size,
             strict=strict,
         )
@@ -1439,6 +1556,7 @@ def main(argv: Sequence[str]) -> int:
             authorization=authorization,
             timeout_s=timeout_s,
             etag=etag,
+            max_body_bytes=max_body_bytes,
         )
     )
     results.append(
@@ -1448,6 +1566,7 @@ def main(argv: Sequence[str]) -> int:
             authorization=authorization,
             timeout_s=timeout_s,
             last_modified=last_modified,
+            max_body_bytes=max_body_bytes,
             strict=strict,
         )
     )
@@ -1458,6 +1577,7 @@ def main(argv: Sequence[str]) -> int:
             authorization=authorization,
             timeout_s=timeout_s,
             etag=etag,
+            max_body_bytes=max_body_bytes,
         )
     )
     results.append(
@@ -1467,6 +1587,7 @@ def main(argv: Sequence[str]) -> int:
             authorization=authorization,
             timeout_s=timeout_s,
             last_modified=last_modified,
+            max_body_bytes=max_body_bytes,
         )
     )
 

@@ -36,6 +36,19 @@ Validates that a disk image streaming endpoint is compatible with Aero’s brows
 
 The script is dependency-free (Python stdlib only) and exits non-zero on failures (CI-friendly).
 
+## Safety: response body read cap
+
+This tool is intended to be run against real **20–40GB** disk image URLs.
+
+To avoid accidental full-disk downloads (for example when a server/CDN ignores `Range` and returns `200 OK`), the conformance script enforces a **response body read cap** for non-`HEAD` requests and will close the connection after reading at most the configured number of bytes.
+
+You can override the cap with:
+
+- `--max-body-bytes`
+- `MAX_BODY_BYTES`
+
+The default is **1 MiB**.
+
 ## Usage
 
 ### Public image
@@ -83,6 +96,7 @@ Disk streaming conformance
   ORIGIN:   https://app.example.com
   STRICT:   False
   CORP:     (not required)
+  MAX_BODY_BYTES: 1048576 (1.00 MiB)
   AUTH:     (none)
 
 PASS HEAD: Accept-Ranges=bytes and Content-Length is present - size=2147483648 (2.00 GiB)
