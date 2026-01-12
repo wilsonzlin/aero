@@ -18,6 +18,15 @@ fn get_gpu_stats_returns_object_with_expected_counters() {
         "recoveries_attempted",
         "recoveries_succeeded",
         "surface_reconfigures",
+        // D3D9 shader cache counters (WG-010).
+        "translate_calls",
+        "persistent_hits",
+        "persistent_misses",
+        "d3d9_shader_translate_calls",
+        "d3d9_shader_cache_persistent_hits",
+        "d3d9_shader_cache_persistent_misses",
+        "d3d9TranslatorCacheVersion",
+        "d3d9_translator_cache_version",
     ] {
         let value = Reflect::get(&stats, &JsValue::from_str(key)).expect("Reflect::get");
         assert!(
@@ -37,4 +46,3 @@ fn drain_gpu_events_returns_array_and_is_non_panicking() {
     let second = drain_gpu_events();
     assert!(Array::is_array(&second));
 }
-
