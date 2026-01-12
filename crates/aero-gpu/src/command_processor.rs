@@ -177,6 +177,17 @@ impl ResourceDesc {
                     return Err(CommandProcessorError::InvalidCreateTexture2d);
                 }
 
+                // Prevent pathological `mip_levels` values from causing extremely large loops in
+                // guest-controlled resource size calculations.
+                //
+                // D3D-style mip chains are limited by the maximum dimension: a 1x1 texture has a
+                // single mip, 2x2 has 2, 4x4 has 3, ... up to 32 for u32 dimensions.
+                let max_dim = width.max(height);
+                let max_mip_levels = 32u32.saturating_sub(max_dim.leading_zeros());
+                if mip_levels > max_mip_levels {
+                    return Err(CommandProcessorError::InvalidCreateTexture2d);
+                }
+
                 let layout = texture_format_layout(format)?;
 
                 // Validate that a non-zero mip0 pitch is large enough to represent a row of mip0.
@@ -1083,6 +1094,31 @@ mod tests {
             /*row_pitch_bytes=*/ 0,
             TEST_ALLOC_ID,
             0,
+        );
+        let bytes = w.finish();
+
+        let mut proc = AeroGpuCommandProcessor::new();
+        let err = proc
+            .process_submission_with_allocations(&bytes, None, /*signal_fence=*/ 1)
+            .unwrap_err();
+        assert_eq!(err, CommandProcessorError::InvalidCreateTexture2d);
+    }
+
+    #[test]
+    fn create_texture2d_rejects_excessive_mip_levels() {
+        // A 1x1 texture can only have a single mip level.
+        let mut w = AerogpuCmdWriter::new();
+        w.create_texture2d(
+            TEST_TEX_HANDLE,
+            /*usage_flags=*/ 0,
+            /*format=*/ AerogpuFormat::R8G8B8A8Unorm as u32,
+            /*width=*/ 1,
+            /*height=*/ 1,
+            /*mip_levels=*/ 2,
+            /*array_layers=*/ 1,
+            /*row_pitch_bytes=*/ 0,
+            /*backing_alloc_id=*/ 0,
+            /*backing_offset_bytes=*/ 0,
         );
         let bytes = w.finish();
 
