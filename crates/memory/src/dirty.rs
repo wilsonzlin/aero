@@ -1,6 +1,5 @@
 use crate::phys::GuestMemory;
-use std::cell::RefCell;
-use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 #[derive(Debug)]
 struct DirtyBitmap {
@@ -76,14 +75,14 @@ impl DirtyBitmap {
 /// wrappers and snapshot adapters.
 #[derive(Debug, Clone)]
 pub struct DirtyTracker {
-    inner: Rc<RefCell<DirtyBitmap>>,
+    inner: Arc<Mutex<DirtyBitmap>>,
 }
 
 impl DirtyTracker {
     /// Create a new dirty tracker for `mem_len` bytes of RAM.
     pub fn new(mem_len: u64, page_size: u32) -> Self {
         Self {
-            inner: Rc::new(RefCell::new(DirtyBitmap::new(mem_len, page_size))),
+            inner: Arc::new(Mutex::new(DirtyBitmap::new(mem_len, page_size))),
         }
     }
 
@@ -91,17 +90,26 @@ impl DirtyTracker {
     ///
     /// Page indices are measured in units of the page size passed to [`DirtyTracker::new`].
     pub fn take_dirty_pages(&self) -> Vec<u64> {
-        self.inner.borrow_mut().take()
+        let Ok(mut bitmap) = self.inner.lock() else {
+            return Vec::new();
+        };
+        bitmap.take()
     }
 
     /// Clear all dirty bits.
     pub fn clear_dirty(&self) {
-        self.inner.borrow_mut().clear();
+        let Ok(mut bitmap) = self.inner.lock() else {
+            return;
+        };
+        bitmap.clear();
     }
 
     /// Mark a guest-physical byte range as dirty.
     pub fn mark_range(&self, start: u64, len: usize) {
-        self.inner.borrow_mut().mark_range(start, len);
+        let Ok(mut bitmap) = self.inner.lock() else {
+            return;
+        };
+        bitmap.mark_range(start, len);
     }
 }
 
