@@ -2019,6 +2019,49 @@ fn vhd_dynamic_rejects_bad_dynamic_header_checksum() {
 }
 
 #[test]
+fn vhd_dynamic_rejects_misaligned_bat_offset() {
+    let virtual_size = 64 * 1024u64;
+    let block_size = 16 * 1024u32;
+    let mut backend = make_vhd_dynamic_empty(virtual_size, block_size);
+
+    // BAT offset is at 16..24 in the dynamic header. Make it intentionally misaligned.
+    let dyn_header_offset = SECTOR_SIZE as u64;
+    let mut table_offset = [0u8; 8];
+    backend
+        .read_at(dyn_header_offset + 16, &mut table_offset)
+        .unwrap();
+    let table_offset = u64::from_be_bytes(table_offset);
+    backend
+        .write_at(dyn_header_offset + 16, &(table_offset + 1).to_be_bytes())
+        .unwrap();
+
+    let err = VhdDisk::open(backend).err().expect("expected error");
+    assert!(matches!(
+        err,
+        DiskError::CorruptImage("vhd bat offset misaligned")
+    ));
+}
+
+#[test]
+fn vhd_dynamic_rejects_zero_max_table_entries() {
+    let virtual_size = 64 * 1024u64;
+    let block_size = 16 * 1024u32;
+    let mut backend = make_vhd_dynamic_empty(virtual_size, block_size);
+
+    // max_table_entries is at 28..32 in the dynamic header.
+    let dyn_header_offset = SECTOR_SIZE as u64;
+    backend
+        .write_at(dyn_header_offset + 28, &0u32.to_be_bytes())
+        .unwrap();
+
+    let err = VhdDisk::open(backend).err().expect("expected error");
+    assert!(matches!(
+        err,
+        DiskError::CorruptImage("vhd max_table_entries is zero")
+    ));
+}
+
+#[test]
 fn vhd_dynamic_rejects_invalid_block_size() {
     let virtual_size = 64 * 1024u64;
     let block_size = 16 * 1024u32;
