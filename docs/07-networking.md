@@ -1240,9 +1240,12 @@ disable tracing — if tracing is still enabled, new frames will continue to be 
 buffer.
 
 If the tracing backend is not installed in the current build/runtime (e.g. `window.aero.netTrace`
-is missing), the UI will surface an error when you try to enable/export. If the net worker isn't
-running yet, captures may not record anything until it starts, and operations like download/stats
-may fail (some hosts explicitly require the net worker to be running before enabling).
+is missing), the UI will surface an error when you try to enable/export.
+
+If the net worker isn't running yet, captures may not record anything until it starts. Some hosts
+explicitly require the net worker to be running before enabling/exporting. Others (notably the
+default `window.aero.netTrace` backend installed by `web/src/net/trace_backend.ts`) treat export/stats
+as best-effort and return an **empty-but-valid** PCAPNG (and stub stats) until the worker is ready.
 
 Most web hosts install the `window.aero.netTrace` backend by calling
 `installNetTraceBackendOnAeroGlobal(...)` (see `web/src/net/trace_backend.ts`).
