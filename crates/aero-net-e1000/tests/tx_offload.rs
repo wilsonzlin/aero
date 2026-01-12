@@ -186,6 +186,7 @@ fn write_tx_data_desc(dma: &mut TestDma, addr: u64, buf_addr: u64, len: u16, cmd
 #[test]
 fn tso_context_descriptor_segments_and_inserts_checksums() {
     let mut dev = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
+    dev.pci_config_write(0x04, 2, 0x4);
     let mut dma = TestDma::new(0x80_000);
 
     dev.mmio_write_u32(REG_IMS, ICR_TXDW);
@@ -270,6 +271,7 @@ fn tso_context_descriptor_segments_and_inserts_checksums() {
 #[test]
 fn checksum_offload_udp_inserts_checksums() {
     let mut dev = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
+    dev.pci_config_write(0x04, 2, 0x4);
     let mut dma = TestDma::new(0x40_000);
 
     dev.mmio_write_u32(REG_IMS, ICR_TXDW);

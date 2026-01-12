@@ -1013,7 +1013,17 @@ impl E1000Device {
         }
     }
 
+    fn bus_master_enabled(&self) -> bool {
+        // PCI command register bit 2 (Bus Master Enable) gates all DMA on real hardware.
+        // The device model must not touch guest memory (descriptor reads/writes) until the guest
+        // explicitly enables bus mastering during enumeration.
+        (self.pci.read(0x04, 2) & (1 << 2)) != 0
+    }
+
     fn flush_rx_pending(&mut self, mem: &mut dyn MemoryBus) {
+        if !self.bus_master_enabled() {
+            return;
+        }
         if (self.rctl & RCTL_EN) == 0 {
             return;
         }
@@ -1117,6 +1127,9 @@ impl E1000Device {
     }
 
     fn process_tx(&mut self, mem: &mut dyn MemoryBus) {
+        if !self.bus_master_enabled() {
+            return;
+        }
         if (self.tctl & TCTL_EN) == 0 {
             return;
         }
@@ -1950,6 +1963,7 @@ mod tests {
     fn tx_processing_emits_frame_and_sets_dd() {
         let mut mem = TestMem::new(0x10_000);
         let mut dev = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
+        dev.pci_config_write(0x04, 2, 0x4); // Bus Master Enable
 
         // Set up TX ring at 0x1000 with 4 descriptors.
         dev.tdbal = 0x1000;
@@ -2188,6 +2202,7 @@ mod tests {
     fn rx_processing_writes_frame_and_sets_dd() {
         let mut mem = TestMem::new(0x20_000);
         let mut dev = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
+        dev.pci_config_write(0x04, 2, 0x4); // Bus Master Enable
 
         // RX ring at 0x3000 with 2 descriptors.
         dev.rdbal = 0x3000;
@@ -2384,6 +2399,7 @@ mod tests {
     fn tx_oversized_descriptor_drops_packet_without_large_dma_reads() {
         let mut mem = LimitedReadMem::new(0x20_000, 2048);
         let mut dev = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
+        dev.pci_config_write(0x04, 2, 0x4); // Bus Master Enable
 
         // TX ring at 0x1000 with 4 descriptors.
         dev.tdbal = 0x1000;
@@ -2436,6 +2452,7 @@ mod tests {
     fn rx_drops_oversized_frame_without_touching_guest_memory() {
         let mut mem = TestMem::new(0x20_000);
         let mut dev = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
+        dev.pci_config_write(0x04, 2, 0x4); // Bus Master Enable
 
         // RX ring at 0x3000 with 2 descriptors.
         dev.rdbal = 0x3000;
@@ -2472,5 +2489,49 @@ mod tests {
         assert_eq!(dev.mmio_read_u32(REG_RDH), 0);
         assert!(!dev.irq_level());
         assert_eq!(dev.mmio_read_u32(REG_ICR), 0);
+    }
+
+    #[test]
+    fn tx_dma_is_gated_on_pci_bus_master_enable() {
+        let mut mem = TestMem::new(0x10_000);
+        let mut dev = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
+
+        // Set up TX ring at 0x1000 with 4 descriptors.
+        dev.mmio_write_u32(&mut mem, REG_TDBAL, 0x1000);
+        dev.mmio_write_u32(&mut mem, REG_TDLEN, (TxDesc::LEN as u32) * 4);
+        dev.mmio_write_u32(&mut mem, REG_TDH, 0);
+        dev.mmio_write_u32(&mut mem, REG_TDT, 0);
+        dev.mmio_write_u32(&mut mem, REG_TCTL, TCTL_EN);
+
+        // Packet buffer at 0x2000.
+        let pkt = [0x11u8; MIN_L2_FRAME_LEN];
+        mem.write_bytes(0x2000, &pkt);
+
+        let desc0 = TxDesc {
+            buffer_addr: 0x2000,
+            length: pkt.len() as u16,
+            cso: 0,
+            cmd: TXD_CMD_EOP | TXD_CMD_RS,
+            status: 0,
+            css: 0,
+            special: 0,
+        };
+        mem.write_bytes(0x1000, &desc0.to_bytes());
+
+        // With bus mastering disabled, advancing the tail must not trigger any DMA.
+        dev.mmio_write_u32(&mut mem, REG_TDT, 1);
+        dev.poll(&mut mem);
+
+        assert!(dev.pop_tx_frame().is_none());
+        let updated = TxDesc::from_bytes(read_desc::<{ TxDesc::LEN }>(&mut mem, 0x1000));
+        assert_eq!(updated.status & TXD_STAT_DD, 0);
+
+        // Enable Bus Mastering and poll again: now TX should complete.
+        dev.pci_config_write(0x04, 2, 0x4);
+        dev.poll(&mut mem);
+
+        assert_eq!(dev.pop_tx_frame().as_deref(), Some(pkt.as_slice()));
+        let updated = TxDesc::from_bytes(read_desc::<{ TxDesc::LEN }>(&mut mem, 0x1000));
+        assert_ne!(updated.status & TXD_STAT_DD, 0);
     }
 }

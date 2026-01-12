@@ -128,6 +128,9 @@ mod tests {
         let mut mem = VecMemory::new(0x20_000);
         let mut dev = E1000PciDevice::new(E1000Device::new([0x52, 0x54, 0, 0x12, 0x34, 0x56]));
 
+        // PCI Bus Master Enable gates DMA on real hardware.
+        dev.config_write(0x04, 2, 0x4);
+
         // Set up a tiny RX ring (2 descriptors => 1 usable due to head/tail semantics).
         let ring_base = 0x1000u64;
         let buf_addr = 0x2000u64;
