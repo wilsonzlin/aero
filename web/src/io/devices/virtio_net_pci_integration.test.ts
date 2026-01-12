@@ -289,7 +289,11 @@ describe("io/devices/virtio-net (pci bridge integration)", () => {
       cfgWriteU32(pciAddr, 0x10, bar0LowInitial);
       cfgWriteU32(pciAddr, 0x14, bar0HighInitial);
 
-      // Enable PCI memory decoding (Command register bit 1) + Bus Master Enable (bit 2).
+      // Enable PCI memory decoding (Command register bit 1).
+      //
+      // Keep Bus Master disabled initially so we can validate that the virtio-net
+      // wrapper respects Bus Master Enable when deciding whether to DMA/process
+      // virtqueues (mirrors the canonical PC platform behavior).
       // Many guests write the full 32-bit dword at 0x04 with the upper (Status)
       // bits as zero; the TS PCI bus must preserve status bits such as
       // CAP_LIST used by virtio-pci.
@@ -297,13 +301,13 @@ describe("io/devices/virtio-net (pci bridge integration)", () => {
       expect((statusBefore & 0x0010) !== 0).toBe(true);
 
       const cmd = cfgReadU16(pciAddr, 0x04);
-      cfgWriteU32(pciAddr, 0x04, (cmd | 0x6) >>> 0);
+      cfgWriteU32(pciAddr, 0x04, (cmd | 0x2) >>> 0);
 
       const statusAfter = cfgReadU16(pciAddr, 0x06);
       expect((statusAfter & 0x0010) !== 0).toBe(true);
       const cmdAfter = cfgReadU16(pciAddr, 0x04);
       expect((cmdAfter & 0x0002) !== 0).toBe(true);
-      expect((cmdAfter & 0x0004) !== 0).toBe(true);
+      expect((cmdAfter & 0x0004) !== 0).toBe(false);
 
       // Compute mapped MMIO base.
       const bar0LowBeforeRemap = cfgReadU32(pciAddr, 0x10);
@@ -522,7 +526,15 @@ describe("io/devices/virtio-net (pci bridge integration)", () => {
       // Notify queue 1.
       const txNotifyAddr = notifyBase + BigInt(txNotifyOff) * BigInt(caps.notifyMult!);
       mmioWriteU16(txNotifyAddr, 1);
+
+      // With Bus Master disabled, ticking must not service virtqueues / DMA.
       dev.tick(0);
+      expect(netTxRing.tryPop()).toBeNull();
+      expect(guestReadU16(txUsed + 2)).toBe(0);
+
+      // Enable Bus Master (command bit 2) so the device can DMA and process notified queues.
+      cfgWriteU32(pciAddr, 0x04, (cmdAfter | 0x0004) >>> 0);
+      expect((cfgReadU16(pciAddr, 0x04) & 0x0004) !== 0).toBe(true);
 
       let popped: Uint8Array | null = null;
       for (let i = 0; i < 16 && !popped; i++) {
