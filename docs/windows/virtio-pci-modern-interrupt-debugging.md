@@ -204,7 +204,7 @@ Expected:
 
 - Read-back equals what you wrote.
 
-If it reads back as `0xFFFF`, see section 3.3.
+If it reads back as `VIRTIO_PCI_MSI_NO_VECTOR` (`0xFFFF`), see section 3.3.
 
 ### 3.2 Read back each queue’s `queue_msix_vector`
 
@@ -218,7 +218,7 @@ Expected:
 
 - Read-back equals what you wrote (or equals the shared vector if you intentionally share).
 
-### 3.3 What `0xFFFF` means (and when it’s expected)
+### 3.3 What `VIRTIO_PCI_MSI_NO_VECTOR` (`0xFFFF`) means (and when it’s expected)
 
 `0xFFFF` is `VIRTIO_PCI_MSI_NO_VECTOR` (“no vector assigned”).
 
@@ -231,7 +231,7 @@ You should treat it as:
   - MSI-X isn’t enabled at the PCI layer.
   - The device has fewer MSI-X table entries than you assumed.
 
-For queue interrupts specifically: leaving `queue_msix_vector = 0xFFFF` means *that queue will not interrupt* (you’ll either poll or never see completions depending on your design).
+For queue interrupts specifically: leaving `queue_msix_vector = VIRTIO_PCI_MSI_NO_VECTOR` (`0xFFFF`) means *that queue will not interrupt* (you’ll either poll or never see completions depending on your design).
 
 ### 3.4 Reset sequencing: MSI-X vectors must be re-programmed after *every* reset
 
@@ -239,7 +239,7 @@ Virtio feature negotiation typically involves a reset (`device_status = 0`) at l
 
 Common pitfall:
 
-- Vectors are programmed once early, then a reset happens, vectors revert to `0xFFFF`, and from that point onward **no interrupts ever fire**.
+- Vectors are programmed once early, then a reset happens, vectors revert to `VIRTIO_PCI_MSI_NO_VECTOR` (`0xFFFF`), and from that point onward **no interrupts ever fire**.
 
 Rule of thumb:
 
@@ -281,27 +281,27 @@ Rule of thumb:
 
 **How to prove**
 
-- Read back `common_cfg.msix_config` and/or `queue_msix_vector` and they are still `0xFFFF` after the device is “running”.
+- Read back `common_cfg.msix_config` and/or `queue_msix_vector` and they are still `VIRTIO_PCI_MSI_NO_VECTOR` (`0xFFFF`) after the device is “running”.
 - You can correlate this with a recent reset/status transition in your logs.
 
 **Fix**
 
 - Program `msix_config` and each `queue_msix_vector` *after* the last reset and before enabling/using the queues.
-- Read back and assert they are not `0xFFFF`.
+- Read back and assert they are not `VIRTIO_PCI_MSI_NO_VECTOR` (`0xFFFF`).
 
 ### 4.3 Wrong routing because the driver used APIC `Vector` instead of `MessageNumber`
 
 **Symptoms**
 
 - Driver logs show `Vector` values like `0xE1`, `0x93`, etc being written into virtio `msix_config` / `queue_msix_vector`.
-- Read-back comes back `0xFFFF` (device rejected the index) or interrupts never arrive.
+- Read-back comes back `VIRTIO_PCI_MSI_NO_VECTOR` (`0xFFFF`) (device rejected the index) or interrupts never arrive.
 
 **How to prove**
 
 - Your `WdfInterruptGetInfo` prints show something like:
   - `MessageNumber=0` (or small)
   - `Vector=0xE1` (large)
-- Your virtio read-back shows `0xFFFF` after “programming”.
+- Your virtio read-back shows `VIRTIO_PCI_MSI_NO_VECTOR` (`0xFFFF`) after “programming”.
 
 **Fix**
 
@@ -345,7 +345,7 @@ For each write:
 - What you wrote (`msix_config`, `queue_msix_vector`), and which message number you intended.
 - The *read-back* value.
 
-This answers: “Did the device accept my vector programming, or did it silently revert to `0xFFFF`?”
+This answers: “Did the device accept my vector programming, or did it silently revert to `VIRTIO_PCI_MSI_NO_VECTOR` (`0xFFFF`)?”
 
 ### 5.4 In the ISR and DPC: counters, not prints
 
@@ -375,5 +375,5 @@ This answers: “Are interrupts firing? Are DPCs scheduled? Is one vector stormi
    - `common_cfg.msix_config = <MessageNumber>`
    - for each queue: `queue_msix_vector = <MessageNumber>`
 6. Read back all virtio vector selectors:
-   - if any are `0xFFFF` unexpectedly, fix before chasing anything else.
+   - if any are `VIRTIO_PCI_MSI_NO_VECTOR` (`0xFFFF`) unexpectedly, fix before chasing anything else.
 7. Verify ISR/DPC counters increment when generating known events (queue kick/completion).
