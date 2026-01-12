@@ -269,20 +269,25 @@ impl SnapshotTarget for PcPlatformSnapshotHarness<'_> {
 
             let mut interrupts = self.pc.interrupts.borrow_mut();
 
+            // Same issue for PCI INTx: `PciIntxRouter::load_state()` restores internal bookkeeping
+             // but cannot drive the sink.
+            if self.restored_pci_intx {
+                self.pc.pci_intx.sync_levels_to_sink(&mut *interrupts);
+            }
+
             // `Hpet::load_state()` cannot drive its interrupt sink or restore its internal
             // `irq_asserted` handshake state; sync pending level-triggered lines into the platform
             // interrupt controller.
+            //
+            // This must run *after* PCI INTx sync: `PciIntxRouter::sync_levels_to_sink()` sets
+            // routed GSI levels to either asserted or deasserted, and can otherwise clear a GSI
+            // asserted by another device (e.g. HPET timer2 default route = GSI10, which is also
+            // commonly used for PCI INTA#).
             if self.restored_hpet {
                 self.pc
                     .hpet
                     .borrow_mut()
                     .sync_levels_to_sink(&mut *interrupts);
-            }
-
-            // Same issue for PCI INTx: `PciIntxRouter::load_state()` restores internal bookkeeping
-            // but cannot drive the sink.
-            if self.restored_pci_intx {
-                self.pc.pci_intx.sync_levels_to_sink(&mut *interrupts);
             }
         }
 

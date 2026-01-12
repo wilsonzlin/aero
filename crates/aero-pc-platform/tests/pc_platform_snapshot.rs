@@ -197,3 +197,93 @@ fn snapshot_restore_redrives_hpet_level_to_interrupt_sink() {
         .expect("pending vector should decode to an IRQ number");
     assert_eq!(irq, 0);
 }
+
+#[test]
+fn snapshot_restore_keeps_hpet_level_asserted_when_pci_intx_sync_runs() {
+    // Regression test: HPET timer2 defaults to routing to GSI10, which is also commonly used for
+    // PCI INTA#. During restore we re-drive PCI INTx levels via
+    // `PciIntxRouter::sync_levels_to_sink()`, which *deasserts* GSIs that have no INTx sources.
+    //
+    // The snapshot adapter must ensure PCI sync runs *before* reasserting HPET pending level lines
+    // (via `Hpet::sync_levels_to_sink()`), otherwise the PCI sync can incorrectly clear an HPET
+    // assertion.
+    const RAM_SIZE: usize = 2 * 1024 * 1024;
+
+    // HPET register offsets.
+    const HPET_REG_GENERAL_CONFIG: u64 = 0x010;
+    const HPET_REG_GENERAL_INT_STATUS: u64 = 0x020;
+    const HPET_REG_TIMER0_BASE: u64 = 0x100;
+    const HPET_TIMER_STRIDE: u64 = 0x20;
+    const HPET_REG_TIMER_CONFIG: u64 = 0x00;
+    const HPET_REG_TIMER_COMPARATOR: u64 = 0x08;
+
+    const HPET_GEN_CONF_ENABLE: u64 = 1 << 0;
+    const HPET_TIMER_CFG_INT_LEVEL: u64 = 1 << 1;
+    const HPET_TIMER_CFG_INT_ENABLE: u64 = 1 << 2;
+
+    const TIMER2_INDEX: u64 = 2;
+    const TIMER2_GSI: u32 = 10;
+    const TIMER2_STATUS_BIT: u64 = 1 << TIMER2_INDEX;
+
+    let mut pc = PcPlatform::new(RAM_SIZE);
+
+    // Sanity: the platform interrupt controller should not see the HPET line asserted at save
+    // time; we program HPET using a dummy sink.
+    assert!(!pc.interrupts.borrow().gsi_level(TIMER2_GSI));
+
+    // Program HPET timer2 to fire a level-triggered interrupt, but deliver it into a dummy sink
+    // rather than the platform interrupt controller. This leaves the platform GSI line low while
+    // HPET has a pending `general_int_status` bit set.
+    {
+        let clock = pc.clock();
+        let hpet = pc.hpet();
+        let mut hpet = hpet.borrow_mut();
+        let mut dummy_sink = IoApic::default();
+
+        hpet.mmio_write(
+            HPET_REG_GENERAL_CONFIG,
+            8,
+            HPET_GEN_CONF_ENABLE,
+            &mut dummy_sink,
+        );
+
+        let timer2_base = HPET_REG_TIMER0_BASE + TIMER2_INDEX * HPET_TIMER_STRIDE;
+        let timer2_cfg = hpet.mmio_read(timer2_base + HPET_REG_TIMER_CONFIG, 8, &mut dummy_sink);
+        hpet.mmio_write(
+            timer2_base + HPET_REG_TIMER_CONFIG,
+            8,
+            timer2_cfg | HPET_TIMER_CFG_INT_ENABLE | HPET_TIMER_CFG_INT_LEVEL,
+            &mut dummy_sink,
+        );
+        hpet.mmio_write(
+            timer2_base + HPET_REG_TIMER_COMPARATOR,
+            8,
+            1,
+            &mut dummy_sink,
+        );
+
+        clock.advance_ns(100);
+        hpet.poll(&mut dummy_sink);
+
+        assert_ne!(
+            hpet.mmio_read(HPET_REG_GENERAL_INT_STATUS, 8, &mut dummy_sink) & TIMER2_STATUS_BIT,
+            0,
+            "HPET timer2 status bit should be pending before snapshot"
+        );
+    }
+
+    // Sanity: platform interrupt controller still sees the timer line deasserted at save time.
+    assert!(!pc.interrupts.borrow().gsi_level(TIMER2_GSI));
+
+    let snap = snapshot_bytes(&mut pc);
+
+    let mut restored = PcPlatform::new(RAM_SIZE);
+    restore_bytes(&mut restored, &snap);
+
+    // After restore, HPET should have reasserted the pending level GSI, and PCI INTx sync should
+    // not clear it.
+    assert!(
+        restored.interrupts.borrow().gsi_level(TIMER2_GSI),
+        "expected HPET timer2 pending interrupt to assert GSI{TIMER2_GSI} after restore"
+    );
+}
