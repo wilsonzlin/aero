@@ -294,6 +294,10 @@ async fn aerogpu_cmd_sync_rejects_writeback_before_executing_any_cmds_on_wasm() 
         "unexpected error: {err}"
     );
     assert!(
+        err.to_string().contains("first WRITEBACK_DST at packet 3"),
+        "expected error to include the offending packet index, got: {err}"
+    );
+    assert!(
         exec.texture_size(TEX).is_err(),
         "expected sync rejection to happen before CREATE_TEXTURE2D executes"
     );

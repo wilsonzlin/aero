@@ -331,6 +331,10 @@ async fn aerogpu_d3d9_sync_rejects_writeback_before_executing_any_cmds_on_wasm()
             .contains("WRITEBACK_DST requires async execution on wasm"),
         "unexpected error: {err}"
     );
+    assert!(
+        err.to_string().contains("first WRITEBACK_DST at packet 3"),
+        "expected error to include the offending packet index, got: {err}"
+    );
 
     {
         let scanout = exec

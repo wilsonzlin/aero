@@ -83,6 +83,10 @@ async fn aerogpu_executor_sync_rejects_writeback_before_executing_any_cmds_on_wa
         "unexpected error: {err}"
     );
     assert!(
+        err.to_string().contains("first WRITEBACK_DST at packet 3"),
+        "expected error to include the offending packet index, got: {err}"
+    );
+    assert!(
         exec.texture(TEX).is_none(),
         "expected sync rejection to happen before CREATE_TEXTURE2D executes"
     );
@@ -131,14 +135,23 @@ async fn aerogpu_executor_process_cmd_stream_rejects_writeback_before_executing_
         "expected writeback pre-scan error, got: {report:?}"
     );
     assert_eq!(report.packets_processed, 0);
+    let err = report.events.iter().find_map(|e| match e {
+        ExecutorEvent::Error { at, message } => Some((*at, message)),
+    });
+    let Some((at, message)) = err else {
+        panic!(
+            "expected WRITEBACK_DST wasm validation error, got: {:#?}",
+            report.events
+        );
+    };
+    assert_eq!(at, 3, "expected first WRITEBACK_DST command at packet 3");
     assert!(
-        report.events.iter().any(|e| matches!(
-            e,
-            ExecutorEvent::Error { message, .. }
-                if message.contains("WRITEBACK_DST requires async execution on wasm")
-        )),
-        "expected WRITEBACK_DST wasm validation error, got: {:#?}",
-        report.events
+        message.contains("WRITEBACK_DST requires async execution on wasm"),
+        "unexpected error message: {message}"
+    );
+    assert!(
+        message.contains("first WRITEBACK_DST at packet 3"),
+        "expected error to include the offending packet index, got: {message}"
     );
     assert!(
         exec.texture(TEX).is_none(),
