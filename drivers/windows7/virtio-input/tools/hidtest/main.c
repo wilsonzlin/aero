@@ -58,8 +58,8 @@
 #endif
 
 #ifndef IOCTL_HID_SET_OUTPUT_REPORT
-// IOCTL_HID_SET_OUTPUT_REPORT is typically HID_CTL_CODE(0x0B) (METHOD_NEITHER).
-#define IOCTL_HID_SET_OUTPUT_REPORT HID_CTL_CODE(0x0B)
+// WDK `hidclass.h` defines IOCTL_HID_SET_OUTPUT_REPORT as a HID_CTL_CODE (function code 9).
+#define IOCTL_HID_SET_OUTPUT_REPORT HID_CTL_CODE(9)
 #endif
 
 // Historical/alternate function code seen in some header sets. If our primary
