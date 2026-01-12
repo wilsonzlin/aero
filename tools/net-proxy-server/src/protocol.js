@@ -89,7 +89,9 @@ export class TcpMuxFrameParser {
 
       const payload = this.buffer.subarray(TCP_MUX_HEADER_BYTES, frameTotalBytes);
       frames.push({ msgType, streamId, payload });
-      this.buffer = this.buffer.subarray(frameTotalBytes);
+      // Avoid keeping a reference to the backing allocation when fully consumed.
+      this.buffer =
+        frameTotalBytes === this.buffer.length ? Buffer.alloc(0) : this.buffer.subarray(frameTotalBytes);
     }
 
     return frames;
