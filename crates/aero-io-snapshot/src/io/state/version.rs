@@ -203,9 +203,14 @@ impl<'a> SnapshotReader<'a> {
         let mut fields = BTreeMap::new();
         let mut offset = HEADER_LEN;
         while offset < bytes.len() {
-            if offset + 2 + 4 > bytes.len() {
+            // Ensure we can read the TLV header (tag + len) without overflowing.
+            let header_end = offset
+                .checked_add(6)
+                .ok_or(SnapshotError::UnexpectedEof)?;
+            if header_end > bytes.len() {
                 return Err(SnapshotError::UnexpectedEof);
             }
+
             let tag = u16::from_le_bytes([bytes[offset], bytes[offset + 1]]);
             let len = u32::from_le_bytes([
                 bytes[offset + 2],
@@ -213,17 +218,22 @@ impl<'a> SnapshotReader<'a> {
                 bytes[offset + 4],
                 bytes[offset + 5],
             ]) as usize;
-            offset += 6;
-            if offset + len > bytes.len() {
+            offset = header_end;
+
+            let field_end = offset
+                .checked_add(len)
+                .ok_or(SnapshotError::UnexpectedEof)?;
+            if field_end > bytes.len() {
                 return Err(SnapshotError::UnexpectedEof);
             }
+
             if fields.len() >= MAX_FIELDS {
                 return Err(SnapshotError::InvalidFieldEncoding("too many fields"));
             }
-            if fields.insert(tag, &bytes[offset..offset + len]).is_some() {
+            if fields.insert(tag, &bytes[offset..field_end]).is_some() {
                 return Err(SnapshotError::DuplicateFieldTag(tag));
             }
-            offset += len;
+            offset = field_end;
         }
 
         Ok(Self { header, fields })
@@ -399,11 +409,15 @@ pub mod codec {
         }
 
         fn take(&mut self, len: usize) -> SnapshotResult<&'a [u8]> {
-            if self.offset + len > self.buf.len() {
+            let end = self
+                .offset
+                .checked_add(len)
+                .ok_or(SnapshotError::UnexpectedEof)?;
+            if end > self.buf.len() {
                 return Err(SnapshotError::UnexpectedEof);
             }
-            let out = &self.buf[self.offset..self.offset + len];
-            self.offset += len;
+            let out = &self.buf[self.offset..end];
+            self.offset = end;
             Ok(out)
         }
 
