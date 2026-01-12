@@ -627,6 +627,82 @@ fn build_ps_cbuffer0_and_sample_l_t0_s0_sm5_dxbc(u: f32, v: f32) -> Vec<u8> {
     build_dxbc(&[(*b"ISGN", isgn), (*b"OSGN", osgn), (*b"SHEX", shex)])
 }
 
+fn build_ps_two_sample_l_sm5_dxbc(u: f32, v: f32) -> Vec<u8> {
+    // PS that performs two independent samples from (t0,s0) and (t1,s1) and returns the second.
+    // This exercises multiple texture/sampler bindings in the same stage.
+    //
+    // Token stream:
+    //   sample_l o0, l(u, v, 0, 0), t0, s0, l(0)
+    //   sample_l o0, l(u, v, 0, 0), t1, s1, l(0)
+    //   ret
+    let isgn = build_signature_chunk(&[]);
+    let osgn = build_signature_chunk(&[SigParam {
+        semantic_name: "SV_Target",
+        semantic_index: 0,
+        register: 0,
+        mask: 0x0f,
+    }]);
+
+    // ps_5_0
+    let version_token = 0x50u32;
+
+    let sample_l_opcode_token = 0x46u32 | (14u32 << 11);
+    let ret_token = 0x3eu32 | (1u32 << 11);
+
+    let dst_o0 = 0x0010_f022u32;
+    let imm_vec4 = 0x0000_f042u32;
+    let imm_scalar = 0x0000_0049u32;
+    let t = 0x0010_0072u32;
+    let s = 0x0010_0062u32;
+
+    let u = u.to_bits();
+    let v = v.to_bits();
+
+    let mut tokens = vec![
+        version_token,
+        0, // length patched below
+        // sample_l o0, l(u,v,0,0), t0, s0, l(0)
+        sample_l_opcode_token,
+        dst_o0,
+        0,
+        imm_vec4,
+        u,
+        v,
+        0,
+        0,
+        t,
+        0,
+        s,
+        0,
+        imm_scalar,
+        0,
+        // sample_l o0, l(u,v,0,0), t1, s1, l(0)
+        sample_l_opcode_token,
+        dst_o0,
+        0,
+        imm_vec4,
+        u,
+        v,
+        0,
+        0,
+        t,
+        1,
+        s,
+        1,
+        imm_scalar,
+        0,
+        ret_token,
+    ];
+    tokens[1] = tokens.len() as u32;
+
+    let mut shex = Vec::with_capacity(tokens.len() * 4);
+    for t in tokens {
+        shex.extend_from_slice(&t.to_le_bytes());
+    }
+
+    build_dxbc(&[(*b"ISGN", isgn), (*b"OSGN", osgn), (*b"SHEX", shex)])
+}
+
 fn build_ps_cbuffer0_sm5_sig_v1_dxbc() -> Vec<u8> {
     // Equivalent to `build_ps_cbuffer0_sm5_dxbc`, but uses `ISG1`/`OSG1` signature chunks with the
     // 32-byte v1 entry layout.
@@ -2279,6 +2355,120 @@ fn aerogpu_cmd_runtime_signature_driven_ps_cb0_texture_sampler_binding_sm5() {
 
         let pixels = rt.read_texture_rgba8(RTEX).await.unwrap();
         assert_eq!(pixels, vec![0, 255, 0, 255]);
+    });
+}
+
+#[test]
+fn aerogpu_cmd_runtime_signature_driven_ps_two_texture_sampler_bindings_sm5() {
+    // Ensure signature-driven runtime bindings support multiple texture/sampler slots in the same
+    // stage-scoped bind group (t0+s0 and t1+s1).
+    pollster::block_on(async {
+        let mut rt = match AerogpuCmdRuntime::new_for_tests().await {
+            Ok(rt) => rt,
+            Err(err) => {
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({err:#})"));
+                return;
+            }
+        };
+
+        const VS: u32 = 1;
+        const PS: u32 = 2;
+        const IL: u32 = 3;
+        const VB: u32 = 4;
+        const TEX0: u32 = 5;
+        const TEX1: u32 = 6;
+        const RTEX: u32 = 7;
+
+        rt.create_shader_dxbc(VS, &build_vs_passthrough_pos_sm5_dxbc())
+            .unwrap();
+        rt.create_shader_dxbc(PS, &build_ps_two_sample_l_sm5_dxbc(0.0, 0.0))
+            .unwrap();
+        rt.create_input_layout(IL, &build_ilay_pos3()).unwrap();
+
+        let vertices: [VertexPos3; 3] = [
+            VertexPos3 {
+                pos: [-1.0, -1.0, 0.0],
+            },
+            VertexPos3 {
+                pos: [3.0, -1.0, 0.0],
+            },
+            VertexPos3 {
+                pos: [-1.0, 3.0, 0.0],
+            },
+        ];
+        rt.create_buffer(
+            VB,
+            std::mem::size_of_val(&vertices) as u64,
+            wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        );
+        rt.write_buffer(VB, 0, bytemuck::bytes_of(&vertices))
+            .unwrap();
+
+        rt.create_texture2d(
+            TEX0,
+            2,
+            2,
+            wgpu::TextureFormat::Rgba8Unorm,
+            wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        );
+        let red_px: [u8; 4] = [255, 0, 0, 255];
+        let tex0_data = [
+            red_px, red_px, //
+            red_px, red_px, //
+        ];
+        rt.write_texture_rgba8(TEX0, 2, 2, 2 * 4, bytemuck::bytes_of(&tex0_data))
+            .unwrap();
+        rt.set_ps_texture(0, Some(TEX0));
+
+        rt.create_texture2d(
+            TEX1,
+            2,
+            2,
+            wgpu::TextureFormat::Rgba8Unorm,
+            wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        );
+        let green_px: [u8; 4] = [0, 255, 0, 255];
+        let tex1_data = [
+            green_px, green_px, //
+            green_px, green_px, //
+        ];
+        rt.write_texture_rgba8(TEX1, 2, 2, 2 * 4, bytemuck::bytes_of(&tex1_data))
+            .unwrap();
+        rt.set_ps_texture(1, Some(TEX1));
+
+        rt.create_texture2d(
+            RTEX,
+            1,
+            1,
+            wgpu::TextureFormat::Rgba8Unorm,
+            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        );
+        let mut colors = [None; 8];
+        colors[0] = Some(RTEX);
+        rt.set_render_targets(&colors, None);
+
+        rt.bind_shaders(Some(VS), Some(PS));
+        rt.set_input_layout(Some(IL));
+        rt.set_vertex_buffers(
+            0,
+            &[VertexBufferBinding {
+                buffer: VB,
+                stride: std::mem::size_of::<VertexPos3>() as u32,
+                offset: 0,
+            }],
+        );
+        rt.set_primitive_topology(PrimitiveTopology::TriangleList);
+        rt.set_rasterizer_state(RasterizerState {
+            cull_mode: None,
+            front_face: wgpu::FrontFace::Ccw,
+            scissor_enable: false,
+        });
+
+        rt.draw(3, 1, 0, 0).unwrap();
+        rt.poll_wait();
+
+        let pixels = rt.read_texture_rgba8(RTEX).await.unwrap();
+        assert_eq!(pixels, vec![0, 255, 0, 255], "t1+s1 sample wins");
     });
 }
 
