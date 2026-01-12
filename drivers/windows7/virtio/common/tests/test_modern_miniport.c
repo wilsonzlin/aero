@@ -1635,6 +1635,39 @@ static void test_notify_queue_cache_bounds(void)
     VirtioPciModernMmioSimUninstall();
 }
 
+static void test_notify_queue_writes_queue_index_value(void)
+{
+    uint8_t bar0[TEST_BAR0_SIZE];
+    uint8_t pci_cfg[256];
+    VIRTIO_PCI_DEVICE dev;
+    VIRTIO_PCI_MODERN_MMIO_SIM sim;
+    volatile uint16_t* addr;
+
+    setup_device(&dev, bar0, pci_cfg);
+
+    VirtioPciModernMmioSimInit(&sim,
+                               dev.CommonCfg,
+                               (volatile uint8_t*)dev.NotifyBase,
+                               dev.NotifyLength,
+                               (volatile uint8_t*)dev.IsrStatus,
+                               dev.IsrLength,
+                               (volatile uint8_t*)dev.DeviceCfg,
+                               dev.DeviceCfgLength);
+
+    sim.num_queues = 1;
+    sim.queues[0].queue_size = 8;
+    sim.queues[0].queue_notify_off = 1;
+
+    VirtioPciModernMmioSimInstall(&sim);
+
+    addr = (volatile uint16_t*)((volatile uint8_t*)dev.NotifyBase + (1u * TEST_NOTIFY_OFF_MULT));
+    *addr = 0xffffu;
+    VirtioPciNotifyQueue(&dev, 0);
+    assert(*addr == 0);
+
+    VirtioPciModernMmioSimUninstall();
+}
+
 static void test_notify_queue_does_not_write_when_queue_missing(void)
 {
     uint8_t bar0[TEST_BAR0_SIZE];
@@ -1935,6 +1968,9 @@ static void test_misc_null_safe_behaviour(void)
     assert(VirtioPciReadDeviceFeatures(NULL) == 0);
     assert(VirtioPciReadDeviceFeatures(&dev) == 0);
 
+    assert(VirtioPciGetStatus(NULL) == 0);
+    assert(VirtioPciGetStatus(&dev) == 0);
+
     assert(VirtioPciReadIsr(NULL) == 0);
 
     notify_addr = (volatile uint16_t*)0x1;
@@ -2001,6 +2037,7 @@ int main(void)
     test_read_isr_read_to_clear();
     test_notify_queue_populates_and_uses_cache();
     test_notify_queue_cache_bounds();
+    test_notify_queue_writes_queue_index_value();
     test_notify_queue_does_not_write_when_queue_missing();
     test_notify_queue_does_not_write_when_invalid_device_state();
     test_reset_device_fast_path();
