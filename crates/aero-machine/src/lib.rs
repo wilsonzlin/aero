@@ -4034,7 +4034,6 @@ mod tests {
     use super::*;
     use aero_cpu_core::state::{gpr, CR0_PE, CR0_PG};
     use aero_devices::pci::PciInterruptPin;
-    use memory::{GuestMemoryMapping, MappedGuestMemory};
     use pretty_assertions::assert_eq;
     use std::io::{Cursor, Read};
     use std::sync::{
