@@ -527,6 +527,15 @@ fn handle_int16(bios: &mut Bios, cpu: &mut CpuState) {
             }
             cpu.rflags &= !FLAG_CF;
         }
+        0x02 => {
+            // Get shift flags (returns AL).
+            //
+            // We do not currently track keyboard modifier state in the BIOS data area; return 0
+            // (no modifiers/locks active) but report success so bootloaders that probe this
+            // function do not treat it as unimplemented.
+            cpu.gpr[gpr::RAX] &= !0xFF;
+            cpu.rflags &= !FLAG_CF;
+        }
         0x01 => {
             // Check for keystroke (ZF=1 if none).
             if let Some(&k) = bios.keyboard_queue.front() {
@@ -781,7 +790,7 @@ fn build_e820_map(
 }
 
 #[cfg(test)]
-mod tests {
+    mod tests {
     use super::super::{
         A20Gate, BiosConfig, InMemoryDisk, TestMemory, PCIE_ECAM_BASE, PCIE_ECAM_SIZE,
     };
@@ -971,6 +980,18 @@ mod tests {
         handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
         assert_ne!(cpu.rflags & FLAG_CF, 0);
         assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0x04);
+    }
+
+    #[test]
+    fn int16_get_shift_flags_reports_zero() {
+        let mut bios = Bios::new(super::super::BiosConfig::default());
+        let mut cpu = CpuState::new(CpuMode::Real);
+
+        cpu.gpr[gpr::RAX] = 0x0200; // AH=02h
+        handle_int16(&mut bios, &mut cpu);
+
+        assert_eq!(cpu.rflags & FLAG_CF, 0);
+        assert_eq!((cpu.gpr[gpr::RAX] & 0xFF) as u8, 0);
     }
 
     #[test]
