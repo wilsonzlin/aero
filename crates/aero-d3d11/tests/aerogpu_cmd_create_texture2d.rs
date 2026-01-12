@@ -822,6 +822,127 @@ fn create_texture2d_bc3_guest_backed_upload_repacks_padded_row_pitch() {
 }
 
 #[test]
+fn create_texture2d_bc7_guest_backed_upload_repacks_padded_row_pitch() {
+    pollster::block_on(async {
+        let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+            Ok(exec) => exec,
+            Err(e) => {
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                return;
+            }
+        };
+
+        // BC7 4x8: blocks_w=1, blocks_h=2, block_bytes=16.
+        // Use a padded row pitch to ensure the upload path repacks into the tight layout expected
+        // by the BC decompressor.
+        let row_pitch_bytes = 256u32;
+        let alloc_size = row_pitch_bytes as u64 * 2; // 2 block rows.
+        let allocs = [AerogpuAllocEntry {
+            alloc_id: 1,
+            flags: 0,
+            gpa: 0x100,
+            size_bytes: alloc_size,
+            reserved0: 0,
+        }];
+
+        let bc7_top: [u8; 16] = [
+            0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+        ];
+        let bc7_bottom: [u8; 16] = [
+            16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,
+        ];
+
+        let mut backing = vec![0u8; alloc_size as usize];
+        backing[0..16].copy_from_slice(&bc7_top);
+        backing[row_pitch_bytes as usize..row_pitch_bytes as usize + 16]
+            .copy_from_slice(&bc7_bottom);
+
+        let mut stream = Vec::new();
+        // Stream header (24 bytes)
+        stream.extend_from_slice(&AEROGPU_CMD_STREAM_MAGIC.to_le_bytes());
+        stream.extend_from_slice(&AEROGPU_ABI_VERSION_U32.to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes()); // size_bytes (patched later)
+        stream.extend_from_slice(&0u32.to_le_bytes()); // flags
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved1
+
+        // SRC: guest-backed BC7 4x8.
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::CreateTexture2d as u32);
+        stream.extend_from_slice(&1u32.to_le_bytes()); // texture_handle
+        stream.extend_from_slice(&AEROGPU_RESOURCE_USAGE_TEXTURE.to_le_bytes());
+        stream.extend_from_slice(&(AerogpuFormat::BC7RgbaUnorm as u32).to_le_bytes());
+        stream.extend_from_slice(&4u32.to_le_bytes()); // width
+        stream.extend_from_slice(&8u32.to_le_bytes()); // height
+        stream.extend_from_slice(&1u32.to_le_bytes()); // mip_levels
+        stream.extend_from_slice(&1u32.to_le_bytes()); // array_layers
+        stream.extend_from_slice(&row_pitch_bytes.to_le_bytes()); // row_pitch_bytes
+        stream.extend_from_slice(&1u32.to_le_bytes()); // backing_alloc_id
+        stream.extend_from_slice(&0u32.to_le_bytes()); // backing_offset_bytes
+        stream.extend_from_slice(&0u64.to_le_bytes()); // reserved0
+        end_cmd(&mut stream, start);
+
+        // DST: non-backed BC7 4x8.
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::CreateTexture2d as u32);
+        stream.extend_from_slice(&2u32.to_le_bytes()); // texture_handle
+        stream.extend_from_slice(&AEROGPU_RESOURCE_USAGE_TEXTURE.to_le_bytes());
+        stream.extend_from_slice(&(AerogpuFormat::BC7RgbaUnorm as u32).to_le_bytes());
+        stream.extend_from_slice(&4u32.to_le_bytes()); // width
+        stream.extend_from_slice(&8u32.to_le_bytes()); // height
+        stream.extend_from_slice(&1u32.to_le_bytes()); // mip_levels
+        stream.extend_from_slice(&1u32.to_le_bytes()); // array_layers
+        stream.extend_from_slice(&0u32.to_le_bytes()); // row_pitch_bytes
+        stream.extend_from_slice(&0u32.to_le_bytes()); // backing_alloc_id
+        stream.extend_from_slice(&0u32.to_le_bytes()); // backing_offset_bytes
+        stream.extend_from_slice(&0u64.to_le_bytes()); // reserved0
+        end_cmd(&mut stream, start);
+
+        // COPY_TEXTURE2D(dst <- src) to force BC upload + decompression.
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::CopyTexture2d as u32);
+        stream.extend_from_slice(&2u32.to_le_bytes()); // dst_texture
+        stream.extend_from_slice(&1u32.to_le_bytes()); // src_texture
+        stream.extend_from_slice(&0u32.to_le_bytes()); // dst_mip_level
+        stream.extend_from_slice(&0u32.to_le_bytes()); // dst_array_layer
+        stream.extend_from_slice(&0u32.to_le_bytes()); // src_mip_level
+        stream.extend_from_slice(&0u32.to_le_bytes()); // src_array_layer
+        stream.extend_from_slice(&0u32.to_le_bytes()); // dst_x
+        stream.extend_from_slice(&0u32.to_le_bytes()); // dst_y
+        stream.extend_from_slice(&0u32.to_le_bytes()); // src_x
+        stream.extend_from_slice(&0u32.to_le_bytes()); // src_y
+        stream.extend_from_slice(&4u32.to_le_bytes()); // width
+        stream.extend_from_slice(&8u32.to_le_bytes()); // height
+        stream.extend_from_slice(&0u32.to_le_bytes()); // flags
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+        end_cmd(&mut stream, start);
+
+        // Patch stream size in header.
+        let total_size = stream.len() as u32;
+        stream[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
+            .copy_from_slice(&total_size.to_le_bytes());
+
+        let mut guest_mem = VecGuestMemory::new(0x2000);
+        guest_mem
+            .write(0x100, &backing)
+            .expect("write BC backing into guest memory");
+
+        exec.execute_cmd_stream(&stream, Some(&allocs), &mut guest_mem)
+            .expect("expected BC7 upload with padded row pitch to succeed");
+        exec.poll_wait();
+
+        let pixels = exec
+            .read_texture_rgba8(2)
+            .await
+            .expect("read back dst texture");
+        assert_eq!(pixels.len(), (4 * 8 * 4) as usize);
+
+        let mut tight = Vec::new();
+        tight.extend_from_slice(&bc7_top);
+        tight.extend_from_slice(&bc7_bottom);
+        let expected = aero_gpu::decompress_bc7_rgba8(4, 8, &tight);
+        assert_eq!(pixels, expected);
+    });
+}
+
+#[test]
 fn create_texture2d_bc1_guest_backed_mip1_uses_tight_row_pitch() {
     pollster::block_on(async {
         let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
@@ -1272,5 +1393,158 @@ fn create_texture2d_bc3_guest_backed_mip1_uses_tight_row_pitch() {
                 assert_eq!(px, expected, "pixel mismatch at ({x},{y})");
             }
         }
+    });
+}
+
+#[test]
+fn create_texture2d_bc7_guest_backed_mip1_uses_tight_row_pitch() {
+    pollster::block_on(async {
+        let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+            Ok(exec) => exec,
+            Err(e) => {
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                return;
+            }
+        };
+
+        // BC7 9x9 with mip_levels=2.
+        //
+        // Regression test for the old mip layout bug (row_pitch_bytes >> level), which breaks BC
+        // textures because block rounding does not preserve the ">> level" rule.
+        //
+        // Mip0: 9x9 => blocks_w=3 blocks_h=3 => 9 blocks => 144 bytes (row_pitch=48).
+        // Mip1: 4x4 => blocks_w=1 blocks_h=1 => 1 block => 16 bytes (tight row_pitch=16).
+        // Total size = 160 bytes.
+        let allocs = [AerogpuAllocEntry {
+            alloc_id: 1,
+            flags: 0,
+            gpa: 0x100,
+            size_bytes: 160,
+            reserved0: 0,
+        }];
+
+        let bc7_mip0_block: [u8; 16] = [
+            0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+        ];
+        let bc7_mip1_block: [u8; 16] = [
+            16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,
+        ];
+
+        // Guest backing layout for the src texture:
+        // - mip0 (144 bytes): 3 rows * 3 blocks
+        // - mip1 (16 bytes): 1 block
+        let mut backing = Vec::new();
+        for _ in 0..9 {
+            backing.extend_from_slice(&bc7_mip0_block);
+        }
+        backing.extend_from_slice(&bc7_mip1_block); // mip1 block0
+        assert_eq!(backing.len(), 160);
+
+        let mut stream = Vec::new();
+        // Stream header (24 bytes)
+        stream.extend_from_slice(&AEROGPU_CMD_STREAM_MAGIC.to_le_bytes());
+        stream.extend_from_slice(&AEROGPU_ABI_VERSION_U32.to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes()); // size_bytes (patched later)
+        stream.extend_from_slice(&0u32.to_le_bytes()); // flags
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved1
+
+        // SRC: guest-backed BC7 9x9 with mip_levels=2.
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::CreateTexture2d as u32);
+        stream.extend_from_slice(&1u32.to_le_bytes()); // texture_handle
+        stream.extend_from_slice(&AEROGPU_RESOURCE_USAGE_TEXTURE.to_le_bytes());
+        stream.extend_from_slice(&(AerogpuFormat::BC7RgbaUnorm as u32).to_le_bytes());
+        stream.extend_from_slice(&9u32.to_le_bytes()); // width
+        stream.extend_from_slice(&9u32.to_le_bytes()); // height
+        stream.extend_from_slice(&2u32.to_le_bytes()); // mip_levels
+        stream.extend_from_slice(&1u32.to_le_bytes()); // array_layers
+        stream.extend_from_slice(&48u32.to_le_bytes()); // row_pitch_bytes (mip0 only)
+        stream.extend_from_slice(&1u32.to_le_bytes()); // backing_alloc_id
+        stream.extend_from_slice(&0u32.to_le_bytes()); // backing_offset_bytes
+        stream.extend_from_slice(&0u64.to_le_bytes()); // reserved0
+        end_cmd(&mut stream, start);
+
+        // DST: non-backed BC7 9x9 (mip_levels=1).
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::CreateTexture2d as u32);
+        stream.extend_from_slice(&2u32.to_le_bytes()); // texture_handle
+        stream.extend_from_slice(&AEROGPU_RESOURCE_USAGE_TEXTURE.to_le_bytes());
+        stream.extend_from_slice(&(AerogpuFormat::BC7RgbaUnorm as u32).to_le_bytes());
+        stream.extend_from_slice(&9u32.to_le_bytes()); // width
+        stream.extend_from_slice(&9u32.to_le_bytes()); // height
+        stream.extend_from_slice(&1u32.to_le_bytes()); // mip_levels
+        stream.extend_from_slice(&1u32.to_le_bytes()); // array_layers
+        stream.extend_from_slice(&0u32.to_le_bytes()); // row_pitch_bytes
+        stream.extend_from_slice(&0u32.to_le_bytes()); // backing_alloc_id
+        stream.extend_from_slice(&0u32.to_le_bytes()); // backing_offset_bytes
+        stream.extend_from_slice(&0u64.to_le_bytes()); // reserved0
+        end_cmd(&mut stream, start);
+
+        // UPLOAD_RESOURCE(dst, mip0 blocks) so we can deterministically verify the later copy.
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::UploadResource as u32);
+        stream.extend_from_slice(&2u32.to_le_bytes()); // resource_handle
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+        stream.extend_from_slice(&0u64.to_le_bytes()); // offset_bytes
+        stream.extend_from_slice(&144u64.to_le_bytes()); // size_bytes
+        for _ in 0..9 {
+            stream.extend_from_slice(&bc7_mip0_block);
+        }
+        end_cmd(&mut stream, start);
+
+        // COPY_TEXTURE2D(dst mip0 <- src mip1) (4x4 region).
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::CopyTexture2d as u32);
+        stream.extend_from_slice(&2u32.to_le_bytes()); // dst_texture
+        stream.extend_from_slice(&1u32.to_le_bytes()); // src_texture
+        stream.extend_from_slice(&0u32.to_le_bytes()); // dst_mip_level
+        stream.extend_from_slice(&0u32.to_le_bytes()); // dst_array_layer
+        stream.extend_from_slice(&1u32.to_le_bytes()); // src_mip_level
+        stream.extend_from_slice(&0u32.to_le_bytes()); // src_array_layer
+        stream.extend_from_slice(&0u32.to_le_bytes()); // dst_x
+        stream.extend_from_slice(&0u32.to_le_bytes()); // dst_y
+        stream.extend_from_slice(&0u32.to_le_bytes()); // src_x
+        stream.extend_from_slice(&0u32.to_le_bytes()); // src_y
+        stream.extend_from_slice(&4u32.to_le_bytes()); // width
+        stream.extend_from_slice(&4u32.to_le_bytes()); // height
+        stream.extend_from_slice(&0u32.to_le_bytes()); // flags
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+        end_cmd(&mut stream, start);
+
+        // Patch stream size in header.
+        let total_size = stream.len() as u32;
+        stream[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
+            .copy_from_slice(&total_size.to_le_bytes());
+
+        let mut guest_mem = VecGuestMemory::new(0x2000);
+        guest_mem
+            .write(0x100, &backing)
+            .expect("write BC backing into guest memory");
+
+        exec.execute_cmd_stream(&stream, Some(&allocs), &mut guest_mem)
+            .expect("expected BC7 mip1 tight packing to succeed");
+        exec.poll_wait();
+
+        let pixels = exec
+            .read_texture_rgba8(2)
+            .await
+            .expect("read back dst texture");
+        assert_eq!(pixels.len(), (9 * 9 * 4) as usize);
+
+        // Expected dst contents: mip0 block stream everywhere, except top-left 4x4 replaced with
+        // mip1 block stream.
+        let mut expected_mip0 = Vec::new();
+        for _ in 0..9 {
+            expected_mip0.extend_from_slice(&bc7_mip0_block);
+        }
+        let mut expected = aero_gpu::decompress_bc7_rgba8(9, 9, &expected_mip0);
+        let expected_mip1 = aero_gpu::decompress_bc7_rgba8(4, 4, &bc7_mip1_block);
+        for y in 0..4u32 {
+            for x in 0..4u32 {
+                let dst_idx = ((y * 9 + x) * 4) as usize;
+                let src_idx = ((y * 4 + x) * 4) as usize;
+                expected[dst_idx..dst_idx + 4]
+                    .copy_from_slice(&expected_mip1[src_idx..src_idx + 4]);
+            }
+        }
+
+        assert_eq!(pixels, expected);
     });
 }
