@@ -1,6 +1,7 @@
 use memory::MemoryBus;
 
 use super::codec::{CodecCmd, HdaVerbResponse};
+use super::mask_for_size;
 use super::regs::*;
 
 #[derive(Debug)]
@@ -40,6 +41,9 @@ impl Corb {
     }
 
     pub fn mmio_read(&self, reg: CorbReg, size: usize) -> u64 {
+        if size == 0 {
+            return 0;
+        }
         match reg {
             CorbReg::Lbase => self.lbase as u64 & mask_for_size(size),
             CorbReg::Ubase => self.ubase as u64 & mask_for_size(size),
@@ -52,6 +56,9 @@ impl Corb {
     }
 
     pub fn mmio_write(&mut self, reg: CorbReg, size: usize, value: u64) {
+        if size == 0 {
+            return;
+        }
         let value = value & mask_for_size(size);
         match reg {
             CorbReg::Lbase => self.lbase = value as u32,
@@ -135,6 +142,9 @@ impl Rirb {
     }
 
     pub fn mmio_read(&self, reg: RirbReg, size: usize) -> u64 {
+        if size == 0 {
+            return 0;
+        }
         match reg {
             RirbReg::Lbase => self.lbase as u64 & mask_for_size(size),
             RirbReg::Ubase => self.ubase as u64 & mask_for_size(size),
@@ -147,6 +157,9 @@ impl Rirb {
     }
 
     pub fn mmio_write(&mut self, reg: RirbReg, size: usize, value: u64) {
+        if size == 0 {
+            return;
+        }
         let value = value & mask_for_size(size);
         match reg {
             RirbReg::Lbase => self.lbase = value as u32,
@@ -195,14 +208,4 @@ impl Rirb {
 
 fn write_u64(mem: &mut dyn MemoryBus, addr: u64, value: u64) {
     mem.write_physical(addr, &value.to_le_bytes());
-}
-
-fn mask_for_size(size: usize) -> u64 {
-    match size {
-        1 => 0xFF,
-        2 => 0xFFFF,
-        4 => 0xFFFF_FFFF,
-        8 => 0xFFFF_FFFF_FFFF_FFFF,
-        _ => 0xFFFF_FFFF_FFFF_FFFF,
-    }
 }

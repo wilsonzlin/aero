@@ -115,6 +115,9 @@ impl HdaController {
     }
 
     pub fn mmio_read(&mut self, offset: u32, size: usize) -> u64 {
+        if size == 0 {
+            return 0;
+        }
         match HdaMmioReg::decode(offset) {
             Some(HdaMmioReg::Gcap) => (self.gcap as u64) & mask_for_size(size),
             Some(HdaMmioReg::Vmin) => (self.vmin as u64) & mask_for_size(size),
@@ -136,6 +139,9 @@ impl HdaController {
     }
 
     pub fn mmio_write(&mut self, offset: u32, size: usize, value: u64) {
+        if size == 0 {
+            return;
+        }
         match HdaMmioReg::decode(offset) {
             Some(HdaMmioReg::Gctl) => {
                 let new_val = (value as u32) & mask_for_size(size) as u32;
@@ -297,18 +303,32 @@ impl HdaController {
 }
 
 fn mask_for_size(size: usize) -> u64 {
-    match size {
-        1 => 0xFF,
-        2 => 0xFFFF,
-        4 => 0xFFFF_FFFF,
-        8 => 0xFFFF_FFFF_FFFF_FFFF,
-        _ => 0xFFFF_FFFF_FFFF_FFFF,
+    if size == 0 {
+        return 0;
     }
+    if size >= 8 {
+        return u64::MAX;
+    }
+    (1u64 << (size * 8)) - 1
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mask_for_size_supports_non_pow2_sizes() {
+        assert_eq!(mask_for_size(0), 0);
+        assert_eq!(mask_for_size(1), 0xFF);
+        assert_eq!(mask_for_size(2), 0xFFFF);
+        assert_eq!(mask_for_size(3), 0x00FF_FFFF);
+        assert_eq!(mask_for_size(4), 0xFFFF_FFFF);
+        assert_eq!(mask_for_size(5), 0x0000_00FF_FFFF_FFFF);
+        assert_eq!(mask_for_size(6), 0x0000_FFFF_FFFF_FFFF);
+        assert_eq!(mask_for_size(7), 0x00FF_FFFF_FFFF_FFFF);
+        assert_eq!(mask_for_size(8), u64::MAX);
+        assert_eq!(mask_for_size(9), u64::MAX);
+    }
 
     #[derive(Clone, Debug)]
     struct TestMem {

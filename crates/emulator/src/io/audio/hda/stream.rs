@@ -1,5 +1,6 @@
 use memory::MemoryBus;
 
+use super::mask_for_size;
 use super::regs::*;
 use crate::io::audio::dsp::pcm::{PcmSampleFormat, PcmSpec};
 
@@ -281,6 +282,9 @@ impl HdaStream {
     }
 
     pub fn mmio_read(&self, reg: StreamReg, size: usize) -> u64 {
+        if size == 0 {
+            return 0;
+        }
         match reg {
             StreamReg::CtlSts => {
                 ((self.sts as u32 as u64) << 24 | self.ctl as u64) & mask_for_size(size)
@@ -297,6 +301,9 @@ impl HdaStream {
     }
 
     pub fn mmio_write(&mut self, reg: StreamReg, size: usize, value: u64, intsts: &mut u32) {
+        if size == 0 {
+            return;
+        }
         let value = value & mask_for_size(size);
         match reg {
             StreamReg::CtlSts => {
@@ -475,16 +482,6 @@ fn read_u64(mem: &mut dyn MemoryBus, addr: u64) -> u64 {
     let mut buf = [0u8; 8];
     mem.read_physical(addr, &mut buf);
     u64::from_le_bytes(buf)
-}
-
-fn mask_for_size(size: usize) -> u64 {
-    match size {
-        1 => 0xFF,
-        2 => 0xFFFF,
-        4 => 0xFFFF_FFFF,
-        8 => 0xFFFF_FFFF_FFFF_FFFF,
-        _ => 0xFFFF_FFFF_FFFF_FFFF,
-    }
 }
 
 #[cfg(test)]
