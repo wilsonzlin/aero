@@ -122,7 +122,7 @@ is invalid. Use the wasm-compatible form:
 CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS="... -C link-arg=--threads=<n>"
 ```
 
-Avoid setting linker thread caps via **global `RUSTFLAGS`**, e.g.:
+Avoid setting linker thread caps via **global `RUSTFLAGS`** (or `CARGO_ENCODED_RUSTFLAGS`), e.g.:
 
 ```bash
 # ⚠️ Avoid: breaks wasm builds because rust-lld doesn't understand -Wl,
