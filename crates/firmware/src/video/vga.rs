@@ -128,13 +128,18 @@ impl VgaDevice {
         attr: u8,
         window: TextWindow,
     ) {
-        let cols = BiosDataArea::read_screen_cols(mem);
+        let cols = BiosDataArea::read_screen_cols(mem).max(1);
         let rows = u16::from(BiosDataArea::read_text_rows(mem).max(1));
         let base = self.text_base_for_page(mem, page);
-        let top_row = window.top_row as u16;
-        let top_col = window.top_col as u16;
-        let bottom_row = window.bottom_row.min((rows - 1) as u8) as u16;
-        let bottom_col = window.bottom_col.min((cols - 1) as u8) as u16;
+
+        let bottom_row = u16::from(window.bottom_row).min(rows.saturating_sub(1));
+        let bottom_col = u16::from(window.bottom_col).min(cols.saturating_sub(1));
+        let top_row = u16::from(window.top_row)
+            .min(rows.saturating_sub(1))
+            .min(bottom_row);
+        let top_col = u16::from(window.top_col)
+            .min(cols.saturating_sub(1))
+            .min(bottom_col);
 
         let lines = lines as u16;
         let window_rows = bottom_row - top_row + 1;
@@ -176,13 +181,18 @@ impl VgaDevice {
         attr: u8,
         window: TextWindow,
     ) {
-        let cols = BiosDataArea::read_screen_cols(mem);
+        let cols = BiosDataArea::read_screen_cols(mem).max(1);
         let rows = u16::from(BiosDataArea::read_text_rows(mem).max(1));
         let base = self.text_base_for_page(mem, page);
-        let top_row = window.top_row as u16;
-        let top_col = window.top_col as u16;
-        let bottom_row = window.bottom_row.min((rows - 1) as u8) as u16;
-        let bottom_col = window.bottom_col.min((cols - 1) as u8) as u16;
+
+        let bottom_row = u16::from(window.bottom_row).min(rows.saturating_sub(1));
+        let bottom_col = u16::from(window.bottom_col).min(cols.saturating_sub(1));
+        let top_row = u16::from(window.top_row)
+            .min(rows.saturating_sub(1))
+            .min(bottom_row);
+        let top_col = u16::from(window.top_col)
+            .min(cols.saturating_sub(1))
+            .min(bottom_col);
 
         let lines = lines as u16;
         let window_rows = bottom_row - top_row + 1;
