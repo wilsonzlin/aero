@@ -236,8 +236,9 @@ impl AhciController {
         // AHCI PI (Ports Implemented) is a hardware strap indicating which ports exist in the HBA.
         // It should not depend on whether a drive is currently attached.
         //
-        // Guests (including Windows' storahci) enumerate ports using this bitmask, then check per-
-        // port status registers (e.g. PxSSTS) to determine whether a device is present.
+        // Guests (including Windows' inbox AHCI drivers like `msahci.sys` / `storahci.sys`)
+        // enumerate ports using this bitmask, then check per-port status registers (e.g. PxSSTS)
+        // to determine whether a device is present.
         let ports = self.ports.len();
         if ports >= 32 {
             u32::MAX
