@@ -46,9 +46,10 @@ It has been removed in favor of the single canonical `UsbPassthroughBridge` WASM
 `crates/aero-wasm/src/lib.rs` that uses `aero_usb::passthrough::{UsbHostAction, UsbHostCompletion}`
 with `serde_wasm_bindgen`.
 
-Note: `crates/emulator` contains a legacy UHCI + passthrough model used by native/emulator tests. Per
-[ADR 0015](./adr/0015-canonical-usb-stack.md), the browser/WASM runtime
-uses `aero-usb` + `aero-wasm` + `web/` and should not grow a parallel USB stack in `crates/emulator`.
+Note: `crates/emulator` consumes `crates/aero-usb` via a thin integration layer (PCI/PortIO wiring +
+compatibility re-exports) for native/emulator tests. Per [ADR 0015](./adr/0015-canonical-usb-stack.md),
+the browser/WASM runtime uses `aero-usb` + `aero-wasm` + `web/` and should not grow a parallel USB
+stack in `crates/emulator`.
 
 ---
 
