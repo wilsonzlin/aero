@@ -10,7 +10,7 @@ use axum::{
 use tempfile::tempdir;
 use tower::ServiceExt;
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cors_preflight_max_age_is_configurable_for_bytes_and_metadata() {
     let dir = tempdir().expect("tempdir");
     tokio::fs::write(dir.path().join("test.img"), b"Hello, world!")
@@ -46,7 +46,7 @@ async fn cors_preflight_max_age_is_configurable_for_bytes_and_metadata() {
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cors_multi_origin_allowlist_echoes_allowed_origin_and_omits_disallowed() {
     let dir = tempdir().expect("tempdir");
     tokio::fs::write(dir.path().join("test.img"), b"Hello, world!")
@@ -111,7 +111,7 @@ async fn cors_multi_origin_allowlist_echoes_allowed_origin_and_omits_disallowed(
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn max_range_bytes_enforced_on_both_images_endpoints() {
     let dir = tempdir().expect("tempdir");
     tokio::fs::write(dir.path().join("test.img"), b"Hello, world!")
@@ -143,7 +143,7 @@ async fn max_range_bytes_enforced_on_both_images_endpoints() {
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn public_cache_max_age_is_configurable() {
     let dir = tempdir().expect("tempdir");
     tokio::fs::write(dir.path().join("test.img"), b"Hello, world!")

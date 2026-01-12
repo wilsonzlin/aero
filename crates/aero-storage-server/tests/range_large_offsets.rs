@@ -23,7 +23,7 @@ const HIGH_OFFSET: u64 = FOUR_GIB + 123; // 2^32 + 123
 const SENTINEL_HIGH: &[u8] = b"AERO_RANGE_4GB";
 const SENTINEL_END: &[u8] = b"AERO_RANGE_END";
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn http_range_supports_offsets_beyond_4gib_and_suffix_ranges() {
     let dir = tempdir().expect("tempdir");
     let path = dir.path().join("large.img");

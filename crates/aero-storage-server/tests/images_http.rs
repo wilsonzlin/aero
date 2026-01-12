@@ -30,7 +30,7 @@ async fn setup_app(max_total_bytes: u64) -> (axum::Router, tempfile::TempDir) {
     (router_with_state(state), dir)
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn get_without_range_returns_full_body() {
     let (app, _dir) = setup_app(1024).await;
 
@@ -69,7 +69,7 @@ async fn get_without_range_returns_full_body() {
     assert_eq!(&body[..], b"Hello, world!");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn overly_long_image_id_is_rejected_with_404() {
     let (app, dir) = setup_app(1024).await;
 
@@ -108,7 +108,7 @@ async fn overly_long_image_id_is_rejected_with_404() {
     assert_eq!(res.status(), StatusCode::NOT_FOUND);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn request_with_cookie_is_not_publicly_cacheable() {
     let (app, _dir) = setup_app(1024).await;
 
@@ -131,7 +131,7 @@ async fn request_with_cookie_is_not_publicly_cacheable() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn head_without_range_returns_headers_only() {
     let (app, _dir) = setup_app(1024).await;
 
@@ -156,7 +156,7 @@ async fn head_without_range_returns_headers_only() {
     assert!(body.is_empty());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn range_single_byte_returns_206() {
     let (app, _dir) = setup_app(1024).await;
 
@@ -183,7 +183,7 @@ async fn range_single_byte_returns_206() {
     assert_eq!(&body[..], b"H");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn range_with_if_range_matching_etag_returns_206() {
     let (app, _dir) = setup_app(1024).await;
 
@@ -222,7 +222,7 @@ async fn range_with_if_range_matching_etag_returns_206() {
     assert_eq!(&body[..], b"H");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn range_with_if_range_mismatch_returns_200() {
     let (app, _dir) = setup_app(1024).await;
 
@@ -244,7 +244,7 @@ async fn range_with_if_range_mismatch_returns_200() {
     assert_eq!(&body[..], b"Hello, world!");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn range_unsatisfiable_returns_416_with_content_range_star() {
     let (app, _dir) = setup_app(1024).await;
 
@@ -267,7 +267,7 @@ async fn range_unsatisfiable_returns_416_with_content_range_star() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn range_multiple_is_rejected_with_416() {
     let (app, _dir) = setup_app(1024).await;
 
@@ -290,7 +290,7 @@ async fn range_multiple_is_rejected_with_416() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn range_abuse_guard_returns_413() {
     let (app, _dir) = setup_app(1).await;
 
@@ -309,7 +309,7 @@ async fn range_abuse_guard_returns_413() {
     assert_eq!(res.status(), StatusCode::PAYLOAD_TOO_LARGE);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn range_header_too_large_returns_413() {
     let (app, _dir) = setup_app(1024).await;
 
@@ -331,7 +331,7 @@ async fn range_header_too_large_returns_413() {
     assert_eq!(res.status(), StatusCode::PAYLOAD_TOO_LARGE);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn range_header_too_many_ranges_returns_413() {
     let (app, _dir) = setup_app(1024).await;
 
@@ -353,7 +353,7 @@ async fn range_header_too_many_ranges_returns_413() {
     assert_eq!(res.status(), StatusCode::PAYLOAD_TOO_LARGE);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cors_preflight_allows_range() {
     let (app, _dir) = setup_app(1024).await;
 
@@ -382,7 +382,7 @@ async fn cors_preflight_allows_range() {
 }
 
 #[cfg(unix)]
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn symlink_escape_is_blocked() {
     use std::os::unix::fs::symlink;
 

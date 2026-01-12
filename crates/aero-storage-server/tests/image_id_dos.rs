@@ -10,7 +10,7 @@ use axum::{
 use http_body_util::BodyExt;
 use tower::ServiceExt;
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn extremely_long_image_id_does_not_bloat_error_body() {
     let dir = tempfile::tempdir().unwrap();
     let store = Arc::new(LocalFsImageStore::new(dir.path()));

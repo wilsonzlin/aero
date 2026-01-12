@@ -46,7 +46,7 @@ mod tests {
 
     use crate::{http, metrics::Metrics, store::LocalFsImageStore};
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn metrics_endpoint_smoke_test() {
         let store = Arc::new(LocalFsImageStore::new("."));
         let metrics = Arc::new(Metrics::new());

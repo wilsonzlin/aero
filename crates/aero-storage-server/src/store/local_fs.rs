@@ -368,7 +368,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn open_range_returns_expected_bytes_for_random_ranges() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
@@ -409,7 +409,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn open_range_supports_offsets_beyond_4gib() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();

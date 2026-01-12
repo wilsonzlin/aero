@@ -73,7 +73,7 @@ async fn setup_app() -> (axum::Router, tempfile::TempDir) {
     (aero_storage_server::app(state), dir)
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn get_image_data_with_invalid_etag_does_not_panic_and_uses_fallback_etag() {
     let (app, _dir) = setup_app().await;
 
@@ -114,7 +114,7 @@ async fn get_image_data_with_invalid_etag_does_not_panic_and_uses_fallback_etag(
     assert!(body.is_empty());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn get_image_meta_with_invalid_etag_does_not_panic_and_uses_fallback_etag() {
     let (app, _dir) = setup_app().await;
 
@@ -154,7 +154,7 @@ async fn get_image_meta_with_invalid_etag_does_not_panic_and_uses_fallback_etag(
     assert_eq!(res.status(), StatusCode::NOT_MODIFIED);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn unquoted_store_etag_is_sanitized_to_fallback_etag() {
     #[derive(Clone)]
     struct UnquotedEtagStore {

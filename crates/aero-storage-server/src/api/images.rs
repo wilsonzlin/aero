@@ -333,7 +333,7 @@ mod tests {
         assert!(!response.etag.is_empty());
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn image_id_path_len_guard_rejects_pathological_raw_segments() {
         let store = std::sync::Arc::new(crate::store::LocalFsImageStore::new("."));
         let state = AppState::new(store);

@@ -114,7 +114,7 @@ fn setup_app(store: Arc<dyn ImageStore>) -> axum::Router {
     aero_storage_server::app(AppState::new(store))
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn invalid_store_etag_with_newline_falls_back_for_bytes_endpoint_and_allows_304() {
     let last_modified = UNIX_EPOCH + Duration::from_secs(1_000) + Duration::from_nanos(456);
     let store = Arc::new(InvalidEtagStore::new(
@@ -162,7 +162,7 @@ async fn invalid_store_etag_with_newline_falls_back_for_bytes_endpoint_and_allow
     assert!(body.is_empty());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn invalid_unquoted_store_etag_falls_back_for_meta_endpoint_and_json_body() {
     let last_modified = UNIX_EPOCH + Duration::from_secs(2_000);
     let store = Arc::new(InvalidEtagStore::new(
@@ -210,7 +210,7 @@ async fn invalid_unquoted_store_etag_falls_back_for_meta_endpoint_and_json_body(
     assert_eq!(res.status(), StatusCode::NOT_MODIFIED);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn non_ascii_store_etag_falls_back_for_bytes_endpoint_and_allows_304() {
     let last_modified = UNIX_EPOCH + Duration::from_secs(3_000);
     let store = Arc::new(InvalidEtagStore::new(
@@ -253,7 +253,7 @@ async fn non_ascii_store_etag_falls_back_for_bytes_endpoint_and_allows_304() {
     assert_eq!(res.status(), StatusCode::NOT_MODIFIED);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn oversized_store_etag_falls_back_for_bytes_endpoint() {
     let last_modified = UNIX_EPOCH + Duration::from_secs(4_000);
     let oversized = format!("\"{}\"", "a".repeat(2000));

@@ -101,7 +101,7 @@ fn setup_app(store: Arc<dyn ImageStore>) -> axum::Router {
     aero_storage_server::app(AppState::new(store))
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn invalid_store_content_type_does_not_panic_and_uses_fallback_content_type() {
     let store = Arc::new(InvalidContentTypeStore::new(
         "test.img",

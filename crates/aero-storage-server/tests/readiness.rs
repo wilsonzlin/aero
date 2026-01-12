@@ -10,7 +10,7 @@ use axum::{
 use http_body_util::BodyExt;
 use tower::ServiceExt;
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn readyz_returns_200_when_store_is_healthy() {
     let dir = tempfile::tempdir().expect("tempdir");
 
@@ -56,7 +56,7 @@ async fn readyz_returns_200_when_store_is_healthy() {
     assert_eq!(parsed["status"], "ok");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn readyz_returns_non_200_when_manifest_is_invalid() {
     let dir = tempfile::tempdir().expect("tempdir");
 
@@ -92,7 +92,7 @@ async fn readyz_returns_non_200_when_manifest_is_invalid() {
     assert_eq!(parsed["status"], "error");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn readyz_returns_non_200_when_manifest_has_invalid_etag() {
     let dir = tempfile::tempdir().expect("tempdir");
 
@@ -135,7 +135,7 @@ async fn readyz_returns_non_200_when_manifest_has_invalid_etag() {
     assert_eq!(parsed["status"], "error");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn readyz_returns_non_200_when_manifest_has_invalid_last_modified() {
     let dir = tempfile::tempdir().expect("tempdir");
 

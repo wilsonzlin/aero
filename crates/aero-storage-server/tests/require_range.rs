@@ -26,7 +26,7 @@ async fn setup_app(require_range: bool) -> (axum::Router, tempfile::TempDir) {
     (router_with_state(state), dir)
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn require_range_rejects_get_without_range_header() {
     let (app, _dir) = setup_app(true).await;
 
@@ -59,7 +59,7 @@ async fn require_range_rejects_get_without_range_header() {
     assert!(body.is_empty());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn require_range_allows_valid_range_requests() {
     let (app, _dir) = setup_app(true).await;
 

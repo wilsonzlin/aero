@@ -125,7 +125,7 @@ fn setup_app(store: Arc<dyn ImageStore>) -> axum::Router {
     router_with_state(state)
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn if_range_http_date_at_or_after_last_modified_allows_range() {
     let last_modified = UNIX_EPOCH + Duration::from_secs(1_000_000);
     let if_range = httpdate::fmt_http_date(last_modified + Duration::from_secs(60));
@@ -164,7 +164,7 @@ async fn if_range_http_date_at_or_after_last_modified_allows_range() {
     assert_eq!(&body[..], b"H");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn if_range_http_date_ignores_subsecond_precision() {
     let last_modified = UNIX_EPOCH + Duration::from_secs(1_000_000) + Duration::from_nanos(456);
     let if_range = httpdate::fmt_http_date(last_modified);
@@ -199,7 +199,7 @@ async fn if_range_http_date_ignores_subsecond_precision() {
     assert_eq!(&body[..], b"H");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn if_range_http_date_before_last_modified_ignores_range() {
     let last_modified = UNIX_EPOCH + Duration::from_secs(1_000_000);
     let if_range = httpdate::fmt_http_date(last_modified - Duration::from_secs(60));
@@ -238,7 +238,7 @@ async fn if_range_http_date_before_last_modified_ignores_range() {
     assert_eq!(&body[..], b"Hello, world!");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn if_none_match_takes_precedence_over_if_modified_since() {
     let last_modified = UNIX_EPOCH + Duration::from_secs(1_000_000);
     let earlier = httpdate::fmt_http_date(last_modified - Duration::from_secs(60));

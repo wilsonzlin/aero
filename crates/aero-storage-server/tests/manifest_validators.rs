@@ -40,7 +40,7 @@ async fn setup_app_with_manifest() -> (axum::Router, tempfile::TempDir) {
     (aero_storage_server::app(state), dir)
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn manifest_provided_etag_and_last_modified_are_used_for_bytes_endpoint() {
     let (app, _dir) = setup_app_with_manifest().await;
 
@@ -86,7 +86,7 @@ async fn manifest_provided_etag_and_last_modified_are_used_for_bytes_endpoint() 
     assert!(body.is_empty());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn manifest_provided_etag_and_last_modified_are_used_for_meta_endpoint() {
     let (app, _dir) = setup_app_with_manifest().await;
 
@@ -129,7 +129,7 @@ async fn manifest_provided_etag_and_last_modified_are_used_for_meta_endpoint() {
     assert_eq!(res.status(), StatusCode::NOT_MODIFIED);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn manifest_last_modified_drives_if_modified_since_for_bytes_endpoint() {
     let (app, _dir) = setup_app_with_manifest().await;
 
@@ -166,7 +166,7 @@ async fn manifest_last_modified_drives_if_modified_since_for_bytes_endpoint() {
     assert!(body.is_empty());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn manifest_last_modified_drives_if_modified_since_for_meta_endpoint() {
     let (app, _dir) = setup_app_with_manifest().await;
 

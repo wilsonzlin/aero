@@ -9,7 +9,7 @@ use std::sync::Arc;
 use tempfile::tempdir;
 use tower::ServiceExt;
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cors_origin_override_is_applied_to_metadata_and_bytes_endpoints() {
     let dir = tempdir().expect("tempdir");
     tokio::fs::write(dir.path().join("test.img"), b"Hello, world!")
@@ -57,7 +57,7 @@ async fn cors_origin_override_is_applied_to_metadata_and_bytes_endpoints() {
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cors_preflight_for_metadata_endpoints_allows_if_none_match() {
     let dir = tempdir().expect("tempdir");
     tokio::fs::write(dir.path().join("test.img"), b"Hello, world!")
@@ -116,7 +116,7 @@ async fn cors_preflight_for_metadata_endpoints_allows_if_none_match() {
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cors_headers_are_present_on_rejected_pathological_image_ids() {
     let dir = tempdir().expect("tempdir");
     tokio::fs::write(dir.path().join("test.img"), b"Hello, world!")

@@ -22,7 +22,7 @@ async fn spawn_server(image_root: &std::path::Path) -> (SocketAddr, tokio::task:
     (addr, handle)
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn list_images_from_manifest() {
     let tmp = TempDir::new().unwrap();
     let image_path = tmp.path().join("win7.img");
@@ -75,7 +75,7 @@ async fn list_images_from_manifest() {
     handle.abort();
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn get_image_meta_has_correct_size() {
     let tmp = TempDir::new().unwrap();
     let image_path = tmp.path().join("disk.img");
@@ -109,7 +109,7 @@ async fn get_image_meta_has_correct_size() {
     handle.abort();
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn overly_long_image_id_meta_is_rejected_with_400() {
     let tmp = TempDir::new().unwrap();
 

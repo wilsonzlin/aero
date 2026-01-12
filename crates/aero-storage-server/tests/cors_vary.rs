@@ -20,7 +20,7 @@ fn has_vary_token(headers: &axum::http::HeaderMap, token: &str) -> bool {
         .any(|t| t == token)
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn public_cors_does_not_vary_on_origin_for_bytes_get_and_head() {
     let dir = tempdir().expect("tempdir");
     tokio::fs::write(dir.path().join("test.img"), b"Hello, world!")
@@ -49,7 +49,7 @@ async fn public_cors_does_not_vary_on_origin_for_bytes_get_and_head() {
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn explicit_cors_origin_includes_vary_origin_for_bytes() {
     let dir = tempdir().expect("tempdir");
     tokio::fs::write(dir.path().join("test.img"), b"Hello, world!")
@@ -78,7 +78,7 @@ async fn explicit_cors_origin_includes_vary_origin_for_bytes() {
     assert!(has_vary_token(resp.headers(), "origin"));
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn preflight_includes_origin_and_acr_vary_tokens_when_origin_specific() {
     let dir = tempdir().expect("tempdir");
     tokio::fs::write(dir.path().join("test.img"), b"Hello, world!")

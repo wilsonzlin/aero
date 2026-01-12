@@ -65,7 +65,7 @@ async fn setup_app() -> (axum::Router, tempfile::TempDir) {
     (aero_storage_server::app(state), dir)
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn get_image_meta_with_if_none_match_returns_304() {
     let (app, _dir) = setup_app().await;
 
@@ -99,7 +99,7 @@ async fn get_image_meta_with_if_none_match_returns_304() {
     assert_eq!(res.status(), StatusCode::NOT_MODIFIED);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn get_image_data_with_if_none_match_returns_304() {
     let (app, _dir) = setup_app().await;
 
@@ -138,7 +138,7 @@ async fn get_image_data_with_if_none_match_returns_304() {
     assert!(body.is_empty());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn head_image_data_includes_etag_last_modified_and_accept_ranges() {
     let (app, _dir) = setup_app().await;
 

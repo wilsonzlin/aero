@@ -36,7 +36,7 @@ async fn setup_app_with_fs_store(require_range: bool) -> (axum::Router, tempfile
     (router_with_state(state), dir)
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn require_range_rejects_unsupported_range_unit() {
     let (app, _dir) = setup_app_with_fs_store(true).await;
 
@@ -161,7 +161,7 @@ impl ImageStore for CountingStore {
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn require_range_if_range_mismatch_returns_412_and_does_not_open_range() {
     let store = Arc::new(CountingStore::new("test.img", b"Hello, world!"));
     let open_range_calls = store.open_range_calls.clone();

@@ -863,7 +863,7 @@ mod tests {
     use std::sync::Arc;
     use tower::ServiceExt;
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn image_id_path_len_guard_intercepts_pathological_raw_segments() {
         let dir = tempfile::tempdir().unwrap();
         let store = Arc::new(LocalFsImageStore::new(dir.path()));

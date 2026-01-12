@@ -61,7 +61,7 @@ fn assert_common_headers(headers: &axum::http::HeaderMap) {
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn range_matrix_no_range_single_suffix_unsatisfiable() {
     let (app, _dir, fixture) = setup_app().await;
 
@@ -265,7 +265,7 @@ async fn range_matrix_no_range_single_suffix_unsatisfiable() {
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cors_preflight_allows_range_request_header() {
     let (app, _dir, _fixture) = setup_app().await;
 

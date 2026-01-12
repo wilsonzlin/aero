@@ -9,7 +9,7 @@ use axum::{
 };
 use tower::ServiceExt;
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn metrics_disabled_returns_404() {
     let store = Arc::new(LocalFsImageStore::new("."));
     let app = aero_storage_server::app(AppState::new(store).with_disable_metrics(true));
@@ -28,7 +28,7 @@ async fn metrics_disabled_returns_404() {
     assert!(resp.headers().get("access-control-allow-origin").is_none());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn metrics_auth_token_is_required() {
     let store = Arc::new(LocalFsImageStore::new("."));
     let token = "test-token";

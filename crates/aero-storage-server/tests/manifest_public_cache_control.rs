@@ -35,7 +35,7 @@ async fn setup_app_with_private_image() -> (axum::Router, tempfile::TempDir) {
     (router_with_state(state), dir)
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn private_manifest_image_without_credentials_is_not_publicly_cacheable() {
     let (app, _dir) = setup_app_with_private_image().await;
 
@@ -62,7 +62,7 @@ async fn private_manifest_image_without_credentials_is_not_publicly_cacheable() 
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn private_manifest_image_range_without_credentials_is_not_publicly_cacheable() {
     let (app, _dir) = setup_app_with_private_image().await;
 

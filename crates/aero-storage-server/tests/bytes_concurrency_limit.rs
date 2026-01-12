@@ -102,7 +102,7 @@ async fn spawn_server(app: axum::Router) -> (SocketAddr, tokio::task::JoinHandle
     (addr, handle)
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn bytes_concurrency_limit_rejects_second_in_flight_request() {
     let (open_tx, open_rx) = oneshot::channel::<()>();
     let (release_tx, release_rx) = oneshot::channel::<()>();

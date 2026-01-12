@@ -121,7 +121,7 @@ mod tests {
 
     use crate::{store::LocalFsImageStore, AppState};
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn version_endpoint_smoke_test() {
         let store = Arc::new(LocalFsImageStore::new("."));
         let app = crate::app(AppState::new(store));
