@@ -277,8 +277,10 @@ In the outer `aero-snapshot` `DEVICES` table, HDA audio state is stored under:
 - Guest-visible device state (HDA registers, CORB/RIRB, stream descriptors, codec verb-visible state, DMA progress, etc).
 - Host sample rates used by the device model (e.g. HDA `output_rate_hz` / `capture_sample_rate_hz`) so resampler state can be restored deterministically.
 - Host-side ring **indices** (but not audio content):
-  - playback ring `readFrameIndex` / `writeFrameIndex` + `capacityFrames`
-  - helpers: `aero_platform::audio::worklet_bridge::{WorkletBridge, InterleavedRingBuffer}::snapshot_state()`
+   - playback ring `readFrameIndex` / `writeFrameIndex` + `capacityFrames`
+   - helpers:
+     - `WorkletBridge::snapshot_state()` / `WorkletBridge::restore_state()` (wasm; the real SAB-backed ring)
+     - `InterleavedRingBuffer::snapshot_state()` (pure Rust helper used by unit tests)
 
 Implementation references:
 
