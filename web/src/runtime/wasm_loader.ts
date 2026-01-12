@@ -77,6 +77,31 @@ export type VirtioNetPciBridgeHandle = {
     free(): void;
 };
 
+export type VirtioSndPciBridgeHandle = {
+    mmio_read(offset: number, size: number): number;
+    mmio_write(offset: number, size: number, value: number): void;
+    poll(): void;
+    driver_ok(): boolean;
+    irq_asserted(): boolean;
+    /**
+     * Attach/detach the shared AudioWorklet output ring buffer (producer side).
+     *
+     * `ringSab` is treated as an `Option` on the Rust side; pass `undefined` (or
+     * `null` in older bindings) to detach.
+     */
+    set_audio_ring_buffer(ringSab: SharedArrayBuffer | null | undefined, capacityFrames: number, channelCount: number): void;
+    set_host_sample_rate_hz(rate: number): void;
+    /**
+     * Attach/detach the shared microphone capture ring buffer (consumer side).
+     *
+     * `ringSab` is treated as an `Option` on the Rust side; pass `undefined` (or
+     * `null` in older bindings) to detach.
+     */
+    set_mic_ring_buffer(ringSab?: SharedArrayBuffer | null): void;
+    set_capture_sample_rate_hz(rate: number): void;
+    free(): void;
+};
+
 export interface WasmApi {
     greet(name: string): string;
     add(a: number, b: number): number;
@@ -324,6 +349,13 @@ export interface WasmApi {
         ioIpcSab: SharedArrayBuffer,
         transportMode?: unknown,
     ) => VirtioNetPciBridgeHandle;
+
+    /**
+     * Guest-visible virtio-snd PCI bridge (virtio-pci modern, BAR0 MMIO).
+     *
+     * Optional until all deployed WASM builds include virtio-snd support.
+     */
+    VirtioSndPciBridge?: new (guestBase: number, guestSize: number) => VirtioSndPciBridgeHandle;
 
     /**
      * Legacy i8042 (PS/2 keyboard + mouse) controller bridge.
@@ -1203,6 +1235,7 @@ function toApi(mod: RawWasmModule): WasmApi {
         UsbPassthroughBridge: mod.UsbPassthroughBridge,
         UhciRuntime: mod.UhciRuntime,
         VirtioNetPciBridge: mod.VirtioNetPciBridge,
+        VirtioSndPciBridge: mod.VirtioSndPciBridge,
         WebUsbUhciPassthroughHarness: mod.WebUsbUhciPassthroughHarness,
         UhciControllerBridge: mod.UhciControllerBridge,
         E1000Bridge: mod.E1000Bridge,

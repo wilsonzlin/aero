@@ -238,6 +238,10 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
         &mut self.output
     }
 
+    pub fn capture_source_mut(&mut self) -> &mut I {
+        &mut self.capture_source
+    }
+
     pub fn capture_telemetry(&self) -> CaptureTelemetry {
         self.capture_telemetry
     }

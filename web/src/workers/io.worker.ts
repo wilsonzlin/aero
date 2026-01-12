@@ -55,6 +55,7 @@ import { PciTestDevice } from "../io/devices/pci_test_device";
 import { UhciPciDevice, type UhciControllerBridgeLike } from "../io/devices/uhci";
 import { VirtioInputPciFunction, hidUsageToLinuxKeyCode, type VirtioInputPciDeviceLike } from "../io/devices/virtio_input";
 import { VirtioNetPciDevice } from "../io/devices/virtio_net";
+import { VirtioSndPciDevice } from "../io/devices/virtio_snd";
 import { UART_COM1, Uart16550, type SerialOutputSink } from "../io/devices/uart16550";
 import { AeroIpcIoServer, type AeroIpcIoDiskResult, type AeroIpcIoDispatchTarget } from "../io/ipc/aero_ipc_io";
 import { defaultReadValue } from "../io/ipc/io_protocol";
@@ -159,6 +160,7 @@ import {
   vmSnapshotDeviceKindToId,
 } from "./vm_snapshot_wasm";
 import { tryInitVirtioNetDevice } from "./io_virtio_net_init";
+import { tryInitVirtioSndDevice } from "./io_virtio_snd_init";
 import { registerVirtioInputKeyboardPciFunction } from "./io_virtio_input_register";
 import { VmTimebase } from "../runtime/vm_timebase";
 
@@ -423,6 +425,7 @@ let usbPassthroughDebugTimer: number | undefined;
 let usbUhciHarnessRuntime: WebUsbUhciHarnessRuntime | null = null;
 let uhciDevice: UhciPciDevice | null = null;
 let virtioNetDevice: VirtioNetPciDevice | null = null;
+let virtioSndDevice: VirtioSndPciDevice | null = null;
 type UhciControllerBridge = InstanceType<NonNullable<WasmApi["UhciControllerBridge"]>>;
 let uhciControllerBridge: UhciControllerBridge | null = null;
 
@@ -1878,6 +1881,60 @@ function maybeInitVirtioNetDevice(): void {
   }
 }
 
+function maybeInitVirtioSndDevice(): void {
+  if (virtioSndDevice) return;
+  const dev = tryInitVirtioSndDevice({
+    api: wasmApi,
+    mgr: deviceManager,
+    guestBase,
+    guestSize,
+  });
+  if (!dev) return;
+  virtioSndDevice = dev;
+
+  // Apply any existing ring-buffer attachments if HDA audio is unavailable.
+  // This keeps audio functional in WASM builds that omit the HDA controller.
+  if (!hdaDevice) {
+    if (micRingBuffer) {
+      try {
+        dev.setMicRingBuffer(micRingBuffer);
+        if (micSampleRate > 0) dev.setCaptureSampleRateHz(micSampleRate);
+      } catch {
+        // ignore
+      }
+    }
+    if (audioOutRingBuffer) {
+      try {
+        dev.setAudioRingBuffer({
+          ringBuffer: audioOutRingBuffer,
+          capacityFrames: audioOutCapacityFrames,
+          channelCount: audioOutChannelCount,
+          dstSampleRateHz: audioOutDstSampleRate,
+        });
+      } catch {
+        // ignore
+      }
+    }
+  } else {
+    // Ensure the virtio-snd bridge is detached from shared rings when HDA is active.
+    try {
+      dev.setMicRingBuffer(null);
+    } catch {
+      // ignore
+    }
+    try {
+      dev.setAudioRingBuffer({
+        ringBuffer: null,
+        capacityFrames: audioOutCapacityFrames,
+        channelCount: audioOutChannelCount,
+        dstSampleRateHz: audioOutDstSampleRate,
+      });
+    } catch {
+      // ignore
+    }
+  }
+}
+
 type UsbPassthroughDemo = InstanceType<NonNullable<WasmApi["UsbPassthroughDemo"]>>;
 let usbDemo: UsbPassthroughDemoRuntime | null = null;
 let usbDemoApi: UsbPassthroughDemo | null = null;
@@ -2350,12 +2407,28 @@ function attachMicRingBuffer(ringBuffer: SharedArrayBuffer | null, sampleRate?: 
   micRingBuffer = ringBuffer;
   micSampleRate = (sampleRate ?? 0) | 0;
 
-  const dev = hdaDevice;
-  if (dev) {
+  // Microphone ring buffers are SPSC (single-consumer). Prefer the legacy HDA
+  // model when available; fall back to virtio-snd in builds that omit HDA.
+  const hda = hdaDevice;
+  const snd = virtioSndDevice;
+  if (hda) {
+    hda.setMicRingBuffer(ringBuffer);
     if (ringBuffer && micSampleRate > 0) {
-      dev.setCaptureSampleRateHz(micSampleRate);
+      hda.setCaptureSampleRateHz(micSampleRate);
     }
-    dev.setMicRingBuffer(ringBuffer);
+    // Ensure we never have two consumers racing the mic ring.
+    if (snd) {
+      try {
+        snd.setMicRingBuffer(null);
+      } catch {
+        // ignore
+      }
+    }
+  } else if (snd) {
+    snd.setMicRingBuffer(ringBuffer);
+    if (ringBuffer && micSampleRate > 0) {
+      snd.setCaptureSampleRateHz(micSampleRate);
+    }
   }
 }
 
@@ -2553,11 +2626,16 @@ function attachAudioRingBuffer(
   audioOutTelemetryNextMs = 0;
 
   // If the guest HDA device is active, attach/detach the ring buffer so the WASM-side
-  // HDA controller can stream directly into the AudioWorklet output ring.
-  const dev = hdaDevice;
-  if (dev) {
+  // HDA controller can stream directly into the AudioWorklet output ring. In WASM
+  // builds without HDA, fall back to virtio-snd.
+  //
+  // NOTE: the playback ring is SPSC (single-producer). Ensure only one guest
+  // audio device is attached to it at a time.
+  const hda = hdaDevice;
+  const snd = virtioSndDevice;
+  if (hda) {
     try {
-      dev.setAudioRingBuffer({
+      hda.setAudioRingBuffer({
         ringBuffer,
         capacityFrames: audioOutCapacityFrames,
         channelCount: audioOutChannelCount,
@@ -2565,6 +2643,29 @@ function attachAudioRingBuffer(
       });
     } catch (err) {
       console.warn("[io.worker] HDA setAudioRingBuffer failed:", err);
+    }
+    if (snd) {
+      try {
+        snd.setAudioRingBuffer({
+          ringBuffer: null,
+          capacityFrames: audioOutCapacityFrames,
+          channelCount: audioOutChannelCount,
+          dstSampleRateHz: audioOutDstSampleRate,
+        });
+      } catch {
+        // ignore
+      }
+    }
+  } else if (snd) {
+    try {
+      snd.setAudioRingBuffer({
+        ringBuffer,
+        capacityFrames: audioOutCapacityFrames,
+        channelCount: audioOutChannelCount,
+        dstSampleRateHz: audioOutDstSampleRate,
+      });
+    } catch (err) {
+      console.warn("[io.worker] virtio-snd setAudioRingBuffer failed:", err);
     }
   }
 }
@@ -3005,6 +3106,7 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
         if (!virtioNetDevice) maybeInitE1000Device();
         maybeInitVirtioInput();
         maybeInitHdaDevice();
+        maybeInitVirtioSndDevice();
 
         maybeInitWasmHidGuestBridge();
         if (!api.UhciRuntime && api.UsbPassthroughDemo && !usbDemo) {
@@ -3236,6 +3338,7 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
       if (!virtioNetDevice) maybeInitE1000Device();
       maybeInitVirtioInput();
       maybeInitHdaDevice();
+      maybeInitVirtioSndDevice();
 
       const uart = new Uart16550(UART_COM1, serialSink);
       mgr.registerPortIo(uart.basePort, uart.basePort + 7, uart);

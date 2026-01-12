@@ -1,0 +1,189 @@
+import { describe, expect, it, vi } from "vitest";
+
+import { MmioBus } from "../bus/mmio.ts";
+import { PciBus } from "../bus/pci.ts";
+import { PortIoBus } from "../bus/portio.ts";
+import type { IrqSink } from "../device_manager";
+import { VirtioSndPciDevice, type VirtioSndPciBridgeLike } from "./virtio_snd";
+
+function cfgAddr(dev: number, fn: number, off: number): number {
+  // PCI config mechanism #1 (I/O ports 0xCF8/0xCFC).
+  return (0x8000_0000 | ((dev & 0x1f) << 11) | ((fn & 0x07) << 8) | (off & 0xfc)) >>> 0;
+}
+
+function makeCfgIo(portBus: PortIoBus) {
+  return {
+    readU32(dev: number, fn: number, off: number): number {
+      portBus.write(0x0cf8, 4, cfgAddr(dev, fn, off));
+      return portBus.read(0x0cfc, 4) >>> 0;
+    },
+    readU16(dev: number, fn: number, off: number): number {
+      portBus.write(0x0cf8, 4, cfgAddr(dev, fn, off));
+      return portBus.read(0x0cfc + (off & 3), 2) & 0xffff;
+    },
+    readU8(dev: number, fn: number, off: number): number {
+      portBus.write(0x0cf8, 4, cfgAddr(dev, fn, off));
+      return portBus.read(0x0cfc + (off & 3), 1) & 0xff;
+    },
+    writeU32(dev: number, fn: number, off: number, value: number): void {
+      portBus.write(0x0cf8, 4, cfgAddr(dev, fn, off));
+      portBus.write(0x0cfc, 4, value >>> 0);
+    },
+  };
+}
+
+function readCapFieldU32(cfg: ReturnType<typeof makeCfgIo>, dev: number, fn: number, capOff: number, off: number): number {
+  return cfg.readU32(dev, fn, capOff + off) >>> 0;
+}
+
+function probeMmio64BarSize(cfg: ReturnType<typeof makeCfgIo>, dev: number, fn: number, barOff: number): bigint {
+  cfg.writeU32(dev, fn, barOff, 0xffff_ffff);
+  cfg.writeU32(dev, fn, barOff + 4, 0xffff_ffff);
+  const maskLow = cfg.readU32(dev, fn, barOff) >>> 0;
+  const maskHigh = cfg.readU32(dev, fn, barOff + 4) >>> 0;
+  const mask = (BigInt(maskHigh) << 32n) | BigInt(maskLow & 0xffff_fff0);
+  return (~mask + 1n) & 0xffff_ffff_ffff_ffffn;
+}
+
+describe("io/devices/virtio_snd PCI config", () => {
+  it("exposes canonical virtio vendor-specific capabilities at 0x40/0x50/0x64/0x74", () => {
+    const portBus = new PortIoBus();
+    const mmioBus = new MmioBus();
+    const pciBus = new PciBus(portBus, mmioBus);
+    pciBus.registerToPortBus();
+
+    const bridge: VirtioSndPciBridgeLike = {
+      mmio_read: () => 0,
+      mmio_write: () => {},
+      poll: () => {},
+      driver_ok: () => false,
+      irq_asserted: () => false,
+      set_audio_ring_buffer: () => {},
+      set_host_sample_rate_hz: () => {},
+      set_mic_ring_buffer: () => {},
+      set_capture_sample_rate_hz: () => {},
+      free: () => {},
+    };
+    const irqSink: IrqSink = { raiseIrq: () => {}, lowerIrq: () => {} };
+    const dev = new VirtioSndPciDevice({ bridge, irqSink });
+    expect(dev.bdf).toEqual({ bus: 0, device: 9, function: 0 });
+
+    // Register at the canonical BDF via the device-provided defaults.
+    const addr = pciBus.registerDevice(dev);
+    expect(addr).toEqual(dev.bdf);
+
+    const cfg = makeCfgIo(portBus);
+
+    // Vendor/device IDs: 1AF4:1059
+    expect(cfg.readU32(9, 0, 0x00)).toBe(0x1059_1af4);
+
+    // Subsystem vendor: 1AF4; subsystem ID: 0x0019
+    expect(cfg.readU32(9, 0, 0x2c)).toBe(0x0019_1af4);
+
+    // Revision ID.
+    expect(cfg.readU8(9, 0, 0x08)).toBe(0x01);
+
+    // Class code: 0x04_01_00 (Multimedia, Audio).
+    expect(cfg.readU8(9, 0, 0x09)).toBe(0x00); // prog-if
+    expect(cfg.readU8(9, 0, 0x0a)).toBe(0x01); // subclass
+    expect(cfg.readU8(9, 0, 0x0b)).toBe(0x04); // base class
+
+    // Interrupt pin should be INTA#.
+    expect(cfg.readU8(9, 0, 0x3d)).toBe(0x01);
+
+    // BAR0: 64-bit MMIO with size 0x4000.
+    const bar0Low = cfg.readU32(9, 0, 0x10);
+    const bar0High = cfg.readU32(9, 0, 0x14);
+    expect(bar0Low & 0x0f).toBe(0x04);
+    expect(bar0High).toBe(0x0000_0000);
+    const size = probeMmio64BarSize(cfg, 9, 0, 0x10);
+    expect(size).toBe(0x4000n);
+
+    // Capability list present.
+    const status = cfg.readU16(9, 0, 0x06);
+    expect(status & 0x0010).toBe(0x0010);
+    expect(cfg.readU8(9, 0, 0x34)).toBe(0x40);
+
+    // Cap chain: 0x40 -> 0x50 -> 0x64 -> 0x74 -> 0x00
+    expect(cfg.readU8(9, 0, 0x40)).toBe(0x09);
+    expect(cfg.readU8(9, 0, 0x41)).toBe(0x50);
+    expect(cfg.readU8(9, 0, 0x50)).toBe(0x09);
+    expect(cfg.readU8(9, 0, 0x51)).toBe(0x64);
+    expect(cfg.readU8(9, 0, 0x64)).toBe(0x09);
+    expect(cfg.readU8(9, 0, 0x65)).toBe(0x74);
+    expect(cfg.readU8(9, 0, 0x74)).toBe(0x09);
+    expect(cfg.readU8(9, 0, 0x75)).toBe(0x00);
+
+    // COMMON_CFG @ 0x40 (cap_len=16)
+    expect(cfg.readU8(9, 0, 0x42)).toBe(16);
+    expect(cfg.readU8(9, 0, 0x43)).toBe(1); // cfg_type
+    expect(cfg.readU8(9, 0, 0x44)).toBe(0); // bar
+    expect(readCapFieldU32(cfg, 9, 0, 0x40, 8)).toBe(0x0000);
+    expect(readCapFieldU32(cfg, 9, 0, 0x40, 12)).toBe(0x0100);
+
+    // NOTIFY_CFG @ 0x50 (cap_len=20, notify_off_multiplier=4)
+    expect(cfg.readU8(9, 0, 0x52)).toBe(20);
+    expect(cfg.readU8(9, 0, 0x53)).toBe(2);
+    expect(cfg.readU8(9, 0, 0x54)).toBe(0);
+    expect(readCapFieldU32(cfg, 9, 0, 0x50, 8)).toBe(0x1000);
+    expect(readCapFieldU32(cfg, 9, 0, 0x50, 12)).toBe(0x0100);
+    expect(readCapFieldU32(cfg, 9, 0, 0x50, 16)).toBe(4);
+
+    // ISR_CFG @ 0x64 (cap_len=16)
+    expect(cfg.readU8(9, 0, 0x66)).toBe(16);
+    expect(cfg.readU8(9, 0, 0x67)).toBe(3);
+    expect(cfg.readU8(9, 0, 0x68)).toBe(0);
+    expect(readCapFieldU32(cfg, 9, 0, 0x64, 8)).toBe(0x2000);
+    expect(readCapFieldU32(cfg, 9, 0, 0x64, 12)).toBe(0x0020);
+
+    // DEVICE_CFG @ 0x74 (cap_len=16)
+    expect(cfg.readU8(9, 0, 0x76)).toBe(16);
+    expect(cfg.readU8(9, 0, 0x77)).toBe(4);
+    expect(cfg.readU8(9, 0, 0x78)).toBe(0);
+    expect(readCapFieldU32(cfg, 9, 0, 0x74, 8)).toBe(0x3000);
+    expect(readCapFieldU32(cfg, 9, 0, 0x74, 12)).toBe(0x0100);
+  });
+});
+
+describe("io/devices/virtio_snd BAR0 MMIO", () => {
+  it("returns 0 and ignores writes for undefined BAR0 MMIO offsets (contract v1)", () => {
+    const mmioRead = vi.fn(() => 0x1234_5678);
+    const mmioWrite = vi.fn();
+    const bridge: VirtioSndPciBridgeLike = {
+      mmio_read: mmioRead,
+      mmio_write: mmioWrite,
+      poll: vi.fn(),
+      driver_ok: vi.fn(() => false),
+      irq_asserted: vi.fn(() => false),
+      set_audio_ring_buffer: vi.fn(),
+      set_host_sample_rate_hz: vi.fn(),
+      set_mic_ring_buffer: vi.fn(),
+      set_capture_sample_rate_hz: vi.fn(),
+      free: vi.fn(),
+    };
+
+    const irqSink: IrqSink = { raiseIrq: vi.fn(), lowerIrq: vi.fn() };
+    const dev = new VirtioSndPciDevice({ bridge, irqSink });
+
+    // Defined region (COMMON_CFG): should forward to bridge.
+    expect(dev.mmioRead(0, 0x0000n, 4)).toBe(0x1234_5678);
+    expect(mmioRead).toHaveBeenCalledWith(0, 4);
+
+    mmioRead.mockClear();
+    // Undefined region within BAR0: must read as 0 and must not hit the bridge.
+    expect(dev.mmioRead(0, 0x0400n, 4)).toBe(0);
+    expect(mmioRead).not.toHaveBeenCalled();
+
+    // Crossing a defined region boundary counts as undefined for the requested width.
+    expect(dev.mmioRead(0, 0x00ffn, 4)).toBe(0);
+
+    // Undefined writes are ignored (no bridge call).
+    dev.mmioWrite(0, 0x0400n, 4, 0xdead_beef);
+    expect(mmioWrite).not.toHaveBeenCalled();
+
+    // Defined writes are forwarded.
+    dev.mmioWrite(0, 0x0000n, 4, 0xdead_beef);
+    expect(mmioWrite).toHaveBeenCalledWith(0, 4, 0xdead_beef);
+  });
+});
+
