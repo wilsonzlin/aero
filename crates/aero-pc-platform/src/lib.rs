@@ -745,6 +745,7 @@ impl PciBarMmioHandler for PcNvmeMmioBar {
         MmioHandler::write(&mut *self.nvme.borrow_mut(), offset, size, value);
     }
 }
+
 struct VirtioPciBar0Mmio {
     dev: Rc<RefCell<VirtioPciDevice>>,
 }

@@ -1,4 +1,4 @@
-use aero_devices::pci::profile::NVME_CONTROLLER;
+use aero_devices::pci::{profile::NVME_CONTROLLER, PciDevice as _};
 use aero_devices_nvme::NvmeController;
 use aero_pc_platform::PcPlatform;
 use aero_storage::{MemBackend, RawDisk, SECTOR_SIZE};
@@ -115,6 +115,17 @@ fn pc_platform_nvme_mmio_is_gated_by_pci_command_mem() {
         cap_lo, 0xffff_ffff,
         "CAP should be readable when COMMAND.MEM is enabled"
     );
+    assert_ne!(
+        pc.nvme
+            .as_ref()
+            .expect("nvme should be enabled")
+            .borrow()
+            .config()
+            .command()
+            & 0x2,
+        0,
+        "platform MMIO handler should sync COMMAND.MEM into the NVMe device model"
+    );
 
     // Disable Memory Space Enable (COMMAND.MEM = bit 1).
     write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0000);
@@ -171,13 +182,14 @@ fn pc_platform_nvme_bar0_relocation_is_honored_by_mmio_routing() {
     assert_ne!(new_base, old_base);
 
     // Program the new BAR0 base (64-bit BAR: low dword then high dword).
+    let bar0_flags = read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x10) & 0xF;
     write_cfg_u32(
         &mut pc,
         bdf.bus,
         bdf.device,
         bdf.function,
         0x10,
-        (new_base as u32) | 0x4,
+        (new_base as u32) | bar0_flags,
     );
     write_cfg_u32(
         &mut pc,
