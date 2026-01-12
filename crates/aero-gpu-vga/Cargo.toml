@@ -5,6 +5,10 @@ edition = "2021"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
+aero-io-snapshot = { path = "../aero-io-snapshot", optional = true }
+
+[features]
+default = []
+io-snapshot = ["dep:aero-io-snapshot"]
 
 [dev-dependencies]
-

@@ -59,7 +59,7 @@ use aero_devices_storage::pci_ide::{Piix3IdePciDevice, PRIMARY_PORTS, SECONDARY_
 use aero_io_snapshot::io::state::IoSnapshot;
 use aero_io_snapshot::io::storage::state::DiskControllersSnapshot;
 pub use aero_devices_input::Ps2MouseButton;
-use aero_gpu_vga::{PortIO as _, VgaDevice};
+use aero_gpu_vga::{DisplayOutput as _, PortIO as _, VgaDevice};
 use aero_interrupts::apic::{IOAPIC_MMIO_BASE, IOAPIC_MMIO_SIZE, LAPIC_MMIO_BASE, LAPIC_MMIO_SIZE};
 use aero_net_backend::{FrameRing, L2TunnelRingBackend, L2TunnelRingBackendStats, NetworkBackend};
 use aero_net_e1000::E1000Device;
@@ -122,8 +122,9 @@ pub struct MachineConfig {
     pub enable_ide: bool,
     /// Whether to attach the legacy VGA/VBE device model.
     ///
-    /// When enabled, guest physical accesses to the legacy VGA window (`0xA0000..0xC0000`) and
-    /// VGA/VBE port I/O are routed to an [`aero_gpu_vga::VgaDevice`].
+    /// When enabled, guest physical accesses to the legacy VGA window (`0xA0000..0xC0000`), the
+    /// Bochs VBE linear framebuffer (LFB) at [`aero_gpu_vga::SVGA_LFB_BASE`], and VGA/VBE port I/O
+    /// (`0x3B0..0x3E0` and `0x01CE/0x01CF`) are routed to an [`aero_gpu_vga::VgaDevice`].
     pub enable_vga: bool,
     /// Whether to attach a COM1 16550 serial device at `0x3F8`.
     pub enable_serial: bool,
@@ -1106,6 +1107,12 @@ pub struct Machine {
     mmu: aero_mmu::Mmu,
     mem: SystemMemory,
     io: IoPortBus,
+
+    // Host-facing display scanout cache (populated by `display_present`).
+    display_fb: Vec<u32>,
+    display_width: u32,
+    display_height: u32,
+
     // ---------------------------------------------------------------------
     // Host-managed storage overlay references (snapshot DISKS section)
     // ---------------------------------------------------------------------
@@ -1201,6 +1208,9 @@ impl Machine {
             mmu: aero_mmu::Mmu::new(),
             mem,
             io: IoPortBus::new(),
+            display_fb: Vec::new(),
+            display_width: 0,
+            display_height: 0,
             ahci_port0_overlay: None,
             ide_secondary_master_atapi_overlay: None,
             ide_primary_master_overlay: None,
@@ -1506,6 +1516,42 @@ impl Machine {
     /// Debug/testing helper: write to an I/O port.
     pub fn io_write(&mut self, port: u16, size: u8, value: u32) {
         self.io.write(port, size, value);
+    }
+
+    // ---------------------------------------------------------------------
+    // Host-facing display API (VGA/VBE scanout)
+    // ---------------------------------------------------------------------
+
+    /// Re-render the emulated display into the machine's host-visible framebuffer cache.
+    ///
+    /// When VGA is disabled, this clears the cached framebuffer and returns `(0, 0)` resolution.
+    pub fn display_present(&mut self) {
+        let Some(vga) = &self.vga else {
+            self.display_fb.clear();
+            self.display_width = 0;
+            self.display_height = 0;
+            return;
+        };
+
+        let mut vga = vga.borrow_mut();
+        vga.present();
+        let (w, h) = vga.get_resolution();
+        let fb = vga.get_framebuffer();
+
+        self.display_width = w;
+        self.display_height = h;
+        self.display_fb.resize(fb.len(), 0);
+        self.display_fb.copy_from_slice(fb);
+    }
+
+    /// Return the last framebuffer produced by [`Machine::display_present`].
+    pub fn display_framebuffer(&self) -> &[u32] {
+        &self.display_fb
+    }
+
+    /// Return the last resolution produced by [`Machine::display_present`].
+    pub fn display_resolution(&self) -> (u32, u32) {
+        (self.display_width, self.display_height)
     }
 
     /// Returns the shared manual clock backing platform timer devices, if the PC platform is
@@ -2115,6 +2161,9 @@ impl Machine {
         self.ps2_mouse_buttons = 0;
         self.guest_time.reset();
         self.restored_disk_overlays = None;
+        self.display_fb.clear();
+        self.display_width = 0;
+        self.display_height = 0;
 
         // Reset chipset lines.
         self.chipset.a20().set_enabled(false);
@@ -3162,14 +3211,12 @@ impl snapshot::SnapshotSource for Machine {
             data: self.serial_log.clone(),
         });
 
-        // VGA/SVGA (VBE) state (registers + full VRAM).
+        // VGA/VBE (registers + full VRAM).
         if let Some(vga) = &self.vga {
-            devices.push(snapshot::DeviceState {
-                id: snapshot::DeviceId::VGA,
-                version: aero_gpu_vga::VgaSnapshotV1::VERSION,
-                flags: 0,
-                data: vga.borrow().encode_snapshot_v1(),
-            });
+            devices.push(snapshot::io_snapshot_bridge::device_state_from_io_snapshot(
+                snapshot::DeviceId::VGA,
+                &*vga.borrow(),
+            ));
         }
 
         // Optional PC platform devices.
@@ -3475,45 +3522,47 @@ impl snapshot::SnapshotTarget for Machine {
             }
         }
 
-        // VGA/SVGA (VBE) state.
+        // VGA/VBE.
         if let Some(state) = by_id.remove(&snapshot::DeviceId::VGA) {
-            if state.version == aero_gpu_vga::VgaSnapshotV1::VERSION {
+            // Ensure a VGA device exists before restoring.
+            let vga: Rc<RefCell<VgaDevice>> = match &self.vga {
+                Some(vga) => vga.clone(),
+                None => {
+                    let vga = Rc::new(RefCell::new(VgaDevice::new()));
+                    self.vga = Some(vga.clone());
+
+                    // Port mappings are part of machine wiring, not the snapshot payload, so
+                    // install the default VGA port ranges now.
+                    self.io.register_range(0x3C0, 0x20, Box::new(VgaPortIo { dev: vga.clone() }));
+                    self.io.register_shared_range(0x01CE, 2, {
+                        let vga = vga.clone();
+                        move |_port| Box::new(VgaPortIo { dev: vga.clone() })
+                    });
+
+                    // MMIO mappings persist in the physical bus; install legacy + LFB.
+                    self.mem.map_mmio_once(0xA0000, 0x20000, {
+                        let vga = vga.clone();
+                        move || Box::new(VgaMmio { base: 0xA0000, dev: vga })
+                    });
+                    let lfb_base = u64::from(aero_gpu_vga::SVGA_LFB_BASE);
+                    let lfb_len = vga.borrow().vram().len() as u64;
+                    self.mem.map_mmio_once(lfb_base, lfb_len, {
+                        let vga = vga.clone();
+                        move || Box::new(VgaMmio { base: lfb_base, dev: vga })
+                    });
+
+                    vga
+                }
+            };
+
+            // Prefer the io-snapshot (`VGAD`) encoding; fall back to the legacy `VgaSnapshotV1`
+            // payload for backward compatibility.
+            let io_result = {
+                let mut vga_mut = vga.borrow_mut();
+                snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(&state, &mut *vga_mut)
+            };
+            if io_result.is_err() && state.version == aero_gpu_vga::VgaSnapshotV1::VERSION {
                 if let Ok(vga_snap) = aero_gpu_vga::VgaSnapshotV1::decode(&state.data) {
-                    // Ensure a VGA device exists before restoring.
-                    let vga: Rc<RefCell<VgaDevice>> = match &self.vga {
-                        Some(vga) => vga.clone(),
-                        None => {
-                            let vga = Rc::new(RefCell::new(VgaDevice::new()));
-                            self.vga = Some(vga.clone());
-
-                            // Port mappings are part of machine wiring, not the snapshot payload,
-                            // so install the default VGA port ranges now.
-                            self.io.register_range(
-                                0x3C0,
-                                0x20,
-                                Box::new(VgaPortIo { dev: vga.clone() }),
-                            );
-                            self.io.register_shared_range(0x01CE, 2, {
-                                let vga = vga.clone();
-                                move |_port| Box::new(VgaPortIo { dev: vga.clone() })
-                            });
-
-                            // MMIO mappings persist in the physical bus; install legacy + LFB.
-                            self.mem.map_mmio_once(0xA0000, 0x20000, {
-                                let vga = vga.clone();
-                                move || Box::new(VgaMmio { base: 0xA0000, dev: vga })
-                            });
-                            let lfb_base = u64::from(aero_gpu_vga::SVGA_LFB_BASE);
-                            let lfb_len = vga.borrow().vram().len() as u64;
-                            self.mem.map_mmio_once(lfb_base, lfb_len, {
-                                let vga = vga.clone();
-                                move || Box::new(VgaMmio { base: lfb_base, dev: vga })
-                            });
-
-                            vga
-                        }
-                    };
-
                     vga.borrow_mut().restore_snapshot_v1(&vga_snap);
                 }
             }
@@ -3963,6 +4012,9 @@ impl snapshot::SnapshotTarget for Machine {
         self.ps2_mouse_buttons = 0xFF;
         self.reset_latch.clear();
         self.assist = AssistContext::default();
+        self.display_fb.clear();
+        self.display_width = 0;
+        self.display_height = 0;
         // Snapshots restore RAM and paging control registers, but do not capture the MMU's internal
         // translation cache (TLB). Since `Machine` keeps a persistent MMU to warm the TLB across
         // batches, reset it here so restored execution never uses stale translations.

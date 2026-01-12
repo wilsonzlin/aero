@@ -270,6 +270,9 @@ dependencies = [
 [[package]]
 name = "aero-gpu-vga"
 version = "0.1.0"
+dependencies = [
+ "aero-io-snapshot",
+]
 
 [[package]]
 name = "aero-gpu-wasm"

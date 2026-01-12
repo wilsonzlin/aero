@@ -24,6 +24,13 @@ use palette::{rgb_to_rgba_u32, Rgb};
 pub use snapshot::{VgaSnapshotError, VgaSnapshotV1};
 use text_font::FONT8X8_BASIC;
 
+#[cfg(feature = "io-snapshot")]
+use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
+#[cfg(feature = "io-snapshot")]
+use aero_io_snapshot::io::state::{
+    IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
+};
+
 /// Physical base address for the Bochs VBE linear framebuffer (LFB).
 ///
 /// QEMU/Bochs typically map the LFB at 0xE0000000.
@@ -37,6 +44,15 @@ pub const VGA_VRAM_SIZE: usize = 4 * VGA_PLANE_SIZE;
 
 /// Default total VRAM for the device (16MiB), enough for common VBE modes.
 pub const DEFAULT_VRAM_SIZE: usize = 16 * 1024 * 1024;
+
+fn io_all_ones(size: usize) -> u32 {
+    match size {
+        1 => 0xFF,
+        2 => 0xFFFF,
+        4 => 0xFFFF_FFFF,
+        _ => 0xFFFF_FFFF,
+    }
+}
 
 /// Host-facing display trait (to be shared with the rest of the emulator).
 pub trait DisplayOutput {
@@ -272,12 +288,12 @@ impl VgaDevice {
     /// Reads from guest physical memory, covering legacy VGA windows and the VBE linear framebuffer.
     pub fn mem_read_u8(&mut self, paddr: u32) -> u8 {
         if let Some(offset) = self.map_svga_lfb(paddr) {
-            return self.vram.get(offset).copied().unwrap_or(0);
+            return self.vram.get(offset).copied().unwrap_or(0xFF);
         }
 
         if self.vbe.enabled() {
             if let Some(offset) = self.map_svga_bank_window(paddr) {
-                return self.vram.get(offset).copied().unwrap_or(0);
+                return self.vram.get(offset).copied().unwrap_or(0xFF);
             }
         }
 
@@ -292,7 +308,7 @@ impl VgaDevice {
             }
         }
 
-        0
+        0xFF
     }
 
     /// Writes to guest physical memory, covering legacy VGA windows and the VBE linear framebuffer.
@@ -976,7 +992,7 @@ impl PortIO for VgaDevice {
             (0x01CE, 2) => self.vbe_index as u32,
             (0x01CF, 2) => self.vbe_read_reg(self.vbe_index) as u32,
 
-            _ => 0,
+            _ => io_all_ones(size),
         }
     }
 
@@ -1050,6 +1066,240 @@ impl PortIO for VgaDevice {
 
             _ => {}
         }
+    }
+}
+
+#[cfg(feature = "io-snapshot")]
+impl IoSnapshot for VgaDevice {
+    const DEVICE_ID: [u8; 4] = *b"VGAD";
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
+
+    fn save_state(&self) -> Vec<u8> {
+        const TAG_MISC_OUTPUT: u16 = 1;
+        const TAG_SEQUENCER_INDEX: u16 = 2;
+        const TAG_SEQUENCER: u16 = 3;
+        const TAG_GRAPHICS_INDEX: u16 = 4;
+        const TAG_GRAPHICS: u16 = 5;
+        const TAG_CRTC_INDEX: u16 = 6;
+        const TAG_CRTC: u16 = 7;
+        const TAG_ATTRIBUTE_INDEX: u16 = 8;
+        const TAG_ATTRIBUTE_FLIP_FLOP: u16 = 9;
+        const TAG_ATTRIBUTE: u16 = 10;
+        const TAG_INPUT_STATUS1_VRETRACE: u16 = 11;
+        const TAG_PEL_MASK: u16 = 12;
+        const TAG_DAC_WRITE_INDEX: u16 = 13;
+        const TAG_DAC_WRITE_SUBINDEX: u16 = 14;
+        const TAG_DAC_READ_INDEX: u16 = 15;
+        const TAG_DAC_READ_SUBINDEX: u16 = 16;
+        const TAG_DAC: u16 = 17;
+        const TAG_VBE_INDEX: u16 = 18;
+        const TAG_VBE_REGS: u16 = 19;
+        const TAG_VRAM: u16 = 20;
+        const TAG_LATCHES: u16 = 21;
+
+        let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
+
+        w.field_u8(TAG_MISC_OUTPUT, self.misc_output);
+
+        w.field_u8(TAG_SEQUENCER_INDEX, self.sequencer_index);
+        w.field_bytes(TAG_SEQUENCER, self.sequencer.to_vec());
+
+        w.field_u8(TAG_GRAPHICS_INDEX, self.graphics_index);
+        w.field_bytes(TAG_GRAPHICS, self.graphics.to_vec());
+
+        w.field_u8(TAG_CRTC_INDEX, self.crtc_index);
+        w.field_bytes(TAG_CRTC, self.crtc.to_vec());
+
+        w.field_u8(TAG_ATTRIBUTE_INDEX, self.attribute_index);
+        w.field_bool(TAG_ATTRIBUTE_FLIP_FLOP, self.attribute_flip_flop_data);
+        w.field_bytes(TAG_ATTRIBUTE, self.attribute.to_vec());
+        w.field_bool(TAG_INPUT_STATUS1_VRETRACE, self.input_status1_vretrace);
+
+        w.field_u8(TAG_PEL_MASK, self.pel_mask);
+        w.field_u8(TAG_DAC_WRITE_INDEX, self.dac_write_index);
+        w.field_u8(TAG_DAC_WRITE_SUBINDEX, self.dac_write_subindex);
+        w.field_u8(TAG_DAC_READ_INDEX, self.dac_read_index);
+        w.field_u8(TAG_DAC_READ_SUBINDEX, self.dac_read_subindex);
+
+        // Palette: pack as tightly as possible (RGB triplets).
+        let mut pal = Vec::with_capacity(256 * 3);
+        for rgb in &self.dac {
+            pal.push(rgb.r);
+            pal.push(rgb.g);
+            pal.push(rgb.b);
+        }
+        w.field_bytes(TAG_DAC, pal);
+
+        w.field_u16(TAG_VBE_INDEX, self.vbe_index);
+        w.field_bytes(
+            TAG_VBE_REGS,
+            Encoder::new()
+                .u16(self.vbe.xres)
+                .u16(self.vbe.yres)
+                .u16(self.vbe.bpp)
+                .u16(self.vbe.enable)
+                .u16(self.vbe.bank)
+                .u16(self.vbe.virt_width)
+                .u16(self.vbe.virt_height)
+                .u16(self.vbe.x_offset)
+                .u16(self.vbe.y_offset)
+                .finish(),
+        );
+
+        // VRAM is the main framebuffer backing store; include it verbatim for deterministic output.
+        w.field_bytes(TAG_VRAM, self.vram.clone());
+        w.field_bytes(TAG_LATCHES, self.latches.to_vec());
+
+        w.finish()
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
+        const TAG_MISC_OUTPUT: u16 = 1;
+        const TAG_SEQUENCER_INDEX: u16 = 2;
+        const TAG_SEQUENCER: u16 = 3;
+        const TAG_GRAPHICS_INDEX: u16 = 4;
+        const TAG_GRAPHICS: u16 = 5;
+        const TAG_CRTC_INDEX: u16 = 6;
+        const TAG_CRTC: u16 = 7;
+        const TAG_ATTRIBUTE_INDEX: u16 = 8;
+        const TAG_ATTRIBUTE_FLIP_FLOP: u16 = 9;
+        const TAG_ATTRIBUTE: u16 = 10;
+        const TAG_INPUT_STATUS1_VRETRACE: u16 = 11;
+        const TAG_PEL_MASK: u16 = 12;
+        const TAG_DAC_WRITE_INDEX: u16 = 13;
+        const TAG_DAC_WRITE_SUBINDEX: u16 = 14;
+        const TAG_DAC_READ_INDEX: u16 = 15;
+        const TAG_DAC_READ_SUBINDEX: u16 = 16;
+        const TAG_DAC: u16 = 17;
+        const TAG_VBE_INDEX: u16 = 18;
+        const TAG_VBE_REGS: u16 = 19;
+        const TAG_VRAM: u16 = 20;
+        const TAG_LATCHES: u16 = 21;
+
+        let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
+        r.ensure_device_major(Self::DEVICE_VERSION.major)?;
+
+        // Reset to a deterministic baseline.
+        *self = Self::new();
+
+        if let Some(v) = r.u8(TAG_MISC_OUTPUT)? {
+            self.misc_output = v;
+        }
+
+        if let Some(v) = r.u8(TAG_SEQUENCER_INDEX)? {
+            self.sequencer_index = v;
+        }
+        if let Some(buf) = r.bytes(TAG_SEQUENCER) {
+            if buf.len() != self.sequencer.len() {
+                return Err(SnapshotError::InvalidFieldEncoding("sequencer"));
+            }
+            self.sequencer.copy_from_slice(buf);
+        }
+
+        if let Some(v) = r.u8(TAG_GRAPHICS_INDEX)? {
+            self.graphics_index = v;
+        }
+        if let Some(buf) = r.bytes(TAG_GRAPHICS) {
+            if buf.len() != self.graphics.len() {
+                return Err(SnapshotError::InvalidFieldEncoding("graphics"));
+            }
+            self.graphics.copy_from_slice(buf);
+        }
+
+        if let Some(v) = r.u8(TAG_CRTC_INDEX)? {
+            self.crtc_index = v;
+        }
+        if let Some(buf) = r.bytes(TAG_CRTC) {
+            if buf.len() != self.crtc.len() {
+                return Err(SnapshotError::InvalidFieldEncoding("crtc"));
+            }
+            self.crtc.copy_from_slice(buf);
+        }
+
+        if let Some(v) = r.u8(TAG_ATTRIBUTE_INDEX)? {
+            self.attribute_index = v;
+        }
+        if let Some(v) = r.bool(TAG_ATTRIBUTE_FLIP_FLOP)? {
+            self.attribute_flip_flop_data = v;
+        }
+        if let Some(buf) = r.bytes(TAG_ATTRIBUTE) {
+            if buf.len() != self.attribute.len() {
+                return Err(SnapshotError::InvalidFieldEncoding("attribute"));
+            }
+            self.attribute.copy_from_slice(buf);
+        }
+        if let Some(v) = r.bool(TAG_INPUT_STATUS1_VRETRACE)? {
+            self.input_status1_vretrace = v;
+        }
+
+        if let Some(v) = r.u8(TAG_PEL_MASK)? {
+            self.pel_mask = v;
+        }
+        if let Some(v) = r.u8(TAG_DAC_WRITE_INDEX)? {
+            self.dac_write_index = v;
+        }
+        if let Some(v) = r.u8(TAG_DAC_WRITE_SUBINDEX)? {
+            self.dac_write_subindex = v;
+        }
+        if let Some(v) = r.u8(TAG_DAC_READ_INDEX)? {
+            self.dac_read_index = v;
+        }
+        if let Some(v) = r.u8(TAG_DAC_READ_SUBINDEX)? {
+            self.dac_read_subindex = v;
+        }
+        if let Some(buf) = r.bytes(TAG_DAC) {
+            if buf.len() != 256 * 3 {
+                return Err(SnapshotError::InvalidFieldEncoding("dac"));
+            }
+            for i in 0..256 {
+                let base = i * 3;
+                self.dac[i] = Rgb {
+                    r: buf[base],
+                    g: buf[base + 1],
+                    b: buf[base + 2],
+                };
+            }
+        }
+
+        if let Some(v) = r.u16(TAG_VBE_INDEX)? {
+            self.vbe_index = v;
+        }
+        if let Some(buf) = r.bytes(TAG_VBE_REGS) {
+            let mut d = Decoder::new(buf);
+            self.vbe.xres = d.u16()?;
+            self.vbe.yres = d.u16()?;
+            self.vbe.bpp = d.u16()?;
+            self.vbe.enable = d.u16()?;
+            self.vbe.bank = d.u16()?;
+            self.vbe.virt_width = d.u16()?;
+            self.vbe.virt_height = d.u16()?;
+            self.vbe.x_offset = d.u16()?;
+            self.vbe.y_offset = d.u16()?;
+            d.finish()?;
+        }
+
+        if let Some(buf) = r.bytes(TAG_VRAM) {
+            if buf.len() != self.vram.len() {
+                return Err(SnapshotError::InvalidFieldEncoding("vram"));
+            }
+            self.vram.copy_from_slice(buf);
+        }
+
+        if let Some(buf) = r.bytes(TAG_LATCHES) {
+            if buf.len() != self.latches.len() {
+                return Err(SnapshotError::InvalidFieldEncoding("latches"));
+            }
+            self.latches.copy_from_slice(buf);
+        }
+
+        // Output buffers are derived; force a re-render on the next `present()`.
+        self.width = 0;
+        self.height = 0;
+        self.front.clear();
+        self.back.clear();
+        self.dirty = true;
+
+        Ok(())
     }
 }
 
