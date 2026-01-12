@@ -29,43 +29,59 @@ test("D3D9 shader translation is persisted and skipped on next run", async ({}, 
         "--force-color-profile=srgb",
       ],
     });
-    const page = await context.newPage();
-    page.on("console", (msg) => logs.push(msg.text()));
+    try {
+      const page = await context.newPage();
+      page.on("console", (msg) => logs.push(msg.text()));
 
-    await page.goto(`${baseUrl}/web/gpu-worker-d3d9-shader-cache.html`);
-    await page.waitForFunction(() => (window as any).__d3d9ShaderCacheDemo !== undefined);
+      await page.goto(`${baseUrl}/web/gpu-worker-d3d9-shader-cache.html`);
+      await page.waitForFunction(() => (window as any).__d3d9ShaderCacheDemo !== undefined);
 
-    const result = await page.evaluate(() => (window as any).__d3d9ShaderCacheDemo);
-    await context.close();
+      const result = await page.evaluate(() => (window as any).__d3d9ShaderCacheDemo);
+      if (result?.error) {
+        throw new Error(`demo page failed: ${result.error}`);
+      }
 
-    if (result?.error) {
-      throw new Error(`demo page failed: ${result.error}\nlogs:\n${logs.join("\n")}`);
+      return {
+        translateCalls: Number(result.translateCalls),
+        persistentHits: Number(result.persistentHits),
+        persistentMisses: Number(result.persistentMisses),
+        cacheDisabled: Boolean(result.cacheDisabled),
+        backend: String(result.backend),
+        logs,
+      };
+    } catch (err) {
+      throw new Error(`${String(err)}\nlogs:\n${logs.join("\n")}`);
+    } finally {
+      try {
+        await context.close();
+      } catch {
+        // Ignore.
+      }
     }
-
-    return {
-      translateCalls: Number(result.translateCalls),
-      persistentHits: Number(result.persistentHits),
-      persistentMisses: Number(result.persistentMisses),
-      cacheDisabled: Boolean(result.cacheDisabled),
-      backend: String(result.backend),
-      logs,
-    };
   }
 
-  const first = await runOnce();
-  expect(first.backend).toBe("webgl2_wgpu");
-  if (first.cacheDisabled) {
-    test.skip(
-      true,
-      `persistent D3D9 shader cache is disabled/unavailable in this Chromium configuration\nlogs:\n${first.logs.join("\n")}`,
-    );
-  }
-  expect(first.translateCalls).toBeGreaterThan(0);
-  expect(first.persistentMisses).toBeGreaterThan(0);
+  try {
+    const first = await runOnce();
+    expect(first.backend).toBe("webgl2_wgpu");
+    if (first.cacheDisabled) {
+      test.skip(
+        true,
+        `persistent D3D9 shader cache is disabled/unavailable in this Chromium configuration\nlogs:\n${first.logs.join("\n")}`,
+      );
+    }
+    expect(first.translateCalls).toBeGreaterThan(0);
+    expect(first.persistentMisses).toBeGreaterThan(0);
 
-  const second = await runOnce();
-  expect(second.backend).toBe("webgl2_wgpu");
-  expect(second.translateCalls).toBe(0);
-  expect(second.persistentHits).toBeGreaterThan(0);
-  expect(second.persistentMisses).toBe(0);
+    const second = await runOnce();
+    expect(second.backend).toBe("webgl2_wgpu");
+    expect(second.translateCalls).toBe(0);
+    expect(second.persistentHits).toBeGreaterThan(0);
+    expect(second.persistentMisses).toBe(0);
+  } finally {
+    try {
+      fs.rmSync(userDataDir, { recursive: true, force: true });
+    } catch {
+      // Ignore cleanup failures; they are non-fatal.
+    }
+  }
 });
