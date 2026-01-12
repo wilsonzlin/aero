@@ -410,6 +410,44 @@ struct Device {
       sampler_states[stage][7] = 0u; // D3DSAMP_MIPFILTER
     }
 
+    // Texture stage state defaults (numeric values from d3d9types.h).
+    //
+    // These are fixed-function states and are not currently consumed by the
+    // AeroGPU shader pipeline, but keeping defaults allows GetTextureStageState
+    // and state blocks to behave deterministically.
+    //
+    // D3DTEXTUREOP:
+    // - DISABLE = 1
+    // - SELECTARG1 = 2
+    // - MODULATE = 4
+    //
+    // D3DTA_* source selector:
+    // - DIFFUSE = 0
+    // - TEXTURE = 2
+    constexpr uint32_t kD3dTssColorOp = 1u;
+    constexpr uint32_t kD3dTssColorArg1 = 2u;
+    constexpr uint32_t kD3dTssColorArg2 = 3u;
+    constexpr uint32_t kD3dTssAlphaOp = 4u;
+    constexpr uint32_t kD3dTssAlphaArg1 = 5u;
+    constexpr uint32_t kD3dTssAlphaArg2 = 6u;
+
+    constexpr uint32_t kD3dTopDisable = 1u;
+    constexpr uint32_t kD3dTopSelectArg1 = 2u;
+    constexpr uint32_t kD3dTopModulate = 4u;
+
+    constexpr uint32_t kD3dTaDiffuse = 0u;
+    constexpr uint32_t kD3dTaTexture = 2u;
+
+    for (uint32_t stage = 0; stage < 16; ++stage) {
+      const bool stage0 = (stage == 0);
+      texture_stage_states[stage][kD3dTssColorOp] = stage0 ? kD3dTopModulate : kD3dTopDisable;
+      texture_stage_states[stage][kD3dTssColorArg1] = kD3dTaTexture;
+      texture_stage_states[stage][kD3dTssColorArg2] = kD3dTaDiffuse;
+      texture_stage_states[stage][kD3dTssAlphaOp] = stage0 ? kD3dTopSelectArg1 : kD3dTopDisable;
+      texture_stage_states[stage][kD3dTssAlphaArg1] = kD3dTaTexture;
+      texture_stage_states[stage][kD3dTssAlphaArg2] = kD3dTaDiffuse;
+    }
+
     // Default stream source frequency is 1 (no instancing).
     for (uint32_t stream = 0; stream < 16; ++stream) {
       stream_source_freq[stream] = 1u;

@@ -128,6 +128,12 @@ struct StateBlock {
   std::bitset<16 * 16> sampler_state_mask{}; // stage * 16 + state
   std::array<uint32_t, 16 * 16> sampler_state_values{};
 
+  // Texture stage state (D3DTSS_*). Fixed-function and not currently consumed
+  // by the AeroGPU shader pipeline, but tracked for deterministic Get* queries
+  // and state blocks.
+  std::bitset<16 * 256> texture_stage_state_mask{}; // stage * 256 + state
+  std::array<uint32_t, 16 * 256> texture_stage_state_values{};
+
   // Texture bindings (pixel shader stages only; 0..15).
   std::bitset<16> texture_mask{};
   std::array<Resource*, 16> textures{};
@@ -2560,6 +2566,19 @@ inline void stateblock_record_sampler_state_locked(Device* dev, uint32_t stage, 
   StateBlock* sb = dev->recording_state_block;
   sb->sampler_state_mask.set(idx);
   sb->sampler_state_values[idx] = value;
+}
+
+inline void stateblock_record_texture_stage_state_locked(Device* dev, uint32_t stage, uint32_t state, uint32_t value) {
+  if (!dev || !dev->recording_state_block) {
+    return;
+  }
+  if (stage >= 16 || state >= 256) {
+    return;
+  }
+  const uint32_t idx = stage * 256u + state;
+  StateBlock* sb = dev->recording_state_block;
+  sb->texture_stage_state_mask.set(idx);
+  sb->texture_stage_state_values[idx] = value;
 }
 
 inline void stateblock_record_texture_locked(Device* dev, uint32_t stage, Resource* tex) {
@@ -9149,6 +9168,11 @@ static void stateblock_init_for_type_locked(Device* dev, StateBlock* sb, uint32_
         sb->sampler_state_mask.set(idx);
         sb->sampler_state_values[idx] = dev->sampler_states[stage][s];
       }
+      for (uint32_t s = 0; s < 256; ++s) {
+        const uint32_t idx = stage * 256u + s;
+        sb->texture_stage_state_mask.set(idx);
+        sb->texture_stage_state_values[idx] = dev->texture_stage_states[stage][s];
+      }
     }
 
     for (uint32_t i = 0; i < 4; ++i) {
@@ -9213,6 +9237,14 @@ static void stateblock_capture_locked(Device* dev, StateBlock* sb) {
       const uint32_t stage = idx / 16u;
       const uint32_t s = idx % 16u;
       sb->sampler_state_values[idx] = dev->sampler_states[stage][s];
+    }
+  }
+
+  for (uint32_t idx = 0; idx < 16u * 256u; ++idx) {
+    if (sb->texture_stage_state_mask.test(idx)) {
+      const uint32_t stage = idx / 256u;
+      const uint32_t s = idx % 256u;
+      sb->texture_stage_state_values[idx] = dev->texture_stage_states[stage][s];
     }
   }
 
@@ -9430,6 +9462,18 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
       cmd->state = s;
       cmd->value = value;
       stateblock_record_sampler_state_locked(dev, stage, s, value);
+    }
+
+    // Texture stage state (fixed function). No command emission; cache-only so
+    // GetTextureStageState + state blocks are deterministic.
+    for (uint32_t s = 0; s < 256; ++s) {
+      const uint32_t idx = stage * 256u + s;
+      if (!sb->texture_stage_state_mask.test(idx)) {
+        continue;
+      }
+      const uint32_t value = sb->texture_stage_state_values[idx];
+      dev->texture_stage_states[stage][s] = value;
+      stateblock_record_texture_stage_state_locked(dev, stage, s, value);
     }
   }
 
@@ -10007,7 +10051,9 @@ HRESULT device_set_texture_stage_state_impl(D3DDDI_HDEVICE hDevice, StageT stage
   }
   auto* dev = as_device(hDevice);
   std::lock_guard<std::mutex> lock(dev->mutex);
-  dev->texture_stage_states[st][ss] = d3d9_to_u32(value);
+  const uint32_t v = d3d9_to_u32(value);
+  dev->texture_stage_states[st][ss] = v;
+  stateblock_record_texture_stage_state_locked(dev, st, ss, v);
   return trace.ret(S_OK);
 }
 
