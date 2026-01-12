@@ -2,6 +2,7 @@
 
 use aero_gpu::aerogpu_executor::AllocTable;
 use aero_gpu::VecGuestMemory;
+use aero_gpu::{AeroGpuCommandProcessor, AeroGpuSubmissionAllocation};
 use aero_protocol::aerogpu::aerogpu_cmd as cmd;
 use aero_protocol::aerogpu::aerogpu_pci as pci;
 use aero_protocol::aerogpu::aerogpu_ring as ring;
@@ -178,6 +179,18 @@ fn fuzz_ring_layouts(ring_bytes: &[u8]) {
     }
 }
 
+fn fuzz_command_processor(
+    cmd_stream_bytes: &[u8],
+    allocations: Option<&[AeroGpuSubmissionAllocation]>,
+) {
+    let mut proc = AeroGpuCommandProcessor::new();
+    let _ = proc.process_submission_with_allocations(
+        cmd_stream_bytes,
+        allocations,
+        /*signal_fence=*/ 1,
+    );
+}
+
 fuzz_target!(|data: &[u8]| {
     if data.len() > MAX_INPUT_SIZE_BYTES {
         return;
@@ -223,6 +236,7 @@ fuzz_target!(|data: &[u8]| {
     cmd_patched[cmd_hdr_off + 4..cmd_hdr_off + 8]
         .copy_from_slice(&(cmd::AerogpuCmdHdr::SIZE_BYTES as u32).to_le_bytes());
     fuzz_cmd_stream(&cmd_patched);
+    fuzz_command_processor(&cmd_patched, None);
 
     // Synthetic command stream: a fixed sequence of minimal valid packets using the fuzzer input
     // as filler. This ensures we consistently exercise a broad set of typed decoders.
@@ -325,7 +339,7 @@ fuzz_target!(|data: &[u8]| {
     );
 
     // CREATE_BUFFER (fixed-size)
-    let _ = write_pkt_hdr(
+    let create_buffer_off = write_pkt_hdr(
         cmd_synth.as_mut_slice(),
         &mut off,
         cmd::AerogpuCmdOpcode::CreateBuffer as u32,
@@ -333,7 +347,7 @@ fuzz_target!(|data: &[u8]| {
     );
 
     // CREATE_TEXTURE2D (fixed-size)
-    let _ = write_pkt_hdr(
+    let create_texture_off = write_pkt_hdr(
         cmd_synth.as_mut_slice(),
         &mut off,
         cmd::AerogpuCmdOpcode::CreateTexture2d as u32,
@@ -341,7 +355,7 @@ fuzz_target!(|data: &[u8]| {
     );
 
     // DESTROY_RESOURCE (fixed-size)
-    let _ = write_pkt_hdr(
+    let destroy_resource_off = write_pkt_hdr(
         cmd_synth.as_mut_slice(),
         &mut off,
         cmd::AerogpuCmdOpcode::DestroyResource as u32,
@@ -349,7 +363,7 @@ fuzz_target!(|data: &[u8]| {
     );
 
     // RESOURCE_DIRTY_RANGE (fixed-size)
-    let _ = write_pkt_hdr(
+    let dirty_range_off = write_pkt_hdr(
         cmd_synth.as_mut_slice(),
         &mut off,
         cmd::AerogpuCmdOpcode::ResourceDirtyRange as u32,
@@ -626,7 +640,7 @@ fuzz_target!(|data: &[u8]| {
     );
 
     // PRESENT (fixed-size)
-    let _ = write_pkt_hdr(
+    let present_off = write_pkt_hdr(
         cmd_synth.as_mut_slice(),
         &mut off,
         cmd::AerogpuCmdOpcode::Present as u32,
@@ -634,7 +648,7 @@ fuzz_target!(|data: &[u8]| {
     );
 
     // PRESENT_EX (fixed-size)
-    let _ = write_pkt_hdr(
+    let present_ex_off = write_pkt_hdr(
         cmd_synth.as_mut_slice(),
         &mut off,
         cmd::AerogpuCmdOpcode::PresentEx as u32,
@@ -642,7 +656,7 @@ fuzz_target!(|data: &[u8]| {
     );
 
     // EXPORT_SHARED_SURFACE (fixed-size)
-    let _ = write_pkt_hdr(
+    let export_shared_off = write_pkt_hdr(
         cmd_synth.as_mut_slice(),
         &mut off,
         cmd::AerogpuCmdOpcode::ExportSharedSurface as u32,
@@ -650,7 +664,7 @@ fuzz_target!(|data: &[u8]| {
     );
 
     // IMPORT_SHARED_SURFACE (fixed-size)
-    let _ = write_pkt_hdr(
+    let import_shared_off = write_pkt_hdr(
         cmd_synth.as_mut_slice(),
         &mut off,
         cmd::AerogpuCmdOpcode::ImportSharedSurface as u32,
@@ -658,7 +672,7 @@ fuzz_target!(|data: &[u8]| {
     );
 
     // RELEASE_SHARED_SURFACE (fixed-size)
-    let _ = write_pkt_hdr(
+    let release_shared_off = write_pkt_hdr(
         cmd_synth.as_mut_slice(),
         &mut off,
         cmd::AerogpuCmdOpcode::ReleaseSharedSurface as u32,
@@ -698,6 +712,124 @@ fuzz_target!(|data: &[u8]| {
     );
 
     fuzz_cmd_stream(&cmd_synth);
+
+    // Also exercise the higher-level command processor's guest-input validation paths.
+    //
+    // Patch a few critical fields to be self-consistent so the processor can make progress past
+    // the first resource-creation packets.
+    let mut cmd_proc_synth = cmd_synth.clone();
+    let alloc_id = 1u32;
+    let buf_handle = 1u32;
+    let tex_handle = 2u32;
+    let alias_handle = 3u32;
+    let share_token = 0x1234_5678_9ABC_DEF0u64;
+    let allocs = [AeroGpuSubmissionAllocation {
+        alloc_id,
+        gpa: 0x2000,
+        size_bytes: 0x1000,
+    }];
+
+    if let Some(pkt) = create_buffer_off {
+        if let Some(v) = cmd_proc_synth.get_mut(pkt + 8..pkt + 12) {
+            v.copy_from_slice(&buf_handle.to_le_bytes());
+        }
+        if let Some(v) = cmd_proc_synth.get_mut(pkt + 16..pkt + 24) {
+            v.copy_from_slice(&64u64.to_le_bytes());
+        }
+        if let Some(v) = cmd_proc_synth.get_mut(pkt + 24..pkt + 28) {
+            v.copy_from_slice(&alloc_id.to_le_bytes());
+        }
+        if let Some(v) = cmd_proc_synth.get_mut(pkt + 28..pkt + 32) {
+            v.copy_from_slice(&0u32.to_le_bytes());
+        }
+    }
+
+    if let Some(pkt) = create_texture_off {
+        if let Some(v) = cmd_proc_synth.get_mut(pkt + 8..pkt + 12) {
+            v.copy_from_slice(&tex_handle.to_le_bytes());
+        }
+        if let Some(v) = cmd_proc_synth.get_mut(pkt + 16..pkt + 20) {
+            v.copy_from_slice(&(pci::AerogpuFormat::B8G8R8A8Unorm as u32).to_le_bytes());
+        }
+        if let Some(v) = cmd_proc_synth.get_mut(pkt + 20..pkt + 24) {
+            v.copy_from_slice(&4u32.to_le_bytes());
+        }
+        if let Some(v) = cmd_proc_synth.get_mut(pkt + 24..pkt + 28) {
+            v.copy_from_slice(&4u32.to_le_bytes());
+        }
+        if let Some(v) = cmd_proc_synth.get_mut(pkt + 28..pkt + 32) {
+            v.copy_from_slice(&1u32.to_le_bytes());
+        }
+        if let Some(v) = cmd_proc_synth.get_mut(pkt + 32..pkt + 36) {
+            v.copy_from_slice(&1u32.to_le_bytes());
+        }
+        if let Some(v) = cmd_proc_synth.get_mut(pkt + 36..pkt + 40) {
+            v.copy_from_slice(&16u32.to_le_bytes());
+        }
+        if let Some(v) = cmd_proc_synth.get_mut(pkt + 40..pkt + 44) {
+            v.copy_from_slice(&alloc_id.to_le_bytes());
+        }
+        if let Some(v) = cmd_proc_synth.get_mut(pkt + 44..pkt + 48) {
+            v.copy_from_slice(&0u32.to_le_bytes());
+        }
+    }
+
+    if let Some(pkt) = destroy_resource_off {
+        // Use an unknown handle to make this a no-op (avoids breaking later shared-surface ops).
+        if let Some(v) = cmd_proc_synth.get_mut(pkt + 8..pkt + 12) {
+            v.copy_from_slice(&999u32.to_le_bytes());
+        }
+    }
+
+    if let Some(pkt) = dirty_range_off {
+        if let Some(v) = cmd_proc_synth.get_mut(pkt + 8..pkt + 12) {
+            v.copy_from_slice(&buf_handle.to_le_bytes());
+        }
+        if let Some(v) = cmd_proc_synth.get_mut(pkt + 16..pkt + 24) {
+            v.copy_from_slice(&0u64.to_le_bytes());
+        }
+        if let Some(v) = cmd_proc_synth.get_mut(pkt + 24..pkt + 32) {
+            v.copy_from_slice(&4u64.to_le_bytes());
+        }
+    }
+
+    if let Some(pkt) = present_off {
+        if let Some(v) = cmd_proc_synth.get_mut(pkt + 8..pkt + 12) {
+            v.copy_from_slice(&0u32.to_le_bytes());
+        }
+    }
+
+    if let Some(pkt) = present_ex_off {
+        if let Some(v) = cmd_proc_synth.get_mut(pkt + 8..pkt + 12) {
+            v.copy_from_slice(&0u32.to_le_bytes());
+        }
+    }
+
+    if let Some(pkt) = export_shared_off {
+        if let Some(v) = cmd_proc_synth.get_mut(pkt + 8..pkt + 12) {
+            v.copy_from_slice(&tex_handle.to_le_bytes());
+        }
+        if let Some(v) = cmd_proc_synth.get_mut(pkt + 16..pkt + 24) {
+            v.copy_from_slice(&share_token.to_le_bytes());
+        }
+    }
+
+    if let Some(pkt) = import_shared_off {
+        if let Some(v) = cmd_proc_synth.get_mut(pkt + 8..pkt + 12) {
+            v.copy_from_slice(&alias_handle.to_le_bytes());
+        }
+        if let Some(v) = cmd_proc_synth.get_mut(pkt + 16..pkt + 24) {
+            v.copy_from_slice(&share_token.to_le_bytes());
+        }
+    }
+
+    if let Some(pkt) = release_shared_off {
+        if let Some(v) = cmd_proc_synth.get_mut(pkt + 8..pkt + 16) {
+            v.copy_from_slice(&share_token.to_le_bytes());
+        }
+    }
+
+    fuzz_command_processor(&cmd_proc_synth, Some(&allocs));
 
     // Patched alloc table: force valid magic/version/stride and a self-consistent entry_count.
     let mut alloc_patched = alloc_bytes.to_vec();
