@@ -427,7 +427,7 @@ mod guest_ram_layout_tests {
         // The web runtime reserves the high 512MiB of the 32-bit guest physical address space for
         // PCI MMIO BARs, so guest RAM must never exceed `PCI_MMIO_BASE`.
         let layout = guest_ram_layout(u32::MAX);
-        assert_eq!(layout.guest_size(), guest_layout::PCI_MMIO_BASE as u32);
+        assert_eq!(layout.guest_size(), guest_layout::GUEST_PCI_MMIO_BASE as u32);
     }
 }
 

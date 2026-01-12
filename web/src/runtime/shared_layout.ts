@@ -314,9 +314,13 @@ export function computeGuestRamLayout(desiredGuestBytes: number): GuestRamLayout
   const maxGuestBytesByWasm = maxGuestPagesByWasm * WASM_PAGE_BYTES;
   const maxGuestBytes = Math.min(maxGuestBytesByWasm, GUEST_PCI_MMIO_BASE);
 
-  const desiredPages = bytesToPages(Math.min(desired, maxGuestBytes));
-  const totalPages = basePages + desiredPages;
-  const guestPages = desiredPages;
+  // Clamp using page counts rather than bytes so rounding-up never produces a guest_size
+  // that exceeds maxGuestBytes (important if we ever change GUEST_PCI_MMIO_BASE to a
+  // non-page-aligned boundary).
+  const desiredPages = bytesToPages(desired);
+  const maxGuestPages = Math.floor(maxGuestBytes / WASM_PAGE_BYTES);
+  const guestPages = Math.min(desiredPages, maxGuestPages);
+  const totalPages = basePages + guestPages;
 
   return {
     guest_base: guestBase,
@@ -349,9 +353,9 @@ export function readGuestRamLayoutFromStatus(status: Int32Array): GuestRamLayout
   if (guestBase === 0 && guestSize === 0) {
     throw new Error("Guest RAM layout was not initialized in status SAB (guest_base/guest_size are 0).");
   }
-  if (guestSize > PCI_MMIO_BASE) {
+  if (guestSize > GUEST_PCI_MMIO_BASE) {
     throw new Error(
-      `Guest RAM overlaps the PCI MMIO aperture: guest_size=0x${guestSize.toString(16)} PCI_MMIO_BASE=0x${PCI_MMIO_BASE.toString(16)}`,
+      `Guest RAM overlaps the PCI MMIO aperture: guest_size=0x${guestSize.toString(16)} PCI_MMIO_BASE=0x${GUEST_PCI_MMIO_BASE.toString(16)}`,
     );
   }
 
