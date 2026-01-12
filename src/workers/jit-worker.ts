@@ -119,11 +119,13 @@ async function handleCompileRequest(req: CompileBlockRequest & { type: 'CompileB
     // backwards-compat with older generated bindings.
     const compileAny = api.compile_tier1_block as unknown as (...args: any[]) => unknown;
     const codeWindow = sliceCodeWindow(entryRip, maxBytes);
+    // Copy bytes into an unshared buffer so compilation cannot race with guest writes.
+    const codeBytes = new Uint8Array(codeWindow);
     let result: unknown;
     try {
       result = compileAny(
         BigInt(entryRip),
-        codeWindow,
+        codeBytes,
         maxInsts,
         maxBytes,
         true, // inline_tlb (Tier-1 ABI uses jit_ctx_ptr + fast-path TLB)
@@ -134,7 +136,7 @@ async function handleCompileRequest(req: CompileBlockRequest & { type: 'CompileB
       try {
         result = compileAny(entryRip, maxBytes) as unknown;
       } catch {
-        result = compileAny(codeWindow, entryRip, maxBytes) as unknown;
+        result = compileAny(codeBytes, entryRip, maxBytes) as unknown;
       }
     }
     compilation = normalizeTier1Compilation(result, maxBytes);
