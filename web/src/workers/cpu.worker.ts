@@ -1657,6 +1657,7 @@ async function initAndRun(init: WorkerInitMessage): Promise<void> {
       guestU8 = views.guestU8;
       vgaFramebuffer = wrapSharedFramebuffer(segments.vgaFramebuffer, 0);
       frameState = init.frameStateSab ? new Int32Array(init.frameStateSab) : null;
+      (globalThis as unknown as { __aeroScanoutState?: Int32Array }).__aeroScanoutState = views.scanoutStateI32;
 
       const demoFbEnd = DEMO_FB_OFFSET + DEMO_FB_MAX_BYTES;
       if (demoFbEnd > guestU8.byteLength) {

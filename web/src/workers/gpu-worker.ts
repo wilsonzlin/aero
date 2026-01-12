@@ -2048,6 +2048,7 @@ const handleRuntimeInit = (init: WorkerInitMessage) => {
   };
   const views = createSharedMemoryViews(segments);
   status = views.status;
+  (globalThis as unknown as { __aeroScanoutState?: Int32Array }).__aeroScanoutState = views.scanoutStateI32;
   // Guest physical addresses (GPAs) in AeroGPU submissions are byte offsets into this view.
   guestU8 = views.guestU8;
   if (aerogpuWasm) {
