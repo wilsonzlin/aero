@@ -305,6 +305,61 @@ fn set_disk_backend_does_not_clobber_custom_virtio_blk_backend() {
 }
 
 #[test]
+fn set_disk_image_does_not_clobber_custom_virtio_blk_backend() {
+    let mut m = Machine::new(MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_virtio_blk: true,
+        // Keep the machine minimal for deterministic reset behavior.
+        enable_ahci: false,
+        enable_nvme: false,
+        enable_ide: false,
+        enable_uhci: false,
+        enable_vga: false,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        enable_e1000: false,
+        enable_virtio_net: false,
+        ..Default::default()
+    })
+    .unwrap();
+
+    let dropped = Arc::new(AtomicBool::new(false));
+    let capacity = 16 * SECTOR_SIZE as u64;
+    let disk = DropDetectDisk {
+        inner: RawDisk::create(MemBackend::new(), capacity).unwrap(),
+        dropped: dropped.clone(),
+    };
+
+    // Explicitly attach a custom virtio-blk backend so the machine should not overwrite it when
+    // the canonical SharedDisk backend changes (e.g. via `set_disk_image`).
+    m.attach_virtio_blk_disk(Box::new(disk))
+        .expect("attaching virtio-blk disk should succeed");
+
+    m.set_disk_image(vec![0u8; SECTOR_SIZE]).unwrap();
+    assert!(
+        !dropped.load(Ordering::SeqCst),
+        "set_disk_image dropped/replaced the custom virtio-blk backend"
+    );
+
+    // Reset should also preserve the explicitly attached backend.
+    m.reset();
+    assert!(
+        !dropped.load(Ordering::SeqCst),
+        "machine reset dropped the custom virtio-blk backend"
+    );
+
+    // Re-attaching the shared disk should drop the custom backend (sanity check).
+    m.attach_shared_disk_to_virtio_blk().unwrap();
+    assert!(
+        dropped.load(Ordering::SeqCst),
+        "re-attaching SharedDisk should drop the previous custom virtio-blk backend"
+    );
+}
+
+#[test]
 fn set_disk_image_does_not_clobber_custom_ahci_port0_backend() {
     let mut m = Machine::new(MachineConfig {
         ram_size_bytes: 2 * 1024 * 1024,
@@ -342,6 +397,61 @@ fn set_disk_image_does_not_clobber_custom_ahci_port0_backend() {
     assert!(
         !dropped.load(Ordering::SeqCst),
         "set_disk_image dropped/replaced the custom AHCI port0 backend"
+    );
+
+    m.reset();
+    assert!(
+        !dropped.load(Ordering::SeqCst),
+        "machine reset dropped the custom AHCI port0 backend"
+    );
+
+    // Re-attaching the shared disk should drop the custom backend (sanity check).
+    m.attach_shared_disk_to_ahci_port0().unwrap();
+    assert!(
+        dropped.load(Ordering::SeqCst),
+        "re-attaching SharedDisk should drop the previous custom AHCI backend"
+    );
+}
+
+#[test]
+fn set_disk_backend_does_not_clobber_custom_ahci_port0_backend() {
+    let mut m = Machine::new(MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_ahci: true,
+        // Keep the machine minimal for deterministic reset behavior.
+        enable_nvme: false,
+        enable_ide: false,
+        enable_virtio_blk: false,
+        enable_uhci: false,
+        enable_vga: false,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        enable_e1000: false,
+        enable_virtio_net: false,
+        ..Default::default()
+    })
+    .unwrap();
+
+    let dropped = Arc::new(AtomicBool::new(false));
+    let capacity = 16 * SECTOR_SIZE as u64;
+    let disk = DropDetectDisk {
+        inner: RawDisk::create(MemBackend::new(), capacity).unwrap(),
+        dropped: dropped.clone(),
+    };
+
+    // Explicitly attach a custom disk backend to AHCI port 0 so the machine should not overwrite
+    // it when the canonical SharedDisk backend changes (e.g. via `set_disk_backend`).
+    m.attach_ahci_disk_port0(Box::new(disk))
+        .expect("attaching AHCI port0 disk should succeed");
+
+    let replacement = RawDisk::create(MemBackend::new(), capacity).unwrap();
+    m.set_disk_backend(Box::new(replacement)).unwrap();
+    assert!(
+        !dropped.load(Ordering::SeqCst),
+        "set_disk_backend dropped/replaced the custom AHCI port0 backend"
     );
 
     m.reset();

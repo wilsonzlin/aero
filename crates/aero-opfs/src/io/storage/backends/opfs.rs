@@ -326,13 +326,15 @@ mod wasm {
         closed: bool,
     }
 
-    // OPFS backends are currently only used by single-threaded `wasm32-unknown-unknown` builds.
-    // `wasm-bindgen` JS handles (e.g. `JsValue`) are not `Send` by default, which prevents the
-    // backend from being stored inside `aero_machine::SharedDisk` (an `Arc<Mutex<..>>` wrapper that
-    // requires `Send`).
+    // `OpfsBackend` contains `wasm-bindgen` JS handles (e.g. `JsValue`), which are not `Send` by
+    // default.
     //
-    // Mark the backend as `Send` only when the wasm target does not have thread/atomics support.
-    // If we ever opt into wasm threads (`target-feature=+atomics`), this impl is intentionally
+    // Some consumers require `VirtualDisk + Send` even on wasm (notably the NVMe device model,
+    // which stores its disk backend behind a `Send` trait object for portability). On single-thread
+    // wasm builds (`target-feature=atomics` is **disabled**), it is safe to treat these JS handles
+    // as `Send` because they cannot be used from multiple threads.
+    //
+    // When wasm threads are enabled (`target-feature=+atomics`), this impl is intentionally
     // disabled so we can revisit the safety story.
     //
     // SAFETY: On wasm32 without atomics, there is no `std::thread::spawn` and no way to move this
