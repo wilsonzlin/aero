@@ -1802,7 +1802,10 @@ impl Machine {
         // Rebuild port I/O devices for deterministic power-on state.
         self.io = IoPortBus::new();
 
-        if self.cfg.enable_vga {
+        // `enable_vga` is independent of `enable_pc_platform`. When PC platform devices are
+        // enabled, VGA is registered within the PC platform wiring below. Avoid registering the
+        // legacy VGA window/ports twice (which would overlap and panic).
+        if self.cfg.enable_vga && !self.cfg.enable_pc_platform {
             // VGA is a special legacy device whose MMIO window lives in the low 1MiB region. The
             // physical bus supports MMIO overlays on top of RAM, so mapping this window is safe
             // even when guest RAM is a dense `[0, ram_size_bytes)` range.
@@ -1840,7 +1843,7 @@ impl Machine {
             );
             self.io
                 .register_range(0x01CE, 0x0002, Box::new(VgaPortWindow { vga }));
-        } else {
+        } else if !self.cfg.enable_vga {
             self.vga = None;
         }
 
@@ -1936,55 +1939,61 @@ impl Machine {
             };
             register_acpi_pm(&mut self.io, acpi_pm.clone());
 
-            // VGA/SVGA (VBE). Keep the device instance stable across resets so the MMIO mapping
-            // remains valid.
-            let vga: Rc<RefCell<VgaDevice>> = match &self.vga {
-                Some(vga) => {
-                    *vga.borrow_mut() = VgaDevice::new();
-                    vga.clone()
-                }
-                None => {
-                    let vga = Rc::new(RefCell::new(VgaDevice::new()));
-                    self.vga = Some(vga.clone());
-                    vga
-                }
-            };
+            let mut vga_lfb_base = 0u64;
+            let mut vga_lfb_len = 0u64;
+            if self.cfg.enable_vga {
+                // VGA/SVGA (VBE). Keep the device instance stable across resets so the MMIO mapping
+                // remains valid.
+                let vga: Rc<RefCell<VgaDevice>> = match &self.vga {
+                    Some(vga) => {
+                        *vga.borrow_mut() = VgaDevice::new();
+                        vga.clone()
+                    }
+                    None => {
+                        let vga = Rc::new(RefCell::new(VgaDevice::new()));
+                        self.vga = Some(vga.clone());
+                        vga
+                    }
+                };
 
-            // Register legacy VGA + Bochs VBE ports.
-            //
-            // - VGA: 0x3C0..0x3DF
-            // - Bochs VBE: 0x01CE (index), 0x01CF (data)
-            self.io.register_range(
-                0x3C0,
-                0x20,
-                Box::new(VgaPortIo { dev: vga.clone() }),
-            );
-            self.io.register_shared_range(0x01CE, 2, {
-                let vga = vga.clone();
-                move |_port| Box::new(VgaPortIo { dev: vga.clone() })
-            });
+                // Register legacy VGA + Bochs VBE ports.
+                //
+                // - VGA: 0x3C0..0x3DF
+                // - Bochs VBE: 0x01CE (index), 0x01CF (data)
+                self.io.register_range(
+                    0x3C0,
+                    0x20,
+                    Box::new(VgaPortIo { dev: vga.clone() }),
+                );
+                self.io.register_shared_range(0x01CE, 2, {
+                    let vga = vga.clone();
+                    move |_port| Box::new(VgaPortIo { dev: vga.clone() })
+                });
 
-            // Map VGA memory windows and the VBE linear framebuffer.
-            self.mem.map_mmio_once(0xA0000, 0x20000, {
-                let vga = vga.clone();
-                move || {
-                    Box::new(VgaMmio {
-                        base: 0xA0000,
-                        dev: vga,
-                    })
-                }
-            });
-            let vga_lfb_base = u64::from(aero_gpu_vga::SVGA_LFB_BASE);
-            let vga_lfb_len = vga.borrow().vram().len() as u64;
-            self.mem.map_mmio_once(vga_lfb_base, vga_lfb_len, {
-                let vga = vga.clone();
-                move || {
-                    Box::new(VgaMmio {
-                        base: vga_lfb_base,
-                        dev: vga,
-                    })
-                }
-            });
+                // Map VGA memory windows and the VBE linear framebuffer.
+                self.mem.map_mmio_once(0xA0000, 0x20000, {
+                    let vga = vga.clone();
+                    move || {
+                        Box::new(VgaMmio {
+                            base: 0xA0000,
+                            dev: vga,
+                        })
+                    }
+                });
+                vga_lfb_base = u64::from(aero_gpu_vga::SVGA_LFB_BASE);
+                vga_lfb_len = vga.borrow().vram().len() as u64;
+                self.mem.map_mmio_once(vga_lfb_base, vga_lfb_len, {
+                    let vga = vga.clone();
+                    move || {
+                        Box::new(VgaMmio {
+                            base: vga_lfb_base,
+                            dev: vga,
+                        })
+                    }
+                });
+            } else {
+                self.vga = None;
+            }
 
             // PCI config ports (config mechanism #1).
             let pci_cfg: SharedPciConfigPorts = match &self.pci_cfg {
@@ -2089,7 +2098,9 @@ impl Machine {
             // default. The canonical PCI allocator also uses the same address as the start of the
             // PCI MMIO window, so we shift the PCI window up to avoid MMIO mapping overlap.
             let mut pci_allocator_cfg = PciResourceAllocatorConfig::default();
-            if pci_allocator_cfg.mmio_base == vga_lfb_base && pci_allocator_cfg.mmio_size > vga_lfb_len
+            if self.cfg.enable_vga
+                && pci_allocator_cfg.mmio_base == vga_lfb_base
+                && pci_allocator_cfg.mmio_size > vga_lfb_len
             {
                 pci_allocator_cfg.mmio_base = pci_allocator_cfg.mmio_base.saturating_add(vga_lfb_len);
                 pci_allocator_cfg.mmio_size = pci_allocator_cfg.mmio_size.saturating_sub(vga_lfb_len);
@@ -2202,7 +2213,6 @@ impl Machine {
             self.acpi_pm = None;
             self.hpet = None;
             self.e1000 = None;
-            self.vga = None;
             self.ahci = None;
         }
         if self.cfg.enable_serial {
