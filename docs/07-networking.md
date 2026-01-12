@@ -1148,8 +1148,8 @@ When present, it implements:
 
 Some builds may additionally expose:
 
-- `clear(): void` (drop buffered frames)
-- `stats(): unknown` (implementation-defined counters such as buffered bytes/frames and drops)
+- `clear(): void | Promise<void>` (drop buffered frames)
+- `getStats(): unknown | Promise<unknown>` (implementation-defined counters such as buffered bytes/frames and drops)
 
 Example:
 
