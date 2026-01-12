@@ -186,7 +186,10 @@ fn snapshot_devices(bytes: &[u8]) -> Vec<snapshot::DeviceState> {
 
         let mut devices = Vec::with_capacity(count);
         for _ in 0..count {
-            devices.push(snapshot::DeviceState::decode(&mut pr, 64 * 1024 * 1024).unwrap());
+            devices.push(
+                snapshot::DeviceState::decode(&mut pr, snapshot::limits::MAX_DEVICE_ENTRY_LEN)
+                    .unwrap(),
+            );
         }
 
         assert_eq!(

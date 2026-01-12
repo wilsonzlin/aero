@@ -105,7 +105,8 @@ fn decode_vga_snapshot(bytes: &[u8]) -> snapshot::DeviceState {
     };
 
     for _ in 0..count {
-        let dev = snapshot::DeviceState::decode(&mut r, 64 * 1024 * 1024).unwrap();
+        let dev =
+            snapshot::DeviceState::decode(&mut r, snapshot::limits::MAX_DEVICE_ENTRY_LEN).unwrap();
         if dev.id == snapshot::DeviceId::VGA {
             return dev;
         }
