@@ -197,6 +197,7 @@ name = "aero-devices-storage"
 version = "0.1.0"
 dependencies = [
  "aero-devices",
+ "aero-io-snapshot",
  "aero-platform",
  "aero-storage",
  "memory",

@@ -1014,3 +1014,164 @@ impl IoSnapshot for NvmeControllerState {
         Ok(())
     }
 }
+
+// ----------------------------------------
+// AHCI controller
+// ----------------------------------------
+
+/// AHCI HBA (global) register state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AhciHbaState {
+    pub cap: u32,
+    pub ghc: u32,
+    pub cap2: u32,
+    pub bohc: u32,
+    pub vs: u32,
+}
+
+impl Default for AhciHbaState {
+    fn default() -> Self {
+        Self {
+            cap: 0,
+            ghc: 0,
+            cap2: 0,
+            bohc: 0,
+            vs: 0,
+        }
+    }
+}
+
+/// AHCI per-port register state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AhciPortState {
+    pub clb: u64,
+    pub fb: u64,
+    pub is: u32,
+    pub ie: u32,
+    pub cmd: u32,
+    pub tfd: u32,
+    pub sig: u32,
+    pub ssts: u32,
+    pub sctl: u32,
+    pub serr: u32,
+    pub sact: u32,
+    pub ci: u32,
+}
+
+impl Default for AhciPortState {
+    fn default() -> Self {
+        Self {
+            clb: 0,
+            fb: 0,
+            is: 0,
+            ie: 0,
+            cmd: 0,
+            tfd: 0,
+            sig: 0,
+            ssts: 0,
+            sctl: 0,
+            serr: 0,
+            sact: 0,
+            ci: 0,
+        }
+    }
+}
+
+/// Serializable AHCI controller state.
+///
+/// This captures guest-visible register state for the controller's implemented ports.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct AhciControllerState {
+    pub hba: AhciHbaState,
+    pub ports: Vec<AhciPortState>,
+}
+
+impl IoSnapshot for AhciControllerState {
+    const DEVICE_ID: [u8; 4] = *b"AHCI";
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
+
+    fn save_state(&self) -> Vec<u8> {
+        const TAG_HBA: u16 = 1;
+        const TAG_PORTS: u16 = 2;
+
+        let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
+
+        let hba = Encoder::new()
+            .u32(self.hba.cap)
+            .u32(self.hba.ghc)
+            .u32(self.hba.cap2)
+            .u32(self.hba.bohc)
+            .u32(self.hba.vs)
+            .finish();
+        w.field_bytes(TAG_HBA, hba);
+
+        let mut ports = Encoder::new().u32(self.ports.len() as u32);
+        for p in &self.ports {
+            ports = ports
+                .u64(p.clb)
+                .u64(p.fb)
+                .u32(p.is)
+                .u32(p.ie)
+                .u32(p.cmd)
+                .u32(p.tfd)
+                .u32(p.sig)
+                .u32(p.ssts)
+                .u32(p.sctl)
+                .u32(p.serr)
+                .u32(p.sact)
+                .u32(p.ci);
+        }
+        w.field_bytes(TAG_PORTS, ports.finish());
+
+        w.finish()
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
+        const TAG_HBA: u16 = 1;
+        const TAG_PORTS: u16 = 2;
+
+        const MAX_PORTS: usize = 32;
+
+        let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
+        r.ensure_device_major(Self::DEVICE_VERSION.major)?;
+
+        if let Some(buf) = r.bytes(TAG_HBA) {
+            let mut d = Decoder::new(buf);
+            self.hba.cap = d.u32()?;
+            self.hba.ghc = d.u32()?;
+            self.hba.cap2 = d.u32()?;
+            self.hba.bohc = d.u32()?;
+            self.hba.vs = d.u32()?;
+            d.finish()?;
+        }
+
+        self.ports.clear();
+        if let Some(buf) = r.bytes(TAG_PORTS) {
+            let mut d = Decoder::new(buf);
+            let count = d.u32()? as usize;
+            if count > MAX_PORTS {
+                return Err(SnapshotError::InvalidFieldEncoding("ahci port count"));
+            }
+            self.ports.reserve(count);
+            for _ in 0..count {
+                self.ports.push(AhciPortState {
+                    clb: d.u64()?,
+                    fb: d.u64()?,
+                    is: d.u32()?,
+                    ie: d.u32()?,
+                    cmd: d.u32()?,
+                    tfd: d.u32()?,
+                    sig: d.u32()?,
+                    ssts: d.u32()?,
+                    sctl: d.u32()?,
+                    serr: d.u32()?,
+                    sact: d.u32()?,
+                    ci: d.u32()?,
+                });
+            }
+            d.finish()?;
+        }
+
+        Ok(())
+    }
+}

@@ -12,6 +12,9 @@
 use std::fmt;
 use std::io;
 
+use aero_io_snapshot::io::state::{IoSnapshot, SnapshotResult, SnapshotVersion};
+use aero_io_snapshot::io::storage::state::{AhciControllerState, AhciHbaState, AhciPortState};
+
 use aero_storage::SECTOR_SIZE;
 
 use crate::ata::{
@@ -418,6 +421,90 @@ impl fmt::Debug for AhciController {
             .field("hba", &self.hba)
             .field("ports", &self.ports)
             .finish_non_exhaustive()
+    }
+}
+
+impl AhciController {
+    pub fn snapshot_state(&self) -> AhciControllerState {
+        AhciControllerState {
+            hba: AhciHbaState {
+                cap: self.hba.cap,
+                ghc: self.hba.ghc,
+                cap2: self.hba.cap2,
+                bohc: self.hba.bohc,
+                vs: self.hba.vs,
+            },
+            ports: self
+                .ports
+                .iter()
+                .map(|p| AhciPortState {
+                    clb: p.regs.clb,
+                    fb: p.regs.fb,
+                    is: p.regs.is,
+                    ie: p.regs.ie,
+                    cmd: p.regs.cmd,
+                    tfd: p.regs.tfd,
+                    sig: p.regs.sig,
+                    ssts: p.regs.ssts,
+                    sctl: p.regs.sctl,
+                    serr: p.regs.serr,
+                    sact: p.regs.sact,
+                    ci: p.regs.ci,
+                })
+                .collect(),
+        }
+    }
+
+    pub fn restore_state(&mut self, state: &AhciControllerState) {
+        self.hba.cap = state.hba.cap;
+        self.hba.ghc = state.hba.ghc;
+        self.hba.cap2 = state.hba.cap2;
+        self.hba.bohc = state.hba.bohc;
+        self.hba.vs = state.hba.vs;
+
+        // Reset ports to a deterministic baseline (but preserve whether a drive is attached).
+        for port in &mut self.ports {
+            let present = port.drive.is_some();
+            port.regs = PortRegs::new(present);
+            port.regs.update_running_bits();
+        }
+
+        // Apply saved port register state, clamping to the controller's configured port count.
+        let count = state.ports.len().min(self.ports.len());
+        for (idx, p) in state.ports.iter().take(count).enumerate() {
+            let port = &mut self.ports[idx];
+            port.regs.clb = p.clb;
+            port.regs.fb = p.fb;
+            port.regs.is = p.is;
+            port.regs.ie = p.ie;
+            port.regs.cmd = p.cmd;
+            port.regs.tfd = p.tfd;
+            port.regs.sig = p.sig;
+            port.regs.ssts = p.ssts;
+            port.regs.sctl = p.sctl;
+            port.regs.serr = p.serr;
+            port.regs.sact = p.sact;
+            port.regs.ci = p.ci;
+            port.regs.update_running_bits();
+        }
+
+        self.update_irq();
+    }
+}
+
+impl IoSnapshot for AhciController {
+    const DEVICE_ID: [u8; 4] = <AhciControllerState as IoSnapshot>::DEVICE_ID;
+    const DEVICE_VERSION: SnapshotVersion = <AhciControllerState as IoSnapshot>::DEVICE_VERSION;
+
+    fn save_state(&self) -> Vec<u8> {
+        self.snapshot_state().save_state()
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
+        let mut state = AhciControllerState::default();
+        state.load_state(bytes)?;
+        self.restore_state(&state);
+        Ok(())
     }
 }
 
