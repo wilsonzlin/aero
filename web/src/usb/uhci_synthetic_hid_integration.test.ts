@@ -886,4 +886,94 @@ describe("usb/UHCI synthetic HID passthrough integration (WASM)", () => {
 
     expect(() => attach.call(runtime, [0, 1, 1], dev)).toThrow();
   });
+
+  it("rejects UsbHidPassthroughBridge attachment onto a WebHID-occupied external hub port", async () => {
+    const desiredGuestBytes = 2 * 1024 * 1024;
+    const layoutHint = computeGuestRamLayout(desiredGuestBytes);
+    const memory = new WebAssembly.Memory({ initial: layoutHint.wasm_pages, maximum: layoutHint.wasm_pages });
+
+    let api: Awaited<ReturnType<typeof initWasm>>["api"];
+    try {
+      ({ api } = await initWasm({ variant: "single", memory }));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (message.includes("Missing single-thread WASM package")) return;
+      throw err;
+    }
+
+    assertWasmMemoryWiring({ api, memory, context: "uhci_synthetic_hid_integration.test (webhid collision)" });
+    if (!api.UhciRuntime) return;
+    if (!api.UsbHidPassthroughBridge) return;
+
+    const layout = api.guest_ram_layout(desiredGuestBytes);
+    const guestBase = layout.guest_base >>> 0;
+    const guestSize = layout.guest_size >>> 0;
+
+    const runtime = new api.UhciRuntime(guestBase, guestSize);
+    if (typeof runtime.attach_usb_hid_passthrough_device !== "function") return;
+    if (typeof (runtime as unknown as { webhid_attach_at_path?: unknown }).webhid_attach_at_path !== "function") return;
+
+    const collections = [
+      {
+        usagePage: 0x01,
+        usage: 0x02,
+        collectionType: 1,
+        children: [],
+        inputReports: [
+          {
+            reportId: 0,
+            items: [
+              {
+                usagePage: 0x01,
+                usages: [0x30],
+                usageMinimum: 0,
+                usageMaximum: 0,
+                reportSize: 8,
+                reportCount: 1,
+                unitExponent: 0,
+                unit: 0,
+                logicalMinimum: 0,
+                logicalMaximum: 127,
+                physicalMinimum: 0,
+                physicalMaximum: 0,
+                strings: [],
+                stringMinimum: 0,
+                stringMaximum: 0,
+                designators: [],
+                designatorMinimum: 0,
+                designatorMaximum: 0,
+                isAbsolute: true,
+                isArray: false,
+                isBufferedBytes: false,
+                isConstant: false,
+                isLinear: true,
+                isRange: false,
+                isRelative: false,
+                isVolatile: false,
+                hasNull: false,
+                hasPreferredState: true,
+                isWrapped: false,
+              },
+            ],
+          },
+        ],
+        outputReports: [],
+        featureReports: [],
+      },
+    ];
+
+    // Attach a WebHID-backed device at port 4.
+    (runtime as unknown as { webhid_attach_at_path: (...args: unknown[]) => void }).webhid_attach_at_path(
+      1,
+      0x1234,
+      0x0001,
+      "WebHID",
+      collections as unknown,
+      [0, 4],
+    );
+
+    const HidBridge = api.UsbHidPassthroughBridge;
+    const dev = new HidBridge(0x1234, 0x0002, "Aero", "Collision", undefined, USB_HID_GAMEPAD_REPORT_DESCRIPTOR, false);
+    expect(() => runtime.attach_usb_hid_passthrough_device([0, 4], dev)).toThrow();
+  });
 });
