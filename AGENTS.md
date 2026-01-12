@@ -285,7 +285,7 @@ This requires custom Windows 7 drivers but provides 10-100x performance improvem
 | JIT Compiler  | Custom (Cranelift-inspired)     | Generate WASM from x86-64                  |
 | Graphics      | WebGPU + WGSL shaders           | Hardware acceleration, DirectX translation |
 | Audio         | Web Audio API + AudioWorklet    | Low-latency audio processing               |
-| Storage       | OPFS + IndexedDB                | Large files, persistence                   |
+| Storage       | OPFS (sync) + IndexedDB (async) | Large files (OPFS); host-side caches/tools (IndexedDB) |
 | Networking    | WebSocket + WebRTC              | TCP/UDP emulation                          |
 | Threading     | Web Workers + SharedArrayBuffer | True parallelism                           |
 | UI            | Canvas 2D + OffscreenCanvas     | Rendering pipeline                         |
