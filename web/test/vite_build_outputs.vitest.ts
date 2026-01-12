@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -55,6 +55,19 @@ describe("web Vite build outputs", () => {
       // dependency files are also present.
       expect(existsSync(path.join(outDir, "assets", "mic_ring.js"))).toBe(true);
       expect(existsSync(path.join(outDir, "assets", "audio_worklet_ring_layout.js"))).toBe(true);
+
+      const assetsDir = path.join(outDir, "assets");
+      const assets = new Set(readdirSync(assetsDir));
+
+      const audioWorklet = [...assets].find((name) => /^audio-worklet-processor-.*\.js$/.test(name));
+      expect(audioWorklet).toBeTruthy();
+      const audioWorkletSource = readFileSync(path.join(assetsDir, audioWorklet!), "utf8");
+      expect(audioWorkletSource).toContain("./audio_worklet_ring_layout.js");
+
+      const micWorklet = [...assets].find((name) => /^mic-worklet-processor-.*\.js$/.test(name));
+      expect(micWorklet).toBeTruthy();
+      const micWorkletSource = readFileSync(path.join(assetsDir, micWorklet!), "utf8");
+      expect(micWorkletSource).toContain("./mic_ring.js");
     } finally {
       rmSync(outDir, { recursive: true, force: true });
     }
