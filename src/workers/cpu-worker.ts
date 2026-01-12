@@ -594,9 +594,9 @@ async function runTieredVm(iterations: number, threshold: number) {
     const tableIndex = existingIndex ?? allocTableIndex();
     jitFns[tableIndex] = block as (cpu_ptr: number, jit_ctx_ptr: number) => bigint;
 
-    // wasm-bindgen APIs differ across versions: older builds returned a list of evicted RIPs
-    // from `install_tier1_block`, while newer builds return `void`. Capture as `unknown` so
-    // we can best-effort free table indices without breaking typecheck.
+    // wasm-bindgen APIs differ across versions: newer builds return a list of evicted RIPs from
+    // `install_tier1_block`, while older builds returned `void`. Capture as `unknown` so we can
+    // best-effort free table indices without breaking typecheck.
     const evicted: unknown = vm.install_tier1_block(
       BigInt(entryRipU32),
       tableIndex,
