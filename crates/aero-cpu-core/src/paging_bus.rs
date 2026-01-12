@@ -585,6 +585,10 @@ where
             None => return Ok(false),
         };
 
+        // Preflight translations with a side-effect-free probe. If any page in the range is
+        // unmapped or fails permission checks, decline the bulk operation so Tier-0 can fall back
+        // to scalar accesses (which will perform architecturally correct A/D bit updates and fault
+        // delivery).
         if !self.preflight_range_probe(src, len, AccessType::Read)? {
             return Ok(false);
         }
@@ -649,6 +653,7 @@ where
             return Ok(false);
         }
 
+        // Preflight translations with write intent using a side-effect-free probe.
         if !self.preflight_range_probe(dst, total, AccessType::Write)? {
             return Ok(false);
         }
