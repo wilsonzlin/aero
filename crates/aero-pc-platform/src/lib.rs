@@ -2117,21 +2117,8 @@ impl PcPlatform {
 
         // Reset selected runtime PCI device models that live outside the `PciBus` (which only owns
         // guest-visible config space for this platform).
-        if let Some(nvme) = self.nvme.as_ref() {
-            nvme.borrow_mut().reset();
-        }
-        if let Some(ahci) = self.ahci.as_ref() {
-            ahci.borrow_mut().reset();
-        }
-        if let Some(ide) = self.ide.as_ref() {
-            ide.borrow_mut().reset();
-        }
         if let Some(uhci) = self.uhci.as_ref() {
             uhci.borrow_mut().reset();
-        }
-        if let Some(e1000) = self.e1000.as_ref() {
-            // Equivalent to a guest write of CTRL.RST.
-            e1000.borrow_mut().mmio_write_u32_reg(0x0000, 1u32 << 26);
         }
 
         // Reset optional PCI device models that are part of the platform and do not own external
@@ -2149,6 +2136,9 @@ impl PcPlatform {
         //
         // These devices maintain internal DMA/command state that must be cleared on reset, but the
         // host-provided media backends should not be silently dropped.
+        if let Some(nvme) = self.nvme.as_ref() {
+            nvme.borrow_mut().reset();
+        }
         if let Some(ahci) = self.ahci.as_ref() {
             ahci.borrow_mut().reset();
         }
