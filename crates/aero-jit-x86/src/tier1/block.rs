@@ -1,5 +1,5 @@
 use crate::Tier1Bus;
-use aero_x86::tier1::{decode_one, DecodedInst, InstKind};
+use aero_x86::tier1::{decode_one_mode, DecodedInst, InstKind};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BlockLimits {
@@ -41,6 +41,20 @@ pub struct BasicBlock {
 /// - `limits` are exceeded
 #[must_use]
 pub fn discover_block<B: Tier1Bus>(bus: &B, entry_rip: u64, limits: BlockLimits) -> BasicBlock {
+    discover_block_mode(bus, entry_rip, limits, 64)
+}
+
+/// Decode a basic block starting at `entry_rip` using the requested x86 bitness.
+///
+/// This is a thin wrapper around the Tier1 minimal decoder (`aero_x86::tier1`) that allows
+/// front-ends/tests to run 16/32-bit guest payloads without mis-decoding `0x40..=0x4F` as REX.
+#[must_use]
+pub fn discover_block_mode<B: Tier1Bus>(
+    bus: &B,
+    entry_rip: u64,
+    limits: BlockLimits,
+    bitness: u32,
+) -> BasicBlock {
     let mut insts = Vec::new();
     let mut rip = entry_rip;
     let mut total_bytes = 0usize;
@@ -55,7 +69,7 @@ pub fn discover_block<B: Tier1Bus>(bus: &B, entry_rip: u64, limits: BlockLimits)
         }
 
         let bytes = bus.fetch(rip, 15);
-        let inst = decode_one(rip, &bytes);
+        let inst = decode_one_mode(rip, &bytes, bitness);
         total_bytes += inst.len as usize;
         rip = inst.next_rip();
 

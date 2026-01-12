@@ -27,7 +27,7 @@ pub mod pipeline {
     pub use crate::tier1_pipeline::*;
 }
 
-pub use block::{discover_block, BasicBlock, BlockEndKind, BlockLimits};
+pub use block::{discover_block, discover_block_mode, BasicBlock, BlockEndKind, BlockLimits};
 pub use translate::translate_block;
 pub use wasm_codegen::{
     Tier1WasmCodegen, Tier1WasmOptions, EXPORT_BLOCK_FN, EXPORT_TIER1_BLOCK_FN,

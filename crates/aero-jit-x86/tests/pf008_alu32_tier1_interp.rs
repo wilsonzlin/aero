@@ -5,57 +5,9 @@ mod tier1_common;
 use aero_cpu_core::state::CpuState;
 use aero_jit_x86::abi;
 use aero_jit_x86::tier1::ir::interp::{execute_block, ExecResult};
-use aero_jit_x86::{translate_block, BasicBlock, BlockEndKind, BlockLimits, Tier1Bus};
+use aero_jit_x86::{discover_block_mode, translate_block, BlockLimits};
 use aero_types::Gpr;
-use aero_x86::tier1::{decode_one_mode, InstKind};
 use tier1_common::{write_cpu_to_wasm_bytes, CpuSnapshot, SimpleBus};
-
-fn discover_block_mode<B: Tier1Bus>(
-    bus: &B,
-    entry_rip: u64,
-    limits: BlockLimits,
-    bitness: u32,
-) -> BasicBlock {
-    let mut insts = Vec::new();
-    let mut rip = entry_rip;
-    let mut total_bytes = 0usize;
-
-    loop {
-        if insts.len() >= limits.max_insts || total_bytes >= limits.max_bytes {
-            return BasicBlock {
-                entry_rip,
-                insts,
-                end_kind: BlockEndKind::Limit { next_rip: rip },
-            };
-        }
-
-        let bytes = bus.fetch(rip, 15);
-        let inst = decode_one_mode(rip, &bytes, bitness);
-        total_bytes += inst.len as usize;
-        rip = inst.next_rip();
-
-        let end_kind = match inst.kind {
-            InstKind::JmpRel { .. } => Some(BlockEndKind::Jmp),
-            InstKind::JccRel { .. } => Some(BlockEndKind::Jcc),
-            InstKind::CallRel { .. } => Some(BlockEndKind::Call),
-            InstKind::Ret => Some(BlockEndKind::Ret),
-            InstKind::Invalid => Some(BlockEndKind::ExitToInterpreter {
-                next_rip: inst.next_rip(),
-            }),
-            _ => None,
-        };
-
-        insts.push(inst);
-
-        if let Some(kind) = end_kind {
-            return BasicBlock {
-                entry_rip,
-                insts,
-                end_kind: kind,
-            };
-        }
-    }
-}
 
 #[test]
 fn pf008_alu32_checksum() {
@@ -118,4 +70,3 @@ fn pf008_alu32_checksum() {
     let final_cpu = CpuSnapshot::from_wasm_bytes(&cpu_bytes);
     assert_eq!(final_cpu.gpr[Gpr::Rax.as_u8() as usize] as u32, 0x30aae0b8);
 }
-
