@@ -1328,6 +1328,47 @@ fn restore_snapshot_rejects_truncated_vcpu_internal_state() {
 }
 
 #[test]
+fn restore_snapshot_rejects_cpu_v2_extension_too_large() {
+    let options = SaveOptions {
+        ram: RamWriteOptions {
+            compression: Compression::None,
+            chunk_size: 1024,
+            ..RamWriteOptions::default()
+        },
+    };
+
+    let mut source = MinimalSource { ram: Vec::new() };
+    let mut cursor = Cursor::new(Vec::new());
+    save_snapshot(&mut cursor, &mut source, options).unwrap();
+    let mut bytes = cursor.into_inner();
+
+    let cpu = {
+        let mut r = Cursor::new(bytes.as_slice());
+        let index = inspect_snapshot(&mut r).unwrap();
+        index
+            .sections
+            .iter()
+            .find(|s| s.id == SectionId::CPU)
+            .expect("CPU section missing")
+            .clone()
+    };
+    assert!(
+        cpu.len >= 8,
+        "CPU section unexpectedly short for v2 extension"
+    );
+    let ext_len_off = (cpu.offset + cpu.len - 8) as usize;
+    let too_large = limits::MAX_CPU_V2_EXT_LEN + 1;
+    bytes[ext_len_off..ext_len_off + 4].copy_from_slice(&too_large.to_le_bytes());
+
+    let mut target = DummyTarget::new(0);
+    let err = restore_snapshot(&mut Cursor::new(bytes), &mut target).unwrap_err();
+    assert!(matches!(
+        err,
+        SnapshotError::Corrupt("cpu v2 extension too large")
+    ));
+}
+
+#[test]
 fn restore_snapshot_rejects_truncated_cpu_v2_extension_prefix() {
     let options = SaveOptions {
         ram: RamWriteOptions {
