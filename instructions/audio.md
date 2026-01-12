@@ -168,11 +168,14 @@ Canonical implementation:
 // The canonical implementation imports these from:
 // - `web/src/platform/audio_worklet_ring_layout.js` (layout-only, safe for AudioWorklet)
 // - `web/src/audio/audio_worklet_ring.ts` (TS helpers used by producers; re-exports the same constants)
-const READ_FRAME_INDEX = 0;
-const WRITE_FRAME_INDEX = 1;
-const UNDERRUN_COUNT_INDEX = 2;
-const HEADER_U32_LEN = 4;
-const HEADER_BYTES = HEADER_U32_LEN * Uint32Array.BYTES_PER_ELEMENT;
+import {
+  READ_FRAME_INDEX,
+  WRITE_FRAME_INDEX,
+  UNDERRUN_COUNT_INDEX,
+  HEADER_U32_LEN,
+  HEADER_BYTES,
+  framesAvailableClamped,
+} from './audio_worklet_ring_layout.js';
 
 class AeroAudioProcessor extends AudioWorkletProcessor {
   constructor(options) {
@@ -190,7 +193,7 @@ class AeroAudioProcessor extends AudioWorkletProcessor {
 
     const read = Atomics.load(this.header, READ_FRAME_INDEX) >>> 0;
     const write = Atomics.load(this.header, WRITE_FRAME_INDEX) >>> 0;
-    const available = Math.min((write - read) >>> 0, this.capacityFrames);
+    const available = framesAvailableClamped(read, write, this.capacityFrames);
     const framesToRead = Math.min(framesNeeded, available);
 
     // Copy framesToRead frames from `this.samples` into `output` (wrap-around omitted).

@@ -1117,12 +1117,15 @@ function runEmulationLoop() {
 
 ```javascript
 // audio-worklet-processor.js
-const READ_FRAME_INDEX = 0;
-const WRITE_FRAME_INDEX = 1;
-const UNDERRUN_COUNT = 2;
-const OVERRUN_COUNT = 3;
-const HEADER_U32_LEN = 4;
-const HEADER_BYTES = HEADER_U32_LEN * Uint32Array.BYTES_PER_ELEMENT;
+import {
+    READ_FRAME_INDEX,
+    WRITE_FRAME_INDEX,
+    UNDERRUN_COUNT_INDEX,
+    OVERRUN_COUNT_INDEX,
+    HEADER_U32_LEN,
+    HEADER_BYTES,
+    framesAvailableClamped,
+} from './audio_worklet_ring_layout.js';
 
 class AeroAudioProcessor extends AudioWorkletProcessor {
     static get parameterDescriptors() {
@@ -1161,7 +1164,7 @@ class AeroAudioProcessor extends AudioWorkletProcessor {
         
         const readFrameIndex = Atomics.load(this.header, READ_FRAME_INDEX) >>> 0;
         const writeFrameIndex = Atomics.load(this.header, WRITE_FRAME_INDEX) >>> 0;
-        const availableFrames = Math.min((writeFrameIndex - readFrameIndex) >>> 0, capacityFrames);
+        const availableFrames = framesAvailableClamped(readFrameIndex, writeFrameIndex, capacityFrames);
         const framesToRead = Math.min(framesNeeded, availableFrames);
 
         const readPos = readFrameIndex % capacityFrames;
@@ -1190,7 +1193,7 @@ class AeroAudioProcessor extends AudioWorkletProcessor {
             for (let c = 0; c < output.length; c++) {
                 output[c].fill(0, framesToRead);
             }
-            const prev = Atomics.add(this.header, UNDERRUN_COUNT, missing);
+            const prev = Atomics.add(this.header, UNDERRUN_COUNT_INDEX, missing);
             const newTotal = (prev + missing) >>> 0;
             this.port.postMessage({
                 type: 'underrun',
