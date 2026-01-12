@@ -167,6 +167,16 @@ Optional flags:
   Skips the interactive "Continue with uninstall?" prompt (for automation). In `/force` mode, the script also skips the interactive prompts for disabling `testsigning` / `nointegritychecks` (leaves boot configuration unchanged).
 - `uninstall.cmd /quiet`  
   Fully non-interactive alias for `/force /noreboot`.
+- `uninstall.cmd /cleanupstorage` (alias: `/cleanup-storage`)  
+  **DANGEROUS (boot-critical registry cleanup).** Reverts the boot-critical virtio-blk pre-seeding performed by `setup.cmd` by:
+  - setting `HKLM\SYSTEM\CurrentControlSet\Services\<AERO_VIRTIO_BLK_SERVICE>\Start` to `3` (DEMAND_START), and
+  - deleting `HKLM\SYSTEM\CurrentControlSet\Control\CriticalDeviceDatabase\PCI#...` keys for the configured virtio-blk HWIDs (including the `&CC_010000` / `&CC_0100` variants).
+
+  Only run this when you are **NOT** currently booting from virtio-blk (for example after switching the boot disk back to AHCI).  
+  Running this while booting from virtio-blk may cause Windows to fail to boot (for example `0x0000007B INACCESSIBLE_BOOT_DEVICE`).
+
+  In interactive mode (default), `uninstall.cmd` prompts before touching the registry.  
+  In `/force` or `/quiet` mode, `/cleanupstorage` is ignored unless `/cleanupstorageforce` (alias: `/cleanup-storage-force`) is also provided.
 - `uninstall.cmd /noreboot`  
   Do not prompt for shutdown/reboot at the end.
 

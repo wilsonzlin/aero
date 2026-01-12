@@ -28,6 +28,8 @@ set "STATE_NOINTEGRITY=%INSTALL_ROOT%\nointegritychecks.enabled-by-aero.txt"
 set "STATE_STORAGE_SKIPPED=%INSTALL_ROOT%\storage-preseed.skipped.txt"
 
 set "ARG_FORCE=0"
+set "ARG_CLEANUP_STORAGE=0"
+set "ARG_CLEANUP_STORAGE_FORCE=0"
 set "SIGNING_POLICY=test"
 
 set "ARG_NO_REBOOT=0"
@@ -38,6 +40,10 @@ for %%A in (%*) do (
   if /i "%%~A"=="/force" set "ARG_FORCE=1"
   if /i "%%~A"=="/quiet" set "ARG_FORCE=1"
   if /i "%%~A"=="/quiet" set "ARG_NO_REBOOT=1"
+  if /i "%%~A"=="/cleanupstorage" set "ARG_CLEANUP_STORAGE=1"
+  if /i "%%~A"=="/cleanup-storage" set "ARG_CLEANUP_STORAGE=1"
+  if /i "%%~A"=="/cleanupstorageforce" set "ARG_CLEANUP_STORAGE_FORCE=1"
+  if /i "%%~A"=="/cleanup-storage-force" set "ARG_CLEANUP_STORAGE_FORCE=1"
   if /i "%%~A"=="/noreboot" set "ARG_NO_REBOOT=1"
   if /i "%%~A"=="/no-reboot" set "ARG_NO_REBOOT=1"
 )
@@ -84,6 +90,7 @@ if "%ARG_FORCE%"=="1" (
   )
 )
 
+call :maybe_cleanup_storage_preseed
 call :remove_driver_packages || goto :fail
 call :remove_certs || goto :fail
 call :maybe_disable_testsigning || goto :fail
@@ -101,6 +108,13 @@ echo.
 echo Options:
 echo   /force, /quiet       Non-interactive: skip confirmation and leave signature mode unchanged
 echo                        (/quiet also implies /noreboot)
+echo   /cleanupstorage      OPTIONAL: revert virtio-blk boot-critical registry pre-seeding
+echo                        DANGER: If this VM currently boots from virtio-blk, running this may make Windows unbootable.
+echo                        Interactive mode will prompt before touching the registry.
+echo                        In /force^|/quiet mode, this flag is ignored unless /cleanupstorageforce is also provided.
+echo                        (alias: /cleanup-storage)
+echo   /cleanupstorageforce Allow /cleanupstorage in /force^|/quiet mode (no prompt; DANGEROUS)
+echo                        (alias: /cleanup-storage-force)
 echo   /noreboot            Do not prompt to reboot/shutdown at the end
 echo.
 echo Logs are written to C:\AeroGuestTools\uninstall.log
@@ -195,10 +209,126 @@ if exist "%MANIFEST_FILE%" (
     )
   )
 )
-
 call :log "Effective signing_policy: %SIGNING_POLICY%"
 exit /b 0
 
+:maybe_cleanup_storage_preseed
+if not "%ARG_CLEANUP_STORAGE%"=="1" exit /b 0
+
+call :log ""
+call :log "================ Storage cleanup (/cleanupstorage) ================"
+call :log "DANGER: This will modify boot-critical storage registry keys."
+call :log "        If this VM is currently booting from virtio-blk, Windows may become unbootable (0x7B)."
+call :log "        Only run this AFTER switching the boot disk back to AHCI (or another non-virtio-blk controller)."
+call :log ""
+call :log "This cleanup will:"
+call :log "  - Set HKLM\SYSTEM\CurrentControlSet\Services\%AERO_VIRTIO_BLK_SERVICE%\Start = 3"
+call :log "  - Delete HKLM\SYSTEM\CurrentControlSet\Control\CriticalDeviceDatabase\PCI#... entries for the configured virtio-blk HWIDs"
+call :log "==============================================================="
+
+rem Conservative default: never do this in non-interactive mode unless explicitly allowed.
+if "%ARG_FORCE%"=="1" if not "%ARG_CLEANUP_STORAGE_FORCE%"=="1" (
+  call :log "SKIP: Non-interactive mode detected (/force or /quiet)."
+  call :log "      For safety, /cleanupstorage is ignored unless /cleanupstorageforce is also provided."
+  exit /b 0
+)
+
+if not "%ARG_FORCE%"=="1" (
+  choice /c YN /n /m "Proceed with boot-critical storage registry cleanup? [Y/N] "
+  if errorlevel 2 (
+    call :log "Storage cleanup cancelled."
+    exit /b 0
+  )
+)
+
+call :cleanup_storage_preseed
+exit /b 0
+
+:cleanup_storage_preseed
+setlocal EnableDelayedExpansion
+
+if not defined AERO_VIRTIO_BLK_SERVICE (
+  endlocal
+  call :log "ERROR: AERO_VIRTIO_BLK_SERVICE is not set (config/devices.cmd). Skipping /cleanupstorage."
+  exit /b 0
+)
+if not defined AERO_VIRTIO_BLK_HWIDS (
+  endlocal
+  call :log "ERROR: AERO_VIRTIO_BLK_HWIDS is not set (config/devices.cmd). Skipping /cleanupstorage."
+  exit /b 0
+)
+
+set "STOR_SERVICE=!AERO_VIRTIO_BLK_SERVICE!"
+set "SVC_KEY=HKLM\SYSTEM\CurrentControlSet\Services\!STOR_SERVICE!"
+
+call :log ""
+call :log "Cleaning up virtio-blk boot-critical registry pre-seed..."
+call :log "Storage service: !STOR_SERVICE!"
+
+rem Preferred safe action: do NOT delete the whole service key; just remove BOOT_START.
+call :reg_set_dword_if_key_exists "!SVC_KEY!" "Start" "3"
+
+set "CDD_BASE=HKLM\SYSTEM\CurrentControlSet\Control\CriticalDeviceDatabase"
+for %%H in (!AERO_VIRTIO_BLK_HWIDS!) do (
+  call :delete_cdd_keys "%%~H"
+)
+
+endlocal & exit /b 0
+
+:delete_cdd_keys
+setlocal EnableDelayedExpansion
+set "HWID=%~1"
+if not defined HWID (
+  endlocal & exit /b 0
+)
+
+set "CDD_BASE=HKLM\SYSTEM\CurrentControlSet\Control\CriticalDeviceDatabase"
+set "KEYNAME=!HWID:\=#!"
+
+call :reg_delete_key_if_exists "!CDD_BASE!\!KEYNAME!"
+call :reg_delete_key_if_exists "!CDD_BASE!\!KEYNAME!&CC_010000"
+call :reg_delete_key_if_exists "!CDD_BASE!\!KEYNAME!&CC_0100"
+
+endlocal & exit /b 0
+
+:reg_set_dword_if_key_exists
+set "KEY=%~1"
+set "VALUE_NAME=%~2"
+set "DWORD_VAL=%~3"
+if not defined KEY exit /b 0
+if not defined VALUE_NAME exit /b 0
+if not defined DWORD_VAL exit /b 0
+
+"%SYS32%\reg.exe" query "%KEY%" >nul 2>&1
+if errorlevel 1 (
+  call :log "  - SKIP (missing key): %KEY%"
+  exit /b 0
+)
+
+call :log "  - SET: %KEY%\%VALUE_NAME% = %DWORD_VAL%"
+"%SYS32%\reg.exe" add "%KEY%" /v "%VALUE_NAME%" /t REG_DWORD /d %DWORD_VAL% /f >>"%LOG%" 2>&1
+if errorlevel 1 (
+  call :log "    WARNING: reg add failed for %KEY% /v %VALUE_NAME%"
+)
+exit /b 0
+
+:reg_delete_key_if_exists
+set "KEY=%~1"
+if not defined KEY exit /b 0
+
+"%SYS32%\reg.exe" query "%KEY%" >nul 2>&1
+if errorlevel 1 (
+  rem Keep logs low-noise for missing keys; this is best-effort cleanup.
+  exit /b 0
+)
+
+call :log "  - DELETE: %KEY%"
+"%SYS32%\reg.exe" delete "%KEY%" /f >>"%LOG%" 2>&1
+if errorlevel 1 (
+  call :log "    WARNING: reg delete failed for %KEY%"
+)
+exit /b 0
+ 
 :remove_driver_packages
 call :log ""
 call :log "Removing Aero driver packages from Driver Store (best-effort)..."
