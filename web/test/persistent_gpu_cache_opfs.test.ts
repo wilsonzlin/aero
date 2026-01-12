@@ -72,6 +72,21 @@ test("PersistentGpuCache OPFS: large shader spills to OPFS and metadata stays in
       // Verify reads go through OPFS and roundtrip.
       const got = await cache1.getShader(key);
       assert.deepEqual(got, { wgsl, reflection });
+
+      // Rewriting the same key should truncate/replace the OPFS blob (not append).
+      const wgsl2 = `// v2\n${wgsl}`;
+      const reflection2 = { bindings: [], version: 2 };
+      assert.ok(new TextEncoder().encode(wgsl2).byteLength > 300 * 1024);
+      await cache1.putShader(key, { wgsl: wgsl2, reflection: reflection2 });
+
+      const handle2 = await shadersDir.getFileHandle(`${key}.json`);
+      const file2 = await handle2.getFile();
+      const parsed2 = JSON.parse(await file2.text());
+      assert.equal(parsed2.wgsl, wgsl2);
+      assert.deepEqual(parsed2.reflection, reflection2);
+
+      const gotUpdated = await cache1.getShader(key);
+      assert.deepEqual(gotUpdated, { wgsl: wgsl2, reflection: reflection2 });
     } finally {
       await cache1.close();
     }
