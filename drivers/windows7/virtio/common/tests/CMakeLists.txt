@@ -90,7 +90,7 @@ add_executable(virtio_pci_modern_miniport_tests
     ${CMAKE_CURRENT_LIST_DIR}/../../../../win7/virtio/virtio-core/portable/virtio_pci_cap_parser.c
 )
 
-target_include_directories(virtio_pci_modern_miniport_tests PRIVATE
+target_include_directories(virtio_pci_modern_miniport_tests BEFORE PRIVATE
     ${CMAKE_CURRENT_LIST_DIR}/wdk_stubs
     ${CMAKE_CURRENT_LIST_DIR}/../include
     ${CMAKE_CURRENT_LIST_DIR}
