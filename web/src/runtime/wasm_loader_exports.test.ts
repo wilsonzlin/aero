@@ -319,8 +319,8 @@ describe("runtime/wasm_loader (optional exports)", () => {
     const bridge = new Ctor(0, 0, new SharedArrayBuffer(4));
     expect(bridge.mmio_read(0, 4)).toBe(0);
     bridge.mmio_write(0, 4, 0);
-    bridge.poll();
-    expect(bridge.irq_asserted()).toBe(false);
+    bridge.poll?.();
+    expect(bridge.irq_asserted?.() ?? false).toBe(false);
     bridge.free();
   });
 

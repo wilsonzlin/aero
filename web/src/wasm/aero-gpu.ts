@@ -252,7 +252,11 @@ export function get_gpu_stats(): unknown | undefined {
         ? (mod.get_gpu_stats as () => unknown)
         : typeof mod.getGpuStats === "function"
           ? (mod.getGpuStats as () => unknown)
-          : null;
+          : typeof mod.get_stats === "function"
+            ? (mod.get_stats as () => unknown)
+            : typeof mod.getStats === "function"
+              ? (mod.getStats as () => unknown)
+              : null;
     if (!fn) return undefined;
     return wrapNonThrowing(fn());
   } catch {
