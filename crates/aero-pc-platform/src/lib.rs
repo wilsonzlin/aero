@@ -1308,7 +1308,6 @@ impl PcPlatform {
         let Some(e1000) = self.e1000.as_ref() else {
             return false;
         };
-
         e1000.borrow_mut().enqueue_rx_frame(frame);
         true
     }

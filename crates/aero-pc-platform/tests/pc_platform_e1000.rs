@@ -67,6 +67,16 @@ fn build_test_frame(payload: &[u8]) -> Vec<u8> {
 }
 
 #[test]
+fn pc_platform_e1000_exposes_mac_addr_via_host_api() {
+    let pc = PcPlatform::new_with_e1000(2 * 1024 * 1024);
+    assert!(pc.has_e1000());
+    assert_eq!(
+        pc.e1000_mac_addr(),
+        Some([0x52, 0x54, 0x00, 0x12, 0x34, 0x56])
+    );
+}
+
+#[test]
 fn pc_platform_enumerates_e1000_and_assigns_bars() {
     let mut pc = PcPlatform::new_with_e1000(2 * 1024 * 1024);
     let bdf = NIC_E1000_82540EM.bdf;
