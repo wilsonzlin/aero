@@ -183,6 +183,18 @@ impl AeroGpuAcmdExecutor {
                         )));
                     }
 
+                    if width == 0 || height == 0 {
+                        return Err(AeroGpuAcmdExecutorError::Backend(
+                            "CREATE_TEXTURE2D: width/height must be non-zero".into(),
+                        ));
+                    }
+                    let max_dim = self.device.limits().max_texture_dimension_2d;
+                    if width > max_dim || height > max_dim {
+                        return Err(AeroGpuAcmdExecutorError::Backend(format!(
+                            "CREATE_TEXTURE2D: dimensions {width}x{height} exceed device limit {max_dim}"
+                        )));
+                    }
+
                     let format = map_texture_format(format)?;
 
                     let texture = self.device.create_texture(&wgpu::TextureDescriptor {
@@ -499,6 +511,33 @@ mod tests {
             assert!(
                 scanout.is_none(),
                 "expected scanout to be cleared after destroy"
+            );
+        });
+    }
+
+    #[test]
+    fn create_texture2d_rejects_zero_sized_textures() {
+        pollster::block_on(async {
+            let mut exec = AeroGpuAcmdExecutor::new_headless().await.unwrap();
+
+            let mut w = AerogpuCmdWriter::new();
+            w.create_texture2d(
+                /*texture_handle=*/ 1,
+                /*usage_flags=*/ 0,
+                AerogpuFormat::B8G8R8A8Unorm as u32,
+                /*width=*/ 0,
+                /*height=*/ 4,
+                /*mip_levels=*/ 1,
+                /*array_layers=*/ 1,
+                /*row_pitch_bytes=*/ 0,
+                /*backing_alloc_id=*/ 0,
+                /*backing_offset_bytes=*/ 0,
+            );
+
+            let err = exec.execute_submission(&w.finish(), None).unwrap_err();
+            assert!(
+                err.to_string().contains("width/height"),
+                "unexpected error: {err}"
             );
         });
     }
