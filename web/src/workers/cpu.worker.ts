@@ -2197,8 +2197,6 @@ async function initAndRun(init: WorkerInitMessage): Promise<void> {
         } catch {
           // ignore
         }
-        // Backwards-compatible signal for older/alternate runtimes that report commit status via a global flag.
-        globalThis.__aero_jit_last_committed = false;
         return -1n;
       };
       setReadyFlag(status, role, true);
