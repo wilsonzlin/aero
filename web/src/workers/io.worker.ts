@@ -2685,18 +2685,24 @@ let usbDemoNextId = 1_000_000_000;
 let usbAvailable = false;
 
 function attachMicRingBuffer(ringBuffer: SharedArrayBuffer | null, sampleRate?: number): void {
+  const parsePositiveSafeU32 = (value: unknown): number => {
+    if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0 || value > 0xffff_ffff) return 0;
+    return value >>> 0;
+  };
+
   if (ringBuffer !== null) {
     const Sab = globalThis.SharedArrayBuffer;
     if (typeof Sab === "undefined") {
-      throw new Error("SharedArrayBuffer is unavailable; microphone capture requires crossOriginIsolated.");
-    }
-    if (!(ringBuffer instanceof Sab)) {
-      throw new Error("setMicrophoneRingBuffer expects a SharedArrayBuffer or null.");
+      console.warn("[io.worker] SharedArrayBuffer is unavailable; dropping mic ring attachment.");
+      ringBuffer = null;
+    } else if (!(ringBuffer instanceof Sab)) {
+      console.warn("[io.worker] setMicrophoneRingBuffer expects a SharedArrayBuffer or null; dropping attachment.");
+      ringBuffer = null;
     }
   }
 
   micRingBuffer = ringBuffer;
-  micSampleRate = (sampleRate ?? 0) | 0;
+  micSampleRate = parsePositiveSafeU32(sampleRate);
 
   // Microphone ring buffers are SPSC (single-consumer). Prefer the legacy HDA
   // model when available; fall back to virtio-snd in builds that omit HDA.
@@ -2707,9 +2713,17 @@ function attachMicRingBuffer(ringBuffer: SharedArrayBuffer | null, sampleRate?: 
     // `attach_mic_ring(ring, sampleRate)` in one step when available (avoids an
     // extra attach/detach cycle when the previous rate was 0).
     if (ringBuffer && micSampleRate > 0) {
-      hda.setCaptureSampleRateHz(micSampleRate);
+      try {
+        hda.setCaptureSampleRateHz(micSampleRate);
+      } catch {
+        // ignore
+      }
     }
-    hda.setMicRingBuffer(ringBuffer);
+    try {
+      hda.setMicRingBuffer(ringBuffer);
+    } catch {
+      // ignore
+    }
     // Ensure we never have two consumers racing the mic ring.
     if (snd) {
       try {
@@ -2720,9 +2734,17 @@ function attachMicRingBuffer(ringBuffer: SharedArrayBuffer | null, sampleRate?: 
     }
   } else if (snd) {
     if (ringBuffer && micSampleRate > 0) {
-      snd.setCaptureSampleRateHz(micSampleRate);
+      try {
+        snd.setCaptureSampleRateHz(micSampleRate);
+      } catch {
+        // ignore
+      }
     }
-    snd.setMicRingBuffer(ringBuffer);
+    try {
+      snd.setMicRingBuffer(ringBuffer);
+    } catch {
+      // ignore
+    }
   }
 }
 
@@ -2982,32 +3004,50 @@ function attachAudioRingBuffer(
   channelCount?: number,
   dstSampleRate?: number,
 ): void {
-  const cap = (capacityFrames ?? 0) >>> 0;
-  const cc = (channelCount ?? 0) >>> 0;
-  const sr = (dstSampleRate ?? 0) >>> 0;
+  const parsePositiveSafeU32 = (value: unknown): number => {
+    if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0 || value > 0xffff_ffff) return 0;
+    return value >>> 0;
+  };
+
+  let cap = parsePositiveSafeU32(capacityFrames);
+  let cc = parsePositiveSafeU32(channelCount);
+  let sr = parsePositiveSafeU32(dstSampleRate);
+
+  let views: AudioWorkletRingBufferViews | null = null;
   if (ringBuffer !== null) {
     const Sab = globalThis.SharedArrayBuffer;
     if (typeof Sab === "undefined") {
-      throw new Error("SharedArrayBuffer is unavailable; audio output requires crossOriginIsolated.");
+      console.warn("[io.worker] SharedArrayBuffer is unavailable; dropping audio ring attachment.");
+      ringBuffer = null;
+    } else if (!(ringBuffer instanceof Sab)) {
+      console.warn("[io.worker] setAudioRingBuffer expects a SharedArrayBuffer or null; dropping attachment.");
+      ringBuffer = null;
+    } else if (ringBuffer.byteLength < AUDIO_OUT_HEADER_BYTES) {
+      console.warn("[io.worker] audio ring buffer is too small; dropping attachment.");
+      ringBuffer = null;
+    } else if (cap === 0 || cc === 0 || sr === 0) {
+      console.warn("[io.worker] audio ring buffer metadata is invalid; dropping attachment.");
+      ringBuffer = null;
+    } else {
+      try {
+        // Validate against the canonical ring buffer layout (also creates convenient views).
+        views = wrapAudioOutRingBuffer(ringBuffer, cap, cc);
+      } catch (err) {
+        console.warn("[io.worker] audio ring buffer wrap failed; dropping attachment:", err);
+        ringBuffer = null;
+        cap = 0;
+        cc = 0;
+        sr = 0;
+        views = null;
+      }
     }
-    if (!(ringBuffer instanceof Sab)) {
-      throw new Error("setAudioRingBuffer expects a SharedArrayBuffer or null.");
-    }
-
-    // Validate against the canonical ring buffer layout (also creates convenient views).
-    if (ringBuffer.byteLength < AUDIO_OUT_HEADER_BYTES) {
-      throw new Error(`audio ring buffer is too small: need at least ${AUDIO_OUT_HEADER_BYTES} bytes`);
-    }
-    if (cap === 0) throw new Error("setAudioRingBuffer: capacityFrames must be non-zero.");
-    if (cc === 0) throw new Error("setAudioRingBuffer: channelCount must be non-zero.");
-    if (sr === 0) throw new Error("setAudioRingBuffer: dstSampleRate must be non-zero.");
   }
 
   audioOutRingBuffer = ringBuffer;
-  audioOutViews = ringBuffer ? wrapAudioOutRingBuffer(ringBuffer, cap, cc) : null;
-  audioOutCapacityFrames = cap;
-  audioOutChannelCount = cc;
-  audioOutDstSampleRate = sr;
+  audioOutViews = views;
+  audioOutCapacityFrames = ringBuffer ? cap : 0;
+  audioOutChannelCount = ringBuffer ? cc : 0;
+  audioOutDstSampleRate = ringBuffer ? sr : 0;
   audioOutTelemetryNextMs = 0;
 
   // If the guest HDA device is active, attach/detach the ring buffer so the WASM-side
