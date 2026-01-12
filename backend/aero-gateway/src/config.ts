@@ -259,9 +259,12 @@ export function loadConfig(env: Env = process.env): Config {
     const trimmed = value?.trim();
     if (!trimmed) return null;
     const parsed = Number(trimmed);
-    if (!Number.isInteger(parsed) || parsed <= 0) {
-      throw new Error(`${name} must be a positive integer, got ${JSON.stringify(value)}`);
+    if (!Number.isInteger(parsed) || parsed < 0) {
+      throw new Error(`${name} must be a positive integer (or 0 to unset), got ${JSON.stringify(value)}`);
     }
+    // Treat 0 as "unset" so deployments can pass through empty/placeholder values without
+    // accidentally disabling framing.
+    if (parsed === 0) return null;
     return parsed;
   }
 
