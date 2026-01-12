@@ -4,6 +4,14 @@ pub const VIRTQ_DESC_F_NEXT: u16 = 1;
 pub const VIRTQ_DESC_F_WRITE: u16 = 2;
 pub const VIRTQ_DESC_F_INDIRECT: u16 = 4;
 
+/// Maximum number of entries permitted in an indirect descriptor table.
+///
+/// Aero's virtio transport is designed to be deterministic and robust under
+/// hostile/corrupted guests. Indirect descriptors can, in theory, describe very
+/// large chains; bounding the table size prevents pathological O(N) behaviour
+/// and large allocations when parsing a single descriptor chain.
+pub const MAX_INDIRECT_DESC_TABLE_ENTRIES: u32 = 4096;
+
 pub const VIRTQ_AVAIL_F_NO_INTERRUPT: u16 = 1;
 pub const VIRTQ_USED_F_NO_NOTIFY: u16 = 1;
 
@@ -168,6 +176,9 @@ impl DescriptorChain {
             return Err(VirtQueueError::IndirectDescriptorLenNotMultipleOf16 { len });
         }
         let count_u32 = len / 16;
+        if count_u32 > MAX_INDIRECT_DESC_TABLE_ENTRIES {
+            return Err(VirtQueueError::IndirectDescriptorTableTooLarge { count: count_u32 });
+        }
         let count = u16::try_from(count_u32)
             .map_err(|_| VirtQueueError::IndirectDescriptorTableTooLarge { count: count_u32 })?;
         Self::read_chain(mem, table_addr, count, 0, false)

@@ -3,6 +3,7 @@ use aero_virtio::memory::{
 };
 use aero_virtio::queue::{
     DescriptorChain, PoppedDescriptorChain, VirtQueue, VirtQueueConfig, VirtQueueError,
+    MAX_INDIRECT_DESC_TABLE_ENTRIES,
     VIRTQ_AVAIL_F_NO_INTERRUPT, VIRTQ_DESC_F_INDIRECT, VIRTQ_DESC_F_NEXT, VIRTQ_DESC_F_WRITE,
 };
 
@@ -238,6 +239,49 @@ fn indirect_descriptor_table_too_large_is_rejected() {
             assert_eq!(
                 error,
                 VirtQueueError::IndirectDescriptorTableTooLarge { count: 65536 }
+            );
+        }
+        PoppedDescriptorChain::Chain(_) => panic!("expected invalid chain"),
+    }
+}
+
+#[test]
+fn indirect_descriptor_table_exceeds_max_entries_is_rejected() {
+    let mut mem = GuestRam::new(0x10000);
+    let desc = 0x1000;
+    let avail = 0x2000;
+    let used = 0x3000;
+    let indirect = 0x8000;
+
+    let count = MAX_INDIRECT_DESC_TABLE_ENTRIES + 1;
+    let len = count * 16;
+    write_desc(&mut mem, desc, 0, indirect, len, VIRTQ_DESC_F_INDIRECT, 0);
+
+    write_u16_le(&mut mem, avail, 0).unwrap();
+    write_u16_le(&mut mem, avail + 2, 1).unwrap();
+    write_u16_le(&mut mem, avail + 4, 0).unwrap();
+
+    write_u16_le(&mut mem, used, 0).unwrap();
+    write_u16_le(&mut mem, used + 2, 0).unwrap();
+
+    let mut q = VirtQueue::new(
+        VirtQueueConfig {
+            size: 4,
+            desc_addr: desc,
+            avail_addr: avail,
+            used_addr: used,
+        },
+        false,
+    )
+    .unwrap();
+
+    let popped = q.pop_descriptor_chain(&mem).unwrap().unwrap();
+    match popped {
+        PoppedDescriptorChain::Invalid { head_index, error } => {
+            assert_eq!(head_index, 0);
+            assert_eq!(
+                error,
+                VirtQueueError::IndirectDescriptorTableTooLarge { count }
             );
         }
         PoppedDescriptorChain::Chain(_) => panic!("expected invalid chain"),
