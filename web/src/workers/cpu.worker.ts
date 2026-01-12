@@ -589,11 +589,13 @@ async function startHdaPciDevice(msg: AudioOutputHdaPciDeviceStartMessage): Prom
   // Guest memory layout for CORB/RIRB + BDL + PCM.
   //
   // Avoid low-memory offsets that are used by other CPU-worker demos (e.g. the
-  // diskRead demo uses 0x1000 as a scratch buffer).
-  const corbBase = 0x0010_0000;
-  const rirbBase = 0x0010_1000;
-  const bdlBase = 0x0020_0000;
-  const pcmBase = 0x0021_0000;
+  // diskRead demo uses 0x1000 as a scratch buffer) and keep this region distinct
+  // from the synthetic HDA capture harness (which also reserves a chunk of guest
+  // RAM for its own CORB/RIRB/BDL/PCM buffers).
+  const corbBase = 0x0030_0000;
+  const rirbBase = 0x0030_1000;
+  const bdlBase = 0x0040_0000;
+  const pcmBase = 0x0041_0000;
 
   const CORB_ENTRIES = 256;
   const RIRB_ENTRIES = 256;
