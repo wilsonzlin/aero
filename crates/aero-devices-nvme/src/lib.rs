@@ -770,8 +770,10 @@ impl NvmeController {
         // SQ0 (admin) is special: it must always be accepted to avoid stalling admin processing. If
         // the map is full and SQ0 is not yet present, evict one other entry to make room so the
         // overall map size stays capped.
-        if self.pending_sq_tail.contains_key(&qid) {
-            self.pending_sq_tail.insert(qid, val);
+        if let std::collections::btree_map::Entry::Occupied(mut entry) =
+            self.pending_sq_tail.entry(qid)
+        {
+            entry.insert(val);
             return;
         }
 

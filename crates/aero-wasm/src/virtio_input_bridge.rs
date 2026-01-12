@@ -183,7 +183,7 @@ impl VirtioInputPciDeviceCore {
             1 | 2 | 4 => size as usize,
             _ => return 0,
         };
-        let end = offset.checked_add(size as u32).unwrap_or(u32::MAX);
+        let end = offset.saturating_add(size as u32);
         if self.legacy_io_size == 0 || end > self.legacy_io_size {
             return 0xffff_ffff;
         }
@@ -203,7 +203,7 @@ impl VirtioInputPciDeviceCore {
             1 | 2 | 4 => size as usize,
             _ => return,
         };
-        let end = offset.checked_add(size as u32).unwrap_or(u32::MAX);
+        let end = offset.saturating_add(size as u32);
         if self.legacy_io_size == 0 || end > self.legacy_io_size {
             return;
         }

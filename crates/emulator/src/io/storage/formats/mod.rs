@@ -25,7 +25,7 @@ pub fn detect_format<S: ByteStorage>(storage: &mut S) -> DiskResult<DiskFormat> 
     //
     // For truncated images (< 8 bytes) that still match the magic, treat them as QCOW2 so callers
     // get a corruption error instead of silently falling back to raw.
-    if len >= 4 && len < 8 {
+    if (4..8).contains(&len) {
         let mut first4 = [0u8; 4];
         storage.read_at(0, &mut first4)?;
         if first4 == QCOW2_MAGIC {
