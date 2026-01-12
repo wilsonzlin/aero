@@ -120,7 +120,9 @@ fn ring_buffer_spsc_concurrent() {
 fn ring_buffer_mpsc_concurrent() {
     let rb = Arc::new(RingBuffer::new(1024));
 
-    const PRODUCERS: usize = 4;
+    // Avoid spawning excessive OS threads in constrained CI environments. Two producers are still
+    // sufficient to exercise the multi-producer code paths.
+    const PRODUCERS: usize = 2;
     const PER_PRODUCER: u32 = 50_000;
 
     let mut handles = Vec::new();

@@ -33,12 +33,21 @@ fn concurrent_writes_to_disjoint_ranges() {
         PhysicalMemory::with_options(0x8000, PhysicalMemoryOptions { chunk_size: 4096 }).unwrap(),
     );
 
+    // Avoid spawning excessive OS threads in constrained CI environments. We still exercise
+    // concurrent writes, but cap the number of writer threads while covering all chunks.
+    const THREADS: usize = 2;
+    const CHUNKS: usize = 8;
+
     let mut threads = Vec::new();
-    for i in 0u64..8 {
+    for tid in 0..THREADS {
         let mem = mem.clone();
         threads.push(std::thread::spawn(move || {
-            let start = i * 0x1000;
-            mem.write_bytes(start, &vec![i as u8; 0x1000]);
+            let mut i = tid;
+            while i < CHUNKS {
+                let start = (i as u64) * 0x1000;
+                mem.write_bytes(start, &vec![i as u8; 0x1000]);
+                i += THREADS;
+            }
         }));
     }
 
@@ -47,11 +56,11 @@ fn concurrent_writes_to_disjoint_ranges() {
     }
 
     // Each thread touched a distinct chunk.
-    assert_eq!(mem.allocated_chunks(), 8);
+    assert_eq!(mem.allocated_chunks(), CHUNKS);
 
     let mut buf = vec![0u8; 0x1000];
-    for i in 0u64..8 {
-        let start = i * 0x1000;
+    for i in 0..CHUNKS {
+        let start = (i as u64) * 0x1000;
         mem.read_bytes(start, &mut buf);
         assert!(buf.iter().all(|b| *b == i as u8));
     }

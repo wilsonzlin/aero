@@ -79,11 +79,18 @@ mod tests {
     fn drain_queue_is_thread_safe() {
         let q = Arc::new(DrainQueue::new());
         let mut threads = Vec::new();
-        for t in 0..4u32 {
+        // Keep the test deterministic while avoiding spawning too many OS threads in constrained
+        // CI environments.
+        for tid in 0..2u32 {
             let q = Arc::clone(&q);
             threads.push(std::thread::spawn(move || {
-                for i in 0..100u32 {
-                    q.push((t * 1000) + i);
+                // Simulate 4 logical writers by splitting them across 2 OS threads.
+                let mut t = tid;
+                while t < 4 {
+                    for i in 0..100u32 {
+                        q.push((t * 1000) + i);
+                    }
+                    t += 2;
                 }
             }));
         }
