@@ -636,3 +636,131 @@ fn d3d9_bc1_misaligned_copy_region_is_rejected() {
         other => panic!("expected Validation error, got {other:?}"),
     }
 }
+
+#[test]
+fn d3d9_bc_copy_region_reaching_mip_edge_is_allowed() {
+    let mut exec = match pollster::block_on(create_executor_no_bc_features()) {
+        Some(exec) => exec,
+        None => {
+            common::skip_or_panic(module_path!(), "wgpu adapter not found");
+            return;
+        }
+    };
+
+    const OPC_CREATE_TEXTURE2D: u32 = AerogpuCmdOpcode::CreateTexture2d as u32;
+    const OPC_UPLOAD_RESOURCE: u32 = AerogpuCmdOpcode::UploadResource as u32;
+    const OPC_COPY_TEXTURE2D: u32 = AerogpuCmdOpcode::CopyTexture2d as u32;
+
+    const SRC_TEX: u32 = 1;
+    const DST_TEX: u32 = 2;
+
+    const WIDTH: u32 = 5;
+    const HEIGHT: u32 = 5;
+
+    fn bc1_solid_block(rgb565: u16) -> [u8; 8] {
+        let [lo, hi] = rgb565.to_le_bytes();
+        [lo, hi, lo, hi, 0x00, 0x00, 0x00, 0x00]
+    }
+
+    // Build a 5x5 BC1 texture as a 2x2 grid of 4x4 blocks.
+    // We make each block a different solid color so we can validate edge behavior deterministically.
+    let block_red = bc1_solid_block(0xF800);
+    let block_green = bc1_solid_block(0x07E0);
+    let block_blue = bc1_solid_block(0x001F);
+    let block_white = bc1_solid_block(0xFFFF);
+
+    let mut src_blocks = Vec::new();
+    // Block row 0 (y=0..3): [red][green]
+    src_blocks.extend_from_slice(&block_red);
+    src_blocks.extend_from_slice(&block_green);
+    // Block row 1 (y=4..7): [blue][white]
+    src_blocks.extend_from_slice(&block_blue);
+    src_blocks.extend_from_slice(&block_white);
+    assert_eq!(src_blocks.len(), 32);
+
+    // Destination starts as solid red everywhere.
+    let mut dst_blocks = Vec::new();
+    for _ in 0..4 {
+        dst_blocks.extend_from_slice(&block_red);
+    }
+    assert_eq!(dst_blocks.len(), 32);
+
+    let stream = build_stream(|out| {
+        for handle in [SRC_TEX, DST_TEX] {
+            emit_packet(out, OPC_CREATE_TEXTURE2D, |out| {
+                push_u32(out, handle);
+                push_u32(out, AEROGPU_RESOURCE_USAGE_TEXTURE);
+                push_u32(out, AEROGPU_FORMAT_BC1_RGBA_UNORM);
+                push_u32(out, WIDTH);
+                push_u32(out, HEIGHT);
+                push_u32(out, 1); // mip_levels
+                push_u32(out, 1); // array_layers
+                push_u32(out, 16); // row_pitch_bytes (2 BC1 blocks per row)
+                push_u32(out, 0); // backing_alloc_id
+                push_u32(out, 0); // backing_offset_bytes
+                push_u64(out, 0); // reserved0
+            });
+        }
+
+        emit_packet(out, OPC_UPLOAD_RESOURCE, |out| {
+            push_u32(out, SRC_TEX);
+            push_u32(out, 0); // reserved0
+            push_u64(out, 0); // offset_bytes
+            push_u64(out, src_blocks.len() as u64);
+            out.extend_from_slice(&src_blocks);
+        });
+
+        emit_packet(out, OPC_UPLOAD_RESOURCE, |out| {
+            push_u32(out, DST_TEX);
+            push_u32(out, 0); // reserved0
+            push_u64(out, 0); // offset_bytes
+            push_u64(out, dst_blocks.len() as u64);
+            out.extend_from_slice(&dst_blocks);
+        });
+
+        // Copy a 1x1 region starting at (4,4) (block-aligned origin) to the same dst coords. The
+        // extent is not block-aligned, but it reaches the mip edge (width=5,height=5), so it is
+        // valid per WebGPU BC copy rules.
+        emit_packet(out, OPC_COPY_TEXTURE2D, |out| {
+            push_u32(out, DST_TEX);
+            push_u32(out, SRC_TEX);
+            push_u32(out, 0); // dst_mip_level
+            push_u32(out, 0); // dst_array_layer
+            push_u32(out, 0); // src_mip_level
+            push_u32(out, 0); // src_array_layer
+            push_u32(out, 4); // dst_x
+            push_u32(out, 4); // dst_y
+            push_u32(out, 4); // src_x
+            push_u32(out, 4); // src_y
+            push_u32(out, 1); // width (not block-aligned, but ends at mip edge)
+            push_u32(out, 1); // height (not block-aligned, but ends at mip edge)
+            push_u32(out, 0); // flags
+            push_u32(out, 0); // reserved0
+        });
+    });
+
+    exec.execute_cmd_stream(&stream)
+        .expect("edge-aligned BC copy should succeed");
+
+    let (src_w, src_h, src_rgba) = pollster::block_on(exec.readback_texture_rgba8(SRC_TEX))
+        .expect("source readback should succeed");
+    let (dst_w, dst_h, dst_rgba) = pollster::block_on(exec.readback_texture_rgba8(DST_TEX))
+        .expect("dest readback should succeed");
+    assert_eq!((src_w, src_h), (WIDTH, HEIGHT));
+    assert_eq!((dst_w, dst_h), (WIDTH, HEIGHT));
+
+    let px = |buf: &[u8], x: u32, y: u32| -> [u8; 4] {
+        let idx = ((y * WIDTH + x) * 4) as usize;
+        buf[idx..idx + 4].try_into().unwrap()
+    };
+
+    // Sanity: source blocks decode as expected.
+    assert_eq!(px(&src_rgba, 0, 0), [255, 0, 0, 255]);
+    assert_eq!(px(&src_rgba, 4, 0), [0, 255, 0, 255]);
+    assert_eq!(px(&src_rgba, 0, 4), [0, 0, 255, 255]);
+    assert_eq!(px(&src_rgba, 4, 4), [255, 255, 255, 255]);
+
+    // Destination starts red, and should have copied the bottom-right pixel (4,4) from the source.
+    assert_eq!(px(&dst_rgba, 0, 0), [255, 0, 0, 255]);
+    assert_eq!(px(&dst_rgba, 4, 4), [255, 255, 255, 255]);
+}
