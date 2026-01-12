@@ -1,5 +1,8 @@
 mod common;
 
+use std::sync::Arc;
+
+use aero_gpu::stats::GpuStats;
 use aero_gpu::{AerogpuD3d9Error, AerogpuD3d9Executor};
 use aero_protocol::aerogpu::{
     aerogpu_cmd::{
@@ -13,13 +16,61 @@ use aero_protocol::aerogpu::{
 
 const AEROGPU_FORMAT_BC1_RGBA_UNORM: u32 = AerogpuFormat::BC1RgbaUnorm as u32;
 
-fn disable_wgpu_texture_compression_for_test() {
-    static ONCE: std::sync::Once = std::sync::Once::new();
-    ONCE.call_once(|| {
-        // `AerogpuD3d9Executor::new_headless` requests optional texture compression features when
-        // supported. For this test we want the deterministic CPU BC->RGBA8 fallback path.
-        std::env::set_var("AERO_DISABLE_WGPU_TEXTURE_COMPRESSION", "1");
+async fn create_executor_no_bc_features() -> Option<AerogpuD3d9Executor> {
+    common::ensure_xdg_runtime_dir();
+
+    // Prefer GL on Linux CI to avoid crashes in some Vulkan software adapters.
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+        backends: if cfg!(target_os = "linux") {
+            wgpu::Backends::GL
+        } else {
+            wgpu::Backends::all()
+        },
+        ..Default::default()
     });
+
+    let adapter = match instance
+        .request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::LowPower,
+            compatible_surface: None,
+            force_fallback_adapter: true,
+        })
+        .await
+    {
+        Some(adapter) => Some(adapter),
+        None => {
+            instance
+                .request_adapter(&wgpu::RequestAdapterOptions {
+                    power_preference: wgpu::PowerPreference::LowPower,
+                    compatible_surface: None,
+                    force_fallback_adapter: false,
+                })
+                .await
+        }
+    }?;
+
+    let downlevel_flags = adapter.get_downlevel_capabilities().flags;
+
+    let (device, queue) = adapter
+        .request_device(
+            &wgpu::DeviceDescriptor {
+                label: Some("aerogpu d3d9 bc test device"),
+                // Do not request TEXTURE_COMPRESSION_BC so the executor must take the CPU
+                // decompression fallback path.
+                required_features: wgpu::Features::empty(),
+                required_limits: wgpu::Limits::downlevel_defaults(),
+            },
+            None,
+        )
+        .await
+        .ok()?;
+
+    Some(AerogpuD3d9Executor::new(
+        device,
+        queue,
+        downlevel_flags,
+        Arc::new(GpuStats::new()),
+    ))
 }
 
 const CMD_STREAM_SIZE_BYTES_OFFSET: usize =
@@ -147,15 +198,12 @@ fn assemble_ps_texld_s3() -> Vec<u8> {
 
 #[test]
 fn d3d9_cmd_stream_bc1_texture_cpu_fallback_upload_and_sample() {
-    disable_wgpu_texture_compression_for_test();
-
-    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
-        Ok(exec) => exec,
-        Err(AerogpuD3d9Error::AdapterNotFound) => {
+    let mut exec = match pollster::block_on(create_executor_no_bc_features()) {
+        Some(exec) => exec,
+        None => {
             common::skip_or_panic(module_path!(), "wgpu adapter not found");
             return;
         }
-        Err(err) => panic!("failed to create executor: {err}"),
     };
 
     const OPC_CREATE_BUFFER: u32 = AerogpuCmdOpcode::CreateBuffer as u32;
@@ -427,15 +475,12 @@ fn d3d9_cmd_stream_bc1_texture_cpu_fallback_upload_and_sample() {
 
 #[test]
 fn d3d9_bc1_misaligned_copy_region_is_rejected() {
-    disable_wgpu_texture_compression_for_test();
-
-    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
-        Ok(exec) => exec,
-        Err(AerogpuD3d9Error::AdapterNotFound) => {
+    let mut exec = match pollster::block_on(create_executor_no_bc_features()) {
+        Some(exec) => exec,
+        None => {
             common::skip_or_panic(module_path!(), "wgpu adapter not found");
             return;
         }
-        Err(err) => panic!("failed to create executor: {err}"),
     };
 
     const OPC_CREATE_TEXTURE2D: u32 = AerogpuCmdOpcode::CreateTexture2d as u32;
