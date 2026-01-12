@@ -150,7 +150,7 @@ fn snapshot_roundtrip_preserves_dns_cache_ttl_and_drops_tcp_state() {
 #[test]
 fn snapshot_rejects_excessive_dns_cache_entry_count() {
     // Tag numbers are part of the snapshot format documented in `aero-net-stack/src/stack.rs`.
-    const TAG_DNS_CACHE: u16 = 7;
+    const TAG_DNS_CACHE: u16 = 6;
 
     let mut w = SnapshotWriter::new(
         <NetworkStack as IoSnapshot>::DEVICE_ID,
@@ -389,4 +389,3 @@ fn build_dns_query(id: u16, name: &str, qtype: u16) -> Vec<u8> {
     out.extend_from_slice(&1u16.to_be_bytes());
     out
 }
-

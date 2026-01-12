@@ -21,9 +21,14 @@
 
 pub mod packet;
 mod policy;
+pub mod snapshot;
 mod stack;
 
 pub use policy::{HostPolicy, IpCidr};
+pub use snapshot::{
+    DnsCacheEntrySnapshot, NetworkStackSnapshotState, TcpConnectionSnapshot, TcpConnectionStatus,
+    TcpRestorePolicy,
+};
 pub use stack::{
     Action, DnsResolved, Millis, NetworkStack, StackConfig, TcpProxyEvent, UdpProxyEvent,
     UdpTransport,

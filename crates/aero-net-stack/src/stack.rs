@@ -8,12 +8,13 @@ use crate::packet::{
     ARP_OP_REPLY, ARP_OP_REQUEST, HTYPE_ETHERNET, PTYPE_IPV4,
 };
 use crate::policy::HostPolicy;
-use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
-use aero_io_snapshot::io::state::{
-    IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
+use crate::snapshot::{
+    DnsCacheEntrySnapshot, NetworkStackSnapshotState, TcpConnectionSnapshot, TcpConnectionStatus,
+    TcpRestorePolicy,
 };
+use aero_io_snapshot::io::state::{IoSnapshot, SnapshotResult, SnapshotVersion};
 use core::net::Ipv4Addr;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 pub type Millis = u64;
 
@@ -160,6 +161,15 @@ struct TcpConn {
     guest_fin_received: bool,
 
     proxy_connected: bool,
+    proxy_reconnecting: bool,
+    /// Whether sequence numbers are safe to use for emitting guest-visible TCP packets.
+    ///
+    /// When restoring with [`TcpRestorePolicy::Reconnect`], the stack does **not** attempt to
+    /// snapshot full TCP stream state. Instead, it restores only connection bookkeeping (IDs +
+    /// endpoints) and treats all connections as proxy-disconnected. We then resynchronize the
+    /// guest-facing sequence state opportunistically from the first post-restore ACK-bearing packet
+    /// from the guest.
+    seq_synced: bool,
     buffered_to_proxy: Vec<Vec<u8>>,
     buffered_to_proxy_bytes: usize,
 }
@@ -346,6 +356,7 @@ impl NetworkStack {
         match event {
             TcpProxyEvent::Connected { .. } => {
                 conn.proxy_connected = true;
+                conn.proxy_reconnecting = false;
                 for chunk in conn.buffered_to_proxy.drain(..) {
                     out.push(Action::TcpProxySend {
                         connection_id: conn.id,
@@ -356,6 +367,12 @@ impl NetworkStack {
                 self.tcp.insert(key, conn);
             }
             TcpProxyEvent::Closed { .. } => {
+                if !conn.seq_synced {
+                    // We cannot emit a guest-visible FIN/RST without sequence state. Drop the
+                    // connection and let the guest time out or reconnect.
+                    return out;
+                }
+
                 // If the tunnel closed before the guest completed the SYN handshake, abort with
                 // an RST instead of a FIN.
                 if !conn.syn_acked {
@@ -372,6 +389,10 @@ impl NetworkStack {
                 }
             }
             TcpProxyEvent::Error { .. } => {
+                if !conn.seq_synced {
+                    // Cannot emit a meaningful RST without seq/ack state; drop.
+                    return out;
+                }
                 out.extend(self.emit_tcp_rst(&conn));
                 // Drop the connection (guest will see RST or time out).
             }
@@ -1099,6 +1120,8 @@ impl NetworkStack {
                 fin_acked: false,
                 guest_fin_received: false,
                 proxy_connected: false,
+                proxy_reconnecting: false,
+                seq_synced: true,
                 buffered_to_proxy: Vec::new(),
                 buffered_to_proxy_bytes: 0,
             };
@@ -1122,6 +1145,94 @@ impl NetworkStack {
         };
         let mut out = Vec::new();
         let payload = tcp.payload();
+
+        // Best-effort sequence resynchronization for connections restored under
+        // [`TcpRestorePolicy::Reconnect`].
+        //
+        // We intentionally do not serialize full TCP stream state (seq/ack numbers). Restored
+        // connections start with `seq_synced = false` and we infer the guest-facing seq/ack from
+        // the first ACK-bearing segment we observe after restore.
+        if !conn.seq_synced {
+            // If the guest is starting a fresh connection attempt (SYN), drop the restored
+            // connection and treat this as a new handshake.
+            if flags.contains(TcpFlags::SYN) && !flags.contains(TcpFlags::ACK) {
+                out.push(Action::TcpProxyClose {
+                    connection_id: conn.id,
+                });
+                let mut actions = out;
+
+                // Re-run the "new connection" code path inline (mirrors the `!contains_key` branch
+                // above).
+                if !self.cfg.host_policy.enabled || !self.cfg.host_policy.allows_ip(ip.dst_ip()) {
+                    actions.extend(self.emit_tcp_rst_for_syn(
+                        ip.src_ip(),
+                        tcp.src_port(),
+                        ip.dst_ip(),
+                        tcp.dst_port(),
+                        tcp.seq_number(),
+                    ));
+                    return actions;
+                }
+
+                let max_tcp_connections = self.cfg.max_tcp_connections as usize;
+                if max_tcp_connections == 0 || self.tcp.len() >= max_tcp_connections {
+                    actions.extend(self.emit_tcp_rst_for_syn(
+                        ip.src_ip(),
+                        tcp.src_port(),
+                        ip.dst_ip(),
+                        tcp.dst_port(),
+                        tcp.seq_number(),
+                    ));
+                    return actions;
+                }
+
+                let guest_isn = tcp.seq_number();
+                let our_isn = self.allocate_isn();
+                let conn_id = self.next_tcp_id;
+                self.next_tcp_id += 1;
+
+                let conn = TcpConn {
+                    id: conn_id,
+                    guest_port: tcp.src_port(),
+                    remote_ip: ip.dst_ip(),
+                    remote_port: tcp.dst_port(),
+                    guest_isn,
+                    guest_next_seq: guest_isn.wrapping_add(1),
+                    our_isn,
+                    our_next_seq: our_isn.wrapping_add(1),
+                    syn_acked: false,
+                    fin_sent: false,
+                    fin_seq: 0,
+                    fin_acked: false,
+                    guest_fin_received: false,
+                    proxy_connected: false,
+                    proxy_reconnecting: false,
+                    seq_synced: true,
+                    buffered_to_proxy: Vec::new(),
+                    buffered_to_proxy_bytes: 0,
+                };
+
+                actions.push(Action::TcpProxyConnect {
+                    connection_id: conn_id,
+                    remote_ip: conn.remote_ip,
+                    remote_port: conn.remote_port,
+                });
+                actions.extend(self.emit_tcp_syn_ack(&conn));
+                self.tcp.insert(key, conn);
+                return actions;
+            }
+
+            // Without ACK, we can't learn the expected send sequence number from the guest.
+            if !flags.contains(TcpFlags::ACK) {
+                self.tcp.insert(key, conn);
+                return out;
+            }
+
+            conn.syn_acked = true;
+            conn.guest_next_seq = tcp.seq_number();
+            conn.our_next_seq = tcp.ack_number();
+            conn.seq_synced = true;
+        }
 
         // Retransmitted SYN: resend SYN-ACK for idempotence.
         if flags.contains(TcpFlags::SYN)
@@ -1238,7 +1349,7 @@ impl NetworkStack {
         let (remote_ip, remote_port, guest_port, seq_number, ack_number) = match self.tcp.get(&key)
         {
             Some(conn) => {
-                if conn.fin_sent || !conn.syn_acked {
+                if conn.fin_sent || !conn.syn_acked || !conn.seq_synced {
                     return;
                 }
                 (
@@ -1566,6 +1677,208 @@ impl NetworkStack {
             > 0
     }
 
+    /// Export the stack's dynamic runtime state for inclusion in a VM snapshot.
+    ///
+    /// This state intentionally excludes static [`StackConfig`] (which should be provided by the
+    /// caller when recreating the stack).
+    pub fn export_snapshot_state(&self) -> NetworkStackSnapshotState {
+        // DNS cache: preserve FIFO order and keep output bounded even if internal bookkeeping is
+        // somehow inconsistent.
+        let now_ms = self.last_now_ms;
+        let max_dns = self.cfg.max_dns_cache_entries as usize;
+        let mut dns_cache = Vec::new();
+        if max_dns > 0 {
+            let mut seen: HashSet<String> = HashSet::new();
+            for name in &self.dns_cache_fifo {
+                if dns_cache.len() >= max_dns {
+                    break;
+                }
+                if !seen.insert(name.clone()) {
+                    continue;
+                }
+                let Some(entry) = self.dns_cache.get(name) else {
+                    continue;
+                };
+                if entry.expires_at_ms <= now_ms {
+                    continue;
+                }
+                dns_cache.push(DnsCacheEntrySnapshot {
+                    name: name.clone(),
+                    addr: entry.addr,
+                    expires_at_ms: entry.expires_at_ms,
+                });
+            }
+
+            // Include any entries that are present in the map but missing from the FIFO list in a
+            // deterministic order.
+            if dns_cache.len() < max_dns {
+                let mut missing: Vec<String> = self
+                    .dns_cache
+                    .keys()
+                    .filter(|k| !seen.contains(*k))
+                    .cloned()
+                    .collect();
+                missing.sort();
+                for name in missing {
+                    if dns_cache.len() >= max_dns {
+                        break;
+                    }
+                    let Some(entry) = self.dns_cache.get(&name) else {
+                        continue;
+                    };
+                    if entry.expires_at_ms <= now_ms {
+                        continue;
+                    }
+                    dns_cache.push(DnsCacheEntrySnapshot {
+                        name,
+                        addr: entry.addr,
+                        expires_at_ms: entry.expires_at_ms,
+                    });
+                }
+            }
+        }
+
+        let mut tcp_connections: Vec<TcpConnectionSnapshot> = self
+            .tcp
+            .values()
+            .map(|c| TcpConnectionSnapshot {
+                id: c.id,
+                guest_port: c.guest_port,
+                remote_ip: c.remote_ip,
+                remote_port: c.remote_port,
+                status: if c.proxy_connected {
+                    TcpConnectionStatus::Connected
+                } else if c.proxy_reconnecting {
+                    TcpConnectionStatus::Reconnecting
+                } else {
+                    TcpConnectionStatus::Disconnected
+                },
+            })
+            .collect();
+        tcp_connections.sort_by_key(|c| c.id);
+
+        NetworkStackSnapshotState {
+            guest_mac: self.guest_mac,
+            ip_assigned: self.ip_assigned,
+            next_tcp_id: self.next_tcp_id,
+            next_dns_id: self.next_dns_id,
+            ipv4_ident: self.ipv4_ident,
+            last_now_ms: self.last_now_ms,
+            dns_cache,
+            tcp_connections,
+        }
+    }
+
+    /// Import stack dynamic runtime state from a previously-exported snapshot.
+    ///
+    /// Returns any host actions that should be performed immediately after restore (e.g.
+    /// best-effort proxy reconnects).
+    pub fn import_snapshot_state(
+        &mut self,
+        state: NetworkStackSnapshotState,
+        policy: TcpRestorePolicy,
+    ) -> Vec<Action> {
+        self.guest_mac = state.guest_mac;
+        self.ip_assigned = state.ip_assigned;
+        self.next_tcp_id = state.next_tcp_id.max(1);
+        self.next_dns_id = state.next_dns_id.max(1);
+        self.ipv4_ident = state.ipv4_ident;
+        if self.ipv4_ident == 0 {
+            self.ipv4_ident = 1;
+        }
+        self.last_now_ms = state.last_now_ms;
+        // Align the post-restore time base on the first call that supplies `now_ms`.
+        self.time_offset_ms = 0;
+        self.restore_time_anchor_ms = Some(state.last_now_ms);
+
+        // Pending DNS cannot be restored: the host-side DoH/proxy requests are not part of the VM
+        // snapshot. The guest will retry.
+        self.pending_dns.clear();
+
+        self.dns_cache.clear();
+        self.dns_cache_fifo.clear();
+        for entry in state.dns_cache {
+            self.insert_dns_cache(
+                entry.name,
+                DnsCacheEntry {
+                    addr: entry.addr,
+                    expires_at_ms: entry.expires_at_ms,
+                },
+            );
+        }
+
+        // TCP state is policy-controlled.
+        self.tcp.clear();
+        let mut actions = Vec::new();
+        match policy {
+            TcpRestorePolicy::Drop => {
+                // Drop all active TCP connections.
+            }
+            TcpRestorePolicy::Reconnect => {
+                // Restore only connection bookkeeping and mark as reconnecting.
+                let max_tcp = self.cfg.max_tcp_connections as usize;
+                if max_tcp == 0 {
+                    return actions;
+                }
+
+                let mut conns = state.tcp_connections;
+                conns.sort_by_key(|c| c.id);
+                for c in conns {
+                    if self.tcp.len() >= max_tcp {
+                        break;
+                    }
+                    if c.id == 0 {
+                        continue;
+                    }
+                    let key = TcpKey {
+                        guest_port: c.guest_port,
+                        remote_ip: c.remote_ip,
+                        remote_port: c.remote_port,
+                    };
+                    if self.tcp.contains_key(&key) {
+                        continue;
+                    }
+
+                    self.tcp.insert(
+                        key,
+                        TcpConn {
+                            id: c.id,
+                            guest_port: c.guest_port,
+                            remote_ip: c.remote_ip,
+                            remote_port: c.remote_port,
+                            // Sequence numbers are resynchronized lazily on the first guest packet.
+                            guest_isn: 0,
+                            guest_next_seq: 0,
+                            our_isn: 0,
+                            our_next_seq: 0,
+                            syn_acked: true,
+                            fin_sent: false,
+                            fin_seq: 0,
+                            fin_acked: false,
+                            guest_fin_received: false,
+                            proxy_connected: false,
+                            proxy_reconnecting: true,
+                            seq_synced: false,
+                            buffered_to_proxy: Vec::new(),
+                            buffered_to_proxy_bytes: 0,
+                        },
+                    );
+
+                    actions.push(Action::TcpProxyConnect {
+                        connection_id: c.id,
+                        remote_ip: c.remote_ip,
+                        remote_port: c.remote_port,
+                    });
+
+                    // Keep the ID allocator monotonic even if the snapshot is corrupted.
+                    self.next_tcp_id = self.next_tcp_id.max(c.id.saturating_add(1));
+                }
+            }
+        }
+
+        actions
+    }
+
     fn insert_dns_cache(&mut self, name: String, entry: DnsCacheEntry) {
         let max = self.cfg.max_dns_cache_entries as usize;
         if max == 0 {
@@ -1592,156 +1905,28 @@ impl NetworkStack {
     }
 }
 
-// Snapshot format (device id "NETS", version 1.0)
+// Snapshot: `aero-io-snapshot` TLV blob (DEVICE_ID = "NSTK", version 1.0).
 //
-// This snapshots only config-independent dynamic state required for reasonable resume semantics.
-//
-// On restore we intentionally drop:
-// - in-flight DNS resolutions (`pending_dns`) because host-side DoH/proxy requests are not
-//   restartable and could otherwise accumulate unbounded state in snapshots.
-// - active TCP connections (`tcp`) because the host transport (WebSocket/WebRTC/TCP) is not
-//   bit-restorable; preserving these would imply reconnection logic that cannot provide correct TCP
-//   semantics for the guest. We still preserve `next_tcp_id` to avoid reusing connection IDs.
-//
-// Persisted:
-// - learned guest MAC (needed to emit frames back to the guest)
-// - DHCP/IP-assigned flag (whether we should accept TCP/UDP/ICMP traffic)
-// - next ID counters
-// - DNS cache entries (bounded), with expiry based on a stable internal time base.
+// `NetworkStackSnapshotState` is the serializable dynamic state. We also implement `IoSnapshot` for
+// `NetworkStack` as a convenience wrapper that defaults to `TcpRestorePolicy::Drop` (deterministic,
+// avoids timing-dependent reconnect behavior).
 impl IoSnapshot for NetworkStack {
-    const DEVICE_ID: [u8; 4] = *b"NETS";
-    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
+    const DEVICE_ID: [u8; 4] = <NetworkStackSnapshotState as IoSnapshot>::DEVICE_ID;
+    const DEVICE_VERSION: SnapshotVersion = <NetworkStackSnapshotState as IoSnapshot>::DEVICE_VERSION;
 
     fn save_state(&self) -> Vec<u8> {
-        const TAG_LAST_NOW_MS: u16 = 1;
-        const TAG_GUEST_MAC: u16 = 2;
-        const TAG_IP_ASSIGNED: u16 = 3;
-        const TAG_NEXT_TCP_ID: u16 = 4;
-        const TAG_NEXT_DNS_ID: u16 = 5;
-        const TAG_IPV4_IDENT: u16 = 6;
-        const TAG_DNS_CACHE: u16 = 7;
-
-        const MAX_SNAPSHOT_DNS_CACHE_ENTRIES: usize = 10_000;
-        const MAX_DNS_NAME_LEN: usize = 1024;
-
-        let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
-
-        w.field_u64(TAG_LAST_NOW_MS, self.last_now_ms);
-        w.field_bool(TAG_IP_ASSIGNED, self.ip_assigned);
-        w.field_u32(TAG_NEXT_TCP_ID, self.next_tcp_id);
-        w.field_u32(TAG_NEXT_DNS_ID, self.next_dns_id);
-        w.field_u16(TAG_IPV4_IDENT, self.ipv4_ident);
-
-        if let Some(mac) = self.guest_mac {
-            w.field_bytes(TAG_GUEST_MAC, mac.0.to_vec());
-        }
-
-        // Encode DNS cache entries in FIFO order for deterministic output.
-        let now_ms = self.last_now_ms;
-        let mut entries: Vec<(&str, &DnsCacheEntry)> = Vec::new();
-        for name in &self.dns_cache_fifo {
-            if entries.len() >= MAX_SNAPSHOT_DNS_CACHE_ENTRIES {
-                break;
-            }
-            if name.len() > MAX_DNS_NAME_LEN {
-                continue;
-            }
-            let Some(entry) = self.dns_cache.get(name) else {
-                continue;
-            };
-            // Skip already-expired entries to keep snapshots compact.
-            if entry.expires_at_ms <= now_ms {
-                continue;
-            }
-            entries.push((name.as_str(), entry));
-        }
-
-        let mut enc = Encoder::new().u32(entries.len() as u32);
-        for (name, entry) in entries {
-            enc = enc
-                .u32(name.len() as u32)
-                .bytes(name.as_bytes())
-                .bytes(&entry.addr.octets())
-                .u64(entry.expires_at_ms);
-        }
-        w.field_bytes(TAG_DNS_CACHE, enc.finish());
-
-        w.finish()
+        self.export_snapshot_state().save_state()
     }
 
     fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
-        const TAG_LAST_NOW_MS: u16 = 1;
-        const TAG_GUEST_MAC: u16 = 2;
-        const TAG_IP_ASSIGNED: u16 = 3;
-        const TAG_NEXT_TCP_ID: u16 = 4;
-        const TAG_NEXT_DNS_ID: u16 = 5;
-        const TAG_IPV4_IDENT: u16 = 6;
-        const TAG_DNS_CACHE: u16 = 7;
-
-        const MAX_SNAPSHOT_DNS_CACHE_ENTRIES: usize = 10_000;
-        const MAX_DNS_NAME_LEN: usize = 1024;
-
-        let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
-        r.ensure_device_major(Self::DEVICE_VERSION.major)?;
+        let mut state = NetworkStackSnapshotState::default();
+        state.load_state(bytes)?;
 
         // Reset to a deterministic baseline while preserving host configuration.
         let cfg = self.cfg.clone();
         *self = Self::new(cfg);
 
-        let last_now_ms = r.u64(TAG_LAST_NOW_MS)?.unwrap_or(0);
-        self.last_now_ms = last_now_ms;
-        // Align the post-restore time base on the first call that supplies `now_ms`.
-        self.restore_time_anchor_ms = Some(last_now_ms);
-
-        if let Some(mac) = r.bytes(TAG_GUEST_MAC) {
-            if mac.len() != 6 {
-                return Err(SnapshotError::InvalidFieldEncoding("guest_mac"));
-            }
-            let mut bytes = [0u8; 6];
-            bytes.copy_from_slice(mac);
-            self.guest_mac = Some(MacAddr(bytes));
-        }
-
-        self.ip_assigned = r.bool(TAG_IP_ASSIGNED)?.unwrap_or(false);
-
-        self.next_tcp_id = r.u32(TAG_NEXT_TCP_ID)?.unwrap_or(1).max(1);
-        self.next_dns_id = r.u32(TAG_NEXT_DNS_ID)?.unwrap_or(1).max(1);
-        self.ipv4_ident = r.u16(TAG_IPV4_IDENT)?.unwrap_or(1).max(1);
-
-        // DNS cache.
-        if let Some(buf) = r.bytes(TAG_DNS_CACHE) {
-            let mut d = Decoder::new(buf);
-            let count = d.u32()? as usize;
-            if count > MAX_SNAPSHOT_DNS_CACHE_ENTRIES {
-                return Err(SnapshotError::InvalidFieldEncoding(
-                    "too many dns cache entries",
-                ));
-            }
-            for _ in 0..count {
-                let name_len = d.u32()? as usize;
-                if name_len > MAX_DNS_NAME_LEN {
-                    return Err(SnapshotError::InvalidFieldEncoding("dns name too long"));
-                }
-                let name_bytes = d.bytes(name_len)?;
-                let name = std::str::from_utf8(name_bytes)
-                    .map_err(|_| SnapshotError::InvalidFieldEncoding("dns name utf-8"))?
-                    .to_string();
-
-                let ip_bytes = d.bytes(4)?;
-                let addr = Ipv4Addr::new(ip_bytes[0], ip_bytes[1], ip_bytes[2], ip_bytes[3]);
-
-                let expires_at_ms = d.u64()?;
-
-                // Drop already-expired entries.
-                if expires_at_ms <= last_now_ms {
-                    continue;
-                }
-
-                self.insert_dns_cache(name, DnsCacheEntry { addr, expires_at_ms });
-            }
-            d.finish()?;
-        }
-
+        let _ = self.import_snapshot_state(state, TcpRestorePolicy::Drop);
         Ok(())
     }
 }
