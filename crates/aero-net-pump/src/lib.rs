@@ -54,7 +54,7 @@ impl E1000TickPump {
     }
 
     pub fn tick<B: NetworkBackend + ?Sized>(
-        &mut self,
+        &self,
         nic: &mut E1000Device,
         mem: &mut dyn MemoryBus,
         backend: &mut B,
@@ -69,7 +69,7 @@ impl E1000TickPump {
     }
 
     pub fn tick_with_counts<B: NetworkBackend + ?Sized>(
-        &mut self,
+        &self,
         nic: &mut E1000Device,
         mem: &mut dyn MemoryBus,
         backend: &mut B,
@@ -441,7 +441,7 @@ mod tests {
         backend.push_rx_frame(rx0.clone());
         backend.push_rx_frame(rx1.clone());
 
-        let mut pump = E1000TickPump::new(1, 1);
+        let pump = E1000TickPump::new(1, 1);
         let counts0 = pump.tick_with_counts(&mut nic, &mut mem, &mut backend);
         assert_eq!(
             counts0,
@@ -600,7 +600,7 @@ mod tests {
             frame: frame.clone(),
         };
 
-        let mut pump = E1000TickPump::new(0, 5);
+        let pump = E1000TickPump::new(0, 5);
         let counts = pump.tick_with_counts(&mut nic, &mut mem, &mut backend);
 
         assert_eq!(backend.calls, 5);
@@ -666,7 +666,7 @@ mod tests {
         let mut backend = OrderingBackend::default();
         backend.rx.push_back(rx_frame.clone());
 
-        let mut pump = E1000TickPump::new(16, 16);
+        let pump = E1000TickPump::new(16, 16);
         pump.tick(&mut nic, &mut mem, &mut backend);
 
         assert_eq!(backend.events, vec!["tx", "rx"]);
