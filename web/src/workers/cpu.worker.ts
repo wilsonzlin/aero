@@ -800,6 +800,11 @@ async function startHdaPciDevice(msg: AudioOutputHdaPciDeviceStartMessage, token
   // Enable global interrupt + stream0 enable (best-effort).
   client.mmioWrite(bar0Base + REG_INTCTL, 4, 0x8000_0000 | 0x1);
 
+  if (!isHdaPciDeviceTokenActive(token)) {
+    stopHdaPciDeviceHardware();
+    return;
+  }
+
   ctx.postMessage({ type: "audioOutputHdaPciDevice.ready", pci: found, bar0 } satisfies AudioOutputHdaPciDeviceReadyMessage);
 }
 
