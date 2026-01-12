@@ -1,3 +1,6 @@
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+
 use aero_devices::pci::profile;
 use aero_devices::pci::PciDevice as _;
 use aero_devices_storage::ata::{AtaDrive, ATA_CMD_IDENTIFY, ATA_CMD_READ_DMA_EXT};
@@ -27,6 +30,35 @@ const PORT_CMD_FRE: u32 = 1 << 4;
 
 const PORT_IS_DHRS: u32 = 1 << 0;
 const PORT_IS_TFES: u32 = 1 << 30;
+
+struct DropDetectDisk {
+    inner: RawDisk<MemBackend>,
+    dropped: Arc<AtomicBool>,
+}
+
+impl Drop for DropDetectDisk {
+    fn drop(&mut self) {
+        self.dropped.store(true, Ordering::SeqCst);
+    }
+}
+
+impl VirtualDisk for DropDetectDisk {
+    fn capacity_bytes(&self) -> u64 {
+        self.inner.capacity_bytes()
+    }
+
+    fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> aero_storage::Result<()> {
+        self.inner.read_at(offset, buf)
+    }
+
+    fn write_at(&mut self, offset: u64, buf: &[u8]) -> aero_storage::Result<()> {
+        self.inner.write_at(offset, buf)
+    }
+
+    fn flush(&mut self) -> aero_storage::Result<()> {
+        self.inner.flush()
+    }
+}
 
 fn write_cmd_header(
     mem: &mut dyn MemoryBus,
@@ -98,6 +130,7 @@ fn pci_config_header_fields_and_bar5_size_probe() {
 
 #[test]
 fn reset_clears_registers_and_irq_but_preserves_attached_drive() {
+    let dropped = Arc::new(AtomicBool::new(false));
     let capacity = 8 * SECTOR_SIZE as u64;
     let mut disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
     let mut sector0 = vec![0u8; SECTOR_SIZE];
@@ -105,6 +138,11 @@ fn reset_clears_registers_and_irq_but_preserves_attached_drive() {
     sector0[510] = 0x55;
     sector0[511] = 0xAA;
     disk.write_sectors(0, &sector0).unwrap();
+
+    let disk = DropDetectDisk {
+        inner: disk,
+        dropped: dropped.clone(),
+    };
 
     let mut dev = AhciPciDevice::new(1);
     dev.attach_drive(0, AtaDrive::new(Box::new(disk)).unwrap());
@@ -145,6 +183,10 @@ fn reset_clears_registers_and_irq_but_preserves_attached_drive() {
     // the attached drive.
     dev.reset();
     assert!(!dev.intx_level(), "reset should deassert legacy INTx");
+    assert!(
+        !dropped.load(Ordering::SeqCst),
+        "reset dropped the attached disk backend"
+    );
 
     // Re-enable MMIO + DMA after reset so we can observe register state and issue commands again.
     dev.config_mut().set_command(0x0006); // MEM + BUSMASTER
@@ -183,6 +225,13 @@ fn reset_clears_registers_and_irq_but_preserves_attached_drive() {
     mem.read_physical(read_buf2, &mut out);
     assert_eq!(&out[0..4], b"BOOT");
     assert_eq!(&out[510..512], &[0x55, 0xAA]);
+
+    // Detaching the drive should drop the backend (sanity check).
+    dev.detach_drive(0);
+    assert!(
+        dropped.load(Ordering::SeqCst),
+        "detaching the drive should drop the disk backend"
+    );
 }
 
 #[test]

@@ -1,6 +1,8 @@
 use std::cell::RefCell;
 use std::io;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use aero_devices::pci::profile::IDE_PIIX3;
 use aero_devices::pci::{
@@ -39,6 +41,56 @@ impl VirtualDisk for ZeroDisk {
 
     fn flush(&mut self) -> aero_storage::Result<()> {
         Ok(())
+    }
+}
+
+struct DropDetectDisk {
+    inner: RawDisk<MemBackend>,
+    dropped: Arc<AtomicBool>,
+}
+
+impl Drop for DropDetectDisk {
+    fn drop(&mut self) {
+        self.dropped.store(true, Ordering::SeqCst);
+    }
+}
+
+impl VirtualDisk for DropDetectDisk {
+    fn capacity_bytes(&self) -> u64 {
+        self.inner.capacity_bytes()
+    }
+
+    fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> aero_storage::Result<()> {
+        self.inner.read_at(offset, buf)
+    }
+
+    fn write_at(&mut self, offset: u64, buf: &[u8]) -> aero_storage::Result<()> {
+        self.inner.write_at(offset, buf)
+    }
+
+    fn flush(&mut self) -> aero_storage::Result<()> {
+        self.inner.flush()
+    }
+}
+
+struct DropDetectIso {
+    inner: MemIso,
+    dropped: Arc<AtomicBool>,
+}
+
+impl Drop for DropDetectIso {
+    fn drop(&mut self) {
+        self.dropped.store(true, Ordering::SeqCst);
+    }
+}
+
+impl IsoBackend for DropDetectIso {
+    fn sector_count(&self) -> u32 {
+        self.inner.sector_count()
+    }
+
+    fn read_sectors(&mut self, lba: u32, buf: &mut [u8]) -> io::Result<()> {
+        self.inner.read_sectors(lba, buf)
     }
 }
 
@@ -335,6 +387,7 @@ fn ata_slave_absent_floats_bus_high_and_does_not_raise_irq() {
 #[test]
 fn reset_clears_channel_and_bus_master_state_but_preserves_attached_media() {
     // ATA disk with a recognizable boot sector.
+    let dropped_ata = Arc::new(AtomicBool::new(false));
     let capacity = 8 * SECTOR_SIZE as u64;
     let mut disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
     let mut sector0 = vec![0u8; SECTOR_SIZE];
@@ -342,10 +395,19 @@ fn reset_clears_channel_and_bus_master_state_but_preserves_attached_media() {
     sector0[510] = 0x55;
     sector0[511] = 0xAA;
     disk.write_sectors(0, &sector0).unwrap();
+    let disk = DropDetectDisk {
+        inner: disk,
+        dropped: dropped_ata.clone(),
+    };
 
     // ATAPI ISO with recognizable data at LBA 1.
+    let dropped_iso = Arc::new(AtomicBool::new(false));
     let mut iso = MemIso::new(2);
     iso.data[2048..2053].copy_from_slice(b"WORLD");
+    let iso = DropDetectIso {
+        inner: iso,
+        dropped: dropped_iso.clone(),
+    };
 
     let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
     {
@@ -379,6 +441,14 @@ fn reset_clears_channel_and_bus_master_state_but_preserves_attached_media() {
 
     // Reset in-place (should preserve attached devices/backends).
     ide.borrow_mut().reset();
+    assert!(
+        !dropped_ata.load(Ordering::SeqCst),
+        "reset dropped the attached ATA disk backend"
+    );
+    assert!(
+        !dropped_iso.load(Ordering::SeqCst),
+        "reset dropped the attached ISO backend"
+    );
 
     // Re-enable I/O decode so we can observe device state post-reset.
     ide.borrow_mut().config_mut().set_command(0x0005); // IO decode + Bus Master
@@ -450,6 +520,25 @@ fn reset_clears_channel_and_bus_master_state_but_preserves_attached_media() {
         atapi_out[i * 2..i * 2 + 2].copy_from_slice(&w.to_le_bytes());
     }
     assert_eq!(&atapi_out[0..5], b"WORLD");
+
+    // Replacing the devices should drop the previous backends (sanity check).
+    let replacement = RawDisk::create(MemBackend::new(), capacity).unwrap();
+    ide.borrow_mut()
+        .controller
+        .attach_primary_master_ata(AtaDrive::new(Box::new(replacement)).unwrap());
+    assert!(
+        dropped_ata.load(Ordering::SeqCst),
+        "replacing the ATA drive should drop the previous disk backend"
+    );
+
+    let replacement_iso = MemIso::new(2);
+    ide.borrow_mut().controller.attach_secondary_master_atapi(
+        aero_devices_storage::atapi::AtapiCdrom::new(Some(Box::new(replacement_iso))),
+    );
+    assert!(
+        dropped_iso.load(Ordering::SeqCst),
+        "replacing the ATAPI device should drop the previous ISO backend"
+    );
 }
 
 #[test]
