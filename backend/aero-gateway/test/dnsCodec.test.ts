@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { readDnsName } from '../src/dns/codec.js';
+import { encodeDnsName, readDnsName } from '../src/dns/codec.js';
 
 test('readDnsName rejects DNS names longer than 255 bytes (RFC1035)', () => {
   // 4 labels * (1 length byte + 63 label bytes) + 1 terminator = 257 bytes (>255).
@@ -16,3 +16,8 @@ test('readDnsName rejects DNS names longer than 255 bytes (RFC1035)', () => {
   assert.throws(() => readDnsName(message, 0), /DNS name too long/);
 });
 
+test('encodeDnsName rejects DNS names longer than 255 bytes (RFC1035)', () => {
+  const labels = ['a', 'b', 'c', 'd'].map((ch) => ch.repeat(63));
+  const name = labels.join('.');
+  assert.throws(() => encodeDnsName(name), /DNS name too long/);
+});

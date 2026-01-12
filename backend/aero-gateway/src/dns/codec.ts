@@ -221,9 +221,12 @@ export function encodeDnsName(name: string): Buffer {
   if (normalized === "") return Buffer.from([0x00]);
   const labels = normalized.split(".").filter(Boolean);
   const buffers: Buffer[] = [];
+  let nameBytes = 1; // terminating 0-length label
   for (const label of labels) {
     const bytes = Buffer.from(label, "utf8");
     if (bytes.length > 63) throw new Error("DNS label too long");
+    nameBytes += 1 + bytes.length;
+    if (nameBytes > 255) throw new Error("DNS name too long");
     buffers.push(Buffer.from([bytes.length]), bytes);
   }
   buffers.push(Buffer.from([0x00]));
