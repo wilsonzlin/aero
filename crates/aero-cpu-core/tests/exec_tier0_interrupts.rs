@@ -372,6 +372,44 @@ fn tier0_preserves_bios_interrupt_vector_for_hlt_hypercall() {
 }
 
 #[test]
+fn tier0_external_interrupt_to_bios_stub_exits_instead_of_halting() {
+    let mut bus = FlatTestBus::new(0x100000);
+    let code_base = 0x0100u64;
+    bus.load(code_base, &[0x90]); // NOP
+
+    // IVT[0x20] points to a tiny ROM stub that begins with `HLT; IRET`.
+    let vector = 0x20u8;
+    let stub_seg = 0xF000u16;
+    let stub_off = 0x0000u16;
+    let ivt_addr = (vector as u64) * 4;
+    bus.write_u16(ivt_addr, stub_off).unwrap();
+    bus.write_u16(ivt_addr + 2, stub_seg).unwrap();
+    let stub_phys = (stub_seg as u64) << 4;
+    bus.load(stub_phys, &[0xF4, 0xCF]);
+
+    let mut cpu = Vcpu::new_with_mode(CpuMode::Real, bus);
+    cpu.cpu.state.write_reg(Register::CS, 0);
+    cpu.cpu.state.write_reg(Register::SS, 0);
+    cpu.cpu.state.write_reg(Register::SP, 0x8000);
+    cpu.cpu.state.set_rflags(0x0202); // IF=1
+    cpu.cpu.state.set_rip(code_base);
+
+    // Inject an external interrupt; Tier-0 should deliver it into the stub and
+    // treat the stub's HLT as a BIOS interrupt hypercall exit rather than
+    // halting with IF=0.
+    cpu.cpu.pending.inject_external_interrupt(vector);
+
+    let mut interp = Tier0Interpreter::new(1024);
+    interp.exec_block(&mut cpu);
+
+    assert!(!cpu.cpu.state.halted);
+    assert_eq!(cpu.cpu.state.segments.cs.selector, stub_seg);
+    assert_eq!(cpu.cpu.state.rip(), (stub_off as u64) + 1);
+    assert!(cpu.cpu.state.pending_bios_int_valid);
+    assert_eq!(cpu.cpu.state.pending_bios_int, vector);
+}
+
+#[test]
 fn tier0_mov_ss_sets_interrupt_shadow_in_real_mode() {
     let mut bus = FlatTestBus::new(0x20000);
 

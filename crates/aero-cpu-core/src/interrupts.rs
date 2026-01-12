@@ -831,6 +831,24 @@ fn deliver_real_mode<B: CpuBus>(
     let new_flags = (state.rflags() & !(RFLAGS_IF | RFLAGS_TF)) | RFLAGS_RESERVED1;
     state.set_rflags(new_flags);
 
+    // BIOS firmware installs IVT entries that point into ROM "stubs" that begin with
+    // `HLT; IRET` (F4 CF). This is used as a hypercall boundary: Tier-0 surfaces
+    // `HLT` as `BiosInterrupt(vector)` only when `pending_bios_int_valid` is set.
+    //
+    // Software `INT n` already sets this marker in `exec_interrupt_assist_decoded`,
+    // but externally injected interrupts/exceptions can also be delivered into
+    // these stubs. Without priming the marker here, the CPU would execute `HLT`
+    // with IF=0 and enter a permanent halt (no wakeup), hanging the VM.
+    //
+    // Best-effort: if the handler bytes cannot be read, skip stub detection.
+    let handler_linear = ((segment as u64) << 4).wrapping_add(offset);
+    if let (Ok(0xF4), Ok(0xCF)) = (
+        bus.read_u8(state.apply_a20(handler_linear)),
+        bus.read_u8(state.apply_a20(handler_linear.wrapping_add(1))),
+    ) {
+        state.set_pending_bios_int(vector);
+    }
+
     // Load handler CS:IP.
     state.write_reg(Register::CS, segment as u64);
     state.set_ip(offset);
