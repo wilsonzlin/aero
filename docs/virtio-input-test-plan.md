@@ -36,19 +36,16 @@ Recommended (enforces repo resource limits via `safe-run.sh`):
 bash ./scripts/safe-run.sh cargo test -p aero-virtio --locked --test virtio_input
 ```
 
-Equivalent (name-filter based; useful when you don’t remember the test binary name):
+Alternative (name-filter based; useful when you don’t remember the test binary name):
 
 ```bash
-# Required by this test plan (or equivalent)
-# NOTE: `cargo test -- <pattern>` is a name filter. Depending on how tests are named
-# in your checkout, this may match 0 tests. Always confirm the output says
+# NOTE: `cargo test -- <pattern>` is a name filter. Always confirm the output says
 # `running N tests` with N > 0.
-bash ./scripts/safe-run.sh cargo test -p aero-virtio --locked -- tests::virtio_input
+
+# Recommended (with safe-run.sh):
+bash ./scripts/safe-run.sh cargo test -p aero-virtio --locked -- virtio_input
 
 # Without safe-run.sh (no timeout / mem limit):
-cargo test -p aero-virtio --locked -- tests::virtio_input
-
-# Practical equivalent in this repo
 cargo test -p aero-virtio --locked -- virtio_input
 ```
 
