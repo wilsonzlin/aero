@@ -91,6 +91,7 @@ Rust builds can also consume large **virtual address space** (via mmap/allocator
 actual resident memory usage is reasonable. In some sandboxes this can surface as rustc panics like:
 
 - `failed to spawn helper thread: Os { code: 11, kind: WouldBlock, message: "Resource temporarily unavailable" }`
+- `thread 'rustc' panicked at 'called Result::unwrap() on an Err value: Os { code: 11, kind: WouldBlock, message: "Resource temporarily unavailable" }'`
 
 If you hit this under `safe-run.sh`, re-run the command with a larger address-space limit:
 
@@ -154,6 +155,7 @@ On shared hosts running many agents concurrently, Linux per-user process/thread 
 - `fork: retry: Resource temporarily unavailable`
 - rustc panic: `failed to spawn helper thread (WouldBlock)`
 - rustc panic: `Unable to install ctrlc handler: ... WouldBlock (Resource temporarily unavailable)`
+- rustc panic: `called Result::unwrap() on an Err value: Os { code: 11, kind: WouldBlock, message: "Resource temporarily unavailable" }`
 
 These are typically **environment/resource-limit** issues, not code bugs. The best remediation is to:
 
