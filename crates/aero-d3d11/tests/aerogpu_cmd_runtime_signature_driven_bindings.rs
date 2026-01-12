@@ -292,18 +292,20 @@ fn aerogpu_cmd_runtime_signature_driven_texture_sampler_binding() {
         rt.create_shader_dxbc(PS, DXBC_PS_SAMPLE).unwrap();
         rt.create_input_layout(IL, ILAY_POS3_TEX2).unwrap();
 
+        // Use out-of-range UVs so sampler address mode (clamp vs repeat) affects the sampled
+        // texel.
         let vertices: [VertexPos3Tex2; 3] = [
             VertexPos3Tex2 {
                 pos: [-1.0, -1.0, 0.0],
-                tex: [0.0, 0.0],
+                tex: [1.1, 0.5],
             },
             VertexPos3Tex2 {
                 pos: [3.0, -1.0, 0.0],
-                tex: [1.0, 0.0],
+                tex: [1.1, 0.5],
             },
             VertexPos3Tex2 {
                 pos: [-1.0, 3.0, 0.0],
-                tex: [0.0, 1.0],
+                tex: [1.1, 0.5],
             },
         ];
         rt.create_buffer(
@@ -316,12 +318,23 @@ fn aerogpu_cmd_runtime_signature_driven_texture_sampler_binding() {
 
         rt.create_texture2d(
             TEX,
-            1,
-            1,
+            2,
+            2,
             wgpu::TextureFormat::Rgba8Unorm,
             wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         );
-        rt.write_texture_rgba8(TEX, 1, 1, 4, &[0, 255, 0, 255])
+        // 2x2 texture with left column red and right column green.
+        //
+        // Default sampler is clamp-to-edge, so sampling at u=1.1 clamps to u=1.0, which should hit
+        // the right column (green). With a repeat sampler, u=1.1 wraps to u=0.1, hitting the left
+        // column (red).
+        let tex_data: [[u8; 4]; 4] = [
+            [255, 0, 0, 255],
+            [0, 255, 0, 255],
+            [255, 0, 0, 255],
+            [0, 255, 0, 255],
+        ];
+        rt.write_texture_rgba8(TEX, 2, 2, 2 * 4, bytemuck::bytes_of(&tex_data))
             .unwrap();
         rt.set_ps_texture(0, Some(TEX));
 
@@ -358,7 +371,28 @@ fn aerogpu_cmd_runtime_signature_driven_texture_sampler_binding() {
         rt.poll_wait();
 
         let pixels = rt.read_texture_rgba8(RTEX).await.unwrap();
-        assert_eq!(pixels, vec![0, 255, 0, 255]);
+        assert_eq!(pixels, vec![0, 255, 0, 255], "default clamp sampler");
+
+        const SAMPLER: u32 = 7;
+        rt.create_sampler(
+            SAMPLER,
+            &wgpu::SamplerDescriptor {
+                label: Some("aerogpu_cmd_runtime repeat sampler"),
+                address_mode_u: wgpu::AddressMode::Repeat,
+                address_mode_v: wgpu::AddressMode::ClampToEdge,
+                address_mode_w: wgpu::AddressMode::ClampToEdge,
+                mag_filter: wgpu::FilterMode::Nearest,
+                min_filter: wgpu::FilterMode::Nearest,
+                mipmap_filter: wgpu::FilterMode::Nearest,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        rt.set_ps_sampler(0, Some(SAMPLER));
+
+        rt.draw(3, 1, 0, 0).unwrap();
+        rt.poll_wait();
+        let pixels = rt.read_texture_rgba8(RTEX).await.unwrap();
+        assert_eq!(pixels, vec![255, 0, 0, 255], "repeat sampler");
     });
 }
-
