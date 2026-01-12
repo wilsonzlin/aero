@@ -268,6 +268,31 @@ describe("io/bus/pci", () => {
     expect(cfg.readU32(0, 0, 0x14)).toBe(0xffff_ffff);
   });
 
+  it("rejects invalid mmio64 BAR layouts (BAR5 start / missing reserved slot)", () => {
+    const portBus = new PortIoBus();
+    const mmioBus = new MmioBus();
+    const pciBus = new PciBus(portBus, mmioBus);
+    pciBus.registerToPortBus();
+
+    const devBar5: PciDevice = {
+      name: "mmio64_bar5",
+      vendorId: 0x1234,
+      deviceId: 0x5678,
+      classCode: 0,
+      bars: [null, null, null, null, null, { kind: "mmio64", size: 0x4000 }],
+    };
+    expect(() => pciBus.registerDevice(devBar5, { device: 0, function: 0 })).toThrow(/BAR5|64-bit/i);
+
+    const devMissingNull: PciDevice = {
+      name: "mmio64_missing_null",
+      vendorId: 0x1234,
+      deviceId: 0x5678,
+      classCode: 0,
+      bars: [{ kind: "mmio64", size: 0x4000 }, { kind: "io", size: 0x20 }, null, null, null, null],
+    };
+    expect(() => pciBus.registerDevice(devMissingNull, { device: 1, function: 0 })).toThrow(/consumes|must be null/i);
+  });
+
   it("calls initPciConfig() during registration and preserves written fields", () => {
     const portBus = new PortIoBus();
     const mmioBus = new MmioBus();
