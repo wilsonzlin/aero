@@ -23,6 +23,11 @@ mod vm;
 pub use vm::WasmVm;
 
 #[cfg(target_arch = "wasm32")]
+mod tiered_vm;
+#[cfg(target_arch = "wasm32")]
+pub use tiered_vm::WasmTieredVm;
+
+#[cfg(target_arch = "wasm32")]
 mod vm_snapshot_builder;
 #[cfg(target_arch = "wasm32")]
 pub use vm_snapshot_builder::{

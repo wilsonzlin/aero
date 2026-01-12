@@ -35,6 +35,7 @@ aero-snapshot = { path = "../aero-snapshot" }
 aero-io-snapshot = { path = "../aero-io-snapshot" }
 aero-net-e1000 = { path = "../aero-net-e1000" }
 memory = { path = "../memory" }
+aero-jit-x86 = { path = "../aero-jit-x86" }
 wasm-bindgen-futures = "0.4"
 linked_list_allocator = "0.10"
 serde-wasm-bindgen = "0.6"

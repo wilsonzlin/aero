@@ -636,6 +636,7 @@ dependencies = [
  "aero-cpu-core",
  "aero-io-snapshot",
  "aero-ipc",
+ "aero-jit-x86",
  "aero-machine",
  "aero-net-e1000",
  "aero-opfs",

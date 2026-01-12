@@ -503,6 +503,47 @@ export interface WasmApi {
     };
 
     /**
+     * Tier-0 + Tier-1 tiered execution VM loop for the browser CPU worker.
+     *
+     * This VM runs basic blocks via `aero_cpu_core::exec::ExecDispatcher` and calls out to JS to
+     * execute Tier-1 blocks (`globalThis.__aero_jit_call`).
+     *
+     * Optional while older WASM builds are still in circulation.
+     */
+    WasmTieredVm?: new (guestBase: number, guestSize: number) => {
+        readonly guest_base: number;
+        readonly guest_size: number;
+
+        reset_real_mode(entryIp: number): void;
+
+        /**
+         * Execute up to `maxBlocks` basic blocks and return a plain JS object with execution
+         * counters and an early-exit reason.
+         */
+        run_blocks(maxBlocks: number): {
+            kind: number;
+            detail: string;
+            executed_blocks: number;
+            interp_blocks: number;
+            jit_blocks: number;
+        };
+
+        /**
+         * Drain de-duplicated compile requests (entry RIPs).
+         */
+        drain_compile_requests(): bigint[];
+
+        /**
+         * Install a compiled Tier-1 block into the JIT cache.
+         *
+         * Returns an array of evicted entry RIPs so the JS runtime can free/reuse table slots.
+         */
+        install_tier1_block(entryRip: bigint, tableIndex: number, codePaddr: bigint, byteLen: number): bigint[];
+
+        free(): void;
+    };
+
+    /**
      * Worker-side VM snapshot builder (CPU/MMU/device state + full RAM streaming to OPFS).
      *
      * Optional while older WASM builds are still in circulation.
@@ -700,6 +741,7 @@ function toApi(mod: RawWasmModule): WasmApi {
         DemoVm: mod.DemoVm,
         Machine: mod.Machine,
         WasmVm: mod.WasmVm,
+        WasmTieredVm: mod.WasmTieredVm,
         WorkerVmSnapshot: mod.WorkerVmSnapshot,
         WorkletBridge: mod.WorkletBridge,
         create_worklet_bridge: mod.create_worklet_bridge,
