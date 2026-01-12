@@ -50,7 +50,9 @@ use aero_platform::io::IoPortBus;
 use aero_platform::reset::{ResetKind, ResetLatch};
 use aero_snapshot as snapshot;
 use firmware::bios::{A20Gate, Bios, BiosBus, BiosConfig, BlockDevice, DiskError, FirmwareMemory};
-use memory::{DenseMemory, MapError, MemoryBus as _, PhysicalMemoryBus};
+use memory::{
+    DenseMemory, DirtyGuestMemory, DirtyTracker, MapError, MemoryBus as _, PhysicalMemoryBus,
+};
 
 mod pci_firmware;
 pub use pci_firmware::{
@@ -201,105 +203,23 @@ impl BlockDevice for VecBlockDevice {
     }
 }
 
-#[derive(Debug, Clone)]
-struct DirtyBitmap {
-    bits: Vec<u64>,
-    pages: usize,
-    page_size: usize,
-}
-
-impl DirtyBitmap {
-    fn new(mem_len: u64, page_size: u32) -> Self {
-        let page_size = page_size as usize;
-        let pages = usize::try_from(
-            mem_len
-                .checked_add((page_size as u64).saturating_sub(1))
-                .unwrap_or(mem_len)
-                / (page_size as u64),
-        )
-        .unwrap_or(0);
-        let words = pages.div_ceil(64);
-        Self {
-            bits: vec![0u64; words],
-            pages,
-            page_size,
-        }
-    }
-
-    fn mark_addr(&mut self, addr: u64) {
-        let page = usize::try_from(addr / self.page_size as u64).unwrap_or(usize::MAX);
-        if page >= self.pages {
-            return;
-        }
-        let word = page / 64;
-        let bit = page % 64;
-        if let Some(slot) = self.bits.get_mut(word) {
-            *slot |= 1u64 << bit;
-        }
-    }
-
-    fn mark_range(&mut self, start: u64, len: usize) {
-        if len == 0 {
-            return;
-        }
-        let len_u64 = len as u64;
-        let end = start.saturating_add(len_u64).saturating_sub(1);
-        let first_page = usize::try_from(start / self.page_size as u64).unwrap_or(usize::MAX);
-        let last_page = usize::try_from(end / self.page_size as u64).unwrap_or(usize::MAX);
-        if first_page >= self.pages {
-            return;
-        }
-        let last_page = last_page.min(self.pages.saturating_sub(1));
-        for page in first_page..=last_page {
-            let word = page / 64;
-            let bit = page % 64;
-            if let Some(slot) = self.bits.get_mut(word) {
-                *slot |= 1u64 << bit;
-            }
-        }
-    }
-
-    fn take(&mut self) -> Vec<u64> {
-        let mut pages = Vec::new();
-        for (word_idx, word) in self.bits.iter_mut().enumerate() {
-            let mut w = *word;
-            if w == 0 {
-                continue;
-            }
-            *word = 0;
-            while w != 0 {
-                let bit = w.trailing_zeros() as usize;
-                let page = word_idx * 64 + bit;
-                if page < self.pages {
-                    pages.push(page as u64);
-                }
-                w &= !(1u64 << bit);
-            }
-        }
-        pages
-    }
-
-    fn clear(&mut self) {
-        self.bits.fill(0);
-    }
-}
-
 struct SystemMemory {
     a20: A20GateHandle,
     inner: RefCell<PhysicalMemoryBus>,
-    dirty: DirtyBitmap,
+    dirty: DirtyTracker,
 }
 
 impl SystemMemory {
     fn new(ram_size_bytes: u64, a20: A20GateHandle) -> Result<Self, MachineError> {
         let ram = DenseMemory::new(ram_size_bytes)
             .map_err(|_| MachineError::GuestMemoryTooLarge(ram_size_bytes))?;
+        let (ram, dirty) = DirtyGuestMemory::new(Box::new(ram), SNAPSHOT_DIRTY_PAGE_SIZE);
         let inner = PhysicalMemoryBus::new(Box::new(ram));
 
         Ok(Self {
             a20,
             inner: RefCell::new(inner),
-            dirty: DirtyBitmap::new(ram_size_bytes, SNAPSHOT_DIRTY_PAGE_SIZE),
+            dirty,
         })
     }
 
@@ -312,11 +232,11 @@ impl SystemMemory {
     }
 
     fn take_dirty_pages(&mut self) -> Vec<u64> {
-        self.dirty.take()
+        self.dirty.take_dirty_pages()
     }
 
     fn clear_dirty(&mut self) {
-        self.dirty.clear();
+        self.dirty.clear_dirty();
     }
 }
 
@@ -371,7 +291,6 @@ impl memory::MemoryBus for SystemMemory {
     fn write_physical(&mut self, paddr: u64, buf: &[u8]) {
         if self.a20.enabled() {
             self.inner.borrow_mut().write_physical(paddr, buf);
-            self.dirty.mark_range(paddr, buf.len());
             return;
         }
 
@@ -379,7 +298,6 @@ impl memory::MemoryBus for SystemMemory {
         for (i, byte) in buf.iter().copied().enumerate() {
             let addr = self.translate_a20(paddr.wrapping_add(i as u64));
             inner.write_physical_u8(addr, byte);
-            self.dirty.mark_addr(addr);
         }
     }
 }
@@ -1833,5 +1751,29 @@ mod tests {
         assert_eq!(ctrl.borrow_mut().read_port(0x60), 0x30);
         assert_eq!(ctrl.borrow_mut().read_port(0x60), 0xB0);
         assert_eq!(ctrl.borrow_mut().read_port(0x60), 0x00);
+    }
+
+    #[test]
+    fn dirty_tracking_includes_device_writes_to_ram() {
+        let mut m = Machine::new(MachineConfig {
+            ram_size_bytes: 16 * 1024 * 1024,
+            ..Default::default()
+        })
+        .unwrap();
+
+        // `Machine::new` performs a reset which clears dirty pages.
+        assert!(m.mem.take_dirty_pages().is_empty());
+
+        // Simulate a DMA/device write by bypassing the CPU memory wrapper and writing directly to
+        // the underlying physical bus.
+        m.mem
+            .inner
+            .borrow_mut()
+            .write_physical(0x2000, &[0xAA, 0xBB, 0xCC, 0xDD]);
+
+        assert_eq!(m.mem.take_dirty_pages(), vec![2]);
+
+        // Drain semantics.
+        assert!(m.mem.take_dirty_pages().is_empty());
     }
 }

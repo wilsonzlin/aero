@@ -1,4 +1,5 @@
 use aero_platform::address_filter::AddressFilter;
+use aero_platform::dirty_memory::DEFAULT_DIRTY_PAGE_SIZE;
 use aero_platform::memory::{MemoryBus, BIOS_RESET_VECTOR_PHYS, BIOS_ROM_BASE, BIOS_ROM_SIZE};
 use aero_platform::ChipsetState;
 use std::sync::{Arc, Mutex};
@@ -172,4 +173,27 @@ fn a20_masking_aliases_high_mmio_addresses() {
     let state = mmio_state.lock().unwrap();
     assert_eq!(state.reads.len(), 1);
     assert_eq!(state.reads[0], (0, 4));
+}
+
+#[test]
+fn dirty_tracking_marks_ram_writes_from_non_cpu_paths() {
+    let chipset = ChipsetState::new(true);
+    let filter = AddressFilter::new(chipset.a20());
+    let mut bus = MemoryBus::new_with_dirty_tracking(filter, 16 * 1024 * 1024, DEFAULT_DIRTY_PAGE_SIZE);
+
+    // Start clean.
+    assert!(bus.take_dirty_pages().unwrap().is_empty());
+
+    // "Device-like" path: write through the platform physical bus.
+    bus.write_physical(0x2000, &[0xAA, 0xBB, 0xCC, 0xDD]);
+
+    // Another non-CPU path: direct access to the RAM backend.
+    bus.ram_mut().write_u8_le(0x3000, 0xEE).unwrap();
+
+    let mut pages = bus.take_dirty_pages().unwrap();
+    pages.sort_unstable();
+    assert_eq!(pages, vec![2, 3]);
+
+    // Drain semantics.
+    assert!(bus.take_dirty_pages().unwrap().is_empty());
 }
