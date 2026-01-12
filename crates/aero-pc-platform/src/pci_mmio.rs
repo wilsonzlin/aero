@@ -1,4 +1,4 @@
-use aero_devices::pci::{PciBarKind, PciBdf, SharedPciConfigPorts};
+use aero_devices::pci::{PciBdf, SharedPciConfigPorts};
 use memory::MmioHandler;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -83,17 +83,15 @@ impl PciBarMmioRouter {
         let size_u64 = u64::try_from(size).ok()?;
         let access_end = paddr.checked_add(size_u64)?;
 
-        // Iterate only over BARs with registered handlers to avoid per-access allocations.
         let mut pci_cfg = self.pci_cfg.borrow_mut();
         let bus = pci_cfg.bus_mut();
 
-        for key in self.handlers.keys().copied() {
-            let Some(bar) = bus.mapped_bar_range(key.0, key.1) else {
-                continue;
-            };
-            if !matches!(bar.kind, PciBarKind::Mmio32 | PciBarKind::Mmio64) {
+        for mapped in bus.iter_mapped_mmio_bars() {
+            let key = (mapped.bdf, mapped.bar);
+            if !self.handlers.contains_key(&key) {
                 continue;
             }
+            let bar = mapped.range;
             let bar_end = bar.end_exclusive();
 
             if paddr < bar.base || access_end > bar_end {

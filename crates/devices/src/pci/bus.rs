@@ -44,7 +44,7 @@ impl PciBus {
         self.devices.keys().copied()
     }
 
-    pub fn mapped_bars(&self) -> Vec<PciMappedBar> {
+    pub fn iter_mapped_bars(&self) -> impl Iterator<Item = PciMappedBar> + '_ {
         self.mapped_bars
             .iter()
             .map(|((bdf, bar), range)| PciMappedBar {
@@ -52,7 +52,20 @@ impl PciBus {
                 bar: *bar,
                 range: *range,
             })
-            .collect()
+    }
+
+    pub fn iter_mapped_mmio_bars(&self) -> impl Iterator<Item = PciMappedBar> + '_ {
+        self.iter_mapped_bars()
+            .filter(|mapped| matches!(mapped.range.kind, PciBarKind::Mmio32 | PciBarKind::Mmio64))
+    }
+
+    pub fn iter_mapped_io_bars(&self) -> impl Iterator<Item = PciMappedBar> + '_ {
+        self.iter_mapped_bars()
+            .filter(|mapped| matches!(mapped.range.kind, PciBarKind::Io))
+    }
+
+    pub fn mapped_bars(&self) -> Vec<PciMappedBar> {
+        self.iter_mapped_bars().collect()
     }
 
     /// Returns the currently decoded BAR range for a single BAR, if any.
@@ -64,17 +77,11 @@ impl PciBus {
     }
 
     pub fn mapped_mmio_bars(&self) -> Vec<PciMappedBar> {
-        self.mapped_bars()
-            .into_iter()
-            .filter(|mapped| matches!(mapped.range.kind, PciBarKind::Mmio32 | PciBarKind::Mmio64))
-            .collect()
+        self.iter_mapped_mmio_bars().collect()
     }
 
     pub fn mapped_io_bars(&self) -> Vec<PciMappedBar> {
-        self.mapped_bars()
-            .into_iter()
-            .filter(|mapped| matches!(mapped.range.kind, PciBarKind::Io))
-            .collect()
+        self.iter_mapped_io_bars().collect()
     }
 
     pub fn reset(&mut self, allocator: &mut PciResourceAllocator) -> Result<(), PciResourceError> {
