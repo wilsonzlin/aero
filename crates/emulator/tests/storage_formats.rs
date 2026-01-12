@@ -614,6 +614,26 @@ fn vhd_dynamic_write_persists_after_reopen() {
 }
 
 #[test]
+fn vhd_rejects_bad_footer_checksum_through_open_auto() {
+    let mut storage = make_vhd_fixed_with_pattern();
+
+    // Corrupt a byte in the footer (but keep the cookie intact) so the checksum no longer matches.
+    let footer_offset = 1024 * 1024u64;
+    let mut footer = [0u8; 512];
+    storage.read_at(footer_offset, &mut footer).unwrap();
+    footer[8] ^= 0x01;
+    storage.write_at(footer_offset, &footer).unwrap();
+
+    assert_eq!(detect_format(&mut storage).unwrap(), DiskFormat::Vhd);
+
+    let res = VirtualDrive::open_auto(storage, 512, WriteCachePolicy::WriteThrough);
+    assert!(matches!(
+        res,
+        Err(DiskError::CorruptImage("vhd footer checksum mismatch"))
+    ));
+}
+
+#[test]
 fn vhd_dynamic_rejects_bad_dynamic_header_checksum() {
     let mut storage = make_vhd_dynamic_empty(1024 * 1024, 64 * 1024);
 
