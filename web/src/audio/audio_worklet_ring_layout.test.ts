@@ -11,6 +11,8 @@ import {
   framesAvailableClamped,
   framesFree,
   getRingBufferLevelFrames,
+  MAX_AUDIO_WORKLET_RING_CAPACITY_FRAMES,
+  MAX_AUDIO_WORKLET_RING_CHANNEL_COUNT,
   requiredBytes,
   wrapRingBuffer,
 } from "./audio_worklet_ring";
@@ -51,6 +53,11 @@ describe("audio_worklet_ring SharedArrayBuffer layout", () => {
     expect(Atomics.load(views.readIndex, 0)).toBe(123);
     expect(Atomics.load(views.writeIndex, 0)).toBe(456);
     expect(views.samples.length).toBe(8);
+  });
+
+  it("requiredBytes rejects excessive capacityFrames/channelCount to avoid huge allocations", () => {
+    expect(() => requiredBytes(MAX_AUDIO_WORKLET_RING_CAPACITY_FRAMES + 1, 2)).toThrow(/capacityFrames/);
+    expect(() => requiredBytes(8, MAX_AUDIO_WORKLET_RING_CHANNEL_COUNT + 1)).toThrow(/channelCount/);
   });
 
   it("re-exports shared layout helpers (avoids duplicate implementations)", () => {

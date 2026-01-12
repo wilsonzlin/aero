@@ -52,4 +52,10 @@ describe("micRingBufferReadInto", () => {
     expect(micRingBufferReadInto(rb, out)).toBe(4);
     expect(Array.from(out)).toEqual([2, 3, 4, 5]);
   });
+
+  it("createMicRingBuffer rejects excessive capacity to avoid huge SharedArrayBuffers", () => {
+    // Keep in sync with `web/src/audio/mic_ring.js` and the Rust mic bridge cap.
+    const MAX_CAPACITY_SAMPLES = 1_048_576;
+    expect(() => createMicRingBuffer(MAX_CAPACITY_SAMPLES + 1)).toThrow(/max/);
+  });
 });

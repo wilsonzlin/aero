@@ -40,8 +40,47 @@ export function clampReadFrameIndexToCapacity(
   return read;
 }
 
+/**
+ * Hard caps for the AudioWorklet playback ring.
+ *
+ * These mirror the caps enforced by the Rust `WorkletBridge` implementation
+ * (`crates/platform/src/audio/worklet_bridge.rs`) so that:
+ * - The browser runtime does not allocate multi-gigabyte `SharedArrayBuffer`s.
+ * - The JS surface validates inputs similarly to the wasm surface.
+ */
+export const MAX_AUDIO_WORKLET_RING_CAPACITY_FRAMES = 1_048_576; // 2^20 frames (~21s @ 48kHz)
+export const MAX_AUDIO_WORKLET_RING_CHANNEL_COUNT = 2;
+
+function assertValidU32(name: string, value: number): number {
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new Error(`invalid ${name}: ${value}`);
+  }
+  if (value > 0xffff_ffff) {
+    throw new Error(`invalid ${name}: ${value}`);
+  }
+  return value >>> 0;
+}
+
+function assertValidCapacityFrames(capacityFrames: number): number {
+  const cap = assertValidU32("capacityFrames", capacityFrames);
+  if (cap > MAX_AUDIO_WORKLET_RING_CAPACITY_FRAMES) {
+    throw new Error(`capacityFrames must be <= ${MAX_AUDIO_WORKLET_RING_CAPACITY_FRAMES}`);
+  }
+  return cap;
+}
+
+function assertValidChannelCount(channelCount: number): number {
+  const cc = assertValidU32("channelCount", channelCount);
+  if (cc > MAX_AUDIO_WORKLET_RING_CHANNEL_COUNT) {
+    throw new Error(`channelCount must be <= ${MAX_AUDIO_WORKLET_RING_CHANNEL_COUNT}`);
+  }
+  return cc;
+}
+
 export function requiredBytes(capacityFrames: number, channelCount: number): number {
-  const sampleCapacity = capacityFrames * channelCount;
+  const cap = assertValidCapacityFrames(capacityFrames);
+  const cc = assertValidChannelCount(channelCount);
+  const sampleCapacity = cap * cc;
   return HEADER_BYTES + sampleCapacity * Float32Array.BYTES_PER_ELEMENT;
 }
 
@@ -50,8 +89,10 @@ export function wrapRingBuffer(
   capacityFrames: number,
   channelCount: number,
 ): AudioWorkletRingBufferViews {
-  const sampleCapacity = capacityFrames * channelCount;
-  const bytes = requiredBytes(capacityFrames, channelCount);
+  const cap = assertValidCapacityFrames(capacityFrames);
+  const cc = assertValidChannelCount(channelCount);
+  const sampleCapacity = cap * cc;
+  const bytes = requiredBytes(cap, cc);
   if (sab.byteLength < bytes) {
     throw new Error(`Provided ring buffer is too small: need ${bytes} bytes, got ${sab.byteLength} bytes`);
   }

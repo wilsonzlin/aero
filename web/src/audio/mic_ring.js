@@ -6,6 +6,12 @@ export const CAPACITY_SAMPLES_INDEX = 3;
 export const HEADER_U32_LEN = 4;
 export const HEADER_BYTES = HEADER_U32_LEN * 4;
 
+// Keep this in sync with `aero_platform::audio::mic_bridge`'s internal cap.
+//
+// This prevents accidental multi-gigabyte `SharedArrayBuffer` allocations if a caller passes an
+// absurd `capacitySamples` (for example, from untrusted UI/config).
+const MAX_MIC_RING_CAPACITY_SAMPLES = 1_048_576; // 2^20 mono samples (~21s @ 48kHz)
+
 export function samplesAvailable(readPos, writePos) {
   return (writePos - readPos) >>> 0;
 }
@@ -19,8 +25,13 @@ export function samplesFree(readPos, writePos, capacity) {
 }
 
 export function createMicRingBuffer(capacitySamples) {
-  if (!Number.isFinite(capacitySamples) || capacitySamples <= 0) {
+  if (!Number.isSafeInteger(capacitySamples) || capacitySamples <= 0) {
     throw new Error(`invalid mic ring buffer capacity: ${capacitySamples}`);
+  }
+  if (capacitySamples > MAX_MIC_RING_CAPACITY_SAMPLES) {
+    throw new Error(
+      `invalid mic ring buffer capacity: ${capacitySamples} (max ${MAX_MIC_RING_CAPACITY_SAMPLES})`,
+    );
   }
 
   const cap = capacitySamples >>> 0;
