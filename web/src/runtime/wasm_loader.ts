@@ -453,6 +453,20 @@ export interface WasmApi {
          * PS/2 mouse injection helpers (optional for older WASM builds).
          */
         inject_mouse_motion?(dx: number, dy: number, wheel: number): void;
+        /**
+         * Inject a mouse button transition using DOM `MouseEvent.button` mapping:
+         * - `0`: left
+         * - `1`: middle
+         * - `2`: right
+         */
+        inject_mouse_button?(button: number, pressed: boolean): void;
+        /**
+         * Set all mouse buttons at once using a bitmask matching DOM `MouseEvent.buttons`:
+         * - bit0 (`0x01`): left
+         * - bit1 (`0x02`): right
+         * - bit2 (`0x04`): middle
+         */
+        inject_mouse_buttons_mask?(mask: number): void;
         inject_mouse_left?(pressed: boolean): void;
         inject_mouse_right?(pressed: boolean): void;
         inject_mouse_middle?(pressed: boolean): void;
