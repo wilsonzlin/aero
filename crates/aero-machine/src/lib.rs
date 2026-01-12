@@ -142,10 +142,11 @@ pub struct MachineConfig {
     /// Bochs VBE linear framebuffer (LFB) at [`aero_gpu_vga::SVGA_LFB_BASE`], and VGA/VBE port I/O
     /// are routed to an [`aero_gpu_vga::VgaDevice`].
     ///
-    /// Port mappings depend on whether the canonical PC platform is enabled:
+    /// Port mappings:
     ///
-    /// - Standalone mode (`enable_pc_platform=false`): `0x3B0..0x3E0` and `0x01CE/0x01CF`
-    /// - PC platform mode (`enable_pc_platform=true`): `0x3C0..0x3E0` and `0x01CE/0x01CF`
+    /// - Legacy VGA window: `0x3B0..0x3E0` (covers both mono and color decode ranges, e.g.
+    ///   `0x3B4/0x3B5` and `0x3D4/0x3D5`)
+    /// - Bochs VBE: `0x01CE/0x01CF`
     pub enable_vga: bool,
     /// Whether to attach a COM1 16550 serial device at `0x3F8`.
     pub enable_serial: bool,
