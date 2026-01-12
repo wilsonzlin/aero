@@ -79,7 +79,21 @@ const DEFAULT_PREVENT_DEFAULT_CODES = new Set<string>([
   "F12",
 ]);
 
+// Codes that should always be swallowed while the VM is capturing input, even when Ctrl/Meta are
+// held. These are typically bound to browser/page navigation rather than content shortcuts.
+const ALWAYS_PREVENT_DEFAULT_CODES = new Set<string>([
+  "BrowserBack",
+  "BrowserForward",
+  "BrowserRefresh",
+  "BrowserStop",
+  "BrowserHome",
+]);
+
 export function shouldPreventDefaultForKeyboardEvent(event: KeyboardEvent): boolean {
+  if (ALWAYS_PREVENT_DEFAULT_CODES.has(event.code)) {
+    return true;
+  }
+
   if (event.metaKey) {
     // Let browser shortcuts (refresh/tab close/etc.) win by default on platforms that use Meta.
     return false;

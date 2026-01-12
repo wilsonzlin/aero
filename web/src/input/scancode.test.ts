@@ -48,10 +48,12 @@ describe("shouldPreventDefaultForKeyboardEvent", () => {
       "F12",
     ];
 
+    const always = new Set<string>(["BrowserBack", "BrowserForward", "BrowserRefresh", "BrowserStop", "BrowserHome"]);
+
     for (const code of codes) {
       expect(shouldPreventDefaultForKeyboardEvent(makeEvent({ code }))).toBe(true);
-      expect(shouldPreventDefaultForKeyboardEvent(makeEvent({ code, ctrlKey: true }))).toBe(false);
-      expect(shouldPreventDefaultForKeyboardEvent(makeEvent({ code, metaKey: true }))).toBe(false);
+      expect(shouldPreventDefaultForKeyboardEvent(makeEvent({ code, ctrlKey: true }))).toBe(always.has(code));
+      expect(shouldPreventDefaultForKeyboardEvent(makeEvent({ code, metaKey: true }))).toBe(always.has(code));
     }
   });
 
