@@ -693,7 +693,12 @@ export class PciBus implements PortIoHandler {
   }
 
   #installCapabilities(config: Uint8Array, caps: ReadonlyArray<PciCapability>): void {
-    let nextOff = 0x40;
+    // Start capabilities at 0x50 (rather than the minimal 0x40) to match the
+    // project's device contract for virtio-pci modern capabilities.
+    //
+    // This still satisfies the PCI requirement that the capability list lives in
+    // the device-specific region after the standard 0x40-byte type-0 header.
+    let nextOff = 0x50;
     let firstPtr = 0;
     let prevPtr = 0;
 
