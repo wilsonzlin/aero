@@ -22,8 +22,8 @@ pub const RUNTIME_RESERVED_BYTES: u64 = 128 * 1024 * 1024; // 128 MiB
 ///
 /// The canonical PC/Q35 platform reserves a larger PCI/MMIO hole below 4 GiB
 /// (`0xC000_0000..0x1_0000_0000`). In the web runtime we allocate device BARs out of the high
-/// sub-window starting at `PCI_MMIO_BASE`, so guest RAM is clamped to `<= PCI_MMIO_BASE` to avoid
-/// overlap in a flat guest RAM layout.
+/// sub-window starting at `PCI_MMIO_BASE`, and clamp the *backing* guest RAM size to
+/// `<= PCI_MMIO_BASE` so BARs never overlap the contiguous wasm linear-memory guest RAM buffer.
 ///
 /// NOTE: Keep this in sync with `web/src/arch/guest_phys.ts` (`PCI_MMIO_BASE`).
 pub const PCI_MMIO_BASE: u64 = 0xE000_0000;

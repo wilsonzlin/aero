@@ -406,10 +406,31 @@ export function guestToLinear(layout: GuestRamLayout, paddr: number): number {
 }
 
 export function guestRangeInBounds(layout: GuestRamLayout, paddr: number, byteLength: number): boolean {
-  const addr = toU32(paddr);
-  const len = toU32(byteLength);
-  if (len === 0) return addr <= layout.guest_size;
-  return addr < layout.guest_size && addr + len <= layout.guest_size;
+  const addr = toU64(paddr);
+  const len = toU64(byteLength);
+  const ramBytes = toU64(layout.guest_size);
+
+  if (ramBytes <= LOW_RAM_END) {
+    if (len === 0) return addr <= ramBytes;
+    return addr < ramBytes && len <= ramBytes - addr;
+  }
+
+  // Low RAM region: [0..LOW_RAM_END).
+  if (addr <= LOW_RAM_END) {
+    if (len === 0) return true;
+    return addr < LOW_RAM_END && len <= LOW_RAM_END - addr;
+  }
+
+  // High RAM remap: [HIGH_RAM_START..HIGH_RAM_START + (ramBytes-LOW_RAM_END)).
+  const highLen = ramBytes - LOW_RAM_END;
+  const highEnd = HIGH_RAM_START + highLen;
+  if (addr >= HIGH_RAM_START && addr <= highEnd) {
+    if (len === 0) return true;
+    return addr < highEnd && len <= highEnd - addr;
+  }
+
+  // Hole or out-of-range.
+  return false;
 }
 
 export function readGuestRamLayoutFromStatus(status: Int32Array): GuestRamLayout {

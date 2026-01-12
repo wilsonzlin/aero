@@ -1,12 +1,18 @@
 /**
  * Guest physical address space layout (wasm32 web runtime).
  *
- * The web runtime treats guest RAM as a single contiguous region starting at
- * physical address 0. PCI MMIO BARs are auto-assigned into a fixed high-memory
- * window so they never overlap guest RAM.
+ * The web runtime uses the PC/Q35 E820-style layout when the configured guest RAM exceeds the PCIe
+ * ECAM base:
+ *
+ * - Low RAM:  `[0x0000_0000 .. 0xB000_0000)`
+ * - Hole:     `[0xB000_0000 .. 0x1_0000_0000)` (ECAM + PCI/MMIO)
+ * - High RAM: `[0x1_0000_0000 .. 0x1_0000_0000 + (ram_bytes - 0xB000_0000))`
+ *
+ * Note: the backing guest RAM buffer in wasm linear memory is still contiguous (length =
+ * `guest_size`); wasm device bridges translate guest physical addresses back into that buffer.
  *
  * NOTE: Keep these constants in sync with the Rust-side guest layout contract:
- * `crates/aero-wasm/src/guest_layout.rs`.
+ * `crates/aero-wasm/src/guest_layout.rs` and `crates/aero-wasm/src/guest_phys.rs`.
  */
 
 /**
@@ -16,8 +22,8 @@
  * (`0xC000_0000..0x1_0000_0000`) and places PCIe ECAM at `0xB000_0000..0xC000_0000`.
  *
  * For the web runtime we currently allocate PCI MMIO BARs out of the high 512 MiB sub-window
- * `[PCI_MMIO_BASE, 0x1_0000_0000)`, keeping guest RAM clamped below `PCI_MMIO_BASE` so BARs never
- * overlap RAM in a simple flat layout.
+ * `[PCI_MMIO_BASE, 0x1_0000_0000)`, and clamp the *backing* guest RAM size below `PCI_MMIO_BASE` so
+ * BARs never overlap the contiguous wasm linear-memory RAM buffer.
  *
  * Guest RAM is clamped so it never covers `[PCI_MMIO_BASE, 0x1_0000_0000)`.
  */

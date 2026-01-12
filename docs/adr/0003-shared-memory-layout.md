@@ -67,16 +67,21 @@ wasm linear memory (0..4GiB)
 
 ### Addendum: guest physical address map (RAM vs PCI MMIO)
 
-Independently from the **wasm linear memory** layout, the emulator needs a consistent **32-bit guest physical address** map so PCI MMIO BAR space cannot overlap guest RAM:
+Independently from the **wasm linear memory** layout, the emulator needs a consistent **guest physical address** map so PCI MMIO BAR space cannot overlap guest RAM.
 
 ```
-guest physical address space (32-bit)
+guest physical address space (PC/Q35)
 
-0                          guest_size                    PCI_MMIO_BASE          4GiB
+0                          0xB000_0000                  0xE000_0000             4GiB
 │--------------------------│-----------------------------│----------------------│
-│ guest RAM                │ (reserved / unmapped hole)  │ PCI MMIO BAR window  │
-│                          │                             │ (PCI BARs live here) │
+│ low RAM                  │ ECAM + reserved hole        │ PCI MMIO BAR window  │
+│                          │ (no RAM backing)            │ (PCI BARs live here) │
 │--------------------------│-----------------------------│----------------------│
+                                                            4GiB                4GiB+high_len
+                                                            │-------------------│
+                                                            │ high RAM remap     │
+                                                            │ (when RAM > 2.75G) │
+                                                            │-------------------│
 ```
 
 The web runtime enforces this by clamping `guest_size` to `<= PCI_MMIO_BASE` in both:
@@ -86,11 +91,12 @@ The web runtime enforces this by clamping `guest_size` to `<= PCI_MMIO_BASE` in 
 
 Contract:
 
-- For the simple flat-RAM layout used by the web runtime today, guest physical address `paddr`
-  maps to linear address `guest_base + paddr`.
-  - Once the PC/Q35 ECAM + PCI/MMIO holes + >4 GiB remap are modeled, this becomes a *piecewise*
-    mapping (see the next section).
-- JS/TS code must bounds-check guest accesses against `[0, guest_size)` and reject anything outside.
+- Guest RAM backing in wasm linear memory is still a **single contiguous byte buffer** of length
+  `guest_size`, but **guest physical addresses are not necessarily contiguous** once the PC/Q35
+  ECAM + PCI/MMIO holes + >4 GiB remap are applied.
+  - JS/TS code must translate guest physical addresses via
+    `web/src/runtime/shared_layout.ts::{guestPaddrToRamOffset,guestToLinear}` (or equivalent),
+    not by assuming `linear = guest_base + paddr`.
 - The coordinator stores `{ guest_base, guest_size }` into the control/status `SharedArrayBuffer` so all workers (TS + WASM) agree on the mapping.
 - The WASM build uses a **bounded global allocator** so Rust heap allocations cannot grow past `runtime_reserved` and silently corrupt guest RAM.
 - The WASM build links with `wasm-ld --stack-first` so the stack stays at low addresses; the stack must fit within `runtime_reserved`.
@@ -101,7 +107,7 @@ Contract:
 
 ### Addendum: PC/Q35 ECAM + PCI holes (non-contiguous guest RAM)
 
-Once we model the canonical PC/Q35 PCI layout, **identity-mapped guest RAM is not sufficient**:
+On the canonical PC/Q35 PCI layout, **identity-mapped guest RAM is not sufficient**:
 
 - Firmware reserves a PCIe ECAM/MMCONFIG window at `0xB000_0000..0xC000_0000`
   (`aero_pc_constants::PCIE_ECAM_BASE`, `PCIE_ECAM_SIZE`).

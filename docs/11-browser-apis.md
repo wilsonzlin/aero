@@ -307,7 +307,7 @@ const wasmFeatures = {
 ### Memory Management
 
 ```javascript
-import { allocateSharedMemorySegments, createSharedMemoryViews } from './runtime/shared_layout.js';
+import { allocateSharedMemorySegments, createSharedMemoryViews, guestToLinear } from './runtime/shared_layout.js';
 
 // Guest RAM is configurable and must fit within wasm32 + browser limits.
 // wasm32 WebAssembly.Memory is ≤ 4GiB addressable, and shared memories often top out below that.
@@ -326,28 +326,19 @@ function initializeMemory() {
     // This is written by the coordinator into the control/status SAB and then treated as immutable.
     const { guest_base, guest_size } = shared.guestLayout;
 
-    function guestToLinear(paddr) {
-        // NOTE: This helper assumes a simple flat guest-RAM layout (paddr 0..guest_size).
-        //
-        // On the canonical PC/Q35 platform, guest physical RAM is not necessarily a single
-        // contiguous range once we reserve:
-        // - PCIe ECAM at 0xB000_0000..0xC000_0000, and
-        // - the PCI/MMIO hole at 0xC000_0000..0x1_0000_0000,
-        // and remap any remaining RAM above 4GiB.
-        //
-        // In that case, paddr->linear becomes a *piecewise* mapping and MMIO/hole accesses must be
-        // routed to device handlers (or treated as open-bus reads). See ADR 0003 and
-        // `crates/firmware/src/bios/interrupts.rs::build_e820_map`.
-        if (paddr < 0 || paddr >= guest_size) throw new RangeError('guest paddr out of range');
-        return guest_base + paddr;
-    }
+    // Translate guest physical addresses to wasm linear addresses.
+    //
+    // Note: on the canonical PC/Q35 platform, guest physical RAM is not a single contiguous range:
+    // there is an ECAM + PCI/MMIO hole below 4 GiB, and any remaining RAM is remapped above 4 GiB.
+    // The runtime `guestToLinear` helper enforces this piecewise mapping and rejects hole accesses.
+    const guestToLinearAddr = (paddr) => guestToLinear(shared.guestLayout, paddr);
 
     // `segments` contains:
     // - `control`: SharedArrayBuffer for status + per-worker command/event rings
     // - `guestMemory`: shared WebAssembly.Memory for guest RAM
     // - `ioIpc`: SharedArrayBuffer for high-frequency CPU<->IO IPC
     // - `vgaFramebuffer` + `sharedFramebuffer`: demo display buffers
-    return { segments, shared, guestToLinear };
+    return { segments, shared, guestToLinear: guestToLinearAddr };
 }
 ```
 

@@ -6,6 +6,7 @@ import {
   LOW_RAM_END,
   computeGuestRamLayout,
   guestPaddrToRamOffset,
+  guestRangeInBounds,
   guestToLinear,
 } from "./shared_layout";
 import { assertWasmMemoryWiring } from "./wasm_memory_probe";
@@ -53,6 +54,33 @@ describe("runtime/wasm_guest_layout", () => {
 
     expect(() => guestToLinear(layout, LOW_RAM_END)).toThrow();
     expect(guestToLinear(layout, HIGH_RAM_START)).toBe(layout.guest_base + LOW_RAM_END);
+  });
+
+  it("guestRangeInBounds rejects ranges that touch the ECAM/PCI hole and accepts ranges in both RAM segments", () => {
+    const layout = {
+      guest_base: 0x1000,
+      guest_size: LOW_RAM_END + 0x2000,
+      runtime_reserved: 0,
+      wasm_pages: 0,
+    };
+
+    // Low RAM.
+    expect(guestRangeInBounds(layout, 0, 1)).toBe(true);
+    expect(guestRangeInBounds(layout, LOW_RAM_END - 4, 4)).toBe(true);
+    expect(guestRangeInBounds(layout, LOW_RAM_END - 4, 8)).toBe(false);
+
+    // Hole.
+    expect(guestRangeInBounds(layout, LOW_RAM_END, 1)).toBe(false);
+    expect(guestRangeInBounds(layout, HIGH_RAM_START - 4, 4)).toBe(false);
+
+    // High RAM.
+    expect(guestRangeInBounds(layout, HIGH_RAM_START, 1)).toBe(true);
+    expect(guestRangeInBounds(layout, HIGH_RAM_START + 0x1ff0, 0x10)).toBe(true);
+    expect(guestRangeInBounds(layout, HIGH_RAM_START + 0x1ff0, 0x20)).toBe(false);
+
+    // Zero-length ranges may sit on segment boundaries.
+    expect(guestRangeInBounds(layout, LOW_RAM_END, 0)).toBe(true);
+    expect(guestRangeInBounds(layout, HIGH_RAM_START, 0)).toBe(true);
   });
 
   it("maps guest physical memory into wasm linear memory after the runtime reserved region", async () => {
