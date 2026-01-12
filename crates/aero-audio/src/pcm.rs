@@ -377,9 +377,18 @@ impl LinearResampler {
         if drop == 0 {
             return;
         }
-        for _ in 0..drop {
+        // `drop` may be much larger than the number of queued frames if callers configure extreme
+        // rate ratios (e.g. dst_rate_hz=1, src_rate_hz=48000) and the source buffer runs dry.
+        //
+        // Popping only as many frames as are actually available avoids an O(drop) empty-loop that
+        // could otherwise iterate billions of times on hostile inputs.
+        let actual = drop.min(self.src.len());
+        for _ in 0..actual {
             let _ = self.src.pop_front();
         }
+        // Still subtract the full `drop` so `src_pos` retains only the fractional position in
+        // [0.0, 1.0). This matches the semantics of consuming `drop` frames even if the source
+        // buffer did not actually contain that many samples.
         self.src_pos -= drop as f64;
     }
 
@@ -1734,5 +1743,23 @@ mod tests {
             res.queued_source_frames() > 1,
             "must still have queued frames; otherwise output wasn't capped"
         );
+    }
+
+    #[test]
+    fn resampler_drop_consumed_does_not_leave_huge_src_pos_when_step_skips_past_queue() {
+        // When downsampling by a large factor, one output frame can consume far more input frames
+        // than are currently queued. The resampler should still maintain a small `src_pos`
+        // (fractional position) after dropping/clearing the queue.
+        let mut res = LinearResampler::new(100, 1);
+        res.push_source_frames(&[[0.0, 0.0], [1.0, 1.0]]);
+
+        let mut out = Vec::new();
+        let produced = res.produce_interleaved_stereo_into(1, &mut out);
+        assert_eq!(produced, 1);
+        assert_eq!(res.queued_source_frames(), 0);
+
+        // If `src_pos` wasn't normalized back down, this would request an absurd number of source
+        // frames due to the large integer component of `src_pos`.
+        assert_eq!(res.required_source_frames(1), 1);
     }
 }
