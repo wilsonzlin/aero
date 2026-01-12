@@ -102,6 +102,22 @@ describe("io/devices/i8042 WASM bridge", () => {
     }
   });
 
+  it("splits large injected mouse deltas into multiple PS/2 packets", async () => {
+    const bridge = await createBridge();
+    if (!bridge) return;
+    try {
+      // Enable reporting.
+      writeToMouse(bridge, 0xf4);
+      // Drain the ACK.
+      expect(drainOutput(bridge)).toEqual([0xfa]);
+
+      bridge.inject_mouse_move(200, 0);
+      expect(drainOutput(bridge)).toEqual([0x08, 0x7f, 0x00, 0x08, 0x49, 0x00]);
+    } finally {
+      bridge.free();
+    }
+  });
+
   it("save_state/load_state roundtrips pending output", async () => {
     const bridge1 = await createBridge();
     if (!bridge1) return;
