@@ -372,4 +372,99 @@ describe("io/bus/pci", () => {
     // BAR decoding should be enabled when Command changes.
     expect(mmioBus.read(bar0Base, 4)).toBe(0x1122_3344);
   });
+
+  it("does not allow initPciConfig() to force-enable decoding or clobber BAR registers", () => {
+    const portBus = new PortIoBus();
+    const mmioBus = new MmioBus();
+    const pciBus = new PciBus(portBus, mmioBus);
+    pciBus.registerToPortBus();
+
+    const dev: PciDevice = {
+      name: "init_invariant_dev",
+      vendorId: 0x1234,
+      deviceId: 0x5678,
+      classCode: 0,
+      bars: [{ kind: "mmio32", size: 0x1000 }, null, null, null, null, null],
+      initPciConfig: (config) => {
+        // Attempt to enable memory decoding + smash BAR0.
+        config[0x04] = 0x02;
+        config[0x05] = 0x00;
+        config[0x10] = 0xaa;
+        config[0x11] = 0xbb;
+        config[0x12] = 0xcc;
+        config[0x13] = 0xdd;
+        // Also attempt to scribble into an unimplemented BAR.
+        config[0x14] = 0x11;
+        config[0x15] = 0x22;
+        config[0x16] = 0x33;
+        config[0x17] = 0x44;
+      },
+      mmioRead: () => 0xdead_beef,
+      mmioWrite: () => {},
+    };
+
+    const addr = pciBus.registerDevice(dev, { device: 0, function: 0 });
+    const cfg = makeCfgIo(portBus);
+
+    // Command should be reset to 0 so decoding is still guest-controlled.
+    expect(cfg.readU16(addr.device, addr.function, 0x04)).toBe(0x0000);
+
+    // BAR0 should reflect the bus-assigned base, not the value written by initPciConfig().
+    const bar0 = cfg.readU32(addr.device, addr.function, 0x10);
+    expect(bar0).toBe(0xe000_0000);
+
+    // BAR1 is unimplemented and must read as 0 even if initPciConfig scribbled.
+    expect(cfg.readU32(addr.device, addr.function, 0x14)).toBe(0);
+
+    // MMIO should not be decoded until the guest enables it.
+    const base = BigInt(bar0) & 0xffff_fff0n;
+    expect(mmioBus.read(base, 4)).toBe(0xffff_ffff);
+
+    cfg.writeU16(addr.device, addr.function, 0x04, 0x0002); // Memory Space Enable
+    expect(mmioBus.read(base, 4)).toBe(0xdead_beef);
+  });
+
+  it("remaps mmio64 BARs on low/high writes while respecting Command.MEM enable", () => {
+    const portBus = new PortIoBus();
+    const mmioBus = new MmioBus();
+    const pciBus = new PciBus(portBus, mmioBus);
+    pciBus.registerToPortBus();
+
+    const dev: PciDevice = {
+      name: "mmio64_remap_dev",
+      vendorId: 0x1234,
+      deviceId: 0x5678,
+      classCode: 0,
+      bars: [{ kind: "mmio64", size: 0x4000 }, null, null, null, null, null],
+      mmioRead: () => 0x1122_3344,
+      mmioWrite: () => {},
+    };
+    const addr = pciBus.registerDevice(dev, { device: 0, function: 0 });
+    const cfg = makeCfgIo(portBus);
+
+    const bar0Low = cfg.readU32(addr.device, addr.function, 0x10);
+    const bar0High = cfg.readU32(addr.device, addr.function, 0x14);
+    const base = (BigInt(bar0High) << 32n) | (BigInt(bar0Low) & 0xffff_fff0n);
+
+    // Memory decoding is disabled by default.
+    expect(mmioBus.read(base, 4)).toBe(0xffff_ffff);
+
+    // Enable memory decoding; BAR0 should map.
+    cfg.writeU16(addr.device, addr.function, 0x04, 0x0002);
+    expect(mmioBus.read(base, 4)).toBe(0x1122_3344);
+
+    // Move BAR0 to a new base and ensure the old range is unmapped.
+    const newBase = base + 0x1_0000n; // keep aligned to 0x4000
+    const newLow = Number(newBase & 0xffff_ffffn) >>> 0;
+    const newHigh = Number((newBase >> 32n) & 0xffff_ffffn) >>> 0;
+    cfg.writeU32(addr.device, addr.function, 0x10, newLow);
+    cfg.writeU32(addr.device, addr.function, 0x14, newHigh);
+
+    expect(mmioBus.read(base, 4)).toBe(0xffff_ffff);
+    expect(mmioBus.read(newBase, 4)).toBe(0x1122_3344);
+
+    // Disable decoding again.
+    cfg.writeU16(addr.device, addr.function, 0x04, 0x0000);
+    expect(mmioBus.read(newBase, 4)).toBe(0xffff_ffff);
+  });
 });
