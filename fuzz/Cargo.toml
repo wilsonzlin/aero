@@ -78,6 +78,12 @@ test = false
 doc = false
 
 [[bin]]
+name = "fuzz_piix3_ide_pci"
+path = "fuzz_targets/fuzz_piix3_ide_pci.rs"
+test = false
+doc = false
+
+[[bin]]
 name = "fuzz_aero_storage_sparse_open"
 path = "fuzz_targets/fuzz_aero_storage_sparse_open.rs"
 test = false

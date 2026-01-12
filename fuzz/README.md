@@ -4,7 +4,7 @@ This crate uses [`cargo-fuzz`](https://github.com/rust-fuzz/cargo-fuzz) (libFuzz
 
 - MMU page walking / translation
 - Physical bus routing logic
-- Storage controller emulation (AHCI + IDE + ATAPI)
+- Storage controller emulation (AHCI + IDE + ATAPI + PIIX3 PCI wrapper)
 - HTTP `Range` header parsing (`aero-http-range`)
 - AeroSparse disk image parsing/open (`aero-storage`)
 - AeroGPU command stream + alloc-table parsing (`aero-gpu` / `aero-protocol`)
@@ -26,6 +26,7 @@ cargo +"$nightly" fuzz run fuzz_mmu_translate
 cargo +"$nightly" fuzz run fuzz_bus_rw
 cargo +"$nightly" fuzz run fuzz_ahci
 cargo +"$nightly" fuzz run fuzz_ide
+cargo +"$nightly" fuzz run fuzz_piix3_ide_pci
 cargo +"$nightly" fuzz run fuzz_http_range
 cargo +"$nightly" fuzz run fuzz_atapi
 cargo +"$nightly" fuzz run fuzz_aero_storage_sparse_open
@@ -63,6 +64,9 @@ cd fuzz && cargo fuzz run fuzz_ahci -- -runs=10000
 
 # IDE (PIIX3-style, includes Bus Master IDE DMA)
 cd fuzz && cargo fuzz run fuzz_ide -- -runs=10000
+
+# IDE via PCI wrapper (PIIX3-style config gating + BAR4 relocation + BMIDE DMA)
+cd fuzz && cargo fuzz run fuzz_piix3_ide_pci -- -runs=10000
 
 # HTTP Range parsing/resolution (hostile headers near caps)
 cd fuzz && cargo fuzz run fuzz_http_range -- -runs=10000
