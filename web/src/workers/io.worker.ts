@@ -242,12 +242,6 @@ let pendingWasmInit: { api: WasmApi; variant: WasmVariant } | null = null;
 let wasmReadySent = false;
 
 const WEBUSB_GUEST_ROOT_PORT = 1;
-// Keep PCI Bus/Device/Function assignments stable so guests can match canonical
-// chipset layouts and driver heuristics (e.g. Aero's native chipset profiles).
-const UHCI_PCI_BDF = { bus: 0, device: 1, function: 0 };
-const HDA_PCI_BDF = { bus: 0, device: 4, function: 0 };
-const E1000_PCI_BDF = { bus: 0, device: 5, function: 0 };
-const VIRTIO_INPUT_PCI_DEVICE = 10;
 const SYNTHETIC_USB_HID_KEYBOARD_DEVICE_ID = 0x1000_0001;
 const SYNTHETIC_USB_HID_MOUSE_DEVICE_ID = 0x1000_0002;
 const SYNTHETIC_USB_HID_GAMEPAD_DEVICE_ID = 0x1000_0003;
@@ -754,7 +748,7 @@ function maybeInitUhciRuntime(): void {
     uhciRuntimeHubConfig.apply(runtime, {
       warn: (message, err) => console.warn(`[io.worker] ${message}`, err),
     });
-    mgr.registerPciDevice(dev, UHCI_PCI_BDF);
+    mgr.registerPciDevice(dev);
     mgr.addTickable(dev);
     uhciHidTopology.setUhciBridge(null);
   } catch (err) {
@@ -806,7 +800,7 @@ function maybeInitE1000Device(): void {
     const dev = new E1000PciDevice({ bridge, irqSink: mgr.irqSink, netTxRing: txRing, netRxRing: rxRing });
     e1000Bridge = bridge;
     e1000Device = dev;
-    mgr.registerPciDevice(dev, E1000_PCI_BDF);
+    mgr.registerPciDevice(dev);
     mgr.addTickable(dev);
   } catch (err) {
     console.warn("[io.worker] Failed to register E1000 PCI device", err);
@@ -872,9 +866,9 @@ function maybeInitVirtioInput(): void {
     mouseFn = new VirtioInputPciFunction({ kind: "mouse", device: mouseDev as unknown as any, irqSink: mgr.irqSink });
 
     // Register as a single multi-function PCI device (fn0 = keyboard, fn1 = mouse).
-    mgr.registerPciDevice(keyboardFn, { device: VIRTIO_INPUT_PCI_DEVICE, function: 0 });
+    mgr.registerPciDevice(keyboardFn);
     keyboardRegistered = true;
-    mgr.registerPciDevice(mouseFn, { device: VIRTIO_INPUT_PCI_DEVICE, function: 1 });
+    mgr.registerPciDevice(mouseFn);
 
     virtioInputKeyboard = keyboardFn;
     virtioInputMouse = mouseFn;
@@ -951,7 +945,7 @@ function maybeInitUhciDevice(): void {
         const dev = new UhciPciDevice({ bridge, irqSink: mgr.irqSink });
         uhciControllerBridge = bridge;
         uhciDevice = dev;
-        mgr.registerPciDevice(dev, UHCI_PCI_BDF);
+        mgr.registerPciDevice(dev);
         mgr.addTickable(dev);
         uhciHidTopology.setUhciBridge(bridge as unknown as any);
       } catch (err) {
@@ -1113,7 +1107,7 @@ function maybeInitHdaDevice(): void {
     const dev = new HdaPciDevice({ bridge: bridge as HdaControllerBridgeLike, irqSink: mgr.irqSink });
     hdaControllerBridge = bridge;
     hdaDevice = dev;
-    mgr.registerPciDevice(dev, HDA_PCI_BDF);
+    mgr.registerPciDevice(dev);
     mgr.addTickable(dev);
 
     // Apply any existing microphone ring-buffer attachment.
