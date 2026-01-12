@@ -902,4 +902,34 @@ mod tests {
         assert_eq!(info.wgpu, wgpu::TextureFormat::Bgra8Unorm);
         assert!(info.decompress_to_bgra8);
     }
+
+    #[test]
+    fn dxt1_cube_native_bc_when_block_aligned() {
+        let features = wgpu::Features::TEXTURE_COMPRESSION_BC;
+        let desc = TextureDesc {
+            kind: TextureKind::Cube { size: 8, levels: 4 },
+            format: D3DFormat::Dxt1,
+            pool: D3DPool::Default,
+            usage: TextureUsageKind::Sampled,
+        };
+
+        let info = format_info_for_texture_desc(&desc, features).unwrap();
+        assert_eq!(info.wgpu, wgpu::TextureFormat::Bc1RgbaUnorm);
+        assert!(!info.decompress_to_bgra8);
+    }
+
+    #[test]
+    fn dxt1_cube_fallback_to_bgra8_when_not_block_aligned() {
+        let features = wgpu::Features::TEXTURE_COMPRESSION_BC;
+        let desc = TextureDesc {
+            kind: TextureKind::Cube { size: 9, levels: 4 },
+            format: D3DFormat::Dxt1,
+            pool: D3DPool::Default,
+            usage: TextureUsageKind::Sampled,
+        };
+
+        let info = format_info_for_texture_desc(&desc, features).unwrap();
+        assert_eq!(info.wgpu, wgpu::TextureFormat::Bgra8Unorm);
+        assert!(info.decompress_to_bgra8);
+    }
 }
