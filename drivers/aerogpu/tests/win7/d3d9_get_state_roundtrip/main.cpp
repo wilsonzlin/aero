@@ -605,6 +605,9 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
   // ---------------------------------------------------------------------------
   const int vs_i_sb[4] = {101, 102, 103, 104};
   const BOOL ps_b_sb[2] = {TRUE, FALSE};
+  const UINT stream_freq_sb = 13;
+  const UINT stream_freq_clobber = 1;
+  bool stream_freq_test = false;
 
   ComPtr<IDirect3DStateBlock9> sb;
   hr = dev->BeginStateBlock();
@@ -660,6 +663,16 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
     return reporter.FailHresult("SetPixelShaderConstantB (stateblock)", hr);
   }
 
+  hr = dev->SetStreamSourceFreq(0, stream_freq_sb);
+  if (FAILED(hr)) {
+    aerogpu_test::PrintfStdout(
+        "INFO: %s: skipping StateBlock Set/GetStreamSourceFreq (Set in stateblock failed hr=0x%08lX)",
+        kTestName,
+        (unsigned long)hr);
+  } else {
+    stream_freq_test = true;
+  }
+
   hr = dev->EndStateBlock(sb.put());
   if (FAILED(hr) || !sb) {
     return reporter.FailHresult("EndStateBlock", hr);
@@ -711,6 +724,17 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
     hr = dev->SetPixelShaderConstantB(7, ps_b_clobber, 2);
     if (FAILED(hr)) {
       return reporter.FailHresult("SetPixelShaderConstantB (clobber)", hr);
+    }
+
+    if (stream_freq_test) {
+      hr = dev->SetStreamSourceFreq(0, stream_freq_clobber);
+      if (FAILED(hr)) {
+        aerogpu_test::PrintfStdout(
+            "INFO: %s: skipping StateBlock Set/GetStreamSourceFreq (clobber Set failed hr=0x%08lX)",
+            kTestName,
+            (unsigned long)hr);
+        stream_freq_test = false;
+      }
     }
   }
 
@@ -812,6 +836,19 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
                              i,
                              (int)b,
                              (int)a);
+      }
+    }
+
+    if (stream_freq_test) {
+      UINT got_freq = 0;
+      hr = dev->GetStreamSourceFreq(0, &got_freq);
+      if (FAILED(hr)) {
+        return reporter.FailHresult("GetStreamSourceFreq (after Apply)", hr);
+      }
+      if (got_freq != stream_freq_sb) {
+        return reporter.Fail("stateblock restore mismatch: StreamSourceFreq got=%u expected=%u",
+                             (unsigned)got_freq,
+                             (unsigned)stream_freq_sb);
       }
     }
   }

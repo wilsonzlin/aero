@@ -139,6 +139,17 @@ struct StateBlock {
   std::bitset<Device::kTransformCacheCount> transform_mask{};
   std::array<float, Device::kTransformCacheCount * 16> transform_values{};
 
+  // User clip planes (0..5). Fixed-function and not currently consumed by the
+  // AeroGPU command stream, but cached for Get*/state-block compatibility.
+  std::bitset<6> clip_plane_mask{};
+  std::array<float, 6 * 4> clip_plane_values{};
+
+  // Misc fixed-function cached state.
+  bool software_vertex_processing_set = false;
+  BOOL software_vertex_processing = FALSE;
+  bool n_patch_mode_set = false;
+  float n_patch_mode = 0.0f;
+
   // Texture bindings (pixel shader stages only; 0..15).
   std::bitset<16> texture_mask{};
   std::array<Resource*, 16> textures{};
@@ -159,6 +170,8 @@ struct StateBlock {
   // VB/IB bindings.
   std::bitset<16> stream_mask{};
   std::array<DeviceStateStream, 16> streams{};
+  std::bitset<16> stream_source_freq_mask{};
+  std::array<uint32_t, 16> stream_source_freq_values{};
   bool index_buffer_set = false;
   Resource* index_buffer = nullptr;
   D3DDDIFORMAT index_format = static_cast<D3DDDIFORMAT>(101); // D3DFMT_INDEX16
@@ -2591,6 +2604,38 @@ inline void stateblock_record_transform_locked(Device* dev, uint32_t state, cons
               sizeof(float) * 16u);
 }
 
+inline void stateblock_record_clip_plane_locked(Device* dev, uint32_t index, const float* plane4) {
+  if (!dev || !dev->recording_state_block || !plane4) {
+    return;
+  }
+  if (index >= 6) {
+    return;
+  }
+  StateBlock* sb = dev->recording_state_block;
+  sb->clip_plane_mask.set(index);
+  std::memcpy(sb->clip_plane_values.data() + static_cast<size_t>(index) * 4u,
+              plane4,
+              sizeof(float) * 4u);
+}
+
+inline void stateblock_record_software_vertex_processing_locked(Device* dev, BOOL enabled) {
+  if (!dev || !dev->recording_state_block) {
+    return;
+  }
+  StateBlock* sb = dev->recording_state_block;
+  sb->software_vertex_processing_set = true;
+  sb->software_vertex_processing = enabled;
+}
+
+inline void stateblock_record_npatch_mode_locked(Device* dev, float mode) {
+  if (!dev || !dev->recording_state_block) {
+    return;
+  }
+  StateBlock* sb = dev->recording_state_block;
+  sb->n_patch_mode_set = true;
+  sb->n_patch_mode = mode;
+}
+
 inline void stateblock_record_texture_locked(Device* dev, uint32_t stage, Resource* tex) {
   if (!dev || !dev->recording_state_block) {
     return;
@@ -2653,6 +2698,18 @@ inline void stateblock_record_stream_source_locked(Device* dev, uint32_t stream,
   StateBlock* sb = dev->recording_state_block;
   sb->stream_mask.set(stream);
   sb->streams[stream] = ss;
+}
+
+inline void stateblock_record_stream_source_freq_locked(Device* dev, uint32_t stream, uint32_t value) {
+  if (!dev || !dev->recording_state_block) {
+    return;
+  }
+  if (stream >= 16) {
+    return;
+  }
+  StateBlock* sb = dev->recording_state_block;
+  sb->stream_source_freq_mask.set(stream);
+  sb->stream_source_freq_values[stream] = value;
 }
 
 inline void stateblock_record_index_buffer_locked(Device* dev, Resource* ib, D3DDDIFORMAT fmt, uint32_t offset_bytes) {
@@ -9399,6 +9456,18 @@ static void stateblock_init_for_type_locked(Device* dev, StateBlock* sb, uint32_
                   sizeof(float) * 16u);
     }
 
+    for (uint32_t p = 0; p < 6; ++p) {
+      sb->clip_plane_mask.set(p);
+      std::memcpy(sb->clip_plane_values.data() + static_cast<size_t>(p) * 4u,
+                  dev->clip_planes[p],
+                  sizeof(float) * 4u);
+    }
+
+    sb->software_vertex_processing_set = true;
+    sb->software_vertex_processing = dev->software_vertex_processing;
+    sb->n_patch_mode_set = true;
+    sb->n_patch_mode = dev->n_patch_mode;
+
     sb->vertex_decl_set = true;
     sb->vertex_decl = dev->vertex_decl;
     sb->fvf_set = true;
@@ -9407,6 +9476,8 @@ static void stateblock_init_for_type_locked(Device* dev, StateBlock* sb, uint32_
     for (uint32_t stream = 0; stream < 16; ++stream) {
       sb->stream_mask.set(stream);
       sb->streams[stream] = dev->streams[stream];
+      sb->stream_source_freq_mask.set(stream);
+      sb->stream_source_freq_values[stream] = dev->stream_source_freq[stream];
     }
 
     sb->index_buffer_set = true;
@@ -9450,6 +9521,21 @@ static void stateblock_capture_locked(Device* dev, StateBlock* sb) {
                   dev->transform_matrices[t],
                   sizeof(float) * 16u);
     }
+  }
+
+  for (uint32_t p = 0; p < 6; ++p) {
+    if (sb->clip_plane_mask.test(p)) {
+      std::memcpy(sb->clip_plane_values.data() + static_cast<size_t>(p) * 4u,
+                  dev->clip_planes[p],
+                  sizeof(float) * 4u);
+    }
+  }
+
+  if (sb->software_vertex_processing_set) {
+    sb->software_vertex_processing = dev->software_vertex_processing;
+  }
+  if (sb->n_patch_mode_set) {
+    sb->n_patch_mode = dev->n_patch_mode;
   }
 
   for (uint32_t idx = 0; idx < 16u * 16u; ++idx) {
@@ -9501,6 +9587,9 @@ static void stateblock_capture_locked(Device* dev, StateBlock* sb) {
   for (uint32_t stream = 0; stream < 16; ++stream) {
     if (sb->stream_mask.test(stream)) {
       sb->streams[stream] = dev->streams[stream];
+    }
+    if (sb->stream_source_freq_mask.test(stream)) {
+      sb->stream_source_freq_values[stream] = dev->stream_source_freq[stream];
     }
   }
 
@@ -9681,6 +9770,25 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
     }
   }
 
+  // Additional fixed-function cached state (clip planes, software vertex processing, N-patches).
+  for (uint32_t p = 0; p < 6; ++p) {
+    if (!sb->clip_plane_mask.test(p)) {
+      continue;
+    }
+    std::memcpy(dev->clip_planes[p],
+                sb->clip_plane_values.data() + static_cast<size_t>(p) * 4u,
+                sizeof(float) * 4u);
+    stateblock_record_clip_plane_locked(dev, p, dev->clip_planes[p]);
+  }
+  if (sb->software_vertex_processing_set) {
+    dev->software_vertex_processing = sb->software_vertex_processing;
+    stateblock_record_software_vertex_processing_locked(dev, dev->software_vertex_processing);
+  }
+  if (sb->n_patch_mode_set) {
+    dev->n_patch_mode = sb->n_patch_mode;
+    stateblock_record_npatch_mode_locked(dev, dev->n_patch_mode);
+  }
+
   // Samplers/textures.
   for (uint32_t stage = 0; stage < 16; ++stage) {
     if (sb->texture_mask.test(stage)) {
@@ -9739,6 +9847,15 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
   }
   if (sb->vertex_decl_set || sb->fvf_set) {
     stateblock_record_vertex_decl_locked(dev, dev->vertex_decl, dev->fvf);
+  }
+
+  // Stream source frequency (instancing). Cached-only.
+  for (uint32_t stream = 0; stream < 16; ++stream) {
+    if (!sb->stream_source_freq_mask.test(stream)) {
+      continue;
+    }
+    dev->stream_source_freq[stream] = sb->stream_source_freq_values[stream];
+    stateblock_record_stream_source_freq_locked(dev, stream, dev->stream_source_freq[stream]);
   }
 
   // VB streams.
@@ -10544,6 +10661,7 @@ HRESULT device_set_clip_plane_impl(D3DDDI_HDEVICE hDevice, IndexT index, const P
   auto* dev = as_device(hDevice);
   std::lock_guard<std::mutex> lock(dev->mutex);
   std::memcpy(dev->clip_planes[idx], pPlane, 4 * sizeof(float));
+  stateblock_record_clip_plane_locked(dev, idx, dev->clip_planes[idx]);
   return trace.ret(S_OK);
 }
 
@@ -11017,6 +11135,7 @@ HRESULT device_set_software_vertex_processing_impl(D3DDDI_HDEVICE hDevice, Value
   auto* dev = as_device(hDevice);
   std::lock_guard<std::mutex> lock(dev->mutex);
   dev->software_vertex_processing = d3d9_to_u32(enabled) ? TRUE : FALSE;
+  stateblock_record_software_vertex_processing_locked(dev, dev->software_vertex_processing);
   return trace.ret(S_OK);
 }
 
@@ -11066,6 +11185,7 @@ HRESULT device_set_npatch_mode_impl(D3DDDI_HDEVICE hDevice, ValueT mode) {
   auto* dev = as_device(hDevice);
   std::lock_guard<std::mutex> lock(dev->mutex);
   dev->n_patch_mode = static_cast<float>(mode);
+  stateblock_record_npatch_mode_locked(dev, dev->n_patch_mode);
   return trace.ret(S_OK);
 }
 
@@ -11121,6 +11241,7 @@ HRESULT device_set_stream_source_freq_impl(D3DDDI_HDEVICE hDevice, StreamT strea
   auto* dev = as_device(hDevice);
   std::lock_guard<std::mutex> lock(dev->mutex);
   dev->stream_source_freq[st] = d3d9_to_u32(value);
+  stateblock_record_stream_source_freq_locked(dev, st, dev->stream_source_freq[st]);
   return trace.ret(S_OK);
 }
 
