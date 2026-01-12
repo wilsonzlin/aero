@@ -2075,6 +2075,106 @@ mod tests {
     }
 
     #[test]
+    fn rx_mmio_write_reg_does_not_dma_on_rctl_enable_until_poll() {
+        let mut mem = TestMem::new(0x20_000);
+        let mut dev = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
+
+        // RX ring at 0x3000 with 2 descriptors. Keep RX disabled initially.
+        dev.mmio_write_u32_reg(REG_RDBAL, 0x3000);
+        dev.mmio_write_u32_reg(REG_RDLEN, (RxDesc::LEN as u32) * 2);
+        dev.mmio_write_u32_reg(REG_RDH, 0);
+        dev.mmio_write_u32_reg(REG_RDT, 1);
+        dev.mmio_write_u32_reg(REG_IMS, ICR_RXT0);
+
+        let desc0 = RxDesc {
+            buffer_addr: 0x4000,
+            length: 0,
+            checksum: 0,
+            status: 0,
+            errors: 0,
+            special: 0,
+        };
+        let desc1 = RxDesc {
+            buffer_addr: 0x5000,
+            ..desc0
+        };
+        mem.write_bytes(0x3000, &desc0.to_bytes());
+        mem.write_bytes(0x3010, &desc1.to_bytes());
+
+        // Sentinel to detect unexpected writes.
+        mem.write_bytes(0x4000, &[0x5a; 32]);
+
+        let frame = vec![0x22u8; MIN_L2_FRAME_LEN];
+        dev.enqueue_rx_frame(frame.clone());
+
+        // Enabling RCTL via register-only write must not DMA until poll().
+        dev.mmio_write_u32_reg(REG_RCTL, RCTL_EN);
+
+        assert_eq!(mem.read_bytes(0x4000, 32), vec![0x5a; 32]);
+        let unchanged = RxDesc::from_bytes(read_desc::<{ RxDesc::LEN }>(&mut mem, 0x3000));
+        assert_eq!(unchanged.status, 0);
+        assert!(!dev.irq_level());
+
+        dev.poll(&mut mem);
+
+        assert_eq!(mem.read_bytes(0x4000, frame.len()), frame);
+        let updated = RxDesc::from_bytes(read_desc::<{ RxDesc::LEN }>(&mut mem, 0x3000));
+        assert_eq!(
+            updated.status & (RXD_STAT_DD | RXD_STAT_EOP),
+            RXD_STAT_DD | RXD_STAT_EOP
+        );
+        assert!(dev.irq_level());
+    }
+
+    #[test]
+    fn rx_mmio_write_reg_does_not_dma_on_rdt_update_until_poll() {
+        let mut mem = TestMem::new(0x20_000);
+        let mut dev = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
+
+        // RX ring at 0x3000 with 2 descriptors, but start with no available buffers (RDH == RDT).
+        dev.mmio_write_u32_reg(REG_RDBAL, 0x3000);
+        dev.mmio_write_u32_reg(REG_RDLEN, (RxDesc::LEN as u32) * 2);
+        dev.mmio_write_u32_reg(REG_RDH, 0);
+        dev.mmio_write_u32_reg(REG_RDT, 0);
+        dev.mmio_write_u32_reg(REG_RCTL, RCTL_EN);
+        dev.mmio_write_u32_reg(REG_IMS, ICR_RXT0);
+
+        let desc0 = RxDesc {
+            buffer_addr: 0x4000,
+            length: 0,
+            checksum: 0,
+            status: 0,
+            errors: 0,
+            special: 0,
+        };
+        let desc1 = RxDesc {
+            buffer_addr: 0x5000,
+            ..desc0
+        };
+        mem.write_bytes(0x3000, &desc0.to_bytes());
+        mem.write_bytes(0x3010, &desc1.to_bytes());
+
+        // Sentinel to detect unexpected writes.
+        mem.write_bytes(0x4000, &[0x5a; 32]);
+
+        let frame = vec![0x22u8; MIN_L2_FRAME_LEN];
+        dev.enqueue_rx_frame(frame.clone());
+
+        // Even with a pending frame, no DMA occurs because RDH == RDT.
+        dev.poll(&mut mem);
+        assert_eq!(mem.read_bytes(0x4000, 32), vec![0x5a; 32]);
+
+        // Open up a buffer via register-only tail update; still should not DMA until poll().
+        dev.mmio_write_u32_reg(REG_RDT, 1);
+        assert_eq!(mem.read_bytes(0x4000, 32), vec![0x5a; 32]);
+        assert!(!dev.irq_level());
+
+        dev.poll(&mut mem);
+        assert_eq!(mem.read_bytes(0x4000, frame.len()), frame);
+        assert!(dev.irq_level());
+    }
+
+    #[test]
     fn tx_oversized_descriptor_drops_packet_without_large_dma_reads() {
         let mut mem = LimitedReadMem::new(0x20_000, 2048);
         let mut dev = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
