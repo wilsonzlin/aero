@@ -2168,6 +2168,10 @@ impl Machine {
         let Some(ahci) = self.ahci.as_ref() else {
             return;
         };
+        // If the canonical shared disk was attached, detaching it should also disable the
+        // auto-attach behaviour so subsequent calls like `set_disk_image` do not silently
+        // re-populate the port.
+        self.ahci_port0_auto_attach_shared_disk = false;
         ahci.borrow_mut().detach_drive(0);
     }
 
@@ -4719,6 +4723,10 @@ impl snapshot::SnapshotTarget for Machine {
                         if packed_bdf == aero_devices::pci::profile::SATA_AHCI_ICH9.bdf.pack_u16() {
                             if let Some(ahci) = &self.ahci {
                                 let _ = ahci.borrow_mut().load_state(nested);
+                                // Storage controller snapshots intentionally drop attached host
+                                // backends. Ensure helpers like `attach_shared_disk_to_ahci_port0`
+                                // will actually reattach.
+                                self.ahci_port0_auto_attach_shared_disk = false;
                             }
                         } else if packed_bdf == aero_devices::pci::profile::IDE_PIIX3.bdf.pack_u16()
                         {
@@ -4742,6 +4750,8 @@ impl snapshot::SnapshotTarget for Machine {
                 .is_ok()
                 {
                     restored = true;
+                    // Storage controller snapshots intentionally drop attached host backends.
+                    self.ahci_port0_auto_attach_shared_disk = false;
                 }
             }
             if !restored {

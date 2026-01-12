@@ -109,7 +109,12 @@ fn machine_shared_bios_disk_is_visible_to_ahci_dma() {
     bios_disk.read_sector(lba, &mut expected).unwrap();
     assert_eq!(&expected[..marker.len()], marker);
 
+    // Detach the default AHCI backend to ensure this test exercises the explicit helper.
+    m.detach_ahci_drive_port0();
+
     // Attach the same shared disk to AHCI port 0 so controller DMA sees identical bytes.
+    m.attach_shared_disk_to_ahci_port0().unwrap();
+    // Idempotency: attaching again should be a no-op (and must not error).
     m.attach_shared_disk_to_ahci_port0().unwrap();
 
     // Enable A20 before touching high MMIO addresses.
