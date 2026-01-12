@@ -33,7 +33,6 @@ aero-audio = { path = "../aero-audio" }
 aero-opfs = { path = "../aero-opfs" }
 aero-snapshot = { path = "../aero-snapshot" }
 aero-io-snapshot = { path = "../aero-io-snapshot" }
-aero-snapshot = { path = "../aero-snapshot" }
 wasm-bindgen-futures = "0.4"
 linked_list_allocator = "0.10"
 serde-wasm-bindgen = "0.6"

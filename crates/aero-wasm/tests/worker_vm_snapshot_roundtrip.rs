@@ -139,4 +139,3 @@ fn worker_vm_snapshot_roundtrip_restores_ram_and_devices() {
         "snapshot bytes must roundtrip identically"
     );
 }
-

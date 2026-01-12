@@ -135,11 +135,8 @@ impl WorkerVmSnapshot {
         }
 
         let mut w = Cursor::new(Vec::new());
-        aero_snapshot::save_snapshot(&mut w, self, SaveOptions::default()).map_err(|e| {
-            js_error(format!(
-                "Failed to write aero-snapshot (full): {e}"
-            ))
-        })?;
+        aero_snapshot::save_snapshot(&mut w, self, SaveOptions::default())
+            .map_err(|e| js_error(format!("Failed to write aero-snapshot (full): {e}")))?;
         Ok(w.into_inner())
     }
 
@@ -161,10 +158,9 @@ impl WorkerVmSnapshot {
             ));
         }
 
-        let mut file =
-            OpfsSyncFile::create(&path)
-                .await
-                .map_err(|e| js_error(format!("Failed to create OPFS file {path}: {e}")))?;
+        let mut file = OpfsSyncFile::create(&path)
+            .await
+            .map_err(|e| js_error(format!("Failed to create OPFS file {path}: {e}")))?;
 
         aero_snapshot::save_snapshot(&mut file, self, SaveOptions::default())
             .map_err(|e| js_error(format!("Failed to write aero-snapshot to OPFS: {e}")))?;
