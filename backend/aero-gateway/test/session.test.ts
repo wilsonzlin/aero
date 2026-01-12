@@ -114,3 +114,19 @@ test('POST /session sets Secure when TRUST_PROXY=1 and X-Forwarded-Proto=https',
 
   await app.close();
 });
+
+test('POST /session surfaces custom l2 payload limits when configured', async () => {
+  const { app } = buildServer({
+    ...baseConfig,
+    L2_MAX_FRAME_PAYLOAD_BYTES: 1234,
+    L2_MAX_CONTROL_PAYLOAD_BYTES: 99,
+  });
+  await app.ready();
+
+  const res = await app.inject({ method: 'POST', url: '/session' });
+  assert.equal(res.statusCode, 201);
+  const body = JSON.parse(res.body);
+  assert.deepEqual(body.limits?.l2, { maxFramePayloadBytes: 1234, maxControlPayloadBytes: 99 });
+
+  await app.close();
+});
