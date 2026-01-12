@@ -6,6 +6,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const repoRoot = path.resolve(projectRoot, '..', '..');
 const tsStripLoader = pathToFileURL(path.join(repoRoot, 'scripts', 'register-ts-strip-loader.mjs')).href;
+const testSetup = pathToFileURL(path.join(projectRoot, 'scripts', 'test-setup.mjs')).href;
 const testRoot = process.argv[2]
   ? path.resolve(projectRoot, process.argv[2])
   : path.join(projectRoot, 'test');
@@ -51,10 +52,14 @@ if (testFiles.length === 0) {
   process.stderr.write(`No test files found under ${path.relative(projectRoot, testRoot)}\n`);
   process.exitCode = 1;
 } else {
-  const child = spawn(process.execPath, ['--experimental-strip-types', '--import', tsStripLoader, '--test', ...testFiles], {
-    cwd: projectRoot,
-    stdio: 'inherit',
-  });
+  const child = spawn(
+    process.execPath,
+    ['--experimental-strip-types', '--import', tsStripLoader, '--import', testSetup, '--test', ...testFiles],
+    {
+      cwd: projectRoot,
+      stdio: 'inherit',
+    },
+  );
 
   child.on('exit', (code, signal) => {
     if (signal) process.exit(1);

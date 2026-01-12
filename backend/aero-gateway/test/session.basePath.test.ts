@@ -66,3 +66,25 @@ test('POST /session endpoint discovery includes PUBLIC_BASE_URL base path', asyn
 
   await app.close();
 });
+
+test('gateway serves HTTP endpoints under PUBLIC_BASE_URL base path without requiring reverse-proxy rewrites', async () => {
+  const { app } = buildServer(baseConfig);
+  await app.ready();
+
+  const health = await app.inject({ method: 'GET', url: '/base/healthz' });
+  assert.equal(health.statusCode, 200);
+  assert.deepEqual(JSON.parse(health.body), { ok: true });
+
+  const res = await app.inject({ method: 'POST', url: '/base/session' });
+  assert.equal(res.statusCode, 201);
+
+  const body = JSON.parse(res.body);
+  assert.equal(body?.endpoints?.l2, '/base/l2');
+  assert.equal(body?.endpoints?.tcp, '/base/tcp');
+
+  const metrics = await app.inject({ method: 'GET', url: '/base/metrics' });
+  assert.equal(metrics.statusCode, 200);
+  assert.match(metrics.body, /http_requests_total/);
+
+  await app.close();
+});

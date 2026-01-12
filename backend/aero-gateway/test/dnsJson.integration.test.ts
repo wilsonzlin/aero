@@ -5,11 +5,6 @@ import test from 'node:test';
 import { buildServer } from '../src/server.js';
 import { decodeDnsHeader, decodeFirstQuestion, encodeDnsQuery, encodeDnsResponseA } from '../src/dns/codec.js';
 
-function bufferToArrayBuffer(buf: Buffer): ArrayBuffer {
-  const ab = buf.buffer as ArrayBuffer;
-  return ab.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
-}
-
 const baseConfig = {
   HOST: '127.0.0.1',
   PORT: 0,
@@ -64,23 +59,13 @@ const baseConfig = {
   UDP_RELAY_ISSUER: '',
 };
 
-async function listen(app: import('fastify').FastifyInstance): Promise<number> {
-  await app.listen({ host: '127.0.0.1', port: 0 });
-  const address = app.server.address();
-  if (!address || typeof address === 'string') throw new Error('Expected TCP address');
-  return address.port;
-}
-
-async function createSessionCookie(port: number): Promise<string> {
-  const res = await fetch(`http://127.0.0.1:${port}/session`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({}),
-  });
-  if (!res.ok) throw new Error(`Failed to create session: ${res.status}`);
-  const setCookie = res.headers.get('set-cookie');
-  if (!setCookie) throw new Error('Missing Set-Cookie header');
-  return setCookie.split(';')[0] ?? setCookie;
+async function createSessionCookie(app: import('fastify').FastifyInstance): Promise<string> {
+  const res = await app.inject({ method: 'POST', url: '/session' });
+  if (res.statusCode !== 201) throw new Error(`Failed to create session: ${res.statusCode}`);
+  const setCookie = res.headers['set-cookie'];
+  const raw = Array.isArray(setCookie) ? setCookie[0] : setCookie;
+  if (!raw) throw new Error('Missing Set-Cookie header');
+  return raw.split(';')[0] ?? raw;
 }
 
 test('GET /dns-json resolves via UDP upstream and shares cache with /dns-query', async () => {
@@ -108,29 +93,31 @@ test('GET /dns-json resolves via UDP upstream and shares cache with /dns-query',
     DNS_UPSTREAMS: [`127.0.0.1:${upstreamAddr.port}`],
   });
   await app.ready();
-  const port = await listen(app);
-  const cookie = await createSessionCookie(port);
+  const cookie = await createSessionCookie(app);
 
   try {
-    const r1 = await fetch(`http://127.0.0.1:${port}/dns-json?name=example.com&type=A`, {
+    const r1 = await app.inject({
+      method: 'GET',
+      url: '/dns-json?name=example.com&type=A',
       headers: { cookie },
     });
-    assert.equal(r1.status, 200);
-    assert.ok((r1.headers.get('content-type') ?? '').startsWith('application/dns-json'));
-    const json = await r1.json();
+    assert.equal(r1.statusCode, 200);
+    assert.ok(String(r1.headers['content-type'] ?? '').startsWith('application/dns-json'));
+    const json = JSON.parse(r1.body);
     assert.equal(json.Status, 0);
     assert.equal(json.Answer?.[0]?.data, '203.0.113.1');
     assert.equal(queryCount, 1);
 
     const q2 = encodeDnsQuery({ id: 0x1234, name: 'example.com', type: 1 });
-    const r2 = await fetch(`http://127.0.0.1:${port}/dns-query`, {
+    const r2 = await app.inject({
       method: 'POST',
-      headers: { 'Content-Type': 'application/dns-message', cookie },
-      body: bufferToArrayBuffer(q2),
+      url: '/dns-query',
+      headers: { 'content-type': 'application/dns-message', cookie },
+      payload: q2,
     });
-    assert.equal(r2.status, 200);
-    assert.ok((r2.headers.get('content-type') ?? '').startsWith('application/dns-message'));
-    const b2 = Buffer.from(await r2.arrayBuffer());
+    assert.equal(r2.statusCode, 200);
+    assert.ok(String(r2.headers['content-type'] ?? '').startsWith('application/dns-message'));
+    const b2 = r2.rawPayload;
 
     const header2 = decodeDnsHeader(b2);
     assert.equal(header2.id, 0x1234);

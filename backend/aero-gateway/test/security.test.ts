@@ -5,13 +5,6 @@ import test from 'node:test';
 import { buildServer } from '../src/server.js';
 import { decodeDnsHeader, encodeDnsQuery, getRcodeFromFlags } from '../src/dns/codec.js';
 
-function bufferToArrayBuffer(buf: Buffer): ArrayBuffer {
-  // Node buffers are backed by ArrayBuffer at runtime, but the type is
-  // `ArrayBufferLike`. Cast to satisfy `fetch`/undici typings.
-  const ab = buf.buffer as ArrayBuffer;
-  return ab.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
-}
-
 const baseConfig = {
   HOST: '127.0.0.1',
   PORT: 0,
@@ -66,42 +59,32 @@ const baseConfig = {
   UDP_RELAY_ISSUER: '',
 };
 
-async function listen(app: import('fastify').FastifyInstance): Promise<number> {
-  await app.listen({ host: '127.0.0.1', port: 0 });
-  const address = app.server.address();
-  if (!address || typeof address === 'string') throw new Error('Expected TCP address');
-  return address.port;
-}
-
-async function createSessionCookie(port: number): Promise<string> {
-  const res = await fetch(`http://127.0.0.1:${port}/session`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({}),
-  });
-  if (!res.ok) throw new Error(`Failed to create session: ${res.status}`);
-  const setCookie = res.headers.get('set-cookie');
-  if (!setCookie) throw new Error('Missing Set-Cookie header');
-  return setCookie.split(';')[0] ?? setCookie;
+async function createSessionCookie(app: import('fastify').FastifyInstance): Promise<string> {
+  const res = await app.inject({ method: 'POST', url: '/session' });
+  if (res.statusCode !== 201) throw new Error(`Failed to create session: ${res.statusCode}`);
+  const setCookie = res.headers['set-cookie'];
+  const raw = Array.isArray(setCookie) ? setCookie[0] : setCookie;
+  if (!raw) throw new Error('Missing Set-Cookie header');
+  return raw.split(';')[0] ?? raw;
 }
 
 test('ANY query is blocked by default', async () => {
   const { app } = buildServer({ ...baseConfig, DNS_ALLOW_ANY: false });
   await app.ready();
-  const port = await listen(app);
-  const cookie = await createSessionCookie(port);
+  const cookie = await createSessionCookie(app);
 
   try {
     const query = encodeDnsQuery({ id: 1, name: 'example.com', type: 255 });
-    const res = await fetch(`http://127.0.0.1:${port}/dns-query`, {
+    const res = await app.inject({
       method: 'POST',
-      headers: { 'Content-Type': 'application/dns-message', cookie },
-      body: bufferToArrayBuffer(query),
+      url: '/dns-query',
+      headers: { 'content-type': 'application/dns-message', cookie },
+      payload: query,
     });
 
-    assert.equal(res.status, 200);
-    assert.ok((res.headers.get('content-type') ?? '').startsWith('application/dns-message'));
-    const body = Buffer.from(await res.arrayBuffer());
+    assert.equal(res.statusCode, 200);
+    assert.ok(String(res.headers['content-type'] ?? '').startsWith('application/dns-message'));
+    const body = res.rawPayload;
     const header = decodeDnsHeader(body);
     assert.equal(header.id, 1);
     assert.equal(getRcodeFromFlags(header.flags), 5);
@@ -128,20 +111,20 @@ test('response size cap rejects large upstream responses', async () => {
     DNS_MAX_RESPONSE_BYTES: 50,
   });
   await app.ready();
-  const port = await listen(app);
-  const cookie = await createSessionCookie(port);
+  const cookie = await createSessionCookie(app);
 
   try {
     const query = encodeDnsQuery({ id: 1, name: 'example.com', type: 1 });
-    const res = await fetch(`http://127.0.0.1:${port}/dns-query`, {
+    const res = await app.inject({
       method: 'POST',
-      headers: { 'Content-Type': 'application/dns-message', cookie },
-      body: bufferToArrayBuffer(query),
+      url: '/dns-query',
+      headers: { 'content-type': 'application/dns-message', cookie },
+      payload: query,
     });
 
-    assert.equal(res.status, 200);
-    assert.ok((res.headers.get('content-type') ?? '').startsWith('application/dns-message'));
-    const body = Buffer.from(await res.arrayBuffer());
+    assert.equal(res.statusCode, 200);
+    assert.ok(String(res.headers['content-type'] ?? '').startsWith('application/dns-message'));
+    const body = res.rawPayload;
     const header = decodeDnsHeader(body);
     assert.equal(header.id, 1);
     assert.equal(getRcodeFromFlags(header.flags), 2);

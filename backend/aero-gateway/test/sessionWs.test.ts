@@ -21,16 +21,13 @@ async function listenGateway(app: import('fastify').FastifyInstance): Promise<nu
   return addr.port;
 }
 
-async function createSessionCookie(baseUrl: string): Promise<string> {
-  const res = await fetch(`${baseUrl}/session`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({}),
-  });
-  if (!res.ok) throw new Error(`Failed to create session: ${res.status}`);
-  const setCookie = res.headers.get('set-cookie');
-  if (!setCookie) throw new Error('Missing Set-Cookie header');
-  return setCookie.split(';')[0] ?? setCookie;
+async function createSessionCookie(app: import('fastify').FastifyInstance): Promise<string> {
+  const res = await app.inject({ method: 'POST', url: '/session' });
+  if (res.statusCode !== 201) throw new Error(`Failed to create session: ${res.statusCode}`);
+  const setCookie = res.headers['set-cookie'];
+  const raw = Array.isArray(setCookie) ? setCookie[0] : setCookie;
+  if (!raw) throw new Error('Missing Set-Cookie header');
+  return raw.split(';')[0] ?? raw;
 }
 
 async function expectWsRejected(url: string, init: WebSocket.ClientOptions, expectedStatus: number, protocols?: string): Promise<void> {
@@ -60,9 +57,6 @@ async function expectWsRejected(url: string, init: WebSocket.ClientOptions, expe
 }
 
 test('WebSocket upgrades reject missing/invalid session cookies', async () => {
-  const originalAllowPrivate = process.env.TCP_ALLOW_PRIVATE_IPS;
-  process.env.TCP_ALLOW_PRIVATE_IPS = '1';
-
   const echoServer = net.createServer((socket) => socket.on('data', (data) => socket.write(data)));
   const echoPort = await listenNet(echoServer);
 
@@ -117,14 +111,13 @@ test('WebSocket upgrades reject missing/invalid session cookies', async () => {
 
   await app.ready();
   const port = await listenGateway(app);
-  const baseUrl = `http://127.0.0.1:${port}`;
   const wsBase = `ws://127.0.0.1:${port}`;
 
   try {
     await expectWsRejected(`${wsBase}/tcp?v=1&host=127.0.0.1&port=${echoPort}`, {}, 401);
     await expectWsRejected(`${wsBase}/tcp-mux`, {}, 401, 'aero-tcp-mux-v1');
 
-    const cookie = await createSessionCookie(baseUrl);
+    const cookie = await createSessionCookie(app);
 
     const ws1 = await new Promise<WebSocket>((resolve, reject) => {
       const ws = new WebSocket(`${wsBase}/tcp?v=1&host=127.0.0.1&port=${echoPort}`, { headers: { cookie } });
@@ -156,6 +149,5 @@ test('WebSocket upgrades reject missing/invalid session cookies', async () => {
   } finally {
     await app.close();
     echoServer.close();
-    process.env.TCP_ALLOW_PRIVATE_IPS = originalAllowPrivate;
   }
 });

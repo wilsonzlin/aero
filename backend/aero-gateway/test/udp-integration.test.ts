@@ -5,11 +5,6 @@ import test from 'node:test';
 import { buildServer } from '../src/server.js';
 import { decodeDnsHeader, decodeFirstQuestion, encodeDnsQuery, encodeDnsResponseA } from '../src/dns/codec.js';
 
-function bufferToArrayBuffer(buf: Buffer): ArrayBuffer {
-  const ab = buf.buffer as ArrayBuffer;
-  return ab.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
-}
-
 const baseConfig = {
   HOST: '127.0.0.1',
   PORT: 0,
@@ -64,23 +59,13 @@ const baseConfig = {
   UDP_RELAY_ISSUER: '',
 };
 
-async function listen(app: import('fastify').FastifyInstance): Promise<number> {
-  await app.listen({ host: '127.0.0.1', port: 0 });
-  const address = app.server.address();
-  if (!address || typeof address === 'string') throw new Error('Expected TCP address');
-  return address.port;
-}
-
-async function createSessionCookie(port: number): Promise<string> {
-  const res = await fetch(`http://127.0.0.1:${port}/session`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({}),
-  });
-  if (!res.ok) throw new Error(`Failed to create session: ${res.status}`);
-  const setCookie = res.headers.get('set-cookie');
-  if (!setCookie) throw new Error('Missing Set-Cookie header');
-  return setCookie.split(';')[0] ?? setCookie;
+async function createSessionCookie(app: import('fastify').FastifyInstance): Promise<string> {
+  const res = await app.inject({ method: 'POST', url: '/session' });
+  if (res.statusCode !== 201) throw new Error(`Failed to create session: ${res.statusCode}`);
+  const setCookie = res.headers['set-cookie'];
+  const raw = Array.isArray(setCookie) ? setCookie[0] : setCookie;
+  if (!raw) throw new Error('Missing Set-Cookie header');
+  return raw.split(';')[0] ?? raw;
 }
 
 test('DoH POST resolves via UDP upstream and hits cache on subsequent queries', async () => {
@@ -108,19 +93,19 @@ test('DoH POST resolves via UDP upstream and hits cache on subsequent queries', 
     DNS_UPSTREAMS: [`127.0.0.1:${upstreamAddr.port}`],
   });
   await app.ready();
-  const port = await listen(app);
-  const cookie = await createSessionCookie(port);
+  const cookie = await createSessionCookie(app);
 
   try {
     const q1 = encodeDnsQuery({ id: 100, name: 'example.com', type: 1 });
-    const r1 = await fetch(`http://127.0.0.1:${port}/dns-query`, {
+    const r1 = await app.inject({
       method: 'POST',
-      headers: { 'Content-Type': 'application/dns-message', cookie },
-      body: bufferToArrayBuffer(q1),
+      url: '/dns-query',
+      headers: { 'content-type': 'application/dns-message', cookie },
+      payload: q1,
     });
-    assert.equal(r1.status, 200);
-    assert.ok((r1.headers.get('content-type') ?? '').startsWith('application/dns-message'));
-    const b1 = Buffer.from(await r1.arrayBuffer());
+    assert.equal(r1.statusCode, 200);
+    assert.ok(String(r1.headers['content-type'] ?? '').startsWith('application/dns-message'));
+    const b1 = r1.rawPayload;
 
     const expected1 = encodeDnsResponseA({
       id: 100,
@@ -131,13 +116,14 @@ test('DoH POST resolves via UDP upstream and hits cache on subsequent queries', 
     assert.equal(queryCount, 1);
 
     const q2 = encodeDnsQuery({ id: 101, name: 'example.com', type: 1 });
-    const r2 = await fetch(`http://127.0.0.1:${port}/dns-query`, {
+    const r2 = await app.inject({
       method: 'POST',
-      headers: { 'Content-Type': 'application/dns-message', cookie },
-      body: bufferToArrayBuffer(q2),
+      url: '/dns-query',
+      headers: { 'content-type': 'application/dns-message', cookie },
+      payload: q2,
     });
-    assert.equal(r2.status, 200);
-    const b2 = Buffer.from(await r2.arrayBuffer());
+    assert.equal(r2.statusCode, 200);
+    const b2 = r2.rawPayload;
 
     const expected2 = encodeDnsResponseA({
       id: 101,
