@@ -19,6 +19,7 @@ and the corresponding tests:
 - `crates/aero-pc-platform/tests/pc_platform_win7_storage.rs` (platform integration wiring)
 - `crates/aero-pc-platform/tests/windows7_storage_topology.rs` (end-to-end AHCI + ATAPI read tests)
 - `crates/aero-machine/tests/machine_win7_storage_topology.rs` (canonical `Machine` wiring: BDFs + PCI Interrupt Line)
+- `crates/aero-machine/tests/win7_storage_topology.rs` (canonical `Machine` wiring: BDFs + INTx routing)
 - `crates/aero-machine/tests/machine_win7_storage_helper.rs` (helper preset wiring)
 - `crates/aero-machine/tests/machine_win7_storage.rs` (helper constructor: PCI BDF presence + multifunction ISA bridge)
 - `crates/aero-machine/tests/machine_disk_overlays_snapshot.rs` (snapshot `DISKS` disk_id mapping guard test)
