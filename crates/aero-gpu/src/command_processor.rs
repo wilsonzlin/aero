@@ -588,13 +588,18 @@ impl AeroGpuCommandProcessor {
         //
         // Preserve the previous "first match wins" semantics in the presence of duplicate
         // `alloc_id`s by only inserting the first entry.
-        let allocations_by_id = allocations.map(|allocs| {
-            let mut map = HashMap::with_capacity(allocs.len());
-            for &alloc in allocs {
-                map.entry(alloc.alloc_id).or_insert(alloc);
+        let allocations_by_id = match allocations {
+            Some(allocs) => {
+                let mut map = HashMap::<u32, AeroGpuSubmissionAllocation>::new();
+                map.try_reserve(allocs.len())
+                    .map_err(|_| CommandProcessorError::SizeOverflow)?;
+                for &alloc in allocs {
+                    map.entry(alloc.alloc_id).or_insert(alloc);
+                }
+                Some(map)
             }
-            map
-        });
+            None => None,
+        };
         let allocations_by_id = allocations_by_id.as_ref();
 
         for cmd in stream.cmds {
