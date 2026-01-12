@@ -306,6 +306,7 @@ only if you explicitly want the base image to be mutated.
     - body size: **1 MiB**
     - bytes: repeating `0..255` pattern
     - includes a correct `Content-Length`
+    - includes `ETag: "8505ae4435522325"` (FNV-1a 64-bit of the payload) and `Cache-Control: no-store`
     - used by the guest virtio-net selftest to stress sustained TX/RX and validate data integrity (size + hash)
 - Launches QEMU with:
   - `-chardev file,...` + `-serial chardev:...` (guest COM1 → host log)
