@@ -72,7 +72,15 @@ impl JitContext {
 }
 
 const _: () = {
+    use core::mem::{offset_of, size_of};
+
     assert!(JitContext::TOTAL_BYTE_SIZE <= u32::MAX as usize);
+    assert!(offset_of!(JitContext, ram_base) == JitContext::RAM_BASE_OFFSET as usize);
+    assert!(offset_of!(JitContext, tlb_salt) == JitContext::TLB_SALT_OFFSET as usize);
+    assert!(size_of::<JitContext>() == JitContext::BYTE_SIZE);
+    assert!(JitContext::TLB_OFFSET as usize == JitContext::BYTE_SIZE);
+    assert!(JitContext::TLB_BYTES == JIT_TLB_ENTRIES * (JIT_TLB_ENTRY_SIZE as usize));
+    assert!(JitContext::TOTAL_BYTE_SIZE == JitContext::BYTE_SIZE + JitContext::TLB_BYTES);
 };
 
 #[cfg(test)]
