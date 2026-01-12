@@ -27,6 +27,17 @@ const VIRTIO_CONTRACT_REVISION_ID = 0x01;
 // BAR0 size in the Aero Windows 7 virtio contract v1 (see docs/windows7-virtio-driver-contract.md).
 const VIRTIO_MMIO_BAR0_SIZE = 0x4000;
 
+// Fixed virtio-pci capability layout within BAR0 (contract v1).
+const VIRTIO_MMIO_COMMON_OFFSET = 0x0000;
+const VIRTIO_MMIO_COMMON_LEN = 0x0100;
+const VIRTIO_MMIO_NOTIFY_OFFSET = 0x1000;
+const VIRTIO_MMIO_NOTIFY_LEN = 0x0100;
+const VIRTIO_MMIO_ISR_OFFSET = 0x2000;
+const VIRTIO_MMIO_ISR_LEN = 0x0020;
+const VIRTIO_MMIO_DEVICE_OFFSET = 0x3000;
+const VIRTIO_MMIO_DEVICE_LEN = 0x0100;
+const VIRTIO_MMIO_NOTIFY_OFF_MULTIPLIER = 4;
+
 // IRQ line choice:
 // - 0x0b is used by the UHCI controller model.
 // - PCI INTx lines are level-triggered and may be shared; the IO worker uses refcounts.
@@ -37,6 +48,10 @@ function maskToSize(value: number, size: number): number {
   if (size === 1) return value & 0xff;
   if (size === 2) return value & 0xffff;
   return value >>> 0;
+}
+
+function isInRange(off: number, size: number, base: number, len: number): boolean {
+  return off >= base && off + size <= base + len;
 }
 
 function writeU16LE(buf: Uint8Array, off: number, value: number): void {
@@ -125,33 +140,33 @@ export class VirtioNetPciDevice implements PciDevice, TickableDevice {
       capLen: 16,
       cfgType: 1,
       bar: 0,
-      offset: 0x0000,
-      length: 0x0100,
+      offset: VIRTIO_MMIO_COMMON_OFFSET,
+      length: VIRTIO_MMIO_COMMON_LEN,
     });
     writeVirtioPciCap(config, 0x60, {
       next: 0x74,
       capLen: 20,
       cfgType: 2,
       bar: 0,
-      offset: 0x1000,
-      length: 0x0100,
-      notifyOffMultiplier: 4,
+      offset: VIRTIO_MMIO_NOTIFY_OFFSET,
+      length: VIRTIO_MMIO_NOTIFY_LEN,
+      notifyOffMultiplier: VIRTIO_MMIO_NOTIFY_OFF_MULTIPLIER,
     });
     writeVirtioPciCap(config, 0x74, {
       next: 0x84,
       capLen: 16,
       cfgType: 3,
       bar: 0,
-      offset: 0x2000,
-      length: 0x0020,
+      offset: VIRTIO_MMIO_ISR_OFFSET,
+      length: VIRTIO_MMIO_ISR_LEN,
     });
     writeVirtioPciCap(config, 0x84, {
       next: 0x00,
       capLen: 16,
       cfgType: 4,
       bar: 0,
-      offset: 0x3000,
-      length: 0x0100,
+      offset: VIRTIO_MMIO_DEVICE_OFFSET,
+      length: VIRTIO_MMIO_DEVICE_LEN,
     });
   }
 
@@ -160,17 +175,30 @@ export class VirtioNetPciDevice implements PciDevice, TickableDevice {
     if (barIndex !== 0) return defaultReadValue(size);
     if (size !== 1 && size !== 2 && size !== 4) return defaultReadValue(size);
 
+    const off = Number(offset);
+    if (!Number.isFinite(off) || off < 0 || off + size > VIRTIO_MMIO_BAR0_SIZE) return 0;
+    // Undefined offsets within BAR0 must read as 0 (contract v1).
+    const defined =
+      isInRange(off, size, VIRTIO_MMIO_COMMON_OFFSET, VIRTIO_MMIO_COMMON_LEN) ||
+      isInRange(off, size, VIRTIO_MMIO_NOTIFY_OFFSET, VIRTIO_MMIO_NOTIFY_LEN) ||
+      isInRange(off, size, VIRTIO_MMIO_ISR_OFFSET, VIRTIO_MMIO_ISR_LEN) ||
+      isInRange(off, size, VIRTIO_MMIO_DEVICE_OFFSET, VIRTIO_MMIO_DEVICE_LEN);
+    if (!defined) return 0;
+
     let value: number;
     try {
       // BAR0 is 0x4000 bytes, so offset fits in a JS number.
-      value = this.#bridge.mmio_read(Number(offset), size) >>> 0;
+      value = this.#bridge.mmio_read(off >>> 0, size) >>> 0;
     } catch {
       // Virtio contract v1 expects undefined MMIO reads within BAR0 to return 0.
       // Treat device-side errors the same way to avoid spurious all-ones reads
       // confusing drivers.
       value = 0;
     }
-    this.#syncIrq();
+    // Reads from the ISR config region are read-to-ack and may deassert the IRQ.
+    if (isInRange(off, size, VIRTIO_MMIO_ISR_OFFSET, VIRTIO_MMIO_ISR_LEN)) {
+      this.#syncIrq();
+    }
     return maskToSize(value, size);
   }
 
@@ -178,8 +206,18 @@ export class VirtioNetPciDevice implements PciDevice, TickableDevice {
     if (this.#destroyed) return;
     if (barIndex !== 0) return;
     if (size !== 1 && size !== 2 && size !== 4) return;
+
+    const off = Number(offset);
+    if (!Number.isFinite(off) || off < 0 || off + size > VIRTIO_MMIO_BAR0_SIZE) return;
+    // Undefined offsets within BAR0 must ignore writes (contract v1).
+    const defined =
+      isInRange(off, size, VIRTIO_MMIO_COMMON_OFFSET, VIRTIO_MMIO_COMMON_LEN) ||
+      isInRange(off, size, VIRTIO_MMIO_NOTIFY_OFFSET, VIRTIO_MMIO_NOTIFY_LEN) ||
+      isInRange(off, size, VIRTIO_MMIO_ISR_OFFSET, VIRTIO_MMIO_ISR_LEN) ||
+      isInRange(off, size, VIRTIO_MMIO_DEVICE_OFFSET, VIRTIO_MMIO_DEVICE_LEN);
+    if (!defined) return;
     try {
-      this.#bridge.mmio_write(Number(offset), size, maskToSize(value >>> 0, size));
+      this.#bridge.mmio_write(off >>> 0, size, maskToSize(value >>> 0, size));
     } catch {
       // ignore device errors during guest IO
     }
