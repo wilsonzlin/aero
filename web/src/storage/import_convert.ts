@@ -1103,7 +1103,7 @@ class Qcow2 {
     const clusterOffsets = new Float64Array(totalClusters);
 
     // Read the L1 table in chunks to avoid allocating `l1Bytes` all at once (can be up to 128MiB).
-    const l1ChunkSize = 64 * 1024;
+    const l1ChunkSize = 8 * 1024 * 1024; // 8 MiB
     const l1BufLen = Math.min(l1ChunkSize, l1Bytes);
     let l1Remaining = l1Bytes;
     let l1Off = l1TableOffset;
