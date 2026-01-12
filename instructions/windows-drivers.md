@@ -80,6 +80,8 @@ These drivers run **inside the guest Windows 7** and communicate with the emulat
 - [`docs/virtio-input-test-plan.md`](../docs/virtio-input-test-plan.md) — virtio-input end-to-end test plan (device model ↔ driver ↔ harness ↔ web runtime)
 - [`docs/virtio-snd.md`](../docs/virtio-snd.md) — virtio-snd device model notes + contract mapping (incl. transitional ID notes)
 - [`docs/graphics/win7-aerogpu-validation.md`](../docs/graphics/win7-aerogpu-validation.md) — AeroGPU stability checklist (TDR/vblank/perf debug playbook)
+- [`docs/graphics/win7-d3d9ex-umd-minimal.md`](../docs/graphics/win7-d3d9ex-umd-minimal.md) — Minimal D3D9Ex UMD implementation guide for enabling DWM/Aero on Win7
+- [`docs/graphics/win7-d3d10-11-umd-minimal.md`](../docs/graphics/win7-d3d10-11-umd-minimal.md) — Minimal D3D10/D3D11 UMD implementation guide (Win7)
 - [`docs/graphics/win7-d3d9-umd-tracing.md`](../docs/graphics/win7-d3d9-umd-tracing.md) — lightweight Win7 D3D9 UMD DDI call tracing (what DWM/test apps invoke; DebugView workflow)
 - [`docs/windows7-guest-tools.md`](../docs/windows7-guest-tools.md) — End-to-end Win7 install + switch to virtio + AeroGPU
 - [`docs/windows7-driver-troubleshooting.md`](../docs/windows7-driver-troubleshooting.md) — Debugging tips
