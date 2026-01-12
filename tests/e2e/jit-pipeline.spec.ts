@@ -56,9 +56,33 @@ function parseMaybeNumber(value: unknown): number | undefined {
   return undefined;
 }
 
+function parseMaybeBoolean(value: unknown): boolean | undefined {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    if (value === 0) return false;
+    if (value === 1) return true;
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim().toLowerCase();
+    if (trimmed === 'true') return true;
+    if (trimmed === 'false') return false;
+    if (trimmed === '1') return true;
+    if (trimmed === '0') return false;
+  }
+  return undefined;
+}
+
 function firstNumberAtPaths(obj: unknown, paths: string[]): number | undefined {
   for (const path of paths) {
     const v = parseMaybeNumber(getPath(obj, path));
+    if (v !== undefined) return v;
+  }
+  return undefined;
+}
+
+function firstBooleanAtPaths(obj: unknown, paths: string[]): boolean | undefined {
+  for (const path of paths) {
+    const v = parseMaybeBoolean(getPath(obj, path));
     if (v !== undefined) return v;
   }
   return undefined;
@@ -365,4 +389,29 @@ test('Tier-1 JIT pipeline compiles, installs, and executes a block', async ({ pa
   // i64 ABI smoke check: Tier-1 blocks return i64, which must be represented as BigInt in JS.
   expect(getPath(result, 'jit_return_type')).toBe('bigint');
   expect(typeof getPath(result, 'jit_return_is_sentinel')).toBe('boolean');
+
+  // Forced stale compilation scenario: the CPU worker snapshots page versions,
+  // the guest code is mutated (SMC), and the runtime must reject the stale
+  // compilation result and request recompilation.
+  const staleInstallRejected = firstBooleanAtPaths(result, [
+    'stale_install_rejected',
+    'staleInstallRejected',
+    'stale.install_rejected',
+    'stale.installRejected',
+  ]);
+  if (staleInstallRejected === undefined) {
+    throw new Error(`Missing stale install rejection flag in result: ${JSON.stringify(result)}`);
+  }
+  expect(staleInstallRejected).toBe(true);
+
+  const staleRecompileRequested = firstBooleanAtPaths(result, [
+    'stale_recompile_requested',
+    'staleRecompileRequested',
+    'stale.recompile_requested',
+    'stale.recompileRequested',
+  ]);
+  if (staleRecompileRequested === undefined) {
+    throw new Error(`Missing stale recompile flag in result: ${JSON.stringify(result)}`);
+  }
+  expect(staleRecompileRequested).toBe(true);
 });

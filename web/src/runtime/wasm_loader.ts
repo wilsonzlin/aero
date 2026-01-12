@@ -767,6 +767,17 @@ export interface WasmApi {
          */
         drain_compile_requests(): bigint[] | Uint32Array | BigInt64Array | BigUint64Array;
         /**
+         * Snapshot page-version metadata for a code range.
+         */
+        snapshot_meta(codePaddr: bigint, byteLen: number): unknown;
+        /**
+         * Install a compiled handle into the runtime using a pre-snapshotted meta object (from
+         * {@link snapshot_meta}).
+         *
+         * Returns an array of evicted entry RIPs so the JS runtime can free/reuse table slots.
+         */
+        install_handle(entryRip: bigint, tableIndex: number, meta: unknown): bigint[];
+        /**
          * Notify the embedded JIT runtime that the guest wrote to memory.
          *
          * This is used by Tier-1 store helpers (when inline-TLB store fast-path is disabled) to
@@ -790,6 +801,8 @@ export interface WasmApi {
          * Notify the JIT runtime that guest code bytes were modified (e.g. DMA writes).
          */
         jit_on_guest_write?(paddr: bigint | number, len: number): void;
+        is_compiled(entryRip: bigint): boolean;
+        cache_len(): number;
         readonly interp_executions?: number;
         readonly jit_executions?: number;
         /**

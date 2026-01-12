@@ -21,8 +21,10 @@ use wasm_bindgen::prelude::*;
 use js_sys::{Array, BigInt, Object, Reflect};
 
 use aero_cpu_core::exec::{ExecDispatcher, ExecutedTier, StepOutcome, Tier0Interpreter, Vcpu};
-use aero_cpu_core::jit::cache::CompiledBlockHandle;
-use aero_cpu_core::jit::runtime::{CompileRequestSink, JitBackend, JitBlockExit, JitConfig, JitRuntime};
+use aero_cpu_core::jit::cache::{CompiledBlockHandle, CompiledBlockMeta, PageVersionSnapshot};
+use aero_cpu_core::jit::runtime::{
+    CompileRequestSink, JitBackend, JitBlockExit, JitConfig, JitRuntime, PAGE_SHIFT,
+};
 use aero_cpu_core::state::{
     CPU_GPR_OFF, CPU_RFLAGS_OFF, CPU_RIP_OFF, CPU_STATE_ALIGN, CPU_STATE_SIZE, CpuMode, Segment,
 };
@@ -36,6 +38,42 @@ use crate::RunExitKind;
 
 fn js_error(message: impl AsRef<str>) -> JsValue {
     js_sys::Error::new(message.as_ref()).into()
+}
+
+const MAX_SAFE_INTEGER_U64: u64 = 9_007_199_254_740_991; // 2^53 - 1
+
+fn u64_to_js_number(value: u64, label: &str) -> Result<JsValue, JsValue> {
+    if value > MAX_SAFE_INTEGER_U64 {
+        return Err(js_error(format!(
+            "{label} exceeds JS safe integer range: {value} > {MAX_SAFE_INTEGER_U64}"
+        )));
+    }
+    Ok(JsValue::from_f64(value as f64))
+}
+
+fn js_number_to_u64(value: JsValue, label: &str) -> Result<u64, JsValue> {
+    let Some(n) = value.as_f64() else {
+        return Err(js_error(format!("{label} must be a number")));
+    };
+    if !n.is_finite() || n < 0.0 || n.fract() != 0.0 {
+        return Err(js_error(format!("{label} must be a non-negative integer")));
+    }
+    if n > MAX_SAFE_INTEGER_U64 as f64 {
+        return Err(js_error(format!(
+            "{label} exceeds JS safe integer range: {n}"
+        )));
+    }
+    Ok(n as u64)
+}
+
+fn js_number_to_u32(value: JsValue, label: &str) -> Result<u32, JsValue> {
+    let Some(n) = value.as_f64() else {
+        return Err(js_error(format!("{label} must be a number")));
+    };
+    if !n.is_finite() || n < 0.0 || n.fract() != 0.0 || n > u32::MAX as f64 {
+        return Err(js_error(format!("{label} must be a non-negative u32 integer")));
+    }
+    Ok(n as u32)
 }
 
 #[wasm_bindgen]
@@ -739,16 +777,84 @@ impl WasmTieredVm {
         arr
     }
 
+    /// Snapshot page-version metadata for a range of guest code bytes.
+    ///
+    /// JS should capture this as close as possible to when a background JIT worker reads the
+    /// guest code bytes. Installing a compiled block with a stale snapshot (e.g. due to
+    /// self-modifying code) will be rejected and recompilation requested.
+    pub fn snapshot_meta(&mut self, code_paddr: u64, byte_len: u32) -> Result<JsValue, JsValue> {
+        let jit = self.dispatcher.jit_mut();
+        let meta = jit.snapshot_meta(code_paddr, byte_len);
+        meta_to_js(&meta)
+    }
+
+    /// Install a compiled Tier-1 block into the JIT cache using a pre-snapshotted metadata
+    /// object (from [`Self::snapshot_meta`]).
+    ///
+    /// Returns an array of evicted entry RIPs (`BigInt`) so JS can free/reuse table slots.
+    pub fn install_handle(
+        &mut self,
+        entry_rip: u64,
+        table_index: u32,
+        meta: JsValue,
+    ) -> Result<Array, JsValue> {
+        let mut meta = meta_from_js(meta)?;
+
+        // Fill in the execution bookkeeping fields that are not part of the JS meta payload.
+        // See `install_tier1_block` for more context.
+        let instruction_count = {
+            let max_bytes = usize::try_from(meta.byte_len).unwrap_or(usize::MAX).max(1);
+            let limits = BlockLimits {
+                max_insts: 64,
+                max_bytes,
+            };
+            let block = discover_block(&self.vcpu.bus, entry_rip, limits);
+            let mut count = u32::try_from(block.insts.len()).unwrap_or(u32::MAX);
+            if matches!(
+                block.end_kind,
+                aero_jit_x86::BlockEndKind::ExitToInterpreter { .. }
+            ) {
+                count = count.saturating_sub(1);
+            }
+            count
+        };
+        meta.instruction_count = instruction_count;
+        meta.inhibit_interrupts_after_block = false;
+
+        let evicted = self.dispatcher.jit_mut().install_handle(CompiledBlockHandle {
+            entry_rip,
+            table_index,
+            meta,
+        });
+
+        let arr = Array::new();
+        for rip in evicted {
+            arr.push(&BigInt::from(rip).into());
+        }
+        Ok(arr)
+    }
+
+    pub fn is_compiled(&mut self, entry_rip: u64) -> bool {
+        self.dispatcher.jit_mut().is_compiled(entry_rip)
+    }
+
+    pub fn cache_len(&mut self) -> u32 {
+        self.dispatcher
+            .jit_mut()
+            .cache_len()
+            .min(u32::MAX as usize) as u32
+    }
+
     /// Notify the tiered runtime that the guest wrote to physical memory.
     ///
     /// This is intended for browser JIT integrations where Tier-1 blocks route stores through a
     /// host-provided helper (`env.mem_write_*`). The helper can call this method to keep the
     /// embedded [`JitRuntime`] page-version tracker in sync so cached blocks are invalidated when
     /// the guest modifies code pages.
-    pub fn on_guest_write(&mut self, paddr: u64, len: u32) {
+    pub fn on_guest_write(&mut self, paddr: u64, byte_len: u32) {
         self.dispatcher
             .jit_mut()
-            .on_guest_write(paddr, len as usize);
+            .on_guest_write(paddr, byte_len as usize);
     }
 
     /// Install a compiled Tier-1 block into the JIT cache.
@@ -938,4 +1044,122 @@ impl WasmTieredVm {
 
         Ok(obj.into())
     }
+}
+
+fn meta_to_js(meta: &CompiledBlockMeta) -> Result<JsValue, JsValue> {
+    let obj = Object::new();
+
+    Reflect::set(
+        &obj,
+        &JsValue::from_str("code_paddr"),
+        &u64_to_js_number(meta.code_paddr, "meta.code_paddr")?,
+    )
+    .map_err(|_| js_error("Failed to set meta.code_paddr"))?;
+    Reflect::set(
+        &obj,
+        &JsValue::from_str("byte_len"),
+        &JsValue::from_f64(meta.byte_len as f64),
+    )
+    .map_err(|_| js_error("Failed to set meta.byte_len"))?;
+
+    let versions = Array::new();
+    for snap in &meta.page_versions {
+        versions.push(&page_snapshot_to_js(snap)?);
+    }
+
+    Reflect::set(&obj, &JsValue::from_str("page_versions"), versions.as_ref())
+        .map_err(|_| js_error("Failed to set meta.page_versions"))?;
+
+    Ok(obj.into())
+}
+
+fn page_snapshot_to_js(snap: &PageVersionSnapshot) -> Result<JsValue, JsValue> {
+    let obj = Object::new();
+    Reflect::set(
+        &obj,
+        &JsValue::from_str("page"),
+        &u64_to_js_number(snap.page, "snapshot.page")?,
+    )
+    .map_err(|_| js_error("Failed to set snapshot.page"))?;
+    Reflect::set(
+        &obj,
+        &JsValue::from_str("version"),
+        &JsValue::from_f64(snap.version as f64),
+    )
+    .map_err(|_| js_error("Failed to set snapshot.version"))?;
+    Ok(obj.into())
+}
+
+fn meta_from_js(meta: JsValue) -> Result<CompiledBlockMeta, JsValue> {
+    if !meta.is_object() {
+        return Err(js_error("meta must be an object"));
+    }
+
+    let code_paddr_val = Reflect::get(&meta, &JsValue::from_str("code_paddr"))
+        .map_err(|_| js_error("meta.code_paddr missing"))?;
+    if code_paddr_val.is_undefined() || code_paddr_val.is_null() {
+        return Err(js_error("meta.code_paddr missing"));
+    }
+    let code_paddr = js_number_to_u64(code_paddr_val, "meta.code_paddr")?;
+
+    let byte_len_val = Reflect::get(&meta, &JsValue::from_str("byte_len"))
+        .map_err(|_| js_error("meta.byte_len missing"))?;
+    if byte_len_val.is_undefined() || byte_len_val.is_null() {
+        return Err(js_error("meta.byte_len missing"));
+    }
+    let byte_len = js_number_to_u32(byte_len_val, "meta.byte_len")?;
+
+    let page_versions_val = Reflect::get(&meta, &JsValue::from_str("page_versions"))
+        .map_err(|_| js_error("meta.page_versions missing"))?;
+    if page_versions_val.is_undefined() || page_versions_val.is_null() {
+        return Err(js_error("meta.page_versions missing"));
+    }
+    let versions_arr = Array::from(&page_versions_val);
+
+    let mut page_versions = Vec::with_capacity(versions_arr.length() as usize);
+    for entry in versions_arr.iter() {
+        page_versions.push(page_snapshot_from_js(entry)?);
+    }
+
+    // Enforce that `page_versions` matches the covered range.
+    // This guards against malformed JS inputs.
+    let expected = if byte_len == 0 {
+        0
+    } else {
+        let start_page = code_paddr >> PAGE_SHIFT;
+        let end = code_paddr.saturating_add(byte_len as u64 - 1);
+        let end_page = end >> PAGE_SHIFT;
+        (end_page - start_page + 1) as usize
+    };
+    if expected != page_versions.len() {
+        return Err(js_error(format!(
+            "meta.page_versions length mismatch: expected {expected} entries for code_paddr=0x{code_paddr:x} byte_len={byte_len}, got {}",
+            page_versions.len()
+        )));
+    }
+
+    Ok(CompiledBlockMeta {
+        code_paddr,
+        byte_len,
+        page_versions,
+        instruction_count: 0,
+        inhibit_interrupts_after_block: false,
+    })
+}
+
+fn page_snapshot_from_js(obj: JsValue) -> Result<PageVersionSnapshot, JsValue> {
+    if !obj.is_object() {
+        return Err(js_error("meta.page_versions entry must be an object"));
+    }
+    let page = js_number_to_u64(
+        Reflect::get(&obj, &JsValue::from_str("page"))
+            .map_err(|_| js_error("snapshot.page missing"))?,
+        "snapshot.page",
+    )?;
+    let version = js_number_to_u32(
+        Reflect::get(&obj, &JsValue::from_str("version"))
+            .map_err(|_| js_error("snapshot.version missing"))?,
+        "snapshot.version",
+    )?;
+    Ok(PageVersionSnapshot { page, version })
 }

@@ -15,14 +15,21 @@ export interface CompileBlockRequest {
    * Optional: omitted/0 defaults to 64 for backwards compatibility.
    */
   bitness?: number;
+  /**
+   * Debug-only barrier used by the JIT smoke test to force a deterministic stale
+   * compilation race (CPU mutates code after the JIT worker reads bytes but before
+   * it responds).
+   */
+  debug_sync?: boolean;
 }
 
 export interface CompileBlockResponseMeta {
   wasm_byte_len: number;
   /**
-   * Length of the compiled guest code block in bytes (from guest memory).
+   * Number of guest code bytes consumed by this compiled block.
    *
-   * Used by the tiered runtime to track self-modifying code invalidation via page versions.
+   * Used by the CPU worker to shrink the pre-snapshotted page-version metadata to
+   * the actual block length (so stale installs can be rejected).
    */
   code_byte_len: number;
 }

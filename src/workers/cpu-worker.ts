@@ -22,6 +22,8 @@ type CpuWorkerToMainMessage =
       // i64/BigInt ABI smoke info (observed via `globalThis.__aero_jit_call`).
       jit_return_type: string | null;
       jit_return_is_sentinel: boolean;
+      stale_install_rejected: boolean;
+      stale_recompile_requested: boolean;
     }
   | { type: 'CpuWorkerError'; reason: string };
 
@@ -32,6 +34,11 @@ type CpuWorkerStartMessage = {
 };
 
 const ENTRY_RIP = 0x1000;
+const STALE_RIP = 0x2000;
+const DEFAULT_MAX_BYTES = 1024;
+// Int32 index inside the shared memory used by the smoke test to coordinate a
+// deterministic stale-code scenario.
+const DEBUG_SYNC_INDEX = 5;
 
 // Tier-1 JIT call status slot (mirrors `crates/aero-jit-x86/src/jit_ctx.rs` + `crates/aero-wasm/src/tiered_vm.rs`).
 //
@@ -64,6 +71,7 @@ function postToMain(msg: CpuWorkerToMainMessage) {
 }
 
 type PendingCompile = {
+  pre_meta: JsCompiledBlockMeta;
   resolve: (msg: CompileBlockResponse) => void;
   reject: (reason: string) => void;
 };
@@ -74,6 +82,23 @@ const pendingCompiles = new Map<number, PendingCompile>();
 const WASM_PAGE_BYTES = 64 * 1024;
 const RUNTIME_RESERVED_BYTES = 128 * 1024 * 1024;
 const DEFAULT_GUEST_RAM_BYTES = 16 * 1024 * 1024;
+const X86_PAGE_BYTES = 4096;
+
+type JsPageVersionSnapshot = { page: number; version: number };
+type JsCompiledBlockMeta = { code_paddr: number; byte_len: number; page_versions: JsPageVersionSnapshot[] };
+
+function shrinkMeta(pre: JsCompiledBlockMeta, codeByteLen: number): JsCompiledBlockMeta {
+  const byteLen = Math.max(0, codeByteLen | 0) >>> 0;
+  if (byteLen === 0) {
+    return { code_paddr: pre.code_paddr, byte_len: 0, page_versions: [] };
+  }
+
+  const codePaddr = pre.code_paddr;
+  const startPage = Math.floor(codePaddr / X86_PAGE_BYTES);
+  const endPage = Math.floor((codePaddr + byteLen - 1) / X86_PAGE_BYTES);
+  const page_versions = pre.page_versions.filter((snap) => snap.page >= startPage && snap.page <= endPage);
+  return { code_paddr: codePaddr, byte_len: byteLen, page_versions };
+}
 
 function platformSharedMemoryError(err: unknown): string {
   const detail = err instanceof Error ? err.message : String(err);
@@ -354,26 +379,35 @@ async function runTieredVm(iterations: number, threshold: number) {
   const initMsg: CpuToJitMessage = { type: 'JitWorkerInit', memory, guest_base, guest_size };
   jitWorker.postMessage(initMsg);
 
-  function requestCompile(entry_rip: number): Promise<CompileBlockResponse> {
+  function startCompile(entry_rip: number, opts: { max_bytes: number; debug_sync?: boolean }) {
     const id = nextCompileId++;
+    const maxBytes = opts.max_bytes > 0 ? opts.max_bytes : DEFAULT_MAX_BYTES;
+    const snapshotLen = maxBytes + 15;
+
+    const pre_meta = vm.snapshot_meta(BigInt(entry_rip), snapshotLen) as unknown as JsCompiledBlockMeta;
+
     const req: CpuToJitMessage = {
       type: 'CompileBlockRequest',
       id,
       entry_rip,
       mode: 'tier1',
-      max_bytes: 0,
+      max_bytes: maxBytes,
       // The smoke harness runs the guest in 16-bit real mode.
       bitness: 16,
+      ...(opts.debug_sync ? { debug_sync: true } : {}),
     };
 
     jitWorker.postMessage(req);
 
-    return new Promise((resolve, reject) => {
+    const response = new Promise<CompileBlockResponse>((resolve, reject) => {
       pendingCompiles.set(id, {
+        pre_meta,
         resolve,
         reject: (reason) => reject(new Error(reason)),
       });
     });
+
+    return { id, pre_meta, response };
   }
 
   const dv = new DataView(memory.buffer);
@@ -663,7 +697,7 @@ async function runTieredVm(iterations: number, threshold: number) {
     freeTableIndices.push(idx);
   };
 
-  async function installTier1(resp: CompileBlockResponse): Promise<number> {
+  async function installTier1(resp: CompileBlockResponse, pre_meta: JsCompiledBlockMeta): Promise<number> {
     const module =
       resp.wasm_module ??
       (resp.wasm_bytes
@@ -687,22 +721,26 @@ async function runTieredVm(iterations: number, threshold: number) {
     const tableIndex = existingIndex ?? allocTableIndex();
     jitFns[tableIndex] = block as (cpu_ptr: number, jit_ctx_ptr: number) => bigint;
 
-    // wasm-bindgen APIs differ across versions: newer builds return a list of evicted RIPs from
-    // `install_tier1_block`, while older builds returned `void`. Capture as `unknown` so we can
-    // best-effort free table indices without breaking typecheck.
+    const meta = shrinkMeta(pre_meta, resp.meta.code_byte_len);
+    // wasm-bindgen APIs differ across versions. Capture as `unknown` so we can best-effort free
+    // table indices without breaking typecheck if the return type changes (Array vs typed array vs
+    // void in older builds).
     let evicted: unknown;
     try {
-      evicted = vm.install_tier1_block(BigInt(entryRipU32), tableIndex, BigInt(entryRipU32), resp.meta.code_byte_len) as unknown;
+      evicted = vm.install_handle(BigInt(entryRipU32), tableIndex, meta) as unknown;
     } catch {
-      // Backwards-compat: older wasm-bindgen exports used u32 params (number) instead of u64 (BigInt).
-      evicted = (vm.install_tier1_block as unknown as (...args: unknown[]) => unknown)(
-        entryRipU32,
-        tableIndex,
-        entryRipU32,
-        resp.meta.code_byte_len,
-      );
+      // Backwards-compat: older wasm-bindgen exports may use u32 params (number) instead of u64 (BigInt).
+      evicted = (vm.install_handle as unknown as (...args: unknown[]) => unknown)(entryRipU32, tableIndex, meta);
     }
-    installedByRip.set(entryRipU32, tableIndex);
+
+    if (vm.is_compiled(BigInt(entryRipU32))) {
+      installedByRip.set(entryRipU32, tableIndex);
+    } else {
+      // Installation was rejected (e.g. stale compilation result). Drop this slot so it can be reused.
+      installedByRip.delete(entryRipU32);
+      if (installedIndex === tableIndex) installedIndex = null;
+      freeTableIndex(tableIndex);
+    }
 
     // If the JIT cache evicted older blocks, free their table indices so they can be reused.
     const releaseEvictedRip = (rip: number) => {
@@ -793,9 +831,12 @@ async function runTieredVm(iterations: number, threshold: number) {
     if (compilingByRip.has(entryRipU32)) return null;
     compilingByRip.add(entryRipU32);
     try {
-      const resp = await requestCompile(entryRipU32);
-      const idx = await installTier1(resp);
-      if (entryRipU32 === ENTRY_RIP) installedIndex = idx;
+      const job = startCompile(entryRipU32, { max_bytes: DEFAULT_MAX_BYTES });
+      const resp = await job.response;
+      const idx = await installTier1(resp, job.pre_meta);
+      if (entryRipU32 === ENTRY_RIP && vm.is_compiled(BigInt(entryRipU32))) {
+        installedIndex = idx;
+      }
       return idx;
     } finally {
       compilingByRip.delete(entryRipU32);
@@ -850,7 +891,11 @@ async function runTieredVm(iterations: number, threshold: number) {
       readMaybeNumber(vm, 'interp_blocks_total'),
       readMaybeNumber(vm, 'interp_executions'),
     );
-    const jitTotal = Math.max(jit_executions, readMaybeNumber(vm, 'jit_blocks_total'), readMaybeNumber(vm, 'jit_executions'));
+    const jitTotal = Math.max(
+      jit_executions,
+      readMaybeNumber(vm, 'jit_blocks_total'),
+      readMaybeNumber(vm, 'jit_executions'),
+    );
     if (interpTotal > 0 && jitTotal > 0 && installedIndex !== null) {
       break;
     }
@@ -980,6 +1025,52 @@ async function runTieredVm(iterations: number, threshold: number) {
     readMaybeNumber(vm, 'jit_executions'),
   );
 
+  // ---------------------------------------------------------------------------
+  // Forced stale compilation scenario.
+  // ---------------------------------------------------------------------------
+  let stale_install_rejected = false;
+  let stale_recompile_requested = false;
+  try {
+    // Ensure no pending requests pollute the stale test.
+    vm.drain_compile_requests();
+
+    // Write a copy of the hot-loop at 0x2000.
+    new Uint8Array(memory.buffer).set(code, guest_base + STALE_RIP);
+
+    // Coordinate with the JIT worker so we can mutate guest bytes after it reads them.
+    const sync = new Int32Array(memory.buffer);
+    Atomics.store(sync, DEBUG_SYNC_INDEX, 0);
+
+    const staleJob = startCompile(STALE_RIP, { max_bytes: DEFAULT_MAX_BYTES, debug_sync: true });
+
+    // Wait for the JIT worker to reach the barrier (sets the slot to `id`).
+    Atomics.wait(sync, DEBUG_SYNC_INDEX, 0, 5_000);
+    const seen = Atomics.load(sync, DEBUG_SYNC_INDEX);
+    if (seen === staleJob.id) {
+      // Mutate one byte of guest code and bump the page-version tracker.
+      const u8 = new Uint8Array(memory.buffer);
+      u8[guest_base + STALE_RIP] ^= 0x01;
+      if (onGuestWrite) onGuestWrite(BigInt(STALE_RIP), 1);
+    }
+
+    // Release the JIT worker to respond.
+    Atomics.store(sync, DEBUG_SYNC_INDEX, -staleJob.id);
+    Atomics.notify(sync, DEBUG_SYNC_INDEX);
+
+    const resp = await staleJob.response;
+    await installTier1(resp, staleJob.pre_meta);
+
+    stale_install_rejected = !vm.is_compiled(BigInt(STALE_RIP));
+    const recompile = vm.drain_compile_requests();
+    stale_recompile_requested = Array.from(recompile as unknown as Iterable<unknown>).some((rip) => {
+      if (typeof rip === 'bigint') return u64AsNumber(rip) === STALE_RIP;
+      if (typeof rip === 'number' && Number.isFinite(rip)) return (rip >>> 0) === STALE_RIP;
+      return false;
+    });
+  } catch (err) {
+    console.warn(`[cpu-worker] stale compile scenario failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
   const runtimeInstalledTableIndex = installedIndex;
   const runtimeInstalledEntryRip = installedIndex !== null ? ENTRY_RIP : null;
   postToMain({
@@ -996,6 +1087,8 @@ async function runTieredVm(iterations: number, threshold: number) {
     bigint_imports_ok,
     jit_return_type: lastJitReturnType,
     jit_return_is_sentinel: lastJitReturnIsSentinel,
+    stale_install_rejected,
+    stale_recompile_requested,
   });
 
   jitWorker.terminate();
