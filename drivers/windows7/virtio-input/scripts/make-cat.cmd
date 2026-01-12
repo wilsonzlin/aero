@@ -12,18 +12,47 @@ rem   - All files referenced by the INF exist in inf\ (at minimum aero_virtio_in
 set SCRIPT_DIR=%~dp0
 for %%I in ("%SCRIPT_DIR%..") do set ROOT_DIR=%%~fI
 set INF_DIR=%ROOT_DIR%\inf
-set INF_FILE=%INF_DIR%\aero_virtio_input.inf
+set CONTRACT_INF=%INF_DIR%\aero_virtio_input.inf
+set ALIAS_INF=%INF_DIR%\virtio-input.inf
 set CAT_FILE=%INF_DIR%\aero_virtio_input.cat
 set ALIAS_INF_DISABLED=%INF_DIR%\virtio-input.inf.disabled
 
-if not exist "%INF_FILE%" (
-  echo ERROR: INF not found: "%INF_FILE%"
+set INF_SELECTED=
+if exist "%CONTRACT_INF%" (
+  set INF_SELECTED=%CONTRACT_INF%
+) else if exist "%ALIAS_INF%" (
+  set INF_SELECTED=%ALIAS_INF%
+)
+
+if "%INF_SELECTED%"=="" (
+  echo ERROR: Contract INF not found. Expected one of:
+  echo   - "%CONTRACT_INF%"
+  echo   - "%ALIAS_INF%"
   if exist "%ALIAS_INF_DISABLED%" (
+    echo.
     echo NOTE: A legacy filename alias INF exists as:
     echo         "%ALIAS_INF_DISABLED%"
     echo       It is intentionally checked in disabled-by-default to avoid shipping/installing two INFs.
   )
   exit /b 1
+)
+
+if exist "%CONTRACT_INF%" if exist "%ALIAS_INF%" (
+  echo ERROR: Both the canonical INF and the legacy alias INF are present:
+  echo   - "%CONTRACT_INF%"
+  echo   - "%ALIAS_INF%"
+  echo.
+  echo Do not ship/install two INFs that match the same HWIDs.
+  echo Delete/rename one of them before running Inf2Cat.
+  exit /b 1
+)
+
+if not exist "%ALIAS_INF%" if exist "%ALIAS_INF_DISABLED%" (
+  rem Friendly hint only; the alias INF is optional.
+  echo NOTE: Alias INF is disabled by default. To enable, rename:
+  echo         "%ALIAS_INF_DISABLED%"
+  echo       to:
+  echo         "%ALIAS_INF%"
 )
 
 where Inf2Cat.exe >nul 2>nul
@@ -36,6 +65,7 @@ if errorlevel 1 (
 echo.
 echo == Inf2Cat (Windows 7 x86 + x64) ==
 echo Driver package dir: "%INF_DIR%"
+echo INF: "%INF_SELECTED%"
 echo.
 
 rem Delete any existing catalog first so stale artifacts cannot satisfy the
