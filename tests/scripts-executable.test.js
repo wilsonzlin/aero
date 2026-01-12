@@ -5,26 +5,23 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-// Guardrail: documentation and CI invoke these scripts via `./scripts/...`.
-// If they lose their executable bit in git, those commands fail with
-// `Permission denied`.
-const hardcodedScripts = [
-  "scripts/agent-env-setup.sh",
-  "scripts/agent-env.sh",
-  "scripts/build-bootsector.sh",
-  "scripts/ci/check-iac.sh",
-  "scripts/ci/detect-wasm-crate.sh",
-  "scripts/compare-benchmarks.sh",
-  "scripts/mem-limit.sh",
-  "scripts/prepare-freedos.sh",
-  "scripts/prepare-windows7.sh",
-  "scripts/run_limited.sh",
-  "scripts/safe-run.sh",
-  "scripts/test-all.sh",
-  "scripts/with-timeout.sh",
-];
-
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
+const scriptsRoot = path.join(repoRoot, "scripts");
+
+function listShellScripts(dir) {
+  const out = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const absPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      out.push(...listShellScripts(absPath));
+      continue;
+    }
+    if (entry.isFile() && entry.name.endsWith(".sh")) {
+      out.push(absPath);
+    }
+  }
+  return out;
+}
 
 function scriptsReferencedByDocs() {
   // Only scan tracked Markdown files to avoid walking huge untracked dirs like
@@ -55,21 +52,29 @@ function scriptsReferencedByDocs() {
 }
 
 function scriptsToCheck() {
-  const scripts = new Set(hardcodedScripts);
+  const scripts = new Set();
+
+  // Ensure every script living under scripts/ stays executable.
+  for (const absPath of listShellScripts(scriptsRoot)) {
+    scripts.add(path.relative(repoRoot, absPath));
+  }
+
+  // Ensure any docs invoking ./scripts/... also refer to an existing executable file.
   for (const docScript of scriptsReferencedByDocs()) scripts.add(docScript);
+
   return [...scripts].sort();
 }
 
 test("scripts referenced as ./scripts/*.sh are executable", { skip: process.platform === "win32" }, () => {
+  assert.ok(fs.existsSync(scriptsRoot), "scripts/ directory is missing");
+
   for (const relPath of scriptsToCheck()) {
     const absPath = path.join(repoRoot, relPath);
     assert.ok(fs.existsSync(absPath), `${relPath} is missing`);
 
     const { mode } = fs.statSync(absPath);
     // Any executable bit (user/group/other) is good enough.
-    assert.ok(
-      (mode & 0o111) !== 0,
-      `${relPath} is not executable (expected chmod +x / git mode 100755)`,
-    );
+    assert.ok((mode & 0o111) !== 0, `${relPath} is not executable (expected chmod +x / git mode 100755)`);
   }
 });
+
