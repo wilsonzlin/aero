@@ -69,6 +69,26 @@ async function loadVariant(variant: WasmVariant): Promise<RawAeroGpuWasmModule> 
 
   const importer = wasmImporters[releasePath] ?? wasmImporters[devPath];
   if (!importer) {
+    if (import.meta.env.DEV) {
+      // When running the Vite dev server *before* `web/src/wasm/pkg-*/` exists (e.g. in local E2E
+      // workflows using `AERO_PLAYWRIGHT_REUSE_SERVER=1`), `import.meta.glob()` can miss newly
+      // generated wasm-pack output until the server is restarted.
+      //
+      // In dev mode only, fall back to a runtime `import()` so developers can rebuild WASM without
+      // restarting Vite.
+      const tryDynamicImport = async (path: string): Promise<RawAeroGpuWasmModule | null> => {
+        try {
+          return (await import(/* @vite-ignore */ path)) as RawAeroGpuWasmModule;
+        } catch {
+          return null;
+        }
+      };
+      const mod = (await tryDynamicImport(releasePath)) ?? (await tryDynamicImport(devPath));
+      if (mod) {
+        await mod.default();
+        return mod;
+      }
+    }
     throw new Error(
       [
         "Missing aero-gpu WASM package.",
