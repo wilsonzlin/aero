@@ -169,7 +169,18 @@ impl<'a> Iterator for CmdStream<'a> {
         };
 
         let payload_start = self.cursor + 2;
-        let payload_end = payload_start + payload_words;
+        let payload_end = match payload_start.checked_add(payload_words) {
+            Some(end) => end,
+            None => {
+                // Defensive: on 32-bit targets a u32 payload_words can overflow usize arithmetic.
+                return Some(Err(CmdParseError::TruncatedPayload {
+                    opcode,
+                    expected_words: payload_words,
+                    remaining_words: self.words.len().saturating_sub(payload_start),
+                    at_word: self.cursor,
+                }));
+            }
+        };
         if payload_end > self.words.len() {
             return Some(Err(CmdParseError::TruncatedPayload {
                 opcode,
