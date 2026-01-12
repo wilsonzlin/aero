@@ -2457,6 +2457,10 @@ impl Machine {
 
     /// Attach a disk backend to the virtio-blk controller, if present.
     ///
+    /// Virtio-blk accepts an [`aero_storage::VirtualDisk`] backend. On `wasm32`, this intentionally
+    /// does **not** require `Send` because some browser-backed disks (OPFS, etc.) may contain JS
+    /// values and thus cannot be sent across threads.
+    ///
     /// This method preserves the virtio-blk controller's guest-visible state (PCI config + virtio
     /// transport registers/queues) by snapshotting the current device model state and re-loading
     /// it after swapping the host disk backend. This is intended for host-managed snapshot restore
