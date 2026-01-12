@@ -43,6 +43,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "aero-devices"
+version = "0.1.0"
+dependencies = [
+ "aero-devices-input",
+ "aero-interrupts",
+ "aero-io-snapshot",
+ "aero-platform",
+ "aero-storage",
+ "aero-storage-adapters",
+ "aero-usb",
+ "memory",
+]
+
+[[package]]
 name = "aero-devices-input"
 version = "0.1.0"
 dependencies = [
@@ -53,10 +67,10 @@ dependencies = [
 name = "aero-devices-storage"
 version = "0.1.0"
 dependencies = [
+ "aero-devices",
  "aero-io-snapshot",
  "aero-platform",
  "aero-storage",
- "devices",
  "memory",
 ]
 
@@ -497,20 +511,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.114",
-]
-
-[[package]]
-name = "devices"
-version = "0.1.0"
-dependencies = [
- "aero-devices-input",
- "aero-interrupts",
- "aero-io-snapshot",
- "aero-platform",
- "aero-storage",
- "aero-storage-adapters",
- "aero-usb",
- "memory",
 ]
 
 [[package]]
@@ -1224,6 +1224,7 @@ version = "0.1.0"
 name = "memory-fuzz"
 version = "0.0.0"
 dependencies = [
+ "aero-devices",
  "aero-devices-storage",
  "aero-gpu",
  "aero-http-range",
@@ -1232,7 +1233,6 @@ dependencies = [
  "aero-snapshot",
  "aero-storage",
  "arbitrary",
- "devices",
  "libfuzzer-sys",
  "memory",
 ]
