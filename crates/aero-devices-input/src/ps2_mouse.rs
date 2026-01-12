@@ -178,6 +178,15 @@ impl Ps2Mouse {
             self.buttons &= !button.bit();
         }
 
+        // Suppress side/extra button packets unless the guest has enabled the IntelliMouse
+        // Explorer extension (device ID 0x04). In non-extended modes the packet formats cannot
+        // represent these buttons, and emitting a packet with no visible state change would
+        // cause spurious IRQ12 activity.
+        if matches!(button, Ps2MouseButton::Side | Ps2MouseButton::Extra) && self.device_id != 0x04
+        {
+            return;
+        }
+
         if self.mode == Mode::Stream && self.reporting_enabled {
             self.send_packet();
         }

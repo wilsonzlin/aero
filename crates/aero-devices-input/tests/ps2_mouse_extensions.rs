@@ -60,6 +60,29 @@ fn ps2_mouse_does_not_emit_packets_for_wheel_without_intellimouse_extension() {
 }
 
 #[test]
+fn ps2_mouse_suppresses_side_buttons_until_explorer_extension_enabled() {
+    let mut mouse = Ps2Mouse::new();
+    enable_reporting(&mut mouse);
+
+    // Side/back button is only representable once the IntelliMouse Explorer extension is active.
+    mouse.inject_button(Ps2MouseButton::Side, true);
+    assert!(
+        !mouse.has_output(),
+        "side button should not emit a packet before IntelliMouse Explorer is enabled"
+    );
+
+    // Enable IntelliMouse Explorer mode (device ID 0x04).
+    send_sample_rate(&mut mouse, 200);
+    send_sample_rate(&mut mouse, 200);
+    send_sample_rate(&mut mouse, 80);
+    assert_eq!(mouse.device_id(), 0x04);
+
+    // Now a movement packet should include the held side button bit (bit 4 of the 4th byte).
+    mouse.inject_motion(1, 0, 0);
+    assert_eq!(take_bytes(&mut mouse, 4), vec![0x08, 0x01, 0x00, 0x10]);
+}
+
+#[test]
 fn ps2_mouse_5button_packets_encode_side_extra_and_wheel() {
     let mut mouse = Ps2Mouse::new();
 
