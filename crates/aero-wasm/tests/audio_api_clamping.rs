@@ -24,11 +24,17 @@ fn sine_tone_write_clamps_frames_to_ring_free_space() {
 #[wasm_bindgen_test]
 fn hda_pcm_writer_clamps_dst_sample_rate_to_avoid_oom() {
     let writer = HdaPcmWriter::new(u32::MAX).unwrap();
-    assert_eq!(writer.dst_sample_rate_hz(), aero_audio::MAX_HOST_SAMPLE_RATE_HZ);
+    assert_eq!(
+        writer.dst_sample_rate_hz(),
+        aero_audio::MAX_HOST_SAMPLE_RATE_HZ
+    );
 
     let mut writer2 = HdaPcmWriter::new(48_000).unwrap();
     writer2.set_dst_sample_rate_hz(u32::MAX).unwrap();
-    assert_eq!(writer2.dst_sample_rate_hz(), aero_audio::MAX_HOST_SAMPLE_RATE_HZ);
+    assert_eq!(
+        writer2.dst_sample_rate_hz(),
+        aero_audio::MAX_HOST_SAMPLE_RATE_HZ
+    );
 }
 
 #[wasm_bindgen_test]
@@ -47,4 +53,3 @@ fn hda_pcm_writer_does_not_buffer_when_ring_is_full() {
     assert_eq!(wrote, 0);
     assert_eq!(bridge.overrun_count(), 0);
 }
-

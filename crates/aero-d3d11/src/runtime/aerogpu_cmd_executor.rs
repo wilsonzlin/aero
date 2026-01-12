@@ -2870,8 +2870,9 @@ impl AerogpuD3d11Executor {
                     let slot = read_u32_le(cmd_bytes, 12)?;
                     let texture = read_u32_le(cmd_bytes, 16)?;
                     if texture != 0 {
-                        let texture =
-                            self.shared_surfaces.resolve_cmd_handle(texture, "SET_TEXTURE")?;
+                        let texture = self
+                            .shared_surfaces
+                            .resolve_cmd_handle(texture, "SET_TEXTURE")?;
                         let Some(stage) = ShaderStage::from_aerogpu_u32(stage_raw) else {
                             break;
                         };
@@ -2918,9 +2919,9 @@ impl AerogpuD3d11Executor {
                         needs_break = true;
                         break;
                     }
-                    let buffer =
-                        self.shared_surfaces
-                            .resolve_cmd_handle(buffer, "SET_VERTEX_BUFFERS")?;
+                    let buffer = self
+                        .shared_surfaces
+                        .resolve_cmd_handle(buffer, "SET_VERTEX_BUFFERS")?;
 
                     let stride_bytes = u32::from_le(binding.stride_bytes);
                     let current_stride = self
@@ -2956,8 +2957,9 @@ impl AerogpuD3d11Executor {
                 if cmd_bytes.len() >= 12 {
                     let buffer = read_u32_le(cmd_bytes, 8)?;
                     if buffer != 0 {
-                        let buffer =
-                            self.shared_surfaces.resolve_cmd_handle(buffer, "SET_INDEX_BUFFER")?;
+                        let buffer = self
+                            .shared_surfaces
+                            .resolve_cmd_handle(buffer, "SET_INDEX_BUFFER")?;
                         if let Some(buf) = self.resources.buffers.get(&buffer) {
                             if buf.backing.is_some()
                                 && buf.dirty.is_some()
@@ -5730,7 +5732,10 @@ impl AerogpuD3d11Executor {
         let texture = if texture == 0 {
             None
         } else {
-            Some(self.shared_surfaces.resolve_cmd_handle(texture, "SET_TEXTURE")?)
+            Some(
+                self.shared_surfaces
+                    .resolve_cmd_handle(texture, "SET_TEXTURE")?,
+            )
         };
         self.bindings.stage_mut(stage).set_texture(slot, texture);
         Ok(())

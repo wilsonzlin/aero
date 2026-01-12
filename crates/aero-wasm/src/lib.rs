@@ -1555,9 +1555,7 @@ impl HdaPcmWriter {
 
         // Only decode as many source frames as needed to fill the available ring space. Dropping
         // excess producer input avoids unbounded buffering if the AudioWorklet consumer stalls.
-        let required_src = self
-            .resampler
-            .required_source_frames(free_frames as usize);
+        let required_src = self.resampler.required_source_frames(free_frames as usize);
         let queued_src = self.resampler.queued_source_frames();
         let need_src = required_src.saturating_sub(queued_src);
         if need_src > 0 && !pcm_bytes.is_empty() {

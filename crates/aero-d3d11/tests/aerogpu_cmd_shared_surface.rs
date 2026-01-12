@@ -679,7 +679,9 @@ fn aerogpu_cmd_shared_surface_using_destroyed_original_handle_is_an_error() {
             .copy_from_slice(&total_size.to_le_bytes());
 
         let mut guest_mem = VecGuestMemory::new(0);
-        let err = exec.execute_cmd_stream(&stream, None, &mut guest_mem).unwrap_err();
+        let err = exec
+            .execute_cmd_stream(&stream, None, &mut guest_mem)
+            .unwrap_err();
         let msg = format!("{err:#}");
         assert!(
             msg.contains("SET_RENDER_TARGETS") && msg.contains("destroyed"),

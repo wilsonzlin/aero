@@ -1827,7 +1827,10 @@ fn bios_post_preserves_piix3_legacy_bar_bases() {
 
     let cfg = bus.device_config(bdf).unwrap();
 
-    assert_eq!(cfg.bar_range(0).unwrap().base, u64::from(PRIMARY_PORTS.cmd_base));
+    assert_eq!(
+        cfg.bar_range(0).unwrap().base,
+        u64::from(PRIMARY_PORTS.cmd_base)
+    );
     assert_eq!(cfg.bar_range(1).unwrap().base, 0x3F4);
     assert_eq!(
         cfg.bar_range(2).unwrap().base,
