@@ -322,14 +322,16 @@ Exit:
 
     VirtIoSndSafeRelease(unknownAdapter);
 
-    if (!NT_SUCCESS(status) && hwStarted) {
+    if (!NT_SUCCESS(status)) {
         if (waveRegistered) {
             (VOID)PcUnregisterSubdevice(DeviceObject, VIRTIOSND_SUBDEVICE_WAVE);
         }
         if (topologyRegistered) {
             (VOID)PcUnregisterSubdevice(DeviceObject, VIRTIOSND_SUBDEVICE_TOPOLOGY);
         }
-        VirtIoSndHwStop(dx);
+        if (hwStarted) {
+            VirtIoSndHwStop(dx);
+        }
     }
 
     return status;
