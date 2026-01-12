@@ -649,7 +649,37 @@ fn snapshot_inspect_prints_meta_and_ram_summary() {
         .stdout(predicate::str::contains("SERIAL("))
         .stdout(predicate::str::contains("RAM:"))
         .stdout(predicate::str::contains("mode: full"))
-        .stdout(predicate::str::contains("compression: lz4"));
+        .stdout(predicate::str::contains("compression: lz4"))
+        .stdout(predicate::str::contains("chunk_samples:"));
+}
+
+#[test]
+fn snapshot_inspect_prints_dirty_ram_samples() {
+    let tmp = tempfile::tempdir().unwrap();
+    let snap = tmp.path().join("dirty_inspect.aerosnap");
+
+    let options = SaveOptions {
+        ram: RamWriteOptions {
+            mode: RamMode::Dirty,
+            compression: Compression::None,
+            page_size: 4096,
+            chunk_size: 1024 * 1024,
+        },
+    };
+    let mut source = DirtyRamSource::new(4096 * 2, vec![0, 1]);
+    let mut cursor = Cursor::new(Vec::new());
+    aero_snapshot::save_snapshot(&mut cursor, &mut source, options).unwrap();
+    fs::write(&snap, cursor.into_inner()).unwrap();
+
+    Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["snapshot", "inspect", snap.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("mode: dirty"))
+        .stdout(predicate::str::contains("compression: none"))
+        .stdout(predicate::str::contains("dirty_page_samples:"))
+        .stdout(predicate::str::contains("page_idx=0"))
+        .stdout(predicate::str::contains("page_idx=1"));
 }
 
 struct UnsetDiskRefSource {

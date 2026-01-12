@@ -157,6 +157,10 @@ fn cmd_inspect(args: Vec<String>) -> Result<()> {
             if let Some(dirty_count) = ram.dirty_count {
                 println!("  dirty_count: {dirty_count}");
             }
+
+            if let Some(ram_section) = index.sections.iter().find(|s| s.id == SectionId::RAM) {
+                print_ram_section_samples(&mut file, ram_section);
+            }
         }
         None => println!("  <missing>"),
     }
@@ -1402,6 +1406,180 @@ fn print_disks_section_summary(file: &mut fs::File, section: &SnapshotSectionInf
     }
     if disks.disks.len() > MAX_PRINT_DISKS {
         println!("  ... ({} more)", disks.disks.len() - MAX_PRINT_DISKS);
+    }
+}
+
+fn print_ram_section_samples(file: &mut fs::File, section: &SnapshotSectionInfo) {
+    const MAX_SAMPLES: u64 = 4;
+
+    if section.len < 16 {
+        println!("  <truncated ram section>");
+        return;
+    }
+
+    let section_end = match section.offset.checked_add(section.len) {
+        Some(v) => v,
+        None => {
+            println!("  <invalid ram section length>");
+            return;
+        }
+    };
+
+    if let Err(e) = file.seek(SeekFrom::Start(section.offset)) {
+        println!("  <failed to seek: {e}>");
+        return;
+    }
+
+    // Decode the RAM header (duplicated from `aero-snapshot`'s RAM format) so we can show a small
+    // preview of the first few entries without decompressing.
+    let _total_len = match read_u64_le_lossy(file) {
+        Ok(v) => v,
+        Err(e) => {
+            println!("  <failed to read ram header: {e}>");
+            return;
+        }
+    };
+    let page_size = match read_u32_le_lossy(file) {
+        Ok(v) => v,
+        Err(e) => {
+            println!("  <failed to read ram page_size: {e}>");
+            return;
+        }
+    };
+    let mode = match read_u8_lossy(file) {
+        Ok(v) => v,
+        Err(e) => {
+            println!("  <failed to read ram mode: {e}>");
+            return;
+        }
+    };
+    let _compression = match read_u8_lossy(file) {
+        Ok(v) => v,
+        Err(e) => {
+            println!("  <failed to read ram compression: {e}>");
+            return;
+        }
+    };
+    if read_u16_le_lossy(file).is_err() {
+        println!("  <failed to read ram reserved field>");
+        return;
+    }
+
+    match mode {
+        0 => {
+            // Full snapshot: u32 chunk_size + N * (u32 uncompressed_len + u32 compressed_len +
+            // compressed payload).
+            let chunk_size = match read_u32_le_lossy(file) {
+                Ok(v) => v,
+                Err(e) => {
+                    println!("  <failed to read ram chunk_size: {e}>");
+                    return;
+                }
+            };
+            println!("  chunk_samples:");
+            for chunk_idx in 0..MAX_SAMPLES {
+                let pos = match file.stream_position() {
+                    Ok(v) => v,
+                    Err(_) => break,
+                };
+                if pos >= section_end {
+                    break;
+                }
+                if section_end - pos < 8 {
+                    println!("    <truncated chunk header>");
+                    break;
+                }
+                let uncompressed_len = match read_u32_le_lossy(file) {
+                    Ok(v) => v,
+                    Err(_) => break,
+                };
+                let compressed_len = match read_u32_le_lossy(file) {
+                    Ok(v) => v,
+                    Err(_) => break,
+                };
+                let payload_start = match file.stream_position() {
+                    Ok(v) => v,
+                    Err(_) => break,
+                };
+                let payload_end = match payload_start.checked_add(u64::from(compressed_len)) {
+                    Some(v) => v,
+                    None => {
+                        println!("    <chunk length overflow>");
+                        break;
+                    }
+                };
+                if payload_end > section_end {
+                    println!("    <truncated chunk payload>");
+                    break;
+                }
+                let offset_bytes = u64::from(chunk_idx).saturating_mul(u64::from(chunk_size));
+                println!(
+                    "    - chunk[{chunk_idx}] offset=0x{offset_bytes:x} uncompressed_len={uncompressed_len} compressed_len={compressed_len}"
+                );
+                let _ = file.seek(SeekFrom::Start(payload_end));
+            }
+        }
+        1 => {
+            // Dirty snapshot: u64 dirty_count + N * (u64 page_idx + u32 uncompressed_len +
+            // u32 compressed_len + payload).
+            let dirty_count = match read_u64_le_lossy(file) {
+                Ok(v) => v,
+                Err(e) => {
+                    println!("  <failed to read ram dirty_count: {e}>");
+                    return;
+                }
+            };
+            println!("  dirty_page_samples:");
+            let sample_count = dirty_count.min(MAX_SAMPLES);
+            for _ in 0..sample_count {
+                let pos = match file.stream_position() {
+                    Ok(v) => v,
+                    Err(_) => break,
+                };
+                if pos >= section_end {
+                    break;
+                }
+                if section_end - pos < 16 {
+                    println!("    <truncated dirty page entry>");
+                    break;
+                }
+                let page_idx = match read_u64_le_lossy(file) {
+                    Ok(v) => v,
+                    Err(_) => break,
+                };
+                let uncompressed_len = match read_u32_le_lossy(file) {
+                    Ok(v) => v,
+                    Err(_) => break,
+                };
+                let compressed_len = match read_u32_le_lossy(file) {
+                    Ok(v) => v,
+                    Err(_) => break,
+                };
+                let payload_start = match file.stream_position() {
+                    Ok(v) => v,
+                    Err(_) => break,
+                };
+                let payload_end = match payload_start.checked_add(u64::from(compressed_len)) {
+                    Some(v) => v,
+                    None => {
+                        println!("    <dirty entry length overflow>");
+                        break;
+                    }
+                };
+                if payload_end > section_end {
+                    println!("    <truncated dirty page payload>");
+                    break;
+                }
+                let offset_bytes = page_idx.saturating_mul(u64::from(page_size));
+                println!(
+                    "    - page_idx={page_idx} offset=0x{offset_bytes:x} uncompressed_len={uncompressed_len} compressed_len={compressed_len}"
+                );
+                let _ = file.seek(SeekFrom::Start(payload_end));
+            }
+        }
+        other => {
+            println!("  <unknown ram mode {other}>");
+        }
     }
 }
 
