@@ -1041,6 +1041,97 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn get_if_none_match_returns_304() {
+        let tmp = tempfile::tempdir().unwrap();
+        let public_dir = tmp.path().join("public");
+        let private_dir = tmp.path().join("private");
+        let cfg = test_config(public_dir.clone(), private_dir);
+
+        write_file(&public_image_path(&cfg, "win7"), b"abcdef").await;
+        let meta = tokio::fs::metadata(&public_image_path(&cfg, "win7"))
+            .await
+            .unwrap();
+        let etag = compute_etag(&meta);
+
+        let app = app(cfg);
+        let req = Request::builder()
+            .method(Method::GET)
+            .uri("/disk/win7")
+            .header(ORIGIN, "https://app.example")
+            .header("if-none-match", etag.to_str().unwrap())
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_MODIFIED);
+
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert!(body.is_empty());
+    }
+
+    #[tokio::test]
+    async fn get_if_range_match_returns_206() {
+        let tmp = tempfile::tempdir().unwrap();
+        let public_dir = tmp.path().join("public");
+        let private_dir = tmp.path().join("private");
+        let cfg = test_config(public_dir.clone(), private_dir);
+
+        write_file(&public_image_path(&cfg, "win7"), b"abcdef").await;
+        let meta = tokio::fs::metadata(&public_image_path(&cfg, "win7"))
+            .await
+            .unwrap();
+        let etag = compute_etag(&meta);
+
+        let app = app(cfg);
+        let req = Request::builder()
+            .method(Method::GET)
+            .uri("/disk/win7")
+            .header(RANGE, "bytes=1-3")
+            .header("if-range", etag.to_str().unwrap())
+            .header(ORIGIN, "https://app.example")
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::PARTIAL_CONTENT);
+
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(&body[..], b"bcd");
+    }
+
+    #[tokio::test]
+    async fn get_if_range_mismatch_ignores_range_and_returns_200() {
+        let tmp = tempfile::tempdir().unwrap();
+        let public_dir = tmp.path().join("public");
+        let private_dir = tmp.path().join("private");
+        let cfg = test_config(public_dir.clone(), private_dir);
+
+        write_file(&public_image_path(&cfg, "win7"), b"abcdef").await;
+
+        let app = app(cfg);
+        let req = Request::builder()
+            .method(Method::GET)
+            .uri("/disk/win7")
+            .header(RANGE, "bytes=1-3")
+            .header("if-range", "\"mismatch\"")
+            .header(ORIGIN, "https://app.example")
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(&body[..], b"abcdef");
+    }
+
+    #[tokio::test]
     async fn head_without_range_returns_headers_only() {
         let tmp = tempfile::tempdir().unwrap();
         let public_dir = tmp.path().join("public");
