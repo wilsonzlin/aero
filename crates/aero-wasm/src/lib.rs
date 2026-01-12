@@ -271,6 +271,7 @@ pub fn jit_abi_constants() -> JsValue {
 #[cfg(all(test, target_arch = "wasm32"))]
 mod jit_abi_constants_tests {
     use super::jit_abi_constants;
+    use crate::tiered_vm::tiered_vm_jit_abi_layout;
 
     use wasm_bindgen::JsCast;
     use wasm_bindgen::JsValue;
@@ -342,6 +343,31 @@ mod jit_abi_constants_tests {
                 "CPU_GPR_OFF[{i}] mismatch"
             );
         }
+    }
+
+    #[wasm_bindgen_test]
+    fn tiered_vm_jit_abi_layout_matches_jit_abi_constants() {
+        let obj = jit_abi_constants();
+        let layout = tiered_vm_jit_abi_layout();
+
+        assert_eq!(
+            layout.jit_ctx_header_bytes(),
+            read_u32(&obj, "jit_ctx_header_bytes")
+        );
+        assert_eq!(layout.jit_tlb_entries(), read_u32(&obj, "jit_tlb_entries"));
+        assert_eq!(
+            layout.jit_tlb_entry_bytes(),
+            read_u32(&obj, "jit_tlb_entry_bytes")
+        );
+        assert_eq!(layout.tier2_ctx_offset(), read_u32(&obj, "tier2_ctx_offset"));
+        assert_eq!(
+            layout.tier2_ctx_bytes(),
+            read_u32(&obj, "tier2_ctx_size")
+        );
+        assert_eq!(
+            layout.commit_flag_offset(),
+            read_u32(&obj, "commit_flag_offset")
+        );
     }
 }
 
