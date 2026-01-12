@@ -106,6 +106,9 @@ fn machine_win7_storage_topology_has_stable_bdfs_and_interrupt_lines() {
 
         // Freeze legacy-compat BAR base assignments so firmware/OSes that assume PC-like port
         // layouts continue to work. These are documented in `docs/05-storage-topology-win7.md`.
+        //
+        // Note: These are hard-coded numeric constants (not derived from device-model constants)
+        // so this test truly freezes the canonical Windows 7 ABI.
         assert_eq!(
             cfg.bar_range(0).map(|r| (r.kind, r.base, r.size)),
             Some((PciBarKind::Io, 0x1F0, 8)),
@@ -153,6 +156,10 @@ fn machine_win7_storage_topology_has_stable_bdfs_and_interrupt_lines() {
         );
 
         // Optional guard: ensure the AHCI ABAR (BAR5) is defined.
+        //
+        // Note: This intentionally hard-codes BAR index/size (rather than referencing
+        // `aero_devices::pci::profile::*` constants) so we catch accidental drift in the profile
+        // layer as well.
         assert_eq!(
             cfg.bar_definition(5),
             Some(PciBarDefinition::Mmio32 {
