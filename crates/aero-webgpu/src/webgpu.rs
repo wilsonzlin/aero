@@ -212,14 +212,19 @@ fn negotiated_features(adapter: &wgpu::Adapter) -> wgpu::Features {
 
     let mut requested = wgpu::Features::empty();
 
+    let disable_texture_compression =
+        env_var_truthy("AERO_DISABLE_WGPU_TEXTURE_COMPRESSION");
+
     // Texture compression is optional but beneficial (guest textures, DDS, etc).
-    for feature in [
-        wgpu::Features::TEXTURE_COMPRESSION_BC,
-        wgpu::Features::TEXTURE_COMPRESSION_ETC2,
-        wgpu::Features::TEXTURE_COMPRESSION_ASTC_HDR,
-    ] {
-        if available.contains(feature) {
-            requested |= feature;
+    if !disable_texture_compression {
+        for feature in [
+            wgpu::Features::TEXTURE_COMPRESSION_BC,
+            wgpu::Features::TEXTURE_COMPRESSION_ETC2,
+            wgpu::Features::TEXTURE_COMPRESSION_ASTC_HDR,
+        ] {
+            if available.contains(feature) {
+                requested |= feature;
+            }
         }
     }
 
@@ -234,6 +239,18 @@ fn negotiated_features(adapter: &wgpu::Adapter) -> wgpu::Features {
     }
 
     requested
+}
+
+fn env_var_truthy(name: &str) -> bool {
+    let Ok(raw) = std::env::var(name) else {
+        return false;
+    };
+
+    let v = raw.trim();
+    v == "1"
+        || v.eq_ignore_ascii_case("true")
+        || v.eq_ignore_ascii_case("yes")
+        || v.eq_ignore_ascii_case("on")
 }
 
 fn negotiated_limits(adapter: &wgpu::Adapter, desired_max_buffer_size: u64) -> wgpu::Limits {
