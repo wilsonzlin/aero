@@ -215,7 +215,7 @@ fn s32_to_f32(sample: i32) -> f32 {
 
 ```bash
 # Run audio tests
-bash ./scripts/safe-run.sh cargo test -p aero-audio --locked
+./scripts/safe-run.sh cargo test -p aero-audio --locked
 
 # Manual testing
 # Boot Windows 7 and play a sound file or system sound
@@ -231,7 +231,7 @@ Audio is hard to test automatically. Focus on:
 ## Quick Start Checklist
 
 1. ☐ Read [`AGENTS.md`](../AGENTS.md) completely
-2. ☐ Run `bash ./scripts/agent-env-setup.sh` and `source ./scripts/agent-env.sh`
+2. ☐ Run `./scripts/agent-env-setup.sh` and `source ./scripts/agent-env.sh`
 3. ☐ Read [`docs/06-audio-subsystem.md`](../docs/06-audio-subsystem.md)
 4. ☐ Explore `crates/aero-audio/src/`
 5. ☐ Run existing tests to establish baseline

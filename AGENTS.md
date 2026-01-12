@@ -59,16 +59,16 @@ Use this for:
 
 **If running many agents concurrently**, enforce **memory limits**. CPU and disk I/O contention are handled fine by the Linux scheduler, but memory exhaustion will OOM-kill the host.
 
-**The one rule:** Use `bash ./scripts/safe-run.sh <command>` for all non-trivial operations. It enforces both timeout (10 min default) and memory limit (12G default).
+**The one rule:** Use `./scripts/safe-run.sh <command>` for all non-trivial operations. It enforces both timeout (10 min default) and memory limit (12G default).
 
 ```bash
-bash ./scripts/agent-env-setup.sh               # One-time: validate environment
+./scripts/agent-env-setup.sh                    # One-time: validate environment
 source ./scripts/agent-env.sh                   # Activate recommended env vars
-bash ./scripts/safe-run.sh cargo build --locked  # Build with timeout + memory limit
-bash ./scripts/safe-run.sh cargo test --locked   # Test with timeout + memory limit
+./scripts/safe-run.sh cargo build --locked      # Build with timeout + memory limit
+./scripts/safe-run.sh cargo test --locked       # Test with timeout + memory limit
 
 # Override defaults if needed:
-AERO_TIMEOUT=1200 AERO_MEM_LIMIT=16G bash ./scripts/safe-run.sh cargo build --release --locked
+AERO_TIMEOUT=1200 AERO_MEM_LIMIT=16G ./scripts/safe-run.sh cargo build --release --locked
 ```
 
 Troubleshooting (some agent environments lose executable bits and/or tracked fixtures):
@@ -453,7 +453,7 @@ pub trait DisplayAdapter {
 2. Read [`LEGAL.md`](./LEGAL.md) and [`CONTRIBUTING.md`](./CONTRIBUTING.md) (clean-room rules, licensing, distribution constraints)
 3. **Run environment setup:**
    ```bash
-   bash ./scripts/agent-env-setup.sh     # One-time validation
+   ./scripts/agent-env-setup.sh          # One-time validation
    source ./scripts/agent-env.sh         # Activate env vars
    ```
 4. **Read your workstream's instruction file** from [`instructions/`](./instructions/README.md)
@@ -462,8 +462,8 @@ pub trait DisplayAdapter {
 7. Check [Project Milestones](./docs/14-project-milestones.md) for timeline
 8. **Build and test:**
    ```bash
-   bash ./scripts/safe-run.sh cargo build --locked
-   bash ./scripts/safe-run.sh cargo test --locked
+   ./scripts/safe-run.sh cargo build --locked
+   ./scripts/safe-run.sh cargo test --locked
    ```
 9. Begin implementation following test-driven development
 

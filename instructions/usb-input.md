@@ -207,8 +207,8 @@ canvas.addEventListener('click', () => {
 
 ```bash
 # Run input tests
-bash ./scripts/safe-run.sh cargo test -p aero-devices-input --locked
-bash ./scripts/safe-run.sh cargo test -p aero-usb --locked
+./scripts/safe-run.sh cargo test -p aero-devices-input --locked
+./scripts/safe-run.sh cargo test -p aero-usb --locked
 
 # Run USB bridge tests
 cd web
@@ -220,7 +220,7 @@ npm test -- --grep usb
 ## Quick Start Checklist
 
 1. ☐ Read [`AGENTS.md`](../AGENTS.md) completely
-2. ☐ Run `bash ./scripts/agent-env-setup.sh` and `source ./scripts/agent-env.sh`
+2. ☐ Run `./scripts/agent-env-setup.sh` and `source ./scripts/agent-env.sh`
 3. ☐ Read [`docs/08-input-devices.md`](../docs/08-input-devices.md)
 4. ☐ Read [`docs/adr/0015-canonical-usb-stack.md`](../docs/adr/0015-canonical-usb-stack.md)
 5. ☐ Explore `crates/aero-devices-input/src/` and `crates/aero-usb/src/`

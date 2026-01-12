@@ -203,9 +203,9 @@ This provides a local proxy that the emulator can connect to for testing.
 
 ```bash
 # Run network tests
-bash ./scripts/safe-run.sh cargo test -p aero-net-e1000 --locked
-bash ./scripts/safe-run.sh cargo test -p aero-net-stack --locked
-bash ./scripts/safe-run.sh cargo test -p aero-l2-proxy --locked
+./scripts/safe-run.sh cargo test -p aero-net-e1000 --locked
+./scripts/safe-run.sh cargo test -p aero-net-stack --locked
+./scripts/safe-run.sh cargo test -p aero-l2-proxy --locked
 
 # Run gateway tests
 cd backend/aero-gateway
@@ -217,7 +217,7 @@ npm test
 ## Quick Start Checklist
 
 1. ☐ Read [`AGENTS.md`](../AGENTS.md) completely
-2. ☐ Run `bash ./scripts/agent-env-setup.sh` and `source ./scripts/agent-env.sh`
+2. ☐ Run `./scripts/agent-env-setup.sh` and `source ./scripts/agent-env.sh`
 3. ☐ Read [`docs/07-networking.md`](../docs/07-networking.md)
 4. ☐ Explore `crates/aero-net-e1000/src/` and `proxy/`
 5. ☐ Run local proxy to test connectivity

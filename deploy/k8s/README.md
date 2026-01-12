@@ -116,7 +116,7 @@ Important: WebRTC uses a **UDP port range** for ICE candidates and relay traffic
 
 This repository's CI validates that the Helm chart renders correctly and produces valid Kubernetes objects.
 
-To reproduce locally (requires `helm` + `kubeconform`; or run the repo-wide `bash ./scripts/ci/check-iac.sh` / `just check-iac`):
+To reproduce locally (requires `helm` + `kubeconform`; or run the repo-wide `./scripts/ci/check-iac.sh` / `just check-iac`):
 
 ```bash
 CHART=deploy/k8s/chart/aero-gateway

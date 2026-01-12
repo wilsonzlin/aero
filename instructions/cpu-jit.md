@@ -192,13 +192,13 @@ pub trait CpuBus {
 
 ```bash
 # Run CPU tests
-bash ./scripts/safe-run.sh cargo test -p aero-cpu-core --locked
-bash ./scripts/safe-run.sh cargo test -p aero-cpu-decoder --locked
-bash ./scripts/safe-run.sh cargo test -p aero-jit-x86 --locked
-bash ./scripts/safe-run.sh cargo test -p aero-mmu --locked
+./scripts/safe-run.sh cargo test -p aero-cpu-core --locked
+./scripts/safe-run.sh cargo test -p aero-cpu-decoder --locked
+./scripts/safe-run.sh cargo test -p aero-jit-x86 --locked
+./scripts/safe-run.sh cargo test -p aero-mmu --locked
 
 # Run all tests
-bash ./scripts/safe-run.sh cargo test --locked
+./scripts/safe-run.sh cargo test --locked
 ```
 
 Use `crates/conformance` for differential testing against QEMU.
@@ -208,7 +208,7 @@ Use `crates/conformance` for differential testing against QEMU.
 ## Quick Start Checklist
 
 1. ☐ Read [`AGENTS.md`](../AGENTS.md) completely
-2. ☐ Run `bash ./scripts/agent-env-setup.sh` and `source ./scripts/agent-env.sh`
+2. ☐ Run `./scripts/agent-env-setup.sh` and `source ./scripts/agent-env.sh`
 3. ☐ Read [`docs/02-cpu-emulation.md`](../docs/02-cpu-emulation.md)
 4. ☐ Read [`docs/03-memory-management.md`](../docs/03-memory-management.md)
 5. ☐ Explore `crates/aero-cpu-core/src/` to understand current state

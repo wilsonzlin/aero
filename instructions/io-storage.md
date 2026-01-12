@@ -190,12 +190,12 @@ accessHandle.write(data, { at: sectorOffset });
 
 ```bash
 # Run storage tests
-bash ./scripts/safe-run.sh cargo test -p aero-storage --locked
-bash ./scripts/safe-run.sh cargo test -p aero-devices-storage --locked
-bash ./scripts/safe-run.sh cargo test -p aero-opfs --locked
+./scripts/safe-run.sh cargo test -p aero-storage --locked
+./scripts/safe-run.sh cargo test -p aero-devices-storage --locked
+./scripts/safe-run.sh cargo test -p aero-opfs --locked
 
 # Integration tests
-bash ./scripts/safe-run.sh cargo test -p aero --test freedos_boot --locked
+./scripts/safe-run.sh cargo test -p aero --test freedos_boot --locked
 ```
 
 ---
@@ -203,7 +203,7 @@ bash ./scripts/safe-run.sh cargo test -p aero --test freedos_boot --locked
 ## Quick Start Checklist
 
 1. ☐ Read [`AGENTS.md`](../AGENTS.md) completely
-2. ☐ Run `bash ./scripts/agent-env-setup.sh` and `source ./scripts/agent-env.sh`
+2. ☐ Run `./scripts/agent-env-setup.sh` and `source ./scripts/agent-env.sh`
 3. ☐ Read [`docs/05-storage-subsystem.md`](../docs/05-storage-subsystem.md)
 4. ☐ Explore `crates/aero-storage/src/` and `crates/aero-devices-storage/src/`
 5. ☐ Run existing tests to establish baseline

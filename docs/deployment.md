@@ -170,7 +170,7 @@ This repository validates deployment artifacts in CI (Terraform + Helm/Kubernete
 - Local reproduction:
 
 ```bash
-bash ./scripts/ci/check-iac.sh
+./scripts/ci/check-iac.sh
 # or:
 #   just check-iac
 ```

@@ -291,19 +291,19 @@ The emulator exposes CPU/device state for debugging. See [`docs/16-debugging-and
 
 ```bash
 # Run BIOS tests
-bash ./scripts/safe-run.sh cargo test -p firmware --locked
+./scripts/safe-run.sh cargo test -p firmware --locked
 
 # Run device model tests
-bash ./scripts/safe-run.sh cargo test -p devices --locked
-bash ./scripts/safe-run.sh cargo test -p aero-interrupts --locked
-bash ./scripts/safe-run.sh cargo test -p aero-timers --locked
+./scripts/safe-run.sh cargo test -p devices --locked
+./scripts/safe-run.sh cargo test -p aero-interrupts --locked
+./scripts/safe-run.sh cargo test -p aero-timers --locked
 
 # Boot tests
-bash ./scripts/safe-run.sh cargo test -p aero --test boot_sector --locked
-bash ./scripts/safe-run.sh cargo test -p aero --test freedos_boot --locked
+./scripts/safe-run.sh cargo test -p aero --test boot_sector --locked
+./scripts/safe-run.sh cargo test -p aero --test freedos_boot --locked
 
 # Full Windows 7 boot (requires ISO at /state/win7.iso)
-bash ./scripts/safe-run.sh cargo test -p aero --test windows7_boot --locked -- --ignored
+./scripts/safe-run.sh cargo test -p aero --test windows7_boot --locked -- --ignored
 ```
 
 ---
@@ -311,7 +311,7 @@ bash ./scripts/safe-run.sh cargo test -p aero --test windows7_boot --locked -- -
 ## Quick Start Checklist
 
 1. ☐ Read [`AGENTS.md`](../AGENTS.md) completely
-2. ☐ Run `bash ./scripts/agent-env-setup.sh` and `source ./scripts/agent-env.sh`
+2. ☐ Run `./scripts/agent-env-setup.sh` and `source ./scripts/agent-env.sh`
 3. ☐ Read [`docs/09-bios-firmware.md`](../docs/09-bios-firmware.md)
 4. ☐ Read [`docs/01-architecture-overview.md`](../docs/01-architecture-overview.md)
 5. ☐ Explore `crates/firmware/src/` and `crates/platform/src/`
