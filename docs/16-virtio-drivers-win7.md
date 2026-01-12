@@ -50,7 +50,7 @@ This repo includes a small **portable C99** module that implements the capabilit
 Run locally:
 
 ```bash
-./drivers/win7/virtio/tests/build_and_run.sh
+bash ./drivers/win7/virtio/tests/build_and_run.sh
 ```
 
 ### Required MMIO regions

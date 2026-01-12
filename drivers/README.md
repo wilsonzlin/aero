@@ -317,7 +317,7 @@ cargo test --locked --manifest-path drivers/protocol/virtio/Cargo.toml
 Run:
 
 ```bash
-./drivers/win7/virtio/tests/build_and_run.sh
+bash ./drivers/win7/virtio/tests/build_and_run.sh
 ```
 
 ## Optional: custom GPU path (WDDM)

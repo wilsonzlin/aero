@@ -497,13 +497,13 @@ config-space images (runs on Linux CI; no hardware required).
 From the repo root:
 
 ```bash
-./drivers/win7/virtio/tests/build_and_run.sh
+bash ./drivers/win7/virtio/tests/build_and_run.sh
 ```
 
 Optionally select a compiler:
 
 ```bash
-CC=clang ./drivers/win7/virtio/tests/build_and_run.sh
+CC=clang bash ./drivers/win7/virtio/tests/build_and_run.sh
 ```
 
 ---

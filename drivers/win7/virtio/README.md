@@ -95,5 +95,5 @@ regression-tested without requiring real hardware.
 From the repo root:
 
 ```bash
-./drivers/win7/virtio/tests/build_and_run.sh
+bash ./drivers/win7/virtio/tests/build_and_run.sh
 ```

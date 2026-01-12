@@ -21,13 +21,13 @@ They also validate the optional **Aero contract** layout enforcement helper:
 From the repo root:
 
 ```bash
-./drivers/win7/virtio/tests/build_and_run.sh
+bash ./drivers/win7/virtio/tests/build_and_run.sh
 ```
 
 Optionally pick a compiler:
 
 ```bash
-CC=clang ./drivers/win7/virtio/tests/build_and_run.sh
+CC=clang bash ./drivers/win7/virtio/tests/build_and_run.sh
 ```
 
 ## Related code

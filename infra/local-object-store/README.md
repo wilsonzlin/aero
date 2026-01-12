@@ -129,7 +129,7 @@ This directory includes a small script that will:
 - verify `HEAD`, `206` Range responses, and preflight behavior against both the origin and the proxy
 
 ```bash
-./verify.sh
+bash ./verify.sh
 ```
 
 Or from the repo root:
@@ -141,7 +141,7 @@ just object-store-verify
 To stop containers at the end:
 
 ```bash
-./verify.sh --down
+bash ./verify.sh --down
 ```
 
 ### Verify HEAD / size discovery
