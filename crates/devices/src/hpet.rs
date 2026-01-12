@@ -297,6 +297,28 @@ impl<C: Clock> Hpet<C> {
         )
     }
 
+    /// Reset the HPET device back to its power-on register state.
+    ///
+    /// This preserves the attached clock and the static capability/route configuration while
+    /// clearing all guest-programmable registers and runtime interrupt bookkeeping.
+    pub fn reset(&mut self) {
+        self.general_config = 0;
+        self.general_int_status = 0;
+        self.main_counter = 0;
+        self.remainder_fs = 0;
+        self.last_update_ns = self.clock.now_ns();
+
+        for timer in &mut self.timers {
+            // Preserve the reset/default route, but clear dynamic state.
+            timer.config &= TIMER_CFG_INT_ROUTE_MASK;
+            timer.comparator = 0;
+            timer.period = 0;
+            timer.fsb_route = 0;
+            timer.armed = false;
+            timer.irq_asserted = false;
+        }
+    }
+
     pub fn poll(&mut self, sink: &mut impl GsiSink) {
         self.update_main_counter();
         self.service_timers(sink);

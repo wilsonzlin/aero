@@ -37,6 +37,15 @@ impl PciConfigPorts {
     pub fn io_write(&mut self, port: u16, size: u8, value: u32) {
         self.cfg.io_write(&mut self.bus, port, size, value);
     }
+
+    /// Reset the PCI configuration mechanism back to its power-on I/O state.
+    ///
+    /// This clears the `0xCF8` address latch (Configuration Mechanism #1) but preserves the PCI
+    /// bus topology. Platform reset flows should separately re-run firmware/BIOS initialization
+    /// (e.g. BAR assignment) if required.
+    pub fn reset_io_state(&mut self) {
+        self.cfg = PciConfigMechanism1::new();
+    }
 }
 
 impl Default for PciConfigPorts {
@@ -106,6 +115,12 @@ impl PortIoDevice for PciConfigPort {
         debug_assert_eq!(port, self.port);
         self.cfg.borrow_mut().io_write(port, size, value);
     }
+
+    fn reset(&mut self) {
+        // Reset the shared config-mechanism state back to its power-on value. This is safe to call
+        // multiple times (once per port mapping) as the operation is idempotent.
+        self.cfg.borrow_mut().reset_io_state();
+    }
 }
 
 /// Range-mapped PCI config mechanism #1 ports.
@@ -130,6 +145,12 @@ impl PortIoDevice for PciConfigPortRange {
 
     fn write(&mut self, port: u16, size: u8, value: u32) {
         self.cfg.borrow_mut().io_write(port, size, value);
+    }
+
+    fn reset(&mut self) {
+        // Reset the shared config-mechanism state back to its power-on value. This is safe to call
+        // multiple times and does not affect the PCI bus topology.
+        self.cfg.borrow_mut().reset_io_state();
     }
 }
 

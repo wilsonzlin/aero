@@ -139,6 +139,53 @@ impl<C: Clock, I: IrqLine> RtcCmos<C, I> {
         rtc
     }
 
+    /// Reset the RTC/CMOS device back to its power-on state.
+    ///
+    /// This preserves host wiring (`clock` and `irq8`) so callers can reset a running platform
+    /// without needing to rebuild the device graph.
+    pub fn reset(&mut self) {
+        self.index = 0;
+        self.nmi_disabled = false;
+        self.nvram = [0; CMOS_LEN];
+        self.reg_a = 0x26;
+        self.reg_b = REG_B_24H;
+        self.reg_c_flags = 0;
+        self.offset_seconds = 0;
+        self.phase_offset_ns = 0;
+        self.set_mode = false;
+        self.frozen_seconds = 0;
+        self.last_rtc_seconds = 0;
+        self.periodic_interval_ns = None;
+        self.next_periodic_ns = None;
+        self.irq_level = false;
+
+        // Deassert the IRQ line so the platform interrupt controller doesn't get stuck with a
+        // level-triggered IRQ8 asserted across resets.
+        self.irq8.set_level(false);
+
+        // Initialize the CMOS RAM contents (base/extended memory sizing fields).
+        self.set_memory_size_bytes(0);
+
+        // Reset the RTC timebase to the default date/time used by `RtcCmos::new`, relative to the
+        // current clock moment.
+        let now_ns = self.clock.now_ns();
+        self.set_rtc_seconds(
+            now_ns,
+            datetime_to_unix_seconds(RtcDateTime {
+                year: 2000,
+                month: 1,
+                day: 1,
+                hour: 0,
+                minute: 0,
+                second: 0,
+            }),
+        );
+
+        // Periodic interrupts are disabled at reset, but recompute to keep internal state
+        // consistent if the reset defaults change in the future.
+        self.recompute_periodic(now_ns as u128);
+    }
+
     pub fn tick(&mut self) {
         let now_ns = self.clock.now_ns();
         self.tick_at(now_ns);
@@ -723,6 +770,12 @@ impl<C: Clock + 'static, I: IrqLine + 'static> PortIoDevice for RtcCmosPort<C, I
     fn write(&mut self, port: u16, size: u8, value: u32) {
         debug_assert_eq!(port, self.port);
         self.rtc.borrow_mut().write(port, size, value);
+    }
+
+    fn reset(&mut self) {
+        // Reset the shared RTC back to its power-on state. This is safe to call multiple times
+        // (once per port mapping) as the operation is idempotent.
+        self.rtc.borrow_mut().reset();
     }
 }
 

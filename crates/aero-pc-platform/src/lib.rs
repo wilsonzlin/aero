@@ -350,6 +350,10 @@ impl PciDevice for UhciPciConfigDevice {
     }
 
     fn reset(&mut self) {
+        // Restore the PCI config space back to its profiled power-on state.
+        //
+        // This ensures guest writes to writable config registers (e.g. MSI, interrupt line, BAR
+        // probe state) do not persist across a platform reset.
         *self = Self::new();
     }
 }

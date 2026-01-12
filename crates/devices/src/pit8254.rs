@@ -365,6 +365,16 @@ impl Pit8254 {
         Self::default()
     }
 
+    /// Reset the PIT back to its power-on state.
+    ///
+    /// This preserves any host-side IRQ wiring previously connected via
+    /// [`Pit8254::connect_irq0`] / [`Pit8254::connect_irq0_to_platform_interrupts`].
+    pub fn reset(&mut self) {
+        let irq0_callback = self.irq0_callback.take();
+        *self = Self::default();
+        self.irq0_callback = irq0_callback;
+    }
+
     /// Connect a callback that will be invoked once per IRQ0 pulse.
     pub fn connect_irq0<F>(&mut self, callback: F)
     where
@@ -686,6 +696,12 @@ impl PortIoDevice for Pit8254Port {
     fn write(&mut self, port: u16, size: u8, value: u32) {
         debug_assert_eq!(port, self.port);
         self.pit.borrow_mut().port_write(port, size, value);
+    }
+
+    fn reset(&mut self) {
+        // Reset the shared PIT back to its power-on state. This is safe to call multiple times
+        // (once per port mapping) as the operation is idempotent.
+        self.pit.borrow_mut().reset();
     }
 }
 
