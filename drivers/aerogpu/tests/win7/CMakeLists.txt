@@ -148,6 +148,11 @@ aerogpu_add_win7_test(d3d9_validate_device_sanity
 )
 target_link_libraries(d3d9_validate_device_sanity PRIVATE user32 gdi32 d3d9)
 
+aerogpu_add_win7_test(d3d9_get_state_roundtrip
+  d3d9_get_state_roundtrip/main.cpp
+)
+target_link_libraries(d3d9_get_state_roundtrip PRIVATE user32 gdi32 d3d9)
+
 aerogpu_add_win7_test(dwm_flush_pacing
   dwm_flush_pacing/main.cpp
 )

@@ -269,7 +269,7 @@ In WDK builds (`AEROGPU_D3D9_USE_WDK_DDI=1`), the UMD populates every *known* fu
 
 ### Currently stubbed DDIs
 
-These DDIs are present in the Win7 D3D9UMDDI surface but are not implemented yet:
+These DDIs are present in the Win7 D3D9UMDDI surface but are not implemented yet.
 
 Note: shader int/bool constants and fixed-function lighting/material state are
 cached (Set*/Get* round-trip) but are not currently emitted to the AeroGPU

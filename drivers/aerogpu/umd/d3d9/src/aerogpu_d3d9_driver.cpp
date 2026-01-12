@@ -110,6 +110,7 @@ namespace aerogpu {
 // the current AeroGPU D3D9 UMD already understands/emits:
 // - render states
 // - sampler states
+// - fixed-function state caches (transforms + texture stage state)
 // - texture bindings
 // - render target + depth/stencil bindings
 // - viewport + scissor
@@ -133,6 +134,10 @@ struct StateBlock {
   // and state blocks.
   std::bitset<16 * 256> texture_stage_state_mask{}; // stage * 256 + state
   std::array<uint32_t, 16 * 256> texture_stage_state_values{};
+
+  // Transform matrices (D3DTRANSFORMSTATETYPE numeric values).
+  std::bitset<Device::kTransformCacheCount> transform_mask{};
+  std::array<float, Device::kTransformCacheCount * 16> transform_values{};
 
   // Texture bindings (pixel shader stages only; 0..15).
   std::bitset<16> texture_mask{};
@@ -2572,6 +2577,20 @@ inline void stateblock_record_texture_stage_state_locked(Device* dev, uint32_t s
   StateBlock* sb = dev->recording_state_block;
   sb->texture_stage_state_mask.set(idx);
   sb->texture_stage_state_values[idx] = value;
+}
+
+inline void stateblock_record_transform_locked(Device* dev, uint32_t state, const float* matrix16) {
+  if (!dev || !dev->recording_state_block || !matrix16) {
+    return;
+  }
+  if (state >= Device::kTransformCacheCount) {
+    return;
+  }
+  StateBlock* sb = dev->recording_state_block;
+  sb->transform_mask.set(state);
+  std::memcpy(sb->transform_values.data() + static_cast<size_t>(state) * 16u,
+              matrix16,
+              sizeof(float) * 16u);
 }
 
 inline void stateblock_record_texture_locked(Device* dev, uint32_t stage, Resource* tex) {
@@ -9303,6 +9322,13 @@ static void stateblock_init_for_type_locked(Device* dev, StateBlock* sb, uint32_
   }
 
   if (is_vertex) {
+    for (uint32_t t = 0; t < Device::kTransformCacheCount; ++t) {
+      sb->transform_mask.set(t);
+      std::memcpy(sb->transform_values.data() + static_cast<size_t>(t) * 16u,
+                  dev->transform_matrices[t],
+                  sizeof(float) * 16u);
+    }
+
     sb->vertex_decl_set = true;
     sb->vertex_decl = dev->vertex_decl;
     sb->fvf_set = true;
@@ -9335,6 +9361,14 @@ static void stateblock_capture_locked(Device* dev, StateBlock* sb) {
   for (uint32_t i = 0; i < 256; ++i) {
     if (sb->render_state_mask.test(i)) {
       sb->render_state_values[i] = dev->render_states[i];
+    }
+  }
+
+  for (uint32_t t = 0; t < Device::kTransformCacheCount; ++t) {
+    if (sb->transform_mask.test(t)) {
+      std::memcpy(sb->transform_values.data() + static_cast<size_t>(t) * 16u,
+                  dev->transform_matrices[t],
+                  sizeof(float) * 16u);
     }
   }
 
@@ -9534,6 +9568,21 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
     cmd->state = i;
     cmd->value = sb->render_state_values[i];
     stateblock_record_render_state_locked(dev, i, sb->render_state_values[i]);
+  }
+
+  // Fixed-function state: transforms. These do not affect the current AeroGPU
+  // command stream yet, but they must be round-trippable via GetTransform and
+  // via state blocks.
+  if (sb->transform_mask.any()) {
+    for (uint32_t t = 0; t < Device::kTransformCacheCount; ++t) {
+      if (!sb->transform_mask.test(t)) {
+        continue;
+      }
+      std::memcpy(dev->transform_matrices[t],
+                  sb->transform_values.data() + static_cast<size_t>(t) * 16u,
+                  sizeof(float) * 16u);
+      stateblock_record_transform_locked(dev, t, dev->transform_matrices[t]);
+    }
   }
 
   // Samplers/textures.
@@ -10218,6 +10267,7 @@ HRESULT device_set_transform_impl(D3DDDI_HDEVICE hDevice, StateT state, const Ma
   auto* dev = as_device(hDevice);
   std::lock_guard<std::mutex> lock(dev->mutex);
   std::memcpy(dev->transform_matrices[idx], pMatrix, 16 * sizeof(float));
+  stateblock_record_transform_locked(dev, idx, dev->transform_matrices[idx]);
   return trace.ret(S_OK);
 }
 
@@ -10251,6 +10301,7 @@ HRESULT device_multiply_transform_impl(D3DDDI_HDEVICE hDevice, StateT state, con
   std::memcpy(rhs, pMatrix, sizeof(rhs));
   d3d9_mul_mat4_row_major(dev->transform_matrices[idx], rhs, tmp);
   std::memcpy(dev->transform_matrices[idx], tmp, sizeof(tmp));
+  stateblock_record_transform_locked(dev, idx, dev->transform_matrices[idx]);
 
   return trace.ret(S_OK);
 }
