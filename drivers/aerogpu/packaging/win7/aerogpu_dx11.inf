@@ -84,6 +84,8 @@ AeroGPU_UMD_Wow64.CopyFiles = 10,SysWOW64
 ; Registry settings
 ; -------------------------------
 [AeroGPU_Device_AddReg_x86]
+; Driver ranking (lower is better). Prefer this DX11-capable INF over aerogpu.inf
+; (0xF8) when both match the same HWID.
 HKR,,FeatureScore,%REG_DWORD%,0x000000F7
 
 ; D3D9 UMD registration (32-bit).
