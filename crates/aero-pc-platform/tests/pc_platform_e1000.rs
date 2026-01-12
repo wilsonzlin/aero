@@ -386,6 +386,43 @@ fn pc_platform_routes_e1000_intx_via_ioapic_in_apic_mode() {
 }
 
 #[test]
+fn pc_platform_e1000_intx_deasserts_after_icr_read_in_apic_mode() {
+    let mut pc = PcPlatform::new_with_e1000(2 * 1024 * 1024);
+    let bar0_base = read_e1000_bar0_base(&mut pc);
+
+    // Switch the platform into APIC mode via IMCR (0x22/0x23).
+    pc.io.write_u8(0x22, 0x70);
+    pc.io.write_u8(0x23, 0x01);
+    assert_eq!(pc.interrupts.borrow().mode(), PlatformInterruptMode::Apic);
+
+    // Program IOAPIC entry for GSI11 to vector 0x62, level-triggered, active-low.
+    let vector = 0x62u32;
+    let low = vector | (1 << 13) | (1 << 15);
+    program_ioapic_entry(&mut pc, 11, low, 0);
+
+    // Enable the interrupt and set the cause.
+    pc.memory.write_u32(bar0_base + 0x00D0, ICR_TXDW); // IMS
+    pc.memory.write_u32(bar0_base + 0x00C8, ICR_TXDW); // ICS
+
+    pc.poll_pci_intx_lines();
+
+    assert_eq!(pc.interrupts.borrow().get_pending(), Some(vector as u8));
+
+    // Simulate the CPU taking the interrupt.
+    pc.interrupts.borrow_mut().acknowledge(vector as u8);
+
+    // Clear the device interrupt cause (ICR is read-to-clear).
+    let _causes = pc.memory.read_u32(bar0_base + 0x00C0);
+
+    // Propagate the deasserted INTx level to the IOAPIC.
+    pc.poll_pci_intx_lines();
+
+    // End-of-interrupt should *not* cause a redelivery now that the line is deasserted.
+    pc.interrupts.borrow_mut().eoi(vector as u8);
+    assert_eq!(pc.interrupts.borrow().get_pending(), None);
+}
+
+#[test]
 fn pc_platform_routes_e1000_io_bar() {
     let mut pc = PcPlatform::new_with_e1000(2 * 1024 * 1024);
     let io_base = read_e1000_bar1_base(&mut pc);
