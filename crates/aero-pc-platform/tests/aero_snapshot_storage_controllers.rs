@@ -350,7 +350,14 @@ fn aero_snapshot_roundtrip_preserves_ahci_inflight_dma_command_and_allows_resume
     assert_eq!(out, [9, 8, 7, 6]);
 
     // Verify the AHCI interrupt is asserted and is routed through PCI INTx -> PIC.
-    unmask_pic_irq(&mut restored.platform, 12);
+    let expected_irq = {
+        let pin = profile::SATA_AHCI_ICH9
+            .interrupt_pin
+            .expect("profile should provide interrupt pin");
+        u8::try_from(restored.platform.pci_intx.gsi_for_intx(profile::SATA_AHCI_ICH9.bdf, pin))
+            .unwrap()
+    };
+    unmask_pic_irq(&mut restored.platform, expected_irq);
     assert!(
         restored
             .platform
@@ -362,7 +369,7 @@ fn aero_snapshot_roundtrip_preserves_ahci_inflight_dma_command_and_allows_resume
         "AHCI INTx should be asserted after completing the DMA command"
     );
     restored.platform.poll_pci_intx_lines();
-    assert_eq!(pic_pending_irq(&restored.platform), Some(12));
+    assert_eq!(pic_pending_irq(&restored.platform), Some(expected_irq));
 }
 
 #[test]

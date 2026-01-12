@@ -65,18 +65,25 @@ fn snapshot_restore_redrives_pci_intx_levels_to_interrupt_sink() {
     let ram_size = 2 * 1024 * 1024;
     let mut pc = PcPlatform::new(ram_size);
 
-    // Configure the legacy PIC so a raised IRQ10 is observable via get_pending_vector().
+    let bdf = PciBdf::new(0, 0, 0);
+    let expected_irq = {
+        let router = PciIntxRouter::new(PciIntxRouterConfig::default());
+        u8::try_from(router.gsi_for_intx(bdf, PciInterruptPin::IntA)).unwrap()
+    };
+
+    // Configure the legacy PIC so a raised IRQ is observable via get_pending_vector().
     {
         let mut interrupts = pc.interrupts.borrow_mut();
         interrupts.pic_mut().set_offsets(0x20, 0x28);
-        interrupts.pic_mut().set_masked(2, false); // cascade
-        interrupts.pic_mut().set_masked(10, false);
+        if expected_irq >= 8 {
+            interrupts.pic_mut().set_masked(2, false); // cascade
+        }
+        interrupts.pic_mut().set_masked(expected_irq, false);
     }
     assert_eq!(pc.interrupts.borrow().pic().get_pending_vector(), None);
 
     // Create a router state where 00:00.0 INTA# is asserted, but apply it via `load_state`
     // (which cannot drive the sink). This simulates the restore ordering hazard.
-    let bdf = PciBdf::new(0, 0, 0);
     let mut asserted_router = PciIntxRouter::new(PciIntxRouterConfig::default());
     let mut null_sink = NullSink;
     asserted_router.assert_intx(bdf, PciInterruptPin::IntA, &mut null_sink);
@@ -107,7 +114,7 @@ fn snapshot_restore_redrives_pci_intx_levels_to_interrupt_sink() {
         .pic()
         .vector_to_irq(pending)
         .expect("pending vector should decode to an IRQ number");
-    assert_eq!(irq, 10);
+    assert_eq!(irq, expected_irq);
 }
 
 #[test]

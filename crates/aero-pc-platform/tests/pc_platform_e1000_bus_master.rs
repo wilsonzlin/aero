@@ -1,5 +1,5 @@
 use aero_devices::pci::profile::NIC_E1000_82540EM;
-use aero_devices::pci::{PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
+use aero_devices::pci::{PciInterruptPin, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
 use aero_net_e1000::{ICR_RXT0, ICR_TXDW};
 use aero_pc_platform::PcPlatform;
 use memory::MemoryBus as _;
@@ -59,6 +59,8 @@ fn pc_platform_gates_e1000_dma_on_pci_bus_master_enable() {
     let mut pc = PcPlatform::new_with_e1000(2 * 1024 * 1024);
     let bdf = NIC_E1000_82540EM.bdf;
 
+    let expected_irq = u8::try_from(pc.pci_intx.gsi_for_intx(bdf, PciInterruptPin::IntA)).unwrap();
+
     let command = read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04) & 0xffff;
     assert_ne!(
         command & 0x2,
@@ -74,12 +76,14 @@ fn pc_platform_gates_e1000_dma_on_pci_bus_master_enable() {
     let bar0_base = read_e1000_bar0_base(&mut pc);
     assert_ne!(bar0_base, 0, "BAR0 should be assigned during BIOS POST");
 
-    // Unmask IRQ2 (cascade) and IRQ11 so we can observe E1000 INTx via the legacy PIC.
+    // Unmask the routed IRQ (and cascade) so we can observe E1000 INTx via the legacy PIC.
     {
         let mut interrupts = pc.interrupts.borrow_mut();
         interrupts.pic_mut().set_offsets(0x20, 0x28);
-        interrupts.pic_mut().set_masked(2, false);
-        interrupts.pic_mut().set_masked(11, false);
+        if expected_irq >= 8 {
+            interrupts.pic_mut().set_masked(2, false);
+        }
+        interrupts.pic_mut().set_masked(expected_irq, false);
     }
 
     // RX ring: 2 descriptors => 1 usable due to head/tail semantics.
@@ -138,20 +142,22 @@ fn pc_platform_gates_e1000_dma_on_pci_bus_master_enable() {
         .borrow()
         .pic()
         .get_pending_vector()
-        .expect("IRQ11 should be pending after enabling bus mastering");
+        .unwrap_or_else(|| panic!("IRQ{expected_irq} should be pending after enabling bus mastering"));
     let irq = pc
         .interrupts
         .borrow()
         .pic()
         .vector_to_irq(pending)
         .expect("pending vector should decode to an IRQ number");
-    assert_eq!(irq, 11);
+    assert_eq!(irq, expected_irq);
 }
 
 #[test]
 fn pc_platform_gates_e1000_tx_dma_on_pci_bus_master_enable() {
     let mut pc = PcPlatform::new_with_e1000(2 * 1024 * 1024);
     let bdf = NIC_E1000_82540EM.bdf;
+
+    let expected_irq = u8::try_from(pc.pci_intx.gsi_for_intx(bdf, PciInterruptPin::IntA)).unwrap();
 
     let command = read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04) & 0xffff;
     assert_ne!(
@@ -168,12 +174,14 @@ fn pc_platform_gates_e1000_tx_dma_on_pci_bus_master_enable() {
     let bar0_base = read_e1000_bar0_base(&mut pc);
     assert_ne!(bar0_base, 0, "BAR0 should be assigned during BIOS POST");
 
-    // Unmask IRQ2 (cascade) and IRQ11 so we can observe E1000 INTx via the legacy PIC.
+    // Unmask the routed IRQ (and cascade) so we can observe E1000 INTx via the legacy PIC.
     {
         let mut interrupts = pc.interrupts.borrow_mut();
         interrupts.pic_mut().set_offsets(0x20, 0x28);
-        interrupts.pic_mut().set_masked(2, false);
-        interrupts.pic_mut().set_masked(11, false);
+        if expected_irq >= 8 {
+            interrupts.pic_mut().set_masked(2, false);
+        }
+        interrupts.pic_mut().set_masked(expected_irq, false);
     }
 
     // TX ring: 4 descriptors at 0x1000.
@@ -237,14 +245,14 @@ fn pc_platform_gates_e1000_tx_dma_on_pci_bus_master_enable() {
         .borrow()
         .pic()
         .get_pending_vector()
-        .expect("IRQ11 should be pending after enabling bus mastering");
+        .unwrap_or_else(|| panic!("IRQ{expected_irq} should be pending after enabling bus mastering"));
     let irq = pc
         .interrupts
         .borrow()
         .pic()
         .vector_to_irq(pending)
         .expect("pending vector should decode to an IRQ number");
-    assert_eq!(irq, 11);
+    assert_eq!(irq, expected_irq);
 }
 
 #[test]

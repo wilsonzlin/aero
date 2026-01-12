@@ -1,6 +1,7 @@
 use aero_devices::pci::profile::{VIRTIO_BLK, VIRTIO_CAP_COMMON, VIRTIO_CAP_DEVICE, VIRTIO_CAP_ISR, VIRTIO_CAP_NOTIFY};
 use aero_devices::pci::{
-    PciInterruptPin, PciResourceAllocatorConfig, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT,
+    PciInterruptPin, PciIntxRouter, PciIntxRouterConfig, PciResourceAllocatorConfig, PCI_CFG_ADDR_PORT,
+    PCI_CFG_DATA_PORT,
 };
 use aero_io_snapshot::io::state::IoSnapshot;
 use aero_interrupts::apic::IOAPIC_MMIO_BASE;
@@ -75,10 +76,15 @@ fn pc_platform_sets_virtio_blk_intx_line_and_pin_registers() {
     let bdf = VIRTIO_BLK.bdf;
 
     let line = read_cfg_u8(&mut pc, bdf.bus, bdf.device, bdf.function, 0x3c);
-    assert_eq!(line, 11, "00:09.0 INTA# should route to GSI/IRQ11 by default");
-
     let pin = read_cfg_u8(&mut pc, bdf.bus, bdf.device, bdf.function, 0x3d);
-    assert_eq!(pin, 1, "Interrupt Pin should be INTA#");
+    let expected_pin = VIRTIO_BLK
+        .interrupt_pin
+        .expect("profile should provide interrupt pin");
+    assert_eq!(pin, expected_pin.to_config_u8());
+
+    let router = PciIntxRouter::new(PciIntxRouterConfig::default());
+    let expected_gsi = router.gsi_for_intx(bdf, expected_pin);
+    assert_eq!(line, u8::try_from(expected_gsi).unwrap());
 }
 
 #[test]
@@ -1057,12 +1063,16 @@ fn pc_platform_virtio_blk_processes_queue_and_raises_intx() {
     assert_ne!(bar0_base, 0, "BAR0 should be assigned during BIOS POST");
     assert_eq!(bar0_base % 0x4000, 0, "BAR0 should be 0x4000-aligned");
 
-    // Unmask IRQ2 (cascade) and IRQ11 so we can observe virtio-blk INTx via the legacy PIC.
+    let expected_irq = u8::try_from(pc.pci_intx.gsi_for_intx(bdf, PciInterruptPin::IntA)).unwrap();
+
+    // Unmask the routed IRQ (and cascade) so we can observe virtio-blk INTx via the legacy PIC.
     {
         let mut interrupts = pc.interrupts.borrow_mut();
         interrupts.pic_mut().set_offsets(0x20, 0x28);
-        interrupts.pic_mut().set_masked(2, false);
-        interrupts.pic_mut().set_masked(11, false);
+        if expected_irq >= 8 {
+            interrupts.pic_mut().set_masked(2, false);
+        }
+        interrupts.pic_mut().set_masked(expected_irq, false);
     }
 
     // Keep bus mastering disabled initially so we can verify that:
@@ -1193,14 +1203,14 @@ fn pc_platform_virtio_blk_processes_queue_and_raises_intx() {
         .borrow()
         .pic()
         .get_pending_vector()
-        .expect("IRQ11 should be pending after processing virtio-blk");
+        .unwrap_or_else(|| panic!("IRQ{expected_irq} should be pending after processing virtio-blk"));
     let irq = pc
         .interrupts
         .borrow()
         .pic()
         .vector_to_irq(pending)
         .expect("pending vector should decode to an IRQ number");
-    assert_eq!(irq, 11);
+    assert_eq!(irq, expected_irq);
 
     // Reading the ISR register should clear the interrupt level.
     let isr = pc.memory.read_u8(bar0_base + 0x2000);

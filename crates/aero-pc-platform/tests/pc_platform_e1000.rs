@@ -192,13 +192,15 @@ fn pc_platform_sets_e1000_intx_line_and_pin_registers() {
     let bdf = NIC_E1000_82540EM.bdf;
 
     let line = read_cfg_u8(&mut pc, bdf.bus, bdf.device, bdf.function, 0x3c);
-    assert_eq!(
-        line, 11,
-        "00:05.0 INTA# should route to GSI/IRQ11 by default"
-    );
-
     let pin = read_cfg_u8(&mut pc, bdf.bus, bdf.device, bdf.function, 0x3d);
-    assert_eq!(pin, 1, "Interrupt Pin should be INTA#");
+    let expected_pin = NIC_E1000_82540EM
+        .interrupt_pin
+        .expect("profile should provide interrupt pin");
+    assert_eq!(pin, expected_pin.to_config_u8());
+
+    let router = PciIntxRouter::new(PciIntxRouterConfig::default());
+    let expected_gsi = router.gsi_for_intx(bdf, expected_pin);
+    assert_eq!(line, u8::try_from(expected_gsi).unwrap());
 }
 
 #[test]
@@ -488,12 +490,16 @@ fn pc_platform_respects_pci_interrupt_disable_bit_for_e1000_intx() {
     let bdf = NIC_E1000_82540EM.bdf;
     let bar0_base = read_e1000_bar0_base(&mut pc);
 
-    // Unmask IRQ2 (cascade) and IRQ11 so we can observe INTx via the legacy PIC.
+    let expected_irq = u8::try_from(pc.pci_intx.gsi_for_intx(bdf, PciInterruptPin::IntA)).unwrap();
+
+    // Unmask the routed IRQ (and cascade) so we can observe INTx via the legacy PIC.
     {
         let mut interrupts = pc.interrupts.borrow_mut();
         interrupts.pic_mut().set_offsets(0x20, 0x28);
-        interrupts.pic_mut().set_masked(2, false);
-        interrupts.pic_mut().set_masked(11, false);
+        if expected_irq >= 8 {
+            interrupts.pic_mut().set_masked(2, false);
+        }
+        interrupts.pic_mut().set_masked(expected_irq, false);
     }
     assert_eq!(pc.interrupts.borrow().pic().get_pending_vector(), None);
 
@@ -526,14 +532,14 @@ fn pc_platform_respects_pci_interrupt_disable_bit_for_e1000_intx() {
         .borrow()
         .pic()
         .get_pending_vector()
-        .expect("IRQ11 should be pending after re-enabling INTx");
+        .unwrap_or_else(|| panic!("IRQ{expected_irq} should be pending after re-enabling INTx"));
     let irq = pc
         .interrupts
         .borrow()
         .pic()
         .vector_to_irq(pending)
         .expect("pending vector should decode to an IRQ number");
-    assert_eq!(irq, 11);
+    assert_eq!(irq, expected_irq);
 }
 
 #[test]
@@ -542,12 +548,16 @@ fn pc_platform_resyncs_e1000_pci_command_before_polling_intx_level() {
     let bdf = NIC_E1000_82540EM.bdf;
     let bar0_base = read_e1000_bar0_base(&mut pc);
 
-    // Unmask IRQ2 (cascade) and IRQ11 so we can observe INTx via the legacy PIC.
+    let expected_irq = u8::try_from(pc.pci_intx.gsi_for_intx(bdf, PciInterruptPin::IntA)).unwrap();
+
+    // Unmask the routed IRQ (and cascade) so we can observe INTx via the legacy PIC.
     {
         let mut interrupts = pc.interrupts.borrow_mut();
         interrupts.pic_mut().set_offsets(0x20, 0x28);
-        interrupts.pic_mut().set_masked(2, false);
-        interrupts.pic_mut().set_masked(11, false);
+        if expected_irq >= 8 {
+            interrupts.pic_mut().set_masked(2, false);
+        }
+        interrupts.pic_mut().set_masked(expected_irq, false);
     }
     assert_eq!(pc.interrupts.borrow().pic().get_pending_vector(), None);
 
@@ -605,7 +615,7 @@ fn pc_platform_resyncs_e1000_pci_command_before_polling_intx_level() {
             .pic()
             .get_pending_vector()
             .and_then(|v| pc.interrupts.borrow().pic().vector_to_irq(v)),
-        Some(11)
+        Some(expected_irq)
     );
 }
 

@@ -34,6 +34,12 @@ fn st010_ahci_read_dma_ext_and_intx_routing() {
     pc.attach_ahci_disk_port0(Box::new(disk)).unwrap();
 
     let bdf = profile::SATA_AHCI_ICH9.bdf;
+    let expected_irq = {
+        let pin = profile::SATA_AHCI_ICH9
+            .interrupt_pin
+            .expect("profile should provide interrupt pin");
+        u8::try_from(pc.pci_intx.gsi_for_intx(bdf, pin)).unwrap()
+    };
 
     // PCI enumeration.
     let id = pci_cfg_read_u32(&mut pc, bdf, 0x00);
@@ -49,11 +55,11 @@ fn st010_ahci_read_dma_ext_and_intx_routing() {
     assert_ne!(bar5.base, 0);
     assert_eq!(bar5.base % 0x2000, 0);
 
-    // Interrupt Line should match the router-selected GSI (device 2 => PIRQ C => IRQ12).
-    assert_eq!(pci_cfg_read_u8(&mut pc, bdf, 0x3C), 12);
+    // Interrupt Line should match the router-selected GSI.
+    assert_eq!(pci_cfg_read_u8(&mut pc, bdf, 0x3C), expected_irq);
 
-    // Observe INTx via the legacy PIC (unmask cascade + IRQ12).
-    unmask_pic_irq(&mut pc, 12);
+    // Observe INTx via the legacy PIC (unmask cascade + routed IRQ).
+    unmask_pic_irq(&mut pc, expected_irq);
 
     // Allow the controller to DMA (bus mastering).
     let mut cmd = pci_cfg_read_u16(&mut pc, bdf, 0x04);
@@ -149,7 +155,7 @@ fn st010_ahci_read_dma_ext_and_intx_routing() {
     // Verify IRQ level and routing.
     assert!(pc.ahci.as_ref().unwrap().borrow().intx_level());
     pc.poll_pci_intx_lines();
-    assert_eq!(pic_pending_irq(&pc), Some(12));
+    assert_eq!(pic_pending_irq(&pc), Some(expected_irq));
 }
 
 #[test]
@@ -163,6 +169,12 @@ fn st010_nvme_admin_identify_and_intx_routing() {
     );
 
     let bdf = profile::NVME_CONTROLLER.bdf;
+    let expected_irq = {
+        let pin = profile::NVME_CONTROLLER
+            .interrupt_pin
+            .expect("profile should provide interrupt pin");
+        u8::try_from(pc.pci_intx.gsi_for_intx(bdf, pin)).unwrap()
+    };
 
     // PCI enumeration.
     let id = pci_cfg_read_u32(&mut pc, bdf, 0x00);
@@ -178,9 +190,9 @@ fn st010_nvme_admin_identify_and_intx_routing() {
     assert_ne!(bar0.base, 0);
     assert_eq!(bar0.base % 0x4000, 0);
 
-    // Interrupt Line should match router-selected GSI (device 3 => PIRQ D => IRQ13).
-    assert_eq!(pci_cfg_read_u8(&mut pc, bdf, 0x3C), 13);
-    unmask_pic_irq(&mut pc, 13);
+    // Interrupt Line should match router-selected GSI.
+    assert_eq!(pci_cfg_read_u8(&mut pc, bdf, 0x3C), expected_irq);
+    unmask_pic_irq(&mut pc, expected_irq);
 
     // Enable bus mastering (DMA).
     let mut cmd = pci_cfg_read_u16(&mut pc, bdf, 0x04);
@@ -227,7 +239,7 @@ fn st010_nvme_admin_identify_and_intx_routing() {
 
     assert!(pc.nvme.as_ref().unwrap().borrow().irq_level());
     pc.poll_pci_intx_lines();
-    assert_eq!(pic_pending_irq(&pc), Some(13));
+    assert_eq!(pic_pending_irq(&pc), Some(expected_irq));
 }
 
 #[test]
@@ -241,6 +253,12 @@ fn st010_virtio_blk_read_write_and_intx_routing() {
     );
 
     let bdf = profile::VIRTIO_BLK.bdf;
+    let expected_irq = {
+        let pin = profile::VIRTIO_BLK
+            .interrupt_pin
+            .expect("profile should provide interrupt pin");
+        u8::try_from(pc.pci_intx.gsi_for_intx(bdf, pin)).unwrap()
+    };
 
     // PCI enumeration.
     let id = pci_cfg_read_u32(&mut pc, bdf, 0x00);
@@ -256,9 +274,9 @@ fn st010_virtio_blk_read_write_and_intx_routing() {
     assert_ne!(bar0.base, 0);
     assert_eq!(bar0.base % 0x4000, 0);
 
-    // Interrupt Line should match router-selected GSI (device 9 => PIRQ B => IRQ11).
-    assert_eq!(pci_cfg_read_u8(&mut pc, bdf, 0x3C), 11);
-    unmask_pic_irq(&mut pc, 11);
+    // Interrupt Line should match router-selected GSI.
+    assert_eq!(pci_cfg_read_u8(&mut pc, bdf, 0x3C), expected_irq);
+    unmask_pic_irq(&mut pc, expected_irq);
 
     // Enable bus mastering for DMA and MMIO decoding.
     let mut cmd = pci_cfg_read_u16(&mut pc, bdf, 0x04);
@@ -385,7 +403,7 @@ fn st010_virtio_blk_read_write_and_intx_routing() {
 
     assert!(pc.virtio_blk.as_ref().unwrap().borrow().irq_level());
     pc.poll_pci_intx_lines();
-    assert_eq!(pic_pending_irq(&pc), Some(11));
+    assert_eq!(pic_pending_irq(&pc), Some(expected_irq));
 
     // Clear virtio ISR (lowers legacy IRQ) and propagate the deassert through INTx routing so the
     // second request can trigger a fresh edge for the PIC.
@@ -729,6 +747,12 @@ fn st010_ahci_snapshot_roundtrip_preserves_intx_level() {
     pc.attach_ahci_disk_port0(Box::new(disk)).unwrap();
 
     let bdf = profile::SATA_AHCI_ICH9.bdf;
+    let expected_irq = {
+        let pin = profile::SATA_AHCI_ICH9
+            .interrupt_pin
+            .expect("profile should provide interrupt pin");
+        u8::try_from(pc.pci_intx.gsi_for_intx(bdf, pin)).unwrap()
+    };
     let bar5 = pci_read_bar(&mut pc, bdf, 5);
 
     // Enable MMIO + bus mastering.
@@ -737,7 +761,7 @@ fn st010_ahci_snapshot_roundtrip_preserves_intx_level() {
     pci_cfg_write_u16(&mut pc, bdf, 0x04, cmd);
 
     // Observe INTx via the PIC.
-    unmask_pic_irq(&mut pc, 12);
+    unmask_pic_irq(&mut pc, expected_irq);
 
     // Minimal AHCI command (same programming model as the main AHCI test).
     let mut alloc = GuestAllocator::new(2 * 1024 * 1024, 0x1000);
@@ -811,7 +835,7 @@ fn st010_ahci_snapshot_roundtrip_preserves_intx_level() {
 
     pc.process_ahci();
     pc.poll_pci_intx_lines();
-    assert_eq!(pic_pending_irq(&pc), Some(12));
+    assert_eq!(pic_pending_irq(&pc), Some(expected_irq));
 
     let ahci_state = pc
         .ahci
@@ -844,7 +868,7 @@ fn st010_ahci_snapshot_roundtrip_preserves_intx_level() {
         .unwrap();
     pc2.attach_ahci_disk_port0(Box::new(disk2)).unwrap();
 
-    unmask_pic_irq(&mut pc2, 12);
+    unmask_pic_irq(&mut pc2, expected_irq);
     let mut cmd2 = pci_cfg_read_u16(&mut pc2, bdf, 0x04);
     cmd2 |= 0x0006;
     pci_cfg_write_u16(&mut pc2, bdf, 0x04, cmd2);
@@ -852,7 +876,7 @@ fn st010_ahci_snapshot_roundtrip_preserves_intx_level() {
     pc2.poll_pci_intx_lines();
     assert_eq!(
         pic_pending_irq(&pc2),
-        Some(12),
+        Some(expected_irq),
         "AHCI INTx should remain asserted after snapshot/restore"
     );
 }
@@ -870,10 +894,16 @@ fn st010_nvme_snapshot_roundtrip_preserves_intx_level() {
     );
 
     let bdf = profile::NVME_CONTROLLER.bdf;
+    let expected_irq = {
+        let pin = profile::NVME_CONTROLLER
+            .interrupt_pin
+            .expect("profile should provide interrupt pin");
+        u8::try_from(pc.pci_intx.gsi_for_intx(bdf, pin)).unwrap()
+    };
     let bar0 = pci_read_bar(&mut pc, bdf, 0);
     assert_eq!(bar0.kind, BarKind::Mem64);
 
-    unmask_pic_irq(&mut pc, 13);
+    unmask_pic_irq(&mut pc, expected_irq);
 
     let mut cmd = pci_cfg_read_u16(&mut pc, bdf, 0x04);
     cmd |= 0x0006; // MEM + BUSMASTER
@@ -899,7 +929,7 @@ fn st010_nvme_snapshot_roundtrip_preserves_intx_level() {
     pc.process_nvme();
 
     pc.poll_pci_intx_lines();
-    assert_eq!(pic_pending_irq(&pc), Some(13));
+    assert_eq!(pic_pending_irq(&pc), Some(expected_irq));
 
     let nvme_state = pc
         .nvme
@@ -924,7 +954,7 @@ fn st010_nvme_snapshot_roundtrip_preserves_intx_level() {
         .load_state(&nvme_state)
         .unwrap();
 
-    unmask_pic_irq(&mut pc2, 13);
+    unmask_pic_irq(&mut pc2, expected_irq);
     let mut cmd2 = pci_cfg_read_u16(&mut pc2, bdf, 0x04);
     cmd2 |= 0x0006;
     pci_cfg_write_u16(&mut pc2, bdf, 0x04, cmd2);
@@ -932,7 +962,7 @@ fn st010_nvme_snapshot_roundtrip_preserves_intx_level() {
     pc2.poll_pci_intx_lines();
     assert_eq!(
         pic_pending_irq(&pc2),
-        Some(13),
+        Some(expected_irq),
         "NVMe INTx should remain asserted after snapshot/restore"
     );
 }

@@ -296,12 +296,16 @@ fn pc_platform_nvme_admin_identify_produces_completion_and_intx() {
     // Enable Memory Space + Bus Mastering so the platform allows DMA processing.
     write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0006);
 
-    // Unmask IRQ2 (cascade) and the routed NVMe INTx IRQ (device 3 INTA# -> PIRQD -> GSI/IRQ13).
+    let expected_irq = u8::try_from(pc.pci_intx.gsi_for_intx(bdf, PciInterruptPin::IntA)).unwrap();
+
+    // Unmask the routed NVMe INTx IRQ (and cascade) so we can observe INTx via the legacy PIC.
     {
         let mut interrupts = pc.interrupts.borrow_mut();
         interrupts.pic_mut().set_offsets(0x20, 0x28);
-        interrupts.pic_mut().set_masked(2, false);
-        interrupts.pic_mut().set_masked(13, false);
+        if expected_irq >= 8 {
+            interrupts.pic_mut().set_masked(2, false);
+        }
+        interrupts.pic_mut().set_masked(expected_irq, false);
     }
 
     let bar0_base = read_nvme_bar0_base(&mut pc);
@@ -359,14 +363,14 @@ fn pc_platform_nvme_admin_identify_produces_completion_and_intx() {
         .borrow()
         .pic()
         .get_pending_vector()
-        .expect("NVMe INTx should be pending via IRQ13");
+        .unwrap_or_else(|| panic!("NVMe INTx should be pending via IRQ{expected_irq}"));
     let irq = pc
         .interrupts
         .borrow()
         .pic()
         .vector_to_irq(pending)
         .expect("pending vector should decode to an IRQ number");
-    assert_eq!(irq, 13);
+    assert_eq!(irq, expected_irq);
 }
 
 #[test]
@@ -462,12 +466,16 @@ fn pc_platform_respects_pci_interrupt_disable_bit_for_nvme_intx() {
     // Enable Memory Space + Bus Mastering so the platform allows DMA processing.
     write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0006);
 
-    // Unmask IRQ2 (cascade) and the routed NVMe INTx IRQ (device 3 INTA# -> PIRQD -> GSI/IRQ13).
+    let expected_irq = u8::try_from(pc.pci_intx.gsi_for_intx(bdf, PciInterruptPin::IntA)).unwrap();
+
+    // Unmask the routed NVMe INTx IRQ (and cascade) so we can observe INTx via the legacy PIC.
     {
         let mut interrupts = pc.interrupts.borrow_mut();
         interrupts.pic_mut().set_offsets(0x20, 0x28);
-        interrupts.pic_mut().set_masked(2, false);
-        interrupts.pic_mut().set_masked(13, false);
+        if expected_irq >= 8 {
+            interrupts.pic_mut().set_masked(2, false);
+        }
+        interrupts.pic_mut().set_masked(expected_irq, false);
     }
 
     let bar0_base = read_nvme_bar0_base(&mut pc);
@@ -503,14 +511,14 @@ fn pc_platform_respects_pci_interrupt_disable_bit_for_nvme_intx() {
         .borrow()
         .pic()
         .get_pending_vector()
-        .expect("NVMe INTx should be pending via IRQ13");
+        .unwrap_or_else(|| panic!("NVMe INTx should be pending via IRQ{expected_irq}"));
     let irq = pc
         .interrupts
         .borrow()
         .pic()
         .vector_to_irq(pending)
         .expect("pending vector should decode to an IRQ number");
-    assert_eq!(irq, 13);
+    assert_eq!(irq, expected_irq);
 
     // Consume and EOI the interrupt so subsequent assertions about pending vectors are not
     // affected by the edge-triggered PIC latching semantics.
@@ -543,7 +551,7 @@ fn pc_platform_respects_pci_interrupt_disable_bit_for_nvme_intx() {
             .pic()
             .get_pending_vector()
             .and_then(|v| pc.interrupts.borrow().pic().vector_to_irq(v)),
-        Some(13)
+        Some(expected_irq)
     );
 }
 
@@ -555,12 +563,16 @@ fn pc_platform_resyncs_nvme_pci_command_before_polling_intx_level() {
     // Enable Memory Space + Bus Mastering so the platform allows DMA processing.
     write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0006);
 
-    // Unmask IRQ2 (cascade) and the routed NVMe INTx IRQ (device 3 INTA# -> PIRQD -> GSI/IRQ13).
+    let expected_irq = u8::try_from(pc.pci_intx.gsi_for_intx(bdf, PciInterruptPin::IntA)).unwrap();
+
+    // Unmask the routed NVMe INTx IRQ (and cascade) so we can observe INTx via the legacy PIC.
     {
         let mut interrupts = pc.interrupts.borrow_mut();
         interrupts.pic_mut().set_offsets(0x20, 0x28);
-        interrupts.pic_mut().set_masked(2, false);
-        interrupts.pic_mut().set_masked(13, false);
+        if expected_irq >= 8 {
+            interrupts.pic_mut().set_masked(2, false);
+        }
+        interrupts.pic_mut().set_masked(expected_irq, false);
     }
 
     let bar0_base = read_nvme_bar0_base(&mut pc);
@@ -631,7 +643,7 @@ fn pc_platform_resyncs_nvme_pci_command_before_polling_intx_level() {
             .pic()
             .get_pending_vector()
             .and_then(|v| pc.interrupts.borrow().pic().vector_to_irq(v)),
-        Some(13)
+        Some(expected_irq)
     );
 }
 
@@ -640,12 +652,16 @@ fn pc_platform_gates_nvme_dma_on_pci_bus_master_enable() {
     let mut pc = PcPlatform::new_with_nvme(2 * 1024 * 1024);
     let bdf = NVME_CONTROLLER.bdf;
 
-    // Program PIC offsets and unmask IRQ2 (cascade) + IRQ13 (device 3 INTA# -> PIRQD -> IRQ13).
+    let expected_irq = u8::try_from(pc.pci_intx.gsi_for_intx(bdf, PciInterruptPin::IntA)).unwrap();
+
+    // Program PIC offsets and unmask the routed IRQ (and cascade).
     {
         let mut interrupts = pc.interrupts.borrow_mut();
         interrupts.pic_mut().set_offsets(0x20, 0x28);
-        interrupts.pic_mut().set_masked(2, false);
-        interrupts.pic_mut().set_masked(13, false);
+        if expected_irq >= 8 {
+            interrupts.pic_mut().set_masked(2, false);
+        }
+        interrupts.pic_mut().set_masked(expected_irq, false);
     }
 
     let bar0_base = read_nvme_bar0_base(&mut pc);
@@ -732,14 +748,14 @@ fn pc_platform_gates_nvme_dma_on_pci_bus_master_enable() {
         .borrow()
         .pic()
         .get_pending_vector()
-        .expect("NVMe INTx should be pending via IRQ13");
+        .unwrap_or_else(|| panic!("NVMe INTx should be pending via IRQ{expected_irq}"));
     let irq = pc
         .interrupts
         .borrow()
         .pic()
         .vector_to_irq(pending)
         .expect("pending vector should decode to an IRQ number");
-    assert_eq!(irq, 13);
+    assert_eq!(irq, expected_irq);
 }
 
 #[test]

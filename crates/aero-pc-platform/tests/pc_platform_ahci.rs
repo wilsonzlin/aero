@@ -291,13 +291,16 @@ fn pc_platform_gates_ahci_dma_on_pci_bus_master_enable() {
     pc.attach_ahci_disk_port0(Box::new(disk)).unwrap();
 
     let bdf = SATA_AHCI_ICH9.bdf;
+    let expected_irq = u8::try_from(pc.pci_intx.gsi_for_intx(bdf, PciInterruptPin::IntA)).unwrap();
 
-    // Unmask IRQ2 (cascade) and IRQ12 so we can observe INTx via the legacy PIC.
+    // Unmask the routed IRQ (and cascade) so we can observe INTx via the legacy PIC.
     {
         let mut interrupts = pc.interrupts.borrow_mut();
         interrupts.pic_mut().set_offsets(0x20, 0x28);
-        interrupts.pic_mut().set_masked(2, false);
-        interrupts.pic_mut().set_masked(12, false);
+        if expected_irq >= 8 {
+            interrupts.pic_mut().set_masked(2, false);
+        }
+        interrupts.pic_mut().set_masked(expected_irq, false);
     }
 
     // Reprogram BAR5 within the platform's PCI MMIO window for determinism.
@@ -366,14 +369,16 @@ fn pc_platform_gates_ahci_dma_on_pci_bus_master_enable() {
         .borrow()
         .pic()
         .get_pending_vector()
-        .expect("IRQ12 should be pending after IDENTIFY DMA completion");
+        .unwrap_or_else(|| {
+            panic!("IRQ{expected_irq} should be pending after IDENTIFY DMA completion")
+        });
     let irq = pc
         .interrupts
         .borrow()
         .pic()
         .vector_to_irq(pending)
         .expect("pending vector should decode to an IRQ number");
-    assert_eq!(irq, 12);
+    assert_eq!(irq, expected_irq);
 
     // Consume and EOI the interrupt so subsequent assertions about pending vectors are not
     // affected by the edge-triggered PIC latching semantics.
@@ -443,13 +448,16 @@ fn pc_platform_ahci_dma_and_intx_routing_work() {
     pc.attach_ahci_disk_port0(Box::new(disk)).unwrap();
 
     let bdf = SATA_AHCI_ICH9.bdf;
+    let expected_irq = u8::try_from(pc.pci_intx.gsi_for_intx(bdf, PciInterruptPin::IntA)).unwrap();
 
-    // Unmask IRQ2 (cascade) and IRQ12 so we can observe INTx via the legacy PIC.
+    // Unmask the routed IRQ (and cascade) so we can observe INTx via the legacy PIC.
     {
         let mut interrupts = pc.interrupts.borrow_mut();
         interrupts.pic_mut().set_offsets(0x20, 0x28);
-        interrupts.pic_mut().set_masked(2, false);
-        interrupts.pic_mut().set_masked(12, false);
+        if expected_irq >= 8 {
+            interrupts.pic_mut().set_masked(2, false);
+        }
+        interrupts.pic_mut().set_masked(expected_irq, false);
     }
 
     // Reprogram BAR5 within the platform's PCI MMIO window.
@@ -521,14 +529,14 @@ fn pc_platform_ahci_dma_and_intx_routing_work() {
         .borrow()
         .pic()
         .get_pending_vector()
-        .expect("IRQ12 should be pending after INTx routing");
+        .unwrap_or_else(|| panic!("IRQ{expected_irq} should be pending after INTx routing"));
     let irq = pc
         .interrupts
         .borrow()
         .pic()
         .vector_to_irq(pending)
         .expect("pending vector should decode to an IRQ number");
-    assert_eq!(irq, 12);
+    assert_eq!(irq, expected_irq);
 
     // Consume and EOI the interrupt so subsequent assertions about pending vectors are not
     // affected by the edge-triggered PIC latching semantics.
@@ -583,7 +591,7 @@ fn pc_platform_ahci_dma_and_intx_routing_work() {
             .pic()
             .get_pending_vector()
             .and_then(|v| pc.interrupts.borrow().pic().vector_to_irq(v)),
-        Some(12)
+        Some(expected_irq)
     );
 }
 
@@ -592,12 +600,16 @@ fn pc_platform_resyncs_ahci_pci_command_before_polling_intx_level() {
     let mut pc = PcPlatform::new_with_ahci(2 * 1024 * 1024);
     let bdf = SATA_AHCI_ICH9.bdf;
 
-    // Unmask IRQ2 (cascade) and IRQ12 so we can observe INTx via the legacy PIC.
+    let expected_irq = u8::try_from(pc.pci_intx.gsi_for_intx(bdf, PciInterruptPin::IntA)).unwrap();
+
+    // Unmask the routed IRQ (and cascade) so we can observe INTx via the legacy PIC.
     {
         let mut interrupts = pc.interrupts.borrow_mut();
         interrupts.pic_mut().set_offsets(0x20, 0x28);
-        interrupts.pic_mut().set_masked(2, false);
-        interrupts.pic_mut().set_masked(12, false);
+        if expected_irq >= 8 {
+            interrupts.pic_mut().set_masked(2, false);
+        }
+        interrupts.pic_mut().set_masked(expected_irq, false);
     }
 
     let bar5_base = read_ahci_bar5_base(&mut pc);
@@ -683,7 +695,7 @@ fn pc_platform_resyncs_ahci_pci_command_before_polling_intx_level() {
             .pic()
             .get_pending_vector()
             .and_then(|v| pc.interrupts.borrow().pic().vector_to_irq(v)),
-        Some(12)
+        Some(expected_irq)
     );
 }
 

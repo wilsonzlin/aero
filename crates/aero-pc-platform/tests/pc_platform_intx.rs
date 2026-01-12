@@ -50,12 +50,17 @@ fn pc_platform_polls_all_pci_intx_sources_even_when_hda_is_disabled() {
         move |_pc| level.get()
     });
 
-    // Unmask IRQ2 (cascade) and IRQ11 so we can observe INTx via the legacy PIC.
+    let expected_irq =
+        u8::try_from(pc.pci_intx.gsi_for_intx(bdf, PciInterruptPin::IntA)).unwrap();
+
+    // Unmask the routed IRQ (and cascade) so we can observe INTx via the legacy PIC.
     {
         let mut interrupts = pc.interrupts.borrow_mut();
         interrupts.pic_mut().set_offsets(0x20, 0x28);
-        interrupts.pic_mut().set_masked(2, false);
-        interrupts.pic_mut().set_masked(11, false);
+        if expected_irq >= 8 {
+            interrupts.pic_mut().set_masked(2, false);
+        }
+        interrupts.pic_mut().set_masked(expected_irq, false);
     }
     assert_eq!(pc.interrupts.borrow().pic().get_pending_vector(), None);
 
@@ -66,12 +71,12 @@ fn pc_platform_polls_all_pci_intx_sources_even_when_hda_is_disabled() {
         .borrow()
         .pic()
         .get_pending_vector()
-        .expect("IRQ11 should be pending after INTx routing");
+        .unwrap_or_else(|| panic!("IRQ{expected_irq} should be pending after INTx routing"));
     let irq = pc
         .interrupts
         .borrow()
         .pic()
         .vector_to_irq(pending)
         .expect("pending vector should decode to an IRQ number");
-    assert_eq!(irq, 11);
+    assert_eq!(irq, expected_irq);
 }
