@@ -1,3 +1,8 @@
+#[cfg(target_arch = "wasm32")]
+use std::cell::RefCell;
+#[cfg(target_arch = "wasm32")]
+use std::rc::Rc;
+#[cfg(not(target_arch = "wasm32"))]
 use std::sync::{Arc, Mutex};
 
 use aero_storage::{MemBackend, RawDisk, VirtualDisk, SECTOR_SIZE};
@@ -16,11 +21,23 @@ use crate::MachineError;
 /// See `docs/20-storage-trait-consolidation.md`.
 #[derive(Clone)]
 pub struct SharedDisk {
+    #[cfg(target_arch = "wasm32")]
+    inner: Rc<RefCell<Box<dyn VirtualDisk>>>,
+    #[cfg(not(target_arch = "wasm32"))]
     inner: Arc<Mutex<Box<dyn VirtualDisk + Send>>>,
 }
 
 impl SharedDisk {
     /// Construct a new shared disk wrapper around an existing [`VirtualDisk`] backend.
+    #[cfg(target_arch = "wasm32")]
+    pub fn new(backend: Box<dyn VirtualDisk>) -> Self {
+        Self {
+            inner: Rc::new(RefCell::new(backend)),
+        }
+    }
+
+    /// Construct a new shared disk wrapper around an existing [`VirtualDisk`] backend.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn new(backend: Box<dyn VirtualDisk + Send>) -> Self {
         Self {
             inner: Arc::new(Mutex::new(backend)),
@@ -40,6 +57,20 @@ impl SharedDisk {
     /// Note: for [`crate::Machine`], prefer [`crate::Machine::set_disk_backend`] so any storage
     /// controllers that derive ATA IDENTIFY geometry from disk capacity can be rebuilt when the
     /// backend changes.
+    #[cfg(target_arch = "wasm32")]
+    pub fn set_backend(&self, backend: Box<dyn VirtualDisk>) {
+        *self
+            .inner
+            .try_borrow_mut()
+            .expect("shared disk refcell should not already be borrowed") = backend;
+    }
+
+    /// Replace the underlying disk backend for **all** shared handles.
+    ///
+    /// Note: for [`crate::Machine`], prefer [`crate::Machine::set_disk_backend`] so any storage
+    /// controllers that derive ATA IDENTIFY geometry from disk capacity can be rebuilt when the
+    /// backend changes.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn set_backend(&self, backend: Box<dyn VirtualDisk + Send>) {
         let mut guard = self
             .inner
@@ -73,6 +104,38 @@ impl SharedDisk {
     }
 }
 
+#[cfg(target_arch = "wasm32")]
+impl VirtualDisk for SharedDisk {
+    fn capacity_bytes(&self) -> u64 {
+        self.inner
+            .try_borrow()
+            .expect("shared disk refcell should not already be mutably borrowed")
+            .capacity_bytes()
+    }
+
+    fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> aero_storage::Result<()> {
+        self.inner
+            .try_borrow_mut()
+            .expect("shared disk refcell should not already be borrowed")
+            .read_at(offset, buf)
+    }
+
+    fn write_at(&mut self, offset: u64, buf: &[u8]) -> aero_storage::Result<()> {
+        self.inner
+            .try_borrow_mut()
+            .expect("shared disk refcell should not already be borrowed")
+            .write_at(offset, buf)
+    }
+
+    fn flush(&mut self) -> aero_storage::Result<()> {
+        self.inner
+            .try_borrow_mut()
+            .expect("shared disk refcell should not already be borrowed")
+            .flush()
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 impl VirtualDisk for SharedDisk {
     fn capacity_bytes(&self) -> u64 {
         self.inner
@@ -103,6 +166,26 @@ impl VirtualDisk for SharedDisk {
     }
 }
 
+#[cfg(target_arch = "wasm32")]
+impl BlockDevice for SharedDisk {
+    fn read_sector(&mut self, lba: u64, buf: &mut [u8; 512]) -> Result<(), BiosDiskError> {
+        self.inner
+            .try_borrow_mut()
+            .expect("shared disk refcell should not already be borrowed")
+            .read_sectors(lba, buf)
+            .map_err(|_err| BiosDiskError::OutOfRange)
+    }
+
+    fn size_in_sectors(&self) -> u64 {
+        self.inner
+            .try_borrow()
+            .expect("shared disk refcell should not already be mutably borrowed")
+            .capacity_bytes()
+            / SECTOR_SIZE as u64
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 impl BlockDevice for SharedDisk {
     fn read_sector(&mut self, lba: u64, buf: &mut [u8; 512]) -> Result<(), BiosDiskError> {
         self.inner

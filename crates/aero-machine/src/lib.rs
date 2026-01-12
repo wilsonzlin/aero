@@ -1989,6 +1989,26 @@ impl Machine {
     ///
     /// Note: if the new backend has a different capacity, this call rebuilds any ATA drives that
     /// were derived from the shared disk so IDENTIFY geometry remains coherent.
+    #[cfg(target_arch = "wasm32")]
+    pub fn set_disk_backend(
+        &mut self,
+        backend: Box<dyn aero_storage::VirtualDisk>,
+    ) -> Result<(), MachineError> {
+        self.disk.set_backend(backend);
+        self.attach_shared_disk_to_storage_controllers()?;
+        Ok(())
+    }
+
+    /// Replace the machine's canonical disk backend (BIOS + storage controllers).
+    ///
+    /// This is the preferred API for non-`Vec<u8>` disk backends (OPFS, streaming, sparse formats,
+    /// etc.). The same disk contents are visible to:
+    /// - BIOS POST / INT 13h (`firmware::bios::BlockDevice`), and
+    /// - storage controllers (AHCI/IDE) attached by this machine.
+    ///
+    /// Note: if the new backend has a different capacity, this call rebuilds any ATA drives that
+    /// were derived from the shared disk so IDENTIFY geometry remains coherent.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn set_disk_backend(
         &mut self,
         backend: Box<dyn aero_storage::VirtualDisk + Send>,
@@ -2475,9 +2495,11 @@ impl Machine {
 
     /// Attach a disk backend to the NVMe controller, if present.
     ///
-    /// Unlike AHCI/IDE, the NVMe device model requires a `Send` disk backend, so this cannot use
-    /// the machine's canonical [`SharedDisk`] (which is intentionally `!Send`/`!Sync` for WASM
-    /// compatibility).
+    /// Unlike AHCI/IDE, the NVMe device model requires a `Send` disk backend.
+    ///
+    /// On `wasm32`, some disk backends (e.g. OPFS) are `!Send` because they hold JS values, so the
+    /// machine's canonical BIOS disk may not be usable for NVMe. Callers can use this method to
+    /// attach a separate `Send` backend.
     ///
     /// This method preserves the NVMe controller's guest-visible state (PCI config + controller
     /// registers/queues) by snapshotting the current device model state and re-loading it after
@@ -3624,10 +3646,25 @@ impl Machine {
                         Some(nvme.clone())
                     }
                     None => {
-                        let dev =
-                            NvmePciDevice::try_new_from_virtual_disk(Box::new(self.disk.clone()))
-                                .expect("machine disk should be 512-byte aligned");
-                        Some(Rc::new(RefCell::new(dev)))
+                        #[cfg(not(target_arch = "wasm32"))]
+                        {
+                            // Share the canonical BIOS disk with the NVMe controller so INT13 reads
+                            // and NVMe DMA observe the same underlying bytes.
+                            let dev = NvmePciDevice::try_new_from_virtual_disk(Box::new(
+                                self.disk.clone(),
+                            ))
+                            .expect("machine disk should be 512-byte aligned");
+                            Some(Rc::new(RefCell::new(dev)))
+                        }
+
+                        #[cfg(target_arch = "wasm32")]
+                        {
+                            // Some wasm32 disk backends (e.g. OPFS) are not `Send` because they
+                            // contain JS values. The NVMe device model requires `VirtualDisk +
+                            // Send`, so on wasm32 we default to an empty in-memory disk unless the
+                            // host explicitly attaches a `Send` backend via `attach_nvme_disk()`.
+                            Some(Rc::new(RefCell::new(NvmePciDevice::default())))
+                        }
                     }
                 }
             } else {

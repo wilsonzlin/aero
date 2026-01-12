@@ -86,9 +86,11 @@ fn snapshot_restore_roundtrips_nvme_state_and_redrives_intx_level() {
         controller_state
             .load_state(&controller_bytes)
             .expect("nvme controller state should decode");
-        // The controller starts with ACQ unset (0). Snapshot restore now validates queue base
-        // addresses are non-zero and 4KiB-aligned, so pick a dummy base before installing a
-        // synthetic pending completion for INTx-level testing.
+        // The machine leaves NVMe admin queues unconfigured at reset (ASQ/ACQ = 0). However, the
+        // controller snapshot restore path validates that any present queue has a non-zero,
+        // page-aligned base address. Use a deterministic dummy base so we can install a synthetic
+        // pending completion for INTx-level testing without requiring a full guest NVMe init
+        // sequence.
         controller_state.acq = 0x1000;
         controller_state.intms = 0; // unmask interrupts
                                     // NVMe queue base addresses must be non-zero and 4KiB-aligned.
