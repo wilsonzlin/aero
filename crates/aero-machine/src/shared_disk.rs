@@ -18,8 +18,9 @@ use crate::MachineError;
 #[derive(Clone)]
 pub struct SharedDisk {
     // NOTE: This wrapper is intentionally `!Send`/`!Sync` because it is implemented in terms of
-    // `Rc<RefCell<_>>`. The canonical `aero_machine::Machine` is single-threaded today, so this is
-    // sufficient for BIOS + controller disk sharing in that environment.
+    // `Rc<RefCell<_>>`. The canonical `aero_machine::Machine` is single-threaded today, and
+    // `VirtualDisk` backends are not necessarily `Send` on `wasm32` (e.g. OPFS backends may hold JS
+    // values), so this is sufficient for BIOS + controller disk sharing in that environment.
     //
     // Some device models (e.g. NVMe / virtio-blk) require `VirtualDisk + Send` backends; this type
     // cannot be used there.
