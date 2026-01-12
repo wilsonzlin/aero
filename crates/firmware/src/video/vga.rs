@@ -51,6 +51,10 @@ impl VgaDevice {
     }
 
     pub fn set_cursor_pos(&mut self, mem: &mut impl MemoryBus, page: u8, row: u8, col: u8) {
+        let rows = BiosDataArea::read_text_rows(mem).max(1);
+        let cols = BiosDataArea::read_screen_cols(mem).max(1) as u8;
+        let row = row.min(rows.saturating_sub(1));
+        let col = col.min(cols.saturating_sub(1));
         BiosDataArea::write_cursor_pos(mem, page, row, col);
     }
 
