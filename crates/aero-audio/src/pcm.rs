@@ -871,6 +871,54 @@ mod tests {
     }
 
     #[test]
+    fn decode_pcm_to_stereo_f32_uses_first_two_channels_for_multichannel_8_24_32bit() {
+        // 8-bit, 4 channels: only first two channels contribute.
+        let fmt = StreamFormat {
+            sample_rate_hz: 48_000,
+            bits_per_sample: 8,
+            channels: 4,
+        };
+        // ch0=0 -> -1.0, ch1=255 -> 127/128, ch2/ch3 arbitrary.
+        let out = decode_pcm_to_stereo_f32(&[0x00, 0xFF, 0x80, 0x01], fmt);
+        assert_eq!(out.len(), 1);
+        assert_f32_approx_eq(out[0][0], -1.0, 1e-6);
+        assert_f32_approx_eq(out[0][1], 127.0 / 128.0, 1e-6);
+
+        // 24-bit, 4 channels: only first two channels contribute and offsets must use 4-byte
+        // containers per sample.
+        let fmt = StreamFormat {
+            sample_rate_hz: 48_000,
+            bits_per_sample: 24,
+            channels: 4,
+        };
+        let mut input = Vec::new();
+        input.extend_from_slice(&4_194_304i32.to_le_bytes()); // 0.5
+        input.extend_from_slice(&(-4_194_304i32).to_le_bytes()); // -0.5
+        input.extend_from_slice(&8_388_607i32.to_le_bytes()); // ~1.0 (ignored)
+        input.extend_from_slice(&(-8_388_608i32).to_le_bytes()); // -1.0 (ignored)
+        let out = decode_pcm_to_stereo_f32(&input, fmt);
+        assert_eq!(out.len(), 1);
+        assert_f32_approx_eq(out[0][0], 0.5, 1e-6);
+        assert_f32_approx_eq(out[0][1], -0.5, 1e-6);
+
+        // 32-bit, 4 channels: only first two channels contribute.
+        let fmt = StreamFormat {
+            sample_rate_hz: 48_000,
+            bits_per_sample: 32,
+            channels: 4,
+        };
+        let mut input = Vec::new();
+        input.extend_from_slice(&(1i32 << 30).to_le_bytes()); // 0.5
+        input.extend_from_slice(&(-(1i32 << 30)).to_le_bytes()); // -0.5
+        input.extend_from_slice(&i32::MAX.to_le_bytes()); // ~1.0 (ignored)
+        input.extend_from_slice(&i32::MIN.to_le_bytes()); // -1.0 (ignored)
+        let out = decode_pcm_to_stereo_f32(&input, fmt);
+        assert_eq!(out.len(), 1);
+        assert_f32_approx_eq(out[0][0], 0.5, 1e-6);
+        assert_f32_approx_eq(out[0][1], -0.5, 1e-6);
+    }
+
+    #[test]
     fn decode_pcm_to_stereo_f32_ignores_partial_trailing_frame() {
         // 16-bit stereo => 4 bytes per frame. Provide 1 full frame + 2 extra bytes.
         let fmt = StreamFormat {
