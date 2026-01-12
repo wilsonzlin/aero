@@ -818,6 +818,68 @@ fn d3d9_create_texture2d_guest_backing_bounds_bc3() {
 }
 
 #[test]
+fn d3d9_copy_texture2d_rejects_misaligned_bc_region() {
+    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
+        Ok(exec) => exec,
+        Err(AerogpuD3d9Error::AdapterNotFound) => {
+            common::skip_or_panic(module_path!(), "wgpu adapter not found");
+            return;
+        }
+        Err(err) => panic!("failed to create executor: {err}"),
+    };
+
+    let mut writer = AerogpuCmdWriter::new();
+    writer.create_texture2d(
+        1,                                // texture_handle
+        0,                                // usage_flags
+        AerogpuFormat::BC1RgbaUnorm as u32, // format
+        8,                                // width
+        4,                                // height
+        1,                                // mip_levels
+        1,                                // array_layers
+        0,                                // row_pitch_bytes
+        0,                                // backing_alloc_id
+        0,                                // backing_offset_bytes
+    );
+    writer.create_texture2d(
+        2,                                // texture_handle
+        0,                                // usage_flags
+        AerogpuFormat::BC1RgbaUnorm as u32, // format
+        8,                                // width
+        4,                                // height
+        1,                                // mip_levels
+        1,                                // array_layers
+        0,                                // row_pitch_bytes
+        0,                                // backing_alloc_id
+        0,                                // backing_offset_bytes
+    );
+
+    // Misaligned destination x (BC blocks are 4x4).
+    writer.copy_texture2d(
+        2, // dst_texture
+        1, // src_texture
+        0, // dst_mip_level
+        0, // dst_array_layer
+        0, // src_mip_level
+        0, // src_array_layer
+        1, // dst_x (misaligned)
+        0, // dst_y
+        0, // src_x
+        0, // src_y
+        4, // width
+        4, // height
+        0, // flags
+    );
+
+    let stream = writer.finish();
+    match exec.execute_cmd_stream(&stream) {
+        Ok(_) => panic!("expected COPY_TEXTURE2D for BC format with misaligned region to be rejected"),
+        Err(AerogpuD3d9Error::Validation(msg)) => assert!(msg.contains("BC copy origin")),
+        Err(other) => panic!("unexpected error: {other:?}"),
+    }
+}
+
+#[test]
 fn d3d9_create_buffer_rejects_unaligned_size() {
     use aero_protocol::aerogpu::aerogpu_cmd::{AerogpuCmdCreateBuffer, AerogpuCmdStreamHeader};
 
