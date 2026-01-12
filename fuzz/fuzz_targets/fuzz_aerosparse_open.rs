@@ -58,7 +58,7 @@ fuzz_target!(|data: &[u8]| {
     // Drive a few bounded reads to exercise allocation table lookups and IO.
     let capacity = disk.capacity_bytes();
     const MAX_READ_LEN: usize = 4096;
-    let mut scratch = vec![0u8; MAX_READ_LEN];
+    let mut scratch = [0u8; MAX_READ_LEN];
 
     let mut u = Unstructured::new(data);
     let read_ops: usize = u.int_in_range(0usize..=8).unwrap_or(0);
