@@ -23,6 +23,8 @@ members = [
     "crates/aero-ipc",
     "crates/aero-wasm",
     "crates/aero-jit-x86",
+    # Built directly by `wasm-pack` in `web/scripts/build_wasm.mjs`; Cargo requires that
+    # packages under the workspace root are explicitly listed here (or in `exclude`).
     "crates/aero-jit-wasm",
     "crates/aero-jit",
     "crates/aero-microbench",
