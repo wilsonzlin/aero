@@ -99,6 +99,17 @@ impl ChunkManifest {
     }
 }
 
+fn alloc_zeroed(len: usize) -> Result<Vec<u8>, StreamingDiskError> {
+    if len == 0 {
+        return Ok(Vec::new());
+    }
+    let mut buf = Vec::new();
+    buf.try_reserve_exact(len)
+        .map_err(|_| StreamingDiskError::Io(format!("allocation failed for {len} bytes")))?;
+    buf.resize(len, 0);
+    Ok(buf)
+}
+
 #[derive(Debug, Clone)]
 pub struct StreamingDiskOptions {
     /// Caching unit for the remote image. All range fetches are chunk-aligned.
@@ -295,8 +306,13 @@ impl ChunkStore for SparseFileChunkStore {
             return Ok(Some(Vec::new()));
         }
 
-        let len = (end - start) as usize;
-        let mut buf = vec![0u8; len];
+        let len_u64 = end - start;
+        let len: usize = len_u64.try_into().map_err(|_| {
+            StreamingDiskError::Protocol(format!(
+                "chunk length {len_u64} does not fit in usize"
+            ))
+        })?;
+        let mut buf = alloc_zeroed(len)?;
         let mut file = self
             .file
             .lock()
@@ -308,7 +324,12 @@ impl ChunkStore for SparseFileChunkStore {
 
     fn write_chunk(&self, chunk_index: u64, data: &[u8]) -> Result<(), StreamingDiskError> {
         let (start, end) = self.chunk_range(chunk_index);
-        let expected = (end - start) as usize;
+        let expected_u64 = end - start;
+        let expected: usize = expected_u64.try_into().map_err(|_| {
+            StreamingDiskError::Protocol(format!(
+                "chunk length {expected_u64} does not fit in usize"
+            ))
+        })?;
         if data.len() != expected {
             return Err(StreamingDiskError::Protocol(format!(
                 "chunk {chunk_index} length mismatch: expected {expected} got {}",
@@ -395,24 +416,40 @@ impl ChunkStore for DirectoryChunkStore {
         }
 
         let path = self.chunk_path(chunk_index);
-        let bytes = match fs::read(&path) {
-            Ok(b) => b,
+        let expected_u64 = end - start;
+        let expected: usize = expected_u64.try_into().map_err(|_| {
+            StreamingDiskError::Protocol(format!(
+                "chunk length {expected_u64} does not fit in usize"
+            ))
+        })?;
+        let mut file = match fs::File::open(&path) {
+            Ok(f) => f,
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(err) => return Err(err.into()),
         };
-
-        let expected = (end - start) as usize;
-        if bytes.len() != expected {
-            // Treat corrupt/mismatched chunks as a cache miss. Best-effort cleanup.
-            let _ = fs::remove_file(&path);
-            return Ok(None);
+        match file.metadata() {
+            Ok(meta) if meta.len() == expected_u64 => {}
+            Ok(_) => {
+                // Treat corrupt/mismatched chunks as a cache miss. Best-effort cleanup.
+                let _ = fs::remove_file(&path);
+                return Ok(None);
+            }
+            Err(err) => return Err(err.into()),
         }
+
+        let mut bytes = alloc_zeroed(expected)?;
+        file.read_exact(&mut bytes)?;
         Ok(Some(bytes))
     }
 
     fn write_chunk(&self, chunk_index: u64, data: &[u8]) -> Result<(), StreamingDiskError> {
         let (start, end) = self.chunk_range(chunk_index);
-        let expected = (end - start) as usize;
+        let expected_u64 = end - start;
+        let expected: usize = expected_u64.try_into().map_err(|_| {
+            StreamingDiskError::Protocol(format!(
+                "chunk length {expected_u64} does not fit in usize"
+            ))
+        })?;
         if data.len() != expected {
             return Err(StreamingDiskError::Protocol(format!(
                 "chunk {chunk_index} length mismatch: expected {expected} got {}",
