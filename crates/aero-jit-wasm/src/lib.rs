@@ -146,11 +146,20 @@ pub fn compile_tier1_block(
     memory_shared: bool,
 ) -> Result<JsValue, JsValue> {
     let code_len = code_bytes.length() as usize;
+    if code_len == 0 {
+        return Err(js_error("compile_tier1_block: code_bytes is empty"));
+    }
     if code_len > MAX_CODE_BYTES {
         return Err(js_error(format!(
             "compile_tier1_block: code_bytes is too large ({} bytes > {} bytes max)",
             code_len, MAX_CODE_BYTES
         )));
+    }
+    if max_insts == 0 {
+        return Err(js_error("compile_tier1_block: max_insts must be > 0"));
+    }
+    if max_bytes == 0 {
+        return Err(js_error("compile_tier1_block: max_bytes must be > 0"));
     }
     let code_end = entry_rip.checked_add(code_len as u64).ok_or_else(|| {
         js_error("compile_tier1_block: entry_rip + code_bytes.len() overflowed u64")
@@ -163,9 +172,15 @@ pub fn compile_tier1_block(
         first_oob_addr: Cell::new(None),
     };
 
+    // Clamp limits so we cannot decode past the provided slice even if the caller passes absurd
+    // values (e.g. negative numbers in JS which become huge u32s).
+    //
+    // Note: decoding may still require reading up to 15 bytes past the end of the slice to decode
+    // the final instruction window; those reads are handled by `Tier1SliceBus` and are only
+    // considered an error if the decoded instruction *length* exceeds the provided coverage.
     let limits = BlockLimits {
-        max_insts: max_insts as usize,
-        max_bytes: max_bytes as usize,
+        max_insts: max_insts.min(code_len as u32) as usize,
+        max_bytes: max_bytes.min(code_len as u32) as usize,
     };
 
     let mut options = Tier1WasmOptions::default();
