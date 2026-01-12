@@ -1158,7 +1158,9 @@ Disabling tracing stops recording new frames but does **not** automatically clea
 buffered in memory (use **Clear capture** or download/export to reset).
 
 If the tracing backend is not installed in the current build/runtime (e.g. `window.aero.netTrace`
-is missing) or the net worker isn't running, enabling or downloading will fail with an error.
+is missing), the UI will surface an error when you try to enable/export. If the net worker isn't
+running yet, captures may not record anything until it starts, and operations like download/stats
+may fail (some hosts explicitly require the net worker to be running before enabling).
 
 Most web hosts install the `window.aero.netTrace` backend by calling
 `installNetTraceBackendOnAeroGlobal(...)` (see `web/src/net/trace_backend.ts`).
