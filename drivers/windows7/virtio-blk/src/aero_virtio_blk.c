@@ -347,7 +347,7 @@ static BOOLEAN AerovblkDeviceBringUp(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, 
   }
 
   /* Disable MSI-X config vector (INTx required by contract v1). */
-  WRITE_REGISTER_USHORT((volatile USHORT*)&devExt->Vdev.CommonCfg->msix_config, 0xFFFFu);
+  WRITE_REGISTER_USHORT((volatile USHORT*)&devExt->Vdev.CommonCfg->msix_config, VIRTIO_PCI_MSI_NO_VECTOR);
 
   devExt->NegotiatedFeatures = negotiated;
   devExt->SupportsIndirect = (negotiated & AEROVBLK_FEATURE_RING_INDIRECT_DESC) ? TRUE : FALSE;
@@ -423,7 +423,7 @@ static BOOLEAN AerovblkDeviceBringUp(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, 
     KeAcquireSpinLock(&devExt->Vdev.CommonCfgLock, &irql);
     WRITE_REGISTER_USHORT((volatile USHORT*)&devExt->Vdev.CommonCfg->queue_select, (USHORT)AEROVBLK_QUEUE_INDEX);
     KeMemoryBarrier();
-    WRITE_REGISTER_USHORT((volatile USHORT*)&devExt->Vdev.CommonCfg->queue_msix_vector, 0xFFFFu);
+    WRITE_REGISTER_USHORT((volatile USHORT*)&devExt->Vdev.CommonCfg->queue_msix_vector, VIRTIO_PCI_MSI_NO_VECTOR);
     KeMemoryBarrier();
     KeReleaseSpinLock(&devExt->Vdev.CommonCfgLock, irql);
   }

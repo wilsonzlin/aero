@@ -669,7 +669,7 @@ static VOID AerovNetDisableQueueMsixVector(_Inout_ AEROVNET_ADAPTER* Adapter, _I
 
   WRITE_REGISTER_USHORT((volatile USHORT*)&Adapter->Vdev.CommonCfg->queue_select, QueueIndex);
   KeMemoryBarrier();
-  WRITE_REGISTER_USHORT((volatile USHORT*)&Adapter->Vdev.CommonCfg->queue_msix_vector, 0xFFFFu);
+  WRITE_REGISTER_USHORT((volatile USHORT*)&Adapter->Vdev.CommonCfg->queue_msix_vector, VIRTIO_PCI_MSI_NO_VECTOR);
   KeMemoryBarrier();
 
   KeReleaseSpinLock(&Adapter->Vdev.CommonCfgLock, OldIrql);
@@ -813,7 +813,7 @@ static NDIS_STATUS AerovNetVirtioStart(_Inout_ AEROVNET_ADAPTER* Adapter) {
   Adapter->GuestFeatures = (UINT64)NegotiatedFeatures;
 
   // Disable MSI-X config interrupt vector; INTx/ISR is required by contract v1.
-  WRITE_REGISTER_USHORT((volatile USHORT*)&Adapter->Vdev.CommonCfg->msix_config, 0xFFFFu);
+  WRITE_REGISTER_USHORT((volatile USHORT*)&Adapter->Vdev.CommonCfg->msix_config, VIRTIO_PCI_MSI_NO_VECTOR);
   KeMemoryBarrier();
 
   // Read virtio-net device config (MAC + link status).

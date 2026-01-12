@@ -100,6 +100,11 @@ typedef uint64_t UINT64;
 #define VIRTIO_CONFIG_S_FAILED VIRTIO_STATUS_FAILED
 #endif
 
+/* Virtio spec sentinel for "no MSI-X vector assigned". */
+#ifndef VIRTIO_PCI_MSI_NO_VECTOR
+#define VIRTIO_PCI_MSI_NO_VECTOR ((UINT16)0xFFFFu)
+#endif
+
 #pragma pack(push, 1)
 
 /*
