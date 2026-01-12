@@ -1447,8 +1447,8 @@ export function installAeroTieredMmioTestShims() {
     }
 
     fn js_err_message(err: JsValue) -> String {
-        if let Ok(e) = err.dyn_into::<js_sys::Error>() {
-            return e.message();
+        if let Some(e) = err.dyn_ref::<js_sys::Error>() {
+            return e.message().into();
         }
         if let Some(s) = err.as_string() {
             return s;
