@@ -1,7 +1,9 @@
 #![cfg(target_arch = "wasm32")]
 
 use aero_io_snapshot::io::state::{SnapshotVersion, SnapshotWriter};
-use aero_snapshot::{CpuState, DeviceId, DeviceState, DiskOverlayRefs, MmuState, SnapshotTarget};
+use aero_snapshot::{
+    CpuInternalState, CpuState, DeviceId, DeviceState, DiskOverlayRefs, MmuState, SnapshotTarget,
+};
 use aero_wasm::{guest_ram_layout, vm_snapshot_restore, vm_snapshot_save};
 use js_sys::{Array, Object, Reflect, Uint8Array};
 use wasm_bindgen::JsCast;
@@ -446,4 +448,90 @@ fn vm_snapshot_builder_roundtrips_unknown_device_id_kind() {
         .expect("bytes Uint8Array")
         .to_vec();
     assert_eq!(bytes, unknown_blob, "unknown device bytes should roundtrip");
+}
+
+#[wasm_bindgen_test]
+fn vm_snapshot_builder_preserves_cpu_internal_device_state_version() {
+    // Ensure we have at least one guest page above the runtime-reserved region (128MiB).
+    let _ = common::alloc_guest_region_bytes(64 * 1024);
+
+    let cpu_bytes = build_cpu_bytes();
+    let mmu_bytes = build_mmu_bytes();
+
+    let cpu_js = Uint8Array::from(cpu_bytes.as_slice());
+    let mmu_js = Uint8Array::from(mmu_bytes.as_slice());
+
+    let cpu_internal = CpuInternalState {
+        interrupt_inhibit: 3,
+        pending_external_interrupts: vec![0x20, 0x21, 0x80],
+    };
+    let cpu_internal_blob = cpu_internal
+        .to_device_state()
+        .expect("CpuInternalState::to_device_state ok")
+        .data;
+
+    // CPU_INTERNAL is a raw device blob (no `aero-io-snapshot` header) stored under device id 9.
+    let kind = format!("device.{}", DeviceId::CPU_INTERNAL.0);
+    let devices_js = build_devices_js(&[(kind.as_str(), cpu_internal_blob.as_slice())]);
+
+    let snap = vm_snapshot_save(cpu_js.clone(), mmu_js.clone(), devices_js)
+        .expect("vm_snapshot_save ok")
+        .to_vec();
+
+    #[derive(Default)]
+    struct InspectTarget {
+        ram_len: usize,
+        devices: Vec<DeviceState>,
+    }
+
+    impl SnapshotTarget for InspectTarget {
+        fn restore_cpu_state(&mut self, _state: CpuState) {}
+        fn restore_mmu_state(&mut self, _state: MmuState) {}
+        fn restore_device_states(&mut self, states: Vec<DeviceState>) {
+            self.devices = states;
+        }
+        fn restore_disk_overlays(&mut self, _overlays: DiskOverlayRefs) {}
+
+        fn ram_len(&self) -> usize {
+            self.ram_len
+        }
+
+        fn write_ram(&mut self, _offset: u64, _data: &[u8]) -> aero_snapshot::Result<()> {
+            Ok(())
+        }
+    }
+
+    let layout = guest_ram_layout(0);
+    let guest_base = layout.guest_base();
+    let mem_bytes = (core::arch::wasm32::memory_size(0) as u64).saturating_mul(64 * 1024);
+    let guest_size = mem_bytes
+        .saturating_sub(guest_base as u64)
+        .try_into()
+        .expect("guest_size fits in usize");
+
+    let mut inspect = InspectTarget {
+        ram_len: guest_size,
+        ..Default::default()
+    };
+    aero_snapshot::restore_snapshot_checked(
+        &mut std::io::Cursor::new(snap.as_slice()),
+        &mut inspect,
+        aero_snapshot::RestoreOptions::default(),
+    )
+    .expect("restore_snapshot_checked ok");
+
+    let state = inspect
+        .devices
+        .iter()
+        .find(|d| d.id == DeviceId::CPU_INTERNAL)
+        .expect("snapshot should contain CPU_INTERNAL device state");
+    assert_eq!(
+        (state.version, state.flags),
+        (CpuInternalState::VERSION, 0),
+        "CPU_INTERNAL device metadata should use CpuInternalState::VERSION"
+    );
+    assert_eq!(
+        state.data, cpu_internal_blob,
+        "CPU_INTERNAL device blob should be preserved verbatim"
+    );
 }

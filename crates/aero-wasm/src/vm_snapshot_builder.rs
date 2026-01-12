@@ -93,7 +93,14 @@ fn decode_mmu_state(bytes: &[u8]) -> Result<MmuState, JsValue> {
         .map_err(|e| js_error(format!("Failed to decode MMU state v2: {e}")))
 }
 
-fn device_version_flags_from_aero_io_snapshot(bytes: &[u8]) -> (u16, u16) {
+fn device_default_version_flags(id: DeviceId) -> (u16, u16) {
+    if id == DeviceId::CPU_INTERNAL {
+        return (aero_snapshot::CpuInternalState::VERSION, 0);
+    }
+    (1, 0)
+}
+
+fn device_version_flags_from_aero_header(bytes: &[u8]) -> Option<(u16, u16)> {
     // Preferred path: `aero-io-snapshot` format uses a 16-byte header (see `aero-io-snapshot`):
     // - magic: b"AERO" (4 bytes)
     // - format_version: u16 major, u16 minor
@@ -112,7 +119,7 @@ fn device_version_flags_from_aero_io_snapshot(bytes: &[u8]) -> (u16, u16) {
     // ASCII tag.
     const IO_HEADER_LEN: usize = 16;
     if bytes.len() < 4 || &bytes[0..4] != b"AERO" {
-        return (1, 0);
+        return None;
     }
 
     if bytes.len() >= IO_HEADER_LEN {
@@ -124,17 +131,21 @@ fn device_version_flags_from_aero_io_snapshot(bytes: &[u8]) -> (u16, u16) {
         if is_ascii_tag {
             let major = u16::from_le_bytes([bytes[12], bytes[13]]);
             let minor = u16::from_le_bytes([bytes[14], bytes[15]]);
-            return (major, minor);
+            return Some((major, minor));
         }
     }
 
     if bytes.len() >= 8 {
         let version = u16::from_le_bytes([bytes[4], bytes[5]]);
         let flags = u16::from_le_bytes([bytes[6], bytes[7]]);
-        return (version, flags);
+        return Some((version, flags));
     }
 
-    (1, 0)
+    None
+}
+
+fn device_version_flags_from_payload(id: DeviceId, bytes: &[u8]) -> (u16, u16) {
+    device_version_flags_from_aero_header(bytes).unwrap_or_else(|| device_default_version_flags(id))
 }
 
 fn parse_devices_js(devices: JsValue) -> Result<Vec<DeviceState>, JsValue> {
@@ -179,7 +190,7 @@ fn parse_devices_js(devices: JsValue) -> Result<Vec<DeviceState>, JsValue> {
 
         let id = parse_device_kind(&kind)
             .ok_or_else(|| js_error(format!("Unknown device kind '{kind}'")))?;
-        let (version, flags) = device_version_flags_from_aero_io_snapshot(&data);
+        let (version, flags) = device_version_flags_from_payload(id, &data);
 
         out.push(DeviceState {
             id,
