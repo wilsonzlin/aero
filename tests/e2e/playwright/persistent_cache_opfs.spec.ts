@@ -25,6 +25,7 @@ test("large shader payload spills to OPFS when available", async ({}, testInfo) 
       opfsWgslBytes: number | null;
       pipelineKey: string | null;
       pipelineOpfsFileExists: boolean;
+      pipelineOpfsFileSize: number | null;
       pipelineRoundtripOk: boolean;
       idbShaderRecord: {
         storage: string | null;
@@ -33,6 +34,7 @@ test("large shader payload spills to OPFS when available", async ({}, testInfo) 
         hasReflection: boolean;
         size: number | null;
       } | null;
+      idbPipelineRecord: { storage: string | null; opfsFile: string | null; hasDesc: boolean; size: number | null } | null;
       logs: string[];
     }> {
       const logs: string[] = [];
@@ -53,16 +55,18 @@ test("large shader payload spills to OPFS when available", async ({}, testInfo) 
           throw new Error(`demo page failed: ${result.error}`);
         }
 
-        const opfsInfo = await page.evaluate(async (key: string) => {
+        const pipelineKey = typeof result.pipelineKey === "string" ? result.pipelineKey : null;
+
+        const opfsInfo = await page.evaluate(async ({ shaderKey, pipelineKey }: { shaderKey: string; pipelineKey: string | null }) => {
           if (!navigator.storage || typeof navigator.storage.getDirectory !== "function") {
-            return { fileSize: null, wgslBytes: null };
+            return { fileSize: null, wgslBytes: null, pipelineFileSize: null };
           }
 
           try {
             const root = await navigator.storage.getDirectory();
             const dir = await root.getDirectoryHandle("aero-gpu-cache", { create: true });
             const shadersDir = await dir.getDirectoryHandle("shaders");
-            const handle = await shadersDir.getFileHandle(`${key}.json`);
+            const handle = await shadersDir.getFileHandle(`${shaderKey}.json`);
             const file = await handle.getFile();
             const text = await file.text();
 
@@ -76,15 +80,29 @@ test("large shader payload spills to OPFS when available", async ({}, testInfo) 
               wgslBytes = null;
             }
 
-            return { fileSize: typeof file.size === "number" ? file.size : null, wgslBytes };
-          } catch {
-            return { fileSize: null, wgslBytes: null };
-          }
-        }, result.key);
+            let pipelineFileSize: number | null = null;
+            if (pipelineKey) {
+              try {
+                const pipelinesDir = await dir.getDirectoryHandle("pipelines");
+                const pHandle = await pipelinesDir.getFileHandle(`${pipelineKey}.json`);
+                const pFile = await pHandle.getFile();
+                pipelineFileSize = typeof pFile.size === "number" ? pFile.size : null;
+              } catch {
+                pipelineFileSize = null;
+              }
+            }
 
-        const idbShaderRecord = await page.evaluate(async (key: string) => {
+            return { fileSize: typeof file.size === "number" ? file.size : null, wgslBytes, pipelineFileSize };
+          } catch {
+            return { fileSize: null, wgslBytes: null, pipelineFileSize: null };
+          }
+        }, { shaderKey: result.key, pipelineKey });
+
+        const idbRecords = await page.evaluate(
+          async ({ shaderKey, pipelineKey }: { shaderKey: string; pipelineKey: string | null }) => {
           const DB_NAME = "aero-gpu-cache";
           const STORE_SHADERS = "shaders";
+          const STORE_PIPELINES = "pipelines";
 
           const db = await new Promise<IDBDatabase>((resolve, reject) => {
             // Open without forcing a schema version so the test stays compatible
@@ -95,31 +113,55 @@ test("large shader payload spills to OPFS when available", async ({}, testInfo) 
           });
 
           try {
-            const tx = db.transaction([STORE_SHADERS], "readonly");
-            const store = tx.objectStore(STORE_SHADERS);
-            const record = await new Promise<any>((resolve, reject) => {
-              const req = store.get(key);
+            const tx = db.transaction([STORE_SHADERS, STORE_PIPELINES], "readonly");
+            const shaders = tx.objectStore(STORE_SHADERS);
+            const pipelines = tx.objectStore(STORE_PIPELINES);
+
+            const shaderRecord = await new Promise<any>((resolve, reject) => {
+              const req = shaders.get(shaderKey);
               req.onerror = () => reject(req.error ?? new Error("IndexedDB get failed"));
               req.onsuccess = () => resolve(req.result ?? null);
             });
+
+            const pipelineRecord = pipelineKey
+              ? await new Promise<any>((resolve, reject) => {
+                  const req = pipelines.get(pipelineKey);
+                  req.onerror = () => reject(req.error ?? new Error("IndexedDB get failed"));
+                  req.onsuccess = () => resolve(req.result ?? null);
+                })
+              : null;
+
             await new Promise<void>((resolve) => {
               tx.oncomplete = () => resolve();
               tx.onabort = () => resolve(); // best-effort; return what we have
               tx.onerror = () => resolve();
             });
 
-            if (!record) return null;
             return {
-              storage: typeof record.storage === "string" ? record.storage : null,
-              opfsFile: typeof record.opfsFile === "string" ? record.opfsFile : null,
-              hasWgsl: typeof record.wgsl === "string",
-              hasReflection: record.reflection !== undefined,
-              size: typeof record.size === "number" && Number.isFinite(record.size) ? record.size : null,
+              shader: shaderRecord
+                ? {
+                    storage: typeof shaderRecord.storage === "string" ? shaderRecord.storage : null,
+                    opfsFile: typeof shaderRecord.opfsFile === "string" ? shaderRecord.opfsFile : null,
+                    hasWgsl: typeof shaderRecord.wgsl === "string",
+                    hasReflection: shaderRecord.reflection !== undefined,
+                    size: typeof shaderRecord.size === "number" && Number.isFinite(shaderRecord.size) ? shaderRecord.size : null,
+                  }
+                : null,
+              pipeline: pipelineRecord
+                ? {
+                    storage: typeof pipelineRecord.storage === "string" ? pipelineRecord.storage : null,
+                    opfsFile: typeof pipelineRecord.opfsFile === "string" ? pipelineRecord.opfsFile : null,
+                    hasDesc: pipelineRecord.desc !== undefined,
+                    size: typeof pipelineRecord.size === "number" && Number.isFinite(pipelineRecord.size) ? pipelineRecord.size : null,
+                  }
+                : null,
             };
           } finally {
             db.close();
           }
-        }, result.key);
+        },
+          { shaderKey: result.key, pipelineKey },
+        );
 
         return {
           key: String(result.key),
@@ -128,10 +170,12 @@ test("large shader payload spills to OPFS when available", async ({}, testInfo) 
           opfsFileExists: !!result.opfsFileExists,
           opfsFileSize: opfsInfo.fileSize ?? null,
           opfsWgslBytes: opfsInfo.wgslBytes ?? null,
-          pipelineKey: typeof result.pipelineKey === "string" ? result.pipelineKey : null,
+          pipelineKey,
           pipelineOpfsFileExists: !!result.pipelineOpfsFileExists,
+          pipelineOpfsFileSize: opfsInfo.pipelineFileSize ?? null,
           pipelineRoundtripOk: !!result.pipelineRoundtripOk,
-          idbShaderRecord: idbShaderRecord ?? null,
+          idbShaderRecord: idbRecords.shader ?? null,
+          idbPipelineRecord: idbRecords.pipeline ?? null,
           logs,
         };
       } catch (err) {
@@ -165,7 +209,14 @@ test("large shader payload spills to OPFS when available", async ({}, testInfo) 
     expect(first.idbShaderRecord?.size ?? 0).toBeGreaterThan(256 * 1024);
     expect(first.pipelineKey).not.toBeNull();
     expect(first.pipelineOpfsFileExists).toBe(true);
+    expect(first.pipelineOpfsFileSize).not.toBeNull();
+    expect(first.pipelineOpfsFileSize ?? 0).toBeGreaterThan(256 * 1024);
     expect(first.pipelineRoundtripOk).toBe(true);
+    expect(first.idbPipelineRecord?.storage).toBe("opfs");
+    expect(first.idbPipelineRecord?.opfsFile).toBe(`${first.pipelineKey}.json`);
+    expect(first.idbPipelineRecord?.hasDesc).toBe(false);
+    expect(first.idbPipelineRecord?.size).not.toBeNull();
+    expect(first.idbPipelineRecord?.size ?? 0).toBeGreaterThan(256 * 1024);
 
     const second = await runOnce();
     expect(second.key).toBe(first.key);
@@ -181,7 +232,12 @@ test("large shader payload spills to OPFS when available", async ({}, testInfo) 
     expect(second.idbShaderRecord?.hasReflection).toBe(false);
     expect(second.pipelineKey).toBe(first.pipelineKey);
     expect(second.pipelineOpfsFileExists).toBe(true);
+    expect(second.pipelineOpfsFileSize).not.toBeNull();
+    expect(second.pipelineOpfsFileSize ?? 0).toBeGreaterThan(256 * 1024);
     expect(second.pipelineRoundtripOk).toBe(true);
+    expect(second.idbPipelineRecord?.storage).toBe("opfs");
+    expect(second.idbPipelineRecord?.opfsFile).toBe(`${first.pipelineKey}.json`);
+    expect(second.idbPipelineRecord?.hasDesc).toBe(false);
   } finally {
     await server.close();
     if (userDataDir) {
