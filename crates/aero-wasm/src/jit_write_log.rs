@@ -231,7 +231,7 @@ mod tests {
             cache_max_bytes: 0,
         };
         let compile = RecordingCompileSink::default();
-        let mut jit = JitRuntime::new(cfg, NeverExecBackend::default(), compile.clone());
+        let mut jit = JitRuntime::new(cfg, NeverExecBackend, compile.clone());
 
         // Install a fake compiled block with a meta snapshot.
         let meta = jit.snapshot_meta(entry_rip, code_len);

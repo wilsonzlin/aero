@@ -299,12 +299,12 @@ mod wasm_guest_memory {
         }
 
         #[inline]
-        fn ram_slice<'a>(
-            &'a self,
+        fn ram_slice(
+            &self,
             paddr: u64,
             ram_offset: u64,
             len: usize,
-        ) -> Result<&'a [u8], GuestMemoryError> {
+        ) -> Result<&[u8], GuestMemoryError> {
             let end = ram_offset
                 .checked_add(len as u64)
                 .ok_or(GuestMemoryError::OutOfBounds { addr: paddr, len })?;
@@ -329,12 +329,12 @@ mod wasm_guest_memory {
         }
 
         #[inline]
-        fn ram_slice_mut<'a>(
-            &'a mut self,
+        fn ram_slice_mut(
+            &mut self,
             paddr: u64,
             ram_offset: u64,
             len: usize,
-        ) -> Result<&'a mut [u8], GuestMemoryError> {
+        ) -> Result<&mut [u8], GuestMemoryError> {
             let end = ram_offset
                 .checked_add(len as u64)
                 .ok_or(GuestMemoryError::OutOfBounds { addr: paddr, len })?;
