@@ -500,7 +500,7 @@ fn restore_device_states_prefers_pci_over_legacy_pci_cfg_entry() {
     let canonical_state = {
         let mut pci_cfg = pci_cfg.borrow_mut();
         let mut pci_intx = pci_intx.borrow_mut();
-        let core = aero_devices::pci::PciCoreSnapshot::new(&mut *pci_cfg, &mut *pci_intx);
+        let core = aero_devices::pci::PciCoreSnapshot::new(&mut pci_cfg, &mut pci_intx);
         snapshot::io_snapshot_bridge::device_state_from_io_snapshot(snapshot::DeviceId::PCI, &core)
     };
 
@@ -676,7 +676,7 @@ fn snapshot_restore_is_independent_of_devices_section_order() {
         let mut ints = interrupts.borrow_mut();
         ints.set_mode(PlatformInterruptMode::Apic);
         let low = 0x52u32 | (1 << 13) | (1 << 15) | (1 << 16);
-        program_ioapic_entry(&mut *ints, 10, low, 0);
+        program_ioapic_entry(&mut ints, 10, low, 0);
     }
 
     // Assert a PCI INTx line that routes to GSI10 (device 0, INTA#).
@@ -705,7 +705,7 @@ fn snapshot_restore_is_independent_of_devices_section_order() {
     {
         let mut ints = interrupts.borrow_mut();
         let low = 0x52u32 | (1 << 13) | (1 << 15);
-        program_ioapic_entry(&mut *ints, 10, low, 0);
+        program_ioapic_entry(&mut ints, 10, low, 0);
     }
 
     assert_eq!(interrupts.borrow().get_pending(), Some(0x52));

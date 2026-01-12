@@ -67,8 +67,8 @@ fn pc_platform_snapshot_roundtrip_preserves_acpi_sci_interrupt_and_platform_devi
 
     // Advance ~half a PIT period in a deterministic way.
     let pit_step_ticks: u64 = u64::from(PIT_DIVISOR / 2);
-    let pit_step_ns: u64 = ((((pit_step_ticks as u128) * 1_000_000_000u128) + (PIT_HZ as u128) - 1)
-        / (PIT_HZ as u128)) as u64;
+    let pit_step_ns: u64 =
+        ((pit_step_ticks as u128) * 1_000_000_000u128).div_ceil(PIT_HZ as u128) as u64;
     pc.tick(pit_step_ns);
 
     // --- Trigger a level-triggered interrupt source (ACPI power button -> SCI).
@@ -116,7 +116,7 @@ fn pc_platform_snapshot_roundtrip_preserves_acpi_sci_interrupt_and_platform_devi
     };
     let pci_core_state = {
         let mut cfg_ports = pc.pci_cfg.borrow_mut();
-        let core = PciCoreSnapshot::new(&mut *cfg_ports, &mut pc.pci_intx);
+        let core = PciCoreSnapshot::new(&mut cfg_ports, &mut pc.pci_intx);
         deterministic_snapshot(&core, "PCI core")
     };
 
@@ -137,7 +137,7 @@ fn pc_platform_snapshot_roundtrip_preserves_acpi_sci_interrupt_and_platform_devi
         .unwrap();
     {
         let mut cfg_ports = pc2.pci_cfg.borrow_mut();
-        let mut core = PciCoreSnapshot::new(&mut *cfg_ports, &mut pc2.pci_intx);
+        let mut core = PciCoreSnapshot::new(&mut cfg_ports, &mut pc2.pci_intx);
         core.load_state(&pci_core_state).unwrap();
         core.sync_intx_levels_to_sink(&mut *pc2.interrupts.borrow_mut());
     }

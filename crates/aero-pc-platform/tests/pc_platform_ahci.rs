@@ -145,9 +145,9 @@ fn pc_platform_ahci_mmio_supports_u64_reads_across_dword_registers() {
     let bar5_base = read_ahci_bar5_base(&mut pc);
 
     // HBA.CAP (0x00) + HBA.GHC (0x04) can be read as a single 64-bit value by the platform bus.
-    let cap = pc.memory.read_u32(bar5_base + 0x00) as u64;
+    let cap = pc.memory.read_u32(bar5_base) as u64;
     let ghc = pc.memory.read_u32(bar5_base + HBA_GHC) as u64;
-    assert_eq!(pc.memory.read_u64(bar5_base + 0x00), cap | (ghc << 32));
+    assert_eq!(pc.memory.read_u64(bar5_base), cap | (ghc << 32));
 }
 
 #[test]

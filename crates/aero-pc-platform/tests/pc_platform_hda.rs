@@ -152,7 +152,7 @@ fn pc_platform_routes_multiple_pci_mmio_bars() {
     assert_ne!(pc.memory.read_u32(hda_bar0_base + 0x08) & 1, 0);
 
     // AHCI: CAP should be readable (not an unmapped all-ones region), and GHC should latch AE.
-    assert_ne!(pc.memory.read_u32(ahci_bar5_base + 0x00), 0xffff_ffff);
+    assert_ne!(pc.memory.read_u32(ahci_bar5_base), 0xffff_ffff);
     pc.memory.write_u32(ahci_bar5_base + 0x04, 1 << 31);
     assert_ne!(pc.memory.read_u32(ahci_bar5_base + 0x04) & (1 << 31), 0);
 }

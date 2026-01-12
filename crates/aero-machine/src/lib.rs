@@ -1120,11 +1120,11 @@ impl snapshot::SnapshotSource for Machine {
                 // - PCI INTx routing + asserted level refcounts (`INTX`)
                 let mut pci_cfg = pci_cfg.borrow_mut();
                 let mut pci_intx = pci_intx.borrow_mut();
-                let core = PciCoreSnapshot::new(&mut *pci_cfg, &mut *pci_intx);
+                let core = PciCoreSnapshot::new(&mut pci_cfg, &mut pci_intx);
                 devices.push(snapshot::io_snapshot_bridge::device_state_from_io_snapshot(
                     snapshot::DeviceId::PCI,
                     &core,
-                ));
+                    ));
             } else {
                 // Fallback: config ports only.
                 devices.push(snapshot::io_snapshot_bridge::device_state_from_io_snapshot(
@@ -1304,7 +1304,7 @@ impl snapshot::SnapshotTarget for Machine {
             if let (Some(pci_cfg), Some(pci_intx)) = (&self.pci_cfg, &self.pci_intx) {
                 let mut pci_cfg = pci_cfg.borrow_mut();
                 let mut pci_intx = pci_intx.borrow_mut();
-                let mut core = PciCoreSnapshot::new(&mut *pci_cfg, &mut *pci_intx);
+                let mut core = PciCoreSnapshot::new(&mut pci_cfg, &mut pci_intx);
                 match snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(&state, &mut core) {
                     Ok(()) => {
                         restored_pci_intx = true;

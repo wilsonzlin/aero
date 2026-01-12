@@ -61,8 +61,8 @@ fn pci_mmio_window_routes_multiple_devices_and_tracks_bar_reprogramming() {
     assert_ne!(pc.memory.read_u32(hda_base + 0x08) & 1, 0);
 
     // E1000 CTRL bit 26 triggers a device reset; choose a value that doesn't set it.
-    pc.memory.write_u32(e1000_base + 0x00, 0x1111_2222);
-    assert_eq!(pc.memory.read_u32(e1000_base + 0x00), 0x1111_2222);
+    pc.memory.write_u32(e1000_base, 0x1111_2222);
+    assert_eq!(pc.memory.read_u32(e1000_base), 0x1111_2222);
 
     // Move both BARs to non-overlapping addresses within the PCI MMIO window.
     let alloc_cfg = PciResourceAllocatorConfig::default();
@@ -90,9 +90,9 @@ fn pci_mmio_window_routes_multiple_devices_and_tracks_bar_reprogramming() {
 
     // Old bases should no longer decode.
     assert_eq!(pc.memory.read_u32(hda_base + 0x08), 0xFFFF_FFFF);
-    assert_eq!(pc.memory.read_u32(e1000_base + 0x00), 0xFFFF_FFFF);
+    assert_eq!(pc.memory.read_u32(e1000_base), 0xFFFF_FFFF);
 
     // New bases should decode and preserve state independently.
     assert_ne!(pc.memory.read_u32(new_hda_base + 0x08) & 1, 0);
-    assert_eq!(pc.memory.read_u32(new_e1000_base + 0x00), 0x1111_2222);
+    assert_eq!(pc.memory.read_u32(new_e1000_base), 0x1111_2222);
 }

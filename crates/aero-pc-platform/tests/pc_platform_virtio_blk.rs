@@ -130,13 +130,13 @@ fn pc_platform_virtio_blk_processes_queue_and_raises_intx() {
     pc.memory.write_u8(bar0_base + COMMON + 0x14, 1 | 2); // ACKNOWLEDGE | DRIVER
 
     // device_feature_select=0 -> read device_feature (low)
-    pc.memory.write_u32(bar0_base + COMMON + 0x00, 0);
+    pc.memory.write_u32(bar0_base + COMMON, 0);
     let f0 = pc.memory.read_u32(bar0_base + COMMON + 0x04);
     pc.memory.write_u32(bar0_base + COMMON + 0x08, 0); // driver_feature_select=0
     pc.memory.write_u32(bar0_base + COMMON + 0x0c, f0);
 
     // device_feature_select=1 -> read high
-    pc.memory.write_u32(bar0_base + COMMON + 0x00, 1);
+    pc.memory.write_u32(bar0_base + COMMON, 1);
     let f1 = pc.memory.read_u32(bar0_base + COMMON + 0x04);
     pc.memory.write_u32(bar0_base + COMMON + 0x08, 1);
     pc.memory.write_u32(bar0_base + COMMON + 0x0c, f1);
