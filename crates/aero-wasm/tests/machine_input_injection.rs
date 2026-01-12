@@ -21,12 +21,12 @@ fn machine_mouse_injection_exports_forward_without_panicking() {
     m.inject_mouse_motion(10, 5, 1);
 
     // Button injection via DOM `MouseEvent.button` mapping.
-    m.inject_mouse_button(0, true);
-    m.inject_mouse_button(0, false);
-    m.inject_mouse_button(1, true);
-    m.inject_mouse_button(1, false);
-    m.inject_mouse_button(2, true);
-    m.inject_mouse_button(2, false);
+    m.inject_mouse_button(aero_wasm::MouseButton::Left as u8, true);
+    m.inject_mouse_button(aero_wasm::MouseButton::Left as u8, false);
+    m.inject_mouse_button(aero_wasm::MouseButton::Middle as u8, true);
+    m.inject_mouse_button(aero_wasm::MouseButton::Middle as u8, false);
+    m.inject_mouse_button(aero_wasm::MouseButton::Right as u8, true);
+    m.inject_mouse_button(aero_wasm::MouseButton::Right as u8, false);
 
     // Unknown button codes should be ignored.
     m.inject_mouse_button(0xFF, true);
