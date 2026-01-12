@@ -3,6 +3,7 @@ import type { VmSnapshotDeviceBlob } from "../runtime/snapshot_protocol";
 import {
   VM_SNAPSHOT_DEVICE_AUDIO_HDA_KIND,
   VM_SNAPSHOT_DEVICE_E1000_KIND,
+  VM_SNAPSHOT_DEVICE_I8042_KIND,
   VM_SNAPSHOT_DEVICE_KIND_PREFIX_ID,
   VM_SNAPSHOT_DEVICE_NET_STACK_KIND,
   VM_SNAPSHOT_DEVICE_USB_KIND,
@@ -18,6 +19,7 @@ export type IoWorkerSnapshotDeviceState = { kind: string; bytes: Uint8Array };
 export type IoWorkerSnapshotRuntimes = Readonly<{
   usbUhciRuntime: unknown | null;
   usbUhciControllerBridge: unknown | null;
+  i8042?: unknown | null;
   audioHda?: unknown | null;
   netE1000: unknown | null;
   netStack: unknown | null;
@@ -90,6 +92,17 @@ export function snapshotUsbDeviceState(runtimes: Pick<IoWorkerSnapshotRuntimes, 
   return null;
 }
 
+export function snapshotI8042DeviceState(i8042: unknown | null): IoWorkerSnapshotDeviceState | null {
+  if (!i8042) return null;
+  try {
+    const bytes = trySaveState(i8042);
+    if (bytes) return { kind: VM_SNAPSHOT_DEVICE_I8042_KIND, bytes };
+  } catch (err) {
+    console.warn("[io.worker] input.i8042 save_state failed:", err);
+  }
+  return null;
+}
+
 export function snapshotNetE1000DeviceState(netE1000: unknown | null): IoWorkerSnapshotDeviceState | null {
   if (!netE1000) return null;
   try {
@@ -129,6 +142,9 @@ export function collectIoWorkerSnapshotDeviceStates(runtimes: IoWorkerSnapshotRu
   const usb = snapshotUsbDeviceState(runtimes);
   if (usb) devices.push(usb);
 
+  const i8042 = snapshotI8042DeviceState(runtimes.i8042 ?? null);
+  if (i8042) devices.push(i8042);
+
   const hda = snapshotAudioHdaDeviceState(runtimes.audioHda ?? null);
   if (hda) devices.push(hda);
 
@@ -158,6 +174,22 @@ export function restoreUsbDeviceState(runtimes: Pick<IoWorkerSnapshotRuntimes, "
     } catch (err) {
       console.warn("[io.worker] UhciControllerBridge load_state failed:", err);
     }
+  }
+}
+
+export function restoreI8042DeviceState(i8042: unknown | null, bytes: Uint8Array): void {
+  if (!i8042) {
+    console.warn("[io.worker] Snapshot contains input.i8042 state but i8042 runtime is unavailable; ignoring blob.");
+    return;
+  }
+  try {
+    if (!tryLoadState(i8042, bytes)) {
+      console.warn(
+        "[io.worker] Snapshot contains input.i8042 state but i8042 runtime has no load_state/restore_state hook; ignoring blob.",
+      );
+    }
+  } catch (err) {
+    console.warn("[io.worker] input.i8042 load_state failed:", err);
   }
 }
 
@@ -310,6 +342,7 @@ export async function restoreIoWorkerVmSnapshotFromOpfs(opts: {
     const devicesRaw = Array.isArray(rec.devices) ? rec.devices : [];
     const devices: VmSnapshotDeviceBlob[] = [];
     let usbBytes: Uint8Array | null = null;
+    let i8042Bytes: Uint8Array | null = null;
     let hdaBytes: Uint8Array | null = null;
     let e1000Bytes: Uint8Array | null = null;
     let stackBytes: Uint8Array | null = null;
@@ -323,6 +356,7 @@ export async function restoreIoWorkerVmSnapshotFromOpfs(opts: {
       devices.push({ kind, bytes: copyU8ToArrayBuffer(e.bytes) });
 
       if (kind === VM_SNAPSHOT_DEVICE_USB_KIND) usbBytes = e.bytes;
+      if (kind === VM_SNAPSHOT_DEVICE_I8042_KIND) i8042Bytes = e.bytes;
       if (kind === VM_SNAPSHOT_DEVICE_AUDIO_HDA_KIND) hdaBytes = e.bytes;
       if (kind === VM_SNAPSHOT_DEVICE_E1000_KIND) e1000Bytes = e.bytes;
       if (kind === VM_SNAPSHOT_DEVICE_NET_STACK_KIND) stackBytes = e.bytes;
@@ -330,6 +364,7 @@ export async function restoreIoWorkerVmSnapshotFromOpfs(opts: {
 
     // Apply device state locally (IO worker owns USB + networking).
     if (usbBytes) restoreUsbDeviceState(opts.runtimes, usbBytes);
+    if (i8042Bytes) restoreI8042DeviceState(opts.runtimes.i8042 ?? null, i8042Bytes);
     if (hdaBytes) restoreAudioHdaDeviceState(opts.runtimes.audioHda ?? null, hdaBytes);
     if (e1000Bytes) restoreNetE1000DeviceState(opts.runtimes.netE1000, e1000Bytes);
     if (stackBytes) restoreNetStackDeviceState(opts.runtimes.netStack, stackBytes, { tcpRestorePolicy: "drop" });
@@ -351,6 +386,7 @@ export async function restoreIoWorkerVmSnapshotFromOpfs(opts: {
 
     const devices: VmSnapshotDeviceBlob[] = [];
     let usbBytes: Uint8Array | null = null;
+    let i8042Bytes: Uint8Array | null = null;
     let hdaBytes: Uint8Array | null = null;
     let e1000Bytes: Uint8Array | null = null;
     let stackBytes: Uint8Array | null = null;
@@ -367,6 +403,7 @@ export async function restoreIoWorkerVmSnapshotFromOpfs(opts: {
       if (!kind) continue;
 
       if (kind === VM_SNAPSHOT_DEVICE_USB_KIND) usbBytes = e.data;
+      if (kind === VM_SNAPSHOT_DEVICE_I8042_KIND) i8042Bytes = e.data;
       if (kind === VM_SNAPSHOT_DEVICE_AUDIO_HDA_KIND) hdaBytes = e.data;
       if (kind === VM_SNAPSHOT_DEVICE_E1000_KIND) e1000Bytes = e.data;
       if (kind === VM_SNAPSHOT_DEVICE_NET_STACK_KIND) stackBytes = e.data;
@@ -375,6 +412,7 @@ export async function restoreIoWorkerVmSnapshotFromOpfs(opts: {
     }
 
     if (usbBytes) restoreUsbDeviceState(opts.runtimes, usbBytes);
+    if (i8042Bytes) restoreI8042DeviceState(opts.runtimes.i8042 ?? null, i8042Bytes);
     if (hdaBytes) restoreAudioHdaDeviceState(opts.runtimes.audioHda ?? null, hdaBytes);
     if (e1000Bytes) restoreNetE1000DeviceState(opts.runtimes.netE1000, e1000Bytes);
     if (stackBytes) restoreNetStackDeviceState(opts.runtimes.netStack, stackBytes, { tcpRestorePolicy: "drop" });

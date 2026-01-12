@@ -6,6 +6,7 @@ import { restoreIoWorkerVmSnapshotFromOpfs, saveIoWorkerVmSnapshotToOpfs } from 
 import {
   VM_SNAPSHOT_DEVICE_ID_AUDIO_HDA,
   VM_SNAPSHOT_DEVICE_ID_E1000,
+  VM_SNAPSHOT_DEVICE_ID_I8042,
   VM_SNAPSHOT_DEVICE_ID_NET_STACK,
   VM_SNAPSHOT_DEVICE_ID_USB,
 } from "./vm_snapshot_wasm";
@@ -20,11 +21,13 @@ describe("workers/io_worker_vm_snapshot", () => {
     } as unknown as WasmApi;
 
     const usbState = new Uint8Array([0x01, 0x02]);
+    const i8042State = new Uint8Array([0x02]);
     const hdaState = new Uint8Array([0x02, 0x03]);
     const e1000State = new Uint8Array([0x03, 0x04, 0x05]);
     const stackState = new Uint8Array([0x06]);
 
     const usbUhciRuntime = { save_state: () => usbState };
+    const i8042 = { save_state: () => i8042State };
     const audioHda = { save_state: () => hdaState };
     const netE1000 = { save_state: () => e1000State };
     // Exercise the alternate `snapshot_state` spelling.
@@ -43,6 +46,7 @@ describe("workers/io_worker_vm_snapshot", () => {
       runtimes: {
         usbUhciRuntime,
         usbUhciControllerBridge: null,
+        i8042,
         audioHda,
         netE1000,
         netStack,
@@ -59,6 +63,7 @@ describe("workers/io_worker_vm_snapshot", () => {
     // blobs can still roundtrip through older bindings.
     expect(calls[0]!.devices).toEqual([
       { kind: `device.${VM_SNAPSHOT_DEVICE_ID_USB}`, bytes: usbState },
+      { kind: `device.${VM_SNAPSHOT_DEVICE_ID_I8042}`, bytes: i8042State },
       { kind: `device.${VM_SNAPSHOT_DEVICE_ID_AUDIO_HDA}`, bytes: hdaState },
       { kind: `device.${VM_SNAPSHOT_DEVICE_ID_E1000}`, bytes: e1000State },
       { kind: `device.${VM_SNAPSHOT_DEVICE_ID_NET_STACK}`, bytes: stackState },
@@ -67,6 +72,7 @@ describe("workers/io_worker_vm_snapshot", () => {
 
   it("normalizes device.<id> kinds on restore and applies net.stack TCP restore policy=drop", async () => {
     const usbState = new Uint8Array([0x01, 0x02]);
+    const i8042State = new Uint8Array([0x02]);
     const hdaState = new Uint8Array([0x02, 0x03]);
     const e1000State = new Uint8Array([0x03, 0x04, 0x05]);
     const stackState = new Uint8Array([0x06]);
@@ -76,6 +82,7 @@ describe("workers/io_worker_vm_snapshot", () => {
       mmu: new Uint8Array([0xbb]),
       devices: [
         { kind: `device.${VM_SNAPSHOT_DEVICE_ID_USB}`, bytes: usbState },
+        { kind: `device.${VM_SNAPSHOT_DEVICE_ID_I8042}`, bytes: i8042State },
         { kind: `device.${VM_SNAPSHOT_DEVICE_ID_AUDIO_HDA}`, bytes: hdaState },
         { kind: `device.${VM_SNAPSHOT_DEVICE_ID_E1000}`, bytes: e1000State },
         { kind: `device.${VM_SNAPSHOT_DEVICE_ID_NET_STACK}`, bytes: stackState },
@@ -85,6 +92,7 @@ describe("workers/io_worker_vm_snapshot", () => {
     const api = { vm_snapshot_restore_from_opfs: restore } as unknown as WasmApi;
 
     const usbLoad = vi.fn();
+    const i8042Load = vi.fn();
     const hdaLoad = vi.fn();
     const e1000Load = vi.fn();
     const stackLoad = vi.fn();
@@ -98,6 +106,7 @@ describe("workers/io_worker_vm_snapshot", () => {
       runtimes: {
         usbUhciRuntime: { load_state: usbLoad },
         usbUhciControllerBridge: null,
+        i8042: { load_state: i8042Load },
         audioHda: { load_state: hdaLoad },
         netE1000: { load_state: e1000Load },
         netStack: { load_state: stackLoad, apply_tcp_restore_policy: stackPolicy },
@@ -106,13 +115,14 @@ describe("workers/io_worker_vm_snapshot", () => {
 
     expect(restore).toHaveBeenCalledWith("state/test.snap");
     expect(usbLoad).toHaveBeenCalledWith(usbState);
+    expect(i8042Load).toHaveBeenCalledWith(i8042State);
     expect(hdaLoad).toHaveBeenCalledWith(hdaState);
     expect(e1000Load).toHaveBeenCalledWith(e1000State);
     expect(stackLoad).toHaveBeenCalledWith(stackState);
     expect(stackPolicy).toHaveBeenCalledWith("drop");
 
     // Returned blob kinds should be canonical (not device.<id>).
-    expect(res.devices?.map((d) => d.kind)).toEqual(["usb.uhci", "audio.hda", "net.e1000", "net.stack"]);
+    expect(res.devices?.map((d) => d.kind)).toEqual(["usb.uhci", "input.i8042", "audio.hda", "net.e1000", "net.stack"]);
   });
 
   it("warns + ignores net.stack restore blobs when net.stack runtime is unavailable", async () => {
