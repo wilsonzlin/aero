@@ -1,7 +1,7 @@
 use aero_devices::pci::{profile::NVME_CONTROLLER, PciDevice as _};
 use aero_devices_nvme::NvmeController;
 use aero_pc_platform::PcPlatform;
-use aero_storage::{MemBackend, RawDisk, SECTOR_SIZE};
+use aero_storage::{MemBackend, RawDisk, VirtualDisk, SECTOR_SIZE};
 use memory::MemoryBus as _;
 
 fn cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
@@ -738,6 +738,119 @@ fn pc_platform_new_with_nvme_disk_reflects_backend_capacity_in_identify_namespac
 
     let nsze = pc.memory.read_u64(id_buf);
     assert_eq!(nsze, DISK_SECTORS);
+}
+
+#[test]
+fn pc_platform_new_with_nvme_disk_uses_backend_for_read_and_write_io() {
+    const RAM_SIZE: usize = 2 * 1024 * 1024;
+    const DISK_SECTORS: u64 = 16;
+
+    // Seed a disk sector with a recognizable marker so a READ command proves the provided backend
+    // is actually being used by the NVMe device model.
+    let mut disk = RawDisk::create(MemBackend::new(), DISK_SECTORS * SECTOR_SIZE as u64)
+        .expect("failed to allocate in-memory NVMe disk");
+    disk.write_at(0, &[9, 8, 7, 6]).unwrap();
+
+    let mut pc = PcPlatform::new_with_nvme_disk(RAM_SIZE, Box::new(disk));
+    let bdf = NVME_CONTROLLER.bdf;
+    let bar0_base = read_nvme_bar0_base(&mut pc);
+
+    // Allow bus mastering for NVMe DMA (queues + data buffers).
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0006);
+
+    let asq = 0x10000u64;
+    let acq = 0x20000u64;
+    let io_cq = 0x40000u64;
+    let io_sq = 0x50000u64;
+    let write_buf = 0x60000u64;
+    let read_buf = 0x61000u64;
+
+    // Admin SQ/CQ setup and enable.
+    pc.memory.write_u32(bar0_base + 0x0024, 0x000f_000f); // 16/16 queues
+    pc.memory.write_u64(bar0_base + 0x0028, asq);
+    pc.memory.write_u64(bar0_base + 0x0030, acq);
+    pc.memory.write_u32(bar0_base + 0x0014, 1); // CC.EN
+    assert_eq!(pc.memory.read_u32(bar0_base + 0x001c) & 1, 1);
+
+    // Create IO CQ (qid=1, size=16, PC+IEN).
+    let mut cmd = build_command(0x05);
+    set_cid(&mut cmd, 1);
+    set_prp1(&mut cmd, io_cq);
+    set_cdw10(&mut cmd, (15u32 << 16) | 1);
+    set_cdw11(&mut cmd, 0x3);
+    pc.memory.write_physical(asq, &cmd);
+    pc.memory.write_u32(bar0_base + 0x1000, 1); // SQ0 tail = 1
+    pc.process_nvme();
+
+    // Create IO SQ (qid=1, size=16, CQID=1).
+    let mut cmd = build_command(0x01);
+    set_cid(&mut cmd, 2);
+    set_prp1(&mut cmd, io_sq);
+    set_cdw10(&mut cmd, (15u32 << 16) | 1);
+    set_cdw11(&mut cmd, 1);
+    pc.memory.write_physical(asq + 64, &cmd);
+    pc.memory.write_u32(bar0_base + 0x1000, 2); // SQ0 tail = 2
+    pc.process_nvme();
+
+    // Consume admin CQ completions so IO CQ entries start at offset 0 and INTx reflects I/O only.
+    pc.memory.write_u32(bar0_base + 0x1004, 2); // CQ0 head = 2
+
+    // READ 1 sector at LBA 0 (should observe the seeded marker).
+    let mut cmd = build_command(0x02);
+    set_cid(&mut cmd, 0x20);
+    set_nsid(&mut cmd, 1);
+    set_prp1(&mut cmd, read_buf);
+    set_cdw10(&mut cmd, 0); // slba low
+    set_cdw11(&mut cmd, 0); // slba high
+    set_cdw12(&mut cmd, 0); // nlb = 0 (1 sector)
+    pc.memory.write_physical(io_sq, &cmd);
+    pc.memory.write_u32(bar0_base + 0x1008, 1); // SQ1 tail = 1
+    pc.process_nvme();
+
+    let cqe = read_cqe(&mut pc, io_cq);
+    assert_eq!(cqe.cid, 0x20);
+    assert_eq!(cqe.status & !0x1, 0);
+    let mut first4 = [0u8; 4];
+    pc.memory.read_physical(read_buf, &mut first4);
+    assert_eq!(first4, [9, 8, 7, 6]);
+
+    // WRITE a full sector, then READ it back.
+    let payload: Vec<u8> = (0..SECTOR_SIZE).map(|v| (v & 0xff) as u8).collect();
+    pc.memory.write_physical(write_buf, &payload);
+
+    let mut cmd = build_command(0x01);
+    set_cid(&mut cmd, 0x21);
+    set_nsid(&mut cmd, 1);
+    set_prp1(&mut cmd, write_buf);
+    set_cdw10(&mut cmd, 0);
+    set_cdw11(&mut cmd, 0);
+    set_cdw12(&mut cmd, 0);
+    pc.memory.write_physical(io_sq + 64, &cmd);
+    pc.memory.write_u32(bar0_base + 0x1008, 2); // SQ1 tail = 2
+    pc.process_nvme();
+
+    let cqe = read_cqe(&mut pc, io_cq + 16);
+    assert_eq!(cqe.cid, 0x21);
+    assert_eq!(cqe.status & !0x1, 0);
+
+    let mut cmd = build_command(0x02);
+    set_cid(&mut cmd, 0x22);
+    set_nsid(&mut cmd, 1);
+    set_prp1(&mut cmd, read_buf);
+    set_cdw10(&mut cmd, 0);
+    set_cdw11(&mut cmd, 0);
+    set_cdw12(&mut cmd, 0);
+    pc.memory.write_physical(io_sq + 128, &cmd);
+    pc.memory.write_u32(bar0_base + 0x1008, 3); // SQ1 tail = 3
+    pc.process_nvme();
+
+    let cqe = read_cqe(&mut pc, io_cq + 32);
+    assert_eq!(cqe.cid, 0x22);
+    assert_eq!(cqe.status & !0x1, 0);
+
+    let mut out = vec![0u8; payload.len()];
+    pc.memory.read_physical(read_buf, &mut out);
+    assert_eq!(out, payload);
 }
 
 #[test]
