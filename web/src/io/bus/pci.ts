@@ -1098,7 +1098,20 @@ export class PciBus implements PortIoHandler {
       throw new Error(`PCI snapshot contains too many functions: ${count} (max ${PCI_SNAPSHOT_MAX_FUNCTIONS}).`);
     }
 
-    // Apply core bus state first (config-address register + allocators).
+    // Parse function payloads first so truncated/corrupt snapshots fail before mutating any live
+    // bus/device state. This matters for in-place snapshot restores where callers may attempt to
+    // load a snapshot while a VM is already running.
+    const entries: Array<{ dev: number; fnNum: number; cfg: Uint8Array }> = [];
+    for (let i = 0; i < count; i++) {
+      const dev = r.u8() & 0xff;
+      const fnNum = r.u8() & 0xff;
+      // reserved u16
+      r.u16();
+      const cfg = r.bytesRaw(256);
+      entries.push({ dev, fnNum, cfg });
+    }
+
+    // Apply core bus state (config-address register + allocators).
     this.#addrReg = addrReg >>> 0;
     this.#nextMmioBase = nextMmioBase;
     this.#nextIoBase = nextIoBase & 0xffff;
@@ -1124,13 +1137,8 @@ export class PciBus implements PortIoHandler {
       }
     }
 
-    for (let i = 0; i < count; i++) {
-      const dev = r.u8() & 0xff;
-      const fnNum = r.u8() & 0xff;
-      // reserved u16
-      r.u16();
-
-      const cfg = r.bytesRaw(256);
+    for (const entry of entries) {
+      const { dev, fnNum, cfg } = entry;
       const fn = this.#functions[dev]?.[fnNum] ?? null;
       if (!fn) {
         // Unknown function in this runtime; ignore (forward compatibility).

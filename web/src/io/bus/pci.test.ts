@@ -1023,6 +1023,37 @@ describe("io/bus/pci", () => {
     expect(seen).toEqual([0x0006, 0x0000]);
   });
 
+  it("does not mutate live PCI bus state when snapshot restore fails (truncated snapshot)", () => {
+    const portBus = new PortIoBus();
+    const mmioBus = new MmioBus();
+    const pciBus = new PciBus(portBus, mmioBus);
+    pciBus.registerToPortBus();
+
+    const dev: PciDevice = {
+      name: "snap_truncated_dev",
+      vendorId: 0x1234,
+      deviceId: 0x5678,
+      classCode: 0,
+      bars: [{ kind: "mmio32", size: 0x1000 }, null, null, null, null, null],
+      mmioRead: () => 0xdead_beef,
+      mmioWrite: () => {},
+    };
+    const addr = pciBus.registerDevice(dev, { device: 0, function: 0 });
+    const cfg = makeCfgIo(portBus);
+
+    cfg.writeU16(addr.device, addr.function, 0x04, 0x0002); // MEM enable
+    cfg.writeU32(addr.device, addr.function, 0x10, 0x8000_0000);
+    expect(mmioBus.read(0x8000_0000n, 4)).toBe(0xdead_beef);
+
+    const snapshot = pciBus.saveState();
+    const truncated = snapshot.subarray(0, Math.max(0, snapshot.byteLength - 10));
+
+    expect(() => pciBus.loadState(truncated)).toThrow(/truncated/i);
+
+    // The live device mapping should remain intact.
+    expect(mmioBus.read(0x8000_0000n, 4)).toBe(0xdead_beef);
+  });
+
   it("restores without transient BAR overlap when devices are registered in a different order", () => {
     // Snapshot bus: register dev0 then dev1.
     const portBus = new PortIoBus();
