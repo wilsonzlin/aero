@@ -1,6 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+import {
+  HEADER_U32_LEN,
+  OVERRUN_COUNT_INDEX,
+  READ_FRAME_INDEX,
+  UNDERRUN_COUNT_INDEX,
+  WRITE_FRAME_INDEX,
+  requiredBytes,
+  wrapRingBuffer,
+} from "../src/audio/audio_worklet_ring";
 import { createAudioOutput, startAudioPerfSampling, writeRingBufferInterleaved } from "../src/platform/audio.ts";
 
 test("AudioOutput exposes getOverrunCount() reading ring buffer header[3]", async () => {
@@ -44,7 +53,7 @@ test("AudioOutput exposes getOverrunCount() reading ring buffer header[3]", asyn
     assert.equal(output.enabled, true);
     if (!output.enabled) return;
 
-    Atomics.store(output.ringBuffer.header, 3, 123);
+    Atomics.store(output.ringBuffer.header, OVERRUN_COUNT_INDEX, 123);
     assert.equal(output.getOverrunCount(), 123);
     assert.equal(output.getMetrics().overrunCount, 123);
   } finally {
@@ -121,34 +130,25 @@ test("writeRingBufferInterleaved() increments overrunCount when frames are dropp
   const capacityFrames = 4;
   const channelCount = 1;
 
-  const headerU32Len = 4;
-  const headerBytes = headerU32Len * Uint32Array.BYTES_PER_ELEMENT;
-  const sampleCapacity = capacityFrames * channelCount;
+  const buffer = new SharedArrayBuffer(requiredBytes(capacityFrames, channelCount));
+  const views = wrapRingBuffer(buffer, capacityFrames, channelCount);
 
-  const buffer = new SharedArrayBuffer(headerBytes + sampleCapacity * Float32Array.BYTES_PER_ELEMENT);
-  const header = new Uint32Array(buffer, 0, headerU32Len);
-  const samples = new Float32Array(buffer, headerBytes, sampleCapacity);
-
-  Atomics.store(header, 0, 0);
-  Atomics.store(header, 1, capacityFrames); // Ring buffer is full.
-  Atomics.store(header, 2, 0);
-  Atomics.store(header, 3, 0);
+  for (let i = 0; i < HEADER_U32_LEN; i++) Atomics.store(views.header, i, 0);
+  Atomics.store(views.header, READ_FRAME_INDEX, 0);
+  Atomics.store(views.header, WRITE_FRAME_INDEX, capacityFrames); // Ring buffer is full.
+  Atomics.store(views.header, UNDERRUN_COUNT_INDEX, 0);
+  Atomics.store(views.header, OVERRUN_COUNT_INDEX, 0);
 
   const ringBuffer = {
     buffer,
-    header,
-    readIndex: header.subarray(0, 1),
-    writeIndex: header.subarray(1, 2),
-    underrunCount: header.subarray(2, 3),
-    overrunCount: header.subarray(3, 4),
-    samples,
+    ...views,
     channelCount,
     capacityFrames,
   };
 
   const written = writeRingBufferInterleaved(ringBuffer, new Float32Array(2), 48_000, 48_000);
   assert.equal(written, 0);
-  assert.equal(Atomics.load(header, 3) >>> 0, 2);
+  assert.equal(Atomics.load(views.header, OVERRUN_COUNT_INDEX) >>> 0, 2);
 });
 
 test("startAudioPerfSampling() emits audio.* counters and prefers worklet underrun frames", async () => {

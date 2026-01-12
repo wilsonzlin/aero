@@ -1,6 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+import {
+  READ_FRAME_INDEX,
+  UNDERRUN_COUNT_INDEX,
+  WRITE_FRAME_INDEX,
+  requiredBytes,
+  wrapRingBuffer,
+} from "../src/audio/audio_worklet_ring";
 import { AeroAudioProcessor, addUnderrunFrames } from "../src/platform/audio-worklet-processor.js";
 
 function makeRingBuffer(capacityFrames: number, channelCount: number): {
@@ -8,13 +15,12 @@ function makeRingBuffer(capacityFrames: number, channelCount: number): {
   header: Uint32Array;
   samples: Float32Array;
 } {
-  const headerBytes = 4 * Uint32Array.BYTES_PER_ELEMENT;
-  const sampleCapacity = capacityFrames * channelCount;
-  const sab = new SharedArrayBuffer(headerBytes + sampleCapacity * Float32Array.BYTES_PER_ELEMENT);
+  const sab = new SharedArrayBuffer(requiredBytes(capacityFrames, channelCount));
+  const views = wrapRingBuffer(sab, capacityFrames, channelCount);
   return {
     sab,
-    header: new Uint32Array(sab, 0, 4),
-    samples: new Float32Array(sab, headerBytes, sampleCapacity),
+    header: views.header,
+    samples: views.samples,
   };
 }
 
@@ -24,9 +30,9 @@ test("AudioWorklet processor underrun counter increments by missing frames", () 
   const { sab, header, samples } = makeRingBuffer(capacityFrames, channelCount);
 
   // Two frames available.
-  Atomics.store(header, 0, 0); // readFrameIndex
-  Atomics.store(header, 1, 2); // writeFrameIndex
-  Atomics.store(header, 2, 0); // underrunCount (missing frames)
+  Atomics.store(header, READ_FRAME_INDEX, 0); // readFrameIndex
+  Atomics.store(header, WRITE_FRAME_INDEX, 2); // writeFrameIndex
+  Atomics.store(header, UNDERRUN_COUNT_INDEX, 0); // underrunCount (missing frames)
 
   // Interleaved samples: [L0, R0, L1, R1, ...]
   samples.set([0.1, 0.2, 1.1, 1.2]);
@@ -47,8 +53,8 @@ test("AudioWorklet processor underrun counter increments by missing frames", () 
   // Compare as Float32Arrays so the expected values are rounded the same way.
   assert.deepEqual(outputs[0][0], Float32Array.from([0.1, 1.1, 0, 0]));
   assert.deepEqual(outputs[0][1], Float32Array.from([0.2, 1.2, 0, 0]));
-  assert.equal(Atomics.load(header, 0) >>> 0, 2);
-  assert.equal(Atomics.load(header, 2) >>> 0, 2);
+  assert.equal(Atomics.load(header, READ_FRAME_INDEX) >>> 0, 2);
+  assert.equal(Atomics.load(header, UNDERRUN_COUNT_INDEX) >>> 0, 2);
   assert.deepEqual(lastMessage, {
     type: "underrun",
     underrunFramesAdded: 2,
@@ -63,7 +69,7 @@ test("AudioWorklet processor underrun counter increments by missing frames", () 
 
   assert.deepEqual(Array.from(outputs2[0][0]), [0, 0, 0, 0]);
   assert.deepEqual(Array.from(outputs2[0][1]), [0, 0, 0, 0]);
-  assert.equal(Atomics.load(header, 2) >>> 0, 6);
+  assert.equal(Atomics.load(header, UNDERRUN_COUNT_INDEX) >>> 0, 6);
   assert.deepEqual(lastMessage, {
     type: "underrun",
     underrunFramesAdded: 4,
@@ -74,8 +80,8 @@ test("AudioWorklet processor underrun counter increments by missing frames", () 
 
 test("addUnderrunFrames wraps as u32", () => {
   const { header } = makeRingBuffer(1, 1);
-  Atomics.store(header, 2, 0xffff_fffe);
+  Atomics.store(header, UNDERRUN_COUNT_INDEX, 0xffff_fffe);
   const total = addUnderrunFrames(header, 4);
   assert.equal(total, 2);
-  assert.equal(Atomics.load(header, 2) >>> 0, 2);
+  assert.equal(Atomics.load(header, UNDERRUN_COUNT_INDEX) >>> 0, 2);
 });
