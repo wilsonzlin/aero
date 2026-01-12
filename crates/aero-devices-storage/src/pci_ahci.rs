@@ -22,6 +22,8 @@ pub const AHCI_ABAR_SIZE: u64 = 0x2000;
 /// PCI BAR index used for AHCI ABAR on Intel ICH9.
 pub const AHCI_ABAR_BAR_INDEX: u8 = 5;
 
+const PCI_COMMAND_MEM_ENABLE: u16 = 1 << 1;
+
 #[derive(Clone, Default)]
 struct AtomicIrqLine {
     level: Arc<AtomicBool>,
@@ -90,6 +92,9 @@ impl AhciPciDevice {
     /// Reads from the AHCI ABAR MMIO region.
     pub fn mmio_read(&mut self, offset: u64, size: usize) -> u64 {
         let size = size.clamp(1, 8);
+        if (self.config.command() & PCI_COMMAND_MEM_ENABLE) == 0 {
+            return all_ones(size);
+        }
         let mut out = 0u64;
 
         for i in 0..size {
@@ -116,6 +121,9 @@ impl AhciPciDevice {
     /// Writes to the AHCI ABAR MMIO region.
     pub fn mmio_write(&mut self, offset: u64, size: usize, value: u64) {
         let size = size.clamp(1, 8);
+        if (self.config.command() & PCI_COMMAND_MEM_ENABLE) == 0 {
+            return;
+        }
 
         let mut idx = 0usize;
         while idx < size {
@@ -280,5 +288,19 @@ impl IoSnapshot for AhciPciDevice {
         self.controller.load_state(buf)?;
 
         Ok(())
+    }
+}
+
+fn all_ones(size: usize) -> u64 {
+    match size {
+        0 => 0,
+        1 => 0xff,
+        2 => 0xffff,
+        3 => 0x00ff_ffff,
+        4 => 0xffff_ffff,
+        5 => 0x0000_ffff_ffff,
+        6 => 0x00ff_ffff_ffff,
+        7 => 0x00ff_ffff_ffff_ffff,
+        _ => u64::MAX,
     }
 }

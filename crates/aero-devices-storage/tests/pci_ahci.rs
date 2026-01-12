@@ -5,6 +5,7 @@ use aero_devices_storage::AhciPciDevice;
 use aero_storage::{MemBackend, RawDisk, VirtualDisk, SECTOR_SIZE};
 use memory::{Bus, MemoryBus};
 
+const HBA_CAP: u64 = 0x00;
 const HBA_GHC: u64 = 0x04;
 
 const PORT_BASE: u64 = 0x100;
@@ -93,6 +94,27 @@ fn pci_config_header_fields_and_bar5_size_probe() {
     dev.config_mut().write(bar5_off, 4, 0xFFFF_FFFF);
     let got = dev.config_mut().read(bar5_off, 4);
     assert_eq!(got, 0xFFFF_E000);
+}
+
+#[test]
+fn mmio_requires_pci_memory_space_enable() {
+    let mut dev = AhciPciDevice::new(1);
+
+    // Memory Space Enable (command bit 1) gates MMIO decoding: reads float high and writes are
+    // ignored.
+    assert_eq!(dev.mmio_read(HBA_CAP, 4), 0xFFFF_FFFF);
+
+    // Try to enable global interrupts while MMIO decoding is disabled; this write should not take
+    // effect.
+    dev.mmio_write(HBA_GHC, 4, u64::from(GHC_AE | GHC_IE));
+
+    // Enable MMIO decoding and observe real register values again.
+    dev.config_mut().set_command(0x0002); // MEM
+    assert_ne!(dev.mmio_read(HBA_CAP, 4), 0xFFFF_FFFF);
+
+    // GHC.IE should still be clear because the earlier write was ignored.
+    let ghc = dev.mmio_read(HBA_GHC, 4) as u32;
+    assert_eq!(ghc & GHC_IE, 0);
 }
 
 #[test]
