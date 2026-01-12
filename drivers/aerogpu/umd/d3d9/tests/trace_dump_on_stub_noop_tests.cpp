@@ -30,6 +30,28 @@ int main() {
     trace.ret(S_OK);
   }
 
+  // Exercise other bring-up no-op DDIs as well; none should be stub-tagged.
+  {
+    aerogpu::D3d9TraceCall trace(aerogpu::D3d9TraceFunc::DeviceSetCursorPosition, 0xdef, 0, 0, 0);
+    trace.ret(S_OK);
+  }
+  {
+    aerogpu::D3d9TraceCall trace(aerogpu::D3d9TraceFunc::DeviceShowCursor, 0x123, 0, 0, 0);
+    trace.ret(S_OK);
+  }
+  {
+    aerogpu::D3d9TraceCall trace(aerogpu::D3d9TraceFunc::DeviceSetDialogBoxMode, 0x456, 0, 0, 0);
+    trace.ret(S_OK);
+  }
+  {
+    aerogpu::D3d9TraceCall trace(aerogpu::D3d9TraceFunc::DeviceSetConvolutionMonoKernel, 0x789, 0, 0, 0);
+    trace.ret(S_OK);
+  }
+  {
+    aerogpu::D3d9TraceCall trace(aerogpu::D3d9TraceFunc::DeviceGenerateMipSubLevels, 0xabc, 0, 0, 0);
+    trace.ret(S_OK);
+  }
+
   std::fflush(stderr);
 
   const std::string output = slurp_file(out_path);
@@ -47,4 +69,3 @@ int main() {
   std::remove(out_path.c_str());
   return 0;
 }
-
