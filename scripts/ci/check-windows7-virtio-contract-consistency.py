@@ -1673,7 +1673,10 @@ def main() -> None:
                     )
 
             if not re.search(
-                rf"^\s*AddService\s*=\s*{re.escape(expected_service)}\b",
+                # INF syntax allows string tokens to be quoted; accept both:
+                #   AddService = foo, ...
+                #   AddService = "foo", ...
+                rf'^\s*AddService\s*=\s*"?{re.escape(expected_service)}"?\s*(?:,|$)',
                 inf_text,
                 flags=re.I | re.M,
             ):

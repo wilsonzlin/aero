@@ -156,6 +156,11 @@ def _extract_inf_addservice_names(inf_text: str) -> set[str]:
         if not rest:
             continue
         service_name = rest.split(",", 1)[0].strip()
+        # INF syntax allows string values to be quoted; accept both:
+        #   AddService = foo, ...
+        #   AddService = "foo", ...
+        if service_name.startswith('"') and service_name.endswith('"') and len(service_name) >= 2:
+            service_name = service_name[1:-1].strip()
         if service_name:
             names.add(service_name)
     return names
