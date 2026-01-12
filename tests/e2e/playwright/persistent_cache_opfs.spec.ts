@@ -23,6 +23,9 @@ test("large shader payload spills to OPFS when available", async ({}, testInfo) 
       opfsFileExists: boolean;
       opfsFileSize: number | null;
       opfsWgslBytes: number | null;
+      pipelineKey: string | null;
+      pipelineOpfsFileExists: boolean;
+      pipelineRoundtripOk: boolean;
       idbShaderRecord: {
         storage: string | null;
         opfsFile: string | null;
@@ -125,6 +128,9 @@ test("large shader payload spills to OPFS when available", async ({}, testInfo) 
           opfsFileExists: !!result.opfsFileExists,
           opfsFileSize: opfsInfo.fileSize ?? null,
           opfsWgslBytes: opfsInfo.wgslBytes ?? null,
+          pipelineKey: typeof result.pipelineKey === "string" ? result.pipelineKey : null,
+          pipelineOpfsFileExists: !!result.pipelineOpfsFileExists,
+          pipelineRoundtripOk: !!result.pipelineRoundtripOk,
           idbShaderRecord: idbShaderRecord ?? null,
           logs,
         };
@@ -157,6 +163,9 @@ test("large shader payload spills to OPFS when available", async ({}, testInfo) 
     expect(first.idbShaderRecord?.hasReflection).toBe(false);
     expect(first.idbShaderRecord?.size).not.toBeNull();
     expect(first.idbShaderRecord?.size ?? 0).toBeGreaterThan(256 * 1024);
+    expect(first.pipelineKey).not.toBeNull();
+    expect(first.pipelineOpfsFileExists).toBe(true);
+    expect(first.pipelineRoundtripOk).toBe(true);
 
     const second = await runOnce();
     expect(second.key).toBe(first.key);
@@ -170,6 +179,9 @@ test("large shader payload spills to OPFS when available", async ({}, testInfo) 
     expect(second.idbShaderRecord?.storage).toBe("opfs");
     expect(second.idbShaderRecord?.hasWgsl).toBe(false);
     expect(second.idbShaderRecord?.hasReflection).toBe(false);
+    expect(second.pipelineKey).toBe(first.pipelineKey);
+    expect(second.pipelineOpfsFileExists).toBe(true);
+    expect(second.pipelineRoundtripOk).toBe(true);
   } finally {
     await server.close();
     if (userDataDir) {
