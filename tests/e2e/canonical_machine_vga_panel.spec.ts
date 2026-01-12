@@ -84,5 +84,46 @@ test("canonical Machine panel: renders VGA scanout to a canvas", async ({ page }
   expect(sample.width).toBeGreaterThan(0);
   expect(sample.height).toBeGreaterThan(0);
   expect(sample.nonBlack).toBeGreaterThan(0);
-});
 
+  // Optional shared-framebuffer mirroring: when SharedArrayBuffer is available,
+  // the machine panel also publishes frames into `__aeroMachineVgaFramebuffer`
+  // using the stable framebuffer protocol header.
+  const shared = await page.evaluate(() => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const sab = (globalThis as any).__aeroMachineVgaFramebuffer as SharedArrayBuffer | undefined;
+    if (typeof SharedArrayBuffer === "undefined") return null;
+    if (!(sab instanceof SharedArrayBuffer)) return null;
+
+    const HEADER_I32_COUNT = 8;
+    const HEADER_BYTES = HEADER_I32_COUNT * 4;
+
+    const header = new Int32Array(sab, 0, HEADER_I32_COUNT);
+    const load = (index: number) => {
+      if (typeof Atomics !== "undefined") return Atomics.load(header, index);
+      return header[index];
+    };
+
+    const width = load(2);
+    const height = load(3);
+    const strideBytes = load(4);
+    const frame = load(6);
+
+    const pixelsLen = Math.min(Math.max(0, sab.byteLength - HEADER_BYTES), Math.max(0, strideBytes) * Math.max(0, height));
+    const pixels = new Uint8Array(sab, HEADER_BYTES, pixelsLen);
+    const r = pixels[0] ?? 0;
+    const g = pixels[1] ?? 0;
+    const b = pixels[2] ?? 0;
+    const a = pixels[3] ?? 0;
+    const nonBlack = r !== 0 || g !== 0 || b !== 0;
+
+    return { width, height, strideBytes, frame, firstPixel: [r, g, b, a], nonBlack };
+  });
+
+  if (shared) {
+    expect(shared.width).toBeGreaterThan(0);
+    expect(shared.height).toBeGreaterThan(0);
+    expect(shared.strideBytes).toBeGreaterThan(0);
+    expect(shared.frame).toBeGreaterThan(0);
+    expect(shared.nonBlack).toBe(true);
+  }
+});
