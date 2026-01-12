@@ -300,6 +300,116 @@ fn disk_layer_snapshot_rejects_unaligned_disk_size() {
 }
 
 #[test]
+fn disk_layer_snapshot_rejects_zero_disk_size() {
+    const TAG_SECTOR_SIZE: u16 = 2;
+    const TAG_SIZE_BYTES: u16 = 3;
+    const TAG_BACKEND_STATE: u16 = 8;
+
+    let backend = DiskBackendState::Local(LocalDiskBackendState {
+        kind: LocalDiskBackendKind::Other,
+        key: "disk0".to_string(),
+        overlay: None,
+    });
+
+    let mut w = SnapshotWriter::new(DiskLayerState::DEVICE_ID, DiskLayerState::DEVICE_VERSION);
+    w.field_bytes(TAG_BACKEND_STATE, backend.encode());
+    w.field_u32(TAG_SECTOR_SIZE, 512);
+    w.field_u64(TAG_SIZE_BYTES, 0);
+
+    let mut state = DiskLayerState::new(backend, 4096, 512);
+    let err = state
+        .load_state(&w.finish())
+        .expect_err("snapshot should reject disk_size=0");
+    assert_eq!(err, SnapshotError::InvalidFieldEncoding("disk_size"));
+}
+
+#[test]
+fn disk_layer_snapshot_rejects_local_overlay_disk_size_mismatch() {
+    const TAG_SECTOR_SIZE: u16 = 2;
+    const TAG_SIZE_BYTES: u16 = 3;
+    const TAG_BACKEND_STATE: u16 = 8;
+
+    let backend = DiskBackendState::Local(LocalDiskBackendState {
+        kind: LocalDiskBackendKind::Other,
+        key: "disk0".to_string(),
+        overlay: Some(aero_io_snapshot::io::storage::state::DiskOverlayState {
+            file_name: "disk0.overlay".to_string(),
+            disk_size_bytes: 4096,
+            block_size_bytes: 1024 * 1024,
+        }),
+    });
+
+    let mut w = SnapshotWriter::new(DiskLayerState::DEVICE_ID, DiskLayerState::DEVICE_VERSION);
+    w.field_bytes(TAG_BACKEND_STATE, backend.encode());
+    w.field_u32(TAG_SECTOR_SIZE, 512);
+    w.field_u64(TAG_SIZE_BYTES, 8192); // mismatch with overlay.disk_size_bytes
+
+    let mut state = DiskLayerState::new(
+        DiskBackendState::Local(LocalDiskBackendState {
+            kind: LocalDiskBackendKind::Other,
+            key: "ignored".to_string(),
+            overlay: None,
+        }),
+        4096,
+        512,
+    );
+    let err = state
+        .load_state(&w.finish())
+        .expect_err("snapshot should reject overlay disk_size mismatch");
+    assert_eq!(
+        err,
+        SnapshotError::InvalidFieldEncoding("overlay disk_size mismatch")
+    );
+}
+
+#[test]
+fn disk_layer_snapshot_rejects_remote_overlay_disk_size_mismatch() {
+    const TAG_SECTOR_SIZE: u16 = 2;
+    const TAG_SIZE_BYTES: u16 = 3;
+    const TAG_BACKEND_STATE: u16 = 8;
+
+    let backend = DiskBackendState::Remote(aero_io_snapshot::io::storage::state::RemoteDiskBackendState {
+        base: aero_io_snapshot::io::storage::state::RemoteDiskBaseState {
+            image_id: "img".to_string(),
+            version: "ver".to_string(),
+            delivery_type: "range".to_string(),
+            expected_validator: None,
+            chunk_size: 1024 * 1024,
+        },
+        overlay: aero_io_snapshot::io::storage::state::DiskOverlayState {
+            file_name: "remote.overlay".to_string(),
+            disk_size_bytes: 4096,
+            block_size_bytes: 1024 * 1024,
+        },
+        cache: aero_io_snapshot::io::storage::state::DiskCacheState {
+            file_name: "remote.cache".to_string(),
+        },
+    });
+
+    let mut w = SnapshotWriter::new(DiskLayerState::DEVICE_ID, DiskLayerState::DEVICE_VERSION);
+    w.field_bytes(TAG_BACKEND_STATE, backend.encode());
+    w.field_u32(TAG_SECTOR_SIZE, 512);
+    w.field_u64(TAG_SIZE_BYTES, 8192); // mismatch with overlay.disk_size_bytes
+
+    let mut state = DiskLayerState::new(
+        DiskBackendState::Local(LocalDiskBackendState {
+            kind: LocalDiskBackendKind::Other,
+            key: "ignored".to_string(),
+            overlay: None,
+        }),
+        4096,
+        512,
+    );
+    let err = state
+        .load_state(&w.finish())
+        .expect_err("snapshot should reject remote overlay disk_size mismatch");
+    assert_eq!(
+        err,
+        SnapshotError::InvalidFieldEncoding("overlay disk_size mismatch")
+    );
+}
+
+#[test]
 fn ahci_snapshot_rejects_excessive_port_count() {
     const TAG_PORTS: u16 = 2;
 
