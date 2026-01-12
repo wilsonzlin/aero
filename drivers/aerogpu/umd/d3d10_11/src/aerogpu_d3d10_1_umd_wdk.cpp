@@ -2715,11 +2715,38 @@ HRESULT AEROGPU_APIENTRY OpenResource(D3D10DDI_HDEVICE hDevice,
 
   const void* priv_data = nullptr;
   uint32_t priv_size = 0;
+  uint32_t num_allocations = 1;
+  __if_exists(D3D10DDIARG_OPENRESOURCE::NumAllocations) {
+    num_allocations = pOpenResource->NumAllocations ? static_cast<uint32_t>(pOpenResource->NumAllocations) : 1u;
+  }
+
+  // OpenResource DDI structs vary across WDK header vintages. Some headers
+  // expose the preserved private driver data at the per-allocation level; prefer
+  // that when present and fall back to the top-level fields.
+  __if_exists(D3D10DDIARG_OPENRESOURCE::pOpenAllocationInfo) {
+    if (pOpenResource->pOpenAllocationInfo && num_allocations >= 1) {
+      using OpenInfoT = std::remove_pointer_t<decltype(pOpenResource->pOpenAllocationInfo)>;
+      __if_exists(OpenInfoT::pPrivateDriverData) {
+        priv_data = pOpenResource->pOpenAllocationInfo[0].pPrivateDriverData;
+      }
+      __if_exists(OpenInfoT::PrivateDriverDataSize) {
+        priv_size = static_cast<uint32_t>(pOpenResource->pOpenAllocationInfo[0].PrivateDriverDataSize);
+      }
+    }
+  }
   __if_exists(D3D10DDIARG_OPENRESOURCE::pPrivateDriverData) {
-    priv_data = pOpenResource->pPrivateDriverData;
+    if (!priv_data) {
+      priv_data = pOpenResource->pPrivateDriverData;
+    }
   }
   __if_exists(D3D10DDIARG_OPENRESOURCE::PrivateDriverDataSize) {
-    priv_size = static_cast<uint32_t>(pOpenResource->PrivateDriverDataSize);
+    if (priv_size == 0) {
+      priv_size = static_cast<uint32_t>(pOpenResource->PrivateDriverDataSize);
+    }
+  }
+
+  if (num_allocations != 1) {
+    return E_NOTIMPL;
   }
 
   if (!priv_data || priv_size < sizeof(aerogpu_wddm_alloc_priv)) {
@@ -2779,6 +2806,29 @@ HRESULT AEROGPU_APIENTRY OpenResource(D3D10DDI_HDEVICE hDevice,
             res->wddm.km_allocation_handles.push_back(h);
           }
         }
+      }
+    }
+  }
+
+  // Fall back to per-allocation handles when top-level members are absent.
+  __if_exists(D3D10DDIARG_OPENRESOURCE::pOpenAllocationInfo) {
+    if (pOpenResource->pOpenAllocationInfo && num_allocations >= 1) {
+      uint64_t km_alloc = 0;
+      uint32_t runtime_alloc = 0;
+      using OpenInfoT = std::remove_pointer_t<decltype(pOpenResource->pOpenAllocationInfo)>;
+      __if_exists(OpenInfoT::hKMAllocation) {
+        km_alloc = static_cast<uint64_t>(pOpenResource->pOpenAllocationInfo[0].hKMAllocation);
+      }
+      __if_exists(OpenInfoT::hAllocation) {
+        runtime_alloc = static_cast<uint32_t>(pOpenResource->pOpenAllocationInfo[0].hAllocation);
+      }
+      if (res->wddm_allocation_handle == 0 && (runtime_alloc != 0 || km_alloc != 0)) {
+        res->wddm_allocation_handle = runtime_alloc ? runtime_alloc : static_cast<uint32_t>(km_alloc);
+      }
+      if (km_alloc != 0 &&
+          std::find(res->wddm.km_allocation_handles.begin(), res->wddm.km_allocation_handles.end(), km_alloc) ==
+              res->wddm.km_allocation_handles.end()) {
+        res->wddm.km_allocation_handles.push_back(km_alloc);
       }
     }
   }
