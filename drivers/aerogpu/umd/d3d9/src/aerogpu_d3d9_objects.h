@@ -138,6 +138,11 @@ struct Query {
   std::atomic<bool> completion_logged{false};
 };
 
+// Forward declaration for D3D9 state-block support (defined in
+// aerogpu_d3d9_driver.cpp). State blocks are lifetime-managed by the D3D9
+// runtime via CreateStateBlock/DeleteStateBlock and BeginStateBlock/EndStateBlock.
+struct StateBlock;
+
 struct Adapter {
   // The adapter LUID used for caching/reuse when the runtime opens the same
   // adapter multiple times (common with D3D9Ex + DWM).
@@ -282,6 +287,11 @@ struct Device {
 
   Adapter* adapter = nullptr;
   std::mutex mutex;
+
+  // Active state-block recording session (BeginStateBlock -> EndStateBlock).
+  // When non-null, state-setting DDIs record the subset of state they touch
+  // into this object.
+  StateBlock* recording_state_block = nullptr;
 
   // WDDM state (only populated in real Win7/WDDM builds).
   WddmDeviceCallbacks wddm_callbacks{};

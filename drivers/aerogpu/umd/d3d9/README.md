@@ -267,8 +267,6 @@ These DDIs are present in the Win7 D3D9UMDDI surface but are not implemented yet
 - `pfnSetConvolutionMonoKernel` (no-op, returns `S_OK`)
 - `pfnSetAutoGenFilterType`, `pfnGetAutoGenFilterType`, `pfnGenerateMipSubLevels` (stubbed for completeness)
 - `pfnSetPriority` / `pfnGetPriority` (stubbed for completeness)
-- `pfnCreateStateBlock` / `pfnDeleteStateBlock` / `pfnCaptureStateBlock` / `pfnApplyStateBlock` / `pfnValidateDevice`
-  (returns `D3DERR_NOTAVAILABLE`)
 - `pfnSetSoftwareVertexProcessing`, `pfnSetCursorProperties` / `pfnSetCursorPosition` / `pfnShowCursor`,
   `pfnSetPaletteEntries` / `pfnSetCurrentTexturePalette`, `pfnSetClipStatus` (no-op, returns `S_OK`)
 - `pfnGetClipStatus` / `pfnGetGammaRamp` (returns `D3DERR_NOTAVAILABLE`)
@@ -278,7 +276,7 @@ These DDIs are present in the Win7 D3D9UMDDI surface but are not implemented yet
 - `pfnDrawIndexedPrimitiveUP` (returns `D3DERR_NOTAVAILABLE`)
 - `pfnGetSoftwareVertexProcessing`, `pfnGetTransform`, `pfnGetClipPlane`, `pfnGetViewport`, `pfnGetScissorRect`
   (returns `D3DERR_NOTAVAILABLE`)
-- `pfnBeginStateBlock` / `pfnEndStateBlock`, `pfnGetMaterial`, `pfnGetLight` / `pfnGetLightEnable`,
+- `pfnGetMaterial`, `pfnGetLight` / `pfnGetLightEnable`,
   `pfnGetRenderTarget` / `pfnGetDepthStencil`, `pfnGetTexture`, `pfnGetTextureStageState`, `pfnGetSamplerState`,
   `pfnGetRenderState`, `pfnGetPaletteEntries` / `pfnGetCurrentTexturePalette`, `pfnGetNPatchMode`,
   `pfnGetFVF` / `pfnGetVertexDecl` (returns `D3DERR_NOTAVAILABLE`)

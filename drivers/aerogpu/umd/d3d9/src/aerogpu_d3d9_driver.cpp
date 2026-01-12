@@ -3,6 +3,7 @@
 
 #include <array>
 #include <algorithm>
+#include <bitset>
 #include <chrono>
 #include <cctype>
 #include <cstddef>
@@ -102,6 +103,74 @@ void set_vid_pn_source_id(T* open, UINT vid_pn_source_id) {
 } // namespace
 
 namespace aerogpu {
+
+// D3D9 StateBlock (BeginStateBlock/EndStateBlock + Create/Capture/Apply).
+//
+// This is a minimal state capture model that records the subset of device state
+// the current AeroGPU D3D9 UMD already understands/emits:
+// - render states
+// - sampler states
+// - texture bindings
+// - render target + depth/stencil bindings
+// - viewport + scissor
+// - VB/IB bindings
+// - vertex decl / FVF hint
+// - shader bindings + float constants
+//
+// State blocks are runtime-managed objects; the runtime owns their lifetime and
+// invokes DeleteStateBlock when released.
+struct StateBlock {
+  // Render state (D3DRS_*). Only the 0..255 range is cached by the UMD today.
+  std::bitset<256> render_state_mask{};
+  std::array<uint32_t, 256> render_state_values{};
+
+  // Sampler state (D3DSAMP_*). Cached as [stage][state], with both ranges 0..15.
+  std::bitset<16 * 16> sampler_state_mask{}; // stage * 16 + state
+  std::array<uint32_t, 16 * 16> sampler_state_values{};
+
+  // Texture bindings (pixel shader stages only; 0..15).
+  std::bitset<16> texture_mask{};
+  std::array<Resource*, 16> textures{};
+
+  // Render target bindings (0..3) + depth/stencil.
+  std::bitset<4> render_target_mask{};
+  std::array<Resource*, 4> render_targets{};
+  bool depth_stencil_set = false;
+  Resource* depth_stencil = nullptr;
+
+  // Viewport + scissor.
+  bool viewport_set = false;
+  D3DDDIVIEWPORTINFO viewport = {0, 0, 0, 0, 0.0f, 1.0f};
+  bool scissor_set = false;
+  RECT scissor_rect = {0, 0, 0, 0};
+  BOOL scissor_enabled = FALSE;
+
+  // VB/IB bindings.
+  std::bitset<16> stream_mask{};
+  std::array<DeviceStateStream, 16> streams{};
+  bool index_buffer_set = false;
+  Resource* index_buffer = nullptr;
+  D3DDDIFORMAT index_format = static_cast<D3DDDIFORMAT>(101); // D3DFMT_INDEX16
+  uint32_t index_offset_bytes = 0;
+
+  // Input layout state.
+  bool vertex_decl_set = false;
+  VertexDecl* vertex_decl = nullptr;
+  bool fvf_set = false;
+  uint32_t fvf = 0;
+
+  // Shader bindings (D3D9 stages: VS/PS) + float constants.
+  bool user_vs_set = false;
+  Shader* user_vs = nullptr;
+  bool user_ps_set = false;
+  Shader* user_ps = nullptr;
+
+  std::bitset<256> vs_const_mask{};
+  std::array<float, 256 * 4> vs_consts{};
+  std::bitset<256> ps_const_mask{};
+  std::array<float, 256 * 4> ps_consts{};
+};
+
 namespace {
 
 #define AEROGPU_D3D9_STUB_LOG_ONCE()                 \
@@ -1024,14 +1093,6 @@ AEROGPU_D3D9_DEFINE_DDI_STUB(pfnSetNPatchMode, D3d9TraceFunc::DeviceSetNPatchMod
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnSetStreamSourceFreq, D3d9TraceFunc::DeviceSetStreamSourceFreq, S_OK);
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnSetGammaRamp, D3d9TraceFunc::DeviceSetGammaRamp, S_OK);
 
-// State blocks and ValidateDevice are not supported yet. Return a stable failure
-// code rather than leaving the vtable entry NULL (which would crash callers).
-AEROGPU_D3D9_DEFINE_DDI_STUB(pfnCreateStateBlock, D3d9TraceFunc::DeviceCreateStateBlock, D3DERR_NOTAVAILABLE);
-AEROGPU_D3D9_DEFINE_DDI_STUB(pfnDeleteStateBlock, D3d9TraceFunc::DeviceDeleteStateBlock, D3DERR_NOTAVAILABLE);
-AEROGPU_D3D9_DEFINE_DDI_STUB(pfnCaptureStateBlock, D3d9TraceFunc::DeviceCaptureStateBlock, D3DERR_NOTAVAILABLE);
-AEROGPU_D3D9_DEFINE_DDI_STUB(pfnApplyStateBlock, D3d9TraceFunc::DeviceApplyStateBlock, D3DERR_NOTAVAILABLE);
-AEROGPU_D3D9_DEFINE_DDI_STUB(pfnValidateDevice, D3d9TraceFunc::DeviceValidateDevice, D3DERR_NOTAVAILABLE);
-
 // D3D9Ex image processing API. Treat as a no-op until the fixed-function path is
 // fully implemented (DWM should not rely on it).
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnSetConvolutionMonoKernel, D3d9TraceFunc::DeviceSetConvolutionMonoKernel, S_OK);
@@ -1079,8 +1140,6 @@ AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetTransform, D3d9TraceFunc::DeviceGetTransform,
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetClipPlane, D3d9TraceFunc::DeviceGetClipPlane, D3DERR_NOTAVAILABLE);
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetViewport, D3d9TraceFunc::DeviceGetViewport, D3DERR_NOTAVAILABLE);
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetScissorRect, D3d9TraceFunc::DeviceGetScissorRect, D3DERR_NOTAVAILABLE);
-AEROGPU_D3D9_DEFINE_DDI_STUB(pfnBeginStateBlock, D3d9TraceFunc::DeviceBeginStateBlock, D3DERR_NOTAVAILABLE);
-AEROGPU_D3D9_DEFINE_DDI_STUB(pfnEndStateBlock, D3d9TraceFunc::DeviceEndStateBlock, D3DERR_NOTAVAILABLE);
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetMaterial, D3d9TraceFunc::DeviceGetMaterial, D3DERR_NOTAVAILABLE);
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetLight, D3d9TraceFunc::DeviceGetLight, D3DERR_NOTAVAILABLE);
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetLightEnable, D3d9TraceFunc::DeviceGetLightEnable, D3DERR_NOTAVAILABLE);
@@ -1314,6 +1373,12 @@ AEROGPU_D3D9_DEFINE_HAS_MEMBER(SwapEffect);
 AEROGPU_D3D9_DEFINE_HAS_MEMBER(swap_effect);
 AEROGPU_D3D9_DEFINE_HAS_MEMBER(PresentationInterval);
 AEROGPU_D3D9_DEFINE_HAS_MEMBER(presentation_interval);
+
+// State-block args (CreateStateBlock/ValidateDevice).
+AEROGPU_D3D9_DEFINE_HAS_MEMBER(StateBlockType);
+AEROGPU_D3D9_DEFINE_HAS_MEMBER(hStateBlock);
+AEROGPU_D3D9_DEFINE_HAS_MEMBER(pNumPasses);
+AEROGPU_D3D9_DEFINE_HAS_MEMBER(NumPasses);
 AEROGPU_D3D9_DEFINE_HAS_MEMBER(Windowed);
 AEROGPU_D3D9_DEFINE_HAS_MEMBER(windowed);
 
@@ -2455,6 +2520,175 @@ VertexDecl* as_vertex_decl(D3D9DDI_HVERTEXDECL hDecl) {
 
 Query* as_query(D3D9DDI_HQUERY hQuery) {
   return reinterpret_cast<Query*>(hQuery.pDrvPrivate);
+}
+
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+StateBlock* as_state_block(D3D9DDI_HSTATEBLOCK hStateBlock) {
+  return reinterpret_cast<StateBlock*>(hStateBlock.pDrvPrivate);
+}
+#endif
+
+// -----------------------------------------------------------------------------
+// State-block recording helpers
+// -----------------------------------------------------------------------------
+// Callers must hold `Device::mutex`.
+inline void stateblock_record_render_state_locked(Device* dev, uint32_t state, uint32_t value) {
+  if (!dev || !dev->recording_state_block) {
+    return;
+  }
+  if (state >= 256) {
+    return;
+  }
+  StateBlock* sb = dev->recording_state_block;
+  sb->render_state_mask.set(state);
+  sb->render_state_values[state] = value;
+}
+
+inline void stateblock_record_sampler_state_locked(Device* dev, uint32_t stage, uint32_t state, uint32_t value) {
+  if (!dev || !dev->recording_state_block) {
+    return;
+  }
+  if (stage >= 16 || state >= 16) {
+    return;
+  }
+  const uint32_t idx = stage * 16u + state;
+  StateBlock* sb = dev->recording_state_block;
+  sb->sampler_state_mask.set(idx);
+  sb->sampler_state_values[idx] = value;
+}
+
+inline void stateblock_record_texture_locked(Device* dev, uint32_t stage, Resource* tex) {
+  if (!dev || !dev->recording_state_block) {
+    return;
+  }
+  if (stage >= 16) {
+    return;
+  }
+  StateBlock* sb = dev->recording_state_block;
+  sb->texture_mask.set(stage);
+  sb->textures[stage] = tex;
+}
+
+inline void stateblock_record_render_target_locked(Device* dev, uint32_t slot, Resource* rt) {
+  if (!dev || !dev->recording_state_block) {
+    return;
+  }
+  if (slot >= 4) {
+    return;
+  }
+  StateBlock* sb = dev->recording_state_block;
+  sb->render_target_mask.set(slot);
+  sb->render_targets[slot] = rt;
+}
+
+inline void stateblock_record_depth_stencil_locked(Device* dev, Resource* ds) {
+  if (!dev || !dev->recording_state_block) {
+    return;
+  }
+  StateBlock* sb = dev->recording_state_block;
+  sb->depth_stencil_set = true;
+  sb->depth_stencil = ds;
+}
+
+inline void stateblock_record_viewport_locked(Device* dev, const D3DDDIVIEWPORTINFO& vp) {
+  if (!dev || !dev->recording_state_block) {
+    return;
+  }
+  StateBlock* sb = dev->recording_state_block;
+  sb->viewport_set = true;
+  sb->viewport = vp;
+}
+
+inline void stateblock_record_scissor_locked(Device* dev, const RECT& rect, BOOL enabled) {
+  if (!dev || !dev->recording_state_block) {
+    return;
+  }
+  StateBlock* sb = dev->recording_state_block;
+  sb->scissor_set = true;
+  sb->scissor_rect = rect;
+  sb->scissor_enabled = enabled;
+}
+
+inline void stateblock_record_stream_source_locked(Device* dev, uint32_t stream, const DeviceStateStream& ss) {
+  if (!dev || !dev->recording_state_block) {
+    return;
+  }
+  if (stream >= 16) {
+    return;
+  }
+  StateBlock* sb = dev->recording_state_block;
+  sb->stream_mask.set(stream);
+  sb->streams[stream] = ss;
+}
+
+inline void stateblock_record_index_buffer_locked(Device* dev, Resource* ib, D3DDDIFORMAT fmt, uint32_t offset_bytes) {
+  if (!dev || !dev->recording_state_block) {
+    return;
+  }
+  StateBlock* sb = dev->recording_state_block;
+  sb->index_buffer_set = true;
+  sb->index_buffer = ib;
+  sb->index_format = fmt;
+  sb->index_offset_bytes = offset_bytes;
+}
+
+inline void stateblock_record_vertex_decl_locked(Device* dev, VertexDecl* decl, uint32_t fvf) {
+  if (!dev || !dev->recording_state_block) {
+    return;
+  }
+  StateBlock* sb = dev->recording_state_block;
+  sb->vertex_decl_set = true;
+  sb->vertex_decl = decl;
+  sb->fvf_set = true;
+  sb->fvf = fvf;
+}
+
+inline void stateblock_record_shader_locked(Device* dev, uint32_t stage, Shader* sh) {
+  if (!dev || !dev->recording_state_block) {
+    return;
+  }
+  StateBlock* sb = dev->recording_state_block;
+  if (stage == kD3d9ShaderStageVs) {
+    sb->user_vs_set = true;
+    sb->user_vs = sh;
+  } else if (stage == kD3d9ShaderStagePs) {
+    sb->user_ps_set = true;
+    sb->user_ps = sh;
+  }
+}
+
+inline void stateblock_record_shader_const_f_locked(
+    Device* dev,
+    uint32_t stage,
+    uint32_t start_reg,
+    const float* pData,
+    uint32_t vec4_count) {
+  if (!dev || !dev->recording_state_block || !pData || vec4_count == 0) {
+    return;
+  }
+  StateBlock* sb = dev->recording_state_block;
+  std::bitset<256>* mask = nullptr;
+  float* dst = nullptr;
+  if (stage == kD3d9ShaderStageVs) {
+    mask = &sb->vs_const_mask;
+    dst = sb->vs_consts.data();
+  } else if (stage == kD3d9ShaderStagePs) {
+    mask = &sb->ps_const_mask;
+    dst = sb->ps_consts.data();
+  } else {
+    return;
+  }
+
+  if (start_reg >= 256) {
+    return;
+  }
+  const uint32_t write_regs = std::min(vec4_count, 256u - start_reg);
+  for (uint32_t i = 0; i < write_regs; ++i) {
+    mask->set(start_reg + i);
+    std::memcpy(dst + static_cast<size_t>(start_reg + i) * 4,
+                pData + static_cast<size_t>(i) * 4,
+                4 * sizeof(float));
+  }
 }
 
 // Forward-declared so helpers can opportunistically split submissions when the
@@ -5498,6 +5732,10 @@ HRESULT AEROGPU_D3D9_CALL device_destroy(D3DDDI_HDEVICE hDevice) {
 
   {
     std::lock_guard<std::mutex> lock(dev->mutex);
+    if (dev->recording_state_block) {
+      delete dev->recording_state_block;
+      dev->recording_state_block = nullptr;
+    }
     // Ensure we are not holding on to a DMA buffer that references allocations we
     // are about to destroy (e.g. swapchain backbuffers created but never
     // submitted). This matches the per-resource destroy path, but we do it once
@@ -8304,6 +8542,12 @@ HRESULT AEROGPU_D3D9_CALL device_set_render_target(
     }
   }
   if (!changed) {
+    stateblock_record_render_target_locked(dev, slot, dev->render_targets[slot]);
+    if (!surf) {
+      for (uint32_t i = slot + 1; i < 4; ++i) {
+        stateblock_record_render_target_locked(dev, i, dev->render_targets[i]);
+      }
+    }
     return trace.ret(S_OK);
   }
 
@@ -8312,6 +8556,12 @@ HRESULT AEROGPU_D3D9_CALL device_set_render_target(
       dev->render_targets[i] = saved_rts[i];
     }
     return trace.ret(E_OUTOFMEMORY);
+  }
+  stateblock_record_render_target_locked(dev, slot, dev->render_targets[slot]);
+  if (!surf) {
+    for (uint32_t i = slot + 1; i < 4; ++i) {
+      stateblock_record_render_target_locked(dev, i, dev->render_targets[i]);
+    }
   }
   return trace.ret(S_OK);
 }
@@ -8333,12 +8583,14 @@ HRESULT AEROGPU_D3D9_CALL device_set_depth_stencil(
   std::lock_guard<std::mutex> lock(dev->mutex);
 
   if (dev->depth_stencil == surf) {
+    stateblock_record_depth_stencil_locked(dev, surf);
     return trace.ret(S_OK);
   }
   dev->depth_stencil = surf;
   if (!emit_set_render_targets_locked(dev)) {
     return trace.ret(E_OUTOFMEMORY);
   }
+  stateblock_record_depth_stencil_locked(dev, surf);
   return trace.ret(S_OK);
 }
 
@@ -8356,6 +8608,7 @@ HRESULT AEROGPU_D3D9_CALL device_set_viewport(
   std::lock_guard<std::mutex> lock(dev->mutex);
 
   dev->viewport = *pViewport;
+  stateblock_record_viewport_locked(dev, dev->viewport);
 
   auto* cmd = append_fixed_locked<aerogpu_cmd_set_viewport>(dev, AEROGPU_CMD_SET_VIEWPORT);
   if (!cmd) {
@@ -8390,6 +8643,7 @@ HRESULT AEROGPU_D3D9_CALL device_set_scissor(
     dev->scissor_rect = *pRect;
   }
   dev->scissor_enabled = enabled;
+  stateblock_record_scissor_locked(dev, dev->scissor_rect, dev->scissor_enabled);
 
   int32_t x = 0;
   int32_t y = 0;
@@ -8435,9 +8689,11 @@ HRESULT AEROGPU_D3D9_CALL device_set_texture(
   std::lock_guard<std::mutex> lock(dev->mutex);
 
   if (dev->textures[stage] == tex) {
+    stateblock_record_texture_locked(dev, stage, tex);
     return trace.ret(S_OK);
   }
   dev->textures[stage] = tex;
+  stateblock_record_texture_locked(dev, stage, tex);
 
   auto* cmd = append_fixed_locked<aerogpu_cmd_set_texture>(dev, AEROGPU_CMD_SET_TEXTURE);
   if (!cmd) {
@@ -8473,6 +8729,7 @@ HRESULT AEROGPU_D3D9_CALL device_set_sampler_state(
   if (stage < 16 && state < 16) {
     dev->sampler_states[stage][state] = value;
   }
+  stateblock_record_sampler_state_locked(dev, stage, state, value);
 
   auto* cmd = append_fixed_locked<aerogpu_cmd_set_sampler_state>(dev, AEROGPU_CMD_SET_SAMPLER_STATE);
   if (!cmd) {
@@ -8504,6 +8761,7 @@ HRESULT AEROGPU_D3D9_CALL device_set_render_state(
   if (state < 256) {
     dev->render_states[state] = value;
   }
+  stateblock_record_render_state_locked(dev, state, value);
 
   auto* cmd = append_fixed_locked<aerogpu_cmd_set_render_state>(dev, AEROGPU_CMD_SET_RENDER_STATE);
   if (!cmd) {
@@ -8588,6 +8846,7 @@ HRESULT AEROGPU_D3D9_CALL device_set_vertex_decl(
     matches_fvf_xyzrhw_diffuse = e0_ok && e1_ok && e2_ok;
   }
   dev->fvf = matches_fvf_xyzrhw_diffuse ? kSupportedFvfXyzrhwDiffuse : 0;
+  stateblock_record_vertex_decl_locked(dev, decl, dev->fvf);
   return trace.ret(S_OK);
 }
 
@@ -8636,6 +8895,7 @@ HRESULT AEROGPU_D3D9_CALL device_set_fvf(D3DDDI_HDEVICE hDevice, uint32_t fvf) {
   std::lock_guard<std::mutex> lock(dev->mutex);
 
   if (fvf == dev->fvf) {
+    stateblock_record_vertex_decl_locked(dev, dev->vertex_decl, dev->fvf);
     return trace.ret(S_OK);
   }
 
@@ -8645,6 +8905,7 @@ HRESULT AEROGPU_D3D9_CALL device_set_fvf(D3DDDI_HDEVICE hDevice, uint32_t fvf) {
 
   if (fvf == 0) {
     dev->fvf = 0;
+    stateblock_record_vertex_decl_locked(dev, dev->vertex_decl, dev->fvf);
     return trace.ret(S_OK);
   }
 
@@ -8668,6 +8929,7 @@ HRESULT AEROGPU_D3D9_CALL device_set_fvf(D3DDDI_HDEVICE hDevice, uint32_t fvf) {
     return trace.ret(E_OUTOFMEMORY);
   }
   dev->fvf = fvf;
+  stateblock_record_vertex_decl_locked(dev, dev->fvf_vertex_decl, dev->fvf);
   return trace.ret(S_OK);
 }
 
@@ -8727,10 +8989,12 @@ HRESULT AEROGPU_D3D9_CALL device_set_shader(
 
   Shader** user_slot = (stage == kD3d9ShaderStageVs) ? &dev->user_vs : &dev->user_ps;
   if (*user_slot == sh) {
+    stateblock_record_shader_locked(dev, stage, sh);
     return trace.ret(S_OK);
   }
 
   *user_slot = sh;
+  stateblock_record_shader_locked(dev, stage, sh);
 
   // Bind exactly what the runtime requested. Fixed-function fallbacks are
   // re-bound lazily at draw time when `user_vs/user_ps` are both null.
@@ -8812,6 +9076,7 @@ HRESULT AEROGPU_D3D9_CALL device_set_shader_const_f(
     const uint32_t write_regs = std::min(vec4_count, 256u - start_reg);
     std::memcpy(dst + start_reg * 4, pData, static_cast<size_t>(write_regs) * 4 * sizeof(float));
   }
+  stateblock_record_shader_const_f_locked(dev, stage, start_reg, pData, vec4_count);
 
   const size_t payload_size = static_cast<size_t>(vec4_count) * 4 * sizeof(float);
   auto* cmd = append_with_payload_locked<aerogpu_cmd_set_shader_constants_f>(
@@ -8826,6 +9091,817 @@ HRESULT AEROGPU_D3D9_CALL device_set_shader_const_f(
 
   return trace.ret(S_OK);
 }
+
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+// -----------------------------------------------------------------------------
+// State block DDIs
+// -----------------------------------------------------------------------------
+
+static void stateblock_init_for_type_locked(Device* dev, StateBlock* sb, uint32_t type_u32) {
+  if (!dev || !sb) {
+    return;
+  }
+
+  // Reset to a deterministic baseline.
+  *sb = StateBlock{};
+
+  // D3DSTATEBLOCKTYPE values (d3d9types.h):
+  //   D3DSBT_ALL = 1
+  //   D3DSBT_PIXELSTATE = 2
+  //   D3DSBT_VERTEXSTATE = 3
+  const bool is_all = (type_u32 == 1u) || (type_u32 == 0u);
+  const bool is_pixel = is_all || (type_u32 == 2u);
+  const bool is_vertex = is_all || (type_u32 == 3u);
+
+  // Render states are treated as common state: include them in all block types
+  // we support since the UMD forwards them generically.
+  for (uint32_t i = 0; i < 256; ++i) {
+    sb->render_state_mask.set(i);
+    sb->render_state_values[i] = dev->render_states[i];
+  }
+
+  if (is_pixel) {
+    for (uint32_t stage = 0; stage < 16; ++stage) {
+      sb->texture_mask.set(stage);
+      sb->textures[stage] = dev->textures[stage];
+      for (uint32_t s = 0; s < 16; ++s) {
+        const uint32_t idx = stage * 16u + s;
+        sb->sampler_state_mask.set(idx);
+        sb->sampler_state_values[idx] = dev->sampler_states[stage][s];
+      }
+    }
+
+    for (uint32_t i = 0; i < 4; ++i) {
+      sb->render_target_mask.set(i);
+      sb->render_targets[i] = dev->render_targets[i];
+    }
+    sb->depth_stencil_set = true;
+    sb->depth_stencil = dev->depth_stencil;
+
+    sb->viewport_set = true;
+    sb->viewport = dev->viewport;
+    sb->scissor_set = true;
+    sb->scissor_rect = dev->scissor_rect;
+    sb->scissor_enabled = dev->scissor_enabled;
+
+    sb->user_ps_set = true;
+    sb->user_ps = dev->user_ps;
+    for (uint32_t r = 0; r < 256; ++r) {
+      sb->ps_const_mask.set(r);
+    }
+    std::memcpy(sb->ps_consts.data(), dev->ps_consts_f, sizeof(float) * 256u * 4u);
+  }
+
+  if (is_vertex) {
+    sb->vertex_decl_set = true;
+    sb->vertex_decl = dev->vertex_decl;
+    sb->fvf_set = true;
+    sb->fvf = dev->fvf;
+
+    for (uint32_t stream = 0; stream < 16; ++stream) {
+      sb->stream_mask.set(stream);
+      sb->streams[stream] = dev->streams[stream];
+    }
+
+    sb->index_buffer_set = true;
+    sb->index_buffer = dev->index_buffer;
+    sb->index_format = dev->index_format;
+    sb->index_offset_bytes = dev->index_offset_bytes;
+
+    sb->user_vs_set = true;
+    sb->user_vs = dev->user_vs;
+    for (uint32_t r = 0; r < 256; ++r) {
+      sb->vs_const_mask.set(r);
+    }
+    std::memcpy(sb->vs_consts.data(), dev->vs_consts_f, sizeof(float) * 256u * 4u);
+  }
+}
+
+static void stateblock_capture_locked(Device* dev, StateBlock* sb) {
+  if (!dev || !sb) {
+    return;
+  }
+
+  for (uint32_t i = 0; i < 256; ++i) {
+    if (sb->render_state_mask.test(i)) {
+      sb->render_state_values[i] = dev->render_states[i];
+    }
+  }
+
+  for (uint32_t idx = 0; idx < 16u * 16u; ++idx) {
+    if (sb->sampler_state_mask.test(idx)) {
+      const uint32_t stage = idx / 16u;
+      const uint32_t s = idx % 16u;
+      sb->sampler_state_values[idx] = dev->sampler_states[stage][s];
+    }
+  }
+
+  for (uint32_t stage = 0; stage < 16; ++stage) {
+    if (sb->texture_mask.test(stage)) {
+      sb->textures[stage] = dev->textures[stage];
+    }
+  }
+
+  for (uint32_t i = 0; i < 4; ++i) {
+    if (sb->render_target_mask.test(i)) {
+      sb->render_targets[i] = dev->render_targets[i];
+    }
+  }
+  if (sb->depth_stencil_set) {
+    sb->depth_stencil = dev->depth_stencil;
+  }
+
+  if (sb->viewport_set) {
+    sb->viewport = dev->viewport;
+  }
+  if (sb->scissor_set) {
+    sb->scissor_rect = dev->scissor_rect;
+    sb->scissor_enabled = dev->scissor_enabled;
+  }
+
+  if (sb->vertex_decl_set) {
+    sb->vertex_decl = dev->vertex_decl;
+  }
+  if (sb->fvf_set) {
+    sb->fvf = dev->fvf;
+  }
+
+  for (uint32_t stream = 0; stream < 16; ++stream) {
+    if (sb->stream_mask.test(stream)) {
+      sb->streams[stream] = dev->streams[stream];
+    }
+  }
+
+  if (sb->index_buffer_set) {
+    sb->index_buffer = dev->index_buffer;
+    sb->index_format = dev->index_format;
+    sb->index_offset_bytes = dev->index_offset_bytes;
+  }
+
+  if (sb->user_vs_set) {
+    sb->user_vs = dev->user_vs;
+  }
+  if (sb->user_ps_set) {
+    sb->user_ps = dev->user_ps;
+  }
+
+  for (uint32_t r = 0; r < 256; ++r) {
+    if (sb->vs_const_mask.test(r)) {
+      std::memcpy(sb->vs_consts.data() + static_cast<size_t>(r) * 4,
+                  dev->vs_consts_f + static_cast<size_t>(r) * 4,
+                  4 * sizeof(float));
+    }
+    if (sb->ps_const_mask.test(r)) {
+      std::memcpy(sb->ps_consts.data() + static_cast<size_t>(r) * 4,
+                  dev->ps_consts_f + static_cast<size_t>(r) * 4,
+                  4 * sizeof(float));
+    }
+  }
+}
+
+static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
+  if (!dev || !sb) {
+    return E_INVALIDARG;
+  }
+
+  // Render targets / depth-stencil first.
+  if (sb->render_target_mask.any() || sb->depth_stencil_set) {
+    Resource* old_rts[4] = {dev->render_targets[0], dev->render_targets[1], dev->render_targets[2], dev->render_targets[3]};
+    Resource* old_ds = dev->depth_stencil;
+
+    for (uint32_t slot = 0; slot < 4; ++slot) {
+      if (!sb->render_target_mask.test(slot)) {
+        continue;
+      }
+
+      Resource* rt = sb->render_targets[slot];
+      if (rt && slot > 0) {
+        for (uint32_t i = 0; i < slot; ++i) {
+          if (!dev->render_targets[i]) {
+            return kD3DErrInvalidCall;
+          }
+        }
+      }
+
+      dev->render_targets[slot] = rt;
+      if (!rt) {
+        // Maintain contiguity: clearing an earlier slot implicitly clears any
+        // later slots.
+        for (uint32_t i = slot + 1; i < 4; ++i) {
+          dev->render_targets[i] = nullptr;
+        }
+      }
+    }
+
+    if (sb->depth_stencil_set) {
+      dev->depth_stencil = sb->depth_stencil;
+    }
+
+    bool changed = (dev->depth_stencil != old_ds);
+    for (uint32_t i = 0; i < 4 && !changed; ++i) {
+      changed = (dev->render_targets[i] != old_rts[i]);
+    }
+
+    if (changed) {
+      if (!emit_set_render_targets_locked(dev)) {
+        dev->depth_stencil = old_ds;
+        for (uint32_t i = 0; i < 4; ++i) {
+          dev->render_targets[i] = old_rts[i];
+        }
+        return E_OUTOFMEMORY;
+      }
+    }
+
+    for (uint32_t i = 0; i < 4; ++i) {
+      if (sb->render_target_mask.test(i)) {
+        stateblock_record_render_target_locked(dev, i, dev->render_targets[i]);
+      }
+    }
+    if (sb->depth_stencil_set) {
+      stateblock_record_depth_stencil_locked(dev, dev->depth_stencil);
+    }
+  }
+
+  if (sb->viewport_set) {
+    dev->viewport = sb->viewport;
+    auto* cmd = append_fixed_locked<aerogpu_cmd_set_viewport>(dev, AEROGPU_CMD_SET_VIEWPORT);
+    if (!cmd) {
+      return E_OUTOFMEMORY;
+    }
+    cmd->x_f32 = f32_bits(sb->viewport.X);
+    cmd->y_f32 = f32_bits(sb->viewport.Y);
+    cmd->width_f32 = f32_bits(sb->viewport.Width);
+    cmd->height_f32 = f32_bits(sb->viewport.Height);
+    cmd->min_depth_f32 = f32_bits(sb->viewport.MinZ);
+    cmd->max_depth_f32 = f32_bits(sb->viewport.MaxZ);
+    stateblock_record_viewport_locked(dev, dev->viewport);
+  }
+
+  if (sb->scissor_set) {
+    dev->scissor_rect = sb->scissor_rect;
+    dev->scissor_enabled = sb->scissor_enabled;
+
+    int32_t x = 0;
+    int32_t y = 0;
+    int32_t w = 0x7FFFFFFF;
+    int32_t h = 0x7FFFFFFF;
+    if (dev->scissor_enabled) {
+      x = static_cast<int32_t>(dev->scissor_rect.left);
+      y = static_cast<int32_t>(dev->scissor_rect.top);
+      w = static_cast<int32_t>(dev->scissor_rect.right - dev->scissor_rect.left);
+      h = static_cast<int32_t>(dev->scissor_rect.bottom - dev->scissor_rect.top);
+    }
+
+    auto* cmd = append_fixed_locked<aerogpu_cmd_set_scissor>(dev, AEROGPU_CMD_SET_SCISSOR);
+    if (!cmd) {
+      return E_OUTOFMEMORY;
+    }
+    cmd->x = x;
+    cmd->y = y;
+    cmd->width = w;
+    cmd->height = h;
+    stateblock_record_scissor_locked(dev, dev->scissor_rect, dev->scissor_enabled);
+  }
+
+  // Render states.
+  for (uint32_t i = 0; i < 256; ++i) {
+    if (!sb->render_state_mask.test(i)) {
+      continue;
+    }
+    dev->render_states[i] = sb->render_state_values[i];
+    auto* cmd = append_fixed_locked<aerogpu_cmd_set_render_state>(dev, AEROGPU_CMD_SET_RENDER_STATE);
+    if (!cmd) {
+      return E_OUTOFMEMORY;
+    }
+    cmd->state = i;
+    cmd->value = sb->render_state_values[i];
+    stateblock_record_render_state_locked(dev, i, sb->render_state_values[i]);
+  }
+
+  // Samplers/textures.
+  for (uint32_t stage = 0; stage < 16; ++stage) {
+    if (sb->texture_mask.test(stage)) {
+      Resource* tex = sb->textures[stage];
+      dev->textures[stage] = tex;
+      auto* cmd = append_fixed_locked<aerogpu_cmd_set_texture>(dev, AEROGPU_CMD_SET_TEXTURE);
+      if (!cmd) {
+        return E_OUTOFMEMORY;
+      }
+      cmd->shader_stage = AEROGPU_SHADER_STAGE_PIXEL;
+      cmd->slot = stage;
+      cmd->texture = tex ? tex->handle : 0;
+      cmd->reserved0 = 0;
+      stateblock_record_texture_locked(dev, stage, tex);
+    }
+
+    for (uint32_t s = 0; s < 16; ++s) {
+      const uint32_t idx = stage * 16u + s;
+      if (!sb->sampler_state_mask.test(idx)) {
+        continue;
+      }
+      const uint32_t value = sb->sampler_state_values[idx];
+      dev->sampler_states[stage][s] = value;
+      auto* cmd = append_fixed_locked<aerogpu_cmd_set_sampler_state>(dev, AEROGPU_CMD_SET_SAMPLER_STATE);
+      if (!cmd) {
+        return E_OUTOFMEMORY;
+      }
+      cmd->shader_stage = AEROGPU_SHADER_STAGE_PIXEL;
+      cmd->slot = stage;
+      cmd->state = s;
+      cmd->value = value;
+      stateblock_record_sampler_state_locked(dev, stage, s, value);
+    }
+  }
+
+  // Input layout / FVF.
+  if (sb->vertex_decl_set) {
+    if (!emit_set_input_layout_locked(dev, sb->vertex_decl)) {
+      return E_OUTOFMEMORY;
+    }
+  }
+  if (sb->fvf_set) {
+    dev->fvf = sb->fvf;
+  }
+  if (sb->vertex_decl_set || sb->fvf_set) {
+    stateblock_record_vertex_decl_locked(dev, dev->vertex_decl, dev->fvf);
+  }
+
+  // VB streams.
+  for (uint32_t stream = 0; stream < 16; ++stream) {
+    if (!sb->stream_mask.test(stream)) {
+      continue;
+    }
+    const DeviceStateStream& ss = sb->streams[stream];
+    if (!emit_set_stream_source_locked(dev, stream, ss.vb, ss.offset_bytes, ss.stride_bytes)) {
+      return E_OUTOFMEMORY;
+    }
+    stateblock_record_stream_source_locked(dev, stream, dev->streams[stream]);
+  }
+
+  // Index buffer.
+  if (sb->index_buffer_set) {
+    dev->index_buffer = sb->index_buffer;
+    dev->index_format = sb->index_format;
+    dev->index_offset_bytes = sb->index_offset_bytes;
+    stateblock_record_index_buffer_locked(dev, dev->index_buffer, dev->index_format, dev->index_offset_bytes);
+
+    auto* cmd = append_fixed_locked<aerogpu_cmd_set_index_buffer>(dev, AEROGPU_CMD_SET_INDEX_BUFFER);
+    if (!cmd) {
+      return E_OUTOFMEMORY;
+    }
+    cmd->buffer = dev->index_buffer ? dev->index_buffer->handle : 0;
+    cmd->format = d3d9_index_format_to_aerogpu(dev->index_format);
+    cmd->offset_bytes = dev->index_offset_bytes;
+    cmd->reserved0 = 0;
+  }
+
+  // Shaders.
+  bool shaders_dirty = false;
+  if (sb->user_vs_set && dev->user_vs != sb->user_vs) {
+    dev->user_vs = sb->user_vs;
+    shaders_dirty = true;
+    stateblock_record_shader_locked(dev, kD3d9ShaderStageVs, dev->user_vs);
+  }
+  if (sb->user_ps_set && dev->user_ps != sb->user_ps) {
+    dev->user_ps = sb->user_ps;
+    shaders_dirty = true;
+    stateblock_record_shader_locked(dev, kD3d9ShaderStagePs, dev->user_ps);
+  }
+  if (shaders_dirty) {
+    dev->vs = dev->user_vs;
+    dev->ps = dev->user_ps;
+    if (!emit_bind_shaders_locked(dev)) {
+      return E_OUTOFMEMORY;
+    }
+  }
+
+  // Shader constants.
+  auto apply_consts = [&](uint32_t stage,
+                          const std::bitset<256>& mask,
+                          const float* src,
+                          float* dst) -> HRESULT {
+    uint32_t reg = 0;
+    while (reg < 256) {
+      if (!mask.test(reg)) {
+        ++reg;
+        continue;
+      }
+      uint32_t start = reg;
+      uint32_t end = reg;
+      while (end + 1 < 256 && mask.test(end + 1)) {
+        ++end;
+      }
+      const uint32_t count = (end - start + 1);
+      std::memcpy(dst + static_cast<size_t>(start) * 4,
+                  src + static_cast<size_t>(start) * 4,
+                  static_cast<size_t>(count) * 4 * sizeof(float));
+
+      const float* payload = src + static_cast<size_t>(start) * 4;
+      const size_t payload_size = static_cast<size_t>(count) * 4 * sizeof(float);
+      auto* cmd = append_with_payload_locked<aerogpu_cmd_set_shader_constants_f>(
+          dev, AEROGPU_CMD_SET_SHADER_CONSTANTS_F, payload, payload_size);
+      if (!cmd) {
+        return E_OUTOFMEMORY;
+      }
+      cmd->stage = d3d9_stage_to_aerogpu_stage(stage);
+      cmd->start_register = start;
+      cmd->vec4_count = count;
+      cmd->reserved0 = 0;
+
+      stateblock_record_shader_const_f_locked(dev, stage, start, payload, count);
+
+      reg = end + 1;
+    }
+    return S_OK;
+  };
+
+  if (sb->vs_const_mask.any()) {
+    const HRESULT hr = apply_consts(kD3d9ShaderStageVs, sb->vs_const_mask, sb->vs_consts.data(), dev->vs_consts_f);
+    if (FAILED(hr)) {
+      return hr;
+    }
+  }
+  if (sb->ps_const_mask.any()) {
+    const HRESULT hr = apply_consts(kD3d9ShaderStagePs, sb->ps_const_mask, sb->ps_consts.data(), dev->ps_consts_f);
+    if (FAILED(hr)) {
+      return hr;
+    }
+  }
+
+  return S_OK;
+}
+
+HRESULT AEROGPU_D3D9_CALL device_begin_state_block(D3DDDI_HDEVICE hDevice) {
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceBeginStateBlock, d3d9_trace_arg_ptr(hDevice.pDrvPrivate), 0, 0, 0);
+  if (!hDevice.pDrvPrivate) {
+    return trace.ret(E_INVALIDARG);
+  }
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+
+  if (dev->recording_state_block) {
+    return trace.ret(kD3DErrInvalidCall);
+  }
+
+  try {
+    dev->recording_state_block = new StateBlock();
+  } catch (...) {
+    dev->recording_state_block = nullptr;
+    return trace.ret(E_OUTOFMEMORY);
+  }
+  return trace.ret(S_OK);
+}
+
+HRESULT AEROGPU_D3D9_CALL device_end_state_block(D3DDDI_HDEVICE hDevice, D3D9DDI_HSTATEBLOCK* phStateBlock) {
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceEndStateBlock,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      d3d9_trace_arg_ptr(phStateBlock),
+                      0,
+                      0);
+  if (!hDevice.pDrvPrivate || !phStateBlock) {
+    return trace.ret(E_INVALIDARG);
+  }
+  phStateBlock->pDrvPrivate = nullptr;
+
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+
+  if (!dev->recording_state_block) {
+    return trace.ret(kD3DErrInvalidCall);
+  }
+
+  phStateBlock->pDrvPrivate = dev->recording_state_block;
+  dev->recording_state_block = nullptr;
+  return trace.ret(S_OK);
+}
+
+template <typename CreateArgsT>
+HRESULT device_create_state_block_from_args(D3DDDI_HDEVICE hDevice, CreateArgsT* pCreateStateBlock) {
+  uint32_t type_u32 = 1u; // D3DSBT_ALL
+  if (pCreateStateBlock) {
+    if constexpr (aerogpu_d3d9_has_member_StateBlockType<CreateArgsT>::value) {
+      type_u32 = static_cast<uint32_t>(pCreateStateBlock->StateBlockType);
+    } else if constexpr (aerogpu_d3d9_has_member_Type<CreateArgsT>::value) {
+      type_u32 = static_cast<uint32_t>(pCreateStateBlock->Type);
+    } else if constexpr (aerogpu_d3d9_has_member_type<CreateArgsT>::value) {
+      type_u32 = static_cast<uint32_t>(pCreateStateBlock->type);
+    }
+  }
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceCreateStateBlock,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      static_cast<uint64_t>(type_u32),
+                      d3d9_trace_arg_ptr(pCreateStateBlock),
+                      0);
+  if (!hDevice.pDrvPrivate || !pCreateStateBlock) {
+    return trace.ret(E_INVALIDARG);
+  }
+
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+
+  // Resolve the output handle field.
+  if constexpr (!aerogpu_d3d9_has_member_hStateBlock<CreateArgsT>::value) {
+    return trace.ret(E_INVALIDARG);
+  }
+
+  pCreateStateBlock->hStateBlock.pDrvPrivate = nullptr;
+
+  std::unique_ptr<StateBlock> sb;
+  try {
+    sb = std::make_unique<StateBlock>();
+  } catch (...) {
+    return trace.ret(E_OUTOFMEMORY);
+  }
+
+  stateblock_init_for_type_locked(dev, sb.get(), type_u32);
+  pCreateStateBlock->hStateBlock.pDrvPrivate = sb.release();
+  return trace.ret(S_OK);
+}
+
+HRESULT AEROGPU_D3D9_CALL device_create_state_block(D3DDDI_HDEVICE hDevice,
+                                                    uint32_t type_u32,
+                                                    D3D9DDI_HSTATEBLOCK* phStateBlock) {
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceCreateStateBlock,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      static_cast<uint64_t>(type_u32),
+                      d3d9_trace_arg_ptr(phStateBlock),
+                      0);
+  if (!hDevice.pDrvPrivate || !phStateBlock) {
+    return trace.ret(E_INVALIDARG);
+  }
+  phStateBlock->pDrvPrivate = nullptr;
+
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+
+  std::unique_ptr<StateBlock> sb;
+  try {
+    sb = std::make_unique<StateBlock>();
+  } catch (...) {
+    return trace.ret(E_OUTOFMEMORY);
+  }
+
+  stateblock_init_for_type_locked(dev, sb.get(), type_u32);
+  phStateBlock->pDrvPrivate = sb.release();
+  return trace.ret(S_OK);
+}
+
+HRESULT AEROGPU_D3D9_CALL device_delete_state_block(D3DDDI_HDEVICE hDevice, D3D9DDI_HSTATEBLOCK hStateBlock) {
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceDeleteStateBlock,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      d3d9_trace_arg_ptr(hStateBlock.pDrvPrivate),
+                      0,
+                      0);
+  (void)as_device(hDevice);
+  delete as_state_block(hStateBlock);
+  return trace.ret(S_OK);
+}
+
+HRESULT AEROGPU_D3D9_CALL device_capture_state_block(D3DDDI_HDEVICE hDevice, D3D9DDI_HSTATEBLOCK hStateBlock) {
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceCaptureStateBlock,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      d3d9_trace_arg_ptr(hStateBlock.pDrvPrivate),
+                      0,
+                      0);
+  if (!hDevice.pDrvPrivate) {
+    return trace.ret(E_INVALIDARG);
+  }
+  auto* dev = as_device(hDevice);
+  auto* sb = as_state_block(hStateBlock);
+  if (!sb) {
+    return trace.ret(E_INVALIDARG);
+  }
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  stateblock_capture_locked(dev, sb);
+  return trace.ret(S_OK);
+}
+
+HRESULT AEROGPU_D3D9_CALL device_apply_state_block(D3DDDI_HDEVICE hDevice, D3D9DDI_HSTATEBLOCK hStateBlock) {
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceApplyStateBlock,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      d3d9_trace_arg_ptr(hStateBlock.pDrvPrivate),
+                      0,
+                      0);
+  if (!hDevice.pDrvPrivate) {
+    return trace.ret(E_INVALIDARG);
+  }
+  auto* dev = as_device(hDevice);
+  auto* sb = as_state_block(hStateBlock);
+  if (!sb) {
+    return trace.ret(E_INVALIDARG);
+  }
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  return trace.ret(stateblock_apply_locked(dev, sb));
+}
+
+template <typename ValidateArgsT>
+HRESULT device_validate_device_from_args(D3DDDI_HDEVICE hDevice, ValidateArgsT* pValidateDevice) {
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceValidateDevice,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      d3d9_trace_arg_ptr(pValidateDevice),
+                      0,
+                      0);
+  if (!hDevice.pDrvPrivate || !pValidateDevice) {
+    return trace.ret(E_INVALIDARG);
+  }
+
+  // Conservative: we currently report a single pass for the supported shader
+  // pipeline. Unknown/legacy state is forwarded to the host, which may choose
+  // to emulate it.
+  if constexpr (aerogpu_d3d9_has_member_pNumPasses<ValidateArgsT>::value) {
+    if (pValidateDevice->pNumPasses) {
+      *pValidateDevice->pNumPasses = 1;
+    }
+  } else if constexpr (aerogpu_d3d9_has_member_NumPasses<ValidateArgsT>::value) {
+    pValidateDevice->NumPasses = 1;
+  }
+  return trace.ret(S_OK);
+}
+
+HRESULT AEROGPU_D3D9_CALL device_validate_device(D3DDDI_HDEVICE hDevice, uint32_t* pNumPasses) {
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceValidateDevice,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      d3d9_trace_arg_ptr(pNumPasses),
+                      0,
+                      0);
+  if (!hDevice.pDrvPrivate || !pNumPasses) {
+    return trace.ret(E_INVALIDARG);
+  }
+  *pNumPasses = 1;
+  return trace.ret(S_OK);
+}
+
+template <typename... Args>
+HRESULT device_create_state_block_dispatch(Args... args) {
+  if constexpr (sizeof...(Args) == 2) {
+    return device_create_state_block_from_args(args...);
+  } else if constexpr (sizeof...(Args) == 3) {
+    return device_create_state_block(args...);
+  }
+  return D3DERR_NOTAVAILABLE;
+}
+
+template <typename... Args>
+HRESULT device_delete_state_block_dispatch(Args... args) {
+  if constexpr (sizeof...(Args) == 2) {
+    return device_delete_state_block(args...);
+  }
+  return D3DERR_NOTAVAILABLE;
+}
+
+template <typename... Args>
+HRESULT device_capture_state_block_dispatch(Args... args) {
+  if constexpr (sizeof...(Args) == 2) {
+    return device_capture_state_block(args...);
+  }
+  return D3DERR_NOTAVAILABLE;
+}
+
+template <typename... Args>
+HRESULT device_apply_state_block_dispatch(Args... args) {
+  if constexpr (sizeof...(Args) == 2) {
+    return device_apply_state_block(args...);
+  }
+  return D3DERR_NOTAVAILABLE;
+}
+
+template <typename... Args>
+HRESULT device_begin_state_block_dispatch(Args... args) {
+  if constexpr (sizeof...(Args) == 1) {
+    return device_begin_state_block(args...);
+  }
+  return D3DERR_NOTAVAILABLE;
+}
+
+template <typename... Args>
+HRESULT device_end_state_block_dispatch(Args... args) {
+  if constexpr (sizeof...(Args) == 2) {
+    return device_end_state_block(args...);
+  }
+  return D3DERR_NOTAVAILABLE;
+}
+
+template <typename T>
+HRESULT device_validate_device_dispatch(D3DDDI_HDEVICE hDevice, T* arg) {
+  // Could be either `DWORD*` or a ValidateDevice args struct pointer.
+  if constexpr (std::is_integral_v<T>) {
+    return device_validate_device(hDevice, reinterpret_cast<uint32_t*>(arg));
+  } else {
+    return device_validate_device_from_args(hDevice, arg);
+  }
+}
+
+template <typename... Args>
+HRESULT device_validate_device_dispatch(Args... /*args*/) {
+  return D3DERR_NOTAVAILABLE;
+}
+
+template <typename Fn>
+struct aerogpu_d3d9_impl_pfnCreateStateBlock;
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnCreateStateBlock<Ret(__stdcall*)(Args...)> {
+  static Ret __stdcall pfnCreateStateBlock(Args... args) {
+    return static_cast<Ret>(device_create_state_block_dispatch(args...));
+  }
+};
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnCreateStateBlock<Ret(*)(Args...)> {
+  static Ret pfnCreateStateBlock(Args... args) {
+    return static_cast<Ret>(device_create_state_block_dispatch(args...));
+  }
+};
+
+template <typename Fn>
+struct aerogpu_d3d9_impl_pfnDeleteStateBlock;
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnDeleteStateBlock<Ret(__stdcall*)(Args...)> {
+  static Ret __stdcall pfnDeleteStateBlock(Args... args) {
+    return static_cast<Ret>(device_delete_state_block_dispatch(args...));
+  }
+};
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnDeleteStateBlock<Ret(*)(Args...)> {
+  static Ret pfnDeleteStateBlock(Args... args) {
+    return static_cast<Ret>(device_delete_state_block_dispatch(args...));
+  }
+};
+
+template <typename Fn>
+struct aerogpu_d3d9_impl_pfnCaptureStateBlock;
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnCaptureStateBlock<Ret(__stdcall*)(Args...)> {
+  static Ret __stdcall pfnCaptureStateBlock(Args... args) {
+    return static_cast<Ret>(device_capture_state_block_dispatch(args...));
+  }
+};
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnCaptureStateBlock<Ret(*)(Args...)> {
+  static Ret pfnCaptureStateBlock(Args... args) {
+    return static_cast<Ret>(device_capture_state_block_dispatch(args...));
+  }
+};
+
+template <typename Fn>
+struct aerogpu_d3d9_impl_pfnApplyStateBlock;
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnApplyStateBlock<Ret(__stdcall*)(Args...)> {
+  static Ret __stdcall pfnApplyStateBlock(Args... args) {
+    return static_cast<Ret>(device_apply_state_block_dispatch(args...));
+  }
+};
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnApplyStateBlock<Ret(*)(Args...)> {
+  static Ret pfnApplyStateBlock(Args... args) {
+    return static_cast<Ret>(device_apply_state_block_dispatch(args...));
+  }
+};
+
+template <typename Fn>
+struct aerogpu_d3d9_impl_pfnBeginStateBlock;
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnBeginStateBlock<Ret(__stdcall*)(Args...)> {
+  static Ret __stdcall pfnBeginStateBlock(Args... args) {
+    return static_cast<Ret>(device_begin_state_block_dispatch(args...));
+  }
+};
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnBeginStateBlock<Ret(*)(Args...)> {
+  static Ret pfnBeginStateBlock(Args... args) {
+    return static_cast<Ret>(device_begin_state_block_dispatch(args...));
+  }
+};
+
+template <typename Fn>
+struct aerogpu_d3d9_impl_pfnEndStateBlock;
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnEndStateBlock<Ret(__stdcall*)(Args...)> {
+  static Ret __stdcall pfnEndStateBlock(Args... args) {
+    return static_cast<Ret>(device_end_state_block_dispatch(args...));
+  }
+};
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnEndStateBlock<Ret(*)(Args...)> {
+  static Ret pfnEndStateBlock(Args... args) {
+    return static_cast<Ret>(device_end_state_block_dispatch(args...));
+  }
+};
+
+template <typename Fn>
+struct aerogpu_d3d9_impl_pfnValidateDevice;
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnValidateDevice<Ret(__stdcall*)(Args...)> {
+  static Ret __stdcall pfnValidateDevice(Args... args) {
+    return static_cast<Ret>(device_validate_device_dispatch(args...));
+  }
+};
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnValidateDevice<Ret(*)(Args...)> {
+  static Ret pfnValidateDevice(Args... args) {
+    return static_cast<Ret>(device_validate_device_dispatch(args...));
+  }
+};
+
+#endif // _WIN32 && AEROGPU_D3D9_USE_WDK_DDI
 
 HRESULT AEROGPU_D3D9_CALL device_blt(D3DDDI_HDEVICE hDevice, const D3D9DDIARG_BLT* pBlt) {
   const D3DDDI_HRESOURCE src_h = pBlt ? d3d9_arg_src_resource(*pBlt) : D3DDDI_HRESOURCE{};
@@ -8953,6 +10029,7 @@ HRESULT AEROGPU_D3D9_CALL device_set_stream_source(
   if (!emit_set_stream_source_locked(dev, stream, vb, offset_bytes, stride_bytes)) {
     return trace.ret(E_OUTOFMEMORY);
   }
+  stateblock_record_stream_source_locked(dev, stream, dev->streams[stream]);
   return trace.ret(S_OK);
 }
 
@@ -8978,6 +10055,7 @@ HRESULT AEROGPU_D3D9_CALL device_set_indices(
   dev->index_buffer = ib;
   dev->index_format = fmt;
   dev->index_offset_bytes = offset_bytes;
+  stateblock_record_index_buffer_locked(dev, ib, fmt, offset_bytes);
 
   auto* cmd = append_fixed_locked<aerogpu_cmd_set_index_buffer>(dev, AEROGPU_CMD_SET_INDEX_BUFFER);
   if (!cmd) {
@@ -11861,27 +12939,27 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
   if constexpr (aerogpu_has_member_pfnCreateStateBlock<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(
         pfnCreateStateBlock,
-        aerogpu_d3d9_stub_pfnCreateStateBlock<decltype(pDeviceFuncs->pfnCreateStateBlock)>::pfnCreateStateBlock);
+        aerogpu_d3d9_impl_pfnCreateStateBlock<decltype(pDeviceFuncs->pfnCreateStateBlock)>::pfnCreateStateBlock);
   }
   if constexpr (aerogpu_has_member_pfnDeleteStateBlock<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(
         pfnDeleteStateBlock,
-        aerogpu_d3d9_stub_pfnDeleteStateBlock<decltype(pDeviceFuncs->pfnDeleteStateBlock)>::pfnDeleteStateBlock);
+        aerogpu_d3d9_impl_pfnDeleteStateBlock<decltype(pDeviceFuncs->pfnDeleteStateBlock)>::pfnDeleteStateBlock);
   }
   if constexpr (aerogpu_has_member_pfnCaptureStateBlock<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(
         pfnCaptureStateBlock,
-        aerogpu_d3d9_stub_pfnCaptureStateBlock<decltype(pDeviceFuncs->pfnCaptureStateBlock)>::pfnCaptureStateBlock);
+        aerogpu_d3d9_impl_pfnCaptureStateBlock<decltype(pDeviceFuncs->pfnCaptureStateBlock)>::pfnCaptureStateBlock);
   }
   if constexpr (aerogpu_has_member_pfnApplyStateBlock<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(
         pfnApplyStateBlock,
-        aerogpu_d3d9_stub_pfnApplyStateBlock<decltype(pDeviceFuncs->pfnApplyStateBlock)>::pfnApplyStateBlock);
+        aerogpu_d3d9_impl_pfnApplyStateBlock<decltype(pDeviceFuncs->pfnApplyStateBlock)>::pfnApplyStateBlock);
   }
   if constexpr (aerogpu_has_member_pfnValidateDevice<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(
         pfnValidateDevice,
-        aerogpu_d3d9_stub_pfnValidateDevice<decltype(pDeviceFuncs->pfnValidateDevice)>::pfnValidateDevice);
+        aerogpu_d3d9_impl_pfnValidateDevice<decltype(pDeviceFuncs->pfnValidateDevice)>::pfnValidateDevice);
   }
   if constexpr (aerogpu_has_member_pfnSetSoftwareVertexProcessing<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(
@@ -12015,13 +13093,14 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
                                pDeviceFuncs->pfnGetScissorRect)>::pfnGetScissorRect);
   }
   if constexpr (aerogpu_has_member_pfnBeginStateBlock<D3D9DDI_DEVICEFUNCS>::value) {
-    AEROGPU_SET_D3D9DDI_FN(pfnBeginStateBlock,
-                           aerogpu_d3d9_stub_pfnBeginStateBlock<decltype(
-                               pDeviceFuncs->pfnBeginStateBlock)>::pfnBeginStateBlock);
+    AEROGPU_SET_D3D9DDI_FN(
+        pfnBeginStateBlock,
+        aerogpu_d3d9_impl_pfnBeginStateBlock<decltype(pDeviceFuncs->pfnBeginStateBlock)>::pfnBeginStateBlock);
   }
   if constexpr (aerogpu_has_member_pfnEndStateBlock<D3D9DDI_DEVICEFUNCS>::value) {
-    AEROGPU_SET_D3D9DDI_FN(pfnEndStateBlock,
-                           aerogpu_d3d9_stub_pfnEndStateBlock<decltype(pDeviceFuncs->pfnEndStateBlock)>::pfnEndStateBlock);
+    AEROGPU_SET_D3D9DDI_FN(
+        pfnEndStateBlock,
+        aerogpu_d3d9_impl_pfnEndStateBlock<decltype(pDeviceFuncs->pfnEndStateBlock)>::pfnEndStateBlock);
   }
   if constexpr (aerogpu_has_member_pfnGetMaterial<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(pfnGetMaterial,

@@ -1,0 +1,538 @@
+#include "..\\common\\aerogpu_test_common.h"
+#include "..\\common\\aerogpu_test_report.h"
+
+#include <d3d9.h>
+
+using aerogpu_test::ComPtr;
+
+struct VertexPosTex {
+  float x;
+  float y;
+  float z;
+  float w;
+  float u;
+  float v;
+  float tu2;
+  float tv2;
+};
+
+static const DWORD kVsCopyPosTex[] = {
+    0xFFFE0200u, // vs_2_0
+    0x02000001u, 0x400F0000u, 0x10E40000u, // mov oPos, v0
+    0x02000001u, 0x600F0000u, 0x10E40001u, // mov oT0, v1
+    0x0000FFFFu, // end
+};
+
+static const DWORD kPsCopyTexMulC0[] = {
+    0xFFFF0200u, // ps_2_0
+    0x03000042u, 0x000F0000u, 0x30E40000u, 0x20E40800u, // texld r0, t0, s0
+    0x03000005u, 0x000F0000u, 0x00E40000u, 0x20E40000u, // mul r0, r0, c0
+    0x02000001u, 0x000F0800u, 0x00E40000u, // mov oC0, r0
+    0x0000FFFFu, // end
+};
+
+static HRESULT CreateDeviceExWithFallback(IDirect3D9Ex* d3d,
+                                         HWND hwnd,
+                                         D3DPRESENT_PARAMETERS* pp,
+                                         DWORD create_flags,
+                                         IDirect3DDevice9Ex** out_dev) {
+  if (!d3d || !pp || !out_dev) {
+    return E_INVALIDARG;
+  }
+
+  HRESULT hr = d3d->CreateDeviceEx(D3DADAPTER_DEFAULT,
+                                   D3DDEVTYPE_HAL,
+                                   hwnd,
+                                   create_flags,
+                                   pp,
+                                   NULL,
+                                   out_dev);
+  if (FAILED(hr)) {
+    DWORD fallback_flags = create_flags;
+    fallback_flags &= ~D3DCREATE_HARDWARE_VERTEXPROCESSING;
+    fallback_flags |= D3DCREATE_SOFTWARE_VERTEXPROCESSING;
+    hr = d3d->CreateDeviceEx(D3DADAPTER_DEFAULT,
+                             D3DDEVTYPE_HAL,
+                             hwnd,
+                             fallback_flags,
+                             pp,
+                             NULL,
+                             out_dev);
+  }
+  return hr;
+}
+
+static HRESULT CreateSolidTexture(IDirect3DDevice9Ex* dev, D3DCOLOR argb, IDirect3DTexture9** out_tex) {
+  if (!dev || !out_tex) {
+    return E_INVALIDARG;
+  }
+
+  // Stage through a systemmem texture so the copy path works even when the default-pool texture
+  // is guest-backed.
+  ComPtr<IDirect3DTexture9> sys_tex;
+  HRESULT hr = dev->CreateTexture(1, 1, 1, 0, D3DFMT_A8R8G8B8, D3DPOOL_SYSTEMMEM, sys_tex.put(), NULL);
+  if (FAILED(hr)) {
+    return hr;
+  }
+
+  D3DLOCKED_RECT lr;
+  ZeroMemory(&lr, sizeof(lr));
+  hr = sys_tex->LockRect(0, &lr, NULL, 0);
+  if (FAILED(hr)) {
+    return hr;
+  }
+  *(D3DCOLOR*)lr.pBits = argb;
+  sys_tex->UnlockRect(0);
+
+  ComPtr<IDirect3DTexture9> gpu_tex;
+  hr = dev->CreateTexture(1, 1, 1, 0, D3DFMT_A8R8G8B8, D3DPOOL_DEFAULT, gpu_tex.put(), NULL);
+  if (FAILED(hr)) {
+    return hr;
+  }
+
+  hr = dev->UpdateTexture(sys_tex.get(), gpu_tex.get());
+  if (FAILED(hr)) {
+    return hr;
+  }
+
+  *out_tex = gpu_tex.detach();
+  return S_OK;
+}
+
+static HRESULT ReadBackbufferPixel(IDirect3DDevice9Ex* dev, UINT* out_width, UINT* out_height, D3DCOLOR* out_pixel) {
+  if (!dev || !out_pixel) {
+    return E_INVALIDARG;
+  }
+
+  ComPtr<IDirect3DSurface9> rt;
+  HRESULT hr = dev->GetRenderTarget(0, rt.put());
+  if (FAILED(hr)) {
+    return hr;
+  }
+
+  D3DSURFACE_DESC desc;
+  ZeroMemory(&desc, sizeof(desc));
+  hr = rt->GetDesc(&desc);
+  if (FAILED(hr)) {
+    return hr;
+  }
+
+  if (out_width) {
+    *out_width = desc.Width;
+  }
+  if (out_height) {
+    *out_height = desc.Height;
+  }
+
+  ComPtr<IDirect3DSurface9> sys;
+  hr = dev->CreateOffscreenPlainSurface(desc.Width, desc.Height, desc.Format, D3DPOOL_SYSTEMMEM, sys.put(), NULL);
+  if (FAILED(hr)) {
+    return hr;
+  }
+
+  hr = dev->GetRenderTargetData(rt.get(), sys.get());
+  if (FAILED(hr)) {
+    return hr;
+  }
+
+  D3DLOCKED_RECT lr;
+  ZeroMemory(&lr, sizeof(lr));
+  hr = sys->LockRect(&lr, NULL, D3DLOCK_READONLY);
+  if (FAILED(hr)) {
+    return hr;
+  }
+
+  const UINT x = desc.Width / 2;
+  const UINT y = desc.Height / 2;
+  const uint8_t* row = (const uint8_t*)lr.pBits + (size_t)y * (size_t)lr.Pitch;
+  *out_pixel = ((const D3DCOLOR*)row)[x];
+
+  sys->UnlockRect();
+  return S_OK;
+}
+
+static HRESULT DrawQuad(IDirect3DDevice9Ex* dev) {
+  if (!dev) {
+    return E_INVALIDARG;
+  }
+
+  HRESULT hr = dev->Clear(0, NULL, D3DCLEAR_TARGET, 0xFF000000u, 1.0f, 0);
+  if (FAILED(hr)) {
+    return hr;
+  }
+
+  hr = dev->BeginScene();
+  if (FAILED(hr)) {
+    return hr;
+  }
+
+  hr = dev->DrawPrimitive(D3DPT_TRIANGLESTRIP, 0, 2);
+  dev->EndScene();
+  if (FAILED(hr)) {
+    return hr;
+  }
+
+  dev->Flush();
+  return S_OK;
+}
+
+static int RunD3D9ExStateBlockSanity(int argc, char** argv) {
+  const char* kTestName = "d3d9ex_stateblock_sanity";
+  if (aerogpu_test::HasHelpArg(argc, argv)) {
+    aerogpu_test::PrintfStdout(
+        "Usage: %s.exe [--hidden] [--json[=PATH]] [--require-vid=0x####] [--require-did=0x####] "
+        "[--allow-microsoft] [--allow-non-aerogpu] [--require-umd]",
+        kTestName);
+    return 0;
+  }
+
+  aerogpu_test::TestReporter reporter(kTestName, argc, argv);
+
+  const bool allow_microsoft = aerogpu_test::HasArg(argc, argv, "--allow-microsoft");
+  const bool allow_non_aerogpu = aerogpu_test::HasArg(argc, argv, "--allow-non-aerogpu");
+  const bool require_umd = aerogpu_test::HasArg(argc, argv, "--require-umd");
+  const bool hidden = aerogpu_test::HasArg(argc, argv, "--hidden");
+
+  uint32_t require_vid = 0;
+  uint32_t require_did = 0;
+  bool has_require_vid = false;
+  bool has_require_did = false;
+  std::string require_vid_str;
+  std::string require_did_str;
+  if (aerogpu_test::GetArgValue(argc, argv, "--require-vid", &require_vid_str)) {
+    std::string err;
+    if (!aerogpu_test::ParseUint32(require_vid_str, &require_vid, &err)) {
+      return reporter.Fail("invalid --require-vid: %s", err.c_str());
+    }
+    has_require_vid = true;
+  }
+  if (aerogpu_test::GetArgValue(argc, argv, "--require-did", &require_did_str)) {
+    std::string err;
+    if (!aerogpu_test::ParseUint32(require_did_str, &require_did, &err)) {
+      return reporter.Fail("invalid --require-did: %s", err.c_str());
+    }
+    has_require_did = true;
+  }
+
+  const int kWidth = 64;
+  const int kHeight = 64;
+  HWND hwnd = aerogpu_test::CreateBasicWindow(L"AeroGPU_D3D9ExStateBlockSanity",
+                                              L"AeroGPU D3D9Ex StateBlock Sanity",
+                                              kWidth,
+                                              kHeight,
+                                              !hidden);
+  if (!hwnd) {
+    return reporter.Fail("CreateBasicWindow failed");
+  }
+
+  ComPtr<IDirect3D9Ex> d3d;
+  HRESULT hr = Direct3DCreate9Ex(D3D_SDK_VERSION, d3d.put());
+  if (FAILED(hr)) {
+    return reporter.FailHresult("Direct3DCreate9Ex", hr);
+  }
+
+  D3DADAPTER_IDENTIFIER9 ident;
+  ZeroMemory(&ident, sizeof(ident));
+  hr = d3d->GetAdapterIdentifier(D3DADAPTER_DEFAULT, 0, &ident);
+  if (SUCCEEDED(hr)) {
+    aerogpu_test::PrintfStdout("INFO: %s: adapter: %s (VID=0x%04X DID=0x%04X)",
+                               kTestName,
+                               ident.Description,
+                               (unsigned)ident.VendorId,
+                               (unsigned)ident.DeviceId);
+    reporter.SetAdapterInfoA(ident.Description, ident.VendorId, ident.DeviceId);
+    if (!allow_microsoft && ident.VendorId == 0x1414) {
+      return reporter.Fail(
+          "refusing to run on Microsoft adapter (VID=0x%04X DID=0x%04X). Install AeroGPU driver or pass --allow-microsoft.",
+          (unsigned)ident.VendorId,
+          (unsigned)ident.DeviceId);
+    }
+    if (has_require_vid && ident.VendorId != require_vid) {
+      return reporter.Fail("adapter VID mismatch: got 0x%04X expected 0x%04X",
+                           (unsigned)ident.VendorId,
+                           (unsigned)require_vid);
+    }
+    if (has_require_did && ident.DeviceId != require_did) {
+      return reporter.Fail("adapter DID mismatch: got 0x%04X expected 0x%04X",
+                           (unsigned)ident.DeviceId,
+                           (unsigned)require_did);
+    }
+    if (!allow_non_aerogpu && !has_require_vid && !has_require_did &&
+        !(ident.VendorId == 0x1414 && allow_microsoft) &&
+        !aerogpu_test::StrIContainsA(ident.Description, "AeroGPU")) {
+      return reporter.Fail(
+          "adapter does not look like AeroGPU: %s (pass --allow-non-aerogpu or use --require-vid/--require-did)",
+          ident.Description);
+    }
+  } else if (has_require_vid || has_require_did) {
+    return reporter.FailHresult("GetAdapterIdentifier (required for --require-vid/--require-did)", hr);
+  }
+
+  if (require_umd || (!allow_microsoft && !allow_non_aerogpu)) {
+    int umd_rc = aerogpu_test::RequireAeroGpuD3D9UmdLoaded(&reporter, kTestName);
+    if (umd_rc != 0) {
+      return umd_rc;
+    }
+  }
+
+  D3DPRESENT_PARAMETERS pp;
+  ZeroMemory(&pp, sizeof(pp));
+  pp.BackBufferWidth = kWidth;
+  pp.BackBufferHeight = kHeight;
+  pp.BackBufferFormat = D3DFMT_X8R8G8B8;
+  pp.BackBufferCount = 1;
+  pp.SwapEffect = D3DSWAPEFFECT_DISCARD;
+  pp.hDeviceWindow = hwnd;
+  pp.Windowed = TRUE;
+  pp.PresentationInterval = D3DPRESENT_INTERVAL_IMMEDIATE;
+
+  ComPtr<IDirect3DDevice9Ex> dev;
+  DWORD create_flags = D3DCREATE_HARDWARE_VERTEXPROCESSING | D3DCREATE_NOWINDOWCHANGES;
+  hr = CreateDeviceExWithFallback(d3d.get(), hwnd, &pp, create_flags, dev.put());
+  if (FAILED(hr)) {
+    return reporter.FailHresult("IDirect3D9Ex::CreateDeviceEx", hr);
+  }
+
+  // Create shaders.
+  ComPtr<IDirect3DVertexShader9> vs;
+  hr = dev->CreateVertexShader(kVsCopyPosTex, vs.put());
+  if (FAILED(hr)) {
+    return reporter.FailHresult("CreateVertexShader", hr);
+  }
+
+  ComPtr<IDirect3DPixelShader9> ps;
+  hr = dev->CreatePixelShader(kPsCopyTexMulC0, ps.put());
+  if (FAILED(hr)) {
+    return reporter.FailHresult("CreatePixelShader", hr);
+  }
+
+  // Create vertex declaration (pos + tex).
+  const D3DVERTEXELEMENT9 decl[] = {
+      {0, 0, D3DDECLTYPE_FLOAT4, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_POSITION, 0},
+      {0, 16, D3DDECLTYPE_FLOAT4, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_TEXCOORD, 0},
+      D3DDECL_END(),
+  };
+
+  ComPtr<IDirect3DVertexDeclaration9> vdecl;
+  hr = dev->CreateVertexDeclaration(decl, vdecl.put());
+  if (FAILED(hr)) {
+    return reporter.FailHresult("CreateVertexDeclaration", hr);
+  }
+
+  // Create VB for a full-screen quad.
+  const VertexPosTex verts[4] = {
+      {-1.0f, -1.0f, 0.0f, 1.0f, 0.0f, 1.0f, 0.0f, 1.0f},
+      {-1.0f,  1.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f},
+      { 1.0f, -1.0f, 0.0f, 1.0f, 1.0f, 1.0f, 0.0f, 1.0f},
+      { 1.0f,  1.0f, 0.0f, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f},
+  };
+
+  ComPtr<IDirect3DVertexBuffer9> vb;
+  hr = dev->CreateVertexBuffer(sizeof(verts),
+                               D3DUSAGE_WRITEONLY | D3DUSAGE_DYNAMIC,
+                               0,
+                               D3DPOOL_DEFAULT,
+                               vb.put(),
+                               NULL);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("CreateVertexBuffer", hr);
+  }
+
+  void* vb_ptr = NULL;
+  hr = vb->Lock(0, sizeof(verts), &vb_ptr, D3DLOCK_DISCARD);
+  if (FAILED(hr) || !vb_ptr) {
+    return reporter.FailHresult("VertexBuffer Lock", FAILED(hr) ? hr : E_FAIL);
+  }
+  memcpy(vb_ptr, verts, sizeof(verts));
+  vb->Unlock();
+
+  // Create textures.
+  ComPtr<IDirect3DTexture9> tex_a;
+  hr = CreateSolidTexture(dev.get(), 0xFFFFFFFFu /*white*/, tex_a.put());
+  if (FAILED(hr)) {
+    return reporter.FailHresult("CreateSolidTexture A", hr);
+  }
+
+  ComPtr<IDirect3DTexture9> tex_b;
+  hr = CreateSolidTexture(dev.get(), 0xFF0000FFu /*blue*/, tex_b.put());
+  if (FAILED(hr)) {
+    return reporter.FailHresult("CreateSolidTexture B", hr);
+  }
+
+  // StateBlock record.
+  hr = dev->BeginStateBlock();
+  if (FAILED(hr)) {
+    return reporter.FailHresult("BeginStateBlock", hr);
+  }
+
+  hr = dev->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetRenderState(CULLMODE)", hr);
+  }
+
+  hr = dev->SetRenderState(D3DRS_ZENABLE, FALSE);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetRenderState(ZENABLE)", hr);
+  }
+
+  hr = dev->SetRenderState(D3DRS_ZWRITEENABLE, FALSE);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetRenderState(ZWRITEENABLE)", hr);
+  }
+
+  D3DVIEWPORT9 vp_full;
+  vp_full.X = 0;
+  vp_full.Y = 0;
+  vp_full.Width = kWidth;
+  vp_full.Height = kHeight;
+  vp_full.MinZ = 0.0f;
+  vp_full.MaxZ = 1.0f;
+  hr = dev->SetViewport(&vp_full);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetViewport(full)", hr);
+  }
+
+  hr = dev->SetVertexDeclaration(vdecl.get());
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetVertexDeclaration", hr);
+  }
+
+  hr = dev->SetStreamSource(0, vb.get(), 0, sizeof(VertexPosTex));
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetStreamSource", hr);
+  }
+
+  hr = dev->SetVertexShader(vs.get());
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetVertexShader", hr);
+  }
+
+  hr = dev->SetPixelShader(ps.get());
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetPixelShader", hr);
+  }
+
+  hr = dev->SetTexture(0, tex_a.get());
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetTexture A", hr);
+  }
+
+  hr = dev->SetSamplerState(0, D3DSAMP_MINFILTER, D3DTEXF_POINT);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetSamplerState(MINFILTER)", hr);
+  }
+  hr = dev->SetSamplerState(0, D3DSAMP_MAGFILTER, D3DTEXF_POINT);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetSamplerState(MAGFILTER)", hr);
+  }
+
+  float c0_green[4] = {0.0f, 1.0f, 0.0f, 1.0f};
+  hr = dev->SetPixelShaderConstantF(0, c0_green, 1);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetPixelShaderConstantF(green)", hr);
+  }
+
+  ComPtr<IDirect3DStateBlock9> sb;
+  hr = dev->EndStateBlock(sb.put());
+  if (FAILED(hr) || !sb) {
+    return reporter.FailHresult("EndStateBlock", FAILED(hr) ? hr : E_FAIL);
+  }
+
+  // Mutate state away from recorded values.
+  float c0_white[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+  hr = dev->SetTexture(0, tex_b.get());
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetTexture B", hr);
+  }
+  hr = dev->SetPixelShaderConstantF(0, c0_white, 1);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetPixelShaderConstantF(white)", hr);
+  }
+  D3DVIEWPORT9 vp_small;
+  vp_small.X = 0;
+  vp_small.Y = 0;
+  vp_small.Width = 1;
+  vp_small.Height = 1;
+  vp_small.MinZ = 0.0f;
+  vp_small.MaxZ = 1.0f;
+  hr = dev->SetViewport(&vp_small);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetViewport(small mutate)", hr);
+  }
+
+  // Apply should restore tex_a and c0_green.
+  hr = sb->Apply();
+  if (FAILED(hr)) {
+    return reporter.FailHresult("StateBlock Apply", hr);
+  }
+
+  hr = DrawQuad(dev.get());
+  if (FAILED(hr)) {
+    return reporter.FailHresult("DrawQuad (after Apply)", hr);
+  }
+
+  D3DCOLOR px = 0;
+  hr = ReadBackbufferPixel(dev.get(), NULL, NULL, &px);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("ReadBackbufferPixel (after Apply)", hr);
+  }
+  if (px != 0xFF00FF00u) {
+    return reporter.Fail("pixel mismatch after Apply: got=0x%08X expected=0x%08X", (unsigned)px, 0xFF00FF00u);
+  }
+
+  // Capture should update the existing block to the current device state.
+  float c0_red[4] = {1.0f, 0.0f, 0.0f, 1.0f};
+  hr = dev->SetTexture(0, tex_a.get());
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetTexture A (pre-Capture)", hr);
+  }
+  hr = dev->SetPixelShaderConstantF(0, c0_red, 1);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetPixelShaderConstantF(red)", hr);
+  }
+
+  hr = sb->Capture();
+  if (FAILED(hr)) {
+    return reporter.FailHresult("StateBlock Capture", hr);
+  }
+
+  // Mutate away again, then apply; we should get red.
+  hr = dev->SetTexture(0, tex_b.get());
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetTexture B (post-Capture mutate)", hr);
+  }
+  hr = dev->SetPixelShaderConstantF(0, c0_green, 1);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetPixelShaderConstantF(green mutate)", hr);
+  }
+  hr = dev->SetViewport(&vp_small);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetViewport(small mutate 2)", hr);
+  }
+
+  hr = sb->Apply();
+  if (FAILED(hr)) {
+    return reporter.FailHresult("StateBlock Apply (after Capture)", hr);
+  }
+
+  hr = DrawQuad(dev.get());
+  if (FAILED(hr)) {
+    return reporter.FailHresult("DrawQuad (after Capture+Apply)", hr);
+  }
+
+  px = 0;
+  hr = ReadBackbufferPixel(dev.get(), NULL, NULL, &px);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("ReadBackbufferPixel (after Capture+Apply)", hr);
+  }
+  if (px != 0xFFFF0000u) {
+    return reporter.Fail("pixel mismatch after Capture+Apply: got=0x%08X expected=0x%08X", (unsigned)px, 0xFFFF0000u);
+  }
+
+  return reporter.Pass();
+}
+
+int main(int argc, char** argv) {
+  aerogpu_test::ConfigureProcessForAutomation();
+  return RunD3D9ExStateBlockSanity(argc, argv);
+}
