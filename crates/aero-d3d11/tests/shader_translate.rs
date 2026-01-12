@@ -1,6 +1,6 @@
 use aero_d3d11::binding_model::{
-    BINDING_BASE_CBUFFER, BINDING_BASE_SAMPLER, BINDING_BASE_TEXTURE, MAX_CBUFFER_SLOTS,
-    MAX_SAMPLER_SLOTS, MAX_TEXTURE_SLOTS,
+    BINDING_BASE_CBUFFER, BINDING_BASE_SAMPLER, BINDING_BASE_TEXTURE, MAX_SAMPLER_SLOTS,
+    MAX_TEXTURE_SLOTS,
 };
 use aero_d3d11::{
     parse_signatures, translate_sm4_module_to_wgsl, BindingKind, Builtin, DxbcFile,
@@ -907,7 +907,7 @@ fn rejects_constant_buffer_slot_out_of_range() {
             kind: "cbuffer",
             slot: 32,
             max
-        } if max == MAX_CBUFFER_SLOTS - 1
+        } if max == 13
     ));
 }
 

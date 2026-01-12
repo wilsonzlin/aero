@@ -950,6 +950,12 @@ impl ResourceUsage {
 }
 
 fn scan_resources(module: &Sm4Module) -> Result<ResourceUsage, ShaderTranslateError> {
+    // D3D11 exposes 14 constant buffer slots (`b0..b13`) per shader stage.
+    // Our binding model can represent up to `MAX_CBUFFER_SLOTS` without colliding with textures,
+    // so enforce both constraints.
+    const D3D11_CBUFFER_SLOT_COUNT: u32 = 14;
+    let max_cbuffer_slots = D3D11_CBUFFER_SLOT_COUNT.min(MAX_CBUFFER_SLOTS);
+
     fn validate_slot(
         kind: &'static str,
         slot: u32,
@@ -964,7 +970,6 @@ fn scan_resources(module: &Sm4Module) -> Result<ResourceUsage, ShaderTranslateEr
         }
         Ok(())
     }
-
     let mut cbuffers: BTreeMap<u32, u32> = BTreeMap::new();
     let mut textures = BTreeSet::new();
     let mut samplers = BTreeSet::new();
@@ -980,7 +985,7 @@ fn scan_resources(module: &Sm4Module) -> Result<ResourceUsage, ShaderTranslateEr
     for inst in &module.instructions {
         let mut scan_src = |src: &crate::sm4_ir::SrcOperand| -> Result<(), ShaderTranslateError> {
             if let SrcKind::ConstantBuffer { slot, reg } = src.kind {
-                validate_slot("cbuffer", slot, MAX_CBUFFER_SLOTS)?;
+                validate_slot("cbuffer", slot, max_cbuffer_slots)?;
                 let entry = cbuffers.entry(slot).or_insert(0);
                 *entry = (*entry).max(reg + 1);
             }
@@ -1477,5 +1482,100 @@ impl WgslWriter {
 
     fn finish(self) -> String {
         self.out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn minimal_module(instructions: Vec<Sm4Inst>) -> Sm4Module {
+        Sm4Module {
+            stage: ShaderStage::Pixel,
+            model: crate::sm4::ShaderModel { major: 4, minor: 0 },
+            decls: Vec::new(),
+            instructions,
+        }
+    }
+
+    fn dummy_dst() -> crate::sm4_ir::DstOperand {
+        crate::sm4_ir::DstOperand {
+            reg: RegisterRef {
+                file: RegFile::Temp,
+                index: 0,
+            },
+            mask: WriteMask::XYZW,
+            saturate: false,
+        }
+    }
+
+    fn dummy_coord() -> crate::sm4_ir::SrcOperand {
+        crate::sm4_ir::SrcOperand {
+            kind: SrcKind::ImmediateF32([0; 4]),
+            swizzle: Swizzle::XYZW,
+            modifier: OperandModifier::None,
+        }
+    }
+
+    #[test]
+    fn texture_slot_128_triggers_error() {
+        let module = minimal_module(vec![Sm4Inst::Sample {
+            dst: dummy_dst(),
+            coord: dummy_coord(),
+            texture: crate::sm4_ir::TextureRef { slot: 128 },
+            sampler: crate::sm4_ir::SamplerRef { slot: 0 },
+        }]);
+
+        let err = scan_resources(&module).unwrap_err();
+        assert!(matches!(
+            err,
+            ShaderTranslateError::ResourceSlotOutOfRange {
+                kind: "texture",
+                slot: 128,
+                max: 127
+            }
+        ));
+    }
+
+    #[test]
+    fn sampler_slot_16_triggers_error() {
+        let module = minimal_module(vec![Sm4Inst::Sample {
+            dst: dummy_dst(),
+            coord: dummy_coord(),
+            texture: crate::sm4_ir::TextureRef { slot: 0 },
+            sampler: crate::sm4_ir::SamplerRef { slot: 16 },
+        }]);
+
+        let err = scan_resources(&module).unwrap_err();
+        assert!(matches!(
+            err,
+            ShaderTranslateError::ResourceSlotOutOfRange {
+                kind: "sampler",
+                slot: 16,
+                max: 15
+            }
+        ));
+    }
+
+    #[test]
+    fn cbuffer_slot_32_triggers_error() {
+        let module = minimal_module(vec![Sm4Inst::Mov {
+            dst: dummy_dst(),
+            src: crate::sm4_ir::SrcOperand {
+                kind: SrcKind::ConstantBuffer { slot: 32, reg: 0 },
+                swizzle: Swizzle::XYZW,
+                modifier: OperandModifier::None,
+            },
+        }]);
+
+        let err = scan_resources(&module).unwrap_err();
+        assert!(matches!(
+            err,
+            ShaderTranslateError::ResourceSlotOutOfRange {
+                kind: "cbuffer",
+                slot: 32,
+                max: 13
+            }
+        ));
     }
 }
