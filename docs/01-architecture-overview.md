@@ -279,6 +279,12 @@ requires a segmented/sparse host backing model (or wasm `memory64`).
 └─────────────┘    └─────────────┘    └─────────────┘    └─────────────┘
 ```
 
+> Note: in the Rust codebase, the canonical synchronous disk traits are
+> `aero_storage::{StorageBackend, VirtualDisk}`. Browser IndexedDB is async-only and cannot back the
+> synchronous Rust disk/controller path in the same Worker; see
+> [`19-indexeddb-storage-story.md`](./19-indexeddb-storage-story.md) and
+> [`20-storage-trait-consolidation.md`](./20-storage-trait-consolidation.md).
+
 ---
 
 ## Inter-Worker Communication
