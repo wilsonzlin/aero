@@ -188,6 +188,30 @@ impl SharedSurfaceTable {
         self.handles.get(&handle).copied().unwrap_or(handle)
     }
 
+    /// Resolves a handle coming from an AeroGPU command stream.
+    ///
+    /// This differs from `resolve_handle()` by treating "reserved underlying IDs" as invalid:
+    /// if an original handle has been destroyed while shared-surface aliases still exist, the
+    /// underlying numeric ID is kept alive in `refcounts` to prevent handle reuse/collision, but
+    /// the original handle value must not be used for subsequent commands.
+    fn resolve_cmd_handle(&self, handle: u32, op: &str) -> Result<u32> {
+        if handle == 0 {
+            return Ok(0);
+        }
+
+        if self.handles.contains_key(&handle) {
+            return Ok(self.resolve_handle(handle));
+        }
+
+        if self.refcounts.contains_key(&handle) {
+            bail!(
+                "{op}: resource handle {handle} was destroyed (underlying id kept alive by shared surface aliases)"
+            );
+        }
+
+        Ok(handle)
+    }
+
     fn export(&mut self, resource_handle: u32, share_token: u64) -> Result<()> {
         if resource_handle == 0 {
             bail!("EXPORT_SHARED_SURFACE: invalid resource handle 0");
@@ -840,7 +864,9 @@ impl AerogpuD3d11Executor {
     }
 
     pub fn texture_size(&self, texture_id: u32) -> Result<(u32, u32)> {
-        let texture_id = self.shared_surfaces.resolve_handle(texture_id);
+        let texture_id = self
+            .shared_surfaces
+            .resolve_cmd_handle(texture_id, "texture_size")?;
         let texture = self
             .resources
             .textures
@@ -850,7 +876,9 @@ impl AerogpuD3d11Executor {
     }
 
     pub async fn read_texture_rgba8(&self, texture_id: u32) -> Result<Vec<u8>> {
-        let texture_id = self.shared_surfaces.resolve_handle(texture_id);
+        let texture_id = self
+            .shared_surfaces
+            .resolve_cmd_handle(texture_id, "read_texture_rgba8")?;
         let texture = self
             .resources
             .textures
@@ -2378,11 +2406,12 @@ impl AerogpuD3d11Executor {
                 if cmd_bytes.len() < 32 {
                     break;
                 }
-                let handle = self
-                    .shared_surfaces
-                    .resolve_handle(read_u32_le(cmd_bytes, 8)?);
                 let size_bytes = read_u64_le(cmd_bytes, 24)?;
                 if size_bytes != 0 {
+                    let handle_raw = read_u32_le(cmd_bytes, 8)?;
+                    let handle = self
+                        .shared_surfaces
+                        .resolve_cmd_handle(handle_raw, "UPLOAD_RESOURCE")?;
                     if self.resources.buffers.contains_key(&handle) {
                         if self.encoder_used_buffers.contains(&handle) {
                             break;
@@ -2840,7 +2869,8 @@ impl AerogpuD3d11Executor {
                     let slot = read_u32_le(cmd_bytes, 12)?;
                     let texture = read_u32_le(cmd_bytes, 16)?;
                     if texture != 0 {
-                        let texture = self.shared_surfaces.resolve_handle(texture);
+                        let texture =
+                            self.shared_surfaces.resolve_cmd_handle(texture, "SET_TEXTURE")?;
                         let Some(stage) = ShaderStage::from_aerogpu_u32(stage_raw) else {
                             break;
                         };
@@ -2887,7 +2917,9 @@ impl AerogpuD3d11Executor {
                         needs_break = true;
                         break;
                     }
-                    let buffer = self.shared_surfaces.resolve_handle(buffer);
+                    let buffer =
+                        self.shared_surfaces
+                            .resolve_cmd_handle(buffer, "SET_VERTEX_BUFFERS")?;
 
                     let stride_bytes = u32::from_le(binding.stride_bytes);
                     let current_stride = self
@@ -2923,7 +2955,8 @@ impl AerogpuD3d11Executor {
                 if cmd_bytes.len() >= 12 {
                     let buffer = read_u32_le(cmd_bytes, 8)?;
                     if buffer != 0 {
-                        let buffer = self.shared_surfaces.resolve_handle(buffer);
+                        let buffer =
+                            self.shared_surfaces.resolve_cmd_handle(buffer, "SET_INDEX_BUFFER")?;
                         if let Some(buf) = self.resources.buffers.get(&buffer) {
                             if buf.backing.is_some()
                                 && buf.dirty.is_some()
@@ -2991,7 +3024,9 @@ impl AerogpuD3d11Executor {
                             if buffer == 0 || buffer == legacy_constants_buffer_id(stage) {
                                 continue;
                             }
-                            let buffer = self.shared_surfaces.resolve_handle(buffer);
+                            let buffer = self
+                                .shared_surfaces
+                                .resolve_cmd_handle(buffer, "SET_CONSTANT_BUFFERS")?;
                             if let Some(buf) = self.resources.buffers.get(&buffer) {
                                 if buf.backing.is_some()
                                     && buf.dirty.is_some()
@@ -3406,12 +3441,17 @@ impl AerogpuD3d11Executor {
                 OPCODE_UPLOAD_RESOURCE => {
                     let (cmd, data) = decode_cmd_upload_resource_payload_le(cmd_bytes)
                         .map_err(|e| anyhow!("UPLOAD_RESOURCE: invalid payload: {e:?}"))?;
-                    self.upload_resource_payload(
-                        cmd.resource_handle,
-                        cmd.offset_bytes,
-                        cmd.size_bytes,
-                        data,
-                    )?;
+                    if cmd.size_bytes != 0 {
+                        let handle = self
+                            .shared_surfaces
+                            .resolve_cmd_handle(cmd.resource_handle, "UPLOAD_RESOURCE")?;
+                        self.upload_resource_payload(
+                            handle,
+                            cmd.offset_bytes,
+                            cmd.size_bytes,
+                            data,
+                        )?;
+                    }
                 }
                 OPCODE_COPY_BUFFER | OPCODE_COPY_TEXTURE2D => {}
                 OPCODE_CLEAR => {}
@@ -3977,7 +4017,9 @@ impl AerogpuD3d11Executor {
         let handle = read_u32_le(cmd_bytes, 8)?;
         let offset = read_u64_le(cmd_bytes, 16)?;
         let size = read_u64_le(cmd_bytes, 24)?;
-        let handle = self.shared_surfaces.resolve_handle(handle);
+        let handle = self
+            .shared_surfaces
+            .resolve_cmd_handle(handle, "RESOURCE_DIRTY_RANGE")?;
 
         if let Some(buf) = self.resources.buffers.get_mut(&handle) {
             let end = offset.saturating_add(size).min(buf.size);
@@ -3998,13 +4040,16 @@ impl AerogpuD3d11Executor {
     ) -> Result<()> {
         let (cmd, data) = decode_cmd_upload_resource_payload_le(cmd_bytes)
             .map_err(|e| anyhow!("UPLOAD_RESOURCE: invalid payload: {e:?}"))?;
-        let handle = self.shared_surfaces.resolve_handle(cmd.resource_handle);
         let offset = cmd.offset_bytes;
         let size = cmd.size_bytes;
 
         if size == 0 {
             return Ok(());
         }
+
+        let handle = self
+            .shared_surfaces
+            .resolve_cmd_handle(cmd.resource_handle, "UPLOAD_RESOURCE")?;
 
         // Preserve command stream ordering relative to any previously encoded GPU work.
         if self.resources.buffers.contains_key(&handle)
@@ -4029,7 +4074,6 @@ impl AerogpuD3d11Executor {
         if size == 0 {
             return Ok(());
         }
-        let handle = self.shared_surfaces.resolve_handle(handle);
 
         if let Some((buffer_size, buffer_gpu_size)) = self
             .resources
@@ -4392,8 +4436,8 @@ impl AerogpuD3d11Executor {
             .map_err(|e| anyhow!("COPY_BUFFER: invalid payload: {e:?}"))?;
         // `AerogpuCmdCopyBuffer` is `repr(C, packed)` (ABI mirror); copy out fields before use to
         // avoid taking references to packed fields.
-        let dst_buffer = self.shared_surfaces.resolve_handle(cmd.dst_buffer);
-        let src_buffer = self.shared_surfaces.resolve_handle(cmd.src_buffer);
+        let dst_buffer_raw = cmd.dst_buffer;
+        let src_buffer_raw = cmd.src_buffer;
         let dst_offset_bytes = cmd.dst_offset_bytes;
         let src_offset_bytes = cmd.src_offset_bytes;
         let size_bytes = cmd.size_bytes;
@@ -4408,6 +4452,14 @@ impl AerogpuD3d11Executor {
         if size_bytes == 0 {
             return Ok(());
         }
+
+        let dst_buffer = self
+            .shared_surfaces
+            .resolve_cmd_handle(dst_buffer_raw, "COPY_BUFFER")?;
+        let src_buffer = self
+            .shared_surfaces
+            .resolve_cmd_handle(src_buffer_raw, "COPY_BUFFER")?;
+
         if dst_buffer == 0 || src_buffer == 0 {
             bail!("COPY_BUFFER: resource handles must be non-zero");
         }
@@ -4596,8 +4648,8 @@ impl AerogpuD3d11Executor {
             .map_err(|e| anyhow!("COPY_TEXTURE2D: invalid payload: {e:?}"))?;
         // `AerogpuCmdCopyTexture2d` is `repr(C, packed)` (ABI mirror); copy out fields before use
         // to avoid taking references to packed fields.
-        let dst_texture = self.shared_surfaces.resolve_handle(cmd.dst_texture);
-        let src_texture = self.shared_surfaces.resolve_handle(cmd.src_texture);
+        let dst_texture_raw = cmd.dst_texture;
+        let src_texture_raw = cmd.src_texture;
         let dst_mip_level = cmd.dst_mip_level;
         let dst_array_layer = cmd.dst_array_layer;
         let src_mip_level = cmd.src_mip_level;
@@ -4619,6 +4671,14 @@ impl AerogpuD3d11Executor {
         if width == 0 || height == 0 {
             return Ok(());
         }
+
+        let dst_texture = self
+            .shared_surfaces
+            .resolve_cmd_handle(dst_texture_raw, "COPY_TEXTURE2D")?;
+        let src_texture = self
+            .shared_surfaces
+            .resolve_cmd_handle(src_texture_raw, "COPY_TEXTURE2D")?;
+
         if dst_texture == 0 || src_texture == 0 {
             bail!("COPY_TEXTURE2D: resource handles must be non-zero");
         }
@@ -5669,7 +5729,7 @@ impl AerogpuD3d11Executor {
         let texture = if texture == 0 {
             None
         } else {
-            Some(self.shared_surfaces.resolve_handle(texture))
+            Some(self.shared_surfaces.resolve_cmd_handle(texture, "SET_TEXTURE")?)
         };
         self.bindings.stage_mut(stage).set_texture(slot, texture);
         Ok(())
@@ -5864,7 +5924,9 @@ impl AerogpuD3d11Executor {
             let bound = if buffer_raw == 0 {
                 None
             } else {
-                let buffer = self.shared_surfaces.resolve_handle(buffer_raw);
+                let buffer = self
+                    .shared_surfaces
+                    .resolve_cmd_handle(buffer_raw, "SET_CONSTANT_BUFFERS")?;
                 Some(BoundConstantBuffer {
                     buffer,
                     offset: offset_bytes as u64,
@@ -5954,13 +6016,19 @@ impl AerogpuD3d11Executor {
             if seen_gap {
                 bail!("SET_RENDER_TARGETS: render target slot {i} is set after an earlier slot was unbound (gaps are not supported yet)");
             }
-            colors.push(self.shared_surfaces.resolve_handle(tex_id));
+            colors.push(
+                self.shared_surfaces
+                    .resolve_cmd_handle(tex_id, "SET_RENDER_TARGETS")?,
+            );
         }
         self.state.render_targets = colors;
         self.state.depth_stencil = if depth_stencil == 0 {
             None
         } else {
-            Some(self.shared_surfaces.resolve_handle(depth_stencil))
+            Some(
+                self.shared_surfaces
+                    .resolve_cmd_handle(depth_stencil, "SET_RENDER_TARGETS")?,
+            )
         };
         Ok(())
     }
@@ -6038,7 +6106,8 @@ impl AerogpuD3d11Executor {
             let buffer = if buffer_raw == 0 {
                 0
             } else {
-                self.shared_surfaces.resolve_handle(buffer_raw)
+                self.shared_surfaces
+                    .resolve_cmd_handle(buffer_raw, "SET_VERTEX_BUFFERS")?
             };
             let stride_bytes = u32::from_le(binding.stride_bytes);
             let offset_bytes = u64::from(u32::from_le(binding.offset_bytes));
@@ -6072,7 +6141,9 @@ impl AerogpuD3d11Executor {
             self.state.index_buffer = None;
             return Ok(());
         }
-        let buffer = self.shared_surfaces.resolve_handle(buffer);
+        let buffer = self
+            .shared_surfaces
+            .resolve_cmd_handle(buffer, "SET_INDEX_BUFFER")?;
 
         let format = match format_u32 {
             0 => wgpu::IndexFormat::Uint16,
