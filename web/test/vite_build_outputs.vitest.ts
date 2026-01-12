@@ -51,6 +51,10 @@ describe("web Vite build outputs", () => {
 
       expect(existsSync(path.join(outDir, "webusb_diagnostics.html"))).toBe(true);
       expect(existsSync(path.join(outDir, "webgl2_fallback_demo.html"))).toBe(true);
+      // AudioWorklet modules are emitted as static assets; ensure their unbundled
+      // dependency files are also present.
+      expect(existsSync(path.join(outDir, "assets", "mic_ring.js"))).toBe(true);
+      expect(existsSync(path.join(outDir, "assets", "audio_worklet_ring_layout.js"))).toBe(true);
     } finally {
       rmSync(outDir, { recursive: true, force: true });
     }

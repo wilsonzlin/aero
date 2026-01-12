@@ -1,10 +1,28 @@
-export const READ_FRAME_INDEX = 0;
-export const WRITE_FRAME_INDEX = 1;
-export const UNDERRUN_COUNT_INDEX = 2;
-export const OVERRUN_COUNT_INDEX = 3;
+import {
+  HEADER_BYTES,
+  HEADER_U32_LEN,
+  OVERRUN_COUNT_INDEX,
+  READ_FRAME_INDEX,
+  UNDERRUN_COUNT_INDEX,
+  WRITE_FRAME_INDEX,
+  framesAvailable,
+  framesAvailableClamped,
+  framesFree,
+  getRingBufferLevelFrames,
+} from "../platform/audio_worklet_ring_layout.js";
 
-export const HEADER_U32_LEN = 4;
-export const HEADER_BYTES = HEADER_U32_LEN * Uint32Array.BYTES_PER_ELEMENT;
+export {
+  HEADER_BYTES,
+  HEADER_U32_LEN,
+  OVERRUN_COUNT_INDEX,
+  READ_FRAME_INDEX,
+  UNDERRUN_COUNT_INDEX,
+  WRITE_FRAME_INDEX,
+  framesAvailable,
+  framesAvailableClamped,
+  framesFree,
+  getRingBufferLevelFrames,
+};
 
 export type AudioWorkletRingBufferViews = {
   header: Uint32Array;
@@ -14,28 +32,6 @@ export type AudioWorkletRingBufferViews = {
   overrunCount: Uint32Array;
   samples: Float32Array;
 };
-
-export function framesAvailable(readFrameIndex: number, writeFrameIndex: number): number {
-  return (writeFrameIndex - readFrameIndex) >>> 0;
-}
-
-export function framesAvailableClamped(
-  readFrameIndex: number,
-  writeFrameIndex: number,
-  capacityFrames: number,
-): number {
-  return Math.min(framesAvailable(readFrameIndex, writeFrameIndex), capacityFrames);
-}
-
-export function framesFree(readFrameIndex: number, writeFrameIndex: number, capacityFrames: number): number {
-  return capacityFrames - framesAvailableClamped(readFrameIndex, writeFrameIndex, capacityFrames);
-}
-
-export function getRingBufferLevelFrames(header: Uint32Array, capacityFrames: number): number {
-  const read = Atomics.load(header, READ_FRAME_INDEX) >>> 0;
-  const write = Atomics.load(header, WRITE_FRAME_INDEX) >>> 0;
-  return framesAvailableClamped(read, write, capacityFrames);
-}
 
 /**
  * Clamp a read frame counter to a consistent state when the producer has advanced

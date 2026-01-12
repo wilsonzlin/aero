@@ -5,7 +5,7 @@ import {
   UNDERRUN_COUNT_INDEX,
   WRITE_FRAME_INDEX,
   framesAvailableClamped,
-} from "../audio/audio_worklet_ring";
+} from "./audio_worklet_ring_layout.js";
 
 // Atomically add missing frames to the underrun counter. The counter is a u32
 // that wraps naturally at 2^32.
