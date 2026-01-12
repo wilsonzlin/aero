@@ -614,6 +614,9 @@ impl PciIoWindowPort {
 
 impl PortIoDevice for PciIoWindowPort {
     fn read(&mut self, port: u16, size: u8) -> u32 {
+        if !matches!(size, 1 | 2 | 4) {
+            return Self::read_all_ones(size);
+        }
         let Some((key, dev_offset)) = self.map_port(port) else {
             return Self::read_all_ones(size);
         };
@@ -628,6 +631,9 @@ impl PortIoDevice for PciIoWindowPort {
     }
 
     fn write(&mut self, port: u16, size: u8, value: u32) {
+        if !matches!(size, 1 | 2 | 4) {
+            return;
+        }
         let Some((key, dev_offset)) = self.map_port(port) else {
             return;
         };
