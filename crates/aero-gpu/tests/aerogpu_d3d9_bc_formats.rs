@@ -112,42 +112,42 @@ async fn create_executor_with_bc_features() -> Option<AerogpuD3d9Executor> {
         // (e.g. llvmpipe) where BC texture compression is often unreliable. Avoid selecting CPU
         // adapters on Linux so the direct-BC tests skip instead of producing false failures.
         let allow_software_adapter = !cfg!(target_os = "linux");
-        let adapter = instance
-            .enumerate_adapters(backends)
-            .into_iter()
-            .find(|a| {
-                if !a
-                    .features()
-                    .contains(wgpu::Features::TEXTURE_COMPRESSION_BC)
-                {
-                    return false;
-                }
-                if allow_software_adapter {
-                    return true;
-                }
-                a.get_info().device_type != wgpu::DeviceType::Cpu
-            })?;
+        for adapter in instance.enumerate_adapters(backends) {
+            if !adapter
+                .features()
+                .contains(wgpu::Features::TEXTURE_COMPRESSION_BC)
+            {
+                continue;
+            }
+            if !allow_software_adapter && adapter.get_info().device_type == wgpu::DeviceType::Cpu {
+                continue;
+            }
 
-        let downlevel_flags = adapter.get_downlevel_capabilities().flags;
+            let downlevel_flags = adapter.get_downlevel_capabilities().flags;
 
-        let (device, queue) = adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    label: Some("aerogpu d3d9 bc (direct) test device"),
-                    required_features: wgpu::Features::TEXTURE_COMPRESSION_BC,
-                    required_limits: wgpu::Limits::downlevel_defaults(),
-                },
-                None,
-            )
-            .await
-            .ok()?;
+            let Ok((device, queue)) = adapter
+                .request_device(
+                    &wgpu::DeviceDescriptor {
+                        label: Some("aerogpu d3d9 bc (direct) test device"),
+                        required_features: wgpu::Features::TEXTURE_COMPRESSION_BC,
+                        required_limits: wgpu::Limits::downlevel_defaults(),
+                    },
+                    None,
+                )
+                .await
+            else {
+                continue;
+            };
 
-        Some(AerogpuD3d9Executor::new(
-            device,
-            queue,
-            downlevel_flags,
-            Arc::new(GpuStats::new()),
-        ))
+            return Some(AerogpuD3d9Executor::new(
+                device,
+                queue,
+                downlevel_flags,
+                Arc::new(GpuStats::new()),
+            ));
+        }
+
+        None
     }
 
     // Prefer GL on Linux CI (avoid crashes in some Vulkan software adapters), but fall back to
