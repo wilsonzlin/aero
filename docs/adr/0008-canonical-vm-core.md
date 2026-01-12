@@ -42,7 +42,11 @@ All code that wants to *construct and run the Aero VM/machine* (including `crate
   - Disk image: `Machine::set_disk_image(Vec<u8>)`
   - Serial drain: `Machine::take_serial_output()`
   - Serial stats: `Machine::serial_output_len()` / `Machine::serial_output_bytes()`
-  - Input injection: `Machine::inject_browser_key(code, pressed)`
+  - Input injection (legacy PS/2 via i8042):
+    - Keyboard: `Machine::inject_browser_key(code, pressed)`
+    - Mouse: `Machine::inject_mouse_motion(dx, dy, wheel)`
+    - Mouse buttons: `Machine::inject_mouse_button(button: Ps2MouseButton, pressed)`
+      - Convenience wrappers: `inject_mouse_left/right/middle`
 - **Debug/testing helpers**
   - Read guest physical memory: `Machine::read_physical_u8/u16/bytes(...)`
 - **Snapshots (via `aero-snapshot`)**
