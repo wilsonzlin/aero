@@ -72,6 +72,8 @@ fn uhci_controller_bridge_snapshot_roundtrip_preserves_irq_and_registers() {
     let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x8000);
 
     let mut ctrl = UhciControllerBridge::new(guest_base, guest_size).unwrap();
+    // Enable PCI bus mastering so the bridge is allowed to DMA into the guest schedule.
+    ctrl.set_pci_command(1 << 2);
     ctrl.connect_device_for_test(0, Box::new(SimpleInDevice::new(b"ABCD")));
 
     ctrl.io_write(REG_PORTSC1, 2, PORTSC_PED as u32);
@@ -115,6 +117,8 @@ fn uhci_controller_bridge_snapshot_roundtrip_preserves_irq_and_registers() {
     let snapshot = ctrl.save_state();
 
     let mut ctrl2 = UhciControllerBridge::new(guest_base, guest_size).unwrap();
+    // Enable PCI bus mastering so the bridge is allowed to DMA into the guest schedule.
+    ctrl2.set_pci_command(1 << 2);
     ctrl2.connect_device_for_test(0, Box::new(SimpleInDevice::new(b"ABCD")));
     ctrl2.load_state(&snapshot).unwrap();
 
@@ -143,6 +147,8 @@ fn uhci_controller_bridge_restore_clears_webusb_host_state_and_allows_retry() {
     let fl_base = setup_webusb_control_in_frame_list(guest_base);
 
     let mut ctrl = UhciControllerBridge::new(guest_base, guest_size).unwrap();
+    // Enable PCI bus mastering so the bridge is allowed to DMA into the guest schedule.
+    ctrl.set_pci_command(1 << 2);
     ctrl.set_connected(true);
     ctrl.io_write(REG_FRBASEADD, 4, fl_base);
 
@@ -179,6 +185,8 @@ fn uhci_controller_bridge_restore_clears_webusb_host_state_and_allows_retry() {
     let snapshot = ctrl.snapshot_state().to_vec();
 
     let mut ctrl2 = UhciControllerBridge::new(guest_base, guest_size).unwrap();
+    // Enable PCI bus mastering so the bridge is allowed to DMA into the guest schedule.
+    ctrl2.set_pci_command(1 << 2);
     ctrl2.restore_state(&snapshot).expect("restore_state ok");
 
     let drained_after_restore = ctrl2.drain_actions().expect("drain_actions ok");
@@ -303,6 +311,8 @@ fn webusb_uhci_bridge_snapshot_roundtrip_preserves_irq_and_registers() {
     let fl_base = setup_webusb_control_in_frame_list(guest_base);
 
     let mut bridge = WebUsbUhciBridge::new(guest_base);
+    // Enable PCI bus mastering so the bridge is allowed to DMA into the guest schedule.
+    bridge.set_pci_command(1 << 2);
     bridge.set_connected(true);
 
     bridge.io_write(WREG_FRBASEADD, 4, fl_base);
@@ -346,6 +356,8 @@ fn webusb_uhci_bridge_snapshot_roundtrip_preserves_irq_and_registers() {
     let snapshot = bridge.save_state();
 
     let mut bridge2 = WebUsbUhciBridge::new(guest_base);
+    // Enable PCI bus mastering so the bridge is allowed to DMA into the guest schedule.
+    bridge2.set_pci_command(1 << 2);
     bridge2.set_connected(true);
     bridge2.load_state(&snapshot).unwrap();
 
@@ -365,6 +377,8 @@ fn webusb_uhci_bridge_restore_clears_host_actions_and_allows_retry() {
     let fl_base = setup_webusb_control_in_frame_list(guest_base);
 
     let mut bridge = WebUsbUhciBridge::new(guest_base);
+    // Enable PCI bus mastering so the bridge is allowed to DMA into the guest schedule.
+    bridge.set_pci_command(1 << 2);
     bridge.set_connected(true);
 
     bridge.io_write(WREG_FRBASEADD, 4, fl_base);
@@ -384,6 +398,8 @@ fn webusb_uhci_bridge_restore_clears_host_actions_and_allows_retry() {
     let snapshot = bridge.save_state();
 
     let mut bridge2 = WebUsbUhciBridge::new(guest_base);
+    // Enable PCI bus mastering so the bridge is allowed to DMA into the guest schedule.
+    bridge2.set_pci_command(1 << 2);
     bridge2.set_connected(true);
     bridge2.load_state(&snapshot).unwrap();
 

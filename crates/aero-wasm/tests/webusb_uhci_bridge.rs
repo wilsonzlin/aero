@@ -104,6 +104,8 @@ fn bridge_emits_host_actions_from_guest_frame_list() {
     }
 
     let mut bridge = WebUsbUhciBridge::new(guest_base);
+    // Enable PCI bus mastering so the bridge is allowed to DMA into the guest frame list.
+    bridge.set_pci_command(1 << 2);
     bridge.set_connected(true);
 
     bridge.io_write(REG_FRBASEADD, 4, fl_base);
@@ -190,6 +192,8 @@ fn uhci_controller_bridge_emits_host_actions_on_webusb_port() {
 
     let mut bridge =
         UhciControllerBridge::new(guest_base, guest_size).expect("UhciControllerBridge::new ok");
+    // Enable PCI bus mastering so the bridge is allowed to DMA into the guest frame list.
+    bridge.set_pci_command(1 << 2);
     bridge.set_connected(true);
 
     bridge.io_write(REG_FRBASEADD as u16, 4, fl_guest);

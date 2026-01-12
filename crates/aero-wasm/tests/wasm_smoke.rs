@@ -123,6 +123,10 @@ fn uhci_controller_bridge_can_step_guest_memory_and_toggle_irq() {
     let mut ctrl =
         UhciControllerBridge::new(guest_base, guest_size).expect("new UhciControllerBridge");
 
+    // PCI Bus Master Enable gates UHCI DMA. When exercising the bridge directly (without the JS
+    // PCI bus), explicitly enable bus mastering so frame stepping can access guest memory.
+    ctrl.set_pci_command(1 << 2);
+
     // Attach a trivial device at root port 0 so we can complete a single IN TD.
     ctrl.connect_device_for_test(0, Box::new(SimpleInDevice::new(b"ABCD")));
 
