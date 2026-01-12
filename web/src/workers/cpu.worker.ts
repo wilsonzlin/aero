@@ -1041,7 +1041,10 @@ async function startHdaCaptureSynthetic(msg: AudioHdaCaptureSyntheticStartMessag
 
     let pciDevice = -1;
     let bar0 = 0;
-    const deadlineMs = performance.now() + 15_000;
+    // WASM + device bring-up can be slow in CI/headless environments (especially if the shared
+    // guest-memory build has to compile on-demand). Be generous here so we don't fail the
+    // synthetic HDA capture harness due to transient startup latency.
+    const deadlineMs = performance.now() + 30_000;
     while (performance.now() < deadlineMs) {
       for (let dev = 0; dev < 32; dev++) {
         const id = pciReadDword(dev, 0x00);

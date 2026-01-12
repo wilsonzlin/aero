@@ -102,7 +102,6 @@ function u64AsNumber(v: bigint): number {
 function readMaybeNumber(vm: unknown, key: string): number {
   try {
     if (!vm || (typeof vm !== 'object' && typeof vm !== 'function')) return 0;
-
     let value: unknown;
     try {
       value = (vm as Record<string, unknown>)[key];

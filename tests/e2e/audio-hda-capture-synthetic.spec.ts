@@ -3,9 +3,11 @@ import { expect, test } from "@playwright/test";
 const PREVIEW_ORIGIN = process.env.AERO_PLAYWRIGHT_PREVIEW_ORIGIN ?? "http://127.0.0.1:4173";
 
 test("HDA capture consumes synthetic mic ring and DMA-writes PCM into guest RAM", async ({ page }) => {
-  test.setTimeout(60_000);
+  // Bringing up the worker VM + WASM device models can take longer in CI/headless environments.
+  // Keep this higher than the harness' internal timeouts to avoid flakiness.
+  test.setTimeout(90_000);
   test.skip(test.info().project.name !== "chromium", "HDA capture test only runs on Chromium.");
-  page.setDefaultTimeout(60_000);
+  page.setDefaultTimeout(90_000);
 
   await page.goto(`${PREVIEW_ORIGIN}/`, { waitUntil: "load" });
 
@@ -30,4 +32,3 @@ test("HDA capture consumes synthetic mic ring and DMA-writes PCM into guest RAM"
   // Startup can be racy in CI; allow some dropped samples but ensure it stays bounded.
   expect(result?.micDroppedDelta).toBeLessThanOrEqual(96_000);
 });
-

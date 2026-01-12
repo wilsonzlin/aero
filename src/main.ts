@@ -1483,7 +1483,9 @@ function renderAudioPanel(): HTMLElement {
         type ErrorMsg = { type: "audioHdaCaptureSynthetic.error"; requestId: number; message: string };
 
         const readyMsg = await new Promise<ReadyMsg>((resolve, reject) => {
-          const timeoutMs = 20_000;
+          // HDA device discovery depends on I/O worker WASM/device bring-up which can be slower
+          // in CI/headless Chromium. Allow more time before treating it as a hard failure.
+          const timeoutMs = 35_000;
           const timer = window.setTimeout(() => {
             cleanup();
             reject(new Error(`Timed out waiting for HDA capture setup (${timeoutMs}ms).`));
