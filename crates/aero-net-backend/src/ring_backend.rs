@@ -292,11 +292,15 @@ mod tests {
         let tx = Arc::new(RingBuffer::new(64));
         let rx = Arc::new(RingBuffer::new(64));
 
-        let backend: Box<dyn NetworkBackend> = Box::new(L2TunnelRingBackend::new(tx, rx));
-        assert_eq!(
-            backend.l2_ring_stats(),
-            Some(L2TunnelRingBackendStats::default())
-        );
+        // Mirror the access pattern used by higher-level machine code (e.g. `PcMachine`), which
+        // typically stores the backend as `Option<Box<dyn NetworkBackend>>`.
+        let mut backend: Option<Box<dyn NetworkBackend>> =
+            Some(Box::new(L2TunnelRingBackend::new(tx, rx)));
+
+        assert_eq!(backend.l2_ring_stats(), Some(L2TunnelRingBackendStats::default()));
+
+        backend.as_mut().unwrap().transmit(vec![1, 2, 3]);
+        assert_eq!(backend.l2_ring_stats().unwrap().tx_pushed_frames, 1);
     }
 
     #[test]
