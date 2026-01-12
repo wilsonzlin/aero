@@ -61,6 +61,11 @@ extern "C" {
  */
 #define VIRTIO_PCI_MODERN_TRANSPORT_BAR0_REQUIRED_LEN 0x4000u
 
+/* Virtio spec sentinel for "no MSI-X vector assigned". */
+#ifndef VIRTIO_PCI_MSI_NO_VECTOR
+#define VIRTIO_PCI_MSI_NO_VECTOR ((UINT16)0xFFFFu)
+#endif
+
 typedef UINT_PTR VIRTIO_PCI_MODERN_SPINLOCK_STATE;
 
 typedef struct _VIRTIO_PCI_MODERN_OS_INTERFACE {

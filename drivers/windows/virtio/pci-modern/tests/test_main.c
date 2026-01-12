@@ -53,6 +53,8 @@ typedef struct _FAKE_DEV {
 	UINT32 MbFillDeviceCfgOffset;
 	UINT32 MbFillDeviceCfgLength;
 	UINT8 MbFillDeviceCfgValue;
+	BOOLEAN MbForceMsixConfigNoVector;
+	BOOLEAN MbForceQueueMsixVectorNoVector;
 } FAKE_DEV;
 
 static void WriteLe16(UINT8 *p, UINT16 v)
@@ -272,6 +274,20 @@ static void OsMb(void *ctx)
 				dev->Bar0[0x3000u + dev->MbFillDeviceCfgOffset + i] = dev->MbFillDeviceCfgValue;
 			}
 		}
+	}
+
+	/*
+	 * Optional MSI-X vector programming behavior override.
+	 *
+	 * Some virtio devices may refuse vector programming and read back 0xFFFF
+	 * ("no vector"). The transport is expected to detect this via readback
+	 * validation.
+	 */
+	if (dev->MbForceMsixConfigNoVector) {
+		common->msix_config = VIRTIO_PCI_MSI_NO_VECTOR;
+	}
+	if (dev->MbForceQueueMsixVectorNoVector) {
+		common->queue_msix_vector = VIRTIO_PCI_MSI_NO_VECTOR;
 	}
 }
 
@@ -961,13 +977,53 @@ static void TestQueueSetupAndNotify(void)
 	assert(st == STATUS_NOT_SUPPORTED);
 
 	/* MSI-X helpers should program fields under the selector lock. */
-	st = VirtioPciModernTransportSetConfigMsixVector(&t, 0xFFFFu);
+	st = VirtioPciModernTransportSetConfigMsixVector(&t, VIRTIO_PCI_MSI_NO_VECTOR);
 	assert(st == STATUS_SUCCESS);
-	assert(common->msix_config == 0xFFFFu);
+	assert(common->msix_config == VIRTIO_PCI_MSI_NO_VECTOR);
 
-	st = VirtioPciModernTransportSetQueueMsixVector(&t, 0, 0xFFFFu);
+	st = VirtioPciModernTransportSetQueueMsixVector(&t, 0, VIRTIO_PCI_MSI_NO_VECTOR);
 	assert(st == STATUS_SUCCESS);
-	assert(common->queue_msix_vector == 0xFFFFu);
+	assert(common->queue_msix_vector == VIRTIO_PCI_MSI_NO_VECTOR);
+
+	VirtioPciModernTransportUninit(&t);
+}
+
+static void TestMsixConfigVectorRefusedFails(void)
+{
+	FAKE_DEV dev;
+	VIRTIO_PCI_MODERN_OS_INTERFACE os;
+	VIRTIO_PCI_MODERN_TRANSPORT t;
+	NTSTATUS st;
+
+	FakeDevInitValid(&dev);
+	dev.MbForceMsixConfigNoVector = TRUE;
+	os = GetOs(&dev);
+
+	st = VirtioPciModernTransportInit(&t, &os, VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT, 0x10000000u, sizeof(dev.Bar0));
+	assert(st == STATUS_SUCCESS);
+
+	st = VirtioPciModernTransportSetConfigMsixVector(&t, 1);
+	assert(st == STATUS_IO_DEVICE_ERROR);
+
+	VirtioPciModernTransportUninit(&t);
+}
+
+static void TestQueueMsixVectorRefusedFails(void)
+{
+	FAKE_DEV dev;
+	VIRTIO_PCI_MODERN_OS_INTERFACE os;
+	VIRTIO_PCI_MODERN_TRANSPORT t;
+	NTSTATUS st;
+
+	FakeDevInitValid(&dev);
+	dev.MbForceQueueMsixVectorNoVector = TRUE;
+	os = GetOs(&dev);
+
+	st = VirtioPciModernTransportInit(&t, &os, VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT, 0x10000000u, sizeof(dev.Bar0));
+	assert(st == STATUS_SUCCESS);
+
+	st = VirtioPciModernTransportSetQueueMsixVector(&t, 0, 2);
+	assert(st == STATUS_IO_DEVICE_ERROR);
 
 	VirtioPciModernTransportUninit(&t);
 }
@@ -1349,6 +1405,8 @@ int main(void)
 	TestNegotiateFeaturesStrictDoesNotNegotiatePackedRingOffered();
 	TestNegotiateFeaturesCompatDoesNotNegotiatePackedRing();
 	TestQueueSetupAndNotify();
+	TestMsixConfigVectorRefusedFails();
+	TestQueueMsixVectorRefusedFails();
 	TestCompatInitAcceptsRelocatedCaps();
 	TestCompatInitAccepts32BitBar0Mmio();
 	TestQueueSetupRejectUnalignedOrInvalidQueue();

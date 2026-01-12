@@ -995,12 +995,28 @@ NTSTATUS VirtioPciModernTransportNotifyQueue(VIRTIO_PCI_MODERN_TRANSPORT *t, UIN
 
 NTSTATUS VirtioPciModernTransportSetConfigMsixVector(VIRTIO_PCI_MODERN_TRANSPORT *t, UINT16 vector)
 {
+	UINT16 read_vector;
+
 	if (t == NULL || t->CommonCfg == NULL) {
 		return STATUS_INVALID_PARAMETER;
 	}
 
 	t->CommonCfg->msix_config = vector;
 	VirtioPciModernMb(t);
+	read_vector = t->CommonCfg->msix_config;
+
+	/*
+	 * Virtio spec: devices return 0xFFFF when MSI-X vector assignment fails.
+	 *
+	 * When disabling vectors (vector == NO_VECTOR), accept a 0xFFFF readback.
+	 */
+	if (vector == VIRTIO_PCI_MSI_NO_VECTOR) {
+		return (read_vector == VIRTIO_PCI_MSI_NO_VECTOR) ? STATUS_SUCCESS : STATUS_IO_DEVICE_ERROR;
+	}
+
+	if (read_vector == VIRTIO_PCI_MSI_NO_VECTOR || read_vector != vector) {
+		return STATUS_IO_DEVICE_ERROR;
+	}
 	return STATUS_SUCCESS;
 }
 
@@ -1008,6 +1024,8 @@ NTSTATUS VirtioPciModernTransportSetQueueMsixVector(VIRTIO_PCI_MODERN_TRANSPORT 
 {
 	VIRTIO_PCI_MODERN_SPINLOCK_STATE state;
 	UINT16 qsz;
+	UINT16 read_vector;
+	NTSTATUS st;
 
 	if (t == NULL || t->CommonCfg == NULL) {
 		return STATUS_INVALID_PARAMETER;
@@ -1020,15 +1038,29 @@ NTSTATUS VirtioPciModernTransportSetQueueMsixVector(VIRTIO_PCI_MODERN_TRANSPORT 
 
 	qsz = t->CommonCfg->queue_size;
 	if (qsz == 0) {
-		VirtioPciModernUnlock(t, state);
-		return STATUS_NOT_FOUND;
+		st = STATUS_NOT_FOUND;
+		goto out_unlock;
 	}
 
 	t->CommonCfg->queue_msix_vector = vector;
 	VirtioPciModernMb(t);
+	read_vector = t->CommonCfg->queue_msix_vector;
 
+	if (vector == VIRTIO_PCI_MSI_NO_VECTOR) {
+		st = (read_vector == VIRTIO_PCI_MSI_NO_VECTOR) ? STATUS_SUCCESS : STATUS_IO_DEVICE_ERROR;
+		goto out_unlock;
+	}
+
+	if (read_vector == VIRTIO_PCI_MSI_NO_VECTOR || read_vector != vector) {
+		st = STATUS_IO_DEVICE_ERROR;
+		goto out_unlock;
+	}
+
+	st = STATUS_SUCCESS;
+
+out_unlock:
 	VirtioPciModernUnlock(t, state);
-	return STATUS_SUCCESS;
+	return st;
 }
 
 UINT8 VirtioPciModernTransportReadIsrStatus(VIRTIO_PCI_MODERN_TRANSPORT *t)
