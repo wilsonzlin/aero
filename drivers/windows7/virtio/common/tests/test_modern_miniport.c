@@ -104,6 +104,71 @@ static void build_test_pci_config(uint8_t cfg[256])
     cfg_write_le32(cfg, 0x78 + 12, TEST_DEVICE_CFG_LEN);
 }
 
+static void build_test_pci_config_dup_common(uint8_t cfg[256])
+{
+    memset(cfg, 0, 256);
+
+    /* BAR0: memory BAR at 0x1000 (flags=0). */
+    cfg_write_le32(cfg, 0x10, 0x1000u);
+
+    /* PCI status: capability list present. */
+    cfg_write_le16(cfg, 0x06, (uint16_t)(1u << 4));
+
+    /* Capability list head. */
+    cfg[0x34] = 0x40;
+
+    /* Common cfg cap #1 (smaller) @ 0x40. */
+    cfg[0x40 + 0] = 0x09; /* VNDR */
+    cfg[0x40 + 1] = 0x50; /* next */
+    cfg[0x40 + 2] = 16;
+    cfg[0x40 + 3] = 1; /* COMMON */
+    cfg[0x40 + 4] = 0;
+    cfg[0x40 + 5] = 0;
+    cfg_write_le32(cfg, 0x40 + 8, 0x100u);
+    cfg_write_le32(cfg, 0x40 + 12, 0x40u);
+
+    /* Common cfg cap #2 (larger) @ 0x50. */
+    cfg[0x50 + 0] = 0x09;
+    cfg[0x50 + 1] = 0x60;
+    cfg[0x50 + 2] = 16;
+    cfg[0x50 + 3] = 1; /* COMMON */
+    cfg[0x50 + 4] = 0;
+    cfg[0x50 + 5] = 0;
+    cfg_write_le32(cfg, 0x50 + 8, 0x200u);
+    cfg_write_le32(cfg, 0x50 + 12, 0x100u);
+
+    /* Notify cfg cap @ 0x60. */
+    cfg[0x60 + 0] = 0x09;
+    cfg[0x60 + 1] = 0x78;
+    cfg[0x60 + 2] = 20;
+    cfg[0x60 + 3] = 2; /* NOTIFY */
+    cfg[0x60 + 4] = 0;
+    cfg[0x60 + 5] = 0;
+    cfg_write_le32(cfg, 0x60 + 8, 0x300u);
+    cfg_write_le32(cfg, 0x60 + 12, TEST_NOTIFY_CFG_LEN);
+    cfg_write_le32(cfg, 0x60 + 16, TEST_NOTIFY_OFF_MULT);
+
+    /* ISR cfg cap @ 0x78. */
+    cfg[0x78 + 0] = 0x09;
+    cfg[0x78 + 1] = 0x88;
+    cfg[0x78 + 2] = 16;
+    cfg[0x78 + 3] = 3; /* ISR */
+    cfg[0x78 + 4] = 0;
+    cfg[0x78 + 5] = 0;
+    cfg_write_le32(cfg, 0x78 + 8, 0x400u);
+    cfg_write_le32(cfg, 0x78 + 12, 1);
+
+    /* Device cfg cap @ 0x88. */
+    cfg[0x88 + 0] = 0x09;
+    cfg[0x88 + 1] = 0x00;
+    cfg[0x88 + 2] = 16;
+    cfg[0x88 + 3] = 4; /* DEVICE */
+    cfg[0x88 + 4] = 0;
+    cfg[0x88 + 5] = 0;
+    cfg_write_le32(cfg, 0x88 + 8, 0x500u);
+    cfg_write_le32(cfg, 0x88 + 12, TEST_DEVICE_CFG_LEN);
+}
+
 static void setup_device(VIRTIO_PCI_DEVICE* dev, uint8_t* bar0, uint8_t pci_cfg[256])
 {
     NTSTATUS st;
@@ -146,6 +211,31 @@ static void test_init_ok(void)
     assert(dev.DeviceCfgOffset == TEST_DEVICE_CFG_OFF);
     assert(dev.DeviceCfgLength == TEST_DEVICE_CFG_LEN);
     assert((const void*)dev.DeviceCfg == (const void*)(bar0 + TEST_DEVICE_CFG_OFF));
+
+    free(bar0);
+}
+
+static void test_init_prefers_largest_common_cfg_cap(void)
+{
+    uint8_t* bar0;
+    uint8_t pci_cfg[256];
+    VIRTIO_PCI_DEVICE dev;
+    NTSTATUS st;
+
+    bar0 = (uint8_t*)calloc(1, TEST_BAR0_SIZE);
+    assert(bar0 != NULL);
+
+    build_test_pci_config_dup_common(pci_cfg);
+    st = VirtioPciModernMiniportInit(&dev, (PUCHAR)bar0, TEST_BAR0_SIZE, pci_cfg, 256);
+    assert(st == STATUS_SUCCESS);
+
+    /* The cap parser should pick the larger common cfg window at 0x200. */
+    assert(dev.CommonCfgOffset == 0x200u);
+    assert(dev.CommonCfgLength == 0x100u);
+    assert((const void*)dev.CommonCfg == (const void*)(bar0 + 0x200u));
+
+    assert(dev.NotifyOffset == 0x300u);
+    assert(dev.NotifyOffMultiplier == TEST_NOTIFY_OFF_MULT);
 
     free(bar0);
 }
@@ -2118,6 +2208,7 @@ static void test_misc_null_safe_behaviour(void)
 int main(void)
 {
     test_init_ok();
+    test_init_prefers_largest_common_cfg_cap();
     test_init_invalid_parameters();
     test_init_invalid_cfg_too_small_fails();
     test_init_invalid_missing_cap_list_fails();
