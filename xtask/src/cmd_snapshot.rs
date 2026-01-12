@@ -212,6 +212,11 @@ fn print_cpu_section_summary(file: &mut fs::File, section: &SnapshotSectionInfo)
     println!("  rip: 0x{:x}", cpu.rip);
     println!("  rflags: 0x{:x}", cpu.rflags);
     println!("  a20_enabled: {}", cpu.a20_enabled);
+    println!("  pending_bios_int_valid: {}", cpu.pending_bios_int_valid);
+    if cpu.pending_bios_int_valid {
+        println!("  pending_bios_int: 0x{:02x}", cpu.pending_bios_int);
+    }
+    println!("  irq13_pending: {}", cpu.irq13_pending);
 
     // Ensure we don't accidentally run past the declared section bounds when decoding corrupted
     // snapshots (defensive; decode already reads via the bounded `Take`).
