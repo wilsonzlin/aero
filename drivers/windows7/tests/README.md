@@ -102,6 +102,8 @@ attach an additional virtio disk with a drive letter (or run the selftest with `
   virtio-blk + virtio-input + virtio-snd + virtio-snd-capture + virtio-net when RESULT=PASS is seen.
   - When `-WithVirtioInputEvents` / `--with-virtio-input-events` is enabled, the harness also injects a small keyboard +
     mouse sequence via QMP (`input-send-event`) and requires `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|PASS`.
+    - The harness also emits a host marker for the injection step itself:
+      `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|PASS/FAIL|...`
 - Exits with `0` on PASS, non-zero on FAIL/timeout.
 
 The harness also sets the PCI **Revision ID** (`x-pci-revision=0x01`) to match the

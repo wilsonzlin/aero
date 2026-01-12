@@ -69,6 +69,15 @@ When enabled, the harness:
    - mouse: relative move + left click
 3. Requires the guest marker `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|PASS`
 
+The harness also emits a host-side marker for the injection step itself (useful for debugging flaky setups and for log
+scraping in CI):
+
+- `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|PASS|...`
+- `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|FAIL|reason=...`
+
+Note: On some QEMU builds, `input-send-event` may not accept the `device=` routing parameter. In that case the harness
+falls back to broadcasting the input events and reports `kbd_mode=broadcast` / `mouse_mode=broadcast` in the marker.
+
 PowerShell example:
 
 ```powershell
