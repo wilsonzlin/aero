@@ -767,6 +767,65 @@ test("convertToAeroSparse: rejects qcow2 where data cluster overlaps metadata", 
   );
 });
 
+test("convertToAeroSparse: rejects qcow2 where l2 table overlaps a refcount block", async () => {
+  const { file } = buildQcow2Fixture();
+  const refcountTableOffset = 512;
+  const l2Offset = 1536;
+  // Point the first refcount table entry at the L2 table cluster.
+  writeU64BE(file, refcountTableOffset, BigInt(l2Offset));
+
+  const src = new MemSource(file);
+  const sync = new MemSyncAccessHandle();
+  await assert.rejects(
+    convertToAeroSparse(src, "qcow2", sync, { blockSizeBytes: 512 }),
+    (err: any) => err instanceof Error && /qcow2 metadata clusters overlap/i.test(err.message),
+  );
+});
+
+test("convertToAeroSparse: rejects qcow2 where data cluster overlaps a refcount block", async () => {
+  const { file } = buildQcow2Fixture();
+  const refcountTableOffset = 512;
+  const data0Offset = 2048;
+  // Point the first refcount table entry at the data cluster.
+  writeU64BE(file, refcountTableOffset, BigInt(data0Offset));
+
+  const src = new MemSource(file);
+  const sync = new MemSyncAccessHandle();
+  await assert.rejects(
+    convertToAeroSparse(src, "qcow2", sync, { blockSizeBytes: 512 }),
+    (err: any) => err instanceof Error && /qcow2 data cluster overlaps metadata/i.test(err.message),
+  );
+});
+
+test("convertToAeroSparse: rejects qcow2 with compressed refcount block entry", async () => {
+  const { file } = buildQcow2Fixture();
+  const refcountTableOffset = 512;
+  const data0Offset = 2048;
+  // Set QCOW2_OFLAG_COMPRESSED (bit 62) on the first refcount table entry.
+  writeU64BE(file, refcountTableOffset, (1n << 62n) | BigInt(data0Offset));
+
+  const src = new MemSource(file);
+  const sync = new MemSyncAccessHandle();
+  await assert.rejects(
+    convertToAeroSparse(src, "qcow2", sync, { blockSizeBytes: 512 }),
+    (err: any) => err instanceof Error && /qcow2 compressed refcount block/i.test(err.message),
+  );
+});
+
+test("convertToAeroSparse: rejects qcow2 with truncated refcount block", async () => {
+  const { file } = buildQcow2Fixture();
+  const refcountTableOffset = 512;
+  // Point the first refcount table entry at a cluster beyond the end of the file.
+  writeU64BE(file, refcountTableOffset, 4096n);
+
+  const src = new MemSource(file);
+  const sync = new MemSyncAccessHandle();
+  await assert.rejects(
+    convertToAeroSparse(src, "qcow2", sync, { blockSizeBytes: 512 }),
+    (err: any) => err instanceof Error && /qcow2 refcount block truncated/i.test(err.message),
+  );
+});
+
 test("convertToAeroSparse: rejects qcow2 with too many clusters", async () => {
   // Construct a qcow2 header claiming a huge logical size with tiny clusters (512B).
   // This would require an enormous cluster offset map and should be rejected up front.

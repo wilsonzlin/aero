@@ -1047,10 +1047,44 @@ class Qcow2 {
       if (rangesOverlap(off, end, refcountTableOffset, refcountEnd)) throw new Error("qcow2 cluster overlaps refcount table");
     }
 
+    // Track all qcow2 metadata clusters (L2 tables and refcount blocks) to detect overlaps and to
+    // reject data clusters that point into metadata regions.
+    const metadataClusters = new Set<number>();
+    const lowMask = (1n << BigInt(clusterBits)) - 1n;
+
+    // Parse the refcount table to record refcount block cluster offsets (even though conversion
+    // doesn't currently interpret refcount contents). This matches Rust's corruption hardening and
+    // prevents treating refcount blocks as guest data when images are malformed.
+    const refcountChunkSize = 64 * 1024;
+    const refcountBufLen = Math.min(refcountChunkSize, refcountTableBytes);
+    let refcountRemaining = refcountTableBytes;
+    let refcountOff = refcountTableOffset;
+    while (refcountRemaining > 0) {
+      if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+      const len = Math.min(refcountRemaining, refcountBufLen);
+      const chunk = await src.readAt(refcountOff, len);
+      for (let i = 0; i < len; i += 8) {
+        const entry = readU64BE(chunk, i);
+        if (entry === 0n) continue;
+        if ((entry & QCOW2_OFLAG_COMPRESSED) !== 0n) throw new Error("qcow2 compressed refcount block unsupported");
+        if ((entry & lowMask) !== 0n) throw new Error("qcow2 unaligned refcount block entry");
+        const blockOffBig = entry & QCOW2_OFFSET_MASK;
+        if (blockOffBig === 0n) throw new Error("qcow2 invalid refcount block entry");
+        const blockOff = Number(blockOffBig);
+        if (!Number.isSafeInteger(blockOff) || blockOff <= 0) throw new Error("qcow2 invalid refcount block entry");
+        if (blockOff % clusterSize !== 0) throw new Error("qcow2 invalid refcount block entry");
+        validateClusterNotOverlappingMetadata(blockOff);
+        if (metadataClusters.has(blockOff)) throw new Error("qcow2 metadata clusters overlap");
+        metadataClusters.add(blockOff);
+        const end = blockOff + clusterSize;
+        if (!Number.isSafeInteger(end) || end > src.size) throw new Error("qcow2 refcount block truncated");
+      }
+      refcountOff += len;
+      refcountRemaining -= len;
+    }
+
     const l1 = await src.readAt(l1TableOffset, l1Bytes);
     const clusterOffsets = new Float64Array(totalClusters);
-    const lowMask = (1n << BigInt(clusterBits)) - 1n;
-    const l2Clusters = new Set<number>();
 
     for (let l1Index = 0; l1Index < requiredL1; l1Index++) {
       if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
@@ -1064,8 +1098,8 @@ class Qcow2 {
       if (!Number.isSafeInteger(l2Off) || l2Off <= 0) throw new Error("invalid qcow2 l2 table offset");
       if (l2Off % clusterSize !== 0) throw new Error("invalid qcow2 l2 table offset");
       validateClusterNotOverlappingMetadata(l2Off);
-      if (l2Clusters.has(l2Off)) throw new Error("qcow2 metadata clusters overlap");
-      l2Clusters.add(l2Off);
+      if (metadataClusters.has(l2Off)) throw new Error("qcow2 metadata clusters overlap");
+      metadataClusters.add(l2Off);
 
       const l2End = l2Off + clusterSize;
       if (!Number.isSafeInteger(l2End) || l2End > src.size) throw new Error("qcow2 l2 table truncated");
@@ -1092,7 +1126,11 @@ class Qcow2 {
         if (!Number.isSafeInteger(dataOff) || dataOff <= 0) throw new Error("invalid qcow2 data offset");
         if (dataOff % clusterSize !== 0) throw new Error("invalid qcow2 data offset");
         validateClusterNotOverlappingMetadata(dataOff);
-        if (l2Clusters.has(dataOff)) throw new Error("qcow2 data cluster overlaps metadata");
+        if (metadataClusters.has(dataOff)) throw new Error("qcow2 data cluster overlaps metadata");
+        const guestOff = clusterIndex * clusterSize;
+        const copyLen = Math.min(clusterSize, logicalSize - guestOff);
+        const dataEnd = dataOff + copyLen;
+        if (!Number.isSafeInteger(dataEnd) || dataEnd > src.size) throw new Error("qcow2 data cluster truncated");
         clusterOffsets[clusterIndex] = dataOff;
       }
     }
