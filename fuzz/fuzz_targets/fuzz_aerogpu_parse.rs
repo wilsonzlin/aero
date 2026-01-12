@@ -810,6 +810,107 @@ fuzz_target!(|data: &[u8]| {
     cmd_synth_misaligned.extend_from_slice(&cmd_synth);
     fuzz_cmd_stream(&cmd_synth_misaligned[1..]);
 
+    // Synthetic command stream with intentionally inconsistent length/count fields.
+    //
+    // This deterministically hits error paths in the typed packet decoders (BadSizeBytes /
+    // PayloadSizeMismatch) that are otherwise hard to reach consistently.
+    let cmd_bad_len_size = cmd::AerogpuCmdStreamHeader::SIZE_BYTES
+        + cmd::AerogpuCmdCreateShaderDxbc::SIZE_BYTES
+        + cmd::AerogpuCmdUploadResource::SIZE_BYTES
+        + cmd::AerogpuCmdCreateInputLayout::SIZE_BYTES
+        + cmd::AerogpuCmdSetShaderConstantsF::SIZE_BYTES
+        + cmd::AerogpuCmdSetVertexBuffers::SIZE_BYTES
+        + cmd::AerogpuCmdSetSamplers::SIZE_BYTES
+        + cmd::AerogpuCmdSetConstantBuffers::SIZE_BYTES;
+    let mut cmd_bad_len = vec![0u8; cmd_bad_len_size];
+    let cmd_bad_len_size_u32 = cmd_bad_len.len() as u32;
+    cmd_bad_len[0..4].copy_from_slice(&cmd::AEROGPU_CMD_STREAM_MAGIC.to_le_bytes());
+    cmd_bad_len[4..8].copy_from_slice(&pci::AEROGPU_ABI_VERSION_U32.to_le_bytes());
+    cmd_bad_len[8..12].copy_from_slice(&cmd_bad_len_size_u32.to_le_bytes());
+    cmd_bad_len[12..16].fill(0);
+    cmd_bad_len[16..24].fill(0);
+    let mut off = cmd::AerogpuCmdStreamHeader::SIZE_BYTES;
+
+    // CREATE_SHADER_DXBC: dxbc_size_bytes=1 but no payload bytes.
+    if let Some(pkt) = write_pkt_hdr(
+        cmd_bad_len.as_mut_slice(),
+        &mut off,
+        cmd::AerogpuCmdOpcode::CreateShaderDxbc as u32,
+        cmd::AerogpuCmdCreateShaderDxbc::SIZE_BYTES,
+    ) {
+        if let Some(v) = cmd_bad_len.get_mut(pkt + 16..pkt + 20) {
+            v.copy_from_slice(&1u32.to_le_bytes());
+        }
+    }
+    // UPLOAD_RESOURCE: size_bytes=1 but no data bytes.
+    if let Some(pkt) = write_pkt_hdr(
+        cmd_bad_len.as_mut_slice(),
+        &mut off,
+        cmd::AerogpuCmdOpcode::UploadResource as u32,
+        cmd::AerogpuCmdUploadResource::SIZE_BYTES,
+    ) {
+        if let Some(v) = cmd_bad_len.get_mut(pkt + 24..pkt + 32) {
+            v.copy_from_slice(&1u64.to_le_bytes());
+        }
+    }
+    // CREATE_INPUT_LAYOUT: blob_size_bytes=1 but no blob bytes.
+    if let Some(pkt) = write_pkt_hdr(
+        cmd_bad_len.as_mut_slice(),
+        &mut off,
+        cmd::AerogpuCmdOpcode::CreateInputLayout as u32,
+        cmd::AerogpuCmdCreateInputLayout::SIZE_BYTES,
+    ) {
+        if let Some(v) = cmd_bad_len.get_mut(pkt + 12..pkt + 16) {
+            v.copy_from_slice(&1u32.to_le_bytes());
+        }
+    }
+    // SET_SHADER_CONSTANTS_F: vec4_count=1 but no float data bytes.
+    if let Some(pkt) = write_pkt_hdr(
+        cmd_bad_len.as_mut_slice(),
+        &mut off,
+        cmd::AerogpuCmdOpcode::SetShaderConstantsF as u32,
+        cmd::AerogpuCmdSetShaderConstantsF::SIZE_BYTES,
+    ) {
+        if let Some(v) = cmd_bad_len.get_mut(pkt + 16..pkt + 20) {
+            v.copy_from_slice(&1u32.to_le_bytes());
+        }
+    }
+    // SET_VERTEX_BUFFERS: buffer_count=1 but no bindings.
+    if let Some(pkt) = write_pkt_hdr(
+        cmd_bad_len.as_mut_slice(),
+        &mut off,
+        cmd::AerogpuCmdOpcode::SetVertexBuffers as u32,
+        cmd::AerogpuCmdSetVertexBuffers::SIZE_BYTES,
+    ) {
+        if let Some(v) = cmd_bad_len.get_mut(pkt + 12..pkt + 16) {
+            v.copy_from_slice(&1u32.to_le_bytes());
+        }
+    }
+    // SET_SAMPLERS: sampler_count=1 but no handles.
+    if let Some(pkt) = write_pkt_hdr(
+        cmd_bad_len.as_mut_slice(),
+        &mut off,
+        cmd::AerogpuCmdOpcode::SetSamplers as u32,
+        cmd::AerogpuCmdSetSamplers::SIZE_BYTES,
+    ) {
+        if let Some(v) = cmd_bad_len.get_mut(pkt + 16..pkt + 20) {
+            v.copy_from_slice(&1u32.to_le_bytes());
+        }
+    }
+    // SET_CONSTANT_BUFFERS: buffer_count=1 but no bindings.
+    if let Some(pkt) = write_pkt_hdr(
+        cmd_bad_len.as_mut_slice(),
+        &mut off,
+        cmd::AerogpuCmdOpcode::SetConstantBuffers as u32,
+        cmd::AerogpuCmdSetConstantBuffers::SIZE_BYTES,
+    ) {
+        if let Some(v) = cmd_bad_len.get_mut(pkt + 16..pkt + 20) {
+            v.copy_from_slice(&1u32.to_le_bytes());
+        }
+    }
+    fuzz_cmd_stream(&cmd_bad_len);
+    fuzz_command_processor(&cmd_bad_len, None);
+
     // Also exercise the higher-level command processor's guest-input validation paths.
     //
     // Patch a few critical fields to be self-consistent so the processor can make progress past
@@ -1286,6 +1387,35 @@ fuzz_target!(|data: &[u8]| {
     alloc_stride_large[entry_off + 16..entry_off + 24].copy_from_slice(&0x1000u64.to_le_bytes()); // size_bytes
     alloc_stride_large[entry_off + 24..entry_off + 32].fill(0); // reserved0
     fuzz_alloc_table(&alloc_stride_large);
+
+    // Exercise additional early validation errors in the executor alloc-table decoder that aren't
+    // reachable via the normal `ALLOC_TABLE_GPA`-backed fuzz input path.
+    let mut guest_small = VecGuestMemory::new(1);
+    let _ = AllocTable::decode_from_guest_memory(
+        &mut guest_small,
+        /*table_gpa=*/ 0,
+        /*size=*/ 0,
+    );
+    let _ = AllocTable::decode_from_guest_memory(
+        &mut guest_small,
+        /*table_gpa=*/ 0,
+        /*size=*/ 4,
+    );
+    let _ = AllocTable::decode_from_guest_memory(
+        &mut guest_small,
+        /*table_gpa=*/ ALLOC_TABLE_GPA,
+        /*size=*/ 0,
+    );
+    let _ = AllocTable::decode_from_guest_memory(
+        &mut guest_small,
+        /*table_gpa=*/ u64::MAX - 1,
+        /*size=*/ 4,
+    );
+    let _ = AllocTable::decode_from_guest_memory(
+        &mut guest_small,
+        /*table_gpa=*/ ALLOC_TABLE_GPA,
+        /*size=*/ (ring::AerogpuAllocTableHeader::SIZE_BYTES as u32).saturating_sub(1),
+    );
 
     // Patched ring layouts: create fixed-size prefix buffers so we can set magic/version and hit
     // deeper validation checks without copying the entire (potentially large) ring slice.
