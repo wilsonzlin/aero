@@ -80,13 +80,6 @@ fn build_a20_snapshot_boot_sector() -> [u8; 512] {
     sector[i] = 0xEE;
     i += 1;
 
-    // Force a control-flow boundary so the interpreter's outer loop can resync the CPU's A20 view
-    // with the chipset latch before the subsequent memory access.
-    //
-    // jmp short +1; nop
-    sector[i..i + 3].copy_from_slice(&[0xEB, 0x01, 0x90]);
-    i += 3;
-
     // mov al, [es:0x0010]
     sector[i..i + 4].copy_from_slice(&[0x26, 0xA0, 0x10, 0x00]);
     i += 4;

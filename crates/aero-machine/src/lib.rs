@@ -4096,7 +4096,18 @@ impl Machine {
             const MAX_QUEUED_EXTERNAL_INTERRUPTS: usize = 1;
             let _ = self.poll_platform_interrupt(MAX_QUEUED_EXTERNAL_INTERRUPTS);
 
-            let remaining = max_insts - executed;
+            let mut remaining = max_insts - executed;
+            // `CpuState::apply_a20` masks bit 20 in real/v8086 mode when `state.a20_enabled` is
+            // false. If the guest enables A20 via port I/O, the chipset latch updates immediately,
+            // but `state.a20_enabled` is only synchronized here at the outer loop boundary.
+            //
+            // Run one instruction per batch while A20 is disabled so any enable transition is
+            // observed before the subsequent instruction executes.
+            if matches!(self.cpu.state.mode, CpuMode::Real | CpuMode::Vm86)
+                && !self.cpu.state.a20_enabled
+            {
+                remaining = remaining.min(1);
+            }
             let mut inner = aero_cpu_core::PagingBus::new_with_io(
                 &mut self.mem,
                 StrictIoPortBus { io: &mut self.io },
@@ -4122,8 +4133,17 @@ impl Machine {
 
             match batch.exit {
                 BatchExit::Completed => {
-                    self.flush_serial();
-                    return RunExit::Completed { executed };
+                    // `BatchExit::Completed` means the inner Tier-0 batch hit its instruction
+                    // budget. Normally that budget is the remaining slice budget, but when A20 is
+                    // disabled we may intentionally run smaller batches (see `remaining` above).
+                    //
+                    // Only treat this as a slice completion when we've consumed the full slice
+                    // budget.
+                    if executed >= max_insts {
+                        self.flush_serial();
+                        return RunExit::Completed { executed };
+                    }
+                    continue;
                 }
                 BatchExit::Branch => continue,
                 BatchExit::Halted => {

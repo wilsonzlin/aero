@@ -492,7 +492,19 @@ impl PcMachine {
             // vector into the CPU's external interrupt FIFO.
             let _ = self.poll_and_queue_one_external_interrupt();
 
-            let remaining = max_insts - executed;
+            let mut remaining = max_insts - executed;
+            // Keep `CpuState::a20_enabled` synchronized with the chipset latch at instruction
+            // boundaries.
+            //
+            // When A20 is disabled in real/v8086 mode, `CpuState::apply_a20` masks bit 20. Enabling
+            // A20 via port I/O updates the chipset immediately, but `a20_enabled` is only synced
+            // here in the outer loop. Run a single instruction per batch while A20 is disabled so
+            // an enable transition is observed before the next instruction executes.
+            if matches!(self.cpu.state.mode, CpuMode::Real | CpuMode::Vm86)
+                && !self.cpu.state.a20_enabled
+            {
+                remaining = remaining.min(1);
+            }
             let batch = run_batch_cpu_core_with_assists(
                 &cfg,
                 &mut self.assist,
@@ -506,7 +518,16 @@ impl PcMachine {
             self.tick_platform_from_cycles(batch.executed);
 
             match batch.exit {
-                BatchExit::Completed => return RunExit::Completed { executed },
+                BatchExit::Completed => {
+                    // Like `Machine::run_slice`, we may intentionally run smaller Tier-0 batches
+                    // (e.g. while A20 is disabled) so we can resync `CpuState::a20_enabled` at an
+                    // instruction boundary. Only treat `BatchExit::Completed` as a slice completion
+                    // once we've hit the caller's instruction budget.
+                    if executed >= max_insts {
+                        return RunExit::Completed { executed };
+                    }
+                    continue;
+                }
                 BatchExit::Branch => continue,
                 BatchExit::Halted => {
                     // After advancing timers, poll again so any newly-due timer interrupts are
