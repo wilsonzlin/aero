@@ -94,7 +94,11 @@ describe("runtime/jit_wasm_loader", () => {
     let threadedImporterCalls = 0;
     const fakeSingleModule = {
       default: async (_input?: unknown) => {},
-      compile_tier1_block: () => new Uint8Array(WASM_EMPTY_MODULE_BYTES),
+      compile_tier1_block: () => ({
+        wasm_bytes: new Uint8Array(WASM_EMPTY_MODULE_BYTES),
+        code_byte_len: 0,
+        exit_to_interpreter: false,
+      }),
     };
 
     // If this ever gets loaded, it will try to allocate a huge shared memory (and the patched
@@ -105,7 +109,11 @@ describe("runtime/jit_wasm_loader", () => {
         // eslint-disable-next-line no-new
         new WebAssembly.Memory({ initial: 1, maximum: 65536, shared: true });
       },
-      compile_tier1_block: () => new Uint8Array(WASM_EMPTY_MODULE_BYTES),
+      compile_tier1_block: () => ({
+        wasm_bytes: new Uint8Array(WASM_EMPTY_MODULE_BYTES),
+        code_byte_len: 0,
+        exit_to_interpreter: false,
+      }),
     };
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -124,7 +132,7 @@ describe("runtime/jit_wasm_loader", () => {
     expect(threadedImporterCalls).toBe(0);
     expect(allocations.some((a) => !!a.shared && typeof a.maximum === "number" && a.maximum > 1024)).toBe(false);
 
-    const bytes = api.compile_tier1_block();
+    const { wasm_bytes: bytes } = api.compile_tier1_block();
     const bytesForWasm: Uint8Array<ArrayBuffer> =
       bytes.buffer instanceof ArrayBuffer ? (bytes as Uint8Array<ArrayBuffer>) : (new Uint8Array(bytes) as Uint8Array<ArrayBuffer>);
     expect(WebAssembly.validate(bytesForWasm)).toBe(true);

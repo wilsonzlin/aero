@@ -25,6 +25,8 @@ export function installNetTraceUI(container: HTMLElement, backend: NetTraceBacke
   const wrapper = document.createElement("div");
   wrapper.className = "net-trace";
 
+  let refreshStats: (() => Promise<void>) | undefined;
+
   const warning = document.createElement("p");
   warning.textContent =
     "Network captures may contain sensitive data (credentials, cookies, private traffic). " +
@@ -53,6 +55,7 @@ export function installNetTraceUI(container: HTMLElement, backend: NetTraceBacke
       } else {
         backend.disable();
       }
+      void refreshStats?.();
     } catch (err) {
       try {
         enableCheckbox.checked = backend.isEnabled();
@@ -104,8 +107,6 @@ export function installNetTraceUI(container: HTMLElement, backend: NetTraceBacke
   const opfsPath = document.createElement("input");
   opfsPath.type = "text";
   opfsPath.value = "captures/aero-net-trace.pcapng";
-
-  let refreshStats: (() => Promise<void>) | undefined;
 
   const clearButton = backend.clear || backend.clearCapture ? document.createElement("button") : null;
   if (clearButton) {
@@ -209,6 +210,7 @@ export function installNetTraceUI(container: HTMLElement, backend: NetTraceBacke
         const stats = await getStats();
         if (signal.aborted) return;
         statsLine.textContent = formatStats(stats);
+        enableCheckbox.checked = stats.enabled;
       } catch (err) {
         if (signal.aborted) return;
         status.textContent = err instanceof Error ? err.message : String(err);

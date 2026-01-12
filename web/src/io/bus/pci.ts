@@ -43,7 +43,7 @@ export interface PciDevice {
    * PCI interrupt pin number (0x3d): 1=INTA#, 2=INTB#, 3=INTC#, 4=INTD#.
    *
    * Defaults to INTA# for endpoint devices.
-   */
+  */
   readonly interruptPin?: 1 | 2 | 3 | 4;
   readonly bars?: ReadonlyArray<PciBar | null>;
   /**
