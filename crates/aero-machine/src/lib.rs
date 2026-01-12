@@ -2185,8 +2185,8 @@ impl Machine {
             const VGA_LEGACY_MMIO_BASE: u64 = 0x000A_0000;
             const VGA_LEGACY_MMIO_SIZE: u64 = 0x0002_0000; // 128KiB: A0000-BFFFF
 
-            // VGA shared device instances must remain stable across resets because MMIO mappings in
-            // the physical memory bus persist. Reset device state in-place while keeping `Rc`
+            // Shared device instances must remain stable across resets because MMIO mappings in the
+            // physical memory bus persist. Reset device state in-place while keeping `Rc`
             // identities stable.
             let vga: Rc<RefCell<VgaDevice>> = match &self.vga {
                 Some(vga) => {
