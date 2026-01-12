@@ -1732,6 +1732,21 @@ fn vhd_dynamic_rejects_bat_entry_pointing_into_metadata() {
 }
 
 #[test]
+fn vhd_dynamic_rejects_overlapping_blocks() {
+    let mut backend = make_vhd_dynamic_with_pattern();
+
+    // Duplicate the BAT entry for block 0 into block 1. This makes two virtual blocks alias the
+    // same on-disk block region, which must be treated as corruption.
+    let table_offset = (SECTOR_SIZE as u64) + 1024u64;
+    let mut entry0 = [0u8; 4];
+    backend.read_at(table_offset, &mut entry0).unwrap();
+    backend.write_at(table_offset + 4, &entry0).unwrap();
+
+    let err = VhdDisk::open(backend).err().expect("expected error");
+    assert!(matches!(err, DiskError::CorruptImage("vhd blocks overlap")));
+}
+
+#[test]
 fn vhd_dynamic_zero_writes_do_not_hide_corrupt_bat_entries() {
     let virtual_size = 64 * 1024u64;
     let block_size = 16 * 1024u32;

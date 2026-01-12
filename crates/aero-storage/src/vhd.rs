@@ -300,6 +300,7 @@ impl<B: StorageBackend> VhdDisk<B> {
                 let data_region_start = (SECTOR_SIZE as u64)
                     .max(dyn_header_end)
                     .max(bat_end_on_disk);
+                let mut allocated_blocks: Vec<u64> = Vec::new();
                 for bat_entry in &bat {
                     if *bat_entry == u32::MAX {
                         continue;
@@ -315,6 +316,19 @@ impl<B: StorageBackend> VhdDisk<B> {
                         .ok_or(DiskError::OffsetOverflow)?;
                     if block_end > footer_offset {
                         return Err(DiskError::CorruptImage("vhd block overlaps footer"));
+                    }
+                    allocated_blocks.push(block_start);
+                }
+
+                allocated_blocks.sort_unstable();
+                for w in allocated_blocks.windows(2) {
+                    let prev_start = w[0];
+                    let next_start = w[1];
+                    let prev_end = prev_start
+                        .checked_add(block_total_size)
+                        .ok_or(DiskError::OffsetOverflow)?;
+                    if next_start < prev_end {
+                        return Err(DiskError::CorruptImage("vhd blocks overlap"));
                     }
                 }
 
@@ -664,7 +678,11 @@ impl<B: StorageBackend> VhdDisk<B> {
             // Best-effort rollback: restore the old footer at its original location and shrink
             // back to the original length. Only shrink if the footer restore succeeds; otherwise
             // keep the file extended with the new EOF footer so the image remains openable.
-            if self.backend.write_at(old_footer_offset, &self.footer.raw).is_ok() {
+            if self
+                .backend
+                .write_at(old_footer_offset, &self.footer.raw)
+                .is_ok()
+            {
                 let _ = self.backend.set_len(file_len);
             }
             return Err(e);
@@ -684,7 +702,11 @@ impl<B: StorageBackend> VhdDisk<B> {
         {
             // Best-effort rollback: restore the old footer and shrink. This keeps failed
             // allocations from permanently growing the image or leaving wasted block space.
-            if self.backend.write_at(old_footer_offset, &self.footer.raw).is_ok() {
+            if self
+                .backend
+                .write_at(old_footer_offset, &self.footer.raw)
+                .is_ok()
+            {
                 let _ = self.backend.set_len(file_len);
             }
             return Err(e);
