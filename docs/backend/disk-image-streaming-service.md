@@ -70,7 +70,8 @@ These endpoints are recommended for operability. Exact paths may vary, but the s
 Implementation note:
 
 - Treat `image_id` as an opaque identifier and keep it **bounded** for operability and DoS safety
-  (the reference `aero-storage-server` implementation enforces **`[A-Za-z0-9._-]{1,128}`**).
+  (the reference `aero-storage-server` implementation enforces **`[A-Za-z0-9._-]{1,128}`**
+  and disallows `.` / `..`).
 
 Metadata response fields:
 

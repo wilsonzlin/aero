@@ -20,7 +20,8 @@ metrics and basic health endpoints.
 
 Notes:
 
-- `image_id` is treated as an opaque identifier and must match **`[A-Za-z0-9._-]{1,128}`**.
+- `image_id` is treated as an opaque identifier and must match **`[A-Za-z0-9._-]{1,128}`**
+  (and must not be `.` or `..`).
   Requests with invalid/overlong IDs are rejected early (and the server avoids recording unbounded
   ID values in logs/metrics).
 - The image bytes endpoints are protected by a per-process concurrency cap and may return
