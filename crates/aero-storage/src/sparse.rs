@@ -146,10 +146,16 @@ impl<B: StorageBackend> AeroSparseDisk<B> {
         backend.set_len(data_offset)?;
         backend.write_at(0, &header.encode())?;
 
+        let mut table: Vec<u64> = Vec::new();
+        table
+            .try_reserve_exact(table_entries_usize)
+            .map_err(|_| DiskError::InvalidConfig("aerosparse allocation table too large"))?;
+        table.resize(table_entries_usize, 0);
+
         Ok(Self {
             backend,
             header,
-            table: vec![0; table_entries_usize],
+            table,
         })
     }
 
