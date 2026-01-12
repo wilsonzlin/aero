@@ -3,8 +3,8 @@ use std::fs;
 use std::io::{Read, Seek, SeekFrom};
 
 use aero_snapshot::{
-    Compression, CpuState, RamMode, SectionId, SnapshotError, SnapshotIndex, SnapshotSectionInfo,
-    SnapshotTarget,
+    Compression, CpuState, DeviceId, RamMode, SectionId, SnapshotError, SnapshotIndex,
+    SnapshotSectionInfo, SnapshotTarget,
 };
 
 use crate::error::{Result, XtaskError};
@@ -116,6 +116,11 @@ fn cmd_inspect(args: Vec<String>) -> Result<()> {
         );
     }
 
+    if let Some(devices) = index.sections.iter().find(|s| s.id == SectionId::DEVICES) {
+        println!("DEVICES:");
+        print_devices_section_summary(&mut file, devices);
+    }
+
     println!("RAM:");
     match &index.ram {
         Some(ram) => {
@@ -148,6 +153,152 @@ fn cmd_inspect(args: Vec<String>) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn print_devices_section_summary(file: &mut fs::File, section: &SnapshotSectionInfo) {
+    if section.version != 1 {
+        println!("  <unsupported DEVICES section version {}>", section.version);
+        return;
+    }
+
+    let section_end = match section.offset.checked_add(section.len) {
+        Some(v) => v,
+        None => {
+            println!("  <invalid section length>");
+            return;
+        }
+    };
+
+    if section.len < 4 {
+        println!("  <truncated section>");
+        return;
+    }
+
+    if let Err(e) = file.seek(SeekFrom::Start(section.offset)) {
+        println!("  <failed to seek: {e}>");
+        return;
+    }
+
+    let count = match read_u32_le_lossy(file) {
+        Ok(v) => v,
+        Err(e) => {
+            println!("  <failed to read device count: {e}>");
+            return;
+        }
+    };
+    println!("  count: {count}");
+
+    const MAX_LISTED: u32 = 64;
+    for idx in 0..count {
+        if idx >= MAX_LISTED {
+            println!("  ... {} more device entries omitted", count - MAX_LISTED);
+            break;
+        }
+
+        let pos = match file.stream_position() {
+            Ok(v) => v,
+            Err(e) => {
+                println!("  <failed to read device entry: {e}>");
+                return;
+            }
+        };
+        if pos >= section_end {
+            println!("  <truncated section>");
+            return;
+        }
+
+        // Device entry header: id(u32), version(u16), flags(u16), len(u64).
+        if section_end - pos < 16 {
+            println!("  <truncated section>");
+            return;
+        }
+        let id = match read_u32_le_lossy(file) {
+            Ok(v) => v,
+            Err(e) => {
+                println!("  <failed to read device id: {e}>");
+                return;
+            }
+        };
+        let version = match read_u16_le_lossy(file) {
+            Ok(v) => v,
+            Err(e) => {
+                println!("  <failed to read device version: {e}>");
+                return;
+            }
+        };
+        let flags = match read_u16_le_lossy(file) {
+            Ok(v) => v,
+            Err(e) => {
+                println!("  <failed to read device flags: {e}>");
+                return;
+            }
+        };
+        let len = match read_u64_le_lossy(file) {
+            Ok(v) => v,
+            Err(e) => {
+                println!("  <failed to read device length: {e}>");
+                return;
+            }
+        };
+
+        let data_start = match file.stream_position() {
+            Ok(v) => v,
+            Err(e) => {
+                println!("  <failed to read device entry: {e}>");
+                return;
+            }
+        };
+        let data_end = match data_start.checked_add(len) {
+            Some(v) => v,
+            None => {
+                println!("  <device length overflow>");
+                return;
+            }
+        };
+        if data_end > section_end {
+            println!(
+                "  - {}: {} version={} flags={} len={} <truncated>",
+                idx,
+                DeviceId(id),
+                version,
+                flags,
+                len
+            );
+            return;
+        }
+
+        println!(
+            "  - {}: {} version={} flags={} len={}",
+            idx,
+            DeviceId(id),
+            version,
+            flags,
+            len
+        );
+
+        if let Err(e) = file.seek(SeekFrom::Start(data_end)) {
+            println!("  <failed to skip device payload: {e}>");
+            return;
+        }
+    }
+}
+
+fn read_u16_le_lossy(r: &mut impl Read) -> std::io::Result<u16> {
+    let mut buf = [0u8; 2];
+    r.read_exact(&mut buf)?;
+    Ok(u16::from_le_bytes(buf))
+}
+
+fn read_u32_le_lossy(r: &mut impl Read) -> std::io::Result<u32> {
+    let mut buf = [0u8; 4];
+    r.read_exact(&mut buf)?;
+    Ok(u32::from_le_bytes(buf))
+}
+
+fn read_u64_le_lossy(r: &mut impl Read) -> std::io::Result<u64> {
+    let mut buf = [0u8; 8];
+    r.read_exact(&mut buf)?;
+    Ok(u64::from_le_bytes(buf))
 }
 
 fn cmd_validate(args: Vec<String>) -> Result<()> {
