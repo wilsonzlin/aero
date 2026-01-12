@@ -377,6 +377,81 @@ fn aerosparse_rejects_absurd_allocation_table_sizes() {
 }
 
 #[test]
+fn aerosparse_rejects_table_entries_mismatch() {
+    let disk = AeroSparseDisk::create(
+        MemBackend::new(),
+        AeroSparseConfig {
+            disk_size_bytes: 16 * 1024,
+            block_size_bytes: 4096,
+        },
+    )
+    .unwrap();
+    let header = *disk.header();
+    let mut backend = disk.into_backend();
+
+    // Corrupt the header with an inconsistent table_entries.
+    let mut bad_header = header;
+    bad_header.table_entries = bad_header.table_entries + 1;
+    backend.write_at(0, &bad_header.encode()).unwrap();
+
+    match AeroSparseDisk::open(backend) {
+        Ok(_) => panic!("expected open to fail"),
+        Err(err) => assert!(matches!(
+            err,
+            DiskError::InvalidSparseHeader("unexpected table_entries")
+        )),
+    }
+}
+
+#[test]
+fn aerosparse_rejects_allocated_blocks_exceeding_table_entries() {
+    let disk = AeroSparseDisk::create(
+        MemBackend::new(),
+        AeroSparseConfig {
+            disk_size_bytes: 16 * 1024,
+            block_size_bytes: 4096,
+        },
+    )
+    .unwrap();
+    let header = *disk.header();
+    let mut backend = disk.into_backend();
+
+    // Claim more allocated blocks than there are table entries.
+    let mut bad_header = header;
+    bad_header.allocated_blocks = bad_header.table_entries + 1;
+    backend.write_at(0, &bad_header.encode()).unwrap();
+
+    match AeroSparseDisk::open(backend) {
+        Ok(_) => panic!("expected open to fail"),
+        Err(err) => assert!(matches!(
+            err,
+            DiskError::InvalidSparseHeader("allocated_blocks exceeds table_entries")
+        )),
+    }
+}
+
+#[test]
+fn aerosparse_create_rejects_absurd_allocation_table_sizes() {
+    let table_entries: u64 = (128 * 1024 * 1024 / 8) + 1;
+    let block_size_bytes: u32 = 512;
+    let disk_size_bytes = table_entries * block_size_bytes as u64;
+
+    match AeroSparseDisk::create(
+        MemBackend::new(),
+        AeroSparseConfig {
+            disk_size_bytes,
+            block_size_bytes,
+        },
+    ) {
+        Ok(_) => panic!("expected create to fail"),
+        Err(err) => assert!(matches!(
+            err,
+            DiskError::InvalidConfig("aerosparse allocation table too large")
+        )),
+    }
+}
+
+#[test]
 fn qcow2_rejects_l1_entries_pointing_past_eof() {
     let virtual_size = 1024 * 1024;
     let mut storage = make_qcow2_empty(virtual_size);
