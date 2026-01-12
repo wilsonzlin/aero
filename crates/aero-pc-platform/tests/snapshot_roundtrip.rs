@@ -48,9 +48,13 @@ fn pc_platform_snapshot_roundtrip_preserves_acpi_sci_interrupt_and_platform_devi
 
     // --- Setup: build a PcPlatform and route SCI through the IOAPIC.
     let mut pc = PcPlatform::new(RAM_SIZE);
+    // Switch the platform into APIC mode via IMCR (0x22/0x23) to match how guests enable the
+    // IOAPIC/LAPIC interrupt path.
+    pc.io.write_u8(0x22, 0x70);
+    pc.io.write_u8(0x23, 0x01);
+    assert_eq!(pc.interrupts.borrow().mode(), PlatformInterruptMode::Apic);
     {
         let mut ints = pc.interrupts.borrow_mut();
-        ints.set_mode(PlatformInterruptMode::Apic);
 
         // Program SCI (GSI9) to a known vector. ACPI tables specify active-low + level-triggered.
         let low = u32::from(SCI_VECTOR) | (1 << 13) | (1 << 15); // polarity_low + level-triggered
@@ -258,9 +262,11 @@ fn pc_platform_snapshot_roundtrip_redrives_hpet_and_pci_intx_levels_after_restor
     const HPET_TIMER_CFG_INT_ROUTE_MASK: u64 = 0x1F << HPET_TIMER_CFG_INT_ROUTE_SHIFT;
 
     let mut pc = PcPlatform::new(RAM_SIZE);
+    pc.io.write_u8(0x22, 0x70);
+    pc.io.write_u8(0x23, 0x01);
+    assert_eq!(pc.interrupts.borrow().mode(), PlatformInterruptMode::Apic);
     {
         let mut ints = pc.interrupts.borrow_mut();
-        ints.set_mode(PlatformInterruptMode::Apic);
 
         // HPET + PCI INTx are typically active-low + level-triggered in PC ACPI setups.
         let hpet_low = u32::from(HPET_VECTOR) | (1 << 13) | (1 << 15);
@@ -424,9 +430,11 @@ fn pc_platform_snapshot_roundtrip_preserves_rtc_irq8_and_requires_status_c_clear
     const RTC_REG_B_UIE: u8 = 1 << 4;
 
     let mut pc = PcPlatform::new(RAM_SIZE);
+    pc.io.write_u8(0x22, 0x70);
+    pc.io.write_u8(0x23, 0x01);
+    assert_eq!(pc.interrupts.borrow().mode(), PlatformInterruptMode::Apic);
     {
         let mut ints = pc.interrupts.borrow_mut();
-        ints.set_mode(PlatformInterruptMode::Apic);
         program_ioapic_entry(&mut ints, RTC_GSI, u32::from(RTC_VECTOR), 0);
     }
 
