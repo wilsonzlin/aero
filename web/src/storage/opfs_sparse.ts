@@ -42,7 +42,14 @@ function alignUp(value: number, alignment: number): number {
 }
 
 function divCeil(n: number, d: number): number {
-  return Math.floor((n + d - 1) / d);
+  if (!Number.isSafeInteger(n) || !Number.isSafeInteger(d) || d <= 0) {
+    throw new Error("divCeil: arguments must be safe positive integers");
+  }
+  const out = Number((BigInt(n) + BigInt(d) - 1n) / BigInt(d));
+  if (!Number.isSafeInteger(out)) {
+    throw new Error("divCeil overflow");
+  }
+  return out;
 }
 
 function toSafeNumber(v: bigint, field: string): number {
