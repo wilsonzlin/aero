@@ -747,12 +747,12 @@ function maybeInitVirtioInput(): void {
   } catch (err) {
     console.warn("[io.worker] Failed to initialize virtio-input devices", err);
     try {
-      keyboardDev?.free();
+      (keyboardDev as VirtioInputPciDevice | null)?.free();
     } catch {
       // ignore
     }
     try {
-      mouseDev?.free();
+      (mouseDev as VirtioInputPciDevice | null)?.free();
     } catch {
       // ignore
     }

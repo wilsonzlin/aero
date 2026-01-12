@@ -1039,7 +1039,10 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
 
       try {
         const start = performance.now();
-        const bytes = await this.downloadChunkWithRetries(chunkIndex, generation);
+        // Capture the signal for this operation so that a subsequent cache invalidation can
+        // safely swap out `this.fetchAbort` without letting older generation tasks continue.
+        const signal = this.fetchSignal;
+        const bytes = await this.downloadChunkWithRetries(chunkIndex, generation, signal);
         if (this.closed) throw new Error("RemoteRangeDisk is closed");
         if (generation !== this.cacheGeneration) {
           // Cache invalidated after download; discard and let the caller retry.
@@ -1081,19 +1084,23 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
     }
   }
 
-  private async downloadChunkWithRetries(chunkIndex: number, generation: number): Promise<Uint8Array> {
+  private async downloadChunkWithRetries(
+    chunkIndex: number,
+    generation: number,
+    signal: AbortSignal,
+  ): Promise<Uint8Array> {
     let lastErr: unknown;
     for (let attempt = 0; attempt <= this.opts.maxRetries; attempt++) {
       const release = await this.fetchSemaphore.acquire();
       try {
-        return await this.downloadChunkOnce(chunkIndex, generation);
+        return await this.downloadChunkOnce(chunkIndex, generation, signal);
       } catch (err) {
         lastErr = err;
         if (attempt >= this.opts.maxRetries || !isRetryableError(err)) {
           throw err;
         }
         const delay = this.opts.retryBaseDelayMs * Math.pow(2, attempt);
-        await sleep(delay, this.fetchSignal);
+        await sleep(delay, signal);
       } finally {
         release();
       }
@@ -1101,7 +1108,7 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
     throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
   }
 
-  private async downloadChunkOnce(chunkIndex: number, generation: number): Promise<Uint8Array> {
+  private async downloadChunkOnce(chunkIndex: number, generation: number, signal: AbortSignal): Promise<Uint8Array> {
     const start = chunkIndex * this.opts.chunkSize;
     const endExclusive = Math.min(start + this.opts.chunkSize, this.capacityBytesValue);
     if (endExclusive <= start) {
@@ -1131,7 +1138,7 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
     await this.maybeRefreshLease();
     const resp = await fetchWithDiskAccessLease(
       this.lease,
-      { method: "GET", headers, signal: this.fetchSignal },
+      { method: "GET", headers, signal },
       { fetch: this.opts.fetchFn, retryAuthOnce: true },
     );
 
