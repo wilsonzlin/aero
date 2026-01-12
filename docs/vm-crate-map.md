@@ -91,6 +91,9 @@ and block devices.
 **How it fits**
 - Not the canonical VM *wiring* crate (it does not define the stable `Machine` API that `aero-wasm` consumes).
 - Provides richer device stacks and conformance harnesses that will eventually be integrated with `aero-machine`.
+- Some low-level, cross-runtime primitives are intentionally factored out of `emulator` into small shared crates.
+  For networking, the NET_TX/NET_RX ring-buffer-backed L2 tunnel backend (`L2TunnelRingBackend`) lives in
+  `crates/aero-net-backend` and is re-exported by `emulator::io::net` for compatibility.
 
 ### Legacy / prototypes (excluded from workspace)
 
