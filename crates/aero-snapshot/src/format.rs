@@ -37,19 +37,15 @@ impl DeviceId {
     pub const APIC: DeviceId = DeviceId(2);
     pub const PIT: DeviceId = DeviceId(3);
     pub const RTC: DeviceId = DeviceId(4);
-    /// PCI core device state.
+    /// PCI core device state (legacy/compat).
     ///
-    /// Snapshot adapters typically store PCI core state as a **single** [`DeviceId::PCI`] entry
-    /// whose payload is the `aero-io-snapshot` blob produced by
-    /// `aero_devices::pci::PciCoreSnapshot` (inner 4CC `PCIC`).
+    /// Canonical full-system snapshots use split-out outer IDs:
+    /// - [`DeviceId::PCI_CFG`] for `PciConfigPorts` (`PCPT`)
+    /// - [`DeviceId::PCI_INTX_ROUTER`] for `PciIntxRouter` (`INTX`)
     ///
-    /// The wrapper nests both:
-    /// - PCI config ports + config-space/BAR state (`aero_devices::pci::PciConfigPorts`, inner `PCPT`)
-    /// - PCI INTx routing + asserted levels (`aero_devices::pci::PciIntxRouter`, inner `INTX`)
-    ///
-    /// This avoids `aero-snapshot`'s `DEVICES` uniqueness constraint on `(DeviceId, version, flags)`
-    /// while still capturing both sub-snapshots. See [`DeviceId::PCI_CFG`] and
-    /// [`DeviceId::PCI_INTX_ROUTER`] for the optional split-out entries.
+    /// Older snapshots may store PCI core state under this historical ID, either as:
+    /// - a combined `PciCoreSnapshot` wrapper (`PCIC`) containing both `PCPT` + `INTX`, or
+    /// - a single `PCPT` or `INTX` payload.
     pub const PCI: DeviceId = DeviceId(5);
     pub const DISK_CONTROLLER: DeviceId = DeviceId(6);
     pub const VGA: DeviceId = DeviceId(7);
@@ -64,16 +60,13 @@ impl DeviceId {
     pub const USB: DeviceId = DeviceId(12);
     /// i8042 / PS/2 controller state (keyboard + mouse).
     pub const I8042: DeviceId = DeviceId(13);
-    /// Optional split-out PCI config mechanism #1 ports (`0xCF8/0xCFC`) and PCI bus config-space
-    /// state.
+    /// PCI config mechanism #1 ports (`0xCF8/0xCFC`) and PCI bus config-space state.
     ///
-    /// Prefer [`DeviceId::PCI`] for new snapshot adapters. This ID exists for backward
-    /// compatibility with older snapshots that stored PCI state as multiple device entries.
+    /// Canonical full-system snapshots store PCI config-state using this ID (inner `PCPT`).
     pub const PCI_CFG: DeviceId = DeviceId(14);
-    /// Optional split-out PCI INTx (INTA#-INTD#) routing state (asserted levels/refcounts).
+    /// PCI INTx (INTA#-INTD#) routing state (asserted levels/refcounts).
     ///
-    /// Prefer [`DeviceId::PCI`] for new snapshot adapters. This ID exists for backward
-    /// compatibility with older snapshots that stored PCI state as multiple device entries.
+    /// Canonical full-system snapshots store PCI INTx routing using this ID (inner `INTX`).
     pub const PCI_INTX_ROUTER: DeviceId = DeviceId(15);
     /// Backward compatible alias for [`DeviceId::PCI_INTX_ROUTER`].
     pub const PCI_INTX: DeviceId = DeviceId::PCI_INTX_ROUTER;
