@@ -180,6 +180,64 @@ describe("io/devices/I8042Controller", () => {
     expect(dev.portRead(0x0060, 1)).toBe(0x01);
   });
 
+  it("recognizes the IntelliMouse Explorer (5-button) sample rate sequence and reports device ID 0x04", () => {
+    const irqSink: IrqSink = { raiseIrq: () => {}, lowerIrq: () => {} };
+    const dev = new I8042Controller(irqSink);
+
+    const sendMouseByte = (value: number) => {
+      dev.portWrite(0x0064, 1, 0xd4);
+      dev.portWrite(0x0060, 1, value);
+      expect(dev.portRead(0x0060, 1)).toBe(0xfa); // ACK
+    };
+
+    // IntelliMouse Explorer mode (200,200,80 sample rate sequence).
+    sendMouseByte(0xf3);
+    sendMouseByte(200);
+    sendMouseByte(0xf3);
+    sendMouseByte(200);
+    sendMouseByte(0xf3);
+    sendMouseByte(80);
+
+    // Confirm device ID is 0x04.
+    dev.portWrite(0x0064, 1, 0xd4);
+    dev.portWrite(0x0060, 1, 0xf2);
+    expect(dev.portRead(0x0060, 1)).toBe(0xfa); // ACK
+    expect(dev.portRead(0x0060, 1)).toBe(0x04); // device id
+  });
+
+  it("clears IntelliMouse mode back to device ID 0x00 when Set Defaults (0xF6) is issued", () => {
+    const irqSink: IrqSink = { raiseIrq: () => {}, lowerIrq: () => {} };
+    const dev = new I8042Controller(irqSink);
+
+    const sendMouseByte = (value: number) => {
+      dev.portWrite(0x0064, 1, 0xd4);
+      dev.portWrite(0x0060, 1, value);
+      expect(dev.portRead(0x0060, 1)).toBe(0xfa); // ACK
+    };
+
+    // Enable IntelliMouse wheel mode (200,100,80 sample rate sequence).
+    sendMouseByte(0xf3);
+    sendMouseByte(200);
+    sendMouseByte(0xf3);
+    sendMouseByte(100);
+    sendMouseByte(0xf3);
+    sendMouseByte(80);
+
+    // Confirm device ID is 0x03.
+    dev.portWrite(0x0064, 1, 0xd4);
+    dev.portWrite(0x0060, 1, 0xf2);
+    expect(dev.portRead(0x0060, 1)).toBe(0xfa); // ACK
+    expect(dev.portRead(0x0060, 1)).toBe(0x03); // device id
+
+    // Set Defaults should clear the extension.
+    sendMouseByte(0xf6);
+
+    dev.portWrite(0x0064, 1, 0xd4);
+    dev.portWrite(0x0060, 1, 0xf2);
+    expect(dev.portRead(0x0060, 1)).toBe(0xfa); // ACK
+    expect(dev.portRead(0x0060, 1)).toBe(0x00); // device id
+  });
+
   it("does not emit spurious IRQ pulses during snapshot restore", () => {
     const srcIrqSink: IrqSink = { raiseIrq: () => {}, lowerIrq: () => {} };
     const src = new I8042Controller(srcIrqSink);

@@ -127,6 +127,38 @@ describe("io/devices/i8042 WASM bridge", () => {
     }
   });
 
+  it("clears IntelliMouse mode when the mouse receives Set Defaults (0xF6)", async () => {
+    const bridge = await createBridge();
+    if (!bridge) return;
+    try {
+      // Enable IntelliMouse wheel extension: sample rate sequence 200, 100, 80.
+      writeToMouse(bridge, 0xf3);
+      writeToMouse(bridge, 200);
+      writeToMouse(bridge, 0xf3);
+      writeToMouse(bridge, 100);
+      writeToMouse(bridge, 0xf3);
+      writeToMouse(bridge, 80);
+
+      // Drain ACKs for the 3x (F3 + rate) sequence.
+      const seqAcks = drainOutput(bridge);
+      expect(seqAcks).toHaveLength(6);
+      expect(seqAcks.every((b) => b === 0xfa)).toBe(true);
+
+      // Verify device ID is 0x03.
+      writeToMouse(bridge, 0xf2);
+      expect(drainOutput(bridge)).toEqual([0xfa, 0x03]);
+
+      // Set Defaults should reset to the base device ID.
+      writeToMouse(bridge, 0xf6);
+      expect(drainOutput(bridge)).toEqual([0xfa]);
+
+      writeToMouse(bridge, 0xf2);
+      expect(drainOutput(bridge)).toEqual([0xfa, 0x00]);
+    } finally {
+      bridge.free();
+    }
+  });
+
   it("save_state/load_state roundtrips pending output", async () => {
     const bridge1 = await createBridge();
     if (!bridge1) return;
