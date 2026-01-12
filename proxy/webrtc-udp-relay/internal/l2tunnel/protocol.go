@@ -27,4 +27,8 @@ const (
 	TypeError byte = 0x7F
 
 	HeaderLen = 4
+
+	// Recommended default payload limits (see docs/l2-tunnel-protocol.md).
+	DefaultMaxFramePayload   = 2048
+	DefaultMaxControlPayload = 256
 )
