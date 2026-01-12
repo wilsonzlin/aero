@@ -3251,9 +3251,9 @@ fn aerogpu_cmd_runtime_signature_driven_texture_load_binding_sm4() {
         const TEX: u32 = 5;
         const RTEX: u32 = 6;
 
-        // `ps_ld.dxbc` includes a COLOR0 input in its signature (unused by the shader body) to keep
-        // stage-interface validation happy when paired with `vs_passthrough.dxbc`, so use the
-        // passthrough VS + POS3+COLOR input layout here.
+        // `ps_ld.dxbc` includes an unused COLOR0 input in its signature. The runtime's pipeline
+        // linker trims unused PS inputs automatically, so we can still pair it with the passthrough
+        // VS. We use the POS3+COLOR input layout because `vs_passthrough.dxbc` consumes COLOR0.
         rt.create_shader_dxbc(VS, DXBC_VS_PASSTHROUGH).unwrap();
         rt.create_shader_dxbc(PS, DXBC_PS_LD).unwrap();
         rt.create_input_layout(IL, ILAY_POS3_COLOR).unwrap();
