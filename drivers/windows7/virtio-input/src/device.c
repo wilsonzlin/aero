@@ -1174,19 +1174,19 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
                 /* Lock. */
                 {VIRTIO_INPUT_KEY_CAPSLOCK, "KEY_CAPSLOCK"},
 
-                /* KEY_F1..KEY_F12 (Linux input ABI). */
-                {59, "KEY_F1"},
-                {60, "KEY_F2"},
-                {61, "KEY_F3"},
-                {62, "KEY_F4"},
-                {63, "KEY_F5"},
-                {64, "KEY_F6"},
-                {65, "KEY_F7"},
-                {66, "KEY_F8"},
-                {67, "KEY_F9"},
-                {68, "KEY_F10"},
-                {87, "KEY_F11"},
-                {88, "KEY_F12"},
+                 /* KEY_F1..KEY_F12 (Linux input ABI). */
+                 {VIRTIO_INPUT_KEY_F1, "KEY_F1"},
+                 {VIRTIO_INPUT_KEY_F2, "KEY_F2"},
+                 {VIRTIO_INPUT_KEY_F3, "KEY_F3"},
+                 {VIRTIO_INPUT_KEY_F4, "KEY_F4"},
+                 {VIRTIO_INPUT_KEY_F5, "KEY_F5"},
+                 {VIRTIO_INPUT_KEY_F6, "KEY_F6"},
+                 {VIRTIO_INPUT_KEY_F7, "KEY_F7"},
+                 {VIRTIO_INPUT_KEY_F8, "KEY_F8"},
+                 {VIRTIO_INPUT_KEY_F9, "KEY_F9"},
+                 {VIRTIO_INPUT_KEY_F10, "KEY_F10"},
+                 {VIRTIO_INPUT_KEY_F11, "KEY_F11"},
+                 {VIRTIO_INPUT_KEY_F12, "KEY_F12"},
 
                 /* Arrows. */
                 {VIRTIO_INPUT_KEY_UP, "KEY_UP"},
