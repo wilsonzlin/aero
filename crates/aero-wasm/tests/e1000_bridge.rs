@@ -70,17 +70,21 @@ fn e1000_bridge_smoke_tx_rx_and_bme_gating() {
     bridge.mmio_write(0x3818, 4, 0); // TDT
     bridge.mmio_write(0x0400, 4, 1 << 1); // TCTL.EN
 
-    // Configure RX ring: 2 descriptors at 0x2000.
+    // Configure RX ring: 3 descriptors at 0x2000.
+    //
+    // The device model intentionally keeps one descriptor unused to disambiguate full/empty ring
+    // states, so using 3 descriptors gives us 2 usable RX buffers for this smoke test.
     bridge.mmio_write(0x2800, 4, 0x2000); // RDBAL
     bridge.mmio_write(0x2804, 4, 0); // RDBAH
-    bridge.mmio_write(0x2808, 4, 2 * 16); // RDLEN
+    bridge.mmio_write(0x2808, 4, 3 * 16); // RDLEN
     bridge.mmio_write(0x2810, 4, 0); // RDH
-    bridge.mmio_write(0x2818, 4, 1); // RDT
+    bridge.mmio_write(0x2818, 4, 2); // RDT
     bridge.mmio_write(0x0100, 4, 1 << 1); // RCTL.EN (defaults to 2048 buffer)
 
     // Populate RX descriptors with guest buffers.
     write_rx_desc(guest, 0x2000, 0x3000, 0);
     write_rx_desc(guest, 0x2010, 0x3400, 0);
+    write_rx_desc(guest, 0x2020, 0x3800, 0);
 
     // With BME disabled, host RX frames should be queued but must not DMA into guest memory yet.
     let pkt_in = build_test_frame(b"host->guest");
