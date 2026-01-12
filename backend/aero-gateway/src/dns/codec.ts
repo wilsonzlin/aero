@@ -30,10 +30,14 @@ export function getRcodeFromFlags(flags: number): number {
 }
 
 export function normalizeDnsName(name: string): string {
-  return name
-    .trim()
-    .replace(/\.$/, "")
-    .toLowerCase();
+  const trimmed = name.trim();
+  let end = trimmed.length;
+  while (end > 0 && trimmed.charCodeAt(end - 1) === 0x2e /* '.' */) {
+    end -= 1;
+  }
+  const withoutTrailingDot = trimmed.slice(0, end);
+  // Avoid allocating in the common case where the name is already lowercase.
+  return /[A-Z]/.test(withoutTrailingDot) ? withoutTrailingDot.toLowerCase() : withoutTrailingDot;
 }
 
 export function readDnsName(message: Buffer, offset: number): { name: string; offsetAfter: number } {
