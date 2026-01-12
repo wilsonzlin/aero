@@ -553,6 +553,76 @@ fn build_ps_sample_l_t0_s0_sm5_dxbc(u: f32, v: f32) -> Vec<u8> {
     build_dxbc(&[(*b"ISGN", isgn), (*b"OSGN", osgn), (*b"SHEX", shex)])
 }
 
+fn build_ps_sample_l_t0_s0_sm5_with_color_input_dxbc(u: f32, v: f32) -> Vec<u8> {
+    // Same token stream as `build_ps_sample_l_t0_s0_sm5_dxbc`, but includes a dummy SV_Position +
+    // COLOR0 input signature so the shader can link with vertex shaders that output `@location(1)`
+    // without triggering WebGPU stage-interface validation errors.
+    let isgn = build_signature_chunk(&[
+        SigParam {
+            semantic_name: "SV_Position",
+            semantic_index: 0,
+            register: 0,
+            mask: 0x0f,
+        },
+        SigParam {
+            semantic_name: "COLOR",
+            semantic_index: 0,
+            register: 1,
+            mask: 0x0f,
+        },
+    ]);
+    let osgn = build_signature_chunk(&[SigParam {
+        semantic_name: "SV_Target",
+        semantic_index: 0,
+        register: 0,
+        mask: 0x0f,
+    }]);
+
+    // ps_5_0
+    let version_token = 0x50u32;
+
+    let sample_l_opcode_token = 0x46u32 | (14u32 << 11);
+    let ret_token = 0x3eu32 | (1u32 << 11);
+
+    let dst_o0 = 0x0010_f022u32;
+    let imm_vec4 = 0x0000_f042u32;
+    let imm_scalar = 0x0000_0049u32;
+    let t0 = 0x0010_0072u32;
+    let s0 = 0x0010_0062u32;
+
+    let u = u.to_bits();
+    let v = v.to_bits();
+
+    let mut tokens = vec![
+        version_token,
+        0, // length patched below
+        // sample_l o0, l(u,v,0,0), t0, s0, l(0)
+        sample_l_opcode_token,
+        dst_o0,
+        0, // o0 index
+        imm_vec4,
+        u,
+        v,
+        0,
+        0,
+        t0,
+        0,
+        s0,
+        0,
+        imm_scalar,
+        0, // lod=0
+        ret_token,
+    ];
+    tokens[1] = tokens.len() as u32;
+
+    let mut shex = Vec::with_capacity(tokens.len() * 4);
+    for t in tokens {
+        shex.extend_from_slice(&t.to_le_bytes());
+    }
+
+    build_dxbc(&[(*b"ISGN", isgn), (*b"OSGN", osgn), (*b"SHEX", shex)])
+}
+
 fn build_ps_sample_l_sm5_dxbc(u: f32, v: f32, tex_slot: u32, sampler_slot: u32) -> Vec<u8> {
     // Variant of `build_ps_sample_l_t0_s0_sm5_dxbc` that samples from a specific texture/sampler
     // slot. This is useful for exercising the binding model at non-zero / max slot indices.
@@ -2208,6 +2278,125 @@ fn aerogpu_cmd_runtime_signature_driven_vs_cb0_and_ps_texture_binding() {
         for (i, px) in pixels.chunks_exact(4).enumerate() {
             assert_eq!(px, &[0, 255, 0, 255], "pixel {i}");
         }
+    });
+}
+
+#[test]
+fn aerogpu_cmd_runtime_signature_driven_vs_and_ps_texture_sampler_binding_sm5() {
+    // Ensure signature-driven runtime bindings work when *both* stages declare texture sampling
+    // resources (t0+s0 in group0 and group1 simultaneously).
+    pollster::block_on(async {
+        let mut rt = match AerogpuCmdRuntime::new_for_tests().await {
+            Ok(rt) => rt,
+            Err(err) => {
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({err:#})"));
+                return;
+            }
+        };
+
+        const VS: u32 = 1;
+        const PS: u32 = 2;
+        const IL: u32 = 3;
+        const VB: u32 = 4;
+        const TEX: u32 = 5;
+        const SAMPLER: u32 = 6;
+        const RTEX: u32 = 7;
+
+        rt.create_shader_dxbc(VS, &build_vs_sample_t0_s0_to_color1_sm5_dxbc(0.0, 0.0))
+            .unwrap();
+        rt.create_shader_dxbc(
+            PS,
+            &build_ps_sample_l_t0_s0_sm5_with_color_input_dxbc(0.0, 0.0),
+        )
+            .unwrap();
+        rt.create_input_layout(IL, &build_ilay_pos3()).unwrap();
+
+        let vertices: [VertexPos3; 3] = [
+            VertexPos3 {
+                pos: [-1.0, -1.0, 0.0],
+            },
+            VertexPos3 {
+                pos: [3.0, -1.0, 0.0],
+            },
+            VertexPos3 {
+                pos: [-1.0, 3.0, 0.0],
+            },
+        ];
+        rt.create_buffer(
+            VB,
+            std::mem::size_of_val(&vertices) as u64,
+            wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        );
+        rt.write_buffer(VB, 0, bytemuck::bytes_of(&vertices))
+            .unwrap();
+
+        rt.create_texture2d(
+            TEX,
+            2,
+            2,
+            wgpu::TextureFormat::Rgba8Unorm,
+            wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        );
+        let green_px: [u8; 4] = [0, 255, 0, 255];
+        let tex_data = [
+            green_px, green_px, //
+            green_px, green_px, //
+        ];
+        rt.write_texture_rgba8(TEX, 2, 2, 2 * 4, bytemuck::bytes_of(&tex_data))
+            .unwrap();
+        rt.set_vs_texture(0, Some(TEX));
+        rt.set_ps_texture(0, Some(TEX));
+
+        rt.create_sampler(
+            SAMPLER,
+            &wgpu::SamplerDescriptor {
+                label: Some("aerogpu_cmd_runtime shared sampler"),
+                address_mode_u: wgpu::AddressMode::ClampToEdge,
+                address_mode_v: wgpu::AddressMode::ClampToEdge,
+                address_mode_w: wgpu::AddressMode::ClampToEdge,
+                mag_filter: wgpu::FilterMode::Nearest,
+                min_filter: wgpu::FilterMode::Nearest,
+                mipmap_filter: wgpu::FilterMode::Nearest,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        rt.set_vs_sampler(0, Some(SAMPLER));
+        rt.set_ps_sampler(0, Some(SAMPLER));
+
+        rt.create_texture2d(
+            RTEX,
+            1,
+            1,
+            wgpu::TextureFormat::Rgba8Unorm,
+            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        );
+        let mut colors = [None; 8];
+        colors[0] = Some(RTEX);
+        rt.set_render_targets(&colors, None);
+
+        rt.bind_shaders(Some(VS), Some(PS));
+        rt.set_input_layout(Some(IL));
+        rt.set_vertex_buffers(
+            0,
+            &[VertexBufferBinding {
+                buffer: VB,
+                stride: std::mem::size_of::<VertexPos3>() as u32,
+                offset: 0,
+            }],
+        );
+        rt.set_primitive_topology(PrimitiveTopology::TriangleList);
+        rt.set_rasterizer_state(RasterizerState {
+            cull_mode: None,
+            front_face: wgpu::FrontFace::Ccw,
+            scissor_enable: false,
+        });
+
+        rt.draw(3, 1, 0, 0).unwrap();
+        rt.poll_wait();
+
+        let pixels = rt.read_texture_rgba8(RTEX).await.unwrap();
+        assert_eq!(pixels, vec![0, 255, 0, 255]);
     });
 }
 
