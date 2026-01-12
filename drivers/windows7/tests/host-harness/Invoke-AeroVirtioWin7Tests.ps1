@@ -350,7 +350,8 @@ function Wait-AeroSelftestResult {
   $sawVirtioInputEventsPass = $false
   $sawVirtioInputEventsFail = $false
   $sawVirtioInputEventsSkip = $false
-  $injectedVirtioInputEvents = $false
+  $inputEventsInjectAttempts = 0
+  $nextInputEventsInject = [DateTime]::UtcNow
   $sawVirtioSndPass = $false
   $sawVirtioSndSkip = $false
   $sawVirtioSndFail = $false
@@ -398,17 +399,6 @@ function Wait-AeroSelftestResult {
       }
       if (-not $sawVirtioInputEventsSkip -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-input-events\|SKIP") {
         $sawVirtioInputEventsSkip = $true
-      }
-
-      if ($RequireVirtioInputEventsPass -and $sawVirtioInputEventsReady -and (-not $injectedVirtioInputEvents)) {
-        $injectedVirtioInputEvents = $true
-        if (($null -eq $QmpPort) -or ($QmpPort -le 0)) {
-          return @{ Result = "QMP_INPUT_INJECT_FAILED"; Tail = $tail }
-        }
-        $ok = Try-AeroQmpInjectVirtioInputEvents -Host $QmpHost -Port ([int]$QmpPort)
-        if (-not $ok) {
-          return @{ Result = "QMP_INPUT_INJECT_FAILED"; Tail = $tail }
-        }
       }
 
       # If input events are required, fail fast when the guest reports SKIP/FAIL for virtio-input-events.
@@ -569,6 +559,23 @@ function Wait-AeroSelftestResult {
       }
       if ($tail -match "AERO_VIRTIO_SELFTEST\|RESULT\|FAIL") {
         return @{ Result = "FAIL"; Tail = $tail }
+      }
+    }
+
+    # When requested, inject keyboard/mouse events after the guest has armed the user-mode HID report read loop
+    # (virtio-input-events|READY). Inject multiple times on a short interval to reduce flakiness from timing
+    # windows (reports may be dropped when no read is pending).
+    if ($RequireVirtioInputEventsPass -and $sawVirtioInputEventsReady -and (-not $sawVirtioInputEventsPass) -and (-not $sawVirtioInputEventsFail) -and (-not $sawVirtioInputEventsSkip)) {
+      if (($null -eq $QmpPort) -or ($QmpPort -le 0)) {
+        return @{ Result = "QMP_INPUT_INJECT_FAILED"; Tail = $tail }
+      }
+      if ($inputEventsInjectAttempts -lt 20 -and [DateTime]::UtcNow -ge $nextInputEventsInject) {
+        $inputEventsInjectAttempts++
+        $nextInputEventsInject = [DateTime]::UtcNow.AddMilliseconds(500)
+        $ok = Try-AeroQmpInjectVirtioInputEvents -Host $QmpHost -Port ([int]$QmpPort)
+        if (-not $ok) {
+          return @{ Result = "QMP_INPUT_INJECT_FAILED"; Tail = $tail }
+        }
       }
     }
 

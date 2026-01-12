@@ -1121,7 +1121,8 @@ def main() -> int:
             saw_virtio_input_events_pass = False
             saw_virtio_input_events_fail = False
             saw_virtio_input_events_skip = False
-            injected_virtio_input_events = False
+            input_events_inject_attempts = 0
+            next_input_events_inject = 0.0
             saw_virtio_snd_pass = False
             saw_virtio_snd_skip = False
             saw_virtio_snd_fail = False
@@ -1198,36 +1199,6 @@ def main() -> int:
                             result_code = 1
                             break
 
-                    if need_input_events and saw_virtio_input_events_ready and not injected_virtio_input_events:
-                        injected_virtio_input_events = True
-                        if qmp_endpoint is None:
-                            print(
-                                "FAIL: --with-input-events/--with-virtio-input-events enabled but QMP endpoint is unavailable",
-                                file=sys.stderr,
-                            )
-                            _print_tail(serial_log)
-                            result_code = 1
-                            break
-                        try:
-                            info = _try_qmp_input_inject_virtio_input_events(qmp_endpoint)
-                            kbd_mode = "broadcast" if info.keyboard_device is None else "device"
-                            mouse_mode = "broadcast" if info.mouse_device is None else "device"
-                            print(
-                                f"AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|PASS|kbd_mode={kbd_mode}|mouse_mode={mouse_mode}"
-                            )
-                        except Exception as e:
-                            reason = _sanitize_marker_value(str(e) or type(e).__name__)
-                            print(
-                                f"AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|FAIL|reason={reason}",
-                                file=sys.stderr,
-                            )
-                            print(
-                                f"FAIL: failed to inject virtio-input events via QMP: {e}",
-                                file=sys.stderr,
-                            )
-                            _print_tail(serial_log)
-                            result_code = 1
-                            break
                     if not saw_virtio_snd_pass and b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS" in tail:
                         saw_virtio_snd_pass = True
                     if not saw_virtio_snd_skip and b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP" in tail:
@@ -1533,6 +1504,43 @@ def main() -> int:
                         break
                     if b"AERO_VIRTIO_SELFTEST|RESULT|FAIL" in tail:
                         print("FAIL: AERO_VIRTIO_SELFTEST|RESULT|FAIL")
+                        _print_tail(serial_log)
+                        result_code = 1
+                        break
+
+                # When requested, inject keyboard/mouse events after the guest has armed the user-mode HID
+                # report read loop (virtio-input-events|READY). Inject multiple times on a short interval to
+                # reduce flakiness from timing windows (reports may be dropped when no read is pending).
+                if (
+                    need_input_events
+                    and saw_virtio_input_events_ready
+                    and not saw_virtio_input_events_pass
+                    and not saw_virtio_input_events_fail
+                    and not saw_virtio_input_events_skip
+                    and qmp_endpoint is not None
+                    and input_events_inject_attempts < 20
+                    and time.monotonic() >= next_input_events_inject
+                ):
+                    input_events_inject_attempts += 1
+                    next_input_events_inject = time.monotonic() + 0.5
+                    try:
+                        info = _try_qmp_input_inject_virtio_input_events(qmp_endpoint)
+                        kbd_mode = "broadcast" if info.keyboard_device is None else "device"
+                        mouse_mode = "broadcast" if info.mouse_device is None else "device"
+                        print(
+                            f"AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|PASS|attempt={input_events_inject_attempts}|"
+                            f"kbd_mode={kbd_mode}|mouse_mode={mouse_mode}"
+                        )
+                    except Exception as e:
+                        reason = _sanitize_marker_value(str(e) or type(e).__name__)
+                        print(
+                            f"AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|FAIL|attempt={input_events_inject_attempts}|reason={reason}",
+                            file=sys.stderr,
+                        )
+                        print(
+                            f"FAIL: failed to inject virtio-input events via QMP: {e}",
+                            file=sys.stderr,
+                        )
                         _print_tail(serial_log)
                         result_code = 1
                         break
