@@ -384,10 +384,14 @@ fn restore_snapshot_impl<R: Read, T: SnapshotTarget>(
                 if header.version == 1 {
                     let count = section_reader.read_u32_le()? as usize;
                     let mut cpus = Vec::with_capacity(count.min(64));
+                    let mut seen = HashSet::with_capacity(count.min(64));
                     for _ in 0..count {
                         let entry_len = section_reader.read_u64_le()?;
                         let mut entry_reader = (&mut section_reader).take(entry_len);
                         let cpu = VcpuSnapshot::decode_v1(&mut entry_reader, 64 * 1024 * 1024)?;
+                        if !seen.insert(cpu.apic_id) {
+                            return Err(SnapshotError::Corrupt("duplicate APIC ID in CPU list"));
+                        }
                         // Skip any forward-compatible additions to the vCPU entry.
                         std::io::copy(&mut entry_reader, &mut std::io::sink())?;
                         cpus.push(cpu);
@@ -397,10 +401,14 @@ fn restore_snapshot_impl<R: Read, T: SnapshotTarget>(
                 } else if header.version >= 2 {
                     let count = section_reader.read_u32_le()? as usize;
                     let mut cpus = Vec::with_capacity(count.min(64));
+                    let mut seen = HashSet::with_capacity(count.min(64));
                     for _ in 0..count {
                         let entry_len = section_reader.read_u64_le()?;
                         let mut entry_reader = (&mut section_reader).take(entry_len);
                         let cpu = VcpuSnapshot::decode_v2(&mut entry_reader, 64 * 1024 * 1024)?;
+                        if !seen.insert(cpu.apic_id) {
+                            return Err(SnapshotError::Corrupt("duplicate APIC ID in CPU list"));
+                        }
                         // Skip any forward-compatible additions to the vCPU entry.
                         std::io::copy(&mut entry_reader, &mut std::io::sink())?;
                         cpus.push(cpu);

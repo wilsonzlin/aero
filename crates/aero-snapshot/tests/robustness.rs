@@ -6,7 +6,7 @@ use aero_snapshot::{
     inspect_snapshot, restore_snapshot, save_snapshot, Compression, CpuState, DeviceId,
     DeviceState, DiskOverlayRef, DiskOverlayRefs, MmuState, RamMode, RamWriteOptions, Result,
     SaveOptions, SectionId, SnapshotError, SnapshotMeta, SnapshotSource, SnapshotTarget,
-    SNAPSHOT_ENDIANNESS_LITTLE, SNAPSHOT_MAGIC, SNAPSHOT_VERSION_V1,
+    VcpuSnapshot, SNAPSHOT_ENDIANNESS_LITTLE, SNAPSHOT_MAGIC, SNAPSHOT_VERSION_V1,
 };
 
 #[derive(Default)]
@@ -199,6 +199,63 @@ impl SnapshotSource for DuplicateDiskSource {
     }
 }
 
+struct DuplicateCpuSource {
+    ram: Vec<u8>,
+}
+
+impl SnapshotSource for DuplicateCpuSource {
+    fn snapshot_meta(&mut self) -> SnapshotMeta {
+        SnapshotMeta::default()
+    }
+
+    fn cpu_state(&self) -> CpuState {
+        CpuState::default()
+    }
+
+    fn cpu_states(&self) -> Vec<VcpuSnapshot> {
+        vec![
+            VcpuSnapshot {
+                apic_id: 1,
+                cpu: CpuState::default(),
+                internal_state: Vec::new(),
+            },
+            VcpuSnapshot {
+                apic_id: 1,
+                cpu: CpuState::default(),
+                internal_state: Vec::new(),
+            },
+        ]
+    }
+
+    fn mmu_state(&self) -> MmuState {
+        MmuState::default()
+    }
+
+    fn device_states(&self) -> Vec<DeviceState> {
+        Vec::new()
+    }
+
+    fn disk_overlays(&self) -> DiskOverlayRefs {
+        DiskOverlayRefs::default()
+    }
+
+    fn ram_len(&self) -> usize {
+        self.ram.len()
+    }
+
+    fn read_ram(&self, offset: u64, buf: &mut [u8]) -> Result<()> {
+        let offset: usize = offset
+            .try_into()
+            .map_err(|_| SnapshotError::Corrupt("ram offset overflow"))?;
+        buf.copy_from_slice(&self.ram[offset..offset + buf.len()]);
+        Ok(())
+    }
+
+    fn take_dirty_pages(&mut self) -> Option<Vec<u64>> {
+        None
+    }
+}
+
 fn push_section(dst: &mut Vec<u8>, id: SectionId, version: u16, flags: u16, payload: &[u8]) {
     dst.extend_from_slice(&id.0.to_le_bytes());
     dst.extend_from_slice(&version.to_le_bytes());
@@ -356,6 +413,66 @@ fn restore_snapshot_rejects_duplicate_disk_entries() {
     assert!(matches!(
         err,
         SnapshotError::Corrupt("duplicate disk entry")
+    ));
+}
+
+#[test]
+fn save_snapshot_rejects_duplicate_apic_ids_in_cpu_list() {
+    let options = SaveOptions {
+        ram: RamWriteOptions {
+            compression: Compression::None,
+            chunk_size: 1024,
+            ..RamWriteOptions::default()
+        },
+    };
+
+    let mut source = DuplicateCpuSource { ram: vec![0u8; 8] };
+    let mut cursor = Cursor::new(Vec::new());
+    let err = save_snapshot(&mut cursor, &mut source, options).unwrap_err();
+    assert!(matches!(
+        err,
+        SnapshotError::Corrupt("duplicate APIC ID in CPU list")
+    ));
+}
+
+#[test]
+fn restore_snapshot_rejects_duplicate_apic_ids_in_cpus_section() {
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(SNAPSHOT_MAGIC);
+    bytes.extend_from_slice(&SNAPSHOT_VERSION_V1.to_le_bytes());
+    bytes.push(SNAPSHOT_ENDIANNESS_LITTLE);
+    bytes.push(0);
+    bytes.extend_from_slice(&0u32.to_le_bytes());
+
+    let mut cpus_payload = Vec::new();
+    cpus_payload.extend_from_slice(&2u32.to_le_bytes());
+    for _ in 0..2 {
+        let vcpu = VcpuSnapshot {
+            apic_id: 1,
+            cpu: CpuState::default(),
+            internal_state: Vec::new(),
+        };
+        let mut entry = Vec::new();
+        vcpu.encode_v2(&mut entry).unwrap();
+        cpus_payload.extend_from_slice(&(entry.len() as u64).to_le_bytes());
+        cpus_payload.extend_from_slice(&entry);
+    }
+    push_section(&mut bytes, SectionId::CPUS, 2, 0, &cpus_payload);
+
+    let mut ram_payload = Vec::new();
+    ram_payload.extend_from_slice(&0u64.to_le_bytes()); // total_len
+    ram_payload.extend_from_slice(&4096u32.to_le_bytes()); // page_size
+    ram_payload.push(RamMode::Full as u8);
+    ram_payload.push(Compression::None as u8);
+    ram_payload.extend_from_slice(&0u16.to_le_bytes()); // reserved
+    ram_payload.extend_from_slice(&4096u32.to_le_bytes()); // chunk_size
+    push_section(&mut bytes, SectionId::RAM, 1, 0, &ram_payload);
+
+    let mut target = DummyTarget::new(0);
+    let err = restore_snapshot(&mut Cursor::new(bytes), &mut target).unwrap_err();
+    assert!(matches!(
+        err,
+        SnapshotError::Corrupt("duplicate APIC ID in CPU list")
     ));
 }
 
