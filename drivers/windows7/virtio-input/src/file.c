@@ -27,18 +27,51 @@ static BOOLEAN VirtioInputAsciiEqualsInsensitive(_In_reads_bytes_(Len) const CHA
     return B[Len] == '\0';
 }
 
-static ULONG VirtioInputGetCollectionNumberFromCreateRequest(_In_ WDFREQUEST Request)
+static NTSTATUS VirtioInputMapUserAddress(
+    _In_ PVOID UserAddress,
+    _In_ SIZE_T Length,
+    _In_ LOCK_OPERATION Operation,
+    _Outptr_ PMDL *MdlOut,
+    _Outptr_result_bytebuffer_(Length) PVOID *SystemAddressOut
+)
 {
-    /*
-     * IRP_MJ_CREATE can originate from user mode. The EA buffer pointer in the
-     * create parameters may then reference user memory. This driver only needs
-     * collection EAs for HIDCLASS/kernel opens, so ignore user-mode EAs to avoid
-     * dereferencing untrusted pointers.
-     */
-    if (WdfRequestGetRequestorMode(Request) == UserMode) {
-        return 0;
+    PMDL mdl;
+    PVOID systemAddress;
+
+    if (UserAddress == NULL || Length == 0) {
+        return STATUS_INVALID_PARAMETER;
     }
 
+    if (Length > (SIZE_T)MAXULONG) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    mdl = IoAllocateMdl(UserAddress, (ULONG)Length, FALSE, FALSE, NULL);
+    if (mdl == NULL) {
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+
+    __try {
+        MmProbeAndLockPages(mdl, UserMode, Operation);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        IoFreeMdl(mdl);
+        return (NTSTATUS)GetExceptionCode();
+    }
+
+    systemAddress = MmGetSystemAddressForMdlSafe(mdl, NormalPagePriority);
+    if (systemAddress == NULL) {
+        MmUnlockPages(mdl);
+        IoFreeMdl(mdl);
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+
+    *MdlOut = mdl;
+    *SystemAddressOut = systemAddress;
+    return STATUS_SUCCESS;
+}
+
+static ULONG VirtioInputGetCollectionNumberFromCreateRequest(_In_ WDFREQUEST Request)
+{
     PIRP irp = WdfRequestWdmGetIrp(Request);
     if (irp == NULL) {
         return 0;
@@ -56,22 +89,44 @@ static ULONG VirtioInputGetCollectionNumberFromCreateRequest(_In_ WDFREQUEST Req
         return 0;
     }
 
-    PUCHAR cursor = eaBuffer;
-    PUCHAR end = eaBuffer + eaLength;
+    // We only expect a small EA list (HidCollection), so bound how much we inspect.
+    SIZE_T parseLen = eaLength;
+    if (parseLen > 4096u) {
+        parseLen = 4096u;
+    }
+
+    PUCHAR cursor;
+    PUCHAR end;
+
+    PMDL eaMdl = NULL;
+    PUCHAR eaSystem = eaBuffer;
+    ULONG collection = 0;
+
+    if (WdfRequestGetRequestorMode(Request) == UserMode) {
+        NTSTATUS status = VirtioInputMapUserAddress(eaBuffer, parseLen, IoReadAccess, &eaMdl, (PVOID *)&eaSystem);
+        if (!NT_SUCCESS(status)) {
+            return 0;
+        }
+    }
+
+    cursor = eaSystem;
+    end = eaSystem + parseLen;
 
     while (cursor + FIELD_OFFSET(FILE_FULL_EA_INFORMATION, EaName) <= end) {
         PFILE_FULL_EA_INFORMATION entry = (PFILE_FULL_EA_INFORMATION)cursor;
 
+        SIZE_T remaining = (SIZE_T)(end - cursor);
         ULONG entrySize = entry->NextEntryOffset;
         if (entrySize == 0) {
-            entrySize = (ULONG)(end - cursor);
+            entrySize = (ULONG)remaining;
         }
 
-        if (entrySize < FIELD_OFFSET(FILE_FULL_EA_INFORMATION, EaName) || cursor + entrySize > end) {
+        if (entrySize < FIELD_OFFSET(FILE_FULL_EA_INFORMATION, EaName) || entrySize > remaining) {
             break;
         }
 
-        ULONG required = FIELD_OFFSET(FILE_FULL_EA_INFORMATION, EaName) + entry->EaNameLength + 1 + entry->EaValueLength;
+        SIZE_T required =
+            FIELD_OFFSET(FILE_FULL_EA_INFORMATION, EaName) + (SIZE_T)entry->EaNameLength + 1 + (SIZE_T)entry->EaValueLength;
         if (required > entrySize) {
             break;
         }
@@ -85,16 +140,20 @@ static ULONG VirtioInputGetCollectionNumberFromCreateRequest(_In_ WDFREQUEST Req
             VirtioInputAsciiEqualsInsensitive(eaName, entry->EaNameLength, "HID_COLLECTION_NUMBER")) {
 
             if (entry->EaValueLength >= sizeof(ULONG)) {
-                return *(UNALIGNED const ULONG *)eaValue;
+                collection = *(UNALIGNED const ULONG *)eaValue;
+                break;
             }
             if (entry->EaValueLength >= sizeof(USHORT)) {
-                return *(UNALIGNED const USHORT *)eaValue;
+                collection = *(UNALIGNED const USHORT *)eaValue;
+                break;
             }
             if (entry->EaValueLength >= sizeof(UCHAR)) {
-                return *(UNALIGNED const UCHAR *)eaValue;
+                collection = *(UNALIGNED const UCHAR *)eaValue;
+                break;
             }
 
-            return 0;
+            collection = 0;
+            break;
         }
 
         if (entry->NextEntryOffset == 0) {
@@ -104,7 +163,12 @@ static ULONG VirtioInputGetCollectionNumberFromCreateRequest(_In_ WDFREQUEST Req
         cursor += entry->NextEntryOffset;
     }
 
-    return 0;
+    if (eaMdl != NULL) {
+        MmUnlockPages(eaMdl);
+        IoFreeMdl(eaMdl);
+    }
+
+    return collection;
 }
 
 static VOID VirtioInputEvtDeviceFileCreate(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request, _In_ WDFFILEOBJECT FileObject)
@@ -114,9 +178,7 @@ static VOID VirtioInputEvtDeviceFileCreate(_In_ WDFDEVICE Device, _In_ WDFREQUES
 
     PIRP irp = WdfRequestWdmGetIrp(Request);
     PIO_STACK_LOCATION irpSp = (irp == NULL) ? NULL : IoGetCurrentIrpStackLocation(irp);
-    fileCtx->HasCollectionEa =
-        (WdfRequestGetRequestorMode(Request) == KernelMode && irpSp != NULL && irpSp->Parameters.Create.EaBuffer != NULL &&
-         irpSp->Parameters.Create.EaLength != 0);
+    fileCtx->HasCollectionEa = (irpSp != NULL && irpSp->Parameters.Create.EaBuffer != NULL && irpSp->Parameters.Create.EaLength != 0);
 
     fileCtx->CollectionNumber = VirtioInputGetCollectionNumberFromCreateRequest(Request);
 
