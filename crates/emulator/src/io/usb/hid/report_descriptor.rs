@@ -2152,6 +2152,26 @@ mod tests {
     }
 
     #[test]
+    fn synth_rejects_output_report_larger_than_full_speed_interrupt_packet() {
+        let collections = vec![HidCollectionInfo {
+            usage_page: 0,
+            usage: 0,
+            collection_type: 0,
+            input_reports: vec![],
+            output_reports: vec![HidReportInfo {
+                report_id: 0,
+                items: vec![simple_item(8, 65)],
+            }],
+            feature_reports: vec![],
+            children: vec![],
+        }];
+
+        let err = synthesize_report_descriptor(&collections).unwrap_err();
+        assert_eq!(err.path, "collections[0].outputReports[0].items[0]");
+        assert!(err.message.contains("interrupt"));
+    }
+
+    #[test]
     fn synth_rejects_report_id_prefix_overflowing_interrupt_packet() {
         let collections = vec![HidCollectionInfo {
             usage_page: 0,
@@ -2996,7 +3016,9 @@ mod proptests {
             is_volatile,
             any::<bool>(), // is_range
             1u32..=32u32,  // report_size
-            0u32..=32u32,  // report_count
+            // Keep reports small enough to fit in a full-speed interrupt packet once all
+            // collections are aggregated. (The validator enforces 64 bytes for input/output.)
+            0u32..=2u32, // report_count
             ordered_i16_pair(),
             ordered_i16_pair(),
             -8i32..=7i32,   // unit_exponent (4-bit signed)
@@ -3078,7 +3100,7 @@ mod proptests {
                 .prop_flat_map(move |ids| {
                     let ids: Vec<u32> = ids.into_iter().collect();
                     prop::collection::vec(
-                        prop::collection::vec(item_strategy(kind), 0..=8),
+                        prop::collection::vec(item_strategy(kind), 0..=2),
                         ids.len(),
                     )
                     .prop_map(move |items| {
@@ -3095,7 +3117,7 @@ mod proptests {
             // report_id=0 report.
             prop_oneof![
                 Just(Vec::new()),
-                prop::collection::vec(item_strategy(kind), 0..=8).prop_map(|items| vec![
+                prop::collection::vec(item_strategy(kind), 0..=2).prop_map(|items| vec![
                     HidReportInfo {
                         report_id: 0,
                         items,
@@ -3111,7 +3133,10 @@ mod proptests {
         use_report_ids: bool,
     ) -> BoxedStrategy<HidCollectionInfo> {
         let child_strategy = if max_depth > 1 {
-            prop::collection::vec(collection_strategy(max_depth - 1, use_report_ids), 0..=3).boxed()
+            // Keep the generated report descriptors small enough that the no-report-ID case (all
+            // fields aggregate into report_id=0) stays within the 64-byte full-speed interrupt
+            // packet limit enforced by `validate_collections()`.
+            prop::collection::vec(collection_strategy(max_depth - 1, use_report_ids), 0..=1).boxed()
         } else {
             Just(Vec::new()).boxed()
         };
