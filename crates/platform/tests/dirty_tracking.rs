@@ -1,6 +1,8 @@
 use aero_platform::address_filter::AddressFilter;
 use aero_platform::memory::MemoryBus;
 use aero_platform::ChipsetState;
+use aero_pc_constants::PCIE_ECAM_BASE;
+use memory::SparseMemory;
 use std::sync::{Arc, Mutex};
 
 #[derive(Default)]
@@ -107,4 +109,33 @@ fn clear_dirty_discards_accumulated_pages() {
     bus.clear_dirty();
 
     assert_eq!(bus.take_dirty_pages().unwrap(), Vec::<u64>::new());
+}
+
+#[test]
+fn dirty_tracking_high_ram_remap_marks_backing_pages() {
+    // When RAM exceeds the ECAM base, the platform remaps the portion above `PCIE_ECAM_BASE` to
+    // start at 4GiB. Dirty tracking must operate on the backing RAM offsets (0..ram_bytes) rather
+    // than the remapped guest physical addresses, otherwise high-RAM writes would not be tracked.
+    const PAGE_SIZE: u32 = 4096;
+    const FOUR_GIB: u64 = 0x1_0000_0000;
+
+    let chipset = ChipsetState::new(true);
+    let filter = AddressFilter::new(chipset.a20());
+
+    // Use a sparse backing store to avoid allocating multi-GB RAM in the test.
+    let ram_bytes = PCIE_ECAM_BASE + 0x2000;
+    let ram = SparseMemory::new(ram_bytes).unwrap();
+    let mut bus = MemoryBus::with_ram_dirty_tracking(filter, Box::new(ram), PAGE_SIZE);
+
+    // Writing into the PCI hole should be ignored and should not mark any pages dirty.
+    bus.write_physical(PCIE_ECAM_BASE + 0x1000, &[0xAA]);
+    assert!(bus.take_dirty_pages().unwrap().is_empty());
+
+    // Writing into high RAM at 4GiB should mark the page corresponding to the backing offset
+    // `PCIE_ECAM_BASE`.
+    bus.write_physical(FOUR_GIB, &[0xBB]);
+    assert_eq!(bus.read_u8(FOUR_GIB), 0xBB);
+
+    let dirty = bus.take_dirty_pages().unwrap();
+    assert_eq!(dirty, vec![PCIE_ECAM_BASE / u64::from(PAGE_SIZE)]);
 }
