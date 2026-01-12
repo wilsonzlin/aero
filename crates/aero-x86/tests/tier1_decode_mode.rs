@@ -135,3 +135,30 @@ fn decode_one_mode_32bit_opsize_override_dec_cx() {
         }
     );
 }
+
+#[test]
+fn decode_one_mode_16bit_modrm_bx_si_disp8() {
+    // mov ax, [bx+si+0x10]
+    //
+    // 16-bit addressing uses the ModRM rm encoding table (no SIB).
+    let inst = decode_one_mode(0x1000, &[0x8b, 0x40, 0x10], 16);
+    assert_eq!(inst.len, 3);
+    assert_eq!(
+        inst.kind,
+        InstKind::Mov {
+            dst: Operand::Reg(Reg {
+                gpr: Gpr::Rax,
+                width: Width::W16,
+                high8: false,
+            }),
+            src: Operand::Mem(aero_x86::tier1::Address {
+                base: Some(Gpr::Rbx),
+                index: Some(Gpr::Rsi),
+                scale: 1,
+                disp: 0x10,
+                rip_relative: false,
+            }),
+            width: Width::W16,
+        }
+    );
+}

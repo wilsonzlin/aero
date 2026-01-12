@@ -524,55 +524,115 @@ pub mod tier1 {
         let mut disp: i32 = 0;
         let mut rip_relative = false;
 
-        let rm_low3 = modrm.rm & 0x7;
-        if rm_low3 == 4 {
-            let sib_byte = read_u8(bytes, *offset)?;
-            *offset += 1;
-            let (scale_bits, index_code, base_code) = parse_sib(sib_byte, rex);
-            scale = 1u8 << scale_bits;
-            if (index_code & 0x7) != 4 {
-                index = Some(decode_gpr(index_code)?);
+        // Address decoding depends on the address-size, which for this Tier1 decoder matches
+        // `bitness` (address-size override `0x67` is currently ignored).
+        if bitness == 16 {
+            // 16-bit ModRM addressing (no SIB byte). Encoding table:
+            //   rm=0: [bx+si]   rm=4: [si]
+            //   rm=1: [bx+di]   rm=5: [di]
+            //   rm=2: [bp+si]   rm=6: [disp16] if mod=0 else [bp]
+            //   rm=3: [bp+di]   rm=7: [bx]
+            let rm = modrm.rm & 0x7;
+            match rm {
+                0 => {
+                    base = Some(Gpr::Rbx);
+                    index = Some(Gpr::Rsi);
+                }
+                1 => {
+                    base = Some(Gpr::Rbx);
+                    index = Some(Gpr::Rdi);
+                }
+                2 => {
+                    base = Some(Gpr::Rbp);
+                    index = Some(Gpr::Rsi);
+                }
+                3 => {
+                    base = Some(Gpr::Rbp);
+                    index = Some(Gpr::Rdi);
+                }
+                4 => base = Some(Gpr::Rsi),
+                5 => base = Some(Gpr::Rdi),
+                6 => {
+                    if modrm.mod_bits == 0 {
+                        base = None;
+                        index = None;
+                        let disp16 = read_le(bytes, *offset, 2)? as u16;
+                        *offset += 2;
+                        // In `mod=0 rm=6`, the displacement is an absolute 16-bit address, not a
+                        // signed offset.
+                        disp = disp16 as i32;
+                    } else {
+                        base = Some(Gpr::Rbp);
+                    }
+                }
+                7 => base = Some(Gpr::Rbx),
+                _ => unreachable!(),
             }
-            if (base_code & 0x7) == 5 && modrm.mod_bits == 0 {
-                base = None;
-            } else {
-                base = Some(decode_gpr(base_code)?);
+
+            match modrm.mod_bits {
+                0 => {}
+                1 => {
+                    let d8 = read_u8(bytes, *offset)? as i8;
+                    *offset += 1;
+                    disp = disp.wrapping_add(d8 as i32);
+                }
+                2 => {
+                    let d16 = read_le(bytes, *offset, 2)? as u16;
+                    *offset += 2;
+                    disp = disp.wrapping_add(d16 as i16 as i32);
+                }
+                _ => unreachable!(),
             }
-            if (base_code & 0x7) == 5 && modrm.mod_bits == 0 && base.is_none() {
-                // No base, disp32 follows.
+        } else {
+            let rm_low3 = modrm.rm & 0x7;
+            if rm_low3 == 4 {
+                let sib_byte = read_u8(bytes, *offset)?;
+                *offset += 1;
+                let (scale_bits, index_code, base_code) = parse_sib(sib_byte, rex);
+                scale = 1u8 << scale_bits;
+                if (index_code & 0x7) != 4 {
+                    index = Some(decode_gpr(index_code)?);
+                }
+                if (base_code & 0x7) == 5 && modrm.mod_bits == 0 {
+                    base = None;
+                } else {
+                    base = Some(decode_gpr(base_code)?);
+                }
+                if (base_code & 0x7) == 5 && modrm.mod_bits == 0 && base.is_none() {
+                    // No base, disp32 follows.
+                    let disp32 = read_le(bytes, *offset, 4)? as u32;
+                    *offset += 4;
+                    disp = disp32 as i32;
+                }
+            } else if rm_low3 == 5 && modrm.mod_bits == 0 {
+                if bitness == 64 {
+                    // RIP-relative (64-bit mode).
+                    rip_relative = true;
+                } else {
+                    // Absolute disp32 addressing (32-bit mode).
+                    base = None;
+                }
                 let disp32 = read_le(bytes, *offset, 4)? as u32;
                 *offset += 4;
                 disp = disp32 as i32;
-            }
-        } else if rm_low3 == 5 && modrm.mod_bits == 0 {
-            if bitness == 64 {
-                // RIP-relative (64-bit mode).
-                rip_relative = true;
             } else {
-                // Absolute disp32 addressing (32-bit mode). 16-bit mode uses a different
-                // addressing scheme which is not supported by this Tier1 decoder.
-                base = None;
+                base = Some(decode_gpr(modrm.rm)?);
             }
-            let disp32 = read_le(bytes, *offset, 4)? as u32;
-            *offset += 4;
-            disp = disp32 as i32;
-        } else {
-            base = Some(decode_gpr(modrm.rm)?);
-        }
 
-        match modrm.mod_bits {
-            0 => {}
-            1 => {
-                let d8 = read_u8(bytes, *offset)? as i8;
-                *offset += 1;
-                disp = disp.wrapping_add(d8 as i32);
+            match modrm.mod_bits {
+                0 => {}
+                1 => {
+                    let d8 = read_u8(bytes, *offset)? as i8;
+                    *offset += 1;
+                    disp = disp.wrapping_add(d8 as i32);
+                }
+                2 => {
+                    let d32 = read_le(bytes, *offset, 4)? as u32;
+                    *offset += 4;
+                    disp = disp.wrapping_add(d32 as i32);
+                }
+                _ => unreachable!(),
             }
-            2 => {
-                let d32 = read_le(bytes, *offset, 4)? as u32;
-                *offset += 4;
-                disp = disp.wrapping_add(d32 as i32);
-            }
-            _ => unreachable!(),
         }
 
         Ok((
