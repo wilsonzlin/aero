@@ -266,6 +266,68 @@ static int RunD3D9ExGettersSanity(int argc, char** argv) {
   if (FAILED(hr)) {
     return reporter.FailHresult("CreateTexture", hr);
   }
+
+  // --- Resource priority ---
+  // Validate SetPriority returns the previous value and GetPriority returns the
+  // latest value. Do not assume a particular default priority, since runtimes
+  // can differ.
+  {
+    const DWORD old0 = tex->SetPriority(7);
+    const DWORD old1 = tex->SetPriority(9);
+    const DWORD got_prio = tex->GetPriority();
+    if (old1 != 7) {
+      return reporter.Fail("SetPriority mismatch: old1=%lu expected 7 (old0=%lu)",
+                           (unsigned long)old1,
+                           (unsigned long)old0);
+    }
+    if (got_prio != 9) {
+      return reporter.Fail("GetPriority mismatch: got=%lu expected 9",
+                           (unsigned long)got_prio);
+    }
+  }
+
+  // --- AutoGenFilterType ---
+  //
+  // Some runtimes validate that SetAutoGenFilterType is only used with textures
+  // created with D3DUSAGE_AUTOGENMIPMAP. If the call is rejected, try again with
+  // an AUTOGENMIPMAP texture. If that still fails, treat as a supported skip.
+  {
+    HRESULT set_hr = tex->SetAutoGenFilterType(D3DTEXF_POINT);
+    IDirect3DBaseTexture9* filter_tex = tex.get();
+    ComPtr<IDirect3DTexture9> autogen_tex;
+    if (set_hr == D3DERR_INVALIDCALL) {
+      hr = dev->CreateTexture(16,
+                              16,
+                              0, // full chain (autogen)
+                              D3DUSAGE_AUTOGENMIPMAP,
+                              D3DFMT_A8R8G8B8,
+                              D3DPOOL_DEFAULT,
+                              autogen_tex.put(),
+                              NULL);
+      if (SUCCEEDED(hr) && autogen_tex) {
+        filter_tex = autogen_tex.get();
+        set_hr = filter_tex->SetAutoGenFilterType(D3DTEXF_POINT);
+      }
+    }
+
+    if (FAILED(set_hr)) {
+      aerogpu_test::PrintfStdout("INFO: %s: skipping Set/GetAutoGenFilterType (hr=0x%08lX)",
+                                 kTestName,
+                                 (unsigned long)set_hr);
+    } else {
+      D3DTEXTUREFILTERTYPE got_filter = (D3DTEXTUREFILTERTYPE)0;
+      hr = filter_tex->GetAutoGenFilterType(&got_filter);
+      if (FAILED(hr)) {
+        return reporter.FailHresult("GetAutoGenFilterType", hr);
+      }
+      if (got_filter != D3DTEXF_POINT) {
+        return reporter.Fail("GetAutoGenFilterType mismatch: got=%lu expected %lu",
+                             (unsigned long)got_filter,
+                             (unsigned long)D3DTEXF_POINT);
+      }
+    }
+  }
+
   hr = dev->SetTexture(0, tex.get());
   if (FAILED(hr)) {
     return reporter.FailHresult("SetTexture(0)", hr);
