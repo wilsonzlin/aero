@@ -588,6 +588,13 @@ impl VirtioPciDevice {
     /// RX) is still invoked once per queue per call; integrations that need strict end-to-end
     /// budgeting should also bound their backend polling (e.g. cap `poll_receive()` calls).
     pub fn poll_bounded(&mut self, mem: &mut dyn GuestMemory, max_chains_per_queue: usize) {
+        // Gate virtqueue DMA on PCI command Bus Master Enable (bit 2).
+        //
+        // This prevents the device from touching guest memory (virtqueue structures + buffers)
+        // before the guest explicitly enables PCI bus mastering during enumeration.
+        if !self.bus_master_enabled() {
+            return;
+        }
         let queue_count = self.queues.len();
         for queue_index in 0..queue_count {
             if let Some(q) = self.queues.get_mut(queue_index) {
@@ -657,6 +664,10 @@ impl VirtioPciDevice {
         mem: &mut dyn GuestMemory,
         max_chains_per_queue: usize,
     ) {
+        // Gate virtqueue DMA on PCI command Bus Master Enable (bit 2).
+        if !self.bus_master_enabled() {
+            return;
+        }
         let queue_count = self.queues.len();
         for queue_index in 0..queue_count {
             let pending = self.queues.get(queue_index).is_some_and(|q| {
