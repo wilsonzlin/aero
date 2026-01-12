@@ -1,5 +1,4 @@
 use std::io;
-use std::sync::Mutex;
 
 use aero_storage_adapters::AeroVirtualDiskAsDeviceBackend;
 
@@ -34,32 +33,6 @@ impl DiskBackend for AeroVirtualDiskAsDeviceBackend {
     }
 }
 
-impl<D> DiskBackend for Mutex<D>
-where
-    D: aero_storage::VirtualDisk + Send,
-{
-    fn len(&self) -> u64 {
-        self.lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .capacity_bytes()
-    }
-
-    fn read_at(&self, offset: u64, buf: &mut [u8]) -> io::Result<()> {
-        let mut inner = self.lock().unwrap_or_else(|e| e.into_inner());
-        inner.read_at(offset, buf).map_err(io::Error::other)
-    }
-
-    fn write_at(&mut self, offset: u64, buf: &[u8]) -> io::Result<()> {
-        let mut inner = self.lock().unwrap_or_else(|e| e.into_inner());
-        inner.write_at(offset, buf).map_err(io::Error::other)
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        let mut inner = self.lock().unwrap_or_else(|e| e.into_inner());
-        inner.flush().map_err(io::Error::other)
-    }
-}
-
 pub struct VirtualDrive {
     sector_size: u32,
     backend: Box<dyn DiskBackend>,
@@ -77,7 +50,10 @@ impl VirtualDrive {
     where
         D: aero_storage::VirtualDisk + Send + 'static,
     {
-        Self::new(512, Box::new(Mutex::new(disk)))
+        Self::new(
+            512,
+            Box::new(AeroVirtualDiskAsDeviceBackend::new(Box::new(disk))),
+        )
     }
 
     pub fn sector_size(&self) -> u32 {

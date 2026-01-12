@@ -210,7 +210,6 @@ mod tests {
     use crate::io::virtio::core::{DenseMemory, GuestMemory, VirtQueue, VIRTQ_DESC_F_NEXT};
     use crate::storage::DiskBackend;
     use aero_storage::{MemBackend, RawDisk, VirtualDisk, SECTOR_SIZE};
-    use aero_storage_adapters::AeroVirtualDiskAsDeviceBackend;
     use std::io;
     use std::sync::{Arc, Mutex};
 
@@ -512,39 +511,66 @@ mod tests {
 
     #[test]
     fn aero_storage_adapter_supports_virtio_blk_read_write() {
-        let disk = RawDisk::create(MemBackend::new(), 4096).unwrap();
-        let drive = VirtualDrive::new_from_aero_storage(disk);
-        let vq = VirtQueue::new(8, DESC_ADDR, AVAIL_ADDR, USED_ADDR);
+        let disk = SharedAeroDisk::new(8 * SECTOR_SIZE as u64);
+        let drive = VirtualDrive::new_from_aero_storage(disk.clone());
+        let vq = VirtQueue::new(16, DESC_ADDR, AVAIL_ADDR, USED_ADDR);
         let mut dev = VirtioBlkDevice::new(drive, vq);
 
         let mut mem = DenseMemory::new(0x10000).unwrap();
 
         let write_header_addr = 0x4000;
         let write_data1_addr = 0x5000;
-        let write_data2_addr = 0x5010;
+        let write_data2_addr = 0x5200;
         let write_status_addr = 0x6000;
 
         let read_header_addr = 0x4100;
         let read_data1_addr = 0x7000;
-        let read_data2_addr = 0x7010;
+        let read_data2_addr = 0x7200;
         let read_status_addr = 0x8000;
 
-        // First, write to the disk.
+        let flush_header_addr = 0x4200;
+        let flush_status_addr = 0x9000;
+
+        let payload: Vec<u8> = (0..(2 * SECTOR_SIZE)).map(|i| (i & 0xff) as u8).collect();
+
+        // 1) WRITE two sectors at LBA 0 via two data descriptors.
         mem.write_u32_le(write_header_addr, VIRTIO_BLK_T_OUT).unwrap();
         mem.write_u32_le(write_header_addr + 4, 0).unwrap();
         mem.write_u64_le(write_header_addr + 8, 0).unwrap(); // sector 0
-        mem.write_from(write_data1_addr, b"abc").unwrap();
-        mem.write_from(write_data2_addr, b"defgh").unwrap();
+        mem.write_from(write_data1_addr, &payload[..SECTOR_SIZE])
+            .unwrap();
+        mem.write_from(write_data2_addr, &payload[SECTOR_SIZE..])
+            .unwrap();
 
-        // Then, read the same bytes back.
+        // 2) READ the same two sectors back.
         mem.write_u32_le(read_header_addr, VIRTIO_BLK_T_IN).unwrap();
         mem.write_u32_le(read_header_addr + 4, 0).unwrap();
         mem.write_u64_le(read_header_addr + 8, 0).unwrap(); // sector 0
 
+        // 3) FLUSH.
+        mem.write_u32_le(flush_header_addr, VIRTIO_BLK_T_FLUSH)
+            .unwrap();
+        mem.write_u32_le(flush_header_addr + 4, 0).unwrap();
+        mem.write_u64_le(flush_header_addr + 8, 0).unwrap();
+
         // WRITE chain.
         write_desc(&mut mem, 0, write_header_addr, 16, VIRTQ_DESC_F_NEXT, 1);
-        write_desc(&mut mem, 1, write_data1_addr, 3, VIRTQ_DESC_F_NEXT, 2);
-        write_desc(&mut mem, 2, write_data2_addr, 5, VIRTQ_DESC_F_NEXT, 3);
+        write_desc(
+            &mut mem,
+            1,
+            write_data1_addr,
+            SECTOR_SIZE as u32,
+            VIRTQ_DESC_F_NEXT,
+            2,
+        );
+        write_desc(
+            &mut mem,
+            2,
+            write_data2_addr,
+            SECTOR_SIZE as u32,
+            VIRTQ_DESC_F_NEXT,
+            3,
+        );
         write_desc(&mut mem, 3, write_status_addr, 1, VIRTQ_DESC_F_WRITE, 0);
 
         // READ chain.
@@ -553,7 +579,7 @@ mod tests {
             &mut mem,
             5,
             read_data1_addr,
-            3,
+            SECTOR_SIZE as u32,
             VIRTQ_DESC_F_NEXT | VIRTQ_DESC_F_WRITE,
             6,
         );
@@ -561,37 +587,41 @@ mod tests {
             &mut mem,
             6,
             read_data2_addr,
-            5,
+            SECTOR_SIZE as u32,
             VIRTQ_DESC_F_NEXT | VIRTQ_DESC_F_WRITE,
             7,
         );
         write_desc(&mut mem, 7, read_status_addr, 1, VIRTQ_DESC_F_WRITE, 0);
 
-        // Two requests in the available ring: WRITE first, then READ.
+        // FLUSH chain.
+        write_desc(&mut mem, 8, flush_header_addr, 16, VIRTQ_DESC_F_NEXT, 9);
+        write_desc(&mut mem, 9, flush_status_addr, 1, VIRTQ_DESC_F_WRITE, 0);
+
+        // Three requests in the available ring: WRITE, READ, FLUSH.
         mem.write_u16_le(AVAIL_ADDR, 0).unwrap(); // flags
-        mem.write_u16_le(AVAIL_ADDR + 2, 2).unwrap(); // idx
+        mem.write_u16_le(AVAIL_ADDR + 2, 3).unwrap(); // idx
         mem.write_u16_le(AVAIL_ADDR + 4, 0).unwrap(); // ring[0]
         mem.write_u16_le(AVAIL_ADDR + 6, 4).unwrap(); // ring[1]
+        mem.write_u16_le(AVAIL_ADDR + 8, 8).unwrap(); // ring[2]
 
         let mut irq = TestIrq::default();
-        assert_eq!(dev.process_queue(&mut mem, &mut irq).unwrap(), 2);
+        assert_eq!(dev.process_queue(&mut mem, &mut irq).unwrap(), 3);
 
-        let out = [
-            mem.read_u8_le(read_data1_addr).unwrap(),
-            mem.read_u8_le(read_data1_addr + 1).unwrap(),
-            mem.read_u8_le(read_data1_addr + 2).unwrap(),
-            mem.read_u8_le(read_data2_addr).unwrap(),
-            mem.read_u8_le(read_data2_addr + 1).unwrap(),
-            mem.read_u8_le(read_data2_addr + 2).unwrap(),
-            mem.read_u8_le(read_data2_addr + 3).unwrap(),
-            mem.read_u8_le(read_data2_addr + 4).unwrap(),
-        ];
-        assert_eq!(&out, b"abcdefgh");
+        let mut out = vec![0u8; payload.len()];
+        mem.read_into(read_data1_addr, &mut out[..SECTOR_SIZE])
+            .unwrap();
+        mem.read_into(read_data2_addr, &mut out[SECTOR_SIZE..])
+            .unwrap();
+        assert_eq!(out, payload);
+        assert_eq!(disk.bytes(0, payload.len()), payload);
         assert_eq!(mem.read_u8_le(write_status_addr).unwrap(), VIRTIO_BLK_S_OK);
         assert_eq!(mem.read_u8_le(read_status_addr).unwrap(), VIRTIO_BLK_S_OK);
-        assert_eq!(mem.read_u16_le(USED_ADDR + 2).unwrap(), 2);
+        assert_eq!(mem.read_u8_le(flush_status_addr).unwrap(), VIRTIO_BLK_S_OK);
+        assert_eq!(disk.flush_count(), 1);
+        assert_eq!(mem.read_u16_le(USED_ADDR + 2).unwrap(), 3);
         assert_eq!(read_used_elem(&mem, 0), (0, 1));
-        assert_eq!(read_used_elem(&mem, 1), (4, 9)); // 8 bytes + status
+        assert_eq!(read_used_elem(&mem, 1), (4, (payload.len() as u32) + 1));
+        assert_eq!(read_used_elem(&mem, 2), (8, 1));
         assert_eq!(irq.count, 1);
     }
 
@@ -629,122 +659,7 @@ mod tests {
         assert_eq!(irq.count, 1);
     }
 
-    #[test]
-    fn rw_roundtrip_works_with_aero_storage_disk_via_adapter() {
-        let disk = SharedAeroDisk::new(8 * SECTOR_SIZE as u64);
-        let payload: Vec<u8> = (0..SECTOR_SIZE as u32).map(|v| (v & 0xff) as u8).collect();
-
-        // 1) Write a full sector via virtio-blk OUT.
-        {
-            let drive = VirtualDrive::new(
-                512,
-                Box::new(AeroVirtualDiskAsDeviceBackend::new(Box::new(disk.clone()))),
-            );
-            let vq = VirtQueue::new(8, DESC_ADDR, AVAIL_ADDR, USED_ADDR);
-            let mut dev = VirtioBlkDevice::new(drive, vq);
-
-            let mut mem = DenseMemory::new(0x10000).unwrap();
-            let header_addr = 0x4000;
-            let data_addr = 0x5000;
-            let status_addr = 0x6000;
-
-            mem.write_u32_le(header_addr, VIRTIO_BLK_T_OUT).unwrap();
-            mem.write_u32_le(header_addr + 4, 0).unwrap();
-            mem.write_u64_le(header_addr + 8, 0).unwrap(); // sector 0
-
-            mem.write_from(data_addr, &payload).unwrap();
-
-            write_desc(&mut mem, 0, header_addr, 16, VIRTQ_DESC_F_NEXT, 1);
-            write_desc(
-                &mut mem,
-                1,
-                data_addr,
-                payload.len() as u32,
-                VIRTQ_DESC_F_NEXT,
-                2,
-            );
-            write_desc(&mut mem, 2, status_addr, 1, VIRTQ_DESC_F_WRITE, 0);
-            write_avail(&mut mem, 1, 0);
-
-            let mut irq = TestIrq::default();
-            dev.process_queue(&mut mem, &mut irq).unwrap();
-
-            assert_eq!(mem.read_u8_le(status_addr).unwrap(), VIRTIO_BLK_S_OK);
-            assert_eq!(read_used_elem(&mem, 0), (0, 1));
-            assert_eq!(irq.count, 1);
-        }
-
-        assert_eq!(disk.bytes(0, payload.len()), payload);
-
-        // 2) Read it back via virtio-blk IN.
-        {
-            let drive = VirtualDrive::new(
-                512,
-                Box::new(AeroVirtualDiskAsDeviceBackend::new(Box::new(disk.clone()))),
-            );
-            let vq = VirtQueue::new(8, DESC_ADDR, AVAIL_ADDR, USED_ADDR);
-            let mut dev = VirtioBlkDevice::new(drive, vq);
-
-            let mut mem = DenseMemory::new(0x10000).unwrap();
-            let header_addr = 0x4000;
-            let data_addr = 0x5000;
-            let status_addr = 0x6000;
-
-            mem.write_u32_le(header_addr, VIRTIO_BLK_T_IN).unwrap();
-            mem.write_u32_le(header_addr + 4, 0).unwrap();
-            mem.write_u64_le(header_addr + 8, 0).unwrap(); // sector 0
-
-            write_desc(&mut mem, 0, header_addr, 16, VIRTQ_DESC_F_NEXT, 1);
-            write_desc(
-                &mut mem,
-                1,
-                data_addr,
-                payload.len() as u32,
-                VIRTQ_DESC_F_NEXT | VIRTQ_DESC_F_WRITE,
-                2,
-            );
-            write_desc(&mut mem, 2, status_addr, 1, VIRTQ_DESC_F_WRITE, 0);
-            write_avail(&mut mem, 1, 0);
-
-            let mut irq = TestIrq::default();
-            dev.process_queue(&mut mem, &mut irq).unwrap();
-
-            assert_eq!(mem.read_u8_le(status_addr).unwrap(), VIRTIO_BLK_S_OK);
-            assert_eq!(read_used_elem(&mem, 0), (0, payload.len() as u32 + 1));
-
-            let mut out = vec![0u8; payload.len()];
-            mem.read_into(data_addr, &mut out).unwrap();
-            assert_eq!(out, payload);
-            assert_eq!(irq.count, 1);
-        }
-
-        // 3) Flush uses the disk's `flush()` impl (adapter path uses a `VirtualDisk`).
-        {
-            let drive = VirtualDrive::new(
-                512,
-                Box::new(AeroVirtualDiskAsDeviceBackend::new(Box::new(disk.clone()))),
-            );
-            let vq = VirtQueue::new(8, DESC_ADDR, AVAIL_ADDR, USED_ADDR);
-            let mut dev = VirtioBlkDevice::new(drive, vq);
-
-            let mut mem = DenseMemory::new(0x10000).unwrap();
-            let header_addr = 0x4000;
-            let status_addr = 0x6000;
-
-            mem.write_u32_le(header_addr, VIRTIO_BLK_T_FLUSH).unwrap();
-            mem.write_u32_le(header_addr + 4, 0).unwrap();
-            mem.write_u64_le(header_addr + 8, 0).unwrap();
-
-            write_desc(&mut mem, 0, header_addr, 16, VIRTQ_DESC_F_NEXT, 1);
-            write_desc(&mut mem, 1, status_addr, 1, VIRTQ_DESC_F_WRITE, 0);
-            write_avail(&mut mem, 1, 0);
-
-            let mut irq = TestIrq::default();
-            dev.process_queue(&mut mem, &mut irq).unwrap();
-
-            assert_eq!(mem.read_u8_le(status_addr).unwrap(), VIRTIO_BLK_S_OK);
-        }
-
-        assert_eq!(disk.flush_count(), 1);
-    }
+    // `rw_roundtrip_works_with_aero_storage_disk_via_adapter` was replaced by
+    // `aero_storage_adapter_supports_virtio_blk_read_write`, which covers scatter-gather,
+    // read-back, and flush in a single virtqueue processing pass.
 }
