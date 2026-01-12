@@ -743,6 +743,81 @@ async fn reject_zero_max_retries() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn reject_excessive_max_retries() {
+    let image: Vec<u8> = (0..2048).map(|i| (i % 251) as u8).collect();
+    let (url, _state, shutdown) =
+        start_range_server_with_options(image, RangeServerOptions::new("etag-max-retries")).await;
+
+    let cache_dir = tempdir().unwrap();
+    let mut config = StreamingDiskConfig::new(url, cache_dir.path());
+    config.cache_backend = StreamingCacheBackend::Directory;
+    config.options.chunk_size = 1024;
+    config.options.read_ahead_chunks = 0;
+    config.options.max_retries = 33;
+
+    let err = StreamingDisk::open(config)
+        .await
+        .err()
+        .expect("expected error");
+    assert!(matches!(err, StreamingDiskError::Protocol(_)));
+
+    let _ = shutdown.send(());
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn reject_excessive_max_concurrent_fetches_count() {
+    let image: Vec<u8> = (0..2048).map(|i| (i % 251) as u8).collect();
+    let (url, _state, shutdown) =
+        start_range_server_with_options(image, RangeServerOptions::new("etag-max-concurrency"))
+            .await;
+
+    let cache_dir = tempdir().unwrap();
+    let mut config = StreamingDiskConfig::new(url, cache_dir.path());
+    config.cache_backend = StreamingCacheBackend::Directory;
+    config.options.chunk_size = 1024;
+    config.options.read_ahead_chunks = 0;
+    config.options.max_retries = 1;
+    config.options.max_concurrent_fetches = 129;
+
+    let err = StreamingDisk::open(config)
+        .await
+        .err()
+        .expect("expected error");
+    assert!(matches!(err, StreamingDiskError::Protocol(_)));
+
+    let _ = shutdown.send(());
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn reject_excessive_max_concurrent_fetches_inflight_bytes() {
+    // Use a moderate image size so `min(chunk_size, total_size) == chunk_size` while keeping test
+    // memory usage reasonable.
+    let image = vec![0u8; 8 * 1024 * 1024]; // 8 MiB
+    let (url, _state, shutdown) = start_range_server_with_options(
+        image,
+        RangeServerOptions::new("etag-inflight-bytes"),
+    )
+    .await;
+
+    let cache_dir = tempdir().unwrap();
+    let mut config = StreamingDiskConfig::new(url, cache_dir.path());
+    config.cache_backend = StreamingCacheBackend::Directory;
+    config.options.chunk_size = 8 * 1024 * 1024; // 8 MiB
+    config.options.read_ahead_chunks = 0;
+    config.options.max_retries = 1;
+    // 65 * 8 MiB = 520 MiB > 512 MiB cap
+    config.options.max_concurrent_fetches = 65;
+
+    let err = StreamingDisk::open(config)
+        .await
+        .err()
+        .expect("expected error");
+    assert!(matches!(err, StreamingDiskError::Protocol(_)));
+
+    let _ = shutdown.send(());
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn reject_excessive_read_ahead_chunks_count() {
     let image: Vec<u8> = (0..2048).map(|i| (i % 251) as u8).collect();
     let (url, _state, shutdown) =

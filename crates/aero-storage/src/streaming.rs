@@ -43,6 +43,13 @@ const MAX_STREAMING_CHUNK_SIZE: u64 = 64 * 1024 * 1024;
 // even when `chunk_size` is very small.
 const MAX_STREAMING_READ_AHEAD_CHUNKS: u64 = 1024;
 const MAX_STREAMING_READ_AHEAD_BYTES: u64 = 512 * 1024 * 1024; // 512 MiB
+// Bound retry and concurrency knobs for untrusted config. Very large values can cause pathological
+// background work, extremely long retry loops, or large in-flight allocations.
+const MAX_STREAMING_MAX_RETRIES: usize = 32;
+const MAX_STREAMING_MAX_CONCURRENT_FETCHES: usize = 128;
+// Upper bound on total in-flight bytes across concurrent chunk downloads:
+// `max_concurrent_fetches * min(chunk_size, total_size)`.
+const MAX_STREAMING_INFLIGHT_BYTES: u64 = 512 * 1024 * 1024; // 512 MiB
 
 #[derive(Debug, Error, Clone)]
 pub enum StreamingDiskError {
@@ -664,10 +671,22 @@ impl StreamingDisk {
                 "max_retries must be greater than zero".to_string(),
             ));
         }
+        if config.options.max_retries > MAX_STREAMING_MAX_RETRIES {
+            return Err(StreamingDiskError::Protocol(format!(
+                "max_retries ({}) exceeds max supported ({MAX_STREAMING_MAX_RETRIES})",
+                config.options.max_retries
+            )));
+        }
         if config.options.max_concurrent_fetches == 0 {
             return Err(StreamingDiskError::Protocol(
                 "max_concurrent_fetches must be greater than zero".to_string(),
             ));
+        }
+        if config.options.max_concurrent_fetches > MAX_STREAMING_MAX_CONCURRENT_FETCHES {
+            return Err(StreamingDiskError::Protocol(format!(
+                "max_concurrent_fetches ({}) exceeds max supported ({MAX_STREAMING_MAX_CONCURRENT_FETCHES})",
+                config.options.max_concurrent_fetches
+            )));
         }
 
         fs::create_dir_all(&config.cache_dir)?;
@@ -679,6 +698,20 @@ impl StreamingDisk {
         request_headers.insert(ACCEPT_ENCODING, HeaderValue::from_static("identity"));
         let (total_size, probed_validator) =
             probe_remote_size_and_validator(&client, &config.url, &request_headers).await?;
+
+        let per_fetch_bytes = config.options.chunk_size.min(total_size);
+        let inflight_bytes = (config.options.max_concurrent_fetches as u64)
+            .checked_mul(per_fetch_bytes)
+            .ok_or_else(|| {
+                StreamingDiskError::Protocol(
+                    "max_concurrent_fetches * min(chunk_size, total_size) overflow".to_string(),
+                )
+            })?;
+        if inflight_bytes > MAX_STREAMING_INFLIGHT_BYTES {
+            return Err(StreamingDiskError::Protocol(format!(
+                "inflight download bytes ({inflight_bytes}) exceeds max supported ({MAX_STREAMING_INFLIGHT_BYTES})"
+            )));
+        }
 
         if let (Some(expected), Some(actual)) = (&config.validator, &probed_validator) {
             if expected != actual {
