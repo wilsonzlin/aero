@@ -38,6 +38,12 @@ describe("runtime/wasm_loader (Machine network typings)", () => {
       machine.attach_l2_tunnel_from_io_ipc_sab(ioIpcSab);
       // @ts-expect-error detach_network may be undefined
       machine.detach_network();
+      // @ts-expect-error attach_net_rings may be undefined
+      machine.attach_net_rings(ring, ring);
+      // @ts-expect-error detach_net_rings may be undefined
+      machine.detach_net_rings();
+      // @ts-expect-error net_stats may be undefined
+      machine.net_stats();
     }
     void assertStrictNullChecksEnforced;
 
@@ -50,8 +56,16 @@ describe("runtime/wasm_loader (Machine network typings)", () => {
     if (machine.detach_network) {
       machine.detach_network();
     }
+    if (machine.attach_net_rings) {
+      machine.attach_net_rings(ring, ring);
+    }
+    if (machine.detach_net_rings) {
+      machine.detach_net_rings();
+    }
+    if (machine.net_stats) {
+      machine.net_stats();
+    }
 
     expect(true).toBe(true);
   });
 });
-

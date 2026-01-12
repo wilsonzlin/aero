@@ -533,6 +533,33 @@ export interface WasmApi {
         attach_l2_tunnel_from_io_ipc_sab?(ioIpc: SharedArrayBuffer): void;
         detach_network?(): void;
         /**
+         * Legacy/alternate naming for attaching NET_TX/NET_RX rings.
+         *
+         * Optional for older WASM builds; prefer {@link attach_l2_tunnel_rings} when available.
+         */
+        attach_net_rings?(netTx: SharedRingBufferHandle, netRx: SharedRingBufferHandle): void;
+        /**
+         * Legacy/alternate naming for detaching the network backend.
+         *
+         * Optional for older WASM builds; prefer {@link detach_network} when available.
+         */
+        detach_net_rings?(): void;
+        /**
+         * Network backend statistics (if exposed by the WASM build).
+         *
+         * Optional for older WASM builds.
+         */
+        net_stats?():
+            | {
+                  tx_pushed_frames: bigint;
+                  tx_dropped_oversize: bigint;
+                  tx_dropped_full: bigint;
+                  rx_popped_frames: bigint;
+                  rx_dropped_oversize: bigint;
+                  rx_corrupt: bigint;
+              }
+            | null;
+        /**
          * Optional for older WASM builds; canonical machine snapshot support.
          */
         snapshot_full?(): Uint8Array;
