@@ -227,14 +227,14 @@ Because chunk URLs are versioned and immutable, they should be cached very aggre
 - `Content-Type: application/octet-stream`
 - `Content-Encoding: identity` (recommended; avoid transparent compression)
 - `Cache-Control: public, max-age=31536000, immutable, no-transform`
-- `ETag: "<strong etag>"` (optional but recommended)
+- `ETag: "<strong etag>"` (optional but recommended; quoted entity-tag, visible ASCII)
 - `Access-Control-Allow-Origin: *` (if served cross-origin without credentials)
 
 **Manifest (`manifest.json`):**
 
 - `Content-Type: application/json`
 - `Cache-Control: public, max-age=31536000, immutable` (when versioned/immutable as described above)
-- `ETag: "<strong etag>"` (optional)
+- `ETag: "<strong etag>"` (optional; quoted entity-tag, visible ASCII)
 - `Access-Control-Allow-Origin: *` (same policy as chunks)
 
 ---

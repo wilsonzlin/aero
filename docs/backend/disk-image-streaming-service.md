@@ -152,6 +152,8 @@ To make `StreamingDisk` range reads cache-friendly (browser cache + CDN) while r
 - **Always include validators when available**
   - `ETag` (strongly recommended)
   - `Last-Modified` (when the underlying image has a meaningful mtime)
+  - ETag values should be quoted HTTP entity-tags and use visible ASCII so clients can reliably
+    round-trip them through `If-None-Match` / `If-Range`.
 - **Return `304 Not Modified`** for conditional `GET`/`HEAD` where applicable.
 - **Set explicit `Cache-Control`**
   - Metadata endpoints should be revalidated (`no-cache`) rather than cached blindly.
