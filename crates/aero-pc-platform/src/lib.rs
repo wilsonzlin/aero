@@ -35,7 +35,9 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 mod cpu_core;
+mod pci_mmio;
 pub use cpu_core::{PcCpuBus, PcInterruptController};
+pub use pci_mmio::{PciBarMmioHandler, PciBarMmioRouter};
 
 /// Base physical address of the PCIe ECAM ("MMCONFIG") window.
 ///
@@ -386,138 +388,6 @@ impl PortIoDevice for E1000PciIoBar {
         self.e1000
             .borrow_mut()
             .io_write_reg(u32::from(port), size, value);
-    }
-}
-
-#[derive(Clone)]
-struct PciMmioWindow {
-    base: u64,
-    pci_cfg: SharedPciConfigPorts,
-
-    // Device handlers registered in this MMIO window.
-    hda: Option<Rc<RefCell<HdaPciDevice>>>,
-    hda_bdf: PciBdf,
-    ahci: Option<Rc<RefCell<AhciPciDevice>>>,
-    ahci_bdf: PciBdf,
-    e1000: Option<Rc<RefCell<E1000Device>>>,
-    e1000_bdf: PciBdf,
-}
-
-impl PciMmioWindow {
-    fn hda_bar0(&self) -> Option<(bool, PciBarRange)> {
-        let mut pci_cfg = self.pci_cfg.borrow_mut();
-        let bus = pci_cfg.bus_mut();
-        let cfg = bus.device_config(self.hda_bdf)?;
-        let mem_enabled = (cfg.command() & 0x2) != 0;
-        let bar0 = cfg.bar_range(0)?;
-        Some((mem_enabled, bar0))
-    }
-
-    fn map_hda(&mut self, paddr: u64, size: usize) -> Option<(Rc<RefCell<HdaPciDevice>>, u64)> {
-        let hda = self.hda.as_ref()?.clone();
-        let (mem_enabled, bar0) = self.hda_bar0()?;
-        if !mem_enabled || bar0.base == 0 {
-            return None;
-        }
-
-        let access_end = paddr.checked_add(size as u64)?;
-        let bar_end = bar0.base.saturating_add(bar0.size);
-        if paddr < bar0.base || access_end > bar_end {
-            return None;
-        }
-
-        Some((hda, paddr - bar0.base))
-    }
-
-    fn ahci_bar5(&self) -> Option<(bool, PciBarRange)> {
-        let mut pci_cfg = self.pci_cfg.borrow_mut();
-        let bus = pci_cfg.bus_mut();
-        let cfg = bus.device_config(self.ahci_bdf)?;
-        let mem_enabled = (cfg.command() & 0x2) != 0;
-        let bar5 = cfg.bar_range(5)?;
-        Some((mem_enabled, bar5))
-    }
-
-    fn map_ahci(&mut self, paddr: u64, size: usize) -> Option<(Rc<RefCell<AhciPciDevice>>, u64)> {
-        let ahci = self.ahci.as_ref()?.clone();
-        let (mem_enabled, bar5) = self.ahci_bar5()?;
-        if !mem_enabled || bar5.base == 0 {
-            return None;
-        }
-
-        let access_end = paddr.checked_add(size as u64)?;
-        let bar_end = bar5.base.saturating_add(bar5.size);
-        if paddr < bar5.base || access_end > bar_end {
-            return None;
-        }
-
-        Some((ahci, paddr - bar5.base))
-    }
-
-    fn e1000_bar0(&self) -> Option<(bool, PciBarRange)> {
-        let mut pci_cfg = self.pci_cfg.borrow_mut();
-        let bus = pci_cfg.bus_mut();
-        let cfg = bus.device_config(self.e1000_bdf)?;
-        let mem_enabled = (cfg.command() & 0x2) != 0;
-        let bar0 = cfg.bar_range(0)?;
-        Some((mem_enabled, bar0))
-    }
-
-    fn map_e1000(&mut self, paddr: u64, size: usize) -> Option<(Rc<RefCell<E1000Device>>, u64)> {
-        let e1000 = self.e1000.as_ref()?.clone();
-        let (mem_enabled, bar0) = self.e1000_bar0()?;
-        if !mem_enabled || bar0.base == 0 {
-            return None;
-        }
-
-        let access_end = paddr.checked_add(size as u64)?;
-        let bar_end = bar0.base.saturating_add(bar0.size);
-        if paddr < bar0.base || access_end > bar_end {
-            return None;
-        }
-
-        Some((e1000, paddr - bar0.base))
-    }
-}
-
-impl MmioHandler for PciMmioWindow {
-    fn read(&mut self, offset: u64, size: usize) -> u64 {
-        let Some(paddr) = self.base.checked_add(offset) else {
-            return all_ones(size);
-        };
-        if let Some((hda, dev_offset)) = self.map_hda(paddr, size) {
-            let mut hda = hda.borrow_mut();
-            return hda.read(dev_offset, size);
-        }
-        if let Some((ahci, dev_offset)) = self.map_ahci(paddr, size) {
-            let mut ahci = ahci.borrow_mut();
-            return ahci.read(dev_offset, size);
-        }
-        if let Some((e1000, dev_offset)) = self.map_e1000(paddr, size) {
-            let mut e1000 = e1000.borrow_mut();
-            return MmioHandler::read(&mut *e1000, dev_offset, size);
-        }
-        all_ones(size)
-    }
-
-    fn write(&mut self, offset: u64, size: usize, value: u64) {
-        let Some(paddr) = self.base.checked_add(offset) else {
-            return;
-        };
-        if let Some((hda, dev_offset)) = self.map_hda(paddr, size) {
-            let mut hda = hda.borrow_mut();
-            hda.write(dev_offset, size, value);
-            return;
-        }
-        if let Some((ahci, dev_offset)) = self.map_ahci(paddr, size) {
-            let mut ahci = ahci.borrow_mut();
-            ahci.write(dev_offset, size, value);
-            return;
-        }
-        if let Some((e1000, dev_offset)) = self.map_e1000(paddr, size) {
-            let mut e1000 = e1000.borrow_mut();
-            MmioHandler::write(&mut *e1000, dev_offset, size, value);
-        }
     }
 }
 
@@ -1174,20 +1044,31 @@ impl PcPlatform {
 
         // Map the PCI MMIO window used by `PciResourceAllocator` so BAR reprogramming is reflected
         // immediately without needing MMIO unmap/remap support in `MemoryBus`.
+        let mut pci_mmio_router =
+            PciBarMmioRouter::new(pci_allocator_config.mmio_base, pci_cfg.clone());
+        if let Some(hda) = hda.clone() {
+            pci_mmio_router.register_shared_handler(aero_devices::pci::profile::HDA_ICH6.bdf, 0, hda);
+        }
+        if let Some(ahci) = ahci.clone() {
+            // ICH9 AHCI uses BAR5 (ABAR).
+            pci_mmio_router.register_shared_handler(
+                aero_devices::pci::profile::SATA_AHCI_ICH9.bdf,
+                5,
+                ahci,
+            );
+        }
+        if let Some(e1000) = e1000.clone() {
+            pci_mmio_router.register_shared_handler(
+                aero_devices::pci::profile::NIC_E1000_82540EM.bdf,
+                0,
+                e1000,
+            );
+        }
         memory
             .map_mmio(
                 pci_allocator_config.mmio_base,
                 pci_allocator_config.mmio_size,
-                Box::new(PciMmioWindow {
-                    base: pci_allocator_config.mmio_base,
-                    pci_cfg: pci_cfg.clone(),
-                    hda: hda.clone(),
-                    hda_bdf: aero_devices::pci::profile::HDA_ICH6.bdf,
-                    ahci: ahci.clone(),
-                    ahci_bdf: aero_devices::pci::profile::SATA_AHCI_ICH9.bdf,
-                    e1000: e1000.clone(),
-                    e1000_bdf: aero_devices::pci::profile::NIC_E1000_82540EM.bdf,
-                }),
+                Box::new(pci_mmio_router),
             )
             .unwrap();
 
