@@ -219,6 +219,42 @@ mod tests {
     }
 
     #[test]
+    fn firmware_pci_adapter_masks_misaligned_config_dword_offsets() {
+        let mut pci_bus = PciBus::new();
+
+        let bdf = PciBdf::new(0, 1, 0);
+        let mut cfg = aero_devices::pci::PciConfigSpace::new(0x1234, 0x5678);
+        cfg.set_interrupt_pin(PciInterruptPin::IntA.to_config_u8());
+        pci_bus.add_device(bdf, Box::new(StubPciDev { cfg }));
+
+        let pci_ports: SharedPciConfigPorts =
+            Rc::new(RefCell::new(PciConfigPorts::with_bus(pci_bus)));
+        let mut adapter = SharedPciConfigPortsBiosAdapter::new(pci_ports.clone());
+
+        let before = firmware::bios::PciConfigSpace::read_config_dword(&mut adapter, 0, 1, 0, 0x3C);
+        let before_misaligned =
+            firmware::bios::PciConfigSpace::read_config_dword(&mut adapter, 0, 1, 0, 0x3D);
+        assert_eq!(before, before_misaligned);
+
+        let new_line = 0x5A;
+        let new = (before & 0xFFFF_FF00) | u32::from(new_line);
+        // The adapter should treat a misaligned offset like config-mech1 hardware: mask with
+        // `offset & 0xFC` (i.e. write the aligned 0x3C dword).
+        firmware::bios::PciConfigSpace::write_config_dword(&mut adapter, 0, 1, 0, 0x3D, new);
+
+        let after = firmware::bios::PciConfigSpace::read_config_dword(&mut adapter, 0, 1, 0, 0x3C);
+        let after_misaligned =
+            firmware::bios::PciConfigSpace::read_config_dword(&mut adapter, 0, 1, 0, 0x3D);
+        assert_eq!(after, new);
+        assert_eq!(after_misaligned, new);
+
+        let mut pci_ports = pci_ports.borrow_mut();
+        let cfg = pci_ports.bus_mut().device_config_mut(bdf).unwrap();
+        assert_eq!(cfg.interrupt_line(), new_line);
+        assert_eq!(cfg.interrupt_pin(), PciInterruptPin::IntA.to_config_u8());
+    }
+
+    #[test]
     fn firmware_bios_pci_enumeration_programs_interrupt_line_via_shared_cfg_ports_adapter() {
         let mut pci_bus = PciBus::new();
 
