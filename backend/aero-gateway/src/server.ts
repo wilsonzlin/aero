@@ -437,6 +437,13 @@ function e2ePageHtml(): string {
           dnsQuery: { ok: false, meta: null, error: null },
           dnsJson: { ok: false, answer: null, error: null },
         };
+        const basePath = location.pathname.replace(/\/+$/, '').replace(/\/e2e$/, '');
+        const defaultEndpoints = {
+          tcp: basePath + '/tcp',
+          dnsQuery: basePath + '/dns-query',
+          dnsJson: basePath + '/dns-json',
+        };
+        let discoveredEndpoints = null;
 
         try {
           const buf = new SharedArrayBuffer(16);
@@ -446,7 +453,7 @@ function e2ePageHtml(): string {
         }
 
         try {
-          const res = await withTimeout(fetch('/session', {
+          const res = await withTimeout(fetch(basePath + '/session', {
             method: 'POST',
             credentials: 'include',
             headers: { 'content-type': 'application/json' },
@@ -454,6 +461,9 @@ function e2ePageHtml(): string {
           }), 5000, 'session fetch');
           results.session.ok = res.ok;
           if (!res.ok) results.session.error = 'HTTP ' + res.status;
+          const json = await res.json().catch(() => null);
+          discoveredEndpoints = json?.endpoints ?? null;
+          results.session.endpoints = discoveredEndpoints;
         } catch (err) {
           results.session.error = String(err && err.message ? err.message : err);
         }
@@ -465,7 +475,11 @@ function e2ePageHtml(): string {
           }
 
           const wsBase = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host;
-          const wsUrl = new URL('/tcp', wsBase);
+          const tcpPath =
+            discoveredEndpoints && typeof discoveredEndpoints.tcp === 'string'
+              ? discoveredEndpoints.tcp
+              : defaultEndpoints.tcp;
+          const wsUrl = new URL(tcpPath, wsBase);
           wsUrl.searchParams.set('v', '1');
           wsUrl.searchParams.set('host', '127.0.0.1');
           wsUrl.searchParams.set('port', String(echoPort));
@@ -496,7 +510,11 @@ function e2ePageHtml(): string {
         try {
           const query = buildDnsQueryA('example.com');
           const dns = base64Url(query.bytes);
-          const res = await withTimeout(fetch('/dns-query?dns=' + encodeURIComponent(dns)), 5000, 'dns-query fetch');
+          const dnsQueryPath =
+            discoveredEndpoints && typeof discoveredEndpoints.dnsQuery === 'string'
+              ? discoveredEndpoints.dnsQuery
+              : defaultEndpoints.dnsQuery;
+          const res = await withTimeout(fetch(dnsQueryPath + '?dns=' + encodeURIComponent(dns)), 5000, 'dns-query fetch');
           const buf = new Uint8Array(await res.arrayBuffer());
 
           if (buf.length < 12) throw new Error('DNS response too short');
@@ -514,7 +532,11 @@ function e2ePageHtml(): string {
         }
 
         try {
-          const res = await withTimeout(fetch('/dns-json?name=example.com&type=A'), 5000, 'dns-json fetch');
+          const dnsJsonPath =
+            discoveredEndpoints && typeof discoveredEndpoints.dnsJson === 'string'
+              ? discoveredEndpoints.dnsJson
+              : defaultEndpoints.dnsJson;
+          const res = await withTimeout(fetch(dnsJsonPath + '?name=example.com&type=A'), 5000, 'dns-json fetch');
           const json = await res.json();
           results.dnsJson.answer = json?.Answer?.[0]?.data ?? null;
           results.dnsJson.ok = Boolean(res.ok && json && json.Status === 0 && typeof results.dnsJson.answer === 'string');

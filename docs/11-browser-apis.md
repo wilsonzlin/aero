@@ -1333,22 +1333,28 @@ All TCP egress uses the **Aero Gateway** backend (see `backend/aero-gateway`):
 - [Aero Gateway OpenAPI](./backend/openapi.yaml)
 
 ```javascript
-class NetworkProxy {
-    // `gatewayWsBaseUrl` should be `ws://...` or `wss://...`.
-    constructor(gatewayWsBaseUrl, { token } = {}) {
-        this.gatewayWsBaseUrl = gatewayWsBaseUrl;
-        this.token = token;
-        this.connections = new Map();
-        this.nextId = 1;
-    }
-    
-    async connect(host, port) {
-        const url = new URL('/tcp', this.gatewayWsBaseUrl);
-        url.searchParams.set('v', '1');
-        url.searchParams.set('host', host);
-        url.searchParams.set('port', String(port));
+ class NetworkProxy {
+     // `gatewayWsBaseUrl` should be `ws://...` or `wss://...`.
+     constructor(gatewayWsBaseUrl, { token } = {}) {
+         this.gatewayWsBaseUrl = gatewayWsBaseUrl;
+         this.token = token;
+         this.connections = new Map();
+         this.nextId = 1;
+     }
+     
+     async connect(host, port) {
+         const url = new URL(this.gatewayWsBaseUrl);
+         // `gatewayWsBaseUrl` may include a base path (e.g. `wss://example.com/aero`).
+         // Append `/tcp` without dropping the base path.
+         url.search = '';
+         url.hash = '';
+         const basePath = url.pathname.replace(/\/$/, '');
+         url.pathname = basePath.endsWith('/tcp') ? basePath : `${basePath}/tcp`;
+         url.searchParams.set('v', '1');
+         url.searchParams.set('host', host);
+         url.searchParams.set('port', String(port));
 
-        // If the gateway is same-origin, cookie-based auth is typically sufficient.
+         // If the gateway is same-origin, cookie-based auth is typically sufficient.
         //
         // Browsers don't allow setting arbitrary headers on WebSocket handshakes,
         // so token auth must be passed via a WebSocket-compatible mechanism
