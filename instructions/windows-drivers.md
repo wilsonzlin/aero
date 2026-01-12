@@ -152,6 +152,9 @@ python3 scripts/ci/check-aerogpu-wdk-guards.py
 python3 scripts/ci/check-aero-d3d11-guest-memory-imports.py
 python3 scripts/ci/check-aerogpu-share-token-contract.py
 
+# Repo layout guardrails (includes AeroGPU Win7 test-suite manifest/doc/fallback-list invariants)
+bash scripts/ci/check-repo-layout.sh
+
 # Ensure no duplicate virtio INFs/projects bind the same HWIDs (requires pwsh)
 pwsh -NoProfile -ExecutionPolicy Bypass -File ci/check-virtio-driver-uniqueness.ps1
 
