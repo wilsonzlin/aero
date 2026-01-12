@@ -188,6 +188,8 @@ fn encode_one_sample(out: &mut [u8], bits_per_sample: u8, sample: f32) {
     match bits_per_sample {
         8 => {
             // 8-bit PCM is unsigned with a 128 bias.
+            // Treat NaN as silence rather than relying on float-to-int cast behaviour.
+            let sample = if sample.is_nan() { 0.0 } else { sample };
             let v = (sample.clamp(-1.0, 1.0) * 128.0 + 128.0).round();
             let v = v.clamp(0.0, 255.0) as u8;
             out[0] = v;
@@ -667,8 +669,8 @@ mod tests {
         // Non-finite inputs should never panic and should clamp deterministically.
         assert_eq!(encode_u8(f32::INFINITY), 255);
         assert_eq!(encode_u8(f32::NEG_INFINITY), 0);
-        // `NaN` propagates through math ops and becomes 0 on `as u8` conversion.
-        assert_eq!(encode_u8(f32::NAN), 0);
+        // `NaN` is treated as silence.
+        assert_eq!(encode_u8(f32::NAN), 128);
     }
 
     #[test]
@@ -1394,9 +1396,9 @@ mod tests {
 
         // -1.0 -> 0, 0.0 -> 128, 1.0 -> 255.
         // 0.5 -> 192, -0.5 -> 64.
-        // Values outside [-1, 1] are clipped; NaN casts to 0 after going through math.
+        // Values outside [-1, 1] are clipped; NaN is treated as silence.
         let mut expected = Vec::new();
-        for &v in &[0u8, 64, 128, 192, 255, 255, 0, 0, 255, 0] {
+        for &v in &[0u8, 64, 128, 192, 255, 255, 0, 128, 255, 0] {
             // Duplicated into the first two channels.
             expected.extend_from_slice(&[v, v]);
             // Remaining channels are silence: 0.0 -> 128 in unsigned PCM.
