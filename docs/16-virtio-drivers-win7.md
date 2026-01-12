@@ -37,7 +37,8 @@ For modern virtio 1.0 drivers, the important `cfg_type` values are:
 Notes for Windows driver authors:
 
 - In `EvtDevicePrepareHardware`, enumerate the device’s PCI capabilities (via bus interface / config space reads) and record the capabilities you need.
-- Map BAR memory from the translated resource list (`CmResourceTypeMemory`) and compute each capability’s effective virtual address as `bar_va + cap.offset`.
+- Map BAR memory from the translated resource list (`CmResourceTypeMemory` / `CmResourceTypeMemoryLarge`) and compute each capability’s effective virtual address as `bar_va + cap.offset`.
+  - On some x64 systems, PCI MMIO ranges (especially BARs above 4 GiB) can be reported as `CmResourceTypeMemoryLarge`. The `Length40/48/64` fields are stored in scaled units and must be decoded back to bytes (see `docs/windows/win7-miniport-virtio-pci-modern.md` for details).
 - Multiple virtio capabilities can live in the same BAR; only map each BAR once.
 
 #### Portable capability-list parser (hardware-free regression tests)
