@@ -1,6 +1,7 @@
+use aero_cpu_core::mem::CpuBus as _;
 use aero_devices::pci::profile::NIC_E1000_82540EM;
 use aero_net_e1000::{ICR_TXDW, MIN_L2_FRAME_LEN};
-use aero_pc_platform::PcPlatform;
+use aero_pc_platform::{PcCpuBus, PcPlatform};
 use memory::MemoryBus as _;
 
 fn cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
@@ -148,6 +149,93 @@ fn pc_platform_routes_e1000_mmio_after_bar0_reprogramming() {
 
     // New base should decode and preserve register state.
     assert_eq!(pc.memory.read_u32(new_base + 0x00D0), 0xABCD_EF01);
+}
+
+#[test]
+fn pc_platform_routes_e1000_io_through_bar1() {
+    let pc = PcPlatform::new_with_e1000(2 * 1024 * 1024);
+    let mut bus = PcCpuBus::new(pc);
+    let bar1_base = read_e1000_bar1_base(&mut bus.platform);
+    let base = u16::try_from(bar1_base).expect("BAR1 should fit in 16-bit I/O port space");
+    let iodata = base.checked_add(4).unwrap();
+
+    // IOADDR/ IODATA should map to MMIO registers. Read STATUS (0x08) via I/O.
+    bus.io_write(base, 4, 0x08).unwrap();
+    let status = bus.io_read(iodata, 4).unwrap() as u32;
+    assert_ne!(status, 0xFFFF_FFFF);
+}
+
+#[test]
+fn pc_platform_gates_e1000_io_on_pci_command_register() {
+    let pc = PcPlatform::new_with_e1000(2 * 1024 * 1024);
+    let mut bus = PcCpuBus::new(pc);
+
+    let bdf = NIC_E1000_82540EM.bdf;
+    let bar1_base = read_e1000_bar1_base(&mut bus.platform);
+    let base = u16::try_from(bar1_base).expect("BAR1 should fit in 16-bit I/O port space");
+    let iodata = base.checked_add(4).unwrap();
+
+    // Should decode when IO is enabled.
+    bus.io_write(base, 4, 0x08).unwrap();
+    assert_ne!(bus.io_read(iodata, 4).unwrap() as u32, 0xFFFF_FFFF);
+
+    // Disable PCI I/O decoding but keep memory decoding enabled.
+    write_cfg_u16(
+        &mut bus.platform,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        0x04,
+        0x0002,
+    );
+
+    // Should no longer decode through the BAR1 window.
+    bus.io_write(base, 4, 0x08).unwrap();
+    assert_eq!(bus.io_read(iodata, 4).unwrap() as u32, 0xFFFF_FFFF);
+
+    // Re-enable I/O decoding.
+    write_cfg_u16(
+        &mut bus.platform,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        0x04,
+        0x0003,
+    );
+    bus.io_write(base, 4, 0x08).unwrap();
+    assert_ne!(bus.io_read(iodata, 4).unwrap() as u32, 0xFFFF_FFFF);
+}
+
+#[test]
+fn pc_platform_routes_e1000_io_after_bar1_reprogramming() {
+    let pc = PcPlatform::new_with_e1000(2 * 1024 * 1024);
+    let mut bus = PcCpuBus::new(pc);
+
+    let bdf = NIC_E1000_82540EM.bdf;
+    let bar1_base = read_e1000_bar1_base(&mut bus.platform);
+    let new_base = bar1_base + 0x40;
+    assert_eq!(new_base % 0x40, 0);
+
+    write_cfg_u32(
+        &mut bus.platform,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        0x14,
+        new_base,
+    );
+
+    // Old base should no longer decode.
+    let old = u16::try_from(bar1_base).unwrap();
+    let old_iodata = old.checked_add(4).unwrap();
+    bus.io_write(old, 4, 0x08).unwrap();
+    assert_eq!(bus.io_read(old_iodata, 4).unwrap() as u32, 0xFFFF_FFFF);
+
+    // New base should decode.
+    let new = u16::try_from(new_base).unwrap();
+    let new_iodata = new.checked_add(4).unwrap();
+    bus.io_write(new, 4, 0x08).unwrap();
+    assert_ne!(bus.io_read(new_iodata, 4).unwrap() as u32, 0xFFFF_FFFF);
 }
 
 #[test]
