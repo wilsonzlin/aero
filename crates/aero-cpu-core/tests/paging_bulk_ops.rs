@@ -292,6 +292,16 @@ fn pagingbus_bulk_copy_preflight_failure_is_atomic() -> Result<(), Exception> {
         0,
     );
 
+    // Capture page-table state so we can assert the preflight made no guest-visible paging
+    // changes (accessed/dirty bit updates, etc).
+    let pt_state_before = (
+        phys.read_u64(pml4_base),
+        phys.read_u64(pdpt_base),
+        phys.read_u64(pd_base),
+        phys.read_u64(pt_base),
+        phys.read_u64(pt_base + 8),
+    );
+
     // Destination range in the mapped page.
     let len = 0x200usize;
     phys.load(page0, &vec![0xCC; len]);
@@ -306,9 +316,19 @@ fn pagingbus_bulk_copy_preflight_failure_is_atomic() -> Result<(), Exception> {
     bus.sync(&long_state(pml4_base));
 
     assert!(!bus.bulk_copy(0, src, len)?);
+    assert_eq!(bus.mmu().cr2(), 0);
 
     // Must not have written any destination bytes.
     assert_eq!(bus.inner_mut().slice(page0, len), vec![0xCC; len]);
+
+    let pt_state_after = (
+        bus.inner_mut().read_u64(pml4_base),
+        bus.inner_mut().read_u64(pdpt_base),
+        bus.inner_mut().read_u64(pd_base),
+        bus.inner_mut().read_u64(pt_base),
+        bus.inner_mut().read_u64(pt_base + 8),
+    );
+    assert_eq!(pt_state_after, pt_state_before);
     Ok(())
 }
 
@@ -333,6 +353,14 @@ fn pagingbus_bulk_set_preflight_failure_is_atomic() -> Result<(), Exception> {
         0,
     );
 
+    let pt_state_before = (
+        phys.read_u64(pml4_base),
+        phys.read_u64(pdpt_base),
+        phys.read_u64(pd_base),
+        phys.read_u64(pt_base),
+        phys.read_u64(pt_base + 8),
+    );
+
     // Destination starts near the end of the mapped page and spans into the unmapped second page.
     let dst = 0xF00u64;
     let repeat = 0x200usize;
@@ -343,12 +371,22 @@ fn pagingbus_bulk_set_preflight_failure_is_atomic() -> Result<(), Exception> {
     bus.sync(&long_state(pml4_base));
 
     assert!(!bus.bulk_set(dst, &[0xAB], repeat)?);
+    assert_eq!(bus.mmu().cr2(), 0);
 
     // Must not have written any bytes in the mapped portion.
     assert_eq!(
         bus.inner_mut().slice(page0 + dst, mapped_len),
         vec![0xCD; mapped_len]
     );
+
+    let pt_state_after = (
+        bus.inner_mut().read_u64(pml4_base),
+        bus.inner_mut().read_u64(pdpt_base),
+        bus.inner_mut().read_u64(pd_base),
+        bus.inner_mut().read_u64(pt_base),
+        bus.inner_mut().read_u64(pt_base + 8),
+    );
+    assert_eq!(pt_state_after, pt_state_before);
     Ok(())
 }
 
