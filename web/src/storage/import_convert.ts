@@ -551,7 +551,7 @@ async function convertQcow2ToSparse(
   blockSize: number,
   options: ImportConvertOptions,
 ): Promise<{ manifest: ImportManifest }> {
-  const qcow = await Qcow2.open(src, options.signal);
+  const qcow = await Qcow2.open(src, blockSize, options.signal);
   const outBlockSize = nextPow2(Math.max(blockSize, qcow.clusterSize));
   assertBlockSize(outBlockSize);
 
@@ -976,8 +976,9 @@ function nextPow2(n: number): number {
 }
 
 class Qcow2 {
-  static async open(src: RandomAccessSource, signal?: AbortSignal): Promise<Qcow2> {
+  static async open(src: RandomAccessSource, minOutputBlockSize: number, signal?: AbortSignal): Promise<Qcow2> {
     if (src.size < 72) throw new Error("qcow2 header truncated");
+    if (!Number.isSafeInteger(minOutputBlockSize) || minOutputBlockSize <= 0) throw new Error("invalid blockSizeBytes");
     const hdr72 = await src.readAt(0, 72);
     if (hdr72[0] !== 0x51 || hdr72[1] !== 0x46 || hdr72[2] !== 0x49 || hdr72[3] !== 0xfb) {
       throw new Error("invalid qcow2 magic");
@@ -1053,6 +1054,15 @@ class Qcow2 {
     if (!Number.isSafeInteger(refcountEnd) || refcountEnd > src.size) throw new Error("qcow2 refcount table truncated");
     if (rangesOverlap(l1TableOffset, l1End, refcountTableOffset, refcountEnd)) {
       throw new Error("qcow2 metadata tables overlap");
+    }
+
+    // Fail fast if the output AeroSparse allocation table would exceed the runtime cap (64MiB).
+    // This avoids allocating qcow2 metadata structures that are proportional to the virtual disk
+    // size when we cannot produce an output sparse disk anyway.
+    const outBlockSize = nextPow2(Math.max(minOutputBlockSize, clusterSize));
+    const outTableEntries = divCeil(logicalSize, outBlockSize);
+    if (outTableEntries > AEROSPAR_MAX_TABLE_ENTRIES) {
+      throw new Error("aerosparse allocation table too large");
     }
 
     function validateClusterNotOverlappingMetadata(off: number): void {

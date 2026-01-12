@@ -650,6 +650,48 @@ test("convertToAeroSparse: qcow2 sparse copy preserves logical bytes", async () 
   assert.equal(manifest.checksum.value, sparseChecksumCrc32(parsed));
 });
 
+test("convertToAeroSparse: qcow2 rejects oversized output table before parsing tables", async () => {
+  const maxTableEntries = (64 * 1024 * 1024) / 8;
+  const clusterSize = 512;
+  const logicalSize = (maxTableEntries + 1) * clusterSize;
+  const totalClusters = logicalSize / clusterSize;
+  const l2Entries = clusterSize / 8;
+  const requiredL1 = Math.ceil(totalClusters / l2Entries);
+  const l1Bytes = requiredL1 * 8;
+
+  const refcountTableOffset = 512;
+  const l1Offset = 1024;
+  const fileSize = l1Offset + l1Bytes;
+
+  const header = new Uint8Array(72);
+  header.set([0x51, 0x46, 0x49, 0xfb], 0); // magic
+  writeU32BE(header, 4, 2); // version
+  writeU32BE(header, 20, 9); // cluster_bits = 9 => 512B clusters
+  writeU64BE(header, 24, BigInt(logicalSize)); // virtual size
+  writeU32BE(header, 36, requiredL1); // l1_size
+  writeU64BE(header, 40, BigInt(l1Offset)); // l1_table_offset
+  writeU64BE(header, 48, BigInt(refcountTableOffset)); // refcount_table_offset
+  writeU32BE(header, 56, 1); // refcount_table_clusters
+
+  class HugeQcow2Source {
+    readonly size: number;
+    constructor(size: number) {
+      this.size = size;
+    }
+    async readAt(offset: number, length: number): Promise<Uint8Array> {
+      if (offset === 0 && length === 72) return header.slice();
+      throw new Error(`unexpected readAt ${offset}+${length}`);
+    }
+  }
+
+  const src = new HugeQcow2Source(fileSize);
+  const sync = new MemSyncAccessHandle();
+  await assert.rejects(
+    convertToAeroSparse(src as any, "qcow2", sync, { blockSizeBytes: 512 }),
+    (err: any) => err instanceof Error && /aerosparse allocation table too large/i.test(err.message),
+  );
+});
+
 test("convertToAeroSparse: rejects truncated qcow2 header", async () => {
   const file = new Uint8Array([0x51, 0x46, 0x49, 0xfb]); // "QFI\xfb"
   const src = new MemSource(file);
