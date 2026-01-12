@@ -246,6 +246,24 @@ const MAX_SYNTHETIC_USB_HID_REPORTS_PER_INPUT_BATCH = 64;
 let snapshotPaused = false;
 let snapshotOpInFlight = false;
 
+const MAX_QUEUED_INPUT_BATCH_BYTES = 4 * 1024 * 1024;
+let queuedInputBatchBytes = 0;
+const queuedInputBatches: Array<{ buffer: ArrayBuffer; recycle: boolean }> = [];
+
+function flushQueuedInputBatches(): void {
+  if (queuedInputBatches.length === 0) return;
+  const batches = queuedInputBatches.splice(0, queuedInputBatches.length);
+  queuedInputBatchBytes = 0;
+  for (const entry of batches) {
+    if (started) {
+      handleInputBatch(entry.buffer);
+    }
+    if (entry.recycle) {
+      ctx.postMessage({ type: "in:input-batch-recycle", buffer: entry.buffer } satisfies InputBatchRecycleMessage, [entry.buffer]);
+    }
+  }
+}
+
 function copyU8ToArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   const out = new Uint8Array(bytes.byteLength);
   out.set(bytes);
@@ -314,6 +332,11 @@ function restoreUsbDeviceState(bytes: Uint8Array): void {
       return;
     }
   }
+}
+
+function restoreI8042DeviceState(bytes: Uint8Array): void {
+  if (!i8042) return;
+  i8042.loadState(bytes);
 }
 
 // Keep broker IDs from overlapping between multiple concurrent USB action sources (UHCI runtime,
@@ -1799,8 +1822,8 @@ async function handleVmSnapshotRestoreFromOpfs(path: string): Promise<{
           (entry as { kind: string }).kind === VM_SNAPSHOT_DEVICE_I8042_KIND &&
           (entry as { bytes?: unknown }).bytes instanceof Uint8Array,
       );
-      if (i8042Blob && i8042) {
-        i8042.loadState(i8042Blob.bytes);
+      if (i8042Blob) {
+        restoreI8042DeviceState(i8042Blob.bytes);
       }
 
       return {
@@ -1856,8 +1879,8 @@ async function handleVmSnapshotRestoreFromOpfs(path: string): Promise<{
       if (usbBytes) {
         restoreUsbDeviceState(usbBytes);
       }
-      if (i8042Bytes && i8042) {
-        i8042.loadState(i8042Bytes);
+      if (i8042Bytes) {
+        restoreI8042DeviceState(i8042Bytes);
       }
 
       return {
@@ -2183,6 +2206,7 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
         }
         case "vm.snapshot.resume": {
           snapshotPaused = false;
+          flushQueuedInputBatches();
           ctx.postMessage({ kind: "vm.snapshot.resumed", requestId, ok: true } satisfies VmSnapshotResumedMessage);
           return;
         }
@@ -2539,10 +2563,26 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
       const msg = data as Partial<InputBatchMessage>;
       if (!(msg.buffer instanceof ArrayBuffer)) return;
       const buffer = msg.buffer;
+      const recycle = (msg as { recycle?: unknown }).recycle === true;
+
+      // Snapshot pause must freeze device-side state so the snapshot contents are deterministic.
+      // Queue input while paused and replay after `vm.snapshot.resume`.
+      if (snapshotPaused) {
+        if (queuedInputBatchBytes + buffer.byteLength <= MAX_QUEUED_INPUT_BATCH_BYTES) {
+          queuedInputBatches.push({ buffer, recycle });
+          queuedInputBatchBytes += buffer.byteLength;
+        } else {
+          // Drop excess input to keep memory bounded; best-effort recycle the transferred buffer.
+          if (recycle) {
+            ctx.postMessage({ type: "in:input-batch-recycle", buffer } satisfies InputBatchRecycleMessage, [buffer]);
+          }
+        }
+        return;
+      }
       if (started) {
         handleInputBatch(buffer);
       }
-      if ((msg as { recycle?: unknown }).recycle === true) {
+      if (recycle) {
         ctx.postMessage({ type: "in:input-batch-recycle", buffer } satisfies InputBatchRecycleMessage, [buffer]);
       }
       return;

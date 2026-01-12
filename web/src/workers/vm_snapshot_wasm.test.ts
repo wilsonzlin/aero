@@ -72,7 +72,7 @@ describe("workers/vm_snapshot_wasm", () => {
     expect(resolveVmSnapshotRestoreFromOpfsExport(api)).toBeNull();
   });
 
-  it("maps USB device kinds/ids for WorkerVmSnapshot", () => {
+  it("maps snapshot device kinds/ids for WorkerVmSnapshot", () => {
     expect(vmSnapshotDeviceKindToId(VM_SNAPSHOT_DEVICE_USB_KIND)).toBe(VM_SNAPSHOT_DEVICE_ID_USB);
     expect(vmSnapshotDeviceIdToKind(VM_SNAPSHOT_DEVICE_ID_USB)).toBe(VM_SNAPSHOT_DEVICE_USB_KIND);
     expect(vmSnapshotDeviceKindToId(VM_SNAPSHOT_DEVICE_I8042_KIND)).toBe(VM_SNAPSHOT_DEVICE_ID_I8042);
@@ -101,7 +101,6 @@ describe("workers/vm_snapshot_wasm", () => {
     expect(parseAeroIoSnapshotVersion(bytes)).toEqual({ version: 0x0201, flags: 0x0403 });
     expect(parseAeroIoSnapshotVersion(new Uint8Array())).toEqual({ version: 1, flags: 0 });
   });
-
   it("parses legacy AERO-prefixed device snapshot header when present", () => {
     const bytes = new Uint8Array(16);
     bytes[0] = 0x41;

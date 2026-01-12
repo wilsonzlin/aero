@@ -97,9 +97,15 @@ describe("io/devices/I8042Controller", () => {
 
     restored.loadState(snap);
     expect(irqEvents).toEqual([]);
+    expect(restored.portRead(0x0064, 1) & 0x01).toBe(0x01);
 
     // Reading the first byte causes the pending byte to become available and should generate an IRQ1 pulse.
     expect(restored.portRead(0x0060, 1)).toBe(0x1c);
     expect(irqEvents).toEqual(["raise:1", "lower:1"]);
+
+    // Draining the remaining byte should not generate any additional pulses (output buffer becomes empty).
+    expect(restored.portRead(0x0060, 1)).toBe(0x9c);
+    expect(irqEvents).toEqual(["raise:1", "lower:1"]);
+    expect(restored.portRead(0x0064, 1) & 0x01).toBe(0x00);
   });
 });

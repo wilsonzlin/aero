@@ -9,11 +9,18 @@ const STATUS_SYS = 0x04; // System flag
 const OUTPUT_PORT_RESET = 0x01; // Bit 0 (active-low reset line)
 const OUTPUT_PORT_A20 = 0x02; // Bit 1
 
-const SNAPSHOT_MAGIC0 = 0x49; // I
-const SNAPSHOT_MAGIC1 = 0x38; // 8
-const SNAPSHOT_MAGIC2 = 0x30; // 0
-const SNAPSHOT_MAGIC3 = 0x34; // 4
-const SNAPSHOT_VERSION = 1;
+// `aero-io-snapshot` header layout (16 bytes):
+// - magic: "AERO"
+// - format_version: u16 major, u16 minor
+// - device_id: [u8;4]
+// - device_version: u16 major, u16 minor
+//
+// The outer VM snapshot code uses `device_version` as `(DeviceState.version, DeviceState.flags)`,
+// so JS-only device snapshots should follow the same header convention.
+const IO_SNAPSHOT_FORMAT_VERSION_MAJOR = 1;
+const IO_SNAPSHOT_FORMAT_VERSION_MINOR = 0;
+const IO_SNAPSHOT_DEVICE_VERSION_MAJOR = 1;
+const IO_SNAPSHOT_DEVICE_VERSION_MINOR = 0;
 
 const MAX_CONTROLLER_OUTPUT_QUEUE = 1024;
 const MAX_KEYBOARD_OUTPUT_QUEUE = 1024;
@@ -880,12 +887,20 @@ export class I8042Controller implements PortIoHandler {
 
   saveState(): Uint8Array {
     const w = new ByteWriter(256);
-    w.u8(SNAPSHOT_MAGIC0);
-    w.u8(SNAPSHOT_MAGIC1);
-    w.u8(SNAPSHOT_MAGIC2);
-    w.u8(SNAPSHOT_MAGIC3);
-    w.u16(SNAPSHOT_VERSION);
-    w.u16(0); // flags/reserved
+    // `aero-io-snapshot` header.
+    w.u8(0x41); // A
+    w.u8(0x45); // E
+    w.u8(0x52); // R
+    w.u8(0x4f); // O
+    w.u16(IO_SNAPSHOT_FORMAT_VERSION_MAJOR);
+    w.u16(IO_SNAPSHOT_FORMAT_VERSION_MINOR);
+    // device id = "8042"
+    w.u8(0x38);
+    w.u8(0x30);
+    w.u8(0x34);
+    w.u8(0x32);
+    w.u16(IO_SNAPSHOT_DEVICE_VERSION_MAJOR);
+    w.u16(IO_SNAPSHOT_DEVICE_VERSION_MINOR);
 
     w.u8(this.#status);
     w.u8(this.#commandByte);
@@ -907,20 +922,39 @@ export class I8042Controller implements PortIoHandler {
   }
 
   loadState(bytes: Uint8Array): void {
+    const MAX_SNAPSHOT_BYTES = 256 * 1024;
+    if (bytes.byteLength > MAX_SNAPSHOT_BYTES) {
+      throw new Error(`i8042 snapshot too large: ${bytes.byteLength} bytes (max ${MAX_SNAPSHOT_BYTES}).`);
+    }
+
     const r = new ByteReader(bytes);
     const m0 = r.u8();
     const m1 = r.u8();
     const m2 = r.u8();
     const m3 = r.u8();
-    if (m0 !== SNAPSHOT_MAGIC0 || m1 !== SNAPSHOT_MAGIC1 || m2 !== SNAPSHOT_MAGIC2 || m3 !== SNAPSHOT_MAGIC3) {
-      throw new Error("i8042 snapshot has invalid magic.");
+    if (m0 !== 0x41 || m1 !== 0x45 || m2 !== 0x52 || m3 !== 0x4f) {
+      throw new Error("i8042 snapshot has invalid magic (expected AERO).");
     }
 
-    const version = r.u16();
-    if (version !== SNAPSHOT_VERSION) {
-      throw new Error(`Unsupported i8042 snapshot version: ${version} (expected ${SNAPSHOT_VERSION}).`);
+    const formatMajor = r.u16();
+    const formatMinor = r.u16();
+    if (formatMajor !== IO_SNAPSHOT_FORMAT_VERSION_MAJOR) {
+      throw new Error(`Unsupported i8042 snapshot format version: ${formatMajor}.${formatMinor}.`);
     }
-    r.u16(); // flags/reserved
+
+    const id0 = r.u8();
+    const id1 = r.u8();
+    const id2 = r.u8();
+    const id3 = r.u8();
+    if (id0 !== 0x38 || id1 !== 0x30 || id2 !== 0x34 || id3 !== 0x32) {
+      throw new Error("i8042 snapshot has unexpected device id (expected 8042).");
+    }
+
+    const deviceMajor = r.u16();
+    const deviceMinor = r.u16();
+    if (deviceMajor !== IO_SNAPSHOT_DEVICE_VERSION_MAJOR) {
+      throw new Error(`Unsupported i8042 snapshot device version: ${deviceMajor}.${deviceMinor}.`);
+    }
 
     this.#status = r.u8() & 0xff;
     this.#commandByte = r.u8() & 0xff;
