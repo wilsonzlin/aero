@@ -270,7 +270,7 @@ assign any other device to `00:02.0`.
 00:04.0  - HD Audio (ICH6)
 00:05.0  - E1000 NIC
 00:06.0  - RTL8139 NIC (alternate)
-00:07.0  - AeroGPU display controller (reserved canonical BDF; `PCI\\VEN_A3A0&DEV_0001`, see `docs/abi/aerogpu-pci-identity.md`)
+00:07.0  - AeroGPU display controller (reserved canonical BDF; `PCI\VEN_A3A0&DEV_0001`, see `docs/abi/aerogpu-pci-identity.md`)
 00:08.0  - virtio-net
 00:09.0  - virtio-blk
 00:0a.0  - virtio-input keyboard (multi-function)
@@ -290,10 +290,15 @@ boot display:
 * Fixed SVGA linear framebuffer (LFB): `0xE000_0000` (within the reserved below-4 GiB PCI/MMIO hole)
 
 To make the LFB reachable via the canonical PCI MMIO window (`0xE000_0000..`), the machine also
-exposes a **minimal PCI VGA function** (Bochs/QEMU "Standard VGA"-like IDs) at `00:0C.0`.
+exposes a **minimal PCI VGA function** (Bochs/QEMU "Standard VGA"-like IDs) at `00:0c.0`.
 
 This PCI stub is intentionally *not* at `00:07.0`: that BDF is reserved for the long-term AeroGPU
-WDDM device identity (`PCI\\VEN_A3A0&DEV_0001`; see `docs/abi/aerogpu-pci-identity.md`).
+WDDM device identity (`PCI\VEN_A3A0&DEV_0001`; see
+[`docs/abi/aerogpu-pci-identity.md`](../docs/abi/aerogpu-pci-identity.md) and
+[`docs/16-aerogpu-vga-vesa-compat.md`](../docs/16-aerogpu-vga-vesa-compat.md)).
+
+The transitional VGA/VBE path is a boot-display stepping stone and does **not** implement the full
+AeroGPU WDDM MMIO/ring protocol.
 
 ---
 

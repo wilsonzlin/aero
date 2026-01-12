@@ -1010,7 +1010,7 @@ impl MmioHandler for VgaMmio {
 // `aero_devices::pci::profile::SATA_AHCI_ICH9`).
 //
 // IMPORTANT: `00:07.0` is reserved for the canonical AeroGPU PCI identity contract
-// (`VID:DID = A3A0:0001`, `PCI\\VEN_A3A0&DEV_0001`). See `docs/abi/aerogpu-pci-identity.md`.
+// (`VID:DID = A3A0:0001`, `PCI\VEN_A3A0&DEV_0001`). See `docs/abi/aerogpu-pci-identity.md`.
 //
 // The VGA/VBE device model used for boot display (`aero_gpu_vga`) is *not* AeroGPU and must not
 // occupy that BDF. We expose a minimal, Bochs/QEMU-compatible VGA PCI function on a different slot
