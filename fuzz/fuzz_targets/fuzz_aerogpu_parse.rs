@@ -234,7 +234,12 @@ fn fuzz_d3d11_cmd_stream(bytes: &[u8]) {
     }
 
     for pkt in d3d11::CmdStream::new(&words).take(1024) {
-        let Ok(pkt) = pkt else { continue };
+        let pkt = match pkt {
+            Ok(pkt) => pkt,
+            // `CmdStream` does not advance its cursor on parse errors, so continuing would just
+            // re-yield the same error repeatedly.
+            Err(_) => break,
+        };
         // Touch a few payload fields to exercise enum/bitflag decoding logic without assuming
         // the payload is well-formed.
         match pkt.header.opcode {
