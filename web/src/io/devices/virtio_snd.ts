@@ -105,7 +105,9 @@ export class VirtioSndPciDevice implements PciDevice, TickableDevice {
   readonly revisionId = VIRTIO_CONTRACT_REVISION_ID;
   readonly irqLine = VIRTIO_SND_IRQ_LINE;
   readonly interruptPin = 1 as const;
-  readonly bdf = { bus: 0, device: 9, function: 0 };
+  // Keep the canonical PCI address consistent with the docs + Rust PCI profile
+  // (`docs/pci-device-compatibility.md`, `crates/devices/src/pci/profile.rs`).
+  readonly bdf = { bus: 0, device: 11, function: 0 };
 
   readonly bars: ReadonlyArray<PciBar | null> = [{ kind: "mmio64", size: VIRTIO_MMIO_BAR0_SIZE }, null, null, null, null, null];
   readonly capabilities: ReadonlyArray<PciCapability> = [
