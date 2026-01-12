@@ -229,6 +229,10 @@ describe("RuntimeDiskWorker (remote)", () => {
     } satisfies RuntimeDiskRequestMessage);
 
     expect(openMock).toHaveBeenCalledTimes(2);
+    expect(openMock.mock.calls[0]?.[1]?.chunkSize).toBe(1024);
+    expect(openMock.mock.calls[0]?.[1]?.cacheKeyParts?.deliveryType).toBe(remoteRangeDeliveryType(1024));
+    expect(openMock.mock.calls[1]?.[1]?.chunkSize).toBe(2048);
+    expect(openMock.mock.calls[1]?.[1]?.cacheKeyParts?.deliveryType).toBe(remoteRangeDeliveryType(2048));
     expect(derivedCacheIds).toHaveLength(2);
     expect(derivedCacheIds[0]).not.toBe(derivedCacheIds[1]);
   });
@@ -303,6 +307,8 @@ describe("RuntimeDiskWorker (remote)", () => {
     expect(openMock).toHaveBeenCalledTimes(2);
     expect(openMock.mock.calls[0]?.[1]?.cacheKeyParts?.deliveryType).toBe(remoteRangeDeliveryType(1024));
     expect(openMock.mock.calls[1]?.[1]?.cacheKeyParts?.deliveryType).toBe(remoteRangeDeliveryType(2048));
+    expect(openMock.mock.calls[0]?.[1]?.chunkSize).toBe(1024);
+    expect(openMock.mock.calls[1]?.[1]?.chunkSize).toBe(2048);
     expect(cacheIds).toHaveLength(2);
     expect(cacheIds[0]).not.toBe(cacheIds[1]);
   });
