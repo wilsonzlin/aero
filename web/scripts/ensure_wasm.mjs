@@ -8,7 +8,7 @@ const __dirname = path.dirname(__filename);
 
 const repoRoot = path.resolve(__dirname, "../..");
 
-function ensureVariant(variant) {
+export function ensureVariant(variant) {
     const outDirAero = path.join(repoRoot, "web/src/wasm", variant === "threaded" ? "pkg-threaded" : "pkg-single");
     const outDirAeroGpu = path.join(
         repoRoot,
@@ -59,5 +59,17 @@ function ensureVariant(variant) {
     }
 }
 
-ensureVariant("single");
-ensureVariant("threaded");
+export function ensureAll() {
+    ensureVariant("single");
+    ensureVariant("threaded");
+}
+
+function isMainModule() {
+    const argv1 = process.argv[1];
+    if (!argv1) return false;
+    return path.resolve(argv1) === __filename;
+}
+
+if (isMainModule()) {
+    ensureAll();
+}
