@@ -8,7 +8,7 @@ use crate::{DiskError, Result};
 /// A concrete wasm32 implementation is provided by the `aero-opfs` crate:
 ///
 /// ```text
-/// aero-opfs::OpfsByteStorage
+/// aero_opfs::OpfsByteStorage
 /// ```
 ///
 /// IndexedDB-backed storage is generally async and therefore does not currently implement
