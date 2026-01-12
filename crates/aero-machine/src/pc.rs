@@ -117,13 +117,8 @@ pub struct PcMachine {
     disk: VecBlockDevice,
 
     network_backend: Option<Box<dyn NetworkBackend>>,
-    net_ring_backend: Option<
-        Rc<
-            RefCell<
-                L2TunnelRingBackend<Box<dyn FrameRing>, Box<dyn FrameRing>>,
-            >,
-        >,
-    >,
+    net_ring_backend:
+        Option<Rc<RefCell<L2TunnelRingBackend<Box<dyn FrameRing>, Box<dyn FrameRing>>>>>,
     e1000_mac_addr: Option<[u8; 6]>,
 }
 
@@ -285,9 +280,7 @@ impl PcMachine {
 
     /// Return statistics for the currently attached `NET_TX`/`NET_RX` ring backend (if present).
     pub fn network_backend_l2_ring_stats(&self) -> Option<L2TunnelRingBackendStats> {
-        self.net_ring_backend
-            .as_ref()
-            .map(|backend| backend.borrow().stats())
+        self.net_ring_backend.as_ref().map(|b| b.borrow().stats())
     }
 
     /// Reset the machine and transfer control to firmware POST (boot sector).
