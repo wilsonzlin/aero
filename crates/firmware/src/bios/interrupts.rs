@@ -4,7 +4,7 @@ use aero_cpu_core::state::{
 
 use super::{
     disk_err_to_int13_status, set_real_mode_seg, Bios, BiosBus, BiosMemoryBus, BlockDevice,
-    EBDA_BASE, EBDA_SIZE,
+    BDA_BASE, EBDA_BASE, EBDA_SIZE,
 };
 use crate::cpu::CpuState as FirmwareCpuState;
 
@@ -42,6 +42,8 @@ pub fn dispatch_interrupt(
 
     match vector {
         0x10 => handle_int10(bios, cpu, bus),
+        0x11 => handle_int11(cpu, bus),
+        0x12 => handle_int12(cpu, bus),
         0x13 => handle_int13(bios, cpu, bus, disk),
         0x15 => handle_int15(bios, cpu, bus),
         0x16 => handle_int16(bios, cpu),
@@ -57,6 +59,26 @@ pub fn dispatch_interrupt(
     const RETURN_MASK: u16 = (FLAG_CF | FLAG_PF | FLAG_ZF | FLAG_SF | FLAG_DF | FLAG_OF) as u16;
     let new_flags = (saved_flags & !RETURN_MASK) | ((cpu.rflags() as u16) & RETURN_MASK) | 0x0002;
     bus.write_u16(flags_addr, new_flags);
+}
+
+fn handle_int11(cpu: &mut CpuState, bus: &mut dyn BiosBus) {
+    // Get equipment list.
+    //
+    // Return the BIOS Data Area equipment flags word. This is a common legacy probing interface
+    // used by DOS-era software.
+    let equip_flags = bus.read_u16(BDA_BASE + 0x10);
+    cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & !0xFFFF) | (equip_flags as u64);
+    cpu.rflags &= !FLAG_CF;
+}
+
+fn handle_int12(cpu: &mut CpuState, bus: &mut dyn BiosBus) {
+    // Get conventional memory size (KiB).
+    //
+    // Return the BIOS Data Area base memory size word (at 0x413). POST initializes this to the
+    // amount of memory below the EBDA.
+    let base_mem_kb = bus.read_u16(BDA_BASE + 0x13);
+    cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & !0xFFFF) | (base_mem_kb as u64);
+    cpu.rflags &= !FLAG_CF;
 }
 
 fn handle_int10(bios: &mut Bios, cpu: &mut CpuState, bus: &mut dyn BiosBus) {
@@ -869,7 +891,8 @@ fn build_e820_map(
 #[cfg(test)]
     mod tests {
     use super::super::{
-        A20Gate, BiosConfig, InMemoryDisk, TestMemory, PCIE_ECAM_BASE, PCIE_ECAM_SIZE,
+        ivt, A20Gate, BiosConfig, InMemoryDisk, TestMemory, BDA_BASE, EBDA_BASE, PCIE_ECAM_BASE,
+        PCIE_ECAM_SIZE,
     };
     use super::*;
     use aero_cpu_core::state::{gpr, CpuMode, CpuState, FLAG_CF, FLAG_ZF};
@@ -1057,6 +1080,30 @@ fn build_e820_map(
         handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
         assert_ne!(cpu.rflags & FLAG_CF, 0);
         assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0x04);
+    }
+
+    #[test]
+    fn int11_reports_bda_equipment_word() {
+        let mut cpu = CpuState::new(CpuMode::Real);
+        let mut mem = TestMemory::new(2 * 1024 * 1024);
+        mem.write_u16(BDA_BASE + 0x10, 0xABCD);
+
+        handle_int11(&mut cpu, &mut mem);
+
+        assert_eq!(cpu.rflags & FLAG_CF, 0);
+        assert_eq!(cpu.gpr[gpr::RAX] as u16, 0xABCD);
+    }
+
+    #[test]
+    fn int12_reports_conventional_memory_kb() {
+        let mut cpu = CpuState::new(CpuMode::Real);
+        let mut mem = TestMemory::new(2 * 1024 * 1024);
+        ivt::init_bda(&mut mem);
+
+        handle_int12(&mut cpu, &mut mem);
+
+        assert_eq!(cpu.rflags & FLAG_CF, 0);
+        assert_eq!(cpu.gpr[gpr::RAX] as u16, (EBDA_BASE / 1024) as u16);
     }
 
     #[test]
