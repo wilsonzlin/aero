@@ -167,8 +167,14 @@ class _QuietHandler(http.server.BaseHTTPRequestHandler):
             return
 
 
-class _ReusableTcpServer(socketserver.TCPServer):
+class _ReusableTcpServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
     allow_reuse_address = True
+    # Each request is handled on its own thread so a stalled large transfer can't block
+    # the accept loop or prevent graceful shutdown.
+    daemon_threads = True
+    # Do not wait for handler threads on server_close(). The harness sets per-connection
+    # socket timeouts so threads should exit promptly, but this avoids pathological hangs.
+    block_on_close = False
 
 
 @dataclass(frozen=True)
