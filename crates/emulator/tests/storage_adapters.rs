@@ -3,8 +3,10 @@ use aero_storage::{MemBackend, RawDisk, StorageBackend as _, VirtualDisk as _};
 use emulator::io::storage::adapters::{
     aero_storage_disk_error_to_emulator, emulator_disk_error_to_aero_storage,
     ByteStorageFromStorageBackend, EmuDiskBackendFromVirtualDisk, StorageBackendFromByteStorage,
+    VirtualDiskFromEmuDiskBackend,
 };
 use emulator::io::storage::{ByteStorage, DiskBackend as _, DiskError, DiskResult};
+use emulator::io::storage::disk::MemDisk as EmuMemDisk;
 
 #[derive(Default, Clone)]
 struct MemByteStorage {
@@ -171,4 +173,45 @@ fn error_mapping_preserves_unsupported_roundtrip() {
 
     let back = emulator_disk_error_to_aero_storage(emu, None, None, None);
     assert!(matches!(back, aero_storage::DiskError::Unsupported("feature")));
+}
+
+#[test]
+fn virtual_disk_from_emu_disk_backend_supports_unaligned_reads() {
+    let mut backend = EmuMemDisk::new(2);
+    backend.data_mut()[0..512].fill(0xAA);
+    backend.data_mut()[512..1024].fill(0xBB);
+
+    let mut disk = VirtualDiskFromEmuDiskBackend(backend);
+
+    // Span two sectors.
+    let mut buf = [0u8; 2];
+    disk.read_at(511, &mut buf).unwrap();
+    assert_eq!(buf, [0xAA, 0xBB]);
+
+    // Within one sector.
+    let mut buf = [0u8; 3];
+    disk.read_at(1, &mut buf).unwrap();
+    assert_eq!(buf, [0xAA, 0xAA, 0xAA]);
+}
+
+#[test]
+fn virtual_disk_from_emu_disk_backend_supports_unaligned_writes() {
+    let mut backend = EmuMemDisk::new(2);
+    backend.data_mut()[0..512].fill(0xAA);
+    backend.data_mut()[512..1024].fill(0xBB);
+
+    let mut disk = VirtualDiskFromEmuDiskBackend(backend);
+
+    // Within a sector.
+    disk.write_at(1, &[1, 2, 3]).unwrap();
+    assert_eq!(disk.0.data()[0], 0xAA);
+    assert_eq!(&disk.0.data()[1..4], &[1, 2, 3]);
+    assert_eq!(disk.0.data()[4], 0xAA);
+
+    // Span two sectors.
+    disk.write_at(511, &[0x11, 0x22]).unwrap();
+    assert_eq!(disk.0.data()[510], 0xAA);
+    assert_eq!(disk.0.data()[511], 0x11);
+    assert_eq!(disk.0.data()[512], 0x22);
+    assert_eq!(disk.0.data()[513], 0xBB);
 }
