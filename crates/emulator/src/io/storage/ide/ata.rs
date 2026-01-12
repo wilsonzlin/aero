@@ -29,7 +29,11 @@ impl AtaDevice {
     }
 
     pub fn sector_bytes(&self, sectors: u64) -> Vec<u8> {
-        vec![0u8; sectors as usize * SECTOR_SIZE]
+        let len = sectors
+            .checked_mul(SECTOR_SIZE as u64)
+            .and_then(|v| usize::try_from(v).ok())
+            .unwrap_or(0);
+        vec![0u8; len]
     }
 
     pub fn identify_data(&self) -> Vec<u8> {
@@ -85,7 +89,8 @@ impl AtaDevice {
         // Word 88: Ultra DMA modes supported + selected.
         // Support up to mode 2 by default.
         let udma_supported = 0x0007;
-        let udma_selected = 1u16 << (8 + self.udma_mode as u16);
+        let udma_mode = self.udma_mode.min(7);
+        let udma_selected = 1u16 << (8 + udma_mode as u16);
         words[88] = udma_supported | udma_selected;
 
         // Words 100-103: total LBA48 sectors.
@@ -109,7 +114,11 @@ impl AtaDevice {
         if self.backend.sector_size() != SECTOR_SIZE as u32 {
             return Err(DiskError::InvalidBufferLength);
         }
-        let mut buf = vec![0u8; sectors as usize * SECTOR_SIZE];
+        let len = sectors
+            .checked_mul(SECTOR_SIZE as u64)
+            .and_then(|v| usize::try_from(v).ok())
+            .ok_or(DiskError::InvalidBufferLength)?;
+        let mut buf = vec![0u8; len];
         self.backend.read_sectors(lba, &mut buf)?;
         Ok(buf)
     }
@@ -118,7 +127,10 @@ impl AtaDevice {
         if self.backend.sector_size() != SECTOR_SIZE as u32 {
             return Err(DiskError::InvalidBufferLength);
         }
-        let expected = sectors as usize * SECTOR_SIZE;
+        let expected = sectors
+            .checked_mul(SECTOR_SIZE as u64)
+            .and_then(|v| usize::try_from(v).ok())
+            .ok_or(DiskError::InvalidBufferLength)?;
         let slice = if data.len() >= expected {
             &data[..expected]
         } else {
@@ -156,7 +168,7 @@ impl AtaDevice {
     }
 
     pub fn restore_state(&mut self, state: &IdeAtaDeviceState) {
-        self.udma_mode = state.udma_mode;
+        self.udma_mode = state.udma_mode.min(7);
     }
 }
 
