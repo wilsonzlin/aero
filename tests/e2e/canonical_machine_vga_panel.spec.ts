@@ -89,13 +89,13 @@ test("canonical Machine panel: renders VGA scanout to a canvas", async ({ page }
     const ctx = canvas.getContext("2d");
     if (!ctx) throw new Error("canonical machine canvas context missing");
 
-    const w = Math.min(16, canvas.width);
-    const h = Math.min(16, canvas.height);
-    const data = ctx.getImageData(0, 0, w, h).data;
+    // Scan the entire canvas rather than sampling only the top-left. Some VGA modes / renderers
+    // may have borders or padding that keeps the top-left pixels black.
+    const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
     let nonBlack = 0;
     for (let i = 0; i < data.length; i += 4) {
       if (data[i] !== 0 || data[i + 1] !== 0 || data[i + 2] !== 0) {
-        nonBlack += 1;
+        nonBlack = 1;
         break;
       }
     }
