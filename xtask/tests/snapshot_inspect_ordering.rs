@@ -414,3 +414,81 @@ fn snapshot_inspect_notes_unsorted_cpus_section() {
             "note: CPUS entries are not sorted by apic_id; displaying sorted order",
         ));
 }
+
+struct AeroIoSnapshotDeviceSource;
+
+impl SnapshotSource for AeroIoSnapshotDeviceSource {
+    fn snapshot_meta(&mut self) -> SnapshotMeta {
+        SnapshotMeta {
+            snapshot_id: 4,
+            parent_snapshot_id: Some(3),
+            created_unix_ms: 0,
+            label: Some("inspect-device-inner-4cc".to_string()),
+        }
+    }
+
+    fn cpu_state(&self) -> CpuState {
+        CpuState::default()
+    }
+
+    fn mmu_state(&self) -> MmuState {
+        MmuState::default()
+    }
+
+    fn device_states(&self) -> Vec<DeviceState> {
+        // `aero-io-snapshot` TLV header for a dummy device id (`UHRT`) with snapshot version 1.0.
+        //
+        // `cargo xtask snapshot inspect` should surface the inner device 4CC + version.
+        let mut data = vec![0u8; 16];
+        data[0..4].copy_from_slice(b"AERO");
+        // io-snapshot format version 1.0
+        data[4..6].copy_from_slice(&1u16.to_le_bytes());
+        data[6..8].copy_from_slice(&0u16.to_le_bytes());
+        // inner device id
+        data[8..12].copy_from_slice(b"UHRT");
+        // inner device snapshot version 1.0
+        data[12..14].copy_from_slice(&1u16.to_le_bytes());
+        data[14..16].copy_from_slice(&0u16.to_le_bytes());
+
+        vec![DeviceState {
+            id: DeviceId::USB,
+            version: 1,
+            flags: 0,
+            data,
+        }]
+    }
+
+    fn disk_overlays(&self) -> DiskOverlayRefs {
+        DiskOverlayRefs::default()
+    }
+
+    fn ram_len(&self) -> usize {
+        4096
+    }
+
+    fn read_ram(&self, _offset: u64, buf: &mut [u8]) -> aero_snapshot::Result<()> {
+        buf.fill(0);
+        Ok(())
+    }
+
+    fn take_dirty_pages(&mut self) -> Option<Vec<u64>> {
+        None
+    }
+}
+
+#[test]
+fn snapshot_inspect_shows_inner_aero_io_snapshot_device_id_when_present() {
+    let tmp = tempfile::tempdir().unwrap();
+    let snap = tmp.path().join("inner_device_id.aerosnap");
+
+    let mut source = AeroIoSnapshotDeviceSource;
+    let mut cursor = Cursor::new(Vec::new());
+    save_snapshot(&mut cursor, &mut source, SaveOptions::default()).unwrap();
+    fs::write(&snap, cursor.into_inner()).unwrap();
+
+    Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["snapshot", "inspect", snap.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("inner=UHRT v1.0"));
+}
