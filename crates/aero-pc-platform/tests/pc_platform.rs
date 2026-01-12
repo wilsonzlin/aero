@@ -4,6 +4,7 @@ use aero_devices::hpet::HPET_MMIO_BASE;
 use aero_devices::pci::PCI_CFG_DATA_PORT;
 use aero_devices::reset_ctrl::RESET_CTRL_RESET_VALUE;
 use aero_io_snapshot::io::state::IoSnapshot;
+use aero_net_e1000::MIN_L2_FRAME_LEN;
 use aero_pc_platform::{PcPlatform, ResetEvent, PCIE_ECAM_BASE};
 use memory::MemoryBus as _;
 
@@ -68,4 +69,17 @@ fn pc_platform_exposes_snapshot_devices_via_accessors() {
     let clock = pc.clock();
     clock.advance_ns(123);
     assert_eq!(pc.clock().now_ns(), 123);
+}
+
+#[test]
+fn pc_platform_e1000_helpers_are_noops_when_disabled() {
+    let mut pc = PcPlatform::new(2 * 1024 * 1024);
+
+    assert!(!pc.has_e1000());
+    assert_eq!(pc.e1000_mac_addr(), None);
+    assert_eq!(pc.e1000_pop_tx_frame(), None);
+
+    // Should not panic.
+    pc.e1000_enqueue_rx_frame(vec![0u8; MIN_L2_FRAME_LEN]);
+    pc.process_e1000();
 }
