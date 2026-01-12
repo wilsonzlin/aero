@@ -399,6 +399,11 @@ type SineToneHandle = {
 let sineTone: SineToneHandle | null = null;
 
 let nextAudioFillDeadlineMs = 0;
+// Tracks whether this CPU worker currently "owns" the AudioWorklet output ring
+// buffer producer side. The output ring is single-producer/single-consumer; if a
+// real VM is running, the I/O worker's guest audio device will become the sole
+// producer and the CPU worker must not write fallback samples.
+let cpuIsAudioRingProducer = false;
 
 const AUDIO_HEADER_U32_LEN = 4;
 const AUDIO_HEADER_BYTES = AUDIO_HEADER_U32_LEN * Uint32Array.BYTES_PER_ELEMENT;
@@ -723,6 +728,8 @@ class JsStreamingLinearResamplerMono {
 }
 
 function detachAudioOutput(): void {
+  const wasProducer = cpuIsAudioRingProducer;
+  cpuIsAudioRingProducer = false;
   if (sineTone?.free) {
     sineTone.free();
   }
@@ -734,7 +741,10 @@ function detachAudioOutput(): void {
   workletBridge = null;
   nextAudioFillDeadlineMs = 0;
 
-  if (typeof status !== "undefined") {
+  // Only the current producer should touch the shared telemetry slots. Clearing
+  // these unconditionally would stomp I/O-worker telemetry once the VM wires up
+  // a real guest audio device.
+  if (typeof status !== "undefined" && wasProducer) {
     Atomics.store(status, StatusIndex.AudioBufferLevelFrames, 0);
     Atomics.store(status, StatusIndex.AudioUnderrunCount, 0);
     Atomics.store(status, StatusIndex.AudioOverrunCount, 0);
@@ -1498,49 +1508,75 @@ async function runLoopInner(): Promise<void> {
       // not actively waiting on an I/O roundtrip.
       io?.poll(64);
 
+      const demoMode = !currentConfig?.activeDiskImage;
+      // The AudioWorklet output ring buffer is treated as SPSC (single-producer,
+      // single-consumer). In demo mode we let the CPU worker own the producer side
+      // to generate a fallback sine tone or mic loopback for smoke tests.
+      //
+      // Once a real VM is requested (`activeDiskImage` is set), the I/O worker's
+      // guest audio device must become the sole producer. If the CPU worker kept
+      // writing its demo audio, we'd have multiple producers racing and corrupting
+      // the ring buffer.
       if (workletBridge && audioDstSampleRate > 0 && audioCapacityFrames > 0) {
         if (nextAudioFillDeadlineMs === 0) nextAudioFillDeadlineMs = now;
         if (now >= nextAudioFillDeadlineMs) {
-          let level = 0;
-          let underruns = 0;
-          let overruns = 0;
-          const bridge = workletBridge as {
-            buffer_level_frames?: () => number;
-            underrun_count?: () => number;
-            overrun_count?: () => number;
-          };
-          if (typeof bridge.buffer_level_frames === "function") level = bridge.buffer_level_frames() | 0;
-          if (typeof bridge.underrun_count === "function") underruns = bridge.underrun_count() | 0;
-          if (typeof bridge.overrun_count === "function") overruns = bridge.overrun_count() | 0;
+          if (demoMode) {
+            let level = 0;
+            let underruns = 0;
+            let overruns = 0;
+            const bridge = workletBridge as {
+              buffer_level_frames?: () => number;
+              underrun_count?: () => number;
+              overrun_count?: () => number;
+            };
+            if (typeof bridge.buffer_level_frames === "function") level = bridge.buffer_level_frames() | 0;
+            if (typeof bridge.underrun_count === "function") underruns = bridge.underrun_count() | 0;
+            if (typeof bridge.overrun_count === "function") overruns = bridge.overrun_count() | 0;
 
-          const targetFrames = Math.min(audioCapacityFrames, Math.floor(audioDstSampleRate / 5)); // ~200ms
-          const need = Math.max(0, targetFrames - level);
-          if (need > 0) {
-            const maxWriteFrames = Math.min(need, Math.min(targetFrames, Math.floor(audioDstSampleRate / 10))); // cap to ~100ms
-            if (maxWriteFrames > 0) {
-              if (micRingBuffer) {
-                pumpMicLoopback(maxWriteFrames);
-              } else {
-                sineTone?.write(workletBridge, maxWriteFrames, 440, audioDstSampleRate, 0.1);
+            const targetFrames = Math.min(audioCapacityFrames, Math.floor(audioDstSampleRate / 5)); // ~200ms
+            const need = Math.max(0, targetFrames - level);
+            if (need > 0) {
+              const maxWriteFrames = Math.min(need, Math.min(targetFrames, Math.floor(audioDstSampleRate / 10))); // cap to ~100ms
+              if (maxWriteFrames > 0) {
+                if (micRingBuffer) {
+                  pumpMicLoopback(maxWriteFrames);
+                } else {
+                  sineTone?.write(workletBridge, maxWriteFrames, 440, audioDstSampleRate, 0.1);
+                }
               }
             }
-          }
 
-          // Export a tiny amount of producer-side telemetry for the UI.
-          if (typeof bridge.buffer_level_frames === "function") level = bridge.buffer_level_frames() | 0;
-          if (typeof bridge.underrun_count === "function") underruns = bridge.underrun_count() | 0;
-          if (typeof bridge.overrun_count === "function") overruns = bridge.overrun_count() | 0;
-          Atomics.store(status, StatusIndex.AudioBufferLevelFrames, level);
-          Atomics.store(status, StatusIndex.AudioUnderrunCount, underruns);
-          Atomics.store(status, StatusIndex.AudioOverrunCount, overruns);
+            // Export a tiny amount of producer-side telemetry for the UI.
+            if (typeof bridge.buffer_level_frames === "function") level = bridge.buffer_level_frames() | 0;
+            if (typeof bridge.underrun_count === "function") underruns = bridge.underrun_count() | 0;
+            if (typeof bridge.overrun_count === "function") overruns = bridge.overrun_count() | 0;
+            Atomics.store(status, StatusIndex.AudioBufferLevelFrames, level);
+            Atomics.store(status, StatusIndex.AudioUnderrunCount, underruns);
+            Atomics.store(status, StatusIndex.AudioOverrunCount, overruns);
+            cpuIsAudioRingProducer = true;
+          } else if (cpuIsAudioRingProducer) {
+            // Transition out of demo mode: clear the CPU worker's telemetry once so
+            // stale demo values don't persist, but avoid stomping telemetry that
+            // may be written by the real I/O-worker audio producer.
+            cpuIsAudioRingProducer = false;
+            Atomics.store(status, StatusIndex.AudioBufferLevelFrames, 0);
+            Atomics.store(status, StatusIndex.AudioUnderrunCount, 0);
+            Atomics.store(status, StatusIndex.AudioOverrunCount, 0);
+          }
 
           nextAudioFillDeadlineMs = now + audioFillIntervalMs;
         }
       } else {
         nextAudioFillDeadlineMs = 0;
-        Atomics.store(status, StatusIndex.AudioBufferLevelFrames, 0);
-        Atomics.store(status, StatusIndex.AudioUnderrunCount, 0);
-        Atomics.store(status, StatusIndex.AudioOverrunCount, 0);
+        if (demoMode || cpuIsAudioRingProducer) {
+          // Demo mode expects the CPU worker to own audio telemetry; keep it at 0
+          // when no audio output ring is attached. In VM mode, only clear once if
+          // we previously acted as the producer (so we don't stomp I/O-worker data).
+          cpuIsAudioRingProducer = false;
+          Atomics.store(status, StatusIndex.AudioBufferLevelFrames, 0);
+          Atomics.store(status, StatusIndex.AudioUnderrunCount, 0);
+          Atomics.store(status, StatusIndex.AudioOverrunCount, 0);
+        }
       }
 
       if (!didIoDemo && io && Atomics.load(status, StatusIndex.IoReady) === 1 && !currentConfig?.activeDiskImage) {
