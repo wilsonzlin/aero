@@ -49,7 +49,9 @@ import {
   CAPACITY_SAMPLES_INDEX,
   HEADER_BYTES as MIC_HEADER_BYTES,
   HEADER_U32_LEN as MIC_HEADER_U32_LEN,
+  READ_POS_INDEX as MIC_READ_POS_INDEX,
   micRingBufferReadInto,
+  WRITE_POS_INDEX as MIC_WRITE_POS_INDEX,
 } from "../audio/mic_ring.js";
 import type { MicRingBuffer } from "../audio/mic_ring.js";
 import { AudioFrameClock, performanceNowNs } from "../audio/audio_frame_clock";
@@ -1746,6 +1748,26 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
         // Reset the producer deadline so the next audio tick observes ~0 elapsed time.
         const now = typeof performance?.now === "function" ? performance.now() : Date.now();
         nextAudioFillDeadlineMs = now;
+
+        // The microphone ring buffer producer (AudioWorklet) can continue writing while the CPU
+        // worker is snapshot-paused (it stops consuming). Discard any buffered samples on resume
+        // so mic loopback/capture starts from the most recent audio rather than replaying a stale
+        // backlog.
+        //
+        // This mirrors the IO worker behaviour and matches the WASM-side mic ring attach policy
+        // (READ_POS := WRITE_POS) used to avoid capture latency.
+        const mic = micRingBuffer;
+        if (mic) {
+          try {
+            const writePos = Atomics.load(mic.header, MIC_WRITE_POS_INDEX) >>> 0;
+            Atomics.store(mic.header, MIC_READ_POS_INDEX, writePos);
+          } catch {
+            // ignore
+          }
+          // Drop any queued resampler state so we don't emit pre-pause samples.
+          micResampler?.reset();
+        }
+
         ctx.postMessage({ kind: "vm.snapshot.resumed", requestId, ok: true } satisfies VmSnapshotResumedMessage);
         return;
       }
