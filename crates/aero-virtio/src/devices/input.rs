@@ -123,6 +123,7 @@ pub const KEY_KPDOT: u16 = 83;
 pub const KEY_102ND: u16 = 86;
 pub const KEY_F11: u16 = 87;
 pub const KEY_F12: u16 = 88;
+pub const KEY_RO: u16 = 89;
 pub const KEY_KPENTER: u16 = 96;
 pub const KEY_RIGHTCTRL: u16 = 97;
 pub const KEY_KPSLASH: u16 = 98;
@@ -138,7 +139,10 @@ pub const KEY_DOWN: u16 = 108;
 pub const KEY_PAGEDOWN: u16 = 109;
 pub const KEY_INSERT: u16 = 110;
 pub const KEY_DELETE: u16 = 111;
+pub const KEY_KPEQUAL: u16 = 117;
 pub const KEY_PAUSE: u16 = 119;
+pub const KEY_KPCOMMA: u16 = 121;
+pub const KEY_YEN: u16 = 124;
 pub const KEY_LEFTMETA: u16 = 125;
 pub const KEY_RIGHTMETA: u16 = 126;
 pub const KEY_MENU: u16 = 139;
@@ -310,6 +314,7 @@ impl VirtioInputBitmaps {
             KEY_KP0,
             KEY_KPDOT,
             KEY_102ND,
+            KEY_RO,
             KEY_KPENTER,
             KEY_RIGHTCTRL,
             KEY_KPSLASH,
@@ -326,7 +331,10 @@ impl VirtioInputBitmaps {
             KEY_PAGEDOWN,
             KEY_INSERT,
             KEY_DELETE,
+            KEY_KPEQUAL,
             KEY_PAUSE,
+            KEY_KPCOMMA,
+            KEY_YEN,
             KEY_MENU,
         ]);
         bitmaps.led = Self::with_bits(&[LED_NUML, LED_CAPSL, LED_SCROLLL]);

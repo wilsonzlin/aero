@@ -128,6 +128,7 @@ const KEY_KPDOT = 83;
 const KEY_102ND = 86;
 const KEY_F11 = 87;
 const KEY_F12 = 88;
+const KEY_RO = 89;
 const KEY_KPENTER = 96;
 const KEY_RIGHTCTRL = 97;
 const KEY_KPSLASH = 98;
@@ -143,7 +144,10 @@ const KEY_DOWN = 108;
 const KEY_PAGEDOWN = 109;
 const KEY_INSERT = 110;
 const KEY_DELETE = 111;
+const KEY_KPEQUAL = 117;
 const KEY_PAUSE = 119;
+const KEY_KPCOMMA = 121;
+const KEY_YEN = 124;
 const KEY_LEFTMETA = 125;
 const KEY_RIGHTMETA = 126;
 const KEY_MENU = 139;
@@ -427,6 +431,14 @@ export function hidUsageToLinuxKeyCode(usage: number): number | null {
       return KEY_102ND;
     case 0x65:
       return KEY_MENU;
+    case 0x67:
+      return KEY_KPEQUAL;
+    case 0x85:
+      return KEY_KPCOMMA;
+    case 0x87:
+      return KEY_RO;
+    case 0x89:
+      return KEY_YEN;
 
     default:
       return null;

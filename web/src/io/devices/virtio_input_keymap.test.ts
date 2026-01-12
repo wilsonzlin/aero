@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { keyboardCodeToHidUsage } from "../../input/hid_usage";
 import { hidUsageToLinuxKeyCode } from "./virtio_input";
+import fs from "node:fs";
 
 describe("io/devices/virtio_input hidUsageToLinuxKeyCode", () => {
   it("maps contract-required alphanumerics, basic keys, and function keys", () => {
@@ -85,6 +86,19 @@ describe("io/devices/virtio_input hidUsageToLinuxKeyCode", () => {
     }
   });
 
+  it("maps non-boot keyboard HID usages used by some layouts/keyboards", () => {
+    const cases: Array<{ usage: number; linuxKey: number }> = [
+      { usage: 0x67, linuxKey: 117 }, // NumpadEqual -> KEY_KPEQUAL
+      { usage: 0x85, linuxKey: 121 }, // NumpadComma -> KEY_KPCOMMA
+      { usage: 0x87, linuxKey: 89 }, // IntlRo -> KEY_RO
+      { usage: 0x89, linuxKey: 124 }, // IntlYen -> KEY_YEN
+    ];
+
+    for (const tc of cases) {
+      expect(hidUsageToLinuxKeyCode(tc.usage)).toBe(tc.linuxKey);
+    }
+  });
+
   it("keeps DOM->HID->Linux key mapping consistent for representative keys", () => {
     const cases: Array<{ code: string; linuxKey: number }> = [
       { code: "Minus", linuxKey: 12 }, // KEY_MINUS
@@ -98,8 +112,12 @@ describe("io/devices/virtio_input hidUsageToLinuxKeyCode", () => {
       { code: "NumpadDivide", linuxKey: 98 }, // KEY_KPSLASH
       { code: "NumpadEnter", linuxKey: 96 }, // KEY_KPENTER
       { code: "NumpadDecimal", linuxKey: 83 }, // KEY_KPDOT
+      { code: "NumpadEqual", linuxKey: 117 }, // KEY_KPEQUAL
+      { code: "NumpadComma", linuxKey: 121 }, // KEY_KPCOMMA
       { code: "IntlHash", linuxKey: 43 }, // KEY_BACKSLASH (alias)
       { code: "IntlBackslash", linuxKey: 86 }, // KEY_102ND
+      { code: "IntlRo", linuxKey: 89 }, // KEY_RO
+      { code: "IntlYen", linuxKey: 124 }, // KEY_YEN
       { code: "ContextMenu", linuxKey: 139 }, // KEY_MENU
     ];
 
@@ -107,6 +125,15 @@ describe("io/devices/virtio_input hidUsageToLinuxKeyCode", () => {
       const usage = keyboardCodeToHidUsage(tc.code);
       if (usage === null) throw new Error(`expected keyboardCodeToHidUsage(${JSON.stringify(tc.code)}) to be non-null`);
       expect(hidUsageToLinuxKeyCode(usage)).toBe(tc.linuxKey);
+    }
+  });
+
+  it("supports all HID keyboard usages in the shared fixture", () => {
+    const fixturePath = new URL("../../../../docs/fixtures/hid_usage_keyboard.json", import.meta.url);
+    const fixture: Array<{ code: string; usage: string }> = JSON.parse(fs.readFileSync(fixturePath, "utf8"));
+    for (const entry of fixture) {
+      const usage = Number.parseInt(entry.usage, 16);
+      expect(hidUsageToLinuxKeyCode(usage)).not.toBeNull();
     }
   });
 });

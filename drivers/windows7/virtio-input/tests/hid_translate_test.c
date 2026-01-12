@@ -137,6 +137,7 @@ static void test_linux_keycode_abi_values(void) {
   assert(VIRTIO_INPUT_KEY_102ND == 86);
   assert(VIRTIO_INPUT_KEY_F11 == 87);
   assert(VIRTIO_INPUT_KEY_F12 == 88);
+  assert(VIRTIO_INPUT_KEY_RO == 89);
   assert(VIRTIO_INPUT_KEY_KPENTER == 96);
   assert(VIRTIO_INPUT_KEY_KPSLASH == 98);
   assert(VIRTIO_INPUT_KEY_SYSRQ == 99);
@@ -150,7 +151,10 @@ static void test_linux_keycode_abi_values(void) {
   assert(VIRTIO_INPUT_KEY_PAGEDOWN == 109);
   assert(VIRTIO_INPUT_KEY_INSERT == 110);
   assert(VIRTIO_INPUT_KEY_DELETE == 111);
+  assert(VIRTIO_INPUT_KEY_KPEQUAL == 117);
   assert(VIRTIO_INPUT_KEY_PAUSE == 119);
+  assert(VIRTIO_INPUT_KEY_KPCOMMA == 121);
+  assert(VIRTIO_INPUT_KEY_YEN == 124);
   assert(VIRTIO_INPUT_KEY_LEFTMETA == 125);
   assert(VIRTIO_INPUT_KEY_RIGHTMETA == 126);
   assert(VIRTIO_INPUT_KEY_MENU == 139);
@@ -211,6 +215,10 @@ static void test_mapping(void) {
   assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_KPDOT) == 0x63);
   assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_102ND) == 0x64);
   assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_MENU) == 0x65);
+  assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_KPEQUAL) == 0x67);
+  assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_KPCOMMA) == 0x85);
+  assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_RO) == 0x87);
+  assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_YEN) == 0x89);
 
   /* Modifiers are handled as a bitmask, not returned as usages. */
   assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_LEFTCTRL) == 0);
@@ -557,6 +565,50 @@ static void test_keyboard_keypad_and_misc_key_reports(void) {
   send_syn(&t);
   uint8_t expect6[HID_TRANSLATE_KEYBOARD_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_KEYBOARD, 0, 0, 0, 0, 0, 0, 0, 0};
   expect_report(&cap, 5, expect6, sizeof(expect6));
+
+  /* Keypad '=' (non-boot usage range). */
+  send_key(&t, VIRTIO_INPUT_KEY_KPEQUAL, 1);
+  send_syn(&t);
+  uint8_t expect7[HID_TRANSLATE_KEYBOARD_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_KEYBOARD, 0, 0, 0x67, 0, 0, 0, 0, 0};
+  expect_report(&cap, 6, expect7, sizeof(expect7));
+
+  send_key(&t, VIRTIO_INPUT_KEY_KPEQUAL, 0);
+  send_syn(&t);
+  uint8_t expect8[HID_TRANSLATE_KEYBOARD_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_KEYBOARD, 0, 0, 0, 0, 0, 0, 0, 0};
+  expect_report(&cap, 7, expect8, sizeof(expect8));
+
+  /* Keypad ',' (non-boot usage range). */
+  send_key(&t, VIRTIO_INPUT_KEY_KPCOMMA, 1);
+  send_syn(&t);
+  uint8_t expect9[HID_TRANSLATE_KEYBOARD_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_KEYBOARD, 0, 0, 0x85, 0, 0, 0, 0, 0};
+  expect_report(&cap, 8, expect9, sizeof(expect9));
+
+  send_key(&t, VIRTIO_INPUT_KEY_KPCOMMA, 0);
+  send_syn(&t);
+  uint8_t expect10[HID_TRANSLATE_KEYBOARD_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_KEYBOARD, 0, 0, 0, 0, 0, 0, 0, 0};
+  expect_report(&cap, 9, expect10, sizeof(expect10));
+
+  /* IntlRo (non-boot usage range). */
+  send_key(&t, VIRTIO_INPUT_KEY_RO, 1);
+  send_syn(&t);
+  uint8_t expect11[HID_TRANSLATE_KEYBOARD_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_KEYBOARD, 0, 0, 0x87, 0, 0, 0, 0, 0};
+  expect_report(&cap, 10, expect11, sizeof(expect11));
+
+  send_key(&t, VIRTIO_INPUT_KEY_RO, 0);
+  send_syn(&t);
+  uint8_t expect12[HID_TRANSLATE_KEYBOARD_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_KEYBOARD, 0, 0, 0, 0, 0, 0, 0, 0};
+  expect_report(&cap, 11, expect12, sizeof(expect12));
+
+  /* IntlYen (non-boot usage range). */
+  send_key(&t, VIRTIO_INPUT_KEY_YEN, 1);
+  send_syn(&t);
+  uint8_t expect13[HID_TRANSLATE_KEYBOARD_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_KEYBOARD, 0, 0, 0x89, 0, 0, 0, 0, 0};
+  expect_report(&cap, 12, expect13, sizeof(expect13));
+
+  send_key(&t, VIRTIO_INPUT_KEY_YEN, 0);
+  send_syn(&t);
+  uint8_t expect14[HID_TRANSLATE_KEYBOARD_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_KEYBOARD, 0, 0, 0, 0, 0, 0, 0, 0};
+  expect_report(&cap, 13, expect14, sizeof(expect14));
 }
 
 static void test_mouse_reports_le(void) {

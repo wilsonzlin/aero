@@ -179,10 +179,14 @@ static const struct hid_translate_keymap_entry kLinuxToHidKeymap[] = {
     {VIRTIO_INPUT_KEY_KP9, 0x61},
     {VIRTIO_INPUT_KEY_KP0, 0x62},
     {VIRTIO_INPUT_KEY_KPDOT, 0x63},
+    {VIRTIO_INPUT_KEY_KPEQUAL, 0x67},
+    {VIRTIO_INPUT_KEY_KPCOMMA, 0x85},
 
     /* International/misc. */
     {VIRTIO_INPUT_KEY_102ND, 0x64},
     {VIRTIO_INPUT_KEY_MENU, 0x65},
+    {VIRTIO_INPUT_KEY_RO, 0x87},
+    {VIRTIO_INPUT_KEY_YEN, 0x89},
 };
 
 uint8_t hid_translate_linux_key_to_hid_usage(uint16_t linux_key_code) {

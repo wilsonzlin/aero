@@ -23,10 +23,10 @@ const UCHAR VirtioInputKeyboardReportDescriptor[] = {
     0x95, 0x06,        //   Report Count (6)
     0x75, 0x08,        //   Report Size (8)
     0x15, 0x00,        //   Logical Minimum (0)
-    0x25, 0x65,        //   Logical Maximum (101)
+    0x25, 0x89,        //   Logical Maximum (137)
     0x05, 0x07,        //   Usage Page (Keyboard/Keypad)
     0x19, 0x00,        //   Usage Minimum (0)
-    0x29, 0x65,        //   Usage Maximum (101)
+    0x29, 0x89,        //   Usage Maximum (137)
     0x81, 0x00,        //   Input (Data,Array,Abs) ; 6-key rollover
     0x05, 0x08,        //   Usage Page (LEDs)
     0x19, 0x01,        //   Usage Minimum (Num Lock)
