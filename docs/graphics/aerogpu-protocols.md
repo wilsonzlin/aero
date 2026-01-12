@@ -7,6 +7,19 @@ that new work should target.
 If you are doing new work and you are not explicitly working on a prototype, **target the
 Win7/WDDM ABI** described below.
 
+Note on the canonical machine (`aero_machine::Machine`):
+
+- The canonical full-system machine reserves `00:07.0` for the AeroGPU Windows driver contract
+  (`PCI\\VEN_A3A0&DEV_0001`), but does **not** yet expose the full AeroGPU PCI device model.
+- Today, boot display in the canonical machine is provided by `aero_gpu_vga` (legacy VGA ports +
+  Bochs VBE) plus a minimal “Standard VGA”-like PCI stub at `00:0c.0` (`1234:1111`) used only for VBE
+  LFB MMIO routing.
+
+See:
+
+- [`docs/abi/aerogpu-pci-identity.md`](../abi/aerogpu-pci-identity.md)
+- [`docs/pci-device-compatibility.md`](../pci-device-compatibility.md)
+
 ## Win7/WDDM target ABI (the real AeroGPU protocol)
 
 **Source of truth (versioned ABI headers):** `drivers/aerogpu/protocol/*`

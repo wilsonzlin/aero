@@ -19,6 +19,12 @@ This drift is costly because **PCI IDs and guest↔host ABIs are API**:
 
 We need a single canonical definition of AeroGPU’s PCI identity and ABI, plus an explicit plan to migrate away from legacy IDs/ABIs without accidentally reintroducing them.
 
+Note: this ADR is about the **AeroGPU** device identity/ABI used by the Win7 WDDM driver. The
+canonical full-system machine (`aero_machine::Machine`) currently uses a separate VGA/VBE boot
+display device model (`aero_gpu_vga`) and a minimal Bochs/QEMU “Standard VGA”-like PCI stub
+(`00:0c.0`, `1234:1111`) solely for VBE LFB routing; this transitional stub is *not* part of the
+AeroGPU PCI identity contract documented here.
+
 ## Decision
 
 ### Canonical PCI identity
