@@ -66,6 +66,14 @@ The `aero-debug::Tracer` collects structured `TraceEvent`s with:
 
 The I/O bus can log port reads/writes, while the CPU core can log instructions and interrupts.
 
+### Network traffic capture (PCAPNG)
+
+For packet-level networking debugging (guest↔tunnel Ethernet frames, exportable to Wireshark),
+see:
+
+- [`07-networking.md`](./07-networking.md#network-tracing-pcappcapng-export) – **Network Tracing (PCAP/PCAPNG Export)**
+  - Includes the browser runtime UI panel and the `window.aero.netTrace` automation API.
+
 ---
 
 ## Web Debug UI
