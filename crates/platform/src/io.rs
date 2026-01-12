@@ -153,9 +153,15 @@ impl IoPortBus {
     }
 
     pub fn read(&mut self, port: u16, size: u8) -> u32 {
-        // x86 port I/O instructions only support access sizes {1,2,4}. Treat any other size as an
-        // invalid/unmapped access and float the bus high (all ones), rather than forwarding an
-        // unexpected size into device models.
+        // Treat zero-sized accesses as true no-ops. (They are not representable by the x86 ISA,
+        // but defensive callers may still attempt them.)
+        if size == 0 {
+            return 0;
+        }
+
+        // x86 port I/O instructions only support access sizes {1,2,4}. Treat any other *non-zero*
+        // size as an invalid/unmapped access and float the bus high (all ones), rather than
+        // forwarding an unexpected size into device models.
         if !matches!(size, 1 | 2 | 4) {
             return 0xFFFF_FFFF;
         }
@@ -181,6 +187,9 @@ impl IoPortBus {
     }
 
     pub fn write(&mut self, port: u16, size: u8, value: u32) {
+        if size == 0 {
+            return;
+        }
         if !matches!(size, 1 | 2 | 4) {
             return;
         }
@@ -226,6 +235,7 @@ impl Default for IoPortBus {
 impl aero_cpu_core::paging_bus::IoBus for IoPortBus {
     fn io_read(&mut self, port: u16, size: u32) -> Result<u64, aero_cpu_core::Exception> {
         match size {
+            0 => Ok(0),
             1 | 2 | 4 => Ok(u64::from(self.read(port, size as u8))),
             _ => Err(aero_cpu_core::Exception::Unimplemented("io_read size")),
         }
@@ -233,6 +243,7 @@ impl aero_cpu_core::paging_bus::IoBus for IoPortBus {
 
     fn io_write(&mut self, port: u16, size: u32, val: u64) -> Result<(), aero_cpu_core::Exception> {
         match size {
+            0 => Ok(()),
             1 | 2 | 4 => {
                 self.write(port, size as u8, val as u32);
                 Ok(())
@@ -245,7 +256,7 @@ impl aero_cpu_core::paging_bus::IoBus for IoPortBus {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::cell::RefCell;
+    use std::cell::{Cell, RefCell};
     use std::rc::Rc;
 
     #[derive(Debug, Default)]
@@ -599,5 +610,51 @@ mod tests {
             bus.register_range(0x2004, 4, Box::new(Noop));
         });
         assert!(adjacent.is_ok());
+    }
+
+    #[test]
+    fn port_io_size0_is_noop() {
+        #[derive(Debug)]
+        struct SpyPort {
+            reads: Rc<Cell<u32>>,
+            writes: Rc<Cell<u32>>,
+        }
+
+        impl PortIoDevice for SpyPort {
+            fn read(&mut self, _port: u16, _size: u8) -> u32 {
+                self.reads.set(self.reads.get() + 1);
+                0x1234_5678
+            }
+
+            fn write(&mut self, _port: u16, _size: u8, _value: u32) {
+                self.writes.set(self.writes.get() + 1);
+            }
+        }
+
+        let reads = Rc::new(Cell::new(0u32));
+        let writes = Rc::new(Cell::new(0u32));
+        let mut bus = IoPortBus::new();
+        bus.register(
+            0x1234,
+            Box::new(SpyPort {
+                reads: reads.clone(),
+                writes: writes.clone(),
+            }),
+        );
+
+        assert_eq!(bus.read(0x1234, 0), 0);
+        bus.write(0x1234, 0, 0xDEAD_BEEF);
+        assert_eq!(reads.get(), 0);
+        assert_eq!(writes.get(), 0);
+
+        use aero_cpu_core::paging_bus::IoBus;
+        assert_eq!(IoBus::io_read(&mut bus, 0x1234, 0).unwrap(), 0);
+        IoBus::io_write(&mut bus, 0x1234, 0, 0xDEAD_BEEF).unwrap();
+        assert_eq!(reads.get(), 0);
+        assert_eq!(writes.get(), 0);
+
+        // Valid access sizes still dispatch.
+        assert_eq!(bus.read(0x1234, 4), 0x1234_5678);
+        assert_eq!(reads.get(), 1);
     }
 }
