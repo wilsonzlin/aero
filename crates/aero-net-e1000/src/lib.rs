@@ -16,7 +16,7 @@ use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
 use aero_io_snapshot::io::state::{
     IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
 };
-use memory::MemoryBus;
+use memory::{MemoryBus, MmioHandler};
 
 mod offload;
 
@@ -1728,6 +1728,43 @@ impl IoSnapshot for E1000Device {
 
         *self = dev;
         Ok(())
+    }
+}
+
+impl MmioHandler for E1000Device {
+    fn read(&mut self, offset: u64, size: usize) -> u64 {
+        match size {
+            1 | 2 | 4 => self.mmio_read(offset, size) as u64,
+            8 => {
+                let lo = self.mmio_read(offset, 4) as u64;
+                let hi = self.mmio_read(offset + 4, 4) as u64;
+                lo | (hi << 32)
+            }
+            _ => {
+                let mut out = 0u64;
+                for i in 0..size.min(8) {
+                    let byte = self.mmio_read(offset + i as u64, 1) as u64 & 0xff;
+                    out |= byte << (i * 8);
+                }
+                out
+            }
+        }
+    }
+
+    fn write(&mut self, offset: u64, size: usize, value: u64) {
+        match size {
+            1 | 2 | 4 => self.mmio_write_reg(offset, size, value as u32),
+            8 => {
+                self.mmio_write_reg(offset, 4, value as u32);
+                self.mmio_write_reg(offset + 4, 4, (value >> 32) as u32);
+            }
+            _ => {
+                let bytes = value.to_le_bytes();
+                for (i, byte) in bytes.iter().copied().enumerate().take(size.min(8)) {
+                    self.mmio_write_reg(offset + i as u64, 1, u32::from(byte));
+                }
+            }
+        }
     }
 }
 
