@@ -130,6 +130,11 @@ impl DiskBackend for AeroVirtualDiskAsNvmeBackend {
     }
 }
 
+/// Convenience helper to wrap an [`aero_storage::VirtualDisk`] as an NVMe [`DiskBackend`].
+pub fn from_virtual_disk(d: Box<dyn aero_storage::VirtualDisk + Send>) -> Box<dyn DiskBackend> {
+    Box::new(AeroVirtualDiskAsNvmeBackend::new(d))
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct NvmeStatus {
     sct: u8,
