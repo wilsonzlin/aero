@@ -1,4 +1,5 @@
 import {
+  L2_TUNNEL_DEFAULT_MAX_CONTROL_PAYLOAD,
   L2_TUNNEL_DEFAULT_MAX_FRAME_PAYLOAD,
   L2_TUNNEL_DATA_CHANNEL_LABEL,
   L2_TUNNEL_TYPE_ERROR,
@@ -83,6 +84,18 @@ export type L2TunnelClientOptions = {
   maxFrameSize?: number;
 
   /**
+   * Maximum payload size for L2 tunnel control messages (PING/PONG/ERROR).
+   *
+   * This should generally match `POST /session` `limits.l2.maxControlPayloadBytes`
+   * (or the proxy's configured control payload limit). The default is the
+   * protocol recommended value.
+   *
+   * Note: The L2 tunnel framing uses a fixed 4-byte header; this limit applies
+   * only to the message payload bytes.
+   */
+  maxControlSize?: number;
+
+  /**
    * When emitting errors (queue overflow, oversize), emit at most one `{ type:
    * "error" }` event per interval to avoid spamming.
    */
@@ -154,6 +167,7 @@ type RequiredOptions = {
   maxQueuedBytes: number;
   maxBufferedAmount: number;
   maxFrameSize: number;
+  maxControlSize: number;
   errorIntervalMs: number;
   keepaliveMinMs: number;
   keepaliveMaxMs: number;
@@ -162,6 +176,7 @@ type RequiredOptions = {
 const DEFAULT_MAX_QUEUED_BYTES = 8 * 1024 * 1024;
 const DEFAULT_MAX_BUFFERED_AMOUNT = 16 * 1024 * 1024;
 const DEFAULT_MAX_FRAME_SIZE = L2_TUNNEL_DEFAULT_MAX_FRAME_PAYLOAD;
+const DEFAULT_MAX_CONTROL_SIZE = L2_TUNNEL_DEFAULT_MAX_CONTROL_PAYLOAD;
 const DEFAULT_ERROR_INTERVAL_MS = 1000;
 const DEFAULT_KEEPALIVE_MIN_MS = 5000;
 const DEFAULT_KEEPALIVE_MAX_MS = 15000;
@@ -226,6 +241,7 @@ abstract class BaseL2TunnelClient implements L2TunnelClient {
     const maxQueuedBytes = opts.maxQueuedBytes ?? DEFAULT_MAX_QUEUED_BYTES;
     const maxBufferedAmount = opts.maxBufferedAmount ?? DEFAULT_MAX_BUFFERED_AMOUNT;
     const maxFrameSize = opts.maxFrameSize ?? DEFAULT_MAX_FRAME_SIZE;
+    const maxControlSize = opts.maxControlSize ?? DEFAULT_MAX_CONTROL_SIZE;
     const errorIntervalMs = opts.errorIntervalMs ?? DEFAULT_ERROR_INTERVAL_MS;
     const keepaliveMinMs = opts.keepaliveMinMs ?? DEFAULT_KEEPALIVE_MIN_MS;
     const keepaliveMaxMs = opts.keepaliveMaxMs ?? DEFAULT_KEEPALIVE_MAX_MS;
@@ -233,6 +249,7 @@ abstract class BaseL2TunnelClient implements L2TunnelClient {
     validateNonNegativeInt("maxQueuedBytes", maxQueuedBytes);
     validateNonNegativeInt("maxBufferedAmount", maxBufferedAmount);
     validateNonNegativeInt("maxFrameSize", maxFrameSize);
+    validateNonNegativeInt("maxControlSize", maxControlSize);
     validateNonNegativeInt("errorIntervalMs", errorIntervalMs);
     validateNonNegativeInt("keepaliveMinMs", keepaliveMinMs);
     validateNonNegativeInt("keepaliveMaxMs", keepaliveMaxMs);
@@ -241,7 +258,7 @@ abstract class BaseL2TunnelClient implements L2TunnelClient {
       throw new RangeError(`keepaliveMinMs must be <= keepaliveMaxMs (${keepaliveMinMs} > ${keepaliveMaxMs})`);
     }
 
-    this.opts = { maxQueuedBytes, maxBufferedAmount, maxFrameSize, errorIntervalMs, keepaliveMinMs, keepaliveMaxMs };
+    this.opts = { maxQueuedBytes, maxBufferedAmount, maxFrameSize, maxControlSize, errorIntervalMs, keepaliveMinMs, keepaliveMaxMs };
     this.token = opts.token;
     const tokenTransport = opts.tokenTransport ?? (opts.tokenViaSubprotocol ? "subprotocol" : "query");
     if (tokenTransport !== "query" && tokenTransport !== "subprotocol" && tokenTransport !== "both") {
@@ -321,7 +338,7 @@ abstract class BaseL2TunnelClient implements L2TunnelClient {
     const receivedAt = nowMs();
     let msg;
     try {
-      msg = decodeL2Message(data, { maxFramePayload: this.opts.maxFrameSize });
+      msg = decodeL2Message(data, { maxFramePayload: this.opts.maxFrameSize, maxControlPayload: this.opts.maxControlSize });
     } catch (err) {
       // Malformed/unexpected control messages should not kill the session.
       this.emitSessionErrorThrottled(err);
@@ -337,7 +354,7 @@ abstract class BaseL2TunnelClient implements L2TunnelClient {
     if (msg.type === L2_TUNNEL_TYPE_PING) {
       // Respond immediately; do not surface to callers. Payload is opaque and is
       // echoed back in the PONG for correlation/RTT measurements.
-      this.enqueue(encodePong(msg.payload));
+      this.enqueue(encodePong(msg.payload, { maxPayload: this.opts.maxControlSize }));
       return;
     }
 
@@ -497,16 +514,20 @@ abstract class BaseL2TunnelClient implements L2TunnelClient {
       }
     }
 
-    const nonce = this.nextPingNonce;
-    this.nextPingNonce = (this.nextPingNonce + 1) >>> 0;
-    this.pendingPings.set(nonce, sentAt);
-    // Bound map growth if the peer never responds.
-    if (this.pendingPings.size > 16) {
-      const first = this.pendingPings.keys().next().value as number;
-      this.pendingPings.delete(first);
+    const canSendNonce = this.opts.maxControlSize >= 4;
+    const pingPayload = canSendNonce ? this.encodePingNonce(this.nextPingNonce) : new Uint8Array();
+    if (canSendNonce) {
+      const nonce = this.nextPingNonce;
+      this.nextPingNonce = (this.nextPingNonce + 1) >>> 0;
+      this.pendingPings.set(nonce, sentAt);
+      // Bound map growth if the peer never responds.
+      if (this.pendingPings.size > 16) {
+        const first = this.pendingPings.keys().next().value as number;
+        this.pendingPings.delete(first);
+      }
     }
 
-    this.enqueue(encodePing(this.encodePingNonce(nonce)));
+    this.enqueue(encodePing(pingPayload, { maxPayload: this.opts.maxControlSize }));
     this.scheduleNextPing();
   }
 

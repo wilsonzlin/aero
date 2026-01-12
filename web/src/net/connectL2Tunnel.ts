@@ -382,6 +382,16 @@ export async function connectL2Tunnel(gatewayBaseUrl: string, opts: ConnectL2Tun
         out.maxFrameSize = maxFramePayloadBytes;
       }
     }
+    if (out.maxControlSize === undefined) {
+      const maxControlPayloadBytes = session?.limits?.l2?.maxControlPayloadBytes;
+      if (
+        typeof maxControlPayloadBytes === "number" &&
+        Number.isInteger(maxControlPayloadBytes) &&
+        maxControlPayloadBytes > 0
+      ) {
+        out.maxControlSize = maxControlPayloadBytes;
+      }
+    }
     return out;
   };
 

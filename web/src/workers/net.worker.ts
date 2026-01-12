@@ -324,10 +324,19 @@ async function connectL2TunnelWithBootstrap(proxyUrl: string, generation: number
   }
 
   const maxFramePayloadBytes = session?.limits?.l2?.maxFramePayloadBytes;
-  const tunnelOpts =
-    typeof maxFramePayloadBytes === "number" && Number.isInteger(maxFramePayloadBytes) && maxFramePayloadBytes > 0
-      ? { maxFrameSize: maxFramePayloadBytes }
-      : undefined;
+  const maxControlPayloadBytes = session?.limits?.l2?.maxControlPayloadBytes;
+  const tunnelOpts: { maxFrameSize?: number; maxControlSize?: number } = {};
+  if (typeof maxFramePayloadBytes === "number" && Number.isInteger(maxFramePayloadBytes) && maxFramePayloadBytes > 0) {
+    tunnelOpts.maxFrameSize = maxFramePayloadBytes;
+  }
+  if (
+    typeof maxControlPayloadBytes === "number" &&
+    Number.isInteger(maxControlPayloadBytes) &&
+    maxControlPayloadBytes > 0
+  ) {
+    tunnelOpts.maxControlSize = maxControlPayloadBytes;
+  }
+  const tunnelOptions = Object.keys(tunnelOpts).length > 0 ? tunnelOpts : undefined;
 
   const client = new WebSocketL2TunnelClient(
     wsBaseUrl,
@@ -336,7 +345,7 @@ async function connectL2TunnelWithBootstrap(proxyUrl: string, generation: number
       if (l2TunnelClient !== client) return;
       forwarder.sink(ev);
     },
-    tunnelOpts,
+    tunnelOptions,
   );
 
   l2TunnelClient = client;

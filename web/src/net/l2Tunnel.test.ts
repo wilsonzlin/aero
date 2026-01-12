@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   L2_TUNNEL_DATA_CHANNEL_LABEL,
   L2_TUNNEL_TYPE_FRAME,
+  L2_TUNNEL_TYPE_PING,
   L2_TUNNEL_TYPE_PONG,
   L2_TUNNEL_TOKEN_SUBPROTOCOL_PREFIX,
   L2_TUNNEL_VERSION,
@@ -293,6 +294,75 @@ describe("net/l2Tunnel", () => {
       // Allow a brief delay; with keepalive disabled we should not emit any PINGs.
       await new Promise((resolve) => setTimeout(resolve, 20));
       expect(FakeWebSocket.last?.sent.length).toBe(0);
+    } finally {
+      client.close();
+      if (original === undefined) {
+        delete (g as { WebSocket?: unknown }).WebSocket;
+      } else {
+        g.WebSocket = original;
+      }
+    }
+  });
+
+  it("honors maxControlSize for PING/PONG payloads", async () => {
+    const channel = new FakeRtcDataChannel();
+    const events: L2TunnelEvent[] = [];
+
+    const client = new WebRtcL2TunnelClient(channel as unknown as RTCDataChannel, (ev) => events.push(ev), {
+      keepaliveMinMs: 60_000,
+      keepaliveMaxMs: 60_000,
+      maxControlSize: 1024,
+    });
+
+    try {
+      await microtask();
+      expect(events[0]?.type).toBe("open");
+
+      const bigPayload = new Uint8Array(512);
+      bigPayload.fill(0xaa);
+      channel.emitMessage(encodePing(bigPayload, { maxPayload: 1024 }));
+      await microtask();
+
+      expect(channel.sent.length).toBe(1);
+      const pong = decodeL2Message(channel.sent[0]!, { maxControlPayload: 1024 });
+      expect(pong.type).toBe(L2_TUNNEL_TYPE_PONG);
+      expect(pong.payload.length).toBe(bigPayload.length);
+      expect(Buffer.from(pong.payload)).toEqual(Buffer.from(bigPayload));
+    } finally {
+      client.close();
+    }
+  });
+
+  it("sends keepalive PINGs with empty payload when maxControlSize < 4", async () => {
+    const g = globalThis as unknown as Record<string, unknown>;
+    const original = g.WebSocket;
+
+    FakeWebSocket.nextProtocol = L2_TUNNEL_SUBPROTOCOL;
+    resetFakeWebSocket();
+    g.WebSocket = FakeWebSocket as unknown as WebSocketConstructor;
+
+    const events: L2TunnelEvent[] = [];
+    const client = new WebSocketL2TunnelClient("wss://gateway.example.com/l2", (ev) => events.push(ev), {
+      keepaliveMinMs: 10,
+      keepaliveMaxMs: 10,
+      maxControlSize: 0,
+    });
+
+    try {
+      client.connect();
+      FakeWebSocket.last?.open();
+      await microtask();
+      expect(events[0]?.type).toBe("open");
+
+      const deadline = Date.now() + 200;
+      while ((FakeWebSocket.last?.sent.length ?? 0) === 0 && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+
+      expect(FakeWebSocket.last?.sent.length).toBeGreaterThan(0);
+      const ping = decodeL2Message(FakeWebSocket.last!.sent[0]!, { maxControlPayload: 0 });
+      expect(ping.type).toBe(L2_TUNNEL_TYPE_PING);
+      expect(ping.payload.length).toBe(0);
     } finally {
       client.close();
       if (original === undefined) {
