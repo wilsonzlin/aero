@@ -1194,6 +1194,7 @@ mod tests {
     }
 
     #[test]
+    // NET-TEST-E1000-NETSTACK-DHCP-001
     fn net_test_e1000_netstack_dhcp_001() {
         let mut mem = TestMem::new(0x20_000);
 
