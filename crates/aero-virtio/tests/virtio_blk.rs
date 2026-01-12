@@ -792,3 +792,85 @@ fn virtio_blk_virtual_disk_backend_maps_errors() {
     let err = BlockBackend::flush(&mut backend).unwrap_err();
     assert_eq!(err, BlockBackendError::IoError);
 }
+
+#[test]
+fn virtio_blk_virtual_disk_backend_maps_browser_storage_failures_to_ioerr() {
+    fn quota_exceeded() -> StorageDiskError {
+        StorageDiskError::QuotaExceeded
+    }
+
+    fn in_use() -> StorageDiskError {
+        StorageDiskError::InUse
+    }
+
+    fn invalid_state() -> StorageDiskError {
+        StorageDiskError::InvalidState("closed".to_string())
+    }
+
+    fn backend_unavailable() -> StorageDiskError {
+        StorageDiskError::BackendUnavailable
+    }
+
+    fn not_supported() -> StorageDiskError {
+        StorageDiskError::NotSupported("opfs".to_string())
+    }
+
+    fn io_error() -> StorageDiskError {
+        StorageDiskError::Io("boom".to_string())
+    }
+
+    struct ErrorDisk {
+        read_err: fn() -> StorageDiskError,
+        write_err: fn() -> StorageDiskError,
+        flush_err: fn() -> StorageDiskError,
+    }
+
+    impl VirtualDisk for ErrorDisk {
+        fn capacity_bytes(&self) -> u64 {
+            512
+        }
+
+        fn read_at(&mut self, _offset: u64, _buf: &mut [u8]) -> aero_storage::Result<()> {
+            Err((self.read_err)())
+        }
+
+        fn write_at(&mut self, _offset: u64, _buf: &[u8]) -> aero_storage::Result<()> {
+            Err((self.write_err)())
+        }
+
+        fn flush(&mut self) -> aero_storage::Result<()> {
+            Err((self.flush_err)())
+        }
+    }
+
+    let disks: &[(
+        fn() -> StorageDiskError,
+        fn() -> StorageDiskError,
+        fn() -> StorageDiskError,
+    )] = &[
+        (quota_exceeded, quota_exceeded, quota_exceeded),
+        (in_use, in_use, in_use),
+        (invalid_state, invalid_state, invalid_state),
+        (backend_unavailable, backend_unavailable, backend_unavailable),
+        (not_supported, not_supported, not_supported),
+        (io_error, io_error, io_error),
+    ];
+
+    for (read_err, write_err, flush_err) in disks {
+        let mut backend: Box<dyn VirtualDisk + Send> = Box::new(ErrorDisk {
+            read_err: *read_err,
+            write_err: *write_err,
+            flush_err: *flush_err,
+        });
+
+        let mut buf = [0u8; 1];
+        let err = BlockBackend::read_at(&mut backend, 0, &mut buf).unwrap_err();
+        assert_eq!(err, BlockBackendError::IoError);
+
+        let err = BlockBackend::write_at(&mut backend, 0, &[0u8; 1]).unwrap_err();
+        assert_eq!(err, BlockBackendError::IoError);
+
+        let err = BlockBackend::flush(&mut backend).unwrap_err();
+        assert_eq!(err, BlockBackendError::IoError);
+    }
+}
