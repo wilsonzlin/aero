@@ -854,6 +854,61 @@ impl VirtioInterruptSink for NoopVirtioInterruptSink {
     fn signal_msix(&mut self, _message: MsiMessage) {}
 }
 
+/// Virtio-net backend adapter that forwards frames to an optional host [`NetworkBackend`] while
+/// enforcing a per-poll receive budget.
+///
+/// Without this, a backend that always has frames available could cause unbounded work in a single
+/// `Machine::poll_network()` call because `VirtioNet::flush_rx` polls until no frames remain or
+/// guest buffers are exhausted.
+struct VirtioNetBackendAdapter {
+    backend: Option<Box<dyn NetworkBackend>>,
+    rx_budget: usize,
+}
+
+impl VirtioNetBackendAdapter {
+    fn new(backend: Option<Box<dyn NetworkBackend>>) -> Self {
+        Self {
+            backend,
+            rx_budget: 0,
+        }
+    }
+
+    fn set_backend(&mut self, backend: Option<Box<dyn NetworkBackend>>) {
+        self.backend = backend;
+    }
+
+    fn take_backend(&mut self) -> Option<Box<dyn NetworkBackend>> {
+        self.backend.take()
+    }
+
+    fn set_rx_budget(&mut self, budget: usize) {
+        self.rx_budget = budget;
+    }
+}
+
+impl NetworkBackend for VirtioNetBackendAdapter {
+    fn transmit(&mut self, frame: Vec<u8>) {
+        if let Some(backend) = self.backend.as_mut() {
+            backend.transmit(frame);
+        }
+    }
+
+    fn poll_receive(&mut self) -> Option<Vec<u8>> {
+        if self.rx_budget == 0 {
+            return None;
+        }
+        let frame = self.backend.as_mut().and_then(|backend| backend.poll_receive());
+        if frame.is_some() {
+            self.rx_budget = self.rx_budget.saturating_sub(1);
+        }
+        frame
+    }
+
+    fn l2_ring_stats(&self) -> Option<L2TunnelRingBackendStats> {
+        self.backend.as_ref().and_then(|backend| backend.l2_ring_stats())
+    }
+}
+
 struct VirtioPciBar0Mmio {
     dev: Rc<RefCell<VirtioPciDevice>>,
 }
@@ -864,29 +919,30 @@ impl VirtioPciBar0Mmio {
     }
 
     fn all_ones(size: usize) -> u64 {
-        match size {
-            0 => 0,
-            1 => 0xFF,
-            2 => 0xFFFF,
-            4 => 0xFFFF_FFFF,
-            8 => 0xFFFF_FFFF_FFFF_FFFF,
-            _ => 0xFFFF_FFFF_FFFF_FFFF,
+        if size == 0 {
+            return 0;
         }
+        if size >= 8 {
+            return u64::MAX;
+        }
+        (1u64 << (size * 8)) - 1
     }
 }
 
 impl PciBarMmioHandler for VirtioPciBar0Mmio {
     fn read(&mut self, offset: u64, size: usize) -> u64 {
-        if !(1..=8).contains(&size) {
-            return Self::all_ones(size);
+        match size {
+            1 | 2 | 4 | 8 => {
+                let mut buf = [0u8; 8];
+                self.dev.borrow_mut().bar0_read(offset, &mut buf[..size]);
+                u64::from_le_bytes(buf)
+            }
+            _ => Self::all_ones(size),
         }
-        let mut buf = [0u8; 8];
-        self.dev.borrow_mut().bar0_read(offset, &mut buf[..size]);
-        u64::from_le_bytes(buf)
     }
 
     fn write(&mut self, offset: u64, size: usize, value: u64) {
-        if !(1..=8).contains(&size) {
+        if !matches!(size, 1 | 2 | 4 | 8) {
             return;
         }
         let bytes = value.to_le_bytes();
@@ -1993,8 +2049,8 @@ impl Machine {
     pub fn set_network_backend(&mut self, backend: Box<dyn NetworkBackend>) {
         if let Some(virtio) = &self.virtio_net {
             let mut virtio = virtio.borrow_mut();
-            if let Some(net) = virtio.device_mut::<VirtioNet<Option<Box<dyn NetworkBackend>>>>() {
-                *net.backend_mut() = Some(backend);
+            if let Some(net) = virtio.device_mut::<VirtioNet<VirtioNetBackendAdapter>>() {
+                net.backend_mut().set_backend(Some(backend));
                 return;
             }
         }
@@ -2035,8 +2091,8 @@ impl Machine {
         self.network_backend = None;
         if let Some(virtio) = &self.virtio_net {
             let mut virtio = virtio.borrow_mut();
-            if let Some(net) = virtio.device_mut::<VirtioNet<Option<Box<dyn NetworkBackend>>>>() {
-                *net.backend_mut() = None;
+            if let Some(net) = virtio.device_mut::<VirtioNet<VirtioNetBackendAdapter>>() {
+                net.backend_mut().set_backend(None);
             }
         }
     }
@@ -2048,7 +2104,7 @@ impl Machine {
             // for stats, but borrow mutably via `RefCell` so the same API can be used regardless of
             // which NIC model is enabled.
             let mut virtio = virtio.borrow_mut();
-            if let Some(net) = virtio.device_mut::<VirtioNet<Option<Box<dyn NetworkBackend>>>>() {
+            if let Some(net) = virtio.device_mut::<VirtioNet<VirtioNetBackendAdapter>>() {
                 return net.backend_mut().l2_ring_stats();
             }
         }
@@ -3408,8 +3464,8 @@ impl Machine {
 
                 let backend = self.virtio_net.as_ref().and_then(|dev| {
                     let mut dev = dev.borrow_mut();
-                    dev.device_mut::<VirtioNet<Option<Box<dyn NetworkBackend>>>>()
-                        .and_then(|net| std::mem::take(net.backend_mut()))
+                    dev.device_mut::<VirtioNet<VirtioNetBackendAdapter>>()
+                        .and_then(|net| net.backend_mut().take_backend())
                 });
 
                 match &self.virtio_net {
@@ -3417,13 +3473,16 @@ impl Machine {
                         // Reset in-place while keeping `Rc` identity stable for persistent MMIO
                         // mappings.
                         *dev.borrow_mut() = VirtioPciDevice::new(
-                            Box::new(VirtioNet::new(backend, mac)),
+                            Box::new(VirtioNet::new(VirtioNetBackendAdapter::new(backend), mac)),
                             Box::new(NoopVirtioInterruptSink),
                         );
                         Some(dev.clone())
                     }
                     None => Some(Rc::new(RefCell::new(VirtioPciDevice::new(
-                        Box::new(VirtioNet::new(None::<Box<dyn NetworkBackend>>, mac)),
+                        Box::new(VirtioNet::new(
+                            VirtioNetBackendAdapter::new(None),
+                            mac,
+                        )),
                         Box::new(NoopVirtioInterruptSink),
                     )))),
                 }
@@ -4039,6 +4098,8 @@ impl Machine {
     ///
     /// This is safe to call even when no NIC is enabled; it will no-op.
     pub fn poll_network(&mut self) {
+        const MAX_FRAMES_PER_POLL: usize = aero_net_pump::DEFAULT_MAX_FRAMES_PER_POLL;
+
         if let Some(e1000) = &self.e1000 {
             let bdf = aero_devices::pci::profile::NIC_E1000_82540EM.bdf;
             let (command, bar0_base, bar1_base) = self
@@ -4077,7 +4138,6 @@ impl Machine {
                 nic.pci_config_write(0x14, 4, bar1_base);
             }
 
-            const MAX_FRAMES_PER_POLL: usize = aero_net_pump::DEFAULT_MAX_FRAMES_PER_POLL;
             // `Option<B>` implements `NetworkBackend`, so when no backend is installed this still
             // drains guest TX frames (dropping them) while making no forward progress on host RX.
             tick_e1000(
@@ -4122,8 +4182,19 @@ impl Machine {
         }
 
         let mut dma = VirtioDmaMemory::new(&mut self.mem);
-        virtio.process_notified_queues(&mut dma);
-        virtio.poll(&mut dma);
+        // Clamp all work so a guest or backend cannot cause unbounded processing within a single
+        // `poll_network()` call.
+        const MAX_CHAINS_PER_QUEUE_PER_POLL: usize = MAX_FRAMES_PER_POLL;
+
+        // Reset the per-poll backend RX budget so `VirtioNet::flush_rx` is bounded.
+        if let Some(net) = virtio.device_mut::<VirtioNet<VirtioNetBackendAdapter>>() {
+            net.backend_mut().set_rx_budget(MAX_FRAMES_PER_POLL);
+        }
+
+        virtio.process_notified_queues_bounded(&mut dma, MAX_CHAINS_PER_QUEUE_PER_POLL);
+        // Poll device-driven work (e.g. virtio-net RX) without consuming additional avail entries
+        // beyond the per-queue budget above.
+        virtio.poll_bounded(&mut dma, 0);
     }
     /// Run the CPU for at most `max_insts` guest instructions.
     pub fn run_slice(&mut self, max_insts: u64) -> RunExit {

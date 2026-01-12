@@ -552,6 +552,24 @@ impl VirtioPciDevice {
         }
     }
 
+    /// Like [`VirtioPciDevice::poll`], but clamps the amount of work performed per call.
+    ///
+    /// `max_chains_per_queue` limits how many descriptor chains may be consumed from each queue's
+    /// avail ring. Device-driven work performed via [`VirtioDevice::poll_queue`] (e.g. virtio-net
+    /// RX) is still invoked once per queue per call; integrations that need strict end-to-end
+    /// budgeting should also bound their backend polling (e.g. cap `poll_receive()` calls).
+    pub fn poll_bounded(&mut self, mem: &mut dyn GuestMemory, max_chains_per_queue: usize) {
+        let queue_count = self.queues.len();
+        for queue_index in 0..queue_count {
+            if let Some(q) = self.queues.get_mut(queue_index) {
+                if q.queue.is_some() {
+                    q.pending_notify = false;
+                }
+            }
+            self.process_queue_activity_bounded(queue_index as u16, mem, max_chains_per_queue);
+        }
+    }
+
     /// Process any virtqueues that have pending work.
     ///
     /// This is intended for platform integrations that cannot perform guest-memory DMA from inside
@@ -597,6 +615,52 @@ impl VirtioPciDevice {
                 q.pending_notify = false;
             }
             self.process_queue_activity(queue_index as u16, mem);
+        }
+    }
+
+    /// Like [`VirtioPciDevice::process_notified_queues`], but clamps the amount of work performed
+    /// per call.
+    ///
+    /// `max_chains_per_queue` limits how many descriptor chains may be consumed from each queue's
+    /// avail ring.
+    pub fn process_notified_queues_bounded(
+        &mut self,
+        mem: &mut dyn GuestMemory,
+        max_chains_per_queue: usize,
+    ) {
+        let queue_count = self.queues.len();
+        for queue_index in 0..queue_count {
+            let pending = self.queues.get(queue_index).is_some_and(|q| {
+                let Some(vq) = q.queue.as_ref() else {
+                    return false;
+                };
+
+                // In addition to explicit notify writes, treat any queue with unconsumed avail
+                // entries as pending. This makes snapshot/restore robust when a snapshot is taken
+                // after the guest posts buffers but before the platform processes the notify.
+                if q.pending_notify {
+                    return true;
+                }
+
+                let Some(avail_idx_addr) = q.avail_addr.checked_add(2) else {
+                    return false;
+                };
+                let Ok(avail_idx) = read_u16_le(&*mem, avail_idx_addr) else {
+                    return false;
+                };
+                avail_idx != vq.next_avail()
+            });
+            if !pending {
+                continue;
+            }
+            if let Some(q) = self.queues.get_mut(queue_index) {
+                q.pending_notify = false;
+            }
+            self.process_queue_activity_bounded(
+                queue_index as u16,
+                mem,
+                max_chains_per_queue,
+            );
         }
     }
 
@@ -1023,6 +1087,75 @@ impl VirtioPciDevice {
                         let head_index = chain.head_index();
                         need_irq |= match self.device.process_queue(queue_index, chain, queue, mem)
                         {
+                            Ok(irq) => irq,
+                            Err(_) => {
+                                // VirtioDevice implementations are expected to add a used entry for
+                                // every descriptor chain they pop. Historically, some devices returned
+                                // an error for malformed chains without completing them; because the
+                                // transport ignores device errors, that behaviour wedges the virtqueue
+                                // (the driver waits forever for used->idx to advance).
+                                //
+                                // As a safety net, complete the chain with `used.len = 0` on any device
+                                // error so the guest can recover and continue issuing requests.
+                                queue.add_used(mem, head_index, 0).unwrap_or(false)
+                            }
+                        };
+                    }
+                    PoppedDescriptorChain::Invalid { head_index, .. } => {
+                        // The guest posted an avail entry, but we could not parse the descriptor
+                        // chain (e.g. loop, out-of-range index, invalid indirect table). Complete
+                        // the chain with `used.len = 0` so the driver can recover instead of
+                        // wedging the queue.
+                        need_irq |= queue.add_used(mem, head_index, 0).unwrap_or(false);
+                    }
+                }
+            }
+            need_irq |= self
+                .device
+                .poll_queue(queue_index, queue, mem)
+                .unwrap_or(false);
+
+            // When EVENT_IDX is enabled, keep `avail_event` up-to-date so the guest
+            // driver can correctly suppress/publish notifications.
+            let _ = queue.update_avail_event(mem);
+        }
+        if need_irq {
+            self.signal_queue_interrupt(queue_index);
+        }
+    }
+
+    fn process_queue_activity_bounded(
+        &mut self,
+        queue_index: u16,
+        mem: &mut dyn GuestMemory,
+        max_chains: usize,
+    ) {
+        let mut need_irq = false;
+        {
+            let Some(q) = self.queues.get_mut(queue_index as usize) else {
+                return;
+            };
+            let Some(queue) = q.queue.as_mut() else {
+                return;
+            };
+
+            let mut chains = 0usize;
+            loop {
+                if chains >= max_chains {
+                    break;
+                }
+
+                let popped = match queue.pop_descriptor_chain(mem) {
+                    Ok(Some(popped)) => popped,
+                    Ok(None) => break,
+                    Err(_) => break,
+                };
+                chains = chains.saturating_add(1);
+
+                match popped {
+                    PoppedDescriptorChain::Chain(chain) => {
+                        let head_index = chain.head_index();
+                        need_irq |= match self.device.process_queue(queue_index, chain, queue, mem) {
                             Ok(irq) => irq,
                             Err(_) => {
                                 // VirtioDevice implementations are expected to add a used entry for
