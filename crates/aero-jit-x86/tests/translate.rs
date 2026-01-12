@@ -581,3 +581,47 @@ block 0x6000:
 
     assert_block_ir(&code, entry, cpu, bus, expected);
 }
+
+#[test]
+fn group2_shl_ax_imm8_masks_count_like_x86() {
+    // mov ax, 1
+    // shl ax, 17  (C1 /4 ib, operand-size override)
+    // ret
+    //
+    // x86 masks shift counts to 5 bits for 16-bit operands, so 17 is *not* reduced to 1.
+    // This is an important behavior difference from masking by `(bits - 1)`.
+    let code = [
+        0x66, 0xb8, 0x01, 0x00, // mov ax, 1
+        0x66, 0xc1, 0xe0, 0x11, // shl ax, 17
+        0xc3, // ret
+    ];
+
+    let entry = 0x6100u64;
+
+    let mut cpu = CpuState {
+        rip: entry,
+        ..Default::default()
+    };
+    write_gpr(&mut cpu, Gpr::Rsp, 0x9000);
+
+    let mut bus = SimpleBus::new(0x10000);
+    bus.write(0x9000, Width::W64, 0x7000);
+
+    let expected = "\
+block 0x6100:
+  v0 = const.i16 0x1
+  write.ax v0
+  v1 = read.ax
+  v2 = const.i16 0x11
+  v3 = shl.i16 v1, v2
+  write.ax v3
+  v4 = read.rsp
+  v5 = load.i64 [v4]
+  v6 = const.i64 0x8
+  v7 = add.i64 v4, v6
+  write.rsp v7
+  term jmp [v5]
+";
+
+    assert_block_ir(&code, entry, cpu, bus, expected);
+}
