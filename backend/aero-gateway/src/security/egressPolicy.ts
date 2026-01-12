@@ -86,8 +86,11 @@ export function hostnameMatchesPattern(hostname: string, pattern: HostnamePatter
   if (pattern.kind === "exact") return hostname === pattern.hostname;
   // "*.example.com" matches "a.example.com" and "a.b.example.com" but not
   // "example.com" itself.
-  if (hostname === pattern.suffix) return false;
-  return hostname.endsWith(`.${pattern.suffix}`);
+  const suffix = pattern.suffix;
+  if (hostname.length <= suffix.length) return false;
+  if (!hostname.endsWith(suffix)) return false;
+  // Avoid allocating `.${suffix}` for every match check.
+  return hostname.charCodeAt(hostname.length - suffix.length - 1) === 0x2e /* '.' */;
 }
 
 export function targetMatchesPattern(target: TargetHost, pattern: HostnamePattern): boolean {
