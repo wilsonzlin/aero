@@ -156,7 +156,13 @@ impl<B, IO> PagingBus<B, IO> {
 
         let mut offset = 0usize;
         while offset < len {
-            let addr = vaddr + offset as u64;
+            // Avoid panicking on overflow in debug builds; treat wrap as non-contiguous so callers
+            // can fall back to scalar accesses (which handle architectural wrapping semantics when
+            // needed).
+            let addr = match vaddr.checked_add(offset as u64) {
+                Some(v) => v,
+                None => return Ok(false),
+            };
             match self
                 .mmu
                 .translate_probe(&mut self.phys, addr, access, self.cpl)
