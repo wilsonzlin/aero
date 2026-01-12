@@ -404,3 +404,59 @@ fn pc_platform_defers_e1000_dma_until_process_e1000() {
     pc.memory.read_physical(0x1000 + 12, &mut status);
     assert_ne!(status[0] & 0x01, 0, "DD should be set after process_e1000()");
 }
+
+#[test]
+fn pc_platform_e1000_dma_writes_mark_dirty_pages_when_enabled() {
+    let mut pc = PcPlatform::new_with_e1000_dirty_tracking(2 * 1024 * 1024);
+    let bdf = NIC_E1000_82540EM.bdf;
+    let bar0_base = read_e1000_bar0_base(&mut pc);
+
+    // Enable IO + MEM decoding and Bus Mastering.
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0007);
+
+    // Configure TX ring: 4 descriptors at 0x1000.
+    pc.memory.write_u32(bar0_base + 0x00D0, ICR_TXDW); // IMS
+    pc.memory.write_u32(bar0_base + 0x3800, 0x1000); // TDBAL
+    pc.memory.write_u32(bar0_base + 0x3804, 0); // TDBAH
+    pc.memory.write_u32(bar0_base + 0x3808, 4 * 16); // TDLEN
+    pc.memory.write_u32(bar0_base + 0x3810, 0); // TDH
+    pc.memory.write_u32(bar0_base + 0x3818, 0); // TDT
+    pc.memory.write_u32(bar0_base + 0x0400, 1 << 1); // TCTL.EN
+
+    // Guest TX: descriptor 0 points at packet buffer 0x2000.
+    let pkt_out = build_test_frame(b"dirty-pages");
+    pc.memory.write_physical(0x2000, &pkt_out);
+    write_tx_desc(
+        &mut pc,
+        0x1000,
+        0x2000,
+        pkt_out.len() as u16,
+        0b0000_1001, // EOP|RS
+        0,
+    );
+
+    // Update tail via MMIO; the device will not DMA until `process_e1000()`.
+    pc.memory.write_u32(bar0_base + 0x3818, 1); // TDT = 1
+
+    // Clear dirty tracking for CPU-initiated setup writes. We want to observe only the DMA
+    // writes performed by the device model (descriptor DD update).
+    pc.memory.clear_dirty();
+
+    pc.process_e1000();
+
+    let mut status = [0u8; 1];
+    pc.memory.read_physical(0x1000 + 12, &mut status);
+    assert_ne!(status[0] & 0x01, 0, "DD should be set after process_e1000()");
+
+    let page_size = u64::from(pc.memory.dirty_page_size());
+    let expected_page = 0x1000u64 / page_size;
+
+    let dirty = pc
+        .memory
+        .take_dirty_pages()
+        .expect("dirty tracking enabled");
+    assert!(
+        dirty.contains(&expected_page),
+        "dirty pages should include TX descriptor ring page (got {dirty:?})"
+    );
+}

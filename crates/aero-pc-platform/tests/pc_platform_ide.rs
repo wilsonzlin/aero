@@ -527,6 +527,67 @@ fn pc_platform_ide_dma_scatter_gather_prd_splits_transfer() {
     assert!(out2.iter().all(|b| *b == 0xBB));
 }
 
+#[test]
+fn pc_platform_ide_dma_writes_mark_dirty_pages_when_enabled() {
+    let capacity = 8 * SECTOR_SIZE as u64;
+    let mut disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
+    let mut sector0 = vec![0u8; SECTOR_SIZE];
+    sector0[0..4].copy_from_slice(b"BOOT");
+    disk.write_sectors(0, &sector0).unwrap();
+
+    let mut pc = PcPlatform::new_with_ide_dirty_tracking(2 * 1024 * 1024);
+    pc.attach_ide_primary_master_disk(Box::new(disk)).unwrap();
+
+    let bdf = IDE_PIIX3.bdf;
+    let bm_base = read_io_bar_base(&mut pc, bdf.bus, bdf.device, bdf.function, 4);
+    assert_ne!(bm_base, 0);
+
+    // Enable bus mastering for DMA (keep I/O decoding enabled).
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0005);
+
+    // PRD table at 0x1000: one entry, end-of-table, 512 bytes.
+    let prd_addr = 0x1000u64;
+    let read_buf = 0x2000u64;
+    pc.memory.write_u32(prd_addr, read_buf as u32);
+    pc.memory.write_u16(prd_addr + 4, SECTOR_SIZE as u16);
+    pc.memory.write_u16(prd_addr + 6, 0x8000);
+
+    pc.io.write(bm_base + 4, 4, prd_addr as u32);
+
+    // Issue READ DMA (LBA 0, 1 sector).
+    pc.io.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
+    pc.io.write(PRIMARY_PORTS.cmd_base + 2, 1, 1);
+    pc.io.write(PRIMARY_PORTS.cmd_base + 3, 1, 0);
+    pc.io.write(PRIMARY_PORTS.cmd_base + 4, 1, 0);
+    pc.io.write(PRIMARY_PORTS.cmd_base + 5, 1, 0);
+    pc.io.write(PRIMARY_PORTS.cmd_base + 7, 1, 0xC8); // READ DMA
+
+    // Start bus master (direction = to memory).
+    pc.io.write(bm_base, 1, 0x09);
+
+    // Clear dirty tracking for CPU-initiated setup writes. We want to observe only the DMA
+    // writes performed by the device model.
+    pc.memory.clear_dirty();
+
+    pc.process_ide();
+
+    let mut out = [0u8; 4];
+    pc.memory.read_physical(read_buf, &mut out);
+    assert_eq!(&out, b"BOOT");
+
+    let page_size = u64::from(pc.memory.dirty_page_size());
+    let expected_page = read_buf / page_size;
+
+    let dirty = pc
+        .memory
+        .take_dirty_pages()
+        .expect("dirty tracking enabled");
+    assert!(
+        dirty.contains(&expected_page),
+        "dirty pages should include IDE DMA buffer page (got {dirty:?})"
+    );
+}
+
 fn send_atapi_packet(pc: &mut PcPlatform, base: u16, features: u8, pkt: &[u8; 12], byte_count: u16) {
     pc.io.write(base + 1, 1, features as u32);
     pc.io.write(base + 4, 1, (byte_count & 0xFF) as u32);
