@@ -2085,47 +2085,30 @@ impl PcPlatform {
             (command, bar0_base, bar1_base)
         };
 
+        // Only allow the device to DMA when Bus Mastering is enabled (PCI command bit 2).
+        let bus_master_enabled = (command & (1 << 2)) != 0;
+
         // Keep the device model's internal PCI config state in sync with the platform PCI bus.
         //
         // The E1000 model gates DMA on COMMAND.BME (bit 2) by consulting its own PCI config state,
         // while the PC platform maintains a separate canonical config space for enumeration.
         // Mirror the live config (command + BAR bases) into the NIC model before polling so
         // bus-master gating works without needing a general "config write hook".
-        {
-            let mut e1000 = e1000.borrow_mut();
-            e1000.pci_config_write(0x04, 2, u32::from(command));
-            if let Ok(bar0_base) = u32::try_from(bar0_base) {
-                if bar0_base != 0 {
-                    e1000.pci_config_write(0x10, 4, bar0_base);
-                }
+        let mut dev = e1000.borrow_mut();
+        dev.pci_config_write(0x04, 2, u32::from(command));
+        if let Ok(bar0_base) = u32::try_from(bar0_base) {
+            if bar0_base != 0 {
+                dev.pci_config_write(0x10, 4, bar0_base);
             }
-            if let Ok(bar1_base) = u32::try_from(bar1_base) {
-                if bar1_base != 0 {
-                    e1000.pci_config_write(0x14, 4, bar1_base);
-                }
+        }
+        if let Ok(bar1_base) = u32::try_from(bar1_base) {
+            if bar1_base != 0 {
+                dev.pci_config_write(0x14, 4, bar1_base);
             }
         }
 
-        // Only allow the device to DMA when Bus Mastering is enabled (PCI command bit 2).
-        //
-        // The E1000 device model also consults its own internal PCI config-space image when
-        // deciding whether to perform DMA. Keep the model in sync with the platform's canonical
-        // PCI config space so the same device can be reused in both "standalone PCI" and
-        // `PcPlatform` integrations.
-        {
-            let mut dev = e1000.borrow_mut();
-            dev.pci_config_write(0x04, 2, u32::from(command));
-        }
-
-        let bus_master_enabled = (command & (1 << 2)) != 0;
-        {
-            // Keep the E1000 model's internal PCI command register in sync with the platform's PCI
-            // config space. The device model gates DMA on its own `pci` state.
-            let mut dev = e1000.borrow_mut();
-            dev.pci.write(0x04, 2, command as u32);
-            if bus_master_enabled {
-                dev.poll(&mut self.memory);
-            }
+        if bus_master_enabled {
+            dev.poll(&mut self.memory);
         }
     }
 
