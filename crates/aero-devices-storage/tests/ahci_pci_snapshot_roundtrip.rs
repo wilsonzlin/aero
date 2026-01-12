@@ -1,6 +1,6 @@
+use aero_devices::pci::profile;
 use aero_devices::pci::PciDevice as _;
 use aero_devices_storage::ata::AtaDrive;
-use aero_devices_storage::pci_ahci::AHCI_ABAR_BAR_INDEX;
 use aero_devices_storage::AhciPciDevice;
 use aero_io_snapshot::io::state::codec::Encoder;
 use aero_io_snapshot::io::state::{IoSnapshot, SnapshotError, SnapshotVersion, SnapshotWriter};
@@ -71,7 +71,7 @@ fn ahci_pci_snapshot_roundtrip_preserves_pci_config_mmio_regs_and_irq_level() {
 
     // Program PCI config state (BAR5 + command).
     dev.config_mut()
-        .set_bar_base(AHCI_ABAR_BAR_INDEX, 0x1000_0000);
+        .set_bar_base(profile::AHCI_ABAR_BAR_INDEX, 0x1000_0000);
     dev.config_mut().set_command(0x0006); // memory decode + bus master
     let pci_before = dev.config().snapshot_state();
 
