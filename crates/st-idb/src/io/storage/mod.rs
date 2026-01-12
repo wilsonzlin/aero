@@ -20,8 +20,11 @@ pub struct DiskBackendStats {
 
 /// Minimal async storage interface used by the block cache.
 ///
-/// The surrounding project (ST-CORE) can adopt this trait, or this crate can be
-/// adapted to match ST-CORE's final interface.
+/// This trait is intentionally async and uses a non-`Send` future (`LocalBoxFuture`) to
+/// integrate cleanly with `wasm-bindgen` / browser event loops.
+///
+/// It is not the same as `aero_storage::StorageBackend`, which is synchronous and is
+/// typically backed by OPFS sync access handles in the browser (`crates/aero-opfs`).
 pub trait DiskBackend {
     fn capacity(&self) -> u64;
     fn stats(&self) -> DiskBackendStats;

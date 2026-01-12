@@ -4,6 +4,11 @@
 //! unavailable (e.g. in older browsers or restricted contexts). The backend
 //! stores fixed-size blocks in IndexedDB and uses an in-memory LRU cache to
 //! amortize reads/writes.
+//!
+//! Note: IndexedDB is fundamentally async, so this crate exposes an async storage interface
+//! (`st_idb::DiskBackend`) and is **not** a synchronous `aero_storage::StorageBackend`.
+//! The boot-critical synchronous storage path in the browser uses OPFS sync access handles
+//! via `crates/aero-opfs`.
 
 mod error;
 pub mod io;
