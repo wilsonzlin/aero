@@ -450,6 +450,13 @@ export interface WasmApi {
         serial_output_len?(): number;
         inject_browser_key(code: string, pressed: boolean): void;
         /**
+         * PS/2 mouse injection helpers (optional for older WASM builds).
+         */
+        inject_mouse_motion?(dx: number, dy: number, wheel: number): void;
+        inject_mouse_left?(pressed: boolean): void;
+        inject_mouse_right?(pressed: boolean): void;
+        inject_mouse_middle?(pressed: boolean): void;
+        /**
          * Optional for older WASM builds; canonical machine snapshot support.
          */
         snapshot_full?(): Uint8Array;
