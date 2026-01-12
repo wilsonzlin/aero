@@ -4,6 +4,103 @@
 #[allow(dead_code)]
 mod drain_queue;
 
+// -----------------------------------------------------------------------------
+// Guest physical address translation (PC/Q35 E820)
+// -----------------------------------------------------------------------------
+//
+// The web runtime stores guest RAM as a flat `[0..guest_size)` byte array (backed by a shared
+// `WebAssembly.Memory`). On the PC/Q35 platform, guest *physical* RAM is non-contiguous once the
+// configured guest RAM exceeds the PCIe ECAM base (0xB000_0000): the "high" portion is remapped
+// above 4GiB, leaving an ECAM+PCI/MMIO hole below 4GiB.
+//
+// AeroGPU allocation tables (`alloc.gpa`) use guest physical addresses, so the browser GPU worker
+// must translate GPAs back into this backing-store offset space before indexing `Uint8Array`.
+//
+// Keep this in sync with:
+// - `crates/aero-wasm/src/guest_phys.rs`
+// - `web/src/runtime/shared_layout.ts`
+#[cfg(any(test, target_arch = "wasm32"))]
+mod guest_phys {
+    /// End of low RAM / start of the ECAM+PCI hole.
+    pub const LOW_RAM_END: u64 = 0xB000_0000;
+    /// Base of remapped high RAM.
+    pub const HIGH_RAM_START: u64 = 0x1_0000_0000;
+
+    /// Translate a guest physical address range into a backing-RAM offset.
+    ///
+    /// Returns `Some(ram_offset)` if (and only if) the entire range is backed by RAM.
+    /// Returns `None` for hole/out-of-range ranges, or for ranges that span multiple regions.
+    pub fn translate_guest_paddr_range(ram_bytes: u64, paddr: u64, len: u64) -> Option<u64> {
+        if len == 0 {
+            return Some(0);
+        }
+
+        if ram_bytes <= LOW_RAM_END {
+            let end = paddr.checked_add(len)?;
+            if paddr < ram_bytes && end <= ram_bytes {
+                return Some(paddr);
+            }
+            return None;
+        }
+
+        // Low RAM.
+        if paddr < LOW_RAM_END {
+            let end = paddr.checked_add(len)?;
+            if end <= LOW_RAM_END {
+                return Some(paddr);
+            }
+            return None;
+        }
+
+        // High RAM remap.
+        let high_len = ram_bytes.saturating_sub(LOW_RAM_END);
+        let high_end = HIGH_RAM_START.saturating_add(high_len);
+        if paddr >= HIGH_RAM_START && paddr < high_end {
+            let end = paddr.checked_add(len)?;
+            if end <= high_end {
+                return Some(LOW_RAM_END + (paddr - HIGH_RAM_START));
+            }
+        }
+
+        // Hole or out-of-range.
+        None
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn translate_guest_paddr_range_identity_for_small_ram() {
+            let ram = 0x2000;
+            assert_eq!(translate_guest_paddr_range(ram, 0, 1), Some(0));
+            assert_eq!(translate_guest_paddr_range(ram, 0x1234, 4), Some(0x1234));
+            assert_eq!(translate_guest_paddr_range(ram, ram - 1, 1), Some(ram - 1));
+            assert_eq!(translate_guest_paddr_range(ram, ram, 1), None);
+            assert_eq!(translate_guest_paddr_range(ram, ram - 1, 2), None);
+        }
+
+        #[test]
+        fn translate_guest_paddr_range_rejects_hole_and_maps_high_ram() {
+            let ram = LOW_RAM_END + 0x2000;
+
+            // Low RAM is identity-mapped.
+            assert_eq!(translate_guest_paddr_range(ram, LOW_RAM_END - 4, 4), Some(LOW_RAM_END - 4));
+            // Hole rejected.
+            assert_eq!(translate_guest_paddr_range(ram, LOW_RAM_END, 4), None);
+            assert_eq!(translate_guest_paddr_range(ram, HIGH_RAM_START - 4, 4), None);
+            // High RAM remaps above 4GiB.
+            assert_eq!(translate_guest_paddr_range(ram, HIGH_RAM_START, 4), Some(LOW_RAM_END));
+            assert_eq!(
+                translate_guest_paddr_range(ram, HIGH_RAM_START + 0x1FFC, 4),
+                Some(LOW_RAM_END + 0x1FFC)
+            );
+            // Cross-region rejected (low -> hole).
+            assert_eq!(translate_guest_paddr_range(ram, LOW_RAM_END - 2, 4), None);
+        }
+    }
+}
+
 // The full implementation is only meaningful on wasm32.
 #[cfg(target_arch = "wasm32")]
 mod wasm {
@@ -288,17 +385,22 @@ mod wasm {
     impl GuestMemory for JsGuestMemory {
         fn read(&mut self, gpa: u64, dst: &mut [u8]) -> Result<(), GuestMemoryError> {
             let len = dst.len();
-            let start = usize::try_from(gpa).map_err(|_| GuestMemoryError { gpa, len })?;
-            let end = start
-                .checked_add(len)
-                .ok_or(GuestMemoryError { gpa, len })?;
-
-            let max = self.view.length() as usize;
-            if end > max {
-                return Err(GuestMemoryError { gpa, len });
+            if len == 0 {
+                return Ok(());
             }
 
-            let start_u32 = u32::try_from(start).map_err(|_| GuestMemoryError { gpa, len })?;
+            // `gpa` is a guest physical address. The backing `Uint8Array` is a flat RAM byte store
+            // of length `guest_size`; translate through the PC/Q35 hole/high-RAM remap layout.
+            let ram_bytes = self.view.length() as u64;
+            let len_u64 = u64::try_from(len).map_err(|_| GuestMemoryError { gpa, len })?;
+            let ram_offset =
+                crate::guest_phys::translate_guest_paddr_range(ram_bytes, gpa, len_u64)
+                    .ok_or(GuestMemoryError { gpa, len })?;
+            let end = ram_offset
+                .checked_add(len_u64)
+                .ok_or(GuestMemoryError { gpa, len })?;
+
+            let start_u32 = u32::try_from(ram_offset).map_err(|_| GuestMemoryError { gpa, len })?;
             let end_u32 = u32::try_from(end).map_err(|_| GuestMemoryError { gpa, len })?;
             self.view.subarray(start_u32, end_u32).copy_to(dst);
             Ok(())
@@ -306,17 +408,20 @@ mod wasm {
 
         fn write(&mut self, gpa: u64, src: &[u8]) -> Result<(), GuestMemoryError> {
             let len = src.len();
-            let start = usize::try_from(gpa).map_err(|_| GuestMemoryError { gpa, len })?;
-            let end = start
-                .checked_add(len)
-                .ok_or(GuestMemoryError { gpa, len })?;
-
-            let max = self.view.length() as usize;
-            if end > max {
-                return Err(GuestMemoryError { gpa, len });
+            if len == 0 {
+                return Ok(());
             }
 
-            let start_u32 = u32::try_from(start).map_err(|_| GuestMemoryError { gpa, len })?;
+            let ram_bytes = self.view.length() as u64;
+            let len_u64 = u64::try_from(len).map_err(|_| GuestMemoryError { gpa, len })?;
+            let ram_offset =
+                crate::guest_phys::translate_guest_paddr_range(ram_bytes, gpa, len_u64)
+                    .ok_or(GuestMemoryError { gpa, len })?;
+            let end = ram_offset
+                .checked_add(len_u64)
+                .ok_or(GuestMemoryError { gpa, len })?;
+
+            let start_u32 = u32::try_from(ram_offset).map_err(|_| GuestMemoryError { gpa, len })?;
             let end_u32 = u32::try_from(end).map_err(|_| GuestMemoryError { gpa, len })?;
             self.view.subarray(start_u32, end_u32).copy_from(src);
             Ok(())
@@ -329,8 +434,12 @@ mod wasm {
 
     /// Register a view of guest RAM for AeroGPU submissions.
     ///
-    /// Contract: guest physical addresses (GPAs) are byte offsets into this `Uint8Array`
-    /// (i.e. gpa=0 refers to `guest_u8[0]`).
+    /// Contract: this is a flat view of the guest RAM *backing store* (length = `guest_size`).
+    ///
+    /// On PC/Q35, guest physical RAM is non-contiguous once `guest_size > 0xB000_0000` due to the
+    /// ECAM/PCI/MMIO hole below 4 GiB. The GPU executor translates guest physical addresses (GPAs)
+    /// back into this backing store using the same low-RAM + hole + high-RAM remap layout as the
+    /// rest of the wasm runtime.
     #[wasm_bindgen]
     pub fn set_guest_memory(guest_u8: Uint8Array) {
         GUEST_MEMORY.with(|slot| {

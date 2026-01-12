@@ -213,9 +213,12 @@ export type GpuRuntimeSubmitAerogpuMessage = GpuWorkerMessageBase & {
   /**
    * Optional `aerogpu_alloc_table` bytes used to resolve `backing_alloc_id` uploads.
    *
-   * The table maps `alloc_id -> { gpa, size_bytes }`, where `gpa` is a guest physical
-   * byte offset into the shared guest RAM view supplied to the worker via
-   * `WorkerInitMessage.guestMemory`.
+   * The table maps `alloc_id -> { gpa, size_bytes }`, where `gpa` is a **guest physical address**.
+   *
+   * Note: when the configured guest RAM exceeds the PCIe ECAM base (`0xB000_0000`), the PC/Q35
+   * E820 layout remaps the "high" portion of RAM above 4 GiB, leaving an ECAM/PCI hole below
+   * 4 GiB. The worker must translate guest physical addresses back into the contiguous guest RAM
+   * backing store before indexing the `Uint8Array` view supplied via `WorkerInitMessage.guestMemory`.
    */
   allocTable?: ArrayBuffer;
 };
