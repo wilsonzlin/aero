@@ -3958,6 +3958,7 @@ impl AerogpuD3d11Executor {
             buf.mark_dirty(start..end);
         } else if let Some(tex) = self.resources.textures.get_mut(&handle) {
             tex.dirty = true;
+            tex.host_shadow = None;
         }
         Ok(())
     }
@@ -6861,6 +6862,9 @@ impl AerogpuD3d11Executor {
             }
         }
 
+        // Guest-backed uploads overwrite the GPU texture content; discard any stale UPLOAD_RESOURCE
+        // shadow copy so later partial uploads don't accidentally clobber the updated contents.
+        tex.host_shadow = None;
         tex.dirty = false;
         Ok(())
     }
