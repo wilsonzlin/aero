@@ -2535,6 +2535,30 @@ impl Machine {
             ));
         }
 
+        let (command, bar0_base) = if let Some(pci_cfg) = &self.pci_cfg {
+            let bdf = aero_devices::pci::profile::NVME_CONTROLLER.bdf;
+            let mut pci_cfg = pci_cfg.borrow_mut();
+            let cfg = pci_cfg.bus_mut().device_config(bdf);
+            let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
+            let bar0_base = cfg
+                .and_then(|cfg| cfg.bar_range(0))
+                .map(|range| range.base)
+                .unwrap_or(0);
+            (command, bar0_base)
+        } else {
+            (0, 0)
+        };
+
+        // Ensure the device model's internal PCI config view is coherent with the canonical PCI
+        // config space before capturing state to preserve.
+        {
+            let mut dev = nvme.borrow_mut();
+            dev.config_mut().set_command(command);
+            if bar0_base != 0 {
+                dev.config_mut().set_bar_base(0, bar0_base);
+            }
+        }
+
         // Preserve the device model's in-flight state (queues, pending interrupts, PCI config
         // snapshot bytes, etc.) while swapping the disk backend.
         let state = nvme.borrow().save_state();
@@ -2552,19 +2576,7 @@ impl Machine {
         *nvme.borrow_mut() = new_dev;
 
         // Keep internal PCI config coherent with the canonical `PciConfigPorts` state.
-        if let Some(pci_cfg) = &self.pci_cfg {
-            let bdf = aero_devices::pci::profile::NVME_CONTROLLER.bdf;
-            let (command, bar0_base) = {
-                let mut pci_cfg = pci_cfg.borrow_mut();
-                let cfg = pci_cfg.bus_mut().device_config(bdf);
-                let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
-                let bar0_base = cfg
-                    .and_then(|cfg| cfg.bar_range(0))
-                    .map(|range| range.base)
-                    .unwrap_or(0);
-                (command, bar0_base)
-            };
-
+        {
             let mut dev = nvme.borrow_mut();
             dev.config_mut().set_command(command);
             if bar0_base != 0 {

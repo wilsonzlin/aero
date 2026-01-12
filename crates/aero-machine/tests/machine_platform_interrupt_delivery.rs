@@ -779,7 +779,7 @@ fn machine_i8042_mouse_irq12_is_gated_by_i8042_command_byte() {
 }
 
 #[test]
-fn machine_i8042_keyboard_port_disable_suppresses_output_until_reenabled() {
+fn machine_i8042_keyboard_port_disable_drops_keys_until_reenabled() {
     let vector = 0x21u8; // IRQ1 with PIC base 0x20
     let flag_addr = 0x0508u16;
     let flag_value = 0x33u8;
