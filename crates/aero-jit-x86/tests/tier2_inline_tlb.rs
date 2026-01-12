@@ -621,7 +621,8 @@ fn tier2_inline_tlb_high_ram_remap_load_uses_contiguous_ram_offset() {
     let cpu_ptr = ram.len() as u64;
     let cpu_ptr_usize = cpu_ptr as usize;
     let jit_ctx_ptr_usize = cpu_ptr_usize + (abi::CPU_STATE_SIZE as usize);
-    let total_len = jit_ctx_ptr_usize + JitContext::TOTAL_BYTE_SIZE + (jit_ctx::TIER2_CTX_SIZE as usize);
+    let total_len =
+        jit_ctx_ptr_usize + JitContext::TOTAL_BYTE_SIZE + (jit_ctx::TIER2_CTX_SIZE as usize);
     let mut mem = vec![0u8; total_len];
 
     mem[..ram.len()].copy_from_slice(&ram);
@@ -647,7 +648,10 @@ fn tier2_inline_tlb_high_ram_remap_load_uses_contiguous_ram_offset() {
     let mut got_mem = vec![0u8; total_len];
     memory.read(&store, 0, &mut got_mem).unwrap();
 
-    let rax = read_u64_le(&got_mem, cpu_ptr_usize + abi::gpr_offset(Gpr::Rax.as_u8() as usize) as usize);
+    let rax = read_u64_le(
+        &got_mem,
+        cpu_ptr_usize + abi::gpr_offset(Gpr::Rax.as_u8() as usize) as usize,
+    );
     assert_eq!(rax & 0xff, 0x7f);
 
     let host = *store.data();

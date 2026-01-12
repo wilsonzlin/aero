@@ -45,4 +45,3 @@ fn vga_input_status_mono_port_alias_resets_attribute_flip_flop() {
         assert_eq!(v, 0xAA);
     }
 }
-

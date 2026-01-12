@@ -711,8 +711,8 @@ pub use wasm::VirtioInputPciDevice;
 mod remap_tests {
     use super::wasm_guest_memory::WasmGuestMemory;
 
-    use aero_virtio::memory::GuestMemory;
     use super::{VirtioInputDeviceKind, VirtioInputPciDeviceCore};
+    use aero_virtio::memory::GuestMemory;
 
     #[test]
     fn virtio_wasm_guest_memory_maps_high_ram_above_4gib() {

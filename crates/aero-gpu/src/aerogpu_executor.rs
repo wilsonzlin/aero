@@ -4360,8 +4360,9 @@ mod tests {
         let row_pitch_bytes = 16u64;
         let offset_bytes = row_pitch_bytes * (u64::from(u32::MAX) + 1);
         let size_bytes = row_pitch_bytes;
-        let err = upload_resource_texture_row_range(1, offset_bytes, size_bytes, row_pitch_bytes, 4)
-            .unwrap_err();
+        let err =
+            upload_resource_texture_row_range(1, offset_bytes, size_bytes, row_pitch_bytes, 4)
+                .unwrap_err();
         match err {
             ExecutorError::Validation(message) => {
                 assert!(message.contains("out of bounds"), "{message}");

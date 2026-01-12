@@ -325,10 +325,7 @@ fn machine_snapshot_roundtrip_preserves_ide_secondary_atapi_inflight_dma_and_all
     let _ = src.io_read(SECONDARY_PORTS.cmd_base + 7, 1);
 
     // Ensure the DMA has not run yet (we have not ticked the controller).
-    assert_eq!(
-        src.read_physical_bytes(data_buf, 5),
-        vec![0, 0, 0, 0, 0]
-    );
+    assert_eq!(src.read_physical_bytes(data_buf, 5), vec![0, 0, 0, 0, 0]);
     assert_eq!(
         src.io_read(bm_base + 0x0A, 1) as u8 & 0x04,
         0,
