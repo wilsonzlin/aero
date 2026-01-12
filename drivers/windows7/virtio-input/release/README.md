@@ -42,6 +42,22 @@ powershell -ExecutionPolicy Bypass -File drivers/windows7/virtio-input/scripts/p
 
 `release/out/` and generated `*.zip` files are ignored by git (see `release/.gitignore`).
 
+## One-shot local workflow (optional)
+
+If you want a single command that runs the typical local signing flow:
+
+1. stage SYS into `inf/`
+2. generate the catalog (`Inf2Cat`)
+3. sign (`signtool`)
+4. produce ZIP(s)
+
+Use:
+
+```powershell
+# From drivers/windows7/virtio-input/
+powershell -ExecutionPolicy Bypass -File .\scripts\build-release.ps1 -Arch both -InputDir <path-to-built-binaries>
+```
+
 ### `-InputDir` expectations
 
 `-InputDir` should point at a directory containing your built artifacts. The script searches **recursively** under `-InputDir` for:
