@@ -17,6 +17,8 @@ Canonical implementation pointers (to avoid duplicated stacks):
 
 - `crates/aero-audio/src/hda.rs` — canonical HDA device model (playback + capture) + codec/PCM glue.
 - `crates/aero-audio/src/hda_pci.rs` — canonical PCI function wrapper for the HDA model (config space + BAR0 MMIO).
+- `crates/aero-wasm/src/hda_controller_bridge.rs` — WASM-side bridge exported as `HdaControllerBridge` and used by the browser IO
+  worker to expose HDA as a PCI/MMIO device (MMIO read/write, `process(frames)`, ring attachment).
 - `crates/aero-virtio/src/devices/snd.rs` — canonical virtio-snd device model.
 - `docs/windows7-virtio-driver-contract.md` — definitive Windows 7 virtio device/transport contract (`AERO-W7-VIRTIO`, includes virtio-snd).
 - `crates/platform/src/audio/worklet_bridge.rs` — playback `SharedArrayBuffer` ring layout + producer-side helper (`WorkletBridge`).
@@ -28,6 +30,7 @@ Canonical implementation pointers (to avoid duplicated stacks):
 - `web/vite.config.ts` — emits AudioWorklet dependency assets (`mic_ring.js`, `audio_worklet_ring_layout.js`) because Vite does not follow ESM imports from worklet modules loaded via `audioWorklet.addModule(new URL(...))`.
 - `web/src/runtime/protocol.ts` + `web/src/runtime/coordinator.ts` — ring buffer attachment messages (`SetAudioRingBufferMessage`, `SetMicrophoneRingBufferMessage`).
 - `web/src/workers/io.worker.ts` + `web/src/io/*` — worker runtime PCI/MMIO device registration (IO worker owns the guest device model layer).
+  - `web/src/io/devices/hda.ts` — `HdaPciDevice` wrapper over `HdaControllerBridge` (MMIO + tick scheduling + ring attachment plumbing).
 
 The older `crates/emulator` audio stack is retained behind the `emulator/legacy-audio` feature for reference and targeted tests.
 
@@ -71,7 +74,9 @@ This section describes the *canonical* browser runtime integration.
    - `capacityFrames` / `channelCount`: out-of-band layout parameters
    - `dstSampleRate`: the *actual* `AudioContext.sampleRate`
 3. The producer worker attaches the ring:
-   - WASM: `WorkletBridge.fromSharedBuffer(...)` (Rust: `crates/platform/src/audio/worklet_bridge.rs`; JS bindings: `api.attach_worklet_bridge(...)`).
+   - Generic WASM producer: `WorkletBridge.fromSharedBuffer(...)` (Rust: `crates/platform/src/audio/worklet_bridge.rs`; WASM export: `api.attach_worklet_bridge(...)`).
+   - IO worker HDA path: `HdaPciDevice.setAudioRingBuffer(...)` (`web/src/io/devices/hda.ts`) forwards to the WASM-side
+     `HdaControllerBridge.attach_audio_ring(...)` + `set_output_rate_hz(...)` (`crates/aero-wasm/src/hda_controller_bridge.rs`).
 
 ### Microphone ring attachment (AudioWorklet capture)
 
@@ -88,6 +93,8 @@ This section describes the *canonical* browser runtime integration.
    - `ringBuffer`: `SharedArrayBuffer | null`
    - `sampleRate`: the *actual* capture graph sample rate
 3. The consumer worker consumes mic samples via `MicBridge.fromSharedBuffer(...)` (`crates/platform/src/audio/mic_bridge.rs`).
+   - IO worker HDA path: the IO worker forwards the attachment into the WASM-side `HdaControllerBridge` so it can consume samples
+     via an internal `MicBridge` while running the guest capture DMA path.
 
 ### Device registration (PCI/MMIO)
 
@@ -95,6 +102,7 @@ Guest-visible devices are registered on the IO worker PCI bus:
 
 - Bus/device plumbing: `web/src/io/device_manager.ts`, `web/src/io/bus/pci.ts`, `web/src/io/bus/mmio.ts`
 - Worker wiring: `web/src/workers/io.worker.ts` (calls `DeviceManager.registerPciDevice(...)`)
+  - HDA PCI function wrapper: `web/src/io/devices/hda.ts` (`HdaPciDevice`, backed by `HdaControllerBridge`).
   - See `web/src/io/devices/uhci.ts` for a concrete example of a WASM-backed PCI device wrapper (PIO + IRQ + tick scheduling).
 
 ### Ring producer/consumer constraints (SPSC)
