@@ -87,6 +87,39 @@ fn pc_platform_enumerates_ide_and_preserves_legacy_bar_bases() {
 }
 
 #[test]
+fn pc_platform_ide_io_decode_bit_gates_legacy_ports_and_bus_master_bar4() {
+    let mut pc = PcPlatform::new_with_ide(2 * 1024 * 1024);
+    let bdf = IDE_PIIX3.bdf;
+
+    let bm_base = read_io_bar_base(&mut pc, bdf.bus, bdf.device, bdf.function, 4);
+    assert_ne!(bm_base, 0);
+
+    // With PCI I/O decoding enabled, legacy ports should respond and BAR4 should decode.
+    let status = pc.io.read(PRIMARY_PORTS.cmd_base + 7, 1) as u8;
+    assert_ne!(status, 0xFF, "expected IDE status to decode while IO is enabled");
+    assert_eq!(pc.io.read(bm_base, 1), 0, "BMIDE cmd reg should decode");
+
+    // Disable PCI I/O decoding: legacy ports and BAR4 should float high.
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0000);
+    assert_eq!(
+        pc.io.read(PRIMARY_PORTS.cmd_base + 7, 1),
+        0xFF,
+        "status port should float high when IO decoding is disabled"
+    );
+    assert_eq!(
+        pc.io.read(bm_base, 1),
+        0xFF,
+        "BMIDE BAR4 should not decode when IO decoding is disabled"
+    );
+
+    // Re-enable I/O decoding and ensure both regions decode again.
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0001);
+    let status = pc.io.read(PRIMARY_PORTS.cmd_base + 7, 1) as u8;
+    assert_ne!(status, 0xFF, "status should decode again after IO is enabled");
+    assert_eq!(pc.io.read(bm_base, 1), 0, "BMIDE should decode again");
+}
+
+#[test]
 fn pc_platform_presents_piix3_as_a_multifunction_device() {
     let mut pc = PcPlatform::new_with_ide(2 * 1024 * 1024);
 
