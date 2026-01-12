@@ -1339,26 +1339,6 @@ impl Machine {
                 }
             };
 
-            // Map PC platform MMIO windows into the persistent physical memory bus so guests can
-            // program interrupt controllers and timers (APIC mode).
-            self.mem.map_mmio_once(LAPIC_MMIO_BASE, LAPIC_MMIO_SIZE, || {
-                Box::new(LapicMmio {
-                    interrupts: interrupts.clone(),
-                })
-            });
-            self.mem.map_mmio_once(IOAPIC_MMIO_BASE, IOAPIC_MMIO_SIZE, || {
-                Box::new(IoApicMmio {
-                    interrupts: interrupts.clone(),
-                })
-            });
-            self.mem
-                .map_mmio_once(hpet::HPET_MMIO_BASE, hpet::HPET_MMIO_SIZE, || {
-                    Box::new(HpetMmio {
-                        hpet: hpet.clone(),
-                        interrupts: interrupts.clone(),
-                    })
-                });
-
             let e1000 = if self.cfg.enable_e1000 {
                 let mac = self.cfg.e1000_mac_addr.unwrap_or(DEFAULT_E1000_MAC_ADDR);
                 pci_cfg.borrow_mut().bus_mut().add_device(
