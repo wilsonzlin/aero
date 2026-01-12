@@ -165,8 +165,38 @@ impl PciBus {
             let Some(dev) = self.devices.get_mut(&bdf) else {
                 return;
             };
-            dev.config_mut()
-                .write_with_effects(offset, usize::from(size), value)
+            // BAR registers (0x10..=0x27) are architecturally 32-bit, but guests may update them
+            // via byte/word accesses through config mechanism #1 (0xCFC..0xCFF) or ECAM. Our
+            // `PciConfigSpace` enforces 32-bit aligned BAR writes, so emulate subword BAR updates
+            // with a read-modify-write of the containing DWORD.
+            //
+            // This matches how real hardware behaves and avoids panicking on partial BAR writes.
+            let offset_usize = usize::from(offset);
+            if (0x10..=0x27).contains(&offset_usize) {
+                let in_dword = (offset & 0x3) as u8;
+                if size == 4 && in_dword == 0 {
+                    dev.config_mut().write_with_effects(offset, 4, value)
+                } else if matches!(size, 1 | 2) && in_dword + size <= 4 {
+                    let aligned = offset & !0x3;
+                    let shift = u32::from(in_dword) * 8;
+                    let mask = match size {
+                        1 => 0xFFu32,
+                        2 => 0xFFFFu32,
+                        _ => unreachable!(),
+                    };
+
+                    let cfg = dev.config_mut();
+                    let cur = cfg.read(aligned, 4);
+                    let merged = (cur & !(mask << shift)) | ((value & mask) << shift);
+                    cfg.write_with_effects(aligned, 4, merged)
+                } else {
+                    // Invalid access that crosses the DWORD window; ignore it.
+                    return;
+                }
+            } else {
+                dev.config_mut()
+                    .write_with_effects(offset, usize::from(size), value)
+            }
         };
 
         let (command, bar_ranges) = {
@@ -682,6 +712,38 @@ mod tests {
 
         cfg.io_write(&mut bus, 0xCFC, 4, 0x0000_0C20);
         assert_eq!(cfg.io_read(&mut bus, 0xCFC, 4), 0x0000_0C21);
+    }
+
+    #[test]
+    fn bar_programming_via_config_mech1_supports_subword_writes() {
+        let mut bus = PciBus::new();
+        let mut cfg = PciConfigMechanism1::new();
+
+        let mut dev = Stub::new(0x1234, 0x0001);
+        dev.cfg.set_bar_definition(
+            0,
+            PciBarDefinition::Mmio32 {
+                size: 0x1000,
+                prefetchable: false,
+            },
+        );
+        dev.cfg
+            .set_bar_definition(1, PciBarDefinition::Io { size: 0x20 });
+        bus.add_device(PciBdf::new(0, 1, 0), Box::new(dev));
+
+        // Program BAR0 (MMIO) using two 16-bit writes: high half then low half.
+        cfg.io_write(&mut bus, 0xCF8, 4, cfg_addr(0, 1, 0, 0x10));
+        cfg.io_write(&mut bus, 0xCFC + 2, 2, 0xE000);
+        assert_eq!(cfg.io_read(&mut bus, 0xCFC, 4), 0xE000_0000);
+
+        // Low half is masked to 0x1000 alignment.
+        cfg.io_write(&mut bus, 0xCFC, 2, 0x5678);
+        assert_eq!(cfg.io_read(&mut bus, 0xCFC, 4), 0xE000_5000);
+
+        // Program BAR1 (I/O) using a 16-bit write with a misaligned base.
+        cfg.io_write(&mut bus, 0xCF8, 4, cfg_addr(0, 1, 0, 0x14));
+        cfg.io_write(&mut bus, 0xCFC, 2, 0xC012);
+        assert_eq!(cfg.io_read(&mut bus, 0xCFC, 4), 0x0000_C001);
     }
 
     #[test]
