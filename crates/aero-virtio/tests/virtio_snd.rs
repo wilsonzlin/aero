@@ -368,6 +368,10 @@ fn virtio_snd_snapshot_restore_can_rewind_eventq_progress_to_recover_buffers() {
 
     let snd = VirtioSnd::new(aero_audio::ring::AudioRingBuffer::new_stereo(8));
     let mut dev = VirtioPciDevice::new(Box::new(snd), Box::new(InterruptLog::default()));
+
+    // Enable PCI bus mastering (DMA). The virtio-pci transport gates all guest-memory access on
+    // `PCI COMMAND.BME` (bit 2).
+    dev.config_write(0x04, &0x0004u16.to_le_bytes());
     let caps = parse_caps(&mut dev);
 
     let mut mem = GuestRam::new(0x20000);

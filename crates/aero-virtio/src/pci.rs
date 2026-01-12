@@ -1491,6 +1491,10 @@ mod tests {
             Box::new(NoopInterrupts),
         );
 
+        // Virtio queue processing is gated on PCI COMMAND.BME (bit 2). Enable bus mastering so the
+        // transport is allowed to touch guest memory when polling.
+        pci.set_pci_command(1u16 << 2);
+
         // Enable queue 0 using a legacy PFN at 0x1000.
         pci.legacy_io_write(VIRTIO_PCI_LEGACY_QUEUE_SEL, &0u16.to_le_bytes());
         pci.legacy_io_write(VIRTIO_PCI_LEGACY_QUEUE_PFN, &1u32.to_le_bytes());
