@@ -14804,8 +14804,9 @@ HRESULT AEROGPU_D3D9_CALL device_present_ex(
     }
   }
 
+  const HRESULT trace_hr = trace.ret(present_hr);
   d3d9_trace_maybe_dump_on_present(present_count);
-  return trace.ret(present_hr);
+  return trace_hr;
 }
 
 HRESULT AEROGPU_D3D9_CALL device_present(
@@ -15208,8 +15209,9 @@ HRESULT AEROGPU_D3D9_CALL device_present(
     }
   }
 
+  const HRESULT trace_hr = trace.ret(present_hr);
   d3d9_trace_maybe_dump_on_present(present_count);
-  return trace.ret(present_hr);
+  return trace_hr;
 }
 
 HRESULT AEROGPU_D3D9_CALL device_set_maximum_frame_latency(

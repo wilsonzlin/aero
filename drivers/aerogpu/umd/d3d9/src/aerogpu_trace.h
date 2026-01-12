@@ -217,6 +217,12 @@ public:
     // Record the HRESULT even if this call was suppressed (TRACE_MODE=unique),
     // so dump-on-fail can still trigger and force-record the failing call.
     hr_ = hr;
+    if (record_) {
+      // Some dump triggers (notably dump-on-present) can fire before the scope
+      // ends and before the destructor runs; update the record immediately so
+      // the dump sees the correct return code.
+      record_->hr = hr;
+    }
     return hr;
   }
 
