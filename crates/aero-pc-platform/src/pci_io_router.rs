@@ -21,6 +21,12 @@ struct PciIoBarRoute {
 pub struct PciIoBarRouter {
     pci_cfg: SharedPciConfigPorts,
     routes: Vec<PciIoBarRoute>,
+    /// Fast-path cache of the most recently-hit route.
+    ///
+    /// Port I/O workloads often issue long runs of accesses to the same I/O BAR (e.g. polling a
+    /// status register). The router still consults live PCI config space each access, but checking
+    /// the last-hit route first avoids scanning the full route table for common cases.
+    last_hit: Option<usize>,
 }
 
 impl PciIoBarRouter {
@@ -28,6 +34,7 @@ impl PciIoBarRouter {
         Self {
             pci_cfg,
             routes: Vec::new(),
+            last_hit: None,
         }
     }
 
@@ -40,6 +47,8 @@ impl PciIoBarRouter {
             bar_index,
             handler: Box::new(handler),
         });
+        // The route table changed; conservatively drop any cached hit.
+        self.last_hit = None;
     }
 
     pub fn dispatch_read(&mut self, port: u16, size: usize) -> Option<u32> {
@@ -75,33 +84,45 @@ impl PciIoBarRouter {
         let mut pci_cfg = self.pci_cfg.borrow_mut();
         let bus = pci_cfg.bus_mut();
 
-        for (idx, route) in self.routes.iter().enumerate() {
+        let check = |route: &PciIoBarRoute| -> Option<u64> {
             let Some(cfg) = bus.device_config(route.bdf) else {
-                continue;
+                return None;
             };
 
             // COMMAND.IO (bit 0) gates I/O BAR decoding.
             if (cfg.command() & 0x1) == 0 {
-                continue;
+                return None;
             }
 
-            let Some(bar) = cfg.bar_range(route.bar_index) else {
-                continue;
-            };
-
+            let bar = cfg.bar_range(route.bar_index)?;
             if bar.kind != PciBarKind::Io || bar.base == 0 || bar.size == 0 {
-                continue;
+                return None;
             }
 
-            let Some(bar_end) = bar.base.checked_add(bar.size) else {
-                continue;
-            };
-
+            let bar_end = bar.base.checked_add(bar.size)?;
             if port_start < bar.base || access_end > bar_end {
-                continue;
+                return None;
             }
 
-            return Some((idx, port_start - bar.base));
+            Some(port_start - bar.base)
+        };
+
+        // Fast path: try the last-hit route first.
+        if let Some(idx) = self.last_hit {
+            if let Some(route) = self.routes.get(idx) {
+                if let Some(offset) = check(route) {
+                    return Some((idx, offset));
+                }
+            } else {
+                self.last_hit = None;
+            }
+        }
+
+        for (idx, route) in self.routes.iter().enumerate() {
+            if let Some(offset) = check(route) {
+                self.last_hit = Some(idx);
+                return Some((idx, offset));
+            }
         }
 
         None
