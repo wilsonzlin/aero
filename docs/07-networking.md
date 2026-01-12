@@ -1131,6 +1131,7 @@ In the repo’s browser host UI (repo-root Vite app; see `src/main.ts`), there i
 `web/src/main.ts`) that provides:
 
 - **Enable/disable** tracing via a checkbox.
+- (Optional) **Live stats** (captured bytes/records + drop counters) when the backend implements a stats API.
 - **Clear capture** (when supported by the backend).
 - **Download capture (PCAPNG)** to your local machine.
 - **Save capture to OPFS** (Origin Private File System) at a configurable path (default
@@ -1162,6 +1163,8 @@ Some builds may additionally expose:
 
 - `clear(): void | Promise<void>` (drop buffered frames)
 - `getStats(): unknown | Promise<unknown>` (implementation-defined counters such as buffered bytes/frames and drops; some builds may expose `stats()` instead)
+  - In the current web runtime, `getStats()` typically returns:
+    `{ enabled, records, bytes, droppedRecords, droppedBytes }`.
 
 Worker-runtime note: in the worker-based runtime, these operations are implemented by sending
 `net.trace.*` `postMessage()` commands to the net worker and receiving the `net.trace.pcapng`
