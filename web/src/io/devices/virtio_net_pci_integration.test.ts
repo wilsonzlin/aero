@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 
 import { openRingByKind } from "../../ipc/ipc";
-import type { RingBuffer } from "../../ipc/ring_buffer";
 import { createIoIpcSab, computeGuestRamLayout, guestToLinear, IO_IPC_NET_RX_QUEUE_KIND, IO_IPC_NET_TX_QUEUE_KIND } from "../../runtime/shared_layout";
 import { assertWasmMemoryWiring } from "../../runtime/wasm_memory_probe";
 import { initWasm } from "../../runtime/wasm_loader";
@@ -177,6 +176,7 @@ describe("io/devices/virtio-net (pci bridge integration)", () => {
       dv.setUint16(guestToLinear(layout, base + 14), next & 0xffff, true);
     };
 
+    const mmioReadU8 = (addr: bigint) => mgr.mmioRead(addr, 1) & 0xff;
     const mmioReadU16 = (addr: bigint) => mgr.mmioRead(addr, 2) & 0xffff;
     const mmioReadU32 = (addr: bigint) => mgr.mmioRead(addr, 4) >>> 0;
     const mmioWriteU8 = (addr: bigint, value: number) => mgr.mmioWrite(addr, 1, value & 0xff);
@@ -265,10 +265,12 @@ describe("io/devices/virtio-net (pci bridge integration)", () => {
       }
 
       mmioWriteU8(commonBase + 0x14n, VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK);
+      expect(mmioReadU8(commonBase + 0x14n) & VIRTIO_STATUS_FEATURES_OK).not.toBe(0);
       mmioWriteU8(
         commonBase + 0x14n,
         VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK | VIRTIO_STATUS_DRIVER_OK,
       );
+      expect(mmioReadU8(commonBase + 0x14n) & VIRTIO_STATUS_DRIVER_OK).not.toBe(0);
 
       // -----------------------------------------------------------------------------------------
       // Queue config (RX=queue0, TX=queue1).
@@ -302,6 +304,8 @@ describe("io/devices/virtio-net (pci bridge integration)", () => {
       // -----------------------------------------------------------------------------------------
       const macLo = mmioReadU32(deviceBase);
       const macHi = mmioReadU16(deviceBase + 4n);
+      const linkStatus = mmioReadU16(deviceBase + 6n);
+      const maxVirtqueuePairs = mmioReadU16(deviceBase + 8n);
       const mac = [
         macLo & 0xff,
         (macLo >>> 8) & 0xff,
@@ -311,6 +315,9 @@ describe("io/devices/virtio-net (pci bridge integration)", () => {
         (macHi >>> 8) & 0xff,
       ];
       expect(mac.some((b) => b !== 0)).toBe(true);
+      // Contract v1: link is always up.
+      expect((linkStatus & 1) !== 0).toBe(true);
+      expect(maxVirtqueuePairs).toBe(1);
 
       // -----------------------------------------------------------------------------------------
       // TX: post a descriptor chain (virtio_net_hdr + Ethernet payload) and expect NET_TX output.
@@ -340,11 +347,17 @@ describe("io/devices/virtio-net (pci bridge integration)", () => {
       mmioWriteU16(txNotifyAddr, 1);
       dev.tick(0);
 
-      const popped = waitPop(netTxRing);
+      let popped: Uint8Array | null = null;
+      for (let i = 0; i < 16 && !popped; i++) {
+        dev.tick(i);
+        popped = netTxRing.tryPop();
+      }
       expect(popped).not.toBeNull();
       expect(Array.from(popped!)).toEqual(Array.from(txFrame));
+      expect(netTxRing.tryPop()).toBeNull();
 
       expect(guestReadU16(txUsed + 2)).toBe(1);
+      expect(guestReadU32(txUsed + 4)).toBe(0);
       expect(guestReadU32(txUsed + 8)).toBe(0);
 
       // -----------------------------------------------------------------------------------------
@@ -378,10 +391,12 @@ describe("io/devices/virtio-net (pci bridge integration)", () => {
       }
 
       expect(guestReadU16(rxUsed + 2)).toBe(1);
+      expect(guestReadU32(rxUsed + 4)).toBe(0);
       expect(guestReadU32(rxUsed + 8)).toBe(VIRTIO_NET_HDR_LEN + rxFrame.byteLength);
 
       expect(Array.from(guestReadBytes(rxHdrAddr, VIRTIO_NET_HDR_LEN))).toEqual(Array.from(new Uint8Array(VIRTIO_NET_HDR_LEN)));
       expect(Array.from(guestReadBytes(rxPayloadAddr, rxFrame.byteLength))).toEqual(Array.from(rxFrame));
+      expect(netRxRing.tryPop()).toBeNull();
     } finally {
       try {
         dev.destroy();
@@ -391,11 +406,3 @@ describe("io/devices/virtio-net (pci bridge integration)", () => {
     }
   });
 });
-
-function waitPop(ring: RingBuffer, maxIters = 64): Uint8Array | null {
-  for (let i = 0; i < maxIters; i++) {
-    const msg = ring.tryPop();
-    if (msg) return msg;
-  }
-  return null;
-}
