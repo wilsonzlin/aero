@@ -313,3 +313,184 @@ fn aerogpu_cmd_shared_surface_release_retires_token_but_keeps_alias_valid() {
         );
     });
 }
+
+#[test]
+fn aerogpu_cmd_shared_surface_destroy_resource_refcounts_aliases() {
+    pollster::block_on(async {
+        let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+            Ok(exec) => exec,
+            Err(e) => {
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                return;
+            }
+        };
+
+        const TEX: u32 = 1;
+        const ALIAS: u32 = 2;
+        const WIDTH: u32 = 4;
+        const HEIGHT: u32 = 4;
+        const TOKEN: u64 = 0x0BAD_F00D_DEAD_BEEF;
+
+        let mut guest_mem = VecGuestMemory::new(0);
+
+        // Submission 1: create + import alias, clear green, present.
+        let mut stream = Vec::new();
+        stream.extend_from_slice(&AEROGPU_CMD_STREAM_MAGIC.to_le_bytes());
+        stream.extend_from_slice(&AEROGPU_ABI_VERSION_U32.to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes()); // size_bytes (patched later)
+        stream.extend_from_slice(&0u32.to_le_bytes()); // flags
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved1
+
+        // CREATE_TEXTURE2D (TEX)
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::CreateTexture2d as u32);
+        stream.extend_from_slice(&TEX.to_le_bytes()); // texture_handle
+        stream.extend_from_slice(&AEROGPU_RESOURCE_USAGE_RENDER_TARGET.to_le_bytes()); // usage_flags
+        stream.extend_from_slice(&(AerogpuFormat::B8G8R8A8Unorm as u32).to_le_bytes()); // format
+        stream.extend_from_slice(&WIDTH.to_le_bytes());
+        stream.extend_from_slice(&HEIGHT.to_le_bytes());
+        stream.extend_from_slice(&1u32.to_le_bytes()); // mip_levels
+        stream.extend_from_slice(&1u32.to_le_bytes()); // array_layers
+        stream.extend_from_slice(&0u32.to_le_bytes()); // row_pitch_bytes
+        stream.extend_from_slice(&0u32.to_le_bytes()); // backing_alloc_id
+        stream.extend_from_slice(&0u32.to_le_bytes()); // backing_offset_bytes
+        stream.extend_from_slice(&0u64.to_le_bytes()); // reserved0
+        end_cmd(&mut stream, start);
+
+        // EXPORT_SHARED_SURFACE (TEX -> TOKEN)
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::ExportSharedSurface as u32);
+        stream.extend_from_slice(&TEX.to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes());
+        stream.extend_from_slice(&TOKEN.to_le_bytes());
+        end_cmd(&mut stream, start);
+
+        // IMPORT_SHARED_SURFACE (ALIAS -> TOKEN)
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::ImportSharedSurface as u32);
+        stream.extend_from_slice(&ALIAS.to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes());
+        stream.extend_from_slice(&TOKEN.to_le_bytes());
+        end_cmd(&mut stream, start);
+
+        // SET_RENDER_TARGETS (color0=ALIAS)
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::SetRenderTargets as u32);
+        stream.extend_from_slice(&1u32.to_le_bytes()); // color_count
+        stream.extend_from_slice(&0u32.to_le_bytes()); // depth_stencil
+        stream.extend_from_slice(&ALIAS.to_le_bytes()); // colors[0]
+        for _ in 1..8 {
+            stream.extend_from_slice(&0u32.to_le_bytes());
+        }
+        end_cmd(&mut stream, start);
+
+        // CLEAR (green)
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::Clear as u32);
+        stream.extend_from_slice(&AEROGPU_CLEAR_COLOR.to_le_bytes());
+        stream.extend_from_slice(&0.0f32.to_bits().to_le_bytes());
+        stream.extend_from_slice(&1.0f32.to_bits().to_le_bytes());
+        stream.extend_from_slice(&0.0f32.to_bits().to_le_bytes());
+        stream.extend_from_slice(&1.0f32.to_bits().to_le_bytes());
+        stream.extend_from_slice(&1.0f32.to_bits().to_le_bytes()); // depth
+        stream.extend_from_slice(&0u32.to_le_bytes()); // stencil
+        end_cmd(&mut stream, start);
+
+        // PRESENT
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::Present as u32);
+        stream.extend_from_slice(&0u32.to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes());
+        end_cmd(&mut stream, start);
+
+        let total_size = stream.len() as u32;
+        stream[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
+            .copy_from_slice(&total_size.to_le_bytes());
+
+        exec.execute_cmd_stream(&stream, None, &mut guest_mem)
+            .expect("execute_cmd_stream should succeed");
+        exec.poll_wait();
+
+        // Ensure alias reads back the same underlying green texture.
+        let pixels = exec.read_texture_rgba8(ALIAS).await.unwrap();
+        for px in pixels.chunks_exact(4) {
+            assert_eq!(px, &[0, 255, 0, 255]);
+        }
+
+        // Submission 2: drop the original handle, then clear red via alias and present.
+        let mut stream = Vec::new();
+        stream.extend_from_slice(&AEROGPU_CMD_STREAM_MAGIC.to_le_bytes());
+        stream.extend_from_slice(&AEROGPU_ABI_VERSION_U32.to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes()); // size_bytes
+        stream.extend_from_slice(&0u32.to_le_bytes()); // flags
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved1
+
+        // DESTROY_RESOURCE (TEX) - alias still alive.
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::DestroyResource as u32);
+        stream.extend_from_slice(&TEX.to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+        end_cmd(&mut stream, start);
+
+        // SET_RENDER_TARGETS (color0=ALIAS)
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::SetRenderTargets as u32);
+        stream.extend_from_slice(&1u32.to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes());
+        stream.extend_from_slice(&ALIAS.to_le_bytes());
+        for _ in 1..8 {
+            stream.extend_from_slice(&0u32.to_le_bytes());
+        }
+        end_cmd(&mut stream, start);
+
+        // CLEAR (red)
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::Clear as u32);
+        stream.extend_from_slice(&AEROGPU_CLEAR_COLOR.to_le_bytes());
+        stream.extend_from_slice(&1.0f32.to_bits().to_le_bytes());
+        stream.extend_from_slice(&0.0f32.to_bits().to_le_bytes());
+        stream.extend_from_slice(&0.0f32.to_bits().to_le_bytes());
+        stream.extend_from_slice(&1.0f32.to_bits().to_le_bytes());
+        stream.extend_from_slice(&1.0f32.to_bits().to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes());
+        end_cmd(&mut stream, start);
+
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::Present as u32);
+        stream.extend_from_slice(&0u32.to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes());
+        end_cmd(&mut stream, start);
+
+        let total_size = stream.len() as u32;
+        stream[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
+            .copy_from_slice(&total_size.to_le_bytes());
+
+        exec.execute_cmd_stream(&stream, None, &mut guest_mem)
+            .expect("destroy original + clear via alias should succeed");
+        exec.poll_wait();
+
+        let pixels = exec.read_texture_rgba8(ALIAS).await.unwrap();
+        for px in pixels.chunks_exact(4) {
+            assert_eq!(px, &[255, 0, 0, 255]);
+        }
+
+        // Submission 3: destroy alias (final ref) - underlying should be destroyed.
+        let mut stream = Vec::new();
+        stream.extend_from_slice(&AEROGPU_CMD_STREAM_MAGIC.to_le_bytes());
+        stream.extend_from_slice(&AEROGPU_ABI_VERSION_U32.to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes()); // size_bytes
+        stream.extend_from_slice(&0u32.to_le_bytes()); // flags
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved1
+
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::DestroyResource as u32);
+        stream.extend_from_slice(&ALIAS.to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes());
+        end_cmd(&mut stream, start);
+
+        let total_size = stream.len() as u32;
+        stream[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
+            .copy_from_slice(&total_size.to_le_bytes());
+
+        exec.execute_cmd_stream(&stream, None, &mut guest_mem)
+            .expect("destroy alias should succeed");
+        exec.poll_wait();
+
+        assert!(
+            exec.texture_size(TEX).is_err(),
+            "expected underlying texture to be destroyed after final handle release"
+        );
+    });
+}
