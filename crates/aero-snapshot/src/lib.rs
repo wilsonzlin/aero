@@ -198,11 +198,9 @@ pub fn save_snapshot<W: Write + Seek, S: SnapshotSource>(
                 None
             }
             RamMode::Dirty => {
-                let mut dirty_pages = source
+                let dirty_pages = source
                     .take_dirty_pages()
                     .ok_or(SnapshotError::Corrupt("dirty-page tracking not available"))?;
-                dirty_pages.sort_unstable();
-                dirty_pages.dedup();
 
                 let page_size = u64::from(options.ram.page_size);
                 if page_size == 0 {
