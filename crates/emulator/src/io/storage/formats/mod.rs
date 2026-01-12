@@ -66,7 +66,13 @@ pub fn detect_format<S: ByteStorage>(storage: &mut S) -> DiskResult<DiskFormat> 
     if len >= 8 {
         let mut magic = [0u8; 8];
         storage.read_at(0, &mut magic)?;
-        if magic == AEROSPAR_MAGIC && len >= 64 {
+        if magic == AEROSPAR_MAGIC {
+            // If the file is too small to contain a full header, still treat it as sparse so
+            // `open_auto` returns a corruption error rather than silently falling back to raw.
+            if len < 64 {
+                return Ok(DiskFormat::Sparse);
+            }
+
             let mut header = [0u8; 64];
             storage.read_at(0, &mut header)?;
 

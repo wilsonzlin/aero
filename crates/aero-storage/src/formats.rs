@@ -38,7 +38,13 @@ pub fn detect_format<B: StorageBackend>(backend: &mut B) -> Result<DiskFormat> {
         // We intentionally avoid fully validating the header here; `open_auto` should attempt to
         // open the image and report a corruption/unsupported error instead of silently treating an
         // AeroSparse-looking image as raw.
-        if first8 == AEROSPAR_MAGIC && len >= 64 {
+        if first8 == AEROSPAR_MAGIC {
+            // If the file is too small to contain a complete header, still treat it as AeroSparse
+            // so callers get a corruption error instead of silently falling back to raw.
+            if len < 64 {
+                return Ok(DiskFormat::AeroSparse);
+            }
+
             let mut header = [0u8; 64];
             backend.read_at(0, &mut header)?;
 

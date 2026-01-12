@@ -353,6 +353,21 @@ fn detect_format_recognizes_aerosparse_magic_with_minimally_plausible_header() {
 }
 
 #[test]
+fn detect_format_recognizes_truncated_aerosparse_magic() {
+    // Truncated files that still begin with the AeroSparse magic should not silently open as raw.
+    let mut backend = MemBackend::with_len(8).unwrap();
+    backend.write_at(0, b"AEROSPAR").unwrap();
+
+    assert_eq!(detect_format(&mut backend).unwrap(), DiskFormat::AeroSparse);
+
+    let err = DiskImage::open_auto(backend).err().expect("expected error");
+    assert!(matches!(
+        err,
+        DiskError::CorruptSparseImage("truncated sparse header")
+    ));
+}
+
+#[test]
 fn detect_aerosparse_and_raw() {
     let sparse = AeroSparseDisk::create(
         MemBackend::new(),

@@ -26,7 +26,7 @@ impl ByteStorage for MemStorage {
             .checked_add(buf.len())
             .ok_or(DiskError::OutOfBounds)?;
         if end > self.data.len() {
-            return Err(DiskError::Io("read past end".into()));
+            return Err(DiskError::OutOfBounds);
         }
         buf.copy_from_slice(&self.data[offset..end]);
         Ok(())
@@ -384,6 +384,19 @@ fn detect_aerospar_magic_with_minimally_plausible_header_is_sparse() {
 
     let res = VirtualDrive::open_auto(storage, 512, WriteCachePolicy::WriteThrough);
     assert!(matches!(res, Err(DiskError::CorruptImage(_))));
+}
+
+#[test]
+fn detect_aerospar_magic_with_truncated_header_is_sparse() {
+    let mut storage = MemStorage::with_len(8);
+    storage.write_at(0, b"AEROSPAR").unwrap();
+    assert_eq!(detect_format(&mut storage).unwrap(), DiskFormat::Sparse);
+
+    let res = VirtualDrive::open_auto(storage, 512, WriteCachePolicy::WriteThrough);
+    assert!(matches!(
+        res,
+        Err(DiskError::CorruptImage("truncated sparse header"))
+    ));
 }
 
 #[test]
