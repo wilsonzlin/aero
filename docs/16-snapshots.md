@@ -120,7 +120,7 @@ Beyond BIOS/RAM, a PcPlatform snapshot is expected to include `DEVICES` entries 
 
 Restore notes:
 
-- **HPET:** after restoring HPET state, call `Hpet::poll(&mut sink)` (or run one platform tick/poll iteration) to re-drive any pending **level-triggered** interrupt lines based on `general_int_status`. (`load_state()` intentionally does not directly touch the interrupt sink.)
+- **HPET:** after restoring HPET state *and* the interrupt controller, call `Hpet::sync_levels_to_sink(&mut sink)` to re-drive any pending **level-triggered** interrupt lines based on `general_int_status`. (`load_state()` intentionally does not directly touch the interrupt sink.) As a fallback, `Hpet::poll(&mut sink)` also reasserts levels, but it advances HPET time and is therefore less ideal for deterministic restore.
 - **ACPI PM determinism:** `PM_TMR` must be derived from deterministic virtual time for stable snapshot/restore. Avoid basing it on host wall-clock / `Instant` (which will make snapshots nondeterministic and can introduce time jumps on restore).
 
 #### Common platform device ids (outer `DeviceId`)
@@ -158,10 +158,10 @@ cause the restored `PM_TMR` value/phase to differ across restores.
 
 #### HPET (`DeviceId::HPET`)
 
-Restore note: after applying HPET state, call `Hpet::poll(&mut sink)` (or run an equivalent one-shot platform
-timer tick/poll) once to re-drive any asserted **level-triggered** GSIs implied by the restored
+Restore note: after applying HPET state, call `Hpet::sync_levels_to_sink(&mut sink)` once to re-drive any
+asserted **level-triggered** GSIs implied by the restored
 `general_int_status`. The per-timer `irq_asserted` field is runtime/sink-handshake state and is intentionally
-not snapshotted, so a post-restore poll is required to make the sink observe restored asserted levels.
+not snapshotted, so a post-restore sync is required to make the sink observe restored asserted levels.
 
 #### Snapshot device IDs (`DeviceId`) and web runtime `kind` strings
 
