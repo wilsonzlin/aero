@@ -978,7 +978,7 @@ fn build_e820_map(
             },
             Case {
                 mem: 4 * 1024 * 1024 * 1024,
-                // With a 256MiB PCIe ECAM window at 0xB0000000 and a 3GiB PCI/MMIO
+                // With a 256MiB PCIe ECAM window at 0xB0000000 and a 1GiB PCI/MMIO
                 // hole (0xC0000000..4GiB), only 0xB0000000 bytes of RAM exist below
                 // 4GiB. The remainder is remapped above 4GiB and does not count
                 // toward INT 15h E801's BX value.
