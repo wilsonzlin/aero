@@ -362,8 +362,12 @@ static NTSTATUS VirtIoSndFindBar0Resource(_In_ ULONGLONG bar0Base,
                 if (rawLenBytes == 0) {
                     return STATUS_DEVICE_CONFIGURATION_ERROR;
                 }
-                if (rawLenBytes > 0xFFFFFFFFull) {
+                if (rawLenBytes > 0xFFFFFFFFull || transLenBytes > 0xFFFFFFFFull) {
                     return STATUS_DEVICE_CONFIGURATION_ERROR;
+                }
+
+                if (transLenBytes < rawLenBytes) {
+                    rawLenBytes = transLenBytes;
                 }
 
                 len = (ULONG)rawLenBytes;

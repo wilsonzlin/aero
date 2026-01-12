@@ -861,9 +861,12 @@ VirtioPciModernMapBars(
                 continue;
             }
 
-            rawStart = (ULONGLONG)rawStartPa.QuadPart;
+            if (transLen < rawLen) {
+                VIRTIO_CORE_PRINT("Resource length mismatch (raw=0x%Ix trans=0x%Ix); using translated length\n", rawLen, transLen);
+                rawLen = transLen;
+            }
 
-            UNREFERENCED_PARAMETER(transLen);
+            rawStart = (ULONGLONG)rawStartPa.QuadPart;
 
             for (bar = 0; bar < VIRTIO_PCI_MAX_BARS; bar++) {
                 if ((requiredMask & (1u << bar)) == 0) {
@@ -1085,8 +1088,12 @@ VirtioPciModernMapBarsWdm(
                 continue;
             }
 
+            if (transLen < rawLen) {
+                VIRTIO_CORE_PRINT("Resource length mismatch (raw=0x%Ix trans=0x%Ix); using translated length\n", rawLen, transLen);
+                rawLen = transLen;
+            }
+
             rawStart = (ULONGLONG)rawStartPa.QuadPart;
-            UNREFERENCED_PARAMETER(transLen);
 
             for (bar = 0; bar < VIRTIO_PCI_MAX_BARS; bar++) {
                 if ((requiredMask & (1u << bar)) == 0) {
