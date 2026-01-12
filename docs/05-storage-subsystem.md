@@ -277,6 +277,9 @@ The in-repo Rust implementation under `crates/emulator/src/io/storage/formats/` 
 
 ### OPFS Backend
 
+In the repo, the OPFS backend is implemented in Rust/wasm32 in `crates/aero-opfs`
+(e.g. `aero_opfs::OpfsBackend` / `aero_opfs::OpfsByteStorage`).
+
 ```rust
 pub struct OpfsBackend {
     file_handle: FileSystemFileHandle,

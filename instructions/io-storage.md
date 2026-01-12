@@ -31,8 +31,8 @@ Storage is on the **critical boot path**. Windows 7 cannot start without a worki
 | `crates/aero-devices-nvme/` | NVMe controller emulation |
 | `crates/aero-opfs/` | Origin Private File System backend |
 | `crates/aero-http-range/` | HTTP Range request handling |
-| `crates/st-idb/` | IndexedDB storage backend |
-| `web/src/storage/` | TypeScript storage worker |
+| `crates/st-idb/` | IndexedDB async storage backend |
+| `web/src/storage/` | TypeScript storage worker / host layer (orchestrates streaming/caching + hosts wasm backends) |
 
 ---
 
@@ -149,7 +149,16 @@ Reference: AHCI 1.3.1 specification (publicly available from Intel).
 
 ## OPFS Backend
 
-Origin Private File System provides fast, large file access:
+Origin Private File System provides fast, large file access in the browser.
+
+In this repo, the primary OPFS backend implementation lives in Rust/wasm32 in
+`crates/aero-opfs` (e.g. `aero_opfs::OpfsByteStorage` / `aero_opfs::OpfsBackend`),
+which calls the underlying browser OPFS APIs via `wasm-bindgen`.
+
+The TypeScript host layer is still responsible for wiring the worker runtime and may
+orchestrate higher-level concerns like remote streaming and cache policy.
+
+Underlying browser API (for reference):
 
 ```typescript
 // Get OPFS root
@@ -167,6 +176,20 @@ accessHandle.read(buffer, { at: sectorOffset });
 
 // Write sector
 accessHandle.write(data, { at: sectorOffset });
+```
+
+Rust usage (wasm32):
+
+```rust
+use aero_opfs::OpfsByteStorage;
+use aero_storage::StorageBackend;
+
+let mut backend = OpfsByteStorage::open("disk.img", true).await?;
+
+let mut sector = [0u8; 512];
+backend.read_at(0, &mut sector)?;
+backend.write_at(0, &sector)?;
+backend.flush()?;
 ```
 
 ---
