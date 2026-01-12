@@ -709,11 +709,7 @@ function resolveAudioHdaSnapshotBridge(): AudioHdaSnapshotBridgeLike | null {
       return candidate as AudioHdaSnapshotBridgeLike;
     }
   }
-
-  // Default to the guest-visible HDA controller bridge if present. This keeps snapshot save/restore
-  // working in the canonical IO-worker path without requiring additional wiring (older builds may not
-  // expose save/load exports; those are treated as absent).
-  return hdaControllerBridge as unknown as AudioHdaSnapshotBridgeLike | null;
+  return null;
 }
 
 function snapshotAudioHdaDeviceState(): { kind: string; bytes: Uint8Array } | null {
