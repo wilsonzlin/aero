@@ -1318,6 +1318,76 @@ static void test_get_queue_notify_address_invalid_parameters(void)
     VirtioPciModernMmioSimUninstall();
 }
 
+static void test_get_queue_notify_address_invalid_device_state(void)
+{
+    uint8_t bar0[TEST_BAR0_SIZE];
+    uint8_t pci_cfg[256];
+    VIRTIO_PCI_DEVICE dev;
+    VIRTIO_PCI_MODERN_MMIO_SIM sim;
+    volatile uint16_t* addr;
+    NTSTATUS st;
+    ULONG saved_multiplier;
+    ULONG saved_notify_len;
+    volatile UCHAR* saved_notify_base;
+
+    setup_device(&dev, bar0, pci_cfg);
+
+    VirtioPciModernMmioSimInit(&sim,
+                               dev.CommonCfg,
+                               (volatile uint8_t*)dev.NotifyBase,
+                               dev.NotifyLength,
+                               (volatile uint8_t*)dev.IsrStatus,
+                               dev.IsrLength,
+                               (volatile uint8_t*)dev.DeviceCfg,
+                               dev.DeviceCfgLength);
+
+    sim.num_queues = 1;
+    sim.queues[0].queue_size = 8;
+    sim.queues[0].queue_notify_off = 1;
+
+    VirtioPciModernMmioSimInstall(&sim);
+
+    saved_multiplier = dev.NotifyOffMultiplier;
+    saved_notify_len = dev.NotifyLength;
+    saved_notify_base = (volatile UCHAR*)dev.NotifyBase;
+
+    /* NotifyOffMultiplier == 0 -> INVALID_DEVICE_STATE. */
+    dev.NotifyOffMultiplier = 0;
+    addr = (volatile uint16_t*)0x1;
+    st = VirtioPciGetQueueNotifyAddress(&dev, 0, &addr);
+    assert(st == STATUS_INVALID_DEVICE_STATE);
+    assert(addr == NULL);
+
+    /* NotifyLength < sizeof(UINT16) -> INVALID_DEVICE_STATE. */
+    dev.NotifyOffMultiplier = saved_multiplier;
+    dev.NotifyLength = 1;
+    addr = (volatile uint16_t*)0x1;
+    st = VirtioPciGetQueueNotifyAddress(&dev, 0, &addr);
+    assert(st == STATUS_INVALID_DEVICE_STATE);
+    assert(addr == NULL);
+
+    /* NotifyBase == NULL -> INVALID_DEVICE_STATE. */
+    dev.NotifyLength = saved_notify_len;
+    dev.NotifyBase = NULL;
+    addr = (volatile uint16_t*)0x1;
+    st = VirtioPciGetQueueNotifyAddress(&dev, 0, &addr);
+    assert(st == STATUS_INVALID_DEVICE_STATE);
+    assert(addr == NULL);
+
+    /* Dev==NULL -> INVALID_DEVICE_STATE (with non-NULL output pointer). */
+    addr = (volatile uint16_t*)0x1;
+    st = VirtioPciGetQueueNotifyAddress(NULL, 0, &addr);
+    assert(st == STATUS_INVALID_DEVICE_STATE);
+    assert(addr == NULL);
+
+    /* Restore for hygiene. */
+    dev.NotifyBase = saved_notify_base;
+    dev.NotifyLength = saved_notify_len;
+    dev.NotifyOffMultiplier = saved_multiplier;
+
+    VirtioPciModernMmioSimUninstall();
+}
+
 static void test_read_isr_read_to_clear(void)
 {
     uint8_t bar0[TEST_BAR0_SIZE];
@@ -1699,6 +1769,42 @@ static void test_reset_device_clears_after_stall_dispatch_level(void)
     VirtioPciModernMmioSimUninstall();
 }
 
+static void test_notify_queue_does_not_write_when_invalid_device_state(void)
+{
+    uint8_t bar0[TEST_BAR0_SIZE];
+    uint8_t pci_cfg[256];
+    VIRTIO_PCI_DEVICE dev;
+    VIRTIO_PCI_MODERN_MMIO_SIM sim;
+    volatile uint16_t* addr;
+
+    setup_device(&dev, bar0, pci_cfg);
+
+    VirtioPciModernMmioSimInit(&sim,
+                               dev.CommonCfg,
+                               (volatile uint8_t*)dev.NotifyBase,
+                               dev.NotifyLength,
+                               (volatile uint8_t*)dev.IsrStatus,
+                               dev.IsrLength,
+                               (volatile uint8_t*)dev.DeviceCfg,
+                               dev.DeviceCfgLength);
+
+    sim.num_queues = 1;
+    sim.queues[0].queue_size = 8;
+    sim.queues[0].queue_notify_off = 1;
+
+    VirtioPciModernMmioSimInstall(&sim);
+
+    /* Corrupt device state so VirtioPciGetQueueNotifyAddress fails early. */
+    dev.NotifyOffMultiplier = 0;
+
+    addr = (volatile uint16_t*)((volatile uint8_t*)sim.notify_base + (1u * TEST_NOTIFY_OFF_MULT));
+    *addr = 0x1234u;
+    VirtioPciNotifyQueue(&dev, 0);
+    assert(*addr == 0x1234u);
+
+    VirtioPciModernMmioSimUninstall();
+}
+
 int main(void)
 {
     test_init_ok();
@@ -1741,10 +1847,12 @@ int main(void)
     test_get_queue_notify_address_per_queue();
     test_get_queue_notify_address_errors();
     test_get_queue_notify_address_invalid_parameters();
+    test_get_queue_notify_address_invalid_device_state();
     test_read_isr_read_to_clear();
     test_notify_queue_populates_and_uses_cache();
     test_notify_queue_cache_bounds();
     test_notify_queue_does_not_write_when_queue_missing();
+    test_notify_queue_does_not_write_when_invalid_device_state();
     test_reset_device_fast_path();
     test_reset_device_clears_after_delay_passive_level();
     test_reset_device_clears_after_stall_dispatch_level();
