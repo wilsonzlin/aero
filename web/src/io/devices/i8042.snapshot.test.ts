@@ -55,16 +55,30 @@ describe("io/devices/i8042 snapshot", () => {
   it("truncates oversized output queues during load", () => {
     const max = I8042Controller.MAX_CONTROLLER_OUTPUT_QUEUE;
     const rawLen = max + 10;
-    const totalLen = 57 + rawLen * 2;
+    // Snapshot layout matches `I8042Controller.saveState()`:
+    // - 16-byte `aero-io-snapshot` header ("AERO", format/device versions, device id "8042")
+    // - controller fields + out queue
+    // - keyboard state
+    // - mouse state
+    const totalLen = 65 + rawLen * 2;
     const bytes = new Uint8Array(totalLen);
     const view = new DataView(bytes.buffer);
 
     let off = 0;
     // Header.
-    bytes[off++] = 0x49;
+    bytes[off++] = 0x41; // A
+    bytes[off++] = 0x45; // E
+    bytes[off++] = 0x52; // R
+    bytes[off++] = 0x4f; // O
+    view.setUint16(off, 1, true);
+    off += 2;
+    view.setUint16(off, 0, true);
+    off += 2;
+    // device id = "8042"
     bytes[off++] = 0x38;
     bytes[off++] = 0x30;
     bytes[off++] = 0x34;
+    bytes[off++] = 0x32;
     view.setUint16(off, 1, true);
     off += 2;
     view.setUint16(off, 0, true);

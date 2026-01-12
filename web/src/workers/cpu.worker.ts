@@ -52,6 +52,7 @@ import {
   micRingBufferReadInto,
 } from "../audio/mic_ring.js";
 import type { MicRingBuffer } from "../audio/mic_ring.js";
+import { AudioFrameClock, performanceNowNs } from "../audio/audio_frame_clock";
 import {
   HEADER_U32_LEN as AUDIO_HEADER_U32_LEN,
   OVERRUN_COUNT_INDEX as AUDIO_OVERRUN_COUNT_INDEX,
@@ -198,6 +199,8 @@ let hdaDemoCapacityFrames = 0;
 let hdaDemoSampleRate = 0;
 let hdaDemoNextStatsMs = 0;
 let hdaDemoWasmMemory: WebAssembly.Memory | null = null;
+let hdaDemoClock: AudioFrameClock | null = null;
+let hdaDemoClockStarted = false;
 
 function hdaDemoTargetFrames(capacityFrames: number, sampleRate: number): number {
   // Default to ~200ms buffered, but scale up for larger ring buffers so the demo has
@@ -270,6 +273,8 @@ function stopHdaDemo(): void {
   hdaDemoCapacityFrames = 0;
   hdaDemoSampleRate = 0;
   hdaDemoNextStatsMs = 0;
+  hdaDemoClock = null;
+  hdaDemoClockStarted = false;
 }
 
 async function startHdaDemo(msg: AudioOutputHdaDemoStartMessage): Promise<void> {
@@ -337,6 +342,8 @@ async function startHdaDemo(msg: AudioOutputHdaDemoStartMessage): Promise<void> 
   hdaDemoHeader = header;
   hdaDemoCapacityFrames = capacityFrames;
   hdaDemoSampleRate = sampleRate;
+  hdaDemoClock = new AudioFrameClock(sampleRate, performanceNowNs());
+  hdaDemoClockStarted = false;
 
   const targetFrames = hdaDemoTargetFrames(capacityFrames, sampleRate);
   // Prime up to the target fill level (without overrunning if the buffer is already full).
@@ -350,12 +357,50 @@ async function startHdaDemo(msg: AudioOutputHdaDemoStartMessage): Promise<void> 
 
   const timer = ctx.setInterval(() => {
     if (!hdaDemoInstance || !hdaDemoHeader) return;
-    const level = getAudioRingBufferLevelFrames(hdaDemoHeader, hdaDemoCapacityFrames);
-    const target = hdaDemoTargetFrames(hdaDemoCapacityFrames, hdaDemoSampleRate);
-    const need = Math.max(0, target - level);
-    if (need > 0) {
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
-      hdaDemoInstance.tick(need);
+    const clock = hdaDemoClock;
+    const header = hdaDemoHeader;
+    const capacity = hdaDemoCapacityFrames;
+    const sampleRateHz = hdaDemoSampleRate;
+    if (!clock || !header || capacity <= 0 || sampleRateHz <= 0) return;
+
+    const nowNs = performanceNowNs();
+    const level = getAudioRingBufferLevelFrames(header, capacity);
+    const target = hdaDemoTargetFrames(capacity, sampleRateHz);
+
+    // The main thread pre-fills the ring buffer with silence up to capacity so the
+    // AudioWorklet doesn't count startup underruns while the worker and WASM spin
+    // up. Avoid producing audio frames until enough silence has drained so we
+    // won't overflow the buffer (keeping overrunCount at 0 for CI smoke tests).
+    if (!hdaDemoClockStarted) {
+      // Keep the clock aligned to real time even while we're holding the device
+      // "paused" behind the silence prefill.
+      hdaDemoClock = new AudioFrameClock(sampleRateHz, nowNs);
+
+      if (level > target) {
+        maybePostHdaDemoStats();
+        return;
+      }
+
+      const prime = Math.max(0, target - level);
+      if (prime > 0) {
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+        hdaDemoInstance.tick(prime);
+      }
+
+      hdaDemoClockStarted = true;
+      hdaDemoClock = new AudioFrameClock(sampleRateHz, nowNs);
+      maybePostHdaDemoStats();
+      return;
+    }
+
+    const elapsedFrames = clock.advanceTo(nowNs);
+    if (elapsedFrames > 0) {
+      const free = Math.max(0, capacity - level);
+      const frames = Math.min(elapsedFrames, free);
+      if (frames > 0) {
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+        hdaDemoInstance.tick(frames);
+      }
     }
     maybePostHdaDemoStats();
   }, 20);
