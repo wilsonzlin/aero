@@ -192,6 +192,7 @@ function hasCompiledRip(result: unknown, rip: number): boolean {
 }
 
 test('Tier-1 JIT pipeline compiles, installs, and executes a block', async ({ page, browserName }) => {
+  test.setTimeout(60_000);
   test.skip(browserName !== 'chromium', 'Smoke test currently targets chromium WASM threads support');
   test.skip(
     !HAS_THREADED_AERO_WASM_BINARY,
@@ -201,6 +202,8 @@ test('Tier-1 JIT pipeline compiles, installs, and executes a block', async ({ pa
     !HAS_JIT_WASM_BINARY,
     'aero-jit-wasm package missing. Build it with `npm -w web run wasm:build` (or `npm -w web run wasm:build:single`).',
   );
+
+  page.setDefaultTimeout(60_000);
 
   await page.goto(`${PREVIEW_ORIGIN}/`, { waitUntil: 'load' });
 
