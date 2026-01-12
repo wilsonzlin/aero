@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -317,6 +317,32 @@ test(
         cwd: tmpRoot,
         stdio: "ignore",
       });
+    } finally {
+      fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  "safe-run.sh prints actionable restore instructions if helper scripts are missing",
+  { skip: process.platform === "win32" },
+  () => {
+    const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "aero-safe-run-missing-helpers-"));
+    try {
+      const tmpScripts = path.join(tmpRoot, "scripts");
+      fs.mkdirSync(tmpScripts, { recursive: true });
+
+      // Copy only safe-run.sh, leaving its helper scripts missing to simulate a broken checkout.
+      fs.copyFileSync(path.join(repoRoot, "scripts", "safe-run.sh"), path.join(tmpScripts, "safe-run.sh"));
+
+      const res = spawnSync("bash", ["scripts/safe-run.sh", "true"], {
+        cwd: tmpRoot,
+        encoding: "utf8",
+      });
+      assert.notEqual(res.status, 0);
+      assert.match(res.stderr, /\[safe-run\] error: missing\/empty required script: scripts\/with-timeout\.sh/);
+      assert.match(res.stderr, /git checkout -- scripts/);
+      assert.match(res.stderr, /git checkout -- \./);
     } finally {
       fs.rmSync(tmpRoot, { recursive: true, force: true });
     }
