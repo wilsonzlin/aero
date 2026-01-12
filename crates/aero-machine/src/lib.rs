@@ -2472,10 +2472,13 @@ impl Machine {
         if self.virtio_blk.is_none() {
             return Ok(());
         }
-        // Host explicitly attached a virtio-blk disk backend. Do not overwrite this device with
-        // the machine's shared disk when `set_disk_backend`/`set_disk_image` are called.
-        self.virtio_blk_auto_attach_shared_disk = false;
-        self.swap_virtio_blk_backend_preserving_state(disk)
+        let result = self.swap_virtio_blk_backend_preserving_state(disk);
+        if result.is_ok() {
+            // Host explicitly attached a virtio-blk disk backend. Do not overwrite this device with
+            // the machine's shared disk when `set_disk_backend`/`set_disk_image` are called.
+            self.virtio_blk_auto_attach_shared_disk = false;
+        }
+        result
     }
 
     /// Returns the PIIX3-compatible UHCI (USB 1.1) controller, if present.
