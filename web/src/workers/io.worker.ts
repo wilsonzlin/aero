@@ -908,6 +908,35 @@ function restoreAudioHdaDeviceState(bytes: Uint8Array): void {
         }
       }
     }
+
+    // Re-apply microphone capture settings after restore for the same reason as output:
+    // the snapshot contains `capture_sample_rate_hz` (host mic sample rate) for determinism,
+    // but the current host AudioContext may differ. If the guest is consuming the mic ring,
+    // mismatched host sample rates can cause resampling drift/pitch changes.
+    //
+    // `HdaPciDevice.setMicRingBuffer(...)` is idempotent and, when supported by the WASM bridge,
+    // will call `attach_mic_ring(ring, sampleRate)` using the wrapper's cached sample rate.
+    const hda = hdaDevice;
+    if (hda) {
+      try {
+        // If the mic ring is detached but we still know the host capture rate, keep the device
+        // model in sync so silent capture resampling stays consistent.
+        if (!micRingBuffer && micSampleRate > 0) {
+          hda.setCaptureSampleRateHz(micSampleRate);
+        }
+        hda.setMicRingBuffer(micRingBuffer);
+      } catch (err) {
+        console.warn("[io.worker] Failed to reapply microphone settings after HDA snapshot restore", err);
+      }
+    }
+    // Ensure virtio-snd is never a concurrent mic consumer when HDA is present.
+    if (hda && virtioSndDevice) {
+      try {
+        virtioSndDevice.setMicRingBuffer(null);
+      } catch {
+        // ignore
+      }
+    }
   } catch (err) {
     console.warn("[io.worker] HDA audio load_state failed:", err);
     cachePending();
@@ -980,6 +1009,21 @@ function restoreAudioVirtioSndDeviceState(bytes: Uint8Array): void {
       });
     } catch (err) {
       console.warn("[io.worker] Failed to reapply virtio-snd audio output settings after snapshot restore", err);
+    }
+
+    // Re-apply microphone capture ring + sample rate after restore. virtio-snd snapshots also
+    // store the host capture rate for determinism, but the live host AudioContext may differ.
+    try {
+      const shouldAttach = !hdaDevice;
+      if (shouldAttach) {
+        if (micSampleRate > 0) dev.setCaptureSampleRateHz(micSampleRate);
+        dev.setMicRingBuffer(micRingBuffer);
+      } else {
+        // Ensure we never have two consumers racing the mic ring.
+        dev.setMicRingBuffer(null);
+      }
+    } catch (err) {
+      console.warn("[io.worker] Failed to reapply virtio-snd microphone settings after snapshot restore", err);
     }
   } else {
     cachePending();
@@ -2104,6 +2148,20 @@ function maybeInitVirtioSndDevice(): void {
             channelCount: audioOutChannelCount,
             dstSampleRateHz: audioOutDstSampleRate,
           });
+        } catch {
+          // ignore
+        }
+
+        // Re-apply microphone capture settings as well: the snapshot may restore a different host
+        // capture sample rate, but the current AudioContext may differ.
+        try {
+          const shouldAttach = !hdaDevice;
+          if (shouldAttach) {
+            if (micSampleRate > 0) dev.setCaptureSampleRateHz(micSampleRate);
+            dev.setMicRingBuffer(micRingBuffer);
+          } else {
+            dev.setMicRingBuffer(null);
+          }
         } catch {
           // ignore
         }
