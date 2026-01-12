@@ -315,11 +315,19 @@ From the repo root:
 cargo xtask web dev
 ```
 
+Equivalent:
+
+```bash
+npm run dev
+```
+
 Open the printed URL with a verbose log level (example):
 
 ```text
 http://localhost:5173/?log=debug
 ```
+
+Note: most multi-worker test/debug flows (SharedArrayBuffer, ring buffers, etc.) require `crossOriginIsolated` to be true (COOP/COEP headers).
 
 ### 5.2 Validate virtio-input PCI exposure (IDs / caps / BAR0) in the browser runtime
 
@@ -363,6 +371,8 @@ At a high level:
    - write `0xFFFF_FFFF` to BAR0 low dword (and high dword for 64-bit BARs), then read back the mask and compute size.
    - expected size: `0x4000`.
 5. Walk the PCI capability list (starting at config offset `0x34`) and confirm virtio vendor caps and their BAR/offset layout.
+6. If you need to read actual virtio MMIO registers via BAR0 (e.g. to check `device_status` / `DRIVER_OK`), ensure PCI **memory space decoding** is enabled (PCI command bit1 = `0x2`).
+   - The end-to-end PCI test in [`tests/e2e/io_worker_i8042.spec.ts`](../tests/e2e/io_worker_i8042.spec.ts) includes an example of enabling mem decoding before issuing BAR-backed MMIO reads/writes.
 
 Expected signal:
 
