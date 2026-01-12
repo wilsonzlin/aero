@@ -348,6 +348,19 @@ should_retry_rustc_thread_error() {
         return 0
     fi
 
+    # Cargo occasionally fails very early while probing the compiler for target-specific
+    # information (e.g. `rustc - --print=cfg ...`) and reports it as:
+    #
+    #   error: failed to run `rustc` to learn about target-specific information
+    #
+    # When this is caused by transient OS resource limits (EAGAIN/WouldBlock), retry/backoff is
+    # effective.
+    if grep -q 'failed to run `rustc` to learn about target-specific information' "${stderr_log}" \
+        && grep -Eq "Resource temporarily unavailable|WouldBlock|os error 11|EAGAIN" "${stderr_log}"
+    then
+        return 0
+    fi
+
     # Some failures show up wrapped as a thread pool build error rather than the direct rustc
     # "failed to spawn helper thread" signature (e.g. Rayon global pool init).
     if grep -q "ThreadPoolBuildError" "${stderr_log}" \
