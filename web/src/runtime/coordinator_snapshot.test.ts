@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
+import { openRingByKind } from "../ipc/ipc";
 import { WorkerCoordinator } from "./coordinator";
+import { createIoIpcSab, IO_IPC_NET_RX_QUEUE_KIND, IO_IPC_NET_TX_QUEUE_KIND } from "./shared_layout";
 
 type PostedMessage = { message: any; transfer?: any[] };
 
@@ -40,6 +42,11 @@ function installReadyWorkers(coordinator: WorkerCoordinator, cpu: StubWorker, io
     cpu: { role: "cpu", instanceId: 1, worker: cpu as unknown as Worker, status: { state: "ready" } },
     io: { role: "io", instanceId: 1, worker: io as unknown as Worker, status: { state: "ready" } },
     net: net ? { role: "net", instanceId: 1, worker: net as unknown as Worker, status: { state: "ready" } } : undefined,
+  };
+
+  // Snapshot flows reset the NET_TX/NET_RX rings stored in the shared ioIpc SAB.
+  (coordinator as any).shared = {
+    segments: { ioIpc: createIoIpcSab() },
   };
 }
 
@@ -158,6 +165,12 @@ describe("runtime/coordinator (worker VM snapshots)", () => {
     const net = new StubWorker();
     installReadyWorkers(coordinator, cpu, io, net);
 
+    const shared = (coordinator as any).shared;
+    const txRing = openRingByKind(shared.segments.ioIpc, IO_IPC_NET_TX_QUEUE_KIND);
+    const rxRing = openRingByKind(shared.segments.ioIpc, IO_IPC_NET_RX_QUEUE_KIND);
+    txRing.tryPush(new Uint8Array([0xaa]));
+    rxRing.tryPush(new Uint8Array([0xbb]));
+
     const promise = coordinator.snapshotRestoreFromOpfs("state/test.snap");
 
     expect(cpu.posted[0]?.message.kind).toBe("vm.snapshot.pause");
@@ -169,6 +182,10 @@ describe("runtime/coordinator (worker VM snapshots)", () => {
     expect(net.posted[0]?.message.kind).toBe("vm.snapshot.pause");
     net.emitMessage({ kind: "vm.snapshot.paused", requestId: net.posted[0]!.message.requestId, ok: true });
     await flushMicrotasks();
+
+    // Snapshot boundary must clear NET_TX/NET_RX rings (they are not part of the snapshot file).
+    expect(txRing.tryPop()).toBeNull();
+    expect(rxRing.tryPop()).toBeNull();
 
     expect(io.posted[1]?.message.kind).toBe("vm.snapshot.restoreFromOpfs");
     const cpuBuf = new ArrayBuffer(4);

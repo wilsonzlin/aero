@@ -13,6 +13,12 @@ import { PERF_FRAME_HEADER_ENABLED_INDEX, PERF_FRAME_HEADER_FRAME_ID_INDEX } fro
 import { installWorkerPerfHandlers } from "../perf/worker";
 import { PerfWriter } from "../perf/writer.js";
 import {
+  serializeVmSnapshotError,
+  type CoordinatorToWorkerSnapshotMessage,
+  type VmSnapshotPausedMessage,
+  type VmSnapshotResumedMessage,
+} from "../runtime/snapshot_protocol";
+import {
   IO_IPC_NET_RX_QUEUE_KIND,
   IO_IPC_NET_TX_QUEUE_KIND,
   StatusIndex,
@@ -21,12 +27,6 @@ import {
   setReadyFlag,
   type WorkerRole,
 } from "../runtime/shared_layout";
-import {
-  serializeVmSnapshotError,
-  type CoordinatorToWorkerSnapshotMessage,
-  type VmSnapshotPausedMessage,
-  type VmSnapshotResumedMessage,
-} from "../runtime/snapshot_protocol";
 import {
   type ConfigAckMessage,
   type ConfigUpdateMessage,
@@ -85,6 +85,10 @@ let currentConfig: AeroConfig | null = null;
 let currentConfigVersion = 0;
 
 let snapshotPaused = false;
+let snapshotResumePromise: Promise<void> | null = null;
+let snapshotResumeResolve: (() => void) | null = null;
+
+let shuttingDown = false;
 
 let perfWriter: PerfWriter | null = null;
 let perfFrameHeader: Int32Array | null = null;
@@ -94,8 +98,6 @@ let perfIoReadBytes = 0;
 let perfIoWriteBytes = 0;
 let perfLastTxBytes = 0;
 let perfLastRxBytes = 0;
-
-let shuttingDown = false;
 
 // Even when idle, wake periodically so pending tunnel→guest frames buffered due
 // to NET_RX backpressure get a chance to flush without waiting for NET_TX
@@ -441,6 +443,11 @@ function handleSnapshotPause(): void {
 
 function handleSnapshotResume(): void {
   snapshotPaused = false;
+  // Wake the run loop immediately so we resume without waiting for command ring
+  // or NET_TX activity.
+  snapshotResumeResolve?.();
+  snapshotResumePromise = null;
+  snapshotResumeResolve = null;
   applyL2TunnelConfig(currentConfig);
 }
 
@@ -520,6 +527,22 @@ async function runLoop(): Promise<void> {
   // responsive to WebSocket and `postMessage()` events while avoiding spin.
   let lastTxBackpressureDrops = 0;
   while (Atomics.load(status, StatusIndex.StopRequested) !== 1) {
+    if (snapshotPaused) {
+      // VM execution is paused for snapshotting. Do not touch NET_TX/NET_RX or the
+      // tunnel while paused; only drain runtime commands so shutdown can still be
+      // processed.
+      drainRuntimeCommands();
+      if (Atomics.load(status, StatusIndex.StopRequested) === 1) break;
+
+      if (!snapshotResumePromise) {
+        snapshotResumePromise = new Promise<void>((resolve) => {
+          snapshotResumeResolve = resolve;
+        });
+      }
+      await Promise.race([snapshotResumePromise, cmdRing.waitForDataAsync(1000)]);
+      continue;
+    }
+
     const perfActive = isPerfActive();
     const t0 = perfActive ? nowMs() : 0;
 
@@ -765,7 +788,6 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
       ctx.postMessage({ kind: "net.trace.pcapng", requestId, bytes: buf }, [buf]);
       return;
     }
-
     const snapshotMsg = msg as Partial<CoordinatorToWorkerSnapshotMessage>;
     if (typeof snapshotMsg.kind === "string" && snapshotMsg.kind.startsWith("vm.snapshot.")) {
       const requestId = snapshotMsg.requestId;

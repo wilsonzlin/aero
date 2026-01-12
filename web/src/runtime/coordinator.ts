@@ -1,4 +1,5 @@
 import type { AeroConfig } from "../config/aero_config";
+import { openRingByKind } from "../ipc/ipc";
 import { ringCtrl } from "../ipc/layout";
 import { RingBuffer } from "../ipc/ring_buffer";
 import { decodeEvent, encodeCommand, type Command, type Event } from "../ipc/protocol";
@@ -16,6 +17,8 @@ import {
   computeGuestRamLayout,
   createIoIpcSab,
   createSharedMemoryViews,
+  IO_IPC_NET_RX_QUEUE_KIND,
+  IO_IPC_NET_TX_QUEUE_KIND,
   ringRegionsForWorker,
   setReadyFlag,
   type SharedMemoryViews,
@@ -1049,7 +1052,7 @@ export class WorkerCoordinator {
         });
         this.assertSnapshotOk("pause net", netPause);
       }
-
+      this.resetNetRingsForSnapshot();
       const cpuState = await this.snapshotRpc<VmSnapshotCpuStateMessage>(
         cpu.worker,
         { kind: "vm.snapshot.getCpuState" },
@@ -1116,7 +1119,7 @@ export class WorkerCoordinator {
         });
         this.assertSnapshotOk("pause net", netPause);
       }
-
+      this.resetNetRingsForSnapshot();
       const restored = await this.snapshotRpc<VmSnapshotRestoredMessage>(
         io.worker,
         { kind: "vm.snapshot.restoreFromOpfs", path },
@@ -1175,6 +1178,22 @@ export class WorkerCoordinator {
     // Best-effort: resume even if one worker fails to respond; we don't want a
     // snapshot error to strand a running VM forever.
     await Promise.allSettled(netResume ? [cpuResume, ioResume, netResume] : [cpuResume, ioResume]);
+  }
+
+  private resetNetRingsForSnapshot(): void {
+    const shared = this.shared;
+    if (!shared) return;
+
+    // NET_TX/NET_RX rings live in the shared `ioIpc` region and are not included in
+    // snapshot files. Reset them at snapshot boundaries so stale frames don't leak
+    // into restored VM state.
+    const ioIpc = shared.segments.ioIpc;
+    try {
+      openRingByKind(ioIpc, IO_IPC_NET_TX_QUEUE_KIND).reset();
+      openRingByKind(ioIpc, IO_IPC_NET_RX_QUEUE_KIND).reset();
+    } catch (err) {
+      console.warn("[coordinator] Failed to reset NET_TX/NET_RX rings during snapshot:", err);
+    }
   }
 
   private snapshotRpc<TResponse extends { kind: string; requestId: number }>(
