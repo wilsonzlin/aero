@@ -4249,14 +4249,26 @@ impl Machine {
         let mut vga = vga.borrow_mut();
 
         // CRTC index/data ports are 0x3D4/0x3D5.
+        //
+        // The BIOS cursor position is stored as a row/column pair, but the VGA CRTC cursor
+        // location registers are in units of character cells relative to the current text start
+        // address (CRTC regs 0x0C/0x0D). Read the current start address so the cursor remains
+        // visible if the guest has panned the text window.
+        vga.port_write(0x3D4, 1, 0x0C);
+        let start_hi = vga.port_read(0x3D5, 1) as u8;
+        vga.port_write(0x3D4, 1, 0x0D);
+        let start_lo = vga.port_read(0x3D5, 1) as u8;
+        let start_addr = (((u16::from(start_hi)) << 8) | u16::from(start_lo)) & 0x3FFF;
+        let cursor_addr = start_addr.wrapping_add(cell_index) & 0x3FFF;
+
         vga.port_write(0x3D4, 1, 0x0A);
         vga.port_write(0x3D5, 1, cursor_start as u32);
         vga.port_write(0x3D4, 1, 0x0B);
         vga.port_write(0x3D5, 1, cursor_end as u32);
         vga.port_write(0x3D4, 1, 0x0E);
-        vga.port_write(0x3D5, 1, u32::from((cell_index >> 8) as u8));
+        vga.port_write(0x3D5, 1, u32::from((cursor_addr >> 8) as u8));
         vga.port_write(0x3D4, 1, 0x0F);
-        vga.port_write(0x3D5, 1, u32::from((cell_index & 0x00FF) as u8));
+        vga.port_write(0x3D5, 1, u32::from((cursor_addr & 0x00FF) as u8));
     }
 
     fn handle_bios_interrupt(&mut self, vector: u8) {
@@ -4264,6 +4276,7 @@ impl Machine {
         let bx_before = self.cpu.state.gpr[gpr::RBX] as u16;
         let cx_before = self.cpu.state.gpr[gpr::RCX] as u16;
         let dx_before = self.cpu.state.gpr[gpr::RDX] as u16;
+        let vbe_mode_before = self.bios.video.vbe.current_mode;
 
         // Keep the core's A20 view coherent with the chipset latch while executing BIOS services.
         self.cpu.state.a20_enabled = self.chipset.a20().enabled();
@@ -4362,7 +4375,17 @@ impl Machine {
                     }
                 }
                 None => {
-                    vga.borrow_mut().set_text_mode_80x25();
+                    // Only reset the VGA register file when the BIOS actually performed a mode
+                    // set (e.g. INT 10h AH=00 AL=03h), or when transitioning from a VBE mode back
+                    // to BIOS text mode.
+                    //
+                    // This avoids clobbering guest-programmed text registers (like the CRTC start
+                    // address used for paging) on unrelated INT 10h text services (cursor moves,
+                    // teletype output, etc.).
+                    let is_set_mode_03h = (ax_before & 0xFF00) == 0x0000 && (ax_before & 0x007F) == 0x03;
+                    if vbe_mode_before.is_some() || is_set_mode_03h {
+                        vga.borrow_mut().set_text_mode_80x25();
+                    }
                 }
             }
         }

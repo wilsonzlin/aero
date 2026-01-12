@@ -232,6 +232,9 @@ impl VgaDevice {
         // Cursor: enable, full block by default at 0.
         self.crtc[0x0A] = 0x00;
         self.crtc[0x0B] = 0x0F;
+        // Start address: reset the displayed top-left cell to 0.
+        self.crtc[0x0C] = 0x00;
+        self.crtc[0x0D] = 0x00;
         self.crtc[0x0E] = 0x00;
         self.crtc[0x0F] = 0x00;
 

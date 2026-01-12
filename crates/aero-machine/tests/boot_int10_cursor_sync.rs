@@ -52,6 +52,79 @@ fn build_int10_set_cursor_shape_boot_sector(start: u8, end: u8) -> [u8; 512] {
     sector
 }
 
+fn build_set_start_address_and_set_cursor_pos_boot_sector(
+    start_addr: u16,
+    row: u8,
+    col: u8,
+) -> [u8; 512] {
+    let mut sector = [0u8; 512];
+    let mut i = 0usize;
+
+    let start_hi = (start_addr >> 8) as u8;
+    let start_lo = (start_addr & 0x00FF) as u8;
+
+    // Program CRTC start address regs (0x0C/0x0D).
+    // mov dx, 0x3D4
+    sector[i..i + 3].copy_from_slice(&[0xBA, 0xD4, 0x03]);
+    i += 3;
+    // mov al, 0x0C
+    sector[i..i + 2].copy_from_slice(&[0xB0, 0x0C]);
+    i += 2;
+    // out dx, al
+    sector[i] = 0xEE;
+    i += 1;
+    // mov dx, 0x3D5
+    sector[i..i + 3].copy_from_slice(&[0xBA, 0xD5, 0x03]);
+    i += 3;
+    // mov al, start_hi
+    sector[i..i + 2].copy_from_slice(&[0xB0, start_hi]);
+    i += 2;
+    // out dx, al
+    sector[i] = 0xEE;
+    i += 1;
+
+    // mov dx, 0x3D4
+    sector[i..i + 3].copy_from_slice(&[0xBA, 0xD4, 0x03]);
+    i += 3;
+    // mov al, 0x0D
+    sector[i..i + 2].copy_from_slice(&[0xB0, 0x0D]);
+    i += 2;
+    // out dx, al
+    sector[i] = 0xEE;
+    i += 1;
+    // mov dx, 0x3D5
+    sector[i..i + 3].copy_from_slice(&[0xBA, 0xD5, 0x03]);
+    i += 3;
+    // mov al, start_lo
+    sector[i..i + 2].copy_from_slice(&[0xB0, start_lo]);
+    i += 2;
+    // out dx, al
+    sector[i] = 0xEE;
+    i += 1;
+
+    // mov ah, 0x02  ; INT 10h AH=02h Set Cursor Position
+    sector[i..i + 2].copy_from_slice(&[0xB4, 0x02]);
+    i += 2;
+    // mov bh, 0x00  ; page 0
+    sector[i..i + 2].copy_from_slice(&[0xB7, 0x00]);
+    i += 2;
+    // mov dh, row
+    sector[i..i + 2].copy_from_slice(&[0xB6, row]);
+    i += 2;
+    // mov dl, col
+    sector[i..i + 2].copy_from_slice(&[0xB2, col]);
+    i += 2;
+    // int 0x10
+    sector[i..i + 2].copy_from_slice(&[0xCD, 0x10]);
+    i += 2;
+    // hlt
+    sector[i] = 0xF4;
+
+    sector[510] = 0x55;
+    sector[511] = 0xAA;
+    sector
+}
+
 fn run_until_halt(m: &mut Machine) {
     let mut halted = false;
     for _ in 0..100 {
@@ -77,6 +150,14 @@ fn read_crtc_cursor_regs(m: &mut Machine) -> (u8, u8, u16) {
     m.io_write(0x3D4, 1, 0x0F);
     let lo = m.io_read(0x3D5, 1) as u8;
     (start, end, ((hi as u16) << 8) | (lo as u16))
+}
+
+fn read_crtc_start_addr(m: &mut Machine) -> u16 {
+    m.io_write(0x3D4, 1, 0x0C);
+    let hi = m.io_read(0x3D5, 1) as u8;
+    m.io_write(0x3D4, 1, 0x0D);
+    let lo = m.io_read(0x3D5, 1) as u8;
+    ((hi as u16) << 8) | (lo as u16)
 }
 
 #[test]
@@ -130,4 +211,37 @@ fn int10_cursor_shape_updates_sync_to_vga_crtc() {
     let (start, end, _pos) = read_crtc_cursor_regs(&mut m);
     assert_eq!(start, 0x20);
     assert_eq!(end, 0x07);
+}
+
+#[test]
+fn int10_cursor_sync_includes_crtc_start_address_offset() {
+    let mut m = Machine::new(MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_vga: true,
+        ..Default::default()
+    })
+    .unwrap();
+
+    let start_addr = 0x0800u16;
+    let row = 5u8;
+    let col = 10u8;
+    let boot = build_set_start_address_and_set_cursor_pos_boot_sector(start_addr, row, col);
+    m.set_disk_image(boot.to_vec()).unwrap();
+    m.reset();
+    run_until_halt(&mut m);
+
+    let got_start = read_crtc_start_addr(&mut m);
+    assert_eq!(got_start, start_addr);
+
+    let cols = m.read_physical_u16(BDA_SCREEN_COLS_ADDR).max(1);
+    let cell_index = u16::from(row)
+        .saturating_mul(cols)
+        .saturating_add(u16::from(col));
+    let expected_pos = start_addr.wrapping_add(cell_index) & 0x3FFF;
+
+    let (start, end, pos) = read_crtc_cursor_regs(&mut m);
+    assert_eq!(start, 0x06);
+    assert_eq!(end, 0x07);
+    assert_eq!(pos, expected_pos);
 }
