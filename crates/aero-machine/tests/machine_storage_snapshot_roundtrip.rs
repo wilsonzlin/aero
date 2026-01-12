@@ -34,9 +34,6 @@ const PORT_CMD_FRE: u32 = 1 << 4;
 
 const PORT_IS_DHRS: u32 = 1 << 0;
 
-// PCI config space offset of the AHCI ABAR register (BAR5 on Intel ICH9).
-const AHCI_ABAR_CFG_OFFSET: u8 = 0x10 + 4 * profile::AHCI_ABAR_BAR_INDEX;
-
 fn pci_cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
     0x8000_0000
         | ((bus as u32) << 16)
@@ -516,7 +513,7 @@ fn machine_storage_snapshot_roundtrip_preserves_controllers_and_allows_backend_r
                 bdf.bus,
                 bdf.device,
                 bdf.function,
-                AHCI_ABAR_CFG_OFFSET,
+                profile::AHCI_ABAR_CFG_OFFSET,
             ) & 0xFFFF_FFF0,
         )
     };
@@ -659,7 +656,7 @@ fn machine_storage_snapshot_roundtrip_preserves_controllers_and_allows_backend_r
                 bdf.bus,
                 bdf.device,
                 bdf.function,
-                AHCI_ABAR_CFG_OFFSET,
+                profile::AHCI_ABAR_CFG_OFFSET,
             ) & 0xFFFF_FFF0,
         )
     };
@@ -1075,7 +1072,7 @@ fn machine_restore_applies_only_present_controllers_from_dskc_wrapper_ahci_only(
                 bdf.bus,
                 bdf.device,
                 bdf.function,
-                AHCI_ABAR_CFG_OFFSET,
+                profile::AHCI_ABAR_CFG_OFFSET,
             ) & 0xFFFF_FFF0,
         )
     };

@@ -1,4 +1,6 @@
-use aero_devices::pci::profile::{AHCI_ABAR_BAR_INDEX, AHCI_ABAR_SIZE, SATA_AHCI_ICH9};
+use aero_devices::pci::profile::{
+    AHCI_ABAR_BAR_INDEX, AHCI_ABAR_CFG_OFFSET, AHCI_ABAR_SIZE, SATA_AHCI_ICH9,
+};
 use aero_devices::pci::{PciDevice, PciInterruptPin, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
 use aero_devices_storage::ata::{ATA_CMD_IDENTIFY, ATA_CMD_READ_DMA_EXT};
 use aero_interrupts::apic::IOAPIC_MMIO_BASE;
@@ -43,9 +45,6 @@ fn write_cfg_u32(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset:
     );
     pc.io.write(PCI_CFG_DATA_PORT, 4, value);
 }
-
-// PCI config space offset of the AHCI ABAR register (BAR5 on Intel ICH9).
-const AHCI_ABAR_CFG_OFFSET: u8 = 0x10 + 4 * AHCI_ABAR_BAR_INDEX;
 
 fn read_ahci_bar5_base(pc: &mut PcPlatform) -> u64 {
     let bdf = SATA_AHCI_ICH9.bdf;

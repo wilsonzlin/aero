@@ -1,14 +1,11 @@
 use aero_devices::i8042::{I8042_DATA_PORT, I8042_STATUS_PORT};
-use aero_devices::pci::profile::{AHCI_ABAR_BAR_INDEX, SATA_AHCI_ICH9, USB_UHCI_PIIX3};
+use aero_devices::pci::profile::{AHCI_ABAR_CFG_OFFSET, SATA_AHCI_ICH9, USB_UHCI_PIIX3};
 use aero_devices::pci::{PciBdf, PciInterruptPin, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
 use aero_devices::pit8254::{PIT_CH0, PIT_CMD};
 use aero_pc_platform::{PcPlatform, ResetEvent};
 use aero_platform::interrupts::{
     InterruptController, IMCR_DATA_PORT, IMCR_INDEX, IMCR_SELECT_PORT,
 };
-
-// PCI config space offset of the AHCI ABAR register (BAR5 on Intel ICH9).
-const AHCI_ABAR_CFG_OFFSET: u8 = 0x10 + 4 * AHCI_ABAR_BAR_INDEX;
 
 const CMOS_INDEX_PORT: u16 = 0x70;
 const CMOS_DATA_PORT: u16 = 0x71;

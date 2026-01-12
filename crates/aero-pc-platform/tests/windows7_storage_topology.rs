@@ -1,7 +1,7 @@
 use std::io;
 
 use aero_devices::pci::profile::{
-    AHCI_ABAR_BAR_INDEX, AHCI_ABAR_SIZE, IDE_PIIX3, ISA_PIIX3, SATA_AHCI_ICH9,
+    AHCI_ABAR_CFG_OFFSET, AHCI_ABAR_SIZE, IDE_PIIX3, ISA_PIIX3, SATA_AHCI_ICH9,
 };
 use aero_devices::pci::{PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
 use aero_devices_storage::ata::AtaDrive;
@@ -10,9 +10,6 @@ use aero_devices_storage::pci_ide::{PRIMARY_PORTS, SECONDARY_PORTS};
 use aero_pc_platform::{PcPlatform, Windows7StorageTopologyConfig};
 use aero_storage::{MemBackend, RawDisk, VirtualDisk as _, SECTOR_SIZE};
 use memory::MemoryBus as _;
-
-// PCI config space offset of the AHCI ABAR register (BAR5 on Intel ICH9).
-const AHCI_ABAR_CFG_OFFSET: u8 = 0x10 + 4 * AHCI_ABAR_BAR_INDEX;
 
 fn cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
     0x8000_0000

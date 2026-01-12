@@ -1,14 +1,11 @@
 #![cfg(not(target_arch = "wasm32"))]
 
-use aero_devices::pci::profile::{AHCI_ABAR_BAR_INDEX, SATA_AHCI_ICH9};
+use aero_devices::pci::profile::{AHCI_ABAR_CFG_OFFSET, SATA_AHCI_ICH9};
 use aero_devices::pci::{PciInterruptPin, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
 use aero_devices_storage::ata::ATA_CMD_WRITE_DMA_EXT;
 use aero_machine::{Machine, MachineConfig, RunExit};
 use aero_storage::{MemBackend, RawDisk, VirtualDisk, SECTOR_SIZE};
 use firmware::bios::BlockDevice as _;
-
-// PCI config space offset of the AHCI ABAR register (BAR5 on Intel ICH9).
-const AHCI_ABAR_CFG_OFFSET: u8 = 0x10 + 4 * AHCI_ABAR_BAR_INDEX;
 
 fn cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
     0x8000_0000

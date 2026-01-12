@@ -2,7 +2,7 @@
 
 use std::io::{Cursor, Read, Seek, SeekFrom};
 
-use aero_devices::pci::profile::{AHCI_ABAR_BAR_INDEX, SATA_AHCI_ICH9};
+use aero_devices::pci::profile::{AHCI_ABAR_CFG_OFFSET, SATA_AHCI_ICH9};
 use aero_devices::pci::{PciBdf, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
 use aero_devices_storage::ata::ATA_CMD_READ_DMA_EXT;
 use aero_io_snapshot::io::storage::state::DiskControllersSnapshot;
@@ -11,9 +11,6 @@ use aero_snapshot as snapshot;
 use aero_snapshot::io_snapshot_bridge::apply_io_snapshot_to_device;
 use aero_storage::{MemBackend, RawDisk, VirtualDisk as _, SECTOR_SIZE};
 use pretty_assertions::assert_eq;
-
-// PCI config space offset of the AHCI ABAR register (BAR5 on Intel ICH9).
-const AHCI_ABAR_CFG_OFFSET: u8 = 0x10 + 4 * AHCI_ABAR_BAR_INDEX;
 
 const HBA_GHC: u64 = 0x04;
 const HBA_VS: u64 = 0x10;
