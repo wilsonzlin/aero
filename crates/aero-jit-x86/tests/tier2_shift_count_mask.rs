@@ -42,6 +42,38 @@ fn tier2_masks_shift_count_for_32bit_operands_like_x86() {
 }
 
 #[test]
+fn tier2_masks_shift_count_for_8bit_operands_like_x86() {
+    // mov al, 1
+    // shl al, 33
+    // int3
+    const CODE: &[u8] = &[
+        0xB0, 0x01, // mov al, 1
+        0xC0, 0xE0, 0x21, // shl al, 33
+        0xCC, // int3
+    ];
+
+    let (exit, state) = run_x86(CODE);
+    assert_side_exit_at_int3(exit, CODE);
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 2);
+}
+
+#[test]
+fn tier2_masks_shift_count_for_high8_operands_like_x86() {
+    // mov ah, 1
+    // shl ah, 33
+    // int3
+    const CODE: &[u8] = &[
+        0xB4, 0x01, // mov ah, 1
+        0xC0, 0xE4, 0x21, // shl ah, 33
+        0xCC, // int3
+    ];
+
+    let (exit, state) = run_x86(CODE);
+    assert_side_exit_at_int3(exit, CODE);
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 0x200);
+}
+
+#[test]
 fn tier2_masks_shift_count_for_32bit_shr_like_x86() {
     // mov eax, 0x80000000
     // shr eax, 33
