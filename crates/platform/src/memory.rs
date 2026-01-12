@@ -1,5 +1,6 @@
 use crate::address_filter::AddressFilter;
 use crate::chipset::A20GateHandle;
+use crate::dirty_memory::{DirtyTrackingHandle, DirtyTrackingMemory, DEFAULT_DIRTY_PAGE_SIZE};
 use memory::{DenseMemory, GuestMemory, MapError, MmioHandler, PhysicalMemoryBus};
 use std::sync::Arc;
 
@@ -25,6 +26,7 @@ const A20_BOUNDARY_MASK: u64 = A20_BIT - 1;
 pub struct MemoryBus {
     filter: AddressFilter,
     bus: PhysicalMemoryBus,
+    dirty: Option<DirtyTrackingHandle>,
 }
 
 impl MemoryBus {
@@ -37,6 +39,31 @@ impl MemoryBus {
         Self {
             filter,
             bus: PhysicalMemoryBus::new(ram),
+            dirty: None,
+        }
+    }
+
+    /// Construct a memory bus backed by guest RAM wrapped in dirty-page tracking.
+    ///
+    /// This is suitable for `aero_snapshot::RamMode::Dirty`: all writes that reach guest RAM via
+    /// [`MemoryBus::write_physical`] (including device/DMA writes) are tracked.
+    pub fn new_with_dirty_tracking(filter: AddressFilter, ram_size: usize, page_size: u32) -> Self {
+        let ram = DenseMemory::new(ram_size as u64).expect("failed to allocate guest RAM");
+        Self::with_ram_dirty_tracking(filter, Box::new(ram), page_size)
+    }
+
+    /// Like [`MemoryBus::with_ram`], but wraps the provided RAM backend in dirty-page tracking.
+    pub fn with_ram_dirty_tracking(
+        filter: AddressFilter,
+        ram: Box<dyn GuestMemory>,
+        page_size: u32,
+    ) -> Self {
+        let dirty_ram = DirtyTrackingMemory::new(ram, page_size);
+        let handle = dirty_ram.tracking_handle();
+        Self {
+            filter,
+            bus: PhysicalMemoryBus::new(Box::new(dirty_ram)),
+            dirty: Some(handle),
         }
     }
 
@@ -50,6 +77,30 @@ impl MemoryBus {
 
     pub fn ram_mut(&mut self) -> &mut dyn GuestMemory {
         &mut *self.bus.ram
+    }
+
+    /// Dirty page size (in bytes) used by [`MemoryBus::take_dirty_pages`], if enabled.
+    ///
+    /// Defaults to 4096 for snapshot compatibility.
+    pub fn dirty_page_size(&self) -> u32 {
+        self.dirty
+            .as_ref()
+            .map(|h| h.page_size())
+            .unwrap_or(DEFAULT_DIRTY_PAGE_SIZE)
+    }
+
+    /// Return and clear the set of guest RAM pages dirtied since the last call.
+    ///
+    /// Returns `None` when dirty tracking is not enabled for this bus.
+    pub fn take_dirty_pages(&mut self) -> Option<Vec<u64>> {
+        self.dirty.as_ref().map(|h| h.take_dirty_pages())
+    }
+
+    /// Clear all dirty page tracking state (if enabled).
+    pub fn clear_dirty(&mut self) {
+        if let Some(handle) = &self.dirty {
+            handle.clear_dirty();
+        }
     }
 
     pub fn map_rom(&mut self, start: u64, data: Arc<[u8]>) -> Result<(), MapError> {

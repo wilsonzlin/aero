@@ -3,6 +3,7 @@
 pub mod address_filter;
 pub mod audio;
 pub mod chipset;
+pub mod dirty_memory;
 pub mod interrupts;
 pub mod io;
 pub mod memory;
