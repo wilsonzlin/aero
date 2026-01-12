@@ -65,7 +65,26 @@ impl UhciPciDevice {
         }
     }
 
+    fn command(&self) -> u16 {
+        self.config.read(0x04, 2) as u16
+    }
+
+    fn io_space_enabled(&self) -> bool {
+        (self.command() & (1 << 0)) != 0
+    }
+
+    fn bus_master_enabled(&self) -> bool {
+        (self.command() & (1 << 2)) != 0
+    }
+
+    fn intx_disabled(&self) -> bool {
+        (self.command() & (1 << 10)) != 0
+    }
+
     pub fn irq_level(&self) -> bool {
+        if self.intx_disabled() {
+            return false;
+        }
         self.controller.irq_level()
     }
 
@@ -79,6 +98,13 @@ impl UhciPciDevice {
     }
 
     pub fn tick_1ms(&mut self, mem: &mut dyn MemoryBus) {
+        // Gate schedule DMA on PCI command Bus Master Enable (bit 2).
+        //
+        // UHCI schedule processing reads/writes guest memory (frame list + TD/QH chain). When the
+        // guest clears COMMAND.BME, the controller must not perform bus-master DMA.
+        if !self.bus_master_enabled() {
+            return;
+        }
         let mut adapter = AeroUsbMemoryBus { inner: mem };
         self.controller.tick_1ms(&mut adapter);
     }
@@ -120,16 +146,115 @@ impl PciDevice for UhciPciDevice {
 
 impl PortIO for UhciPciDevice {
     fn port_read(&self, port: u16, size: usize) -> u32 {
+        // Gate I/O decoding on PCI command I/O Space Enable (bit 0).
+        if !self.io_space_enabled() {
+            return match size {
+                1 => 0xff,
+                2 => 0xffff,
+                4 => u32::MAX,
+                _ => u32::MAX,
+            };
+        }
         let Some(offset) = port.checked_sub(self.io_base) else {
-            return u32::MAX;
+            return match size {
+                1 => 0xff,
+                2 => 0xffff,
+                4 => u32::MAX,
+                _ => u32::MAX,
+            };
         };
         self.controller.io_read(offset, size)
     }
 
     fn port_write(&mut self, port: u16, size: usize, val: u32) {
+        // Gate I/O decoding on PCI command I/O Space Enable (bit 0).
+        if !self.io_space_enabled() {
+            return;
+        }
         let Some(offset) = port.checked_sub(self.io_base) else {
             return;
         };
         self.controller.io_write(offset, size, val);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::io::PortIO;
+
+    struct PanicMem;
+
+    impl MemoryBus for PanicMem {
+        fn read_physical(&mut self, _paddr: u64, _buf: &mut [u8]) {
+            panic!("unexpected DMA read");
+        }
+
+        fn write_physical(&mut self, _paddr: u64, _buf: &[u8]) {
+            panic!("unexpected DMA write");
+        }
+    }
+
+    #[test]
+    fn pci_command_io_bit_gates_port_io_access() {
+        let mut dev = UhciPciDevice::new(UhciController::new(), 0x1000);
+
+        // COMMAND.IO is clear by default: reads float high, writes ignored.
+        dev.port_write(0x1000 + regs::REG_USBCMD, 2, u32::from(regs::USBCMD_RS));
+        assert_eq!(dev.port_read(0x1000 + regs::REG_USBCMD, 2), 0xffff);
+
+        // Enable I/O space decoding and verify the earlier write did not take effect.
+        dev.config_write(0x04, 2, 1 << 0);
+        assert_eq!(
+            dev.port_read(0x1000 + regs::REG_USBCMD, 2) as u16,
+            regs::USBCMD_MAXP,
+        );
+
+        // Writes should apply once IO decoding is enabled.
+        dev.port_write(0x1000 + regs::REG_USBCMD, 2, u32::from(regs::USBCMD_RS));
+        assert_eq!(
+            dev.port_read(0x1000 + regs::REG_USBCMD, 2) as u16,
+            regs::USBCMD_RS
+        );
+    }
+
+    #[test]
+    fn pci_command_bme_bit_gates_tick_1ms_dma() {
+        let mut dev = UhciPciDevice::new(UhciController::new(), 0x1000);
+
+        // Enable I/O decoding so we can program the controller, but leave BME disabled.
+        dev.config_write(0x04, 2, 1 << 0);
+
+        dev.port_write(0x1000 + regs::REG_FLBASEADD, 4, 0x1000);
+        dev.port_write(0x1000 + regs::REG_USBCMD, 2, u32::from(regs::USBCMD_RS));
+
+        // With BME clear, no DMA should occur.
+        let mut mem = PanicMem;
+        dev.tick_1ms(&mut mem);
+
+        // Enable BME and verify the schedule engine attempts to DMA.
+        dev.config_write(0x04, 2, (1 << 0) | (1 << 2));
+        let err = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            dev.tick_1ms(&mut mem);
+        }));
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn pci_command_intx_disable_bit_masks_irq_level() {
+        let mut dev = UhciPciDevice::new(UhciController::new(), 0x1000);
+
+        // Enable IO decoding so we can program USBINTR.
+        dev.config_write(0x04, 2, 1 << 0);
+        dev.port_write(0x1000 + regs::REG_USBINTR, 2, u32::from(regs::USBINTR_IOC));
+        dev.controller.set_usbsts_bits(regs::USBSTS_USBINT);
+
+        assert!(dev.controller.irq_level());
+        assert!(dev.irq_level());
+
+        // Disable legacy INTx delivery via PCI command bit 10.
+        dev.config_write(0x04, 2, (1 << 0) | (1 << 10));
+        assert!(dev.controller.irq_level());
+        assert!(!dev.irq_level());
     }
 }

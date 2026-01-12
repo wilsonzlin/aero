@@ -21,13 +21,28 @@ impl E1000PciDevice {
         Self { nic }
     }
 
+    fn command(&self) -> u16 {
+        self.nic.pci_config_read(0x04, 2) as u16
+    }
+
+    fn mem_space_enabled(&self) -> bool {
+        (self.command() & (1 << 1)) != 0
+    }
+
     fn bus_master_enabled(&self) -> bool {
         // Gate DMA on PCI COMMAND.BME (bit 2) to avoid touching guest memory before the guest
         // explicitly enables bus mastering during enumeration.
-        (self.nic.pci_config_read(0x04, 2) & (1 << 2)) != 0
+        (self.command() & (1 << 2)) != 0
+    }
+
+    fn intx_disabled(&self) -> bool {
+        (self.command() & (1 << 10)) != 0
     }
 
     pub fn irq_level(&self) -> bool {
+        if self.intx_disabled() {
+            return false;
+        }
         self.nic.irq_level()
     }
 
@@ -62,10 +77,23 @@ impl PciDevice for E1000PciDevice {
 
 impl MmioDevice for E1000PciDevice {
     fn mmio_read(&mut self, _mem: &mut dyn MemoryBus, offset: u64, size: usize) -> u32 {
+        // Gate MMIO on PCI command Memory Space Enable (bit 1).
+        if !self.mem_space_enabled() {
+            return match size {
+                1 => 0xff,
+                2 => 0xffff,
+                4 => u32::MAX,
+                _ => 0,
+            };
+        }
         self.nic.mmio_read(offset, size)
     }
 
     fn mmio_write(&mut self, mem: &mut dyn MemoryBus, offset: u64, size: usize, value: u32) {
+        // Gate MMIO on PCI command Memory Space Enable (bit 1).
+        if !self.mem_space_enabled() {
+            return;
+        }
         // Preserve the legacy behavior for `MmioDevice` callers: register writes are immediately
         // followed by a poll() so doorbells kick DMA "soon", while still respecting PCI
         // COMMAND.BME gating (no DMA/polling until the guest enables bus mastering).
@@ -120,6 +148,46 @@ mod tests {
     }
 
     #[test]
+    fn wrapper_gates_mmio_on_pci_command_mem_bit() {
+        let mut mem = VecMemory::new(0x1000);
+        let mut dev = E1000PciDevice::new(E1000Device::new([0x52, 0x54, 0, 0x12, 0x34, 0x56]));
+
+        // With COMMAND.MEM clear, reads must float high and writes must be ignored.
+        assert_eq!(dev.mmio_read(&mut mem, 0x0000, 4), u32::MAX);
+        dev.mmio_write(&mut mem, 0x00d0, 4, 0x1234_5678);
+
+        // Enable MMIO decoding and verify the earlier write did not take effect.
+        dev.config_write(0x04, 2, 1 << 1);
+        assert_ne!(dev.mmio_read(&mut mem, 0x0000, 4), u32::MAX);
+        assert_eq!(dev.mmio_read(&mut mem, 0x00d0, 4), 0);
+
+        // Writes should apply once MEM is enabled.
+        dev.mmio_write(&mut mem, 0x00d0, 4, 0x1234_5678);
+        assert_eq!(dev.mmio_read(&mut mem, 0x00d0, 4), 0x1234_5678);
+    }
+
+    #[test]
+    fn wrapper_gates_intx_on_pci_command_intx_disable_bit() {
+        let mut mem = VecMemory::new(0x1000);
+        let mut dev = E1000PciDevice::new(E1000Device::new([0x52, 0x54, 0, 0x12, 0x34, 0x56]));
+
+        // Enable MMIO decoding (but not bus mastering).
+        dev.config_write(0x04, 2, 1 << 1);
+
+        // Enable and assert TXDW interrupt via IMS + ICS.
+        dev.mmio_write(&mut mem, 0x00d0, 4, aero_net_e1000::ICR_TXDW);
+        dev.mmio_write(&mut mem, 0x00c8, 4, aero_net_e1000::ICR_TXDW);
+
+        assert!(dev.nic.irq_level(), "device model asserts IRQ line");
+        assert!(dev.irq_level(), "wrapper forwards IRQ when INTX is enabled");
+
+        // Disable legacy INTx delivery via PCI command bit 10.
+        dev.config_write(0x04, 2, (1 << 1) | (1 << 10));
+        assert!(dev.nic.irq_level(), "device model still asserts IRQ internally");
+        assert!(!dev.irq_level(), "wrapper must suppress IRQ when INTX is disabled");
+    }
+
+    #[test]
     fn wrapper_config_space_bar0_probe_roundtrip() {
         let mut dev = E1000PciDevice::new(E1000Device::new([0x52, 0x54, 0, 0x12, 0x34, 0x56]));
         dev.config_write(0x10, 4, 0xffff_ffff);
@@ -139,8 +207,8 @@ mod tests {
         let mut mem = VecMemory::new(0x20_000);
         let mut dev = E1000PciDevice::new(E1000Device::new([0x52, 0x54, 0, 0x12, 0x34, 0x56]));
 
-        // PCI Bus Master Enable gates DMA on real hardware.
-        dev.config_write(0x04, 2, 0x4);
+        // PCI command register gates both decode (MEM) and DMA (BME) on real hardware.
+        dev.config_write(0x04, 2, 0x6);
 
         // Set up a tiny RX ring (2 descriptors => 1 usable due to head/tail semantics).
         let ring_base = 0x1000u64;
