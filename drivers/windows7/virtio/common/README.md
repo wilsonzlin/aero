@@ -198,7 +198,10 @@ For the optional legacy/transitional transport, the device-model must:
 Host-buildable tests live in a few places:
 
 - `drivers/windows7/virtio/common/tests/` covers split ring helpers + legacy
-  transport behaviour using fake I/O backends.
+  transport behaviour using fake I/O backends, plus host-buildable shims/tests
+  for selected WDK-dependent helpers (e.g. `virtio_pci_intx_wdm` and the Win7
+  modern miniport transport). These tests compile against a local
+  `wdk_stubs/ntddk.h` stub header (no WDK required).
 - `drivers/windows/virtio/pci-modern/tests/` covers the canonical modern
   transport (PCI cap parsing + MMIO contract validation).
 - `drivers/win7/virtio/tests/` covers the portable PCI capability parser.
