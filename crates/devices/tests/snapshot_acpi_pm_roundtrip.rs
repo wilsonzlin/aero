@@ -168,10 +168,12 @@ fn snapshot_load_tolerates_gpe0_length_mismatch_for_forward_compat() {
     let cfg = AcpiPmConfig::default();
     let half = (cfg.gpe0_blk_len as usize) / 2;
 
-    // Build a snapshot with a mismatched-length GPE0_STS field and ensure it still restores.
+    // Build snapshots with mismatched-length GPE0 fields and ensure they still restore.
     const TAG_GPE0_STS: u16 = 4;
+    const TAG_GPE0_EN: u16 = 5;
     let mut w = SnapshotWriter::new(*b"ACPM", SnapshotVersion::new(1, 0));
     w.field_bytes(TAG_GPE0_STS, vec![0xAA, 0xBB, 0xCC, 0xDD, 0xEE]);
+    w.field_bytes(TAG_GPE0_EN, vec![0x11, 0x22, 0x33, 0x44, 0x55]);
     let bytes = w.finish();
 
     let clock = ManualClock::new();
@@ -191,6 +193,19 @@ fn snapshot_load_tolerates_gpe0_length_mismatch_for_forward_compat() {
     }
     if half >= 4 {
         assert_eq!(pm.read(cfg.gpe0_blk + 3, 1) as u8, 0xDD);
+    }
+
+    if half >= 1 {
+        assert_eq!(pm.read(cfg.gpe0_blk + half as u16, 1) as u8, 0x11);
+    }
+    if half >= 2 {
+        assert_eq!(pm.read(cfg.gpe0_blk + half as u16 + 1, 1) as u8, 0x22);
+    }
+    if half >= 3 {
+        assert_eq!(pm.read(cfg.gpe0_blk + half as u16 + 2, 1) as u8, 0x33);
+    }
+    if half >= 4 {
+        assert_eq!(pm.read(cfg.gpe0_blk + half as u16 + 3, 1) as u8, 0x44);
     }
 }
 
