@@ -101,8 +101,9 @@ fn pc_platform_enumerates_ide_and_preserves_legacy_bar_bases() {
 fn pc_platform_ide_io_decode_bit_gates_legacy_ports_and_bus_master_bar4() {
     let mut pc = PcPlatform::new_with_ide(2 * 1024 * 1024);
     let bdf = IDE_PIIX3.bdf;
-    // Attach a disk so the status port does not float high (0xFF) due to "no drive present".
-    // This allows the test to use the legacy status register as a proxy for I/O decode gating.
+    // Attach a disk so legacy taskfile/status reads do not float high (0xFF) due to "no drive
+    // present". This allows the test to use the legacy status register as a proxy for PCI I/O
+    // decode gating.
     let disk = RawDisk::create(MemBackend::new(), 8 * SECTOR_SIZE as u64).unwrap();
     pc.attach_ide_primary_master_disk(Box::new(disk)).unwrap();
 
