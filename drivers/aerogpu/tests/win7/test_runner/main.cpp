@@ -916,6 +916,7 @@ int main(int argc, char** argv) {
       "dwm_flush_pacing",
       "d3d9ex_triangle",
       "d3d9ex_stateblock_sanity",
+      "d3d9ex_scissor_sanity",
       "d3d9ex_draw_indexed_primitive_up",
       "d3d9ex_multiframe_triangle",
       "d3d9ex_vb_dirty_range",
