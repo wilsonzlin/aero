@@ -383,6 +383,18 @@ pub struct AerogpuD3d11Executor {
     bind_group_cache: BindGroupCache<Arc<wgpu::BindGroup>>,
     pipeline_cache: PipelineCache,
 
+    /// Resources referenced by commands recorded into the current `wgpu::CommandEncoder`.
+    ///
+    /// `wgpu::Queue::write_*` operations are ordered relative to `queue.submit` calls, so when we
+    /// perform an implicit guest-memory upload via `queue.write_*` while a render pass is active we
+    /// must ensure that upload can safely be reordered before the eventual command-buffer submission.
+    ///
+    /// Tracking which handles were used by previously-recorded GPU commands lets the render-pass
+    /// executor decide whether an implicit upload must end the pass (and force a submit) to
+    /// preserve command stream ordering.
+    encoder_used_buffers: HashSet<u32>,
+    encoder_used_textures: HashSet<u32>,
+
     /// Tracks whether the in-flight command encoder has recorded any GPU work.
     ///
     /// This is used to avoid submitting empty command buffers when we need to
@@ -575,6 +587,8 @@ impl AerogpuD3d11Executor {
             bind_group_layout_cache: BindGroupLayoutCache::new(),
             bind_group_cache: BindGroupCache::new(DEFAULT_BIND_GROUP_CACHE_CAPACITY),
             pipeline_cache,
+            encoder_used_buffers: HashSet::new(),
+            encoder_used_textures: HashSet::new(),
             encoder_has_commands: false,
         })
     }
@@ -588,6 +602,8 @@ impl AerogpuD3d11Executor {
         self.state = AerogpuD3d11State::default();
         self.pipeline_cache.clear();
         self.cbuffer_scratch.clear();
+        self.encoder_used_buffers.clear();
+        self.encoder_used_textures.clear();
         self.next_scratch_buffer_id = 1u64 << 32;
         self.bindings = BindingState::default();
         for stage in [
@@ -952,12 +968,16 @@ impl AerogpuD3d11Executor {
             Ok(()) => {
                 self.queue.submit([encoder.finish()]);
                 self.encoder_has_commands = false;
+                self.encoder_used_buffers.clear();
+                self.encoder_used_textures.clear();
                 Ok(report)
             }
             Err(err) => {
                 // Drop partially-recorded work, but still flush `queue.write_*` uploads so they
                 // don't remain queued indefinitely and reorder with later submissions.
                 self.encoder_has_commands = false;
+                self.encoder_used_buffers.clear();
+                self.encoder_used_textures.clear();
                 self.queue.submit([]);
                 Err(err)
             }
@@ -1173,6 +1193,8 @@ impl AerogpuD3d11Executor {
         let finished = std::mem::replace(encoder, new_encoder).finish();
         self.queue.submit([finished]);
         self.encoder_has_commands = false;
+        self.encoder_used_buffers.clear();
+        self.encoder_used_textures.clear();
     }
 
     fn submit_encoder_if_has_commands(
@@ -1617,9 +1639,11 @@ impl AerogpuD3d11Executor {
         // `SET_SHADER_CONSTANTS_F` via `queue.write_buffer` without reordering it ahead of the
         // earlier draw commands.
         let mut legacy_constants_used = [false; 3];
-        let mut used_textures_in_pass: HashSet<u32> = render_targets.iter().copied().collect();
+        for &handle in &render_targets {
+            self.encoder_used_textures.insert(handle);
+        }
         if let Some(handle) = depth_stencil {
-            used_textures_in_pass.insert(handle);
+            self.encoder_used_textures.insert(handle);
         }
 
         loop {
@@ -2026,8 +2050,11 @@ impl AerogpuD3d11Executor {
                 let Some(stage) = ShaderStage::from_aerogpu_u32(stage_raw) else {
                     break;
                 };
+                let legacy_id = legacy_constants_buffer_id(stage);
                 let stage_index = stage.as_bind_group_index() as usize;
-                if stage_index < legacy_constants_used.len() && legacy_constants_used[stage_index] {
+                if (stage_index < legacy_constants_used.len() && legacy_constants_used[stage_index])
+                    || self.encoder_used_buffers.contains(&legacy_id)
+                {
                     break;
                 }
             }
@@ -2232,7 +2259,9 @@ impl AerogpuD3d11Executor {
             //
             // In particular, allocation-backed textures start life `dirty=true` and are uploaded
             // lazily on first use. If a dirty texture is bound via SET_TEXTURE between draws, we
-            // must end the current pass so the outer loop can upload it before the next draw.
+            // must end the current pass if the texture has already been referenced by previously
+            // recorded GPU commands (because `queue.write_texture` would otherwise reorder the
+            // upload ahead of those commands).
             if opcode == OPCODE_SET_TEXTURE {
                 // `struct aerogpu_cmd_set_texture` (24 bytes)
                 if cmd_bytes.len() >= 20 {
@@ -2255,7 +2284,7 @@ impl AerogpuD3d11Executor {
                             if let Some(tex) = self.resources.textures.get(&texture) {
                                 if tex.dirty
                                     && tex.backing.is_some()
-                                    && used_textures_in_pass.contains(&texture)
+                                    && self.encoder_used_textures.contains(&texture)
                                 {
                                     break;
                                 }
@@ -2302,7 +2331,10 @@ impl AerogpuD3d11Executor {
                     }
 
                     if let Some(buf) = self.resources.buffers.get(&buffer) {
-                        if buf.backing.is_some() && buf.dirty.is_some() {
+                        if buf.backing.is_some()
+                            && buf.dirty.is_some()
+                            && self.encoder_used_buffers.contains(&buffer)
+                        {
                             needs_break = true;
                             break;
                         }
@@ -2319,7 +2351,10 @@ impl AerogpuD3d11Executor {
                     let buffer = read_u32_le(cmd_bytes, 8)?;
                     if buffer != 0 {
                         if let Some(buf) = self.resources.buffers.get(&buffer) {
-                            if buf.backing.is_some() && buf.dirty.is_some() {
+                            if buf.backing.is_some()
+                                && buf.dirty.is_some()
+                                && self.encoder_used_buffers.contains(&buffer)
+                            {
                                 break;
                             }
                         }
@@ -2383,7 +2418,10 @@ impl AerogpuD3d11Executor {
                                 continue;
                             }
                             if let Some(buf) = self.resources.buffers.get(&buffer) {
-                                if buf.backing.is_some() && buf.dirty.is_some() {
+                                if buf.backing.is_some()
+                                    && buf.dirty.is_some()
+                                    && self.encoder_used_buffers.contains(&buffer)
+                                {
                                     needs_break = true;
                                     break;
                                 }
@@ -2471,6 +2509,8 @@ impl AerogpuD3d11Executor {
                         {
                             legacy_constants_used
                                 [ShaderStage::Vertex.as_bind_group_index() as usize] = true;
+                            self.encoder_used_buffers
+                                .insert(legacy_constants_buffer_id(ShaderStage::Vertex));
                         }
                         if used_cb_ps.first().is_some_and(|v| *v)
                             && self
@@ -2483,6 +2523,15 @@ impl AerogpuD3d11Executor {
                         {
                             legacy_constants_used
                                 [ShaderStage::Pixel.as_bind_group_index() as usize] = true;
+                            self.encoder_used_buffers
+                                .insert(legacy_constants_buffer_id(ShaderStage::Pixel));
+                        }
+
+                        for &d3d_slot in &wgpu_slot_to_d3d_slot {
+                            let slot = d3d_slot as usize;
+                            if let Some(vb) = self.state.vertex_buffers.get(slot).and_then(|v| *v) {
+                                self.encoder_used_buffers.insert(vb.buffer);
+                            }
                         }
 
                         for (group_index, group_bindings) in
@@ -2491,10 +2540,18 @@ impl AerogpuD3d11Executor {
                             let stage = group_index_to_stage(group_index as u32)?;
                             let stage_bindings = self.bindings.stage(stage);
                             for binding in group_bindings {
-                                if let crate::BindingKind::Texture2D { slot } = &binding.kind {
-                                    if let Some(tex) = stage_bindings.texture(*slot) {
-                                        used_textures_in_pass.insert(tex.texture);
+                                match &binding.kind {
+                                    crate::BindingKind::Texture2D { slot } => {
+                                        if let Some(tex) = stage_bindings.texture(*slot) {
+                                            self.encoder_used_textures.insert(tex.texture);
+                                        }
                                     }
+                                    crate::BindingKind::ConstantBuffer { slot, .. } => {
+                                        if let Some(cb) = stage_bindings.constant_buffer(*slot) {
+                                            self.encoder_used_buffers.insert(cb.buffer);
+                                        }
+                                    }
+                                    crate::BindingKind::Sampler { .. } => {}
                                 }
                             }
                         }
@@ -2566,6 +2623,8 @@ impl AerogpuD3d11Executor {
                         {
                             legacy_constants_used
                                 [ShaderStage::Vertex.as_bind_group_index() as usize] = true;
+                            self.encoder_used_buffers
+                                .insert(legacy_constants_buffer_id(ShaderStage::Vertex));
                         }
                         if used_cb_ps.first().is_some_and(|v| *v)
                             && self
@@ -2578,6 +2637,18 @@ impl AerogpuD3d11Executor {
                         {
                             legacy_constants_used
                                 [ShaderStage::Pixel.as_bind_group_index() as usize] = true;
+                            self.encoder_used_buffers
+                                .insert(legacy_constants_buffer_id(ShaderStage::Pixel));
+                        }
+
+                        for &d3d_slot in &wgpu_slot_to_d3d_slot {
+                            let slot = d3d_slot as usize;
+                            if let Some(vb) = self.state.vertex_buffers.get(slot).and_then(|v| *v) {
+                                self.encoder_used_buffers.insert(vb.buffer);
+                            }
+                        }
+                        if let Some(ib) = self.state.index_buffer {
+                            self.encoder_used_buffers.insert(ib.buffer);
                         }
 
                         for (group_index, group_bindings) in
@@ -2586,10 +2657,18 @@ impl AerogpuD3d11Executor {
                             let stage = group_index_to_stage(group_index as u32)?;
                             let stage_bindings = self.bindings.stage(stage);
                             for binding in group_bindings {
-                                if let crate::BindingKind::Texture2D { slot } = &binding.kind {
-                                    if let Some(tex) = stage_bindings.texture(*slot) {
-                                        used_textures_in_pass.insert(tex.texture);
+                                match &binding.kind {
+                                    crate::BindingKind::Texture2D { slot } => {
+                                        if let Some(tex) = stage_bindings.texture(*slot) {
+                                            self.encoder_used_textures.insert(tex.texture);
+                                        }
                                     }
+                                    crate::BindingKind::ConstantBuffer { slot, .. } => {
+                                        if let Some(cb) = stage_bindings.constant_buffer(*slot) {
+                                            self.encoder_used_buffers.insert(cb.buffer);
+                                        }
+                                    }
+                                    crate::BindingKind::Sampler { .. } => {}
                                 }
                             }
                         }
@@ -2753,6 +2832,25 @@ impl AerogpuD3d11Executor {
                     let start_slot = cmd.start_slot as usize;
                     let buffer_count = cmd.buffer_count as usize;
 
+                    for (i, binding) in bindings.iter().copied().enumerate() {
+                        let slot = start_slot.saturating_add(i);
+                        if slot >= used_vertex_slots.len() || !used_vertex_slots[slot] {
+                            continue;
+                        }
+                        let buffer = u32::from_le(binding.buffer);
+                        if buffer == 0 {
+                            continue;
+                        }
+                        let needs_upload = self
+                            .resources
+                            .buffers
+                            .get(&buffer)
+                            .is_some_and(|buf| buf.backing.is_some() && buf.dirty.is_some());
+                        if needs_upload && !self.encoder_used_buffers.contains(&buffer) {
+                            self.upload_buffer_from_guest_memory(buffer, allocs, guest_mem)?;
+                        }
+                    }
+
                     self.exec_set_vertex_buffers(cmd_bytes)?;
 
                     for slot in start_slot..start_slot.saturating_add(buffer_count) {
@@ -2792,6 +2890,19 @@ impl AerogpuD3d11Executor {
                     }
                 }
                 OPCODE_SET_INDEX_BUFFER => {
+                    if cmd_bytes.len() >= 12 {
+                        let buffer = read_u32_le(cmd_bytes, 8)?;
+                        if buffer != 0 {
+                            let needs_upload = self
+                                .resources
+                                .buffers
+                                .get(&buffer)
+                                .is_some_and(|buf| buf.backing.is_some() && buf.dirty.is_some());
+                            if needs_upload && !self.encoder_used_buffers.contains(&buffer) {
+                                self.upload_buffer_from_guest_memory(buffer, allocs, guest_mem)?;
+                            }
+                        }
+                    }
                     self.exec_set_index_buffer(cmd_bytes)?;
                     if let Some(ib) = self.state.index_buffer {
                         let (buf_ptr, buf_size): (*const wgpu::Buffer, u64) = {
@@ -2818,7 +2929,8 @@ impl AerogpuD3d11Executor {
                 OPCODE_SET_TEXTURE => {
                     // Allow first-use uploads of allocation-backed textures inside a render pass by
                     // reordering the upload ahead of the pass submission. This is only safe when
-                    // the texture has not been used by any previously recorded draw in this pass.
+                    // the texture has not been referenced by any previously recorded GPU commands
+                    // in the current command encoder.
                     if cmd_bytes.len() >= 20 {
                         let stage_raw = read_u32_le(cmd_bytes, 8)?;
                         let slot = read_u32_le(cmd_bytes, 12)?;
@@ -2832,23 +2944,22 @@ impl AerogpuD3d11Executor {
                                 ShaderStage::Pixel => &used_textures_ps,
                                 ShaderStage::Compute => &used_textures_cs,
                             };
-                            let slot_usize: usize = slot
-                                .try_into()
-                                .map_err(|_| anyhow!("SET_TEXTURE: slot out of range"))?;
-                            if slot_usize < used_slots.len() && used_slots[slot_usize] {
-                                let needs_upload = self
-                                    .resources
-                                    .textures
-                                    .get(&texture)
-                                    .is_some_and(|tex| tex.dirty && tex.backing.is_some());
-                                if needs_upload && !used_textures_in_pass.contains(&texture) {
+                             let slot_usize: usize = slot
+                                 .try_into()
+                                 .map_err(|_| anyhow!("SET_TEXTURE: slot out of range"))?;
+                             if slot_usize < used_slots.len() && used_slots[slot_usize] {
+                                let needs_upload =
+                                    self.resources.textures.get(&texture).is_some_and(|tex| {
+                                        tex.dirty && tex.backing.is_some()
+                                    });
+                                if needs_upload && !self.encoder_used_textures.contains(&texture) {
                                     self.upload_texture_from_guest_memory(
                                         texture, allocs, guest_mem,
                                     )?;
                                 }
-                            }
-                        }
-                    }
+                             }
+                         }
+                     }
                     self.exec_set_texture(cmd_bytes)?;
                 }
                 OPCODE_SET_SAMPLER_STATE => self.exec_set_sampler_state(cmd_bytes)?,
@@ -2856,7 +2967,62 @@ impl AerogpuD3d11Executor {
                 OPCODE_CREATE_SAMPLER => self.exec_create_sampler(cmd_bytes)?,
                 OPCODE_DESTROY_SAMPLER => self.exec_destroy_sampler(cmd_bytes)?,
                 OPCODE_SET_SAMPLERS => self.exec_set_samplers(cmd_bytes)?,
-                OPCODE_SET_CONSTANT_BUFFERS => self.exec_set_constant_buffers(cmd_bytes)?,
+                OPCODE_SET_CONSTANT_BUFFERS => {
+                    // Allow first-use uploads of allocation-backed constant buffers inside a render
+                    // pass by reordering the upload ahead of the pass submission. This is only safe
+                    // when the buffer has not been referenced by any previously recorded GPU
+                    // commands in the current command encoder.
+                    if cmd_bytes.len() >= 24 {
+                        let stage_raw = read_u32_le(cmd_bytes, 8)?;
+                        let start_slot = read_u32_le(cmd_bytes, 12)?;
+                        let buffer_count_u32 = read_u32_le(cmd_bytes, 16)?;
+                        let buffer_count: usize = buffer_count_u32
+                            .try_into()
+                            .map_err(|_| anyhow!("SET_CONSTANT_BUFFERS: buffer_count out of range"))?;
+                        let expected = 24usize
+                            .checked_add(
+                                buffer_count
+                                    .checked_mul(16)
+                                    .ok_or_else(|| anyhow!("SET_CONSTANT_BUFFERS: size overflow"))?,
+                            )
+                            .ok_or_else(|| anyhow!("SET_CONSTANT_BUFFERS: size overflow"))?;
+                        if cmd_bytes.len() >= expected {
+                            if let Some(stage) = ShaderStage::from_aerogpu_u32(stage_raw) {
+                                let used_slots = match stage {
+                                    ShaderStage::Vertex => &used_cb_vs,
+                                    ShaderStage::Pixel => &used_cb_ps,
+                                    ShaderStage::Compute => &used_cb_cs,
+                                };
+                                for i in 0..buffer_count {
+                                    let slot = start_slot
+                                        .checked_add(i as u32)
+                                        .ok_or_else(|| anyhow!("SET_CONSTANT_BUFFERS: slot overflow"))?;
+                                    let slot_usize: usize = slot.try_into().map_err(|_| {
+                                        anyhow!("SET_CONSTANT_BUFFERS: slot out of range")
+                                    })?;
+                                    if slot_usize >= used_slots.len() || !used_slots[slot_usize] {
+                                        continue;
+                                    }
+
+                                    let base = 24 + i * 16;
+                                    let buffer = read_u32_le(cmd_bytes, base)?;
+                                    if buffer == 0 || buffer == legacy_constants_buffer_id(stage) {
+                                        continue;
+                                    }
+                                    let needs_upload = self
+                                        .resources
+                                        .buffers
+                                        .get(&buffer)
+                                        .is_some_and(|buf| buf.backing.is_some() && buf.dirty.is_some());
+                                    if needs_upload && !self.encoder_used_buffers.contains(&buffer) {
+                                        self.upload_buffer_from_guest_memory(buffer, allocs, guest_mem)?;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    self.exec_set_constant_buffers(cmd_bytes)?;
+                }
                 OPCODE_NOP | OPCODE_DEBUG_MARKER => {}
                 _ => {}
             }
@@ -3038,6 +3204,8 @@ impl AerogpuD3d11Executor {
 
         self.resources.buffers.remove(&handle);
         self.resources.textures.remove(&handle);
+        self.encoder_used_buffers.remove(&handle);
+        self.encoder_used_textures.remove(&handle);
 
         // Clean up bindings in state.
         self.state.render_targets.retain(|&rt| rt != handle);
@@ -3440,6 +3608,8 @@ impl AerogpuD3d11Executor {
         }
 
         self.encoder_has_commands = true;
+        self.encoder_used_buffers.insert(src_buffer);
+        self.encoder_used_buffers.insert(dst_buffer);
 
         if let Some(dst_gpa) = dst_writeback_gpa {
             let Some(staging) = staging else {
@@ -3763,6 +3933,8 @@ impl AerogpuD3d11Executor {
             }
         }
         self.encoder_has_commands = true;
+        self.encoder_used_textures.insert(src_texture);
+        self.encoder_used_textures.insert(dst_texture);
 
         if let Some((plan, _)) = writeback_plan {
             let Some(staging) = staging else {
@@ -4617,6 +4789,13 @@ impl AerogpuD3d11Executor {
             self.ensure_texture_uploaded(encoder, handle, allocs, guest_mem)?;
         }
 
+        for &handle in &render_targets {
+            self.encoder_used_textures.insert(handle);
+        }
+        if let Some(handle) = depth_stencil {
+            self.encoder_used_textures.insert(handle);
+        }
+
         let color = [
             f32::from_bits(read_u32_le(cmd_bytes, 12)?),
             f32::from_bits(read_u32_le(cmd_bytes, 16)?),
@@ -4823,6 +5002,9 @@ impl AerogpuD3d11Executor {
                 let src = unsafe { &*src_ptr };
                 encoder.copy_buffer_to_buffer(src, offset, &scratch.buffer, 0, size);
                 self.encoder_has_commands = true;
+                if cb.buffer != legacy_constants_buffer_id(stage) {
+                    self.encoder_used_buffers.insert(cb.buffer);
+                }
             }
         }
 
@@ -4868,6 +5050,29 @@ impl AerogpuD3d11Executor {
         allocs: &AllocTable,
         guest_mem: &mut dyn GuestMemory,
     ) -> Result<()> {
+        let needs_upload = self
+            .resources
+            .buffers
+            .get(&buffer_handle)
+            .is_some_and(|buf| buf.backing.is_some() && buf.dirty.is_some());
+        if !needs_upload {
+            return Ok(());
+        }
+
+        // Preserve command stream ordering relative to any previously encoded GPU work.
+        self.submit_encoder_if_has_commands(
+            encoder,
+            "aerogpu_cmd encoder after implicit buffer upload",
+        );
+        self.upload_buffer_from_guest_memory(buffer_handle, allocs, guest_mem)
+    }
+
+    fn upload_buffer_from_guest_memory(
+        &mut self,
+        buffer_handle: u32,
+        allocs: &AllocTable,
+        guest_mem: &mut dyn GuestMemory,
+    ) -> Result<()> {
         let (dirty, backing, buffer_size, buffer_gpu_size) = {
             let Some(buf) = self.resources.buffers.get(&buffer_handle) else {
                 return Ok(());
@@ -4898,12 +5103,6 @@ impl AerogpuD3d11Executor {
             dirty_len,
         )?;
         let gpa = allocs.gpa(backing.alloc_id)? + backing.offset_bytes + dirty.start;
-
-        // Preserve command stream ordering relative to any previously encoded GPU work.
-        self.submit_encoder_if_has_commands(
-            encoder,
-            "aerogpu_cmd encoder after implicit buffer upload",
-        );
 
         let Some(buf) = self.resources.buffers.get(&buffer_handle) else {
             return Ok(());
