@@ -760,7 +760,7 @@ impl<C: Clock, S: GsiSink> memory::MmioHandler for HpetMmio<C, S> {
 mod tests {
     use super::*;
     use crate::clock::ManualClock;
-    use crate::ioapic::{GsiEvent, IoApic};
+    use crate::ioapic::{GsiEvent, GsiSink, IoApic};
 
     #[test]
     fn enable_bit_gates_counter_increment() {
@@ -846,5 +846,46 @@ mod tests {
             0
         );
         assert!(!ioapic.is_asserted(2));
+    }
+
+    #[test]
+    fn reset_clears_guest_registers_and_irq_bookkeeping() {
+        let clock = ManualClock::new();
+        let mut ioapic = IoApic::default();
+        let mut hpet = Hpet::new_default(clock.clone());
+
+        // Program a level-triggered interrupt so we exercise pending status + `irq_asserted`.
+        hpet.mmio_write(REG_GENERAL_CONFIG, 8, GEN_CONF_ENABLE, &mut ioapic);
+        let timer0_cfg = hpet.mmio_read(REG_TIMER0_BASE + REG_TIMER_CONFIG, 8, &mut ioapic);
+        hpet.mmio_write(
+            REG_TIMER0_BASE + REG_TIMER_CONFIG,
+            8,
+            timer0_cfg | TIMER_CFG_INT_ENABLE | TIMER_CFG_INT_LEVEL,
+            &mut ioapic,
+        );
+        hpet.mmio_write(REG_TIMER0_BASE + REG_TIMER_COMPARATOR, 8, 1, &mut ioapic);
+
+        clock.advance_ns(100);
+        hpet.poll(&mut ioapic);
+        assert!(ioapic.is_asserted(2));
+        assert_ne!(hpet.general_int_status & 1, 0);
+        assert!(hpet.timers[0].irq_asserted);
+
+        hpet.reset();
+
+        assert_eq!(hpet.general_config, 0);
+        assert_eq!(hpet.general_int_status, 0);
+        assert_eq!(hpet.main_counter, 0);
+        assert!(!hpet.timers[0].armed);
+        assert!(!hpet.timers[0].irq_asserted);
+
+        // Reset does not take an interrupt sink, so the test harness must clear any previously
+        // asserted lines before validating post-reset behavior.
+        ioapic.lower_gsi(2);
+        ioapic.take_events();
+
+        hpet.sync_levels_to_sink(&mut ioapic);
+        assert!(!ioapic.is_asserted(2));
+        assert!(ioapic.take_events().is_empty());
     }
 }
