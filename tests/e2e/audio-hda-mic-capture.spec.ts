@@ -35,6 +35,7 @@ test("HDA capture stream DMA-writes microphone PCM into guest RAM (synthetic mic
       MIC_HEADER_U32_LEN,
       MIC_READ_POS_INDEX,
       MIC_WRITE_POS_INDEX,
+      micSampleRateHz,
     }) => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const coord = (globalThis as any).__aeroWorkerCoordinator as any;
