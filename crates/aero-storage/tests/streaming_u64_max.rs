@@ -161,7 +161,7 @@ fn parse_range_header(header: &str, total_size: u64) -> Result<(u64, u64), Statu
     Ok((start, end_inclusive + 1))
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "current_thread")]
 async fn streaming_disk_handles_u64_max_total_size_without_overflow() {
     let total_size = u64::MAX;
     let (url, counters, shutdown) = start_range_server(total_size).await;
@@ -198,4 +198,3 @@ async fn streaming_disk_handles_u64_max_total_size_without_overflow() {
 
     let _ = shutdown.send(());
 }
-
