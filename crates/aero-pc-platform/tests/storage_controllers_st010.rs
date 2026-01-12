@@ -597,6 +597,120 @@ fn st010_ide_pio_atapi_and_busmaster_dma() {
 }
 
 #[test]
+fn st010_ide_atapi_dma_and_irq15_routing() {
+    let mut pc = PcPlatform::new_with_config(
+        2 * 1024 * 1024,
+        PcPlatformConfig {
+            enable_ide: true,
+            enable_ahci: false,
+            enable_uhci: false,
+            ..Default::default()
+        },
+    );
+
+    let bdf = profile::IDE_PIIX3.bdf;
+
+    // Enable I/O decoding and bus mastering (DMA).
+    let mut cmd = pci_cfg_read_u16(&mut pc, bdf, 0x04);
+    cmd |= 0x0005; // IO + BUSMASTER
+    pci_cfg_write_u16(&mut pc, bdf, 0x04, cmd);
+
+    // Bus Master IDE is a relocatable I/O BAR (BAR4).
+    let bar4 = pci_read_bar(&mut pc, bdf, 4);
+    assert_eq!(bar4.kind, BarKind::Io);
+    assert_ne!(bar4.base, 0);
+    let bm_base = bar4.base as u16;
+
+    // Attach an ATAPI CD-ROM backend (secondary master) with recognizable bytes at LBA 0.
+    let mut iso = RawDisk::create(MemBackend::new(), 2048).unwrap();
+    iso.write_at(0, b"DMATEST!").unwrap();
+    pc.attach_ide_secondary_master_iso(Box::new(iso)).unwrap();
+
+    // Select secondary master.
+    let sec_cmd = SECONDARY_PORTS.cmd_base;
+    pc.io.write(sec_cmd + 6, 1, 0xA0);
+
+    fn wait_drq(pc: &mut PcPlatform, cmd_base: u16) {
+        for _ in 0..1000 {
+            let st = pc.io.read(cmd_base + 7, 1) as u8;
+            if (st & 0x80) == 0 && (st & 0x08) != 0 {
+                return;
+            }
+        }
+        panic!("timeout waiting for DRQ on IDE port {cmd_base:#x}");
+    }
+
+    fn atapi_send_packet(
+        pc: &mut PcPlatform,
+        cmd_base: u16,
+        features: u8,
+        pkt: &[u8; 12],
+        byte_count: u16,
+    ) {
+        pc.io.write(cmd_base + 1, 1, features as u32);
+        pc.io.write(cmd_base + 4, 1, (byte_count & 0xFF) as u32);
+        pc.io.write(cmd_base + 5, 1, (byte_count >> 8) as u32);
+        pc.io.write(cmd_base + 7, 1, 0xA0); // PACKET
+
+        // Wait for the device to request the 12-byte packet.
+        wait_drq(pc, cmd_base);
+
+        for i in 0..6 {
+            let w = u16::from_le_bytes([pkt[i * 2], pkt[i * 2 + 1]]);
+            pc.io.write(cmd_base, 2, w as u32);
+        }
+    }
+
+    // Clear initial UNIT ATTENTION (media change) while IRQ15 is masked. Explicitly clear any
+    // latched interrupt condition by reading Status.
+    let tur = [0u8; 12];
+    atapi_send_packet(&mut pc, sec_cmd, 0, &tur, 0);
+    let _ = pc.io.read(sec_cmd + 7, 1);
+
+    let mut req_sense = [0u8; 12];
+    req_sense[0] = 0x03;
+    req_sense[4] = 18;
+    atapi_send_packet(&mut pc, sec_cmd, 0, &req_sense, 18);
+    wait_drq(&mut pc, sec_cmd);
+    for _ in 0..(18 / 2) {
+        let _ = pc.io.read(sec_cmd, 2);
+    }
+    let _ = pc.io.read(sec_cmd + 7, 1);
+
+    // PRD table and DMA buffer in guest RAM.
+    let prd_addr = 0x2000u64;
+    let dma_buf = 0x3000u64;
+
+    pc.memory.write_u32(prd_addr, dma_buf as u32);
+    pc.memory.write_u16(prd_addr + 4, 2048);
+    pc.memory.write_u16(prd_addr + 6, 0x8000); // EOT
+
+    // Program secondary PRD pointer (BMIDE base + 8 + 4) and clear BMIDE status.
+    pc.io.write(bm_base + 8 + 2, 1, 0x06);
+    pc.io.write(bm_base + 8 + 4, 4, prd_addr as u32);
+
+    // Now unmask IRQ15 so we can observe the ATAPI DMA completion interrupt.
+    unmask_pic_irq(&mut pc, 15);
+
+    // READ(10) for LBA=0, blocks=1 with DMA enabled (FEATURES bit0).
+    let mut read10 = [0u8; 12];
+    read10[0] = 0x28;
+    read10[2..6].copy_from_slice(&0u32.to_be_bytes());
+    read10[7..9].copy_from_slice(&1u16.to_be_bytes());
+    atapi_send_packet(&mut pc, sec_cmd, 0x01, &read10, 2048);
+
+    pc.io.write(bm_base + 8, 1, 0x09); // start + direction=read
+    pc.process_ide();
+    pc.poll_pci_intx_lines();
+
+    let mut out = [0u8; 8];
+    mem_read(&mut pc, dma_buf, &mut out);
+    assert_eq!(&out, b"DMATEST!");
+
+    assert_eq!(pic_pending_irq(&pc), Some(15));
+}
+
+#[test]
 fn st010_ahci_snapshot_roundtrip_preserves_intx_level() {
     let mut pc = PcPlatform::new_with_config(
         2 * 1024 * 1024,
