@@ -1,7 +1,15 @@
 import { describe, expect, it } from "vitest";
 
 import { AeroAudioProcessor, addUnderrunFrames } from "./audio-worklet-processor.js";
-import { READ_FRAME_INDEX, UNDERRUN_COUNT_INDEX, WRITE_FRAME_INDEX, requiredBytes, wrapRingBuffer } from "../audio/audio_worklet_ring";
+import {
+  HEADER_BYTES,
+  HEADER_U32_LEN,
+  READ_FRAME_INDEX,
+  UNDERRUN_COUNT_INDEX,
+  WRITE_FRAME_INDEX,
+  requiredBytes,
+  wrapRingBuffer,
+} from "../audio/audio_worklet_ring";
 
 function makeRingBuffer(capacityFrames: number, channelCount: number): {
   sab: SharedArrayBuffer;
@@ -18,6 +26,38 @@ function makeRingBuffer(capacityFrames: number, channelCount: number): {
 }
 
 describe("audio-worklet-processor underrun counter", () => {
+  it("matches the shared ring-buffer header layout constants", () => {
+    // This test intentionally doesn't reach into non-exported constants in
+    // `audio-worklet-processor.js`. Instead it asserts the worklet reads/writes
+    // the *same* header indices and sample offsets as `audio_worklet_ring.ts`
+    // by validating behavior via a minimal render pass.
+    const capacityFrames = 1;
+    const channelCount = 1;
+    const { sab, header, samples } = makeRingBuffer(capacityFrames, channelCount);
+
+    // Seed exactly 1 frame in the buffer and ensure the processor consumes it.
+    Atomics.store(header, READ_FRAME_INDEX, 0);
+    Atomics.store(header, WRITE_FRAME_INDEX, 1);
+    Atomics.store(header, UNDERRUN_COUNT_INDEX, 0);
+    samples[0] = 0.5;
+
+    const proc = new AeroAudioProcessor({
+      processorOptions: { ringBuffer: sab, channelCount, capacityFrames },
+    });
+
+    const outputs: Float32Array[][] = [[new Float32Array(1)]];
+    proc.process([], outputs);
+
+    expect(outputs[0][0]).toEqual(Float32Array.from([0.5]));
+    expect(Atomics.load(header, READ_FRAME_INDEX) >>> 0).toBe(1);
+    expect(Atomics.load(header, UNDERRUN_COUNT_INDEX) >>> 0).toBe(0);
+
+    // Also lock the byte-level header size that the worklet hardcodes (the
+    // `Float32Array(ringBuffer, 16)` offset and `Uint32Array(..., 4)` length).
+    expect(HEADER_U32_LEN).toBe(4);
+    expect(HEADER_BYTES).toBe(16);
+  });
+
   it("counts missing frames (not underrun events)", () => {
     const capacityFrames = 4;
     const channelCount = 2;
