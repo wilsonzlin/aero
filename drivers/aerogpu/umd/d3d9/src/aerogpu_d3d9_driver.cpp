@@ -1089,10 +1089,6 @@ std::array<uint64_t, 4> d3d9_stub_trace_args(const Args&... args) {
 // Shader constant paths (int/bool) are not emitted yet, but some apps query
 // them during initialization. Cache them so Set*/Get* round-trips.
 
-// Fixed-function gamma ramp is not supported yet. Treat this as a no-op to avoid
-// Win7 runtime crashes when apps use legacy state paths.
-AEROGPU_D3D9_DEFINE_DDI_STUB(pfnSetGammaRamp, D3d9TraceFunc::DeviceSetGammaRamp, S_OK);
-
 // D3D9Ex image processing API. Treat as a no-op until the fixed-function path is
 // fully implemented (DWM should not rely on it).
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnSetConvolutionMonoKernel, D3d9TraceFunc::DeviceSetConvolutionMonoKernel, S_OK);
@@ -1102,19 +1098,11 @@ AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGenerateMipSubLevels, D3d9TraceFunc::DeviceGener
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnSetPriority, D3d9TraceFunc::DeviceSetPriority, S_OK);
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetPriority, D3d9TraceFunc::DeviceGetPriority, D3DERR_NOTAVAILABLE);
 
-// Cursor, palette, and clip-status management is not implemented yet, but these
-// can be treated as benign no-ops for bring-up.
+// Cursor management is not implemented yet, but these can be treated as benign
+// no-ops for bring-up.
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnSetCursorProperties, D3d9TraceFunc::DeviceSetCursorProperties, S_OK);
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnSetCursorPosition, D3d9TraceFunc::DeviceSetCursorPosition, S_OK);
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnShowCursor, D3d9TraceFunc::DeviceShowCursor, S_OK);
-AEROGPU_D3D9_DEFINE_DDI_STUB(pfnSetPaletteEntries, D3d9TraceFunc::DeviceSetPaletteEntries, S_OK);
-AEROGPU_D3D9_DEFINE_DDI_STUB(pfnSetCurrentTexturePalette, D3d9TraceFunc::DeviceSetCurrentTexturePalette, S_OK);
-AEROGPU_D3D9_DEFINE_DDI_STUB(pfnSetClipStatus, D3d9TraceFunc::DeviceSetClipStatus, S_OK);
-
-// "Get" style queries have output parameters; return an explicit failure so the
-// runtime does not consume uninitialized output data.
-AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetClipStatus, D3d9TraceFunc::DeviceGetClipStatus, D3DERR_NOTAVAILABLE);
-AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetGammaRamp, D3d9TraceFunc::DeviceGetGammaRamp, D3DERR_NOTAVAILABLE);
 
 // Patch rendering (N-Patch/patches) and ProcessVertices are not supported yet.
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnDrawRectPatch, D3d9TraceFunc::DeviceDrawRectPatch, D3DERR_NOTAVAILABLE);
@@ -1130,9 +1118,6 @@ AEROGPU_D3D9_DEFINE_DDI_STUB(pfnSetDialogBoxMode, D3d9TraceFunc::DeviceSetDialog
 // Various state "getters" (largely used by legacy apps). These have output
 // parameters; return a clean failure so callers don't consume uninitialized
 // memory.
-AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetPaletteEntries, D3d9TraceFunc::DeviceGetPaletteEntries, D3DERR_NOTAVAILABLE);
-AEROGPU_D3D9_DEFINE_DDI_STUB(
-    pfnGetCurrentTexturePalette, D3d9TraceFunc::DeviceGetCurrentTexturePalette, D3DERR_NOTAVAILABLE);
 // (Shader bool/int constant getters are implemented and cached elsewhere.)
 
 #undef AEROGPU_D3D9_DEFINE_DDI_STUB
@@ -10581,6 +10566,251 @@ HRESULT device_get_light_enable_dispatch(Args... args) {
   }
   return D3DERR_NOTAVAILABLE;
 }
+
+template <typename PaletteT, typename EntryT>
+HRESULT device_set_palette_entries_impl(D3DDDI_HDEVICE hDevice, PaletteT palette, const EntryT* pEntries) {
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceSetPaletteEntries,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      static_cast<uint64_t>(d3d9_to_u32(palette)),
+                      d3d9_trace_arg_ptr(pEntries),
+                      0);
+  if (!hDevice.pDrvPrivate || !pEntries) {
+    return trace.ret(E_INVALIDARG);
+  }
+  const uint32_t idx = d3d9_to_u32(palette);
+  if (idx >= Device::kMaxPalettes) {
+    return trace.ret(kD3DErrInvalidCall);
+  }
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  std::memset(&dev->palette_entries[idx][0], 0, sizeof(dev->palette_entries[idx]));
+  const size_t src_bytes = static_cast<size_t>(256) * sizeof(*pEntries);
+  const size_t dst_bytes = sizeof(dev->palette_entries[idx]);
+  std::memcpy(&dev->palette_entries[idx][0], pEntries, std::min(src_bytes, dst_bytes));
+  dev->palette_valid[idx] = true;
+  return trace.ret(S_OK);
+}
+
+template <typename... Args>
+HRESULT device_set_palette_entries_dispatch(Args... args) {
+  if constexpr (sizeof...(Args) == 3) {
+    return device_set_palette_entries_impl(args...);
+  }
+  return D3DERR_NOTAVAILABLE;
+}
+
+template <typename PaletteT, typename EntryT>
+HRESULT device_get_palette_entries_impl(D3DDDI_HDEVICE hDevice, PaletteT palette, EntryT* pEntries) {
+  if (pEntries) {
+    std::memset(pEntries, 0, static_cast<size_t>(256) * sizeof(*pEntries));
+  }
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceGetPaletteEntries,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      static_cast<uint64_t>(d3d9_to_u32(palette)),
+                      d3d9_trace_arg_ptr(pEntries),
+                      0);
+  if (!hDevice.pDrvPrivate || !pEntries) {
+    return trace.ret(E_INVALIDARG);
+  }
+  const uint32_t idx = d3d9_to_u32(palette);
+  if (idx >= Device::kMaxPalettes) {
+    return trace.ret(kD3DErrInvalidCall);
+  }
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  if (dev->palette_valid[idx]) {
+    const size_t src_bytes = sizeof(dev->palette_entries[idx]);
+    const size_t dst_bytes = static_cast<size_t>(256) * sizeof(*pEntries);
+    std::memcpy(pEntries, &dev->palette_entries[idx][0], std::min(src_bytes, dst_bytes));
+  }
+  return trace.ret(S_OK);
+}
+
+template <typename... Args>
+HRESULT device_get_palette_entries_dispatch(Args... args) {
+  if constexpr (sizeof...(Args) == 3) {
+    return device_get_palette_entries_impl(args...);
+  }
+  return D3DERR_NOTAVAILABLE;
+}
+
+template <typename PaletteT>
+HRESULT device_set_current_texture_palette_impl(D3DDDI_HDEVICE hDevice, PaletteT palette) {
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceSetCurrentTexturePalette,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      static_cast<uint64_t>(d3d9_to_u32(palette)),
+                      0,
+                      0);
+  if (!hDevice.pDrvPrivate) {
+    return trace.ret(E_INVALIDARG);
+  }
+  const uint32_t idx = d3d9_to_u32(palette);
+  if (idx >= Device::kMaxPalettes) {
+    return trace.ret(kD3DErrInvalidCall);
+  }
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  dev->current_texture_palette = idx;
+  return trace.ret(S_OK);
+}
+
+template <typename... Args>
+HRESULT device_set_current_texture_palette_dispatch(Args... args) {
+  if constexpr (sizeof...(Args) == 2) {
+    return device_set_current_texture_palette_impl(args...);
+  }
+  return D3DERR_NOTAVAILABLE;
+}
+
+template <typename PaletteT>
+HRESULT device_get_current_texture_palette_impl(D3DDDI_HDEVICE hDevice, PaletteT* pPalette) {
+  d3d9_write_u32(pPalette, 0u);
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceGetCurrentTexturePalette,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      d3d9_trace_arg_ptr(pPalette),
+                      0,
+                      0);
+  if (!hDevice.pDrvPrivate || !pPalette) {
+    return trace.ret(E_INVALIDARG);
+  }
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  d3d9_write_u32(pPalette, dev->current_texture_palette);
+  return trace.ret(S_OK);
+}
+
+template <typename... Args>
+HRESULT device_get_current_texture_palette_dispatch(Args... args) {
+  if constexpr (sizeof...(Args) == 2) {
+    return device_get_current_texture_palette_impl(args...);
+  }
+  return D3DERR_NOTAVAILABLE;
+}
+
+template <typename ClipStatusT>
+HRESULT device_set_clip_status_impl(D3DDDI_HDEVICE hDevice, const ClipStatusT* pClipStatus) {
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceSetClipStatus,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      d3d9_trace_arg_ptr(pClipStatus),
+                      0,
+                      0);
+  if (!hDevice.pDrvPrivate || !pClipStatus) {
+    return trace.ret(E_INVALIDARG);
+  }
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  std::memset(&dev->clip_status, 0, sizeof(dev->clip_status));
+  std::memcpy(&dev->clip_status, pClipStatus, std::min(sizeof(dev->clip_status), sizeof(*pClipStatus)));
+  dev->clip_status_valid = true;
+  return trace.ret(S_OK);
+}
+
+template <typename... Args>
+HRESULT device_set_clip_status_dispatch(Args... args) {
+  if constexpr (sizeof...(Args) == 2) {
+    return device_set_clip_status_impl(args...);
+  }
+  return D3DERR_NOTAVAILABLE;
+}
+
+template <typename ClipStatusT>
+HRESULT device_get_clip_status_impl(D3DDDI_HDEVICE hDevice, ClipStatusT* pClipStatus) {
+  if (pClipStatus) {
+    std::memset(pClipStatus, 0, sizeof(*pClipStatus));
+  }
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceGetClipStatus,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      d3d9_trace_arg_ptr(pClipStatus),
+                      0,
+                      0);
+  if (!hDevice.pDrvPrivate || !pClipStatus) {
+    return trace.ret(E_INVALIDARG);
+  }
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  if (dev->clip_status_valid) {
+    std::memcpy(pClipStatus, &dev->clip_status, std::min(sizeof(*pClipStatus), sizeof(dev->clip_status)));
+  }
+  return trace.ret(S_OK);
+}
+
+template <typename... Args>
+HRESULT device_get_clip_status_dispatch(Args... args) {
+  if constexpr (sizeof...(Args) == 2) {
+    return device_get_clip_status_impl(args...);
+  }
+  return D3DERR_NOTAVAILABLE;
+}
+
+template <typename A1, typename A2, typename RampT>
+HRESULT device_set_gamma_ramp_impl(D3DDDI_HDEVICE hDevice, A1 arg1, A2 arg2, const RampT* pRamp) {
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceSetGammaRamp,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      static_cast<uint64_t>(d3d9_to_u32(arg1)),
+                      static_cast<uint64_t>(d3d9_to_u32(arg2)),
+                      d3d9_trace_arg_ptr(pRamp));
+  if (!hDevice.pDrvPrivate || !pRamp) {
+    return trace.ret(E_INVALIDARG);
+  }
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  std::memset(&dev->gamma_ramp, 0, sizeof(dev->gamma_ramp));
+  std::memcpy(&dev->gamma_ramp, pRamp, std::min(sizeof(dev->gamma_ramp), sizeof(*pRamp)));
+  dev->gamma_ramp_valid = true;
+  return trace.ret(S_OK);
+}
+
+template <typename A1, typename RampT>
+HRESULT device_set_gamma_ramp_impl(D3DDDI_HDEVICE hDevice, A1 arg1, const RampT* pRamp) {
+  return device_set_gamma_ramp_impl(hDevice, arg1, 0u, pRamp);
+}
+
+template <typename... Args>
+HRESULT device_set_gamma_ramp_dispatch(Args... args) {
+  if constexpr (sizeof...(Args) == 3) {
+    return device_set_gamma_ramp_impl(args...);
+  } else if constexpr (sizeof...(Args) == 4) {
+    return device_set_gamma_ramp_impl(args...);
+  }
+  return D3DERR_NOTAVAILABLE;
+}
+
+template <typename A1, typename A2, typename RampT>
+HRESULT device_get_gamma_ramp_impl(D3DDDI_HDEVICE hDevice, A1 arg1, A2 arg2, RampT* pRamp) {
+  if (pRamp) {
+    std::memset(pRamp, 0, sizeof(*pRamp));
+  }
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceGetGammaRamp,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      static_cast<uint64_t>(d3d9_to_u32(arg1)),
+                      static_cast<uint64_t>(d3d9_to_u32(arg2)),
+                      d3d9_trace_arg_ptr(pRamp));
+  if (!hDevice.pDrvPrivate || !pRamp) {
+    return trace.ret(E_INVALIDARG);
+  }
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  const D3DGAMMARAMP* src = dev->gamma_ramp_valid ? &dev->gamma_ramp : nullptr;
+  if (src) {
+    std::memcpy(pRamp, src, std::min(sizeof(*pRamp), sizeof(*src)));
+  }
+  return trace.ret(S_OK);
+}
+
+template <typename A1, typename RampT>
+HRESULT device_get_gamma_ramp_impl(D3DDDI_HDEVICE hDevice, A1 arg1, RampT* pRamp) {
+  return device_get_gamma_ramp_impl(hDevice, arg1, 0u, pRamp);
+}
+
+template <typename... Args>
+HRESULT device_get_gamma_ramp_dispatch(Args... args) {
+  if constexpr (sizeof...(Args) == 3) {
+    return device_get_gamma_ramp_impl(args...);
+  } else if constexpr (sizeof...(Args) == 4) {
+    return device_get_gamma_ramp_impl(args...);
+  }
+  return D3DERR_NOTAVAILABLE;
+}
 #endif
 
 template <typename ValueT>
@@ -11524,6 +11754,126 @@ template <typename Ret, typename... Args>
 struct aerogpu_d3d9_impl_pfnGetLightEnable<Ret(*)(Args...)> {
   static Ret pfnGetLightEnable(Args... args) {
     return static_cast<Ret>(device_get_light_enable_dispatch(args...));
+  }
+};
+
+template <typename Fn>
+struct aerogpu_d3d9_impl_pfnSetPaletteEntries;
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnSetPaletteEntries<Ret(__stdcall*)(Args...)> {
+  static Ret __stdcall pfnSetPaletteEntries(Args... args) {
+    return static_cast<Ret>(device_set_palette_entries_dispatch(args...));
+  }
+};
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnSetPaletteEntries<Ret(*)(Args...)> {
+  static Ret pfnSetPaletteEntries(Args... args) {
+    return static_cast<Ret>(device_set_palette_entries_dispatch(args...));
+  }
+};
+
+template <typename Fn>
+struct aerogpu_d3d9_impl_pfnGetPaletteEntries;
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnGetPaletteEntries<Ret(__stdcall*)(Args...)> {
+  static Ret __stdcall pfnGetPaletteEntries(Args... args) {
+    return static_cast<Ret>(device_get_palette_entries_dispatch(args...));
+  }
+};
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnGetPaletteEntries<Ret(*)(Args...)> {
+  static Ret pfnGetPaletteEntries(Args... args) {
+    return static_cast<Ret>(device_get_palette_entries_dispatch(args...));
+  }
+};
+
+template <typename Fn>
+struct aerogpu_d3d9_impl_pfnSetCurrentTexturePalette;
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnSetCurrentTexturePalette<Ret(__stdcall*)(Args...)> {
+  static Ret __stdcall pfnSetCurrentTexturePalette(Args... args) {
+    return static_cast<Ret>(device_set_current_texture_palette_dispatch(args...));
+  }
+};
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnSetCurrentTexturePalette<Ret(*)(Args...)> {
+  static Ret pfnSetCurrentTexturePalette(Args... args) {
+    return static_cast<Ret>(device_set_current_texture_palette_dispatch(args...));
+  }
+};
+
+template <typename Fn>
+struct aerogpu_d3d9_impl_pfnGetCurrentTexturePalette;
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnGetCurrentTexturePalette<Ret(__stdcall*)(Args...)> {
+  static Ret __stdcall pfnGetCurrentTexturePalette(Args... args) {
+    return static_cast<Ret>(device_get_current_texture_palette_dispatch(args...));
+  }
+};
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnGetCurrentTexturePalette<Ret(*)(Args...)> {
+  static Ret pfnGetCurrentTexturePalette(Args... args) {
+    return static_cast<Ret>(device_get_current_texture_palette_dispatch(args...));
+  }
+};
+
+template <typename Fn>
+struct aerogpu_d3d9_impl_pfnSetClipStatus;
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnSetClipStatus<Ret(__stdcall*)(Args...)> {
+  static Ret __stdcall pfnSetClipStatus(Args... args) {
+    return static_cast<Ret>(device_set_clip_status_dispatch(args...));
+  }
+};
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnSetClipStatus<Ret(*)(Args...)> {
+  static Ret pfnSetClipStatus(Args... args) {
+    return static_cast<Ret>(device_set_clip_status_dispatch(args...));
+  }
+};
+
+template <typename Fn>
+struct aerogpu_d3d9_impl_pfnGetClipStatus;
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnGetClipStatus<Ret(__stdcall*)(Args...)> {
+  static Ret __stdcall pfnGetClipStatus(Args... args) {
+    return static_cast<Ret>(device_get_clip_status_dispatch(args...));
+  }
+};
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnGetClipStatus<Ret(*)(Args...)> {
+  static Ret pfnGetClipStatus(Args... args) {
+    return static_cast<Ret>(device_get_clip_status_dispatch(args...));
+  }
+};
+
+template <typename Fn>
+struct aerogpu_d3d9_impl_pfnSetGammaRamp;
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnSetGammaRamp<Ret(__stdcall*)(Args...)> {
+  static Ret __stdcall pfnSetGammaRamp(Args... args) {
+    return static_cast<Ret>(device_set_gamma_ramp_dispatch(args...));
+  }
+};
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnSetGammaRamp<Ret(*)(Args...)> {
+  static Ret pfnSetGammaRamp(Args... args) {
+    return static_cast<Ret>(device_set_gamma_ramp_dispatch(args...));
+  }
+};
+
+template <typename Fn>
+struct aerogpu_d3d9_impl_pfnGetGammaRamp;
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnGetGammaRamp<Ret(__stdcall*)(Args...)> {
+  static Ret __stdcall pfnGetGammaRamp(Args... args) {
+    return static_cast<Ret>(device_get_gamma_ramp_dispatch(args...));
+  }
+};
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnGetGammaRamp<Ret(*)(Args...)> {
+  static Ret pfnGetGammaRamp(Args... args) {
+    return static_cast<Ret>(device_get_gamma_ramp_dispatch(args...));
   }
 };
 
@@ -14915,7 +15265,7 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
   if constexpr (aerogpu_has_member_pfnSetGammaRamp<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(
         pfnSetGammaRamp,
-        aerogpu_d3d9_stub_pfnSetGammaRamp<decltype(pDeviceFuncs->pfnSetGammaRamp)>::pfnSetGammaRamp);
+        aerogpu_d3d9_impl_pfnSetGammaRamp<decltype(pDeviceFuncs->pfnSetGammaRamp)>::pfnSetGammaRamp);
   }
   if constexpr (aerogpu_has_member_pfnSetTransform<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(
@@ -15004,27 +15354,27 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
   if constexpr (aerogpu_has_member_pfnSetPaletteEntries<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(
         pfnSetPaletteEntries,
-        aerogpu_d3d9_stub_pfnSetPaletteEntries<decltype(pDeviceFuncs->pfnSetPaletteEntries)>::pfnSetPaletteEntries);
+        aerogpu_d3d9_impl_pfnSetPaletteEntries<decltype(pDeviceFuncs->pfnSetPaletteEntries)>::pfnSetPaletteEntries);
   }
   if constexpr (aerogpu_has_member_pfnSetCurrentTexturePalette<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(pfnSetCurrentTexturePalette,
-                           aerogpu_d3d9_stub_pfnSetCurrentTexturePalette<decltype(
+                           aerogpu_d3d9_impl_pfnSetCurrentTexturePalette<decltype(
                                pDeviceFuncs->pfnSetCurrentTexturePalette)>::pfnSetCurrentTexturePalette);
   }
   if constexpr (aerogpu_has_member_pfnSetClipStatus<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(
         pfnSetClipStatus,
-        aerogpu_d3d9_stub_pfnSetClipStatus<decltype(pDeviceFuncs->pfnSetClipStatus)>::pfnSetClipStatus);
+        aerogpu_d3d9_impl_pfnSetClipStatus<decltype(pDeviceFuncs->pfnSetClipStatus)>::pfnSetClipStatus);
   }
   if constexpr (aerogpu_has_member_pfnGetClipStatus<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(
         pfnGetClipStatus,
-        aerogpu_d3d9_stub_pfnGetClipStatus<decltype(pDeviceFuncs->pfnGetClipStatus)>::pfnGetClipStatus);
+        aerogpu_d3d9_impl_pfnGetClipStatus<decltype(pDeviceFuncs->pfnGetClipStatus)>::pfnGetClipStatus);
   }
   if constexpr (aerogpu_has_member_pfnGetGammaRamp<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(
         pfnGetGammaRamp,
-        aerogpu_d3d9_stub_pfnGetGammaRamp<decltype(pDeviceFuncs->pfnGetGammaRamp)>::pfnGetGammaRamp);
+        aerogpu_d3d9_impl_pfnGetGammaRamp<decltype(pDeviceFuncs->pfnGetGammaRamp)>::pfnGetGammaRamp);
   }
   if constexpr (aerogpu_has_member_pfnDrawRectPatch<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(
@@ -15165,12 +15515,12 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
   }
   if constexpr (aerogpu_has_member_pfnGetPaletteEntries<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(pfnGetPaletteEntries,
-                           aerogpu_d3d9_stub_pfnGetPaletteEntries<decltype(
+                           aerogpu_d3d9_impl_pfnGetPaletteEntries<decltype(
                                pDeviceFuncs->pfnGetPaletteEntries)>::pfnGetPaletteEntries);
   }
   if constexpr (aerogpu_has_member_pfnGetCurrentTexturePalette<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(pfnGetCurrentTexturePalette,
-                           aerogpu_d3d9_stub_pfnGetCurrentTexturePalette<decltype(
+                           aerogpu_d3d9_impl_pfnGetCurrentTexturePalette<decltype(
                                pDeviceFuncs->pfnGetCurrentTexturePalette)>::pfnGetCurrentTexturePalette);
   }
   if constexpr (aerogpu_has_member_pfnGetNPatchMode<D3D9DDI_DEVICEFUNCS>::value) {

@@ -212,8 +212,10 @@ public:
 
   D3d9TraceCall(const D3d9TraceCall&) = delete;
   D3d9TraceCall& operator=(const D3d9TraceCall&) = delete;
- 
+  
   HRESULT ret(HRESULT hr) {
+    // Record the HRESULT even if this call was suppressed (TRACE_MODE=unique),
+    // so dump-on-fail can still trigger and force-record the failing call.
     hr_ = hr;
     return hr;
   }

@@ -478,6 +478,27 @@ struct Device {
       light_valid[i] = false;
       light_enabled[i] = FALSE;
     }
+
+    // Default gamma ramp is identity.
+    std::memset(&gamma_ramp, 0, sizeof(gamma_ramp));
+    WORD* ramp_words = reinterpret_cast<WORD*>(&gamma_ramp);
+    for (uint32_t i = 0; i < 256; ++i) {
+      const WORD v = static_cast<WORD>(i * 257u);
+      ramp_words[i] = v;
+      ramp_words[256u + i] = v;
+      ramp_words[512u + i] = v;
+    }
+    gamma_ramp_valid = true;
+
+    // Clip status and palettes start out as "unset" (zeroes).
+    std::memset(&clip_status, 0, sizeof(clip_status));
+    clip_status_valid = false;
+
+    for (uint32_t p = 0; p < kMaxPalettes; ++p) {
+      std::memset(&palette_entries[p][0], 0, sizeof(palette_entries[p]));
+      palette_valid[p] = false;
+    }
+    current_texture_palette = 0;
 #endif
   }
 
@@ -605,6 +626,16 @@ struct Device {
   D3DLIGHT9 lights[kMaxLights] = {};
   bool light_valid[kMaxLights] = {};
   BOOL light_enabled[kMaxLights] = {};
+
+  // Misc legacy state not currently emitted to the AeroGPU command stream.
+  D3DGAMMARAMP gamma_ramp = {};
+  bool gamma_ramp_valid = false;
+  D3DCLIPSTATUS9 clip_status = {};
+  bool clip_status_valid = false;
+  static constexpr uint32_t kMaxPalettes = 256u;
+  PALETTEENTRY palette_entries[kMaxPalettes][256] = {};
+  bool palette_valid[kMaxPalettes] = {};
+  uint32_t current_texture_palette = 0;
 #endif
 
   // Built-in resources used for blit/copy operations (StretchRect/Blt).

@@ -271,21 +271,17 @@ In WDK builds (`AEROGPU_D3D9_USE_WDK_DDI=1`), the UMD populates every *known* fu
 
 These DDIs are present in the Win7 D3D9UMDDI surface but are not implemented yet.
 
-Note: shader int/bool constants and fixed-function lighting/material state are
-cached (Set*/Get* round-trip) but are not currently emitted to the AeroGPU
-command stream.
-- `pfnSetGammaRamp` (no-op, returns `S_OK`)
+Note: shader int/bool constants and several legacy fixed-function state paths
+(lighting/material, palettes, clip status, gamma ramp) are cached (Set*/Get*
+round-trip) but are not currently emitted to the AeroGPU command stream.
 - `pfnSetConvolutionMonoKernel` (no-op, returns `S_OK`)
 - `pfnSetAutoGenFilterType`, `pfnGetAutoGenFilterType`, `pfnGenerateMipSubLevels` (stubbed for completeness)
 - `pfnSetPriority` / `pfnGetPriority` (stubbed for completeness)
 - `pfnSetCursorProperties` / `pfnSetCursorPosition` / `pfnShowCursor`,
-  `pfnSetPaletteEntries` / `pfnSetCurrentTexturePalette`, `pfnSetClipStatus` (no-op, returns `S_OK`)
-- `pfnGetClipStatus` / `pfnGetGammaRamp` (returns `D3DERR_NOTAVAILABLE`)
+  (no-op, returns `S_OK`)
 - `pfnDrawRectPatch` / `pfnDrawTriPatch` / `pfnDeletePatch` / `pfnProcessVertices`
   (returns `D3DERR_NOTAVAILABLE`)
 - `pfnSetDialogBoxMode` (no-op, returns `S_OK`)
-- `pfnGetPaletteEntries` / `pfnGetCurrentTexturePalette`
-  (returns `D3DERR_NOTAVAILABLE`)
 
 ### Caps/feature gating
 
