@@ -234,6 +234,77 @@ fn pc_machine_does_not_ack_pic_interrupt_when_if0() {
 }
 
 #[test]
+fn pc_machine_e1000_intx_is_synced_but_not_acknowledged_when_if0() {
+    let mut pc = PcMachine::new_with_e1000(2 * 1024 * 1024, None);
+
+    let bdf = NIC_E1000_82540EM.bdf;
+    let gsi = pc
+        .bus
+        .platform
+        .pci_intx
+        .gsi_for_intx(bdf, PciInterruptPin::IntA);
+    assert!(
+        gsi < 16,
+        "expected E1000 INTx to route to legacy PIC IRQ (<16), got gsi={gsi}"
+    );
+    let expected_vector = if gsi < 8 {
+        0x20u8.wrapping_add(gsi as u8)
+    } else {
+        0x28u8.wrapping_add((gsi as u8).wrapping_sub(8))
+    };
+
+    // Configure the legacy PIC to use the standard remapped offsets and unmask the routed IRQ.
+    {
+        let mut ints = pc.bus.platform.interrupts.borrow_mut();
+        ints.pic_mut().set_offsets(0x20, 0x28);
+        for irq in 0..16 {
+            ints.pic_mut().set_masked(irq, true);
+        }
+        // If the routed GSI maps to the slave PIC, ensure cascade (IRQ2) is unmasked as well.
+        ints.pic_mut().set_masked(2, false);
+        if let Ok(irq) = u8::try_from(gsi) {
+            if irq < 16 {
+                ints.pic_mut().set_masked(irq, false);
+            }
+        }
+    }
+
+    // Park the CPU at a NOP sled and simulate HLT with IF=0.
+    const ENTRY_IP: u64 = 0x2000;
+    pc.bus.platform.memory.write_physical(ENTRY_IP, &[0x90; 32]);
+    setup_real_mode_cpu(&mut pc, ENTRY_IP);
+    pc.cpu.state.set_rflags(0); // IF=0
+    pc.cpu.state.halted = true;
+
+    // Assert E1000 INTx level by enabling + setting a cause bit. This sets `irq_level()` in the
+    // device model, but does not automatically drive the platform IRQ line until we poll/sync.
+    let e1000 = pc.bus.platform.e1000().expect("e1000 enabled");
+    {
+        let mut dev = e1000.borrow_mut();
+        dev.mmio_write_u32_reg(0x00D0, ICR_TXDW); // IMS
+        dev.mmio_write_u32_reg(0x00C8, ICR_TXDW); // ICS
+        assert!(dev.irq_level());
+    }
+
+    // Prior to running a slice, the INTx level has not been synced into the platform interrupt
+    // controller yet.
+    assert_eq!(
+        PlatformInterruptController::get_pending(&*pc.bus.platform.interrupts.borrow()),
+        None
+    );
+
+    // With IF=0, `run_slice` must not acknowledge the interrupt or enqueue a vector, but it should
+    // still sync PCI INTx sources so the PIC sees the asserted line.
+    let exit = pc.run_slice(5);
+    assert_eq!(exit, RunExit::Halted { executed: 0 });
+    assert!(pc.cpu.pending.external_interrupts.is_empty());
+    assert_eq!(
+        PlatformInterruptController::get_pending(&*pc.bus.platform.interrupts.borrow()),
+        Some(expected_vector)
+    );
+}
+
+#[test]
 fn pc_machine_e1000_intx_asserted_via_bar1_io_wakes_hlt_in_same_slice() {
     let mut pc = PcMachine::new_with_e1000(2 * 1024 * 1024, None);
 
