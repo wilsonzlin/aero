@@ -2562,7 +2562,7 @@ impl AerogpuD3d9Executor {
                             .contains(wgpu::Features::TEXTURE_COMPRESSION_BC);
 
                         if bc_supported
-                            && crate::texture_format::wgpu_bc_texture_dimensions_compatible(
+                            && crate::wgpu_bc_texture_dimensions_compatible(
                                 width, height, mip_levels,
                             )
                         {
