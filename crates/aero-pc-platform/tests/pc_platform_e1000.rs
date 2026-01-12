@@ -291,6 +291,20 @@ fn pc_platform_routes_e1000_io_after_bar1_reprogramming() {
 }
 
 #[test]
+fn pc_platform_e1000_io_invalid_access_sizes_float_high() {
+    let mut pc = PcPlatform::new_with_e1000(2 * 1024 * 1024);
+    let bar1_base = read_e1000_bar1_base(&mut pc);
+    let base = u16::try_from(bar1_base).expect("BAR1 should fit in 16-bit I/O port space");
+    let iodata = base.checked_add(4).unwrap();
+
+    // Valid 4-byte IOADDR write to select STATUS (0x08).
+    pc.io.write(base, 4, 0x08);
+
+    // Invalid 3-byte access should behave like an unmapped port and float high.
+    assert_eq!(pc.io.read(iodata, 3), 0xFFFF_FFFF);
+}
+
+#[test]
 fn pc_platform_respects_pci_interrupt_disable_bit_for_e1000_intx() {
     let mut pc = PcPlatform::new_with_e1000(2 * 1024 * 1024);
     let bdf = NIC_E1000_82540EM.bdf;
