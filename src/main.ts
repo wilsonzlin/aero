@@ -2704,6 +2704,16 @@ function resolveNetTraceBackend(): NetTraceBackend {
       if (!backend) throw missingBackendError();
       return await backend.downloadPcapng();
     },
+    exportPcapng: async () => {
+      const backend = resolveInstalled();
+      if (!backend) throw missingBackendError();
+      // Fall back to the draining export when the backend does not support
+      // non-draining snapshot exports.
+      if (backend.exportPcapng) {
+        return await backend.exportPcapng();
+      }
+      return await backend.downloadPcapng();
+    },
     clear: async () => {
       const backend = resolveInstalled();
       if (!backend) return;
