@@ -739,11 +739,12 @@ class Ps2Mouse {
   }
 
   #statusByte(): number {
-    // Bit0/1/2 = buttons, bit3=always 1, bit4=scale21, bit5=data reporting.
+    // Bit0/1/2 = buttons, bit3=always 1, bit4=scale21, bit5=data reporting, bit6=remote mode.
     let st = (this.buttons & 0x07) | 0x08;
     if (this.scaling === "double") st |= 0x10;
     if (this.reportingEnabled) st |= 0x20;
-    // bits6/7 reserved
+    if (this.mode === "remote") st |= 0x40;
+    // bit7 reserved
     return st & 0xff;
   }
 

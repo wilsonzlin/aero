@@ -159,6 +159,29 @@ describe("io/devices/i8042 WASM bridge", () => {
     }
   });
 
+  it("includes the remote-mode bit in the mouse status byte after Set Remote Mode (0xF0)", async () => {
+    const bridge = await createBridge();
+    if (!bridge) return;
+    try {
+      // Enter remote mode.
+      writeToMouse(bridge, 0xf0);
+      expect(drainOutput(bridge)).toEqual([0xfa]);
+
+      // Status request should include bit6=remote mode and the default resolution/sample rate.
+      writeToMouse(bridge, 0xe9);
+      expect(drainOutput(bridge)).toEqual([0xfa, 0x48, 0x04, 0x64]);
+
+      // Back to stream mode.
+      writeToMouse(bridge, 0xea);
+      expect(drainOutput(bridge)).toEqual([0xfa]);
+
+      writeToMouse(bridge, 0xe9);
+      expect(drainOutput(bridge)).toEqual([0xfa, 0x08, 0x04, 0x64]);
+    } finally {
+      bridge.free();
+    }
+  });
+
   it("save_state/load_state roundtrips pending output", async () => {
     const bridge1 = await createBridge();
     if (!bridge1) return;

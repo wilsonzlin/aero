@@ -238,6 +238,37 @@ describe("io/devices/I8042Controller", () => {
     expect(dev.portRead(0x0060, 1)).toBe(0x00); // device id
   });
 
+  it("includes the remote-mode bit in the PS/2 mouse status byte (0xE9) after Set Remote Mode (0xF0)", () => {
+    const irqSink: IrqSink = { raiseIrq: () => {}, lowerIrq: () => {} };
+    const dev = new I8042Controller(irqSink);
+
+    const sendMouseByte = (value: number) => {
+      dev.portWrite(0x0064, 1, 0xd4);
+      dev.portWrite(0x0060, 1, value);
+      expect(dev.portRead(0x0060, 1)).toBe(0xfa); // ACK
+    };
+
+    // Enter remote mode.
+    sendMouseByte(0xf0);
+
+    // Status request should include bit6=remote mode.
+    dev.portWrite(0x0064, 1, 0xd4);
+    dev.portWrite(0x0060, 1, 0xe9);
+    expect(dev.portRead(0x0060, 1)).toBe(0xfa); // ACK
+    const stRemote = dev.portRead(0x0060, 1);
+    expect(stRemote & 0x40).toBe(0x40);
+    expect(dev.portRead(0x0060, 1)).toBe(0x04); // resolution default
+    expect(dev.portRead(0x0060, 1)).toBe(0x64); // sample rate default (100)
+
+    // Back to stream mode.
+    sendMouseByte(0xea);
+    dev.portWrite(0x0064, 1, 0xd4);
+    dev.portWrite(0x0060, 1, 0xe9);
+    expect(dev.portRead(0x0060, 1)).toBe(0xfa);
+    const stStream = dev.portRead(0x0060, 1);
+    expect(stStream & 0x40).toBe(0x00);
+  });
+
   it("does not emit spurious IRQ pulses during snapshot restore", () => {
     const srcIrqSink: IrqSink = { raiseIrq: () => {}, lowerIrq: () => {} };
     const src = new I8042Controller(srcIrqSink);
