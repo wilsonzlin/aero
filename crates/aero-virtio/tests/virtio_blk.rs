@@ -537,7 +537,6 @@ fn virtio_blk_accepts_aero_storage_virtual_disk_backend() {
     write_u16_le(&mut mem, AVAIL_RING, 0).unwrap();
     write_u16_le(&mut mem, AVAIL_RING + 2, 1).unwrap();
     write_u16_le(&mut mem, AVAIL_RING + 4, 0).unwrap();
-
     write_u16_le(&mut mem, USED_RING, 0).unwrap();
     write_u16_le(&mut mem, USED_RING + 2, 0).unwrap();
 

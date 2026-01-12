@@ -92,30 +92,32 @@ pub trait BlockBackend {
 
 fn map_storage_error(err: StorageDiskError) -> BlockBackendError {
     match err {
-        StorageDiskError::OutOfBounds { .. } => BlockBackendError::OutOfBounds,
+        StorageDiskError::OutOfBounds { .. } | StorageDiskError::OffsetOverflow => {
+            BlockBackendError::OutOfBounds
+        }
         _ => BlockBackendError::IoError,
     }
 }
 
-impl BlockBackend for Box<dyn VirtualDisk> {
+impl<T: VirtualDisk + ?Sized> BlockBackend for Box<T> {
     fn len(&self) -> u64 {
-        self.capacity_bytes()
+        (**self).capacity_bytes()
     }
 
     fn read_at(&mut self, offset: u64, dst: &mut [u8]) -> Result<(), BlockBackendError> {
-        self.as_mut()
-            .read_at(offset, dst)
-            .map_err(map_storage_error)
+        (**self).read_at(offset, dst).map_err(map_storage_error)
     }
 
     fn write_at(&mut self, offset: u64, src: &[u8]) -> Result<(), BlockBackendError> {
-        self.as_mut()
-            .write_at(offset, src)
-            .map_err(map_storage_error)
+        (**self).write_at(offset, src).map_err(map_storage_error)
+    }
+
+    fn blk_size(&self) -> u32 {
+        VIRTIO_BLK_SECTOR_SIZE as u32
     }
 
     fn flush(&mut self) -> Result<(), BlockBackendError> {
-        self.as_mut().flush().map_err(map_storage_error)
+        (**self).flush().map_err(map_storage_error)
     }
 }
 
