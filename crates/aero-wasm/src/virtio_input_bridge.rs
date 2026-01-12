@@ -119,14 +119,14 @@ impl VirtioInputPciDeviceCore {
         offset: u64,
         size: u8,
         value: u32,
-        mem: &mut dyn GuestMemory,
+        _mem: &mut dyn GuestMemory,
     ) {
         let size = validate_mmio_size(size);
         if size == 0 {
             return;
         }
         let bytes = value.to_le_bytes();
-        self.pci.bar0_write(offset, &bytes[..size], mem);
+        self.pci.bar0_write(offset, &bytes[..size]);
     }
 
     pub fn poll(&mut self, mem: &mut dyn GuestMemory) {
