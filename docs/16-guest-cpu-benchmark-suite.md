@@ -91,6 +91,7 @@ window.aero.bench.runGuestCpuBench(opts: GuestCpuBenchOpts): Promise<GuestCpuBen
 Notes:
 
  - If `seconds` is specified, the harness repeats deterministic runs until the budget is reached.
+ - `seconds` and `iters` are mutually exclusive; if provided they must be finite and > 0.
  - If checksum verification fails, `runGuestCpuBench` **throws** (and Playwright marks the scenario failed).
  - `mode` selects interpreter vs baseline JIT vs optimizing JIT. If a mode is not implemented yet, the API should fail loudly (or optionally downgrade while clearly reporting the actual mode used).
 
