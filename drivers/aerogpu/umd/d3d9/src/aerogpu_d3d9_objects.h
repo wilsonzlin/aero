@@ -591,6 +591,12 @@ struct Device {
 
   D3DDDIVIEWPORTINFO viewport = {0, 0, 0, 0, 0.0f, 1.0f};
   RECT scissor_rect = {0, 0, 0, 0};
+  // Track whether the scissor rect was explicitly set by the app (via SetScissorRect).
+  // Some runtimes enable scissor testing before ever calling SetScissorRect, so
+  // leaving the default (all-zero) rect would clip everything. When scissor is
+  // enabled and the rect is still unset, the UMD can fall back to a viewport-sized
+  // rect to match common D3D9 behavior.
+  bool scissor_rect_user_set = false;
   BOOL scissor_enabled = FALSE;
 
   // Misc fixed-function / legacy state (cached for Get*/state-block compatibility).

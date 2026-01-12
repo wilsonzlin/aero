@@ -9091,6 +9091,7 @@ HRESULT AEROGPU_D3D9_CALL device_set_scissor(
 
   if (pRect) {
     dev->scissor_rect = *pRect;
+    dev->scissor_rect_user_set = true;
   }
   dev->scissor_enabled = enabled;
   // Keep D3DRS_SCISSORTESTENABLE (174) in sync with the dedicated scissor state,
@@ -9102,6 +9103,26 @@ HRESULT AEROGPU_D3D9_CALL device_set_scissor(
   if (kD3dRsScissorTestEnable < 256) {
     dev->render_states[kD3dRsScissorTestEnable] = dev->scissor_enabled ? 1u : 0u;
     stateblock_record_render_state_locked(dev, kD3dRsScissorTestEnable, dev->render_states[kD3dRsScissorTestEnable]);
+  }
+
+  // Some runtimes enable scissor testing before ever setting a scissor rect. In
+  // that case, leaving the default all-zero rect would clip everything.
+  // Best-effort: if scissor is enabled and the rect was never explicitly set,
+  // fall back to a viewport-sized rect.
+  if (dev->scissor_enabled && !dev->scissor_rect_user_set) {
+    const RECT& r = dev->scissor_rect;
+    if (r.right <= r.left || r.bottom <= r.top) {
+      const int32_t vx = static_cast<int32_t>(dev->viewport.X);
+      const int32_t vy = static_cast<int32_t>(dev->viewport.Y);
+      const int32_t vw = static_cast<int32_t>(dev->viewport.Width);
+      const int32_t vh = static_cast<int32_t>(dev->viewport.Height);
+      if (vw > 0 && vh > 0) {
+        dev->scissor_rect.left = static_cast<LONG>(vx);
+        dev->scissor_rect.top = static_cast<LONG>(vy);
+        dev->scissor_rect.right = static_cast<LONG>(vx + vw);
+        dev->scissor_rect.bottom = static_cast<LONG>(vy + vh);
+      }
+    }
   }
   stateblock_record_scissor_locked(dev, dev->scissor_rect, dev->scissor_enabled);
 
@@ -9233,6 +9254,26 @@ HRESULT AEROGPU_D3D9_CALL device_set_render_state(
     const BOOL enabled = value ? TRUE : FALSE;
     if ((dev->scissor_enabled ? TRUE : FALSE) != (enabled ? TRUE : FALSE)) {
       dev->scissor_enabled = enabled;
+
+      // Some runtimes enable scissor testing before setting a scissor rect. If
+      // the rect is still unset (all-zero) and the app never called
+      // SetScissorRect, fall back to a viewport-sized rect so enabling scissor
+      // doesn't clip everything.
+      if (dev->scissor_enabled && !dev->scissor_rect_user_set) {
+        const RECT& r = dev->scissor_rect;
+        if (r.right <= r.left || r.bottom <= r.top) {
+          const int32_t vx = static_cast<int32_t>(dev->viewport.X);
+          const int32_t vy = static_cast<int32_t>(dev->viewport.Y);
+          const int32_t vw = static_cast<int32_t>(dev->viewport.Width);
+          const int32_t vh = static_cast<int32_t>(dev->viewport.Height);
+          if (vw > 0 && vh > 0) {
+            dev->scissor_rect.left = static_cast<LONG>(vx);
+            dev->scissor_rect.top = static_cast<LONG>(vy);
+            dev->scissor_rect.right = static_cast<LONG>(vx + vw);
+            dev->scissor_rect.bottom = static_cast<LONG>(vy + vh);
+          }
+        }
+      }
       stateblock_record_scissor_locked(dev, dev->scissor_rect, dev->scissor_enabled);
 
       int32_t x = 0;
@@ -10023,6 +10064,9 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
 
   if (sb->scissor_set) {
     dev->scissor_rect = sb->scissor_rect;
+    // Applying a state block explicitly sets scissor rect state, so stop treating
+    // the rect as "unset".
+    dev->scissor_rect_user_set = true;
     dev->scissor_enabled = sb->scissor_enabled;
 
     // Keep D3DRS_SCISSORTESTENABLE (174) in sync with the dedicated scissor state
@@ -10067,6 +10111,22 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
       const BOOL enabled = sb->render_state_values[i] ? TRUE : FALSE;
       if ((dev->scissor_enabled ? TRUE : FALSE) != (enabled ? TRUE : FALSE)) {
         dev->scissor_enabled = enabled;
+
+        if (dev->scissor_enabled && !dev->scissor_rect_user_set) {
+          const RECT& r = dev->scissor_rect;
+          if (r.right <= r.left || r.bottom <= r.top) {
+            const int32_t vx = static_cast<int32_t>(dev->viewport.X);
+            const int32_t vy = static_cast<int32_t>(dev->viewport.Y);
+            const int32_t vw = static_cast<int32_t>(dev->viewport.Width);
+            const int32_t vh = static_cast<int32_t>(dev->viewport.Height);
+            if (vw > 0 && vh > 0) {
+              dev->scissor_rect.left = static_cast<LONG>(vx);
+              dev->scissor_rect.top = static_cast<LONG>(vy);
+              dev->scissor_rect.right = static_cast<LONG>(vx + vw);
+              dev->scissor_rect.bottom = static_cast<LONG>(vy + vh);
+            }
+          }
+        }
 
         int32_t x = 0;
         int32_t y = 0;
