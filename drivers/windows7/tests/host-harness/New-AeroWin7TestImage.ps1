@@ -35,6 +35,10 @@ param(
   [string]$OutputIsoPath = "",
 
   # Default args baked into the provisioning script (expected by the host harness).
+  #
+  # Note: the guest virtio-net selftest uses this URL for a basic HTTP connectivity check, and
+  # also fetches a deterministic large payload from "<HttpUrl>-large" (1 MiB, bytes 0..255 repeating)
+  # to stress sustained TX/RX and validate data integrity.
   [Parameter(Mandatory = $false)]
   [string]$HttpUrl = "http://10.0.2.2:18080/aero-virtio-selftest",
 
