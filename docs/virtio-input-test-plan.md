@@ -382,6 +382,10 @@ Goal: validate that browser keyboard/mouse events are routed through the correct
 From the repo root:
 
 ```bash
+# Ensure the Rust→WASM packages exist (virtio-input uses the WASM device model).
+# This builds any missing packages (single + threaded) via the `web/` workspace scripts.
+npm run wasm:ensure
+
 cargo xtask web dev
 ```
 
@@ -442,6 +446,14 @@ npm -w web run test:unit -- src/io/devices/virtio_input_keymap.test.ts
 ```
 
 This is a fast regression check that contract-required keys like **F1..F12**, `NumLock`, and `ScrollLock` map correctly end-to-end.
+
+If you want an end-to-end **web runtime** smoke test (TypeScript PCI device wrapper + WASM bridge + BAR0 MMIO + virtqueue event injection), run:
+
+```bash
+npm -w web run test:unit -- src/io/devices/virtio_input_pci_integration.test.ts
+```
+
+Note: this test will **SKIP** if the WASM packages are missing; run `npm run wasm:ensure` first.
 
 Use the same “CPU ↔ IO worker” technique used by the existing PCI tests to read config space via PCI config mechanism #1 (ports `0xCF8`/`0xCFC`):
 
