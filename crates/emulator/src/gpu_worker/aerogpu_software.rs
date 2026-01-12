@@ -4550,6 +4550,9 @@ mod tests {
         exec.textures.insert(dst_handle, dst_tex);
         exec.texture_refcounts.insert(src_handle, 1);
         exec.texture_refcounts.insert(dst_handle, 1);
+        // Live textures are tracked in the alias table so command handles resolve correctly.
+        exec.resource_aliases.insert(src_handle, src_handle);
+        exec.resource_aliases.insert(dst_handle, dst_handle);
 
         let mut packet = vec![0u8; cmd::AerogpuCmdCopyTexture2d::SIZE_BYTES];
         packet[0..4].copy_from_slice(&(cmd::AerogpuCmdOpcode::CopyTexture2d as u32).to_le_bytes());
@@ -4663,6 +4666,9 @@ mod tests {
         exec.textures.insert(dst_handle, dst_tex);
         exec.texture_refcounts.insert(src_handle, 1);
         exec.texture_refcounts.insert(dst_handle, 1);
+        // Live textures are tracked in the alias table so command handles resolve correctly.
+        exec.resource_aliases.insert(src_handle, src_handle);
+        exec.resource_aliases.insert(dst_handle, dst_handle);
 
         let mut packet = vec![0u8; cmd::AerogpuCmdCopyTexture2d::SIZE_BYTES];
         packet[0..4].copy_from_slice(&(cmd::AerogpuCmdOpcode::CopyTexture2d as u32).to_le_bytes());
