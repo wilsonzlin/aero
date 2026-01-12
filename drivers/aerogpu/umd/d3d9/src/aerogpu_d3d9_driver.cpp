@@ -110,13 +110,15 @@ namespace aerogpu {
 // the current AeroGPU D3D9 UMD already understands/emits:
 // - render states
 // - sampler states
-// - fixed-function state caches (transforms + texture stage state; cached-only, used for Get*/stateblock compatibility)
+// - fixed-function / legacy state caches (texture stage state, transforms,
+//   clip planes, stream source freq, shader int/bool constants; cached-only,
+//   used for Get*/state block compatibility)
 // - texture bindings
 // - render target + depth/stencil bindings
 // - viewport + scissor
 // - VB/IB bindings
 // - vertex decl / FVF hint
-// - shader bindings + float constants
+// - shader bindings + float/int/bool constants
 //
 // State blocks are runtime-managed objects; the runtime owns their lifetime and
 // invokes DeleteStateBlock when released.
