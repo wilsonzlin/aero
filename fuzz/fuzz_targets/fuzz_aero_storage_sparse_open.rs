@@ -62,5 +62,10 @@ fuzz_target!(|data: &[u8]| {
     }
 
     let _ = disk.flush();
-});
 
+    // Re-open after mutation to exercise parsing of updated header/table state.
+    let backend = disk.into_backend();
+    if let Ok(mut reopened) = AeroSparseDisk::open(backend) {
+        let _ = reopened.flush();
+    }
+});
