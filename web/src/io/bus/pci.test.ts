@@ -989,6 +989,40 @@ describe("io/bus/pci", () => {
     expect(restoredCommand).toBe(0x0006);
   });
 
+  it("clears PCI command register side effects when restoring a snapshot that disables command bits", () => {
+    const portBus = new PortIoBus();
+    const mmioBus = new MmioBus();
+    const pciBus = new PciBus(portBus, mmioBus);
+    pciBus.registerToPortBus();
+
+    const seen: number[] = [];
+    const dev: PciDevice = {
+      name: "snap_cmd_clear_dev",
+      vendorId: 0x1234,
+      deviceId: 0x5678,
+      classCode: 0,
+      bars: [{ kind: "mmio32", size: 0x1000 }, null, null, null, null, null],
+      onPciCommandWrite: (command) => {
+        seen.push(command & 0xffff);
+      },
+    };
+    const addr = pciBus.registerDevice(dev, { device: 0, function: 0 });
+    const cfg = makeCfgIo(portBus);
+
+    // Snapshot with command bits still disabled (default).
+    const snapshot = pciBus.saveState();
+
+    // Mutate runtime state: enable MEM + BME.
+    cfg.writeU16(addr.device, addr.function, 0x04, 0x0006);
+    expect(seen).toEqual([0x0006]);
+
+    // Restore the snapshot into the *same* bus. Devices must observe the command register clearing
+    // transition (0x0006 -> 0x0000), even though the restored command value is identical to the
+    // reset-time value.
+    pciBus.loadState(snapshot);
+    expect(seen).toEqual([0x0006, 0x0000]);
+  });
+
   it("restores without transient BAR overlap when devices are registered in a different order", () => {
     // Snapshot bus: register dev0 then dev1.
     const portBus = new PortIoBus();

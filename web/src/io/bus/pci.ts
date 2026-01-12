@@ -1111,9 +1111,12 @@ export class PciBus implements PortIoHandler {
       for (let fnNum = 0; fnNum < 8; fnNum++) {
         const fn = fns[fnNum];
         if (!fn) continue;
-        // Clear Command.IO/MEM/BME bits; status bits (0x06..0x07) are preserved.
-        fn.config[0x04] = 0x00;
-        fn.config[0x05] = 0x00;
+        // Clear PCI command bits (IO/MEM/BME/etc) via the normal config write path so device hooks
+        // (onPciCommandWrite / pciConfigWrite) remain coherent across in-place snapshot restores.
+        //
+        // Keep Status bits untouched: PCI status is RO/RW1C and should not be clobbered by restore.
+        this.#writeConfigDword(fn, 0x04, 0x0000_0000, 0x0000_ffff);
+        // Ensure any existing BAR mappings are removed even if Command was already disabled.
         for (const slot of fn.bars) {
           if (!slot || slot.part !== "low") continue;
           this.#unmapBar(slot.bar);
