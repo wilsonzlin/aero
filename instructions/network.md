@@ -26,6 +26,8 @@ Network connectivity is important for Windows activation, updates, and general u
 | Crate/Directory | Purpose |
 |-----------------|---------|
 | `crates/aero-net-e1000/` | Intel E1000 NIC emulation |
+| `crates/aero-net-pump/` | Bounded per-tick NIC↔backend frame pumping glue (shared integration logic) |
+| `crates/aero-net-backend/` | Minimal host-side network backend trait + L2 tunnel backends (queue + NET_TX/NET_RX ring) |
 | `crates/aero-net-stack/` | User-space TCP/IP stack |
 | `crates/aero-l2-protocol/` | L2 frame protocol |
 | `crates/aero-l2-proxy/` | L2 tunnel proxy |
