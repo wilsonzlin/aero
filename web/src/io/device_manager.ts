@@ -51,6 +51,7 @@ export class DeviceManager {
   constructor(irqSink: IrqSink) {
     this.#irqSink = irqSink;
     this.pciBus.registerToPortBus();
+    this.pciBus.registerEcamToMmioBus();
   }
 
   get irqSink(): IrqSink {

@@ -2,7 +2,7 @@ import { defaultReadValue } from "../ipc/io_protocol.ts";
 import type { PortIoHandler } from "./portio.ts";
 import type { PortIoBus } from "./portio.ts";
 import type { MmioBus, MmioHandle } from "./mmio.ts";
-import { PCI_MMIO_BASE as GUEST_PCI_MMIO_BASE } from "../../arch/guest_phys.ts";
+import { PCI_MMIO_BASE as GUEST_PCI_MMIO_BASE, PCIE_ECAM_BASE, PCIE_ECAM_SIZE } from "../../arch/guest_phys.ts";
 
 // -------------------------------------------------------------------------------------------------
 // Snapshot support (web runtime)
@@ -377,6 +377,7 @@ function computeBarMaskHigh(desc: PciBar): number {
 export class PciBus implements PortIoHandler {
   readonly #portBus: PortIoBus;
   readonly #mmioBus: MmioBus;
+  #ecamHandle: MmioHandle | null = null;
   #functions: Array<Array<PciFunction | null>> = Array.from({ length: 32 }, () =>
     Array.from({ length: 8 }, () => null),
   );
@@ -423,6 +424,20 @@ export class PciBus implements PortIoHandler {
     // Avoid stealing 0xCF9, which is commonly used by a chipset reset-control port.
     this.#portBus.registerRange(0x0cf8, 0x0cf8, this);
     this.#portBus.registerRange(0x0cfc, 0x0cff, this);
+  }
+
+  /**
+   * Map the PCIe ECAM (MMCONFIG) window into the MMIO bus.
+   *
+   * Guests may use this window (advertised via ACPI MCFG) instead of the legacy
+   * 0xCF8/0xCFC PCI config ports.
+   */
+  registerEcamToMmioBus(): void {
+    if (this.#ecamHandle !== null) return;
+    this.#ecamHandle = this.#mmioBus.mapRange(PCIE_ECAM_BASE, PCIE_ECAM_SIZE, {
+      mmioRead: (offset, size) => this.#ecamRead(offset, size),
+      mmioWrite: (offset, size, value) => this.#ecamWrite(offset, size, value),
+    });
   }
 
   registerDevice(device: PciDevice, addr: Partial<PciAddress> = {}): PciAddress {
@@ -615,9 +630,7 @@ export class PciBus implements PortIoHandler {
       if (!fn) return defaultReadValue(size);
 
       const regOff = (this.#addrReg & 0xfc) + (p - 0x0cfc);
-      const aligned = regOff & ~3;
-      const dword = this.#readConfigDword(fn, aligned);
-      return this.#readFromReg(dword, p, size, 0x0cfc + (aligned & 3));
+      return this.#readConfigValue(fn, regOff, size);
     }
     return defaultReadValue(size);
   }
@@ -637,23 +650,7 @@ export class PciBus implements PortIoHandler {
       if (!fn) return;
 
       const regOff = (this.#addrReg & 0xfc) + (p - 0x0cfc);
-      const aligned = regOff & ~3;
-
-      // Preserve untouched bytes when writing < 4 bytes.
-      let newDword: number;
-      let writeMask: number;
-      if (size === 4 && (regOff & 3) === 0) {
-        newDword = v;
-        writeMask = 0xffff_ffff;
-      } else {
-        const cur = this.#readConfigDword(fn, aligned);
-        const shift = (regOff & 3) * 8;
-        const mask = size === 1 ? 0xff : size === 2 ? 0xffff : 0xffff_ffff;
-        writeMask = (mask << shift) >>> 0;
-        newDword = ((cur & ~writeMask) | ((v & mask) << shift)) >>> 0;
-      }
-
-      this.#writeConfigDword(fn, aligned, newDword, writeMask);
+      this.#writeConfigValue(fn, regOff, size, v);
       return;
     }
   }
@@ -671,6 +668,118 @@ export class PciBus implements PortIoHandler {
     const dev = (this.#addrReg >>> 11) & 0x1f;
     const fn = (this.#addrReg >>> 8) & 0x07;
     return this.#functions[dev]?.[fn] ?? null;
+  }
+
+  #ecamRead(offset: bigint, size: number): number {
+    if (size !== 1 && size !== 2 && size !== 4) return defaultReadValue(size);
+
+    const bus = Number((offset >> 20n) & 0xffn) >>> 0;
+    if (bus !== 0) return defaultReadValue(size);
+    const dev = Number((offset >> 15n) & 0x1fn) >>> 0;
+    const fnNum = Number((offset >> 12n) & 0x7n) >>> 0;
+    const reg = Number(offset & 0xfffn) >>> 0;
+
+    // We only store/implement the first 256 bytes of config space.
+    if (reg >= 256) return defaultReadValue(size);
+
+    const fn = this.#functions[dev]?.[fnNum] ?? null;
+    if (!fn) return defaultReadValue(size);
+    return this.#readConfigValue(fn, reg, size);
+  }
+
+  #ecamWrite(offset: bigint, size: number, value: number): void {
+    if (size !== 1 && size !== 2 && size !== 4) return;
+
+    const bus = Number((offset >> 20n) & 0xffn) >>> 0;
+    if (bus !== 0) return;
+    const dev = Number((offset >> 15n) & 0x1fn) >>> 0;
+    const fnNum = Number((offset >> 12n) & 0x7n) >>> 0;
+    const reg = Number(offset & 0xfffn) >>> 0;
+
+    // We only store/implement the first 256 bytes of config space.
+    if (reg >= 256) return;
+
+    const fn = this.#functions[dev]?.[fnNum] ?? null;
+    if (!fn) return;
+    this.#writeConfigValue(fn, reg, size, value >>> 0);
+  }
+
+  #readConfigValue(fn: PciFunction, off: number, size: number): number {
+    if (size !== 1 && size !== 2 && size !== 4) return defaultReadValue(size);
+    if (off < 0 || off >= 256) return defaultReadValue(size);
+
+    // Fast path: aligned reads contained within a single dword.
+    const byteInDword = off & 3;
+    if (byteInDword + size <= 4 && off + size <= 256) {
+      const aligned = off & ~3;
+      const dword = this.#readConfigDword(fn, aligned);
+      const shift = byteInDword * 8;
+      if (size === 1) return (dword >>> shift) & 0xff;
+      if (size === 2) return (dword >>> shift) & 0xffff;
+      return dword >>> 0;
+    }
+
+    // Slow path: compose from individual bytes (handles unaligned/cross-dword).
+    let out = 0;
+    for (let i = 0; i < size; i++) {
+      const byteOff = off + i;
+      const b = byteOff < 256 ? this.#readConfigByte(fn, byteOff) : 0xff;
+      out |= (b & 0xff) << (i * 8);
+    }
+    return out >>> 0;
+  }
+
+  #readConfigByte(fn: PciFunction, byteOff: number): number {
+    if (byteOff < 0 || byteOff >= 256) return 0xff;
+    const aligned = byteOff & ~3;
+    const dword = this.#readConfigDword(fn, aligned);
+    const shift = (byteOff & 3) * 8;
+    return (dword >>> shift) & 0xff;
+  }
+
+  #writeConfigValue(fn: PciFunction, off: number, size: number, value: number): void {
+    if (size !== 1 && size !== 2 && size !== 4) return;
+    if (off < 0 || off >= 256) return;
+
+    const byteInDword = off & 3;
+    // Fast path: writes contained within a single dword.
+    if (byteInDword + size <= 4 && off + size <= 256) {
+      const aligned = off & ~3;
+
+      let newDword: number;
+      let writeMask: number;
+      if (size === 4 && byteInDword === 0) {
+        newDword = value >>> 0;
+        writeMask = 0xffff_ffff;
+      } else {
+        const cur = this.#readConfigDword(fn, aligned);
+        const shift = byteInDword * 8;
+        const mask = size === 1 ? 0xff : 0xffff;
+        writeMask = (mask << shift) >>> 0;
+        newDword = ((cur & ~writeMask) | ((value & mask) << shift)) >>> 0;
+      }
+
+      this.#writeConfigDword(fn, aligned, newDword, writeMask);
+      return;
+    }
+
+    // Slow path: split into individual bytes (handles unaligned/cross-dword).
+    for (let i = 0; i < size; i++) {
+      const byteOff = off + i;
+      if (byteOff >= 256) continue;
+      const b = (value >>> (i * 8)) & 0xff;
+      this.#writeConfigByte(fn, byteOff, b);
+    }
+  }
+
+  #writeConfigByte(fn: PciFunction, byteOff: number, value: number): void {
+    if (byteOff < 0 || byteOff >= 256) return;
+    const aligned = byteOff & ~3;
+    const cur = this.#readConfigDword(fn, aligned);
+    const shift = (byteOff & 3) * 8;
+    const writeMask = (0xff << shift) >>> 0;
+    const newDword = ((cur & ~writeMask) | ((value & 0xff) << shift)) >>> 0;
+    this.#writeConfigDword(fn, aligned, newDword, writeMask);
   }
 
   #readConfigDword(fn: PciFunction, alignedOff: number): number {
