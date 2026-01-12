@@ -153,6 +153,31 @@ impl<B: StorageBackend> VhdDisk<B> {
                     return Err(DiskError::CorruptImage("vhd bat too small"));
                 }
 
+                // Validate the on-disk BAT size based on `max_table_entries`. We only *read* the
+                // portion required for the advertised virtual size, but the metadata region must
+                // still be coherent.
+                let bat_size_on_disk = {
+                    let bat_bytes = (dynamic.max_table_entries as u64)
+                        .checked_mul(4)
+                        .ok_or(DiskError::OffsetOverflow)?;
+                    let bat_bytes_aligned = align_up_u64(bat_bytes, SECTOR_SIZE as u64)?;
+                    if bat_bytes_aligned > MAX_BAT_BYTES {
+                        return Err(DiskError::Unsupported("vhd bat too large"));
+                    }
+                    bat_bytes_aligned
+                };
+                if len < SECTOR_SIZE as u64 {
+                    return Err(DiskError::CorruptImage("vhd file too small"));
+                }
+                let footer_offset = len - SECTOR_SIZE as u64;
+                let bat_end_on_disk = dynamic
+                    .table_offset
+                    .checked_add(bat_size_on_disk)
+                    .ok_or(DiskError::OffsetOverflow)?;
+                if bat_end_on_disk > footer_offset {
+                    return Err(DiskError::CorruptImage("vhd bat truncated"));
+                }
+
                 // Only read the BAT entries needed for the virtual size; this avoids allocating
                 // memory proportional to `max_table_entries` for sparse/truncated images.
                 let bat_bytes = required_entries
@@ -167,14 +192,6 @@ impl<B: StorageBackend> VhdDisk<B> {
                 let bat_bytes_usize: usize = bat_bytes
                     .try_into()
                     .map_err(|_| DiskError::Unsupported("vhd bat too large"))?;
-
-                let bat_end = dynamic
-                    .table_offset
-                    .checked_add(bat_bytes)
-                    .ok_or(DiskError::OffsetOverflow)?;
-                if bat_end > len {
-                    return Err(DiskError::CorruptImage("vhd bat truncated"));
-                }
 
                 let mut bat_buf = vec![0u8; bat_bytes_usize];
                 backend.read_at(dynamic.table_offset, &mut bat_buf)?;
@@ -306,16 +323,16 @@ impl<B: StorageBackend> VhdDisk<B> {
             .checked_add(1024)
             .ok_or(DiskError::OffsetOverflow)?;
 
-        let bat_bytes = (self.bat.len() as u64)
+        let bat_bytes = (dyn_hdr.max_table_entries as u64)
             .checked_mul(4)
             .ok_or(DiskError::OffsetOverflow)?;
+        let bat_size = align_up_u64(bat_bytes, SECTOR_SIZE as u64)?;
         let bat_end = dyn_hdr
             .table_offset
-            .checked_add(bat_bytes)
+            .checked_add(bat_size)
             .ok_or(DiskError::OffsetOverflow)?;
-        let bat_end_aligned = align_up_u64(bat_end, SECTOR_SIZE as u64)?;
 
-        Ok(footer_copy_end.max(dyn_header_end).max(bat_end_aligned))
+        Ok(footer_copy_end.max(dyn_header_end).max(bat_end))
     }
 
     fn validate_block_bounds(&mut self, block_start: u64, bitmap_size: u64) -> Result<()> {

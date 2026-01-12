@@ -80,6 +80,10 @@ impl Qcow2Header {
         if len < header_length as u64 {
             return Err(DiskError::CorruptImage("qcow2 header truncated"));
         }
+        let header_length_u64 = header_length as u64;
+        if l1_table_offset < header_length_u64 || refcount_table_offset < header_length_u64 {
+            return Err(DiskError::CorruptImage("qcow2 table overlaps header"));
+        }
 
         if crypt_method != 0 {
             return Err(DiskError::Unsupported("qcow2 encryption"));
@@ -201,13 +205,6 @@ impl<B: StorageBackend> Qcow2Disk<B> {
             return Err(DiskError::CorruptImage("qcow2 l1 table truncated"));
         }
 
-        let mut l1_buf = vec![0u8; l1_bytes_usize];
-        backend.read_at(header.l1_table_offset, &mut l1_buf)?;
-        let mut l1_table = Vec::with_capacity(l1_entries);
-        for chunk in l1_buf.chunks_exact(8) {
-            l1_table.push(be_u64(chunk));
-        }
-
         // ----- Refcount table -----
         let refcount_table_bytes = (header.refcount_table_clusters as u64)
             .checked_mul(cluster_size)
@@ -228,6 +225,22 @@ impl<B: StorageBackend> Qcow2Disk<B> {
             .ok_or(DiskError::OffsetOverflow)?;
         if refcount_end > file_len {
             return Err(DiskError::CorruptImage("qcow2 refcount table truncated"));
+        }
+
+        if ranges_overlap(
+            header.l1_table_offset,
+            l1_end,
+            header.refcount_table_offset,
+            refcount_end,
+        ) {
+            return Err(DiskError::CorruptImage("qcow2 metadata tables overlap"));
+        }
+
+        let mut l1_buf = vec![0u8; l1_bytes_usize];
+        backend.read_at(header.l1_table_offset, &mut l1_buf)?;
+        let mut l1_table = Vec::with_capacity(l1_entries);
+        for chunk in l1_buf.chunks_exact(8) {
+            l1_table.push(be_u64(chunk));
         }
 
         let mut refcount_buf = vec![0u8; refcount_bytes_usize];
@@ -407,7 +420,8 @@ impl<B: StorageBackend> Qcow2Disk<B> {
             .l1_table_offset
             .checked_add((l1_index as u64) * 8)
             .ok_or(DiskError::OffsetOverflow)?;
-        self.backend.write_at(l1_entry_offset, &entry.to_be_bytes())?;
+        self.backend
+            .write_at(l1_entry_offset, &entry.to_be_bytes())?;
 
         let l2_entries: usize = self
             .l2_entries_per_table()
@@ -661,4 +675,8 @@ fn write_zeroes<B: StorageBackend>(backend: &mut B, mut offset: u64, mut len: u6
         len -= to_write as u64;
     }
     Ok(())
+}
+
+fn ranges_overlap(start_a: u64, end_a: u64, start_b: u64, end_b: u64) -> bool {
+    start_a < end_b && start_b < end_a
 }

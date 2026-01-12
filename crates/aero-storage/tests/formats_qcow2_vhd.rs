@@ -3,6 +3,7 @@ use aero_storage::{
 };
 
 const QCOW2_OFLAG_COPIED: u64 = 1 << 63;
+const QCOW2_OFLAG_COMPRESSED: u64 = 1 << 62;
 const QCOW2_OFLAG_ZERO: u64 = 1 << 0;
 
 fn write_be_u32(buf: &mut [u8], offset: usize, val: u32) {
@@ -91,7 +92,7 @@ fn make_qcow2_v2_empty(virtual_size: u64) -> MemBackend {
     let mut header = [0u8; 72];
     header[0..4].copy_from_slice(b"QFI\xfb");
     write_be_u32(&mut header, 4, 2); // version
-    // backing file offset/size are zero
+                                     // backing file offset/size are zero
     write_be_u32(&mut header, 20, cluster_bits);
     write_be_u64(&mut header, 24, virtual_size);
     // crypt_method is zero
@@ -99,7 +100,7 @@ fn make_qcow2_v2_empty(virtual_size: u64) -> MemBackend {
     write_be_u64(&mut header, 40, l1_table_offset);
     write_be_u64(&mut header, 48, refcount_table_offset);
     write_be_u32(&mut header, 56, 1); // refcount_table_clusters
-    // nb_snapshots and snapshots_offset are zero
+                                      // nb_snapshots and snapshots_offset are zero
     backend.write_at(0, &header).unwrap();
 
     backend
@@ -231,7 +232,9 @@ fn make_vhd_dynamic_empty(virtual_size: u64, block_size: u32) -> MemBackend {
     let mut backend = MemBackend::with_len(file_len).unwrap();
 
     backend.write_at(0, &footer).unwrap();
-    backend.write_at(file_len - SECTOR_SIZE as u64, &footer).unwrap();
+    backend
+        .write_at(file_len - SECTOR_SIZE as u64, &footer)
+        .unwrap();
 
     let mut dyn_header = [0u8; 1024];
     dyn_header[0..8].copy_from_slice(b"cxsparse");
@@ -261,7 +264,9 @@ fn make_vhd_dynamic_with_pattern() -> MemBackend {
     let block_total_size = bitmap_size + block_size as u64;
     let new_footer_offset = old_footer_offset + block_total_size;
 
-    backend.set_len(new_footer_offset + SECTOR_SIZE as u64).unwrap();
+    backend
+        .set_len(new_footer_offset + SECTOR_SIZE as u64)
+        .unwrap();
 
     let bat_entry = (old_footer_offset / SECTOR_SIZE as u64) as u32;
     backend
@@ -339,6 +344,106 @@ fn qcow2_rejects_corrupt_magic() {
 }
 
 #[test]
+fn qcow2_rejects_backing_file() {
+    let mut backend = make_qcow2_empty(64 * 1024);
+    // backing_file_offset is at offset 8 in the header.
+    backend.write_at(8, &1u64.to_be_bytes()).unwrap();
+
+    let err = Qcow2Disk::open(backend).err().expect("expected error");
+    assert!(matches!(err, DiskError::Unsupported("qcow2 backing file")));
+}
+
+#[test]
+fn qcow2_rejects_encryption() {
+    let mut backend = make_qcow2_empty(64 * 1024);
+    // crypt_method is at offset 32 in the header.
+    backend.write_at(32, &1u32.to_be_bytes()).unwrap();
+
+    let err = Qcow2Disk::open(backend).err().expect("expected error");
+    assert!(matches!(err, DiskError::Unsupported("qcow2 encryption")));
+}
+
+#[test]
+fn qcow2_rejects_internal_snapshots() {
+    let mut backend = make_qcow2_empty(64 * 1024);
+    // nb_snapshots is at offset 60 in the header.
+    backend.write_at(60, &1u32.to_be_bytes()).unwrap();
+
+    let err = Qcow2Disk::open(backend).err().expect("expected error");
+    assert!(matches!(
+        err,
+        DiskError::Unsupported("qcow2 internal snapshots")
+    ));
+}
+
+#[test]
+fn qcow2_rejects_metadata_tables_overlapping() {
+    let cluster_size = 1u64 << 12;
+    let mut backend = make_qcow2_empty(64 * 1024);
+
+    // Set l1_table_offset to overlap the refcount table (both at cluster 1).
+    backend.write_at(40, &cluster_size.to_be_bytes()).unwrap();
+
+    let err = Qcow2Disk::open(backend).err().expect("expected error");
+    assert!(matches!(
+        err,
+        DiskError::CorruptImage("qcow2 metadata tables overlap")
+    ));
+}
+
+#[test]
+fn qcow2_rejects_table_offset_overlapping_header() {
+    let mut backend = make_qcow2_empty(64 * 1024);
+    // Set l1_table_offset to 0 (overlaps the header).
+    backend.write_at(40, &0u64.to_be_bytes()).unwrap();
+
+    let err = Qcow2Disk::open(backend).err().expect("expected error");
+    assert!(matches!(
+        err,
+        DiskError::CorruptImage("qcow2 table overlaps header")
+    ));
+}
+
+#[test]
+fn qcow2_rejects_compressed_l1_entry() {
+    let cluster_size = 1u64 << 12;
+    let l1_table_offset = cluster_size * 2;
+    let l2_table_offset = cluster_size * 4;
+
+    let mut backend = make_qcow2_empty(64 * 1024);
+    let l1_entry = l2_table_offset | QCOW2_OFLAG_COPIED | QCOW2_OFLAG_COMPRESSED;
+    backend
+        .write_at(l1_table_offset, &l1_entry.to_be_bytes())
+        .unwrap();
+
+    let mut disk = Qcow2Disk::open(backend).unwrap();
+    let mut buf = [0u8; SECTOR_SIZE];
+    let err = disk.read_sectors(0, &mut buf).unwrap_err();
+    assert!(matches!(err, DiskError::Unsupported("qcow2 compressed l1")));
+}
+
+#[test]
+fn qcow2_rejects_compressed_l2_entry() {
+    let cluster_size = 1u64 << 12;
+    let l2_table_offset = cluster_size * 4;
+    let data_cluster_offset = cluster_size * 5;
+
+    let mut backend = make_qcow2_empty(64 * 1024);
+    let l2_entry = data_cluster_offset | QCOW2_OFLAG_COMPRESSED;
+    backend
+        .write_at(l2_table_offset, &l2_entry.to_be_bytes())
+        .unwrap();
+
+    let mut disk = Qcow2Disk::open(backend).unwrap();
+    let mut buf = [0u8; SECTOR_SIZE];
+    let err = disk.read_sectors(0, &mut buf).unwrap_err();
+    assert!(matches!(
+        err,
+        DiskError::Unsupported("qcow2 compressed cluster")
+    ));
+}
+
+#[test]
 fn qcow2_v2_open_write_and_reopen_roundtrip() {
     let backend = make_qcow2_v2_empty(64 * 1024);
     let mut disk = Qcow2Disk::open(backend).unwrap();
@@ -367,8 +472,8 @@ fn qcow2_rejects_absurd_l1_table_size() {
     write_be_u32(&mut header, 20, cluster_bits);
     write_be_u64(&mut header, 24, virtual_size);
     write_be_u32(&mut header, 36, 0x0200_0000); // l1_size must be >= required_l1 (33,554,432)
-    write_be_u64(&mut header, 40, 0); // l1_table_offset (won't be read on failure)
-    write_be_u64(&mut header, 48, 0); // refcount_table_offset (won't be read on failure)
+    write_be_u64(&mut header, 40, 104); // l1_table_offset (won't be read on failure)
+    write_be_u64(&mut header, 48, 104); // refcount_table_offset (won't be read on failure)
     write_be_u32(&mut header, 56, 1); // refcount_table_clusters
     write_be_u64(&mut header, 72, 0); // incompatible_features
     write_be_u32(&mut header, 96, 4); // refcount_order
@@ -441,13 +546,17 @@ fn qcow2_allocates_l2_table_when_missing() {
 
     // L1 entry should now point at the newly allocated L2 table.
     let mut l1_entry_bytes = [0u8; 8];
-    backend.read_at(l1_table_offset, &mut l1_entry_bytes).unwrap();
+    backend
+        .read_at(l1_table_offset, &mut l1_entry_bytes)
+        .unwrap();
     let l1_entry = u64::from_be_bytes(l1_entry_bytes);
     assert_eq!(l1_entry, l2_table_offset | QCOW2_OFLAG_COPIED);
 
     // L2 entry 0 should now point at the newly allocated data cluster.
     let mut l2_entry_bytes = [0u8; 8];
-    backend.read_at(l2_table_offset, &mut l2_entry_bytes).unwrap();
+    backend
+        .read_at(l2_table_offset, &mut l2_entry_bytes)
+        .unwrap();
     let l2_entry = u64::from_be_bytes(l2_entry_bytes);
     assert_eq!(l2_entry, data_cluster_offset | QCOW2_OFLAG_COPIED);
 
@@ -493,7 +602,9 @@ fn qcow2_allocates_new_refcount_block_when_needed() {
 
     // L2 entry 0 should now point at the newly allocated (very high offset) data cluster.
     let mut l2_entry_bytes = [0u8; 8];
-    backend.read_at(l2_table_offset, &mut l2_entry_bytes).unwrap();
+    backend
+        .read_at(l2_table_offset, &mut l2_entry_bytes)
+        .unwrap();
     let l2_entry = u64::from_be_bytes(l2_entry_bytes);
     assert_eq!(l2_entry, data_cluster_offset | QCOW2_OFLAG_COPIED);
 
@@ -614,7 +725,10 @@ fn qcow2_zero_cluster_flag_is_treated_as_unallocated_and_can_be_written() {
         .read_at(l2_table_offset, &mut new_l2_entry_bytes)
         .unwrap();
     let new_l2_entry = u64::from_be_bytes(new_l2_entry_bytes);
-    assert_eq!(new_l2_entry, expected_data_cluster_offset | QCOW2_OFLAG_COPIED);
+    assert_eq!(
+        new_l2_entry,
+        expected_data_cluster_offset | QCOW2_OFLAG_COPIED
+    );
 
     let mut reopened = Qcow2Disk::open(backend).unwrap();
     let mut back = vec![0u8; SECTOR_SIZE];
@@ -827,7 +941,9 @@ fn vhd_rejects_absurd_bat_size() {
 fn vhd_rejects_bad_footer_checksum() {
     let mut backend = make_vhd_fixed_with_pattern();
     let mut last = [0u8; 1];
-    backend.read_at((64 * 1024) + (SECTOR_SIZE as u64) - 1, &mut last).unwrap();
+    backend
+        .read_at((64 * 1024) + (SECTOR_SIZE as u64) - 1, &mut last)
+        .unwrap();
     last[0] ^= 0xFF;
     backend
         .write_at((64 * 1024) + (SECTOR_SIZE as u64) - 1, &last)
@@ -851,7 +967,9 @@ fn vhd_dynamic_rejects_block_overlapping_footer() {
     let file_len = backend.len().unwrap();
     let footer_offset = file_len - SECTOR_SIZE as u64;
     let bat_entry = (footer_offset / SECTOR_SIZE as u64) as u32;
-    backend.write_at(table_offset, &bat_entry.to_be_bytes()).unwrap();
+    backend
+        .write_at(table_offset, &bat_entry.to_be_bytes())
+        .unwrap();
 
     let mut disk = VhdDisk::open(backend).unwrap();
     let mut buf = [0u8; SECTOR_SIZE];
@@ -908,4 +1026,20 @@ fn vhd_dynamic_zero_writes_do_not_hide_corrupt_bat_entries() {
     let zeros = vec![0u8; SECTOR_SIZE];
     let err = disk.write_sectors(0, &zeros).unwrap_err();
     assert!(matches!(err, DiskError::CorruptImage(_)));
+}
+
+#[test]
+fn vhd_dynamic_rejects_truncated_bat_when_max_table_entries_exceeds_file() {
+    let virtual_size = 64 * 1024u64;
+    let block_size = 16 * 1024u32;
+    let mut backend = make_vhd_dynamic_empty(virtual_size, block_size);
+
+    // Inflate `max_table_entries` so the declared BAT region would extend into the EOF footer.
+    let dyn_header_offset = SECTOR_SIZE as u64;
+    backend
+        .write_at(dyn_header_offset + 28, &130u32.to_be_bytes())
+        .unwrap();
+
+    let err = VhdDisk::open(backend).err().expect("expected error");
+    assert!(matches!(err, DiskError::CorruptImage("vhd bat truncated")));
 }
