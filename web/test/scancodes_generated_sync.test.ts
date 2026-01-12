@@ -2,8 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-import { PS2_SET2_CODE_TO_SCANCODE as WEB_PS2_SET2_CODE_TO_SCANCODE } from '../src/input/scancodes.ts';
-import { PS2_SET2_CODE_TO_SCANCODE as HARNESS_PS2_SET2_CODE_TO_SCANCODE } from '../../src/input/scancodes.ts';
+import {
+  PS2_SET2_CODE_TO_SCANCODE as WEB_PS2_SET2_CODE_TO_SCANCODE,
+  ps2Set2BytesForKeyEvent as webPs2Set2BytesForKeyEvent,
+} from '../src/input/scancodes.ts';
+import {
+  PS2_SET2_CODE_TO_SCANCODE as HARNESS_PS2_SET2_CODE_TO_SCANCODE,
+  ps2Set2BytesForKeyEvent as harnessPs2Set2BytesForKeyEvent,
+} from '../../src/input/scancodes.ts';
 
 type JsonScancodeEntry = {
   make: string[];
@@ -45,6 +51,7 @@ function loadJsonScancodes(): JsonScancodes {
 function assertTsMappingInSync(
   label: string,
   tsMapping: Record<string, unknown>,
+  tsBytesForKeyEvent: (code: string, pressed: boolean) => number[] | undefined,
   jsonScancodes: JsonScancodes,
 ): void {
   const jsonMapping = jsonScancodes.ps2_set2;
@@ -87,29 +94,53 @@ function assertTsMappingInSync(
         expected,
         `${label}: PS2_SET2_CODE_TO_SCANCODE[${JSON.stringify(code)}] is out of sync with tools/gen_scancodes/scancodes.json. ${REGEN_HINT}`,
       );
-      continue;
+    } else {
+      assert.ok(
+        breakBytes !== undefined,
+        `${label}: tools/gen_scancodes/scancodes.json entry for ${JSON.stringify(code)} has a multi-byte make sequence but no explicit break sequence. ${REGEN_HINT}`,
+      );
+
+      if (actual.kind !== 'sequence') {
+        assert.fail(
+          `${label}: PS2_SET2_CODE_TO_SCANCODE[${JSON.stringify(code)}] should be a { kind: 'sequence', ... } scancode. ${REGEN_HINT}`,
+        );
+      }
+
+      assert.deepStrictEqual(
+        actual.make,
+        makeBytes,
+        `${label}: PS2_SET2_CODE_TO_SCANCODE[${JSON.stringify(code)}].make is out of sync with tools/gen_scancodes/scancodes.json. ${REGEN_HINT}`,
+      );
+      assert.deepStrictEqual(
+        actual.break,
+        breakBytes,
+        `${label}: PS2_SET2_CODE_TO_SCANCODE[${JSON.stringify(code)}].break is out of sync with tools/gen_scancodes/scancodes.json. ${REGEN_HINT}`,
+      );
     }
 
-    assert.ok(
-      breakBytes !== undefined,
-      `${label}: tools/gen_scancodes/scancodes.json entry for ${JSON.stringify(code)} has a multi-byte make sequence but no explicit break sequence. ${REGEN_HINT}`,
-    );
+    const expectedBreakBytes =
+      breakBytes ??
+      (makeBytes.length === 1
+        ? [0xf0, makeBytes[0]]
+        : makeBytes.length === 2 && makeBytes[0] === 0xe0
+          ? [0xe0, 0xf0, makeBytes[1]]
+          : undefined);
 
-    if (actual.kind !== 'sequence') {
+    if (!expectedBreakBytes) {
       assert.fail(
-        `${label}: PS2_SET2_CODE_TO_SCANCODE[${JSON.stringify(code)}] should be a { kind: 'sequence', ... } scancode. ${REGEN_HINT}`,
+        `${label}: could not derive default break bytes for ${JSON.stringify(code)} from tools/gen_scancodes/scancodes.json make=${JSON.stringify(entry.make)}. ${REGEN_HINT}`,
       );
     }
 
     assert.deepStrictEqual(
-      actual.make,
+      tsBytesForKeyEvent(code, true),
       makeBytes,
-      `${label}: PS2_SET2_CODE_TO_SCANCODE[${JSON.stringify(code)}].make is out of sync with tools/gen_scancodes/scancodes.json. ${REGEN_HINT}`,
+      `${label}: ps2Set2BytesForKeyEvent(${JSON.stringify(code)}, true) is out of sync with tools/gen_scancodes/scancodes.json. ${REGEN_HINT}`,
     );
     assert.deepStrictEqual(
-      actual.break,
-      breakBytes,
-      `${label}: PS2_SET2_CODE_TO_SCANCODE[${JSON.stringify(code)}].break is out of sync with tools/gen_scancodes/scancodes.json. ${REGEN_HINT}`,
+      tsBytesForKeyEvent(code, false),
+      expectedBreakBytes,
+      `${label}: ps2Set2BytesForKeyEvent(${JSON.stringify(code)}, false) is out of sync with tools/gen_scancodes/scancodes.json. ${REGEN_HINT}`,
     );
   }
 }
@@ -120,11 +151,13 @@ test('generated PS/2 Set-2 scancode tables are in sync with tools/gen_scancodes/
   assertTsMappingInSync(
     'web/src/input/scancodes.ts',
     WEB_PS2_SET2_CODE_TO_SCANCODE,
+    (code, pressed) => webPs2Set2BytesForKeyEvent(code, pressed),
     jsonScancodes,
   );
   assertTsMappingInSync(
     'src/input/scancodes.ts',
     HARNESS_PS2_SET2_CODE_TO_SCANCODE,
+    (code, pressed) => harnessPs2Set2BytesForKeyEvent(code, pressed),
     jsonScancodes,
   );
 });
