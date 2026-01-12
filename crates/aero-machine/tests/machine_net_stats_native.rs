@@ -209,4 +209,8 @@ fn machine_e1000_l2_tunnel_rings_tx_rx_stats_smoke() {
         .expect("expected ring backend stats");
     assert_eq!(stats.rx_popped_frames, 1);
     assert_eq!(stats.rx_dropped_oversize, 1);
+
+    // Detaching the backend should make ring stats unavailable.
+    m.detach_network();
+    assert!(m.network_backend_l2_ring_stats().is_none());
 }
