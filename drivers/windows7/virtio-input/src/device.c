@@ -9,6 +9,7 @@
 #endif
 
 static VOID VioInputSetDeviceKind(_Inout_ PDEVICE_CONTEXT Ctx, _In_ VIOINPUT_DEVICE_KIND Kind);
+static VOID VirtioInputApplyTransportState(_In_ PDEVICE_CONTEXT DeviceContext);
 
 /*
  * virtio-input EV_BITS parsing/validation.
@@ -269,7 +270,7 @@ static VOID VioInputEventQUninitialize(_Inout_ PDEVICE_CONTEXT Ctx)
     }
 
     if (Ctx->EventVq != NULL) {
-        ExFreePoolWithTag(Ctx->EventVq, VIOINPUT_POOL_TAG);
+        ExFreePoolWithTag(Ctx->EventVq, VIRTIOINPUT_POOL_TAG);
         Ctx->EventVq = NULL;
     }
 
@@ -296,7 +297,7 @@ static NTSTATUS VioInputEventQInitialize(_Inout_ PDEVICE_CONTEXT Ctx, _In_ WDFDM
     VioInputEventQUninitialize(Ctx);
 
     vqBytes = VirtqSplitStateSize(QueueSize);
-    Ctx->EventVq = (VIRTQ_SPLIT*)ExAllocatePoolWithTag(NonPagedPool, vqBytes, VIOINPUT_POOL_TAG);
+    Ctx->EventVq = (VIRTQ_SPLIT*)ExAllocatePoolWithTag(NonPagedPool, vqBytes, VIRTIOINPUT_POOL_TAG);
     if (Ctx->EventVq == NULL) {
         return STATUS_INSUFFICIENT_RESOURCES;
     }
