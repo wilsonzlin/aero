@@ -533,7 +533,10 @@ impl SnapshotSource for DskcWrapperDeviceSource {
         // DSKC payload: tag 1 contains an `Encoder::vec_bytes` list.
         //
         // Encode one controller at packed_bdf 00:02.0.
-        let bdf_u16: u16 = (0u16 << 8) | (2u16 << 3) | 0u16;
+        let bus: u16 = 0;
+        let device: u16 = 2;
+        let function: u16 = 0;
+        let bdf_u16: u16 = (bus << 8) | (device << 3) | function;
         let mut entry = Vec::new();
         entry.extend_from_slice(&bdf_u16.to_le_bytes());
         entry.extend_from_slice(&nested);

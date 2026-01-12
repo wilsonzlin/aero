@@ -61,7 +61,7 @@ fn decode_string_descriptor_utf16le(desc: &[u8]) -> Option<String> {
         return None;
     }
     let payload = &desc[2..len];
-    if payload.len() % 2 != 0 {
+    if !payload.len().is_multiple_of(2) {
         return None;
     }
     let units: Vec<u16> = payload

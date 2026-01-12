@@ -9,10 +9,11 @@ use firmware::{
 fn int10_get_display_combination_code_reports_vga_color() {
     let mut mem = VecMemory::new(2 * 1024 * 1024);
     let mut bios = Bios::new(CmosRtc::new(DateTime::new(2026, 1, 1, 0, 0, 0)));
-    let mut cpu = CpuState::default();
-
-    cpu.rax = 0x1234_5678_0000_0000;
-    cpu.rbx = 0xFEDC_BA98_0000_0000;
+    let mut cpu = CpuState {
+        rax: 0x1234_5678_0000_0000,
+        rbx: 0xFEDC_BA98_0000_0000,
+        ..Default::default()
+    };
     cpu.set_ax(0x1A00); // AH=1Ah, AL=00h
 
     bios.handle_int10(&mut cpu, &mut mem);
