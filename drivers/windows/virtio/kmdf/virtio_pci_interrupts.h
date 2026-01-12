@@ -28,7 +28,9 @@
 #define VIRTIO_PCI_ISR_CONFIG_INTERRUPT 0x02
 
 /* Virtio spec sentinel for "no MSI-X vector assigned". */
+#ifndef VIRTIO_PCI_MSI_NO_VECTOR
 #define VIRTIO_PCI_MSI_NO_VECTOR ((USHORT)0xFFFF)
+#endif
 
 typedef virtio_pci_common_cfg VIRTIO_PCI_COMMON_CFG;
 typedef Pvirtio_pci_common_cfg PVIRTIO_PCI_COMMON_CFG;
@@ -149,4 +151,3 @@ _IRQL_requires_max_(PASSIVE_LEVEL)
 NTSTATUS VirtioPciInterruptsResume(
     _Inout_ PVIRTIO_PCI_INTERRUPTS Interrupts,
     _In_opt_ volatile VIRTIO_PCI_COMMON_CFG* CommonCfg);
-
