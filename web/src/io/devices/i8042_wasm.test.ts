@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { initWasmForContext } from "../../runtime/wasm_context";
+import { assertWasmMemoryWiring } from "../../runtime/wasm_memory_probe";
 
 // Keep the test self-contained: allocate a minimal non-shared wasm memory so the module has room
 // for its runtime heap (the allocator reserves a fixed low region for the runtime).
@@ -26,6 +27,8 @@ describe("I8042Bridge (wasm)", () => {
       }
       throw err;
     }
+
+    assertWasmMemoryWiring({ api, memory, context: "I8042Bridge(wasm) test" });
     if (!api.I8042Bridge) {
       throw new Error("I8042Bridge wasm export is unavailable; rebuild web/src/wasm/pkg-single.");
     }

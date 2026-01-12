@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { openRingByKind } from "../../ipc/ipc";
 import type { RingBuffer } from "../../ipc/ring_buffer";
 import { createIoIpcSab, computeGuestRamLayout, guestToLinear, IO_IPC_NET_RX_QUEUE_KIND, IO_IPC_NET_TX_QUEUE_KIND } from "../../runtime/shared_layout";
+import { assertWasmMemoryWiring } from "../../runtime/wasm_memory_probe";
 import { initWasm } from "../../runtime/wasm_loader";
 import { DeviceManager, type IrqSink } from "../device_manager";
 import type { PciAddress } from "../bus/pci";
@@ -134,6 +135,8 @@ describe("io/devices/virtio-net (pci bridge integration)", () => {
       if (message.includes("Missing single-thread WASM package")) return;
       throw err;
     }
+
+    assertWasmMemoryWiring({ api, memory, context: "virtio_net_pci_integration.test" });
 
     // Older/partial builds may not yet include the virtio-net bridge export.
     const Bridge = api.VirtioNetPciBridge;

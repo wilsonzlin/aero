@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { initWasm } from "../runtime/wasm_loader";
+import { assertWasmMemoryWiring } from "../runtime/wasm_memory_probe";
 import { computeGuestRamLayout } from "../runtime/shared_layout";
 import {
   USB_HID_BOOT_KEYBOARD_REPORT_DESCRIPTOR,
@@ -200,6 +201,7 @@ describe("usb/UHCI synthetic HID passthrough integration (WASM)", () => {
       throw err;
     }
 
+    assertWasmMemoryWiring({ api, memory, context: "uhci_synthetic_hid_integration.test" });
     if (!api.UhciControllerBridge) return;
     if (!api.UsbHidPassthroughBridge) return;
 
