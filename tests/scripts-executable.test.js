@@ -108,6 +108,11 @@ test("scripts referenced as ./scripts/*.sh are executable", { skip: process.plat
     if (modeInGit !== null) {
       assert.equal(modeInGit, "100755", `${relPath} is not executable in git (expected mode 100755)`);
     }
+
+    // Scripts invoked directly (via `./foo.sh`) must have a shebang, otherwise
+    // Linux will fail with `Exec format error`.
+    const firstLine = fs.readFileSync(absPath, "utf8").split(/\r?\n/, 1)[0];
+    assert.ok(firstLine.startsWith("#!"), `${relPath} is missing a shebang (expected first line to start with '#!')`);
   }
 });
 
