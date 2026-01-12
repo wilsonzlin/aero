@@ -117,3 +117,49 @@ fn machine_reset_does_not_detach_ide_disk_backend() {
         "replacing the IDE drive should drop the previous disk backend"
     );
 }
+
+#[test]
+fn machine_reset_does_not_detach_ide_secondary_master_iso_backend() {
+    let mut m = Machine::new(MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_ide: true,
+        enable_ahci: false,
+        // Keep the machine minimal for deterministic reset behavior.
+        enable_vga: false,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        enable_e1000: false,
+        ..Default::default()
+    })
+    .unwrap();
+
+    let dropped = Arc::new(AtomicBool::new(false));
+    // ATAPI uses 2048-byte sectors, so ensure capacity is 2048-aligned.
+    let capacity = 16 * SECTOR_SIZE as u64;
+    assert_eq!(capacity % 2048, 0);
+    let disk = DropDetectDisk {
+        inner: RawDisk::create(MemBackend::new(), capacity).unwrap(),
+        dropped: dropped.clone(),
+    };
+
+    m.attach_ide_secondary_master_iso(Box::new(disk)).unwrap();
+
+    m.reset();
+
+    assert!(
+        !dropped.load(Ordering::SeqCst),
+        "machine reset dropped the attached IDE ISO backend"
+    );
+
+    // Replacing the ISO should drop the previous backend (sanity check that it was attached).
+    let replacement = RawDisk::create(MemBackend::new(), capacity).unwrap();
+    m.attach_ide_secondary_master_iso(Box::new(replacement))
+        .unwrap();
+    assert!(
+        dropped.load(Ordering::SeqCst),
+        "replacing the IDE ISO should drop the previous backend"
+    );
+}
