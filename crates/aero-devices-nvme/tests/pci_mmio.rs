@@ -34,6 +34,29 @@ fn bar0_mmio_requires_pci_memory_space_enable() {
 }
 
 #[test]
+fn bar0_mmio_size0_is_noop() {
+    let mut dev = NvmePciDevice::default();
+
+    // Size-0 reads are treated as a no-op and return 0, regardless of whether MMIO decoding is
+    // enabled in the PCI Command register.
+    dev.config_mut().set_command(0);
+    assert_eq!(dev.read(NVME_CAP, 0), 0);
+
+    dev.config_mut().set_command(0x0002); // MEM
+    assert_eq!(dev.read(NVME_CAP, 0), 0);
+
+    // Size-0 writes are a no-op and must not change CC.EN.
+    let cc_before = dev.read(NVME_CC, 4) as u32;
+    assert_eq!(cc_before & 1, 0, "CC.EN should start cleared");
+
+    dev.write(NVME_CC, 0, 1);
+
+    let cc_after = dev.read(NVME_CC, 4) as u32;
+    assert_eq!(cc_after, cc_before);
+    assert_eq!(cc_after & 1, 0, "CC.EN must remain unchanged");
+}
+
+#[test]
 fn nvme_irq_level_is_gated_by_pci_command_intx_disable() {
     let mut dev = NvmePciDevice::default();
 
