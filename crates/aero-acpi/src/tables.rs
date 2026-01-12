@@ -869,6 +869,10 @@ fn aml_processor(cpu_id: u8) -> Vec<u8> {
 }
 
 fn aml_op_region(name: [u8; 4], space: u8, offset: u64, len: u64) -> Vec<u8> {
+    // NOTE: `OperationRegion` is *not* a package opcode in AML, so it does NOT
+    // carry a PkgLength byte. Encoding:
+    //   ExtOpPrefix(0x5B), OperationRegionOp(0x80),
+    //   NameString, RegionSpace, RegionOffset, RegionLen
     let mut out = Vec::new();
     out.extend_from_slice(&[0x5B, 0x80]); // OperationRegionOp
     out.extend_from_slice(&name);
