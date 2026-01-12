@@ -7,6 +7,10 @@ const PCAPNG_BYTE_ORDER_MAGIC = 0x1a2b3c4d;
 // https://www.ietf.org/archive/id/draft-tuexen-opsawg-pcapng-02.html
 // (PCAPNG registry): LINKTYPE_ETHERNET
 export const PCAPNG_LINKTYPE_ETHERNET = 1;
+// LINKTYPE_USER0 / LINKTYPE_USER1
+// Used by the Rust net tracer for proxy pseudo-packets ("ATCP"/"AUDP").
+export const PCAPNG_LINKTYPE_USER0 = 147;
+export const PCAPNG_LINKTYPE_USER1 = 148;
 
 const PCAPNG_IF_OPTION_NAME = 2;
 const PCAPNG_IF_OPTION_TSRESOL = 9;
