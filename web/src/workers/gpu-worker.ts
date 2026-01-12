@@ -2145,7 +2145,9 @@ const handleRuntimeInit = (init: WorkerInitMessage) => {
   status = views.status;
   scanoutState = views.scanoutStateI32 ?? null;
   (globalThis as unknown as { __aeroScanoutState?: Int32Array }).__aeroScanoutState = scanoutState ?? undefined;
-  // Guest physical addresses (GPAs) in AeroGPU submissions are byte offsets into this view.
+  // `guestU8` is a flat backing store of guest RAM bytes (length = `guest_size`). On PC/Q35 with
+  // ECAM/PCI holes + high-RAM remap, GPAs in AeroGPU submissions are guest *physical* addresses
+  // (which may be >=4GiB); executors must translate them back into this view before slicing.
   guestU8 = views.guestU8;
   if (aerogpuWasm) {
     try {
