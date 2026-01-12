@@ -74,7 +74,7 @@ use aero_platform::io::{IoPortBus, PortIoDevice as _};
 use aero_platform::memory::MemoryBus as PlatformMemoryBus;
 use aero_platform::reset::{ResetKind, ResetLatch};
 use aero_snapshot as snapshot;
-use firmware::bda::{BDA_CURSOR_POS_PAGE0_ADDR, BDA_CURSOR_SHAPE_ADDR, BDA_SCREEN_COLS_ADDR};
+use firmware::bda::BiosDataArea;
 use firmware::bios::{A20Gate, Bios, BiosBus, BiosConfig, FirmwareMemory};
 use memory::{
     DenseMemory, DirtyGuestMemory, DirtyTracker, GuestMemoryError, MapError, MemoryBus as _,
@@ -2965,19 +2965,16 @@ impl Machine {
         // on CRTC registers, so we mirror the BDA fields into those regs when in BIOS text mode.
         //
         // BDA layout (see `firmware::bda`):
-        // - `BDA_SCREEN_COLS_ADDR`: screen columns (u16)
-        // - `BDA_CURSOR_POS_PAGE0_ADDR`: cursor pos for page 0 (row:hi, col:lo)
-        // - `BDA_CURSOR_SHAPE_ADDR`: cursor shape (start:hi, end:lo)
-        let cols = self.mem.read_u16(BDA_SCREEN_COLS_ADDR).max(1);
-        let pos = self.mem.read_u16(BDA_CURSOR_POS_PAGE0_ADDR);
-        let shape = self.mem.read_u16(BDA_CURSOR_SHAPE_ADDR);
+        // - screen cols (u16)
+        // - cursor pos for page 0 (row, col)
+        // - cursor shape (start, end)
+        let cols = BiosDataArea::read_screen_cols(&mut self.mem).max(1);
+        let (row, col) = BiosDataArea::read_cursor_pos_page0(&mut self.mem);
+        let (cursor_start, cursor_end) = BiosDataArea::read_cursor_shape(&mut self.mem);
 
-        let row = pos >> 8;
-        let col = pos & 0x00FF;
-        let cell_index = row.saturating_mul(cols).saturating_add(col);
-
-        let cursor_start = (shape >> 8) as u8;
-        let cursor_end = (shape & 0x00FF) as u8;
+        let cell_index = u16::from(row)
+            .saturating_mul(cols)
+            .saturating_add(u16::from(col));
 
         let mut vga = vga.borrow_mut();
 
