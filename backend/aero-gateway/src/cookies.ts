@@ -94,20 +94,72 @@ export function appendSetCookieHeader(res: ServerResponse, cookie: string): void
 export function getCookieValue(cookieHeader: string | string[] | undefined, name: string): string | undefined {
   if (!cookieHeader) return undefined;
   const raw = Array.isArray(cookieHeader) ? cookieHeader.join(';') : cookieHeader;
-  const parts = raw.split(';');
-  for (const part of parts) {
-    const trimmed = part.trim();
-    if (!trimmed) continue;
-    const idx = trimmed.indexOf('=');
-    if (idx <= 0) continue;
-    const key = trimmed.slice(0, idx).trim();
-    if (key !== name) continue;
-    const value = trimmed.slice(idx + 1).trim();
+  if (raw.length === 0 || name.length === 0) return undefined;
+
+  // Scan cookie header without allocating `raw.split(';')`.
+  //
+  // Cookie header grammar (RFC 6265-ish): `cookie-pair *( ";" SP cookie-pair )`.
+  // We accept any ASCII whitespace <= 0x20 as "SP" for robustness.
+  let i = 0;
+  while (i < raw.length) {
+    // Skip separators/whitespace.
+    while (i < raw.length) {
+      const c = raw.charCodeAt(i);
+      if (c !== 0x3b /* ';' */ && c > 0x20) break;
+      i += 1;
+    }
+    if (i >= raw.length) break;
+
+    // Key: scan until '=' or ';'.
+    const keyStart = i;
+    while (i < raw.length) {
+      const c = raw.charCodeAt(i);
+      if (c === 0x3d /* '=' */ || c === 0x3b /* ';' */) break;
+      i += 1;
+    }
+    if (i >= raw.length || raw.charCodeAt(i) !== 0x3d /* '=' */) {
+      // Malformed segment; skip to next ';'.
+      while (i < raw.length && raw.charCodeAt(i) !== 0x3b /* ';' */) i += 1;
+      continue;
+    }
+
+    // Trim trailing whitespace from the key.
+    let keyEnd = i;
+    while (keyEnd > keyStart && raw.charCodeAt(keyEnd - 1) <= 0x20) {
+      keyEnd -= 1;
+    }
+
+    const keyLen = keyEnd - keyStart;
+    let keyMatches = keyLen === name.length;
+    if (keyMatches) {
+      for (let j = 0; j < keyLen; j += 1) {
+        if (raw.charCodeAt(keyStart + j) !== name.charCodeAt(j)) {
+          keyMatches = false;
+          break;
+        }
+      }
+    }
+
+    i += 1; // skip '='
+
+    // Value: skip leading whitespace, then scan to ';' or end.
+    while (i < raw.length && raw.charCodeAt(i) <= 0x20) i += 1;
+    const valueStart = i;
+    while (i < raw.length && raw.charCodeAt(i) !== 0x3b /* ';' */) i += 1;
+    let valueEnd = i;
+    while (valueEnd > valueStart && raw.charCodeAt(valueEnd - 1) <= 0x20) valueEnd -= 1;
+
+    if (!keyMatches) {
+      continue;
+    }
+
+    const value = raw.slice(valueStart, valueEnd);
     try {
       return decodeURIComponent(value);
     } catch {
       return value;
     }
   }
+
   return undefined;
 }

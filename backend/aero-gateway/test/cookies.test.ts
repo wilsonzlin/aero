@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { isRequestSecure } from "../src/cookies.js";
+import { getCookieValue, isRequestSecure } from "../src/cookies.js";
 
 function makeReq(
   opts: Readonly<{
@@ -43,3 +43,22 @@ test("isRequestSecure: missing/empty header is not secure", () => {
   assert.equal(isRequestSecure(makeReq({ forwardedProto: "" }), { trustProxy: true }), false);
 });
 
+test("getCookieValue: returns decoded cookie value", () => {
+  assert.equal(getCookieValue("a=1; aero_session=hello%20world; b=2", "aero_session"), "hello world");
+});
+
+test("getCookieValue: ignores whitespace and returns first match", () => {
+  assert.equal(getCookieValue("  a=1 ; aero_session = t1 ; aero_session=t2", "aero_session"), "t1");
+});
+
+test("getCookieValue: handles array headers", () => {
+  assert.equal(getCookieValue(["a=1", "aero_session=ok"], "aero_session"), "ok");
+});
+
+test("getCookieValue: returns raw value on decodeURIComponent failure", () => {
+  assert.equal(getCookieValue("aero_session=%zz", "aero_session"), "%zz");
+});
+
+test("getCookieValue: returns undefined when missing", () => {
+  assert.equal(getCookieValue("a=1; b=2", "aero_session"), undefined);
+});
