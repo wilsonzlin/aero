@@ -54,11 +54,16 @@
 #endif
 
 #define VIRTIO_INPUT_VID 0x1AF4
+#define VIRTIO_INPUT_PID_KEYBOARD 0x0001
+#define VIRTIO_INPUT_PID_MOUSE 0x0002
+// Legacy/alternate product IDs (e.g. older builds that reused the PCI virtio IDs).
 #define VIRTIO_INPUT_PID_MODERN 0x1052
 #define VIRTIO_INPUT_PID_TRANSITIONAL 0x1011
 
-// Current virtio-input report descriptor used by this repo's Win7 driver.
-#define VIRTIO_INPUT_EXPECTED_REPORT_DESC_LEN 119
+// Current Aero virtio-input Win7 driver exposes *separate* keyboard/mouse HID
+// devices, each with its own report descriptor.
+#define VIRTIO_INPUT_EXPECTED_KBD_REPORT_DESC_LEN 65
+#define VIRTIO_INPUT_EXPECTED_MOUSE_REPORT_DESC_LEN 54
 #define VIRTIO_INPUT_EXPECTED_KBD_INPUT_LEN 9
 #define VIRTIO_INPUT_EXPECTED_KBD_OUTPUT_LEN 2
 #define VIRTIO_INPUT_EXPECTED_MOUSE_INPUT_LEN 5
@@ -117,7 +122,9 @@ static int is_virtio_input_device(const HIDD_ATTRIBUTES *attr)
         return 0;
     }
 
-    return (attr->ProductID == VIRTIO_INPUT_PID_MODERN) ||
+    return (attr->ProductID == VIRTIO_INPUT_PID_KEYBOARD) ||
+           (attr->ProductID == VIRTIO_INPUT_PID_MOUSE) ||
+           (attr->ProductID == VIRTIO_INPUT_PID_MODERN) ||
            (attr->ProductID == VIRTIO_INPUT_PID_TRANSITIONAL);
 }
 
@@ -363,7 +370,9 @@ static void print_usage(void)
     wprintf(L"  --dump-desc     Print the raw HID report descriptor bytes\n");
     wprintf(L"\n");
     wprintf(L"Notes:\n");
-    wprintf(L"  - Without filters, the tool prefers a virtio-input keyboard interface (VID 0x1AF4).\n");
+    wprintf(L"  - virtio-input detection: VID 0x1AF4, PID 0x0001 (keyboard) / 0x0002 (mouse)\n");
+    wprintf(L"    (legacy/alternate PIDs: 0x1052 / 0x1011).\n");
+    wprintf(L"  - Without filters, the tool prefers a virtio-input keyboard interface.\n");
     wprintf(L"  - Press Ctrl+C to exit the report read loop.\n");
 }
 
@@ -563,6 +572,8 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
         int report_desc_valid = 0;
         DWORD hid_report_desc_len = 0;
         int hid_report_desc_valid = 0;
+        DWORD virtio_expected_desc_len = 0;
+        int virtio_expected_desc_valid = 0;
         int match = 0;
         int is_virtio = 0;
         int is_keyboard = 0;
@@ -641,6 +652,30 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
         is_keyboard = caps_valid && caps.UsagePage == 0x01 && caps.Usage == 0x06;
         is_mouse = caps_valid && caps.UsagePage == 0x01 && caps.Usage == 0x02;
 
+        if (is_keyboard) {
+            virtio_expected_desc_len = VIRTIO_INPUT_EXPECTED_KBD_REPORT_DESC_LEN;
+            virtio_expected_desc_valid = 1;
+        } else if (is_mouse) {
+            virtio_expected_desc_len = VIRTIO_INPUT_EXPECTED_MOUSE_REPORT_DESC_LEN;
+            virtio_expected_desc_valid = 1;
+        } else if (attr_valid && attr.ProductID == VIRTIO_INPUT_PID_KEYBOARD) {
+            virtio_expected_desc_len = VIRTIO_INPUT_EXPECTED_KBD_REPORT_DESC_LEN;
+            virtio_expected_desc_valid = 1;
+        } else if (attr_valid && attr.ProductID == VIRTIO_INPUT_PID_MOUSE) {
+            virtio_expected_desc_len = VIRTIO_INPUT_EXPECTED_MOUSE_REPORT_DESC_LEN;
+            virtio_expected_desc_valid = 1;
+        }
+
+        if (is_virtio) {
+            if (is_keyboard) {
+                wprintf(L"      Detected: virtio-input keyboard\n");
+            } else if (is_mouse) {
+                wprintf(L"      Detected: virtio-input mouse\n");
+            } else {
+                wprintf(L"      Detected: virtio-input\n");
+            }
+        }
+
         if (report_desc_valid) {
             wprintf(L"      Report descriptor length: %lu bytes\n", report_desc_len);
         } else {
@@ -657,13 +692,15 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
         }
 
         if (is_virtio) {
-            if (report_desc_valid && report_desc_len != VIRTIO_INPUT_EXPECTED_REPORT_DESC_LEN) {
-                wprintf(L"      [WARN] unexpected virtio-input report descriptor length (expected %u)\n",
-                        (unsigned)VIRTIO_INPUT_EXPECTED_REPORT_DESC_LEN);
-            }
-            if (hid_report_desc_valid && hid_report_desc_len != VIRTIO_INPUT_EXPECTED_REPORT_DESC_LEN) {
-                wprintf(L"      [WARN] unexpected virtio-input HID descriptor report length (expected %u)\n",
-                        (unsigned)VIRTIO_INPUT_EXPECTED_REPORT_DESC_LEN);
+            if (virtio_expected_desc_valid) {
+                if (report_desc_valid && report_desc_len != virtio_expected_desc_len) {
+                    wprintf(L"      [WARN] unexpected virtio-input report descriptor length (expected %u)\n",
+                            (unsigned)virtio_expected_desc_len);
+                }
+                if (hid_report_desc_valid && hid_report_desc_len != virtio_expected_desc_len) {
+                    wprintf(L"      [WARN] unexpected virtio-input HID descriptor report length (expected %u)\n",
+                            (unsigned)virtio_expected_desc_len);
+                }
             }
 
             if (caps_valid && is_keyboard) {

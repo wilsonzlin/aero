@@ -16,6 +16,22 @@ Minimal user-mode HID probe utility for validating the `virtio-input` HID minidr
   - virtio-input mouse report (`ReportID=2`)
 - Optionally writes a keyboard LED output report (`ReportID=1`) via `WriteFile` to exercise `IOCTL_HID_WRITE_REPORT`.
 
+## Aero virtio-input IDs / expectations
+
+The in-tree Aero virtio-input Win7 driver exposes **separate** HID devices:
+
+- Keyboard: VID:PID `1AF4:0001` (ReportID `1`)
+- Mouse: VID:PID `1AF4:0002` (ReportID `2`)
+
+`hidtest` uses these IDs to auto-prefer the virtio-input keyboard/mouse when multiple HID devices are present.
+
+The tool also sanity-checks report descriptor lengths against the in-tree driver:
+
+- Keyboard report descriptor: 65 bytes
+- Mouse report descriptor: 54 bytes
+
+Older/alternate builds may use PCI-style virtio IDs (PID `1052`/`1011`); `hidtest` still recognizes these as virtio-input.
+
 ## Build (MSVC)
 
 From a Visual Studio / Windows SDK command prompt:
@@ -58,7 +74,7 @@ Force selecting the mouse collection:
 hidtest.exe --mouse
 ```
 
-If multiple mice are present, `--mouse` prefers a virtio-input interface (VID `0x1AF4`, PID `0x1052`/`0x1011`) when available.
+If multiple mice are present, `--mouse` prefers a virtio-input interface (VID `0x1AF4`, PID `0x0002`) when available.
 
 Write keyboard LEDs (NumLock|CapsLock|ScrollLock):
 
