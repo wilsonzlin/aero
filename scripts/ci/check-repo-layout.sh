@@ -62,7 +62,7 @@ md_files = [p for p in tracked if p.endswith(".md")]
 # - Explicit invocations: `.\foo.ps1`, `.\some\path\foo.cmd` (Windows)
 # - Repo-root relative paths: `drivers/scripts/foo.sh`, `scripts/ci/bar.sh`, etc.
 # - Repo-root relative paths: `drivers\scripts\foo.ps1`, `ci\build-drivers.ps1`, etc.
-# - Other repo-local helper scripts referenced in docs (PowerShell, Python, CMD).
+# - Other repo-local helper scripts referenced in docs (PowerShell, Python, CMD, Node).
 #
 # Note: many docs embed commands inside backticks, so treat backtick as a stop
 # character in addition to whitespace.
@@ -70,7 +70,7 @@ md_files = [p for p in tracked if p.endswith(".md")]
 # We intentionally match only paths that look like repo-local references (common
 # top-level dirs) to avoid accidentally matching URLs that end in `.sh`.
 pattern = re.compile(
-    r"(?<![\w/\\])((?:\./|\.\./|\.\\|\.\.\\|scripts[\\/]|drivers[\\/]|infra[\\/]|deploy[\\/]|backend[\\/]|tools[\\/]|ci[\\/]|guest-tools[\\/])[^\s`]+?\.(?:sh|py|ps1|cmd))\b"
+    r"(?<![\w/\\])((?:\./|\.\./|\.\\|\.\.\\|scripts[\\/]|drivers[\\/]|infra[\\/]|deploy[\\/]|backend[\\/]|tools[\\/]|ci[\\/]|guest-tools[\\/]|web[\\/]|server[\\/]|poc[\\/])[^\s`]+?\.(?:sh|py|ps1|cmd|mjs|cjs))\b"
 )
 
 
