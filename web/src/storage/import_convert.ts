@@ -180,7 +180,19 @@ export async function detectFormat(src: RandomAccessSource, filename?: string): 
     const cookie0 = await src.readAt(0, 8);
     if (ascii(cookie0) === "conectix") {
       const footer = await src.readAt(0, 512);
-      if (looksLikeVhdFooter(footer, src.size)) return "vhd";
+      if (looksLikeVhdFooter(footer, src.size)) {
+        const diskType = readU32BE(footer, 60);
+        if (diskType === VHD_TYPE_FIXED) {
+          // A fixed VHD footer at offset 0 implies an additional required footer at EOF, so the
+          // file must be large enough to contain:
+          //   footer_copy (512) + data (current_size) + eof_footer (512)
+          const currentSize = Number(readU64BE(footer, 48));
+          const required = currentSize + 1024;
+          if (Number.isSafeInteger(required) && src.size >= required) return "vhd";
+        } else {
+          return "vhd";
+        }
+      }
     }
   }
 

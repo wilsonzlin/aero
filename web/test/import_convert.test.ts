@@ -511,6 +511,27 @@ test("detectFormat: does not misclassify VHD cookie without valid footer", async
   assert.equal(fmt, "raw");
 });
 
+test("detectFormat: does not misclassify fixed VHD footer at offset 0 without EOF footer", async () => {
+  const footerSize = 512;
+  const logicalSize = 512;
+
+  const footer = new Uint8Array(footerSize);
+  footer.set(new TextEncoder().encode("conectix"), 0);
+  writeU32BE(footer, 8, 2); // features
+  writeU32BE(footer, 12, 0x0001_0000); // file_format_version
+  writeU64BE(footer, 16, 0xffff_ffff_ffff_ffffn); // data_offset (fixed)
+  writeU64BE(footer, 48, BigInt(logicalSize)); // current size
+  writeU32BE(footer, 60, 2); // disk type fixed
+
+  // File contains a valid-looking footer at offset 0 but does not contain the required EOF footer.
+  const file = new Uint8Array(footerSize + logicalSize);
+  file.set(footer, 0);
+  file.fill(0x5a, footerSize);
+
+  const fmt = await detectFormat(new MemSource(file), "disk.unknown");
+  assert.equal(fmt, "raw");
+});
+
 test("detectFormat: VHD checksum mismatch is still detected as vhd", async () => {
   const { file } = buildFixedVhdFixture();
   const footerOff = file.byteLength - 512;
