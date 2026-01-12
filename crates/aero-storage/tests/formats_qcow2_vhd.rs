@@ -1869,7 +1869,7 @@ fn vhd_rejects_absurd_bat_size() {
     backend.write_at(dyn_header_offset, &dyn_header).unwrap();
 
     let err = VhdDisk::open(backend).err().expect("expected error");
-    assert!(matches!(err, DiskError::Unsupported(_)));
+    assert!(matches!(err, DiskError::Unsupported("vhd bat too large")));
 }
 
 #[test]
