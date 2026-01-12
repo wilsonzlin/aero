@@ -885,12 +885,16 @@ for /f "delims=" %%L in ('"%SYS32%\findstr.exe" /i /c:"AddService" "%INF_FILE%" 
   if not defined RIGHT (
     rem Not an AddService assignment (e.g. a section name); ignore.
   ) else (
-    set "LEFT=!LEFT: =!"
+    rem Normalize whitespace on the left-hand side (tabs/spaces) without requiring
+    rem literal tab characters in the script.
+    for /f "tokens=1" %%X in ("!LEFT!") do set "LEFT=%%X"
     if /i "!LEFT!"=="AddService" (
       set "REST=!RIGHT!"
-      for /f "tokens=* delims= " %%R in ("!REST!") do set "REST=%%R"
       set "REST=!REST:"=!"
-      for /f "tokens=1 delims=,; " %%S in ("!REST!") do set "SVC=%%S"
+      set "SVC="
+      for /f "tokens=1 delims=," %%S in ("!REST!") do set "SVC=%%S"
+      for /f "tokens=1 delims=;" %%S in ("!SVC!") do set "SVC=%%S"
+      for /f "tokens=1" %%S in ("!SVC!") do set "SVC=%%S"
       if /i "!SVC!"=="!TARGET!" (
         endlocal & exit /b 0
       )
@@ -942,12 +946,16 @@ for /f "delims=" %%L in ('"%SYS32%\findstr.exe" /i /c:"AddService" "%INF_FILE%" 
   if not defined RIGHT (
     rem Not an AddService assignment (e.g. a section name); ignore.
   ) else (
-    set "LEFT=!LEFT: =!"
+    rem Normalize whitespace on the left-hand side (tabs/spaces) without requiring
+    rem literal tab characters in the script.
+    for /f "tokens=1" %%X in ("!LEFT!") do set "LEFT=%%X"
     if /i "!LEFT!"=="AddService" (
       set "REST=!RIGHT!"
-      for /f "tokens=* delims= " %%R in ("!REST!") do set "REST=%%R"
       set "REST=!REST:"=!"
-      for /f "tokens=1 delims=,; " %%S in ("!REST!") do set "SVC=%%S"
+      set "SVC="
+      for /f "tokens=1 delims=," %%S in ("!REST!") do set "SVC=%%S"
+      for /f "tokens=1 delims=;" %%S in ("!SVC!") do set "SVC=%%S"
+      for /f "tokens=1" %%S in ("!SVC!") do set "SVC=%%S"
       if /i "!SVC!"=="!TARGET!" (
         endlocal & exit /b 0
       )
