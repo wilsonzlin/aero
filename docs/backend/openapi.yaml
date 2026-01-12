@@ -362,11 +362,17 @@ components:
                 maxFramePayloadBytes:
                   type: integer
                   minimum: 1
-                  description: Maximum payload size for L2 tunnel FRAME messages in bytes.
+                  description: |
+                    Maximum payload size for L2 tunnel FRAME messages in bytes.
+
+                    Recommended default: 2048 bytes (see `docs/l2-tunnel-protocol.md`).
                 maxControlPayloadBytes:
                   type: integer
                   minimum: 1
-                  description: Maximum payload size for L2 tunnel control messages (PING/PONG/ERROR) in bytes.
+                  description: |
+                    Maximum payload size for L2 tunnel control messages (PING/PONG/ERROR) in bytes.
+
+                    Recommended default: 256 bytes (see `docs/l2-tunnel-protocol.md`).
 
     UdpRelayEndpoints:
       type: object
