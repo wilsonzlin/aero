@@ -369,6 +369,12 @@ class AeroSparseWriter {
     this.sync = sync;
     this.diskSizeBytes = diskSizeBytes;
     this.blockSizeBytes = blockSizeBytes;
+    if (!Number.isSafeInteger(diskSizeBytes) || diskSizeBytes <= 0) {
+      throw new Error("invalid disk size");
+    }
+    if (diskSizeBytes % 512 !== 0) {
+      throw new Error("disk size must be a multiple of 512");
+    }
     this.tableEntries = divCeil(diskSizeBytes, blockSizeBytes);
     if (!Number.isSafeInteger(this.tableEntries) || this.tableEntries <= 0) {
       throw new Error("invalid aerosparse table size");

@@ -579,6 +579,15 @@ test("convertToAeroSparse: rejects huge output blockSizeBytes", async () => {
   );
 });
 
+test("convertToAeroSparse: rejects raw disk size not multiple of 512", async () => {
+  const src = new MemSource(new Uint8Array(513));
+  const sync = new MemSyncAccessHandle();
+  await assert.rejects(
+    convertToAeroSparse(src, "raw", sync, { blockSizeBytes: 512 }),
+    (err: any) => err instanceof Error && /disk size must be a multiple of 512/i.test(err.message),
+  );
+});
+
 test("convertToAeroSparse: rejects aerosparse allocation table larger than 128MiB", async () => {
   class HugeZeroSource {
     readonly size: number;
