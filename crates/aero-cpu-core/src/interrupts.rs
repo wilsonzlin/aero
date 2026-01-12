@@ -305,10 +305,11 @@ impl PendingEventState {
 
     /// Restore the interrupt-inhibit ("interrupt shadow") counter.
     ///
-    /// The current implementation only supports `0` and `1`; any non-zero value
-    /// is clamped to `1` to keep invariants stable across snapshot restores.
+    /// The Tier-0 model currently only uses values `0` and `1`, but we preserve the raw counter
+    /// value to keep snapshot/restore forward-compatible if we ever extend the interrupt-shadow
+    /// semantics.
     pub fn set_interrupt_inhibit(&mut self, v: u8) {
-        self.interrupt_inhibit = (v != 0) as u8;
+        self.interrupt_inhibit = v;
     }
 
     /// Call after each successfully executed instruction to update the interrupt
@@ -365,7 +366,7 @@ mod tests {
     }
 
     #[test]
-    fn set_interrupt_inhibit_restores_and_clamps() {
+    fn set_interrupt_inhibit_restores_exact_value() {
         let mut pending = PendingEventState::default();
 
         pending.set_interrupt_inhibit(1);
@@ -374,11 +375,10 @@ mod tests {
         pending.set_interrupt_inhibit(0);
         assert_eq!(pending.interrupt_inhibit(), 0);
 
-        // Any non-zero value is clamped to 1.
         pending.set_interrupt_inhibit(2);
-        assert_eq!(pending.interrupt_inhibit(), 1);
+        assert_eq!(pending.interrupt_inhibit(), 2);
         pending.set_interrupt_inhibit(u8::MAX);
-        assert_eq!(pending.interrupt_inhibit(), 1);
+        assert_eq!(pending.interrupt_inhibit(), u8::MAX);
     }
 }
 
