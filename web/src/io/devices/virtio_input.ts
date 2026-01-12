@@ -53,6 +53,8 @@ const KEY_7 = 8;
 const KEY_8 = 9;
 const KEY_9 = 10;
 const KEY_0 = 11;
+const KEY_MINUS = 12;
+const KEY_EQUAL = 13;
 const KEY_BACKSPACE = 14;
 const KEY_TAB = 15;
 const KEY_Q = 16;
@@ -65,6 +67,8 @@ const KEY_U = 22;
 const KEY_I = 23;
 const KEY_O = 24;
 const KEY_P = 25;
+const KEY_LEFTBRACE = 26;
+const KEY_RIGHTBRACE = 27;
 const KEY_ENTER = 28;
 const KEY_LEFTCTRL = 29;
 const KEY_A = 30;
@@ -76,7 +80,11 @@ const KEY_H = 35;
 const KEY_J = 36;
 const KEY_K = 37;
 const KEY_L = 38;
+const KEY_SEMICOLON = 39;
+const KEY_APOSTROPHE = 40;
+const KEY_GRAVE = 41;
 const KEY_LEFTSHIFT = 42;
+const KEY_BACKSLASH = 43;
 const KEY_Z = 44;
 const KEY_X = 45;
 const KEY_C = 46;
@@ -84,6 +92,9 @@ const KEY_V = 47;
 const KEY_B = 48;
 const KEY_N = 49;
 const KEY_M = 50;
+const KEY_COMMA = 51;
+const KEY_DOT = 52;
+const KEY_SLASH = 53;
 const KEY_RIGHTSHIFT = 54;
 const KEY_LEFTALT = 56;
 const KEY_SPACE = 57;
@@ -217,6 +228,28 @@ export function hidUsageToLinuxKeyCode(usage: number): number | null {
       return KEY_TAB;
     case 0x2c:
       return KEY_SPACE;
+    case 0x2d:
+      return KEY_MINUS;
+    case 0x2e:
+      return KEY_EQUAL;
+    case 0x2f:
+      return KEY_LEFTBRACE;
+    case 0x30:
+      return KEY_RIGHTBRACE;
+    case 0x31:
+      return KEY_BACKSLASH;
+    case 0x33:
+      return KEY_SEMICOLON;
+    case 0x34:
+      return KEY_APOSTROPHE;
+    case 0x35:
+      return KEY_GRAVE;
+    case 0x36:
+      return KEY_COMMA;
+    case 0x37:
+      return KEY_DOT;
+    case 0x38:
+      return KEY_SLASH;
 
     // Modifiers.
     case 0xe0:

@@ -164,5 +164,18 @@ describe("hidUsageToLinuxKeyCode", () => {
     expect(hidUsageToLinuxKeyCode(0x3a)).toBe(59); // KEY_F1
     expect(hidUsageToLinuxKeyCode(0x45)).toBe(88); // KEY_F12
   });
-});
 
+  it("maps common punctuation keys used for text entry", () => {
+    expect(hidUsageToLinuxKeyCode(0x2d)).toBe(12); // KEY_MINUS
+    expect(hidUsageToLinuxKeyCode(0x2e)).toBe(13); // KEY_EQUAL
+    expect(hidUsageToLinuxKeyCode(0x2f)).toBe(26); // KEY_LEFTBRACE
+    expect(hidUsageToLinuxKeyCode(0x30)).toBe(27); // KEY_RIGHTBRACE
+    expect(hidUsageToLinuxKeyCode(0x31)).toBe(43); // KEY_BACKSLASH
+    expect(hidUsageToLinuxKeyCode(0x33)).toBe(39); // KEY_SEMICOLON
+    expect(hidUsageToLinuxKeyCode(0x34)).toBe(40); // KEY_APOSTROPHE
+    expect(hidUsageToLinuxKeyCode(0x35)).toBe(41); // KEY_GRAVE
+    expect(hidUsageToLinuxKeyCode(0x36)).toBe(51); // KEY_COMMA
+    expect(hidUsageToLinuxKeyCode(0x37)).toBe(52); // KEY_DOT
+    expect(hidUsageToLinuxKeyCode(0x38)).toBe(53); // KEY_SLASH
+  });
+});
