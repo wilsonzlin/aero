@@ -339,3 +339,71 @@ fn pc_platform_ahci_dma_and_intx_routing_work() {
         Some(12)
     );
 }
+
+#[test]
+fn pc_platform_ahci_dma_writes_mark_dirty_pages_when_enabled() {
+    let capacity = 8 * SECTOR_SIZE as u64;
+    let disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
+
+    let mut pc = PcPlatform::new_with_ahci_dirty_tracking(2 * 1024 * 1024);
+    pc.attach_ahci_disk_port0(Box::new(disk)).unwrap();
+
+    let bdf = SATA_AHCI_ICH9.bdf;
+
+    // Reprogram BAR5 within the platform's PCI MMIO window.
+    let bar5_base: u64 = 0xE100_0000;
+    write_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x24, bar5_base as u32);
+
+    // Enable bus mastering so DMA is permitted (keep memory decoding enabled).
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0006);
+
+    // Program HBA + port 0 registers.
+    let clb = 0x1000u64;
+    let fb = 0x2000u64;
+    let ctba = 0x3000u64;
+    let identify_buf = 0x4000u64;
+
+    pc.memory.write_u32(bar5_base + PORT_BASE + PORT_REG_CLB, clb as u32);
+    pc.memory
+        .write_u32(bar5_base + PORT_BASE + PORT_REG_CLBU, (clb >> 32) as u32);
+    pc.memory.write_u32(bar5_base + PORT_BASE + PORT_REG_FB, fb as u32);
+    pc.memory
+        .write_u32(bar5_base + PORT_BASE + PORT_REG_FBU, (fb >> 32) as u32);
+
+    pc.memory.write_u32(bar5_base + HBA_GHC, GHC_AE | GHC_IE);
+    pc.memory
+        .write_u32(bar5_base + PORT_BASE + PORT_REG_IE, PORT_IS_DHRS);
+    pc.memory.write_u32(
+        bar5_base + PORT_BASE + PORT_REG_CMD,
+        PORT_CMD_ST | PORT_CMD_FRE,
+    );
+
+    // IDENTIFY DMA.
+    write_cmd_header(&mut pc, clb, 0, ctba, 1, false);
+    write_cfis(&mut pc, ctba, ATA_CMD_IDENTIFY, 0, 0);
+    write_prdt(&mut pc, ctba, 0, identify_buf, SECTOR_SIZE as u32);
+
+    // Clear dirty tracking for CPU-initiated setup writes. We want to observe only the DMA
+    // writes performed by the device model.
+    pc.memory.clear_dirty();
+
+    pc.memory
+        .write_u32(bar5_base + PORT_BASE + PORT_REG_CI, 1);
+    pc.process_ahci();
+
+    let mut identify = [0u8; SECTOR_SIZE];
+    pc.memory.read_physical(identify_buf, &mut identify);
+    assert_eq!(identify[0], 0x40);
+
+    let page_size = u64::from(pc.memory.dirty_page_size());
+    let expected_page = identify_buf / page_size;
+
+    let dirty = pc
+        .memory
+        .take_dirty_pages()
+        .expect("dirty tracking enabled");
+    assert!(
+        dirty.contains(&expected_page),
+        "dirty pages should include IDENTIFY DMA buffer page (got {dirty:?})"
+    );
+}
