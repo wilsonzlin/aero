@@ -1236,6 +1236,8 @@ The web tracing buffer is held in-memory and has an explicit size cap to prevent
   per net worker.
 - Once the cap is reached, new frames are **dropped** (so captures may be incomplete for long or
   high-throughput sessions).
+- If available, use the live stats (`droppedRecords` / `droppedBytes`) to detect when the capture
+  hit its cap and frames were dropped.
 - Exporting via the UI (or `downloadPcapng`) uses the net worker’s `takePcapng()` path, which
   **clears the buffer after exporting**. Use this (or the clear button / API) to keep captures
   bounded during long debugging sessions.
