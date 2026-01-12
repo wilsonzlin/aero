@@ -31,6 +31,15 @@ MEM_LIMIT="${AERO_MEM_LIMIT:-12G}"
 export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-4}"
 export RAYON_NUM_THREADS="${RAYON_NUM_THREADS:-$CARGO_BUILD_JOBS}"
 
+# Reduce codegen parallelism per crate (avoids memory spikes / thread creation failures).
+# Only apply when invoking cargo directly, and don't override an explicit codegen-units setting.
+if [[ "${1:-}" == "cargo" || "${1:-}" == */cargo ]]; then
+    if [[ "${RUSTFLAGS:-}" != *"codegen-units="* ]]; then
+        export RUSTFLAGS="${RUSTFLAGS:-} -C codegen-units=${CARGO_BUILD_JOBS}"
+        export RUSTFLAGS="${RUSTFLAGS# }"
+    fi
+fi
+
 if [[ $# -lt 1 ]]; then
     echo "Usage: $0 <command...>" >&2
     echo "" >&2
