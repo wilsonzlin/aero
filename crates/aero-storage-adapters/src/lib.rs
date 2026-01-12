@@ -192,7 +192,9 @@ fn map_aero_storage_error_to_io(err: aero_storage::DiskError) -> io::Error {
             io::Error::new(io::ErrorKind::UnexpectedEof, err)
         }
         aero_storage::DiskError::Unsupported(_)
-        | aero_storage::DiskError::NotSupported(_) => io::Error::new(io::ErrorKind::Unsupported, err),
+        | aero_storage::DiskError::NotSupported(_) => {
+            io::Error::new(io::ErrorKind::Unsupported, err)
+        }
         aero_storage::DiskError::QuotaExceeded => io::Error::new(io::ErrorKind::StorageFull, err),
         aero_storage::DiskError::InUse => io::Error::new(io::ErrorKind::ResourceBusy, err),
         aero_storage::DiskError::InvalidState(_) => io::Error::new(io::ErrorKind::Other, err),
