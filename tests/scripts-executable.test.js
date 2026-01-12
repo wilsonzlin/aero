@@ -292,6 +292,69 @@ test("safe-run.sh does not force codegen-units based on AERO_CARGO_BUILD_JOBS (L
   }
 });
 
+test("safe-run.sh retries Cargo when it hits fork EAGAIN under contention (Linux)", { skip: process.platform !== "linux" }, () => {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "aero-safe-run-retry-fork-eagain-"));
+  try {
+    const binDir = path.join(tmpRoot, "bin");
+    fs.mkdirSync(binDir, { recursive: true });
+
+    // Track how many times safe-run invoked "cargo".
+    const invocationsFile = path.join(tmpRoot, "cargo-invocations.txt");
+
+    // Fake `cargo` that fails once with the fork EAGAIN signature safe-run should retry, then succeeds.
+    const fakeCargo = path.join(binDir, "cargo");
+    fs.writeFileSync(
+      fakeCargo,
+      `#!/usr/bin/env bash
+set -euo pipefail
+
+count_file="\${CARGO_INVOCATIONS_FILE:?}"
+count=0
+if [[ -f "\${count_file}" ]]; then
+  count="$(cat "\${count_file}")"
+fi
+count=$((count + 1))
+echo "\${count}" > "\${count_file}"
+
+if [[ "\${count}" -eq 1 ]]; then
+  echo "run_limited.sh: fork: retry: Resource temporarily unavailable" >&2
+  exit 1
+fi
+exit 0
+`,
+      "utf8",
+    );
+    fs.chmodSync(fakeCargo, 0o755);
+
+    // Override `sleep` so the safe-run exponential backoff doesn't slow down tests.
+    const fakeSleep = path.join(binDir, "sleep");
+    fs.writeFileSync(fakeSleep, "#!/usr/bin/env bash\nexit 0\n", "utf8");
+    fs.chmodSync(fakeSleep, 0o755);
+
+    const env = { ...process.env };
+    env.PATH = `${binDir}${path.delimiter}${env.PATH || ""}`;
+    env.CARGO_INVOCATIONS_FILE = invocationsFile;
+
+    // Keep the retry loop bounded (one retry max).
+    env.AERO_SAFE_RUN_RUSTC_RETRIES = "2";
+
+    // Ensure the codegen-units override path isn't accidentally triggered by the outer environment.
+    delete env.AERO_RUST_CODEGEN_UNITS;
+    delete env.AERO_CODEGEN_UNITS;
+    delete env.RUSTFLAGS;
+
+    execFileSync(path.join(repoRoot, "scripts/safe-run.sh"), ["cargo"], {
+      cwd: repoRoot,
+      env,
+      stdio: "ignore",
+    });
+
+    assert.equal(fs.readFileSync(invocationsFile, "utf8").trim(), "2");
+  } finally {
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
+});
+
 test("safe-run.sh allows overriding codegen-units via AERO_RUST_CODEGEN_UNITS (Linux)", { skip: process.platform !== "linux" }, () => {
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "aero-safe-run-codegen-units-"));
   try {
