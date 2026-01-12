@@ -558,6 +558,21 @@ while true; do
     set -e
 
     if [[ "${status}" -eq 0 ]]; then
+        # Cargo can be extremely slow under shared-host contention when multiple agents share the
+        # same Cargo registry/cache (stderr includes: "Blocking waiting for file lock on package cache").
+        #
+        # This is not a failure, but it is often surprising and leads to timeouts. Provide a
+        # proactive hint even on success so users know how to mitigate it.
+        if grep -q "Blocking waiting for file lock on package cache" "${stderr_log}"; then
+            # Only emit this hint when safe-run hasn't already been asked to isolate Cargo home.
+            case "${AERO_ISOLATE_CARGO_HOME:-}" in
+              "" | 0 | false | FALSE | no | NO | off | OFF)
+                echo "[safe-run] note: detected Cargo package-cache lock contention (\"Blocking waiting for file lock on package cache\")" >&2
+                echo "[safe-run] Tip: avoid shared Cargo registry lock contention by isolating Cargo state per checkout:" >&2
+                echo "[safe-run]   AERO_ISOLATE_CARGO_HOME=1 bash ./scripts/safe-run.sh ..." >&2
+                ;;
+            esac
+        fi
         rm -f "${stderr_log}"
         exit 0
     fi
