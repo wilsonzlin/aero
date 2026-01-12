@@ -768,17 +768,41 @@ export interface WasmApi {
          * Optional for older WASM builds.
          */
         serial_output_len?(): number;
+
         /**
-         * VGA scanout helpers (legacy text/VBE).
+         * VGA/SVGA scanout (BIOS text mode + VBE graphics).
+         *
+         * Call {@link vga_present} before reading the framebuffer pointer/length or before sampling
+         * {@link vga_width}/{@link vga_height} after the guest changes video modes.
          *
          * Optional for older WASM builds.
          */
-        vga_present?(): boolean;
+        vga_present?(): void;
+        /** Current VGA output width in pixels (0 when VGA is not present). */
         vga_width?(): number;
+        /** Current VGA output height in pixels (0 when VGA is not present). */
         vga_height?(): number;
+        /** Byte stride of a single scanline in the returned framebuffer (RGBA8888, tightly packed). */
         vga_stride_bytes?(): number;
+        /**
+         * Pointer (byte offset) into WASM linear memory for the current VGA front buffer.
+         *
+         * The buffer is RGBA8888 (`width * height * 4` bytes). Pair with {@link vga_framebuffer_len_bytes}.
+         */
         vga_framebuffer_ptr?(): number;
+        /** Length in bytes of the current VGA front buffer (RGBA8888). */
         vga_framebuffer_len_bytes?(): number;
+        /**
+         * Convenience helper: copy the framebuffer bytes into JS (RGBA8888).
+         *
+         * Slower than using {@link vga_framebuffer_ptr} + {@link vga_framebuffer_len_bytes}.
+         */
+        vga_framebuffer_copy_rgba8888?(): Uint8Array;
+        /**
+         * Legacy helper: copy the framebuffer bytes into JS (RGBA8888).
+         *
+         * Optional for older WASM builds.
+         */
         vga_framebuffer_rgba8888_copy?(): Uint8Array | null;
         inject_browser_key(code: string, pressed: boolean): void;
         /**

@@ -2439,22 +2439,22 @@ impl Machine {
     }
 
     // -------------------------------------------------------------------------
-    // VGA scanout (RGBA8888)
+    // VGA/SVGA scanout (BIOS text mode + VBE graphics)
     // -------------------------------------------------------------------------
 
-    /// Present the VGA output (re-render the front buffer if necessary).
+    /// Re-render the VGA/SVGA device into its front buffer if necessary.
     ///
-    /// Returns `false` if the underlying machine was built without VGA support.
-    pub fn vga_present(&mut self) -> bool {
+    /// Call this before reading the framebuffer via `vga_framebuffer_*` or before sampling
+    /// `vga_width()`/`vga_height()` after the guest changes video modes.
+    pub fn vga_present(&mut self) {
         let Some(vga) = self.inner.vga() else {
-            return false;
+            return;
         };
         vga.borrow_mut().present();
-        true
     }
 
-    /// Current VGA output width in pixels (0 if VGA is absent).
-    pub fn vga_width(&mut self) -> u32 {
+    /// Current VGA output width in pixels (0 if the machine does not have a VGA device).
+    pub fn vga_width(&self) -> u32 {
         let Some(vga) = self.inner.vga() else {
             return 0;
         };
@@ -2462,8 +2462,8 @@ impl Machine {
         w
     }
 
-    /// Current VGA output height in pixels (0 if VGA is absent).
-    pub fn vga_height(&mut self) -> u32 {
+    /// Current VGA output height in pixels (0 if the machine does not have a VGA device).
+    pub fn vga_height(&self) -> u32 {
         let Some(vga) = self.inner.vga() else {
             return 0;
         };
@@ -2471,10 +2471,8 @@ impl Machine {
         h
     }
 
-    /// Current VGA framebuffer stride in bytes.
-    ///
-    /// This is always `vga_width() * 4` for RGBA8888 (0 if VGA is absent).
-    pub fn vga_stride_bytes(&mut self) -> u32 {
+    /// Current VGA output stride in bytes (RGBA8888, tightly packed).
+    pub fn vga_stride_bytes(&self) -> u32 {
         self.vga_width().saturating_mul(4)
     }
 
@@ -2485,13 +2483,18 @@ impl Machine {
     /// # Safety contract (JS/host)
     /// The caller must re-query this pointer after each [`Machine::vga_present`] call because the
     /// front buffer pointer may change (front/back swap or resize).
-    pub fn vga_framebuffer_ptr(&mut self) -> u32 {
+    #[cfg(target_arch = "wasm32")]
+    pub fn vga_framebuffer_ptr(&self) -> u32 {
         let Some(vga) = self.inner.vga() else {
             return 0;
         };
-        let vga = vga.borrow();
-        let fb: &[u32] = vga.get_framebuffer();
-        u32::try_from(fb.as_ptr() as usize).unwrap_or(0)
+        vga.borrow().get_framebuffer().as_ptr() as u32
+    }
+
+    /// See [`Machine::vga_framebuffer_ptr`].
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn vga_framebuffer_ptr(&self) -> u32 {
+        0
     }
 
     /// Length in bytes of the VGA framebuffer.
@@ -2500,17 +2503,37 @@ impl Machine {
     ///
     /// The caller must re-query this length after each [`Machine::vga_present`] call because it
     /// may change (front/back swap or resize).
-    pub fn vga_framebuffer_len_bytes(&mut self) -> u32 {
+    pub fn vga_framebuffer_len_bytes(&self) -> u32 {
         let Some(vga) = self.inner.vga() else {
             return 0;
         };
-        let vga = vga.borrow();
-        let fb: &[u32] = vga.get_framebuffer();
-        let bytes = fb.len().saturating_mul(4);
-        u32::try_from(bytes).unwrap_or(u32::MAX)
+        let bytes = (vga.borrow().get_framebuffer().len() as u64).saturating_mul(4);
+        bytes.min(u64::from(u32::MAX)) as u32
     }
 
-    /// Convenience API: return a copy of the VGA RGBA8888 framebuffer as a `Uint8Array`.
+    /// Copy the current VGA front buffer into a byte vector (RGBA8888).
+    ///
+    /// This is significantly slower than using `vga_framebuffer_ptr()`/`vga_framebuffer_len_bytes()`,
+    /// but it is convenient for tests and for simple JS callers.
+    pub fn vga_framebuffer_copy_rgba8888(&mut self) -> Vec<u8> {
+        let Some(vga) = self.inner.vga() else {
+            return Vec::new();
+        };
+
+        let mut vga = vga.borrow_mut();
+        vga.present();
+        let fb = vga.get_framebuffer();
+        let mut out = Vec::with_capacity(fb.len().saturating_mul(4));
+        for &px in fb {
+            out.extend_from_slice(&px.to_le_bytes());
+        }
+        out
+    }
+
+    /// Legacy helper: copy the current VGA front buffer into a JS `Uint8Array` (RGBA8888).
+    ///
+    /// Prefer [`Machine::vga_framebuffer_copy_rgba8888`] (returns a `Vec<u8>` which wasm-bindgen
+    /// already maps to `Uint8Array`) or the raw pointer/len view for zero-copy scanout.
     ///
     /// Returns `null` if VGA is absent.
     #[cfg(target_arch = "wasm32")]
@@ -2518,7 +2541,8 @@ impl Machine {
         let Some(vga) = self.inner.vga() else {
             return JsValue::NULL;
         };
-        let vga = vga.borrow();
+        let mut vga = vga.borrow_mut();
+        vga.present();
         let fb: &[u32] = vga.get_framebuffer();
         // Safety: `fb` is a valid slice of `u32` pixels; reinterpret as raw bytes.
         let bytes = unsafe { core::slice::from_raw_parts(fb.as_ptr() as *const u8, fb.len() * 4) };
