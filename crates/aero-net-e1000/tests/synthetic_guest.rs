@@ -94,6 +94,16 @@ fn pci_bars_probe_and_program() {
 }
 
 #[test]
+fn pci_bar1_io_indicator_bit_is_present_in_byte_reads() {
+    // Regression test: BAR1 is an I/O BAR, so bit0 must read back as 1 even when read as 8/16-bit
+    // config space accesses. (The device model stores BAR values both in decoded fields and the
+    // raw config byte array.)
+    let dev = E1000Device::new([0x52, 0x54, 0, 0x12, 0x34, 0x56]);
+    assert_eq!(dev.pci_config_read(0x14, 1), 0x1);
+    assert_eq!(dev.pci_config_read(0x14, 2), 0x1);
+}
+
+#[test]
 fn eeprom_read_returns_mac_words() {
     let mac = [0x52, 0x54, 0x00, 0x12, 0x34, 0x56];
     let mut dev = E1000Device::new(mac);
