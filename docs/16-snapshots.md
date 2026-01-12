@@ -82,9 +82,9 @@ To keep restore behavior deterministic and avoid ambiguous state merges, the dec
 - Duplicate core sections (e.g. multiple `META`/`MMU`/`DEVICES`/`DISKS`/`RAM` sections).
 - Multiple CPU sections (any mix of `CPU` + `CPUS`).
 - Duplicate entries inside canonical lists:
-  - `DEVICES`: duplicate `(device_id, version, flags)`
-  - `DISKS`: duplicate `disk_id`
-  - `CPUS`: duplicate `apic_id`
+  - `DEVICES`: duplicate `(device_id, version, flags)` (must be unique)
+  - `DISKS`: duplicate `disk_id` (must be unique)
+  - `CPUS`: duplicate `apic_id` (must be unique)
 - Dirty RAM snapshots (`RAM` `mode = Dirty`) whose page index list is not **strictly increasing**.
 
 ### Core sections (format v1)
