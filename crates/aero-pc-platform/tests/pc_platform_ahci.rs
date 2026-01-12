@@ -192,11 +192,7 @@ fn pc_platform_ahci_dma_and_intx_routing_work() {
     disk.write_sectors(0, &sector0).unwrap();
 
     let mut pc = PcPlatform::new_with_ahci(2 * 1024 * 1024);
-    pc.ahci
-        .as_ref()
-        .unwrap()
-        .borrow_mut()
-        .attach_drive(0, AtaDrive::new(Box::new(disk)).unwrap());
+    pc.attach_ahci_drive_port0(AtaDrive::new(Box::new(disk)).unwrap());
 
     let bdf = SATA_AHCI_ICH9.bdf;
 

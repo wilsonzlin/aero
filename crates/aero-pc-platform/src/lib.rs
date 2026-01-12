@@ -16,6 +16,7 @@ use aero_devices::pit8254::{register_pit8254, Pit8254, SharedPit8254};
 use aero_devices::reset_ctrl::{ResetCtrl, ResetKind, RESET_CTRL_PORT};
 use aero_devices::rtc_cmos::{register_rtc_cmos, RtcCmos, SharedRtcCmos};
 use aero_devices::{hpet, i8042};
+use aero_devices_storage::ata::AtaDrive;
 use aero_devices_storage::pci_ide::{Piix3IdePciDevice, PRIMARY_PORTS, SECONDARY_PORTS};
 use aero_devices_storage::AhciPciDevice;
 use aero_interrupts::apic::{IOAPIC_MMIO_BASE, IOAPIC_MMIO_SIZE, LAPIC_MMIO_BASE, LAPIC_MMIO_SIZE};
@@ -786,6 +787,18 @@ impl PcPlatform {
     pub fn reset_pci(&mut self) {
         let mut pci_cfg = self.pci_cfg.borrow_mut();
         bios_post(pci_cfg.bus_mut(), &mut self.pci_allocator).unwrap();
+    }
+
+    pub fn attach_ahci_drive(&mut self, port: usize, drive: AtaDrive) {
+        self.ahci
+            .as_ref()
+            .expect("AHCI controller is not enabled on this PcPlatform")
+            .borrow_mut()
+            .attach_drive(port, drive);
+    }
+
+    pub fn attach_ahci_drive_port0(&mut self, drive: AtaDrive) {
+        self.attach_ahci_drive(0, drive);
     }
 
     pub fn process_hda(&mut self, output_frames: usize) {
