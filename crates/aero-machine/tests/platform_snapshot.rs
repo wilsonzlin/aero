@@ -4,6 +4,7 @@ use pretty_assertions::assert_eq;
 
 use aero_devices::acpi_pm::DEFAULT_PM_TMR_BLK;
 use aero_devices::pci::{PciBarDefinition, PciBdf, PciConfigSpace, PciDevice, PciInterruptPin};
+use aero_devices::pit8254::{PIT_CH0, PIT_CMD};
 
 fn pc_machine_config() -> MachineConfig {
     MachineConfig {
@@ -72,6 +73,78 @@ fn snapshot_restore_preserves_acpi_pm_timer_and_it_advances_with_manual_clock() 
     // Advancing another second should deterministically add another 3_579_545 ticks.
     restored.tick_platform(1_000_000_000);
     assert_eq!(restored.io_read(DEFAULT_PM_TMR_BLK, 4), 7_159_090);
+}
+
+#[test]
+fn snapshot_restore_preserves_rtc_periodic_irq8_pending_vector() {
+    let mut src = Machine::new(pc_machine_config()).unwrap();
+    let interrupts = src.platform_interrupts().unwrap();
+
+    // Put the PIC in a known state:
+    // - master offset 0x20, slave offset 0x28
+    // - unmask cascade + IRQ8
+    {
+        let mut ints = interrupts.borrow_mut();
+        ints.pic_mut().set_offsets(0x20, 0x28);
+        ints.pic_mut().set_masked(2, false);
+        ints.pic_mut().set_masked(8, false);
+    }
+
+    // Enable RTC periodic interrupts (PIE=1) in Status Register B (0x0B).
+    src.io_write(0x70, 1, 0x0B);
+    src.io_write(0x71, 1, 0x42); // 24h + PIE
+
+    assert_eq!(interrupts.borrow().get_pending(), None);
+
+    // Default reg A rate is 1024Hz, so 1ms is enough to trigger a periodic interrupt.
+    src.tick_platform(1_000_000);
+
+    // IRQ8 on the slave PIC with offset 0x28 => vector 0x28.
+    assert_eq!(interrupts.borrow().get_pending(), Some(0x28));
+
+    let snap = src.take_snapshot_full().unwrap();
+
+    let mut restored = Machine::new(pc_machine_config()).unwrap();
+    restored.restore_snapshot_bytes(&snap).unwrap();
+
+    let interrupts = restored.platform_interrupts().unwrap();
+    assert_eq!(interrupts.borrow().get_pending(), Some(0x28));
+}
+
+#[test]
+fn snapshot_restore_preserves_pit_phase_and_pulse_accounting() {
+    let cfg = pc_machine_config();
+
+    // Baseline: run without snapshot/restore.
+    let mut baseline = Machine::new(cfg.clone()).unwrap();
+
+    // Program PIT ch0: access lobyte/hibyte, mode 2 (rate generator), binary.
+    baseline.io_write(PIT_CMD, 1, 0x34);
+    baseline.io_write(PIT_CH0, 1, 100);
+    baseline.io_write(PIT_CH0, 1, 0);
+
+    let pit = baseline.pit().unwrap();
+    pit.borrow_mut().advance_ticks(150);
+    pit.borrow_mut().advance_ticks(50);
+    assert_eq!(pit.borrow_mut().take_irq0_pulses(), 2);
+
+    // Snapshot mid-period and continue after restore.
+    let mut src = Machine::new(cfg.clone()).unwrap();
+    src.io_write(PIT_CMD, 1, 0x34);
+    src.io_write(PIT_CH0, 1, 100);
+    src.io_write(PIT_CH0, 1, 0);
+    let pit = src.pit().unwrap();
+    pit.borrow_mut().advance_ticks(150);
+
+    let snap = src.take_snapshot_full().unwrap();
+
+    let mut restored = Machine::new(cfg).unwrap();
+    restored.restore_snapshot_bytes(&snap).unwrap();
+    let pit = restored.pit().unwrap();
+    pit.borrow_mut().advance_ticks(50);
+
+    // The restored PIT includes pulses from before the snapshot (1) and after (1).
+    assert_eq!(pit.borrow_mut().take_irq0_pulses(), 2);
 }
 
 #[test]
