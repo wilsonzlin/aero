@@ -489,6 +489,12 @@ Mitigations:
     CARGO_BUILD_RUSTC_WRAPPER= CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER= \
     cargo test --locked
   ```
+- Or, when using `safe-run.sh` (recommended), note that it clears *environment-based* `sccache`
+  wrappers by default. To force-disable wrappers (including those injected via Cargo config),
+  set:
+  ```bash
+  AERO_DISABLE_RUSTC_WRAPPER=1 bash ./scripts/safe-run.sh cargo test --locked
+  ```
 - Or, when using the agent env helper:
   ```bash
   export AERO_DISABLE_RUSTC_WRAPPER=1
@@ -497,9 +503,9 @@ Mitigations:
 
 Notes:
 
-- By default, `scripts/agent-env.sh` clears *only* `sccache` wrappers it sees in the environment
-  and preserves non-sccache wrappers (e.g. `ccache`). Use `AERO_DISABLE_RUSTC_WRAPPER=1` to
-  force-disable all wrappers.
+- By default, `scripts/safe-run.sh` and `scripts/agent-env.sh` clear *only* `sccache` wrappers they
+  see in the environment and preserve non-sccache wrappers (e.g. `ccache`). Use
+  `AERO_DISABLE_RUSTC_WRAPPER=1` to force-disable all wrappers.
 
 ### Build is very slow
 
