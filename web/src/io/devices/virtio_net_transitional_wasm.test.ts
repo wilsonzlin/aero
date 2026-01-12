@@ -20,7 +20,9 @@ describe("io/devices/virtio_net (wasm transitional)", () => {
       ({ api } = await initWasm({ variant: "single", memory }));
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      if (message.includes("Missing single WASM package")) return;
+      // Local dev / unit test environments may not have the wasm-pack outputs built.
+      // Skip this integration test when the single-thread WASM bundle is unavailable.
+      if (message.includes("Missing single") && message.includes("WASM package")) return;
       throw err;
     }
 
