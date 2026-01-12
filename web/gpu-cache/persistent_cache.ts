@@ -743,7 +743,21 @@ export class PersistentGpuCache {
     };
 
     store.put(record);
-    await txDone(tx);
+    try {
+      await txDone(tx);
+    } catch (err) {
+      // If the IDB write failed but we already wrote an OPFS blob, delete it so
+      // we don't leak orphaned files.
+      if (storage === "opfs" && opfsFile && this._opfsCacheDir) {
+        try {
+          const shadersDir = await this._opfsCacheDir.getDirectoryHandle("shaders");
+          await deleteOpfsFile(shadersDir, opfsFile);
+        } catch {
+          // Ignore.
+        }
+      }
+      throw err;
+    }
 
     // If the entry used to be OPFS-backed but is now stored in IDB (e.g. the
     // payload shrank below the spill threshold, or OPFS write failed), clean up
@@ -861,7 +875,19 @@ export class PersistentGpuCache {
     };
 
     store.put(record);
-    await txDone(tx);
+    try {
+      await txDone(tx);
+    } catch (err) {
+      if (storage === "opfs" && opfsFile && this._opfsCacheDir) {
+        try {
+          const dir = await this._opfsCacheDir.getDirectoryHandle("pipelines");
+          await deleteOpfsFile(dir, opfsFile);
+        } catch {
+          // Ignore.
+        }
+      }
+      throw err;
+    }
 
     if (existingOpfsFile && storage !== "opfs" && this._opfsCacheDir) {
       try {
