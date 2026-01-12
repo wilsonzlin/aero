@@ -28,6 +28,9 @@ pub const E1000_MMIO_SIZE: u32 = 0x20_000;
 /// Size of the E1000 I/O BAR (IOADDR/IODATA window).
 pub const E1000_IO_SIZE: u32 = 0x40;
 
+const E1000_BAR0_ADDR_MASK: u32 = (!(E1000_MMIO_SIZE - 1)) & 0xffff_fff0;
+const E1000_BAR1_ADDR_MASK: u32 = (!(E1000_IO_SIZE - 1)) & 0xffff_fffc;
+
 /// Minimum Ethernet frame length: destination MAC (6) + source MAC (6) + ethertype (2).
 pub const MIN_L2_FRAME_LEN: usize = 14;
 /// Maximum Ethernet frame length accepted by the device model (no FCS).
@@ -419,7 +422,7 @@ impl PciConfig {
         let read_byte = |off: usize| -> u8 {
             if (0x10..0x14).contains(&off) {
                 let full = if self.bar0_probe {
-                    (!(E1000_MMIO_SIZE - 1)) & 0xffff_fff0
+                    E1000_BAR0_ADDR_MASK
                 } else {
                     self.bar0
                 };
@@ -428,7 +431,7 @@ impl PciConfig {
             } else if (0x14..0x18).contains(&off) {
                 let full = if self.bar1_probe {
                     // I/O BAR: bit0 must remain set.
-                    (!(E1000_IO_SIZE - 1) & 0xffff_fffc) | 0x1
+                    E1000_BAR1_ADDR_MASK | 0x1
                 } else {
                     self.bar1
                 };
@@ -544,7 +547,7 @@ impl PciConfig {
                         self.bar0 = 0;
                     } else {
                         self.bar0_probe = false;
-                        self.bar0 = value & 0xffff_fff0;
+                        self.bar0 = value & E1000_BAR0_ADDR_MASK;
                     }
                     self.write_u32_raw(offset, self.bar0);
                     return;
@@ -555,7 +558,7 @@ impl PciConfig {
                         self.bar1 = 0x1;
                     } else {
                         self.bar1_probe = false;
-                        self.bar1 = (value & 0xffff_fffc) | 0x1;
+                        self.bar1 = (value & E1000_BAR1_ADDR_MASK) | 0x1;
                     }
                     self.write_u32_raw(offset, self.bar1);
                     return;
@@ -1620,13 +1623,13 @@ impl E1000Device {
         self.pci.bar0 = if self.pci.bar0_probe {
             0
         } else {
-            state.pci_bar0 & 0xffff_fff0
+            state.pci_bar0 & E1000_BAR0_ADDR_MASK
         };
         self.pci.bar1 = if self.pci.bar1_probe {
             0x1
         } else {
             // I/O BAR: bit0 must remain set.
-            (state.pci_bar1 & 0xffff_fffc) | 0x1
+            (state.pci_bar1 & E1000_BAR1_ADDR_MASK) | 0x1
         };
 
         // Keep the raw config-space bytes coherent with the BAR fields so that 8/16-bit config

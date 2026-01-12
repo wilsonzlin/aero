@@ -138,6 +138,7 @@ fn snapshot_roundtrip_preserves_key_state() {
     dev.pci_config_write(0x04, 2, 0x4); // Bus Master Enable
 
     // Mutate PCI config.
+    // BAR0 size is 0x20_000, so the device masks the base to 0x20_000 alignment.
     dev.pci_write_u32(0x10, 0xFEBF_0000);
     dev.pci_write_u32(0x14, 0xC000);
 
@@ -206,7 +207,7 @@ fn snapshot_roundtrip_preserves_key_state() {
     restored.load_state(&snapshot).expect("load_state");
 
     assert_eq!(restored.mac_addr(), mac);
-    assert_eq!(restored.pci_read_u32(0x10), 0xFEBF_0000);
+    assert_eq!(restored.pci_read_u32(0x10), 0xFEBE_0000);
     assert_eq!(restored.pci_read_u32(0x14), 0xC001);
     assert_eq!(restored.mmio_read_u32(REG_IMS), ICR_TXDW);
     assert_eq!(restored.mmio_read_u32(0x1234), 0xDEAD_BEEF);

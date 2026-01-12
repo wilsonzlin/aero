@@ -82,9 +82,14 @@ fn pci_bars_probe_and_program() {
     assert_eq!(dev.pci_config_read(0x12, 2), 0xFFFE);
 
     // Program BAR0.
-    dev.pci_write_u32(0x10, 0xFEBF_0000);
-    assert_eq!(dev.pci_read_u32(0x10), 0xFEBF_0000);
-    assert_eq!(dev.pci_config_read(0x12, 2), 0xFEBF);
+    dev.pci_write_u32(0x10, 0xFEBE_0000);
+    assert_eq!(dev.pci_read_u32(0x10), 0xFEBE_0000);
+    assert_eq!(dev.pci_config_read(0x12, 2), 0xFEBE);
+
+    // Misaligned BAR0 writes should be masked to the BAR size (0x20_000) like real hardware.
+    dev.pci_write_u32(0x10, 0xFEBF_1234);
+    assert_eq!(dev.pci_read_u32(0x10), 0xFEBE_0000);
+    assert_eq!(dev.pci_config_read(0x12, 2), 0xFEBE);
 
     // Probe BAR1 size (I/O BAR).
     dev.pci_write_u32(0x14, 0xFFFF_FFFF);
@@ -94,6 +99,10 @@ fn pci_bars_probe_and_program() {
 
     // Program BAR1 (bit0 must remain set).
     dev.pci_write_u32(0x14, 0xC000);
+    assert_eq!(dev.pci_read_u32(0x14), 0xC001);
+
+    // Misaligned BAR1 writes should be masked to the BAR size (0x40) and keep bit0 set.
+    dev.pci_write_u32(0x14, 0xC012);
     assert_eq!(dev.pci_read_u32(0x14), 0xC001);
 }
 
@@ -115,7 +124,7 @@ fn pci_bar_partial_writes_update_decoded_bar_fields() {
 
     // Program BAR0 by writing only the high 16 bits.
     dev.pci_config_write(0x12, 2, 0xFEBF);
-    assert_eq!(dev.pci_read_u32(0x10), 0xFEBF_0000);
+    assert_eq!(dev.pci_read_u32(0x10), 0xFEBE_0000);
 
     // Program BAR1 via a 16-bit write; bit0 must remain set.
     dev.pci_config_write(0x14, 2, 0xC000);
@@ -135,15 +144,15 @@ fn pci_bar_cross_boundary_accesses_are_coherent() {
     assert_eq!(dev.pci_config_read(0x13, 2), 0x01FF);
 
     // Program BAR0, then update BAR0 high byte + BAR1 low byte with a single 16-bit config write.
-    dev.pci_write_u32(0x10, 0xFEBF_0000);
+    dev.pci_write_u32(0x10, 0xFEBE_0000);
     dev.pci_config_write(0x13, 2, 0xA55A);
 
-    // BAR0 bytes 0..2 remain from 0xFEBF_0000; high byte is updated to 0x5A.
-    assert_eq!(dev.pci_read_u32(0x10), 0x5ABF_0000);
-    // BAR1 low byte updated to 0xA5 (bit0 is already set, bit1 clear).
-    assert_eq!(dev.pci_read_u32(0x14), 0x0000_00A5);
-    // Cross-boundary read should observe the same bytes.
-    assert_eq!(dev.pci_config_read(0x13, 2), 0xA55A);
+    // BAR0 bytes 0..2 remain from 0xFEBE_0000; high byte is updated to 0x5A.
+    assert_eq!(dev.pci_read_u32(0x10), 0x5ABE_0000);
+    // BAR1 low byte is masked to the I/O BAR size (0x40) and bit0 remains set.
+    assert_eq!(dev.pci_read_u32(0x14), 0x0000_0081);
+    // Cross-boundary read should observe the masked result.
+    assert_eq!(dev.pci_config_read(0x13, 2), 0x815A);
 }
 
 #[test]
