@@ -188,29 +188,6 @@ pub fn save_snapshot<W: Write + Seek, S: SnapshotSource>(
         write_section(w, SectionId::CPU, 2, 0, |w| cpus[0].cpu.encode_v2(w))?;
     } else {
         write_section(w, SectionId::CPUS, 2, 0, |w| {
-            #[derive(Debug, Default)]
-            struct CountingWriter {
-                len: u64,
-            }
-
-            impl std::io::Write for CountingWriter {
-                fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-                    self.write_all(buf)?;
-                    Ok(buf.len())
-                }
-
-                fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
-                    self.len = self.len.checked_add(buf.len() as u64).ok_or_else(|| {
-                        std::io::Error::new(std::io::ErrorKind::Other, "length overflow")
-                    })?;
-                    Ok(())
-                }
-
-                fn flush(&mut self) -> std::io::Result<()> {
-                    Ok(())
-                }
-            }
-
             let count: u32 = cpus
                 .len()
                 .try_into()
@@ -219,12 +196,19 @@ pub fn save_snapshot<W: Write + Seek, S: SnapshotSource>(
 
             for cpu in &cpus {
                 // Avoid buffering the full vCPU entry in memory (which would duplicate large
-                // `internal_state` blobs). Instead, count bytes first, then stream-write.
-                let mut counter = CountingWriter::default();
-                cpu.encode_v2(&mut counter)?;
-                let entry_len = counter.len;
-                w.write_u64_le(entry_len)?;
+                // `internal_state` blobs). We also avoid encoding twice by reserving space for the
+                // length prefix and seeking back to patch it once the entry has been written.
+                let len_pos = w.stream_position()?;
+                w.write_u64_le(0)?; // placeholder entry_len
+                let entry_start = w.stream_position()?;
                 cpu.encode_v2(w)?;
+                let entry_end = w.stream_position()?;
+                let entry_len = entry_end
+                    .checked_sub(entry_start)
+                    .ok_or(SnapshotError::Corrupt("stream position underflow"))?;
+                w.seek(SeekFrom::Start(len_pos))?;
+                w.write_u64_le(entry_len)?;
+                w.seek(SeekFrom::Start(entry_end))?;
             }
             Ok(())
         })?;
