@@ -22,6 +22,13 @@ pub trait NetworkBackend {
     /// Transmit a guest → host Ethernet frame.
     fn transmit(&mut self, frame: Vec<u8>);
 
+    /// Best-effort stats for the ring-buffer-backed [`L2TunnelRingBackend`].
+    ///
+    /// Most backends do not provide these stats; the default implementation returns `None`.
+    fn l2_ring_stats(&self) -> Option<L2TunnelRingBackendStats> {
+        None
+    }
+
     /// Poll for a host → guest Ethernet frame.
     ///
     /// Backends may return immediate responses (ARP/DHCP/DNS, etc.) when the guest transmits,
@@ -43,6 +50,10 @@ impl<T: NetworkBackend + ?Sized> NetworkBackend for Box<T> {
         <T as NetworkBackend>::transmit(&mut **self, frame);
     }
 
+    fn l2_ring_stats(&self) -> Option<L2TunnelRingBackendStats> {
+        <T as NetworkBackend>::l2_ring_stats(&**self)
+    }
+
     fn poll_receive(&mut self) -> Option<Vec<u8>> {
         <T as NetworkBackend>::poll_receive(&mut **self)
     }
@@ -55,6 +66,10 @@ impl<T: NetworkBackend + ?Sized> NetworkBackend for Box<T> {
 impl<T: NetworkBackend + ?Sized> NetworkBackend for &mut T {
     fn transmit(&mut self, frame: Vec<u8>) {
         <T as NetworkBackend>::transmit(&mut **self, frame);
+    }
+
+    fn l2_ring_stats(&self) -> Option<L2TunnelRingBackendStats> {
+        <T as NetworkBackend>::l2_ring_stats(&**self)
     }
 
     fn poll_receive(&mut self) -> Option<Vec<u8>> {
@@ -75,6 +90,10 @@ impl<B: NetworkBackend> NetworkBackend for Option<B> {
         if let Some(backend) = self.as_mut() {
             backend.transmit(frame);
         }
+    }
+
+    fn l2_ring_stats(&self) -> Option<L2TunnelRingBackendStats> {
+        self.as_ref().and_then(|backend| backend.l2_ring_stats())
     }
 
     fn poll_receive(&mut self) -> Option<Vec<u8>> {

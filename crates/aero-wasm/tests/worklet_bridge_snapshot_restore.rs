@@ -162,3 +162,61 @@ fn hda_controller_deferred_ring_restore_applies_on_attach() {
 
     drop(guest);
 }
+
+#[wasm_bindgen_test]
+fn hda_controller_deferred_ring_restore_tolerates_capacity_mismatch() {
+    let snapshot_capacity_frames = 8;
+    let restored_capacity_frames = 4;
+    let channel_count = 2;
+
+    let mut guest = vec![0u8; 0x4000];
+    let guest_base = guest.as_mut_ptr() as u32;
+    let guest_size = guest.len() as u32;
+
+    let mut hda = HdaControllerBridge::new(guest_base, guest_size, None).unwrap();
+
+    // Create a snapshot with a larger AudioWorklet ring.
+    let ring = WorkletBridge::new(snapshot_capacity_frames, channel_count).unwrap();
+    let sab = ring.shared_buffer();
+    hda.attach_audio_ring(sab, snapshot_capacity_frames, channel_count)
+        .unwrap();
+
+    // Fill the ring so the write index is far ahead of the read index (used > restored capacity).
+    let input: Vec<f32> = (0..(snapshot_capacity_frames * channel_count))
+        .map(|v| (v + 1) as f32)
+        .collect();
+    assert_eq!(ring.write_f32_interleaved(&input), snapshot_capacity_frames);
+    let snap = hda.save_state();
+
+    // Detach the ring and restore the snapshot bytes while no ring is attached. This will stash the
+    // ring state for later application.
+    hda.detach_audio_ring();
+    hda.load_state(&snap).unwrap();
+
+    // Reattach a smaller ring. Applying the pending snapshot must not panic, and indices should be
+    // clamped to the new capacity.
+    let ring2 = WorkletBridge::new(restored_capacity_frames, channel_count).unwrap();
+    let sab2 = ring2.shared_buffer();
+    let header = Uint32Array::new_with_byte_offset_and_length(&sab2, 0, HEADER_U32_LEN as u32);
+    let samples = Float32Array::new_with_byte_offset_and_length(
+        &sab2,
+        HEADER_BYTES as u32,
+        restored_capacity_frames * channel_count,
+    );
+
+    atomics_store_u32(&header, READ_FRAME_INDEX as u32, 123);
+    atomics_store_u32(&header, WRITE_FRAME_INDEX as u32, 456);
+    let _ = samples.fill(123.0, 0, samples.length());
+
+    hda.attach_audio_ring(sab2, restored_capacity_frames, channel_count)
+        .unwrap();
+
+    // The snapshot had read=0, write=8. Restoring into capacity 4 should clamp read to write-4.
+    assert_eq!(atomics_load_u32(&header, READ_FRAME_INDEX as u32), 4);
+    assert_eq!(atomics_load_u32(&header, WRITE_FRAME_INDEX as u32), 8);
+    for i in 0..samples.length() {
+        assert_eq!(samples.get_index(i), 0.0, "sample[{i}] not cleared");
+    }
+
+    drop(guest);
+}
