@@ -2355,7 +2355,8 @@ static void ProcessKeyboardReport(VirtioInputEventsTestResult& out, const uint8_
 
   const uint8_t modifiers = buf[off];
   const uint8_t* keys = buf + off + 2;
-  const size_t key_count = static_cast<size_t>(len) - (off + 2);
+  // Boot keyboard layout exposes up to 6 simultaneous key usages.
+  const size_t key_count = std::min<size_t>(6, static_cast<size_t>(len) - (off + 2));
 
   bool saw_a = false;
   bool all_zero = true;
