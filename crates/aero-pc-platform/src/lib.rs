@@ -438,6 +438,47 @@ impl PortIoDevice for PcIdeBusMasterBar {
     }
 }
 
+/// AHCI (BAR5) handler registered via the platform's [`PciBarMmioRouter`].
+///
+/// The canonical PC platform models PCI config space via [`PciConfigPorts`], but the standalone
+/// `AhciPciDevice` instance also contains its own `PciConfigSpace` which gates MMIO on
+/// `PCI_COMMAND.MEMORY_ENABLE`.
+///
+/// Keep the device model's PCI command register mirrored from the canonical config space on every
+/// MMIO access so BAR routing behaves the same as when the device is used standalone (e.g. in unit
+/// tests) and so MMIO decoding respects guest writes to the command register.
+struct PcAhciMmioBar {
+    pci_cfg: SharedPciConfigPorts,
+    ahci: Rc<RefCell<AhciPciDevice>>,
+    bdf: PciBdf,
+}
+
+impl PcAhciMmioBar {
+    fn sync_command(&self) {
+        let command = {
+            let mut pci_cfg = self.pci_cfg.borrow_mut();
+            pci_cfg
+                .bus_mut()
+                .device_config(self.bdf)
+                .map(|cfg| cfg.command())
+                .unwrap_or(0)
+        };
+        self.ahci.borrow_mut().config_mut().set_command(command);
+    }
+}
+
+impl PciBarMmioHandler for PcAhciMmioBar {
+    fn read(&mut self, offset: u64, size: usize) -> u64 {
+        self.sync_command();
+        MmioHandler::read(&mut *self.ahci.borrow_mut(), offset, size)
+    }
+
+    fn write(&mut self, offset: u64, size: usize, value: u64) {
+        self.sync_command();
+        MmioHandler::write(&mut *self.ahci.borrow_mut(), offset, size, value);
+    }
+}
+
 /// UHCI (BAR4) handler registered via the platform's `PciIoWindow`.
 ///
 /// The `port` argument is interpreted as the device-relative offset within BAR4.
