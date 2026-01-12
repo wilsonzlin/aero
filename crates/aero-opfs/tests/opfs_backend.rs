@@ -53,6 +53,7 @@ async fn opfs_roundtrip_small() {
     let mut backend = match OpfsStorage::open(&path, true, size).await {
         Ok(b) => b,
         Err(DiskError::NotSupported(_)) => return,
+        Err(DiskError::BackendUnavailable) => return,
         Err(e) => panic!("open failed: {e:?}"),
     };
 
@@ -77,6 +78,7 @@ async fn opfs_large_offset_over_2gb() {
         Ok(b) => b,
         Err(DiskError::NotSupported(_)) => return,
         Err(DiskError::QuotaExceeded) => return,
+        Err(DiskError::BackendUnavailable) => return,
         Err(e) => panic!("open failed: {e:?}"),
     };
 
