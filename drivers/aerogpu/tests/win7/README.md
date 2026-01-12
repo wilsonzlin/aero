@@ -77,6 +77,7 @@ drivers/aerogpu/tests/win7/
   transfer_feature_sanity/
   d3d9_raster_status_sanity/
   d3d9_raster_status_pacing/
+  d3d9_validate_device_sanity/
   dwm_flush_pacing/
   d3d9ex_triangle/
   d3d9ex_stateblock_sanity/
