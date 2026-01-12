@@ -91,10 +91,9 @@ pub fn detect_format<S: ByteStorage>(storage: &mut S) -> DiskResult<DiskFormat> 
                 return Ok(DiskFormat::Sparse);
             }
 
-            let mut header = [0u8; 64];
-            storage.read_at(0, &mut header)?;
-
-            let version = u32::from_le_bytes([header[8], header[9], header[10], header[11]]);
+            let mut version_bytes = [0u8; 4];
+            storage.read_at(8, &mut version_bytes)?;
+            let version = u32::from_le_bytes(version_bytes);
             if version == 1 {
                 return Ok(DiskFormat::Sparse);
             }
@@ -106,9 +105,9 @@ pub fn detect_format<S: ByteStorage>(storage: &mut S) -> DiskResult<DiskFormat> 
                 return Ok(DiskFormat::Sparse);
             }
 
-            let mut header = [0u8; 4096];
-            storage.read_at(0, &mut header)?;
-            let version = u32::from_le_bytes([header[8], header[9], header[10], header[11]]);
+            let mut version_bytes = [0u8; 4];
+            storage.read_at(8, &mut version_bytes)?;
+            let version = u32::from_le_bytes(version_bytes);
             if version == 1 {
                 return Ok(DiskFormat::Sparse);
             }

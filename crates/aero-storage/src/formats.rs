@@ -54,10 +54,9 @@ pub fn detect_format<B: StorageBackend>(backend: &mut B) -> Result<DiskFormat> {
                 return Ok(DiskFormat::AeroSparse);
             }
 
-            let mut header = [0u8; 64];
-            backend.read_at(0, &mut header)?;
-
-            let version = u32::from_le_bytes([header[8], header[9], header[10], header[11]]);
+            let mut version_bytes = [0u8; 4];
+            backend.read_at(8, &mut version_bytes)?;
+            let version = u32::from_le_bytes(version_bytes);
             if version == 1 {
                 return Ok(DiskFormat::AeroSparse);
             }
