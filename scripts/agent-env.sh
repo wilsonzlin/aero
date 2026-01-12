@@ -235,6 +235,42 @@ fi
 if [[ "$(uname 2>/dev/null || true)" == "Linux" ]]; then
   aero_target="${CARGO_BUILD_TARGET:-}"
 
+  # If `RUSTFLAGS` contains linker thread flags, strip them so they don't apply to every target.
+  # We re-apply a conservative cap via Cargo's per-target rustflags env vars.
+  #
+  # This avoids breaking nested wasm32 builds where rustc invokes `rust-lld -flavor wasm`
+  # directly (which does not understand `-Wl,`).
+  if [[ "${RUSTFLAGS:-}" == *"--threads="* || "${RUSTFLAGS:-}" == *"-Wl,--threads="* ]]; then
+    aero_rustflags=()
+    # shellcheck disable=SC2206
+    aero_rustflags=(${RUSTFLAGS})
+    new_rustflags=()
+    i=0
+    while [[ $i -lt ${#aero_rustflags[@]} ]]; do
+      tok="${aero_rustflags[$i]}"
+      next=""
+      if [[ $((i + 1)) -lt ${#aero_rustflags[@]} ]]; then
+        next="${aero_rustflags[$((i + 1))]}"
+      fi
+
+      if [[ "${tok}" == "-C" ]] && ([[ "${next}" == link-arg=-Wl,--threads=* ]] || [[ "${next}" == link-arg=--threads=* ]]); then
+        i=$((i + 2))
+        continue
+      fi
+      if [[ "${tok}" == -Clink-arg=-Wl,--threads=* ]] || [[ "${tok}" == -Clink-arg=--threads=* ]]; then
+        i=$((i + 1))
+        continue
+      fi
+
+      new_rustflags+=("${tok}")
+      i=$((i + 1))
+    done
+
+    export RUSTFLAGS="${new_rustflags[*]}"
+    export RUSTFLAGS="${RUSTFLAGS# }"
+    unset aero_rustflags new_rustflags tok next i 2>/dev/null || true
+  fi
+
   # If we already have the native-style `-Wl,--threads=...` in the environment and the default
   # Cargo target is wasm32 (via CARGO_BUILD_TARGET), rewrite it to the wasm-compatible form.
   #

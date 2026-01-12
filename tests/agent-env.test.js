@@ -499,6 +499,38 @@ test("agent-env: rewrites -Wl,--threads=<n> into --threads=<n> for wasm32 target
   }
 });
 
+test("agent-env: strips lld --threads link-args from global RUSTFLAGS (nested wasm safety)", { skip: process.platform !== "linux" }, () => {
+  const repoRoot = setupTempRepo();
+  try {
+    const stdout = execFileSync(
+      "bash",
+      [
+        "-c",
+        'source scripts/agent-env.sh >/dev/null; printf "%s\\n%s" "${RUSTFLAGS:-}" "${CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS:-}"',
+      ],
+      {
+        cwd: repoRoot,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          AERO_CARGO_BUILD_JOBS: "2",
+          // Simulate an outer environment that tried to cap lld threads via global RUSTFLAGS.
+          // This should not leak into wasm32 builds.
+          RUSTFLAGS: "-C link-arg=-Wl,--threads=99 -Clink-arg=--threads=100 -C opt-level=2",
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+
+    const [rustflags, wasmFlags] = stdout.split("\n");
+    assert.equal(rustflags, "-C opt-level=2");
+    assert.match(wasmFlags, /-C link-arg=--threads=2\b/);
+    assert.ok(!wasmFlags.includes("-Wl,--threads="), `expected wasm rustflags to avoid -Wl,--threads, got: ${wasmFlags}`);
+  } finally {
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
 test("agent-env: AERO_RUST_CODEGEN_UNITS overrides codegen-units", { skip: process.platform === "win32" }, () => {
   const repoRoot = setupTempRepo();
   try {
