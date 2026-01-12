@@ -69,3 +69,43 @@ test("ACMD RELEASE_SHARED_SURFACE retires token but keeps existing imported hand
   assert.deepEqual(Array.from(new Uint8Array(state.lastPresentedFrame.rgba8)), Array.from(upload));
 });
 
+test("ACMD shared surface refcounting keeps underlying resource alive until final DESTROY_RESOURCE", () => {
+  const state = createAerogpuCpuExecutorState();
+
+  const token = 0x4242n;
+  const upload = Uint8Array.from([
+    // 2x2 RGBA8
+    51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66,
+  ]);
+
+  // Create + export, then import an alias and drop the original handle. The alias should keep the
+  // underlying texture alive.
+  const w = new AerogpuCmdWriter();
+  w.createTexture2d(1, 0, AerogpuFormat.R8G8B8A8Unorm, 2, 2, 1, 1, 0, 0, 0);
+  w.exportSharedSurface(1, token);
+  w.importSharedSurface(10, token);
+  w.uploadResource(10, 0n, upload);
+  w.destroyResource(1); // drop original handle; alias remains
+  w.setRenderTargets([10], 0);
+  w.present(0, 0);
+  executeAerogpuCmdStream(state, w.finish().buffer, { allocTable: null, guestU8: null });
+
+  assert(state.lastPresentedFrame, "expected present to work via alias after destroying original handle");
+  assert.deepEqual(Array.from(new Uint8Array(state.lastPresentedFrame.rgba8)), Array.from(upload));
+
+  // Destroy the alias too; this should free the underlying resource and retire any tokens that
+  // were still mapped to it.
+  const destroyAlias = new AerogpuCmdWriter();
+  destroyAlias.destroyResource(10);
+  executeAerogpuCmdStream(state, destroyAlias.finish().buffer, { allocTable: null, guestU8: null });
+  assert.equal(state.textures.has(1), false, "expected underlying texture to be destroyed after final handle release");
+
+  // Re-export of the same token must fail once the token is retired.
+  const reuseToken = new AerogpuCmdWriter();
+  reuseToken.createTexture2d(2, 0, AerogpuFormat.R8G8B8A8Unorm, 1, 1, 1, 1, 0, 0, 0);
+  reuseToken.exportSharedSurface(2, token);
+  assert.throws(
+    () => executeAerogpuCmdStream(state, reuseToken.finish().buffer, { allocTable: null, guestU8: null }),
+    /EXPORT_SHARED_SURFACE.*previously released/i,
+  );
+});
