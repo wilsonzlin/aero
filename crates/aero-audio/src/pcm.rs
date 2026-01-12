@@ -520,6 +520,33 @@ mod tests {
     }
 
     #[test]
+    fn parse_hda_format_ignores_stream_type_bit() {
+        // Bit 15 selects PCM vs non-PCM. The implementation ignores it for now.
+        let fmt_pcm = (1 << 4) | 1; // 48kHz, 16-bit, 2 channels
+        let fmt_non_pcm = fmt_pcm | (1 << 15);
+        assert_eq!(
+            StreamFormat::from_hda_format(fmt_pcm),
+            StreamFormat::from_hda_format(fmt_non_pcm)
+        );
+    }
+
+    #[test]
+    fn parse_hda_format_uses_integer_division() {
+        // These combinations may not correspond to valid HDA sample rates, but they verify
+        // the implementation's integer arithmetic (truncating division).
+        //
+        // base=44.1k, mult=1, div=8 => 5512.5 -> 5512 (truncated).
+        let fmt = (1 << 14) | (7 << 8) | (1 << 4) | 0; // 16-bit, 1 channel
+        let parsed = StreamFormat::from_hda_format(fmt);
+        assert_eq!(parsed.sample_rate_hz, 5512);
+
+        // base=48k, mult=1, div=7 => 6857.142... -> 6857 (truncated).
+        let fmt = (6 << 8) | (1 << 4) | 0;
+        let parsed = StreamFormat::from_hda_format(fmt);
+        assert_eq!(parsed.sample_rate_hz, 6857);
+    }
+
+    #[test]
     #[should_panic(expected = "unsupported bits per sample")]
     fn bytes_per_sample_panics_for_unsupported_bits() {
         let fmt = StreamFormat {
