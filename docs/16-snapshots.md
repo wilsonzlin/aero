@@ -209,11 +209,22 @@ For the browser networking stack (e.g. tunnel/NAT state managed outside the gues
 
 #### E1000 (`DeviceId::E1000`)
 
-For the guest-visible Intel E1000 NIC emulation state, store a single device entry:
+For the guest-visible Intel E1000 NIC emulation state (`crates/aero-net-e1000`), store a single device entry:
 
 - Outer `DeviceState.id = DeviceId::E1000`
-- `DeviceState.data = aero-io-snapshot` TLV blob produced by the E1000 device model
+- `DeviceState.data = aero-io-snapshot` TLV blob produced by the E1000 device model (inner `DEVICE_ID = E1K0`)
 - `DeviceState.version` / `DeviceState.flags` mirror the inner device `SnapshotVersion (major, minor)`
+
+The NIC snapshot captures enough guest-visible state to resume RX/TX DMA correctly, including:
+
+- key registers (CTRL/STATUS/IMS/ICR/RCTL/TCTL, ring base/len/head/tail, etc.)
+- MAC + EEPROM/PHY state
+- in-flight TX aggregation/offload bookkeeping
+- pending host-facing RX/TX queues (Ethernet frames)
+
+Restore note: host-side network backends/tunnels are external state and are intentionally *not* part of the
+snapshot format. Canonical snapshot restore flows should treat the backend lifecycle as out-of-band
+(e.g. detach on restore, then re-attach as needed).
 
 This standardizes device payloads on a deterministic, forward-compatible TLV encoding. `aero-snapshot` provides opt-in helpers behind the `io-snapshot` feature: `aero_snapshot::io_snapshot_bridge::{device_state_from_io_snapshot, apply_io_snapshot_to_device}`.
 
