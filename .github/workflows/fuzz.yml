@@ -40,13 +40,13 @@ jobs:
         run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run fuzz_aerogpu_parse -- -max_total_time=10
 
       - name: fuzz_aerosparse_open (10s)
-        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run fuzz_aerosparse_open -- -max_total_time=10
+        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run fuzz_aerosparse_open -- -max_total_time=10 -dict=fuzz/fuzz_targets/fuzz_aerosparse_open.dict
 
       - name: fuzz_aero_storage_sparse_open (10s)
-        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run fuzz_aero_storage_sparse_open -- -max_total_time=10
+        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run fuzz_aero_storage_sparse_open -- -max_total_time=10 -dict=fuzz/fuzz_targets/fuzz_aero_storage_sparse_open.dict
 
       - name: fuzz_disk_image_open_auto (10s)
-        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run fuzz_disk_image_open_auto -- -max_total_time=10
+        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run fuzz_disk_image_open_auto -- -max_total_time=10 -dict=fuzz/fuzz_targets/fuzz_disk_image_open_auto.dict
 
       - name: fuzz_ahci_command (10s)
         run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run fuzz_ahci_command -- -max_total_time=10
