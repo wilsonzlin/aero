@@ -94,7 +94,7 @@ use js_sys::{Object, Reflect, SharedArrayBuffer, Uint8Array};
 use aero_audio::hda::HdaController;
 
 #[cfg(target_arch = "wasm32")]
-use aero_audio::mem::{GuestMemory, MemoryAccess};
+use aero_audio::mem::MemoryAccess;
 
 #[cfg(target_arch = "wasm32")]
 use aero_audio::pcm::{LinearResampler, StreamFormat, decode_pcm_to_stereo_f32_into};
@@ -1214,6 +1214,67 @@ impl HdaPcmWriter {
     }
 }
 
+#[cfg(target_arch = "wasm32")]
+#[derive(Debug)]
+struct HdaGuestMemory {
+    /// Byte offset inside the wasm linear memory where guest physical address 0 begins.
+    ///
+    /// In the real worker runtime this is the `guest_base` from the `guest_ram_layout` contract.
+    /// In the `HdaPlaybackDemo` harness we point this at a private heap allocation.
+    guest_base: u32,
+    /// Guest RAM size in bytes.
+    guest_size: u64,
+}
+
+#[cfg(target_arch = "wasm32")]
+impl HdaGuestMemory {
+    #[inline]
+    fn translate(&self, addr: u64, len: usize) -> Option<u32> {
+        let end = addr.checked_add(len as u64)?;
+        if end > self.guest_size {
+            return None;
+        }
+        let linear = (self.guest_base as u64).checked_add(addr)?;
+        u32::try_from(linear).ok()
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl MemoryAccess for HdaGuestMemory {
+    fn read_physical(&self, addr: u64, buf: &mut [u8]) {
+        if buf.is_empty() {
+            return;
+        }
+
+        let Some(linear) = self.translate(addr, buf.len()) else {
+            buf.fill(0);
+            return;
+        };
+
+        // Safety: `translate` validates the requested guest range and returns a wasm32-compatible
+        // linear address.
+        unsafe {
+            core::ptr::copy_nonoverlapping(linear as *const u8, buf.as_mut_ptr(), buf.len());
+        }
+    }
+
+    fn write_physical(&mut self, addr: u64, buf: &[u8]) {
+        if buf.is_empty() {
+            return;
+        }
+
+        let Some(linear) = self.translate(addr, buf.len()) else {
+            return;
+        };
+
+        // Safety: `translate` validates the requested guest range and returns a wasm32-compatible
+        // linear address.
+        unsafe {
+            core::ptr::copy_nonoverlapping(buf.as_ptr(), linear as *mut u8, buf.len());
+        }
+    }
+}
+
 /// End-to-end browser demo: drive the real HDA device model and stream its output
 /// directly into a Web Audio `AudioWorkletProcessor` ring buffer.
 ///
@@ -1223,7 +1284,10 @@ impl HdaPcmWriter {
 #[wasm_bindgen]
 pub struct HdaPlaybackDemo {
     hda: HdaController,
-    mem: GuestMemory,
+    // Keep the backing allocation alive so `mem`'s raw `guest_base` pointer remains valid.
+    #[allow(dead_code)]
+    guest: Vec<u8>,
+    mem: HdaGuestMemory,
     bridge: WorkletBridge,
     host_sample_rate_hz: u32,
 
@@ -1265,12 +1329,17 @@ impl HdaPlaybackDemo {
 
         // Allocate a small guest-physical memory backing store. The demo programs
         // a short BDL + PCM buffer and loops it forever.
-        let mem = GuestMemory::new(0x20_000);
+        let mut guest = vec![0u8; 0x20_000];
+        let mem = HdaGuestMemory {
+            guest_base: guest.as_mut_ptr() as u32,
+            guest_size: guest.len() as u64,
+        };
 
         // Default to a 440Hz tone so the demo works even if callers don't invoke
         // `init_sine_dma()` explicitly.
         let mut demo = Self {
             hda,
+            guest,
             mem,
             bridge,
             host_sample_rate_hz: host_sample_rate,
@@ -1441,6 +1510,65 @@ impl<'a> AudioSink for WorkletBridgeStatsSink<'a> {
         self.dropped_frames = self
             .dropped_frames
             .wrapping_add(requested_frames.saturating_sub(written));
+    }
+}
+
+#[cfg(all(test, target_arch = "wasm32"))]
+mod hda_dma_oob_tests {
+    use super::*;
+
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    #[wasm_bindgen_test]
+    fn hda_process_completes_on_oob_dma_pointer() {
+        // Small synthetic guest RAM region for the DMA engine.
+        let mut guest = vec![0u8; 0x4000];
+        let guest_size = guest.len() as u64;
+        let mut mem = HdaGuestMemory {
+            guest_base: guest.as_mut_ptr() as u32,
+            guest_size,
+        };
+
+        let mut hda = HdaController::new();
+
+        // Bring controller out of reset.
+        hda.mmio_write(0x08, 4, 0x1); // GCTL.CRST
+
+        // Configure the codec converter to listen on stream 1, channel 0.
+        // SET_STREAM_CHANNEL: verb 0x706, payload = stream<<4 | channel
+        let set_stream_ch = (0x706u32 << 8) | 0x10;
+        hda.codec_mut().execute_verb(2, set_stream_ch);
+
+        // Stream format: 48kHz, 16-bit, 2ch.
+        let fmt_raw: u16 = (1 << 4) | 0x1;
+        // SET_CONVERTER_FORMAT (4-bit verb group 0x2 encoded in low 16 bits)
+        let set_fmt = (0x200u32 << 8) | (fmt_raw as u8 as u32);
+        hda.codec_mut().execute_verb(2, set_fmt);
+
+        // Guest buffer layout: BDL is in-bounds, but it points at an out-of-bounds PCM address.
+        let bdl_base = 0x1000u64;
+        let pcm_len_bytes = 512u32; // 128 frames @ 16-bit stereo
+        let oob_pcm_base = guest_size + 0x1000;
+
+        // One BDL entry pointing at an invalid buffer address.
+        mem.write_u64(bdl_base, oob_pcm_base);
+        mem.write_u32(bdl_base + 8, pcm_len_bytes);
+        mem.write_u32(bdl_base + 12, 1); // IOC=1
+
+        // Configure stream descriptor 0.
+        {
+            let sd = hda.stream_mut(0);
+            sd.bdpl = bdl_base as u32;
+            sd.bdpu = 0;
+            sd.cbl = pcm_len_bytes;
+            sd.lvi = 0;
+            sd.fmt = fmt_raw;
+            // SRST | RUN | IOCE | stream number 1.
+            sd.ctl = (1 << 0) | (1 << 1) | (1 << 2) | (1 << 20);
+        }
+
+        // The call should complete without panicking even though the DMA address is invalid.
+        hda.process(&mut mem, 128);
     }
 }
 
