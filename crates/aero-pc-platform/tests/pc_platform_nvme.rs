@@ -5,7 +5,9 @@ use aero_devices_nvme::NvmeController;
 use aero_interrupts::apic::IOAPIC_MMIO_BASE;
 use aero_io_snapshot::io::state::IoSnapshot;
 use aero_pc_platform::{PcPlatform, PcPlatformConfig};
-use aero_platform::interrupts::{InterruptController, PlatformInterruptMode};
+use aero_platform::interrupts::{
+    InterruptController, PlatformInterruptMode, IMCR_DATA_PORT, IMCR_INDEX, IMCR_SELECT_PORT,
+};
 use aero_storage::{MemBackend, RawDisk, VirtualDisk, SECTOR_SIZE};
 use memory::MemoryBus as _;
 
@@ -376,9 +378,9 @@ fn pc_platform_routes_nvme_intx_via_ioapic_in_apic_mode() {
     );
     let bdf = NVME_CONTROLLER.bdf;
 
-    // Switch the platform into APIC mode via IMCR (0x22/0x23).
-    pc.io.write_u8(0x22, 0x70);
-    pc.io.write_u8(0x23, 0x01);
+    // Switch the platform into APIC mode via IMCR.
+    pc.io.write_u8(IMCR_SELECT_PORT, IMCR_INDEX);
+    pc.io.write_u8(IMCR_DATA_PORT, 0x01);
     assert_eq!(pc.interrupts.borrow().mode(), PlatformInterruptMode::Apic);
 
     // Route the NVMe INTx line to vector 0x61, level-triggered + active-low.
