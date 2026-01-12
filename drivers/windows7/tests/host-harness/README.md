@@ -346,6 +346,14 @@ only if you explicitly want the base image to be mutated.
     - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|PASS` or `...|SKIP` (if `-WithVirtioSnd` / `--with-virtio-snd` is set, it must be `PASS`)
     - `AERO_VIRTIO_SELFTEST|TEST|virtio-net|PASS`
 
+The Python/PowerShell harnesses also emit an additional host-side marker after the run for log scraping:
+
+```
+AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_LARGE|PASS/FAIL/INFO|large_ok=...|large_bytes=...|large_fnv1a64=...|large_mbps=...
+```
+
+This mirrors the guest's virtio-net marker fields when present and does not affect overall PASS/FAIL.
+
 ### Why `x-pci-revision=0x01`?
 
 The Aero Windows 7 virtio device contract encodes the **contract major version** in the PCI
