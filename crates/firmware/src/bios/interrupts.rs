@@ -60,6 +60,10 @@ pub fn dispatch_interrupt(
         }
     }
 
+    // INT 16h (and BIOS extensions) may have mutated `keyboard_queue`; keep the BDA mirror in sync
+    // for callers that probe it directly.
+    sync_keyboard_bda(bios, bus);
+
     // Merge the flags the handler set into the saved FLAGS image so the stub's IRET
     // returns them to the caller, while preserving IF from the original interrupt frame.
     const RETURN_MASK: u16 = (FLAG_CF | FLAG_PF | FLAG_ZF | FLAG_SF | FLAG_DF | FLAG_OF) as u16;
