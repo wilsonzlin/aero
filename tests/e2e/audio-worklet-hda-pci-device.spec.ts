@@ -3,12 +3,14 @@ import { expect, test } from "@playwright/test";
 const PREVIEW_ORIGIN = process.env.AERO_PLAYWRIGHT_PREVIEW_ORIGIN ?? "http://127.0.0.1:4173";
 
 test("AudioWorklet output runs and receives frames from IO-worker HDA PCI/MMIO device", async ({ page }) => {
-  test.setTimeout(60_000);
+  // Full worker runtime + IO-worker WASM init can be slower than the standalone HDA demo,
+  // especially on cold CI runners without a cached compilation artifact.
+  test.setTimeout(90_000);
   test.skip(test.info().project.name !== "chromium", "AudioWorklet output test only runs on Chromium.");
 
   // The full worker HDA path involves instantiating a large WASM module in the IO worker
   // (often uncached in CI), so tolerate longer startup times than Playwright's 30s default.
-  page.setDefaultTimeout(60_000);
+  page.setDefaultTimeout(90_000);
 
   await page.goto(`${PREVIEW_ORIGIN}/`, { waitUntil: "load" });
 
