@@ -201,7 +201,7 @@ async function runTieredVm(iterations: number, threshold: number) {
   }
 
   // Install JS-side tier-1 call table that the WASM tiered runtime imports via `globalThis.__aero_jit_call`.
-  const jitFns: Array<(cpu_ptr: number, jit_ctx_ptr: number) => bigint> = [];
+  const jitFns: Array<((cpu_ptr: number, jit_ctx_ptr: number) => bigint) | undefined> = [];
   let lastJitReturnType: string | null = null;
   let lastJitReturnIsSentinel = false;
 
@@ -421,6 +421,7 @@ async function runTieredVm(iterations: number, threshold: number) {
   };
 
   let nextTableIndex = 0;
+  const freeTableIndices: number[] = [];
   const installedByRip = new Map<number, number>();
   let interp_executions = 0;
   let jit_executions = 0;
@@ -564,11 +565,38 @@ async function runTieredVm(iterations: number, threshold: number) {
       throw new Error('JIT block module did not export a callable `block` function');
     }
 
-    const tableIndex = nextTableIndex++;
+    const tableIndex = freeTableIndices.pop() ?? nextTableIndex++;
     jitFns[tableIndex] = block as (cpu_ptr: number, jit_ctx_ptr: number) => bigint;
     const entryRipU32 = resp.entry_rip >>> 0;
-    vm.install_tier1_block(BigInt(entryRipU32), tableIndex, BigInt(entryRipU32), resp.meta.code_byte_len);
+    const evicted = vm.install_tier1_block(BigInt(entryRipU32), tableIndex, BigInt(entryRipU32), resp.meta.code_byte_len);
     installedByRip.set(entryRipU32, tableIndex);
+
+    // If the JIT cache evicted older blocks, free their table indices so they can be reused.
+    const releaseEvictedRip = (rip: number) => {
+      const ripU32 = rip >>> 0;
+      if (ripU32 === entryRipU32) return;
+      const idx = installedByRip.get(ripU32);
+      if (idx === undefined) return;
+      installedByRip.delete(ripU32);
+      // Clearing the slot avoids accidentally calling into an evicted block.
+      jitFns[idx] = undefined;
+      freeTableIndices.push(idx);
+    };
+
+    if (Array.isArray(evicted)) {
+      for (const v of evicted) {
+        if (typeof v === 'bigint') releaseEvictedRip(u64AsNumber(v));
+        else if (typeof v === 'number' && Number.isFinite(v)) releaseEvictedRip(v);
+      }
+    } else if (evicted && typeof evicted === 'object' && ArrayBuffer.isView(evicted)) {
+      // Older WASM builds may return a typed array (e.g. Uint32Array).
+      const view = evicted as ArrayLike<number>;
+      for (let i = 0; i < view.length; i++) {
+        const v = view[i];
+        if (typeof v === 'number' && Number.isFinite(v)) releaseEvictedRip(v);
+      }
+    }
+
     return tableIndex;
   }
 
