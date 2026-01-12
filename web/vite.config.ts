@@ -20,6 +20,21 @@ const nodeMajor = (() => {
   return Number.isFinite(major) ? major : 0;
 })();
 
+const vitestMaxForks = (() => {
+  // `vitest` uses Tinypool + `child_process.fork()` when `pool: "forks"` is enabled below.
+  //
+  // In sandboxed environments with tight process/thread limits, newer Node majors can fail to
+  // spawn additional forks with:
+  //   - `uv_thread_create` assertion failures, or
+  //   - `spawn /usr/bin/node EAGAIN`
+  //
+  // Keep Node 22.x (CI baseline) reasonably parallel, but cap newer majors more aggressively so
+  // unit tests remain runnable for contributors / hermetic runners.
+  if (nodeMajor >= 25) return 2;
+  if (nodeMajor >= 23) return 4;
+  return 8;
+})();
+
 type AeroBuildInfo = Readonly<{
   version: string;
   gitSha: string;
@@ -235,7 +250,7 @@ export default defineConfig({
         //
         // CI uses Node 22.x; newer majors can be more thread-hungry / unstable in sandboxed
         // environments, so cap them more aggressively.
-        maxForks: nodeMajor >= 23 ? 4 : 8,
+        maxForks: vitestMaxForks,
       },
     },
     // Keep Vitest scoped to unit tests under src/, plus any dedicated Vitest
