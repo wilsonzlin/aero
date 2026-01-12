@@ -232,8 +232,18 @@ VirtioPciModernResetDevice(_Inout_ PVIRTIO_PCI_MODERN_DEVICE Dev);
  */
 
 /*
- * Resets the device by writing 0 to device_status and polling until it reads
- * back 0 (bounded timeout).
+ * Resets the device by writing 0 to device_status and waiting for the device to
+ * acknowledge reset (device_status reads back 0).
+ *
+ * Intended call site: PASSIVE_LEVEL (during init/teardown).
+ *
+ * Defensive behavior: if invoked at > PASSIVE_LEVEL, this helper will only
+ * busy-wait for a small bounded budget and then return even if the device does
+ * not complete the reset handshake (to avoid long stalls in DPC/DIRQL
+ * contexts).
+ *
+ * Callers that require a guaranteed reset must follow up with appropriate
+ * failure/abort handling (e.g. VirtioPciFailDevice + teardown).
  */
 _IRQL_requires_max_(PASSIVE_LEVEL)
 VOID
