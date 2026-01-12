@@ -882,8 +882,8 @@ fuzz_target!(|data: &[u8]| {
         56,
         cmd::AerogpuCmdSetBlendState::SIZE_BYTES,
     ];
-    let cmd_blend_variants_size = cmd::AerogpuCmdStreamHeader::SIZE_BYTES
-        + set_blend_sizes.iter().copied().sum::<usize>();
+    let cmd_blend_variants_size =
+        cmd::AerogpuCmdStreamHeader::SIZE_BYTES + set_blend_sizes.iter().copied().sum::<usize>();
     let mut cmd_blend_variants = vec![0u8; cmd_blend_variants_size];
     let cmd_blend_variants_size_u32 = cmd_blend_variants.len() as u32;
     cmd_blend_variants[0..4].copy_from_slice(&cmd::AEROGPU_CMD_STREAM_MAGIC.to_le_bytes());
@@ -1642,6 +1642,71 @@ fuzz_target!(|data: &[u8]| {
     alloc_stride_large[entry_off + 16..entry_off + 24].copy_from_slice(&0x1000u64.to_le_bytes()); // size_bytes
     alloc_stride_large[entry_off + 24..entry_off + 32].fill(0); // reserved0
     fuzz_alloc_table(&alloc_stride_large);
+
+    // Deterministic executor alloc-table validation errors (AllocTable::new).
+    //
+    // The protocol decoder only validates structural layout; the executor additionally validates
+    // per-entry invariants like alloc_id!=0, size_bytes!=0, gpa+size overflow, and duplicate ids.
+    let alloc_two_size = header_size + stride * 2;
+    let mut alloc_two_base = vec![0u8; alloc_two_size];
+    alloc_two_base[0..4].copy_from_slice(&ring::AEROGPU_ALLOC_TABLE_MAGIC.to_le_bytes());
+    alloc_two_base[4..8].copy_from_slice(&pci::AEROGPU_ABI_VERSION_U32.to_le_bytes());
+    alloc_two_base[8..12].copy_from_slice(&(alloc_two_size as u32).to_le_bytes());
+    alloc_two_base[12..16].copy_from_slice(&2u32.to_le_bytes());
+    alloc_two_base[16..20].copy_from_slice(&(stride as u32).to_le_bytes());
+    alloc_two_base[20..24].fill(0);
+    let write_entry = |buf: &mut [u8], idx: usize, alloc_id: u32, gpa: u64, size_bytes: u64| {
+        let base = header_size + idx * stride;
+        buf[base..base + 4].copy_from_slice(&alloc_id.to_le_bytes());
+        buf[base + 4..base + 8].fill(0);
+        buf[base + 8..base + 16].copy_from_slice(&gpa.to_le_bytes());
+        buf[base + 16..base + 24].copy_from_slice(&size_bytes.to_le_bytes());
+        buf[base + 24..base + 32].fill(0);
+    };
+
+    let mut alloc_id_zero = alloc_two_base.clone();
+    write_entry(&mut alloc_id_zero, 0, /*alloc_id=*/ 0, 0x2000, 0x1000);
+    write_entry(&mut alloc_id_zero, 1, /*alloc_id=*/ 1, 0x3000, 0x1000);
+    fuzz_alloc_table(&alloc_id_zero);
+
+    let mut alloc_size_zero = alloc_two_base.clone();
+    write_entry(
+        &mut alloc_size_zero,
+        0,
+        /*alloc_id=*/ 1,
+        0x2000,
+        /*size_bytes=*/ 0,
+    );
+    write_entry(
+        &mut alloc_size_zero,
+        1,
+        /*alloc_id=*/ 2,
+        0x3000,
+        0x1000,
+    );
+    fuzz_alloc_table(&alloc_size_zero);
+
+    let mut alloc_gpa_overflow = alloc_two_base.clone();
+    write_entry(
+        &mut alloc_gpa_overflow,
+        0,
+        /*alloc_id=*/ 1,
+        u64::MAX - 1,
+        /*size_bytes=*/ 2,
+    );
+    write_entry(
+        &mut alloc_gpa_overflow,
+        1,
+        /*alloc_id=*/ 2,
+        0x3000,
+        0x1000,
+    );
+    fuzz_alloc_table(&alloc_gpa_overflow);
+
+    let mut alloc_dup_id = alloc_two_base.clone();
+    write_entry(&mut alloc_dup_id, 0, /*alloc_id=*/ 1, 0x2000, 0x1000);
+    write_entry(&mut alloc_dup_id, 1, /*alloc_id=*/ 1, 0x4000, 0x1000);
+    fuzz_alloc_table(&alloc_dup_id);
 
     // Exercise additional early validation errors in the executor alloc-table decoder that aren't
     // reachable via the normal `ALLOC_TABLE_GPA`-backed fuzz input path.
