@@ -17,6 +17,8 @@
 
 This workstream owns **Windows 7 guest drivers**: the AeroGPU display driver (WDDM KMD + UMD) and virtio paravirtualized drivers (virtio-blk, virtio-net, virtio-input, virtio-snd).
 
+It also owns the **binding/packaging surface** for those drivers (HWID/service-name contracts + Guest Tools media) so the emulator, driver INFs, and installer scripts stay consistent.
+
 These drivers run **inside the guest Windows 7** and communicate with the emulator's device models via PCI MMIO/IO ports and shared memory.
 
 ---
