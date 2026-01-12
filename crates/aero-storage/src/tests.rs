@@ -52,6 +52,13 @@ fn sector_helpers_validate_alignment_and_bounds() {
     let mut buf = [0u8; SECTOR_SIZE];
     let err = disk.read_sectors(9, &mut buf).unwrap_err();
     assert!(matches!(err, DiskError::OutOfBounds { .. }));
+
+    // LBA -> byte offset overflow should be surfaced explicitly.
+    let err = disk.read_sectors(u64::MAX, &mut buf).unwrap_err();
+    assert!(matches!(err, DiskError::OffsetOverflow));
+
+    let err = disk.write_sectors(u64::MAX, &buf).unwrap_err();
+    assert!(matches!(err, DiskError::OffsetOverflow));
 }
 
 #[test]
