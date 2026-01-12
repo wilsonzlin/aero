@@ -1615,12 +1615,30 @@ impl Machine {
         ide.borrow_mut().controller.attach_primary_master_ata(drive);
     }
 
+    /// Attach a disk image as an ATA drive on the IDE primary master, if present.
+    pub fn attach_ide_primary_master_disk(
+        &mut self,
+        disk: Box<dyn aero_storage::VirtualDisk>,
+    ) -> std::io::Result<()> {
+        self.attach_ide_primary_master_drive(AtaDrive::new(disk)?);
+        Ok(())
+    }
+
     /// Attach an ATAPI CD-ROM device as the secondary master on the IDE controller, if present.
     pub fn attach_ide_secondary_master_atapi(&mut self, dev: AtapiCdrom) {
         let Some(ide) = &self.ide else {
             return;
         };
         ide.borrow_mut().controller.attach_secondary_master_atapi(dev);
+    }
+
+    /// Attach a disk image as an ATAPI CD-ROM ISO on the IDE secondary master, if present.
+    pub fn attach_ide_secondary_master_iso(
+        &mut self,
+        disk: Box<dyn aero_storage::VirtualDisk + Send>,
+    ) -> std::io::Result<()> {
+        self.attach_ide_secondary_master_atapi(AtapiCdrom::new_from_virtual_disk(disk)?);
+        Ok(())
     }
 
     /// Re-attach a host ISO backend to the IDE secondary master ATAPI device without changing
@@ -2824,6 +2842,7 @@ impl Machine {
                     // Process AHCI once more here so guests that issue an AHCI command and then
                     // execute `HLT` can still make DMA progress and be woken by INTx within the
                     // same `run_slice` call.
+                    self.process_ide();
                     self.process_ahci();
                     self.sync_pci_intx_sources_to_interrupts();
                     if self.poll_platform_interrupt(MAX_QUEUED_EXTERNAL_INTERRUPTS) {
@@ -2832,6 +2851,7 @@ impl Machine {
 
                     // When halted, advance platform time so timer interrupts can wake the CPU.
                     self.idle_tick_platform_1ms();
+                    self.process_ide();
                     self.process_ahci();
                     self.sync_pci_intx_sources_to_interrupts();
                     if self.poll_platform_interrupt(MAX_QUEUED_EXTERNAL_INTERRUPTS) {
