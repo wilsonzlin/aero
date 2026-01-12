@@ -269,6 +269,44 @@ describe("runtime/coordinator", () => {
     expect((ioWorker.posted.at(-1)?.message as any)?.ringBuffer).toBe(null);
   });
 
+  it("can re-route microphone ring ownership via setMicrophoneRingBufferOwner", () => {
+    const coordinator = new WorkerCoordinator();
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 1 });
+    const shared = createSharedMemoryViews(segments);
+    (coordinator as any).shared = shared;
+    (coordinator as any).activeConfig = {
+      guestMemoryMiB: 1,
+      enableWorkers: true,
+      enableWebGPU: false,
+      proxyUrl: null,
+      activeDiskImage: null,
+      logLevel: "info",
+    };
+    (coordinator as any).spawnWorker("cpu", segments);
+    (coordinator as any).spawnWorker("io", segments);
+
+    const cpuWorker = (coordinator as any).workers.cpu.worker as MockWorker;
+    const ioWorker = (coordinator as any).workers.io.worker as MockWorker;
+
+    const micSab = new SharedArrayBuffer(256);
+    coordinator.setMicrophoneRingBuffer(micSab, 48_000);
+
+    // Default demo-mode owner is CPU.
+    expect((cpuWorker.posted.at(-1)?.message as any)?.ringBuffer).toBe(micSab);
+    expect((ioWorker.posted.at(-1)?.message as any)?.ringBuffer).toBe(null);
+
+    coordinator.setMicrophoneRingBufferOwner("io");
+
+    // Now the CPU must be detached and the IO worker must receive the SAB.
+    expect((cpuWorker.posted.at(-1)?.message as any)?.ringBuffer).toBe(null);
+    expect((ioWorker.posted.at(-1)?.message as any)?.ringBuffer).toBe(micSab);
+
+    // Clearing the override should restore the default routing policy (CPU in demo mode).
+    coordinator.setMicrophoneRingBufferOwner(null);
+    expect((cpuWorker.posted.at(-1)?.message as any)?.ringBuffer).toBe(micSab);
+    expect((ioWorker.posted.at(-1)?.message as any)?.ringBuffer).toBe(null);
+  });
+
   it("sends net.trace.enable to the net worker when enabling net tracing", () => {
     const coordinator = new WorkerCoordinator();
     const segments = allocateSharedMemorySegments({ guestRamMiB: 1 });
