@@ -145,6 +145,29 @@ function patchHeader(dir: MemoryDirectoryHandle, fileName: string, fn: (view: Da
   fn(view);
 }
 
+function patchTableEntry(dir: MemoryDirectoryHandle, fileName: string, entryIndex: number, phys: bigint): void {
+  const fh = dir.getFileHandleSync(fileName);
+  if (!fh) throw new Error("missing file handle");
+  const off = HEADER_SIZE + entryIndex * 8;
+  if (off + 8 > fh.file.data.byteLength) throw new Error("table entry out of range");
+  const view = new DataView(fh.file.data.buffer, fh.file.data.byteOffset, fh.file.data.byteLength);
+  view.setBigUint64(off, phys, true);
+}
+
+function resizeFile(dir: MemoryDirectoryHandle, fileName: string, size: number): void {
+  const fh = dir.getFileHandleSync(fileName);
+  if (!fh) throw new Error("missing file handle");
+  if (!Number.isSafeInteger(size) || size < 0) throw new Error("invalid size");
+  if (size === fh.file.data.byteLength) return;
+  if (size < fh.file.data.byteLength) {
+    fh.file.data = fh.file.data.subarray(0, size).slice();
+    return;
+  }
+  const next = new Uint8Array(size);
+  next.set(fh.file.data);
+  fh.file.data = next;
+}
+
 describe("OpfsAeroSparseDisk.open header validation", () => {
   it("roundtrips create() then open()", async () => {
     const dir = new MemoryDirectoryHandle();
@@ -232,3 +255,73 @@ describe("OpfsAeroSparseDisk.open header validation", () => {
   });
 });
 
+describe("OpfsAeroSparseDisk.open allocation table validation", () => {
+  it("rejects when allocatedBlocks does not match allocation table", async () => {
+    const dir = new MemoryDirectoryHandle();
+    const name = "alloc-count-mismatch.aerospar";
+
+    const created = await OpfsAeroSparseDisk.create(name, { diskSizeBytes: 1024 * 1024, blockSizeBytes: 4096, dir });
+    await created.close();
+
+    // Claim a single allocated block without setting any table entries.
+    patchHeader(dir, name, (view) => {
+      view.setBigUint64(56, 1n, true);
+    });
+    // Ensure file is long enough for the claimed block so we hit the allocation table validation.
+    resizeFile(dir, name, 8192);
+
+    await expect(OpfsAeroSparseDisk.open(name, { dir })).rejects.toThrow(/allocatedBlocks does not match allocation table/i);
+  });
+
+  it("rejects data block offsets before the data region", async () => {
+    const dir = new MemoryDirectoryHandle();
+    const name = "alloc-before-data.aerospar";
+
+    const created = await OpfsAeroSparseDisk.create(name, { diskSizeBytes: 1024 * 1024, blockSizeBytes: 4096, dir });
+    await created.close();
+
+    patchHeader(dir, name, (view) => {
+      view.setBigUint64(56, 1n, true); // allocatedBlocks
+    });
+    // Point the first table entry at the header region.
+    patchTableEntry(dir, name, 0, 64n);
+    resizeFile(dir, name, 8192);
+
+    await expect(OpfsAeroSparseDisk.open(name, { dir })).rejects.toThrow(/data block offset before data region/i);
+  });
+
+  it("rejects misaligned data block offsets", async () => {
+    const dir = new MemoryDirectoryHandle();
+    const name = "alloc-misaligned.aerospar";
+
+    const created = await OpfsAeroSparseDisk.create(name, { diskSizeBytes: 1024 * 1024, blockSizeBytes: 4096, dir });
+    await created.close();
+
+    patchHeader(dir, name, (view) => {
+      view.setBigUint64(56, 1n, true); // allocatedBlocks
+    });
+    // Misaligned offset: dataOffset=4096 for this fixture, so 4097 is not block-aligned.
+    patchTableEntry(dir, name, 0, 4097n);
+    resizeFile(dir, name, 8192);
+
+    await expect(OpfsAeroSparseDisk.open(name, { dir })).rejects.toThrow(/misaligned data block offset/i);
+  });
+
+  it("rejects duplicate data block offsets", async () => {
+    const dir = new MemoryDirectoryHandle();
+    const name = "alloc-duplicate.aerospar";
+
+    const created = await OpfsAeroSparseDisk.create(name, { diskSizeBytes: 1024 * 1024, blockSizeBytes: 4096, dir });
+    await created.close();
+
+    patchHeader(dir, name, (view) => {
+      view.setBigUint64(56, 2n, true); // allocatedBlocks
+    });
+    // Two table entries referencing the same physical block index 0.
+    patchTableEntry(dir, name, 0, 4096n);
+    patchTableEntry(dir, name, 1, 4096n);
+    resizeFile(dir, name, 4096 + 2 * 4096);
+
+    await expect(OpfsAeroSparseDisk.open(name, { dir })).rejects.toThrow(/duplicate data block offset/i);
+  });
+});
