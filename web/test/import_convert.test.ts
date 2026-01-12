@@ -139,7 +139,7 @@ function buildQcow2Fixture(): { file: Uint8Array; logical: Uint8Array } {
   return { file, logical };
 }
 
-function buildDynamicVhdFixture(): { file: Uint8Array; logical: Uint8Array } {
+function buildDynamicVhdFixture(maxTableEntries = 1): { file: Uint8Array; logical: Uint8Array } {
   const footerSize = 512;
   const dynHeaderOffset = 512;
   const dynHeaderSize = 1024;
@@ -162,7 +162,7 @@ function buildDynamicVhdFixture(): { file: Uint8Array; logical: Uint8Array } {
   const dyn = new Uint8Array(dynHeaderSize);
   dyn.set(new TextEncoder().encode("cxsparse"), 0);
   writeU64BE(dyn, 16, BigInt(batOffset));
-  writeU32BE(dyn, 28, 1); // max table entries
+  writeU32BE(dyn, 28, maxTableEntries); // max table entries
   writeU32BE(dyn, 32, blockSize);
   writeU32BE(dyn, 36, vhdChecksum(dyn, 36));
 
@@ -173,8 +173,9 @@ function buildDynamicVhdFixture(): { file: Uint8Array; logical: Uint8Array } {
   file.set(footer, 0);
   file.set(dyn, dynHeaderOffset);
 
-  // BAT (one entry): sector offset of block (big-endian u32)
+  // BAT entries: sector offset of blocks (big-endian u32)
   writeU32BE(file, batOffset, blockOff / 512);
+  for (let i = 1; i < maxTableEntries; i++) writeU32BE(file, batOffset + i * 4, 0xffff_ffff);
 
   // Block bitmap + data.
   file[blockOff] = 0x80; // sector 0 allocated, sector 1 unallocated
@@ -419,6 +420,20 @@ test("convertToAeroSparse: qcow2 sparse copy preserves logical bytes", async () 
 
 test("convertToAeroSparse: dynamic VHD respects BAT + sector bitmap", async () => {
   const { file, logical } = buildDynamicVhdFixture();
+  const src = new MemSource(file);
+  const sync = new MemSyncAccessHandle();
+  const { manifest } = await convertToAeroSparse(src, "vhd", sync, { blockSizeBytes: 512 });
+  assert.equal(manifest.originalFormat, "vhd");
+  assert.equal(manifest.logicalSize, logical.byteLength);
+
+  const parsed = parseAeroSparse(sync.toBytes());
+  const roundtrip = readLogical(parsed, 0, logical.byteLength);
+  assert.deepEqual(roundtrip, logical);
+  assert.equal(manifest.checksum.value, sparseChecksumCrc32(parsed));
+});
+
+test("convertToAeroSparse: dynamic VHD allows max_table_entries > required", async () => {
+  const { file, logical } = buildDynamicVhdFixture(2);
   const src = new MemSource(file);
   const sync = new MemSyncAccessHandle();
   const { manifest } = await convertToAeroSparse(src, "vhd", sync, { blockSizeBytes: 512 });

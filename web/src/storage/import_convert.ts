@@ -590,7 +590,7 @@ async function convertVhdToSparse(
   assertBlockSize(dyn.blockSize);
 
   const expectedEntries = divCeil(logicalSize, dyn.blockSize);
-  if (dyn.maxTableEntries !== expectedEntries) throw new Error("VHD max_table_entries mismatch");
+  if (dyn.maxTableEntries < expectedEntries) throw new Error("VHD max_table_entries too small");
 
   const bat = await VhdBat.read(src, dyn.tableOffset, dyn.maxTableEntries);
   const writer = new AeroSparseWriter(sync, logicalSize, dyn.blockSize);
