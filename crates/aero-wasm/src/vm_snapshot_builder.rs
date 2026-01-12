@@ -29,8 +29,8 @@ const MAX_DEVICE_BLOB_BYTES: usize = 4 * 1024 * 1024;
 const DEVICE_KIND_USB_UHCI: &str = "usb.uhci";
 const DEVICE_KIND_I8042: &str = "input.i8042";
 const DEVICE_KIND_AUDIO_HDA: &str = "audio.hda";
-const DEVICE_KIND_NET_STACK: &str = "net.stack";
 const DEVICE_KIND_NET_E1000: &str = "net.e1000";
+const DEVICE_KIND_NET_STACK: &str = "net.stack";
 const DEVICE_KIND_PREFIX_ID: &str = "device.";
 
 fn js_error(message: impl core::fmt::Display) -> JsValue {
@@ -146,11 +146,11 @@ fn parse_device_kind(kind: &str) -> Option<DeviceId> {
     if kind == DEVICE_KIND_AUDIO_HDA {
         return Some(DeviceId::HDA);
     }
-    if kind == DEVICE_KIND_NET_STACK {
-        return Some(DeviceId::NET_STACK);
-    }
     if kind == DEVICE_KIND_NET_E1000 {
         return Some(DeviceId::E1000);
+    }
+    if kind == DEVICE_KIND_NET_STACK {
+        return Some(DeviceId::NET_STACK);
     }
 
     // For forward compatibility, unknown device ids can be surfaced as `device.<id>` strings.
@@ -174,11 +174,11 @@ fn kind_from_device_id(id: DeviceId) -> String {
     if id == DeviceId::HDA {
         return DEVICE_KIND_AUDIO_HDA.to_string();
     }
-    if id == DeviceId::NET_STACK {
-        return DEVICE_KIND_NET_STACK.to_string();
-    }
     if id == DeviceId::E1000 {
         return DEVICE_KIND_NET_E1000.to_string();
+    }
+    if id == DeviceId::NET_STACK {
+        return DEVICE_KIND_NET_STACK.to_string();
     }
 
     // For unknown device ids, preserve them as `device.<id>` entries so callers can roundtrip them

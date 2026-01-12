@@ -81,7 +81,7 @@ impl DeviceId {
     pub const HDA: DeviceId = DeviceId(18);
     /// Intel E1000 (82540EM-ish) NIC model state.
     pub const E1000: DeviceId = DeviceId(19);
-    /// User-space network stack state (TCP/IP, NAT, etc.).
+    /// User-space network stack/backend state (TCP/IP, DHCP, NAT, proxy bookkeeping).
     pub const NET_STACK: DeviceId = DeviceId(20);
 
     pub fn name(self) -> Option<&'static str> {

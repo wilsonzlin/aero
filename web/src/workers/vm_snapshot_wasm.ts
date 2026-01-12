@@ -3,6 +3,8 @@ import type { WasmApi } from "../runtime/wasm_loader";
 export const VM_SNAPSHOT_DEVICE_USB_KIND = "usb.uhci";
 export const VM_SNAPSHOT_DEVICE_I8042_KIND = "input.i8042";
 export const VM_SNAPSHOT_DEVICE_AUDIO_HDA_KIND = "audio.hda";
+export const VM_SNAPSHOT_DEVICE_E1000_KIND = "net.e1000";
+export const VM_SNAPSHOT_DEVICE_NET_STACK_KIND = "net.stack";
 
 // `aero_snapshot::DeviceId::USB` (see `docs/16-snapshots.md`).
 export const VM_SNAPSHOT_DEVICE_ID_USB = 12;
@@ -11,16 +13,12 @@ export const VM_SNAPSHOT_DEVICE_ID_USB = 12;
 export const VM_SNAPSHOT_DEVICE_ID_I8042 = 13;
 // `aero_snapshot::DeviceId::HDA` (see `docs/16-snapshots.md`).
 export const VM_SNAPSHOT_DEVICE_ID_AUDIO_HDA = 18;
-
-export const VM_SNAPSHOT_DEVICE_NET_STACK_KIND = "net.stack";
-// `aero_snapshot::DeviceId::NET_STACK` (see `docs/16-snapshots.md`).
-// NOTE: This must match the Rust `DeviceId` assignment.
-export const VM_SNAPSHOT_DEVICE_ID_NET_STACK = 20;
-
-export const VM_SNAPSHOT_DEVICE_E1000_KIND = "net.e1000";
 // `aero_snapshot::DeviceId::E1000` (see `docs/16-snapshots.md`).
 // NOTE: This must match the Rust `DeviceId` assignment.
 export const VM_SNAPSHOT_DEVICE_ID_E1000 = 19;
+// `aero_snapshot::DeviceId::NET_STACK` (see `docs/16-snapshots.md`).
+// NOTE: This must match the Rust `DeviceId` assignment.
+export const VM_SNAPSHOT_DEVICE_ID_NET_STACK = 20;
 
 const VM_SNAPSHOT_DEVICE_KIND_PREFIX_ID = "device.";
 
@@ -132,8 +130,8 @@ export function vmSnapshotDeviceIdToKind(id: number): string {
   if (idU32 === VM_SNAPSHOT_DEVICE_ID_USB) return VM_SNAPSHOT_DEVICE_USB_KIND;
   if (idU32 === VM_SNAPSHOT_DEVICE_ID_I8042) return VM_SNAPSHOT_DEVICE_I8042_KIND;
   if (idU32 === VM_SNAPSHOT_DEVICE_ID_AUDIO_HDA) return VM_SNAPSHOT_DEVICE_AUDIO_HDA_KIND;
-  if (idU32 === VM_SNAPSHOT_DEVICE_ID_NET_STACK) return VM_SNAPSHOT_DEVICE_NET_STACK_KIND;
   if (idU32 === VM_SNAPSHOT_DEVICE_ID_E1000) return VM_SNAPSHOT_DEVICE_E1000_KIND;
+  if (idU32 === VM_SNAPSHOT_DEVICE_ID_NET_STACK) return VM_SNAPSHOT_DEVICE_NET_STACK_KIND;
   // Forward compatibility: preserve unknown numeric IDs via a stable `device.<id>` spelling.
   return `${VM_SNAPSHOT_DEVICE_KIND_PREFIX_ID}${idU32}`;
 }
@@ -142,8 +140,8 @@ export function vmSnapshotDeviceKindToId(kind: string): number | null {
   if (kind === VM_SNAPSHOT_DEVICE_USB_KIND) return VM_SNAPSHOT_DEVICE_ID_USB;
   if (kind === VM_SNAPSHOT_DEVICE_I8042_KIND) return VM_SNAPSHOT_DEVICE_ID_I8042;
   if (kind === VM_SNAPSHOT_DEVICE_AUDIO_HDA_KIND) return VM_SNAPSHOT_DEVICE_ID_AUDIO_HDA;
-  if (kind === VM_SNAPSHOT_DEVICE_NET_STACK_KIND) return VM_SNAPSHOT_DEVICE_ID_NET_STACK;
   if (kind === VM_SNAPSHOT_DEVICE_E1000_KIND) return VM_SNAPSHOT_DEVICE_ID_E1000;
+  if (kind === VM_SNAPSHOT_DEVICE_NET_STACK_KIND) return VM_SNAPSHOT_DEVICE_ID_NET_STACK;
   if (kind.startsWith(VM_SNAPSHOT_DEVICE_KIND_PREFIX_ID)) {
     const rest = kind.slice(VM_SNAPSHOT_DEVICE_KIND_PREFIX_ID.length);
     if (/^[0-9]+$/.test(rest)) {
