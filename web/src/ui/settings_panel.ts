@@ -13,6 +13,10 @@ export function mountSettingsPanel(container: HTMLElement, manager: AeroConfigMa
   legend.textContent = "Settings";
   fieldset.appendChild(legend);
 
+  const proxyHelpText =
+    "Guest networking (Option C L2 tunnel). Use the gateway base URL (e.g. https://gateway.example.com or /; not /l2). " +
+    "Aero will POST /session (with credentials) then connect to /l2.";
+
   const memorySelect = document.createElement("select");
   let customMemoryOption: HTMLOptionElement | null = null;
   for (const mem of AERO_GUEST_MEMORY_PRESETS_MIB) {
@@ -38,7 +42,7 @@ export function mountSettingsPanel(container: HTMLElement, manager: AeroConfigMa
   const proxyInput = document.createElement("input");
   proxyInput.type = "text";
   proxyInput.inputMode = "url";
-  proxyInput.placeholder = "https://gateway.example.com or /l2 (or blank)";
+  proxyInput.placeholder = "https://gateway.example.com or / (or blank)";
   proxyInput.autocomplete = "off";
   proxyInput.spellcheck = false;
 
@@ -116,6 +120,9 @@ export function mountSettingsPanel(container: HTMLElement, manager: AeroConfigMa
     setLocked(memorySelect, memoryHint, state, "guestMemoryMiB");
     setLocked(logSelect, logHint, state, "logLevel");
     setLocked(proxyInput, proxyHint, state, "proxyUrl");
+    if (!state.lockedKeys.has("proxyUrl")) {
+      proxyHint.textContent = proxyHelpText;
+    }
 
     const desiredMem = String(state.effective.guestMemoryMiB);
     const hasOption = Array.from(memorySelect.options).some((o) => o.value === desiredMem);
