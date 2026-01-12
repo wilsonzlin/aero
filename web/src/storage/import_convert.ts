@@ -168,6 +168,13 @@ export async function detectFormat(src: RandomAccessSource, filename?: string): 
     }
   }
 
+  // VHD: if we only have the cookie but not enough bytes for a full footer, still classify as VHD
+  // so the subsequent open/conversion step can fail with a meaningful corruption error.
+  if (src.size >= 8 && src.size < 512) {
+    const cookie0 = await src.readAt(0, 8);
+    if (ascii(cookie0) === "conectix") return "vhd";
+  }
+
   // VHD: check for a *plausible* footer at end (fixed and dynamic disks).
   //
   // Note: We intentionally do not require a valid checksum here. A corrupted VHD should still

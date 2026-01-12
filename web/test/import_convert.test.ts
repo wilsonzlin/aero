@@ -501,6 +501,13 @@ test("detectFormat: detects truncated qcow2 magic", async () => {
   assert.equal(fmt, "qcow2");
 });
 
+test("detectFormat: detects truncated VHD cookie", async () => {
+  const file = new Uint8Array(8);
+  file.set(new TextEncoder().encode("conectix"), 0);
+  const fmt = await detectFormat(new MemSource(file), "disk.unknown");
+  assert.equal(fmt, "vhd");
+});
+
 test("detectFormat: does not misclassify qcow2 magic with invalid version", async () => {
   const file = new Uint8Array(8);
   file.set([0x51, 0x46, 0x49, 0xfb], 0);
