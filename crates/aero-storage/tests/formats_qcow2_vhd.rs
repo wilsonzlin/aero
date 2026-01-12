@@ -3,7 +3,7 @@ use aero_storage::{
 };
 use std::sync::{
     atomic::{AtomicU64, Ordering},
-    Arc,
+    Arc, Mutex,
 };
 
 const QCOW2_OFLAG_COPIED: u64 = 1 << 63;
@@ -247,6 +247,40 @@ impl StorageBackend for CountingBackend {
     }
 
     fn write_at(&mut self, offset: u64, buf: &[u8]) -> aero_storage::Result<()> {
+        self.inner.write_at(offset, buf)
+    }
+
+    fn flush(&mut self) -> aero_storage::Result<()> {
+        self.inner.flush()
+    }
+}
+
+struct WriteTraceBackend {
+    inner: MemBackend,
+    writes: Arc<Mutex<Vec<(u64, usize)>>>,
+}
+
+impl WriteTraceBackend {
+    fn new(inner: MemBackend, writes: Arc<Mutex<Vec<(u64, usize)>>>) -> Self {
+        Self { inner, writes }
+    }
+}
+
+impl StorageBackend for WriteTraceBackend {
+    fn len(&mut self) -> aero_storage::Result<u64> {
+        self.inner.len()
+    }
+
+    fn set_len(&mut self, len: u64) -> aero_storage::Result<()> {
+        self.inner.set_len(len)
+    }
+
+    fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> aero_storage::Result<()> {
+        self.inner.read_at(offset, buf)
+    }
+
+    fn write_at(&mut self, offset: u64, buf: &[u8]) -> aero_storage::Result<()> {
+        self.writes.lock().unwrap().push((offset, buf.len()));
         self.inner.write_at(offset, buf)
     }
 
@@ -1052,6 +1086,42 @@ fn vhd_dynamic_write_at_spanning_two_sectors_sets_bitmap_bits() {
     let mut bitmap_first = [0u8; 1];
     backend.read_at(block_start, &mut bitmap_first).unwrap();
     assert_eq!(bitmap_first[0], 0xC0);
+}
+
+#[test]
+fn vhd_dynamic_write_updates_single_bitmap_byte() {
+    let backend = make_vhd_dynamic_with_pattern();
+
+    let writes = Arc::new(Mutex::new(Vec::new()));
+    let backend = WriteTraceBackend::new(backend, writes.clone());
+    let mut disk = VhdDisk::open(backend).unwrap();
+
+    // Fixture layout (see `make_vhd_dynamic_with_pattern`):
+    // - dynamic header at 512
+    // - BAT at 1536 (padded to 512 bytes)
+    // - first allocated block placed at the old footer offset: 2048
+    // - bitmap size is 512 bytes, so data starts at 2560.
+    let block_start = 512u64 + 1024u64 + 512u64;
+
+    // Write to sector 1, which is in the already-allocated block and will require flipping a
+    // bitmap bit. The bitmap update should write back only the single changed bitmap byte.
+    let data = vec![0x11u8; SECTOR_SIZE];
+    disk.write_sectors(1, &data).unwrap();
+    disk.flush().unwrap();
+
+    let writes = writes.lock().unwrap();
+    assert!(
+        writes
+            .iter()
+            .any(|(off, len)| *off == block_start && *len == 1),
+        "expected a 1-byte bitmap update write at block_start; writes={writes:?}"
+    );
+    assert!(
+        !writes
+            .iter()
+            .any(|(off, len)| *off == block_start && *len == SECTOR_SIZE),
+        "bitmap should not be rewritten fully; writes={writes:?}"
+    );
 }
 
 #[test]
