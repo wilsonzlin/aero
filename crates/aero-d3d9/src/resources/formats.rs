@@ -391,15 +391,27 @@ mod tests {
     fn dxt_format_selection_falls_back_when_dims_incompatible_even_if_bc_supported() {
         let features = wgpu::Features::TEXTURE_COMPRESSION_BC;
 
-        let info =
-            format_info_for_texture(D3DFormat::Dxt1, features, TextureUsageKind::Sampled, 12, 12, 2)
-                .unwrap();
+        let info = format_info_for_texture(
+            D3DFormat::Dxt1,
+            features,
+            TextureUsageKind::Sampled,
+            12,
+            12,
+            2,
+        )
+        .unwrap();
         assert_eq!(info.wgpu, wgpu::TextureFormat::Bgra8Unorm);
         assert!(info.decompress_to_bgra8);
 
-        let info =
-            format_info_for_texture(D3DFormat::Dxt1, features, TextureUsageKind::Sampled, 8, 8, 2)
-                .unwrap();
+        let info = format_info_for_texture(
+            D3DFormat::Dxt1,
+            features,
+            TextureUsageKind::Sampled,
+            8,
+            8,
+            2,
+        )
+        .unwrap();
         assert_eq!(info.wgpu, wgpu::TextureFormat::Bc1RgbaUnorm);
         assert!(!info.decompress_to_bgra8);
     }

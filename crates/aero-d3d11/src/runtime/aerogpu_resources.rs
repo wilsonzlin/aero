@@ -240,7 +240,12 @@ impl AerogpuResourceManager {
             .features()
             .contains(wgpu::Features::TEXTURE_COMPRESSION_BC);
         let bc_enabled = bc_enabled
-            && wgpu_compressed_texture_dimensions_compatible(linear_format, width, height, mip_levels)?;
+            && wgpu_compressed_texture_dimensions_compatible(
+                linear_format,
+                width,
+                height,
+                mip_levels,
+            )?;
         let (texture_format, upload_transform) =
             select_texture_format_for_device(linear_format, bc_enabled)?;
 

@@ -5011,10 +5011,11 @@ impl AerogpuD3d11Executor {
                         .mip_offsets
                         .get(src_mip_level as usize)
                         .ok_or_else(|| anyhow!("COPY_TEXTURE2D: missing src mip offset"))?;
-                    let src_row_pitch = *guest_layout
-                        .mip_row_pitches
-                        .get(src_mip_level as usize)
-                        .ok_or_else(|| anyhow!("COPY_TEXTURE2D: missing src mip row pitch"))?;
+                    let src_row_pitch =
+                        *guest_layout
+                            .mip_row_pitches
+                            .get(src_mip_level as usize)
+                            .ok_or_else(|| anyhow!("COPY_TEXTURE2D: missing src mip row pitch"))?;
 
                     let src_row_pitch_usize: usize = src_row_pitch
                         .try_into()
@@ -5041,11 +5042,10 @@ impl AerogpuD3d11Executor {
                             .get_mut(dst_start..dst_end)
                             .ok_or_else(|| anyhow!("COPY_TEXTURE2D: BC region buffer too small"))?;
 
-                        let src_row_index = u64::from(
-                            src_block_y
-                                .checked_add(block_row)
-                                .ok_or_else(|| anyhow!("COPY_TEXTURE2D: BC src row index overflow"))?,
-                        );
+                        let src_row_index =
+                            u64::from(src_block_y.checked_add(block_row).ok_or_else(|| {
+                                anyhow!("COPY_TEXTURE2D: BC src row index overflow")
+                            })?);
                         let src_row_offset = src_row_index
                             .checked_mul(src_row_pitch as u64)
                             .ok_or_else(|| anyhow!("COPY_TEXTURE2D: BC src row offset overflow"))?;
@@ -5215,32 +5215,40 @@ impl AerogpuD3d11Executor {
                         } else if dst_res.backing.is_some() && dst_guest_backing_was_current {
                             // Seed a shadow copy from guest memory (which we believe still matches
                             // GPU contents) so we can patch in the copied blocks.
-                            let backing = dst_res
-                                .backing
-                                .expect("checked backing.is_some above");
+                            let backing = dst_res.backing.expect("checked backing.is_some above");
                             let shadow_len_u64: u64 = dst_shadow_len.try_into().map_err(|_| {
                                 anyhow!("COPY_TEXTURE2D: dst shadow size out of range")
                             })?;
-                            allocs.validate_range(backing.alloc_id, backing.offset_bytes, shadow_len_u64)?;
+                            allocs.validate_range(
+                                backing.alloc_id,
+                                backing.offset_bytes,
+                                shadow_len_u64,
+                            )?;
                             let base_gpa = allocs
                                 .gpa(backing.alloc_id)?
                                 .checked_add(backing.offset_bytes)
-                                .ok_or_else(|| anyhow!("COPY_TEXTURE2D: dst backing GPA overflow"))?;
+                                .ok_or_else(|| {
+                                    anyhow!("COPY_TEXTURE2D: dst backing GPA overflow")
+                                })?;
 
                             let mut shadow = vec![0u8; dst_shadow_len];
                             for row in 0..dst_rows_u32 {
                                 let row_offset = (row as u64)
                                     .checked_mul(dst_bytes_per_row as u64)
-                                    .ok_or_else(|| anyhow!("COPY_TEXTURE2D: dst shadow row offset overflow"))?;
-                                let src_addr = base_gpa
-                                    .checked_add(row_offset)
-                                    .ok_or_else(|| anyhow!("COPY_TEXTURE2D: dst shadow src address overflow"))?;
-                                let start = (row as usize)
-                                    .checked_mul(dst_bpr_usize)
-                                    .ok_or_else(|| anyhow!("COPY_TEXTURE2D: dst shadow dst offset overflow"))?;
-                                let end = start
-                                    .checked_add(dst_bpr_usize)
-                                    .ok_or_else(|| anyhow!("COPY_TEXTURE2D: dst shadow dst end overflow"))?;
+                                    .ok_or_else(|| {
+                                        anyhow!("COPY_TEXTURE2D: dst shadow row offset overflow")
+                                    })?;
+                                let src_addr =
+                                    base_gpa.checked_add(row_offset).ok_or_else(|| {
+                                        anyhow!("COPY_TEXTURE2D: dst shadow src address overflow")
+                                    })?;
+                                let start =
+                                    (row as usize).checked_mul(dst_bpr_usize).ok_or_else(|| {
+                                        anyhow!("COPY_TEXTURE2D: dst shadow dst offset overflow")
+                                    })?;
+                                let end = start.checked_add(dst_bpr_usize).ok_or_else(|| {
+                                    anyhow!("COPY_TEXTURE2D: dst shadow dst end overflow")
+                                })?;
                                 guest_mem
                                     .read(
                                         src_addr,

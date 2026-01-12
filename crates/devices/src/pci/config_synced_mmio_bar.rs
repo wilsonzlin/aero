@@ -76,7 +76,12 @@ impl<T: MmioHandler + PciDevice> MmioHandler for PciConfigSyncedMmioBar<T> {
         self.sync_pci_state();
         // Mask to enforce byte-enable semantics even for handlers that treat `value` as a full
         // 64-bit quantity.
-        MmioHandler::write(&mut *self.dev.borrow_mut(), offset, size, value & all_ones(size));
+        MmioHandler::write(
+            &mut *self.dev.borrow_mut(),
+            offset,
+            size,
+            value & all_ones(size),
+        );
     }
 }
 

@@ -1478,7 +1478,10 @@ mod tests {
         for i in 2..rx_desc_count {
             let desc_addr = 0x2000 + (i as u64) * 16;
             let (buf, len, status, errors) = read_rx_desc_fields(&mem, desc_addr);
-            assert_eq!(buf, rx_bufs[i as usize], "unexpected RX desc {i} buffer addr change");
+            assert_eq!(
+                buf, rx_bufs[i as usize],
+                "unexpected RX desc {i} buffer addr change"
+            );
             assert_eq!(len, 0, "unexpected RX desc {i} length after OFFER tick");
             assert_eq!(status, 0, "unexpected RX desc {i} status after OFFER tick");
             assert_eq!(errors, 0, "unexpected RX desc {i} errors after OFFER tick");
@@ -1608,12 +1611,22 @@ mod tests {
         let (rx1_buf_after, rx1_len_after, rx1_status_after, rx1_errors_after) =
             read_rx_desc_fields(&mem, 0x2010);
         assert_eq!(
-            (rx0_buf_after, rx0_len_after, rx0_status_after, rx0_errors_after),
+            (
+                rx0_buf_after,
+                rx0_len_after,
+                rx0_status_after,
+                rx0_errors_after
+            ),
             (rx0_buf, rx0_len, rx0_status, rx0_errors),
             "RX desc 0 should not be modified after OFFER tick"
         );
         assert_eq!(
-            (rx1_buf_after, rx1_len_after, rx1_status_after, rx1_errors_after),
+            (
+                rx1_buf_after,
+                rx1_len_after,
+                rx1_status_after,
+                rx1_errors_after
+            ),
             (rx1_buf, rx1_len, rx1_status, rx1_errors),
             "RX desc 1 should not be modified after OFFER tick"
         );

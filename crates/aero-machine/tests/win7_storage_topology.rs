@@ -6,7 +6,9 @@
 //! - `crates/aero-pc-platform/tests/pc_platform_win7_storage.rs`
 
 use aero_devices::pci::profile::{IDE_PIIX3, ISA_PIIX3, SATA_AHCI_ICH9};
-use aero_devices::pci::{PciBarDefinition, PciBdf, PciInterruptPin, PciIntxRouter, PciIntxRouterConfig};
+use aero_devices::pci::{
+    PciBarDefinition, PciBdf, PciInterruptPin, PciIntxRouter, PciIntxRouterConfig,
+};
 use aero_machine::{Machine, MachineConfig};
 
 #[test]

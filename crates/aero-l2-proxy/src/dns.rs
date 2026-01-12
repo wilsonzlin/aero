@@ -111,13 +111,7 @@ mod tests {
 
     #[test]
     fn normalize_dns_name_owns_and_lowercases_when_needed() {
-        assert_eq!(
-            normalize_dns_name("Example.COM.").as_ref(),
-            "example.com"
-        );
-        assert!(matches!(
-            normalize_dns_name("Example.COM."),
-            Cow::Owned(_)
-        ));
+        assert_eq!(normalize_dns_name("Example.COM.").as_ref(), "example.com");
+        assert!(matches!(normalize_dns_name("Example.COM."), Cow::Owned(_)));
     }
 }

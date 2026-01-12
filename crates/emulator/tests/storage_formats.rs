@@ -664,7 +664,9 @@ fn vhd_dynamic_rejects_bad_dynamic_header_checksum() {
     // Corrupt only the checksum field (offset 36) without changing the rest of the header.
     let dyn_header_offset = 512u64;
     let mut checksum = [0u8; 4];
-    storage.read_at(dyn_header_offset + 36, &mut checksum).unwrap();
+    storage
+        .read_at(dyn_header_offset + 36, &mut checksum)
+        .unwrap();
     let bad = u32::from_be_bytes(checksum) ^ 1;
     storage
         .write_at(dyn_header_offset + 36, &bad.to_be_bytes())

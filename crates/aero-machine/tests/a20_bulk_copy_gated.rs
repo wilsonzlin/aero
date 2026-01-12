@@ -268,4 +268,3 @@ fn a20_disabled_gates_rep_movs_bulk_fast_path_even_in_protected_mode() {
     let expected_head: Vec<u8> = (0..0x10u8).collect();
     assert_eq!(src_head, expected_head);
 }
-

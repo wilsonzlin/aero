@@ -1,14 +1,19 @@
 #![cfg(not(target_arch = "wasm32"))]
 
 use emulator::io::storage::disk::MemDisk;
-use emulator::io::storage::{DiskBackend as _, DiskError, DiskFormat, VirtualDrive, WriteCachePolicy};
+use emulator::io::storage::{
+    DiskBackend as _, DiskError, DiskFormat, VirtualDrive, WriteCachePolicy,
+};
 
 #[test]
 fn virtual_drive_readv_rejects_unaligned_buffer() {
     let backend = MemDisk::new(4);
-    let mut drive =
-        VirtualDrive::new(DiskFormat::Raw, Box::new(backend), WriteCachePolicy::WriteThrough)
-            .unwrap();
+    let mut drive = VirtualDrive::new(
+        DiskFormat::Raw,
+        Box::new(backend),
+        WriteCachePolicy::WriteThrough,
+    )
+    .unwrap();
 
     let mut buf0 = vec![0u8; 512];
     let mut buf1 = vec![0u8; 1];
@@ -26,9 +31,12 @@ fn virtual_drive_readv_rejects_unaligned_buffer() {
 #[test]
 fn virtual_drive_writev_rejects_unaligned_buffer() {
     let backend = MemDisk::new(4);
-    let mut drive =
-        VirtualDrive::new(DiskFormat::Raw, Box::new(backend), WriteCachePolicy::WriteThrough)
-            .unwrap();
+    let mut drive = VirtualDrive::new(
+        DiskFormat::Raw,
+        Box::new(backend),
+        WriteCachePolicy::WriteThrough,
+    )
+    .unwrap();
 
     let buf0 = vec![0u8; 512];
     let buf1 = vec![0u8; 1];
@@ -49,9 +57,12 @@ fn virtual_drive_readv_roundtrips() {
     backend.data_mut()[0..512].fill(0xAA);
     backend.data_mut()[512..1024].fill(0xBB);
 
-    let mut drive =
-        VirtualDrive::new(DiskFormat::Raw, Box::new(backend), WriteCachePolicy::WriteThrough)
-            .unwrap();
+    let mut drive = VirtualDrive::new(
+        DiskFormat::Raw,
+        Box::new(backend),
+        WriteCachePolicy::WriteThrough,
+    )
+    .unwrap();
 
     let mut buf0 = vec![0u8; 512];
     let mut buf1 = vec![0u8; 512];
@@ -60,4 +71,3 @@ fn virtual_drive_readv_roundtrips() {
     assert!(buf0.iter().all(|b| *b == 0xAA));
     assert!(buf1.iter().all(|b| *b == 0xBB));
 }
-

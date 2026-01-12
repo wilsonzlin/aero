@@ -94,15 +94,7 @@ fn parse_caps(cfg: &[u8; 256]) -> Caps {
     caps
 }
 
-fn write_desc(
-    m: &mut Machine,
-    table: u64,
-    index: u16,
-    addr: u64,
-    len: u32,
-    flags: u16,
-    next: u16,
-) {
+fn write_desc(m: &mut Machine, table: u64, index: u16, addr: u64, len: u32, flags: u16, next: u16) {
     let base = table + u64::from(index) * 16;
     m.write_physical_u64(base, addr);
     m.write_physical_u32(base + 8, len);
@@ -150,10 +142,7 @@ fn virtio_net_tx_and_rx_complete_via_machine_network_backend() {
     assert_ne!(caps.notify_mult, 0);
 
     // Feature negotiation: accept everything the device offers.
-    m.write_physical_u8(
-        bar0_base + caps.common + 0x14,
-        VIRTIO_STATUS_ACKNOWLEDGE,
-    );
+    m.write_physical_u8(bar0_base + caps.common + 0x14, VIRTIO_STATUS_ACKNOWLEDGE);
     m.write_physical_u8(
         bar0_base + caps.common + 0x14,
         VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
@@ -227,15 +216,7 @@ fn virtio_net_tx_and_rx_complete_via_machine_network_backend() {
         VIRTQ_DESC_F_NEXT,
         1,
     );
-    write_desc(
-        &mut m,
-        tx_desc,
-        1,
-        payload_addr,
-        payload.len() as u32,
-        0,
-        0,
-    );
+    write_desc(&mut m, tx_desc, 1, payload_addr, payload.len() as u32, 0, 0);
 
     m.write_physical_u16(tx_avail, 0);
     m.write_physical_u16(tx_avail + 2, 1);
@@ -244,10 +225,7 @@ fn virtio_net_tx_and_rx_complete_via_machine_network_backend() {
     m.write_physical_u16(tx_used + 2, 0);
 
     // Notify TX queue 1 and poll the machine once.
-    m.write_physical_u16(
-        bar0_base + caps.notify + u64::from(caps.notify_mult),
-        1,
-    );
+    m.write_physical_u16(bar0_base + caps.notify + u64::from(caps.notify_mult), 1);
     m.poll_network();
 
     assert_eq!(state.borrow().tx, vec![payload.to_vec()]);
@@ -308,4 +286,3 @@ fn virtio_net_tx_and_rx_complete_via_machine_network_backend() {
         rx_frame
     );
 }
-

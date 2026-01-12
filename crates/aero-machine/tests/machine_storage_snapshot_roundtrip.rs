@@ -565,11 +565,7 @@ fn machine_storage_snapshot_roundtrip_preserves_controllers_and_allows_backend_r
     first4[2..4].copy_from_slice(&w1.to_le_bytes());
     assert_eq!(&first4, b"BOOT");
     assert!(
-        src.ide()
-            .unwrap()
-            .borrow()
-            .controller
-            .primary_irq_pending(),
+        src.ide().unwrap().borrow().controller.primary_irq_pending(),
         "IDE primary IRQ should be pending mid-transfer before snapshot"
     );
 

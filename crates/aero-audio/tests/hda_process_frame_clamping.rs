@@ -52,4 +52,3 @@ fn hda_process_clamps_extreme_frame_counts_to_avoid_oom() {
         hda.output_rate_hz() as u64 - hda.audio_out.capacity_frames() as u64
     );
 }
-

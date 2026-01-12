@@ -51,7 +51,9 @@ fn move_disks_section_before_cpu(bytes: &[u8]) -> Vec<u8> {
 
     let cpu_idx = sections
         .iter()
-        .position(|(id, _, _)| *id == snapshot::SectionId::CPU.0 || *id == snapshot::SectionId::CPUS.0)
+        .position(|(id, _, _)| {
+            *id == snapshot::SectionId::CPU.0 || *id == snapshot::SectionId::CPUS.0
+        })
         .expect("snapshot should contain a CPU/CPUS section");
     sections.insert(cpu_idx, disks);
 

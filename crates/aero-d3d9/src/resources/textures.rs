@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use super::{
     align_copy_bytes_per_row, format_info_for_texture, wgpu_bc_texture_dimensions_compatible,
-    D3DFormat, D3DPool, FormatInfo,
-    GuestResourceId, LockFlags, ResourceManager, TextureUploadDesc, TextureUsageKind,
+    D3DFormat, D3DPool, FormatInfo, GuestResourceId, LockFlags, ResourceManager, TextureUploadDesc,
+    TextureUsageKind,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -768,9 +768,7 @@ impl PciBarMmioHandler for VirtioPciBar0Mmio {
             return Self::all_ones(size);
         }
         let mut buf = [0u8; 8];
-        self.dev
-            .borrow_mut()
-            .bar0_read(offset, &mut buf[..size]);
+        self.dev.borrow_mut().bar0_read(offset, &mut buf[..size]);
         u64::from_le_bytes(buf)
     }
 
@@ -830,13 +828,12 @@ impl VirtioGuestMemory for VirtioDmaMemory<'_> {
             return Ok(());
         }
         if self.a20_enabled {
-            self.bus
-                .ram()
-                .read_into(addr, dst)
-                .map_err(|_| VirtioGuestMemoryError::OutOfBounds {
+            self.bus.ram().read_into(addr, dst).map_err(|_| {
+                VirtioGuestMemoryError::OutOfBounds {
                     addr,
                     len: dst.len(),
-                })?;
+                }
+            })?;
             return Ok(());
         }
 
@@ -859,13 +856,12 @@ impl VirtioGuestMemory for VirtioDmaMemory<'_> {
             return Ok(());
         }
         if self.a20_enabled {
-            self.bus
-                .ram_mut()
-                .write_from(addr, src)
-                .map_err(|_| VirtioGuestMemoryError::OutOfBounds {
+            self.bus.ram_mut().write_from(addr, src).map_err(|_| {
+                VirtioGuestMemoryError::OutOfBounds {
                     addr,
                     len: src.len(),
-                })?;
+                }
+            })?;
             return Ok(());
         }
 
@@ -894,7 +890,11 @@ impl VirtioGuestMemory for VirtioDmaMemory<'_> {
             .ok_or(VirtioGuestMemoryError::OutOfBounds { addr, len })
     }
 
-    fn get_slice_mut(&mut self, addr: u64, len: usize) -> Result<&mut [u8], VirtioGuestMemoryError> {
+    fn get_slice_mut(
+        &mut self,
+        addr: u64,
+        len: usize,
+    ) -> Result<&mut [u8], VirtioGuestMemoryError> {
         if !self.a20_range_is_contiguous(addr, len) {
             return Err(VirtioGuestMemoryError::OutOfBounds { addr, len });
         }
@@ -1229,9 +1229,7 @@ impl MachineAhciMmioBar {
             let cfg = pci_cfg.bus_mut().device_config(self.bdf);
             let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
             let bar5_base = cfg
-                .and_then(|cfg| {
-                    cfg.bar_range(aero_devices_storage::pci_ahci::AHCI_ABAR_BAR_INDEX)
-                })
+                .and_then(|cfg| cfg.bar_range(aero_devices_storage::pci_ahci::AHCI_ABAR_BAR_INDEX))
                 .map(|range| range.base)
                 .unwrap_or(0);
             (command, bar5_base)
@@ -1240,9 +1238,10 @@ impl MachineAhciMmioBar {
         let mut ahci = self.ahci.borrow_mut();
         ahci.config_mut().set_command(command);
         if bar5_base != 0 {
-            ahci
-                .config_mut()
-                .set_bar_base(aero_devices_storage::pci_ahci::AHCI_ABAR_BAR_INDEX, bar5_base);
+            ahci.config_mut().set_bar_base(
+                aero_devices_storage::pci_ahci::AHCI_ABAR_BAR_INDEX,
+                bar5_base,
+            );
         }
     }
 }
@@ -1885,7 +1884,9 @@ impl Machine {
                 return net.backend_mut().l2_ring_stats();
             }
         }
-        self.network_backend.as_ref().and_then(|b| b.l2_ring_stats())
+        self.network_backend
+            .as_ref()
+            .and_then(|b| b.l2_ring_stats())
     }
 
     /// Debug/testing helper: read a single guest physical byte.
@@ -4133,8 +4134,11 @@ impl snapshot::SnapshotTarget for Machine {
 
                         // Port mappings are part of machine wiring, not the snapshot payload, so
                         // install the default VGA port ranges now.
-                        self.io
-                            .register_range(0x3C0, 0x20, Box::new(VgaPortIo { dev: vga.clone() }));
+                        self.io.register_range(
+                            0x3C0,
+                            0x20,
+                            Box::new(VgaPortIo { dev: vga.clone() }),
+                        );
                         self.io.register_shared_range(0x01CE, 2, {
                             let vga = vga.clone();
                             move |_port| Box::new(VgaPortIo { dev: vga.clone() })
@@ -6929,7 +6933,10 @@ mod tests {
 
         dst.restore_snapshot_bytes(&snap).unwrap();
 
-        assert!(dst.vga.is_none(), "headless restore should not create a VGA device");
+        assert!(
+            dst.vga.is_none(),
+            "headless restore should not create a VGA device"
+        );
         assert_eq!(
             dst.bios.video.vbe.lfb_base,
             firmware::video::vbe::VbeDevice::LFB_BASE_DEFAULT

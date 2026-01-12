@@ -41,7 +41,9 @@ fn vga_pci_stub_does_not_collide_with_canonical_aerogpu_bdf() {
     let vga_bdf = PciBdf::new(0, 0x0c, 0);
     let vga_vendor = bus.read_config(vga_bdf, 0x00, 2) as u16;
     if vga_vendor == 0xFFFF {
-        panic!("expected VGA PCI stub at {vga_bdf:?} when enable_vga=true and enable_pc_platform=true");
+        panic!(
+            "expected VGA PCI stub at {vga_bdf:?} when enable_vga=true and enable_pc_platform=true"
+        );
     }
     let vga_device = bus.read_config(vga_bdf, 0x02, 2) as u16;
     assert_eq!(vga_vendor, 0x1234);

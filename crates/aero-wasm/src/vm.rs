@@ -73,9 +73,8 @@ impl WasmPhysBus {
     fn ram_offset(&self, paddr: u64, len: usize) -> Option<u64> {
         match crate::guest_phys::translate_guest_paddr_range(self.guest_size, paddr, len) {
             crate::guest_phys::GuestRamRange::Ram { ram_offset } => Some(ram_offset),
-            crate::guest_phys::GuestRamRange::Hole | crate::guest_phys::GuestRamRange::OutOfBounds => {
-                None
-            }
+            crate::guest_phys::GuestRamRange::Hole
+            | crate::guest_phys::GuestRamRange::OutOfBounds => None,
         }
     }
 

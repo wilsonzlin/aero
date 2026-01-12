@@ -321,7 +321,10 @@ fn print_disks_section_summary(file: &mut fs::File, section: &SnapshotSectionInf
 
         let base = truncate(&disk.base_image, MAX_PRINT_CHARS);
         let overlay = truncate(&disk.overlay_image, MAX_PRINT_CHARS);
-        println!("  - [{idx}] disk_id={} base_image={base:?} overlay_image={overlay:?}", disk.disk_id);
+        println!(
+            "  - [{idx}] disk_id={} base_image={base:?} overlay_image={overlay:?}",
+            disk.disk_id
+        );
     }
     if disks.disks.len() > MAX_PRINT_DISKS {
         println!("  ... ({} more)", disks.disks.len() - MAX_PRINT_DISKS);

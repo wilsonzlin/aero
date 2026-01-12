@@ -434,8 +434,8 @@ fn is_bc_format(format: u32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
     use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
+    use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
 
     #[test]
     fn map_texture_format_accepts_uncompressed_srgb_formats() {
@@ -496,7 +496,10 @@ mod tests {
 
             // The scanout should be cleared rather than pointing at a destroyed texture.
             let scanout = exec.read_presented_scanout_rgba8(SCANOUT).await.unwrap();
-            assert!(scanout.is_none(), "expected scanout to be cleared after destroy");
+            assert!(
+                scanout.is_none(),
+                "expected scanout to be cleared after destroy"
+            );
         });
     }
 }

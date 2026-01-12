@@ -93,7 +93,9 @@ fn decode_vga_snapshot(bytes: &[u8]) -> snapshot::DeviceState {
         .expect("missing DEVICES section");
 
     let mut cursor = Cursor::new(bytes);
-    cursor.seek(SeekFrom::Start(devices_section.offset)).unwrap();
+    cursor
+        .seek(SeekFrom::Start(devices_section.offset))
+        .unwrap();
     let mut r = cursor.take(devices_section.len);
 
     let count = {
@@ -169,7 +171,10 @@ fn snapshot_restore_resyncs_text_cursor_from_bda() {
     vga.port_write(0x3D4, 1, 0x0F);
     let lo = vga.port_read(0x3D5, 1) as u8;
     let snap_cursor_pos = ((hi as u16) << 8) | (lo as u16);
-    assert_eq!((snap_cursor_start, snap_cursor_end, snap_cursor_pos), (0x00, 0x0F, 0));
+    assert_eq!(
+        (snap_cursor_start, snap_cursor_end, snap_cursor_pos),
+        (0x00, 0x0F, 0)
+    );
 
     // Restore into a fresh machine: post-restore logic should resync VGA CRTC cursor regs from the
     // BDA.
@@ -177,5 +182,8 @@ fn snapshot_restore_resyncs_text_cursor_from_bda() {
     m2.restore_snapshot_bytes(&snap).unwrap();
 
     let (start, end, pos) = read_crtc_cursor_regs(&mut m2);
-    assert_eq!((start, end, pos), (expected_start, expected_end, expected_pos));
+    assert_eq!(
+        (start, end, pos),
+        (expected_start, expected_end, expected_pos)
+    );
 }
