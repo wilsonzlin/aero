@@ -245,4 +245,19 @@ describe("web/scripts/ensure_wasm.mjs", () => {
     expect(() => ensureVariant("single")).toThrowError(/expected wasm-pack outputs are still missing/);
     expect(spawnSyncMock).toHaveBeenCalledTimes(1);
   });
+
+  it("fails with a clear error when build_wasm.mjs cannot be spawned", async () => {
+    const { existsSync } = await import("node:fs");
+    const { spawnSync } = await import("node:child_process");
+    const existsSyncMock = vi.mocked(existsSync);
+    const spawnSyncMock = vi.mocked(spawnSync);
+
+    existsSyncMock.mockImplementation(() => false);
+    spawnSyncMock.mockImplementation(() => {
+      return { status: null, error: new Error("ENOENT") } as unknown as ReturnType<typeof spawnSync>;
+    });
+
+    const { ensureVariant } = await import("../scripts/ensure_wasm.mjs");
+    expect(() => ensureVariant("single")).toThrowError(/Failed to execute build_wasm\.mjs/);
+  });
 });

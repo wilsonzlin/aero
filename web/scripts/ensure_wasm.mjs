@@ -11,6 +11,7 @@ const repoRoot = path.resolve(__dirname, "../..");
 class EnsureWasmError extends Error {
     constructor(message, status = 1) {
         super(message);
+        this.name = "EnsureWasmError";
         this.status = status;
     }
 }
@@ -50,9 +51,15 @@ export function ensureVariant(variant) {
     }
 
     const result = spawnSync("node", [path.join(__dirname, "build_wasm.mjs"), variant], { stdio: "inherit" });
+    if (result.error) {
+        throw new EnsureWasmError(
+            `[wasm] Failed to execute build_wasm.mjs for variant '${variant}': ${result.error.message}`,
+            1,
+        );
+    }
     if ((result.status ?? 1) !== 0) {
         // build_wasm.mjs already printed details; preserve its exit code.
-        throw new EnsureWasmError("", result.status ?? 1);
+        throw new EnsureWasmError(`[wasm] build_wasm.mjs failed for variant '${variant}'.`, result.status ?? 1);
     }
 
     // Defensive: verify the build produced the required artifacts so callers can
