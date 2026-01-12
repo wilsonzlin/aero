@@ -460,11 +460,17 @@ export class PciBus implements PortIoHandler {
   #writeConfigDword(fn: PciFunction, alignedOff: number, value: number): void {
     // Command register changes affect BAR decoding enablement.
     if (alignedOff === 0x04) {
-      // Command (low 16) is writable; status (high 16) is treated as read-only for now.
+      // PCI header dword @ 0x04:
+      // - Command register (0x04..0x05) is writable.
+      // - Status register  (0x06..0x07) is RO / RW1C on real hardware and must not
+      //   be blindly overwritten by 32-bit command writes. Guests commonly write
+      //   the full dword with the upper 16 bits as zero, which would otherwise
+      //   clobber Status bits such as "Capabilities List" (bit 4) used by modern
+      //   virtio-pci.
       const cur = readU32LE(fn.config, alignedOff);
       const newValue = ((cur & 0xffff_0000) | (value & 0x0000_ffff)) >>> 0;
       writeU32LE(fn.config, alignedOff, newValue);
-      this.#refreshDeviceDecoding(fn);
+      if ((cur & 0xffff) !== (newValue & 0xffff)) this.#refreshDeviceDecoding(fn);
       return;
     }
 

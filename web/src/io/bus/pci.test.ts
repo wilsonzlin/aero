@@ -308,4 +308,45 @@ describe("io/bus/pci", () => {
 
     expect(seen.size).toBe(3);
   });
+
+  it("preserves Status.CAP_LIST on 32-bit writes to the Command/Status dword (0x04)", () => {
+    const portBus = new PortIoBus();
+    const mmioBus = new MmioBus();
+    const pciBus = new PciBus(portBus, mmioBus);
+    pciBus.registerToPortBus();
+
+    const dev: PciDevice = {
+      name: "status_preserve_dev",
+      vendorId: 0x1234,
+      deviceId: 0x5678,
+      classCode: 0,
+      bars: [{ kind: "mmio32", size: 0x100 }, null, null, null, null, null],
+      initPciConfig: (config) => {
+        // PCI Status register bit 4: Capabilities List.
+        config[0x06] |= 0x10;
+      },
+      mmioRead: () => 0x1122_3344,
+      mmioWrite: () => {},
+    };
+
+    const addr = pciBus.registerDevice(dev, { device: 0, function: 0 });
+    const cfg = makeCfgIo(portBus);
+
+    const statusBefore = cfg.readU16(addr.device, addr.function, 0x06);
+    expect(statusBefore & 0x0010).toBe(0x0010);
+
+    const bar0 = cfg.readU32(addr.device, addr.function, 0x10);
+    const bar0Base = BigInt(bar0) & 0xffff_fff0n;
+    expect(mmioBus.read(bar0Base, 4)).toBe(0xffff_ffff);
+
+    // 32-bit write to 0x04 with upper 16 bits = 0 must not clobber Status.
+    cfg.writeU32(addr.device, addr.function, 0x04, 0x0000_0002); // Memory Space Enable
+
+    const statusAfter = cfg.readU16(addr.device, addr.function, 0x06);
+    expect(cfg.readU16(addr.device, addr.function, 0x04)).toBe(0x0002);
+    expect(statusAfter & 0x0010).toBe(0x0010);
+
+    // BAR decoding should be enabled when Command changes.
+    expect(mmioBus.read(bar0Base, 4)).toBe(0x1122_3344);
+  });
 });
