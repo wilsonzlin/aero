@@ -81,9 +81,13 @@ echo ""
 echo "Checking defensive tools..."
 
 # timeout (for with-timeout.sh / safe-run.sh)
+# Prefer GNU coreutils timeout. On macOS, it is typically installed as `gtimeout`.
+TIMEOUT_CMD=""
 if command -v timeout &>/dev/null; then
+    TIMEOUT_CMD="timeout"
     echo "  ✓ timeout: available"
 elif command -v gtimeout &>/dev/null; then
+    TIMEOUT_CMD="gtimeout"
     echo "  ✓ gtimeout: available (macOS coreutils)"
 else
     WARNINGS+=("timeout not found. Install coreutils: brew install coreutils (macOS) or apt install coreutils (Linux)")
@@ -139,7 +143,11 @@ ORPHANS_FOUND=0
 if command -v pgrep &>/dev/null; then
     for pattern in "cargo" "rustc" "wasm-pack"; do
         # Get count, handling edge cases carefully
-        RAW_COUNT=$(timeout 2 pgrep -u "$(whoami)" -c "$pattern" 2>/dev/null || echo "0")
+        if [[ -n "${TIMEOUT_CMD}" ]]; then
+            RAW_COUNT=$("$TIMEOUT_CMD" 2 pgrep -u "$(whoami)" -c "$pattern" 2>/dev/null || echo "0")
+        else
+            RAW_COUNT=$(pgrep -u "$(whoami)" -c "$pattern" 2>/dev/null || echo "0")
+        fi
         COUNT="${RAW_COUNT//[^0-9]/}"  # Strip non-digits
         COUNT="${COUNT:-0}"  # Default to 0 if empty
         if [[ "$COUNT" =~ ^[0-9]+$ ]] && [[ "$COUNT" -gt 0 ]]; then
