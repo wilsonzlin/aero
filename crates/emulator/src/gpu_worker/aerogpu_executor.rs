@@ -1062,6 +1062,7 @@ fn decode_cmd_stream(
         ));
         return (None, Vec::new());
     }
+
     if desc
         .cmd_gpa
         .checked_add(u64::from(desc.cmd_size_bytes))
@@ -1073,64 +1074,21 @@ fn decode_cmd_stream(
         return (None, Vec::new());
     }
 
-    if desc.cmd_size_bytes > MAX_CMD_STREAM_SIZE_BYTES {
-        decode_errors.push(AeroGpuSubmissionDecodeError::CmdStream(
-            AeroGpuCmdStreamDecodeError::TooLarge,
-        ));
-
-        let mut prefix = [0u8; ProtocolCmdStreamHeader::SIZE_BYTES];
-        mem.read_physical(desc.cmd_gpa, &mut prefix);
-        let header = decode_cmd_stream_header_le(&prefix)
-            .ok()
-            .map(AeroGpuCmdStreamHeader::from);
-        if let Some(header) = header {
-            if header.size_bytes > desc.cmd_size_bytes {
-                decode_errors.push(AeroGpuSubmissionDecodeError::CmdStream(
-                    AeroGpuCmdStreamDecodeError::StreamSizeTooLarge,
-                ));
-            }
-        }
-        return (header, Vec::new());
-    }
-
-    if !capture_bytes {
-        let cmd_size = desc.cmd_size_bytes as usize;
-        if cmd_size < ProtocolCmdStreamHeader::SIZE_BYTES {
-            decode_errors.push(AeroGpuSubmissionDecodeError::CmdStream(
-                AeroGpuCmdStreamDecodeError::TooSmall,
-            ));
-            return (None, Vec::new());
-        }
-
-        let mut prefix = [0u8; ProtocolCmdStreamHeader::SIZE_BYTES];
-        mem.read_physical(desc.cmd_gpa, &mut prefix);
-        let header = match decode_cmd_stream_header_le(&prefix) {
-            Ok(header) => AeroGpuCmdStreamHeader::from(header),
-            Err(_) => {
-                decode_errors.push(AeroGpuSubmissionDecodeError::CmdStream(
-                    AeroGpuCmdStreamDecodeError::BadHeader,
-                ));
-                return (None, Vec::new());
-            }
-        };
-
-        if header.size_bytes > desc.cmd_size_bytes {
-            decode_errors.push(AeroGpuSubmissionDecodeError::CmdStream(
-                AeroGpuCmdStreamDecodeError::StreamSizeTooLarge,
-            ));
-        }
-
-        return (Some(header), Vec::new());
-    }
-
-    let cmd_size = desc.cmd_size_bytes as usize;
-    if cmd_size < ProtocolCmdStreamHeader::SIZE_BYTES {
+    // Forward-compat: `cmd_size_bytes` is the buffer capacity, while the command stream header's
+    // `size_bytes` is the number of bytes used by the stream. Guests may provide a backing buffer
+    // that is larger than `cmd_stream_header.size_bytes` (page rounding / reuse); only copy the
+    // used prefix.
+    if desc.cmd_size_bytes < ProtocolCmdStreamHeader::SIZE_BYTES as u32 {
         decode_errors.push(AeroGpuSubmissionDecodeError::CmdStream(
             AeroGpuCmdStreamDecodeError::TooSmall,
         ));
-        let mut bytes = vec![0u8; cmd_size];
-        mem.read_physical(desc.cmd_gpa, &mut bytes);
-        return (None, bytes);
+        if !capture_bytes {
+            return (None, Vec::new());
+        }
+        let cmd_size = desc.cmd_size_bytes as usize;
+        let mut cmd_stream = vec![0u8; cmd_size];
+        mem.read_physical(desc.cmd_gpa, &mut cmd_stream);
+        return (None, cmd_stream);
     }
 
     let mut prefix = [0u8; ProtocolCmdStreamHeader::SIZE_BYTES];
@@ -1141,7 +1099,10 @@ fn decode_cmd_stream(
             decode_errors.push(AeroGpuSubmissionDecodeError::CmdStream(
                 AeroGpuCmdStreamDecodeError::BadHeader,
             ));
-            return (None, prefix.to_vec());
+            if capture_bytes {
+                return (None, prefix.to_vec());
+            }
+            return (None, Vec::new());
         }
     };
 
@@ -1149,19 +1110,35 @@ fn decode_cmd_stream(
         decode_errors.push(AeroGpuSubmissionDecodeError::CmdStream(
             AeroGpuCmdStreamDecodeError::StreamSizeTooLarge,
         ));
+        if capture_bytes {
+            return (Some(header), prefix.to_vec());
+        }
+        return (Some(header), Vec::new());
     }
 
-    // Forward-compat: `cmd_size_bytes` is the backing buffer size, while the stream header's
-    // `size_bytes` is the number of bytes used.
-    let capture_size = header.size_bytes.min(desc.cmd_size_bytes) as usize;
+    if header.size_bytes > MAX_CMD_STREAM_SIZE_BYTES {
+        decode_errors.push(AeroGpuSubmissionDecodeError::CmdStream(
+            AeroGpuCmdStreamDecodeError::TooLarge,
+        ));
+        if capture_bytes {
+            return (Some(header), prefix.to_vec());
+        }
+        return (Some(header), Vec::new());
+    }
+
+    if !capture_bytes {
+        return (Some(header), Vec::new());
+    }
+
+    let cmd_size = header.size_bytes as usize;
     let mut cmd_stream = Vec::new();
-    if cmd_stream.try_reserve_exact(capture_size).is_err() {
+    if cmd_stream.try_reserve_exact(cmd_size).is_err() {
         decode_errors.push(AeroGpuSubmissionDecodeError::CmdStream(
             AeroGpuCmdStreamDecodeError::TooLarge,
         ));
         return (Some(header), Vec::new());
     }
-    cmd_stream.resize(capture_size, 0u8);
+    cmd_stream.resize(cmd_size, 0u8);
     mem.read_physical(desc.cmd_gpa, &mut cmd_stream);
 
     (Some(header), cmd_stream)
@@ -1613,26 +1590,71 @@ impl AerogpuSubmissionTrace {
 
         self.ensure_frame_open()?;
 
-        if desc.cmd_size_bytes > MAX_CAPTURE_BYTES {
-            return Err(TraceWriteError::Io(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "aerogpu trace: cmd stream too large",
-            )));
-        }
-        let cmd_size = desc.cmd_size_bytes as usize;
-        let mut cmd_stream_bytes = vec![0u8; cmd_size];
-        if cmd_size > 0 && desc.cmd_gpa != 0 {
+        // Only capture the command stream if the descriptor is consistent. Malformed descriptors
+        // are still recorded (with an empty cmd stream) so tracing can't be disabled by guests
+        // that set `cmd_size_bytes` without a valid GPA.
+        let cmd_stream_bytes = if desc.cmd_gpa != 0
+            && desc.cmd_size_bytes != 0
+            && desc
+                .cmd_gpa
+                .checked_add(u64::from(desc.cmd_size_bytes))
+                .is_some()
+        {
+            // Capture only the used bytes (`cmd_stream_header.size_bytes`), not the backing buffer
+            // capacity (`desc.cmd_size_bytes`).
+            if desc.cmd_size_bytes > MAX_CAPTURE_BYTES {
+                return Err(TraceWriteError::Io(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "aerogpu trace: cmd buffer too large",
+                )));
+            }
+            let mut capture_len = desc.cmd_size_bytes;
+            if desc.cmd_size_bytes >= ProtocolCmdStreamHeader::SIZE_BYTES as u32 {
+                let mut prefix = [0u8; ProtocolCmdStreamHeader::SIZE_BYTES];
+                mem.read_physical(desc.cmd_gpa, &mut prefix);
+                if let Ok(hdr) = decode_cmd_stream_header_le(&prefix) {
+                    if hdr.size_bytes >= ProtocolCmdStreamHeader::SIZE_BYTES as u32
+                        && hdr.size_bytes <= desc.cmd_size_bytes
+                    {
+                        capture_len = hdr.size_bytes;
+                    }
+                }
+            }
+            let cmd_size = capture_len as usize;
+            let mut cmd_stream_bytes = vec![0u8; cmd_size];
             mem.read_physical(desc.cmd_gpa, &mut cmd_stream_bytes);
-        }
+            cmd_stream_bytes
+        } else {
+            Vec::new()
+        };
 
-        let alloc_table_bytes = if desc.alloc_table_gpa != 0 && desc.alloc_table_size_bytes != 0 {
+        let alloc_table_bytes = if desc.alloc_table_gpa != 0
+            && desc.alloc_table_size_bytes != 0
+            && desc
+                .alloc_table_gpa
+                .checked_add(u64::from(desc.alloc_table_size_bytes))
+                .is_some()
+        {
+            // Capture only the used bytes (`alloc_table_header.size_bytes`), not the backing buffer
+            // capacity (`desc.alloc_table_size_bytes`).
             if desc.alloc_table_size_bytes > MAX_CAPTURE_BYTES {
                 return Err(TraceWriteError::Io(std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
-                    "aerogpu trace: alloc table too large",
+                    "aerogpu trace: alloc table buffer too large",
                 )));
             }
-            let alloc_size = desc.alloc_table_size_bytes as usize;
+
+            let mut capture_len = desc.alloc_table_size_bytes;
+            if desc.alloc_table_size_bytes >= AeroGpuAllocTableHeader::SIZE_BYTES {
+                let hdr = AeroGpuAllocTableHeader::read_from(mem, desc.alloc_table_gpa);
+                if hdr.size_bytes >= AeroGpuAllocTableHeader::SIZE_BYTES
+                    && hdr.size_bytes <= desc.alloc_table_size_bytes
+                {
+                    capture_len = hdr.size_bytes;
+                }
+            }
+
+            let alloc_size = capture_len as usize;
             let mut bytes = vec![0u8; alloc_size];
             mem.read_physical(desc.alloc_table_gpa, &mut bytes);
             Some(bytes)
@@ -1675,7 +1697,7 @@ impl AerogpuSubmissionTrace {
                         let size =
                             u64::from_le_bytes(table[off + 16..off + 24].try_into().unwrap());
 
-                        if alloc_id != 0 && gpa != 0 && size != 0 {
+                        if alloc_id != 0 && size != 0 && gpa.checked_add(size).is_some() {
                             let size_u32 = u32::try_from(size).unwrap_or(u32::MAX);
                             if size_u32 <= MAX_CAPTURE_BYTES {
                                 let mut bytes = vec![0u8; size as usize];
