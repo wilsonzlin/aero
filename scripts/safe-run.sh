@@ -202,50 +202,59 @@ if [[ "${is_cargo_cmd}" == "true" ]]; then
     # Restrict this to Linux: other platforms may use different linkers that don't accept
     # `--threads=`.
     if [[ "$(uname 2>/dev/null || true)" == "Linux" ]]; then
+        # Determine the Cargo build target so we can pick an appropriate `rust-lld` threads flag.
+        #
+        # Precedence matches Cargo itself:
+        # - `cargo --target <triple>` / `--target=<triple>` overrides everything.
+        # - Otherwise, fall back to `CARGO_BUILD_TARGET` (often set by agent shells or configs).
+        aero_target=""
+        prev=""
+        for arg in "${@:2}"; do
+            # Stop parsing at `--` because subsequent args are passed to the invoked binary
+            # (e.g. test harness flags) and should not affect our Cargo target detection.
+            if [[ "${arg}" == "--" ]]; then
+                break
+            fi
+            if [[ "${prev}" == "--target" ]]; then
+                aero_target="${arg}"
+                break
+            fi
+            prev=""
+            case "${arg}" in
+                --target)
+                    prev="--target"
+                    continue
+                    ;;
+                --target=*)
+                    aero_target="${arg#--target=}"
+                    break
+                    ;;
+            esac
+        done
+        if [[ -z "${aero_target}" ]]; then
+            aero_target="${CARGO_BUILD_TARGET:-}"
+        fi
+
+        # If a native environment has already injected `-Wl,--threads=...` into RUSTFLAGS (commonly
+        # via `scripts/agent-env.sh`), rewrite it into the wasm-compatible form when the Cargo target
+        # is wasm32. Otherwise, `rust-lld -flavor wasm` fails with:
+        #   rust-lld: error: unknown argument: -Wl,--threads=...
+        if [[ "${aero_target}" == wasm32-* ]] && [[ "${RUSTFLAGS:-}" == *"-Wl,--threads="* ]]; then
+            export RUSTFLAGS="${RUSTFLAGS//-C link-arg=-Wl,--threads=/-C link-arg=--threads=}"
+            export RUSTFLAGS="${RUSTFLAGS# }"
+        fi
+
         if [[ "${RUSTFLAGS:-}" != *"--threads="* ]]; then
             aero_lld_threads="${CARGO_BUILD_JOBS:-1}"
-
-            # Determine the Cargo build target so we can pick an appropriate `rust-lld` threads flag.
-            #
-            # Precedence matches Cargo itself:
-            # - `cargo --target <triple>` / `--target=<triple>` overrides everything.
-            # - Otherwise, fall back to `CARGO_BUILD_TARGET` (often set by agent shells or configs).
-            aero_target=""
-            prev=""
-            for arg in "${@:2}"; do
-                # Stop parsing at `--` because subsequent args are passed to the invoked binary
-                # (e.g. test harness flags) and should not affect our Cargo target detection.
-                if [[ "${arg}" == "--" ]]; then
-                    break
-                fi
-                if [[ "${prev}" == "--target" ]]; then
-                    aero_target="${arg}"
-                    break
-                fi
-                prev=""
-                case "${arg}" in
-                    --target)
-                        prev="--target"
-                        continue
-                        ;;
-                    --target=*)
-                        aero_target="${arg#--target=}"
-                        break
-                        ;;
-                esac
-            done
-            if [[ -z "${aero_target}" ]]; then
-                aero_target="${CARGO_BUILD_TARGET:-}"
-            fi
-
             if [[ "${aero_target}" == wasm32-* ]]; then
                 export RUSTFLAGS="${RUSTFLAGS:-} -C link-arg=--threads=${aero_lld_threads}"
             else
                 export RUSTFLAGS="${RUSTFLAGS:-} -C link-arg=-Wl,--threads=${aero_lld_threads}"
             fi
             export RUSTFLAGS="${RUSTFLAGS# }"
-            unset aero_lld_threads aero_target prev 2>/dev/null || true
         fi
+
+        unset aero_lld_threads aero_target prev 2>/dev/null || true
     fi
 fi
 

@@ -164,11 +164,31 @@ fi
 # LLVM lld (used by the pinned Rust toolchain on Linux) defaults to using all available hardware
 # threads when linking, which can also hit per-user thread limits on shared hosts. Limit lld's
 # parallelism to match our overall build parallelism.
+#
+# ⚠️ WASM NOTE:
+# When linking wasm32 targets, rustc typically invokes `rust-lld -flavor wasm` *directly*
+# (not via `cc -Wl,...`). The `-Wl,` prefix is treated as a literal argument and causes:
+#   rust-lld: error: unknown argument: -Wl,--threads=...
+# Prefer passing lld's flag directly for wasm targets (`--threads=N`).
 if [[ "$(uname 2>/dev/null || true)" == "Linux" ]]; then
-  if [[ "${RUSTFLAGS:-}" != *"--threads="* ]]; then
-    export RUSTFLAGS="${RUSTFLAGS:-} -C link-arg=-Wl,--threads=${CARGO_BUILD_JOBS:-1}"
+  aero_target="${CARGO_BUILD_TARGET:-}"
+
+  # If we already have the native-style `-Wl,--threads=...` in the environment but are building
+  # wasm32 (via CARGO_BUILD_TARGET), rewrite it to the wasm-compatible form.
+  if [[ "${aero_target}" == wasm32-* ]] && [[ "${RUSTFLAGS:-}" == *"-Wl,--threads="* ]]; then
+    export RUSTFLAGS="${RUSTFLAGS//-C link-arg=-Wl,--threads=/-C link-arg=--threads=}"
     export RUSTFLAGS="${RUSTFLAGS# }"
   fi
+
+  if [[ "${RUSTFLAGS:-}" != *"--threads="* ]]; then
+    if [[ "${aero_target}" == wasm32-* ]]; then
+      export RUSTFLAGS="${RUSTFLAGS:-} -C link-arg=--threads=${CARGO_BUILD_JOBS:-1}"
+    else
+      export RUSTFLAGS="${RUSTFLAGS:-} -C link-arg=-Wl,--threads=${CARGO_BUILD_JOBS:-1}"
+    fi
+    export RUSTFLAGS="${RUSTFLAGS# }"
+  fi
+  unset aero_target 2>/dev/null || true
 fi
 
 # Node.js - cap V8 heap to avoid runaway memory.

@@ -163,6 +163,10 @@ test("agent-env: does not force rustc codegen-units based on CARGO_BUILD_JOBS", 
     const env = { ...process.env };
     delete env.RUSTFLAGS;
     delete env.CARGO_BUILD_JOBS;
+    // Keep the test deterministic: if a caller exports CARGO_BUILD_TARGET=wasm32-...,
+    // agent-env will inject the wasm-specific linker flag instead of `-Wl,...`.
+    // These assertions target the default native path.
+    delete env.CARGO_BUILD_TARGET;
     env.AERO_CARGO_BUILD_JOBS = "2";
     delete env.AERO_RUST_CODEGEN_UNITS;
     delete env.AERO_CODEGEN_UNITS;
@@ -178,6 +182,33 @@ test("agent-env: does not force rustc codegen-units based on CARGO_BUILD_JOBS", 
     // On Linux we still cap LLVM lld parallelism to match build jobs.
     if (process.platform === "linux") {
       assert.match(stdout, /-C link-arg=-Wl,--threads=2\b/);
+    }
+  } finally {
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("agent-env: uses --threads=<n> for wasm32 when CARGO_BUILD_TARGET is set", { skip: process.platform === "win32" }, () => {
+  const repoRoot = setupTempRepo();
+  try {
+    const env = { ...process.env };
+    delete env.RUSTFLAGS;
+    delete env.CARGO_BUILD_JOBS;
+    env.AERO_CARGO_BUILD_JOBS = "2";
+    env.CARGO_BUILD_TARGET = "wasm32-unknown-unknown";
+    delete env.AERO_RUST_CODEGEN_UNITS;
+    delete env.AERO_CODEGEN_UNITS;
+
+    const stdout = execFileSync("bash", ["-c", 'source scripts/agent-env.sh >/dev/null; printf "%s" "$RUSTFLAGS"'], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    if (process.platform === "linux") {
+      assert.match(stdout, /-C link-arg=--threads=2\b/);
+      assert.ok(!stdout.includes("-Wl,--threads="), `expected wasm32 RUSTFLAGS to avoid -Wl,--threads, got: ${stdout}`);
     }
   } finally {
     fs.rmSync(repoRoot, { recursive: true, force: true });

@@ -49,6 +49,32 @@ test("safe-run: uses --threads=<n> for wasm32 targets (rust-lld -flavor wasm)", 
   }
 });
 
+test("safe-run: rewrites -Wl,--threads=<n> into --threads=<n> for wasm32 targets", { skip: process.platform === "win32" }, () => {
+  const { dir } = makeFakeCargoBin();
+  try {
+    const env = { ...process.env };
+    env.RUSTFLAGS = "-C link-arg=-Wl,--threads=7";
+    delete env.CARGO_BUILD_TARGET;
+    env.PATH = `${dir}:${env.PATH ?? ""}`;
+
+    const stdout = execFileSync(
+      "bash",
+      ["scripts/safe-run.sh", "cargo", "build", "--target", "wasm32-unknown-unknown"],
+      {
+        cwd: repoRoot,
+        encoding: "utf8",
+        env,
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+
+    assert.match(stdout, /-C link-arg=--threads=7\b/);
+    assert.doesNotMatch(stdout, /-C link-arg=-Wl,--threads=7\b/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("safe-run: falls back to CARGO_BUILD_TARGET for wasm32 when no --target flag is provided", { skip: process.platform === "win32" }, () => {
   const { dir } = makeFakeCargoBin();
   try {

@@ -339,6 +339,11 @@ const existingRustflags = process.env.RUSTFLAGS?.trim() ?? "";
 // Avoid accidentally inheriting target features (especially `+atomics`) from a user's environment.
 const rustflagsWithoutTargetFeatures = existingRustflags
     .replace(/-C\s*target-feature=[^ ]+/g, "")
+    // Some developer environments inject an lld threads flag via `-Wl,--threads=...` (works for native
+    // targets where rustc links via `cc`, but breaks wasm because rustc invokes `rust-lld -flavor wasm`
+    // directly). Translate it to the wasm-compatible form so threaded wasm builds remain robust even
+    // when running in an agent shell that sourced scripts like `scripts/agent-env.sh`.
+    .replace(/-C\s*link-arg=-Wl,--threads=/g, "-C link-arg=--threads=")
     // Avoid inheriting wasm memory import/export knobs; the build script controls those per-package.
     .replace(/-C\s*link-arg=--import-memory\b/g, "")
     .replace(/-C\s*link-arg=--export-memory\b/g, "")
