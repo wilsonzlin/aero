@@ -80,7 +80,9 @@ int main() {
   set_env("AEROGPU_D3D9_TRACE", "1");
   set_env("AEROGPU_D3D9_TRACE_MODE", "all");
   set_env("AEROGPU_D3D9_TRACE_MAX", "64");
-  set_env("AEROGPU_D3D9_TRACE_FILTER", "ValidateDevice");
+  // Exercise whitespace trimming + case-insensitive matching, and ensure unknown
+  // tokens do not break filtering.
+  set_env("AEROGPU_D3D9_TRACE_FILTER", "  validateDEVICE , does_not_exist  ");
   set_env("AEROGPU_D3D9_TRACE_DUMP_ON_DETACH", "1");
   set_env("AEROGPU_D3D9_TRACE_DUMP_ON_FAIL", "0");
   set_env("AEROGPU_D3D9_TRACE_DUMP_PRESENT", "0");
