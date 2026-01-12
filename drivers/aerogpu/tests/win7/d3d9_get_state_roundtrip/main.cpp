@@ -996,6 +996,31 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
     return reporter.FailHresult("CreateRenderTarget (stateblock rt_clobber)", hr);
   }
 
+  ComPtr<IDirect3DSurface9> ds_sb;
+  hr = dev->CreateDepthStencilSurface(kWidth,
+                                      kHeight,
+                                      D3DFMT_D24S8,
+                                      D3DMULTISAMPLE_NONE,
+                                      0,
+                                      FALSE,
+                                      ds_sb.put(),
+                                      NULL);
+  if (FAILED(hr) || !ds_sb) {
+    return reporter.FailHresult("CreateDepthStencilSurface (stateblock ds_sb)", hr);
+  }
+  ComPtr<IDirect3DSurface9> ds_clobber;
+  hr = dev->CreateDepthStencilSurface(kWidth,
+                                      kHeight,
+                                      D3DFMT_D24S8,
+                                      D3DMULTISAMPLE_NONE,
+                                      0,
+                                      FALSE,
+                                      ds_clobber.put(),
+                                      NULL);
+  if (FAILED(hr) || !ds_clobber) {
+    return reporter.FailHresult("CreateDepthStencilSurface (stateblock ds_clobber)", hr);
+  }
+
   ComPtr<IDirect3DStateBlock9> sb;
   hr = dev->BeginStateBlock();
   if (FAILED(hr)) {
@@ -1050,6 +1075,11 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
   hr = dev->SetRenderTarget(0, rt_sb.get());
   if (FAILED(hr)) {
     return reporter.FailHresult("SetRenderTarget(0) (stateblock)", hr);
+  }
+
+  hr = dev->SetDepthStencilSurface(ds_sb.get());
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetDepthStencilSurface (stateblock)", hr);
   }
 
   hr = dev->SetStreamSource(0, vb_sb.get(), stream_offset_sb, stream_stride_sb);
@@ -1248,6 +1278,11 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
     hr = dev->SetRenderTarget(0, rt_clobber.get());
     if (FAILED(hr)) {
       return reporter.FailHresult("SetRenderTarget(0) (clobber)", hr);
+    }
+
+    hr = dev->SetDepthStencilSurface(ds_clobber.get());
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetDepthStencilSurface (clobber)", hr);
     }
 
     hr = dev->SetStreamSource(0, vb_clobber.get(), stream_offset_clobber, stream_stride_clobber);
@@ -1481,6 +1516,15 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
     }
     if (got_rt.get() != rt_sb.get()) {
       return reporter.Fail("stateblock restore mismatch: RenderTarget(0) got=%p expected=%p", got_rt.get(), rt_sb.get());
+    }
+
+    ComPtr<IDirect3DSurface9> got_ds;
+    hr = dev->GetDepthStencilSurface(got_ds.put());
+    if (FAILED(hr)) {
+      return reporter.FailHresult("GetDepthStencilSurface (after Apply)", hr);
+    }
+    if (got_ds.get() != ds_sb.get()) {
+      return reporter.Fail("stateblock restore mismatch: DepthStencilSurface got=%p expected=%p", got_ds.get(), ds_sb.get());
     }
 
     ComPtr<IDirect3DVertexBuffer9> got_vb;
@@ -2239,6 +2283,31 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
       return reporter.FailHresult("CreateRenderTarget (CreateStateBlock pixel rt_1)", hr);
     }
 
+    ComPtr<IDirect3DSurface9> ds_0;
+    hr = dev->CreateDepthStencilSurface(kWidth,
+                                        kHeight,
+                                        D3DFMT_D24S8,
+                                        D3DMULTISAMPLE_NONE,
+                                        0,
+                                        FALSE,
+                                        ds_0.put(),
+                                        NULL);
+    if (FAILED(hr) || !ds_0) {
+      return reporter.FailHresult("CreateDepthStencilSurface (CreateStateBlock pixel ds_0)", hr);
+    }
+    ComPtr<IDirect3DSurface9> ds_1;
+    hr = dev->CreateDepthStencilSurface(kWidth,
+                                        kHeight,
+                                        D3DFMT_D24S8,
+                                        D3DMULTISAMPLE_NONE,
+                                        0,
+                                        FALSE,
+                                        ds_1.put(),
+                                        NULL);
+    if (FAILED(hr) || !ds_1) {
+      return reporter.FailHresult("CreateDepthStencilSurface (CreateStateBlock pixel ds_1)", hr);
+    }
+
     // Establish a baseline pixel-state config.
     const DWORD alphablend_0 = TRUE;
     hr = dev->SetRenderState(D3DRS_ALPHABLENDENABLE, alphablend_0);
@@ -2299,6 +2368,11 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
     hr = dev->SetRenderTarget(0, rt_0.get());
     if (FAILED(hr)) {
       return reporter.FailHresult("SetRenderTarget(0) (pre CreateStateBlock pixel)", hr);
+    }
+
+    hr = dev->SetDepthStencilSurface(ds_0.get());
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetDepthStencilSurface (pre CreateStateBlock pixel)", hr);
     }
 
     // Palette / gamma ramp are legacy cached-only state. Some runtimes may reject
@@ -2424,6 +2498,11 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
       hr = dev->SetRenderTarget(0, rt_1.get());
       if (FAILED(hr)) {
         return reporter.FailHresult("SetRenderTarget(0) (clobber pre Apply pixel baseline)", hr);
+      }
+
+      hr = dev->SetDepthStencilSurface(ds_1.get());
+      if (FAILED(hr)) {
+        return reporter.FailHresult("SetDepthStencilSurface (clobber pre Apply pixel baseline)", hr);
       }
 
       if (palette_ok) {
@@ -2552,6 +2631,17 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
                              rt_0.get());
       }
 
+      ComPtr<IDirect3DSurface9> got_ds;
+      hr = dev->GetDepthStencilSurface(got_ds.put());
+      if (FAILED(hr)) {
+        return reporter.FailHresult("GetDepthStencilSurface (after Apply pixel baseline)", hr);
+      }
+      if (got_ds.get() != ds_0.get()) {
+        return reporter.Fail("CreateStateBlock baseline mismatch: DepthStencilSurface got=%p expected=%p",
+                             got_ds.get(),
+                             ds_0.get());
+      }
+
       if (palette_ok) {
         PALETTEENTRY got_pal[256];
         std::memset(got_pal, 0, sizeof(got_pal));
@@ -2642,6 +2732,11 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
       return reporter.FailHresult("SetRenderTarget(0) (pre Capture pixel)", hr);
     }
 
+    hr = dev->SetDepthStencilSurface(ds_1.get());
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetDepthStencilSurface (pre Capture pixel)", hr);
+    }
+
     if (palette_ok) {
       hr = dev->SetPaletteEntries(palette_idx_0, palette_1);
       if (FAILED(hr)) {
@@ -2720,6 +2815,11 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
     hr = dev->SetRenderTarget(0, rt_0.get());
     if (FAILED(hr)) {
       return reporter.FailHresult("SetRenderTarget(0) (pre Apply pixel)", hr);
+    }
+
+    hr = dev->SetDepthStencilSurface(ds_0.get());
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetDepthStencilSurface (pre Apply pixel)", hr);
     }
 
     if (palette_ok) {
@@ -2847,6 +2947,17 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
       return reporter.Fail("CreateStateBlock restore mismatch: RenderTarget(0) got=%p expected=%p",
                            got_rt.get(),
                            rt_1.get());
+    }
+
+    ComPtr<IDirect3DSurface9> got_ds;
+    hr = dev->GetDepthStencilSurface(got_ds.put());
+    if (FAILED(hr)) {
+      return reporter.FailHresult("GetDepthStencilSurface (after Apply pixel)", hr);
+    }
+    if (got_ds.get() != ds_1.get()) {
+      return reporter.Fail("CreateStateBlock restore mismatch: DepthStencilSurface got=%p expected=%p",
+                           got_ds.get(),
+                           ds_1.get());
     }
 
     if (palette_ok) {
