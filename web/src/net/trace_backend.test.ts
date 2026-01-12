@@ -33,5 +33,20 @@ describe("net/trace_backend", () => {
 
     await expect(netTrace.getStats()).resolves.toEqual({ enabled: true, records: 1, bytes: 2, droppedRecords: 3, droppedBytes: 4 });
   });
-});
 
+  it("repairs non-object window.aero values", () => {
+    const fakeCoordinator = {
+      isNetTraceEnabled: () => false,
+      setNetTraceEnabled: () => {},
+      takeNetTracePcapng: async () => new Uint8Array(),
+      clearNetTrace: () => {},
+      getNetTraceStats: async () => ({ enabled: false, records: 0, bytes: 0, droppedRecords: 0, droppedBytes: 0 }),
+    };
+
+    (globalThis as any).window = { aero: "not-an-object" };
+
+    expect(() => installNetTraceBackendOnAeroGlobal(fakeCoordinator as any)).not.toThrow();
+    expect(typeof (globalThis as any).window.aero).toBe("object");
+    expect(typeof (globalThis as any).window.aero.netTrace).toBe("object");
+  });
+});

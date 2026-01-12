@@ -12,6 +12,12 @@ export function installNetTraceBackendOnAeroGlobal(coordinator: WorkerCoordinato
     throw new Error("installNetTraceBackendOnAeroGlobal must be called on the browser main thread (window is undefined).");
   }
 
+  // Be defensive: other tooling might set `window.aero` to a non-object value.
+  // Align with `web/src/api/status.ts` which repairs the global in that case.
+  const existing = (window as unknown as { aero?: unknown }).aero;
+  const aero: Record<string, unknown> =
+    existing && typeof existing === "object" ? (existing as Record<string, unknown>) : ((window as unknown as any).aero = {});
+
   const backend: NetTraceBackend = {
     isEnabled: () => coordinator.isNetTraceEnabled(),
     enable: () => coordinator.setNetTraceEnabled(true),
@@ -23,5 +29,5 @@ export function installNetTraceBackendOnAeroGlobal(coordinator: WorkerCoordinato
     clearCapture: () => coordinator.clearNetTrace(),
   };
 
-  (window.aero ??= {}).netTrace = backend;
+  aero.netTrace = backend;
 }
