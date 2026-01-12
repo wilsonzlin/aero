@@ -12,6 +12,7 @@ use aero_gpu::guest_memory::{GuestMemory, GuestMemoryError};
 use aero_gpu::pipeline_cache::{PipelineCache, PipelineCacheConfig};
 use aero_gpu::pipeline_key::{ColorTargetKey, PipelineLayoutKey, RenderPipelineKey, ShaderHash};
 use aero_gpu::GpuCapabilities;
+use aero_gpu::wgpu_bc_texture_dimensions_compatible;
 use aero_protocol::aerogpu::aerogpu_cmd::{
     decode_cmd_copy_buffer_le, decode_cmd_copy_texture2d_le,
     decode_cmd_create_input_layout_blob_le, decode_cmd_create_shader_dxbc_payload_le,
@@ -8369,26 +8370,6 @@ fn bc_block_bytes(format: wgpu::TextureFormat) -> Option<u32> {
         | wgpu::TextureFormat::Bc7RgbaUnormSrgb => Some(16),
         _ => None,
     }
-}
-
-fn wgpu_bc_texture_dimensions_compatible(width: u32, height: u32, mip_levels: u32) -> bool {
-    // WebGPU validation requires block-compressed texture dimensions to be block-aligned (4x4 for
-    // BC formats) for mip levels that are at least one full block in size.
-    //
-    // See also: wgpu validation errors like:
-    //   "Width 9 is not a multiple of Bc1RgbaUnorm's block width (4)"
-    fn mip_extent(v: u32, level: u32) -> u32 {
-        v.checked_shr(level).unwrap_or(0).max(1)
-    }
-
-    for level in 0..mip_levels {
-        let w = mip_extent(width, level);
-        let h = mip_extent(height, level);
-        if (w >= 4 && !w.is_multiple_of(4)) || (h >= 4 && !h.is_multiple_of(4)) {
-            return false;
-        }
-    }
-    true
 }
 
 /// Compute the tight `bytes_per_row` and row count for `wgpu::Queue::write_texture`.
