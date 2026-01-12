@@ -114,6 +114,8 @@ attach an additional virtio disk with a drive letter (or run the selftest with `
     `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|PASS`.
     - Note: this requires a guest image provisioned with `--test-input-events` so the guest selftest enables the
       `virtio-input-events` read loop (otherwise the guest reports `...|SKIP|flag_not_set`).
+      When `-WithInputEvents` / `--with-input-events` is enabled, that SKIP causes the harness to fail
+      (PowerShell: `VIRTIO_INPUT_EVENTS_SKIPPED`; Python: `FAIL: VIRTIO_INPUT_EVENTS_SKIPPED: ...`).
     - Note: if the guest selftest does not emit any `virtio-input-events` marker at all (READY/SKIP/PASS/FAIL) after
       completing `virtio-input`, the harness fails early (PowerShell: `MISSING_VIRTIO_INPUT_EVENTS`; Python: prints
       `FAIL: MISSING_VIRTIO_INPUT_EVENTS: ...`). Update/re-provision the guest selftest binary.

@@ -119,7 +119,9 @@ python3 drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py \
 
 Note: If the guest was provisioned without `--test-input-events`, it will emit:
 `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|SKIP|flag_not_set`.
-The host harness only requires `virtio-input-events|PASS` when `-WithInputEvents` / `--with-input-events` is set.
+The host harness only requires `virtio-input-events|PASS` when `-WithInputEvents` / `--with-input-events` is set. When
+enabled, a guest `SKIP|flag_not_set` causes a hard failure (PowerShell: `VIRTIO_INPUT_EVENTS_SKIPPED`; Python:
+`FAIL: VIRTIO_INPUT_EVENTS_SKIPPED: ...`).
 
 Note: If the guest selftest is too old (or otherwise misconfigured) and does not emit any `virtio-input-events`
 marker at all (READY/SKIP/PASS/FAIL) after completing `virtio-input`, the harness fails early

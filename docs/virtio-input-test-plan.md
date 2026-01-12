@@ -372,7 +372,8 @@ Expected signal:
     In that case you may see multiple `VIRTIO_INPUT_EVENTS_INJECT|PASS` lines (the marker includes `attempt=<n>`).
 
 If the guest was not provisioned with `--test-input-events`, the guest will emit:
-`AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|SKIP|flag_not_set` and the harness will fail when `-WithInputEvents` / `--with-input-events` is enabled.
+`AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|SKIP|flag_not_set` and the harness will fail when `-WithInputEvents` / `--with-input-events` is enabled
+(PowerShell: `VIRTIO_INPUT_EVENTS_SKIPPED`; Python: `FAIL: VIRTIO_INPUT_EVENTS_SKIPPED: ...`).
 
 If the guest selftest is too old (or otherwise misconfigured) and does not emit any `virtio-input-events` marker at all
 (READY/SKIP/PASS/FAIL) after completing `virtio-input`, the harness fails early
