@@ -89,6 +89,7 @@ fn snapshot_roundtrip_preserves_key_state() {
     let mac = [0x52, 0x54, 0x00, 0x12, 0x34, 0x56];
     let mut dev = E1000Device::new(mac);
     let mut dma = TestDma::new(0x10000);
+    dev.pci_config_write(0x04, 2, 0x4); // Bus Master Enable (gate for DMA)
 
     // Mutate PCI config.
     dev.pci_write_u32(0x10, 0xFEBF_0000);

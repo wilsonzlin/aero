@@ -2007,6 +2007,7 @@ mod tests {
     fn tx_mmio_write_reg_defers_dma_until_poll() {
         let mut mem = TestMem::new(0x10_000);
         let mut dev = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
+        dev.pci_config_write(0x04, 2, 0x4); // Bus Master Enable
 
         // Set up TX ring at 0x1000 with 4 descriptors.
         dev.tdbal = 0x1000;
@@ -2052,6 +2053,7 @@ mod tests {
         let mut mem = TestMem::new(0x40_000);
         let mut dev = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
         let mut panic_mem = PanicMem;
+        dev.pci_config_write(0x04, 2, 0x4); // Bus Master Enable
 
         // --- TX: REG_TDT doorbell sets pending work, but must not DMA until poll.
         dev.mmio_write_u32_reg(REG_TDBAL, 0x1000);
@@ -2148,6 +2150,7 @@ mod tests {
         // behavior for robustness.
         let mut mem = TestMem::new(0x10_000);
         let mut dev = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
+        dev.pci_config_write(0x04, 2, 0x4); // Bus Master Enable
 
         dev.tdbal = 0x1000;
         dev.tdlen = (TxDesc::LEN as u32) * 4;
@@ -2165,6 +2168,7 @@ mod tests {
     fn tx_io_write_reg_defers_dma_until_poll() {
         let mut mem = TestMem::new(0x10_000);
         let mut dev = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
+        dev.pci_config_write(0x04, 2, 0x4); // Bus Master Enable
 
         // Set up TX ring at 0x1000 with 4 descriptors.
         dev.tdbal = 0x1000;
@@ -2249,6 +2253,7 @@ mod tests {
     fn rx_enqueue_defers_dma_until_poll() {
         let mut mem = TestMem::new(0x20_000);
         let mut dev = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
+        dev.pci_config_write(0x04, 2, 0x4); // Bus Master Enable
 
         // RX ring at 0x3000 with 2 descriptors.
         dev.rdbal = 0x3000;
@@ -2299,6 +2304,7 @@ mod tests {
     fn rx_mmio_write_reg_does_not_dma_on_rctl_enable_until_poll() {
         let mut mem = TestMem::new(0x20_000);
         let mut dev = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
+        dev.pci_config_write(0x04, 2, 0x4); // Bus Master Enable
 
         // RX ring at 0x3000 with 2 descriptors. Keep RX disabled initially.
         dev.mmio_write_u32_reg(REG_RDBAL, 0x3000);
@@ -2351,6 +2357,7 @@ mod tests {
     fn rx_mmio_write_reg_does_not_dma_on_rdt_update_until_poll() {
         let mut mem = TestMem::new(0x20_000);
         let mut dev = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
+        dev.pci_config_write(0x04, 2, 0x4); // Bus Master Enable
 
         // RX ring at 0x3000 with 2 descriptors, but start with no available buffers (RDH == RDT).
         dev.mmio_write_u32_reg(REG_RDBAL, 0x3000);
@@ -2497,11 +2504,11 @@ mod tests {
         let mut dev = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
 
         // Set up TX ring at 0x1000 with 4 descriptors.
-        dev.mmio_write_u32(&mut mem, REG_TDBAL, 0x1000);
-        dev.mmio_write_u32(&mut mem, REG_TDLEN, (TxDesc::LEN as u32) * 4);
-        dev.mmio_write_u32(&mut mem, REG_TDH, 0);
-        dev.mmio_write_u32(&mut mem, REG_TDT, 0);
-        dev.mmio_write_u32(&mut mem, REG_TCTL, TCTL_EN);
+        dev.mmio_write_u32(REG_TDBAL, 0x1000);
+        dev.mmio_write_u32(REG_TDLEN, (TxDesc::LEN as u32) * 4);
+        dev.mmio_write_u32(REG_TDH, 0);
+        dev.mmio_write_u32(REG_TDT, 0);
+        dev.mmio_write_u32(REG_TCTL, TCTL_EN);
 
         // Packet buffer at 0x2000.
         let pkt = [0x11u8; MIN_L2_FRAME_LEN];
@@ -2519,7 +2526,7 @@ mod tests {
         mem.write_bytes(0x1000, &desc0.to_bytes());
 
         // With bus mastering disabled, advancing the tail must not trigger any DMA.
-        dev.mmio_write_u32(&mut mem, REG_TDT, 1);
+        dev.mmio_write_u32(REG_TDT, 1);
         dev.poll(&mut mem);
 
         assert!(dev.pop_tx_frame().is_none());

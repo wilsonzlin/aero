@@ -109,6 +109,7 @@ fn snapshot_roundtrip_preserves_state() {
     let mut mem = TestMem::new(0x40_000);
     let mac = [0x52, 0x54, 0x00, 0x12, 0x34, 0x56];
     let mut dev = E1000Device::new(mac);
+    dev.pci_config_write(0x04, 2, 0x4); // Bus Master Enable (gate for DMA)
 
     // Touch a non-modeled register so it lands in `other_regs`.
     dev.mmio_write_u32(REG_OTHER, 0xDEAD_BEEF);
