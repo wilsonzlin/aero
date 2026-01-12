@@ -16,6 +16,14 @@ const BUILD_LOCK_TIMEOUT_MS = BUILD_TIMEOUT_MS + 2 * 60_000;
 const BUILD_LOCK_RETRY_MS = 200;
 const BUILD_STAMP_TIMEOUT_MS = 5_000;
 
+function parsePositiveIntEnv(value) {
+  if (typeof value !== "string") return null;
+  if (!/^[1-9][0-9]*$/.test(value)) return null;
+  const n = Number.parseInt(value, 10);
+  if (!Number.isSafeInteger(n) || n <= 0) return null;
+  return n;
+}
+
 function isSccacheWrapper(value) {
   if (!value) return false;
   const v = value.toLowerCase();
@@ -373,6 +381,26 @@ async function runCommand(command, args, { cwd, env, timeoutMs = 60_000 } = {}) 
     };
 
     if (command === "cargo") {
+      // Defensive defaults: cap Cargo and rustc thread usage for environments with tight per-user
+      // thread limits. This helper is invoked from Node tests that may run without `safe-run.sh`
+      // and therefore would otherwise inherit Cargo's default parallelism (num_cpus).
+      //
+      // Prefer using the canonical agent knob `AERO_CARGO_BUILD_JOBS` when present; otherwise,
+      // default to -j1 for reliability. Align rustc + Rayon thread pools with the chosen job
+      // count to avoid rustc ICEs on EAGAIN/WouldBlock when spawning helper threads.
+      const defaultJobs = 1;
+      const jobsFromAero = parsePositiveIntEnv(childEnv.AERO_CARGO_BUILD_JOBS);
+      const jobsFromCargo = parsePositiveIntEnv(childEnv.CARGO_BUILD_JOBS);
+      const jobs = jobsFromAero ?? jobsFromCargo ?? defaultJobs;
+      childEnv.CARGO_BUILD_JOBS = String(jobs);
+
+      if (parsePositiveIntEnv(childEnv.RUSTC_WORKER_THREADS) === null) {
+        childEnv.RUSTC_WORKER_THREADS = String(jobs);
+      }
+      if (parsePositiveIntEnv(childEnv.RAYON_NUM_THREADS) === null) {
+        childEnv.RAYON_NUM_THREADS = String(jobs);
+      }
+
       // Prevent progress bars from spamming logs on CI timeouts.
       childEnv.CARGO_TERM_COLOR = "never";
       childEnv.CARGO_TERM_PROGRESS_WHEN = "never";
