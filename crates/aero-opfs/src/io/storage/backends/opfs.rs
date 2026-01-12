@@ -11,6 +11,8 @@ pub enum OpfsBackendMode {
     /// Note: IndexedDB is async and this mode does not currently implement the synchronous
     /// `aero_storage::{StorageBackend, VirtualDisk}` traits used by the boot-critical Rust
     /// controller path.
+    ///
+    /// See `docs/19-indexeddb-storage-story.md` and `docs/20-storage-trait-consolidation.md`.
     IndexedDb,
 }
 
@@ -786,6 +788,8 @@ mod wasm {
     /// IMPORTANT: IndexedDB cannot back `aero_storage::StorageBackend` / `aero_storage::VirtualDisk`
     /// (used by Aero's synchronous Rust AHCI/IDE controller path) in the same Worker, because
     /// IndexedDB does not provide synchronous read/write semantics.
+    ///
+    /// See `docs/19-indexeddb-storage-story.md` and `docs/20-storage-trait-consolidation.md`.
     ///
     /// As a guardrail, this type intentionally does **not** implement
     /// [`aero_storage::StorageBackend`]:

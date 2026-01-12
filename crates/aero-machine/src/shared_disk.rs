@@ -11,6 +11,8 @@ use crate::{MachineError, VecBlockDevice};
 /// - firmware BIOS INT13 (`firmware::bios::BlockDevice`), and
 /// - PCI storage controllers (AHCI/NVMe/virtio-blk; `aero_storage::VirtualDisk`)
 /// can operate on the *same* disk image when a guest transitions between them.
+///
+/// See `docs/20-storage-trait-consolidation.md`.
 #[derive(Clone)]
 pub struct SharedDisk {
     inner: Arc<Mutex<Box<dyn VirtualDisk + Send>>>,
@@ -151,4 +153,3 @@ impl VirtualDisk for VecBlockDevice {
         Ok(())
     }
 }
-

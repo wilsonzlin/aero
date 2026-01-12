@@ -212,6 +212,12 @@ export function explainMissingRequirements(report: PlatformFeatureReport = platf
   }
 
   if (!report.opfsSyncAccessHandle) {
+    // IndexedDB is async-only and cannot safely substitute for the synchronous Rust disk/controller
+    // stack in the same Worker.
+    //
+    // See:
+    // - docs/19-indexeddb-storage-story.md
+    // - docs/20-storage-trait-consolidation.md
     messages.push(
       "OPFS SyncAccessHandle is unavailable. Aero's boot-critical Rust disk/controller stack (aero-storage::VirtualDisk + AHCI/IDE) requires synchronous disk I/O via FileSystemFileHandle.createSyncAccessHandle() in a dedicated worker; IndexedDB is async-only and cannot be used as a drop-in substitute. Use a browser with OPFS SyncAccessHandle support (typically Chromium) or run the demo mode without a disk image.",
     );

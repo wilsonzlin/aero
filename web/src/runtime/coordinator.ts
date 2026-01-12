@@ -399,6 +399,10 @@ export class WorkerCoordinator {
     // disk/controller stack (aero-storage::VirtualDisk + AHCI/IDE). That stack
     // requires OPFS `FileSystemSyncAccessHandle` / `createSyncAccessHandle()`.
     // IndexedDB is async-only and cannot safely substitute.
+    //
+    // See:
+    // - docs/19-indexeddb-storage-story.md
+    // - docs/20-storage-trait-consolidation.md
     if (config.activeDiskImage !== null) {
       const features = this.platformFeatures ?? detectPlatformFeatures();
       this.platformFeatures = features;
@@ -485,6 +489,10 @@ export class WorkerCoordinator {
     //
     // VM mode requires OPFS SyncAccessHandle; do not allow an implicit fallback to
     // async backends (e.g. IndexedDB) for the synchronous Rust disk/controller path.
+    //
+    // See:
+    // - docs/19-indexeddb-storage-story.md
+    // - docs/20-storage-trait-consolidation.md
     if (config.activeDiskImage !== null && config.enableWorkers) {
       const features = this.platformFeatures ?? detectPlatformFeatures();
       this.platformFeatures = features;

@@ -3,6 +3,8 @@
 //!
 //! These adapters are intentionally lightweight and aim to preserve as much error information
 //! as possible when crossing crate boundaries.
+//!
+//! See `docs/20-storage-trait-consolidation.md`.
 
 use crate::io::storage::disk::{ByteStorage, DiskBackend};
 use crate::io::storage::error::{DiskError, DiskResult};
