@@ -1340,6 +1340,34 @@ fn vhd_dynamic_failed_bitmap_write_rolls_back_cached_bit() {
 }
 
 #[test]
+fn vhd_dynamic_failed_bat_write_does_not_leave_cached_bat_entry() {
+    let block_size = 16 * 1024u32;
+    let backend = make_vhd_dynamic_empty(64 * 1024, block_size);
+
+    // Fixture layout (see `make_vhd_dynamic_empty`):
+    // - dynamic header at 512
+    // - BAT at 1536 (padded to 512 bytes)
+    let table_offset = (SECTOR_SIZE as u64) + 1024u64;
+
+    // Fail specifically the 4-byte BAT entry update for block 0.
+    let backend = FailOnWriteBackend::new(backend, table_offset, 4);
+    let mut disk = VhdDisk::open(backend).unwrap();
+
+    let data = vec![0x11u8; SECTOR_SIZE];
+    let err = disk.write_sectors(0, &data).unwrap_err();
+    assert!(matches!(err, DiskError::Io(_)));
+
+    // Retry should still fail (the failed BAT write must not have been cached).
+    let err = disk.write_sectors(0, &data).unwrap_err();
+    assert!(matches!(err, DiskError::Io(_)));
+
+    // Reads must still return zeros because the block is still unallocated in-memory.
+    let mut back = vec![0xAAu8; SECTOR_SIZE];
+    disk.read_sectors(0, &mut back).unwrap();
+    assert!(back.iter().all(|b| *b == 0));
+}
+
+#[test]
 fn vhd_dynamic_zero_writes_do_not_allocate_blocks() {
     let mut backend = make_vhd_dynamic_empty(64 * 1024, 16 * 1024);
     let initial_len = backend.len().unwrap();

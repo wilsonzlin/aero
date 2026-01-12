@@ -588,13 +588,13 @@ impl<B: StorageBackend> VhdDisk<B> {
         let block_sector: u32 = (old_footer_offset / SECTOR_SIZE as u64)
             .try_into()
             .map_err(|_| DiskError::Unsupported("vhd block offset"))?;
-        self.bat[block_index] = block_sector;
         let bat_entry_offset = dyn_hdr
             .table_offset
             .checked_add((block_index as u64) * 4)
             .ok_or(DiskError::OffsetOverflow)?;
         self.backend
             .write_at(bat_entry_offset, &block_sector.to_be_bytes())?;
+        self.bat[block_index] = block_sector;
 
         // The dynamic disk footer must exist at both offset 0 and the end of the file.
         self.footer.rewrite_checksum();
