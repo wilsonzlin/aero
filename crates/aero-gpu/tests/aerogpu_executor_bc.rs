@@ -330,6 +330,33 @@ fn executor_upload_bc3_cpu_fallback_and_sample() {
 }
 
 #[test]
+fn executor_upload_bc7_cpu_fallback_and_sample() {
+    const TEST_NAME: &str = concat!(module_path!(), "::executor_upload_bc7_cpu_fallback_and_sample");
+    pollster::block_on(async {
+        // Single BC7 block for a 4x4 texture. Use a simple known vector that decodes to a solid
+        // color, so the executor's fixed sampling UV (0.5, 0.5) is deterministic across backends.
+        let bc7_solid = [0xffu8; 16];
+        let decompressed = aero_gpu::decompress_bc7_rgba8(4, 4, &bc7_solid);
+        let expected_rgba: [u8; 4] = decompressed[0..4].try_into().unwrap();
+
+        // Ensure the block is truly solid so our 1x1 sample result is stable.
+        for px in decompressed.chunks_exact(4) {
+            assert_eq!(px, &expected_rgba);
+        }
+        // Also ensure the chosen block differs from the clear color, so the draw is observable.
+        assert_ne!(expected_rgba, [0, 0, 0, 255]);
+
+        run_bc_cpu_fallback_sample_test(
+            TEST_NAME,
+            AerogpuFormat::BC7RgbaUnorm,
+            &bc7_solid,
+            expected_rgba,
+        )
+        .await;
+    });
+}
+
+#[test]
 fn executor_rejects_misaligned_bc_copy_region() {
     pollster::block_on(async {
         let (device, queue) = match create_device_queue().await {
