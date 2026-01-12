@@ -193,10 +193,15 @@ NTSTATUS VirtioInputHandleHidWriteReport(_In_ WDFQUEUE Queue, _In_ WDFREQUEST Re
 
     WDF_REQUEST_PARAMETERS_INIT(&params);
     WdfRequestGetParameters(Request, &params);
-    if (params.Type == WdfRequestTypeDeviceControlInternal) {
-        name = VioInputHidIoctlToString(params.Parameters.DeviceIoControl.IoControlCode);
-    } else {
-        name = VioInputHidIoctlToString(IOCTL_HID_WRITE_REPORT);
+    {
+        ULONG ioctl;
+
+        ioctl = IOCTL_HID_WRITE_REPORT;
+        if ((params.Type == WdfRequestTypeDeviceControlInternal) || (params.Type == WdfRequestTypeDeviceControl)) {
+            ioctl = params.Parameters.DeviceIoControl.IoControlCode;
+        }
+
+        name = VioInputHidIoctlToString(ioctl);
     }
 
     HID_XFER_PACKET *packet = NULL;
