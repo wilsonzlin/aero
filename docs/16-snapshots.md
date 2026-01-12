@@ -191,7 +191,7 @@ For forward compatibility, the runtime also supports a fallback spelling for unk
 | `MEMORY` | `11` | `device.11` | Memory-bus glue state (A20, ROM windows, etc.) |
 | `USB` | `12` | `usb.uhci` | Browser USB stack (UHCI controller + runtime/bridge state) |
 | `I8042` | `13` | `input.i8042` | Legacy i8042 PS/2 controller state |
-| `PCI_CFG` | `14` | `device.14` | PCI config ports + bus state (`PciConfigPorts`, inner `PCPT`) |
+| `PCI_CFG` | `14` | `device.14` | PCI config ports + bus state (Rust: `PciConfigPorts`, inner `PCPT`; web: JS PCI bus snapshot, inner `PCIB`) |
 | `PCI_INTX_ROUTER` | `15` | `device.15` | PCI INTx routing state (`PciIntxRouter`, inner `INTX`) |
 | `ACPI_PM` | `16` | `device.16` | ACPI fixed-feature power management state |
 | `HPET` | `17` | `device.17` | High Precision Event Timer state |
