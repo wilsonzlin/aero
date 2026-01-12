@@ -1321,9 +1321,6 @@ fn validate_disks_section(file: &mut fs::File, section: &SnapshotSectionInfo) ->
 }
 
 fn validate_ram_section(file: &mut fs::File, section: &SnapshotSectionInfo) -> Result<()> {
-    const MAX_PAGE_SIZE: u32 = 2 * 1024 * 1024;
-    const MAX_CHUNK_SIZE: u32 = 64 * 1024 * 1024;
-
     if section.version != 1 {
         return Err(XtaskError::Message(
             "unsupported RAM section version".to_string(),
@@ -1341,7 +1338,7 @@ fn validate_ram_section(file: &mut fs::File, section: &SnapshotSectionInfo) -> R
     ensure_section_remaining(file, section_end, 16, "ram header")?;
     let total_len = read_u64_le(file)?;
     let page_size = read_u32_le(file)?;
-    if page_size == 0 || page_size > MAX_PAGE_SIZE {
+    if page_size == 0 || page_size > limits::MAX_RAM_PAGE_SIZE {
         return Err(XtaskError::Message("invalid page size".to_string()));
     }
 
@@ -1373,7 +1370,7 @@ fn validate_ram_section(file: &mut fs::File, section: &SnapshotSectionInfo) -> R
         RamMode::Full => {
             ensure_section_remaining(file, section_end, 4, "chunk_size")?;
             let chunk_size = read_u32_le(file)?;
-            if chunk_size == 0 || chunk_size > MAX_CHUNK_SIZE {
+            if chunk_size == 0 || chunk_size > limits::MAX_RAM_CHUNK_SIZE {
                 return Err(XtaskError::Message("invalid chunk size".to_string()));
             }
 

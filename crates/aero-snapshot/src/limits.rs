@@ -31,3 +31,8 @@ pub const MAX_LABEL_LEN: u32 = 4 * 1024;
 /// Maximum number of pending interrupt bytes stored in `CpuInternalState`.
 pub const MAX_PENDING_INTERRUPTS: u32 = 1024 * 1024;
 
+/// Maximum supported RAM page size in bytes.
+pub const MAX_RAM_PAGE_SIZE: u32 = 2 * 1024 * 1024;
+
+/// Maximum supported RAM chunk size in bytes.
+pub const MAX_RAM_CHUNK_SIZE: u32 = 64 * 1024 * 1024;

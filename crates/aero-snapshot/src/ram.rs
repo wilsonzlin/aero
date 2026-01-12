@@ -3,8 +3,8 @@ use std::io::{Read, Write};
 use crate::error::{Result, SnapshotError};
 use crate::io::{ReadLeExt, WriteLeExt};
 
-pub(crate) const MAX_PAGE_SIZE: u32 = 2 * 1024 * 1024;
-pub(crate) const MAX_CHUNK_SIZE: u32 = 64 * 1024 * 1024;
+pub(crate) const MAX_PAGE_SIZE: u32 = crate::limits::MAX_RAM_PAGE_SIZE;
+pub(crate) const MAX_CHUNK_SIZE: u32 = crate::limits::MAX_RAM_CHUNK_SIZE;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
