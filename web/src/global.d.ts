@@ -45,6 +45,10 @@ declare global {
       vgaSupported: boolean;
       framesPresented: number;
       sharedFramesPublished?: number;
+      transport?: "none" | "ptr" | "copy";
+      width?: number;
+      height?: number;
+      strideBytes?: number;
       error: string | null;
     };
 

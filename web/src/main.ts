@@ -604,6 +604,10 @@ function renderMachinePanel(): HTMLElement {
     vgaSupported: false,
     framesPresented: 0,
     sharedFramesPublished: 0,
+    transport: "none" as "none" | "ptr" | "copy",
+    width: 0,
+    height: 0,
+    strideBytes: 0,
     error: null as string | null,
   });
 
@@ -892,12 +896,14 @@ function renderMachinePanel(): HTMLElement {
             const buf = wasmMemory.buffer;
             if (ptr + lenBytes > buf.byteLength) return;
             src = new Uint8Array(buf, ptr, requiredSrcBytes);
+            testState.transport = "ptr";
           } else if (hasVgaCopy) {
             // Fall back to a JS-owned copy if we cannot access WASM linear memory.
             const copied =
               machine.vga_framebuffer_copy_rgba8888?.() ?? machine.vga_framebuffer_rgba8888_copy?.() ?? null;
             if (!copied || !copied.byteLength) return;
             src = copied;
+            testState.transport = "copy";
             if (src.byteLength < requiredSrcBytes && src.byteLength === width * height * 4) {
               // Some helpers return tight-packed buffers even if a stride is reported.
               strideBytes = width * 4;
@@ -947,6 +953,9 @@ function renderMachinePanel(): HTMLElement {
 
           ctx2.putImageData(imageData, 0, 0);
           testState.framesPresented += 1;
+          testState.width = width;
+          testState.height = height;
+          testState.strideBytes = strideBytes;
           vgaInfo.textContent = `vga: ${width}x${height} stride=${strideBytes} frames=${testState.framesPresented}`;
         } catch (err) {
           vgaFailed = true;
