@@ -1106,10 +1106,7 @@ fn restore_snapshot_rejects_truncated_cpus_entry_len() {
 
     let mut target = DummyTarget::new(0);
     let err = restore_snapshot(&mut Cursor::new(bytes), &mut target).unwrap_err();
-    assert!(matches!(
-        err,
-        SnapshotError::Corrupt("truncated CPU entry")
-    ));
+    assert!(matches!(err, SnapshotError::Corrupt("truncated CPU entry")));
 }
 
 #[test]
