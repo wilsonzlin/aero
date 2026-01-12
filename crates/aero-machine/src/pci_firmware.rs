@@ -60,11 +60,6 @@ fn cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
     // PCI Configuration Mechanism #1 address (0xCF8).
     //
     // Bits 7:2 encode the DWORD-aligned register number; bits 1:0 are reserved and read as 0.
-    assert_eq!(
-        offset & 0x3,
-        0,
-        "PCI config dword offset must be 4-byte aligned"
-    );
     0x8000_0000
         | (u32::from(bus) << 16)
         | (u32::from(device) << 11)
@@ -127,22 +122,12 @@ impl firmware::bios::PciConfigSpace for SharedPciConfigPortsBiosAdapter {
 
 impl firmware::bios::PciConfigSpace for PciBusBiosAdapter<'_> {
     fn read_config_dword(&mut self, bus: u8, device: u8, function: u8, offset: u8) -> u32 {
-        assert_eq!(
-            offset & 0x3,
-            0,
-            "PCI config dword offset must be 4-byte aligned"
-        );
         let bdf = PciBdf::new(bus, device, function);
         let offset = u16::from(offset & 0xFC);
         self.bus.read_config(bdf, offset, 4)
     }
 
     fn write_config_dword(&mut self, bus: u8, device: u8, function: u8, offset: u8, value: u32) {
-        assert_eq!(
-            offset & 0x3,
-            0,
-            "PCI config dword offset must be 4-byte aligned"
-        );
         let bdf = PciBdf::new(bus, device, function);
         let offset = u16::from(offset & 0xFC);
         self.bus.write_config(bdf, offset, 4, value);
@@ -275,6 +260,42 @@ mod tests {
         let pirq = device.wrapping_add(pin_index) & 0x03;
         let gsi = pirq_to_gsi[pirq as usize];
         u8::try_from(gsi).unwrap_or(0xFF)
+    }
+
+    #[test]
+    fn firmware_pci_adapter_masks_misaligned_config_dword_offsets() {
+        let mut pci_bus = PciBus::new();
+
+        let bdf = PciBdf::new(0, 1, 0);
+        let mut cfg = aero_devices::pci::PciConfigSpace::new(0x1234, 0x5678);
+        cfg.set_interrupt_pin(PciInterruptPin::IntA.to_config_u8());
+        pci_bus.add_device(bdf, Box::new(StubPciDev { cfg }));
+
+        let pci_ports: SharedPciConfigPorts =
+            Rc::new(RefCell::new(PciConfigPorts::with_bus(pci_bus)));
+        let mut adapter = SharedPciConfigPortsBiosAdapter::new(pci_ports.clone());
+
+        let before =
+            firmware::bios::PciConfigSpace::read_config_dword(&mut adapter, 0, 1, 0, 0x3C);
+        let before_misaligned =
+            firmware::bios::PciConfigSpace::read_config_dword(&mut adapter, 0, 1, 0, 0x3D);
+        assert_eq!(before, before_misaligned);
+
+        let new_line = 0x5A;
+        let new = (before & 0xFFFF_FF00) | u32::from(new_line);
+        firmware::bios::PciConfigSpace::write_config_dword(&mut adapter, 0, 1, 0, 0x3D, new);
+
+        let after =
+            firmware::bios::PciConfigSpace::read_config_dword(&mut adapter, 0, 1, 0, 0x3C);
+        let after_misaligned =
+            firmware::bios::PciConfigSpace::read_config_dword(&mut adapter, 0, 1, 0, 0x3D);
+        assert_eq!(after, new);
+        assert_eq!(after_misaligned, new);
+
+        let mut pci_ports = pci_ports.borrow_mut();
+        let cfg = pci_ports.bus_mut().device_config_mut(bdf).unwrap();
+        assert_eq!(cfg.interrupt_line(), new_line);
+        assert_eq!(cfg.interrupt_pin(), PciInterruptPin::IntA.to_config_u8());
     }
 
     #[test]
