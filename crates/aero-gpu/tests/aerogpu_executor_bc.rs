@@ -12,9 +12,6 @@ use aero_protocol::aerogpu::{
     aerogpu_pci::{AerogpuFormat, AEROGPU_ABI_VERSION_U32},
 };
 
-// These values mirror the BC extensions used by the stable executor.
-const AEROGPU_FORMAT_BC1_RGBA_UNORM: u32 = 7;
-
 const CMD_STREAM_SIZE_BYTES_OFFSET: usize =
     core::mem::offset_of!(ProtocolCmdStreamHeader, size_bytes);
 const CMD_HDR_SIZE_BYTES_OFFSET: usize = core::mem::offset_of!(ProtocolCmdHdr, size_bytes);
@@ -155,7 +152,7 @@ fn executor_upload_bc1_cpu_fallback_and_sample() {
             emit_packet(out, AerogpuCmdOpcode::CreateTexture2d as u32, |out| {
                 push_u32(out, 2); // texture_handle
                 push_u32(out, AEROGPU_RESOURCE_USAGE_TEXTURE); // usage_flags
-                push_u32(out, AEROGPU_FORMAT_BC1_RGBA_UNORM); // format
+                push_u32(out, AerogpuFormat::BC1RgbaUnorm as u32); // format
                 push_u32(out, 4); // width
                 push_u32(out, 4); // height
                 push_u32(out, 1); // mip_levels
@@ -289,7 +286,7 @@ fn executor_rejects_misaligned_bc_copy_region() {
             emit_packet(out, AerogpuCmdOpcode::CreateTexture2d as u32, |out| {
                 push_u32(out, 1);
                 push_u32(out, AEROGPU_RESOURCE_USAGE_TEXTURE);
-                push_u32(out, AEROGPU_FORMAT_BC1_RGBA_UNORM);
+                push_u32(out, AerogpuFormat::BC1RgbaUnorm as u32);
                 push_u32(out, 8);
                 push_u32(out, 8);
                 push_u32(out, 1);
@@ -304,7 +301,7 @@ fn executor_rejects_misaligned_bc_copy_region() {
             emit_packet(out, AerogpuCmdOpcode::CreateTexture2d as u32, |out| {
                 push_u32(out, 2);
                 push_u32(out, AEROGPU_RESOURCE_USAGE_TEXTURE);
-                push_u32(out, AEROGPU_FORMAT_BC1_RGBA_UNORM);
+                push_u32(out, AerogpuFormat::BC1RgbaUnorm as u32);
                 push_u32(out, 8);
                 push_u32(out, 8);
                 push_u32(out, 1);

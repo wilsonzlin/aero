@@ -19,17 +19,6 @@ use crate::{
 use crate::protocol::{parse_cmd_stream, AeroGpuCmd, AeroGpuCmdStreamParseError};
 use aero_protocol::aerogpu::{aerogpu_cmd as cmd, aerogpu_pci as pci, aerogpu_ring as ring};
 
-// NOTE: The canonical AeroGPU protocol currently exposes only basic BGRA/RGBA formats. The stable
-// command-stream executor, however, needs to handle BC-compressed textures used by higher-level
-// backends (D3D9/D3D11 translation) and tests.
-//
-// These values mirror the upstream `aerogpu_format` extensions. They intentionally do not overlap
-// with the existing published values.
-const AEROGPU_FORMAT_BC1_RGBA_UNORM: u32 = 7;
-const AEROGPU_FORMAT_BC2_RGBA_UNORM: u32 = 8;
-const AEROGPU_FORMAT_BC3_RGBA_UNORM: u32 = 9;
-const AEROGPU_FORMAT_BC7_RGBA_UNORM: u32 = 10;
-
 fn read_u32_le(bytes: &[u8], offset: usize) -> Result<u32, ExecutorError> {
     let slice = bytes
         .get(offset..offset + 4)
@@ -61,16 +50,19 @@ fn align_up_u32(value: u32, alignment: u32) -> Result<u32, ExecutorError> {
 fn is_x8_format(format_raw: u32) -> bool {
     format_raw == pci::AerogpuFormat::B8G8R8X8Unorm as u32
         || format_raw == pci::AerogpuFormat::R8G8B8X8Unorm as u32
+        || format_raw == pci::AerogpuFormat::B8G8R8X8UnormSrgb as u32
+        || format_raw == pci::AerogpuFormat::R8G8B8X8UnormSrgb as u32
 }
 
 fn is_bc_format(format_raw: u32) -> bool {
-    matches!(
-        format_raw,
-        AEROGPU_FORMAT_BC1_RGBA_UNORM
-            | AEROGPU_FORMAT_BC2_RGBA_UNORM
-            | AEROGPU_FORMAT_BC3_RGBA_UNORM
-            | AEROGPU_FORMAT_BC7_RGBA_UNORM
-    )
+    format_raw == pci::AerogpuFormat::BC1RgbaUnorm as u32
+        || format_raw == pci::AerogpuFormat::BC1RgbaUnormSrgb as u32
+        || format_raw == pci::AerogpuFormat::BC2RgbaUnorm as u32
+        || format_raw == pci::AerogpuFormat::BC2RgbaUnormSrgb as u32
+        || format_raw == pci::AerogpuFormat::BC3RgbaUnorm as u32
+        || format_raw == pci::AerogpuFormat::BC3RgbaUnormSrgb as u32
+        || format_raw == pci::AerogpuFormat::BC7RgbaUnorm as u32
+        || format_raw == pci::AerogpuFormat::BC7RgbaUnormSrgb as u32
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -95,14 +87,28 @@ fn texture_copy_layout(
         v if v == pci::AerogpuFormat::B8G8R8A8Unorm as u32
             || v == pci::AerogpuFormat::B8G8R8X8Unorm as u32
             || v == pci::AerogpuFormat::R8G8B8A8Unorm as u32
-            || v == pci::AerogpuFormat::R8G8B8X8Unorm as u32 =>
+            || v == pci::AerogpuFormat::R8G8B8X8Unorm as u32
+            || v == pci::AerogpuFormat::B8G8R8A8UnormSrgb as u32
+            || v == pci::AerogpuFormat::B8G8R8X8UnormSrgb as u32
+            || v == pci::AerogpuFormat::R8G8B8A8UnormSrgb as u32
+            || v == pci::AerogpuFormat::R8G8B8X8UnormSrgb as u32 =>
         {
             (1, 1, 4)
         }
-        AEROGPU_FORMAT_BC1_RGBA_UNORM => (4, 4, 8),
-        AEROGPU_FORMAT_BC2_RGBA_UNORM
-        | AEROGPU_FORMAT_BC3_RGBA_UNORM
-        | AEROGPU_FORMAT_BC7_RGBA_UNORM => (4, 4, 16),
+        v if v == pci::AerogpuFormat::BC1RgbaUnorm as u32
+            || v == pci::AerogpuFormat::BC1RgbaUnormSrgb as u32 =>
+        {
+            (4, 4, 8)
+        }
+        v if v == pci::AerogpuFormat::BC2RgbaUnorm as u32
+            || v == pci::AerogpuFormat::BC2RgbaUnormSrgb as u32
+            || v == pci::AerogpuFormat::BC3RgbaUnorm as u32
+            || v == pci::AerogpuFormat::BC3RgbaUnormSrgb as u32
+            || v == pci::AerogpuFormat::BC7RgbaUnorm as u32
+            || v == pci::AerogpuFormat::BC7RgbaUnormSrgb as u32 =>
+        {
+            (4, 4, 16)
+        }
         _ => {
             return Err(ExecutorError::Validation(format!(
                 "unsupported aerogpu_format={format_raw}"
@@ -614,7 +620,9 @@ fn fs_main() -> @location(0) vec4<f32> {
         let mut pipelines = HashMap::new();
         for fmt in [
             wgpu::TextureFormat::Rgba8Unorm,
+            wgpu::TextureFormat::Rgba8UnormSrgb,
             wgpu::TextureFormat::Bgra8Unorm,
+            wgpu::TextureFormat::Bgra8UnormSrgb,
         ] {
             let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("aerogpu.executor.pipeline"),
@@ -1480,6 +1488,14 @@ fn fs_main() -> @location(0) vec4<f32> {
                     TextureUploadTransform::Direct,
                 ))
             }
+            v if v == pci::AerogpuFormat::B8G8R8A8UnormSrgb as u32
+                || v == pci::AerogpuFormat::B8G8R8X8UnormSrgb as u32 =>
+            {
+                Ok((
+                    wgpu::TextureFormat::Bgra8UnormSrgb,
+                    TextureUploadTransform::Direct,
+                ))
+            }
             v if v == pci::AerogpuFormat::R8G8B8A8Unorm as u32
                 || v == pci::AerogpuFormat::R8G8B8X8Unorm as u32 =>
             {
@@ -1488,41 +1504,124 @@ fn fs_main() -> @location(0) vec4<f32> {
                     TextureUploadTransform::Direct,
                 ))
             }
+            v if v == pci::AerogpuFormat::R8G8B8A8UnormSrgb as u32
+                || v == pci::AerogpuFormat::R8G8B8X8UnormSrgb as u32 =>
+            {
+                Ok((
+                    wgpu::TextureFormat::Rgba8UnormSrgb,
+                    TextureUploadTransform::Direct,
+                ))
+            }
 
-            AEROGPU_FORMAT_BC1_RGBA_UNORM if bc_enabled => Ok((
-                wgpu::TextureFormat::Bc1RgbaUnorm,
-                TextureUploadTransform::Direct,
-            )),
-            AEROGPU_FORMAT_BC2_RGBA_UNORM if bc_enabled => Ok((
-                wgpu::TextureFormat::Bc2RgbaUnorm,
-                TextureUploadTransform::Direct,
-            )),
-            AEROGPU_FORMAT_BC3_RGBA_UNORM if bc_enabled => Ok((
-                wgpu::TextureFormat::Bc3RgbaUnorm,
-                TextureUploadTransform::Direct,
-            )),
-            AEROGPU_FORMAT_BC7_RGBA_UNORM if bc_enabled => Ok((
-                wgpu::TextureFormat::Bc7RgbaUnorm,
-                TextureUploadTransform::Direct,
-            )),
+            // BC formats: sample/upload directly when BC compression is enabled on the device,
+            // otherwise CPU-decompress into RGBA8 (to avoid requiring BC sampling support).
+            v if v == pci::AerogpuFormat::BC1RgbaUnorm as u32 => {
+                if bc_enabled {
+                    Ok((
+                        wgpu::TextureFormat::Bc1RgbaUnorm,
+                        TextureUploadTransform::Direct,
+                    ))
+                } else {
+                    Ok((
+                        wgpu::TextureFormat::Rgba8Unorm,
+                        TextureUploadTransform::Bc1ToRgba8,
+                    ))
+                }
+            }
+            v if v == pci::AerogpuFormat::BC1RgbaUnormSrgb as u32 => {
+                if bc_enabled {
+                    Ok((
+                        wgpu::TextureFormat::Bc1RgbaUnormSrgb,
+                        TextureUploadTransform::Direct,
+                    ))
+                } else {
+                    Ok((
+                        wgpu::TextureFormat::Rgba8UnormSrgb,
+                        TextureUploadTransform::Bc1ToRgba8,
+                    ))
+                }
+            }
 
-            // CPU fallback path: decompress uploads into RGBA8.
-            AEROGPU_FORMAT_BC1_RGBA_UNORM => Ok((
-                wgpu::TextureFormat::Rgba8Unorm,
-                TextureUploadTransform::Bc1ToRgba8,
-            )),
-            AEROGPU_FORMAT_BC2_RGBA_UNORM => Ok((
-                wgpu::TextureFormat::Rgba8Unorm,
-                TextureUploadTransform::Bc2ToRgba8,
-            )),
-            AEROGPU_FORMAT_BC3_RGBA_UNORM => Ok((
-                wgpu::TextureFormat::Rgba8Unorm,
-                TextureUploadTransform::Bc3ToRgba8,
-            )),
-            AEROGPU_FORMAT_BC7_RGBA_UNORM => Ok((
-                wgpu::TextureFormat::Rgba8Unorm,
-                TextureUploadTransform::Bc7ToRgba8,
-            )),
+            v if v == pci::AerogpuFormat::BC2RgbaUnorm as u32 => {
+                if bc_enabled {
+                    Ok((
+                        wgpu::TextureFormat::Bc2RgbaUnorm,
+                        TextureUploadTransform::Direct,
+                    ))
+                } else {
+                    Ok((
+                        wgpu::TextureFormat::Rgba8Unorm,
+                        TextureUploadTransform::Bc2ToRgba8,
+                    ))
+                }
+            }
+            v if v == pci::AerogpuFormat::BC2RgbaUnormSrgb as u32 => {
+                if bc_enabled {
+                    Ok((
+                        wgpu::TextureFormat::Bc2RgbaUnormSrgb,
+                        TextureUploadTransform::Direct,
+                    ))
+                } else {
+                    Ok((
+                        wgpu::TextureFormat::Rgba8UnormSrgb,
+                        TextureUploadTransform::Bc2ToRgba8,
+                    ))
+                }
+            }
+
+            v if v == pci::AerogpuFormat::BC3RgbaUnorm as u32 => {
+                if bc_enabled {
+                    Ok((
+                        wgpu::TextureFormat::Bc3RgbaUnorm,
+                        TextureUploadTransform::Direct,
+                    ))
+                } else {
+                    Ok((
+                        wgpu::TextureFormat::Rgba8Unorm,
+                        TextureUploadTransform::Bc3ToRgba8,
+                    ))
+                }
+            }
+            v if v == pci::AerogpuFormat::BC3RgbaUnormSrgb as u32 => {
+                if bc_enabled {
+                    Ok((
+                        wgpu::TextureFormat::Bc3RgbaUnormSrgb,
+                        TextureUploadTransform::Direct,
+                    ))
+                } else {
+                    Ok((
+                        wgpu::TextureFormat::Rgba8UnormSrgb,
+                        TextureUploadTransform::Bc3ToRgba8,
+                    ))
+                }
+            }
+
+            v if v == pci::AerogpuFormat::BC7RgbaUnorm as u32 => {
+                if bc_enabled {
+                    Ok((
+                        wgpu::TextureFormat::Bc7RgbaUnorm,
+                        TextureUploadTransform::Direct,
+                    ))
+                } else {
+                    Ok((
+                        wgpu::TextureFormat::Rgba8Unorm,
+                        TextureUploadTransform::Bc7ToRgba8,
+                    ))
+                }
+            }
+            v if v == pci::AerogpuFormat::BC7RgbaUnormSrgb as u32 => {
+                if bc_enabled {
+                    Ok((
+                        wgpu::TextureFormat::Bc7RgbaUnormSrgb,
+                        TextureUploadTransform::Direct,
+                    ))
+                } else {
+                    Ok((
+                        wgpu::TextureFormat::Rgba8UnormSrgb,
+                        TextureUploadTransform::Bc7ToRgba8,
+                    ))
+                }
+            }
 
             _ => Err(ExecutorError::Validation(format!(
                 "unsupported aerogpu_format={format}"
