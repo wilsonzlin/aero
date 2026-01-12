@@ -527,7 +527,7 @@ done
 echo "[safe-run] Command: $*" >&2
 echo "[safe-run] Timeout: ${TIMEOUT}s, Memory: ${MEM_LIMIT}" >&2
 if [[ "${is_cargo_cmd}" == "true" ]]; then
-    echo "[safe-run] Cargo jobs: ${CARGO_BUILD_JOBS:-}  rustc worker threads: ${RUSTC_WORKER_THREADS:-}  rayon threads: ${RAYON_NUM_THREADS:-}" >&2
+    echo "[safe-run] Cargo jobs: ${CARGO_BUILD_JOBS:-}  rustc worker threads: ${RUSTC_WORKER_THREADS:-}  rayon threads: ${RAYON_NUM_THREADS:-}  test threads: ${RUST_TEST_THREADS:-}" >&2
 fi
 echo "[safe-run] Started: $(date -Iseconds 2>/dev/null || date)" >&2
 

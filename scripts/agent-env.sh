@@ -146,7 +146,17 @@ export RAYON_NUM_THREADS="${RAYON_NUM_THREADS:-$CARGO_BUILD_JOBS}"
 # fail before they even start.
 #
 # Keep it aligned with our overall Cargo parallelism for reliability.
-export RUST_TEST_THREADS="${RUST_TEST_THREADS:-$CARGO_BUILD_JOBS}"
+_aero_default_rust_test_threads="${CARGO_BUILD_JOBS:-1}"
+if ! [[ "${_aero_default_rust_test_threads}" =~ ^[1-9][0-9]*$ ]]; then
+  _aero_default_rust_test_threads=1
+fi
+if [[ -z "${RUST_TEST_THREADS:-}" ]]; then
+  export RUST_TEST_THREADS="${_aero_default_rust_test_threads}"
+elif ! [[ "${RUST_TEST_THREADS}" =~ ^[1-9][0-9]*$ ]]; then
+  echo "warning: invalid RUST_TEST_THREADS value: ${RUST_TEST_THREADS} (expected positive integer); using ${_aero_default_rust_test_threads}" >&2
+  export RUST_TEST_THREADS="${_aero_default_rust_test_threads}"
+fi
+unset _aero_default_rust_test_threads 2>/dev/null || true
 
 # Optional: reduce per-crate codegen parallelism (can reduce memory spikes).
 #
