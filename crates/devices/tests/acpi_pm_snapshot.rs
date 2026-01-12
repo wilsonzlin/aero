@@ -4,7 +4,7 @@ use std::rc::Rc;
 use aero_devices::acpi_pm::{AcpiPmCallbacks, AcpiPmConfig, AcpiPmIo, PM1_STS_PWRBTN};
 use aero_devices::clock::ManualClock;
 use aero_devices::irq::IrqLine;
-use aero_io_snapshot::io::state::IoSnapshot;
+use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader};
 use aero_platform::io::PortIoDevice;
 
 #[derive(Clone)]
@@ -116,4 +116,34 @@ fn snapshot_restore_preserves_pm_timer_value_and_continuity() {
         t0_after, t1_after,
         "PM_TMR must advance deterministically after restore"
     );
+}
+
+#[test]
+fn snapshot_encodes_pm_timer_ticks_and_fractional_remainder() {
+    const PM_TIMER_HZ: u128 = 3_579_545;
+    const NS_PER_SEC: u128 = 1_000_000_000;
+
+    let cfg = AcpiPmConfig::default();
+    let clock = ManualClock::new();
+    let pm = AcpiPmIo::new_with_callbacks_and_clock(cfg, AcpiPmCallbacks::default(), clock.clone());
+
+    // Advance by a sub-second delta so we exercise both ticks and remainder.
+    clock.advance_ns(1_000);
+
+    let snap = pm.save_state();
+    let r = SnapshotReader::parse(&snap, *b"ACPM").unwrap();
+
+    let elapsed_ns = r.u64(6).unwrap().expect("missing elapsed_ns");
+    let ticks = r.u32(8).unwrap().expect("missing pm_timer_ticks");
+    let remainder = r
+        .u32(9)
+        .unwrap()
+        .expect("missing pm_timer_remainder");
+
+    let numer = (elapsed_ns as u128) * PM_TIMER_HZ;
+    let expected_ticks = (numer / NS_PER_SEC) as u32;
+    let expected_remainder = (numer % NS_PER_SEC) as u32;
+
+    assert_eq!(ticks, expected_ticks & 0x00FF_FFFF);
+    assert_eq!(remainder, expected_remainder);
 }
