@@ -27,7 +27,7 @@ Canonical implementation pointers (to avoid duplicated stacks):
 - `web/src/audio/audio_worklet_ring.ts` + `web/src/platform/audio_worklet_ring_layout.js` — playback ring header layout constants + helper math (shared between producers and the AudioWorklet consumer).
 - `crates/platform/src/audio/mic_bridge.rs` — microphone `SharedArrayBuffer` ring layout + consumer-side helper (`MicBridge`).
 - `web/src/audio/mic_ring.js` + `web/src/audio/mic-worklet-processor.js` — microphone ring helpers + AudioWorklet producer.
-- `web/vite.config.ts` — emits AudioWorklet dependency assets (`mic_ring.js`, `audio_worklet_ring_layout.js`) because Vite does not follow ESM imports from worklet modules loaded via `audioWorklet.addModule(new URL(...))`.
+- `web/vite.config.ts` + `vite.harness.config.ts` — emit AudioWorklet dependency assets (`mic_ring.js`, `audio_worklet_ring_layout.js`) because Vite does not follow ESM imports from worklet modules loaded via `audioWorklet.addModule(new URL(...))`.
 - `web/src/runtime/protocol.ts` + `web/src/runtime/coordinator.ts` — ring buffer attachment messages (`SetAudioRingBufferMessage`, `SetMicrophoneRingBufferMessage`).
 - `web/src/workers/io.worker.ts` + `web/src/io/*` — worker runtime PCI/MMIO device registration (IO worker owns the guest device model layer).
   - `web/src/io/devices/hda.ts` — `HdaPciDevice` wrapper over `HdaControllerBridge` (MMIO + tick scheduling + ring attachment plumbing).

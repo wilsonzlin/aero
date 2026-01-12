@@ -4,8 +4,10 @@
 // Keep it free of `AudioContext` / DOM dependencies.
 //
 // Vite currently treats modules loaded via `audioWorklet.addModule(new URL(...))` as
-// static assets and does not chase their ESM imports, so `web/vite.config.ts`
-// manually emits a copy of this file into `dist/assets/` for production builds.
+// static assets and does not chase their ESM imports, so both:
+// - `web/vite.config.ts` (legacy web build)
+// - `vite.harness.config.ts` (repo-root harness build)
+// manually emit a copy of this file into `dist/assets/` for production builds.
 //
 // The canonical layout/semantics are also mirrored in Rust:
 // `crates/platform/src/audio/worklet_bridge.rs`.
@@ -35,4 +37,3 @@ export function getRingBufferLevelFrames(header, capacityFrames) {
   const write = Atomics.load(header, WRITE_FRAME_INDEX) >>> 0;
   return framesAvailableClamped(read, write, capacityFrames);
 }
-
