@@ -73,7 +73,7 @@ Open the printed local URL (usually `http://127.0.0.1:5173/`).
 Notes:
 
 - If the page errors with “Missing single-thread WASM package” / “Missing threaded WASM package”, you skipped the build step above.
-  - Run `npm -w web run wasm:build` and reload.
+  - Stop the dev server, run `npm -w web run wasm:build`, then restart `npm run dev:web`.
 - `npm run dev:web` runs the **web UI** under `web/`, which includes the **Disks** + **Workers** panels used below.
 - The repo-root harness (`npm run dev`) is primarily used by CI/Playwright and may not expose the full Win7 boot UI.
 
