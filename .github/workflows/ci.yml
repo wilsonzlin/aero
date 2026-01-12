@@ -638,6 +638,18 @@ jobs:
         env:
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
 
+      - name: Setup Rust (pinned nightly for threaded WASM)
+        uses: ./.github/actions/setup-rust
+        with:
+          toolchain: nightly
+          targets: wasm32-unknown-unknown
+          components: rust-src
+          locked: always
+
+      - name: Threaded WASM build (release, required for SharedArrayBuffer tests)
+        working-directory: ${{ steps.node-workspace.outputs.dir }}
+        run: npm -w web run wasm:build:threaded
+
       - name: Prepare test-results directory
         working-directory: ${{ steps.node-workspace.outputs.dir }}
         run: mkdir -p test-results
@@ -652,6 +664,9 @@ jobs:
       - name: Playwright tests (non-WebGPU)
         env:
           AERO_NODE_DIR: ${{ steps.node-workspace.outputs.dir }}
+          # Ensure we keep running CI on the pinned stable toolchain (the nightly toolchain is installed
+          # above only to build the threaded WASM bundle).
+          RUSTUP_TOOLCHAIN: ${{ steps.setup-rust.outputs.rust_toolchain }}
         run: cargo xtask test-all --skip-rust --skip-wasm --skip-ts --pw-project chromium
 
       - name: Publish E2E test report
