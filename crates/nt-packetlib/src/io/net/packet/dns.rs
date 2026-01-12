@@ -32,6 +32,12 @@ impl<'a> DnsQuery<'a> {
 pub fn qname_to_string(qname: &[u8]) -> Result<alloc::string::String, PacketError> {
     use alloc::string::String;
 
+    // RFC1035: domain names are limited to 255 bytes in wire format (including length octets and
+    // the terminating 0-length label).
+    if qname.len() > 255 {
+        return Err(PacketError::Malformed("DNS QNAME too long"));
+    }
+
     // Upper bound on the output length is `qname.len()`: the encoded name includes 1-byte label
     // length prefixes (and a 0 terminator), so the decoded string is always <= this.
     //
@@ -107,6 +113,10 @@ fn parse_single_question_inner(packet: &[u8]) -> Result<DnsQuery<'_>, PacketErro
         });
     }
     let qname = &packet[12..off];
+    // RFC1035: domain names are limited to 255 bytes in wire format.
+    if qname.len() > 255 {
+        return Err(PacketError::Malformed("DNS QNAME too long"));
+    }
     let qtype = u16::from_be_bytes([packet[off], packet[off + 1]]);
     let qclass = u16::from_be_bytes([packet[off + 2], packet[off + 3]]);
     Ok(DnsQuery {
@@ -341,6 +351,31 @@ mod tests {
         assert_eq!(
             parse_single_query(&query).unwrap_err(),
             PacketError::Unsupported("compressed DNS QNAME")
+        );
+    }
+
+    #[test]
+    fn dns_qname_over_255_bytes_is_rejected() {
+        let mut query = Vec::new();
+        query.extend_from_slice(&0x1234u16.to_be_bytes());
+        query.extend_from_slice(&0x0100u16.to_be_bytes()); // RD
+        query.extend_from_slice(&1u16.to_be_bytes()); // QDCOUNT
+        query.extend_from_slice(&0u16.to_be_bytes()); // ANCOUNT
+        query.extend_from_slice(&0u16.to_be_bytes()); // NSCOUNT
+        query.extend_from_slice(&0u16.to_be_bytes()); // ARCOUNT
+
+        // 4 labels × (1 length byte + 63 payload bytes) + terminator = 257 bytes of QNAME.
+        for _ in 0..4 {
+            query.push(63);
+            query.extend_from_slice(&[b'a'; 63]);
+        }
+        query.push(0);
+        query.extend_from_slice(&1u16.to_be_bytes()); // QTYPE=A
+        query.extend_from_slice(&1u16.to_be_bytes()); // QCLASS=IN
+
+        assert_eq!(
+            parse_single_query(&query).unwrap_err(),
+            PacketError::Malformed("DNS QNAME too long")
         );
     }
 }
