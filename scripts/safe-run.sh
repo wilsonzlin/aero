@@ -17,10 +17,48 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # Defaults - can be overridden via environment
 TIMEOUT="${AERO_TIMEOUT:-600}"
 MEM_LIMIT="${AERO_MEM_LIMIT:-12G}"
+
+# Cargo registry cache contention can be a major slowdown when many agents share the same host
+# (cargo prints: "Blocking waiting for file lock on package cache"). Mirror the opt-in behavior of
+# `scripts/agent-env.sh` so callers can isolate Cargo state per checkout without needing to source
+# that script first:
+#
+#   AERO_ISOLATE_CARGO_HOME=1 bash ./scripts/safe-run.sh cargo test --locked
+#
+# When enabled, we intentionally override any pre-existing `CARGO_HOME` so the isolation actually
+# takes effect.
+case "${AERO_ISOLATE_CARGO_HOME:-}" in
+  "" | 0 | false | FALSE | no | NO | off | OFF)
+    ;;
+  1 | true | TRUE | yes | YES | on | ON)
+    export CARGO_HOME="$REPO_ROOT/.cargo-home"
+    mkdir -p "$CARGO_HOME"
+    ;;
+  *)
+    custom="$AERO_ISOLATE_CARGO_HOME"
+    # Expand the common `~/` shorthand (tilde is not expanded inside variables).
+    if [[ "$custom" == "~"* ]]; then
+      if [[ -z "${HOME:-}" ]]; then
+        echo "[safe-run] warning: cannot expand '~' in AERO_ISOLATE_CARGO_HOME because HOME is unset; using literal path: $custom" >&2
+      else
+        custom="${custom/#\~/$HOME}"
+      fi
+    fi
+    # Treat non-absolute paths as relative to the repo root so the behavior is stable
+    # even when invoking from a different working directory.
+    if [[ "$custom" != /* ]]; then
+      custom="$REPO_ROOT/$custom"
+    fi
+    export CARGO_HOME="$custom"
+    mkdir -p "$CARGO_HOME"
+    unset custom 2>/dev/null || true
+    ;;
+esac
 
 # Defensive defaults for shared-host agent execution.
 #
@@ -122,6 +160,7 @@ if [[ $# -lt 1 ]]; then
     echo "Environment variables:" >&2
     echo "  AERO_TIMEOUT=600     Timeout in seconds (default: 600 = 10 min)" >&2
     echo "  AERO_MEM_LIMIT=12G   Memory limit (default: 12G)" >&2
+    echo "  AERO_ISOLATE_CARGO_HOME=1  Override CARGO_HOME to ./.cargo-home (opt-in, avoids registry lock contention on shared hosts)" >&2
     echo "  AERO_CARGO_BUILD_JOBS=1  Cargo parallelism for agent sandboxes (default: 1; overrides CARGO_BUILD_JOBS if set)" >&2
     echo "  AERO_SAFE_RUN_RUSTC_RETRIES=3  Retries for transient rustc thread spawn panics (default: 3; only for cargo commands)" >&2
     echo "  CARGO_BUILD_JOBS=1       Cargo parallelism override (used when AERO_CARGO_BUILD_JOBS is unset)" >&2

@@ -213,6 +213,24 @@ test("safe-run.sh sanitizes invalid CARGO_BUILD_JOBS (Linux)", { skip: process.p
   assert.equal(stdout, "1");
 });
 
+test("safe-run.sh can isolate CARGO_HOME to avoid registry lock contention (Linux)", { skip: process.platform !== "linux" }, () => {
+  const env = { ...process.env };
+  delete env.CARGO_HOME;
+  env.AERO_ISOLATE_CARGO_HOME = "1";
+
+  const stdout = execFileSync(
+    path.join(repoRoot, "scripts/safe-run.sh"),
+    ["bash", "-c", 'printf "%s" "$CARGO_HOME"'],
+    {
+      cwd: repoRoot,
+      env,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
+  assert.equal(stdout, path.join(repoRoot, ".cargo-home"));
+});
+
 test("safe-run.sh sets rustc codegen-units based on CARGO_BUILD_JOBS (Linux)", { skip: process.platform !== "linux" }, () => {
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "aero-safe-run-cargo-env-"));
   try {
