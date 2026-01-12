@@ -50,11 +50,24 @@ fn fs_main() -> @location(0) vec4<f32> {
 `.trimStart();
 }
 
-async function translateDxbcToWgslSlow(_dxbcBytes) {
+function buildLargeWgsl(minBytes) {
+  const base = buildValidWgsl();
+  // WGSL accepts `//` comments; repeating these lines is a harmless way to grow
+  // the payload without changing semantics.
+  const padLine = "// aero shader cache demo padding .................................................................\n";
+  const enc = new TextEncoder();
+  const baseBytes = enc.encode(base).byteLength;
+  const padBytes = enc.encode(padLine).byteLength;
+  const repeats = Math.max(0, Math.ceil((minBytes - baseBytes) / padBytes));
+  return padLine.repeat(repeats) + base;
+}
+
+async function translateDxbcToWgslSlow(_dxbcBytes, opts) {
   // Simulate an expensive DXBC->WGSL translation pass.
   await sleep(300);
+  const wgsl = opts?.large ? buildLargeWgsl(310 * 1024) : buildValidWgsl();
   return {
-    wgsl: buildValidWgsl(),
+    wgsl,
     reflection: {
       // Real implementation would store bind group layout metadata, etc.
       bindings: [],
@@ -63,6 +76,9 @@ async function translateDxbcToWgslSlow(_dxbcBytes) {
 }
 
 async function main() {
+  const params = new URLSearchParams(location.search);
+  const large = params.get("large") === "1";
+
   // Ensure deterministic output for tests.
   const dxbc = new Uint8Array([0x44, 0x58, 0x42, 0x43, 1, 2, 3, 4, 5, 6, 7, 8]);
   const webgpu = await tryInitWebGpu();
@@ -86,7 +102,7 @@ async function main() {
     flags,
     async () => {
       logLine("shader_translate: begin");
-      const out = await translateDxbcToWgslSlow(dxbc);
+      const out = await translateDxbcToWgslSlow(dxbc, { large });
       logLine("shader_translate: end");
       return out;
     },
@@ -111,7 +127,7 @@ async function main() {
       logLine("wgsl_compile: failed; invalidating cache entry and retranslating");
       await cache.deleteShader(key);
       logLine("shader_translate: begin");
-      payload = await translateDxbcToWgslSlow(dxbc);
+      payload = await translateDxbcToWgslSlow(dxbc, { large });
       logLine("shader_translate: end");
       await cache.putShader(key, payload);
       await compileWgslModule(device, payload.wgsl);
@@ -125,12 +141,36 @@ async function main() {
   const translationMs = t1 - t0;
   logLine(`shader_cache: done hit=${cacheHit} translation_ms=${translationMs.toFixed(1)}`);
 
+  let opfsAvailable = false;
+  let opfsFileExists = false;
+  if (large) {
+    try {
+      if (navigator.storage && typeof navigator.storage.getDirectory === "function") {
+        const root = await navigator.storage.getDirectory();
+        const dir = await root.getDirectoryHandle("aero-gpu-cache", { create: true });
+        const shadersDir = await dir.getDirectoryHandle("shaders");
+        opfsAvailable = true;
+        try {
+          await shadersDir.getFileHandle(`${key}.json`);
+          opfsFileExists = true;
+        } catch {
+          opfsFileExists = false;
+        }
+      }
+    } catch {
+      opfsAvailable = false;
+      opfsFileExists = false;
+    }
+  }
+
   // Expose results for Playwright.
   window.__shaderCacheDemo = {
     key,
     cacheHit,
     translationMs,
     telemetry: cache.getTelemetry(),
+    opfsAvailable,
+    opfsFileExists,
   };
 }
 
