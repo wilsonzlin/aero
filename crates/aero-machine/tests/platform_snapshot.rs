@@ -1,5 +1,6 @@
 use aero_machine::{Machine, MachineConfig};
 use aero_platform::interrupts::{InterruptController, InterruptInput, PlatformInterruptMode};
+use aero_snapshot as snapshot;
 use pretty_assertions::assert_eq;
 use std::io::{Cursor, Read};
 
@@ -134,6 +135,21 @@ fn reverse_devices_section(bytes: &[u8]) -> Vec<u8> {
     }
 
     out
+}
+
+#[test]
+fn snapshot_source_emits_pci_cfg_device_id_for_config_ports() {
+    let m = Machine::new(pc_machine_config()).unwrap();
+    let devices = snapshot::SnapshotSource::device_states(&m);
+
+    assert!(
+        devices.iter().any(|d| d.id == snapshot::DeviceId::PCI_CFG),
+        "machine snapshot should include a PCI_CFG entry when pc platform is enabled"
+    );
+    assert!(
+        devices.iter().all(|d| d.id != snapshot::DeviceId::PCI),
+        "machine snapshot should not emit the legacy DeviceId::PCI for PCI config ports"
+    );
 }
 
 #[test]
@@ -361,6 +377,153 @@ fn snapshot_restore_pci_config_bar_programming_survives() {
 
     restored.io_write(0xCF8, 4, bar0_addr);
     assert_eq!(restored.io_read(0xCFC, 4), 0x8000_0000);
+}
+
+#[test]
+fn restore_device_states_accepts_legacy_pci_device_id_for_pci_cfg_state() {
+    let mut src = Machine::new(pc_machine_config()).unwrap();
+    let pci_cfg = src.pci_config_ports().expect("pc platform enabled");
+
+    struct TestDev {
+        cfg: PciConfigSpace,
+    }
+
+    impl PciDevice for TestDev {
+        fn config(&self) -> &PciConfigSpace {
+            &self.cfg
+        }
+
+        fn config_mut(&mut self) -> &mut PciConfigSpace {
+            &mut self.cfg
+        }
+    }
+
+    let bdf = PciBdf::new(0, 1, 0);
+    let mut cfg = PciConfigSpace::new(0x1234, 0x5678);
+    cfg.set_bar_definition(
+        0,
+        PciBarDefinition::Mmio32 {
+            size: 0x1000,
+            prefetchable: false,
+        },
+    );
+    pci_cfg
+        .borrow_mut()
+        .bus_mut()
+        .add_device(bdf, Box::new(TestDev { cfg }));
+
+    // Program BAR0 base and enable decode + bus mastering + INTx disable.
+    cfg_write(&mut src, bdf, 0x10, 4, 0x8000_0000);
+    let command: u16 = 0x0007 | (1 << 10); // IO + MEM + BME + INTX_DISABLE
+    cfg_write(&mut src, bdf, 0x04, 2, u32::from(command));
+
+    let legacy_state = {
+        let pci_cfg = pci_cfg.borrow();
+        snapshot::io_snapshot_bridge::device_state_from_io_snapshot(snapshot::DeviceId::PCI, &*pci_cfg)
+    };
+
+    // Restore into a fresh machine with a different guest-programmed state.
+    let mut restored = Machine::new(pc_machine_config()).unwrap();
+    let pci_cfg = restored.pci_config_ports().expect("pc platform enabled");
+
+    let mut cfg = PciConfigSpace::new(0x1234, 0x5678);
+    cfg.set_bar_definition(
+        0,
+        PciBarDefinition::Mmio32 {
+            size: 0x1000,
+            prefetchable: false,
+        },
+    );
+    pci_cfg
+        .borrow_mut()
+        .bus_mut()
+        .add_device(bdf, Box::new(TestDev { cfg }));
+
+    cfg_write(&mut restored, bdf, 0x10, 4, 0x9000_0000);
+    cfg_write(&mut restored, bdf, 0x04, 2, 0);
+    assert_eq!(cfg_read(&mut restored, bdf, 0x10, 4), 0x9000_0000);
+    assert_eq!(cfg_read(&mut restored, bdf, 0x04, 2) as u16, 0);
+
+    snapshot::SnapshotTarget::restore_device_states(&mut restored, vec![legacy_state]);
+
+    assert_eq!(cfg_read(&mut restored, bdf, 0x10, 4), 0x8000_0000);
+    assert_eq!(cfg_read(&mut restored, bdf, 0x04, 2) as u16, command);
+}
+
+#[test]
+fn restore_device_states_prefers_pci_cfg_over_legacy_pci_entry() {
+    let mut src = Machine::new(pc_machine_config()).unwrap();
+    let pci_cfg = src.pci_config_ports().expect("pc platform enabled");
+
+    struct TestDev {
+        cfg: PciConfigSpace,
+    }
+
+    impl PciDevice for TestDev {
+        fn config(&self) -> &PciConfigSpace {
+            &self.cfg
+        }
+
+        fn config_mut(&mut self) -> &mut PciConfigSpace {
+            &mut self.cfg
+        }
+    }
+
+    let bdf = PciBdf::new(0, 1, 0);
+    let mut cfg = PciConfigSpace::new(0x1234, 0x5678);
+    cfg.set_bar_definition(
+        0,
+        PciBarDefinition::Mmio32 {
+            size: 0x1000,
+            prefetchable: false,
+        },
+    );
+    pci_cfg
+        .borrow_mut()
+        .bus_mut()
+        .add_device(bdf, Box::new(TestDev { cfg }));
+
+    // Canonical state: BAR0 = 0x8000_0000.
+    cfg_write(&mut src, bdf, 0x10, 4, 0x8000_0000);
+    let canonical_state = {
+        let pci_cfg = pci_cfg.borrow();
+        snapshot::io_snapshot_bridge::device_state_from_io_snapshot(
+            snapshot::DeviceId::PCI_CFG,
+            &*pci_cfg,
+        )
+    };
+
+    // Legacy state: BAR0 = 0x9000_0000.
+    cfg_write(&mut src, bdf, 0x10, 4, 0x9000_0000);
+    let legacy_state = {
+        let pci_cfg = pci_cfg.borrow();
+        snapshot::io_snapshot_bridge::device_state_from_io_snapshot(snapshot::DeviceId::PCI, &*pci_cfg)
+    };
+
+    // Restore into a fresh machine and ensure the canonical state wins even if the legacy entry
+    // appears first.
+    let mut restored = Machine::new(pc_machine_config()).unwrap();
+    let pci_cfg = restored.pci_config_ports().expect("pc platform enabled");
+
+    let mut cfg = PciConfigSpace::new(0x1234, 0x5678);
+    cfg.set_bar_definition(
+        0,
+        PciBarDefinition::Mmio32 {
+            size: 0x1000,
+            prefetchable: false,
+        },
+    );
+    pci_cfg
+        .borrow_mut()
+        .bus_mut()
+        .add_device(bdf, Box::new(TestDev { cfg }));
+
+    snapshot::SnapshotTarget::restore_device_states(
+        &mut restored,
+        vec![legacy_state, canonical_state],
+    );
+
+    assert_eq!(cfg_read(&mut restored, bdf, 0x10, 4), 0x8000_0000);
 }
 
 #[test]

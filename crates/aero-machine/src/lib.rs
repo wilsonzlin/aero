@@ -994,12 +994,13 @@ impl snapshot::SnapshotSource for Machine {
         }
         if let Some(pci_cfg) = &self.pci_cfg {
             devices.push(snapshot::io_snapshot_bridge::device_state_from_io_snapshot(
-                // Use the stable `DeviceId::PCI` outer ID for PCI config-space state.
+                // Canonical outer ID for legacy PCI config mechanism #1 ports (`0xCF8/0xCFC`) and
+                // PCI bus config-space state.
                 //
                 // NOTE: `PciConfigPorts` snapshots cover both the config mechanism #1 address
                 // latch and the per-device config space/BAR state, so this one entry is
                 // sufficient to restore guest-programmed BARs and command bits.
-                snapshot::DeviceId::PCI,
+                snapshot::DeviceId::PCI_CFG,
                 &*pci_cfg.borrow(),
             ));
         }
@@ -1163,9 +1164,10 @@ impl snapshot::SnapshotTarget for Machine {
         }
 
         // 2) Restore PCI devices (config ports + INTx router).
+        // Prefer the canonical `PCI_CFG` outer ID, but accept legacy snapshots that used `PCI`.
         let pci_cfg_state = by_id
-            .remove(&snapshot::DeviceId::PCI)
-            .or_else(|| by_id.remove(&snapshot::DeviceId::PCI_CFG));
+            .remove(&snapshot::DeviceId::PCI_CFG)
+            .or_else(|| by_id.remove(&snapshot::DeviceId::PCI));
         if let (Some(pci_cfg), Some(state)) = (&self.pci_cfg, pci_cfg_state) {
             let mut pci_cfg = pci_cfg.borrow_mut();
             let _ =
