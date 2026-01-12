@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -135,3 +136,29 @@ test("safe-run.sh can execute a trivial command (Linux)", { skip: process.platfo
     stdio: "ignore",
   });
 });
+
+test(
+  "safe-run.sh works via bash even if scripts lose executable bits (Linux)",
+  { skip: process.platform !== "linux" },
+  () => {
+    const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "aero-safe-run-nonexec-"));
+    try {
+      const tmpScripts = path.join(tmpRoot, "scripts");
+      fs.mkdirSync(tmpScripts, { recursive: true });
+      for (const script of ["safe-run.sh", "with-timeout.sh", "run_limited.sh"]) {
+        const src = path.join(repoRoot, "scripts", script);
+        const dst = path.join(tmpScripts, script);
+        fs.copyFileSync(src, dst);
+        // Simulate environments/filesystems that lose exec bits on checkout.
+        fs.chmodSync(dst, 0o644);
+      }
+
+      execFileSync("bash", ["scripts/safe-run.sh", "true"], {
+        cwd: tmpRoot,
+        stdio: "ignore",
+      });
+    } finally {
+      fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+  },
+);
