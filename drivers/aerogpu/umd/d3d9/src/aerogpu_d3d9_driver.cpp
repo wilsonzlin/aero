@@ -4101,32 +4101,11 @@ void write_f32_unaligned(uint8_t* p, float v) {
 }
 
 void get_viewport_dims_locked(Device* dev, float* out_x, float* out_y, float* out_w, float* out_h) {
-  float x = dev->viewport.X;
-  float y = dev->viewport.Y;
-  float w = dev->viewport.Width;
-  float h = dev->viewport.Height;
-
-  if (w <= 0.0f || h <= 0.0f) {
-    // Some apps rely on the default viewport. Use the current render target as a
-    // conservative fallback.
-    if (dev->render_targets[0]) {
-      w = static_cast<float>(std::max(1u, dev->render_targets[0]->width));
-      h = static_cast<float>(std::max(1u, dev->render_targets[0]->height));
-      x = 0.0f;
-      y = 0.0f;
-    }
-  }
-  if (w <= 0.0f) {
-    w = 1.0f;
-  }
-  if (h <= 0.0f) {
-    h = 1.0f;
-  }
-
-  *out_x = x;
-  *out_y = y;
-  *out_w = w;
-  *out_h = h;
+  const D3DDDIVIEWPORTINFO vp = viewport_effective_locked(dev);
+  *out_x = vp.X;
+  *out_y = vp.Y;
+  *out_w = vp.Width;
+  *out_h = vp.Height;
 }
 
 HRESULT convert_xyzrhw_to_clipspace_locked(
