@@ -4315,21 +4315,22 @@ impl snapshot::SnapshotTarget for Machine {
                     firmware::bios::BiosSnapshot::decode(&mut Cursor::new(&state.data))
                 {
                     self.bios.restore_snapshot(snapshot, &mut self.mem);
-                    // Keep the BIOS VBE LFB base coherent with the machine's VGA wiring.
-                    //
-                    // When VGA is enabled, the machine exposes the SVGA linear framebuffer (LFB)
-                    // at the fixed MMIO address `SVGA_LFB_BASE`.
-                    //
-                    // When VGA is disabled, avoid reporting `SVGA_LFB_BASE` since it overlaps the
-                    // canonical PCI MMIO window (0xE0000000).
-                    self.bios.video.vbe.lfb_base = if self.cfg.enable_vga {
-                        aero_gpu_vga::SVGA_LFB_BASE
-                    } else {
-                        firmware::video::vbe::VbeDevice::LFB_BASE_DEFAULT
-                    };
                 }
             }
         }
+        // Keep the BIOS VBE LFB base coherent with the machine's VGA wiring, even if the snapshot
+        // did not include a BIOS section (or it failed to decode).
+        //
+        // When VGA is enabled, the machine exposes the SVGA linear framebuffer (LFB) at the fixed
+        // MMIO address `SVGA_LFB_BASE`.
+        //
+        // When VGA is disabled, avoid reporting `SVGA_LFB_BASE` since it overlaps the canonical PCI
+        // MMIO window (0xE0000000).
+        self.bios.video.vbe.lfb_base = if self.cfg.enable_vga {
+            aero_gpu_vga::SVGA_LFB_BASE
+        } else {
+            firmware::video::vbe::VbeDevice::LFB_BASE_DEFAULT
+        };
 
         // Memory/chipset glue.
         if let Some(state) = by_id.remove(&snapshot::DeviceId::MEMORY) {
@@ -4361,6 +4362,7 @@ impl snapshot::SnapshotTarget for Machine {
             if !self.cfg.enable_vga {
                 // Treat this as a config mismatch (snapshot taken with VGA enabled, restored into a
                 // headless machine).
+                self.vga = None;
             } else {
                 // Ensure a VGA device exists before restoring.
                 let vga: Rc<RefCell<VgaDevice>> = match &self.vga {
