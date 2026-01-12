@@ -444,6 +444,37 @@ fn tier0_external_interrupt_to_non_stub_does_not_prime_bios_marker() {
 }
 
 #[test]
+fn vm86_external_interrupt_to_bios_stub_primes_bios_marker() {
+    let mut bus = FlatTestBus::new(0x20000);
+
+    // Placeholder interrupted context.
+    let code_base = 0x0100u64;
+    bus.load(code_base, &[0x90]); // NOP
+
+    // IVT[0x20] -> 0000:0500 (BIOS stub `HLT; IRET`).
+    let vector = 0x20u8;
+    let handler_seg = 0x0000u16;
+    let handler_off = 0x0500u16;
+    let ivt_addr = (vector as u64) * 4;
+    bus.write_u16(ivt_addr, handler_off).unwrap();
+    bus.write_u16(ivt_addr + 2, handler_seg).unwrap();
+    bus.load(handler_off as u64, &[0xF4, 0xCF]);
+
+    let mut cpu = Vcpu::new_with_mode(CpuMode::Vm86, bus);
+    cpu.cpu.state.write_reg(Register::CS, 0);
+    cpu.cpu.state.write_reg(Register::SS, 0);
+    cpu.cpu.state.write_reg(Register::SP, 0x8000);
+    cpu.cpu.state.set_rflags(0x0202); // IF=1
+    cpu.cpu.state.set_rip(code_base);
+
+    cpu.cpu.pending.inject_external_interrupt(vector);
+    assert!(cpu.maybe_deliver_interrupt());
+    assert_eq!(cpu.cpu.state.rip(), handler_off as u64);
+    assert!(cpu.cpu.state.pending_bios_int_valid);
+    assert_eq!(cpu.cpu.state.pending_bios_int, vector);
+}
+
+#[test]
 fn tier0_mov_ss_sets_interrupt_shadow_in_real_mode() {
     let mut bus = FlatTestBus::new(0x20000);
 
