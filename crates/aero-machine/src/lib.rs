@@ -1181,6 +1181,11 @@ impl Machine {
         }
     }
 
+    /// Backward-compatible alias for [`Machine::tick_platform`].
+    pub fn tick(&mut self, delta_ns: u64) {
+        self.tick_platform(delta_ns);
+    }
+
     fn tick_platform_from_cycles(&mut self, cycles: u64) {
         if self.platform_clock.is_none() {
             return;
