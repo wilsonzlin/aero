@@ -73,6 +73,7 @@ pub struct AerogpuD3d9Executor {
     sampler_cache: HashMap<D3d9SamplerState, Arc<wgpu::Sampler>>,
 
     pipelines: HashMap<PipelineCacheKey, wgpu::RenderPipeline>,
+    alpha_test_pixel_shaders: HashMap<AlphaTestShaderModuleKey, Arc<wgpu::ShaderModule>>,
 
     clear_shader: wgpu::ShaderModule,
     clear_bind_group: wgpu::BindGroup,
@@ -417,6 +418,7 @@ struct Shader {
     stage: shader::ShaderStage,
     key: u64,
     module: wgpu::ShaderModule,
+    wgsl: String,
     entry_point: &'static str,
     uses_semantic_locations: bool,
     used_samplers_mask: u16,
@@ -480,6 +482,10 @@ struct State {
     sample_mask: u32,
     depth_stencil_state: DepthStencilState,
     rasterizer_state: RasterizerState,
+
+    alpha_test_enable: bool,
+    alpha_test_func: u32,
+    alpha_test_ref: u8,
 
     textures_vs: [u32; MAX_SAMPLERS],
     textures_ps: [u32; MAX_SAMPLERS],
@@ -702,6 +708,7 @@ fn create_default_render_states() -> Vec<u32> {
     states[d3d9::D3DRS_CCW_STENCILFAIL as usize] = 1; // D3DSTENCILOP_KEEP
     states[d3d9::D3DRS_CCW_STENCILZFAIL as usize] = 1; // D3DSTENCILOP_KEEP
     states[d3d9::D3DRS_CCW_STENCILPASS as usize] = 1; // D3DSTENCILOP_KEEP
+    states[d3d9::D3DRS_ALPHAFUNC as usize] = 8; // D3DCMP_ALWAYS
 
     states
 }
@@ -731,11 +738,69 @@ fn create_default_state() -> State {
         topology: wgpu::PrimitiveTopology::TriangleList,
         blend_constant: [1.0; 4],
         sample_mask: 0xFFFF_FFFF,
+        alpha_test_func: 8, // D3DCMP_ALWAYS
         ..Default::default()
     };
     state.render_states = create_default_render_states();
     state.sampler_states_ps = create_default_sampler_states_ps();
     state
+}
+
+fn build_alpha_test_wgsl_variant(
+    base: &str,
+    alpha_test_func: u32,
+    alpha_test_ref: u8,
+) -> Result<String, AerogpuD3d9Error> {
+    const FS_SIG_WITH_INPUT: &str = "@fragment\nfn fs_main(input: PsInput) -> PsOutput {\n";
+    const FS_SIG_NO_INPUT: &str = "@fragment\nfn fs_main() -> PsOutput {\n";
+
+    let (old_sig, new_sig, wrapper_sig, call_expr) = if base.contains(FS_SIG_WITH_INPUT) {
+        (
+            FS_SIG_WITH_INPUT,
+            "fn fs_main_inner(input: PsInput) -> PsOutput {\n",
+            "fn fs_main(input: PsInput) -> PsOutput {\n",
+            "fs_main_inner(input)",
+        )
+    } else if base.contains(FS_SIG_NO_INPUT) {
+        (
+            FS_SIG_NO_INPUT,
+            "fn fs_main_inner() -> PsOutput {\n",
+            "fn fs_main() -> PsOutput {\n",
+            "fs_main_inner()",
+        )
+    } else {
+        return Err(AerogpuD3d9Error::ShaderTranslation(
+            "alpha-test WGSL injection failed: unrecognized fs_main signature".into(),
+        ));
+    };
+
+    let mut out = base.replacen(old_sig, new_sig, 1);
+    out.push_str("\n@fragment\n");
+    out.push_str(wrapper_sig);
+    out.push_str(&format!("  let out = {};\n", call_expr));
+    out.push_str("  let a: f32 = clamp(out.oC0.a, 0.0, 1.0);\n");
+    out.push_str(&format!(
+        "  let alpha_ref: f32 = f32({}u) / 255.0;\n",
+        alpha_test_ref
+    ));
+
+    let passes = match alpha_test_func {
+        1 => "false",                 // D3DCMP_NEVER
+        2 => "(a < alpha_ref)",        // D3DCMP_LESS
+        3 => "(a == alpha_ref)",       // D3DCMP_EQUAL
+        4 => "(a <= alpha_ref)",       // D3DCMP_LESSEQUAL
+        5 => "(a > alpha_ref)",        // D3DCMP_GREATER
+        6 => "(a != alpha_ref)",       // D3DCMP_NOTEQUAL
+        7 => "(a >= alpha_ref)",       // D3DCMP_GREATEREQUAL
+        8 => "true",                  // D3DCMP_ALWAYS
+        _ => "true",
+    };
+    out.push_str(&format!(
+        "  if !({}) {{\n    discard;\n  }}\n",
+        passes
+    ));
+    out.push_str("  return out;\n}\n");
+    Ok(out)
 }
 
 fn create_default_samplers(
@@ -790,6 +855,9 @@ impl Default for D3d9SamplerState {
 struct PipelineCacheKey {
     vs: u64,
     ps: u64,
+    alpha_test_enable: bool,
+    alpha_test_func: u32,
+    alpha_test_ref: u8,
     vertex_buffers: Vec<crate::pipeline_key::VertexBufferLayoutKey>,
     color_formats: Vec<Option<wgpu::TextureFormat>>,
     /// Per color attachment: true if the bound render target is an X8 format (e.g. X8R8G8B8).
@@ -804,6 +872,13 @@ struct PipelineCacheKey {
     blend: BlendState,
     depth_stencil: DepthStencilState,
     raster: RasterizerPipelineKey,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct AlphaTestShaderModuleKey {
+    ps: u64,
+    alpha_test_func: u32,
+    alpha_test_ref: u8,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -1029,6 +1104,7 @@ impl AerogpuD3d9Executor {
             sampler_state_ps,
             sampler_cache: HashMap::new(),
             pipelines: HashMap::new(),
+            alpha_test_pixel_shaders: HashMap::new(),
             clear_shader,
             clear_bind_group,
             clear_pipeline_layout,
@@ -1056,6 +1132,7 @@ impl AerogpuD3d9Executor {
         self.input_layouts.clear();
         self.presented_scanouts.clear();
         self.pipelines.clear();
+        self.alpha_test_pixel_shaders.clear();
         self.clear_pipelines.clear();
         self.clear_depth_pipelines.clear();
         self.clear_dummy_color_targets.clear();
@@ -3763,18 +3840,23 @@ impl AerogpuD3d9Executor {
                         actual: bytecode_stage,
                     });
                 }
+                let wgsl = cached.wgsl.wgsl.clone();
                 let module = self
                     .device
                     .create_shader_module(wgpu::ShaderModuleDescriptor {
                         label: Some("aerogpu-d3d9.shader"),
-                        source: wgpu::ShaderSource::Wgsl(cached.wgsl.wgsl.clone().into()),
+                        source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(wgsl.as_str())),
                     });
                 let mut used_samplers_mask = 0u16;
                 for &s in &cached.ir.used_samplers {
                     if (s as usize) < MAX_SAMPLERS {
                         used_samplers_mask |= 1u16 << s;
                     } else {
-                        debug!(shader_handle, sampler = s, "shader uses out-of-range sampler index");
+                        debug!(
+                            shader_handle,
+                            sampler = s,
+                            "shader uses out-of-range sampler index"
+                        );
                     }
                 }
                 self.shaders.insert(
@@ -3783,6 +3865,7 @@ impl AerogpuD3d9Executor {
                         stage: bytecode_stage,
                         key,
                         module,
+                        wgsl,
                         entry_point: cached.wgsl.entry_point,
                         uses_semantic_locations: cached.ir.uses_semantic_locations
                             && bytecode_stage == shader::ShaderStage::Vertex,
@@ -5783,43 +5866,41 @@ impl AerogpuD3d9Executor {
             self.flush_texture_binding_if_dirty(Some(encoder), tex_handle, ctx)?;
         }
         self.ensure_bind_group();
-        let bind_group = self
-            .bind_group
-            .as_ref()
-            .expect("ensure_bind_group initializes bind group");
-
-        let vs = self
-            .shaders
-            .get(&vs_handle)
-            .ok_or(AerogpuD3d9Error::UnknownShader(vs_handle))?;
-        let ps = self
-            .shaders
-            .get(&ps_handle)
-            .ok_or(AerogpuD3d9Error::UnknownShader(ps_handle))?;
-        if vs.stage != shader::ShaderStage::Vertex {
-            return Err(AerogpuD3d9Error::ShaderStageMismatch {
-                shader_handle: vs_handle,
-                expected: shader::ShaderStage::Vertex,
-                actual: vs.stage,
-            });
-        }
-        if ps.stage != shader::ShaderStage::Pixel {
-            return Err(AerogpuD3d9Error::ShaderStageMismatch {
-                shader_handle: ps_handle,
-                expected: shader::ShaderStage::Pixel,
-                actual: ps.stage,
-            });
-        }
-        let vs_key = vs.key;
-        let ps_key = ps.key;
-        let layout = self
-            .input_layouts
-            .get(&layout_handle)
-            .ok_or(AerogpuD3d9Error::UnknownInputLayout(layout_handle))?;
+        let (vs_key, ps_key, vs_uses_semantic_locations) = {
+            let vs = self
+                .shaders
+                .get(&vs_handle)
+                .ok_or(AerogpuD3d9Error::UnknownShader(vs_handle))?;
+            let ps = self
+                .shaders
+                .get(&ps_handle)
+                .ok_or(AerogpuD3d9Error::UnknownShader(ps_handle))?;
+            if vs.stage != shader::ShaderStage::Vertex {
+                return Err(AerogpuD3d9Error::ShaderStageMismatch {
+                    shader_handle: vs_handle,
+                    expected: shader::ShaderStage::Vertex,
+                    actual: vs.stage,
+                });
+            }
+            if ps.stage != shader::ShaderStage::Pixel {
+                return Err(AerogpuD3d9Error::ShaderStageMismatch {
+                    shader_handle: ps_handle,
+                    expected: shader::ShaderStage::Pixel,
+                    actual: ps.stage,
+                });
+            }
+            (vs.key, ps.key, vs.uses_semantic_locations)
+        };
         let (color_formats, color_is_x8, depth_format) = self.render_target_formats()?;
         let depth_has_stencil =
             matches!(depth_format, Some(wgpu::TextureFormat::Depth24PlusStencil8));
-        let vertex_buffers = self.vertex_buffer_layouts(layout, vs.uses_semantic_locations)?;
+        let vertex_buffers = {
+            let layout = self
+                .input_layouts
+                .get(&layout_handle)
+                .ok_or(AerogpuD3d9Error::UnknownInputLayout(layout_handle))?;
+            self.vertex_buffer_layouts(layout, vs_uses_semantic_locations)?
+        };
         let vertex_buffers_ref = vertex_buffers
             .buffers
             .iter()
@@ -5866,9 +5947,22 @@ impl AerogpuD3d9Executor {
             })
             .collect::<Vec<_>>();
 
+        let alpha_test_enable = self.state.alpha_test_enable;
+        let alpha_test_func = self.state.alpha_test_func;
+        let alpha_test_ref = self.state.alpha_test_ref;
+        // When alpha testing is disabled, ALPHAFUNC/ALPHAREF should not affect pipeline selection.
+        let (pipeline_alpha_enable, pipeline_alpha_func, pipeline_alpha_ref) = if alpha_test_enable {
+            (true, alpha_test_func, alpha_test_ref)
+        } else {
+            (false, 0, 0)
+        };
+
         let pipeline_key = PipelineCacheKey {
             vs: vs_key,
             ps: ps_key,
+            alpha_test_enable: pipeline_alpha_enable,
+            alpha_test_func: pipeline_alpha_func,
+            alpha_test_ref: pipeline_alpha_ref,
             vertex_buffers: vertex_buffer_keys,
             color_formats: color_formats.clone(),
             x8_mask: color_is_x8.clone(),
@@ -5886,9 +5980,38 @@ impl AerogpuD3d9Executor {
         let pipeline = if let Some(existing) = self.pipelines.get(&pipeline_key) {
             existing
         } else {
-            let pipeline = self
-                .device
-                .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            let alpha_test_ps_module = if alpha_test_enable {
+                let ps_wgsl = {
+                    let ps = self
+                        .shaders
+                        .get(&ps_handle)
+                        .ok_or(AerogpuD3d9Error::UnknownShader(ps_handle))?;
+                    ps.wgsl.clone()
+                };
+                Some(self.alpha_test_pixel_shader_module(
+                    ps_key,
+                    &ps_wgsl,
+                    alpha_test_func,
+                    alpha_test_ref,
+                )?)
+            } else {
+                None
+            };
+
+            let pipeline = {
+                let vs = self
+                    .shaders
+                    .get(&vs_handle)
+                    .ok_or(AerogpuD3d9Error::UnknownShader(vs_handle))?;
+                let ps = self
+                    .shaders
+                    .get(&ps_handle)
+                    .ok_or(AerogpuD3d9Error::UnknownShader(ps_handle))?;
+                let ps_module: &wgpu::ShaderModule = alpha_test_ps_module
+                    .as_ref()
+                    .map(|m| m.as_ref())
+                    .unwrap_or(&ps.module);
+                self.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                     label: Some("aerogpu-d3d9.pipeline"),
                     layout: Some(&self.pipeline_layout),
                     vertex: wgpu::VertexState {
@@ -5898,7 +6021,7 @@ impl AerogpuD3d9Executor {
                         buffers: &vertex_buffers_ref,
                     },
                     fragment: Some(wgpu::FragmentState {
-                        module: &ps.module,
+                        module: ps_module,
                         entry_point: ps.entry_point,
                         compilation_options: wgpu::PipelineCompilationOptions::default(),
                         targets: &targets,
@@ -5927,8 +6050,7 @@ impl AerogpuD3d9Executor {
                         } else {
                             wgpu::CompareFunction::Always
                         },
-                        stencil: if depth_has_stencil
-                            && self.state.depth_stencil_state.stencil_enable
+                        stencil: if depth_has_stencil && self.state.depth_stencil_state.stencil_enable
                         {
                             let cw_face = wgpu::StencilFaceState {
                                 compare: map_compare_func(self.state.depth_stencil_state.stencil_func),
@@ -5939,18 +6061,12 @@ impl AerogpuD3d9Executor {
                                 pass_op: map_stencil_op(self.state.depth_stencil_state.stencil_pass_op),
                             };
                             let ccw_face = wgpu::StencilFaceState {
-                                compare: map_compare_func(
-                                    self.state.depth_stencil_state.ccw_stencil_func,
-                                ),
-                                fail_op: map_stencil_op(
-                                    self.state.depth_stencil_state.ccw_stencil_fail_op,
-                                ),
+                                compare: map_compare_func(self.state.depth_stencil_state.ccw_stencil_func),
+                                fail_op: map_stencil_op(self.state.depth_stencil_state.ccw_stencil_fail_op),
                                 depth_fail_op: map_stencil_op(
                                     self.state.depth_stencil_state.ccw_stencil_depth_fail_op,
                                 ),
-                                pass_op: map_stencil_op(
-                                    self.state.depth_stencil_state.ccw_stencil_pass_op,
-                                ),
+                                pass_op: map_stencil_op(self.state.depth_stencil_state.ccw_stencil_pass_op),
                             };
 
                             // D3D9's CCW stencil state is keyed to winding order, not "back face".
@@ -5970,8 +6086,7 @@ impl AerogpuD3d9Executor {
                                 front,
                                 back,
                                 read_mask: self.state.depth_stencil_state.stencil_read_mask as u32,
-                                write_mask: self.state.depth_stencil_state.stencil_write_mask
-                                    as u32,
+                                write_mask: self.state.depth_stencil_state.stencil_write_mask as u32,
                             }
                         } else {
                             wgpu::StencilState {
@@ -5989,7 +6104,8 @@ impl AerogpuD3d9Executor {
                     }),
                     multisample: wgpu::MultisampleState::default(),
                     multiview: None,
-                });
+                })
+            };
             self.pipelines.insert(pipeline_key.clone(), pipeline);
             self.pipelines
                 .get(&pipeline_key)
@@ -6000,6 +6116,11 @@ impl AerogpuD3d9Executor {
             Some((vertex_count, ..)) => self.triangle_fan_index_buffers.get(&vertex_count),
             None => None,
         };
+
+        let bind_group = self
+            .bind_group
+            .as_ref()
+            .expect("ensure_bind_group initializes bind group");
 
         let (color_views, depth_view) = self.render_target_attachments()?;
         let color_attachments = color_views
@@ -6038,12 +6159,18 @@ impl AerogpuD3d9Executor {
         // Note: this is intentionally implemented as a per-draw conversion into temporary buffers
         // to avoid requiring any shader-side workarounds.
         let mut d3dcolor_offsets_by_stream: HashMap<u8, Vec<u16>> = HashMap::new();
-        for e in &layout.decl.elements {
-            if e.ty == aero_d3d9::vertex::DeclType::D3dColor {
-                d3dcolor_offsets_by_stream
-                    .entry(e.stream)
-                    .or_default()
-                    .push(e.offset);
+        {
+            let layout = self
+                .input_layouts
+                .get(&layout_handle)
+                .ok_or(AerogpuD3d9Error::UnknownInputLayout(layout_handle))?;
+            for e in &layout.decl.elements {
+                if e.ty == aero_d3d9::vertex::DeclType::D3dColor {
+                    d3dcolor_offsets_by_stream
+                        .entry(e.stream)
+                        .or_default()
+                        .push(e.offset);
+                }
             }
         }
         for offsets in d3dcolor_offsets_by_stream.values_mut() {
@@ -6397,6 +6524,32 @@ impl AerogpuD3d9Executor {
         Ok(())
     }
 
+    fn alpha_test_pixel_shader_module(
+        &mut self,
+        ps_key: u64,
+        ps_wgsl: &str,
+        alpha_test_func: u32,
+        alpha_test_ref: u8,
+    ) -> Result<Arc<wgpu::ShaderModule>, AerogpuD3d9Error> {
+        let key = AlphaTestShaderModuleKey {
+            ps: ps_key,
+            alpha_test_func,
+            alpha_test_ref,
+        };
+
+        if let Some(hit) = self.alpha_test_pixel_shaders.get(&key) {
+            return Ok(hit.clone());
+        }
+
+        let wgsl = build_alpha_test_wgsl_variant(ps_wgsl, alpha_test_func, alpha_test_ref)?;
+        let module = Arc::new(self.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("aerogpu-d3d9.shader.alpha_test"),
+            source: wgpu::ShaderSource::Wgsl(wgsl.into()),
+        }));
+        self.alpha_test_pixel_shaders.insert(key, module.clone());
+        Ok(module)
+    }
+
     fn ensure_bind_group(&mut self) {
         if !self.bind_group_dirty && self.bind_group.is_some() {
             return;
@@ -6629,6 +6782,12 @@ impl AerogpuD3d9Executor {
                 }
             }
             d3d9::D3DRS_STENCILREF => {}
+            d3d9::D3DRS_ALPHATESTENABLE => self.state.alpha_test_enable = value != 0,
+            d3d9::D3DRS_ALPHAFUNC => {
+                let raw = if value == 0 { 8 } else { value };
+                self.state.alpha_test_func = raw;
+            }
+            d3d9::D3DRS_ALPHAREF => self.state.alpha_test_ref = (value & 0xFF) as u8,
             d3d9::D3DRS_ALPHABLENDENABLE => self.state.blend_state.enable = value != 0,
             d3d9::D3DRS_SRCBLEND => match value {
                 d3d9::D3DBLEND_BOTHSRCALPHA => {
@@ -8043,6 +8202,10 @@ mod d3d9 {
     pub const D3DRS_ZENABLE: u32 = 7;
     pub const D3DRS_ZWRITEENABLE: u32 = 14;
     pub const D3DRS_ZFUNC: u32 = 23;
+
+    pub const D3DRS_ALPHATESTENABLE: u32 = 15;
+    pub const D3DRS_ALPHAREF: u32 = 24;
+    pub const D3DRS_ALPHAFUNC: u32 = 25;
 
     pub const D3DRS_CULLMODE: u32 = 22;
     pub const D3DRS_FRONTCOUNTERCLOCKWISE: u32 = 18;
