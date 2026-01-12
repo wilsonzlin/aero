@@ -305,7 +305,8 @@ fn handle_int13(
     fn set_error(bios: &mut Bios, cpu: &mut CpuState, status: u8) {
         bios.last_int13_status = status;
         cpu.rflags |= FLAG_CF;
-        cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & 0xFF) | ((status as u64) << 8);
+        // For most INT 13h errors, BIOSes return AL=0 (no sectors transferred) alongside AH=status.
+        cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & !0xFFFF) | ((status as u64) << 8);
     }
 
     fn floppy_drive_count(bus: &mut dyn BiosBus) -> u8 {
@@ -1650,6 +1651,27 @@ mod tests {
         handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
         assert_ne!(cpu.rflags & FLAG_CF, 0);
         assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0x01);
+    }
+
+    #[test]
+    fn int13_read_sectors_on_nonexistent_drive_reports_zero_sectors_transferred() {
+        let mut bios = Bios::new(super::super::BiosConfig::default());
+        let disk_bytes = vec![0u8; 512];
+        let mut disk = InMemoryDisk::new(disk_bytes);
+
+        let mut cpu = CpuState::new(CpuMode::Real);
+        set_real_mode_seg(&mut cpu.segments.es, 0);
+        cpu.gpr[gpr::RBX] = 0x1000;
+        cpu.gpr[gpr::RAX] = 0x0201; // AH=02h read, AL=1 sector
+        cpu.gpr[gpr::RCX] = 0x0001; // CH=0, CL=1
+        cpu.gpr[gpr::RDX] = 0x0000; // DH=0, DL=floppy 0 (but no floppy advertised)
+
+        let mut mem = TestMemory::new(2 * 1024 * 1024);
+        ivt::init_bda(&mut mem, 0x80);
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
+
+        assert_ne!(cpu.rflags & FLAG_CF, 0);
+        assert_eq!(cpu.gpr[gpr::RAX] as u16, 0x0100);
     }
 
     #[test]
