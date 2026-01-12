@@ -382,6 +382,13 @@ def _test_get_range(
     )
     _require(resp.status == 206, f"expected 206, got {resp.status}")
 
+    accept_ranges = _header(resp, "Accept-Ranges")
+    _require(accept_ranges is not None, "missing Accept-Ranges header")
+    _require(
+        "bytes" in _csv_tokens(accept_ranges),
+        f"expected Accept-Ranges to include 'bytes', got {accept_ranges!r}",
+    )
+
     cache_control = _header(resp, "Cache-Control")
     _require(cache_control is not None, "missing Cache-Control header")
     _require(
@@ -469,6 +476,13 @@ def _test_get_unsatisfiable_range(
             max_body_bytes=1024,
         )
         _require(resp.status == 416, f"expected 416, got {resp.status}")
+
+        accept_ranges = _header(resp, "Accept-Ranges")
+        _require(accept_ranges is not None, "missing Accept-Ranges header")
+        _require(
+            "bytes" in _csv_tokens(accept_ranges),
+            f"expected Accept-Ranges to include 'bytes', got {accept_ranges!r}",
+        )
 
         content_range = _header(resp, "Content-Range")
         _require(content_range is not None, "missing Content-Range header")

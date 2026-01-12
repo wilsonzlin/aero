@@ -4,6 +4,7 @@ Validates that a disk image streaming endpoint is compatible with Aero’s brows
 
 - `HEAD` advertises byte ranges and provides a stable `Content-Length`
 - `GET` Range requests work (`206` + correct `Content-Range`)
+- `GET`/`416` responses also advertise `Accept-Ranges: bytes`
 - `GET` Range responses are safe for byte-addressed reads (no compression transforms):
   - `Cache-Control` includes `no-transform`
   - `Content-Encoding` is absent or `identity`
