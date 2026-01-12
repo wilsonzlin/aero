@@ -22,8 +22,17 @@ node scripts/check-node-version.mjs
 If you need to run tooling in an environment where you can't change the Node version (unsupported), you can bypass the hard error:
 
 ```bash
-AERO_ALLOW_UNSUPPORTED_NODE=1 node scripts/check-node-version.mjs
+  AERO_ALLOW_UNSUPPORTED_NODE=1 node scripts/check-node-version.mjs
 ```
+
+---
+
+## Manual testing checklists
+
+Some end-to-end behaviors (especially audio) are hard to validate automatically. The repo keeps a small set of
+**manual, reproducible smoke-test checklists** under `docs/testing/`.
+
+- Windows 7 audio (in-box HDA driver): [`docs/testing/audio-windows7.md`](./testing/audio-windows7.md)
 
 ## Test fixtures (boot sectors + tiny disk images)
 
