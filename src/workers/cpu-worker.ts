@@ -5,6 +5,18 @@ import { asI64, asU64, u64ToNumber } from './bigint';
 import { JIT_BIGINT_ABI_WASM_BYTES, JIT_CODE_PAGE_VERSION_ABI_WASM_BYTES } from './wasm-bytes';
 import { initWasmForContext, type WasmApi } from '../../web/src/runtime/wasm_context';
 
+declare global {
+  // Tiered VM bus exit hooks installed by this worker for deterministic JIT smoke tests.
+  // eslint-disable-next-line no-var
+  var __aero_io_port_read: ((port: number, size: number) => number) | undefined;
+  // eslint-disable-next-line no-var
+  var __aero_io_port_write: ((port: number, size: number, value: number) => void) | undefined;
+  // eslint-disable-next-line no-var
+  var __aero_mmio_read: ((addr: bigint, size: number) => number) | undefined;
+  // eslint-disable-next-line no-var
+  var __aero_mmio_write: ((addr: bigint, size: number, value: number) => void) | undefined;
+}
+
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 
 type CpuWorkerToMainMessage =

@@ -1598,14 +1598,32 @@ async function startHdaCaptureSynthetic(msg: AudioHdaCaptureSyntheticStartMessag
 
     // Guest memory layout for this debug harness.
     //
-    // Place these buffers well above the CPU worker's shared/demo framebuffer
-    // guest memory regions (see `startHdaPciDevice` for details) so the capture
-    // harness isn't corrupted by the always-on framebuffer publish path.
-    const corbBase = 0x0120_0000;
-    const rirbBase = 0x0120_1000;
-    const bdlBase = 0x0130_0000; // 128-byte aligned
-    const pcmBase = 0x0131_0000;
+    // IMPORTANT: keep all capture buffers disjoint from any CPU-worker demo framebuffer regions.
+    // Those demos continuously write to guest RAM in the background; overlapping ranges can corrupt
+    // CORB/RIRB/BDL/PCM state and cause flaky "PCM non-zero" probes.
+    //
+    // Allocate from the end of guest RAM so this stays robust if demo regions grow.
     const pcmBytes = 0x4000;
+    const alignDown = (value: number, alignment: number): number => {
+      if (alignment <= 0) return value >>> 0;
+      return Math.floor(value / alignment) * alignment;
+    };
+    const guestBytes = guestU8.byteLength >>> 0;
+    const guardBytes = 0x1000;
+    const slotBytes = 0x1000;
+    const requiredBytes = guardBytes + pcmBytes + slotBytes * 3;
+    if (guestBytes < requiredBytes) {
+      throw new Error(`Guest RAM too small for HDA capture buffers (guestBytes=0x${guestBytes.toString(16)}).`);
+    }
+
+    let cursor = alignDown(guestBytes - guardBytes, slotBytes);
+    const pcmBase = alignDown(cursor - pcmBytes, slotBytes);
+    cursor = pcmBase;
+    const bdlBase = cursor - slotBytes; // also 128-byte aligned
+    cursor = bdlBase;
+    const rirbBase = cursor - slotBytes;
+    cursor = rirbBase;
+    const corbBase = cursor - slotBytes;
 
     guestBoundsCheck(corbBase, 8);
     guestBoundsCheck(rirbBase, 16);

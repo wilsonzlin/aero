@@ -1325,10 +1325,6 @@ function maybeSendWasmReady(): void {
   if (wasmReadySent) return;
   const init = pendingWasmInit;
   if (!init) return;
-  // Readiness implies the guest-visible UHCI controller is registered and the WASM-side HID
-  // passthrough bridge is installed, so `hid.attach` can immediately hotplug into the guest.
-  if (!uhciDevice) return;
-  if (!wasmHidGuest) return;
   try {
     if (Atomics.load(status, StatusIndex.StopRequested) === 1) return;
   } catch {
@@ -3227,6 +3223,7 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
         assertWasmMemoryWiring({ api, memory: init.guestMemory, context: "io.worker" });
         wasmApi = api;
         pendingWasmInit = { api, variant };
+        maybeSendWasmReady();
         usbHid = new api.UsbHidBridge();
         maybeInitUhciDevice();
         maybeInitVirtioNetDevice();
