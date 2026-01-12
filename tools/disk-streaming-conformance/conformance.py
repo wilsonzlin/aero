@@ -51,6 +51,7 @@ def _request(
     headers: Mapping[str, str],
     timeout_s: float,
     follow_redirects: bool = True,
+    max_body_bytes: int | None = None,
 ) -> HttpResponse:
     req = urllib.request.Request(url=url, method=method, headers=dict(headers))
     opener = urllib.request.build_opener()
@@ -65,7 +66,12 @@ def _request(
         opener = urllib.request.build_opener(_NoRedirect())
     try:
         with opener.open(req, timeout=timeout_s) as resp:
-            body = b"" if method == "HEAD" else resp.read()
+            if method == "HEAD":
+                body = b""
+            elif max_body_bytes is None:
+                body = resp.read()
+            else:
+                body = resp.read(max_body_bytes)
             return HttpResponse(
                 url=resp.geturl(),
                 status=int(resp.status),
@@ -74,7 +80,12 @@ def _request(
                 body=body,
             )
     except urllib.error.HTTPError as e:
-        body = b"" if method == "HEAD" else e.read()
+        if method == "HEAD":
+            body = b""
+        elif max_body_bytes is None:
+            body = e.read()
+        else:
+            body = e.read(max_body_bytes)
         return HttpResponse(
             url=e.geturl(),
             status=int(e.code),
@@ -188,6 +199,7 @@ def _test_private_requires_auth(
             method="GET",
             headers=headers,
             timeout_s=timeout_s,
+            max_body_bytes=1024,
         )
         _require_cors(resp, origin)
         _require(resp.status in (401, 403), f"expected 401/403, got {resp.status}")
@@ -196,13 +208,21 @@ def _test_private_requires_auth(
         return TestResult(name=name, status="FAIL", details=str(e))
 
 
+@dataclass(frozen=True)
+class HeadInfo:
+    resp: HttpResponse
+    size: int
+    etag: str | None
+    last_modified: str | None
+
+
 def _test_head(
     *,
     base_url: str,
     origin: str | None,
     authorization: str | None,
     timeout_s: float,
-) -> tuple[TestResult, int | None]:
+) -> tuple[TestResult, HeadInfo | None]:
     name = "HEAD: Accept-Ranges=bytes and Content-Length is present"
     try:
         headers: dict[str, str] = {
@@ -235,13 +255,15 @@ def _test_head(
             origin,
             expose={"accept-ranges", "content-range", "content-length", "etag", "last-modified"},
         )
+        etag = _header(resp, "ETag")
+        last_modified = _header(resp, "Last-Modified")
         return (
             TestResult(
                 name=name,
                 status="PASS",
                 details=f"size={size} ({_fmt_bytes(size)})",
             ),
-            size,
+            HeadInfo(resp=resp, size=size, etag=etag, last_modified=last_modified),
         )
     except TestFailure as e:
         return TestResult(name=name, status="FAIL", details=str(e)), None
@@ -333,6 +355,7 @@ def _test_get_range(
     req_start: int,
     req_end: int,
     strict: bool,
+    extra_headers: Mapping[str, str] | None = None,
 ) -> TestResult:
     _require(0 <= req_start <= req_end < size, f"invalid test range {req_start}-{req_end} for size {size}")
     headers: dict[str, str] = {
@@ -343,8 +366,20 @@ def _test_get_range(
         headers["Origin"] = origin
     if authorization is not None:
         headers["Authorization"] = authorization
+    if extra_headers is not None:
+        for k, v in extra_headers.items():
+            headers[str(k)] = str(v)
 
-    resp = _request(url=base_url, method="GET", headers=headers, timeout_s=timeout_s)
+    # Safety: if the server ignores Range and returns a full 200 response, don't download the whole
+    # disk image. We only need `expected_len` bytes to validate conformance.
+    expected_len = req_end - req_start + 1
+    resp = _request(
+        url=base_url,
+        method="GET",
+        headers=headers,
+        timeout_s=timeout_s,
+        max_body_bytes=expected_len + 1,
+    )
     _require(resp.status == 206, f"expected 206, got {resp.status}")
 
     cache_control = _header(resp, "Cache-Control")
@@ -373,7 +408,6 @@ def _test_get_range(
     _require(start == req_start and end == req_end, f"expected bytes {req_start}-{req_end}, got {start}-{end}")
     _require(total == size, f"expected total size {size}, got {total}")
 
-    expected_len = req_end - req_start + 1
     _require(len(resp.body) == expected_len, f"expected body length {expected_len}, got {len(resp.body)}")
 
     content_length = _header(resp, "Content-Length")
@@ -426,7 +460,14 @@ def _test_get_unsatisfiable_range(
         if authorization is not None:
             headers["Authorization"] = authorization
 
-        resp = _request(url=base_url, method="GET", headers=headers, timeout_s=timeout_s)
+        # Safety: if Range is ignored and a full 200 is returned, don't download the whole image.
+        resp = _request(
+            url=base_url,
+            method="GET",
+            headers=headers,
+            timeout_s=timeout_s,
+            max_body_bytes=1024,
+        )
         _require(resp.status == 416, f"expected 416, got {resp.status}")
 
         content_range = _header(resp, "Content-Range")
@@ -455,13 +496,13 @@ def _test_options_preflight(
     authorization: str | None,
     timeout_s: float,
 ) -> TestResult:
-    required_headers = {"range", "if-range"}
-    req_header_value = "range,if-range"
-    name = "OPTIONS: CORS preflight allows Range + If-Range headers"
+    required_headers = {"range", "if-range", "if-none-match", "if-modified-since"}
+    req_header_value = "range,if-range,if-none-match,if-modified-since"
+    name = "OPTIONS: CORS preflight allows Range + If-Range + conditional headers"
     if authorization is not None:
         required_headers.add("authorization")
         req_header_value += ",authorization"
-        name = "OPTIONS: CORS preflight allows Range + If-Range + Authorization headers"
+        name = "OPTIONS: CORS preflight allows Range + If-Range + conditional + Authorization headers"
     if origin is None:
         return TestResult(name=name, status="SKIP", details="skipped (no origin provided)")
     try:
@@ -476,6 +517,7 @@ def _test_options_preflight(
             },
             timeout_s=timeout_s,
             follow_redirects=False,
+            max_body_bytes=1024,
         )
         _require(200 <= resp.status < 300, f"expected 2xx, got {resp.status}")
 
@@ -532,7 +574,19 @@ def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument(
         "--strict",
         action="store_true",
-        help="Fail on 'WARN' conditions (currently: Transfer-Encoding: chunked on 206)",
+        help=(
+            "Fail on 'WARN' conditions (e.g. Transfer-Encoding: chunked on 206, "
+            "missing Cross-Origin-Resource-Policy, private caching without no-store, "
+            "If-Range mismatch behavior)"
+        ),
+    )
+    parser.add_argument(
+        "--expect-corp",
+        default=None,
+        help=(
+            "Require Cross-Origin-Resource-Policy to equal this value (e.g. same-site, cross-origin). "
+            "If omitted, missing CORP is WARN-only."
+        ),
     )
     args = parser.parse_args(argv)
 
@@ -546,7 +600,321 @@ def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
         args.token = args.token.strip()
         if args.token == "":
             args.token = None
+    if args.expect_corp is not None:
+        args.expect_corp = args.expect_corp.strip()
+        if args.expect_corp == "":
+            args.expect_corp = None
     return args
+
+
+def _is_weak_etag(etag: str) -> bool:
+    return etag.strip().lower().startswith("w/")
+
+
+def _is_single_etag(etag: str) -> bool:
+    # If-Range only accepts a single validator. We conservatively skip if it looks like a list.
+    # (ETag values can technically contain commas inside quotes, but it's extremely uncommon.)
+    return "," not in etag
+
+
+def _test_if_range_matches_etag(
+    *,
+    base_url: str,
+    origin: str | None,
+    authorization: str | None,
+    timeout_s: float,
+    size: int | None,
+    etag: str | None,
+    strict: bool,
+) -> TestResult:
+    name = "GET: Range + If-Range (matching ETag) returns 206"
+    if size is None:
+        return TestResult(name=name, status="SKIP", details="skipped (size unknown)")
+    if etag is None:
+        return TestResult(name=name, status="SKIP", details="skipped (no ETag from HEAD)")
+    if _is_weak_etag(etag):
+        return TestResult(
+            name=name,
+            status="SKIP",
+            details="skipped (ETag is weak; If-Range requires a strong ETag)",
+        )
+    if not _is_single_etag(etag):
+        return TestResult(name=name, status="SKIP", details=f"skipped (ETag looks like a list: {etag!r})")
+
+    try:
+        return _test_get_range(
+            name=name,
+            base_url=base_url,
+            origin=origin,
+            authorization=authorization,
+            timeout_s=timeout_s,
+            size=size,
+            req_start=0,
+            req_end=0,
+            strict=strict,
+            extra_headers={"If-Range": etag},
+        )
+    except TestFailure as e:
+        return TestResult(name=name, status="FAIL", details=str(e))
+
+
+def _test_if_range_mismatch(
+    *,
+    base_url: str,
+    origin: str | None,
+    authorization: str | None,
+    timeout_s: float,
+    size: int | None,
+    strict: bool,
+) -> TestResult:
+    name = 'GET: Range + If-Range ("mismatch") does not return mixed-version 206'
+    if size is None:
+        return TestResult(name=name, status="SKIP", details="skipped (size unknown)")
+
+    try:
+        headers: dict[str, str] = {
+            "Accept-Encoding": "identity",
+            "Range": "bytes=0-0",
+            "If-Range": '"mismatch"',
+        }
+        if origin is not None:
+            headers["Origin"] = origin
+        if authorization is not None:
+            headers["Authorization"] = authorization
+
+        # If the server prefers to ignore `Range` and return `200`, that could be many GiB. Don't
+        # download it.
+        resp = _request(
+            url=base_url,
+            method="GET",
+            headers=headers,
+            timeout_s=timeout_s,
+            max_body_bytes=1024,
+        )
+        _require_cors(resp, origin)
+
+        if resp.status == 200:
+            content_range = _header(resp, "Content-Range")
+            _require(content_range is None, f"expected no Content-Range on 200, got {content_range!r}")
+            content_length = _header(resp, "Content-Length")
+            if content_length is not None:
+                try:
+                    resp_len = int(content_length)
+                except ValueError:
+                    raise TestFailure(f"invalid Content-Length {content_length!r}") from None
+                _require(resp_len == size, f"expected full Content-Length {size}, got {resp_len}")
+            return TestResult(name=name, status="PASS", details="status=200 (Range ignored)")
+
+        if resp.status == 412:
+            message = (
+                "server returned 412 Precondition Failed for If-Range mismatch; "
+                "spec prefers 200 full body to avoid mixed-version ranges"
+            )
+            if strict:
+                return TestResult(name=name, status="FAIL", details=message)
+            return TestResult(name=name, status="WARN", details=message)
+
+        raise TestFailure(f"expected 200 (preferred) or 412, got {resp.status}")
+    except TestFailure as e:
+        return TestResult(name=name, status="FAIL", details=str(e))
+
+
+def _test_conditional_if_none_match(
+    *,
+    base_url: str,
+    origin: str | None,
+    authorization: str | None,
+    timeout_s: float,
+    etag: str | None,
+) -> TestResult:
+    name = "GET: If-None-Match returns 304 Not Modified"
+    if etag is None:
+        return TestResult(name=name, status="SKIP", details="skipped (no ETag from HEAD)")
+
+    try:
+        headers: dict[str, str] = {
+            "Accept-Encoding": "identity",
+            "If-None-Match": etag,
+        }
+        if origin is not None:
+            headers["Origin"] = origin
+        if authorization is not None:
+            headers["Authorization"] = authorization
+
+        resp = _request(
+            url=base_url,
+            method="GET",
+            headers=headers,
+            timeout_s=timeout_s,
+            # Safety: a broken server might ignore If-None-Match and return a giant 200.
+            max_body_bytes=1024,
+        )
+        _require_cors(resp, origin)
+        _require(resp.status == 304, f"expected 304, got {resp.status}")
+        _require(len(resp.body) == 0, f"expected empty body on 304, got {len(resp.body)} bytes")
+        return TestResult(name=name, status="PASS", details="status=304")
+    except TestFailure as e:
+        return TestResult(name=name, status="FAIL", details=str(e))
+
+
+def _test_conditional_if_modified_since(
+    *,
+    base_url: str,
+    origin: str | None,
+    authorization: str | None,
+    timeout_s: float,
+    last_modified: str | None,
+    strict: bool,
+) -> TestResult:
+    name = "GET: If-Modified-Since returns 304 Not Modified"
+    if last_modified is None:
+        return TestResult(name=name, status="SKIP", details="skipped (no Last-Modified from HEAD)")
+
+    try:
+        headers: dict[str, str] = {
+            "Accept-Encoding": "identity",
+            "If-Modified-Since": last_modified,
+        }
+        if origin is not None:
+            headers["Origin"] = origin
+        if authorization is not None:
+            headers["Authorization"] = authorization
+
+        resp = _request(
+            url=base_url,
+            method="GET",
+            headers=headers,
+            timeout_s=timeout_s,
+            max_body_bytes=1024,
+        )
+        _require_cors(resp, origin)
+
+        if resp.status == 304:
+            _require(len(resp.body) == 0, f"expected empty body on 304, got {len(resp.body)} bytes")
+            return TestResult(name=name, status="PASS", details="status=304")
+
+        message = f"expected 304, got {resp.status}"
+        if strict:
+            return TestResult(name=name, status="FAIL", details=message)
+        return TestResult(name=name, status="WARN", details=message)
+    except TestFailure as e:
+        return TestResult(name=name, status="FAIL", details=str(e))
+
+
+def _test_corp_header(
+    *,
+    name: str,
+    resp: HttpResponse | None,
+    expect_corp: str | None,
+) -> TestResult:
+    if resp is None:
+        return TestResult(name=name, status="SKIP", details="skipped (no response)")
+
+    corp = _header(resp, "Cross-Origin-Resource-Policy")
+
+    if expect_corp is not None:
+        if corp is None:
+            return TestResult(name=name, status="FAIL", details="missing Cross-Origin-Resource-Policy header")
+        actual = corp.strip().lower()
+        expected = expect_corp.strip().lower()
+        if actual != expected:
+            return TestResult(name=name, status="FAIL", details=f"expected {expected!r}, got {actual!r}")
+        return TestResult(name=name, status="PASS", details=f"value={corp!r}")
+
+    if corp is None:
+        return TestResult(
+            name=name,
+            status="WARN",
+            details=(
+                "missing Cross-Origin-Resource-Policy header "
+                "(recommended for COEP: require-corp defence-in-depth)"
+            ),
+        )
+
+    return TestResult(name=name, status="PASS", details=f"value={corp!r}")
+
+
+def _test_corp_on_get(
+    *,
+    base_url: str,
+    origin: str | None,
+    authorization: str | None,
+    timeout_s: float,
+    expect_corp: str | None,
+) -> TestResult:
+    name = "GET: Cross-Origin-Resource-Policy is set"
+    try:
+        headers: dict[str, str] = {
+            "Accept-Encoding": "identity",
+            "Range": "bytes=0-0",
+        }
+        if origin is not None:
+            headers["Origin"] = origin
+        if authorization is not None:
+            headers["Authorization"] = authorization
+        resp = _request(
+            url=base_url,
+            method="GET",
+            headers=headers,
+            timeout_s=timeout_s,
+            max_body_bytes=2,
+        )
+        # If Range is supported this should be 206, but CORP is meaningful on any successful GET.
+        _require(200 <= resp.status < 400, f"expected <400, got {resp.status}")
+        return _test_corp_header(name=name, resp=resp, expect_corp=expect_corp)
+    except TestFailure as e:
+        return TestResult(name=name, status="FAIL", details=str(e))
+
+
+def _test_private_cache_control(
+    *,
+    base_url: str,
+    origin: str | None,
+    authorization: str | None,
+    timeout_s: float,
+    strict: bool,
+) -> TestResult:
+    name = "private: 206 responses are not publicly cacheable (Cache-Control)"
+    if authorization is None:
+        return TestResult(name=name, status="SKIP", details="skipped (no --token provided)")
+
+    try:
+        headers: dict[str, str] = {
+            "Accept-Encoding": "identity",
+            "Range": "bytes=0-0",
+            "Authorization": authorization,
+        }
+        if origin is not None:
+            headers["Origin"] = origin
+
+        resp = _request(
+            url=base_url,
+            method="GET",
+            headers=headers,
+            timeout_s=timeout_s,
+            max_body_bytes=2,
+        )
+        _require_cors(resp, origin)
+        _require(resp.status == 206, f"expected 206, got {resp.status}")
+
+        cache_control = _header(resp, "Cache-Control")
+        _require(cache_control is not None, "missing Cache-Control header")
+        tokens = _csv_tokens(cache_control)
+        if "public" in tokens:
+            raise TestFailure(f"private response must not be Cache-Control: public; got {cache_control!r}")
+        if "no-store" in tokens:
+            return TestResult(name=name, status="PASS", details=f"Cache-Control={cache_control!r}")
+
+        message = (
+            "private response Cache-Control does not include 'no-store'. "
+            "This is risky for browser/intermediary caching unless you intentionally enforce auth at the edge. "
+            "Run with --strict to fail."
+        )
+        if strict:
+            return TestResult(name=name, status="FAIL", details=f"{message} Cache-Control={cache_control!r}")
+        return TestResult(name=name, status="WARN", details=f"{message} Cache-Control={cache_control!r}")
+    except TestFailure as e:
+        return TestResult(name=name, status="FAIL", details=str(e))
 
 
 def main(argv: Sequence[str]) -> int:
@@ -555,6 +923,7 @@ def main(argv: Sequence[str]) -> int:
     origin: str | None = args.origin
     timeout_s: float = args.timeout
     strict: bool = bool(args.strict)
+    expect_corp: str | None = args.expect_corp
 
     token: str | None = args.token
     authorization: str | None = _authorization_value(token) if token else None
@@ -563,6 +932,7 @@ def main(argv: Sequence[str]) -> int:
     print(f"  BASE_URL: {base_url}")
     print(f"  ORIGIN:   {origin or '(none)'}")
     print(f"  STRICT:   {strict}")
+    print(f"  CORP:     {expect_corp or '(not required)'}")
     if authorization is None:
         print("  AUTH:     (none)")
     else:
@@ -575,13 +945,33 @@ def main(argv: Sequence[str]) -> int:
     if authorization is not None:
         results.append(_test_private_requires_auth(base_url=base_url, origin=origin, timeout_s=timeout_s))
 
-    head_result, size = _test_head(
+    head_result, head_info = _test_head(
         base_url=base_url,
         origin=origin,
         authorization=authorization,
         timeout_s=timeout_s,
     )
     results.append(head_result)
+    size = head_info.size if head_info is not None else None
+    etag = head_info.etag if head_info is not None else None
+    last_modified = head_info.last_modified if head_info is not None else None
+
+    results.append(
+        _test_corp_header(
+            name="HEAD: Cross-Origin-Resource-Policy is set",
+            resp=head_info.resp if head_info is not None else None,
+            expect_corp=expect_corp,
+        )
+    )
+    results.append(
+        _test_corp_on_get(
+            base_url=base_url,
+            origin=origin,
+            authorization=authorization,
+            timeout_s=timeout_s,
+            expect_corp=expect_corp,
+        )
+    )
 
     results.append(
         _test_get_valid_range(
@@ -590,6 +980,15 @@ def main(argv: Sequence[str]) -> int:
             authorization=authorization,
             timeout_s=timeout_s,
             size=size,
+            strict=strict,
+        )
+    )
+    results.append(
+        _test_private_cache_control(
+            base_url=base_url,
+            origin=origin,
+            authorization=authorization,
+            timeout_s=timeout_s,
             strict=strict,
         )
     )
@@ -610,6 +1009,46 @@ def main(argv: Sequence[str]) -> int:
             authorization=authorization,
             timeout_s=timeout_s,
             size=size,
+        )
+    )
+    results.append(
+        _test_if_range_matches_etag(
+            base_url=base_url,
+            origin=origin,
+            authorization=authorization,
+            timeout_s=timeout_s,
+            size=size,
+            etag=etag,
+            strict=strict,
+        )
+    )
+    results.append(
+        _test_if_range_mismatch(
+            base_url=base_url,
+            origin=origin,
+            authorization=authorization,
+            timeout_s=timeout_s,
+            size=size,
+            strict=strict,
+        )
+    )
+    results.append(
+        _test_conditional_if_none_match(
+            base_url=base_url,
+            origin=origin,
+            authorization=authorization,
+            timeout_s=timeout_s,
+            etag=etag,
+        )
+    )
+    results.append(
+        _test_conditional_if_modified_since(
+            base_url=base_url,
+            origin=origin,
+            authorization=authorization,
+            timeout_s=timeout_s,
+            last_modified=last_modified,
+            strict=strict,
         )
     )
     results.append(

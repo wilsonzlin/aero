@@ -7,10 +7,18 @@ Validates that a disk image streaming endpoint is compatible with Aero’s brows
 - `GET` Range responses are safe for byte-addressed reads (no compression transforms):
   - `Cache-Control` includes `no-transform`
   - `Content-Encoding` is absent or `identity`
+- `If-Range` semantics (defence against mixed-version bytes):
+  - `GET Range` with `If-Range: <strong-etag>` returns `206` (skipped if ETag is missing or weak)
+  - `GET Range` with `If-Range: "mismatch"` returns `200` (preferred) or `412`
+- Conditional caching works when validators are present:
+  - `GET` with `If-None-Match: <etag>` returns `304 Not Modified` (skipped if ETag is missing)
+  - (Optional) `GET` with `If-Modified-Since: <last-modified>` returns `304` (WARN if not)
 - Unsatisfiable ranges fail correctly (`416` + `Content-Range: bytes */<size>`)
-- CORS preflight (`OPTIONS`) allows the `Range` + `If-Range` headers (and `Authorization` when testing private images)
+- CORS preflight (`OPTIONS`) allows `Range`, `If-Range`, and conditional headers (`If-None-Match`, `If-Modified-Since`) (and `Authorization` when testing private images)
 - CORS responses expose required headers (`Access-Control-Expose-Headers` for `Accept-Ranges`, `Content-Length`, `Content-Range`, `ETag`, `Last-Modified`)
+- COEP/CORP defence-in-depth: `Cross-Origin-Resource-Policy` is present on `GET`/`HEAD` (WARN-only by default; see `--strict` / `--expect-corp`)
 - (Private images) unauthenticated requests are denied, authenticated requests succeed
+- (Private images) `206` responses are not publicly cacheable (`Cache-Control: no-store` recommended; WARN-only by default)
 
 The script is dependency-free (Python stdlib only) and exits non-zero on failures (CI-friendly).
 
@@ -60,20 +68,46 @@ Disk streaming conformance
   BASE_URL: https://aero.example.com/disk/my-image
   ORIGIN:   https://app.example.com
   STRICT:   False
+  CORP:     (not required)
   AUTH:     (none)
 
 PASS HEAD: Accept-Ranges=bytes and Content-Length is present - size=2147483648 (2.00 GiB)
+PASS HEAD: Cross-Origin-Resource-Policy is set - value='same-site'
+PASS GET: Cross-Origin-Resource-Policy is set - value='same-site'
 PASS GET: valid Range (first byte) returns 206 with correct Content-Range and body length - Content-Range='bytes 0-0/2147483648'
+SKIP private: 206 responses are not publicly cacheable (Cache-Control) - skipped (no --token provided)
 PASS GET: valid Range (mid-file) returns 206 with correct Content-Range and body length - Content-Range='bytes 1073741824-1073741824/2147483648'
 PASS GET: unsatisfiable Range returns 416 and Content-Range bytes */<size> - Content-Range='bytes */2147483648'
-PASS OPTIONS: CORS preflight allows Range + If-Range headers - status=204
+PASS GET: Range + If-Range (matching ETag) returns 206 - Content-Range='bytes 0-0/2147483648'
+PASS GET: Range + If-Range ("mismatch") does not return mixed-version 206 - status=200 (Range ignored)
+PASS GET: If-None-Match returns 304 Not Modified - status=304
+PASS GET: If-Modified-Since returns 304 Not Modified - status=304
+PASS OPTIONS: CORS preflight allows Range + If-Range + conditional headers - status=204
 
-Summary: 5 passed, 0 failed, 0 warned, 0 skipped
+Summary: 11 passed, 0 failed, 0 warned, 1 skipped
 ```
 
 ## Strict mode
 
-`--strict` fails on `WARN` conditions. Currently this includes `Transfer-Encoding: chunked` on `206` responses (some CDNs mishandle it).
+`--strict` fails on `WARN` conditions. This includes things like:
+
+- `Transfer-Encoding: chunked` on `206` responses (some CDNs mishandle it)
+- Missing `Cross-Origin-Resource-Policy`
+- Private responses missing `Cache-Control: no-store`
+- `If-Range` mismatch returning `412` instead of `200`
+- `If-Modified-Since` not returning `304` (this check is WARN-only by default)
+
+## CORP expectations
+
+By default, the tool only warns if `Cross-Origin-Resource-Policy` is missing.
+
+You can require a specific value:
+
+```bash
+python3 tools/disk-streaming-conformance/conformance.py \
+  --base-url 'https://aero.example.com/disk/my-image' \
+  --expect-corp 'same-site'
+```
 
 ## Running against the reference `server/disk-gateway`
 
