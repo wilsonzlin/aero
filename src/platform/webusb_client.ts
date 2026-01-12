@@ -1,11 +1,16 @@
-// NOTE: Repo-root WebUSB demo RPC.
+// NOTE: Legacy demo-only WebUSB broker/client stack (repo-root Vite harness).
 //
 // This module is the worker-side client for the generic WebUSB broker used by the repo-root Vite
-// harness (`src/main.ts`). It forwards direct `navigator.usb` operations over a MessagePort.
+// harness (`src/main.ts`). It forwards *direct* `navigator.usb` operations over a MessagePort.
 //
-// It is NOT the canonical guest USB passthrough protocol (UsbHostAction/UsbHostCompletion). For the
-// browser runtime passthrough stack, use `web/src/usb/*` and see:
-// - docs/adr/0015-canonical-usb-stack.md
+// WARNING: Do NOT extend this stack for production guest USB passthrough. The canonical browser USB
+// passthrough stack (UsbHostAction/UsbHostCompletion) lives in `web/src/usb/*` and the wire contract
+// is owned by:
+// - crates/aero-usb/src/passthrough.rs
+// - docs/fixtures/webusb_passthrough_wire.json
+// - web/src/usb/usb_passthrough_types.ts
+//
+// Deletion target per docs/adr/0015-canonical-usb-stack.md.
 
 import {
   WEBUSB_BROKER_PORT_MESSAGE_TYPE,
@@ -27,6 +32,7 @@ type PendingRequest = {
   reject: (reason: Error) => void;
 };
 
+/** @deprecated Legacy demo-only WebUSB client (direct `navigator.usb` RPC). Do not use for production guest USB passthrough; use `web/src/usb/*` + `crates/aero-usb` (ADR 0015). */
 export class WebUsbClient {
   private port: MessagePort;
   private nextId = 1;
@@ -162,6 +168,7 @@ export class WebUsbClient {
   }
 }
 
+/** @deprecated Legacy demo-only worker bootstrap for the WebUSB demo client. Do not use for production guest USB passthrough; use `web/src/usb/*` + `crates/aero-usb` (ADR 0015). */
 export function installWebUsbClientInWorker(): Promise<WebUsbClient> {
   const ctx = self as unknown as DedicatedWorkerGlobalScope;
   return new Promise((resolve) => {

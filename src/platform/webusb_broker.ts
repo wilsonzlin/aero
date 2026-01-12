@@ -1,11 +1,17 @@
-// NOTE: Repo-root WebUSB demo RPC.
+// NOTE: Legacy demo-only WebUSB broker/client stack (repo-root Vite harness).
 //
 // This module implements a generic main-thread WebUSB broker used by the repo-root Vite harness
-// (`src/main.ts`) for diagnostics / demos.
+// (`src/main.ts`) for diagnostics / demos. It forwards *direct* `navigator.usb` operations to a
+// worker over a MessagePort.
 //
-// It is NOT the canonical guest USB passthrough protocol (UsbHostAction/UsbHostCompletion). For the
-// browser runtime passthrough stack, use `web/src/usb/*` and see:
-// - docs/adr/0015-canonical-usb-stack.md
+// WARNING: Do NOT extend this stack for production guest USB passthrough. The canonical browser USB
+// passthrough stack (UsbHostAction/UsbHostCompletion) lives in `web/src/usb/*` and the wire contract
+// is owned by:
+// - crates/aero-usb/src/passthrough.rs
+// - docs/fixtures/webusb_passthrough_wire.json
+// - web/src/usb/usb_passthrough_types.ts
+//
+// Deletion target per docs/adr/0015-canonical-usb-stack.md.
 
 import {
   WEBUSB_BROKER_PORT_MESSAGE_TYPE,
@@ -22,6 +28,7 @@ import {
   serializeWebUsbError,
 } from './webusb_protocol';
 
+/** @deprecated Legacy demo-only WebUSB broker (direct `navigator.usb` RPC). Do not use for production guest USB passthrough; use `web/src/usb/*` + `crates/aero-usb` (ADR 0015). */
 export type WebUsbBroker = {
   attachToWorker(worker: Worker): void;
   requestDevice(options?: USBDeviceRequestOptions): Promise<WebUsbDeviceInfo>;
@@ -90,6 +97,7 @@ function checkUserActivationForRequestDevice(): void {
   }
 }
 
+/** @deprecated Legacy demo-only WebUSB broker factory. Do not use for production guest USB passthrough; use `web/src/usb/*` + `crates/aero-usb` (ADR 0015). */
 export function createWebUsbBroker(): WebUsbBroker {
   let nextDeviceId = 1;
   const devices = new Map<WebUsbDeviceId, USBDevice>();

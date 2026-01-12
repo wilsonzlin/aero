@@ -114,8 +114,11 @@ export type RemoteDiskProbeResult = {
 };
 
 class RemoteValidatorMismatchError extends Error {
-  constructor(readonly status: number) {
+  status: number;
+
+  constructor(status: number) {
     super(`remote validator mismatch (status=${status})`);
+    this.status = status;
   }
 }
 
