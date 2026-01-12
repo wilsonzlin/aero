@@ -496,7 +496,13 @@ async function runTieredVm(iterations: number, threshold: number) {
 
     // Tier-1 contract: sentinel return value requests interpreter fallback.
     const exitToInterpreter = lastJitReturnIsSentinel;
-    const shouldRollback = exitToInterpreter && hostExitStateShouldRollback(exitState);
+    const runtimeExit = hostExitStateShouldRollback(exitState);
+    if (runtimeExit && !exitToInterpreter) {
+      throw new Error(
+        `Tier-1 JIT block triggered a runtime exit but returned a non-sentinel i64 (expected -1n). ret=${ret.toString()}`,
+      );
+    }
+    const shouldRollback = exitToInterpreter && runtimeExit;
 
     if (shouldRollback) {
       // Roll back guest RAM writes (reverse order) and restore pre-block CPU state.
@@ -851,6 +857,21 @@ async function runTieredVm(iterations: number, threshold: number) {
       if (!callAndAssertRollback('mmio_exit', true)) return false;
       if (!callAndAssertRollback('page_fault', true)) return false;
       if (!callAndAssertRollback('term', false)) return false;
+
+      // Safety: if the block triggers a runtime exit helper but forgets to return the sentinel,
+      // `__aero_jit_call` must not silently treat the block as a committed normal return.
+      const badIndex = nextTableIndex++;
+      jitFns[badIndex] = (cpu_ptr: number, _jit_ctx_ptr: number): bigint => {
+        env.jit_exit(0, 0n);
+        return 0n;
+      };
+      let badThrew = false;
+      try {
+        globalThis.__aero_jit_call!(badIndex, cpuPtr, 0);
+      } catch {
+        badThrew = true;
+      }
+      if (!badThrew) return false;
 
       // Separate check: seed the commit flag with 0 so we can confirm `__aero_jit_call` resets it
       // to 1 on entry for non-rollback paths.
