@@ -59,7 +59,8 @@ if not exist "%ALIAS_INF%" if exist "%ALIAS_INF_DISABLED%" (
 if not exist "%SYS_FILE%" (
   echo ERROR: Driver binary not found: "%SYS_FILE%"
   echo        Build the driver and copy aero_virtio_input.sys into the inf\ directory.
-  echo        Alternatively run: powershell -ExecutionPolicy Bypass -File "%SCRIPT_DIR%stage-built-sys.ps1" -Arch amd64
+  echo        Alternatively run: powershell -ExecutionPolicy Bypass -File "%SCRIPT_DIR%stage-built-sys.ps1" -Arch x86
+  echo                          powershell -ExecutionPolicy Bypass -File "%SCRIPT_DIR%stage-built-sys.ps1" -Arch amd64
   exit /b 1
 )
 
