@@ -25,7 +25,7 @@ import {
   type StreamAuth,
 } from "./cloudfront";
 import { ApiError } from "./errors";
-import { buildRangeProxyHeaders, buildRangeProxyResponse } from "./rangeProxy";
+import { DISK_BYTES_CONTENT_TYPE, buildRangeProxyHeaders, buildRangeProxyResponse } from "./rangeProxy";
 import type { ImageRecord, ImageStore } from "./store";
 import { buildImageObjectKey } from "./s3";
 
@@ -59,6 +59,32 @@ function ensureNoTransformCacheControl(value: string): string {
   const directives = trimmed.split(",").map((directive) => directive.trim().toLowerCase());
   if (directives.includes("no-transform")) return trimmed;
   return `${trimmed}, no-transform`;
+}
+
+function stripWeakEtagPrefix(value: string): string {
+  const trimmed = value.trim();
+  return trimmed.replace(/^w\//i, "");
+}
+
+function ifNoneMatchMatches(ifNoneMatch: string, currentEtag: string): boolean {
+  const raw = ifNoneMatch.trim();
+  if (!raw) return false;
+  if (raw === "*") return true;
+
+  const current = stripWeakEtagPrefix(normalizeEtag(currentEtag));
+  for (const part of raw.split(",")) {
+    const candidate = part.trim();
+    if (!candidate) continue;
+    if (candidate === "*") return true;
+    if (stripWeakEtagPrefix(normalizeEtag(candidate)) === current) return true;
+  }
+  return false;
+}
+
+function ifModifiedSinceAllowsNotModified(ifModifiedSince: string, lastModified: Date): boolean {
+  const imsMillis = Date.parse(ifModifiedSince);
+  if (!Number.isFinite(imsMillis)) return false;
+  return lastModified.getTime() <= imsMillis;
 }
 
 function assertIdentityContentEncoding(value: string | undefined): void {
@@ -160,6 +186,26 @@ function sendIfRangePreconditionFailed(
         message: "If-Range does not match current ETag",
       },
     });
+}
+
+function sendNotModified(params: {
+  reply: FastifyReply;
+  etag?: string;
+  lastModified?: Date;
+  cacheControl?: string;
+  crossOriginResourcePolicy: Config["crossOriginResourcePolicy"];
+}): void {
+  const headers = buildRangeProxyHeaders({
+    contentType: DISK_BYTES_CONTENT_TYPE,
+    crossOriginResourcePolicy: params.crossOriginResourcePolicy,
+  });
+  if (params.etag) headers["etag"] = normalizeEtag(params.etag);
+  if (params.lastModified) headers["last-modified"] = params.lastModified.toUTCString();
+  if (params.cacheControl) {
+    headers["cache-control"] = ensureNoTransformCacheControl(params.cacheControl);
+  }
+
+  params.reply.status(304).headers(headers).send();
 }
 
 function requireImage(store: ImageStore, imageId: string): ImageRecord {
@@ -982,9 +1028,16 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
       throw new ApiError(409, "Image is not complete", "INVALID_STATE");
     }
 
+    const ifNoneMatch =
+      typeof req.headers["if-none-match"] === "string" ? req.headers["if-none-match"] : undefined;
+    const ifModifiedSince =
+      typeof req.headers["if-modified-since"] === "string"
+        ? req.headers["if-modified-since"]
+        : undefined;
+
     const rawRange = typeof req.headers.range === "string" ? req.headers.range : undefined;
     const parsedRange = rawRange ? parseSingleByteRangeHeader(rawRange) : undefined;
-    const requestedRange = parsedRange?.normalized;
+    let requestedRange = parsedRange?.normalized;
     if (rawRange && !requestedRange) {
       await sendRangeNotSatisfiable({
         reply,
@@ -996,34 +1049,18 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
       });
       return;
     }
-    if (
-      parsedRange &&
-      typeof record.size === "number" &&
-      parsedRange.start >= BigInt(record.size)
-    ) {
-      await sendRangeNotSatisfiable({
-        reply,
-        config: deps.config,
-        s3: deps.s3,
-        store: deps.store,
-        imageId,
-        record,
-      });
-      return;
-    }
 
-    const ifRange =
-      requestedRange && typeof req.headers["if-range"] === "string"
-        ? req.headers["if-range"]
-        : undefined;
+    const ifRange = requestedRange && typeof req.headers["if-range"] === "string" ? req.headers["if-range"] : undefined;
 
     let ifMatch: string | undefined;
     if (ifRange) {
       const normalizedIfRange = normalizeEtag(ifRange);
       let currentEtag = record.etag;
+      let currentLastModified = record.lastModified ? new Date(record.lastModified) : undefined;
+      let currentCacheControl: string | undefined;
 
       // Fall back to an S3 HEAD if we don't have an in-memory validator.
-      if (!currentEtag) {
+      if (!currentEtag || (ifModifiedSince && !currentLastModified)) {
         let head: HeadObjectCommandOutput;
         try {
           head = await deps.s3.send(
@@ -1046,6 +1083,8 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
         const size = typeof head.ContentLength === "number" ? head.ContentLength : undefined;
         const lastModified =
           head.LastModified instanceof Date ? head.LastModified.toISOString() : undefined;
+        currentLastModified = head.LastModified instanceof Date ? head.LastModified : undefined;
+        currentCacheControl = head.CacheControl;
 
         deps.store.update(imageId, {
           etag: currentEtag,
@@ -1060,17 +1099,96 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
 
       const normalizedCurrentEtag = normalizeEtag(currentEtag);
       if (normalizedIfRange !== normalizedCurrentEtag) {
-        sendIfRangePreconditionFailed(reply, {
-          etag: normalizedCurrentEtag,
+        // RFC 9110 If-Range semantics: ignore Range and return the full representation to avoid
+        // serving mixed-version bytes.
+        requestedRange = undefined;
+      } else {
+        // Enforce If-Range semantics atomically at S3: if the object changes between our
+        // validation step and GetObject, S3 will return 412 instead of streaming bytes for the
+        // new version.
+        ifMatch = normalizedCurrentEtag;
+      }
+    }
+
+    // Conditional requests (RFC 9110): If-None-Match dominates If-Modified-Since.
+    if (ifNoneMatch || ifModifiedSince) {
+      let currentEtag = record.etag;
+      let currentLastModified = record.lastModified ? new Date(record.lastModified) : undefined;
+      let currentCacheControl: string | undefined;
+
+      if (!currentEtag || (ifModifiedSince && !currentLastModified)) {
+        let head: HeadObjectCommandOutput;
+        try {
+          head = await deps.s3.send(
+            new HeadObjectCommand({
+              Bucket: deps.config.s3Bucket,
+              Key: record.s3Key,
+            })
+          );
+        } catch (err) {
+          const maybeStatus = (
+            err as Partial<{ $metadata?: { httpStatusCode?: unknown } }>
+          ).$metadata?.httpStatusCode;
+          if (typeof maybeStatus === "number" && maybeStatus === 404) {
+            throw new ApiError(404, "Image object not found", "NOT_FOUND");
+          }
+          throw err;
+        }
+
+        currentEtag = typeof head.ETag === "string" ? head.ETag : undefined;
+        currentLastModified = head.LastModified instanceof Date ? head.LastModified : undefined;
+        currentCacheControl = head.CacheControl;
+
+        deps.store.update(imageId, {
+          etag: currentEtag,
+          size: typeof head.ContentLength === "number" ? head.ContentLength : undefined,
+          lastModified: head.LastModified instanceof Date ? head.LastModified.toISOString() : undefined,
+        });
+      }
+
+      if (ifNoneMatch && currentEtag && ifNoneMatchMatches(ifNoneMatch, currentEtag)) {
+        sendNotModified({
+          reply,
+          etag: currentEtag,
+          lastModified: currentLastModified,
+          cacheControl: currentCacheControl ?? deps.config.imageCacheControl,
           crossOriginResourcePolicy: deps.config.crossOriginResourcePolicy,
         });
         return;
       }
 
-      // Enforce If-Range semantics atomically at S3: if the object changes between our
-      // validation step and GetObject, S3 will return 412 instead of streaming bytes for the
-      // new version.
-      ifMatch = normalizedCurrentEtag;
+      if (
+        !ifNoneMatch &&
+        ifModifiedSince &&
+        currentLastModified &&
+        ifModifiedSinceAllowsNotModified(ifModifiedSince, currentLastModified)
+      ) {
+        sendNotModified({
+          reply,
+          etag: currentEtag,
+          lastModified: currentLastModified,
+          cacheControl: currentCacheControl ?? deps.config.imageCacheControl,
+          crossOriginResourcePolicy: deps.config.crossOriginResourcePolicy,
+        });
+        return;
+      }
+    }
+
+    if (
+      parsedRange &&
+      requestedRange &&
+      typeof record.size === "number" &&
+      parsedRange.start >= BigInt(record.size)
+    ) {
+      await sendRangeNotSatisfiable({
+        reply,
+        config: deps.config,
+        s3: deps.s3,
+        store: deps.store,
+        imageId,
+        record,
+      });
+      return;
     }
 
     let s3Res: GetObjectCommandOutput;
@@ -1089,54 +1207,24 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
       ).$metadata?.httpStatusCode;
       if (typeof maybeStatus === "number") {
         if (maybeStatus === 412) {
-          // An If-Range request must never fall back to streaming the full object. Return a
-          // precondition failure with the current ETag so the client can refresh its cache key.
-          let currentEtag: string | undefined;
+          // IfMatch failed (most likely due to an If-Range check). Per RFC 9110, ignore Range and
+          // return the full representation to avoid mixed-version bytes.
           try {
-            const head = await deps.s3.send(
-              new HeadObjectCommand({
+            s3Res = await deps.s3.send(
+              new GetObjectCommand({
                 Bucket: deps.config.s3Bucket,
                 Key: record.s3Key,
               })
             );
-            currentEtag = typeof head.ETag === "string" ? head.ETag : undefined;
-            if (currentEtag) {
-              deps.store.update(imageId, { etag: currentEtag });
-            }
-          } catch (headErr) {
-            const headStatus = (
-              headErr as Partial<{ $metadata?: { httpStatusCode?: unknown } }>
+          } catch (retryErr) {
+            const retryStatus = (
+              retryErr as Partial<{ $metadata?: { httpStatusCode?: unknown } }>
             ).$metadata?.httpStatusCode;
-            if (typeof headStatus === "number" && headStatus === 404) {
+            if (typeof retryStatus === "number" && retryStatus === 404) {
               throw new ApiError(404, "Image object not found", "NOT_FOUND");
             }
+            throw retryErr;
           }
-
-          const etagToReturn = currentEtag ?? record.etag;
-          if (etagToReturn) {
-            sendIfRangePreconditionFailed(reply, {
-              etag: etagToReturn,
-              crossOriginResourcePolicy: deps.config.crossOriginResourcePolicy,
-            });
-            return;
-          }
-
-          // We couldn't get a validator, but we still must not stream the full object.
-          reply
-            .status(412)
-            .headers(
-              buildRangeProxyHeaders({
-                contentType: "application/json",
-                crossOriginResourcePolicy: deps.config.crossOriginResourcePolicy,
-              })
-            )
-            .send({
-              error: {
-                code: "PRECONDITION_FAILED",
-                message: "If-Range precondition failed but no ETag is available",
-              },
-            });
-          return;
         }
         if (maybeStatus === 416) {
           await sendRangeNotSatisfiable({
@@ -1199,6 +1287,13 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
       throw new ApiError(409, "Image is not complete", "INVALID_STATE");
     }
 
+    const ifNoneMatch =
+      typeof req.headers["if-none-match"] === "string" ? req.headers["if-none-match"] : undefined;
+    const ifModifiedSince =
+      typeof req.headers["if-modified-since"] === "string"
+        ? req.headers["if-modified-since"]
+        : undefined;
+
     let head: HeadObjectCommandOutput;
     try {
       head = await deps.s3.send(
@@ -1215,6 +1310,32 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
         throw new ApiError(404, "Image object not found", "NOT_FOUND");
       }
       throw err;
+    }
+
+    if (ifNoneMatch && head.ETag && ifNoneMatchMatches(ifNoneMatch, head.ETag)) {
+      sendNotModified({
+        reply,
+        etag: head.ETag,
+        lastModified: head.LastModified instanceof Date ? head.LastModified : undefined,
+        cacheControl: head.CacheControl ?? deps.config.imageCacheControl,
+        crossOriginResourcePolicy: deps.config.crossOriginResourcePolicy,
+      });
+      return;
+    }
+    if (
+      !ifNoneMatch &&
+      ifModifiedSince &&
+      head.LastModified instanceof Date &&
+      ifModifiedSinceAllowsNotModified(ifModifiedSince, head.LastModified)
+    ) {
+      sendNotModified({
+        reply,
+        etag: head.ETag,
+        lastModified: head.LastModified,
+        cacheControl: head.CacheControl ?? deps.config.imageCacheControl,
+        crossOriginResourcePolicy: deps.config.crossOriginResourcePolicy,
+      });
+      return;
     }
 
     const proxy = buildRangeProxyResponse({

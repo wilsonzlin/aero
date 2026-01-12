@@ -590,7 +590,7 @@ describe("app", () => {
     expect(res.payload).toBe("hello");
   });
 
-  it("returns 412 when If-Range does not match and does not call S3 GetObject", async () => {
+  it("ignores Range and returns 200 when If-Range does not match", async () => {
     const config = makeConfig();
     const store = new MemoryImageStore();
     const ownerId = "user-1";
@@ -605,14 +605,24 @@ describe("app", () => {
       uploadId: "upload-1",
       status: "complete",
       etag: '"etag-current"',
+      lastModified: new Date("2020-01-01T00:00:00.000Z").toISOString(),
     });
 
     let getObjectCalls = 0;
+    const lastModified = new Date("2020-01-01T00:00:00.000Z");
     const s3 = {
       async send(command: unknown) {
         if (command instanceof GetObjectCommand) {
           getObjectCalls += 1;
-          throw new Error("GetObject should not be called for If-Range mismatches");
+          expect(command.input.Range).toBeUndefined();
+          expect(command.input.IfMatch).toBeUndefined();
+          return {
+            Body: Readable.from([Buffer.from("hello")]),
+            ContentLength: 5,
+            ETag: '"etag-current"',
+            LastModified: lastModified,
+            ContentType: "application/octet-stream",
+          };
         }
         throw new Error("unexpected command");
       },
@@ -631,17 +641,107 @@ describe("app", () => {
       },
     });
 
-    expect(getObjectCalls).toBe(0);
-    expect(res.statusCode).toBe(412);
+    expect(getObjectCalls).toBe(1);
+    expect(res.statusCode).toBe(200);
     expect(res.headers["etag"]).toBe('"etag-current"');
+    expect(res.headers["content-range"]).toBeUndefined();
     expect(res.headers["cache-control"]).toBe("no-transform");
     expect(res.headers["content-encoding"]).toBe("identity");
+    expect(res.headers["content-type"]).toBe("application/octet-stream");
     expect(res.headers["x-content-type-options"]).toBe("nosniff");
     expect(res.headers["cross-origin-resource-policy"]).toBe("same-site");
     expect(res.headers["access-control-expose-headers"]).toContain("etag");
-    expect(res.json()).toMatchObject({
-      error: { code: "PRECONDITION_FAILED" },
+    expect(res.payload).toBe("hello");
+  });
+
+  it("returns 304 for GET If-None-Match when validators match (no S3 call)", async () => {
+    const config = makeConfig();
+    const store = new MemoryImageStore();
+    const ownerId = "user-1";
+    const imageId = "image-1";
+
+    const lastModified = new Date("2020-01-01T00:00:00.000Z");
+    store.create({
+      id: imageId,
+      ownerId,
+      createdAt: new Date().toISOString(),
+      version: "v1",
+      s3Key: "images/user-1/image-1/v1/disk.img",
+      uploadId: "upload-1",
+      status: "complete",
+      etag: '"etag"',
+      lastModified: lastModified.toISOString(),
     });
+
+    const s3 = {
+      async send() {
+        throw new Error("S3 should not be called for a satisfied conditional request");
+      },
+    } as unknown as S3Client;
+
+    const app = buildApp({ config, s3, store });
+    await app.ready();
+
+    const res = await app.inject({
+      method: "GET",
+      url: `/v1/images/${imageId}/range`,
+      headers: {
+        "x-user-id": ownerId,
+        "if-none-match": '"etag"',
+      },
+    });
+
+    expect(res.statusCode).toBe(304);
+    expect(res.payload).toBe("");
+    expect(res.headers["etag"]).toBe('"etag"');
+    expect(res.headers["last-modified"]).toBe(lastModified.toUTCString());
+    expect(res.headers["cache-control"]).toBe("private, no-store, no-transform");
+    expect(res.headers["cross-origin-resource-policy"]).toBe("same-site");
+  });
+
+  it("returns 304 for GET If-Modified-Since when last-modified is not newer (no S3 call)", async () => {
+    const config = makeConfig();
+    const store = new MemoryImageStore();
+    const ownerId = "user-1";
+    const imageId = "image-1";
+
+    const lastModified = new Date("2020-01-01T00:00:00.000Z");
+    store.create({
+      id: imageId,
+      ownerId,
+      createdAt: new Date().toISOString(),
+      version: "v1",
+      s3Key: "images/user-1/image-1/v1/disk.img",
+      uploadId: "upload-1",
+      status: "complete",
+      etag: '"etag"',
+      lastModified: lastModified.toISOString(),
+    });
+
+    const s3 = {
+      async send() {
+        throw new Error("S3 should not be called for a satisfied conditional request");
+      },
+    } as unknown as S3Client;
+
+    const app = buildApp({ config, s3, store });
+    await app.ready();
+
+    const res = await app.inject({
+      method: "GET",
+      url: `/v1/images/${imageId}/range`,
+      headers: {
+        "x-user-id": ownerId,
+        "if-modified-since": lastModified.toUTCString(),
+      },
+    });
+
+    expect(res.statusCode).toBe(304);
+    expect(res.payload).toBe("");
+    expect(res.headers["etag"]).toBe('"etag"');
+    expect(res.headers["last-modified"]).toBe(lastModified.toUTCString());
+    expect(res.headers["cache-control"]).toBe("private, no-store, no-transform");
+    expect(res.headers["cross-origin-resource-policy"]).toBe("same-site");
   });
 
   it("returns 416 with RFC-style Content-Range when S3 rejects the range", async () => {
