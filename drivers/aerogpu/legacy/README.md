@@ -4,8 +4,11 @@ This folder contains **legacy** INF files that bind the AeroGPU Win7 driver stac
 deprecated AeroGPU PCI identity (**VEN_1AED&DEV_0001**).
 
 The canonical (non-legacy) AeroGPU PCI IDs are defined in
-`drivers/aerogpu/protocol/aerogpu_pci.h` (**VEN_A3A0&DEV_0001**) and are what the primary INF
-(`aerogpu.inf`) matches.
+`drivers/aerogpu/protocol/aerogpu_pci.h` (**VEN_A3A0&DEV_0001**) and are what the canonical AeroGPU
+INFs match:
+
+- `aerogpu_dx11.inf` (DX11-capable; CI/Guest Tools default)
+- `aerogpu.inf` (D3D9-only; useful for bring-up/regression)
 
 This directory provides two legacy-binding INF variants:
 
@@ -15,11 +18,16 @@ This directory provides two legacy-binding INF variants:
 To stage the legacy DX11-capable INF in CI, add `legacy/aerogpu_dx11.inf` to `drivers/aerogpu/ci-package.json`
 (`additionalFiles`) and ensure the D3D10/11 UMDs are staged (see `drivers/aerogpu/packaging/win7/README.md`).
 
-This folder is intended to be shipped alongside the canonical driver package so Guest Tools can
-install against either device model:
+This folder is shipped alongside the canonical driver package so installs can target either
+device model:
 
 - Canonical: `PCI\VEN_A3A0&DEV_0001`
 - Legacy (deprecated): `PCI\VEN_1AED&DEV_0001`
+
+Note: the canonical Windows device contract / Guest Tools verification scripts intentionally
+validate only the canonical (`VEN_A3A0`) AeroGPU identity. The legacy bring-up device model is
+supported for optional compatibility/regression testing but is not part of the default Guest Tools
+hardware-ID contract.
 
 Notes on on-disk layout:
 
