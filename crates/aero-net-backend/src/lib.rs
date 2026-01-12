@@ -15,6 +15,7 @@ pub mod tunnel_backend;
 
 pub use ring_backend::{FrameRing, L2TunnelRingBackend, L2TunnelRingBackendStats};
 pub use tunnel_backend::{L2TunnelBackend, L2TunnelBackendStats};
+pub use aero_ipc::ring::{PopError, PushError};
 
 /// Network backend to bridge frames between emulated NICs and the host network stack.
 ///
