@@ -447,6 +447,7 @@ impl JitBackend for WasmJitBackend {
         JitBlockExit {
             next_rip,
             exit_to_interpreter,
+            committed: true,
         }
     }
 }
