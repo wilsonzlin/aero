@@ -4,8 +4,14 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 
+[features]
+# Keep virtio-snd enabled by default for the full emulator build, but allow lightweight users
+# (like `aero-pc-platform` in reference-only mode) to opt out of pulling `aero-audio`.
+default = ["snd"]
+snd = ["dep:aero-audio"]
+
 [dependencies]
-aero-audio = { path = "../aero-audio" }
+aero-audio = { path = "../aero-audio", optional = true }
 aero-devices = { package = "devices", path = "../devices" }
 aero-io-snapshot = { path = "../aero-io-snapshot" }
 aero-net-backend = { path = "../aero-net-backend" }

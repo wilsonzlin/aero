@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+#[cfg(feature = "hda")]
 use aero_audio::hda_pci::HdaPciDevice;
 use aero_devices::a20_gate::A20Gate;
 use aero_devices::acpi_pm::{AcpiPmCallbacks, AcpiPmConfig, AcpiPmIo, SharedAcpiPmIo};
@@ -103,10 +104,12 @@ impl Default for PcPlatformConfig {
     }
 }
 
+#[cfg(feature = "hda")]
 struct HdaPciConfigDevice {
     config: aero_devices::pci::PciConfigSpace,
 }
 
+#[cfg(feature = "hda")]
 impl HdaPciConfigDevice {
     fn new() -> Self {
         let mut config = aero_devices::pci::profile::HDA_ICH6.build_config_space();
@@ -121,6 +124,7 @@ impl HdaPciConfigDevice {
     }
 }
 
+#[cfg(feature = "hda")]
 impl PciDevice for HdaPciConfigDevice {
     fn config(&self) -> &aero_devices::pci::PciConfigSpace {
         &self.config
@@ -691,10 +695,12 @@ impl PortIoDevice for PciIoWindowPort {
     }
 }
 
+#[cfg(feature = "hda")]
 struct HdaDmaMemory<'a> {
     mem: RefCell<&'a mut MemoryBus>,
 }
 
+#[cfg(feature = "hda")]
 impl aero_audio::mem::MemoryAccess for HdaDmaMemory<'_> {
     fn read_physical(&self, addr: u64, buf: &mut [u8]) {
         self.mem.borrow_mut().read_physical(addr, buf);
@@ -1052,6 +1058,7 @@ pub struct PcPlatform {
     pub pci_intx: PciIntxRouter,
     pub acpi_pm: SharedAcpiPmIo<ManualClock>,
 
+    #[cfg(feature = "hda")]
     pub hda: Option<Rc<RefCell<HdaPciDevice>>>,
     pub nvme: Option<Rc<RefCell<NvmePciDevice>>>,
     pub ahci: Option<Rc<RefCell<AhciPciDevice>>>,
@@ -1421,6 +1428,7 @@ impl PcPlatform {
         let mut pci_intx_sources: Vec<PciIntxSource> = Vec::new();
         let pci_io_bars: SharedPciIoBarMap = Rc::new(RefCell::new(HashMap::new()));
 
+        #[cfg(feature = "hda")]
         let hda = if config.enable_hda {
             let profile = aero_devices::pci::profile::HDA_ICH6;
             let bdf = profile.bdf;
@@ -1803,9 +1811,12 @@ impl PcPlatform {
         )));
         {
             let mut router = pci_mmio_router.borrow_mut();
+
+            #[cfg(feature = "hda")]
             if let Some(hda) = hda.clone() {
                 router.register_shared_handler(aero_devices::pci::profile::HDA_ICH6.bdf, 0, hda);
             }
+
             if let Some(ahci) = ahci.clone() {
                 // ICH9 AHCI uses BAR5 (ABAR).
                 let bdf = aero_devices::pci::profile::SATA_AHCI_ICH9.bdf;
@@ -1911,6 +1922,7 @@ impl PcPlatform {
             pci_cfg,
             pci_intx,
             acpi_pm,
+            #[cfg(feature = "hda")]
             hda,
             nvme,
             ahci,
@@ -2111,6 +2123,7 @@ impl PcPlatform {
         Ok(())
     }
 
+    #[cfg(feature = "hda")]
     pub fn process_hda(&mut self, output_frames: usize) {
         let Some(hda) = self.hda.as_ref() else {
             return;
@@ -2135,6 +2148,9 @@ impl PcPlatform {
         };
         hda.controller_mut().process(&mut mem, output_frames);
     }
+
+    #[cfg(not(feature = "hda"))]
+    pub fn process_hda(&mut self, _output_frames: usize) {}
 
     /// Reset the platform back to a deterministic "power-on" baseline.
     ///
