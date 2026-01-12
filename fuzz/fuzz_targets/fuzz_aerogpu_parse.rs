@@ -735,6 +735,28 @@ fuzz_target!(|data: &[u8]| {
     alloc_one[entry_off + 24..entry_off + 32].fill(0); // reserved0
     fuzz_alloc_table(&alloc_one);
 
+    // Patched alloc table (forward-compat stride): declare a larger entry stride to exercise the
+    // per-entry decode paths (rather than the fast aligned/borrowed slice path).
+    let stride_large = stride + 8;
+    let mut alloc_stride_large = vec![0u8; header_size + stride_large];
+    let alloc_stride_large_copy_len = alloc_stride_large.len().min(alloc_bytes.len());
+    alloc_stride_large[..alloc_stride_large_copy_len]
+        .copy_from_slice(&alloc_bytes[..alloc_stride_large_copy_len]);
+    alloc_stride_large[0..4].copy_from_slice(&ring::AEROGPU_ALLOC_TABLE_MAGIC.to_le_bytes());
+    alloc_stride_large[4..8].copy_from_slice(&pci::AEROGPU_ABI_VERSION_U32.to_le_bytes());
+    let alloc_stride_large_size_bytes = alloc_stride_large.len() as u32;
+    alloc_stride_large[8..12].copy_from_slice(&alloc_stride_large_size_bytes.to_le_bytes());
+    alloc_stride_large[12..16].copy_from_slice(&1u32.to_le_bytes());
+    alloc_stride_large[16..20].copy_from_slice(&(stride_large as u32).to_le_bytes());
+    alloc_stride_large[20..24].fill(0);
+    let entry_off = header_size;
+    alloc_stride_large[entry_off..entry_off + 4].copy_from_slice(&1u32.to_le_bytes()); // alloc_id
+    alloc_stride_large[entry_off + 4..entry_off + 8].fill(0); // flags
+    alloc_stride_large[entry_off + 8..entry_off + 16].copy_from_slice(&0x3000u64.to_le_bytes()); // gpa
+    alloc_stride_large[entry_off + 16..entry_off + 24].copy_from_slice(&0x1000u64.to_le_bytes()); // size_bytes
+    alloc_stride_large[entry_off + 24..entry_off + 32].fill(0); // reserved0
+    fuzz_alloc_table(&alloc_stride_large);
+
     // Patched ring layouts: create fixed-size prefix buffers so we can set magic/version and hit
     // deeper validation checks without copying the entire (potentially large) ring slice.
     let mut ring_hdr_bytes = [0u8; ring::AerogpuRingHeader::SIZE_BYTES];
