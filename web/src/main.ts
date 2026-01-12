@@ -1544,10 +1544,6 @@ function renderNetTracePanel(): HTMLElement {
       }
       return await workerCoordinator.getNetTraceStats(1000);
     },
-    clearCapture: () => {
-      requireNetWorkerReady();
-      workerCoordinator.clearNetTrace();
-    },
     downloadPcapng: async () => {
       requireNetWorkerReady();
       return await workerCoordinator.takeNetTracePcapng(30_000);

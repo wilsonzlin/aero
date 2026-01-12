@@ -409,6 +409,19 @@ describe("workers/net.worker (worker_threads)", () => {
       worker.postMessage({ kind: "net.trace.clear" });
       worker.postMessage({ kind: "net.trace.enable" });
 
+      // Ensure the enable message has been processed before sending frames, to avoid
+      // racing the worker's ring-buffer drain loop (which could otherwise forward
+      // frames before tracing is enabled).
+      const statusReadyPromise = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as { kind?: unknown; requestId?: unknown }).kind === "net.trace.status" && (msg as { requestId?: unknown }).requestId === 99,
+        10000,
+      ) as Promise<{ enabled?: boolean; records?: number }>;
+      worker.postMessage({ kind: "net.trace.status", requestId: 99 });
+      const statusReady = await statusReadyPromise;
+      expect(statusReady.enabled).toBe(true);
+      expect(statusReady.records).toBe(0);
+
       const txFrame = Uint8Array.of(0xde, 0xad, 0xbe, 0xef);
       while (!netTxRing.tryPush(txFrame)) {
         await new Promise<void>((resolve) => setTimeout(resolve, 0));
