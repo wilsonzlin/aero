@@ -603,19 +603,36 @@ export interface WasmApi {
         /**
          * Execute up to N basic blocks. Each block is executed either via Tier-0 or a cached Tier-1 entry.
          */
-        run_blocks(blocks: number): void;
+        run_blocks(
+            blocks: number,
+        ):
+            | {
+                  kind: number;
+                  detail: string;
+                  executed_blocks: number;
+                  interp_blocks: number;
+                  jit_blocks: number;
+              }
+            | void;
         /**
          * Drain queued compilation requests (entry RIPs) produced by the tiered runtime.
          */
-        drain_compile_requests(): Uint32Array;
+        drain_compile_requests(): bigint[] | Uint32Array;
         /**
          * Install a compiled Tier-1 block into the runtime cache.
          */
-        install_tier1_block(entryRip: number, tableIndex: number, codePaddr: number, byteLen: number): void;
+        install_tier1_block(
+            entryRip: bigint | number,
+            tableIndex: number,
+            codePaddr: bigint | number,
+            byteLen: number,
+        ): bigint[] | Uint32Array | void;
         readonly interp_executions?: number;
         readonly jit_executions?: number;
         readonly guest_base?: number;
         readonly guest_size?: number;
+        readonly interp_blocks_total?: bigint;
+        readonly jit_blocks_total?: bigint;
         free(): void;
     };
 
