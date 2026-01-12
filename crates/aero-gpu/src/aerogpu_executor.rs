@@ -47,6 +47,10 @@ fn align_up_u32(value: u32, alignment: u32) -> Result<u32, ExecutorError> {
         .ok_or_else(|| ExecutorError::Validation("alignment overflow".into()))
 }
 
+fn mip_dimension(base: u32, mip_level: u32) -> u32 {
+    base.checked_shr(mip_level).unwrap_or(0).max(1)
+}
+
 fn is_x8_format(format_raw: u32) -> bool {
     format_raw == pci::AerogpuFormat::B8G8R8X8Unorm as u32
         || format_raw == pci::AerogpuFormat::R8G8B8X8Unorm as u32
@@ -497,6 +501,8 @@ struct TextureResource {
     row_pitch_bytes: u32,
     width: u32,
     height: u32,
+    mip_levels: u32,
+    array_layers: u32,
     format: wgpu::TextureFormat,
     upload_transform: TextureUploadTransform,
     /// The row pitch for `UPLOAD_RESOURCE`/dirty uploads, expressed in "layout rows":
@@ -1820,10 +1826,33 @@ fn fs_main() -> @location(0) vec4<f32> {
             )));
         }
 
-        if mip_levels != 1 || array_layers != 1 {
+        if mip_levels == 0 || array_layers == 0 {
             return Err(ExecutorError::Validation(format!(
-                "only mip_levels=1 and array_layers=1 are supported for now (got mip_levels={mip_levels}, array_layers={array_layers})"
+                "CREATE_TEXTURE2D mip_levels/array_layers must be non-zero (got mip_levels={mip_levels}, array_layers={array_layers})"
             )));
+        }
+        if array_layers != 1 {
+            return Err(ExecutorError::Validation(format!(
+                "only array_layers=1 is supported for now (got array_layers={array_layers})"
+            )));
+        }
+        // Guest-backed textures rely on a single `row_pitch_bytes` describing their guest-memory
+        // layout, so keep the minimal executor restriction that such textures are single-mip.
+        if backing_alloc_id != 0 && mip_levels != 1 {
+            return Err(ExecutorError::Validation(format!(
+                "CREATE_TEXTURE2D guest-backed textures only support mip_levels=1 for now (got mip_levels={mip_levels})"
+            )));
+        }
+        // The executor's render pipeline always uses a single-mip view for render targets.
+        if mip_levels != 1
+            && (usage_flags
+                & (cmd::AEROGPU_RESOURCE_USAGE_RENDER_TARGET
+                    | cmd::AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL))
+                != 0
+        {
+            return Err(ExecutorError::Validation(
+                "CREATE_TEXTURE2D render targets only support mip_levels=1 for now".into(),
+            ));
         }
 
         let (wgpu_format, upload_transform) = self.map_format(format, width, height)?;
@@ -1889,6 +1918,8 @@ fn fs_main() -> @location(0) vec4<f32> {
                 || existing.format_raw != format
                 || existing.width != width
                 || existing.height != height
+                || existing.mip_levels != mip_levels
+                || existing.array_layers != array_layers
                 || existing.row_pitch_bytes != row_pitch_bytes
             {
                 return Err(ExecutorError::Validation(format!(
@@ -1919,9 +1950,9 @@ fn fs_main() -> @location(0) vec4<f32> {
             size: wgpu::Extent3d {
                 width,
                 height,
-                depth_or_array_layers: 1,
+                depth_or_array_layers: array_layers,
             },
-            mip_level_count: 1,
+            mip_level_count: mip_levels,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: wgpu_format,
@@ -1941,6 +1972,8 @@ fn fs_main() -> @location(0) vec4<f32> {
                 row_pitch_bytes,
                 width,
                 height,
+                mip_levels,
+                array_layers,
                 format: wgpu_format,
                 upload_transform,
                 layout_row_pitch_bytes,
@@ -2293,6 +2326,14 @@ fn fs_main() -> @location(0) vec4<f32> {
                 }
             };
 
+            let mut copy_extent_width = tex.width;
+            let mut copy_extent_height = extent_height;
+            if tex.upload_transform == TextureUploadTransform::Direct && is_bc_format(tex.format_raw)
+            {
+                copy_extent_width = align_up_u32(copy_extent_width, 4)?;
+                copy_extent_height = align_up_u32(copy_extent_height, 4)?;
+            }
+
             self.queue.write_texture(
                 wgpu::ImageCopyTexture {
                     texture: &tex.texture,
@@ -2311,8 +2352,8 @@ fn fs_main() -> @location(0) vec4<f32> {
                     rows_per_image: Some(rows_per_image),
                 },
                 wgpu::Extent3d {
-                    width: tex.width,
-                    height: extent_height,
+                    width: copy_extent_width,
+                    height: copy_extent_height,
                     depth_or_array_layers: 1,
                 },
             );
@@ -2589,6 +2630,11 @@ fn fs_main() -> @location(0) vec4<f32> {
                 "COPY_TEXTURE2D: unsupported flags 0x{flags:08X}"
             )));
         }
+        if writeback && dst_mip_level != 0 {
+            return Err(ExecutorError::Validation(
+                "COPY_TEXTURE2D: WRITEBACK_DST only supports dst_mip_level=0 for now".into(),
+            ));
+        }
 
         if dst_texture == 0 || src_texture == 0 {
             return Err(ExecutorError::Validation(
@@ -2601,10 +2647,9 @@ fn fs_main() -> @location(0) vec4<f32> {
             ));
         }
 
-        if dst_mip_level != 0 || dst_array_layer != 0 || src_mip_level != 0 || src_array_layer != 0
-        {
+        if dst_array_layer != 0 || src_array_layer != 0 {
             return Err(ExecutorError::Validation(
-                "COPY_TEXTURE2D only supports mip0 layer0".into(),
+                "COPY_TEXTURE2D only supports array_layer=0".into(),
             ));
         }
 
@@ -2626,6 +2671,18 @@ fn fs_main() -> @location(0) vec4<f32> {
                     "COPY_TEXTURE2D: unknown dst texture {dst_texture}"
                 ))
             })?;
+            if src_mip_level >= src.mip_levels {
+                return Err(ExecutorError::Validation(format!(
+                    "COPY_TEXTURE2D: src mip_level {src_mip_level} out of bounds (mip_levels={})",
+                    src.mip_levels
+                )));
+            }
+            if dst_mip_level >= dst.mip_levels {
+                return Err(ExecutorError::Validation(format!(
+                    "COPY_TEXTURE2D: dst mip_level {dst_mip_level} out of bounds (mip_levels={})",
+                    dst.mip_levels
+                )));
+            }
             let dst_backing = if writeback {
                 Some(dst.backing.ok_or_else(|| {
                     ExecutorError::Validation(format!(
@@ -2637,8 +2694,14 @@ fn fs_main() -> @location(0) vec4<f32> {
             };
 
             (
-                (src.width, src.height),
-                (dst.width, dst.height),
+                (
+                    mip_dimension(src.width, src_mip_level),
+                    mip_dimension(src.height, src_mip_level),
+                ),
+                (
+                    mip_dimension(dst.width, dst_mip_level),
+                    mip_dimension(dst.height, dst_mip_level),
+                ),
                 src.format_raw,
                 dst.format_raw,
                 dst.upload_transform,
@@ -2678,9 +2741,13 @@ fn fs_main() -> @location(0) vec4<f32> {
         }
 
         if is_bc_format(dst_format_raw) {
-            // WebGPU requires compressed texture copies to be block-aligned:
+            // AeroGPU/D3D BC copy rules:
             // - origins must be multiples of 4
             // - sizes must be multiples of 4 unless the copy reaches the mip edge
+            //
+            // Note: even when the logical copy size reaches the edge, wgpu/WebGPU validation
+            // expects a "physical" copy size rounded up to whole blocks; we pad before encoding
+            // the wgpu copy (see below).
             if !src_x.is_multiple_of(4)
                 || !src_y.is_multiple_of(4)
                 || !dst_x.is_multiple_of(4)
@@ -2854,6 +2921,14 @@ fn fs_main() -> @location(0) vec4<f32> {
             (&src.texture, &dst.texture)
         };
 
+        let (wgpu_copy_width, wgpu_copy_height) =
+            if is_bc_format(dst_format_raw) && dst_upload_transform == TextureUploadTransform::Direct
+            {
+                (align_up_u32(width, 4)?, align_up_u32(height, 4)?)
+            } else {
+                (width, height)
+            };
+
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -2862,7 +2937,7 @@ fn fs_main() -> @location(0) vec4<f32> {
         encoder.copy_texture_to_texture(
             wgpu::ImageCopyTexture {
                 texture: src,
-                mip_level: 0,
+                mip_level: src_mip_level,
                 origin: wgpu::Origin3d {
                     x: src_x,
                     y: src_y,
@@ -2872,7 +2947,7 @@ fn fs_main() -> @location(0) vec4<f32> {
             },
             wgpu::ImageCopyTexture {
                 texture: dst,
-                mip_level: 0,
+                mip_level: dst_mip_level,
                 origin: wgpu::Origin3d {
                     x: dst_x,
                     y: dst_y,
@@ -2881,8 +2956,8 @@ fn fs_main() -> @location(0) vec4<f32> {
                 aspect: wgpu::TextureAspect::All,
             },
             wgpu::Extent3d {
-                width,
-                height,
+                width: wgpu_copy_width,
+                height: wgpu_copy_height,
                 depth_or_array_layers: 1,
             },
         );
@@ -2901,7 +2976,7 @@ fn fs_main() -> @location(0) vec4<f32> {
             encoder.copy_texture_to_buffer(
                 wgpu::ImageCopyTexture {
                     texture: dst,
-                    mip_level: 0,
+                    mip_level: dst_mip_level,
                     origin: wgpu::Origin3d {
                         x: dst_x,
                         y: dst_y,
@@ -2918,8 +2993,8 @@ fn fs_main() -> @location(0) vec4<f32> {
                     },
                 },
                 wgpu::Extent3d {
-                    width,
-                    height,
+                    width: wgpu_copy_width,
+                    height: wgpu_copy_height,
                     depth_or_array_layers: 1,
                 },
             );
@@ -3553,6 +3628,13 @@ fn fs_main() -> @location(0) vec4<f32> {
                         }
                     }
 
+                    let mut copy_extent_width = tex.width;
+                    let mut copy_extent_height = copy_height;
+                    if is_bc_format(tex.format_raw) {
+                        copy_extent_width = align_up_u32(copy_extent_width, 4)?;
+                        copy_extent_height = align_up_u32(copy_extent_height, 4)?;
+                    }
+
                     self.queue.write_texture(
                         wgpu::ImageCopyTexture {
                             texture: &tex.texture,
@@ -3571,8 +3653,8 @@ fn fs_main() -> @location(0) vec4<f32> {
                             rows_per_image: Some(row_count),
                         },
                         wgpu::Extent3d {
-                            width: tex.width,
-                            height: copy_height,
+                            width: copy_extent_width,
+                            height: copy_extent_height,
                             depth_or_array_layers: 1,
                         },
                     );
