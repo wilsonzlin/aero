@@ -31,7 +31,7 @@ wasm-bindgen-test = "0.3"
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 js-sys = "0.3"
 aero-platform = { path = "../platform" }
-aero-audio = { path = "../aero-audio" }
+aero-audio = { path = "../aero-audio", features = ["io-snapshot"] }
 aero-mmu = { path = "../aero-mmu" }
 aero-opfs = { path = "../aero-opfs" }
 aero-snapshot = { path = "../aero-snapshot" }

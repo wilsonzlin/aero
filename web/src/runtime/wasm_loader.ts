@@ -893,6 +893,24 @@ export interface WasmApi {
 
         buffer_level_frames(): number;
         overrun_count(): number;
+
+        /**
+         * Optional AudioWorklet output ring attachment.
+         *
+         * Newer builds attach the SharedArrayBuffer ring directly to the WASM-side HDA controller so
+         * the device can stream output samples without JS copies.
+         */
+        set_audio_ring_buffer?(sab: SharedArrayBuffer | null | undefined, capacityFrames: number, channelCount: number): void;
+
+        /**
+         * Deterministic device snapshot bytes (aero-io-snapshot TLV blob).
+         *
+         * Optional for older WASM builds.
+         */
+        save_state?(): Uint8Array;
+        load_state?(bytes: Uint8Array): void;
+        snapshot_state?(): Uint8Array;
+        restore_state?(bytes: Uint8Array): void;
         free(): void;
     };
 }

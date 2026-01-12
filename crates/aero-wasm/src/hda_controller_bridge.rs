@@ -7,14 +7,22 @@
 //! directly against guest RAM. In the browser runtime, guest physical address 0 maps to
 //! `guest_base` within the module's linear memory (see `guest_ram_layout`); this bridge uses the
 //! OOB-safe guest memory adapter (`HdaGuestMemory`) from `lib.rs` to provide that memory interface.
+//!
+//! Snapshot/restore:
+//! - HDA controller state is serialized as an `aero-io-snapshot` TLV blob (`HdaControllerState`).
+//! - The snapshot includes `AudioWorkletRingState` (read/write indices + capacity) for determinism.
+//! - Host audio samples are not serialized; on restore we clear the AudioWorklet ring samples to
+//!   silence via `WorkletBridge::restore_state`.
 #![cfg(target_arch = "wasm32")]
 
 use wasm_bindgen::prelude::*;
 
-use js_sys::SharedArrayBuffer;
+use js_sys::{SharedArrayBuffer, Uint8Array};
 
 use aero_audio::hda::HdaController;
 use aero_audio::sink::AudioSink;
+use aero_io_snapshot::io::audio::state::{AudioWorkletRingState, HdaControllerState};
+use aero_io_snapshot::io::state::IoSnapshot as _;
 
 use aero_platform::audio::mic_bridge::MicBridge;
 use aero_platform::audio::worklet_bridge::WorkletBridge;
@@ -61,6 +69,8 @@ pub struct HdaControllerBridge {
 
     audio_ring: Option<WorkletBridge>,
     mic_ring: Option<MicBridge>,
+
+    pending_audio_ring_state: Option<AudioWorkletRingState>,
 }
 
 #[wasm_bindgen]
@@ -83,6 +93,9 @@ impl HdaControllerBridge {
         } else {
             guest_size as u64
         };
+        if guest_size_u64 == 0 {
+            return Err(js_error("guest_size must be non-zero"));
+        }
 
         let end = (guest_base as u64)
             .checked_add(guest_size_u64)
@@ -101,6 +114,7 @@ impl HdaControllerBridge {
             },
             audio_ring: None,
             mic_ring: None,
+            pending_audio_ring_state: None,
         })
     }
 
@@ -137,16 +151,43 @@ impl HdaControllerBridge {
             return Err(js_error("capacityFrames must be non-zero"));
         }
         if channel_count != 2 {
-            return Err(js_error("channelCount must be 2 for HDA output (stereo)"));
+            return Err(js_error(
+                "channelCount must be 2 for HDA output (stereo)",
+            ));
         }
 
         let bridge = WorkletBridge::from_shared_buffer(ring_sab, capacity_frames, channel_count)?;
+
+        // Apply a deferred ring restore if `load_state` was called before the host reattached the
+        // AudioWorklet ring.
+        if let Some(state) = self.pending_audio_ring_state.take() {
+            bridge.restore_state(&state);
+        }
+
         self.audio_ring = Some(bridge);
         Ok(())
     }
 
     pub fn detach_audio_ring(&mut self) {
         self.audio_ring = None;
+    }
+
+    /// Convenience helper: attach/detach the audio ring buffer using an `Option`.
+    ///
+    /// This mirrors older JS call sites that use `set_*_ring_buffer(undefined)` to detach.
+    pub fn set_audio_ring_buffer(
+        &mut self,
+        ring_sab: Option<SharedArrayBuffer>,
+        capacity_frames: u32,
+        channel_count: u32,
+    ) -> Result<(), JsValue> {
+        match ring_sab {
+            Some(sab) => self.attach_audio_ring(sab, capacity_frames, channel_count),
+            None => {
+                self.detach_audio_ring();
+                Ok(())
+            }
+        }
     }
 
     /// Attach the microphone capture ring buffer (consumer side; AudioWorklet is the producer).
@@ -267,6 +308,57 @@ impl HdaControllerBridge {
             .as_ref()
             .map(|r| r.overrun_count())
             .unwrap_or(0)
+    }
+
+    /// Serialize the current HDA controller state into a deterministic snapshot blob.
+    ///
+    /// If an AudioWorklet ring is attached, its indices are included for determinism.
+    pub fn save_state(&self) -> Vec<u8> {
+        let ring_state = self
+            .audio_ring
+            .as_ref()
+            .map(|w| w.snapshot_state())
+            .unwrap_or(AudioWorkletRingState {
+                capacity_frames: 0,
+                write_pos: 0,
+                read_pos: 0,
+            });
+
+        let state = self.hda.snapshot_state(ring_state);
+        state.save_state()
+    }
+
+    /// Restore HDA controller state from a snapshot blob produced by [`save_state`].
+    ///
+    /// If an AudioWorklet ring is attached, ring indices are restored immediately and samples are
+    /// cleared to silence via `WorkletBridge::restore_state`. If not yet attached, the ring state
+    /// is cached and applied when [`attach_audio_ring`] (or [`set_audio_ring_buffer`]) is called.
+    pub fn load_state(&mut self, bytes: &[u8]) -> Result<(), JsValue> {
+        let mut state = HdaControllerState::default();
+        state
+            .load_state(bytes)
+            .map_err(|e| js_error(format!("Invalid HDA snapshot: {e}")))?;
+
+        self.hda.restore_state(&state);
+
+        if let Some(ring) = self.audio_ring.as_ref() {
+            ring.restore_state(&state.worklet_ring);
+            self.pending_audio_ring_state = None;
+        } else {
+            self.pending_audio_ring_state = Some(state.worklet_ring);
+        }
+
+        Ok(())
+    }
+
+    /// Snapshot the full device state as deterministic bytes.
+    pub fn snapshot_state(&self) -> Uint8Array {
+        Uint8Array::from(self.save_state().as_slice())
+    }
+
+    /// Restore device state from deterministic snapshot bytes.
+    pub fn restore_state(&mut self, bytes: &[u8]) -> Result<(), JsValue> {
+        self.load_state(bytes)
     }
 }
 
