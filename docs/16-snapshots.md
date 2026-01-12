@@ -204,8 +204,13 @@ Restore note: USB snapshots capture guest-visible controller/runtime state only.
 For the browser networking stack (e.g. tunnel/NAT state managed outside the guest-visible NIC device model), store a single device entry:
 
 - Outer `DeviceState.id = DeviceId::NET_STACK`
-- `DeviceState.data = aero-io-snapshot` TLV blob produced by the networking stack
+- `DeviceState.data = aero-io-snapshot` TLV blob produced by the networking stack (inner `DEVICE_ID = NETS`)
 - `DeviceState.version` / `DeviceState.flags` mirror the inner device `SnapshotVersion (major, minor)`
+
+Restore note: `NET_STACK` snapshots capture *guest-visible* stack/backend bookkeeping (e.g. DHCP/NAT state and proxy bookkeeping) but **must not** attempt to bit-restore host resources. On restore, integrations should treat the following as reset and drop/recreate them:
+
+- Active TCP proxy connections (e.g. WebSocket `/tcp` / `/tcp-mux`)
+- L2 tunnel transports (WebSocket `/l2`, WebRTC `l2` DataChannels)
 
 #### E1000 (`DeviceId::E1000`)
 
@@ -259,32 +264,6 @@ Restore notes (see also [`docs/06-audio-subsystem.md`](./06-audio-subsystem.md#s
 
 - The browser audio graph (`AudioContext` / `AudioWorkletNode`) is a host resource and is not captured in snapshots. On restore, host code must recreate/reattach the Web Audio pipeline.
 - Audio snapshots preserve **ring buffer indices** (guest-visible progress) but do not restore ring **contents**. The producer should clear the ring to silence on restore to avoid replaying stale samples.
-
-#### Networking (`DeviceId::E1000`, `DeviceId::NET_STACK`)
-
-Networking snapshots in Aero are split into two `DEVICES` entries:
-
-1. **NIC device model state** (guest-visible hardware)
-2. **Network backend/stack state** (guest-visible “host-side” network behavior)
-
-Canonical identifiers (outer `DeviceId` + web/WASM `kind` string):
-
-| Layer | Outer `DeviceId` | Numeric id | `DeviceId::name()` | Recommended `kind` | Notes |
-|---|---|---:|---|---|---|
-| NIC (E1000) | `DeviceId::E1000` | `19` | `"E1000"` | `net.e1000` | Registers + descriptor ring state + pending frames. Payload is an `aero-io-snapshot` blob (inner `DEVICE_ID = E1K0`). |
-| Net stack/backend | `DeviceId::NET_STACK` | `20` | `"NET_STACK"` | `net.stack` | User-space network stack / NAT / DHCP / connection bookkeeping. Payload is an `aero-io-snapshot` blob (inner `DEVICE_ID = NETS`). |
-
-Payload convention:
-
-- `DeviceState.data` stores the raw `aero-io-snapshot` TLV blob returned by `IoSnapshot::save_state()` (including the inner 16-byte `AERO` header).
-- `DeviceState.version` / `DeviceState.flags` mirror the **inner device** `SnapshotVersion (major, minor)` from the contained `aero-io-snapshot` header.
-
-Restore semantics (what is *not* bit-restorable):
-
-- **Active TCP proxy connections** (e.g. WebSocket `/tcp` or `/tcp-mux` streams) are host resources and cannot be snapshotted/restored bit-for-bit.
-- **L2 tunnel transports** (WebSocket `/l2` sessions, WebRTC DataChannels) are host resources and cannot be snapshotted/restored bit-for-bit.
-
-On restore, integrations should treat these host resources as reset: immediately drop/close any live proxy/tunnel connections and re-establish them (or leave them disconnected and let the guest reconnect) after the VM resumes.
 
 ### PCI core state (`aero-devices`)
 
