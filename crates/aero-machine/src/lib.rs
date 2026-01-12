@@ -4015,6 +4015,44 @@ mod tests {
         );
     }
 
+    #[test]
+    fn dirty_snapshot_roundtrips_cpu_internal_state() {
+        let cfg = MachineConfig {
+            ram_size_bytes: 2 * 1024 * 1024,
+            ..Default::default()
+        };
+
+        let mut src = Machine::new(cfg.clone()).unwrap();
+        // Base snapshot: initial CPU_INTERNAL state.
+        src.cpu.pending.set_interrupt_inhibit(7);
+        src.cpu.pending.inject_external_interrupt(0x20);
+        let base = src.take_snapshot_full().unwrap();
+
+        // Dirty snapshot: updated CPU_INTERNAL state, with no RAM changes required.
+        src.cpu.pending.set_interrupt_inhibit(1);
+        src.cpu.pending.external_interrupts.clear();
+        src.cpu.pending.inject_external_interrupt(0x33);
+        src.cpu.pending.inject_external_interrupt(0x34);
+        let diff = src.take_snapshot_dirty().unwrap();
+
+        // Restore chain (base -> diff).
+        let mut restored = Machine::new(cfg).unwrap();
+        restored.restore_snapshot_bytes(&base).unwrap();
+        restored.restore_snapshot_bytes(&diff).unwrap();
+
+        assert_eq!(restored.cpu.pending.interrupt_inhibit(), 1);
+        assert_eq!(
+            restored
+                .cpu
+                .pending
+                .external_interrupts
+                .iter()
+                .copied()
+                .collect::<Vec<_>>(),
+            vec![0x33, 0x34]
+        );
+    }
+
     fn strip_cpu_internal_device_state(bytes: &[u8]) -> Vec<u8> {
         const FILE_HEADER_LEN: usize = 16;
         const SECTION_HEADER_LEN: usize = 16;
