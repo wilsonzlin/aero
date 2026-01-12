@@ -28,9 +28,11 @@ struct State {
     etag: std::sync::Mutex<String>,
     fail_first_range: AtomicBool,
     required_header: Option<(String, String)>,
+    head_accept_ranges: bool,
     ignore_range: bool,
     enforce_strong_if_range: bool,
     wrong_content_range: bool,
+    content_range_total_star: bool,
     content_encoding: Option<String>,
     counters: Counters,
 }
@@ -46,9 +48,11 @@ struct RangeServerOptions<'a> {
     etag: &'a str,
     fail_first_range: bool,
     required_header: Option<(&'a str, &'a str)>,
+    head_accept_ranges: bool,
     ignore_range: bool,
     enforce_strong_if_range: bool,
     wrong_content_range: bool,
+    content_range_total_star: bool,
     content_encoding: Option<&'a str>,
 }
 
@@ -58,9 +62,11 @@ impl<'a> RangeServerOptions<'a> {
             etag,
             fail_first_range: false,
             required_header: None,
+            head_accept_ranges: true,
             ignore_range: false,
             enforce_strong_if_range: false,
             wrong_content_range: false,
+            content_range_total_star: false,
             content_encoding: None,
         }
     }
@@ -77,9 +83,11 @@ async fn start_range_server_with_options(
         required_header: options
             .required_header
             .map(|(k, v)| (k.to_string(), v.to_string())),
+        head_accept_ranges: options.head_accept_ranges,
         ignore_range: options.ignore_range,
         enforce_strong_if_range: options.enforce_strong_if_range,
         wrong_content_range: options.wrong_content_range,
+        content_range_total_star: options.content_range_total_star,
         content_encoding: options.content_encoding.map(|v| v.to_string()),
         counters: Counters::default(),
     });
@@ -131,8 +139,10 @@ async fn handle_request(
                 CONTENT_LENGTH,
                 (state.image.len() as u64).to_string().parse().unwrap(),
             );
-            resp.headers_mut()
-                .insert(ACCEPT_RANGES, "bytes".parse().unwrap());
+            if state.head_accept_ranges {
+                resp.headers_mut()
+                    .insert(ACCEPT_RANGES, "bytes".parse().unwrap());
+            }
             resp.headers_mut().insert(
                 hyper::header::ETAG,
                 state.etag.lock().unwrap().parse().unwrap(),
@@ -211,10 +221,15 @@ async fn handle_request(
                             resp.headers_mut()
                                 .insert(CONTENT_ENCODING, encoding.parse().unwrap());
                         }
-                        let content_range = if state.wrong_content_range {
-                            format!("bytes {}-{end_inclusive}/{}", start + 1, state.image.len())
+                        let total = if state.content_range_total_star {
+                            "*".to_string()
                         } else {
-                            format!("bytes {start}-{end_inclusive}/{}", state.image.len())
+                            state.image.len().to_string()
+                        };
+                        let content_range = if state.wrong_content_range {
+                            format!("bytes {}-{end_inclusive}/{total}", start + 1)
+                        } else {
+                            format!("bytes {start}-{end_inclusive}/{total}")
                         };
                         resp.headers_mut()
                             .insert(CONTENT_RANGE, content_range.parse().unwrap());
@@ -863,6 +878,33 @@ async fn content_range_mismatch_is_protocol_error() {
     let mut buf = vec![0u8; 16];
     let err = disk.read_at(0, &mut buf).await.err().unwrap();
     assert!(matches!(err, StreamingDiskError::Protocol(_)));
+
+    let _ = shutdown.send(());
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn content_range_total_star_is_accepted() {
+    let image: Vec<u8> = (0..2048).map(|i| (i % 251) as u8).collect();
+    let (url, _state, shutdown) = start_range_server_with_options(
+        image.clone(),
+        RangeServerOptions {
+            content_range_total_star: true,
+            ..RangeServerOptions::new("etag-total-star")
+        },
+    )
+    .await;
+
+    let cache_dir = tempdir().unwrap();
+    let mut config = StreamingDiskConfig::new(url, cache_dir.path());
+    config.cache_backend = StreamingCacheBackend::Directory;
+    config.options.chunk_size = 1024;
+    config.options.read_ahead_chunks = 0;
+    config.options.max_retries = 1;
+
+    let disk = StreamingDisk::open(config).await.unwrap();
+    let mut buf = vec![0u8; 32];
+    disk.read_at(0, &mut buf).await.unwrap();
+    assert_eq!(&buf[..], &image[0..32]);
 
     let _ = shutdown.send(());
 }

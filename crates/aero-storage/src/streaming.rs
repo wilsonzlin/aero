@@ -1238,7 +1238,10 @@ impl StreamingDisk {
             .and_then(|v| v.to_str().ok())
             .ok_or_else(|| StreamingDiskError::Protocol("missing Content-Range".to_string()))?;
         let (cr_start, cr_end_inclusive, cr_total) = parse_content_range(content_range)?;
-        if cr_start != start || cr_end_inclusive != end - 1 || cr_total != self.inner.total_size {
+        if cr_start != start
+            || cr_end_inclusive != end - 1
+            || cr_total.is_some_and(|total| total != self.inner.total_size)
+        {
             return Err(StreamingDiskError::Protocol(format!(
                 "unexpected Content-Range: {content_range} (expected bytes {start}-{} / {})",
                 end - 1,
@@ -1329,14 +1332,24 @@ async fn probe_remote_size_and_validator(
         .and_then(|v| v.to_str().ok())
         .ok_or_else(|| StreamingDiskError::Protocol("missing Content-Range".to_string()))?;
 
-    let total = parse_total_size_from_content_range(cr)?;
-    if let Some(expected) = head_total_size {
-        if total != expected {
-            return Err(StreamingDiskError::Protocol(format!(
-                "Content-Range total ({total}) does not match Content-Length ({expected})"
-            )));
+    let total = match (parse_total_size_from_content_range(cr)?, head_total_size) {
+        (Some(total), Some(expected)) => {
+            if total != expected {
+                return Err(StreamingDiskError::Protocol(format!(
+                    "Content-Range total ({total}) does not match Content-Length ({expected})"
+                )));
+            }
+            total
         }
-    }
+        (Some(total), None) => total,
+        (None, Some(expected)) => expected,
+        (None, None) => {
+            return Err(StreamingDiskError::Protocol(
+                "Content-Range did not include total size and Content-Length was missing"
+                    .to_string(),
+            ));
+        }
+    };
     Ok((total, validator.or(head_validator)))
 }
 
@@ -1407,12 +1420,14 @@ fn cache_backend_looks_populated(
     }
 }
 
-fn parse_total_size_from_content_range(content_range: &str) -> Result<u64, StreamingDiskError> {
+fn parse_total_size_from_content_range(
+    content_range: &str,
+) -> Result<Option<u64>, StreamingDiskError> {
     let (_, _, total) = parse_content_range(content_range)?;
     Ok(total)
 }
 
-fn parse_content_range(content_range: &str) -> Result<(u64, u64, u64), StreamingDiskError> {
+fn parse_content_range(content_range: &str) -> Result<(u64, u64, Option<u64>), StreamingDiskError> {
     // Example: "bytes 0-0/12345"
     let content_range = content_range.trim();
     let mut parts = content_range.split_whitespace();
@@ -1431,9 +1446,13 @@ fn parse_content_range(content_range: &str) -> Result<(u64, u64, u64), Streaming
     let (range_part, total_part) = spec.split_once('/').ok_or_else(|| {
         StreamingDiskError::Protocol(format!("invalid Content-Range: {content_range}"))
     })?;
-    let total: u64 = total_part.parse().map_err(|_| {
-        StreamingDiskError::Protocol(format!("invalid Content-Range: {content_range}"))
-    })?;
+    let total = if total_part == "*" {
+        None
+    } else {
+        Some(total_part.parse().map_err(|_| {
+            StreamingDiskError::Protocol(format!("invalid Content-Range: {content_range}"))
+        })?)
+    };
 
     let (start_part, end_part) = range_part.split_once('-').ok_or_else(|| {
         StreamingDiskError::Protocol(format!("invalid Content-Range: {content_range}"))
@@ -1448,6 +1467,13 @@ fn parse_content_range(content_range: &str) -> Result<(u64, u64, u64), Streaming
         return Err(StreamingDiskError::Protocol(format!(
             "invalid Content-Range: {content_range}"
         )));
+    }
+    if let Some(total) = total {
+        if end >= total {
+            return Err(StreamingDiskError::Protocol(format!(
+                "invalid Content-Range: {content_range}"
+            )));
+        }
     }
     Ok((start, end, total))
 }
