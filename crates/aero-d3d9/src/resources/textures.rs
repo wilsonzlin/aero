@@ -843,4 +843,23 @@ mod tests {
         assert_eq!(info.wgpu, wgpu::TextureFormat::Bc1RgbaUnorm);
         assert!(!info.decompress_to_bgra8);
     }
+
+    #[test]
+    fn dxt1_fallback_to_bgra8_when_intermediate_mip_not_block_aligned() {
+        let features = wgpu::Features::TEXTURE_COMPRESSION_BC;
+        let desc = TextureDesc {
+            kind: TextureKind::Texture2D {
+                width: 12,
+                height: 12,
+                levels: 4, // 12x12, 6x6 (misaligned), 3x3, 1x1
+            },
+            format: D3DFormat::Dxt1,
+            pool: D3DPool::Default,
+            usage: TextureUsageKind::Sampled,
+        };
+
+        let info = format_info_for_texture_desc(&desc, features).unwrap();
+        assert_eq!(info.wgpu, wgpu::TextureFormat::Bgra8Unorm);
+        assert!(info.decompress_to_bgra8);
+    }
 }
