@@ -90,6 +90,7 @@ test("jit i64 BigInt ABI: wasm fixture imports/returns use BigInt", async () => 
 
   const ret = block(0, 0);
   assert.equal(typeof ret, "bigint");
+  assert.equal(ret, -1n);
 
   assert.ok(calls.mem_read_u64 > 0, "expected mem_read_u64 to be called");
   assert.ok(calls.mem_write_u64 > 0, "expected mem_write_u64 to be called");
