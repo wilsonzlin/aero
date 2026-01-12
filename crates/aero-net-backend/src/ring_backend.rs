@@ -211,10 +211,6 @@ impl<TX: FrameRing, RX: FrameRing> NetworkBackend for L2TunnelRingBackend<TX, RX
         }
     }
 
-    fn l2_ring_stats(&self) -> Option<L2TunnelRingBackendStats> {
-        Some(self.stats())
-    }
-
     fn poll_receive(&mut self) -> Option<Vec<u8>> {
         if self.rx_broken {
             return None;
@@ -278,22 +274,6 @@ mod tests {
         assert_eq!(backend.poll_receive(), Some(vec![9]));
         assert_eq!(backend.poll_receive(), Some(vec![8, 7]));
         assert_eq!(backend.poll_receive(), None);
-    }
-
-    #[test]
-    fn l2_ring_stats_is_available_through_boxed_trait_object() {
-        let tx = Arc::new(RingBuffer::new(64));
-        let rx = Arc::new(RingBuffer::new(64));
-        let backend = L2TunnelRingBackend::new(tx, rx);
-        let mut backend: Option<Box<dyn NetworkBackend>> = Some(Box::new(backend));
-
-        // Mirror the access pattern used by `PcMachine::network_backend_l2_ring_stats()`.
-        let stats = backend.as_ref().and_then(|b| b.l2_ring_stats()).unwrap();
-        assert_eq!(stats, L2TunnelRingBackendStats::default());
-
-        backend.as_mut().unwrap().transmit(vec![1, 2, 3]);
-        let stats = backend.as_ref().and_then(|b| b.l2_ring_stats()).unwrap();
-        assert_eq!(stats.tx_pushed_frames, 1);
     }
 
     #[test]
