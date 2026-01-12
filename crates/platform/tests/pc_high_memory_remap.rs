@@ -3,6 +3,59 @@ use aero_platform::memory::MemoryBus;
 use aero_platform::ChipsetState;
 use aero_pc_constants::PCIE_ECAM_BASE;
 use memory::SparseMemory;
+use std::sync::{Arc, Mutex};
+
+#[derive(Default)]
+struct MmioState {
+    mem: Vec<u8>,
+    reads: Vec<(u64, usize)>,
+    writes: Vec<(u64, usize, u64)>,
+}
+
+#[derive(Clone)]
+struct RecordingMmio {
+    state: Arc<Mutex<MmioState>>,
+}
+
+impl RecordingMmio {
+    fn new(mem: Vec<u8>) -> (Self, Arc<Mutex<MmioState>>) {
+        let state = Arc::new(Mutex::new(MmioState {
+            mem,
+            ..Default::default()
+        }));
+        (
+            Self {
+                state: Arc::clone(&state),
+            },
+            state,
+        )
+    }
+}
+
+impl memory::MmioHandler for RecordingMmio {
+    fn read(&mut self, offset: u64, size: usize) -> u64 {
+        let mut state = self.state.lock().unwrap();
+        state.reads.push((offset, size));
+        let mut buf = [0xFFu8; 8];
+        let off = offset as usize;
+        for (i, slot) in buf.iter_mut().take(size.min(8)).enumerate() {
+            *slot = state.mem.get(off + i).copied().unwrap_or(0xFF);
+        }
+        u64::from_le_bytes(buf)
+    }
+
+    fn write(&mut self, offset: u64, size: usize, value: u64) {
+        let mut state = self.state.lock().unwrap();
+        state.writes.push((offset, size, value));
+        let bytes = value.to_le_bytes();
+        let off = offset as usize;
+        for (i, &b) in bytes.iter().take(size.min(8)).enumerate() {
+            if let Some(slot) = state.mem.get_mut(off + i) {
+                *slot = b;
+            }
+        }
+    }
+}
 
 #[test]
 fn pc_high_memory_remaps_ram_above_4gib_and_hole_is_open_bus() {
@@ -27,6 +80,19 @@ fn pc_high_memory_remaps_ram_above_4gib_and_hole_is_open_bus() {
     let mut hole = [0u8; 4];
     bus.read_physical(PCIE_ECAM_BASE + 0x1000, &mut hole);
     assert_eq!(hole, [0xFF; 4]);
+
+    // MMIO mappings inside the hole must override the open-bus default.
+    let (mmio, mmio_state) = RecordingMmio::new(vec![0xDE, 0xAD, 0xBE, 0xEF]);
+    bus.map_mmio(PCIE_ECAM_BASE + 0x1000, 4, Box::new(mmio))
+        .unwrap();
+
+    let mut mmio_read = [0u8; 4];
+    bus.read_physical(PCIE_ECAM_BASE + 0x1000, &mut mmio_read);
+    assert_eq!(mmio_read, [0xDE, 0xAD, 0xBE, 0xEF]);
+
+    bus.write_physical(PCIE_ECAM_BASE + 0x1000, &[1, 2, 3, 4]);
+    let state = mmio_state.lock().unwrap();
+    assert_eq!(state.mem, vec![1, 2, 3, 4]);
 
     // Reads that straddle low RAM -> hole should return mapped bytes then open-bus 0xFFs.
     bus.write_physical(PCIE_ECAM_BASE - 4, &[1, 2, 3, 4]);
