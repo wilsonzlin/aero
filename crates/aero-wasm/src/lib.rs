@@ -1,7 +1,4 @@
-#![cfg_attr(
-    all(target_arch = "wasm32", feature = "wasm-threaded"),
-    feature(thread_local)
-)]
+// Note: The threaded WASM build must compile on stable Rust; avoid unstable features here.
 
 use wasm_bindgen::prelude::*;
 
@@ -130,15 +127,22 @@ use aero_usb::passthrough::PendingSummary as UsbPassthroughPendingSummary;
 // by the linker when there is at least one TLS variable. We keep a tiny TLS
 // slot behind a cargo feature enabled only for the threaded build.
 #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
-#[thread_local]
-static TLS_DUMMY: u8 = 0;
+thread_local! {
+    // wasm-bindgen's "threads" transform expects TLS metadata symbols (e.g.
+    // `__tls_size`) to exist in shared-memory builds. Those symbols are only emitted
+    // by the linker when there is at least one TLS variable.
+    //
+    // We use `thread_local!` instead of the unstable `#[thread_local]` attribute so
+    // the threaded WASM build can compile on stable Rust.
+    static TLS_DUMMY: u8 = 0;
+}
 
 #[wasm_bindgen(start)]
 pub fn wasm_start() {
     #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
     {
         // Ensure the TLS dummy is not optimized away.
-        let _ = &TLS_DUMMY as *const u8;
+        TLS_DUMMY.with(|v| core::hint::black_box(*v));
     }
 }
 
