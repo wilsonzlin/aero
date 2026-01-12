@@ -12,6 +12,11 @@ pub const BDA_CURSOR_POS_PAGE0_ADDR: u64 = 0x0450;
 pub const BDA_CURSOR_SHAPE_ADDR: u64 = 0x0460;
 /// BIOS Data Area: active page number (byte).
 pub const BDA_ACTIVE_PAGE_ADDR: u64 = 0x0462;
+/// BIOS Data Area: CRT controller base I/O port (word).
+///
+/// This is typically `0x3D4` for color adapters (modes using `0xB8000`) and `0x3B4` for monochrome
+/// adapters (modes using `0xB0000`).
+pub const BDA_CRTC_BASE_ADDR: u64 = 0x0463;
 
 pub struct BiosDataArea;
 
@@ -46,6 +51,14 @@ impl BiosDataArea {
 
     pub fn write_active_page(mem: &mut impl MemoryBus, page: u8) {
         mem.write_u8(BDA_ACTIVE_PAGE_ADDR, page);
+    }
+
+    pub fn read_crtc_base(mem: &mut impl MemoryBus) -> u16 {
+        mem.read_u16(BDA_CRTC_BASE_ADDR)
+    }
+
+    pub fn write_crtc_base(mem: &mut impl MemoryBus, base: u16) {
+        mem.write_u16(BDA_CRTC_BASE_ADDR, base);
     }
 
     pub fn read_cursor_pos(mem: &mut impl MemoryBus, page: u8) -> (u8, u8) {

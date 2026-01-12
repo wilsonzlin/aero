@@ -20,6 +20,7 @@ fn int10_text_mode_teletype_updates_text_buffer_and_cursor() {
     assert_eq!(BiosDataArea::read_screen_cols(&mut mem), 80);
     assert_eq!(BiosDataArea::read_page_size(&mut mem), 80 * 25 * 2);
     assert_eq!(BiosDataArea::read_active_page(&mut mem), 0);
+    assert_eq!(BiosDataArea::read_crtc_base(&mut mem), 0x3D4);
 
     // Place cursor at (row=2, col=5).
     cpu.set_ax(0x0200);

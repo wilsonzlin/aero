@@ -36,6 +36,8 @@ impl VgaDevice {
         BiosDataArea::write_screen_cols(mem, 80);
         BiosDataArea::write_page_size(mem, 80 * 25 * 2);
         BiosDataArea::write_active_page(mem, 0);
+        // Color CRTC base I/O port.
+        BiosDataArea::write_crtc_base(mem, 0x3D4);
         for page in 0..8u8 {
             BiosDataArea::write_cursor_pos(mem, page, 0, 0);
         }
