@@ -164,7 +164,11 @@ impl VgaSnapshotV1 {
         if vram_len > VGA_SNAPSHOT_V1_MAX_VRAM_LEN {
             return Err(VgaSnapshotError::Corrupt("vram too large"));
         }
-        let mut vram = vec![0u8; vram_len as usize];
+        let vram_len = vram_len as usize;
+        let mut vram = Vec::new();
+        vram.try_reserve_exact(vram_len)
+            .map_err(|_| VgaSnapshotError::Corrupt("out of memory"))?;
+        vram.resize(vram_len, 0);
         r.read_exact(&mut vram)?;
 
         Ok(Self {
