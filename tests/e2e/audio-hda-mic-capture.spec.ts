@@ -15,6 +15,11 @@ test("HDA capture stream DMA-writes microphone PCM into guest RAM (synthetic mic
   test.setTimeout(60_000);
   test.skip(test.info().project.name !== "chromium", "HDA mic capture test only runs on Chromium.");
 
+  // The harness programs the HDA capture stream at 48kHz but we intentionally publish a
+  // different mic sample rate to exercise the capture resampler + sample-rate plumbing.
+  const micSampleRateHz = 44_100;
+  const captureStreamRateHz = 48_000;
+
   await page.goto(`${PREVIEW_ORIGIN}/`, { waitUntil: "load" });
 
   await page.waitForFunction(() => {
@@ -71,7 +76,7 @@ test("HDA capture stream DMA-writes microphone PCM into guest RAM (synthetic mic
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (globalThis as any).__aeroTestMicRingSab = sab;
 
-    coord.setMicrophoneRingBuffer(sab, 48_000);
+    coord.setMicrophoneRingBuffer(sab, micSampleRateHz);
     },
     {
       MIC_CAPACITY_SAMPLES_INDEX,
@@ -80,6 +85,7 @@ test("HDA capture stream DMA-writes microphone PCM into guest RAM (synthetic mic
       MIC_HEADER_U32_LEN,
       MIC_READ_POS_INDEX,
       MIC_WRITE_POS_INDEX,
+      micSampleRateHz,
     },
   );
 
@@ -167,7 +173,17 @@ test("HDA capture stream DMA-writes microphone PCM into guest RAM (synthetic mic
     },
     { MIC_HEADER_U32_LEN, MIC_READ_POS_INDEX, MIC_WRITE_POS_INDEX, MIC_DROPPED_SAMPLES_INDEX },
   );
-  expect(micAfter?.read ?? 0).toBeGreaterThan(0);
+
+  const expectedReadAfterFirstCapture = (() => {
+    const dstFrames = 1024;
+    const step = micSampleRateHz / captureStreamRateHz;
+    const lastPos = (dstFrames - 1) * step;
+    const idx = Math.floor(lastPos);
+    const frac = lastPos - idx;
+    // Match `LinearResampler.required_source_frames` in `crates/aero-audio/src/pcm.rs`.
+    return Math.abs(frac) <= 1e-12 ? idx + 1 : idx + 2;
+  })();
+  expect(micAfter?.read ?? 0).toBe(expectedReadAfterFirstCapture);
 
   // Empty the mic ring (no available samples) and ensure capture still completes and produces silence.
   const micBeforeSilence = micAfter;
