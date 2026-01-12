@@ -120,6 +120,10 @@ fn int10_text_active_page_affects_cursor_and_scroll() {
     cpu.set_ax(0x0501);
     bios.handle_int10(&mut cpu, &mut mem);
     assert_eq!(BiosDataArea::read_active_page(&mut mem), 1);
+    assert_eq!(
+        BiosDataArea::read_video_page_offset(&mut mem),
+        BiosDataArea::read_page_size(&mut mem)
+    );
 
     // Set cursor pos for page 1 to (row=2, col=5).
     cpu.set_ax(0x0200);

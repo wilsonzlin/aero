@@ -30,6 +30,9 @@ impl Bios {
                 let page = cpu.al();
                 if page < 8 {
                     BiosDataArea::write_active_page(memory, page);
+                    let page_size = BiosDataArea::read_page_size(memory);
+                    let offset = page_size.saturating_mul(u16::from(page));
+                    BiosDataArea::write_video_page_offset(memory, offset);
                 }
             }
             0x0F => {
