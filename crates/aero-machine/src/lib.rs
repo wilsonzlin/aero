@@ -3774,8 +3774,8 @@ impl snapshot::SnapshotTarget for Machine {
                     .is_ok();
         }
 
-        // 7) After HPET restore, poll once so any level-triggered lines implied by restored
-        // interrupt status are asserted immediately.
+        // 7) After HPET restore, re-drive any pending level-triggered timer lines implied by the
+        // restored interrupt status.
         if restored_hpet {
             if let (Some(hpet), Some(interrupts)) = (&self.hpet, &self.interrupts) {
                 let mut hpet = hpet.borrow_mut();
