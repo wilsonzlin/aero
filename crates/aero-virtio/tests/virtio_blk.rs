@@ -638,6 +638,94 @@ fn virtio_blk_snapshot_restore_preserves_pending_avail_entries_without_renotify(
 }
 
 #[test]
+fn virtio_pci_modern_dma_is_gated_on_pci_bus_master_enable() {
+    let irq = TestIrq::default();
+    let (mut dev, caps, mut mem, _backing, _flushes, irq) = setup_with_irq(irq);
+
+    // Disable bus mastering after the driver has set up the virtqueue. The guest should still be
+    // able to interact with BAR0 MMIO, but the transport must not touch guest memory until BME is
+    // re-enabled.
+    dev.config_write(0x04, &0x0000u16.to_le_bytes());
+
+    // Build a FLUSH request.
+    let header = 0x7000;
+    let status = 0x9000;
+    write_u32_le(&mut mem, header, VIRTIO_BLK_T_FLUSH).unwrap();
+    write_u32_le(&mut mem, header + 4, 0).unwrap();
+    write_u64_le(&mut mem, header + 8, 0).unwrap();
+    mem.write(status, &[0xff]).unwrap();
+
+    write_desc(&mut mem, DESC_TABLE, 0, header, 16, 0x0001, 1);
+    write_desc(&mut mem, DESC_TABLE, 1, status, 1, 0x0002, 0);
+
+    write_u16_le(&mut mem, AVAIL_RING, 0).unwrap();
+    write_u16_le(&mut mem, AVAIL_RING + 2, 1).unwrap();
+    write_u16_le(&mut mem, AVAIL_RING + 4, 0).unwrap();
+    write_u16_le(&mut mem, USED_RING, 0).unwrap();
+    write_u16_le(&mut mem, USED_RING + 2, 0).unwrap();
+
+    // Notify and attempt to process while BME is disabled.
+    dev.bar0_write(caps.notify, &0u16.to_le_bytes());
+    dev.process_notified_queues(&mut mem);
+
+    assert_eq!(mem.get_slice(status, 1).unwrap()[0], 0xff);
+    assert_eq!(dev.debug_queue_used_idx(&mem, 0), Some(0));
+    assert_eq!(irq.legacy_count(), 0);
+    assert!(!irq.legacy_level());
+
+    // Re-enable bus mastering and ensure the pending notify is processed.
+    dev.config_write(0x04, &0x0004u16.to_le_bytes());
+    dev.process_notified_queues(&mut mem);
+
+    assert_eq!(mem.get_slice(status, 1).unwrap()[0], 0);
+    assert_eq!(dev.debug_queue_used_idx(&mem, 0), Some(1));
+    assert_eq!(irq.legacy_count(), 1);
+    assert!(irq.legacy_level());
+}
+
+#[test]
+fn virtio_pci_modern_intx_disable_suppresses_line_but_retains_pending() {
+    let irq = TestIrq::default();
+    let (mut dev, caps, mut mem, _backing, _flushes, irq) = setup_with_irq(irq);
+
+    // Enable bus mastering but disable INTx delivery.
+    dev.config_write(0x04, &0x0404u16.to_le_bytes());
+
+    // Build a FLUSH request.
+    let header = 0x7000;
+    let status = 0x9000;
+    write_u32_le(&mut mem, header, VIRTIO_BLK_T_FLUSH).unwrap();
+    write_u32_le(&mut mem, header + 4, 0).unwrap();
+    write_u64_le(&mut mem, header + 8, 0).unwrap();
+    mem.write(status, &[0xff]).unwrap();
+
+    write_desc(&mut mem, DESC_TABLE, 0, header, 16, 0x0001, 1);
+    write_desc(&mut mem, DESC_TABLE, 1, status, 1, 0x0002, 0);
+
+    write_u16_le(&mut mem, AVAIL_RING, 0).unwrap();
+    write_u16_le(&mut mem, AVAIL_RING + 2, 1).unwrap();
+    write_u16_le(&mut mem, AVAIL_RING + 4, 0).unwrap();
+    write_u16_le(&mut mem, USED_RING, 0).unwrap();
+    write_u16_le(&mut mem, USED_RING + 2, 0).unwrap();
+
+    dev.bar0_write(caps.notify, &0u16.to_le_bytes());
+    dev.process_notified_queues(&mut mem);
+
+    // Request should complete, but INTx should be suppressed while disabled.
+    assert_eq!(mem.get_slice(status, 1).unwrap()[0], 0);
+    assert_eq!(dev.debug_queue_used_idx(&mem, 0), Some(1));
+    assert_eq!(irq.legacy_count(), 0);
+    assert!(!irq.legacy_level());
+    assert!(!dev.irq_level());
+
+    // Re-enable INTx and ensure the pending latch reasserts the line without additional work.
+    dev.config_write(0x04, &0x0004u16.to_le_bytes());
+    assert_eq!(irq.legacy_count(), 1);
+    assert!(irq.legacy_level());
+    assert!(dev.irq_level());
+}
+
+#[test]
 fn malformed_chains_return_ioerr_without_panicking() {
     let (mut dev, caps, mut mem, _backing, _flushes) = setup();
 
