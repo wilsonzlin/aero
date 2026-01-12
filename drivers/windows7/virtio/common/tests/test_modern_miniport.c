@@ -150,6 +150,110 @@ static void test_init_ok(void)
     free(bar0);
 }
 
+static void test_init_invalid_cfg_too_small_fails(void)
+{
+    uint8_t bar0[TEST_BAR0_SIZE];
+    uint8_t pci_cfg[256];
+    VIRTIO_PCI_DEVICE dev;
+    NTSTATUS st;
+
+    build_test_pci_config(pci_cfg);
+    memset(bar0, 0, sizeof(bar0));
+
+    st = VirtioPciModernMiniportInit(&dev, (PUCHAR)bar0, sizeof(bar0), pci_cfg, 0x20);
+    assert(st == STATUS_BUFFER_TOO_SMALL);
+}
+
+static void test_init_invalid_missing_cap_list_fails(void)
+{
+    uint8_t bar0[TEST_BAR0_SIZE];
+    uint8_t pci_cfg[256];
+    VIRTIO_PCI_DEVICE dev;
+    NTSTATUS st;
+
+    build_test_pci_config(pci_cfg);
+    memset(bar0, 0, sizeof(bar0));
+
+    /* Clear PCI status cap-list bit. */
+    pci_cfg[0x06] = 0;
+    pci_cfg[0x07] = 0;
+
+    st = VirtioPciModernMiniportInit(&dev, (PUCHAR)bar0, sizeof(bar0), pci_cfg, 256);
+    assert(st == STATUS_DEVICE_CONFIGURATION_ERROR);
+}
+
+static void test_init_invalid_notify_multiplier_zero_fails(void)
+{
+    uint8_t bar0[TEST_BAR0_SIZE];
+    uint8_t pci_cfg[256];
+    VIRTIO_PCI_DEVICE dev;
+    NTSTATUS st;
+
+    build_test_pci_config(pci_cfg);
+    memset(bar0, 0, sizeof(bar0));
+
+    /* notify_off_multiplier field is at notify cap + 16. */
+    cfg_write_le32(pci_cfg, 0x50 + 16, 0);
+
+    st = VirtioPciModernMiniportInit(&dev, (PUCHAR)bar0, sizeof(bar0), pci_cfg, 256);
+    assert(st == STATUS_DEVICE_CONFIGURATION_ERROR);
+}
+
+static void test_init_invalid_common_cfg_not_in_bar0_fails(void)
+{
+    uint8_t bar0[TEST_BAR0_SIZE];
+    uint8_t pci_cfg[256];
+    VIRTIO_PCI_DEVICE dev;
+    NTSTATUS st;
+
+    build_test_pci_config(pci_cfg);
+    memset(bar0, 0, sizeof(bar0));
+
+    /* Provide BAR1 address so cap parser accepts bar=1. */
+    cfg_write_le32(pci_cfg, 0x14, 0x2000u);
+
+    /* Set common_cfg cap's bar field to 1. */
+    pci_cfg[0x40 + 4] = 1;
+
+    st = VirtioPciModernMiniportInit(&dev, (PUCHAR)bar0, sizeof(bar0), pci_cfg, 256);
+    assert(st == STATUS_DEVICE_CONFIGURATION_ERROR);
+}
+
+static void test_init_invalid_cap_out_of_range_fails(void)
+{
+    uint8_t bar0[TEST_BAR0_SIZE];
+    uint8_t pci_cfg[256];
+    VIRTIO_PCI_DEVICE dev;
+    NTSTATUS st;
+
+    build_test_pci_config(pci_cfg);
+    memset(bar0, 0, sizeof(bar0));
+
+    /* Move common cfg window near the end so it overflows BAR0. */
+    cfg_write_le32(pci_cfg, 0x40 + 8, TEST_BAR0_SIZE - 0x20);
+    cfg_write_le32(pci_cfg, 0x40 + 12, 0x38); /* sizeof(virtio_pci_common_cfg) */
+
+    st = VirtioPciModernMiniportInit(&dev, (PUCHAR)bar0, sizeof(bar0), pci_cfg, 256);
+    assert(st == STATUS_DEVICE_CONFIGURATION_ERROR);
+}
+
+static void test_init_invalid_notify_len_too_small_fails(void)
+{
+    uint8_t bar0[TEST_BAR0_SIZE];
+    uint8_t pci_cfg[256];
+    VIRTIO_PCI_DEVICE dev;
+    NTSTATUS st;
+
+    build_test_pci_config(pci_cfg);
+    memset(bar0, 0, sizeof(bar0));
+
+    /* notify cfg length < sizeof(UINT16) should be rejected. */
+    cfg_write_le32(pci_cfg, 0x50 + 12, 1);
+
+    st = VirtioPciModernMiniportInit(&dev, (PUCHAR)bar0, sizeof(bar0), pci_cfg, 256);
+    assert(st == STATUS_DEVICE_CONFIGURATION_ERROR);
+}
+
 static void test_read_device_features(void)
 {
     uint8_t bar0[TEST_BAR0_SIZE];
@@ -507,6 +611,34 @@ static void test_read_device_config_success(void)
     VirtioPciModernMmioSimUninstall();
 }
 
+static void test_read_device_config_invalid_range(void)
+{
+    uint8_t bar0[TEST_BAR0_SIZE];
+    uint8_t pci_cfg[256];
+    VIRTIO_PCI_DEVICE dev;
+    VIRTIO_PCI_MODERN_MMIO_SIM sim;
+    uint8_t buf[2];
+    NTSTATUS st;
+
+    setup_device(&dev, bar0, pci_cfg);
+
+    VirtioPciModernMmioSimInit(&sim,
+                               dev.CommonCfg,
+                               (volatile uint8_t*)dev.NotifyBase,
+                               dev.NotifyLength,
+                               (volatile uint8_t*)dev.IsrStatus,
+                               dev.IsrLength,
+                               (volatile uint8_t*)dev.DeviceCfg,
+                               dev.DeviceCfgLength);
+
+    VirtioPciModernMmioSimInstall(&sim);
+
+    st = VirtioPciReadDeviceConfig(&dev, TEST_DEVICE_CFG_LEN - 1, buf, 2);
+    assert(st == STATUS_INVALID_PARAMETER);
+
+    VirtioPciModernMmioSimUninstall();
+}
+
 static void test_read_device_config_generation_mismatch_times_out(void)
 {
     uint8_t bar0[TEST_BAR0_SIZE];
@@ -723,6 +855,12 @@ static void test_notify_queue_populates_and_uses_cache(void)
 int main(void)
 {
     test_init_ok();
+    test_init_invalid_cfg_too_small_fails();
+    test_init_invalid_missing_cap_list_fails();
+    test_init_invalid_notify_multiplier_zero_fails();
+    test_init_invalid_common_cfg_not_in_bar0_fails();
+    test_init_invalid_cap_out_of_range_fails();
+    test_init_invalid_notify_len_too_small_fails();
     test_read_device_features();
     test_negotiate_features_missing_required_fails();
     test_negotiate_features_success_and_status_sequence();
@@ -732,6 +870,7 @@ int main(void)
     test_setup_queue_not_found_when_size_zero();
     test_disable_queue_clears_enable();
     test_read_device_config_success();
+    test_read_device_config_invalid_range();
     test_read_device_config_generation_mismatch_times_out();
     test_get_queue_notify_address_respects_multiplier();
     test_get_queue_notify_address_errors();
