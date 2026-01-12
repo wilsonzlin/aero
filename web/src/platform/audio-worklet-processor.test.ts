@@ -108,4 +108,36 @@ describe("audio-worklet-processor underrun counter", () => {
     expect(total).toBe(2);
     expect(Atomics.load(views.underrunCount, 0) >>> 0).toBe(2);
   });
+
+  it("does not throw if the provided SharedArrayBuffer is too small/misaligned", () => {
+    // Corrupted snapshots or misbehaving hosts should not crash the AudioWorklet. The processor
+    // should treat invalid buffers as "no ring attached" and output silence.
+    const sab = new SharedArrayBuffer(1);
+    const proc = new AeroAudioProcessor({
+      processorOptions: { ringBuffer: sab, channelCount: 2, capacityFrames: 4 },
+    });
+
+    const outputs: Float32Array[][] = [[new Float32Array(4), new Float32Array(4)]];
+    proc.process([], outputs);
+
+    expect(outputs[0][0]).toEqual(new Float32Array(4));
+    expect(outputs[0][1]).toEqual(new Float32Array(4));
+  });
+
+  it("clamps capacityFrames to the SharedArrayBuffer's actual sample storage", () => {
+    const { sab, views } = makeRingBuffer(4, 1);
+    Atomics.store(views.readIndex, 0, 0);
+    Atomics.store(views.writeIndex, 0, 1);
+    views.samples[0] = 0.5;
+
+    // Lie about the capacity via processorOptions; the worklet must not index past the buffer.
+    const proc = new AeroAudioProcessor({
+      processorOptions: { ringBuffer: sab, channelCount: 1, capacityFrames: 1_000_000 },
+    });
+
+    const outputs: Float32Array[][] = [[new Float32Array(1)]];
+    proc.process([], outputs);
+
+    expect(outputs[0][0]).toEqual(Float32Array.from([0.5]));
+  });
 });

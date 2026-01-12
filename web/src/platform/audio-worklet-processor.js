@@ -36,10 +36,24 @@ export class AeroAudioProcessor extends WorkletProcessorBase {
       // Layout is described in:
       // - `web/src/platform/audio_worklet_ring_layout.js` (layout-only, AudioWorklet-safe)
       // - `web/src/audio/audio_worklet_ring.ts` (producer-side helpers; re-exports the same constants)
-      this._header = new Uint32Array(ringBuffer, 0, HEADER_U32_LEN);
-      this._samples = new Float32Array(ringBuffer, HEADER_BYTES);
-      this._channelCount = typeof channelCount === "number" ? channelCount : null;
-      this._capacityFrames = typeof capacityFrames === "number" ? capacityFrames : null;
+      //
+      // `SharedArrayBuffer` contents/size may be untrusted (e.g. corrupted snapshot state or a
+      // misbehaving host). Creating typed-array views can throw a RangeError if the buffer is too
+      // small or misaligned; treat that as "no ring attached" and output silence rather than
+      // crashing the AudioWorklet.
+      let header = null;
+      let samples = null;
+      try {
+        header = new Uint32Array(ringBuffer, 0, HEADER_U32_LEN);
+        samples = new Float32Array(ringBuffer, HEADER_BYTES);
+      } catch (_e) {
+        header = null;
+        samples = null;
+      }
+      this._header = header;
+      this._samples = samples;
+      this._channelCount = header && samples && typeof channelCount === "number" ? channelCount : null;
+      this._capacityFrames = header && samples && typeof capacityFrames === "number" ? capacityFrames : null;
     } else {
       this._header = null;
       this._samples = null;
@@ -52,14 +66,45 @@ export class AeroAudioProcessor extends WorkletProcessorBase {
     const output = outputs[0];
     if (!output) return true;
 
+    // Always zero outputs first so we never leak stale samples if the ring is absent or
+    // misconfigured.
+    for (let c = 0; c < output.length; c++) output[c].fill(0);
+
     if (!this._header || !this._samples) {
-      for (let c = 0; c < output.length; c++) output[c].fill(0);
       return true;
     }
 
-    const channelCount = Math.min(this._channelCount ?? output.length, output.length);
     const framesNeeded = output[0]?.length ?? 0;
-    const capacityFrames = this._capacityFrames ?? Math.floor(this._samples.length / channelCount);
+    if (framesNeeded === 0) return true;
+
+    // Defensive validation: callers can pass bogus values for `channelCount`/`capacityFrames` via
+    // `processorOptions`, and the AudioWorklet must never index out of bounds into the shared ring.
+    //
+    // Clamp channelCount to the actual output channel count and derive an upper bound on the ring
+    // capacity from the SharedArrayBuffer length.
+    let channelCount = this._channelCount;
+    if (!Number.isFinite(channelCount) || channelCount <= 0) channelCount = output.length;
+    channelCount = Math.floor(channelCount);
+    channelCount = Math.min(Math.max(channelCount, 1), output.length);
+
+    const maxCapacityFromBuffer = Math.floor(this._samples.length / channelCount);
+    if (!Number.isFinite(maxCapacityFromBuffer) || maxCapacityFromBuffer <= 0) {
+      return true;
+    }
+
+    // Cap to match other layers of the stack (Rust `WorkletBridge` / TS helpers) so untrusted
+    // inputs cannot make the worklet do multi-second per-callback work.
+    const MAX_CAPACITY_FRAMES = 1_048_576; // 2^20 frames (~21s @ 48kHz)
+
+    let capacityFrames = this._capacityFrames;
+    if (Number.isFinite(capacityFrames) && capacityFrames > 0) {
+      capacityFrames = Math.floor(capacityFrames) >>> 0;
+      capacityFrames = Math.min(capacityFrames, maxCapacityFromBuffer);
+    } else {
+      capacityFrames = maxCapacityFromBuffer;
+    }
+    capacityFrames = Math.min(capacityFrames, MAX_CAPACITY_FRAMES);
+    if (capacityFrames <= 0) return true;
 
     const readFrameIndex = Atomics.load(this._header, READ_FRAME_INDEX) >>> 0;
     const writeFrameIndex = Atomics.load(this._header, WRITE_FRAME_INDEX) >>> 0;
@@ -89,12 +134,9 @@ export class AeroAudioProcessor extends WorkletProcessorBase {
       }
     }
 
-    // Zero-fill any missing frames (underrun).
+    // Any missing frames are already zeroed above.
     if (framesToRead < framesNeeded) {
       const missing = framesNeeded - framesToRead;
-      for (let c = 0; c < output.length; c++) {
-        output[c].fill(0, framesToRead);
-      }
       const newTotal = addUnderrunFrames(this._header, missing);
       this.port.postMessage({
         type: "underrun",
