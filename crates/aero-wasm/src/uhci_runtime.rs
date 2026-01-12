@@ -499,6 +499,11 @@ impl UhciRuntime {
                 "USB HID passthrough devices must attach behind the external hub (expected path like [0, <hubPort>])",
             ));
         }
+        if path.len() != 2 {
+            return Err(js_error(
+                "Nested USB topology paths are not supported by UhciRuntime yet (expected [0, <hubPort>])",
+            ));
+        }
         if path[0] as usize != EXTERNAL_HUB_ROOT_PORT {
             return Err(js_error(
                 "USB HID passthrough devices must attach behind the external hub on root port 0",
@@ -1486,7 +1491,7 @@ impl UhciRuntime {
             .usb_hid_passthrough_devices
             .iter()
             .filter_map(|(path, dev)| {
-                if path.len() < 2 || path[0] as usize != EXTERNAL_HUB_ROOT_PORT {
+                if path.len() != 2 || path[0] as usize != EXTERNAL_HUB_ROOT_PORT {
                     return None;
                 }
                 let hub_port = path[1];
