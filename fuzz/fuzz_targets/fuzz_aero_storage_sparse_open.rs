@@ -66,6 +66,42 @@ fuzz_target!(|data: &[u8]| {
     // Re-open after mutation to exercise parsing of updated header/table state.
     let backend = disk.into_backend();
     if let Ok(mut reopened) = AeroSparseDisk::open(backend) {
+        let cap = reopened.capacity_bytes();
+        if cap > 0 {
+            let mut u = Unstructured::new(data);
+            let ops: usize = u.int_in_range(0usize..=MAX_OPS).unwrap_or(0);
+            for _ in 0..ops {
+                let is_write: bool = u.arbitrary().unwrap_or(false);
+                let len: usize = u.int_in_range(0usize..=MAX_IO_BYTES).unwrap_or(0);
+                if len == 0 {
+                    continue;
+                }
+
+                let len_u64 = len as u64;
+                if cap < len_u64 {
+                    continue;
+                }
+                let max_off = cap - len_u64;
+                let raw_off: u64 = u.arbitrary().unwrap_or(0);
+                let off = if max_off == u64::MAX {
+                    raw_off
+                } else {
+                    raw_off % (max_off + 1)
+                };
+
+                if is_write {
+                    let mut buf = vec![0u8; len];
+                    for b in &mut buf {
+                        *b = u.arbitrary().unwrap_or(0);
+                    }
+                    let _ = reopened.write_at(off, &buf);
+                } else {
+                    let mut buf = vec![0u8; len];
+                    let _ = reopened.read_at(off, &mut buf);
+                }
+            }
+        }
+
         let _ = reopened.flush();
     }
 });
