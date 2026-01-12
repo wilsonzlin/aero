@@ -1861,14 +1861,26 @@ impl AerogpuD3d11Executor {
             }
 
             if opcode == OPCODE_UPLOAD_RESOURCE {
-                // UPLOAD_RESOURCE requires ending the pass to preserve ordering relative to draw
-                // commands, unless the upload is a no-op (size_bytes == 0).
+                // UPLOAD_RESOURCE can be applied inside an active render pass via `queue.write_*`
+                // only when the upload can be reordered ahead of the eventual command-buffer
+                // submission without changing the behavior of any previously recorded GPU work.
                 if cmd_bytes.len() < 32 {
                     break;
                 }
+                let handle = read_u32_le(cmd_bytes, 8)?;
                 let size_bytes = read_u64_le(cmd_bytes, 24)?;
                 if size_bytes != 0 {
-                    break;
+                    if self.resources.buffers.contains_key(&handle) {
+                        if self.encoder_used_buffers.contains(&handle) {
+                            break;
+                        }
+                    } else if self.resources.textures.contains_key(&handle) {
+                        if self.encoder_used_textures.contains(&handle) {
+                            break;
+                        }
+                    } else {
+                        // Unknown handle; treat as a no-op for robustness.
+                    }
                 }
             }
 
@@ -2866,7 +2878,17 @@ impl AerogpuD3d11Executor {
                 OPCODE_SET_INPUT_LAYOUT => self.exec_set_input_layout(cmd_bytes)?,
                 OPCODE_SET_RENDER_TARGETS => self.exec_set_render_targets(cmd_bytes)?,
                 OPCODE_RESOURCE_DIRTY_RANGE => self.exec_resource_dirty_range(cmd_bytes)?,
-                OPCODE_UPLOAD_RESOURCE | OPCODE_COPY_BUFFER | OPCODE_COPY_TEXTURE2D => {}
+                OPCODE_UPLOAD_RESOURCE => {
+                    let (cmd, data) = decode_cmd_upload_resource_payload_le(cmd_bytes)
+                        .map_err(|e| anyhow!("UPLOAD_RESOURCE: invalid payload: {e:?}"))?;
+                    self.upload_resource_payload(
+                        cmd.resource_handle,
+                        cmd.offset_bytes,
+                        cmd.size_bytes,
+                        data,
+                    )?;
+                }
+                OPCODE_COPY_BUFFER | OPCODE_COPY_TEXTURE2D => {}
                 OPCODE_CLEAR => {}
                 OPCODE_SET_VERTEX_BUFFERS => {
                     let Ok((cmd, bindings)) = decode_cmd_set_vertex_buffers_bindings_le(cmd_bytes)
@@ -3313,6 +3335,32 @@ impl AerogpuD3d11Executor {
         let offset = cmd.offset_bytes;
         let size = cmd.size_bytes;
 
+        if size == 0 {
+            return Ok(());
+        }
+
+        // Preserve command stream ordering relative to any previously encoded GPU work.
+        if self.resources.buffers.contains_key(&handle) || self.resources.textures.contains_key(&handle) {
+            self.submit_encoder_if_has_commands(
+                encoder,
+                "aerogpu_cmd encoder after UPLOAD_RESOURCE",
+            );
+        }
+
+        self.upload_resource_payload(handle, offset, size, data)
+    }
+
+    fn upload_resource_payload(
+        &mut self,
+        handle: u32,
+        offset: u64,
+        size: u64,
+        data: &[u8],
+    ) -> Result<()> {
+        if size == 0 {
+            return Ok(());
+        }
+
         if let Some((buffer_size, buffer_gpu_size)) = self
             .resources
             .buffers
@@ -3358,11 +3406,6 @@ impl AerogpuD3d11Executor {
                 data
             };
 
-            // Preserve command stream ordering relative to any previously encoded GPU work.
-            self.submit_encoder_if_has_commands(
-                encoder,
-                "aerogpu_cmd encoder after UPLOAD_RESOURCE",
-            );
             {
                 let buf = self
                     .resources
@@ -3396,82 +3439,70 @@ impl AerogpuD3d11Executor {
             return Ok(());
         };
 
-        {
-            // Texture uploads are expressed as a linear byte range into mip0/layer0.
-            //
-            // WebGPU uploads are 2D; for partial updates we patch into a CPU shadow buffer and then
-            // re-upload the full texture.
-            let bytes_per_row = if row_pitch_bytes != 0 {
-                row_pitch_bytes
-            } else {
-                desc.width
-                    .checked_mul(bytes_per_texel(desc.format)?)
-                    .ok_or_else(|| anyhow!("UPLOAD_RESOURCE: bytes_per_row overflow"))?
-            };
-            let expected = (bytes_per_row as u64).saturating_mul(desc.height as u64);
+        // Texture uploads are expressed as a linear byte range into mip0/layer0.
+        //
+        // WebGPU uploads are 2D; for partial updates we patch into a CPU shadow buffer and then
+        // re-upload the full texture.
+        let bytes_per_row = if row_pitch_bytes != 0 {
+            row_pitch_bytes
+        } else {
+            desc.width
+                .checked_mul(bytes_per_texel(desc.format)?)
+                .ok_or_else(|| anyhow!("UPLOAD_RESOURCE: bytes_per_row overflow"))?
+        };
+        let expected = (bytes_per_row as u64).saturating_mul(desc.height as u64);
 
-            let end = offset
-                .checked_add(size)
-                .ok_or_else(|| anyhow!("UPLOAD_RESOURCE: upload range overflows u64"))?;
-            if end > expected {
-                bail!("UPLOAD_RESOURCE: texture upload out of bounds");
-            }
+        let end = offset
+            .checked_add(size)
+            .ok_or_else(|| anyhow!("UPLOAD_RESOURCE: upload range overflows u64"))?;
+        if end > expected {
+            bail!("UPLOAD_RESOURCE: texture upload out of bounds");
+        }
 
-            let expected_usize: usize = expected
-                .try_into()
-                .map_err(|_| anyhow!("UPLOAD_RESOURCE: texture upload size out of range"))?;
-            let offset_usize: usize = offset
-                .try_into()
-                .map_err(|_| anyhow!("UPLOAD_RESOURCE: offset out of range"))?;
-            let end_usize: usize = end
-                .try_into()
-                .map_err(|_| anyhow!("UPLOAD_RESOURCE: end out of range"))?;
+        let expected_usize: usize = expected
+            .try_into()
+            .map_err(|_| anyhow!("UPLOAD_RESOURCE: texture upload size out of range"))?;
+        let offset_usize: usize = offset
+            .try_into()
+            .map_err(|_| anyhow!("UPLOAD_RESOURCE: offset out of range"))?;
+        let end_usize: usize = end
+            .try_into()
+            .map_err(|_| anyhow!("UPLOAD_RESOURCE: end out of range"))?;
 
-            if offset == 0 && size == expected {
-                self.submit_encoder_if_has_commands(
-                    encoder,
-                    "aerogpu_cmd encoder after UPLOAD_RESOURCE",
-                );
-                let tex = self
-                    .resources
-                    .textures
-                    .get_mut(&handle)
-                    .ok_or_else(|| anyhow!("UPLOAD_RESOURCE: unknown texture {handle}"))?;
-                write_texture_linear(&self.queue, &tex.texture, tex.desc, bytes_per_row, data)?;
-                tex.host_shadow = Some(data.to_vec());
-                tex.dirty = false;
-                return Ok(());
-            }
-
-            let shadow_len = shadow_len.ok_or_else(|| {
-                anyhow!("UPLOAD_RESOURCE: partial texture uploads require a prior full upload")
-            })?;
-            if shadow_len != expected_usize {
-                bail!("UPLOAD_RESOURCE: internal shadow size mismatch");
-            }
-
-            self.submit_encoder_if_has_commands(
-                encoder,
-                "aerogpu_cmd encoder after UPLOAD_RESOURCE",
-            );
-
+        if offset == 0 && size == expected {
             let tex = self
                 .resources
                 .textures
                 .get_mut(&handle)
                 .ok_or_else(|| anyhow!("UPLOAD_RESOURCE: unknown texture {handle}"))?;
-            let shadow = tex.host_shadow.as_mut().ok_or_else(|| {
-                anyhow!("UPLOAD_RESOURCE: partial texture uploads require a prior full upload")
-            })?;
-            if shadow.len() != expected_usize {
-                bail!("UPLOAD_RESOURCE: internal shadow size mismatch");
-            }
-            shadow[offset_usize..end_usize].copy_from_slice(data);
-
-            write_texture_linear(&self.queue, &tex.texture, tex.desc, bytes_per_row, shadow)?;
+            write_texture_linear(&self.queue, &tex.texture, tex.desc, bytes_per_row, data)?;
+            tex.host_shadow = Some(data.to_vec());
             tex.dirty = false;
-            Ok(())
+            return Ok(());
         }
+
+        let shadow_len =
+            shadow_len.ok_or_else(|| anyhow!("UPLOAD_RESOURCE: partial texture uploads require a prior full upload"))?;
+        if shadow_len != expected_usize {
+            bail!("UPLOAD_RESOURCE: internal shadow size mismatch");
+        }
+
+        let tex = self
+            .resources
+            .textures
+            .get_mut(&handle)
+            .ok_or_else(|| anyhow!("UPLOAD_RESOURCE: unknown texture {handle}"))?;
+        let shadow = tex.host_shadow.as_mut().ok_or_else(|| {
+            anyhow!("UPLOAD_RESOURCE: partial texture uploads require a prior full upload")
+        })?;
+        if shadow.len() != expected_usize {
+            bail!("UPLOAD_RESOURCE: internal shadow size mismatch");
+        }
+        shadow[offset_usize..end_usize].copy_from_slice(data);
+
+        write_texture_linear(&self.queue, &tex.texture, tex.desc, bytes_per_row, shadow)?;
+        tex.dirty = false;
+        Ok(())
     }
 
     fn exec_copy_buffer(
