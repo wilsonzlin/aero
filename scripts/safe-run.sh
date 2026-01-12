@@ -150,9 +150,30 @@ export RUSTC_WORKER_THREADS="${RUSTC_WORKER_THREADS:-$CARGO_BUILD_JOBS}"
 #
 # If you want to set codegen-units for a specific invocation, use:
 #   AERO_RUST_CODEGEN_UNITS=<n> (alias: AERO_CODEGEN_UNITS)
+cmd0="${1:-}"
+cmd0="${cmd0##*/}"
+
 is_cargo_cmd=false
-if [[ "${1:-}" == "cargo" || "${1:-}" == */cargo ]]; then
+is_retryable_cmd=false
+case "${cmd0}" in
+  cargo|cargo.exe)
+    # Direct Cargo invocation: apply extra Rust-specific env hardening.
     is_cargo_cmd=true
+    is_retryable_cmd=true
+    ;;
+  cargo-*)
+    # Cargo subcommand binaries (e.g. cargo-clippy, cargo-nextest). These still
+    # run Rust tooling and are safe to retry on transient OS resource limits.
+    is_retryable_cmd=true
+    ;;
+  npm|npm.exe|pnpm|pnpm.exe|yarn|yarn.exe|node|node.exe|npx|npx.exe|wasm-pack|wasm-pack.exe)
+    # Common build/test drivers which may spawn Cargo/rustc internally (e.g.
+    # `npm -w web run wasm:build`).
+    is_retryable_cmd=true
+    ;;
+esac
+
+if [[ "${is_cargo_cmd}" == "true" ]]; then
     if [[ "${RUSTFLAGS:-}" != *"codegen-units="* ]]; then
         # Allow explicit override without requiring users to manually edit RUSTFLAGS.
         # `AERO_CODEGEN_UNITS` is a shorthand alias for `AERO_RUST_CODEGEN_UNITS`.
@@ -229,7 +250,7 @@ if [[ $# -lt 1 ]]; then
     echo "  AERO_ISOLATE_CARGO_HOME=1  Override CARGO_HOME to ./.cargo-home (opt-in, avoids registry lock contention on shared hosts)" >&2
     echo "  AERO_DISABLE_RUSTC_WRAPPER=1  Force-disable rustc wrappers (clears RUSTC_WRAPPER env vars; overrides Cargo config build.rustc-wrapper)" >&2
     echo "  AERO_CARGO_BUILD_JOBS=1  Cargo parallelism for agent sandboxes (default: 1; overrides CARGO_BUILD_JOBS if set)" >&2
-    echo "  AERO_SAFE_RUN_RUSTC_RETRIES=3  Retries for transient rustc thread spawn panics (default: 3; only for cargo commands)" >&2
+    echo "  AERO_SAFE_RUN_RUSTC_RETRIES=3  Retries for transient rustc/EAGAIN spawn failures (default: 3; for cargo + common wrappers like npm/wasm-pack)" >&2
     echo "  CARGO_BUILD_JOBS=1       Cargo parallelism override (used when AERO_CARGO_BUILD_JOBS is unset)" >&2
     echo "  RUSTC_WORKER_THREADS=1   rustc internal worker threads (default: CARGO_BUILD_JOBS)" >&2
     echo "  RAYON_NUM_THREADS=1      Rayon global pool size (default: CARGO_BUILD_JOBS)" >&2
@@ -357,8 +378,8 @@ run_once() {
     return "${status}"
 }
 
-# Retry Cargo commands when rustc hits transient OS resource limits. Keep the default small so real
-# failures aren't hidden for too long.
+# Retry Rust build/test commands when rustc hits transient OS resource limits. Keep the default
+# small so real failures aren't hidden for too long.
 MAX_RETRIES="${AERO_SAFE_RUN_RUSTC_RETRIES:-3}"
 if ! [[ "${MAX_RETRIES}" =~ ^[0-9]+$ ]] || [[ "${MAX_RETRIES}" -lt 1 ]]; then
     MAX_RETRIES=1
@@ -400,7 +421,7 @@ while true; do
     fi
 
     if [[ "${attempt}" -lt "${MAX_RETRIES}" ]] \
-        && [[ "${is_cargo_cmd}" == "true" ]] \
+        && [[ "${is_retryable_cmd}" == "true" ]] \
         && should_retry_rustc_thread_error "${stderr_log}"
     then
         # Exponential backoff with jitter (2-4, 4-8, 8-16, ...).
@@ -410,15 +431,15 @@ while true; do
             base=16
         fi
         delay=$((base + RANDOM % (base + 1)))
-        echo "[safe-run] rustc hit transient resource limit; retrying in ${delay}s (attempt $((attempt + 1))/${MAX_RETRIES})" >&2
+        echo "[safe-run] detected transient OS resource limit; retrying in ${delay}s (attempt $((attempt + 1))/${MAX_RETRIES})" >&2
         sleep "${delay}"
         attempt=$((attempt + 1))
         rm -f "${stderr_log}"
         continue
     fi
 
-    if [[ "${is_cargo_cmd}" == "true" ]] && should_retry_rustc_thread_error "${stderr_log}"; then
-        echo "[safe-run] note: rustc hit an OS resource limit (EAGAIN/WouldBlock). If this persists, try raising AERO_MEM_LIMIT (e.g. 32G or unlimited) or lowering parallelism (AERO_CARGO_BUILD_JOBS=1, RAYON_NUM_THREADS=1)." >&2
+    if [[ "${is_retryable_cmd}" == "true" ]] && should_retry_rustc_thread_error "${stderr_log}"; then
+        echo "[safe-run] note: detected an OS resource limit (EAGAIN/WouldBlock). If this persists, try raising AERO_MEM_LIMIT (e.g. 32G or unlimited) or lowering parallelism (AERO_CARGO_BUILD_JOBS=1, RAYON_NUM_THREADS=1)." >&2
     fi
 
     rm -f "${stderr_log}"

@@ -549,6 +549,59 @@ exit 0
   }
 });
 
+test("safe-run.sh retries npm when it hits rustc EAGAIN under contention (Linux)", { skip: process.platform !== "linux" }, () => {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "aero-safe-run-retry-npm-eagain-"));
+  try {
+    const binDir = path.join(tmpRoot, "bin");
+    fs.mkdirSync(binDir, { recursive: true });
+
+    const invocationsFile = path.join(tmpRoot, "npm-invocations.txt");
+    const fakeNpm = path.join(binDir, "npm");
+    fs.writeFileSync(
+      fakeNpm,
+      `#!/usr/bin/env bash
+set -euo pipefail
+
+count_file="\${NPM_INVOCATIONS_FILE:?}"
+count=0
+if [[ -f "\${count_file}" ]]; then
+  count="$(cat "\${count_file}")"
+fi
+count=$((count + 1))
+echo "\${count}" > "\${count_file}"
+
+if [[ "\${count}" -eq 1 ]]; then
+  echo "thread 'main' panicked at compiler/rustc_driver_impl/src/lib.rs:1608:6:" >&2
+  echo "Unable to install ctrlc handler: System(Os { code: 11, kind: WouldBlock, message: \\"Resource temporarily unavailable\\" })" >&2
+  exit 1
+fi
+exit 0
+`,
+      "utf8",
+    );
+    fs.chmodSync(fakeNpm, 0o755);
+
+    const fakeSleep = path.join(binDir, "sleep");
+    fs.writeFileSync(fakeSleep, "#!/usr/bin/env bash\nexit 0\n", "utf8");
+    fs.chmodSync(fakeSleep, 0o755);
+
+    const env = { ...process.env };
+    env.PATH = `${binDir}${path.delimiter}${env.PATH || ""}`;
+    env.NPM_INVOCATIONS_FILE = invocationsFile;
+    env.AERO_SAFE_RUN_RUSTC_RETRIES = "2";
+
+    execFileSync(path.join(repoRoot, "scripts/safe-run.sh"), ["npm"], {
+      cwd: repoRoot,
+      env,
+      stdio: "ignore",
+    });
+
+    assert.equal(fs.readFileSync(invocationsFile, "utf8").trim(), "2");
+  } finally {
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
+});
+
 test("safe-run.sh allows overriding codegen-units via AERO_RUST_CODEGEN_UNITS (Linux)", { skip: process.platform !== "linux" }, () => {
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "aero-safe-run-codegen-units-"));
   try {
