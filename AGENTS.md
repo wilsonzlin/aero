@@ -73,6 +73,7 @@ bash ./scripts/safe-run.sh cargo test --locked   # Test with timeout + memory li
   #   - RUST_TEST_THREADS controls Rust's built-in test harness parallelism (libtest). Agent helper scripts default it to CARGO_BUILD_JOBS for reliability under tight thread limits.
   #   - AERO_TOKIO_WORKER_THREADS controls Tokio runtime worker threads for supported Aero binaries (e.g. aero-l2-proxy, disk-gateway). Agent helper scripts default it to CARGO_BUILD_JOBS for reliability under tight thread limits.
   #   - AERO_ISOLATE_CARGO_HOME=1 isolates Cargo registry/cache state per checkout to avoid "Blocking waiting for file lock on package cache" on shared hosts.
+  #     - `scripts/safe-run.sh` will also create `./.cargo-home` automatically when it detects that lock contention, and will auto-use it on future runs as long as you're using the default Cargo home (`$HOME/.cargo`).
   #   - AERO_RUST_CODEGEN_UNITS (alias: AERO_CODEGEN_UNITS) controls rustc per-crate codegen parallelism (`-C codegen-units=<n>`) without manually editing RUSTFLAGS.
   #   - AERO_SAFE_RUN_RUSTC_RETRIES controls how many times safe-run will retry transient rustc thread/process spawn failures (EAGAIN/WouldBlock), including panics like:
   #       - `failed to spawn helper thread (WouldBlock)`
