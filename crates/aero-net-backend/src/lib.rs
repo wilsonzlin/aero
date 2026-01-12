@@ -37,13 +37,6 @@ pub trait NetworkBackend {
     fn poll_receive(&mut self) -> Option<Vec<u8>> {
         None
     }
-
-    /// Optional stats for the [`L2TunnelRingBackend`] implementation.
-    ///
-    /// Most backends do not expose ring statistics; they should return `None`.
-    fn l2_ring_stats(&self) -> Option<L2TunnelRingBackendStats> {
-        None
-    }
 }
 
 impl<T: NetworkBackend + ?Sized> NetworkBackend for Box<T> {
