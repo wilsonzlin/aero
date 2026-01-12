@@ -297,6 +297,18 @@ if [[ "${NODE_OPTIONS:-}" != *"--max-old-space-size="* ]]; then
   export NODE_OPTIONS="${NODE_OPTIONS# }"
 fi
 
+# Node.js test runner defaults to running many test files in parallel. In agent sandboxes (and
+# especially when tests instantiate WASM modules or spawn subprocesses), this can multiply memory
+# usage and lead to OOM failures.
+#
+# Keep the test runner concurrency aligned with our overall "how much parallel work should this
+# machine attempt?" knob (`CARGO_BUILD_JOBS` / `AERO_CARGO_BUILD_JOBS`), which defaults to 1 in
+# this script.
+if [[ "${NODE_OPTIONS:-}" != *"--test-concurrency="* ]]; then
+  export NODE_OPTIONS="${NODE_OPTIONS:-} --test-concurrency=${CARGO_BUILD_JOBS:-1}"
+  export NODE_OPTIONS="${NODE_OPTIONS# }"
+fi
+
 # Node.js version guard:
 # Some agent environments can't easily install the repo's pinned `.nvmrc` Node version.
 # If the major version doesn't match, enable the opt-in bypass for `check-node-version.mjs`
