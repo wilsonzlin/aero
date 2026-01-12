@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { createRequire } from "node:module";
 
 function writeExecutable(filePath, contents) {
@@ -19,6 +20,17 @@ function parseKeyValues(text) {
     out[line.slice(0, idx)] = line.slice(idx + 1);
   }
   return out;
+}
+
+function rustcHostTarget() {
+  const out = execFileSync("rustc", ["-vV"], { encoding: "utf8" });
+  const m = out.match(/^host:\s*(.+)\s*$/m);
+  assert.ok(m, `failed to parse rustc host target from: ${out}`);
+  return m[1].trim();
+}
+
+function cargoTargetRustflagsVar(target) {
+  return `CARGO_TARGET_${target.toUpperCase().replace(/[-.]/g, "_")}_RUSTFLAGS`;
 }
 
 async function withEnv(overrides, fn) {
@@ -45,6 +57,7 @@ test(
     try {
       const binDir = path.join(tmpRoot, "bin");
       fs.mkdirSync(binDir, { recursive: true });
+      const hostTargetVar = cargoTargetRustflagsVar(rustcHostTarget());
 
       const outputPath = path.join(tmpRoot, "cargo-env.txt");
       writeExecutable(
@@ -58,6 +71,10 @@ out="\${AERO_TEST_CARGO_ENV_OUT:?}"
   echo "RUSTC_WORKER_THREADS=\${RUSTC_WORKER_THREADS:-}"
   echo "RAYON_NUM_THREADS=\${RAYON_NUM_THREADS:-}"
   echo "AERO_TOKIO_WORKER_THREADS=\${AERO_TOKIO_WORKER_THREADS:-}"
+  var="\${AERO_TEST_HOST_RUSTFLAGS_VAR:-}"
+  if [[ -n "\${var}" ]]; then
+    echo "HOST_RUSTFLAGS=\${!var:-}"
+  fi
 } > "\${out}"
 
 exec node -e '
@@ -88,12 +105,14 @@ exec node -e '
         {
           PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
           AERO_TEST_CARGO_ENV_OUT: outputPath,
+          AERO_TEST_HOST_RUSTFLAGS_VAR: hostTargetVar,
           // Ensure we exercise the defaulting logic.
           AERO_CARGO_BUILD_JOBS: null,
           CARGO_BUILD_JOBS: null,
           RUSTC_WORKER_THREADS: null,
           RAYON_NUM_THREADS: null,
           AERO_TOKIO_WORKER_THREADS: null,
+          [hostTargetVar]: null,
         },
         async () => {
           const server = await startDiskGatewayServer({
@@ -115,6 +134,7 @@ exec node -e '
         RUSTC_WORKER_THREADS: "1",
         RAYON_NUM_THREADS: "1",
         AERO_TOKIO_WORKER_THREADS: "1",
+        HOST_RUSTFLAGS: process.platform === "linux" ? "-C link-arg=-Wl,--threads=1" : "",
       });
     } finally {
       fs.rmSync(tmpRoot, { recursive: true, force: true });
@@ -126,10 +146,11 @@ test(
   "disk-streaming-browser-e2e harness respects AERO_CARGO_BUILD_JOBS when spawning disk-gateway",
   { skip: process.platform === "win32" },
   async () => {
-    const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "aero-disk-gateway-env-override-"));
+      const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "aero-disk-gateway-env-override-"));
     try {
       const binDir = path.join(tmpRoot, "bin");
       fs.mkdirSync(binDir, { recursive: true });
+      const hostTargetVar = cargoTargetRustflagsVar(rustcHostTarget());
 
       const outputPath = path.join(tmpRoot, "cargo-env.txt");
       writeExecutable(
@@ -143,6 +164,10 @@ out="\${AERO_TEST_CARGO_ENV_OUT:?}"
   echo "RUSTC_WORKER_THREADS=\${RUSTC_WORKER_THREADS:-}"
   echo "RAYON_NUM_THREADS=\${RAYON_NUM_THREADS:-}"
   echo "AERO_TOKIO_WORKER_THREADS=\${AERO_TOKIO_WORKER_THREADS:-}"
+  var="\${AERO_TEST_HOST_RUSTFLAGS_VAR:-}"
+  if [[ -n "\${var}" ]]; then
+    echo "HOST_RUSTFLAGS=\${!var:-}"
+  fi
 } > "\${out}"
 
 exec node -e '
@@ -173,11 +198,13 @@ exec node -e '
         {
           PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
           AERO_TEST_CARGO_ENV_OUT: outputPath,
+          AERO_TEST_HOST_RUSTFLAGS_VAR: hostTargetVar,
           AERO_CARGO_BUILD_JOBS: "2",
           CARGO_BUILD_JOBS: null,
           RUSTC_WORKER_THREADS: null,
           RAYON_NUM_THREADS: null,
           AERO_TOKIO_WORKER_THREADS: null,
+          [hostTargetVar]: null,
         },
         async () => {
           const server = await startDiskGatewayServer({
@@ -199,6 +226,7 @@ exec node -e '
         RUSTC_WORKER_THREADS: "2",
         RAYON_NUM_THREADS: "2",
         AERO_TOKIO_WORKER_THREADS: "2",
+        HOST_RUSTFLAGS: process.platform === "linux" ? "-C link-arg=-Wl,--threads=2" : "",
       });
     } finally {
       fs.rmSync(tmpRoot, { recursive: true, force: true });

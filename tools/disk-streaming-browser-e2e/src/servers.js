@@ -1,5 +1,5 @@
 const http = require('node:http');
-const { spawn } = require('node:child_process');
+const { spawn, spawnSync } = require('node:child_process');
 const fs = require('node:fs/promises');
 const net = require('node:net');
 const os = require('node:os');
@@ -52,6 +52,33 @@ function isSccacheWrapper(value) {
     v.endsWith('/sccache.exe') ||
     v.endsWith('\\sccache.exe')
   );
+}
+
+let rustcHostTargetCache;
+function rustcHostTarget() {
+  if (rustcHostTargetCache !== undefined) return rustcHostTargetCache;
+  try {
+    const vv = spawnSync('rustc', ['-vV'], {
+      cwd: getRepoRoot(),
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: 5_000,
+    });
+    if (vv.status !== 0) {
+      rustcHostTargetCache = null;
+      return rustcHostTargetCache;
+    }
+    const m = (vv.stdout ?? '').match(/^host:\s*(.+)\s*$/m);
+    rustcHostTargetCache = m ? m[1].trim() : null;
+    return rustcHostTargetCache;
+  } catch {
+    rustcHostTargetCache = null;
+    return rustcHostTargetCache;
+  }
+}
+
+function cargoTargetRustflagsVar(target) {
+  return `CARGO_TARGET_${target.toUpperCase().replace(/[-.]/g, '_')}_RUSTFLAGS`;
 }
 
 function parsePositiveIntEnv(value) {
@@ -375,6 +402,20 @@ async function startDiskGatewayServer({ appOrigin, publicFixturePath, privateFix
   }
   if (parsePositiveIntEnv(env.AERO_TOKIO_WORKER_THREADS) === null) {
     env.AERO_TOKIO_WORKER_THREADS = String(jobs);
+  }
+
+  // Limit LLVM lld thread parallelism on Linux (matches safe-run/agent-env behavior).
+  // Use Cargo's per-target rustflags env var rather than mutating global RUSTFLAGS so this
+  // doesn't leak into wasm builds (rust-lld -flavor wasm does not understand -Wl,...).
+  if (process.platform === 'linux') {
+    const host = rustcHostTarget();
+    if (host) {
+      const varName = cargoTargetRustflagsVar(host);
+      const current = env[varName] ?? '';
+      if (!current.includes('--threads=') && !current.includes('-Wl,--threads=')) {
+        env[varName] = `${current} -C link-arg=-Wl,--threads=${jobs}`.trim();
+      }
+    }
   }
 
   // Some environments configure a rustc wrapper (e.g. `sccache`) via global Cargo config.

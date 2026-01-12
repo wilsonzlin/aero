@@ -24,6 +24,36 @@ function parsePositiveIntEnv(value) {
   return n;
 }
 
+let rustcHostTargetCache;
+function rustcHostTarget() {
+  if (rustcHostTargetCache !== undefined) return rustcHostTargetCache;
+  try {
+    const vv = spawnSync("rustc", ["-vV"], {
+      cwd: REPO_ROOT,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 5_000,
+    });
+    if (vv.status !== 0) {
+      rustcHostTargetCache = null;
+      return rustcHostTargetCache;
+    }
+    const m = (vv.stdout ?? "").match(/^host:\s*(.+)\s*$/m);
+    rustcHostTargetCache = m ? m[1].trim() : null;
+    return rustcHostTargetCache;
+  } catch {
+    rustcHostTargetCache = null;
+    return rustcHostTargetCache;
+  }
+}
+
+function cargoTargetRustflagsVar(target) {
+  // Cargo reads per-target rustflags env vars in the form:
+  //   CARGO_TARGET_<TRIPLE>_RUSTFLAGS
+  // with '-' and '.' replaced by '_', and the triple uppercased.
+  return `CARGO_TARGET_${target.toUpperCase().replace(/[-.]/g, "_")}_RUSTFLAGS`;
+}
+
 function isSccacheWrapper(value) {
   if (!value) return false;
   const v = value.toLowerCase();
@@ -399,6 +429,20 @@ async function runCommand(command, args, { cwd, env, timeoutMs = 60_000 } = {}) 
       }
       if (parsePositiveIntEnv(childEnv.RAYON_NUM_THREADS) === null) {
         childEnv.RAYON_NUM_THREADS = String(jobs);
+      }
+
+      // Limit LLVM lld thread parallelism on Linux (matches safe-run/agent-env behavior).
+      // Use Cargo's per-target rustflags env var rather than mutating global RUSTFLAGS so this
+      // doesn't leak into wasm builds (rust-lld -flavor wasm does not understand -Wl,...).
+      if (process.platform === "linux") {
+        const host = rustcHostTarget();
+        if (host) {
+          const varName = cargoTargetRustflagsVar(host);
+          const current = childEnv[varName] ?? "";
+          if (!current.includes("--threads=") && !current.includes("-Wl,--threads=")) {
+            childEnv[varName] = `${current} -C link-arg=-Wl,--threads=${jobs}`.trim();
+          }
+        }
       }
 
       // Prevent progress bars from spamming logs on CI timeouts.

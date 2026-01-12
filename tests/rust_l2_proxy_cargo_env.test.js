@@ -3,10 +3,22 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 
 function writeExecutable(filePath, contents) {
   fs.writeFileSync(filePath, contents, "utf8");
   fs.chmodSync(filePath, 0o755);
+}
+
+function rustcHostTarget() {
+  const out = execFileSync("rustc", ["-vV"], { encoding: "utf8" });
+  const m = out.match(/^host:\s*(.+)\s*$/m);
+  assert.ok(m, `failed to parse rustc host target from: ${out}`);
+  return m[1].trim();
+}
+
+function cargoTargetRustflagsVar(target) {
+  return `CARGO_TARGET_${target.toUpperCase().replace(/[-.]/g, "_")}_RUSTFLAGS`;
 }
 
 function parseKeyValues(text) {
@@ -47,6 +59,7 @@ test(
       const targetDir = path.join(tmpRoot, "target");
       const outputPath = path.join(tmpRoot, "cargo-env.txt");
       const proxyEnvPath = path.join(tmpRoot, "proxy-env.txt");
+      const hostTargetVar = cargoTargetRustflagsVar(rustcHostTarget());
 
       writeExecutable(
         path.join(binDir, "cargo"),
@@ -58,6 +71,10 @@ out="\${AERO_TEST_OUTPUT:?}"
   echo "CARGO_BUILD_JOBS=\${CARGO_BUILD_JOBS:-}"
   echo "RUSTC_WORKER_THREADS=\${RUSTC_WORKER_THREADS:-}"
   echo "RAYON_NUM_THREADS=\${RAYON_NUM_THREADS:-}"
+  var="\${AERO_TEST_HOST_RUSTFLAGS_VAR:-}"
+  if [[ -n "\${var}" ]]; then
+    echo "HOST_RUSTFLAGS=\${!var:-}"
+  fi
 } > "\${out}"
 
 mkdir -p "\${CARGO_TARGET_DIR:?}/debug"
@@ -81,12 +98,15 @@ exit 0
           CARGO_TARGET_DIR: targetDir,
           AERO_TEST_OUTPUT: outputPath,
           AERO_TEST_PROXY_ENV_OUTPUT: proxyEnvPath,
+          AERO_TEST_HOST_RUSTFLAGS_VAR: hostTargetVar,
           // Ensure we exercise the defaulting path.
           AERO_CARGO_BUILD_JOBS: null,
           CARGO_BUILD_JOBS: null,
           RUSTC_WORKER_THREADS: null,
           RAYON_NUM_THREADS: null,
           AERO_TOKIO_WORKER_THREADS: null,
+          // Ensure we exercise the lld threads injection path (do not inherit from safe-run).
+          [hostTargetVar]: null,
         },
         async () => {
           const moduleUrl = new URL(
@@ -104,6 +124,7 @@ exit 0
         CARGO_BUILD_JOBS: "1",
         RUSTC_WORKER_THREADS: "1",
         RAYON_NUM_THREADS: "1",
+        HOST_RUSTFLAGS: process.platform === "linux" ? "-C link-arg=-Wl,--threads=1" : "",
       });
 
       const proxyEnv = parseKeyValues(fs.readFileSync(proxyEnvPath, "utf8"));
@@ -127,6 +148,7 @@ test(
       const targetDir = path.join(tmpRoot, "target");
       const outputPath = path.join(tmpRoot, "cargo-env.txt");
       const proxyEnvPath = path.join(tmpRoot, "proxy-env.txt");
+      const hostTargetVar = cargoTargetRustflagsVar(rustcHostTarget());
 
       writeExecutable(
         path.join(binDir, "cargo"),
@@ -138,6 +160,10 @@ out="\${AERO_TEST_OUTPUT:?}"
   echo "CARGO_BUILD_JOBS=\${CARGO_BUILD_JOBS:-}"
   echo "RUSTC_WORKER_THREADS=\${RUSTC_WORKER_THREADS:-}"
   echo "RAYON_NUM_THREADS=\${RAYON_NUM_THREADS:-}"
+  var="\${AERO_TEST_HOST_RUSTFLAGS_VAR:-}"
+  if [[ -n "\${var}" ]]; then
+    echo "HOST_RUSTFLAGS=\${!var:-}"
+  fi
 } > "\${out}"
 
 mkdir -p "\${CARGO_TARGET_DIR:?}/debug"
@@ -161,11 +187,13 @@ exit 0
           CARGO_TARGET_DIR: targetDir,
           AERO_TEST_OUTPUT: outputPath,
           AERO_TEST_PROXY_ENV_OUTPUT: proxyEnvPath,
+          AERO_TEST_HOST_RUSTFLAGS_VAR: hostTargetVar,
           AERO_CARGO_BUILD_JOBS: "2",
           CARGO_BUILD_JOBS: null,
           RUSTC_WORKER_THREADS: null,
           RAYON_NUM_THREADS: null,
           AERO_TOKIO_WORKER_THREADS: null,
+          [hostTargetVar]: null,
         },
         async () => {
           const moduleUrl = new URL(
@@ -183,6 +211,7 @@ exit 0
         CARGO_BUILD_JOBS: "2",
         RUSTC_WORKER_THREADS: "2",
         RAYON_NUM_THREADS: "2",
+        HOST_RUSTFLAGS: process.platform === "linux" ? "-C link-arg=-Wl,--threads=2" : "",
       });
 
       const proxyEnv = parseKeyValues(fs.readFileSync(proxyEnvPath, "utf8"));
