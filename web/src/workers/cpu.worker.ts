@@ -1005,14 +1005,20 @@ function maybeInitMicBridge(): void {
 }
 
 function attachMicrophoneRingBuffer(msg: SetMicrophoneRingBufferMessage): void {
-  const ringBuffer = msg.ringBuffer;
+  const parsePositiveSafeU32 = (value: unknown): number => {
+    if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0 || value > 0xffff_ffff) return 0;
+    return value >>> 0;
+  };
+
+  let ringBuffer = msg.ringBuffer;
   if (ringBuffer !== null) {
     const Sab = globalThis.SharedArrayBuffer;
     if (typeof Sab === "undefined") {
-      throw new Error("SharedArrayBuffer is unavailable; microphone capture requires crossOriginIsolated.");
-    }
-    if (!(ringBuffer instanceof Sab)) {
-      throw new Error("setMicrophoneRingBuffer expects a SharedArrayBuffer or null.");
+      console.warn("[cpu.worker] SharedArrayBuffer is unavailable; dropping mic ring attachment.");
+      ringBuffer = null;
+    } else if (!(ringBuffer instanceof Sab)) {
+      console.warn("[cpu.worker] setMicrophoneRingBuffer expects a SharedArrayBuffer or null; dropping attachment.");
+      ringBuffer = null;
     }
   }
 
@@ -1026,40 +1032,49 @@ function attachMicrophoneRingBuffer(msg: SetMicrophoneRingBufferMessage): void {
   micRingBuffer = null;
   if (!ringBuffer) return;
 
-  if (ringBuffer.byteLength < MIC_HEADER_BYTES) {
-    throw new Error(`mic ring buffer is too small: need at least ${MIC_HEADER_BYTES} bytes, got ${ringBuffer.byteLength} bytes`);
-  }
-
-  const header = new Uint32Array(ringBuffer, 0, MIC_HEADER_U32_LEN);
-  const capacity = Atomics.load(header, CAPACITY_SAMPLES_INDEX) >>> 0;
-  if (capacity === 0) {
-    throw new Error("mic ring buffer capacity must be non-zero");
-  }
-
-  const requiredBytes = MIC_HEADER_BYTES + capacity * Float32Array.BYTES_PER_ELEMENT;
-  if (ringBuffer.byteLength < requiredBytes) {
-    throw new Error(`mic ring buffer is too small: need ${requiredBytes} bytes, got ${ringBuffer.byteLength} bytes`);
-  }
-
-  const data = new Float32Array(ringBuffer, MIC_HEADER_BYTES, capacity);
-  micRingBuffer = { sab: ringBuffer, header, data, capacity, sampleRate: (msg.sampleRate ?? 0) | 0 };
-
-  // The AudioWorklet microphone producer can start writing before the emulator worker attaches
-  // as the ring consumer. To avoid replaying stale samples (large perceived latency), discard
-  // any buffered data when attaching by advancing readPos := writePos.
-  //
-  // Note: WASM mic bridges (`attach_mic_bridge`) perform the same flush internally; keep the
-  // JS path consistent so demo mode still has low-latency loopback even when WASM init fails.
-  if (isNewAttach) {
-    try {
-      const writePos = Atomics.load(header, MIC_WRITE_POS_INDEX) >>> 0;
-      Atomics.store(header, MIC_READ_POS_INDEX, writePos);
-    } catch {
-      // ignore
+  try {
+    if (ringBuffer.byteLength < MIC_HEADER_BYTES) {
+      throw new Error(
+        `mic ring buffer is too small: need at least ${MIC_HEADER_BYTES} bytes, got ${ringBuffer.byteLength} bytes`,
+      );
     }
+
+    const header = new Uint32Array(ringBuffer, 0, MIC_HEADER_U32_LEN);
+    const capacity = Atomics.load(header, CAPACITY_SAMPLES_INDEX) >>> 0;
+    if (capacity === 0) {
+      throw new Error("mic ring buffer capacity must be non-zero");
+    }
+
+    const requiredBytes = MIC_HEADER_BYTES + capacity * Float32Array.BYTES_PER_ELEMENT;
+    if (ringBuffer.byteLength < requiredBytes) {
+      throw new Error(`mic ring buffer is too small: need ${requiredBytes} bytes, got ${ringBuffer.byteLength} bytes`);
+    }
+
+    const data = new Float32Array(ringBuffer, MIC_HEADER_BYTES, capacity);
+    micRingBuffer = { sab: ringBuffer, header, data, capacity, sampleRate: parsePositiveSafeU32(msg.sampleRate) };
+
+    // The AudioWorklet microphone producer can start writing before the emulator worker attaches
+    // as the ring consumer. To avoid replaying stale samples (large perceived latency), discard
+    // any buffered data when attaching by advancing readPos := writePos.
+    //
+    // Note: WASM mic bridges (`attach_mic_bridge`) perform the same flush internally; keep the
+    // JS path consistent so demo mode still has low-latency loopback even when WASM init fails.
+    if (isNewAttach) {
+      try {
+        const writePos = Atomics.load(header, MIC_WRITE_POS_INDEX) >>> 0;
+        Atomics.store(header, MIC_READ_POS_INDEX, writePos);
+      } catch {
+        // ignore
+      }
+    }
+
+    maybeInitMicBridge();
+  } catch (err) {
+    console.warn("[cpu.worker] invalid mic ring buffer; ignoring attachment:", err);
+    micRingBuffer = null;
   }
 
-  maybeInitMicBridge();
+  // Keep existing behavior: if attachment failed, we already detached/reset state above.
 }
 
 class JsWorkletBridge {
@@ -1356,21 +1371,27 @@ function maybeInitAudioOutput(): void {
 }
 
 function attachAudioRingBuffer(msg: SetAudioRingBufferMessage): void {
-  const ringBuffer = msg.ringBuffer;
+  const parsePositiveSafeU32 = (value: unknown): number => {
+    if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0 || value > 0xffff_ffff) return 0;
+    return value >>> 0;
+  };
+
+  let ringBuffer = msg.ringBuffer;
   if (ringBuffer !== null) {
     const Sab = globalThis.SharedArrayBuffer;
     if (typeof Sab === "undefined") {
-      throw new Error("SharedArrayBuffer is unavailable; audio output requires crossOriginIsolated.");
-    }
-    if (!(ringBuffer instanceof Sab)) {
-      throw new Error("setAudioRingBuffer expects a SharedArrayBuffer or null.");
+      console.warn("[cpu.worker] SharedArrayBuffer is unavailable; dropping audio ring attachment.");
+      ringBuffer = null;
+    } else if (!(ringBuffer instanceof Sab)) {
+      console.warn("[cpu.worker] setAudioRingBuffer expects a SharedArrayBuffer or null; dropping attachment.");
+      ringBuffer = null;
     }
   }
 
   audioRingBuffer = ringBuffer;
-  audioDstSampleRate = msg.dstSampleRate >>> 0;
-  audioChannelCount = msg.channelCount >>> 0;
-  audioCapacityFrames = msg.capacityFrames >>> 0;
+  audioDstSampleRate = parsePositiveSafeU32(msg.dstSampleRate);
+  audioChannelCount = parsePositiveSafeU32(msg.channelCount);
+  audioCapacityFrames = parsePositiveSafeU32(msg.capacityFrames);
 
   maybeInitAudioOutput();
 }
