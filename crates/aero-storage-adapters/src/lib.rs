@@ -243,4 +243,48 @@ mod tests {
         let err = map_aero_storage_error_to_io(aero_storage::DiskError::CorruptImage("bad"));
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
     }
+
+    #[test]
+    fn map_aero_storage_error_to_io_classifies_browser_storage_failures() {
+        let err = map_aero_storage_error_to_io(aero_storage::DiskError::QuotaExceeded);
+        assert_eq!(err.kind(), io::ErrorKind::StorageFull);
+        assert!(matches!(
+            err.get_ref()
+                .and_then(|e| e.downcast_ref::<aero_storage::DiskError>()),
+            Some(aero_storage::DiskError::QuotaExceeded)
+        ));
+
+        let err = map_aero_storage_error_to_io(aero_storage::DiskError::InUse);
+        assert_eq!(err.kind(), io::ErrorKind::ResourceBusy);
+        assert!(matches!(
+            err.get_ref()
+                .and_then(|e| e.downcast_ref::<aero_storage::DiskError>()),
+            Some(aero_storage::DiskError::InUse)
+        ));
+
+        let err = map_aero_storage_error_to_io(aero_storage::DiskError::BackendUnavailable);
+        assert_eq!(err.kind(), io::ErrorKind::NotConnected);
+        assert!(matches!(
+            err.get_ref()
+                .and_then(|e| e.downcast_ref::<aero_storage::DiskError>()),
+            Some(aero_storage::DiskError::BackendUnavailable)
+        ));
+
+        let err =
+            map_aero_storage_error_to_io(aero_storage::DiskError::InvalidState("closed".into()));
+        assert_eq!(err.kind(), io::ErrorKind::Other);
+        assert!(matches!(
+            err.get_ref()
+                .and_then(|e| e.downcast_ref::<aero_storage::DiskError>()),
+            Some(aero_storage::DiskError::InvalidState(msg)) if msg == "closed"
+        ));
+
+        let err = map_aero_storage_error_to_io(aero_storage::DiskError::Io("boom".into()));
+        assert_eq!(err.kind(), io::ErrorKind::Other);
+        assert!(matches!(
+            err.get_ref()
+                .and_then(|e| e.downcast_ref::<aero_storage::DiskError>()),
+            Some(aero_storage::DiskError::Io(msg)) if msg == "boom"
+        ));
+    }
 }
