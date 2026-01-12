@@ -6,6 +6,9 @@ use libfuzzer_sys::fuzz_target;
 
 const MAX_INPUT_BYTES: usize = 1024 * 1024; // 1 MiB
 const MAX_READ_LEN: usize = 4096; // 4 KiB
+// Keep offsets near the start of the disk so very large virtual sizes (common for sparse formats)
+// still exercise mapping logic instead of immediately erroring on huge indices.
+const MAX_TOUCHED_CAP_BYTES: u64 = 4 * 1024 * 1024; // 4 MiB
 
 /// Read-only `StorageBackend` over the fuzzer-provided byte buffer.
 struct FuzzBackend<'a> {
@@ -57,12 +60,16 @@ fuzz_target!(|data: &[u8]| {
     };
 
     let cap = disk.capacity_bytes();
+    let touched_cap = cap.min(MAX_TOUCHED_CAP_BYTES);
     let mut scratch = [0u8; MAX_READ_LEN];
 
     // Deterministic boundary reads to ensure we exercise I/O even if the fuzzer chooses 0 ops.
     if cap > 0 {
         let _ = disk.read_at(0, &mut scratch[..1]);
         let _ = disk.read_at(cap - 1, &mut scratch[..1]);
+    }
+    if touched_cap > 0 && touched_cap != cap {
+        let _ = disk.read_at(touched_cap - 1, &mut scratch[..1]);
     }
 
     let mut u = Unstructured::new(data);
@@ -74,14 +81,15 @@ fuzz_target!(|data: &[u8]| {
             continue;
         }
 
-        // Clamp within disk capacity to avoid trivially failing range checks.
-        let len = if cap < raw_len as u64 {
-            cap as usize
+        // Clamp within a small window at the start of the disk to avoid trivially failing
+        // huge-index guards in formats with very large virtual sizes.
+        let len = if touched_cap < raw_len as u64 {
+            touched_cap as usize
         } else {
             raw_len
         };
-        let max_off = cap.saturating_sub(len as u64);
-        let off = if cap == 0 {
+        let max_off = touched_cap.saturating_sub(len as u64);
+        let off = if touched_cap == 0 {
             0
         } else {
             raw_off % (max_off.saturating_add(1))
@@ -92,4 +100,3 @@ fuzz_target!(|data: &[u8]| {
 
     let _ = disk.flush();
 });
-
