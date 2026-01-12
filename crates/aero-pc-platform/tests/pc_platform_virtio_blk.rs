@@ -217,6 +217,26 @@ fn pc_platform_virtio_blk_processes_queue_and_raises_intx() {
         "virtio device should assert INTx after completing a request"
     );
 
+    // PCI command INTx Disable (bit 10) should suppress delivery even if the device is asserting
+    // its legacy interrupt level.
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0406);
+    pc.poll_pci_intx_lines();
+    assert!(
+        pc.interrupts.borrow().pic().get_pending_vector().is_none(),
+        "INTx disable should suppress interrupt delivery"
+    );
+    assert!(
+        pc.virtio_blk
+            .as_ref()
+            .expect("virtio-blk enabled")
+            .borrow()
+            .irq_level(),
+        "INTx disable should not change the device's asserted level"
+    );
+
+    // Re-enable INTx and ensure it is delivered to the PIC.
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0006);
+
     pc.poll_pci_intx_lines();
     let pending = pc
         .interrupts
