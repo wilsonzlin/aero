@@ -626,6 +626,20 @@ mod tests {
     }
 
     #[test]
+    fn pcm_8bit_decode_encode_round_trips_for_selected_bytes() {
+        fn round_trip(b: u8) -> u8 {
+            let sample = decode_one_sample(&[b], 8);
+            let mut out = [0u8; 1];
+            encode_one_sample(&mut out, 8, sample);
+            out[0]
+        }
+
+        for b in [0u8, 1, 2, 127, 128, 129, 254, 255] {
+            assert_eq!(round_trip(b), b);
+        }
+    }
+
+    #[test]
     fn pcm_8bit_encode_bias_rounding_and_clipping() {
         fn encode_u8(sample: f32) -> u8 {
             let mut out = [0u8; 1];
@@ -1138,6 +1152,11 @@ mod tests {
             },
             StreamFormat {
                 sample_rate_hz: 48_000,
+                bits_per_sample: 8,
+                channels: 4,
+            },
+            StreamFormat {
+                sample_rate_hz: 48_000,
                 bits_per_sample: 16,
                 channels: 2,
             },
@@ -1168,7 +1187,12 @@ mod tests {
                 // channels 2.. are silence.
                 for ch in 2..fmt.channels as usize {
                     let off = ch * bps;
-                    assert!(frame0[off..off + bps].iter().all(|&b| b == 0));
+                    match fmt.bits_per_sample {
+                        // 8-bit PCM silence is the 128 bias.
+                        8 => assert_eq!(&frame0[off..off + bps], &[128u8]),
+                        // Signed formats use 0, which is represented as all-zero bytes.
+                        _ => assert!(frame0[off..off + bps].iter().all(|&b| b == 0)),
+                    }
                 }
             }
 
