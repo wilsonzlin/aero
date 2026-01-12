@@ -1110,6 +1110,13 @@ The web tracing capture is taken at the **L2 forwarder boundary** in the browser
 In other words, it captures **guest↔tunnel Ethernet frames** right where the browser runtime acts as
 an Ethernet “pipe” (the same conceptual boundary described in ADR 0013 / Option C).
 
+Capture format notes:
+
+- The exported PCAPNG uses two Ethernet interfaces named `guest_rx` and `guest_tx`.
+- Frames are recorded at the forwarder boundary (best-effort). In particular, the capture may
+  include frames that were later dropped due to missing tunnel/backpressure, or because `NET_RX`
+  was full.
+
 Relevant implementation files:
 
 - UI surface: `web/src/net/trace_ui.ts`
@@ -1151,7 +1158,7 @@ When present, it implements:
 Some builds may additionally expose:
 
 - `clear(): void | Promise<void>` (drop buffered frames)
-- `getStats(): unknown | Promise<unknown>` (implementation-defined counters such as buffered bytes/frames and drops)
+- `getStats(): unknown | Promise<unknown>` (implementation-defined counters such as buffered bytes/frames and drops; some builds may expose `stats()` instead)
 
 Example:
 
