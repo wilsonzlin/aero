@@ -1,5 +1,6 @@
 use super::{AtaDevice, AtapiCdrom, IdeController, IsoBackend, PRIMARY_PORTS};
 use crate::io::storage::disk::{DiskBackend, DiskError, DiskResult, MemDisk};
+use aero_io_snapshot::io::storage::state::MAX_IDE_DATA_BUFFER_BYTES;
 use memory::MemoryBus;
 
 #[derive(Clone, Debug)]
@@ -243,6 +244,75 @@ fn ata_pio_write_sectors_ext_uses_lba48() {
 }
 
 #[test]
+fn ata_lba48_oversized_pio_read_is_rejected_without_entering_data_phase() {
+    // Construct a transfer size larger than the snapshot/device cap. If the cap ever grows
+    // beyond the largest representable LBA48 transfer (65536 sectors), skip the assertion.
+    let sectors = (MAX_IDE_DATA_BUFFER_BYTES / 512) as u32 + 1;
+    if sectors > 65536 {
+        return;
+    }
+
+    let disk = MemDisk::new(1);
+    let mut ide = IdeController::new(0xC000);
+    ide.attach_primary_master_ata(AtaDevice::new(Box::new(disk), "Aero HDD"));
+
+    // Select master, LBA mode.
+    ide.io_write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
+
+    // Sector count (48-bit): high then low.
+    ide.io_write(PRIMARY_PORTS.cmd_base + 2, 1, (sectors >> 8) as u32);
+    ide.io_write(PRIMARY_PORTS.cmd_base + 2, 1, (sectors & 0xFF) as u32);
+
+    // LBA = 0 (48-bit writes, high then low for each byte).
+    ide.io_write(PRIMARY_PORTS.cmd_base + 3, 1, 0);
+    ide.io_write(PRIMARY_PORTS.cmd_base + 3, 1, 0);
+    ide.io_write(PRIMARY_PORTS.cmd_base + 4, 1, 0);
+    ide.io_write(PRIMARY_PORTS.cmd_base + 4, 1, 0);
+    ide.io_write(PRIMARY_PORTS.cmd_base + 5, 1, 0);
+    ide.io_write(PRIMARY_PORTS.cmd_base + 5, 1, 0);
+
+    // READ SECTORS EXT (PIO).
+    ide.io_write(PRIMARY_PORTS.cmd_base + 7, 1, 0x24);
+
+    let status = ide.io_read(PRIMARY_PORTS.cmd_base + 7, 1) as u8;
+    assert_eq!(status & 0x80, 0, "BSY should be clear");
+    assert_eq!(status & 0x08, 0, "DRQ should be clear (no data phase)");
+    assert_ne!(status & 0x01, 0, "ERR should be set");
+    assert_eq!(ide.io_read(PRIMARY_PORTS.cmd_base + 1, 1) as u8, 0x04);
+}
+
+#[test]
+fn ata_lba48_oversized_pio_write_is_rejected_without_allocating_buffer() {
+    let sectors = (MAX_IDE_DATA_BUFFER_BYTES / 512) as u32 + 1;
+    if sectors > 65536 {
+        return;
+    }
+
+    let disk = MemDisk::new(1);
+    let mut ide = IdeController::new(0xC000);
+    ide.attach_primary_master_ata(AtaDevice::new(Box::new(disk), "Aero HDD"));
+
+    ide.io_write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
+    ide.io_write(PRIMARY_PORTS.cmd_base + 2, 1, (sectors >> 8) as u32);
+    ide.io_write(PRIMARY_PORTS.cmd_base + 2, 1, (sectors & 0xFF) as u32);
+    ide.io_write(PRIMARY_PORTS.cmd_base + 3, 1, 0);
+    ide.io_write(PRIMARY_PORTS.cmd_base + 3, 1, 0);
+    ide.io_write(PRIMARY_PORTS.cmd_base + 4, 1, 0);
+    ide.io_write(PRIMARY_PORTS.cmd_base + 4, 1, 0);
+    ide.io_write(PRIMARY_PORTS.cmd_base + 5, 1, 0);
+    ide.io_write(PRIMARY_PORTS.cmd_base + 5, 1, 0);
+
+    // WRITE SECTORS EXT (PIO).
+    ide.io_write(PRIMARY_PORTS.cmd_base + 7, 1, 0x34);
+
+    let status = ide.io_read(PRIMARY_PORTS.cmd_base + 7, 1) as u8;
+    assert_eq!(status & 0x80, 0, "BSY should be clear");
+    assert_eq!(status & 0x08, 0, "DRQ should be clear (no data phase)");
+    assert_ne!(status & 0x01, 0, "ERR should be set");
+    assert_eq!(ide.io_read(PRIMARY_PORTS.cmd_base + 1, 1) as u8, 0x04);
+}
+
+#[test]
 fn ata_dma_prd_scatter_gather_crosses_page_boundary() {
     let mut disk = MemDisk::new(4);
     let mut expected = vec![0u8; 512];
@@ -348,6 +418,58 @@ fn atapi_read_10_returns_correct_bytes() {
     }
 
     assert_eq!(&out[..5], b"WORLD");
+}
+
+#[test]
+fn atapi_read_12_rejects_oversized_transfer_without_allocating_buffer() {
+    let iso = MemIso::new(1);
+    let mut ide = IdeController::new(0xC000);
+    ide.attach_secondary_master_atapi(AtapiCdrom::new(Some(Box::new(iso))));
+    let sec = super::SECONDARY_PORTS;
+    ide.io_write(sec.cmd_base + 6, 1, 0xA0);
+
+    fn send_packet(
+        ide: &mut IdeController,
+        sec: super::IdePortMap,
+        pkt: &[u8; 12],
+        byte_count: u16,
+    ) {
+        ide.io_write(sec.cmd_base + 1, 1, 0);
+        ide.io_write(sec.cmd_base + 4, 1, (byte_count & 0xFF) as u32);
+        ide.io_write(sec.cmd_base + 5, 1, (byte_count >> 8) as u32);
+        ide.io_write(sec.cmd_base + 7, 1, 0xA0);
+        for i in 0..6 {
+            let w = u16::from_le_bytes([pkt[i * 2], pkt[i * 2 + 1]]);
+            ide.io_write(sec.cmd_base, 2, w as u32);
+        }
+    }
+
+    // Clear initial UNIT ATTENTION.
+    let tur = [0u8; 12];
+    send_packet(&mut ide, sec, &tur, 0);
+    let _ = ide.io_read(sec.cmd_base + 7, 1);
+    let mut req_sense = [0u8; 12];
+    req_sense[0] = 0x03;
+    req_sense[4] = 18;
+    send_packet(&mut ide, sec, &req_sense, 18);
+    for _ in 0..9 {
+        let _ = ide.io_read(sec.cmd_base, 2);
+    }
+
+    let blocks = (MAX_IDE_DATA_BUFFER_BYTES / 2048) as u32 + 1;
+    let mut pkt = [0u8; 12];
+    pkt[0] = 0xA8; // READ(12)
+    pkt[6..10].copy_from_slice(&blocks.to_be_bytes());
+    send_packet(&mut ide, sec, &pkt, 2048);
+
+    assert!(ide.secondary_irq_pending());
+    assert_eq!(ide.io_read(sec.cmd_base + 2, 1) as u8, 0x03);
+
+    let status = ide.io_read(sec.cmd_base + 7, 1) as u8;
+    assert_eq!(status & 0x80, 0, "BSY should be clear");
+    assert_eq!(status & 0x08, 0, "DRQ should be clear (no data phase)");
+    assert_ne!(status & 0x01, 0, "ERR should be set");
+    assert_eq!(ide.io_read(sec.cmd_base + 1, 1) as u8, 0x04);
 }
 
 #[test]
