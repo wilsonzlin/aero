@@ -81,7 +81,10 @@ async function main() {
 
   // Ensure deterministic output for tests.
   const dxbc = new Uint8Array([0x44, 0x58, 0x42, 0x43, 1, 2, 3, 4, 5, 6, 7, 8]);
-  const webgpu = await tryInitWebGpu();
+  // Large mode is meant to exercise the persistent cache spill-to-OPFS path; it
+  // doesn't need WebGPU and can be more stable if we avoid compiling an enormous
+  // shader module.
+  const webgpu = large ? null : await tryInitWebGpu();
   const device = webgpu?.device ?? null;
   const capsHash = webgpu ? await computeWebGpuCapsHash(webgpu.adapter) : "no-webgpu";
   const flags = { halfPixelCenter: false, capsHash };
@@ -106,7 +109,7 @@ async function main() {
       logLine("shader_translate: end");
       return out;
     },
-    device
+    device && !large
       ? {
           validateWgsl: async (wgsl) => {
             // Cache-hit corruption defense: validate against current implementation.
@@ -120,7 +123,7 @@ async function main() {
   cacheHit = result.source === "persistent";
   logLine(`shader_cache: ${cacheHit ? "hit" : "miss"} key=${key}`);
   const t1 = performance.now();
-  if (device) {
+  if (device && !large) {
     // Validate cached WGSL against current browser implementation.
     const compile = await compileWgslModule(device, payload.wgsl);
     if (!compile.ok) {
@@ -135,7 +138,7 @@ async function main() {
       logLine("wgsl_compile: ok");
     }
   } else {
-    logLine("wgsl_compile: skipped (WebGPU unavailable)");
+    logLine(device ? "wgsl_compile: skipped (large mode)" : "wgsl_compile: skipped (WebGPU unavailable)");
   }
 
   const translationMs = t1 - t0;
