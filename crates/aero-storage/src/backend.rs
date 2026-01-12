@@ -62,9 +62,11 @@ impl MemBackend {
 
     pub fn with_len(len: u64) -> Result<Self> {
         let len_usize: usize = len.try_into().map_err(|_| DiskError::OffsetOverflow)?;
-        Ok(Self {
-            data: vec![0; len_usize],
-        })
+        let mut data = Vec::new();
+        data.try_reserve_exact(len_usize)
+            .map_err(|_| DiskError::QuotaExceeded)?;
+        data.resize(len_usize, 0);
+        Ok(Self { data })
     }
 
     pub fn as_slice(&self) -> &[u8] {
@@ -79,6 +81,11 @@ impl StorageBackend for MemBackend {
 
     fn set_len(&mut self, len: u64) -> Result<()> {
         let len_usize: usize = len.try_into().map_err(|_| DiskError::OffsetOverflow)?;
+        if len_usize > self.data.capacity() {
+            self.data
+                .try_reserve_exact(len_usize - self.data.capacity())
+                .map_err(|_| DiskError::QuotaExceeded)?;
+        }
         self.data.resize(len_usize, 0);
         Ok(())
     }
@@ -105,7 +112,8 @@ impl StorageBackend for MemBackend {
             .checked_add(buf.len())
             .ok_or(DiskError::OffsetOverflow)?;
         if end > self.data.len() {
-            self.data.resize(end, 0);
+            let end_u64 = u64::try_from(end).map_err(|_| DiskError::OffsetOverflow)?;
+            self.set_len(end_u64)?;
         }
         self.data[offset_usize..end].copy_from_slice(buf);
         Ok(())
