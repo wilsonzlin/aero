@@ -104,6 +104,7 @@ export const PS2_SET2_CODE_TO_SCANCODE: Record<string, Ps2Set2Scancode> = {
   "NumpadDecimal": { kind: 'simple', make: 0x71, extended: false },
   "NumpadDivide": { kind: 'simple', make: 0x4A, extended: true },
   "NumpadEnter": { kind: 'simple', make: 0x5A, extended: true },
+  "NumpadEqual": { kind: 'simple', make: 0x55, extended: false },
   "NumpadMultiply": { kind: 'simple', make: 0x7C, extended: false },
   "NumpadSubtract": { kind: 'simple', make: 0x7B, extended: false },
   "OSLeft": { kind: 'simple', make: 0x1F, extended: true },

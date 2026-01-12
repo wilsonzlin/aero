@@ -78,6 +78,7 @@
     "Numpad0": { "make": ["70"] },
     "NumpadDecimal": { "make": ["71"] },
     "NumpadComma": { "make": ["71"] },
+    "NumpadEqual": { "make": ["55"] },
 
     "CapsLock": { "make": ["58"] },
     "KeyA": { "make": ["1C"] },

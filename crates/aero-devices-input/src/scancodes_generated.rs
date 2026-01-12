@@ -430,6 +430,10 @@ pub fn ps2_set2_scancode_for_code(code: &str) -> Option<Ps2Set2Scancode> {
             make: 0x5A,
             extended: true,
         }),
+        "NumpadEqual" => Some(Ps2Set2Scancode::Simple {
+            make: 0x55,
+            extended: false,
+        }),
         "NumpadMultiply" => Some(Ps2Set2Scancode::Simple {
             make: 0x7C,
             extended: false,
