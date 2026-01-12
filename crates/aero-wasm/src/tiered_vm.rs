@@ -1354,6 +1354,7 @@ fn page_snapshot_from_js(obj: JsValue) -> Result<PageVersionSnapshot, JsValue> {
 #[cfg(test)]
 mod tests {
     use super::WasmBus;
+    use super::WasmTieredVm;
 
     use aero_cpu_core::CpuBus;
     use js_sys::{Array, Reflect};
@@ -1455,5 +1456,61 @@ export function installAeroTieredMmioTestShims() {
         assert_eq!(call_prop_u32(&c1, "addr"), 0x30);
         assert_eq!(call_prop_u32(&c1, "size"), 2);
         assert_eq!(call_prop_u32(&c1, "value"), 0x1234);
+    }
+
+    #[wasm_bindgen_test]
+    fn wasm_tiered_vm_instruction_count_respects_cpu_bitness() {
+        // This is a regression test for `WasmTieredVm::install_tier1_block` /
+        // `install_handle`: instruction_count is computed by re-decoding the guest code bytes.
+        //
+        // The Tier-1 minimal decoder treats 0x40..=0x4F as REX prefixes in 64-bit mode, but as
+        // INC/DEC in 16/32-bit modes. Ensure we use the current CPU mode's bitness when decoding,
+        // otherwise real-mode guest blocks will get incorrect instruction counts (which affects
+        // retirement bookkeeping like TSC advancement).
+
+        // The test should not require any I/O/MMIO shims since we only access in-RAM bytes.
+
+        let mut guest = vec![0u8; 0x2000];
+        let guest_base = guest.as_mut_ptr() as u32;
+        let guest_size = guest.len() as u32;
+
+        // Guest code at paddr 0x1000:
+        //   0x40       inc ax        (in 16-bit mode)
+        //   0xeb 0xfe  jmp short -2  (back to the jmp itself)
+        //
+        // In 64-bit decode mode, 0x40 is a REX prefix, so the same bytes decode as a single JMP
+        // instruction (len=3). In 16-bit mode, they decode as two instructions.
+        guest[0x1000..0x1003].copy_from_slice(&[0x40, 0xeb, 0xfe]);
+
+        let mut vm = WasmTieredVm::new(guest_base, guest_size).expect("new WasmTieredVm");
+        vm.reset_real_mode(0x1000);
+
+        // Install via the direct helper (byte_len=3).
+        vm.install_tier1_block(0x1000, 0, 0x1000, 3);
+        let handle = vm
+            .dispatcher
+            .jit_mut()
+            .prepare_block(0x1000)
+            .expect("installed block must be present");
+        assert_eq!(
+            handle.meta.instruction_count, 2,
+            "expected 16-bit decode to see INC+JMP (2 instructions)"
+        );
+
+        // Now install via `snapshot_meta` + `install_handle` and ensure the count is still correct.
+        vm.dispatcher
+            .jit_mut()
+            .invalidate_block(0x1000);
+        let meta = vm.snapshot_meta(0x1000, 3).expect("snapshot_meta");
+        vm.install_handle(0x1000, 1, meta).expect("install_handle");
+        let handle2 = vm
+            .dispatcher
+            .jit_mut()
+            .prepare_block(0x1000)
+            .expect("installed block must be present after install_handle");
+        assert_eq!(
+            handle2.meta.instruction_count, 2,
+            "expected instruction_count to match 16-bit decode after install_handle"
+        );
     }
 }
