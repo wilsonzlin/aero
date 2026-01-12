@@ -437,6 +437,9 @@ impl Pit8254 {
 
     /// Read from an I/O port.
     pub fn port_read(&mut self, port: u16, size: u8) -> u32 {
+        if size == 0 {
+            return 0;
+        }
         match size {
             1 => self.port_read_u8(port) as u32,
             2 => {
@@ -457,6 +460,9 @@ impl Pit8254 {
 
     /// Write to an I/O port.
     pub fn port_write(&mut self, port: u16, size: u8, val: u32) {
+        if size == 0 {
+            return;
+        }
         match size {
             1 => self.port_write_u8(port, val as u8),
             2 => {
@@ -816,5 +822,27 @@ mod tests {
 
         pit.advance_ns(1_000_000); // 1ms -> ~1193 ticks -> ~1 pulse
         assert_eq!(pit.take_irq0_pulses(), 1);
+    }
+
+    #[test]
+    fn port_io_size0_is_noop() {
+        let mut pit = Pit8254::new();
+
+        // Prime channel 0 with a latched value so a 1-byte read would mutate state.
+        pit.channels[0].latched_count = Some(LatchedValue::new(0x1234));
+        pit.channels[0].read_phase = BytePhase::Low;
+        let before_latched = pit.channels[0].latched_count;
+        let before_phase = pit.channels[0].read_phase;
+
+        assert_eq!(pit.port_read(PIT_CH0, 0), 0);
+        assert_eq!(pit.channels[0].latched_count, before_latched);
+        assert_eq!(pit.channels[0].read_phase, before_phase);
+
+        // A size-0 write must not program the PIT mode register.
+        let before_mode = pit.channels[0].mode;
+        let before_access = pit.channels[0].access_mode;
+        pit.port_write(PIT_CMD, 0, 0x34);
+        assert_eq!(pit.channels[0].mode, before_mode);
+        assert_eq!(pit.channels[0].access_mode, before_access);
     }
 }
