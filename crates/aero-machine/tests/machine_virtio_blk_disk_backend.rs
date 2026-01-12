@@ -3,9 +3,11 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+use aero_devices::pci::PciDevice as _;
 use aero_io_snapshot::io::state::IoSnapshot as _;
 use aero_machine::{Machine, MachineConfig};
 use aero_storage::{MemBackend, RawDisk, VirtualDisk, SECTOR_SIZE};
+use aero_virtio::pci::{VIRTIO_PCI_CAP_COMMON_CFG, VIRTIO_STATUS_ACKNOWLEDGE};
 
 struct DropDetectDisk {
     inner: RawDisk<MemBackend>,
@@ -36,6 +38,29 @@ impl VirtualDisk for DropDetectDisk {
     }
 }
 
+fn virtio_common_cfg_offset(cfg: &[u8; 256]) -> u64 {
+    // `PciConfigSpace::snapshot_state()` returns standard 256-byte config space.
+    let mut ptr = cfg[0x34] as usize;
+    while ptr != 0 {
+        let cap_id = cfg[ptr];
+        let next = cfg[ptr + 1] as usize;
+
+        // Vendor-specific capability.
+        if cap_id == 0x09 {
+            let cfg_type = cfg[ptr + 3];
+            if cfg_type == VIRTIO_PCI_CAP_COMMON_CFG {
+                let offset =
+                    u32::from_le_bytes(cfg[ptr + 8..ptr + 12].try_into().unwrap()) as u64;
+                return offset;
+            }
+        }
+
+        ptr = next;
+    }
+
+    panic!("missing virtio-pci common config capability");
+}
+
 #[test]
 fn machine_attach_virtio_blk_disk_preserves_state_and_survives_reset() {
     let mut m = Machine::new(MachineConfig {
@@ -60,8 +85,14 @@ fn machine_attach_virtio_blk_disk_preserves_state_and_survives_reset() {
 
     let virtio_blk = m.virtio_blk().expect("virtio-blk should be enabled");
 
-    // Mutate transport state so the snapshot blob is non-default.
-    virtio_blk.borrow_mut().bar0_write(0x14, &[1]);
+    let cfg_bytes = virtio_blk.borrow().config().snapshot_state().bytes;
+    let common = virtio_common_cfg_offset(&cfg_bytes);
+
+    // Mutate some non-default transport state so a naive "recreate device" backend swap would
+    // wipe it.
+    virtio_blk
+        .borrow_mut()
+        .bar0_write(common + 0x14, &[VIRTIO_STATUS_ACKNOWLEDGE]);
 
     let state_before = virtio_blk.borrow().save_state();
 
@@ -72,12 +103,13 @@ fn machine_attach_virtio_blk_disk_preserves_state_and_survives_reset() {
         dropped: dropped.clone(),
     };
 
-    m.attach_virtio_blk_disk(Box::new(disk));
+    m.attach_virtio_blk_disk(Box::new(disk))
+        .expect("attaching virtio-blk disk should succeed");
 
     // Attaching the disk backend should preserve controller state by snapshotting and restoring.
     assert_eq!(virtio_blk.borrow().save_state(), state_before);
 
-    // Reset should preserve the attached disk backend.
+    // Reset should preserve the attached disk backend (virtio-blk reset does not swap disks).
     m.reset();
     assert!(
         !dropped.load(Ordering::SeqCst),

@@ -2361,15 +2361,23 @@ impl Machine {
     /// Virtio-blk requires a `VirtualDisk + Send` backend (unlike AHCI/IDE which accept the
     /// non-`Send` [`SharedDisk`]).
     ///
-    /// This method preserves the virtio-blk controller's in-flight transport state (PCI config +
-    /// virtio-pci registers/queues) by snapshotting the existing controller state and restoring it
-    /// after swapping the disk backend. This is particularly important for snapshot restore flows,
-    /// where the host needs to reattach the virtio-blk disk backend without resetting the guest's
-    /// driver-visible device state.
-    pub fn attach_virtio_blk_disk(&mut self, disk: Box<dyn aero_storage::VirtualDisk + Send>) {
+    /// This method preserves the virtio-blk controller's guest-visible state (PCI config + virtio
+    /// transport registers/queues) by snapshotting the current device model state and re-loading
+    /// it after swapping the host disk backend. This is intended for host-managed snapshot restore
+    /// flows where the disk contents live outside the snapshot blob.
+    pub fn attach_virtio_blk_disk(
+        &mut self,
+        disk: Box<dyn aero_storage::VirtualDisk + Send>,
+    ) -> Result<(), MachineError> {
         let Some(virtio_blk) = &self.virtio_blk else {
-            return;
+            return Ok(());
         };
+
+        if !disk.capacity_bytes().is_multiple_of(512) {
+            return Err(MachineError::DiskBackend(
+                "virtio-blk disk capacity must be a multiple of 512 bytes".to_string(),
+            ));
+        }
 
         let (command, bar0_base) = if let Some(pci_cfg) = &self.pci_cfg {
             let bdf = aero_devices::pci::profile::VIRTIO_BLK.bdf;
@@ -2395,25 +2403,31 @@ impl Machine {
             }
         }
 
+        // Preserve the device model's in-flight state while swapping the disk backend.
         let state = virtio_blk.borrow().save_state();
-
-        // Replace the inner device model while keeping the `Rc` identity stable for persistent MMIO
-        // mappings, then restore the preserved transport state.
         let mut new_dev = VirtioPciDevice::new(
             Box::new(VirtioBlk::new(disk)),
             Box::new(NoopVirtioInterruptSink),
         );
-        let _ = new_dev.load_state(&state);
+        new_dev.load_state(&state).map_err(|e| {
+            MachineError::DiskBackend(format!(
+                "failed to restore virtio-blk state after attaching disk backend: {e}"
+            ))
+        })?;
         *virtio_blk.borrow_mut() = new_dev;
 
-        // Keep the device model's internal PCI config state coherent with the canonical PCI config
+        // Keep the device model's internal PCI config view coherent with the canonical PCI config
         // space. This ensures `save_state()` sees consistent BAR programming without requiring an
         // immediate `reset()` cycle.
-        let mut dev = virtio_blk.borrow_mut();
-        dev.set_pci_command(command);
-        if bar0_base != 0 {
-            dev.config_mut().set_bar_base(0, bar0_base);
+        {
+            let mut dev = virtio_blk.borrow_mut();
+            dev.set_pci_command(command);
+            if bar0_base != 0 {
+                dev.config_mut().set_bar_base(0, bar0_base);
+            }
         }
+
+        Ok(())
     }
 
     /// Returns the PIIX3-compatible UHCI (USB 1.1) controller, if present.

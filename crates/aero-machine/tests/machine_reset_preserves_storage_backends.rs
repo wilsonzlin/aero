@@ -227,7 +227,8 @@ fn machine_reset_does_not_detach_virtio_blk_backend() {
         dropped: dropped.clone(),
     };
 
-    m.attach_virtio_blk_disk(Box::new(disk));
+    m.attach_virtio_blk_disk(Box::new(disk))
+        .expect("attaching virtio-blk disk should succeed");
 
     m.reset();
 
@@ -238,7 +239,8 @@ fn machine_reset_does_not_detach_virtio_blk_backend() {
 
     // Replacing the device should drop the previous backend (sanity check that it was attached).
     let replacement = RawDisk::create(MemBackend::new(), capacity).unwrap();
-    m.attach_virtio_blk_disk(Box::new(replacement));
+    m.attach_virtio_blk_disk(Box::new(replacement))
+        .expect("attaching virtio-blk disk should succeed");
     assert!(
         dropped.load(Ordering::SeqCst),
         "replacing the virtio-blk device should drop the previous disk backend"
