@@ -471,7 +471,10 @@ func TestWebRTCUDPRelay_L2TunnelPingPongRoundTrip(t *testing.T) {
 		t.Fatalf("timed out waiting for l2 datachannel open")
 	}
 
-	ping := []byte{l2tunnel.Magic, l2tunnel.Version, l2tunnel.TypePing, 0x00}
+	ping, err := l2tunnel.EncodePing(nil)
+	if err != nil {
+		t.Fatalf("encode ping: %v", err)
+	}
 	if err := dc.Send(ping); err != nil {
 		t.Fatalf("send ping: %v", err)
 	}
@@ -483,7 +486,10 @@ func TestWebRTCUDPRelay_L2TunnelPingPongRoundTrip(t *testing.T) {
 		t.Fatalf("timed out waiting for pong")
 	}
 
-	want := []byte{l2tunnel.Magic, l2tunnel.Version, l2tunnel.TypePong, 0x00}
+	want, err := l2tunnel.EncodePong(nil)
+	if err != nil {
+		t.Fatalf("encode pong: %v", err)
+	}
 	if !bytes.Equal(got, want) {
 		t.Fatalf("pong mismatch: %x != %x", got, want)
 	}
@@ -534,7 +540,10 @@ func TestWebRTCUDPRelay_L2TunnelBackendTokenViaSubprotocol(t *testing.T) {
 		t.Fatalf("timed out waiting for l2 datachannel open")
 	}
 
-	ping := []byte{l2tunnel.Magic, l2tunnel.Version, l2tunnel.TypePing, 0x00}
+	ping, err := l2tunnel.EncodePing(nil)
+	if err != nil {
+		t.Fatalf("encode ping: %v", err)
+	}
 	if err := dc.Send(ping); err != nil {
 		t.Fatalf("send ping: %v", err)
 	}
@@ -546,7 +555,10 @@ func TestWebRTCUDPRelay_L2TunnelBackendTokenViaSubprotocol(t *testing.T) {
 		t.Fatalf("timed out waiting for pong")
 	}
 
-	want := []byte{l2tunnel.Magic, l2tunnel.Version, l2tunnel.TypePong, 0x00}
+	want, err := l2tunnel.EncodePong(nil)
+	if err != nil {
+		t.Fatalf("encode pong: %v", err)
+	}
 	if !bytes.Equal(got, want) {
 		t.Fatalf("pong mismatch: %x != %x", got, want)
 	}
@@ -606,7 +618,10 @@ func TestWebRTCUDPRelay_L2TunnelBackendTokenViaQueryForwarding(t *testing.T) {
 		t.Fatalf("timed out waiting for l2 datachannel open")
 	}
 
-	ping := []byte{l2tunnel.Magic, l2tunnel.Version, l2tunnel.TypePing, 0x00}
+	ping, err := l2tunnel.EncodePing(nil)
+	if err != nil {
+		t.Fatalf("encode ping: %v", err)
+	}
 	if err := dc.Send(ping); err != nil {
 		t.Fatalf("send ping: %v", err)
 	}
@@ -618,7 +633,10 @@ func TestWebRTCUDPRelay_L2TunnelBackendTokenViaQueryForwarding(t *testing.T) {
 		t.Fatalf("timed out waiting for pong")
 	}
 
-	want := []byte{l2tunnel.Magic, l2tunnel.Version, l2tunnel.TypePong, 0x00}
+	want, err := l2tunnel.EncodePong(nil)
+	if err != nil {
+		t.Fatalf("encode pong: %v", err)
+	}
 	if !bytes.Equal(got, want) {
 		t.Fatalf("pong mismatch: %x != %x", got, want)
 	}
@@ -691,7 +709,10 @@ func TestWebRTCUDPRelay_L2TunnelForwardsDerivedOriginWhenMissing(t *testing.T) {
 		t.Fatalf("timed out waiting for l2 datachannel open")
 	}
 
-	ping := []byte{l2tunnel.Magic, l2tunnel.Version, l2tunnel.TypePing, 0x00}
+	ping, err := l2tunnel.EncodePing(nil)
+	if err != nil {
+		t.Fatalf("encode ping: %v", err)
+	}
 	if err := dc.Send(ping); err != nil {
 		t.Fatalf("send ping: %v", err)
 	}
@@ -766,7 +787,10 @@ func TestWebRTCUDPRelay_L2TunnelBackendOriginOverrideTakesPrecedence(t *testing.
 		t.Fatalf("timed out waiting for l2 datachannel open")
 	}
 
-	ping := []byte{l2tunnel.Magic, l2tunnel.Version, l2tunnel.TypePing, 0x00}
+	ping, err := l2tunnel.EncodePing(nil)
+	if err != nil {
+		t.Fatalf("encode ping: %v", err)
+	}
 	if err := dc.Send(ping); err != nil {
 		t.Fatalf("send ping: %v", err)
 	}
@@ -837,7 +861,10 @@ func TestWebRTCUDPRelay_L2TunnelBackendTokenViaSubprotocolForwarding(t *testing.
 		t.Fatalf("timed out waiting for l2 datachannel open")
 	}
 
-	ping := []byte{l2tunnel.Magic, l2tunnel.Version, l2tunnel.TypePing, 0x00}
+	ping, err := l2tunnel.EncodePing(nil)
+	if err != nil {
+		t.Fatalf("encode ping: %v", err)
+	}
 	if err := dc.Send(ping); err != nil {
 		t.Fatalf("send ping: %v", err)
 	}
@@ -849,7 +876,10 @@ func TestWebRTCUDPRelay_L2TunnelBackendTokenViaSubprotocolForwarding(t *testing.
 		t.Fatalf("timed out waiting for pong")
 	}
 
-	want := []byte{l2tunnel.Magic, l2tunnel.Version, l2tunnel.TypePong, 0x00}
+	want, err := l2tunnel.EncodePong(nil)
+	if err != nil {
+		t.Fatalf("encode pong: %v", err)
+	}
 	if !bytes.Equal(got, want) {
 		t.Fatalf("pong mismatch: %x != %x", got, want)
 	}
@@ -918,7 +948,10 @@ func TestWebRTCUDPRelay_L2TunnelBackendTokenOverridesForwardedCredential(t *test
 		t.Fatalf("timed out waiting for l2 datachannel open")
 	}
 
-	ping := []byte{l2tunnel.Magic, l2tunnel.Version, l2tunnel.TypePing, 0x00}
+	ping, err := l2tunnel.EncodePing(nil)
+	if err != nil {
+		t.Fatalf("encode ping: %v", err)
+	}
 	if err := dc.Send(ping); err != nil {
 		t.Fatalf("send ping: %v", err)
 	}
@@ -930,7 +963,10 @@ func TestWebRTCUDPRelay_L2TunnelBackendTokenOverridesForwardedCredential(t *test
 		t.Fatalf("timed out waiting for pong")
 	}
 
-	want := []byte{l2tunnel.Magic, l2tunnel.Version, l2tunnel.TypePong, 0x00}
+	want, err := l2tunnel.EncodePong(nil)
+	if err != nil {
+		t.Fatalf("encode pong: %v", err)
+	}
 	if !bytes.Equal(got, want) {
 		t.Fatalf("pong mismatch: %x != %x", got, want)
 	}
@@ -1001,7 +1037,10 @@ func TestWebRTCUDPRelay_L2TunnelAuthForwardModeNoneDoesNotForwardCredential(t *t
 		t.Fatalf("timed out waiting for l2 datachannel open")
 	}
 
-	ping := []byte{l2tunnel.Magic, l2tunnel.Version, l2tunnel.TypePing, 0x00}
+	ping, err := l2tunnel.EncodePing(nil)
+	if err != nil {
+		t.Fatalf("encode ping: %v", err)
+	}
 	if err := dc.Send(ping); err != nil {
 		t.Fatalf("send ping: %v", err)
 	}
@@ -1013,7 +1052,10 @@ func TestWebRTCUDPRelay_L2TunnelAuthForwardModeNoneDoesNotForwardCredential(t *t
 		t.Fatalf("timed out waiting for pong")
 	}
 
-	want := []byte{l2tunnel.Magic, l2tunnel.Version, l2tunnel.TypePong, 0x00}
+	want, err := l2tunnel.EncodePong(nil)
+	if err != nil {
+		t.Fatalf("encode pong: %v", err)
+	}
 	if !bytes.Equal(got, want) {
 		t.Fatalf("pong mismatch: %x != %x", got, want)
 	}
@@ -1126,7 +1168,10 @@ func TestWebRTCUDPRelay_L2TunnelForwardsAeroSessionCookie(t *testing.T) {
 		t.Fatalf("timed out waiting for l2 datachannel open")
 	}
 
-	ping := []byte{l2tunnel.Magic, l2tunnel.Version, l2tunnel.TypePing, 0x00}
+	ping, err := l2tunnel.EncodePing(nil)
+	if err != nil {
+		t.Fatalf("encode ping: %v", err)
+	}
 	if err := dc.Send(ping); err != nil {
 		t.Fatalf("send ping: %v", err)
 	}
@@ -1138,7 +1183,10 @@ func TestWebRTCUDPRelay_L2TunnelForwardsAeroSessionCookie(t *testing.T) {
 		t.Fatalf("timed out waiting for pong")
 	}
 
-	want := []byte{l2tunnel.Magic, l2tunnel.Version, l2tunnel.TypePong, 0x00}
+	want, err := l2tunnel.EncodePong(nil)
+	if err != nil {
+		t.Fatalf("encode pong: %v", err)
+	}
 	if !bytes.Equal(got, want) {
 		t.Fatalf("pong mismatch: %x != %x", got, want)
 	}
