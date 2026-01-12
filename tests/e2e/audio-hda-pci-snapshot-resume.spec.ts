@@ -59,14 +59,33 @@ test("IO-worker HDA PCI audio does not fast-forward after worker snapshot restor
     { timeout: 120_000 },
   );
 
-  const initialWrite = await page.evaluate(() => {
+  const initialIndices = await page.evaluate(() => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const out = (globalThis as any).__aeroAudioOutputHdaPciDevice;
     if (!out?.enabled) return null;
-    const ring = out.ringBuffer as { writeIndex: Uint32Array };
-    return Atomics.load(ring.writeIndex, 0) >>> 0;
+    const ring = out.ringBuffer as { readIndex: Uint32Array; writeIndex: Uint32Array };
+    return {
+      read: Atomics.load(ring.readIndex, 0) >>> 0,
+      write: Atomics.load(ring.writeIndex, 0) >>> 0,
+    };
   });
-  expect(initialWrite).not.toBeNull();
+  expect(initialIndices).not.toBeNull();
+  const initialRead = initialIndices!.read;
+  const initialWrite = initialIndices!.write;
+
+  // Sanity check: ensure the AudioWorklet is actually consuming frames before snapshotting.
+  await page.waitForFunction(
+    (initialRead) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const out = (globalThis as any).__aeroAudioOutputHdaPciDevice;
+      if (!out?.enabled) return false;
+      const ring = out.ringBuffer as { readIndex: Uint32Array };
+      const read = Atomics.load(ring.readIndex, 0) >>> 0;
+      return ((read - (initialRead as number)) >>> 0) > 0;
+    },
+    initialRead,
+    { timeout: 20_000 },
+  );
 
   // Confirm the IO worker is producing into the ring buffer before snapshotting.
   await page.waitForFunction(
@@ -81,6 +100,44 @@ test("IO-worker HDA PCI audio does not fast-forward after worker snapshot restor
     initialWrite,
     { timeout: 60_000 },
   );
+
+  // Ensure the producer is writing actual (non-silent) samples into the ring, not just
+  // advancing indices.
+  await waitForAudioOutputNonSilent(page, "__aeroAudioOutputHdaPciDevice", { threshold: 0.01, timeoutMs: 20_000 });
+
+  // Let the system run for a bit so we catch sustained underruns (not just “it started once”).
+  await page.waitForTimeout(1000);
+
+  const beforeSnapshot = await page.evaluate(() => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const out = (globalThis as any).__aeroAudioOutputHdaPciDevice;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const backend = (globalThis as any).__aeroAudioToneBackend;
+    if (!out?.enabled) return null;
+    const ring = out.ringBuffer as { readIndex: Uint32Array; writeIndex: Uint32Array };
+    const read = Atomics.load(ring.readIndex, 0) >>> 0;
+    const write = Atomics.load(ring.writeIndex, 0) >>> 0;
+    return {
+      enabled: out?.enabled,
+      state: out?.context?.state,
+      backend,
+      read,
+      write,
+      bufferLevelFrames: typeof out?.getBufferLevelFrames === "function" ? out.getBufferLevelFrames() : null,
+      underruns: typeof out?.getUnderrunCount === "function" ? out.getUnderrunCount() : null,
+      overruns: typeof out?.getOverrunCount === "function" ? out.getOverrunCount() : null,
+    };
+  });
+
+  expect(beforeSnapshot).not.toBeNull();
+  expect(beforeSnapshot!.enabled).toBe(true);
+  expect(beforeSnapshot!.state).toBe("running");
+  expect(beforeSnapshot!.backend).toBe("io-worker-hda-pci");
+  expect(beforeSnapshot!.bufferLevelFrames).not.toBeNull();
+  expect(beforeSnapshot!.bufferLevelFrames as number).toBeGreaterThan(0);
+  // Startup is still subject to scheduler variance in CI; allow up to one render quantum worth of underrun.
+  expect(beforeSnapshot!.underruns).toBeLessThanOrEqual(128);
+  expect(beforeSnapshot!.overruns).toBe(0);
 
   // Generate a per-test snapshot path to avoid collisions when Playwright runs specs in parallel.
   const snapshotPath = `state/playwright-hda-pci-snapshot-${Date.now()}-${Math.random().toString(16).slice(2)}.snap`;
