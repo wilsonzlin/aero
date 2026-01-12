@@ -1042,8 +1042,10 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
     while (true) {
       if (this.closed) throw new Error("RemoteRangeDisk is closed");
       if (generation !== this.cacheGeneration) {
-        // Cache was invalidated while we were waiting in the task queue.
-        return await this.ensureChunkCached(chunkIndex);
+        // Cache was invalidated (or cleared) while we were waiting in the task queue.
+        // Do not automatically retry: the caller (readSectors) will restart against the
+        // new cache generation if needed, while background prefetches should simply stop.
+        return;
       }
 
       const cache = this.ensureOpen();
@@ -1082,9 +1084,11 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
         this.scheduleBackgroundFlush();
         return;
       } catch (err) {
+        if (this.closed) throw new Error("RemoteRangeDisk is closed");
         if (isAbortError(err) && generation !== this.cacheGeneration) {
-          // An inflight fetch was aborted due to cache invalidation/clearCache; retry against the new cache generation.
-          return await this.ensureChunkCached(chunkIndex);
+          // An inflight fetch was aborted due to cache invalidation/clearCache; do not retry here.
+          // Foreground callers will re-issue reads once they observe the generation bump.
+          return;
         }
         if (err instanceof RemoteValidatorMismatchError && invalidations < 1) {
           invalidations += 1;
