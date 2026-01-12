@@ -21,9 +21,11 @@ test("AudioWorklet producer does not burst after worker-VM snapshot restore", as
 
       const root = await storage.getDirectory();
       const handle = await root.getFileHandle("aero-sync-access-handle-probe.tmp", { create: true });
+      const supported = typeof (handle as unknown as { createSyncAccessHandle?: unknown }).createSyncAccessHandle === "function";
       return {
         ok: true as const,
-        supported: typeof (handle as unknown as { createSyncAccessHandle?: unknown }).createSyncAccessHandle === "function",
+        supported,
+        reason: supported ? undefined : "FileSystemFileHandle.createSyncAccessHandle unavailable",
       };
     } catch (err) {
       return { ok: false as const, supported: false as const, reason: err instanceof Error ? err.message : String(err) };
