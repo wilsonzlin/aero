@@ -238,6 +238,7 @@ const WEBUSB_GUEST_ROOT_PORT = 1;
 // chipset layouts and driver heuristics (e.g. Aero's native chipset profiles).
 const UHCI_PCI_BDF = { bus: 0, device: 1, function: 0 };
 const E1000_PCI_BDF = { bus: 0, device: 5, function: 0 };
+const VIRTIO_INPUT_PCI_DEVICE = 10;
 const SYNTHETIC_USB_HID_KEYBOARD_DEVICE_ID = 0x1000_0001;
 const SYNTHETIC_USB_HID_MOUSE_DEVICE_ID = 0x1000_0002;
 const SYNTHETIC_USB_HID_GAMEPAD_DEVICE_ID = 0x1000_0003;
@@ -862,9 +863,9 @@ function maybeInitVirtioInput(): void {
     mouseFn = new VirtioInputPciFunction({ kind: "mouse", device: mouseDev as unknown as any, irqSink: mgr.irqSink });
 
     // Register as a single multi-function PCI device (fn0 = keyboard, fn1 = mouse).
-    const addr0 = mgr.pciBus.registerDevice(keyboardFn);
+    mgr.registerPciDevice(keyboardFn, { device: VIRTIO_INPUT_PCI_DEVICE, function: 0 });
     keyboardRegistered = true;
-    mgr.pciBus.registerDevice(mouseFn, { device: addr0.device, function: 1 });
+    mgr.registerPciDevice(mouseFn, { device: VIRTIO_INPUT_PCI_DEVICE, function: 1 });
 
     virtioInputKeyboard = keyboardFn;
     virtioInputMouse = mouseFn;
