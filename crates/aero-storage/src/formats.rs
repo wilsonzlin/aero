@@ -56,7 +56,7 @@ pub enum DiskImage<B> {
     Raw(RawDisk<B>),
     AeroSparse(AeroSparseDisk<B>),
     Qcow2(Qcow2Disk<B>),
-    Vhd(VhdDisk<B>),
+    Vhd(Box<VhdDisk<B>>),
 }
 
 impl<B: StorageBackend> DiskImage<B> {
@@ -74,7 +74,7 @@ impl<B: StorageBackend> DiskImage<B> {
             DiskFormat::Raw => Ok(Self::Raw(RawDisk::open(backend)?)),
             DiskFormat::AeroSparse => Ok(Self::AeroSparse(AeroSparseDisk::open(backend)?)),
             DiskFormat::Qcow2 => Ok(Self::Qcow2(Qcow2Disk::open(backend)?)),
-            DiskFormat::Vhd => Ok(Self::Vhd(VhdDisk::open(backend)?)),
+            DiskFormat::Vhd => Ok(Self::Vhd(Box::new(VhdDisk::open(backend)?))),
         }
     }
 
