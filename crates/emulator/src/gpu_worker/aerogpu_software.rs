@@ -4492,4 +4492,42 @@ mod tests {
         assert_eq!(srgb_bytes[2], 0);
         assert_eq!(srgb_bytes[3], 255);
     }
+
+    #[test]
+    fn software_srgb_blending_decodes_destination_to_linear() {
+        // Validate that when blending into an sRGB render target, the destination is decoded to
+        // linear, blending happens in linear space, and the result is encoded back to sRGB.
+        //
+        // Start with a destination texel of sRGB=0x80 (~0.5), which corresponds to linear ~0.216.
+        // Blend a 50% transparent black over it using standard alpha blending:
+        //   out = src*src_a + dst*(1-src_a)
+        // -> out_linear ~= 0.108, which encodes to sRGB ~= 0.362 -> 0x5C (92).
+        let mut tex = Texture2DResource {
+            width: 1,
+            height: 1,
+            format: AeroGpuFormat::R8G8B8A8UnormSrgb,
+            mip_levels: 1,
+            array_layers: 1,
+            row_pitch_bytes: 4,
+            backing: None,
+            data: vec![128, 128, 128, 255],
+            dirty: false,
+        };
+
+        let blend = BlendState {
+            enable: true,
+            src_factor: cmd::AerogpuBlendFactor::SrcAlpha as u32,
+            dst_factor: cmd::AerogpuBlendFactor::InvSrcAlpha as u32,
+            blend_op: cmd::AerogpuBlendOp::Add as u32,
+            src_factor_alpha: cmd::AerogpuBlendFactor::One as u32,
+            dst_factor_alpha: cmd::AerogpuBlendFactor::InvSrcAlpha as u32,
+            blend_op_alpha: cmd::AerogpuBlendOp::Add as u32,
+            blend_constant: [0.0; 4],
+            sample_mask: 0xffff_ffff,
+            write_mask: 0xf,
+        };
+
+        AeroGpuSoftwareExecutor::blend_and_write_pixel(&mut tex, 0, 0, [0.0, 0.0, 0.0, 0.5], blend);
+        assert_eq!(&tex.data[..4], &[92, 92, 92, 255]);
+    }
 }
