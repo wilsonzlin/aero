@@ -305,3 +305,23 @@ fn snapshot_restore_from_ticks_and_remainder_without_elapsed_ns_preserves_phase(
         "restored PM_TMR must preserve sub-tick remainder (1ns should cross the first tick boundary)"
     );
 }
+
+#[test]
+fn snapshot_save_samples_clock_once_for_timer_encoding() {
+    // Snapshot save should sample the clock once for deterministic PM timer encoding. This guards
+    // against regressions where `save_state()` would call `Clock::now_ns()` multiple times and
+    // produce internally inconsistent timer fields under unusual clock implementations (e.g. test
+    // clocks that advance on each `now_ns()` call).
+    let cfg = AcpiPmConfig::default();
+    let clock = CountingClock::new(1_000_000_000);
+
+    let pm = AcpiPmIo::new_with_callbacks_and_clock(cfg, AcpiPmCallbacks::default(), clock.clone());
+    clock.reset_calls();
+
+    let _ = pm.save_state();
+    assert_eq!(
+        clock.calls(),
+        1,
+        "ACPI PM save_state should sample Clock::now_ns once when encoding PM timer fields"
+    );
+}
