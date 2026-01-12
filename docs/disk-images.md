@@ -12,9 +12,12 @@ Aero can use **raw disk images** in two ways:
 
 Streaming is essential for very large images (20GB+) because it avoids a full upfront download.
 
-Note: OPFS is the preferred backend for local images. Aero can fall back to IndexedDB for some
-host-side storage flows when OPFS sync access handles are unavailable, but IndexedDB is async-only
-and does not currently back the synchronous Rust disk/controller path; see
+Note: OPFS is the preferred backend for local images. In this repo, the primary OPFS backend is
+implemented in Rust/wasm32 in `crates/aero-opfs`.
+
+Aero can fall back to IndexedDB for some host-side storage flows when OPFS sync access handles are
+unavailable, but IndexedDB is async-only and does not currently back the synchronous Rust
+disk/controller path; see
 [`19-indexeddb-storage-story.md`](./19-indexeddb-storage-story.md).
 
 ## Legal / Responsible Use (Important)
