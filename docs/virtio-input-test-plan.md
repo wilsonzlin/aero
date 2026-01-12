@@ -31,7 +31,8 @@ If a test fails, treat the contract as the source of truth; fix code or bump the
 From the repo root:
 
 > Note (agent sandboxes / shared hosts): if you see `rustc` panics mentioning
-> `WouldBlock` / `Resource temporarily unavailable` (for example `Unable to install ctrlc handler`),
+> `WouldBlock` / `Resource temporarily unavailable` (for example `Unable to install ctrlc handler` or
+> `called Result::unwrap() on an Err value: Os { code: 11, kind: WouldBlock, message: "Resource temporarily unavailable" }`),
 > re-run via `safe-run.sh` (recommended below). `safe-run.sh` defaults to `-j1` and will retry a few
 > times. You can tune retries with `AERO_SAFE_RUN_RUSTC_RETRIES=...` and, if needed, raise the
 > address-space cap with `AERO_MEM_LIMIT=...` (see `docs/agent-resource-limits.md`).
