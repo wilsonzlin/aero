@@ -38,18 +38,41 @@ export class AeroMicCaptureProcessor extends WorkletProcessorBase {
   constructor(options) {
     super();
     const ringBuffer = options?.processorOptions?.ringBuffer;
-    if (!(ringBuffer instanceof SharedArrayBuffer)) {
-      throw new Error("AeroMicCaptureProcessor requires processorOptions.ringBuffer (SharedArrayBuffer)");
+    // The microphone worklet runs in a high-priority AudioWorklet thread. Avoid throwing on
+    // malformed inputs (corrupted snapshot state, misbehaving host) so we don't crash the entire
+    // audio graph; instead treat invalid buffers as "no capture sink attached".
+    let header = null;
+    let data = null;
+    let capacity = 0;
+    let rb = null;
+    if (typeof SharedArrayBuffer !== "undefined" && ringBuffer instanceof SharedArrayBuffer) {
+      try {
+        header = new Uint32Array(ringBuffer, 0, HEADER_U32_LEN);
+        data = new Float32Array(ringBuffer, HEADER_BYTES);
+        const headerCap = Atomics.load(header, CAPACITY_SAMPLES_INDEX) >>> 0;
+        // If the producer populated the CAPACITY field, ensure it matches the SAB's actual data
+        // storage. Otherwise, fall back to the SAB-derived length.
+        if (headerCap !== 0 && headerCap !== data.length) {
+          header = null;
+          data = null;
+        } else {
+          capacity = headerCap || data.length;
+          if (capacity > 0) {
+            rb = { header, data, capacity };
+          }
+        }
+      } catch (_e) {
+        header = null;
+        data = null;
+        capacity = 0;
+        rb = null;
+      }
     }
 
-    this._header = new Uint32Array(ringBuffer, 0, HEADER_U32_LEN);
-    this._data = new Float32Array(ringBuffer, HEADER_BYTES);
-    const headerCap = Atomics.load(this._header, CAPACITY_SAMPLES_INDEX) >>> 0;
-    if (headerCap && headerCap !== this._data.length) {
-      throw new Error("Mic ring buffer capacity does not match SharedArrayBuffer size");
-    }
-    this._capacity = headerCap || this._data.length;
-    this._rb = { header: this._header, data: this._data, capacity: this._capacity };
+    this._header = header;
+    this._data = data;
+    this._capacity = capacity;
+    this._rb = rb;
 
     this._muted = false;
     this._statsCounter = 0;
@@ -73,6 +96,12 @@ export class AeroMicCaptureProcessor extends WorkletProcessorBase {
 
     const frames = input[0].length;
     if (frames === 0) {
+      this._zeroOutputs(outputs);
+      return true;
+    }
+
+    if (!this._rb) {
+      // No ring buffer attached (or it was invalid). Still keep the node pullable.
       this._zeroOutputs(outputs);
       return true;
     }
