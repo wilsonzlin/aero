@@ -1957,8 +1957,9 @@ impl snapshot::SnapshotTarget for Machine {
         self.detach_network();
         // `inject_ps2_mouse_buttons` maintains a host-side "previous buttons" cache to synthesize
         // per-button transitions from an absolute mask. Snapshot restore rewinds guest time, so
-        // discard that cache to avoid suppressing post-restore button updates.
-        self.ps2_mouse_buttons = 0;
+        // force the next injection call to re-sync all 3 buttons (including transitions to the
+        // released state) regardless of the cached value.
+        self.ps2_mouse_buttons = 0xFF;
         self.reset_latch.clear();
         self.assist = AssistContext::default();
         self.mmu = aero_mmu::Mmu::new();
@@ -3025,6 +3026,10 @@ mod tests {
         assert_eq!(m.ps2_mouse_buttons, 0x07);
 
         m.restore_snapshot_bytes(&snap).unwrap();
+        assert_eq!(m.ps2_mouse_buttons, 0xFF);
+
+        // Next injection should re-sync and clear the invalid marker.
+        m.inject_ps2_mouse_buttons(0x00);
         assert_eq!(m.ps2_mouse_buttons, 0x00);
     }
 
