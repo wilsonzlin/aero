@@ -169,6 +169,14 @@ powershell -ExecutionPolicy Bypass -File drivers/windows7/virtio-input/scripts/s
   -InputDir out/drivers/windows7/virtio-input
 ```
 
+To produce a signed, redistributable ZIP in one step (stages SYS → Inf2Cat → sign → package), run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\build-release.ps1 -Arch both -InputDir <build-output-root>
+```
+
+Output is written to `release/out/`.
+
 ## Test certificate workflow (generate + install)
 
 ### 1) Generate a test certificate (on the signing machine)
