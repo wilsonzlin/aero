@@ -13,6 +13,7 @@ mod ecam;
 mod platform;
 mod ports;
 mod resources;
+mod snapshot;
 
 pub use acpi::{build_prt_bus0, dsdt_asl, PciPrtEntry, ACPI_PCI_ROOT_NAME};
 pub use bios::bios_post;
@@ -32,6 +33,7 @@ pub use ports::{
     PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT,
 };
 pub use resources::{PciResourceAllocator, PciResourceAllocatorConfig, PciResourceError};
+pub use snapshot::PciCoreSnapshot;
 
 /// PCI bus/device/function identifier.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
