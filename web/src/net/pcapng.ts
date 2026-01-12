@@ -16,14 +16,14 @@
 
 // Avoid TypeScript `enum` declarations so this module can be executed directly
 // under Node with `--experimental-strip-types` (strip-only mode does not
-// transform enums).
+// transform enums). This is required by worker_threads unit tests that load the
+// net worker directly in Node.
 export const LinkType = {
   Ethernet: 1,
   User0: 147,
   User1: 148,
 } as const;
 export type LinkType = (typeof LinkType)[keyof typeof LinkType];
-
 export const PacketDirection = {
   Inbound: 0,
   Outbound: 1,
