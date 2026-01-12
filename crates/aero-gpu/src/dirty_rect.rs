@@ -345,10 +345,13 @@ mod tests {
 
     #[test]
     fn too_many_rects_fall_back_to_full_frame() {
+        // Ensure the generated rectangles remain within bounds so we actually exceed
+        // `MAX_CLAMPED_RECTS` after clamping.
+        let bounds = (256u32, (MAX_CLAMPED_RECTS + 1).div_ceil(256) as u32);
         let rects: Vec<_> = (0..(MAX_CLAMPED_RECTS + 1))
             .map(|i| Rect::new((i % 256) as u32, (i / 256) as u32, 1, 1))
             .collect();
-        let out = merge_and_cap_rects(&rects, (100, 100), 128);
-        assert_eq!(out.rects, vec![Rect::new(0, 0, 100, 100)]);
+        let out = merge_and_cap_rects(&rects, bounds, 128);
+        assert_eq!(out.rects, vec![Rect::new(0, 0, bounds.0, bounds.1)]);
     }
 }

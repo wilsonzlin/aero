@@ -27,6 +27,7 @@ struct Texture2d {
     width: u32,
     height: u32,
     format: wgpu::TextureFormat,
+    is_x8: bool,
     texture: wgpu::Texture,
     view: wgpu::TextureView,
 }
@@ -49,6 +50,13 @@ pub struct AeroGpuAcmdExecutor {
 
     // D3D9Ex shared surface import/export bookkeeping (EXPORT/IMPORT_SHARED_SURFACE).
     shared_surfaces: SharedSurfaceTable,
+}
+
+fn is_x8_format(format: u32) -> bool {
+    format == AerogpuFormat::B8G8R8X8Unorm as u32
+        || format == AerogpuFormat::R8G8B8X8Unorm as u32
+        || format == AerogpuFormat::B8G8R8X8UnormSrgb as u32
+        || format == AerogpuFormat::R8G8B8X8UnormSrgb as u32
 }
 
 impl AeroGpuAcmdExecutor {
@@ -195,7 +203,9 @@ impl AeroGpuAcmdExecutor {
                         )));
                     }
 
-                    let format = map_texture_format(format)?;
+                    let format_raw = format;
+                    let is_x8 = is_x8_format(format_raw);
+                    let format = map_texture_format(format_raw)?;
 
                     let texture = self.device.create_texture(&wgpu::TextureDescriptor {
                         label: Some("aerogpu texture2d"),
@@ -215,15 +225,16 @@ impl AeroGpuAcmdExecutor {
                     });
 
                     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-                    self.textures.insert(
-                        texture_handle,
-                        Texture2d {
-                            width,
-                            height,
-                            format,
-                            texture,
-                            view,
-                        },
+                     self.textures.insert(
+                         texture_handle,
+                         Texture2d {
+                             width,
+                             height,
+                             format,
+                             is_x8,
+                             texture,
+                             view,
+                         },
                     );
 
                     if let Err(e) = self.shared_surfaces.register_handle(texture_handle) {
@@ -260,11 +271,15 @@ impl AeroGpuAcmdExecutor {
                         .get(&rt)
                         .ok_or(AeroGpuAcmdExecutorError::UnknownTexture(rt))?;
 
+                    let mut a = f32::from_bits(color_rgba_f32[3]);
+                    if tex.is_x8 {
+                        a = 1.0;
+                    }
                     let color = wgpu::Color {
                         r: f32::from_bits(color_rgba_f32[0]) as f64,
                         g: f32::from_bits(color_rgba_f32[1]) as f64,
                         b: f32::from_bits(color_rgba_f32[2]) as f64,
-                        a: f32::from_bits(color_rgba_f32[3]) as f64,
+                        a: a as f64,
                     };
 
                     let mut encoder =
@@ -392,6 +407,14 @@ impl AeroGpuAcmdExecutor {
             // Convert BGRA -> RGBA.
             for px in rgba8.chunks_exact_mut(4) {
                 px.swap(0, 2);
+            }
+        }
+
+        if tex.is_x8 {
+            // Report X8 textures as opaque, regardless of what wgpu stored in the underlying alpha
+            // channel.
+            for px in rgba8.chunks_exact_mut(4) {
+                px[3] = 0xFF;
             }
         }
 
@@ -539,6 +562,57 @@ mod tests {
                 err.to_string().contains("width/height"),
                 "unexpected error: {err}"
             );
+        });
+    }
+
+    #[test]
+    fn clear_x8_render_target_forces_opaque_alpha() {
+        pollster::block_on(async {
+            let mut exec = AeroGpuAcmdExecutor::new_headless().await.unwrap();
+
+            const SCANOUT: u32 = 0;
+            let cases = [
+                ("rgba_x8", AerogpuFormat::R8G8B8X8Unorm as u32),
+                ("bgra_x8", AerogpuFormat::B8G8R8X8Unorm as u32),
+            ];
+
+            for (idx, (label, format)) in cases.into_iter().enumerate() {
+                exec.reset();
+
+                let tex = 1 + idx as u32;
+                let mut w = AerogpuCmdWriter::new();
+                w.create_texture2d(
+                    tex,
+                    /*usage_flags=*/ 0,
+                    format,
+                    /*width=*/ 1,
+                    /*height=*/ 1,
+                    /*mip_levels=*/ 1,
+                    /*array_layers=*/ 1,
+                    /*row_pitch_bytes=*/ 0,
+                    /*backing_alloc_id=*/ 0,
+                    /*backing_offset_bytes=*/ 0,
+                );
+                w.set_render_targets(&[tex], /*depth_stencil=*/ 0);
+                w.clear(
+                    cmd::AEROGPU_CLEAR_COLOR,
+                    [0.0, 0.0, 0.0, 0.0], // alpha should be ignored for X8 formats
+                    /*depth=*/ 1.0,
+                    /*stencil=*/ 0,
+                );
+                w.present(SCANOUT, /*flags=*/ 0);
+
+                exec.execute_submission(&w.finish(), None)
+                    .unwrap_or_else(|e| panic!("{label}: execute_submission failed: {e:?}"));
+
+                let scanout = exec
+                    .read_presented_scanout_rgba8(SCANOUT)
+                    .await
+                    .unwrap_or_else(|e| panic!("{label}: read_presented_scanout_rgba8 failed: {e:?}"))
+                    .expect("{label}: scanout should exist after present");
+                assert_eq!((scanout.0, scanout.1), (1, 1), "{label}");
+                assert_eq!(&scanout.2[0..4], &[0, 0, 0, 255], "{label}");
+            }
         });
     }
 }
