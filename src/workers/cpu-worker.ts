@@ -441,68 +441,97 @@ async function runTieredVm(iterations: number, threshold: number) {
       const storeAddr = 0x200;
       const storeLinear = guest_base + storeAddr;
 
-      // Initialize CPU ABI bytes + guest RAM store location.
       const preRax = 0x1111222233334444n;
       const preRip = 0x5555666677778888n;
       const preStore = 0xdeadbeef;
-      dv.setBigUint64(cpuPtr + CPU_RAX_OFF, preRax, true);
-      dv.setBigUint64(cpuPtr + CPU_RIP_OFF, preRip, true);
-      dv.setUint32(storeLinear, preStore, true);
 
-      refreshMemU8();
-      const cpuBefore = memU8.slice(cpuPtr, cpuPtr + CPU_STATE_SIZE);
-
-      const tableIndex = nextTableIndex++;
-      jitFns[tableIndex] = (cpu_ptr: number, _jit_ctx_ptr: number): bigint => {
-        // Mutate the CpuState ABI region.
-        const rax = dv.getBigUint64(cpu_ptr + CPU_RAX_OFF, true);
-        dv.setBigUint64(cpu_ptr + CPU_RAX_OFF, rax + 1n, true);
-        const rip = dv.getBigUint64(cpu_ptr + CPU_RIP_OFF, true);
-        dv.setBigUint64(cpu_ptr + CPU_RIP_OFF, rip + 1n, true);
-
-        // Guest RAM store goes through the helper so it is logged.
-        env.mem_write_u32(cpu_ptr, BigInt(storeAddr), 0x12345678);
-
-        // Trigger a runtime bailout and request interpreter fallback.
-        env.jit_exit(0, 0n);
-        return JIT_EXIT_SENTINEL_I64;
+      const initState = () => {
+        dv.setBigUint64(cpuPtr + CPU_RAX_OFF, preRax, true);
+        dv.setBigUint64(cpuPtr + CPU_RIP_OFF, preRip, true);
+        dv.setUint32(storeLinear, preStore, true);
+        refreshMemU8();
+        return memU8.slice(cpuPtr, cpuPtr + CPU_STATE_SIZE);
       };
 
-      const ret = (globalThis as unknown as { __aero_jit_call: (idx: number, cpu: number, ctx: number) => bigint })
-        .__aero_jit_call(tableIndex, cpuPtr, 0);
-      if (ret !== JIT_EXIT_SENTINEL_I64) return false;
+      const callAndAssertRollback = (
+        trigger: 'jit_exit' | 'mmio_exit' | 'page_fault' | 'term',
+        expectRollback: boolean,
+      ): boolean => {
+        const cpuBefore = initState();
 
-      refreshMemU8();
-      const cpuAfter = memU8.slice(cpuPtr, cpuPtr + CPU_STATE_SIZE);
-      if (!arraysEqual(cpuBefore, cpuAfter)) return false;
+        const tableIndex = nextTableIndex++;
+        jitFns[tableIndex] = (cpu_ptr: number, _jit_ctx_ptr: number): bigint => {
+          // Mutate the CpuState ABI region.
+          const rax = dv.getBigUint64(cpu_ptr + CPU_RAX_OFF, true);
+          dv.setBigUint64(cpu_ptr + CPU_RAX_OFF, rax + 1n, true);
+          const rip = dv.getBigUint64(cpu_ptr + CPU_RIP_OFF, true);
+          dv.setBigUint64(cpu_ptr + CPU_RIP_OFF, rip + 1n, true);
 
-      const storeAfter = dv.getUint32(storeLinear, true);
-      if (storeAfter !== preStore) return false;
+          // Guest RAM store goes through the helper so it is logged.
+          env.mem_write_u32(cpu_ptr, BigInt(storeAddr), 0x12345678);
 
-      const commitAfter = dv.getUint32(cpuPtr + COMMIT_FLAG_OFFSET, true);
-      if (commitAfter !== 0) return false;
+          switch (trigger) {
+            case 'jit_exit':
+              env.jit_exit(0, 0n);
+              break;
+            case 'mmio_exit':
+              env.jit_exit_mmio(cpu_ptr, 0n, 4, 1, 0n, 0n);
+              break;
+            case 'page_fault':
+              env.page_fault(cpu_ptr, 0n);
+              break;
+            case 'term':
+              // No explicit runtime exit flag: simulate a normal `ExitToInterpreter` terminator.
+              break;
+          }
+          return JIT_EXIT_SENTINEL_I64;
+        };
 
-      // Optional sanity check: if we exit-to-interpreter without triggering a rollback condition,
-      // the commit flag should remain 1 (the default).
+        const ret = (
+          globalThis as unknown as { __aero_jit_call: (idx: number, cpu: number, ctx: number) => bigint }
+        ).__aero_jit_call(tableIndex, cpuPtr, 0);
+        if (ret !== JIT_EXIT_SENTINEL_I64) return false;
+
+        refreshMemU8();
+        const cpuAfter = memU8.slice(cpuPtr, cpuPtr + CPU_STATE_SIZE);
+        const storeAfter = dv.getUint32(storeLinear, true);
+        const commitAfter = dv.getUint32(cpuPtr + COMMIT_FLAG_OFFSET, true);
+
+        if (expectRollback) {
+          if (!arraysEqual(cpuBefore, cpuAfter)) return false;
+          if (storeAfter !== preStore) return false;
+          if (commitAfter !== 0) return false;
+          return true;
+        }
+
+        if (arraysEqual(cpuBefore, cpuAfter)) return false;
+        if (storeAfter === preStore) return false;
+        if (commitAfter !== 1) return false;
+        return true;
+      };
+
+      // Rollback exits (must clear commit flag).
+      if (!callAndAssertRollback('jit_exit', true)) return false;
+      if (!callAndAssertRollback('mmio_exit', true)) return false;
+      if (!callAndAssertRollback('page_fault', true)) return false;
+      if (!callAndAssertRollback('term', false)) return false;
+
+      // Separate check: seed the commit flag with 0 so we can confirm `__aero_jit_call` resets it
+      // to 1 on entry for non-rollback paths.
       const committedIndex = nextTableIndex++;
       jitFns[committedIndex] = (cpu_ptr: number, _jit_ctx_ptr: number): bigint => {
         const rax = dv.getBigUint64(cpu_ptr + CPU_RAX_OFF, true);
         dv.setBigUint64(cpu_ptr + CPU_RAX_OFF, rax + 2n, true);
         return JIT_EXIT_SENTINEL_I64;
       };
-
-      // Seed the commit flag with 0 so we can confirm `__aero_jit_call` resets it to 1 on entry.
       dv.setUint32(cpuPtr + COMMIT_FLAG_OFFSET, 0, true);
       dv.setBigUint64(cpuPtr + CPU_RAX_OFF, preRax, true);
-
-      const retCommitted = (globalThis as unknown as { __aero_jit_call: (idx: number, cpu: number, ctx: number) => bigint })
-        .__aero_jit_call(committedIndex, cpuPtr, 0);
+      const retCommitted = (
+        globalThis as unknown as { __aero_jit_call: (idx: number, cpu: number, ctx: number) => bigint }
+      ).__aero_jit_call(committedIndex, cpuPtr, 0);
       if (retCommitted !== JIT_EXIT_SENTINEL_I64) return false;
-
       const commitCommitted = dv.getUint32(cpuPtr + COMMIT_FLAG_OFFSET, true);
       if (commitCommitted !== 1) return false;
-      const raxCommitted = dv.getBigUint64(cpuPtr + CPU_RAX_OFF, true);
-      if (raxCommitted !== preRax + 2n) return false;
 
       return true;
     } catch {

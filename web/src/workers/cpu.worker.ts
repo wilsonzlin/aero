@@ -1530,10 +1530,25 @@ async function initAndRun(init: WorkerInitMessage): Promise<void> {
       // The tiered VM calls out to JS so the CPU worker can execute JIT blocks that were
       // compiled/instantiated out-of-band. Until the worker installs a real dispatch table, keep a
       // safe default that forces an interpreter fallback.
-      (globalThis as any).__aero_jit_call = (_tableIndex: number, _cpuPtr: number, _jitCtxPtr: number) => {
+      (globalThis as any).__aero_jit_call = (_tableIndex: number, cpuPtr: number, _jitCtxPtr: number) => {
         // Ensure the tiered runtime treats this as a non-committed execution (the stub did not run
         // any guest instructions).
-        (globalThis as any).__aero_jit_last_committed = false;
+        //
+        // This mirrors `crates/aero-wasm/src/tiered_vm.rs` where the wasm backend expects the JS
+        // host to clear a commit flag slot when it rolls back (or otherwise does not commit) a JIT
+        // block.
+        const CPU_STATE_SIZE = 1072;
+        const JIT_CTX_HEADER_BYTES = 16;
+        const JIT_TLB_ENTRIES = 256;
+        const JIT_TLB_ENTRY_BYTES = 16;
+        const JIT_CTX_TOTAL_BYTES = JIT_CTX_HEADER_BYTES + JIT_TLB_ENTRIES * JIT_TLB_ENTRY_BYTES;
+        const TIER2_CTX_BYTES = 12;
+        const COMMIT_FLAG_OFFSET = CPU_STATE_SIZE + JIT_CTX_TOTAL_BYTES + TIER2_CTX_BYTES;
+        try {
+          new DataView(segments.guestMemory.buffer).setUint32((cpuPtr + COMMIT_FLAG_OFFSET) >>> 0, 0, true);
+        } catch {
+          // ignore
+        }
         return -1n;
       };
       setReadyFlag(status, role, true);
