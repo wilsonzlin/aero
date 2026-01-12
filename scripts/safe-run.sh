@@ -56,6 +56,14 @@ unset _aero_default_cargo_build_jobs 2>/dev/null || true
 
 export RAYON_NUM_THREADS="${RAYON_NUM_THREADS:-$CARGO_BUILD_JOBS}"
 
+# rustc has its own internal worker thread pool (separate from Cargo's `-j` / build jobs).
+# In constrained agent sandboxes, the default pool size (often `num_cpus`) can exceed
+# per-user thread/process limits and cause rustc to ICE with:
+#   Os { code: 11, kind: WouldBlock, message: "Resource temporarily unavailable" }
+#
+# Keep rustc's worker pool aligned with overall Cargo build parallelism for reliability.
+export RUSTC_WORKER_THREADS="${RUSTC_WORKER_THREADS:-$CARGO_BUILD_JOBS}"
+
 # Reduce codegen parallelism per crate (avoids memory spikes / thread creation failures).
 # Only apply when invoking cargo directly, and don't override an explicit codegen-units setting.
 #

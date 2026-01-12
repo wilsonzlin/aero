@@ -112,6 +112,7 @@ These don't enforce hard limits but reduce memory spikes:
 
 ```bash
 export CARGO_BUILD_JOBS=1       # Limit parallel rustc (agent default; raise if your sandbox allows)
+export RUSTC_WORKER_THREADS=1   # Limit rustc's internal worker pool (avoid "WouldBlock" rustc ICEs)
 export RUSTFLAGS="-C codegen-units=4"  # Reduce per-crate parallelism
 ```
 
@@ -134,6 +135,8 @@ Recommended memory-friendly Cargo settings live in environment variables (next s
 # Cargo parallelism is defaulted to `-j1` for reliability in constrained sandboxes.
 # Override by setting `AERO_CARGO_BUILD_JOBS` before sourcing `scripts/agent-env.sh`.
 export CARGO_BUILD_JOBS=1
+export RUSTC_WORKER_THREADS=1   # Limit rustc internal worker threads (reliability under contention)
+export RAYON_NUM_THREADS=1      # Keep rayon pools aligned with Cargo parallelism
 export RUSTFLAGS="-C codegen-units=4"
 export CARGO_INCREMENTAL=1
 

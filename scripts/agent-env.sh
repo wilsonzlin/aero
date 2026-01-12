@@ -112,6 +112,14 @@ fi
 unset _aero_default_cargo_build_jobs 2>/dev/null || true
 export CARGO_INCREMENTAL=1
 
+# rustc has its own internal worker thread pool (separate from Cargo's `-j` / build jobs).
+# In constrained agent sandboxes, the default pool size (often `num_cpus`) can exceed per-user
+# thread/process limits and cause rustc to ICE with:
+#   Os { code: 11, kind: WouldBlock, message: "Resource temporarily unavailable" }
+#
+# Keep rustc's worker pool aligned with overall Cargo build parallelism for reliability.
+export RUSTC_WORKER_THREADS="${RUSTC_WORKER_THREADS:-$CARGO_BUILD_JOBS}"
+
 # rustc uses Rayon internally for query evaluation and other parallel work.
 # When many agents share the same host, the default Rayon thread count (often `num_cpus`) can
 # exceed per-user thread/process limits, causing rustc to ICE with:
@@ -200,6 +208,7 @@ ulimit -n 4096 2>/dev/null || true
 
 echo "Aero agent environment configured:"
 echo "  CARGO_BUILD_JOBS=$CARGO_BUILD_JOBS"
+echo "  RUSTC_WORKER_THREADS=$RUSTC_WORKER_THREADS"
 echo "  RAYON_NUM_THREADS=$RAYON_NUM_THREADS"
 echo "  RUSTFLAGS=$RUSTFLAGS"
 echo "  CARGO_INCREMENTAL=$CARGO_INCREMENTAL"
