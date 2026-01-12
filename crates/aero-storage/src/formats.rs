@@ -3,6 +3,7 @@ use crate::{AeroSparseDisk, Qcow2Disk, RawDisk, Result, StorageBackend, VhdDisk}
 const QCOW2_MAGIC: [u8; 4] = *b"QFI\xfb";
 const AEROSPAR_MAGIC: [u8; 8] = *b"AEROSPAR";
 const VHD_COOKIE: [u8; 8] = *b"conectix";
+const VHD_FOOTER_SIZE: usize = 512;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum DiskFormat {
@@ -18,24 +19,31 @@ pub enum DiskFormat {
 pub fn detect_format<B: StorageBackend>(backend: &mut B) -> Result<DiskFormat> {
     let len = backend.len()?;
 
-    if len >= 4 {
-        let mut magic = [0u8; 4];
-        backend.read_at(0, &mut magic)?;
-        if magic == QCOW2_MAGIC {
-            return Ok(DiskFormat::Qcow2);
+    // QCOW2: check the magic and a plausible version field. A QCOW2 header is at least 72 bytes,
+    // but we only need the first 8 bytes for conservative detection.
+    if len >= 8 {
+        let mut header8 = [0u8; 8];
+        backend.read_at(0, &mut header8)?;
+        if header8[..4] == QCOW2_MAGIC {
+            let version = be_u32(&header8[4..8]);
+            if version == 2 || version == 3 {
+                return Ok(DiskFormat::Qcow2);
+            }
         }
     }
 
     // VHD fixed disks have only a footer at the end; dynamic disks typically have a footer at
     // both the beginning and the end. Check both.
-    if len >= 512 {
-        let mut cookie = [0u8; 8];
-        backend.read_at(len - 512, &mut cookie)?;
-        if cookie == VHD_COOKIE {
+    if len >= VHD_FOOTER_SIZE as u64 {
+        let mut footer = [0u8; VHD_FOOTER_SIZE];
+
+        backend.read_at(len - VHD_FOOTER_SIZE as u64, &mut footer)?;
+        if looks_like_vhd_footer(&footer, len) {
             return Ok(DiskFormat::Vhd);
         }
-        backend.read_at(0, &mut cookie)?;
-        if cookie == VHD_COOKIE {
+
+        backend.read_at(0, &mut footer)?;
+        if looks_like_vhd_footer(&footer, len) {
             return Ok(DiskFormat::Vhd);
         }
     }
@@ -49,6 +57,79 @@ pub fn detect_format<B: StorageBackend>(backend: &mut B) -> Result<DiskFormat> {
     }
 
     Ok(DiskFormat::Raw)
+}
+
+fn looks_like_vhd_footer(footer: &[u8; VHD_FOOTER_SIZE], file_len: u64) -> bool {
+    if footer[..8] != VHD_COOKIE {
+        return false;
+    }
+
+    // The VHD footer is big-endian and has a fixed file format version.
+    if be_u32(&footer[12..16]) != 0x0001_0000 {
+        return false;
+    }
+
+    // Virtual disk size.
+    let current_size = be_u64(&footer[48..56]);
+    if current_size == 0 || current_size % (VHD_FOOTER_SIZE as u64) != 0 {
+        return false;
+    }
+
+    let disk_type = be_u32(&footer[60..64]);
+    if disk_type != 2 && disk_type != 3 {
+        return false;
+    }
+
+    // Fixed: data_offset is 0xFFFF..FFFF.
+    // Dynamic: data_offset points to the dynamic header and must be 512-byte aligned.
+    let data_offset = be_u64(&footer[16..24]);
+    match disk_type {
+        2 => {
+            if data_offset != u64::MAX {
+                return false;
+            }
+
+            // A fixed VHD consists of the data region followed by a single 512-byte footer.
+            let Some(required_len) = current_size.checked_add(VHD_FOOTER_SIZE as u64) else {
+                return false;
+            };
+            if file_len < required_len {
+                return false;
+            }
+        }
+        3 => {
+            if data_offset == u64::MAX {
+                return false;
+            }
+            if data_offset % (VHD_FOOTER_SIZE as u64) != 0 {
+                return false;
+            }
+            // The footer copy occupies the first sector of the file.
+            if data_offset < VHD_FOOTER_SIZE as u64 {
+                return false;
+            }
+            // The dynamic header is 1024 bytes.
+            let Some(end) = data_offset.checked_add(1024) else {
+                return false;
+            };
+            if end > file_len {
+                return false;
+            }
+        }
+        _ => return false,
+    }
+
+    true
+}
+
+fn be_u32(bytes: &[u8]) -> u32 {
+    u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
+}
+
+fn be_u64(bytes: &[u8]) -> u64 {
+    u64::from_be_bytes([
+        bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+    ])
 }
 
 /// A convenience wrapper that can open multiple disk image formats from a single backend.

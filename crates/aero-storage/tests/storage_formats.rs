@@ -208,6 +208,23 @@ fn detect_qcow2_and_vhd() {
 }
 
 #[test]
+fn detect_format_does_not_misclassify_vhd_cookie_without_valid_footer_fields() {
+    // A random file that happens to contain "conectix" should not be treated as a VHD unless
+    // the surrounding footer fields are also plausible.
+    let mut backend = MemBackend::with_len(512).unwrap();
+    backend.write_at(0, b"conectix").unwrap();
+    assert_eq!(detect_format(&mut backend).unwrap(), DiskFormat::Raw);
+}
+
+#[test]
+fn detect_format_does_not_misclassify_qcow2_magic_with_bad_version() {
+    let mut backend = MemBackend::with_len(8).unwrap();
+    backend.write_at(0, b"QFI\xfb").unwrap();
+    backend.write_at(4, &99u32.to_be_bytes()).unwrap(); // invalid version
+    assert_eq!(detect_format(&mut backend).unwrap(), DiskFormat::Raw);
+}
+
+#[test]
 fn detect_aerosparse_and_raw() {
     let sparse = AeroSparseDisk::create(
         MemBackend::new(),
