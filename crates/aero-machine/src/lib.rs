@@ -1376,11 +1376,11 @@ impl snapshot::SnapshotTarget for Machine {
                 (&self.pci_intx, by_id.remove(&snapshot::DeviceId::PCI_INTX))
             {
                 let mut pci_intx = pci_intx.borrow_mut();
-                let _ = snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
+                restored_pci_intx = snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
                     &state,
                     &mut *pci_intx,
-                );
-                restored_pci_intx = true;
+                )
+                .is_ok();
             }
         }
 
