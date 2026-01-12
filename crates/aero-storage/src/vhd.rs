@@ -99,6 +99,18 @@ impl VhdDynamicHeader {
 }
 
 /// VHD fixed/dynamic disk (subset).
+///
+/// Supported:
+/// - Fixed disks (`disk_type=2`)
+///   - Data region + required footer at EOF
+///   - Optional footer copy at offset 0 (data starts at offset 512)
+/// - Dynamic disks (`disk_type=3`)
+///   - Footer copy at offset 0 and footer at EOF
+///   - Dynamic header + BAT + per-block bitmaps
+///
+/// Unsupported:
+/// - Differencing disks (`disk_type=4`)
+/// - Any features that require interpreting backing chains beyond this single image file
 pub struct VhdDisk<B> {
     backend: B,
     footer: VhdFooter,

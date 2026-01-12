@@ -181,6 +181,7 @@ impl Qcow2Header {
 /// - uncompressed
 /// - no backing file
 /// - no internal snapshots
+/// - writes only support clusters with refcount=1 (shared clusters are rejected)
 pub struct Qcow2Disk<B> {
     backend: B,
     header: Qcow2Header,
