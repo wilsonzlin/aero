@@ -114,6 +114,19 @@ Restore note: USB snapshots capture guest-visible controller/runtime state only.
 
 This standardizes device payloads on a deterministic, forward-compatible TLV encoding. `aero-snapshot` provides opt-in helpers behind the `io-snapshot` feature: `aero_snapshot::io_snapshot_bridge::{device_state_from_io_snapshot, apply_io_snapshot_to_device}`.
 
+#### i8042 (`DeviceId::I8042`)
+
+For the legacy PS/2 controller (`ports 0x60/0x64`), store a single device entry:
+
+- Outer `DeviceState.id = DeviceId::I8042`
+- `DeviceState.data = aero-io-snapshot` TLV blob produced by the i8042 controller
+  (`aero_devices_input::I8042Controller::save_state()`)
+- `DeviceState.version` / `DeviceState.flags` mirror the inner device `SnapshotVersion (major, minor)`
+
+Restore note: the i8042 snapshot includes the guest-visible output-port A20 bit (command `0xD0`).
+If the i8042 model has a `SystemControlSink` attached (recommended), `load_state()` will
+resynchronize the platform A20 latch with the restored output-port image.
+
 ### PCI core state (`aero-devices`)
 
 The PCI core in `crates/devices` snapshots only **guest-visible PCI-layer state** (not device-internal emulation state) using `aero-io-snapshot` TLVs with the following inner `DEVICE_ID`s:
