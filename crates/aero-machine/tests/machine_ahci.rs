@@ -414,3 +414,100 @@ fn machine_exposes_ich9_ahci_at_canonical_bdf_and_bar5_mmio_works() {
     assert_eq!(cap, 0x8000_1F00);
     assert_eq!(pi, 0x0000_0001);
 }
+
+#[test]
+fn machine_gates_ahci_dma_on_pci_bus_master_enable() {
+    const RAM_SIZE: u64 = 2 * 1024 * 1024;
+
+    let mut m = Machine::new(MachineConfig {
+        ram_size_bytes: RAM_SIZE,
+        enable_pc_platform: true,
+        enable_ahci: true,
+        // Keep the machine minimal for deterministic polling.
+        enable_serial: false,
+        enable_i8042: false,
+        enable_reset_ctrl: false,
+        ..Default::default()
+    })
+    .unwrap();
+
+    // Enable A20 before touching high MMIO addresses.
+    m.io_write(0x92, 1, 0x02);
+
+    // Attach a small disk to AHCI port 0.
+    let capacity = 8 * SECTOR_SIZE as u64;
+    let disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
+    m.attach_ahci_disk_port0(Box::new(disk)).unwrap();
+
+    // Program the AHCI controller.
+    let bdf = SATA_AHCI_ICH9.bdf;
+    let bar5_base: u64 = 0xE100_0000;
+
+    // Reprogram BAR5 within the machine's PCI MMIO window (deterministic address).
+    write_cfg_u32(
+        &mut m,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        0x24,
+        bar5_base as u32,
+    );
+
+    // Enable memory decoding but keep bus mastering disabled.
+    write_cfg_u16(&mut m, bdf.bus, bdf.device, bdf.function, 0x04, 0x0002);
+
+    // Basic port programming.
+    let clb = 0x1000u64;
+    let fb = 0x2000u64;
+    let ctba = 0x3000u64;
+    let identify_buf = 0x4000u64;
+
+    m.write_physical_u32(bar5_base + PORT_BASE + PORT_REG_CLB, clb as u32);
+    m.write_physical_u32(bar5_base + PORT_BASE + PORT_REG_CLBU, (clb >> 32) as u32);
+    m.write_physical_u32(bar5_base + PORT_BASE + PORT_REG_FB, fb as u32);
+    m.write_physical_u32(bar5_base + PORT_BASE + PORT_REG_FBU, (fb >> 32) as u32);
+
+    m.write_physical_u32(bar5_base + HBA_GHC, GHC_AE);
+    m.write_physical_u32(
+        bar5_base + PORT_BASE + PORT_REG_CMD,
+        PORT_CMD_ST | PORT_CMD_FRE,
+    );
+
+    // Issue IDENTIFY DMA (slot 0).
+    write_cmd_header(&mut m, clb, 0, ctba, 1, false);
+    write_cfis(&mut m, ctba, 0xEC, 0, 0);
+    write_prdt(&mut m, ctba, 0, identify_buf, SECTOR_SIZE as u32);
+
+    // Ensure the buffer starts cleared so we can detect whether DMA ran.
+    m.write_physical_u32(identify_buf, 0);
+
+    m.write_physical_u32(bar5_base + PORT_BASE + PORT_REG_CI, 1);
+
+    // Without Bus Master Enable, `process_ahci()` must not perform DMA or complete the command.
+    for _ in 0..8 {
+        m.process_ahci();
+    }
+    assert_eq!(
+        m.read_physical_u8(identify_buf),
+        0,
+        "AHCI DMA should be gated off when PCI bus mastering is disabled"
+    );
+    assert_eq!(
+        m.read_physical_u32(bar5_base + PORT_BASE + PORT_REG_CI),
+        1,
+        "AHCI command issue bits should remain set when PCI bus mastering is disabled"
+    );
+
+    // Now enable bus mastering and re-run processing; the pending command should complete.
+    write_cfg_u16(&mut m, bdf.bus, bdf.device, bdf.function, 0x04, 0x0006);
+    for _ in 0..32 {
+        m.process_ahci();
+        if m.read_physical_u32(bar5_base + PORT_BASE + PORT_REG_CI) == 0 {
+            break;
+        }
+    }
+    assert_eq!(m.read_physical_u32(bar5_base + PORT_BASE + PORT_REG_CI), 0);
+
+    let identify = m.read_physical_bytes(identify_buf, SECTOR_SIZE);
+    assert_eq!(identify[0], 0x40);
+}
