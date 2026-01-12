@@ -83,7 +83,10 @@ The web runtime enforces this by clamping `guest_size` to `<= PCI_MMIO_BASE` in 
 
 Contract:
 
-- Guest physical address `paddr` maps to linear address `guest_base + paddr`.
+- For the simple flat-RAM layout used by the web runtime today, guest physical address `paddr`
+  maps to linear address `guest_base + paddr`.
+  - Once the PC/Q35 ECAM + PCI/MMIO holes + >4 GiB remap are modeled, this becomes a *piecewise*
+    mapping (see the next section).
 - JS/TS code must bounds-check guest accesses against `[0, guest_size)` and reject anything outside.
 - The coordinator stores `{ guest_base, guest_size }` into the control/status `SharedArrayBuffer` so all workers (TS + WASM) agree on the mapping.
 - The WASM build uses a **bounded global allocator** so Rust heap allocations cannot grow past `runtime_reserved` and silently corrupt guest RAM.
