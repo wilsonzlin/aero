@@ -2,6 +2,7 @@ use aero_io_snapshot::io::state::{IoSnapshot, SnapshotVersion, SnapshotWriter};
 use aero_net_stack::packet::*;
 use aero_net_stack::{
     Action, DnsResolved, NetworkStack, NetworkStackSnapshotState, StackConfig, TcpRestorePolicy,
+    TcpConnectionStatus,
 };
 use core::net::Ipv4Addr;
 
@@ -112,6 +113,50 @@ fn snapshot_drop_policy_clears_tcp_state() {
 }
 
 #[test]
+fn snapshot_reconnect_policy_restores_tcp_bookkeeping_and_emits_proxy_connects() {
+    let mut cfg = StackConfig::default();
+    cfg.host_policy.enabled = true;
+    let mut stack = NetworkStack::new(cfg.clone());
+    let guest_mac = MacAddr([0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0xee]);
+    dhcp_handshake(&mut stack, guest_mac);
+
+    // Establish two distinct TCP connections so the snapshot contains TCP bookkeeping state.
+    let remote_ip1 = Ipv4Addr::new(93, 184, 216, 34);
+    let remote_ip2 = Ipv4Addr::new(1, 1, 1, 1);
+    let conn1 = open_tcp_connection(&mut stack, guest_mac, remote_ip1, 40000, 80, 1000, 20);
+    let conn2 = open_tcp_connection(&mut stack, guest_mac, remote_ip2, 40001, 443, 2000, 21);
+
+    let state = stack.export_snapshot_state();
+    assert_eq!(state.tcp_connections.len(), 2);
+
+    let mut restored = NetworkStack::new(cfg);
+    let actions = restored.import_snapshot_state(state, TcpRestorePolicy::Reconnect);
+
+    let tcp_connects: Vec<(u32, Ipv4Addr, u16)> = actions
+        .iter()
+        .filter_map(|a| match a {
+            Action::TcpProxyConnect {
+                connection_id,
+                remote_ip,
+                remote_port,
+            } => Some((*connection_id, *remote_ip, *remote_port)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        tcp_connects,
+        vec![(conn1, remote_ip1, 80), (conn2, remote_ip2, 443)],
+        "Reconnect policy should emit best-effort proxy connects in deterministic order"
+    );
+
+    let exported = restored.export_snapshot_state();
+    assert_eq!(exported.tcp_connections.len(), 2);
+    for conn in &exported.tcp_connections {
+        assert_eq!(conn.status, TcpConnectionStatus::Reconnecting);
+    }
+}
+
+#[test]
 fn snapshot_corrupt_bytes_returns_error() {
     let mut state = NetworkStackSnapshotState::default();
     assert!(state.load_state(&[]).is_err());
@@ -134,6 +179,37 @@ fn snapshot_loads_legacy_device_id() {
     let mut decoded = NetworkStackSnapshotState::default();
     decoded.load_state(&bytes).expect("decode legacy snapshot");
     assert!(decoded.ip_assigned);
+}
+
+fn open_tcp_connection(
+    stack: &mut NetworkStack,
+    guest_mac: MacAddr,
+    remote_ip: Ipv4Addr,
+    guest_port: u16,
+    remote_port: u16,
+    guest_isn: u32,
+    now_ms: u64,
+) -> u32 {
+    let syn = wrap_tcp_ipv4_eth(
+        guest_mac,
+        stack.config().our_mac,
+        stack.config().guest_ip,
+        remote_ip,
+        guest_port,
+        remote_port,
+        guest_isn,
+        0,
+        TcpFlags::SYN,
+        &[],
+    );
+    let actions = stack.process_outbound_ethernet(&syn, now_ms);
+    actions
+        .iter()
+        .find_map(|a| match a {
+            Action::TcpProxyConnect { connection_id, .. } => Some(*connection_id),
+            _ => None,
+        })
+        .expect("missing TcpProxyConnect action for SYN")
 }
 
 fn dhcp_handshake(stack: &mut NetworkStack, guest_mac: MacAddr) {
