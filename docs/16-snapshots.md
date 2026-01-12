@@ -136,6 +136,12 @@ Restore note: the i8042 snapshot includes the guest-visible output-port A20 bit 
 If the i8042 model has a `SystemControlSink` attached (recommended), `load_state()` will
 resynchronize the platform A20 latch with the restored output-port image.
 
+IRQ note: i8042 IRQ1/IRQ12 are treated as **edge-triggered** in Aero’s model. The i8042 device
+snapshot should not attempt to encode an “IRQ level”; any pending interrupts from prior edges must
+be captured/restored by the interrupt controller (PIC/APIC) device state. On restore, the i8042
+device must avoid emitting spurious IRQ pulses purely due to buffered output bytes (see
+[`docs/irq-semantics.md`](./irq-semantics.md)).
+
 ### PCI core state (`aero-devices`)
 
 The PCI core in `crates/devices` snapshots only **guest-visible PCI-layer state** (not device-internal emulation state) using `aero-io-snapshot` TLVs with the following inner `DEVICE_ID`s:
