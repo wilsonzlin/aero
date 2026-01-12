@@ -151,6 +151,21 @@ which can happen when many agents share the same host. Override with
 
 These balance speed with reasonable memory usage. They're defaults, not hard constraints—override if you know what you're doing.
 
+### Common agent-sandbox failures (and what to do)
+
+On shared hosts running many agents concurrently, Linux per-user process/thread limits can be hit even when
+`CARGO_BUILD_JOBS=1`. When that happens you may see transient errors like:
+
+- `Resource temporarily unavailable (os error 11)`
+- `fork: retry: Resource temporarily unavailable`
+- rustc panic: `failed to spawn helper thread (WouldBlock)`
+- rustc panic: `Unable to install ctrlc handler: ... WouldBlock (Resource temporarily unavailable)`
+
+These are typically **environment/resource-limit** issues, not code bugs. The best remediation is to:
+
+1. Wait with backoff (a few seconds → tens of seconds)
+2. Re-run the command (still using `safe-run.sh`)
+
 ### Cargo config (`.cargo/config.toml`)
 
 This repo tracks `.cargo/config.toml` for the `cargo xtask` alias, and it is kept intentionally minimal so CI isn't affected by agent-only settings.
