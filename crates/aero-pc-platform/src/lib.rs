@@ -2109,6 +2109,9 @@ impl PcPlatform {
         if let Some(ahci) = self.ahci.as_ref() {
             ahci.borrow_mut().reset();
         }
+        if let Some(ide) = self.ide.as_ref() {
+            ide.borrow_mut().reset();
+        }
         if let Some(uhci) = self.uhci.as_ref() {
             uhci.borrow_mut().reset();
         }

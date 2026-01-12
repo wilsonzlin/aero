@@ -574,6 +574,30 @@ impl IdeController {
         }
     }
 
+    pub fn reset(&mut self) {
+        // Preserve guest-visible drive presence and host-side backends while resetting the
+        // controller's register and transfer state back to its power-on defaults.
+        let primary_devices = std::mem::take(&mut self.primary.devices);
+        let primary_present = self.primary.drive_present;
+        let secondary_devices = std::mem::take(&mut self.secondary.devices);
+        let secondary_present = self.secondary.drive_present;
+
+        let primary_ports = self.primary.ports;
+        let secondary_ports = self.secondary.ports;
+
+        self.primary = Channel::new(primary_ports);
+        self.primary.devices = primary_devices;
+        self.primary.drive_present = primary_present;
+
+        self.secondary = Channel::new(secondary_ports);
+        self.secondary.devices = secondary_devices;
+        self.secondary.drive_present = secondary_present;
+
+        for bm in &mut self.bus_master {
+            bm.reset();
+        }
+    }
+
     pub fn bus_master_base(&self) -> u16 {
         self.bus_master_base
     }
@@ -1478,6 +1502,14 @@ impl PciDevice for Piix3IdePciDevice {
 
     fn config_mut(&mut self) -> &mut PciConfigSpace {
         &mut self.config
+    }
+
+    fn reset(&mut self) {
+        // Preserve BAR programming but disable decoding.
+        self.config.set_command(0);
+
+        // Reset the IDE controller state machine while preserving attached backends.
+        self.controller.reset();
     }
 }
 

@@ -107,6 +107,14 @@ impl BusMasterChannel {
         }
     }
 
+    pub fn reset(&mut self) {
+        // Preserve drive DMA capability flags (those represent hardware capability, not runtime
+        // state), but clear runtime registers back to their power-on defaults.
+        self.cmd = 0;
+        self.status = 0;
+        self.prd_addr = 0;
+    }
+
     pub fn set_drive_dma_capable(&mut self, drive: usize, capable: bool) {
         if drive < 2 {
             self.drive_dma_capable[drive] = capable;

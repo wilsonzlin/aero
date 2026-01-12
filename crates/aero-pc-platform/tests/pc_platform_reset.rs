@@ -1,6 +1,8 @@
-use aero_devices::pci::profile::{NVME_CONTROLLER, SATA_AHCI_ICH9, USB_UHCI_PIIX3};
+use aero_devices::pci::profile::{IDE_PIIX3, NVME_CONTROLLER, SATA_AHCI_ICH9, USB_UHCI_PIIX3};
 use aero_devices::reset_ctrl::RESET_CTRL_RESET_VALUE;
+use aero_devices_storage::pci_ide::PRIMARY_PORTS;
 use aero_pc_platform::{PcPlatform, ResetEvent};
+use aero_storage::{MemBackend, RawDisk, SECTOR_SIZE};
 use memory::MemoryBus as _;
 
 fn cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
@@ -15,6 +17,12 @@ fn read_cfg_u32(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: 
     pc.io
         .write(0xCF8, 4, cfg_addr(bus, device, function, offset));
     pc.io.read(0xCFC, 4)
+}
+
+fn read_io_bar_base(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, bar: u8) -> u16 {
+    let off = 0x10 + bar * 4;
+    let val = read_cfg_u32(pc, bus, device, function, off);
+    u16::try_from(val & 0xFFFF_FFFC).unwrap()
 }
 
 fn write_cfg_u16(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8, value: u16) {
@@ -150,5 +158,54 @@ fn pc_platform_reset_resets_nvme_controller_state() {
         pc.memory.read_u32(bar0_base_after + 0x000c),
         0,
         "reset should clear NVMe interrupt mask register"
+    );
+}
+
+#[test]
+fn pc_platform_reset_resets_ide_controller_state() {
+    let mut pc = PcPlatform::new_with_ide(2 * 1024 * 1024);
+    let bdf = IDE_PIIX3.bdf;
+
+    // Attach a disk so status reads are driven by the selected device.
+    let disk = RawDisk::create(MemBackend::new(), 8 * SECTOR_SIZE as u64).unwrap();
+    pc.attach_ide_primary_master_disk(Box::new(disk)).unwrap();
+
+    // Ensure I/O decoding is enabled so legacy ports + BAR4 are accessible.
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0001);
+
+    let bm_base = read_io_bar_base(&mut pc, bdf.bus, bdf.device, bdf.function, 4);
+    assert_ne!(bm_base, 0);
+
+    let status_before = pc.io.read(PRIMARY_PORTS.cmd_base + 7, 1) as u8;
+    assert_ne!(status_before, 0xFF, "IDE status should decode with a drive present");
+
+    // Mutate Bus Master IDE registers so we can verify they're cleared by reset.
+    pc.io.write(bm_base, 1, 0x09);
+    pc.io.write(bm_base + 4, 4, 0x1234_5678);
+    assert_eq!(pc.io.read(bm_base, 1), 0x09);
+    assert_eq!(pc.io.read(bm_base + 4, 4), 0x1234_5678);
+
+    pc.reset();
+
+    // Re-enable I/O decoding in case the post-reset BIOS chose a different policy.
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0001);
+    let bm_base_after = read_io_bar_base(&mut pc, bdf.bus, bdf.device, bdf.function, 4);
+    assert_ne!(bm_base_after, 0);
+
+    let status_after = pc.io.read(PRIMARY_PORTS.cmd_base + 7, 1) as u8;
+    assert_ne!(
+        status_after, 0xFF,
+        "IDE drive presence should survive platform reset"
+    );
+
+    assert_eq!(
+        pc.io.read(bm_base_after, 1),
+        0,
+        "Bus Master IDE command register should be cleared on reset"
+    );
+    assert_eq!(
+        pc.io.read(bm_base_after + 4, 4),
+        0,
+        "Bus Master IDE PRD pointer should be cleared on reset"
     );
 }
