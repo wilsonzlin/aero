@@ -110,7 +110,7 @@ namespace aerogpu {
 // the current AeroGPU D3D9 UMD already understands/emits:
 // - render states
 // - sampler states
-// - fixed-function state caches (transforms + texture stage state)
+// - fixed-function state caches (transforms + texture stage state; cached-only, used for Get*/stateblock compatibility)
 // - texture bindings
 // - render target + depth/stencil bindings
 // - viewport + scissor
