@@ -1050,6 +1050,7 @@ impl StreamingDisk {
             return Ok(Vec::new());
         }
 
+        let expected_validator = self.inner.validator.as_deref();
         let range_header = format!("bytes={}-{}", start, end - 1);
         self.inner
             .telemetry
@@ -1062,19 +1063,25 @@ impl StreamingDisk {
             HeaderValue::from_str(&range_header)
                 .map_err(|e| StreamingDiskError::Protocol(e.to_string()))?,
         );
-        if let Some(validator) = &self.inner.validator {
-            // RFC 9110 disallows weak ETags in `If-Range`. Some servers respond to
-            // `If-Range: W/"..."` by ignoring the Range and returning a full 200 OK.
-            // Avoid misclassifying the server as not supporting Range by omitting `If-Range`
-            // when the validator is a weak ETag.
+        // RFC 9110 disallows weak validators in `If-Range` and requires strong comparison. Some
+        // servers respond with `200 OK` (full representation) when clients send `If-Range: W/"..."`,
+        // which is ambiguous with servers that don't support Range at all. Avoid the ambiguity by
+        // omitting `If-Range` when the validator is a weak ETag and instead validating ETags on
+        // successful `206` responses.
+        let sent_if_range = if let Some(validator) = expected_validator {
             if !validator_is_weak_etag(validator) {
                 headers.insert(
                     IF_RANGE,
                     HeaderValue::from_str(validator)
                         .map_err(|e| StreamingDiskError::Protocol(e.to_string()))?,
                 );
+                true
+            } else {
+                false
             }
-        }
+        } else {
+            false
+        };
         let req = self
             .inner
             .client
@@ -1123,16 +1130,18 @@ impl StreamingDisk {
             });
         }
 
-        if let Some(expected) = &self.inner.validator {
-            let actual = extract_validator(resp.headers());
-            if actual
-                .as_deref()
-                .is_some_and(|validator| validator != expected.as_str())
-            {
-                return Err(StreamingDiskError::ValidatorMismatch {
-                    expected: Some(expected.clone()),
-                    actual,
-                });
+        if !sent_if_range {
+            if let Some(expected) = expected_validator {
+                if validator_is_weak_etag(expected) {
+                    if let Some(actual) = resp.headers().get(ETAG).and_then(|v| v.to_str().ok()) {
+                        if actual != expected {
+                            return Err(StreamingDiskError::ValidatorMismatch {
+                                expected: Some(expected.to_string()),
+                                actual: Some(actual.to_string()),
+                            });
+                        }
+                    }
+                }
             }
         }
 
@@ -1303,7 +1312,8 @@ fn extract_validator(headers: &HeaderMap) -> Option<String> {
 }
 
 fn validator_is_weak_etag(validator: &str) -> bool {
-    validator.trim_start().starts_with("W/")
+    let trimmed = validator.trim_start();
+    trimmed.starts_with("W/") || trimmed.starts_with("w/")
 }
 
 fn cache_backend_looks_populated(

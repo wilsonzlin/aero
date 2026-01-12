@@ -9,12 +9,24 @@ use rand::{rngs::StdRng, Rng, SeedableRng};
 use wasmparser::{Operator, Parser, Payload};
 use wasmtime::{Config, Engine, Instance, Module, Store, Trap};
 
+fn wasmtime_engine() -> Engine {
+    let mut config = Config::new();
+    config.wasm_simd(true);
+    // Wasmtime's default configuration reserves a 4GiB virtual address space region per wasm32
+    // linear memory (plus guard pages) to enable fast bounds checks. These SIMD JIT unit tests spin
+    // up many instances in parallel; reserving 4GiB each can exceed RLIMIT_AS in CI/sandbox
+    // environments even though the test memories are tiny.
+    //
+    // Keep the reservation small so the tests can run under resource limits.
+    config.memory_reservation(128 * 1024);
+    config.memory_reservation_for_growth(0);
+    Engine::new(&config).unwrap()
+}
+
 fn run_jit(program: &Program, state: &SseState, mem: &[u8]) -> (SseState, Vec<u8>, Vec<u8>) {
     let wasm = compile_wasm_simd(program, JitOptions::default(), DEFAULT_WASM_LAYOUT).unwrap();
 
-    let mut config = Config::new();
-    config.wasm_simd(true);
-    let engine = Engine::new(&config).unwrap();
+    let engine = wasmtime_engine();
     let module = Module::new(&engine, &wasm).unwrap();
     let mut store = Store::new(&engine, ());
     let instance = Instance::new(&mut store, &module, &[]).unwrap();
@@ -576,9 +588,7 @@ fn mxcsr_gate_traps_for_float_ops() {
 
     let wasm = compile_wasm_simd(&program, JitOptions::default(), DEFAULT_WASM_LAYOUT).unwrap();
 
-    let mut config = Config::new();
-    config.wasm_simd(true);
-    let engine = Engine::new(&config).unwrap();
+    let engine = wasmtime_engine();
     let module = Module::new(&engine, &wasm).unwrap();
     let mut store = Store::new(&engine, ());
     let instance = Instance::new(&mut store, &module, &[]).unwrap();

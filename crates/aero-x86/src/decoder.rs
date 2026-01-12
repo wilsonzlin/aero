@@ -345,6 +345,21 @@ fn fixup_implicit_operands(
                 rip_relative: false,
             }));
         }
+        (OpcodeMap::Map0F, 0xF7, _)
+            if !operands.iter().any(|op| matches!(op, Operand::Memory(_))) =>
+        {
+            // MASKMOVQ/MASKMOVDQU: implicit destination memory operand at [DI/EDI/RDI] (default
+            // segment selection, overridable).
+            operands.push(Operand::Memory(crate::inst::MemoryOperand {
+                segment: prefixes.segment,
+                addr_size: address_size,
+                base: Some(crate::inst::Gpr { index: 7 }), // DI/EDI/RDI
+                index: None,
+                scale: 1,
+                disp: 0,
+                rip_relative: false,
+            }));
+        }
         (OpcodeMap::Primary, 0xCC, _) => {
             // INT3 is a dedicated 1-byte encoding and has no explicit operands.
             operands.clear();
@@ -573,6 +588,23 @@ fn parse_opcode(
         // which would make the legacy opcodes invalid (they require a memory operand).
         let b1 = *bytes.get(off + 1).ok_or(DecodeError::UnexpectedEof)?;
         let is_extended = mode == DecodeMode::Bits64 || (b1 & 0xC0) == 0xC0;
+        Ok((
+            OpcodeBytes {
+                map: if is_extended {
+                    OpcodeMap::Extended
+                } else {
+                    OpcodeMap::Primary
+                },
+                opcode: b0,
+                opcode_ext: None,
+            },
+            1,
+        ))
+    } else if b0 == 0x8F {
+        // XOP shares its first byte with `POP r/m16/32/64` (`8F /0`). The CPU disambiguates the
+        // XOP prefix by requiring ModRM.reg != 0, which would make the legacy POP encoding invalid.
+        let b1 = *bytes.get(off + 1).ok_or(DecodeError::UnexpectedEof)?;
+        let is_extended = ((b1 >> 3) & 0x7) != 0;
         Ok((
             OpcodeBytes {
                 map: if is_extended {

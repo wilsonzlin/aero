@@ -201,7 +201,11 @@ pub fn compile_wasm_simd(
     // Single-page memory is sufficient for unit tests and demo programs.
     mems.memory(MemoryType {
         minimum: 1,
-        maximum: None,
+        // Keep the maximum explicit: leaving it `None` means "grow up to the wasm32 limit"
+        // (4 GiB). Some engines (notably Wasmtime) reserve address space for the maximum at
+        // instantiation time, which makes the SIMD JIT tests flaky under constrained virtual
+        // memory limits (RLIMIT_AS).
+        maximum: Some(1),
         memory64: false,
         shared: false,
         page_size_log2: None,
