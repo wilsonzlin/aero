@@ -554,6 +554,17 @@ fn handle_int16(bios: &mut Bios, cpu: &mut CpuState) {
             }
             cpu.rflags &= !FLAG_CF;
         }
+        0x05 => {
+            // Store keystroke in buffer (CH=scan code, CL=ASCII).
+            //
+            // This is used by some BIOS extensions and DOS programs to inject keyboard input.
+            // Our BIOS models the keyboard buffer as an unbounded FIFO queue, so this always
+            // succeeds (real hardware returns CF=1 when the 32-byte BIOS data area ring buffer is
+            // full).
+            let key = (cpu.gpr[gpr::RCX] & 0xFFFF) as u16;
+            bios.keyboard_queue.push_back(key);
+            cpu.rflags &= !FLAG_CF;
+        }
         0x10 => {
             // Read extended keystroke (blocking in real BIOS; we return 0 if none).
             //
@@ -1071,6 +1082,38 @@ fn build_e820_map(
         handle_int16(&mut bios, &mut cpu);
         assert_ne!(cpu.rflags & FLAG_ZF, 0);
         assert_eq!(cpu.rflags & FLAG_CF, 0);
+    }
+
+    #[test]
+    fn int16_store_keystroke_appends_to_keyboard_queue() {
+        let mut bios = Bios::new(super::super::BiosConfig::default());
+        let mut cpu = CpuState::new(CpuMode::Real);
+
+        bios.push_key(0x1111);
+
+        // AH=05h stores key from CX without consuming the existing queue head.
+        cpu.gpr[gpr::RAX] = 0x0500;
+        cpu.gpr[gpr::RCX] = 0x2222;
+        handle_int16(&mut bios, &mut cpu);
+        assert_eq!(cpu.rflags & FLAG_CF, 0);
+
+        // First key should still be at the front.
+        cpu.gpr[gpr::RAX] = 0x0100;
+        handle_int16(&mut bios, &mut cpu);
+        assert_eq!(cpu.rflags & FLAG_ZF, 0);
+        assert_eq!(cpu.gpr[gpr::RAX] as u16, 0x1111);
+
+        // Read consumes the first key.
+        cpu.gpr[gpr::RAX] = 0x0000;
+        handle_int16(&mut bios, &mut cpu);
+        assert_eq!(cpu.rflags & FLAG_ZF, 0);
+        assert_eq!(cpu.gpr[gpr::RAX] as u16, 0x1111);
+
+        // Now we should observe the stored key.
+        cpu.gpr[gpr::RAX] = 0x0000;
+        handle_int16(&mut bios, &mut cpu);
+        assert_eq!(cpu.rflags & FLAG_ZF, 0);
+        assert_eq!(cpu.gpr[gpr::RAX] as u16, 0x2222);
     }
 
     #[test]
