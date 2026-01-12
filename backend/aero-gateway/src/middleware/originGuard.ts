@@ -2,28 +2,36 @@ import type { FastifyReply, FastifyRequest } from 'fastify';
 
 import { normalizeOriginString } from '../security/origin.js';
 
+function isValidHostHeaderString(trimmed: string): boolean {
+  if (trimmed === '') return false;
+  if (trimmed.charCodeAt(trimmed.length - 1) === 0x3a /* ':' */) return false;
+
+  for (let i = 0; i < trimmed.length; i += 1) {
+    const c = trimmed.charCodeAt(i);
+    // Host is an ASCII serialization. Be strict about rejecting non-ASCII or
+    // non-printable characters that URL parsers may normalize away.
+    if (c <= 0x20 || c >= 0x7f) return false;
+    // Disallow percent-encoding and IPv6 zone identifiers; different URL parsers
+    // disagree on how to handle them, and browsers won't emit them in Host.
+    if (c === 0x25 /* '%' */) return false;
+    // Reject comma-delimited values. Some HTTP stacks may join repeated headers
+    // with commas.
+    if (c === 0x2c /* ',' */) return false;
+    // Reject path/query/fragment delimiters. Host headers are a host[:port]
+    // serialization and must not contain these.
+    if (c === 0x2f /* '/' */ || c === 0x3f /* '?' */ || c === 0x23 /* '#' */) return false;
+    // Reject backslashes; some URL parsers normalize them to `/`.
+    if (c === 0x5c /* '\\' */) return false;
+    // Reject userinfo delimiters.
+    if (c === 0x40 /* '@' */) return false;
+  }
+
+  return true;
+}
+
 function normalizeRequestHost(requestHost: string, scheme: 'http' | 'https'): string | null {
   const trimmed = requestHost.trim();
-  if (trimmed === '') return null;
-  // Host is an ASCII serialization. Be strict about rejecting non-ASCII or
-  // non-printable characters that URL parsers may normalize away.
-  if (!/^[\x21-\x7E]+$/.test(trimmed)) return null;
-  // Disallow percent-encoding and IPv6 zone identifiers; different URL parsers
-  // disagree on how to handle them, and browsers won't emit them in Host.
-  if (trimmed.includes('%')) return null;
-  // Reject comma-delimited values. Some HTTP stacks may join repeated headers
-  // with commas.
-  if (trimmed.includes(',')) return null;
-  // Reject path/query/fragment delimiters. Host headers are a host[:port]
-  // serialization and must not contain these.
-  if (trimmed.includes('/') || trimmed.includes('?') || trimmed.includes('#')) return null;
-  // Reject backslashes; some URL parsers normalize them to `/`.
-  if (trimmed.includes('\\')) return null;
-  if (trimmed.includes('@')) return null;
-  // Reject empty port specs like `example.com:`. Node's URL parser may otherwise
-  // treat this as if the port were absent, which would diverge from the stricter
-  // behavior in our shared protocol vectors.
-  if (trimmed.endsWith(':')) return null;
+  if (!isValidHostHeaderString(trimmed)) return null;
 
   let url: URL;
   try {
