@@ -112,6 +112,9 @@ impl<B: StorageBackend> VhdDisk<B> {
         if len < SECTOR_SIZE as u64 {
             return Err(DiskError::CorruptImage("vhd file too small"));
         }
+        if !len.is_multiple_of(SECTOR_SIZE as u64) {
+            return Err(DiskError::CorruptImage("vhd file length misaligned"));
+        }
 
         let footer_offset = len - SECTOR_SIZE as u64;
         let mut raw_footer = [0u8; SECTOR_SIZE];

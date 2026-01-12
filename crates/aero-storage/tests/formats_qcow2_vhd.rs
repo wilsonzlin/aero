@@ -1048,6 +1048,16 @@ fn vhd_rejects_bad_footer_checksum() {
 }
 
 #[test]
+fn vhd_rejects_misaligned_file_length() {
+    let backend = MemBackend::with_len((SECTOR_SIZE as u64) + 1).unwrap();
+    let err = VhdDisk::open(backend).err().expect("expected error");
+    assert!(matches!(
+        err,
+        DiskError::CorruptImage("vhd file length misaligned")
+    ));
+}
+
+#[test]
 fn vhd_dynamic_rejects_block_overlapping_footer() {
     let virtual_size = 64 * 1024u64;
     let block_size = 16 * 1024u32;
