@@ -160,7 +160,7 @@ not snapshotted, so a post-restore poll is required to make the sink observe res
 
 The snapshot file stores device entries under an **outer numeric** `DeviceId` (the `u32` written into each `DeviceState` header).
 
-In the worker-based web runtime, device blobs are exchanged as `{ kind: string, bytes: Uint8Array }` (see `web/src/runtime/snapshot_protocol.ts`). The `kind` field is a **stable string** that maps to a numeric `DeviceId`.
+In the worker-based web runtime, device blobs are exchanged as `{ kind: string, bytes: Uint8Array }` (protocol types in `web/src/runtime/snapshot_protocol.ts`). The `kind` field is a **stable string** that maps to a numeric `DeviceId` (mapping lives in `web/src/workers/vm_snapshot_wasm.ts` and is mirrored in `crates/aero-wasm/src/vm_snapshot_builder.rs`).
 
 For forward compatibility, the runtime also supports a fallback spelling for unknown device IDs:
 
@@ -189,6 +189,25 @@ For forward compatibility, the runtime also supports a fallback spelling for unk
 | `E1000` | `19` | `net.e1000` | Intel E1000 NIC device model state |
 | `NET_STACK` | `20` | `net.stack` | User-space network stack/backend state (DHCP/DNS cache + connection bookkeeping) |
 | `PLATFORM_INTERRUPTS` | `21` | `device.21` | Platform interrupt controller/routing state |
+
+#### Disk controllers (`DeviceId::DISK_CONTROLLER`)
+
+`aero-snapshot` rejects duplicate `(DeviceId, version, flags)` tuples inside `DEVICES` (see `Validation / corruption handling` above), and by convention `DeviceState.version/flags` mirror the *inner* `aero-io-snapshot` device `SnapshotVersion (major, minor)` (see `Recommended device payload convention (DEVICES)` above).
+
+This means multiple storage controllers **cannot** be stored as multiple outer `DeviceId::DISK_CONTROLLER` entries if they share the same inner `SnapshotVersion`:
+
+- AHCI PCI device (`AhciPciDevice`) snapshots as inner `DEVICE_ID = AHCP`, `SnapshotVersion (1.0)`
+- virtio-pci transport (`VirtioPciDevice`) snapshots as inner `DEVICE_ID = VPCI`, `SnapshotVersion (1.0)`
+
+If both are stored using `aero_snapshot::io_snapshot_bridge::device_state_from_io_snapshot(DeviceId::DISK_CONTROLLER, ...)`, they would both map to the same outer `(DeviceId::DISK_CONTROLLER = 6, version = 1, flags = 0)` key, which is treated as corrupt.
+
+**Canonical encoding:** store **exactly one** outer `DeviceId::DISK_CONTROLLER` entry whose payload is an `aero-io-snapshot` TLV blob with inner `DEVICE_ID = DSKC` and `SnapshotVersion (1.0)`. That `DSKC` wrapper can then contain *multiple* nested controller snapshots keyed by PCI BDF (bus/device/function), e.g.:
+
+- `AHCP` (AHCI PCI)
+- `VPCI` (virtio-pci based storage controllers, e.g. virtio-blk)
+- `NVMP` (NVMe PCI)
+
+Restore behavior: when restoring the `DSKC` wrapper, snapshot consumers should apply only the controller entries that exist in the target machine. Unknown/extra controller entries (unknown device id, unknown BDF, or simply a controller type that is not present) should be ignored for forward compatibility.
 
 #### USB (`DeviceId::USB`)
 
