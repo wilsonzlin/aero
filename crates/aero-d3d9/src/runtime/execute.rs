@@ -356,6 +356,42 @@ impl D3D9Runtime {
 
         let downlevel_flags = adapter.get_downlevel_capabilities().flags;
 
+        let adapter_features = adapter.features();
+        let texture_compression_disabled = std::env::var("AERO_DISABLE_WGPU_TEXTURE_COMPRESSION")
+            .ok()
+            .map(|raw| {
+                let v = raw.trim();
+                v == "1"
+                    || v.eq_ignore_ascii_case("true")
+                    || v.eq_ignore_ascii_case("yes")
+                    || v.eq_ignore_ascii_case("on")
+            })
+            .unwrap_or(false);
+
+        let mut required_features = wgpu::Features::empty();
+        if !texture_compression_disabled {
+            // Texture compression is optional but beneficial (guest textures, DDS, etc).
+            //
+            // Note: Only request features the adapter advertises, otherwise `request_device`
+            // will fail.
+            for feature in [
+                wgpu::Features::TEXTURE_COMPRESSION_BC,
+                wgpu::Features::TEXTURE_COMPRESSION_ETC2,
+                wgpu::Features::TEXTURE_COMPRESSION_ASTC_HDR,
+            ] {
+                if adapter_features.contains(feature) {
+                    required_features |= feature;
+                }
+            }
+        }
+
+        debug!(
+            ?adapter_features,
+            ?required_features,
+            texture_compression_disabled,
+            "aero-d3d9 negotiated wgpu features"
+        );
+
         let required_limits = if cfg!(target_os = "linux") {
             wgpu::Limits::downlevel_defaults()
         } else {
@@ -363,7 +399,7 @@ impl D3D9Runtime {
         };
         let descriptor = wgpu::DeviceDescriptor {
             label: Some("aero-d3d9-device"),
-            required_features: wgpu::Features::empty(),
+            required_features,
             required_limits,
         };
 
@@ -371,6 +407,23 @@ impl D3D9Runtime {
             .request_device(&descriptor, None)
             .await
             .map_err(|e| RuntimeError::RequestDevice(e.to_string()))?;
+
+        let device_features = device.features();
+        debug!(?device_features, "aero-d3d9 created wgpu device");
+
+        debug_assert!(device_features.contains(required_features));
+
+        // Regression check: if the adapter supports BC and it's not disabled, ensure we actually
+        // requested it so DXT textures can remain compressed on the GPU.
+        #[cfg(test)]
+        if !texture_compression_disabled
+            && adapter_features.contains(wgpu::Features::TEXTURE_COMPRESSION_BC)
+        {
+            assert!(
+                device_features.contains(wgpu::Features::TEXTURE_COMPRESSION_BC),
+                "adapter supports TEXTURE_COMPRESSION_BC but aero-d3d9 device was not created with it (set AERO_DISABLE_WGPU_TEXTURE_COMPRESSION=1 to force opt-out)"
+            );
+        }
 
         let constants_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
