@@ -21,6 +21,7 @@ fn snapshot_includes_canonical_disk_overlay_refs() {
     let mut m = Machine::new(minimal_machine_config()).unwrap();
     m.set_ahci_port0_disk_overlay_ref("os.base", "os.overlay");
     m.set_ide_secondary_master_atapi_overlay_ref("iso.base", "iso.overlay");
+    m.set_ide_primary_master_ata_overlay_ref("ide.base", "ide.overlay");
 
     let snap = m.take_snapshot_full().unwrap();
 
@@ -38,13 +39,16 @@ fn snapshot_includes_canonical_disk_overlay_refs() {
         snapshot::DiskOverlayRefs::decode(&mut limited).expect("decode DISKS payload")
     };
 
-    assert_eq!(disks.disks.len(), 2);
+    assert_eq!(disks.disks.len(), 3);
     assert_eq!(disks.disks[0].disk_id, 0);
     assert_eq!(disks.disks[0].base_image, "os.base");
     assert_eq!(disks.disks[0].overlay_image, "os.overlay");
     assert_eq!(disks.disks[1].disk_id, 1);
     assert_eq!(disks.disks[1].base_image, "iso.base");
     assert_eq!(disks.disks[1].overlay_image, "iso.overlay");
+    assert_eq!(disks.disks[2].disk_id, 2);
+    assert_eq!(disks.disks[2].base_image, "ide.base");
+    assert_eq!(disks.disks[2].overlay_image, "ide.overlay");
 }
 
 #[test]
@@ -52,6 +56,7 @@ fn restore_exposes_disk_overlay_refs_for_host_reattach() {
     let mut src = Machine::new(minimal_machine_config()).unwrap();
     src.set_ahci_port0_disk_overlay_ref("os.base", "os.overlay");
     src.set_ide_secondary_master_atapi_overlay_ref("iso.base", "iso.overlay");
+    src.set_ide_primary_master_ata_overlay_ref("ide.base", "ide.overlay");
     let snap = src.take_snapshot_full().unwrap();
 
     let mut restored = Machine::new(minimal_machine_config()).unwrap();
@@ -65,13 +70,16 @@ fn restore_exposes_disk_overlay_refs_for_host_reattach() {
         .restored_disk_overlays()
         .expect("restored overlays should be available after restore");
 
-    assert_eq!(overlays.disks.len(), 2);
+    assert_eq!(overlays.disks.len(), 3);
     assert_eq!(overlays.disks[0].disk_id, 0);
     assert_eq!(overlays.disks[0].base_image, "os.base");
     assert_eq!(overlays.disks[0].overlay_image, "os.overlay");
     assert_eq!(overlays.disks[1].disk_id, 1);
     assert_eq!(overlays.disks[1].base_image, "iso.base");
     assert_eq!(overlays.disks[1].overlay_image, "iso.overlay");
+    assert_eq!(overlays.disks[2].disk_id, 2);
+    assert_eq!(overlays.disks[2].base_image, "ide.base");
+    assert_eq!(overlays.disks[2].overlay_image, "ide.overlay");
 
     // Resetting the machine should clear restore-only overlay refs.
     restored.reset();
