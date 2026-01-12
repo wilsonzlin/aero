@@ -572,4 +572,41 @@ mod tests {
         bus.write(0x1234, 4, 0x1234_5678);
         assert_eq!(bus.read(0x1234, 4), 0x1234_5678);
     }
+
+    #[test]
+    fn register_range_panics_on_overlap_and_wrap() {
+        #[derive(Debug)]
+        struct Noop;
+
+        impl PortIoDevice for Noop {
+            fn read(&mut self, _port: u16, _size: u8) -> u32 {
+                0
+            }
+
+            fn write(&mut self, _port: u16, _size: u8, _value: u32) {}
+        }
+
+        // Overlap should panic.
+        let overlap = std::panic::catch_unwind(|| {
+            let mut bus = IoPortBus::new();
+            bus.register_range(0x1000, 4, Box::new(Noop));
+            bus.register_range(0x1002, 4, Box::new(Noop));
+        });
+        assert!(overlap.is_err());
+
+        // Wrap past 0xFFFF should panic.
+        let wrap = std::panic::catch_unwind(|| {
+            let mut bus = IoPortBus::new();
+            bus.register_range(0xFFFE, 4, Box::new(Noop));
+        });
+        assert!(wrap.is_err());
+
+        // Adjacent ranges should be allowed.
+        let adjacent = std::panic::catch_unwind(|| {
+            let mut bus = IoPortBus::new();
+            bus.register_range(0x2000, 4, Box::new(Noop));
+            bus.register_range(0x2004, 4, Box::new(Noop));
+        });
+        assert!(adjacent.is_ok());
+    }
 }
