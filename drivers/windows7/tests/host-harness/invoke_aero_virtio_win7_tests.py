@@ -1659,7 +1659,7 @@ def main() -> int:
                             file=sys.stderr,
                         )
                         print(
-                            f"FAIL: failed to inject virtio-input events via QMP: {e}",
+                            f"FAIL: QMP_INPUT_INJECT_FAILED: failed to inject virtio-input events via QMP: {e}",
                             file=sys.stderr,
                         )
                         _print_tail(serial_log)

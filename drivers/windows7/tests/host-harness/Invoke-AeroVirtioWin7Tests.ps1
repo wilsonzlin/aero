@@ -1582,7 +1582,7 @@ try {
       $scriptExitCode = 1
     }
     "QMP_INPUT_INJECT_FAILED" {
-      Write-Host "FAIL: failed to inject virtio-input events via QMP (ensure QMP is reachable and QEMU supports input-send-event)"
+      Write-Host "FAIL: QMP_INPUT_INJECT_FAILED: failed to inject virtio-input events via QMP (ensure QMP is reachable and QEMU supports input-send-event)"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
