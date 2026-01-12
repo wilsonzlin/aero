@@ -325,6 +325,74 @@ function makeTestData(sizeBytes: number): Uint8Array {
 }
 
 describe("RemoteRangeDisk", () => {
+  it.each(["omit", "include"] as const)("passes credentials=%s through to fetchFn for HEAD + Range GET", async (credentials) => {
+    const chunkSize = 512;
+    const data = makeTestData(2 * chunkSize);
+
+    const seenCredentials: Array<RequestCredentials | undefined> = [];
+
+    const fetchFn: typeof fetch = async (_input, init) => {
+      seenCredentials.push(init?.credentials as RequestCredentials | undefined);
+
+      const method = String(init?.method ?? "GET").toUpperCase();
+      const headers = init?.headers;
+      const rangeHeader =
+        headers instanceof Headers
+          ? (headers.get("Range") ?? headers.get("range") ?? undefined)
+          : typeof headers === "object" && headers
+            ? (((headers as any).Range as string | undefined) ?? ((headers as any).range as string | undefined))
+            : undefined;
+
+      if (method === "HEAD") {
+        return new Response(null, {
+          status: 200,
+          headers: { "Content-Length": String(data.byteLength), ETag: "\"v1\"" },
+        });
+      }
+
+      if (method === "GET" && typeof rangeHeader === "string") {
+        const m = /^bytes=(\d+)-(\d+)$/.exec(rangeHeader);
+        if (!m) throw new Error(`invalid Range header: ${rangeHeader}`);
+        const start = Number(m[1]);
+        const endInclusive = Number(m[2]);
+        const endExclusive = endInclusive + 1;
+        const body = data.slice(start, endExclusive);
+
+        return new Response(body, {
+          status: 206,
+          headers: {
+            "Content-Range": `bytes ${start}-${endInclusive}/${data.byteLength}`,
+            ETag: "\"v1\"",
+          },
+        });
+      }
+
+      throw new Error(`unexpected request method=${method} range=${String(rangeHeader)}`);
+    };
+
+    const disk = await RemoteRangeDisk.open("https://example.invalid/image.bin", {
+      cacheKeyParts: { imageId: "test-creds", version: "v1", deliveryType: remoteRangeDeliveryType(chunkSize) },
+      credentials,
+      chunkSize,
+      metadataStore: new MemoryMetadataStore(),
+      sparseCacheFactory: new MemorySparseCacheFactory(),
+      readAheadChunks: 0,
+      fetchFn,
+    });
+
+    const buf = new Uint8Array(512);
+    await disk.readSectors(0, buf);
+    expect(buf).toEqual(data.subarray(0, buf.byteLength));
+
+    // The probe HEAD request and the subsequent Range GET must both carry the requested
+    // credential mode (via DiskAccessLease.credentialsMode).
+    expect(seenCredentials.length).toBeGreaterThanOrEqual(2);
+    expect(seenCredentials[0]).toBe(credentials);
+    expect(seenCredentials[1]).toBe(credentials);
+
+    await disk.close();
+  });
+
   it("single read triggers exactly one Range fetch", async () => {
     const chunkSize = 1024 * 1024;
     const data = makeTestData(2 * chunkSize);

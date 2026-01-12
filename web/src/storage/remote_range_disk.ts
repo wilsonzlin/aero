@@ -59,6 +59,14 @@ export type RemoteRangeDiskOptions = {
    * MUST NOT be derived from signed URLs / bearer tokens.
    */
   cacheKeyParts: RemoteCacheKeyParts;
+  /**
+   * Fetch credential mode for Range requests.
+   *
+   * Defaults to `same-origin` so cookies are sent for same-origin endpoints but
+   * not for cross-origin requests (avoids credentialed CORS unless explicitly
+   * requested).
+   */
+  credentials?: RequestCredentials;
   chunkSize?: number;
   maxConcurrentFetches?: number;
   maxRetries?: number;
@@ -109,11 +117,11 @@ class HttpStatusError extends Error {
   }
 }
 
-function staticDiskLease(url: string): DiskAccessLease {
+function staticDiskLease(url: string, credentialsMode: RequestCredentials): DiskAccessLease {
   const lease: DiskAccessLease = {
     url,
     expiresAt: undefined,
-    credentialsMode: "same-origin",
+    credentialsMode,
     async refresh() {
       return lease;
     },
@@ -532,7 +540,8 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
 
   static async open(url: string, options: RemoteRangeDiskOptions): Promise<RemoteRangeDisk> {
     const sourceId = options.cacheKeyParts.imageId;
-    const lease = staticDiskLease(url);
+    const credentials = options.credentials ?? "same-origin";
+    const lease = staticDiskLease(url, credentials);
     return await RemoteRangeDisk.openWithLease({ sourceId, lease }, options);
   }
 

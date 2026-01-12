@@ -103,11 +103,6 @@ async function openRemoteDisk(url: string, options?: RemoteDiskOptions): Promise
   // implement cache eviction. Only select it when OPFS is explicitly requested and
   // caching has not been disabled via `cacheLimitBytes: 0`.
   if (cacheBackend === "opfs" && cacheLimitBytes !== 0 && hasOpfsSyncAccessHandle()) {
-    const fetchFn =
-      options?.credentials && options.credentials !== "same-origin"
-        ? ((input: RequestInfo | URL, init?: RequestInit) => fetch(input, { ...init, credentials: options.credentials }))
-        : fetch;
-
     const cacheKeyParts = {
       imageId: (options?.cacheImageId ?? stableImageIdFromUrl(url)).trim(),
       version: (options?.cacheVersion ?? "1").trim(),
@@ -117,9 +112,9 @@ async function openRemoteDisk(url: string, options?: RemoteDiskOptions): Promise
     if (!cacheKeyParts.version) throw new Error("cacheVersion must not be empty");
     return await RemoteRangeDisk.open(url, {
       cacheKeyParts,
+      credentials: options?.credentials,
       chunkSize: options?.blockSize,
       readAheadChunks: options?.prefetchSequentialBlocks,
-      fetchFn,
     });
   }
 
@@ -836,6 +831,7 @@ async function openRemoteBackedDisk(
     remote.delivery === "range"
       ? await RemoteRangeDisk.open(remote.url, {
           cacheKeyParts: { imageId: cacheImageId, version: rangeCacheVersion, deliveryType: remote.delivery },
+          credentials: remote.credentials,
           chunkSize: remote.chunkSizeBytes,
           sha256Manifest: await loadSha256Manifest(remote.integrity, fetchFn),
           fetchFn,
