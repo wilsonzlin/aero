@@ -82,7 +82,14 @@ for raw in subprocess.check_output(["git", "ls-tree", "-r", "HEAD"], text=True).
 # We intentionally match only paths that look like repo-local references (common
 # top-level dirs) to avoid accidentally matching URLs that end in `.sh`.
 pattern = re.compile(
-    r"(?<![\w/\\])((?:\./|\.\./|\.\\|\.\.\\|scripts[\\/]|drivers[\\/]|infra[\\/]|deploy[\\/]|backend[\\/]|tools[\\/]|ci[\\/]|guest-tools[\\/]|web[\\/]|server[\\/]|poc[\\/])[^\s`]+?\.(?:sh|py|ps1|cmd|mjs|cjs))\b"
+    r"(?<![\w/\\])("
+    # Runnable scripts: allow explicitly-relative invocations (`./`, `.\`) and repo-root relative paths.
+    r"(?:\./|\.\./|\.\\|\.\.\\|scripts[\\/]|drivers[\\/]|infra[\\/]|deploy[\\/]|backend[\\/]|tools[\\/]|ci[\\/]|guest-tools[\\/]|web[\\/]|server[\\/]|poc[\\/])[^\s`]+?\.(?:sh|py|ps1|cmd|mjs|cjs)"
+    r"|"
+    # JS scripts referenced by path in docs: restrict to repo-root relative prefixes to avoid
+    # false positives on in-doc JS import snippets like `import ... from './foo.js'`.
+    r"(?:scripts[\\/]|drivers[\\/]|infra[\\/]|deploy[\\/]|backend[\\/]|tools[\\/]|ci[\\/]|guest-tools[\\/]|web[\\/]|server[\\/]|poc[\\/]|bench[\\/])[^\s`]+?\.js"
+    r")\b"
 )
 
 
