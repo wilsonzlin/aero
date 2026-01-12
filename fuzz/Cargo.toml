@@ -26,7 +26,6 @@ path = "../crates/aero-devices-storage"
 
 [dependencies.aero-devices]
 path = "../crates/devices"
-package = "devices"
 
 [dependencies.aero-storage]
 path = "../crates/aero-storage"

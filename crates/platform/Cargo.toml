@@ -16,6 +16,6 @@ js-sys = "0.3"
 wasm-bindgen = "0.2"
 
 [dev-dependencies]
-aero-devices = { package = "devices", path = "../devices" }
+aero-devices = { path = "../devices" }
 aero-acpi = { path = "../aero-acpi" }
 firmware = { path = "../firmware" }

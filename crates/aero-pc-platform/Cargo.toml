@@ -12,7 +12,7 @@ hda = ["dep:aero-audio"]
 aero-audio = { path = "../aero-audio", optional = true }
 aero-mmu = { path = "../aero-mmu" }
 aero-cpu-core = { path = "../aero-cpu-core" }
-aero-devices = { package = "devices", path = "../devices" }
+aero-devices = { path = "../devices" }
 aero-devices-storage = { path = "../aero-devices-storage" }
 aero-devices-nvme = { path = "../aero-devices-nvme" }
 aero-interrupts = { path = "../aero-interrupts" }

@@ -12,7 +12,7 @@ snd = ["dep:aero-audio"]
 
 [dependencies]
 aero-audio = { path = "../aero-audio", optional = true }
-aero-devices = { package = "devices", path = "../devices" }
+aero-devices = { path = "../devices" }
 aero-io-snapshot = { path = "../aero-io-snapshot" }
 aero-net-backend = { path = "../aero-net-backend" }
 aero-storage = { path = "../aero-storage" }

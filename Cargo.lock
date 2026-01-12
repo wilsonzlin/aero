@@ -42,17 +42,17 @@ dependencies = [
 name = "aero-acpi"
 version = "0.1.0"
 dependencies = [
+ "aero-devices",
  "aero-platform",
- "devices",
 ]
 
 [[package]]
 name = "aero-audio"
 version = "0.1.0"
 dependencies = [
+ "aero-devices",
  "aero-io-snapshot",
  "aero-platform",
- "devices",
  "memory",
 ]
 
@@ -157,6 +157,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "aero-devices"
+version = "0.1.0"
+dependencies = [
+ "aero-acpi",
+ "aero-cpu-core",
+ "aero-devices-input",
+ "aero-interrupts",
+ "aero-io-snapshot",
+ "aero-platform",
+ "aero-snapshot",
+ "aero-storage",
+ "aero-storage-adapters",
+ "aero-usb",
+ "memory",
+ "serde_json",
+]
+
+[[package]]
 name = "aero-devices-input"
 version = "0.1.0"
 dependencies = [
@@ -168,11 +186,11 @@ dependencies = [
 name = "aero-devices-nvme"
 version = "0.1.0"
 dependencies = [
+ "aero-devices",
  "aero-io-snapshot",
  "aero-storage",
  "aero-storage-adapters",
  "criterion",
- "devices",
  "emulator",
  "memory",
 ]
@@ -181,10 +199,10 @@ dependencies = [
 name = "aero-devices-storage"
 version = "0.1.0"
 dependencies = [
+ "aero-devices",
  "aero-io-snapshot",
  "aero-platform",
  "aero-storage",
- "devices",
  "memory",
 ]
 
@@ -372,6 +390,7 @@ name = "aero-machine"
 version = "0.1.0"
 dependencies = [
  "aero-cpu-core",
+ "aero-devices",
  "aero-devices-input",
  "aero-interrupts",
  "aero-ipc",
@@ -383,7 +402,6 @@ dependencies = [
  "aero-platform",
  "aero-snapshot",
  "aero-storage",
- "devices",
  "firmware",
  "memory",
  "pretty_assertions",
@@ -474,6 +492,7 @@ version = "0.1.0"
 dependencies = [
  "aero-audio",
  "aero-cpu-core",
+ "aero-devices",
  "aero-devices-nvme",
  "aero-devices-storage",
  "aero-interrupts",
@@ -486,7 +505,6 @@ dependencies = [
  "aero-storage",
  "aero-usb",
  "aero-virtio",
- "devices",
  "firmware",
  "memory",
 ]
@@ -501,10 +519,10 @@ version = "0.1.0"
 dependencies = [
  "aero-acpi",
  "aero-cpu-core",
+ "aero-devices",
  "aero-interrupts",
  "aero-io-snapshot",
  "aero-mmu",
- "devices",
  "firmware",
  "js-sys",
  "memory",
@@ -639,10 +657,10 @@ name = "aero-virtio"
 version = "0.1.0"
 dependencies = [
  "aero-audio",
+ "aero-devices",
  "aero-io-snapshot",
  "aero-net-backend",
  "aero-storage",
- "devices",
  "memory",
  "nt-packetlib",
  "virtio-gpu-proto",
@@ -1616,24 +1634,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "devices"
-version = "0.1.0"
-dependencies = [
- "aero-acpi",
- "aero-cpu-core",
- "aero-devices-input",
- "aero-interrupts",
- "aero-io-snapshot",
- "aero-platform",
- "aero-snapshot",
- "aero-storage",
- "aero-storage-adapters",
- "aero-usb",
- "memory",
- "serde_json",
-]
-
-[[package]]
 name = "diff"
 version = "0.1.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1698,6 +1698,7 @@ name = "emulator"
 version = "0.1.0"
 dependencies = [
  "aero-d3d11",
+ "aero-devices",
  "aero-devices-input",
  "aero-edid",
  "aero-gpu",
@@ -1715,7 +1716,6 @@ dependencies = [
  "aero-usb",
  "anyhow",
  "criterion",
- "devices",
  "firmware",
  "font8x8",
  "hyper 0.14.32",
@@ -1806,10 +1806,10 @@ version = "0.1.0"
 dependencies = [
  "aero-acpi",
  "aero-cpu-core",
+ "aero-devices",
  "aero-edid",
  "aero-pc-constants",
  "aero-platform",
- "devices",
  "memory",
 ]
 

@@ -6,7 +6,7 @@ license = "MIT OR Apache-2.0"
 publish = false
 
 [dependencies]
-aero-devices = { package = "devices", path = "../devices" }
+aero-devices = { path = "../devices" }
 aero-io-snapshot = { path = "../aero-io-snapshot" }
 aero-storage = { path = "../aero-storage" }
 aero-storage-adapters = { path = "../aero-storage-adapters" }

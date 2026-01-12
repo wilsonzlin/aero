@@ -7,6 +7,6 @@ license = "MIT OR Apache-2.0"
 [dependencies]
 aero-storage = { path = "../aero-storage" }
 aero-io-snapshot = { path = "../aero-io-snapshot" }
-aero-devices = { package = "devices", path = "../devices" }
+aero-devices = { path = "../devices" }
 aero-platform = { path = "../platform" }
 memory = { path = "../memory" }
