@@ -276,14 +276,7 @@ fn validate_index(path: &str, index: &SnapshotIndex) -> Result<()> {
             id if id == SectionId::MMU => validate_mmu_section(&mut file, section)?,
             id if id == SectionId::DEVICES => validate_devices_section(&mut file, section)?,
             id if id == SectionId::DISKS => validate_disks_section(&mut file, section)?,
-            id if id == SectionId::RAM => {
-                // RAM header validation is handled by `inspect_snapshot`.
-                if section.version != 1 {
-                    return Err(XtaskError::Message(
-                        "unsupported RAM section version".to_string(),
-                    ));
-                }
-            }
+            id if id == SectionId::RAM => validate_ram_section(&mut file, section)?,
             _ => {}
         }
     }
@@ -556,6 +549,167 @@ fn validate_disks_section(file: &mut fs::File, section: &SnapshotSectionInfo) ->
         validate_string_u32_utf8(&mut limited, MAX_DISK_PATH_LEN, "disk overlay_image")?;
     }
 
+    Ok(())
+}
+
+fn validate_ram_section(file: &mut fs::File, section: &SnapshotSectionInfo) -> Result<()> {
+    const MAX_PAGE_SIZE: u32 = 2 * 1024 * 1024;
+    const MAX_CHUNK_SIZE: u32 = 64 * 1024 * 1024;
+
+    if section.version != 1 {
+        return Err(XtaskError::Message(
+            "unsupported RAM section version".to_string(),
+        ));
+    }
+
+    let section_end = section
+        .offset
+        .checked_add(section.len)
+        .ok_or_else(|| XtaskError::Message("ram section overflow".to_string()))?;
+
+    file.seek(SeekFrom::Start(section.offset))
+        .map_err(|e| XtaskError::Message(format!("seek RAM: {e}")))?;
+
+    ensure_section_remaining(file, section_end, 16, "ram header")?;
+    let total_len = read_u64_le(file)?;
+    let page_size = read_u32_le(file)?;
+    if page_size == 0 || page_size > MAX_PAGE_SIZE {
+        return Err(XtaskError::Message("invalid page size".to_string()));
+    }
+
+    let mode = {
+        let mut b = [0u8; 1];
+        file.read_exact(&mut b)
+            .map_err(|e| XtaskError::Message(format!("read ram mode: {e}")))?;
+        match b[0] {
+            0 => RamMode::Full,
+            1 => RamMode::Dirty,
+            _ => return Err(XtaskError::Message("invalid ram mode".to_string())),
+        }
+    };
+
+    let compression = {
+        let mut b = [0u8; 1];
+        file.read_exact(&mut b)
+            .map_err(|e| XtaskError::Message(format!("read ram compression: {e}")))?;
+        match b[0] {
+            0 => Compression::None,
+            1 => Compression::Lz4,
+            _ => return Err(XtaskError::Message("invalid compression kind".to_string())),
+        }
+    };
+
+    let _reserved = read_u16_le(file)?;
+
+    match mode {
+        RamMode::Full => {
+            ensure_section_remaining(file, section_end, 4, "chunk_size")?;
+            let chunk_size = read_u32_le(file)?;
+            if chunk_size == 0 || chunk_size > MAX_CHUNK_SIZE {
+                return Err(XtaskError::Message("invalid chunk size".to_string()));
+            }
+
+            let mut offset = 0u64;
+            while offset < total_len {
+                ensure_section_remaining(file, section_end, 8, "chunk header")?;
+                let expected_uncompressed = (total_len - offset).min(u64::from(chunk_size)) as u32;
+                let uncompressed_len = read_u32_le(file)?;
+                if uncompressed_len != expected_uncompressed {
+                    return Err(XtaskError::Message(
+                        "chunk uncompressed length mismatch".to_string(),
+                    ));
+                }
+                let compressed_len = read_u32_le(file)?;
+                validate_compressed_len(compression, uncompressed_len, compressed_len)?;
+
+                let payload_len: u64 = compressed_len.into();
+                ensure_section_remaining(file, section_end, payload_len, "chunk payload")?;
+                file.seek(SeekFrom::Current(i64::try_from(payload_len).map_err(
+                    |_| XtaskError::Message("chunk payload too large".to_string()),
+                )?))
+                .map_err(|e| XtaskError::Message(format!("seek chunk payload: {e}")))?;
+
+                offset = offset
+                    .checked_add(u64::from(uncompressed_len))
+                    .ok_or_else(|| XtaskError::Message("ram length overflow".to_string()))?;
+            }
+        }
+        RamMode::Dirty => {
+            ensure_section_remaining(file, section_end, 8, "dirty_count")?;
+            let count = read_u64_le(file)?;
+
+            let page_size_u64 = u64::from(page_size);
+            let max_pages = total_len
+                .checked_add(page_size_u64 - 1)
+                .ok_or_else(|| XtaskError::Message("ram length overflow".to_string()))?
+                / page_size_u64;
+            if count > max_pages {
+                return Err(XtaskError::Message("too many dirty pages".to_string()));
+            }
+
+            let mut prev_page_idx: Option<u64> = None;
+            for _ in 0..count {
+                ensure_section_remaining(file, section_end, 16, "dirty page header")?;
+                let page_idx = read_u64_le(file)?;
+                if let Some(prev) = prev_page_idx {
+                    if page_idx <= prev {
+                        return Err(XtaskError::Message(
+                            "dirty page list not strictly increasing".to_string(),
+                        ));
+                    }
+                }
+                prev_page_idx = Some(page_idx);
+
+                let offset = page_idx
+                    .checked_mul(page_size_u64)
+                    .ok_or_else(|| XtaskError::Message("dirty page offset overflow".to_string()))?;
+                if offset >= total_len {
+                    return Err(XtaskError::Message("dirty page out of range".to_string()));
+                }
+
+                let expected_uncompressed = (total_len - offset).min(page_size_u64) as u32;
+                let uncompressed_len = read_u32_le(file)?;
+                if uncompressed_len != expected_uncompressed {
+                    return Err(XtaskError::Message(
+                        "dirty page uncompressed length mismatch".to_string(),
+                    ));
+                }
+                let compressed_len = read_u32_le(file)?;
+                validate_compressed_len(compression, uncompressed_len, compressed_len)?;
+
+                let payload_len: u64 = compressed_len.into();
+                ensure_section_remaining(file, section_end, payload_len, "dirty page payload")?;
+                file.seek(SeekFrom::Current(i64::try_from(payload_len).map_err(
+                    |_| XtaskError::Message("dirty page payload too large".to_string()),
+                )?))
+                .map_err(|e| XtaskError::Message(format!("seek dirty page payload: {e}")))?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_compressed_len(
+    compression: Compression,
+    uncompressed_len: u32,
+    compressed_len: u32,
+) -> Result<()> {
+    match compression {
+        Compression::None => {
+            if compressed_len != uncompressed_len {
+                return Err(XtaskError::Message(
+                    "compressed_len must equal uncompressed_len for no compression".to_string(),
+                ));
+            }
+        }
+        Compression::Lz4 => {
+            let max = lz4_flex::block::get_maximum_output_size(uncompressed_len as usize) as u32;
+            if compressed_len > max {
+                return Err(XtaskError::Message("lz4 chunk too large".to_string()));
+            }
+        }
+    }
     Ok(())
 }
 

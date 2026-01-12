@@ -5,8 +5,8 @@ use std::io::Cursor;
 use std::io::{Seek, Write};
 
 use aero_snapshot::{
-    CpuState, DeviceId, DeviceState, DiskOverlayRef, DiskOverlayRefs, MmuState, RamMode,
-    RamWriteOptions, SaveOptions, SectionId, SnapshotMeta, SnapshotSource, VcpuSnapshot,
+    Compression, CpuState, DeviceId, DeviceState, DiskOverlayRef, DiskOverlayRefs, MmuState,
+    RamMode, RamWriteOptions, SaveOptions, SectionId, SnapshotMeta, SnapshotSource, VcpuSnapshot,
 };
 use assert_cmd::Command;
 use predicates::prelude::*;
@@ -155,6 +155,68 @@ impl SnapshotSource for MultiCpuSource {
 
     fn take_dirty_pages(&mut self) -> Option<Vec<u64>> {
         None
+    }
+}
+
+struct DirtyRamSource {
+    ram: Vec<u8>,
+    dirty_pages: Option<Vec<u64>>,
+}
+
+impl DirtyRamSource {
+    fn new(ram_len: usize, dirty_pages: Vec<u64>) -> Self {
+        let mut ram = Vec::with_capacity(ram_len);
+        ram.extend((0..ram_len).map(|i| (i as u8).wrapping_mul(23)));
+        Self {
+            ram,
+            dirty_pages: Some(dirty_pages),
+        }
+    }
+}
+
+impl SnapshotSource for DirtyRamSource {
+    fn snapshot_meta(&mut self) -> SnapshotMeta {
+        SnapshotMeta {
+            snapshot_id: 3,
+            parent_snapshot_id: Some(2),
+            created_unix_ms: 0,
+            label: Some("xtask-dirty".to_string()),
+        }
+    }
+
+    fn cpu_state(&self) -> CpuState {
+        CpuState::default()
+    }
+
+    fn mmu_state(&self) -> MmuState {
+        MmuState::default()
+    }
+
+    fn device_states(&self) -> Vec<DeviceState> {
+        Vec::new()
+    }
+
+    fn disk_overlays(&self) -> DiskOverlayRefs {
+        DiskOverlayRefs::default()
+    }
+
+    fn ram_len(&self) -> usize {
+        self.ram.len()
+    }
+
+    fn read_ram(&self, offset: u64, buf: &mut [u8]) -> aero_snapshot::Result<()> {
+        let offset: usize = offset
+            .try_into()
+            .map_err(|_| aero_snapshot::SnapshotError::Corrupt("ram offset overflow"))?;
+        let end = offset
+            .checked_add(buf.len())
+            .ok_or(aero_snapshot::SnapshotError::Corrupt("ram read overflow"))?;
+        buf.copy_from_slice(&self.ram[offset..end]);
+        Ok(())
+    }
+
+    fn take_dirty_pages(&mut self) -> Option<Vec<u64>> {
+        self.dirty_pages.take()
     }
 }
 
@@ -324,6 +386,34 @@ fn write_sparse_snapshot_with_large_devices_section(original: &[u8], out: &std::
     file.flush().unwrap();
 }
 
+fn swap_first_two_dirty_page_indices(snapshot: &mut [u8]) {
+    let index = aero_snapshot::inspect_snapshot(&mut Cursor::new(&snapshot)).unwrap();
+    let ram = index
+        .sections
+        .iter()
+        .find(|s| s.id == SectionId::RAM)
+        .expect("RAM section missing");
+    let start = ram.offset as usize;
+    assert!(start + 24 <= snapshot.len());
+    assert_eq!(snapshot[start + 12], RamMode::Dirty as u8);
+    assert_eq!(snapshot[start + 13], Compression::None as u8);
+
+    let count = read_u64_le(&snapshot[start + 16..start + 24]);
+    assert!(count >= 2);
+
+    let entry0 = start + 24;
+    let compressed_len0 = read_u32_le(&snapshot[entry0 + 12..entry0 + 16]) as usize;
+    let entry1 = entry0 + 8 + 4 + 4 + compressed_len0;
+    assert!(entry1 + 8 <= snapshot.len());
+
+    let mut tmp0 = [0u8; 8];
+    tmp0.copy_from_slice(&snapshot[entry0..entry0 + 8]);
+    let mut tmp1 = [0u8; 8];
+    tmp1.copy_from_slice(&snapshot[entry1..entry1 + 8]);
+    snapshot[entry0..entry0 + 8].copy_from_slice(&tmp1);
+    snapshot[entry1..entry1 + 8].copy_from_slice(&tmp0);
+}
+
 #[test]
 fn snapshot_inspect_prints_meta_and_ram_summary() {
     let tmp = tempfile::tempdir().unwrap();
@@ -460,6 +550,36 @@ fn snapshot_validate_rejects_duplicate_apic_ids_in_cpus_section() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("duplicate APIC ID in CPU list"));
+}
+
+#[test]
+fn snapshot_validate_rejects_dirty_ram_page_list_not_strictly_increasing() {
+    let tmp = tempfile::tempdir().unwrap();
+    let snap = tmp.path().join("dirty_unsorted.aerosnap");
+
+    let options = SaveOptions {
+        ram: RamWriteOptions {
+            mode: RamMode::Dirty,
+            compression: Compression::None,
+            page_size: 4096,
+            chunk_size: 1024 * 1024,
+        },
+    };
+    let mut source = DirtyRamSource::new(4096 * 2, vec![0, 1]);
+    let mut cursor = Cursor::new(Vec::new());
+    aero_snapshot::save_snapshot(&mut cursor, &mut source, options).unwrap();
+    let mut bytes = cursor.into_inner();
+
+    swap_first_two_dirty_page_indices(&mut bytes);
+    fs::write(&snap, &bytes).unwrap();
+
+    Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["snapshot", "validate", snap.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "dirty page list not strictly increasing",
+        ));
 }
 
 #[test]

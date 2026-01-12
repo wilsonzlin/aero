@@ -5699,6 +5699,7 @@ version = "0.1.0"
 dependencies = [
  "aero-snapshot",
  "assert_cmd",
+ "lz4_flex",
  "predicates",
  "tempfile",
 ]
