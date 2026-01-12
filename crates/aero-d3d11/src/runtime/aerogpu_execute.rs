@@ -260,6 +260,10 @@ impl AerogpuCmdRuntime {
         self.pipelines.stats()
     }
 
+    pub fn pipeline_layout_cache_stats(&self) -> aero_gpu::bindings::CacheStats {
+        self.pipeline_layout_cache.stats()
+    }
+
     pub fn create_buffer(&mut self, handle: AerogpuHandle, size: u64, usage: wgpu::BufferUsages) {
         let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("aero-d3d11 aerogpu buffer"),
