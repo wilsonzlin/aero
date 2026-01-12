@@ -782,6 +782,7 @@ impl VirtioPciBar0Mmio {
 
     fn all_ones(size: usize) -> u64 {
         match size {
+            0 => 0,
             1 => 0xFF,
             2 => 0xFFFF,
             4 => 0xFFFF_FFFF,
@@ -5040,6 +5041,76 @@ mod tests {
         MmioHandler::write(&mut mmio, 0, 0, 0x55);
 
         assert_eq!(vga.borrow().vram()[0], 0xAA);
+    }
+
+    #[test]
+    fn virtio_pci_bar0_mmio_size0_is_noop() {
+        struct DummyVirtioDevice;
+
+        impl aero_virtio::devices::VirtioDevice for DummyVirtioDevice {
+            fn device_type(&self) -> u16 {
+                1
+            }
+
+            fn device_features(&self) -> u64 {
+                0
+            }
+
+            fn set_features(&mut self, _features: u64) {}
+
+            fn num_queues(&self) -> u16 {
+                0
+            }
+
+            fn queue_max_size(&self, _queue: u16) -> u16 {
+                0
+            }
+
+            fn process_queue(
+                &mut self,
+                _queue_index: u16,
+                _chain: aero_virtio::queue::DescriptorChain,
+                _queue: &mut aero_virtio::queue::VirtQueue,
+                _mem: &mut dyn aero_virtio::memory::GuestMemory,
+            ) -> Result<bool, aero_virtio::devices::VirtioDeviceError> {
+                Ok(false)
+            }
+
+            fn poll_queue(
+                &mut self,
+                _queue_index: u16,
+                _queue: &mut aero_virtio::queue::VirtQueue,
+                _mem: &mut dyn aero_virtio::memory::GuestMemory,
+            ) -> Result<bool, aero_virtio::devices::VirtioDeviceError> {
+                Ok(false)
+            }
+
+            fn read_config(&self, _offset: u64, data: &mut [u8]) {
+                data.fill(0);
+            }
+
+            fn write_config(&mut self, _offset: u64, _data: &[u8]) {}
+
+            fn reset(&mut self) {}
+
+            fn as_any(&self) -> &dyn std::any::Any {
+                self
+            }
+
+            fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+                self
+            }
+        }
+
+        let dev = Rc::new(RefCell::new(VirtioPciDevice::new(
+            Box::new(DummyVirtioDevice),
+            Box::new(NoopVirtioInterruptSink::default()),
+        )));
+
+        let mut mmio = VirtioPciBar0Mmio::new(dev);
+
+        assert_eq!(PciBarMmioHandler::read(&mut mmio, 0, 0), 0);
+        PciBarMmioHandler::write(&mut mmio, 0, 0, 0xDEAD_BEEF);
     }
 
     fn build_paged_serial_boot_sector(message: &[u8]) -> [u8; 512] {
