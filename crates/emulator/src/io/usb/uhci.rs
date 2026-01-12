@@ -330,6 +330,89 @@ mod tests {
     }
 
     #[test]
+    fn pci_command_bme_clear_still_detects_remote_wakeup_resume() {
+        use crate::io::usb::core::{UsbInResult, UsbOutResult};
+        use crate::io::usb::SetupPacket;
+
+        const PORTSC_PED: u16 = 1 << 2;
+        const PORTSC_RD: u16 = 1 << 6;
+        const PORTSC_SUSP: u16 = 1 << 12;
+
+        let mut dev = UhciPciDevice::new(UhciController::new(), 0x1000);
+
+        // Enable I/O decoding so we can program the controller, but keep BME disabled.
+        dev.config_write(0x04, 2, 1 << 0);
+
+        // Attach a keyboard and force-enable the port so it is reachable at address 0.
+        let keyboard = UsbHidKeyboardHandle::new();
+        dev.controller.hub_mut().attach(0, Box::new(keyboard.clone()));
+        dev.controller.hub_mut().force_enable_for_tests(0);
+
+        // Configure the device and enable remote wakeup.
+        {
+            let dev0 = dev
+                .controller
+                .hub_mut()
+                .device_mut_for_address(0)
+                .expect("keyboard should be reachable at address 0");
+
+            let setup = SetupPacket {
+                bm_request_type: 0x00,
+                b_request: 0x09, // SET_CONFIGURATION
+                w_value: 1,
+                w_index: 0,
+                w_length: 0,
+            };
+            assert_eq!(dev0.handle_setup(setup), UsbOutResult::Ack);
+            assert!(matches!(
+                dev0.handle_in(0, 0),
+                UsbInResult::Data(data) if data.is_empty()
+            ));
+
+            let setup = SetupPacket {
+                bm_request_type: 0x00,
+                b_request: 0x03, // SET_FEATURE
+                w_value: 1,      // DEVICE_REMOTE_WAKEUP
+                w_index: 0,
+                w_length: 0,
+            };
+            assert_eq!(dev0.handle_setup(setup), UsbOutResult::Ack);
+            assert!(matches!(
+                dev0.handle_in(0, 0),
+                UsbInResult::Data(data) if data.is_empty()
+            ));
+        }
+
+        // Enter port suspend and enable resume interrupts.
+        dev.port_write(
+            0x1000 + regs::REG_USBINTR,
+            2,
+            u32::from(regs::USBINTR_RESUME),
+        );
+        dev.port_write(
+            0x1000 + regs::REG_PORTSC1,
+            2,
+            u32::from(PORTSC_PED | PORTSC_SUSP),
+        );
+
+        // While suspended, a keypress should create a remote wakeup event on the next tick.
+        keyboard.key_event(4, true);
+
+        let mut mem = PanicMem;
+        dev.tick_1ms(&mut mem);
+
+        assert_ne!(
+            dev.port_read(0x1000 + regs::REG_PORTSC1, 2) as u16 & PORTSC_RD,
+            0
+        );
+        assert_ne!(
+            dev.port_read(0x1000 + regs::REG_USBSTS, 2) as u16 & regs::USBSTS_RESUMEDETECT,
+            0
+        );
+        assert!(dev.irq_level());
+    }
+
+    #[test]
     fn pci_command_intx_disable_bit_masks_irq_level() {
         let mut dev = UhciPciDevice::new(UhciController::new(), 0x1000);
 
