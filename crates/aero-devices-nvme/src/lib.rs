@@ -100,10 +100,9 @@ impl DiskBackend for AeroStorageDiskAdapter {
             });
         }
 
-        // Any disk-layer error is surfaced as a generic I/O failure at the NVMe level.
         self.disk_mut()
             .read_sectors(lba, buffer)
-            .map_err(|_| DiskError::Io)
+            .map_err(|err| map_aero_storage_error(err, lba, sectors, capacity, self.sector_size()))
     }
 
     fn write_sectors(&mut self, lba: u64, buffer: &[u8]) -> DiskResult<()> {
@@ -131,17 +130,51 @@ impl DiskBackend for AeroStorageDiskAdapter {
 
         self.disk_mut()
             .write_sectors(lba, buffer)
-            .map_err(|_| DiskError::Io)
+            .map_err(|err| map_aero_storage_error(err, lba, sectors, capacity, self.sector_size()))
     }
 
     fn flush(&mut self) -> DiskResult<()> {
-        self.disk_mut().flush().map_err(|_| DiskError::Io)
+        self.disk_mut()
+            .flush()
+            .map_err(|err| map_aero_storage_error(err, 0, 0, self.total_sectors(), self.sector_size()))
     }
 }
 
 /// Convenience helper to wrap an [`aero_storage::VirtualDisk`] as an NVMe [`DiskBackend`].
 pub fn from_virtual_disk(d: Box<dyn aero_storage::VirtualDisk + Send>) -> Box<dyn DiskBackend> {
     Box::new(AeroStorageDiskAdapter::new(d))
+}
+
+fn map_aero_storage_error(
+    err: aero_storage::DiskError,
+    lba: u64,
+    sectors: u64,
+    capacity_sectors: u64,
+    sector_size: u32,
+) -> DiskError {
+    match err {
+        aero_storage::DiskError::OutOfBounds { .. } => DiskError::OutOfRange {
+            lba,
+            sectors,
+            capacity_sectors,
+        },
+        aero_storage::DiskError::UnalignedLength { len, .. } => DiskError::UnalignedBuffer {
+            len,
+            sector_size,
+        },
+        // Higher-level disk format/config errors are surfaced as a generic I/O failure
+        // at the controller boundary.
+        aero_storage::DiskError::OffsetOverflow
+        | aero_storage::DiskError::InvalidSparseHeader(_)
+        | aero_storage::DiskError::InvalidConfig(_)
+        | aero_storage::DiskError::CorruptSparseImage(_)
+        | aero_storage::DiskError::NotSupported(_)
+        | aero_storage::DiskError::QuotaExceeded
+        | aero_storage::DiskError::InUse
+        | aero_storage::DiskError::InvalidState(_)
+        | aero_storage::DiskError::BackendUnavailable
+        | aero_storage::DiskError::Io(_) => DiskError::Io,
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
