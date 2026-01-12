@@ -90,7 +90,7 @@ To keep restore behavior deterministic and avoid ambiguous state merges, the dec
 | `CPU` | Architectural CPU state (v1: minimal; v2: `aero_cpu_core::state::CpuState` compatible) |
 | `CPUS` | Multi-vCPU CPU state (v1: minimal; v2: `aero_cpu_core::state::CpuState` compatible) |
 | `MMU` | System/MMU state (v1: minimal; v2: control/debug/MSR + descriptor tables) |
-| `DEVICES` | List of device states (PIC/APIC/PIT/RTC/I8042/HPET/ACPI_PM/PCI/Disk/VGA/etc) as typed TLVs |
+| `DEVICES` | List of device states (PIC/APIC/PLATFORM_INTERRUPTS/PIT/RTC/I8042/HPET/ACPI_PM/PCI/Disk/VGA/etc) as typed TLVs |
 | `DISKS` | References to disk base images + overlay images |
 | `RAM` | Guest RAM contents (either full snapshot or dirty-page diff) |
 
@@ -108,7 +108,7 @@ A minimal VM can sometimes get away with snapshotting just CPU/MMU + BIOS + RAM,
 
 Beyond BIOS/RAM, a PcPlatform snapshot is expected to include `DEVICES` entries for:
 
-- **Platform interrupt controller complex** (legacy PIC + IOAPIC + LAPIC + IMCR routing)
+- **Platform interrupt controller complex** (legacy PIC + IOAPIC + LAPIC + IMCR routing; typically stored as `DeviceId::PLATFORM_INTERRUPTS`, historically `DeviceId::APIC`)
 - **Timers:** PIT, RTC, and HPET
 - **ACPI PM fixed-function I/O** (SCI + PM_TMR, plus PM1/GPE state)
 - **i8042 controller** (PS/2 keyboard/mouse controller and output-port state)
@@ -248,7 +248,7 @@ resynchronize the platform A20 latch with the restored output-port image.
 
 IRQ note: i8042 IRQ1/IRQ12 are treated as **edge-triggered** in Aero’s model. The i8042 device
 snapshot should not attempt to encode an “IRQ level”; any pending interrupts from prior edges must
-be captured/restored by the interrupt controller (PIC/APIC) device state. On restore, the i8042
+be captured/restored by the interrupt controller (PIC/APIC/PLATFORM_INTERRUPTS) device state. On restore, the i8042
 device must avoid emitting spurious IRQ pulses purely due to buffered output bytes (see
 [`docs/irq-semantics.md`](./irq-semantics.md)).
 
