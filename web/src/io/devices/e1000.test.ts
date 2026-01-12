@@ -6,15 +6,15 @@ import type { IrqSink } from "../device_manager";
 import { E1000PciDevice, type E1000BridgeLike } from "./e1000";
 
 describe("io/devices/E1000PciDevice", () => {
-  it("forwards TX frames to NET_TX and delivers NET_RX frames to receive_frame()", () => {
+  it("pumps NET_RX -> receive_frame and drains pop_tx_frame -> NET_TX", () => {
     const { buffer } = createIpcBuffer([
-      { kind: IO_IPC_NET_TX_QUEUE_KIND, capacityBytes: 4096 },
-      { kind: IO_IPC_NET_RX_QUEUE_KIND, capacityBytes: 4096 },
+      { kind: IO_IPC_NET_TX_QUEUE_KIND, capacityBytes: 256 },
+      { kind: IO_IPC_NET_RX_QUEUE_KIND, capacityBytes: 256 },
     ]);
     const netTx = openRingByKind(buffer, IO_IPC_NET_TX_QUEUE_KIND);
     const netRx = openRingByKind(buffer, IO_IPC_NET_RX_QUEUE_KIND);
 
-    const txFrames: Uint8Array[] = [new Uint8Array([0x01, 0x02, 0x03]), new Uint8Array([0xaa, 0xbb])];
+    const txQueue: Uint8Array[] = [new Uint8Array([0xaa, 0xbb]), new Uint8Array([0xcc])];
     const receiveFrame = vi.fn();
 
     const bridge: E1000BridgeLike = {
@@ -24,28 +24,72 @@ describe("io/devices/E1000PciDevice", () => {
       io_write: vi.fn(),
       poll: vi.fn(),
       receive_frame: receiveFrame,
-      pop_tx_frame: vi.fn(() => txFrames.shift()),
+      pop_tx_frame: vi.fn(() => txQueue.shift()),
       irq_level: vi.fn(() => false),
       free: vi.fn(),
     };
     const irqSink: IrqSink = { raiseIrq: vi.fn(), lowerIrq: vi.fn() };
 
-    // Preload a host->guest frame.
-    expect(netRx.tryPush(new Uint8Array([0xde, 0xad, 0xbe, 0xef]))).toBe(true);
-
     const dev = new E1000PciDevice({ bridge, irqSink, netTxRing: netTx, netRxRing: netRx });
+
+    // Host -> guest
+    expect(netRx.tryPush(new Uint8Array([1, 2, 3]))).toBe(true);
+    expect(netRx.tryPush(new Uint8Array([4, 5]))).toBe(true);
+
     dev.tick(0);
 
-    // TX frames are drained into NET_TX.
-    const out1 = netTx.tryPop();
-    const out2 = netTx.tryPop();
-    expect(out1 && Array.from(out1)).toEqual([0x01, 0x02, 0x03]);
-    expect(out2 && Array.from(out2)).toEqual([0xaa, 0xbb]);
-    expect(netTx.tryPop()).toBeNull();
+    expect(bridge.poll).toHaveBeenCalledTimes(1);
+    expect(receiveFrame).toHaveBeenCalledTimes(2);
+    expect(Array.from(receiveFrame.mock.calls[0]![0] as Uint8Array)).toEqual([1, 2, 3]);
+    expect(Array.from(receiveFrame.mock.calls[1]![0] as Uint8Array)).toEqual([4, 5]);
 
-    // NET_RX frame is delivered to the bridge.
-    expect(receiveFrame).toHaveBeenCalledTimes(1);
-    expect(Array.from(receiveFrame.mock.calls[0]![0] as Uint8Array)).toEqual([0xde, 0xad, 0xbe, 0xef]);
+    // Guest -> host
+    expect(Array.from(netTx.tryPop()!)).toEqual([0xaa, 0xbb]);
+    expect(Array.from(netTx.tryPop()!)).toEqual([0xcc]);
+    expect(netTx.tryPop()).toBe(null);
+  });
+
+  it("keeps at most one pending TX frame when NET_TX is full", () => {
+    // Capacity 8 bytes: enough for a single 1-byte payload record
+    // (len=1 => record size alignUp(4+1,8)=8).
+    const { buffer } = createIpcBuffer([
+      { kind: IO_IPC_NET_TX_QUEUE_KIND, capacityBytes: 8 },
+      { kind: IO_IPC_NET_RX_QUEUE_KIND, capacityBytes: 256 },
+    ]);
+    const netTx = openRingByKind(buffer, IO_IPC_NET_TX_QUEUE_KIND);
+    const netRx = openRingByKind(buffer, IO_IPC_NET_RX_QUEUE_KIND);
+
+    // Fill the ring so pushes fail.
+    expect(netTx.tryPush(new Uint8Array([0x00]))).toBe(true);
+
+    const txQueue: Uint8Array[] = [new Uint8Array([0x01]), new Uint8Array([0x02])];
+    const bridge: E1000BridgeLike = {
+      mmio_read: vi.fn(() => 0),
+      mmio_write: vi.fn(),
+      io_read: vi.fn(() => 0),
+      io_write: vi.fn(),
+      poll: vi.fn(),
+      receive_frame: vi.fn(),
+      pop_tx_frame: vi.fn(() => txQueue.shift()),
+      irq_level: vi.fn(() => false),
+      free: vi.fn(),
+    };
+    const irqSink: IrqSink = { raiseIrq: vi.fn(), lowerIrq: vi.fn() };
+
+    const dev = new E1000PciDevice({ bridge, irqSink, netTxRing: netTx, netRxRing: netRx });
+
+    dev.tick(0);
+    expect(bridge.pop_tx_frame).toHaveBeenCalledTimes(1);
+
+    // Ring is still full, so the device should not keep popping more frames.
+    dev.tick(1);
+    expect(bridge.pop_tx_frame).toHaveBeenCalledTimes(1);
+
+    // Consume the old entry so the pending frame can flush.
+    expect(Array.from(netTx.tryPop()!)).toEqual([0x00]);
+    dev.tick(2);
+
+    expect(Array.from(netTx.tryPop()!)).toEqual([0x01]);
   });
 
   it("raises/lowers IRQ only on edges", () => {
@@ -69,6 +113,7 @@ describe("io/devices/E1000PciDevice", () => {
       free: vi.fn(),
     };
     const irqSink: IrqSink = { raiseIrq: vi.fn(), lowerIrq: vi.fn() };
+
     const dev = new E1000PciDevice({ bridge, irqSink, netTxRing: netTx, netRxRing: netRx });
 
     dev.tick(0);

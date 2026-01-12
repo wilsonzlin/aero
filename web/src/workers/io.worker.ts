@@ -166,11 +166,12 @@ let usbPassthroughRuntime: WebUsbPassthroughRuntime | null = null;
 let usbPassthroughDebugTimer: number | undefined;
 let usbUhciHarnessRuntime: WebUsbUhciHarnessRuntime | null = null;
 let uhciDevice: UhciPciDevice | null = null;
+type UhciControllerBridge = InstanceType<NonNullable<WasmApi["UhciControllerBridge"]>>;
+let uhciControllerBridge: UhciControllerBridge | null = null;
+
 let e1000Device: E1000PciDevice | null = null;
 type E1000Bridge = InstanceType<NonNullable<WasmApi["E1000Bridge"]>>;
 let e1000Bridge: E1000Bridge | null = null;
-type UhciControllerBridge = InstanceType<NonNullable<WasmApi["UhciControllerBridge"]>>;
-let uhciControllerBridge: UhciControllerBridge | null = null;
 
 type WebUsbGuestBridge = WebUsbUhciHotplugBridgeLike & UsbPassthroughBridgeLike;
 let webUsbGuestBridge: WebUsbGuestBridge | null = null;
@@ -1629,6 +1630,8 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
       eventRing = new RingBuffer(segments.control, regions.event.byteOffset);
       ioCmdRing = openRingByKind(segments.ioIpc, IO_IPC_CMD_QUEUE_KIND);
       ioEvtRing = openRingByKind(segments.ioIpc, IO_IPC_EVT_QUEUE_KIND);
+      netTxRing = openRingByKind(segments.ioIpc, IO_IPC_NET_TX_QUEUE_KIND);
+      netRxRing = openRingByKind(segments.ioIpc, IO_IPC_NET_RX_QUEUE_KIND);
       try {
         netTxRing = openRingByKind(segments.ioIpc, IO_IPC_NET_TX_QUEUE_KIND);
         netRxRing = openRingByKind(segments.ioIpc, IO_IPC_NET_RX_QUEUE_KIND);
@@ -2584,6 +2587,8 @@ function shutdown(): void {
       usbDemoApi = null;
       usbDemo = null;
       lastUsbSelected = null;
+      netTxRing = null;
+      netRxRing = null;
       deviceManager = null;
       i8042 = null;
       pushEvent({ kind: "log", level: "info", message: "worker shutdown" });

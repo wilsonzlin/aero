@@ -1,7 +1,7 @@
-import { RingBuffer } from "../../ipc/ring_buffer.ts";
 import { defaultReadValue } from "../ipc/io_protocol.ts";
 import type { PciBar, PciDevice } from "../bus/pci.ts";
 import type { IrqSink, TickableDevice } from "../device_manager.ts";
+import type { RingBuffer } from "../../ipc/ring_buffer.ts";
 
 export type E1000BridgeLike = {
   mmio_read(offset: number, size: number): number;
@@ -10,6 +10,8 @@ export type E1000BridgeLike = {
   io_write(offset: number, size: number, value: number): void;
   poll(): void;
   receive_frame(frame: Uint8Array): void;
+  // wasm-bindgen represents `Option<Uint8Array>` as `undefined` in most builds,
+  // but older bindings or manual shims may use `null`. Accept both.
   pop_tx_frame(): Uint8Array | null | undefined;
   irq_level(): boolean;
   mac_addr?: () => Uint8Array;
@@ -24,26 +26,20 @@ const E1000_IO_BAR_SIZE = 0x40;
 // unused by the other built-in devices (i8042=IRQ1, UART=IRQ4, UHCI=IRQ11).
 const E1000_IRQ_LINE = 0x0a;
 
+const MAX_FRAMES_PER_TICK = 128;
+
 function maskToSize(value: number, size: number): number {
   if (size === 1) return value & 0xff;
   if (size === 2) return value & 0xffff;
   return value >>> 0;
 }
 
-/**
- * Minimal Intel E1000 PCI function backed by the WASM `E1000Bridge`.
- *
- * The guest driver programs RX/TX descriptor rings in guest RAM; the Rust device
- * model DMAs directly via the wasm linear memory guest mapping.
- *
- * Raw Ethernet frames are forwarded between the device model and the net worker
- * through the IO_IPC_NET_{TX,RX} rings.
- */
 export class E1000PciDevice implements PciDevice, TickableDevice {
   readonly name = "e1000";
   readonly vendorId = 0x8086;
   readonly deviceId = 0x100e;
   readonly classCode = E1000_CLASS_CODE;
+  readonly revisionId = 0x00;
   readonly irqLine = E1000_IRQ_LINE;
 
   readonly bars: ReadonlyArray<PciBar | null> = [
@@ -57,24 +53,25 @@ export class E1000PciDevice implements PciDevice, TickableDevice {
 
   readonly #bridge: E1000BridgeLike;
   readonly #irqSink: IrqSink;
-  readonly #netTx: RingBuffer;
-  readonly #netRx: RingBuffer;
+  readonly #netTxRing: RingBuffer;
+  readonly #netRxRing: RingBuffer;
 
+  #pendingTxFrame: Uint8Array | null = null;
   #irqLevel = false;
   #destroyed = false;
-  #txDrops = 0;
 
   constructor(opts: { bridge: E1000BridgeLike; irqSink: IrqSink; netTxRing: RingBuffer; netRxRing: RingBuffer }) {
     this.#bridge = opts.bridge;
     this.#irqSink = opts.irqSink;
-    this.#netTx = opts.netTxRing;
-    this.#netRx = opts.netRxRing;
+    this.#netTxRing = opts.netTxRing;
+    this.#netRxRing = opts.netRxRing;
   }
 
   mmioRead(barIndex: number, offset: bigint, size: number): number {
     if (this.#destroyed) return defaultReadValue(size);
     if (barIndex !== 0) return defaultReadValue(size);
     if (size !== 1 && size !== 2 && size !== 4) return defaultReadValue(size);
+
     const off = Number(offset);
     if (!Number.isFinite(off) || off < 0 || off + size > E1000_MMIO_BAR_SIZE) return defaultReadValue(size);
 
@@ -84,6 +81,8 @@ export class E1000PciDevice implements PciDevice, TickableDevice {
     } catch {
       value = defaultReadValue(size);
     }
+
+    // Reads of ICR can clear the IRQ; keep the line level accurate.
     this.#syncIrq();
     return maskToSize(value, size);
   }
@@ -92,6 +91,7 @@ export class E1000PciDevice implements PciDevice, TickableDevice {
     if (this.#destroyed) return;
     if (barIndex !== 0) return;
     if (size !== 1 && size !== 2 && size !== 4) return;
+
     const off = Number(offset);
     if (!Number.isFinite(off) || off < 0 || off + size > E1000_MMIO_BAR_SIZE) return;
 
@@ -107,6 +107,7 @@ export class E1000PciDevice implements PciDevice, TickableDevice {
     if (this.#destroyed) return defaultReadValue(size);
     if (barIndex !== 1) return defaultReadValue(size);
     if (size !== 1 && size !== 2 && size !== 4) return defaultReadValue(size);
+
     const off = offset >>> 0;
     if (off + size > E1000_IO_BAR_SIZE) return defaultReadValue(size);
 
@@ -116,6 +117,8 @@ export class E1000PciDevice implements PciDevice, TickableDevice {
     } catch {
       value = defaultReadValue(size);
     }
+
+    // Reads via IODATA can touch ICR.
     this.#syncIrq();
     return maskToSize(value, size);
   }
@@ -124,6 +127,7 @@ export class E1000PciDevice implements PciDevice, TickableDevice {
     if (this.#destroyed) return;
     if (barIndex !== 1) return;
     if (size !== 1 && size !== 2 && size !== 4) return;
+
     const off = offset >>> 0;
     if (off + size > E1000_IO_BAR_SIZE) return;
 
@@ -141,36 +145,11 @@ export class E1000PciDevice implements PciDevice, TickableDevice {
     try {
       this.#bridge.poll();
     } catch {
-      // ignore poll errors
+      // ignore device errors during tick
     }
 
-    // Drain guest->host frames (E1000 TX queue -> NET_TX ring).
-    // eslint-disable-next-line no-constant-condition
-    while (true) {
-      let frame: Uint8Array | null | undefined;
-      try {
-        frame = this.#bridge.pop_tx_frame();
-      } catch {
-        frame = null;
-      }
-      if (!frame) break;
-      if (!this.#netTx.tryPush(frame)) {
-        this.#txDrops++;
-      }
-    }
-
-    // Drain host->guest frames (NET_RX ring -> E1000 RX path).
-    // eslint-disable-next-line no-constant-condition
-    while (true) {
-      const frame = this.#netRx.tryPop();
-      if (!frame) break;
-      try {
-        this.#bridge.receive_frame(frame);
-      } catch {
-        // ignore malformed frames
-      }
-    }
-
+    this.#pumpRxRing();
+    this.#pumpTxRing();
     this.#syncIrq();
   }
 
@@ -190,8 +169,47 @@ export class E1000PciDevice implements PciDevice, TickableDevice {
     }
   }
 
-  get txDrops(): number {
-    return this.#txDrops;
+  #pumpRxRing(): void {
+    const ring = this.#netRxRing;
+    const bridge = this.#bridge;
+
+    for (let i = 0; i < MAX_FRAMES_PER_TICK; i++) {
+      const didConsume = ring.consumeNext((frame) => {
+        try {
+          bridge.receive_frame(frame);
+        } catch {
+          // ignore malformed frames
+        }
+      });
+      if (!didConsume) break;
+    }
+  }
+
+  #pumpTxRing(): void {
+    const ring = this.#netTxRing;
+    const bridge = this.#bridge;
+
+    // If the NET_TX ring was full, retry the pending frame first and avoid
+    // popping more frames from WASM until we can flush it.
+    if (this.#pendingTxFrame) {
+      if (!ring.tryPush(this.#pendingTxFrame)) return;
+      this.#pendingTxFrame = null;
+    }
+
+    for (let i = 0; i < MAX_FRAMES_PER_TICK; i++) {
+      let frame: Uint8Array | null | undefined;
+      try {
+        frame = bridge.pop_tx_frame();
+      } catch {
+        frame = undefined;
+      }
+      if (!frame) return;
+
+      if (!ring.tryPush(frame)) {
+        this.#pendingTxFrame = frame;
+        return;
+      }
+    }
   }
 
   #syncIrq(): void {
@@ -201,9 +219,11 @@ export class E1000PciDevice implements PciDevice, TickableDevice {
     } catch {
       asserted = false;
     }
+
     if (asserted === this.#irqLevel) return;
     this.#irqLevel = asserted;
     if (asserted) this.#irqSink.raiseIrq(this.irqLine);
     else this.#irqSink.lowerIrq(this.irqLine);
   }
 }
+

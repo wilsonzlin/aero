@@ -1,6 +1,6 @@
 //! WASM-side bridge for exposing a guest-visible Intel E1000 NIC.
 //!
-//! The browser I/O worker wires this device to the raw Ethernet frame rings:
+//! The browser runtime wires this device to the raw Ethernet frame rings:
 //! - Guest -> host: E1000 TX queue -> IO_IPC_NET_TX_QUEUE_KIND
 //! - Host -> guest: IO_IPC_NET_RX_QUEUE_KIND -> E1000 RX queue
 //!
@@ -13,7 +13,7 @@ use wasm_bindgen::prelude::*;
 
 use js_sys::Uint8Array;
 
-use aero_net_e1000::{E1000_IO_SIZE, E1000_MMIO_SIZE, E1000Device};
+use aero_net_e1000::{E1000Device, E1000_IO_SIZE, E1000_MMIO_SIZE};
 use memory::MemoryBus;
 
 fn js_error(message: impl core::fmt::Display) -> JsValue {
@@ -32,13 +32,17 @@ fn validate_io_size(size: u32) -> usize {
     }
 }
 
+/// Guest physical memory backed by the module's linear memory.
+///
+/// Guest physical address 0 maps to `guest_base` in linear memory and spans
+/// `guest_size` bytes.
 #[derive(Clone, Copy)]
-struct WasmGuestMemory {
+struct LinearGuestMemory {
     guest_base: u32,
     guest_size: u64,
 }
 
-impl WasmGuestMemory {
+impl LinearGuestMemory {
     #[inline]
     fn linear_ptr(&self, paddr: u64, len: usize) -> Option<*const u8> {
         let len_u64 = len as u64;
@@ -56,7 +60,7 @@ impl WasmGuestMemory {
     }
 }
 
-impl MemoryBus for WasmGuestMemory {
+impl MemoryBus for LinearGuestMemory {
     fn read_physical(&mut self, paddr: u64, buf: &mut [u8]) {
         if buf.is_empty() {
             return;
@@ -117,13 +121,13 @@ const DEFAULT_MAC_ADDR: [u8; 6] = [0x52, 0x54, 0x00, 0x12, 0x34, 0x56];
 #[wasm_bindgen]
 pub struct E1000Bridge {
     dev: E1000Device,
-    mem: WasmGuestMemory,
+    mem: LinearGuestMemory,
 }
 
 #[wasm_bindgen]
 impl E1000Bridge {
     #[wasm_bindgen(constructor)]
-    pub fn new(guest_base: u32, guest_size: u32) -> Result<Self, JsValue> {
+    pub fn new(guest_base: u32, guest_size: u32, mac: Option<Uint8Array>) -> Result<Self, JsValue> {
         if guest_base == 0 {
             return Err(js_error("guest_base must be non-zero"));
         }
@@ -144,9 +148,20 @@ impl E1000Bridge {
             )));
         }
 
+        let mac_addr = if let Some(mac) = mac {
+            if mac.length() != 6 {
+                return Err(js_error("E1000Bridge: mac must be a Uint8Array of length 6"));
+            }
+            let mut out = [0u8; 6];
+            mac.copy_to(&mut out);
+            out
+        } else {
+            DEFAULT_MAC_ADDR
+        };
+
         Ok(Self {
-            dev: E1000Device::new(DEFAULT_MAC_ADDR),
-            mem: WasmGuestMemory {
+            dev: E1000Device::new(mac_addr),
+            mem: LinearGuestMemory {
                 guest_base,
                 guest_size: guest_size_u64,
             },
@@ -174,8 +189,7 @@ impl E1000Bridge {
         if end > E1000_MMIO_SIZE {
             return;
         }
-        self.dev
-            .mmio_write(&mut self.mem, offset as u64, size, value);
+        self.dev.mmio_write(&mut self.mem, offset as u64, size, value);
     }
 
     pub fn io_read(&mut self, offset: u32, size: u32) -> u32 {
@@ -206,6 +220,10 @@ impl E1000Bridge {
         self.dev.poll(&mut self.mem);
     }
 
+    pub fn irq_level(&self) -> bool {
+        self.dev.irq_level()
+    }
+
     pub fn receive_frame(&mut self, frame: &[u8]) {
         self.dev.receive_frame(&mut self.mem, frame);
     }
@@ -215,12 +233,9 @@ impl E1000Bridge {
         Some(Uint8Array::from(frame.as_slice()))
     }
 
-    pub fn irq_level(&self) -> bool {
-        self.dev.irq_level()
-    }
-
     pub fn mac_addr(&self) -> Uint8Array {
         let mac = self.dev.mac_addr();
         Uint8Array::from(mac.as_ref())
     }
 }
+
