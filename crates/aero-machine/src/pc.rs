@@ -927,10 +927,7 @@ mod tests {
         desc[0..8].copy_from_slice(&pkt_base.to_le_bytes());
         desc[8..10].copy_from_slice(&(frame.len() as u16).to_le_bytes());
         desc[11] = (1 << 0) | (1 << 3); // EOP|RS
-        pc.bus
-            .platform
-            .memory
-            .write_physical(tx_ring_base, &desc);
+        pc.bus.platform.memory.write_physical(tx_ring_base, &desc);
 
         // Program E1000 TX ring over MMIO (BAR0) and enable TXDW interrupts.
         pc.bus
@@ -942,7 +939,10 @@ mod tests {
         pc.bus.platform.memory.write_u32(bar0_base + 0x3810, 0); // TDH
         pc.bus.platform.memory.write_u32(bar0_base + 0x3818, 0); // TDT
         pc.bus.platform.memory.write_u32(bar0_base + 0x0400, 1 << 1); // TCTL.EN
-        pc.bus.platform.memory.write_u32(bar0_base + 0x00D0, ICR_TXDW); // IMS = TXDW
+        pc.bus
+            .platform
+            .memory
+            .write_u32(bar0_base + 0x00D0, ICR_TXDW); // IMS = TXDW
         pc.bus.platform.memory.write_u32(bar0_base + 0x3818, 1); // Doorbell: TDT=1
 
         let e1000 = pc.bus.platform.e1000().expect("e1000 enabled");
