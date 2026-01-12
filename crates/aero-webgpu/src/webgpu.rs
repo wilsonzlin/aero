@@ -210,10 +210,17 @@ async fn request_adapter_robust<'a>(
 fn negotiated_features(adapter: &wgpu::Adapter) -> wgpu::Features {
     let available = adapter.features();
 
-    let mut requested = wgpu::Features::empty();
+    negotiated_features_for_available(
+        available,
+        env_var_truthy("AERO_DISABLE_WGPU_TEXTURE_COMPRESSION"),
+    )
+}
 
-    let disable_texture_compression =
-        env_var_truthy("AERO_DISABLE_WGPU_TEXTURE_COMPRESSION");
+fn negotiated_features_for_available(
+    available: wgpu::Features,
+    disable_texture_compression: bool,
+) -> wgpu::Features {
+    let mut requested = wgpu::Features::empty();
 
     // Texture compression is optional but beneficial (guest textures, DDS, etc).
     if !disable_texture_compression {
@@ -266,5 +273,46 @@ fn negotiated_limits(adapter: &wgpu::Adapter, desired_max_buffer_size: u64) -> w
         max_buffer_size,
         max_storage_buffer_binding_size: desired_storage_binding_size as u32,
         ..Default::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn negotiated_features_respects_texture_compression_opt_out() {
+        let compression = wgpu::Features::TEXTURE_COMPRESSION_BC
+            | wgpu::Features::TEXTURE_COMPRESSION_ETC2
+            | wgpu::Features::TEXTURE_COMPRESSION_ASTC_HDR;
+
+        let timestamps =
+            wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS;
+
+        let available = compression | timestamps;
+
+        let requested = negotiated_features_for_available(available, false);
+        assert!(requested.contains(compression));
+        assert!(requested.contains(timestamps));
+
+        let requested = negotiated_features_for_available(available, true);
+        assert!(!requested.intersects(compression));
+        assert!(requested.contains(timestamps));
+    }
+
+    #[test]
+    fn negotiated_features_requires_timestamp_inside_encoders() {
+        let requested = negotiated_features_for_available(wgpu::Features::TIMESTAMP_QUERY, false);
+        assert!(
+            !requested.contains(wgpu::Features::TIMESTAMP_QUERY),
+            "should not request TIMESTAMP_QUERY unless TIMESTAMP_QUERY_INSIDE_ENCODERS is also available"
+        );
+
+        let requested = negotiated_features_for_available(
+            wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS,
+            false,
+        );
+        assert!(requested.contains(wgpu::Features::TIMESTAMP_QUERY));
+        assert!(requested.contains(wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS));
     }
 }
