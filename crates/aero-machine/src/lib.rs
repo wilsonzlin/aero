@@ -863,6 +863,11 @@ impl Machine {
 
         if self.cfg.enable_i8042 {
             let ports = I8042Ports::new();
+            // If the PC platform interrupt controller is enabled, wire i8042 IRQ1/IRQ12 pulses
+            // into it so the guest can receive keyboard/mouse interrupts.
+            if let Some(interrupts) = &self.interrupts {
+                ports.connect_irqs_to_platform_interrupts(interrupts.clone());
+            }
             let ctrl = ports.controller();
             aero_devices::i8042::register_i8042(&mut self.io, ctrl.clone());
 
