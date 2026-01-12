@@ -554,18 +554,39 @@ async function startHdaPciDevice(msg: AudioOutputHdaPciDeviceStartMessage): Prom
   //
   // This device is registered by the IO worker after WASM init completes; when Chromium
   // doesn't have a cached compilation artifact yet (common in CI), we may need to retry.
+  //
+  // Probe all functions on multifunction devices for robustness (even though the current
+  // IO-worker HDA device is expected to be 00:??.0).
   let found: { bus: number; device: number; function: number } | null = null;
   const scanDeadlineMs = (typeof performance?.now === "function" ? performance.now() : Date.now()) + 45_000;
   while ((typeof performance?.now === "function" ? performance.now() : Date.now()) < scanDeadlineMs) {
     for (let dev = 0; dev < 32; dev++) {
-      const id = readDword(0, dev, 0, 0x00);
-      const vendorId = id & 0xffff;
-      const deviceId = (id >>> 16) & 0xffff;
-      if (vendorId === 0xffff) continue;
-      if (vendorId === 0x8086 && deviceId === 0x2668) {
+      const id0 = readDword(0, dev, 0, 0x00);
+      const vendor0 = id0 & 0xffff;
+      const device0 = (id0 >>> 16) & 0xffff;
+      if (vendor0 === 0xffff) continue;
+      if (vendor0 === 0x8086 && device0 === 0x2668) {
         found = { bus: 0, device: dev, function: 0 };
         break;
       }
+
+      // Header type at 0x0e: bit7 indicates multifunction.
+      const hdr0 = readDword(0, dev, 0, 0x0c);
+      const headerType = (hdr0 >>> 16) & 0xff;
+      const multiFunction = (headerType & 0x80) !== 0;
+      if (!multiFunction) continue;
+
+      for (let fn = 1; fn < 8; fn++) {
+        const id = readDword(0, dev, fn, 0x00);
+        const vendorId = id & 0xffff;
+        const deviceId = (id >>> 16) & 0xffff;
+        if (vendorId === 0xffff) continue;
+        if (vendorId === 0x8086 && deviceId === 0x2668) {
+          found = { bus: 0, device: dev, function: fn };
+          break;
+        }
+      }
+      if (found) break;
     }
     if (found) break;
     await sleepMs(50);
