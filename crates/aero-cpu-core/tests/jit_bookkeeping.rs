@@ -64,6 +64,24 @@ impl JitBackend for FirstExitSecondPanicBackend {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+struct TwoExitBackend {
+    exit0: JitBlockExit,
+    exit1: JitBlockExit,
+}
+
+impl JitBackend for TwoExitBackend {
+    type Cpu = Vcpu<FlatTestBus>;
+
+    fn execute(&mut self, table_index: u32, _cpu: &mut Self::Cpu) -> JitBlockExit {
+        match table_index {
+            0 => self.exit0,
+            1 => self.exit1,
+            other => panic!("unexpected JIT table index {other}"),
+        }
+    }
+}
+
 #[derive(Default)]
 struct NoopInterpreter;
 
@@ -236,6 +254,95 @@ fn rollback_exit_to_interpreter_forces_one_interpreter_step() {
         }
         other => panic!("unexpected outcome: {other:?}"),
     }
+}
+
+#[test]
+fn inhibit_interrupts_after_block_creates_and_ages_shadow() {
+    let entry_a = 0x1000u64;
+    let entry_b = 0x2000u64;
+    let vector = 0x20u8;
+
+    let backend = TwoExitBackend {
+        exit0: JitBlockExit {
+            next_rip: entry_b,
+            exit_to_interpreter: false,
+            committed: true,
+        },
+        exit1: JitBlockExit {
+            next_rip: entry_b,
+            exit_to_interpreter: false,
+            committed: true,
+        },
+    };
+    let config = JitConfig {
+        enabled: true,
+        hot_threshold: 1,
+        cache_max_blocks: 16,
+        cache_max_bytes: 0,
+    };
+    let jit = JitRuntime::new(config, backend, NullCompileSink);
+    let mut dispatcher = ExecDispatcher::new(NoopInterpreter::default(), jit);
+
+    // Block A: creates an interrupt shadow after it retires (e.g. STI/MOV SS semantics).
+    {
+        let jit = dispatcher.jit_mut();
+        let mut meta = jit.make_meta(0, 0);
+        meta.instruction_count = 1;
+        meta.inhibit_interrupts_after_block = true;
+        jit.install_handle(CompiledBlockHandle {
+            entry_rip: entry_a,
+            table_index: 0,
+            meta,
+        });
+    }
+
+    // Block B: a normal instruction that does not create a new shadow but should age an existing
+    // one.
+    {
+        let jit = dispatcher.jit_mut();
+        let mut meta = jit.make_meta(0, 0);
+        meta.instruction_count = 1;
+        meta.inhibit_interrupts_after_block = false;
+        jit.install_handle(CompiledBlockHandle {
+            entry_rip: entry_b,
+            table_index: 1,
+            meta,
+        });
+    }
+
+    let mut core = CpuCore::new(CpuMode::Real);
+    core.state.set_rip(entry_a);
+    core.state.set_flag(RFLAGS_IF, true);
+    core.state.write_gpr16(gpr::RSP, 0x8000);
+
+    let mut bus = FlatTestBus::new(0x20000);
+    install_ivt_entry(&mut bus, vector, 0x0000, 0x1234);
+    let mut cpu = Vcpu::new(core, bus);
+
+    // Step 1: execute block A, which creates the shadow. No interrupt pending yet, so it should run.
+    match dispatcher.step(&mut cpu) {
+        StepOutcome::Block { tier, .. } => assert_eq!(tier, ExecutedTier::Jit),
+        other => panic!("unexpected outcome: {other:?}"),
+    }
+    assert_eq!(cpu.cpu.pending.interrupt_inhibit(), 1);
+
+    // Now an external interrupt becomes pending. The shadow should block immediate delivery at the
+    // next instruction boundary.
+    cpu.cpu.pending.inject_external_interrupt(vector);
+
+    // Step 2: shadow active, so interrupt is *not* delivered. Instead we execute block B, which
+    // ages the shadow.
+    match dispatcher.step(&mut cpu) {
+        StepOutcome::Block { tier, .. } => assert_eq!(tier, ExecutedTier::Jit),
+        other => panic!("unexpected outcome: {other:?}"),
+    }
+    assert_eq!(cpu.cpu.pending.external_interrupts.len(), 1);
+    assert_eq!(cpu.cpu.pending.interrupt_inhibit(), 0);
+
+    // Step 3: shadow expired; interrupt is delivered.
+    assert_eq!(dispatcher.step(&mut cpu), StepOutcome::InterruptDelivered);
+    assert!(cpu.cpu.pending.external_interrupts.is_empty());
+    assert_eq!(cpu.cpu.state.rip(), 0x1234);
 }
 
 #[test]
