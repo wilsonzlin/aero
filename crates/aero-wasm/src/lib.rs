@@ -5,6 +5,8 @@
 
 use wasm_bindgen::prelude::*;
 
+pub mod guest_cpu_bench;
+
 // Re-export Aero IPC SharedArrayBuffer ring helpers so the generated `aero-wasm`
 // wasm-pack package exposes them to JS (both threaded + single builds).
 #[cfg(target_arch = "wasm32")]
