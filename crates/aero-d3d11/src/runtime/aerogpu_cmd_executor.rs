@@ -761,6 +761,7 @@ impl AerogpuD3d11Executor {
                 .map_err(|e| anyhow!("aerogpu_cmd: invalid cmd stream: {e:?}"))?;
             let stream_size = iter.header().size_bytes as usize;
             let mut cursor = AerogpuCmdStreamHeader::SIZE_BYTES;
+            let mut packet_index = 0usize;
             for next in iter {
                 let packet = next.map_err(|err| {
                     anyhow!("aerogpu_cmd: invalid cmd header @0x{cursor:x}: {err:?}")
@@ -780,20 +781,25 @@ impl AerogpuD3d11Executor {
                         let cmd = decode_cmd_copy_buffer_le(cmd_bytes)
                             .map_err(|e| anyhow!("COPY_BUFFER: invalid payload: {e:?}"))?;
                         if (cmd.flags & AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0 {
-                            bail!("WRITEBACK_DST requires async execution on wasm (call execute_cmd_stream_async)");
+                            bail!(
+                                "WRITEBACK_DST requires async execution on wasm (call execute_cmd_stream_async); first WRITEBACK_DST at packet {packet_index}"
+                            );
                         }
                     }
                     OPCODE_COPY_TEXTURE2D => {
                         let cmd = decode_cmd_copy_texture2d_le(cmd_bytes)
                             .map_err(|e| anyhow!("COPY_TEXTURE2D: invalid payload: {e:?}"))?;
                         if (cmd.flags & AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0 {
-                            bail!("WRITEBACK_DST requires async execution on wasm (call execute_cmd_stream_async)");
+                            bail!(
+                                "WRITEBACK_DST requires async execution on wasm (call execute_cmd_stream_async); first WRITEBACK_DST at packet {packet_index}"
+                            );
                         }
                     }
                     _ => {}
                 }
 
                 cursor = cmd_end;
+                packet_index += 1;
             }
         }
 

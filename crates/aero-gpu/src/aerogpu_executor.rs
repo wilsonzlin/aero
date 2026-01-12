@@ -594,20 +594,20 @@ fn fs_main() -> @location(0) vec4<f32> {
                     };
                 }
             };
-            let has_writeback = stream.cmds.iter().any(|cmd| match cmd {
+            let writeback_at = stream.cmds.iter().position(|cmd| match cmd {
                 AeroGpuCmd::CopyBuffer { flags, .. } | AeroGpuCmd::CopyTexture2d { flags, .. } => {
                     (flags & cmd::AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0
                 }
                 _ => false,
             });
-            if has_writeback {
+            if let Some(at) = writeback_at {
                 return ExecutionReport {
                     packets_processed: 0,
                     events: vec![ExecutorEvent::Error {
-                        at: 0,
-                        message:
-                            "WRITEBACK_DST requires async execution on wasm (call execute_cmd_stream_async)"
-                                .into(),
+                        at,
+                        message: format!(
+                            "WRITEBACK_DST requires async execution on wasm (call execute_cmd_stream_async); first WRITEBACK_DST at packet {at}"
+                        ),
                     }],
                 };
             }
@@ -824,16 +824,17 @@ fn fs_main() -> @location(0) vec4<f32> {
         #[cfg(target_arch = "wasm32")]
         {
             let stream = parse_cmd_stream(bytes).map_err(map_cmd_stream_parse_error)?;
-            let has_writeback = stream.cmds.iter().any(|cmd| match cmd {
+            let writeback_at = stream.cmds.iter().position(|cmd| match cmd {
                 AeroGpuCmd::CopyBuffer { flags, .. } | AeroGpuCmd::CopyTexture2d { flags, .. } => {
                     (flags & cmd::AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0
                 }
                 _ => false,
             });
-            if has_writeback {
+            if let Some(at) = writeback_at {
                 return Err(ExecutorError::Validation(
-                    "WRITEBACK_DST requires async execution on wasm (call execute_cmd_stream_async)"
-                        .into(),
+                    format!(
+                        "WRITEBACK_DST requires async execution on wasm (call execute_cmd_stream_async); first WRITEBACK_DST at packet {at}"
+                    ),
                 ));
             }
         }

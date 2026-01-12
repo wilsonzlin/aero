@@ -1274,16 +1274,17 @@ impl AerogpuD3d9Executor {
         // and cannot be waited on synchronously.
         #[cfg(target_arch = "wasm32")]
         {
-            let has_writeback = stream.cmds.iter().any(|cmd| match cmd {
+            let writeback_at = stream.cmds.iter().position(|cmd| match cmd {
                 AeroGpuCmd::CopyBuffer { flags, .. } | AeroGpuCmd::CopyTexture2d { flags, .. } => {
                     (flags & AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0
                 }
                 _ => false,
             });
-            if has_writeback {
+            if let Some(at) = writeback_at {
                 return Err(AerogpuD3d9Error::Validation(
-                    "WRITEBACK_DST requires async execution on wasm (call execute_cmd_stream_with_guest_memory_for_context_async)"
-                        .into(),
+                    format!(
+                        "WRITEBACK_DST requires async execution on wasm (call execute_cmd_stream_with_guest_memory_for_context_async); first WRITEBACK_DST at packet {at}"
+                    ),
                 ));
             }
         }
