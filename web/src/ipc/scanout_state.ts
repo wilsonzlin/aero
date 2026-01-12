@@ -45,6 +45,29 @@ export interface ScanoutStateSnapshot extends ScanoutStateUpdate {
   generation: number;
 }
 
+export function wrapScanoutState(sab: SharedArrayBuffer, byteOffset = 0): Int32Array {
+  if (!(sab instanceof SharedArrayBuffer)) {
+    throw new TypeError("wrapScanoutState requires a SharedArrayBuffer");
+  }
+  if (!Number.isFinite(byteOffset)) {
+    throw new RangeError(`byteOffset must be a finite number, got ${String(byteOffset)}`);
+  }
+  const off = Math.trunc(byteOffset);
+  if (off < 0) {
+    throw new RangeError(`byteOffset must be >= 0, got ${off}`);
+  }
+  if (off % 4 !== 0) {
+    throw new RangeError(`byteOffset must be 4-byte aligned, got ${off}`);
+  }
+  const requiredBytes = off + SCANOUT_STATE_BYTE_LEN;
+  if (requiredBytes > sab.byteLength) {
+    throw new RangeError(
+      `ScanoutState view would be out of bounds: need ${requiredBytes} bytes (offset=${off}, len=${SCANOUT_STATE_BYTE_LEN}), sab.byteLength=${sab.byteLength}`,
+    );
+  }
+  return new Int32Array(sab, off, SCANOUT_STATE_U32_LEN);
+}
+
 export function scanoutBasePaddr(snapshot: ScanoutStateSnapshot): bigint {
   return (BigInt(snapshot.basePaddrHi >>> 0) << 32n) | BigInt(snapshot.basePaddrLo >>> 0);
 }
@@ -119,4 +142,3 @@ export function publishScanoutState(words: Int32Array, update: ScanoutStateUpdat
   Atomics.store(words, ScanoutStateIndex.GENERATION, newGeneration | 0);
   return newGeneration;
 }
-

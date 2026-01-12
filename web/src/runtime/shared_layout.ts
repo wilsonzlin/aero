@@ -15,6 +15,7 @@ import {
   SCANOUT_SOURCE_LEGACY_TEXT,
   SCANOUT_STATE_U32_LEN,
   ScanoutStateIndex,
+  wrapScanoutState,
 } from "../ipc/scanout_state";
 
 export const WORKER_ROLES = ["cpu", "gpu", "io", "jit", "net"] as const;
@@ -540,7 +541,7 @@ export function createSharedMemoryViews(segments: SharedMemorySegments): SharedM
   const scanoutState = segments.scanoutState;
   const scanoutStateOffsetBytes = segments.scanoutStateOffsetBytes ?? 0;
   const scanoutStateI32 =
-    scanoutState instanceof SharedArrayBuffer ? new Int32Array(scanoutState, scanoutStateOffsetBytes, SCANOUT_STATE_U32_LEN) : undefined;
+    scanoutState instanceof SharedArrayBuffer ? wrapScanoutState(scanoutState, scanoutStateOffsetBytes) : undefined;
   return {
     segments,
     status,
