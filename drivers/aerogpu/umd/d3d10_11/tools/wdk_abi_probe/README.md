@@ -24,11 +24,11 @@ The goal is to make header/version drift and calling-convention mismatches obvio
 cd \path\to\repo\drivers\aerogpu\umd\d3d10_11\tools\wdk_abi_probe
 
 rem x86
-cl /nologo /W4 /EHsc d3d10_11_wdk_abi_probe.cpp /Fe:d3d10_11_wdk_abi_probe_x86.exe
+cl /nologo /W4 /EHsc /std:c++17 d3d10_11_wdk_abi_probe.cpp /Fe:d3d10_11_wdk_abi_probe_x86.exe
 d3d10_11_wdk_abi_probe_x86.exe
 
 rem x64 (from the x64 build environment)
-cl /nologo /W4 /EHsc d3d10_11_wdk_abi_probe.cpp /Fe:d3d10_11_wdk_abi_probe_x64.exe
+cl /nologo /W4 /EHsc /std:c++17 d3d10_11_wdk_abi_probe.cpp /Fe:d3d10_11_wdk_abi_probe_x64.exe
 d3d10_11_wdk_abi_probe_x64.exe
 ```
 

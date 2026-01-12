@@ -245,12 +245,24 @@ int main() {
   std::printf("== Exported entrypoints ==\n");
   std::printf("  runtime expects: OpenAdapter10, OpenAdapter10_2, OpenAdapter11\n");
   if (sizeof(void*) == 4) {
-    const unsigned stack_bytes = static_cast<unsigned>(aerogpu_stdcall_stack_bytes<PFND3D10DDI_OPENADAPTER>::value);
-    const unsigned stack_bytes_11 = static_cast<unsigned>(aerogpu_stdcall_stack_bytes<PFND3D11DDI_OPENADAPTER>::value);
     std::printf("  x86 stdcall decoration:\n");
-    std::printf("    OpenAdapter10   => _OpenAdapter10@%u\n", stack_bytes);
-    std::printf("    OpenAdapter10_2 => _OpenAdapter10_2@%u\n", stack_bytes);
-    std::printf("    OpenAdapter11   => _OpenAdapter11@%u\n", stack_bytes_11);
+    __if_exists(PFND3D10DDI_OPENADAPTER) {
+      const unsigned stack_bytes = static_cast<unsigned>(aerogpu_stdcall_stack_bytes<PFND3D10DDI_OPENADAPTER>::value);
+      std::printf("    OpenAdapter10   => _OpenAdapter10@%u\n", stack_bytes);
+      std::printf("    OpenAdapter10_2 => _OpenAdapter10_2@%u\n", stack_bytes);
+    }
+    __if_not_exists(PFND3D10DDI_OPENADAPTER) {
+      std::printf("    OpenAdapter10   => <typedef PFND3D10DDI_OPENADAPTER not found>\n");
+      std::printf("    OpenAdapter10_2 => <typedef PFND3D10DDI_OPENADAPTER not found>\n");
+    }
+
+    __if_exists(PFND3D11DDI_OPENADAPTER) {
+      const unsigned stack_bytes_11 = static_cast<unsigned>(aerogpu_stdcall_stack_bytes<PFND3D11DDI_OPENADAPTER>::value);
+      std::printf("    OpenAdapter11   => _OpenAdapter11@%u\n", stack_bytes_11);
+    }
+    __if_not_exists(PFND3D11DDI_OPENADAPTER) {
+      std::printf("    OpenAdapter11   => <typedef PFND3D11DDI_OPENADAPTER not found>\n");
+    }
   } else {
     std::printf("  x64: no stdcall decoration\n");
   }

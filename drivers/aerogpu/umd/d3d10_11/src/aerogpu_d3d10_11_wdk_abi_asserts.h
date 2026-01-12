@@ -119,8 +119,11 @@ struct aerogpu_d3d10_11_abi_stdcall_stack_bytes<R(__stdcall*)(A1, A2, A3, A4)> {
 
 #if defined(_M_IX86) && defined(__cplusplus)
   #if defined(AEROGPU_D3D10_11_WDK_ABI_EXPECT_OPENADAPTER10_STDCALL_BYTES)
+typedef HRESULT(__stdcall* aerogpu_d3d10_11_openadapter10_fn)(D3D10DDIARG_OPENADAPTER*);
+static const aerogpu_d3d10_11_openadapter10_fn aerogpu_d3d10_11_openadapter10_sigcheck = &OpenAdapter10;
 AEROGPU_D3D10_11_ABI_STATIC_ASSERT(
-    aerogpu_d3d10_11_abi_stdcall_stack_bytes<decltype(&OpenAdapter10)>::value == AEROGPU_D3D10_11_WDK_ABI_EXPECT_OPENADAPTER10_STDCALL_BYTES,
+    aerogpu_d3d10_11_abi_stdcall_stack_bytes<aerogpu_d3d10_11_openadapter10_fn>::value ==
+        AEROGPU_D3D10_11_WDK_ABI_EXPECT_OPENADAPTER10_STDCALL_BYTES,
     "x86 stdcall stack bytes for OpenAdapter10 do not match expected value");
 __if_exists(PFND3D10DDI_OPENADAPTER) {
   AEROGPU_D3D10_11_ABI_STATIC_ASSERT(
@@ -131,8 +134,11 @@ __if_exists(PFND3D10DDI_OPENADAPTER) {
   #endif
 
   #if defined(AEROGPU_D3D10_11_WDK_ABI_EXPECT_OPENADAPTER10_2_STDCALL_BYTES)
+typedef HRESULT(__stdcall* aerogpu_d3d10_11_openadapter10_2_fn)(D3D10DDIARG_OPENADAPTER*);
+static const aerogpu_d3d10_11_openadapter10_2_fn aerogpu_d3d10_11_openadapter10_2_sigcheck = &OpenAdapter10_2;
 AEROGPU_D3D10_11_ABI_STATIC_ASSERT(
-    aerogpu_d3d10_11_abi_stdcall_stack_bytes<decltype(&OpenAdapter10_2)>::value == AEROGPU_D3D10_11_WDK_ABI_EXPECT_OPENADAPTER10_2_STDCALL_BYTES,
+    aerogpu_d3d10_11_abi_stdcall_stack_bytes<aerogpu_d3d10_11_openadapter10_2_fn>::value ==
+        AEROGPU_D3D10_11_WDK_ABI_EXPECT_OPENADAPTER10_2_STDCALL_BYTES,
     "x86 stdcall stack bytes for OpenAdapter10_2 do not match expected value");
 __if_exists(PFND3D10DDI_OPENADAPTER) {
   // Some WDKs do not expose a distinct typedef for the 10.1 OpenAdapter export.
@@ -162,8 +168,11 @@ __if_exists(PFND3D10_1DDI_OPENADAPTER) {
   #endif
 
   #if defined(AEROGPU_D3D10_11_WDK_ABI_EXPECT_OPENADAPTER11_STDCALL_BYTES)
+typedef HRESULT(__stdcall* aerogpu_d3d10_11_openadapter11_fn)(D3D10DDIARG_OPENADAPTER*);
+static const aerogpu_d3d10_11_openadapter11_fn aerogpu_d3d10_11_openadapter11_sigcheck = &OpenAdapter11;
 AEROGPU_D3D10_11_ABI_STATIC_ASSERT(
-    aerogpu_d3d10_11_abi_stdcall_stack_bytes<decltype(&OpenAdapter11)>::value == AEROGPU_D3D10_11_WDK_ABI_EXPECT_OPENADAPTER11_STDCALL_BYTES,
+    aerogpu_d3d10_11_abi_stdcall_stack_bytes<aerogpu_d3d10_11_openadapter11_fn>::value ==
+        AEROGPU_D3D10_11_WDK_ABI_EXPECT_OPENADAPTER11_STDCALL_BYTES,
     "x86 stdcall stack bytes for OpenAdapter11 do not match expected value");
 __if_exists(PFND3D11DDI_OPENADAPTER) {
   AEROGPU_D3D10_11_ABI_STATIC_ASSERT(
