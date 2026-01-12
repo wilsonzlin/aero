@@ -42,6 +42,11 @@ Options:
   --no-require-webgpu, --no-webgpu
                               Force AERO_REQUIRE_WEBGPU=0
 
+  --disable-wgpu-texture-compression
+                              Force AERO_DISABLE_WGPU_TEXTURE_COMPRESSION=1
+  --no-disable-wgpu-texture-compression
+                              Force AERO_DISABLE_WGPU_TEXTURE_COMPRESSION=0
+
 Examples:
   node scripts/env/resolve.mjs --format json
   eval "$(node scripts/env/resolve.mjs --format bash --require-node-dir)"
@@ -274,6 +279,7 @@ function parseArgs(argv) {
     requireNodeDir: false,
     requireWasmCrateDir: false,
     requireWebgpuOverride: null, // boolean | null
+    disableWgpuTextureCompressionOverride: null, // boolean | null
   };
 
   for (let i = 2; i < argv.length; i += 1) {
@@ -337,6 +343,15 @@ function parseArgs(argv) {
       continue;
     }
 
+    if (arg === "--disable-wgpu-texture-compression") {
+      out.disableWgpuTextureCompressionOverride = true;
+      continue;
+    }
+    if (arg === "--no-disable-wgpu-texture-compression") {
+      out.disableWgpuTextureCompressionOverride = false;
+      continue;
+    }
+
     die(`unknown argument: ${arg}`);
   }
 
@@ -360,11 +375,13 @@ const args = parseArgs(process.argv);
 
 const requireWebgpu =
   args.requireWebgpuOverride ?? parseBoolean("AERO_REQUIRE_WEBGPU", process.env.AERO_REQUIRE_WEBGPU, false);
-const disableWgpuTextureCompression = parseBoolean(
-  "AERO_DISABLE_WGPU_TEXTURE_COMPRESSION",
-  process.env.AERO_DISABLE_WGPU_TEXTURE_COMPRESSION,
-  false,
-);
+const disableWgpuTextureCompression =
+  args.disableWgpuTextureCompressionOverride ??
+  parseBoolean(
+    "AERO_DISABLE_WGPU_TEXTURE_COMPRESSION",
+    process.env.AERO_DISABLE_WGPU_TEXTURE_COMPRESSION,
+    false,
+  );
 const viteDisableCoopCoep = parseBoolean(
   "VITE_DISABLE_COOP_COEP",
   process.env.VITE_DISABLE_COOP_COEP,
