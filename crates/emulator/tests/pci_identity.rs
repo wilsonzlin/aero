@@ -1,5 +1,5 @@
 use aero_devices::pci::profile::{
-    AHCI_ABAR_BAR_INDEX, AHCI_ABAR_SIZE_U32, IDE_PIIX3, NIC_E1000_82540EM, NVME_CONTROLLER,
+    AHCI_ABAR_CFG_OFFSET, AHCI_ABAR_SIZE_U32, IDE_PIIX3, NIC_E1000_82540EM, NVME_CONTROLLER,
     SATA_AHCI_ICH9, USB_UHCI_PIIX3,
 };
 use aero_devices::pci::{PciIntxRouter, PciIntxRouterConfig};
@@ -110,7 +110,7 @@ fn ahci_pci_config_matches_canonical_profile() {
     assert_basic_identity(&dev, SATA_AHCI_ICH9);
 
     // BAR5 probe must report the implemented ABAR size.
-    let abar_cfg_off: u16 = 0x10 + u16::from(AHCI_ABAR_BAR_INDEX) * 4;
+    let abar_cfg_off: u16 = AHCI_ABAR_CFG_OFFSET as u16;
     let mut dev = dev;
     dev.config_write(abar_cfg_off, 4, 0xffff_ffff);
     let mask = dev.config_read(abar_cfg_off, 4);

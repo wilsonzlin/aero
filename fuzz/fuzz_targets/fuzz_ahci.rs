@@ -4,7 +4,7 @@ use arbitrary::Unstructured;
 use libfuzzer_sys::fuzz_target;
 
 use aero_devices::pci::capabilities::PCI_CONFIG_SPACE_SIZE;
-use aero_devices::pci::profile::AHCI_ABAR_BAR_INDEX;
+use aero_devices::pci::profile::AHCI_ABAR_CFG_OFFSET;
 use aero_devices::pci::PciDevice;
 use aero_io_snapshot::io::state::IoSnapshot;
 use aero_devices_storage::ata::{
@@ -42,9 +42,6 @@ const PORT_CMD_ST: u32 = 1 << 0;
 const PORT_CMD_FRE: u32 = 1 << 4;
 
 const PORT_IS_DHRS: u32 = 1 << 0;
-
-// PCI config space offset of the AHCI ABAR register (BAR5 on Intel ICH9).
-const AHCI_ABAR_CFG_OFFSET: u16 = 0x10 + (AHCI_ABAR_BAR_INDEX as u16) * 4;
 
 /// Bounded guest-physical memory for AHCI DMA fuzzing.
 ///
@@ -312,7 +309,7 @@ fuzz_target!(|data: &[u8]| {
                     // BAR5 (ABAR) dword write at the canonical config space BAR offset.
                     let value: u32 = u.arbitrary().unwrap_or(0);
                     ops.push(MmioOp::ConfigWrite {
-                        offset: AHCI_ABAR_CFG_OFFSET,
+                        offset: AHCI_ABAR_CFG_OFFSET as u16,
                         size: 4,
                         value,
                     });

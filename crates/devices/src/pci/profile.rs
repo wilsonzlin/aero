@@ -233,6 +233,9 @@ pub const UHCI_BARS: [PciBarProfile; 1] = [PciBarProfile::io(4, 32)];
 /// PCI BAR index used for the AHCI ABAR MMIO window on the Intel ICH9 profile.
 pub const AHCI_ABAR_BAR_INDEX: u8 = 5;
 
+/// PCI config space offset of the AHCI ABAR register (BAR5 on Intel ICH9).
+pub const AHCI_ABAR_CFG_OFFSET: u8 = 0x10 + AHCI_ABAR_BAR_INDEX * 4;
+
 /// Size in bytes of the AHCI ABAR MMIO window (as a `u32`, for `PciBarDefinition::Mmio32`).
 pub const AHCI_ABAR_SIZE_U32: u32 = 0x2000;
 

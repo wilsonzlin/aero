@@ -22,6 +22,9 @@ use crate::ata::AtaDrive;
 /// model and the guest-facing PCI identity cannot drift.
 pub const AHCI_ABAR_BAR_INDEX: u8 = aero_devices::pci::profile::AHCI_ABAR_BAR_INDEX;
 
+/// PCI config space offset of the AHCI ABAR register (BAR5 on Intel ICH9).
+pub const AHCI_ABAR_CFG_OFFSET: u8 = aero_devices::pci::profile::AHCI_ABAR_CFG_OFFSET;
+
 /// AHCI ABAR (HBA registers) size in bytes as a `u32` (for `PciBarDefinition::Mmio32`).
 pub const AHCI_ABAR_SIZE_U32: u32 = aero_devices::pci::profile::AHCI_ABAR_SIZE_U32;
 

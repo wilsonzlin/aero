@@ -21,7 +21,7 @@ use aero_io_snapshot::io::storage::state::{AhciControllerState, AhciHbaState, Ah
 
 use aero_devices::pci::profile;
 
-const AHCI_ABAR_CFG_OFFSET: u16 = 0x10 + (profile::AHCI_ABAR_BAR_INDEX as u16) * 4;
+const AHCI_ABAR_CFG_OFFSET: u16 = profile::AHCI_ABAR_CFG_OFFSET as u16;
 
 const ATA_CMD_IDENTIFY_DEVICE: u8 = 0xec;
 const ATA_CMD_SET_FEATURES: u8 = 0xef;
