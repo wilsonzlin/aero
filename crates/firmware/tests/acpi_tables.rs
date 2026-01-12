@@ -1,6 +1,11 @@
+use aero_devices::acpi_pm::{
+    DEFAULT_ACPI_DISABLE, DEFAULT_ACPI_ENABLE, DEFAULT_GPE0_BLK, DEFAULT_GPE0_BLK_LEN,
+    DEFAULT_PM1A_CNT_BLK, DEFAULT_PM1A_EVT_BLK, DEFAULT_PM_TMR_BLK, DEFAULT_SMI_CMD_PORT,
+};
 use aero_devices::apic::{IOAPIC_MMIO_BASE, LAPIC_MMIO_BASE};
 use aero_devices::hpet::HPET_MMIO_BASE;
 use aero_devices::pci::PciIntxRouterConfig;
+use aero_devices::reset_ctrl::{RESET_CTRL_PORT, RESET_CTRL_RESET_VALUE};
 use aero_pc_constants::PCIE_ECAM_BASE;
 use firmware::acpi::{
     checksum8, find_rsdp_in_memory, parse_header, parse_rsdp_v2, parse_rsdt_entries,
@@ -160,24 +165,40 @@ fn fadt_exposes_acpi_pm_blocks_and_reset_register() {
     // --- ACPI PM blocks + enable handshake ---
     assert_eq!(read_u16_le(fadt, 46), 9, "SCI IRQ should be 9");
 
-    assert_eq!(read_u32_le(fadt, 48) as u16, 0x00B2, "SMI_CMD must be 0xB2");
-    assert_eq!(fadt[52], 0xA0, "ACPI_ENABLE must be 0xA0");
-    assert_eq!(fadt[53], 0xA1, "ACPI_DISABLE must be 0xA1");
+    assert_eq!(
+        read_u32_le(fadt, 48) as u16,
+        DEFAULT_SMI_CMD_PORT,
+        "SMI_CMD must be 0xB2"
+    );
+    assert_eq!(fadt[52], DEFAULT_ACPI_ENABLE, "ACPI_ENABLE must be 0xA0");
+    assert_eq!(fadt[53], DEFAULT_ACPI_DISABLE, "ACPI_DISABLE must be 0xA1");
 
     assert_eq!(
         read_u32_le(fadt, 56) as u16,
-        0x0400,
+        DEFAULT_PM1A_EVT_BLK,
         "PM1a_EVT must be 0x400"
     );
     assert_eq!(
         read_u32_le(fadt, 64) as u16,
-        0x0404,
+        DEFAULT_PM1A_CNT_BLK,
         "PM1a_CNT must be 0x404"
     );
-    assert_eq!(read_u32_le(fadt, 76) as u16, 0x0408, "PM_TMR must be 0x408");
-    assert_eq!(read_u32_le(fadt, 80) as u16, 0x0420, "GPE0 must be 0x420");
+    assert_eq!(
+        read_u32_le(fadt, 76) as u16,
+        DEFAULT_PM_TMR_BLK,
+        "PM_TMR must be 0x408"
+    );
+    assert_eq!(
+        read_u32_le(fadt, 80) as u16,
+        DEFAULT_GPE0_BLK,
+        "GPE0 must be 0x420"
+    );
     assert_eq!(fadt[91], 4, "PM_TMR_LEN must be 4");
-    assert_eq!(fadt[92], 0x08, "GPE0_BLK_LEN must be 0x08");
+    assert_eq!(
+        fadt[92],
+        DEFAULT_GPE0_BLK_LEN,
+        "GPE0_BLK_LEN must be 0x08"
+    );
 
     // Offsets per ACPI 2.0+ FADT layout (see `acpi::structures::Fadt`).
     const FLAGS_OFFSET: usize = 112;
@@ -204,8 +225,16 @@ fn fadt_exposes_acpi_pm_blocks_and_reset_register() {
             .try_into()
             .unwrap(),
     );
-    assert_eq!(addr, 0x0CF9, "ResetReg address must be port 0xCF9");
-    assert_eq!(fadt[RESET_REG_OFFSET + 12], 0x06, "ResetValue must be 0x06");
+    assert_eq!(
+        addr,
+        u64::from(RESET_CTRL_PORT),
+        "ResetReg address must be port 0xCF9"
+    );
+    assert_eq!(
+        fadt[RESET_REG_OFFSET + 12],
+        RESET_CTRL_RESET_VALUE,
+        "ResetValue must be 0x06"
+    );
 }
 
 #[test]
