@@ -394,5 +394,12 @@ fn aerogpu_cmd_runtime_signature_driven_texture_sampler_binding() {
         rt.poll_wait();
         let pixels = rt.read_texture_rgba8(RTEX).await.unwrap();
         assert_eq!(pixels, vec![255, 0, 0, 255], "repeat sampler");
+
+        // Unbound SRVs should behave like a dummy (0,0,0,1) texture in D3D.
+        rt.set_ps_texture(0, None);
+        rt.draw(3, 1, 0, 0).unwrap();
+        rt.poll_wait();
+        let pixels = rt.read_texture_rgba8(RTEX).await.unwrap();
+        assert_eq!(pixels, vec![0, 0, 0, 255], "unbound texture fallback");
     });
 }
