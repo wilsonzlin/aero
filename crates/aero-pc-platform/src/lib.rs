@@ -461,15 +461,7 @@ impl MmioHandler for PciMmioWindow {
         }
         if let Some((e1000, dev_offset)) = self.map_e1000(paddr, size) {
             let mut e1000 = e1000.borrow_mut();
-            return match size {
-                1 | 2 | 4 => u64::from(e1000.mmio_read(dev_offset, size)),
-                8 => {
-                    let lo = e1000.mmio_read(dev_offset, 4) as u64;
-                    let hi = e1000.mmio_read(dev_offset + 4, 4) as u64;
-                    lo | (hi << 32)
-                }
-                _ => all_ones(size),
-            };
+            return MmioHandler::read(&mut *e1000, dev_offset, size);
         }
         all_ones(size)
     }
@@ -490,16 +482,7 @@ impl MmioHandler for PciMmioWindow {
         }
         if let Some((e1000, dev_offset)) = self.map_e1000(paddr, size) {
             let mut e1000 = e1000.borrow_mut();
-            match size {
-                1 | 2 | 4 => e1000.mmio_write_reg(dev_offset, size, value as u32),
-                8 => {
-                    let lo = (value & 0xffff_ffff) as u32;
-                    let hi = (value >> 32) as u32;
-                    e1000.mmio_write_reg(dev_offset, 4, lo);
-                    e1000.mmio_write_reg(dev_offset + 4, 4, hi);
-                }
-                _ => {}
-            }
+            MmioHandler::write(&mut *e1000, dev_offset, size, value);
         }
     }
 }
