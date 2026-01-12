@@ -3475,7 +3475,14 @@ impl AerogpuD3d11Executor {
                 .textures
                 .get_mut(&handle)
                 .ok_or_else(|| anyhow!("UPLOAD_RESOURCE: unknown texture {handle}"))?;
-            write_texture_linear(&self.queue, &tex.texture, tex.desc, bytes_per_row, data)?;
+            write_texture_linear(
+                &self.queue,
+                &tex.texture,
+                tex.desc,
+                bytes_per_row,
+                data,
+                aerogpu_format_is_x8(tex.format_u32),
+            )?;
             tex.host_shadow = Some(data.to_vec());
             tex.dirty = false;
             return Ok(());
@@ -3500,7 +3507,14 @@ impl AerogpuD3d11Executor {
         }
         shadow[offset_usize..end_usize].copy_from_slice(data);
 
-        write_texture_linear(&self.queue, &tex.texture, tex.desc, bytes_per_row, shadow)?;
+        write_texture_linear(
+            &self.queue,
+            &tex.texture,
+            tex.desc,
+            bytes_per_row,
+            shadow,
+            aerogpu_format_is_x8(tex.format_u32),
+        )?;
         tex.dirty = false;
         Ok(())
     }
@@ -5250,8 +5264,12 @@ impl AerogpuD3d11Executor {
         allocs: &AllocTable,
         guest_mem: &mut dyn GuestMemory,
     ) -> Result<()> {
-        let (desc, row_pitch_bytes, backing) = match self.resources.textures.get(&texture_handle) {
-            Some(tex) if tex.dirty => (tex.desc, tex.row_pitch_bytes, tex.backing),
+        let (desc, format_u32, row_pitch_bytes, backing) = match self
+            .resources
+            .textures
+            .get(&texture_handle)
+        {
+            Some(tex) if tex.dirty => (tex.desc, tex.format_u32, tex.row_pitch_bytes, tex.backing),
             _ => return Ok(()),
         };
 
@@ -5261,6 +5279,8 @@ impl AerogpuD3d11Executor {
             }
             return Ok(());
         };
+
+        let force_opaque_alpha = aerogpu_format_is_x8(format_u32);
 
         let bytes_per_row = if row_pitch_bytes != 0 {
             row_pitch_bytes
@@ -5332,6 +5352,7 @@ impl AerogpuD3d11Executor {
             width: u32,
             height: u32,
             bytes_per_row: u32,
+            force_opaque_alpha: bool,
             gpa: u64,
             guest_mem: &mut dyn GuestMemory,
         ) -> Result<()> {
@@ -5387,6 +5408,9 @@ impl AerogpuD3d11Executor {
                         guest_mem
                             .read(src_addr, &mut row_buf)
                             .map_err(anyhow_guest_mem)?;
+                        if force_opaque_alpha {
+                            force_opaque_alpha_rgba8(&mut row_buf);
+                        }
                         let dst_start = row * padded_bpr_usize;
                         repacked[dst_start..dst_start + row_buf.len()].copy_from_slice(&row_buf);
                     }
@@ -5436,6 +5460,20 @@ impl AerogpuD3d11Executor {
                     guest_mem
                         .read(src_addr, tmp_slice)
                         .map_err(anyhow_guest_mem)?;
+                    if force_opaque_alpha {
+                        let unpadded_bpr_usize = unpadded_bpr as usize;
+                        for row in 0..rows {
+                            let start = row
+                                .checked_mul(src_row_pitch)
+                                .ok_or_else(|| anyhow!("texture upload row offset overflows usize"))?;
+                            let end = start.checked_add(unpadded_bpr_usize).ok_or_else(|| {
+                                anyhow!("texture upload row end overflows usize")
+                            })?;
+                            force_opaque_alpha_rgba8(tmp_slice.get_mut(start..end).ok_or_else(
+                                || anyhow!("texture upload staging buffer too small"),
+                            )?);
+                        }
+                    }
 
                     queue.write_texture(
                         wgpu::ImageCopyTexture {
@@ -5495,6 +5533,7 @@ impl AerogpuD3d11Executor {
                     level_width,
                     level_height,
                     level_row_pitch_u32,
+                    force_opaque_alpha,
                     gpa,
                     guest_mem,
                 )?;
@@ -6432,6 +6471,7 @@ fn write_texture_linear(
     desc: Texture2dDesc,
     src_bytes_per_row: u32,
     bytes: &[u8],
+    force_opaque_alpha: bool,
 ) -> Result<()> {
     let bpt = bytes_per_texel(desc.format)?;
     let unpadded_bpr = desc
@@ -6462,7 +6502,7 @@ fn write_texture_linear(
             .and_then(|v| v.checked_mul(aligned))
             .ok_or_else(|| anyhow!("write_texture: padded bytes_per_row overflow"))?;
 
-        if src_bytes_per_row != padded_bpr {
+        if src_bytes_per_row != padded_bpr || force_opaque_alpha {
             let repacked_len = (padded_bpr as usize)
                 .checked_mul(desc.height as usize)
                 .ok_or_else(|| anyhow!("write_texture: repacked size overflow"))?;
@@ -6474,8 +6514,12 @@ fn write_texture_linear(
                 let dst_start = row
                     .checked_mul(padded_bpr as usize)
                     .ok_or_else(|| anyhow!("write_texture: dst row offset overflow"))?;
-                repacked[dst_start..dst_start + unpadded_bpr as usize]
+                let row_bytes = &mut repacked[dst_start..dst_start + unpadded_bpr as usize];
+                row_bytes
                     .copy_from_slice(&bytes[src_start..src_start + unpadded_bpr as usize]);
+                if force_opaque_alpha {
+                    force_opaque_alpha_rgba8(row_bytes);
+                }
             }
             queue.write_texture(
                 wgpu::ImageCopyTexture {
@@ -6519,25 +6563,54 @@ fn write_texture_linear(
         }
     } else {
         // Single-row textures don't require row pitch alignment.
-        queue.write_texture(
-            wgpu::ImageCopyTexture {
-                texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            bytes,
-            wgpu::ImageDataLayout {
-                offset: 0,
-                bytes_per_row: Some(src_bytes_per_row),
-                rows_per_image: Some(desc.height),
-            },
-            wgpu::Extent3d {
-                width: desc.width,
-                height: desc.height,
-                depth_or_array_layers: 1,
-            },
-        );
+        if force_opaque_alpha {
+            let src_stride_usize: usize = src_bytes_per_row
+                .try_into()
+                .map_err(|_| anyhow!("write_texture: src_bytes_per_row out of range"))?;
+            let mut repacked = vec![0u8; src_stride_usize];
+            repacked[..unpadded_bpr as usize]
+                .copy_from_slice(&bytes[..unpadded_bpr as usize]);
+            force_opaque_alpha_rgba8(&mut repacked[..unpadded_bpr as usize]);
+            queue.write_texture(
+                wgpu::ImageCopyTexture {
+                    texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                &repacked,
+                wgpu::ImageDataLayout {
+                    offset: 0,
+                    bytes_per_row: Some(src_bytes_per_row),
+                    rows_per_image: Some(desc.height),
+                },
+                wgpu::Extent3d {
+                    width: desc.width,
+                    height: desc.height,
+                    depth_or_array_layers: 1,
+                },
+            );
+        } else {
+            queue.write_texture(
+                wgpu::ImageCopyTexture {
+                    texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                bytes,
+                wgpu::ImageDataLayout {
+                    offset: 0,
+                    bytes_per_row: Some(src_bytes_per_row),
+                    rows_per_image: Some(desc.height),
+                },
+                wgpu::Extent3d {
+                    width: desc.width,
+                    height: desc.height,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
     }
 
     Ok(())
