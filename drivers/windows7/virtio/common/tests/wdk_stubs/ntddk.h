@@ -65,14 +65,6 @@ typedef uintptr_t KAFFINITY;
 #define PASSIVE_LEVEL ((KIRQL)0u)
 #define DISPATCH_LEVEL ((KIRQL)2u)
 
-/* DbgPrint/DbgPrintEx */
-#ifndef DPFLTR_IHVDRIVER_ID
-#define DPFLTR_IHVDRIVER_ID 0u
-#endif
-#ifndef DPFLTR_ERROR_LEVEL
-#define DPFLTR_ERROR_LEVEL 0u
-#endif
-
 /* Processor mode */
 typedef enum _KPROCESSOR_MODE {
     KernelMode = 0,
