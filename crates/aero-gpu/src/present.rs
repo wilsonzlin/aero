@@ -9,6 +9,7 @@
 //! "presentation" boundary of the graphics stack.
 
 use crate::dirty_rect::{merge_and_cap_rects, Rect};
+use std::borrow::Cow;
 
 // -----------------------------------------------------------------------------
 // Presentation policy
@@ -321,27 +322,28 @@ impl<W: TextureWriter> Presenter<W> {
             });
         }
 
-        let (rects_requested, rects_input): (usize, Vec<Rect>) = match dirty {
-            Some(rects) => (rects.len(), rects.to_vec()),
+        // Prefer borrowing the caller-provided dirty list to avoid an extra allocation/copy; the
+        // merge step already performs its own clamping/processing and returns an owned list.
+        let rects_input: Cow<'_, [Rect]> = match dirty {
+            Some(rects) => Cow::Borrowed(rects),
             None => {
                 #[cfg(feature = "diff-engine")]
                 if let Some(diff) = &mut self.diff {
-                    let rects = diff.diff(frame_data, stride);
-                    let requested = rects.len();
-                    (requested, rects)
+                    Cow::Owned(diff.diff(frame_data, stride))
                 } else {
-                    (1, vec![Rect::new(0, 0, self.width, self.height)])
+                    Cow::Owned(vec![Rect::new(0, 0, self.width, self.height)])
                 }
 
                 #[cfg(not(feature = "diff-engine"))]
                 {
-                    (1, vec![Rect::new(0, 0, self.width, self.height)])
+                    Cow::Owned(vec![Rect::new(0, 0, self.width, self.height)])
                 }
             }
         };
+        let rects_requested = rects_input.len();
 
         let merged = merge_and_cap_rects(
-            &rects_input,
+            rects_input.as_ref(),
             (self.width, self.height),
             self.max_rects_per_frame,
         );

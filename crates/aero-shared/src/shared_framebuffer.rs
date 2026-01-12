@@ -539,6 +539,8 @@ pub fn dirty_tiles_to_rects(
     layout: SharedFramebufferLayout,
     dirty_words: &[u32],
 ) -> Vec<DirtyRect> {
+    const MAX_DIRTY_RECTS: usize = 65_536;
+
     if layout.tile_size == 0 || layout.dirty_words_per_buffer == 0 {
         return vec![DirtyRect {
             x: 0,
@@ -603,6 +605,15 @@ pub fn dirty_tiles_to_rects(
             let mut height = u64::from(tile_size);
             if y.saturating_add(height) > framebuffer_h {
                 height = framebuffer_h.saturating_sub(y);
+            }
+
+            if rects.len() >= MAX_DIRTY_RECTS || rects.try_reserve(1).is_err() {
+                return vec![DirtyRect {
+                    x: 0,
+                    y: 0,
+                    width: layout.width,
+                    height: layout.height,
+                }];
             }
 
             rects.push(DirtyRect {
@@ -875,6 +886,48 @@ mod tests {
         assert_eq!(rects[0].y, 3 * tile_size);
         assert_eq!(rects[0].height, tile_size - 1);
         assert_eq!(rects[0].width, 1);
+    }
+
+    #[test]
+    fn dirty_tile_rects_fall_back_to_full_frame_when_too_many_rects() {
+        // Alternating dirty tiles can create a very large rect list (one rect per dirty tile per
+        // row). When the list would grow too large, we conservatively fall back to a single
+        // full-frame dirty rect.
+        let width = 1025;
+        let height = 128;
+        let stride_bytes = width * 4;
+        let layout = SharedFramebufferLayout::new(
+            width,
+            height,
+            stride_bytes,
+            FramebufferFormat::Rgba8,
+            /*tile_size=*/ 1,
+        )
+        .unwrap();
+
+        let tiles_x = layout.tiles_x as usize;
+        let tiles_y = layout.tiles_y as usize;
+
+        let mut dirty_words = vec![0u32; layout.dirty_words_per_buffer as usize];
+        for ty in 0..tiles_y {
+            for tx in (0..tiles_x).step_by(2) {
+                let tile_index = ty * tiles_x + tx;
+                let word = tile_index / 32;
+                let bit = tile_index % 32;
+                dirty_words[word] |= 1u32 << bit;
+            }
+        }
+
+        let rects = dirty_tiles_to_rects(layout, &dirty_words);
+        assert_eq!(
+            rects,
+            vec![DirtyRect {
+                x: 0,
+                y: 0,
+                width,
+                height,
+            }]
+        );
     }
 }
 

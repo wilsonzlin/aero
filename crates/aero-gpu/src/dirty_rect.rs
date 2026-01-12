@@ -107,6 +107,14 @@ pub struct RectMergeOutcome {
     pub rects_after_cap: usize,
 }
 
+// The merge algorithm for small rect lists uses an O(n^2) overlap/adjacency check. Keep it robust
+// against guest-controlled pathological inputs by bounding both the number of rects we will merge
+// exactly and the total number of rects we'll even attempt to process before falling back to a
+// conservative full-frame update.
+const MAX_INPUT_RECTS: usize = 1_000_000;
+const MAX_CLAMPED_RECTS: usize = 65_536;
+const MAX_EXACT_MERGE_RECTS: usize = 4096;
+
 /// Merge overlapping/adjacent rectangles and cap the output list length.
 ///
 /// - Overlapping or edge-adjacent rects are merged into their bounding box.
@@ -116,17 +124,61 @@ pub struct RectMergeOutcome {
 pub fn merge_and_cap_rects(rects: &[Rect], bounds: (u32, u32), cap: usize) -> RectMergeOutcome {
     let (width, height) = bounds;
 
-    let mut clamped = Vec::with_capacity(rects.len());
+    if width == 0 || height == 0 {
+        return RectMergeOutcome {
+            rects: Vec::new(),
+            rects_clamped: 0,
+            rects_after_merge: 0,
+            rects_after_cap: 0,
+        };
+    }
+
+    let full_frame = || {
+        let rects_after_merge = 1usize;
+        let rects = if cap == 0 {
+            Vec::new()
+        } else {
+            vec![Rect::new(0, 0, width, height)]
+        };
+        RectMergeOutcome {
+            rects_clamped: 0,
+            rects_after_merge,
+            rects_after_cap: rects.len(),
+            rects,
+        }
+    };
+
+    if rects.len() > MAX_INPUT_RECTS {
+        return full_frame();
+    }
+
+    let mut clamped = Vec::new();
+    if clamped
+        .try_reserve_exact(rects.len().min(MAX_CLAMPED_RECTS))
+        .is_err()
+    {
+        return full_frame();
+    }
     for &rect in rects {
         if let Some(rect) = rect.clamp_to_bounds(width, height) {
             if !rect.is_empty() {
+                if clamped.len() >= MAX_CLAMPED_RECTS {
+                    return full_frame();
+                }
                 clamped.push(rect);
             }
         }
     }
     let rects_clamped = clamped.len();
 
-    let mut merged = merge_overlapping_and_adjacent(&clamped);
+    let mut merged = if clamped.len() > MAX_EXACT_MERGE_RECTS {
+        // Large inputs can be guest-controlled (e.g. dirty-tile bitmaps with tiny tile sizes). Skip
+        // the quadratic overlap/adjacency merge and rely on the deterministic `cap` grouping
+        // instead, which is O(n log n) due to sorting.
+        clamped
+    } else {
+        merge_overlapping_and_adjacent(&clamped)
+    };
     let rects_after_merge = merged.len();
 
     cap_rects_in_place(&mut merged, cap);
@@ -277,5 +329,26 @@ mod tests {
 
         // Grouping uses a group size of ceil(9/4)=3 -> 3 output rects.
         assert_eq!(out.rects.len(), 3);
+    }
+
+    #[test]
+    fn large_rect_lists_skip_quadratic_merge_and_still_cap() {
+        // This hits the "large input" fallback path (skip O(n^2) merge) without requiring a huge
+        // allocation.
+        let rects: Vec<_> = (0..(MAX_EXACT_MERGE_RECTS + 1))
+            .map(|i| Rect::new((i % 256) as u32, (i / 256) as u32, 1, 1))
+            .collect();
+        let out = merge_and_cap_rects(&rects, (1024, 1024), 10);
+        assert_eq!(out.rects_after_merge, rects.len());
+        assert_eq!(out.rects.len(), 10);
+    }
+
+    #[test]
+    fn too_many_rects_fall_back_to_full_frame() {
+        let rects: Vec<_> = (0..(MAX_CLAMPED_RECTS + 1))
+            .map(|i| Rect::new((i % 256) as u32, (i / 256) as u32, 1, 1))
+            .collect();
+        let out = merge_and_cap_rects(&rects, (100, 100), 128);
+        assert_eq!(out.rects, vec![Rect::new(0, 0, 100, 100)]);
     }
 }

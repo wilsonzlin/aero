@@ -217,12 +217,16 @@ impl FrameView<'_> {
                     return None;
                 }
 
-                Some(
-                    rects
-                        .into_iter()
-                        .map(|r| Rect::new(r.x, r.y, r.width, r.height))
-                        .collect(),
-                )
+                let mut out = Vec::new();
+                if out.try_reserve_exact(rects.len()).is_err() {
+                    // Conservative fallback: if we can't allocate the rect list, upload the full
+                    // frame instead.
+                    return None;
+                }
+                for r in rects {
+                    out.push(Rect::new(r.x, r.y, r.width, r.height));
+                }
+                Some(out)
             }
         }
     }
