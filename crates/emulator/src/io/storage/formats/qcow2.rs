@@ -186,6 +186,7 @@ pub struct Qcow2Disk<S> {
     header: Qcow2Header,
     l1_table: Vec<u64>,
     refcount_table: Vec<u64>,
+    metadata_clusters: Vec<u64>,
     l2_cache: LruCache<u64, Vec<u64>>,
     refcount_cache: LruCache<u64, Vec<u16>>,
     next_free_offset: u64,
@@ -317,15 +318,20 @@ impl<S: ByteStorage> Qcow2Disk<S> {
         let refcount_cache_cap = NonZeroUsize::new(refcount_cache_cap_entries)
             .ok_or(DiskError::Unsupported("qcow2 refcount cache size is zero"))?;
 
-        Ok(Self {
+        let mut disk = Self {
             storage,
             header,
             l1_table,
             refcount_table,
+            metadata_clusters: Vec::new(),
             l2_cache: LruCache::new(l2_cache_cap),
             refcount_cache: LruCache::new(refcount_cache_cap),
             next_free_offset,
-        })
+        };
+
+        disk.build_metadata_clusters()?;
+
+        Ok(disk)
     }
 
     pub fn into_storage(self) -> S {
@@ -451,6 +457,70 @@ impl<S: ByteStorage> Qcow2Disk<S> {
         Ok(())
     }
 
+    fn build_metadata_clusters(&mut self) -> DiskResult<()> {
+        let mut clusters = Vec::new();
+
+        for &l1_entry in &self.l1_table {
+            let Some(l2_offset) = self.l2_table_offset_from_l1_entry(l1_entry)? else {
+                continue;
+            };
+            clusters
+                .try_reserve(1)
+                .map_err(|_| DiskError::QuotaExceeded)?;
+            clusters.push(l2_offset);
+        }
+
+        for &entry in &self.refcount_table {
+            let Some(block_offset) = self.refcount_block_offset_from_entry(entry)? else {
+                continue;
+            };
+            clusters
+                .try_reserve(1)
+                .map_err(|_| DiskError::QuotaExceeded)?;
+            clusters.push(block_offset);
+        }
+
+        clusters.sort_unstable();
+        for w in clusters.windows(2) {
+            if w[0] == w[1] {
+                return Err(DiskError::CorruptImage("qcow2 metadata clusters overlap"));
+            }
+        }
+
+        self.metadata_clusters = clusters;
+        Ok(())
+    }
+
+    fn record_metadata_cluster(&mut self, cluster_offset: u64) -> DiskResult<()> {
+        // Keep `metadata_clusters` sorted and de-duped for binary_search checks.
+        if let Some(last) = self.metadata_clusters.last().copied() {
+            if cluster_offset > last {
+                self.metadata_clusters
+                    .try_reserve(1)
+                    .map_err(|_| DiskError::QuotaExceeded)?;
+                self.metadata_clusters.push(cluster_offset);
+                return Ok(());
+            }
+        } else {
+            self.metadata_clusters
+                .try_reserve(1)
+                .map_err(|_| DiskError::QuotaExceeded)?;
+            self.metadata_clusters.push(cluster_offset);
+            return Ok(());
+        }
+
+        match self.metadata_clusters.binary_search(&cluster_offset) {
+            Ok(_) => Err(DiskError::CorruptImage("qcow2 metadata clusters overlap")),
+            Err(idx) => {
+                self.metadata_clusters
+                    .try_reserve(1)
+                    .map_err(|_| DiskError::QuotaExceeded)?;
+                self.metadata_clusters.insert(idx, cluster_offset);
+                Ok(())
+            }
+        }
+    }
+
     fn l1_l2_index(&self, guest_cluster_index: u64) -> DiskResult<(usize, usize)> {
         let l2_entries = self.l2_entries_per_table();
         let l1_index = guest_cluster_index / l2_entries;
@@ -505,6 +575,11 @@ impl<S: ByteStorage> Qcow2Disk<S> {
             return Err(DiskError::CorruptImage("qcow2 invalid l2 entry"));
         }
         self.validate_cluster_not_overlapping_metadata(offset)?;
+        if self.metadata_clusters.binary_search(&offset).is_ok() {
+            return Err(DiskError::CorruptImage(
+                "qcow2 data cluster overlaps metadata",
+            ));
+        }
         Ok(Some(offset))
     }
 
@@ -581,6 +656,7 @@ impl<S: ByteStorage> Qcow2Disk<S> {
         let new_l2_offset = self.allocate_cluster_raw()?;
         write_zeroes(&mut self.storage, new_l2_offset, cluster_size)?;
         self.storage.flush()?;
+        self.record_metadata_cluster(new_l2_offset)?;
 
         self.set_refcount_for_offset(new_l2_offset, 1)?;
         self.storage.flush()?;
@@ -598,7 +674,12 @@ impl<S: ByteStorage> Qcow2Disk<S> {
 
         let l2_entries =
             usize::try_from(self.l2_entries_per_table()).map_err(|_| DiskError::OutOfBounds)?;
-        let _ = self.l2_cache.push(new_l2_offset, vec![0u64; l2_entries]);
+        let mut table = Vec::new();
+        table
+            .try_reserve_exact(l2_entries)
+            .map_err(|_| DiskError::QuotaExceeded)?;
+        table.resize(l2_entries, 0);
+        let _ = self.l2_cache.push(new_l2_offset, table);
 
         Ok(new_l2_offset)
     }
@@ -721,6 +802,7 @@ impl<S: ByteStorage> Qcow2Disk<S> {
         let new_block_offset = self.allocate_cluster_raw()?;
         write_zeroes(&mut self.storage, new_block_offset, cluster_size)?;
         self.storage.flush()?;
+        self.record_metadata_cluster(new_block_offset)?;
 
         self.refcount_table[block_index] = new_block_offset;
         let entry_offset = self
@@ -1007,5 +1089,61 @@ mod tests {
 
         let expected_cap = (QCOW2_L2_CACHE_BUDGET_BYTES / cluster_size).max(1) as usize;
         assert!(disk.l2_cache.len() <= expected_cap);
+    }
+
+    #[test]
+    fn qcow2_data_cluster_cannot_overlap_metadata_cluster() {
+        // Construct an image where an L2 entry points back at its own L2 table cluster.
+        // This is invalid (data clusters must not overlap metadata clusters).
+        let cluster_bits = 9u32; // 512-byte clusters (minimum supported)
+        let cluster_size = 1u64 << cluster_bits;
+        let l2_entries_per_table = cluster_size / 8;
+
+        let l1_entries = 1u64;
+        let guest_clusters = l1_entries * l2_entries_per_table;
+        let virtual_size = guest_clusters * cluster_size;
+
+        let refcount_table_offset = cluster_size;
+        let l1_table_offset = cluster_size * 2;
+        let l2_table_offset = cluster_size * 3;
+
+        let file_len = cluster_size * 4;
+        let mut storage = MemStorage::with_len(file_len as usize);
+
+        let mut header = [0u8; 104];
+        header[0..4].copy_from_slice(b"QFI\xfb");
+        write_be_u32(&mut header, 4, 3); // version
+        write_be_u32(&mut header, 20, cluster_bits);
+        write_be_u64(&mut header, 24, virtual_size);
+        write_be_u32(&mut header, 36, l1_entries as u32); // l1_size
+        write_be_u64(&mut header, 40, l1_table_offset);
+        write_be_u64(&mut header, 48, refcount_table_offset);
+        write_be_u32(&mut header, 56, 1); // refcount_table_clusters
+        write_be_u64(&mut header, 72, 0); // incompatible_features
+        write_be_u64(&mut header, 80, 0); // compatible_features
+        write_be_u64(&mut header, 88, 0); // autoclear_features
+        write_be_u32(&mut header, 96, 4); // refcount_order
+        write_be_u32(&mut header, 100, 104); // header_length
+        storage.write_at(0, &header).unwrap();
+
+        // L1 entry points to the L2 table.
+        let l1_entry = l2_table_offset | QCOW2_OFLAG_COPIED;
+        storage
+            .write_at(l1_table_offset, &l1_entry.to_be_bytes())
+            .unwrap();
+
+        // L2 entry points to the same cluster as the L2 table (metadata overlap).
+        let l2_entry = l2_table_offset | QCOW2_OFLAG_COPIED;
+        storage
+            .write_at(l2_table_offset, &l2_entry.to_be_bytes())
+            .unwrap();
+
+        let mut disk = Qcow2Disk::open(storage).unwrap();
+        let mut out = [0u8; SECTOR_SIZE as usize];
+        let err = disk.read_sectors(0, &mut out).unwrap_err();
+        assert_eq!(
+            err,
+            DiskError::CorruptImage("qcow2 data cluster overlaps metadata")
+        );
     }
 }
