@@ -238,6 +238,14 @@ fn sparse_open_rejects_allocated_blocks_inconsistent_with_table() {
 }
 
 #[test]
+fn sparse_open_rejects_truncated_header() {
+    // Empty backend: header read must fail, but `open` should not panic.
+    let backend = MemBackend::new();
+    let err = open_sparse_err(backend);
+    assert!(matches!(err, DiskError::CorruptSparseImage(_)));
+}
+
+#[test]
 fn sparse_open_rejects_zero_block_size() {
     let mut backend = MemBackend::new();
     let mut header = make_header(4096, 4096, 0);
