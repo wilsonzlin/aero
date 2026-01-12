@@ -3810,15 +3810,50 @@ impl AerogpuD3d9Executor {
                         });
                     }
 
+                    // Block-compressed (BC) textures have additional copy alignment requirements.
+                    //
+                    // IMPORTANT: We validate based on the *guest* format (`*_format_raw`) rather
+                    // than the wgpu texture format because BC textures may be stored as RGBA8 when
+                    // `TEXTURE_COMPRESSION_BC` is not enabled (CPU decompression fallback).
+                    let texel_block = aerogpu_format_texel_block_info(src_format_raw)?;
+                    validate_copy_region_alignment(
+                        texel_block,
+                        src_x,
+                        src_y,
+                        width,
+                        height,
+                        src_mip_w,
+                        src_mip_h,
+                        "COPY_TEXTURE2D: src",
+                    )?;
+                    validate_copy_region_alignment(
+                        texel_block,
+                        dst_x,
+                        dst_y,
+                        width,
+                        height,
+                        dst_mip_w,
+                        dst_mip_h,
+                        "COPY_TEXTURE2D: dst",
+                    )?;
+
                     let dst_writeback_plan = if writeback {
                         let dst_backing = dst_backing.ok_or_else(|| {
                             AerogpuD3d9Error::Validation(
                                 "COPY_TEXTURE2D: WRITEBACK_DST requires guest-backed dst".into(),
                             )
                         })?;
-                        if aerogpu_format_bc(dst_format_raw).is_some() {
+                        let bc_format = aerogpu_format_bc(dst_format_raw);
+                        let dst_is_bc = matches!(
+                            dst_format,
+                            wgpu::TextureFormat::Bc1RgbaUnorm
+                                | wgpu::TextureFormat::Bc2RgbaUnorm
+                                | wgpu::TextureFormat::Bc3RgbaUnorm
+                                | wgpu::TextureFormat::Bc7RgbaUnorm
+                        );
+                        if bc_format.is_some() && !dst_is_bc {
                             return Err(AerogpuD3d9Error::Validation(
-                                "COPY_TEXTURE2D: WRITEBACK_DST is not supported for BC textures"
+                                "COPY_TEXTURE2D: WRITEBACK_DST is not supported for BC textures when TEXTURE_COMPRESSION_BC is not enabled"
                                     .into(),
                             ));
                         }
@@ -3826,19 +3861,28 @@ impl AerogpuD3d9Executor {
                             return Err(AerogpuD3d9Error::MissingGuestMemory(dst_texture));
                         }
 
-                        let guest_bpp = bytes_per_pixel_aerogpu_format(dst_format_raw)?;
-                        let host_bpp = bytes_per_pixel(dst_format);
+                        let block = aerogpu_format_texel_block_info(dst_format_raw)?;
+                        let copy_w_units = width.div_ceil(block.block_width);
+                        let copy_h_units = block.rows_per_image(height);
+                        let guest_unit_bytes = block.bytes_per_block;
                         let guest_unpadded_bpr =
-                            width.checked_mul(guest_bpp).ok_or_else(|| {
+                            copy_w_units.checked_mul(guest_unit_bytes).ok_or_else(|| {
                                 AerogpuD3d9Error::Validation(
                                     "COPY_TEXTURE2D: bytes_per_row overflow".into(),
                                 )
                             })?;
-                        let host_unpadded_bpr = width.checked_mul(host_bpp).ok_or_else(|| {
-                            AerogpuD3d9Error::Validation(
-                                "COPY_TEXTURE2D: bytes_per_row overflow".into(),
-                            )
-                        })?;
+                        let (host_unit_bytes, host_unpadded_bpr) = if dst_is_bc {
+                            (block.bytes_per_block, guest_unpadded_bpr)
+                        } else {
+                            let host_bpp = bytes_per_pixel(dst_format);
+                            let host_unpadded_bpr =
+                                width.checked_mul(host_bpp).ok_or_else(|| {
+                                    AerogpuD3d9Error::Validation(
+                                        "COPY_TEXTURE2D: bytes_per_row overflow".into(),
+                                    )
+                                })?;
+                            (host_bpp, host_unpadded_bpr)
+                        };
                         let padded_bpr =
                             align_to(host_unpadded_bpr, wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
 
@@ -3914,8 +3958,23 @@ impl AerogpuD3d9Executor {
                                 (offset, row_pitch)
                             };
 
-                        let dst_x_bytes =
-                            (dst_x as u64).checked_mul(guest_bpp as u64).ok_or_else(|| {
+                        let dst_x_units = if dst_x.is_multiple_of(block.block_width) {
+                            dst_x / block.block_width
+                        } else {
+                            return Err(AerogpuD3d9Error::Validation(
+                                "COPY_TEXTURE2D: BC dst_x must be block-aligned".into(),
+                            ));
+                        };
+                        let dst_y_units = if dst_y.is_multiple_of(block.block_height) {
+                            dst_y / block.block_height
+                        } else {
+                            return Err(AerogpuD3d9Error::Validation(
+                                "COPY_TEXTURE2D: BC dst_y must be block-aligned".into(),
+                            ));
+                        };
+                        let dst_x_bytes = (dst_x_units as u64)
+                            .checked_mul(guest_unit_bytes as u64)
+                            .ok_or_else(|| {
                                 AerogpuD3d9Error::Validation(
                                     "COPY_TEXTURE2D: dst_x byte offset overflow".into(),
                                 )
@@ -3986,13 +4045,13 @@ impl AerogpuD3d9Executor {
                             dst_array_layer,
                             dst_subresource_offset_bytes,
                             dst_subresource_row_pitch_bytes,
-                            dst_x,
-                            dst_y,
-                            height,
+                            dst_x: dst_x_units,
+                            dst_y: dst_y_units,
+                            height: copy_h_units,
                             format_raw: dst_format_raw,
                             is_x8: is_x8_format(dst_format_raw),
-                            guest_bytes_per_pixel: guest_bpp,
-                            host_bytes_per_pixel: host_bpp,
+                            guest_bytes_per_pixel: guest_unit_bytes,
+                            host_bytes_per_pixel: host_unit_bytes,
                             guest_unpadded_bytes_per_row: guest_unpadded_bpr,
                             host_unpadded_bytes_per_row: host_unpadded_bpr,
                             padded_bytes_per_row: padded_bpr,
@@ -7891,6 +7950,54 @@ impl TexelBlockInfo {
     }
 }
 
+fn validate_copy_region_alignment(
+    block: TexelBlockInfo,
+    origin_x: u32,
+    origin_y: u32,
+    width: u32,
+    height: u32,
+    mip_width: u32,
+    mip_height: u32,
+    label: &str,
+) -> Result<(), AerogpuD3d9Error> {
+    // Uncompressed formats have no special alignment constraints.
+    if block.block_width == 1 && block.block_height == 1 {
+        return Ok(());
+    }
+
+    // Block-compressed copies must use block-aligned origins, and block-aligned extents unless the
+    // region reaches the edge of the mip.
+    if origin_x % block.block_width != 0 || origin_y % block.block_height != 0 {
+        return Err(AerogpuD3d9Error::Validation(format!(
+            "{label}: BC copy origin must be {}x{}-aligned (origin=({origin_x},{origin_y}))",
+            block.block_width, block.block_height
+        )));
+    }
+
+    let end_x = origin_x.checked_add(width).ok_or_else(|| {
+        AerogpuD3d9Error::Validation(format!("{label}: copy region overflow"))
+    })?;
+    let end_y = origin_y.checked_add(height).ok_or_else(|| {
+        AerogpuD3d9Error::Validation(format!("{label}: copy region overflow"))
+    })?;
+
+    if (width % block.block_width) != 0 && end_x != mip_width {
+        return Err(AerogpuD3d9Error::Validation(format!(
+            "{label}: BC copy width must be a multiple of {} unless it reaches the mip edge (origin_x={origin_x} width={width} mip_width={mip_width})",
+            block.block_width
+        )));
+    }
+
+    if (height % block.block_height) != 0 && end_y != mip_height {
+        return Err(AerogpuD3d9Error::Validation(format!(
+            "{label}: BC copy height must be a multiple of {} unless it reaches the mip edge (origin_y={origin_y} height={height} mip_height={mip_height})",
+            block.block_height
+        )));
+    }
+
+    Ok(())
+}
+
 fn aerogpu_format_texel_block_info(format_raw: u32) -> Result<TexelBlockInfo, AerogpuD3d9Error> {
     Ok(match format_raw {
         x if x == AerogpuFormat::B8G8R8A8Unorm as u32
@@ -8225,30 +8332,6 @@ fn map_aerogpu_format(format: u32) -> Result<wgpu::TextureFormat, AerogpuD3d9Err
         }
         x if x == AerogpuFormat::D24UnormS8Uint as u32 => wgpu::TextureFormat::Depth24PlusStencil8,
         x if x == AerogpuFormat::D32Float as u32 => wgpu::TextureFormat::Depth32Float,
-        other => return Err(AerogpuD3d9Error::UnsupportedFormat(other)),
-    })
-}
-
-fn bytes_per_pixel_aerogpu_format(format_raw: u32) -> Result<u32, AerogpuD3d9Error> {
-    Ok(match format_raw {
-        x if x == AerogpuFormat::B8G8R8A8Unorm as u32
-            || x == AerogpuFormat::B8G8R8X8Unorm as u32
-            || x == AerogpuFormat::B8G8R8A8UnormSrgb as u32
-            || x == AerogpuFormat::B8G8R8X8UnormSrgb as u32 =>
-        {
-            4
-        }
-        x if x == AerogpuFormat::R8G8B8A8Unorm as u32
-            || x == AerogpuFormat::R8G8B8X8Unorm as u32
-            || x == AerogpuFormat::R8G8B8A8UnormSrgb as u32
-            || x == AerogpuFormat::R8G8B8X8UnormSrgb as u32 =>
-        {
-            4
-        }
-        x if x == AerogpuFormat::B5G6R5Unorm as u32 => 2,
-        x if x == AerogpuFormat::B5G5R5A1Unorm as u32 => 2,
-        x if x == AerogpuFormat::D24UnormS8Uint as u32 => 4,
-        x if x == AerogpuFormat::D32Float as u32 => 4,
         other => return Err(AerogpuD3d9Error::UnsupportedFormat(other)),
     })
 }
