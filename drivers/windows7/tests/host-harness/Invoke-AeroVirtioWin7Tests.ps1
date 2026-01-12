@@ -582,7 +582,7 @@ function Wait-AeroSelftestResult {
       if ($inputEventsInjectAttempts -lt 20 -and [DateTime]::UtcNow -ge $nextInputEventsInject) {
         $inputEventsInjectAttempts++
         $nextInputEventsInject = [DateTime]::UtcNow.AddMilliseconds(500)
-        $ok = Try-AeroQmpInjectVirtioInputEvents -Host $QmpHost -Port ([int]$QmpPort)
+        $ok = Try-AeroQmpInjectVirtioInputEvents -Host $QmpHost -Port ([int]$QmpPort) -Attempt $inputEventsInjectAttempts
         if (-not $ok) {
           return @{ Result = "QMP_INPUT_INJECT_FAILED"; Tail = $tail }
         }
@@ -1097,7 +1097,10 @@ function Invoke-AeroQmpInputSendEvent {
 function Try-AeroQmpInjectVirtioInputEvents {
   param(
     [Parameter(Mandatory = $true)] [string]$Host,
-    [Parameter(Mandatory = $true)] [int]$Port
+    [Parameter(Mandatory = $true)] [int]$Port,
+    # Outer retry attempt number (1-based). Included in the emitted host marker so log scraping can
+    # correlate guest READY/PASS timing with host injection attempts.
+    [Parameter(Mandatory = $true)] [int]$Attempt
   )
 
   $deadline = [DateTime]::UtcNow.AddSeconds(5)
@@ -1156,7 +1159,7 @@ function Try-AeroQmpInjectVirtioInputEvents {
 
       $kbdMode = if ([string]::IsNullOrEmpty($kbdDevice)) { "broadcast" } else { "device" }
       $mouseMode = if ([string]::IsNullOrEmpty($mouseDevice)) { "broadcast" } else { "device" }
-      Write-Host "AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|PASS|kbd_mode=$kbdMode|mouse_mode=$mouseMode"
+      Write-Host "AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|PASS|attempt=$Attempt|kbd_mode=$kbdMode|mouse_mode=$mouseMode"
       return $true
     } catch {
       try { $lastErr = [string]$_.Exception.Message } catch { }
@@ -1171,7 +1174,7 @@ function Try-AeroQmpInjectVirtioInputEvents {
   if (-not [string]::IsNullOrEmpty($lastErr)) {
     $reason = Sanitize-AeroMarkerValue $lastErr
   }
-  Write-Host "AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|FAIL|reason=$reason"
+  Write-Host "AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|FAIL|attempt=$Attempt|reason=$reason"
   return $false
 }
 
