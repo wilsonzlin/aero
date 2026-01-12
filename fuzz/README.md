@@ -118,6 +118,9 @@ cd fuzz && cargo fuzz run fuzz_aero_storage_sparse_open -- -runs=10000
 # Allow larger generated inputs (the target itself caps at 1MiB)
 cd fuzz && cargo fuzz run fuzz_aero_storage_sparse_open -- -runs=10000 -max_len=1048576
 
+# Optional: use the bundled dictionary to help libFuzzer find valid headers faster
+cd fuzz && cargo fuzz run fuzz_aero_storage_sparse_open -- -runs=10000 -max_len=1048576 -dict=fuzz_targets/fuzz_aero_storage_sparse_open.dict
+
 # Auto-detect + open (raw/aerosparse/qcow2/vhd) + bounded IO
 cd fuzz && cargo fuzz run fuzz_disk_image_open_auto -- -runs=10000
 
