@@ -28,7 +28,7 @@ Audio is important for user experience but not on the critical boot path.
 | `crates/aero-audio/` | Guest audio device models (HDA controller + codec + PCM helpers) |
 | `crates/aero-virtio/` | Virtio device models (includes virtio-snd) |
 | `crates/platform/src/audio/` | SharedArrayBuffer ring layouts + WASM bridges (`WorkletBridge`, `MicBridge`) |
-| `crates/aero-wasm/` | wasm-pack exports used by the browser runtime (e.g. `HdaControllerBridge`, `attach_worklet_bridge`, `attach_mic_bridge`) |
+| `crates/aero-wasm/` | wasm-pack exports used by the browser runtime (e.g. `HdaControllerBridge`, `VirtioSndPciBridge`, `attach_worklet_bridge`, `attach_mic_bridge`) |
 | `web/src/platform/` | Web Audio output setup + AudioWorklet consumer (`audio.ts`, `audio-worklet-processor.js`) |
 | `web/src/audio/` | Microphone capture UI + AudioWorklet producer (`mic_capture.ts`, `mic-worklet-processor.js`) |
 | `web/src/runtime/` | Coordinator↔worker control plane (ring buffer attachment messages + routing) |
