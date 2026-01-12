@@ -17,6 +17,8 @@ servers:
     description: Production (example)
   - url: https://gateway.example.com
     description: Production alternative (example)
+  - url: https://gateway.example.com/aero
+    description: Production behind a base path (example)
 tags:
   - name: session
     description: Session bootstrap and cookies
@@ -242,6 +244,13 @@ components:
         endpoints:
           type: object
           additionalProperties: false
+          description: |
+            Discovered gateway endpoint paths (absolute paths).
+
+            Values are rooted at the gateway's configured public base path (the
+            `.pathname` of `PUBLIC_BASE_URL`). For example, if
+            `PUBLIC_BASE_URL=https://gateway.example.com/aero`, then `tcp` is
+            `/aero/tcp` and `l2` is `/aero/l2`.
           required: [tcp, tcpMux, dnsQuery, dnsJson, l2, udpRelayToken]
           properties:
             tcp:

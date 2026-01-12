@@ -20,10 +20,17 @@ The intent is that a frontend engineer can build a compatible client **without r
 
 ## 1) Base URL / origin assumptions
 
-All endpoints are rooted at the **gateway origin**:
+All endpoints are rooted at the gateway’s **configured public base URL** (`PUBLIC_BASE_URL`), which may include a **path prefix** when the gateway is served behind a reverse proxy at a subpath (e.g. `https://example.com/aero`).
 
-- HTTP: `https://gateway.example.com/session`, `https://gateway.example.com/dns-query`
-- WebSocket: `wss://gateway.example.com/tcp`, `wss://gateway.example.com/l2`
+Examples:
+
+- `PUBLIC_BASE_URL=https://gateway.example.com`
+  - HTTP: `https://gateway.example.com/session`, `https://gateway.example.com/dns-query`
+  - WebSocket: `wss://gateway.example.com/tcp`, `wss://gateway.example.com/l2`
+
+- `PUBLIC_BASE_URL=https://gateway.example.com/aero`
+  - HTTP: `https://gateway.example.com/aero/session`, `https://gateway.example.com/aero/dns-query`
+  - WebSocket: `wss://gateway.example.com/aero/tcp`, `wss://gateway.example.com/aero/l2`
 
 ### Same-site vs cross-site deployments (cookies)
 
@@ -95,7 +102,9 @@ other implementations to prevent cross-language drift.
 
 #### Endpoint discovery (`endpoints`)
 
-The JSON response includes an `endpoints` object with **relative paths** to the gateway’s networking surfaces:
+The JSON response includes an `endpoints` object with **relative paths** to the gateway’s networking surfaces.
+
+These paths are rooted at the gateway’s configured base path (the `.pathname` of `PUBLIC_BASE_URL`). For example, if the gateway is served behind `/aero` and `PUBLIC_BASE_URL=https://gateway.example.com/aero`, then `endpoints.l2` is `/aero/l2`.
 
 ```json
 {

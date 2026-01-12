@@ -27,6 +27,33 @@ type ServerBundle = {
   closeUpgradeSockets: () => void;
 };
 
+function normalizeBasePathFromPublicBaseUrl(publicBaseUrl: string): string {
+  let pathname: string;
+  try {
+    pathname = new URL(publicBaseUrl).pathname;
+  } catch {
+    // `PUBLIC_BASE_URL` is validated by config loading, but tests may construct
+    // configs directly. Fall back to root path.
+    pathname = '/';
+  }
+
+  // `URL.pathname` is usually at least `/`, but be defensive.
+  let basePath = pathname || '/';
+  if (basePath === '') basePath = '/';
+  if (!basePath.startsWith('/')) basePath = `/${basePath}`;
+
+  // Remove trailing `/` except for the root path.
+  if (basePath !== '/') basePath = basePath.replace(/\/+$/, '');
+  if (basePath === '') basePath = '/';
+  return basePath;
+}
+
+function joinBasePath(basePath: string, endpointPath: string): string {
+  const suffix = endpointPath.startsWith('/') ? endpointPath : `/${endpointPath}`;
+  if (basePath === '' || basePath === '/') return suffix;
+  return `${basePath}${suffix}`;
+}
+
 function findFrontendDistDir(): string | null {
   const candidates = [
     path.resolve(process.cwd(), '../../dist'),
@@ -88,6 +115,16 @@ function httpStatusText(status: number): string {
 export function buildServer(config: Config): ServerBundle {
   let shuttingDown = false;
   const upgradeSockets = new Set<Duplex>();
+
+  const basePath = normalizeBasePathFromPublicBaseUrl(config.PUBLIC_BASE_URL);
+  const endpoints = {
+    tcp: joinBasePath(basePath, '/tcp'),
+    dnsQuery: joinBasePath(basePath, '/dns-query'),
+    tcpMux: joinBasePath(basePath, '/tcp-mux'),
+    dnsJson: joinBasePath(basePath, '/dns-json'),
+    l2: joinBasePath(basePath, '/l2'),
+    udpRelayToken: joinBasePath(basePath, '/udp-relay/token'),
+  } as const;
 
   const app = fastify({
     trustProxy: config.TRUST_PROXY,
@@ -165,14 +202,7 @@ export function buildServer(config: Config): ServerBundle {
     reply.code(201);
     const response: Record<string, unknown> = {
       session: { expiresAt: new Date(session.expiresAtMs).toISOString() },
-      endpoints: {
-        tcp: '/tcp',
-        dnsQuery: '/dns-query',
-        tcpMux: '/tcp-mux',
-        dnsJson: '/dns-json',
-        l2: '/l2',
-        udpRelayToken: '/udp-relay/token',
-      },
+      endpoints,
       limits: {
         tcp: {
           maxConnections: config.TCP_PROXY_MAX_CONNECTIONS,
