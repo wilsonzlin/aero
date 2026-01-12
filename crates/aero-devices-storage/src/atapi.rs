@@ -82,6 +82,13 @@ const SENSE_NOT_READY: u8 = 0x02;
 const SENSE_ILLEGAL_REQUEST: u8 = 0x05;
 const SENSE_UNIT_ATTENTION: u8 = 0x06;
 
+fn try_alloc_zeroed(len: usize) -> Option<Vec<u8>> {
+    let mut buf = Vec::new();
+    buf.try_reserve_exact(len).ok()?;
+    buf.resize(len, 0);
+    Some(buf)
+}
+
 const ASC_MEDIUM_NOT_PRESENT: u8 = 0x3A;
 const ASC_MEDIUM_CHANGED: u8 = 0x28;
 const ASC_INVALID_COMMAND: u8 = 0x20;
@@ -438,7 +445,19 @@ impl AtapiCdrom {
                 ascq: 0,
             };
         }
-        let mut buf = vec![0u8; len];
+        let mut buf = match try_alloc_zeroed(len) {
+            Some(buf) => buf,
+            None => {
+                // Surface allocation failures as a command error instead of aborting the entire
+                // process on OOM.
+                self.set_sense(SENSE_ILLEGAL_REQUEST, 0x21, 0);
+                return PacketResult::Error {
+                    sense_key: SENSE_ILLEGAL_REQUEST,
+                    asc: 0x21,
+                    ascq: 0,
+                };
+            }
+        };
         let res = if let Some(backend) = self.backend.as_mut() {
             backend.read_sectors(lba, &mut buf)
         } else {
