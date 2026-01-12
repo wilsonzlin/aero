@@ -1,6 +1,6 @@
 # Windows 7 audio smoke test (in-box HDA driver)
 
-This is a **manual**, **reproducible** smoke test to validate that Windows 7’s **in-box HD Audio (Intel HDA) driver stack** works end-to-end once the emulated HDA controller is wired into the real Aero worker runtime:
+This is a **manual**, **reproducible** smoke test to validate that Windows 7’s **in-box HD Audio (Intel HDA) driver stack** works end-to-end in the Aero worker runtime:
 
 - Windows enumerates the **PCI controller** (“High Definition Audio Controller”)
 - Windows enumerates the **audio function** (“High Definition Audio Device”)
