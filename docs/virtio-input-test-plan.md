@@ -178,10 +178,12 @@ Inside the guest:
 2. Install the driver signing certificate used by your build into:
    - **Trusted Root Certification Authorities**
    - **Trusted Publishers**
+
+   See `drivers/windows7/virtio-input/README.md` for the in-tree test-signing workflow (make-cert → install-test-cert → make-cat → sign-driver).
 3. Install the driver via **Device Manager**:
    - Find the virtio-input PCI device(s) (often show as unknown before binding)
    - Update Driver → Have Disk… → point at the directory containing:
-     - `aero_virtio_input.inf`
+      - `aero_virtio_input.inf`
      - `aero_virtio_input.sys`
      - `aero_virtio_input.cat`
 

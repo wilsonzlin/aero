@@ -98,11 +98,12 @@ Contract note:
    - Run: `bcdedit /set testsigning on`
    - Reboot the VM
 2. **Install the test certificate** used to sign the driver:
-   - Import into **Trusted Root Certification Authorities**
-   - Import into **Trusted Publishers**
+    - Import into **Trusted Root Certification Authorities**
+    - Import into **Trusted Publishers**
+    - For the in-tree Win7 driver, see `drivers/windows7/virtio-input/README.md` for helper scripts (`make-cert.ps1` / `install-test-cert.ps1`) and the full signing workflow.
 3. **Install the driver**:
-   - Device Manager → the virtio-input PCI device (often appears as “Unknown device”)
-   - “Update driver” → “Have Disk…” → point at the driver `.inf`
+    - Device Manager → the virtio-input PCI device (often appears as “Unknown device”)
+    - “Update driver” → “Have Disk…” → point at the driver `.inf`
 4. **Verify**:
    - A new HID keyboard and HID mouse appear
    - The emulator can detect `DRIVER_OK` and switch input routing to virtio-input
