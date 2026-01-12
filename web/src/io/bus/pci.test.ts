@@ -508,6 +508,97 @@ describe("io/bus/pci", () => {
     expect(mmioBus.read(bar0Base, 4)).toBe(0x1122_3344);
   });
 
+  it("clears PCI Status RW1C bits on 16-bit writes while preserving CAP_LIST", () => {
+    const portBus = new PortIoBus();
+    const mmioBus = new MmioBus();
+    const pciBus = new PciBus(portBus, mmioBus);
+    pciBus.registerToPortBus();
+
+    const seen: number[] = [];
+    const dev: PciDevice = {
+      name: "status_rw1c_u16",
+      vendorId: 0x1234,
+      deviceId: 0x5678,
+      classCode: 0,
+      initPciConfig: (config) => {
+        // Status.CAP_LIST (bit 4) is RO.
+        config[0x06] |= 0x10;
+        // Status.Received Master Abort (bit 13) is RW1C.
+        config[0x07] |= 0x20;
+      },
+      onPciCommandWrite: (command) => {
+        seen.push(command & 0xffff);
+      },
+    };
+    const addr = pciBus.registerDevice(dev, { device: 0, function: 0 });
+
+    const cfg = makeCfgIo(portBus);
+    const statusBefore = cfg.readU16(addr.device, addr.function, 0x06);
+    expect(statusBefore & 0x0010).toBe(0x0010);
+    expect(statusBefore & 0x2000).toBe(0x2000);
+
+    // Clear Received Master Abort (bit 13) via RW1C write. CAP_LIST must remain set.
+    cfg.writeU16(addr.device, addr.function, 0x06, 0x2000);
+    const statusAfter = cfg.readU16(addr.device, addr.function, 0x06);
+    expect(statusAfter & 0x0010).toBe(0x0010);
+    expect(statusAfter & 0x2000).toBe(0x0000);
+
+    // Status-only writes must not be treated as command updates.
+    expect(seen).toEqual([]);
+  });
+
+  it("does not clear high-byte RW1C Status bits on 8-bit writes to 0x06", () => {
+    const portBus = new PortIoBus();
+    const mmioBus = new MmioBus();
+    const pciBus = new PciBus(portBus, mmioBus);
+    pciBus.registerToPortBus();
+
+    const dev: PciDevice = {
+      name: "status_rw1c_u8_low",
+      vendorId: 0x1234,
+      deviceId: 0x5678,
+      classCode: 0,
+      initPciConfig: (config) => {
+        config[0x06] |= 0x10; // CAP_LIST (bit 4)
+        config[0x07] |= 0x20; // Received Master Abort (bit 13)
+      },
+    };
+    const addr = pciBus.registerDevice(dev, { device: 0, function: 0 });
+    const cfg = makeCfgIo(portBus);
+
+    // Writing to 0x06 only touches the low byte of Status; it must not be treated
+    // as a write to 0x07 (where bit 13 lives).
+    cfg.writeU8(addr.device, addr.function, 0x06, 0x00);
+    const statusAfter = cfg.readU16(addr.device, addr.function, 0x06);
+    expect(statusAfter & 0x0010).toBe(0x0010);
+    expect(statusAfter & 0x2000).toBe(0x2000);
+  });
+
+  it("clears high-byte RW1C Status bits on 8-bit writes to 0x07", () => {
+    const portBus = new PortIoBus();
+    const mmioBus = new MmioBus();
+    const pciBus = new PciBus(portBus, mmioBus);
+    pciBus.registerToPortBus();
+
+    const dev: PciDevice = {
+      name: "status_rw1c_u8_high",
+      vendorId: 0x1234,
+      deviceId: 0x5678,
+      classCode: 0,
+      initPciConfig: (config) => {
+        config[0x06] |= 0x10; // CAP_LIST (bit 4)
+        config[0x07] |= 0x20; // Received Master Abort (bit 13)
+      },
+    };
+    const addr = pciBus.registerDevice(dev, { device: 0, function: 0 });
+    const cfg = makeCfgIo(portBus);
+
+    cfg.writeU8(addr.device, addr.function, 0x07, 0x20);
+    const statusAfter = cfg.readU16(addr.device, addr.function, 0x06);
+    expect(statusAfter & 0x0010).toBe(0x0010);
+    expect(statusAfter & 0x2000).toBe(0x0000);
+  });
+
   it("does not allow initPciConfig() to force-enable decoding or clobber BAR registers", () => {
     const portBus = new PortIoBus();
     const mmioBus = new MmioBus();

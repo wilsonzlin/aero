@@ -187,6 +187,23 @@ function readU32LE(buf: Uint8Array, off: number): number {
   );
 }
 
+// PCI Status register (0x06..0x07) RW1C bits we emulate.
+//
+// PCI has a mix of RO and RW1C bits in STATUS. Guests commonly write STATUS to clear
+// error bits. We implement a small, spec-aligned subset of common RW1C bits.
+//
+// Note on "Data Parity Reported" bit numbering:
+// - PCI Local Bus Spec / Linux `PCI_STATUS_PARITY` use bit 8 (0x0100) for the
+//   Master Data Parity Error ("Data Parity Reported") flag.
+const PCI_STATUS_RW1C_MASK = (
+  0x8000 | // Detected Parity Error
+  0x4000 | // Signaled System Error
+  0x2000 | // Received Master Abort
+  0x1000 | // Received Target Abort
+  0x0800 | // Signaled Target Abort
+  0x0100 // Data Parity Reported / Master Data Parity Error
+) >>> 0;
+
 function computeBarMask(desc: PciBar): number {
   if (!isPow2(desc.size)) {
     throw new Error(`PCI BAR size must be power-of-two, got ${desc.size}`);
@@ -442,16 +459,19 @@ export class PciBus implements PortIoHandler {
 
       // Preserve untouched bytes when writing < 4 bytes.
       let newDword: number;
+      let writeMask: number;
       if (size === 4 && (regOff & 3) === 0) {
         newDword = v;
+        writeMask = 0xffff_ffff;
       } else {
         const cur = this.#readConfigDword(fn, aligned);
         const shift = (regOff & 3) * 8;
         const mask = size === 1 ? 0xff : size === 2 ? 0xffff : 0xffff_ffff;
-        newDword = ((cur & ~(mask << shift)) | ((v & mask) << shift)) >>> 0;
+        writeMask = (mask << shift) >>> 0;
+        newDword = ((cur & ~writeMask) | ((v & mask) << shift)) >>> 0;
       }
 
-      this.#writeConfigDword(fn, aligned, newDword);
+      this.#writeConfigDword(fn, aligned, newDword, writeMask);
       return;
     }
   }
@@ -486,22 +506,38 @@ export class PciBus implements PortIoHandler {
     return readU32LE(fn.config, alignedOff);
   }
 
-  #writeConfigDword(fn: PciFunction, alignedOff: number, value: number): void {
+  #writeConfigDword(fn: PciFunction, alignedOff: number, value: number, writeMask: number): void {
     // Command register changes affect BAR decoding enablement.
     if (alignedOff === 0x04) {
       // PCI header dword @ 0x04:
       // - Command register (0x04..0x05) is writable.
-      // - Status register  (0x06..0x07) is RO / RW1C on real hardware and must not
-      //   be blindly overwritten by 32-bit command writes. Guests commonly write
-      //   the full dword with the upper 16 bits as zero, which would otherwise
-      //   clobber Status bits such as "Capabilities List" (bit 4) used by modern
-      //   virtio-pci.
+      // - Status register  (0x06..0x07) is RO / RW1C on real hardware:
+      //    - Many bits are cleared by writing 1 (RW1C).
+      //    - Other bits (including CAP_LIST bit 4) are RO.
+      //
+      // Guests commonly write the full 32-bit dword with the upper 16 bits as
+      // zero when they intend to only update Command; such writes must not
+      // clobber status bits (virtio-pci relies on Status.CAP_LIST).
       const cur = readU32LE(fn.config, alignedOff);
-      const newValue = ((cur & 0xffff_0000) | (value & 0x0000_ffff)) >>> 0;
+      const oldCommand = cur & 0xffff;
+
+      // Apply Command writes (normal RW).
+      const commandWriteMask = writeMask & 0x0000_ffff;
+      let newCommand = oldCommand;
+      if (commandWriteMask !== 0) {
+        newCommand = ((oldCommand & ~commandWriteMask) | (value & commandWriteMask)) & 0xffff;
+      }
+
+      // Apply Status writes (RW1C subset).
+      const oldStatus = (cur >>> 16) & 0xffff;
+      const statusWriteMask16 = (writeMask >>> 16) & 0xffff;
+      const statusWriteValue16 = (value >>> 16) & 0xffff;
+      const statusBitsToClear = (statusWriteValue16 & statusWriteMask16 & PCI_STATUS_RW1C_MASK) >>> 0;
+      const newStatus = (oldStatus & ~statusBitsToClear) & 0xffff;
+
+      const newValue = ((newStatus << 16) | newCommand) >>> 0;
       writeU32LE(fn.config, alignedOff, newValue);
-      const curCommand = cur & 0xffff;
-      const newCommand = newValue & 0xffff;
-      if (curCommand !== newCommand) {
+      if (oldCommand !== newCommand) {
         this.#refreshDeviceDecoding(fn);
         try {
           fn.device.onPciCommandWrite?.(newCommand >>> 0);
@@ -509,13 +545,13 @@ export class PciBus implements PortIoHandler {
           // Ignore device hook failures; PCI config space writes should remain resilient to
           // device implementation bugs.
         }
+      }
 
-        try {
-          fn.device.pciConfigWrite?.(alignedOff, 4, newValue);
-        } catch {
-          // Ignore device hook failures; PCI config space writes should remain resilient to
-          // device implementation bugs.
-        }
+      try {
+        fn.device.pciConfigWrite?.(alignedOff, 4, newValue);
+      } catch {
+        // Ignore device hook failures; PCI config space writes should remain resilient to
+        // device implementation bugs.
       }
       return;
     }
