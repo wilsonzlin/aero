@@ -729,6 +729,60 @@ exit 0
   }
 });
 
+test("safe-run.sh retries Cargo when rustc panics with unwrap(EAGAIN) (Linux)", { skip: process.platform !== "linux" }, () => {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "aero-safe-run-retry-unwrap-eagain-"));
+  try {
+    const binDir = path.join(tmpRoot, "bin");
+    fs.mkdirSync(binDir, { recursive: true });
+
+    const invocationsFile = path.join(tmpRoot, "cargo-invocations.txt");
+    const fakeCargo = path.join(binDir, "cargo");
+    fs.writeFileSync(
+      fakeCargo,
+      `#!/usr/bin/env bash
+set -euo pipefail
+
+count_file="\${CARGO_INVOCATIONS_FILE:?}"
+count=0
+if [[ -f "\${count_file}" ]]; then
+  count="$(cat "\${count_file}")"
+fi
+count=$((count + 1))
+echo "\${count}" > "\${count_file}"
+
+if [[ "\${count}" -eq 1 ]]; then
+  cat >&2 <<'EOF'
+thread 'rustc' panicked at 'called Result::unwrap() on an Err value: Os { code: 11, kind: WouldBlock, message: "Resource temporarily unavailable" }', library/core/src/result.rs:1:1
+EOF
+  exit 1
+fi
+exit 0
+`,
+      "utf8",
+    );
+    fs.chmodSync(fakeCargo, 0o755);
+
+    const fakeSleep = path.join(binDir, "sleep");
+    fs.writeFileSync(fakeSleep, "#!/usr/bin/env bash\nexit 0\n", "utf8");
+    fs.chmodSync(fakeSleep, 0o755);
+
+    const env = { ...process.env };
+    env.PATH = `${binDir}${path.delimiter}${env.PATH || ""}`;
+    env.CARGO_INVOCATIONS_FILE = invocationsFile;
+    env.AERO_SAFE_RUN_RUSTC_RETRIES = "2";
+
+    execFileSync(path.join(repoRoot, "scripts/safe-run.sh"), ["cargo"], {
+      cwd: repoRoot,
+      env,
+      stdio: "ignore",
+    });
+
+    assert.equal(fs.readFileSync(invocationsFile, "utf8").trim(), "2");
+  } finally {
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
+});
+
 test("safe-run.sh retries Cargo on could not exec the linker (Linux)", { skip: process.platform !== "linux" }, () => {
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "aero-safe-run-retry-linker-exec-"));
   try {
