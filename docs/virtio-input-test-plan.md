@@ -367,7 +367,8 @@ When enabled, the harness:
 Expected signal:
 
 - Guest serial contains `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|PASS|...`
-- Host harness logs include a marker like `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|PASS|attempt=<n>|...`
+- Host harness logs include a marker like:
+  `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|PASS|attempt=<n>|kbd_mode=device/broadcast|mouse_mode=device/broadcast`
   - Note: The harness may retry injection a few times after `virtio-input-events|READY` to reduce timing flakiness.
     In that case you may see multiple `VIRTIO_INPUT_EVENTS_INJECT|PASS` lines (the marker includes `attempt=<n>`).
 

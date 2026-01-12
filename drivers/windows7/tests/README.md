@@ -124,7 +124,8 @@ attach an additional virtio disk with a drive letter (or run the selftest with `
       If QMP input injection fails, the harness fails (PowerShell: `QMP_INPUT_INJECT_FAILED`; Python:
       `FAIL: QMP_INPUT_INJECT_FAILED: ...`).
     - The harness also emits a host marker for the injection step itself:
-      `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|PASS/FAIL|attempt=<n>|...`
+      - `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|PASS|attempt=<n>|kbd_mode=device/broadcast|mouse_mode=device/broadcast`
+      - `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|FAIL|attempt=<n>|reason=...`
       - Note: The harness may retry injection a few times after `virtio-input-events|READY` to reduce timing flakiness.
         In that case you may see multiple `VIRTIO_INPUT_EVENTS_INJECT|PASS` lines (the marker includes `attempt=<n>`).
 - Exits with `0` on PASS, non-zero on FAIL/timeout.
