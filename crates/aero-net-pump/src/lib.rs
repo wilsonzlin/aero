@@ -1251,6 +1251,14 @@ mod tests {
             counts0.rx_frames, 2,
             "expected 2 backend RX frames (broadcast + unicast DHCP OFFER)"
         );
+        assert!(
+            backend.poll_receive().is_none(),
+            "backend should have no pending RX frames after pump tick"
+        );
+        assert!(
+            nic.pop_tx_frame().is_none(),
+            "NIC TX queue should be drained by pump tick"
+        );
         assert_eq!(
             backend.tx_log.as_slice(),
             std::slice::from_ref(&discover_frame),
@@ -1260,6 +1268,17 @@ mod tests {
             mem.read_vec(0x10_000, discover_frame.len()),
             discover_frame,
             "E1000 TX DMA must not modify the guest TX buffer"
+        );
+        let icr0 = nic.mmio_read_u32(0x00C0);
+        assert_ne!(
+            icr0 & aero_net_e1000::ICR_TXDW,
+            0,
+            "expected TXDW interrupt cause after DHCPDISCOVER (icr={icr0:#010x})"
+        );
+        assert_ne!(
+            icr0 & aero_net_e1000::ICR_RXT0,
+            0,
+            "expected RXT0 interrupt cause after DHCP OFFER delivery (icr={icr0:#010x})"
         );
         assert!(
             !backend.stack().is_ip_assigned(),
@@ -1328,6 +1347,20 @@ mod tests {
                 offer.dhcp.message_type,
                 DhcpMessageType::Offer,
                 "expected DHCP OFFER in frame {i}"
+            );
+            assert_eq!(
+                offer.dhcp.op,
+                dhcp::DHCP_OP_BOOTREPLY,
+                "offer{i} should be BOOTREPLY"
+            );
+            assert_eq!(
+                offer.dhcp.flags, 0x8000,
+                "offer{i} flags mismatch (expected broadcast bit)"
+            );
+            assert_eq!(
+                offer.dhcp.requested_ip,
+                None,
+                "offer{i} should not include a requested_ip option"
             );
             assert_eq!(
                 offer.dhcp.client_mac, guest_mac,
@@ -1421,6 +1454,14 @@ mod tests {
             counts1.rx_frames, 2,
             "expected 2 backend RX frames (broadcast + unicast DHCP ACK)"
         );
+        assert!(
+            backend.poll_receive().is_none(),
+            "backend should have no pending RX frames after pump tick"
+        );
+        assert!(
+            nic.pop_tx_frame().is_none(),
+            "NIC TX queue should be drained by pump tick"
+        );
         assert_eq!(
             backend.tx_log.as_slice(),
             [discover_frame.clone(), request_frame.clone()],
@@ -1435,6 +1476,17 @@ mod tests {
             mem.read_vec(0x11_000, request_frame.len()),
             request_frame,
             "E1000 TX DMA must not modify the DHCPREQUEST TX buffer"
+        );
+        let icr1 = nic.mmio_read_u32(0x00C0);
+        assert_ne!(
+            icr1 & aero_net_e1000::ICR_TXDW,
+            0,
+            "expected TXDW interrupt cause after DHCPREQUEST (icr={icr1:#010x})"
+        );
+        assert_ne!(
+            icr1 & aero_net_e1000::ICR_RXT0,
+            0,
+            "expected RXT0 interrupt cause after DHCP ACK delivery (icr={icr1:#010x})"
         );
 
         let tx1_status = mem.read_vec(0x1010 + 12, 1)[0];
@@ -1497,6 +1549,20 @@ mod tests {
                 ack.dhcp.message_type,
                 DhcpMessageType::Ack,
                 "expected DHCP ACK in frame {i}"
+            );
+            assert_eq!(
+                ack.dhcp.op,
+                dhcp::DHCP_OP_BOOTREPLY,
+                "ack{i} should be BOOTREPLY"
+            );
+            assert_eq!(
+                ack.dhcp.flags, 0x8000,
+                "ack{i} flags mismatch (expected broadcast bit)"
+            );
+            assert_eq!(
+                ack.dhcp.requested_ip,
+                None,
+                "ack{i} should not include a requested_ip option"
             );
             assert_eq!(ack.dhcp.client_mac, guest_mac, "ack{i} client MAC mismatch");
             assert_eq!(
