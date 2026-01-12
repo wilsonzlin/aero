@@ -97,6 +97,15 @@ impl PciBar {
         }
     }
 
+    fn read_raw_programmed(&self) -> u32 {
+        match self.kind {
+            PciBarKind::Unused => 0,
+            PciBarKind::Memory32 => {
+                (self.base & Self::mem32_addr_mask(self.size)) | self.mem32_flags()
+            }
+        }
+    }
+
     pub fn write_raw(&mut self, value: u32) {
         match self.kind {
             PciBarKind::Unused => {}
@@ -169,7 +178,20 @@ impl PciConfigSpace {
         assert!(matches!(size, 1 | 2 | 4), "invalid PCI config write size");
         let aligned = offset & !3;
         let shift = (offset - aligned) * 8;
-        let mut dword = self.read_u32(aligned);
+        let mut dword = if size == 4 {
+            self.read_u32(aligned)
+        } else {
+            // BAR size probing sets an internal probe flag but does *not* overwrite the
+            // programmed base. For subword BAR writes, merge against the programmed base rather
+            // than the probe response (size mask), matching real hardware behavior.
+            match aligned {
+                0x10..=0x24 => {
+                    let bar_index = ((aligned - 0x10) / 4) as usize;
+                    self.bars[bar_index].read_raw_programmed()
+                }
+                _ => self.read_u32(aligned),
+            }
+        };
         match size {
             1 => {
                 dword = (dword & !(0xFF << shift)) | ((value & 0xFF) << shift);
@@ -342,5 +364,27 @@ impl PciBus {
         let port_offset = port - CONFIG_DATA_PORT;
         let offset = register_base + port_offset;
         self.config_write(bus, device, function, offset, size, value);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bar_subword_writes_after_probe_use_programmed_base_not_probe_mask() {
+        let mut cfg = PciConfigSpace::new(0x1234, 0x5678, 0x00, 0x00, 0x00);
+        cfg.bars[0] = PciBar::memory32(0, 0x1000, false);
+
+        // BAR size probe returns the size mask, but does not overwrite the programmed base.
+        cfg.write(0x10, 4, 0xFFFF_FFFF);
+        assert_eq!(cfg.read(0x10, 4), 0xFFFF_F000);
+        assert_eq!(cfg.bars[0].base(), 0);
+
+        // Program only the high 16 bits via a subword write. The low 16 bits must remain from
+        // the programmed base (0), not from the probe response (0xFFFF_F000).
+        cfg.write(0x12, 2, 0xE000);
+        assert_eq!(cfg.read(0x10, 4), 0xE000_0000);
+        assert_eq!(cfg.bars[0].base(), 0xE000_0000);
     }
 }
