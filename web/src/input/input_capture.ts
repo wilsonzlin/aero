@@ -110,6 +110,7 @@ export class InputCapture {
   private mouseButtons = 0;
   private mouseFracX = 0;
   private mouseFracY = 0;
+  private wheelFrac = 0;
 
   private latencyLogLastMs = 0;
   private latencyLogCount = 0;
@@ -320,7 +321,8 @@ export class InputCapture {
     event.preventDefault();
     event.stopPropagation();
 
-    const dz = wheelEventToSteps(event);
+    this.wheelFrac += wheelEventToDeltaSteps(event);
+    const dz = this.takeWholeWheelDelta();
     if (dz === 0) {
       return;
     }
@@ -547,6 +549,12 @@ export class InputCapture {
     return new ArrayBuffer(byteLength);
   }
 
+  private takeWholeWheelDelta(): number {
+    const whole = this.wheelFrac < 0 ? Math.ceil(this.wheelFrac) : Math.floor(this.wheelFrac);
+    this.wheelFrac -= whole;
+    return whole | 0;
+  }
+
   private pollGamepad(): void {
     if (!this.gamepad) {
       return;
@@ -663,22 +671,21 @@ function buttonToMask(button: number): number {
   }
 }
 
-function wheelEventToSteps(event: WheelEvent): number {
-  // Try to map varying browser delta modes into discrete wheel "clicks".
+function wheelEventToDeltaSteps(event: WheelEvent): number {
+  // Preserve fractional deltas (trackpads, high-resolution wheels) by allowing callers to
+  // accumulate and quantize later.
   let delta = event.deltaY;
   switch (event.deltaMode) {
-    case WheelEvent.DOM_DELTA_PIXEL:
+    case 0: // WheelEvent.DOM_DELTA_PIXEL
       delta /= 100;
       break;
-    case WheelEvent.DOM_DELTA_LINE:
+    case 1: // WheelEvent.DOM_DELTA_LINE
       // Leave as-is.
       break;
-    case WheelEvent.DOM_DELTA_PAGE:
+    case 2: // WheelEvent.DOM_DELTA_PAGE
       delta *= 3;
       break;
   }
-
-  const steps = delta < 0 ? Math.ceil(delta) : Math.floor(delta);
   // DOM: deltaY > 0 is scroll down; PS/2: positive is wheel up.
-  return (-steps) | 0;
+  return -delta;
 }
