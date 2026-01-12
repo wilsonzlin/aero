@@ -4,8 +4,9 @@ This directory contains a **basic, automatable functional test harness** for the
 
 Goals:
 - Run **end-to-end**, **repeatable** tests under **QEMU**.
-- Validate **virtio-blk** (disk I/O), **virtio-net** (DHCP + outbound TCP), **virtio-input** (HID enumeration), and
-  **virtio-snd** (audio endpoint enumeration + basic playback) without manual UI interaction.
+- Validate **virtio-blk** (disk I/O), **virtio-net** (DHCP + outbound TCP), **virtio-input** (HID enumeration + optional
+  end-to-end event delivery), and **virtio-snd** (audio endpoint enumeration + basic playback) without manual UI
+  interaction.
 - Produce logs over **COM1 serial** so the host can deterministically parse **PASS/FAIL**.
 - Keep the structure extensible (more tests later).
 
@@ -30,6 +31,9 @@ drivers/windows7/tests/
 - Runs a virtio-blk file I/O test (write/readback, sequential read, flush) on a **virtio-backed volume**.
 - Runs a virtio-net test (wait for DHCP, DNS resolve, HTTP GET).
 - Runs a virtio-input HID sanity test (detect virtio-input HID devices + validate separate keyboard-only + mouse-only HID devices).
+- Emits a `virtio-input-events` marker that can be used to validate **end-to-end input report delivery** when the host
+  harness injects deterministic keyboard/mouse events via QMP (`input-send-event`). This path reads HID input reports
+  directly from the virtio-input HID interface so it does not depend on UI focus.
 - Optionally runs a virtio-snd test (PCI detection + endpoint enumeration + short playback) when a supported virtio-snd
   device is detected (or when `--require-snd` / `--test-snd` is set).
   - Detects the virtio-snd PCI function by hardware ID:
@@ -48,6 +52,8 @@ The selftest emits machine-parseable markers:
 ```
  AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS
  AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS|...
+ # (virtio-input-events is exercised only when the host harness injects input via QMP):
+ AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|PASS|...
  # (virtio-snd is emitted as PASS/FAIL/SKIP depending on device/config):
   AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP
   AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|flag_not_set
@@ -94,6 +100,8 @@ attach an additional virtio disk with a drive letter (or run the selftest with `
 - COM1 redirected to a host log file
 - Parses the serial log for `AERO_VIRTIO_SELFTEST|RESULT|PASS/FAIL` and requires per-test markers for
   virtio-blk + virtio-input + virtio-snd + virtio-snd-capture + virtio-net when RESULT=PASS is seen.
+  - When `-WithVirtioInputEvents` / `--with-virtio-input-events` is enabled, the harness also injects a small keyboard +
+    mouse sequence via QMP (`input-send-event`) and requires `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|PASS`.
 - Exits with `0` on PASS, non-zero on FAIL/timeout.
 
 The harness also sets the PCI **Revision ID** (`x-pci-revision=0x01`) to match the

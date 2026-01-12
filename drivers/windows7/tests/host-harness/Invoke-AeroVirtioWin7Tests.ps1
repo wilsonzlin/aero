@@ -60,6 +60,12 @@ param(
   [Alias("EnableVirtioSnd")]
   [switch]$WithVirtioSnd,
 
+  # If set, inject deterministic virtio-input keyboard/mouse events via QMP (`input-send-event`) and
+  # require the guest selftest marker `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|PASS`.
+  [Parameter(Mandatory = $false)]
+  [Alias("EnableVirtioInputEvents")]
+  [switch]$WithVirtioInputEvents,
+
   # Audio backend for virtio-snd.
   # - none: no host audio (device exists)
   # - wav:  capture deterministic audio output to a wav file
@@ -93,6 +99,10 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 . (Join-Path $PSScriptRoot "AeroVirtioWin7QemuArgs.ps1")
+
+# Stable QOM `id=` values for virtio-input devices so QMP can target them explicitly.
+$script:VirtioInputKeyboardQmpId = "aero_virtio_kbd0"
+$script:VirtioInputMouseQmpId = "aero_virtio_mouse0"
 if ($VerifyVirtioSndWav) {
   if (-not $WithVirtioSnd) {
     throw "-VerifyVirtioSndWav requires -WithVirtioSnd."
@@ -255,7 +265,12 @@ function Wait-AeroSelftestResult {
     [Parameter(Mandatory = $false)] [bool]$RequirePerTestMarkers = $true,
     # If true, a virtio-snd device was attached, so the virtio-snd selftest must actually run and pass
     # (not be skipped via --disable-snd).
-    [Parameter(Mandatory = $true)] [bool]$RequireVirtioSndPass
+    [Parameter(Mandatory = $true)] [bool]$RequireVirtioSndPass,
+    # If true, require the guest virtio-input-events marker to PASS (host will inject events via QMP).
+    [Parameter(Mandatory = $false)] [bool]$EnableVirtioInputEvents = $false,
+    # QMP connection settings used for virtio-input injection.
+    [Parameter(Mandatory = $false)] [string]$QmpHost = "127.0.0.1",
+    [Parameter(Mandatory = $false)] [int]$QmpPort = 0
   )
 
   $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
@@ -265,6 +280,10 @@ function Wait-AeroSelftestResult {
   $sawVirtioBlkFail = $false
   $sawVirtioInputPass = $false
   $sawVirtioInputFail = $false
+  $sawVirtioInputEventsReady = $false
+  $sawVirtioInputEventsPass = $false
+  $sawVirtioInputEventsFail = $false
+  $injectedVirtioInputEvents = $false
   $sawVirtioSndPass = $false
   $sawVirtioSndSkip = $false
   $sawVirtioSndFail = $false
@@ -300,6 +319,26 @@ function Wait-AeroSelftestResult {
       }
       if (-not $sawVirtioInputFail -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-input\|FAIL") {
         $sawVirtioInputFail = $true
+      }
+      if (-not $sawVirtioInputEventsReady -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-input-events\|READY") {
+        $sawVirtioInputEventsReady = $true
+      }
+      if (-not $sawVirtioInputEventsPass -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-input-events\|PASS") {
+        $sawVirtioInputEventsPass = $true
+      }
+      if (-not $sawVirtioInputEventsFail -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-input-events\|FAIL") {
+        $sawVirtioInputEventsFail = $true
+      }
+
+      if ($EnableVirtioInputEvents -and $sawVirtioInputEventsReady -and (-not $injectedVirtioInputEvents)) {
+        $injectedVirtioInputEvents = $true
+        if ($QmpPort -le 0) {
+          return @{ Result = "QMP_INPUT_INJECT_FAILED"; Tail = $tail }
+        }
+        $ok = Try-AeroQmpInjectVirtioInputEvents -Host $QmpHost -Port $QmpPort
+        if (-not $ok) {
+          return @{ Result = "QMP_INPUT_INJECT_FAILED"; Tail = $tail }
+        }
       }
       if (-not $sawVirtioSndPass -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-snd\|PASS") {
         $sawVirtioSndPass = $true
@@ -390,6 +429,15 @@ function Wait-AeroSelftestResult {
             return @{ Result = "MISSING_VIRTIO_NET"; Tail = $tail }
           }
 
+          if ($EnableVirtioInputEvents) {
+            if ($sawVirtioInputEventsFail) {
+              return @{ Result = "VIRTIO_INPUT_EVENTS_FAIL"; Tail = $tail }
+            }
+            if (-not $sawVirtioInputEventsPass) {
+              return @{ Result = "MISSING_VIRTIO_INPUT_EVENTS"; Tail = $tail }
+            }
+          }
+
           return @{ Result = "PASS"; Tail = $tail }
         }
 
@@ -403,6 +451,14 @@ function Wait-AeroSelftestResult {
             }
             if ($sawVirtioSndCapturePass) {
               if ($sawVirtioSndDuplexPass) {
+                if ($EnableVirtioInputEvents) {
+                  if ($sawVirtioInputEventsFail) {
+                    return @{ Result = "VIRTIO_INPUT_EVENTS_FAIL"; Tail = $tail }
+                  }
+                  if (-not $sawVirtioInputEventsPass) {
+                    return @{ Result = "MISSING_VIRTIO_INPUT_EVENTS"; Tail = $tail }
+                  }
+                }
                 return @{ Result = "PASS"; Tail = $tail }
               }
               if ($sawVirtioSndDuplexSkip) {
@@ -419,6 +475,15 @@ function Wait-AeroSelftestResult {
             return @{ Result = "VIRTIO_SND_SKIPPED"; Tail = $tail }
           }
           return @{ Result = "MISSING_VIRTIO_SND"; Tail = $tail }
+        }
+
+        if ($EnableVirtioInputEvents) {
+          if ($sawVirtioInputEventsFail) {
+            return @{ Result = "VIRTIO_INPUT_EVENTS_FAIL"; Tail = $tail }
+          }
+          if (-not $sawVirtioInputEventsPass) {
+            return @{ Result = "MISSING_VIRTIO_INPUT_EVENTS"; Tail = $tail }
+          }
         }
 
         return @{ Result = "PASS"; Tail = $tail }
@@ -806,6 +871,124 @@ function Try-AeroQmpQuit {
   return $false
 }
 
+function Read-AeroQmpResponse {
+  param(
+    [Parameter(Mandatory = $true)] [System.IO.StreamReader]$Reader
+  )
+
+  while ($true) {
+    $line = $Reader.ReadLine()
+    if ($null -eq $line) {
+      throw "EOF while waiting for QMP response"
+    }
+    if ([string]::IsNullOrWhiteSpace($line)) { continue }
+
+    $obj = $null
+    try {
+      $obj = $line | ConvertFrom-Json -ErrorAction Stop
+    } catch {
+      continue
+    }
+
+    if ($obj.PSObject.Properties.Name -contains "return") { return $obj }
+    if ($obj.PSObject.Properties.Name -contains "error") { return $obj }
+    # Otherwise, ignore async events and keep reading.
+  }
+}
+
+function Try-AeroQmpInjectVirtioInputEvents {
+  param(
+    [Parameter(Mandatory = $true)] [string]$Host,
+    [Parameter(Mandatory = $true)] [int]$Port
+  )
+
+  $deadline = [DateTime]::UtcNow.AddSeconds(5)
+  while ([DateTime]::UtcNow -lt $deadline) {
+    $client = $null
+    try {
+      $client = [System.Net.Sockets.TcpClient]::new()
+      $client.ReceiveTimeout = 2000
+      $client.SendTimeout = 2000
+      $client.Connect($Host, $Port)
+
+      $stream = $client.GetStream()
+      $reader = [System.IO.StreamReader]::new($stream, [System.Text.Encoding]::UTF8, $false, 4096, $true)
+      $writer = [System.IO.StreamWriter]::new($stream, [System.Text.Encoding]::UTF8, 4096, $true)
+      $writer.NewLine = "`n"
+      $writer.AutoFlush = $true
+
+      # Greeting.
+      $null = $reader.ReadLine()
+      $writer.WriteLine('{"execute":"qmp_capabilities"}')
+      $null = Read-AeroQmpResponse -Reader $reader
+
+      # Keyboard: 'a' down/up.
+      $cmd = @{
+        execute   = "input-send-event"
+        arguments = @{
+          device = $script:VirtioInputKeyboardQmpId
+          events = @(
+            @{ type = "key"; data = @{ down = $true; key = @{ type = "qcode"; data = "a" } } }
+          )
+        }
+      }
+      $writer.WriteLine(($cmd | ConvertTo-Json -Compress -Depth 10))
+      $null = Read-AeroQmpResponse -Reader $reader
+
+      Start-Sleep -Milliseconds 50
+
+      $cmd.arguments.events[0].data.down = $false
+      $writer.WriteLine(($cmd | ConvertTo-Json -Compress -Depth 10))
+      $null = Read-AeroQmpResponse -Reader $reader
+
+      Start-Sleep -Milliseconds 50
+
+      # Mouse: move + left click.
+      $cmdMouseMove = @{
+        execute   = "input-send-event"
+        arguments = @{
+          device = $script:VirtioInputMouseQmpId
+          events = @(
+            @{ type = "rel"; data = @{ axis = "x"; value = 10 } },
+            @{ type = "rel"; data = @{ axis = "y"; value = 5 } }
+          )
+        }
+      }
+      $writer.WriteLine(($cmdMouseMove | ConvertTo-Json -Compress -Depth 10))
+      $null = Read-AeroQmpResponse -Reader $reader
+
+      Start-Sleep -Milliseconds 50
+
+      $cmdMouseBtn = @{
+        execute   = "input-send-event"
+        arguments = @{
+          device = $script:VirtioInputMouseQmpId
+          events = @(
+            @{ type = "btn"; data = @{ down = $true; button = "left" } }
+          )
+        }
+      }
+      $writer.WriteLine(($cmdMouseBtn | ConvertTo-Json -Compress -Depth 10))
+      $null = Read-AeroQmpResponse -Reader $reader
+
+      Start-Sleep -Milliseconds 50
+
+      $cmdMouseBtn.arguments.events[0].data.down = $false
+      $writer.WriteLine(($cmdMouseBtn | ConvertTo-Json -Compress -Depth 10))
+      $null = Read-AeroQmpResponse -Reader $reader
+
+      return $true
+    } catch {
+      Start-Sleep -Milliseconds 100
+      continue
+    } finally {
+      if ($client) { $client.Close() }
+    }
+  }
+
+  return $false
+}
+
 $DiskImagePath = (Resolve-Path -LiteralPath $DiskImagePath).Path
 
 $serialParent = Split-Path -Parent $SerialLogPath
@@ -825,15 +1008,20 @@ $httpListener = Start-AeroSelftestHttpServer -Port $HttpPort -Path $HttpPath
 try {
   $qmpPort = $null
   $qmpArgs = @()
-  if ($WithVirtioSnd -and $VirtioSndAudioBackend -eq "wav") {
-    # QEMU's wav audiodev typically finalizes the RIFF header on graceful shutdown. If we kill
-    # the process hard, the host-side wav verification can flake (or always fail).
+  $needQmp = ($WithVirtioSnd -and $VirtioSndAudioBackend -eq "wav") -or $WithVirtioInputEvents
+  if ($needQmp) {
+    # QMP is used for:
+    # - graceful shutdown when the wav audiodev backend is enabled (so the RIFF header is finalized)
+    # - deterministic virtio-input event injection (when -WithVirtioInputEvents is enabled)
     try {
       $qmpPort = Get-AeroFreeTcpPort
       $qmpArgs = @(
         "-qmp", "tcp:127.0.0.1:$qmpPort,server,nowait"
       )
     } catch {
+      if ($WithVirtioInputEvents) {
+        throw "Failed to allocate QMP port required for -WithVirtioInputEvents: $_"
+      }
       Write-Warning "Failed to allocate QMP port for graceful shutdown: $_"
       $qmpPort = $null
       $qmpArgs = @()
@@ -869,8 +1057,8 @@ try {
 
     if ($haveVirtioKbd -and $haveVirtioMouse) {
       $virtioInputArgs = @(
-        "-device", "virtio-keyboard-pci",
-        "-device", "virtio-mouse-pci"
+        "-device", "virtio-keyboard-pci,id=$($script:VirtioInputKeyboardQmpId)",
+        "-device", "virtio-mouse-pci,id=$($script:VirtioInputMouseQmpId)"
       )
     } else {
       Write-Warning "QEMU does not advertise virtio-keyboard-pci/virtio-mouse-pci. The guest virtio-input selftest will likely FAIL. Upgrade QEMU or adjust the guest image/selftest expectations."
@@ -939,8 +1127,8 @@ try {
     $drive = New-AeroWin7VirtioBlkDriveArg -DiskImagePath $DiskImagePath -DriveId $driveId -Snapshot:$Snapshot
     $blk = New-AeroWin7VirtioBlkDeviceArg -DriveId $driveId
 
-    $kbd = New-AeroWin7VirtioKeyboardDeviceArg
-    $mouse = New-AeroWin7VirtioMouseDeviceArg
+    $kbd = "$(New-AeroWin7VirtioKeyboardDeviceArg),id=$($script:VirtioInputKeyboardQmpId)"
+    $mouse = "$(New-AeroWin7VirtioMouseDeviceArg),id=$($script:VirtioInputMouseQmpId)"
 
     $virtioSndArgs = @()
     if ($WithVirtioSnd) {
@@ -1005,7 +1193,7 @@ try {
   $scriptExitCode = 0
 
   try {
-    $result = Wait-AeroSelftestResult -SerialLogPath $SerialLogPath -QemuProcess $proc -TimeoutSeconds $TimeoutSeconds -HttpListener $httpListener -HttpPath $HttpPath -FollowSerial ([bool]$FollowSerial) -RequirePerTestMarkers (-not $VirtioTransitional) -RequireVirtioSndPass ([bool]$WithVirtioSnd)
+    $result = Wait-AeroSelftestResult -SerialLogPath $SerialLogPath -QemuProcess $proc -TimeoutSeconds $TimeoutSeconds -HttpListener $httpListener -HttpPath $HttpPath -FollowSerial ([bool]$FollowSerial) -RequirePerTestMarkers (-not $VirtioTransitional) -RequireVirtioSndPass ([bool]$WithVirtioSnd) -EnableVirtioInputEvents ([bool]$WithVirtioInputEvents) -QmpHost "127.0.0.1" -QmpPort ($qmpPort -as [int])
   } finally {
     if (-not $proc.HasExited) {
       $quitOk = $false
@@ -1070,6 +1258,30 @@ try {
     }
     "MISSING_VIRTIO_INPUT" {
       Write-Host "FAIL: selftest RESULT=PASS but did not emit virtio-input test marker"
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      $scriptExitCode = 1
+    }
+    "MISSING_VIRTIO_INPUT_EVENTS" {
+      Write-Host "FAIL: virtio-input-events test did not PASS while -WithVirtioInputEvents was enabled"
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      $scriptExitCode = 1
+    }
+    "VIRTIO_INPUT_EVENTS_FAIL" {
+      Write-Host "FAIL: virtio-input-events test reported FAIL while -WithVirtioInputEvents was enabled"
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      $scriptExitCode = 1
+    }
+    "QMP_INPUT_INJECT_FAILED" {
+      Write-Host "FAIL: failed to inject virtio-input events via QMP (ensure QMP is reachable and QEMU supports input-send-event)"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue

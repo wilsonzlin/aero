@@ -1951,6 +1951,355 @@ static VirtioInputTestResult VirtioInputTest(Logger& log) {
   return out;
 }
 
+struct VirtioInputEventsTestResult {
+  bool ok = false;
+  bool saw_key_a_down = false;
+  bool saw_key_a_up = false;
+  bool saw_mouse_move = false;
+  bool saw_mouse_left_down = false;
+  bool saw_mouse_left_up = false;
+  int keyboard_reports = 0;
+  int mouse_reports = 0;
+  std::string reason;
+  DWORD win32_error = 0;
+};
+
+struct VirtioInputHidPaths {
+  std::wstring keyboard_path;
+  std::wstring mouse_path;
+  std::string reason;
+};
+
+static std::optional<VirtioInputHidPaths> FindVirtioInputHidPaths(Logger& log) {
+  // {4D1E55B2-F16F-11CF-88CB-001111000030}
+  static const GUID kHidInterfaceGuid = {0x4D1E55B2,
+                                         0xF16F,
+                                         0x11CF,
+                                         {0x88, 0xCB, 0x00, 0x11, 0x11, 0x00, 0x00, 0x30}};
+
+  HDEVINFO devinfo = SetupDiGetClassDevsW(&kHidInterfaceGuid, nullptr, nullptr,
+                                         DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
+  if (devinfo == INVALID_HANDLE_VALUE) {
+    log.Logf("virtio-input-events: SetupDiGetClassDevs(GUID_DEVINTERFACE_HID) failed: %lu", GetLastError());
+    return std::nullopt;
+  }
+
+  VirtioInputHidPaths out{};
+  bool had_error = false;
+
+  for (DWORD idx = 0;; idx++) {
+    SP_DEVICE_INTERFACE_DATA iface{};
+    iface.cbSize = sizeof(iface);
+    if (!SetupDiEnumDeviceInterfaces(devinfo, nullptr, &kHidInterfaceGuid, idx, &iface)) {
+      if (GetLastError() == ERROR_NO_MORE_ITEMS) break;
+      continue;
+    }
+
+    DWORD detail_size = 0;
+    SetupDiGetDeviceInterfaceDetailW(devinfo, &iface, nullptr, 0, &detail_size, nullptr);
+    if (detail_size == 0) continue;
+
+    std::vector<BYTE> detail_buf(detail_size);
+    auto* detail = reinterpret_cast<SP_DEVICE_INTERFACE_DETAIL_DATA_W*>(detail_buf.data());
+    detail->cbSize = sizeof(SP_DEVICE_INTERFACE_DETAIL_DATA_W);
+
+    SP_DEVINFO_DATA dev{};
+    dev.cbSize = sizeof(dev);
+
+    if (!SetupDiGetDeviceInterfaceDetailW(devinfo, &iface, detail, detail_size, nullptr, &dev)) {
+      continue;
+    }
+
+    const std::wstring device_path = detail->DevicePath;
+    const auto hwids = GetDevicePropertyMultiSz(devinfo, &dev, SPDRP_HARDWAREID);
+
+    if (!IsVirtioInputHardwareId(hwids) && !LooksLikeVirtioInputInterfacePath(device_path)) {
+      continue;
+    }
+
+    HANDLE h = OpenHidDeviceForIoctl(device_path.c_str());
+    if (h == INVALID_HANDLE_VALUE) {
+      had_error = true;
+      log.Logf("virtio-input-events: CreateFile(%s) failed err=%lu", WideToUtf8(device_path).c_str(),
+               GetLastError());
+      continue;
+    }
+
+    const auto report_desc = ReadHidReportDescriptor(log, h);
+    CloseHandle(h);
+    if (!report_desc.has_value()) {
+      had_error = true;
+      continue;
+    }
+
+    const auto summary = SummarizeHidReportDescriptor(*report_desc);
+    const bool has_keyboard = summary.keyboard_app_collections > 0;
+    const bool has_mouse = summary.mouse_app_collections > 0;
+
+    if (has_keyboard && !has_mouse && out.keyboard_path.empty()) {
+      out.keyboard_path = device_path;
+      log.Logf("virtio-input-events: selected keyboard HID interface: %s", WideToUtf8(device_path).c_str());
+    } else if (has_mouse && !has_keyboard && out.mouse_path.empty()) {
+      out.mouse_path = device_path;
+      log.Logf("virtio-input-events: selected mouse HID interface: %s", WideToUtf8(device_path).c_str());
+    }
+
+    if (!out.keyboard_path.empty() && !out.mouse_path.empty()) break;
+  }
+
+  SetupDiDestroyDeviceInfoList(devinfo);
+
+  if (had_error) {
+    out.reason = "ioctl_or_open_failed";
+    return out;
+  }
+  if (out.keyboard_path.empty()) {
+    out.reason = "missing_keyboard_device";
+    return out;
+  }
+  if (out.mouse_path.empty()) {
+    out.reason = "missing_mouse_device";
+    return out;
+  }
+
+  return out;
+}
+
+static HANDLE OpenHidDeviceForRead(const wchar_t* path) {
+  const DWORD share = FILE_SHARE_READ | FILE_SHARE_WRITE;
+  const DWORD flags = FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OVERLAPPED;
+  const DWORD desired_accesses[] = {GENERIC_READ | GENERIC_WRITE, GENERIC_READ};
+
+  for (const DWORD access : desired_accesses) {
+    HANDLE h = CreateFileW(path, access, share, nullptr, OPEN_EXISTING, flags, nullptr);
+    if (h != INVALID_HANDLE_VALUE) return h;
+  }
+  return INVALID_HANDLE_VALUE;
+}
+
+struct HidOverlappedReader {
+  HANDLE h = INVALID_HANDLE_VALUE;
+  HANDLE ev = nullptr;
+  OVERLAPPED ov{};
+  std::vector<uint8_t> buf;
+  DWORD bytes = 0;
+  bool pending = false;
+  DWORD last_error = 0;
+
+  bool StartRead() {
+    if (h == INVALID_HANDLE_VALUE) return false;
+    if (!ev) {
+      ev = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+      if (!ev) {
+        last_error = GetLastError();
+        return false;
+      }
+      ZeroMemory(&ov, sizeof(ov));
+      ov.hEvent = ev;
+    }
+
+    ResetEvent(ev);
+    bytes = 0;
+    pending = false;
+
+    BOOL ok = ReadFile(h, buf.data(), static_cast<DWORD>(buf.size()), &bytes, &ov);
+    if (ok) {
+      pending = false;
+      // Some drivers don't reliably signal the overlapped event for synchronous completion; ensure the wait
+      // loop sees it.
+      SetEvent(ev);
+      return true;
+    }
+
+    const DWORD err = GetLastError();
+    if (err == ERROR_IO_PENDING) {
+      pending = true;
+      return true;
+    }
+
+    last_error = err;
+    return false;
+  }
+
+  bool FinishRead(DWORD& out_bytes) {
+    if (!pending) {
+      out_bytes = bytes;
+      return true;
+    }
+
+    DWORD n = 0;
+    if (!GetOverlappedResult(h, &ov, &n, FALSE)) {
+      last_error = GetLastError();
+      return false;
+    }
+    pending = false;
+    out_bytes = n;
+    return true;
+  }
+
+  void CancelAndClose() {
+    if (h != INVALID_HANDLE_VALUE) {
+      // Best-effort: cancel any outstanding overlapped reads so CloseHandle doesn't block.
+      CancelIo(h);
+      CloseHandle(h);
+      h = INVALID_HANDLE_VALUE;
+    }
+    if (ev) {
+      CloseHandle(ev);
+      ev = nullptr;
+    }
+  }
+};
+
+static void ProcessKeyboardReport(VirtioInputEventsTestResult& out, const uint8_t* buf, DWORD len) {
+  if (!buf || len == 0) return;
+
+  size_t off = 0;
+  if (buf[0] == 1) off = 1; // ReportID=1 (virtio-input keyboard)
+  if (len < off + 2) return;
+
+  const uint8_t modifiers = buf[off];
+  const uint8_t* keys = buf + off + 2;
+  const size_t key_count = static_cast<size_t>(len) - (off + 2);
+
+  bool saw_a = false;
+  bool all_zero = true;
+  for (size_t i = 0; i < key_count; i++) {
+    if (keys[i] == 0x04) saw_a = true; // HID Usage ID for 'A'
+    if (keys[i] != 0) all_zero = false;
+  }
+
+  if (saw_a) out.saw_key_a_down = true;
+  if (out.saw_key_a_down && modifiers == 0 && all_zero) {
+    out.saw_key_a_up = true;
+  }
+}
+
+static void ProcessMouseReport(VirtioInputEventsTestResult& out, const uint8_t* buf, DWORD len) {
+  if (!buf || len == 0) return;
+
+  size_t off = 0;
+  if (buf[0] == 2) off = 1; // ReportID=2 (virtio-input mouse)
+  if (len < off + 3) return;
+
+  const uint8_t buttons = buf[off + 0];
+  const int8_t dx = static_cast<int8_t>(buf[off + 1]);
+  const int8_t dy = static_cast<int8_t>(buf[off + 2]);
+
+  if (dx != 0 || dy != 0) out.saw_mouse_move = true;
+
+  const bool left = (buttons & 0x01) != 0;
+  if (left) out.saw_mouse_left_down = true;
+  if (out.saw_mouse_left_down && !left) out.saw_mouse_left_up = true;
+}
+
+static VirtioInputEventsTestResult VirtioInputEventsTest(Logger& log) {
+  VirtioInputEventsTestResult out{};
+
+  const auto paths = FindVirtioInputHidPaths(log);
+  if (!paths.has_value()) {
+    out.reason = "hid_enum_failed";
+    out.win32_error = GetLastError();
+    return out;
+  }
+  if (!paths->reason.empty()) {
+    out.reason = paths->reason;
+    return out;
+  }
+
+  HidOverlappedReader kbd{};
+  HidOverlappedReader mouse{};
+  kbd.buf.resize(64);
+  mouse.buf.resize(64);
+
+  kbd.h = OpenHidDeviceForRead(paths->keyboard_path.c_str());
+  if (kbd.h == INVALID_HANDLE_VALUE) {
+    out.reason = "open_keyboard_failed";
+    out.win32_error = GetLastError();
+    return out;
+  }
+  mouse.h = OpenHidDeviceForRead(paths->mouse_path.c_str());
+  if (mouse.h == INVALID_HANDLE_VALUE) {
+    out.reason = "open_mouse_failed";
+    out.win32_error = GetLastError();
+    kbd.CancelAndClose();
+    return out;
+  }
+
+  if (!kbd.StartRead()) {
+    out.reason = "read_keyboard_failed";
+    out.win32_error = kbd.last_error;
+    kbd.CancelAndClose();
+    mouse.CancelAndClose();
+    return out;
+  }
+  if (!mouse.StartRead()) {
+    out.reason = "read_mouse_failed";
+    out.win32_error = mouse.last_error;
+    kbd.CancelAndClose();
+    mouse.CancelAndClose();
+    return out;
+  }
+
+  log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|READY");
+
+  const DWORD deadline_ms = GetTickCount() + 10000;
+  while (static_cast<int32_t>(GetTickCount() - deadline_ms) < 0) {
+    if (out.saw_key_a_down && out.saw_key_a_up && out.saw_mouse_move && out.saw_mouse_left_down &&
+        out.saw_mouse_left_up) {
+      out.ok = true;
+      break;
+    }
+
+    const DWORD now = GetTickCount();
+    const int32_t diff = static_cast<int32_t>(deadline_ms - now);
+    const DWORD timeout = diff > 0 ? static_cast<DWORD>(diff) : 0;
+
+    HANDLE evs[2] = {kbd.ev, mouse.ev};
+    const DWORD wait = WaitForMultipleObjects(2, evs, FALSE, timeout);
+    if (wait == WAIT_TIMEOUT) break;
+    if (wait == WAIT_FAILED) {
+      out.reason = "wait_failed";
+      out.win32_error = GetLastError();
+      break;
+    }
+
+    const int which = static_cast<int>(wait - WAIT_OBJECT_0);
+    HidOverlappedReader* reader = (which == 0) ? &kbd : &mouse;
+
+    DWORD n = 0;
+    if (!reader->FinishRead(n)) {
+      out.reason = (which == 0) ? "read_keyboard_failed" : "read_mouse_failed";
+      out.win32_error = reader->last_error;
+      break;
+    }
+
+    if (which == 0) {
+      out.keyboard_reports++;
+      ProcessKeyboardReport(out, reader->buf.data(), n);
+    } else {
+      out.mouse_reports++;
+      ProcessMouseReport(out, reader->buf.data(), n);
+    }
+
+    if (!reader->StartRead()) {
+      out.reason = (which == 0) ? "read_keyboard_failed" : "read_mouse_failed";
+      out.win32_error = reader->last_error;
+      break;
+    }
+  }
+
+  kbd.CancelAndClose();
+  mouse.CancelAndClose();
+
+  if (out.ok) return out;
+
+  if (out.reason.empty()) {
+    out.reason = "timeout";
+  }
+  return out;
+}
+
 struct VirtioNetAdapter {
   std::wstring instance_id;   // e.g. "{GUID}"
   std::wstring friendly_name; // optional
@@ -5311,6 +5660,31 @@ int wmain(int argc, wchar_t** argv) {
            input.ambiguous_devices, input.unknown_devices, input.keyboard_collections, input.mouse_collections,
            input.reason.empty() ? "-" : input.reason.c_str());
   all_ok = all_ok && input.ok;
+
+  // virtio-input end-to-end event delivery:
+  //
+  // This test reads HID input reports directly from the virtio-input HID minidriver and matches
+  // deterministic host-injected input events (keyboard + mouse). The host harness enables injection
+  // via QMP `input-send-event` and can optionally enforce this marker.
+  //
+  // The marker is emitted unconditionally, but does NOT affect the overall selftest RESULT marker by
+  // default (so existing harness runs that do not perform QMP injection remain unchanged).
+  const auto input_events = VirtioInputEventsTest(log);
+  if (input_events.ok) {
+    log.Logf(
+        "AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|PASS|kbd_reports=%d|mouse_reports=%d|kbd_a_down=%d|kbd_a_up=%d|mouse_move=%d|mouse_left_down=%d|mouse_left_up=%d",
+        input_events.keyboard_reports, input_events.mouse_reports, input_events.saw_key_a_down ? 1 : 0,
+        input_events.saw_key_a_up ? 1 : 0, input_events.saw_mouse_move ? 1 : 0,
+        input_events.saw_mouse_left_down ? 1 : 0, input_events.saw_mouse_left_up ? 1 : 0);
+  } else {
+    log.Logf(
+        "AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|FAIL|reason=%s|err=%lu|kbd_reports=%d|mouse_reports=%d|kbd_a_down=%d|kbd_a_up=%d|mouse_move=%d|mouse_left_down=%d|mouse_left_up=%d",
+        input_events.reason.empty() ? "unknown" : input_events.reason.c_str(),
+        static_cast<unsigned long>(input_events.win32_error), input_events.keyboard_reports,
+        input_events.mouse_reports, input_events.saw_key_a_down ? 1 : 0, input_events.saw_key_a_up ? 1 : 0,
+        input_events.saw_mouse_move ? 1 : 0, input_events.saw_mouse_left_down ? 1 : 0,
+        input_events.saw_mouse_left_up ? 1 : 0);
+  }
   // virtio-snd:
   //
   // The host harness can optionally attach a virtio-snd PCI function. When the device is present,

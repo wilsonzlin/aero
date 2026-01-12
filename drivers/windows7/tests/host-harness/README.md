@@ -52,6 +52,44 @@ pwsh ./drivers/windows7/tests/host-harness/Invoke-AeroVirtioWin7Tests.ps1 `
   -TimeoutSeconds 600
 ```
 
+### virtio-input (end-to-end event delivery)
+
+The base guest selftest validates virtio-input by enumerating HID devices and sanity-checking the report descriptors.
+To deterministically prove that **real virtio-input events** flow through the driver stack, enable the optional
+virtio-input event injection path:
+
+- PowerShell: `-WithVirtioInputEvents`
+- Python: `--with-virtio-input-events`
+
+When enabled, the harness:
+
+1. Waits for the guest readiness marker: `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|READY`
+2. Injects a small input sequence via QMP `input-send-event`:
+   - keyboard: `'a'` press + release
+   - mouse: relative move + left click
+3. Requires the guest marker `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|PASS`
+
+PowerShell example:
+
+```powershell
+pwsh ./drivers/windows7/tests/host-harness/Invoke-AeroVirtioWin7Tests.ps1 `
+  -QemuSystem qemu-system-x86_64 `
+  -DiskImagePath ./win7-aero-tests.qcow2 `
+  -WithVirtioInputEvents `
+  -TimeoutSeconds 600
+```
+
+Python example:
+
+```bash
+python3 drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py \
+  --qemu-system qemu-system-x86_64 \
+  --disk-image ./win7-aero-tests.qcow2 \
+  --with-virtio-input-events \
+  --timeout-seconds 600 \
+  --snapshot
+```
+
 ### virtio-snd (audio)
 
 If your test image includes the virtio-snd driver, you can ask the harness to attach a virtio-snd PCI device:
@@ -255,6 +293,7 @@ only if you explicitly want the base image to be mutated.
   - When `RESULT|PASS` is seen, the harness also requires that the guest emitted per-test markers for:
     - `AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS`
     - `AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS`
+    - `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|PASS` when `-WithVirtioInputEvents` / `--with-virtio-input-events` is enabled
     - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS` or `...|SKIP` (if `-WithVirtioSnd` / `--with-virtio-snd` is set, it must be `PASS`)
     - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|PASS` or `...|SKIP` (if `-WithVirtioSnd` / `--with-virtio-snd` is set, it must be `PASS`)
     - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|PASS` or `...|SKIP` (if `-WithVirtioSnd` / `--with-virtio-snd` is set, it must be `PASS`)

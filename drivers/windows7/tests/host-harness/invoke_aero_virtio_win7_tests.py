@@ -237,6 +237,150 @@ def _try_qmp_quit(endpoint: _QmpEndpoint, *, timeout_seconds: float = 2.0) -> bo
             time.sleep(0.1)
 
 
+# Stable QOM `id=` values for virtio-input devices so QMP can target them explicitly (rather than
+# relying on whatever default input routing the QEMU machine config uses, which may hit PS/2).
+_VIRTIO_INPUT_QMP_KEYBOARD_ID = "aero_virtio_kbd0"
+_VIRTIO_INPUT_QMP_MOUSE_ID = "aero_virtio_mouse0"
+
+
+def _qmp_read_response(sock: socket.socket, *, timeout_seconds: float = 2.0) -> dict[str, object]:
+    """
+    Read QMP messages until we see a command response (`{"return":...}` or `{"error":...}`).
+
+    QMP may interleave asynchronous event notifications; these are ignored for the purpose of simple
+    request/response helpers.
+    """
+    while True:
+        msg = _qmp_read_json(sock, timeout_seconds=timeout_seconds)
+        if "return" in msg or "error" in msg:
+            return msg
+
+
+def _qmp_send_command(sock: socket.socket, cmd: dict[str, object]) -> dict[str, object]:
+    sock.sendall(json.dumps(cmd, separators=(",", ":")).encode("utf-8") + b"\n")
+    resp = _qmp_read_response(sock, timeout_seconds=2.0)
+    if "error" in resp:
+        raise RuntimeError(f"QMP command failed: {resp}")
+    return resp
+
+
+def _qmp_connect(endpoint: _QmpEndpoint, *, timeout_seconds: float = 5.0) -> socket.socket:
+    if endpoint.tcp_port is None and endpoint.unix_socket is None:
+        raise RuntimeError("invalid QMP endpoint (no tcp_port/unix_socket)")
+
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        if endpoint.unix_socket is not None and not endpoint.unix_socket.exists():
+            if time.monotonic() >= deadline:
+                raise RuntimeError("timed out waiting for QMP unix socket")
+            time.sleep(0.05)
+            continue
+
+        try:
+            if endpoint.unix_socket is not None:
+                s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                s.settimeout(2.0)
+                s.connect(str(endpoint.unix_socket))
+            else:
+                host = endpoint.tcp_host or "127.0.0.1"
+                port = endpoint.tcp_port
+                if port is None:
+                    raise RuntimeError("invalid QMP endpoint (missing tcp_port)")
+                s = socket.create_connection((host, port), timeout=2.0)
+
+            # Greeting.
+            _qmp_read_json(s, timeout_seconds=2.0)
+            _qmp_send_command(s, {"execute": "qmp_capabilities"})
+            return s
+        except Exception:
+            try:
+                s.close()  # type: ignore[misc]
+            except Exception:
+                pass
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(0.05)
+
+
+def _qmp_key_event(qcode: str, *, down: bool) -> dict[str, object]:
+    return {
+        "type": "key",
+        "data": {"down": down, "key": {"type": "qcode", "data": qcode}},
+    }
+
+
+def _qmp_btn_event(button: str, *, down: bool) -> dict[str, object]:
+    return {"type": "btn", "data": {"down": down, "button": button}}
+
+
+def _qmp_rel_event(axis: str, value: int) -> dict[str, object]:
+    return {"type": "rel", "data": {"axis": axis, "value": value}}
+
+
+def _qmp_input_send_event_cmd(
+    events: list[dict[str, object]], *, device: Optional[str] = None
+) -> dict[str, object]:
+    args: dict[str, object] = {"events": events}
+    if device is not None:
+        args["device"] = device
+    return {"execute": "input-send-event", "arguments": args}
+
+
+def _try_qmp_input_inject_virtio_input_events(endpoint: _QmpEndpoint) -> None:
+    """
+    Inject a small, deterministic keyboard + mouse sequence via QMP.
+
+    Guest-side verification lives in `aero-virtio-selftest.exe` under the marker:
+      AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|...
+    """
+    with _qmp_connect(endpoint, timeout_seconds=5.0) as s:
+        # Keyboard: 'a' press + release.
+        _qmp_send_command(
+            s,
+            _qmp_input_send_event_cmd(
+                [_qmp_key_event("a", down=True)],
+                device=_VIRTIO_INPUT_QMP_KEYBOARD_ID,
+            ),
+        )
+        time.sleep(0.05)
+        _qmp_send_command(
+            s,
+            _qmp_input_send_event_cmd(
+                [_qmp_key_event("a", down=False)],
+                device=_VIRTIO_INPUT_QMP_KEYBOARD_ID,
+            ),
+        )
+
+        # Mouse: small movement then left click.
+        time.sleep(0.05)
+        _qmp_send_command(
+            s,
+            _qmp_input_send_event_cmd(
+                [
+                    _qmp_rel_event("x", 10),
+                    _qmp_rel_event("y", 5),
+                ],
+                device=_VIRTIO_INPUT_QMP_MOUSE_ID,
+            ),
+        )
+        time.sleep(0.05)
+        _qmp_send_command(
+            s,
+            _qmp_input_send_event_cmd(
+                [_qmp_btn_event("left", down=True)],
+                device=_VIRTIO_INPUT_QMP_MOUSE_ID,
+            ),
+        )
+        time.sleep(0.05)
+        _qmp_send_command(
+            s,
+            _qmp_input_send_event_cmd(
+                [_qmp_btn_event("left", down=False)],
+                device=_VIRTIO_INPUT_QMP_MOUSE_ID,
+            ),
+        )
+
+
 def _find_free_tcp_port() -> Optional[int]:
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -520,6 +664,16 @@ def main() -> int:
         help="RMS threshold for --virtio-snd-verify-wav in 16-bit PCM units (default: 50)",
     )
     parser.add_argument(
+        "--with-virtio-input-events",
+        "--enable-virtio-input-events",
+        dest="enable_virtio_input_events",
+        action="store_true",
+        help=(
+            "Inject deterministic virtio-input keyboard/mouse events via QMP (input-send-event) and require the guest "
+            "virtio-input-events selftest marker to PASS."
+        ),
+    )
+    parser.add_argument(
         "--follow-serial",
         action="store_true",
         help="Stream newly captured COM1 serial output to stdout while waiting",
@@ -572,11 +726,14 @@ def main() -> int:
     except FileNotFoundError:
         pass
 
-    # QMP endpoint used to request a graceful shutdown (so the wav audiodev can flush/finalize).
+    # QMP endpoint used to:
+    # - request a graceful shutdown (so the wav audiodev can flush/finalize)
+    # - optionally inject virtio-input events (keyboard + mouse) via `input-send-event`
     #
-    # Only enable QMP when we actually need a graceful exit for `-audiodev wav` output, so we
-    # don't introduce extra host port/socket dependencies in non-audio harness runs.
-    use_qmp = args.enable_virtio_snd and args.virtio_snd_audio_backend == "wav"
+    # Historically we enabled QMP only when we needed a graceful exit for `-audiodev wav` output, so we
+    # wouldn't introduce extra host port/socket dependencies in non-audio harness runs. Input injection
+    # also requires QMP, but remains opt-in via --with-virtio-input-events.
+    use_qmp = (args.enable_virtio_snd and args.virtio_snd_audio_backend == "wav") or args.enable_virtio_input_events
     qmp_endpoint: Optional[_QmpEndpoint] = None
     qmp_socket: Optional[Path] = None
     if use_qmp:
@@ -599,12 +756,24 @@ def main() -> int:
         if qmp_endpoint is None:
             port = _find_free_tcp_port()
             if port is None:
+                if args.enable_virtio_input_events:
+                    print(
+                        "ERROR: --with-virtio-input-events requires QMP, but a free TCP port could not be allocated",
+                        file=sys.stderr,
+                    )
+                    return 2
                 print(
                     "WARNING: disabling QMP shutdown because a free TCP port could not be allocated",
                     file=sys.stderr,
                 )
             else:
                 qmp_endpoint = _QmpEndpoint(tcp_host="127.0.0.1", tcp_port=port)
+    if args.enable_virtio_input_events and qmp_endpoint is None:
+        print(
+            "ERROR: --with-virtio-input-events requires QMP, but a QMP endpoint could not be allocated",
+            file=sys.stderr,
+        )
+        return 2
 
     http_log_path: Optional[Path] = None
     if args.http_log:
@@ -651,9 +820,9 @@ def main() -> int:
             ):
                 virtio_input_args = [
                     "-device",
-                    "virtio-keyboard-pci",
+                    f"virtio-keyboard-pci,id={_VIRTIO_INPUT_QMP_KEYBOARD_ID}",
                     "-device",
-                    "virtio-mouse-pci",
+                    f"virtio-mouse-pci,id={_VIRTIO_INPUT_QMP_MOUSE_ID}",
                 ]
             else:
                 print(
@@ -730,8 +899,12 @@ def main() -> int:
 
             virtio_net = f"virtio-net-pci,netdev=net0,disable-legacy=on,x-pci-revision={aero_pci_rev}"
             virtio_blk = f"virtio-blk-pci,drive={drive_id},disable-legacy=on,x-pci-revision={aero_pci_rev}"
-            virtio_kbd = f"virtio-keyboard-pci,disable-legacy=on,x-pci-revision={aero_pci_rev}"
-            virtio_mouse = f"virtio-mouse-pci,disable-legacy=on,x-pci-revision={aero_pci_rev}"
+            virtio_kbd = (
+                f"virtio-keyboard-pci,id={_VIRTIO_INPUT_QMP_KEYBOARD_ID},disable-legacy=on,x-pci-revision={aero_pci_rev}"
+            )
+            virtio_mouse = (
+                f"virtio-mouse-pci,id={_VIRTIO_INPUT_QMP_MOUSE_ID},disable-legacy=on,x-pci-revision={aero_pci_rev}"
+            )
 
             virtio_snd_args: list[str] = []
             if args.enable_virtio_snd:
@@ -803,6 +976,10 @@ def main() -> int:
             saw_virtio_blk_fail = False
             saw_virtio_input_pass = False
             saw_virtio_input_fail = False
+            saw_virtio_input_events_ready = False
+            saw_virtio_input_events_pass = False
+            saw_virtio_input_events_fail = False
+            injected_virtio_input_events = False
             saw_virtio_snd_pass = False
             saw_virtio_snd_skip = False
             saw_virtio_snd_fail = False
@@ -836,6 +1013,46 @@ def main() -> int:
                         saw_virtio_input_pass = True
                     if not saw_virtio_input_fail and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input|FAIL" in tail:
                         saw_virtio_input_fail = True
+                    if (
+                        not saw_virtio_input_events_ready
+                        and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|READY" in tail
+                    ):
+                        saw_virtio_input_events_ready = True
+                    if (
+                        not saw_virtio_input_events_pass
+                        and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|PASS" in tail
+                    ):
+                        saw_virtio_input_events_pass = True
+                    if (
+                        not saw_virtio_input_events_fail
+                        and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|FAIL" in tail
+                    ):
+                        saw_virtio_input_events_fail = True
+
+                    if (
+                        args.enable_virtio_input_events
+                        and saw_virtio_input_events_ready
+                        and not injected_virtio_input_events
+                    ):
+                        injected_virtio_input_events = True
+                        if qmp_endpoint is None:
+                            print(
+                                "FAIL: --with-virtio-input-events enabled but QMP endpoint is unavailable",
+                                file=sys.stderr,
+                            )
+                            _print_tail(serial_log)
+                            result_code = 1
+                            break
+                        try:
+                            _try_qmp_input_inject_virtio_input_events(qmp_endpoint)
+                        except Exception as e:
+                            print(
+                                f"FAIL: failed to inject virtio-input events via QMP: {e}",
+                                file=sys.stderr,
+                            )
+                            _print_tail(serial_log)
+                            result_code = 1
+                            break
                     if not saw_virtio_snd_pass and b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS" in tail:
                         saw_virtio_snd_pass = True
                     if not saw_virtio_snd_skip and b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP" in tail:
@@ -1082,7 +1299,24 @@ def main() -> int:
                                         "FAIL: selftest RESULT=PASS but did not emit virtio-snd-duplex test marker "
                                         "while --with-virtio-snd was enabled"
                                     )
-                                print(msg, file=sys.stderr)
+                                    print(msg, file=sys.stderr)
+                                    _print_tail(serial_log)
+                                    result_code = 1
+                                    break
+                        if args.enable_virtio_input_events:
+                            if saw_virtio_input_events_fail:
+                                print(
+                                    "FAIL: selftest RESULT=PASS but virtio-input-events test reported FAIL",
+                                    file=sys.stderr,
+                                )
+                                _print_tail(serial_log)
+                                result_code = 1
+                                break
+                            if not saw_virtio_input_events_pass:
+                                print(
+                                    "FAIL: virtio-input-events test did not PASS while --with-virtio-input-events was enabled",
+                                    file=sys.stderr,
+                                )
                                 _print_tail(serial_log)
                                 result_code = 1
                                 break
@@ -1108,6 +1342,21 @@ def main() -> int:
                             saw_virtio_input_pass = True
                         if not saw_virtio_input_fail and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input|FAIL" in tail:
                             saw_virtio_input_fail = True
+                        if (
+                            not saw_virtio_input_events_ready
+                            and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|READY" in tail
+                        ):
+                            saw_virtio_input_events_ready = True
+                        if (
+                            not saw_virtio_input_events_pass
+                            and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|PASS" in tail
+                        ):
+                            saw_virtio_input_events_pass = True
+                        if (
+                            not saw_virtio_input_events_fail
+                            and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|FAIL" in tail
+                        ):
+                            saw_virtio_input_events_fail = True
                         if not saw_virtio_snd_pass and b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS" in tail:
                             saw_virtio_snd_pass = True
                         if not saw_virtio_snd_skip and b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP" in tail:
@@ -1346,6 +1595,23 @@ def main() -> int:
                                             "while --with-virtio-snd was enabled"
                                         )
                                     print(msg, file=sys.stderr)
+                                    _print_tail(serial_log)
+                                    result_code = 1
+                                    break
+                            if args.enable_virtio_input_events:
+                                if saw_virtio_input_events_fail:
+                                    print(
+                                        "FAIL: selftest RESULT=PASS but virtio-input-events test reported FAIL",
+                                        file=sys.stderr,
+                                    )
+                                    _print_tail(serial_log)
+                                    result_code = 1
+                                    break
+                                if not saw_virtio_input_events_pass:
+                                    print(
+                                        "FAIL: virtio-input-events test did not PASS while --with-virtio-input-events was enabled",
+                                        file=sys.stderr,
+                                    )
                                     _print_tail(serial_log)
                                     result_code = 1
                                     break
