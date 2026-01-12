@@ -9,6 +9,11 @@ Aero supports **streaming 20GB+ disk images** into the browser without downloadi
 - A **CDN** (CloudFront is the primary reference) sits in front of the object store to cache hot ranges and reduce origin load.
 - Downloaded ranges are persisted locally (OPFS) so repeated reads stop hitting the network.
 
+Implementation note: in Rust, the streaming-disk implementation and cache traits live under
+`crates/aero-storage` (e.g. `aero_storage::StreamingDisk` / `aero_storage::streaming::ChunkStore`).
+For the repo-wide canonical disk/backend trait mapping, see
+[`20-storage-trait-consolidation.md`](./20-storage-trait-consolidation.md).
+
 This document defines the **production contract** for the `remote_url` used by `StreamingDisk` and provides deployment guidance (caching, CORS, security).
 
 For the normative auth + CORS + COOP/COEP behavior of the disk bytes endpoint, see: [Disk Image Streaming (HTTP Range + Auth + COOP/COEP)](./16-disk-image-streaming-auth.md).
