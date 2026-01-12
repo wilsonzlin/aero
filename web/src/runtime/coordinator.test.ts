@@ -103,6 +103,54 @@ describe("runtime/coordinator", () => {
     ).toThrow(/SyncAccessHandle/i);
   });
 
+  it("stops and emits a fatal event when switching into VM mode via updateConfig without OPFS SyncAccessHandle", () => {
+    const coordinator = new WorkerCoordinator();
+
+    const baseConfig = {
+      guestMemoryMiB: 1,
+      enableWorkers: true,
+      enableWebGPU: false,
+      proxyUrl: null,
+      activeDiskImage: null,
+      logLevel: "info" as const,
+    };
+    const platformFeatures = {
+      crossOriginIsolated: true,
+      sharedArrayBuffer: true,
+      wasmSimd: true,
+      wasmThreads: true,
+      webgpu: true,
+      webusb: false,
+      webhid: false,
+      webgl2: true,
+      opfs: true,
+      opfsSyncAccessHandle: false,
+      audioWorklet: true,
+      offscreenCanvas: true,
+      jit_dynamic_wasm: true,
+    };
+
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 1 });
+    const shared = createSharedMemoryViews(segments);
+    // Manually wire up a running coordinator without invoking `start()` so this
+    // unit test stays lightweight (no WASM precompile attempts).
+    (coordinator as any).shared = shared;
+    (coordinator as any).platformFeatures = platformFeatures;
+    (coordinator as any).activeConfig = baseConfig;
+    (coordinator as any).vmState = "running";
+    (coordinator as any).spawnWorker("cpu", segments);
+    (coordinator as any).spawnWorker("io", segments);
+
+    coordinator.updateConfig({ ...baseConfig, activeDiskImage: "disk.img" });
+
+    expect(coordinator.getVmState()).toBe("failed");
+    expect(coordinator.getLastFatalEvent()?.message).toMatch(/SyncAccessHandle/i);
+
+    const statuses = coordinator.getWorkerStatuses();
+    expect(statuses.cpu.state).toBe("stopped");
+    expect(statuses.io.state).toBe("stopped");
+  });
+
   it("forwards audio/mic rings to CPU only in demo mode by default (SPSC)", () => {
     const coordinator = new WorkerCoordinator();
     const segments = allocateSharedMemorySegments({ guestRamMiB: 1 });

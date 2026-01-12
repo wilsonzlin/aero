@@ -471,6 +471,28 @@ export class WorkerCoordinator {
     }
     this.activeConfig = config;
 
+    // It is possible for callers to start the coordinator in demo mode (no disk) and
+    // then later toggle into VM mode via `updateConfig` (for example, if the static
+    // config file loads after workers have already been started).
+    //
+    // VM mode requires OPFS SyncAccessHandle; do not allow an implicit fallback to
+    // async backends (e.g. IndexedDB) for the synchronous Rust disk/controller path.
+    if (config.activeDiskImage !== null && config.enableWorkers) {
+      const features = this.platformFeatures ?? detectPlatformFeatures();
+      this.platformFeatures = features;
+      if (!features.opfsSyncAccessHandle) {
+        const message =
+          "Cannot start VM with a disk image: OPFS SyncAccessHandle (FileSystemFileHandle.createSyncAccessHandle) is unavailable. Aero's boot-critical Rust AHCI/IDE controller path requires synchronous disk I/O; IndexedDB cannot be used as a drop-in fallback. Use a Chromium-based browser with SyncAccessHandle support, or run the demo mode without a disk image.";
+        if (this.shared) {
+          this.recordFatal({ kind: "start_failed", message, atMs: nowMs() });
+          this.cancelPendingRestarts();
+          this.stopWorkersInternal({ clearShared: true });
+          this.setVmState("failed", "opfs_sync_access_handle_required");
+        }
+        return;
+      }
+    }
+
     if (!this.shared) {
       return;
     }
