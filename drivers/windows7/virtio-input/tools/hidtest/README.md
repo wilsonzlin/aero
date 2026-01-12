@@ -98,6 +98,9 @@ hidtest.exe --keyboard --ioctl-bad-xfer-packet
 hidtest.exe --keyboard --ioctl-bad-write-report
 hidtest.exe --keyboard --ioctl-bad-set-output-xfer-packet
 hidtest.exe --keyboard --ioctl-bad-set-output-report
+hidtest.exe --keyboard --ioctl-bad-get-report-descriptor
+hidtest.exe --keyboard --ioctl-bad-get-device-descriptor
+hidtest.exe --keyboard --ioctl-bad-get-string
 ```
 
 Negative test (invalid `HidD_SetOutputReport` buffer pointer; should fail cleanly without crashing the guest):

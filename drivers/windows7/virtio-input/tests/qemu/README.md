@@ -245,6 +245,9 @@ Copy `hidtest.exe` into the guest and run it from an elevated Command Prompt.
    hidtest.exe --keyboard --ioctl-bad-write-report
    hidtest.exe --keyboard --ioctl-bad-set-output-xfer-packet
    hidtest.exe --keyboard --ioctl-bad-set-output-report
+   hidtest.exe --keyboard --ioctl-bad-get-report-descriptor
+   hidtest.exe --keyboard --ioctl-bad-get-device-descriptor
+   hidtest.exe --keyboard --ioctl-bad-get-string
    hidtest.exe --keyboard --hidd-bad-set-output-report
    ```
 
