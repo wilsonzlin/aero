@@ -10,7 +10,7 @@ Higher-level orchestration such as remote HTTP streaming/caching and UI integrat
 still live in the TypeScript host layer.
 
 Note: IndexedDB-based storage is generally async and is not currently exposed as a sync
-`aero_storage::StorageBackend`.
+`aero_storage::StorageBackend`. The async IndexedDB block store lives in `crates/st-idb`.
 
 ## Supported disk image formats
 

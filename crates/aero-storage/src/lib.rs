@@ -38,7 +38,8 @@
 //! (native-only) HTTP Range streaming helper.
 //!
 //! Note: IndexedDB-based storage is generally async and is not currently exposed as a
-//! synchronous [`StorageBackend`] in this crate.
+//! synchronous [`StorageBackend`] in this crate. The async IndexedDB block store lives in
+//! `crates/st-idb`.
 
 mod backend;
 mod cache;

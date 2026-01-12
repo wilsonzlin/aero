@@ -19,6 +19,8 @@ use crate::{DiskError, Result};
 /// safely in the *same* Worker thread. Supporting IndexedDB would require an explicit split
 /// (separate storage worker + RPC/serialization layer), which is currently out of scope.
 ///
+/// For host-layer IndexedDB storage/caching, see the async `st-idb` crate.
+///
 /// This trait also allows the pure Rust disk image formats to be unit-tested without any
 /// browser APIs.
 pub trait StorageBackend {
