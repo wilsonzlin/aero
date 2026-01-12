@@ -55,49 +55,121 @@ mod wasm {
     // Diagnostics exports (optional; polled by `web/src/workers/gpu-worker.ts`)
     // -------------------------------------------------------------------------
 
-    /// Returns a JSON string of the current GPU telemetry counters.
+    /// Returns a structured-cloneable object containing the current GPU telemetry counters.
     ///
-    /// This is intentionally non-panicking and returns a valid JSON object even
-    /// if the GPU has not been initialized.
+    /// This is intentionally non-panicking and returns a valid object even if the GPU has not
+    /// been initialized.
     #[wasm_bindgen]
-    pub fn get_gpu_stats() -> String {
-        gpu_stats().get_gpu_stats()
+    pub fn get_gpu_stats() -> JsValue {
+        let snapshot = gpu_stats().snapshot();
+        let obj = Object::new();
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("presents_attempted"),
+            &JsValue::from_f64(snapshot.presents_attempted as f64),
+        );
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("presents_succeeded"),
+            &JsValue::from_f64(snapshot.presents_succeeded as f64),
+        );
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("recoveries_attempted"),
+            &JsValue::from_f64(snapshot.recoveries_attempted as f64),
+        );
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("recoveries_succeeded"),
+            &JsValue::from_f64(snapshot.recoveries_succeeded as f64),
+        );
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("surface_reconfigures"),
+            &JsValue::from_f64(snapshot.surface_reconfigures as f64),
+        );
+        obj.into()
     }
 
     /// CamelCase alias for callers that probe `getGpuStats`.
     #[wasm_bindgen(js_name = getGpuStats)]
-    pub fn get_gpu_stats_alias() -> String {
+    pub fn get_gpu_stats_alias() -> JsValue {
         get_gpu_stats()
     }
 
     /// Drain-and-clear any queued GPU runtime error events.
     ///
-    /// Returns a JSON array string of events compatible with
+    /// Returns an array of events compatible with
     /// `GpuRuntimeErrorEvent` normalization in the browser GPU worker.
     #[wasm_bindgen]
-    pub fn drain_gpu_events() -> String {
+    pub fn drain_gpu_events() -> JsValue {
+        fn backend_kind_as_str(kind: GpuBackendKind) -> &'static str {
+            match kind {
+                GpuBackendKind::WebGpu => "webgpu",
+                GpuBackendKind::WebGl2 => "webgl2",
+            }
+        }
+
         let events = gpu_event_queue().drain();
-        events_to_json(&events)
+        let out = Array::new();
+        for ev in &events {
+            let obj = Object::new();
+            let _ = Reflect::set(
+                &obj,
+                &JsValue::from_str("time_ms"),
+                &JsValue::from_f64(ev.time_ms as f64),
+            );
+            let _ = Reflect::set(
+                &obj,
+                &JsValue::from_str("backend_kind"),
+                &JsValue::from_str(backend_kind_as_str(ev.backend_kind)),
+            );
+            let _ = Reflect::set(
+                &obj,
+                &JsValue::from_str("severity"),
+                &JsValue::from_str(ev.severity.as_str()),
+            );
+            let _ = Reflect::set(
+                &obj,
+                &JsValue::from_str("category"),
+                &JsValue::from_str(ev.category.as_str()),
+            );
+            let _ = Reflect::set(
+                &obj,
+                &JsValue::from_str("message"),
+                &JsValue::from_str(&ev.message),
+            );
+            if let Some(details) = &ev.details {
+                let details_obj = Object::new();
+                for (k, v) in details {
+                    let _ =
+                        Reflect::set(&details_obj, &JsValue::from_str(k), &JsValue::from_str(v));
+                }
+                let _ = Reflect::set(&obj, &JsValue::from_str("details"), &details_obj.into());
+            }
+            out.push(&obj);
+        }
+        out.into()
     }
 
     // Additional aliases probed by the worker.
     #[wasm_bindgen]
-    pub fn drain_gpu_error_events() -> String {
+    pub fn drain_gpu_error_events() -> JsValue {
         drain_gpu_events()
     }
 
     #[wasm_bindgen]
-    pub fn take_gpu_events() -> String {
+    pub fn take_gpu_events() -> JsValue {
         drain_gpu_events()
     }
 
     #[wasm_bindgen]
-    pub fn take_gpu_error_events() -> String {
+    pub fn take_gpu_error_events() -> JsValue {
         drain_gpu_events()
     }
 
     #[wasm_bindgen(js_name = drainGpuEvents)]
-    pub fn drain_gpu_events_alias() -> String {
+    pub fn drain_gpu_events_alias() -> JsValue {
         drain_gpu_events()
     }
 
@@ -121,21 +193,8 @@ mod wasm {
         gpu_event_queue().push(event);
     }
 
-    fn events_to_json(events: &[GpuErrorEvent]) -> String {
-        if events.is_empty() {
-            return "[]".to_string();
-        }
-        let mut json = String::new();
-        json.push('[');
-        for (i, ev) in events.iter().enumerate() {
-            if i > 0 {
-                json.push(',');
-            }
-            json.push_str(&ev.to_json());
-        }
-        json.push(']');
-        json
-    }
+    // Note: events are forwarded as JS objects/arrays. The browser GPU worker accepts either
+    // JSON strings or objects, but objects avoid an extra JSON parse and are structured-cloneable.
 
     #[derive(Clone)]
     struct JsGuestMemory {
