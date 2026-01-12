@@ -15,6 +15,7 @@ use aero_devices::pic8259::register_pic8259_on_platform_interrupts;
 use aero_devices::pit8254::{register_pit8254, Pit8254, SharedPit8254};
 use aero_devices::reset_ctrl::{ResetCtrl, ResetKind, RESET_CTRL_PORT};
 use aero_devices::rtc_cmos::{register_rtc_cmos, RtcCmos, SharedRtcCmos};
+use aero_devices::usb::uhci::UhciPciDevice;
 use aero_devices::{hpet, i8042};
 use aero_devices_storage::ata::AtaDrive;
 use aero_devices_storage::atapi::AtapiCdrom;
@@ -60,6 +61,7 @@ pub struct PcPlatformConfig {
     pub enable_ide: bool,
     pub enable_e1000: bool,
     pub mac_addr: Option<[u8; 6]>,
+    pub enable_uhci: bool,
 }
 
 impl Default for PcPlatformConfig {
@@ -72,6 +74,9 @@ impl Default for PcPlatformConfig {
             enable_ide: false,
             enable_e1000: false,
             mac_addr: None,
+            // USB is a core piece of the canonical PC platform; enable UHCI by default so guests
+            // can discover a basic USB 1.1 controller without opting in to extra devices.
+            enable_uhci: true,
         }
     }
 }
@@ -209,6 +214,27 @@ impl PciDevice for IdePciConfigDevice {
     }
 }
 
+struct UhciPciConfigDevice {
+    config: aero_devices::pci::PciConfigSpace,
+}
+
+impl UhciPciConfigDevice {
+    fn new() -> Self {
+        let config = aero_devices::pci::profile::USB_UHCI_PIIX3.build_config_space();
+        Self { config }
+    }
+}
+
+impl PciDevice for UhciPciConfigDevice {
+    fn config(&self) -> &aero_devices::pci::PciConfigSpace {
+        &self.config
+    }
+
+    fn config_mut(&mut self) -> &mut aero_devices::pci::PciConfigSpace {
+        &mut self.config
+    }
+}
+
 #[derive(Clone)]
 struct PcIdePort {
     pci_cfg: SharedPciConfigPorts,
@@ -301,6 +327,46 @@ impl PortIoDevice for PcIdeBusMasterBar {
         let base = { self.ide.borrow().bus_master_base() };
         let abs_port = base.wrapping_add(port);
         self.ide.borrow_mut().io_write(abs_port, size, value);
+    }
+}
+
+/// UHCI (BAR4) handler registered via the platform's `PciIoWindow`.
+///
+/// The `port` argument is interpreted as the device-relative offset within BAR4.
+#[derive(Clone)]
+struct PcUhciIoBar {
+    uhci: Rc<RefCell<UhciPciDevice>>,
+}
+
+impl PcUhciIoBar {
+    fn read_all_ones(size: u8) -> u32 {
+        match size {
+            1 => 0xFF,
+            2 => 0xFFFF,
+            4 => 0xFFFF_FFFF,
+            _ => 0xFFFF_FFFF,
+        }
+    }
+}
+
+impl PortIoDevice for PcUhciIoBar {
+    fn read(&mut self, port: u16, size: u8) -> u32 {
+        let size = match size {
+            1 | 2 | 4 => size as usize,
+            _ => return Self::read_all_ones(size),
+        };
+        self.uhci.borrow_mut().controller_mut().io_read(port, size)
+    }
+
+    fn write(&mut self, port: u16, size: u8, value: u32) {
+        let size = match size {
+            1 | 2 | 4 => size as usize,
+            _ => return,
+        };
+        self.uhci
+            .borrow_mut()
+            .controller_mut()
+            .io_write(port, size, value);
     }
 }
 
@@ -703,6 +769,7 @@ pub struct PcPlatform {
     pub ahci: Option<Rc<RefCell<AhciPciDevice>>>,
     pub ide: Option<Rc<RefCell<Piix3IdePciDevice>>>,
     pub e1000: Option<Rc<RefCell<E1000Device>>>,
+    pub uhci: Option<Rc<RefCell<UhciPciDevice>>>,
 
     pci_intx_sources: Vec<PciIntxSource>,
     pci_allocator: PciResourceAllocator,
@@ -713,6 +780,8 @@ pub struct PcPlatform {
     rtc: SharedRtcCmos<ManualClock, PlatformIrqLine>,
     hpet: Rc<RefCell<hpet::Hpet<ManualClock>>>,
     i8042: I8042Ports,
+
+    uhci_ns_remainder: u64,
 
     reset_events: Rc<RefCell<Vec<ResetEvent>>>,
 }
@@ -946,18 +1015,45 @@ impl PcPlatform {
             None
         };
 
+        // PIIX3 is a multi-function PCI device. Ensure function 0 exists and has the
+        // multi-function bit set so OSes enumerate the IDE/UHCI functions at 00:01.1/00:01.2.
+        if config.enable_ide || config.enable_uhci {
+            let bdf = aero_devices::pci::profile::ISA_PIIX3.bdf;
+            pci_cfg
+                .borrow_mut()
+                .bus_mut()
+                .add_device(bdf, Box::new(Piix3IsaPciConfigDevice::new()));
+        }
+
+        let uhci = if config.enable_uhci {
+            let profile = aero_devices::pci::profile::USB_UHCI_PIIX3;
+            let bdf = profile.bdf;
+
+            let uhci = Rc::new(RefCell::new(UhciPciDevice::default()));
+
+            {
+                let uhci_for_intx = uhci.clone();
+                pci_intx_sources.push(PciIntxSource {
+                    bdf,
+                    pin: PciInterruptPin::IntA,
+                    query_level: Box::new(move |_pc| uhci_for_intx.borrow().irq_level()),
+                });
+            }
+
+            let mut dev = UhciPciConfigDevice::new();
+            pci_intx.configure_device_intx(bdf, Some(PciInterruptPin::IntA), dev.config_mut());
+            pci_cfg
+                .borrow_mut()
+                .bus_mut()
+                .add_device(bdf, Box::new(dev));
+
+            Some(uhci)
+        } else {
+            None
+        };
+
         let ide = if config.enable_ide {
             let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
-
-            // PIIX3 is a multi-function PCI device. Ensure function 0 exists and has the
-            // multi-function bit set so OSes enumerate the IDE function at 00:01.1.
-            {
-                let bdf = aero_devices::pci::profile::ISA_PIIX3.bdf;
-                pci_cfg
-                    .borrow_mut()
-                    .bus_mut()
-                    .add_device(bdf, Box::new(Piix3IsaPciConfigDevice::new()));
-            }
 
             let profile = aero_devices::pci::profile::IDE_PIIX3;
             let bdf = profile.bdf;
@@ -1077,6 +1173,22 @@ impl PcPlatform {
             );
         }
 
+        // Register UHCI's relocatable BAR4 I/O region through the PCI I/O window dispatcher.
+        if let Some(uhci_dev) = uhci.as_ref() {
+            let bdf = aero_devices::pci::profile::USB_UHCI_PIIX3.bdf;
+            let bar = UhciPciDevice::IO_BAR_INDEX;
+            let prev = pci_io_bars.borrow_mut().insert(
+                (bdf, bar),
+                Box::new(PcUhciIoBar {
+                    uhci: uhci_dev.clone(),
+                }),
+            );
+            assert!(
+                prev.is_none(),
+                "duplicate UHCI BAR{bar} handler registration for {bdf:?}"
+            );
+        }
+
         // Register E1000 BAR1 I/O ports after BIOS POST has assigned an address.
         //
         // Limitation: BAR1 port handlers are registered once after BIOS POST. If the guest later
@@ -1192,6 +1304,7 @@ impl PcPlatform {
             ahci,
             ide,
             e1000,
+            uhci,
             pci_intx_sources,
             pci_allocator,
             pci_io_bars,
@@ -1200,6 +1313,7 @@ impl PcPlatform {
             rtc,
             hpet,
             i8042: i8042_ports,
+            uhci_ns_remainder: 0,
             reset_events,
         }
     }
@@ -1490,6 +1604,18 @@ impl PcPlatform {
             let mut hpet = self.hpet.borrow_mut();
             let mut interrupts = self.interrupts.borrow_mut();
             hpet.poll(&mut *interrupts);
+        }
+
+        if let Some(uhci) = self.uhci.as_ref() {
+            const NS_PER_MS: u64 = 1_000_000;
+            self.uhci_ns_remainder = self.uhci_ns_remainder.saturating_add(delta_ns);
+            let mut ticks = self.uhci_ns_remainder / NS_PER_MS;
+            self.uhci_ns_remainder %= NS_PER_MS;
+
+            while ticks != 0 {
+                uhci.borrow_mut().tick_1ms(&mut self.memory);
+                ticks -= 1;
+            }
         }
     }
 

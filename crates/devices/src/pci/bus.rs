@@ -78,6 +78,23 @@ impl PciBus {
             dev.reset();
         }
 
+        // Some devices may come with fixed BAR assignments that firmware should preserve (e.g.
+        // legacy compatible IDE controllers, or platform-chosen I/O BAR bases). Reserve any
+        // non-zero BAR ranges so newly allocated BARs do not overlap them if additional devices
+        // are added and POST is re-run.
+        for bdf in self.iter_device_addrs().collect::<Vec<_>>() {
+            let dev = self.devices.get_mut(&bdf).expect("device disappeared");
+            for bar_index in 0u8..6u8 {
+                let Some(range) = dev.config().bar_range(bar_index) else {
+                    continue;
+                };
+                if range.base == 0 {
+                    continue;
+                }
+                allocator.reserve_range(range);
+            }
+        }
+
         // Allocate BARs in deterministic order: ascending BDF then BAR index.
         for bdf in self.iter_device_addrs().collect::<Vec<_>>() {
             let dev = self.devices.get_mut(&bdf).expect("device disappeared");

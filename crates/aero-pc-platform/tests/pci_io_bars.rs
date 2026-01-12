@@ -25,6 +25,23 @@ fn write_cfg_u32(pc: &mut PcPlatform, bdf: PciBdf, offset: u8, value: u32) {
     pc.io.write(0xCFC, 4, value);
 }
 
+fn find_free_bdf(pc: &mut PcPlatform) -> PciBdf {
+    // Avoid low device numbers reserved for canonical chipset devices (PIIX3, AHCI, etc.).
+    for dev in 12u8..32 {
+        let bdf = PciBdf::new(0, dev, 0);
+        let present = pc
+            .pci_cfg
+            .borrow_mut()
+            .bus_mut()
+            .device_config(bdf)
+            .is_some();
+        if !present {
+            return bdf;
+        }
+    }
+    panic!("no free PCI BDF found for test device");
+}
+
 struct TestPciConfigDevice {
     cfg: PciConfigSpace,
 }
@@ -53,7 +70,7 @@ impl PortIoDevice for TestIoBar {
 #[test]
 fn pci_io_bar4_probe_returns_size_mask_and_relocation_updates_io_decode() {
     let mut pc = PcPlatform::new(2 * 1024 * 1024);
-    let bdf = PciBdf::new(0, 1, 0);
+    let bdf = find_free_bdf(&mut pc);
 
     // Add a PCI function that exposes a single 16-byte I/O BAR at BAR4.
     let mut cfg = PciConfigSpace::new(0x1234, 0x0001);
@@ -100,4 +117,3 @@ fn pci_io_bar4_probe_returns_size_mask_and_relocation_updates_io_decode() {
     assert_eq!(pc.io.read(old_base, 1), 0xFF);
     assert_eq!(pc.io.read(new_base, 1), 0);
 }
-
