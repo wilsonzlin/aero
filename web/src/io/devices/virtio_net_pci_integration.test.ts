@@ -352,9 +352,10 @@ describe("io/devices/virtio-net (pci bridge integration)", () => {
         expect(mmioReadU16(commonBase + 0x16n)).toBe(queueIndex);
 
         const max = mmioReadU16(commonBase + 0x18n);
-        expect(max).toBeGreaterThanOrEqual(256);
-        // Driver-selected queue size.
-        mmioWriteU16(commonBase + 0x18n, 256);
+        // Contract v1: virtio-net exposes fixed-size queues (256).
+        expect(max).toBe(256);
+        // Queue size is treated as read-only by the contract; writes must not change it.
+        mmioWriteU16(commonBase + 0x18n, 128);
         expect(mmioReadU16(commonBase + 0x18n)).toBe(256);
 
         mmioWriteU64(commonBase + 0x20n, BigInt(desc));
