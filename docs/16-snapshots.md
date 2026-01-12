@@ -186,7 +186,7 @@ For forward compatibility, the runtime also supports a fallback spelling for unk
 | `HPET` | `17` | `device.17` | High Precision Event Timer state |
 | `HDA` | `18` | `audio.hda` | HD Audio controller/runtime state |
 | `E1000` | `19` | `net.e1000` | Intel E1000 NIC device model state |
-| `NET_STACK` | `20` | `net.stack` | User-space network stack/backend state (DHCP/NAT/proxy bookkeeping) |
+| `NET_STACK` | `20` | `net.stack` | User-space network stack/backend state (DHCP/DNS cache + connection bookkeeping) |
 | `PLATFORM_INTERRUPTS` | `21` | `device.21` | Platform interrupt controller/routing state |
 
 #### USB (`DeviceId::USB`)
@@ -207,7 +207,7 @@ For the browser networking stack (e.g. tunnel/NAT state managed outside the gues
 - `DeviceState.data = aero-io-snapshot` TLV blob produced by the networking stack (inner `DEVICE_ID = NETS`)
 - `DeviceState.version` / `DeviceState.flags` mirror the inner device `SnapshotVersion (major, minor)`
 
-Restore note: `NET_STACK` snapshots capture *guest-visible* stack/backend bookkeeping (e.g. DHCP/NAT state and proxy bookkeeping) but **must not** attempt to bit-restore host resources. On restore, integrations should treat the following as reset and drop/recreate them:
+Restore note: `NET_STACK` snapshots capture *guest-visible* stack/backend bookkeeping (e.g. DHCP/DNS cache and connection bookkeeping) but **must not** attempt to bit-restore host resources. On restore, integrations should treat the following as reset and drop/recreate them:
 
 - Active TCP proxy connections (e.g. WebSocket `/tcp` / `/tcp-mux`)
 - L2 tunnel transports (WebSocket `/l2`, WebRTC `l2` DataChannels)
@@ -266,7 +266,6 @@ Restore notes (see also [`docs/06-audio-subsystem.md`](./06-audio-subsystem.md#s
 
 - The browser audio graph (`AudioContext` / `AudioWorkletNode`) is a host resource and is not captured in snapshots. On restore, host code must recreate/reattach the Web Audio pipeline.
 - Audio snapshots preserve **ring buffer indices** (guest-visible progress) but do not restore ring **contents**. The producer should clear the ring to silence on restore to avoid replaying stale samples.
-
 ### PCI core state (`aero-devices`)
 
 The PCI core in `crates/devices` snapshots only **guest-visible PCI-layer state** (not device-internal

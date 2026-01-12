@@ -309,7 +309,7 @@ In the VM snapshot file, networking is represented as two `DEVICES` entries:
 | Layer | Outer `DeviceId` | Web/WASM `kind` string | What it covers |
 |---|---|---|---|
 | NIC (E1000) | `DeviceId::E1000` (`19`) | `net.e1000` | Guest-visible NIC state: registers, descriptor rings, pending RX/TX bookkeeping. |
-| Net stack/backend | `DeviceId::NET_STACK` (`20`) | `net.stack` | User-space stack / NAT / DHCP state + proxy bookkeeping. |
+| Net stack/backend | `DeviceId::NET_STACK` (`20`) | `net.stack` | User-space stack / DHCP/DNS cache + proxy bookkeeping. |
 
 Device snapshot IDs and the stable `kind` strings used by the web runtime are listed in [`docs/16-snapshots.md`](./16-snapshots.md) (e.g. `net.e1000`, `net.stack`, and the forward-compatible `device.<id>` form).
 
@@ -326,10 +326,15 @@ Device snapshot IDs and the stable `kind` strings used by the web runtime are li
 
 #### Net stack (`net.stack`, Phase 0 / fallback)
 
-The in-browser `aero-net-stack` can snapshot/restore its internal bookkeeping (DHCP lease, DNS cache, NAT mappings, etc.), but it cannot bit-restore host-side proxy transports.
+The in-browser `aero-net-stack` snapshots only the minimal dynamic state required for reasonable resume semantics, but it cannot bit-restore host-side proxy transports.
 
 **Policy on restore:** **Drop.** On restore, all host-side proxy transports are treated as reset/closed.
 
+- **Restored (best-effort):** config-independent bookkeeping like the learned guest MAC, an “IP assigned” flag, next-id counters, and a bounded DNS cache.
+- **Dropped on restore (by design):**
+  - in-flight DNS resolutions (`pending_dns`)
+  - all active TCP connections (`tcp`)
+  These are dropped because the host transport (WebSocket/WebRTC/TCP) is not bit-restorable and preserving them would imply reconnection logic that cannot provide correct guest TCP semantics.
 - **Active TCP proxy connections are not bit-restorable.** Browser WebSocket objects cannot be serialized, and the proxy’s upstream sockets have independent state.
 - Guest TCP connections that were mid-flight will break (RST/timeout) and must be re-established by the guest/application.
 - UDP is connectionless; any in-flight datagrams may be dropped, but subsequent sends work once the stack is running again.
