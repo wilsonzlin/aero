@@ -45,6 +45,7 @@ mod aero_storage_adapter;
 pub use aero_storage_adapter::NvmeDiskFromAeroStorage;
 
 const PAGE_SIZE: usize = 4096;
+const PCI_COMMAND_MEM_ENABLE: u16 = 1 << 1;
 
 /// Errors returned by disk backends.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1470,11 +1471,33 @@ impl PciDevice for NvmePciDevice {
 
 impl MmioHandler for NvmePciDevice {
     fn read(&mut self, offset: u64, size: usize) -> u64 {
+        let size = size.clamp(1, 8);
+        if (self.config.command() & PCI_COMMAND_MEM_ENABLE) == 0 {
+            return all_ones(size);
+        }
         self.controller.mmio_read(offset, size)
     }
 
     fn write(&mut self, offset: u64, size: usize, value: u64) {
+        let size = size.clamp(1, 8);
+        if (self.config.command() & PCI_COMMAND_MEM_ENABLE) == 0 {
+            return;
+        }
         self.controller.mmio_write(offset, size, value)
+    }
+}
+
+fn all_ones(size: usize) -> u64 {
+    match size {
+        0 => 0,
+        1 => 0xff,
+        2 => 0xffff,
+        3 => 0x00ff_ffff,
+        4 => 0xffff_ffff,
+        5 => 0x0000_ffff_ffff,
+        6 => 0x00ff_ffff_ffff,
+        7 => 0x00ff_ffff_ffff_ffff,
+        _ => u64::MAX,
     }
 }
 

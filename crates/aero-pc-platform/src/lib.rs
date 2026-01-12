@@ -646,6 +646,44 @@ impl PciBarMmioHandler for PcAhciMmioBar {
     }
 }
 
+/// NVMe BAR0 handler registered via the platform's [`PciBarMmioRouter`].
+///
+/// The NVMe device model gates MMIO accesses on PCI COMMAND.MEM (bit 1). The PC platform maintains
+/// a separate canonical PCI config space (`PciConfigPorts`) for guest enumeration, so we must
+/// mirror the live PCI command register into the NVMe model before each MMIO access.
+struct PcNvmeMmioBar {
+    pci_cfg: SharedPciConfigPorts,
+    nvme: Rc<RefCell<NvmePciDevice>>,
+    bdf: PciBdf,
+}
+
+impl PcNvmeMmioBar {
+    fn sync_command(&self) {
+        let command = {
+            let mut pci_cfg = self.pci_cfg.borrow_mut();
+            pci_cfg
+                .bus_mut()
+                .device_config(self.bdf)
+                .map(|cfg| cfg.command())
+                .unwrap_or(0)
+        };
+
+        self.nvme.borrow_mut().config_mut().set_command(command);
+    }
+}
+
+impl PciBarMmioHandler for PcNvmeMmioBar {
+    fn read(&mut self, offset: u64, size: usize) -> u64 {
+        self.sync_command();
+        MmioHandler::read(&mut *self.nvme.borrow_mut(), offset, size)
+    }
+
+    fn write(&mut self, offset: u64, size: usize, value: u64) {
+        self.sync_command();
+        MmioHandler::write(&mut *self.nvme.borrow_mut(), offset, size, value);
+    }
+}
+
 struct VirtioPciBar0Mmio {
     dev: Rc<RefCell<VirtioPciDevice>>,
 }
@@ -1228,7 +1266,23 @@ impl PcPlatform {
                 pci_intx_sources.push(PciIntxSource {
                     bdf,
                     pin: PciInterruptPin::IntA,
-                    query_level: Box::new(move |_pc| nvme_for_intx.borrow().irq_level()),
+                    query_level: Box::new(move |pc| {
+                        let command = {
+                            let mut pci_cfg = pc.pci_cfg.borrow_mut();
+                            pci_cfg
+                                .bus_mut()
+                                .device_config(bdf)
+                                .map(|cfg| cfg.command())
+                                .unwrap_or(0)
+                        };
+
+                        // Keep device-side gating consistent when the same device model is also used
+                        // outside the platform (e.g. in unit tests).
+                        let mut nvme = nvme_for_intx.borrow_mut();
+                        nvme.config_mut().set_command(command);
+
+                        nvme.irq_level()
+                    }),
                 });
             }
 
@@ -1559,10 +1613,15 @@ impl PcPlatform {
             );
         }
         if let Some(nvme) = nvme.clone() {
-            pci_mmio_router.register_shared_handler(
-                aero_devices::pci::profile::NVME_CONTROLLER.bdf,
+            let bdf = aero_devices::pci::profile::NVME_CONTROLLER.bdf;
+            pci_mmio_router.register_handler(
+                bdf,
                 0,
-                nvme,
+                PcNvmeMmioBar {
+                    pci_cfg: pci_cfg.clone(),
+                    nvme,
+                    bdf,
+                },
             );
         }
         memory
@@ -1896,15 +1955,26 @@ impl PcPlatform {
             return;
         };
 
-        // Only allow the device to DMA when Bus Mastering is enabled (PCI command bit 2).
         let bdf = aero_devices::pci::profile::NVME_CONTROLLER.bdf;
-        let bus_master_enabled = {
+        let command = {
             let mut pci_cfg = self.pci_cfg.borrow_mut();
             pci_cfg
                 .bus_mut()
                 .device_config(bdf)
-                .is_some_and(|cfg| (cfg.command() & (1 << 2)) != 0)
+                .map(|cfg| cfg.command())
+                .unwrap_or(0)
         };
+
+        // Keep the device's internal view of the PCI command register in sync so it can apply
+        // COMMAND.MEM gating in its MMIO handler (and COMMAND.INTX_DISABLE gating for IRQ level) when
+        // used standalone.
+        {
+            let mut nvme = nvme.borrow_mut();
+            nvme.config_mut().set_command(command);
+        }
+
+        // Only allow the device to DMA when Bus Mastering is enabled (PCI command bit 2).
+        let bus_master_enabled = (command & (1 << 2)) != 0;
         if !bus_master_enabled {
             return;
         };
