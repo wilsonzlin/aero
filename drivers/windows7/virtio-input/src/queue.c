@@ -1,92 +1,5 @@
 #include "virtio_input.h"
 
-#ifdef IOCTL_HID_SET_NUM_DEVICE_INPUT_BUFFERS
-
-static NTSTATUS VirtioInputMapUserAddress(
-    _In_ PVOID UserAddress,
-    _In_ SIZE_T Length,
-    _In_ LOCK_OPERATION Operation,
-    _Outptr_ PMDL *MdlOut,
-    _Outptr_result_bytebuffer_(Length) PVOID *SystemAddressOut
-)
-{
-    PMDL mdl;
-    PVOID systemAddress;
-
-    if (UserAddress == NULL || Length == 0) {
-        return STATUS_INVALID_PARAMETER;
-    }
-
-    if (Length > (SIZE_T)MAXULONG) {
-        return STATUS_INVALID_PARAMETER;
-    }
-
-    mdl = IoAllocateMdl(UserAddress, (ULONG)Length, FALSE, FALSE, NULL);
-    if (mdl == NULL) {
-        return STATUS_INSUFFICIENT_RESOURCES;
-    }
-
-    __try {
-        MmProbeAndLockPages(mdl, UserMode, Operation);
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        IoFreeMdl(mdl);
-        return (NTSTATUS)GetExceptionCode();
-    }
-
-    systemAddress = MmGetSystemAddressForMdlSafe(mdl, NormalPagePriority);
-    if (systemAddress == NULL) {
-        MmUnlockPages(mdl);
-        IoFreeMdl(mdl);
-        return STATUS_INSUFFICIENT_RESOURCES;
-    }
-
-    *MdlOut = mdl;
-    *SystemAddressOut = systemAddress;
-    return STATUS_SUCCESS;
-}
-
-static NTSTATUS VirtioInputReadRequestInputUlong(_In_ WDFREQUEST Request, _Out_ ULONG *ValueOut)
-{
-    NTSTATUS status;
-    ULONG *userPtr;
-    size_t len;
-    KPROCESSOR_MODE requestorMode;
-
-    if (ValueOut == NULL) {
-        return STATUS_INVALID_PARAMETER;
-    }
-    *ValueOut = 0;
-
-    status = WdfRequestRetrieveInputBuffer(Request, sizeof(ULONG), (PVOID *)&userPtr, &len);
-    if (!NT_SUCCESS(status) || len < sizeof(ULONG)) {
-        return STATUS_INVALID_PARAMETER;
-    }
-
-    requestorMode = WdfRequestGetRequestorMode(Request);
-    if (requestorMode == UserMode) {
-        PMDL mdl;
-        ULONG *systemPtr;
-
-        mdl = NULL;
-        systemPtr = NULL;
-        status = VirtioInputMapUserAddress(userPtr, sizeof(ULONG), IoReadAccess, &mdl, (PVOID *)&systemPtr);
-        if (!NT_SUCCESS(status)) {
-            return status;
-        }
-
-        *ValueOut = *systemPtr;
-
-        MmUnlockPages(mdl);
-        IoFreeMdl(mdl);
-        return STATUS_SUCCESS;
-    }
-
-    *ValueOut = *userPtr;
-    return STATUS_SUCCESS;
-}
-
-#endif
-
 static VOID VioInputCountHidIoctl(_Inout_ PVIOINPUT_COUNTERS Counters, _In_ ULONG IoControlCode)
 {
     VioInputCounterInc(&Counters->IoctlTotal);
@@ -233,7 +146,7 @@ VOID VirtioInputEvtIoInternalDeviceControl(
     case IOCTL_HID_SET_NUM_DEVICE_INPUT_BUFFERS: {
         ULONG numBuffers;
 
-        if (InputBufferLength >= sizeof(ULONG) && NT_SUCCESS(VirtioInputReadRequestInputUlong(Request, &numBuffers))) {
+        if (InputBufferLength >= sizeof(ULONG) && NT_SUCCESS(VioInputReadRequestInputUlong(Request, &numBuffers))) {
             devCtx->NumDeviceInputBuffers = numBuffers;
         }
 

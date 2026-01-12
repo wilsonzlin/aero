@@ -27,49 +27,6 @@ static BOOLEAN VirtioInputAsciiEqualsInsensitive(_In_reads_bytes_(Len) const CHA
     return B[Len] == '\0';
 }
 
-static NTSTATUS VirtioInputMapUserAddress(
-    _In_ PVOID UserAddress,
-    _In_ SIZE_T Length,
-    _In_ LOCK_OPERATION Operation,
-    _Outptr_ PMDL *MdlOut,
-    _Outptr_result_bytebuffer_(Length) PVOID *SystemAddressOut
-)
-{
-    PMDL mdl;
-    PVOID systemAddress;
-
-    if (UserAddress == NULL || Length == 0) {
-        return STATUS_INVALID_PARAMETER;
-    }
-
-    if (Length > (SIZE_T)MAXULONG) {
-        return STATUS_INVALID_PARAMETER;
-    }
-
-    mdl = IoAllocateMdl(UserAddress, (ULONG)Length, FALSE, FALSE, NULL);
-    if (mdl == NULL) {
-        return STATUS_INSUFFICIENT_RESOURCES;
-    }
-
-    __try {
-        MmProbeAndLockPages(mdl, UserMode, Operation);
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        IoFreeMdl(mdl);
-        return (NTSTATUS)GetExceptionCode();
-    }
-
-    systemAddress = MmGetSystemAddressForMdlSafe(mdl, NormalPagePriority);
-    if (systemAddress == NULL) {
-        MmUnlockPages(mdl);
-        IoFreeMdl(mdl);
-        return STATUS_INSUFFICIENT_RESOURCES;
-    }
-
-    *MdlOut = mdl;
-    *SystemAddressOut = systemAddress;
-    return STATUS_SUCCESS;
-}
-
 static ULONG VirtioInputGetCollectionNumberFromCreateRequest(_In_ WDFREQUEST Request)
 {
     PIRP irp = WdfRequestWdmGetIrp(Request);
@@ -103,7 +60,7 @@ static ULONG VirtioInputGetCollectionNumberFromCreateRequest(_In_ WDFREQUEST Req
     ULONG collection = 0;
 
     if (WdfRequestGetRequestorMode(Request) == UserMode) {
-        NTSTATUS status = VirtioInputMapUserAddress(eaBuffer, parseLen, IoReadAccess, &eaMdl, (PVOID *)&eaSystem);
+        NTSTATUS status = VioInputMapUserAddress(eaBuffer, parseLen, IoReadAccess, &eaMdl, (PVOID *)&eaSystem);
         if (!NT_SUCCESS(status)) {
             return 0;
         }
@@ -163,10 +120,7 @@ static ULONG VirtioInputGetCollectionNumberFromCreateRequest(_In_ WDFREQUEST Req
         cursor += entry->NextEntryOffset;
     }
 
-    if (eaMdl != NULL) {
-        MmUnlockPages(eaMdl);
-        IoFreeMdl(eaMdl);
-    }
+    VioInputMdlFree(&eaMdl);
 
     return collection;
 }

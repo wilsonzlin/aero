@@ -75,49 +75,6 @@ static BOOLEAN VirtioInputPendingRingPop(_Inout_ struct virtio_input_report_ring
     return TRUE;
 }
 
-static NTSTATUS VirtioInputMapUserAddress(
-    _In_ PVOID UserAddress,
-    _In_ SIZE_T Length,
-    _In_ LOCK_OPERATION Operation,
-    _Outptr_ PMDL *MdlOut,
-    _Outptr_result_bytebuffer_(Length) PVOID *SystemAddressOut
-)
-{
-    if (UserAddress == NULL || Length == 0) {
-        return STATUS_INVALID_PARAMETER;
-    }
-
-    if (Length > (SIZE_T)MAXULONG) {
-        return STATUS_INVALID_PARAMETER;
-    }
-
-    PMDL mdl;
-    PVOID systemAddress;
-
-    mdl = IoAllocateMdl(UserAddress, (ULONG)Length, FALSE, FALSE, NULL);
-    if (mdl == NULL) {
-        return STATUS_INSUFFICIENT_RESOURCES;
-    }
-
-    __try {
-        MmProbeAndLockPages(mdl, UserMode, Operation);
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        IoFreeMdl(mdl);
-        return (NTSTATUS)GetExceptionCode();
-    }
-
-    systemAddress = MmGetSystemAddressForMdlSafe(mdl, NormalPagePriority);
-    if (systemAddress == NULL) {
-        MmUnlockPages(mdl);
-        IoFreeMdl(mdl);
-        return STATUS_INSUFFICIENT_RESOURCES;
-    }
-
-    *MdlOut = mdl;
-    *SystemAddressOut = systemAddress;
-    return STATUS_SUCCESS;
-}
-
 static NTSTATUS VirtioInputGetTransferPacket(
     _In_ WDFREQUEST Request,
     _In_ size_t OutputBufferLength,
@@ -170,7 +127,7 @@ static NTSTATUS VirtioInputPrepareReadRequest(_In_ WDFREQUEST Request, _In_ size
 
     requestorMode = WdfRequestGetRequestorMode(Request);
     if (requestorMode == UserMode) {
-        status = VirtioInputMapUserAddress(
+        status = VioInputMapUserAddress(
             xfer,
             sizeof(HID_XFER_PACKET),
             IoWriteAccess,
@@ -204,7 +161,7 @@ static NTSTATUS VirtioInputPrepareReadRequest(_In_ WDFREQUEST Request, _In_ size
             mapLen = VIRTIO_INPUT_REPORT_MAX_SIZE;
         }
 
-        status = VirtioInputMapUserAddress(
+        status = VioInputMapUserAddress(
             xfer->reportBuffer,
             mapLen,
             IoWriteAccess,
@@ -670,15 +627,6 @@ static VOID VirtioInputEvtReadRequestContextCleanup(_In_ WDFOBJECT Object)
 
     ctx = VirtioInputGetReadRequestContext(Object);
 
-    if (ctx->ReportBufferMdl != NULL) {
-        MmUnlockPages(ctx->ReportBufferMdl);
-        IoFreeMdl(ctx->ReportBufferMdl);
-        ctx->ReportBufferMdl = NULL;
-    }
-
-    if (ctx->XferPacketMdl != NULL) {
-        MmUnlockPages(ctx->XferPacketMdl);
-        IoFreeMdl(ctx->XferPacketMdl);
-        ctx->XferPacketMdl = NULL;
-    }
+    VioInputMdlFree(&ctx->ReportBufferMdl);
+    VioInputMdlFree(&ctx->XferPacketMdl);
 }

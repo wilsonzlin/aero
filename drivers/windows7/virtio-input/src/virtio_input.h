@@ -86,6 +86,103 @@ bool virtio_input_try_pop_report(struct virtio_input_device *dev, struct virtio_
 #endif
 #include "log.h"
 
+__forceinline VOID VioInputMdlFree(_Inout_opt_ PMDL *Mdl)
+{
+    if (Mdl == NULL || *Mdl == NULL) {
+        return;
+    }
+
+    MmUnlockPages(*Mdl);
+    IoFreeMdl(*Mdl);
+    *Mdl = NULL;
+}
+
+__forceinline NTSTATUS VioInputMapUserAddress(
+    _In_ PVOID UserAddress,
+    _In_ SIZE_T Length,
+    _In_ LOCK_OPERATION Operation,
+    _Outptr_ PMDL *MdlOut,
+    _Outptr_result_bytebuffer_(Length) PVOID *SystemAddressOut
+)
+{
+    PMDL mdl;
+    PVOID systemAddress;
+
+    if (MdlOut == NULL || SystemAddressOut == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+    *MdlOut = NULL;
+    *SystemAddressOut = NULL;
+
+    if (UserAddress == NULL || Length == 0) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    // IoAllocateMdl takes an ULONG length.
+    if (Length > (SIZE_T)MAXULONG) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    mdl = IoAllocateMdl(UserAddress, (ULONG)Length, FALSE, FALSE, NULL);
+    if (mdl == NULL) {
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+
+    __try {
+        MmProbeAndLockPages(mdl, UserMode, Operation);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        IoFreeMdl(mdl);
+        return (NTSTATUS)GetExceptionCode();
+    }
+
+    systemAddress = MmGetSystemAddressForMdlSafe(mdl, NormalPagePriority);
+    if (systemAddress == NULL) {
+        MmUnlockPages(mdl);
+        IoFreeMdl(mdl);
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+
+    *MdlOut = mdl;
+    *SystemAddressOut = systemAddress;
+    return STATUS_SUCCESS;
+}
+
+__forceinline NTSTATUS VioInputReadRequestInputUlong(_In_ WDFREQUEST Request, _Out_ ULONG *ValueOut)
+{
+    NTSTATUS status;
+    ULONG *userPtr;
+    size_t len;
+
+    if (ValueOut == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+    *ValueOut = 0;
+
+    status = WdfRequestRetrieveInputBuffer(Request, sizeof(ULONG), (PVOID *)&userPtr, &len);
+    if (!NT_SUCCESS(status) || len < sizeof(ULONG)) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    if (WdfRequestGetRequestorMode(Request) == UserMode) {
+        PMDL mdl;
+        ULONG *systemPtr;
+
+        mdl = NULL;
+        systemPtr = NULL;
+        status = VioInputMapUserAddress(userPtr, sizeof(ULONG), IoReadAccess, &mdl, (PVOID *)&systemPtr);
+        if (!NT_SUCCESS(status)) {
+            return status;
+        }
+
+        *ValueOut = *systemPtr;
+        VioInputMdlFree(&mdl);
+        return STATUS_SUCCESS;
+    }
+
+    *ValueOut = *userPtr;
+    return STATUS_SUCCESS;
+}
+
 #define VIRTIOINPUT_POOL_TAG 'pInV'
 
 #define VIRTIO_INPUT_REPORT_ID_ANY 0
