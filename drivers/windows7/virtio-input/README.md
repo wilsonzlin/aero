@@ -3,6 +3,9 @@
 This directory contains the clean-room **Aero virtio-input** Windows 7 SP1 driver (KMDF HID minidriver) and the
 packaging/signing helpers needed to produce an installable driver package.
 
+End-to-end validation plan (device model + driver + web runtime):
+`docs/virtio-input-test-plan.md` (from repo root).
+
 Canonical naming (see [`docs/adr/0016-win7-virtio-driver-naming.md`](../../../docs/adr/0016-win7-virtio-driver-naming.md)):
 
 - SYS: `aero_virtio_input.sys`

@@ -34,6 +34,12 @@ Some end-to-end behaviors (especially audio) are hard to validate automatically.
 
 - Windows 7 audio (in-box HDA driver): [`docs/testing/audio-windows7.md`](./testing/audio-windows7.md)
 
+## Device/driver end-to-end test plans
+
+Some subsystems also have “single document” end-to-end test plans (device model ↔ guest drivers ↔ web runtime).
+
+- virtio-input (device model + Win7 driver + web runtime): [`docs/test-plans/virtio-input.md`](./test-plans/virtio-input.md)
+
 ## Test fixtures (boot sectors + tiny disk images)
 
 Boot/system tests use **tiny deterministic fixtures** under `tests/fixtures/boot/` (e.g. a 512-byte boot sector that writes a known pattern to VGA/serial).
