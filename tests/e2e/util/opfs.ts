@@ -72,12 +72,23 @@ export async function probeOpfsSyncAccessHandle(page: Page): Promise<OpfsSyncAcc
                   }
 
                   const root = await storage.getDirectory();
+                  let dir = root;
                   try {
-                    await root.getDirectoryHandle('state', { create: true });
+                    dir = await root.getDirectoryHandle('state', { create: true });
                   } catch {}
 
-                  const file = await root.getFileHandle('aero-sync-access-handle-probe.tmp', { create: true });
+                  // Use a per-probe filename to avoid SyncAccessHandle lock contention when
+                  // Playwright runs multiple tests in parallel.
+                  const filename = 'aero-sync-access-handle-probe-' + Math.random().toString(16).slice(2) + '.tmp';
+                  const file = await dir.getFileHandle(filename, { create: true });
+                  const cleanupProbeFile = async () => {
+                    try {
+                      await dir.removeEntry(filename);
+                    } catch {}
+                  };
+
                   if (typeof file.createSyncAccessHandle !== 'function') {
+                    await cleanupProbeFile();
                     self.postMessage({ supported: false, reason: 'FileSystemFileHandle.createSyncAccessHandle unavailable' });
                     return;
                   }
@@ -89,11 +100,13 @@ export async function probeOpfsSyncAccessHandle(page: Page): Promise<OpfsSyncAcc
                       await handle.close();
                     }
                   } catch (err) {
+                    await cleanupProbeFile();
                     const msg = err && typeof err === 'object' && 'message' in err ? String(err.message) : String(err);
                     self.postMessage({ supported: false, reason: msg });
                     return;
                   }
 
+                  await cleanupProbeFile();
                   self.postMessage({ supported: true });
                 } catch (err) {
                   const msg = err && typeof err === 'object' && 'message' in err ? String(err.message) : String(err);

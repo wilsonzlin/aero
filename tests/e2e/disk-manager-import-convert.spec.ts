@@ -1,42 +1,21 @@
 import { expect, test } from "@playwright/test";
 
+import { probeOpfsSyncAccessHandle } from "./util/opfs";
+
 test.describe("disk manager: importDiskConverted()", () => {
   test.skip(({ browserName }) => browserName !== "chromium", "requires Chromium OPFS sync access handles");
 
   test.beforeEach(async ({ page }, testInfo) => {
     await page.goto("/", { waitUntil: "load" });
 
-    const supported = await page.evaluate(async () => {
-      if (!navigator.storage?.getDirectory) return false;
-      const url = URL.createObjectURL(
-        new Blob(
-          [
-            `
-              self.onmessage = async () => {
-                try {
-                  const root = await navigator.storage.getDirectory();
-                  const file = await root.getFileHandle("tmp-opfs-sync-check", { create: true });
-                  self.postMessage({ supported: typeof file.createSyncAccessHandle === "function" });
-                } catch (err) {
-                  self.postMessage({ supported: false, error: String(err) });
-                }
-              };
-            `,
-          ],
-          { type: "text/javascript" },
-        ),
+    const snapshotSupport = await probeOpfsSyncAccessHandle(page);
+    if (!snapshotSupport.ok || !snapshotSupport.supported) {
+      testInfo.skip(
+        snapshotSupport.ok
+          ? `OPFS SyncAccessHandle unsupported in this browser/context (${snapshotSupport.reason ?? "unknown reason"}).`
+          : `Failed to probe OPFS SyncAccessHandle support (${snapshotSupport.reason ?? "unknown error"}).`,
       );
-      return await new Promise<boolean>((resolve) => {
-        const w = new Worker(url);
-        w.onmessage = (event) => {
-          resolve(Boolean((event.data as any)?.supported));
-          w.terminate();
-          URL.revokeObjectURL(url);
-        };
-        w.postMessage(null);
-      });
-    });
-    if (!supported) testInfo.skip("OPFS SyncAccessHandle is not supported in this browser");
+    }
 
     await page.evaluate(async () => {
       const { DiskManager } = await import("/web/src/storage/disk_manager.ts");
@@ -65,7 +44,8 @@ test.describe("disk manager: importDiskConverted()", () => {
         const l1Offset = 512;
         const l2Offset = 1024;
         const data0Offset = 1536;
-        const fileSize = data0Offset + clusterSize;
+        const refcountTableOffset = 2048;
+        const fileSize = refcountTableOffset + clusterSize;
 
         const file = new Uint8Array(fileSize);
         file.set([0x51, 0x46, 0x49, 0xfb], 0); // "QFI\xfb"
@@ -77,6 +57,8 @@ test.describe("disk manager: importDiskConverted()", () => {
         writeU32BE(file, 32, 0); // crypt method
         writeU32BE(file, 36, 1); // l1 size
         writeU64BE(file, 40, BigInt(l1Offset));
+        writeU64BE(file, 48, BigInt(refcountTableOffset)); // refcount table offset
+        writeU32BE(file, 56, 1); // refcount table clusters
 
         // L1 table
         writeU64BE(file, l1Offset + 0, BigInt(l2Offset));
