@@ -269,7 +269,13 @@ impl<B: StorageBackend> AeroSparseDisk<B> {
             .allocated_blocks
             .try_into()
             .map_err(|_| DiskError::CorruptSparseImage("allocated_blocks out of range"))?;
-        let mut seen_phys_idx = vec![false; allocated_blocks_usize];
+        // Use a bitset instead of `Vec<bool>` to keep validation overhead small even for
+        // large tables (important on wasm32).
+        let bitset_len = allocated_blocks_usize
+            .checked_add(63)
+            .ok_or(DiskError::OffsetOverflow)?
+            / 64;
+        let mut seen_phys_idx = vec![0u64; bitset_len];
 
         for &phys in &table {
             if phys == 0 {
@@ -310,11 +316,16 @@ impl<B: StorageBackend> AeroSparseDisk<B> {
             let phys_idx_usize: usize = phys_idx
                 .try_into()
                 .map_err(|_| DiskError::CorruptSparseImage("data block offset out of bounds"))?;
-            if std::mem::replace(&mut seen_phys_idx[phys_idx_usize], true) {
-                return Err(DiskError::CorruptSparseImage(
-                    "duplicate data block offset",
-                ));
+            let word_idx = phys_idx_usize / 64;
+            let bit_idx = phys_idx_usize % 64;
+            let mask = 1u64 << bit_idx;
+            let word = seen_phys_idx
+                .get_mut(word_idx)
+                .ok_or(DiskError::CorruptSparseImage("data block offset out of bounds"))?;
+            if (*word & mask) != 0 {
+                return Err(DiskError::CorruptSparseImage("duplicate data block offset"));
             }
+            *word |= mask;
         }
 
         if actual_allocated_blocks != header.allocated_blocks {
