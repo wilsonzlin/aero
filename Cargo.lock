@@ -547,6 +547,7 @@ dependencies = [
  "aero-devices-input",
  "aero-io-snapshot",
  "aero-net-e1000",
+ "aero-net-stack",
  "lz4_flex",
  "memory",
  "proptest",

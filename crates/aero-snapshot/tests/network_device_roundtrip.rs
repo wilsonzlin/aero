@@ -3,11 +3,11 @@
 use std::collections::HashMap;
 use std::io::Cursor;
 
-use aero_io_snapshot::io::network::state::{
-    DhcpLease, Ipv4Addr, LegacyNetworkStackState, NatKey, NatProtocol, NatValue,
-};
 use aero_io_snapshot::io::state::IoSnapshot;
 use aero_net_e1000::{E1000Device, MIN_L2_FRAME_LEN};
+use aero_net_stack::packet::*;
+use aero_net_stack::{Action, DnsResolved, NetworkStack, StackConfig};
+use core::net::Ipv4Addr;
 use aero_snapshot::io_snapshot_bridge::{
     apply_io_snapshot_to_device, device_state_from_io_snapshot,
 };
@@ -73,7 +73,7 @@ impl SnapshotSource for DeviceStateSource {
 
 struct TestSource {
     e1000: E1000Device,
-    net_stack: LegacyNetworkStackState,
+    net_stack: NetworkStack,
     ram: Vec<u8>,
     meta: SnapshotMeta,
 }
@@ -124,18 +124,20 @@ impl SnapshotSource for TestSource {
 
 struct TestTarget {
     e1000: E1000Device,
-    net_stack: LegacyNetworkStackState,
+    net_stack: NetworkStack,
     restored_states: Vec<DeviceState>,
     ram: Vec<u8>,
 }
 
 impl TestTarget {
     fn new(ram_len: usize) -> Self {
+        let mut cfg = StackConfig::default();
+        cfg.host_policy.enabled = true;
         Self {
             // These are deliberately initialized to defaults. Snapshot application should populate
             // the state we care about, and the test asserts the resulting TLV bytes match.
             e1000: E1000Device::new([0x52, 0x54, 0x00, 0x00, 0x00, 0x01]),
-            net_stack: LegacyNetworkStackState::default(),
+            net_stack: NetworkStack::new(cfg),
             restored_states: Vec::new(),
             ram: vec![0u8; ram_len],
         }
@@ -198,45 +200,41 @@ fn networking_device_blobs_roundtrip_through_aero_snapshot_container() {
     let expected_e1000_rctl = e1000.mmio_read_u32(REG_RCTL);
     let expected_e1000_tctl = e1000.mmio_read_u32(REG_TCTL);
 
-    // Build a network stack snapshot state with enough complexity to exercise encoding.
-    let mut net_stack = LegacyNetworkStackState::default();
-    net_stack.mac_addr = [0x02, 0x00, 0x00, 0x00, 0x00, 0x01];
-    net_stack.dhcp_lease = Some(DhcpLease {
-        ip: Ipv4Addr::new(10, 0, 2, 15),
-        gateway: Ipv4Addr::new(10, 0, 2, 2),
-        netmask: Ipv4Addr::new(255, 255, 255, 0),
-        lease_time_secs: 3600,
-        acquired_at_tick: 12345,
-    });
-    net_stack.nat.insert(
-        NatKey {
-            proto: NatProtocol::Tcp,
-            inside_ip: Ipv4Addr::new(10, 0, 2, 15),
-            inside_port: 1234,
-            outside_port: 40000,
+    // Build a user-space network stack with enough dynamic state to exercise encoding.
+    let mut cfg = StackConfig::default();
+    cfg.host_policy.enabled = true;
+    let mut net_stack = NetworkStack::new(cfg);
+    let guest_mac = MacAddr([0x02, 0x00, 0x00, 0x00, 0x00, 0x02]);
+    dhcp_handshake(&mut net_stack, guest_mac);
+
+    // Populate DNS cache.
+    let dns_query = build_dns_query(0x1234, "example.com", DnsType::A as u16);
+    let dns_frame = wrap_udp_ipv4_eth(
+        guest_mac,
+        net_stack.config().our_mac,
+        net_stack.config().guest_ip,
+        net_stack.config().dns_ip,
+        53000,
+        53,
+        &dns_query,
+    );
+    let actions = net_stack.process_outbound_ethernet(&dns_frame, 1000);
+    let (dns_req_id, name) = match actions.as_slice() {
+        [Action::DnsResolve { request_id, name }] => (*request_id, name.clone()),
+        _ => panic!("expected single DnsResolve action, got {actions:?}"),
+    };
+    let _ = net_stack.handle_dns_resolved(
+        DnsResolved {
+            request_id: dns_req_id,
+            name,
+            addr: Some(Ipv4Addr::new(93, 184, 216, 34)),
+            ttl_secs: 60,
         },
-        NatValue {
-            remote_ip: Ipv4Addr::new(93, 184, 216, 34),
-            remote_port: 443,
-            last_seen_tick: 999,
-        },
+        1001,
     );
 
-    // Add one TCP proxy connection. Keep the status as Disconnected so a save->load->save roundtrip
-    // remains stable even if the decoder normalizes connection state.
-    {
-        use aero_io_snapshot::io::network::state::{ProxyConnStatus, ProxyConnection};
-        net_stack.tcp_proxy_conns.insert(
-            7,
-            ProxyConnection {
-                id: 7,
-                remote_ip: Ipv4Addr::new(93, 184, 216, 34),
-                remote_port: 443,
-                status: ProxyConnStatus::Disconnected,
-            },
-        );
-        net_stack.next_conn_id = 8;
-    }
+    // Update the stack's internal time base so snapshots encode a meaningful `now_ms`.
+    let _ = net_stack.process_outbound_ethernet(&dns_frame, 2500);
 
     // Expected device blobs before wrapping in the aero-snapshot container.
     let expected_e1000_state = device_state_from_io_snapshot(DeviceId::E1000, &e1000);
@@ -252,7 +250,7 @@ fn networking_device_blobs_roundtrip_through_aero_snapshot_container() {
 
     let mut source = TestSource {
         e1000,
-        net_stack: net_stack.clone(),
+        net_stack,
         ram: vec![0u8; RAM_LEN],
         meta: SnapshotMeta::default(),
     };
@@ -298,7 +296,7 @@ fn networking_device_blobs_roundtrip_through_aero_snapshot_container() {
     assert_eq!(restored[&DeviceId::NET_STACK], expected_net_stack_state);
 
     // Preferred: ensure the blobs can be applied back to fresh devices and reproduce the same TLV.
-    assert_eq!(target.net_stack, net_stack);
+    assert!(target.net_stack.is_ip_assigned());
     assert_eq!(target.e1000.mac_addr(), expected_e1000_mac);
     assert_eq!(target.e1000.mmio_read_u32(REG_IMS), expected_e1000_ims);
     assert_eq!(target.e1000.mmio_read_u32(REG_RCTL), expected_e1000_rctl);
@@ -314,5 +312,131 @@ fn networking_device_blobs_roundtrip_through_aero_snapshot_container() {
     assert_eq!(&e1000_resaved.data[..4], b"AERO");
     assert_eq!(&net_stack_resaved.data[..4], b"AERO");
     // Double-check the trait is actually in use (not an accidental dummy blob).
-    assert_eq!(<LegacyNetworkStackState as IoSnapshot>::DEVICE_ID, *b"NETL");
+    assert_eq!(<NetworkStack as IoSnapshot>::DEVICE_ID, *b"NSTK");
+}
+
+fn dhcp_handshake(stack: &mut NetworkStack, guest_mac: MacAddr) {
+    let xid = 0x1020_3040;
+    let discover = build_dhcp_discover(xid, guest_mac);
+    let discover_frame = wrap_udp_ipv4_eth(
+        guest_mac,
+        MacAddr::BROADCAST,
+        Ipv4Addr::UNSPECIFIED,
+        Ipv4Addr::BROADCAST,
+        68,
+        67,
+        &discover,
+    );
+
+    // Offer.
+    let _ = stack.process_outbound_ethernet(&discover_frame, 0);
+
+    let request = build_dhcp_request(
+        xid,
+        guest_mac,
+        stack.config().guest_ip,
+        stack.config().gateway_ip,
+    );
+    let request_frame = wrap_udp_ipv4_eth(
+        guest_mac,
+        MacAddr::BROADCAST,
+        Ipv4Addr::UNSPECIFIED,
+        Ipv4Addr::BROADCAST,
+        68,
+        67,
+        &request,
+    );
+
+    // Ack.
+    let _ = stack.process_outbound_ethernet(&request_frame, 1);
+    assert!(stack.is_ip_assigned());
+}
+
+fn wrap_udp_ipv4_eth(
+    src_mac: MacAddr,
+    dst_mac: MacAddr,
+    src_ip: Ipv4Addr,
+    dst_ip: Ipv4Addr,
+    src_port: u16,
+    dst_port: u16,
+    payload: &[u8],
+) -> Vec<u8> {
+    let udp = UdpPacketBuilder {
+        src_port,
+        dst_port,
+        payload,
+    }
+    .build_vec(src_ip, dst_ip)
+    .unwrap();
+    let ip = Ipv4PacketBuilder {
+        dscp_ecn: 0,
+        identification: 1,
+        flags_fragment: 0x4000, // DF
+        ttl: 64,
+        protocol: Ipv4Protocol::UDP,
+        src_ip,
+        dst_ip,
+        options: &[],
+        payload: &udp,
+    }
+    .build_vec()
+    .unwrap();
+    EthernetFrameBuilder {
+        dest_mac: dst_mac,
+        src_mac,
+        ethertype: EtherType::IPV4,
+        payload: &ip,
+    }
+    .build_vec()
+    .unwrap()
+}
+
+fn build_dhcp_discover(xid: u32, mac: MacAddr) -> Vec<u8> {
+    let mut out = vec![0u8; 240];
+    out[0] = 1; // BOOTREQUEST
+    out[1] = 1; // Ethernet
+    out[2] = 6; // MAC len
+    out[4..8].copy_from_slice(&xid.to_be_bytes());
+    out[10..12].copy_from_slice(&0x8000u16.to_be_bytes()); // broadcast
+    out[28..34].copy_from_slice(&mac.0);
+    out[236..240].copy_from_slice(&[99, 130, 83, 99]);
+    out.extend_from_slice(&[53, 1, 1]); // DHCPDISCOVER
+    out.push(255);
+    out
+}
+
+fn build_dhcp_request(xid: u32, mac: MacAddr, requested_ip: Ipv4Addr, server_id: Ipv4Addr) -> Vec<u8> {
+    let mut out = vec![0u8; 240];
+    out[0] = 1; // BOOTREQUEST
+    out[1] = 1;
+    out[2] = 6;
+    out[4..8].copy_from_slice(&xid.to_be_bytes());
+    out[10..12].copy_from_slice(&0x8000u16.to_be_bytes());
+    out[28..34].copy_from_slice(&mac.0);
+    out[236..240].copy_from_slice(&[99, 130, 83, 99]);
+    out.extend_from_slice(&[53, 1, 3]); // DHCPREQUEST
+    out.extend_from_slice(&[50, 4]);
+    out.extend_from_slice(&requested_ip.octets());
+    out.extend_from_slice(&[54, 4]);
+    out.extend_from_slice(&server_id.octets());
+    out.push(255);
+    out
+}
+
+fn build_dns_query(id: u16, name: &str, qtype: u16) -> Vec<u8> {
+    let mut out = Vec::new();
+    out.extend_from_slice(&id.to_be_bytes());
+    out.extend_from_slice(&0x0100u16.to_be_bytes()); // RD
+    out.extend_from_slice(&1u16.to_be_bytes()); // QDCOUNT
+    out.extend_from_slice(&0u16.to_be_bytes()); // ANCOUNT
+    out.extend_from_slice(&0u16.to_be_bytes()); // NSCOUNT
+    out.extend_from_slice(&0u16.to_be_bytes()); // ARCOUNT
+    for label in name.split('.') {
+        out.push(label.len() as u8);
+        out.extend_from_slice(label.as_bytes());
+    }
+    out.push(0);
+    out.extend_from_slice(&qtype.to_be_bytes());
+    out.extend_from_slice(&1u16.to_be_bytes());
+    out
 }

@@ -18,5 +18,6 @@ thiserror = "1"
 aero-devices-input = { path = "../aero-devices-input" }
 aero-net-e1000 = { path = "../aero-net-e1000", features = ["io-snapshot"] }
 memory = { path = "../memory" }
+aero-net-stack = { path = "../aero-net-stack" }
 proptest = "1.5"
 rand = "0.8"
