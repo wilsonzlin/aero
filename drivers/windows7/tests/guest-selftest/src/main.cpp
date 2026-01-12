@@ -5509,7 +5509,7 @@ static void PrintUsage() {
       "\n"
       "Options:\n"
       "  --blk-root <path>         Directory to use for virtio-blk file I/O test\n"
-      "  --http-url <url>          HTTP URL for TCP connectivity test\n"
+      "  --http-url <url>          HTTP URL for TCP connectivity test (also expects <url>-large)\n"
       "  --dns-host <hostname>     Hostname for DNS resolution test\n"
       "  --log-file <path>         Log file path (default C:\\\\aero-virtio-selftest.log)\n"
       "  --disable-snd             Skip virtio-snd test (emit SKIP)\n"
@@ -5662,9 +5662,10 @@ int wmain(int argc, wchar_t** argv) {
   Logger log(opt.log_file);
 
   log.LogLine("AERO_VIRTIO_SELFTEST|START|version=1");
-  log.Logf("AERO_VIRTIO_SELFTEST|CONFIG|http_url=%s|dns_host=%s|blk_root=%s",
-           WideToUtf8(opt.http_url).c_str(), WideToUtf8(opt.dns_host).c_str(),
-           WideToUtf8(opt.blk_root).c_str());
+  log.Logf("AERO_VIRTIO_SELFTEST|CONFIG|http_url=%s|http_url_large=%s|dns_host=%s|blk_root=%s",
+           WideToUtf8(opt.http_url).c_str(),
+           WideToUtf8(UrlAppendSuffix(opt.http_url, L"-large")).c_str(),
+           WideToUtf8(opt.dns_host).c_str(), WideToUtf8(opt.blk_root).c_str());
 
   bool all_ok = true;
 
