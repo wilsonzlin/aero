@@ -923,6 +923,35 @@ fn handle_int15(bios: &mut Bios, cpu: &mut CpuState, bus: &mut dyn BiosBus) {
             cpu.rflags &= !FLAG_CF;
         }
         _ => match (ax >> 8) as u8 {
+            0xC0 => {
+                // Get system configuration parameters.
+                //
+                // Provide a small, PC-compatible "system configuration parameters" table in the
+                // EBDA. DOS-era software sometimes uses this to probe for machine features without
+                // relying on specific hardware I/O ports.
+                //
+                // Return:
+                // - CF=0 on success
+                // - AH=0
+                // - ES:BX points to the table
+                const TABLE_OFF: u16 = 0x0020;
+                let table_seg = (super::EBDA_BASE / 16) as u16;
+                let table_addr = (u64::from(table_seg) << 4) + u64::from(TABLE_OFF);
+
+                // Table format (minimal):
+                // - offset 0: WORD length in bytes
+                // - offset 2+: implementation-defined feature bytes
+                bus.write_u16(table_addr, 0x0010);
+                for i in 2..0x10 {
+                    bus.write_u8(table_addr + i, 0);
+                }
+
+                // ES:BX -> table.
+                set_real_mode_seg(&mut cpu.segments.es, table_seg);
+                cpu.gpr[gpr::RBX] = (cpu.gpr[gpr::RBX] & !0xFFFF) | (TABLE_OFF as u64);
+                cpu.gpr[gpr::RAX] &= !0xFF00u64; // AH=0
+                cpu.rflags &= !FLAG_CF;
+            }
             0x88 => {
                 // Extended memory size (KB above 1MB).
                 let ext_kb = bios.config.memory_size_bytes.saturating_sub(1024 * 1024) / 1024;
@@ -1780,6 +1809,24 @@ mod tests {
 
         assert_eq!(cpu.rflags & FLAG_CF, 0);
         assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0);
+    }
+
+    #[test]
+    fn int15_get_system_configuration_parameters_returns_table_in_ebda() {
+        let mut bios = Bios::new(BiosConfig::default());
+        let mut bus = TestMemory::new(2 * 1024 * 1024);
+        let mut cpu = CpuState::new(CpuMode::Real);
+
+        cpu.gpr[gpr::RAX] = 0xC000; // AH=C0h
+        handle_int15(&mut bios, &mut cpu, &mut bus);
+
+        assert_eq!(cpu.rflags & FLAG_CF, 0);
+        assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0);
+        assert_eq!(cpu.segments.es.selector, (EBDA_BASE / 16) as u16);
+        assert_eq!(cpu.gpr[gpr::RBX] as u16, 0x0020);
+
+        let table_addr = EBDA_BASE + 0x20;
+        assert_eq!(bus.read_u16(table_addr), 0x0010);
     }
 
     #[test]
