@@ -99,6 +99,9 @@
   let AEROGPU_CLEAR_STENCIL = 1 << 2;
 
   let AEROGPU_FORMAT_R8G8B8A8_UNORM = 3;
+  // ABI 1.2+ adds explicit sRGB variants. The replay tool treats sRGB as UNORM (no conversion)
+  // because WebGL2 presentation is not color-managed here.
+  let AEROGPU_FORMAT_R8G8B8A8_UNORM_SRGB = 9;
   let AEROGPU_TOPOLOGY_TRIANGLELIST = 4;
 
   let decodeCmdStreamHeader = null;
@@ -171,6 +174,9 @@
         }
         if (pci && pci.AerogpuFormat && typeof pci.AerogpuFormat.R8G8B8A8Unorm === "number") {
           AEROGPU_FORMAT_R8G8B8A8_UNORM = pci.AerogpuFormat.R8G8B8A8Unorm >>> 0;
+        }
+        if (pci && pci.AerogpuFormat && typeof pci.AerogpuFormat.R8G8B8A8UnormSrgb === "number") {
+          AEROGPU_FORMAT_R8G8B8A8_UNORM_SRGB = pci.AerogpuFormat.R8G8B8A8UnormSrgb >>> 0;
         }
       } catch (e) {
         // Ignore; this tool can run standalone without the protocol mirrors.
@@ -1068,12 +1074,13 @@ void main() {
             let glInternalFormat = 0;
             let glFormat = 0;
             let glType = 0;
-            if (format === AEROGPU_FORMAT_R8G8B8A8_UNORM) {
+            if (format === AEROGPU_FORMAT_R8G8B8A8_UNORM || format === AEROGPU_FORMAT_R8G8B8A8_UNORM_SRGB) {
               glInternalFormat = gl.RGBA8;
               glFormat = gl.RGBA;
               glType = gl.UNSIGNED_BYTE;
             } else {
-              fail("ACMD CREATE_TEXTURE2D unsupported format=" + format);
+              const bcHint = format >= 64 && format <= 71 ? " (BC formats require GPU backend)" : "";
+              fail("ACMD CREATE_TEXTURE2D unsupported format=" + format + bcHint);
             }
 
             const tex = gl.createTexture();
@@ -1708,7 +1715,10 @@ void main() {
             if (mipLevels !== 1 || arrayLayers !== 1) {
               fail("CREATE_TEXTURE2D only supports mip_levels=1, array_layers=1");
             }
-            if (format !== AEROGPU_FORMAT_R8G8B8A8_UNORM) fail("unsupported texture format");
+            if (format !== AEROGPU_FORMAT_R8G8B8A8_UNORM && format !== AEROGPU_FORMAT_R8G8B8A8_UNORM_SRGB) {
+              const bcHint = format >= 64 && format <= 71 ? " (BC formats require GPU backend)" : "";
+              fail("unsupported texture format " + format + bcHint);
+            }
 
             const tex = gl.createTexture();
             if (!tex) fail("gl.createTexture failed");
