@@ -2172,31 +2172,29 @@ impl AerogpuD3d11Executor {
                         }
                         exec_draw(&mut pass, cmd_bytes)?;
 
-                        if used_cb_vs.get(0).is_some_and(|v| *v) {
-                            if self
+                        if used_cb_vs.first().is_some_and(|v| *v)
+                            && self
                                 .bindings
                                 .stage(ShaderStage::Vertex)
                                 .constant_buffer(0)
                                 .is_some_and(|cb| {
                                     cb.buffer == legacy_constants_buffer_id(ShaderStage::Vertex)
                                 })
-                            {
-                                legacy_constants_used
-                                    [ShaderStage::Vertex.as_bind_group_index() as usize] = true;
-                            }
+                        {
+                            legacy_constants_used
+                                [ShaderStage::Vertex.as_bind_group_index() as usize] = true;
                         }
-                        if used_cb_ps.get(0).is_some_and(|v| *v) {
-                            if self
+                        if used_cb_ps.first().is_some_and(|v| *v)
+                            && self
                                 .bindings
                                 .stage(ShaderStage::Pixel)
                                 .constant_buffer(0)
                                 .is_some_and(|cb| {
                                     cb.buffer == legacy_constants_buffer_id(ShaderStage::Pixel)
                                 })
-                            {
-                                legacy_constants_used
-                                    [ShaderStage::Pixel.as_bind_group_index() as usize] = true;
-                            }
+                        {
+                            legacy_constants_used
+                                [ShaderStage::Pixel.as_bind_group_index() as usize] = true;
                         }
                     }
                 }
@@ -2255,31 +2253,29 @@ impl AerogpuD3d11Executor {
                         }
                         exec_draw_indexed(&mut pass, cmd_bytes)?;
 
-                        if used_cb_vs.get(0).is_some_and(|v| *v) {
-                            if self
+                        if used_cb_vs.first().is_some_and(|v| *v)
+                            && self
                                 .bindings
                                 .stage(ShaderStage::Vertex)
                                 .constant_buffer(0)
                                 .is_some_and(|cb| {
                                     cb.buffer == legacy_constants_buffer_id(ShaderStage::Vertex)
                                 })
-                            {
-                                legacy_constants_used
-                                    [ShaderStage::Vertex.as_bind_group_index() as usize] = true;
-                            }
+                        {
+                            legacy_constants_used
+                                [ShaderStage::Vertex.as_bind_group_index() as usize] = true;
                         }
-                        if used_cb_ps.get(0).is_some_and(|v| *v) {
-                            if self
+                        if used_cb_ps.first().is_some_and(|v| *v)
+                            && self
                                 .bindings
                                 .stage(ShaderStage::Pixel)
                                 .constant_buffer(0)
                                 .is_some_and(|cb| {
                                     cb.buffer == legacy_constants_buffer_id(ShaderStage::Pixel)
                                 })
-                            {
-                                legacy_constants_used
-                                    [ShaderStage::Pixel.as_bind_group_index() as usize] = true;
-                            }
+                        {
+                            legacy_constants_used
+                                [ShaderStage::Pixel.as_bind_group_index() as usize] = true;
                         }
                     }
                 }
