@@ -153,6 +153,12 @@ impl IoPortBus {
     }
 
     pub fn read(&mut self, port: u16, size: u8) -> u32 {
+        // x86 port I/O instructions only support access sizes {1,2,4}. Treat any other size as an
+        // invalid/unmapped access and float the bus high (all ones), rather than forwarding an
+        // unexpected size into device models.
+        if !matches!(size, 1 | 2 | 4) {
+            return 0xFFFF_FFFF;
+        }
         if let Some(dev) = self.devices.get_mut(&port) {
             return dev.read(port, size);
         }
@@ -175,6 +181,9 @@ impl IoPortBus {
     }
 
     pub fn write(&mut self, port: u16, size: u8, value: u32) {
+        if !matches!(size, 1 | 2 | 4) {
+            return;
+        }
         if let Some(device) = self.devices.get_mut(&port) {
             device.write(port, size, value);
             return;
@@ -479,5 +488,50 @@ mod tests {
         // Unregistering the exact port mapping should fall back to the range device again.
         assert!(bus.unregister(OVERRIDE_PORT).is_some());
         assert_eq!(bus.read(OVERRIDE_PORT, 4), 0xAA00_0002);
+    }
+
+    #[test]
+    fn invalid_port_io_sizes_float_high_and_are_not_dispatched() {
+        let mut bus = IoPortBus::new();
+
+        #[derive(Clone)]
+        struct SpyPort {
+            state: Rc<RefCell<u32>>,
+            port: u16,
+        }
+
+        impl PortIoDevice for SpyPort {
+            fn read(&mut self, port: u16, size: u8) -> u32 {
+                debug_assert_eq!(port, self.port);
+                debug_assert_eq!(size, 4);
+                *self.state.borrow()
+            }
+
+            fn write(&mut self, port: u16, size: u8, value: u32) {
+                debug_assert_eq!(port, self.port);
+                debug_assert_eq!(size, 4);
+                *self.state.borrow_mut() = value;
+            }
+        }
+
+        let state = Rc::new(RefCell::new(0u32));
+        bus.register(
+            0x1234,
+            Box::new(SpyPort {
+                state: state.clone(),
+                port: 0x1234,
+            }),
+        );
+
+        // Invalid-sized writes must be ignored.
+        bus.write(0x1234, 3, 0xDEAD_BEEF);
+        assert_eq!(*state.borrow(), 0);
+
+        // Invalid-sized reads must float high even when a device is mapped.
+        assert_eq!(bus.read(0x1234, 3), 0xFFFF_FFFF);
+
+        // Valid accesses still dispatch.
+        bus.write(0x1234, 4, 0x1234_5678);
+        assert_eq!(bus.read(0x1234, 4), 0x1234_5678);
     }
 }
