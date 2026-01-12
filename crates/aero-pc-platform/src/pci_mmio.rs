@@ -1,4 +1,4 @@
-use aero_devices::pci::{PciBdf, SharedPciConfigPorts};
+use aero_devices::pci::{PciBarKind, PciBdf, SharedPciConfigPorts};
 use memory::MmioHandler;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -47,9 +47,10 @@ impl<T: PciBarMmioHandler> PciBarMmioHandler for SharedPciBarMmioHandler<T> {
 
 /// Routes MMIO accesses within a PCI MMIO window to the correct device BAR handler.
 ///
-/// The router consults the PCI bus' *currently decoded* BAR mappings (`PciBus::mapped_bars`) for
-/// every access, so changes to the PCI command register (MEMORY_ENABLE) or BAR reprogramming are
-/// reflected immediately without needing dynamic MMIO unmap/remap support in the memory bus.
+/// The router consults each device's live PCI config space (`PciConfigSpace::command()` +
+/// `PciConfigSpace::bar_range()`) for every access, so changes to the PCI command register
+/// (MEMORY_ENABLE) or BAR reprogramming are reflected immediately without needing dynamic MMIO
+/// unmap/remap support in the memory bus.
 pub struct PciBarMmioRouter {
     base: u64,
     pci_cfg: SharedPciConfigPorts,
@@ -86,12 +87,29 @@ impl PciBarMmioRouter {
         let mut pci_cfg = self.pci_cfg.borrow_mut();
         let bus = pci_cfg.bus_mut();
 
-        for mapped in bus.iter_mapped_mmio_bars() {
-            let key = (mapped.bdf, mapped.bar);
-            if !self.handlers.contains_key(&key) {
+        // Iterate only over BARs with registered handlers to avoid scanning the entire bus.
+        for key in self.handlers.keys().copied() {
+            let Some(cfg) = bus.device_config(key.0) else {
+                continue;
+            };
+
+            // Respect PCI command register Memory Space Enable (bit 1).
+            if (cfg.command() & 0x2) == 0 {
                 continue;
             }
-            let bar = mapped.range;
+
+            let Some(bar) = cfg.bar_range(key.1) else {
+                continue;
+            };
+
+            if bar.base == 0 {
+                continue;
+            }
+
+            if !matches!(bar.kind, PciBarKind::Mmio32 | PciBarKind::Mmio64) {
+                continue;
+            }
+
             let bar_end = bar.end_exclusive();
 
             if paddr < bar.base || access_end > bar_end {
