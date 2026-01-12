@@ -525,8 +525,18 @@ mod tests {
     }
 
     fn patterned_bytes(len: usize) -> Vec<u8> {
-        // Deterministic "unique-ish" pattern for verifying slices. Wraps naturally at 256.
-        (0..len).map(|i| i as u8).collect()
+        // Deterministic pattern for verifying slices.
+        //
+        // Note: Avoid a simple `i as u8` pattern, which repeats every 256 bytes and can make
+        // row/offset bugs harder to detect when strides are 256-aligned.
+        let mut state: u32 = 0x1234_5678;
+        let mut out = Vec::with_capacity(len);
+        for _ in 0..len {
+            // LCG with full period 2^32 (Numerical Recipes constants).
+            state = state.wrapping_mul(1664525).wrapping_add(1013904223);
+            out.push((state >> 24) as u8);
+        }
+        out
     }
 
     #[test]
