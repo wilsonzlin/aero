@@ -638,6 +638,7 @@ dependencies = [
  "aero-ipc",
  "aero-jit-x86",
  "aero-machine",
+ "aero-mmu",
  "aero-net-backend",
  "aero-net-e1000",
  "aero-opfs",

@@ -15,7 +15,7 @@ use wasm_bindgen::prelude::*;
 use js_sys::{Object, Reflect, Uint8Array};
 
 use aero_cpu_core::{
-    CpuBus, CpuCore, Exception,
+    CpuCore, Exception, PagingBus,
     assist::AssistContext,
     interp::tier0::{
         Tier0Config,
@@ -23,6 +23,7 @@ use aero_cpu_core::{
     },
     state::{CpuMode, Segment},
 };
+use aero_mmu::MemoryBus;
 
 use crate::{RunExit, RunExitKind};
 
@@ -54,174 +55,101 @@ fn wasm_memory_byte_len() -> u64 {
 }
 
 #[derive(Clone, Copy)]
-struct WasmBus {
+struct WasmPhysBus {
     guest_base: u32,
     guest_size: u64,
 }
 
-impl WasmBus {
+impl WasmPhysBus {
     #[inline]
-    fn ptr(&self, vaddr: u64, len: usize) -> Result<*const u8, Exception> {
+    fn ptr(&self, paddr: u64, len: usize) -> Option<*const u8> {
         let len_u64 = len as u64;
-        let end = vaddr.checked_add(len_u64).ok_or(Exception::MemoryFault)?;
+        let end = paddr.checked_add(len_u64)?;
         if end > self.guest_size {
-            return Err(Exception::MemoryFault);
+            return None;
         }
 
         let linear = (self.guest_base as u64)
-            .checked_add(vaddr)
-            .ok_or(Exception::MemoryFault)?;
-        Ok(linear as *const u8)
+            .checked_add(paddr)?;
+        Some(linear as *const u8)
     }
 
     #[inline]
-    fn ptr_mut(&self, vaddr: u64, len: usize) -> Result<*mut u8, Exception> {
-        Ok(self.ptr(vaddr, len)? as *mut u8)
+    fn ptr_mut(&self, paddr: u64, len: usize) -> Option<*mut u8> {
+        Some(self.ptr(paddr, len)? as *mut u8)
     }
 
     #[inline]
-    fn read_scalar<const N: usize>(&self, vaddr: u64) -> Result<[u8; N], Exception> {
-        let ptr = self.ptr(vaddr, N)?;
+    fn read_scalar<const N: usize>(&self, paddr: u64) -> [u8; N] {
+        let Some(ptr) = self.ptr(paddr, N) else {
+            return [0xFFu8; N];
+        };
         // Safety: `ptr()` bounds-checks against the configured guest region.
         unsafe {
             let mut out = [0u8; N];
             core::ptr::copy_nonoverlapping(ptr, out.as_mut_ptr(), N);
-            Ok(out)
+            out
         }
     }
 
     #[inline]
-    fn write_scalar<const N: usize>(&self, vaddr: u64, bytes: [u8; N]) -> Result<(), Exception> {
-        let ptr = self.ptr_mut(vaddr, N)?;
+    fn write_scalar<const N: usize>(&self, paddr: u64, bytes: [u8; N]) {
+        let Some(ptr) = self.ptr_mut(paddr, N) else {
+            return;
+        };
         // Safety: `ptr_mut()` bounds-checks against the configured guest region.
         unsafe {
             core::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr, N);
         }
-        Ok(())
     }
 }
 
-impl CpuBus for WasmBus {
+impl MemoryBus for WasmPhysBus {
     #[inline]
-    fn read_u8(&mut self, vaddr: u64) -> Result<u8, Exception> {
-        Ok(self.read_scalar::<1>(vaddr)?[0])
-    }
-
-    #[inline]
-    fn read_u16(&mut self, vaddr: u64) -> Result<u16, Exception> {
-        Ok(u16::from_le_bytes(self.read_scalar::<2>(vaddr)?))
+    fn read_u8(&mut self, paddr: u64) -> u8 {
+        self.read_scalar::<1>(paddr)[0]
     }
 
     #[inline]
-    fn read_u32(&mut self, vaddr: u64) -> Result<u32, Exception> {
-        Ok(u32::from_le_bytes(self.read_scalar::<4>(vaddr)?))
+    fn read_u16(&mut self, paddr: u64) -> u16 {
+        u16::from_le_bytes(self.read_scalar::<2>(paddr))
     }
 
     #[inline]
-    fn read_u64(&mut self, vaddr: u64) -> Result<u64, Exception> {
-        Ok(u64::from_le_bytes(self.read_scalar::<8>(vaddr)?))
+    fn read_u32(&mut self, paddr: u64) -> u32 {
+        u32::from_le_bytes(self.read_scalar::<4>(paddr))
     }
 
     #[inline]
-    fn read_u128(&mut self, vaddr: u64) -> Result<u128, Exception> {
-        Ok(u128::from_le_bytes(self.read_scalar::<16>(vaddr)?))
+    fn read_u64(&mut self, paddr: u64) -> u64 {
+        u64::from_le_bytes(self.read_scalar::<8>(paddr))
     }
 
     #[inline]
-    fn write_u8(&mut self, vaddr: u64, val: u8) -> Result<(), Exception> {
-        self.write_scalar::<1>(vaddr, [val])
+    fn write_u8(&mut self, paddr: u64, value: u8) {
+        self.write_scalar::<1>(paddr, [value]);
     }
 
     #[inline]
-    fn write_u16(&mut self, vaddr: u64, val: u16) -> Result<(), Exception> {
-        self.write_scalar::<2>(vaddr, val.to_le_bytes())
+    fn write_u16(&mut self, paddr: u64, value: u16) {
+        self.write_scalar::<2>(paddr, value.to_le_bytes());
     }
 
     #[inline]
-    fn write_u32(&mut self, vaddr: u64, val: u32) -> Result<(), Exception> {
-        self.write_scalar::<4>(vaddr, val.to_le_bytes())
+    fn write_u32(&mut self, paddr: u64, value: u32) {
+        self.write_scalar::<4>(paddr, value.to_le_bytes());
     }
 
     #[inline]
-    fn write_u64(&mut self, vaddr: u64, val: u64) -> Result<(), Exception> {
-        self.write_scalar::<8>(vaddr, val.to_le_bytes())
+    fn write_u64(&mut self, paddr: u64, value: u64) {
+        self.write_scalar::<8>(paddr, value.to_le_bytes());
     }
+}
 
-    #[inline]
-    fn write_u128(&mut self, vaddr: u64, val: u128) -> Result<(), Exception> {
-        self.write_scalar::<16>(vaddr, val.to_le_bytes())
-    }
+#[derive(Debug, Default, Clone, Copy)]
+struct JsIoBus;
 
-    fn read_bytes(&mut self, vaddr: u64, dst: &mut [u8]) -> Result<(), Exception> {
-        let ptr = self.ptr(vaddr, dst.len())?;
-        // Safety: `ptr()` bounds-checks.
-        unsafe {
-            core::ptr::copy_nonoverlapping(ptr, dst.as_mut_ptr(), dst.len());
-        }
-        Ok(())
-    }
-
-    fn write_bytes(&mut self, vaddr: u64, src: &[u8]) -> Result<(), Exception> {
-        let ptr = self.ptr_mut(vaddr, src.len())?;
-        // Safety: `ptr_mut()` bounds-checks.
-        unsafe {
-            core::ptr::copy_nonoverlapping(src.as_ptr(), ptr, src.len());
-        }
-        Ok(())
-    }
-
-    fn preflight_write_bytes(&mut self, vaddr: u64, len: usize) -> Result<(), Exception> {
-        let _ = self.ptr_mut(vaddr, len)?;
-        Ok(())
-    }
-
-    fn supports_bulk_copy(&self) -> bool {
-        true
-    }
-
-    fn bulk_copy(&mut self, dst: u64, src: u64, len: usize) -> Result<bool, Exception> {
-        if len == 0 || dst == src {
-            return Ok(true);
-        }
-        let dst_ptr = self.ptr_mut(dst, len)?;
-        let src_ptr = self.ptr(src, len)?;
-        // Safety: pointers are in-bounds and `copy` preserves overlap semantics.
-        unsafe {
-            core::ptr::copy(src_ptr, dst_ptr, len);
-        }
-        Ok(true)
-    }
-
-    fn supports_bulk_set(&self) -> bool {
-        true
-    }
-
-    fn bulk_set(&mut self, dst: u64, pattern: &[u8], repeat: usize) -> Result<bool, Exception> {
-        if repeat == 0 || pattern.is_empty() {
-            return Ok(true);
-        }
-        let total = pattern
-            .len()
-            .checked_mul(repeat)
-            .ok_or(Exception::MemoryFault)?;
-        let dst_ptr = self.ptr_mut(dst, total)?;
-        // Safety: `dst_ptr` covers `total` bytes.
-        unsafe {
-            for i in 0..repeat {
-                let off = i * pattern.len();
-                core::ptr::copy_nonoverlapping(pattern.as_ptr(), dst_ptr.add(off), pattern.len());
-            }
-        }
-        Ok(true)
-    }
-
-    fn fetch(&mut self, vaddr: u64, max_len: usize) -> Result<[u8; 15], Exception> {
-        let mut buf = [0u8; 15];
-        let len = max_len.min(15);
-        self.read_bytes(vaddr, &mut buf[..len])?;
-        Ok(buf)
-    }
-
+impl aero_cpu_core::paging_bus::IoBus for JsIoBus {
     fn io_read(&mut self, port: u16, size: u32) -> Result<u64, Exception> {
         match size {
             1 | 2 | 4 => Ok(js_io_port_read(u32::from(port), size) as u64),
@@ -324,10 +252,11 @@ impl WasmVm {
             };
         }
 
-        let mut bus = WasmBus {
+        let phys = WasmPhysBus {
             guest_base: self.guest_base,
             guest_size: self.guest_size,
         };
+        let mut bus = PagingBus::new_with_io(phys, JsIoBus);
         let cfg = Tier0Config::from_cpuid(&self.assist.features);
 
         let mut executed = 0u64;
