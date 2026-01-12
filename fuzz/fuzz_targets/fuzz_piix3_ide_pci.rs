@@ -4,6 +4,7 @@ use arbitrary::Unstructured;
 use libfuzzer_sys::fuzz_target;
 
 use aero_devices::pci::PciDevice;
+use aero_io_snapshot::io::state::IoSnapshot;
 use aero_devices_storage::atapi::{AtapiCdrom, IsoBackend};
 use aero_devices_storage::ata::AtaDrive;
 use aero_devices_storage::pci_ide::Piix3IdePciDevice;
@@ -185,6 +186,7 @@ enum Op {
     IoRead { port: u16, size: u8 },
     IoWrite { port: u16, size: u8, value: u32 },
     Tick,
+    SnapshotRoundtrip,
 }
 
 fuzz_target!(|data: &[u8]| {
@@ -367,6 +369,11 @@ fuzz_target!(|data: &[u8]| {
     let mut ops = Vec::with_capacity(ops_len);
     for _ in 0..ops_len {
         let kind: u8 = u.arbitrary().unwrap_or(0);
+        // Snapshot roundtrips are relatively expensive; trigger them rarely.
+        if kind == 0 {
+            ops.push(Op::SnapshotRoundtrip);
+            continue;
+        }
         match kind % 5 {
             0 => {
                 let offset: u8 = u.arbitrary().unwrap_or(0);
@@ -446,6 +453,41 @@ fuzz_target!(|data: &[u8]| {
                 dev.io_write(port, size, value);
             }
             Op::Tick => dev.tick(&mut mem),
+            Op::SnapshotRoundtrip => {
+                let bytes = dev.save_state();
+                let mut restored = Piix3IdePciDevice::new();
+                if restored.load_state(&bytes).is_ok() {
+                    // Like the AHCI model, IDE snapshots intentionally drop host-side backends.
+                    // Reattach a fresh disk/ISO so deeper DMA/packet paths remain reachable.
+                    if attach_atapi {
+                        let backend = MemIso::new(iso_sectors, init);
+                        if attach_secondary {
+                            restored
+                                .controller
+                                .attach_secondary_master_atapi_backend_for_restore(Box::new(backend));
+                        } else {
+                            restored
+                                .controller
+                                .attach_primary_master_atapi_backend_for_restore(Box::new(backend));
+                        }
+                    } else {
+                        let disk = match RawDisk::create(MemBackend::new(), capacity) {
+                            Ok(d) => d,
+                            Err(_) => continue,
+                        };
+                        let drive = match AtaDrive::new(Box::new(disk) as Box<dyn VirtualDisk>) {
+                            Ok(d) => d,
+                            Err(_) => continue,
+                        };
+                        if attach_secondary {
+                            restored.controller.attach_secondary_master_ata(drive);
+                        } else {
+                            restored.controller.attach_primary_master_ata(drive);
+                        }
+                    }
+                    dev = restored;
+                }
+            }
         }
     }
 
