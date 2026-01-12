@@ -709,6 +709,21 @@ impl AhciPciDevice {
             controller,
         }
     }
+
+    fn command(&self) -> u16 {
+        self.config.read(0x04, 2) as u16
+    }
+
+    fn intx_disabled(&self) -> bool {
+        (self.command() & (1 << 10)) != 0
+    }
+
+    pub fn irq_level(&self) -> bool {
+        if self.intx_disabled() {
+            return false;
+        }
+        self.controller.irq_level()
+    }
 }
 
 impl PciDevice for AhciPciDevice {
@@ -1095,6 +1110,60 @@ mod tests {
         mem.read_physical(dst, &mut got);
         let expected = core::array::from_fn(|i| ((2 * 512 + i) & 0xff) as u8);
         assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn pci_wrapper_gates_ahci_intx_on_pci_command_intx_disable_bit() {
+        let mut disk = MemDisk::new(16);
+        // Fill sectors with deterministic bytes so READ DMA EXT produces non-zero output.
+        for (i, b) in disk.data_mut().iter_mut().enumerate() {
+            *b = (i & 0xff) as u8;
+        }
+        let disk = Box::new(disk);
+
+        let mut mem = VecMemory::new(0x20_000);
+        let controller = AhciController::new(disk);
+        let mut dev = AhciPciDevice::new(controller, 0xfebf_0000);
+
+        // Enable MMIO decode + bus mastering so the command executes and asserts the IRQ.
+        dev.config_write(0x04, 2, (1 << 1) | (1 << 2));
+
+        let clb = 0x1000u64;
+        let fb = 0x2000u64;
+        let ctba = 0x3000u64;
+        let dst = 0x4000u64;
+
+        dev.mmio_write(&mut mem, HBA_GHC, 4, GHC_AE | GHC_IE);
+        dev.mmio_write(&mut mem, HBA_PORTS_BASE + PX_CLB, 4, clb as u32);
+        dev.mmio_write(&mut mem, HBA_PORTS_BASE + PX_CLBU, 4, (clb >> 32) as u32);
+        dev.mmio_write(&mut mem, HBA_PORTS_BASE + PX_FB, 4, fb as u32);
+        dev.mmio_write(&mut mem, HBA_PORTS_BASE + PX_FBU, 4, (fb >> 32) as u32);
+        dev.mmio_write(&mut mem, HBA_PORTS_BASE + PX_IE, 4, PXIE_DHRE);
+        dev.mmio_write(
+            &mut mem,
+            HBA_PORTS_BASE + PX_CMD,
+            4,
+            PXCMD_FRE | PXCMD_ST | PXCMD_SUD,
+        );
+
+        let header = build_cmd_header(5, false, 1, ctba);
+        mem.write_physical(clb, &header);
+        write_reg_h2d_fis(&mut mem, ctba, ATA_CMD_READ_DMA_EXT, 2, 1);
+        write_prd(&mut mem, ctba + 0x80, dst, 512);
+        mem.write_physical(dst, &[0xaa; 512]);
+
+        dev.mmio_write(&mut mem, HBA_PORTS_BASE + PX_CI, 4, 1);
+
+        assert!(dev.controller.irq_level(), "device model asserts IRQ line");
+        assert!(dev.irq_level(), "wrapper forwards IRQ when INTX is enabled");
+
+        // INTX_DISABLE suppresses the external line, but does not clear internal state.
+        dev.config_write(0x04, 2, (1 << 1) | (1 << 2) | (1 << 10));
+        assert!(dev.controller.irq_level(), "device model retains pending interrupt");
+        assert!(!dev.irq_level(), "wrapper must suppress IRQ when INTX is disabled");
+
+        dev.config_write(0x04, 2, (1 << 1) | (1 << 2));
+        assert!(dev.irq_level());
     }
 
     #[test]

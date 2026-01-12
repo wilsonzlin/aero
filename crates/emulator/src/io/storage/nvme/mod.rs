@@ -684,6 +684,21 @@ impl NvmePciDevice {
             controller,
         }
     }
+
+    fn command(&self) -> u16 {
+        self.config.read(0x04, 2) as u16
+    }
+
+    fn intx_disabled(&self) -> bool {
+        (self.command() & (1 << 10)) != 0
+    }
+
+    pub fn irq_level(&self) -> bool {
+        if self.intx_disabled() {
+            return false;
+        }
+        self.controller.irq_level()
+    }
 }
 
 impl PciDevice for NvmePciDevice {
@@ -991,6 +1006,51 @@ mod tests {
         let vid = mem.read_u16(identify_buf);
         assert_eq!(vid, 0x1b36);
         assert!(dev.controller.irq_level());
+    }
+
+    #[test]
+    fn pci_wrapper_gates_nvme_intx_on_pci_command_intx_disable_bit() {
+        let disk = Box::new(MemDisk::new(16));
+        let ctrl = NvmeController::new(disk);
+        let mut dev = NvmePciDevice::new(ctrl, 0xfebf_0000);
+        let mut mem = VecMemory::new(4 * 1024 * 1024);
+
+        // Enable MMIO decode + bus mastering so the admin command executes and asserts the IRQ.
+        dev.config_write(0x04, 2, (1 << 1) | (1 << 2));
+
+        dev.mmio_write(&mut mem, NVME_REG_AQA, 4, 0x0003_0003);
+        dev.mmio_write(&mut mem, NVME_REG_ASQ, 4, 0x10_000);
+        dev.mmio_write(&mut mem, NVME_REG_ASQ_HI, 4, 0);
+        dev.mmio_write(&mut mem, NVME_REG_ACQ, 4, 0x20_000);
+        dev.mmio_write(&mut mem, NVME_REG_ACQ_HI, 4, 0);
+        dev.mmio_write(&mut mem, NVME_REG_CC, 4, (6 << 16) | (4 << 20) | CC_EN);
+
+        let identify_buf = 0x30_000u64;
+        for i in 0..4096u64 {
+            mem.write_u8(identify_buf + i, 0xaa);
+        }
+
+        let cid = 0x1234u16;
+        let cmd_addr = 0x10_000u64;
+        let mut cmd = [0u32; 16];
+        cmd[0] = OPC_ADMIN_IDENTIFY as u32 | ((cid as u32) << 16);
+        cmd[6] = identify_buf as u32;
+        cmd[7] = (identify_buf >> 32) as u32;
+        cmd[10] = 1;
+        write_cmd(&mut mem, cmd_addr, cmd);
+
+        // Ring SQ0 tail; the command should complete and raise an IRQ.
+        dev.mmio_write(&mut mem, NVME_DOORBELL_BASE, 4, 1);
+
+        assert!(dev.controller.irq_level(), "device model asserts IRQ line");
+        assert!(dev.irq_level(), "wrapper forwards IRQ when INTX is enabled");
+
+        dev.config_write(0x04, 2, (1 << 1) | (1 << 2) | (1 << 10));
+        assert!(dev.controller.irq_level(), "device model retains pending interrupt");
+        assert!(!dev.irq_level(), "wrapper must suppress IRQ when INTX is disabled");
+
+        dev.config_write(0x04, 2, (1 << 1) | (1 << 2));
+        assert!(dev.irq_level());
     }
 
     #[test]
