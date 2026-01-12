@@ -329,8 +329,10 @@ name = "aero-jit-wasm"
 version = "0.1.0"
 dependencies = [
  "aero-jit-x86",
+ "aero-types",
  "js-sys",
  "wasm-bindgen",
+ "wasmparser 0.244.0",
 ]
 
 [[package]]

@@ -9,16 +9,16 @@
 use core::cell::Cell;
 
 #[cfg(target_arch = "wasm32")]
-use wasm_bindgen::prelude::*;
-
-#[cfg(target_arch = "wasm32")]
 use js_sys::{Object, Reflect, Uint8Array};
 
 #[cfg(target_arch = "wasm32")]
+use wasm_bindgen::prelude::*;
+
+#[cfg(target_arch = "wasm32")]
 use aero_jit_x86::{
-    Tier1Bus,
     compiler::tier1::compile_tier1_block_with_options,
     tier1::{BlockLimits, Tier1WasmOptions},
+    Tier1Bus,
 };
 
 // wasm-bindgen's "threads" transform expects TLS metadata symbols (e.g.
@@ -184,3 +184,4 @@ pub fn compile_tier1_block(
 
     Ok(result.into())
 }
+
