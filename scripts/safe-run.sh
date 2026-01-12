@@ -258,6 +258,18 @@ should_retry_rustc_thread_error() {
     if grep -q "fork: retry: Resource temporarily unavailable" "${stderr_log}"; then
         return 0
     fi
+    # Cargo can also surface EAGAIN process spawn failures as a generic "could not execute process"
+    # error (e.g. failing to spawn rustc at all):
+    #
+    #   error: could not compile `foo` (lib)
+    #
+    #   Caused by:
+    #     could not execute process `rustc ...` (never executed)
+    #
+    #   Caused by:
+    #     Resource temporarily unavailable (os error 11)
+    #
+    # This is also transient under shared-host contention and benefits from retry/backoff.
     if grep -q "could not execute process" "${stderr_log}" \
         && grep -Eq "Resource temporarily unavailable|WouldBlock|os error 11|EAGAIN" "${stderr_log}"
     then
