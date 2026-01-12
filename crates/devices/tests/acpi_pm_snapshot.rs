@@ -457,6 +457,40 @@ fn snapshot_restore_with_inconsistent_remainder_falls_back_to_ticks_only() {
 }
 
 #[test]
+fn snapshot_load_does_not_sample_clock_on_decode_error() {
+    const TAG_PM_TIMER_TICKS: u16 = 8;
+
+    let cfg = AcpiPmConfig::default();
+    let clock = CountingClock::new(1);
+
+    let mut pm =
+        AcpiPmIo::new_with_callbacks_and_clock(cfg, AcpiPmCallbacks::default(), clock.clone());
+    clock.reset_calls();
+
+    // Mutate some state so we can confirm `load_state()` is atomic on failure.
+    pm.write(cfg.pm1a_cnt_blk, 2, 0x1234);
+    let pm1_cnt_before = pm.pm1_cnt();
+    assert_eq!(clock.calls(), 0);
+
+    // Provide a corrupted tick field and omit `elapsed_ns` to force decode of ticks.
+    let mut w = SnapshotWriter::new(*b"ACPM", SnapshotVersion::new(1, 0));
+    w.field_bytes(TAG_PM_TIMER_TICKS, vec![0xAA]); // invalid encoding for u32
+    let bytes = w.finish();
+
+    assert!(pm.load_state(&bytes).is_err());
+    assert_eq!(
+        clock.calls(),
+        0,
+        "ACPI PM load_state must not sample Clock::now_ns if snapshot decoding fails"
+    );
+    assert_eq!(
+        pm.pm1_cnt(),
+        pm1_cnt_before,
+        "load_state must leave device state unchanged on decode error"
+    );
+}
+
+#[test]
 fn snapshot_save_samples_clock_once_for_timer_encoding() {
     // Snapshot save should sample the clock once for deterministic PM timer encoding. This guards
     // against regressions where `save_state()` would call `Clock::now_ns()` multiple times and
