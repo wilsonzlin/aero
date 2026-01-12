@@ -21,3 +21,20 @@ fn i8042_device_id_has_stable_name() {
         "DeviceId::I8042 Display should include name, got: {display}"
     );
 }
+
+#[test]
+fn canonical_platform_device_ids_have_stable_names() {
+    for (id, name) in [
+        (DeviceId::PCI_CFG, "PCI_CFG"),
+        (DeviceId::PCI_INTX, "PCI_INTX"),
+        (DeviceId::ACPI_PM, "ACPI_PM"),
+        (DeviceId::HPET, "HPET"),
+    ] {
+        assert_eq!(id.name(), Some(name));
+        let display = format!("{id}");
+        assert!(
+            display.contains(&format!("{name}(")),
+            "DeviceId::{name} Display should include name, got: {display}"
+        );
+    }
+}
