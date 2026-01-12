@@ -1409,7 +1409,7 @@ impl SineTone {
         sample_rate: f32,
         gain: f32,
     ) -> u32 {
-        if frames == 0 || sample_rate <= 0.0 {
+        if frames == 0 || !sample_rate.is_finite() || sample_rate <= 0.0 {
             return 0;
         }
 
@@ -1417,6 +1417,17 @@ impl SineTone {
         if channel_count == 0 {
             return 0;
         }
+
+        let capacity = bridge.capacity_frames();
+        let level = bridge.buffer_level_frames();
+        let free_frames = capacity.saturating_sub(level);
+        if free_frames == 0 {
+            return 0;
+        }
+
+        // Clamp per-call work: this is a JS-callable demo API and callers may be untrusted. Avoid
+        // allocating a multi-gigabyte scratch buffer if a hostile caller passes `frames=u32::MAX`.
+        let frames = frames.min(free_frames);
 
         let total_samples = frames as usize * channel_count as usize;
         self.scratch.clear();
@@ -1462,6 +1473,8 @@ impl HdaPcmWriter {
         if dst_sample_rate_hz == 0 {
             return Err(JsValue::from_str("dst_sample_rate_hz must be non-zero"));
         }
+        // Defensive clamp: this is a JS-callable API and callers may be untrusted.
+        let dst_sample_rate_hz = dst_sample_rate_hz.min(aero_audio::MAX_HOST_SAMPLE_RATE_HZ);
         Ok(Self {
             dst_sample_rate_hz,
             resampler: LinearResampler::new(dst_sample_rate_hz, dst_sample_rate_hz),
@@ -1479,6 +1492,7 @@ impl HdaPcmWriter {
         if dst_sample_rate_hz == 0 {
             return Err(JsValue::from_str("dst_sample_rate_hz must be non-zero"));
         }
+        let dst_sample_rate_hz = dst_sample_rate_hz.min(aero_audio::MAX_HOST_SAMPLE_RATE_HZ);
         self.dst_sample_rate_hz = dst_sample_rate_hz;
         let src = self.resampler.src_rate_hz();
         self.resampler.reset_rates(src, dst_sample_rate_hz);
@@ -1526,17 +1540,34 @@ impl HdaPcmWriter {
                 .reset_rates(fmt.sample_rate_hz, self.dst_sample_rate_hz);
         }
 
-        decode_pcm_to_stereo_f32_into(pcm_bytes, fmt, &mut self.decode_scratch);
-        if self.decode_scratch.is_empty() {
-            return Ok(0);
-        }
-        self.resampler.push_source_frames(&self.decode_scratch);
-
         let capacity = bridge.capacity_frames();
         let level = bridge.buffer_level_frames();
-        let free_frames = capacity.saturating_sub(level);
+        let mut free_frames = capacity.saturating_sub(level);
         if free_frames == 0 {
             return Ok(0);
+        }
+        // Bound per-call work/allocations. This API is JS-callable; avoid decoding/resampling
+        // multi-second buffers in one go if a caller passes a huge ring capacity or `frames` value.
+        free_frames = free_frames.min(self.dst_sample_rate_hz);
+        if free_frames == 0 {
+            return Ok(0);
+        }
+
+        // Only decode as many source frames as needed to fill the available ring space. Dropping
+        // excess producer input avoids unbounded buffering if the AudioWorklet consumer stalls.
+        let required_src = self
+            .resampler
+            .required_source_frames(free_frames as usize);
+        let queued_src = self.resampler.queued_source_frames();
+        let need_src = required_src.saturating_sub(queued_src);
+        if need_src > 0 && !pcm_bytes.is_empty() {
+            let bytes_per_frame = fmt.bytes_per_frame();
+            let max_bytes = need_src.saturating_mul(bytes_per_frame);
+            let take = pcm_bytes.len().min(max_bytes);
+            decode_pcm_to_stereo_f32_into(&pcm_bytes[..take], fmt, &mut self.decode_scratch);
+            if !self.decode_scratch.is_empty() {
+                self.resampler.push_source_frames(&self.decode_scratch);
+            }
         }
 
         self.resampler
