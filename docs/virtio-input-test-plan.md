@@ -12,6 +12,10 @@ Authoritative interoperability contract (device model ↔ Win7 drivers):
 
 - **[`docs/windows7-virtio-driver-contract.md`](./windows7-virtio-driver-contract.md)** (`AERO-W7-VIRTIO` v1)
 
+Overview (device model behavior and motivation):
+
+- [`docs/virtio-input.md`](./virtio-input.md)
+
 If a test fails, treat the contract as the source of truth; fix code or bump the contract version.
 
 ---
@@ -129,6 +133,8 @@ Source and test:
 
 - Translator: [`drivers/windows7/virtio-input/src/hid_translate.c`](../drivers/windows7/virtio-input/src/hid_translate.c)
 - Test: [`drivers/windows7/virtio-input/tests/hid_translate_test.c`](../drivers/windows7/virtio-input/tests/hid_translate_test.c)
+
+See also: [`drivers/windows7/virtio-input/tests/README.md`](../drivers/windows7/virtio-input/tests/README.md)
 
 ### 2.1 Build + run (gcc / clang)
 
