@@ -35,10 +35,11 @@ async function flushMicrotasks(): Promise<void> {
   await Promise.resolve();
 }
 
-function installReadyWorkers(coordinator: WorkerCoordinator, cpu: StubWorker, io: StubWorker): void {
+function installReadyWorkers(coordinator: WorkerCoordinator, cpu: StubWorker, io: StubWorker, net?: StubWorker): void {
   (coordinator as any).workers = {
     cpu: { role: "cpu", instanceId: 1, worker: cpu as unknown as Worker, status: { state: "ready" } },
     io: { role: "io", instanceId: 1, worker: io as unknown as Worker, status: { state: "ready" } },
+    net: net ? { role: "net", instanceId: 1, worker: net as unknown as Worker, status: { state: "ready" } } : undefined,
   };
 }
 
@@ -48,11 +49,7 @@ describe("runtime/coordinator (worker VM snapshots)", () => {
     const cpu = new StubWorker();
     const io = new StubWorker();
     const net = new StubWorker();
-    (coordinator as any).workers = {
-      cpu: { role: "cpu", instanceId: 1, worker: cpu as unknown as Worker, status: { state: "ready" } },
-      io: { role: "io", instanceId: 1, worker: io as unknown as Worker, status: { state: "ready" } },
-      net: { role: "net", instanceId: 1, worker: net as unknown as Worker, status: { state: "ready" } },
-    };
+    installReadyWorkers(coordinator, cpu, io, net);
 
     const promise = coordinator.snapshotSaveToOpfs("state/test.snap");
 
@@ -61,6 +58,9 @@ describe("runtime/coordinator (worker VM snapshots)", () => {
     expect(net.posted.length).toBe(0);
 
     cpu.emitMessage({ kind: "vm.snapshot.paused", requestId: cpu.posted[0]!.message.requestId, ok: true });
+    await flushMicrotasks();
+    // NET pause should not happen until *both* CPU + IO pause acks are received.
+    expect(net.posted.length).toBe(0);
     io.emitMessage({ kind: "vm.snapshot.paused", requestId: io.posted[0]!.message.requestId, ok: true });
     await flushMicrotasks();
 
@@ -105,12 +105,16 @@ describe("runtime/coordinator (worker VM snapshots)", () => {
     const coordinator = new WorkerCoordinator();
     const cpu = new StubWorker();
     const io = new StubWorker();
-    installReadyWorkers(coordinator, cpu, io);
+    const net = new StubWorker();
+    installReadyWorkers(coordinator, cpu, io, net);
 
     const promise = coordinator.snapshotSaveToOpfs("state/test.snap");
 
     cpu.emitMessage({ kind: "vm.snapshot.paused", requestId: cpu.posted[0]!.message.requestId, ok: true });
     io.emitMessage({ kind: "vm.snapshot.paused", requestId: io.posted[0]!.message.requestId, ok: true });
+    await flushMicrotasks();
+
+    net.emitMessage({ kind: "vm.snapshot.paused", requestId: net.posted[0]!.message.requestId, ok: true });
     await flushMicrotasks();
 
     const cpuBuf = new ArrayBuffer(4);
@@ -135,11 +139,14 @@ describe("runtime/coordinator (worker VM snapshots)", () => {
     // Even though save failed, the coordinator must attempt to resume both workers.
     expect(cpu.posted.some((m) => m.message.kind === "vm.snapshot.resume")).toBe(true);
     expect(io.posted.some((m) => m.message.kind === "vm.snapshot.resume")).toBe(true);
+    expect(net.posted.some((m) => m.message.kind === "vm.snapshot.resume")).toBe(true);
 
     const cpuResume = cpu.posted.find((m) => m.message.kind === "vm.snapshot.resume")!;
     const ioResume = io.posted.find((m) => m.message.kind === "vm.snapshot.resume")!;
+    const netResume = net.posted.find((m) => m.message.kind === "vm.snapshot.resume")!;
     cpu.emitMessage({ kind: "vm.snapshot.resumed", requestId: cpuResume.message.requestId, ok: true });
     io.emitMessage({ kind: "vm.snapshot.resumed", requestId: ioResume.message.requestId, ok: true });
+    net.emitMessage({ kind: "vm.snapshot.resumed", requestId: netResume.message.requestId, ok: true });
 
     await expect(promise).rejects.toThrow(/saveToOpfs/i);
   });
@@ -149,11 +156,7 @@ describe("runtime/coordinator (worker VM snapshots)", () => {
     const cpu = new StubWorker();
     const io = new StubWorker();
     const net = new StubWorker();
-    (coordinator as any).workers = {
-      cpu: { role: "cpu", instanceId: 1, worker: cpu as unknown as Worker, status: { state: "ready" } },
-      io: { role: "io", instanceId: 1, worker: io as unknown as Worker, status: { state: "ready" } },
-      net: { role: "net", instanceId: 1, worker: net as unknown as Worker, status: { state: "ready" } },
-    };
+    installReadyWorkers(coordinator, cpu, io, net);
 
     const promise = coordinator.snapshotRestoreFromOpfs("state/test.snap");
 

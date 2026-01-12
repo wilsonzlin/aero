@@ -1018,15 +1018,14 @@ export class WorkerCoordinator {
 
     const cpu = this.workers.cpu;
     const io = this.workers.io;
-    const net = this.workers.net;
+    const netInfo = this.workers.net;
     if (!cpu?.worker || !io?.worker) {
       throw new Error("Cannot save VM snapshot: CPU/IO workers are not running.");
     }
     if (cpu.status.state !== "ready" || io.status.state !== "ready") {
       throw new Error("Cannot save VM snapshot: CPU/IO workers are not ready.");
     }
-    const netWorker = net?.worker;
-    const netReady = !!netWorker && net?.status.state === "ready";
+    const netWorker = netInfo?.status.state === "ready" ? netInfo.worker : undefined;
 
     this.snapshotInFlight = true;
     try {
@@ -1036,16 +1035,18 @@ export class WorkerCoordinator {
       const ioPause = this.snapshotRpc<VmSnapshotPausedMessage>(io.worker, { kind: "vm.snapshot.pause" }, "vm.snapshot.paused", {
         timeoutMs: 5_000,
       });
-      this.assertSnapshotOk("pause cpu", await cpuPause);
-      this.assertSnapshotOk("pause io", await ioPause);
+      const [cpuPaused, ioPaused] = await Promise.all([cpuPause, ioPause]);
+      this.assertSnapshotOk("pause cpu", cpuPaused);
+      this.assertSnapshotOk("pause io", ioPaused);
 
-      if (netReady) {
-        const netPause = await this.snapshotRpc<VmSnapshotPausedMessage>(
-          netWorker,
-          { kind: "vm.snapshot.pause" },
-          "vm.snapshot.paused",
-          { timeoutMs: 5_000 },
-        );
+      // Important: pause/drain the NET worker only after the guest/device side is
+      // fully paused (CPU + IO), otherwise the net worker can drain NET_TX/NET_RX
+      // while IO is still producing frames and those late frames would survive the
+      // snapshot boundary.
+      if (netWorker) {
+        const netPause = await this.snapshotRpc<VmSnapshotPausedMessage>(netWorker, { kind: "vm.snapshot.pause" }, "vm.snapshot.paused", {
+          timeoutMs: 5_000,
+        });
         this.assertSnapshotOk("pause net", netPause);
       }
 
@@ -1088,15 +1089,14 @@ export class WorkerCoordinator {
 
     const cpu = this.workers.cpu;
     const io = this.workers.io;
-    const net = this.workers.net;
+    const netInfo = this.workers.net;
     if (!cpu?.worker || !io?.worker) {
       throw new Error("Cannot restore VM snapshot: CPU/IO workers are not running.");
     }
     if (cpu.status.state !== "ready" || io.status.state !== "ready") {
       throw new Error("Cannot restore VM snapshot: CPU/IO workers are not ready.");
     }
-    const netWorker = net?.worker;
-    const netReady = !!netWorker && net?.status.state === "ready";
+    const netWorker = netInfo?.status.state === "ready" ? netInfo.worker : undefined;
 
     this.snapshotInFlight = true;
     try {
@@ -1106,16 +1106,14 @@ export class WorkerCoordinator {
       const ioPause = this.snapshotRpc<VmSnapshotPausedMessage>(io.worker, { kind: "vm.snapshot.pause" }, "vm.snapshot.paused", {
         timeoutMs: 5_000,
       });
-      this.assertSnapshotOk("pause cpu", await cpuPause);
-      this.assertSnapshotOk("pause io", await ioPause);
+      const [cpuPaused, ioPaused] = await Promise.all([cpuPause, ioPause]);
+      this.assertSnapshotOk("pause cpu", cpuPaused);
+      this.assertSnapshotOk("pause io", ioPaused);
 
-      if (netReady) {
-        const netPause = await this.snapshotRpc<VmSnapshotPausedMessage>(
-          netWorker,
-          { kind: "vm.snapshot.pause" },
-          "vm.snapshot.paused",
-          { timeoutMs: 5_000 },
-        );
+      if (netWorker) {
+        const netPause = await this.snapshotRpc<VmSnapshotPausedMessage>(netWorker, { kind: "vm.snapshot.pause" }, "vm.snapshot.paused", {
+          timeoutMs: 5_000,
+        });
         this.assertSnapshotOk("pause net", netPause);
       }
 
