@@ -1828,9 +1828,12 @@ impl Machine {
         // Rebuild port I/O devices for deterministic power-on state.
         self.io = IoPortBus::new();
 
-        // `enable_vga` is independent of `enable_pc_platform`. When PC platform devices are
-        // enabled, VGA is registered within the PC platform wiring below. Avoid registering the
-        // legacy VGA window/ports twice (which would overlap and panic).
+        // `enable_vga` is a legacy/standalone VGA wiring option.
+        //
+        // When the full PC platform is enabled, VGA is wired as part of that platform (see below).
+        // Avoid registering legacy VGA windows/ports twice (which would overlap and panic), and
+        // keep a stable `Rc` identity across resets because the physical memory bus persists MMIO
+        // mappings.
         if self.cfg.enable_vga && !self.cfg.enable_pc_platform {
             // VGA is a special legacy device whose MMIO window lives in the low 1MiB region. The
             // physical bus supports MMIO overlays on top of RAM, so mapping this window is safe
@@ -1879,7 +1882,7 @@ impl Machine {
                     vga: vga.clone(),
                 })
             });
-        } else if !self.cfg.enable_vga {
+        } else if !self.cfg.enable_pc_platform {
             self.vga = None;
         }
 
