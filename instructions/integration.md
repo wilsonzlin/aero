@@ -327,7 +327,7 @@ AERO_TIMEOUT=1200 bash ./scripts/safe-run.sh cargo test -p emulator --test freed
 
 # Full Windows 7 boot (local only; requires a user-supplied Windows 7 disk image)
 bash ./scripts/prepare-windows7.sh
-bash ./scripts/safe-run.sh cargo test -p emulator --test windows7_boot --locked -- --ignored
+AERO_TIMEOUT=1200 bash ./scripts/safe-run.sh cargo test -p emulator --test windows7_boot --locked -- --ignored
 ```
 
 ---
