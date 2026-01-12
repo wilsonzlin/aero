@@ -41,13 +41,15 @@ fn build_usb_blob(device_version: SnapshotVersion) -> Vec<u8> {
     w.finish()
 }
 
-fn build_devices_js(kind: &str, bytes: &[u8]) -> JsValue {
+fn build_devices_js(entries: &[(&str, &[u8])]) -> JsValue {
     let arr = Array::new();
-    let obj = Object::new();
-    Reflect::set(&obj, &JsValue::from_str("kind"), &JsValue::from_str(kind)).expect("set kind");
-    let bytes_js = Uint8Array::from(bytes);
-    Reflect::set(&obj, &JsValue::from_str("bytes"), bytes_js.as_ref()).expect("set bytes");
-    arr.push(&obj);
+    for (kind, bytes) in entries {
+        let obj = Object::new();
+        Reflect::set(&obj, &JsValue::from_str("kind"), &JsValue::from_str(kind)).expect("set kind");
+        let bytes_js = Uint8Array::from(*bytes);
+        Reflect::set(&obj, &JsValue::from_str("bytes"), bytes_js.as_ref()).expect("set bytes");
+        arr.push(&obj);
+    }
     arr.into()
 }
 
@@ -83,7 +85,9 @@ fn vm_snapshot_builder_roundtrips_guest_ram_and_usb_state() {
 
     let usb_version = SnapshotVersion::new(3, 7);
     let usb_blob = build_usb_blob(usb_version);
-    let devices_js = build_devices_js("usb.uhci", &usb_blob);
+    let i8042_version = SnapshotVersion::new(1, 2);
+    let i8042_blob = SnapshotWriter::new(*b"8042", i8042_version).finish();
+    let devices_js = build_devices_js(&[("usb.uhci", &usb_blob), ("input.i8042", &i8042_blob)]);
 
     let snap_a = vm_snapshot_save(cpu_js.clone(), mmu_js.clone(), devices_js.clone())
         .expect("vm_snapshot_save ok")
@@ -155,6 +159,21 @@ fn vm_snapshot_builder_roundtrips_guest_ram_and_usb_state() {
         "USB device blob should be preserved verbatim"
     );
 
+    let i8042_state = inspect
+        .devices
+        .iter()
+        .find(|d| d.id == DeviceId::I8042)
+        .expect("snapshot should contain i8042 device state");
+    assert_eq!(
+        (i8042_state.version, i8042_state.flags),
+        (i8042_version.major, i8042_version.minor),
+        "i8042 DeviceState version/flags should reflect aero-io-snapshot header"
+    );
+    assert_eq!(
+        i8042_state.data, i8042_blob,
+        "i8042 device blob should be preserved verbatim"
+    );
+
     // Clear RAM and restore via the wasm export.
     guest.fill(0);
 
@@ -182,20 +201,35 @@ fn vm_snapshot_builder_roundtrips_guest_ram_and_usb_state() {
         "devices should be present"
     );
     let devices_out: Array = devices_out_val.dyn_into().expect("devices array");
-    assert_eq!(devices_out.length(), 1, "expected one device state");
+    assert_eq!(devices_out.length(), 2, "expected two device states");
 
     let dev0: Object = devices_out.get(0).dyn_into().expect("devices[0] object");
-    let kind = Reflect::get(&dev0, &JsValue::from_str("kind"))
+    let kind0 = Reflect::get(&dev0, &JsValue::from_str("kind"))
         .expect("kind property")
         .as_string()
         .expect("kind string");
-    assert_eq!(kind, "usb.uhci");
-    let usb_out = Reflect::get(&dev0, &JsValue::from_str("bytes"))
+    let bytes0 = Reflect::get(&dev0, &JsValue::from_str("bytes"))
         .expect("bytes property")
         .dyn_into::<Uint8Array>()
         .expect("bytes Uint8Array")
         .to_vec();
-    assert_eq!(usb_out, usb_blob, "USB device bytes should roundtrip");
+
+    let dev1: Object = devices_out.get(1).dyn_into().expect("devices[1] object");
+    let kind1 = Reflect::get(&dev1, &JsValue::from_str("kind"))
+        .expect("kind property")
+        .as_string()
+        .expect("kind string");
+    let bytes1 = Reflect::get(&dev1, &JsValue::from_str("bytes"))
+        .expect("bytes property")
+        .dyn_into::<Uint8Array>()
+        .expect("bytes Uint8Array")
+        .to_vec();
+
+    // Devices are returned in deterministic order by device id (USB=12, I8042=13).
+    assert_eq!(kind0, "usb.uhci");
+    assert_eq!(bytes0, usb_blob, "USB device bytes should roundtrip");
+    assert_eq!(kind1, "input.i8042");
+    assert_eq!(bytes1, i8042_blob, "i8042 device bytes should roundtrip");
 
     for (i, &b) in guest.iter().enumerate() {
         assert_eq!(b, ram_pattern_byte(i), "RAM mismatch at offset {i}");
