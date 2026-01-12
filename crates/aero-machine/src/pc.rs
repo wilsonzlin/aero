@@ -285,7 +285,8 @@ impl PcMachine {
     pub fn poll_network(&mut self) {
         // 1) Process DMA (TX descriptors -> host TX queue, rx_pending -> guest RX ring).
         //
-        // This is safe even when E1000 is disabled; it will no-op.
+        // `PcPlatform::process_e1000` gates DMA on PCI command Bus Master Enable and no-ops when
+        // E1000 is disabled, so it's safe to call unconditionally.
         self.bus.platform.process_e1000();
 
         // 2) Drain guest->host frames.
