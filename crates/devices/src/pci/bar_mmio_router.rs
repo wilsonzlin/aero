@@ -147,18 +147,14 @@ impl PciBarMmioRouter {
         let bus = pci_cfg.bus_mut();
 
         let check = |(bdf, bar): (PciBdf, u8)| -> Option<u64> {
-            let Some(cfg) = bus.device_config(bdf) else {
-                return None;
-            };
+            let cfg = bus.device_config(bdf)?;
 
             let mem_enabled = (cfg.command() & 0x2) != 0;
             if !mem_enabled {
                 return None;
             }
 
-            let Some(range) = cfg.bar_range(bar) else {
-                return None;
-            };
+            let range = cfg.bar_range(bar)?;
             if range.base == 0 {
                 return None;
             }
