@@ -1049,7 +1049,8 @@ impl Machine {
                     pci_cfg.clone()
                 }
                 None => {
-                    let pci_cfg: SharedPciConfigPorts = Rc::new(RefCell::new(PciConfigPorts::new()));
+                    let pci_cfg: SharedPciConfigPorts =
+                        Rc::new(RefCell::new(PciConfigPorts::new()));
                     self.pci_cfg = Some(pci_cfg.clone());
                     pci_cfg
                 }
@@ -1059,8 +1060,7 @@ impl Machine {
             // PCI INTx router.
             let pci_intx: Rc<RefCell<PciIntxRouter>> = match &self.pci_intx {
                 Some(pci_intx) => {
-                    *pci_intx.borrow_mut() =
-                        PciIntxRouter::new(PciIntxRouterConfig::default());
+                    *pci_intx.borrow_mut() = PciIntxRouter::new(PciIntxRouterConfig::default());
                     pci_intx.clone()
                 }
                 None => {
@@ -1406,7 +1406,7 @@ impl snapshot::SnapshotSource for Machine {
                 devices.push(snapshot::io_snapshot_bridge::device_state_from_io_snapshot(
                     snapshot::DeviceId::PCI,
                     &core,
-                    ));
+                ));
             } else {
                 // Fallback: config ports only.
                 devices.push(snapshot::io_snapshot_bridge::device_state_from_io_snapshot(
@@ -1488,7 +1488,9 @@ impl snapshot::SnapshotSource for Machine {
             .borrow()
             .ram
             .read_into(offset, buf)
-            .map_err(|_err: GuestMemoryError| snapshot::SnapshotError::Corrupt("ram read failed"))?;
+            .map_err(|_err: GuestMemoryError| {
+                snapshot::SnapshotError::Corrupt("ram read failed")
+            })?;
         Ok(())
     }
 
@@ -1574,11 +1576,9 @@ impl snapshot::SnapshotTarget for Machine {
             (&self.interrupts, by_id.remove(&snapshot::DeviceId::APIC))
         {
             let mut interrupts = interrupts.borrow_mut();
-            restored_interrupts = snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
-                &state,
-                &mut *interrupts,
-            )
-            .is_ok();
+            restored_interrupts =
+                snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(&state, &mut *interrupts)
+                    .is_ok();
         }
 
         let mut restored_pci_intx = false;
@@ -1609,7 +1609,8 @@ impl snapshot::SnapshotTarget for Machine {
                         // (`PCPT`) under `DeviceId::PCI`.
                         //
                         // If a dedicated `PCI_CFG` entry is also present, prefer it.
-                        if let (Some(pci_cfg), Some(cfg_state)) = (&self.pci_cfg, pci_cfg_state.take())
+                        if let (Some(pci_cfg), Some(cfg_state)) =
+                            (&self.pci_cfg, pci_cfg_state.take())
                         {
                             let mut pci_cfg = pci_cfg.borrow_mut();
                             let _ = snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
@@ -1693,11 +1694,9 @@ impl snapshot::SnapshotTarget for Machine {
         let mut restored_hpet = false;
         if let (Some(hpet), Some(state)) = (&self.hpet, by_id.remove(&snapshot::DeviceId::HPET)) {
             let mut hpet = hpet.borrow_mut();
-            restored_hpet = snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
-                &state,
-                &mut *hpet,
-            )
-            .is_ok();
+            restored_hpet =
+                snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(&state, &mut *hpet)
+                    .is_ok();
         }
 
         // 6) After HPET restore, poll once so any level-triggered lines implied by restored
@@ -1761,7 +1760,9 @@ impl snapshot::SnapshotTarget for Machine {
             .borrow_mut()
             .ram
             .write_from(offset, data)
-            .map_err(|_err: GuestMemoryError| snapshot::SnapshotError::Corrupt("ram write failed"))?;
+            .map_err(|_err: GuestMemoryError| {
+                snapshot::SnapshotError::Corrupt("ram write failed")
+            })?;
         Ok(())
     }
 
@@ -2671,6 +2672,69 @@ mod tests {
             !m.cpu.state.halted,
             "CPU should wake from HLT once IRQ is delivered"
         );
+    }
+
+    #[test]
+    fn pc_platform_irq_is_not_acknowledged_during_interrupt_shadow() {
+        let mut m = Machine::new(MachineConfig {
+            ram_size_bytes: 2 * 1024 * 1024,
+            enable_pc_platform: true,
+            enable_serial: false,
+            enable_i8042: false,
+            enable_a20_gate: false,
+            enable_reset_ctrl: false,
+            ..Default::default()
+        })
+        .unwrap();
+
+        // Simple handler for IRQ0 (vector 0x20): write a byte to RAM and IRET.
+        const HANDLER_IP: u16 = 0x1100;
+        m.mem
+            .inner
+            .borrow_mut()
+            .write_physical(u64::from(HANDLER_IP), &[0xC6, 0x06, 0x00, 0x20, 0xAA, 0xCF]);
+        write_ivt_entry(&mut m, 0x20, HANDLER_IP, 0x0000);
+
+        // Program CPU at 0x1000 with enough NOPs to cover the instruction budgets below.
+        const ENTRY_IP: u16 = 0x1000;
+        m.mem
+            .inner
+            .borrow_mut()
+            .write_physical(u64::from(ENTRY_IP), &[0x90; 32]);
+        m.mem.inner.borrow_mut().write_physical(0x2000, &[0x00]);
+
+        init_real_mode_cpu(&mut m, ENTRY_IP, RFLAGS_IF);
+        m.cpu.pending.inhibit_interrupts_for_one_instruction();
+
+        // Configure the legacy PIC to use the standard remapped offsets and unmask IRQ0.
+        let interrupts = m.platform_interrupts().expect("pc platform enabled");
+        {
+            let mut ints = interrupts.borrow_mut();
+            ints.pic_mut().set_offsets(0x20, 0x28);
+            for irq in 0..16 {
+                ints.pic_mut().set_masked(irq, irq != 0);
+            }
+            ints.raise_irq(aero_platform::interrupts::InterruptInput::IsaIrq(0));
+        }
+
+        assert_eq!(
+            PlatformInterruptController::get_pending(&*interrupts.borrow()),
+            Some(0x20)
+        );
+
+        // While the interrupt shadow is active, the machine should not poll/acknowledge the PIC.
+        assert_eq!(m.run_slice(1), RunExit::Completed { executed: 1 });
+        assert_eq!(m.cpu.pending.interrupt_inhibit(), 0);
+        assert!(m.cpu.pending.external_interrupts.is_empty());
+        assert_eq!(
+            PlatformInterruptController::get_pending(&*interrupts.borrow()),
+            Some(0x20)
+        );
+        assert_eq!(m.read_physical_u8(0x2000), 0x00);
+
+        // Once the shadow expires, the pending IRQ should be acknowledged + delivered.
+        let _ = m.run_slice(10);
+        assert_eq!(m.read_physical_u8(0x2000), 0xAA);
     }
 
     #[test]
