@@ -1,5 +1,4 @@
 import { expect, test } from "@playwright/test";
-import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 const BASE_URL = "http://127.0.0.1:5173";
@@ -7,20 +6,6 @@ const BASE_URL = "http://127.0.0.1:5173";
 const THREADED_WASM_BINARY = fileURLToPath(
   new URL("../../web/src/wasm/pkg-threaded/aero_wasm_bg.wasm", import.meta.url),
 );
-const HAS_THREADED_WASM_BINARY = existsSync(THREADED_WASM_BINARY);
-
-if (process.env.CI && !HAS_THREADED_WASM_BINARY) {
-  throw new Error(
-    [
-      "Threaded WASM package missing in CI.",
-      "",
-      `Expected: ${THREADED_WASM_BINARY}`,
-      "",
-      "Build it with (from the repo root):",
-      "  npm -w web run wasm:build",
-    ].join("\n"),
-  );
-}
 
 async function hasThreadedWasmBundle(page: import("@playwright/test").Page): Promise<boolean> {
   // `wasm_loader.ts` fetches this path when instantiating the threaded build.
@@ -33,7 +18,21 @@ test("runtime UHCI: WebHID + WebUSB passthrough are guest-visible (NAK while pen
 
   await page.goto(`${BASE_URL}/`, { waitUntil: "load" });
 
-  test.skip(!(await hasThreadedWasmBundle(page)), "threaded WASM bundle (pkg-threaded) is missing");
+  const hasBundle = await hasThreadedWasmBundle(page);
+  if (!hasBundle) {
+    const message = [
+      "threaded WASM bundle (pkg-threaded) is missing",
+      "",
+      `Expected: ${THREADED_WASM_BINARY}`,
+      "",
+      "Build it with (from the repo root):",
+      "  npm -w web run wasm:build",
+    ].join("\n");
+    if (process.env.CI) {
+      throw new Error(message);
+    }
+    test.skip(true, message);
+  }
 
   const support = await page.evaluate(() => {
     let wasmThreads = false;

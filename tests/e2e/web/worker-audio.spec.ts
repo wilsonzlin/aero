@@ -8,19 +8,6 @@ const repoRoot = dirname(dirname(dirname(thisDir)));
 const threadedWasmPath = join(repoRoot, "web", "src", "wasm", "pkg-threaded", "aero_wasm_bg.wasm");
 const hasThreadedWasm = existsSync(threadedWasmPath);
 
-if (process.env.CI && !hasThreadedWasm) {
-  throw new Error(
-    [
-      "Threaded WASM package missing in CI.",
-      "",
-      `Expected: ${threadedWasmPath}`,
-      "",
-      "Build it with (from the repo root):",
-      "  npm -w web run wasm:build",
-    ].join("\n"),
-  );
-}
-
 test("worker audio fills the shared ring buffer (no postMessage audio copies)", async ({ page }) => {
   await page.goto("/web/blank.html");
 
@@ -28,7 +15,20 @@ test("worker audio fills the shared ring buffer (no postMessage audio copies)", 
   // `web/src/wasm/pkg-threaded`. When running Playwright in environments that
   // don't build WASM (e.g. `npx vite` without `npm run wasm:build`), skip instead
   // of hanging on an unfilled ring buffer.
-  test.skip(!hasThreadedWasm, "Threaded WASM bundle is missing (run `cd web && npm run wasm:build:threaded`).");
+  if (!hasThreadedWasm) {
+    const message = [
+      "Threaded WASM bundle is missing (required for shared-memory worker audio).",
+      "",
+      `Expected: ${threadedWasmPath}`,
+      "",
+      "Build it with (from the repo root):",
+      "  npm -w web run wasm:build",
+    ].join("\n");
+    if (process.env.CI) {
+      throw new Error(message);
+    }
+    test.skip(true, message);
+  }
 
   const support = await page.evaluate(() => {
     const AudioContextCtor =

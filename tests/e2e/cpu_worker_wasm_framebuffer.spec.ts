@@ -7,28 +7,25 @@ const THREADED_WASM_BINARY = fileURLToPath(
 );
 const HAS_THREADED_WASM_BINARY = existsSync(THREADED_WASM_BINARY);
 
-if (process.env.CI && !HAS_THREADED_WASM_BINARY) {
-  throw new Error(
-    [
-      "Threaded WASM package missing in CI.",
-      "",
-      `Expected: ${THREADED_WASM_BINARY}`,
-      "",
-      "Build it with (from the repo root):",
-      "  npm -w web run wasm:build",
-    ].join("\n"),
-  );
-}
-
 async function waitForReady(page: Page) {
   await page.waitForFunction(() => (window as any).__aeroTest?.ready === true);
 }
 
 test("cpu worker wasm demo: publishes shared framebuffer frames from WASM", async ({ page }) => {
-  test.skip(
-    !HAS_THREADED_WASM_BINARY,
-    "Threaded WASM package missing (required for shared-memory worker runtime). Build it with `npm -w web run wasm:build:threaded`.",
-  );
+  if (!HAS_THREADED_WASM_BINARY) {
+    const message = [
+      "Threaded WASM package missing (required for shared-memory worker runtime).",
+      "",
+      `Expected: ${THREADED_WASM_BINARY}`,
+      "",
+      "Build it with (from the repo root):",
+      "  npm -w web run wasm:build",
+    ].join("\n");
+    if (process.env.CI) {
+      throw new Error(message);
+    }
+    test.skip(true, message);
+  }
   await page.goto("http://127.0.0.1:5173/web/cpu-worker-wasm-framebuffer-smoke.html", { waitUntil: "load" });
 
   const support = await page.evaluate(() => {

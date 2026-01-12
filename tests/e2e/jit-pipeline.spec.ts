@@ -17,21 +17,6 @@ const HAS_THREADED_AERO_WASM_BINARY =
   (existsSync(THREADED_AERO_WASM_BINARY_RELEASE) && existsSync(THREADED_AERO_WASM_JS_RELEASE)) ||
   (existsSync(THREADED_AERO_WASM_BINARY_DEV) && existsSync(THREADED_AERO_WASM_JS_DEV));
 
-if (process.env.CI && !HAS_THREADED_AERO_WASM_BINARY) {
-  throw new Error(
-    [
-      'Threaded aero-wasm package missing in CI.',
-      '',
-      'Build it with (from the repo root):',
-      '  npm -w web run wasm:build',
-      '',
-      'Expected one of:',
-      `- ${THREADED_AERO_WASM_BINARY_RELEASE} (+ ${THREADED_AERO_WASM_JS_RELEASE})`,
-      `- ${THREADED_AERO_WASM_BINARY_DEV} (+ ${THREADED_AERO_WASM_JS_DEV})`,
-    ].join('\n'),
-  );
-}
-
 const JIT_WASM_BINARY_RELEASE = fileURLToPath(
   new URL('../../web/src/wasm/pkg-jit-single/aero_jit_wasm_bg.wasm', import.meta.url),
 );
@@ -209,10 +194,22 @@ function hasCompiledRip(result: unknown, rip: number): boolean {
 test('Tier-1 JIT pipeline compiles, installs, and executes a block', async ({ page, browserName }) => {
   test.setTimeout(60_000);
   test.skip(browserName !== 'chromium', 'Smoke test currently targets chromium WASM threads support');
-  test.skip(
-    !HAS_THREADED_AERO_WASM_BINARY,
-    'Threaded aero-wasm package missing. Build it with `npm -w web run wasm:build:threaded`.',
-  );
+  if (!HAS_THREADED_AERO_WASM_BINARY) {
+    const message = [
+      'Threaded aero-wasm package missing.',
+      '',
+      'Build it with (from the repo root):',
+      '  npm -w web run wasm:build',
+      '',
+      'Expected one of:',
+      `- ${THREADED_AERO_WASM_BINARY_RELEASE} (+ ${THREADED_AERO_WASM_JS_RELEASE})`,
+      `- ${THREADED_AERO_WASM_BINARY_DEV} (+ ${THREADED_AERO_WASM_JS_DEV})`,
+    ].join('\n');
+    if (process.env.CI) {
+      throw new Error(message);
+    }
+    test.skip(true, message);
+  }
   test.skip(
     !HAS_JIT_WASM_BINARY,
     'aero-jit-wasm package missing. Build it with `npm -w web run wasm:build` (or `npm -w web run wasm:build:single`).',
