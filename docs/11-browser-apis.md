@@ -1330,6 +1330,11 @@ function setupKeyboard(canvas) {
 }
 ```
 
+> Note: if your app also installs **global hotkeys** (e.g. `window.addEventListener('keydown', ...)`),
+> always check `event.defaultPrevented` and return early when it is `true`. This ensures VM input
+> capture (which calls `preventDefault()`/`stopPropagation()` for swallowed events) can reliably
+> suppress host/UI shortcuts during capture.
+
 ---
 
 ## Network APIs
