@@ -3,7 +3,7 @@ use crate::chipset::A20GateHandle;
 use crate::dirty_memory::{DirtyTrackingHandle, DirtyTrackingMemory, DEFAULT_DIRTY_PAGE_SIZE};
 use aero_pc_constants::PCIE_ECAM_BASE;
 use memory::{
-    DenseMemory, GuestMemory, GuestMemoryMapping, MapError, MappedGuestMemory, MmioHandler,
+    DenseMemory, GuestMemory, GuestMemoryMapping, MapError, MmioHandler, MappedGuestMemory,
     PhysicalMemoryBus,
 };
 use std::sync::Arc;
@@ -48,31 +48,33 @@ impl MemoryBus {
 
         const HIGH_RAM_BASE: u64 = 0x1_0000_0000;
         let high_len = ram_bytes - PCIE_ECAM_BASE;
-        let high_end = HIGH_RAM_BASE
+        let phys_size = HIGH_RAM_BASE
             .checked_add(high_len)
             .expect("high RAM end overflow");
 
-        Box::new(
-            MappedGuestMemory::new(
-                ram,
-                high_end,
-                vec![
-                    // Low RAM: [0..PCIE_ECAM_BASE)
-                    GuestMemoryMapping {
-                        phys_start: 0,
-                        phys_end: PCIE_ECAM_BASE,
-                        inner_offset: 0,
-                    },
-                    // High RAM: [4GiB..4GiB + (ram_bytes - PCIE_ECAM_BASE))
-                    GuestMemoryMapping {
-                        phys_start: HIGH_RAM_BASE,
-                        phys_end: high_end,
-                        inner_offset: PCIE_ECAM_BASE,
-                    },
-                ],
-            )
-            .expect("failed to map PC high RAM"),
+        // Leave the guest-physical `[PCIE_ECAM_BASE, HIGH_RAM_BASE)` range unmapped so reads behave
+        // as open bus (0xFF) and writes are ignored, matching PC PCI hole semantics.
+        let mapped = MappedGuestMemory::new(
+            ram,
+            phys_size,
+            vec![
+                // Low RAM: [0..PCIE_ECAM_BASE)
+                GuestMemoryMapping {
+                    phys_start: 0,
+                    phys_end: PCIE_ECAM_BASE,
+                    inner_offset: 0,
+                },
+                // High RAM: [4GiB..4GiB + (ram_bytes - PCIE_ECAM_BASE))
+                GuestMemoryMapping {
+                    phys_start: HIGH_RAM_BASE,
+                    phys_end: phys_size,
+                    inner_offset: PCIE_ECAM_BASE,
+                },
+            ],
         )
+        .expect("failed to apply PC high-memory remap");
+
+        Box::new(mapped)
     }
 
     pub fn new(filter: AddressFilter, ram_size: usize) -> Self {
