@@ -38,7 +38,6 @@ impl<T: FrameRing + ?Sized> FrameRing for Box<T> {
         <T as FrameRing>::try_pop_vec(&**self)
     }
 }
-
 impl FrameRing for aero_ipc::ring::RingBuffer {
     fn capacity_bytes(&self) -> usize {
         aero_ipc::ring::RingBuffer::capacity_bytes(self)

@@ -3,11 +3,8 @@
 //! This crate is intentionally minimal: it deals exclusively with raw Ethernet frames (`Vec<u8>`)
 //! and provides backends suitable for bridging emulated NIC models to host glue.
 //!
-//! In particular it includes a ring-buffer-backed L2 tunnel backend intended for the
-//! browser/runtime NET_TX / NET_RX SharedArrayBuffer path.
-//!
 //! This crate exists so consumers that only need these backends do not need to depend on the
-//! heavyweight `emulator` crate.
+//! heavyweight `emulator` crate (e.g. the canonical machine).
 #![forbid(unsafe_code)]
 
 pub mod ring_backend;
