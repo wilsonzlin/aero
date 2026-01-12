@@ -81,7 +81,7 @@ This matches the explicit attachment API in the IDE model:
 
 ## Interrupt routing expectations (normative)
 
-### PCI INTx routing (AHCI / NVMe)
+### PCI INTx routing (AHCI / NVMe / IDE PCI config)
 
 Aero’s canonical PCI INTx routing uses:
 
@@ -95,6 +95,7 @@ PCI **device number**:
 
 | Device | BDF | INTx pin | PIRQ | GSI |
 |---|---:|---:|---:|---:|
+| PIIX3 IDE | `00:01.1` | INTA | B | **11** |
 | ICH9 AHCI | `00:02.0` | INTA | C | **12** |
 | NVMe (optional) | `00:03.0` | INTA | D | **13** |
 
