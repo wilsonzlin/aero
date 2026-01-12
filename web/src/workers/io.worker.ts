@@ -230,6 +230,10 @@ let pendingWasmInit: { api: WasmApi; variant: WasmVariant } | null = null;
 let wasmReadySent = false;
 
 const WEBUSB_GUEST_ROOT_PORT = 1;
+// Keep PCI Bus/Device/Function assignments stable so guests can match canonical
+// chipset layouts and driver heuristics (e.g. Aero's native chipset profiles).
+const UHCI_PCI_BDF = { bus: 0, device: 1, function: 0 };
+const E1000_PCI_BDF = { bus: 0, device: 5, function: 0 };
 const SYNTHETIC_USB_HID_KEYBOARD_DEVICE_ID = 0x1000_0001;
 const SYNTHETIC_USB_HID_MOUSE_DEVICE_ID = 0x1000_0002;
 const SYNTHETIC_USB_HID_GAMEPAD_DEVICE_ID = 0x1000_0003;
@@ -658,7 +662,7 @@ function maybeInitUhciRuntime(): void {
     uhciRuntimeHubConfig.apply(runtime, {
       warn: (message, err) => console.warn(`[io.worker] ${message}`, err),
     });
-    mgr.registerPciDevice(dev);
+    mgr.registerPciDevice(dev, UHCI_PCI_BDF);
     mgr.addTickable(dev);
     uhciHidTopology.setUhciBridge(null);
   } catch (err) {
@@ -710,7 +714,7 @@ function maybeInitE1000Device(): void {
     const dev = new E1000PciDevice({ bridge, irqSink: mgr.irqSink, netTxRing: txRing, netRxRing: rxRing });
     e1000Bridge = bridge;
     e1000Device = dev;
-    mgr.registerPciDevice(dev);
+    mgr.registerPciDevice(dev, E1000_PCI_BDF);
     mgr.addTickable(dev);
   } catch (err) {
     console.warn("[io.worker] Failed to register E1000 PCI device", err);
@@ -855,7 +859,7 @@ function maybeInitUhciDevice(): void {
         const dev = new UhciPciDevice({ bridge, irqSink: mgr.irqSink });
         uhciControllerBridge = bridge;
         uhciDevice = dev;
-        mgr.registerPciDevice(dev);
+        mgr.registerPciDevice(dev, UHCI_PCI_BDF);
         mgr.addTickable(dev);
         uhciHidTopology.setUhciBridge(bridge as unknown as any);
       } catch (err) {
