@@ -50,21 +50,38 @@ describe("io/devices/virtio_input hidUsageToLinuxKeyCode", () => {
     }
   });
 
-  it("maps contract-required alphanumerics, Enter/Esc, and function keys", () => {
-    // A..Z.
-    expect(hidUsageToLinuxKeyCode(0x04)).toBe(30); // KEY_A
-    expect(hidUsageToLinuxKeyCode(0x1d)).toBe(44); // KEY_Z
+  it("maps boot-keyboard-compatible sysrq/pause + keypad keys used by the Win7 virtio-input driver", () => {
+    const cases: Array<{ usage: number; linuxKey: number }> = [
+      // System.
+      { usage: 0x46, linuxKey: 99 }, // PrintScreen -> KEY_SYSRQ
+      { usage: 0x48, linuxKey: 119 }, // Pause -> KEY_PAUSE
 
-    // 0..9.
-    expect(hidUsageToLinuxKeyCode(0x27)).toBe(11); // KEY_0
+      // Keypad (boot keyboard usages 0x54..0x63).
+      { usage: 0x54, linuxKey: 98 }, // NumpadDivide -> KEY_KPSLASH
+      { usage: 0x55, linuxKey: 55 }, // NumpadMultiply -> KEY_KPASTERISK
+      { usage: 0x56, linuxKey: 74 }, // NumpadSubtract -> KEY_KPMINUS
+      { usage: 0x57, linuxKey: 78 }, // NumpadAdd -> KEY_KPPLUS
+      { usage: 0x58, linuxKey: 96 }, // NumpadEnter -> KEY_KPENTER
+      { usage: 0x59, linuxKey: 79 }, // Numpad1 -> KEY_KP1
+      { usage: 0x5a, linuxKey: 80 }, // Numpad2 -> KEY_KP2
+      { usage: 0x5b, linuxKey: 81 }, // Numpad3 -> KEY_KP3
+      { usage: 0x5c, linuxKey: 75 }, // Numpad4 -> KEY_KP4
+      { usage: 0x5d, linuxKey: 76 }, // Numpad5/Clear -> KEY_KP5
+      { usage: 0x5e, linuxKey: 77 }, // Numpad6 -> KEY_KP6
+      { usage: 0x5f, linuxKey: 71 }, // Numpad7 -> KEY_KP7
+      { usage: 0x60, linuxKey: 72 }, // Numpad8 -> KEY_KP8
+      { usage: 0x61, linuxKey: 73 }, // Numpad9 -> KEY_KP9
+      { usage: 0x62, linuxKey: 82 }, // Numpad0 -> KEY_KP0
+      { usage: 0x63, linuxKey: 83 }, // NumpadDecimal -> KEY_KPDOT
 
-    // Enter / Esc.
-    expect(hidUsageToLinuxKeyCode(0x28)).toBe(28); // KEY_ENTER
-    expect(hidUsageToLinuxKeyCode(0x29)).toBe(1); // KEY_ESC
+      // Intl / menu.
+      { usage: 0x64, linuxKey: 86 }, // IntlBackslash -> KEY_102ND
+      { usage: 0x65, linuxKey: 139 }, // ContextMenu -> KEY_MENU
+    ];
 
-    // Function keys.
-    expect(hidUsageToLinuxKeyCode(0x3a)).toBe(59); // KEY_F1
-    expect(hidUsageToLinuxKeyCode(0x45)).toBe(88); // KEY_F12
+    for (const tc of cases) {
+      expect(hidUsageToLinuxKeyCode(tc.usage)).toBe(tc.linuxKey);
+    }
   });
 
   it("keeps DOM->HID->Linux key mapping consistent for representative keys", () => {
@@ -75,6 +92,13 @@ describe("io/devices/virtio_input hidUsageToLinuxKeyCode", () => {
       { code: "MetaLeft", linuxKey: 125 }, // KEY_LEFTMETA
       { code: "NumLock", linuxKey: 69 }, // KEY_NUMLOCK
       { code: "ScrollLock", linuxKey: 70 }, // KEY_SCROLLLOCK
+      { code: "PrintScreen", linuxKey: 99 }, // KEY_SYSRQ
+      { code: "Pause", linuxKey: 119 }, // KEY_PAUSE
+      { code: "NumpadDivide", linuxKey: 98 }, // KEY_KPSLASH
+      { code: "NumpadEnter", linuxKey: 96 }, // KEY_KPENTER
+      { code: "NumpadDecimal", linuxKey: 83 }, // KEY_KPDOT
+      { code: "IntlBackslash", linuxKey: 86 }, // KEY_102ND
+      { code: "ContextMenu", linuxKey: 139 }, // KEY_MENU
     ];
 
     for (const tc of cases) {

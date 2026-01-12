@@ -96,6 +96,7 @@ const KEY_COMMA = 51;
 const KEY_DOT = 52;
 const KEY_SLASH = 53;
 const KEY_RIGHTSHIFT = 54;
+const KEY_KPASTERISK = 55;
 const KEY_LEFTALT = 56;
 const KEY_SPACE = 57;
 const KEY_CAPSLOCK = 58;
@@ -111,9 +112,26 @@ const KEY_F9 = 67;
 const KEY_F10 = 68;
 const KEY_NUMLOCK = 69;
 const KEY_SCROLLLOCK = 70;
+const KEY_KP7 = 71;
+const KEY_KP8 = 72;
+const KEY_KP9 = 73;
+const KEY_KPMINUS = 74;
+const KEY_KP4 = 75;
+const KEY_KP5 = 76;
+const KEY_KP6 = 77;
+const KEY_KPPLUS = 78;
+const KEY_KP1 = 79;
+const KEY_KP2 = 80;
+const KEY_KP3 = 81;
+const KEY_KP0 = 82;
+const KEY_KPDOT = 83;
+const KEY_102ND = 86;
 const KEY_F11 = 87;
 const KEY_F12 = 88;
+const KEY_KPENTER = 96;
 const KEY_RIGHTCTRL = 97;
+const KEY_KPSLASH = 98;
+const KEY_SYSRQ = 99;
 const KEY_RIGHTALT = 100;
 const KEY_HOME = 102;
 const KEY_UP = 103;
@@ -125,8 +143,10 @@ const KEY_DOWN = 108;
 const KEY_PAGEDOWN = 109;
 const KEY_INSERT = 110;
 const KEY_DELETE = 111;
+const KEY_PAUSE = 119;
 const KEY_LEFTMETA = 125;
 const KEY_RIGHTMETA = 126;
+const KEY_MENU = 139;
 
 function maskToSize(value: number, size: number): number {
   if (size === 1) return value & 0xff;
@@ -332,10 +352,15 @@ export function hidUsageToLinuxKeyCode(usage: number): number | null {
       return KEY_F11;
     case 0x45:
       return KEY_F12;
+    case 0x46:
+      return KEY_SYSRQ;
 
     // Locks.
     case 0x47:
       return KEY_SCROLLLOCK;
+
+    case 0x48:
+      return KEY_PAUSE;
 
     // Navigation.
     case 0x49:
@@ -362,6 +387,42 @@ export function hidUsageToLinuxKeyCode(usage: number): number | null {
     // Keypad.
     case 0x53:
       return KEY_NUMLOCK;
+    case 0x54:
+      return KEY_KPSLASH;
+    case 0x55:
+      return KEY_KPASTERISK;
+    case 0x56:
+      return KEY_KPMINUS;
+    case 0x57:
+      return KEY_KPPLUS;
+    case 0x58:
+      return KEY_KPENTER;
+    case 0x59:
+      return KEY_KP1;
+    case 0x5a:
+      return KEY_KP2;
+    case 0x5b:
+      return KEY_KP3;
+    case 0x5c:
+      return KEY_KP4;
+    case 0x5d:
+      return KEY_KP5;
+    case 0x5e:
+      return KEY_KP6;
+    case 0x5f:
+      return KEY_KP7;
+    case 0x60:
+      return KEY_KP8;
+    case 0x61:
+      return KEY_KP9;
+    case 0x62:
+      return KEY_KP0;
+    case 0x63:
+      return KEY_KPDOT;
+    case 0x64:
+      return KEY_102ND;
+    case 0x65:
+      return KEY_MENU;
 
     default:
       return null;

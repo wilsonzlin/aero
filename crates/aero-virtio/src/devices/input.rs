@@ -91,6 +91,7 @@ pub const KEY_COMMA: u16 = 51;
 pub const KEY_DOT: u16 = 52;
 pub const KEY_SLASH: u16 = 53;
 pub const KEY_RIGHTSHIFT: u16 = 54;
+pub const KEY_KPASTERISK: u16 = 55;
 pub const KEY_LEFTALT: u16 = 56;
 pub const KEY_SPACE: u16 = 57;
 pub const KEY_CAPSLOCK: u16 = 58;
@@ -106,9 +107,26 @@ pub const KEY_F9: u16 = 67;
 pub const KEY_F10: u16 = 68;
 pub const KEY_NUMLOCK: u16 = 69;
 pub const KEY_SCROLLLOCK: u16 = 70;
+pub const KEY_KP7: u16 = 71;
+pub const KEY_KP8: u16 = 72;
+pub const KEY_KP9: u16 = 73;
+pub const KEY_KPMINUS: u16 = 74;
+pub const KEY_KP4: u16 = 75;
+pub const KEY_KP5: u16 = 76;
+pub const KEY_KP6: u16 = 77;
+pub const KEY_KPPLUS: u16 = 78;
+pub const KEY_KP1: u16 = 79;
+pub const KEY_KP2: u16 = 80;
+pub const KEY_KP3: u16 = 81;
+pub const KEY_KP0: u16 = 82;
+pub const KEY_KPDOT: u16 = 83;
+pub const KEY_102ND: u16 = 86;
 pub const KEY_F11: u16 = 87;
 pub const KEY_F12: u16 = 88;
+pub const KEY_KPENTER: u16 = 96;
 pub const KEY_RIGHTCTRL: u16 = 97;
+pub const KEY_KPSLASH: u16 = 98;
+pub const KEY_SYSRQ: u16 = 99;
 pub const KEY_RIGHTALT: u16 = 100;
 pub const KEY_HOME: u16 = 102;
 pub const KEY_UP: u16 = 103;
@@ -120,8 +138,10 @@ pub const KEY_DOWN: u16 = 108;
 pub const KEY_PAGEDOWN: u16 = 109;
 pub const KEY_INSERT: u16 = 110;
 pub const KEY_DELETE: u16 = 111;
+pub const KEY_PAUSE: u16 = 119;
 pub const KEY_LEFTMETA: u16 = 125;
 pub const KEY_RIGHTMETA: u16 = 126;
+pub const KEY_MENU: u16 = 139;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VirtioInputDeviceKind {
@@ -257,6 +277,7 @@ impl VirtioInputBitmaps {
             KEY_DOT,
             KEY_SLASH,
             KEY_RIGHTSHIFT,
+            KEY_KPASTERISK,
             KEY_LEFTALT,
             KEY_RIGHTALT,
             KEY_SPACE,
@@ -275,7 +296,24 @@ impl VirtioInputBitmaps {
             KEY_F12,
             KEY_NUMLOCK,
             KEY_SCROLLLOCK,
+            KEY_KP7,
+            KEY_KP8,
+            KEY_KP9,
+            KEY_KPMINUS,
+            KEY_KP4,
+            KEY_KP5,
+            KEY_KP6,
+            KEY_KPPLUS,
+            KEY_KP1,
+            KEY_KP2,
+            KEY_KP3,
+            KEY_KP0,
+            KEY_KPDOT,
+            KEY_102ND,
+            KEY_KPENTER,
             KEY_RIGHTCTRL,
+            KEY_KPSLASH,
+            KEY_SYSRQ,
             KEY_LEFTMETA,
             KEY_RIGHTMETA,
             KEY_HOME,
@@ -288,6 +326,8 @@ impl VirtioInputBitmaps {
             KEY_PAGEDOWN,
             KEY_INSERT,
             KEY_DELETE,
+            KEY_PAUSE,
+            KEY_MENU,
         ]);
         bitmaps.led = Self::with_bits(&[LED_NUML, LED_CAPSL, LED_SCROLLL]);
         bitmaps
