@@ -233,8 +233,9 @@ impl<C: Clock> IoSnapshot for Hpet<C> {
                     timer.armed = armed;
 
                     // `irq_asserted` is not snapshotted: it is a runtime handshake with the
-                    // interrupt sink. The first `poll()` after restore reasserts lines based
-                    // on `general_int_status` and timer configuration.
+                    // interrupt sink. The first `poll()` after restore (or an explicit
+                    // `sync_levels_to_sink()`) reasserts lines based on `general_int_status`
+                    // and timer configuration.
                     timer.irq_asserted = false;
                 }
             }
@@ -291,6 +292,35 @@ impl<C: Clock> Hpet<C> {
     pub fn poll(&mut self, sink: &mut impl GsiSink) {
         self.update_main_counter();
         self.service_timers(sink);
+    }
+
+    /// Synchronizes the current level-triggered IRQ line levels into `sink`.
+    ///
+    /// This is primarily intended for snapshot restore flows: [`IoSnapshot::load_state()`]
+    /// restores interrupt status bits and timer configuration, but it cannot access the
+    /// platform interrupt sink. Callers should invoke this after restoring both the HPET
+    /// and the interrupt controller to re-drive any pending level-triggered interrupts
+    /// without advancing the HPET counter.
+    pub fn sync_levels_to_sink(&mut self, sink: &mut impl GsiSink) {
+        let legacy = self.general_config & GEN_CONF_LEGACY_ROUTE != 0;
+        let enabled = self.enabled();
+
+        for (idx, timer) in self.timers.iter_mut().enumerate() {
+            let status_bit = 1u64 << idx;
+            let gsi = apply_legacy_replacement_route(legacy, idx, timer.route());
+
+            let pending = self.general_int_status & status_bit != 0;
+            let should_assert =
+                enabled && pending && timer.is_level_triggered() && timer.int_enabled();
+
+            if should_assert {
+                sink.raise_gsi(gsi);
+                timer.irq_asserted = true;
+            } else {
+                sink.lower_gsi(gsi);
+                timer.irq_asserted = false;
+            }
+        }
     }
 
     pub fn mmio_read(&mut self, offset: u64, size: usize, sink: &mut impl GsiSink) -> u64 {

@@ -317,6 +317,8 @@ For deterministic guest bring-up, reattachment should follow the same canonical 
 
 ATAPI note: the guest-visible “disc present” state is snapshotted explicitly (independent of whether a host ISO backend is currently attached), so reattaching an ISO backend does not implicitly “insert media” from the guest’s perspective.
 
+Note: `Hpet::load_state()` restores `general_int_status` but cannot access the interrupt sink; snapshot restore code should call `Hpet::sync_levels_to_sink()` (or `Hpet::poll()`) after restoring the interrupt controller to re-drive any pending level-triggered timer interrupts.
+
 ---
 
 ## CPU section encoding
