@@ -92,6 +92,8 @@ These checks exist specifically to prevent “driver installs but doesn’t bind
 - Windows virtio contract wiring (manifest ↔ INFs ↔ emulator ↔ guest-tools): [`.github/workflows/windows-virtio-contract.yml`](../.github/workflows/windows-virtio-contract.yml)
 - Device contract validator (JSON schema + invariants): [`.github/workflows/windows-device-contract.yml`](../.github/workflows/windows-device-contract.yml)
 - Virtio protocol crate tests: [`.github/workflows/virtio-protocol.yml`](../.github/workflows/virtio-protocol.yml)
+- Win7 virtio guest selftest build (x86 + x64 EXEs): [`.github/workflows/win7-virtio-selftest.yml`](../.github/workflows/win7-virtio-selftest.yml)
+- Win7 virtio QEMU harness (self-hosted; end-to-end guest run, incl. virtio-snd wav capture): [`.github/workflows/win7-virtio-harness.yml`](../.github/workflows/win7-virtio-harness.yml)
 
 Local equivalents for fast iteration (Linux/macOS host):
 
@@ -106,6 +108,14 @@ python3 scripts/ci/check-win7-virtqueue-split-headers.py
 python3 scripts/ci/check-virtqueue-split-driver-builds.py
 python3 scripts/ci/check-win7-virtio-header-collisions.py
 
+# AeroGPU guardrails (fast, no VM required)
+python3 scripts/ci/check-aerogpu-d3d9-def-stdcall.py
+python3 scripts/ci/check-aerogpu-wdk-guards.py
+python3 scripts/ci/check-aerogpu-share-token-contract.py
+
+# Ensure no duplicate virtio INFs/projects bind the same HWIDs (requires pwsh)
+pwsh -NoProfile -ExecutionPolicy Bypass -File ci/check-virtio-driver-uniqueness.ps1
+
 # Device contract schema/invariants (same check as windows-device-contract.yml)
 cargo run -p device-contract-validator --locked
 
@@ -119,6 +129,11 @@ python3 -m unittest discover -s drivers/windows7/tests/host-harness/tests -p 'te
 cmake -S . -B build-virtio-host-tests -DAERO_VIRTIO_BUILD_TESTS=ON -DAERO_AEROGPU_BUILD_TESTS=OFF -DCMAKE_BUILD_TYPE=Release
 cmake --build build-virtio-host-tests
 ctest --test-dir build-virtio-host-tests --output-on-failure
+
+# Host-side C++ unit tests for AeroGPU UMD helpers (command stream writer, submit buffer utils)
+cmake -S . -B build-aerogpu-host-tests -DAERO_AEROGPU_BUILD_TESTS=ON -DAERO_VIRTIO_BUILD_TESTS=OFF -DCMAKE_BUILD_TYPE=Release
+cmake --build build-aerogpu-host-tests
+ctest --test-dir build-aerogpu-host-tests --output-on-failure --no-tests=error
 ```
 
 ---
@@ -175,6 +190,7 @@ Legend:
 | AGPU-003 | Partial | D3D10/11 UMD feature expansion beyond “triangle” bring-up (pipeline/state coverage; Map/Unmap correctness; format support) | `drivers/aerogpu/umd/d3d10_11/` | README: [`drivers/aerogpu/umd/d3d10_11/README.md`](../drivers/aerogpu/umd/d3d10_11/README.md); checklist: [`docs/graphics/win7-d3d11ddi-function-tables.md`](../docs/graphics/win7-d3d11ddi-function-tables.md); host tests: `drivers/aerogpu/umd/d3d10_11/tests/` |
 | AGPU-004 | Remaining | DXGI/D3D10/11 shared-resource interop (export/import shared surfaces, share-token plumbing) | `drivers/aerogpu/umd/d3d10_11/` | Design contract: [`docs/graphics/win7-shared-surfaces-share-token.md`](../docs/graphics/win7-shared-surfaces-share-token.md); related D3D9 tests live under `drivers/aerogpu/tests/win7/` |
 | AGPU-005 | Implemented | AeroGPU Win7 guest-side validation suite (D3D9/D3D10/D3D11 + vblank/fence/ring probes) | `drivers/aerogpu/tests/win7/` | [`drivers/aerogpu/tests/win7/README.md`](../drivers/aerogpu/tests/win7/README.md) |
+| AGPU-006 | Remaining | Ship/stage the DX11-capable AeroGPU package in CI artifacts (`aerogpu_dx11.inf` + WOW64 `aerogpu_d3d10.dll`) | `drivers/aerogpu/ci-package.json`, `drivers/aerogpu/packaging/win7/` | Packaging notes: [`drivers/aerogpu/packaging/win7/README.md`](../drivers/aerogpu/packaging/win7/README.md) (see “0) CI packages vs manual packaging”) |
 
 ---
 
@@ -240,6 +256,7 @@ pwsh ci/build-drivers.ps1 -ToolchainJson out/toolchain.json -Drivers aerogpu win
 pwsh ci/make-catalogs.ps1 -ToolchainJson out/toolchain.json
 pwsh ci/sign-drivers.ps1 -ToolchainJson out/toolchain.json
 pwsh ci/package-drivers.ps1
+pwsh ci/package-guest-tools.ps1 -SpecPath tools/packaging/specs/win7-signed.json
 
 # On Windows with WDK installed:
 cd drivers\aerogpu
