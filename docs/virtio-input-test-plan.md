@@ -33,26 +33,35 @@ cargo test -p aero-virtio --locked --test virtio_input
 Recommended (enforces repo resource limits via `safe-run.sh`):
 
 ```bash
+./scripts/safe-run.sh cargo test -p aero-virtio --locked --test virtio_input
+```
+
+If your checkout does not preserve executable bits for `scripts/*.sh` (or you see `Permission denied`), run:
+
+```bash
 bash ./scripts/safe-run.sh cargo test -p aero-virtio --locked --test virtio_input
 ```
 
-Alternative (name-filter based; useful when you don’t remember the test binary name):
+Alternative (name-filter based; useful when you don’t remember the test binary name; may match 0 tests):
 
 ```bash
+# Required by this test plan (or equivalent).
 # NOTE: `cargo test -- <pattern>` is a name filter. Always confirm the output says
-# `running N tests` with N > 0.
+# `running N tests` with N > 0; if you see `running 0 tests`, use `--test virtio_input`.
+./scripts/safe-run.sh cargo test -p aero-virtio --locked -- tests::virtio_input
 
-# Recommended (with safe-run.sh):
-bash ./scripts/safe-run.sh cargo test -p aero-virtio --locked -- virtio_input
+# Practical equivalent in this repo (matches the `virtio_input` test binary name):
+./scripts/safe-run.sh cargo test -p aero-virtio --locked -- virtio_input
 
 # Without safe-run.sh (no timeout / mem limit):
+cargo test -p aero-virtio --locked -- tests::virtio_input
 cargo test -p aero-virtio --locked -- virtio_input
 ```
 
 Tip: if you see `running 0 tests`, prefer the explicit integration test invocation:
 
 ```bash
-bash ./scripts/safe-run.sh cargo test -p aero-virtio --locked --test virtio_input
+./scripts/safe-run.sh cargo test -p aero-virtio --locked --test virtio_input
 ```
 
 Primary coverage lives in:
@@ -74,11 +83,11 @@ cargo test -p aero-devices --locked --test pci_virtio_input_multifunction
 Recommended (enforces repo resource limits via `safe-run.sh`):
 
 ```bash
-bash ./scripts/safe-run.sh cargo test -p aero-virtio --locked --test win7_contract_queue_sizes
-bash ./scripts/safe-run.sh cargo test -p aero-virtio --locked --test win7_contract_ring_features
-bash ./scripts/safe-run.sh cargo test -p aero-virtio --locked --test win7_contract_dma_64bit
-bash ./scripts/safe-run.sh cargo test -p aero-virtio --locked --test pci_profile
-bash ./scripts/safe-run.sh cargo test -p aero-devices --locked --test pci_virtio_input_multifunction
+./scripts/safe-run.sh cargo test -p aero-virtio --locked --test win7_contract_queue_sizes
+./scripts/safe-run.sh cargo test -p aero-virtio --locked --test win7_contract_ring_features
+./scripts/safe-run.sh cargo test -p aero-virtio --locked --test win7_contract_dma_64bit
+./scripts/safe-run.sh cargo test -p aero-virtio --locked --test pci_profile
+./scripts/safe-run.sh cargo test -p aero-devices --locked --test pci_virtio_input_multifunction
 ```
 
 ### 1.3 What to expect (key invariants)
