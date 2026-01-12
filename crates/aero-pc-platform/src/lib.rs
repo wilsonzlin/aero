@@ -7,7 +7,7 @@ use aero_devices::clock::ManualClock;
 use aero_devices::i8042::{register_i8042, I8042Ports, SharedI8042Controller};
 use aero_devices::irq::PlatformIrqLine;
 use aero_devices::pci::{
-    bios_post, register_pci_config_ports, PciBarDefinition, PciBarRange, PciBdf, PciConfigPorts,
+    bios_post, register_pci_config_ports, PciBarDefinition, PciBdf, PciConfigPorts,
     PciDevice, PciEcamConfig, PciEcamMmio, PciInterruptPin, PciIntxRouter, PciIntxRouterConfig,
     PciResourceAllocator, PciResourceAllocatorConfig, SharedPciConfigPorts,
 };
@@ -466,20 +466,6 @@ impl PortIoDevice for PciIoWindowPort {
         for dev in handlers.values_mut() {
             dev.reset();
         }
-    }
-}
-
-fn all_ones(size: usize) -> u64 {
-    match size {
-        0 => 0,
-        1 => 0xff,
-        2 => 0xffff,
-        3 => 0x00ff_ffff,
-        4 => 0xffff_ffff,
-        5 => 0x0000_ffff_ffff,
-        6 => 0x00ff_ffff_ffff,
-        7 => 0x00ff_ffff_ffff_ffff,
-        _ => u64::MAX,
     }
 }
 
