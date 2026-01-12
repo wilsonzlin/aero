@@ -77,8 +77,6 @@ impl DeviceId {
     pub const PCI_INTX_ROUTER: DeviceId = DeviceId(15);
     /// Backward compatible alias for [`DeviceId::PCI_INTX_ROUTER`].
     pub const PCI_INTX: DeviceId = DeviceId(15);
-    /// Alias for [`DeviceId::PCI_INTX`], used by some snapshot adapters to clarify intent.
-    pub const PCI_INTX_ROUTER: DeviceId = DeviceId::PCI_INTX;
     /// ACPI fixed-feature power management I/O state (PM1/GPE/SMI_CMD).
     pub const ACPI_PM: DeviceId = DeviceId(16);
     /// High Precision Event Timer (HPET) state.
