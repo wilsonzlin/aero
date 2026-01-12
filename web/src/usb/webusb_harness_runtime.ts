@@ -702,8 +702,11 @@ export class WebUsbUhciHarnessRuntime {
   }
 
   private handleRingFailure(reason: string, options: { notifyBroker?: boolean } = {}): void {
+    const hadRings = this.#actionRing !== null || this.#completionRingUnsubscribe !== null;
     this.detachRings();
-    this.stop(reason);
+    this.#lastError = reason;
+    if (hadRings) this.cancelPending(reason);
+    this.emitUpdate();
 
     const shouldNotify = options.notifyBroker !== false;
     if (!shouldNotify) return;
@@ -714,5 +717,29 @@ export class WebUsbUhciHarnessRuntime {
     } catch {
       // ignore
     }
+  }
+
+  private cancelPending(reason: string): void {
+    const harness = this.#harness;
+    if (!harness) {
+      this.#pending.clear();
+      this.#pendingHarnessIds.clear();
+      return;
+    }
+
+    for (const pending of this.#pending.values()) {
+      try {
+        const completion = usbErrorCompletion(pending.action.kind, pending.action.id, reason);
+        harness.push_completion(completion);
+        this.#completionsApplied += 1;
+        this.#lastCompletion = completion;
+      } catch (err) {
+        this.#lastError = formatError(err);
+        break;
+      }
+    }
+
+    this.#pending.clear();
+    this.#pendingHarnessIds.clear();
   }
 }

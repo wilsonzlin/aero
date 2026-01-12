@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { isUsbUhciHarnessStatusMessage, WebUsbUhciHarnessRuntime } from "./webusb_harness_runtime";
 import type { UsbHostAction, UsbHostCompletion } from "./usb_proxy_protocol";
+import { createUsbProxyRingBuffer } from "./usb_proxy_ring";
 
 type Listener = (ev: MessageEvent<unknown>) => void;
 
@@ -238,5 +239,48 @@ describe("usb/WebUsbUhciHarnessRuntime", () => {
         snapshot: { ...msg.snapshot, lastAction: { kind: "bulkIn", id: 1, endpoint: 1, length: 8 } },
       }),
     ).toBe(false);
+  });
+
+  it("does not stop on usb.ringDetach and pushes error completions for pending actions", () => {
+    const port = new FakePort();
+
+    const action: UsbHostAction = { kind: "bulkIn", id: 1, endpoint: 0x81, length: 8 };
+
+    const harness = {
+      tick: vi.fn(),
+      drain_actions: vi.fn().mockReturnValueOnce([action]).mockReturnValue([]),
+      push_completion: vi.fn(),
+      free: vi.fn(),
+    };
+
+    const runtime = new WebUsbUhciHarnessRuntime({
+      createHarness: () => harness,
+      port: port as unknown as MessagePort,
+      initiallyBlocked: false,
+    });
+
+    runtime.start();
+    port.emit({
+      type: "usb.ringAttach",
+      actionRing: createUsbProxyRingBuffer(256),
+      completionRing: createUsbProxyRingBuffer(256),
+    });
+    port.posted.length = 0;
+
+    runtime.pollOnce();
+    expect(harness.tick).toHaveBeenCalledTimes(1);
+    expect(harness.push_completion).toHaveBeenCalledTimes(0);
+
+    port.emit({ type: "usb.ringDetach", reason: "corrupt ring" });
+
+    expect(harness.push_completion).toHaveBeenCalledTimes(1);
+    expect(harness.push_completion.mock.calls[0]?.[0]).toMatchObject({ kind: "bulkIn", id: 1, status: "error" });
+
+    const snapshot = runtime.getSnapshot();
+    expect(snapshot.enabled).toBe(true);
+    expect(snapshot.pendingCompletions).toBe(0);
+    expect(snapshot.lastError).toBe("corrupt ring");
+
+    expect(port.posted.filter((m) => (m as { type?: unknown }).type === "usb.ringDetach")).toHaveLength(0);
   });
 });
