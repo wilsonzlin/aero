@@ -4,6 +4,7 @@ typedef struct _VIRTIO_INPUT_WRITE_REQUEST_CONTEXT {
     PHID_XFER_PACKET XferPacket;
     PMDL XferPacketMdl;
 
+    PUCHAR ReportBufferUser;
     PUCHAR ReportBuffer;
     PMDL ReportBufferMdl;
     ULONG ReportBufferLen;
@@ -85,31 +86,46 @@ static NTSTATUS VirtioInputPrepareWriteRequest(
     }
 
     xfer = ctx->XferPacket;
+    ctx->ReportBufferUser = xfer->reportBuffer;
     ctx->ReportBufferLen = xfer->reportBufferLen;
 
-    if (xfer->reportBuffer != NULL && ctx->ReportBufferLen > 0) {
-        SIZE_T mapLen;
-        PUCHAR reportBufferUser;
+    *MappedPacketOut = ctx->XferPacket;
+    *MappedReportBufferOut = NULL;
+    return STATUS_SUCCESS;
+}
 
-        reportBufferUser = xfer->reportBuffer;
+static NTSTATUS VirtioInputMapWriteReportBuffer(_In_ WDFREQUEST Request, _Outptr_ const UCHAR **MappedReportBufferOut)
+{
+    PVIRTIO_INPUT_WRITE_REQUEST_CONTEXT ctx;
+    NTSTATUS status;
+    SIZE_T mapLen;
 
-        mapLen = ctx->ReportBufferLen;
-        if (mapLen > 2) {
-            mapLen = 2;
-        }
+    ctx = VirtioInputGetWriteRequestContext(Request);
 
-        status = VirtioInputMapUserAddress(
-            reportBufferUser,
-            mapLen,
-            IoReadAccess,
-            &ctx->ReportBufferMdl,
-            (PVOID *)&ctx->ReportBuffer);
-        if (!NT_SUCCESS(status)) {
-            return status;
-        }
+    if (ctx->ReportBufferMdl != NULL) {
+        *MappedReportBufferOut = ctx->ReportBuffer;
+        return STATUS_SUCCESS;
     }
 
-    *MappedPacketOut = ctx->XferPacket;
+    if (ctx->ReportBufferUser == NULL || ctx->ReportBufferLen == 0) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    mapLen = ctx->ReportBufferLen;
+    if (mapLen > 2) {
+        mapLen = 2;
+    }
+
+    status = VirtioInputMapUserAddress(
+        ctx->ReportBufferUser,
+        mapLen,
+        IoReadAccess,
+        &ctx->ReportBufferMdl,
+        (PVOID *)&ctx->ReportBuffer);
+    if (!NT_SUCCESS(status)) {
+        return status;
+    }
+
     *MappedReportBufferOut = ctx->ReportBuffer;
     return STATUS_SUCCESS;
 }
@@ -215,14 +231,29 @@ NTSTATUS VirtioInputHandleHidWriteReport(_In_ WDFQUEUE Queue, _In_ WDFREQUEST Re
     }
 
     safePacket = *mappedPacket;
-    safePacket.reportBuffer = (PUCHAR)mappedReportBuffer;
     if (WdfRequestGetRequestorMode(Request) == UserMode) {
         PVIRTIO_INPUT_WRITE_REQUEST_CONTEXT reqCtx = VirtioInputGetWriteRequestContext(Request);
         safePacket.reportBufferLen = reqCtx->ReportBufferLen;
-        safePacket.reportBuffer = reqCtx->ReportBuffer;
+        safePacket.reportBuffer = NULL;
+    } else {
+        safePacket.reportBuffer = (PUCHAR)mappedReportBuffer;
     }
 
     UCHAR reportId = VirtioInputDetermineWriteReportId(Request, &safePacket);
+    if (reportId == VIRTIO_INPUT_REPORT_ID_ANY && safePacket.reportBuffer == NULL &&
+        WdfRequestGetRequestorMode(Request) == UserMode) {
+        PVIRTIO_INPUT_WRITE_REQUEST_CONTEXT reqCtx = VirtioInputGetWriteRequestContext(Request);
+        if (reqCtx->ReportBufferUser != NULL && reqCtx->ReportBufferLen > 0) {
+            status = VirtioInputMapWriteReportBuffer(Request, &mappedReportBuffer);
+            if (!NT_SUCCESS(status)) {
+                VIOINPUT_LOG(VIOINPUT_LOG_ERROR | VIOINPUT_LOG_IOCTL, "%s map report buffer failed: %!STATUS!\n", name, status);
+                WdfRequestComplete(Request, status);
+                return STATUS_SUCCESS;
+            }
+            safePacket.reportBuffer = (PUCHAR)mappedReportBuffer;
+            reportId = VirtioInputDetermineWriteReportId(Request, &safePacket);
+        }
+    }
     if (reportId != VIRTIO_INPUT_REPORT_ID_KEYBOARD) {
         VIOINPUT_LOG(
             VIOINPUT_LOG_IOCTL,
@@ -232,6 +263,16 @@ NTSTATUS VirtioInputHandleHidWriteReport(_In_ WDFQUEUE Queue, _In_ WDFREQUEST Re
             safePacket.reportBufferLen);
         WdfRequestCompleteWithInformation(Request, STATUS_SUCCESS, safePacket.reportBufferLen);
         return STATUS_SUCCESS;
+    }
+
+    if (safePacket.reportBuffer == NULL && WdfRequestGetRequestorMode(Request) == UserMode) {
+        status = VirtioInputMapWriteReportBuffer(Request, &mappedReportBuffer);
+        if (!NT_SUCCESS(status)) {
+            VIOINPUT_LOG(VIOINPUT_LOG_ERROR | VIOINPUT_LOG_IOCTL, "%s map report buffer failed: %!STATUS!\n", name, status);
+            WdfRequestComplete(Request, status);
+            return STATUS_SUCCESS;
+        }
+        safePacket.reportBuffer = (PUCHAR)mappedReportBuffer;
     }
 
     UCHAR ledBitfield = 0;
