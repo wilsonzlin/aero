@@ -1323,7 +1323,8 @@ mod wasm {
             self.ensure_surface_matches_canvas();
 
             let device = &self.device;
-            let frame = acquire_surface_frame(&mut self.surface, device, &mut self.config)?;
+            let frame =
+                acquire_surface_frame(&mut self.surface, device, &mut self.config, self.backend_kind)?;
             let view = frame
                 .texture
                 .create_view(&wgpu::TextureViewDescriptor::default());
@@ -1532,6 +1533,7 @@ mod wasm {
     /// Unlike [`Presenter`], this does not own a `wgpu::Device`/`wgpu::Queue`. The executor owns
     /// them, and the presenter borrows them when it needs to blit a scanout to the surface.
     struct ScanoutPresenter {
+        backend_kind: GpuBackendKind,
         canvas: OffscreenCanvas,
 
         // Keep the `wgpu::Instance` alive for the lifetime of the surface.
@@ -1781,6 +1783,7 @@ mod wasm {
 
             Ok((
                 Self {
+                    backend_kind,
                     canvas,
                     instance,
                     surface,
@@ -1818,7 +1821,8 @@ mod wasm {
         ) -> Result<(), JsValue> {
             gpu_stats().inc_presents_attempted();
             self.ensure_surface_matches_canvas(device);
-            let frame = acquire_surface_frame(&mut self.surface, device, &mut self.config)?;
+            let frame =
+                acquire_surface_frame(&mut self.surface, device, &mut self.config, self.backend_kind)?;
             let view = frame
                 .texture
                 .create_view(&wgpu::TextureViewDescriptor::default());
@@ -1879,7 +1883,8 @@ mod wasm {
                 bytemuck::bytes_of(&viewport_transform),
             );
 
-            let frame = acquire_surface_frame(&mut self.surface, device, &mut self.config)?;
+            let frame =
+                acquire_surface_frame(&mut self.surface, device, &mut self.config, self.backend_kind)?;
             let view = frame
                 .texture
                 .create_view(&wgpu::TextureViewDescriptor::default());
@@ -2103,6 +2108,7 @@ mod wasm {
         surface: &mut wgpu::Surface<'static>,
         device: &wgpu::Device,
         config: &mut wgpu::SurfaceConfiguration,
+        backend_kind: GpuBackendKind,
     ) -> Result<wgpu::SurfaceTexture, JsValue> {
         match surface.get_current_texture() {
             Ok(frame) => Ok(frame),
@@ -2116,13 +2122,44 @@ mod wasm {
                         gpu_stats().inc_recoveries_succeeded();
                         Ok(frame)
                     }
-                    Err(err) => Err(JsValue::from_str(&format!(
-                        "Surface acquire failed after reconfigure: {err:?}"
-                    ))),
+                    Err(err) => {
+                        // If the recovery reconfigure doesn't help, surface the error via the
+                        // diagnostics channel so the GPU worker can report it even if the caller
+                        // discards the thrown JsValue.
+                        push_gpu_event(
+                            GpuErrorEvent::now(
+                                backend_kind,
+                                aero_gpu::GpuErrorSeverityKind::Error,
+                                aero_gpu::GpuErrorCategory::Surface,
+                                "Surface acquire failed after reconfigure",
+                            )
+                            .with_detail("wgpu_surface_error", format!("{err:?}")),
+                        );
+
+                        Err(JsValue::from_str(&format!(
+                            "Surface acquire failed after reconfigure: {err:?}"
+                        )))
+                    }
                 }
             }
-            Err(wgpu::SurfaceError::Timeout) => Err(JsValue::from_str("Surface acquire timeout")),
-            Err(wgpu::SurfaceError::OutOfMemory) => Err(JsValue::from_str("Surface out of memory")),
+            Err(wgpu::SurfaceError::Timeout) => {
+                push_gpu_event(GpuErrorEvent::now(
+                    backend_kind,
+                    aero_gpu::GpuErrorSeverityKind::Error,
+                    aero_gpu::GpuErrorCategory::Surface,
+                    "Surface acquire timeout",
+                ));
+                Err(JsValue::from_str("Surface acquire timeout"))
+            }
+            Err(wgpu::SurfaceError::OutOfMemory) => {
+                push_gpu_event(GpuErrorEvent::now(
+                    backend_kind,
+                    aero_gpu::GpuErrorSeverityKind::Fatal,
+                    aero_gpu::GpuErrorCategory::OutOfMemory,
+                    "Surface out of memory",
+                ));
+                Err(JsValue::from_str("Surface out of memory"))
+            }
         }
     }
 
