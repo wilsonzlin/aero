@@ -389,7 +389,6 @@ fn pc_platform_uses_provided_guest_memory_for_device_dma_writes() {
             ..Default::default()
         },
     );
-
     let bar0_base = read_hda_bar0_base(&mut pc);
 
     // Bring controller out of reset.
@@ -433,5 +432,61 @@ fn pc_platform_uses_provided_guest_memory_for_device_dma_writes() {
                 && u32::from_le_bytes(bytes[..4].try_into().expect("checked length")) == expected
         }),
         "expected a DMA write to RIRB to be routed through the provided GuestMemory"
+    );
+}
+
+#[test]
+fn pc_platform_hda_dma_writes_mark_dirty_pages_when_enabled() {
+    let mut pc = PcPlatform::new_with_hda_dirty_tracking(2 * 1024 * 1024);
+    let bdf = HDA_ICH6.bdf;
+    let bar0_base = read_hda_bar0_base(&mut pc);
+
+    // Bring controller out of reset.
+    pc.memory.write_u32(bar0_base + 0x08, 1);
+
+    // Allow HDA CORB/RIRB DMA while processing.
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0006);
+
+    // Set up CORB/RIRB in guest memory so the controller can DMA a response.
+    let corb_base = 0x1000u64;
+    let rirb_base = 0x2000u64;
+
+    // Command: root (NID 0), GET_PARAMETER 0xF00 payload 0 => codec vendor id.
+    pc.memory.write_u32(corb_base, 0x000f_0000);
+
+    pc.memory.write_u32(bar0_base + 0x40, corb_base as u32); // CORBLBASE
+    pc.memory.write_u32(bar0_base + 0x50, rirb_base as u32); // RIRBLBASE
+
+    // First command/response at entry 0.
+    pc.memory.write_u16(bar0_base + 0x4a, 0x00ff); // CORBRP
+    pc.memory.write_u16(bar0_base + 0x58, 0x00ff); // RIRBWP
+
+    // Enable global + controller interrupts (GIE + CIE).
+    pc.memory
+        .write_u32(bar0_base + 0x20, 0x8000_0000 | (1 << 30)); // INTCTL
+    // Enable CORB/RIRB DMA engines and response interrupts.
+    pc.memory.write_u8(bar0_base + 0x5c, 0x03); // RIRBCTL: RUN + RINTCTL
+    pc.memory.write_u8(bar0_base + 0x4c, 0x02); // CORBCTL: RUN
+
+    // Publish the command by advancing CORBWP.
+    pc.memory.write_u16(bar0_base + 0x48, 0x0000);
+
+    // Clear dirty tracking for CPU-initiated setup writes. We want to observe only the DMA
+    // writes performed by the device model.
+    pc.memory.clear_dirty();
+
+    pc.process_hda(0);
+    assert_eq!(pc.memory.read_u32(rirb_base), 0x1af4_1620);
+
+    let page_size = u64::from(pc.memory.dirty_page_size());
+    let expected_page = rirb_base / page_size;
+
+    let dirty = pc
+        .memory
+        .take_dirty_pages()
+        .expect("dirty tracking enabled");
+    assert!(
+        dirty.contains(&expected_page),
+        "dirty pages should include the RIRB DMA page (got {dirty:?})"
     );
 }

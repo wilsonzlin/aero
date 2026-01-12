@@ -24,6 +24,7 @@ use aero_devices_storage::AhciPciDevice;
 use aero_interrupts::apic::{IOAPIC_MMIO_BASE, IOAPIC_MMIO_SIZE, LAPIC_MMIO_BASE, LAPIC_MMIO_SIZE};
 use aero_platform::address_filter::AddressFilter;
 use aero_platform::chipset::ChipsetState;
+use aero_platform::dirty_memory::DEFAULT_DIRTY_PAGE_SIZE;
 use aero_platform::interrupts::{InterruptInput, PlatformInterrupts};
 use aero_platform::io::{IoPortBus, PortIoDevice};
 use aero_platform::memory::MemoryBus;
@@ -629,6 +630,14 @@ impl PcPlatform {
         Self::new_with_config(ram_size, PcPlatformConfig::default())
     }
 
+    pub fn new_with_dirty_tracking(ram_size: usize) -> Self {
+        Self::new_with_config_dirty_tracking(
+            ram_size,
+            PcPlatformConfig::default(),
+            DEFAULT_DIRTY_PAGE_SIZE,
+        )
+    }
+
     pub fn new_with_hda(ram_size: usize) -> Self {
         Self::new_with_config(
             ram_size,
@@ -636,6 +645,17 @@ impl PcPlatform {
                 enable_hda: true,
                 ..Default::default()
             },
+        )
+    }
+
+    pub fn new_with_hda_dirty_tracking(ram_size: usize) -> Self {
+        Self::new_with_config_dirty_tracking(
+            ram_size,
+            PcPlatformConfig {
+                enable_hda: true,
+                ..Default::default()
+            },
+            DEFAULT_DIRTY_PAGE_SIZE,
         )
     }
 
@@ -649,6 +669,17 @@ impl PcPlatform {
         )
     }
 
+    pub fn new_with_ahci_dirty_tracking(ram_size: usize) -> Self {
+        Self::new_with_config_dirty_tracking(
+            ram_size,
+            PcPlatformConfig {
+                enable_ahci: true,
+                ..Default::default()
+            },
+            DEFAULT_DIRTY_PAGE_SIZE,
+        )
+    }
+
     pub fn new_with_ide(ram_size: usize) -> Self {
         Self::new_with_config(
             ram_size,
@@ -656,6 +687,17 @@ impl PcPlatform {
                 enable_ide: true,
                 ..Default::default()
             },
+        )
+    }
+
+    pub fn new_with_ide_dirty_tracking(ram_size: usize) -> Self {
+        Self::new_with_config_dirty_tracking(
+            ram_size,
+            PcPlatformConfig {
+                enable_ide: true,
+                ..Default::default()
+            },
+            DEFAULT_DIRTY_PAGE_SIZE,
         )
     }
 
@@ -673,6 +715,18 @@ impl PcPlatform {
         )
     }
 
+    pub fn new_with_win7_storage_dirty_tracking(ram_size: usize) -> Self {
+        Self::new_with_config_dirty_tracking(
+            ram_size,
+            PcPlatformConfig {
+                enable_ahci: true,
+                enable_ide: true,
+                ..Default::default()
+            },
+            DEFAULT_DIRTY_PAGE_SIZE,
+        )
+    }
+
     pub fn new_with_e1000(ram_size: usize) -> Self {
         Self::new_with_config(
             ram_size,
@@ -683,18 +737,57 @@ impl PcPlatform {
         )
     }
 
+    pub fn new_with_e1000_dirty_tracking(ram_size: usize) -> Self {
+        Self::new_with_config_dirty_tracking(
+            ram_size,
+            PcPlatformConfig {
+                enable_e1000: true,
+                ..Default::default()
+            },
+            DEFAULT_DIRTY_PAGE_SIZE,
+        )
+    }
+
     pub fn new_with_config(ram_size: usize, config: PcPlatformConfig) -> Self {
         let ram = DenseMemory::new(ram_size as u64).expect("failed to allocate guest RAM");
         Self::new_with_config_and_ram(Box::new(ram), config)
     }
 
+    pub fn new_with_config_dirty_tracking(
+        ram_size: usize,
+        config: PcPlatformConfig,
+        page_size: u32,
+    ) -> Self {
+        let ram = DenseMemory::new(ram_size as u64).expect("failed to allocate guest RAM");
+        Self::new_with_config_and_ram_dirty_tracking(Box::new(ram), config, page_size)
+    }
+
     pub fn new_with_config_and_ram(ram: Box<dyn GuestMemory>, config: PcPlatformConfig) -> Self {
+        Self::new_with_config_and_ram_inner(ram, config, None)
+    }
+
+    pub fn new_with_config_and_ram_dirty_tracking(
+        ram: Box<dyn GuestMemory>,
+        config: PcPlatformConfig,
+        page_size: u32,
+    ) -> Self {
+        Self::new_with_config_and_ram_inner(ram, config, Some(page_size))
+    }
+
+    fn new_with_config_and_ram_inner(
+        ram: Box<dyn GuestMemory>,
+        config: PcPlatformConfig,
+        dirty_page_size: Option<u32>,
+    ) -> Self {
         let chipset = ChipsetState::new(false);
         let filter = AddressFilter::new(chipset.a20());
 
         let mut io = IoPortBus::new();
         let ram_size = ram.size();
-        let mut memory = MemoryBus::with_ram(filter, ram);
+        let mut memory = match dirty_page_size {
+            Some(page_size) => MemoryBus::with_ram_dirty_tracking(filter, ram, page_size),
+            None => MemoryBus::with_ram(filter, ram),
+        };
 
         let interrupts = Rc::new(RefCell::new(PlatformInterrupts::new()));
 
