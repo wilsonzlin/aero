@@ -731,7 +731,8 @@ impl From<PrpError> for NvmeStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::io::storage::disk::MemDisk;
+    use aero_storage::{MemBackend, RawDisk, SECTOR_SIZE};
+    use aero_storage_adapters::AeroVirtualDiskAsNvmeBackend;
 
     #[derive(Clone, Debug)]
     struct VecMemory {
@@ -782,7 +783,8 @@ mod tests {
     }
 
     fn setup_controller(mem: &mut VecMemory) -> NvmeController {
-        let disk = Box::new(MemDisk::new(20_000));
+        let disk = RawDisk::create(MemBackend::new(), 20_000u64 * SECTOR_SIZE as u64).unwrap();
+        let disk = Box::new(AeroVirtualDiskAsNvmeBackend::new(Box::new(disk)));
         let mut ctrl = NvmeController::new(disk);
 
         ctrl.mmio_write_u32(mem, NVME_REG_AQA, 0x0003_0003);
@@ -943,7 +945,8 @@ mod tests {
     #[test]
     fn completion_phase_wraparound() {
         let mut mem = VecMemory::new(4 * 1024 * 1024);
-        let disk = Box::new(MemDisk::new(10_000));
+        let disk = RawDisk::create(MemBackend::new(), 10_000u64 * SECTOR_SIZE as u64).unwrap();
+        let disk = Box::new(AeroVirtualDiskAsNvmeBackend::new(Box::new(disk)));
         let mut ctrl = NvmeController::new(disk);
 
         ctrl.mmio_write_u32(&mut mem, NVME_REG_AQA, 0x0001_0003);
