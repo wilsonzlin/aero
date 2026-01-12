@@ -1117,6 +1117,7 @@ def main() -> int:
             saw_virtio_blk_fail = False
             saw_virtio_input_pass = False
             saw_virtio_input_fail = False
+            virtio_input_marker_time: Optional[float] = None
             saw_virtio_input_events_ready = False
             saw_virtio_input_events_pass = False
             saw_virtio_input_events_fail = False
@@ -1154,8 +1155,12 @@ def main() -> int:
                         saw_virtio_blk_fail = True
                     if not saw_virtio_input_pass and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS" in tail:
                         saw_virtio_input_pass = True
+                        if virtio_input_marker_time is None:
+                            virtio_input_marker_time = time.monotonic()
                     if not saw_virtio_input_fail and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input|FAIL" in tail:
                         saw_virtio_input_fail = True
+                        if virtio_input_marker_time is None:
+                            virtio_input_marker_time = time.monotonic()
                     if (
                         not saw_virtio_input_events_ready
                         and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|READY" in tail
@@ -1511,6 +1516,28 @@ def main() -> int:
                 # When requested, inject keyboard/mouse events after the guest has armed the user-mode HID
                 # report read loop (virtio-input-events|READY). Inject multiple times on a short interval to
                 # reduce flakiness from timing windows (reports may be dropped when no read is pending).
+                #
+                # If the guest never emits READY/SKIP/PASS/FAIL after completing virtio-input, assume the
+                # guest selftest is too old (or misconfigured) and fail early to avoid burning the full
+                # virtio-net timeout.
+                if (
+                    need_input_events
+                    and virtio_input_marker_time is not None
+                    and not saw_virtio_input_events_ready
+                    and not saw_virtio_input_events_pass
+                    and not saw_virtio_input_events_fail
+                    and not saw_virtio_input_events_skip
+                    and time.monotonic() - virtio_input_marker_time > 20.0
+                ):
+                    print(
+                        "FAIL: did not observe virtio-input-events marker after virtio-input completed while "
+                        "--with-input-events was enabled (guest selftest too old or missing --test-input-events)",
+                        file=sys.stderr,
+                    )
+                    _print_tail(serial_log)
+                    result_code = 1
+                    break
+
                 if (
                     need_input_events
                     and saw_virtio_input_events_ready

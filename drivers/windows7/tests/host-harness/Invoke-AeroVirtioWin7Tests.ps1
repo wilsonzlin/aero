@@ -346,6 +346,7 @@ function Wait-AeroSelftestResult {
   $sawVirtioBlkFail = $false
   $sawVirtioInputPass = $false
   $sawVirtioInputFail = $false
+  $virtioInputMarkerTime = $null
   $sawVirtioInputEventsReady = $false
   $sawVirtioInputEventsPass = $false
   $sawVirtioInputEventsFail = $false
@@ -384,9 +385,11 @@ function Wait-AeroSelftestResult {
       }
       if (-not $sawVirtioInputPass -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-input\|PASS") {
         $sawVirtioInputPass = $true
+        if ($null -eq $virtioInputMarkerTime) { $virtioInputMarkerTime = [DateTime]::UtcNow }
       }
       if (-not $sawVirtioInputFail -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-input\|FAIL") {
         $sawVirtioInputFail = $true
+        if ($null -eq $virtioInputMarkerTime) { $virtioInputMarkerTime = [DateTime]::UtcNow }
       }
       if (-not $sawVirtioInputEventsReady -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-input-events\|READY") {
         $sawVirtioInputEventsReady = $true
@@ -565,6 +568,13 @@ function Wait-AeroSelftestResult {
     # When requested, inject keyboard/mouse events after the guest has armed the user-mode HID report read loop
     # (virtio-input-events|READY). Inject multiple times on a short interval to reduce flakiness from timing
     # windows (reports may be dropped when no read is pending).
+    #
+    # If the guest never emits READY/SKIP/PASS/FAIL after completing virtio-input, assume the guest selftest
+    # is too old (or misconfigured) and fail early to avoid burning the full virtio-net timeout.
+    if ($RequireVirtioInputEventsPass -and ($null -ne $virtioInputMarkerTime) -and (-not $sawVirtioInputEventsReady) -and (-not $sawVirtioInputEventsPass) -and (-not $sawVirtioInputEventsFail) -and (-not $sawVirtioInputEventsSkip)) {
+      $delta = ([DateTime]::UtcNow - $virtioInputMarkerTime).TotalSeconds
+      if ($delta -ge 20) { return @{ Result = "MISSING_VIRTIO_INPUT_EVENTS"; Tail = $tail } }
+    }
     if ($RequireVirtioInputEventsPass -and $sawVirtioInputEventsReady -and (-not $sawVirtioInputEventsPass) -and (-not $sawVirtioInputEventsFail) -and (-not $sawVirtioInputEventsSkip)) {
       if (($null -eq $QmpPort) -or ($QmpPort -le 0)) {
         return @{ Result = "QMP_INPUT_INJECT_FAILED"; Tail = $tail }
@@ -1445,7 +1455,7 @@ try {
       $scriptExitCode = 1
     }
     "MISSING_VIRTIO_INPUT_EVENTS" {
-      Write-Host "FAIL: selftest RESULT=PASS but did not emit virtio-input-events marker while -WithInputEvents was enabled"
+      Write-Host "FAIL: did not observe virtio-input-events marker while -WithInputEvents was enabled"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
