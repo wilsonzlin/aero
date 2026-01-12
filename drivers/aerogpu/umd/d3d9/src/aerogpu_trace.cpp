@@ -330,27 +330,27 @@ const char* func_name(D3d9TraceFunc func) {
     case D3d9TraceFunc::DeviceSetFVF:
       return "Device::SetFVF";
     case D3d9TraceFunc::DeviceSetTextureStageState:
-      return "Device::SetTextureStageState (stub)";
+      return "Device::SetTextureStageState";
     case D3d9TraceFunc::DeviceSetTransform:
-      return "Device::SetTransform (stub)";
+      return "Device::SetTransform";
     case D3d9TraceFunc::DeviceMultiplyTransform:
-      return "Device::MultiplyTransform (stub)";
+      return "Device::MultiplyTransform";
     case D3d9TraceFunc::DeviceSetClipPlane:
-      return "Device::SetClipPlane (stub)";
+      return "Device::SetClipPlane";
     case D3d9TraceFunc::DeviceSetShaderConstI:
-      return "Device::SetShaderConstI (stub)";
+      return "Device::SetShaderConstI";
     case D3d9TraceFunc::DeviceSetShaderConstB:
-      return "Device::SetShaderConstB (stub)";
+      return "Device::SetShaderConstB";
     case D3d9TraceFunc::DeviceSetMaterial:
-      return "Device::SetMaterial (stub)";
+      return "Device::SetMaterial";
     case D3d9TraceFunc::DeviceSetLight:
-      return "Device::SetLight (stub)";
+      return "Device::SetLight";
     case D3d9TraceFunc::DeviceLightEnable:
-      return "Device::LightEnable (stub)";
+      return "Device::LightEnable";
     case D3d9TraceFunc::DeviceSetNPatchMode:
-      return "Device::SetNPatchMode (stub)";
+      return "Device::SetNPatchMode";
     case D3d9TraceFunc::DeviceSetStreamSourceFreq:
-      return "Device::SetStreamSourceFreq (stub)";
+      return "Device::SetStreamSourceFreq";
     case D3d9TraceFunc::DeviceSetGammaRamp:
       return "Device::SetGammaRamp (stub)";
     case D3d9TraceFunc::DeviceCreateStateBlock:
@@ -364,7 +364,7 @@ const char* func_name(D3d9TraceFunc func) {
     case D3d9TraceFunc::DeviceValidateDevice:
       return "Device::ValidateDevice";
     case D3d9TraceFunc::DeviceSetSoftwareVertexProcessing:
-      return "Device::SetSoftwareVertexProcessing (stub)";
+      return "Device::SetSoftwareVertexProcessing";
     case D3d9TraceFunc::DeviceSetCursorProperties:
       return "Device::SetCursorProperties (stub)";
     case D3d9TraceFunc::DeviceSetCursorPosition:
@@ -396,11 +396,11 @@ const char* func_name(D3d9TraceFunc func) {
     case D3d9TraceFunc::DeviceDrawIndexedPrimitiveUP:
       return "Device::DrawIndexedPrimitiveUP";
     case D3d9TraceFunc::DeviceGetSoftwareVertexProcessing:
-      return "Device::GetSoftwareVertexProcessing (stub)";
+      return "Device::GetSoftwareVertexProcessing";
     case D3d9TraceFunc::DeviceGetTransform:
-      return "Device::GetTransform (stub)";
+      return "Device::GetTransform";
     case D3d9TraceFunc::DeviceGetClipPlane:
-      return "Device::GetClipPlane (stub)";
+      return "Device::GetClipPlane";
     case D3d9TraceFunc::DeviceGetViewport:
       return "Device::GetViewport";
     case D3d9TraceFunc::DeviceGetScissorRect:
@@ -410,11 +410,11 @@ const char* func_name(D3d9TraceFunc func) {
     case D3d9TraceFunc::DeviceEndStateBlock:
       return "Device::EndStateBlock";
     case D3d9TraceFunc::DeviceGetMaterial:
-      return "Device::GetMaterial (stub)";
+      return "Device::GetMaterial";
     case D3d9TraceFunc::DeviceGetLight:
-      return "Device::GetLight (stub)";
+      return "Device::GetLight";
     case D3d9TraceFunc::DeviceGetLightEnable:
-      return "Device::GetLightEnable (stub)";
+      return "Device::GetLightEnable";
     case D3d9TraceFunc::DeviceGetRenderTarget:
       return "Device::GetRenderTarget";
     case D3d9TraceFunc::DeviceGetDepthStencil:
@@ -422,7 +422,7 @@ const char* func_name(D3d9TraceFunc func) {
     case D3d9TraceFunc::DeviceGetTexture:
       return "Device::GetTexture";
     case D3d9TraceFunc::DeviceGetTextureStageState:
-      return "Device::GetTextureStageState (stub)";
+      return "Device::GetTextureStageState";
     case D3d9TraceFunc::DeviceGetSamplerState:
       return "Device::GetSamplerState";
     case D3d9TraceFunc::DeviceGetRenderState:
@@ -432,7 +432,7 @@ const char* func_name(D3d9TraceFunc func) {
     case D3d9TraceFunc::DeviceGetCurrentTexturePalette:
       return "Device::GetCurrentTexturePalette (stub)";
     case D3d9TraceFunc::DeviceGetNPatchMode:
-      return "Device::GetNPatchMode (stub)";
+      return "Device::GetNPatchMode";
     case D3d9TraceFunc::DeviceGetFVF:
       return "Device::GetFVF";
     case D3d9TraceFunc::DeviceGetVertexDecl:
@@ -440,7 +440,7 @@ const char* func_name(D3d9TraceFunc func) {
     case D3d9TraceFunc::DeviceGetStreamSource:
       return "Device::GetStreamSource";
     case D3d9TraceFunc::DeviceGetStreamSourceFreq:
-      return "Device::GetStreamSourceFreq (stub)";
+      return "Device::GetStreamSourceFreq";
     case D3d9TraceFunc::DeviceGetIndices:
       return "Device::GetIndices";
     case D3d9TraceFunc::DeviceGetShader:
@@ -448,9 +448,9 @@ const char* func_name(D3d9TraceFunc func) {
     case D3d9TraceFunc::DeviceGetShaderConstF:
       return "Device::GetShaderConstF";
     case D3d9TraceFunc::DeviceGetShaderConstI:
-      return "Device::GetShaderConstI (stub)";
+      return "Device::GetShaderConstI";
     case D3d9TraceFunc::DeviceGetShaderConstB:
-      return "Device::GetShaderConstB (stub)";
+      return "Device::GetShaderConstB";
     case D3d9TraceFunc::DeviceSetConvolutionMonoKernel:
       return "Device::SetConvolutionMonoKernel (stub)";
     case D3d9TraceFunc::DeviceSetAutoGenFilterType:
