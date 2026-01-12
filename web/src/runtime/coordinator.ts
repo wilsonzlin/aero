@@ -19,8 +19,6 @@ import {
   computeGuestRamLayout,
   createIoIpcSab,
   createSharedMemoryViews,
-  IO_IPC_NET_RX_QUEUE_KIND,
-  IO_IPC_NET_TX_QUEUE_KIND,
   ringRegionsForWorker,
   setReadyFlag,
   type SharedMemoryViews,
@@ -1145,18 +1143,6 @@ export class WorkerCoordinator {
 
     // Now that CPU+IO+NET are all paused, it is safe to reset the NET_TX/NET_RX rings.
     this.resetNetRingsForSnapshot();
-  }
-
-  private resetNetRingsForSnapshot(): void {
-    const shared = this.shared;
-    if (!shared) {
-      throw new Error("Cannot reset NET rings for snapshot: shared memory is not initialized.");
-    }
-
-    // NOTE: `RingBuffer.reset()` is only safe when there are no concurrent producers or
-    // consumers. `pauseWorkersForSnapshot()` enforces that invariant.
-    openRingByKind(shared.segments.ioIpc, IO_IPC_NET_TX_QUEUE_KIND).reset();
-    openRingByKind(shared.segments.ioIpc, IO_IPC_NET_RX_QUEUE_KIND).reset();
   }
 
   private assertSnapshotOk(context: string, msg: { ok: boolean; error?: VmSnapshotSerializedError; kind?: unknown }): void {

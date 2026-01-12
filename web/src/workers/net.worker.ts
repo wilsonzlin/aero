@@ -12,11 +12,6 @@ import { perf } from "../perf/perf";
 import { PERF_FRAME_HEADER_ENABLED_INDEX, PERF_FRAME_HEADER_FRAME_ID_INDEX } from "../perf/shared.js";
 import { installWorkerPerfHandlers } from "../perf/worker";
 import { PerfWriter } from "../perf/writer.js";
-import type {
-  CoordinatorToWorkerSnapshotMessage,
-  VmSnapshotPausedMessage,
-  VmSnapshotResumedMessage,
-} from "../runtime/snapshot_protocol";
 import {
   serializeVmSnapshotError,
   type CoordinatorToWorkerSnapshotMessage,

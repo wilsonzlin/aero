@@ -24,6 +24,9 @@ export type SharedRingBufferHandle = {
 
 export type WasmEnum<K extends string> = Readonly<Record<K, number>>;
 
+// wasm-bindgen represents Rust enums as numeric discriminants in JS/TS type defs.
+export type RunExitKind = number;
+
 export type UhciControllerBridgeHandle = {
     io_read(offset: number, size: number): number;
     io_write(offset: number, size: number, value: number): void;
