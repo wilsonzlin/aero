@@ -627,6 +627,11 @@ impl D3D9Runtime {
         if self.swapchains.contains_key(&swapchain_id) {
             return Err(RuntimeError::SwapChainAlreadyExists(swapchain_id));
         }
+        if desc.width == 0 || desc.height == 0 {
+            return Err(RuntimeError::Validation(
+                "create_swap_chain: width/height must be non-zero".into(),
+            ));
+        }
 
         let format = desc.format.to_wgpu();
         let view_formats = if self
