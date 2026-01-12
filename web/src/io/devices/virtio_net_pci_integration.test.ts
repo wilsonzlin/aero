@@ -224,6 +224,14 @@ describe("io/devices/virtio-net (pci bridge integration)", () => {
     try {
       pciAddr = mgr.registerPciDevice(dev);
 
+      // Basic PCI identification.
+      const idDword = cfgReadU32(pciAddr, 0x00);
+      expect(idDword & 0xffff).toBe(0x1af4);
+      expect((idDword >>> 16) & 0xffff).toBe(0x1041);
+      const subsysDword = cfgReadU32(pciAddr, 0x2c);
+      expect(subsysDword & 0xffff).toBe(0x1af4);
+      expect((subsysDword >>> 16) & 0xffff).toBe(0x0001);
+
       // Read BAR0 and ensure it's a 64-bit memory BAR.
       const bar0LowInitial = cfgReadU32(pciAddr, 0x10);
       void cfgReadU32(pciAddr, 0x14);
@@ -296,6 +304,7 @@ describe("io/devices/virtio-net (pci bridge integration)", () => {
       // -----------------------------------------------------------------------------------------
       // Virtio modern init (feature negotiation).
       // -----------------------------------------------------------------------------------------
+      expect(mmioReadU16(commonBase + 0x12n)).toBe(2); // num_queues
       mmioWriteU8(commonBase + 0x14n, VIRTIO_STATUS_ACKNOWLEDGE);
       mmioWriteU8(commonBase + 0x14n, VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER);
 
@@ -344,6 +353,7 @@ describe("io/devices/virtio-net (pci bridge integration)", () => {
         mmioWriteU64(commonBase + 0x28n, BigInt(avail));
         mmioWriteU64(commonBase + 0x30n, BigInt(used));
         const notifyOff = mmioReadU16(commonBase + 0x1en);
+        expect(notifyOff).toBe(queueIndex);
         mmioWriteU16(commonBase + 0x1cn, 1);
         expect(mmioReadU16(commonBase + 0x1cn)).toBe(1);
         return notifyOff;
@@ -351,6 +361,8 @@ describe("io/devices/virtio-net (pci bridge integration)", () => {
 
       const rxNotifyOff = configureQueue(0, rxDesc, rxAvail, rxUsed);
       const txNotifyOff = configureQueue(1, txDesc, txAvail, txUsed);
+      expect(rxNotifyOff).toBe(0);
+      expect(txNotifyOff).toBe(1);
 
       // -----------------------------------------------------------------------------------------
       // Device config (sanity: ensure MMIO mapping works).
