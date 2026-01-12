@@ -31,10 +31,16 @@ See also:
   Defined in: [`crates/aero-storage/src/backend.rs`](../crates/aero-storage/src/backend.rs)
 - `aero_storage::VirtualDisk` (sync, fixed-capacity virtual disk; byte addressing + sector helpers)\
   Defined in: [`crates/aero-storage/src/disk.rs`](../crates/aero-storage/src/disk.rs)
+- `aero_storage::streaming::ChunkStore` (sync, chunk-addressed cache store used by `aero_storage::StreamingDisk`)\
+  Defined in: [`crates/aero-storage/src/streaming.rs`](../crates/aero-storage/src/streaming.rs)
 - `aero_devices::storage::DiskBackend` (sync, byte-addressed device-model backend used by virtio-blk etc)\
   Defined in: [`crates/devices/src/storage/mod.rs`](../crates/devices/src/storage/mod.rs)
 - `aero_devices_nvme::DiskBackend` (sync, **sector-addressed** backend used by the NVMe controller model)\
   Defined in: [`crates/aero-devices-nvme/src/lib.rs`](../crates/aero-devices-nvme/src/lib.rs)
+- `aero_devices_storage::atapi::IsoBackend` (sync, read-only 2048-byte-sector CD/ISO backend for ATAPI)\
+  Defined in: [`crates/aero-devices-storage/src/atapi.rs`](../crates/aero-devices-storage/src/atapi.rs)
+- `aero_virtio::devices::blk::BlockBackend` (sync, byte-addressed backend used by the `aero-virtio` virtio-blk device model)\
+  Defined in: [`crates/aero-virtio/src/devices/blk.rs`](../crates/aero-virtio/src/devices/blk.rs)
 - `aero_io_snapshot::io::storage::state::DiskBackend` (sync, byte-addressed backend used by the snapshot layer)\
   Defined in: [`crates/aero-io-snapshot/src/io/storage/state.rs`](../crates/aero-io-snapshot/src/io/storage/state.rs)
 
@@ -44,6 +50,8 @@ See also:
   Defined in: [`crates/emulator/src/io/storage/disk.rs`](../crates/emulator/src/io/storage/disk.rs)
 - `emulator::io::storage::disk::DiskBackend` (legacy, sync, sector-addressed backend)\
   Defined in: [`crates/emulator/src/io/storage/disk.rs`](../crates/emulator/src/io/storage/disk.rs)
+- `emulator::io::storage::ide::atapi::IsoBackend` (legacy, read-only 2048-byte-sector CD/ISO backend for ATAPI)\
+  Defined in: [`crates/emulator/src/io/storage/ide/atapi.rs`](../crates/emulator/src/io/storage/ide/atapi.rs)
 
 ### Rust (asynchronous, browser-oriented)
 
@@ -213,12 +221,18 @@ Goal: ensure there is exactly one place in-tree implementing raw/qcow2/vhd/spars
 1. Prefer passing `Box<dyn aero_storage::VirtualDisk>` through “platform wiring” layers.
 2. Limit crate-specific `DiskBackend` traits to truly internal needs.
 3. Keep `crates/aero-storage-adapters` as the shared home for adapter wrapper *types*.
+4. (Optional cleanup) Evaluate consolidating virtio-blk device models on fewer backend traits:
+   - `aero_devices::storage::DiskBackend`
+   - `aero_virtio::devices::blk::BlockBackend`
+   In both cases, keep `aero_storage::VirtualDisk` as the common “disk image” boundary and adapt.
 
 ### Phase 3: deprecate and remove legacy emulator traits
 
 1. Migrate `crates/emulator` internal call sites from:
    - `ByteStorage` → `aero_storage::StorageBackend`
    - `DiskBackend` → `aero_storage::VirtualDisk`
+   - `ide::atapi::IsoBackend` → `aero_devices_storage::atapi::IsoBackend` (or directly to `VirtualDisk`
+     via a small adapter)
 2. Remove the emulator traits once no longer used, keeping only any genuinely emulator-specific glue.
 
 ### Phase 4 (optional, future): IndexedDB as runtime fallback for sync controllers (Option C)
@@ -226,4 +240,3 @@ Goal: ensure there is exactly one place in-tree implementing raw/qcow2/vhd/spars
 1. Implement the “storage worker” RPC protocol (shared memory + `Atomics`)
 2. Implement `aero_storage::StorageBackend` for the RPC client
 3. Reuse existing `aero_storage` disk formats + existing synchronous controllers unchanged
-

@@ -5,6 +5,16 @@ use aero_io_snapshot::io::storage::state::{IdeAtapiDeviceState, MAX_IDE_DATA_BUF
 /// Read-only ISO9660 (or raw CD) backing store.
 ///
 /// The IDE/ATAPI layer treats the image as a sequence of 2048-byte sectors.
+///
+/// # Canonical trait note
+///
+/// This trait is **legacy** and exists for the historical `crates/emulator` ATAPI model.
+/// New controller/device code should prefer the canonical storage stack:
+///
+/// - `aero_storage::VirtualDisk` for disk images
+/// - `crates/aero-devices-storage` for IDE/ATAPI controller models (including its `IsoBackend`)
+///
+/// See `docs/20-storage-trait-consolidation.md`.
 pub trait IsoBackend: Send {
     fn sector_count(&self) -> u32;
     fn read_sectors(&mut self, lba: u32, buf: &mut [u8]) -> DiskResult<()>;

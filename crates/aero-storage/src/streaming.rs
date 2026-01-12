@@ -224,6 +224,15 @@ impl StreamingTelemetry {
     }
 }
 
+/// Persistent chunk cache interface used by [`StreamingDisk`].
+///
+/// This is an internal storage abstraction for the HTTP range streaming/cache subsystem. It is
+/// **not** intended to be a general-purpose “disk trait” for device/controller code.
+///
+/// For synchronous disk image formats and controller/device integration, prefer the canonical
+/// `aero_storage::{StorageBackend, VirtualDisk}` traits instead.
+///
+/// See `docs/20-storage-trait-consolidation.md`.
 pub trait ChunkStore: Send + Sync {
     fn total_size(&self) -> u64;
     fn chunk_size(&self) -> u64;

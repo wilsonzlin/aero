@@ -6,6 +6,17 @@ use aero_storage::{DiskError, VirtualDisk};
 /// Read-only ISO9660 (or raw CD) backing store.
 ///
 /// The IDE/ATAPI layer treats the image as a sequence of 2048-byte sectors.
+///
+/// # Canonical trait note
+///
+/// This trait is intentionally narrow (read-only, 2048-byte sectors) because it models an ATAPI
+/// CD-ROM device rather than a general-purpose disk.
+///
+/// Most disk image code in this repo should use the canonical synchronous disk trait
+/// [`aero_storage::VirtualDisk`]. For ISO images stored as a generic `VirtualDisk`, use
+/// [`VirtualDiskIsoBackend`] to adapt into this ATAPI interface.
+///
+/// See `docs/20-storage-trait-consolidation.md`.
 pub trait IsoBackend: Send {
     fn sector_count(&self) -> u32;
     fn read_sectors(&mut self, lba: u32, buf: &mut [u8]) -> io::Result<()>;

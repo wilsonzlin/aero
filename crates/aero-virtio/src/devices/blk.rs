@@ -72,6 +72,20 @@ impl VirtioBlkConfig {
     }
 }
 
+/// Disk backend trait used by the `aero-virtio` virtio-blk device model.
+///
+/// # Canonical trait note
+///
+/// The repo-wide canonical synchronous disk trait is [`aero_storage::VirtualDisk`]. This crate
+/// keeps a separate `BlockBackend` trait primarily for virtio-blk device ergonomics, but most
+/// call sites should pass a boxed `aero-storage` disk type; an adapter is provided:
+///
+/// - `impl<T: aero_storage::VirtualDisk> BlockBackend for Box<T>`
+///
+/// Avoid introducing new backend traits in other crates; prefer adapting from
+/// `aero_storage::VirtualDisk` instead.
+///
+/// See `docs/20-storage-trait-consolidation.md`.
 pub trait BlockBackend {
     fn len(&self) -> u64;
     fn is_empty(&self) -> bool {
