@@ -161,6 +161,11 @@ pub struct SnapshotReader<'a> {
 
 impl<'a> SnapshotReader<'a> {
     pub fn parse(bytes: &'a [u8], expected_device_id: [u8; 4]) -> SnapshotResult<Self> {
+        // The outer TLV is intended for a small number of tagged fields. A corrupted snapshot could
+        // encode an extreme number of tiny/empty fields and force pathological BTreeMap growth.
+        // Cap the number of fields we will track to keep parsing bounded.
+        const MAX_FIELDS: usize = 4096;
+
         if bytes.len() < HEADER_LEN {
             return Err(SnapshotError::UnexpectedEof);
         }
@@ -211,6 +216,9 @@ impl<'a> SnapshotReader<'a> {
             offset += 6;
             if offset + len > bytes.len() {
                 return Err(SnapshotError::UnexpectedEof);
+            }
+            if fields.len() >= MAX_FIELDS {
+                return Err(SnapshotError::InvalidFieldEncoding("too many fields"));
             }
             if fields.insert(tag, &bytes[offset..offset + len]).is_some() {
                 return Err(SnapshotError::DuplicateFieldTag(tag));

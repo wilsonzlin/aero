@@ -1,5 +1,5 @@
 use aero_io_snapshot::io::state::codec::Decoder;
-use aero_io_snapshot::io::state::SnapshotError;
+use aero_io_snapshot::io::state::{SnapshotError, SnapshotReader};
 
 #[test]
 fn decoder_vec_bytes_does_not_preallocate_on_large_count() {
@@ -11,4 +11,32 @@ fn decoder_vec_bytes_does_not_preallocate_on_large_count() {
     let mut d = Decoder::new(&buf);
     let err = d.vec_bytes().unwrap_err();
     assert_eq!(err, SnapshotError::UnexpectedEof);
+}
+
+#[test]
+fn snapshot_reader_rejects_excessive_field_count() {
+    // SnapshotReader stores fields in a BTreeMap keyed by tag. A corrupted snapshot can encode many
+    // tiny fields (tag + len + empty) and force pathological allocations. Ensure we cap the field
+    // count.
+    const DEVICE_ID: [u8; 4] = *b"TEST";
+
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(b"AERO");
+    bytes.extend_from_slice(&1u16.to_le_bytes()); // format version major
+    bytes.extend_from_slice(&0u16.to_le_bytes()); // format version minor
+    bytes.extend_from_slice(&DEVICE_ID);
+    bytes.extend_from_slice(&1u16.to_le_bytes()); // device version major
+    bytes.extend_from_slice(&0u16.to_le_bytes()); // device version minor
+
+    // MAX_FIELDS is 4096 (see SnapshotReader::parse). Emit 4097 unique zero-length fields.
+    for tag in 0u16..=4096u16 {
+        bytes.extend_from_slice(&tag.to_le_bytes());
+        bytes.extend_from_slice(&0u32.to_le_bytes());
+    }
+
+    let err = match SnapshotReader::parse(&bytes, DEVICE_ID) {
+        Ok(_) => panic!("expected SnapshotReader::parse to reject excessive field count"),
+        Err(err) => err,
+    };
+    assert_eq!(err, SnapshotError::InvalidFieldEncoding("too many fields"));
 }
