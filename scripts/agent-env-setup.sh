@@ -293,7 +293,9 @@ fi
 
 echo "Next steps:"
 echo "  1. Activate environment:  source $SCRIPT_DIR/agent-env.sh"
-echo "  2. Run builds safely:     ./scripts/safe-run.sh cargo build --locked"
+# Some agent environments lose executable bits in the working tree. Using `bash`
+# avoids hard-requiring `chmod +x` to have been preserved by the checkout.
+echo "  2. Run builds safely:     bash ./scripts/safe-run.sh cargo build --locked"
 echo ""
 echo "Windows 7 test ISO available at: /state/win7.iso"
 echo ""
