@@ -324,6 +324,38 @@ async function runTieredVm(iterations: number, threshold: number) {
     return;
   }
 
+  // Additional invariants: these offsets should always be 8-byte aligned since they are u64 fields.
+  if ((cpu_rip_off & 7) !== 0 || (cpu_rflags_off & 7) !== 0 || (cpu_rax_off & 7) !== 0) {
+    postToMain({
+      type: 'CpuWorkerError',
+      reason: `Invalid jit_abi_constants offsets (misaligned u64 fields): ${JSON.stringify({
+        cpu_state_size,
+        cpu_rax_off,
+        cpu_rip_off,
+        cpu_rflags_off,
+      })}`,
+    });
+    return;
+  }
+
+  // The `CpuState` GPRs are stored as `[u64; 16]`, so offsets must be contiguous in 8-byte steps.
+  for (let i = 0; i < 16; i++) {
+    const expected = (cpu_rax_off + i * 8) >>> 0;
+    const got = cpu_gpr_off[i]! >>> 0;
+    if (got !== expected) {
+      postToMain({
+        type: 'CpuWorkerError',
+        reason: `Invalid jit_abi_constants cpu_gpr_off array (unexpected layout): ${JSON.stringify({
+          i,
+          got,
+          expected,
+          cpu_rax_off,
+        })}`,
+      });
+      return;
+    }
+  }
+
   // Newer WASM builds expose Tier-1 JIT layout fields directly on `jit_abi_constants()` to avoid
   // JS-side drift. Fall back to the older `tiered_vm_jit_abi_layout()` helper for backwards
   // compatibility with deployed bundles.
