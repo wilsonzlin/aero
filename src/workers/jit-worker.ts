@@ -133,6 +133,7 @@ async function handleCompileRequest(req: CompileBlockRequest & { type: 'CompileB
 
   const maxBytes = req.max_bytes > 0 ? req.max_bytes : 1024;
   const maxInsts = 64;
+  const bitness = req.bitness ?? 0;
 
   let compilation: Tier1BlockCompilation;
   try {
@@ -149,6 +150,7 @@ async function handleCompileRequest(req: CompileBlockRequest & { type: 'CompileB
         maxBytes,
         true, // inline_tlb (Tier-1 ABI uses jit_ctx_ptr + fast-path TLB)
         true, // memory_shared (compiled blocks must import the shared guest memory)
+        bitness,
       ) as unknown;
     } catch {
       // Backwards-compat: older JIT wasm builds used simpler argument lists.

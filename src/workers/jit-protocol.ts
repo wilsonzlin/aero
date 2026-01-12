@@ -5,6 +5,16 @@ export interface CompileBlockRequest {
   entry_rip: number;
   mode: JitCompileMode;
   max_bytes: number;
+  /**
+   * x86 decode bitness for the guest CPU mode at `entry_rip`.
+   *
+   * - 16: real mode / 16-bit protected mode
+   * - 32: protected mode
+   * - 64: long mode
+   *
+   * Optional: omitted/0 defaults to 64 for backwards compatibility.
+   */
+  bitness?: number;
 }
 
 export interface CompileBlockResponseMeta {

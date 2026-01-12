@@ -319,6 +319,8 @@ async function runTieredVm(iterations: number, threshold: number) {
       entry_rip,
       mode: 'tier1',
       max_bytes: 0,
+      // The smoke harness runs the guest in 16-bit real mode.
+      bitness: 16,
     };
 
     jitWorker.postMessage(req);
