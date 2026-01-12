@@ -36,7 +36,10 @@ const BTN_LEFT = 0x110;
 const BTN_RIGHT = 0x111;
 const BTN_MIDDLE = 0x112;
 
-// Linux input key codes (subset required by the Windows 7 contract).
+// Linux input key codes used by the browser runtime.
+//
+// This includes the minimum set required by the Windows 7 virtio-input contract, plus a few
+// common keys that are advertised by Aero's virtio-input device model (e.g. GUI keys and locks).
 const KEY_ESC = 1;
 const KEY_1 = 2;
 const KEY_2 = 3;
@@ -93,6 +96,8 @@ const KEY_F7 = 65;
 const KEY_F8 = 66;
 const KEY_F9 = 67;
 const KEY_F10 = 68;
+const KEY_NUMLOCK = 69;
+const KEY_SCROLLLOCK = 70;
 const KEY_F11 = 87;
 const KEY_F12 = 88;
 const KEY_RIGHTCTRL = 97;
@@ -107,6 +112,8 @@ const KEY_DOWN = 108;
 const KEY_PAGEDOWN = 109;
 const KEY_INSERT = 110;
 const KEY_DELETE = 111;
+const KEY_LEFTMETA = 125;
+const KEY_RIGHTMETA = 126;
 
 function maskToSize(value: number, size: number): number {
   if (size === 1) return value & 0xff;
@@ -216,12 +223,16 @@ export function hidUsageToLinuxKeyCode(usage: number): number | null {
       return KEY_LEFTSHIFT;
     case 0xe2:
       return KEY_LEFTALT;
+    case 0xe3:
+      return KEY_LEFTMETA;
     case 0xe4:
       return KEY_RIGHTCTRL;
     case 0xe5:
       return KEY_RIGHTSHIFT;
     case 0xe6:
       return KEY_RIGHTALT;
+    case 0xe7:
+      return KEY_RIGHTMETA;
 
     case 0x39:
       return KEY_CAPSLOCK;
@@ -253,6 +264,8 @@ export function hidUsageToLinuxKeyCode(usage: number): number | null {
       return KEY_F12;
 
     // Navigation.
+    case 0x47:
+      return KEY_SCROLLLOCK;
     case 0x49:
       return KEY_INSERT;
     case 0x4a:
@@ -273,6 +286,8 @@ export function hidUsageToLinuxKeyCode(usage: number): number | null {
       return KEY_DOWN;
     case 0x52:
       return KEY_UP;
+    case 0x53:
+      return KEY_NUMLOCK;
 
     default:
       return null;
