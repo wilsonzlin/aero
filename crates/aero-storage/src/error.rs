@@ -17,6 +17,12 @@ pub enum DiskError {
     #[error("integer overflow while computing byte offsets")]
     OffsetOverflow,
 
+    #[error("corrupt disk image: {0}")]
+    CorruptImage(&'static str),
+
+    #[error("unsupported disk image feature: {0}")]
+    Unsupported(&'static str),
+
     #[error("invalid sparse header: {0}")]
     InvalidSparseHeader(&'static str),
 

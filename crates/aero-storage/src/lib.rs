@@ -20,15 +20,21 @@ mod cache;
 mod cow;
 mod disk;
 mod error;
+mod formats;
+mod qcow2;
 mod sparse;
 mod util;
+mod vhd;
 
 pub use backend::{MemBackend, StorageBackend};
 pub use cache::{BlockCacheStats, BlockCachedDisk};
 pub use cow::AeroCowDisk;
 pub use disk::{RawDisk, VirtualDisk, SECTOR_SIZE};
 pub use error::{DiskError, Result};
+pub use formats::{detect_format, DiskFormat, DiskImage};
+pub use qcow2::Qcow2Disk;
 pub use sparse::{AeroSparseConfig, AeroSparseDisk, AeroSparseHeader};
+pub use vhd::VhdDisk;
 
 #[cfg(test)]
 mod tests;
