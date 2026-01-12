@@ -3640,6 +3640,7 @@ impl AerogpuD3d11Executor {
                     "CREATE_BUFFER: buffer_handle {buffer_handle} is already an alias (underlying={existing})"
                 );
             }
+            bail!("CREATE_BUFFER: buffer_handle {buffer_handle} is still in use");
         } else if self.shared_surfaces.refcounts.contains_key(&buffer_handle) {
             // Underlying handles remain reserved as long as any aliases still reference them.
             // If the original handle was destroyed, reject reusing it until the underlying resource
@@ -3718,6 +3719,7 @@ impl AerogpuD3d11Executor {
                     "CREATE_TEXTURE2D: texture_handle {texture_handle} is already an alias (underlying={existing})"
                 );
             }
+            bail!("CREATE_TEXTURE2D: texture_handle {texture_handle} is still in use");
         } else if self.shared_surfaces.refcounts.contains_key(&texture_handle) {
             // Underlying handles remain reserved as long as any aliases still reference them.
             // If the original handle was destroyed, reject reusing it until the underlying resource

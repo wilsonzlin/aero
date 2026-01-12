@@ -5,7 +5,7 @@ use aero_gpu::guest_memory::VecGuestMemory;
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode,
     AerogpuCmdStreamHeader as ProtocolCmdStreamHeader, AEROGPU_CLEAR_COLOR, AEROGPU_CMD_STREAM_MAGIC,
-    AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
+    AEROGPU_RESOURCE_USAGE_RENDER_TARGET, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
 };
 use aero_protocol::aerogpu::aerogpu_pci::{AerogpuFormat, AEROGPU_ABI_VERSION_U32};
 
@@ -855,6 +855,69 @@ fn aerogpu_cmd_shared_surface_rejects_creating_resource_under_alias_handle() {
         assert!(
             msg.contains("CREATE_TEXTURE2D") && msg.contains("alias"),
             "expected CREATE_TEXTURE2D under alias handle to be rejected, got: {msg}"
+        );
+    });
+}
+
+#[test]
+fn aerogpu_cmd_shared_surface_rejects_creating_buffer_over_existing_texture_handle() {
+    pollster::block_on(async {
+        let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+            Ok(exec) => exec,
+            Err(e) => {
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                return;
+            }
+        };
+
+        const HANDLE: u32 = 1;
+        const WIDTH: u32 = 4;
+        const HEIGHT: u32 = 4;
+
+        let mut stream = Vec::new();
+        stream.extend_from_slice(&AEROGPU_CMD_STREAM_MAGIC.to_le_bytes());
+        stream.extend_from_slice(&AEROGPU_ABI_VERSION_U32.to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes()); // size_bytes (patched later)
+        stream.extend_from_slice(&0u32.to_le_bytes()); // flags
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved1
+
+        // CREATE_TEXTURE2D (HANDLE)
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::CreateTexture2d as u32);
+        stream.extend_from_slice(&HANDLE.to_le_bytes()); // texture_handle
+        stream.extend_from_slice(&AEROGPU_RESOURCE_USAGE_RENDER_TARGET.to_le_bytes()); // usage_flags
+        stream.extend_from_slice(&(AerogpuFormat::B8G8R8A8Unorm as u32).to_le_bytes()); // format
+        stream.extend_from_slice(&WIDTH.to_le_bytes());
+        stream.extend_from_slice(&HEIGHT.to_le_bytes());
+        stream.extend_from_slice(&1u32.to_le_bytes()); // mip_levels
+        stream.extend_from_slice(&1u32.to_le_bytes()); // array_layers
+        stream.extend_from_slice(&0u32.to_le_bytes()); // row_pitch_bytes (not allocation-backed)
+        stream.extend_from_slice(&0u32.to_le_bytes()); // backing_alloc_id
+        stream.extend_from_slice(&0u32.to_le_bytes()); // backing_offset_bytes
+        stream.extend_from_slice(&0u64.to_le_bytes()); // reserved0
+        end_cmd(&mut stream, start);
+
+        // Buggy guest behavior: attempt to create a buffer that reuses the same handle as the
+        // existing texture.
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::CreateBuffer as u32);
+        stream.extend_from_slice(&HANDLE.to_le_bytes()); // buffer_handle
+        stream.extend_from_slice(&AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER.to_le_bytes()); // usage_flags
+        stream.extend_from_slice(&16u64.to_le_bytes()); // size_bytes
+        stream.extend_from_slice(&0u32.to_le_bytes()); // backing_alloc_id
+        stream.extend_from_slice(&0u32.to_le_bytes()); // backing_offset_bytes
+        stream.extend_from_slice(&0u64.to_le_bytes()); // reserved0
+        end_cmd(&mut stream, start);
+
+        let total_size = stream.len() as u32;
+        stream[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
+            .copy_from_slice(&total_size.to_le_bytes());
+
+        let mut guest_mem = VecGuestMemory::new(0);
+        let err = exec.execute_cmd_stream(&stream, None, &mut guest_mem).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("CREATE_BUFFER") && msg.contains("still in use"),
+            "expected CREATE_BUFFER under an existing resource handle to be rejected, got: {msg}"
         );
     });
 }
