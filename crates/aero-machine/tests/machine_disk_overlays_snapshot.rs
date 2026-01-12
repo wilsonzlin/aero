@@ -63,11 +63,16 @@ fn machine_snapshot_writes_and_restores_disk_overlay_refs_with_stable_disk_ids()
     // Attach a dummy disk backend to AHCI port 0 so this test mirrors a real configured machine.
     let disk = RawDisk::create(MemBackend::new(), 8 * SECTOR_SIZE as u64).unwrap();
     src.attach_ahci_disk_port0(Box::new(disk)).unwrap();
+    // Attach a dummy disk backend to the IDE primary master (optional disk_id=2 slot).
+    let ide_disk = RawDisk::create(MemBackend::new(), 4 * SECTOR_SIZE as u64).unwrap();
+    src.attach_ide_primary_master_disk(Box::new(ide_disk))
+        .unwrap();
 
     // Simulate a configured storage topology by setting overlay references for the canonical disk
     // slots. (Actual disk contents/backends are external to snapshots.)
     src.set_ahci_port0_disk_overlay_ref("hdd.base.img", "hdd.overlay.img");
     src.set_ide_secondary_master_atapi_overlay_ref("install.iso", "install.overlay");
+    src.set_ide_primary_master_ata_overlay_ref("ide.base.img", "ide.overlay.img");
 
     // SnapshotSource::disk_overlays should be deterministic and ordered by disk_id.
     use snapshot::SnapshotSource as _;
@@ -82,6 +87,11 @@ fn machine_snapshot_writes_and_restores_disk_overlay_refs_with_stable_disk_ids()
                 disk_id: Machine::DISK_ID_INSTALL_MEDIA,
                 base_image: "install.iso".to_string(),
                 overlay_image: "install.overlay".to_string(),
+            },
+            snapshot::DiskOverlayRef {
+                disk_id: Machine::DISK_ID_IDE_PRIMARY_MASTER,
+                base_image: "ide.base.img".to_string(),
+                overlay_image: "ide.overlay.img".to_string(),
             },
         ],
     };
