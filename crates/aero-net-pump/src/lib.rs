@@ -746,6 +746,55 @@ mod tests {
     }
 
     #[test]
+    fn tx_out_is_drained_even_if_bus_master_is_disabled_after_dma() {
+        let mut mem = TestMem::new(0x80_000);
+        let mut nic = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
+        nic.pci_config_write(0x04, 2, 0x4); // Bus Master Enable
+
+        // One TX descriptor.
+        configure_tx_ring(&mut nic, 0x1000, 4);
+        let frame = build_test_frame(b"tx");
+        mem.write(0x4000, &frame);
+        write_tx_desc(
+            &mut mem,
+            0x1000,
+            0x4000,
+            frame.len() as u16,
+            0b0000_1001, // EOP|RS
+            0,
+        );
+        nic.mmio_write_u32_reg(0x3818, 1); // TDT
+
+        let mut backend = L2TunnelBackend::new();
+
+        // Process DMA so the frame lands in the NIC's host TX queue, but do not drain it to the
+        // backend yet.
+        let counts0 = tick_e1000_with_counts(&mut nic, &mut mem, &mut backend, 0, 0);
+        assert_eq!(
+            counts0,
+            PumpCounts {
+                tx_frames: 0,
+                rx_frames: 0,
+            }
+        );
+
+        // Disable bus mastering after DMA has completed.
+        nic.pci_config_write(0x04, 2, 0x0);
+
+        // Even with bus mastering disabled, the already-produced host TX queue should still be
+        // drained to the backend (bus mastering only gates DMA, not the host-facing queue).
+        let counts1 = tick_e1000_with_counts(&mut nic, &mut mem, &mut backend, 1, 0);
+        assert_eq!(
+            counts1,
+            PumpCounts {
+                tx_frames: 1,
+                rx_frames: 0,
+            }
+        );
+        assert_eq!(backend.drain_tx_frames(), vec![frame]);
+    }
+
+    #[test]
     fn zero_budgets_do_not_call_backend() {
         #[derive(Default)]
         struct PanicBackend;
