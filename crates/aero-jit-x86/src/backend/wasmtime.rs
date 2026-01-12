@@ -92,13 +92,17 @@ impl<Cpu> WasmtimeBackend<Cpu> {
         // explicit makes the backend's capabilities stable across upgrades.)
         let mut config = Config::new();
         config.wasm_simd(true);
+        config.memory_reservation(u64::from(memory_pages) * 65_536);
         let engine = Engine::new(&config).expect("create wasmtime engine");
         let mut store = Store::new(&engine, HostExitState::default());
         let mut linker = Linker::new(&engine);
 
         // A single shared memory is imported by all generated blocks.
-        let memory = Memory::new(&mut store, MemoryType::new(memory_pages, None))
-            .expect("create wasmtime memory");
+        let memory = Memory::new(
+            &mut store,
+            MemoryType::new(memory_pages, Some(memory_pages)),
+        )
+        .expect("create wasmtime memory");
         linker
             .define(&mut store, IMPORT_MODULE, IMPORT_MEMORY, memory)
             .expect("define env.memory import");
