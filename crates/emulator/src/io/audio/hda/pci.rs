@@ -54,11 +54,37 @@ impl HdaPciDevice {
         }
     }
 
+    fn command(&self) -> u16 {
+        self.config.read(0x04, 2) as u16
+    }
+
+    fn mem_space_enabled(&self) -> bool {
+        (self.command() & (1 << 1)) != 0
+    }
+
+    fn bus_master_enabled(&self) -> bool {
+        (self.command() & (1 << 2)) != 0
+    }
+
+    fn intx_disabled(&self) -> bool {
+        (self.command() & (1 << 10)) != 0
+    }
+
     pub fn irq_level(&self) -> bool {
+        if self.intx_disabled() {
+            return false;
+        }
         self.controller.irq_line()
     }
 
     pub fn poll(&mut self, mem: &mut dyn MemoryBus) {
+        // Gate DMA on PCI command Bus Master Enable (bit 2).
+        //
+        // HDA uses bus mastering for CORB/RIRB and stream DMA. When the guest clears COMMAND.BME,
+        // the controller must not touch guest memory.
+        if !self.bus_master_enabled() {
+            return;
+        }
         self.controller.poll(mem);
     }
 }
@@ -93,10 +119,23 @@ impl PciDevice for HdaPciDevice {
 
 impl MmioDevice for HdaPciDevice {
     fn mmio_read(&mut self, _mem: &mut dyn MemoryBus, offset: u64, size: usize) -> u32 {
+        // Gate MMIO on PCI command Memory Space Enable (bit 1).
+        if !self.mem_space_enabled() {
+            return match size {
+                1 => 0xff,
+                2 => 0xffff,
+                4 => u32::MAX,
+                _ => 0,
+            };
+        }
         self.controller.mmio_read(offset as u32, size) as u32
     }
 
     fn mmio_write(&mut self, _mem: &mut dyn MemoryBus, offset: u64, size: usize, value: u32) {
+        // Gate MMIO on PCI command Memory Space Enable (bit 1).
+        if !self.mem_space_enabled() {
+            return;
+        }
         self.controller
             .mmio_write(offset as u32, size, value as u64);
     }
@@ -153,6 +192,9 @@ mod tests {
         let mut mem = Mem::new(0x10000);
         let mut dev = HdaPciDevice::new(HdaController::new(), 0xfebf_0000);
 
+        // Enable PCI MMIO decoding.
+        dev.config_write(0x04, 2, 1 << 1);
+
         // Bring controller out of reset via MMIO.
         dev.mmio_write(&mut mem, HDA_GCTL as u64, 4, GCTL_CRST);
         assert_eq!(
@@ -162,5 +204,78 @@ mod tests {
 
         // Codec 0 should be present in STATESTS once out of reset.
         assert_eq!(dev.mmio_read(&mut mem, HDA_STATESTS as u64, 2) & 0x1, 0x1);
+    }
+
+    #[test]
+    fn pci_wrapper_gates_hda_mmio_on_pci_command_mem_bit() {
+        #[derive(Clone, Debug)]
+        struct Mem(Vec<u8>);
+
+        impl Mem {
+            fn new(size: usize) -> Self {
+                Self(vec![0; size])
+            }
+        }
+
+        impl MemoryBus for Mem {
+            fn read_physical(&mut self, paddr: u64, buf: &mut [u8]) {
+                let start = paddr as usize;
+                buf.copy_from_slice(&self.0[start..start + buf.len()]);
+            }
+
+            fn write_physical(&mut self, paddr: u64, buf: &[u8]) {
+                let start = paddr as usize;
+                self.0[start..start + buf.len()].copy_from_slice(buf);
+            }
+        }
+
+        let mut mem = Mem::new(0x10000);
+        let mut dev = HdaPciDevice::new(HdaController::new(), 0xfebf_0000);
+
+        // With COMMAND.MEM clear, reads float high and writes are ignored.
+        assert_eq!(dev.mmio_read(&mut mem, HDA_GCTL as u64, 4), u32::MAX);
+        dev.mmio_write(&mut mem, HDA_GCTL as u64, 4, GCTL_CRST);
+
+        // Enable MMIO decoding and verify the earlier write did not take effect.
+        dev.config_write(0x04, 2, 1 << 1);
+        assert_ne!(dev.mmio_read(&mut mem, HDA_GCTL as u64, 4), u32::MAX);
+        assert_eq!(dev.mmio_read(&mut mem, HDA_GCTL as u64, 4) & GCTL_CRST, 0);
+    }
+
+    #[test]
+    fn pci_wrapper_gates_hda_dma_on_pci_command_bme_bit() {
+        struct PanicMem;
+
+        impl MemoryBus for PanicMem {
+            fn read_physical(&mut self, _paddr: u64, _buf: &mut [u8]) {
+                panic!("unexpected DMA read");
+            }
+
+            fn write_physical(&mut self, _paddr: u64, _buf: &[u8]) {
+                panic!("unexpected DMA write");
+            }
+        }
+
+        let mut dev = HdaPciDevice::new(HdaController::new(), 0xfebf_0000);
+        let mut mem = PanicMem;
+
+        // Enable MMIO decoding so we can program the controller, but leave BME disabled.
+        dev.config_write(0x04, 2, 1 << 1);
+
+        // Bring controller out of reset and enable the position buffer so poll() will write to guest
+        // memory when bus mastering is enabled.
+        dev.mmio_write(&mut mem, HDA_GCTL as u64, 4, GCTL_CRST);
+        dev.mmio_write(&mut mem, HDA_DPUBASE as u64, 4, 0);
+        dev.mmio_write(&mut mem, HDA_DPLBASE as u64, 4, 0x7000 | DPLBASE_ENABLE);
+
+        // With BME clear, wrapper.poll must not touch guest memory.
+        dev.poll(&mut mem);
+
+        // Enable bus mastering and verify polling attempts a memory access (position buffer write).
+        dev.config_write(0x04, 2, (1 << 1) | (1 << 2));
+        let err = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            dev.poll(&mut mem);
+        }));
+        assert!(err.is_err());
     }
 }

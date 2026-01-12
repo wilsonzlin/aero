@@ -250,6 +250,40 @@ impl Ac97PciDevice {
         }
     }
 
+    fn command(&self) -> u16 {
+        self.config.read(0x04, 2) as u16
+    }
+
+    fn io_space_enabled(&self) -> bool {
+        (self.command() & (1 << 0)) != 0
+    }
+
+    fn bus_master_enabled(&self) -> bool {
+        (self.command() & (1 << 2)) != 0
+    }
+
+    fn intx_disabled(&self) -> bool {
+        (self.command() & (1 << 10)) != 0
+    }
+
+    pub fn irq_level(&self) -> bool {
+        if self.intx_disabled() {
+            return false;
+        }
+        self.controller.irq_level()
+    }
+
+    pub fn poll(&mut self, mem: &mut dyn MemoryBus, out: &mut impl AudioSink, max_words: u16) {
+        // Gate DMA on PCI command Bus Master Enable (bit 2).
+        //
+        // AC'97 bus mastering reads descriptors + audio buffers from guest memory. When the guest
+        // clears COMMAND.BME, the device must not perform DMA.
+        if !self.bus_master_enabled() {
+            return;
+        }
+        self.controller.poll(mem, out, max_words);
+    }
+
     fn port_to_nam_offset(&self, port: u16) -> Option<u64> {
         if port >= self.bar_nam && port < self.bar_nam.wrapping_add(NAM_SIZE) {
             Some(u64::from(port.wrapping_sub(self.bar_nam)))
@@ -319,6 +353,15 @@ impl PciDevice for Ac97PciDevice {
 
 impl PortIO for Ac97PciDevice {
     fn port_read(&self, port: u16, size: usize) -> u32 {
+        // Gate I/O decoding on PCI command I/O Space Enable (bit 0).
+        if !self.io_space_enabled() {
+            return match size {
+                1 => 0xff,
+                2 => 0xffff,
+                4 => u32::MAX,
+                _ => u32::MAX,
+            };
+        }
         if let Some(off) = self.port_to_nam_offset(port) {
             return self.controller.nam_read(off, size);
         }
@@ -329,6 +372,10 @@ impl PortIO for Ac97PciDevice {
     }
 
     fn port_write(&mut self, port: u16, size: usize, val: u32) {
+        // Gate I/O decoding on PCI command I/O Space Enable (bit 0).
+        if !self.io_space_enabled() {
+            return;
+        }
         if let Some(off) = self.port_to_nam_offset(port) {
             self.controller.nam_write(off, size, val);
             return;
@@ -342,6 +389,7 @@ impl PortIO for Ac97PciDevice {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::io::PortIO;
 
     #[test]
     fn mixer_vendor_ids_are_exposed() {
@@ -359,5 +407,66 @@ mod tests {
 
         dev.nam_write(NAM_RESET, 2, 0);
         assert_eq!(dev.nam_read(NAM_MASTER_VOL, 2) as u16, 0x0000);
+    }
+
+    #[test]
+    fn pci_wrapper_gates_ac97_ports_on_pci_command_io_bit() {
+        let mut dev = Ac97PciDevice::new(0x1000, 0x1100);
+
+        // With COMMAND.IO clear, reads float high and writes are ignored.
+        let vid1_port = 0x1000u16 + NAM_VENDOR_ID1 as u16;
+        assert_eq!(dev.port_read(vid1_port, 2), 0xffff);
+
+        let master_vol_port = 0x1000u16 + NAM_MASTER_VOL as u16;
+        dev.port_write(master_vol_port, 2, 0x1234);
+
+        // Enable IO decoding and verify the earlier write did not take effect.
+        dev.config_write(0x04, 2, 1 << 0);
+        assert_eq!(dev.port_read(vid1_port, 2) as u16, 0x8384);
+        assert_eq!(dev.port_read(master_vol_port, 2) as u16, 0x0000);
+    }
+
+    #[test]
+    fn pci_wrapper_gates_ac97_dma_on_pci_command_bme_bit() {
+        struct PanicMem;
+
+        impl MemoryBus for PanicMem {
+            fn read_physical(&mut self, _paddr: u64, _buf: &mut [u8]) {
+                panic!("unexpected DMA read");
+            }
+
+            fn write_physical(&mut self, _paddr: u64, _buf: &[u8]) {
+                panic!("unexpected DMA write");
+            }
+        }
+
+        #[derive(Default)]
+        struct Sink;
+
+        impl AudioSink for Sink {
+            fn push_interleaved_f32(&mut self, _samples: &[f32]) {}
+        }
+
+        let mut dev = Ac97PciDevice::new(0x1000, 0x1100);
+        // Enable I/O decoding so we can program the NABM registers, but leave BME disabled.
+        dev.config_write(0x04, 2, 1 << 0);
+
+        // Start the PCM out DMA engine (this would DMA immediately if BME was enabled).
+        dev.port_write(0x1100 + NABM_PO_BDBAR as u16, 4, 0x2000);
+        dev.port_write(0x1100 + NABM_PO_LVI as u16, 1, 0);
+        dev.port_write(0x1100 + NABM_PO_CR as u16, 1, u32::from(CR_RPBM));
+
+        let mut mem = PanicMem;
+        let mut sink = Sink::default();
+
+        // With BME clear, wrapper.poll must not touch guest memory.
+        dev.poll(&mut mem, &mut sink, 2);
+
+        // Enable bus mastering and verify the DMA engine attempts a memory access.
+        dev.config_write(0x04, 2, (1 << 0) | (1 << 2));
+        let err = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            dev.poll(&mut mem, &mut sink, 2);
+        }));
+        assert!(err.is_err());
     }
 }
