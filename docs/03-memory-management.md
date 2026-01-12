@@ -471,6 +471,8 @@ Self-modifying code invalidation is handled by the runtime using page-version sn
   - `JitRuntime::install_handle` rejects compilation results whose `CompiledBlockMeta.page_versions` no longer match the current `PageVersionTracker` (e.g. background compilation races with code writes).
   - `JitRuntime::prepare_block` lazily invalidates cached blocks whose page-version snapshots are stale and requests recompilation.
 
+In the browser tiered execution harness (`crates/aero-wasm/src/tiered_vm.rs`), Tier-0 interpreter writes are captured by the WASM-side `CpuBus` into a bounded `GuestWriteLog` and drained into `JitRuntime::on_guest_write` after each executed block/interrupt boundary. Tier-1 slow-path store helpers (JS `env.mem_write_*`) are expected to call the exported `WasmTieredVm::on_guest_write(paddr, len)` so the embedded page-version tracker stays coherent.
+
 Tier-1 blocks rely on these runtime snapshot checks, while Tier-2 traces additionally embed
 `GuardCodeVersion { page, expected }` checks derived from the same tracker so they can deopt when the
 guest modifies code after trace compilation.
