@@ -95,7 +95,8 @@ NTSTATUS VirtioQueueCreate(_Inout_ VIRTIO_PCI_DEVICE* Device, _Out_ VIRTIO_QUEUE
    * alignment.
    */
   if ((Queue->RingPa.QuadPart & (VIRTIO_PCI_VRING_ALIGN - 1)) != 0) {
-    MmFreeContiguousMemory(Queue->RingVa);
+    ASSERT(Queue->RingBytes != 0);
+    MmFreeContiguousMemorySpecifyCache(Queue->RingVa, Queue->RingBytes, MmCached);
     Queue->RingVa = NULL;
     return STATUS_DATATYPE_MISALIGNMENT;
   }
@@ -103,7 +104,8 @@ NTSTATUS VirtioQueueCreate(_Inout_ VIRTIO_PCI_DEVICE* Device, _Out_ VIRTIO_QUEUE
   Queue->Context =
       (PVOID*)ExAllocatePoolWithTag(NonPagedPool, sizeof(PVOID) * Queue->QueueSize, VQ_TAG_CTX);
   if (!Queue->Context) {
-    MmFreeContiguousMemory(Queue->RingVa);
+    ASSERT(Queue->RingBytes != 0);
+    MmFreeContiguousMemorySpecifyCache(Queue->RingVa, Queue->RingBytes, MmCached);
     Queue->RingVa = NULL;
     return STATUS_INSUFFICIENT_RESOURCES;
   }
@@ -142,7 +144,8 @@ VOID VirtioQueueDelete(_Inout_ VIRTIO_PCI_DEVICE* Device, _Inout_ VIRTIO_QUEUE* 
       VirtioPciWriteQueuePfn(Device, 0);
     }
 
-    MmFreeContiguousMemory(Queue->RingVa);
+    ASSERT(Queue->RingBytes != 0);
+    MmFreeContiguousMemorySpecifyCache(Queue->RingVa, Queue->RingBytes, MmCached);
     Queue->RingVa = NULL;
   }
 
