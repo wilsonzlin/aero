@@ -162,3 +162,64 @@ fn decode_one_mode_16bit_modrm_bx_si_disp8() {
         }
     );
 }
+
+#[test]
+fn decode_one_mode_32bit_push_ebx_uses_w32() {
+    let inst = decode_one_mode(0x1000, &[0x53], 32);
+    assert_eq!(inst.len, 1);
+    assert_eq!(
+        inst.kind,
+        InstKind::Push {
+            src: Operand::Reg(Reg {
+                gpr: Gpr::Rbx,
+                width: Width::W32,
+                high8: false,
+            }),
+        }
+    );
+}
+
+#[test]
+fn decode_one_mode_32bit_pop_ebx_uses_w32() {
+    let inst = decode_one_mode(0x1000, &[0x5b], 32);
+    assert_eq!(inst.len, 1);
+    assert_eq!(
+        inst.kind,
+        InstKind::Pop {
+            dst: Operand::Reg(Reg {
+                gpr: Gpr::Rbx,
+                width: Width::W32,
+                high8: false,
+            }),
+        }
+    );
+}
+
+#[test]
+fn decode_one_mode_64bit_push_pop_use_w64() {
+    let push = decode_one_mode(0x1000, &[0x53], 64);
+    assert_eq!(push.len, 1);
+    assert_eq!(
+        push.kind,
+        InstKind::Push {
+            src: Operand::Reg(Reg {
+                gpr: Gpr::Rbx,
+                width: Width::W64,
+                high8: false,
+            }),
+        }
+    );
+
+    let pop = decode_one_mode(0x1000, &[0x5b], 64);
+    assert_eq!(pop.len, 1);
+    assert_eq!(
+        pop.kind,
+        InstKind::Pop {
+            dst: Operand::Reg(Reg {
+                gpr: Gpr::Rbx,
+                width: Width::W64,
+                high8: false,
+            }),
+        }
+    );
+}

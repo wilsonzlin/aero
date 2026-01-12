@@ -137,11 +137,13 @@ fn to_shift_binop(op: ShiftOp) -> BinOp {
 pub fn translate_block(block: &BasicBlock) -> IrBlock {
     let mut b = IrBuilder::new(block.entry_rip);
     let stack_width = match block.bitness {
+        16 => Width::W16,
         32 => Width::W32,
         64 => Width::W64,
         other => panic!("unsupported Tier-1 bitness {other}"),
     };
     let ip_mask: u64 = match block.bitness {
+        16 => 0xffff,
         32 => 0xffff_ffff,
         64 => u64::MAX,
         other => panic!("unsupported Tier-1 bitness {other}"),

@@ -470,12 +470,30 @@ pub mod tier1 {
         }
     }
 
-    fn stack_width(bitness: u32) -> Width {
+    fn stack_width(bitness: u32, operand_override: bool) -> Width {
         match bitness {
-            64 => Width::W64,
-            32 => Width::W32,
-            16 => Width::W16,
-            _ => Width::W64,
+            64 => {
+                if operand_override {
+                    Width::W16
+                } else {
+                    Width::W64
+                }
+            }
+            32 => {
+                if operand_override {
+                    Width::W16
+                } else {
+                    Width::W32
+                }
+            }
+            16 => {
+                if operand_override {
+                    Width::W32
+                } else {
+                    Width::W16
+                }
+            }
+            _ => Width::W32,
         }
     }
 
@@ -723,7 +741,7 @@ pub mod tier1 {
         offset += 1;
 
         let width = op_width(bitness, rex, operand_override);
-        let stack_width = stack_width(bitness);
+        let stack_width = stack_width(bitness, operand_override);
 
         let kind = match opcode1 {
             0x40..=0x47 if bitness != 64 => {

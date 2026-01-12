@@ -382,14 +382,14 @@ impl IrBlock {
                     }
                 }
                 IrInst::Load { dst, addr, width } => {
-                    if use_val(addr)? != Width::W64 {
-                        return Err("Load addr must be i64".to_string());
+                    match use_val(addr)? {
+                        Width::W8 | Width::W16 | Width::W32 | Width::W64 => {}
                     }
                     define(dst, width)?;
                 }
                 IrInst::Store { addr, src, width } => {
-                    if use_val(addr)? != Width::W64 {
-                        return Err("Store addr must be i64".to_string());
+                    match use_val(addr)? {
+                        Width::W8 | Width::W16 | Width::W32 | Width::W64 => {}
                     }
                     if use_val(src)? != width {
                         return Err("Store width mismatch".to_string());
@@ -452,9 +452,8 @@ impl IrBlock {
                 }
             }
             IrTerminator::IndirectJump { target } => {
-                let ty = use_val(target)?;
-                if !matches!(ty, Width::W32 | Width::W64) {
-                    return Err(format!("IndirectJump target must be i32/i64, got {ty}"));
+                match use_val(target)? {
+                    Width::W8 | Width::W16 | Width::W32 | Width::W64 => {}
                 }
             }
             IrTerminator::ExitToInterpreter { .. } => {}
