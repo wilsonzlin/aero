@@ -106,15 +106,6 @@ impl FormatInfo {
         let rows = self.upload_rows_per_image(height, level);
         bytes_per_row as usize * rows as usize
     }
-
-    pub(crate) fn force_decompress_dxt_to_bgra8(&mut self) {
-        self.wgpu = wgpu::TextureFormat::Bgra8Unorm;
-        self.decompress_to_bgra8 = true;
-        self.upload_bytes_per_block = 4;
-        self.upload_block_width = 1;
-        self.upload_block_height = 1;
-        self.upload_is_compressed = false;
-    }
 }
 
 fn mip_extent(v: u32, level: u32) -> u32 {

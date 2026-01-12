@@ -3,9 +3,8 @@ use anyhow::{anyhow, Result};
 use std::sync::Arc;
 
 use super::{
-    align_copy_bytes_per_row, format_info_for_texture, wgpu_bc_texture_dimensions_compatible,
-    D3DFormat, D3DPool, FormatInfo, GuestResourceId, LockFlags, ResourceManager, TextureUploadDesc,
-    TextureUsageKind,
+    align_copy_bytes_per_row, format_info_for_texture, D3DFormat, D3DPool, FormatInfo,
+    GuestResourceId, LockFlags, ResourceManager, TextureUploadDesc, TextureUsageKind,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -156,19 +155,11 @@ impl Texture {
             return;
         }
 
-        if device
-            .features()
-            .contains(wgpu::Features::TEXTURE_COMPRESSION_BC)
-            && matches!(
-                self.desc.format,
-                D3DFormat::Dxt1 | D3DFormat::Dxt3 | D3DFormat::Dxt5
-            )
-        {
-            let (width, height) = self.desc.kind.dimensions();
-            let mip_levels = self.desc.kind.mip_levels();
-            if !wgpu_bc_texture_dimensions_compatible(width, height, mip_levels) {
-                self.info.force_decompress_dxt_to_bgra8();
-            }
+        // Managed textures can be evicted and later recreated. Re-run the same BC compatibility
+        // selection logic we apply at creation time so we never attempt to create invalid native
+        // BC textures.
+        if let Ok(info) = format_info_for_texture_desc(&self.desc, device.features()) {
+            self.info = info;
         }
 
         let texture = Arc::new(device.create_texture(&wgpu::TextureDescriptor {
