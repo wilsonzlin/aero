@@ -1975,10 +1975,21 @@ impl Machine {
         self.inner.serial_output_len().min(u64::from(u32::MAX)) as u32
     }
 
+    /// Inject a browser-style keyboard event into the guest PS/2 i8042 controller.
+    ///
+    /// `code` must be a DOM `KeyboardEvent.code` string (e.g. `"KeyA"`, `"Enter"`, `"ArrowUp"`).
+    /// Unknown codes are ignored.
     pub fn inject_browser_key(&mut self, code: &str, pressed: bool) {
         self.inner.inject_browser_key(code, pressed);
     }
 
+    /// Inject relative mouse movement into the guest PS/2 i8042 controller.
+    ///
+    /// - `dx`/`dy` use browser-style coordinates: +X is right, +Y is down.
+    /// - `wheel` uses PS/2 convention: positive is wheel up.
+    ///
+    /// Note: the PS/2 mouse model only emits movement packets when reporting is enabled by the
+    /// guest (typically via `0xF4` after i8042 command `0xD4`).
     pub fn inject_mouse_motion(&mut self, dx: i32, dy: i32, wheel: i32) {
         self.inner.inject_mouse_motion(dx, dy, wheel);
     }
@@ -2031,6 +2042,7 @@ impl Machine {
         self.mouse_buttons_known = true;
     }
 
+    /// Convenience wrapper: set the left mouse button state.
     pub fn inject_mouse_left(&mut self, pressed: bool) {
         self.inner.inject_mouse_left(pressed);
         if pressed {
@@ -2041,6 +2053,7 @@ impl Machine {
         self.mouse_buttons_known = true;
     }
 
+    /// Convenience wrapper: set the right mouse button state.
     pub fn inject_mouse_right(&mut self, pressed: bool) {
         self.inner.inject_mouse_right(pressed);
         if pressed {
@@ -2051,6 +2064,7 @@ impl Machine {
         self.mouse_buttons_known = true;
     }
 
+    /// Convenience wrapper: set the middle mouse button state.
     pub fn inject_mouse_middle(&mut self, pressed: bool) {
         self.inner.inject_mouse_middle(pressed);
         if pressed {
