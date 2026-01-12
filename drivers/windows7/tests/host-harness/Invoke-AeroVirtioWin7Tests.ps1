@@ -1525,7 +1525,7 @@ try {
     "QEMU_EXITED" {
       $exitCode = $null
       try { $exitCode = $proc.ExitCode } catch { }
-      Write-Host "FAIL: QEMU exited before selftest result marker (exit code: $exitCode)"
+      Write-Host "FAIL: QEMU_EXITED: QEMU exited before selftest result marker (exit code: $exitCode)"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -1534,7 +1534,7 @@ try {
       $scriptExitCode = 3
     }
     "TIMEOUT" {
-      Write-Host "FAIL: timed out waiting for AERO_VIRTIO_SELFTEST result marker"
+      Write-Host "FAIL: TIMEOUT: timed out waiting for AERO_VIRTIO_SELFTEST result marker"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -1542,7 +1542,7 @@ try {
       $scriptExitCode = 2
     }
     "MISSING_VIRTIO_BLK" {
-      Write-Host "FAIL: selftest RESULT=PASS but did not emit virtio-blk test marker"
+      Write-Host "FAIL: MISSING_VIRTIO_BLK: selftest RESULT=PASS but did not emit virtio-blk test marker"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -1550,7 +1550,7 @@ try {
       $scriptExitCode = 1
     }
     "MISSING_VIRTIO_INPUT" {
-      Write-Host "FAIL: selftest RESULT=PASS but did not emit virtio-input test marker"
+      Write-Host "FAIL: MISSING_VIRTIO_INPUT: selftest RESULT=PASS but did not emit virtio-input test marker"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -1590,7 +1590,7 @@ try {
       $scriptExitCode = 1
     }
     "MISSING_VIRTIO_SND" {
-      Write-Host "FAIL: selftest RESULT=PASS but did not emit virtio-snd test marker"
+      Write-Host "FAIL: MISSING_VIRTIO_SND: selftest RESULT=PASS but did not emit virtio-snd test marker"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -1598,7 +1598,7 @@ try {
       $scriptExitCode = 1
     }
     "MISSING_VIRTIO_SND_CAPTURE" {
-      Write-Host "FAIL: selftest RESULT=PASS but did not emit virtio-snd-capture test marker"
+      Write-Host "FAIL: MISSING_VIRTIO_SND_CAPTURE: selftest RESULT=PASS but did not emit virtio-snd-capture test marker"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -1606,7 +1606,7 @@ try {
       $scriptExitCode = 1
     }
     "MISSING_VIRTIO_SND_DUPLEX" {
-      Write-Host "FAIL: selftest RESULT=PASS but did not emit virtio-snd-duplex test marker"
+      Write-Host "FAIL: MISSING_VIRTIO_SND_DUPLEX: selftest RESULT=PASS but did not emit virtio-snd-duplex test marker"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -1614,7 +1614,7 @@ try {
       $scriptExitCode = 1
     }
     "MISSING_VIRTIO_NET" {
-      Write-Host "FAIL: selftest RESULT=PASS but did not emit virtio-net test marker"
+      Write-Host "FAIL: MISSING_VIRTIO_NET: selftest RESULT=PASS but did not emit virtio-net test marker"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -1631,7 +1631,7 @@ try {
         $reason = "--disable-snd"
       }
 
-      Write-Host "FAIL: virtio-snd test was skipped ($reason) but -WithVirtioSnd was enabled"
+      Write-Host "FAIL: VIRTIO_SND_SKIPPED: virtio-snd test was skipped ($reason) but -WithVirtioSnd was enabled"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -1644,7 +1644,7 @@ try {
         $reason = $Matches[1]
       }
 
-      Write-Host "FAIL: virtio-snd capture test was skipped ($reason) but -WithVirtioSnd was enabled"
+      Write-Host "FAIL: VIRTIO_SND_CAPTURE_SKIPPED: virtio-snd capture test was skipped ($reason) but -WithVirtioSnd was enabled"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -1657,7 +1657,7 @@ try {
         $reason = $Matches[1]
       }
 
-      Write-Host "FAIL: virtio-snd duplex test was skipped ($reason) but -WithVirtioSnd was enabled"
+      Write-Host "FAIL: VIRTIO_SND_DUPLEX_SKIPPED: virtio-snd duplex test was skipped ($reason) but -WithVirtioSnd was enabled"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
