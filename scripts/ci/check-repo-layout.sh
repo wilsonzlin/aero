@@ -109,10 +109,15 @@ def normalize_rel(path_str):
 for md in md_files:
     text = (repo_root / md).read_text(encoding="utf-8", errors="ignore")
     md_dir = Path(md).parent
+    # Track line numbers incrementally as we scan matches. This is much faster than
+    # `text.count("\n", 0, m.start())` per match for large markdown files.
+    line_no = 1
+    last_pos = 0
 
     for m in pattern.finditer(text):
         referenced = m.group(1)
-        line_no = text.count("\n", 0, m.start()) + 1
+        line_no += text.count("\n", last_pos, m.start())
+        last_pos = m.start()
 
         # Ignore glob patterns like `./scripts/*.sh` — these are not literal file
         # paths, and are often used in docs as troubleshooting advice.
