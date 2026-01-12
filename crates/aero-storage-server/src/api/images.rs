@@ -281,7 +281,9 @@ pub async fn head_image_meta(
 mod tests {
     use super::*;
     use crate::store::{ImageCatalogEntry, ImageMeta, CONTENT_TYPE_DISK_IMAGE};
+    use axum::{body::Body, http::Request, routing::get, Router};
     use std::time::Duration;
+    use tower::ServiceExt;
 
     #[test]
     fn image_response_includes_fallback_etag_when_missing() {
@@ -303,5 +305,39 @@ mod tests {
         let response = ImageResponse::from(entry);
         assert_eq!(response.etag, cache::etag_or_fallback(&meta));
         assert!(!response.etag.is_empty());
+    }
+
+    #[tokio::test]
+    async fn image_id_path_len_guard_rejects_pathological_raw_segments() {
+        let app = Router::new()
+            .route("/v1/images/:id/meta", get(|| async { StatusCode::OK }))
+            .route_layer(axum::middleware::from_fn(image_id_path_len_guard));
+
+        let too_long_raw = "a".repeat(crate::store::MAX_IMAGE_ID_LEN * 3 + 1);
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/v1/images/{too_long_raw}/meta"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+        // Boundary case: this is the longest raw segment that could still decode to exactly
+        // `MAX_IMAGE_ID_LEN` bytes (if every byte was percent-encoded).
+        let max_raw = "a".repeat(crate::store::MAX_IMAGE_ID_LEN * 3);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/v1/images/{max_raw}/meta"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
     }
 }
