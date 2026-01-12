@@ -223,7 +223,7 @@ fn copy_texture2d_bc_uses_cpu_fallback_on_gl() {
 }
 
 #[test]
-fn copy_texture2d_bc_gl_rejects_stale_guest_backing_source() {
+fn copy_texture2d_bc_gl_uses_shadow_when_guest_backing_is_stale() {
     pollster::block_on(async {
         let mut exec = match create_executor_with_bc_features().await {
             Some(exec) => exec,
@@ -279,7 +279,9 @@ fn copy_texture2d_bc_gl_rejects_stale_guest_backing_source() {
         stream.extend_from_slice(&0u64.to_le_bytes()); // reserved0
         end_cmd(&mut stream, start);
 
-        // Host-owned BC1 texture B (handle=2) + UPLOAD_RESOURCE to establish `host_shadow`.
+        // Host-owned BC1 texture B (handle=2). We'll initialize it to white, then copy black into
+        // it from A. If the GL fallback incorrectly reads from A's stale guest backing, B would
+        // remain white.
         let start = begin_cmd(&mut stream, AerogpuCmdOpcode::CreateTexture2d as u32);
         stream.extend_from_slice(&2u32.to_le_bytes()); // texture_handle
         stream.extend_from_slice(&AEROGPU_RESOURCE_USAGE_TEXTURE.to_le_bytes());
@@ -298,14 +300,38 @@ fn copy_texture2d_bc_gl_rejects_stale_guest_backing_source() {
         stream.extend_from_slice(&2u32.to_le_bytes()); // resource_handle
         stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
         stream.extend_from_slice(&0u64.to_le_bytes()); // offset_bytes
+        stream.extend_from_slice(&(bc1_white.len() as u64).to_le_bytes()); // size_bytes
+        stream.extend_from_slice(&bc1_white);
+        end_cmd(&mut stream, start);
+
+        // Host-owned BC1 texture C (handle=3), initialized to black.
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::CreateTexture2d as u32);
+        stream.extend_from_slice(&3u32.to_le_bytes()); // texture_handle
+        stream.extend_from_slice(&AEROGPU_RESOURCE_USAGE_TEXTURE.to_le_bytes());
+        stream.extend_from_slice(&(AerogpuFormat::BC1RgbaUnorm as u32).to_le_bytes());
+        stream.extend_from_slice(&4u32.to_le_bytes()); // width
+        stream.extend_from_slice(&4u32.to_le_bytes()); // height
+        stream.extend_from_slice(&1u32.to_le_bytes()); // mip_levels
+        stream.extend_from_slice(&1u32.to_le_bytes()); // array_layers
+        stream.extend_from_slice(&0u32.to_le_bytes()); // row_pitch_bytes
+        stream.extend_from_slice(&0u32.to_le_bytes()); // backing_alloc_id
+        stream.extend_from_slice(&0u32.to_le_bytes()); // backing_offset_bytes
+        stream.extend_from_slice(&0u64.to_le_bytes()); // reserved0
+        end_cmd(&mut stream, start);
+
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::UploadResource as u32);
+        stream.extend_from_slice(&3u32.to_le_bytes()); // resource_handle
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+        stream.extend_from_slice(&0u64.to_le_bytes()); // offset_bytes
         stream.extend_from_slice(&(bc1_black.len() as u64).to_le_bytes()); // size_bytes
         stream.extend_from_slice(&bc1_black);
         end_cmd(&mut stream, start);
 
-        // Copy B -> A. This updates A on the GPU but does not update its guest backing memory.
+        // Copy C -> A. This updates A on the GPU but does not update its guest backing memory,
+        // leaving guest memory stale (still white).
         let start = begin_cmd(&mut stream, AerogpuCmdOpcode::CopyTexture2d as u32);
         stream.extend_from_slice(&1u32.to_le_bytes()); // dst_texture (A)
-        stream.extend_from_slice(&2u32.to_le_bytes()); // src_texture (B)
+        stream.extend_from_slice(&3u32.to_le_bytes()); // src_texture (C)
         stream.extend_from_slice(&0u32.to_le_bytes()); // dst_mip_level
         stream.extend_from_slice(&0u32.to_le_bytes()); // dst_array_layer
         stream.extend_from_slice(&0u32.to_le_bytes()); // src_mip_level
@@ -320,8 +346,8 @@ fn copy_texture2d_bc_gl_rejects_stale_guest_backing_source() {
         stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
         end_cmd(&mut stream, start);
 
-        // Now attempt to copy A -> B. On wgpu GL+BC we cannot safely source BC blocks from A's
-        // guest memory because it is stale (A was modified by a GPU copy).
+        // Now copy A -> B. The GL BC fallback must NOT read from A's stale guest backing memory
+        // (white); it must use the maintained CPU shadow (black).
         let start = begin_cmd(&mut stream, AerogpuCmdOpcode::CopyTexture2d as u32);
         stream.extend_from_slice(&2u32.to_le_bytes()); // dst_texture (B)
         stream.extend_from_slice(&1u32.to_le_bytes()); // src_texture (A)
@@ -344,13 +370,17 @@ fn copy_texture2d_bc_gl_rejects_stale_guest_backing_source() {
         stream[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
             .copy_from_slice(&total_size.to_le_bytes());
 
-        let err = exec
-            .execute_cmd_stream(&stream, Some(&allocs), &mut guest_mem)
-            .expect_err("expected stale guest-backed BC copy source to be rejected on GL");
-        let msg = format!("{err:#}");
-        assert!(
-            msg.contains("guest backing is stale") || msg.contains("stale"),
-            "unexpected error message: {msg}"
-        );
+        exec.execute_cmd_stream(&stream, Some(&allocs), &mut guest_mem)
+            .expect("expected BC COPY_TEXTURE2D to succeed on GL via CPU shadow fallback");
+        exec.poll_wait();
+
+        let pixels = exec
+            .read_texture_rgba8(2)
+            .await
+            .expect("read back dst texture");
+        assert_eq!(pixels.len(), (4 * 4 * 4) as usize);
+        for (idx, px) in pixels.chunks_exact(4).enumerate() {
+            assert_eq!(px, [0u8, 0u8, 0u8, 255u8], "pixel mismatch at {idx}");
+        }
     })
 }
