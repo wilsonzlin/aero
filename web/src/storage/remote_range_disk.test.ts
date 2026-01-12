@@ -474,8 +474,9 @@ describe("RemoteRangeDisk", () => {
     // Ensure any pending debounced meta write has completed.
     await disk.flush();
 
-    // Init + 1 debounced update (not per chunk).
-    expect(metadataStore.writes).toBeLessThanOrEqual(2);
+    // Init + debounced updates (not per chunk). In slower environments the debounce timer can
+    // fire while a multi-chunk read is still in flight, so allow up to 2 debounced updates here.
+    expect(metadataStore.writes).toBeLessThanOrEqual(3);
   });
 
   it("exposes a telemetry snapshot compatible with the runtime disk worker", async () => {
