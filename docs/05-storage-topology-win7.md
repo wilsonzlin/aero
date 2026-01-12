@@ -18,6 +18,7 @@ and the corresponding tests:
 - `crates/devices/tests/win7_storage_topology.rs` (PCI profile constants + INTx routing)
 - `crates/aero-pc-platform/tests/pc_platform_win7_storage.rs` (platform integration wiring)
 - `crates/aero-pc-platform/tests/windows7_storage_topology.rs` (end-to-end AHCI + ATAPI read tests)
+- `crates/aero-machine/tests/machine_win7_storage_topology.rs` (canonical `Machine` wiring: BDFs + PCI Interrupt Line)
 - `crates/aero-machine/tests/machine_disk_overlays_snapshot.rs` (snapshot `DISKS` disk_id mapping guard test)
 
 ---
