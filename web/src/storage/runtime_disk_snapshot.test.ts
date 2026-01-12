@@ -11,60 +11,68 @@ import {
 } from "./runtime_disk_snapshot";
 import { remoteRangeDeliveryType } from "./remote_cache_manager";
 
+function encodeJson(value: unknown): Uint8Array {
+  return new TextEncoder().encode(JSON.stringify(value));
+}
+
+function sampleSnapshot(): RuntimeDiskSnapshot {
+  return {
+    version: 1,
+    nextHandle: 3,
+    disks: [
+      {
+        handle: 1,
+        readOnly: false,
+        sectorSize: 512,
+        capacityBytes: 20 * 1024 * 1024,
+        backend: {
+          kind: "local",
+          backend: "opfs",
+          key: "abc.aerospar",
+          format: "aerospar",
+          diskKind: "hdd",
+          sizeBytes: 20 * 1024 * 1024,
+          overlay: {
+            fileName: "abc.overlay.aerospar",
+            diskSizeBytes: 20 * 1024 * 1024,
+            blockSizeBytes: 1024 * 1024,
+          },
+        },
+      },
+      {
+        handle: 2,
+        readOnly: false,
+        sectorSize: 512,
+        capacityBytes: 20 * 1024 * 1024,
+        backend: {
+          kind: "remote",
+          backend: "opfs",
+          diskKind: "hdd",
+          sizeBytes: 20 * 1024 * 1024,
+          base: {
+            imageId: "win7-sp1-x64",
+            version: "sha256-deadbeef",
+            deliveryType: remoteRangeDeliveryType(1024 * 1024),
+            expectedValidator: { kind: "etag", value: "\"abc\"" },
+            chunkSize: 1024 * 1024,
+          },
+          overlay: {
+            fileName: "remote.overlay.aerospar",
+            diskSizeBytes: 20 * 1024 * 1024,
+            blockSizeBytes: 1024 * 1024,
+          },
+          cache: {
+            fileName: "remote.cache.aerospar",
+          },
+        },
+      },
+    ],
+  };
+}
+
 describe("runtime disk snapshot payload", () => {
   it("serializes and deserializes (roundtrip)", () => {
-    const snapshot: RuntimeDiskSnapshot = {
-      version: 1,
-      nextHandle: 3,
-      disks: [
-        {
-          handle: 1,
-          readOnly: false,
-          sectorSize: 512,
-          capacityBytes: 20 * 1024 * 1024,
-          backend: {
-            kind: "local",
-            backend: "opfs",
-            key: "abc.aerospar",
-            format: "aerospar",
-            diskKind: "hdd",
-            sizeBytes: 20 * 1024 * 1024,
-            overlay: {
-              fileName: "abc.overlay.aerospar",
-              diskSizeBytes: 20 * 1024 * 1024,
-              blockSizeBytes: 1024 * 1024,
-            },
-          },
-        },
-        {
-          handle: 2,
-          readOnly: false,
-          sectorSize: 512,
-          capacityBytes: 20 * 1024 * 1024,
-          backend: {
-            kind: "remote",
-            backend: "opfs",
-            diskKind: "hdd",
-            sizeBytes: 20 * 1024 * 1024,
-            base: {
-              imageId: "win7-sp1-x64",
-              version: "sha256-deadbeef",
-              deliveryType: remoteRangeDeliveryType(1024 * 1024),
-              expectedValidator: { kind: "etag", value: "\"abc\"" },
-              chunkSize: 1024 * 1024,
-            },
-            overlay: {
-              fileName: "remote.overlay.aerospar",
-              diskSizeBytes: 20 * 1024 * 1024,
-              blockSizeBytes: 1024 * 1024,
-            },
-            cache: {
-              fileName: "remote.cache.aerospar",
-            },
-          },
-        },
-      ],
-    };
+    const snapshot = sampleSnapshot();
 
     const bytes = serializeRuntimeDiskSnapshot(snapshot);
     const decoded = deserializeRuntimeDiskSnapshot(bytes);
@@ -75,6 +83,54 @@ describe("runtime disk snapshot payload", () => {
     expect(json).not.toContain("http");
     expect(json).not.toContain("token");
     expect(json).not.toContain("cookie");
+  });
+
+  it("rejects wrong version", () => {
+    const snapshot = sampleSnapshot() as any;
+    snapshot.version = 2;
+    expect(() => deserializeRuntimeDiskSnapshot(encodeJson(snapshot))).toThrow(/Unsupported disk snapshot version/);
+  });
+
+  it("rejects missing disks array", () => {
+    expect(() => deserializeRuntimeDiskSnapshot(encodeJson({ version: 1, nextHandle: 1 }))).toThrow(/disks/);
+  });
+
+  it("rejects disk entry with non-integer handle", () => {
+    const snapshot = sampleSnapshot() as any;
+    snapshot.disks[0].handle = 1.5;
+    expect(() => deserializeRuntimeDiskSnapshot(encodeJson(snapshot))).toThrow(/handle/);
+  });
+
+  it("rejects unsupported sectorSize", () => {
+    const snapshot = sampleSnapshot() as any;
+    snapshot.disks[0].sectorSize = 123;
+    expect(() => deserializeRuntimeDiskSnapshot(encodeJson(snapshot))).toThrow(/sectorSize/);
+  });
+
+  it("rejects remote leaseEndpoint with http://", () => {
+    const snapshot = sampleSnapshot() as any;
+    snapshot.disks[1].backend.base.leaseEndpoint = "http://evil.example/lease";
+    expect(() => deserializeRuntimeDiskSnapshot(encodeJson(snapshot))).toThrow(/leaseEndpoint/);
+  });
+
+  it("rejects remote chunkSize not multiple of 512", () => {
+    const snapshot = sampleSnapshot() as any;
+    snapshot.disks[1].backend.base.chunkSize = 1000;
+    expect(() => deserializeRuntimeDiskSnapshot(encodeJson(snapshot))).toThrow(/chunkSize/);
+    expect(() => deserializeRuntimeDiskSnapshot(encodeJson(snapshot))).toThrow(/multiple of 512/);
+  });
+
+  it("rejects overlay blockSizeBytes that is not a power of two", () => {
+    const snapshot = sampleSnapshot() as any;
+    snapshot.disks[0].backend.overlay.blockSizeBytes = 3 * 512;
+    expect(() => deserializeRuntimeDiskSnapshot(encodeJson(snapshot))).toThrow(/blockSizeBytes/);
+    expect(() => deserializeRuntimeDiskSnapshot(encodeJson(snapshot))).toThrow(/power of two/);
+  });
+
+  it("rejects excessively long strings", () => {
+    const snapshot = sampleSnapshot() as any;
+    snapshot.disks[0].backend.key = "a".repeat(64 * 1024 + 1);
+    expect(() => deserializeRuntimeDiskSnapshot(encodeJson(snapshot))).toThrow(/string too long/);
   });
 
   it("invalidates remote cache bindings on mismatch", () => {
