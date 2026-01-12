@@ -112,10 +112,9 @@ describe("workers/net.worker (worker_threads)", () => {
         worker,
         (msg) =>
           (msg as { type?: unknown }).type === "fetch.called" &&
-          (msg as { url?: unknown }).url === "https://gateway.example.com/session" &&
-          (msg as { method?: unknown }).method === "POST",
+          (msg as { url?: unknown }).url === "https://gateway.example.com/session",
         10000,
-      );
+      ) as Promise<{ url?: string; init?: unknown }>;
       const wsCreated = waitForWorkerMessage(worker, (msg) => (msg as { type?: unknown }).type === "ws.created", 10000) as Promise<{
         url?: string;
       }>;
@@ -129,7 +128,18 @@ describe("workers/net.worker (worker_threads)", () => {
       worker.postMessage({ kind: "config.update", version: 1, config: makeConfig("https://gateway.example.com") });
       worker.postMessage(makeInit(segments));
 
-      await fetchCalledAbs;
+      const firstConnectFirst = await Promise.race([
+        fetchCalledAbs.then((msg) => ({ kind: "fetch" as const, msg })),
+        wsCreated.then((msg) => ({ kind: "ws" as const, msg })),
+      ]);
+      expect(firstConnectFirst.kind).toBe("fetch");
+
+      const fetchAbsMsg = firstConnectFirst.msg as { url?: string; init?: unknown };
+      expect(fetchAbsMsg.url).toBe("https://gateway.example.com/session");
+      const fetchAbsInit = fetchAbsMsg.init as { method?: unknown; credentials?: unknown } | undefined;
+      expect(fetchAbsInit?.method).toBe("POST");
+      expect(fetchAbsInit?.credentials).toBe("include");
+
       const createdMsg = await wsCreated;
       expect(createdMsg.url).toBe("wss://gateway.example.com/l2");
 
@@ -141,15 +151,26 @@ describe("workers/net.worker (worker_threads)", () => {
         worker,
         (msg) =>
           (msg as { type?: unknown }).type === "fetch.called" &&
-          (msg as { url?: unknown }).url === "https://gateway.example.com/base/session" &&
-          (msg as { method?: unknown }).method === "POST",
+          (msg as { url?: unknown }).url === "https://gateway.example.com/base/session",
         10000,
-      );
+      ) as Promise<{ url?: string; init?: unknown }>;
       const wsCreatedRel = waitForWorkerMessage(worker, (msg) => (msg as { type?: unknown }).type === "ws.created", 10000) as Promise<{
         url?: string;
       }>;
       worker.postMessage({ kind: "config.update", version: 2, config: makeConfig("/base") });
-      await fetchCalledRel;
+
+      const secondConnectFirst = await Promise.race([
+        fetchCalledRel.then((msg) => ({ kind: "fetch" as const, msg })),
+        wsCreatedRel.then((msg) => ({ kind: "ws" as const, msg })),
+      ]);
+      expect(secondConnectFirst.kind).toBe("fetch");
+
+      const fetchRelMsg = secondConnectFirst.msg as { url?: string; init?: unknown };
+      expect(fetchRelMsg.url).toBe("https://gateway.example.com/base/session");
+      const fetchRelInit = fetchRelMsg.init as { method?: unknown; credentials?: unknown } | undefined;
+      expect(fetchRelInit?.method).toBe("POST");
+      expect(fetchRelInit?.credentials).toBe("include");
+
       const createdRelMsg = await wsCreatedRel;
       expect(createdRelMsg.url).toBe("wss://gateway.example.com/base/l2");
 
@@ -230,17 +251,28 @@ describe("workers/net.worker (worker_threads)", () => {
         worker,
         (msg) =>
           (msg as { type?: unknown }).type === "fetch.called" &&
-          (msg as { url?: unknown }).url === "https://gateway.example.com/base/session" &&
-          (msg as { method?: unknown }).method === "POST",
+          (msg as { url?: unknown }).url === "https://gateway.example.com/base/session",
         10000,
-      );
+      ) as Promise<{ url?: string; init?: unknown }>;
+      const wsCreated2Promise = waitForWorkerMessage(worker, (msg) => (msg as { type?: unknown }).type === "ws.created", 10000) as Promise<{
+        url?: string;
+      }>;
+
       worker.postMessage({ type: "ws.close", code: 1000, reason: "test" });
-      const wsCreated2 = (await waitForWorkerMessage(
-        worker,
-        (msg) => (msg as { type?: unknown }).type === "ws.created",
-        10000,
-      )) as { url?: string };
-      await fetchCalledReconnect;
+
+      const reconnectFirst = await Promise.race([
+        fetchCalledReconnect.then((msg) => ({ kind: "fetch" as const, msg })),
+        wsCreated2Promise.then((msg) => ({ kind: "ws" as const, msg })),
+      ]);
+      expect(reconnectFirst.kind).toBe("fetch");
+
+      const fetchReconnectMsg = reconnectFirst.msg as { url?: string; init?: unknown };
+      expect(fetchReconnectMsg.url).toBe("https://gateway.example.com/base/session");
+      const fetchReconnectInit = fetchReconnectMsg.init as { method?: unknown; credentials?: unknown } | undefined;
+      expect(fetchReconnectInit?.method).toBe("POST");
+      expect(fetchReconnectInit?.credentials).toBe("include");
+
+      const wsCreated2 = await wsCreated2Promise;
       expect(wsCreated2.url).toBe("wss://gateway.example.com/base/l2");
 
       const frame2 = Uint8Array.of(6, 7, 8);

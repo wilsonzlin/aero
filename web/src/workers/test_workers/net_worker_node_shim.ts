@@ -30,29 +30,23 @@ function dispatchMessage(data: unknown): void {
 // Fake fetch for worker_threads tests (session bootstrap).
 // ---------------------------------------------------------------------------
 
-type FetchCalledMessage = { type: "fetch.called"; url: string; method: string };
+(globalThis as unknown as { fetch?: unknown }).fetch = async (url: unknown, init?: unknown) => {
+  const href = url instanceof URL ? url.toString() : typeof url === "string" ? url : String(url);
+  parentPort?.postMessage({ type: "fetch.called", url: href, init });
 
-(globalThis as unknown as { fetch?: unknown }).fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-  const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
-  const method = (init?.method ?? "GET").toUpperCase();
-
-  if (method === "POST") {
-    parentPort?.postMessage({ type: "fetch.called", url, method } satisfies FetchCalledMessage);
+  const body = JSON.stringify({});
+  if (typeof Response !== "undefined") {
+    return new Response(body, { status: 201, headers: { "content-type": "application/json" } });
   }
 
-  if (
-    method === "POST" &&
-    (url === "https://gateway.example.com/session" || url === "https://gateway.example.com/base/session")
-  ) {
-    const json = JSON.stringify({
-      endpoints: { l2: "/l2" },
-      limits: { l2: { maxFramePayloadBytes: 2048, maxControlPayloadBytes: 256 } },
-    });
-    return { ok: true, status: 200, text: async () => json } as unknown as Response;
-  }
-
-  return { ok: false, status: 404, text: async () => "" } as unknown as Response;
-}) as unknown as typeof fetch;
+  // Fallback minimal Response-like object for environments without WHATWG fetch.
+  return {
+    ok: true,
+    status: 201,
+    headers: { get: (name: string) => (name.toLowerCase() === "content-type" ? "application/json" : null) },
+    text: async () => body,
+  } as unknown as Response;
+};
 
 (globalThis as unknown as { addEventListener?: unknown }).addEventListener = (type: string, listener: MessageListener) => {
   if (type !== "message") return;

@@ -162,13 +162,9 @@ function buildWebSocketUrlFromEndpoint(proxyUrl: string, endpoint: string): stri
 function parseGatewaySessionResponse(text: string): GatewaySessionResponse {
   const trimmed = text.trim();
   if (trimmed.length === 0) return {};
-  try {
-    const json: unknown = JSON.parse(trimmed);
-    if (typeof json !== "object" || json === null) return {};
-    return json as GatewaySessionResponse;
-  } catch {
-    return {};
-  }
+  const json: unknown = JSON.parse(trimmed);
+  if (typeof json !== "object" || json === null) return {};
+  return json as GatewaySessionResponse;
 }
 
 function pushEvent(evt: Event): void {
