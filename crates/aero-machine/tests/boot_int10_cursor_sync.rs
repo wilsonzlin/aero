@@ -125,6 +125,67 @@ fn build_set_start_address_and_set_cursor_pos_boot_sector(
     sector
 }
 
+fn build_set_start_address_and_set_mode_03h_boot_sector(start_addr: u16) -> [u8; 512] {
+    let mut sector = [0u8; 512];
+    let mut i = 0usize;
+
+    let start_hi = (start_addr >> 8) as u8;
+    let start_lo = (start_addr & 0x00FF) as u8;
+
+    // Program CRTC start address regs (0x0C/0x0D).
+    // mov dx, 0x3D4
+    sector[i..i + 3].copy_from_slice(&[0xBA, 0xD4, 0x03]);
+    i += 3;
+    // mov al, 0x0C
+    sector[i..i + 2].copy_from_slice(&[0xB0, 0x0C]);
+    i += 2;
+    // out dx, al
+    sector[i] = 0xEE;
+    i += 1;
+    // mov dx, 0x3D5
+    sector[i..i + 3].copy_from_slice(&[0xBA, 0xD5, 0x03]);
+    i += 3;
+    // mov al, start_hi
+    sector[i..i + 2].copy_from_slice(&[0xB0, start_hi]);
+    i += 2;
+    // out dx, al
+    sector[i] = 0xEE;
+    i += 1;
+
+    // mov dx, 0x3D4
+    sector[i..i + 3].copy_from_slice(&[0xBA, 0xD4, 0x03]);
+    i += 3;
+    // mov al, 0x0D
+    sector[i..i + 2].copy_from_slice(&[0xB0, 0x0D]);
+    i += 2;
+    // out dx, al
+    sector[i] = 0xEE;
+    i += 1;
+    // mov dx, 0x3D5
+    sector[i..i + 3].copy_from_slice(&[0xBA, 0xD5, 0x03]);
+    i += 3;
+    // mov al, start_lo
+    sector[i..i + 2].copy_from_slice(&[0xB0, start_lo]);
+    i += 2;
+    // out dx, al
+    sector[i] = 0xEE;
+    i += 1;
+
+    // mov ax, 0x0003 ; INT 10h AH=00h Set Video Mode (mode 03h)
+    sector[i..i + 3].copy_from_slice(&[0xB8, 0x03, 0x00]);
+    i += 3;
+    // int 0x10
+    sector[i..i + 2].copy_from_slice(&[0xCD, 0x10]);
+    i += 2;
+
+    // hlt
+    sector[i] = 0xF4;
+
+    sector[510] = 0x55;
+    sector[511] = 0xAA;
+    sector
+}
+
 fn run_until_halt(m: &mut Machine) {
     let mut halted = false;
     for _ in 0..100 {
@@ -244,4 +305,25 @@ fn int10_cursor_sync_includes_crtc_start_address_offset() {
     assert_eq!(start, 0x06);
     assert_eq!(end, 0x07);
     assert_eq!(pos, expected_pos);
+}
+
+#[test]
+fn int10_set_mode_resets_crtc_start_address() {
+    let mut m = Machine::new(MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_vga: true,
+        ..Default::default()
+    })
+    .unwrap();
+
+    let start_addr = 0x0800u16;
+    let boot = build_set_start_address_and_set_mode_03h_boot_sector(start_addr);
+    m.set_disk_image(boot.to_vec()).unwrap();
+    m.reset();
+    run_until_halt(&mut m);
+
+    // Mode set 03h should reinitialize text state, including resetting the CRTC start address.
+    let got_start = read_crtc_start_addr(&mut m);
+    assert_eq!(got_start, 0);
 }
