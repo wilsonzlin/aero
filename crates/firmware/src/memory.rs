@@ -105,4 +105,22 @@ impl<T: memory::MemoryBus + ?Sized> MemoryBus for T {
     fn write_u8(&mut self, addr: u64, value: u8) {
         memory::MemoryBus::write_u8(self, addr, value);
     }
+
+    fn read_physical(&mut self, paddr: u64, buf: &mut [u8]) {
+        memory::MemoryBus::read_physical(self, paddr, buf);
+    }
+
+    fn write_physical(&mut self, paddr: u64, buf: &[u8]) {
+        memory::MemoryBus::write_physical(self, paddr, buf);
+    }
+
+    fn read_bytes(&mut self, addr: u64, out: &mut [u8]) {
+        // Treat `read_bytes` as an alias for physical reads so firmware call sites can efficiently
+        // transfer larger buffers (e.g. VBE palette tables) without byte-at-a-time loops.
+        memory::MemoryBus::read_physical(self, addr, out);
+    }
+
+    fn write_bytes(&mut self, addr: u64, bytes: &[u8]) {
+        memory::MemoryBus::write_physical(self, addr, bytes);
+    }
 }

@@ -175,6 +175,28 @@ impl FirmwareMemoryBus for BiosMemoryBus<'_> {
     fn write_u8(&mut self, addr: u64, value: u8) {
         self.bus.write_u8(addr, value);
     }
+
+    fn read_physical(&mut self, paddr: u64, buf: &mut [u8]) {
+        // Forward bulk reads to the canonical guest memory bus so callers like the VBE framebuffer
+        // clear path don't devolve into byte-at-a-time MMIO accesses.
+        self.bus.read_physical(paddr, buf);
+    }
+
+    fn write_physical(&mut self, paddr: u64, buf: &[u8]) {
+        // Forward bulk writes to the canonical guest memory bus so callers like the VBE
+        // framebuffer clear path can take advantage of efficient RAM copies / aligned MMIO writes.
+        self.bus.write_physical(paddr, buf);
+    }
+
+    fn read_bytes(&mut self, addr: u64, out: &mut [u8]) {
+        // `FirmwareMemoryBus` exposes both `read_physical` and `read_bytes`; keep them consistent
+        // and bulk-friendly.
+        self.read_physical(addr, out);
+    }
+
+    fn write_bytes(&mut self, addr: u64, bytes: &[u8]) {
+        self.write_physical(addr, bytes);
+    }
 }
 
 #[derive(Debug, Clone)]

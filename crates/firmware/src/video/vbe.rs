@@ -263,10 +263,24 @@ impl VbeDevice {
         self.bytes_per_scan_line = mode.bytes_per_scan_line();
 
         if !no_clear {
-            let size = mode.framebuffer_size_bytes() as u64;
+            // Clear the framebuffer efficiently using bulk writes when available.
+            //
+            // Note: The firmware memory bus interface supports byte writes as the lowest common
+            // denominator, but most implementations also provide an efficient `write_physical`
+            // fast path (RAM memcpy / aligned MMIO chunking). Use a fixed-size zero buffer and
+            // write in chunks to avoid issuing millions of individual `write_u8` operations.
+            const CLEAR_CHUNK: [u8; 4096] = [0u8; 4096];
+
+            let size = mode.framebuffer_size_bytes() as usize;
             let base = self.lfb_base as u64;
-            for i in 0..size {
-                mem.write_u8(base + i, 0);
+            let mut offset = 0usize;
+            while offset < size {
+                let len = (size - offset).min(CLEAR_CHUNK.len());
+                let Some(addr) = base.checked_add(offset as u64) else {
+                    break;
+                };
+                mem.write_physical(addr, &CLEAR_CHUNK[..len]);
+                offset += len;
             }
         }
 
