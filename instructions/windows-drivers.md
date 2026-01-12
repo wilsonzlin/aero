@@ -45,6 +45,7 @@ These drivers run **inside the guest Windows 7** and communicate with the emulat
 | `drivers/protocol/virtio/` | Rust virtio protocol definitions + unit tests (`cargo test`) |
 | `guest-tools/` | Guest tools packaging and installer |
 | `docs/windows-device-contract.{md,json}` | Machine-readable PCI/INF/service binding contract consumed by CI + Guest Tools |
+| `docs/windows-device-contract-virtio-win.json` | Optional virtio-win compatibility contract (used by virtio-win packaging flows) |
 | `tools/device_contract_validator/` | Rust validator for the device contract (runs in CI) |
 | `tools/packaging/` | Guest Tools packager + packaging specs (ISO/zip builder) |
 | `tools/packaging/aero_packager/` | Deterministic Rust packager implementation + tests |
@@ -69,6 +70,7 @@ These drivers run **inside the guest Windows 7** and communicate with the emulat
 - [`docs/16-driver-packaging-and-signing.md`](../docs/16-driver-packaging-and-signing.md) — Packaging and catalogs
 - [`docs/16-guest-tools-packaging.md`](../docs/16-guest-tools-packaging.md) — Guest Tools packager specs/inputs/outputs (ISO/zip)
 - [`docs/16-virtio-drivers-win7.md`](../docs/16-virtio-drivers-win7.md) — Virtio driver plumbing notes (transport/virtqueues)
+- [`docs/16-virtio-pci-legacy-transitional.md`](../docs/16-virtio-pci-legacy-transitional.md) — Legacy/transitional virtio-pci notes (compatibility)
 - [`drivers/README.md`](../drivers/README.md) — What CI actually ships (artifact names, release workflow, Guest Tools media)
 - [`docs/virtio-windows-drivers.md`](../docs/virtio-windows-drivers.md) — Virtio driver packaging options (in-tree vs virtio-win)
 - [`docs/virtio-input.md`](../docs/virtio-input.md) — virtio-input device model notes (keyboard/mouse) + contract mapping
@@ -89,6 +91,7 @@ These drivers run **inside the guest Windows 7** and communicate with the emulat
 
 - Virtio transport + feature contract: [`docs/windows7-virtio-driver-contract.md`](../docs/windows7-virtio-driver-contract.md) (`AERO-W7-VIRTIO`)
 - Unified device binding manifest: [`docs/windows-device-contract.json`](../docs/windows-device-contract.json) (+ human-readable [`docs/windows-device-contract.md`](../docs/windows-device-contract.md))
+  - Optional virtio-win compatibility manifest (used only for virtio-win-based packaging/scripts): [`docs/windows-device-contract-virtio-win.json`](../docs/windows-device-contract-virtio-win.json)
 
 Any change to PCI vendor/device IDs, BAR sizes, or feature bits requires:
 1. Update the contract document
