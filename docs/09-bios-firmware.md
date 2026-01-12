@@ -14,6 +14,10 @@ Windows 7 can boot from both legacy BIOS and UEFI. We implement a custom BIOS th
 > `crates/aero-machine` provides the concrete implementations of those traits and dispatches BIOS
 > interrupt hypercalls.
 >
+> Storage trait note: BIOS uses a small `firmware::bios::BlockDevice` interface for INT 13h, while
+> PCI storage controllers use `aero_storage::VirtualDisk`. `crates/aero-machine::SharedDisk` bridges
+> those. See [`docs/20-storage-trait-consolidation.md`](./20-storage-trait-consolidation.md).
+>
 > For how Tier-0 surfaces BIOS interrupt stubs (and how the embedding is expected to dispatch them),
 > see [`docs/02-cpu-emulation.md`](./02-cpu-emulation.md).
 
