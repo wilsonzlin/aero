@@ -147,6 +147,14 @@ impl I8042Bridge {
         self.ctrl.inject_key_scancode_bytes(&bytes[..len]);
     }
 
+    /// Inject raw PS/2 Set-2 scancode bytes into the keyboard device queue.
+    ///
+    /// This is a convenience API for host injection paths that already have an arbitrary-length
+    /// scancode byte sequence and do not want to pack them into 32-bit chunks.
+    pub fn inject_keyboard_bytes(&mut self, bytes: &[u8]) {
+        self.ctrl.inject_keyboard_bytes(bytes);
+    }
+
     /// Inject a relative PS/2 mouse movement event.
     ///
     /// Coordinates use PS/2 convention: `dx` is positive right, `dy` is positive up.
@@ -160,6 +168,13 @@ impl I8042Bridge {
     /// Inject a PS/2 mouse wheel movement (positive = wheel up).
     pub fn inject_mouse_wheel(&mut self, delta: i32) {
         self.ctrl.inject_mouse_motion(0, 0, delta);
+    }
+
+    /// Inject PS/2 mouse motion + wheel in one call.
+    ///
+    /// `dy` uses PS/2 convention: positive is up.
+    pub fn inject_ps2_mouse_motion(&mut self, dx: i32, dy: i32, wheel: i32) {
+        self.ctrl.inject_mouse_motion(dx, -dy, wheel);
     }
 
     /// Set PS/2 mouse button state as a bitmask (bit0=left, bit1=right, bit2=middle).
@@ -184,6 +199,11 @@ impl I8042Bridge {
         }
 
         self.mouse_buttons = next;
+    }
+
+    /// Alias for [`I8042Bridge::inject_mouse_buttons`].
+    pub fn inject_ps2_mouse_buttons(&mut self, buttons: u8) {
+        self.inject_mouse_buttons(buttons);
     }
 
     /// Drain pending IRQ pulses since the last call.

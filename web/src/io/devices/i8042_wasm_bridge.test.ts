@@ -56,7 +56,11 @@ describe("io/devices/i8042 WASM bridge", () => {
     if (!bridge) return;
     try {
       // Set-2 "A" make (0x1c).
-      bridge.inject_key_scancode_bytes(0x1c, 1);
+      if (bridge.inject_keyboard_bytes) {
+        bridge.inject_keyboard_bytes(new Uint8Array([0x1c]));
+      } else {
+        bridge.inject_key_scancode_bytes(0x1c, 1);
+      }
       expect(bridge.port_read(0x64) & 0x01).toBe(1);
       expect(bridge.port_read(0x60)).toBe(0x1e); // Set-1 "A" make
     } finally {
@@ -82,11 +86,17 @@ describe("io/devices/i8042 WASM bridge", () => {
       expect(acks.length).toBe(7);
       expect(acks.every((b) => b === 0xfa)).toBe(true);
 
-      // The WASM bridge currently exposes mouse motion and wheel injection as separate calls.
-      bridge.inject_mouse_move(5, 3);
-      bridge.inject_mouse_wheel(1);
-      const packets = drainOutput(bridge);
-      expect(packets).toEqual([0x08, 0x05, 0x03, 0x00, 0x08, 0x00, 0x00, 0x01]);
+      if (bridge.inject_ps2_mouse_motion) {
+        bridge.inject_ps2_mouse_motion(5, 3, 1);
+        const packet = drainOutput(bridge);
+        expect(packet).toEqual([0x08, 0x05, 0x03, 0x01]);
+      } else {
+        // Older WASM builds expose mouse motion and wheel injection as separate calls.
+        bridge.inject_mouse_move(5, 3);
+        bridge.inject_mouse_wheel(1);
+        const packets = drainOutput(bridge);
+        expect(packets).toEqual([0x08, 0x05, 0x03, 0x00, 0x08, 0x00, 0x00, 0x01]);
+      }
     } finally {
       bridge.free();
     }
@@ -101,7 +111,11 @@ describe("io/devices/i8042 WASM bridge", () => {
       return;
     }
     try {
-      bridge1.inject_key_scancode_bytes(0x1c, 1);
+      if (bridge1.inject_keyboard_bytes) {
+        bridge1.inject_keyboard_bytes(new Uint8Array([0x1c]));
+      } else {
+        bridge1.inject_key_scancode_bytes(0x1c, 1);
+      }
       const snap = bridge1.save_state();
 
       bridge2.load_state(snap);

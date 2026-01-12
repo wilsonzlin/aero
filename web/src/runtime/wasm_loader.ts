@@ -314,9 +314,27 @@ export interface WasmApi {
         port_write(port: number, value: number): void;
 
         inject_key_scancode_bytes(packed: number, len: number): void;
+        /**
+         * Inject raw Set-2 scancode bytes into the keyboard output queue.
+         *
+         * Optional for older WASM builds.
+         */
+        inject_keyboard_bytes?(bytes: Uint8Array): void;
         inject_mouse_move(dx: number, dy: number): void;
         inject_mouse_buttons(buttons: number): void;
         inject_mouse_wheel(delta: number): void;
+        /**
+         * Inject PS/2 mouse motion + wheel.
+         *
+         * Optional for older WASM builds.
+         */
+        inject_ps2_mouse_motion?(dx: number, dy: number, wheel: number): void;
+        /**
+         * Set PS/2 mouse button state as a bitmask (bit0=left, bit1=right, bit2=middle).
+         *
+         * Optional for older WASM builds.
+         */
+        inject_ps2_mouse_buttons?(buttons: number): void;
 
         /**
          * Drain pending IRQ pulses since the last call.
