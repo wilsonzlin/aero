@@ -46,6 +46,7 @@ This is the **coordination hub**. You wire together the work from all other work
 - [`docs/09-bios-firmware.md`](../docs/09-bios-firmware.md) — BIOS and ACPI
 - [`docs/01-architecture-overview.md`](../docs/01-architecture-overview.md) — System architecture
 - [`docs/16-snapshots.md`](../docs/16-snapshots.md) — Snapshot format
+- [`docs/05-storage-topology-win7.md`](../docs/05-storage-topology-win7.md) — Canonical Windows 7 storage topology (stable PCI BDFs + media attachment mapping + IRQ routing)
 
 **Reference:**
 
@@ -294,16 +295,17 @@ The emulator exposes CPU/device state for debugging. See [`docs/16-debugging-and
 bash ./scripts/safe-run.sh cargo test -p firmware --locked
 
 # Run device model tests
-bash ./scripts/safe-run.sh cargo test -p devices --locked
+bash ./scripts/safe-run.sh cargo test -p aero-devices --locked
 bash ./scripts/safe-run.sh cargo test -p aero-interrupts --locked
 bash ./scripts/safe-run.sh cargo test -p aero-timers --locked
 
 # Boot tests
-bash ./scripts/safe-run.sh cargo test -p aero --test boot_sector --locked
-bash ./scripts/safe-run.sh cargo test -p aero --test freedos_boot --locked
+bash ./scripts/safe-run.sh cargo test -p emulator --test boot_sector --locked
+bash ./scripts/safe-run.sh cargo test -p emulator --test freedos_boot --locked
 
-# Full Windows 7 boot (requires ISO at /state/win7.iso)
-bash ./scripts/safe-run.sh cargo test -p aero --test windows7_boot --locked -- --ignored
+# Full Windows 7 boot (local only; requires a user-supplied Windows 7 disk image)
+bash ./scripts/prepare-windows7.sh
+bash ./scripts/safe-run.sh cargo test -p emulator --test windows7_boot --locked -- --ignored
 ```
 
 ---
