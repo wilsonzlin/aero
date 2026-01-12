@@ -211,6 +211,42 @@ fn ata_boot_sector_read_via_legacy_pio_ports() {
 }
 
 #[test]
+fn ata_boot_sector_read_via_legacy_pio_ports_byte_reads() {
+    let capacity = 8 * SECTOR_SIZE as u64;
+    let mut disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
+    let mut sector0 = vec![0u8; SECTOR_SIZE];
+    sector0[0..4].copy_from_slice(b"BOOT");
+    sector0[510] = 0x55;
+    sector0[511] = 0xAA;
+    disk.write_sectors(0, &sector0).unwrap();
+
+    let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
+    ide.borrow_mut()
+        .controller
+        .attach_primary_master_ata(AtaDrive::new(Box::new(disk)).unwrap());
+    ide.borrow_mut().config_mut().set_command(0x0001); // IO decode
+
+    let mut io = IoPortBus::new();
+    register_piix3_ide_ports(&mut io, ide.clone());
+
+    // Issue READ SECTORS for LBA 0, 1 sector.
+    io.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0); // master + LBA
+    io.write(PRIMARY_PORTS.cmd_base + 2, 1, 1); // count
+    io.write(PRIMARY_PORTS.cmd_base + 3, 1, 0); // lba0
+    io.write(PRIMARY_PORTS.cmd_base + 4, 1, 0); // lba1
+    io.write(PRIMARY_PORTS.cmd_base + 5, 1, 0); // lba2
+    io.write(PRIMARY_PORTS.cmd_base + 7, 1, 0x20); // READ SECTORS
+
+    let mut buf = [0u8; SECTOR_SIZE];
+    for b in &mut buf {
+        *b = io.read(PRIMARY_PORTS.cmd_base, 1) as u8;
+    }
+
+    assert_eq!(&buf[0..4], b"BOOT");
+    assert_eq!(&buf[510..512], &[0x55, 0xAA]);
+}
+
+#[test]
 fn ata_pio_read_out_of_bounds_raises_irq_and_sets_err() {
     let capacity = SECTOR_SIZE as u64; // 1 sector
     let disk = RawDisk::create(MemBackend::new(), capacity).unwrap();

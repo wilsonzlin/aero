@@ -424,10 +424,35 @@ impl Channel {
         u16::from_le_bytes([lo, hi])
     }
 
+    fn data_in_u8(&mut self) -> u8 {
+        if self.data_index >= self.data.len() {
+            self.finish_data_phase();
+            return 0;
+        }
+        let b = self.data[self.data_index];
+        self.data_index += 1;
+        if self.data_index >= self.data.len() {
+            self.finish_data_phase();
+        }
+        b
+    }
+
     fn data_in_u32(&mut self) -> u32 {
         let lo = self.data_in_u16() as u32;
         let hi = self.data_in_u16() as u32;
         lo | (hi << 16)
+    }
+
+    fn data_out_u8(&mut self, val: u8) {
+        if self.data_index >= self.data.len() {
+            // Ignore overflow.
+            return;
+        }
+        self.data[self.data_index] = val;
+        self.data_index += 1;
+        if self.data_index >= self.data.len() {
+            self.finish_data_phase();
+        }
     }
 
     fn data_out_u16(&mut self, val: u16) {
@@ -701,6 +726,7 @@ impl IdeController {
     fn read_cmd_reg(chan: &mut Channel, reg: u16, size: u8) -> u32 {
         match reg {
             ATA_REG_DATA => match size {
+                1 => chan.data_in_u8() as u32,
                 2 => chan.data_in_u16() as u32,
                 4 => chan.data_in_u32(),
                 _ => 0,
@@ -722,6 +748,7 @@ impl IdeController {
     fn write_cmd_reg(chan: &mut Channel, reg: u16, size: u8, val: u32) {
         match reg {
             ATA_REG_DATA => match size {
+                1 => chan.data_out_u8(val as u8),
                 2 => chan.data_out_u16(val as u16),
                 4 => chan.data_out_u32(val),
                 _ => {}
