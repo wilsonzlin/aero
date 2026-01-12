@@ -81,7 +81,15 @@ Notes:
 
 Most browsers require a **user gesture** to start audio output. Before expecting guest audio:
 
-- In the UI, click the **Audio** panel’s **“Init audio output …”** button (exact label may vary by build).
+- In the UI, perform the user-gesture action that initializes **audio output** (AudioContext + AudioWorklet ring).
+  - Some builds expose host-only demo buttons like **“Init audio output (test tone)”**. These are fine to satisfy autoplay policy,
+    but they are **not** the guest Windows 7 audio path.
+  - If you accidentally start a demo tone, stop it before proceeding (DevTools Console):
+    ```js
+    await globalThis.__aeroAudioOutput?.close?.();
+    await globalThis.__aeroAudioOutputWorker?.close?.();
+    await globalThis.__aeroAudioOutputHdaDemo?.close?.();
+    ```
 - Confirm the host-side audio status shows:
   - `AudioContext: running` (not `suspended`)
   - Ring buffer counters are visible (see §3.2).
