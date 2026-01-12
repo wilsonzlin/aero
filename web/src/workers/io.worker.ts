@@ -10,6 +10,7 @@ import { installWorkerPerfHandlers } from "../perf/worker";
 import { PerfWriter } from "../perf/writer.js";
 import { PERF_FRAME_HEADER_ENABLED_INDEX, PERF_FRAME_HEADER_FRAME_ID_INDEX } from "../perf/shared.js";
 import { initWasmForContext, type WasmApi, type WasmVariant } from "../runtime/wasm_context";
+import { assertWasmMemoryWiring, WasmMemoryWiringError } from "../runtime/wasm_memory_probe";
 import {
   serializeVmSnapshotError,
   type CoordinatorToWorkerSnapshotMessage,
@@ -1892,67 +1893,7 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
         // Upcoming IO-worker devices (e.g. HDA audio) rely on DMA into shared guest RAM;
         // if the module is instantiated with a private memory, device models will silently
         // break. Fail fast with a clear error instead of running in a subtly corrupted mode.
-        try {
-          // Probe within guest RAM (not the runtime-reserved low region of the wasm linear
-          // memory) so we don't risk clobbering the Rust/WASM runtime.
-          //
-          // Use an offset that is unlikely to overlap with other worker probes/counters
-          // and also avoids low-memory demo DMA regions (e.g. the CPU worker's disk demo
-          // writes to 0x1000..0x1200).
-          const memProbeGuestOffset = 0x104;
-          const memProbeLinearOffset = guestU8.byteOffset + memProbeGuestOffset;
-          const memView = new DataView(init.guestMemory.buffer);
-          if (memProbeLinearOffset + 4 > memView.byteLength) {
-            throw new Error(
-              `WASM guestMemory wiring probe is out-of-bounds: linearOffset=0x${memProbeLinearOffset.toString(16)} memoryBytes=0x${memView.byteLength.toString(16)}`,
-            );
-          }
-          const prev = memView.getUint32(memProbeLinearOffset, true);
-          try {
-            const a = 0x11223344;
-            memView.setUint32(memProbeLinearOffset, a, true);
-            const gotA = api.mem_load_u32(memProbeLinearOffset);
-            if (gotA !== a) {
-              throw new Error(
-                `WASM guestMemory wiring failed: JS wrote 0x${a.toString(16)}, WASM read 0x${gotA.toString(16)}.`,
-              );
-            }
-
-            const b = 0x55667788;
-            api.mem_store_u32(memProbeLinearOffset, b);
-            const gotB = memView.getUint32(memProbeLinearOffset, true);
-            if (gotB !== b) {
-              throw new Error(
-                `WASM guestMemory wiring failed: WASM wrote 0x${b.toString(16)}, JS read 0x${gotB.toString(16)}.`,
-              );
-            }
-          } finally {
-            // Restore the previous value so we don't permanently dirty guest RAM.
-            memView.setUint32(memProbeLinearOffset, prev, true);
-          }
-        } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          const guestBaseBytes = (guestU8 as Uint8Array | undefined)?.byteOffset ?? 0;
-          const guestSizeBytes = (guestU8 as Uint8Array | undefined)?.byteLength ?? 0;
-          const detail = {
-            guestOffset: "0x104",
-            linearOffset: `0x${(guestBaseBytes + 0x104).toString(16)}`,
-            guestBase: `0x${guestBaseBytes.toString(16)}`,
-            guestSize: `0x${guestSizeBytes.toString(16)}`,
-          };
-          console.error("[io.worker] WASM guestMemory wiring probe failed", detail, err);
-          pushEventBlocking({
-            kind: "log",
-            level: "error",
-            message: `WASM guestMemory wiring probe failed: ${message} (IO-worker DMA will not work; check WASM imported-memory wiring).`,
-          });
-          fatal(
-            new Error(
-              `WASM guestMemory wiring probe failed: ${message}. The IO worker requires the coordinator-provided shared WebAssembly.Memory; mis-wired memory will break DMA-backed devices.`,
-            ),
-          );
-          return;
-        }
+        assertWasmMemoryWiring({ api, memory: init.guestMemory, context: "io.worker" });
         wasmApi = api;
         pendingWasmInit = { api, variant };
         usbHid = new api.UsbHidBridge();
@@ -2041,6 +1982,11 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
+        if (err instanceof WasmMemoryWiringError) {
+          console.error(`[io.worker] ${message}`);
+          fatal(err);
+          return;
+        }
         console.error(`[io.worker] wasm:init failed: ${message}`);
         pushEvent({ kind: "log", level: "error", message: `wasm:init failed: ${message}` });
       }
