@@ -686,7 +686,7 @@ impl AhciPciConfigDevice {
         cfg.set_bar_definition(
             aero_devices_storage::pci_ahci::AHCI_ABAR_BAR_INDEX,
             PciBarDefinition::Mmio32 {
-                size: aero_devices_storage::pci_ahci::AHCI_ABAR_SIZE as u32,
+                size: aero_devices_storage::pci_ahci::AHCI_ABAR_SIZE_U32,
                 prefetchable: false,
             },
         );

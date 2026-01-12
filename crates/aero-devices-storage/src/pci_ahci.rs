@@ -16,8 +16,11 @@ use memory::MmioHandler;
 use crate::ahci::AhciController;
 use crate::ata::AtaDrive;
 
+/// AHCI ABAR (HBA registers) size in bytes as a `u32` (for `PciBarDefinition::Mmio32`).
+pub const AHCI_ABAR_SIZE_U32: u32 = 0x2000;
+
 /// AHCI ABAR (HBA registers) size in bytes.
-pub const AHCI_ABAR_SIZE: u64 = 0x2000;
+pub const AHCI_ABAR_SIZE: u64 = AHCI_ABAR_SIZE_U32 as u64;
 
 /// PCI BAR index used for AHCI ABAR on Intel ICH9.
 pub const AHCI_ABAR_BAR_INDEX: u8 = 5;
