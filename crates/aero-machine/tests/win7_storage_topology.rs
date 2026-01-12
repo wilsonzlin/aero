@@ -11,6 +11,7 @@ use aero_devices::pci::profile::{
 use aero_devices::pci::{
     PciBarDefinition, PciBarKind, PciBdf, PciInterruptPin, PciIntxRouter, PciIntxRouterConfig,
 };
+use aero_devices_storage::pci_ide::{Piix3IdePciDevice, PRIMARY_PORTS, SECONDARY_PORTS};
 use aero_machine::{Machine, MachineConfig};
 
 #[test]
@@ -109,27 +110,31 @@ fn machine_win7_storage_topology_has_stable_bdfs_and_interrupt_lines() {
         // layouts continue to work. These are documented in `docs/05-storage-topology-win7.md`.
         assert_eq!(
             cfg.bar_range(0).map(|r| (r.kind, r.base, r.size)),
-            Some((PciBarKind::Io, 0x1F0, 8)),
+            Some((PciBarKind::Io, u64::from(PRIMARY_PORTS.cmd_base), 8)),
             "IDE_PIIX3 BAR0 (primary cmd block) drifted"
         );
         assert_eq!(
             cfg.bar_range(1).map(|r| (r.kind, r.base, r.size)),
-            Some((PciBarKind::Io, 0x3F4, 4)),
+            Some((PciBarKind::Io, u64::from(PRIMARY_PORTS.ctrl_base - 2), 4)),
             "IDE_PIIX3 BAR1 (primary control block base) drifted"
         );
         assert_eq!(
             cfg.bar_range(2).map(|r| (r.kind, r.base, r.size)),
-            Some((PciBarKind::Io, 0x170, 8)),
+            Some((PciBarKind::Io, u64::from(SECONDARY_PORTS.cmd_base), 8)),
             "IDE_PIIX3 BAR2 (secondary cmd block) drifted"
         );
         assert_eq!(
             cfg.bar_range(3).map(|r| (r.kind, r.base, r.size)),
-            Some((PciBarKind::Io, 0x374, 4)),
+            Some((PciBarKind::Io, u64::from(SECONDARY_PORTS.ctrl_base - 2), 4)),
             "IDE_PIIX3 BAR3 (secondary control block base) drifted"
         );
         assert_eq!(
             cfg.bar_range(4).map(|r| (r.kind, r.base, r.size)),
-            Some((PciBarKind::Io, 0xC000, 16)),
+            Some((
+                PciBarKind::Io,
+                u64::from(Piix3IdePciDevice::DEFAULT_BUS_MASTER_BASE),
+                16,
+            )),
             "IDE_PIIX3 BAR4 (bus master IDE) base/size drifted"
         );
     }

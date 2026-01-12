@@ -2,6 +2,7 @@
 
 use aero_devices::pci::profile::IDE_PIIX3;
 use aero_devices::pci::{PciBdf, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
+use aero_devices_storage::pci_ide::PRIMARY_PORTS;
 use aero_machine::{Machine, MachineConfig, SharedDisk};
 use aero_storage::{MemBackend, RawDisk, VirtualDisk as _, SECTOR_SIZE};
 use pretty_assertions::{assert_eq, assert_ne};
@@ -77,12 +78,12 @@ fn machine_snapshot_roundtrip_preserves_ide_inflight_dma_command_and_allows_resu
     src.io_write(bm_base, 1, 0x09); // start + direction=to-memory
 
     // Issue ATA READ DMA (0xC8) for LBA 0, count 1, primary master.
-    src.io_write(0x1F2, 1, 1);
-    src.io_write(0x1F3, 1, 0);
-    src.io_write(0x1F4, 1, 0);
-    src.io_write(0x1F5, 1, 0);
-    src.io_write(0x1F6, 1, 0xE0);
-    src.io_write(0x1F7, 1, 0xC8);
+    src.io_write(PRIMARY_PORTS.cmd_base + 2, 1, 1);
+    src.io_write(PRIMARY_PORTS.cmd_base + 3, 1, 0);
+    src.io_write(PRIMARY_PORTS.cmd_base + 4, 1, 0);
+    src.io_write(PRIMARY_PORTS.cmd_base + 5, 1, 0);
+    src.io_write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
+    src.io_write(PRIMARY_PORTS.cmd_base + 7, 1, 0xC8);
 
     // Ensure the DMA has not run yet (we have not ticked the controller).
     assert_eq!(src.read_physical_bytes(data_buf, 4), vec![0, 0, 0, 0]);
@@ -184,12 +185,12 @@ fn machine_snapshot_roundtrip_preserves_ide_inflight_dma_write_and_allows_resume
     src.io_write(bm_base, 1, 0x01); // start
 
     // Issue ATA WRITE DMA (0xCA) for LBA 1, count 1, primary master.
-    src.io_write(0x1F2, 1, 1);
-    src.io_write(0x1F3, 1, 1);
-    src.io_write(0x1F4, 1, 0);
-    src.io_write(0x1F5, 1, 0);
-    src.io_write(0x1F6, 1, 0xE0);
-    src.io_write(0x1F7, 1, 0xCA);
+    src.io_write(PRIMARY_PORTS.cmd_base + 2, 1, 1);
+    src.io_write(PRIMARY_PORTS.cmd_base + 3, 1, 1);
+    src.io_write(PRIMARY_PORTS.cmd_base + 4, 1, 0);
+    src.io_write(PRIMARY_PORTS.cmd_base + 5, 1, 0);
+    src.io_write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
+    src.io_write(PRIMARY_PORTS.cmd_base + 7, 1, 0xCA);
 
     // Ensure the DMA has not run/committed yet (we have not ticked the controller).
     {

@@ -3,6 +3,7 @@
 use aero_devices::pci::profile::IDE_PIIX3;
 use aero_devices::pci::{PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
 use aero_devices_storage::atapi::AtapiCdrom;
+use aero_devices_storage::pci_ide::{PRIMARY_PORTS, SECONDARY_PORTS};
 use aero_machine::{Machine, MachineConfig, RunExit};
 use aero_platform::interrupts::{PlatformInterruptMode, PlatformInterrupts};
 use aero_storage::{MemBackend, RawDisk, VirtualDisk as _, SECTOR_SIZE};
@@ -156,11 +157,11 @@ fn machine_ide_identify_pio_raises_irq14_and_wakes_halted_cpu() {
     write_cfg_u16(&mut m, bdf.bus, bdf.device, bdf.function, 0x04, 0x0001);
 
     // ATA IDENTIFY DEVICE (0xEC) via legacy ports.
-    m.io_write(0x1F6, 1, 0xA0); // select primary master
-    m.io_write(0x1F7, 1, 0xEC);
+    m.io_write(PRIMARY_PORTS.cmd_base + 6, 1, 0xA0); // select primary master
+    m.io_write(PRIMARY_PORTS.cmd_base + 7, 1, 0xEC);
 
     // Verify that IDENTIFY data is reachable via the data port (0x1F0).
-    let word0 = m.io_read(0x1F0, 2) as u16;
+    let word0 = m.io_read(PRIMARY_PORTS.cmd_base, 2) as u16;
     assert_eq!(word0, 0x0040);
 
     // Run until the interrupt handler writes the flag byte.
@@ -327,11 +328,11 @@ fn machine_ide_irq14_is_delivered_via_ioapic_in_apic_mode() {
     write_cfg_u16(&mut m, bdf.bus, bdf.device, bdf.function, 0x04, 0x0001);
 
     // ATA IDENTIFY DEVICE (0xEC) via legacy ports.
-    m.io_write(0x1F6, 1, 0xA0); // select primary master
-    m.io_write(0x1F7, 1, 0xEC);
+    m.io_write(PRIMARY_PORTS.cmd_base + 6, 1, 0xA0); // select primary master
+    m.io_write(PRIMARY_PORTS.cmd_base + 7, 1, 0xEC);
 
     // Verify that IDENTIFY data is reachable via the data port (0x1F0).
-    let word0 = m.io_read(0x1F0, 2) as u16;
+    let word0 = m.io_read(PRIMARY_PORTS.cmd_base, 2) as u16;
     assert_eq!(word0, 0x0040);
 
     // Run until the interrupt handler writes the flag byte.
@@ -403,11 +404,11 @@ fn machine_ide_irq15_is_delivered_via_ioapic_in_apic_mode() {
     write_cfg_u16(&mut m, bdf.bus, bdf.device, bdf.function, 0x04, 0x0001);
 
     // ATAPI IDENTIFY PACKET DEVICE (0xA1) via secondary legacy ports.
-    m.io_write(0x176, 1, 0xA0); // select secondary master
-    m.io_write(0x177, 1, 0xA1);
+    m.io_write(SECONDARY_PORTS.cmd_base + 6, 1, 0xA0); // select secondary master
+    m.io_write(SECONDARY_PORTS.cmd_base + 7, 1, 0xA1);
 
     // Verify that IDENTIFY data is reachable via the data port (0x170).
-    let word0 = m.io_read(0x170, 2) as u16;
+    let word0 = m.io_read(SECONDARY_PORTS.cmd_base, 2) as u16;
     assert_eq!(word0, 0x8581);
 
     // Run until the interrupt handler writes the flag byte.
@@ -519,11 +520,11 @@ fn machine_ide_secondary_identify_packet_raises_irq15_and_wakes_halted_cpu() {
     write_cfg_u16(&mut m, bdf.bus, bdf.device, bdf.function, 0x04, 0x0001);
 
     // ATAPI IDENTIFY PACKET DEVICE (0xA1) via secondary legacy ports.
-    m.io_write(0x176, 1, 0xA0); // select secondary master
-    m.io_write(0x177, 1, 0xA1);
+    m.io_write(SECONDARY_PORTS.cmd_base + 6, 1, 0xA0); // select secondary master
+    m.io_write(SECONDARY_PORTS.cmd_base + 7, 1, 0xA1);
 
     // Verify that IDENTIFY data is reachable via the data port (0x170).
-    let word0 = m.io_read(0x170, 2) as u16;
+    let word0 = m.io_read(SECONDARY_PORTS.cmd_base, 2) as u16;
     assert_eq!(word0, 0x8581);
 
     // Run until the interrupt handler writes the flag byte.
@@ -621,12 +622,12 @@ fn machine_ide_primary_dma_read_fills_memory_and_wakes_halted_cpu_via_irq14() {
     m.io_write(bm_base, 1, 0x09);
 
     // Issue ATA READ DMA (0xC8) for LBA 0, count 1, primary master.
-    m.io_write(0x1F2, 1, 1);
-    m.io_write(0x1F3, 1, 0);
-    m.io_write(0x1F4, 1, 0);
-    m.io_write(0x1F5, 1, 0);
-    m.io_write(0x1F6, 1, 0xE0);
-    m.io_write(0x1F7, 1, 0xC8);
+    m.io_write(PRIMARY_PORTS.cmd_base + 2, 1, 1);
+    m.io_write(PRIMARY_PORTS.cmd_base + 3, 1, 0);
+    m.io_write(PRIMARY_PORTS.cmd_base + 4, 1, 0);
+    m.io_write(PRIMARY_PORTS.cmd_base + 5, 1, 0);
+    m.io_write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
+    m.io_write(PRIMARY_PORTS.cmd_base + 7, 1, 0xC8);
 
     // With bus mastering disabled, the DMA transfer must not complete.
     for _ in 0..3 {
@@ -722,11 +723,11 @@ fn machine_ide_nien_masks_irq14_until_cleared() {
     write_cfg_u16(&mut m, bdf.bus, bdf.device, bdf.function, 0x04, 0x0001);
 
     // Set nIEN (Device Control bit1) to mask interrupt output.
-    m.io_write(0x3F6, 1, 0x02);
+    m.io_write(PRIMARY_PORTS.ctrl_base, 1, 0x02);
 
     // Issue ATA IDENTIFY DEVICE (0xEC) via legacy ports.
-    m.io_write(0x1F6, 1, 0xA0);
-    m.io_write(0x1F7, 1, 0xEC);
+    m.io_write(PRIMARY_PORTS.cmd_base + 6, 1, 0xA0);
+    m.io_write(PRIMARY_PORTS.cmd_base + 7, 1, 0xEC);
 
     // Run a few slices; the interrupt is latched internally but must not be delivered while nIEN=1.
     for _ in 0..5 {
@@ -739,7 +740,7 @@ fn machine_ide_nien_masks_irq14_until_cleared() {
     }
 
     // Clear nIEN; the pending IRQ should now be delivered and wake the CPU.
-    m.io_write(0x3F6, 1, 0x00);
+    m.io_write(PRIMARY_PORTS.ctrl_base, 1, 0x00);
 
     for _ in 0..10 {
         let _ = m.run_slice(256);
@@ -839,12 +840,12 @@ fn machine_ide_primary_dma_write_updates_disk_and_wakes_halted_cpu_via_irq14() {
     m.io_write(bm_base, 1, 0x01); // start, direction=0 (from memory)
 
     // Issue ATA WRITE DMA (0xCA) for LBA 1, count 1, primary master.
-    m.io_write(0x1F2, 1, 1);
-    m.io_write(0x1F3, 1, 1);
-    m.io_write(0x1F4, 1, 0);
-    m.io_write(0x1F5, 1, 0);
-    m.io_write(0x1F6, 1, 0xE0);
-    m.io_write(0x1F7, 1, 0xCA);
+    m.io_write(PRIMARY_PORTS.cmd_base + 2, 1, 1);
+    m.io_write(PRIMARY_PORTS.cmd_base + 3, 1, 1);
+    m.io_write(PRIMARY_PORTS.cmd_base + 4, 1, 0);
+    m.io_write(PRIMARY_PORTS.cmd_base + 5, 1, 0);
+    m.io_write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
+    m.io_write(PRIMARY_PORTS.cmd_base + 7, 1, 0xCA);
 
     // With bus mastering disabled, the write must not commit.
     for _ in 0..3 {
@@ -922,8 +923,8 @@ fn machine_ide_altstatus_does_not_clear_irq_pending_but_status_does() {
     write_cfg_u16(&mut m, bdf.bus, bdf.device, bdf.function, 0x04, 0x0001);
 
     // Issue ATA IDENTIFY DEVICE (0xEC).
-    m.io_write(0x1F6, 1, 0xA0);
-    m.io_write(0x1F7, 1, 0xEC);
+    m.io_write(PRIMARY_PORTS.cmd_base + 6, 1, 0xA0);
+    m.io_write(PRIMARY_PORTS.cmd_base + 7, 1, 0xEC);
 
     // The command should latch an interrupt condition.
     assert!(
@@ -936,7 +937,7 @@ fn machine_ide_altstatus_does_not_clear_irq_pending_but_status_does() {
     );
 
     // Reading alternate status must *not* clear the IRQ latch.
-    let _ = m.io_read(0x3F6, 1);
+    let _ = m.io_read(PRIMARY_PORTS.ctrl_base, 1);
     assert!(
         m.ide()
             .expect("ide enabled")
@@ -947,7 +948,7 @@ fn machine_ide_altstatus_does_not_clear_irq_pending_but_status_does() {
     );
 
     // Reading STATUS must clear the IRQ latch.
-    let _ = m.io_read(0x1F7, 1);
+    let _ = m.io_read(PRIMARY_PORTS.cmd_base + 7, 1);
     assert!(
         !m.ide()
             .expect("ide enabled")
@@ -1055,9 +1056,9 @@ fn machine_ide_secondary_atapi_read10_dma_fills_memory_and_wakes_halted_cpu_via_
     // so the subsequent READ(10) succeeds.
     let mut tur = [0u8; 12];
     tur[0] = 0x00; // TEST UNIT READY
-    m.io_write(0x176, 1, 0xA0);
-    send_atapi_packet(&mut m, 0x170, 0x00, &tur, 0);
-    let _ = m.io_read(0x177, 1); // clear IRQ
+    m.io_write(SECONDARY_PORTS.cmd_base + 6, 1, 0xA0);
+    send_atapi_packet(&mut m, SECONDARY_PORTS.cmd_base, 0x00, &tur, 0);
+    let _ = m.io_read(SECONDARY_PORTS.cmd_base + 7, 1); // clear IRQ
 
     // Send ATAPI READ(10) for LBA 1, blocks=1, using DMA (features bit0=1).
     let mut pkt = [0u8; 12];
@@ -1066,17 +1067,17 @@ fn machine_ide_secondary_atapi_read10_dma_fills_memory_and_wakes_halted_cpu_via_
     pkt[7..9].copy_from_slice(&1u16.to_be_bytes()); // blocks=1
 
     // Select secondary master and issue PACKET.
-    m.io_write(0x176, 1, 0xA0);
+    m.io_write(SECONDARY_PORTS.cmd_base + 6, 1, 0xA0);
     send_atapi_packet(
         &mut m,
-        0x170,
+        SECONDARY_PORTS.cmd_base,
         0x01, // DMA requested
         &pkt,
         AtapiCdrom::SECTOR_SIZE as u16,
     );
 
     // Clear the "packet request" IRQ so we only observe the DMA completion interrupt.
-    let _ = m.io_read(0x177, 1);
+    let _ = m.io_read(SECONDARY_PORTS.cmd_base + 7, 1);
 
     // With bus mastering disabled, the DMA transfer must not complete.
     for _ in 0..3 {
