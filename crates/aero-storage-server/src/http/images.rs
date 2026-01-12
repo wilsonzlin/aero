@@ -42,6 +42,7 @@ pub struct ImagesState {
     store: Arc<dyn ImageStore>,
     metrics: Arc<Metrics>,
     range_options: RangeOptions,
+    require_range: bool,
     cors: CorsConfig,
     cross_origin_resource_policy: HeaderValue,
     public_cache_max_age: Duration,
@@ -56,6 +57,7 @@ impl ImagesState {
             range_options: RangeOptions {
                 max_total_bytes: DEFAULT_MAX_TOTAL_BYTES,
             },
+            require_range: false,
             cors: CorsConfig::default(),
             cross_origin_resource_policy: HeaderValue::from_static("same-site"),
             public_cache_max_age: DEFAULT_PUBLIC_MAX_AGE,
@@ -67,6 +69,13 @@ impl ImagesState {
 
     pub fn with_range_options(mut self, range_options: RangeOptions) -> Self {
         self.range_options = range_options;
+        self
+    }
+
+    /// When enabled, `GET` requests without a `Range` header will be rejected with
+    /// `416 Range Not Satisfiable` instead of returning the full object body.
+    pub fn with_require_range(mut self, require_range: bool) -> Self {
+        self.require_range = require_range;
         self
     }
 
@@ -241,6 +250,12 @@ async fn serve_image(
         }
 
         let range_header = req_headers.get(header::RANGE).and_then(|v| v.to_str().ok());
+        if range_header.is_none() && state.require_range && want_body {
+            // Range-only mode: avoid accidental full-object downloads when a browser/crawler hits the
+            // bytes endpoint without `Range`.
+            state.metrics.inc_range_request_invalid();
+            return range_not_satisfiable(&state, &req_headers, len);
+        }
         if let Some(range_header) = range_header {
             // RFC 9110 If-Range support: if validator doesn't match, ignore Range and return 200.
             if !cache::if_range_allows_range(&req_headers, meta.etag.as_deref(), meta.last_modified)

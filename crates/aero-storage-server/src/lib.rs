@@ -45,6 +45,7 @@ pub struct AppState {
     range_options: Option<http::range::RangeOptions>,
     public_cache_max_age: Option<Duration>,
     max_concurrent_bytes_requests: usize,
+    require_range: bool,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -57,6 +58,7 @@ impl AppState {
             range_options: None,
             public_cache_max_age: None,
             max_concurrent_bytes_requests: DEFAULT_MAX_CONCURRENT_BYTES_REQUESTS,
+            require_range: false,
         }
     }
 
@@ -111,6 +113,11 @@ impl AppState {
         self.max_concurrent_bytes_requests = max;
         self
     }
+
+    pub fn with_require_range(mut self, require_range: bool) -> Self {
+        self.require_range = require_range;
+        self
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -120,13 +127,15 @@ pub fn app(state: AppState) -> axum::Router {
     let range_options = state.range_options;
     let public_cache_max_age = state.public_cache_max_age;
     let max_concurrent_bytes_requests = state.max_concurrent_bytes_requests;
+    let require_range = state.require_range;
     let store = Arc::clone(&state.store);
     let metrics = Arc::new(Metrics::new());
 
     let mut images_state = http::images::ImagesState::new(store, Arc::clone(&metrics))
         .with_cors(cors)
         .with_cross_origin_resource_policy(cross_origin_resource_policy)
-        .with_max_concurrent_bytes_requests(max_concurrent_bytes_requests);
+        .with_max_concurrent_bytes_requests(max_concurrent_bytes_requests)
+        .with_require_range(require_range);
     if let Some(range_options) = range_options {
         images_state = images_state.with_range_options(range_options);
     }
@@ -145,3 +154,4 @@ pub fn app(state: AppState) -> axum::Router {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use server::{start, RunningStorageServer, StorageServerConfig};
+

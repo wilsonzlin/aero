@@ -36,6 +36,7 @@ Configuration is via **CLI flags with env var fallbacks** (powered by `clap`).
 | `--max-range-bytes` | `AERO_STORAGE_MAX_RANGE_BYTES` | `8388608` (8 MiB) |
 | `--public-cache-max-age-secs` | `AERO_STORAGE_PUBLIC_CACHE_MAX_AGE_SECS` | `3600` |
 | `--cors-preflight-max-age-secs` | `AERO_STORAGE_CORS_PREFLIGHT_MAX_AGE_SECS` | `86400` |
+| `--require-range` | `AERO_STORAGE_REQUIRE_RANGE` | `false` |
 
 Notes:
 

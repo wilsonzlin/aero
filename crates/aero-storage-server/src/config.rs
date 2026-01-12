@@ -87,6 +87,14 @@ struct Args {
         default_value_t = DEFAULT_MAX_CONCURRENT_BYTES_REQUESTS
     )]
     max_concurrent_bytes_requests: usize,
+    /// Require `Range` requests for image bytes endpoints (`GET /v1/images/:id`).
+    ///
+    /// When enabled, `GET` requests without a `Range` header will be rejected with
+    /// `416 Range Not Satisfiable` (the server will not stream the full image body).
+    ///
+    /// Environment variable: `AERO_STORAGE_REQUIRE_RANGE`.
+    #[arg(long)]
+    require_range: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -101,6 +109,7 @@ pub struct Config {
     pub public_cache_max_age_secs: Option<u64>,
     pub cors_preflight_max_age_secs: Option<u64>,
     pub max_concurrent_bytes_requests: usize,
+    pub require_range: bool,
 }
 
 impl Config {
@@ -125,8 +134,7 @@ impl Config {
             })
             .unwrap_or_else(|| PathBuf::from("./images"));
 
-        let cors_origin = args
-            .cors_origin;
+        let cors_origin = args.cors_origin;
         let cors_origins = if !cors_origin.is_empty() {
             Some(parse_origin_list(&cors_origin.join(",")))
         } else if let Ok(v) = env::var("AERO_STORAGE_SERVER_CORS_ORIGIN") {
@@ -154,6 +162,8 @@ impl Config {
             .or_else(|| env::var("AERO_STORAGE_SERVER_LOG_LEVEL").ok())
             .unwrap_or_else(|| "info".to_string());
 
+        let require_range = args.require_range || parse_env_bool("AERO_STORAGE_REQUIRE_RANGE");
+
         Self {
             listen_addr,
             cors_origins,
@@ -164,6 +174,7 @@ impl Config {
             max_range_bytes: args.max_range_bytes,
             public_cache_max_age_secs: args.public_cache_max_age_secs,
             cors_preflight_max_age_secs: args.cors_preflight_max_age_secs,
+            require_range,
             max_concurrent_bytes_requests: args.max_concurrent_bytes_requests,
         }
     }
@@ -179,4 +190,19 @@ fn parse_origin_list(value: &str) -> Vec<String> {
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty())
         .collect()
+}
+
+fn parse_env_bool(var: &str) -> bool {
+    let value = match env::var(var) {
+        Ok(v) => v,
+        Err(env::VarError::NotPresent) => return false,
+        Err(env::VarError::NotUnicode(_)) => panic!("{var} must be valid UTF-8"),
+    };
+
+    match value.trim().to_ascii_lowercase().as_str() {
+        "" => false,
+        "1" | "true" | "yes" | "y" | "on" => true,
+        "0" | "false" | "no" | "n" | "off" => false,
+        other => panic!("{var} must be a boolean (got {other:?})"),
+    }
 }
