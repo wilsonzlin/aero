@@ -6,6 +6,8 @@
 //! - MMIO register interface for init, RX/TX rings, and interrupts
 //! - Legacy RX/TX descriptor rings with DMA read/write via [`memory::MemoryBus`]
 //! - Simple host-facing frame queues
+//! - `memory::MmioHandler`-style integration: MMIO/PIO register access is split from DMA; DMA
+//!   happens only in [`E1000Device::poll`]
 //!
 //! The implementation aims to be "good enough" for driver compatibility
 //! without chasing every obscure corner case of real silicon.
