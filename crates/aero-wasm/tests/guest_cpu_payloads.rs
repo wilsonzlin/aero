@@ -1,4 +1,20 @@
-use aero_wasm::guest_cpu_bench::{GuestCpuBenchCoreRunner, ITERS_PER_RUN_CANONICAL, PAYLOADS};
+use aero_wasm::guest_cpu_bench::{
+    GuestCpuBenchCoreRunner, GuestCpuBenchVariant, ITERS_PER_RUN_CANONICAL, PAYLOADS,
+};
+
+fn expected_retired_instructions_10k(variant: GuestCpuBenchVariant) -> u64 {
+    let iters = u64::from(ITERS_PER_RUN_CANONICAL);
+    match variant {
+        GuestCpuBenchVariant::Alu64 | GuestCpuBenchVariant::Alu32 => 3 + iters * 7,
+        GuestCpuBenchVariant::BranchPred64 | GuestCpuBenchVariant::BranchPred32 => 3 + iters * 10,
+        GuestCpuBenchVariant::BranchUnpred64 | GuestCpuBenchVariant::BranchUnpred32 => 4 + iters * 16,
+        GuestCpuBenchVariant::MemSeq64
+        | GuestCpuBenchVariant::MemSeq32
+        | GuestCpuBenchVariant::MemStride64
+        | GuestCpuBenchVariant::MemStride32 => 3 + iters * 8,
+        GuestCpuBenchVariant::CallRet64 | GuestCpuBenchVariant::CallRet32 => 3 + iters * 11,
+    }
+}
 
 #[test]
 fn guest_cpu_payload_checksums_match_pf008_doc() {
@@ -12,6 +28,12 @@ fn guest_cpu_payload_checksums_match_pf008_doc() {
             res.checksum,
             payload.expected_checksum_10k,
             "checksum mismatch for {}",
+            payload.variant.as_str()
+        );
+        assert_eq!(
+            res.retired_instructions,
+            expected_retired_instructions_10k(payload.variant),
+            "retired instruction count mismatch for {}",
             payload.variant.as_str()
         );
         assert!(
