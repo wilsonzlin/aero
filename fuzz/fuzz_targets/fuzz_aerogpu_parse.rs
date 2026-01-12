@@ -32,6 +32,21 @@ fn write_pkt_hdr(buf: &mut [u8], off: &mut usize, opcode: u32, size: usize) -> O
     Some(start)
 }
 
+fn write_guest_texture2d_4x4_bgra8(w: &mut AerogpuCmdWriter, texture_handle: u32, alloc_id: u32) {
+    w.create_texture2d(
+        texture_handle,
+        /*usage_flags=*/ 0,
+        pci::AerogpuFormat::B8G8R8A8Unorm as u32,
+        /*width=*/ 4,
+        /*height=*/ 4,
+        /*mip_levels=*/ 1,
+        /*array_layers=*/ 1,
+        /*row_pitch_bytes=*/ 16,
+        alloc_id,
+        /*backing_offset_bytes=*/ 0,
+    );
+}
+
 fn fuzz_cmd_stream(cmd_bytes: &[u8]) {
     fn packet_bytes<'a>(cmd_bytes: &'a [u8], pkt: &cmd::AerogpuCmdPacket<'a>) -> Option<&'a [u8]> {
         let base = cmd_bytes.as_ptr() as usize;
@@ -928,67 +943,73 @@ fuzz_target!(|data: &[u8]| {
     //
     // This should hit the `UnknownResourceHandle` branch in `ResourceDirtyRange` validation.
     let mut w = AerogpuCmdWriter::new();
-    w.create_texture2d(
-        tex_handle,
-        /*usage_flags=*/ 0,
-        pci::AerogpuFormat::B8G8R8A8Unorm as u32,
-        /*width=*/ 4,
-        /*height=*/ 4,
-        /*mip_levels=*/ 1,
-        /*array_layers=*/ 1,
-        /*row_pitch_bytes=*/ 16,
-        alloc_id,
-        /*backing_offset_bytes=*/ 0,
-    );
+    write_guest_texture2d_4x4_bgra8(&mut w, tex_handle, alloc_id);
     w.export_shared_surface(tex_handle, share_token);
     w.import_shared_surface(alias_handle, share_token);
     w.destroy_resource(tex_handle);
     w.resource_dirty_range(tex_handle, /*offset_bytes=*/ 0, /*size_bytes=*/ 4);
     let cmd_proc_unknown_handle = w.finish();
-    let mut proc_unknown_handle = AeroGpuCommandProcessor::new();
-    let _ = proc_unknown_handle.process_submission_with_allocations(
-        &cmd_proc_unknown_handle,
-        Some(&allocs),
-        1,
-    );
+    fuzz_command_processor(&cmd_proc_unknown_handle, Some(&allocs));
 
     // CommandProcessor edge-case: exporting the same share token for a different underlying handle
     // should error deterministically (`ShareTokenAlreadyExported`).
     let tex2_handle = 4u32;
     let mut w = AerogpuCmdWriter::new();
-    w.create_texture2d(
-        tex_handle,
-        /*usage_flags=*/ 0,
-        pci::AerogpuFormat::B8G8R8A8Unorm as u32,
-        /*width=*/ 4,
-        /*height=*/ 4,
-        /*mip_levels=*/ 1,
-        /*array_layers=*/ 1,
-        /*row_pitch_bytes=*/ 16,
-        alloc_id,
-        /*backing_offset_bytes=*/ 0,
-    );
-    w.create_texture2d(
-        tex2_handle,
-        /*usage_flags=*/ 0,
-        pci::AerogpuFormat::B8G8R8A8Unorm as u32,
-        /*width=*/ 4,
-        /*height=*/ 4,
-        /*mip_levels=*/ 1,
-        /*array_layers=*/ 1,
-        /*row_pitch_bytes=*/ 16,
-        alloc_id,
-        /*backing_offset_bytes=*/ 0,
-    );
+    write_guest_texture2d_4x4_bgra8(&mut w, tex_handle, alloc_id);
+    write_guest_texture2d_4x4_bgra8(&mut w, tex2_handle, alloc_id);
     w.export_shared_surface(tex_handle, share_token);
     w.export_shared_surface(tex2_handle, share_token);
     let cmd_proc_token_retarget = w.finish();
-    let mut proc_token_retarget = AeroGpuCommandProcessor::new();
-    let _ = proc_token_retarget.process_submission_with_allocations(
-        &cmd_proc_token_retarget,
-        Some(&allocs),
-        1,
+    fuzz_command_processor(&cmd_proc_token_retarget, Some(&allocs));
+
+    // CommandProcessor edge-case: importing an unknown share token should error deterministically
+    // (`UnknownShareToken`).
+    let mut w = AerogpuCmdWriter::new();
+    w.import_shared_surface(alias_handle, share_token);
+    let cmd_proc_unknown_token = w.finish();
+    fuzz_command_processor(&cmd_proc_unknown_token, None);
+
+    // CommandProcessor edge-case: exporting a shared surface for an unknown handle should error
+    // deterministically (`UnknownSharedSurfaceHandle`).
+    let mut w = AerogpuCmdWriter::new();
+    w.export_shared_surface(tex_handle, share_token);
+    let cmd_proc_unknown_shared_handle = w.finish();
+    fuzz_command_processor(&cmd_proc_unknown_shared_handle, None);
+
+    // CommandProcessor edge-case: invalid share token 0 should be rejected (`InvalidShareToken`).
+    let mut w = AerogpuCmdWriter::new();
+    w.export_shared_surface(tex_handle, /*share_token=*/ 0);
+    let cmd_proc_invalid_token = w.finish();
+    fuzz_command_processor(&cmd_proc_invalid_token, None);
+
+    // CommandProcessor edge-case: alias already bound to a different underlying handle should be
+    // rejected (`SharedSurfaceAliasAlreadyBound`).
+    let share_token2 = share_token.wrapping_add(1);
+    let mut w = AerogpuCmdWriter::new();
+    write_guest_texture2d_4x4_bgra8(&mut w, tex_handle, alloc_id);
+    write_guest_texture2d_4x4_bgra8(&mut w, tex2_handle, alloc_id);
+    w.export_shared_surface(tex_handle, share_token);
+    w.export_shared_surface(tex2_handle, share_token2);
+    w.import_shared_surface(alias_handle, share_token);
+    w.import_shared_surface(alias_handle, share_token2);
+    let cmd_proc_alias_rebind = w.finish();
+    fuzz_command_processor(&cmd_proc_alias_rebind, Some(&allocs));
+
+    // CommandProcessor edge-case: creating a non-shared resource using an alias handle should be
+    // rejected (`SharedSurfaceHandleInUse`).
+    let mut w = AerogpuCmdWriter::new();
+    write_guest_texture2d_4x4_bgra8(&mut w, tex_handle, alloc_id);
+    w.export_shared_surface(tex_handle, share_token);
+    w.import_shared_surface(alias_handle, share_token);
+    w.create_buffer(
+        alias_handle,
+        /*usage_flags=*/ 0,
+        /*size_bytes=*/ 4,
+        /*backing_alloc_id=*/ 0,
+        /*backing_offset_bytes=*/ 0,
     );
+    let cmd_proc_handle_in_use = w.finish();
+    fuzz_command_processor(&cmd_proc_handle_in_use, Some(&allocs));
 
     // Patched alloc table: force valid magic/version/stride and a self-consistent entry_count.
     let mut alloc_patched = alloc_bytes.to_vec();
