@@ -2,9 +2,10 @@ use std::io::Cursor;
 
 use aero_devices::pci::profile;
 use aero_devices_storage::ata::ATA_CMD_READ_DMA_EXT;
+use aero_devices_storage::pci_ide::PRIMARY_PORTS;
 use aero_io_snapshot::io::state::IoSnapshot;
 use aero_io_snapshot::io::storage::state::DiskControllersSnapshot;
-use aero_pc_platform::PcPlatform;
+use aero_pc_platform::{PcPlatform, PcPlatformConfig};
 use aero_snapshot::io_snapshot_bridge::{apply_io_snapshot_to_device, device_state_from_io_snapshot};
 use aero_snapshot::{
     restore_snapshot, save_snapshot, Compression, CpuState, DeviceId, DeviceState, DiskOverlayRefs,
@@ -25,8 +26,12 @@ struct PcPlatformStorageSnapshotHarness {
 
 impl PcPlatformStorageSnapshotHarness {
     fn new(ram_size: usize) -> Self {
+        Self::new_with_config(ram_size, PcPlatformConfig::default())
+    }
+
+    fn new_with_config(ram_size: usize, config: PcPlatformConfig) -> Self {
         Self {
-            platform: PcPlatform::new(ram_size),
+            platform: PcPlatform::new_with_config(ram_size, config),
             meta: SnapshotMeta {
                 snapshot_id: 1,
                 parent_snapshot_id: None,
@@ -68,6 +73,9 @@ impl SnapshotSource for PcPlatformStorageSnapshotHarness {
         // For this harness we only snapshot the ICH9 AHCI controller at its canonical BDF.
         if let Some(ahci) = &self.platform.ahci {
             disk_controllers.insert(profile::SATA_AHCI_ICH9.bdf.pack_u16(), ahci.borrow().save_state());
+        }
+        if let Some(ide) = &self.platform.ide {
+            disk_controllers.insert(profile::IDE_PIIX3.bdf.pack_u16(), ide.borrow().save_state());
         }
         devices.push(device_state_from_io_snapshot(
             DeviceId::DISK_CONTROLLER,
@@ -145,6 +153,11 @@ impl SnapshotTarget for PcPlatformStorageSnapshotHarness {
                                 ahci.borrow_mut().load_state(nested).unwrap();
                             }
                         }
+                        if bdf == profile::IDE_PIIX3.bdf {
+                            if let Some(ide) = &self.platform.ide {
+                                ide.borrow_mut().load_state(nested).unwrap();
+                            }
+                        }
                     }
                 }
                 // Backward compatibility: some snapshots stored the controller directly under
@@ -152,6 +165,10 @@ impl SnapshotTarget for PcPlatformStorageSnapshotHarness {
                 [b'A', b'H', b'C', b'P'] => {
                     let ahci = self.platform.ahci.as_ref().expect("AHCI enabled");
                     apply_io_snapshot_to_device(&state, &mut *ahci.borrow_mut()).unwrap();
+                }
+                [b'I', b'D', b'E', b'0'] => {
+                    let ide = self.platform.ide.as_ref().expect("IDE enabled");
+                    apply_io_snapshot_to_device(&state, &mut *ide.borrow_mut()).unwrap();
                 }
                 _ => panic!("unexpected DISK_CONTROLLER payload device id: {id:?}"),
             }
@@ -346,4 +363,133 @@ fn aero_snapshot_roundtrip_preserves_ahci_inflight_dma_command_and_allows_resume
     );
     restored.platform.poll_pci_intx_lines();
     assert_eq!(pic_pending_irq(&restored.platform), Some(12));
+}
+
+#[test]
+fn aero_snapshot_roundtrip_preserves_ide_inflight_pio_and_allows_resume() {
+    let mut src = PcPlatformStorageSnapshotHarness::new_with_config(
+        RAM_SIZE,
+        PcPlatformConfig {
+            enable_ahci: false,
+            enable_ide: true,
+            enable_uhci: false,
+            ..Default::default()
+        },
+    );
+
+    // Attach a small in-memory disk with a known marker at LBA 0.
+    let mut disk = RawDisk::create(MemBackend::new(), 4 * SECTOR_SIZE as u64).unwrap();
+    let mut sector0 = vec![0u8; SECTOR_SIZE];
+    sector0[0..4].copy_from_slice(b"BOOT");
+    disk.write_at(0, &sector0).unwrap();
+    src.platform.attach_ide_primary_master_disk(Box::new(disk)).unwrap();
+
+    // Issue READ SECTORS (LBA 0, 1 sector) and consume the first 4 bytes ("BOOT").
+    src.platform.io.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
+    src.platform.io.write(PRIMARY_PORTS.cmd_base + 2, 1, 1);
+    src.platform.io.write(PRIMARY_PORTS.cmd_base + 3, 1, 0);
+    src.platform.io.write(PRIMARY_PORTS.cmd_base + 4, 1, 0);
+    src.platform.io.write(PRIMARY_PORTS.cmd_base + 5, 1, 0);
+    src.platform.io.write(PRIMARY_PORTS.cmd_base + 7, 1, 0x20);
+
+    let w0 = src.platform.io.read(PRIMARY_PORTS.cmd_base, 2) as u16;
+    let w1 = src.platform.io.read(PRIMARY_PORTS.cmd_base, 2) as u16;
+    let mut first4 = [0u8; 4];
+    first4[0..2].copy_from_slice(&w0.to_le_bytes());
+    first4[2..4].copy_from_slice(&w1.to_le_bytes());
+    assert_eq!(&first4, b"BOOT");
+
+    let snap = save_snapshot_bytes(&mut src);
+
+    let mut restored = PcPlatformStorageSnapshotHarness::new_with_config(
+        RAM_SIZE,
+        PcPlatformConfig {
+            enable_ahci: false,
+            enable_ide: true,
+            enable_uhci: false,
+            ..Default::default()
+        },
+    );
+    restore_snapshot(&mut Cursor::new(&snap), &mut restored).unwrap();
+
+    // IRQ should still be pending (PIO data phase).
+    assert!(
+        restored
+            .platform
+            .ide
+            .as_ref()
+            .unwrap()
+            .borrow()
+            .controller
+            .primary_irq_pending(),
+        "restored IDE controller should preserve pending IRQ during PIO data phase"
+    );
+
+    // Ensure the platform observes the IDE IRQ14 assertion when polled.
+    unmask_pic_irq(&mut restored.platform, 14);
+    restored.platform.poll_pci_intx_lines();
+    assert_eq!(pic_pending_irq(&restored.platform), Some(14));
+
+    // Read the rest of the sector and ensure it's still correct.
+    let mut buf = vec![0u8; SECTOR_SIZE];
+    buf[0..4].copy_from_slice(b"BOOT");
+    for i in 2..(SECTOR_SIZE / 2) {
+        let w = restored.platform.io.read(PRIMARY_PORTS.cmd_base, 2) as u16;
+        buf[i * 2..i * 2 + 2].copy_from_slice(&w.to_le_bytes());
+    }
+    assert_eq!(&buf[0..4], b"BOOT");
+
+    // Reading status clears the pending IRQ.
+    let _ = restored.platform.io.read(PRIMARY_PORTS.cmd_base + 7, 1);
+    assert!(
+        !restored
+            .platform
+            .ide
+            .as_ref()
+            .unwrap()
+            .borrow()
+            .controller
+            .primary_irq_pending()
+    );
+
+    // Re-attach a backend and perform a WRITE SECTORS PIO to LBA 1, then read it back.
+    let disk2 = RawDisk::create(MemBackend::new(), 4 * SECTOR_SIZE as u64).unwrap();
+    restored
+        .platform
+        .attach_ide_primary_master_disk(Box::new(disk2))
+        .unwrap();
+
+    restored.platform.io.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
+    restored.platform.io.write(PRIMARY_PORTS.cmd_base + 2, 1, 1);
+    restored.platform.io.write(PRIMARY_PORTS.cmd_base + 3, 1, 1);
+    restored.platform.io.write(PRIMARY_PORTS.cmd_base + 4, 1, 0);
+    restored.platform.io.write(PRIMARY_PORTS.cmd_base + 5, 1, 0);
+    restored.platform.io.write(PRIMARY_PORTS.cmd_base + 7, 1, 0x30); // WRITE SECTORS
+
+    restored
+        .platform
+        .io
+        .write(PRIMARY_PORTS.cmd_base, 2, u16::from_le_bytes([5, 6]) as u32);
+    restored
+        .platform
+        .io
+        .write(PRIMARY_PORTS.cmd_base, 2, u16::from_le_bytes([7, 8]) as u32);
+    for _ in 0..((SECTOR_SIZE / 2) - 2) {
+        restored.platform.io.write(PRIMARY_PORTS.cmd_base, 2, 0);
+    }
+
+    // Read back LBA 1 and verify the first 4 bytes.
+    restored.platform.io.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
+    restored.platform.io.write(PRIMARY_PORTS.cmd_base + 2, 1, 1);
+    restored.platform.io.write(PRIMARY_PORTS.cmd_base + 3, 1, 1);
+    restored.platform.io.write(PRIMARY_PORTS.cmd_base + 4, 1, 0);
+    restored.platform.io.write(PRIMARY_PORTS.cmd_base + 5, 1, 0);
+    restored.platform.io.write(PRIMARY_PORTS.cmd_base + 7, 1, 0x20); // READ SECTORS
+
+    let w0 = restored.platform.io.read(PRIMARY_PORTS.cmd_base, 2) as u16;
+    let w1 = restored.platform.io.read(PRIMARY_PORTS.cmd_base, 2) as u16;
+    let mut out = [0u8; 4];
+    out[0..2].copy_from_slice(&w0.to_le_bytes());
+    out[2..4].copy_from_slice(&w1.to_le_bytes());
+    assert_eq!(out, [5, 6, 7, 8]);
 }
