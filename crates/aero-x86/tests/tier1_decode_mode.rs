@@ -79,3 +79,59 @@ fn decode_one_mode_32bit_jmp_rel8_wraps_eip() {
     assert_eq!(inst.len, 2);
     assert_eq!(inst.kind, InstKind::JmpRel { target: 0x2 });
 }
+
+#[test]
+fn decode_one_mode_16bit_inc_ax_is_not_rex() {
+    // 0x40 is INC AX in 16-bit mode; it must not be consumed as a REX prefix.
+    let inst = decode_one_mode(0x1000, &[0x40], 16);
+    assert_eq!(inst.len, 1);
+    assert_eq!(
+        inst.kind,
+        InstKind::Inc {
+            dst: Operand::Reg(Reg {
+                gpr: Gpr::Rax,
+                width: Width::W16,
+                high8: false,
+            }),
+            width: Width::W16,
+        }
+    );
+}
+
+#[test]
+fn decode_one_mode_16bit_opsize_override_inc_eax() {
+    // In 16-bit mode, 0x66 selects 32-bit operand size.
+    // 66 40 = inc eax
+    let inst = decode_one_mode(0x1000, &[0x66, 0x40], 16);
+    assert_eq!(inst.len, 2);
+    assert_eq!(
+        inst.kind,
+        InstKind::Inc {
+            dst: Operand::Reg(Reg {
+                gpr: Gpr::Rax,
+                width: Width::W32,
+                high8: false,
+            }),
+            width: Width::W32,
+        }
+    );
+}
+
+#[test]
+fn decode_one_mode_32bit_opsize_override_dec_cx() {
+    // In 32-bit mode, 0x66 selects 16-bit operand size.
+    // 66 49 = dec cx
+    let inst = decode_one_mode(0x1000, &[0x66, 0x49], 32);
+    assert_eq!(inst.len, 2);
+    assert_eq!(
+        inst.kind,
+        InstKind::Dec {
+            dst: Operand::Reg(Reg {
+                gpr: Gpr::Rcx,
+                width: Width::W16,
+                high8: false,
+            }),
+            width: Width::W16,
+        }
+    );
+}
