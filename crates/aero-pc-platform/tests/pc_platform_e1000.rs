@@ -347,10 +347,7 @@ fn pc_platform_defers_e1000_dma_until_process_e1000() {
     // device must defer DMA until `process_e1000()` is called.
     pc.memory.write_u32(bar0_base + 0x3818, 1); // TDT = 1
 
-    {
-        let mut dev = pc.e1000.as_ref().unwrap().borrow_mut();
-        assert!(dev.pop_tx_frame().is_none());
-    }
+    assert!(pc.e1000_pop_tx_frame().is_none());
 
     let mut status = [0u8; 1];
     pc.memory.read_physical(0x1000 + 12, &mut status);
@@ -358,11 +355,8 @@ fn pc_platform_defers_e1000_dma_until_process_e1000() {
 
     pc.process_e1000();
 
-    {
-        let mut dev = pc.e1000.as_ref().unwrap().borrow_mut();
-        assert_eq!(dev.pop_tx_frame().as_deref(), Some(pkt_out.as_slice()));
-        assert!(dev.irq_level());
-    }
+    assert_eq!(pc.e1000_pop_tx_frame().as_deref(), Some(pkt_out.as_slice()));
+    assert!(pc.e1000.as_ref().unwrap().borrow().irq_level());
 
     pc.memory.read_physical(0x1000 + 12, &mut status);
     assert_ne!(status[0] & 0x01, 0, "DD should be set after process_e1000()");

@@ -1348,6 +1348,26 @@ impl PcPlatform {
         self.i8042.controller()
     }
 
+    pub fn has_e1000(&self) -> bool {
+        self.e1000.is_some()
+    }
+
+    pub fn e1000_mac_addr(&self) -> Option<[u8; 6]> {
+        self.e1000.as_ref().map(|e1000| e1000.borrow().mac_addr())
+    }
+
+    pub fn e1000_pop_tx_frame(&mut self) -> Option<Vec<u8>> {
+        self.e1000
+            .as_ref()
+            .and_then(|e1000| e1000.borrow_mut().pop_tx_frame())
+    }
+
+    pub fn e1000_enqueue_rx_frame(&mut self, frame: Vec<u8>) {
+        if let Some(e1000) = self.e1000.as_ref() {
+            e1000.borrow_mut().enqueue_rx_frame(frame);
+        }
+    }
+
     pub fn reset_pci(&mut self) {
         let mut pci_cfg = self.pci_cfg.borrow_mut();
         bios_post(pci_cfg.bus_mut(), &mut self.pci_allocator).unwrap();
