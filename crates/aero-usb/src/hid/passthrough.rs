@@ -981,21 +981,11 @@ fn report_bits(report: &report_descriptor::HidReportInfo) -> u64 {
         .fold(0u64, |acc, v| acc.saturating_add(v))
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 struct ScanGlobalState {
     report_id: u32,
     report_size: u32,
     report_count: u32,
-}
-
-impl Default for ScanGlobalState {
-    fn default() -> Self {
-        Self {
-            report_id: 0,
-            report_size: 0,
-            report_count: 0,
-        }
-    }
 }
 
 fn scan_parse_unsigned(data: &[u8]) -> u32 {
@@ -1008,14 +998,14 @@ fn scan_parse_unsigned(data: &[u8]) -> u32 {
     }
 }
 
-fn scan_report_descriptor_bits(
-    report_descriptor: &[u8],
-) -> (
+type ScanReportDescriptorBits = (
     bool,
     BTreeMap<u8, u64>,
     BTreeMap<u8, u64>,
     BTreeMap<u8, u64>,
-) {
+);
+
+fn scan_report_descriptor_bits(report_descriptor: &[u8]) -> ScanReportDescriptorBits {
     let mut global = ScanGlobalState::default();
     let mut global_stack: Vec<ScanGlobalState> = Vec::new();
 

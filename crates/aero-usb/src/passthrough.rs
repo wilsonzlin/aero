@@ -567,6 +567,33 @@ impl UsbPassthroughDevice {
         data_stage: Option<&[u8]>,
     ) -> ControlResponse {
         let req_dir_in = setup.is_device_to_host();
+        let expected_len = setup.w_length as usize;
+        // Normalize empty `data_stage` for no-data control writes.
+        //
+        // Some callers represent "no DATA stage" as `None`, while others may pass `Some(&[])`.
+        // Treat them as equivalent when `wLength == 0` so we don't re-emit duplicate host actions.
+        let data_stage = if !req_dir_in && expected_len == 0 {
+            match data_stage {
+                Some([]) => None,
+                other => other,
+            }
+        } else {
+            data_stage
+        };
+
+        // Defensive: enforce that control OUT requests always provide exactly `wLength` bytes.
+        //
+        // The UHCI glue in `AttachedUsbDevice` is expected to only call us with a correct payload,
+        // but this is a public API and we should not silently emit malformed host actions.
+        if !req_dir_in {
+            match (expected_len, data_stage) {
+                (0, None) => {}
+                (0, Some(_)) => return ControlResponse::Stall,
+                (_, None) => return ControlResponse::Stall,
+                (expected, Some(buf)) if buf.len() != expected => return ControlResponse::Stall,
+                _ => {}
+            }
+        }
 
         let same_as_inflight = self.control_inflight.as_ref().is_some_and(|ctl| {
             if ctl.setup != setup {
@@ -616,6 +643,11 @@ impl UsbPassthroughDevice {
         if req_dir_in {
             Self::map_in_result(inflight.setup, result)
         } else {
+            if let UsbHostResult::OkOut { bytes_written } = result {
+                if bytes_written != expected_len {
+                    return ControlResponse::Timeout;
+                }
+            }
             Self::map_out_result(result)
         }
     }
@@ -682,10 +714,18 @@ impl UsbPassthroughDevice {
             "handle_out_transfer should not be used for control endpoint 0, got {endpoint:#04x}"
         );
         if let Some(inflight) = self.ep_inflight.get(&endpoint) {
-            if let Some(result) = self.take_result(inflight.id) {
+            let inflight_id = inflight.id;
+            let expected_len = inflight.len;
+            if let Some(result) = self.take_result(inflight_id) {
                 self.ep_inflight.remove(&endpoint);
                 return match result {
-                    UsbHostResult::OkOut { .. } => UsbOutResult::Ack,
+                    UsbHostResult::OkOut { bytes_written } => {
+                        if bytes_written != expected_len {
+                            UsbOutResult::Timeout
+                        } else {
+                            UsbOutResult::Ack
+                        }
+                    }
                     UsbHostResult::Stall => UsbOutResult::Stall,
                     UsbHostResult::Error(_) | UsbHostResult::OkIn { .. } => UsbOutResult::Timeout,
                 };
