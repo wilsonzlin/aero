@@ -976,10 +976,7 @@ pub fn generate_wgsl(ir: &ShaderIr) -> WgslOutput {
                 ));
             }
             for &idx in &color_outputs {
-                wgsl.push_str(&format!(
-                    "  var oC{}: vec4<f32> = vec4<f32>(0.0);\n",
-                    idx
-                ));
+                wgsl.push_str(&format!("  var oC{}: vec4<f32> = vec4<f32>(0.0);\n", idx));
             }
             wgsl.push('\n');
 
