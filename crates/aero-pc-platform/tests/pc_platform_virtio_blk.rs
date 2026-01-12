@@ -5,6 +5,7 @@ use aero_interrupts::apic::IOAPIC_MMIO_BASE;
 use aero_pc_platform::{PcPlatform, PcPlatformConfig};
 use aero_platform::interrupts::{InterruptController, PlatformInterruptMode};
 use aero_storage::VirtualDisk;
+use aero_virtio::devices::VirtioDevice;
 use aero_virtio::devices::blk::{BlockBackend, VirtioBlk, VIRTIO_BLK_SECTOR_SIZE};
 use memory::MemoryBus as _;
 
@@ -188,10 +189,16 @@ fn pc_platform_virtio_blk_device_cfg_reports_capacity_and_block_size() {
             .device_as_any_mut()
             .downcast_mut::<VirtioBlk<Box<dyn VirtualDisk + Send>>>()
             .expect("virtio device should be VirtioBlk");
-        let backend = blk.backend_mut();
+        let seg_max = u32::from(blk.queue_max_size(0).saturating_sub(2));
+        let (capacity, blk_size) = {
+            let backend = blk.backend_mut();
+            (backend.len() / VIRTIO_BLK_SECTOR_SIZE, backend.blk_size())
+        };
         (
-            backend.len() / VIRTIO_BLK_SECTOR_SIZE,
-            backend.blk_size(),
+            capacity,
+            0u32, // size_max (contract v1: unused, must be 0)
+            seg_max,
+            blk_size,
         )
     };
 
@@ -203,10 +210,14 @@ fn pc_platform_virtio_blk_device_cfg_reports_capacity_and_block_size() {
     const DEVICE_CFG: u64 = 0x3000;
 
     let capacity = pc.memory.read_u64(bar0_base + DEVICE_CFG);
+    let size_max = pc.memory.read_u32(bar0_base + DEVICE_CFG + 8);
+    let seg_max = pc.memory.read_u32(bar0_base + DEVICE_CFG + 12);
     let blk_size = pc.memory.read_u32(bar0_base + DEVICE_CFG + 20);
 
     assert_eq!(capacity, expected.0);
-    assert_eq!(blk_size, expected.1);
+    assert_eq!(size_max, expected.1);
+    assert_eq!(seg_max, expected.2);
+    assert_eq!(blk_size, expected.3);
 }
 
 #[test]
