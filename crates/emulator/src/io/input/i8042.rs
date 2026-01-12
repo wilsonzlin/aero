@@ -253,4 +253,38 @@ mod tests {
         dev.port_read(0x60, 1);
         assert_eq!(irq.take(), vec![12, 12, 12]);
     }
+
+    #[test]
+    fn key_a_is_translated_to_set1_by_default() {
+        let ctrl = new_shared_controller();
+        let dev = ctrl.clone();
+
+        ctrl.borrow_mut().inject_browser_key("KeyA", true);
+
+        // Set-2 make code for KeyA is 0x1C, which translates to Set-1 0x1E when command-byte bit 6
+        // (translation) is enabled (default).
+        assert_eq!(dev.port_read(0x60, 1) as u8, 0x1E);
+    }
+
+    #[test]
+    fn ps2_mouse_stream_packets_are_generated() {
+        let ctrl = new_shared_controller();
+        let mut dev = ctrl.clone();
+
+        // Enable mouse reporting (write-to-mouse prefix + enable data reporting).
+        dev.port_write(0x64, 1, 0xD4);
+        dev.port_write(0x60, 1, 0xF4);
+
+        // Mouse ACK.
+        assert_eq!(dev.port_read(0x60, 1) as u8, 0xFA);
+
+        // Inject a small movement and verify a 3-byte packet is emitted.
+        ctrl.borrow_mut().inject_mouse_motion(1, 0, 0);
+
+        let b0 = dev.port_read(0x60, 1) as u8;
+        let b1 = dev.port_read(0x60, 1) as u8;
+        let b2 = dev.port_read(0x60, 1) as u8;
+
+        assert_eq!([b0, b1, b2], [0x08, 0x01, 0x00]);
+    }
 }

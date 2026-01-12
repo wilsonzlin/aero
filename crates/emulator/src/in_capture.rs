@@ -547,6 +547,7 @@ fn js_code_to_linux_key(code: &str) -> Option<u16> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::io::PortIO;
     use crate::io::usb::core::UsbInResult;
     use crate::io::usb::{ControlResponse, SetupPacket, UsbDeviceModel};
     use crate::io::virtio::devices::input::{
@@ -574,6 +575,18 @@ mod tests {
     fn init_used(mem: &mut DenseMemory, used: u64) {
         mem.write_u16_le(used, 0).unwrap();
         mem.write_u16_le(used + 2, 0).unwrap();
+    }
+
+    fn drain_i8042_output(ps2: &SharedI8042Controller) -> Vec<u8> {
+        let mut out = Vec::new();
+        loop {
+            let status = ps2.port_read(0x64, 1) as u8;
+            if status & 0x01 == 0 {
+                break;
+            }
+            out.push(ps2.port_read(0x60, 1) as u8);
+        }
+        out
     }
 
     fn configure_usb_device(dev: &mut impl UsbDeviceModel) {
@@ -646,11 +659,7 @@ mod tests {
         pipeline.handle_key(&mut mem, "KeyA", true).unwrap();
 
         let ps2 = pipeline.ps2.as_ref().unwrap();
-        {
-            let mut ctrl = ps2.borrow_mut();
-            assert_ne!(ctrl.read_port(0x64) & 0x01, 0);
-            assert_eq!(ctrl.read_port(0x60), 0x1E);
-        }
+        assert_eq!(drain_i8042_output(ps2), vec![0x1E]);
         assert_eq!(mem.read_u16_le(used + 2).unwrap(), 0);
 
         pipeline
@@ -681,10 +690,7 @@ mod tests {
         pipeline.handle_key(&mut mem, "ArrowUp", true).unwrap();
         pipeline.handle_key(&mut mem, "ArrowUp", false).unwrap();
 
-        let bytes: Vec<u8> = {
-            let mut ctrl = ps2.borrow_mut();
-            (0..4).map(|_| ctrl.read_port(0x60)).collect()
-        };
+        let bytes = drain_i8042_output(pipeline.ps2.as_ref().unwrap());
         assert_eq!(bytes, vec![0xE0, 0x48, 0xE0, 0xC8]);
 
         // Sequence keys: PrintScreen and Pause have multi-byte make/break.
@@ -693,17 +699,14 @@ mod tests {
         pipeline.handle_key(&mut mem, "Pause", true).unwrap();
         pipeline.handle_key(&mut mem, "Pause", false).unwrap();
 
-        let bytes: Vec<u8> = {
-            let mut ctrl = ps2.borrow_mut();
-            (0..14).map(|_| ctrl.read_port(0x60)).collect()
-        };
+        let bytes = drain_i8042_output(pipeline.ps2.as_ref().unwrap());
 
         assert_eq!(
             bytes,
             vec![
-                // PrintScreen make/break (Set-1).
+                // PrintScreen make/break.
                 0xE0, 0x2A, 0xE0, 0x37, 0xE0, 0xB7, 0xE0, 0xAA,
-                // Pause make only (Set-1).
+                // Pause make only (Set-2 -> Set-1 translation enabled by default).
                 0xE1, 0x1D, 0x45, 0xE1, 0x9D, 0xC5,
             ]
         );
