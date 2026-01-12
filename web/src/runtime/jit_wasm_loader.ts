@@ -1,5 +1,11 @@
 export type JitWasmVariant = "threaded" | "single";
 
+export type Tier1BlockCompilation = {
+  wasm_bytes: Uint8Array;
+  code_byte_len: number;
+  exit_to_interpreter: boolean;
+};
+
 export interface JitWasmApi {
   /**
    * Compile a Tier-1 x86 basic block into a standalone WASM module.
@@ -7,7 +13,7 @@ export interface JitWasmApi {
    * This intentionally uses a permissive signature until the WASM ABI is stabilized.
    */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  compile_tier1_block: (...args: any[]) => Uint8Array;
+  compile_tier1_block: (...args: any[]) => Tier1BlockCompilation;
 }
 
 type RawJitWasmModule = any;

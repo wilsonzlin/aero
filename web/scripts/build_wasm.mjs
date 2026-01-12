@@ -199,11 +199,19 @@ const packages = [
         cratePath,
         outDir: outDirAero,
         outName: "aero_wasm",
+        // The main runtime module imports memory so the JS runtime can optionally inject its own
+        // `WebAssembly.Memory` (e.g. the shared guest RAM allocation owned by the worker
+        // coordinator).
+        importMemory: true,
+        threaded: true,
     },
     {
         cratePath: path.join(repoRoot, "crates/aero-gpu-wasm"),
         outDir: outDirAeroGpu,
         outName: "aero_gpu_wasm",
+        // The GPU worker module follows the same imported-memory contract as the main runtime.
+        importMemory: true,
+        threaded: true,
     },
 ];
 
@@ -213,6 +221,11 @@ if (existsSync(path.join(aeroJitWasmCratePath, "Cargo.toml"))) {
         cratePath: aeroJitWasmCratePath,
         outDir: outDirAeroJit,
         outName: "aero_jit_wasm",
+        // IMPORTANT: the Tier-1 JIT compiler must have its *own* private linear memory so it
+        // does not alias the emulator/runtime's `WebAssembly.Memory` (multiple Rust runtimes
+        // sharing one linear memory is undefined behaviour).
+        importMemory: false,
+        threaded: false,
     });
 } else {
     console.warn(
@@ -220,14 +233,12 @@ if (existsSync(path.join(aeroJitWasmCratePath, "Cargo.toml"))) {
     );
 }
 
-const targetFeatures = ["+bulk-memory"];
+const baseTargetFeatures = ["+bulk-memory"];
 const simdSetting = (process.env.AERO_WASM_SIMD ?? "1").toLowerCase();
 if (simdSetting !== "0" && simdSetting !== "false") {
-    targetFeatures.push("+simd128");
+    baseTargetFeatures.push("+simd128");
 }
-if (isThreaded) {
-    targetFeatures.push("+atomics", "+mutable-globals");
-}
+const threadedTargetFeatures = [...baseTargetFeatures, "+atomics", "+mutable-globals"];
 
 const existingRustflags = process.env.RUSTFLAGS?.trim() ?? "";
 // Avoid accidentally inheriting target features (especially `+atomics`) from a user's environment.
@@ -239,11 +250,7 @@ const rustflagsWithoutTargetFeatures = existingRustflags
     .replace(/-C\s*codegen-units=[^ ]+/g, "")
     .replace(/-C\s*embed-bitcode=[^ ]+/g, "")
     .trim();
-const requiredRustflags = [];
-if (targetFeatures.length !== 0) {
-    requiredRustflags.push(`-C target-feature=${targetFeatures.join(",")}`);
-}
-
+const commonRustflags = [];
 if (isRelease) {
     // Release builds are tuned for runtime performance.
     //
@@ -255,55 +262,59 @@ if (isRelease) {
     //   "lto can only be run for executables, cdylibs and static library outputs"
     //
     // We rely on `wasm-opt -O4` for post-link optimization instead.
-    requiredRustflags.push("-C opt-level=3", "-C codegen-units=1");
+    commonRustflags.push("-C opt-level=3", "-C codegen-units=1");
 }
 
-// Both variants are built with imported+exported memory so the web runtime can
-// optionally provide a `WebAssembly.Memory` (e.g. the shared guest RAM allocation
-// owned by the worker coordinator).
-//
-// The module's `--max-memory` must be >= the maximum the runtime will ever
-// allocate for `guestMemory.maximum`; otherwise instantiation fails with a
-// memory type mismatch when the runtime injects its own memory.
-requiredRustflags.push(
+const importedMemoryLinkArgs = [
     "-C link-arg=--import-memory",
     "-C link-arg=--export-memory",
     // Place the Rust/WASM stack at low addresses so the runtime-reserved region
     // is contiguous and guest RAM can live at high addresses (`guest_base`).
     "-C link-arg=--stack-first",
     `-C link-arg=--max-memory=${maxMemoryBytes}`,
-);
+];
 
-if (isThreaded) {
+const sharedMemoryLinkArgs = [
     // Produce a shared-memory + imported-memory module so it can be used in
     // crossOriginIsolated contexts (SharedArrayBuffer + Atomics).
-    requiredRustflags.push(
-        "-C link-arg=--shared-memory",
-        // wasm-bindgen's threads transform expects these TLS exports.
-        "-C link-arg=--export=__wasm_init_tls",
-        "-C link-arg=--export=__tls_base",
-        "-C link-arg=--export=__tls_size",
-        "-C link-arg=--export=__tls_align",
-    );
+    "-C link-arg=--shared-memory",
+    // wasm-bindgen's threads transform expects these TLS exports.
+    "-C link-arg=--export=__wasm_init_tls",
+    "-C link-arg=--export=__tls_base",
+    "-C link-arg=--export=__tls_size",
+    "-C link-arg=--export=__tls_align",
+];
+
+function rustflagsForPkg(pkg, pkgUsesThreads) {
+    const targetFeatures = pkgUsesThreads ? threadedTargetFeatures : baseTargetFeatures;
+    const out = [];
+    if (rustflagsWithoutTargetFeatures) out.push(rustflagsWithoutTargetFeatures);
+    if (targetFeatures.length !== 0) {
+        out.push(`-C target-feature=${targetFeatures.join(",")}`);
+    }
+    out.push(...commonRustflags);
+    if (pkg.importMemory) {
+        // The module's `--max-memory` must be >= the maximum the runtime will ever allocate for
+        // `guestMemory.maximum`; otherwise instantiation fails with a memory type mismatch when the
+        // runtime injects its own memory.
+        out.push(...importedMemoryLinkArgs);
+        if (pkgUsesThreads) {
+            out.push(...sharedMemoryLinkArgs);
+        }
+    }
+    return out.filter(Boolean).join(" ").trim();
 }
 
-const rustflags = [rustflagsWithoutTargetFeatures, ...requiredRustflags].filter(Boolean).join(" ").trim();
-
-const env = { ...process.env };
-if (rustflags) {
-    env.RUSTFLAGS = rustflags;
-} else {
-    delete env.RUSTFLAGS;
-}
+const baseEnv = { ...process.env };
 
 if (isThreaded) {
     // `--shared-memory` requires rebuilding std with atomics/bulk-memory enabled.
     // This uses the pinned nightly toolchain + rust-src (see scripts/toolchains.json).
-    env.RUSTUP_TOOLCHAIN = wasmThreadedToolchain;
+    baseEnv.RUSTUP_TOOLCHAIN = wasmThreadedToolchain;
 } else {
     // Keep the single-threaded build on the repo's pinned stable toolchain, regardless of any
     // user-level overrides.
-    delete env.RUSTUP_TOOLCHAIN;
+    delete baseEnv.RUSTUP_TOOLCHAIN;
 }
 
 // Prefer reproducible builds when a workspace lockfile is present, but allow
@@ -330,7 +341,8 @@ for (const pkg of packages) {
         pkg.cratePath,
     ];
 
-    if (isThreaded) {
+    const pkgUsesThreads = isThreaded && pkg.threaded;
+    if (pkgUsesThreads) {
         args.push("-Z", "build-std=std,panic_abort", "--features", "wasm-threaded");
     }
 
@@ -338,7 +350,15 @@ for (const pkg of packages) {
         args.push("--locked");
     }
 
-    const result = spawnSync("wasm-pack", args, { env, stdio: "inherit" });
+    const pkgEnv = { ...baseEnv };
+    const rustflags = rustflagsForPkg(pkg, pkgUsesThreads);
+    if (rustflags) {
+        pkgEnv.RUSTFLAGS = rustflags;
+    } else {
+        delete pkgEnv.RUSTFLAGS;
+    }
+
+    const result = spawnSync("wasm-pack", args, { env: pkgEnv, stdio: "inherit" });
     if ((result.status ?? 1) !== 0) {
         process.exit(result.status ?? 1);
     }

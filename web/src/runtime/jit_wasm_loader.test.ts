@@ -38,7 +38,11 @@ describe("runtime/jit_wasm_loader", () => {
 
     const fakeModule = {
       default: async (_input?: unknown) => {},
-      compile_tier1_block: () => new Uint8Array(WASM_EMPTY_MODULE_BYTES),
+      compile_tier1_block: () => ({
+        wasm_bytes: new Uint8Array(WASM_EMPTY_MODULE_BYTES),
+        code_byte_len: 0,
+        exit_to_interpreter: false,
+      }),
     };
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -49,7 +53,7 @@ describe("runtime/jit_wasm_loader", () => {
 
     const { initJitWasm } = await import("./jit_wasm_loader");
     const { api } = await initJitWasm({ module });
-    const bytes = api.compile_tier1_block();
+    const { wasm_bytes: bytes } = api.compile_tier1_block();
     // `WebAssembly.validate` expects an ArrayBuffer-backed view; `Uint8Array` is
     // generic over `ArrayBufferLike` and may be backed by `SharedArrayBuffer`.
     // Copy when needed so TypeScript (and spec compliance) are happy.
