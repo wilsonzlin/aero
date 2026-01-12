@@ -6,6 +6,7 @@ import type { RemoteRangeDiskMetadataStore, RemoteRangeDiskSparseCacheFactory } 
 import { RemoteRangeDisk } from "./remote_range_disk";
 import { MemorySparseDisk } from "./memory_sparse_disk";
 import { RemoteCacheManager, remoteRangeDeliveryType } from "./remote_cache_manager";
+import { RANGE_STREAM_CHUNK_SIZE } from "./chunk_sizes";
 
 function createRangeFetch(
   data: Uint8Array<ArrayBuffer>,
@@ -437,5 +438,111 @@ describe("RuntimeDiskWorker (remote)", () => {
     expect(openMock).toHaveBeenCalledTimes(1);
     expect(openOpfsSpy).toHaveBeenCalledTimes(1);
     expect(clearCache).toHaveBeenCalledWith(expectedLegacyCacheKey);
+  });
+
+  it("uses default RANGE_STREAM_CHUNK_SIZE when opening via openRemote without blockSize", async () => {
+    vi.resetModules();
+
+    const openMock = vi.fn(async (_url: string, _opts: any) => {
+      return {
+        sectorSize: 512,
+        capacityBytes: 512,
+        async readSectors() {},
+        async writeSectors() {
+          throw new Error("read-only");
+        },
+        async flush() {},
+      };
+    });
+
+    vi.doMock("./metadata", async (importOriginal) => {
+      const actual = await importOriginal<typeof import("./metadata")>();
+      return {
+        ...actual,
+        hasOpfsSyncAccessHandle: () => true,
+      };
+    });
+
+    vi.doMock("./remote_range_disk", async (importOriginal) => {
+      const actual = await importOriginal<typeof import("./remote_range_disk")>();
+      return {
+        ...actual,
+        RemoteRangeDisk: { open: openMock },
+      };
+    });
+
+    const { RuntimeDiskWorker: MockedWorker } = await import("./runtime_disk_worker_impl");
+    const worker = new MockedWorker(() => {});
+
+    await worker.handleMessage({
+      type: "request",
+      requestId: 1,
+      op: "openRemote",
+      payload: {
+        url: "https://example.invalid/disk.img",
+        options: {
+          cacheBackend: "opfs",
+          cacheImageId: "test-image",
+          cacheVersion: "v1",
+          // blockSize intentionally omitted.
+        },
+      },
+    } satisfies RuntimeDiskRequestMessage);
+
+    expect(openMock).toHaveBeenCalledTimes(1);
+    expect(openMock.mock.calls[0]?.[1]?.chunkSize).toBe(RANGE_STREAM_CHUNK_SIZE);
+    expect(openMock.mock.calls[0]?.[1]?.cacheKeyParts?.deliveryType).toBe(remoteRangeDeliveryType(RANGE_STREAM_CHUNK_SIZE));
+  });
+
+  it("uses default RANGE_STREAM_CHUNK_SIZE when opening a remote range spec without chunkSizeBytes", async () => {
+    vi.resetModules();
+
+    const openMock = vi.fn(async (_url: string, _opts: any) => {
+      return {
+        sectorSize: 512,
+        capacityBytes: 512,
+        async readSectors() {},
+        async writeSectors() {
+          throw new Error("read-only");
+        },
+        async flush() {},
+      };
+    });
+
+    vi.doMock("./remote_range_disk", async (importOriginal) => {
+      const actual = await importOriginal<typeof import("./remote_range_disk")>();
+      return {
+        ...actual,
+        RemoteRangeDisk: { open: openMock },
+      };
+    });
+
+    const { RuntimeDiskWorker: MockedWorker } = await import("./runtime_disk_worker_impl");
+    const worker = new MockedWorker(() => {});
+
+    const spec: DiskOpenSpec = {
+      kind: "remote",
+      remote: {
+        delivery: "range",
+        kind: "cd",
+        format: "iso",
+        url: "https://example.invalid/disk.iso",
+        cacheKey: "test.iso.v1",
+        imageId: "test-image",
+        version: "v1",
+        // chunkSizeBytes intentionally omitted.
+      },
+    };
+
+    await worker.handleMessage({
+      type: "request",
+      requestId: 1,
+      op: "open",
+      payload: { spec },
+    } satisfies RuntimeDiskRequestMessage);
+
+    expect(openMock).toHaveBeenCalledTimes(1);
+    expect(openMock.mock.calls[0]?.[1]?.chunkSize).toBe(RANGE_STREAM_CHUNK_SIZE);
+    expect(openMock.mock.calls[0]?.[1]?.cacheKeyParts?.deliveryType).toBe(remoteRangeDeliveryType(RANGE_STREAM_CHUNK_SIZE));
   });
 });
