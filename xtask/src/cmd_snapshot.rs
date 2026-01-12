@@ -209,6 +209,32 @@ fn print_devices_section_summary(file: &mut fs::File, section: &SnapshotSectionI
         version: u16,
         flags: u16,
         len: u64,
+        inner: Option<DeviceInnerHeader>,
+    }
+
+    #[derive(Debug, Clone)]
+    enum DeviceInnerHeader {
+        IoSnapshot {
+            device_id: [u8; 4],
+            device_version: (u16, u16),
+            format_version: (u16, u16),
+        },
+        LegacyAero { version: u16, flags: u16 },
+    }
+
+    fn is_ascii_tag_byte(b: u8) -> bool {
+        (b'0'..=b'9').contains(&b)
+            || (b'A'..=b'Z').contains(&b)
+            || (b'a'..=b'z').contains(&b)
+            || b == b'_'
+    }
+
+    fn format_fourcc(id: [u8; 4]) -> String {
+        if id.iter().copied().all(is_ascii_tag_byte) {
+            String::from_utf8_lossy(&id).into_owned()
+        } else {
+            format!("0x{:02x}{:02x}{:02x}{:02x}", id[0], id[1], id[2], id[3])
+        }
     }
 
     let mut entries: Vec<DeviceSummaryEntry> = Vec::with_capacity(count as usize);
@@ -278,11 +304,55 @@ fn print_devices_section_summary(file: &mut fs::File, section: &SnapshotSectionI
             return;
         }
 
+        // Parse `aero-io-snapshot` / legacy `AERO` device header for debugging.
+        let inner = if len >= 4 {
+            let header_len = usize::try_from(len.min(16)).unwrap_or(16);
+            let mut header = [0u8; 16];
+            if let Err(e) = file.read_exact(&mut header[..header_len]) {
+                println!("  <failed to read device payload header: {e}>");
+                return;
+            }
+
+            if header_len >= 4 && &header[0..4] == b"AERO" {
+                if header_len >= 16 {
+                    let device_id = [header[8], header[9], header[10], header[11]];
+                    if device_id.iter().copied().all(is_ascii_tag_byte) {
+                        let format_major = u16::from_le_bytes([header[4], header[5]]);
+                        let format_minor = u16::from_le_bytes([header[6], header[7]]);
+                        let dev_major = u16::from_le_bytes([header[12], header[13]]);
+                        let dev_minor = u16::from_le_bytes([header[14], header[15]]);
+                        Some(DeviceInnerHeader::IoSnapshot {
+                            device_id,
+                            device_version: (dev_major, dev_minor),
+                            format_version: (format_major, format_minor),
+                        })
+                    } else if header_len >= 8 {
+                        let version = u16::from_le_bytes([header[4], header[5]]);
+                        let flags = u16::from_le_bytes([header[6], header[7]]);
+                        Some(DeviceInnerHeader::LegacyAero { version, flags })
+                    } else {
+                        None
+                    }
+                } else if header_len >= 8 {
+                    let version = u16::from_le_bytes([header[4], header[5]]);
+                    let flags = u16::from_le_bytes([header[6], header[7]]);
+                    Some(DeviceInnerHeader::LegacyAero { version, flags })
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         entries.push(DeviceSummaryEntry {
             id,
             version,
             flags,
             len,
+            inner,
         });
 
         if let Err(e) = file.seek(SeekFrom::Start(data_end)) {
@@ -311,13 +381,39 @@ fn print_devices_section_summary(file: &mut fs::File, section: &SnapshotSectionI
 
     const MAX_LISTED: usize = 64;
     for (idx, entry) in entries.iter().take(MAX_LISTED).enumerate() {
+        let inner = match &entry.inner {
+            Some(DeviceInnerHeader::IoSnapshot {
+                device_id,
+                device_version,
+                format_version,
+            }) => {
+                let (major, minor) = *device_version;
+                let (fmt_major, fmt_minor) = *format_version;
+                let mut suffix = format!(" inner={} v{}.{}", format_fourcc(*device_id), major, minor);
+                if fmt_major != 1 || fmt_minor != 0 {
+                    suffix.push_str(&format!(" fmt{}.{}", fmt_major, fmt_minor));
+                }
+                if major != entry.version || minor != entry.flags {
+                    suffix.push_str(&format!(
+                        " (outer v{}.{} mismatch)",
+                        entry.version, entry.flags
+                    ));
+                }
+                suffix
+            }
+            Some(DeviceInnerHeader::LegacyAero { version, flags }) => {
+                format!(" inner=legacy-AERO v{version} flags={flags}")
+            }
+            None => String::new(),
+        };
         println!(
-            "  - {}: {} version={} flags={} len={}",
+            "  - {}: {} version={} flags={} len={}{}",
             idx,
             DeviceId(entry.id),
             entry.version,
             entry.flags,
-            entry.len
+            entry.len,
+            inner,
         );
     }
     if entries.len() > MAX_LISTED {
