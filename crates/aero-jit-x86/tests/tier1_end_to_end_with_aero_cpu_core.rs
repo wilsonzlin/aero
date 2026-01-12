@@ -1,6 +1,8 @@
 #![cfg(not(target_arch = "wasm32"))]
 
-use aero_cpu_core::exec::{ExecCpu, ExecDispatcher, ExecutedTier, Interpreter, StepOutcome};
+use aero_cpu_core::exec::{
+    ExecCpu, ExecDispatcher, ExecutedTier, Interpreter, InterpreterBlockExit, StepOutcome,
+};
 use aero_cpu_core::jit::runtime::{JitConfig, JitRuntime};
 use aero_cpu_core::state::CpuState;
 use aero_jit_x86::abi;
@@ -45,15 +47,19 @@ struct Tier1Interpreter {
 }
 
 impl Interpreter<TestCpu> for Tier1Interpreter {
-    fn exec_block(&mut self, cpu: &mut TestCpu) -> u64 {
+    fn exec_block(&mut self, cpu: &mut TestCpu) -> InterpreterBlockExit {
         let entry_rip = cpu.rip();
         let block = discover_block(&self.bus, entry_rip, BlockLimits::default());
+        let instructions_retired = block.insts.len() as u64;
         let ir = translate_block(&block);
         let mut cpu_mem = vec![0u8; abi::CPU_STATE_SIZE as usize];
         tier1_interp::TestCpu::from_cpu_state(&cpu.state).write_to_abi_mem(&mut cpu_mem);
         let _ = tier1_interp::execute_block(&ir, &mut cpu_mem, &mut self.bus);
         tier1_interp::TestCpu::from_abi_mem(&cpu_mem).write_to_cpu_state(&mut cpu.state);
-        cpu.state.rip
+        InterpreterBlockExit {
+            next_rip: cpu.state.rip,
+            instructions_retired,
+        }
     }
 }
 
@@ -139,6 +145,7 @@ fn tier1_hotness_triggers_compile_and_subsequent_execution_uses_jit() {
             tier,
             entry_rip,
             next_rip,
+            ..
         } => {
             assert_eq!(tier, ExecutedTier::Jit);
             assert_eq!(entry_rip, entry);

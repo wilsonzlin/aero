@@ -2,7 +2,9 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use aero_cpu_core::exec::{ExecCpu, ExecDispatcher, ExecutedTier, Interpreter, StepOutcome};
+use aero_cpu_core::exec::{
+    ExecCpu, ExecDispatcher, ExecutedTier, Interpreter, InterpreterBlockExit, StepOutcome,
+};
 use aero_cpu_core::jit::cache::{CodeCache, CompiledBlockHandle, CompiledBlockMeta};
 use aero_cpu_core::jit::runtime::{
     CompileRequestSink, JitBackend, JitBlockExit, JitConfig, JitRuntime,
@@ -115,13 +117,16 @@ impl TestInterpreter {
 }
 
 impl Interpreter<TestCpu> for TestInterpreter {
-    fn exec_block(&mut self, cpu: &mut TestCpu) -> u64 {
+    fn exec_block(&mut self, cpu: &mut TestCpu) -> InterpreterBlockExit {
         let rip = cpu.rip();
         cpu.begin_instruction();
         let next = self.steps.get_mut(&rip).expect("no interp step")(cpu);
         cpu.end_instruction();
         cpu.maybe_deliver_interrupt();
-        next
+        InterpreterBlockExit {
+            next_rip: next,
+            instructions_retired: 1,
+        }
     }
 }
 
@@ -418,4 +423,114 @@ fn pending_interrupt_delivered_at_jit_block_boundaries() {
 
     dispatcher.step(&mut cpu);
     assert_eq!(cpu.rip, 2);
+}
+
+#[test]
+fn step_reports_retired_instruction_counts_across_tiers() {
+    let config = JitConfig {
+        enabled: true,
+        hot_threshold: 1_000,
+        cache_max_blocks: 16,
+        cache_max_bytes: 0,
+    };
+
+    let mut backend = TestJitBackend::default();
+    backend.install(0, |cpu: &mut TestCpu| {
+        cpu.acc += 10;
+        JitBlockExit {
+            next_rip: 2,
+            exit_to_interpreter: false,
+            committed: true,
+        }
+    });
+    backend.install(1, |_cpu: &mut TestCpu| JitBlockExit {
+        // Roll back and re-execute from the same RIP in the interpreter.
+        next_rip: 2,
+        exit_to_interpreter: true,
+        committed: false,
+    });
+
+    let compile = RecordingCompileSink::default();
+    let mut jit = JitRuntime::new(config, backend, compile);
+
+    // Install a committed block with an instruction count of 5.
+    jit.install_handle(CompiledBlockHandle {
+        entry_rip: 1,
+        table_index: 0,
+        meta: CompiledBlockMeta {
+            code_paddr: 0x1000,
+            byte_len: 4,
+            page_versions: Vec::new(),
+            instruction_count: 5,
+            inhibit_interrupts_after_block: false,
+        },
+    });
+
+    // Install a rollback block with a non-zero instruction count; it should not be reported as
+    // retired when the exit is not committed.
+    jit.install_handle(CompiledBlockHandle {
+        entry_rip: 2,
+        table_index: 1,
+        meta: CompiledBlockMeta {
+            code_paddr: 0x2000,
+            byte_len: 4,
+            page_versions: Vec::new(),
+            instruction_count: 7,
+            inhibit_interrupts_after_block: false,
+        },
+    });
+
+    let mut interp = TestInterpreter::default();
+    interp.install(0, |_cpu: &mut TestCpu| 1);
+
+    let mut dispatcher = ExecDispatcher::new(interp, jit);
+    let mut cpu = TestCpu {
+        rip: 0,
+        ..TestCpu::default()
+    };
+
+    match dispatcher.step(&mut cpu) {
+        StepOutcome::Block {
+            tier,
+            entry_rip,
+            next_rip,
+            instructions_retired,
+        } => {
+            assert_eq!(tier, ExecutedTier::Interpreter);
+            assert_eq!(entry_rip, 0);
+            assert_eq!(next_rip, 1);
+            assert_eq!(instructions_retired, 1);
+        }
+        other => panic!("expected interpreter block, got {other:?}"),
+    }
+
+    match dispatcher.step(&mut cpu) {
+        StepOutcome::Block {
+            tier,
+            entry_rip,
+            next_rip,
+            instructions_retired,
+        } => {
+            assert_eq!(tier, ExecutedTier::Jit);
+            assert_eq!(entry_rip, 1);
+            assert_eq!(next_rip, 2);
+            assert_eq!(instructions_retired, 5);
+        }
+        other => panic!("expected JIT block, got {other:?}"),
+    }
+
+    match dispatcher.step(&mut cpu) {
+        StepOutcome::Block {
+            tier,
+            entry_rip,
+            next_rip,
+            instructions_retired,
+        } => {
+            assert_eq!(tier, ExecutedTier::Jit);
+            assert_eq!(entry_rip, 2);
+            assert_eq!(next_rip, 2);
+            assert_eq!(instructions_retired, 0);
+        }
+        other => panic!("expected rollback JIT block, got {other:?}"),
+    }
 }

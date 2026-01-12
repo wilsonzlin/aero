@@ -3,7 +3,9 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use aero_cpu_core::exec::{ExecCpu, ExecDispatcher, ExecutedTier, Interpreter, StepOutcome};
+use aero_cpu_core::exec::{
+    ExecCpu, ExecDispatcher, ExecutedTier, Interpreter, InterpreterBlockExit, StepOutcome,
+};
 use aero_cpu_core::jit::cache::CompiledBlockHandle;
 #[cfg(feature = "tier1-inline-tlb")]
 use aero_cpu_core::jit::runtime::JitBackend;
@@ -61,10 +63,13 @@ struct TestInterpreter {
 }
 
 impl Interpreter<TestCpu> for TestInterpreter {
-    fn exec_block(&mut self, cpu: &mut TestCpu) -> u64 {
+    fn exec_block(&mut self, cpu: &mut TestCpu) -> InterpreterBlockExit {
         self.calls.set(self.calls.get() + 1);
         cpu.state.gpr[Gpr::Rcx.as_u8() as usize] = 0x99;
-        0x4000
+        InterpreterBlockExit {
+            next_rip: 0x4000,
+            instructions_retired: 1,
+        }
     }
 }
 
@@ -176,6 +181,7 @@ fn wasmtime_backend_executes_blocks_via_exec_dispatcher() {
             tier: ExecutedTier::Jit,
             entry_rip,
             next_rip,
+            ..
         } => {
             assert_eq!(entry_rip, entry1);
             assert_eq!(next_rip, entry2);
@@ -195,6 +201,7 @@ fn wasmtime_backend_executes_blocks_via_exec_dispatcher() {
             tier: ExecutedTier::Jit,
             entry_rip,
             next_rip,
+            ..
         } => {
             assert_eq!(entry_rip, entry2);
             assert_eq!(next_rip, entry3);
@@ -209,6 +216,7 @@ fn wasmtime_backend_executes_blocks_via_exec_dispatcher() {
             tier: ExecutedTier::Interpreter,
             entry_rip,
             next_rip,
+            ..
         } => {
             assert_eq!(entry_rip, entry3);
             assert_eq!(next_rip, 0x4000);

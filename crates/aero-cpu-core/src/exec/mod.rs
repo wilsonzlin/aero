@@ -20,8 +20,14 @@ pub trait ExecCpu {
     fn on_retire_instructions(&mut self, _instructions: u64, _inhibit_interrupts: bool) {}
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InterpreterBlockExit {
+    pub next_rip: u64,
+    pub instructions_retired: u64,
+}
+
 pub trait Interpreter<Cpu: ExecCpu> {
-    fn exec_block(&mut self, cpu: &mut Cpu) -> u64;
+    fn exec_block(&mut self, cpu: &mut Cpu) -> InterpreterBlockExit;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -37,6 +43,7 @@ pub enum StepOutcome {
         tier: ExecutedTier,
         entry_rip: u64,
         next_rip: u64,
+        instructions_retired: u64,
     },
 }
 
@@ -74,13 +81,14 @@ where
         let compiled = self.jit.prepare_block(entry_rip);
 
         if self.force_interpreter || compiled.is_none() {
-            let next_rip = self.interpreter.exec_block(cpu);
-            cpu.set_rip(next_rip);
+            let exit = self.interpreter.exec_block(cpu);
+            cpu.set_rip(exit.next_rip);
             self.force_interpreter = false;
             return StepOutcome::Block {
                 tier: ExecutedTier::Interpreter,
                 entry_rip,
-                next_rip,
+                next_rip: exit.next_rip,
+                instructions_retired: exit.instructions_retired,
             };
         }
 
@@ -97,6 +105,11 @@ where
             tier: ExecutedTier::Jit,
             entry_rip,
             next_rip: exit.next_rip,
+            instructions_retired: if exit.committed {
+                u64::from(handle.meta.instruction_count)
+            } else {
+                0
+            },
         }
     }
 
@@ -246,7 +259,7 @@ fn deliver_tier0_exception<B: crate::mem::CpuBus>(
 }
 
 impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
-    fn exec_block(&mut self, cpu: &mut Vcpu<B>) -> u64 {
+    fn exec_block(&mut self, cpu: &mut Vcpu<B>) -> InterpreterBlockExit {
         use aero_x86::{Mnemonic, OpKind, Register};
 
         use crate::exception::{AssistReason, Exception};
@@ -300,24 +313,27 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
                     cpu.cpu.pending.retire_instruction();
                     cpu.cpu.time.advance_cycles(1);
                     cpu.cpu.state.msr.tsc = cpu.cpu.time.read_tsc();
+                    executed += 1;
                     break;
                 }
                 StepExit::Halted => {
                     cpu.cpu.pending.retire_instruction();
                     cpu.cpu.time.advance_cycles(1);
                     cpu.cpu.state.msr.tsc = cpu.cpu.time.read_tsc();
+                    executed += 1;
                     break;
                 }
                 StepExit::BiosInterrupt(vector) => {
                     // Tier-0 surfaces BIOS ROM stubs (`HLT` reached after an `INT n`) as a
                     // `BiosInterrupt` exit. `step()` consumes the recorded vector via
-                    // `take_pending_bios_int()`, but this `Interpreter` trait only returns a RIP.
+                    // `take_pending_bios_int()`, but this `Interpreter` trait does not return it.
                     // Re-store the vector in CPU state so the embedding can observe and dispatch
                     // it before resuming execution at the stub's `IRET`.
                     cpu.cpu.state.set_pending_bios_int(vector);
                     cpu.cpu.pending.retire_instruction();
                     cpu.cpu.time.advance_cycles(1);
                     cpu.cpu.state.msr.tsc = cpu.cpu.time.read_tsc();
+                    executed += 1;
                     break;
                 }
                 StepExit::Assist(AssistReason::Interrupt) => {
@@ -368,6 +384,7 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
                             if inhibit_interrupts {
                                 cpu.cpu.pending.inhibit_interrupts_for_one_instruction();
                             }
+                            executed += 1;
                         }
                         crate::interrupts::InterruptAssistOutcome::FaultDelivered => {}
                     }
@@ -430,6 +447,7 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
                             if inhibits_interrupt {
                                 cpu.cpu.pending.inhibit_interrupts_for_one_instruction();
                             }
+                            executed += 1;
                         }
                         Err((faulting_rip, e)) => {
                             deliver_tier0_exception(cpu, faulting_rip, e);
@@ -440,6 +458,9 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
             }
         }
 
-        cpu.cpu.state.rip()
+        InterpreterBlockExit {
+            next_rip: cpu.cpu.state.rip(),
+            instructions_retired: executed,
+        }
     }
 }

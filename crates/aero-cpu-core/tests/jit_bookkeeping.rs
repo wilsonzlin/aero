@@ -1,4 +1,6 @@
-use aero_cpu_core::exec::{ExecCpu, ExecDispatcher, ExecutedTier, Interpreter, StepOutcome, Vcpu};
+use aero_cpu_core::exec::{
+    ExecCpu, ExecDispatcher, ExecutedTier, Interpreter, InterpreterBlockExit, StepOutcome, Vcpu,
+};
 use aero_cpu_core::interrupts::CpuCore;
 use aero_cpu_core::jit::cache::CompiledBlockHandle;
 use aero_cpu_core::jit::runtime::{CompileRequestSink, JitBackend, JitBlockExit, JitConfig, JitRuntime};
@@ -30,8 +32,11 @@ impl JitBackend for FixedExitBackend {
 struct NoopInterpreter;
 
 impl Interpreter<Vcpu<FlatTestBus>> for NoopInterpreter {
-    fn exec_block(&mut self, cpu: &mut Vcpu<FlatTestBus>) -> u64 {
-        cpu.rip()
+    fn exec_block(&mut self, cpu: &mut Vcpu<FlatTestBus>) -> InterpreterBlockExit {
+        InterpreterBlockExit {
+            next_rip: cpu.rip(),
+            instructions_retired: 0,
+        }
     }
 }
 
