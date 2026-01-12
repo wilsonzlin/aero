@@ -339,6 +339,8 @@ The in-browser `aero-net-stack` snapshots only the minimal dynamic state require
 - Guest TCP connections that were mid-flight will break (RST/timeout) and must be re-established by the guest/application.
 - UDP is connectionless; any in-flight datagrams may be dropped, but subsequent sends work once the stack is running again.
 
+Implementation note: the stack also supports an explicit best-effort reconnect policy (`TcpRestorePolicy::Reconnect`), which restores only connection IDs/endpoints and attempts to re-open proxy tunnels. This mode cannot guarantee correct TCP semantics (and is expected to fail for many real-world protocols such as TLS). Canonical VM snapshot restore uses the deterministic **Drop** policy.
+
 #### L2 tunnel (production Option C)
 
 The L2 tunnel is a host transport (WebSocket/WebRTC DataChannel) carrying raw Ethernet frames; the connection itself is **not bit-restorable**.
@@ -350,10 +352,12 @@ The L2 tunnel is a host transport (WebSocket/WebRTC DataChannel) carrying raw Et
 
 To avoid capturing partially-processed network traffic (and to ensure restored device state does not see stale ring contents):
 
-1. **Pause CPU + I/O + NET** (stop guest execution + device emulation + frame forwarding).
-   - During `vm.snapshot.pause`, the net worker stops the tunnel forwarder and clears `NET_TX`/`NET_RX`.
-2. Save/restore snapshot bytes.
-3. **Resume CPU + I/O + NET**; the net worker reconnects best-effort.
+1. **Pause CPU + I/O** (stop guest execution + device emulation).
+2. **Then pause NET** (stop frame forwarding) and clear transient host traffic:
+   - close/stop the tunnel transport (WebSocket/WebRTC),
+   - drain/reset the shared `NET_TX`/`NET_RX` rings **only after** all producers/consumers are paused (to avoid races and stale replay).
+3. Save/restore snapshot bytes.
+4. **Resume CPU + I/O**, then resume NET; the net worker reconnects best-effort.
 
 ### L2 tunnel forwarder (Option C) pause/drain policy
 
