@@ -1906,7 +1906,8 @@ fn aerogpu_cmd_rebinds_vertex_buffer_between_draws_without_restarting_render_pas
 }
 
 #[test]
-fn aerogpu_cmd_rebinds_allocation_backed_vertex_buffer_between_draws_does_not_restart_render_pass() {
+fn aerogpu_cmd_rebinds_allocation_backed_vertex_buffer_between_draws_does_not_restart_render_pass()
+{
     pollster::block_on(async {
         let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
             Ok(exec) => exec,
@@ -1975,10 +1976,9 @@ fn aerogpu_cmd_rebinds_allocation_backed_vertex_buffer_between_draws_does_not_re
         stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
         stream.extend_from_slice(&0u32.to_le_bytes()); // reserved1
 
-        for (handle, data, backing_offset_bytes) in [
-            (VB_A, vb_a_bytes, 0u32),
-            (VB_B, vb_b_bytes, 0x100u32),
-        ] {
+        for (handle, data, backing_offset_bytes) in
+            [(VB_A, vb_a_bytes, 0u32), (VB_B, vb_b_bytes, 0x100u32)]
+        {
             // CREATE_BUFFER (allocation-backed VB)
             let start = begin_cmd(&mut stream, AerogpuCmdOpcode::CreateBuffer as u32);
             stream.extend_from_slice(&handle.to_le_bytes());
