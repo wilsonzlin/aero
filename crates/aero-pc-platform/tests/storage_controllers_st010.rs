@@ -453,6 +453,9 @@ fn st010_ide_pio_atapi_and_busmaster_dma() {
     cmd |= 0x0005; // IO + BUSMASTER
     pci_cfg_write_u16(&mut pc, bdf, 0x04, cmd);
 
+    // Observe IDE legacy IRQs via the PIC.
+    unmask_pic_irq(&mut pc, 14);
+
     // Attach an ATA HDD (primary master) and an ATAPI CD-ROM (secondary master).
     let mut hdd = RawDisk::create(MemBackend::new(), 8 * aero_storage::SECTOR_SIZE as u64).unwrap();
     hdd.write_at(aero_storage::SECTOR_SIZE as u64, &[1, 2, 3, 4])
@@ -576,6 +579,8 @@ fn st010_ide_pio_atapi_and_busmaster_dma() {
 
     pc.io.write(bus_master_base, 1, 0x09); // start + direction=read
     pc.process_ide();
+    pc.poll_pci_intx_lines();
+    assert_eq!(pic_pending_irq(&pc), Some(14));
 
     let mut dma0 = [0u8; 16];
     let mut dma1 = [0u8; 16];
