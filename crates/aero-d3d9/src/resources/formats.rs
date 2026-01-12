@@ -115,16 +115,14 @@ fn mip_extent(v: u32, level: u32) -> u32 {
 /// Returns whether a BC-compressed texture of the given dimensions can be created under wgpu's
 /// WebGPU validation rules.
 ///
-/// WebGPU requires the base mip level dimensions to be aligned to the compression block size
-/// (4×4). Additionally, some backends conservatively validate that each mip level whose extent is
-/// at least one full block is also aligned.
+/// Some backends conservatively validate that each mip level whose extent is at least one full
+/// block (4×4 for BC formats) is also block-aligned.
 pub fn wgpu_bc_texture_dimensions_compatible(width: u32, height: u32, mip_levels: u32) -> bool {
     if mip_levels == 0 {
         return false;
     }
 
-    // wgpu/WebGPU validation requires compressed texture creation sizes to be block aligned.
-    if !width.is_multiple_of(4) || !height.is_multiple_of(4) {
+    if width == 0 || height == 0 {
         return false;
     }
 
@@ -381,6 +379,8 @@ mod tests {
         assert!(!wgpu_bc_texture_dimensions_compatible(12, 12, 2));
         // 8x8 -> 4x4 is fine.
         assert!(wgpu_bc_texture_dimensions_compatible(8, 8, 2));
+        // 4x4 -> 2x2 is OK because mip1 is smaller than a full block.
+        assert!(wgpu_bc_texture_dimensions_compatible(4, 4, 2));
     }
 
     #[test]
