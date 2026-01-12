@@ -11,6 +11,11 @@ pub use manifest::{Manifest, ManifestError, ManifestImage};
 
 pub const CONTENT_TYPE_DISK_IMAGE: &str = "application/octet-stream";
 pub const MAX_IMAGE_ID_LEN: usize = 128;
+/// Maximum length allowed for ETag values supplied by store backends/manifests.
+///
+/// This is a defensive bound to avoid large allocations / processing if a store backend returns
+/// attacker-controlled data.
+pub const MAX_ETAG_LEN: usize = 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImageMeta {

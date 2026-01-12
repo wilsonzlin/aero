@@ -5,10 +5,6 @@ use sha2::{Digest, Sha256};
 
 use crate::store::ImageMeta;
 
-// Defensive bound for store-provided ETags. This avoids allocating/processing unreasonably large
-// header values if a store backend returns attacker-controlled data.
-const MAX_ETAG_LEN: usize = 1024;
-
 /// Returns `true` if this looks like a syntactically valid HTTP `ETag` header value.
 ///
 /// This is intentionally stricter than `HeaderValue` parsing: we require quoted tags, since an
@@ -18,7 +14,7 @@ fn looks_like_etag(value: &str) -> bool {
     if value.is_empty() {
         return false;
     }
-    if value.len() > MAX_ETAG_LEN {
+    if value.len() > crate::store::MAX_ETAG_LEN {
         return false;
     }
 
@@ -66,12 +62,12 @@ where
         // If the raw value is far beyond our max length, treat it as invalid without trimming.
         // This avoids spending O(n) time trimming attacker-controlled whitespace from very large
         // strings.
-        if etag.len() > MAX_ETAG_LEN + 32 {
+        if etag.len() > crate::store::MAX_ETAG_LEN + 32 {
             let etag_for_log = super::observability::truncate_for_span(etag, 256);
             tracing::warn!(
                 etag = ?etag_for_log.as_ref(),
                 len = etag.len(),
-                max_len = MAX_ETAG_LEN,
+                max_len = crate::store::MAX_ETAG_LEN,
                 "store-provided ETag is too long; using fallback"
             );
         } else {
