@@ -347,6 +347,38 @@ async function runTieredVm(iterations: number, threshold: number) {
     return;
   }
 
+  // Sanity checks: ensure the returned values are internally consistent (detect Rust/JS ABI drift).
+  const derivedJitCtxTotalBytes = (jitCtxHeaderBytes + jitTlbEntries * jitTlbEntryBytes) >>> 0;
+  const exportedJitCtxTotalBytes = readMaybeU32(jitAbi, 'jit_ctx_total_bytes') ?? 0;
+  if (exportedJitCtxTotalBytes !== 0 && exportedJitCtxTotalBytes !== derivedJitCtxTotalBytes) {
+    postToMain({
+      type: 'CpuWorkerError',
+      reason: `Inconsistent jit_abi_constants payload: ${JSON.stringify({
+        derivedJitCtxTotalBytes,
+        exportedJitCtxTotalBytes,
+        jitCtxHeaderBytes,
+        jitTlbEntries,
+        jitTlbEntryBytes,
+      })}`,
+    });
+    return;
+  }
+
+  const expectedCommitFlagOffset = (cpu_state_size + derivedJitCtxTotalBytes + tier2CtxBytes) >>> 0;
+  if (commitFlagOffset !== expectedCommitFlagOffset) {
+    postToMain({
+      type: 'CpuWorkerError',
+      reason: `Inconsistent Tier-1 commit_flag_offset: ${JSON.stringify({
+        commitFlagOffset,
+        expectedCommitFlagOffset,
+        cpu_state_size,
+        derivedJitCtxTotalBytes,
+        tier2CtxBytes,
+      })}`,
+    });
+    return;
+  }
+
   const desiredGuestBytes = DEFAULT_GUEST_RAM_BYTES;
   const layout = api.guest_ram_layout(desiredGuestBytes);
   const guest_base = layout.guest_base >>> 0;
