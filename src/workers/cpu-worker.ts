@@ -834,13 +834,7 @@ async function runTieredVm(iterations: number, threshold: number) {
     const entryRipU32 = resp.entry_rip >>> 0;
     const meta = shrinkMeta(pre_meta, resp.meta.code_byte_len);
 
-    // Safety: if we already have a valid compiled block for this RIP, the runtime will ignore a
-    // stale background compilation result. In that case we must NOT overwrite the JS call-table
-    // slot for the existing block with the stale compiled function.
-    //
-    // Detect staleness by comparing the pre-snapshotted page-version metadata (captured before the
-    // JIT worker read the code bytes) against the current page-version snapshot.
-    if (!compiledMetaMatchesCurrent(entryRipU32, meta)) {
+    const handleStaleMeta = (): number | null => {
       // Ask the runtime to process the stale handle so it can drop any stale existing block and/or
       // request a fresh compilation.
       try {
@@ -864,6 +858,16 @@ async function runTieredVm(iterations: number, threshold: number) {
       }
 
       return installedByRip.get(entryRipU32) ?? null;
+    };
+
+    // Safety: if we already have a valid compiled block for this RIP, the runtime will ignore a
+    // stale background compilation result. In that case we must NOT overwrite the JS call-table
+    // slot for the existing block with the stale compiled function.
+    //
+    // Detect staleness by comparing the pre-snapshotted page-version metadata (captured before the
+    // JIT worker read the code bytes) against the current page-version snapshot.
+    if (!compiledMetaMatchesCurrent(entryRipU32, meta)) {
+      return handleStaleMeta();
     }
 
     const module =
@@ -878,6 +882,13 @@ async function runTieredVm(iterations: number, threshold: number) {
     const block = (instance.exports as { block?: unknown }).block;
     if (typeof block !== 'function') {
       throw new Error('JIT block module did not export a callable `block` function');
+    }
+
+    // Re-check staleness after module compilation/instantiation. This protects against races where
+    // another compilation installs a newer valid block while we were awaiting the WebAssembly
+    // instantiation (e.g. when multiple JIT workers are running).
+    if (!compiledMetaMatchesCurrent(entryRipU32, meta)) {
+      return handleStaleMeta();
     }
 
     // Reuse the existing table slot if this RIP was compiled before. This makes recompilation
