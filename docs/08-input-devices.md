@@ -4,6 +4,39 @@
 
 Windows 7 requires keyboard and mouse input. The baseline approach is to capture browser events and translate them into **legacy PS/2** (works out-of-the-box), or **USB HID** (also inbox, but requires a much larger emulation surface).
 
+### WASM / browser integration: canonical `Machine` input injection
+
+For JS/WASM-side input testing and future in-browser integration, the canonical full-system VM (`aero_machine::Machine`) is exported to JS via `crates/aero-wasm::Machine`.
+
+The WASM-facing wrapper exposes input injection methods that map directly to PS/2 (i8042):
+
+- Keyboard: `Machine.inject_browser_key(code, pressed)` where `code` is DOM `KeyboardEvent.code`.
+- Mouse motion + wheel: `Machine.inject_mouse_motion(dx, dy, wheel)`
+  - `dx`/`dy` use browser-style coordinates: +X is right, +Y is down.
+  - `wheel` uses PS/2 convention: positive is wheel up.
+- Mouse buttons:
+  - `Machine.inject_mouse_button(button, pressed)` uses DOM `MouseEvent.button` mapping:
+    - `0`: left, `1`: middle, `2`: right (other values ignored)
+  - `Machine.inject_mouse_buttons_mask(mask)` uses DOM `MouseEvent.buttons` bitmask:
+    - bit0 (`0x01`): left, bit1 (`0x02`): right, bit2 (`0x04`): middle (higher bits ignored)
+  - Convenience helpers also exist: `inject_mouse_left/right/middle(pressed)`.
+
+Example:
+
+```ts
+const { api } = await initWasm({ variant: "single" });
+const machine = new api.Machine(64 * 1024 * 1024);
+
+machine.inject_browser_key("KeyA", true);
+machine.inject_browser_key("KeyA", false);
+
+machine.inject_mouse_motion(10, 5, 1); // dx=+10, dy=+5, wheel=+1 (up)
+machine.inject_mouse_button(0, true); // left down
+machine.inject_mouse_button(0, false); // left up
+machine.inject_mouse_buttons_mask(0x01 | 0x02); // left+right held
+machine.inject_mouse_buttons_mask(0x00); // release all
+```
+
 For best performance and lowest complexity on the host side, we also plan a **paravirtualized virtio-input** path. This avoids USB controller emulation entirely, but requires a custom Windows 7 driver to surface the virtio device as standard HID keyboard/mouse devices. The definitive virtio-input device contract for Aero (transport + queues + event codes) is specified in [`docs/windows7-virtio-driver-contract.md`](./windows7-virtio-driver-contract.md).
 
 Physical device passthrough (optional): on Chromium-based browsers, Aero can also (optionally) attach a **real host-connected device** to the guest via WebHID/WebUSB. See:
