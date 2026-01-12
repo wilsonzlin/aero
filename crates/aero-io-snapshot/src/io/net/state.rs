@@ -12,7 +12,7 @@ const MIN_L2_FRAME_LEN: usize = 14;
 const MAX_L2_FRAME_LEN: usize = 1522;
 const MAX_TX_PARTIAL_BYTES: usize = 256 * 1024;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct E1000TxContextState {
     pub ipcss: u32,
     pub ipcso: u32,
@@ -24,32 +24,12 @@ pub struct E1000TxContextState {
     pub hdr_len: u32,
 }
 
-impl Default for E1000TxContextState {
-    fn default() -> Self {
-        Self {
-            ipcss: 0,
-            ipcso: 0,
-            ipcse: 0,
-            tucss: 0,
-            tucso: 0,
-            tucse: 0,
-            mss: 0,
-            hdr_len: 0,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum E1000TxPacketState {
+    #[default]
     None,
     Legacy { cmd: u8, css: u32, cso: u32 },
     Advanced { cmd: u8, popts: u8 },
-}
-
-impl Default for E1000TxPacketState {
-    fn default() -> Self {
-        Self::None
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
