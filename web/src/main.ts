@@ -2403,16 +2403,15 @@ function renderAudioPanel(): HTMLElement {
 
       await output.resume();
       status.textContent = "Audio initialized and HDA playback demo started in CPU worker.";
-      const timer = window.setInterval(() => {
-        const metrics = output.getMetrics();
-        const header = output.ringBuffer.header;
-        const read = Atomics.load(header, 0) >>> 0;
-        const write = Atomics.load(header, 1) >>> 0;
-        const demoStats = hdaDemoStats;
-        const demoLines: string[] = [];
-        if (demoStats) {
-          const t = demoStats["targetFrames"];
-          const lvl = demoStats["bufferLevelFrames"];
+        const timer = window.setInterval(() => {
+          const metrics = output.getMetrics();
+          const read = Atomics.load(output.ringBuffer.readIndex, 0) >>> 0;
+          const write = Atomics.load(output.ringBuffer.writeIndex, 0) >>> 0;
+          const demoStats = hdaDemoStats;
+          const demoLines: string[] = [];
+          if (demoStats) {
+            const t = demoStats["targetFrames"];
+            const lvl = demoStats["bufferLevelFrames"];
           if (typeof t === "number") demoLines.push(`worker.targetFrames: ${t}`);
           if (typeof lvl === "number") demoLines.push(`worker.bufferLevelFrames: ${lvl}`);
           const totalWritten = demoStats["totalFramesWritten"];
