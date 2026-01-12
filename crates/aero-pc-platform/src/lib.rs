@@ -466,6 +466,7 @@ struct PcUhciIoBar {
 impl PcUhciIoBar {
     fn read_all_ones(size: u8) -> u32 {
         match size {
+            0 => 0,
             1 => 0xFF,
             2 => 0xFFFF,
             4 => 0xFFFF_FFFF,

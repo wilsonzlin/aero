@@ -31,6 +31,9 @@ impl Pic8259Port {
 
 impl PortIoDevice for Pic8259Port {
     fn read(&mut self, port: u16, size: u8) -> u32 {
+        if size == 0 {
+            return 0;
+        }
         debug_assert_eq!(port, self.port);
         let pic = self.pic.borrow();
         match size {
@@ -52,6 +55,9 @@ impl PortIoDevice for Pic8259Port {
     }
 
     fn write(&mut self, port: u16, size: u8, value: u32) {
+        if size == 0 {
+            return;
+        }
         debug_assert_eq!(port, self.port);
         let mut pic = self.pic.borrow_mut();
         match size {
@@ -113,6 +119,9 @@ pub fn register_pic8259_on_platform_interrupts(
 
     impl PortIoDevice for PlatformPicPort {
         fn read(&mut self, port: u16, size: u8) -> u32 {
+            if size == 0 {
+                return 0;
+            }
             debug_assert_eq!(port, self.port);
             let ints = self.interrupts.borrow();
             let pic = ints.pic();
@@ -135,6 +144,9 @@ pub fn register_pic8259_on_platform_interrupts(
         }
 
         fn write(&mut self, port: u16, size: u8, value: u32) {
+            if size == 0 {
+                return;
+            }
             debug_assert_eq!(port, self.port);
             let mut ints = self.interrupts.borrow_mut();
             let pic = ints.pic_mut();

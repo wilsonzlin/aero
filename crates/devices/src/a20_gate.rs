@@ -77,11 +77,17 @@ impl A20Gate {
 }
 
 impl PortIoDevice for A20Gate {
-    fn read(&mut self, _port: u16, _size: u8) -> u32 {
+    fn read(&mut self, _port: u16, size: u8) -> u32 {
+        if size == 0 {
+            return 0;
+        }
         self.read_value() as u32
     }
 
-    fn write(&mut self, _port: u16, _size: u8, value: u32) {
+    fn write(&mut self, _port: u16, size: u8, value: u32) {
+        if size == 0 {
+            return;
+        }
         let value = value as u8;
         if (value & 0x01) != 0 {
             if let Some(reset) = self.reset.as_mut() {
@@ -98,5 +104,34 @@ impl PortIoDevice for A20Gate {
     fn reset(&mut self) {
         // Power-on value: A20 gate follows the chipset state; reset bit is cleared.
         self.value = if self.a20.enabled() { 0x02 } else { 0x00 };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aero_platform::chipset::ChipsetState;
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    #[test]
+    fn port_io_size0_is_noop() {
+        let chipset = ChipsetState::new(false);
+        let a20 = chipset.a20();
+
+        let reset_called = Rc::new(Cell::new(false));
+        let reset_called_clone = reset_called.clone();
+        let mut dev = A20Gate::with_reset_sink(a20.clone(), move |_kind| {
+            reset_called_clone.set(true);
+        });
+
+        // Size-0 writes must not trigger a reset pulse or update A20 state.
+        dev.write(A20_GATE_PORT, 0, 0x03);
+        assert!(!reset_called.get());
+        assert!(!a20.enabled());
+        assert_eq!(dev.read(A20_GATE_PORT, 1), 0);
+
+        // Size-0 reads must return 0.
+        assert_eq!(dev.read(A20_GATE_PORT, 0), 0);
     }
 }

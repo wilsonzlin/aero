@@ -66,7 +66,10 @@ impl PortIoDevice for ResetCtrl {
         }
     }
 
-    fn write(&mut self, _port: u16, _size: u8, value: u32) {
+    fn write(&mut self, _port: u16, size: u8, value: u32) {
+        if size == 0 {
+            return;
+        }
         let value = value as u8;
         self.value = value;
         self.maybe_trigger_reset(value);
@@ -109,5 +112,19 @@ mod tests {
         // System reset bit without enable should be ignored.
         dev.write(RESET_CTRL_PORT, 1, BIT_SYSTEM_RESET as u32);
         assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn size0_write_is_noop() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls_clone = Arc::clone(&calls);
+
+        let mut dev = ResetCtrl::new(move |_kind| {
+            calls_clone.fetch_add(1, Ordering::SeqCst);
+        });
+
+        dev.write(RESET_CTRL_PORT, 0, RESET_CTRL_RESET_VALUE as u32);
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert_eq!(dev.read(RESET_CTRL_PORT, 1), 0);
     }
 }

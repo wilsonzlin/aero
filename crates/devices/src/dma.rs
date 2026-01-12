@@ -47,6 +47,9 @@ impl Dma8237Port {
 
 impl PortIoDevice for Dma8237Port {
     fn read(&mut self, port: u16, size: u8) -> u32 {
+        if size == 0 {
+            return 0;
+        }
         debug_assert_eq!(port, self.port);
         let dma = self.dma.borrow();
         match size {
@@ -68,6 +71,9 @@ impl PortIoDevice for Dma8237Port {
     }
 
     fn write(&mut self, port: u16, size: u8, value: u32) {
+        if size == 0 {
+            return;
+        }
         debug_assert_eq!(port, self.port);
         let mut dma = self.dma.borrow_mut();
         match size {
@@ -90,6 +96,25 @@ impl PortIoDevice for Dma8237Port {
 
     fn reset(&mut self) {
         self.dma.borrow_mut().reset();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn port_io_size0_is_noop() {
+        let dma = Rc::new(RefCell::new(Dma8237::new()));
+        let mut port = Dma8237Port::new(dma.clone(), 0x00);
+
+        // Size-0 writes must not latch values.
+        port.write(0x00, 0, 0x12);
+        assert_eq!(port.read(0x00, 1), 0);
+
+        // Sanity: size-1 writes should still work.
+        port.write(0x00, 1, 0x34);
+        assert_eq!(port.read(0x00, 1), 0x34);
     }
 }
 

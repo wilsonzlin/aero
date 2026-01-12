@@ -90,6 +90,9 @@ impl I8042Port {
 
 impl PortIoDevice for I8042Port {
     fn read(&mut self, port: u16, size: u8) -> u32 {
+        if size == 0 {
+            return 0;
+        }
         debug_assert_eq!(port, self.port);
         let byte = self.inner.borrow_mut().read_port(self.port);
         match size {
@@ -100,7 +103,10 @@ impl PortIoDevice for I8042Port {
         }
     }
 
-    fn write(&mut self, port: u16, _size: u8, value: u32) {
+    fn write(&mut self, port: u16, size: u8, value: u32) {
+        if size == 0 {
+            return;
+        }
         debug_assert_eq!(port, self.port);
         self.inner
             .borrow_mut()

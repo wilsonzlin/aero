@@ -144,6 +144,9 @@ impl ImcrPort {
 
 impl PortIoDevice for ImcrPort {
     fn read(&mut self, port: u16, size: u8) -> u32 {
+        if size == 0 {
+            return 0;
+        }
         debug_assert_eq!(port, self.port);
         let value = self.interrupts.borrow().imcr_port_read_u8(port) as u32;
         match size {
@@ -155,6 +158,9 @@ impl PortIoDevice for ImcrPort {
     }
 
     fn write(&mut self, port: u16, size: u8, value: u32) {
+        if size == 0 {
+            return;
+        }
         debug_assert_eq!(port, self.port);
         let mut interrupts = self.interrupts.borrow_mut();
         match size {

@@ -175,6 +175,9 @@ impl Serial16550Port {
 
 impl PortIoDevice for Serial16550Port {
     fn read(&mut self, port: u16, size: u8) -> u32 {
+        if size == 0 {
+            return 0;
+        }
         debug_assert_eq!(port, self.port);
         let mut uart = self.uart.borrow_mut();
         match size {
@@ -196,6 +199,9 @@ impl PortIoDevice for Serial16550Port {
     }
 
     fn write(&mut self, port: u16, size: u8, value: u32) {
+        if size == 0 {
+            return;
+        }
         debug_assert_eq!(port, self.port);
         let mut uart = self.uart.borrow_mut();
         match size {
@@ -214,6 +220,31 @@ impl PortIoDevice for Serial16550Port {
             }
             _ => uart.write_u8(port, value as u8),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn port_io_size0_is_noop() {
+        let uart = Rc::new(RefCell::new(Serial16550::new(0x3F8)));
+        uart.borrow_mut().push_rx(0xAB);
+
+        let mut port = Serial16550Port::new(uart.clone(), 0x3F8);
+
+        // Size-0 reads must return 0 and must not consume RX bytes.
+        assert_eq!(port.read(0x3F8, 0), 0);
+        assert_eq!(port.read(0x3F8, 1) as u8, 0xAB);
+
+        // Size-0 writes must not enqueue TX bytes.
+        port.write(0x3F8, 0, 0xCD);
+        assert!(uart.borrow_mut().take_tx().is_empty());
+
+        // Sanity: size-1 writes should still work.
+        port.write(0x3F8, 1, 0xEF);
+        assert_eq!(uart.borrow_mut().take_tx(), vec![0xEF]);
     }
 }
 
