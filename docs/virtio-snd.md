@@ -151,7 +151,8 @@ If the host capture backend cannot provide enough samples to fill the payload bu
 ### Capture sample source
 
 In browser builds, captured samples are expected to come from the Web mic capture
-ring buffer (`SharedArrayBuffer`) via `aero_platform::audio::mic_bridge::MicBridge`.
+ring buffer (`SharedArrayBuffer`) via `aero_platform::audio::mic_bridge::MicBridge` (re-exported as
+`aero_audio::mic_bridge::MicBridge`).
 
 ### Capture sample-rate conversion
 
