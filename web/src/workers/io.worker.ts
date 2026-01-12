@@ -2478,6 +2478,10 @@ function runHdaMicCaptureTest(requestId: number): void {
     const pcm = new Uint8Array(pcmBytes);
     pcm.set(guestU8.subarray(pcmBase, pcmBase + pcmBytes));
 
+    // Stop the capture stream so subsequent IO worker ticks (if bus mastering is later enabled)
+    // don't continue consuming mic samples after the harness has returned.
+    mmioWrite(sd1Base + 0x00, 4, 0);
+
     ctx.postMessage(
       {
         type: "hda.micCaptureTest.result",
