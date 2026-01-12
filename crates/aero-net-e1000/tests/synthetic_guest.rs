@@ -78,15 +78,19 @@ fn pci_bars_probe_and_program() {
     dev.pci_write_u32(0x10, 0xFFFF_FFFF);
     let mask = dev.pci_read_u32(0x10);
     assert_eq!(mask, (!(E1000_MMIO_SIZE - 1)) & 0xFFFF_FFF0);
+    // Sub-dword reads should observe the same probe mask.
+    assert_eq!(dev.pci_config_read(0x12, 2), 0xFFFE);
 
     // Program BAR0.
     dev.pci_write_u32(0x10, 0xFEBF_0000);
     assert_eq!(dev.pci_read_u32(0x10), 0xFEBF_0000);
+    assert_eq!(dev.pci_config_read(0x12, 2), 0xFEBF);
 
     // Probe BAR1 size (I/O BAR).
     dev.pci_write_u32(0x14, 0xFFFF_FFFF);
     let mask = dev.pci_read_u32(0x14);
     assert_eq!(mask, ((!(E1000_IO_SIZE - 1)) & 0xFFFF_FFFC) | 0x1);
+    assert_eq!(dev.pci_config_read(0x14, 2), 0xFFC1);
 
     // Program BAR1 (bit0 must remain set).
     dev.pci_write_u32(0x14, 0xC000);

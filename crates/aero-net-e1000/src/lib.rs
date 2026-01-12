@@ -404,25 +404,43 @@ impl PciConfig {
 
     pub fn read(&self, offset: u16, size: usize) -> u32 {
         let offset = offset as usize;
+        // BAR0/BAR1 are defined as full 32-bit registers in PCI config space, but some access
+        // mechanisms perform byte/word reads. The device model stores BAR values in both decoded
+        // fields (`bar0`/`bar1` + probe flags) and the raw `regs` array; ensure the probe behavior
+        // and decoded BAR values are observable regardless of access width.
+        if offset >= 0x10 && offset + size <= 0x14 {
+            let full = if self.bar0_probe {
+                (!(E1000_MMIO_SIZE - 1)) & 0xffff_fff0
+            } else {
+                self.bar0
+            };
+            let shift = ((offset - 0x10) * 8) as u32;
+            return match size {
+                4 => full,
+                2 => (full >> shift) & 0xffff,
+                1 => (full >> shift) & 0xff,
+                _ => 0,
+            };
+        }
+        if offset >= 0x14 && offset + size <= 0x18 {
+            let full = if self.bar1_probe {
+                // I/O BAR: bit0 must remain set.
+                (!(E1000_IO_SIZE - 1) & 0xffff_fffc) | 0x1
+            } else {
+                self.bar1
+            };
+            let shift = ((offset - 0x14) * 8) as u32;
+            return match size {
+                4 => full,
+                2 => (full >> shift) & 0xffff,
+                1 => (full >> shift) & 0xff,
+                _ => 0,
+            };
+        }
         match size {
             1 => self.regs[offset] as u32,
             2 => u16::from_le_bytes(self.regs[offset..offset + 2].try_into().unwrap()) as u32,
             4 => {
-                if offset == 0x10 {
-                    return if self.bar0_probe {
-                        (!(E1000_MMIO_SIZE - 1)) & 0xffff_fff0
-                    } else {
-                        self.bar0
-                    };
-                }
-                if offset == 0x14 {
-                    return if self.bar1_probe {
-                        // I/O BAR: bit0 must remain set.
-                        (!(E1000_IO_SIZE - 1) & 0xffff_fffc) | 0x1
-                    } else {
-                        self.bar1
-                    };
-                }
                 self.read_u32_raw(offset)
             }
             _ => 0,
