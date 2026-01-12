@@ -236,7 +236,17 @@ pub fn if_range_allows_range(
     let Some(last_modified) = current_last_modified else {
         return false;
     };
-    last_modified <= since
+    // HTTP dates have 1-second resolution. Filesystems often provide sub-second mtimes, but our
+    // `Last-Modified` header (and thus `If-Range` in HTTP-date form) cannot represent that.
+    // Compare at second granularity to avoid false mismatches where the resource mtime has
+    // sub-second data that gets truncated when formatting/parsing the HTTP date.
+    let Ok(resource_secs) = last_modified.duration_since(UNIX_EPOCH) else {
+        return false;
+    };
+    let Ok(since_secs) = since.duration_since(UNIX_EPOCH) else {
+        return false;
+    };
+    resource_secs.as_secs() <= since_secs.as_secs()
 }
 
 #[cfg(test)]
@@ -274,5 +284,21 @@ mod tests {
     fn last_modified_header_value_does_not_panic_for_pre_epoch_times() {
         let t = UNIX_EPOCH - Duration::from_secs(1);
         assert!(last_modified_header_value(Some(t)).is_none());
+    }
+
+    #[test]
+    fn if_range_http_date_ignores_subsecond_precision() {
+        let last_modified = UNIX_EPOCH + Duration::from_secs(123) + Duration::from_nanos(456);
+        let if_range_value = httpdate::fmt_http_date(last_modified);
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::IF_RANGE,
+            HeaderValue::from_str(&if_range_value).unwrap(),
+        );
+
+        assert!(
+            if_range_allows_range(&headers, None, Some(last_modified)),
+            "expected If-Range date to match even when the resource mtime has sub-second precision"
+        );
     }
 }
