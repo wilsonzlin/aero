@@ -464,6 +464,16 @@ static int RunD3D9ExStateBlockSanity(int argc, char** argv) {
   if (FAILED(hr)) {
     return reporter.FailHresult("SetTexture B", hr);
   }
+  // Disable color writes and unbind the VB to ensure ApplyStateBlock restores
+  // these bindings/states.
+  hr = dev->SetRenderState(D3DRS_COLORWRITEENABLE, 0);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetRenderState(COLORWRITEENABLE=0 mutate)", hr);
+  }
+  hr = dev->SetStreamSource(0, NULL, 0, 0);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetStreamSource(NULL mutate)", hr);
+  }
   hr = dev->SetPixelShaderConstantF(0, c0_white, 1);
   if (FAILED(hr)) {
     return reporter.FailHresult("SetPixelShaderConstantF(white)", hr);
@@ -556,6 +566,15 @@ static int RunD3D9ExStateBlockSanity(int argc, char** argv) {
   if (FAILED(hr)) {
     return reporter.FailHresult("SetTexture A (pre-Capture)", hr);
   }
+  // Ensure we capture a sane state for render-state + VB bindings.
+  hr = dev->SetRenderState(D3DRS_COLORWRITEENABLE, 0xFu);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetRenderState(COLORWRITEENABLE=0xF pre-Capture)", hr);
+  }
+  hr = dev->SetStreamSource(0, vb.get(), 0, sizeof(VertexPosTex));
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetStreamSource(vb pre-Capture)", hr);
+  }
   hr = dev->SetPixelShaderConstantF(0, c0_red, 1);
   if (FAILED(hr)) {
     return reporter.FailHresult("SetPixelShaderConstantF(red)", hr);
@@ -570,6 +589,14 @@ static int RunD3D9ExStateBlockSanity(int argc, char** argv) {
   hr = dev->SetTexture(0, tex_b.get());
   if (FAILED(hr)) {
     return reporter.FailHresult("SetTexture B (post-Capture mutate)", hr);
+  }
+  hr = dev->SetRenderState(D3DRS_COLORWRITEENABLE, 0);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetRenderState(COLORWRITEENABLE=0 post-Capture mutate)", hr);
+  }
+  hr = dev->SetStreamSource(0, NULL, 0, 0);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetStreamSource(NULL post-Capture mutate)", hr);
   }
   hr = dev->SetPixelShaderConstantF(0, c0_green, 1);
   if (FAILED(hr)) {
