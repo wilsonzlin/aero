@@ -54,11 +54,35 @@ export RAYON_NUM_THREADS="${RAYON_NUM_THREADS:-$CARGO_BUILD_JOBS}"
 
 # Reduce codegen parallelism per crate (avoids memory spikes / thread creation failures).
 # Only apply when invoking cargo directly, and don't override an explicit codegen-units setting.
+#
+# Heuristic: align per-crate codegen parallelism with overall Cargo build parallelism so the total
+# number of rustc worker threads remains bounded.
 if [[ "${1:-}" == "cargo" || "${1:-}" == */cargo ]]; then
     if [[ "${RUSTFLAGS:-}" != *"codegen-units="* ]]; then
-        # Keep per-crate parallelism low but not pathologically slow.
-        export RUSTFLAGS="${RUSTFLAGS:-} -C codegen-units=4"
+        _aero_codegen_units="${CARGO_BUILD_JOBS:-1}"
+        if ! [[ "${_aero_codegen_units}" =~ ^[1-9][0-9]*$ ]]; then
+            _aero_codegen_units=1
+        fi
+        # cap at 4 to avoid overly slow per-crate codegen when users opt into higher Cargo parallelism.
+        if [[ "${_aero_codegen_units}" -gt 4 ]]; then
+            _aero_codegen_units=4
+        fi
+        export RUSTFLAGS="${RUSTFLAGS:-} -C codegen-units=${_aero_codegen_units}"
         export RUSTFLAGS="${RUSTFLAGS# }"
+        unset _aero_codegen_units 2>/dev/null || true
+    fi
+
+    # LLVM lld defaults to using all available hardware threads when linking. On shared hosts this
+    # can hit per-user thread limits (EAGAIN/"Resource temporarily unavailable"). Limit lld's
+    # internal parallelism to match our overall Cargo build parallelism.
+    #
+    # Restrict this to Linux: other platforms may use different linkers that don't accept
+    # `--threads=`.
+    if [[ "$(uname 2>/dev/null || true)" == "Linux" ]]; then
+        if [[ "${RUSTFLAGS:-}" != *"--threads="* ]]; then
+            export RUSTFLAGS="${RUSTFLAGS:-} -C link-arg=-Wl,--threads=${CARGO_BUILD_JOBS:-1}"
+            export RUSTFLAGS="${RUSTFLAGS# }"
+        fi
     fi
 fi
 

@@ -122,11 +122,36 @@ export CARGO_INCREMENTAL=1
 # reliable under contention.
 export RAYON_NUM_THREADS="${RAYON_NUM_THREADS:-$CARGO_BUILD_JOBS}"
 
-# Reduce codegen parallelism per crate to limit memory spikes.
+# Reduce codegen parallelism per crate to limit memory spikes and avoid hitting per-user thread
+# limits in constrained sandboxes.
+#
 # Keep any existing RUSTFLAGS, but don't re-add codegen-units when sourced twice.
+#
+# Heuristic: align per-crate parallelism with overall Cargo build parallelism so the total number
+# of rustc worker threads remains bounded.
 if [[ "${RUSTFLAGS:-}" != *"codegen-units="* ]]; then
-  export RUSTFLAGS="${RUSTFLAGS:-} -C codegen-units=4"
+  _aero_codegen_units="${CARGO_BUILD_JOBS:-1}"
+  if ! [[ "${_aero_codegen_units}" =~ ^[1-9][0-9]*$ ]]; then
+    _aero_codegen_units=1
+  fi
+  # cap at 4 to avoid overly slow per-crate codegen when users opt into higher Cargo parallelism.
+  if [[ "${_aero_codegen_units}" -gt 4 ]]; then
+    _aero_codegen_units=4
+  fi
+
+  export RUSTFLAGS="${RUSTFLAGS:-} -C codegen-units=${_aero_codegen_units}"
   export RUSTFLAGS="${RUSTFLAGS# }"
+  unset _aero_codegen_units 2>/dev/null || true
+fi
+
+# LLVM lld (used by the pinned Rust toolchain on Linux) defaults to using all available hardware
+# threads when linking, which can also hit per-user thread limits on shared hosts. Limit lld's
+# parallelism to match our overall build parallelism.
+if [[ "$(uname 2>/dev/null || true)" == "Linux" ]]; then
+  if [[ "${RUSTFLAGS:-}" != *"--threads="* ]]; then
+    export RUSTFLAGS="${RUSTFLAGS:-} -C link-arg=-Wl,--threads=${CARGO_BUILD_JOBS:-1}"
+    export RUSTFLAGS="${RUSTFLAGS# }"
+  fi
 fi
 
 # Node.js - cap V8 heap to avoid runaway memory.
