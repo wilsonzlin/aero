@@ -1,3 +1,9 @@
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    cmake_minimum_required(VERSION 3.15)
+    project(virtio_pci_interrupts_host_tests C)
+    enable_testing()
+endif()
+
 add_executable(virtio_pci_interrupts_host_tests
     test_main.c
     ${CMAKE_CURRENT_LIST_DIR}/../../virtio_pci_interrupts.c
@@ -15,4 +21,3 @@ set_target_properties(virtio_pci_interrupts_host_tests PROPERTIES
 )
 
 add_test(NAME virtio_pci_interrupts_host_tests COMMAND virtio_pci_interrupts_host_tests)
-
