@@ -739,7 +739,13 @@ impl E1000Device {
     }
 
     pub fn mmio_read(&mut self, offset: u64, size: usize) -> u32 {
+        if offset > u32::MAX as u64 {
+            return 0;
+        }
         let aligned = (offset & !3) as u32;
+        if aligned >= E1000_MMIO_SIZE {
+            return 0;
+        }
         let shift = ((offset & 3) * 8) as u32;
         let value = self.mmio_read_u32_aligned(aligned);
         match size {
@@ -756,7 +762,13 @@ impl E1000Device {
     /// DMA side effects (descriptor reads/writes, RX buffer writes, etc.) are
     /// deferred to [`poll`].
     pub fn mmio_write_reg(&mut self, offset: u64, size: usize, value: u32) {
+        if offset > u32::MAX as u64 {
+            return;
+        }
         let aligned = (offset & !3) as u32;
+        if aligned >= E1000_MMIO_SIZE {
+            return;
+        }
         let shift = ((offset & 3) * 8) as u32;
 
         let value32 = match size {
@@ -1692,7 +1704,13 @@ impl E1000Device {
 
         self.other_regs.clear();
         for (k, v) in &state.other_regs {
-            self.other_regs.insert(*k, *v);
+            // Unknown/unmodeled registers are always within the MMIO BAR window.
+            //
+            // Snapshots may be loaded from untrusted sources; ignore out-of-range keys to keep the
+            // in-memory map bounded and consistent with the live device model.
+            if *k < E1000_MMIO_SIZE {
+                self.other_regs.insert(*k, *v);
+            }
         }
 
         const MAX_RX_PENDING: usize = 256;
@@ -1942,6 +1960,31 @@ mod tests {
         dev.io_write_reg(0x0, 4, REG_IMC);
         dev.io_write_reg(0x4, 4, 0x1234_0000);
         assert_eq!(dev.mmio_read_u32(REG_IMS), 0x0000_5678);
+    }
+
+    #[test]
+    fn ioaddr_out_of_range_does_not_touch_other_regs() {
+        let mut dev = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
+        assert!(dev.other_regs.is_empty());
+
+        // Program an out-of-range IOADDR and attempt to access IODATA.
+        dev.io_write_reg(0x0, 4, E1000_MMIO_SIZE); // out of range (valid: 0..E1000_MMIO_SIZE-1)
+        dev.io_write_reg(0x4, 4, 0xDEAD_BEEF);
+        assert_eq!(dev.io_read(0x4, 4), 0);
+        assert!(
+            dev.other_regs.is_empty(),
+            "out-of-range IOADDR should not create other_regs entries"
+        );
+
+        // Direct MMIO out-of-range accesses should also be ignored.
+        dev.mmio_write_u32_reg(E1000_MMIO_SIZE + 0x100, 0xC0FF_EE00);
+        assert_eq!(dev.mmio_read((E1000_MMIO_SIZE + 0x100) as u64, 4), 0);
+        assert!(dev.other_regs.is_empty());
+
+        // In-range IOADDR/IODATA accesses should still work.
+        dev.mmio_write_u32_reg(REG_IMS, 0x1234_5678);
+        dev.io_write_reg(0x0, 4, REG_IMS);
+        assert_eq!(dev.io_read(0x4, 4), 0x1234_5678);
     }
 
     #[test]
