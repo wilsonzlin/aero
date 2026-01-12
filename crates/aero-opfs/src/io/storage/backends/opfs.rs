@@ -778,10 +778,14 @@ mod wasm {
         }
     }
 
-    /// IndexedDB-backed block storage fallback for browser environments.
+    /// IndexedDB-backed block/sector storage fallback for browser environments.
     ///
-    /// This backend uses the `st-idb` crate and is async-only. It does not currently implement
-    /// the synchronous `aero_storage::{StorageBackend, VirtualDisk}` traits.
+    /// This backend uses the `st-idb` crate and is **async-only** (Promise-based). It exists
+    /// primarily as a portability fallback when OPFS APIs are unavailable.
+    ///
+    /// IMPORTANT: IndexedDB cannot back `aero_storage::StorageBackend` / `aero_storage::VirtualDisk`
+    /// (used by Aero's synchronous Rust AHCI/IDE controller path) in the same Worker, because
+    /// IndexedDB does not provide synchronous read/write semantics.
     pub struct OpfsIndexedDbBackend {
         inner: StIndexedDbBackend,
         sector_size: u32,
@@ -901,6 +905,11 @@ mod wasm {
     pub enum OpfsStorage {
         Sync(OpfsBackend),
         Async(OpfsAsyncBackend),
+        /// Async IndexedDB-backed storage fallback.
+        ///
+        /// NOTE: This is *not* suitable for the boot-critical synchronous Rust
+        /// storage/controller stack (`aero_storage::VirtualDisk` + AHCI/IDE). It
+        /// should only be used by async paths.
         IndexedDb(OpfsIndexedDbBackend),
     }
 

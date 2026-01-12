@@ -255,6 +255,12 @@ export function explainMissingRequirements(
     );
   }
 
+  if (!report.opfsSyncAccessHandle) {
+    messages.push(
+      "OPFS SyncAccessHandle is unavailable. Aero's boot-critical Rust disk/controller stack (aero-storage::VirtualDisk + AHCI/IDE) requires synchronous disk I/O via FileSystemFileHandle.createSyncAccessHandle() in a dedicated worker; IndexedDB is async-only and cannot be used as a drop-in substitute. Use a browser with OPFS SyncAccessHandle support (typically Chromium) or run the demo mode without a disk image.",
+    );
+  }
+
   if (!report.audioWorklet) {
     messages.push(
       "AudioWorklet is unavailable. Aero's audio output requires AudioWorklet; update your browser or disable audio output for now.",

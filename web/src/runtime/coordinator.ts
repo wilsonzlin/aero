@@ -5,7 +5,7 @@ import { decodeEvent, encodeCommand, type Command, type Event } from "../ipc/pro
 import { perf } from "../perf/perf";
 import { WorkerKind } from "../perf/record.js";
 import type { PerfChannel } from "../perf/shared.js";
-import type { PlatformFeatureReport } from "../platform/features";
+import { detectPlatformFeatures, type PlatformFeatureReport } from "../platform/features";
 import {
   WORKER_ROLES,
   type WorkerRole,
@@ -384,6 +384,21 @@ export class WorkerCoordinator {
     if (opts?.platformFeatures) {
       this.platformFeatures = opts.platformFeatures;
     }
+
+    // VM mode (`activeDiskImage != null`) uses Aero's boot-critical synchronous Rust
+    // disk/controller stack (aero-storage::VirtualDisk + AHCI/IDE). That stack
+    // requires OPFS `FileSystemSyncAccessHandle` / `createSyncAccessHandle()`.
+    // IndexedDB is async-only and cannot safely substitute.
+    if (config.activeDiskImage !== null) {
+      const features = this.platformFeatures ?? detectPlatformFeatures();
+      this.platformFeatures = features;
+      if (!features.opfsSyncAccessHandle) {
+        throw new Error(
+          "Cannot start VM with a disk image: OPFS SyncAccessHandle (FileSystemFileHandle.createSyncAccessHandle) is unavailable. Aero's boot-critical Rust AHCI/IDE controller path requires synchronous disk I/O; IndexedDB cannot be used as a drop-in fallback. Use a Chromium-based browser with SyncAccessHandle support, or run the demo mode without a disk image.",
+        );
+      }
+    }
+
     if (!config.enableWorkers) {
       throw new Error("Workers are disabled by configuration.");
     }

@@ -11,8 +11,12 @@ use crate::{DiskError, Result};
 /// aero_opfs::OpfsByteStorage
 /// ```
 ///
-/// IndexedDB-backed storage is generally async and therefore does not currently implement
-/// this synchronous trait.
+/// **Important (wasm32):** this trait is intentionally *synchronous* because it is used by
+/// `aero_storage::VirtualDisk` and the Rust device/controller stack (e.g. AHCI/IDE).
+///
+/// Browser IndexedDB APIs are Promise-based (async) and therefore cannot implement this trait
+/// safely in the *same* Worker thread. Supporting IndexedDB would require an explicit split
+/// (separate storage worker + RPC/serialization layer), which is currently out of scope.
 ///
 /// This trait also allows the pure Rust disk image formats to be unit-tested without any
 /// browser APIs.

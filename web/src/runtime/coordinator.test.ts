@@ -68,6 +68,40 @@ describe("runtime/coordinator", () => {
     expect(() => coordinator.restartWorker("net")).not.toThrow();
   });
 
+  it("rejects VM start when activeDiskImage is set but OPFS SyncAccessHandle is unavailable", () => {
+    const coordinator = new WorkerCoordinator();
+
+    expect(() =>
+      coordinator.start(
+        {
+          guestMemoryMiB: 1,
+          enableWorkers: true,
+          enableWebGPU: false,
+          proxyUrl: null,
+          activeDiskImage: "disk.img",
+          logLevel: "info",
+        },
+        {
+          platformFeatures: {
+            crossOriginIsolated: true,
+            sharedArrayBuffer: true,
+            wasmSimd: true,
+            wasmThreads: true,
+            webgpu: true,
+            webusb: false,
+            webhid: false,
+            webgl2: true,
+            opfs: true,
+            opfsSyncAccessHandle: false,
+            audioWorklet: true,
+            offscreenCanvas: true,
+            jit_dynamic_wasm: true,
+          },
+        },
+      ),
+    ).toThrow(/SyncAccessHandle/i);
+  });
+
   it("sends net.trace.enable to the net worker when enabling net tracing", () => {
     const coordinator = new WorkerCoordinator();
     const segments = allocateSharedMemorySegments({ guestRamMiB: 1 });

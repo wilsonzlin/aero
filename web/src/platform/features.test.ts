@@ -153,11 +153,32 @@ describe("explainMissingRequirements", () => {
     ).toEqual([]);
   });
 
+  it("includes OPFS SyncAccessHandle when OPFS is available but sync handles are not", () => {
+    const messages = explainMissingRequirements(
+      report({
+        crossOriginIsolated: true,
+        sharedArrayBuffer: true,
+        wasmSimd: true,
+        wasmThreads: true,
+        jit_dynamic_wasm: true,
+        webgpu: true,
+        webgl2: true,
+        opfs: true,
+        opfsSyncAccessHandle: false,
+        audioWorklet: true,
+        offscreenCanvas: true,
+      }),
+    );
+
+    expect(messages.join("\n")).toContain("SyncAccessHandle");
+    expect(messages.join("\n")).toContain("IndexedDB");
+  });
+
   it("returns actionable messages for missing capabilities", () => {
     const messages = explainMissingRequirements(report());
 
     // Keep this intentionally broad (copy edits shouldn't break tests).
-    expect(messages).toHaveLength(9);
+    expect(messages).toHaveLength(10);
     expect(messages.join("\n")).toContain("cross-origin isolated");
     expect(messages.join("\n")).toContain("SharedArrayBuffer");
     expect(messages.join("\n")).toContain("WebAssembly SIMD");
@@ -165,5 +186,6 @@ describe("explainMissingRequirements", () => {
     expect(messages.join("\n")).toContain("WebGPU");
     expect(messages.join("\n")).toContain("WebGL2");
     expect(messages.join("\n")).toContain("wasm-unsafe-eval");
+    expect(messages.join("\n")).toContain("SyncAccessHandle");
   });
 });
