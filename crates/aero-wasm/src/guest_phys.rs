@@ -10,6 +10,9 @@
 //! The wasm runtime stores guest RAM as a contiguous `[0..ram_bytes)` region in linear memory, so
 //! devices that DMA into guest RAM must translate guest physical addresses back into this RAM
 //! offset space.
+//!
+//! Addresses in the hole are not backed by RAM: reads should behave like open bus (`0xFF` bytes) and
+//! writes should be ignored unless an MMIO device claims the range.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum GuestRamRange {
