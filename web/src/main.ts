@@ -1536,7 +1536,12 @@ function renderNetTracePanel(): HTMLElement {
       workerCoordinator.clearNetTrace();
     },
     getStats: async () => {
-      requireNetWorkerReady();
+      // Avoid spamming the UI with errors when the net worker is not running yet.
+      // We can only fetch real stats once the worker is ready.
+      const workerStatus = workerCoordinator.getWorkerStatuses().net;
+      if (workerStatus.state !== "ready") {
+        return { enabled: workerCoordinator.isNetTraceEnabled(), records: 0, bytes: 0, droppedRecords: 0, droppedBytes: 0 };
+      }
       return await workerCoordinator.getNetTraceStats(1000);
     },
     clearCapture: () => {
