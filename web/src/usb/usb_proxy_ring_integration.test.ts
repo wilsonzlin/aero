@@ -263,6 +263,40 @@ describe("usb/WebUSB proxy SAB ring integration", () => {
     runtime.destroy();
   });
 
+  it("disables rings and sends usb.ringDetach when action ring decoding fails", async () => {
+    Object.defineProperty(globalThis, "crossOriginIsolated", { value: true, configurable: true });
+    vi.useFakeTimers();
+    try {
+      const broker = new UsbBroker({ ringDrainIntervalMs: 1 });
+      const { brokerPort } = createChannel();
+      broker.attachWorkerPort(brokerPort as unknown as MessagePort);
+
+      const ringAttach = brokerPort.sent.find((p) => (p.msg as { type?: unknown }).type === "usb.ringAttach")?.msg as
+        | { actionRing: SharedArrayBuffer; completionRing: SharedArrayBuffer }
+        | undefined;
+      expect(ringAttach).toBeTruthy();
+
+      const ring = new UsbProxyRing(ringAttach!.actionRing);
+      expect(ring.pushAction({ kind: "bulkIn", id: 1, endpoint: 0x81, length: 8 })).toBe(true);
+
+      // Corrupt the kind tag so popAction() throws.
+      new Uint8Array(ringAttach!.actionRing, USB_PROXY_RING_CTRL_BYTES)[0] = 0x99;
+
+      brokerPort.sent.length = 0;
+      await vi.advanceTimersByTimeAsync(1);
+
+      const detach = brokerPort.sent.find((p) => (p.msg as { type?: unknown }).type === "usb.ringDetach")?.msg as
+        | { type: "usb.ringDetach"; reason?: string }
+        | undefined;
+      expect(detach).toBeTruthy();
+      expect(detach!.reason).toMatch(/disabled/i);
+
+      broker.detachWorkerPort(brokerPort as unknown as MessagePort);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("broadcasts completion ring data to multiple runtimes on the same port", async () => {
     Object.defineProperty(globalThis, "crossOriginIsolated", { value: true, configurable: true });
 
