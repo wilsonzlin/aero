@@ -5,6 +5,16 @@ import type { IrqSink, TickableDevice } from "../device_manager.ts";
 export type VirtioInputPciDeviceLike = {
   mmio_read(offset: number, size: number): number;
   mmio_write(offset: number, size: number, value: number): void;
+  /**
+   * Legacy virtio-pci (0.9) I/O port register block accessors (BAR2).
+   *
+   * Newer WASM builds expose these as `legacy_io_read`/`legacy_io_write`. Older builds used
+   * `io_read`/`io_write` and those names are retained for back-compat.
+   */
+  legacy_io_read?(offset: number, size: number): number;
+  legacy_io_write?(offset: number, size: number, value: number): void;
+  io_read?(offset: number, size: number): number;
+  io_write?(offset: number, size: number, value: number): void;
   poll(): void;
   /**
    * Optional hook for mirroring PCI command register writes into the underlying device model.
@@ -22,9 +32,13 @@ export type VirtioInputPciDeviceLike = {
 };
 
 export type VirtioInputKind = "keyboard" | "mouse";
+export type VirtioInputPciMode = "modern" | "transitional" | "legacy";
 
 const VIRTIO_VENDOR_ID = 0x1af4;
-const VIRTIO_INPUT_DEVICE_ID = 0x1052;
+// Modern virtio-pci device ID space is 0x1040 + <virtio device type>. virtio-input type is 18 (0x12).
+const VIRTIO_INPUT_MODERN_DEVICE_ID = 0x1052;
+// Transitional virtio-pci device IDs are 0x1000 + (type - 1).
+const VIRTIO_INPUT_TRANSITIONAL_DEVICE_ID = 0x1011;
 const VIRTIO_INPUT_REVISION_ID = 0x01;
 const VIRTIO_INPUT_CLASS_CODE = 0x09_80_00;
 
@@ -33,6 +47,8 @@ const VIRTIO_INPUT_SUBSYSTEM_KEYBOARD = 0x0010;
 const VIRTIO_INPUT_SUBSYSTEM_MOUSE = 0x0011;
 
 const VIRTIO_INPUT_MMIO_BAR_SIZE = 0x4000;
+// Keep in sync with `crates/aero-virtio/src/pci.rs` (`bar2_size` when legacy I/O is enabled).
+const VIRTIO_LEGACY_IO_BAR2_SIZE = 0x100;
 
 // IRQ5 is unused by the other built-in devices (i8042=IRQ1/12, UART=IRQ4, UHCI=IRQ11, E1000=IRQ10).
 const VIRTIO_INPUT_IRQ_LINE = 0x05;
@@ -456,7 +472,7 @@ export function hidUsageToLinuxKeyCode(usage: number): number | null {
 export class VirtioInputPciFunction implements PciDevice, TickableDevice {
   readonly name: string;
   readonly vendorId = VIRTIO_VENDOR_ID;
-  readonly deviceId = VIRTIO_INPUT_DEVICE_ID;
+  readonly deviceId: number;
   readonly classCode = VIRTIO_INPUT_CLASS_CODE;
   readonly revisionId = VIRTIO_INPUT_REVISION_ID;
 
@@ -467,19 +483,13 @@ export class VirtioInputPciFunction implements PciDevice, TickableDevice {
   readonly interruptPin = 1 as const;
   readonly bdf: PciAddress;
 
-  readonly bars: ReadonlyArray<PciBar | null> = [{ kind: "mmio64", size: VIRTIO_INPUT_MMIO_BAR_SIZE }, null, null, null, null, null];
-  readonly capabilities: ReadonlyArray<PciCapability> = [
-    // Virtio modern vendor-specific capabilities (contract v1 fixed BAR0 layout).
-    // The PCI bus will install these starting at 0x40 with 4-byte aligned pointers.
-    virtioVendorCap({ cfgType: 1, bar: 0, offset: 0x0000, length: 0x0100 }), // COMMON_CFG
-    virtioVendorCap({ cfgType: 2, bar: 0, offset: 0x1000, length: 0x0100, notifyOffMultiplier: 4 }), // NOTIFY_CFG
-    virtioVendorCap({ cfgType: 3, bar: 0, offset: 0x2000, length: 0x0020 }), // ISR_CFG
-    virtioVendorCap({ cfgType: 4, bar: 0, offset: 0x3000, length: 0x0100 }), // DEVICE_CFG
-  ];
+  readonly bars: ReadonlyArray<PciBar | null>;
+  readonly capabilities: ReadonlyArray<PciCapability>;
 
   readonly #dev: VirtioInputPciDeviceLike;
   readonly #irqSink: IrqSink;
   readonly #kind: VirtioInputKind;
+  readonly #mode: VirtioInputPciMode;
 
   #pciCommand = 0;
   #irqLevel = false;
@@ -487,14 +497,41 @@ export class VirtioInputPciFunction implements PciDevice, TickableDevice {
   #driverOkLogged = false;
   #mouseButtons = 0;
 
-  constructor(opts: { kind: VirtioInputKind; device: VirtioInputPciDeviceLike; irqSink: IrqSink }) {
+  constructor(opts: { kind: VirtioInputKind; device: VirtioInputPciDeviceLike; irqSink: IrqSink; mode?: VirtioInputPciMode }) {
     this.#kind = opts.kind;
     this.#dev = opts.device;
     this.#irqSink = opts.irqSink;
+    this.#mode = opts.mode ?? "modern";
     this.name = `virtio_input_${opts.kind}`;
     this.subsystemId = opts.kind === "keyboard" ? VIRTIO_INPUT_SUBSYSTEM_KEYBOARD : VIRTIO_INPUT_SUBSYSTEM_MOUSE;
     this.headerType = opts.kind === "keyboard" ? 0x80 : 0x00;
     this.bdf = { bus: 0, device: VIRTIO_INPUT_PCI_DEVICE, function: opts.kind === "keyboard" ? 0 : 1 };
+
+    const caps: ReadonlyArray<PciCapability> = [
+      // Virtio modern vendor-specific capabilities (contract v1 fixed BAR0 layout).
+      // The PCI bus will install these starting at 0x40 with 4-byte aligned pointers.
+      virtioVendorCap({ cfgType: 1, bar: 0, offset: 0x0000, length: 0x0100 }), // COMMON_CFG
+      virtioVendorCap({ cfgType: 2, bar: 0, offset: 0x1000, length: 0x0100, notifyOffMultiplier: 4 }), // NOTIFY_CFG
+      virtioVendorCap({ cfgType: 3, bar: 0, offset: 0x2000, length: 0x0020 }), // ISR_CFG
+      virtioVendorCap({ cfgType: 4, bar: 0, offset: 0x3000, length: 0x0100 }), // DEVICE_CFG
+    ];
+
+    // Legacy-only mode intentionally disables modern virtio-pci capabilities so guests take the
+    // virtio 0.9 I/O-port transport path.
+    this.capabilities = this.#mode === "legacy" ? [] : caps;
+
+    this.deviceId = this.#mode === "modern" ? VIRTIO_INPUT_MODERN_DEVICE_ID : VIRTIO_INPUT_TRANSITIONAL_DEVICE_ID;
+    this.bars =
+      this.#mode === "modern"
+        ? [{ kind: "mmio64", size: VIRTIO_INPUT_MMIO_BAR_SIZE }, null, null, null, null, null]
+        : [
+            { kind: "mmio64", size: VIRTIO_INPUT_MMIO_BAR_SIZE },
+            null,
+            { kind: "io", size: VIRTIO_LEGACY_IO_BAR2_SIZE },
+            null,
+            null,
+            null,
+          ];
   }
 
   mmioRead(barIndex: number, offset: bigint, size: number): number {
@@ -532,6 +569,54 @@ export class VirtioInputPciFunction implements PciDevice, TickableDevice {
       this.#dev.mmio_write(off >>> 0, size >>> 0, maskToSize(value >>> 0, size));
     } catch {
       // ignore device errors during guest MMIO
+    }
+    this.#syncIrq();
+  }
+
+  ioRead(barIndex: number, offset: number, size: number): number {
+    if (this.#destroyed) return defaultReadValue(size);
+    if (barIndex !== 2) return defaultReadValue(size);
+    if (size !== 1 && size !== 2 && size !== 4) return defaultReadValue(size);
+    if (this.#mode === "modern") return defaultReadValue(size);
+
+    const off = offset >>> 0;
+    if (off + size > VIRTIO_LEGACY_IO_BAR2_SIZE) return defaultReadValue(size);
+
+    const dev = this.#dev as unknown as { legacy_io_read?: unknown; io_read?: unknown };
+    const fn = (typeof dev.legacy_io_read === "function" ? dev.legacy_io_read : dev.io_read) as
+      | ((offset: number, size: number) => number)
+      | undefined;
+    if (typeof fn !== "function") return defaultReadValue(size);
+
+    let value: number;
+    try {
+      value = fn.call(this.#dev, off, size) >>> 0;
+    } catch {
+      value = defaultReadValue(size);
+    }
+    this.#syncIrq();
+    return maskToSize(value, size);
+  }
+
+  ioWrite(barIndex: number, offset: number, size: number, value: number): void {
+    if (this.#destroyed) return;
+    if (barIndex !== 2) return;
+    if (size !== 1 && size !== 2 && size !== 4) return;
+    if (this.#mode === "modern") return;
+
+    const off = offset >>> 0;
+    if (off + size > VIRTIO_LEGACY_IO_BAR2_SIZE) return;
+
+    const dev = this.#dev as unknown as { legacy_io_write?: unknown; io_write?: unknown };
+    const fn = (typeof dev.legacy_io_write === "function" ? dev.legacy_io_write : dev.io_write) as
+      | ((offset: number, size: number, value: number) => void)
+      | undefined;
+    if (typeof fn === "function") {
+      try {
+        fn.call(this.#dev, off, size, maskToSize(value >>> 0, size));
+      } catch {
+        // ignore device errors during guest IO
+      }
     }
     this.#syncIrq();
   }

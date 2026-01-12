@@ -165,4 +165,67 @@ describe("io/devices/virtio_input PCI config", () => {
       expect(readCapFieldU32(cfg, 10, fn, 0x74, 12)).toBe(0x0100);
     }
   });
+
+  it("exposes BAR2 as IO for transitional/legacy modes and hides modern capabilities in legacy mode", () => {
+    const make = (mode: "transitional" | "legacy") => {
+      const portBus = new PortIoBus();
+      const mmioBus = new MmioBus();
+      const pciBus = new PciBus(portBus, mmioBus);
+      pciBus.registerToPortBus();
+
+      const dev: VirtioInputPciDeviceLike = {
+        mmio_read: () => 0,
+        mmio_write: () => {},
+        poll: () => {},
+        driver_ok: () => false,
+        irq_asserted: () => false,
+        inject_key: () => {},
+        inject_rel: () => {},
+        inject_button: () => {},
+        inject_wheel: () => {},
+        free: () => {},
+      };
+      const irqSink = { raiseIrq: () => {}, lowerIrq: () => {} };
+
+      const fn0 = new VirtioInputPciFunction({ kind: "keyboard", device: dev, irqSink, mode });
+      const fn1 = new VirtioInputPciFunction({ kind: "mouse", device: dev, irqSink, mode });
+      pciBus.registerDevice(fn0);
+      pciBus.registerDevice(fn1);
+      return { cfg: makeCfgIo(portBus) };
+    };
+
+    // Transitional: transitional device ID, BAR2 present, modern caps present.
+    {
+      const { cfg } = make("transitional");
+      for (const fn of [0, 1]) {
+        expect(cfg.readU32(10, fn, 0x00)).toBe(0x1011_1af4);
+
+        const bar2 = cfg.readU32(10, fn, 0x18);
+        expect(bar2 & 0x1).toBe(0x1);
+        cfg.writeU32(10, fn, 0x18, 0xffff_ffff);
+        expect(cfg.readU32(10, fn, 0x18)).toBe(0xffff_ff01);
+
+        const status = cfg.readU16(10, fn, 0x06);
+        expect(status & 0x0010).toBe(0x0010);
+        expect(cfg.readU8(10, fn, 0x34)).toBe(0x40);
+      }
+    }
+
+    // Legacy-only: same transitional device ID, BAR2 present, capability list disabled.
+    {
+      const { cfg } = make("legacy");
+      for (const fn of [0, 1]) {
+        expect(cfg.readU32(10, fn, 0x00)).toBe(0x1011_1af4);
+
+        const bar2 = cfg.readU32(10, fn, 0x18);
+        expect(bar2 & 0x1).toBe(0x1);
+        cfg.writeU32(10, fn, 0x18, 0xffff_ffff);
+        expect(cfg.readU32(10, fn, 0x18)).toBe(0xffff_ff01);
+
+        const status = cfg.readU16(10, fn, 0x06);
+        expect(status & 0x0010).toBe(0x0000);
+        expect(cfg.readU8(10, fn, 0x34)).toBe(0x00);
+      }
+    }
+  });
 });

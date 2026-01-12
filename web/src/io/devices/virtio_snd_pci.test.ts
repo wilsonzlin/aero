@@ -143,6 +143,63 @@ describe("io/devices/virtio_snd PCI config", () => {
     expect(readCapFieldU32(cfg, 11, 0, 0x74, 8)).toBe(0x3000);
     expect(readCapFieldU32(cfg, 11, 0, 0x74, 12)).toBe(0x0100);
   });
+
+  it("exposes BAR2 as IO for transitional/legacy modes and hides modern capabilities in legacy mode", () => {
+    const make = (mode: "transitional" | "legacy") => {
+      const portBus = new PortIoBus();
+      const mmioBus = new MmioBus();
+      const pciBus = new PciBus(portBus, mmioBus);
+      pciBus.registerToPortBus();
+
+      const bridge: VirtioSndPciBridgeLike = {
+        mmio_read: () => 0,
+        mmio_write: () => {},
+        poll: () => {},
+        driver_ok: () => false,
+        irq_asserted: () => false,
+        set_audio_ring_buffer: () => {},
+        set_host_sample_rate_hz: () => {},
+        set_mic_ring_buffer: () => {},
+        set_capture_sample_rate_hz: () => {},
+        free: () => {},
+      };
+      const irqSink: IrqSink = { raiseIrq: () => {}, lowerIrq: () => {} };
+      const dev = new VirtioSndPciDevice({ bridge, irqSink, mode });
+      pciBus.registerDevice(dev);
+      return { cfg: makeCfgIo(portBus) };
+    };
+
+    // Transitional: device ID should be the 0x1000-range transitional ID and modern capabilities should be present.
+    {
+      const { cfg } = make("transitional");
+      expect(cfg.readU32(11, 0, 0x00)).toBe(0x1018_1af4);
+
+      const bar2 = cfg.readU32(11, 0, 0x18);
+      expect(bar2 & 0x1).toBe(0x1);
+      // Probe BAR2 size mask.
+      cfg.writeU32(11, 0, 0x18, 0xffff_ffff);
+      expect(cfg.readU32(11, 0, 0x18)).toBe(0xffff_ff01);
+
+      const status = cfg.readU16(11, 0, 0x06);
+      expect(status & 0x0010).toBe(0x0010);
+      expect(cfg.readU8(11, 0, 0x34)).toBe(0x40);
+    }
+
+    // Legacy-only: same 0x1000-range device ID, BAR2 present, but modern capability list disabled.
+    {
+      const { cfg } = make("legacy");
+      expect(cfg.readU32(11, 0, 0x00)).toBe(0x1018_1af4);
+
+      const bar2 = cfg.readU32(11, 0, 0x18);
+      expect(bar2 & 0x1).toBe(0x1);
+      cfg.writeU32(11, 0, 0x18, 0xffff_ffff);
+      expect(cfg.readU32(11, 0, 0x18)).toBe(0xffff_ff01);
+
+      const status = cfg.readU16(11, 0, 0x06);
+      expect(status & 0x0010).toBe(0x0000);
+      expect(cfg.readU8(11, 0, 0x34)).toBe(0x00);
+    }
+  });
 });
 
 describe("io/devices/virtio_snd BAR0 MMIO", () => {

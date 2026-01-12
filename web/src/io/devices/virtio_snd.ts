@@ -5,6 +5,16 @@ import type { IrqSink, TickableDevice } from "../device_manager.ts";
 export type VirtioSndPciBridgeLike = {
   mmio_read(offset: number, size: number): number;
   mmio_write(offset: number, size: number, value: number): void;
+  /**
+   * Legacy virtio-pci (0.9) I/O port register block accessors (BAR2).
+   *
+   * Newer WASM builds expose these as `legacy_io_read`/`legacy_io_write`. Older builds used
+   * `io_read`/`io_write` and those names are retained for back-compat.
+   */
+  legacy_io_read?(offset: number, size: number): number;
+  legacy_io_write?(offset: number, size: number, value: number): void;
+  io_read?(offset: number, size: number): number;
+  io_write?(offset: number, size: number, value: number): void;
   poll(): void;
   /**
    * Optional hook for mirroring PCI command register writes into the underlying device model.
@@ -26,14 +36,21 @@ export type VirtioSndPciBridgeLike = {
   free(): void;
 };
 
+export type VirtioSndPciMode = "modern" | "transitional" | "legacy";
+
 const VIRTIO_VENDOR_ID = 0x1af4;
-const VIRTIO_SND_DEVICE_ID = 0x1059;
+// Modern virtio-pci device ID space is 0x1040 + <virtio device type>.
+const VIRTIO_SND_MODERN_DEVICE_ID = 0x1059;
+// Transitional virtio-pci device IDs are 0x1000 + (type - 1). virtio-snd type is 25 (0x19).
+const VIRTIO_SND_TRANSITIONAL_DEVICE_ID = 0x1018;
 const VIRTIO_SND_SUBSYSTEM_DEVICE_ID = 0x0019;
 const VIRTIO_SND_CLASS_CODE = 0x04_01_00;
 const VIRTIO_CONTRACT_REVISION_ID = 0x01;
 
 // BAR0 size in the Aero Windows 7 virtio contract v1 (see docs/windows7-virtio-driver-contract.md).
 const VIRTIO_MMIO_BAR0_SIZE = 0x4000;
+// Keep in sync with `crates/aero-virtio/src/pci.rs` (`bar2_size` when legacy I/O is enabled).
+const VIRTIO_LEGACY_IO_BAR2_SIZE = 0x100;
 
 // Fixed virtio-pci capability layout within BAR0 (contract v1).
 const VIRTIO_MMIO_COMMON_OFFSET = 0x0000;
@@ -95,15 +112,16 @@ function virtioVendorCap(opts: {
 }
 
 /**
- * Virtio-snd PCI function (virtio-pci modern transport) backed by the WASM `VirtioSndPciBridge`.
+ * Virtio-snd PCI function (virtio-pci modern/transitional/legacy transport) backed by the WASM `VirtioSndPciBridge`.
  *
  * Exposes:
  * - BAR0: 64-bit MMIO BAR, size 0x4000 (Aero Windows 7 virtio contract v1 modern layout).
+ * - BAR2 (transitional/legacy modes): legacy I/O port register block, size 0x100.
  */
 export class VirtioSndPciDevice implements PciDevice, TickableDevice {
   readonly name = "virtio_snd";
   readonly vendorId = VIRTIO_VENDOR_ID;
-  readonly deviceId = VIRTIO_SND_DEVICE_ID;
+  readonly deviceId: number;
   readonly subsystemVendorId = VIRTIO_VENDOR_ID;
   readonly subsystemId = VIRTIO_SND_SUBSYSTEM_DEVICE_ID;
   readonly classCode = VIRTIO_SND_CLASS_CODE;
@@ -114,33 +132,47 @@ export class VirtioSndPciDevice implements PciDevice, TickableDevice {
   // (`docs/pci-device-compatibility.md`, `crates/devices/src/pci/profile.rs`).
   readonly bdf = { bus: 0, device: 11, function: 0 };
 
-  readonly bars: ReadonlyArray<PciBar | null> = [{ kind: "mmio64", size: VIRTIO_MMIO_BAR0_SIZE }, null, null, null, null, null];
-  readonly capabilities: ReadonlyArray<PciCapability> = [
-    // Virtio modern vendor-specific capabilities (contract v1 fixed BAR0 layout).
-    // The PCI bus will install these starting at 0x40 with 4-byte aligned pointers.
-    virtioVendorCap({ cfgType: 1, bar: 0, offset: VIRTIO_MMIO_COMMON_OFFSET, length: VIRTIO_MMIO_COMMON_LEN }), // COMMON_CFG
-    virtioVendorCap({
-      cfgType: 2,
-      bar: 0,
-      offset: VIRTIO_MMIO_NOTIFY_OFFSET,
-      length: VIRTIO_MMIO_NOTIFY_LEN,
-      notifyOffMultiplier: VIRTIO_MMIO_NOTIFY_OFF_MULTIPLIER,
-    }), // NOTIFY_CFG
-    virtioVendorCap({ cfgType: 3, bar: 0, offset: VIRTIO_MMIO_ISR_OFFSET, length: VIRTIO_MMIO_ISR_LEN }), // ISR_CFG
-    virtioVendorCap({ cfgType: 4, bar: 0, offset: VIRTIO_MMIO_DEVICE_OFFSET, length: VIRTIO_MMIO_DEVICE_LEN }), // DEVICE_CFG
-  ];
+  readonly bars: ReadonlyArray<PciBar | null>;
+  readonly capabilities: ReadonlyArray<PciCapability>;
 
   readonly #bridge: VirtioSndPciBridgeLike;
   readonly #irqSink: IrqSink;
+  readonly #mode: VirtioSndPciMode;
 
   #pciCommand = 0;
   #irqLevel = false;
   #destroyed = false;
   #driverOkLogged = false;
 
-  constructor(opts: { bridge: VirtioSndPciBridgeLike; irqSink: IrqSink }) {
+  constructor(opts: { bridge: VirtioSndPciBridgeLike; irqSink: IrqSink; mode?: VirtioSndPciMode }) {
     this.#bridge = opts.bridge;
     this.#irqSink = opts.irqSink;
+    this.#mode = opts.mode ?? "modern";
+
+    const caps: ReadonlyArray<PciCapability> = [
+      // Virtio modern vendor-specific capabilities (contract v1 fixed BAR0 layout).
+      // The PCI bus will install these starting at 0x40 with 4-byte aligned pointers.
+      virtioVendorCap({ cfgType: 1, bar: 0, offset: VIRTIO_MMIO_COMMON_OFFSET, length: VIRTIO_MMIO_COMMON_LEN }), // COMMON_CFG
+      virtioVendorCap({
+        cfgType: 2,
+        bar: 0,
+        offset: VIRTIO_MMIO_NOTIFY_OFFSET,
+        length: VIRTIO_MMIO_NOTIFY_LEN,
+        notifyOffMultiplier: VIRTIO_MMIO_NOTIFY_OFF_MULTIPLIER,
+      }), // NOTIFY_CFG
+      virtioVendorCap({ cfgType: 3, bar: 0, offset: VIRTIO_MMIO_ISR_OFFSET, length: VIRTIO_MMIO_ISR_LEN }), // ISR_CFG
+      virtioVendorCap({ cfgType: 4, bar: 0, offset: VIRTIO_MMIO_DEVICE_OFFSET, length: VIRTIO_MMIO_DEVICE_LEN }), // DEVICE_CFG
+    ];
+
+    // Legacy-only mode intentionally disables modern virtio-pci capabilities so guests take the
+    // virtio 0.9 I/O-port transport path.
+    this.capabilities = this.#mode === "legacy" ? [] : caps;
+
+    this.deviceId = this.#mode === "modern" ? VIRTIO_SND_MODERN_DEVICE_ID : VIRTIO_SND_TRANSITIONAL_DEVICE_ID;
+    this.bars =
+      this.#mode === "modern"
+        ? [{ kind: "mmio64", size: VIRTIO_MMIO_BAR0_SIZE }, null, null, null, null, null]
+        : [{ kind: "mmio64", size: VIRTIO_MMIO_BAR0_SIZE }, null, { kind: "io", size: VIRTIO_LEGACY_IO_BAR2_SIZE }, null, null, null];
   }
 
   mmioRead(barIndex: number, offset: bigint, size: number): number {
@@ -194,6 +226,54 @@ export class VirtioSndPciDevice implements PciDevice, TickableDevice {
       this.#bridge.mmio_write(off >>> 0, size, maskToSize(value >>> 0, size));
     } catch {
       // ignore device errors during guest IO
+    }
+    this.#syncIrq();
+  }
+
+  ioRead(barIndex: number, offset: number, size: number): number {
+    if (this.#destroyed) return defaultReadValue(size);
+    if (barIndex !== 2) return defaultReadValue(size);
+    if (size !== 1 && size !== 2 && size !== 4) return defaultReadValue(size);
+    if (this.#mode === "modern") return defaultReadValue(size);
+
+    const off = offset >>> 0;
+    if (off + size > VIRTIO_LEGACY_IO_BAR2_SIZE) return defaultReadValue(size);
+
+    const bridge = this.#bridge as unknown as { legacy_io_read?: unknown; io_read?: unknown };
+    const fn = (typeof bridge.legacy_io_read === "function" ? bridge.legacy_io_read : bridge.io_read) as
+      | ((offset: number, size: number) => number)
+      | undefined;
+    if (typeof fn !== "function") return defaultReadValue(size);
+
+    let value: number;
+    try {
+      value = fn.call(this.#bridge, off, size) >>> 0;
+    } catch {
+      value = defaultReadValue(size);
+    }
+    this.#syncIrq();
+    return maskToSize(value, size);
+  }
+
+  ioWrite(barIndex: number, offset: number, size: number, value: number): void {
+    if (this.#destroyed) return;
+    if (barIndex !== 2) return;
+    if (size !== 1 && size !== 2 && size !== 4) return;
+    if (this.#mode === "modern") return;
+
+    const off = offset >>> 0;
+    if (off + size > VIRTIO_LEGACY_IO_BAR2_SIZE) return;
+
+    const bridge = this.#bridge as unknown as { legacy_io_write?: unknown; io_write?: unknown };
+    const fn = (typeof bridge.legacy_io_write === "function" ? bridge.legacy_io_write : bridge.io_write) as
+      | ((offset: number, size: number, value: number) => void)
+      | undefined;
+    if (typeof fn === "function") {
+      try {
+        fn.call(this.#bridge, off, size, maskToSize(value >>> 0, size));
+      } catch {
+        // ignore device errors during guest IO
+      }
     }
     this.#syncIrq();
   }
