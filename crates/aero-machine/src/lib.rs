@@ -45,8 +45,7 @@ use aero_devices::pci::{
     bios_post, register_pci_config_ports, GsiLevelSink, PciBarDefinition, PciBarMmioHandler,
     PciBarMmioRouter, PciBdf, PciConfigPorts, PciConfigSyncedMmioBar, PciCoreSnapshot, PciDevice,
     PciEcamConfig, PciEcamMmio, PciInterruptPin, PciIntxRouter, PciIntxRouterConfig,
-    PciResourceAllocator,
-    PciResourceAllocatorConfig, SharedPciConfigPorts,
+    PciResourceAllocator, PciResourceAllocatorConfig, SharedPciConfigPorts,
 };
 use aero_devices::pic8259::register_pic8259_on_platform_interrupts;
 use aero_devices::pit8254::{register_pit8254, Pit8254, SharedPit8254};
@@ -4765,27 +4764,34 @@ impl snapshot::SnapshotTarget for Machine {
         // Preserve a stable ordering for host integrations regardless of snapshot file ordering.
         overlays.disks.sort_by_key(|disk| disk.disk_id);
 
-        // Record the restored refs for the host/coordinator so it can re-open and re-attach the
-        // appropriate storage backends after restore.
-        self.restored_disk_overlays = Some(overlays.clone());
-
-        // Also update the machine's configured overlay refs so subsequent snapshots (and host-side
-        // queries) reflect the restored configuration.
-        self.ahci_port0_overlay = overlays
+        // Precompute the machine's per-disk overlay refs before we move `overlays` into
+        // `restored_disk_overlays`. This avoids cloning the full `DiskOverlayRefs` payload (which
+        // can include many entries) just to retain a copy for the host.
+        let ahci_port0_overlay = overlays
             .disks
             .iter()
             .find(|d| d.disk_id == Self::DISK_ID_PRIMARY_HDD)
             .cloned();
-        self.ide_secondary_master_atapi_overlay = overlays
+        let ide_secondary_master_atapi_overlay = overlays
             .disks
             .iter()
             .find(|d| d.disk_id == Self::DISK_ID_INSTALL_MEDIA)
             .cloned();
-        self.ide_primary_master_overlay = overlays
+        let ide_primary_master_overlay = overlays
             .disks
             .iter()
             .find(|d| d.disk_id == Self::DISK_ID_IDE_PRIMARY_MASTER)
             .cloned();
+
+        // Record the restored refs for the host/coordinator so it can re-open and re-attach the
+        // appropriate storage backends after restore.
+        self.restored_disk_overlays = Some(overlays);
+
+        // Also update the machine's configured overlay refs so subsequent snapshots (and host-side
+        // queries) reflect the restored configuration.
+        self.ahci_port0_overlay = ahci_port0_overlay;
+        self.ide_secondary_master_atapi_overlay = ide_secondary_master_atapi_overlay;
+        self.ide_primary_master_overlay = ide_primary_master_overlay;
     }
 
     fn ram_len(&self) -> usize {
