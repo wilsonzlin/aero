@@ -764,6 +764,10 @@ mod wasm {
             let (offset, end) = self.check_io_bounds(lba, buf.len())?;
             self.flush_writable_if_dirty().await?;
 
+            if buf.is_empty() {
+                return Ok(());
+            }
+
             let file_obj = opfs_platform::get_file_obj(&self.file).await?;
             let start = u64_to_f64_checked(offset)?;
             let end = u64_to_f64_checked(end)?;
@@ -775,6 +779,13 @@ mod wasm {
                 .await
                 .map_err(opfs_platform::disk_error_from_js)?;
             let arr = Uint8Array::new(&ab);
+            let got = arr.length() as usize;
+            if got != buf.len() {
+                return Err(DiskError::Io(format!(
+                    "short read from OPFS async backend: expected {} bytes got {got}",
+                    buf.len()
+                )));
+            }
             arr.copy_to(buf);
             Ok(())
         }
