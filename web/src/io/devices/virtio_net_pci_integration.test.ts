@@ -46,10 +46,14 @@ function readU32LE(buf: Uint8Array, off: number): number {
 
 type VirtioPciCaps = {
   commonOff: number | null;
+  commonLen: number | null;
   notifyOff: number | null;
+  notifyLen: number | null;
   notifyMult: number | null;
   isrOff: number | null;
+  isrLen: number | null;
   deviceOff: number | null;
+  deviceLen: number | null;
 };
 
 function parseVirtioPciCaps(cfg: Uint8Array): VirtioPciCaps {
@@ -57,10 +61,14 @@ function parseVirtioPciCaps(cfg: Uint8Array): VirtioPciCaps {
   let ptr = cfg[0x34] ?? 0;
   const caps: VirtioPciCaps = {
     commonOff: null,
+    commonLen: null,
     notifyOff: null,
+    notifyLen: null,
     notifyMult: null,
     isrOff: null,
+    isrLen: null,
     deviceOff: null,
+    deviceLen: null,
   };
 
   // Guard against malformed/cyclic lists.
@@ -89,21 +97,26 @@ function parseVirtioPciCaps(cfg: Uint8Array): VirtioPciCaps {
       const bar = cfg[ptr + 4]! >>> 0;
       if (bar !== 0) throw new Error(`virtio_pci_cap BAR != 0 (got ${bar}); test expects BAR0-backed caps`);
       const offset = readU32LE(cfg, ptr + 8);
+      const length = readU32LE(cfg, ptr + 12);
 
       switch (cfgType) {
         case VIRTIO_PCI_CAP_COMMON_CFG:
           caps.commonOff = offset;
+          caps.commonLen = length;
           break;
         case VIRTIO_PCI_CAP_NOTIFY_CFG:
           caps.notifyOff = offset;
+          caps.notifyLen = length;
           if (capLen < 20) throw new Error(`virtio notify cap too short: len=${capLen}`);
           caps.notifyMult = readU32LE(cfg, ptr + 16);
           break;
         case VIRTIO_PCI_CAP_ISR_CFG:
           caps.isrOff = offset;
+          caps.isrLen = length;
           break;
         case VIRTIO_PCI_CAP_DEVICE_CFG:
           caps.deviceOff = offset;
+          caps.deviceLen = length;
           break;
         default:
           break;
@@ -248,11 +261,25 @@ describe("io/devices/virtio-net (pci bridge integration)", () => {
       // Note: common config is at offset 0x0000 in the Aero virtio-net PCI contract,
       // so we must treat `0` as a valid offset (use `null` as the "not found" sentinel).
       expect(caps.commonOff).not.toBeNull();
+      expect(caps.commonLen).not.toBeNull();
       expect(caps.notifyOff).not.toBeNull();
+      expect(caps.notifyLen).not.toBeNull();
       expect(caps.isrOff).not.toBeNull();
+      expect(caps.isrLen).not.toBeNull();
       expect(caps.deviceOff).not.toBeNull();
+      expect(caps.deviceLen).not.toBeNull();
       expect(caps.notifyMult).not.toBeNull();
-      expect(caps.notifyMult).not.toBe(0);
+      expect(caps.notifyMult).toBe(4);
+
+      // Contract v1 virtio-net capability layout (see `io/devices/virtio_net.ts` docs).
+      expect(caps.commonOff).toBe(0x0000);
+      expect(caps.commonLen).toBe(0x0100);
+      expect(caps.notifyOff).toBe(0x1000);
+      expect(caps.notifyLen).toBe(0x0100);
+      expect(caps.isrOff).toBe(0x2000);
+      expect(caps.isrLen).toBe(0x0020);
+      expect(caps.deviceOff).toBe(0x3000);
+      expect(caps.deviceLen).toBe(0x0100);
 
       const commonBase = bar0Base + BigInt(caps.commonOff!);
       const notifyBase = bar0Base + BigInt(caps.notifyOff!);
@@ -295,11 +322,13 @@ describe("io/devices/virtio-net (pci bridge integration)", () => {
         expect(max).toBeGreaterThanOrEqual(256);
         // Driver-selected queue size.
         mmioWriteU16(commonBase + 0x18n, 256);
+        expect(mmioReadU16(commonBase + 0x18n)).toBe(256);
         mmioWriteU64(commonBase + 0x20n, BigInt(desc));
         mmioWriteU64(commonBase + 0x28n, BigInt(avail));
         mmioWriteU64(commonBase + 0x30n, BigInt(used));
         const notifyOff = mmioReadU16(commonBase + 0x1en);
         mmioWriteU16(commonBase + 0x1cn, 1);
+        expect(mmioReadU16(commonBase + 0x1cn)).toBe(1);
         return notifyOff;
       };
 
