@@ -16,6 +16,24 @@ use aero_usb::uhci::regs::*;
 use aero_usb::uhci::UhciController;
 use memory::MemoryBus as _;
 
+const FRAME_LIST_BASE: u32 = 0x1000;
+const QH_ADDR: u32 = 0x2000;
+const TD0: u32 = 0x3000;
+const TD1: u32 = 0x3020;
+const BUF_SETUP: u32 = 0x4000;
+const BUF_INT: u32 = 0x5000;
+
+const PID_IN: u8 = 0x69;
+const PID_SETUP: u8 = 0x2d;
+
+const TD_STATUS_ACTIVE: u32 = 1 << 23;
+const TD_STATUS_NAK: u32 = 1 << 19;
+
+// UHCI root hub PORTSC bits (Intel UHCI spec / Linux uhci-hcd).
+const PORTSC_CSC: u16 = 0x0002;
+const PORTSC_PED: u16 = 0x0004;
+const PORTSC_PR: u16 = 0x0200;
+
 fn cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
     0x8000_0000
         | ((bus as u32) << 16)
@@ -77,6 +95,87 @@ fn program_ioapic_entry(pc: &mut PcPlatform, gsi: u32, low: u32, high: u32) {
     pc.memory.write_u32(IOAPIC_MMIO_BASE + 0x10, low);
     pc.memory.write_u32(IOAPIC_MMIO_BASE, redtbl_high);
     pc.memory.write_u32(IOAPIC_MMIO_BASE + 0x10, high);
+}
+
+fn td_token(pid: u8, addr: u8, ep: u8, toggle: u8, max_len: usize) -> u32 {
+    let max_field = if max_len == 0 {
+        0x7ffu32
+    } else {
+        (max_len as u32) - 1
+    };
+    (pid as u32)
+        | ((addr as u32) << 8)
+        | ((ep as u32) << 15)
+        | ((toggle as u32) << 19)
+        | (max_field << 21)
+}
+
+fn td_status(active: bool) -> u32 {
+    let mut v = 0x7ffu32;
+    if active {
+        v |= TD_STATUS_ACTIVE;
+    }
+    v
+}
+
+fn write_td(
+    pc: &mut PcPlatform,
+    addr: u32,
+    link: u32,
+    status: u32,
+    token: u32,
+    buffer: u32,
+) {
+    pc.memory.write_u32(addr as u64, link);
+    pc.memory.write_u32(addr.wrapping_add(4) as u64, status);
+    pc.memory.write_u32(addr.wrapping_add(8) as u64, token);
+    pc.memory
+        .write_u32(addr.wrapping_add(12) as u64, buffer);
+}
+
+fn write_qh(pc: &mut PcPlatform, elem: u32) {
+    pc.memory.write_u32(QH_ADDR as u64, 1); // horiz terminate
+    pc.memory.write_u32(QH_ADDR.wrapping_add(4) as u64, elem);
+}
+
+fn init_frame_list(pc: &mut PcPlatform) {
+    for i in 0..1024u32 {
+        pc.memory
+            .write_u32((FRAME_LIST_BASE + i * 4) as u64, QH_ADDR | 0x2);
+    }
+}
+
+fn run_one_frame(pc: &mut PcPlatform, first_td: u32) {
+    write_qh(pc, first_td);
+    pc.tick(1_000_000);
+}
+
+fn read_portsc(pc: &mut PcPlatform, bar4_base: u16, portsc_offset: u16) -> u16 {
+    pc.io.read(bar4_base + portsc_offset, 2) as u16
+}
+
+fn write_portsc(pc: &mut PcPlatform, bar4_base: u16, portsc_offset: u16, value: u16) {
+    pc.io
+        .write(bar4_base + portsc_offset, 2, u32::from(value));
+}
+
+fn write_portsc_w1c(pc: &mut PcPlatform, bar4_base: u16, portsc_offset: u16, w1c: u16) {
+    // Preserve the port enable bit when clearing change bits, matching the usual
+    // read-modify-write pattern of UHCI drivers.
+    let cur = read_portsc(pc, bar4_base, portsc_offset);
+    let value = (cur & PORTSC_PED) | w1c;
+    write_portsc(pc, bar4_base, portsc_offset, value);
+}
+
+fn reset_port(pc: &mut PcPlatform, bar4_base: u16, portsc_offset: u16) {
+    // Clear connection status change if present.
+    if read_portsc(pc, bar4_base, portsc_offset) & PORTSC_CSC != 0 {
+        write_portsc_w1c(pc, bar4_base, portsc_offset, PORTSC_CSC);
+    }
+
+    // Trigger port reset and wait the UHCI-mandated ~50ms.
+    write_portsc(pc, bar4_base, portsc_offset, PORTSC_PR);
+    pc.tick(50_000_000);
 }
 
 #[test]
@@ -747,4 +846,118 @@ fn pc_platform_routes_uhci_intx_via_ioapic_in_apic_mode() {
 
     pc.interrupts.borrow_mut().eoi(vector as u8);
     assert_eq!(pc.interrupts.borrow().get_pending(), None);
+}
+
+#[test]
+fn pc_platform_uhci_interrupt_in_reads_hid_keyboard_reports_via_dma() {
+    let mut pc = PcPlatform::new(2 * 1024 * 1024);
+    let bdf = USB_UHCI_PIIX3.bdf;
+    let bar4_base = read_uhci_bar4_base(&mut pc);
+
+    let keyboard = UsbHidKeyboardHandle::new();
+    pc.uhci
+        .as_ref()
+        .expect("UHCI should be enabled")
+        .borrow_mut()
+        .controller_mut()
+        .hub_mut()
+        .attach(0, Box::new(keyboard.clone()));
+
+    // Enable Bus Mastering so UHCI can DMA the schedule/TD state.
+    let command = read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04) as u16;
+    write_cfg_u16(
+        &mut pc,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        0x04,
+        command | (1 << 2),
+    );
+    pc.tick(0);
+
+    init_frame_list(&mut pc);
+    reset_port(&mut pc, bar4_base, REG_PORTSC1);
+
+    pc.io
+        .write(bar4_base + REG_FLBASEADD, 4, FRAME_LIST_BASE);
+    pc.io.write(bar4_base + REG_FRNUM, 2, 0);
+    pc.io.write(
+        bar4_base + REG_USBCMD,
+        2,
+        u32::from(USBCMD_RS | USBCMD_MAXP),
+    );
+
+    // SET_ADDRESS(5).
+    pc.memory.write_physical(
+        BUF_SETUP as u64,
+        &[0x00, 0x05, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00],
+    );
+    write_td(
+        &mut pc,
+        TD0,
+        TD1,
+        td_status(true),
+        td_token(PID_SETUP, 0, 0, 0, 8),
+        BUF_SETUP,
+    );
+    write_td(
+        &mut pc,
+        TD1,
+        1,
+        td_status(true),
+        td_token(PID_IN, 0, 0, 1, 0),
+        0,
+    );
+    run_one_frame(&mut pc, TD0);
+
+    assert_eq!(pc.memory.read_u32(TD0 as u64 + 4) & TD_STATUS_ACTIVE, 0);
+    assert_eq!(pc.memory.read_u32(TD1 as u64 + 4) & TD_STATUS_ACTIVE, 0);
+
+    // SET_CONFIGURATION(1).
+    pc.memory.write_physical(
+        BUF_SETUP as u64,
+        &[0x00, 0x09, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00],
+    );
+    write_td(
+        &mut pc,
+        TD0,
+        TD1,
+        td_status(true),
+        td_token(PID_SETUP, 5, 0, 0, 8),
+        BUF_SETUP,
+    );
+    write_td(
+        &mut pc,
+        TD1,
+        1,
+        td_status(true),
+        td_token(PID_IN, 5, 0, 1, 0),
+        0,
+    );
+    run_one_frame(&mut pc, TD0);
+
+    keyboard.key_event(0x04, true); // 'a'
+
+    // Poll interrupt endpoint 1 at address 5.
+    write_td(
+        &mut pc,
+        TD0,
+        1,
+        td_status(true),
+        td_token(PID_IN, 5, 1, 0, 8),
+        BUF_INT,
+    );
+    run_one_frame(&mut pc, TD0);
+
+    let mut report = [0u8; 8];
+    pc.memory.read_physical(BUF_INT as u64, &mut report);
+    assert_eq!(report, [0x00, 0x00, 0x04, 0, 0, 0, 0, 0]);
+
+    // Poll again without new input: should NAK and remain active.
+    pc.memory
+        .write_u32(TD0 as u64 + 4, td_status(true));
+    run_one_frame(&mut pc, TD0);
+    let st = pc.memory.read_u32(TD0 as u64 + 4);
+    assert_ne!(st & TD_STATUS_ACTIVE, 0);
+    assert_ne!(st & TD_STATUS_NAK, 0);
 }
