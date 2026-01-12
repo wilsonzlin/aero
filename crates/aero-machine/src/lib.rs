@@ -220,6 +220,8 @@ impl MachineConfig {
     ///
     /// Other devices are set to explicit, stable defaults to avoid drift:
     ///
+    /// - PC platform enabled (PIC/APIC/PIT/RTC/PCI/ACPI/HPET)
+    /// - 1 vCPU (current machine limitation)
     /// - serial (`COM1`) enabled
     /// - i8042 enabled (keyboard/mouse)
     /// - fast A20 gate enabled (port `0x92`)
