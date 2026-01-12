@@ -1,68 +1,8 @@
-#include <cstdio>
-#include <cstdlib>
-#include <fstream>
-#include <sstream>
-#include <string>
- 
 #include "aerogpu_trace.h"
- 
-#if !defined(_WIN32)
-  #include <unistd.h>
-#endif
- 
-namespace {
- 
-void set_env(const char* name, const char* value) {
-#if defined(_WIN32)
-  if (!name) {
-    return;
-  }
-  if (value) {
-    SetEnvironmentVariableA(name, value);
-  } else {
-    SetEnvironmentVariableA(name, nullptr);
-  }
-#else
-  if (!name) {
-    return;
-  }
-  if (value) {
-    setenv(name, value, 1);
-  } else {
-    unsetenv(name);
-  }
-#endif
-}
- 
-std::string slurp_file(const std::string& path) {
-  std::ifstream in(path.c_str(), std::ios::in | std::ios::binary);
-  std::stringstream ss;
-  ss << in.rdbuf();
-  return ss.str();
-}
- 
-std::string make_unique_log_path(const char* stem) {
-  if (!stem) {
-    stem = "aerogpu_d3d9_trace_test";
-  }
-#if defined(_WIN32)
-  const unsigned long pid = GetCurrentProcessId();
-#else
-  const unsigned long pid = static_cast<unsigned long>(getpid());
-#endif
-  char buf[256];
-  std::snprintf(buf, sizeof(buf), "%s.%lu.log", stem, pid);
-  return std::string(buf);
-}
- 
-int fail(const char* msg) {
-  std::fprintf(stdout, "FAIL: %s\n", msg ? msg : "(null)");
-  return 1;
-}
- 
-} // namespace
- 
+#include "trace_test_utils.h"
+
 int main() {
+  using namespace aerogpu_d3d9_trace_test;
   const std::string out_path = make_unique_log_path("aerogpu_d3d9_trace_dump_on_stub_filtered_tests");
   if (!std::freopen(out_path.c_str(), "w", stderr)) {
     return fail("freopen(stderr) failed");
@@ -103,4 +43,3 @@ int main() {
   std::remove(out_path.c_str());
   return 0;
 }
-
