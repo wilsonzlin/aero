@@ -286,6 +286,7 @@ jobs:
           wav_marker=""
           failure_token=""
           failure_line=""
+          error_line=""
           if [[ -f "${serial_log}" ]]; then
             result_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|RESULT\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
             snd_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-snd\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
@@ -301,6 +302,8 @@ jobs:
             failure_token="$(grep -Eo 'FAIL: [A-Z0-9_]+:' "${harness_log}" | tail -n 1 | sed -e 's/^FAIL: //' -e 's/:$//' || true)"
             # Fallback: the full last failure line (useful when no structured token is present).
             failure_line="$(grep -F 'FAIL:' "${harness_log}" | tail -n 1 || true)"
+            # Fallback: last explicit "ERROR:" line.
+            error_line="$(grep -F 'ERROR:' "${harness_log}" | tail -n 1 || true)"
           fi
 
           {
@@ -313,6 +316,9 @@ jobs:
             fi
             if [[ -z "${failure_token}" && -n "${failure_line}" ]]; then
               echo "- Harness failure: ${failure_line}"
+            fi
+            if [[ -z "${failure_token}" && -z "${failure_line}" && -n "${error_line}" ]]; then
+              echo "- Harness error: ${error_line}"
             fi
             if [[ -n "${result_marker}" ]]; then
               echo "- Guest result marker: ${result_marker}"
