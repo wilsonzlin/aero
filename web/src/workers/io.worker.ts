@@ -863,12 +863,12 @@ function maybeInitVirtioInput(): void {
   } catch (err) {
     console.warn("[io.worker] Failed to initialize virtio-input devices", err);
     try {
-      (keyboardDev as VirtioInputPciDevice | null)?.free();
+      (keyboardDev as unknown as { free?: () => void } | null)?.free?.();
     } catch {
       // ignore
     }
     try {
-      (mouseDev as VirtioInputPciDevice | null)?.free();
+      (mouseDev as unknown as { free?: () => void } | null)?.free?.();
     } catch {
       // ignore
     }
@@ -909,14 +909,14 @@ function maybeInitVirtioInput(): void {
     // If wrapper construction failed before we took ownership, free the raw WASM objects.
     if (!keyboardFn) {
       try {
-        (keyboardDev as VirtioInputPciDevice | null)?.free();
+        (keyboardDev as unknown as { free?: () => void } | null)?.free?.();
       } catch {
         // ignore
       }
     }
     if (!mouseFn) {
       try {
-        (mouseDev as VirtioInputPciDevice | null)?.free();
+        (mouseDev as unknown as { free?: () => void } | null)?.free?.();
       } catch {
         // ignore
       }

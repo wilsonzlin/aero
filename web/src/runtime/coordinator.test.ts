@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { perf } from "../perf/perf";
 import { WorkerCoordinator } from "./coordinator";
+import { MessageType } from "./protocol";
 import { allocateSharedMemorySegments, createSharedMemoryViews } from "./shared_layout";
 
 class MockWorker {
@@ -113,6 +114,12 @@ describe("runtime/coordinator", () => {
     coordinator.setNetTraceEnabled(true);
     expect(coordinator.isNetTraceEnabled()).toBe(true);
 
+    expect(netWorker.posted).toContainEqual({ message: { kind: "net.trace.enable" }, transfer: undefined });
+
+    // When the net worker restarts, the coordinator re-applies the stored state once the
+    // replacement worker publishes READY.
+    netWorker.posted.length = 0;
+    netWorker.onmessage?.({ data: { type: MessageType.READY, role: "net" } } as MessageEvent);
     expect(netWorker.posted).toContainEqual({ message: { kind: "net.trace.enable" }, transfer: undefined });
   });
 

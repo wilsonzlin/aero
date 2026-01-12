@@ -1514,10 +1514,13 @@ function renderOpfsPanel(): HTMLElement {
 function renderNetTracePanel(): HTMLElement {
   const panel = el("div", { class: "panel" }, el("h2", { text: "Network trace" }));
 
-  function requireNetWorkerReady(): void {
-    const status = workerCoordinator.getWorkerStatuses().net;
-    if (status.state !== "ready") {
-      throw new Error("Net worker is not running. Start workers before using network tracing.");
+  function requireWorkersRunning(): void {
+    const state = workerCoordinator.getVmState();
+    if (state === "stopped" || state === "poweredOff") {
+      throw new Error("Workers are not running. Start workers before using network tracing.");
+    }
+    if (state === "failed") {
+      throw new Error("Workers are in a failed state. Restart workers before using network tracing.");
     }
   }
 
@@ -1537,7 +1540,7 @@ function renderNetTracePanel(): HTMLElement {
     },
     getStats: () => workerCoordinator.getNetTraceStats(),
     downloadPcapng: async () => {
-      requireNetWorkerReady();
+      requireWorkersRunning();
       return await workerCoordinator.takeNetTracePcapng(30_000);
     },
   });
