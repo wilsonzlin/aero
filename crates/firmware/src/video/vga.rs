@@ -253,6 +253,19 @@ impl VgaDevice {
         (ch, attr)
     }
 
+    pub fn write_text_cell(
+        &mut self,
+        mem: &mut impl MemoryBus,
+        page: u8,
+        row: u8,
+        col: u8,
+        ch: u8,
+        attr: u8,
+    ) {
+        let base = self.text_base_for_page(mem, page);
+        self.write_text_cell_at_base(mem, base, row, col, ch, attr);
+    }
+
     fn clear_text_buffer(&self, mem: &mut impl MemoryBus, attr: u8) {
         // Clear the full 32KiB text window (16k cells). This covers all BIOS text pages.
         for cell in 0..0x4000u32 {

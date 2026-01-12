@@ -1,4 +1,8 @@
-use crate::{bda::BiosDataArea, cpu::CpuState, memory::MemoryBus};
+use crate::{
+    bda::BiosDataArea,
+    cpu::CpuState,
+    memory::{real_addr, MemoryBus},
+};
 
 use super::Bios;
 
@@ -152,9 +156,74 @@ impl Bios {
                     .vga
                     .write_char_attr(memory, page, ch, attr, count);
             }
+            0x13 => {
+                // Write String
+                //
+                // This is primarily used by DOS-era software to quickly render text with a single
+                // BIOS call.
+                //
+                // We implement a subset for text mode:
+                // - start row/col from DH/DL
+                // - page from BH
+                // - attribute from BL (or per-character attributes if AL bit1 is set)
+                // - update cursor only if AL bit0 is set
+                let mode = cpu.al();
+                let page = cpu.bh();
+                let attr_default = cpu.bl();
+                let count = cpu.cx();
+                let row0 = cpu.dh();
+                let col0 = cpu.dl();
+
+                if count == 0 {
+                    return;
+                }
+
+                let cols = BiosDataArea::read_screen_cols(memory).max(1) as u32;
+                let rows = 25u32;
+                if u32::from(row0) >= rows || u32::from(col0) >= cols {
+                    return;
+                }
+
+                let start_linear = u32::from(row0) * cols + u32::from(col0);
+                let max_cells = rows.saturating_mul(cols);
+
+                let update_cursor = (mode & 0x01) != 0;
+                let attrs_in_string = (mode & 0x02) != 0;
+
+                let src = real_addr(cpu.es(), cpu.bp());
+
+                let mut written: u16 = 0;
+                for i in 0..count {
+                    let linear = start_linear.saturating_add(u32::from(i));
+                    if linear >= max_cells {
+                        break;
+                    }
+                    let row = (linear / cols) as u8;
+                    let col = (linear % cols) as u8;
+
+                    let (ch, attr) = if attrs_in_string {
+                        let off = u64::from(i).saturating_mul(2);
+                        (memory.read_u8(src + off), memory.read_u8(src + off + 1))
+                    } else {
+                        let off = u64::from(i);
+                        (memory.read_u8(src + off), attr_default)
+                    };
+
+                    self.video.vga.write_text_cell(memory, page, row, col, ch, attr);
+                    written = written.saturating_add(1);
+                }
+
+                if update_cursor {
+                    let end_linear = start_linear.saturating_add(u32::from(written));
+                    let clamped = end_linear.min(max_cells.saturating_sub(1));
+                    let row = (clamped / cols) as u8;
+                    let col = (clamped % cols) as u8;
+                    self.video.vga.set_cursor_pos(memory, page, row, col);
+                }
+            }
             _ => {
                 // Unhandled INT 10h function.
             }
         }
     }
-}
+} 

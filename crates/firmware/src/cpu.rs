@@ -10,6 +10,7 @@ pub struct CpuState {
     pub rbx: u64,
     pub rcx: u64,
     pub rdx: u64,
+    pub rbp: u64,
     pub rsi: u64,
     pub rdi: u64,
     pub rflags: u64,
@@ -121,6 +122,14 @@ impl CpuState {
 
     pub fn si(&self) -> u16 {
         (self.rsi & 0xFFFF) as u16
+    }
+
+    pub fn bp(&self) -> u16 {
+        (self.rbp & 0xFFFF) as u16
+    }
+
+    pub fn set_bp(&mut self, value: u16) {
+        self.rbp = (self.rbp & !0xFFFF) | (value as u64);
     }
 
     pub fn set_si(&mut self, value: u16) {

@@ -321,6 +321,7 @@ fn handle_int10(bios: &mut Bios, cpu: &mut CpuState, bus: &mut dyn BiosBus) {
         rbx: cpu.gpr[gpr::RBX],
         rcx: cpu.gpr[gpr::RCX],
         rdx: cpu.gpr[gpr::RDX],
+        rbp: cpu.gpr[gpr::RBP],
         rsi: cpu.gpr[gpr::RSI],
         rdi: cpu.gpr[gpr::RDI],
         rflags: 0, // INT 10h does not define flag inputs; start with CF clear.
@@ -334,6 +335,7 @@ fn handle_int10(bios: &mut Bios, cpu: &mut CpuState, bus: &mut dyn BiosBus) {
     cpu.gpr[gpr::RBX] = fw_cpu.rbx;
     cpu.gpr[gpr::RCX] = fw_cpu.rcx;
     cpu.gpr[gpr::RDX] = fw_cpu.rdx;
+    cpu.gpr[gpr::RBP] = fw_cpu.rbp;
     cpu.gpr[gpr::RSI] = fw_cpu.rsi;
     cpu.gpr[gpr::RDI] = fw_cpu.rdi;
     set_real_mode_seg(&mut cpu.segments.ds, fw_cpu.ds);

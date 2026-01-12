@@ -231,3 +231,97 @@ fn int10_scroll_down_moves_screen_contents_down() {
     assert_eq!(mem.read_u8(0xB8000 + (2 * 80 * 2) as u64), b'B');
     assert_eq!(mem.read_u8(0xB8000 + (2 * 80 * 2 + 1) as u64), 0x2E);
 }
+
+#[test]
+fn int10_write_string_writes_chars_and_updates_cursor() {
+    let mut mem = VecMemory::new(2 * 1024 * 1024);
+    let mut bios = Bios::new(CmosRtc::new(DateTime::new(2026, 1, 1, 0, 0, 0)));
+    let mut cpu = CpuState::default();
+
+    // Set mode 03h.
+    cpu.set_ax(0x0003);
+    bios.handle_int10(&mut cpu, &mut mem);
+
+    // Write "HI" starting at (row=0,col=0) with attribute 0x1E.
+    mem.write_u8(0x2000, b'H');
+    mem.write_u8(0x2001, b'I');
+
+    cpu.set_ax(0x1301); // AH=13h write string, AL=01h (update cursor, no attrs in string)
+    cpu.set_bx(0x001E); // BH=page0, BL=attr
+    cpu.set_cx(2);
+    cpu.set_dx(0x0000); // row 0, col 0
+    cpu.set_es(0x0000);
+    cpu.set_bp(0x2000);
+    bios.handle_int10(&mut cpu, &mut mem);
+
+    assert_eq!(mem.read_u8(0xB8000), b'H');
+    assert_eq!(mem.read_u8(0xB8001), 0x1E);
+    assert_eq!(mem.read_u8(0xB8002), b'I');
+    assert_eq!(mem.read_u8(0xB8003), 0x1E);
+
+    // Cursor advanced to col 2.
+    assert_eq!(BiosDataArea::read_cursor_pos_page0(&mut mem), (0, 2));
+}
+
+#[test]
+fn int10_write_string_with_inline_attributes_respects_each_cell_attr() {
+    let mut mem = VecMemory::new(2 * 1024 * 1024);
+    let mut bios = Bios::new(CmosRtc::new(DateTime::new(2026, 1, 1, 0, 0, 0)));
+    let mut cpu = CpuState::default();
+
+    // Set mode 03h.
+    cpu.set_ax(0x0003);
+    bios.handle_int10(&mut cpu, &mut mem);
+
+    // String with inline attributes: ('A',0x1F), ('B',0x2E).
+    mem.write_u8(0x2100, b'A');
+    mem.write_u8(0x2101, 0x1F);
+    mem.write_u8(0x2102, b'B');
+    mem.write_u8(0x2103, 0x2E);
+
+    cpu.set_ax(0x1303); // AL=03h (update cursor + attrs in string)
+    cpu.set_bx(0x0000); // BH=page0
+    cpu.set_cx(2);
+    cpu.set_dx(0x0000);
+    cpu.set_es(0x0000);
+    cpu.set_bp(0x2100);
+    bios.handle_int10(&mut cpu, &mut mem);
+
+    assert_eq!(mem.read_u8(0xB8000), b'A');
+    assert_eq!(mem.read_u8(0xB8001), 0x1F);
+    assert_eq!(mem.read_u8(0xB8002), b'B');
+    assert_eq!(mem.read_u8(0xB8003), 0x2E);
+    assert_eq!(BiosDataArea::read_cursor_pos_page0(&mut mem), (0, 2));
+}
+
+#[test]
+fn int10_write_string_without_update_cursor_leaves_cursor_unchanged() {
+    let mut mem = VecMemory::new(2 * 1024 * 1024);
+    let mut bios = Bios::new(CmosRtc::new(DateTime::new(2026, 1, 1, 0, 0, 0)));
+    let mut cpu = CpuState::default();
+
+    // Set mode 03h.
+    cpu.set_ax(0x0003);
+    bios.handle_int10(&mut cpu, &mut mem);
+
+    // Move cursor to (row=2,col=3).
+    cpu.set_ax(0x0200);
+    cpu.set_bx(0x0000);
+    cpu.set_dx((2u16 << 8) | 3u16);
+    bios.handle_int10(&mut cpu, &mut mem);
+    assert_eq!(BiosDataArea::read_cursor_pos_page0(&mut mem), (2, 3));
+
+    mem.write_u8(0x2200, b'X');
+    cpu.set_ax(0x1300); // AL=00h (do not update cursor)
+    cpu.set_bx(0x001E);
+    cpu.set_cx(1);
+    cpu.set_dx(0x0000); // write at 0,0
+    cpu.set_es(0x0000);
+    cpu.set_bp(0x2200);
+    bios.handle_int10(&mut cpu, &mut mem);
+
+    // Cursor unchanged.
+    assert_eq!(BiosDataArea::read_cursor_pos_page0(&mut mem), (2, 3));
+    // But the character was written at the requested location.
+    assert_eq!(mem.read_u8(0xB8000), b'X');
+}
