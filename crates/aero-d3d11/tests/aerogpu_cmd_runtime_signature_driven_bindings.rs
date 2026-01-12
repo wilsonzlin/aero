@@ -555,6 +555,78 @@ fn build_ps_sample_l_sm5_dxbc(u: f32, v: f32, tex_slot: u32, sampler_slot: u32) 
     build_dxbc(&[(*b"ISGN", isgn), (*b"OSGN", osgn), (*b"SHEX", shex)])
 }
 
+fn build_ps_cbuffer0_and_sample_l_t0_s0_sm5_dxbc(u: f32, v: f32) -> Vec<u8> {
+    // Minimal PS (ps_5_0) that references both cb0 and texture sampling (t0/s0). The constant
+    // buffer read is intentionally overwritten so the final color comes from the texture sample;
+    // this drives combined resource bindings in the PS bind group without needing additional ALU
+    // instructions.
+    //
+    // Token stream:
+    //   mov o0, cb0[0]
+    //   sample_l o0, l(u, v, 0, 0), t0, s0, l(0)
+    //   ret
+    let isgn = build_signature_chunk(&[]);
+    let osgn = build_signature_chunk(&[SigParam {
+        semantic_name: "SV_Target",
+        semantic_index: 0,
+        register: 0,
+        mask: 0x0f,
+    }]);
+
+    // ps_5_0
+    let version_token = 0x50u32;
+
+    let mov_token = 0x01u32 | (6u32 << 11);
+    let sample_l_opcode_token = 0x46u32 | (14u32 << 11);
+    let ret_token = 0x3eu32 | (1u32 << 11);
+
+    let dst_o0 = 0x0010_f022u32;
+    let cb0_reg0 = 0x002e_4086u32;
+    let imm_vec4 = 0x0000_f042u32;
+    let imm_scalar = 0x0000_0049u32;
+    let t0 = 0x0010_0072u32;
+    let s0 = 0x0010_0062u32;
+
+    let u = u.to_bits();
+    let v = v.to_bits();
+
+    let mut tokens = vec![
+        version_token,
+        0, // length patched below
+        // mov o0, cb0[0]
+        mov_token,
+        dst_o0,
+        0,
+        cb0_reg0,
+        0,
+        0,
+        // sample_l o0, l(u,v,0,0), t0, s0, l(0)
+        sample_l_opcode_token,
+        dst_o0,
+        0,
+        imm_vec4,
+        u,
+        v,
+        0,
+        0,
+        t0,
+        0,
+        s0,
+        0,
+        imm_scalar,
+        0,
+        ret_token,
+    ];
+    tokens[1] = tokens.len() as u32;
+
+    let mut shex = Vec::with_capacity(tokens.len() * 4);
+    for t in tokens {
+        shex.extend_from_slice(&t.to_le_bytes());
+    }
+
+    build_dxbc(&[(*b"ISGN", isgn), (*b"OSGN", osgn), (*b"SHEX", shex)])
+}
+
 fn build_ps_cbuffer0_sm5_sig_v1_dxbc() -> Vec<u8> {
     // Equivalent to `build_ps_cbuffer0_sm5_dxbc`, but uses `ISG1`/`OSG1` signature chunks with the
     // 32-byte v1 entry layout.
@@ -2071,6 +2143,116 @@ fn aerogpu_cmd_runtime_signature_driven_texture_sampler_binding_sm5() {
             wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
         );
 
+        let mut colors = [None; 8];
+        colors[0] = Some(RTEX);
+        rt.set_render_targets(&colors, None);
+
+        rt.bind_shaders(Some(VS), Some(PS));
+        rt.set_input_layout(Some(IL));
+        rt.set_vertex_buffers(
+            0,
+            &[VertexBufferBinding {
+                buffer: VB,
+                stride: std::mem::size_of::<VertexPos3>() as u32,
+                offset: 0,
+            }],
+        );
+        rt.set_primitive_topology(PrimitiveTopology::TriangleList);
+        rt.set_rasterizer_state(RasterizerState {
+            cull_mode: None,
+            front_face: wgpu::FrontFace::Ccw,
+            scissor_enable: false,
+        });
+
+        rt.draw(3, 1, 0, 0).unwrap();
+        rt.poll_wait();
+
+        let pixels = rt.read_texture_rgba8(RTEX).await.unwrap();
+        assert_eq!(pixels, vec![0, 255, 0, 255]);
+    });
+}
+
+#[test]
+fn aerogpu_cmd_runtime_signature_driven_ps_cb0_texture_sampler_binding_sm5() {
+    // Ensure signature-driven runtime bindings work when a *single* stage (PS) declares multiple
+    // resource types in its stage-scoped bind group:
+    // - cb0
+    // - t0 + s0
+    pollster::block_on(async {
+        let mut rt = match AerogpuCmdRuntime::new_for_tests().await {
+            Ok(rt) => rt,
+            Err(err) => {
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({err:#})"));
+                return;
+            }
+        };
+
+        const VS: u32 = 1;
+        const PS: u32 = 2;
+        const IL: u32 = 3;
+        const VB: u32 = 4;
+        const CB0: u32 = 5;
+        const TEX: u32 = 6;
+        const RTEX: u32 = 7;
+
+        rt.create_shader_dxbc(VS, &build_vs_passthrough_pos_sm5_dxbc())
+            .unwrap();
+        rt.create_shader_dxbc(PS, &build_ps_cbuffer0_and_sample_l_t0_s0_sm5_dxbc(0.0, 0.0))
+            .unwrap();
+        rt.create_input_layout(IL, &build_ilay_pos3()).unwrap();
+
+        let vertices: [VertexPos3; 3] = [
+            VertexPos3 {
+                pos: [-1.0, -1.0, 0.0],
+            },
+            VertexPos3 {
+                pos: [3.0, -1.0, 0.0],
+            },
+            VertexPos3 {
+                pos: [-1.0, 3.0, 0.0],
+            },
+        ];
+        rt.create_buffer(
+            VB,
+            std::mem::size_of_val(&vertices) as u64,
+            wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        );
+        rt.write_buffer(VB, 0, bytemuck::bytes_of(&vertices))
+            .unwrap();
+
+        let cb0_color: [f32; 4] = [1.0, 0.0, 1.0, 1.0];
+        rt.create_buffer(
+            CB0,
+            std::mem::size_of_val(&cb0_color) as u64,
+            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        );
+        rt.write_buffer(CB0, 0, bytemuck::bytes_of(&cb0_color))
+            .unwrap();
+        rt.set_ps_constant_buffer(0, Some(CB0));
+
+        rt.create_texture2d(
+            TEX,
+            2,
+            2,
+            wgpu::TextureFormat::Rgba8Unorm,
+            wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        );
+        let green_px: [u8; 4] = [0, 255, 0, 255];
+        let tex_data = [
+            green_px, green_px, //
+            green_px, green_px, //
+        ];
+        rt.write_texture_rgba8(TEX, 2, 2, 2 * 4, bytemuck::bytes_of(&tex_data))
+            .unwrap();
+        rt.set_ps_texture(0, Some(TEX));
+
+        rt.create_texture2d(
+            RTEX,
+            1,
+            1,
+            wgpu::TextureFormat::Rgba8Unorm,
+            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        );
         let mut colors = [None; 8];
         colors[0] = Some(RTEX);
         rt.set_render_targets(&colors, None);
