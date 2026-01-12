@@ -39,24 +39,20 @@ fn validate_io_size(size: u32) -> usize {
 #[derive(Clone, Copy)]
 struct LinearGuestMemory {
     guest_base: u32,
-    guest_size: u64,
+    guest_size: u32,
 }
 
 impl LinearGuestMemory {
-    #[inline]
-    fn linear_ptr(&self, paddr: u64, len: usize) -> Option<*const u8> {
-        let len_u64 = len as u64;
-        let end = paddr.checked_add(len_u64)?;
+    fn translate(&self, paddr: u64, len: usize) -> Option<u32> {
+        let paddr_u32 = u32::try_from(paddr).ok()?;
+        if paddr_u32 >= self.guest_size {
+            return None;
+        }
+        let end = paddr_u32.checked_add(len as u32)?;
         if end > self.guest_size {
             return None;
         }
-        let linear = (self.guest_base as u64).checked_add(paddr)?;
-        u32::try_from(linear).ok().map(|v| v as *const u8)
-    }
-
-    #[inline]
-    fn linear_ptr_mut(&self, paddr: u64, len: usize) -> Option<*mut u8> {
-        Some(self.linear_ptr(paddr, len)? as *mut u8)
+        self.guest_base.checked_add(paddr_u32)
     }
 }
 
@@ -66,29 +62,17 @@ impl MemoryBus for LinearGuestMemory {
             return;
         }
 
-        // If the request goes out of bounds, read as much as possible and fill the rest with 0.
-        let Some(max_len) = self.guest_size.checked_sub(paddr) else {
-            buf.fill(0);
-            return;
-        };
-        let copy_len = buf.len().min(max_len.min(usize::MAX as u64) as usize);
-        if copy_len == 0 {
-            buf.fill(0);
-            return;
-        }
-
-        let Some(ptr) = self.linear_ptr(paddr, copy_len) else {
+        // Out-of-bounds reads return 0.
+        let Some(linear) = self.translate(paddr, buf.len()) else {
             buf.fill(0);
             return;
         };
 
-        // Safety: `linear_ptr` bounds-checks against the configured guest region.
+        // Safety: `translate` validates the access is within the configured guest
+        // region, and the guest region is bounds-checked against the wasm linear
+        // memory size in `E1000Bridge::new`.
         unsafe {
-            core::ptr::copy_nonoverlapping(ptr, buf.as_mut_ptr(), copy_len);
-        }
-
-        if copy_len < buf.len() {
-            buf[copy_len..].fill(0);
+            core::ptr::copy_nonoverlapping(linear as *const u8, buf.as_mut_ptr(), buf.len());
         }
     }
 
@@ -97,21 +81,16 @@ impl MemoryBus for LinearGuestMemory {
             return;
         }
 
-        let Some(max_len) = self.guest_size.checked_sub(paddr) else {
-            return;
-        };
-        let copy_len = buf.len().min(max_len.min(usize::MAX as u64) as usize);
-        if copy_len == 0 {
-            return;
-        }
-
-        let Some(ptr) = self.linear_ptr_mut(paddr, copy_len) else {
+        // Out-of-bounds writes are ignored.
+        let Some(linear) = self.translate(paddr, buf.len()) else {
             return;
         };
 
-        // Safety: `linear_ptr_mut` bounds-checks against the configured guest region.
+        // Safety: `translate` validates the access is within the configured guest
+        // region, and the guest region is bounds-checked against the wasm linear
+        // memory size in `E1000Bridge::new`.
         unsafe {
-            core::ptr::copy_nonoverlapping(buf.as_ptr(), ptr, copy_len);
+            core::ptr::copy_nonoverlapping(buf.as_ptr(), linear as *mut u8, buf.len());
         }
     }
 }
@@ -159,11 +138,14 @@ impl E1000Bridge {
             DEFAULT_MAC_ADDR
         };
 
+        let guest_size_u32 = u32::try_from(guest_size_u64)
+            .map_err(|_| js_error("guest_size does not fit in u32"))?;
+
         Ok(Self {
             dev: E1000Device::new(mac_addr),
             mem: LinearGuestMemory {
                 guest_base,
-                guest_size: guest_size_u64,
+                guest_size: guest_size_u32,
             },
         })
     }
@@ -238,4 +220,3 @@ impl E1000Bridge {
         Uint8Array::from(mac.as_ref())
     }
 }
-
