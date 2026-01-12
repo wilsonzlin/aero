@@ -10,6 +10,12 @@ use std::rc::Rc;
 
 use aero_devices::pci::profile::IDE_PIIX3;
 use aero_devices::pci::{PciConfigSpace, PciDevice};
+use aero_io_snapshot::io::state::{IoSnapshot, SnapshotResult, SnapshotVersion};
+use aero_io_snapshot::io::storage::state::{
+    IdeChannelState, IdeControllerState, IdeDataMode, IdeDmaCommitState, IdeDmaDirection,
+    IdeDmaRequestState, IdeDriveState, IdePioWriteState, IdePortMapState, IdeTaskFileState,
+    IdeTransferKind, PciConfigSpaceState,
+};
 use aero_platform::io::{IoPortBus, PortIoDevice};
 use aero_storage::SECTOR_SIZE;
 use memory::MemoryBus;
@@ -1015,6 +1021,249 @@ impl Piix3IdePciDevice {
             return;
         }
         self.controller.io_write(port, size, value)
+    }
+
+    pub fn snapshot_state(&self) -> IdeControllerState {
+        fn snapshot_tf(tf: &TaskFile) -> IdeTaskFileState {
+            IdeTaskFileState {
+                features: tf.features,
+                sector_count: tf.sector_count,
+                lba0: tf.lba0,
+                lba1: tf.lba1,
+                lba2: tf.lba2,
+                device: tf.device,
+                hob_features: tf.hob_features,
+                hob_sector_count: tf.hob_sector_count,
+                hob_lba0: tf.hob_lba0,
+                hob_lba1: tf.hob_lba1,
+                hob_lba2: tf.hob_lba2,
+                pending_features_high: tf.pending_features_high,
+                pending_sector_count_high: tf.pending_sector_count_high,
+                pending_lba0_high: tf.pending_lba0_high,
+                pending_lba1_high: tf.pending_lba1_high,
+                pending_lba2_high: tf.pending_lba2_high,
+            }
+        }
+
+        fn snapshot_channel(chan: &Channel, bm: &BusMasterChannel, irq: u8) -> IdeChannelState {
+            let data_mode = match chan.data_mode {
+                DataMode::None => IdeDataMode::None,
+                DataMode::PioIn => IdeDataMode::PioIn,
+                DataMode::PioOut => IdeDataMode::PioOut,
+            };
+            let transfer_kind = chan.transfer_kind.map(|k| match k {
+                TransferKind::AtaPioRead => IdeTransferKind::AtaPioRead,
+                TransferKind::AtaPioWrite => IdeTransferKind::AtaPioWrite,
+                TransferKind::Identify => IdeTransferKind::Identify,
+                TransferKind::AtapiPacket => IdeTransferKind::AtapiPacket,
+                TransferKind::AtapiPioIn => IdeTransferKind::AtapiPioIn,
+            });
+
+            let pending_dma = chan.pending_dma.as_ref().map(|req| IdeDmaRequestState {
+                direction: match req.direction {
+                    crate::busmaster::DmaDirection::ToMemory => IdeDmaDirection::ToMemory,
+                    crate::busmaster::DmaDirection::FromMemory => IdeDmaDirection::FromMemory,
+                },
+                buffer: req.buffer.clone(),
+                commit: req.commit.as_ref().map(|c| match c {
+                    DmaCommit::AtaWrite { lba, sectors } => IdeDmaCommitState::AtaWrite {
+                        lba: *lba,
+                        sectors: *sectors,
+                    },
+                }),
+            });
+
+            let pio_write = chan
+                .pio_write
+                .map(|(lba, sectors)| IdePioWriteState { lba, sectors });
+
+            let drives = core::array::from_fn(|idx| match chan.devices[idx].as_ref() {
+                None => IdeDriveState::None,
+                Some(IdeDevice::Ata(dev)) => IdeDriveState::Ata(dev.snapshot_state()),
+                Some(IdeDevice::Atapi(dev)) => IdeDriveState::Atapi(dev.snapshot_state()),
+            });
+
+            IdeChannelState {
+                ports: IdePortMapState {
+                    cmd_base: chan.ports.cmd_base,
+                    ctrl_base: chan.ports.ctrl_base,
+                    irq,
+                },
+                tf: snapshot_tf(&chan.tf),
+                status: chan.status,
+                error: chan.error,
+                control: chan.control,
+                irq_pending: chan.irq_pending,
+                data_mode,
+                transfer_kind,
+                data: chan.data.clone(),
+                data_index: chan.data_index.min(u32::MAX as usize) as u32,
+                pending_dma,
+                pio_write,
+                bus_master: bm.snapshot_state(),
+                drives,
+            }
+        }
+
+        let pci_snap = self.config.snapshot_state();
+        let regs = pci_snap.bytes;
+        let bar0 = u32::from_le_bytes(regs[0x10..0x14].try_into().unwrap());
+        let bar1 = u32::from_le_bytes(regs[0x14..0x18].try_into().unwrap());
+        let bar2 = u32::from_le_bytes(regs[0x18..0x1C].try_into().unwrap());
+        let bar3 = u32::from_le_bytes(regs[0x1C..0x20].try_into().unwrap());
+        let bar4 = u32::from_le_bytes(regs[0x20..0x24].try_into().unwrap());
+
+        IdeControllerState {
+            pci: PciConfigSpaceState {
+                regs,
+                bar0,
+                bar1,
+                bar2,
+                bar3,
+                bar4,
+                bar0_probe: pci_snap.bar_probe[0],
+                bar1_probe: pci_snap.bar_probe[1],
+                bar2_probe: pci_snap.bar_probe[2],
+                bar3_probe: pci_snap.bar_probe[3],
+                bar4_probe: pci_snap.bar_probe[4],
+                bus_master_base: self.controller.bus_master_base,
+            },
+            primary: snapshot_channel(&self.controller.primary, &self.controller.bus_master[0], 14),
+            secondary: snapshot_channel(
+                &self.controller.secondary,
+                &self.controller.bus_master[1],
+                15,
+            ),
+        }
+    }
+
+    pub fn restore_state(&mut self, state: &IdeControllerState) {
+        fn restore_tf(tf: &mut TaskFile, state: &IdeTaskFileState) {
+            tf.features = state.features;
+            tf.sector_count = state.sector_count;
+            tf.lba0 = state.lba0;
+            tf.lba1 = state.lba1;
+            tf.lba2 = state.lba2;
+            tf.device = state.device;
+
+            tf.hob_features = state.hob_features;
+            tf.hob_sector_count = state.hob_sector_count;
+            tf.hob_lba0 = state.hob_lba0;
+            tf.hob_lba1 = state.hob_lba1;
+            tf.hob_lba2 = state.hob_lba2;
+
+            tf.pending_features_high = state.pending_features_high;
+            tf.pending_sector_count_high = state.pending_sector_count_high;
+            tf.pending_lba0_high = state.pending_lba0_high;
+            tf.pending_lba1_high = state.pending_lba1_high;
+            tf.pending_lba2_high = state.pending_lba2_high;
+        }
+
+        fn restore_channel(chan: &mut Channel, bm: &mut BusMasterChannel, state: &IdeChannelState) {
+            chan.ports.cmd_base = state.ports.cmd_base;
+            chan.ports.ctrl_base = state.ports.ctrl_base;
+
+            restore_tf(&mut chan.tf, &state.tf);
+
+            chan.status = state.status;
+            chan.error = state.error;
+            chan.control = state.control;
+            chan.irq_pending = state.irq_pending;
+
+            chan.data_mode = match state.data_mode {
+                IdeDataMode::None => DataMode::None,
+                IdeDataMode::PioIn => DataMode::PioIn,
+                IdeDataMode::PioOut => DataMode::PioOut,
+            };
+
+            chan.transfer_kind = state.transfer_kind.map(|k| match k {
+                IdeTransferKind::AtaPioRead => TransferKind::AtaPioRead,
+                IdeTransferKind::AtaPioWrite => TransferKind::AtaPioWrite,
+                IdeTransferKind::Identify => TransferKind::Identify,
+                IdeTransferKind::AtapiPacket => TransferKind::AtapiPacket,
+                IdeTransferKind::AtapiPioIn => TransferKind::AtapiPioIn,
+            });
+
+            chan.data = state.data.clone();
+            chan.data_index = (state.data_index as usize).min(chan.data.len());
+
+            chan.pio_write = state.pio_write.as_ref().map(|pw| (pw.lba, pw.sectors));
+
+            chan.pending_dma = state.pending_dma.as_ref().map(|req| DmaRequest {
+                direction: match req.direction {
+                    IdeDmaDirection::ToMemory => crate::busmaster::DmaDirection::ToMemory,
+                    IdeDmaDirection::FromMemory => crate::busmaster::DmaDirection::FromMemory,
+                },
+                buffer: req.buffer.clone(),
+                commit: req.commit.as_ref().map(|c| match c {
+                    IdeDmaCommitState::AtaWrite { lba, sectors } => DmaCommit::AtaWrite {
+                        lba: *lba,
+                        sectors: *sectors,
+                    },
+                }),
+            });
+
+            bm.restore_state(&state.bus_master);
+
+            // Restore per-drive state (where compatible with the currently-attached device).
+            for slot in 0..2 {
+                match (chan.devices[slot].as_mut(), &state.drives[slot]) {
+                    (Some(IdeDevice::Ata(dev)), IdeDriveState::Ata(s)) => dev.restore_state(s),
+                    (Some(IdeDevice::Atapi(dev)), IdeDriveState::Atapi(s)) => dev.restore_state(s),
+                    _ => {}
+                }
+            }
+        }
+
+        // Restore PCI config space state.
+        let mut bar_base = [0u64; 6];
+        let mut bar_probe = [false; 6];
+        bar_base[0] = u64::from(state.pci.bar0 & 0xFFFF_FFFC);
+        bar_base[1] = u64::from(state.pci.bar1 & 0xFFFF_FFFC);
+        bar_base[2] = u64::from(state.pci.bar2 & 0xFFFF_FFFC);
+        bar_base[3] = u64::from(state.pci.bar3 & 0xFFFF_FFFC);
+        bar_base[4] = u64::from(state.pci.bar4 & 0xFFFF_FFFC);
+        bar_probe[0] = state.pci.bar0_probe;
+        bar_probe[1] = state.pci.bar1_probe;
+        bar_probe[2] = state.pci.bar2_probe;
+        bar_probe[3] = state.pci.bar3_probe;
+        bar_probe[4] = state.pci.bar4_probe;
+
+        self.config.restore_state(&aero_devices::pci::PciConfigSpaceState {
+            bytes: state.pci.regs,
+            bar_base,
+            bar_probe,
+        });
+
+        // Keep controller and config BAR4 decode consistent.
+        self.controller.bus_master_base = state.pci.bus_master_base;
+
+        restore_channel(
+            &mut self.controller.primary,
+            &mut self.controller.bus_master[0],
+            &state.primary,
+        );
+        restore_channel(
+            &mut self.controller.secondary,
+            &mut self.controller.bus_master[1],
+            &state.secondary,
+        );
+    }
+}
+
+impl IoSnapshot for Piix3IdePciDevice {
+    const DEVICE_ID: [u8; 4] = IdeControllerState::DEVICE_ID;
+    const DEVICE_VERSION: SnapshotVersion = IdeControllerState::DEVICE_VERSION;
+
+    fn save_state(&self) -> Vec<u8> {
+        self.snapshot_state().save_state()
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
+        let mut state = IdeControllerState::default();
+        state.load_state(bytes)?;
+        self.restore_state(&state);
+        Ok(())
     }
 }
 

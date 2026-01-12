@@ -1,5 +1,7 @@
 use std::io;
 
+use aero_io_snapshot::io::storage::state::IdeAtapiDeviceState;
+
 /// Read-only ISO9660 (or raw CD) backing store.
 ///
 /// The IDE/ATAPI layer treats the image as a sequence of 2048-byte sectors.
@@ -474,6 +476,33 @@ impl AtapiCdrom {
         // Byte 2: keep non-zero to avoid "no media" heuristics.
         page[2] = 0x01;
         page
+    }
+
+    pub fn snapshot_state(&self) -> IdeAtapiDeviceState {
+        IdeAtapiDeviceState {
+            tray_open: self.tray_open,
+            media_changed: self.media_changed,
+            media_present: self.backend.is_some(),
+            sense_key: self.sense.key,
+            asc: self.sense.asc,
+            ascq: self.sense.ascq,
+        }
+    }
+
+    pub fn restore_state(&mut self, state: &IdeAtapiDeviceState) {
+        self.tray_open = state.tray_open;
+        self.media_changed = state.media_changed;
+        self.sense = Sense {
+            key: state.sense_key,
+            asc: state.asc,
+            ascq: state.ascq,
+        };
+
+        // Media contents are host-managed (snapshotted separately as a disk/ISO layer),
+        // but the guest must observe the same "media present" behavior after restore.
+        if !state.media_present {
+            self.backend = None;
+        }
     }
 }
 

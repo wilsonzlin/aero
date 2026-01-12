@@ -1,5 +1,7 @@
 use memory::MemoryBus;
 
+use aero_io_snapshot::io::storage::state::IdeBusMasterChannelState;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DmaDirection {
     /// Device -> guest memory.
@@ -242,6 +244,20 @@ impl BusMasterChannel {
         self.status |= 0x02; // error
         self.status |= 0x04; // interrupt
     }
+
+    pub fn snapshot_state(&self) -> IdeBusMasterChannelState {
+        IdeBusMasterChannelState {
+            cmd: self.cmd,
+            status: self.status,
+            prd_addr: self.prd_addr,
+        }
+    }
+
+    pub fn restore_state(&mut self, state: &IdeBusMasterChannelState) {
+        self.cmd = state.cmd;
+        self.status = state.status;
+        self.prd_addr = state.prd_addr;
+    }
 }
 
 impl Default for BusMasterChannel {
@@ -249,4 +265,3 @@ impl Default for BusMasterChannel {
         Self::new()
     }
 }
-
