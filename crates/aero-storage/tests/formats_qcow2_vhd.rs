@@ -71,6 +71,49 @@ fn make_qcow2_empty(virtual_size: u64) -> MemBackend {
     backend
 }
 
+fn make_qcow2_empty_without_l2(virtual_size: u64) -> MemBackend {
+    assert_eq!(virtual_size % SECTOR_SIZE as u64, 0);
+
+    let cluster_bits = 12u32; // 4 KiB clusters
+    let cluster_size = 1u64 << cluster_bits;
+
+    let refcount_table_offset = cluster_size;
+    let l1_table_offset = cluster_size * 2;
+    let refcount_block_offset = cluster_size * 3;
+
+    // No L2 table cluster is allocated yet.
+    let file_len = cluster_size * 4;
+    let mut backend = MemBackend::with_len(file_len).unwrap();
+
+    let mut header = [0u8; 104];
+    header[0..4].copy_from_slice(b"QFI\xfb");
+    write_be_u32(&mut header, 4, 3); // version
+    write_be_u32(&mut header, 20, cluster_bits);
+    write_be_u64(&mut header, 24, virtual_size);
+    write_be_u32(&mut header, 36, 1); // l1_size
+    write_be_u64(&mut header, 40, l1_table_offset);
+    write_be_u64(&mut header, 48, refcount_table_offset);
+    write_be_u32(&mut header, 56, 1); // refcount_table_clusters
+    write_be_u64(&mut header, 72, 0); // incompatible_features
+    write_be_u64(&mut header, 80, 0); // compatible_features
+    write_be_u64(&mut header, 88, 0); // autoclear_features
+    write_be_u32(&mut header, 96, 4); // refcount_order (16-bit)
+    write_be_u32(&mut header, 100, 104); // header_length
+    backend.write_at(0, &header).unwrap();
+
+    backend
+        .write_at(refcount_table_offset, &refcount_block_offset.to_be_bytes())
+        .unwrap();
+
+    // Mark metadata clusters as in-use: header, refcount table, L1 table, refcount block.
+    for cluster_index in 0u64..4 {
+        let off = refcount_block_offset + cluster_index * 2;
+        backend.write_at(off, &1u16.to_be_bytes()).unwrap();
+    }
+
+    backend
+}
+
 fn make_qcow2_with_pattern() -> MemBackend {
     let virtual_size = 2 * 1024 * 1024;
     let cluster_size = 1u64 << 12;
@@ -284,6 +327,106 @@ fn qcow2_nonzero_write_allocates_cluster_and_grows_file() {
 }
 
 #[test]
+fn qcow2_allocates_l2_table_when_missing() {
+    let virtual_size = 64 * 1024;
+    let cluster_size = 1u64 << 12;
+    let l1_table_offset = cluster_size * 2;
+    let refcount_block_offset = cluster_size * 3;
+
+    let mut backend = make_qcow2_empty_without_l2(virtual_size);
+    let initial_len = backend.len().unwrap();
+    assert_eq!(initial_len, cluster_size * 4);
+
+    let mut disk = Qcow2Disk::open(backend).unwrap();
+
+    let data = vec![0xABu8; SECTOR_SIZE];
+    disk.write_sectors(0, &data).unwrap();
+    disk.flush().unwrap();
+
+    let mut backend = disk.into_backend();
+    let final_len = backend.len().unwrap();
+
+    let l2_table_offset = cluster_size * 4;
+    let data_cluster_offset = cluster_size * 5;
+    assert_eq!(final_len, cluster_size * 6);
+
+    // L1 entry should now point at the newly allocated L2 table.
+    let mut l1_entry_bytes = [0u8; 8];
+    backend.read_at(l1_table_offset, &mut l1_entry_bytes).unwrap();
+    let l1_entry = u64::from_be_bytes(l1_entry_bytes);
+    assert_eq!(l1_entry, l2_table_offset | QCOW2_OFLAG_COPIED);
+
+    // L2 entry 0 should now point at the newly allocated data cluster.
+    let mut l2_entry_bytes = [0u8; 8];
+    backend.read_at(l2_table_offset, &mut l2_entry_bytes).unwrap();
+    let l2_entry = u64::from_be_bytes(l2_entry_bytes);
+    assert_eq!(l2_entry, data_cluster_offset | QCOW2_OFLAG_COPIED);
+
+    // Refcount block should mark the new clusters (L2 + data) as in-use.
+    let mut refcounts = [0u8; 4];
+    backend
+        .read_at(refcount_block_offset + 4 * 2, &mut refcounts)
+        .unwrap();
+    assert_eq!(refcounts, [0, 1, 0, 1]);
+
+    // Persistence check.
+    let mut reopened = Qcow2Disk::open(backend).unwrap();
+    let mut back = vec![0u8; SECTOR_SIZE];
+    reopened.read_sectors(0, &mut back).unwrap();
+    assert_eq!(back, data);
+}
+
+#[test]
+fn qcow2_allocates_new_refcount_block_when_needed() {
+    let virtual_size = 64 * 1024;
+    let cluster_size = 1u64 << 12;
+    let refcount_table_offset = cluster_size;
+    let l2_table_offset = cluster_size * 4;
+
+    // Create a file whose physical size forces the next allocation into cluster_index=2048
+    // (which requires allocating a new refcount block at block_index=1).
+    let mut backend = make_qcow2_empty(virtual_size);
+    backend.set_len(cluster_size * 2048).unwrap();
+    let initial_len = backend.len().unwrap();
+    assert_eq!(initial_len, cluster_size * 2048);
+
+    let mut disk = Qcow2Disk::open(backend).unwrap();
+    let data = vec![0x5Au8; SECTOR_SIZE];
+    disk.write_sectors(0, &data).unwrap();
+    disk.flush().unwrap();
+
+    let mut backend = disk.into_backend();
+    let final_len = backend.len().unwrap();
+
+    let data_cluster_offset = cluster_size * 2048;
+    let new_refcount_block_offset = cluster_size * 2049;
+    assert_eq!(final_len, cluster_size * 2050);
+
+    // L2 entry 0 should now point at the newly allocated (very high offset) data cluster.
+    let mut l2_entry_bytes = [0u8; 8];
+    backend.read_at(l2_table_offset, &mut l2_entry_bytes).unwrap();
+    let l2_entry = u64::from_be_bytes(l2_entry_bytes);
+    assert_eq!(l2_entry, data_cluster_offset | QCOW2_OFLAG_COPIED);
+
+    // Refcount table entry 1 should now point at the newly allocated refcount block.
+    let mut refcount_table_entry_bytes = [0u8; 8];
+    backend
+        .read_at(refcount_table_offset + 8, &mut refcount_table_entry_bytes)
+        .unwrap();
+    let refcount_table_entry = u64::from_be_bytes(refcount_table_entry_bytes);
+    assert_eq!(refcount_table_entry, new_refcount_block_offset);
+
+    // The new refcount block must mark:
+    // - entry 0 (cluster_index=2048) as in-use (data cluster)
+    // - entry 1 (cluster_index=2049) as in-use (the refcount block itself)
+    let mut refcounts = [0u8; 4];
+    backend
+        .read_at(new_refcount_block_offset, &mut refcounts)
+        .unwrap();
+    assert_eq!(refcounts, [0, 1, 0, 1]);
+}
+
+#[test]
 fn vhd_fixed_fixture_read() {
     let backend = make_vhd_fixed_with_pattern();
     let mut disk = VhdDisk::open(backend).unwrap();
@@ -355,6 +498,28 @@ fn vhd_dynamic_nonzero_write_allocates_block_and_grows_file() {
     let mut backend = disk.into_backend();
     let final_len = backend.len().unwrap();
     assert!(final_len > initial_len);
+
+    // Verify BAT + bitmap were updated for block 0.
+    let dyn_header_offset = SECTOR_SIZE as u64;
+    let table_offset = dyn_header_offset + 1024;
+    let bat_size = SECTOR_SIZE as u64; // 4 entries padded to 512
+    let old_footer_offset = (SECTOR_SIZE as u64) + 1024 + bat_size;
+    let bitmap_size = SECTOR_SIZE as u64;
+    let block_total_size = bitmap_size + 16 * 1024u64;
+    let new_footer_offset = old_footer_offset + block_total_size;
+
+    assert_eq!(final_len, new_footer_offset + SECTOR_SIZE as u64);
+
+    let mut bat_entry_bytes = [0u8; 4];
+    backend.read_at(table_offset, &mut bat_entry_bytes).unwrap();
+    let bat_entry = u32::from_be_bytes(bat_entry_bytes);
+    assert_eq!(bat_entry, (old_footer_offset / SECTOR_SIZE as u64) as u32);
+
+    let mut bitmap_first = [0u8; 1];
+    backend
+        .read_at(old_footer_offset, &mut bitmap_first)
+        .unwrap();
+    assert_eq!(bitmap_first[0], 0x80);
 }
 
 #[test]
