@@ -127,6 +127,7 @@ export class VirtioNetPciDevice implements PciDevice, TickableDevice {
   readonly #irqSink: IrqSink;
   readonly #mode: VirtioNetPciMode;
 
+  #pciCommand = 0;
   #irqLevel = false;
   #destroyed = false;
 
@@ -256,6 +257,13 @@ export class VirtioNetPciDevice implements PciDevice, TickableDevice {
     this.#syncIrq();
   }
 
+  onPciCommandWrite(command: number): void {
+    if (this.#destroyed) return;
+    this.#pciCommand = command & 0xffff;
+    // Interrupt Disable bit can immediately drop INTx level.
+    this.#syncIrq();
+  }
+
   ioRead(barIndex: number, offset: number, size: number): number {
     if (this.#destroyed) return defaultReadValue(size);
     if (barIndex !== 2) return defaultReadValue(size);
@@ -352,6 +360,12 @@ export class VirtioNetPciDevice implements PciDevice, TickableDevice {
         asserted = Boolean(bridge.irq_level.call(this.#bridge));
       }
     } catch {
+      asserted = false;
+    }
+
+    // Respect PCI command register Interrupt Disable bit (bit 10). When set, the device must not
+    // assert INTx.
+    if ((this.#pciCommand & (1 << 10)) !== 0) {
       asserted = false;
     }
     if (asserted === this.#irqLevel) return;

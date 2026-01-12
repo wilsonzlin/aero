@@ -121,4 +121,43 @@ describe("io/devices/VirtioNetPciDevice", () => {
     dev.mmioWrite(0, 0x0000n, 4, 0xdead_beef);
     expect(mmioWrite).toHaveBeenCalledWith(0, 4, 0xdead_beef);
   });
+
+  it("respects PCI command Interrupt Disable bit (bit 10) when syncing INTx level", () => {
+    let irq = false;
+    const bridge: VirtioNetPciBridgeLike = {
+      mmio_read: vi.fn(() => 0),
+      mmio_write: vi.fn(),
+      irq_asserted: vi.fn(() => irq),
+      free: vi.fn(),
+    };
+    const irqSink: IrqSink = { raiseIrq: vi.fn(), lowerIrq: vi.fn() };
+    const dev = new VirtioNetPciDevice({ bridge, irqSink });
+
+    // Start deasserted.
+    dev.tick(0);
+    expect(irqSink.raiseIrq).not.toHaveBeenCalled();
+
+    // Assert line.
+    irq = true;
+    dev.tick(1);
+    expect(irqSink.raiseIrq).toHaveBeenCalledTimes(1);
+    expect(irqSink.raiseIrq).toHaveBeenCalledWith(10);
+
+    // Disable INTx in PCI command register: should drop the line.
+    dev.onPciCommandWrite(1 << 10);
+    expect(irqSink.lowerIrq).toHaveBeenCalledTimes(1);
+    expect(irqSink.lowerIrq).toHaveBeenCalledWith(10);
+
+    // No additional edges while disabled.
+    (irqSink.raiseIrq as ReturnType<typeof vi.fn>).mockClear();
+    (irqSink.lowerIrq as ReturnType<typeof vi.fn>).mockClear();
+    dev.tick(2);
+    expect(irqSink.raiseIrq).not.toHaveBeenCalled();
+    expect(irqSink.lowerIrq).not.toHaveBeenCalled();
+
+    // Re-enable INTx: should reassert because the device-level condition is still true.
+    dev.onPciCommandWrite(0);
+    expect(irqSink.raiseIrq).toHaveBeenCalledTimes(1);
+    expect(irqSink.raiseIrq).toHaveBeenCalledWith(10);
+  });
 });
