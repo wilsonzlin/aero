@@ -647,6 +647,12 @@ impl aero_cpu_core::mem::CpuBus for MachineCpuBus<'_> {
 
     #[inline]
     fn bulk_copy(&mut self, dst: u64, src: u64, len: usize) -> Result<bool, Exception> {
+        if len == 0 || dst == src {
+            return Ok(true);
+        }
+        if !self.a20.enabled() {
+            return Ok(false);
+        }
         self.inner.bulk_copy(dst, src, len)
     }
 
@@ -657,6 +663,12 @@ impl aero_cpu_core::mem::CpuBus for MachineCpuBus<'_> {
 
     #[inline]
     fn bulk_set(&mut self, dst: u64, pattern: &[u8], repeat: usize) -> Result<bool, Exception> {
+        if repeat == 0 || pattern.is_empty() {
+            return Ok(true);
+        }
+        if !self.a20.enabled() {
+            return Ok(false);
+        }
         self.inner.bulk_set(dst, pattern, repeat)
     }
 
@@ -7335,6 +7347,38 @@ mod tests {
             dst.bios.video.vbe.lfb_base,
             firmware::video::vbe::VbeDevice::LFB_BASE_DEFAULT
         );
+    }
+
+    #[test]
+    fn machine_cpu_bus_declines_bulk_ops_when_a20_is_disabled() {
+        use aero_cpu_core::mem::CpuBus as _;
+
+        let mut m = Machine::new(MachineConfig {
+            ram_size_bytes: 2 * 1024 * 1024,
+            enable_serial: false,
+            enable_i8042: false,
+            enable_a20_gate: false,
+            enable_reset_ctrl: false,
+            ..Default::default()
+        })
+        .unwrap();
+
+        // BIOS POST enables A20; force it off so we exercise the A20-aliasing path.
+        m.chipset.a20().set_enabled(false);
+
+        let inner = aero_cpu_core::PagingBus::new_with_io(
+            &mut m.mem,
+            StrictIoPortBus { io: &mut m.io },
+        );
+        let mut bus = MachineCpuBus {
+            a20: m.chipset.a20(),
+            inner,
+        };
+
+        assert!(!bus.supports_bulk_copy());
+        assert!(!bus.supports_bulk_set());
+        assert_eq!(bus.bulk_copy(0x2000, 0x1000, 64).unwrap(), false);
+        assert_eq!(bus.bulk_set(0x3000, &[0xAA], 64).unwrap(), false);
     }
 
     #[test]
