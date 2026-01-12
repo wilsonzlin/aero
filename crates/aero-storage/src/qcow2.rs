@@ -245,14 +245,26 @@ impl<B: StorageBackend> Qcow2Disk<B> {
         }
 
         let mut l1_buf = vec![0u8; l1_bytes_usize];
-        backend.read_at(header.l1_table_offset, &mut l1_buf)?;
+        match backend.read_at(header.l1_table_offset, &mut l1_buf) {
+            Ok(()) => {}
+            Err(DiskError::OutOfBounds { .. }) => {
+                return Err(DiskError::CorruptImage("qcow2 l1 table truncated"));
+            }
+            Err(e) => return Err(e),
+        }
         let mut l1_table = Vec::with_capacity(l1_entries);
         for chunk in l1_buf.chunks_exact(8) {
             l1_table.push(be_u64(chunk));
         }
 
         let mut refcount_buf = vec![0u8; refcount_bytes_usize];
-        backend.read_at(header.refcount_table_offset, &mut refcount_buf)?;
+        match backend.read_at(header.refcount_table_offset, &mut refcount_buf) {
+            Ok(()) => {}
+            Err(DiskError::OutOfBounds { .. }) => {
+                return Err(DiskError::CorruptImage("qcow2 refcount table truncated"));
+            }
+            Err(e) => return Err(e),
+        }
         let mut refcount_table = Vec::with_capacity(refcount_bytes_usize / 8);
         for chunk in refcount_buf.chunks_exact(8) {
             refcount_table.push(be_u64(chunk));

@@ -115,7 +115,13 @@ impl<B: StorageBackend> VhdDisk<B> {
 
         let footer_offset = len - SECTOR_SIZE as u64;
         let mut raw_footer = [0u8; SECTOR_SIZE];
-        backend.read_at(footer_offset, &mut raw_footer)?;
+        match backend.read_at(footer_offset, &mut raw_footer) {
+            Ok(()) => {}
+            Err(DiskError::OutOfBounds { .. }) => {
+                return Err(DiskError::CorruptImage("vhd footer truncated"));
+            }
+            Err(e) => return Err(e),
+        }
         let footer = VhdFooter::parse(raw_footer)?;
 
         match footer.disk_type {
@@ -159,7 +165,13 @@ impl<B: StorageBackend> VhdDisk<B> {
                 }
 
                 let mut raw_header = [0u8; 1024];
-                backend.read_at(footer.data_offset, &mut raw_header)?;
+                match backend.read_at(footer.data_offset, &mut raw_header) {
+                    Ok(()) => {}
+                    Err(DiskError::OutOfBounds { .. }) => {
+                        return Err(DiskError::CorruptImage("vhd dynamic header truncated"));
+                    }
+                    Err(e) => return Err(e),
+                }
                 let dynamic = VhdDynamicHeader::parse(&raw_header)?;
                 if dynamic.table_offset < dyn_header_end {
                     return Err(DiskError::CorruptImage("vhd bat overlaps dynamic header"));
@@ -211,7 +223,13 @@ impl<B: StorageBackend> VhdDisk<B> {
                     .map_err(|_| DiskError::Unsupported("vhd bat too large"))?;
 
                 let mut bat_buf = vec![0u8; bat_bytes_usize];
-                backend.read_at(dynamic.table_offset, &mut bat_buf)?;
+                match backend.read_at(dynamic.table_offset, &mut bat_buf) {
+                    Ok(()) => {}
+                    Err(DiskError::OutOfBounds { .. }) => {
+                        return Err(DiskError::CorruptImage("vhd bat truncated"));
+                    }
+                    Err(e) => return Err(e),
+                }
                 let mut bat = Vec::with_capacity(entries);
                 for chunk in bat_buf.chunks_exact(4) {
                     bat.push(be_u32(chunk));
