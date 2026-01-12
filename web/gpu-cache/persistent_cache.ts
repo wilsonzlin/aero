@@ -747,8 +747,9 @@ export class PersistentGpuCache {
       await txDone(tx);
     } catch (err) {
       // If the IDB write failed but we already wrote an OPFS blob, delete it so
-      // we don't leak orphaned files.
-      if (storage === "opfs" && opfsFile && this._opfsCacheDir) {
+      // we don't leak orphaned files. If the entry previously pointed at the
+      // same OPFS file, keep it to avoid destroying a still-valid cache entry.
+      if (storage === "opfs" && opfsFile && this._opfsCacheDir && existingOpfsFile !== opfsFile) {
         try {
           const shadersDir = await this._opfsCacheDir.getDirectoryHandle("shaders");
           await deleteOpfsFile(shadersDir, opfsFile);
@@ -878,7 +879,7 @@ export class PersistentGpuCache {
     try {
       await txDone(tx);
     } catch (err) {
-      if (storage === "opfs" && opfsFile && this._opfsCacheDir) {
+      if (storage === "opfs" && opfsFile && this._opfsCacheDir && existingOpfsFile !== opfsFile) {
         try {
           const dir = await this._opfsCacheDir.getDirectoryHandle("pipelines");
           await deleteOpfsFile(dir, opfsFile);
