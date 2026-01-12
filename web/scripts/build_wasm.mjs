@@ -183,6 +183,17 @@ const outDirAeroGpu = path.join(
             : "pkg-single-gpu-dev",
 );
 
+const outDirAeroJit = path.join(
+    wasmRoot,
+    variant === "threaded"
+        ? isRelease
+            ? "pkg-jit-threaded"
+            : "pkg-jit-threaded-dev"
+        : isRelease
+            ? "pkg-jit-single"
+            : "pkg-jit-single-dev",
+);
+
 const packages = [
     {
         cratePath,
@@ -195,6 +206,19 @@ const packages = [
         outName: "aero_gpu_wasm",
     },
 ];
+
+const aeroJitWasmCratePath = path.join(repoRoot, "crates/aero-jit-wasm");
+if (existsSync(path.join(aeroJitWasmCratePath, "Cargo.toml"))) {
+    packages.push({
+        cratePath: aeroJitWasmCratePath,
+        outDir: outDirAeroJit,
+        outName: "aero_jit_wasm",
+    });
+} else {
+    console.warn(
+        `[wasm] Warning: ${path.relative(repoRoot, aeroJitWasmCratePath)} not found; skipping aero-jit-wasm build.`,
+    );
+}
 
 const targetFeatures = ["+bulk-memory"];
 const simdSetting = (process.env.AERO_WASM_SIMD ?? "1").toLowerCase();

@@ -15,6 +15,11 @@ function ensureVariant(variant) {
         "web/src/wasm",
         variant === "threaded" ? "pkg-threaded-gpu" : "pkg-single-gpu",
     );
+    const outDirAeroJit = path.join(
+        repoRoot,
+        "web/src/wasm",
+        variant === "threaded" ? "pkg-jit-threaded" : "pkg-jit-single",
+    );
 
     const expectedFiles = [
         path.join(outDirAero, "aero_wasm.js"),
@@ -22,6 +27,11 @@ function ensureVariant(variant) {
         path.join(outDirAeroGpu, "aero_gpu_wasm.js"),
         path.join(outDirAeroGpu, "aero_gpu_wasm_bg.wasm"),
     ];
+
+    const jitCratePath = path.join(repoRoot, "crates/aero-jit-wasm", "Cargo.toml");
+    if (existsSync(jitCratePath)) {
+        expectedFiles.push(path.join(outDirAeroJit, "aero_jit_wasm.js"), path.join(outDirAeroJit, "aero_jit_wasm_bg.wasm"));
+    }
 
     if (expectedFiles.every((file) => existsSync(file))) {
         return;
