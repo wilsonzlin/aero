@@ -183,7 +183,23 @@ impl SharedRingBuffer {
 
             let total = align_up(4 + len as usize, RECORD_ALIGN);
             if total > remaining {
-                // Corrupt; treat as empty.
+                // Corrupt record (e.g. bogus length). If we simply return `None` without advancing
+                // `head`, the queue becomes permanently wedged (all future pops will re-read the
+                // same bogus length and bail out).
+                //
+                // Treat corruption as fatal to the current backlog: drop all pending records by
+                // snapping `head` to the current committed `tail`. This preserves forward progress
+                // for future writers while still behaving like "empty" for the caller.
+                atomics_store_i32(&self.ctrl, ring_ctrl::HEAD as u32, tail as i32);
+                atomics_notify_i32(&self.ctrl, ring_ctrl::HEAD as u32, 1);
+                return None;
+            }
+
+            let committed = tail.wrapping_sub(head);
+            if committed < total as u32 {
+                // Should not happen with in-order commits; treat as corruption and drop backlog.
+                atomics_store_i32(&self.ctrl, ring_ctrl::HEAD as u32, tail as i32);
+                atomics_notify_i32(&self.ctrl, ring_ctrl::HEAD as u32, 1);
                 return None;
             }
 
