@@ -1104,6 +1104,44 @@ mod tests {
     }
 
     #[test]
+    fn decode_pcm_to_stereo_f32_ignores_partial_trailing_frame_for_24bit() {
+        // 24-bit PCM uses a 4-byte container. Stereo => 8 bytes per frame.
+        let fmt = StreamFormat {
+            sample_rate_hz: 48_000,
+            bits_per_sample: 24,
+            channels: 2,
+        };
+        let mut input = Vec::new();
+        input.extend_from_slice(&4_194_304i32.to_le_bytes()); // 0.5
+        input.extend_from_slice(&(-4_194_304i32).to_le_bytes()); // -0.5
+        input.extend_from_slice(&0xDEAD_BEEFu32.to_le_bytes()); // trailing partial frame
+
+        let out = decode_pcm_to_stereo_f32(&input, fmt);
+        assert_eq!(out.len(), 1);
+        assert_f32_approx_eq(out[0][0], 0.5, 1e-6);
+        assert_f32_approx_eq(out[0][1], -0.5, 1e-6);
+    }
+
+    #[test]
+    fn decode_pcm_to_stereo_f32_ignores_partial_trailing_frame_for_32bit() {
+        // 32-bit PCM uses 4 bytes per sample. Stereo => 8 bytes per frame.
+        let fmt = StreamFormat {
+            sample_rate_hz: 48_000,
+            bits_per_sample: 32,
+            channels: 2,
+        };
+        let mut input = Vec::new();
+        input.extend_from_slice(&(1i32 << 30).to_le_bytes()); // 0.5
+        input.extend_from_slice(&(-(1i32 << 30)).to_le_bytes()); // -0.5
+        input.extend_from_slice(&0xDEAD_BEEFu32.to_le_bytes()); // trailing partial frame
+
+        let out = decode_pcm_to_stereo_f32(&input, fmt);
+        assert_eq!(out.len(), 1);
+        assert_f32_approx_eq(out[0][0], 0.5, 1e-6);
+        assert_f32_approx_eq(out[0][1], -0.5, 1e-6);
+    }
+
+    #[test]
     fn decode_pcm_to_stereo_f32_into_clears_output_on_short_input() {
         // Input shorter than a single frame should produce zero output frames, and the caller's
         // output buffer must still be cleared.
