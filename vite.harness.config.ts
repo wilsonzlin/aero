@@ -128,6 +128,8 @@ function audioWorkletDependenciesPlugin(): Plugin {
   // resolve it at runtime.
   const srcMicRingPath = resolve(rootDir, 'web/src/audio/mic_ring.js');
   const source = readFileSync(srcMicRingPath, 'utf8');
+  const srcAudioWorkletRingLayoutPath = resolve(rootDir, 'web/src/platform/audio_worklet_ring_layout.js');
+  const audioWorkletRingLayoutSource = readFileSync(srcAudioWorkletRingLayoutPath, 'utf8');
   return {
     name: 'aero-audio-worklet-deps',
     generateBundle() {
@@ -135,6 +137,11 @@ function audioWorkletDependenciesPlugin(): Plugin {
         type: 'asset',
         fileName: 'assets/mic_ring.js',
         source,
+      });
+      this.emitFile({
+        type: 'asset',
+        fileName: 'assets/audio_worklet_ring_layout.js',
+        source: audioWorkletRingLayoutSource,
       });
     },
   };
