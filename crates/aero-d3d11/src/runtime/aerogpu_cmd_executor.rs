@@ -7253,20 +7253,20 @@ impl AerogpuD3d11Executor {
                         write_texture_subresource_linear(
                             queue,
                             &tex.texture,
-                            Texture2dDesc {
-                                width: level_width,
-                                height: level_height,
-                                mip_level_count: 1,
-                                array_layers: 1,
-                                format: desc.format,
-                            },
-                            TextureSubresource {
+                            Texture2dSubresourceDesc {
+                                desc: Texture2dDesc {
+                                    width: level_width,
+                                    height: level_height,
+                                    mip_level_count: 1,
+                                    array_layers: 1,
+                                    format: desc.format,
+                                },
                                 mip_level: level,
                                 array_layer: layer,
                             },
-                            level_width.checked_mul(4).ok_or_else(|| {
-                                anyhow!("texture upload: decompressed bytes_per_row overflow")
-                            })?,
+                            level_width
+                                .checked_mul(4)
+                                .ok_or_else(|| anyhow!("texture upload: decompressed bytes_per_row overflow"))?,
                             &rgba,
                             false,
                         )?;
@@ -8399,20 +8399,21 @@ fn write_texture_layout(
     Ok((bytes_per_row, height))
 }
 
-#[derive(Clone, Copy)]
-struct TextureSubresource {
+#[derive(Debug, Clone, Copy)]
+struct Texture2dSubresourceDesc {
+    desc: Texture2dDesc,
     mip_level: u32,
     array_layer: u32,
 }
 fn write_texture_subresource_linear(
     queue: &wgpu::Queue,
     texture: &wgpu::Texture,
-    desc: Texture2dDesc,
-    subresource: TextureSubresource,
+    subresource: Texture2dSubresourceDesc,
     src_bytes_per_row: u32,
     bytes: &[u8],
     force_opaque_alpha: bool,
 ) -> Result<()> {
+    let desc = &subresource.desc;
     let (unpadded_bpr, layout_rows) = write_texture_layout(desc.format, desc.width, desc.height)?;
     let (extent_width, extent_height) = if bc_block_bytes(desc.format).is_some() {
         // WebGPU requires BC uploads to use the physical (block-rounded) size, even when the mip
@@ -8584,8 +8585,8 @@ fn write_texture_linear(
     write_texture_subresource_linear(
         queue,
         texture,
-        desc,
-        TextureSubresource {
+        Texture2dSubresourceDesc {
+            desc,
             mip_level: 0,
             array_layer: 0,
         },

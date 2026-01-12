@@ -5176,7 +5176,7 @@ impl snapshot::SnapshotTarget for Machine {
                             // back to the legacy `DeviceId::PCI` payload if the new entry fails to
                             // apply (e.g. because it is from an unsupported future version).
                             let mut pci_intx = pci_intx.borrow_mut();
-                            if snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
+                            let restored = snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
                                 &intx_state,
                                 &mut *pci_intx,
                             )
@@ -5185,8 +5185,8 @@ impl snapshot::SnapshotTarget for Machine {
                                     &state,
                                     &mut *pci_intx,
                                 )
-                                .is_ok()
-                            {
+                                .is_ok();
+                            if restored {
                                 restored_pci_intx = true;
                             }
                         } else {

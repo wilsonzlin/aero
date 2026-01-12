@@ -636,7 +636,7 @@ impl<C: Clock> IoSnapshot for AcpiPmIo<C> {
                     .saturating_add(remainder);
                 let g = gcd_u128(a, freq);
 
-                if b % g == 0 {
+                if b.is_multiple_of(g) {
                     let m = freq / g;
                     let a_mod = ((a / g) % m) as i128;
                     let b_mod = ((b / g) % m) as i128;
