@@ -249,13 +249,13 @@ fn pc_platform_virtio_blk_dma_writes_mark_dirty_pages_when_enabled() {
     pc.memory.write_u8(bar0_base + COMMON + 0x14, 1 | 2); // ACKNOWLEDGE | DRIVER
 
     // device_feature_select=0 -> read device_feature (low)
-    pc.memory.write_u32(bar0_base + COMMON + 0x00, 0);
+    pc.memory.write_u32(bar0_base + COMMON, 0);
     let f0 = pc.memory.read_u32(bar0_base + COMMON + 0x04);
     pc.memory.write_u32(bar0_base + COMMON + 0x08, 0); // driver_feature_select=0
     pc.memory.write_u32(bar0_base + COMMON + 0x0c, f0);
 
     // device_feature_select=1 -> read high
-    pc.memory.write_u32(bar0_base + COMMON + 0x00, 1);
+    pc.memory.write_u32(bar0_base + COMMON, 1);
     let f1 = pc.memory.read_u32(bar0_base + COMMON + 0x04);
     pc.memory.write_u32(bar0_base + COMMON + 0x08, 1);
     pc.memory.write_u32(bar0_base + COMMON + 0x0c, f1);
@@ -579,13 +579,13 @@ fn pc_platform_routes_virtio_blk_intx_via_ioapic_in_apic_mode() {
     pc.memory.write_u8(bar0_base + COMMON + 0x14, 1 | 2); // ACKNOWLEDGE | DRIVER
 
     // device_feature_select=0 -> read device_feature (low)
-    pc.memory.write_u32(bar0_base + COMMON + 0x00, 0);
+    pc.memory.write_u32(bar0_base + COMMON, 0);
     let f0 = pc.memory.read_u32(bar0_base + COMMON + 0x04);
     pc.memory.write_u32(bar0_base + COMMON + 0x08, 0); // driver_feature_select=0
     pc.memory.write_u32(bar0_base + COMMON + 0x0c, f0);
 
     // device_feature_select=1 -> read high
-    pc.memory.write_u32(bar0_base + COMMON + 0x00, 1);
+    pc.memory.write_u32(bar0_base + COMMON, 1);
     let f1 = pc.memory.read_u32(bar0_base + COMMON + 0x04);
     pc.memory.write_u32(bar0_base + COMMON + 0x08, 1);
     pc.memory.write_u32(bar0_base + COMMON + 0x0c, f1);
@@ -674,13 +674,13 @@ fn pc_platform_virtio_blk_snapshot_restore_preserves_virtqueue_progress() {
     pc.memory.write_u8(bar0_base + COMMON + 0x14, 1 | 2); // ACKNOWLEDGE | DRIVER
 
     // device_feature_select=0 -> read device_feature (low)
-    pc.memory.write_u32(bar0_base + COMMON + 0x00, 0);
+    pc.memory.write_u32(bar0_base + COMMON, 0);
     let f0 = pc.memory.read_u32(bar0_base + COMMON + 0x04);
     pc.memory.write_u32(bar0_base + COMMON + 0x08, 0); // driver_feature_select=0
     pc.memory.write_u32(bar0_base + COMMON + 0x0c, f0);
 
     // device_feature_select=1 -> read high
-    pc.memory.write_u32(bar0_base + COMMON + 0x00, 1);
+    pc.memory.write_u32(bar0_base + COMMON, 1);
     let f1 = pc.memory.read_u32(bar0_base + COMMON + 0x04);
     pc.memory.write_u32(bar0_base + COMMON + 0x08, 1);
     pc.memory.write_u32(bar0_base + COMMON + 0x0c, f1);
@@ -831,13 +831,13 @@ fn pc_platform_virtio_blk_snapshot_restore_processes_pending_request_without_ren
     pc.memory.write_u8(bar0_base + COMMON + 0x14, 1 | 2); // ACKNOWLEDGE | DRIVER
 
     // device_feature_select=0 -> read device_feature (low)
-    pc.memory.write_u32(bar0_base + COMMON + 0x00, 0);
+    pc.memory.write_u32(bar0_base + COMMON, 0);
     let f0 = pc.memory.read_u32(bar0_base + COMMON + 0x04);
     pc.memory.write_u32(bar0_base + COMMON + 0x08, 0); // driver_feature_select=0
     pc.memory.write_u32(bar0_base + COMMON + 0x0c, f0);
 
     // device_feature_select=1 -> read high
-    pc.memory.write_u32(bar0_base + COMMON + 0x00, 1);
+    pc.memory.write_u32(bar0_base + COMMON, 1);
     let f1 = pc.memory.read_u32(bar0_base + COMMON + 0x04);
     pc.memory.write_u32(bar0_base + COMMON + 0x08, 1);
     pc.memory.write_u32(bar0_base + COMMON + 0x0c, f1);

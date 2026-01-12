@@ -29,14 +29,13 @@ fn pc_platform_reset_resets_e1000_mmio_state() {
     assert_ne!(bar0_base, 0);
 
     // E1000 CTRL (offset 0x00) should be writable through the PCI MMIO router.
-    pc.memory.write_u32(bar0_base + 0x00, 0x1111_2222);
-    assert_eq!(pc.memory.read_u32(bar0_base + 0x00), 0x1111_2222);
+    pc.memory.write_u32(bar0_base, 0x1111_2222);
+    assert_eq!(pc.memory.read_u32(bar0_base), 0x1111_2222);
 
     // Reset the platform: E1000 should return to its power-on baseline (CTRL cleared).
     pc.reset();
 
     let bar0_base_after = read_e1000_bar0_base(&mut pc);
     assert_ne!(bar0_base_after, 0);
-    assert_eq!(pc.memory.read_u32(bar0_base_after + 0x00), 0);
+    assert_eq!(pc.memory.read_u32(bar0_base_after), 0);
 }
-

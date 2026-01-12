@@ -161,7 +161,7 @@ fn win7_storage_topology_is_canonical_and_reads_hdd_and_cdrom() {
         let data_buf = 0x4000u64;
 
         // PxCLB / PxFB (lower 32 bits; high is zero).
-        pc.memory.write_u32(bar5 + 0x100 + 0x00, clb as u32);
+        pc.memory.write_u32(bar5 + 0x100, clb as u32);
         pc.memory.write_u32(bar5 + 0x100 + 0x08, fb as u32);
 
         // GHC: AE + IE.
@@ -173,7 +173,7 @@ fn win7_storage_topology_is_canonical_and_reads_hdd_and_cdrom() {
 
         // Command header (slot 0).
         // flags: CFL=5, PRDTL=1.
-        pc.memory.write_u32(clb + 0x00, 0x0001_0005);
+        pc.memory.write_u32(clb, 0x0001_0005);
         pc.memory.write_u32(clb + 0x04, 0); // PRDBC
         pc.memory.write_u32(clb + 0x08, ctba as u32);
         pc.memory.write_u32(clb + 0x0c, 0);
@@ -223,7 +223,7 @@ fn win7_storage_topology_is_canonical_and_reads_hdd_and_cdrom() {
         const IDE_COMMAND: u16 = IDE_BASE + 7;
         const IDE_LBA1: u16 = IDE_BASE + 4;
         const IDE_LBA2: u16 = IDE_BASE + 5;
-        const IDE_DATA: u16 = IDE_BASE + 0;
+        const IDE_DATA: u16 = IDE_BASE;
 
         // Select secondary master.
         pc.io.write_u8(IDE_DEVICE, 0xA0);

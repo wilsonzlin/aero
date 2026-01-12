@@ -364,7 +364,7 @@ fn pc_platform_snapshot_roundtrip_redrives_hpet_and_pci_intx_levels_after_restor
     };
     let pci_core_state = {
         let mut cfg_ports = pc.pci_cfg.borrow_mut();
-        let core = PciCoreSnapshot::new(&mut *cfg_ports, &mut pc.pci_intx);
+        let core = PciCoreSnapshot::new(&mut cfg_ports, &mut pc.pci_intx);
         deterministic_snapshot(&core, "PCI core")
     };
 
@@ -379,7 +379,7 @@ fn pc_platform_snapshot_roundtrip_redrives_hpet_and_pci_intx_levels_after_restor
 
     {
         let mut cfg_ports = pc2.pci_cfg.borrow_mut();
-        let mut core = PciCoreSnapshot::new(&mut *cfg_ports, &mut pc2.pci_intx);
+        let mut core = PciCoreSnapshot::new(&mut cfg_ports, &mut pc2.pci_intx);
         core.load_state(&pci_core_state).unwrap();
     }
 
@@ -520,14 +520,14 @@ fn pc_platform_snapshot_roundtrip_preserves_acpi_pm_timer_progression() {
     let mut pc = PcPlatform::new(RAM_SIZE);
 
     // At time 0, the timer should read as 0 and be stable without ticking.
-    let t0 = (pc.io.read(DEFAULT_PM_TMR_BLK, 4) as u32) & PM_TIMER_MASK_24BIT;
-    let t0b = (pc.io.read(DEFAULT_PM_TMR_BLK, 4) as u32) & PM_TIMER_MASK_24BIT;
+    let t0 = pc.io.read(DEFAULT_PM_TMR_BLK, 4) & PM_TIMER_MASK_24BIT;
+    let t0b = pc.io.read(DEFAULT_PM_TMR_BLK, 4) & PM_TIMER_MASK_24BIT;
     assert_eq!(t0, t0b);
 
     // Advance deterministic time and ensure the timer increments as expected.
     let delta1_ns: u64 = 1_000_000; // 1ms
     pc.tick(delta1_ns);
-    let t1 = (pc.io.read(DEFAULT_PM_TMR_BLK, 4) as u32) & PM_TIMER_MASK_24BIT;
+    let t1 = pc.io.read(DEFAULT_PM_TMR_BLK, 4) & PM_TIMER_MASK_24BIT;
     let expected_t1 = (((delta1_ns as u128) * PM_TIMER_FREQUENCY_HZ) / NS_PER_SEC) as u32;
     assert_eq!(t1, expected_t1 & PM_TIMER_MASK_24BIT);
 
@@ -542,14 +542,14 @@ fn pc_platform_snapshot_roundtrip_preserves_acpi_pm_timer_progression() {
 
     // The timer value at the snapshot moment should survive restore even though the new clock
     // starts at 0; the device models this by restoring the timer base offset.
-    let t1_restore = (pc2.io.read(DEFAULT_PM_TMR_BLK, 4) as u32) & PM_TIMER_MASK_24BIT;
+    let t1_restore = pc2.io.read(DEFAULT_PM_TMR_BLK, 4) & PM_TIMER_MASK_24BIT;
     assert_eq!(t1_restore, t1);
 
     // Further ticking should advance from the restored point. Use absolute expected values to
     // avoid off-by-one issues due to integer division at fractional tick boundaries.
     let delta2_ns: u64 = 500_000; // 0.5ms
     pc2.tick(delta2_ns);
-    let t2 = (pc2.io.read(DEFAULT_PM_TMR_BLK, 4) as u32) & PM_TIMER_MASK_24BIT;
+    let t2 = pc2.io.read(DEFAULT_PM_TMR_BLK, 4) & PM_TIMER_MASK_24BIT;
     let total_ns = (delta1_ns as u128) + (delta2_ns as u128);
     let expected_t2 = ((total_ns * PM_TIMER_FREQUENCY_HZ) / NS_PER_SEC) as u32;
     assert_eq!(t2, expected_t2 & PM_TIMER_MASK_24BIT);
@@ -873,7 +873,7 @@ fn pc_platform_snapshot_roundtrip_preserves_storage_controllers_and_allows_backe
     };
     let pci_core_state = {
         let mut cfg_ports = pc.pci_cfg.borrow_mut();
-        let core = PciCoreSnapshot::new(&mut *cfg_ports, &mut pc.pci_intx);
+        let core = PciCoreSnapshot::new(&mut cfg_ports, &mut pc.pci_intx);
         deterministic_snapshot(&core, "PCI core")
     };
     let ahci_state = {
@@ -895,7 +895,7 @@ fn pc_platform_snapshot_roundtrip_preserves_storage_controllers_and_allows_backe
 
     {
         let mut cfg_ports = pc2.pci_cfg.borrow_mut();
-        let mut core = PciCoreSnapshot::new(&mut *cfg_ports, &mut pc2.pci_intx);
+        let mut core = PciCoreSnapshot::new(&mut cfg_ports, &mut pc2.pci_intx);
         core.load_state(&pci_core_state).unwrap();
         core.sync_intx_levels_to_sink(&mut *pc2.interrupts.borrow_mut());
     }

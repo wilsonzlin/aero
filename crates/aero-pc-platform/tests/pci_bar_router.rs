@@ -44,9 +44,9 @@ impl MmioHandler for TestMmioDev {
     fn read(&mut self, offset: u64, size: usize) -> u64 {
         let mut buf = [0xffu8; 8];
         let base = offset as usize;
-        for i in 0..size.min(8) {
-            if base + i < self.mem.len() {
-                buf[i] = self.mem[base + i];
+        for (i, dst) in buf.iter_mut().enumerate().take(size.min(8)) {
+            if let Some(src) = self.mem.get(base + i) {
+                *dst = *src;
             }
         }
         u64::from_le_bytes(buf)
@@ -56,9 +56,9 @@ impl MmioHandler for TestMmioDev {
         self.last_write = Some((offset, size, value));
         let bytes = value.to_le_bytes();
         let base = offset as usize;
-        for i in 0..size.min(8) {
-            if base + i < self.mem.len() {
-                self.mem[base + i] = bytes[i];
+        for (i, src) in bytes.iter().enumerate().take(size.min(8)) {
+            if let Some(dst) = self.mem.get_mut(base + i) {
+                *dst = *src;
             }
         }
     }

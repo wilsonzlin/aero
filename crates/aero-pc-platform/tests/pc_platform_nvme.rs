@@ -110,7 +110,7 @@ fn pc_platform_nvme_mmio_is_gated_by_pci_command_mem() {
     let bdf = NVME_CONTROLLER.bdf;
     let bar0_base = read_nvme_bar0_base(&mut pc);
 
-    let cap_lo = pc.memory.read_u32(bar0_base + 0x0000);
+    let cap_lo = pc.memory.read_u32(bar0_base);
     assert_ne!(
         cap_lo, 0xffff_ffff,
         "CAP should be readable when COMMAND.MEM is enabled"
@@ -130,7 +130,7 @@ fn pc_platform_nvme_mmio_is_gated_by_pci_command_mem() {
     // Disable Memory Space Enable (COMMAND.MEM = bit 1).
     write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0000);
 
-    let cap_lo_disabled = pc.memory.read_u32(bar0_base + 0x0000);
+    let cap_lo_disabled = pc.memory.read_u32(bar0_base);
     assert_eq!(
         cap_lo_disabled, 0xffff_ffff,
         "BAR0 reads should return all-ones when COMMAND.MEM=0"
@@ -142,7 +142,7 @@ fn pc_platform_nvme_mmio_is_gated_by_pci_command_mem() {
     // Re-enable memory decoding.
     write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0002);
 
-    let cap_lo_reenabled = pc.memory.read_u32(bar0_base + 0x0000);
+    let cap_lo_reenabled = pc.memory.read_u32(bar0_base);
     assert_ne!(
         cap_lo_reenabled, 0xffff_ffff,
         "BAR0 should decode again when COMMAND.MEM is re-enabled"
@@ -234,11 +234,11 @@ fn pc_platform_nvme_bar0_relocation_is_honored_by_mmio_routing() {
     assert_eq!(read_nvme_bar0_base(&mut pc), new_base);
 
     // Old base must no longer decode.
-    let cap_old = pc.memory.read_u32(old_base + 0x0000);
+    let cap_old = pc.memory.read_u32(old_base);
     assert_eq!(cap_old, 0xffff_ffff, "old BAR0 base should not route");
 
     // New base should decode.
-    let cap_new = pc.memory.read_u32(new_base + 0x0000);
+    let cap_new = pc.memory.read_u32(new_base);
     assert_ne!(cap_new, 0xffff_ffff, "new BAR0 base should route");
 
     // Writes at the new base should take effect.

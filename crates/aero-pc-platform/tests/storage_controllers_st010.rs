@@ -103,7 +103,7 @@ fn st010_ahci_read_dma_ext_and_intx_routing() {
     let cfl = 5u32; // 20 bytes / 4
     let prdtl = 1u32;
     let header_flags = cfl | (prdtl << 16);
-    pc.memory.write_u32(clb + 0, header_flags);
+    pc.memory.write_u32(clb, header_flags);
     pc.memory.write_u32(clb + 4, 0); // PRDBC
     pc.memory.write_u32(clb + 8, ctba as u32);
     pc.memory.write_u32(clb + 12, 0);
@@ -125,7 +125,7 @@ fn st010_ahci_read_dma_ext_and_intx_routing() {
 
     // PRDT entry 0.
     let prd = ctba + 0x80;
-    pc.memory.write_u32(prd + 0, data_buf as u32);
+    pc.memory.write_u32(prd, data_buf as u32);
     pc.memory.write_u32(prd + 4, 0);
     pc.memory.write_u32(prd + 8, 0);
     // DBC is stored as byte_count-1; set IOC (bit31) for realism.
@@ -205,9 +205,9 @@ fn st010_nvme_admin_identify_and_intx_routing() {
     let cid: u16 = 1;
     let opc: u8 = 0x06;
     let dw0 = (opc as u32) | ((cid as u32) << 16);
-    pc.memory.write_u32(asq + 0, dw0);
+    pc.memory.write_u32(asq, dw0);
     pc.memory.write_u32(asq + 4, 0); // NSID
-                                     // PRP1/PRP2
+                                      // PRP1/PRP2
     pc.memory.write_u64(asq + 24, identify);
     pc.memory.write_u64(asq + 32, 0);
     pc.memory.write_u32(asq + 40, 1); // CDW10: CNS=1
@@ -222,7 +222,7 @@ fn st010_nvme_admin_identify_and_intx_routing() {
     assert_eq!(cpl_cid, cid);
     assert_eq!(cpl_status & 0xFFFE, 0, "status should report SUCCESS");
 
-    let vid = pc.memory.read_u16(identify + 0);
+    let vid = pc.memory.read_u16(identify);
     assert_eq!(vid, 0x1b36);
 
     assert!(pc.nvme.as_ref().unwrap().borrow().irq_level());
@@ -341,7 +341,7 @@ fn st010_virtio_blk_read_write_and_intx_routing() {
         next: u16,
     ) {
         let base = desc_addr + u64::from(index) * 16;
-        pc.memory.write_u64(base + 0, addr);
+        pc.memory.write_u64(base, addr);
         pc.memory.write_u32(base + 8, len);
         pc.memory.write_u16(base + 12, flags);
         pc.memory.write_u16(base + 14, next);
@@ -363,7 +363,7 @@ fn st010_virtio_blk_read_write_and_intx_routing() {
 
     // virtio-blk request header: type=u32, reserved=u32, sector=u64
     pc.memory
-        .write_u32(req_hdr + 0, aero_virtio::devices::blk::VIRTIO_BLK_T_OUT);
+        .write_u32(req_hdr, aero_virtio::devices::blk::VIRTIO_BLK_T_OUT);
     pc.memory.write_u32(req_hdr + 4, 0);
     pc.memory.write_u64(req_hdr + 8, 1);
 
@@ -394,7 +394,7 @@ fn st010_virtio_blk_read_write_and_intx_routing() {
 
     // --- Request 1: READ sector 1 (IN) ---
     pc.memory
-        .write_u32(req_hdr + 0, aero_virtio::devices::blk::VIRTIO_BLK_T_IN);
+        .write_u32(req_hdr, aero_virtio::devices::blk::VIRTIO_BLK_T_IN);
     pc.memory.write_u32(req_hdr + 4, 0);
     pc.memory.write_u64(req_hdr + 8, 1);
 
@@ -455,7 +455,7 @@ fn st010_ide_pio_atapi_and_busmaster_dma() {
 
     // Attach an ATA HDD (primary master) and an ATAPI CD-ROM (secondary master).
     let mut hdd = RawDisk::create(MemBackend::new(), 8 * aero_storage::SECTOR_SIZE as u64).unwrap();
-    hdd.write_at(1 * aero_storage::SECTOR_SIZE as u64, &[1, 2, 3, 4])
+    hdd.write_at(aero_storage::SECTOR_SIZE as u64, &[1, 2, 3, 4])
         .unwrap();
     let mut sector0 = [0u8; aero_storage::SECTOR_SIZE];
     for (i, b) in sector0.iter_mut().enumerate() {
@@ -493,7 +493,7 @@ fn st010_ide_pio_atapi_and_busmaster_dma() {
     wait_drq(&mut pc, pri_cmd);
     let mut sector = [0u8; 512];
     for i in 0..256 {
-        let w = pc.io.read(pri_cmd + 0, 2) as u16;
+        let w = pc.io.read(pri_cmd, 2) as u16;
         sector[i * 2..i * 2 + 2].copy_from_slice(&w.to_le_bytes());
     }
     assert_eq!(&sector[0..4], &[1, 2, 3, 4]);
@@ -513,7 +513,7 @@ fn st010_ide_pio_atapi_and_busmaster_dma() {
 
         for i in 0..6 {
             let w = u16::from_le_bytes([pkt[i * 2], pkt[i * 2 + 1]]);
-            pc.io.write(cmd_base + 0, 2, w as u32);
+            pc.io.write(cmd_base, 2, w as u32);
         }
     }
 
@@ -527,7 +527,7 @@ fn st010_ide_pio_atapi_and_busmaster_dma() {
     atapi_send_packet(&mut pc, sec_cmd, &req_sense, 18);
     wait_drq(&mut pc, sec_cmd);
     for _ in 0..9 {
-        let _ = pc.io.read(sec_cmd + 0, 2);
+        let _ = pc.io.read(sec_cmd, 2);
     }
 
     // READ(10) for LBA=1, blocks=1.
@@ -540,7 +540,7 @@ fn st010_ide_pio_atapi_and_busmaster_dma() {
 
     let mut cd = vec![0u8; 2048];
     for i in 0..(2048 / 2) {
-        let w = pc.io.read(sec_cmd + 0, 2) as u16;
+        let w = pc.io.read(sec_cmd, 2) as u16;
         cd[i * 2..i * 2 + 2].copy_from_slice(&w.to_le_bytes());
     }
     assert_eq!(&cd[0..5], b"WORLD");
@@ -553,7 +553,7 @@ fn st010_ide_pio_atapi_and_busmaster_dma() {
     let buf0 = 0x0FF00u64; // 0xFF00..0x10000 (256 bytes)
     let buf1 = 0x10000u64; // 0x10000..0x10100 (256 bytes)
 
-    pc.memory.write_u32(prd_addr + 0, buf0 as u32);
+    pc.memory.write_u32(prd_addr, buf0 as u32);
     pc.memory.write_u16(prd_addr + 4, 256);
     pc.memory.write_u16(prd_addr + 6, 0x0000);
     pc.memory.write_u32(prd_addr + 8, buf1 as u32);
@@ -574,7 +574,7 @@ fn st010_ide_pio_atapi_and_busmaster_dma() {
     pc.io.write(pri_cmd + 5, 1, 0);
     pc.io.write(pri_cmd + 7, 1, 0xC8);
 
-    pc.io.write(bus_master_base + 0, 1, 0x09); // start + direction=read
+    pc.io.write(bus_master_base, 1, 0x09); // start + direction=read
     pc.process_ide();
 
     let mut dma0 = [0u8; 16];
@@ -660,7 +660,7 @@ fn st010_ahci_snapshot_roundtrip_preserves_intx_level() {
 
     let cfl = 5u32;
     let prdtl = 1u32;
-    pc.memory.write_u32(clb + 0, cfl | (prdtl << 16));
+    pc.memory.write_u32(clb, cfl | (prdtl << 16));
     pc.memory.write_u32(clb + 4, 0);
     pc.memory.write_u32(clb + 8, ctba as u32);
     pc.memory.write_u32(clb + 12, 0);
@@ -681,7 +681,7 @@ fn st010_ahci_snapshot_roundtrip_preserves_intx_level() {
     mem_write(&mut pc, ctba, &cfis);
 
     let prd = ctba + 0x80;
-    pc.memory.write_u32(prd + 0, data_buf as u32);
+    pc.memory.write_u32(prd, data_buf as u32);
     pc.memory.write_u32(prd + 4, 0);
     pc.memory.write_u32(prd + 8, 0);
     pc.memory.write_u32(prd + 12, (aero_storage::SECTOR_SIZE as u32 - 1) | (1 << 31));
@@ -772,7 +772,7 @@ fn st010_nvme_snapshot_roundtrip_preserves_intx_level() {
 
     let cid: u16 = 1;
     let dw0 = (0x06u32) | ((cid as u32) << 16); // IDENTIFY
-    pc.memory.write_u32(asq + 0, dw0);
+    pc.memory.write_u32(asq, dw0);
     pc.memory.write_u64(asq + 24, identify);
     pc.memory.write_u32(asq + 40, 1); // CNS=1
 
@@ -858,7 +858,7 @@ fn st010_ide_snapshot_roundtrip_preserves_irq14_level() {
     let buf0 = 0x0FF00u64;
     let buf1 = 0x10000u64;
 
-    pc.memory.write_u32(prd_addr + 0, buf0 as u32);
+    pc.memory.write_u32(prd_addr, buf0 as u32);
     pc.memory.write_u16(prd_addr + 4, 256);
     pc.memory.write_u16(prd_addr + 6, 0x0000);
     pc.memory.write_u32(prd_addr + 8, buf1 as u32);
@@ -875,7 +875,7 @@ fn st010_ide_snapshot_roundtrip_preserves_irq14_level() {
     pc.io.write(pri_cmd + 4, 1, 0);
     pc.io.write(pri_cmd + 5, 1, 0);
     pc.io.write(pri_cmd + 7, 1, 0xC8);
-    pc.io.write(bus_master_base + 0, 1, 0x09);
+    pc.io.write(bus_master_base, 1, 0x09);
 
     pc.process_ide();
 
