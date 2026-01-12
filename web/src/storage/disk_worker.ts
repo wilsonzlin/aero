@@ -42,6 +42,7 @@ import { probeRemoteDisk, stableCacheKey } from "../platform/remote_disk";
 import { removeOpfsEntry } from "../platform/opfs";
 import { CHUNKED_DISK_CHUNK_SIZE, RANGE_STREAM_CHUNK_SIZE } from "./chunk_sizes.ts";
 import { RemoteCacheManager, remoteChunkedDeliveryType, remoteRangeDeliveryType } from "./remote_cache_manager";
+import { assertNonSecretUrl, assertValidLeaseEndpoint } from "./url_safety";
 
 type DiskWorkerError = { message: string; name?: string; stack?: string };
 
@@ -111,54 +112,6 @@ function postErr(requestId: number, error: unknown): void {
     ok: false,
     error: serializeError(error),
   });
-}
-
-function assertNonSecretUrl(url: string | undefined): void {
-  if (!url) return;
-  let parsed: URL;
-  try {
-    parsed = new URL(url, "https://example.invalid");
-  } catch {
-    // If URL parsing fails, fall back to best-effort substring checks.
-    const lower = url.toLowerCase();
-    if (lower.includes("x-amz-signature") || lower.includes("key-pair-id=") || lower.includes("signature=")) {
-      throw new Error("Refusing to persist what looks like a signed URL; store a stable URL or a leaseEndpoint instead.");
-    }
-    return;
-  }
-
-  if (parsed.username || parsed.password) {
-    throw new Error("Refusing to persist a URL with embedded credentials; store a stable URL or a leaseEndpoint instead.");
-  }
-
-  const banned = new Set([
-    // AWS S3 presigned query params.
-    "x-amz-algorithm",
-    "x-amz-credential",
-    "x-amz-date",
-    "x-amz-expires",
-    "x-amz-security-token",
-    "x-amz-signature",
-    "x-amz-signedheaders",
-    // CloudFront signed URL params (and other common CDNs).
-    "expires",
-    "key-pair-id",
-    "policy",
-    "signature",
-  ]);
-
-  for (const [key] of parsed.searchParams) {
-    if (banned.has(key.toLowerCase())) {
-      throw new Error("Refusing to persist what looks like a signed URL; store a stable URL or a leaseEndpoint instead.");
-    }
-  }
-}
-
-function assertValidLeaseEndpoint(endpoint: string | undefined): void {
-  if (!endpoint) return;
-  if (!endpoint.startsWith("/")) {
-    throw new Error("leaseEndpoint must be a same-origin path starting with '/'");
-  }
 }
 
 function bytesToHex(bytes: Uint8Array): string {
@@ -477,6 +430,14 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
       }
       if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
         throw new Error("Remote disks require an http(s) URL.");
+      }
+
+      try {
+        assertNonSecretUrl(url);
+      } catch {
+        throw new Error(
+          "Refusing to persist a signed/secret URL in remote disk metadata; provide a stable URL or use the remote-disk flow with leaseEndpoint.",
+        );
       }
 
       const probe = await probeRemoteDisk(url);
