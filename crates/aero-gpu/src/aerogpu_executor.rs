@@ -1622,20 +1622,19 @@ fn fs_main() -> @location(0) vec4<f32> {
         format: u32,
         width: u32,
         height: u32,
+        mip_level_count: u32,
     ) -> Result<(wgpu::TextureFormat, TextureUploadTransform), ExecutorError> {
         let bc_enabled = self
             .device
             .features()
             .contains(wgpu::Features::TEXTURE_COMPRESSION_BC);
-        // WebGPU validation requires block-compressed (BC) textures to have base dimensions that
-        // are multiples of the 4x4 block size. If the guest requests an unaligned size (e.g. 9x9),
-        // fall back to an RGBA8 texture + CPU decompression so `create_texture` stays robust even
-        // when BC is enabled on the device.
+        // WebGPU validation requires block-compressed (BC) textures to be 4x4-block aligned.
         //
-        // Note: the stable executor only supports mip_level_count=1 today, so base dimensions are
-        // the only ones we need to validate here.
-        let bc_dims_compatible = width.is_multiple_of(4) && height.is_multiple_of(4);
-        let bc_native_ok = bc_enabled && bc_dims_compatible;
+        // At minimum this applies to the base mip (e.g. 9x9 BC1 is rejected), and some backends
+        // conservatively validate intermediate mip dimensions too. Use the shared compatibility
+        // helper so `create_texture` stays robust even when BC is enabled on the device.
+        let bc_native_ok = bc_enabled
+            && crate::wgpu_bc_texture_dimensions_compatible(width, height, mip_level_count);
 
         match format {
             v if v == pci::AerogpuFormat::B8G8R8A8Unorm as u32
@@ -1855,7 +1854,7 @@ fn fs_main() -> @location(0) vec4<f32> {
             ));
         }
 
-        let (wgpu_format, upload_transform) = self.map_format(format, width, height)?;
+        let (wgpu_format, upload_transform) = self.map_format(format, width, height, mip_levels)?;
         let layout = texture_copy_layout(width, height, format)?;
 
         if row_pitch_bytes != 0 && row_pitch_bytes < layout.unpadded_bytes_per_row {
@@ -2658,6 +2657,8 @@ fn fs_main() -> @location(0) vec4<f32> {
             dst_extent,
             src_format_raw,
             dst_format_raw,
+            src_format,
+            dst_format,
             dst_upload_transform,
             dst_backing,
         ) = {
@@ -2704,6 +2705,8 @@ fn fs_main() -> @location(0) vec4<f32> {
                 ),
                 src.format_raw,
                 dst.format_raw,
+                src.format,
+                dst.format,
                 dst.upload_transform,
                 dst_backing,
             )
@@ -2713,6 +2716,11 @@ fn fs_main() -> @location(0) vec4<f32> {
             return Err(ExecutorError::Validation(
                 "COPY_TEXTURE2D: format mismatch".into(),
             ));
+        }
+        if src_format != dst_format {
+            return Err(ExecutorError::Validation(format!(
+                "COPY_TEXTURE2D: internal format mismatch: src={src_format:?} dst={dst_format:?}"
+            )));
         }
         let dst_is_x8 = is_x8_format(dst_format_raw);
 
@@ -4137,4 +4145,121 @@ mod tests {
             assert_eq!(tex.upload_transform, TextureUploadTransform::Bc1ToRgba8);
         });
     }
-}
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn create_texture2d_bc_falls_back_when_intermediate_mip_is_not_block_aligned_even_if_bc_enabled(
+    ) {
+        pollster::block_on(async {
+            let Some((device, queue)) =
+                create_device_queue(wgpu::Features::TEXTURE_COMPRESSION_BC).await
+            else {
+                // Adapter/device does not support BC compression; nothing to validate here.
+                return;
+            };
+
+            let mut exec = AeroGpuExecutor::new(device, queue).expect("executor init must succeed");
+            // 12x12 with mip_levels=2 produces mip1=6x6. Some backends conservatively validate that
+            // mip levels >= 4 remain block-aligned, so we fall back to an RGBA8 texture + CPU
+            // decompression.
+            exec.exec_create_texture2d(
+                CreateTexture2dArgs {
+                    texture_handle: 1,
+                    usage_flags: cmd::AEROGPU_RESOURCE_USAGE_TEXTURE,
+                    format: pci::AerogpuFormat::BC1RgbaUnorm as u32,
+                    width: 12,
+                    height: 12,
+                    mip_levels: 2,
+                    array_layers: 1,
+                    row_pitch_bytes: 0,
+                    backing_alloc_id: 0,
+                    backing_offset_bytes: 0,
+                },
+                None,
+            )
+            .expect("CREATE_TEXTURE2D must succeed");
+
+            let tex = exec.textures.get(&1).expect("texture must exist");
+            assert_eq!(tex.format, wgpu::TextureFormat::Rgba8Unorm);
+            assert_eq!(tex.upload_transform, TextureUploadTransform::Bc1ToRgba8);
+        });
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn copy_texture2d_rejects_host_format_mismatch_after_bc_fallback() {
+        pollster::block_on(async {
+            let Some((device, queue)) =
+                create_device_queue(wgpu::Features::TEXTURE_COMPRESSION_BC).await
+            else {
+                // Adapter/device does not support BC compression; nothing to validate here.
+                return;
+            };
+
+            let mut exec = AeroGpuExecutor::new(device, queue).expect("executor init must succeed");
+            exec.exec_create_texture2d(
+                CreateTexture2dArgs {
+                    texture_handle: 1,
+                    usage_flags: cmd::AEROGPU_RESOURCE_USAGE_TEXTURE,
+                    format: pci::AerogpuFormat::BC1RgbaUnorm as u32,
+                    width: 8,
+                    height: 8,
+                    mip_levels: 1,
+                    array_layers: 1,
+                    row_pitch_bytes: 0,
+                    backing_alloc_id: 0,
+                    backing_offset_bytes: 0,
+                },
+                None,
+            )
+            .expect("CREATE_TEXTURE2D must succeed");
+            exec.exec_create_texture2d(
+                CreateTexture2dArgs {
+                    texture_handle: 2,
+                    usage_flags: cmd::AEROGPU_RESOURCE_USAGE_TEXTURE,
+                    format: pci::AerogpuFormat::BC1RgbaUnorm as u32,
+                    width: 9,
+                    height: 9,
+                    mip_levels: 1,
+                    array_layers: 1,
+                    row_pitch_bytes: 0,
+                    backing_alloc_id: 0,
+                    backing_offset_bytes: 0,
+                },
+                None,
+            )
+            .expect("CREATE_TEXTURE2D must succeed");
+
+            let mut guest = crate::guest_memory::VecGuestMemory::new(0x1000);
+            let mut pending_writebacks = Vec::new();
+            let err = exec
+                .exec_copy_texture2d(
+                    CopyTexture2dArgs {
+                        dst_texture: 2,
+                        src_texture: 1,
+                        dst_mip_level: 0,
+                        dst_array_layer: 0,
+                        src_mip_level: 0,
+                        src_array_layer: 0,
+                        dst_x: 0,
+                        dst_y: 0,
+                        src_x: 0,
+                        src_y: 0,
+                        width: 4,
+                        height: 4,
+                        flags: 0,
+                    },
+                    &mut guest,
+                    None,
+                    &mut pending_writebacks,
+                )
+                .unwrap_err();
+            match err {
+                ExecutorError::Validation(message) => {
+                    assert!(message.contains("internal format mismatch"), "{message}");
+                }
+                other => panic!("expected validation error, got {other:?}"),
+            }
+        });
+    }
+} 
