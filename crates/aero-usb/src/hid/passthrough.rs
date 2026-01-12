@@ -257,8 +257,7 @@ impl UsbHidPassthrough {
     }
 
     pub fn push_input_report(&mut self, report_id: u8, data: &[u8]) {
-        let mut out =
-            Vec::with_capacity(data.len().saturating_add((report_id != 0) as usize));
+        let mut out = Vec::with_capacity(data.len().saturating_add((report_id != 0) as usize));
         if report_id != 0 {
             out.push(report_id);
         }
@@ -1180,13 +1179,24 @@ impl IoSnapshot for UsbHidPassthrough {
         );
 
         let pending: Vec<Vec<u8>> = self.pending_input_reports.iter().cloned().collect();
-        w.field_bytes(TAG_PENDING_INPUT_REPORTS, Encoder::new().vec_bytes(&pending).finish());
-        w.field_bytes(TAG_LAST_INPUT_REPORTS, encode_report_map(&self.last_input_reports));
-        w.field_bytes(TAG_LAST_OUTPUT_REPORTS, encode_report_map(&self.last_output_reports));
-        w.field_bytes(TAG_LAST_FEATURE_REPORTS, encode_report_map(&self.last_feature_reports));
+        w.field_bytes(
+            TAG_PENDING_INPUT_REPORTS,
+            Encoder::new().vec_bytes(&pending).finish(),
+        );
+        w.field_bytes(
+            TAG_LAST_INPUT_REPORTS,
+            encode_report_map(&self.last_input_reports),
+        );
+        w.field_bytes(
+            TAG_LAST_OUTPUT_REPORTS,
+            encode_report_map(&self.last_output_reports),
+        );
+        w.field_bytes(
+            TAG_LAST_FEATURE_REPORTS,
+            encode_report_map(&self.last_feature_reports),
+        );
 
-        let mut pending_out =
-            Encoder::new().u32(self.pending_output_reports.len() as u32);
+        let mut pending_out = Encoder::new().u32(self.pending_output_reports.len() as u32);
         for report in &self.pending_output_reports {
             pending_out = pending_out
                 .u8(report.report_type)
@@ -1271,14 +1281,18 @@ impl IoSnapshot for UsbHidPassthrough {
             let mut d = Decoder::new(buf);
             let count = d.u32()? as usize;
             if count > self.max_pending_output_reports {
-                return Err(SnapshotError::InvalidFieldEncoding("pending output reports"));
+                return Err(SnapshotError::InvalidFieldEncoding(
+                    "pending output reports",
+                ));
             }
             for _ in 0..count {
                 let report_type = d.u8()?;
                 let report_id = d.u8()?;
                 let len = d.u32()? as usize;
                 if len > MAX_REPORT_BYTES {
-                    return Err(SnapshotError::InvalidFieldEncoding("pending output reports"));
+                    return Err(SnapshotError::InvalidFieldEncoding(
+                        "pending output reports",
+                    ));
                 }
                 let data = d.bytes(len)?.to_vec();
                 self.pending_output_reports

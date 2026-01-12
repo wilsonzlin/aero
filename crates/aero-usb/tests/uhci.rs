@@ -837,10 +837,8 @@ fn uhci_control_in_no_data_pending_naks_status_out_until_ready() {
 
     let mut uhci = UhciController::new();
     let ready = Rc::new(RefCell::new(false));
-    uhci.hub_mut().attach(
-        0,
-        Box::new(PendingControlInZlpDevice::new(ready.clone())),
-    );
+    uhci.hub_mut()
+        .attach(0, Box::new(PendingControlInZlpDevice::new(ready.clone())));
     reset_port(&mut uhci, &mut mem, REG_PORTSC1);
 
     uhci.io_write(REG_FLBASEADD, 4, FRAME_LIST_BASE);

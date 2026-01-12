@@ -170,7 +170,10 @@ impl IoSnapshot for UsbHidMouse {
             .iter()
             .map(|r| vec![r.buttons, r.x as u8, r.y as u8, r.wheel as u8])
             .collect();
-        w.field_bytes(TAG_PENDING_REPORTS, Encoder::new().vec_bytes(&pending).finish());
+        w.field_bytes(
+            TAG_PENDING_REPORTS,
+            Encoder::new().vec_bytes(&pending).finish(),
+        );
 
         w.finish()
     }

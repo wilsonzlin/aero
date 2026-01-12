@@ -8,7 +8,7 @@ use core::any::Any;
 
 mod util;
 
-use util::{PORTSC_PR, REG_PORTSC1, TestMemory};
+use util::{TestMemory, PORTSC_PR, REG_PORTSC1};
 
 fn control_no_data(ctrl: &mut UhciController, addr: u8, setup: SetupPacket) {
     let dev = ctrl
@@ -45,7 +45,8 @@ fn external_hub_mut(ctrl: &mut UhciController) -> &mut UsbHubDevice {
 #[test]
 fn snapshot_roundtrip_is_deterministic_and_preserves_external_hub_reports() {
     let mut ctrl = UhciController::new();
-    ctrl.hub_mut().attach(0, Box::new(UsbHubDevice::new_with_ports(4)));
+    ctrl.hub_mut()
+        .attach(0, Box::new(UsbHubDevice::new_with_ports(4)));
 
     let kb = UsbHidKeyboardHandle::new();
     let mouse = UsbHidMouseHandle::new();

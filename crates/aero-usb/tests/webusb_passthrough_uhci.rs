@@ -205,11 +205,7 @@ fn control_in_short_completion_with_spd_stops_additional_data_tds_in_frame() {
     let (mut ctrl, mut mem, mut alloc, fl_base, dev) = setup_controller();
 
     // Enable short packet interrupts so the test can observe IRQ assertion.
-    ctrl.io_write(
-        REG_USBINTR,
-        2,
-        (USBINTR_IOC | USBINTR_SHORT_PACKET) as u32,
-    );
+    ctrl.io_write(REG_USBINTR, 2, (USBINTR_IOC | USBINTR_SHORT_PACKET) as u32);
 
     // Control-IN request with a large wLength. The host completion will provide fewer bytes,
     // resulting in a short packet on the first DATA TD.

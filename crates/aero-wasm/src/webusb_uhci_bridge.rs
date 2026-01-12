@@ -94,9 +94,10 @@ impl WebUsbUhciBridge {
     #[wasm_bindgen(constructor)]
     pub fn new(guest_base: u32) -> Self {
         let mut controller = UhciController::new();
-        controller
-            .hub_mut()
-            .attach(ROOT_PORT_EXTERNAL_HUB, Box::new(UsbHubDevice::with_port_count(EXTERNAL_HUB_PORT_COUNT)));
+        controller.hub_mut().attach(
+            ROOT_PORT_EXTERNAL_HUB,
+            Box::new(UsbHubDevice::with_port_count(EXTERNAL_HUB_PORT_COUNT)),
+        );
 
         Self {
             guest_base,
@@ -189,8 +190,11 @@ impl WebUsbUhciBridge {
     }
 
     pub fn reset(&mut self) {
-        self.controller
-            .io_write(REG_USBCMD, 2, u32::from(aero_usb::uhci::regs::USBCMD_HCRESET));
+        self.controller.io_write(
+            REG_USBCMD,
+            2,
+            u32::from(aero_usb::uhci::regs::USBCMD_HCRESET),
+        );
 
         if let Some(dev) = self.webusb.as_ref() {
             dev.reset();

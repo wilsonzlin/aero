@@ -183,7 +183,9 @@ impl IoSnapshot for UsbWebUsbPassthroughDevice {
 
         if let Some(buf) = r.bytes(TAG_PASSTHROUGH_FULL) {
             inner.snapshot_load(buf)?;
-        } else if let Some(buf) = r.bytes(TAG_PASSTHROUGH).or_else(|| r.bytes(TAG_PASSTHROUGH_V1_0))
+        } else if let Some(buf) = r
+            .bytes(TAG_PASSTHROUGH)
+            .or_else(|| r.bytes(TAG_PASSTHROUGH_V1_0))
         {
             // Minimal snapshot (next_id only).
             inner.load_state(buf)?;

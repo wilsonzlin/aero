@@ -204,7 +204,10 @@ impl IoSnapshot for UsbHidGamepad {
 
         w.field_bytes(TAG_LAST_REPORT, self.last_report.to_vec());
         let pending: Vec<Vec<u8>> = self.pending_reports.iter().map(|r| r.to_vec()).collect();
-        w.field_bytes(TAG_PENDING_REPORTS, Encoder::new().vec_bytes(&pending).finish());
+        w.field_bytes(
+            TAG_PENDING_REPORTS,
+            Encoder::new().vec_bytes(&pending).finish(),
+        );
 
         w.finish()
     }
@@ -267,7 +270,9 @@ impl IoSnapshot for UsbHidGamepad {
             let reports = d.vec_bytes()?;
             d.finish()?;
             if reports.len() > MAX_PENDING_REPORTS {
-                return Err(SnapshotError::InvalidFieldEncoding("gamepad pending reports"));
+                return Err(SnapshotError::InvalidFieldEncoding(
+                    "gamepad pending reports",
+                ));
             }
             self.pending_reports.clear();
             for report in reports {

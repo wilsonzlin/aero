@@ -247,7 +247,14 @@ fn uhci_external_hub_enumerates_multiple_passthrough_hid_devices() {
     ctrl.io_write(REG_USBCMD, 2, (USBCMD_RUN | regs::USBCMD_MAXP) as u32);
 
     // Enumerate and configure the hub itself at address 0 -> 1.
-    control_no_data(&mut ctrl, &mut mem, &mut alloc, fl_base, 0, setup_set_address(1));
+    control_no_data(
+        &mut ctrl,
+        &mut mem,
+        &mut alloc,
+        fl_base,
+        0,
+        setup_set_address(1),
+    );
     control_no_data(
         &mut ctrl,
         &mut mem,
@@ -298,7 +305,14 @@ fn uhci_external_hub_enumerates_multiple_passthrough_hid_devices() {
     }
 
     // Enumerate device1 at address 5.
-    control_no_data(&mut ctrl, &mut mem, &mut alloc, fl_base, 0, setup_set_address(5));
+    control_no_data(
+        &mut ctrl,
+        &mut mem,
+        &mut alloc,
+        fl_base,
+        0,
+        setup_set_address(5),
+    );
     control_no_data(
         &mut ctrl,
         &mut mem,
@@ -339,7 +353,14 @@ fn uhci_external_hub_enumerates_multiple_passthrough_hid_devices() {
             setup_hub_clear_port_feature(2, feature),
         );
     }
-    control_no_data(&mut ctrl, &mut mem, &mut alloc, fl_base, 0, setup_set_address(6));
+    control_no_data(
+        &mut ctrl,
+        &mut mem,
+        &mut alloc,
+        fl_base,
+        0,
+        setup_set_address(6),
+    );
     control_no_data(
         &mut ctrl,
         &mut mem,
@@ -380,7 +401,14 @@ fn uhci_external_hub_enumerates_multiple_passthrough_hid_devices() {
             setup_hub_clear_port_feature(3, feature),
         );
     }
-    control_no_data(&mut ctrl, &mut mem, &mut alloc, fl_base, 0, setup_set_address(7));
+    control_no_data(
+        &mut ctrl,
+        &mut mem,
+        &mut alloc,
+        fl_base,
+        0,
+        setup_set_address(7),
+    );
     control_no_data(
         &mut ctrl,
         &mut mem,

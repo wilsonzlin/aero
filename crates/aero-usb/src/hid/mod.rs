@@ -17,9 +17,10 @@ pub use keyboard::{UsbHidKeyboard, UsbHidKeyboardHandle};
 pub use mouse::{UsbHidMouse, UsbHidMouseHandle};
 
 pub use report_descriptor::{
-    max_feature_report_bytes, max_input_report_bytes, max_output_report_bytes, parse_report_descriptor,
-    report_bits_for_id, report_bytes_for_id, synthesize_report_descriptor, validate_collections,
-    HidCollectionInfo, HidDescriptorError, HidReportInfo, HidReportItem, ValidationSummary,
+    max_feature_report_bytes, max_input_report_bytes, max_output_report_bytes,
+    parse_report_descriptor, report_bits_for_id, report_bytes_for_id, synthesize_report_descriptor,
+    validate_collections, HidCollectionInfo, HidDescriptorError, HidReportInfo, HidReportItem,
+    ValidationSummary,
 };
 
 pub use passthrough::{UsbHidPassthrough, UsbHidPassthroughHandle, UsbHidPassthroughOutputReport};

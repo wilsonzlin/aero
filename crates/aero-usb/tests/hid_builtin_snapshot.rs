@@ -176,7 +176,7 @@ fn hid_keyboard_snapshot_roundtrip_preserves_leds_and_pending_reports() {
         &mut restored,
         SetupPacket {
             bm_request_type: 0xA1,
-            b_request: 0x01, // GET_REPORT
+            b_request: 0x01,    // GET_REPORT
             w_value: 2u16 << 8, // Output report
             w_index: 0,
             w_length: 1,
@@ -188,9 +188,7 @@ fn hid_keyboard_snapshot_roundtrip_preserves_leds_and_pending_reports() {
     assert!(
         matches!(restored.handle_in(1, 8), UsbInResult::Data(data) if data == vec![0, 0, 0x04, 0, 0, 0, 0, 0])
     );
-    assert!(
-        matches!(restored.handle_in(1, 8), UsbInResult::Data(data) if data == vec![0; 8])
-    );
+    assert!(matches!(restored.handle_in(1, 8), UsbInResult::Data(data) if data == vec![0; 8]));
     assert!(matches!(restored.handle_in(1, 8), UsbInResult::Nak));
 }
 

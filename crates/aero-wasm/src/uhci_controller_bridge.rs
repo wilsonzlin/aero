@@ -476,8 +476,11 @@ impl UhciControllerBridge {
     /// Some host code expects a "reset" action that clears the register block but preserves
     /// attached topology.
     pub fn reset_controller(&mut self) {
-        self.ctrl
-            .io_write(REG_USBCMD, 2, u32::from(aero_usb::uhci::regs::USBCMD_HCRESET));
+        self.ctrl.io_write(
+            REG_USBCMD,
+            2,
+            u32::from(aero_usb::uhci::regs::USBCMD_HCRESET),
+        );
     }
 
     /// Convenience export: set `PORTSC1/2.PR` (port reset) for a given root port.
@@ -485,7 +488,11 @@ impl UhciControllerBridge {
         if root_port > 1 {
             return Err(js_error("root_port must be 0 or 1"));
         }
-        let reg = if root_port == 0 { REG_PORTSC1 } else { REG_PORTSC2 };
+        let reg = if root_port == 0 {
+            REG_PORTSC1
+        } else {
+            REG_PORTSC2
+        };
         self.ctrl.io_write(reg, 2, u32::from(1u16 << 9));
         Ok(())
     }

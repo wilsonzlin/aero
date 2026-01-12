@@ -518,7 +518,9 @@ fn decode_control_state(buf: &[u8]) -> SnapshotResult<ControlState> {
             let data = d.vec_u8()?;
             let offset = d.u32()? as usize;
             if offset > data.len() {
-                return Err(SnapshotError::InvalidFieldEncoding("control in_data offset"));
+                return Err(SnapshotError::InvalidFieldEncoding(
+                    "control in_data offset",
+                ));
             }
             ControlStage::InData { data, offset }
         }

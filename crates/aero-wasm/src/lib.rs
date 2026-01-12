@@ -93,12 +93,10 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 #[cfg(target_arch = "wasm32")]
 use aero_usb::{
+    SetupPacket, UsbDeviceModel, UsbInResult,
     hid::passthrough::UsbHidPassthroughHandle,
     hid::webhid,
     hid::{GamepadReport, UsbHidGamepad, UsbHidKeyboard, UsbHidMouse},
-    SetupPacket,
-    UsbInResult,
-    UsbDeviceModel,
 };
 
 #[cfg(any(target_arch = "wasm32", test))]

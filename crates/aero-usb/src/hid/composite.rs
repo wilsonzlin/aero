@@ -634,7 +634,10 @@ impl IoSnapshot for UsbCompositeHidInput {
 
         w.field_bool(TAG_KBD_INTERRUPT_HALTED, self.keyboard_interrupt_in_halted);
         w.field_bool(TAG_MOUSE_INTERRUPT_HALTED, self.mouse_interrupt_in_halted);
-        w.field_bool(TAG_GAMEPAD_INTERRUPT_HALTED, self.gamepad_interrupt_in_halted);
+        w.field_bool(
+            TAG_GAMEPAD_INTERRUPT_HALTED,
+            self.gamepad_interrupt_in_halted,
+        );
 
         w.finish()
     }
@@ -712,12 +715,16 @@ impl IoSnapshot for UsbCompositeHidInput {
             let reports = d.vec_bytes()?;
             d.finish()?;
             if reports.len() > MAX_PENDING_KEYBOARD_REPORTS {
-                return Err(SnapshotError::InvalidFieldEncoding("keyboard pending reports"));
+                return Err(SnapshotError::InvalidFieldEncoding(
+                    "keyboard pending reports",
+                ));
             }
             self.keyboard.pending_reports.clear();
             for report in reports {
                 if report.len() != self.keyboard.last_report.len() {
-                    return Err(SnapshotError::InvalidFieldEncoding("keyboard report length"));
+                    return Err(SnapshotError::InvalidFieldEncoding(
+                        "keyboard report length",
+                    ));
                 }
                 self.keyboard
                     .pending_reports
@@ -775,7 +782,9 @@ impl IoSnapshot for UsbCompositeHidInput {
             let reports = d.vec_bytes()?;
             d.finish()?;
             if reports.len() > MAX_PENDING_GAMEPAD_REPORTS {
-                return Err(SnapshotError::InvalidFieldEncoding("gamepad pending reports"));
+                return Err(SnapshotError::InvalidFieldEncoding(
+                    "gamepad pending reports",
+                ));
             }
             self.gamepad.pending_reports.clear();
             for report in reports {

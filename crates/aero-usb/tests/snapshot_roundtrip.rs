@@ -345,7 +345,9 @@ impl UsbDeviceModel for HubHandle {
         setup: SetupPacket,
         data_stage: Option<&[u8]>,
     ) -> ControlResponse {
-        self.0.borrow_mut().handle_control_request(setup, data_stage)
+        self.0
+            .borrow_mut()
+            .handle_control_request(setup, data_stage)
     }
 
     fn handle_in_transfer(&mut self, ep: u8, max_len: usize) -> UsbInResult {
@@ -547,7 +549,8 @@ fn hub_snapshot_roundtrip_preserves_port_reset_timer() {
 #[test]
 fn uhci_snapshot_roundtrip_preserves_regs_and_port_timer() {
     let mut ctrl = UhciController::new();
-    ctrl.hub_mut().attach(0, Box::new(DummyUsbDevice::default()));
+    ctrl.hub_mut()
+        .attach(0, Box::new(DummyUsbDevice::default()));
 
     let mut mem = TestMemory::new(0x4000);
 
@@ -573,7 +576,11 @@ fn uhci_snapshot_roundtrip_preserves_regs_and_port_timer() {
 
     let expected_frnum = ctrl.io_read(REG_FRNUM, 2);
     let expected_portsc1 = ctrl.io_read(REG_PORTSC1, 2) as u16;
-    assert_ne!(expected_portsc1 & PORTSC_PR, 0, "reset should still be active");
+    assert_ne!(
+        expected_portsc1 & PORTSC_PR,
+        0,
+        "reset should still be active"
+    );
 
     let snapshot = ctrl.save_state();
 
@@ -589,7 +596,11 @@ fn uhci_snapshot_roundtrip_preserves_regs_and_port_timer() {
 
     // Root port connection must be preserved (CCS bit).
     let portsc1 = restored.io_read(REG_PORTSC1, 2) as u16;
-    assert_ne!(portsc1 & 0x0001, 0, "root port connection must be preserved");
+    assert_ne!(
+        portsc1 & 0x0001,
+        0,
+        "root port connection must be preserved"
+    );
     assert_eq!(
         portsc1 & PORTSC_PED,
         0,
@@ -610,7 +621,11 @@ fn uhci_snapshot_roundtrip_preserves_regs_and_port_timer() {
     restored.tick_1ms(&mut mem);
     let portsc1 = restored.io_read(REG_PORTSC1, 2) as u16;
     assert_eq!(portsc1 & PORTSC_PR, 0, "reset bit clears after 40ms");
-    assert_ne!(portsc1 & PORTSC_PED, 0, "port should be enabled after reset");
+    assert_ne!(
+        portsc1 & PORTSC_PED,
+        0,
+        "port should be enabled after reset"
+    );
 }
 
 #[test]
@@ -869,9 +884,7 @@ fn webusb_passthrough_device_snapshot_preserves_pending_set_address() {
     assert_eq!(restored.address(), 0);
 
     // Status stage for SET_ADDRESS is an IN ZLP.
-    assert!(
-        matches!(restored.handle_in(0, 0), UsbInResult::Data(data) if data.is_empty())
-    );
+    assert!(matches!(restored.handle_in(0, 0), UsbInResult::Data(data) if data.is_empty()));
     assert_eq!(restored.address(), 12);
 }
 

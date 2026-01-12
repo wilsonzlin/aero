@@ -10,7 +10,9 @@ use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader, SnapshotVersion, S
 use aero_usb::hid::passthrough::{UsbHidPassthroughHandle, UsbHidPassthroughOutputReport};
 use aero_usb::hid::webhid;
 use aero_usb::hub::UsbHubDevice;
-use aero_usb::passthrough::{SetupPacket as PassthroughSetupPacket, UsbHostAction, UsbHostCompletion};
+use aero_usb::passthrough::{
+    SetupPacket as PassthroughSetupPacket, UsbHostAction, UsbHostCompletion,
+};
 use aero_usb::uhci::UhciController;
 use aero_usb::{MemoryBus, UsbWebUsbPassthroughDevice};
 
@@ -298,9 +300,7 @@ impl UhciRuntime {
             None,
         );
 
-        self.ctrl
-            .hub_mut()
-            .attach(port, Box::new(dev.clone()));
+        self.ctrl.hub_mut().attach(port, Box::new(dev.clone()));
 
         self.webhid_ports[port] = Some(device_id);
         self.webhid_devices.insert(
@@ -490,9 +490,7 @@ impl UhciRuntime {
 
         let port = WEBUSB_ROOT_PORT;
         let dev = UsbWebUsbPassthroughDevice::new();
-        self.ctrl
-            .hub_mut()
-            .attach(port, Box::new(dev.clone()));
+        self.ctrl.hub_mut().attach(port, Box::new(dev.clone()));
         self.webusb = Some(WebUsbDeviceState { port, dev });
         Ok(port as u32)
     }
@@ -902,9 +900,7 @@ impl UhciRuntime {
                             entry.device_id
                         )));
                     }
-                    self.ctrl
-                        .hub_mut()
-                        .attach(port, Box::new(dev.clone()));
+                    self.ctrl.hub_mut().attach(port, Box::new(dev.clone()));
                     self.webhid_ports[port] = Some(entry.device_id);
                 }
                 WebHidDeviceLocation::ExternalHubPort(hub_port) => {
@@ -1031,7 +1027,10 @@ impl UhciRuntime {
     }
 
     fn external_hub_mut(&mut self) -> Option<&mut UsbHubDevice> {
-        let dev = self.ctrl.hub_mut().port_device_mut(EXTERNAL_HUB_ROOT_PORT)?;
+        let dev = self
+            .ctrl
+            .hub_mut()
+            .port_device_mut(EXTERNAL_HUB_ROOT_PORT)?;
         let any = dev.model_mut() as &mut dyn core::any::Any;
         any.downcast_mut::<UsbHubDevice>()
     }
