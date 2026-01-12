@@ -458,6 +458,8 @@ For the concrete backend design (selection algorithm, OffscreenCanvas worker mod
 **Optional (enabled opportunistically with fallbacks):**
 
 - `texture-compression-bc` for BCn/DXT textures (otherwise decompress on CPU)
+- `texture-compression-etc2` for ETC2 textures (common on mobile; otherwise decompress on CPU)
+- `texture-compression-astc` for ASTC textures (common on mobile; otherwise decompress on CPU)
 - `float32-filterable` for higher-quality/precision sampling paths
 - `timestamp-query` for profiling builds and benchmark instrumentation
 
@@ -499,6 +501,8 @@ async function initializeWebGPU({ enableGpuTiming = false } = {}) {
     // Only request timestamp queries when explicitly enabled (profiling/bench builds).
     const OPTIONAL_FEATURES = [
         'texture-compression-bc', // Use BCn/DXT directly when available; otherwise decompress on CPU.
+        'texture-compression-etc2',
+        'texture-compression-astc',
         'float32-filterable',     // Quality/perf improvement for some HDR/linear paths.
         ...(gpuTimingEnabled ? ['timestamp-query'] : []),
     ];

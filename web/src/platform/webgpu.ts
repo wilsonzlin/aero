@@ -22,7 +22,7 @@ function getNavigatorGpu(): GPU | undefined {
  * compatibility while the rendering stack is still being built out.
  *
  * Planned (see docs/11-browser-apis.md) for later:
- * - requiredFeatures: ['texture-compression-bc', 'float32-filterable']
+ * - requiredFeatures: ['texture-compression-bc', 'texture-compression-etc2', 'texture-compression-astc', 'float32-filterable']
  * - requiredLimits: { maxStorageBufferBindingSize, maxBufferSize, ... }
  */
 export async function requestWebGpuDevice(
@@ -75,4 +75,3 @@ export function createWebGpuCanvasContext(
 
   return context;
 }
-
