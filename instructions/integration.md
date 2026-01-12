@@ -179,7 +179,7 @@ PC/Q35 memory map that BIOS must report via E820 (source of truth:
 `crates/aero-pc-constants/src/lib.rs`):
 
 ```
-0x0000_0000 - 0x0009_EFFF   639 KiB   Conventional memory (usable)
+0x0000_0000 - 0x0009_EFFF   636 KiB   Conventional memory (usable)
 0x0009_F000 - 0x0009_FFFF     4 KiB   EBDA (reserved)
 0x000A_0000 - 0x000F_FFFF   384 KiB   VGA/BIOS/option ROM window (reserved)
 
