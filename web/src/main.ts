@@ -738,9 +738,13 @@ function renderMachinePanel(): HTMLElement {
                   machine.inject_mouse_motion(0, 0, dz);
                 }
               } else if (type === InputEventType.MouseButtons) {
-                // PS/2 supports the core 3 buttons.
+                // DOM `MouseEvent.buttons` bitfield:
+                // - bit0 left, bit1 right, bit2 middle, bit3 back, bit4 forward.
+                //
+                // The canonical Machine PS/2 mouse model can surface back/forward (IntelliMouse
+                // Explorer extensions) when the guest enables it, so preserve the low 5 bits.
                 const buttons = words[off + 2] & 0xff;
-                const mask = buttons & 0x07;
+                const mask = buttons & 0x1f;
                 if (typeof machine.inject_mouse_buttons_mask === "function") {
                   machine.inject_mouse_buttons_mask(mask);
                 } else if (typeof machine.inject_ps2_mouse_buttons === "function") {
