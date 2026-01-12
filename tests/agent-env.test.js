@@ -336,7 +336,8 @@ test("agent-env: NODE_OPTIONS does not include disallowed node flags", { skip: p
     const env = { ...process.env };
     // Simulate a broken outer environment that injects disallowed node flags via NODE_OPTIONS
     // (Node rejects --test-concurrency in NODE_OPTIONS).
-    env.NODE_OPTIONS = "--trace-warnings --test-concurrency=7";
+    // Cover both `--test-concurrency=<n>` and `--test-concurrency <n>` spellings.
+    env.NODE_OPTIONS = "--trace-warnings --test-concurrency=7 --test-concurrency 3";
 
     const nodeOptions = execFileSync("bash", ["-c", 'source scripts/agent-env.sh >/dev/null; printf "%s" "$NODE_OPTIONS"'], {
       cwd: repoRoot,
