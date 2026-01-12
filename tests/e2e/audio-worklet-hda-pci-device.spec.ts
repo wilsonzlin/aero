@@ -59,7 +59,8 @@ test("AudioWorklet output runs and receives frames from IO-worker HDA PCI/MMIO d
       return ((write - (initialWrite as number)) >>> 0) > 0;
     },
     initialWrite,
-    { timeout: 10_000 },
+    // Allow enough time for IO-worker WASM init + PCI enumeration/programming in CI.
+    { timeout: 45_000 },
   );
 
   await page.waitForTimeout(1000);
