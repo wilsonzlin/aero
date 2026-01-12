@@ -261,13 +261,25 @@ mod wasm {
         }
     }
 
+    fn storage_error_from_opfs(err: DiskError) -> aero_storage::DiskError {
+        match err {
+            DiskError::NotSupported(msg) => aero_storage::DiskError::NotSupported(msg),
+            DiskError::QuotaExceeded => aero_storage::DiskError::QuotaExceeded,
+            DiskError::InUse => aero_storage::DiskError::InUse,
+            DiskError::InvalidState(msg) => aero_storage::DiskError::InvalidState(msg),
+            DiskError::Unsupported(msg) => aero_storage::DiskError::NotSupported(msg.to_string()),
+            DiskError::Io(msg) => aero_storage::DiskError::Io(msg),
+            other => aero_storage::DiskError::Io(other.to_string()),
+        }
+    }
+
     impl aero_storage::StorageBackend for OpfsByteStorage {
         fn len(&mut self) -> aero_storage::Result<u64> {
-            OpfsByteStorage::len(self).map_err(|_| aero_storage::DiskError::Io("opfs"))
+            OpfsByteStorage::len(self).map_err(storage_error_from_opfs)
         }
 
         fn set_len(&mut self, len: u64) -> aero_storage::Result<()> {
-            OpfsByteStorage::set_len(self, len).map_err(|_| aero_storage::DiskError::Io("opfs"))
+            OpfsByteStorage::set_len(self, len).map_err(storage_error_from_opfs)
         }
 
         fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> aero_storage::Result<()> {
@@ -281,7 +293,7 @@ mod wasm {
                         capacity,
                     })
                 }
-                Err(_) => Err(aero_storage::DiskError::Io("opfs")),
+                Err(err) => Err(storage_error_from_opfs(err)),
             }
         }
 
@@ -291,12 +303,12 @@ mod wasm {
                 // `OpfsByteStorage::write_at` uses `OutOfBounds` for integer overflow when
                 // computing `offset + len`.
                 Err(DiskError::OutOfBounds) => Err(aero_storage::DiskError::OffsetOverflow),
-                Err(_) => Err(aero_storage::DiskError::Io("opfs")),
+                Err(err) => Err(storage_error_from_opfs(err)),
             }
         }
 
         fn flush(&mut self) -> aero_storage::Result<()> {
-            OpfsByteStorage::flush(self).map_err(|_| aero_storage::DiskError::Io("opfs"))
+            OpfsByteStorage::flush(self).map_err(storage_error_from_opfs)
         }
     }
 
@@ -557,7 +569,9 @@ mod wasm {
 
         fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> aero_storage::Result<()> {
             if self.closed {
-                return Err(aero_storage::DiskError::Io("opfs"));
+                return Err(aero_storage::DiskError::InvalidState(
+                    "backend already closed".to_string(),
+                ));
             }
 
             let end = offset
@@ -572,12 +586,14 @@ mod wasm {
             }
 
             self.read_exact(offset, buf)
-                .map_err(|_| aero_storage::DiskError::Io("opfs"))
+                .map_err(storage_error_from_opfs)
         }
 
         fn write_at(&mut self, offset: u64, buf: &[u8]) -> aero_storage::Result<()> {
             if self.closed {
-                return Err(aero_storage::DiskError::Io("opfs"));
+                return Err(aero_storage::DiskError::InvalidState(
+                    "backend already closed".to_string(),
+                ));
             }
 
             let end = offset
@@ -592,11 +608,11 @@ mod wasm {
             }
 
             self.write_all(offset, buf)
-                .map_err(|_| aero_storage::DiskError::Io("opfs"))
+                .map_err(storage_error_from_opfs)
         }
 
         fn flush(&mut self) -> aero_storage::Result<()> {
-            OpfsBackend::flush(self).map_err(|_| aero_storage::DiskError::Io("opfs"))
+            OpfsBackend::flush(self).map_err(storage_error_from_opfs)
         }
     }
 
@@ -985,15 +1001,21 @@ mod native {
         }
 
         fn read_at(&mut self, _offset: u64, _buf: &mut [u8]) -> aero_storage::Result<()> {
-            Err(aero_storage::DiskError::Io("opfs"))
+            Err(aero_storage::DiskError::NotSupported(
+                "OPFS is wasm-only".to_string(),
+            ))
         }
 
         fn write_at(&mut self, _offset: u64, _buf: &[u8]) -> aero_storage::Result<()> {
-            Err(aero_storage::DiskError::Io("opfs"))
+            Err(aero_storage::DiskError::NotSupported(
+                "OPFS is wasm-only".to_string(),
+            ))
         }
 
         fn flush(&mut self) -> aero_storage::Result<()> {
-            Err(aero_storage::DiskError::Io("opfs"))
+            Err(aero_storage::DiskError::NotSupported(
+                "OPFS is wasm-only".to_string(),
+            ))
         }
     }
 
@@ -1039,23 +1061,33 @@ mod native {
 
     impl aero_storage::StorageBackend for OpfsByteStorage {
         fn len(&mut self) -> aero_storage::Result<u64> {
-            Err(aero_storage::DiskError::Io("opfs"))
+            Err(aero_storage::DiskError::NotSupported(
+                "OPFS is wasm-only".to_string(),
+            ))
         }
 
         fn set_len(&mut self, _len: u64) -> aero_storage::Result<()> {
-            Err(aero_storage::DiskError::Io("opfs"))
+            Err(aero_storage::DiskError::NotSupported(
+                "OPFS is wasm-only".to_string(),
+            ))
         }
 
         fn read_at(&mut self, _offset: u64, _buf: &mut [u8]) -> aero_storage::Result<()> {
-            Err(aero_storage::DiskError::Io("opfs"))
+            Err(aero_storage::DiskError::NotSupported(
+                "OPFS is wasm-only".to_string(),
+            ))
         }
 
         fn write_at(&mut self, _offset: u64, _buf: &[u8]) -> aero_storage::Result<()> {
-            Err(aero_storage::DiskError::Io("opfs"))
+            Err(aero_storage::DiskError::NotSupported(
+                "OPFS is wasm-only".to_string(),
+            ))
         }
 
         fn flush(&mut self) -> aero_storage::Result<()> {
-            Err(aero_storage::DiskError::Io("opfs"))
+            Err(aero_storage::DiskError::NotSupported(
+                "OPFS is wasm-only".to_string(),
+            ))
         }
     }
 
