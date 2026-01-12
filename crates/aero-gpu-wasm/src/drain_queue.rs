@@ -33,6 +33,24 @@ impl<T> DrainQueue<T> {
         self.lock().push(item);
     }
 
+    /// Push an item, truncating the queue to at most `max_len` by dropping the
+    /// oldest items.
+    ///
+    /// If `max_len` is 0, the item is dropped.
+    pub fn push_bounded(&self, item: T, max_len: usize) {
+        if max_len == 0 {
+            return;
+        }
+        let mut guard = self.lock();
+        if guard.len() >= max_len {
+            // Keep the most recent items. This is O(n) but expected to be cheap
+            // given the small bounded size and low event frequency.
+            let drop_count = guard.len() + 1 - max_len;
+            guard.drain(0..drop_count);
+        }
+        guard.push(item);
+    }
+
     pub fn drain(&self) -> Vec<T> {
         std::mem::take(&mut *self.lock())
     }
@@ -80,5 +98,13 @@ mod tests {
         assert_eq!(items.last().copied(), Some(3000 + 99));
         assert!(q.drain().is_empty());
     }
-}
 
+    #[test]
+    fn push_bounded_drops_oldest() {
+        let q = DrainQueue::new();
+        q.push_bounded(1, 2);
+        q.push_bounded(2, 2);
+        q.push_bounded(3, 2);
+        assert_eq!(q.drain(), vec![2, 3]);
+    }
+}

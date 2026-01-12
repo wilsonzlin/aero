@@ -244,6 +244,7 @@ mod wasm {
 
     static GPU_STATS: OnceLock<Arc<GpuStats>> = OnceLock::new();
     static GPU_EVENT_QUEUE: OnceLock<DrainQueue<GpuErrorEvent>> = OnceLock::new();
+    const MAX_GPU_EVENTS: usize = 1024;
 
     fn gpu_stats() -> &'static Arc<GpuStats> {
         GPU_STATS.get_or_init(|| Arc::new(GpuStats::new()))
@@ -254,7 +255,7 @@ mod wasm {
     }
 
     fn push_gpu_event(event: GpuErrorEvent) {
-        gpu_event_queue().push(event);
+        gpu_event_queue().push_bounded(event, MAX_GPU_EVENTS);
     }
 
     // Note: events are forwarded as JS objects/arrays. The browser GPU worker accepts either
