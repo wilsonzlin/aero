@@ -34,7 +34,7 @@ on:
         default: false
         type: boolean
       with_virtio_input_events:
-        description: Inject deterministic virtio-input events via QMP (keyboard + mouse) and require virtio-input-events to PASS
+        description: Inject deterministic virtio-input events via QMP (keyboard + mouse) and require virtio-input-events to PASS (requires a guest image provisioned with --test-input-events)
         required: false
         default: false
         type: boolean
@@ -194,7 +194,7 @@ jobs:
               args+=(--follow-serial)
             fi
             if [[ "${with_virtio_input_events}" == "true" ]]; then
-              args+=(--with-virtio-input-events)
+              args+=(--with-input-events)
             fi
             if [[ "${with_virtio_snd}" == "true" ]]; then
               args+=(--with-virtio-snd)
