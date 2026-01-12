@@ -400,6 +400,16 @@ should_retry_rustc_thread_error() {
         return 0
     fi
 
+    # rustc can also panic inside `rustc_interface` when it fails to spawn threads / enter its
+    # internal thread pool. Depending on where this happens, Cargo may not emit the usual
+    # "failed to spawn helper thread" signature; it may only include the panic location.
+    # Treat these as retryable when they are clearly caused by EAGAIN/WouldBlock.
+    if grep -q "rustc_interface/src/util.rs" "${stderr_log}" \
+        && grep -Eq "Resource temporarily unavailable|WouldBlock|os error 11|EAGAIN" "${stderr_log}"
+    then
+        return 0
+    fi
+
     # Some environments hit transient EAGAIN failures inside `git` itself (e.g. when Cargo fetches
     # git dependencies), which surface as:
     #
