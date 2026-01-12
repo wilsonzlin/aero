@@ -959,6 +959,9 @@ function maybeInitUhciRuntime(): void {
 
 function maybeInitE1000Device(): void {
   if (e1000Device) return;
+  // Only one NIC can be attached to the shared NET_TX/NET_RX rings at a time.
+  // If virtio-net is available, prefer it and keep E1000 as a fallback.
+  if (virtioNetDevice) return;
   const api = wasmApi;
   const mgr = deviceManager;
   if (!api || !mgr) return;
@@ -1418,6 +1421,9 @@ function maybeInitSyntheticUsbHidDevices(): void {
 }
 
 function maybeInitVirtioNetDevice(): void {
+  // Only one NIC can be attached to the shared NET_TX/NET_RX rings at a time.
+  // If we already registered the E1000 fallback, don't attempt to add virtio-net.
+  if (e1000Device) return;
   if (virtioNetDevice) return;
   const dev = tryInitVirtioNetDevice({
     api: wasmApi,
@@ -2278,9 +2284,9 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
         pendingWasmInit = { api, variant };
         usbHid = new api.UsbHidBridge();
         maybeInitUhciDevice();
-        maybeInitE1000Device();
-        maybeInitVirtioInput();
         maybeInitVirtioNetDevice();
+        if (!virtioNetDevice) maybeInitE1000Device();
+        maybeInitVirtioInput();
         maybeInitHdaDevice();
 
         maybeInitWasmHidGuestBridge();
@@ -2505,9 +2511,9 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
 
       mgr.registerPciDevice(new PciTestDevice());
       maybeInitUhciDevice();
-      maybeInitE1000Device();
-      maybeInitVirtioInput();
       maybeInitVirtioNetDevice();
+      if (!virtioNetDevice) maybeInitE1000Device();
+      maybeInitVirtioInput();
       maybeInitHdaDevice();
 
       const uart = new Uart16550(UART_COM1, serialSink);
