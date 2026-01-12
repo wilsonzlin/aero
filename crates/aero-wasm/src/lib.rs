@@ -211,6 +211,8 @@ pub fn jit_abi_constants() -> JsValue {
         use aero_cpu_core::state::{
             CPU_GPR_OFF, CPU_RFLAGS_OFF, CPU_RIP_OFF, CPU_STATE_ALIGN, CPU_STATE_SIZE, GPR_COUNT,
         };
+        use aero_jit_x86::jit_ctx::{JitContext, TIER2_CTX_OFFSET, TIER2_CTX_SIZE};
+        use aero_jit_x86::{JIT_TLB_ENTRIES, JIT_TLB_ENTRY_SIZE};
         use js_sys::Uint32Array;
 
         let obj = Object::new();
@@ -224,6 +226,15 @@ pub fn jit_abi_constants() -> JsValue {
         set_u32("cpu_state_align", CPU_STATE_ALIGN as u32);
         set_u32("cpu_rip_off", CPU_RIP_OFF as u32);
         set_u32("cpu_rflags_off", CPU_RFLAGS_OFF as u32);
+        set_u32("jit_ctx_header_bytes", JitContext::BYTE_SIZE as u32);
+        set_u32("jit_ctx_total_bytes", JitContext::TOTAL_BYTE_SIZE as u32);
+        set_u32("jit_tlb_entries", JIT_TLB_ENTRIES as u32);
+        set_u32("jit_tlb_entry_bytes", JIT_TLB_ENTRY_SIZE as u32);
+        set_u32("tier2_ctx_offset", TIER2_CTX_OFFSET as u32);
+        set_u32("tier2_ctx_size", TIER2_CTX_SIZE as u32);
+        let commit_flag_offset = TIER2_CTX_OFFSET + TIER2_CTX_SIZE;
+        set_u32("commit_flag_offset", commit_flag_offset as u32);
+        set_u32("commit_flag_bytes", 4);
 
         let mut gpr_off_u32 = [0u32; GPR_COUNT];
         for (i, off) in CPU_GPR_OFF.iter().enumerate() {
