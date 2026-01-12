@@ -25,6 +25,18 @@ impl<T: IoBus + ?Sized> IoBus for &mut T {
     }
 }
 
+impl<T: IoBus + ?Sized> IoBus for Box<T> {
+    #[inline]
+    fn io_read(&mut self, port: u16, size: u32) -> Result<u64, Exception> {
+        <T as IoBus>::io_read(&mut **self, port, size)
+    }
+
+    #[inline]
+    fn io_write(&mut self, port: u16, size: u32, val: u64) -> Result<(), Exception> {
+        <T as IoBus>::io_write(&mut **self, port, size, val)
+    }
+}
+
 /// Default port-I/O backend that behaves like the old `PagingBus` stub I/O: all
 /// reads return `0` and all writes are ignored.
 #[derive(Clone, Copy, Default)]
@@ -686,6 +698,171 @@ where
 
     fn io_write(&mut self, port: u16, size: u32, val: u64) -> Result<(), Exception> {
         self.io.io_write(port, size, val)
+    }
+
+    fn supports_bulk_copy(&self) -> bool {
+        true
+    }
+
+    fn bulk_copy(&mut self, dst: u64, src: u64, len: usize) -> Result<bool, Exception> {
+        if len == 0 || dst == src {
+            return Ok(true);
+        }
+
+        let len_u64 = u64::try_from(len).map_err(|_| Exception::MemoryFault)?;
+        let src_end = src.checked_add(len_u64).ok_or(Exception::MemoryFault)?;
+        let dst_end = dst.checked_add(len_u64).ok_or(Exception::MemoryFault)?;
+
+        // Preflight translations using `translate_probe` so that if we decide to
+        // decline (return `Ok(false)`), we make *no* guest-visible changes (in
+        // particular: we must not set accessed/dirty bits).
+        //
+        // If preflight fails (page fault, non-canonical, etc), fall back to the
+        // caller's scalar path, which will handle faults and partial progress
+        // with correct architectural semantics.
+        let mut offset = 0usize;
+        while offset < len {
+            let src_addr = src + offset as u64;
+            let dst_addr = dst + offset as u64;
+
+            let src_page_off = (src_addr & (PAGE_SIZE - 1)) as usize;
+            let dst_page_off = (dst_addr & (PAGE_SIZE - 1)) as usize;
+            let src_page_rem = (PAGE_SIZE as usize) - src_page_off;
+            let dst_page_rem = (PAGE_SIZE as usize) - dst_page_off;
+            let chunk_len = src_page_rem.min(dst_page_rem).min(len - offset);
+
+            if self
+                .mmu
+                .translate_probe(&mut self.phys, src_addr, AccessType::Read, self.cpl)
+                .is_err()
+            {
+                return Ok(false);
+            }
+            if self
+                .mmu
+                .translate_probe(&mut self.phys, dst_addr, AccessType::Write, self.cpl)
+                .is_err()
+            {
+                return Ok(false);
+            }
+
+            offset += chunk_len;
+        }
+
+        // Determine if this is an overlapping memmove-style copy.
+        let overlap = src < dst_end && dst < src_end;
+        let copy_backward = overlap && dst > src;
+
+        if copy_backward {
+            let mut offset = len;
+            while offset > 0 {
+                let src_last = src + (offset - 1) as u64;
+                let dst_last = dst + (offset - 1) as u64;
+
+                let src_page_off = (src_last & (PAGE_SIZE - 1)) as usize;
+                let dst_page_off = (dst_last & (PAGE_SIZE - 1)) as usize;
+                let src_chunk = src_page_off + 1;
+                let dst_chunk = dst_page_off + 1;
+                let chunk_len = src_chunk.min(dst_chunk).min(offset);
+
+                let start_off = offset - chunk_len;
+                let src_addr = src + start_off as u64;
+                let dst_addr = dst + start_off as u64;
+
+                let src_paddr = self.translate(src_addr, AccessType::Read)?;
+                let dst_paddr = self.translate(dst_addr, AccessType::Write)?;
+
+                for i in (0..chunk_len).rev() {
+                    let b = self.phys.read_u8(src_paddr.wrapping_add(i as u64));
+                    self.phys.write_u8(dst_paddr.wrapping_add(i as u64), b);
+                }
+
+                offset = start_off;
+            }
+        } else {
+            let mut offset = 0usize;
+            while offset < len {
+                let src_addr = src + offset as u64;
+                let dst_addr = dst + offset as u64;
+
+                let src_page_off = (src_addr & (PAGE_SIZE - 1)) as usize;
+                let dst_page_off = (dst_addr & (PAGE_SIZE - 1)) as usize;
+                let src_page_rem = (PAGE_SIZE as usize) - src_page_off;
+                let dst_page_rem = (PAGE_SIZE as usize) - dst_page_off;
+                let chunk_len = src_page_rem.min(dst_page_rem).min(len - offset);
+
+                let src_paddr = self.translate(src_addr, AccessType::Read)?;
+                let dst_paddr = self.translate(dst_addr, AccessType::Write)?;
+
+                for i in 0..chunk_len {
+                    let b = self.phys.read_u8(src_paddr.wrapping_add(i as u64));
+                    self.phys.write_u8(dst_paddr.wrapping_add(i as u64), b);
+                }
+
+                offset += chunk_len;
+            }
+        }
+
+        Ok(true)
+    }
+
+    fn supports_bulk_set(&self) -> bool {
+        true
+    }
+
+    fn bulk_set(&mut self, dst: u64, pattern: &[u8], repeat: usize) -> Result<bool, Exception> {
+        if repeat == 0 || pattern.is_empty() {
+            return Ok(true);
+        }
+
+        let total = pattern
+            .len()
+            .checked_mul(repeat)
+            .ok_or(Exception::MemoryFault)?;
+        let total_u64 = u64::try_from(total).map_err(|_| Exception::MemoryFault)?;
+        dst.checked_add(total_u64).ok_or(Exception::MemoryFault)?;
+
+        // Preflight destination translations without guest-visible side effects.
+        let mut offset = 0usize;
+        while offset < total {
+            let dst_addr = dst + offset as u64;
+
+            let page_off = (dst_addr & (PAGE_SIZE - 1)) as usize;
+            let page_rem = (PAGE_SIZE as usize) - page_off;
+            let chunk_len = page_rem.min(total - offset);
+
+            if self
+                .mmu
+                .translate_probe(&mut self.phys, dst_addr, AccessType::Write, self.cpl)
+                .is_err()
+            {
+                return Ok(false);
+            }
+
+            offset += chunk_len;
+        }
+
+        // Perform the fill, translating each chunk with side effects so paging A/D
+        // bits match what a scalar fallback would observe on success.
+        let mut offset = 0usize;
+        while offset < total {
+            let dst_addr = dst + offset as u64;
+
+            let page_off = (dst_addr & (PAGE_SIZE - 1)) as usize;
+            let page_rem = (PAGE_SIZE as usize) - page_off;
+            let chunk_len = page_rem.min(total - offset);
+
+            let dst_paddr = self.translate(dst_addr, AccessType::Write)?;
+
+            for i in 0..chunk_len {
+                let byte = pattern[(offset + i) % pattern.len()];
+                self.phys.write_u8(dst_paddr.wrapping_add(i as u64), byte);
+            }
+
+            offset += chunk_len;
+        }
+
+        Ok(true)
     }
 }
 

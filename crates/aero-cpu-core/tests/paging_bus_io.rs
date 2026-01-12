@@ -62,3 +62,37 @@ fn paging_bus_forwards_port_io_to_backend() {
     assert_eq!(bus.io().reads, vec![(0x3f8, 1)]);
     assert_eq!(bus.io().writes, vec![(0x3f8, 1, 0x41)]);
 }
+
+#[test]
+fn paging_bus_accepts_mut_io_reference() {
+    let phys = TestMem;
+    let mut io = TestIo {
+        read_value: 0x1122_3344_5566_7788,
+        ..TestIo::default()
+    };
+
+    {
+        let mut bus = PagingBus::new_with_io(phys, &mut io);
+        assert_eq!(bus.io_read(0x3f8, 1).unwrap(), 0x1122_3344_5566_7788);
+        bus.io_write(0x3f8, 1, 0x41).unwrap();
+    }
+
+    assert_eq!(io.reads, vec![(0x3f8, 1)]);
+    assert_eq!(io.writes, vec![(0x3f8, 1, 0x41)]);
+}
+
+#[test]
+fn paging_bus_accepts_boxed_io_backend() {
+    let phys = TestMem;
+    let io = Box::new(TestIo {
+        read_value: 0x1122_3344_5566_7788,
+        ..TestIo::default()
+    });
+    let mut bus = PagingBus::new_with_io(phys, io);
+
+    assert_eq!(bus.io_read(0x3f8, 1).unwrap(), 0x1122_3344_5566_7788);
+    bus.io_write(0x3f8, 1, 0x41).unwrap();
+
+    assert_eq!(bus.io().reads, vec![(0x3f8, 1)]);
+    assert_eq!(bus.io().writes, vec![(0x3f8, 1, 0x41)]);
+}
