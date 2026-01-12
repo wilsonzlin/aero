@@ -1267,7 +1267,9 @@ fn snapshot_validate_rejects_duplicate_disk_entries() {
         .args(["snapshot", "validate", snap.to_str().unwrap()])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("duplicate disk entry"));
+        .stderr(predicate::str::contains(
+            "duplicate disk entry (disk_id must be unique)",
+        ));
 }
 
 #[test]

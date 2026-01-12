@@ -363,7 +363,7 @@ fn save_snapshot_rejects_duplicate_disk_entries() {
     let err = save_snapshot(&mut cursor, &mut source, options).unwrap_err();
     assert!(matches!(
         err,
-        SnapshotError::Corrupt("duplicate disk entry")
+        SnapshotError::Corrupt("duplicate disk entry (disk_id must be unique)")
     ));
 }
 
@@ -412,7 +412,7 @@ fn restore_snapshot_rejects_duplicate_disk_entries() {
     let err = restore_snapshot(&mut Cursor::new(bytes), &mut target).unwrap_err();
     assert!(matches!(
         err,
-        SnapshotError::Corrupt("duplicate disk entry")
+        SnapshotError::Corrupt("duplicate disk entry (disk_id must be unique)")
     ));
 }
 

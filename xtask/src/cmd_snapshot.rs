@@ -731,7 +731,9 @@ fn validate_disks_section(file: &mut fs::File, section: &SnapshotSectionInfo) ->
     for _ in 0..count {
         let disk_id = read_u32_le(&mut limited)?;
         if !seen.insert(disk_id) {
-            return Err(XtaskError::Message("duplicate disk entry".to_string()));
+            return Err(XtaskError::Message(
+                "duplicate disk entry (disk_id must be unique)".to_string(),
+            ));
         }
         validate_string_u32_utf8(&mut limited, MAX_DISK_PATH_LEN, "disk base_image")?;
         validate_string_u32_utf8(&mut limited, MAX_DISK_PATH_LEN, "disk overlay_image")?;

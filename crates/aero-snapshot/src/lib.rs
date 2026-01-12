@@ -35,6 +35,7 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use crate::io::{ReadLeExt, WriteLeExt};
 
 const DUPLICATE_DEVICE_ENTRY: &str = "duplicate device entry (id/version/flags must be unique)";
+const DUPLICATE_DISK_ENTRY: &str = "duplicate disk entry (disk_id must be unique)";
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SaveOptions {
@@ -188,7 +189,7 @@ pub fn save_snapshot<W: Write + Seek, S: SnapshotSource>(
         let mut disks = source.disk_overlays();
         disks.disks.sort_by_key(|disk| disk.disk_id);
         if disks.disks.windows(2).any(|w| w[0].disk_id == w[1].disk_id) {
-            return Err(SnapshotError::Corrupt("duplicate disk entry"));
+            return Err(SnapshotError::Corrupt(DUPLICATE_DISK_ENTRY));
         }
         disks.encode(w)
     })?;
@@ -498,7 +499,7 @@ fn restore_snapshot_impl<R: Read, T: SnapshotTarget>(
                     let mut seen = HashSet::with_capacity(disks.disks.len().min(64));
                     for disk in &disks.disks {
                         if !seen.insert(disk.disk_id) {
-                            return Err(SnapshotError::Corrupt("duplicate disk entry"));
+                            return Err(SnapshotError::Corrupt(DUPLICATE_DISK_ENTRY));
                         }
                     }
                     target.restore_disk_overlays(disks);
