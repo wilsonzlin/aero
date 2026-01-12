@@ -987,4 +987,54 @@ mod tests {
             &frame_data[row1_src..row1_src + row_bytes]
         );
     }
+
+    #[test]
+    fn present_drops_fully_out_of_bounds_dirty_rect() {
+        let (width, height, bpp) = (10u32, 10u32, 4usize);
+        let stride = 40usize;
+
+        let full_row_bytes = width as usize * bpp;
+        let frame_len = min_frame_len(stride, height as usize, full_row_bytes);
+        let frame_data = patterned_bytes(frame_len);
+
+        let requested = Rect::new(100, 100, 10, 10);
+
+        let mut presenter = Presenter::new(width, height, bpp, RecordingWriter::default());
+        let telemetry = presenter
+            .present(&frame_data, stride, Some(std::slice::from_ref(&requested)))
+            .unwrap();
+
+        assert_eq!(presenter.writer().calls.len(), 0);
+        assert_eq!(
+            telemetry,
+            PresentTelemetry {
+                rects_requested: 1,
+                rects_after_merge: 0,
+                rects_uploaded: 0,
+                bytes_uploaded: 0,
+            }
+        );
+        assert_eq!(telemetry.merge_rate(), 1.0);
+    }
+
+    #[test]
+    fn error_bytes_per_row_too_large_when_alignment_exceeds_u32_max() {
+        // This test calls the internal helper directly to avoid allocating a multi-GB frame
+        // buffer. The error is raised before any frame_data indexing occurs.
+        let mut presenter = Presenter::new(1, 1, 1, RecordingWriter::default());
+        let rect = Rect::new(0, 0, u32::MAX, 2);
+
+        let err = presenter.upload_rect(&[], 0, rect).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "bytes_per_row too large (4294967296)"
+        );
+        assert!(matches!(
+            err,
+            PresentError::BytesPerRowTooLarge {
+                bytes_per_row: 4294967296
+            }
+        ));
+        assert_eq!(presenter.writer().calls.len(), 0);
+    }
 }
