@@ -10,7 +10,8 @@ function authorityHasUserinfo(raw: string): boolean {
     if (idx !== -1 && idx < end) end = idx;
   }
 
-  return trimmed.slice(start, end).includes('@');
+  const at = trimmed.indexOf('@', start);
+  return at !== -1 && at < end;
 }
 
 function asciiStartsWithIgnoreCase(s: string, prefix: string): boolean {
