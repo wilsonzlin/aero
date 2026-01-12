@@ -59,8 +59,10 @@ describe("shouldPreventDefaultForKeyboardEvent", () => {
     expect(shouldPreventDefaultForKeyboardEvent(makeEvent({ code: "KeyD", altKey: true }))).toBe(true);
     expect(shouldPreventDefaultForKeyboardEvent(makeEvent({ code: "Digit4", altKey: true }))).toBe(true);
 
-    // Ctrl/Meta are treated as "host shortcut" modifiers and should override the Alt rule.
-    expect(shouldPreventDefaultForKeyboardEvent(makeEvent({ code: "KeyD", altKey: true, ctrlKey: true }))).toBe(false);
+    // Ctrl+Alt is commonly used for AltGr layouts; prefer delivering to the guest.
+    expect(shouldPreventDefaultForKeyboardEvent(makeEvent({ code: "KeyD", altKey: true, ctrlKey: true }))).toBe(true);
+
+    // Meta is treated as a host shortcut modifier and should override the Alt rule.
     expect(shouldPreventDefaultForKeyboardEvent(makeEvent({ code: "KeyD", altKey: true, metaKey: true }))).toBe(false);
   });
 

@@ -80,16 +80,22 @@ const DEFAULT_PREVENT_DEFAULT_CODES = new Set<string>([
 ]);
 
 export function shouldPreventDefaultForKeyboardEvent(event: KeyboardEvent): boolean {
-  if (event.ctrlKey || event.metaKey) {
-    // Let browser shortcuts (copy/paste/tab close/etc.) win by default.
+  if (event.metaKey) {
+    // Let browser shortcuts (refresh/tab close/etc.) win by default on platforms that use Meta.
     return false;
   }
 
-  // Alt-based shortcuts are frequently used by browsers (e.g. focusing menus / address bar).
-  // When the VM has focus, prefer delivering Alt-modified keystrokes to the guest.
-  if (event.altKey) {
-    return true;
+  if (event.ctrlKey && !event.altKey) {
+    // Let browser shortcuts (copy/paste/etc.) win by default when Ctrl is the only modifier.
+    //
+    // Note: Some keyboard layouts (AltGr) report `ctrlKey=true` + `altKey=true`. Treat those as
+    // guest-intended and let the Alt rule below win instead.
+    return false;
   }
+
+  // Alt-based shortcuts are frequently used by browsers/OSes (e.g. focusing menus / address bar).
+  // When the VM has focus, prefer delivering Alt-modified keystrokes to the guest.
+  if (event.altKey) return true;
 
   return DEFAULT_PREVENT_DEFAULT_CODES.has(event.code);
 }
