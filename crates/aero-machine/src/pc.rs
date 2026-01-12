@@ -342,6 +342,14 @@ impl PcMachine {
     }
 
     fn poll_and_queue_one_external_interrupt(&mut self) -> bool {
+        // Synchronize PCI INTx sources (e.g. E1000) into the platform interrupt controller before
+        // polling/acknowledging a pending vector.
+        //
+        // This must happen even when the guest cannot currently accept maskable interrupts (IF=0 /
+        // interrupt shadow), and even when our external-interrupt FIFO is at capacity, so
+        // level-triggered lines remain accurately asserted/deasserted until delivery is possible.
+        self.bus.platform.poll_pci_intx_lines();
+
         // Avoid unbounded growth of the external interrupt FIFO if the guest has IF=0, interrupts
         // are inhibited, etc. Also avoids tight polling loops when a level-triggered interrupt
         // line stays asserted.
@@ -483,7 +491,6 @@ impl PcMachine {
             // may assert PCI INTx lines (e.g. TXDW). We must poll/latch PCI INTx *after* DMA so the
             // interrupt can be delivered within the same `run_slice` call.
             self.poll_network();
-            self.bus.platform.poll_pci_intx_lines();
 
             if let Some(kind) = self.take_reset_kind() {
                 return RunExit::ResetRequested { kind, executed };

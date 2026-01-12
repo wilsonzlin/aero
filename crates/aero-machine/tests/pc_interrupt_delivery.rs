@@ -1,8 +1,10 @@
 #![cfg(not(target_arch = "wasm32"))]
 
-use aero_devices::pci::profile::SATA_AHCI_ICH9;
+use aero_devices::pci::profile::{NIC_E1000_82540EM, SATA_AHCI_ICH9};
+use aero_devices::pci::PciInterruptPin;
 use aero_machine::pc::PcMachine;
 use aero_machine::RunExit;
+use aero_net_e1000::ICR_TXDW;
 use aero_platform::interrupts::{
     InterruptController as PlatformInterruptController, InterruptInput, PlatformInterruptMode,
 };
@@ -232,6 +234,137 @@ fn pc_machine_does_not_ack_pic_interrupt_when_if0() {
 }
 
 #[test]
+fn pc_machine_e1000_intx_asserted_via_bar1_io_wakes_hlt_in_same_slice() {
+    let mut pc = PcMachine::new_with_e1000(2 * 1024 * 1024, None);
+
+    let bdf = NIC_E1000_82540EM.bdf;
+    let gsi = pc
+        .bus
+        .platform
+        .pci_intx
+        .gsi_for_intx(bdf, PciInterruptPin::IntA);
+    assert!(
+        gsi < 16,
+        "expected E1000 INTx to route to legacy PIC IRQ (<16), got gsi={gsi}"
+    );
+    let expected_vector = if gsi < 8 {
+        0x20u8.wrapping_add(gsi as u8)
+    } else {
+        0x28u8.wrapping_add((gsi as u8).wrapping_sub(8))
+    };
+
+    // Configure the legacy PIC to use the standard remapped offsets and unmask the routed IRQ.
+    {
+        let mut ints = pc.bus.platform.interrupts.borrow_mut();
+        ints.pic_mut().set_offsets(0x20, 0x28);
+        // If the routed GSI maps to the slave PIC, ensure cascade (IRQ2) is unmasked as well.
+        ints.pic_mut().set_masked(2, false);
+        if let Ok(irq) = u8::try_from(gsi) {
+            if irq < 16 {
+                ints.pic_mut().set_masked(irq, false);
+            }
+        }
+    }
+
+    // Resolve the E1000 BAR1 I/O port base assigned by BIOS POST.
+    let bar1_base = {
+        let mut pci_cfg = pc.bus.platform.pci_cfg.borrow_mut();
+        pci_cfg
+            .bus_mut()
+            .device_config(bdf)
+            .and_then(|cfg| cfg.bar_range(1))
+            .expect("missing E1000 BAR1")
+            .base
+    };
+    let ioaddr_port = u16::try_from(bar1_base).expect("E1000 BAR1 should fit in u16 I/O space");
+    let iodata_port = ioaddr_port.wrapping_add(4);
+
+    // Install a real-mode ISR for the expected vector that clears the interrupt by reading ICR.
+    //
+    // Handler:
+    //   mov byte ptr [0x2000], 0xAA
+    //   ; clear interrupt by reading ICR via BAR1
+    //   mov dx, ioaddr_port
+    //   mov eax, 0x00C0 (ICR)
+    //   out dx, eax
+    //   mov dx, iodata_port
+    //   in eax, dx
+    //   iret
+    const HANDLER_IP: u16 = 0x1100;
+    let mut handler = Vec::new();
+    handler.extend_from_slice(&[0xC6, 0x06, 0x00, 0x20, 0xAA]); // mov byte ptr [0x2000], 0xAA
+    handler.extend_from_slice(&[0xBA, (ioaddr_port & 0xFF) as u8, (ioaddr_port >> 8) as u8]); // mov dx, ioaddr_port
+    handler.extend_from_slice(&[0x66, 0xB8]);
+    handler.extend_from_slice(&0x00C0u32.to_le_bytes()); // mov eax, ICR
+    handler.extend_from_slice(&[0x66, 0xEF]); // out dx, eax
+    handler.extend_from_slice(&[0xBA, (iodata_port & 0xFF) as u8, (iodata_port >> 8) as u8]); // mov dx, iodata_port
+    handler.extend_from_slice(&[0x66, 0xED]); // in eax, dx
+    handler.push(0xCF); // iret
+    pc.bus
+        .platform
+        .memory
+        .write_physical(u64::from(HANDLER_IP), &handler);
+    write_ivt_entry(&mut pc, expected_vector, 0x0000, HANDLER_IP);
+
+    // Guest program:
+    //   ; IMS = ICR_TXDW
+    //   mov dx, ioaddr_port
+    //   mov eax, 0x00D0 (IMS)
+    //   out dx, eax
+    //   mov dx, iodata_port
+    //   mov eax, ICR_TXDW
+    //   out dx, eax
+    //
+    //   ; ICS = ICR_TXDW (assert INTx)
+    //   mov dx, ioaddr_port
+    //   mov eax, 0x00C8 (ICS)
+    //   out dx, eax
+    //   mov dx, iodata_port
+    //   mov eax, ICR_TXDW
+    //   out dx, eax
+    //
+    //   hlt
+    //   hlt
+    const ENTRY_IP: u16 = 0x1000;
+    let mut code = Vec::new();
+    // IOADDR = IMS
+    code.extend_from_slice(&[0xBA, (ioaddr_port & 0xFF) as u8, (ioaddr_port >> 8) as u8]);
+    code.extend_from_slice(&[0x66, 0xB8]);
+    code.extend_from_slice(&0x00D0u32.to_le_bytes());
+    code.extend_from_slice(&[0x66, 0xEF]);
+    // IODATA = ICR_TXDW
+    code.extend_from_slice(&[0xBA, (iodata_port & 0xFF) as u8, (iodata_port >> 8) as u8]);
+    code.extend_from_slice(&[0x66, 0xB8]);
+    code.extend_from_slice(&ICR_TXDW.to_le_bytes());
+    code.extend_from_slice(&[0x66, 0xEF]);
+    // IOADDR = ICS
+    code.extend_from_slice(&[0xBA, (ioaddr_port & 0xFF) as u8, (ioaddr_port >> 8) as u8]);
+    code.extend_from_slice(&[0x66, 0xB8]);
+    code.extend_from_slice(&0x00C8u32.to_le_bytes());
+    code.extend_from_slice(&[0x66, 0xEF]);
+    // IODATA = ICR_TXDW
+    code.extend_from_slice(&[0xBA, (iodata_port & 0xFF) as u8, (iodata_port >> 8) as u8]);
+    code.extend_from_slice(&[0x66, 0xB8]);
+    code.extend_from_slice(&ICR_TXDW.to_le_bytes());
+    code.extend_from_slice(&[0x66, 0xEF]);
+    // HLT (twice so we can observe wakeup + re-halt deterministically).
+    code.extend_from_slice(&[0xF4, 0xF4]);
+
+    pc.bus
+        .platform
+        .memory
+        .write_physical(u64::from(ENTRY_IP), &code);
+    pc.bus.platform.memory.write_u8(0x2000, 0);
+
+    setup_real_mode_cpu(&mut pc, u64::from(ENTRY_IP));
+
+    // One slice should be sufficient: the guest asserts INTx, executes HLT, and the machine
+    // should sync + deliver the interrupt within the same `run_slice` call, running the ISR.
+    let _ = pc.run_slice(100);
+    assert_eq!(pc.bus.platform.memory.read_u8(0x2000), 0xAA);
+}
+
+#[test]
 fn pc_machine_delivers_ioapic_interrupt_to_real_mode_ivt_handler() {
     let mut pc = PcMachine::new(2 * 1024 * 1024);
 
@@ -408,7 +541,11 @@ fn pc_machine_delivers_e1000_pci_intx_after_tx_dma_sets_txdw() {
             .device_config_mut(bdf)
             .expect("E1000 config function must exist");
         cfg.set_command(cfg.command() | (1 << 2));
-        assert_ne!(cfg.command() & 0x2, 0, "E1000 MMIO decoding must be enabled");
+        assert_ne!(
+            cfg.command() & 0x2,
+            0,
+            "E1000 MMIO decoding must be enabled"
+        );
         cfg.bar_range(0).expect("E1000 BAR0 must exist").base
     };
     assert_ne!(
@@ -437,7 +574,10 @@ fn pc_machine_delivers_e1000_pci_intx_after_tx_dma_sets_txdw() {
     // Enable TXDW interrupt cause.
     const REG_IMS: u64 = 0x00D0;
     const ICR_TXDW: u32 = 1 << 0;
-    pc.bus.platform.memory.write_u32(bar0_base + REG_IMS, ICR_TXDW);
+    pc.bus
+        .platform
+        .memory
+        .write_u32(bar0_base + REG_IMS, ICR_TXDW);
 
     // Program E1000 TX registers over MMIO (BAR0).
     const REG_TCTL: u64 = 0x0400;
