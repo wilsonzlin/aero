@@ -538,6 +538,7 @@ describe("io/devices/virtio-net (pci bridge integration)", () => {
 
       // ISR region should be mapped (not default 0xFF) and read-to-clear.
       const isrAfterTx = mmioReadU8(isrBase);
+      expect((isrAfterTx & 0x01) !== 0).toBe(true);
       expect(isrAfterTx & 0xfc).toBe(0);
       expect(mmioReadU8(isrBase)).toBe(0);
 
@@ -580,6 +581,7 @@ describe("io/devices/virtio-net (pci bridge integration)", () => {
       expect(netRxRing.tryPop()).toBeNull();
 
       const isrAfterRx = mmioReadU8(isrBase);
+      expect((isrAfterRx & 0x01) !== 0).toBe(true);
       expect(isrAfterRx & 0xfc).toBe(0);
       expect(mmioReadU8(isrBase)).toBe(0);
     } finally {
