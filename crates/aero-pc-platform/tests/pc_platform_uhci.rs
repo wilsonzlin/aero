@@ -31,7 +31,10 @@ const PID_IN: u8 = 0x69;
 const PID_SETUP: u8 = 0x2d;
 
 const TD_STATUS_ACTIVE: u32 = 1 << 23;
+const TD_STATUS_STALLED: u32 = 1 << 22;
+const TD_STATUS_DATA_BUFFER_ERROR: u32 = 1 << 21;
 const TD_STATUS_NAK: u32 = 1 << 19;
+const TD_STATUS_CRC_TIMEOUT: u32 = 1 << 18;
 const TD_CTRL_IOC: u32 = 1 << 24;
 
 // UHCI root hub PORTSC bits (Intel UHCI spec / Linux uhci-hcd).
@@ -196,8 +199,16 @@ fn control_no_data(pc: &mut PcPlatform, devaddr: u8, setup: [u8; 8]) {
     );
     run_one_frame(pc, TD0);
 
-    assert_eq!(pc.memory.read_u32(TD0 as u64 + 4) & TD_STATUS_ACTIVE, 0);
-    assert_eq!(pc.memory.read_u32(TD1 as u64 + 4) & TD_STATUS_ACTIVE, 0);
+    const ERR_MASK: u32 =
+        TD_STATUS_STALLED | TD_STATUS_DATA_BUFFER_ERROR | TD_STATUS_CRC_TIMEOUT;
+
+    let st0 = pc.memory.read_u32(TD0 as u64 + 4);
+    let st1 = pc.memory.read_u32(TD1 as u64 + 4);
+
+    assert_eq!(st0 & TD_STATUS_ACTIVE, 0);
+    assert_eq!(st1 & TD_STATUS_ACTIVE, 0);
+    assert_eq!(st0 & ERR_MASK, 0, "setup TD should complete without error");
+    assert_eq!(st1 & ERR_MASK, 0, "status TD should complete without error");
 }
 
 #[test]
