@@ -164,6 +164,37 @@ static VOID AerovblkResetVirtqueueLocked(_Inout_ PAEROVBLK_DEVICE_EXTENSION devE
   virtqueue_split_reset(&devExt->Vq);
 }
 
+static VOID AerovblkFreeRequestContexts(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt) {
+  ULONG i;
+  PAEROVBLK_REQUEST_CONTEXT ctx;
+
+  if (devExt == NULL) {
+    return;
+  }
+
+  /*
+   * Always reset the free-list bookkeeping to avoid leaving the device
+   * extension with list pointers that reference freed request contexts.
+   */
+  InitializeListHead(&devExt->FreeRequestList);
+  devExt->FreeRequestCount = 0;
+
+  if (devExt->RequestContexts != NULL) {
+    for (i = 0; i < devExt->RequestContextCount; ++i) {
+      ctx = &devExt->RequestContexts[i];
+      if (ctx->SharedPageVa != NULL) {
+        StorPortFreeContiguousMemorySpecifyCache(devExt, ctx->SharedPageVa, PAGE_SIZE, MmNonCached);
+        ctx->SharedPageVa = NULL;
+      }
+    }
+
+    StorPortFreePool(devExt, devExt->RequestContexts);
+    devExt->RequestContexts = NULL;
+  }
+
+  devExt->RequestContextCount = 0;
+}
+
 static BOOLEAN AerovblkAllocateRequestContexts(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt) {
   ULONG i;
   ULONG ctxCount;
@@ -175,6 +206,8 @@ static BOOLEAN AerovblkAllocateRequestContexts(_Inout_ PAEROVBLK_DEVICE_EXTENSIO
   STOR_PHYSICAL_ADDRESS pagePa;
   PAEROVBLK_REQUEST_CONTEXT ctx;
 
+  AerovblkFreeRequestContexts(devExt);
+
   ctxCount = (ULONG)devExt->Vq.queue_size;
   if (ctxCount == 0) {
     return FALSE;
@@ -183,6 +216,7 @@ static BOOLEAN AerovblkAllocateRequestContexts(_Inout_ PAEROVBLK_DEVICE_EXTENSIO
 
   devExt->RequestContexts = (PAEROVBLK_REQUEST_CONTEXT)StorPortAllocatePool(devExt, sizeof(AEROVBLK_REQUEST_CONTEXT) * ctxCount, 'bVrA');
   if (devExt->RequestContexts == NULL) {
+    AerovblkFreeRequestContexts(devExt);
     return FALSE;
   }
 
@@ -196,22 +230,26 @@ static BOOLEAN AerovblkAllocateRequestContexts(_Inout_ PAEROVBLK_DEVICE_EXTENSIO
   boundary.QuadPart = 0;
 
   for (i = 0; i < ctxCount; ++i) {
-    pageVa = StorPortAllocateContiguousMemorySpecifyCache(devExt, PAGE_SIZE, low, high, boundary, MmNonCached);
-    if (pageVa == NULL) {
+    ctx = &devExt->RequestContexts[i];
+    InitializeListHead(&ctx->Link);
+
+    ctx->SharedPageVa = StorPortAllocateContiguousMemorySpecifyCache(devExt, PAGE_SIZE, low, high, boundary, MmNonCached);
+    if (ctx->SharedPageVa == NULL) {
+      AerovblkFreeRequestContexts(devExt);
       return FALSE;
     }
+
+    pageVa = ctx->SharedPageVa;
 
     pageLen = PAGE_SIZE;
     pagePa = StorPortGetPhysicalAddress(devExt, NULL, pageVa, &pageLen);
     if (pageLen < PAGE_SIZE) {
+      AerovblkFreeRequestContexts(devExt);
       return FALSE;
     }
 
     RtlZeroMemory(pageVa, PAGE_SIZE);
 
-    ctx = &devExt->RequestContexts[i];
-    InitializeListHead(&ctx->Link);
-    ctx->SharedPageVa = pageVa;
     ctx->SharedPagePa.QuadPart = pagePa.QuadPart;
     ctx->ReqHdr = (volatile VIRTIO_BLK_REQ_HDR*)((PUCHAR)pageVa + AEROVBLK_CTX_HDR_OFFSET);
     ctx->StatusByte = (volatile UCHAR*)((PUCHAR)pageVa + AEROVBLK_CTX_STATUS_OFFSET);
