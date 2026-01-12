@@ -141,8 +141,12 @@ impl DiskBackend for AeroStorageDiskAdapter {
 }
 
 /// Convenience helper to wrap an [`aero_storage::VirtualDisk`] as an NVMe [`DiskBackend`].
-pub fn from_virtual_disk(d: Box<dyn aero_storage::VirtualDisk + Send>) -> Box<dyn DiskBackend> {
-    Box::new(AeroStorageDiskAdapter::new(d))
+pub fn from_virtual_disk(
+    d: Box<dyn aero_storage::VirtualDisk + Send>,
+) -> DiskResult<Box<dyn DiskBackend>> {
+    // Prefer the stricter adapter that rejects disks whose byte capacity is not representable as a
+    // whole number of 512-byte LBAs.
+    Ok(Box::new(NvmeDiskFromAeroStorage::new(d)?))
 }
 
 fn map_aero_storage_error(
@@ -1440,7 +1444,7 @@ mod tests {
     #[test]
     fn pci_bar0_probe_and_program() {
         let disk = TestDisk::new(1024);
-        let mut dev = NvmePciDevice::new(from_virtual_disk(Box::new(disk)));
+        let mut dev = NvmePciDevice::new(from_virtual_disk(Box::new(disk)).unwrap());
 
         dev.pci_write_u32(0x10, 0xffff_ffff);
         let mask_lo = dev.pci_read_u32(0x10);
@@ -1464,7 +1468,7 @@ mod tests {
     #[test]
     fn registers_enable_sets_rdy() {
         let disk = TestDisk::new(1024);
-        let mut ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)));
+        let mut ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)).unwrap());
         let mut mem = TestMem::new(1024 * 1024);
 
         ctrl.mmio_write(0x0024, 4, 0x000f_000f, &mut mem); // 16/16 queues
@@ -1478,7 +1482,7 @@ mod tests {
     #[test]
     fn aqa_fields_map_to_admin_queue_sizes() {
         let disk = TestDisk::new(1024);
-        let mut ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)));
+        let mut ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)).unwrap());
         let mut mem = TestMem::new(1024 * 1024);
 
         // ASQS = 8 entries, ACQS = 4 entries (both are 0-based in AQA).
@@ -1494,7 +1498,7 @@ mod tests {
     #[test]
     fn admin_identify_controller_writes_data_and_completion() {
         let disk = TestDisk::new(1024);
-        let mut ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)));
+        let mut ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)).unwrap());
         let mut mem = TestMem::new(1024 * 1024);
 
         let asq = 0x10000;
@@ -1528,7 +1532,7 @@ mod tests {
     fn create_io_queues_and_rw_roundtrip() {
         let disk = TestDisk::new(1024);
         let disk_state = disk.clone();
-        let mut ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)));
+        let mut ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)).unwrap());
         let mut mem = TestMem::new(2 * 1024 * 1024);
         let sector_size = 512usize;
 
@@ -1615,7 +1619,7 @@ mod tests {
     #[test]
     fn cq_phase_toggles_on_wrap() {
         let disk = TestDisk::new(1024);
-        let mut ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)));
+        let mut ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)).unwrap());
         let mut mem = TestMem::new(2 * 1024 * 1024);
 
         let asq = 0x10000;
