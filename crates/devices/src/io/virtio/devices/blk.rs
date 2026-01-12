@@ -163,7 +163,9 @@ impl VirtioBlkDevice {
             if let Some(buf) = mem.get_slice_mut(desc.addr, len) {
                 self.drive.read_at(disk_offset, buf).map_err(|_| ())?;
             } else {
-                let mut tmp = vec![0u8; len];
+                let mut tmp = Vec::new();
+                tmp.try_reserve_exact(len).map_err(|_| ())?;
+                tmp.resize(len, 0);
                 self.drive.read_at(disk_offset, &mut tmp).map_err(|_| ())?;
                 mem.write_from(desc.addr, &tmp).map_err(|_| ())?;
             }
@@ -193,7 +195,9 @@ impl VirtioBlkDevice {
             if let Some(buf) = mem.get_slice(desc.addr, len) {
                 self.drive.write_at(disk_offset, buf).map_err(|_| ())?;
             } else {
-                let mut tmp = vec![0u8; len];
+                let mut tmp = Vec::new();
+                tmp.try_reserve_exact(len).map_err(|_| ())?;
+                tmp.resize(len, 0);
                 mem.read_into(desc.addr, &mut tmp).map_err(|_| ())?;
                 self.drive.write_at(disk_offset, &tmp).map_err(|_| ())?;
             }
