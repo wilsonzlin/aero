@@ -3665,6 +3665,10 @@ impl Machine {
 
         // Keep the virtio transport's internal PCI command register in sync with the canonical PCI
         // config space owned by the machine.
+        //
+        // `VirtioPciDevice` gates all guest-memory DMA (virtqueue processing) on COMMAND.BME (bit
+        // 2), so if we don't mirror the command register the device will never make forward
+        // progress even after the guest enables bus mastering via PCI config ports.
         {
             let mut virtio = virtio.borrow_mut();
             virtio.set_pci_command(command);
@@ -3676,13 +3680,6 @@ impl Machine {
 
         let mut dma = VirtioDmaMemory::new(&mut self.mem);
         let mut virtio = virtio.borrow_mut();
-        // Keep the virtio transport's internal PCI command register coherent with the machine's
-        // canonical PCI config space.
-        //
-        // Virtio gates all guest-memory DMA (virtqueue processing) on COMMAND.BME (bit 2), so if
-        // we do not mirror the command register the device will never make forward progress even
-        // after the guest enables bus mastering via PCI config ports.
-        virtio.set_pci_command(command);
         virtio.process_notified_queues(&mut dma);
         virtio.poll(&mut dma);
     }
