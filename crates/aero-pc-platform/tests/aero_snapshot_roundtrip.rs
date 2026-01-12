@@ -57,53 +57,29 @@ impl SnapshotSource for PcPlatformSnapshotHarness {
     }
 
     fn device_states(&self) -> Vec<DeviceState> {
-        let mut devices = Vec::new();
-
-        // Platform interrupt controller complex (PIC + IOAPIC + LAPIC).
-        devices.push(device_state_from_io_snapshot(
-            DeviceId::PLATFORM_INTERRUPTS,
-            &*self.platform.interrupts.borrow(),
-        ));
-
-        // Timers.
-        devices.push(device_state_from_io_snapshot(
-            DeviceId::PIT,
-            &*self.platform.pit().borrow(),
-        ));
-        devices.push(device_state_from_io_snapshot(
-            DeviceId::RTC,
-            &*self.platform.rtc().borrow(),
-        ));
-        devices.push(device_state_from_io_snapshot(
-            DeviceId::HPET,
-            &*self.platform.hpet().borrow(),
-        ));
-
-        // PCI.
-        devices.push(device_state_from_io_snapshot(
-            DeviceId::PCI_CFG,
-            &*self.platform.pci_cfg.borrow(),
-        ));
-        devices.push(device_state_from_io_snapshot(
-            DeviceId::PCI_INTX_ROUTER,
-            &self.platform.pci_intx,
-        ));
-
-        // Optional (if available): ACPI PM I/O state.
-        devices.push(device_state_from_io_snapshot(
-            DeviceId::ACPI_PM,
-            &*self.platform.acpi_pm.borrow(),
-        ));
-
-        // Memory/chipset glue (A20 gate latch only).
-        devices.push(DeviceState {
-            id: DeviceId::MEMORY,
-            version: 1,
-            flags: 0,
-            data: vec![self.platform.chipset.a20().enabled() as u8],
-        });
-
-        devices
+        vec![
+            // Platform interrupt controller complex (PIC + IOAPIC + LAPIC).
+            device_state_from_io_snapshot(
+                DeviceId::PLATFORM_INTERRUPTS,
+                &*self.platform.interrupts.borrow(),
+            ),
+            // Timers.
+            device_state_from_io_snapshot(DeviceId::PIT, &*self.platform.pit().borrow()),
+            device_state_from_io_snapshot(DeviceId::RTC, &*self.platform.rtc().borrow()),
+            device_state_from_io_snapshot(DeviceId::HPET, &*self.platform.hpet().borrow()),
+            // PCI.
+            device_state_from_io_snapshot(DeviceId::PCI_CFG, &*self.platform.pci_cfg.borrow()),
+            device_state_from_io_snapshot(DeviceId::PCI_INTX_ROUTER, &self.platform.pci_intx),
+            // Optional (if available): ACPI PM I/O state.
+            device_state_from_io_snapshot(DeviceId::ACPI_PM, &*self.platform.acpi_pm.borrow()),
+            // Memory/chipset glue (A20 gate latch only).
+            DeviceState {
+                id: DeviceId::MEMORY,
+                version: 1,
+                flags: 0,
+                data: vec![self.platform.chipset.a20().enabled() as u8],
+            },
+        ]
     }
 
     fn disk_overlays(&self) -> DiskOverlayRefs {
@@ -365,9 +341,10 @@ fn aero_snapshot_restore_syncs_pci_intx_levels_into_interrupt_controller() {
     let bdf = PciBdf::new(0, 0, 0);
     let pin = PciInterruptPin::IntA;
     let expected_gsi = src.platform.pci_intx.gsi_for_intx(bdf, pin);
+    let mut dummy_sink = DummySink;
     src.platform
         .pci_intx
-        .assert_intx(bdf, pin, &mut DummySink::default());
+        .assert_intx(bdf, pin, &mut dummy_sink);
 
     // Sanity: the interrupt controller snapshot still sees the GSI deasserted at save time.
     let intr_bytes = src.platform.interrupts.borrow().save_state();
@@ -579,4 +556,3 @@ fn aero_snapshot_restore_syncs_hpet_levels_for_non_default_route_into_interrupt_
 
     assert_eq!(levels[EXPECTED_GSI as usize], 1);
 }
-

@@ -273,12 +273,12 @@ fn pc_platform_virtio_blk_uses_injected_disk_for_reads_and_writes() {
     pc.memory.write_u8(bar0_base + COMMON + 0x14, 1); // ACKNOWLEDGE
     pc.memory.write_u8(bar0_base + COMMON + 0x14, 1 | 2); // ACKNOWLEDGE | DRIVER
 
-    pc.memory.write_u32(bar0_base + COMMON + 0x00, 0);
+    pc.memory.write_u32(bar0_base + COMMON, 0);
     let f0 = pc.memory.read_u32(bar0_base + COMMON + 0x04);
     pc.memory.write_u32(bar0_base + COMMON + 0x08, 0);
     pc.memory.write_u32(bar0_base + COMMON + 0x0c, f0);
 
-    pc.memory.write_u32(bar0_base + COMMON + 0x00, 1);
+    pc.memory.write_u32(bar0_base + COMMON, 1);
     let f1 = pc.memory.read_u32(bar0_base + COMMON + 0x04);
     pc.memory.write_u32(bar0_base + COMMON + 0x08, 1);
     pc.memory.write_u32(bar0_base + COMMON + 0x0c, f1);
@@ -491,12 +491,12 @@ fn pc_platform_virtio_blk_multi_descriptor_read_write_roundtrip() {
     pc.memory.write_u8(bar0_base + COMMON + 0x14, 1); // ACKNOWLEDGE
     pc.memory.write_u8(bar0_base + COMMON + 0x14, 1 | 2); // ACKNOWLEDGE | DRIVER
 
-    pc.memory.write_u32(bar0_base + COMMON + 0x00, 0);
+    pc.memory.write_u32(bar0_base + COMMON, 0);
     let f0 = pc.memory.read_u32(bar0_base + COMMON + 0x04);
     pc.memory.write_u32(bar0_base + COMMON + 0x08, 0);
     pc.memory.write_u32(bar0_base + COMMON + 0x0c, f0);
 
-    pc.memory.write_u32(bar0_base + COMMON + 0x00, 1);
+    pc.memory.write_u32(bar0_base + COMMON, 1);
     let f1 = pc.memory.read_u32(bar0_base + COMMON + 0x04);
     pc.memory.write_u32(bar0_base + COMMON + 0x08, 1);
     pc.memory.write_u32(bar0_base + COMMON + 0x0c, f1);
@@ -694,12 +694,12 @@ fn pc_platform_virtio_blk_indirect_descriptor_read_write_roundtrip() {
     pc.memory.write_u8(bar0_base + COMMON + 0x14, 1); // ACKNOWLEDGE
     pc.memory.write_u8(bar0_base + COMMON + 0x14, 1 | 2); // ACKNOWLEDGE | DRIVER
 
-    pc.memory.write_u32(bar0_base + COMMON + 0x00, 0);
+    pc.memory.write_u32(bar0_base + COMMON, 0);
     let f0 = pc.memory.read_u32(bar0_base + COMMON + 0x04);
     pc.memory.write_u32(bar0_base + COMMON + 0x08, 0);
     pc.memory.write_u32(bar0_base + COMMON + 0x0c, f0);
 
-    pc.memory.write_u32(bar0_base + COMMON + 0x00, 1);
+    pc.memory.write_u32(bar0_base + COMMON, 1);
     let f1 = pc.memory.read_u32(bar0_base + COMMON + 0x04);
     pc.memory.write_u32(bar0_base + COMMON + 0x08, 1);
     pc.memory.write_u32(bar0_base + COMMON + 0x0c, f1);

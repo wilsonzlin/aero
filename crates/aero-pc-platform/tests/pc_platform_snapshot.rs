@@ -78,7 +78,8 @@ fn snapshot_restore_redrives_pci_intx_levels_to_interrupt_sink() {
     // (which cannot drive the sink). This simulates the restore ordering hazard.
     let bdf = PciBdf::new(0, 0, 0);
     let mut asserted_router = PciIntxRouter::new(PciIntxRouterConfig::default());
-    asserted_router.assert_intx(bdf, PciInterruptPin::IntA, &mut NullSink::default());
+    let mut null_sink = NullSink;
+    asserted_router.assert_intx(bdf, PciInterruptPin::IntA, &mut null_sink);
 
     let router_state =
         device_state_from_io_snapshot(aero_snapshot::DeviceId::PCI_INTX_ROUTER, &asserted_router);

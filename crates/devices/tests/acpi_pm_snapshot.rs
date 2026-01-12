@@ -403,7 +403,7 @@ fn snapshot_restore_from_ticks_and_remainder_with_wrap_preserves_tick_boundary()
     // The snapshot remainder is `(elapsed_ns * FREQ) % 1e9`; the next tick occurs once
     // `remainder + delta_ns * FREQ >= 1e9`.
     let remainder_u128 = u128::from(remainder);
-    let ns_until_next_tick = (NS_PER_SEC - remainder_u128 + PM_TIMER_HZ - 1) / PM_TIMER_HZ;
+    let ns_until_next_tick = (NS_PER_SEC - remainder_u128).div_ceil(PM_TIMER_HZ);
     assert!(ns_until_next_tick >= 1);
 
     let before = (ns_until_next_tick - 1) as u64;

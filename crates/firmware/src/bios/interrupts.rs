@@ -1304,7 +1304,7 @@ fn build_e820_map(
 
         handle_int19(&mut bios, &mut cpu, &mut mem, &mut disk);
 
-        assert_eq!(cpu.halted, false);
+        assert!(!cpu.halted);
         assert_eq!(cpu.rflags & FLAG_CF, 0);
         assert_eq!(cpu.gpr[gpr::RDX] as u8, 0x80);
         assert_eq!(cpu.segments.ss.selector, 0x0000);
