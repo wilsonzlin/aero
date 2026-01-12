@@ -106,6 +106,17 @@ Both rings are **SPSC** (single-producer / single-consumer). Only the â€œownerâ€
 
 Violating SPSC (e.g. having both JS and WASM write to the playback ring) will corrupt indices and cause audible glitches.
 
+### Host-side telemetry (StatusIndex)
+
+In addition to the raw ring header counters, the active producer worker publishes a few low-rate counters into the shared
+status header (`web/src/runtime/shared_layout.ts`):
+
+- `StatusIndex.AudioBufferLevelFrames`
+- `StatusIndex.AudioUnderrunCount`
+- `StatusIndex.AudioOverrunCount`
+
+These are useful for perf HUDs / smoke tests without needing direct access to the underlying `SharedArrayBuffer` ring.
+
 ---
 
 ## Browser demo + CI coverage
