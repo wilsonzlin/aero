@@ -50,9 +50,9 @@ export class AeroPerf {
 export function installAeroPerf(globalThisLike, options = {}) {
   const g = globalThisLike;
   if (!g) throw new Error('installAeroPerf requires a global object (e.g. window)');
-  if (!g.aero) g.aero = {};
+  // Be defensive: callers may have set `aero` to a non-object value.
+  if (!g.aero || typeof g.aero !== 'object') g.aero = {};
   const perf = new AeroPerf(options);
   g.aero.perf = perf;
   return perf;
 }
-
