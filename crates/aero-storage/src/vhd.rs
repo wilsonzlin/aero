@@ -1,5 +1,6 @@
 use lru::LruCache;
 use std::num::NonZeroUsize;
+use std::sync::Arc;
 
 use crate::util::{align_up_u64, checked_range};
 use crate::{DiskError, Result, StorageBackend, VirtualDisk, SECTOR_SIZE};
@@ -103,7 +104,7 @@ pub struct VhdDisk<B> {
     footer: VhdFooter,
     dynamic: Option<VhdDynamicHeader>,
     bat: Vec<u32>,
-    bitmap_cache: LruCache<u64, Vec<u8>>,
+    bitmap_cache: LruCache<u64, Arc<[u8]>>,
 }
 
 impl<B: StorageBackend> VhdDisk<B> {
@@ -340,7 +341,7 @@ impl<B: StorageBackend> VhdDisk<B> {
         Ok(end - within_block)
     }
 
-    fn load_bitmap(&mut self, block_start: u64, bitmap_size: u64) -> Result<Vec<u8>> {
+    fn load_bitmap(&mut self, block_start: u64, bitmap_size: u64) -> Result<Arc<[u8]>> {
         if let Some(v) = self.bitmap_cache.get(&block_start) {
             return Ok(v.clone());
         }
@@ -349,12 +350,13 @@ impl<B: StorageBackend> VhdDisk<B> {
             .map_err(|_| DiskError::Unsupported("vhd bitmap too large"))?;
         let mut bitmap = vec![0u8; bytes];
         self.backend_read_at(block_start, &mut bitmap, "vhd block bitmap truncated")?;
-        let _ = self.bitmap_cache.push(block_start, bitmap.clone());
-        Ok(bitmap)
+        let arc: Arc<[u8]> = bitmap.into();
+        let _ = self.bitmap_cache.push(block_start, arc.clone());
+        Ok(arc)
     }
 
-    fn store_bitmap(&mut self, block_start: u64, bitmap: Vec<u8>) -> Result<()> {
-        self.backend.write_at(block_start, &bitmap)?;
+    fn store_bitmap(&mut self, block_start: u64, bitmap: Arc<[u8]>) -> Result<()> {
+        self.backend.write_at(block_start, bitmap.as_ref())?;
         let _ = self.bitmap_cache.push(block_start, bitmap);
         Ok(())
     }
@@ -431,7 +433,7 @@ impl<B: StorageBackend> VhdDisk<B> {
             .ok_or(DiskError::OffsetOverflow)?;
         self.validate_block_bounds(block_start, bitmap_size)?;
         let bitmap = self.load_bitmap(block_start, bitmap_size)?;
-        Self::bitmap_get(&bitmap, sector_in_block)
+        Self::bitmap_get(bitmap.as_ref(), sector_in_block)
     }
 
     fn read_sector_dyn(&mut self, lba: u64, out: &mut [u8; SECTOR_SIZE]) -> Result<()> {
@@ -455,7 +457,7 @@ impl<B: StorageBackend> VhdDisk<B> {
             .ok_or(DiskError::OffsetOverflow)?;
         self.validate_block_bounds(block_start, bitmap_size)?;
         let bitmap = self.load_bitmap(block_start, bitmap_size)?;
-        if !Self::bitmap_get(&bitmap, sector_in_block)? {
+        if !Self::bitmap_get(bitmap.as_ref(), sector_in_block)? {
             out.fill(0);
             return Ok(());
         }
@@ -503,9 +505,10 @@ impl<B: StorageBackend> VhdDisk<B> {
             .ok_or(DiskError::OffsetOverflow)?;
         self.backend.write_at(data_offset, data)?;
 
-        let mut bitmap = self.load_bitmap(block_start, bitmap_size)?;
-        Self::bitmap_set(&mut bitmap, sector_in_block)?;
-        self.store_bitmap(block_start, bitmap)?;
+        let bitmap = self.load_bitmap(block_start, bitmap_size)?;
+        let mut bitmap_vec = bitmap.as_ref().to_vec();
+        Self::bitmap_set(&mut bitmap_vec, sector_in_block)?;
+        self.store_bitmap(block_start, bitmap_vec.into())?;
 
         Ok(())
     }
@@ -568,7 +571,7 @@ impl<B: StorageBackend> VhdDisk<B> {
             .try_into()
             .map_err(|_| DiskError::Unsupported("vhd bitmap too large"))?;
         self.bitmap_cache
-            .push(old_footer_offset, vec![0u8; bitmap_size_usize]);
+            .push(old_footer_offset, vec![0u8; bitmap_size_usize].into());
 
         Ok(old_footer_offset)
     }
@@ -631,9 +634,9 @@ impl<B: StorageBackend> VirtualDisk for VhdDisk<B> {
                     return Err(DiskError::CorruptImage("vhd sector index out of range"));
                 }
 
-                let allocated = Self::bitmap_get(&bitmap, sector_in_block)?;
+                let allocated = Self::bitmap_get(bitmap.as_ref(), sector_in_block)?;
                 let run_len_u64 = Self::sector_run_len(
-                    &bitmap,
+                    bitmap.as_ref(),
                     sectors_per_block,
                     within,
                     remaining as u64,
