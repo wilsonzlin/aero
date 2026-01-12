@@ -111,15 +111,15 @@ fn snapshot_roundtrip_preserves_state() {
     let mut dev = E1000Device::new(mac);
 
     // Touch a non-modeled register so it lands in `other_regs`.
-    dev.mmio_write_u32_reg(REG_OTHER, 0xDEAD_BEEF);
+    dev.mmio_write_u32(REG_OTHER, 0xDEAD_BEEF);
 
     // Enable interrupt masks and set a pending cause.
-    dev.mmio_write_u32_reg(REG_IMS, ICR_RXT0 | ICR_TXDW);
-    dev.mmio_write_u32_reg(REG_ICS, ICR_RXT0);
+    dev.mmio_write_u32(REG_IMS, ICR_RXT0 | ICR_TXDW);
+    dev.mmio_write_u32(REG_ICS, ICR_RXT0);
 
     // Enable RX/TX, but do not configure RX ring yet so frames remain in rx_pending.
-    dev.mmio_write_u32_reg(REG_RCTL, RCTL_EN);
-    dev.mmio_write_u32_reg(REG_TCTL, TCTL_EN);
+    dev.mmio_write_u32(REG_RCTL, RCTL_EN);
+    dev.mmio_write_u32(REG_TCTL, TCTL_EN);
 
     let rx1 = vec![0xAA; MIN_L2_FRAME_LEN];
     let rx2 = vec![0xBB; MIN_L2_FRAME_LEN];
@@ -127,10 +127,10 @@ fn snapshot_roundtrip_preserves_state() {
     dev.enqueue_rx_frame(rx2.clone());
 
     // Configure TX ring with 4 descriptors at 0x1000.
-    dev.mmio_write_u32_reg(REG_TDBAL, 0x1000);
-    dev.mmio_write_u32_reg(REG_TDLEN, (TxDesc::LEN as u32) * 4);
-    dev.mmio_write_u32_reg(REG_TDH, 0);
-    dev.mmio_write_u32_reg(REG_TDT, 0);
+    dev.mmio_write_u32(REG_TDBAL, 0x1000);
+    dev.mmio_write_u32(REG_TDLEN, (TxDesc::LEN as u32) * 4);
+    dev.mmio_write_u32(REG_TDH, 0);
+    dev.mmio_write_u32(REG_TDT, 0);
 
     // First packet is a complete frame in descriptor 0 (should end up in tx_out before snapshot).
     let tx1 = vec![0x11; MIN_L2_FRAME_LEN];
@@ -179,7 +179,7 @@ fn snapshot_roundtrip_preserves_state() {
     mem.write_bytes(0x1020, &desc2.to_bytes());
 
     // Process descriptors 0 and 1, leaving descriptor 2 pending so we snapshot in-progress TX state.
-    dev.mmio_write_u32_reg(REG_TDT, 2);
+    dev.mmio_write_u32(REG_TDT, 2);
     dev.poll(&mut mem);
 
     let snapshot = dev.save_state();
@@ -204,7 +204,7 @@ fn snapshot_roundtrip_preserves_state() {
     assert_eq!(restored.pop_tx_frame(), Some(tx1));
 
     // Finish the in-progress packet by advancing the tail to include descriptor 2.
-    restored.mmio_write_u32_reg(REG_TDT, 3);
+    restored.mmio_write_u32(REG_TDT, 3);
     restored.poll(&mut mem);
     assert_eq!(restored.pop_tx_frame(), Some(tx2_expected));
 
@@ -226,10 +226,10 @@ fn snapshot_roundtrip_preserves_state() {
     mem.write_bytes(0x3020, &rx_desc2.to_bytes());
     mem.write_bytes(0x3030, &rx_desc3.to_bytes());
 
-    restored.mmio_write_u32_reg(REG_RDBAL, 0x3000);
-    restored.mmio_write_u32_reg(REG_RDLEN, (RxDesc::LEN as u32) * 4);
-    restored.mmio_write_u32_reg(REG_RDH, 0);
-    restored.mmio_write_u32_reg(REG_RDT, 3);
+    restored.mmio_write_u32(REG_RDBAL, 0x3000);
+    restored.mmio_write_u32(REG_RDLEN, (RxDesc::LEN as u32) * 4);
+    restored.mmio_write_u32(REG_RDH, 0);
+    restored.mmio_write_u32(REG_RDT, 3);
     restored.poll(&mut mem);
 
     assert_eq!(mem.read_bytes(0x4000, rx1.len()), rx1);

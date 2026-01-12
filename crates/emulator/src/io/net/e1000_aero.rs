@@ -58,7 +58,7 @@ impl MmioDevice for E1000PciDevice {
         // `MmioDevice` provides guest RAM access, but the device's register interface must be
         // usable behind `memory::MmioHandler`-based buses that do not. Perform a register-only
         // write here and explicitly poll to keep the old "writes kick DMA soon" behavior.
-        self.nic.mmio_write_reg(offset, size, value);
+        self.nic.mmio_write(offset, size, value);
         self.nic.poll(mem);
     }
 }

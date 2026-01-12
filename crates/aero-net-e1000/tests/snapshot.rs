@@ -96,23 +96,23 @@ fn snapshot_roundtrip_preserves_key_state() {
 
     // Configure TX ring.
     let tx_ring = 0x1000u64;
-    dev.mmio_write_u32_reg(REG_IMS, ICR_TXDW);
-    dev.mmio_write_u32_reg(REG_TDBAL, tx_ring as u32);
-    dev.mmio_write_u32_reg(REG_TDLEN, 4 * 16);
-    dev.mmio_write_u32_reg(REG_TDH, 0);
-    dev.mmio_write_u32_reg(REG_TDT, 0);
-    dev.mmio_write_u32_reg(REG_TCTL, TCTL_EN);
+    dev.mmio_write_u32(REG_IMS, ICR_TXDW);
+    dev.mmio_write_u32(REG_TDBAL, tx_ring as u32);
+    dev.mmio_write_u32(REG_TDLEN, 4 * 16);
+    dev.mmio_write_u32(REG_TDH, 0);
+    dev.mmio_write_u32(REG_TDT, 0);
+    dev.mmio_write_u32(REG_TCTL, TCTL_EN);
 
     // Configure RX ring but keep it "full" (RDH==RDT) so pending frames are not flushed.
     let rx_ring = 0x5000u64;
-    dev.mmio_write_u32_reg(REG_RDBAL, rx_ring as u32);
-    dev.mmio_write_u32_reg(REG_RDLEN, 4 * 16);
-    dev.mmio_write_u32_reg(REG_RDH, 0);
-    dev.mmio_write_u32_reg(REG_RDT, 0);
-    dev.mmio_write_u32_reg(REG_RCTL, RCTL_EN);
+    dev.mmio_write_u32(REG_RDBAL, rx_ring as u32);
+    dev.mmio_write_u32(REG_RDLEN, 4 * 16);
+    dev.mmio_write_u32(REG_RDH, 0);
+    dev.mmio_write_u32(REG_RDT, 0);
+    dev.mmio_write_u32(REG_RCTL, RCTL_EN);
 
     // Populate a register in other_regs.
-    dev.mmio_write_u32_reg(0x1234, 0xDEAD_BEEF);
+    dev.mmio_write_u32(0x1234, 0xDEAD_BEEF);
 
     // Queue RX frames but ensure they remain pending at snapshot time.
     let rx1 = build_test_frame(b"rx1");
@@ -135,7 +135,7 @@ fn snapshot_roundtrip_preserves_key_state() {
     write_tx_desc(&mut dma, tx_ring + 0 * 16, tx0_addr, tx0.len() as u16, TXD_CMD_EOP | TXD_CMD_RS);
     write_tx_desc(&mut dma, tx_ring + 1 * 16, tx1_part1_addr, tx1_part1.len() as u16, TXD_CMD_RS);
 
-    dev.mmio_write_u32_reg(REG_TDT, 2);
+    dev.mmio_write_u32(REG_TDT, 2);
     dev.poll(&mut dma);
 
     assert!(dev.irq_level(), "tx should have raised an interrupt");
@@ -165,7 +165,7 @@ fn snapshot_roundtrip_preserves_key_state() {
         TXD_CMD_EOP | TXD_CMD_RS,
     );
 
-    restored.mmio_write_u32_reg(REG_TDT, 3);
+    restored.mmio_write_u32(REG_TDT, 3);
     restored.poll(&mut dma);
 
     assert_eq!(
@@ -183,7 +183,7 @@ fn snapshot_roundtrip_preserves_key_state() {
     write_rx_desc(&mut dma, rx_ring + 1 * 16, rx_buf1);
     write_rx_desc(&mut dma, rx_ring + 2 * 16, rx_buf2);
 
-    restored.mmio_write_u32_reg(REG_RDT, 3);
+    restored.mmio_write_u32(REG_RDT, 3);
     restored.poll(&mut dma);
 
     assert_eq!(dma.read_vec(rx_buf0, rx1.len()), rx1);

@@ -646,12 +646,12 @@ impl E1000Device {
         self.mmio_write_u32_aligned_reg(aligned, merged);
     }
 
-    /// MMIO write path that preserves legacy semantics: register write + immediate DMA.
+    /// Write to the device MMIO BAR (register-only).
     ///
-    /// This is a thin compatibility wrapper around [`mmio_write_reg`] + [`poll`].
-    pub fn mmio_write(&mut self, mem: &mut dyn MemoryBus, offset: u64, size: usize, value: u32) {
+    /// DMA side effects (descriptor reads/writes, RX buffer writes, etc.) are
+    /// deferred to [`poll`].
+    pub fn mmio_write(&mut self, offset: u64, size: usize, value: u32) {
         self.mmio_write_reg(offset, size, value);
-        self.poll(mem);
     }
 
     pub fn mmio_read_u32(&mut self, offset: u32) -> u32 {
@@ -662,8 +662,8 @@ impl E1000Device {
         self.mmio_write_reg(offset as u64, 4, value);
     }
 
-    pub fn mmio_write_u32(&mut self, mem: &mut dyn MemoryBus, offset: u32, value: u32) {
-        self.mmio_write(mem, offset as u64, 4, value);
+    pub fn mmio_write_u32(&mut self, offset: u32, value: u32) {
+        self.mmio_write(offset as u64, 4, value);
     }
 
     /// Read from the device's I/O BAR (IOADDR/IODATA window).
@@ -713,12 +713,11 @@ impl E1000Device {
         }
     }
 
-    /// Write to the device's I/O BAR (IOADDR/IODATA window) with immediate DMA.
+    /// Write to the device's I/O BAR (IOADDR/IODATA window) (register-only).
     ///
-    /// This is a compatibility wrapper around [`io_write_reg`] + [`poll`].
-    pub fn io_write(&mut self, mem: &mut dyn MemoryBus, offset: u32, size: usize, value: u32) {
+    /// DMA side effects are deferred to [`poll`].
+    pub fn io_write(&mut self, offset: u32, size: usize, value: u32) {
         self.io_write_reg(offset, size, value);
-        self.poll(mem);
     }
 
     pub fn poll(&mut self, mem: &mut dyn MemoryBus) {
@@ -1937,13 +1936,13 @@ mod tests {
     fn ioaddr_iodata_interface_maps_to_mmio_registers() {
         let mut dev = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
 
-        dev.mmio_write_u32_reg(REG_IMS, 0x1234_5678);
+        dev.mmio_write_u32(REG_IMS, 0x1234_5678);
 
-        dev.io_write_reg(0x0, 4, REG_IMS);
+        dev.io_write(0x0, 4, REG_IMS);
         assert_eq!(dev.io_read(0x4, 4), 0x1234_5678);
 
-        dev.io_write_reg(0x0, 4, REG_IMC);
-        dev.io_write_reg(0x4, 4, 0x1234_0000);
+        dev.io_write(0x0, 4, REG_IMC);
+        dev.io_write(0x4, 4, 0x1234_0000);
         assert_eq!(dev.mmio_read_u32(REG_IMS), 0x0000_5678);
     }
 
@@ -1976,7 +1975,7 @@ mod tests {
         mem.write_bytes(0x1000, &desc0.to_bytes());
 
         // Guest updates tail to 1.
-        dev.mmio_write_u32_reg(REG_TDT, 1);
+        dev.mmio_write_u32(REG_TDT, 1);
         dev.poll(&mut mem);
 
         assert_eq!(dev.pop_tx_frame().as_deref(), Some(pkt.as_slice()));
@@ -2417,7 +2416,7 @@ mod tests {
         mem.write_bytes(0x1010, &desc1.to_bytes());
 
         // Guest updates tail to 2.
-        dev.mmio_write_u32_reg(REG_TDT, 2);
+        dev.mmio_write_u32(REG_TDT, 2);
         dev.poll(&mut mem);
 
         assert!(dev.pop_tx_frame().is_none());
