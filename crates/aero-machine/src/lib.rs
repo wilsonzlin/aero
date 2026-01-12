@@ -2530,6 +2530,34 @@ impl Machine {
             }
         }
     }
+
+    fn sync_ide_irqs_to_interrupts(&mut self) {
+        let (Some(ide), Some(interrupts)) = (&self.ide, &self.interrupts) else {
+            return;
+        };
+
+        // IDE legacy mode uses ISA IRQ14/IRQ15 rather than PCI INTx.
+        let (irq14, irq15) = {
+            let ide = ide.borrow();
+            (
+                ide.controller.primary_irq_pending(),
+                ide.controller.secondary_irq_pending(),
+            )
+        };
+
+        let mut interrupts = interrupts.borrow_mut();
+        if irq14 {
+            interrupts.raise_irq(InterruptInput::IsaIrq(14));
+        } else {
+            interrupts.lower_irq(InterruptInput::IsaIrq(14));
+        }
+        if irq15 {
+            interrupts.raise_irq(InterruptInput::IsaIrq(15));
+        } else {
+            interrupts.lower_irq(InterruptInput::IsaIrq(15));
+        }
+    }
+
     /// Take (drain) all serial output accumulated so far.
     pub fn take_serial_output(&mut self) -> Vec<u8> {
         self.flush_serial();
@@ -3649,6 +3677,7 @@ impl Machine {
                     // same `run_slice` call.
                     self.process_ide();
                     self.process_ahci();
+                    self.process_ide();
                     self.sync_pci_intx_sources_to_interrupts();
                     if self.poll_platform_interrupt(MAX_QUEUED_EXTERNAL_INTERRUPTS) {
                         continue;
@@ -3658,6 +3687,7 @@ impl Machine {
                     self.idle_tick_platform_1ms();
                     self.process_ide();
                     self.process_ahci();
+                    self.process_ide();
                     self.sync_pci_intx_sources_to_interrupts();
                     if self.poll_platform_interrupt(MAX_QUEUED_EXTERNAL_INTERRUPTS) {
                         continue;
@@ -3849,6 +3879,7 @@ impl Machine {
         // interrupt shadow), and even when our external-interrupt FIFO is at capacity, so
         // level-triggered lines remain accurately asserted/deasserted until delivery is possible.
         self.sync_pci_intx_sources_to_interrupts();
+        self.sync_ide_irqs_to_interrupts();
 
         if self.cpu.pending.external_interrupts.len() >= max_queued {
             return false;
@@ -4014,6 +4045,7 @@ impl snapshot::SnapshotSource for Machine {
                 &*pci_intx.borrow(),
             ));
         }
+
         if let Some(e1000) = &self.e1000 {
             devices.push(snapshot::io_snapshot_bridge::device_state_from_io_snapshot(
                 snapshot::DeviceId::E1000,
@@ -4723,6 +4755,7 @@ impl snapshot::SnapshotTarget for Machine {
         // and some device models surface their INTx level via polling rather than storing it in
         // the router snapshot.
         self.sync_pci_intx_sources_to_interrupts();
+        self.sync_ide_irqs_to_interrupts();
 
         // Reassert PCI INTx levels after restoring other devices that may have modified shared GSI
         // lines during `load_state()` or their own sync fixups (e.g. HPET).

@@ -2,6 +2,7 @@
 
 use aero_cpu_core::state::RFLAGS_IF;
 use aero_devices::pci::{profile, PciBdf, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
+use aero_devices_storage::atapi::AtapiCdrom;
 use aero_machine::{Machine, MachineConfig, RunExit};
 use aero_platform::interrupts::InterruptController;
 use aero_storage::{MemBackend, RawDisk, VirtualDisk as _, SECTOR_SIZE};
@@ -99,4 +100,58 @@ fn machine_piix3_ide_pio_read_raises_irq14() {
     } else {
         panic!("expected CPU to remain halted in the boot sector loop");
     }
+}
+
+#[test]
+fn machine_piix3_ide_secondary_identify_aborts_and_raises_irq15() {
+    // Deterministic `hlt; jmp` boot sector so `run_slice` is safe to use as a polling mechanism.
+    let mut boot = [0u8; 512];
+    boot[0..3].copy_from_slice(&[0xF4, 0xEB, 0xFD]); // hlt; jmp $-3
+    boot[510] = 0x55;
+    boot[511] = 0xAA;
+
+    let mut m = Machine::new(ide_machine_config()).unwrap();
+    m.set_disk_image(boot.to_vec()).unwrap();
+    m.reset();
+
+    // PCI topology: IDE is a PIIX3 multi-function device; function 0 must exist and be marked
+    // multi-function so OSes enumerate the IDE function at 00:01.1.
+    {
+        let bdf = profile::ISA_PIIX3.bdf;
+        m.io_write(PCI_CFG_ADDR_PORT, 4, pci_cfg_addr(bdf, 0x0C));
+        let header = m.io_read(PCI_CFG_DATA_PORT, 4);
+        let header_type = ((header >> 16) & 0xFF) as u8;
+        assert_ne!(header_type & 0x80, 0, "ISA_PIIX3 must be multi-function");
+    }
+
+    // Attach an empty ATAPI CD-ROM device on the secondary master so IDENTIFY DEVICE aborts and
+    // generates an interrupt on the secondary channel.
+    m.attach_ide_secondary_master_atapi(AtapiCdrom::new(None));
+
+    // Unmask IRQ15 (and cascade IRQ2) so PIC pending vectors are observable.
+    {
+        let ints = m.platform_interrupts().unwrap();
+        let mut ints = ints.borrow_mut();
+        ints.pic_mut().set_masked(2, false); // cascade
+        ints.pic_mut().set_masked(15, false);
+    }
+
+    // Keep IF=0 so `Machine::run_slice` does not acknowledge/present the interrupt to the CPU.
+    let rflags = m.cpu().rflags();
+    m.cpu_mut().set_rflags(rflags & !RFLAGS_IF);
+
+    // Enable IDE I/O decoding.
+    let bdf = profile::IDE_PIIX3.bdf;
+    m.io_write(PCI_CFG_ADDR_PORT, 4, pci_cfg_addr(bdf, 0x04));
+    m.io_write(PCI_CFG_DATA_PORT, 2, 0x0001);
+
+    // IDENTIFY DEVICE (0xEC) on an ATAPI device aborts and raises an interrupt.
+    m.io_write(0x177, 1, 0xEC);
+
+    // Poll once so the IDE IRQ pending state is synchronized into the platform controller. With
+    // IF=0, the PIC should retain the interrupt as pending.
+    let _ = m.run_slice(1);
+
+    let pending = m.platform_interrupts().unwrap().borrow().get_pending();
+    assert_eq!(pending, Some(0x77), "IDE secondary should assert ISA IRQ15");
 }

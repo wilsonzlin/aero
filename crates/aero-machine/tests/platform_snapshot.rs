@@ -521,13 +521,14 @@ fn snapshot_restore_pci_config_bar_programming_survives() {
             prefetchable: false,
         },
     );
+    let bdf = PciBdf::new(0, 6, 0);
     pci_cfg
         .borrow_mut()
         .bus_mut()
-        .add_device(PciBdf::new(0, 1, 0), Box::new(TestDev { cfg }));
+        .add_device(bdf, Box::new(TestDev { cfg }));
 
     // Program BAR0 via the standard PCI config mechanism #1 ports.
-    let bar0_addr = 0x8000_0000u32 | (1u32 << 11) | 0x10;
+    let bar0_addr = cfg_addr(bdf, 0x10);
     src.io_write(PCI_CFG_ADDR_PORT, 4, bar0_addr);
     src.io_write(PCI_CFG_DATA_PORT, 4, 0x8000_0000);
 
@@ -550,7 +551,7 @@ fn snapshot_restore_pci_config_bar_programming_survives() {
     pci_cfg
         .borrow_mut()
         .bus_mut()
-        .add_device(PciBdf::new(0, 1, 0), Box::new(TestDev { cfg }));
+        .add_device(bdf, Box::new(TestDev { cfg }));
 
     restored.restore_snapshot_bytes(&snap).unwrap();
 
@@ -577,7 +578,7 @@ fn restore_device_states_accepts_legacy_pci_device_id_for_pci_cfg_state() {
         }
     }
 
-    let bdf = PciBdf::new(0, 1, 0);
+    let bdf = PciBdf::new(0, 6, 0);
     let mut cfg = PciConfigSpace::new(0x1234, 0x5678);
     cfg.set_bar_definition(
         0,
@@ -652,7 +653,7 @@ fn restore_device_states_prefers_pci_cfg_over_legacy_pci_entry() {
         }
     }
 
-    let bdf = PciBdf::new(0, 1, 0);
+    let bdf = PciBdf::new(0, 6, 0);
     let mut cfg = PciConfigSpace::new(0x1234, 0x5678);
     cfg.set_bar_definition(
         0,
@@ -1182,10 +1183,10 @@ fn snapshot_restore_preserves_pci_command_bits_and_pic_pending_interrupt() {
         }
     }
 
-    // Install a simple endpoint at 00:01.0 with one MMIO BAR so we can validate both:
+    // Install a simple endpoint at 00:06.0 with one MMIO BAR so we can validate both:
     // - guest-programmed BAR base
     // - PCI command register bits (IO/MEM/BME/INTX_DISABLE).
-    let bdf = PciBdf::new(0, 1, 0);
+    let bdf = PciBdf::new(0, 6, 0);
     let mut cfg = PciConfigSpace::new(0x1234, 0x5678);
     cfg.set_bar_definition(
         0,
