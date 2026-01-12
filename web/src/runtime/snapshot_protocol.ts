@@ -106,7 +106,7 @@ export type VmSnapshotRestoredMessage =
       /**
        * Optional device state blobs recovered from the snapshot file.
        *
-       * The IO worker applies relevant blobs locally (e.g. USB), but the raw blobs
+       * The IO worker applies relevant blobs locally (e.g. USB + networking), but the raw blobs
        * are still returned so the coordinator can dispatch additional device state
        * to other workers in follow-up tasks.
        */

@@ -639,12 +639,18 @@ function restoreE1000DeviceState(bytes: Uint8Array): void {
   }
 
   const bridge = e1000Bridge;
-  if (!bridge) return;
+  if (!bridge) {
+    console.warn("[io.worker] Snapshot contains net.e1000 state but E1000 bridge is unavailable; ignoring blob.");
+    return;
+  }
 
   const load =
     (bridge as unknown as { load_state?: unknown }).load_state ??
     (bridge as unknown as { restore_state?: unknown }).restore_state;
-  if (typeof load !== "function") return;
+  if (typeof load !== "function") {
+    console.warn("[io.worker] Snapshot contains net.e1000 state but E1000 bridge has no load_state/restore_state hook; ignoring blob.");
+    return;
+  }
 
   try {
     load.call(bridge, bytes);
@@ -743,6 +749,10 @@ function resolveNetStackSnapshotBridge(): NetStackSnapshotBridgeLike | null {
   const candidate =
     anyGlobal["__aeroNetStackBridge"] ??
     anyGlobal["__aero_net_stack_bridge"] ??
+    anyGlobal["__aeroNetStack"] ??
+    anyGlobal["__aero_net_stack"] ??
+    anyGlobal["__aeroIoNetStack"] ??
+    anyGlobal["__aero_io_net_stack"] ??
     anyGlobal["__aero_io_net_stack_bridge"] ??
     null;
   if (!candidate) return null;
@@ -766,18 +776,54 @@ function snapshotNetStackDeviceState(): { kind: string; bytes: Uint8Array } | nu
   return null;
 }
 
+function applyNetStackTcpRestorePolicy(netStack: unknown, policy: "drop" | "reconnect"): void {
+  if (!netStack || (typeof netStack !== "object" && typeof netStack !== "function")) return;
+
+  const fn =
+    (netStack as unknown as { apply_tcp_restore_policy?: unknown }).apply_tcp_restore_policy ??
+    (netStack as unknown as { applyTcpRestorePolicy?: unknown }).applyTcpRestorePolicy ??
+    (netStack as unknown as { set_tcp_restore_policy?: unknown }).set_tcp_restore_policy ??
+    (netStack as unknown as { setTcpRestorePolicy?: unknown }).setTcpRestorePolicy;
+  if (typeof fn !== "function") return;
+
+  // Prefer a readable string API, but fall back to a numeric enum-like encoding if
+  // the runtime expects it (e.g. wasm-bindgen enum variants).
+  try {
+    fn.call(netStack, policy);
+    return;
+  } catch {
+    // continue
+  }
+  try {
+    fn.call(netStack, policy === "drop" ? 0 : 1);
+  } catch (err) {
+    console.warn("[io.worker] net.stack apply_tcp_restore_policy failed:", err);
+  }
+}
+
 function restoreNetStackDeviceState(bytes: Uint8Array): void {
   const bridge = resolveNetStackSnapshotBridge();
-  if (!bridge) return;
+  if (!bridge) {
+    console.warn("[io.worker] Snapshot contains net.stack state but net.stack runtime is unavailable; ignoring blob.");
+    return;
+  }
 
   const load =
     (bridge as unknown as { load_state?: unknown }).load_state ?? (bridge as unknown as { restore_state?: unknown }).restore_state;
-  if (typeof load !== "function") return;
+  if (typeof load !== "function") {
+    console.warn("[io.worker] Snapshot contains net.stack state but net.stack bridge has no load_state/restore_state hook; ignoring blob.");
+    return;
+  }
   try {
     load.call(bridge, bytes);
   } catch (err) {
     console.warn("[io.worker] NET_STACK load_state failed:", err);
+    return;
   }
+
+  // Default to dropping any in-flight TCP connections: the browser-side stack can restore NAT
+  // tables, but resuming live connections without an out-of-band handshake is unsafe.
+  applyNetStackTcpRestorePolicy(bridge, "drop");
 }
 
 const VM_SNAPSHOT_DEVICE_KIND_PREFIX_ID = "device.";
