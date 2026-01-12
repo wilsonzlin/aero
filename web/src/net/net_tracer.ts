@@ -156,7 +156,6 @@ export class NetTracer {
     if (!this.captureEthernet) return;
 
     const len = frame.byteLength;
-    if (len === 0) return;
     if (len > this.maxBytes || this.bytes + len > this.maxBytes) {
       this.droppedRecords += 1;
       this.droppedBytes += len;

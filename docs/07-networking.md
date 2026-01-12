@@ -1116,6 +1116,7 @@ Rust capture format notes (PCAPNG):
 
 - Ethernet frames are written on a single interface named `guest-eth0`; packet direction is encoded
   via the Enhanced Packet Block `epb_flags` option (`1` = inbound, `2` = outbound).
+- Proxy payload capture is opt-in by default (requires enabling `capture_tcp_proxy` / `capture_udp_proxy` in `NetTraceConfig`).
 - If proxy payload records are present, additional pseudo-interfaces may be emitted:
   - `tcp-proxy` (`LINKTYPE_USER0` / 147) containing pseudo-packets with an `ATCP` header.
   - `udp-proxy` (`LINKTYPE_USER1` / 148) containing pseudo-packets with an `AUDP` header.

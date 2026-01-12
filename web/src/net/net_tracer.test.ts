@@ -133,6 +133,18 @@ describe("NetTracer", () => {
     expect(tracer.stats().records).toBe(1);
   });
 
+  it("records empty Ethernet frames (length 0) as EPBs", () => {
+    const tracer = new NetTracer();
+    tracer.enable();
+    tracer.recordEthernet("guest_tx", new Uint8Array([]), 1n);
+
+    expect(tracer.stats().records).toBe(1);
+    const epbs = parsePcapngEpbs(tracer.exportPcapng());
+    expect(epbs.length).toBe(1);
+    expect(epbs[0]!.payload.byteLength).toBe(0);
+    expect((epbs[0]!.flags ?? 0) & 0x3).toBe(2); // outbound
+  });
+
   it("enforces maxBytes by dropping new frames", () => {
     const tracer = new NetTracer({ maxBytes: 6 });
     tracer.enable();
