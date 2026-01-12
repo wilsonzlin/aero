@@ -4,8 +4,9 @@ use aero_platform::audio::worklet_bridge::{
     WorkletBridge, HEADER_BYTES, HEADER_U32_LEN, OVERRUN_COUNT_INDEX, READ_FRAME_INDEX,
     UNDERRUN_COUNT_INDEX, WRITE_FRAME_INDEX,
 };
+use aero_platform::audio::mic_bridge as mic_ring;
 use aero_wasm::HdaControllerBridge;
-use js_sys::{Float32Array, Uint32Array};
+use js_sys::{Float32Array, SharedArrayBuffer, Uint32Array};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_test::wasm_bindgen_test;
 
@@ -266,6 +267,81 @@ fn hda_controller_deferred_ring_restore_tolerates_capacity_mismatch() {
     for i in 0..samples.length() {
         assert_eq!(samples.get_index(i), 0.0, "sample[{i}] not cleared");
     }
+
+    drop(guest);
+}
+
+#[wasm_bindgen_test]
+fn hda_controller_attach_mic_ring_discards_buffered_samples() {
+    let capacity_samples = 16u32;
+    let byte_len = (mic_ring::HEADER_BYTES + capacity_samples as usize * core::mem::size_of::<f32>())
+        as u32;
+    let sab = SharedArrayBuffer::new(byte_len);
+    let header =
+        Uint32Array::new_with_byte_offset_and_length(&sab, 0, mic_ring::HEADER_U32_LEN as u32);
+
+    // Seed with a non-empty ring state.
+    atomics_store_u32(&header, mic_ring::WRITE_POS_INDEX as u32, 10);
+    atomics_store_u32(&header, mic_ring::READ_POS_INDEX as u32, 4);
+    atomics_store_u32(&header, mic_ring::DROPPED_SAMPLES_INDEX as u32, 0);
+    atomics_store_u32(&header, mic_ring::CAPACITY_SAMPLES_INDEX as u32, capacity_samples);
+
+    let mut guest = vec![0u8; 0x4000];
+    let guest_base = guest.as_mut_ptr() as u32;
+    let guest_size = guest.len() as u32;
+    let mut hda = HdaControllerBridge::new(guest_base, guest_size, None).unwrap();
+
+    hda.attach_mic_ring(sab.clone(), 48_000).unwrap();
+
+    // Attaching should drop any buffered samples so capture starts at low latency.
+    assert_eq!(
+        atomics_load_u32(&header, mic_ring::READ_POS_INDEX as u32),
+        atomics_load_u32(&header, mic_ring::WRITE_POS_INDEX as u32)
+    );
+
+    drop(guest);
+}
+
+#[wasm_bindgen_test]
+fn hda_controller_load_state_discards_mic_ring_buffered_samples() {
+    let capacity_samples = 16u32;
+    let byte_len = (mic_ring::HEADER_BYTES + capacity_samples as usize * core::mem::size_of::<f32>())
+        as u32;
+    let sab = SharedArrayBuffer::new(byte_len);
+    let header =
+        Uint32Array::new_with_byte_offset_and_length(&sab, 0, mic_ring::HEADER_U32_LEN as u32);
+
+    // Initialize the header (ring is empty at attach time).
+    atomics_store_u32(&header, mic_ring::WRITE_POS_INDEX as u32, 0);
+    atomics_store_u32(&header, mic_ring::READ_POS_INDEX as u32, 0);
+    atomics_store_u32(&header, mic_ring::DROPPED_SAMPLES_INDEX as u32, 0);
+    atomics_store_u32(&header, mic_ring::CAPACITY_SAMPLES_INDEX as u32, capacity_samples);
+
+    let mut guest = vec![0u8; 0x4000];
+    let guest_base = guest.as_mut_ptr() as u32;
+    let guest_size = guest.len() as u32;
+    let mut hda = HdaControllerBridge::new(guest_base, guest_size, None).unwrap();
+
+    hda.attach_mic_ring(sab.clone(), 48_000).unwrap();
+
+    let snap = hda.save_state();
+
+    // Simulate the producer writing into the ring while the VM is snapshot-paused.
+    atomics_store_u32(&header, mic_ring::WRITE_POS_INDEX as u32, 10);
+    atomics_store_u32(&header, mic_ring::READ_POS_INDEX as u32, 4);
+
+    assert_ne!(
+        atomics_load_u32(&header, mic_ring::READ_POS_INDEX as u32),
+        atomics_load_u32(&header, mic_ring::WRITE_POS_INDEX as u32)
+    );
+
+    // Snapshot restore should discard any buffered mic samples so capture resumes without stale
+    // latency.
+    hda.load_state(&snap).unwrap();
+    assert_eq!(
+        atomics_load_u32(&header, mic_ring::READ_POS_INDEX as u32),
+        atomics_load_u32(&header, mic_ring::WRITE_POS_INDEX as u32)
+    );
 
     drop(guest);
 }

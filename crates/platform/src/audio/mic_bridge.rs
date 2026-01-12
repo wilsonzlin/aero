@@ -405,6 +405,26 @@ mod wasm {
             self.last_dropped_samples = dropped;
             delta as u64
         }
+
+        /// Discard any buffered microphone samples by advancing the consumer read position to the
+        /// current producer write position.
+        ///
+        /// This is useful when resuming from a VM snapshot pause: the host-side microphone
+        /// producer may have continued writing into the ring while the guest was stopped, so
+        /// draining those samples would introduce stale capture latency.
+        pub fn discard_buffered_samples(&mut self) {
+            let write_pos = atomic_load_u32(&self.header, WRITE_POS_INDEX);
+            atomic_store_u32(&self.header, READ_POS_INDEX, write_pos);
+        }
+
+        /// Reset the dropped-sample delta baseline to the current producer counter.
+        ///
+        /// The producer owns the `DROPPED_SAMPLES_INDEX` counter; this method does not mutate the
+        /// shared counter, it only updates the consumer-side baseline used by
+        /// [`Self::take_dropped_samples_delta`].
+        pub fn reset_dropped_samples_baseline(&mut self) {
+            self.last_dropped_samples = atomic_load_u32(&self.header, DROPPED_SAMPLES_INDEX);
+        }
     }
 }
 

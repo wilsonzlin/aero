@@ -241,7 +241,10 @@ impl HdaControllerBridge {
             return Err(js_error("sampleRate must be non-zero"));
         }
 
-        let bridge = MicBridge::from_shared_buffer(ring_sab)?;
+        let mut bridge = MicBridge::from_shared_buffer(ring_sab)?;
+        // Ensure capture starts from the most recent sample to avoid "stale mic" latency if the
+        // producer wrote into the ring before (or while) the guest was attached.
+        bridge.discard_buffered_samples();
         self.hda.set_capture_sample_rate_hz(sample_rate);
         self.mic_ring = Some(bridge);
         Ok(())
@@ -315,7 +318,11 @@ impl HdaControllerBridge {
     /// Prefer [`Self::attach_mic_ring`] + [`Self::detach_mic_ring`] for new code.
     pub fn set_mic_ring_buffer(&mut self, sab: Option<SharedArrayBuffer>) -> Result<(), JsValue> {
         self.mic_ring = match sab {
-            Some(sab) => Some(MicBridge::from_shared_buffer(sab)?),
+            Some(sab) => {
+                let mut bridge = MicBridge::from_shared_buffer(sab)?;
+                bridge.discard_buffered_samples();
+                Some(bridge)
+            }
             None => None,
         };
         Ok(())
@@ -388,6 +395,14 @@ impl HdaControllerBridge {
             .map_err(|e| js_error(format!("Invalid HDA snapshot: {e}")))?;
 
         self.hda.restore_state(&state);
+
+        // Microphone input is not serialized in the snapshot, so any samples buffered by the host
+        // capture worklet while the VM was paused/restored should be discarded to avoid replaying
+        // stale audio on resume.
+        if let Some(mic) = self.mic_ring.as_mut() {
+            mic.discard_buffered_samples();
+            mic.reset_dropped_samples_baseline();
+        }
 
         let mut ring_state = state.worklet_ring;
         if let Some(ring) = self.audio_ring.as_ref() {
