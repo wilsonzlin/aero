@@ -310,54 +310,40 @@ impl PcMachine {
     /// This is safe to call even when E1000 is disabled; it will still propagate PCI INTx line
     /// levels into the platform interrupt controller.
     pub fn poll_network(&mut self) {
-        if let Some(e1000) = self.bus.platform.e1000.as_ref() {
-            let bdf = aero_devices::pci::profile::NIC_E1000_82540EM.bdf;
-            let bus_master_enabled = {
-                let mut pci_cfg = self.bus.platform.pci_cfg.borrow_mut();
-                pci_cfg
-                    .bus_mut()
-                    .device_config(bdf)
-                    .is_some_and(|cfg| (cfg.command() & (1 << 2)) != 0)
+        // 1) Process DMA (TX descriptors -> host TX queue, rx_pending -> guest RX ring).
+        //
+        // This is safe even when E1000 is disabled; it will no-op.
+        self.bus.platform.process_e1000();
+
+        // 2) Drain guest->host frames.
+        const MAX_TX_FRAMES_PER_POLL: usize = 256;
+        let mut tx_budget = MAX_TX_FRAMES_PER_POLL;
+        while tx_budget != 0 {
+            let Some(frame) = self.bus.platform.e1000_pop_tx_frame() else {
+                break;
             };
+            tx_budget -= 1;
 
-            // 1) Process DMA (TX descriptors -> tx_out queue, rx_pending -> guest RX ring).
-            if bus_master_enabled {
-                e1000.borrow_mut().poll(&mut self.bus.platform.memory);
-            }
-
-            // 2) Drain guest->host frames.
-            const MAX_TX_FRAMES_PER_POLL: usize = 256;
-            let mut tx_budget = MAX_TX_FRAMES_PER_POLL;
-            while tx_budget != 0 {
-                let frame = e1000.borrow_mut().pop_tx_frame();
-                let Some(frame) = frame else {
-                    break;
-                };
-                tx_budget -= 1;
-
-                if let Some(backend) = self.network_backend.as_mut() {
-                    backend.transmit(frame);
-                }
-            }
-
-            // 3) Drain host->guest frames.
             if let Some(backend) = self.network_backend.as_mut() {
-                const MAX_RX_FRAMES_PER_POLL: usize = 256;
-                let mut rx_budget = MAX_RX_FRAMES_PER_POLL;
-                while rx_budget != 0 {
-                    let Some(frame) = backend.poll_receive() else {
-                        break;
-                    };
-                    rx_budget -= 1;
-                    e1000.borrow_mut().enqueue_rx_frame(frame);
-                }
-            }
-
-            // 4) Flush RX delivery for newly enqueued frames.
-            if bus_master_enabled {
-                e1000.borrow_mut().poll(&mut self.bus.platform.memory);
+                backend.transmit(frame);
             }
         }
+
+        // 3) Drain host->guest frames.
+        if let Some(backend) = self.network_backend.as_mut() {
+            const MAX_RX_FRAMES_PER_POLL: usize = 256;
+            let mut rx_budget = MAX_RX_FRAMES_PER_POLL;
+            while rx_budget != 0 {
+                let Some(frame) = backend.poll_receive() else {
+                    break;
+                };
+                rx_budget -= 1;
+                self.bus.platform.e1000_enqueue_rx_frame(frame);
+            }
+        }
+
+        // 4) Flush RX delivery for newly enqueued frames.
+        self.bus.platform.process_e1000();
 
         // 5) Route PCI INTx lines (including E1000) into the platform interrupt controller.
         self.bus.platform.poll_pci_intx_lines();
