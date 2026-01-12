@@ -1111,7 +1111,13 @@ an Ethernet “pipe” (the same conceptual boundary described in ADR 0013 / Opt
 
 Capture format notes:
 
-- The exported PCAPNG uses two Ethernet interfaces named `guest_rx` and `guest_tx`.
+- The exported PCAPNG uses a single Ethernet interface named `guest-eth0`.
+- Packet direction is encoded via the Enhanced Packet Block `epb_flags` option:
+  - `1` = inbound (remote → guest)
+  - `2` = outbound (guest → remote)
+- When proxy payload tracing is enabled (legacy in-browser NAT paths / future integrations), the capture may also include additional pseudo-interfaces:
+  - `tcp-proxy` (`LINKTYPE_USER0` / 147) containing pseudo-packets with an `ATCP` header.
+  - `udp-proxy` (`LINKTYPE_USER1` / 148) containing pseudo-packets with an `AUDP` header.
 - Frames are recorded at the forwarder boundary (best-effort). In particular, the capture may
   include frames that were later dropped due to missing tunnel/backpressure, or because `NET_RX`
   was full.
