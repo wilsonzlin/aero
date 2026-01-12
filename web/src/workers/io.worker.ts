@@ -135,6 +135,7 @@ import {
 } from "../usb/hid_descriptors";
 import {
   EXTERNAL_HUB_ROOT_PORT,
+  WEBUSB_GUEST_ROOT_PORT,
   UHCI_SYNTHETIC_HID_GAMEPAD_HUB_PORT,
   UHCI_SYNTHETIC_HID_KEYBOARD_HUB_PORT,
   UHCI_SYNTHETIC_HID_MOUSE_HUB_PORT,
@@ -245,7 +246,6 @@ const uhciRuntimeHubConfig = new UhciRuntimeExternalHubConfigManager();
 let pendingWasmInit: { api: WasmApi; variant: WasmVariant } | null = null;
 let wasmReadySent = false;
 
-const WEBUSB_GUEST_ROOT_PORT = 1;
 const SYNTHETIC_USB_HID_KEYBOARD_DEVICE_ID = 0x1000_0001;
 const SYNTHETIC_USB_HID_MOUSE_DEVICE_ID = 0x1000_0002;
 const SYNTHETIC_USB_HID_GAMEPAD_DEVICE_ID = 0x1000_0003;
