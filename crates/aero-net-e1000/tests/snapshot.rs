@@ -534,6 +534,24 @@ fn snapshot_rejects_pci_bar1_probe_with_nondefault_bar1() {
 }
 
 #[test]
+fn snapshot_rejects_unaligned_io_reg() {
+    // Tags from `aero_io_snapshot::io::net::state::E1000DeviceState`.
+    const TAG_IO_REG: u16 = 16;
+
+    let mut w = SnapshotWriter::new(
+        <E1000Device as IoSnapshot>::DEVICE_ID,
+        <E1000Device as IoSnapshot>::DEVICE_VERSION,
+    );
+    // The IOADDR register always clears the low 2 bits in the device model.
+    w.field_u32(TAG_IO_REG, 0x123);
+    let bytes = w.finish();
+
+    let mut dev = E1000Device::new([0; 6]);
+    let err = dev.load_state(&bytes).unwrap_err();
+    assert_eq!(err, SnapshotError::InvalidFieldEncoding("e1000 io_reg"));
+}
+
+#[test]
 fn snapshot_rejects_out_of_range_tx_ring_indices() {
     // Tags from `aero_io_snapshot::io::net::state::E1000DeviceState`.
     const TAG_TDLEN: u16 = 52;

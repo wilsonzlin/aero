@@ -410,7 +410,12 @@ impl IoSnapshot for E1000DeviceState {
         self.eerd = r.u32(TAG_EERD)?.unwrap_or(self.eerd);
         self.ctrl_ext = r.u32(TAG_CTRL_EXT)?.unwrap_or(self.ctrl_ext);
         self.mdic = r.u32(TAG_MDIC)?.unwrap_or(self.mdic);
-        self.io_reg = r.u32(TAG_IO_REG)?.unwrap_or(self.io_reg);
+        if let Some(io_reg) = r.u32(TAG_IO_REG)? {
+            if (io_reg & 3) != 0 {
+                return Err(SnapshotError::InvalidFieldEncoding("e1000 io_reg"));
+            }
+            self.io_reg = io_reg;
+        }
 
         self.icr = r.u32(TAG_ICR)?.unwrap_or(self.icr);
         self.ims = r.u32(TAG_IMS)?.unwrap_or(self.ims);
