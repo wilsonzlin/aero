@@ -447,10 +447,26 @@ impl VirtioPciDevice {
     pub fn process_notified_queues(&mut self, mem: &mut dyn GuestMemory) {
         let queue_count = self.queues.len();
         for queue_index in 0..queue_count {
-            let pending = self
-                .queues
-                .get(queue_index)
-                .is_some_and(|q| q.pending_notify && q.queue.is_some());
+            let pending = self.queues.get(queue_index).is_some_and(|q| {
+                let Some(vq) = q.queue.as_ref() else {
+                    return false;
+                };
+
+                // In addition to explicit notify writes, treat any queue with unconsumed avail
+                // entries as pending. This makes snapshot/restore robust when a snapshot is taken
+                // after the guest posts buffers but before the platform processes the notify.
+                if q.pending_notify {
+                    return true;
+                }
+
+                let Some(avail_idx_addr) = q.avail_addr.checked_add(2) else {
+                    return false;
+                };
+                let Ok(avail_idx) = read_u16_le(&*mem, avail_idx_addr) else {
+                    return false;
+                };
+                avail_idx != vq.next_avail()
+            });
             if !pending {
                 continue;
             }

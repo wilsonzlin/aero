@@ -537,6 +537,63 @@ fn virtio_blk_snapshot_restore_preserves_virtqueue_progress_and_does_not_duplica
 }
 
 #[test]
+fn virtio_blk_snapshot_restore_preserves_pending_avail_entries_without_renotify() {
+    let irq0 = TestIrq::default();
+    let (mut dev, caps, mut mem, backing, flushes, _irq0) = setup_with_irq(irq0);
+
+    // Build a FLUSH request, but snapshot after the guest "kicks" the queue and before the
+    // platform processes the notify.
+    let header = 0x7000;
+    let status = 0x9000;
+
+    write_u32_le(&mut mem, header, VIRTIO_BLK_T_FLUSH).unwrap();
+    write_u32_le(&mut mem, header + 4, 0).unwrap();
+    write_u64_le(&mut mem, header + 8, 0).unwrap();
+    mem.write(status, &[0xff]).unwrap();
+
+    write_desc(&mut mem, DESC_TABLE, 0, header, 16, 0x0001, 1);
+    write_desc(&mut mem, DESC_TABLE, 1, status, 1, 0x0002, 0);
+
+    write_u16_le(&mut mem, AVAIL_RING, 0).unwrap();
+    write_u16_le(&mut mem, AVAIL_RING + 2, 1).unwrap();
+    write_u16_le(&mut mem, AVAIL_RING + 4, 0).unwrap();
+    write_u16_le(&mut mem, USED_RING, 0).unwrap();
+    write_u16_le(&mut mem, USED_RING + 2, 0).unwrap();
+
+    // Guest writes the notify register, but the platform has not yet called
+    // `process_notified_queues()`.
+    dev.bar0_write(caps.notify, &0u16.to_le_bytes());
+
+    assert_eq!(mem.get_slice(status, 1).unwrap()[0], 0xff);
+    assert_eq!(flushes.get(), 0);
+    assert_eq!(dev.debug_queue_used_idx(&mem, 0), Some(0));
+
+    let snap_bytes = dev.save_state();
+    let mem_snap = mem.clone();
+
+    // Restore into a fresh device instance with the same disk backend and guest memory image.
+    let irq1 = TestIrq::default();
+    let backend = SharedDisk {
+        data: backing.clone(),
+        flushes: flushes.clone(),
+    };
+    let blk = VirtioBlk::new(backend);
+    let mut restored = VirtioPciDevice::new(Box::new(blk), Box::new(irq1));
+    restored.load_state(&snap_bytes).unwrap();
+
+    let mut mem2 = mem_snap.clone();
+
+    // The platform should not need to re-notify after restore: the device can detect that
+    // `avail.idx != next_avail` and process the pending entry.
+    restored.process_notified_queues(&mut mem2);
+
+    assert_eq!(mem2.get_slice(status, 1).unwrap()[0], 0);
+    assert_eq!(flushes.get(), 1);
+    assert_eq!(restored.debug_queue_used_idx(&mem2, 0), Some(1));
+    assert_eq!(restored.debug_queue_progress(0), Some((1, 1, false)));
+}
+
+#[test]
 fn malformed_chains_return_ioerr_without_panicking() {
     let (mut dev, caps, mut mem, _backing, _flushes) = setup();
 
