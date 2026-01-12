@@ -239,6 +239,42 @@ const MAX_SAMPLERS: usize = 16;
 const MAX_REASONABLE_RENDER_STATE_ID: u32 = 4096;
 const MAX_REASONABLE_SAMPLER_STATE_ID: u32 = 4096;
 
+const DISABLE_WGPU_TEXTURE_COMPRESSION_ENV: &str = "AERO_DISABLE_WGPU_TEXTURE_COMPRESSION";
+
+fn env_var_truthy(name: &str) -> bool {
+    let Ok(raw) = std::env::var(name) else {
+        return false;
+    };
+
+    let v = raw.trim();
+    v == "1"
+        || v.eq_ignore_ascii_case("true")
+        || v.eq_ignore_ascii_case("yes")
+        || v.eq_ignore_ascii_case("on")
+}
+
+fn negotiated_features_for_available(
+    available: wgpu::Features,
+    disable_texture_compression: bool,
+) -> wgpu::Features {
+    let mut requested = wgpu::Features::empty();
+
+    if !disable_texture_compression {
+        // Texture compression is optional but beneficial (guest textures, DDS, etc).
+        for feature in [
+            wgpu::Features::TEXTURE_COMPRESSION_BC,
+            wgpu::Features::TEXTURE_COMPRESSION_ETC2,
+            wgpu::Features::TEXTURE_COMPRESSION_ASTC_HDR,
+        ] {
+            if available.contains(feature) {
+                requested |= feature;
+            }
+        }
+    }
+
+    requested
+}
+
 #[derive(Debug)]
 struct GraphicsState {
     color_target: Option<RenderTarget>,
@@ -357,33 +393,12 @@ impl D3D9Runtime {
         let downlevel_flags = adapter.get_downlevel_capabilities().flags;
 
         let adapter_features = adapter.features();
-        let texture_compression_disabled = std::env::var("AERO_DISABLE_WGPU_TEXTURE_COMPRESSION")
-            .ok()
-            .map(|raw| {
-                let v = raw.trim();
-                v == "1"
-                    || v.eq_ignore_ascii_case("true")
-                    || v.eq_ignore_ascii_case("yes")
-                    || v.eq_ignore_ascii_case("on")
-            })
-            .unwrap_or(false);
-
-        let mut required_features = wgpu::Features::empty();
-        if !texture_compression_disabled {
-            // Texture compression is optional but beneficial (guest textures, DDS, etc).
-            //
-            // Note: Only request features the adapter advertises, otherwise `request_device`
-            // will fail.
-            for feature in [
-                wgpu::Features::TEXTURE_COMPRESSION_BC,
-                wgpu::Features::TEXTURE_COMPRESSION_ETC2,
-                wgpu::Features::TEXTURE_COMPRESSION_ASTC_HDR,
-            ] {
-                if adapter_features.contains(feature) {
-                    required_features |= feature;
-                }
-            }
-        }
+        let texture_compression_disabled =
+            env_var_truthy(DISABLE_WGPU_TEXTURE_COMPRESSION_ENV);
+        let required_features = negotiated_features_for_available(
+            adapter_features,
+            texture_compression_disabled,
+        );
 
         debug!(
             ?adapter_features,
@@ -2582,4 +2597,39 @@ async fn wait_for_queue(device: &wgpu::Device, queue: &wgpu::Queue) {
     #[cfg(target_arch = "wasm32")]
     device.poll(wgpu::Maintain::Poll);
     let _ = receiver.receive().await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn negotiated_features_respects_texture_compression_opt_out() {
+        let compression = wgpu::Features::TEXTURE_COMPRESSION_BC
+            | wgpu::Features::TEXTURE_COMPRESSION_ETC2
+            | wgpu::Features::TEXTURE_COMPRESSION_ASTC_HDR;
+
+        let available = compression;
+
+        let requested = negotiated_features_for_available(available, false);
+        assert!(requested.contains(compression));
+
+        let requested = negotiated_features_for_available(available, true);
+        assert!(!requested.intersects(compression));
+    }
+
+    #[test]
+    fn negotiated_features_only_requests_adapter_supported_bits() {
+        let requested = negotiated_features_for_available(wgpu::Features::empty(), false);
+        assert!(requested.is_empty());
+    }
+
+    #[test]
+    fn negotiated_features_only_requests_supported_compression_features() {
+        let available = wgpu::Features::TEXTURE_COMPRESSION_BC;
+        let requested = negotiated_features_for_available(available, false);
+        assert!(requested.contains(wgpu::Features::TEXTURE_COMPRESSION_BC));
+        assert!(!requested.contains(wgpu::Features::TEXTURE_COMPRESSION_ETC2));
+        assert!(!requested.contains(wgpu::Features::TEXTURE_COMPRESSION_ASTC_HDR));
+    }
 }
