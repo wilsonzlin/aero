@@ -5,6 +5,7 @@ use std::sync::{
 
 use aero_devices::pci::{profile, PciConfigSpace, PciDevice};
 use memory::MemoryBus;
+use memory::MmioHandler;
 
 use crate::ahci::AhciController;
 use crate::ata::AtaDrive;
@@ -205,5 +206,15 @@ impl PciDevice for AhciPciDevice {
 
     fn config_mut(&mut self) -> &mut PciConfigSpace {
         &mut self.config
+    }
+}
+
+impl MmioHandler for AhciPciDevice {
+    fn read(&mut self, offset: u64, size: usize) -> u64 {
+        self.mmio_read(offset, size)
+    }
+
+    fn write(&mut self, offset: u64, size: usize, value: u64) {
+        self.mmio_write(offset, size, value);
     }
 }
