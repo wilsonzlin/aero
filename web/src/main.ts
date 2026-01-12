@@ -43,6 +43,7 @@ import { FRAME_SEQ_INDEX, FRAME_STATUS_INDEX } from "./ipc/gpu-protocol";
 import { SHARED_FRAMEBUFFER_HEADER_U32_LEN, SharedFramebufferHeaderIndex } from "./ipc/shared-layout";
 import { mountSettingsPanel } from "./ui/settings_panel";
 import { mountStatusPanel } from "./ui/status_panel";
+import { installNetTraceUI } from "./net/trace_ui";
 import { renderWebUsbPanel } from "./usb/webusb_panel";
 import { renderWebUsbUhciHarnessPanel } from "./usb/webusb_uhci_harness_panel";
 import { isUsbUhciHarnessStatusMessage, type WebUsbUhciHarnessRuntimeSnapshot } from "./usb/webusb_harness_runtime";
@@ -358,6 +359,7 @@ function render(): void {
     renderGpuWorkerPanel(),
     renderSm5TrianglePanel(),
     renderOpfsPanel(),
+    renderNetTracePanel(),
     renderDisksPanel(),
     renderAudioPanel(),
     renderMicrophonePanel(),
@@ -1502,6 +1504,39 @@ function renderOpfsPanel(): HTMLElement {
     quotaLine.textContent = `Storage quota: error (${err instanceof Error ? err.message : String(err)})`;
     persistenceLine.className = "mono bad";
     persistenceLine.textContent = "Persistent storage: error.";
+  });
+
+  return panel;
+}
+
+function renderNetTracePanel(): HTMLElement {
+  const panel = el("div", { class: "panel" }, el("h2", { text: "Network trace" }));
+
+  function requireNetWorkerReady(): void {
+    const status = workerCoordinator.getWorkerStatuses().net;
+    if (status.state !== "ready") {
+      throw new Error("Net worker is not running. Start workers before using network tracing.");
+    }
+  }
+
+  installNetTraceUI(panel, {
+    isEnabled: () => workerCoordinator.isNetTraceEnabled(),
+    enable: () => {
+      requireNetWorkerReady();
+      workerCoordinator.setNetTraceEnabled(true);
+    },
+    disable: () => {
+      requireNetWorkerReady();
+      workerCoordinator.setNetTraceEnabled(false);
+    },
+    clearCapture: () => {
+      requireNetWorkerReady();
+      workerCoordinator.clearNetTrace();
+    },
+    downloadPcapng: async () => {
+      requireNetWorkerReady();
+      return await workerCoordinator.takeNetTracePcapng(30_000);
+    },
   });
 
   return panel;

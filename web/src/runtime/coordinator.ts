@@ -23,6 +23,11 @@ import {
 import {
   type ConfigAckMessage,
   type ConfigUpdateMessage,
+  type NetTraceClearMessage,
+  type NetTraceDisableMessage,
+  type NetTraceEnableMessage,
+  type NetTracePcapngMessage,
+  type NetTraceTakePcapngMessage,
   MessageType,
   type ProtocolMessage,
   type SetAudioRingBufferMessage,
@@ -123,6 +128,12 @@ type GpuWorkerGpuErrorMessage = {
 type GpuWorkerErrorEventMessage = {
   type: "gpu_error_event";
   event: { category?: string; message?: string };
+};
+
+type PendingNetTraceRequest = {
+  resolve: (bytes: Uint8Array<ArrayBuffer>) => void;
+  reject: (err: Error) => void;
+  timeout: number;
 };
 
 function nowMs(): number {
@@ -245,6 +256,10 @@ export class WorkerCoordinator {
 
   private cursorImage: { width: number; height: number; rgba8: ArrayBuffer } | null = null;
   private cursorState: { enabled: boolean; x: number; y: number; hotX: number; hotY: number } | null = null;
+
+  private netTraceEnabled = false;
+  private nextNetTraceRequestId = 1;
+  private pendingNetTraceRequests = new Map<number, PendingNetTraceRequest>();
 
   private activeConfig: AeroConfig | null = null;
   private configVersion = 0;
@@ -713,6 +728,54 @@ export class WorkerCoordinator {
     this.setAudioRingBuffer(ringBuffer, capacityFrames, channelCount, sampleRate);
   }
 
+  setNetTraceEnabled(enabled: boolean): void {
+    this.netTraceEnabled = !!enabled;
+    const net = this.workers.net?.worker;
+    if (!net) return;
+    this.syncNetTraceEnabledToWorker(net);
+  }
+
+  isNetTraceEnabled(): boolean {
+    return this.netTraceEnabled;
+  }
+
+  clearNetTrace(): void {
+    const net = this.workers.net?.worker;
+    if (!net) return;
+    net.postMessage({ kind: "net.trace.clear" } satisfies NetTraceClearMessage);
+  }
+
+  takeNetTracePcapng(timeoutMs = 10_000): Promise<Uint8Array<ArrayBuffer>> {
+    const net = this.workers.net?.worker;
+    if (!net) {
+      return Promise.reject(new Error("Cannot take network trace: net worker is not running."));
+    }
+
+    const requestId = this.nextNetTraceRequestId++;
+    return new Promise<Uint8Array<ArrayBuffer>>((resolve, reject) => {
+      const timer = globalThis.setTimeout(() => {
+        this.pendingNetTraceRequests.delete(requestId);
+        reject(new Error(`Timed out waiting for net trace capture (requestId=${requestId})`));
+      }, timeoutMs);
+      (timer as unknown as { unref?: () => void }).unref?.();
+
+      const pending: PendingNetTraceRequest = {
+        resolve,
+        reject: reject as (err: Error) => void,
+        timeout: timer as unknown as number,
+      };
+      this.pendingNetTraceRequests.set(requestId, pending);
+
+      try {
+        net.postMessage({ kind: "net.trace.take_pcapng", requestId } satisfies NetTraceTakePcapngMessage);
+      } catch (err) {
+        clearTimeout(pending.timeout);
+        this.pendingNetTraceRequests.delete(requestId);
+        reject(err instanceof Error ? err : new Error(String(err)));
+      }
+    });
+  }
+
   async snapshotSaveToOpfs(path: string): Promise<void> {
     if (this.snapshotInFlight) {
       throw new Error("VM snapshot already in progress.");
@@ -981,6 +1044,9 @@ export class WorkerCoordinator {
     for (const role of WORKER_ROLES) {
       const info = this.workers[role];
       if (!info) continue;
+      if (role === "net") {
+        this.rejectAllPendingNetTraceRequests(new Error("Net worker stopped while a trace request was pending."));
+      }
       void this.trySendCommand(info, { kind: "shutdown" });
       info.worker.terminate();
       info.status = { state: "stopped" };
@@ -1075,6 +1141,10 @@ export class WorkerCoordinator {
     const shared = this.shared;
     const info = this.workers[role];
     if (!shared || !info) return;
+
+    if (role === "net") {
+      this.rejectAllPendingNetTraceRequests(new Error("Net worker restarted while a trace request was pending."));
+    }
 
     setReadyFlag(shared.status, role, false);
     info.worker.terminate();
@@ -1239,6 +1309,20 @@ export class WorkerCoordinator {
       return;
     }
 
+    const maybeNetTracePcapng = data as Partial<NetTracePcapngMessage>;
+    if (
+      maybeNetTracePcapng?.kind === "net.trace.pcapng" &&
+      typeof maybeNetTracePcapng.requestId === "number" &&
+      maybeNetTracePcapng.bytes instanceof ArrayBuffer
+    ) {
+      const pending = this.pendingNetTraceRequests.get(maybeNetTracePcapng.requestId);
+      if (!pending) return;
+      clearTimeout(pending.timeout);
+      this.pendingNetTraceRequests.delete(maybeNetTracePcapng.requestId);
+      pending.resolve(new Uint8Array(maybeNetTracePcapng.bytes) as Uint8Array<ArrayBuffer>);
+      return;
+    }
+
     const maybeCursorImage = data as Partial<CursorSetImageMessage>;
     if (
       maybeCursorImage?.kind === "cursor.set_image" &&
@@ -1304,6 +1388,10 @@ export class WorkerCoordinator {
       info.status = { state: "ready" };
       setReadyFlag(shared.status, role, true);
       this.workerRestartBackoff[role].reset();
+
+      if (role === "net") {
+        this.syncNetTraceEnabledToWorker(info.worker);
+      }
 
       if ((role === "io" || role === "cpu") && this.micRingBuffer) {
         info.worker.postMessage({
@@ -1403,6 +1491,23 @@ export class WorkerCoordinator {
     } else {
       this.scheduleFullRestart("worker_message_error");
     }
+  }
+
+  private syncNetTraceEnabledToWorker(worker: Worker): void {
+    if (this.netTraceEnabled) {
+      worker.postMessage({ kind: "net.trace.enable" } satisfies NetTraceEnableMessage);
+    } else {
+      worker.postMessage({ kind: "net.trace.disable" } satisfies NetTraceDisableMessage);
+    }
+  }
+
+  private rejectAllPendingNetTraceRequests(error: Error): void {
+    if (this.pendingNetTraceRequests.size === 0) return;
+    for (const [requestId, pending] of this.pendingNetTraceRequests) {
+      clearTimeout(pending.timeout);
+      pending.reject(new Error(`${error.message} (requestId=${requestId})`));
+    }
+    this.pendingNetTraceRequests.clear();
   }
 
   private maybeMarkRunning(): void {

@@ -145,11 +145,38 @@ export type ResetRequestMessage = {
   reason?: string;
 };
 
+export type NetTraceEnableMessage = {
+  kind: "net.trace.enable";
+};
+
+export type NetTraceDisableMessage = {
+  kind: "net.trace.disable";
+};
+
+export type NetTraceClearMessage = {
+  kind: "net.trace.clear";
+};
+
+export type NetTraceTakePcapngMessage = {
+  kind: "net.trace.take_pcapng";
+  requestId: number;
+};
+
+export type NetTracePcapngMessage = {
+  kind: "net.trace.pcapng";
+  requestId: number;
+  bytes: ArrayBuffer;
+};
+
 export type CoordinatorToWorkerPostMessage =
   | WorkerInitMessage
   | ConfigUpdateMessage
   | SetMicrophoneRingBufferMessage
-  | SetAudioRingBufferMessage;
+  | SetAudioRingBufferMessage
+  | NetTraceEnableMessage
+  | NetTraceDisableMessage
+  | NetTraceClearMessage
+  | NetTraceTakePcapngMessage;
 
 /**
  * Cursor image update forwarded from an emulation worker (typically CPU/WASM) to the coordinator.
@@ -188,4 +215,5 @@ export type WorkerToCoordinatorPostMessage =
   | SerialOutputMessage
   | ResetRequestMessage
   | CursorSetImageMessage
-  | CursorSetStateMessage;
+  | CursorSetStateMessage
+  | NetTracePcapngMessage;

@@ -4,6 +4,7 @@ export interface NetTraceBackend {
   isEnabled(): boolean;
   enable(): void;
   disable(): void;
+  clearCapture?(): void;
   downloadPcapng(): Promise<Uint8Array>;
 }
 
@@ -68,6 +69,19 @@ export function installNetTraceUI(container: HTMLElement, backend: NetTraceBacke
     }
   });
 
+  const clearButton = document.createElement("button");
+  clearButton.textContent = "Clear capture";
+  clearButton.disabled = typeof backend.clearCapture !== "function";
+  clearButton.addEventListener("click", () => {
+    status.textContent = "";
+    try {
+      backend.clearCapture?.();
+      status.textContent = "Capture cleared.";
+    } catch (err) {
+      status.textContent = err instanceof Error ? err.message : String(err);
+    }
+  });
+
   const opfsPath = document.createElement("input");
   opfsPath.type = "text";
   opfsPath.value = "captures/aero-net-trace.pcapng";
@@ -97,6 +111,7 @@ export function installNetTraceUI(container: HTMLElement, backend: NetTraceBacke
 
   const buttonRow = document.createElement("div");
   buttonRow.className = "row";
+  buttonRow.appendChild(clearButton);
   buttonRow.appendChild(downloadButton);
   buttonRow.appendChild(saveButton);
   wrapper.appendChild(buttonRow);
