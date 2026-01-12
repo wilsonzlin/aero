@@ -137,9 +137,32 @@ static VOID AerovblkResetVirtqueueLocked(_Inout_ PAEROVBLK_DEVICE_EXTENSION devE
   virtqueue_split_reset(&devExt->Vq);
 }
 
-static VOID AerovblkFreeRequestContexts(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt) {
+static VOID AerovblkFreeRequestContextsArray(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt,
+                                            _Inout_updates_opt_(ctxCount) PAEROVBLK_REQUEST_CONTEXT ctxs,
+                                            _In_ ULONG ctxCount) {
   ULONG i;
-  PAEROVBLK_REQUEST_CONTEXT ctx;
+
+  if (devExt == NULL) {
+    return;
+  }
+
+  if (ctxs == NULL) {
+    return;
+  }
+
+  for (i = 0; i < ctxCount; ++i) {
+    if (ctxs[i].SharedPageVa != NULL) {
+      StorPortFreeContiguousMemorySpecifyCache(devExt, ctxs[i].SharedPageVa, PAGE_SIZE, MmNonCached);
+      ctxs[i].SharedPageVa = NULL;
+    }
+  }
+
+  StorPortFreePool(devExt, ctxs);
+}
+
+static VOID AerovblkFreeRequestContexts(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt) {
+  PAEROVBLK_REQUEST_CONTEXT ctxs;
+  ULONG ctxCount;
 
   if (devExt == NULL) {
     return;
@@ -152,20 +175,70 @@ static VOID AerovblkFreeRequestContexts(_Inout_ PAEROVBLK_DEVICE_EXTENSION devEx
   InitializeListHead(&devExt->FreeRequestList);
   devExt->FreeRequestCount = 0;
 
-  if (devExt->RequestContexts != NULL) {
-    for (i = 0; i < devExt->RequestContextCount; ++i) {
-      ctx = &devExt->RequestContexts[i];
-      if (ctx->SharedPageVa != NULL) {
-        StorPortFreeContiguousMemorySpecifyCache(devExt, ctx->SharedPageVa, PAGE_SIZE, MmNonCached);
-        ctx->SharedPageVa = NULL;
-      }
-    }
+  ctxs = devExt->RequestContexts;
+  ctxCount = devExt->RequestContextCount;
+  devExt->RequestContexts = NULL;
+  devExt->RequestContextCount = 0;
 
-    StorPortFreePool(devExt, devExt->RequestContexts);
-    devExt->RequestContexts = NULL;
+  AerovblkFreeRequestContextsArray(devExt, ctxs, ctxCount);
+}
+
+static VOID AerovblkFreeResources(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt) {
+  STOR_LOCK_HANDLE lock;
+  PAEROVBLK_REQUEST_CONTEXT requestContexts;
+  ULONG requestContextCount;
+  virtqueue_split_t vq;
+  virtio_dma_buffer_t ringDma;
+
+  if (devExt == NULL) {
+    return;
   }
 
+  /*
+   * The caller must reset the device first so it cannot DMA into ring/request
+   * memory while we free it.
+   */
+
+  /*
+   * Detach shared resources under the interrupt spinlock so the interrupt
+   * handler and StartIo path stop touching them before we free any backing
+   * memory. We free outside the lock to avoid holding the spinlock across
+   * potentially expensive memory manager operations.
+   */
+  StorPortAcquireSpinLock(devExt, InterruptLock, &lock);
+
+  AerovblkAbortOutstandingRequestsLocked(devExt);
+
+  requestContexts = devExt->RequestContexts;
+  requestContextCount = devExt->RequestContextCount;
+  devExt->RequestContexts = NULL;
   devExt->RequestContextCount = 0;
+  InitializeListHead(&devExt->FreeRequestList);
+  devExt->FreeRequestCount = 0;
+
+  vq = devExt->Vq;
+  RtlZeroMemory(&devExt->Vq, sizeof(devExt->Vq));
+
+  ringDma = devExt->RingDma;
+  RtlZeroMemory(&devExt->RingDma, sizeof(devExt->RingDma));
+
+  StorPortReleaseSpinLock(devExt, &lock);
+
+  AerovblkFreeRequestContextsArray(devExt, requestContexts, requestContextCount);
+
+  /*
+   * Destroy the virtqueue (frees cookies + indirect tables) and free the split
+   * ring DMA buffer allocated via virtqueue_split_alloc_ring.
+   */
+  virtqueue_split_destroy(&vq);
+  virtqueue_split_free_ring(&devExt->VirtioOps, &devExt->VirtioOpsCtx, &ringDma);
+
+  /*
+   * Defensive: clear queue mapping bookkeeping used by VirtioPciGetQueueNotifyAddress.
+   * It is safe to leave these intact, but clearing helps catch accidental reuse
+   * after removal.
+   */
+  devExt->QueueNotifyAddrCache[0] = NULL;
 }
 
 static BOOLEAN AerovblkAllocateRequestContexts(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt) {
@@ -1129,12 +1202,21 @@ SCSI_ADAPTER_CONTROL_STATUS AerovblkHwAdapterControl(_In_ PVOID deviceExtension,
       VirtioPciResetDevice(&devExt->Vdev);
     }
 
-    StorPortAcquireSpinLock(devExt, InterruptLock, &lock);
-    AerovblkAbortOutstandingRequestsLocked(devExt);
-    if (devExt->Vq.queue_size != 0) {
-      AerovblkResetVirtqueueLocked(devExt);
+    if (controlType == ScsiStopAdapter) {
+      StorPortAcquireSpinLock(devExt, InterruptLock, &lock);
+      AerovblkAbortOutstandingRequestsLocked(devExt);
+      if (devExt->Vq.queue_size != 0) {
+        AerovblkResetVirtqueueLocked(devExt);
+      }
+      StorPortReleaseSpinLock(devExt, &lock);
+      return ScsiAdapterControlSuccess;
     }
-    StorPortReleaseSpinLock(devExt, &lock);
+
+    /*
+     * ScsiRemoveAdapter is the final teardown path (driver unload / hot-remove).
+     * Abort outstanding requests and release all allocations.
+     */
+    AerovblkFreeResources(devExt);
     return ScsiAdapterControlSuccess;
   }
 
