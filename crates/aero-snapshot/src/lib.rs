@@ -330,6 +330,7 @@ fn restore_snapshot_impl<R: Read, T: SnapshotTarget>(
 
     const MAX_DEVICES_SECTION_LEN: u64 = 256 * 1024 * 1024;
     const MAX_DEVICE_COUNT: usize = 4096;
+    const MAX_CPU_COUNT: usize = 256;
 
     // For dirty snapshots, we must validate parent snapshot id before applying RAM diffs.
     //
@@ -399,6 +400,9 @@ fn restore_snapshot_impl<R: Read, T: SnapshotTarget>(
                         return Err(SnapshotError::Corrupt("duplicate CPU/CPUS section"));
                     }
                     let count = section_reader.read_u32_le()? as usize;
+                    if count > MAX_CPU_COUNT {
+                        return Err(SnapshotError::Corrupt("too many CPUs"));
+                    }
                     let mut cpus = Vec::with_capacity(count.min(64));
                     let mut seen = HashSet::with_capacity(count.min(64));
                     for _ in 0..count {
@@ -419,6 +423,9 @@ fn restore_snapshot_impl<R: Read, T: SnapshotTarget>(
                         return Err(SnapshotError::Corrupt("duplicate CPU/CPUS section"));
                     }
                     let count = section_reader.read_u32_le()? as usize;
+                    if count > MAX_CPU_COUNT {
+                        return Err(SnapshotError::Corrupt("too many CPUs"));
+                    }
                     let mut cpus = Vec::with_capacity(count.min(64));
                     let mut seen = HashSet::with_capacity(count.min(64));
                     for _ in 0..count {

@@ -477,6 +477,23 @@ fn restore_snapshot_rejects_duplicate_apic_ids_in_cpus_section() {
 }
 
 #[test]
+fn restore_snapshot_rejects_excessive_cpu_count() {
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(SNAPSHOT_MAGIC);
+    bytes.extend_from_slice(&SNAPSHOT_VERSION_V1.to_le_bytes());
+    bytes.push(SNAPSHOT_ENDIANNESS_LITTLE);
+    bytes.push(0);
+    bytes.extend_from_slice(&0u32.to_le_bytes());
+
+    let cpus_payload = u32::MAX.to_le_bytes();
+    push_section(&mut bytes, SectionId::CPUS, 2, 0, &cpus_payload);
+
+    let mut target = DummyTarget::new(0);
+    let err = restore_snapshot(&mut Cursor::new(bytes), &mut target).unwrap_err();
+    assert!(matches!(err, SnapshotError::Corrupt("too many CPUs")));
+}
+
+#[test]
 fn restore_snapshot_rejects_duplicate_meta_sections() {
     let mut bytes = Vec::new();
     bytes.extend_from_slice(SNAPSHOT_MAGIC);
