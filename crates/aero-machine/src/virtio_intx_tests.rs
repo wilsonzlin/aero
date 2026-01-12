@@ -25,7 +25,12 @@ fn new_virtio_net_machine() -> Machine {
     .unwrap()
 }
 
-fn configure_virtio_net_pic(m: &mut Machine) -> (std::rc::Rc<std::cell::RefCell<aero_platform::interrupts::PlatformInterrupts>>, u8) {
+fn configure_virtio_net_pic(
+    m: &mut Machine,
+) -> (
+    std::rc::Rc<std::cell::RefCell<aero_platform::interrupts::PlatformInterrupts>>,
+    u8,
+) {
     let interrupts = m.platform_interrupts().expect("pc platform enabled");
     let pci_intx = m.pci_intx_router().expect("pc platform enabled");
 

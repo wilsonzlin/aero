@@ -322,7 +322,11 @@ impl PcMachine {
                 ResetEvent::Cpu => saw_cpu = true,
             }
         }
-        if saw_cpu { Some(ResetKind::Cpu) } else { None }
+        if saw_cpu {
+            Some(ResetKind::Cpu)
+        } else {
+            None
+        }
     }
 
     fn poll_and_queue_one_external_interrupt(&mut self) -> bool {
@@ -603,16 +607,16 @@ impl PcMachine {
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::PcMachine;
+    use crate::RunExit;
     use aero_cpu_core::state::CpuMode;
     use aero_cpu_core::state::RFLAGS_IF;
     use aero_cpu_core::CpuCore;
-    use aero_devices::reset_ctrl::RESET_CTRL_PORT;
     use aero_devices::pci::profile::NIC_E1000_82540EM;
     use aero_devices::pci::PciInterruptPin;
+    use aero_devices::reset_ctrl::RESET_CTRL_PORT;
     use aero_net_e1000::ICR_TXDW;
     use aero_platform::interrupts::InterruptController as PlatformInterruptController;
     use aero_platform::reset::ResetKind;
-    use crate::RunExit;
     use memory::MemoryBus as _;
 
     #[test]
