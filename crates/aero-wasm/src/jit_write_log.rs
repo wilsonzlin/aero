@@ -103,9 +103,20 @@ impl GuestWriteLog {
         if self.overflowed {
             self.overflowed = false;
             self.entries.clear();
-            let len = guest_size.min(usize::MAX as u64) as usize;
-            if len != 0 {
-                f(0, len);
+            // When `guest_size` exceeds `usize::MAX` (possible with Q35 high-RAM remap where the
+            // guest-physical end can exceed 4GiB even on wasm32), split the coarse invalidation into
+            // multiple chunks so we still cover the full guest-physical address space.
+            let mut start = 0u64;
+            let mut remaining = guest_size;
+            while remaining != 0 {
+                let chunk_len_u64 = remaining.min(usize::MAX as u64);
+                let chunk_len = chunk_len_u64 as usize;
+                if chunk_len == 0 {
+                    break;
+                }
+                f(start, chunk_len);
+                start = start.saturating_add(chunk_len_u64);
+                remaining = remaining.saturating_sub(chunk_len_u64);
             }
             return;
         }
