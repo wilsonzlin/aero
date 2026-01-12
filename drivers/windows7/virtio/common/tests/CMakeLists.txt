@@ -62,3 +62,22 @@ set_target_properties(virtio_pci_cap_parser_tests_strict_layout PROPERTIES
 )
 
 add_test(NAME virtio_pci_cap_parser_tests_strict_layout COMMAND virtio_pci_cap_parser_tests_strict_layout)
+
+add_executable(virtio_intx_wdm_tests
+    test_intx_wdm.c
+    ${CMAKE_CURRENT_LIST_DIR}/wdk_stubs/wdk_stubs.c
+    ${CMAKE_CURRENT_LIST_DIR}/../src/virtio_pci_intx_wdm.c
+)
+
+target_include_directories(virtio_intx_wdm_tests PRIVATE
+    ${CMAKE_CURRENT_LIST_DIR}/wdk_stubs
+    ${CMAKE_CURRENT_LIST_DIR}/../include
+    ${CMAKE_CURRENT_LIST_DIR}
+)
+
+set_target_properties(virtio_intx_wdm_tests PROPERTIES
+    C_STANDARD 99
+    C_STANDARD_REQUIRED YES
+)
+
+add_test(NAME virtio_intx_wdm_tests COMMAND virtio_intx_wdm_tests)

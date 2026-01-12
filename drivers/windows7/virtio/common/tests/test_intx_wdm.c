@@ -1,0 +1,270 @@
+/* SPDX-License-Identifier: MIT OR Apache-2.0 */
+
+#include <assert.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+#include "virtio_pci_intx_wdm.h"
+
+/*
+ * This test harness relies on assert() for side-effectful setup calls. Ensure
+ * it remains active even in Release builds (which typically define NDEBUG).
+ */
+#undef assert
+#define assert(expr)                                                                                                      \
+    do {                                                                                                                 \
+        if (!(expr)) {                                                                                                   \
+            fprintf(stderr, "ASSERT failed at %s:%d: %s\n", __FILE__, __LINE__, #expr);                                  \
+            abort();                                                                                                     \
+        }                                                                                                                \
+    } while (0)
+
+typedef struct intx_test_ctx {
+    PVIRTIO_INTX expected_intx;
+    int config_calls;
+    int queue_calls;
+    int dpc_calls;
+    UCHAR last_isr_status;
+} intx_test_ctx_t;
+
+static VOID evt_config(_Inout_ PVIRTIO_INTX Intx, _In_opt_ PVOID Cookie)
+{
+    intx_test_ctx_t* ctx = (intx_test_ctx_t*)Cookie;
+    assert(ctx != NULL);
+    assert(Intx == ctx->expected_intx);
+    ctx->config_calls++;
+}
+
+static VOID evt_queue(_Inout_ PVIRTIO_INTX Intx, _In_opt_ PVOID Cookie)
+{
+    intx_test_ctx_t* ctx = (intx_test_ctx_t*)Cookie;
+    assert(ctx != NULL);
+    assert(Intx == ctx->expected_intx);
+    ctx->queue_calls++;
+}
+
+static VOID evt_dpc(_Inout_ PVIRTIO_INTX Intx, _In_ UCHAR IsrStatus, _In_opt_ PVOID Cookie)
+{
+    intx_test_ctx_t* ctx = (intx_test_ctx_t*)Cookie;
+    assert(ctx != NULL);
+    assert(Intx == ctx->expected_intx);
+    ctx->dpc_calls++;
+    ctx->last_isr_status = IsrStatus;
+}
+
+static CM_PARTIAL_RESOURCE_DESCRIPTOR make_int_desc(void)
+{
+    CM_PARTIAL_RESOURCE_DESCRIPTOR desc;
+    RtlZeroMemory(&desc, sizeof(desc));
+    desc.Type = CmResourceTypeInterrupt;
+    desc.ShareDisposition = 3; /* shared */
+    desc.Flags = 0;
+    desc.u.Interrupt.Vector = 0x10;
+    desc.u.Interrupt.Level = 0x5;
+    desc.u.Interrupt.Affinity = 0x1;
+    return desc;
+}
+
+static void test_spurious_interrupt(void)
+{
+    VIRTIO_INTX intx;
+    volatile UCHAR isr_reg = 0;
+    CM_PARTIAL_RESOURCE_DESCRIPTOR desc;
+    intx_test_ctx_t ctx;
+    NTSTATUS status;
+    BOOLEAN claimed;
+
+    desc = make_int_desc();
+    RtlZeroMemory(&ctx, sizeof(ctx));
+
+    status = VirtioIntxConnect(NULL, &desc, &isr_reg, evt_config, evt_queue, NULL, &ctx, &intx);
+    assert(status == STATUS_SUCCESS);
+
+    ctx.expected_intx = &intx;
+
+    /* Spurious interrupt: status byte contains 0. */
+    isr_reg = 0;
+    claimed = WdkTestTriggerInterrupt(intx.InterruptObject);
+    assert(claimed == FALSE);
+    assert(intx.SpuriousCount == 1);
+    assert(intx.IsrCount == 0);
+    assert(intx.DpcCount == 0);
+    assert(intx.PendingIsrStatus == 0);
+    assert(intx.DpcInFlight == 0);
+    assert(intx.Dpc.Inserted == FALSE);
+
+    assert(ctx.config_calls == 0);
+    assert(ctx.queue_calls == 0);
+
+    VirtioIntxDisconnect(&intx);
+    assert(intx.Initialized == FALSE);
+    assert(intx.InterruptObject == NULL);
+    assert(intx.IsrStatusRegister == NULL);
+}
+
+static void test_queue_config_dispatch(void)
+{
+    VIRTIO_INTX intx;
+    volatile UCHAR isr_reg = 0;
+    CM_PARTIAL_RESOURCE_DESCRIPTOR desc;
+    intx_test_ctx_t ctx;
+    NTSTATUS status;
+    BOOLEAN claimed;
+
+    desc = make_int_desc();
+    RtlZeroMemory(&ctx, sizeof(ctx));
+
+    status = VirtioIntxConnect(NULL, &desc, &isr_reg, evt_config, evt_queue, NULL, &ctx, &intx);
+    assert(status == STATUS_SUCCESS);
+
+    ctx.expected_intx = &intx;
+
+    /* Interrupt with both queue + config bits set. */
+    isr_reg = 0x3;
+    claimed = WdkTestTriggerInterrupt(intx.InterruptObject);
+    assert(claimed != FALSE);
+
+    /* READ_REGISTER_UCHAR is a read-to-clear ACK. */
+    assert(isr_reg == 0);
+
+    assert(intx.IsrCount == 1);
+    assert(intx.SpuriousCount == 0);
+    assert(intx.PendingIsrStatus == 0x3);
+    assert(intx.DpcInFlight == 1);
+    assert(intx.Dpc.Inserted != FALSE);
+
+    /* Now run the queued DPC. */
+    assert(WdkTestRunQueuedDpc(&intx.Dpc) != FALSE);
+    assert(intx.Dpc.Inserted == FALSE);
+
+    assert(intx.PendingIsrStatus == 0);
+    assert(intx.DpcInFlight == 0);
+    assert(intx.DpcCount == 1);
+
+    assert(ctx.config_calls == 1);
+    assert(ctx.queue_calls == 1);
+
+    VirtioIntxDisconnect(&intx);
+}
+
+static void test_bit_accumulation_single_dpc(void)
+{
+    VIRTIO_INTX intx;
+    volatile UCHAR isr_reg = 0;
+    CM_PARTIAL_RESOURCE_DESCRIPTOR desc;
+    intx_test_ctx_t ctx;
+    NTSTATUS status;
+
+    desc = make_int_desc();
+    RtlZeroMemory(&ctx, sizeof(ctx));
+
+    status = VirtioIntxConnect(NULL, &desc, &isr_reg, evt_config, evt_queue, NULL, &ctx, &intx);
+    assert(status == STATUS_SUCCESS);
+
+    ctx.expected_intx = &intx;
+
+    /* Queue interrupt -> queues a DPC. */
+    isr_reg = VIRTIO_PCI_ISR_QUEUE_INTERRUPT;
+    assert(WdkTestTriggerInterrupt(intx.InterruptObject) != FALSE);
+    assert(isr_reg == 0);
+    assert(intx.PendingIsrStatus == VIRTIO_PCI_ISR_QUEUE_INTERRUPT);
+    assert(intx.DpcInFlight == 1);
+    assert(intx.Dpc.Inserted != FALSE);
+    assert(ctx.config_calls == 0);
+    assert(ctx.queue_calls == 0);
+
+    /* Config interrupt arrives before the DPC runs -> bits accumulate, no second DPC. */
+    isr_reg = VIRTIO_PCI_ISR_CONFIG_INTERRUPT;
+    assert(WdkTestTriggerInterrupt(intx.InterruptObject) != FALSE);
+    assert(isr_reg == 0);
+    assert(intx.PendingIsrStatus == (VIRTIO_PCI_ISR_QUEUE_INTERRUPT | VIRTIO_PCI_ISR_CONFIG_INTERRUPT));
+    assert(intx.DpcInFlight == 1);
+    assert(intx.Dpc.Inserted != FALSE);
+
+    /* Only one DPC should be queued/runnable. */
+    assert(WdkTestRunQueuedDpc(&intx.Dpc) != FALSE);
+    assert(WdkTestRunQueuedDpc(&intx.Dpc) == FALSE);
+
+    assert(intx.PendingIsrStatus == 0);
+    assert(intx.DpcInFlight == 0);
+    assert(intx.DpcCount == 1);
+
+    assert(ctx.config_calls == 1);
+    assert(ctx.queue_calls == 1);
+
+    VirtioIntxDisconnect(&intx);
+}
+
+static void test_disconnect_cancels_queued_dpc(void)
+{
+    VIRTIO_INTX intx;
+    volatile UCHAR isr_reg = 0;
+    CM_PARTIAL_RESOURCE_DESCRIPTOR desc;
+    intx_test_ctx_t ctx;
+    NTSTATUS status;
+
+    desc = make_int_desc();
+    RtlZeroMemory(&ctx, sizeof(ctx));
+
+    status = VirtioIntxConnect(NULL, &desc, &isr_reg, evt_config, evt_queue, NULL, &ctx, &intx);
+    assert(status == STATUS_SUCCESS);
+
+    ctx.expected_intx = &intx;
+
+    /* Queue a DPC but do not run it. */
+    isr_reg = VIRTIO_PCI_ISR_QUEUE_INTERRUPT;
+    assert(WdkTestTriggerInterrupt(intx.InterruptObject) != FALSE);
+    assert(intx.Dpc.Inserted != FALSE);
+    assert(intx.DpcInFlight == 1);
+
+    /* Disconnect should cancel safely and zero the state. */
+    VirtioIntxDisconnect(&intx);
+    assert(intx.Initialized == FALSE);
+    assert(intx.InterruptObject == NULL);
+    assert(intx.IsrStatusRegister == NULL);
+    assert(intx.DpcInFlight == 0);
+    assert(intx.PendingIsrStatus == 0);
+    assert(intx.Dpc.Inserted == FALSE);
+}
+
+static void test_evt_dpc_dispatch_override(void)
+{
+    VIRTIO_INTX intx;
+    volatile UCHAR isr_reg = 0;
+    CM_PARTIAL_RESOURCE_DESCRIPTOR desc;
+    intx_test_ctx_t ctx;
+    NTSTATUS status;
+
+    desc = make_int_desc();
+    RtlZeroMemory(&ctx, sizeof(ctx));
+
+    status = VirtioIntxConnect(NULL, &desc, &isr_reg, evt_config, evt_queue, evt_dpc, &ctx, &intx);
+    assert(status == STATUS_SUCCESS);
+    ctx.expected_intx = &intx;
+
+    isr_reg = 0x3;
+    assert(WdkTestTriggerInterrupt(intx.InterruptObject) != FALSE);
+    assert(WdkTestRunQueuedDpc(&intx.Dpc) != FALSE);
+
+    /* With EvtDpc installed, the helper should not call the per-bit callbacks. */
+    assert(ctx.dpc_calls == 1);
+    assert(ctx.last_isr_status == 0x3);
+    assert(ctx.config_calls == 0);
+    assert(ctx.queue_calls == 0);
+
+    VirtioIntxDisconnect(&intx);
+}
+
+int main(void)
+{
+    test_spurious_interrupt();
+    test_queue_config_dispatch();
+    test_bit_accumulation_single_dpc();
+    test_disconnect_cancels_queued_dpc();
+    test_evt_dpc_dispatch_override();
+
+    printf("virtio_intx_wdm_tests: PASS\n");
+    return 0;
+}
+
