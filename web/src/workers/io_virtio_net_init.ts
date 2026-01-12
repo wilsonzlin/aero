@@ -29,7 +29,8 @@ export function tryInitVirtioNetDevice(opts: {
 
   try {
     const dev = new VirtioNetPciDevice({ bridge, irqSink: mgr.irqSink });
-    mgr.registerPciDevice(dev);
+    // Match the canonical chipset layout used by Aero's native PCI profiles.
+    mgr.registerPciDevice(dev, { device: 8, function: 0 });
     mgr.addTickable(dev);
     return dev;
   } catch (err) {

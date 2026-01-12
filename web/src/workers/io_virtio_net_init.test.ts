@@ -53,14 +53,14 @@ describe("workers/io_virtio_net_init", () => {
     });
     expect(dev).not.toBeNull();
 
-    // Read vendor/device IDs for device 0 on bus 0.
-    mgr.portWrite(0x0cf8, 4, 0x8000_0000 | 0x00);
+    // Read vendor/device IDs for device 8 on bus 0 (canonical virtio-net BDF: 00:08.0).
+    mgr.portWrite(0x0cf8, 4, 0x8000_0000 | (8 << 11) | 0x00);
     const id = mgr.portRead(0x0cfc, 4) >>> 0;
     expect(id & 0xffff).toBe(0x1af4);
     expect((id >>> 16) & 0xffff).toBe(0x1000);
 
     // Probe BAR0 size mask via the standard all-ones write.
-    mgr.portWrite(0x0cf8, 4, 0x8000_0000 | 0x10);
+    mgr.portWrite(0x0cf8, 4, 0x8000_0000 | (8 << 11) | 0x10);
     mgr.portWrite(0x0cfc, 4, 0xffff_ffff);
     const mask = mgr.portRead(0x0cfc, 4) >>> 0;
     expect(mask).toBe(0xffff_c000);
@@ -68,4 +68,3 @@ describe("workers/io_virtio_net_init", () => {
     dev?.destroy();
   });
 });
-
