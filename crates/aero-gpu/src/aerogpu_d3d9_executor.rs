@@ -6141,22 +6141,32 @@ impl AerogpuD3d9Executor {
             offsets.dedup();
         }
 
-        let (swizzle_vertex_start, swizzle_vertex_end) = match draw {
+        // wgpu/WebGPU vertex fetch is robust and does not allow reading before the bound vertex
+        // buffer offset, even if the final address would still be within the underlying buffer.
+        //
+        // D3D9 allows this pattern via a negative `base_vertex` combined with a positive stream
+        // offset (i.e., indices can reference vertices "before" the stream offset). To preserve
+        // D3D9 semantics we compute a per-draw vertex index bias that shifts all vertex indices to
+        // be non-negative and adjust the bound vertex buffer offsets accordingly.
+        let (draw, swizzle_vertex_start, swizzle_vertex_end, vertex_index_bias) = match draw {
             DrawParams::NonIndexed {
                 vertex_count,
                 first_vertex,
                 ..
             } => (
+                draw,
                 first_vertex,
                 first_vertex
                     .checked_add(vertex_count)
                     .unwrap_or(u32::MAX),
+                0i64,
             ),
             DrawParams::Indexed {
                 index_count,
                 first_index,
                 base_vertex,
-                ..
+                instance_count,
+                first_instance,
             } => {
                 let index_binding = index_binding.ok_or(AerogpuD3d9Error::MissingIndexBuffer)?;
                 let underlying = self.resolve_resource_handle(index_binding.buffer)?;
@@ -6223,13 +6233,28 @@ impl AerogpuD3d9Executor {
 
                 if min_index == u32::MAX {
                     // No indices.
-                    (0, 0)
+                    (draw, 0, 0, 0)
                 } else {
                     let base = base_vertex as i64;
                     let min_v_i64 = base.saturating_add(min_index as i64);
                     let max_v_excl_i64 = base
                         .saturating_add(max_index as i64)
                         .saturating_add(1);
+
+                    // Bias vertex indices so the minimum becomes >= 0.
+                    let bias_i64 = if min_v_i64 < 0 {
+                        min_v_i64.saturating_abs()
+                    } else {
+                        0
+                    };
+
+                    let effective_base_vertex_i64 = base.saturating_add(bias_i64);
+                    let effective_base_vertex: i32 = effective_base_vertex_i64.try_into().map_err(|_| {
+                        AerogpuD3d9Error::Validation(
+                            "indexed draw base_vertex out of range after bias".into(),
+                        )
+                    })?;
+
                     let clamp_u32 = |v: i64| -> u32 {
                         if v <= 0 {
                             0
@@ -6239,7 +6264,21 @@ impl AerogpuD3d9Executor {
                             v as u32
                         }
                     };
-                    (clamp_u32(min_v_i64), clamp_u32(max_v_excl_i64))
+                    let swizzle_start = clamp_u32(min_v_i64.saturating_add(bias_i64));
+                    let swizzle_end = clamp_u32(max_v_excl_i64.saturating_add(bias_i64));
+
+                    (
+                        DrawParams::Indexed {
+                            index_count,
+                            instance_count,
+                            first_index,
+                            base_vertex: effective_base_vertex,
+                            first_instance,
+                        },
+                        swizzle_start,
+                        swizzle_end,
+                        bias_i64,
+                    )
                 }
             }
         };
@@ -6283,7 +6322,22 @@ impl AerogpuD3d9Executor {
                 let desired_len = (swizzle_vertex_end as u64)
                     .checked_mul(stride)
                     .ok_or_else(|| AerogpuD3d9Error::Validation("vertex range overflow".into()))?;
-                let base_offset = binding.offset_bytes as u64;
+                let base_offset = if vertex_index_bias != 0 {
+                    let bias_u64 = u64::try_from(vertex_index_bias).map_err(|_| {
+                        AerogpuD3d9Error::Validation("vertex index bias out of range".into())
+                    })?;
+                    let delta_bytes = bias_u64.checked_mul(stride).ok_or_else(|| {
+                        AerogpuD3d9Error::Validation("vertex index bias overflow".into())
+                    })?;
+                    (binding.offset_bytes as u64).checked_sub(delta_bytes).ok_or_else(|| {
+                        AerogpuD3d9Error::Validation(format!(
+                            "vertex buffer offset underflow after base vertex bias (handle={} offset_bytes=0x{:x} bias_vertices={bias_u64} stride=0x{:x})",
+                            binding.buffer, binding.offset_bytes, stride
+                        ))
+                    })?
+                } else {
+                    binding.offset_bytes as u64
+                };
                 let available = size.saturating_sub(base_offset);
                 let len = desired_len.min(available);
                 if len == 0 {
@@ -6413,7 +6467,24 @@ impl AerogpuD3d9Executor {
             if let Some(converted) = converted_vertex_buffers.get(stream) {
                 pass.set_vertex_buffer(wgpu_slot, converted.slice(..));
             } else {
-                pass.set_vertex_buffer(wgpu_slot, buffer.slice(binding.offset_bytes as u64..));
+                let stride = binding.stride_bytes as u64;
+                let vb_offset = if vertex_index_bias != 0 {
+                    let bias_u64 = u64::try_from(vertex_index_bias).map_err(|_| {
+                        AerogpuD3d9Error::Validation("vertex index bias out of range".into())
+                    })?;
+                    let delta_bytes = bias_u64.checked_mul(stride).ok_or_else(|| {
+                        AerogpuD3d9Error::Validation("vertex index bias overflow".into())
+                    })?;
+                    (binding.offset_bytes as u64).checked_sub(delta_bytes).ok_or_else(|| {
+                        AerogpuD3d9Error::Validation(format!(
+                            "vertex buffer offset underflow after base vertex bias (handle={} offset_bytes=0x{:x} bias_vertices={bias_u64} stride=0x{:x})",
+                            binding.buffer, binding.offset_bytes, stride
+                        ))
+                    })?
+                } else {
+                    binding.offset_bytes as u64
+                };
+                pass.set_vertex_buffer(wgpu_slot, buffer.slice(vb_offset..));
             }
         }
 
