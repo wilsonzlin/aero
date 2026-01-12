@@ -26,12 +26,9 @@ export type UsbSelectDeviceMessage = { type: "usb.selectDevice"; filters?: USBDe
  * initializing after the user selected a device).
  */
 export type UsbQuerySelectedMessage = { type: "usb.querySelected" };
-export type UsbSelectedMessage = {
-  type: "usb.selected";
-  ok: boolean;
-  error?: string;
-  info?: { vendorId: number; productId: number; productName?: string };
-};
+export type UsbSelectedMessage =
+  | { type: "usb.selected"; ok: true; info: { vendorId: number; productId: number; productName?: string } }
+  | { type: "usb.selected"; ok: false; error?: string };
 
 export type UsbGuestWebUsbSnapshot = {
   /** WASM exports are present and the guest-visible passthrough device can be attached. */

@@ -2995,7 +2995,7 @@ function renderWebUsbPassthroughDemoWorkerPanel(): HTMLElement {
     channel.port2.addEventListener("message", (ev: MessageEvent<unknown>) => {
       if (!isUsbSelectedMessage(ev.data)) return;
       const msg = ev.data;
-      if (msg.ok && msg.info) {
+      if (msg.ok) {
         const next = msg.info;
         if (!selectedInfo || selectedInfo.vendorId !== next.vendorId || selectedInfo.productId !== next.productId) {
           lastResult = null;
@@ -3006,7 +3006,7 @@ function renderWebUsbPassthroughDemoWorkerPanel(): HTMLElement {
         selectedError = null;
       } else {
         selectedInfo = null;
-        selectedError = typeof msg.error === "string" ? msg.error : null;
+        selectedError = msg.error ?? null;
         lastResult = null;
         lastRequest = null;
         pending = false;

@@ -224,13 +224,12 @@ export function renderWebUsbBrokerPanel(broker: UsbBroker): HTMLElement {
       channel.port2.addEventListener("message", (ev: MessageEvent<unknown>) => {
         const data = ev.data;
         if (isUsbSelectedMessage(data)) {
-          if (data.ok && data.info && typeof data.info === "object") {
-            const info = data.info as SelectedInfo;
-            setStatus(info);
+          if (data.ok) {
+            setStatus(data.info);
             clearError();
           } else {
             setStatus(null);
-            if (typeof data.error === "string") {
+            if (data.error) {
               showError(data.error);
             }
           }
