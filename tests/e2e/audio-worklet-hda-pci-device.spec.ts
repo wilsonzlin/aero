@@ -63,6 +63,36 @@ test("AudioWorklet output runs and receives frames from IO-worker HDA PCI/MMIO d
     { timeout: 45_000 },
   );
 
+  // Ensure the producer is writing actual (non-silent) samples into the ring, not just
+  // advancing indices.
+  await page.waitForFunction(
+    () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const out = (globalThis as any).__aeroAudioOutputHdaPciDevice;
+      if (!out?.ringBuffer?.samples || !out?.ringBuffer?.header) return false;
+      const samples: Float32Array = out.ringBuffer.samples;
+      const header: Uint32Array = out.ringBuffer.header;
+      const cc = out.ringBuffer.channelCount | 0;
+      const cap = out.ringBuffer.capacityFrames | 0;
+      if (cc <= 0 || cap <= 0) return false;
+      const write = Atomics.load(header, 1) >>> 0;
+      const framesToInspect = Math.min(1024, cap);
+      const startFrame = (write - framesToInspect) >>> 0;
+      let maxAbs = 0;
+      for (let i = 0; i < framesToInspect; i++) {
+        const frame = (startFrame + i) % cap;
+        const base = frame * cc;
+        for (let c = 0; c < cc; c++) {
+          const s = samples[base + c] ?? 0;
+          const a = Math.abs(s);
+          if (a > maxAbs) maxAbs = a;
+        }
+      }
+      return maxAbs > 0.01;
+    },
+    { timeout: 10_000 },
+  );
+
   await page.waitForTimeout(1000);
 
   const result = await page.evaluate(() => {
