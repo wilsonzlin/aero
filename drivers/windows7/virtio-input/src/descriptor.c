@@ -2,7 +2,7 @@
 
 const UCHAR VirtioInputKeyboardReportDescriptor[] = {
     //
-    // Report ID 1: Keyboard (8 modifier bits + reserved + 6-key rollover)
+    // Report ID 1: Keyboard (8 modifier bits + reserved + 6-key array)
     // Report ID 1: Keyboard LEDs (output)
     //
     0x05, 0x01,        // Usage Page (Generic Desktop)

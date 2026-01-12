@@ -8,7 +8,7 @@
  * minidriver.
  *
  * Report formats (must match the driver's HID report descriptor):
- *   - ReportID 1: Keyboard (boot protocol compatible)
+ *   - ReportID 1: Keyboard (boot-protocol-style 8 modifiers + reserved + 6-key array)
  *       Byte 0: ReportID = 0x01
  *       Byte 1: Modifier bitmask (E0..E7 -> bits 0..7)
  *       Byte 2: Reserved (0)

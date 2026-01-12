@@ -58,7 +58,7 @@ static int32_t hid_translate_i32_from_u32_bits(uint32_t u) {
 /*
  * Clean-room mapping table from Linux KEY_* codes to USB HID keyboard usages.
  *
- * Only keys represented in the boot keyboard 6-key array are included here.
+ * Only keys represented in the keyboard 6-key array are included here.
  * Modifiers (Ctrl/Shift/Alt/GUI) are handled separately as a bitmask.
  */
 struct hid_translate_keymap_entry {
