@@ -191,6 +191,12 @@ run_once() {
     bash "$SCRIPT_DIR/with-timeout.sh" "${TIMEOUT}" \
         bash "$SCRIPT_DIR/run_limited.sh" --as "$MEM_LIMIT" -- "$@" \
         2> >(tee "${stderr_log}" >&2)
+    local status=$?
+
+    # `>(...)` process substitution spawns the `tee` as a background job; ensure it has drained and
+    # flushed stderr into `stderr_log` before we inspect it for retry patterns.
+    wait
+    return "${status}"
 }
 
 # Retry Cargo commands when rustc hits transient OS resource limits. Keep the default small so real
