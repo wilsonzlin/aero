@@ -797,6 +797,7 @@ impl UhciRuntime {
     /// - tag 5: external hub port-count hint (optional)
     /// - tag 6: WebHID passthrough devices (sorted list)
     /// - tag 7: WebUSB passthrough device snapshot bytes (if present)
+    /// - tag 8: externally managed USB HID passthrough device snapshots (sorted list)
     pub fn save_state(&self) -> Vec<u8> {
         const TAG_CONTROLLER: u16 = 1;
         const TAG_IRQ_LEVEL: u16 = 2;
@@ -805,15 +806,23 @@ impl UhciRuntime {
         const TAG_EXTERNAL_HUB_PORT_COUNT_HINT: u16 = 5;
         const TAG_WEBHID_DEVICES: u16 = 6;
         const TAG_WEBUSB_STATE: u16 = 7;
+        const TAG_USB_HID_PASSTHROUGH_DEVICES: u16 = 8;
 
         let mut w = SnapshotWriter::new(UHCI_RUNTIME_DEVICE_ID, UHCI_RUNTIME_DEVICE_VERSION);
         w.field_bytes(TAG_CONTROLLER, self.ctrl.save_state());
         w.field_bool(TAG_IRQ_LEVEL, self.ctrl.irq_level());
 
+        let mut external_hub_ports_with_devices: Option<Vec<u8>> = None;
         if let Some(state) = self.external_hub.as_ref() {
             w.field_u8(TAG_EXTERNAL_HUB_PORT_COUNT, state.port_count);
             if let Some(hub) = self.external_hub_ref() {
-                w.field_bytes(TAG_EXTERNAL_HUB_STATE, hub.save_state());
+                let hub_state = hub.save_state();
+                // This should never fail because `hub_state` was produced by our own snapshot
+                // implementation, but keep it best-effort so snapshotting cannot panic.
+                if let Ok(ports) = Self::external_hub_ports_with_snapshot_devices(&hub_state) {
+                    external_hub_ports_with_devices = Some(ports);
+                }
+                w.field_bytes(TAG_EXTERNAL_HUB_STATE, hub_state);
             }
         }
         if let Some(hint) = self.external_hub_port_count_hint {
@@ -858,6 +867,33 @@ impl UhciRuntime {
             w.field_bytes(TAG_WEBUSB_STATE, webusb.dev.save_state());
         }
 
+        if let Some(hub_ports) = external_hub_ports_with_devices {
+            let mut records: Vec<(u8, Vec<u8>)> = hub_ports
+                .into_iter()
+                .filter_map(|hub_port| {
+                    // WebHID devices are snapshotted separately (tag 6).
+                    if self.webhid_hub_ports.contains_key(&hub_port) {
+                        return None;
+                    }
+
+                    let path = [EXTERNAL_HUB_ROOT_PORT as u8, hub_port];
+                    let dev = self.usb_hid_passthrough_devices.get(&path[..])?;
+                    let state = dev.save_state();
+                    let record = Encoder::new().u8(hub_port).vec_u8(&state).finish();
+                    Some((hub_port, record))
+                })
+                .collect();
+
+            records.sort_by_key(|(hub_port, _)| *hub_port);
+            let bytes: Vec<Vec<u8>> = records.into_iter().map(|(_, rec)| rec).collect();
+            if !bytes.is_empty() {
+                w.field_bytes(
+                    TAG_USB_HID_PASSTHROUGH_DEVICES,
+                    Encoder::new().vec_bytes(&bytes).finish(),
+                );
+            }
+        }
+
         w.finish()
     }
 
@@ -881,6 +917,7 @@ impl UhciRuntime {
         const TAG_EXTERNAL_HUB_PORT_COUNT_HINT: u16 = 5;
         const TAG_WEBHID_DEVICES: u16 = 6;
         const TAG_WEBUSB_STATE: u16 = 7;
+        const TAG_USB_HID_PASSTHROUGH_DEVICES: u16 = 8;
 
         #[derive(Debug)]
         struct WebHidSnapshotEntry {
@@ -932,6 +969,67 @@ impl UhciRuntime {
             .and_then(|v| (v != 0).then_some(v));
 
         let webusb_state_bytes = r.bytes(TAG_WEBUSB_STATE);
+
+        let passthrough_snapshot_states: HashMap<u8, Vec<u8>> =
+            if let Some(buf) = r.bytes(TAG_USB_HID_PASSTHROUGH_DEVICES) {
+                if hub_port_count.is_none() {
+                    return Err(js_error(
+                        "UHCI runtime snapshot includes passthrough HID device state but no external hub snapshot is present",
+                    ));
+                }
+                let mut d = Decoder::new(buf);
+                let recs = d.vec_bytes().map_err(|e| {
+                    js_error(&format!(
+                        "Invalid UHCI runtime snapshot passthrough HID device list: {e}"
+                    ))
+                })?;
+                d.finish().map_err(|e| {
+                    js_error(&format!(
+                        "Invalid UHCI runtime snapshot passthrough HID device list: {e}"
+                    ))
+                })?;
+
+                let mut out = HashMap::new();
+                for (idx, rec) in recs.into_iter().enumerate() {
+                    let mut rd = Decoder::new(&rec);
+                    let hub_port = rd.u8().map_err(|e| {
+                        js_error(&format!(
+                            "Invalid UHCI runtime snapshot passthrough HID record #{idx}: {e}"
+                        ))
+                    })?;
+                    if hub_port == 0 {
+                        return Err(js_error(&format!(
+                            "Invalid UHCI runtime snapshot passthrough HID record #{idx}: hub port 0 is not valid",
+                        )));
+                    }
+                    if let Some(max_port) = hub_port_count {
+                        if hub_port > max_port {
+                            return Err(js_error(&format!(
+                                "Invalid UHCI runtime snapshot passthrough HID record #{idx}: hub port {hub_port} exceeds hub port count {max_port}",
+                            )));
+                        }
+                    }
+                    let state = rd.vec_u8().map_err(|e| {
+                        js_error(&format!(
+                            "Invalid UHCI runtime snapshot passthrough HID record #{idx}: {e}"
+                        ))
+                    })?;
+                    rd.finish().map_err(|e| {
+                        js_error(&format!(
+                            "Invalid UHCI runtime snapshot passthrough HID record #{idx}: {e}"
+                        ))
+                    })?;
+
+                    if out.insert(hub_port, state).is_some() {
+                        return Err(js_error(&format!(
+                            "UHCI runtime snapshot has duplicate passthrough HID hub port {hub_port}"
+                        )));
+                    }
+                }
+                out
+            } else {
+                HashMap::new()
+            };
 
         let webhid_entries: Vec<WebHidSnapshotEntry> = if let Some(buf) =
             r.bytes(TAG_WEBHID_DEVICES)
@@ -1234,9 +1332,14 @@ impl UhciRuntime {
                 }
 
                 let path = [EXTERNAL_HUB_ROOT_PORT as u8, hub_port];
-                let Some(dev) = self.usb_hid_passthrough_devices.get(&path[..]).cloned() else {
+                let Some(mut dev) = self.usb_hid_passthrough_devices.get(&path[..]).cloned() else {
                     continue;
                 };
+                if let Some(state) = passthrough_snapshot_states.get(&hub_port) {
+                    // Best-effort: state restore failures should not abort the whole snapshot
+                    // restore, as these devices are owned/managed externally by the host.
+                    let _ = dev.load_state(state);
+                }
 
                 // Best-effort: if a passthrough device can't be reattached, continue restoring the
                 // snapshot so other devices still come back.

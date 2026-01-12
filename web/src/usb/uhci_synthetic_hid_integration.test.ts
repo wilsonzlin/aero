@@ -536,6 +536,16 @@ describe("usb/UHCI synthetic HID passthrough integration (WASM)", () => {
 
     const snapshotBytes = save.call(runtime) as unknown;
     expect(snapshotBytes).toBeInstanceOf(Uint8Array);
+
+    // Mutate passthrough device state after the snapshot so we can verify restore rolls it back.
+    // (Without explicit snapshotting of `UsbHidPassthroughHandle` state, configuration would stay 0.)
+    for (const addr of addrs) {
+      controlNoData({ uhci, view, guestBase, alloc, flBase, devAddr: addr, setup: { bmRequestType: 0x00, bRequest: 0x09, wValue: 0, wIndex: 0, wLength: 0 } });
+    }
+    expect(keyboardDev.configured()).toBe(false);
+    expect(mouseDev.configured()).toBe(false);
+    expect(gamepadDev.configured()).toBe(false);
+
     load.call(runtime, snapshotBytes);
 
     // The runtime should preserve externally attached devices during snapshot restore so they remain
