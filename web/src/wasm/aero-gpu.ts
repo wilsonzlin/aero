@@ -252,7 +252,13 @@ export async function request_screenshot_info(): Promise<ScreenshotInfo> {
 // -----------------------------------------------------------------------------
 
 export function get_gpu_stats(): unknown | undefined {
-  const mod = requireLoaded();
+  let mod: RawAeroGpuWasmModule;
+  try {
+    mod = requireLoaded();
+  } catch {
+    return undefined;
+  }
+
   const fn = (mod.get_gpu_stats ?? mod.getGpuStats) as (() => unknown) | undefined;
   if (typeof fn !== "function") return undefined;
   try {
@@ -263,7 +269,13 @@ export function get_gpu_stats(): unknown | undefined {
 }
 
 export function drain_gpu_events(): unknown {
-  const mod = requireLoaded();
+  let mod: RawAeroGpuWasmModule;
+  try {
+    mod = requireLoaded();
+  } catch {
+    return [];
+  }
+
   const fn = (
     mod.drain_gpu_events ??
     mod.drain_gpu_error_events ??
