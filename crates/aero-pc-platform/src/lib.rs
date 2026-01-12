@@ -2161,6 +2161,9 @@ impl PcPlatform {
         if let Some(ide) = self.ide.as_ref() {
             ide.borrow_mut().reset();
         }
+        if let Some(virtio_blk) = self.virtio_blk.as_ref() {
+            virtio_blk.borrow_mut().reset();
+        }
 
         // Reset host-side tick accumulators.
         self.uhci_ns_remainder = 0;

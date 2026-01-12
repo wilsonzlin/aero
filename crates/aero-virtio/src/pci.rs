@@ -243,6 +243,21 @@ impl VirtioPciDevice {
         self.config.bar_range(2).map(|r| r.base as u32).unwrap_or(0)
     }
 
+    /// Reset the virtio-pci transport back to its power-on baseline.
+    ///
+    /// This is intended for platform-level resets (e.g. `PcPlatform::reset()`), where the device
+    /// should forget any negotiated features, queue configuration, and pending interrupts while
+    /// **preserving** any host-attached backend owned by the inner [`VirtioDevice`].
+    ///
+    /// This mirrors the reset semantics used by other PCI device models in this repo:
+    /// - BAR programming is preserved
+    /// - PCI decoding is disabled (`COMMAND = 0`)
+    pub fn reset(&mut self) {
+        // Preserve BAR programming but disable decoding.
+        self.config.set_command(0);
+        self.reset_transport();
+    }
+
     /// Returns whether the device is currently asserting its legacy INTx interrupt line.
     ///
     /// Virtio legacy interrupts are level-triggered and are deasserted when the guest reads the

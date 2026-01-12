@@ -1,10 +1,44 @@
-use aero_devices::pci::profile::{IDE_PIIX3, NVME_CONTROLLER, SATA_AHCI_ICH9, USB_UHCI_PIIX3};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+
+use aero_devices::pci::profile::{
+    IDE_PIIX3, NVME_CONTROLLER, SATA_AHCI_ICH9, USB_UHCI_PIIX3, VIRTIO_BLK,
+};
 use aero_devices::pci::{PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
 use aero_devices::reset_ctrl::{RESET_CTRL_PORT, RESET_CTRL_RESET_VALUE};
 use aero_devices_storage::pci_ide::PRIMARY_PORTS;
 use aero_pc_platform::{PcPlatform, ResetEvent};
 use aero_storage::{MemBackend, RawDisk, VirtualDisk, SECTOR_SIZE};
 use memory::MemoryBus as _;
+
+struct DropDetectDisk {
+    inner: RawDisk<MemBackend>,
+    dropped: Arc<AtomicBool>,
+}
+
+impl Drop for DropDetectDisk {
+    fn drop(&mut self) {
+        self.dropped.store(true, Ordering::SeqCst);
+    }
+}
+
+impl VirtualDisk for DropDetectDisk {
+    fn capacity_bytes(&self) -> u64 {
+        self.inner.capacity_bytes()
+    }
+
+    fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> aero_storage::Result<()> {
+        self.inner.read_at(offset, buf)
+    }
+
+    fn write_at(&mut self, offset: u64, buf: &[u8]) -> aero_storage::Result<()> {
+        self.inner.write_at(offset, buf)
+    }
+
+    fn flush(&mut self) -> aero_storage::Result<()> {
+        self.inner.flush()
+    }
+}
 
 fn cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
     0x8000_0000
@@ -55,6 +89,13 @@ fn read_ahci_bar5_base(pc: &mut PcPlatform) -> u64 {
 
 fn read_nvme_bar0_base(pc: &mut PcPlatform) -> u64 {
     let bdf = NVME_CONTROLLER.bdf;
+    let bar0_lo = read_cfg_u32(pc, bdf.bus, bdf.device, bdf.function, 0x10);
+    let bar0_hi = read_cfg_u32(pc, bdf.bus, bdf.device, bdf.function, 0x14);
+    (u64::from(bar0_hi) << 32) | u64::from(bar0_lo & 0xffff_fff0)
+}
+
+fn read_virtio_blk_bar0_base(pc: &mut PcPlatform) -> u64 {
+    let bdf = VIRTIO_BLK.bdf;
     let bar0_lo = read_cfg_u32(pc, bdf.bus, bdf.device, bdf.function, 0x10);
     let bar0_hi = read_cfg_u32(pc, bdf.bus, bdf.device, bdf.function, 0x14);
     (u64::from(bar0_hi) << 32) | u64::from(bar0_lo & 0xffff_fff0)
@@ -332,4 +373,51 @@ fn pc_platform_reset_clears_ide_nien_and_allows_irq14_delivery() {
     let _ = pc.io.read(PRIMARY_PORTS.cmd_base + 7, 1);
     pc.poll_pci_intx_lines();
     assert_eq!(pc.interrupts.borrow().pic().get_pending_vector(), None);
+}
+
+#[test]
+fn pc_platform_reset_resets_virtio_blk_transport_state_and_preserves_disk_backend() {
+    let dropped = Arc::new(AtomicBool::new(false));
+    let capacity = 16 * SECTOR_SIZE as u64;
+    let disk = DropDetectDisk {
+        inner: RawDisk::create(MemBackend::new(), capacity).unwrap(),
+        dropped: dropped.clone(),
+    };
+
+    let mut pc = PcPlatform::new_with_virtio_blk_disk(2 * 1024 * 1024, Box::new(disk));
+
+    let bdf = VIRTIO_BLK.bdf;
+    // Ensure memory decoding is enabled so BAR0 MMIO is accessible.
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0002);
+    let bar0_base = read_virtio_blk_bar0_base(&mut pc);
+    assert_ne!(bar0_base, 0);
+
+    // Mutate the virtio device status register (common cfg offset 0x14).
+    pc.memory.write_u8(bar0_base + 0x14, 0x04); // VIRTIO_STATUS_DRIVER_OK
+    assert_eq!(pc.memory.read_u8(bar0_base + 0x14), 0x04);
+
+    pc.reset();
+
+    assert!(
+        !dropped.load(Ordering::SeqCst),
+        "platform reset dropped the virtio-blk disk backend"
+    );
+
+    // Re-enable memory decoding in case the post-reset BIOS chose a different policy.
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0002);
+    let bar0_base_after = read_virtio_blk_bar0_base(&mut pc);
+    assert_ne!(bar0_base_after, 0);
+
+    assert_eq!(
+        pc.memory.read_u8(bar0_base_after + 0x14),
+        0,
+        "platform reset should clear virtio device status"
+    );
+
+    // Dropping the platform should drop the disk backend (sanity check).
+    drop(pc);
+    assert!(
+        dropped.load(Ordering::SeqCst),
+        "dropping the platform should drop the virtio-blk disk backend"
+    );
 }
