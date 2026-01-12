@@ -79,6 +79,8 @@ mod tests {
     #[test]
     fn parse_device_kind_accepts_device_dot_u32_ids() {
         assert_eq!(parse_device_kind("device.0"), Some(DeviceId(0)));
+        // Parsers may accept leading zeros; encoders should canonicalize them away.
+        assert_eq!(parse_device_kind("device.00999"), Some(DeviceId(999)));
         assert_eq!(
             parse_device_kind("device.4294967295"),
             Some(DeviceId(u32::MAX))
