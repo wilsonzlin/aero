@@ -221,6 +221,53 @@ static BOOLEAN AerovNetAcceptFrame(_In_ const AEROVNET_ADAPTER* Adapter, _In_rea
   return AerovNetMacEqual(Dst, Adapter->CurrentMac) ? TRUE : FALSE;
 }
 
+static BOOLEAN AerovNetExtractMemoryResource(_In_ const CM_PARTIAL_RESOURCE_DESCRIPTOR* Desc, _Out_ PHYSICAL_ADDRESS* Start,
+                                            _Out_ ULONG* Length) {
+  USHORT Large;
+
+  if (Start) {
+    Start->QuadPart = 0;
+  }
+  if (Length) {
+    *Length = 0;
+  }
+
+  if (!Desc || !Start || !Length) {
+    return FALSE;
+  }
+
+  switch (Desc->Type) {
+    case CmResourceTypeMemory:
+      *Start = Desc->u.Memory.Start;
+      *Length = Desc->u.Memory.Length;
+      return TRUE;
+
+    case CmResourceTypeMemoryLarge:
+      /*
+       * PCI MMIO above 4GiB may be reported as CmResourceTypeMemoryLarge.
+       * The active union member depends on Desc->Flags.
+       */
+      *Start = Desc->u.Memory.Start;
+      Large = Desc->Flags & (CM_RESOURCE_MEMORY_LARGE_40 | CM_RESOURCE_MEMORY_LARGE_48 | CM_RESOURCE_MEMORY_LARGE_64);
+      switch (Large) {
+        case CM_RESOURCE_MEMORY_LARGE_40:
+          *Length = Desc->u.Memory40.Length40;
+          return TRUE;
+        case CM_RESOURCE_MEMORY_LARGE_48:
+          *Length = Desc->u.Memory48.Length48;
+          return TRUE;
+        case CM_RESOURCE_MEMORY_LARGE_64:
+          *Length = Desc->u.Memory64.Length64;
+          return TRUE;
+        default:
+          return FALSE;
+      }
+
+    default:
+      return FALSE;
+  }
+}
+
 static NDIS_STATUS AerovNetParseResources(_Inout_ AEROVNET_ADAPTER* Adapter, _In_ PNDIS_RESOURCE_LIST Resources) {
   ULONG I;
   NDIS_STATUS Status;
@@ -275,14 +322,22 @@ static NDIS_STATUS AerovNetParseResources(_Inout_ AEROVNET_ADAPTER* Adapter, _In
 
   for (I = 0; I < Resources->Count; I++) {
     PCM_PARTIAL_RESOURCE_DESCRIPTOR Desc = &Resources->PartialDescriptors[I];
-    if (Desc->Type == CmResourceTypeMemory && Desc->u.Memory.Length >= AEROVNET_BAR0_MIN_LEN) {
-      if (Desc->u.Memory.Start.QuadPart != Bar0Base) {
-        continue;
-      }
-      Adapter->Bar0Pa = Desc->u.Memory.Start;
-      Adapter->Bar0Length = Desc->u.Memory.Length;
-      break;
+    PHYSICAL_ADDRESS Start;
+    ULONG Length;
+
+    if (!AerovNetExtractMemoryResource(Desc, &Start, &Length)) {
+      continue;
     }
+    if (Length < AEROVNET_BAR0_MIN_LEN) {
+      continue;
+    }
+    if (Start.QuadPart != Bar0Base) {
+      continue;
+    }
+
+    Adapter->Bar0Pa = Start;
+    Adapter->Bar0Length = Length;
+    break;
   }
 
   if (Adapter->Bar0Length < AEROVNET_BAR0_MIN_LEN) {
