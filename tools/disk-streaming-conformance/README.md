@@ -18,6 +18,7 @@ Validates that a disk image streaming endpoint is compatible with Aero’s brows
 - Conditional caching works when validators are present:
   - `GET` with `If-None-Match: <etag>` returns `304 Not Modified` (skipped if ETag is missing)
   - `HEAD` with `If-None-Match: <etag>` returns `304 Not Modified` (skipped if ETag is missing)
+  - (Recommended) `304` responses include `ETag` and it matches the current validator
   - (Optional) `GET` with `If-Modified-Since: <last-modified>` returns `304` (WARN if not)
 - (Optional) `HEAD` with `If-Modified-Since: <last-modified>` returns `304` (WARN if not)
 - Unsatisfiable ranges fail correctly (`416` + `Content-Range: bytes */<size>`)
@@ -136,6 +137,7 @@ Summary: 19 passed, 0 failed, 0 warned, 2 skipped
 - `Cross-Origin-Resource-Policy` present but with an unexpected value
 - Weak `ETag` validators (If-Range requires strong ETag)
 - ETag mismatch between HEAD and GET responses
+- Missing/mismatched `ETag` on `304 Not Modified` responses
 - Missing recommended content headers (e.g. `X-Content-Type-Options: nosniff`)
 - Unexpected `Content-Encoding` (disk bytes must be served as identity / no compression transforms)
 - Private responses missing `Cache-Control: no-store`

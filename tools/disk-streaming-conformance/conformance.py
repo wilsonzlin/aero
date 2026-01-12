@@ -1080,6 +1080,16 @@ def _test_conditional_if_none_match(
         _require_cors(resp, origin)
         _require(resp.status == 304, f"expected 304, got {resp.status}")
         _require(len(resp.body) == 0, f"expected empty body on 304, got {len(resp.body)} bytes")
+
+        resp_etag = _header(resp, "ETag")
+        if resp_etag is None:
+            return TestResult(name=name, status="WARN", details="missing ETag on 304 response")
+        if _strip_weak_etag_prefix(resp_etag) != _strip_weak_etag_prefix(etag):
+            return TestResult(
+                name=name,
+                status="FAIL",
+                details=f"ETag mismatch on 304: expected {etag!r}, got {resp_etag!r}",
+            )
         return TestResult(name=name, status="PASS", details="status=304")
     except TestFailure as e:
         return TestResult(name=name, status="FAIL", details=str(e))
@@ -1116,6 +1126,16 @@ def _test_head_conditional_if_none_match(
         _require_cors(resp, origin)
         _require(resp.status == 304, f"expected 304, got {resp.status}")
         _require(len(resp.body) == 0, f"expected empty body on 304, got {len(resp.body)} bytes")
+
+        resp_etag = _header(resp, "ETag")
+        if resp_etag is None:
+            return TestResult(name=name, status="WARN", details="missing ETag on 304 response")
+        if _strip_weak_etag_prefix(resp_etag) != _strip_weak_etag_prefix(etag):
+            return TestResult(
+                name=name,
+                status="FAIL",
+                details=f"ETag mismatch on 304: expected {etag!r}, got {resp_etag!r}",
+            )
         return TestResult(name=name, status="PASS", details="status=304")
     except TestFailure as e:
         return TestResult(name=name, status="FAIL", details=str(e))
