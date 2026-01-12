@@ -110,23 +110,11 @@ impl VirtualDisk for SharedDisk {
 
 impl BlockDevice for SharedDisk {
     fn read_sector(&mut self, lba: u64, buf: &mut [u8; 512]) -> Result<(), BiosDiskError> {
-        let offset = lba
-            .checked_mul(SECTOR_SIZE as u64)
-            .ok_or(BiosDiskError::OutOfRange)?;
-        let end = offset
-            .checked_add(SECTOR_SIZE as u64)
-            .ok_or(BiosDiskError::OutOfRange)?;
-
-        let mut disk = self
-            .inner
+        self.inner
             .try_borrow_mut()
-            .expect("shared disk refcell should not already be borrowed");
-        if end > disk.capacity_bytes() {
-            return Err(BiosDiskError::OutOfRange);
-        }
-        disk.read_at(offset, buf)
-            .map_err(|_err| BiosDiskError::OutOfRange)?;
-        Ok(())
+            .expect("shared disk refcell should not already be borrowed")
+            .read_sectors(lba, buf)
+            .map_err(|_err| BiosDiskError::OutOfRange)
     }
 
     fn size_in_sectors(&self) -> u64 {
