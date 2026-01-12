@@ -667,14 +667,16 @@ function renderMachinePanel(): HTMLElement {
       // so stash the non-null canvas context for the VGA present closure.
       const ctx2 = ctx;
 
-      const hasVga =
+      const hasVgaPresent = typeof machine.vga_present === "function";
+      const hasVgaSize = typeof machine.vga_width === "function" && typeof machine.vga_height === "function";
+      const hasVgaPtr =
         !!wasmMemory &&
-        typeof machine.vga_present === "function" &&
-        typeof machine.vga_width === "function" &&
-        typeof machine.vga_height === "function" &&
-        typeof machine.vga_stride_bytes === "function" &&
         typeof machine.vga_framebuffer_ptr === "function" &&
         typeof machine.vga_framebuffer_len_bytes === "function";
+      const hasVgaCopy =
+        typeof machine.vga_framebuffer_copy_rgba8888 === "function" ||
+        typeof machine.vga_framebuffer_rgba8888_copy === "function";
+      const hasVga = hasVgaPresent && hasVgaSize && (hasVgaPtr || hasVgaCopy);
 
       testState.vgaSupported = hasVga;
       vgaInfo.textContent = hasVga ? "vga: ready" : "vga: unavailable (WASM build missing scanout exports)";
@@ -745,7 +747,7 @@ function renderMachinePanel(): HTMLElement {
       }
 
       function presentVgaFrame(): void {
-        if (!hasVga || !wasmMemory || vgaFailed) return;
+        if (!hasVga || vgaFailed) return;
 
         try {
           // Trigger WASM-side VGA/VBE scanout. This populates an RGBA framebuffer in
@@ -754,19 +756,37 @@ function renderMachinePanel(): HTMLElement {
 
           const width = machine.vga_width?.() ?? 0;
           const height = machine.vga_height?.() ?? 0;
-          const strideBytes = machine.vga_stride_bytes?.() ?? 0;
-          const ptr = machine.vga_framebuffer_ptr?.() ?? 0;
-          const lenBytes = machine.vga_framebuffer_len_bytes?.() ?? 0;
+          // Some older WASM builds may not expose a stride helper; assume tightly packed RGBA8888.
+          let strideBytes = machine.vga_stride_bytes?.() ?? width * 4;
+          let ptr = machine.vga_framebuffer_ptr?.() ?? 0;
+          let lenBytes = machine.vga_framebuffer_len_bytes?.() ?? 0;
 
           if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return;
           if (!Number.isFinite(strideBytes) || strideBytes < width * 4) return;
-          if (!Number.isFinite(ptr) || !Number.isFinite(lenBytes) || ptr < 0 || lenBytes <= 0) return;
+          if (!Number.isFinite(ptr) || !Number.isFinite(lenBytes) || ptr < 0 || lenBytes < 0) return;
 
-          const requiredSrcBytes = strideBytes * height;
-          if (lenBytes < requiredSrcBytes) return;
-
-          const buf = wasmMemory.buffer;
-          if (ptr + lenBytes > buf.byteLength) return;
+          let requiredSrcBytes = strideBytes * height;
+          let src: Uint8Array | null = null;
+          if (hasVgaPtr && wasmMemory) {
+            if (lenBytes < requiredSrcBytes) return;
+            const buf = wasmMemory.buffer;
+            if (ptr + lenBytes > buf.byteLength) return;
+            src = new Uint8Array(buf, ptr, requiredSrcBytes);
+          } else if (hasVgaCopy) {
+            // Fall back to a JS-owned copy if we cannot access WASM linear memory.
+            const copied =
+              machine.vga_framebuffer_copy_rgba8888?.() ?? machine.vga_framebuffer_rgba8888_copy?.() ?? null;
+            if (!copied || !copied.byteLength) return;
+            src = copied;
+            if (src.byteLength < requiredSrcBytes && src.byteLength === width * height * 4) {
+              // Some helpers return tight-packed buffers even if a stride is reported.
+              strideBytes = width * 4;
+              requiredSrcBytes = strideBytes * height;
+            }
+            if (src.byteLength < requiredSrcBytes) return;
+          } else {
+            return;
+          }
 
           if (canvas.width !== width || canvas.height !== height) {
             canvas.width = width;
@@ -786,8 +806,6 @@ function renderMachinePanel(): HTMLElement {
             imageData = new ImageData(imageDataBytes, width, height);
           }
           if (!imageData || !imageDataBytes) return;
-
-          const src = new Uint8ClampedArray(buf, ptr, requiredSrcBytes);
 
           // Optional: also publish the scanout into a SharedArrayBuffer-backed framebuffer so
           // existing shared-framebuffer plumbing can consume it (e.g. GPU-worker harnesses).
