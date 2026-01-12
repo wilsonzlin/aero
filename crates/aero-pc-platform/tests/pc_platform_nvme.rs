@@ -147,6 +147,14 @@ fn pc_platform_nvme_mmio_is_gated_by_pci_command_mem() {
         cap_lo_reenabled, 0xffff_ffff,
         "BAR0 should decode again when COMMAND.MEM is re-enabled"
     );
+    let dev_command = pc
+        .nvme
+        .as_ref()
+        .expect("nvme should be enabled")
+        .borrow()
+        .config()
+        .command();
+    assert_eq!(dev_command, 0x0002);
 
     let cc = pc.memory.read_u32(bar0_base + 0x0014);
     assert_eq!(
