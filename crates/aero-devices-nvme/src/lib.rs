@@ -29,6 +29,7 @@ use aero_io_snapshot::io::state::{
 use aero_io_snapshot::io::storage::state::{
     NvmeCompletionQueueState, NvmeControllerState, NvmeSubmissionQueueState,
 };
+use aero_storage::DiskError as StorageDiskError;
 /// Adapter allowing [`aero_storage::VirtualDisk`] implementations (e.g. `RawDisk`,
 /// `AeroSparseDisk`, `BlockCachedDisk`) to be used as an NVMe [`DiskBackend`].
 ///
@@ -73,6 +74,27 @@ pub trait DiskBackend: Send {
     fn flush(&mut self) -> DiskResult<()>;
 }
 
+fn map_storage_error_to_nvme(err: StorageDiskError) -> DiskError {
+    // Keep this exhaustive so that adding new variants to `aero_storage::DiskError` forces disk
+    // adapter call sites to consider how those errors should be surfaced at the NVMe layer.
+    match err {
+        StorageDiskError::UnalignedLength { .. }
+        | StorageDiskError::OutOfBounds { .. }
+        | StorageDiskError::OffsetOverflow
+        | StorageDiskError::CorruptImage(_)
+        | StorageDiskError::Unsupported(_)
+        | StorageDiskError::InvalidSparseHeader(_)
+        | StorageDiskError::InvalidConfig(_)
+        | StorageDiskError::CorruptSparseImage(_)
+        | StorageDiskError::NotSupported(_)
+        | StorageDiskError::QuotaExceeded
+        | StorageDiskError::InUse
+        | StorageDiskError::InvalidState(_)
+        | StorageDiskError::BackendUnavailable
+        | StorageDiskError::Io(_) => DiskError::Io,
+    }
+}
+
 impl DiskBackend for AeroStorageDiskAdapter {
     fn sector_size(&self) -> u32 {
         AeroStorageDiskAdapter::SECTOR_SIZE
@@ -114,7 +136,9 @@ impl DiskBackend for AeroStorageDiskAdapter {
             .ok_or(DiskError::Io)?;
         // Any unexpected disk-layer error is surfaced as a generic I/O failure at the NVMe level
         // (should be rare after the range/alignment pre-checks above).
-        self.disk_mut().read_at(offset, buffer).map_err(|_| DiskError::Io)
+        self.disk_mut()
+            .read_at(offset, buffer)
+            .map_err(map_storage_error_to_nvme)
     }
 
     fn write_sectors(&mut self, lba: u64, buffer: &[u8]) -> DiskResult<()> {
@@ -145,11 +169,11 @@ impl DiskBackend for AeroStorageDiskAdapter {
             .ok_or(DiskError::Io)?;
         self.disk_mut()
             .write_at(offset, buffer)
-            .map_err(|_| DiskError::Io)
+            .map_err(map_storage_error_to_nvme)
     }
 
     fn flush(&mut self) -> DiskResult<()> {
-        self.disk_mut().flush().map_err(|_| DiskError::Io)
+        self.disk_mut().flush().map_err(map_storage_error_to_nvme)
     }
 }
 
