@@ -116,6 +116,11 @@ export RUSTC_WORKER_THREADS=1   # Limit rustc's internal worker pool (avoid "Wou
 export RUSTFLAGS="-C codegen-units=4"  # Reduce per-crate parallelism
 ```
 
+`bash ./scripts/safe-run.sh` also includes a small backoff + retry loop for Cargo commands when it
+detects transient `rustc` thread-spawn panics (e.g. `failed to spawn helper thread (WouldBlock)`),
+which can happen when many agents share the same host. Override with
+`AERO_SAFE_RUN_RUSTC_RETRIES=1` to disable retries.
+
 ---
 
 ## Recommended Build Settings

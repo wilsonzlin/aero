@@ -70,6 +70,9 @@ export RUSTC_WORKER_THREADS="${RUSTC_WORKER_THREADS:-$CARGO_BUILD_JOBS}"
 # Heuristic: align per-crate codegen parallelism with overall Cargo build parallelism so the total
 # number of rustc worker threads remains bounded.
 is_cargo_cmd=false
+_aero_injected_codegen_units=0
+_aero_injected_codegen_units_value=""
+_aero_injected_codegen_units_is_explicit=0
 if [[ "${1:-}" == "cargo" || "${1:-}" == */cargo ]]; then
     is_cargo_cmd=true
     if [[ "${RUSTFLAGS:-}" != *"codegen-units="* ]]; then
@@ -78,12 +81,14 @@ if [[ "${1:-}" == "cargo" || "${1:-}" == */cargo ]]; then
         # Allow explicit override without requiring users to manually edit RUSTFLAGS.
         # `AERO_CODEGEN_UNITS` is a shorthand alias for `AERO_RUST_CODEGEN_UNITS`.
         if [[ -n "${AERO_RUST_CODEGEN_UNITS:-}" ]]; then
+            _aero_injected_codegen_units_is_explicit=1
             if [[ "${AERO_RUST_CODEGEN_UNITS}" =~ ^[1-9][0-9]*$ ]]; then
                 _aero_codegen_units="${AERO_RUST_CODEGEN_UNITS}"
             else
                 echo "[safe-run] warning: invalid AERO_RUST_CODEGEN_UNITS value: ${AERO_RUST_CODEGEN_UNITS} (expected positive integer); using ${_aero_codegen_units}" >&2
             fi
         elif [[ -n "${AERO_CODEGEN_UNITS:-}" ]]; then
+            _aero_injected_codegen_units_is_explicit=1
             if [[ "${AERO_CODEGEN_UNITS}" =~ ^[1-9][0-9]*$ ]]; then
                 _aero_codegen_units="${AERO_CODEGEN_UNITS}"
             else
@@ -102,6 +107,8 @@ if [[ "${1:-}" == "cargo" || "${1:-}" == */cargo ]]; then
 
         export RUSTFLAGS="${RUSTFLAGS:-} -C codegen-units=${_aero_codegen_units}"
         export RUSTFLAGS="${RUSTFLAGS# }"
+        _aero_injected_codegen_units=1
+        _aero_injected_codegen_units_value="${_aero_codegen_units}"
         unset _aero_codegen_units 2>/dev/null || true
     fi
 
@@ -159,6 +166,7 @@ echo "[safe-run] Command: $*" >&2
 echo "[safe-run] Timeout: ${TIMEOUT}s, Memory: ${MEM_LIMIT}" >&2
 echo "[safe-run] Started: $(date -Iseconds 2>/dev/null || date)" >&2
 
+
 should_retry_rustc_thread_error() {
     local stderr_log="${1:-}"
     if [[ -z "${stderr_log}" || ! -f "${stderr_log}" ]]; then
@@ -173,12 +181,15 @@ should_retry_rustc_thread_error() {
     # - "failed to create helper thread: ... Resource temporarily unavailable"
     # - "failed to spawn helper thread: ... Resource temporarily unavailable"
     # - "failed to spawn work thread: ... Resource temporarily unavailable"
+    # - "failed to spawn coordinator thread: ... Resource temporarily unavailable"
     # - "Unable to install ctrlc handler: ... Resource temporarily unavailable"
-    if grep -q "failed to create helper thread" "${stderr_log}" \
-        || grep -q "failed to spawn helper thread" "${stderr_log}" \
-        || grep -q "failed to spawn work thread" "${stderr_log}" \
-        || grep -q "Unable to install ctrlc handler" "${stderr_log}"
-    then
+    if grep -q "Unable to install ctrlc handler" "${stderr_log}"; then
+        return 0
+    fi
+    if grep -q "failed to create helper thread" "${stderr_log}"; then
+        return 0
+    fi
+    if grep -q "failed to spawn" "${stderr_log}" && grep -q "Resource temporarily unavailable" "${stderr_log}"; then
         return 0
     fi
 
@@ -216,6 +227,17 @@ fi
 
 attempt=1
 while true; do
+    # If we injected codegen-units and hit the thread-spawn ICE, fall back to the most conservative
+    # setting on retry to reduce rustc's helper threads.
+    #
+    # If the user explicitly set AERO_RUST_CODEGEN_UNITS/AERO_CODEGEN_UNITS, respect it and do not
+    # override; they can opt into the more conservative setting themselves if desired.
+    if [[ "${attempt}" -gt 1 && "${_aero_injected_codegen_units:-0}" -eq 1 ]]; then
+        if [[ "${_aero_injected_codegen_units_is_explicit:-0}" -eq 0 && -n "${_aero_injected_codegen_units_value:-}" && "${_aero_injected_codegen_units_value}" != "1" ]]; then
+            export RUSTFLAGS="${RUSTFLAGS//codegen-units=${_aero_injected_codegen_units_value}/codegen-units=1}"
+        fi
+    fi
+
     stderr_log="$(mktemp "${TMPDIR:-/tmp}/aero-safe-run-stderr.XXXXXX")"
 
     set +e
@@ -229,11 +251,15 @@ while true; do
     fi
 
     if [[ "${attempt}" -lt "${MAX_RETRIES}" ]] \
-        && [[ "${1:-}" == "cargo" || "${1:-}" == */cargo ]] \
+        && [[ "${is_cargo_cmd}" == "true" ]] \
         && should_retry_rustc_thread_error "${stderr_log}"
     then
         # Exponential backoff with jitter (2-4, 4-8, 8-16, ...).
-        base=$((2 ** (attempt - 1)))
+        base=$((2 ** attempt))
+        # Cap at 16 so we stay within the documented 16-32s backoff window for 4th+ retries.
+        if [[ "${base}" -gt 16 ]]; then
+            base=16
+        fi
         delay=$((base + RANDOM % (base + 1)))
         echo "[safe-run] rustc hit transient resource limit; retrying in ${delay}s (attempt $((attempt + 1))/${MAX_RETRIES})" >&2
         sleep "${delay}"
