@@ -20,6 +20,7 @@ We assume a single PCI bus (`bus 0`) with stable device numbers. Not all devices
 | 00:04.0  | Audio  | 8086:2668     | 04/03/00                 | INTA     | Intel HD Audio (HDA) controller |
 | 00:05.0  | NIC    | 8086:100E     | 02/00/00                 | INTA     | Intel E1000 (82540EM) |
 | 00:06.0  | NIC    | 10EC:8139     | 02/00/00                 | INTA     | RTL8139 (alternate NIC option) |
+| 00:07.0  | GPU    | A3A0:0001     | 03/00/00                 | INTA     | AeroGPU display controller (WDDM). Canonical BDF reserved; the canonical `aero_machine::Machine` currently exposes only legacy VGA/VBE (non-PCI). |
 | 00:08.0  | vNIC   | 1AF4:1041     | 02/00/00                 | INTA     | virtio-net (Aero Win7 contract v1: modern-only, `REV_01`; upstream transitional = 1AF4:1000) |
 | 00:09.0  | vBlk   | 1AF4:1042     | 01/00/00                 | INTA     | virtio-blk (Aero Win7 contract v1: modern-only, `REV_01`; upstream transitional = 1AF4:1001) |
 | 00:0A.0  | vInput | 1AF4:1052     | 09/80/00                 | INTA     | virtio-input keyboard (Aero Win7 contract v1: `SUBSYS_00101AF4`, `REV_01`, `header_type=0x80` for multi-function discovery) |

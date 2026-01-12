@@ -37,6 +37,10 @@ fn canonical_ids_and_class_codes() {
     assert_eq!(NIC_RTL8139.device_id, 0x8139);
     assert_eq!(NIC_RTL8139.class.as_u32(), 0x020000);
 
+    assert_eq!(AEROGPU.vendor_id, 0xA3A0);
+    assert_eq!(AEROGPU.device_id, 0x0001);
+    assert_eq!(AEROGPU.class.as_u32(), 0x030000);
+
     assert_eq!(VIRTIO_NET.class.as_u32(), 0x020000);
     assert_eq!(VIRTIO_BLK.class.as_u32(), 0x010000);
     assert_eq!(VIRTIO_INPUT_KEYBOARD.class.as_u32(), 0x098000);

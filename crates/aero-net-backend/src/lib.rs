@@ -29,7 +29,6 @@ pub trait NetworkBackend {
     fn poll_receive(&mut self) -> Option<Vec<u8>> {
         None
     }
-
     /// Best-effort stats for the ring-buffer-backed [`L2TunnelRingBackend`] (`NET_TX`/`NET_RX`
     /// rings).
     ///

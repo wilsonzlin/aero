@@ -198,6 +198,8 @@ pub const PCI_VENDOR_ID_INTEL: u16 = 0x8086;
 pub const PCI_VENDOR_ID_REALTEK: u16 = 0x10ec;
 pub const PCI_VENDOR_ID_REDHAT_QEMU: u16 = 0x1b36;
 pub const PCI_VENDOR_ID_VIRTIO: u16 = 0x1af4;
+/// Project-local PCI vendor ID used by AeroGPU (display controller).
+pub const PCI_VENDOR_ID_AERO: u16 = 0xA3A0;
 
 pub const PCI_DEVICE_ID_INTEL_PIIX3_IDE: u16 = 0x7010;
 pub const PCI_DEVICE_ID_INTEL_PIIX3_UHCI: u16 = 0x7020;
@@ -207,6 +209,7 @@ pub const PCI_DEVICE_ID_INTEL_ICH6_HDA: u16 = 0x2668;
 pub const PCI_DEVICE_ID_INTEL_E1000_82540EM: u16 = 0x100e;
 pub const PCI_DEVICE_ID_REALTEK_RTL8139: u16 = 0x8139;
 pub const PCI_DEVICE_ID_QEMU_NVME: u16 = 0x0010;
+pub const PCI_DEVICE_ID_AERO_AEROGPU: u16 = 0x0001;
 
 pub const PCI_DEVICE_ID_VIRTIO_NET_TRANSITIONAL: u16 = 0x1000;
 pub const PCI_DEVICE_ID_VIRTIO_BLK_TRANSITIONAL: u16 = 0x1001;
@@ -244,6 +247,8 @@ pub const RTL8139_BARS: [PciBarProfile; 2] = [
 ];
 
 pub const VIRTIO_BARS: [PciBarProfile; 1] = [PciBarProfile::mem64(0, 0x4000, false)];
+
+pub const AEROGPU_BARS: [PciBarProfile; 1] = [PciBarProfile::mem32(0, 64 * 1024, false)];
 
 pub const VIRTIO_CAP_COMMON: [u8; 14] = [
     16, 1, 0, 0, 0, 0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00,
@@ -400,6 +405,27 @@ pub const NIC_RTL8139: PciDeviceProfile = PciDeviceProfile {
     capabilities: &[],
 };
 
+/// AeroGPU display controller (canonical Windows device contract).
+///
+/// Note: this is a PCI identity/profile only; the canonical `aero_machine::Machine` currently
+/// exposes a legacy VGA/VBE device (`aero_gpu_vga`) via fixed legacy ports and MMIO windows and
+/// does not yet wire up an AeroGPU PCI function.
+pub const AEROGPU: PciDeviceProfile = PciDeviceProfile {
+    name: "aerogpu",
+    bdf: PciBdf::new(0, 7, 0),
+    vendor_id: PCI_VENDOR_ID_AERO,
+    device_id: PCI_DEVICE_ID_AERO_AEROGPU,
+    subsystem_vendor_id: PCI_VENDOR_ID_AERO,
+    subsystem_id: 0x0001,
+    revision_id: 0,
+    // VGA-compatible display controller.
+    class: PciClassCode::new(0x03, 0x00, 0x00),
+    header_type: 0x00,
+    interrupt_pin: Some(PciInterruptPin::IntA),
+    bars: &AEROGPU_BARS,
+    capabilities: &[],
+};
+
 pub const VIRTIO_NET: PciDeviceProfile = PciDeviceProfile {
     name: "virtio-net",
     bdf: PciBdf::new(0, 8, 0),
@@ -501,6 +527,7 @@ pub const CANONICAL_IO_DEVICES: &[PciDeviceProfile] = &[
     HDA_ICH6,
     NIC_E1000_82540EM,
     NIC_RTL8139,
+    AEROGPU,
     VIRTIO_NET,
     VIRTIO_BLK,
     VIRTIO_INPUT_KEYBOARD,

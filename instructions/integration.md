@@ -241,19 +241,44 @@ Windows 7 prefers APIC. The MADT tells the OS about APIC configuration:
 
 ## PCI Device Enumeration
 
-Devices must be registered on the PCI bus:
+The canonical PCI layout (BDFs, IDs/class codes, and INTx routing) is defined in:
+
+- [`docs/pci-device-compatibility.md`](../docs/pci-device-compatibility.md)
+- `aero_devices::pci::profile` (source of truth for the constants used by tests/platform code)
+
+**Important:** The canonical Windows 7 storage topology is normative and requires **ICH9 AHCI at
+`00:02.0`** (see [`docs/05-storage-topology-win7.md`](../docs/05-storage-topology-win7.md)). Do not
+assign any other device to `00:02.0`.
+
+### Canonical bus 0 device numbers (when enabled)
 
 ```
-Bus 0, Device 0  - Host Bridge
-Bus 0, Device 1  - ISA Bridge (LPC)
-Bus 0, Device 2  - AeroGPU (VGA)
-Bus 0, Device 3  - AHCI Controller
-Bus 0, Device 4  - E1000 NIC
-Bus 0, Device 5  - HD Audio
-Bus 0, Device 6  - Virtio-blk
-Bus 0, Device 7  - Virtio-net
-...
+00:00.0  - Host bridge (Q35)
+00:1f.0  - ISA/LPC bridge (ICH9)
+
+00:01.0  - PIIX3 ISA bridge (multi-function; enables 00:01.1/00:01.2 discovery)
+00:01.1  - PIIX3 IDE (Win7 install ISO attachment; legacy compat mode)
+00:01.2  - PIIX3 UHCI (USB 1.1)
+
+00:02.0  - ICH9 AHCI (Win7 OS disk; canonical and normative)
+00:03.0  - NVMe (optional; off by default for Win7)
+00:04.0  - HD Audio (ICH6)
+00:05.0  - E1000 NIC
+00:06.0  - RTL8139 NIC (alternate)
+00:07.0  - AeroGPU display controller (reserved canonical BDF)
+00:08.0  - virtio-net
+00:09.0  - virtio-blk
+00:0a.0  - virtio-input keyboard (multi-function)
+00:0a.1  - virtio-input mouse
+00:0b.0  - virtio-snd
 ```
+
+### Note on VGA / display today
+
+The canonical `aero_machine::Machine` currently exposes VGA/SVGA (Bochs VBE) as a **legacy-only**
+device (fixed ports `0x3C0..0x3DF`, VBE ports `0x01CE/0x01CF`, legacy VRAM window
+`0xA0000..0xBFFFF`, and a fixed LFB at `0xE000_0000`). It is **not** currently exposed as a PCI
+function.
 
 ---
 
