@@ -1,5 +1,119 @@
 #include "virtio_input.h"
 
+typedef struct _VIRTIO_INPUT_WRITE_REQUEST_CONTEXT {
+    PHID_XFER_PACKET XferPacket;
+    PMDL XferPacketMdl;
+
+    PUCHAR ReportBuffer;
+    PMDL ReportBufferMdl;
+    ULONG ReportBufferLen;
+} VIRTIO_INPUT_WRITE_REQUEST_CONTEXT, *PVIRTIO_INPUT_WRITE_REQUEST_CONTEXT;
+
+WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(VIRTIO_INPUT_WRITE_REQUEST_CONTEXT, VirtioInputGetWriteRequestContext);
+
+static EVT_WDF_OBJECT_CONTEXT_CLEANUP VirtioInputEvtWriteRequestContextCleanup;
+
+static NTSTATUS VirtioInputMapUserAddress(
+    _In_ PVOID UserAddress,
+    _In_ SIZE_T Length,
+    _In_ LOCK_OPERATION Operation,
+    _Outptr_ PMDL *MdlOut,
+    _Outptr_result_bytebuffer_(Length) PVOID *SystemAddressOut
+)
+{
+    PMDL mdl;
+    PVOID systemAddress;
+
+    mdl = IoAllocateMdl(UserAddress, (ULONG)Length, FALSE, FALSE, NULL);
+    if (mdl == NULL) {
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+
+    __try {
+        MmProbeAndLockPages(mdl, UserMode, Operation);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        IoFreeMdl(mdl);
+        return (NTSTATUS)GetExceptionCode();
+    }
+
+    systemAddress = MmGetSystemAddressForMdlSafe(mdl, NormalPagePriority);
+    if (systemAddress == NULL) {
+        MmUnlockPages(mdl);
+        IoFreeMdl(mdl);
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+
+    *MdlOut = mdl;
+    *SystemAddressOut = systemAddress;
+    return STATUS_SUCCESS;
+}
+
+static NTSTATUS VirtioInputPrepareWriteRequest(
+    _In_ WDFREQUEST Request,
+    _In_ HID_XFER_PACKET *Packet,
+    _Outptr_ const HID_XFER_PACKET **MappedPacketOut,
+    _Outptr_opt_ const UCHAR **MappedReportBufferOut
+)
+{
+    NTSTATUS status;
+    PVIRTIO_INPUT_WRITE_REQUEST_CONTEXT ctx;
+    WDF_OBJECT_ATTRIBUTES attributes;
+
+    KPROCESSOR_MODE requestorMode;
+    const HID_XFER_PACKET *xfer;
+
+    requestorMode = WdfRequestGetRequestorMode(Request);
+    if (requestorMode != UserMode) {
+        *MappedPacketOut = Packet;
+        *MappedReportBufferOut = Packet->reportBuffer;
+        return STATUS_SUCCESS;
+    }
+
+    WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(&attributes, VIRTIO_INPUT_WRITE_REQUEST_CONTEXT);
+    attributes.EvtCleanupCallback = VirtioInputEvtWriteRequestContextCleanup;
+
+    status = WdfObjectAllocateContext(Request, &attributes, (PVOID *)&ctx);
+    if (!NT_SUCCESS(status)) {
+        return status;
+    }
+
+    RtlZeroMemory(ctx, sizeof(*ctx));
+
+    status = VirtioInputMapUserAddress(Packet, sizeof(HID_XFER_PACKET), IoReadAccess, &ctx->XferPacketMdl, (PVOID *)&ctx->XferPacket);
+    if (!NT_SUCCESS(status)) {
+        return status;
+    }
+
+    xfer = ctx->XferPacket;
+    ctx->ReportBufferLen = xfer->reportBufferLen;
+
+    if (xfer->reportBuffer != NULL && ctx->ReportBufferLen > 0) {
+        SIZE_T mapLen;
+        PUCHAR reportBufferUser;
+
+        reportBufferUser = xfer->reportBuffer;
+
+        mapLen = ctx->ReportBufferLen;
+        if (mapLen > 2) {
+            mapLen = 2;
+        }
+
+        status = VirtioInputMapUserAddress(
+            reportBufferUser,
+            mapLen,
+            IoReadAccess,
+            &ctx->ReportBufferMdl,
+            (PVOID *)&ctx->ReportBuffer);
+        if (!NT_SUCCESS(status)) {
+            return status;
+        }
+    }
+
+    *MappedPacketOut = ctx->XferPacket;
+    *MappedReportBufferOut = ctx->ReportBuffer;
+    return STATUS_SUCCESS;
+}
+
 static BOOLEAN VirtioInputIsValidReportId(_In_ UCHAR ReportId)
 {
     return (ReportId == VIRTIO_INPUT_REPORT_ID_KEYBOARD) || (ReportId == VIRTIO_INPUT_REPORT_ID_MOUSE);
@@ -58,7 +172,16 @@ NTSTATUS VirtioInputHandleHidWriteReport(_In_ WDFQUEUE Queue, _In_ WDFREQUEST Re
 {
     WDFDEVICE device = WdfIoQueueGetDevice(Queue);
     PDEVICE_CONTEXT ctx = VirtioInputGetDeviceContext(device);
-    PCSTR name = VioInputHidIoctlToString(IOCTL_HID_WRITE_REPORT);
+    WDF_REQUEST_PARAMETERS params;
+    PCSTR name;
+
+    WDF_REQUEST_PARAMETERS_INIT(&params);
+    WdfRequestGetParameters(Request, &params);
+    if (params.Type == WdfRequestTypeDeviceControlInternal) {
+        name = VioInputHidIoctlToString(params.Parameters.DeviceIoControl.IoControlCode);
+    } else {
+        name = VioInputHidIoctlToString(IOCTL_HID_WRITE_REPORT);
+    }
 
     HID_XFER_PACKET *packet = NULL;
     size_t packetBytes = 0;
@@ -78,20 +201,41 @@ NTSTATUS VirtioInputHandleHidWriteReport(_In_ WDFQUEUE Queue, _In_ WDFREQUEST Re
         return STATUS_SUCCESS;
     }
 
-    UCHAR reportId = VirtioInputDetermineWriteReportId(Request, packet);
+    const HID_XFER_PACKET *mappedPacket;
+    const UCHAR *mappedReportBuffer;
+    HID_XFER_PACKET safePacket;
+
+    mappedPacket = NULL;
+    mappedReportBuffer = NULL;
+    status = VirtioInputPrepareWriteRequest(Request, packet, &mappedPacket, &mappedReportBuffer);
+    if (!NT_SUCCESS(status)) {
+        VIOINPUT_LOG(VIOINPUT_LOG_ERROR | VIOINPUT_LOG_IOCTL, "%s map user buffers failed: %!STATUS!\n", name, status);
+        WdfRequestComplete(Request, status);
+        return STATUS_SUCCESS;
+    }
+
+    safePacket = *mappedPacket;
+    safePacket.reportBuffer = (PUCHAR)mappedReportBuffer;
+    if (WdfRequestGetRequestorMode(Request) == UserMode) {
+        PVIRTIO_INPUT_WRITE_REQUEST_CONTEXT reqCtx = VirtioInputGetWriteRequestContext(Request);
+        safePacket.reportBufferLen = reqCtx->ReportBufferLen;
+        safePacket.reportBuffer = reqCtx->ReportBuffer;
+    }
+
+    UCHAR reportId = VirtioInputDetermineWriteReportId(Request, &safePacket);
     if (reportId != VIRTIO_INPUT_REPORT_ID_KEYBOARD) {
         VIOINPUT_LOG(
             VIOINPUT_LOG_IOCTL,
             "%s ignored: reportId=%u bytes=%lu\n",
             name,
             (ULONG)reportId,
-            packet->reportBufferLen);
-        WdfRequestCompleteWithInformation(Request, STATUS_SUCCESS, packet->reportBufferLen);
+            safePacket.reportBufferLen);
+        WdfRequestCompleteWithInformation(Request, STATUS_SUCCESS, safePacket.reportBufferLen);
         return STATUS_SUCCESS;
     }
 
     UCHAR ledBitfield = 0;
-    status = VirtioInputParseKeyboardLedReport(packet, reportId, &ledBitfield);
+    status = VirtioInputParseKeyboardLedReport(&safePacket, reportId, &ledBitfield);
     if (!NT_SUCCESS(status)) {
         VIOINPUT_LOG(VIOINPUT_LOG_ERROR | VIOINPUT_LOG_IOCTL, "%s parse failed: %!STATUS!\n", name, status);
         WdfRequestComplete(Request, status);
@@ -126,7 +270,26 @@ NTSTATUS VirtioInputHandleHidWriteReport(_In_ WDFQUEUE Queue, _In_ WDFREQUEST Re
             (ULONG)ledBitfield);
     }
 
-    VIOINPUT_LOG(VIOINPUT_LOG_IOCTL, "%s -> %!STATUS! bytes=%lu\n", name, STATUS_SUCCESS, packet->reportBufferLen);
-    WdfRequestCompleteWithInformation(Request, STATUS_SUCCESS, packet->reportBufferLen);
+    VIOINPUT_LOG(VIOINPUT_LOG_IOCTL, "%s -> %!STATUS! bytes=%lu\n", name, STATUS_SUCCESS, safePacket.reportBufferLen);
+    WdfRequestCompleteWithInformation(Request, STATUS_SUCCESS, safePacket.reportBufferLen);
     return STATUS_SUCCESS;
+}
+
+static VOID VirtioInputEvtWriteRequestContextCleanup(_In_ WDFOBJECT Object)
+{
+    PVIRTIO_INPUT_WRITE_REQUEST_CONTEXT ctx;
+
+    ctx = VirtioInputGetWriteRequestContext(Object);
+
+    if (ctx->ReportBufferMdl != NULL) {
+        MmUnlockPages(ctx->ReportBufferMdl);
+        IoFreeMdl(ctx->ReportBufferMdl);
+        ctx->ReportBufferMdl = NULL;
+    }
+
+    if (ctx->XferPacketMdl != NULL) {
+        MmUnlockPages(ctx->XferPacketMdl);
+        IoFreeMdl(ctx->XferPacketMdl);
+        ctx->XferPacketMdl = NULL;
+    }
 }
