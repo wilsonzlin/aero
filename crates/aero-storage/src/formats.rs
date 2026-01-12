@@ -1,4 +1,4 @@
-use crate::{AeroSparseDisk, Qcow2Disk, RawDisk, Result, StorageBackend, VhdDisk};
+use crate::{AeroSparseDisk, AeroSparseHeader, Qcow2Disk, RawDisk, Result, StorageBackend, VhdDisk};
 
 const QCOW2_MAGIC: [u8; 4] = *b"QFI\xfb";
 const AEROSPAR_MAGIC: [u8; 8] = *b"AEROSPAR";
@@ -48,11 +48,16 @@ pub fn detect_format<B: StorageBackend>(backend: &mut B) -> Result<DiskFormat> {
         }
     }
 
+    // AeroSparse: check magic plus a minimally valid header (version/size/table invariants).
     if len >= 8 {
         let mut magic = [0u8; 8];
         backend.read_at(0, &mut magic)?;
-        if magic == AEROSPAR_MAGIC {
-            return Ok(DiskFormat::AeroSparse);
+        if magic == AEROSPAR_MAGIC && len >= 64 {
+            let mut header = [0u8; 64];
+            backend.read_at(0, &mut header)?;
+            if AeroSparseHeader::decode(&header).is_ok() {
+                return Ok(DiskFormat::AeroSparse);
+            }
         }
     }
 
