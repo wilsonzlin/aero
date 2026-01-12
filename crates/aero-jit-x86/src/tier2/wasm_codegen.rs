@@ -13,7 +13,7 @@ use crate::jit_ctx::{self, JitContext};
 use crate::wasm::abi::{
     IMPORT_MEMORY, IMPORT_MEM_READ_U16, IMPORT_MEM_READ_U32, IMPORT_MEM_READ_U64,
     IMPORT_MEM_READ_U8, IMPORT_MEM_WRITE_U16, IMPORT_MEM_WRITE_U32, IMPORT_MEM_WRITE_U64,
-    IMPORT_MEM_WRITE_U8, IMPORT_MMU_TRANSLATE, IMPORT_MODULE,
+    IMPORT_MEM_WRITE_U8, IMPORT_MMU_TRANSLATE, IMPORT_MODULE, WASM32_MAX_PAGES,
 };
 use crate::{
     JIT_TLB_ENTRY_SIZE, JIT_TLB_INDEX_MASK, PAGE_BASE_MASK, PAGE_OFFSET_MASK, PAGE_SHIFT,
@@ -72,7 +72,7 @@ impl Default for Tier2WasmOptions {
 impl Tier2WasmOptions {
     fn validate_memory_import(self) {
         let effective_max_pages = if self.memory_shared {
-            Some(self.memory_max_pages.unwrap_or(65_536))
+            Some(self.memory_max_pages.unwrap_or(WASM32_MAX_PAGES))
         } else {
             self.memory_max_pages
         };
@@ -220,7 +220,7 @@ impl Tier2WasmCodegen {
         let memory_max_pages: Option<u64> = if options.memory_shared {
             // Shared memories require an explicit maximum. Default to 4GiB (the maximum size of a
             // wasm32 memory) so we can link against any smaller shared memory.
-            Some(u64::from(options.memory_max_pages.unwrap_or(65_536)))
+            Some(u64::from(options.memory_max_pages.unwrap_or(WASM32_MAX_PAGES)))
         } else {
             options.memory_max_pages.map(u64::from)
         };

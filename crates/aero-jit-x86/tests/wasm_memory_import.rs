@@ -3,7 +3,7 @@ use aero_jit_x86::tier1::{Tier1WasmCodegen, Tier1WasmOptions};
 use aero_jit_x86::tier2::ir::{Instr, TraceIr, TraceKind};
 use aero_jit_x86::tier2::opt::RegAllocPlan;
 use aero_jit_x86::tier2::{Tier2WasmCodegen, Tier2WasmOptions};
-use aero_jit_x86::wasm::{IMPORT_MEMORY, IMPORT_MODULE};
+use aero_jit_x86::wasm::{IMPORT_MEMORY, IMPORT_MODULE, WASM32_MAX_PAGES};
 #[cfg(feature = "legacy-baseline")]
 use aero_jit_x86::{
     legacy::{
@@ -104,7 +104,7 @@ fn tier1_wasm_memory_import_shared_defaults_to_4gib_maximum_and_respects_minimum
     assert!(!mem.memory64);
     assert!(mem.shared);
     assert_eq!(mem.initial, 3);
-    assert_eq!(mem.maximum, Some(65_536));
+    assert_eq!(mem.maximum, Some(u64::from(WASM32_MAX_PAGES)));
     assert_eq!(mem.page_size_log2, None);
 }
 
@@ -160,7 +160,7 @@ fn tier2_wasm_memory_import_shared_defaults_to_4gib_maximum() {
     assert!(!mem.memory64);
     assert!(mem.shared);
     assert_eq!(mem.initial, 1);
-    assert_eq!(mem.maximum, Some(65_536));
+    assert_eq!(mem.maximum, Some(u64::from(WASM32_MAX_PAGES)));
     assert_eq!(mem.page_size_log2, None);
 }
 
@@ -181,7 +181,7 @@ fn tier2_wasm_memory_import_shared_defaults_to_4gib_maximum_and_respects_minimum
     assert!(!mem.memory64);
     assert!(mem.shared);
     assert_eq!(mem.initial, 7);
-    assert_eq!(mem.maximum, Some(65_536));
+    assert_eq!(mem.maximum, Some(u64::from(WASM32_MAX_PAGES)));
     assert_eq!(mem.page_size_log2, None);
 }
 
@@ -202,7 +202,7 @@ fn legacy_wasm_memory_import_shared_defaults_to_4gib_maximum() {
     assert!(!mem.memory64);
     assert!(mem.shared);
     assert_eq!(mem.initial, 1);
-    assert_eq!(mem.maximum, Some(65_536));
+    assert_eq!(mem.maximum, Some(u64::from(WASM32_MAX_PAGES)));
     assert_eq!(mem.page_size_log2, None);
 }
 
@@ -222,6 +222,6 @@ fn legacy_wasm_memory_import_shared_defaults_to_4gib_maximum_and_respects_minimu
     assert!(!mem.memory64);
     assert!(mem.shared);
     assert_eq!(mem.initial, 9);
-    assert_eq!(mem.maximum, Some(65_536));
+    assert_eq!(mem.maximum, Some(u64::from(WASM32_MAX_PAGES)));
     assert_eq!(mem.page_size_log2, None);
 }

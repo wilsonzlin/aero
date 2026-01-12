@@ -13,7 +13,7 @@ use crate::wasm::abi::{
     IMPORT_JIT_EXIT, IMPORT_JIT_EXIT_MMIO, IMPORT_MEMORY, IMPORT_MEM_READ_U16, IMPORT_MEM_READ_U32,
     IMPORT_MEM_READ_U64, IMPORT_MEM_READ_U8, IMPORT_MEM_WRITE_U16, IMPORT_MEM_WRITE_U32,
     IMPORT_MEM_WRITE_U64, IMPORT_MEM_WRITE_U8, IMPORT_MMU_TRANSLATE, IMPORT_MODULE,
-    IMPORT_PAGE_FAULT, JIT_EXIT_SENTINEL_I64,
+    IMPORT_PAGE_FAULT, JIT_EXIT_SENTINEL_I64, WASM32_MAX_PAGES,
 };
 
 /// WASM export name for Tier-1 blocks.
@@ -72,7 +72,7 @@ impl Default for Tier1WasmOptions {
 impl Tier1WasmOptions {
     fn validate_memory_import(self) {
         let effective_max_pages = if self.memory_shared {
-            Some(self.memory_max_pages.unwrap_or(65_536))
+            Some(self.memory_max_pages.unwrap_or(WASM32_MAX_PAGES))
         } else {
             self.memory_max_pages
         };
@@ -222,7 +222,7 @@ impl Tier1WasmCodegen {
         let memory_max_pages: Option<u64> = if options.memory_shared {
             // Shared memories require an explicit maximum. Default to 4GiB (the maximum size of a
             // wasm32 memory) so we can link against any smaller shared memory.
-            Some(u64::from(options.memory_max_pages.unwrap_or(65_536)))
+            Some(u64::from(options.memory_max_pages.unwrap_or(WASM32_MAX_PAGES)))
         } else {
             options.memory_max_pages.map(u64::from)
         };

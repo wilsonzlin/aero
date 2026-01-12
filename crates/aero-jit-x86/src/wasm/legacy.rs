@@ -14,7 +14,7 @@ use super::abi::{
     IMPORT_JIT_EXIT, IMPORT_JIT_EXIT_MMIO, IMPORT_MEMORY, IMPORT_MEM_READ_U16, IMPORT_MEM_READ_U32,
     IMPORT_MEM_READ_U64, IMPORT_MEM_READ_U8, IMPORT_MEM_WRITE_U16, IMPORT_MEM_WRITE_U32,
     IMPORT_MEM_WRITE_U64, IMPORT_MEM_WRITE_U8, IMPORT_MMU_TRANSLATE, IMPORT_MODULE,
-    IMPORT_PAGE_FAULT,
+    IMPORT_PAGE_FAULT, WASM32_MAX_PAGES,
 };
 
 /// A compiled basic block is exported as a function named `block`.
@@ -51,7 +51,7 @@ impl Default for LegacyWasmOptions {
 impl LegacyWasmOptions {
     fn validate_memory_import(self) {
         let effective_max_pages = if self.memory_shared {
-            Some(self.memory_max_pages.unwrap_or(65_536))
+            Some(self.memory_max_pages.unwrap_or(WASM32_MAX_PAGES))
         } else {
             self.memory_max_pages
         };
@@ -175,7 +175,7 @@ impl WasmCodegen {
         let memory_max_pages: Option<u64> = if options.memory_shared {
             // Shared memories require an explicit maximum. Default to 4GiB (the maximum size of a
             // wasm32 memory) so we can link against any smaller shared memory.
-            Some(u64::from(options.memory_max_pages.unwrap_or(65_536)))
+            Some(u64::from(options.memory_max_pages.unwrap_or(WASM32_MAX_PAGES)))
         } else {
             options.memory_max_pages.map(u64::from)
         };

@@ -4,6 +4,12 @@ pub const IMPORT_MODULE: &str = "env";
 /// Imported linear memory (`WebAssembly.Memory`) shared with the main emulator.
 pub const IMPORT_MEMORY: &str = "memory";
 
+/// Maximum number of 64KiB pages in a wasm32 linear memory (4GiB).
+///
+/// Shared memories require an explicit maximum. Defaulting to the wasm32 limit lets generated
+/// modules link against any smaller shared memory provided by the host.
+pub const WASM32_MAX_PAGES: u32 = 65_536;
+
 /// Export name used by compiled Tier-1 blocks (and the legacy baseline codegen).
 pub const EXPORT_BLOCK_FN: &str = "block";
 

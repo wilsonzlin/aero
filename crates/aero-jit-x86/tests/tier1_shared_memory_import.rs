@@ -1,6 +1,6 @@
 use aero_jit_x86::tier1::ir::{IrBuilder, IrTerminator};
 use aero_jit_x86::tier1::{Tier1WasmCodegen, Tier1WasmOptions};
-use aero_jit_x86::wasm::{IMPORT_MEMORY, IMPORT_MODULE};
+use aero_jit_x86::wasm::{IMPORT_MEMORY, IMPORT_MODULE, WASM32_MAX_PAGES};
 
 #[test]
 fn tier1_wasm_codegen_can_import_shared_memory_with_maximum() {
@@ -37,7 +37,7 @@ fn tier1_wasm_codegen_can_import_shared_memory_with_maximum() {
                         );
                         assert_eq!(
                             ty.maximum,
-                            Some(65_536),
+                            Some(u64::from(WASM32_MAX_PAGES)),
                             "expected shared env.memory import to default to a 4GiB maximum"
                         );
                         found_mem_import = true;
