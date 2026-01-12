@@ -25,6 +25,10 @@ warns that the guest virtio-input selftest will likely fail.
 It:
 - starts a tiny HTTP server on 127.0.0.1:<port> (guest reaches it as 10.0.2.2:<port> via slirp)
   - use `--http-log <path>` to record per-request logs (useful for CI artifacts)
+  - serves a deterministic large payload at `<http_path>-large`:
+    - HTTP 200
+    - 1 MiB body of bytes 0..255 repeating
+    - correct Content-Length
 - launches QEMU with virtio-blk + virtio-net + virtio-input (and optionally virtio-snd) and COM1 redirected to a log file
   - in transitional mode virtio-input is skipped (with a warning) if QEMU does not advertise virtio-keyboard-pci/virtio-mouse-pci
 - captures QEMU stderr to `<serial-base>.qemu.stderr.log` (next to the serial log) for debugging early exits

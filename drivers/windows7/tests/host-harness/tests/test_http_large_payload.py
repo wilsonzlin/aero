@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import http.client
 import importlib.util
+import socket
 import sys
 import unittest
 from pathlib import Path
@@ -152,6 +153,32 @@ class HarnessHttpLargePayloadTests(unittest.TestCase):
                 c.close()
                 self.assertEqual(r.status, 200)
                 self.assertEqual(len(body), 1048576)
+            finally:
+                httpd.shutdown()
+                thread.join(timeout=2)
+
+    def test_large_endpoint_client_disconnect_does_not_kill_server(self) -> None:
+        # Regression test: if a client disconnects mid-transfer, the server should keep running
+        # and continue servicing subsequent requests.
+        httpd, thread, port = self._start_server("/aero-virtio-selftest")
+        with httpd:
+            try:
+                s = socket.create_connection(("127.0.0.1", port), timeout=2)
+                try:
+                    s.sendall(b"GET /aero-virtio-selftest-large HTTP/1.1\r\nHost: localhost\r\n\r\n")
+                    # Read a small prefix (header + some body), then disconnect abruptly.
+                    _ = s.recv(1024)
+                finally:
+                    s.close()
+
+                # Server should still respond to new requests.
+                c = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
+                c.request("GET", "/aero-virtio-selftest")
+                r = c.getresponse()
+                body = r.read()
+                c.close()
+                self.assertEqual(r.status, 200)
+                self.assertEqual(body, b"OK\n")
             finally:
                 httpd.shutdown()
                 thread.join(timeout=2)
