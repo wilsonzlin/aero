@@ -331,8 +331,9 @@ Implementation references:
 - Ring buffer **contents** are not restored. Producers clear the ring to silence on restore to avoid replaying stale samples.
 - Any host-time-derived audio clocks (e.g. `AudioFrameClock`-driven schedulers) must be reset on snapshot resume so devices do not
   "fast-forward" by wall-clock time spent paused during save/restore.
-- virtio-snd snapshot/restore is not yet plumbed in the browser runtime (only PCI config/bus state is snapshotted), so the
-  virtio-snd device model will reset on restore.
+- virtio-snd snapshot/restore is not yet plumbed in the browser runtime (only PCI config/bus state is snapshotted). If virtio-snd
+  is the active guest audio device, snapshot restore is not currently deterministic/supported because the virtio-snd device’s
+  internal state (virtqueues/stream state) is not restored.
 - The goal is *guest-visible determinism*: after restore, Windows should see consistent HDA state (and, once implemented, virtio-snd
   state) and DMA position evolution.
 

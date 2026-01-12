@@ -38,7 +38,8 @@ explicit device-selection mechanism is added (detach HDA rings and attach virtio
 
 Limitations (current):
 
-- VM snapshot/restore does not yet capture virtio-snd internal device state in the browser runtime.
+- VM snapshot/restore does not yet capture virtio-snd internal device state in the browser runtime. In-place snapshot restore while
+  virtio-snd is active is not currently deterministic/supported.
 
 Scope:
 
