@@ -66,6 +66,9 @@ def check_docs() -> list[str]:
         REPO_ROOT / "tools/packaging/README.md",
         REPO_ROOT / "tools/packaging/specs/README.md",
         REPO_ROOT / "drivers/README.md",
+        # Workstream onboarding docs sometimes mention virtio-win-derived packaging flows.
+        # Keep them aligned with wrapper defaults too.
+        REPO_ROOT / "instructions/windows-drivers.md",
     ]
 
     patterns: list[tuple[str, re.Pattern[str]]] = [
