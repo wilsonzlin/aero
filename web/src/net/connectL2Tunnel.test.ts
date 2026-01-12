@@ -186,6 +186,40 @@ describe("net/connectL2Tunnel", () => {
     }
   });
 
+  it("supports explicit ws:// gateway URLs (bootstraps session over http and reuses /l2 path)", async () => {
+    const originalFetch = globalThis.fetch;
+    const originalWs = (globalThis as unknown as Record<string, unknown>).WebSocket;
+
+    const fetchMock = vi.fn(async () => {
+      return new Response("{}", { status: 201, headers: { "Content-Type": "application/json" } });
+    }) as unknown as typeof fetch;
+    globalThis.fetch = fetchMock;
+
+    resetFakeWebSocket();
+    (globalThis as unknown as Record<string, unknown>).WebSocket = FakeWebSocket as unknown as WebSocketConstructor;
+
+    const events: L2TunnelEvent[] = [];
+    const tunnel = await connectL2Tunnel("ws://gateway.example.com/l2", {
+      mode: "ws",
+      sink: (ev) => events.push(ev),
+    });
+
+    try {
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const [url, init] = (fetchMock as unknown as { mock: { calls: any[][] } }).mock.calls[0]!;
+      expect(url).toBe("http://gateway.example.com/session");
+      expect(init?.credentials).toBe("include");
+
+      expect(FakeWebSocket.last?.url).toBe("ws://gateway.example.com/l2");
+      expect(FakeWebSocket.last?.protocols).toBe(L2_TUNNEL_SUBPROTOCOL);
+    } finally {
+      tunnel.close();
+      globalThis.fetch = originalFetch;
+      if (originalWs === undefined) delete (globalThis as { WebSocket?: unknown }).WebSocket;
+      else (globalThis as unknown as Record<string, unknown>).WebSocket = originalWs;
+    }
+  });
+
   it("supports same-origin relative gateway base URLs (resolves against location.href)", async () => {
     const originalFetch = globalThis.fetch;
     const originalWs = (globalThis as unknown as Record<string, unknown>).WebSocket;

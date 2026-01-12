@@ -69,6 +69,10 @@ describe("ipc/scanout_state", () => {
         }
 
         const snap = snapshotScanoutState(words);
+        // Wait for the writer to publish at least one update. The initial shared
+        // memory state is all zeros (generation=0), so a fast snapshot can race
+        // the first publish and would otherwise fail the invariants below.
+        if ((snap.generation >>> 0) === 0) continue;
         expect(snap.source).toBe(SCANOUT_SOURCE_WDDM);
         expect(snap.format).toBe(SCANOUT_FORMAT_B8G8R8X8);
         expect((snap.generation & SCANOUT_STATE_GENERATION_BUSY_BIT) >>> 0).toBe(0);
@@ -87,4 +91,3 @@ describe("ipc/scanout_state", () => {
     }
   });
 });
-
