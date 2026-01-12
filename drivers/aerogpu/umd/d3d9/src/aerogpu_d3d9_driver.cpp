@@ -9514,7 +9514,10 @@ static void stateblock_init_for_type_locked(Device* dev, StateBlock* sb, uint32_
   //   D3DSBT_ALL = 1
   //   D3DSBT_PIXELSTATE = 2
   //   D3DSBT_VERTEXSTATE = 3
-  const bool is_all = (type_u32 == 1u) || (type_u32 == 0u);
+  // Be permissive: some runtimes/headers may pass unexpected values (e.g. the
+  // `FORCE_DWORD` sentinel). Treat unknown types as ALL so we capture a
+  // meaningful snapshot rather than silently omitting most state.
+  const bool is_all = (type_u32 == 1u) || (type_u32 == 0u) || (type_u32 > 3u);
   const bool is_pixel = is_all || (type_u32 == 2u);
   const bool is_vertex = is_all || (type_u32 == 3u);
 
