@@ -138,7 +138,7 @@ fn map_storage_error(err: StorageDiskError) -> BlockBackendError {
 ///
 /// This means platform code can do:
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// use aero_storage::{MemBackend, RawDisk, SECTOR_SIZE};
 /// use aero_virtio::devices::blk::VirtioBlk;
 ///
@@ -499,5 +499,20 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
 
     fn as_any_mut(&mut self) -> &mut dyn core::any::Any {
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{BlockBackend, VirtioBlk};
+    use aero_storage::{MemBackend, RawDisk, SECTOR_SIZE};
+
+    #[test]
+    fn doc_example_open_raw_disk_as_virtio_blk_backend() {
+        let disk = RawDisk::create(MemBackend::new(), (1024 * SECTOR_SIZE) as u64).unwrap();
+        let mut blk = VirtioBlk::new(Box::new(disk));
+
+        // Sanity-check that the adapter exposes the underlying disk capacity.
+        assert_eq!(blk.backend_mut().len(), (1024 * SECTOR_SIZE) as u64);
     }
 }
