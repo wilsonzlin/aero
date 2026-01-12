@@ -505,12 +505,13 @@ If sync access handles are unavailable (e.g. the code runs on the main thread in
 
 The worker-based web runtime splits responsibilities across workers (CPU, I/O, net). To produce a coherent snapshot and avoid replaying stale network traffic after restore, snapshot orchestration must follow a strict ordering:
 
-1. **Pause CPU, then pause I/O** so:
-    - guest execution stops, and
-    - device emulation stops mutating device/RAM state while it is being serialized.
-2. **Then pause/drain/reset the net worker** *after* CPU+I/O are paused:
-    - host tunnel connections (WebSocket/WebRTC) are **not bit-restorable**, so they must be treated as reset on restore.
-    - clear the shared `NET_TX` / `NET_RX` rings (only when all ring participants are paused) so any in-flight frames are dropped rather than replayed into a restored guest.
+1. **Pause CPU, then pause I/O, then pause NET** (via `vm.snapshot.pause`) so:
+    - guest execution stops,
+    - device emulation stops mutating device/RAM state while it is being serialized, and
+    - the net worker stops the tunnel forwarder and drains any pending `NET_TX`/`NET_RX` traffic.
+2. **Clear/reset `NET_TX` / `NET_RX`** once all ring participants are paused.
+    - These shared-memory rings are **not part of the snapshot file**, and any in-flight frames must be dropped to avoid replay into a restored guest.
+    - Host tunnel transports (WebSocket/WebRTC) are **not bit-restorable**, so restore must treat them as reset and reconnect best-effort.
 3. Save/restore the snapshot payload (CPU/MMU + device blobs + guest RAM).
 4. Resume workers (CPU+I/O first, then net); the net worker reconnects best-effort.
 
