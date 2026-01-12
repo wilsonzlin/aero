@@ -389,6 +389,27 @@ mod tests {
     }
 
     #[test]
+    fn rejects_oversized_etag() {
+        // Construct an ETag value that's just over the allowed maximum.
+        let inner = "a".repeat(crate::store::MAX_ETAG_LEN - 1);
+        let etag = format!("\"{inner}\"");
+        assert!(
+            etag.len() > crate::store::MAX_ETAG_LEN,
+            "test ETag must exceed MAX_ETAG_LEN"
+        );
+
+        let json = serde_json::json!({
+            "images": [
+                { "id": "bad", "file": "bad.img", "name": "Bad", "etag": etag, "public": true }
+            ]
+        })
+        .to_string();
+
+        let err = Manifest::parse_str(&json).unwrap_err();
+        assert!(matches!(err, ManifestError::InvalidEtag { .. }));
+    }
+
+    #[test]
     fn rejects_unquoted_etag() {
         let err = Manifest::parse_str(
             r#"{
