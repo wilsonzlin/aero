@@ -1,6 +1,8 @@
 use aero_devices::pci::profile::{VIRTIO_BLK, VIRTIO_CAP_COMMON, VIRTIO_CAP_DEVICE, VIRTIO_CAP_ISR, VIRTIO_CAP_NOTIFY};
 use aero_io_snapshot::io::state::IoSnapshot;
+use aero_interrupts::apic::IOAPIC_MMIO_BASE;
 use aero_pc_platform::PcPlatform;
+use aero_platform::interrupts::{InterruptController, PlatformInterruptMode};
 use memory::MemoryBus as _;
 
 fn cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
@@ -42,6 +44,15 @@ fn write_desc(pc: &mut PcPlatform, table: u64, index: u16, addr: u64, len: u32, 
     pc.memory.write_u32(base + 8, len);
     pc.memory.write_u16(base + 12, flags);
     pc.memory.write_u16(base + 14, next);
+}
+
+fn program_ioapic_entry(pc: &mut PcPlatform, gsi: u32, low: u32, high: u32) {
+    let redtbl_low = 0x10u32 + gsi * 2;
+    let redtbl_high = redtbl_low + 1;
+    pc.memory.write_u32(IOAPIC_MMIO_BASE, redtbl_low);
+    pc.memory.write_u32(IOAPIC_MMIO_BASE + 0x10, low);
+    pc.memory.write_u32(IOAPIC_MMIO_BASE, redtbl_high);
+    pc.memory.write_u32(IOAPIC_MMIO_BASE + 0x10, high);
 }
 
 #[test]
@@ -262,6 +273,109 @@ fn pc_platform_virtio_blk_processes_queue_and_raises_intx() {
             .borrow()
             .irq_level()
     );
+}
+
+#[test]
+fn pc_platform_routes_virtio_blk_intx_via_ioapic_in_apic_mode() {
+    let mut pc = PcPlatform::new_with_virtio_blk(2 * 1024 * 1024);
+    let bdf = VIRTIO_BLK.bdf;
+
+    // Switch the platform into APIC mode via IMCR (0x22/0x23).
+    pc.io.write_u8(0x22, 0x70);
+    pc.io.write_u8(0x23, 0x01);
+    assert_eq!(pc.interrupts.borrow().mode(), PlatformInterruptMode::Apic);
+
+    // Program IOAPIC entry for GSI11 to vector 0x61, level-triggered, active-low (default PCI INTx wiring).
+    let vector = 0x61u32;
+    let low = vector | (1 << 13) | (1 << 15); // polarity_low + level-triggered, unmasked
+    program_ioapic_entry(&mut pc, 11, low, 0);
+
+    // Enable memory decoding + Bus Mastering so the device can DMA during processing.
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0006);
+
+    let bar0_base = read_bar0_base(&mut pc);
+
+    // BAR0 layout for Aero's virtio-pci contract:
+    // - common cfg @ 0x0000
+    // - notify @ 0x1000, notify_off_multiplier = 4, queue0 notify_off = 0
+    const COMMON: u64 = 0x0000;
+    const NOTIFY: u64 = 0x1000;
+
+    // Basic feature negotiation (accept whatever the device offers).
+    pc.memory.write_u8(bar0_base + COMMON + 0x14, 1); // ACKNOWLEDGE
+    pc.memory.write_u8(bar0_base + COMMON + 0x14, 1 | 2); // ACKNOWLEDGE | DRIVER
+
+    // device_feature_select=0 -> read device_feature (low)
+    pc.memory.write_u32(bar0_base + COMMON + 0x00, 0);
+    let f0 = pc.memory.read_u32(bar0_base + COMMON + 0x04);
+    pc.memory.write_u32(bar0_base + COMMON + 0x08, 0); // driver_feature_select=0
+    pc.memory.write_u32(bar0_base + COMMON + 0x0c, f0);
+
+    // device_feature_select=1 -> read high
+    pc.memory.write_u32(bar0_base + COMMON + 0x00, 1);
+    let f1 = pc.memory.read_u32(bar0_base + COMMON + 0x04);
+    pc.memory.write_u32(bar0_base + COMMON + 0x08, 1);
+    pc.memory.write_u32(bar0_base + COMMON + 0x0c, f1);
+
+    pc.memory.write_u8(bar0_base + COMMON + 0x14, 1 | 2 | 8); // + FEATURES_OK
+    pc.memory.write_u8(bar0_base + COMMON + 0x14, 1 | 2 | 8 | 4); // + DRIVER_OK
+
+    // Configure queue 0.
+    const DESC_TABLE: u64 = 0x4000;
+    const AVAIL_RING: u64 = 0x5000;
+    const USED_RING: u64 = 0x6000;
+    pc.memory.write_u16(bar0_base + COMMON + 0x16, 0); // queue_select
+    let _qsz = pc.memory.read_u16(bar0_base + COMMON + 0x18);
+    pc.memory.write_u64(bar0_base + COMMON + 0x20, DESC_TABLE);
+    pc.memory.write_u64(bar0_base + COMMON + 0x28, AVAIL_RING);
+    pc.memory.write_u64(bar0_base + COMMON + 0x30, USED_RING);
+    pc.memory.write_u16(bar0_base + COMMON + 0x1c, 1); // queue_enable
+
+    // Build a minimal FLUSH request.
+    const VIRTIO_BLK_T_FLUSH: u32 = 4;
+    const VIRTQ_DESC_F_NEXT: u16 = 0x0001;
+    const VIRTQ_DESC_F_WRITE: u16 = 0x0002;
+
+    let header = 0x7000;
+    let status = 0x9000;
+    pc.memory.write_u32(header, VIRTIO_BLK_T_FLUSH);
+    pc.memory.write_u32(header + 4, 0);
+    pc.memory.write_u64(header + 8, 0);
+    pc.memory.write_u8(status, 0xff);
+
+    write_desc(&mut pc, DESC_TABLE, 0, header, 16, VIRTQ_DESC_F_NEXT, 1);
+    write_desc(&mut pc, DESC_TABLE, 1, status, 1, VIRTQ_DESC_F_WRITE, 0);
+
+    pc.memory.write_u16(AVAIL_RING, 0);
+    pc.memory.write_u16(AVAIL_RING + 2, 1);
+    pc.memory.write_u16(AVAIL_RING + 4, 0);
+    pc.memory.write_u16(USED_RING, 0);
+    pc.memory.write_u16(USED_RING + 2, 0);
+
+    pc.memory.write_u16(bar0_base + NOTIFY, 0);
+
+    pc.process_virtio_blk();
+    assert_eq!(pc.memory.read_u16(USED_RING + 2), 1);
+    assert!(pc.virtio_blk.as_ref().unwrap().borrow().irq_level());
+
+    pc.poll_pci_intx_lines();
+
+    // IOAPIC should have delivered the vector through the LAPIC.
+    assert_eq!(pc.interrupts.borrow().get_pending(), Some(vector as u8));
+
+    // Simulate CPU taking the interrupt.
+    pc.interrupts.borrow_mut().acknowledge(vector as u8);
+
+    // Clear the device interrupt cause (ISR is read-to-clear).
+    let _isr = pc.memory.read_u8(bar0_base + 0x2000);
+    assert!(!pc.virtio_blk.as_ref().unwrap().borrow().irq_level());
+
+    // Propagate the deasserted INTx level to the IOAPIC.
+    pc.poll_pci_intx_lines();
+
+    // End-of-interrupt should *not* cause a redelivery now that the line is deasserted.
+    pc.interrupts.borrow_mut().eoi(vector as u8);
+    assert_eq!(pc.interrupts.borrow().get_pending(), None);
 }
 
 #[test]
