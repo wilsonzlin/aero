@@ -235,7 +235,7 @@ fn uhci_runtime_snapshot_truncates_webhid_product_string() {
 
     let mut rt = UhciRuntime::new(guest_base, guest_size).expect("new UhciRuntime");
 
-    let long_name = "A".repeat(1000);
+    let long_name = "😀".repeat(1000);
     let collections_json = load_mouse_collections_json();
     rt.webhid_attach(
         1,
@@ -265,10 +265,21 @@ fn uhci_runtime_snapshot_truncates_webhid_product_string() {
     let _vendor_id = rd.u16().expect("vendor id");
     let _product_id = rd.u16().expect("product id");
     let name_len = rd.u32().expect("product name len") as usize;
-    assert_eq!(
-        name_len, 126,
-        "expected product string to be truncated to 126 UTF-16 code units"
-    );
+    let name_bytes = rd.bytes(name_len).expect("product name bytes");
+    let name = std::str::from_utf8(name_bytes).expect("product name utf8");
+
+    let expected = "😀".repeat(63);
+    assert_eq!(name_len, expected.as_bytes().len());
+    assert_eq!(name, expected.as_str());
+    assert_eq!(name.encode_utf16().count(), 126);
+
+    let report_descriptor_len = rd.u32().expect("report descriptor len") as usize;
+    rd.bytes(report_descriptor_len)
+        .expect("report descriptor bytes");
+    rd.bool().expect("has interrupt out");
+    let dev_state_len = rd.u32().expect("device state len") as usize;
+    rd.bytes(dev_state_len).expect("device state bytes");
+    rd.finish().expect("finish record decoder");
 }
 
 #[wasm_bindgen_test]

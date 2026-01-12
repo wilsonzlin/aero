@@ -279,7 +279,7 @@ pub struct UhciRuntime {
 
 #[wasm_bindgen]
 impl UhciRuntime {
-    fn sanitize_usb_string(mut s: String) -> String {
+    fn sanitize_usb_string(s: &str) -> String {
         let mut units = 0usize;
         let mut end = 0usize;
         for (idx, ch) in s.char_indices() {
@@ -290,10 +290,11 @@ impl UhciRuntime {
             units = next_units;
             end = idx + ch.len_utf8();
         }
-        if end < s.len() {
-            s.truncate(end);
+        if end == s.len() {
+            s.to_string()
+        } else {
+            s[..end].to_string()
         }
-        s
     }
 
     #[wasm_bindgen(constructor)]
@@ -371,9 +372,8 @@ impl UhciRuntime {
             })?;
 
         let has_interrupt_out = collections_have_output_reports(&collections);
-        let product = Self::sanitize_usb_string(
-            product_name.unwrap_or_else(|| "WebHID HID Device".to_string()),
-        );
+        let product =
+            Self::sanitize_usb_string(product_name.as_deref().unwrap_or("WebHID HID Device"));
 
         let device = UsbHidPassthrough::new(
             vendor_id,
@@ -447,9 +447,8 @@ impl UhciRuntime {
             })?;
 
         let has_interrupt_out = collections_have_output_reports(&collections);
-        let product = Self::sanitize_usb_string(
-            product_name.unwrap_or_else(|| "WebHID HID Device".to_string()),
-        );
+        let product =
+            Self::sanitize_usb_string(product_name.as_deref().unwrap_or("WebHID HID Device"));
 
         let device = UsbHidPassthrough::new(
             vendor_id,
@@ -808,10 +807,15 @@ impl UhciRuntime {
                 let product_id = rd.u16().map_err(|e| {
                     js_error(&format!("Invalid WebHID record {device_id} productId: {e}"))
                 })?;
-                let product_bytes = rd.vec_u8().map_err(|e| {
+                let product_len = rd.u32().map_err(|e| {
+                    js_error(&format!(
+                        "Invalid WebHID record {device_id} product length: {e}"
+                    ))
+                })? as usize;
+                let product_bytes = rd.bytes(product_len).map_err(|e| {
                     js_error(&format!("Invalid WebHID record {device_id} product: {e}"))
                 })?;
-                let product = String::from_utf8(product_bytes).map_err(|_| {
+                let product = std::str::from_utf8(product_bytes).map_err(|_| {
                     js_error(&format!(
                         "Invalid WebHID record {device_id} product: expected UTF-8 string"
                     ))
