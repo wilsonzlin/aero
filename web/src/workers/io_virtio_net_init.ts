@@ -30,14 +30,27 @@ export function tryInitVirtioNetDevice(opts: {
     //
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const AnyCtor = Bridge as any;
+    const base = opts.guestBase >>> 0;
+    const size = opts.guestSize >>> 0;
     if (mode === "modern") {
-      bridge = new AnyCtor(opts.guestBase >>> 0, opts.guestSize >>> 0, opts.ioIpc);
+      // Prefer the 3-arg signature for modern mode (matches the Aero Win7 virtio contract v1).
+      // Some older/newer wasm-bindgen outputs may enforce arity; if 3 args fails, retry with a
+      // 4th `transport_mode` argument that selects modern-only.
+      try {
+        bridge = new AnyCtor(base, size, opts.ioIpc);
+      } catch {
+        bridge = new AnyCtor(base, size, opts.ioIpc, false);
+      }
     } else {
+      // `transport_mode` accepts multiple encodings on the WASM side:
+      // - `true` / `"transitional"` / `1` for transitional devices (legacy + modern)
+      // - `"legacy"` / `2` for legacy-only
+      // - `false` / `"modern"` / `0` for modern-only
       const arg = mode === "transitional" ? true : mode;
       try {
-        bridge = new AnyCtor(opts.guestBase >>> 0, opts.guestSize >>> 0, opts.ioIpc, arg);
+        bridge = new AnyCtor(base, size, opts.ioIpc, arg);
       } catch {
-        bridge = new AnyCtor(opts.guestBase >>> 0, opts.guestSize >>> 0, opts.ioIpc);
+        bridge = new AnyCtor(base, size, opts.ioIpc);
       }
     }
   } catch (err) {
