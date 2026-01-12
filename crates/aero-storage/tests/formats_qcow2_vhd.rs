@@ -1592,6 +1592,25 @@ fn vhd_dynamic_rejects_bat_overlapping_dynamic_header() {
 }
 
 #[test]
+fn vhd_dynamic_rejects_bat_overlapping_footer_copy() {
+    let virtual_size = 64 * 1024u64;
+    let block_size = 16 * 1024u32;
+    let mut backend = make_vhd_dynamic_empty(virtual_size, block_size);
+
+    // Point the BAT at the start of the file (overlapping the required footer copy).
+    let dyn_header_offset = SECTOR_SIZE as u64;
+    backend
+        .write_at(dyn_header_offset + 16, &0u64.to_be_bytes())
+        .unwrap();
+
+    let err = VhdDisk::open(backend).err().expect("expected error");
+    assert!(matches!(
+        err,
+        DiskError::CorruptImage("vhd bat overlaps footer copy")
+    ));
+}
+
+#[test]
 fn vhd_dynamic_rejects_bad_dynamic_header_cookie() {
     let virtual_size = 64 * 1024u64;
     let block_size = 16 * 1024u32;

@@ -182,9 +182,6 @@ impl<B: StorageBackend> VhdDisk<B> {
                     Err(e) => return Err(e),
                 }
                 let dynamic = VhdDynamicHeader::parse(&raw_header)?;
-                if dynamic.table_offset < dyn_header_end {
-                    return Err(DiskError::CorruptImage("vhd bat overlaps dynamic header"));
-                }
 
                 let required_entries = footer.current_size.div_ceil(dynamic.block_size as u64);
                 if (dynamic.max_table_entries as u64) < required_entries {
@@ -214,6 +211,12 @@ impl<B: StorageBackend> VhdDisk<B> {
                     .ok_or(DiskError::OffsetOverflow)?;
                 if bat_end_on_disk > footer_offset {
                     return Err(DiskError::CorruptImage("vhd bat truncated"));
+                }
+                if dynamic.table_offset < SECTOR_SIZE as u64 {
+                    return Err(DiskError::CorruptImage("vhd bat overlaps footer copy"));
+                }
+                if dynamic.table_offset < dyn_header_end && footer.data_offset < bat_end_on_disk {
+                    return Err(DiskError::CorruptImage("vhd bat overlaps dynamic header"));
                 }
 
                 // Only read the BAT entries needed for the virtual size; this avoids allocating
