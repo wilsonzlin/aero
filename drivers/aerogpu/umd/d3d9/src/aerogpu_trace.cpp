@@ -669,6 +669,12 @@ void d3d9_trace_init_from_env() {
 
   char filter[512] = {};
   if (env_get("AEROGPU_D3D9_TRACE_FILTER", filter, sizeof(filter))) {
+    trim_ascii_whitespace_inplace(filter);
+    if (!*filter) {
+      // Treat an all-whitespace filter as "unset" to avoid surprising behavior
+      // where `TRACE_FILTER="   "` filters out all calls.
+      goto filter_done;
+    }
     g_trace_filter_enabled = true;
     g_trace_filter_count = 0;
     std::memset(g_trace_filter, 0, sizeof(g_trace_filter));
@@ -723,6 +729,7 @@ void d3d9_trace_init_from_env() {
       g_trace_filter_count += popcount_u32(g_trace_filter[i]);
     }
   }
+filter_done:
 
   if (!enabled) {
     return;
