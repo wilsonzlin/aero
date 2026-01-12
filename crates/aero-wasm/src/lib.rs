@@ -2371,35 +2371,41 @@ impl Machine {
 
     /// Convenience wrapper: set the left mouse button state.
     pub fn inject_mouse_left(&mut self, pressed: bool) {
+        // Only `inject_mouse_buttons_mask` can fully synchronize all 3 buttons at once. If our
+        // cached button state is currently "unknown" (e.g. after snapshot restore), individual
+        // transitions shouldn't flip that flag back to "known".
+        let known = self.mouse_buttons_known;
         self.inner.inject_mouse_left(pressed);
         if pressed {
             self.mouse_buttons |= 0x01;
         } else {
             self.mouse_buttons &= !0x01;
         }
-        self.mouse_buttons_known = true;
+        self.mouse_buttons_known = known;
     }
 
     /// Convenience wrapper: set the right mouse button state.
     pub fn inject_mouse_right(&mut self, pressed: bool) {
+        let known = self.mouse_buttons_known;
         self.inner.inject_mouse_right(pressed);
         if pressed {
             self.mouse_buttons |= 0x02;
         } else {
             self.mouse_buttons &= !0x02;
         }
-        self.mouse_buttons_known = true;
+        self.mouse_buttons_known = known;
     }
 
     /// Convenience wrapper: set the middle mouse button state.
     pub fn inject_mouse_middle(&mut self, pressed: bool) {
+        let known = self.mouse_buttons_known;
         self.inner.inject_mouse_middle(pressed);
         if pressed {
             self.mouse_buttons |= 0x04;
         } else {
             self.mouse_buttons &= !0x04;
         }
-        self.mouse_buttons_known = true;
+        self.mouse_buttons_known = known;
     }
 
     // -------------------------------------------------------------------------
@@ -2651,6 +2657,11 @@ mod machine_mouse_button_cache_tests {
         assert_eq!(m.mouse_buttons, 0x00);
 
         m.restore_snapshot(&snap).expect("restore_snapshot ok");
+        assert!(!m.mouse_buttons_known);
+
+        // Individual transitions should not flip the state back to "known" (we only know the state
+        // of the specific button we touched; the other 2 may differ inside the restored guest).
+        m.inject_mouse_right(true);
         assert!(!m.mouse_buttons_known);
 
         // The next mask call should re-establish a known cache.
