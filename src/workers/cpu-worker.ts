@@ -577,6 +577,9 @@ async function runTieredVm(iterations: number, threshold: number) {
       const idx = installedByRip.get(ripU32);
       if (idx === undefined) return;
       installedByRip.delete(ripU32);
+      if (ripU32 === ENTRY_RIP && installedIndex === idx) {
+        installedIndex = null;
+      }
       // Clearing the slot avoids accidentally calling into an evicted block.
       jitFns[idx] = undefined;
       freeTableIndices.push(idx);
