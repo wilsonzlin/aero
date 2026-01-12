@@ -144,7 +144,12 @@ export class InputCapture {
     this.queue.flush(this.ioWorker, { recycle: this.recycleBuffers });
   };
 
-  private readonly handleClick = (): void => {
+  private readonly handleClick = (event: MouseEvent): void => {
+    // Swallow clicks on the canvas while capture is active. `mousedown`/`mouseup` handlers already
+    // preventDefault+stopPropagation, but the synthesized `click` event is distinct and would
+    // otherwise bubble to app-level handlers (e.g. toggles or global click listeners).
+    event.preventDefault();
+    event.stopPropagation();
     this.canvas.focus();
     this.pointerLock.request();
   };
