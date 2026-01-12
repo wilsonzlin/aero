@@ -79,22 +79,32 @@ function isPrivateIpv6(bytes: Uint8Array): boolean {
   return false;
 }
 
+function asciiEndsWithIgnoreCase(s: string, suffix: string): boolean {
+  if (s.length < suffix.length) return false;
+  const start = s.length - suffix.length;
+  for (let i = 0; i < suffix.length; i += 1) {
+    let c = s.charCodeAt(start + i);
+    if (c >= 0x41 && c <= 0x5a) c += 0x20; // ASCII upper -> lower
+    if (c !== suffix.charCodeAt(i)) return false;
+  }
+  return true;
+}
+
 export function isPrivatePtrQname(qname: string): boolean {
-  const lower = qname.toLowerCase();
-  if (lower.endsWith('.in-addr.arpa')) {
-    const base = lower.slice(0, -'.in-addr.arpa'.length);
+  if (asciiEndsWithIgnoreCase(qname, '.in-addr.arpa')) {
+    const base = qname.slice(0, -'.in-addr.arpa'.length);
     const octets = base.split('.').filter(Boolean);
     if (octets.length !== 4) return false;
     const ip = octets.reverse().join('.');
     return isPrivateIpv4(ip);
   }
 
-  if (lower.endsWith('.ip6.arpa')) {
-    const base = lower.slice(0, -'.ip6.arpa'.length);
+  if (asciiEndsWithIgnoreCase(qname, '.ip6.arpa')) {
+    const base = qname.slice(0, -'.ip6.arpa'.length);
     const nibbles = base.split('.').filter(Boolean);
     if (nibbles.length !== 32) return false;
     const hex = nibbles.reverse().join('');
-    if (!/^[0-9a-f]{32}$/.test(hex)) return false;
+    if (!/^[0-9a-fA-F]{32}$/.test(hex)) return false;
     const bytes = new Uint8Array(16);
     for (let i = 0; i < 16; i++) bytes[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16);
     return isPrivateIpv6(bytes);
