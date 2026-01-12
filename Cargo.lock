@@ -257,6 +257,7 @@ version = "0.1.0"
 name = "aero-gpu-wasm"
 version = "0.1.0"
 dependencies = [
+ "aero-d3d9",
  "aero-gpu",
  "aero-protocol",
  "bytemuck",

@@ -88,6 +88,70 @@ mod wasm {
             &JsValue::from_str("surface_reconfigures"),
             &JsValue::from_f64(snapshot.surface_reconfigures as f64),
         );
+
+        // ---------------------------------------------------------------------
+        // D3D9 shader translation + cache stats (WG-010)
+        // ---------------------------------------------------------------------
+        //
+        // Expose both:
+        // - the fully-qualified `d3d9_shader_*` keys (mirrors `aero-gpu` stats naming)
+        // - legacy/short `translate_calls` / `persistent_hits` / `persistent_misses` keys used by
+        //   the D3D9 shader-cache harness page.
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("d3d9_shader_translate_calls"),
+            &JsValue::from_f64(snapshot.d3d9_shader_translate_calls as f64),
+        );
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("d3d9_shader_cache_persistent_hits"),
+            &JsValue::from_f64(snapshot.d3d9_shader_cache_persistent_hits as f64),
+        );
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("d3d9_shader_cache_persistent_misses"),
+            &JsValue::from_f64(snapshot.d3d9_shader_cache_persistent_misses as f64),
+        );
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("d3d9_shader_cache_memory_hits"),
+            &JsValue::from_f64(snapshot.d3d9_shader_cache_memory_hits as f64),
+        );
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("d3d9_shader_cache_disabled"),
+            &JsValue::from_f64(snapshot.d3d9_shader_cache_disabled as f64),
+        );
+
+        // Back-compat keys consumed by `web/gpu-worker-d3d9-shader-cache.ts`.
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("translate_calls"),
+            &JsValue::from_f64(snapshot.d3d9_shader_translate_calls as f64),
+        );
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("persistent_hits"),
+            &JsValue::from_f64(snapshot.d3d9_shader_cache_persistent_hits as f64),
+        );
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("persistent_misses"),
+            &JsValue::from_f64(snapshot.d3d9_shader_cache_persistent_misses as f64),
+        );
+
+        // D3D9 translator cache version participating in persistent shader cache keys.
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("d3d9_translator_cache_version"),
+            &JsValue::from_f64(aero_d3d9::runtime::D3D9_TRANSLATOR_CACHE_VERSION as f64),
+        );
+        // CamelCase alias for convenience in browser tooling.
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("d3d9TranslatorCacheVersion"),
+            &JsValue::from_f64(aero_d3d9::runtime::D3D9_TRANSLATOR_CACHE_VERSION as f64),
+        );
         obj.into()
     }
 
