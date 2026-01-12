@@ -48,9 +48,29 @@ function assertU16Len(n: number, what: string): void {
   }
 }
 
+function assertU16(n: number, what: string): void {
+  if (!Number.isInteger(n) || n < 0 || n > 0xffff) {
+    throw new RangeError(`${what} must fit in u16: ${n}`);
+  }
+}
+
+function assertU8(n: number, what: string): void {
+  if (!Number.isInteger(n) || n < 0 || n > 0xff) {
+    throw new RangeError(`${what} must fit in u8: ${n}`);
+  }
+}
+
 function assertU32(n: number, what: string): void {
   if (!Number.isInteger(n) || n < 0 || n > 0xffff_ffff) {
     throw new RangeError(`${what} must fit in u32: ${n}`);
+  }
+}
+
+const U64_MAX = 0xffff_ffff_ffff_ffffn;
+
+function assertU64(n: bigint, what: string): void {
+  if (n < 0n || n > U64_MAX) {
+    throw new RangeError(`${what} must fit in u64: ${n.toString()}`);
   }
 }
 
@@ -421,6 +441,7 @@ function computeInterfaceOptionsLength(desc: PcapngInterfaceDescription): number
     len += 4 + bytes.byteLength + pad4(bytes.byteLength);
   }
   if (desc.tsResolPower10 !== undefined) {
+    assertU8(desc.tsResolPower10, "if_tsresol option value");
     // 1 byte value + padding.
     len += 4 + 1 + pad4(1);
   }
@@ -439,6 +460,7 @@ function writeInterfaceOptions(w: ByteWriter, desc: PcapngInterfaceDescription):
     w.writeZeros(pad4(bytes.byteLength));
   }
   if (desc.tsResolPower10 !== undefined) {
+    assertU8(desc.tsResolPower10, "if_tsresol option value");
     w.writeU16(PCAPNG_IF_OPTION_TSRESOL);
     w.writeU16(1);
     w.writeU8(desc.tsResolPower10 & 0xff);
@@ -502,9 +524,11 @@ export function writePcapng(capture: PcapngCapture): Uint8Array<ArrayBuffer> {
 
     w.writeU32(PCAPNG_BLOCK_TYPE_INTERFACE_DESCRIPTION);
     w.writeU32(idbLen);
+    assertU16(iface.linkType, "pcapng linkType");
     w.writeU16(iface.linkType);
     w.writeU16(0); // reserved
-    w.writeU32(iface.snapLen >>> 0);
+    assertU32(iface.snapLen, "pcapng snapLen");
+    w.writeU32(iface.snapLen);
     if (optLen !== 0) {
       writeInterfaceOptions(w, iface);
     }
@@ -514,27 +538,31 @@ export function writePcapng(capture: PcapngCapture): Uint8Array<ArrayBuffer> {
   // EPBs
   for (const pkt of capture.packets) {
     const dataLen = pkt.packet.byteLength;
+    assertU32(dataLen, "pcapng packet length");
     const paddedDataLen = dataLen + pad4(dataLen);
     const optsLen = pkt.flags === undefined ? 0 : 12; // flags + end-of-options
     const epbLen = 32 + paddedDataLen + optsLen;
 
     const ts = pkt.timestamp;
+    assertU64(ts, "pcapng timestamp");
     const tsLo = Number(ts & 0xffff_ffffn);
     const tsHi = Number((ts >> 32n) & 0xffff_ffffn);
 
     w.writeU32(PCAPNG_BLOCK_TYPE_ENHANCED_PACKET);
     w.writeU32(epbLen);
-    w.writeU32(pkt.interfaceId >>> 0);
+    assertU32(pkt.interfaceId, "pcapng interfaceId");
+    w.writeU32(pkt.interfaceId);
     w.writeU32(tsHi);
     w.writeU32(tsLo);
-    w.writeU32(dataLen >>> 0);
-    w.writeU32(dataLen >>> 0);
+    w.writeU32(dataLen);
+    w.writeU32(dataLen);
     w.writeBytes(pkt.packet);
     w.writeZeros(pad4(dataLen));
     if (pkt.flags !== undefined) {
       w.writeU16(PCAPNG_EPB_OPTION_FLAGS);
       w.writeU16(4);
-      w.writeU32(pkt.flags >>> 0);
+      assertU32(pkt.flags, "pcapng epb_flags");
+      w.writeU32(pkt.flags);
       // End of options.
       w.writeU16(0);
       w.writeU16(0);
