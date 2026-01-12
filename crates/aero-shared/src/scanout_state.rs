@@ -25,6 +25,7 @@ pub const SCANOUT_STATE_GENERATION_BUSY_BIT: u32 = 1 << 31;
 /// The scanout state is an array of 32-bit words to keep it trivially shareable
 /// with JS as an `Int32Array`.
 pub const SCANOUT_STATE_U32_LEN: usize = 8;
+pub const SCANOUT_STATE_BYTE_LEN: usize = SCANOUT_STATE_U32_LEN * 4;
 
 pub mod header_index {
     //! Indices into the scanout state when viewed as a `u32[]` / `Int32Array`.
@@ -222,9 +223,47 @@ mod tests {
 
     #[test]
     fn scanout_state_struct_matches_declared_u32_len() {
+        assert_eq!(core::mem::size_of::<ScanoutState>(), SCANOUT_STATE_BYTE_LEN);
+    }
+
+    #[test]
+    fn header_indices_match_struct_layout() {
+        let state = ScanoutState::new();
+        let base = core::ptr::addr_of!(state) as usize;
+
+        let field_offset = |ptr: *const AtomicU32| ptr as usize - base;
+
         assert_eq!(
-            core::mem::size_of::<ScanoutState>(),
-            SCANOUT_STATE_U32_LEN * 4
+            field_offset(core::ptr::addr_of!(state.generation)),
+            header_index::GENERATION * 4
+        );
+        assert_eq!(
+            field_offset(core::ptr::addr_of!(state.source)),
+            header_index::SOURCE * 4
+        );
+        assert_eq!(
+            field_offset(core::ptr::addr_of!(state.base_paddr_lo)),
+            header_index::BASE_PADDR_LO * 4
+        );
+        assert_eq!(
+            field_offset(core::ptr::addr_of!(state.base_paddr_hi)),
+            header_index::BASE_PADDR_HI * 4
+        );
+        assert_eq!(
+            field_offset(core::ptr::addr_of!(state.width)),
+            header_index::WIDTH * 4
+        );
+        assert_eq!(
+            field_offset(core::ptr::addr_of!(state.height)),
+            header_index::HEIGHT * 4
+        );
+        assert_eq!(
+            field_offset(core::ptr::addr_of!(state.pitch_bytes)),
+            header_index::PITCH_BYTES * 4
+        );
+        assert_eq!(
+            field_offset(core::ptr::addr_of!(state.format)),
+            header_index::FORMAT * 4
         );
     }
 
