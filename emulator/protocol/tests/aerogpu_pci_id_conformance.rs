@@ -356,6 +356,7 @@ fn aerogpu_ci_package_manifest_includes_wow64_umds_for_dx11_inf() {
 #[test]
 fn aerogpu_ci_package_manifest_stages_only_dx11_inf_at_package_root() {
     let repo_root = repo_root();
+    let driver_root = repo_root.join("drivers/aerogpu");
 
     let manifest_path = repo_root.join("drivers/aerogpu/ci-package.json");
     let manifest_text = read_file(&manifest_path);
@@ -395,6 +396,18 @@ fn aerogpu_ci_package_manifest_stages_only_dx11_inf_at_package_root() {
         "{path}: expected the sole staged INF to be aerogpu_dx11.inf. Found: {inf_files:?}",
         path = manifest_path.display()
     );
+
+    // Ensure the staged INF is the *canonical* AeroGPU binding (VEN_A3A0), not a legacy-binding
+    // variant that happens to share the same file name.
+    let rel = inf_files[0].replace('\\', "/");
+    let staged_inf_path = driver_root.join(rel);
+    assert!(
+        staged_inf_path.is_file(),
+        "{}: infFiles entry does not resolve to a file under the driver root: {staged_inf_path}",
+        manifest_path.display(),
+        staged_inf_path = staged_inf_path.display()
+    );
+    assert_file_contains_noncomment_line(&staged_inf_path, r"PCI\VEN_A3A0&DEV_0001");
 }
 
 #[test]
