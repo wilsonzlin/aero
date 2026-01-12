@@ -102,6 +102,7 @@ pub enum LayoutError {
         min_stride_bytes: u32,
     },
     TileSizeNotPowerOfTwo(u32),
+    SizeOverflow(&'static str),
 }
 
 impl fmt::Display for LayoutError {
@@ -119,6 +120,7 @@ impl fmt::Display for LayoutError {
                 f,
                 "tile_size ({tile_size}) must be 0 (disabled) or a power-of-two"
             ),
+            LayoutError::SizeOverflow(what) => write!(f, "size overflow while computing {what}"),
         }
     }
 }
@@ -158,37 +160,64 @@ impl SharedFramebufferLayout {
             return Err(LayoutError::TileSizeNotPowerOfTwo(tile_size));
         }
 
-        let buffer_bytes = stride_bytes as usize * height as usize;
+        let buffer_bytes = (stride_bytes as usize)
+            .checked_mul(height as usize)
+            .ok_or(LayoutError::SizeOverflow("framebuffer byte length"))?;
 
         let (tiles_x, tiles_y, dirty_words_per_buffer) = if tile_size == 0 {
             (0, 0, 0)
         } else {
             let tiles_x = width.div_ceil(tile_size);
             let tiles_y = height.div_ceil(tile_size);
-            let tile_count = tiles_x as usize * tiles_y as usize;
-            let dirty_words = tile_count.div_ceil(32) as u32;
+            let tile_count = (tiles_x as usize)
+                .checked_mul(tiles_y as usize)
+                .ok_or(LayoutError::SizeOverflow("tile_count"))?;
+            let dirty_words = u32::try_from(tile_count.div_ceil(32))
+                .map_err(|_| LayoutError::SizeOverflow("dirty_words_per_buffer"))?;
             (tiles_x, tiles_y, dirty_words)
         };
 
         let header_bytes = SHARED_FRAMEBUFFER_HEADER_BYTE_LEN;
 
-        let mut cursor = align_up(header_bytes, SHARED_FRAMEBUFFER_ALIGNMENT);
+        let mut cursor = align_up(header_bytes, SHARED_FRAMEBUFFER_ALIGNMENT)?;
 
         let slot0_fb = cursor;
-        cursor = align_up(slot0_fb + buffer_bytes, 4);
+        cursor = align_up(
+            slot0_fb
+                .checked_add(buffer_bytes)
+                .ok_or(LayoutError::SizeOverflow("slot0_fb end"))?,
+            4,
+        )?;
         let slot0_dirty = cursor;
         cursor = align_up(
-            slot0_dirty + dirty_words_per_buffer as usize * 4,
+            slot0_dirty
+                .checked_add(
+                    (dirty_words_per_buffer as usize)
+                        .checked_mul(4)
+                        .ok_or(LayoutError::SizeOverflow("dirty_words_per_buffer bytes"))?,
+                )
+                .ok_or(LayoutError::SizeOverflow("slot0 dirty end"))?,
             SHARED_FRAMEBUFFER_ALIGNMENT,
-        );
+        )?;
 
         let slot1_fb = cursor;
-        cursor = align_up(slot1_fb + buffer_bytes, 4);
+        cursor = align_up(
+            slot1_fb
+                .checked_add(buffer_bytes)
+                .ok_or(LayoutError::SizeOverflow("slot1_fb end"))?,
+            4,
+        )?;
         let slot1_dirty = cursor;
         cursor = align_up(
-            slot1_dirty + dirty_words_per_buffer as usize * 4,
+            slot1_dirty
+                .checked_add(
+                    (dirty_words_per_buffer as usize)
+                        .checked_mul(4)
+                        .ok_or(LayoutError::SizeOverflow("dirty_words_per_buffer bytes"))?,
+                )
+                .ok_or(LayoutError::SizeOverflow("slot1 dirty end"))?,
             SHARED_FRAMEBUFFER_ALIGNMENT,
-        );
+        )?;
 
         Ok(Self {
             width,
@@ -618,9 +647,12 @@ fn dirty_bit_is_set(words: &[u32], tile_index: usize) -> bool {
     (words.get(word).copied().unwrap_or(0) & (1u32 << bit)) != 0
 }
 
-fn align_up(value: usize, align: usize) -> usize {
+fn align_up(value: usize, align: usize) -> Result<usize, LayoutError> {
     debug_assert!(align.is_power_of_two());
-    (value + align - 1) & !(align - 1)
+    value
+        .checked_add(align - 1)
+        .map(|v| v & !(align - 1))
+        .ok_or(LayoutError::SizeOverflow("align_up"))
 }
 
 #[cfg(all(test, not(feature = "loom")))]
@@ -682,6 +714,37 @@ mod tests {
         let tile_count = layout.tile_count();
         let expected_words = tile_count.div_ceil(32) as u32;
         assert_eq!(layout.dirty_words_per_buffer, expected_words);
+    }
+
+    #[test]
+    fn layout_rejects_total_size_overflow() {
+        // Two framebuffer slots can overflow `usize` even though the individual dimensions fit in
+        // `u32`.
+        let err = SharedFramebufferLayout::new(
+            u32::MAX,
+            u32::MAX,
+            u32::MAX,
+            FramebufferFormat::Rgba8,
+            /*tile_size=*/ 0,
+        )
+        .unwrap_err();
+        assert!(matches!(err, LayoutError::SizeOverflow(_)));
+    }
+
+    #[test]
+    fn layout_rejects_dirty_word_count_overflow() {
+        let err = SharedFramebufferLayout::new(
+            u32::MAX,
+            u32::MAX,
+            u32::MAX,
+            FramebufferFormat::Rgba8,
+            /*tile_size=*/ 1,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            LayoutError::SizeOverflow("dirty_words_per_buffer")
+        ));
     }
 
     #[test]
