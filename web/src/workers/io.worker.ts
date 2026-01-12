@@ -214,7 +214,7 @@ let e1000Device: E1000PciDevice | null = null;
 type E1000Bridge = InstanceType<NonNullable<WasmApi["E1000Bridge"]>>;
 let e1000Bridge: E1000Bridge | null = null;
 
-type VirtioInputPciDevice = InstanceType<NonNullable<WasmApi["VirtioInputPciDevice"]>>;
+type VirtioInputPciDevice = InstanceType<WasmApi["VirtioInputPciDevice"]>;
 let virtioInputKeyboard: VirtioInputPciFunction | null = null;
 let virtioInputMouse: VirtioInputPciFunction | null = null;
 

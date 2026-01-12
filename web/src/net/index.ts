@@ -27,4 +27,3 @@ export {
 } from "./l2TunnelForwarder";
 export { NetTracer, type FrameDirection, type NetTraceConfig, type ProxyDirection, type UdpProxyTransport } from "./net_tracer";
 export { LinkType, PacketDirection, PcapngWriter } from "./pcapng";
-export type { LinkType, PacketDirection } from "./pcapng";
