@@ -16,6 +16,7 @@ use aero_devices::pit8254::{register_pit8254, Pit8254, SharedPit8254};
 use aero_devices::reset_ctrl::{ResetCtrl, ResetKind, RESET_CTRL_PORT};
 use aero_devices::rtc_cmos::{register_rtc_cmos, RtcCmos, SharedRtcCmos};
 use aero_devices::{hpet, i8042};
+use aero_devices_storage::AhciPciDevice;
 use aero_interrupts::apic::{IOAPIC_MMIO_BASE, IOAPIC_MMIO_SIZE, LAPIC_MMIO_BASE, LAPIC_MMIO_SIZE};
 use aero_platform::address_filter::AddressFilter;
 use aero_platform::chipset::ChipsetState;
@@ -49,6 +50,7 @@ pub enum ResetEvent {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PcPlatformConfig {
     pub enable_hda: bool,
+    pub enable_ahci: bool,
 }
 
 struct HdaPciConfigDevice {
@@ -79,6 +81,34 @@ impl PciDevice for HdaPciConfigDevice {
     }
 }
 
+struct AhciPciConfigDevice {
+    config: aero_devices::pci::PciConfigSpace,
+}
+
+impl AhciPciConfigDevice {
+    fn new() -> Self {
+        let mut config = aero_devices::pci::profile::SATA_AHCI_ICH9.build_config_space();
+        config.set_bar_definition(
+            5,
+            PciBarDefinition::Mmio32 {
+                size: 0x2000,
+                prefetchable: false,
+            },
+        );
+        Self { config }
+    }
+}
+
+impl PciDevice for AhciPciConfigDevice {
+    fn config(&self) -> &aero_devices::pci::PciConfigSpace {
+        &self.config
+    }
+
+    fn config_mut(&mut self) -> &mut aero_devices::pci::PciConfigSpace {
+        &mut self.config
+    }
+}
+
 #[derive(Clone)]
 struct PciMmioWindow {
     base: u64,
@@ -87,6 +117,8 @@ struct PciMmioWindow {
     // Device handlers registered in this MMIO window.
     hda: Option<Rc<RefCell<HdaPciDevice>>>,
     hda_bdf: PciBdf,
+    ahci: Option<Rc<RefCell<AhciPciDevice>>>,
+    ahci_bdf: PciBdf,
 }
 
 impl PciMmioWindow {
@@ -114,6 +146,35 @@ impl PciMmioWindow {
 
         Some((hda, paddr - bar0.base))
     }
+
+    fn ahci_bar5(&self) -> Option<(bool, PciBarRange)> {
+        let mut pci_cfg = self.pci_cfg.borrow_mut();
+        let bus = pci_cfg.bus_mut();
+        let cfg = bus.device_config(self.ahci_bdf)?;
+        let mem_enabled = (cfg.command() & 0x2) != 0;
+        let bar5 = cfg.bar_range(5)?;
+        Some((mem_enabled, bar5))
+    }
+
+    fn map_ahci(
+        &mut self,
+        paddr: u64,
+        size: usize,
+    ) -> Option<(Rc<RefCell<AhciPciDevice>>, u64)> {
+        let ahci = self.ahci.as_ref()?.clone();
+        let (mem_enabled, bar5) = self.ahci_bar5()?;
+        if !mem_enabled || bar5.base == 0 {
+            return None;
+        }
+
+        let access_end = paddr.checked_add(size as u64)?;
+        let bar_end = bar5.base.saturating_add(bar5.size);
+        if paddr < bar5.base || access_end > bar_end {
+            return None;
+        }
+
+        Some((ahci, paddr - bar5.base))
+    }
 }
 
 impl MmioHandler for PciMmioWindow {
@@ -121,22 +182,31 @@ impl MmioHandler for PciMmioWindow {
         let Some(paddr) = self.base.checked_add(offset) else {
             return all_ones(size);
         };
-        let Some((hda, dev_offset)) = self.map_hda(paddr, size) else {
-            return all_ones(size);
-        };
-        let mut hda = hda.borrow_mut();
-        hda.read(dev_offset, size)
+        if let Some((hda, dev_offset)) = self.map_hda(paddr, size) {
+            let mut hda = hda.borrow_mut();
+            return hda.read(dev_offset, size);
+        }
+        if let Some((ahci, dev_offset)) = self.map_ahci(paddr, size) {
+            let mut ahci = ahci.borrow_mut();
+            return ahci.read(dev_offset, size);
+        }
+        all_ones(size)
     }
 
     fn write(&mut self, offset: u64, size: usize, value: u64) {
         let Some(paddr) = self.base.checked_add(offset) else {
             return;
         };
-        let Some((hda, dev_offset)) = self.map_hda(paddr, size) else {
+        if let Some((hda, dev_offset)) = self.map_hda(paddr, size) {
+            let mut hda = hda.borrow_mut();
+            hda.write(dev_offset, size, value);
             return;
-        };
-        let mut hda = hda.borrow_mut();
-        hda.write(dev_offset, size, value);
+        }
+        if let Some((ahci, dev_offset)) = self.map_ahci(paddr, size) {
+            let mut ahci = ahci.borrow_mut();
+            ahci.write(dev_offset, size, value);
+            return;
+        }
     }
 }
 
@@ -270,6 +340,7 @@ pub struct PcPlatform {
     pub acpi_pm: SharedAcpiPmIo,
 
     pub hda: Option<Rc<RefCell<HdaPciDevice>>>,
+    pub ahci: Option<Rc<RefCell<AhciPciDevice>>>,
 
     pci_allocator: PciResourceAllocator,
 
@@ -288,7 +359,23 @@ impl PcPlatform {
     }
 
     pub fn new_with_hda(ram_size: usize) -> Self {
-        Self::new_with_config(ram_size, PcPlatformConfig { enable_hda: true })
+        Self::new_with_config(
+            ram_size,
+            PcPlatformConfig {
+                enable_hda: true,
+                ..Default::default()
+            },
+        )
+    }
+
+    pub fn new_with_ahci(ram_size: usize) -> Self {
+        Self::new_with_config(
+            ram_size,
+            PcPlatformConfig {
+                enable_ahci: true,
+                ..Default::default()
+            },
+        )
     }
 
     pub fn new_with_config(ram_size: usize, config: PcPlatformConfig) -> Self {
@@ -399,6 +486,24 @@ impl PcPlatform {
             None
         };
 
+        let ahci = if config.enable_ahci {
+            let profile = aero_devices::pci::profile::SATA_AHCI_ICH9;
+            let bdf = profile.bdf;
+
+            let ahci = Rc::new(RefCell::new(AhciPciDevice::new(1)));
+
+            let mut dev = AhciPciConfigDevice::new();
+            pci_intx.configure_device_intx(bdf, Some(PciInterruptPin::IntA), dev.config_mut());
+            pci_cfg
+                .borrow_mut()
+                .bus_mut()
+                .add_device(bdf, Box::new(dev));
+
+            Some(ahci)
+        } else {
+            None
+        };
+
         {
             let mut pci_cfg = pci_cfg.borrow_mut();
             bios_post(pci_cfg.bus_mut(), &mut pci_allocator).unwrap();
@@ -415,6 +520,8 @@ impl PcPlatform {
                     pci_cfg: pci_cfg.clone(),
                     hda: hda.clone(),
                     hda_bdf: aero_devices::pci::profile::HDA_ICH6.bdf,
+                    ahci: ahci.clone(),
+                    ahci_bdf: aero_devices::pci::profile::SATA_AHCI_ICH9.bdf,
                 }),
             )
             .unwrap();
@@ -459,6 +566,7 @@ impl PcPlatform {
             pci_intx,
             acpi_pm,
             hda,
+            ahci,
             pci_allocator,
             clock,
             pit,
@@ -503,35 +611,99 @@ impl PcPlatform {
         hda.controller_mut().process(&mut mem, output_frames);
     }
 
-    pub fn poll_pci_intx_lines(&mut self) {
-        let Some(hda) = self.hda.as_ref() else {
+    pub fn process_ahci(&mut self) {
+        let Some(ahci) = self.ahci.as_ref() else {
             return;
         };
 
-        let bdf = aero_devices::pci::profile::HDA_ICH6.bdf;
-        let mut level = hda.borrow().irq_level();
-
-        // Respect PCI command register Interrupt Disable bit (bit 10). When set, the device must
-        // not assert INTx.
-        //
-        // This is important for guests that switch to MSI/MSI-X and disable legacy INTx.
-        let intx_disabled = {
+        let bdf = aero_devices::pci::profile::SATA_AHCI_ICH9.bdf;
+        let command = {
             let mut pci_cfg = self.pci_cfg.borrow_mut();
             pci_cfg
                 .bus_mut()
                 .device_config(bdf)
-                .is_some_and(|cfg| (cfg.command() & (1 << 10)) != 0)
+                .map(|cfg| cfg.command())
+                .unwrap_or(0)
         };
-        if intx_disabled {
-            level = false;
+
+        // Keep the device's internal view of the PCI command register in sync so it can apply
+        // Bus Master and INTx disable gating when used standalone.
+        {
+            let mut ahci = ahci.borrow_mut();
+            ahci.config_mut().set_command(command);
         }
 
-        self.pci_intx.set_intx_level(
-            bdf,
-            PciInterruptPin::IntA,
-            level,
-            &mut *self.interrupts.borrow_mut(),
-        );
+        // Only allow the device to DMA when Bus Mastering is enabled (PCI command bit 2).
+        let bus_master_enabled = (command & (1 << 2)) != 0;
+        if !bus_master_enabled {
+            return;
+        }
+
+        let mut ahci = ahci.borrow_mut();
+        ahci.process(&mut self.memory);
+    }
+
+    pub fn poll_pci_intx_lines(&mut self) {
+        if let Some(hda) = self.hda.as_ref() {
+            let bdf = aero_devices::pci::profile::HDA_ICH6.bdf;
+            let mut level = hda.borrow().irq_level();
+
+            // Respect PCI command register Interrupt Disable bit (bit 10). When set, the device must
+            // not assert INTx.
+            //
+            // This is important for guests that switch to MSI/MSI-X and disable legacy INTx.
+            let intx_disabled = {
+                let mut pci_cfg = self.pci_cfg.borrow_mut();
+                pci_cfg
+                    .bus_mut()
+                    .device_config(bdf)
+                    .is_some_and(|cfg| (cfg.command() & (1 << 10)) != 0)
+            };
+            if intx_disabled {
+                level = false;
+            }
+
+            self.pci_intx.set_intx_level(
+                bdf,
+                PciInterruptPin::IntA,
+                level,
+                &mut *self.interrupts.borrow_mut(),
+            );
+        }
+
+        if let Some(ahci) = self.ahci.as_ref() {
+            let bdf = aero_devices::pci::profile::SATA_AHCI_ICH9.bdf;
+            let command = {
+                let mut pci_cfg = self.pci_cfg.borrow_mut();
+                pci_cfg
+                    .bus_mut()
+                    .device_config(bdf)
+                    .map(|cfg| cfg.command())
+                    .unwrap_or(0)
+            };
+
+            // Keep device-side gating consistent when the same device model is also used outside
+            // the platform (e.g. in unit tests).
+            {
+                let mut ahci = ahci.borrow_mut();
+                ahci.config_mut().set_command(command);
+            }
+
+            let mut level = ahci.borrow().intx_level();
+
+            // Respect PCI command register Interrupt Disable bit (bit 10). When set, the device must
+            // not assert INTx.
+            if (command & (1 << 10)) != 0 {
+                level = false;
+            }
+
+            self.pci_intx.set_intx_level(
+                bdf,
+                PciInterruptPin::IntA,
+                level,
+                &mut *self.interrupts.borrow_mut(),
+            );
+        }
     }
 
     pub fn tick(&mut self, delta_ns: u64) {

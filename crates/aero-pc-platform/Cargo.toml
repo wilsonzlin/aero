@@ -9,7 +9,11 @@ aero-audio = { path = "../aero-audio" }
 aero-mmu = { path = "../aero-mmu" }
 aero-cpu-core = { path = "../aero-cpu-core" }
 aero-devices = { path = "../devices" }
+aero-devices-storage = { path = "../aero-devices-storage" }
 aero-interrupts = { path = "../aero-interrupts" }
 aero-platform = { path = "../platform" }
 aero-pc-constants = { path = "../aero-pc-constants" }
 memory = { path = "../memory" }
+
+[dev-dependencies]
+aero-storage = { path = "../aero-storage" }
