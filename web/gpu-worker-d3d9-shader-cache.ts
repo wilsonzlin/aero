@@ -341,8 +341,6 @@ void main().catch((err) => {
     backend: "unknown",
     d3d9TranslatorCacheVersion: -1,
     capsHash: "",
-    d3d9TranslatorCacheVersion: -1,
-    capsHash: "",
     error: message,
   };
   const status = $("status");
