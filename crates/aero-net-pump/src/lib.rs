@@ -1303,6 +1303,16 @@ mod tests {
             0,
             "ICR should be cleared after read"
         );
+        assert_eq!(
+            nic.mmio_read_u32(0x2818),
+            rx_desc_count - 1,
+            "RDT should remain unchanged by hardware"
+        );
+        assert_eq!(
+            nic.mmio_read_u32(0x3818),
+            1,
+            "TDT should remain unchanged by hardware"
+        );
         assert!(
             !backend.stack().is_ip_assigned(),
             "stack should not mark IP assigned after DHCP OFFER"
@@ -1445,6 +1455,22 @@ mod tests {
             "RX buffer 1 was modified beyond reported frame length"
         );
 
+        // No other RX descriptors/buffers should have been touched by the OFFER tick.
+        for i in 2..rx_desc_count {
+            let desc_addr = 0x2000 + (i as u64) * 16;
+            let (buf, len, status, errors) = read_rx_desc_fields(&mem, desc_addr);
+            assert_eq!(buf, rx_bufs[i as usize], "unexpected RX desc {i} buffer addr change");
+            assert_eq!(len, 0, "unexpected RX desc {i} length after OFFER tick");
+            assert_eq!(status, 0, "unexpected RX desc {i} status after OFFER tick");
+            assert_eq!(errors, 0, "unexpected RX desc {i} errors after OFFER tick");
+            assert!(
+                mem.read_vec(rx_bufs[i as usize], RX_BUF_SIZE)
+                    .iter()
+                    .all(|b| *b == RX_SENTINEL),
+                "unexpected write into RX buffer {i} during OFFER tick"
+            );
+        }
+
         // --- DHCP REQUEST → ACK ---
         let request = build_dhcp_request(
             xid,
@@ -1525,6 +1551,16 @@ mod tests {
             nic.mmio_read_u32(0x00C0),
             0,
             "ICR should be cleared after read"
+        );
+        assert_eq!(
+            nic.mmio_read_u32(0x2818),
+            rx_desc_count - 1,
+            "RDT should remain unchanged by hardware"
+        );
+        assert_eq!(
+            nic.mmio_read_u32(0x3818),
+            2,
+            "TDT should remain unchanged by hardware"
         );
 
         let tx1_status = mem.read_vec(0x1010 + 12, 1)[0];
