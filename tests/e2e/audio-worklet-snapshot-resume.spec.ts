@@ -45,13 +45,19 @@ test("AudioWorklet producer does not burst after worker-VM snapshot restore", as
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const out = (globalThis as any).__aeroAudioOutputWorker;
     if (!out?.enabled) return null;
-    const header = out.ringBuffer.header as Uint32Array;
+    const ring = out.ringBuffer as {
+      readIndex: Uint32Array;
+      writeIndex: Uint32Array;
+      underrunCount: Uint32Array;
+      overrunCount: Uint32Array;
+      capacityFrames: number;
+    };
     return {
-      read: Atomics.load(header, 0) >>> 0,
-      write: Atomics.load(header, 1) >>> 0,
-      underrun: Atomics.load(header, 2) >>> 0,
-      overrun: Atomics.load(header, 3) >>> 0,
-      capacity: out.ringBuffer.capacityFrames as number,
+      read: Atomics.load(ring.readIndex, 0) >>> 0,
+      write: Atomics.load(ring.writeIndex, 0) >>> 0,
+      underrun: Atomics.load(ring.underrunCount, 0) >>> 0,
+      overrun: Atomics.load(ring.overrunCount, 0) >>> 0,
+      capacity: ring.capacityFrames as number,
     };
   });
   expect(beforeSave).not.toBeNull();
@@ -67,13 +73,19 @@ test("AudioWorklet producer does not burst after worker-VM snapshot restore", as
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const out = (globalThis as any).__aeroAudioOutputWorker;
     if (!out?.enabled) return null;
-    const header = out.ringBuffer.header as Uint32Array;
+    const ring = out.ringBuffer as {
+      readIndex: Uint32Array;
+      writeIndex: Uint32Array;
+      underrunCount: Uint32Array;
+      overrunCount: Uint32Array;
+      capacityFrames: number;
+    };
     return {
-      read: Atomics.load(header, 0) >>> 0,
-      write: Atomics.load(header, 1) >>> 0,
-      underrun: Atomics.load(header, 2) >>> 0,
-      overrun: Atomics.load(header, 3) >>> 0,
-      capacity: out.ringBuffer.capacityFrames as number,
+      read: Atomics.load(ring.readIndex, 0) >>> 0,
+      write: Atomics.load(ring.writeIndex, 0) >>> 0,
+      underrun: Atomics.load(ring.underrunCount, 0) >>> 0,
+      overrun: Atomics.load(ring.overrunCount, 0) >>> 0,
+      capacity: ring.capacityFrames as number,
     };
   });
   expect(beforeRestore).not.toBeNull();
@@ -93,13 +105,19 @@ test("AudioWorklet producer does not burst after worker-VM snapshot restore", as
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const out = (globalThis as any).__aeroAudioOutputWorker;
     if (!out?.enabled) return null;
-    const header = out.ringBuffer.header as Uint32Array;
+    const ring = out.ringBuffer as {
+      readIndex: Uint32Array;
+      writeIndex: Uint32Array;
+      underrunCount: Uint32Array;
+      overrunCount: Uint32Array;
+      capacityFrames: number;
+    };
     return {
-      read: Atomics.load(header, 0) >>> 0,
-      write: Atomics.load(header, 1) >>> 0,
-      underrun: Atomics.load(header, 2) >>> 0,
-      overrun: Atomics.load(header, 3) >>> 0,
-      capacity: out.ringBuffer.capacityFrames as number,
+      read: Atomics.load(ring.readIndex, 0) >>> 0,
+      write: Atomics.load(ring.writeIndex, 0) >>> 0,
+      underrun: Atomics.load(ring.underrunCount, 0) >>> 0,
+      overrun: Atomics.load(ring.overrunCount, 0) >>> 0,
+      capacity: ring.capacityFrames as number,
     };
   });
   expect(afterRestore).not.toBeNull();

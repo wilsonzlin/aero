@@ -1,3 +1,12 @@
+import {
+  HEADER_BYTES,
+  HEADER_U32_LEN,
+  OVERRUN_COUNT_INDEX,
+  READ_FRAME_INDEX,
+  UNDERRUN_COUNT_INDEX,
+  WRITE_FRAME_INDEX,
+} from "./src/platform/audio_worklet_ring_layout.js";
+
 const logEl = document.getElementById("log");
 const playBtn = document.getElementById("play");
 
@@ -6,17 +15,15 @@ function log(msg) {
 }
 
 function makeRingBuffer(capacityFrames, channelCount) {
-  const headerU32Len = 4;
-  const headerBytes = headerU32Len * Uint32Array.BYTES_PER_ELEMENT; // 16
   const sampleCapacity = capacityFrames * channelCount;
-  const sab = new SharedArrayBuffer(headerBytes + sampleCapacity * Float32Array.BYTES_PER_ELEMENT);
-  const header = new Uint32Array(sab, 0, headerU32Len);
-  const samples = new Float32Array(sab, headerBytes, sampleCapacity);
+  const sab = new SharedArrayBuffer(HEADER_BYTES + sampleCapacity * Float32Array.BYTES_PER_ELEMENT);
+  const header = new Uint32Array(sab, 0, HEADER_U32_LEN);
+  const samples = new Float32Array(sab, HEADER_BYTES, sampleCapacity);
 
-  Atomics.store(header, 0, 0);
-  Atomics.store(header, 1, 0);
-  Atomics.store(header, 2, 0);
-  Atomics.store(header, 3, 0);
+  Atomics.store(header, READ_FRAME_INDEX, 0);
+  Atomics.store(header, WRITE_FRAME_INDEX, 0);
+  Atomics.store(header, UNDERRUN_COUNT_INDEX, 0);
+  Atomics.store(header, OVERRUN_COUNT_INDEX, 0);
 
   return { sab, header, samples, capacityFrames, channelCount };
 }
@@ -112,8 +119,8 @@ playBtn.addEventListener("click", async () => {
     const toneF32 = convertS16ToF32(toneS16);
     const toneResampled = resampleInterleavedStereoF32(toneF32, srcSampleRate, dstSampleRate);
     rb.samples.set(toneResampled);
-    Atomics.store(rb.header, 0, 0);
-    Atomics.store(rb.header, 1, dstFrames);
+    Atomics.store(rb.header, READ_FRAME_INDEX, 0);
+    Atomics.store(rb.header, WRITE_FRAME_INDEX, dstFrames);
     log(`Wrote: ${dstFrames} frames (${totalSamples} samples) into Float32 ring buffer`);
 
     await ctx.resume();
