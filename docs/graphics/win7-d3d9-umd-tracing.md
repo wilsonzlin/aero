@@ -17,6 +17,12 @@ Source: `drivers/aerogpu/umd/d3d9/src/aerogpu_trace.*`
 The recommended repro apps below are part of the Win7 guest validation suite.
 Build/run instructions live in: `drivers/aerogpu/tests/win7/README.md`.
 
+Host-side unit tests (no Win7 VM required) live in:
+
+- `drivers/aerogpu/umd/d3d9/tests/`
+
+They validate the trace filtering and dump trigger behavior (including unique-mode force-record cases) and run under CI via `ctest` when `AERO_AEROGPU_BUILD_TESTS=ON`.
+
 ---
 
 ## Enabling tracing
