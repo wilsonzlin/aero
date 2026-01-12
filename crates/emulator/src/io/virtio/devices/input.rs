@@ -896,7 +896,9 @@ mod tests {
 
         dev.write_config(0, &[VIRTIO_INPUT_CFG_EV_BITS, 0]);
         let ev_bitmap = dev.read_config(8, 128);
+        assert_ne!(ev_bitmap[(EV_SYN / 8) as usize] & (1u8 << (EV_SYN % 8)), 0);
         assert_ne!(ev_bitmap[(EV_KEY / 8) as usize] & (1u8 << (EV_KEY % 8)), 0);
+        assert_ne!(ev_bitmap[(EV_LED / 8) as usize] & (1u8 << (EV_LED % 8)), 0);
 
         dev.write_config(1, &[EV_KEY as u8]);
         let key_bitmap = dev.read_config(8, 128);

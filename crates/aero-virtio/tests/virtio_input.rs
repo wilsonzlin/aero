@@ -1,6 +1,6 @@
 use aero_virtio::devices::input::{
-    VirtioInput, VirtioInputDeviceKind, VirtioInputEvent, BTN_LEFT, EV_KEY, EV_LED, EV_REL, KEY_A,
-    KEY_F1, KEY_F12, KEY_NUMLOCK, KEY_SCROLLLOCK, REL_X, VIRTIO_INPUT_CFG_EV_BITS,
+    VirtioInput, VirtioInputDeviceKind, VirtioInputEvent, BTN_LEFT, EV_KEY, EV_LED, EV_REL, EV_SYN,
+    KEY_A, KEY_F1, KEY_F12, KEY_NUMLOCK, KEY_SCROLLLOCK, REL_X, VIRTIO_INPUT_CFG_EV_BITS,
     VIRTIO_INPUT_CFG_ID_DEVIDS, VIRTIO_INPUT_CFG_ID_NAME,
 };
 use aero_virtio::memory::{
@@ -324,6 +324,7 @@ fn virtio_input_config_exposes_name_devids_and_ev_bits() {
     let size = bar_read_u8(&mut dev, caps.device + 2) as usize;
     assert_eq!(size, 128);
     let ev_bits = bar_read(&mut dev, caps.device + 8, size);
+    assert_ne!(ev_bits[(EV_SYN / 8) as usize] & (1u8 << (EV_SYN % 8)), 0);
     assert_ne!(ev_bits[(EV_KEY / 8) as usize] & (1u8 << (EV_KEY % 8)), 0);
     assert_ne!(ev_bits[(EV_LED / 8) as usize] & (1u8 << (EV_LED % 8)), 0);
     assert_eq!(ev_bits[(EV_REL / 8) as usize] & (1u8 << (EV_REL % 8)), 0);
@@ -362,6 +363,7 @@ fn virtio_input_config_exposes_name_devids_and_ev_bits() {
     bar_write_u8(&mut dev, &mut mem, caps.device + 1, 0);
     let size = bar_read_u8(&mut dev, caps.device + 2) as usize;
     let ev_bits = bar_read(&mut dev, caps.device + 8, size);
+    assert_ne!(ev_bits[(EV_SYN / 8) as usize] & (1u8 << (EV_SYN % 8)), 0);
     assert_ne!(ev_bits[(EV_KEY / 8) as usize] & (1u8 << (EV_KEY % 8)), 0);
     assert_ne!(ev_bits[(EV_REL / 8) as usize] & (1u8 << (EV_REL % 8)), 0);
     assert_eq!(ev_bits[(EV_LED / 8) as usize] & (1u8 << (EV_LED % 8)), 0);
