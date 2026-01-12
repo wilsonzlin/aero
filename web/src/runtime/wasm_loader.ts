@@ -457,6 +457,19 @@ export interface WasmApi {
         free(): void;
     };
 
+    /**
+     * Worker-side VM snapshot builder (CPU/MMU/device state + full RAM streaming to OPFS).
+     *
+     * Optional while older WASM builds are still in circulation.
+     */
+    WorkerVmSnapshot?: new (guestBase: number, guestSize: number) => {
+        set_cpu_state_v2(cpuBytes: Uint8Array, mmuBytes: Uint8Array): void;
+        add_device_state(id: number, version: number, flags: number, data: Uint8Array): void;
+        snapshot_full_to_opfs(path: string): Promise<void>;
+        restore_snapshot_from_opfs(path: string): Promise<unknown>;
+        free(): void;
+    };
+
     // Optional audio exports (present when the WASM build includes the audio worklet bridge).
     WorkletBridge?: new (capacityFrames: number, channelCount: number) => {
         readonly shared_buffer: SharedArrayBuffer;
@@ -641,6 +654,7 @@ function toApi(mod: RawWasmModule): WasmApi {
         DemoVm: mod.DemoVm,
         Machine: mod.Machine,
         WasmVm: mod.WasmVm,
+        WorkerVmSnapshot: mod.WorkerVmSnapshot,
         WorkletBridge: mod.WorkletBridge,
         create_worklet_bridge: mod.create_worklet_bridge,
         attach_worklet_bridge: mod.attach_worklet_bridge,

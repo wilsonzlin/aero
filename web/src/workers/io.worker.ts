@@ -106,6 +106,14 @@ import { HidReportRing, HidReportType as HidRingReportType } from "../usb/hid_re
 import { IoWorkerLegacyHidPassthroughAdapter } from "./io_hid_passthrough_legacy_adapter";
 import { drainIoHidInputRing } from "./io_hid_input_ring";
 import { UhciRuntimeExternalHubConfigManager } from "./uhci_runtime_hub_config";
+import {
+  VM_SNAPSHOT_DEVICE_USB_KIND,
+  parseAeroIoSnapshotVersion,
+  resolveVmSnapshotRestoreFromOpfsExport,
+  resolveVmSnapshotSaveToOpfsExport,
+  vmSnapshotDeviceIdToKind,
+  vmSnapshotDeviceKindToId,
+} from "./vm_snapshot_wasm";
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 
@@ -176,8 +184,6 @@ const WEBUSB_GUEST_ROOT_PORT = 1;
 let snapshotPaused = false;
 let snapshotOpInFlight = false;
 
-const VM_SNAPSHOT_DEVICE_USB = "usb.uhci";
-
 function copyU8ToArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   const out = new Uint8Array(bytes.byteLength);
   out.set(bytes);
@@ -192,7 +198,7 @@ function snapshotUsbDeviceState(): { kind: string; bytes: Uint8Array } | null {
     if (typeof save === "function") {
       try {
         const bytes = save.call(runtime) as unknown;
-        if (bytes instanceof Uint8Array) return { kind: VM_SNAPSHOT_DEVICE_USB, bytes };
+        if (bytes instanceof Uint8Array) return { kind: VM_SNAPSHOT_DEVICE_USB_KIND, bytes };
       } catch (err) {
         console.warn("[io.worker] UhciRuntime save_state failed:", err);
       }
@@ -206,7 +212,7 @@ function snapshotUsbDeviceState(): { kind: string; bytes: Uint8Array } | null {
     if (typeof save === "function") {
       try {
         const bytes = save.call(bridge) as unknown;
-        if (bytes instanceof Uint8Array) return { kind: VM_SNAPSHOT_DEVICE_USB, bytes };
+        if (bytes instanceof Uint8Array) return { kind: VM_SNAPSHOT_DEVICE_USB_KIND, bytes };
       } catch (err) {
         console.warn("[io.worker] UhciControllerBridge save_state failed:", err);
       }
@@ -236,18 +242,6 @@ function restoreUsbDeviceState(bytes: Uint8Array): void {
       return;
     }
   }
-}
-
-function resolveWasmVmSnapshotFn(
-  api: WasmApi,
-  names: string[],
-): ((...args: unknown[]) => unknown) | null {
-  const anyApi = api as unknown as Record<string, unknown>;
-  for (const name of names) {
-    const fn = anyApi[name];
-    if (typeof fn === "function") return fn as (...args: unknown[]) => unknown;
-  }
-  return null;
 }
 
 // Keep broker IDs from overlapping between multiple concurrent USB action sources (UHCI runtime,
@@ -1305,29 +1299,44 @@ async function handleVmSnapshotSaveToOpfs(path: string, cpu: ArrayBuffer, mmu: A
     const devices: Array<{ kind: string; bytes: Uint8Array }> = [];
     if (usb) devices.push(usb);
 
-    const saveFn =
-      resolveWasmVmSnapshotFn(api, [
-        // Preferred names (Task 1078).
-        "vm_snapshot_save_to_opfs",
-        "save_vm_snapshot_to_opfs",
-        // Legacy/alternate spellings.
-        "snapshot_vm_to_opfs",
-        "snapshot_worker_vm_to_opfs",
-        "worker_vm_snapshot_to_opfs",
-      ]) ??
-      null;
-    if (!saveFn) {
-      throw new Error("WASM VM snapshot builder export is unavailable (expected *_snapshot*_to_opfs).");
+    const saveExport = resolveVmSnapshotSaveToOpfsExport(api);
+    if (!saveExport) {
+      throw new Error("WASM VM snapshot save export is unavailable (expected *_snapshot*_to_opfs or WorkerVmSnapshot).");
     }
 
-    // Build a JS-friendly device blob list; wasm-bindgen can accept this as `JsValue`.
-    const devicePayload = devices.map((d) => ({ kind: d.kind, bytes: d.bytes }));
+    if (saveExport.kind === "free-function") {
+      // Build a JS-friendly device blob list; wasm-bindgen can accept this as `JsValue`.
+      const devicePayload = devices.map((d) => ({ kind: d.kind, bytes: d.bytes }));
 
-    // Always pass fresh Uint8Array views for the CPU state so callers can transfer the ArrayBuffer.
-    const cpuBytes = new Uint8Array(cpu);
-    const mmuBytes = new Uint8Array(mmu);
+      // Always pass fresh Uint8Array views for the CPU state so callers can transfer the ArrayBuffer.
+      const cpuBytes = new Uint8Array(cpu);
+      const mmuBytes = new Uint8Array(mmu);
 
-    await Promise.resolve(saveFn.call(api as unknown, path, cpuBytes, mmuBytes, devicePayload));
+      await Promise.resolve(saveExport.fn.call(api as unknown, path, cpuBytes, mmuBytes, devicePayload));
+      return;
+    }
+
+    const builder = new saveExport.Ctor(guestBase >>> 0, guestSize >>> 0);
+    try {
+      builder.set_cpu_state_v2(new Uint8Array(cpu), new Uint8Array(mmu));
+
+      for (const device of devices) {
+        const id = vmSnapshotDeviceKindToId(device.kind);
+        if (id === null) {
+          throw new Error(`Unsupported VM snapshot device kind: ${device.kind}`);
+        }
+        const { version, flags } = parseAeroIoSnapshotVersion(device.bytes);
+        builder.add_device_state(id, version, flags, device.bytes);
+      }
+
+      await builder.snapshot_full_to_opfs(path);
+    } finally {
+      try {
+        builder.free();
+      } catch {
+        // ignore
+      }
+    }
   } finally {
     snapshotOpInFlight = false;
   }
@@ -1348,54 +1357,104 @@ async function handleVmSnapshotRestoreFromOpfs(path: string): Promise<{
       throw new Error("WASM is not initialized in the IO worker; cannot restore VM snapshot.");
     }
 
-    const restoreFn =
-      resolveWasmVmSnapshotFn(api, [
-        // Preferred names (Task 1078).
-        "vm_snapshot_restore_from_opfs",
-        "restore_vm_snapshot_from_opfs",
-        // Legacy/alternate spellings.
-        "restore_snapshot_vm_from_opfs",
-        "restore_worker_vm_snapshot_from_opfs",
-        "snapshot_restore_vm_from_opfs",
-      ]) ??
-      null;
-    if (!restoreFn) {
-      throw new Error("WASM VM snapshot restore export is unavailable (expected *_restore*_from_opfs).");
+    const restoreExport = resolveVmSnapshotRestoreFromOpfsExport(api);
+    if (!restoreExport) {
+      throw new Error(
+        "WASM VM snapshot restore export is unavailable (expected *_restore*_from_opfs or WorkerVmSnapshot).",
+      );
     }
 
-    const res = await Promise.resolve(restoreFn.call(api as unknown, path));
-    const rec = res as { cpu?: unknown; mmu?: unknown; devices?: unknown };
-    if (!(rec?.cpu instanceof Uint8Array) || !(rec?.mmu instanceof Uint8Array)) {
-      throw new Error("WASM snapshot restore returned an unexpected result shape (expected {cpu:Uint8Array, mmu:Uint8Array}).");
+    if (restoreExport.kind === "free-function") {
+      const res = await Promise.resolve(restoreExport.fn.call(api as unknown, path));
+      const rec = res as { cpu?: unknown; mmu?: unknown; devices?: unknown };
+      if (!(rec?.cpu instanceof Uint8Array) || !(rec?.mmu instanceof Uint8Array)) {
+        throw new Error("WASM snapshot restore returned an unexpected result shape (expected {cpu:Uint8Array, mmu:Uint8Array}).");
+      }
+
+      const devicesRaw = Array.isArray(rec.devices) ? rec.devices : [];
+      const devices: VmSnapshotDeviceBlob[] = [];
+      for (const entry of devicesRaw) {
+        if (!entry || typeof entry !== "object") continue;
+        const e = entry as { kind?: unknown; bytes?: unknown };
+        if (typeof e.kind !== "string") continue;
+        if (!(e.bytes instanceof Uint8Array)) continue;
+        devices.push({ kind: e.kind, bytes: copyU8ToArrayBuffer(e.bytes) });
+      }
+
+      // Apply device state locally (IO worker owns USB).
+      const usbBlob = devicesRaw.find(
+        (entry): entry is { kind: string; bytes: Uint8Array } =>
+          !!entry &&
+          typeof (entry as { kind?: unknown }).kind === "string" &&
+          (entry as { kind: string }).kind === VM_SNAPSHOT_DEVICE_USB_KIND &&
+          (entry as { bytes?: unknown }).bytes instanceof Uint8Array,
+      );
+      if (usbBlob) {
+        restoreUsbDeviceState(usbBlob.bytes);
+      }
+
+      return {
+        cpu: copyU8ToArrayBuffer(rec.cpu),
+        mmu: copyU8ToArrayBuffer(rec.mmu),
+        devices: devices.length ? devices : undefined,
+      };
     }
 
-    const devicesRaw = Array.isArray(rec.devices) ? rec.devices : [];
-    const devices: VmSnapshotDeviceBlob[] = [];
-    for (const entry of devicesRaw) {
-      if (!entry || typeof entry !== "object") continue;
-      const e = entry as { kind?: unknown; bytes?: unknown };
-      if (typeof e.kind !== "string") continue;
-      if (!(e.bytes instanceof Uint8Array)) continue;
-      devices.push({ kind: e.kind, bytes: copyU8ToArrayBuffer(e.bytes) });
-    }
+    const builder = new restoreExport.Ctor(guestBase >>> 0, guestSize >>> 0);
+    try {
+      const res = await builder.restore_snapshot_from_opfs(path);
+      const rec = res as { cpu?: unknown; mmu?: unknown; devices?: unknown };
+      if (!(rec?.cpu instanceof Uint8Array) || !(rec?.mmu instanceof Uint8Array) || !Array.isArray(rec.devices)) {
+        throw new Error(
+          "WASM snapshot restore returned an unexpected result shape (expected {cpu:Uint8Array, mmu:Uint8Array, devices:Array}).",
+        );
+      }
 
-    // Apply device state locally (IO worker owns USB).
-    const usbBlob = devicesRaw.find(
-      (entry): entry is { kind: string; bytes: Uint8Array } =>
-        !!entry &&
-        typeof (entry as { kind?: unknown }).kind === "string" &&
-        (entry as { kind: string }).kind === VM_SNAPSHOT_DEVICE_USB &&
-        (entry as { bytes?: unknown }).bytes instanceof Uint8Array,
-    );
-    if (usbBlob) {
-      restoreUsbDeviceState(usbBlob.bytes);
-    }
+      const devices: VmSnapshotDeviceBlob[] = [];
+      let usbBytes: Uint8Array | null = null;
+      for (const entry of rec.devices) {
+        if (!entry || typeof entry !== "object") {
+          throw new Error(
+            "WASM snapshot restore returned an unexpected devices entry (expected {id:number,version:number,flags:number,data:Uint8Array}).",
+          );
+        }
+        const e = entry as { id?: unknown; version?: unknown; flags?: unknown; data?: unknown };
+        if (
+          typeof e.id !== "number" ||
+          typeof e.version !== "number" ||
+          typeof e.flags !== "number" ||
+          !(e.data instanceof Uint8Array)
+        ) {
+          throw new Error(
+            "WASM snapshot restore returned an unexpected devices entry shape (expected {id:number,version:number,flags:number,data:Uint8Array}).",
+          );
+        }
 
-    return {
-      cpu: copyU8ToArrayBuffer(rec.cpu),
-      mmu: copyU8ToArrayBuffer(rec.mmu),
-      devices: devices.length ? devices : undefined,
-    };
+        const kind = vmSnapshotDeviceIdToKind(e.id);
+        if (!kind) continue;
+
+        if (kind === VM_SNAPSHOT_DEVICE_USB_KIND) {
+          usbBytes = e.data;
+        }
+        devices.push({ kind, bytes: copyU8ToArrayBuffer(e.data) });
+      }
+
+      if (usbBytes) {
+        restoreUsbDeviceState(usbBytes);
+      }
+
+      return {
+        cpu: copyU8ToArrayBuffer(rec.cpu),
+        mmu: copyU8ToArrayBuffer(rec.mmu),
+        devices: devices.length ? devices : undefined,
+      };
+    } finally {
+      try {
+        builder.free();
+      } catch {
+        // ignore
+      }
+    }
   } finally {
     snapshotOpInFlight = false;
   }
