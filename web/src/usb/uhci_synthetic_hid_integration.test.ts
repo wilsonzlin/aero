@@ -499,12 +499,24 @@ describe("usb/UHCI synthetic HID passthrough integration (WASM)", () => {
     expect(gamepadDev.configured()).toBe(true);
 
     const usbHid = new api.UsbHidBridge();
-    usbHid.keyboard_event(0x04, true);
+    usbHid.keyboard_event(0x04, true); // KeyA
     const kbReport = usbHid.drain_next_keyboard_report();
     expect(kbReport).toBeInstanceOf(Uint8Array);
     keyboardDev.push_input_report(0, kbReport!);
 
+    usbHid.mouse_move(10, 5);
+    const mouseReport = usbHid.drain_next_mouse_report();
+    expect(mouseReport).toBeInstanceOf(Uint8Array);
+    mouseDev.push_input_report(0, mouseReport!);
+
+    usbHid.gamepad_report(0x04030201, 0x00070605);
+    const padReport = usbHid.drain_next_gamepad_report();
+    expect(padReport).toBeInstanceOf(Uint8Array);
+    gamepadDev.push_input_report(0, padReport!);
+
     expect(interruptIn({ uhci, view, guestBase, alloc, flBase, devAddr: addrs[0]!, ep: 1, len: 8 })).toEqual(kbReport);
+    expect(interruptIn({ uhci, view, guestBase, alloc, flBase, devAddr: addrs[1]!, ep: 1, len: 4 })).toEqual(mouseReport);
+    expect(interruptIn({ uhci, view, guestBase, alloc, flBase, devAddr: addrs[2]!, ep: 1, len: 8 })).toEqual(padReport);
   });
 
   it("preserves externally attached UsbHidPassthroughBridge devices across external hub growth", async () => {

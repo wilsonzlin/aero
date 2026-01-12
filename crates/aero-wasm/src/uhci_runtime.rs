@@ -172,8 +172,13 @@ pub struct UhciRuntime {
     /// as `UsbHidPassthroughBridge` instances. We track their handles so we can reattach them when
     /// the external hub is replaced (e.g. due to a port-count grow) or during snapshot restore.
     ///
-    /// NOTE: These devices are not currently snapshotted/recreated by the runtime. Instead, we
-    /// assume the host reattaches them before snapshot restore (as `io.worker.ts` does).
+    /// NOTE: The UHCI runtime snapshot captures the *USB topology state* (hub ports + per-device
+    /// dynamic state) inside the controller/hub snapshots. However, because these devices are
+    /// created/owned externally (in JS), the runtime cannot recreate them from the snapshot alone.
+    ///
+    /// Instead, we require that the host has attached the devices at least once (so the runtime
+    /// has a `UsbHidPassthroughHandle` to clone), and then we reattach those handles before
+    /// applying the hub snapshot so the saved device state can be restored.
     usb_hid_passthrough_devices: HashMap<Vec<u8>, UsbHidPassthroughHandle>,
 
     webusb: Option<WebUsbDeviceState>,
