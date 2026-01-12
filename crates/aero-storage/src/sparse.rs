@@ -393,7 +393,7 @@ impl<B: StorageBackend> AeroSparseDisk<B> {
                     ));
                 }
                 let rel = phys - header.data_offset;
-                if rel % block_size != 0 {
+                if !rel.is_multiple_of(block_size) {
                     return Err(DiskError::CorruptSparseImage(
                         "misaligned data block offset",
                     ));

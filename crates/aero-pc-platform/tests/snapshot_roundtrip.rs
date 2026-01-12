@@ -164,7 +164,9 @@ fn pc_platform_snapshot_roundtrip_preserves_acpi_sci_interrupt_and_platform_devi
         let mut cfg_ports = pc2.pci_cfg.borrow_mut();
         let mut core = PciCoreSnapshot::new(&mut cfg_ports, &mut pc2.pci_intx);
         core.load_state(&pci_core_state).unwrap();
-        core.sync_intx_levels_to_sink(&mut *pc2.interrupts.borrow_mut());
+        let mut ints = pc2.interrupts.borrow_mut();
+        let ints: &mut PlatformInterrupts = &mut ints;
+        core.sync_intx_levels_to_sink(ints);
     }
 
     // HPET snapshot does not serialize active IRQ assertions; re-drive after restore.
@@ -897,7 +899,9 @@ fn pc_platform_snapshot_roundtrip_preserves_storage_controllers_and_allows_backe
         let mut cfg_ports = pc2.pci_cfg.borrow_mut();
         let mut core = PciCoreSnapshot::new(&mut cfg_ports, &mut pc2.pci_intx);
         core.load_state(&pci_core_state).unwrap();
-        core.sync_intx_levels_to_sink(&mut *pc2.interrupts.borrow_mut());
+        let mut ints = pc2.interrupts.borrow_mut();
+        let ints: &mut PlatformInterrupts = &mut ints;
+        core.sync_intx_levels_to_sink(ints);
     }
 
     pc2.ahci

@@ -1525,7 +1525,7 @@ impl Machine {
         const MAX_FRAMES_PER_POLL: usize = aero_net_pump::DEFAULT_MAX_FRAMES_PER_POLL;
         if let Some(backend) = self.network_backend.as_mut() {
             tick_e1000(
-                &mut *nic,
+                &mut nic,
                 &mut self.mem,
                 backend,
                 MAX_FRAMES_PER_POLL,
@@ -1536,7 +1536,7 @@ impl Machine {
             // attached (e.g. for deterministic guest tests). Any guest TX frames are dropped.
             let mut no_backend = ();
             tick_e1000(
-                &mut *nic,
+                &mut nic,
                 &mut self.mem,
                 &mut no_backend,
                 MAX_FRAMES_PER_POLL,
@@ -3707,9 +3707,9 @@ mod tests {
         let redtbl_high = redtbl_low + 1;
         {
             let mut bus = m.mem.inner.borrow_mut();
-            bus.write_physical_u32(IOAPIC_MMIO_BASE + 0x00, redtbl_low);
+            bus.write_physical_u32(IOAPIC_MMIO_BASE, redtbl_low);
             bus.write_physical_u32(IOAPIC_MMIO_BASE + 0x10, low);
-            bus.write_physical_u32(IOAPIC_MMIO_BASE + 0x00, redtbl_high);
+            bus.write_physical_u32(IOAPIC_MMIO_BASE, redtbl_high);
             bus.write_physical_u32(IOAPIC_MMIO_BASE + 0x10, 0);
         }
 

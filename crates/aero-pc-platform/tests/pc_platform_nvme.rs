@@ -182,7 +182,7 @@ fn pc_platform_nvme_mmio_syncs_device_command_before_each_access() {
 
     // Through the platform MMIO bus, the access should still succeed because the MMIO router
     // mirrors the live PCI command register into the device model before dispatch.
-    let cap_platform = pc.memory.read_u32(bar0_base + 0x0000);
+    let cap_platform = pc.memory.read_u32(bar0_base);
     assert_ne!(cap_platform, 0xFFFF_FFFF);
 
     // And the device model should now observe a synced command register.
