@@ -120,3 +120,99 @@ fn tier2_masks_shift_count_for_16bit_operands_like_x86() {
     assert_side_exit_at_int3(exit, CODE);
     assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 2);
 }
+
+#[test]
+fn tier2_masks_shift_count_for_16bit_shr_like_x86() {
+    // mov ax, 0x8000
+    // shr ax, 33
+    // int3
+    const CODE: &[u8] = &[
+        0x66, 0xB8, 0x00, 0x80, // mov ax, 0x8000
+        0x66, 0xC1, 0xE8, 0x21, // shr ax, 33
+        0xCC, // int3
+    ];
+
+    let (exit, state) = run_x86(CODE);
+    assert_side_exit_at_int3(exit, CODE);
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 0x4000);
+}
+
+#[test]
+fn tier2_masks_shift_count_for_16bit_sar_like_x86() {
+    // mov ax, 0x8000
+    // sar ax, 33
+    // int3
+    const CODE: &[u8] = &[
+        0x66, 0xB8, 0x00, 0x80, // mov ax, 0x8000
+        0x66, 0xC1, 0xF8, 0x21, // sar ax, 33
+        0xCC, // int3
+    ];
+
+    let (exit, state) = run_x86(CODE);
+    assert_side_exit_at_int3(exit, CODE);
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 0xC000);
+}
+
+#[test]
+fn tier2_masks_shift_count_for_8bit_shr_like_x86() {
+    // mov al, 0x80
+    // shr al, 33
+    // int3
+    const CODE: &[u8] = &[
+        0xB0, 0x80, // mov al, 0x80
+        0xC0, 0xE8, 0x21, // shr al, 33
+        0xCC, // int3
+    ];
+
+    let (exit, state) = run_x86(CODE);
+    assert_side_exit_at_int3(exit, CODE);
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 0x40);
+}
+
+#[test]
+fn tier2_masks_shift_count_for_8bit_sar_like_x86() {
+    // mov al, 0x80
+    // sar al, 33
+    // int3
+    const CODE: &[u8] = &[
+        0xB0, 0x80, // mov al, 0x80
+        0xC0, 0xF8, 0x21, // sar al, 33
+        0xCC, // int3
+    ];
+
+    let (exit, state) = run_x86(CODE);
+    assert_side_exit_at_int3(exit, CODE);
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 0xC0);
+}
+
+#[test]
+fn tier2_masks_shift_count_for_high8_shr_like_x86() {
+    // mov ah, 0x80
+    // shr ah, 33
+    // int3
+    const CODE: &[u8] = &[
+        0xB4, 0x80, // mov ah, 0x80
+        0xC0, 0xEC, 0x21, // shr ah, 33
+        0xCC, // int3
+    ];
+
+    let (exit, state) = run_x86(CODE);
+    assert_side_exit_at_int3(exit, CODE);
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 0x4000);
+}
+
+#[test]
+fn tier2_masks_shift_count_for_high8_sar_like_x86() {
+    // mov ah, 0x80
+    // sar ah, 33
+    // int3
+    const CODE: &[u8] = &[
+        0xB4, 0x80, // mov ah, 0x80
+        0xC0, 0xFC, 0x21, // sar ah, 33
+        0xCC, // int3
+    ];
+
+    let (exit, state) = run_x86(CODE);
+    assert_side_exit_at_int3(exit, CODE);
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 0xC000);
+}
