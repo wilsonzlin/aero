@@ -57,6 +57,16 @@ pub fn discover_block_mode<B: Tier1Bus>(
     bitness: u32,
 ) -> BasicBlock {
     let mut insts = Vec::new();
+    let ip_mask = match bitness {
+        32 => 0xffff_ffff,
+        64 => u64::MAX,
+        // Tier-1 decoder does not currently model 16-bit addressing, but applying the 16-bit IP
+        // mask here keeps instruction fetch consistent with the architectural IP width if
+        // callers experiment with `bitness=16`.
+        16 => 0xffff,
+        other => panic!("invalid x86 bitness {other}"),
+    };
+    let entry_rip = entry_rip & ip_mask;
     let mut rip = entry_rip;
     let mut total_bytes = 0usize;
 
@@ -73,7 +83,7 @@ pub fn discover_block_mode<B: Tier1Bus>(
         let bytes = bus.fetch(rip, 15);
         let inst = decode_one_mode(rip, &bytes, bitness);
         total_bytes += inst.len as usize;
-        rip = inst.next_rip();
+        rip = inst.next_rip() & ip_mask;
 
         let end_kind = match inst.kind {
             InstKind::JmpRel { .. } => Some(BlockEndKind::Jmp),

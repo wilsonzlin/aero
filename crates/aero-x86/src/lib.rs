@@ -479,6 +479,15 @@ pub mod tier1 {
         }
     }
 
+    fn ip_mask(bitness: u32) -> u64 {
+        match bitness {
+            64 => u64::MAX,
+            32 => 0xffff_ffff,
+            16 => 0xffff,
+            _ => u64::MAX,
+        }
+    }
+
     fn sign_extend_imm(width: Width, imm: u64) -> u64 {
         width.sign_extend(width.truncate(imm))
     }
@@ -1090,19 +1099,19 @@ pub mod tier1 {
             0xe9 => {
                 let rel32 = read_le(bytes, offset, 4)? as u32;
                 offset += 4;
-                let target = (rip + offset as u64).wrapping_add(rel32 as i32 as i64 as u64);
+                let target = (rip + offset as u64).wrapping_add(rel32 as i32 as i64 as u64) & ip_mask(bitness);
                 InstKind::JmpRel { target }
             }
             0xeb => {
                 let rel8 = read_u8(bytes, offset)? as i8;
                 offset += 1;
-                let target = (rip + offset as u64).wrapping_add(rel8 as i64 as u64);
+                let target = (rip + offset as u64).wrapping_add(rel8 as i64 as u64) & ip_mask(bitness);
                 InstKind::JmpRel { target }
             }
             0xe8 => {
                 let rel32 = read_le(bytes, offset, 4)? as u32;
                 offset += 4;
-                let target = (rip + offset as u64).wrapping_add(rel32 as i32 as i64 as u64);
+                let target = (rip + offset as u64).wrapping_add(rel32 as i32 as i64 as u64) & ip_mask(bitness);
                 InstKind::CallRel { target }
             }
             0xc3 => InstKind::Ret,
@@ -1113,7 +1122,7 @@ pub mod tier1 {
                 })?;
                 let rel8 = read_u8(bytes, offset)? as i8;
                 offset += 1;
-                let target = (rip + offset as u64).wrapping_add(rel8 as i64 as u64);
+                let target = (rip + offset as u64).wrapping_add(rel8 as i64 as u64) & ip_mask(bitness);
                 InstKind::JccRel { cond, target }
             }
             0x0f => {
@@ -1127,7 +1136,7 @@ pub mod tier1 {
                         })?;
                         let rel32 = read_le(bytes, offset, 4)? as u32;
                         offset += 4;
-                        let target = (rip + offset as u64).wrapping_add(rel32 as i32 as i64 as u64);
+                        let target = (rip + offset as u64).wrapping_add(rel32 as i32 as i64 as u64) & ip_mask(bitness);
                         InstKind::JccRel { cond, target }
                     }
                     0x90..=0x9f => {

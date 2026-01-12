@@ -70,3 +70,12 @@ fn decode_one_mode_32bit_d0_disp32_is_not_rip_relative() {
         }
     );
 }
+
+#[test]
+fn decode_one_mode_32bit_jmp_rel8_wraps_eip() {
+    // jmp +1 at 0xFFFF_FFFF:
+    // next EIP would be 0x1_0000_0001, plus rel8(1) => 0x1_0000_0002, then wrapped to 0x0000_0002.
+    let inst = decode_one_mode(0xffff_ffff, &[0xeb, 0x01], 32);
+    assert_eq!(inst.len, 2);
+    assert_eq!(inst.kind, InstKind::JmpRel { target: 0x2 });
+}
