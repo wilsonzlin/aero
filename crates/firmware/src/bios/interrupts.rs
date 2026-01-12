@@ -318,6 +318,53 @@ fn handle_int13(
             cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & !0xFFFF) | transferred;
             let _ = drive;
         }
+        0x04 => {
+            // Verify sectors (CHS).
+            //
+            // Verify is like a read without transferring data into memory. We implement it by
+            // reading sectors and discarding the contents.
+            let mut count = (cpu.gpr[gpr::RAX] & 0xFF) as u16;
+            if count == 0 {
+                count = 256;
+            }
+            let cl = (cpu.gpr[gpr::RCX] & 0xFF) as u8;
+            let ch = ((cpu.gpr[gpr::RCX] >> 8) & 0xFF) as u8;
+            let dh = ((cpu.gpr[gpr::RDX] >> 8) & 0xFF) as u8;
+
+            let sector = (cl & 0x3F) as u16;
+            let cylinder = ((ch as u16) | (((cl as u16) & 0xC0) << 2)) as u32;
+            let head = dh as u32;
+
+            let (cylinders, heads, spt) = geometry_for_drive(drive, disk.size_in_sectors());
+            let spt = u32::from(spt);
+            let heads = u32::from(heads);
+            let cylinders = u32::from(cylinders);
+
+            if sector == 0 || sector > spt as u16 || head >= heads || cylinder >= cylinders {
+                bios.last_int13_status = 0x01;
+                cpu.rflags |= FLAG_CF;
+                cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & 0xFF) | ((0x01u64) << 8);
+                return;
+            }
+
+            let lba = ((cylinder * heads + head) * spt + (sector as u32 - 1)) as u64;
+            for i in 0..count as u64 {
+                let mut buf = [0u8; 512];
+                if let Err(e) = disk.read_sector(lba + i, &mut buf) {
+                    cpu.rflags |= FLAG_CF;
+                    let status = disk_err_to_int13_status(e);
+                    bios.last_int13_status = status;
+                    cpu.gpr[gpr::RAX] =
+                        (cpu.gpr[gpr::RAX] & !0xFFFF) | (i & 0xFF) | ((status as u64) << 8);
+                    return;
+                }
+            }
+
+            bios.last_int13_status = 0;
+            cpu.rflags &= !FLAG_CF;
+            let verified = if count == 256 { 0u64 } else { count as u64 };
+            cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & !0xFFFF) | verified;
+        }
         0x08 => {
             // Get drive parameters (very small subset).
             // Return: CF clear, AH=0, CH/CL/DH describe geometry.
@@ -334,6 +381,14 @@ fn handle_int13(
             cpu.gpr[gpr::RAX] &= !0xFF00u64;
             bios.last_int13_status = 0;
             cpu.rflags &= !FLAG_CF;
+        }
+        0x10 => {
+            // Check drive ready.
+            //
+            // We model disk I/O synchronously; if the drive exists, it is always ready.
+            bios.last_int13_status = 0;
+            cpu.rflags &= !FLAG_CF;
+            cpu.gpr[gpr::RAX] &= !0xFF00u64;
         }
         0x15 => {
             // Get disk type.
@@ -1145,6 +1200,48 @@ mod tests {
 
         assert_eq!(cpu.rflags & FLAG_CF, 0);
         assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0x02);
+    }
+
+    #[test]
+    fn int13_verify_sectors_chs_reads_without_writing_memory() {
+        let mut bios = Bios::new(super::super::BiosConfig::default());
+        let mut disk_bytes = vec![0u8; 512 * 2880];
+        disk_bytes[18 * 512] = 0xCC;
+        let mut disk = InMemoryDisk::new(disk_bytes);
+
+        let mut cpu = CpuState::new(CpuMode::Real);
+        set_real_mode_seg(&mut cpu.segments.es, 0);
+        cpu.gpr[gpr::RBX] = 0x1000;
+        cpu.gpr[gpr::RAX] = 0x0401; // AH=04h verify, AL=1 sector
+        cpu.gpr[gpr::RCX] = 0x0001; // CH=0, CL=1
+        cpu.gpr[gpr::RDX] = 0x0100; // DH=1, DL=0
+
+        let mut mem = TestMemory::new(2 * 1024 * 1024);
+        // Pre-fill memory so we can detect unexpected writes.
+        mem.write_u8(0x1000, 0xAA);
+
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
+
+        assert_eq!(cpu.rflags & FLAG_CF, 0);
+        assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0);
+        assert_eq!(mem.read_u8(0x1000), 0xAA);
+    }
+
+    #[test]
+    fn int13_check_drive_ready_reports_success() {
+        let mut bios = Bios::new(super::super::BiosConfig::default());
+        let disk_bytes = vec![0u8; 512];
+        let mut disk = InMemoryDisk::new(disk_bytes);
+
+        let mut cpu = CpuState::new(CpuMode::Real);
+        cpu.gpr[gpr::RAX] = 0x1000; // AH=10h
+        cpu.gpr[gpr::RDX] = 0x0000; // DL=0
+
+        let mut mem = TestMemory::new(2 * 1024 * 1024);
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
+
+        assert_eq!(cpu.rflags & FLAG_CF, 0);
+        assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0);
     }
 
     #[test]
