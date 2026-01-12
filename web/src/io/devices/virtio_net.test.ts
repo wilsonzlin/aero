@@ -85,4 +85,40 @@ describe("io/devices/VirtioNetPciDevice", () => {
     }
     expect(Array.from(visited)).toEqual([0x50, 0x60, 0x74, 0x84]);
   });
+
+  it("returns 0 and ignores writes for undefined BAR0 MMIO offsets (contract v1)", () => {
+    const mmioRead = vi.fn(() => 0x1234_5678);
+    const mmioWrite = vi.fn();
+    const irqLevel = vi.fn(() => false);
+
+    const bridge: VirtioNetPciBridgeLike = {
+      mmio_read: mmioRead,
+      mmio_write: mmioWrite,
+      poll: vi.fn(),
+      irq_level: irqLevel,
+      free: vi.fn(),
+    };
+    const irqSink: IrqSink = { raiseIrq: vi.fn(), lowerIrq: vi.fn() };
+    const dev = new VirtioNetPciDevice({ bridge, irqSink });
+
+    // Defined region (COMMON_CFG): should forward to bridge.
+    expect(dev.mmioRead(0, 0x0000n, 4)).toBe(0x1234_5678);
+    expect(mmioRead).toHaveBeenCalledWith(0, 4);
+
+    mmioRead.mockClear();
+    // Undefined region within BAR0: must read as 0 and must not hit the bridge.
+    expect(dev.mmioRead(0, 0x0400n, 4)).toBe(0);
+    expect(mmioRead).not.toHaveBeenCalled();
+
+    // Crossing a defined region boundary counts as undefined for the requested width.
+    expect(dev.mmioRead(0, 0x00ffn, 4)).toBe(0);
+
+    // Undefined writes are ignored (no bridge call).
+    dev.mmioWrite(0, 0x0400n, 4, 0xdead_beef);
+    expect(mmioWrite).not.toHaveBeenCalled();
+
+    // Defined writes are forwarded.
+    dev.mmioWrite(0, 0x0000n, 4, 0xdead_beef);
+    expect(mmioWrite).toHaveBeenCalledWith(0, 4, 0xdead_beef);
+  });
 });
