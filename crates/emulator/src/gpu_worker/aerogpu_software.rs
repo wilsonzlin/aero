@@ -953,12 +953,80 @@ impl AeroGpuSoftwareExecutor {
         }
     }
 
-    fn decode_color_f32_as_u8(rgba: [f32; 4]) -> [u8; 4] {
-        fn f(v: f32) -> u8 {
-            let v = v.clamp(0.0, 1.0);
-            (v * 255.0 + 0.5).floor() as u8
+    fn format_is_srgb(format: AeroGpuFormat) -> bool {
+        matches!(
+            format,
+            AeroGpuFormat::B8G8R8A8UnormSrgb
+                | AeroGpuFormat::B8G8R8X8UnormSrgb
+                | AeroGpuFormat::R8G8B8A8UnormSrgb
+                | AeroGpuFormat::R8G8B8X8UnormSrgb
+                | AeroGpuFormat::Bc1UnormSrgb
+                | AeroGpuFormat::Bc2UnormSrgb
+                | AeroGpuFormat::Bc3UnormSrgb
+                | AeroGpuFormat::Bc7UnormSrgb
+        )
+    }
+
+    fn encode_unorm_u8(v: f32) -> u8 {
+        let v = v.clamp(0.0, 1.0);
+        (v * 255.0 + 0.5).floor() as u8
+    }
+
+    fn srgb_u8_to_linear_f32(v: u8) -> f32 {
+        // sRGB EOTF: https://www.w3.org/TR/css-color-4/#srgb
+        let s = v as f32 / 255.0;
+        if s <= 0.04045 {
+            s / 12.92
+        } else {
+            ((s + 0.055) / 1.055).powf(2.4)
         }
-        [f(rgba[0]), f(rgba[1]), f(rgba[2]), f(rgba[3])]
+    }
+
+    fn linear_f32_to_srgb_u8(v: f32) -> u8 {
+        // sRGB OETF: https://www.w3.org/TR/css-color-4/#srgb
+        let l = v.clamp(0.0, 1.0);
+        let s = if l <= 0.0031308 {
+            l * 12.92
+        } else {
+            1.055 * l.powf(1.0 / 2.4) - 0.055
+        };
+        Self::encode_unorm_u8(s)
+    }
+
+    fn decode_color_u8_as_f32(format: AeroGpuFormat, rgba: [u8; 4]) -> [f32; 4] {
+        if Self::format_is_srgb(format) {
+            [
+                Self::srgb_u8_to_linear_f32(rgba[0]),
+                Self::srgb_u8_to_linear_f32(rgba[1]),
+                Self::srgb_u8_to_linear_f32(rgba[2]),
+                rgba[3] as f32 / 255.0,
+            ]
+        } else {
+            [
+                rgba[0] as f32 / 255.0,
+                rgba[1] as f32 / 255.0,
+                rgba[2] as f32 / 255.0,
+                rgba[3] as f32 / 255.0,
+            ]
+        }
+    }
+
+    fn encode_color_f32_as_u8(format: AeroGpuFormat, rgba: [f32; 4]) -> [u8; 4] {
+        if Self::format_is_srgb(format) {
+            [
+                Self::linear_f32_to_srgb_u8(rgba[0]),
+                Self::linear_f32_to_srgb_u8(rgba[1]),
+                Self::linear_f32_to_srgb_u8(rgba[2]),
+                Self::encode_unorm_u8(rgba[3]),
+            ]
+        } else {
+            [
+                Self::encode_unorm_u8(rgba[0]),
+                Self::encode_unorm_u8(rgba[1]),
+                Self::encode_unorm_u8(rgba[2]),
+                Self::encode_unorm_u8(rgba[3]),
+            ]
+        }
     }
 
     fn read_pixel_rgba_u8(tex: &Texture2DResource, off: usize) -> Option<[u8; 4]> {
@@ -1038,12 +1106,7 @@ impl AeroGpuSoftwareExecutor {
         let Some(rgba_u8) = Self::read_pixel_rgba_u8(tex, off) else {
             return [0.0, 0.0, 0.0, 1.0];
         };
-        [
-            rgba_u8[0] as f32 / 255.0,
-            rgba_u8[1] as f32 / 255.0,
-            rgba_u8[2] as f32 / 255.0,
-            rgba_u8[3] as f32 / 255.0,
-        ]
+        Self::decode_color_u8_as_f32(tex.format, rgba_u8)
     }
 
     fn sample_texture_2d(
@@ -1189,12 +1252,7 @@ impl AeroGpuSoftwareExecutor {
         let Some(dst_u8) = Self::read_pixel_rgba_u8(tex, off) else {
             return;
         };
-        let dst = [
-            dst_u8[0] as f32 / 255.0,
-            dst_u8[1] as f32 / 255.0,
-            dst_u8[2] as f32 / 255.0,
-            dst_u8[3] as f32 / 255.0,
-        ];
+        let dst = Self::decode_color_u8_as_f32(tex.format, dst_u8);
 
         let mut out = rgba;
         if blend.enable {
@@ -1221,7 +1279,7 @@ impl AeroGpuSoftwareExecutor {
             }
         }
 
-        let mut out_u8 = Self::decode_color_f32_as_u8(out);
+        let mut out_u8 = Self::encode_color_f32_as_u8(tex.format, out);
 
         // Apply color write mask in RGBA order.
         if (blend.write_mask & 0b0001) == 0 {
@@ -1247,7 +1305,7 @@ impl AeroGpuSoftwareExecutor {
         if width == 0 || height == 0 || row_pitch < width.saturating_mul(4) {
             return;
         }
-        let [r, g, b, a] = Self::decode_color_f32_as_u8(rgba);
+        let [r, g, b, a] = Self::encode_color_f32_as_u8(tex.format, rgba);
 
         for y in 0..height {
             let row_start = y.saturating_mul(row_pitch);
@@ -4353,5 +4411,85 @@ mod tests {
             &[0xA8, 0xA9, 0xAA, 0xAB, 0xAC, 0xAD, 0xAE, 0xAF]
         );
         assert!(dst_tex.dirty);
+    }
+
+    #[test]
+    fn software_srgb_clear_encodes_linear_values() {
+        // Clearing an sRGB render target takes a linear float input and stores sRGB-encoded bytes.
+        //
+        // linear(0.5) encodes to sRGB ~0.735 -> 188 in 8-bit.
+        let mut rgba_tex = Texture2DResource {
+            width: 1,
+            height: 1,
+            format: AeroGpuFormat::R8G8B8A8UnormSrgb,
+            mip_levels: 1,
+            array_layers: 1,
+            row_pitch_bytes: 4,
+            backing: None,
+            data: vec![0u8; 4],
+            dirty: false,
+        };
+        AeroGpuSoftwareExecutor::clear_texture(&mut rgba_tex, [0.5, 0.0, 0.0, 1.0]);
+        assert_eq!(&rgba_tex.data[..4], &[188, 0, 0, 255]);
+
+        let mut bgra_tex = Texture2DResource {
+            width: 1,
+            height: 1,
+            format: AeroGpuFormat::B8G8R8A8UnormSrgb,
+            mip_levels: 1,
+            array_layers: 1,
+            row_pitch_bytes: 4,
+            backing: None,
+            data: vec![0u8; 4],
+            dirty: false,
+        };
+        AeroGpuSoftwareExecutor::clear_texture(&mut bgra_tex, [0.5, 0.0, 0.0, 1.0]);
+        // Stored as BGRA in memory.
+        assert_eq!(&bgra_tex.data[..4], &[0, 0, 188, 255]);
+    }
+
+    #[test]
+    fn software_srgb_texture_sampling_decodes_to_linear() {
+        // A mid-red sRGB texel (0x80) should decode to linear ~0.216, which quantizes to ~55 in
+        // 8-bit UNORM.
+        let texel = [128u8, 0u8, 0u8, 255u8];
+        let mut data = Vec::new();
+        data.extend_from_slice(&texel);
+        data.extend_from_slice(&texel);
+        data.extend_from_slice(&texel);
+        data.extend_from_slice(&texel);
+
+        let tex = Texture2DResource {
+            width: 2,
+            height: 2,
+            format: AeroGpuFormat::R8G8B8A8UnormSrgb,
+            mip_levels: 1,
+            array_layers: 1,
+            row_pitch_bytes: 8,
+            backing: None,
+            data,
+            dirty: false,
+        };
+
+        let sampled = AeroGpuSoftwareExecutor::sample_texture_2d(
+            &tex,
+            SamplerResource::default(),
+            (0.5, 0.5),
+        );
+
+        let unorm_bytes =
+            AeroGpuSoftwareExecutor::encode_color_f32_as_u8(AeroGpuFormat::R8G8B8A8Unorm, sampled);
+        assert!((unorm_bytes[0] as i32 - 55).abs() <= 1, "r={}", unorm_bytes[0]);
+        assert!(unorm_bytes[1] <= 1, "g={}", unorm_bytes[1]);
+        assert!(unorm_bytes[2] <= 1, "b={}", unorm_bytes[2]);
+        assert_eq!(unorm_bytes[3], 255);
+
+        // If we re-encode the sampled value to sRGB, we should recover the original ~0x80.
+        let srgb_bytes =
+            AeroGpuSoftwareExecutor::encode_color_f32_as_u8(AeroGpuFormat::R8G8B8A8UnormSrgb, sampled);
+        assert!((srgb_bytes[0] as i32 - 128).abs() <= 1, "r={}", srgb_bytes[0]);
+        assert_eq!(srgb_bytes[1], 0);
+        assert_eq!(srgb_bytes[2], 0);
+        assert_eq!(srgb_bytes[3], 255);
     }
 }
