@@ -1,4 +1,5 @@
 use aero_machine::{Machine, MachineConfig, RunExit};
+use firmware::bda::BDA_SCREEN_COLS_ADDR;
 
 fn build_int10_set_cursor_pos_boot_sector(row: u8, col: u8) -> [u8; 512] {
     let mut sector = [0u8; 512];
@@ -101,10 +102,13 @@ fn int10_cursor_updates_sync_to_vga_crtc() {
 
     run_until_halt(&mut m);
 
+    let cols = m.read_physical_u16(BDA_SCREEN_COLS_ADDR).max(1);
+    let expected_pos = 5u16.saturating_mul(cols) + 10u16;
+
     let (start, end, pos) = read_crtc_cursor_regs(&mut m);
     assert_eq!(start, 0x06);
     assert_eq!(end, 0x07);
-    assert_eq!(pos, 5 * 80 + 10);
+    assert_eq!(pos, expected_pos);
 }
 
 #[test]
