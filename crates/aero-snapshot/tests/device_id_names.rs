@@ -60,3 +60,14 @@ fn platform_device_ids_have_stable_names_and_numbers() {
         assert_eq!(format!("{id}"), format!("{expected_name}({expected_num})"));
     }
 }
+
+#[test]
+fn pci_intx_alias_matches_pci_intx_router() {
+    assert_eq!(
+        DeviceId::PCI_INTX,
+        DeviceId::PCI_INTX_ROUTER,
+        "PCI_INTX alias must remain identical to PCI_INTX_ROUTER for backward compatibility"
+    );
+    // `name()` should still report the canonical name.
+    assert_eq!(DeviceId::PCI_INTX.name(), Some("PCI_INTX_ROUTER"));
+}
