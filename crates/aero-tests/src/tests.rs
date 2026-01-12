@@ -359,9 +359,6 @@ impl Machine {
                 if self.cpu.bitness() != 16 {
                     return Err(Exception::Unimplemented("INT outside real mode"));
                 }
-                // Mirror the Tier-0 BIOS hypercall convention: record the vector so an HLT at
-                // the target stub can be surfaced as `StepExit::BiosInterrupt`.
-                self.cpu.set_pending_bios_int(vector);
 
                 self.pending.raise_software_interrupt(vector, next_ip);
                 interrupts::deliver_pending_event(&mut self.cpu, &mut bus, &mut self.pending)
@@ -788,7 +785,7 @@ fn boot_sector_hello_via_int10() {
 }
 
 #[test]
-fn boot_sector_hello_via_bios_hypercall_int10() {
+    fn boot_sector_hello_via_bios_hypercall_int10() {
     // Same "Hello" boot sector as `boot_sector_hello_via_int10`, but routes INT 10h
     // through the Tier-0 BIOS hypercall mechanism:
     // - IVT[0x10] points at a ROM stub that executes `HLT`
@@ -835,11 +832,11 @@ fn boot_sector_hello_via_bios_hypercall_int10() {
     ];
     mem.load(boot_addr, &boot);
 
-    // BIOS ROM stub at F000:0100 that just halts.
+    // BIOS ROM stub at F000:0100 (`HLT; IRET`).
     let bios_seg = 0xF000u16;
     let bios_off = 0x0100u16;
     let bios_addr = ((bios_seg as u64) << 4) + bios_off as u64;
-    mem.load(bios_addr, &[0xF4]); // hlt
+    mem.load(bios_addr, &[0xF4, 0xCF]); // hlt; iret
 
     // IVT[0x10] = bios stub.
     let ivt = 0x10u64 * 4;
