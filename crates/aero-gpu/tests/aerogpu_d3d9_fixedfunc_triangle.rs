@@ -124,9 +124,9 @@ fn d3d9_cmd_stream_fixedfunc_poscolor_renders_triangle() {
         0x0200_0001u32, // mov oPos, v0
         0x400F_0000u32, // oPos.xyzw
         0x10E4_0000u32, // v0.xyzw
-        0x0200_0001u32, // mov oD0, v1.zyxw
+        0x0200_0001u32, // mov oD0, v1
         0x500F_0000u32, // oD0.xyzw
-        0x10C6_0001u32, // v1.zyxw (BGRA -> RGBA swizzle)
+        0x10E4_0001u32, // v1.xyzw
         0x0000_FFFFu32, // end
     ];
     const PS_WORDS: [u32; 5] = [
@@ -171,13 +171,15 @@ fn d3d9_cmd_stream_fixedfunc_poscolor_renders_triangle() {
     assert_eq!(vertex_decl.len(), 24);
 
     // Vertex buffer: float4 position (clip space) + D3DCOLOR (ARGB, stored as BGRA bytes in LE).
-    let green_argb: u32 = 0xFF00_FF00u32;
+    //
+    // Use a non-symmetric color (red) so we catch regressions in D3DCOLOR BGRA->RGBA conversion.
+    let red_argb: u32 = 0xFFFF_0000u32;
     // D3D9 defaults to back-face culling with clockwise front faces.
     // Use clockwise winding so the test does not depend on cull state.
     let verts = [
-        (-0.5f32, -0.5f32, 0.0f32, 1.0f32, green_argb),
-        (0.0f32, 0.5f32, 0.0f32, 1.0f32, green_argb),
-        (0.5f32, -0.5f32, 0.0f32, 1.0f32, green_argb),
+        (-0.5f32, -0.5f32, 0.0f32, 1.0f32, red_argb),
+        (0.0f32, 0.5f32, 0.0f32, 1.0f32, red_argb),
+        (0.5f32, -0.5f32, 0.0f32, 1.0f32, red_argb),
     ];
     let mut vb_data = Vec::new();
     for (x, y, z, w, color) in verts {
@@ -300,8 +302,8 @@ fn d3d9_cmd_stream_fixedfunc_poscolor_renders_triangle() {
 
         emit_packet(out, OPC_CLEAR, |out| {
             push_u32(out, AEROGPU_CLEAR_COLOR);
-            // red clear
-            push_f32(out, 1.0);
+            // black clear
+            push_f32(out, 0.0);
             push_f32(out, 0.0);
             push_f32(out, 0.0);
             push_f32(out, 1.0);
@@ -331,7 +333,7 @@ fn d3d9_cmd_stream_fixedfunc_poscolor_renders_triangle() {
     };
 
     // Corner should remain clear color.
-    assert_eq!(px(5, 5), [255, 0, 0, 255]);
-    // Center pixel should be green from vertex color swizzle path.
-    assert_eq!(px(width / 2, height / 2), [0, 255, 0, 255]);
+    assert_eq!(px(5, 5), [0, 0, 0, 255]);
+    // Center pixel should be red.
+    assert_eq!(px(width / 2, height / 2), [255, 0, 0, 255]);
 }

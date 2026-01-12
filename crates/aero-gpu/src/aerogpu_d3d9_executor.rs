@@ -269,6 +269,11 @@ enum Resource {
         usage_flags: u32,
         backing: Option<GuestBufferBacking>,
         dirty_ranges: Vec<Range<u64>>,
+        /// CPU shadow copy of the buffer contents.
+        ///
+        /// This is currently used to support vertex format conversions (e.g. D3D9 `D3DCOLOR`
+        /// BGRA-in-memory → RGBA-in-shader) without requiring shader-side workarounds.
+        shadow: Vec<u8>,
     },
     Texture2d {
         texture: wgpu::Texture,
@@ -1711,6 +1716,11 @@ impl AerogpuD3d9Executor {
                         usage: buffer_usage,
                         mapped_at_creation: false,
                     });
+                    let shadow_len = usize::try_from(size_bytes).map_err(|_| {
+                        AerogpuD3d9Error::Validation(format!(
+                            "CREATE_BUFFER: size_bytes is too large for host shadow copy (size_bytes={size_bytes})"
+                        ))
+                    })?;
                     self.resources.insert(
                         buffer_handle,
                         Resource::Buffer {
@@ -1719,6 +1729,7 @@ impl AerogpuD3d9Executor {
                             usage_flags,
                             backing,
                             dirty_ranges: Vec::new(),
+                            shadow: vec![0u8; shadow_len],
                         },
                     );
                     self.register_resource_handle(buffer_handle);
@@ -2007,15 +2018,39 @@ impl AerogpuD3d9Executor {
                 let mut encoder_opt = Some(self.encoder.take().unwrap());
 
                 let result = (|| -> Result<(), AerogpuD3d9Error> {
-                    let Some(res) = self.resources.get(&underlying) else {
+                    let Some(res) = self.resources.get_mut(&underlying) else {
                         return Err(AerogpuD3d9Error::UnknownResource(resource_handle));
                     };
                     match res {
-                        Resource::Buffer { buffer, size, .. } => {
+                        Resource::Buffer {
+                            buffer,
+                            size,
+                            shadow,
+                            ..
+                        } => {
                             let end = offset_bytes
                                 .checked_add(size_bytes)
                                 .ok_or(AerogpuD3d9Error::UploadOutOfBounds(resource_handle))?;
                             if end > *size {
+                                return Err(AerogpuD3d9Error::UploadOutOfBounds(resource_handle));
+                            }
+
+                            let off = usize::try_from(offset_bytes).map_err(|_| {
+                                AerogpuD3d9Error::Validation(
+                                    "UPLOAD_RESOURCE: buffer offset_bytes overflow".into(),
+                                )
+                            })?;
+                            let len = usize::try_from(size_bytes).map_err(|_| {
+                                AerogpuD3d9Error::Validation(
+                                    "UPLOAD_RESOURCE: buffer size_bytes overflow".into(),
+                                )
+                            })?;
+                            let end_usize = off
+                                .checked_add(len)
+                                .ok_or(AerogpuD3d9Error::Validation(
+                                    "UPLOAD_RESOURCE: buffer offset/size overflow".into(),
+                                ))?;
+                            if end_usize > shadow.len() {
                                 return Err(AerogpuD3d9Error::UploadOutOfBounds(resource_handle));
                             }
 
@@ -2049,6 +2084,9 @@ impl AerogpuD3d9Executor {
                                 offset_bytes,
                                 size_bytes,
                             );
+
+                            // Keep the CPU shadow copy in sync with the GPU buffer contents.
+                            shadow[off..end_usize].copy_from_slice(data);
                             Ok(())
                         }
                         Resource::Texture2d {
@@ -2358,64 +2396,178 @@ impl AerogpuD3d9Executor {
                     self.flush_buffer_if_dirty(encoder_opt.as_mut(), src_buffer, ctx)?;
                     self.flush_buffer_if_dirty(encoder_opt.as_mut(), dst_buffer, ctx)?;
 
-                    let src_buf = match self
-                        .resources
-                        .get(&src_underlying)
-                        .ok_or(AerogpuD3d9Error::UnknownResource(src_buffer))?
-                    {
-                        Resource::Buffer { buffer, .. } => buffer,
-                        _ => {
-                            return Err(AerogpuD3d9Error::CopyNotSupported {
-                                src: src_buffer,
-                                dst: dst_buffer,
-                            })
-                        }
-                    };
-                    let dst_buf = match self
-                        .resources
-                        .get(&dst_underlying)
-                        .ok_or(AerogpuD3d9Error::UnknownResource(dst_buffer))?
-                    {
-                        Resource::Buffer { buffer, .. } => buffer,
-                        _ => {
-                            return Err(AerogpuD3d9Error::CopyNotSupported {
-                                src: src_buffer,
-                                dst: dst_buffer,
-                            })
-                        }
-                    };
-
                     let encoder = encoder_opt.as_mut().ok_or_else(|| {
                         AerogpuD3d9Error::Validation("COPY_BUFFER: missing encoder".into())
                     })?;
 
-                    encoder.copy_buffer_to_buffer(
-                        src_buf,
-                        src_offset_bytes,
-                        dst_buf,
-                        dst_offset_bytes,
-                        size_bytes,
-                    );
+                    {
+                        let src_buf = match self
+                            .resources
+                            .get(&src_underlying)
+                            .ok_or(AerogpuD3d9Error::UnknownResource(src_buffer))?
+                        {
+                            Resource::Buffer { buffer, .. } => buffer,
+                            _ => {
+                                return Err(AerogpuD3d9Error::CopyNotSupported {
+                                    src: src_buffer,
+                                    dst: dst_buffer,
+                                })
+                            }
+                        };
+                        let dst_buf = match self
+                            .resources
+                            .get(&dst_underlying)
+                            .ok_or(AerogpuD3d9Error::UnknownResource(dst_buffer))?
+                        {
+                            Resource::Buffer { buffer, .. } => buffer,
+                            _ => {
+                                return Err(AerogpuD3d9Error::CopyNotSupported {
+                                    src: src_buffer,
+                                    dst: dst_buffer,
+                                })
+                            }
+                        };
 
-                    if let Some(dst_gpa) = dst_writeback_gpa {
-                        let staging = self.device.create_buffer(&wgpu::BufferDescriptor {
-                            label: Some("aerogpu-d3d9.copy_buffer.writeback_staging"),
-                            size: size_bytes,
-                            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-                            mapped_at_creation: false,
-                        });
                         encoder.copy_buffer_to_buffer(
+                            src_buf,
+                            src_offset_bytes,
                             dst_buf,
                             dst_offset_bytes,
-                            &staging,
-                            0,
                             size_bytes,
                         );
-                        writeback_entry = Some(PendingWriteback::Buffer {
-                            staging,
-                            dst_gpa,
-                            size_bytes,
-                        });
+
+                        if let Some(dst_gpa) = dst_writeback_gpa {
+                            let staging = self.device.create_buffer(&wgpu::BufferDescriptor {
+                                label: Some("aerogpu-d3d9.copy_buffer.writeback_staging"),
+                                size: size_bytes,
+                                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                                mapped_at_creation: false,
+                            });
+                            encoder.copy_buffer_to_buffer(
+                                dst_buf,
+                                dst_offset_bytes,
+                                &staging,
+                                0,
+                                size_bytes,
+                            );
+                            writeback_entry = Some(PendingWriteback::Buffer {
+                                staging,
+                                dst_gpa,
+                                size_bytes,
+                            });
+                        }
+                    }
+
+                    // Keep CPU shadow copies in sync with the GPU copy.
+                    //
+                    // This is required for vertex format conversions which operate on the CPU
+                    // shadow (e.g. D3DDECLTYPE_D3DCOLOR BGRA->RGBA conversion).
+                    if src_underlying == dst_underlying {
+                        if let Some(Resource::Buffer { shadow, .. }) =
+                            self.resources.get_mut(&src_underlying)
+                        {
+                            let src_off = usize::try_from(src_offset_bytes).map_err(|_| {
+                                AerogpuD3d9Error::Validation(
+                                    "COPY_BUFFER: src_offset_bytes overflow".into(),
+                                )
+                            })?;
+                            let dst_off = usize::try_from(dst_offset_bytes).map_err(|_| {
+                                AerogpuD3d9Error::Validation(
+                                    "COPY_BUFFER: dst_offset_bytes overflow".into(),
+                                )
+                            })?;
+                            let len = usize::try_from(size_bytes).map_err(|_| {
+                                AerogpuD3d9Error::Validation(
+                                    "COPY_BUFFER: size_bytes overflow".into(),
+                                )
+                            })?;
+                            let src_end = src_off.checked_add(len).ok_or_else(|| {
+                                AerogpuD3d9Error::Validation(
+                                    "COPY_BUFFER: src range overflow".into(),
+                                )
+                            })?;
+                            let dst_end = dst_off.checked_add(len).ok_or_else(|| {
+                                AerogpuD3d9Error::Validation(
+                                    "COPY_BUFFER: dst range overflow".into(),
+                                )
+                            })?;
+                            if src_end > shadow.len() || dst_end > shadow.len() {
+                                return Err(AerogpuD3d9Error::CopyOutOfBounds {
+                                    src: src_buffer,
+                                    dst: dst_buffer,
+                                });
+                            }
+                            shadow.copy_within(src_off..src_end, dst_off);
+                        }
+                    } else {
+                        let src_bytes = match self
+                            .resources
+                            .get(&src_underlying)
+                            .ok_or(AerogpuD3d9Error::UnknownResource(src_buffer))?
+                        {
+                            Resource::Buffer { shadow, .. } => {
+                                let src_off = usize::try_from(src_offset_bytes).map_err(|_| {
+                                    AerogpuD3d9Error::Validation(
+                                        "COPY_BUFFER: src_offset_bytes overflow".into(),
+                                    )
+                                })?;
+                                let len = usize::try_from(size_bytes).map_err(|_| {
+                                    AerogpuD3d9Error::Validation(
+                                        "COPY_BUFFER: size_bytes overflow".into(),
+                                    )
+                                })?;
+                                let src_end = src_off.checked_add(len).ok_or_else(|| {
+                                    AerogpuD3d9Error::Validation(
+                                        "COPY_BUFFER: src range overflow".into(),
+                                    )
+                                })?;
+                                if src_end > shadow.len() {
+                                    return Err(AerogpuD3d9Error::CopyOutOfBounds {
+                                        src: src_buffer,
+                                        dst: dst_buffer,
+                                    });
+                                }
+                                shadow[src_off..src_end].to_vec()
+                            }
+                            _ => {
+                                return Err(AerogpuD3d9Error::CopyNotSupported {
+                                    src: src_buffer,
+                                    dst: dst_buffer,
+                                })
+                            }
+                        };
+                        match self
+                            .resources
+                            .get_mut(&dst_underlying)
+                            .ok_or(AerogpuD3d9Error::UnknownResource(dst_buffer))?
+                        {
+                            Resource::Buffer { shadow, .. } => {
+                                let dst_off = usize::try_from(dst_offset_bytes).map_err(|_| {
+                                    AerogpuD3d9Error::Validation(
+                                        "COPY_BUFFER: dst_offset_bytes overflow".into(),
+                                    )
+                                })?;
+                                let dst_end =
+                                    dst_off.checked_add(src_bytes.len()).ok_or_else(|| {
+                                        AerogpuD3d9Error::Validation(
+                                            "COPY_BUFFER: dst range overflow".into(),
+                                        )
+                                    })?;
+                                if dst_end > shadow.len() {
+                                    return Err(AerogpuD3d9Error::CopyOutOfBounds {
+                                        src: src_buffer,
+                                        dst: dst_buffer,
+                                    });
+                                }
+                                shadow[dst_off..dst_end].copy_from_slice(&src_bytes);
+                            }
+                            _ => {
+                                return Err(AerogpuD3d9Error::CopyNotSupported {
+                                    src: src_buffer,
+                                    dst: dst_buffer,
+                                })
+                            }
+                        }
                     }
                     Ok(())
                 })();
@@ -3480,6 +3632,7 @@ impl AerogpuD3d9Executor {
             size,
             backing,
             dirty_ranges,
+            shadow,
             ..
         } = res
         else {
@@ -3532,6 +3685,24 @@ impl AerogpuD3d9Executor {
                 ));
             }
             guest_memory.read(src_gpa, &mut data)?;
+
+            // Keep CPU shadow in sync with the written range.
+            let shadow_start = usize::try_from(aligned_start).map_err(|_| {
+                AerogpuD3d9Error::Validation("buffer dirty range offset overflow".into())
+            })?;
+            let shadow_len = usize::try_from(len_u64).map_err(|_| {
+                AerogpuD3d9Error::Validation("buffer dirty range size overflow".into())
+            })?;
+            let shadow_end = shadow_start.checked_add(shadow_len).ok_or_else(|| {
+                AerogpuD3d9Error::Validation("buffer dirty range overflow".into())
+            })?;
+            if shadow_end > shadow.len() {
+                return Err(AerogpuD3d9Error::Validation(format!(
+                    "buffer shadow write out of bounds (handle={handle} range=0x{aligned_start:x}..0x{aligned_end:x} shadow_size=0x{:x})",
+                    shadow.len()
+                )));
+            }
+            shadow[shadow_start..shadow_end].copy_from_slice(&data);
             if let Some(encoder) = encoder.as_deref_mut() {
                 // Prefer encoder-ordered buffer copies to preserve ordering with other operations
                 // in this command buffer. If the range isn't aligned for `copy_buffer_to_buffer`,
@@ -4645,6 +4816,224 @@ impl AerogpuD3d9Executor {
                 }),
             });
 
+        // Prepare per-draw converted vertex buffers for D3D9 `D3DDECLTYPE_D3DCOLOR`.
+        //
+        // D3DCOLOR is 0xAARRGGBB, but in little-endian vertex buffers it's stored as BGRA bytes.
+        // D3D9 vertex fetch presents it to shaders as RGBA, so we must swap the red/blue channels
+        // before WebGPU reads it as `unorm8x4`.
+        //
+        // Note: this is intentionally implemented as a per-draw conversion into temporary buffers
+        // to avoid requiring any shader-side workarounds.
+        let mut d3dcolor_offsets_by_stream: HashMap<u8, Vec<u16>> = HashMap::new();
+        for e in &layout.decl.elements {
+            if e.ty == aero_d3d9::vertex::DeclType::D3dColor {
+                d3dcolor_offsets_by_stream
+                    .entry(e.stream)
+                    .or_default()
+                    .push(e.offset);
+            }
+        }
+        for offsets in d3dcolor_offsets_by_stream.values_mut() {
+            offsets.sort_unstable();
+            offsets.dedup();
+        }
+
+        let (swizzle_vertex_start, swizzle_vertex_end) = match draw {
+            DrawParams::NonIndexed {
+                vertex_count,
+                first_vertex,
+                ..
+            } => (
+                first_vertex,
+                first_vertex
+                    .checked_add(vertex_count)
+                    .unwrap_or(u32::MAX),
+            ),
+            DrawParams::Indexed {
+                index_count,
+                first_index,
+                base_vertex,
+                ..
+            } => {
+                let index_binding = index_binding.ok_or(AerogpuD3d9Error::MissingIndexBuffer)?;
+                let underlying = self.resolve_resource_handle(index_binding.buffer)?;
+                let res = self
+                    .resources
+                    .get(&underlying)
+                    .ok_or(AerogpuD3d9Error::UnknownResource(index_binding.buffer))?;
+                let Resource::Buffer { shadow, size, .. } = res else {
+                    return Err(AerogpuD3d9Error::UnknownResource(index_binding.buffer));
+                };
+                let bytes_per_index = match index_binding.format {
+                    wgpu::IndexFormat::Uint16 => 2u64,
+                    wgpu::IndexFormat::Uint32 => 4u64,
+                };
+                let start_byte = (index_binding.offset_bytes as u64)
+                    .checked_add((first_index as u64).saturating_mul(bytes_per_index))
+                    .ok_or_else(|| {
+                        AerogpuD3d9Error::Validation("index buffer range overflow".into())
+                    })?;
+                let byte_len = (index_count as u64)
+                    .checked_mul(bytes_per_index)
+                    .ok_or_else(|| {
+                        AerogpuD3d9Error::Validation("index buffer range overflow".into())
+                    })?;
+                let end_byte = start_byte.checked_add(byte_len).ok_or_else(|| {
+                    AerogpuD3d9Error::Validation("index buffer range overflow".into())
+                })?;
+                if end_byte > *size {
+                    return Err(AerogpuD3d9Error::Validation(format!(
+                        "indexed draw out of bounds for index buffer (handle={} start=0x{start_byte:x} end=0x{end_byte:x} size=0x{size:x})",
+                        index_binding.buffer
+                    )));
+                }
+                let start_usize = usize::try_from(start_byte).map_err(|_| {
+                    AerogpuD3d9Error::Validation("index buffer offset overflow".into())
+                })?;
+                let end_usize = usize::try_from(end_byte).map_err(|_| {
+                    AerogpuD3d9Error::Validation("index buffer size overflow".into())
+                })?;
+                if end_usize > shadow.len() {
+                    return Err(AerogpuD3d9Error::Validation(format!(
+                        "index buffer shadow too small (handle={} end=0x{end_byte:x} shadow_size=0x{:x})",
+                        index_binding.buffer,
+                        shadow.len()
+                    )));
+                }
+                let indices_bytes = &shadow[start_usize..end_usize];
+
+                let mut min_index: u32 = u32::MAX;
+                let mut max_index: u32 = 0;
+                if index_binding.format == wgpu::IndexFormat::Uint16 {
+                    for chunk in indices_bytes.chunks_exact(2) {
+                        let idx = u16::from_le_bytes([chunk[0], chunk[1]]) as u32;
+                        min_index = min_index.min(idx);
+                        max_index = max_index.max(idx);
+                    }
+                } else {
+                    for chunk in indices_bytes.chunks_exact(4) {
+                        let idx = u32::from_le_bytes(chunk.try_into().unwrap());
+                        min_index = min_index.min(idx);
+                        max_index = max_index.max(idx);
+                    }
+                }
+
+                if min_index == u32::MAX {
+                    // No indices.
+                    (0, 0)
+                } else {
+                    let base = base_vertex as i64;
+                    let min_v_i64 = base.saturating_add(min_index as i64);
+                    let max_v_excl_i64 = base
+                        .saturating_add(max_index as i64)
+                        .saturating_add(1);
+                    let clamp_u32 = |v: i64| -> u32 {
+                        if v <= 0 {
+                            0
+                        } else if v >= u32::MAX as i64 {
+                            u32::MAX
+                        } else {
+                            v as u32
+                        }
+                    };
+                    (clamp_u32(min_v_i64), clamp_u32(max_v_excl_i64))
+                }
+            }
+        };
+
+        let mut converted_vertex_buffers: HashMap<u8, wgpu::Buffer> = HashMap::new();
+        if swizzle_vertex_end != 0 && !d3dcolor_offsets_by_stream.is_empty() {
+            for stream in &vertex_buffers.streams {
+                let Some(d3dcolor_offsets) = d3dcolor_offsets_by_stream.get(stream) else {
+                    continue;
+                };
+                if d3dcolor_offsets.is_empty() {
+                    continue;
+                }
+
+                let Some(binding) = self
+                    .state
+                    .vertex_buffers
+                    .get(*stream as usize)
+                    .copied()
+                    .flatten()
+                else {
+                    continue;
+                };
+
+                let underlying = self.resolve_resource_handle(binding.buffer)?;
+                let res = self
+                    .resources
+                    .get(&underlying)
+                    .ok_or(AerogpuD3d9Error::UnknownResource(binding.buffer))?;
+                let Resource::Buffer { shadow, size, .. } = res else {
+                    return Err(AerogpuD3d9Error::UnknownResource(binding.buffer));
+                };
+
+                let stride = binding.stride_bytes as u64;
+                if stride == 0 {
+                    return Err(AerogpuD3d9Error::Validation(format!(
+                        "vertex buffer stride is 0 for stream {stream}"
+                    )));
+                }
+
+                let desired_len = (swizzle_vertex_end as u64)
+                    .checked_mul(stride)
+                    .ok_or_else(|| AerogpuD3d9Error::Validation("vertex range overflow".into()))?;
+                let base_offset = binding.offset_bytes as u64;
+                let available = size.saturating_sub(base_offset);
+                let len = desired_len.min(available);
+                if len == 0 {
+                    continue;
+                }
+
+                let base_usize = usize::try_from(base_offset).map_err(|_| {
+                    AerogpuD3d9Error::Validation("vertex buffer offset overflow".into())
+                })?;
+                let len_usize = usize::try_from(len).map_err(|_| {
+                    AerogpuD3d9Error::Validation("vertex buffer conversion size overflow".into())
+                })?;
+                let end_usize = base_usize.checked_add(len_usize).ok_or_else(|| {
+                    AerogpuD3d9Error::Validation("vertex buffer conversion range overflow".into())
+                })?;
+                if end_usize > shadow.len() {
+                    return Err(AerogpuD3d9Error::Validation(format!(
+                        "vertex buffer shadow too small (handle={} end=0x{:x} shadow_size=0x{:x})",
+                        binding.buffer, end_usize, shadow.len()
+                    )));
+                }
+
+                let mut converted = shadow[base_usize..end_usize].to_vec();
+
+                // Clamp swizzle range to the converted data slice.
+                let max_vertices = (len / stride) as u32;
+                let swizzle_start = swizzle_vertex_start.min(max_vertices);
+                let swizzle_end = swizzle_vertex_end.min(max_vertices);
+                for v in swizzle_start..swizzle_end {
+                    let v_base = (v as u64).saturating_mul(stride);
+                    for &attr_off in d3dcolor_offsets {
+                        let off = v_base.saturating_add(attr_off as u64);
+                        if off.saturating_add(3) >= len {
+                            continue;
+                        }
+                        // BGRA -> RGBA (swap R/B).
+                        let i0 = off as usize;
+                        let i2 = (off + 2) as usize;
+                        converted.swap(i0, i2);
+                    }
+                }
+
+                let converted_buffer =
+                    self.device
+                        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                            label: Some("aerogpu-d3d9.vertex.d3dcolor_bgra_to_rgba"),
+                            contents: &converted,
+                            usage: wgpu::BufferUsages::VERTEX,
+                        });
+                converted_vertex_buffers.insert(*stream, converted_buffer);
+            }
+        }
+
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("aerogpu-d3d9.render"),
             color_attachments: &color_attachments,
@@ -4718,7 +5107,11 @@ impl AerogpuD3d9Executor {
                 .stream_to_slot
                 .get(stream)
                 .expect("stream_to_slot contains all streams");
-            pass.set_vertex_buffer(wgpu_slot, buffer.slice(binding.offset_bytes as u64..));
+            if let Some(converted) = converted_vertex_buffers.get(stream) {
+                pass.set_vertex_buffer(wgpu_slot, converted.slice(..));
+            } else {
+                pass.set_vertex_buffer(wgpu_slot, buffer.slice(binding.offset_bytes as u64..));
+            }
         }
 
         let sample_mask_allows_draw = (self.state.sample_mask & 1) != 0;
