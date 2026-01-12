@@ -2,6 +2,17 @@
 //!
 //! This structure is designed to be shared with JavaScript via
 //! `SharedArrayBuffer` + `Int32Array`, using atomic operations only.
+//!
+//! ## Publish protocol
+//!
+//! A naive "write fields, then increment generation" scheme is not sufficient because a reader
+//! could observe a mix of old/new fields while `generation` is still unchanged.
+//!
+//! Instead we use a seqlock-style scheme where the high bit of `generation` is treated as a
+//! "busy" marker:
+//! - The writer sets [`SCANOUT_STATE_GENERATION_BUSY_BIT`] before writing fields.
+//! - The writer stores the new committed generation (busy bit cleared) as the last step.
+//! - Readers spin/retry if the busy bit is set or if the generation changes mid-snapshot.
 
 #[cfg(all(feature = "loom", test))]
 use loom::sync::atomic::AtomicU32;

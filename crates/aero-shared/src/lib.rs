@@ -2,8 +2,9 @@
 //!
 //! The browser architecture uses `SharedArrayBuffer` + `Atomics` to exchange
 //! data between the emulation core (CPU worker) and the GPU worker without
-//! per-frame copies. This crate defines the in-memory layout and the atomic
-//! publish protocol for the shared framebuffer.
+//! per-frame copies. This crate defines the in-memory layouts and atomic
+//! publish protocols used by the display pipeline (shared framebuffer and
+//! scanout selection).
 
 pub mod scanout_state;
 pub mod shared_framebuffer;
