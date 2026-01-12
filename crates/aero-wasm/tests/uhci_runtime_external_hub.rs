@@ -15,7 +15,8 @@ fn uhci_runtime_supports_external_hub_paths_and_webusb_on_root_port_1() {
     // The host WebHID passthrough manager attaches a virtual external hub at root port 0 with a
     // configurable downstream port count.
     let hub_path = serde_wasm_bindgen::to_value(&vec![0u32]).expect("hub path to_value");
-    // Start with a single downstream port to cover the hub grow path when we attach device #2.
+    // Start with a single downstream port to cover the hub grow path when we later attach devices
+    // at higher hub ports.
     rt.webhid_attach_hub(hub_path, Some(1))
         .expect("attach external hub");
 
