@@ -434,11 +434,15 @@ impl SnapshotSource for CpuEntrySummarySource {
     }
 
     fn cpu_states(&self) -> Vec<VcpuSnapshot> {
-        let mut cpu0 = CpuState::default();
-        cpu0.rip = 0x1234;
-        let mut cpu1 = CpuState::default();
-        cpu1.rip = 0x5678;
-        cpu1.halted = true;
+        let cpu0 = CpuState {
+            rip: 0x1234,
+            ..Default::default()
+        };
+        let cpu1 = CpuState {
+            rip: 0x5678,
+            halted: true,
+            ..Default::default()
+        };
         vec![
             VcpuSnapshot {
                 apic_id: 0,

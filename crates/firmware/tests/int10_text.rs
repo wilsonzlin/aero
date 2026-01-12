@@ -417,10 +417,11 @@ fn int10_write_char_only_preserves_existing_attribute_and_cursor() {
 fn int10_get_font_info_returns_8x16_font_pointer() {
     let mut mem = VecMemory::new(2 * 1024 * 1024);
     let mut bios = Bios::new(CmosRtc::new(DateTime::new(2026, 1, 1, 0, 0, 0)));
-    let mut cpu = CpuState::default();
-
-    cpu.rcx = 0x1234_5678_0000_0000;
-    cpu.rdx = 0xFEDC_BA98_0000_1200;
+    let mut cpu = CpuState {
+        rcx: 0x1234_5678_0000_0000,
+        rdx: 0xFEDC_BA98_0000_1200,
+        ..Default::default()
+    };
 
     // Initialize text-mode BDA fields so rows-1 is well-defined.
     cpu.set_ax(0x0003);

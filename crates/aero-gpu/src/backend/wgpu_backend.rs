@@ -477,13 +477,12 @@ impl GpuBackend for WgpuBackend {
             .checked_mul(bytes_per_texel)
             .ok_or_else(|| GpuError::Backend("write_texture row_size overflow".into()))?;
 
-        if desc.size.height > 1 || desc.size.depth_or_array_layers > 1 {
-            if desc.layout.bytes_per_row.is_none() {
-                return Err(GpuError::Backend(
-                    "write_texture bytes_per_row is required for multi-row/multi-layer uploads"
-                        .into(),
-                ));
-            }
+        if (desc.size.height > 1 || desc.size.depth_or_array_layers > 1)
+            && desc.layout.bytes_per_row.is_none()
+        {
+            return Err(GpuError::Backend(
+                "write_texture bytes_per_row is required for multi-row/multi-layer uploads".into(),
+            ));
         }
         if desc.size.depth_or_array_layers > 1 && desc.layout.rows_per_image.is_none() {
             return Err(GpuError::Backend(

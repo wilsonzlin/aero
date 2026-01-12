@@ -1593,28 +1593,6 @@ impl D3D11Runtime {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn take_bytes_extracts_prefix() {
-        let w0 = u32::from_ne_bytes([1, 2, 3, 4]);
-        let w1 = u32::from_ne_bytes([5, 6, 7, 8]);
-        // fixed_words=3 => payload[3] is byte_len and bytes start at index 4.
-        let payload = [0u32, 0, 0, 5, w0, w1];
-        let bytes = D3D11Runtime::take_bytes(&payload, 3).unwrap();
-        assert_eq!(bytes, &[1, 2, 3, 4, 5]);
-    }
-
-    #[test]
-    fn take_bytes_rejects_truncated_byte_payload() {
-        let w0 = u32::from_ne_bytes([1, 2, 3, 4]);
-        let payload = [0u32, 0, 0, 5, w0];
-        assert!(D3D11Runtime::take_bytes(&payload, 3).is_err());
-    }
-}
-
 fn state_set_pipeline(state: &mut D3D11State, payload: &[u32]) -> Result<()> {
     if payload.len() != 2 {
         bail!(
@@ -2027,5 +2005,27 @@ fn binding_def_to_layout_entry(def: &BindingDef) -> wgpu::BindGroupLayoutEntry {
         visibility: def.visibility,
         ty,
         count: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn take_bytes_extracts_prefix() {
+        let w0 = u32::from_ne_bytes([1, 2, 3, 4]);
+        let w1 = u32::from_ne_bytes([5, 6, 7, 8]);
+        // fixed_words=3 => payload[3] is byte_len and bytes start at index 4.
+        let payload = [0u32, 0, 0, 5, w0, w1];
+        let bytes = D3D11Runtime::take_bytes(&payload, 3).unwrap();
+        assert_eq!(bytes, &[1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn take_bytes_rejects_truncated_byte_payload() {
+        let w0 = u32::from_ne_bytes([1, 2, 3, 4]);
+        let payload = [0u32, 0, 0, 5, w0];
+        assert!(D3D11Runtime::take_bytes(&payload, 3).is_err());
     }
 }
