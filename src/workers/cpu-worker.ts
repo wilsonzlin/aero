@@ -558,6 +558,8 @@ async function runTieredVm(iterations: number, threshold: number) {
     mem_read_u16: (_cpuPtr: number, addr: bigint) => dv.getUint16(guest_base + u64ToNumber(addr), true),
     mem_read_u32: (_cpuPtr: number, addr: bigint) => dv.getUint32(guest_base + u64ToNumber(addr), true) | 0,
     mem_read_u64: (_cpuPtr: number, addr: bigint) => asI64(dv.getBigUint64(guest_base + u64ToNumber(addr), true)),
+    // Tier-2 codegen may optionally import this for code-version guards. It returns a u32 encoded as i64.
+    code_page_version: (_cpuPtr: number, _page: bigint) => 0n,
     mem_write_u8: (_cpuPtr: number, addr: bigint, value: number) => {
       const off = u64ToNumber(addr);
       if (off >= guest_size) return;
