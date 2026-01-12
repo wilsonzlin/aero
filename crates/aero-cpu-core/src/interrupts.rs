@@ -576,8 +576,23 @@ pub fn poll_and_deliver_external_interrupt<B: CpuBus, C: InterruptController>(
     pending: &mut PendingEventState,
     ctrl: &mut C,
 ) -> Result<(), CpuExit> {
-    if let Some(vector) = ctrl.poll_interrupt() {
-        pending.inject_external_interrupt(vector);
+    // Do not poll the controller (which commonly *acknowledges* the interrupt) unless the CPU is
+    // architecturally ready to accept a maskable interrupt *and* there is no already-queued vector.
+    //
+    // Tier-0 calls this helper at instruction boundaries; in particular, `STI`/`MOV SS`/`POP SS`
+    // set an interrupt shadow that must delay maskable interrupt recognition for one instruction.
+    //
+    // If we were to poll/ack while `IF=0` or the shadow is active, we could consume a PIC/APIC
+    // vector without ever delivering it to the guest, leaving the interrupt stuck "in service"
+    // (and potentially hanging the VM).
+    if pending.pending_event.is_none()
+        && pending.external_interrupts.is_empty()
+        && (state.rflags() & RFLAGS_IF) != 0
+        && pending.interrupt_inhibit == 0
+    {
+        if let Some(vector) = ctrl.poll_interrupt() {
+            pending.inject_external_interrupt(vector);
+        }
     }
     deliver_external_interrupt(state, bus, pending)
 }

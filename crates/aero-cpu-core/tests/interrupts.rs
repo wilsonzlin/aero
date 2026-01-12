@@ -897,3 +897,83 @@ fn poll_and_deliver_external_interrupt_uses_interrupt_controller() -> Result<(),
     assert_eq!(cpu.state.rip(), 0x6666);
     Ok(())
 }
+
+struct CountingController {
+    vector: u8,
+    poll_count: usize,
+}
+
+impl CountingController {
+    fn new(vector: u8) -> Self {
+        Self {
+            vector,
+            poll_count: 0,
+        }
+    }
+}
+
+impl InterruptController for CountingController {
+    fn poll_interrupt(&mut self) -> Option<u8> {
+        self.poll_count += 1;
+        Some(self.vector)
+    }
+}
+
+#[test]
+fn poll_and_deliver_external_interrupt_does_not_poll_controller_when_if0() -> Result<(), CpuExit> {
+    let mut mem = FlatTestBus::new(0x20000);
+    let mut cpu = CpuCore::new(CpuMode::Real);
+    cpu.state.set_rflags(0); // IF=0
+
+    let mut ctrl = CountingController::new(0x20);
+    cpu.poll_and_deliver_external_interrupt(&mut mem, &mut ctrl)?;
+
+    assert_eq!(ctrl.poll_count, 0);
+    assert!(cpu.pending.external_interrupts.is_empty());
+    Ok(())
+}
+
+#[test]
+fn poll_and_deliver_external_interrupt_does_not_poll_controller_when_interrupt_shadow_active(
+) -> Result<(), CpuExit> {
+    let mut mem = FlatTestBus::new(0x20000);
+    let mut cpu = CpuCore::new(CpuMode::Real);
+    cpu.state.set_rflags(RFLAGS_IF);
+    cpu.pending.inhibit_interrupts_for_one_instruction();
+
+    let mut ctrl = CountingController::new(0x20);
+    cpu.poll_and_deliver_external_interrupt(&mut mem, &mut ctrl)?;
+
+    assert_eq!(ctrl.poll_count, 0);
+    assert!(cpu.pending.external_interrupts.is_empty());
+    Ok(())
+}
+
+#[test]
+fn poll_and_deliver_external_interrupt_delivers_queued_vector_before_polling_controller(
+) -> Result<(), CpuExit> {
+    let mut mem = FlatTestBus::new(0x20000);
+
+    let idt_base = 0x1000;
+    write_idt_gate32(&mut mem, idt_base, 0x21, 0x08, 0x6666, 0x8E);
+
+    let mut cpu = CpuCore::new(CpuMode::Protected);
+    cpu.state.tables.idtr.base = idt_base;
+    cpu.state.tables.idtr.limit = 0x7FF;
+    cpu.state.segments.cs.selector = 0x08;
+    cpu.state.segments.ss.selector = 0x10;
+    cpu.state.write_gpr32(gpr::RSP, 0x3000);
+    cpu.state.set_rip(0x1111);
+    cpu.state.set_rflags(0x202);
+
+    // Already-queued vector should be delivered without polling/acknowledging any new interrupt.
+    cpu.pending.inject_external_interrupt(0x21);
+
+    let mut ctrl = CountingController::new(0x22);
+    cpu.poll_and_deliver_external_interrupt(&mut mem, &mut ctrl)?;
+
+    assert_eq!(ctrl.poll_count, 0);
+    assert!(cpu.pending.external_interrupts.is_empty());
+    assert_eq!(cpu.state.rip(), 0x6666);
+    Ok(())
+}
