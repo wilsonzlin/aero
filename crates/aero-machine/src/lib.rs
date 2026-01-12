@@ -1293,12 +1293,16 @@ impl MmioHandler for VgaLfbMmio {
         let vga = self.dev.borrow();
         let vram = vga.vram();
         let base = offset as usize;
-        let mut out = 0u64;
-        for i in 0..size {
-            let byte = vram.get(base + i).copied().unwrap_or(0);
-            out |= (byte as u64) << (i * 8);
+        if base >= vram.len() {
+            return 0;
         }
-        out
+
+        let end = base.saturating_add(size).min(vram.len());
+        let len = end - base;
+
+        let mut buf = [0u8; 8];
+        buf[..len].copy_from_slice(&vram[base..end]);
+        u64::from_le_bytes(buf)
     }
 
     fn write(&mut self, offset: u64, size: usize, value: u64) {
@@ -1310,15 +1314,17 @@ impl MmioHandler for VgaLfbMmio {
             _ => size.clamp(1, 8),
         };
 
-        let bytes = value.to_le_bytes();
         let base = offset as usize;
         let mut vga = self.dev.borrow_mut();
         let vram = vga.vram_mut();
-        for (i, byte) in bytes.into_iter().take(size).enumerate() {
-            if let Some(dst) = vram.get_mut(base + i) {
-                *dst = byte;
-            }
+        if base >= vram.len() {
+            return;
         }
+
+        let end = base.saturating_add(size).min(vram.len());
+        let len = end - base;
+        let bytes = value.to_le_bytes();
+        vram[base..end].copy_from_slice(&bytes[..len]);
     }
 }
 
