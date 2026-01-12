@@ -387,6 +387,52 @@ static int RunD3D9ExScissorSanity(int argc, char** argv) {
   }
 
   // ---------------------------------------------------------------------------
+  // Scenario 0b: ensure applying a state block captured before any SetScissorRect
+  // call does not "lock in" an empty scissor rect such that later enabling scissor
+  // clips everything.
+  // ---------------------------------------------------------------------------
+  hr = dev->SetRenderState(D3DRS_SCISSORTESTENABLE, FALSE);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetRenderState(D3DRS_SCISSORTESTENABLE, FALSE) (scenario 0b)", hr);
+  }
+  ComPtr<IDirect3DStateBlock9> sb_default;
+  hr = dev->CreateStateBlock(D3DSBT_ALL, sb_default.put());
+  if (FAILED(hr) || !sb_default) {
+    return reporter.FailHresult("CreateStateBlock(D3DSBT_ALL) (scenario 0b)", FAILED(hr) ? hr : E_FAIL);
+  }
+  // Clobber a benign state to ensure Apply() executes a meaningful restore.
+  (void)dev->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
+  hr = sb_default->Apply();
+  if (FAILED(hr)) {
+    return reporter.FailHresult("StateBlock::Apply (scenario 0b)", hr);
+  }
+
+  hr = dev->Clear(0, NULL, D3DCLEAR_TARGET, kRed, 1.0f, 0);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("IDirect3DDevice9Ex::Clear (scenario 0b)", hr);
+  }
+  hr = dev->SetRenderState(D3DRS_SCISSORTESTENABLE, TRUE);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetRenderState(D3DRS_SCISSORTESTENABLE, TRUE) (scenario 0b)", hr);
+  }
+  hr = DrawFullscreenQuad(dev.get(), kWidth, kHeight, kBlue);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("DrawFullscreenQuad (scenario 0b)", hr);
+  }
+  {
+    int rc = ValidateCenterAndCorner(reporter,
+                                    kTestName,
+                                    dev.get(),
+                                    dump,
+                                    L"d3d9ex_scissor_sanity_default_stateblock.bmp",
+                                    kExpectedBlueBgra,
+                                    kExpectedBlueBgra);
+    if (rc != 0) {
+      return rc;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // Scenario A: set scissor rect while disabled, then enable scissor and verify
   // clipping.
   // ---------------------------------------------------------------------------

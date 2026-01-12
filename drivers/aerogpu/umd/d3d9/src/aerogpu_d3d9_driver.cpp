@@ -203,6 +203,11 @@ struct StateBlock {
   D3DDDIVIEWPORTINFO viewport = {0, 0, 0, 0, 0.0f, 1.0f};
   bool scissor_set = false;
   RECT scissor_rect = {0, 0, 0, 0};
+  // Mirrors `Device::scissor_rect_user_set`. This is not a D3D9-visible bit, but
+  // it influences the UMD's "default scissor rect" fixup behavior when scissor
+  // is enabled before any SetScissorRect call. Treat it as part of scissor
+  // state so state blocks can round-trip the pre-SetScissorRect condition.
+  bool scissor_rect_user_set = false;
   BOOL scissor_enabled = FALSE;
 
   // VB/IB bindings.
@@ -2854,6 +2859,7 @@ inline void stateblock_record_scissor_locked(Device* dev, const RECT& rect, BOOL
   StateBlock* sb = dev->recording_state_block;
   sb->scissor_set = true;
   sb->scissor_rect = rect;
+  sb->scissor_rect_user_set = dev->scissor_rect_user_set;
   sb->scissor_enabled = enabled;
 }
 
@@ -9706,6 +9712,7 @@ static void stateblock_init_for_type_locked(Device* dev, StateBlock* sb, uint32_
     sb->viewport = dev->viewport;
     sb->scissor_set = true;
     sb->scissor_rect = dev->scissor_rect;
+    sb->scissor_rect_user_set = dev->scissor_rect_user_set;
     sb->scissor_enabled = dev->scissor_enabled;
 
     sb->user_ps_set = true;
@@ -9942,6 +9949,7 @@ static void stateblock_capture_locked(Device* dev, StateBlock* sb) {
   }
   if (sb->scissor_set) {
     sb->scissor_rect = dev->scissor_rect;
+    sb->scissor_rect_user_set = dev->scissor_rect_user_set;
     sb->scissor_enabled = dev->scissor_enabled;
   }
 
@@ -10084,10 +10092,9 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
 
   if (sb->scissor_set) {
     dev->scissor_rect = sb->scissor_rect;
-    // Applying a state block explicitly sets scissor rect state, so stop treating
-    // the rect as "unset".
-    dev->scissor_rect_user_set = true;
     dev->scissor_enabled = sb->scissor_enabled;
+    dev->scissor_rect_user_set = sb->scissor_rect_user_set;
+    scissor_fixup_unset_rect_locked(dev);
 
     // Keep D3DRS_SCISSORTESTENABLE (174) in sync with the dedicated scissor state
     // so GetRenderState and state blocks observe consistent values.
