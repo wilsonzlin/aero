@@ -336,6 +336,7 @@ fn d3d9_cmd_stream_bc1_texture_direct_upload_and_sample() {
         AEROGPU_FORMAT_BC1_RGBA_UNORM,
         8, // row_pitch_bytes (1 BC1 block row)
         &bc1_block,
+        [255, 0, 0, 255],
     );
 }
 
@@ -404,6 +405,7 @@ fn d3d9_cmd_stream_bc3_texture_direct_upload_and_sample() {
         AEROGPU_FORMAT_BC3_RGBA_UNORM,
         16, // row_pitch_bytes (1 BC3 block row)
         &bc3_block,
+        [255, 0, 0, 255],
     );
 }
 
@@ -425,6 +427,7 @@ fn d3d9_cmd_stream_bc2_texture_direct_upload_and_sample() {
         AEROGPU_FORMAT_BC2_RGBA_UNORM,
         16, // row_pitch_bytes (1 BC2 block row)
         &bc2_block,
+        [255, 0, 0, 255],
     );
 }
 
@@ -447,6 +450,7 @@ fn run_bc_texture_cpu_fallback_upload_and_sample(
         sample_format,
         sample_row_pitch_bytes,
         sample_block_bytes,
+        expected_rgba,
     );
 }
 
@@ -454,6 +458,7 @@ fn run_bc_texture_direct_upload_and_sample(
     sample_format: u32,
     sample_row_pitch_bytes: u32,
     sample_block_bytes: &[u8],
+    expected_rgba: [u8; 4],
 ) {
     let mut exec = match pollster::block_on(create_executor_with_bc_features()) {
         Some(exec) => exec,
@@ -478,6 +483,7 @@ fn run_bc_texture_direct_upload_and_sample(
         sample_format,
         sample_row_pitch_bytes,
         sample_block_bytes,
+        expected_rgba,
     );
 }
 
@@ -486,6 +492,7 @@ fn run_bc_texture_upload_and_sample(
     sample_format: u32,
     sample_row_pitch_bytes: u32,
     sample_block_bytes: &[u8],
+    expected_rgba: [u8; 4],
 ) {
     const OPC_CREATE_BUFFER: u32 = AerogpuCmdOpcode::CreateBuffer as u32;
     const OPC_CREATE_TEXTURE2D: u32 = AerogpuCmdOpcode::CreateTexture2d as u32;
