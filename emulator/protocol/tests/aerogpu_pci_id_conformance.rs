@@ -413,3 +413,14 @@ fn aerogpu_install_script_prefers_dx11_inf_in_ci_layout() {
     );
     assert_file_contains_noncomment_line(&install_cmd, r"..\..\aerogpu_dx11.inf");
 }
+
+#[test]
+fn aerogpu_sign_test_script_detects_ci_package_root_when_dx11_inf_is_staged() {
+    let repo_root = repo_root();
+
+    // `sign_test.cmd` is shipped alongside CI packages under packaging\win7\. The CI package root
+    // uses the single-INF layout, staging only aerogpu_dx11.inf at the package root, so the helper
+    // must detect `..\..\aerogpu_dx11.inf` and operate from the package root.
+    let sign_test_cmd = repo_root.join("drivers/aerogpu/packaging/win7/sign_test.cmd");
+    assert_file_contains_noncomment_line(&sign_test_cmd, r#"..\..\aerogpu_dx11.inf"#);
+}
