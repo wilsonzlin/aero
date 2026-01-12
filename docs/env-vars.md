@@ -100,6 +100,44 @@ These are not required for the core build/test pipeline, but are common when run
 | `AERO_STUN_URLS` | Comma-separated STUN URLs (e.g. `stun:stun.l.google.com:19302`). | *(unset)* | `proxy/webrtc-udp-relay` | `AERO_STUN_URLS=stun:stun.l.google.com:19302` |
 | `AERO_TURN_URLS` | Comma-separated TURN URLs. | *(unset)* | `proxy/webrtc-udp-relay` | `AERO_TURN_URLS=turn:turn.example.com:3478?transport=udp` |
 
+## L2 tunnel proxy variables (`crates/aero-l2-proxy`)
+
+These variables configure the L2 tunnel termination proxy used by the “Option C” networking path (see [`docs/l2-tunnel-runbook.md`](./l2-tunnel-runbook.md) for a practical guide).
+
+This table is **not exhaustive** (there are additional stack tuning and observability knobs); it covers the most commonly-used and security-sensitive options.
+
+| Variable | Meaning | Default | Consumed by | Examples |
+| --- | --- | --- | --- | --- |
+| `AERO_L2_PROXY_LISTEN_ADDR` | Socket address to listen on for the proxy’s HTTP/WebSocket endpoints (including `/l2`, `/metrics`, `/healthz`). Alias: `AERO_L2_PROXY_BIND_ADDR`. | `0.0.0.0:8090` | `crates/aero-l2-proxy` | `AERO_L2_PROXY_LISTEN_ADDR=127.0.0.1:8090 cargo run --locked -p aero-l2-proxy` |
+| `AERO_L2_ALLOWED_ORIGINS` | Comma-separated allowlist of normalized Origin values allowed to upgrade to `/l2`. Supports `"*"` to allow any valid Origin (but still requires the header unless `AERO_L2_OPEN=1`). Legacy alias: `ALLOWED_ORIGINS`. | Same-host only (empty allowlist) | `crates/aero-l2-proxy` | `AERO_L2_ALLOWED_ORIGINS=http://localhost:5173 cargo run --locked -p aero-l2-proxy` |
+| `AERO_L2_ALLOWED_ORIGINS_EXTRA` | Additional comma-separated Origin entries appended to the base allowlist (useful when `ALLOWED_ORIGINS` is shared across services). | *(unset)* | `crates/aero-l2-proxy` | `ALLOWED_ORIGINS=https://example.com AERO_L2_ALLOWED_ORIGINS_EXTRA=,http://localhost:5173 cargo run --locked -p aero-l2-proxy` |
+| `AERO_L2_ALLOWED_HOSTS` | Comma-separated allowlist of Host header values accepted at WebSocket upgrade time. When unset/empty, Host validation is disabled. | *(unset)* | `crates/aero-l2-proxy` | `AERO_L2_ALLOWED_HOSTS=proxy.example.com` |
+| `AERO_L2_TRUST_PROXY_HOST` | When true, prefer proxy-provided host headers (`Forwarded: host=` / `X-Forwarded-Host`) over `Host` when validating `AERO_L2_ALLOWED_HOSTS`. Only enable behind a trusted reverse proxy. | `0` | `crates/aero-l2-proxy` | `AERO_L2_TRUST_PROXY_HOST=1` |
+| `AERO_L2_OPEN` | Security escape hatch: when set to exactly `1`, disable Origin enforcement (trusted local development only). Note: this does **not** automatically disable authentication. | `0` | `crates/aero-l2-proxy` | `AERO_L2_OPEN=1 AERO_L2_AUTH_MODE=none cargo run --locked -p aero-l2-proxy` |
+| `AERO_L2_INSECURE_ALLOW_NO_AUTH` | When set to exactly `1` alongside `AERO_L2_OPEN=1`, allow the proxy to start with no auth configured (explicit unauthenticated mode). | `0` | `crates/aero-l2-proxy` | `AERO_L2_OPEN=1 AERO_L2_INSECURE_ALLOW_NO_AUTH=1 cargo run --locked -p aero-l2-proxy` |
+| `AERO_L2_AUTH_MODE` | Authentication mode for `/l2` upgrades (`none`, `token`, `session`, `session_or_token`, `session_and_token`, `jwt`, `cookie_or_jwt`, …). | Auto-detected (may fail if no auth is configured) | `crates/aero-l2-proxy` | `AERO_L2_AUTH_MODE=jwt AERO_L2_JWT_SECRET=... cargo run --locked -p aero-l2-proxy` |
+| `AERO_L2_API_KEY` | Static API key used when token auth is enabled. Legacy alias: `AERO_L2_TOKEN`. | *(unset)* | `crates/aero-l2-proxy` | `AERO_L2_AUTH_MODE=token AERO_L2_API_KEY=sekrit cargo run --locked -p aero-l2-proxy` |
+| `AERO_L2_SESSION_SECRET` | HMAC secret used to verify the `aero_session` cookie when session/cookie auth is enabled. Also accepts shared `SESSION_SECRET` / `AERO_GATEWAY_SESSION_SECRET`. | *(unset)* | `crates/aero-l2-proxy` | `AERO_L2_AUTH_MODE=session AERO_L2_SESSION_SECRET=sekrit cargo run --locked -p aero-l2-proxy` |
+| `AERO_L2_JWT_SECRET` | HMAC secret used to verify JWTs when JWT auth is enabled. | *(unset)* | `crates/aero-l2-proxy` | `AERO_L2_AUTH_MODE=jwt AERO_L2_JWT_SECRET=sekrit cargo run --locked -p aero-l2-proxy` |
+| `AERO_L2_JWT_AUDIENCE` | Optional expected JWT `aud` claim (JWT auth modes). | *(unset)* | `crates/aero-l2-proxy` | `AERO_L2_JWT_AUDIENCE=aero` |
+| `AERO_L2_JWT_ISSUER` | Optional expected JWT `iss` claim (JWT auth modes). | *(unset)* | `crates/aero-l2-proxy` | `AERO_L2_JWT_ISSUER=aero-gateway` |
+| `AERO_L2_MAX_CONNECTIONS` | Process-wide concurrent tunnel cap (`0` disables). | `64` | `crates/aero-l2-proxy` | `AERO_L2_MAX_CONNECTIONS=128` |
+| `AERO_L2_MAX_CONNECTIONS_PER_SESSION` | Concurrent tunnel cap per authenticated session principal (`0` disables). Legacy alias: `AERO_L2_MAX_TUNNELS_PER_SESSION`. | `0` | `crates/aero-l2-proxy` | `AERO_L2_MAX_CONNECTIONS_PER_SESSION=4` |
+| `AERO_L2_MAX_CONNECTIONS_PER_IP` | Concurrent tunnel cap per client IP (`0` disables). Note: only meaningful when the proxy can determine a stable client IP (see `AERO_L2_TRUST_PROXY`). | `0` | `crates/aero-l2-proxy` | `AERO_L2_MAX_CONNECTIONS_PER_IP=8` |
+| `AERO_L2_TRUST_PROXY` | When true, trust proxy-provided client IP headers (`Forwarded` / `X-Forwarded-For`) for per-IP limits and logging. Only enable behind a trusted reverse proxy. | `0` | `crates/aero-l2-proxy` | `AERO_L2_TRUST_PROXY=1` |
+| `AERO_L2_MAX_BYTES_PER_CONNECTION` | Total bytes per connection (rx + tx, `0` disables). | `0` | `crates/aero-l2-proxy` | `AERO_L2_MAX_BYTES_PER_CONNECTION=100000000` |
+| `AERO_L2_MAX_FRAMES_PER_SECOND` | Inbound messages per second per connection (`0` disables). | `0` | `crates/aero-l2-proxy` | `AERO_L2_MAX_FRAMES_PER_SECOND=1000` |
+| `AERO_L2_MAX_FRAME_PAYLOAD` | Max `FRAME` payload bytes for the L2 tunnel protocol (defense in depth). Legacy alias: `AERO_L2_MAX_FRAME_SIZE`. | `2048` | `crates/aero-l2-proxy`, `backend/aero-gateway` (surfaced via `POST /session`) | `AERO_L2_MAX_FRAME_PAYLOAD=2048` |
+| `AERO_L2_MAX_CONTROL_PAYLOAD` | Max control payload bytes for the L2 tunnel protocol (PING/PONG/ERROR; defense in depth). | `256` | `crates/aero-l2-proxy`, `backend/aero-gateway` (surfaced via `POST /session`) | `AERO_L2_MAX_CONTROL_PAYLOAD=256` |
+| `AERO_L2_CAPTURE_DIR` | When set, write a per-tunnel PCAPNG capture file into this directory. | *(unset)* | `crates/aero-l2-proxy` | `AERO_L2_CAPTURE_DIR=/tmp/aero-l2-captures` |
+| `AERO_L2_PING_INTERVAL_MS` | When set to a positive integer, the proxy will send protocol-level PINGs at this interval and record RTT metrics. | *(unset)* | `crates/aero-l2-proxy` | `AERO_L2_PING_INTERVAL_MS=1000` |
+| `AERO_L2_IDLE_TIMEOUT_MS` | When set to a positive integer, close the tunnel if no inbound messages are received for this duration. | *(unset)* | `crates/aero-l2-proxy` | `AERO_L2_IDLE_TIMEOUT_MS=30000` |
+| `AERO_L2_ALLOW_PRIVATE_IPS` | When true, allow egress to RFC1918/private/reserved IPv4 ranges (dev-only; production should keep this off). | `0` | `crates/aero-l2-proxy` | `AERO_L2_ALLOW_PRIVATE_IPS=1` |
+| `AERO_L2_ALLOWED_TCP_PORTS` | Comma-separated TCP destination port allowlist. When set, TCP egress is denied by default unless the port is listed. | Allow all | `crates/aero-l2-proxy` | `AERO_L2_ALLOWED_TCP_PORTS=80,443` |
+| `AERO_L2_ALLOWED_UDP_PORTS` | Comma-separated UDP destination port allowlist. When set, UDP egress is denied by default unless the port is listed. | Allow all | `crates/aero-l2-proxy` | `AERO_L2_ALLOWED_UDP_PORTS=53,3478` |
+| `AERO_L2_ALLOWED_DOMAINS` | Comma-separated DNS name suffix allowlist. When non-empty, outbound DNS/TCP destinations must match at least one suffix. | Allow all | `crates/aero-l2-proxy` | `AERO_L2_ALLOWED_DOMAINS=example.com,example.org` |
+| `AERO_L2_BLOCKED_DOMAINS` | Comma-separated DNS name suffix denylist (applied before `AERO_L2_ALLOWED_DOMAINS`). | *(unset)* | `crates/aero-l2-proxy` | `AERO_L2_BLOCKED_DOMAINS=metadata.google.internal` |
+
 ## Deprecated aliases (will be removed)
 
 These names are still accepted but emit warnings. Prefer the canonical variables above.
