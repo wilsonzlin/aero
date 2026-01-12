@@ -123,16 +123,37 @@ impl SnapshotTarget for PcPlatformStorageSnapshotHarness {
         }
 
         if let Some(state) = disk_controllers {
-            let mut wrapper = DiskControllersSnapshot::default();
-            apply_io_snapshot_to_device(&state, &mut wrapper).unwrap();
+            // `DeviceId::DISK_CONTROLLER` may contain multiple controller types/versions.
+            // Route based on the inner `aero-io-snapshot` device id.
+            let id = state
+                .data
+                .get(8..12)
+                .unwrap_or(&[])
+                .try_into()
+                .unwrap_or([0u8; 4]);
+            match id {
+                // Canonical `DSKC` wrapper.
+                [b'D', b'S', b'K', b'C'] => {
+                    let mut wrapper = DiskControllersSnapshot::default();
+                    apply_io_snapshot_to_device(&state, &mut wrapper).unwrap();
 
-            // Apply only controller entries that exist in the target machine.
-            for (bdf, nested) in wrapper.controllers() {
-                if *bdf == profile::SATA_AHCI_ICH9.bdf.pack_u16() {
-                    if let Some(ahci) = &self.platform.ahci {
-                        ahci.borrow_mut().load_state(nested).unwrap();
+                    // Apply only controller entries that exist in the target machine.
+                    for (&packed_bdf, nested) in wrapper.controllers() {
+                        let bdf = aero_devices::pci::PciBdf::unpack_u16(packed_bdf);
+                        if bdf == profile::SATA_AHCI_ICH9.bdf {
+                            if let Some(ahci) = &self.platform.ahci {
+                                ahci.borrow_mut().load_state(nested).unwrap();
+                            }
+                        }
                     }
                 }
+                // Backward compatibility: some snapshots stored the controller directly under
+                // `DeviceId::DISK_CONTROLLER` without the `DSKC` wrapper.
+                [b'A', b'H', b'C', b'P'] => {
+                    let ahci = self.platform.ahci.as_ref().expect("AHCI enabled");
+                    apply_io_snapshot_to_device(&state, &mut *ahci.borrow_mut()).unwrap();
+                }
+                _ => panic!("unexpected DISK_CONTROLLER payload device id: {id:?}"),
             }
         }
     }
