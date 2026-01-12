@@ -2,8 +2,8 @@
 
 use aero_wasm::WasmVm;
 use js_sys::{Reflect, Uint8Array};
-use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
+use wasm_bindgen::prelude::*;
 use wasm_bindgen_test::wasm_bindgen_test;
 
 mod common;
@@ -87,7 +87,12 @@ fn save_load_state_v2_roundtrips() {
 
     let (cpu_after, mmu_after) = snapshot_bytes(&restored);
 
-    assert_eq!(cpu_before, cpu_after, "CPU snapshot mismatch after roundtrip");
-    assert_eq!(mmu_before, mmu_after, "MMU snapshot mismatch after roundtrip");
+    assert_eq!(
+        cpu_before, cpu_after,
+        "CPU snapshot mismatch after roundtrip"
+    );
+    assert_eq!(
+        mmu_before, mmu_after,
+        "MMU snapshot mismatch after roundtrip"
+    );
 }
-
