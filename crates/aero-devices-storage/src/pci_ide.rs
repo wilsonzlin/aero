@@ -765,15 +765,30 @@ impl IdeController {
         match cmd {
             0xEC => {
                 // IDENTIFY DEVICE
-                let data = match chan.devices[dev_idx].as_ref() {
-                    Some(IdeDevice::Ata(_)) => Some(ata_identify_data(chan.devices[dev_idx].as_ref())),
-                    _ => None,
-                };
-                if let Some(data) = data {
-                    chan.begin_pio_in(TransferKind::Identify, data);
-                } else {
-                    chan.set_error(0x04);
-                    chan.status &= !IDE_STATUS_BSY;
+                match chan.devices[dev_idx].as_ref() {
+                    Some(IdeDevice::Ata(_)) => {
+                        let data = ata_identify_data(chan.devices[dev_idx].as_ref());
+                        chan.begin_pio_in(TransferKind::Identify, data);
+                    }
+                    Some(IdeDevice::Atapi(_)) => {
+                        // Per ATA/ATAPI spec, an ATAPI device aborts IDENTIFY DEVICE and leaves a
+                        // signature in the LBA Mid/High registers so the guest can detect that a
+                        // packet device is present.
+                        chan.tf.sector_count = 0x01;
+                        chan.tf.lba0 = 0x01;
+                        chan.tf.lba1 = 0x14;
+                        chan.tf.lba2 = 0xEB;
+                        chan.set_error(0x04);
+                        chan.status &= !IDE_STATUS_BSY;
+                        chan.status |= IDE_STATUS_DRDY;
+                        chan.set_irq();
+                    }
+                    None => {
+                        chan.set_error(0x04);
+                        chan.status &= !IDE_STATUS_BSY;
+                        chan.status |= IDE_STATUS_DRDY;
+                        chan.set_irq();
+                    }
                 }
             }
             0xA1 => {
@@ -787,6 +802,8 @@ impl IdeController {
                 } else {
                     chan.set_error(0x04);
                     chan.status &= !IDE_STATUS_BSY;
+                    chan.status |= IDE_STATUS_DRDY;
+                    chan.set_irq();
                 }
             }
             0x20 | 0x24 => {

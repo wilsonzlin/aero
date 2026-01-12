@@ -805,6 +805,43 @@ fn send_atapi_packet(io: &mut IoPortBus, base: u16, features: u8, pkt: &[u8; 12]
 }
 
 #[test]
+fn atapi_identify_device_aborts_with_signature() {
+    // Many OSes probe for ATAPI by issuing ATA IDENTIFY DEVICE (0xEC) and then checking
+    // LBA Mid/High for the ATAPI signature (0x14/0xEB) after ABRT.
+    let iso = MemIso::new(1);
+
+    let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
+    ide.borrow_mut()
+        .controller
+        .attach_secondary_master_atapi(aero_devices_storage::atapi::AtapiCdrom::new(Some(
+            Box::new(iso),
+        )));
+    ide.borrow_mut().config_mut().set_command(0x0001); // IO decode
+
+    let mut ioports = IoPortBus::new();
+    register_piix3_ide_ports(&mut ioports, ide.clone());
+
+    // Select master on secondary channel.
+    ioports.write(SECONDARY_PORTS.cmd_base + 6, 1, 0xA0);
+
+    // IDENTIFY DEVICE (expected to abort on ATAPI).
+    ioports.write(SECONDARY_PORTS.cmd_base + 7, 1, 0xEC);
+
+    // Completion should raise an interrupt.
+    assert!(ide.borrow().controller.secondary_irq_pending());
+
+    let status = ioports.read(SECONDARY_PORTS.cmd_base + 7, 1) as u8;
+    assert_eq!(status & 0x80, 0, "BSY should be clear");
+    assert_eq!(status & 0x08, 0, "DRQ should be clear");
+    assert_ne!(status & 0x01, 0, "ERR should be set");
+    assert_eq!(ioports.read(SECONDARY_PORTS.cmd_base + 1, 1) as u8, 0x04);
+
+    let lba1 = ioports.read(SECONDARY_PORTS.cmd_base + 4, 1) as u8;
+    let lba2 = ioports.read(SECONDARY_PORTS.cmd_base + 5, 1) as u8;
+    assert_eq!((lba1, lba2), (0x14, 0xEB));
+}
+
+#[test]
 fn atapi_inquiry_and_read_10_pio() {
     let mut iso = MemIso::new(2);
     iso.data[2048..2053].copy_from_slice(b"WORLD");
