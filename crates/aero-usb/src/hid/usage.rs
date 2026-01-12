@@ -61,6 +61,7 @@ pub fn keyboard_code_to_usage(code: &str) -> Option<u8> {
         "BracketLeft" => Some(0x2F),
         "BracketRight" => Some(0x30),
         "Backslash" => Some(0x31),
+        "IntlHash" => Some(0x32),
         "Semicolon" => Some(0x33),
         "Quote" => Some(0x34),
         "Backquote" => Some(0x35),
@@ -96,15 +97,24 @@ pub fn keyboard_code_to_usage(code: &str) -> Option<u8> {
         "Numpad3" => Some(0x5B),
         "Numpad4" => Some(0x5C),
         "Numpad5" => Some(0x5D),
+        // Some browsers/keyboard layouts report the numpad 5 position as "NumpadClear".
+        "NumpadClear" => Some(0x5D),
         "Numpad6" => Some(0x5E),
         "Numpad7" => Some(0x5F),
         "Numpad8" => Some(0x60),
         "Numpad9" => Some(0x61),
         "Numpad0" => Some(0x62),
         "NumpadDecimal" => Some(0x63),
+        "NumpadEqual" => Some(0x67),
+        "NumpadComma" => Some(0x85),
 
         // "Application" key (aka context menu).
         "ContextMenu" => Some(0x65),
+
+        // International keys.
+        "IntlBackslash" => Some(0x64),
+        "IntlRo" => Some(0x87),
+        "IntlYen" => Some(0x89),
 
         _ => None,
     }

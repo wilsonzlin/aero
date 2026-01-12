@@ -75,6 +75,8 @@ export function keyboardCodeToHidUsage(code: string): number | null {
       return 0x30;
     case "Backslash":
       return 0x31;
+    case "IntlHash":
+      return 0x32;
     case "Semicolon":
       return 0x33;
     case "Quote":
@@ -141,6 +143,9 @@ export function keyboardCodeToHidUsage(code: string): number | null {
       return 0x5c;
     case "Numpad5":
       return 0x5d;
+    // Some browsers/keyboard layouts report the numpad 5 position as "NumpadClear".
+    case "NumpadClear":
+      return 0x5d;
     case "Numpad6":
       return 0x5e;
     case "Numpad7":
@@ -153,12 +158,23 @@ export function keyboardCodeToHidUsage(code: string): number | null {
       return 0x62;
     case "NumpadDecimal":
       return 0x63;
+    case "NumpadEqual":
+      return 0x67;
+    case "NumpadComma":
+      return 0x85;
 
     // "Application" key (aka context menu).
     case "ContextMenu":
       return 0x65;
+
+    // International keys.
+    case "IntlBackslash":
+      return 0x64;
+    case "IntlRo":
+      return 0x87;
+    case "IntlYen":
+      return 0x89;
   }
 
   return null;
 }
-

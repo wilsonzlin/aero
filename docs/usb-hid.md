@@ -67,6 +67,7 @@ USB HID usages for letters and digits are fixed (independent of layout):
 | `BracketLeft` | `0x2F` |
 | `BracketRight` | `0x30` |
 | `Backslash` | `0x31` |
+| `IntlHash` | `0x32` |
 | `Semicolon` | `0x33` |
 | `Quote` | `0x34` |
 | `Backquote` | `0x35` |
@@ -88,6 +89,36 @@ USB HID usages for letters and digits are fixed (independent of layout):
 | `ArrowLeft` | `0x50` |
 | `ArrowDown` | `0x51` |
 | `ArrowUp` | `0x52` |
+| `IntlBackslash` | `0x64` |
+| `NumpadEqual` | `0x67` |
+| `NumpadComma` | `0x85` |
+| `IntlRo` | `0x87` |
+| `IntlYen` | `0x89` |
+
+### Keeping the mapping consistent (Rust ↔ TypeScript)
+
+There are two independent implementations of `KeyboardEvent.code → HID usage`:
+
+- Rust: `crates/aero-usb/src/hid/usage.rs::keyboard_code_to_usage`
+- TypeScript: `web/src/input/hid_usage.ts::keyboardCodeToHidUsage`
+
+To prevent drift between them, we keep a shared fixture of representative mappings at:
+
+- `docs/fixtures/hid_usage_keyboard.json`
+
+Both sides have unit tests that validate their mapping function against that fixture:
+
+- Rust: `crates/aero-usb/tests/hid_usage_keyboard_fixture.rs`
+- TypeScript: `web/src/input/hid_usage.test.ts`
+
+When adding support for a new key code:
+
+1. Add it to `docs/fixtures/hid_usage_keyboard.json` (as `code` + expected usage).
+2. Update **both** mapping functions.
+3. Run `cargo test -p aero-usb` and `npm -w web run test:unit`.
+
+(The mapping is still not intended to be exhaustive; alphanumeric ranges like `KeyA..KeyZ`,
+`Digit1..Digit0`, and `F1..F12` are handled algorithmically.)
 
 ### Report model (boot keyboard)
 
