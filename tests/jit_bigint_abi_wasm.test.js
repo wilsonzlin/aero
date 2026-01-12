@@ -1,7 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { JIT_BIGINT_ABI_WASM_BYTES, JIT_CODE_PAGE_VERSION_ABI_WASM_BYTES } from "../src/workers/wasm-bytes.ts";
+import {
+  JIT_BIGINT_ABI_WASM_BYTES,
+  JIT_BLOCK_WASM_BYTES,
+  JIT_CODE_PAGE_VERSION_ABI_WASM_BYTES,
+} from "../src/workers/wasm-bytes.ts";
 
 test("jit i64 BigInt ABI: wasm fixture imports/returns use BigInt", async () => {
   const calls = {
@@ -119,4 +123,36 @@ test("jit i64 BigInt ABI: code_page_version import uses BigInt", async () => {
   const ret = block(0, 0);
   assert.equal(typeof ret, "bigint");
   assert.equal(seenPage, -1n);
+});
+
+test("jit i64 BigInt ABI: rollback fixture returns sentinel and uses BigInt params", async () => {
+  let sawWrite = false;
+  let sawExit = false;
+
+  const memory = new WebAssembly.Memory({ initial: 1, maximum: 16, shared: true });
+
+  const env = {
+    memory,
+    mem_write_u32(_cpuPtr, addr, value) {
+      assert.equal(typeof addr, "bigint");
+      assert.equal(typeof value, "number");
+      sawWrite = true;
+    },
+    jit_exit(kind, rip) {
+      assert.equal(typeof kind, "number");
+      assert.equal(typeof rip, "bigint");
+      sawExit = true;
+      return rip;
+    },
+  };
+
+  const module = await WebAssembly.compile(JIT_BLOCK_WASM_BYTES);
+  const instance = await WebAssembly.instantiate(module, { env });
+  const { block } = instance.exports;
+  assert.equal(typeof block, "function");
+
+  const ret = block(0, 0);
+  assert.equal(ret, -1n);
+  assert.ok(sawWrite, "expected mem_write_u32 to be called");
+  assert.ok(sawExit, "expected jit_exit to be called");
 });
