@@ -2092,6 +2092,12 @@ impl Machine {
     pub fn ide(&self) -> Option<Rc<RefCell<Piix3IdePciDevice>>> {
         self.ide.clone()
     }
+
+    /// Returns the PIIX3-compatible UHCI (USB 1.1) controller, if present.
+    pub fn uhci(&self) -> Option<Rc<RefCell<UhciPciDevice>>> {
+        self.uhci.clone()
+    }
+
     /// Attach an ATA drive to the canonical AHCI port 0, if the AHCI controller is enabled.
     pub fn attach_ahci_drive_port0(&mut self, drive: AtaDrive) {
         self.attach_ahci_drive(0, drive);
