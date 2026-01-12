@@ -1240,6 +1240,8 @@ async function setupAudio() {
     // Shared buffer for audio data (example: ~1 second of stereo frames).
     const channelCount = 2;
     const capacityFrames = sampleRate;
+    // The playback ring uses a fixed u32[4] header (16 bytes). Prefer importing
+    // `HEADER_BYTES` from `audio_worklet_ring_layout.js` in real code.
     const ringBufferBytes = 16 + capacityFrames * channelCount * Float32Array.BYTES_PER_ELEMENT;
     const ringBuffer = new SharedArrayBuffer(ringBufferBytes);
     
