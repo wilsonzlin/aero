@@ -12370,12 +12370,17 @@ HRESULT device_get_scissor_rect_impl(D3DDDI_HDEVICE hDevice, RectT* pRect, BoolT
     *pRect = {};
   }
   d3d9_write_u32(pEnabled, 0u);
-  if (!hDevice.pDrvPrivate || !pRect) {
+  // Some header/runtime combinations may pass NULL for pRect when only the
+  // enabled flag is needed. Be permissive: return E_INVALIDARG only if both
+  // outputs are missing.
+  if (!hDevice.pDrvPrivate || (!pRect && !pEnabled)) {
     return trace.ret(E_INVALIDARG);
   }
   auto* dev = as_device(hDevice);
   std::lock_guard<std::mutex> lock(dev->mutex);
-  *pRect = dev->scissor_rect;
+  if (pRect) {
+    *pRect = dev->scissor_rect;
+  }
   if (pEnabled) {
     d3d9_write_u32(pEnabled, static_cast<uint32_t>(dev->scissor_enabled));
   }
