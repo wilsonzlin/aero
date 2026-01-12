@@ -21,7 +21,9 @@ module.
   - `NotifyBase`
   - `IsrStatus`
   - `DeviceCfg`
-- Virtio 1.0 status helpers (reset/status byte)
+- Virtio 1.0 status helpers (reset/status byte). Reset is IRQL-aware in kernel
+  builds: it yields at `PASSIVE_LEVEL` and caps busy-waiting at elevated IRQL to
+  avoid long stalls in DPC/dirql contexts.
 - 64-bit feature negotiation (requires `VIRTIO_F_VERSION_1`)
 - Split-virtqueue programming helpers (desc/avail/used addresses, `queue_enable`)
 - Queue notification helper (doorbell write)

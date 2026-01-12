@@ -182,6 +182,15 @@ NTSTATUS VirtioPciModernTransportInit(VIRTIO_PCI_MODERN_TRANSPORT *Transport, co
 VOID VirtioPciModernTransportUninit(VIRTIO_PCI_MODERN_TRANSPORT *Transport);
 
 /* Virtio status helpers */
+/*
+ * Reset the device by writing device_status=0 and waiting for the device to
+ * acknowledge reset (device_status reads back 0).
+ *
+ * This helper is IRQL-aware in kernel-mode builds:
+ * - PASSIVE_LEVEL: may sleep/yield while waiting (bounded ~1s).
+ * - > PASSIVE_LEVEL: busy-waits only briefly (bounded) and returns even if the
+ *   reset handshake does not complete.
+ */
 VOID VirtioPciModernTransportResetDevice(VIRTIO_PCI_MODERN_TRANSPORT *Transport);
 UINT8 VirtioPciModernTransportGetStatus(VIRTIO_PCI_MODERN_TRANSPORT *Transport);
 VOID VirtioPciModernTransportSetStatus(VIRTIO_PCI_MODERN_TRANSPORT *Transport, UINT8 Status);

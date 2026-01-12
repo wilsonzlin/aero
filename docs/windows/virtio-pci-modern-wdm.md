@@ -89,10 +89,14 @@ In practice:
   stop/remove handling and should be called at `PASSIVE_LEVEL` (they map/unmap
   MMIO and may query PCI config).
 - `VirtioPciModernTransportNegotiateFeatures` should be called at
-  `PASSIVE_LEVEL` (it performs a reset handshake with busy-wait delays).
+  `PASSIVE_LEVEL` (it performs a device reset handshake and may sleep/yield).
 - Status/queue/config helpers are designed to be usable at `<= DISPATCH_LEVEL`
   (for example from a DPC), but queue programming is typically performed during
   start at `PASSIVE_LEVEL`.
+
+Note: the transport reset helper is IRQL-aware. In kernel-mode builds it will
+avoid long stalls at elevated IRQL by capping the busy-wait budget and returning
+even if the device does not complete the reset handshake within that budget.
 
 `common_cfg` contains selector registers (`device_feature_select`,
 `driver_feature_select`, `queue_select`). The transport creates a per-device
