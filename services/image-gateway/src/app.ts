@@ -84,7 +84,12 @@ function ifNoneMatchMatches(ifNoneMatch: string, currentEtag: string): boolean {
 function ifModifiedSinceAllowsNotModified(ifModifiedSince: string, lastModified: Date): boolean {
   const imsMillis = Date.parse(ifModifiedSince);
   if (!Number.isFinite(imsMillis)) return false;
-  return lastModified.getTime() <= imsMillis;
+  // HTTP-date has 1-second resolution. S3/MinIO may return LastModified with sub-second
+  // precision, but if we compare millisecond timestamps directly we'll sometimes fail to return
+  // 304 even when the client used our own Last-Modified header value.
+  const lastSeconds = Math.floor(lastModified.getTime() / 1000);
+  const imsSeconds = Math.floor(imsMillis / 1000);
+  return lastSeconds <= imsSeconds;
 }
 
 function assertIdentityContentEncoding(value: string | undefined): void {

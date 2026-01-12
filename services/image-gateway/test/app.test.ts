@@ -705,7 +705,9 @@ describe("app", () => {
     const ownerId = "user-1";
     const imageId = "image-1";
 
-    const lastModified = new Date("2020-01-01T00:00:00.000Z");
+    // Use sub-second precision to ensure we don't accidentally compare timestamps at millisecond
+    // resolution (HTTP-date is only second-granular).
+    const lastModified = new Date("2020-01-01T00:00:00.456Z");
     store.create({
       id: imageId,
       ownerId,
@@ -741,6 +743,62 @@ describe("app", () => {
     expect(res.headers["etag"]).toBe('"etag"');
     expect(res.headers["last-modified"]).toBe(lastModified.toUTCString());
     expect(res.headers["cache-control"]).toBe("private, no-store, no-transform");
+    expect(res.headers["cross-origin-resource-policy"]).toBe("same-site");
+  });
+
+  it("returns 304 for HEAD If-Modified-Since when last-modified is not newer", async () => {
+    const config = makeConfig();
+    const store = new MemoryImageStore();
+    const ownerId = "user-1";
+    const imageId = "image-1";
+
+    const lastModified = new Date("2020-01-01T00:00:00.789Z");
+    store.create({
+      id: imageId,
+      ownerId,
+      createdAt: new Date().toISOString(),
+      version: "v1",
+      s3Key: "images/user-1/image-1/v1/disk.img",
+      uploadId: "upload-1",
+      status: "complete",
+      etag: '"etag"',
+      lastModified: lastModified.toISOString(),
+      size: 123,
+    });
+
+    const s3 = {
+      async send(command: unknown) {
+        if (command instanceof HeadObjectCommand) {
+          return {
+            ContentLength: 123,
+            ETag: '"etag"',
+            LastModified: lastModified,
+            ContentType: "application/octet-stream",
+            CacheControl: CACHE_CONTROL_PRIVATE_NO_STORE,
+            ContentEncoding: "identity",
+          };
+        }
+        throw new Error("unexpected command");
+      },
+    } as unknown as S3Client;
+
+    const app = buildApp({ config, s3, store });
+    await app.ready();
+
+    const res = await app.inject({
+      method: "HEAD",
+      url: `/v1/images/${imageId}/range`,
+      headers: {
+        "x-user-id": ownerId,
+        "if-modified-since": lastModified.toUTCString(),
+      },
+    });
+
+    expect(res.statusCode).toBe(304);
+    expect(res.payload).toBe("");
+    expect(res.headers["etag"]).toBe('"etag"');
+    expect(res.headers["last-modified"]).toBe(lastModified.toUTCString());
+    expect(res.headers["cache-control"]).toBe(CACHE_CONTROL_PRIVATE_NO_STORE);
     expect(res.headers["cross-origin-resource-policy"]).toBe("same-site");
   });
 
