@@ -42,6 +42,24 @@ To run time-bounded:
 cargo +"$nightly" fuzz run fuzz_mmu_translate -- -max_total_time=10
 ```
 
+## Resource limits / AddressSanitizer note
+
+`cargo-fuzz` enables AddressSanitizer by default. ASan reserves a very large *virtual* address
+space region for shadow memory. If you run fuzzers under a strict `RLIMIT_AS` (virtual address
+space) limit (for example via `scripts/safe-run.sh`), the fuzz target may fail to start with an
+ASan error like:
+
+```
+ReserveShadowMemoryRange failed while trying to map ...
+```
+
+Workarounds:
+
+- Use an unlimited/high virtual address space limit when running fuzzers:
+  - `AERO_MEM_LIMIT=unlimited bash ./scripts/safe-run.sh cargo +"$nightly" fuzz run <target> -- -max_total_time=10`
+- Or disable sanitizers for that run (less bug-finding, but avoids the VA reservation):
+  - `cargo +"$nightly" fuzz run -s none <target> -- -max_total_time=10`
+
 ## Smoke runs
 
 Build all targets:
@@ -65,8 +83,14 @@ Run a bounded number of iterations:
 cd fuzz && cargo +"$nightly" fuzz run fuzz_ahci -- -runs=10000
 cd fuzz && cargo fuzz run fuzz_ahci -- -runs=10000
 
+# Targeted AHCI command list / PRDT parsing
+cd fuzz && cargo fuzz run fuzz_ahci_command -- -runs=10000
+
 # IDE (PIIX3-style, includes Bus Master IDE DMA)
 cd fuzz && cargo fuzz run fuzz_ide -- -runs=10000
+
+# Targeted Bus Master IDE PRD parsing / DMA engine
+cd fuzz && cargo fuzz run fuzz_ide_busmaster -- -runs=10000
 
 # IDE via PCI wrapper (PIIX3-style config gating + BAR4 relocation + BMIDE DMA)
 cd fuzz && cargo fuzz run fuzz_piix3_ide_pci -- -runs=10000
