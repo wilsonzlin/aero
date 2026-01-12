@@ -110,11 +110,9 @@ import { WasmHidGuestBridge, type HidGuestBridge, type HidHostSink } from "../hi
 import { WasmUhciHidGuestBridge } from "../hid/wasm_uhci_hid_guest_bridge";
 import {
   HEADER_BYTES as AUDIO_OUT_HEADER_BYTES,
-  HEADER_U32_LEN as AUDIO_OUT_HEADER_U32_LEN,
   getRingBufferLevelFrames as getAudioOutRingBufferLevelFrames,
-  OVERRUN_COUNT_INDEX as AUDIO_OUT_OVERRUN_COUNT_INDEX,
-  UNDERRUN_COUNT_INDEX as AUDIO_OUT_UNDERRUN_COUNT_INDEX,
-  requiredBytes as audioOutRequiredBytes,
+  wrapRingBuffer as wrapAudioOutRingBuffer,
+  type AudioWorkletRingBufferViews,
 } from "../audio/audio_worklet_ring";
 import {
   isHidAttachHubMessage as isHidPassthroughAttachHubMessage,
@@ -1909,7 +1907,7 @@ let micSampleRate = 0;
 // - CPU worker: demo tone / mic loopback
 // - IO worker: guest HDA device (real VM runs)
 let audioOutRingBuffer: SharedArrayBuffer | null = null;
-let audioOutHeader: Uint32Array | null = null;
+let audioOutViews: AudioWorkletRingBufferViews | null = null;
 let audioOutCapacityFrames = 0;
 let audioOutChannelCount = 0;
 let audioOutDstSampleRate = 0;
@@ -2003,6 +2001,10 @@ function attachAudioRingBuffer(
   channelCount?: number,
   dstSampleRate?: number,
 ): void {
+  const cap = (capacityFrames ?? 0) >>> 0;
+  const cc = (channelCount ?? 0) >>> 0;
+  const sr = (dstSampleRate ?? 0) >>> 0;
+
   if (ringBuffer !== null) {
     const Sab = globalThis.SharedArrayBuffer;
     if (typeof Sab === "undefined") {
@@ -2011,25 +2013,17 @@ function attachAudioRingBuffer(
     if (!(ringBuffer instanceof Sab)) {
       throw new Error("setAudioRingBuffer expects a SharedArrayBuffer or null.");
     }
+    // Validate against the canonical ring buffer layout (also creates convenient views).
     if (ringBuffer.byteLength < AUDIO_OUT_HEADER_BYTES) {
       throw new Error(`audio ring buffer is too small: need at least ${AUDIO_OUT_HEADER_BYTES} bytes`);
-    }
-
-    const cap = (capacityFrames ?? 0) >>> 0;
-    const cc = (channelCount ?? 0) >>> 0;
-    if (cap > 0 && cc > 0) {
-      const requiredBytes = audioOutRequiredBytes(cap, cc);
-      if (ringBuffer.byteLength < requiredBytes) {
-        throw new Error(`audio ring buffer is too small: need ${requiredBytes} bytes, got ${ringBuffer.byteLength} bytes`);
-      }
     }
   }
 
   audioOutRingBuffer = ringBuffer;
-  audioOutHeader = ringBuffer ? new Uint32Array(ringBuffer, 0, AUDIO_OUT_HEADER_U32_LEN) : null;
-  audioOutCapacityFrames = (capacityFrames ?? 0) >>> 0;
-  audioOutChannelCount = (channelCount ?? 0) >>> 0;
-  audioOutDstSampleRate = (dstSampleRate ?? 0) >>> 0;
+  audioOutViews = ringBuffer ? wrapAudioOutRingBuffer(ringBuffer, cap, cc) : null;
+  audioOutCapacityFrames = cap;
+  audioOutChannelCount = cc;
+  audioOutDstSampleRate = sr;
   audioOutTelemetryNextMs = 0;
 
   // If the guest HDA device is active, attach/detach the ring buffer so the WASM-side
@@ -2053,10 +2047,10 @@ function maybePublishAudioOutTelemetry(nowMs: number): void {
   // The IO worker should only publish these counters when the guest HDA device is
   // active (i.e. during real VM runs). The CPU worker owns these counters during
   // demo tone / loopback mode.
-  const header = audioOutHeader;
+  const views = audioOutViews;
   const capacityFrames = audioOutCapacityFrames;
   const hdaActive = !!currentConfig?.activeDiskImage;
-  const shouldPublish = hdaActive && !!header && capacityFrames > 0;
+  const shouldPublish = hdaActive && !!views && capacityFrames > 0;
 
   if (!shouldPublish) {
     if (audioOutTelemetryActive) {
@@ -2072,9 +2066,9 @@ function maybePublishAudioOutTelemetry(nowMs: number): void {
   audioOutTelemetryActive = true;
   if (audioOutTelemetryNextMs !== 0 && nowMs < audioOutTelemetryNextMs) return;
 
-  const bufferLevelFrames = getAudioOutRingBufferLevelFrames(header, capacityFrames);
-  const underrunCount = Atomics.load(header, AUDIO_OUT_UNDERRUN_COUNT_INDEX) >>> 0;
-  const overrunCount = Atomics.load(header, AUDIO_OUT_OVERRUN_COUNT_INDEX) >>> 0;
+  const bufferLevelFrames = getAudioOutRingBufferLevelFrames(views.header, capacityFrames);
+  const underrunCount = Atomics.load(views.underrunCount, 0) >>> 0;
+  const overrunCount = Atomics.load(views.overrunCount, 0) >>> 0;
 
   Atomics.store(status, StatusIndex.AudioBufferLevelFrames, bufferLevelFrames | 0);
   Atomics.store(status, StatusIndex.AudioUnderrunCount, underrunCount | 0);
