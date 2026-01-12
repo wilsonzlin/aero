@@ -34,6 +34,22 @@ For shared allocations, dxgkrnl preserves these bytes and returns them verbatim 
 another process opens the shared resource, so the opening UMD instance observes the
 same `share_token`.
 
+### Related metadata: preserving row pitch for cross-API consumers (DWM)
+
+In addition to `share_token`, AeroGPU also persists enough allocation metadata for safe cross-process **and cross-API**
+interop:
+
+- `alloc_id` (stable allocation ID used by the per-submit allocation table)
+- `size_bytes`
+- and (for surface allocations) an optional **row pitch** encoding
+
+The pitch metadata matters because some Win7 `OpenResource` DDI variants (notably D3D9Ex consumers such as `dwm.exe`)
+do not reliably provide a full resource description (including pitch). AeroGPU therefore propagates row pitch through the
+preserved private-data blob:
+
+- for `aerogpu_wddm_alloc_priv_v2`, via `row_pitch_bytes`
+- and for legacy consumers, via the low 32 bits of `reserved0` when the D3D9 surface descriptor marker bit is not set
+
 ### Collision policy
 
 `share_token` must be treated as a **globally unique** identifier:
