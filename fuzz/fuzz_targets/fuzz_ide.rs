@@ -141,18 +141,33 @@ fuzz_target!(|data: &[u8]| {
         Err(_) => return,
     };
 
+    // Randomize whether we attach the disk to the primary or secondary channel so we cover both
+    // port decode and bus master channel selection logic.
+    let attach_secondary: bool = u.arbitrary().unwrap_or(false);
+
     // Remaining bytes initialize guest RAM.
     let rest_len = u.len();
     let init = u.bytes(rest_len).unwrap_or(&[]);
     let mut mem = FuzzBus::new(mem_size, init);
 
     let mut ctl = IdeController::new(bus_master_base);
-    ctl.attach_primary_master_ata(drive);
+    if attach_secondary {
+        ctl.attach_secondary_master_ata(drive);
+    } else {
+        ctl.attach_primary_master_ata(drive);
+    }
 
     // Bias towards at least occasionally exercising the Bus Master DMA code paths with a
     // minimally well-formed PRD table and a DMA command.
     let synthesize_dma: bool = u.arbitrary().unwrap_or(true);
     if synthesize_dma {
+        let cmd_base = if attach_secondary {
+            SECONDARY_BASE
+        } else {
+            PRIMARY_BASE
+        };
+        let bm_chan_off: u16 = if attach_secondary { 8 } else { 0 };
+
         let dma_write: bool = u.arbitrary().unwrap_or(false);
         let sectors: u8 = (u.arbitrary::<u8>().unwrap_or(1) % 8).max(1);
         let byte_len = sectors as usize * SECTOR_SIZE;
@@ -170,10 +185,10 @@ fuzz_target!(|data: &[u8]| {
         mem.write_u16(prd_addr as u64 + 4, byte_len as u16);
         mem.write_u16(prd_addr as u64 + 6, 0x8000);
 
-        // Program Bus Master PRD base (primary channel, reg 4).
-        ctl.io_write(bus_master_base + 4, 4, prd_addr);
+        // Program Bus Master PRD base for the selected channel (reg 4).
+        ctl.io_write(bus_master_base + bm_chan_off + 4, 4, prd_addr);
 
-        // Program ATA registers for a 28-bit DMA command (primary master, LBA mode).
+        // Program ATA registers for a 28-bit DMA command (master, LBA mode).
         let lba_max = (capacity / SECTOR_SIZE as u64).saturating_sub(sectors as u64);
         let lba: u32 = if lba_max == 0 {
             0
@@ -183,21 +198,21 @@ fuzz_target!(|data: &[u8]| {
 
         // Drive/head: master + LBA bit set.
         let dev = 0xE0u8 | ((lba >> 24) as u8 & 0x0F);
-        ctl.io_write(PRIMARY_BASE + 6, 1, dev as u32);
-        ctl.io_write(PRIMARY_BASE + 2, 1, sectors as u32);
-        ctl.io_write(PRIMARY_BASE + 3, 1, (lba & 0xFF) as u32);
-        ctl.io_write(PRIMARY_BASE + 4, 1, ((lba >> 8) & 0xFF) as u32);
-        ctl.io_write(PRIMARY_BASE + 5, 1, ((lba >> 16) & 0xFF) as u32);
+        ctl.io_write(cmd_base + 6, 1, dev as u32);
+        ctl.io_write(cmd_base + 2, 1, sectors as u32);
+        ctl.io_write(cmd_base + 3, 1, (lba & 0xFF) as u32);
+        ctl.io_write(cmd_base + 4, 1, ((lba >> 8) & 0xFF) as u32);
+        ctl.io_write(cmd_base + 5, 1, ((lba >> 16) & 0xFF) as u32);
 
         // Issue ATA DMA command: READ DMA (0xC8) or WRITE DMA (0xCA).
         let cmd = if dma_write { 0xCAu8 } else { 0xC8u8 };
-        ctl.io_write(PRIMARY_BASE + 7, 1, cmd as u32);
+        ctl.io_write(cmd_base + 7, 1, cmd as u32);
 
-        // Start Bus Master engine (primary channel). Direction bit:
+        // Start Bus Master engine (selected channel). Direction bit:
         // - 1 => device -> memory (read)
         // - 0 => memory -> device (write)
         let bm_cmd = if dma_write { 0x01u32 } else { 0x09u32 };
-        ctl.io_write(bus_master_base + 0, 1, bm_cmd);
+        ctl.io_write(bus_master_base + bm_chan_off + 0, 1, bm_cmd);
 
         // Complete DMA synchronously.
         ctl.tick(&mut mem);
