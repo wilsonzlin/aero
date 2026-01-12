@@ -58,8 +58,9 @@ This section describes the *canonical* browser runtime integration.
    - constructs an `AudioWorkletNode` with `processorOptions.ringBuffer = sab`.
 2. The coordinator forwards the ring to the worker that will act as the **single producer** via `SetAudioRingBufferMessage`
    (`web/src/runtime/protocol.ts`, dispatch currently in `web/src/runtime/coordinator.ts`).
-   - Production VM path: IO worker receives this and owns the guest device model that produces audio frames.
-   - CI/demo harnesses may attach the same ring in the CPU worker (e.g. `HdaPlaybackDemo`) to validate the device model + ring plumbing.
+   - Current worker runtime: forwarded to the **CPU worker** (`WorkerCoordinator.setAudioRingBuffer` posts to `this.workers.cpu`).
+   - IO-worker integration path: when the guest audio devices (HDA/virtio-snd) are hosted in the IO worker, the coordinator should
+     forward this message to the IO worker instead so the device model can be the playback-ring producer.
    - `ringBuffer`: `SharedArrayBuffer | null` (null detaches)
    - `capacityFrames` / `channelCount`: out-of-band layout parameters
    - `dstSampleRate`: the *actual* `AudioContext.sampleRate`
