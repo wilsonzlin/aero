@@ -34,6 +34,7 @@ ROOT = repo_root()
 # not scan driver source trees where legacy identifiers may still appear.
 SCAN_PATHS: list[pathlib.Path] = [
     ROOT / "docs",
+    ROOT / "instructions",
     ROOT / "drivers" / "aerogpu" / "protocol",
     ROOT / "drivers" / "aerogpu" / "kmd" / "README.md",
     ROOT / "drivers" / "aerogpu" / "umd" / "d3d9" / "README.md",
