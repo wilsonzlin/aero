@@ -183,13 +183,32 @@ should_retry_rustc_thread_error() {
     # - "failed to spawn work thread: ... Resource temporarily unavailable"
     # - "failed to spawn coordinator thread: ... Resource temporarily unavailable"
     # - "Unable to install ctrlc handler: ... Resource temporarily unavailable"
+    # - "ThreadPoolBuildError { ... Resource temporarily unavailable }" (Rayon thread pool init)
+    # - "std::system_error: Resource temporarily unavailable" (observed from linkers like lld)
     if grep -q "Unable to install ctrlc handler" "${stderr_log}"; then
         return 0
     fi
     if grep -q "failed to create helper thread" "${stderr_log}"; then
         return 0
     fi
-    if grep -q "failed to spawn" "${stderr_log}" && grep -q "Resource temporarily unavailable" "${stderr_log}"; then
+    if grep -q "failed to spawn" "${stderr_log}" \
+        && grep -Eq "Resource temporarily unavailable|WouldBlock|os error 11|EAGAIN" "${stderr_log}"
+    then
+        return 0
+    fi
+
+    # Some failures show up wrapped as a thread pool build error rather than the direct rustc
+    # "failed to spawn helper thread" signature (e.g. Rayon global pool init).
+    if grep -q "ThreadPoolBuildError" "${stderr_log}" \
+        && grep -Eq "Resource temporarily unavailable|WouldBlock|os error 11|EAGAIN" "${stderr_log}"
+    then
+        return 0
+    fi
+
+    # Some native tools (e.g. LLVM lld) report EAGAIN thread failures as a C++ std::system_error.
+    if grep -q "std::system_error" "${stderr_log}" \
+        && grep -Eq "Resource temporarily unavailable|WouldBlock|os error 11|EAGAIN" "${stderr_log}"
+    then
         return 0
     fi
 
