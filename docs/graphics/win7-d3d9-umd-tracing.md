@@ -9,8 +9,8 @@ It is intended to answer one question during bring-up:
 The tracing implementation is **logging/introspection only**:
 
 - No allocations on hot paths
-- No file I/O
-- In-memory fixed-size buffer + a one-shot dump trigger via `OutputDebugStringA`
+- No file I/O on hot paths
+- In-memory fixed-size buffer + a one-shot dump trigger via `OutputDebugStringA` (optionally also `stderr`)
 
 Source: `drivers/aerogpu/umd/d3d9/src/aerogpu_trace.*`
 
@@ -42,6 +42,9 @@ Tracing is **disabled by default**. Enable it by setting environment variables i
   Leading/trailing whitespace around tokens is ignored.
   Note: the filter applies to both recording and dump triggers (for example, `AEROGPU_D3D9_TRACE_DUMP_ON_FAIL=1` will only fire for filtered-in entrypoints).
   Example: `AEROGPU_D3D9_TRACE_FILTER=StateBlock,ValidateDevice`
+
+- `AEROGPU_D3D9_TRACE_STDERR=1` (Windows-only; optional)  
+  By default, trace output on Windows is emitted via `OutputDebugStringA` (for DebugView/WinDbg). When this is set, the trace output is also echoed to `stderr` (useful for console repro apps and host-side unit tests).
 
 ### Common recipes
 
@@ -82,7 +85,9 @@ For small repro apps that don't call `Present`/`PresentEx` (for example `d3d9_va
 
 ## Capturing logs (DebugView)
 
-The dump uses `OutputDebugStringA`.
+The dump uses `OutputDebugStringA` by default.
+
+If you are tracing a **console app** (for example one of the Win7 guest validation tests), you can also set `AEROGPU_D3D9_TRACE_STDERR=1` so trace output appears in the console `stderr` stream.
 
 Recommended workflow on Win7:
 

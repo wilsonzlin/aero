@@ -62,12 +62,6 @@ int fail(const char* msg) {
  
 } // namespace
  
-#if defined(_WIN32)
-int main() {
-  // OutputDebugStringA isn't captured by this host-side test harness.
-  return 0;
-}
-#else
 int main() {
   const std::string out_path = make_unique_log_path("aerogpu_d3d9_trace_dump_on_fail_filtered_tests");
   if (!std::freopen(out_path.c_str(), "w", stderr)) {
@@ -79,6 +73,9 @@ int main() {
   set_env("AEROGPU_D3D9_TRACE_MAX", "64");
   set_env("AEROGPU_D3D9_TRACE_FILTER", "ValidateDevice");
   set_env("AEROGPU_D3D9_TRACE_DUMP_ON_FAIL", "1");
+  // On Windows, the trace defaults to OutputDebugStringA; enable stderr echo so
+  // we can capture output portably.
+  set_env("AEROGPU_D3D9_TRACE_STDERR", "1");
   set_env("AEROGPU_D3D9_TRACE_DUMP_ON_DETACH", "0");
   set_env("AEROGPU_D3D9_TRACE_DUMP_PRESENT", "0");
  
@@ -123,4 +120,3 @@ int main() {
   std::remove(out_path.c_str());
   return 0;
 }
-#endif

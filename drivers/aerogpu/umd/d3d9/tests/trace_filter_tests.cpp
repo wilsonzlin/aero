@@ -63,14 +63,6 @@ int fail(const char* msg) {
  
 } // namespace
  
-#if defined(_WIN32)
-// The trace backend uses OutputDebugStringA on Windows, making it difficult to
-// capture the output in a portable unit test. The functional paths are still
-// exercised by guest-side tests; skip this host-only test on Windows.
-int main() {
-  return 0;
-}
-#else
 int main() {
   const std::string out_path = make_unique_log_path("aerogpu_d3d9_trace_filter_tests");
   if (!std::freopen(out_path.c_str(), "w", stderr)) {
@@ -80,6 +72,9 @@ int main() {
   set_env("AEROGPU_D3D9_TRACE", "1");
   set_env("AEROGPU_D3D9_TRACE_MODE", "all");
   set_env("AEROGPU_D3D9_TRACE_MAX", "64");
+  // On Windows, the trace defaults to OutputDebugStringA; enable stderr echo so
+  // we can capture output portably.
+  set_env("AEROGPU_D3D9_TRACE_STDERR", "1");
   // Exercise whitespace trimming + case-insensitive matching, and ensure unknown
   // tokens do not break filtering.
   set_env("AEROGPU_D3D9_TRACE_FILTER", "  validateDEVICE , does_not_exist  ");
@@ -121,4 +116,3 @@ int main() {
   std::remove(out_path.c_str());
   return 0;
 }
-#endif

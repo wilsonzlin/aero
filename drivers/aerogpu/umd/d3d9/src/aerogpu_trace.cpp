@@ -36,6 +36,7 @@ uint32_t g_trace_max_records = kTraceCapacity;
 uint32_t g_trace_dump_present_count = 0;
 bool g_trace_dump_on_detach = false;
 bool g_trace_dump_on_fail = false;
+bool g_trace_stderr_enabled = false;
 
 std::atomic<uint32_t> g_trace_write_index{0};
 D3d9TraceRecord g_trace_records[kTraceCapacity]{};
@@ -117,6 +118,9 @@ void trace_out(const char* s) {
   }
 #if defined(_WIN32)
   OutputDebugStringA(s);
+  if (g_trace_stderr_enabled) {
+    fputs(s, stderr);
+  }
 #else
   fputs(s, stderr);
 #endif
@@ -629,6 +633,7 @@ void d3d9_trace_init_from_env() {
   g_trace_dump_present_count = env_u32("AEROGPU_D3D9_TRACE_DUMP_PRESENT", 0);
   g_trace_dump_on_detach = env_bool("AEROGPU_D3D9_TRACE_DUMP_ON_DETACH");
   g_trace_dump_on_fail = env_bool("AEROGPU_D3D9_TRACE_DUMP_ON_FAIL");
+  g_trace_stderr_enabled = env_bool("AEROGPU_D3D9_TRACE_STDERR");
 
   char filter[512] = {};
   if (env_get("AEROGPU_D3D9_TRACE_FILTER", filter, sizeof(filter))) {
