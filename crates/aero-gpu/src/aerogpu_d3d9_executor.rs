@@ -5498,8 +5498,16 @@ impl AerogpuD3d9Executor {
                         texture,
                         mip,
                         layer,
-                        mip_w,
-                        mip_h,
+                        if dst_is_bc {
+                            align_to(mip_w, src_block.block_width)
+                        } else {
+                            mip_w
+                        },
+                        if dst_is_bc {
+                            align_to(mip_h, src_block.block_height)
+                        } else {
+                            mip_h
+                        },
                         &upload,
                         upload_bpr,
                         src_rows,
