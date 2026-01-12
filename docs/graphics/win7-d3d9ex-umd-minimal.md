@@ -536,7 +536,21 @@ Goal: confirm that your “minimal subset” matches what DWM actually calls, an
 
 ### 6.1 UMD-side instrumentation (fastest feedback loop)
 
-Add structured logging at every DDI entrypoint:
+Add structured logging at every DDI entrypoint.
+
+In this repo, the AeroGPU D3D9 UMD already includes an **in-process DDI call trace facility** (ring buffer + one-shot dump triggers):
+
+* `docs/graphics/win7-d3d9-umd-tracing.md`
+
+For example, to quickly identify the first stubbed DDI hit:
+
+```cmd
+set AEROGPU_D3D9_TRACE=1
+set AEROGPU_D3D9_TRACE_MODE=unique
+set AEROGPU_D3D9_TRACE_FILTER=stub
+set AEROGPU_D3D9_TRACE_DUMP_ON_STUB=1
+set AEROGPU_D3D9_TRACE_DUMP_ON_DETACH=1
+```
 
 * Print:
   * function name,
