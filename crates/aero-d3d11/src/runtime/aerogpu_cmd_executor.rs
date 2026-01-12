@@ -4858,14 +4858,24 @@ impl AerogpuD3d11Executor {
             (width, height)
         };
 
-        // If the destination is guest-backed and dirty and we're only overwriting a sub-rectangle
-        // of the destination subresource, upload it now so the untouched pixels remain correct.
+        // If the destination is guest-backed and dirty, we need to preserve guest-memory contents
+        // that are *not* overwritten by the copy:
+        // - within the destination subresource (partial rectangle updates), and
+        // - in other mips/array layers (the dirty flag is coarse and we do not track per-subresource
+        //   dirtiness).
+        //
+        // Since COPY_TEXTURE2D clears the destination's dirty marker (to prevent overwriting the
+        // copy with stale guest bytes), we must upload from guest memory first unless the copy
+        // completely overwrites the entire texture (single-subresource full copy).
         //
         // Note: the texture dirty flag is coarse (we don't track per-mip/per-layer dirtiness), so
         // uploading here refreshes all subresources from guest memory.
+        let dst_has_other_subresources = dst_desc.mip_level_count != 1 || dst_desc.array_layers != 1;
+        let copy_overwrites_entire_subresource =
+            dst_x == 0 && dst_y == 0 && width == dst_w && height == dst_h;
         let needs_dst_upload = dst_backing.is_some()
             && dst_dirty
-            && !(dst_x == 0 && dst_y == 0 && width == dst_w && height == dst_h);
+            && (dst_has_other_subresources || !copy_overwrites_entire_subresource);
 
         let writeback_plan = if writeback {
             let dst_backing = dst_backing.ok_or_else(|| {
@@ -9354,6 +9364,153 @@ mod tests {
             assert_eq!(
                 out, expected,
                 "COPY_TEXTURE2D into a dirty guest-backed destination must preserve untouched pixels by uploading from guest memory first"
+            );
+        });
+    }
+
+    #[test]
+    fn copy_texture2d_uploads_dirty_guest_backed_dst_when_other_subresources_exist() {
+        pollster::block_on(async {
+            let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+                Ok(exec) => exec,
+                Err(e) => {
+                    skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                    return;
+                }
+            };
+
+            const SRC_TEX: u32 = 1;
+            const DST_TEX: u32 = 2;
+            const SRC_ALLOC_ID: u32 = 1;
+            const DST_ALLOC_ID: u32 = 2;
+            const SRC_GPA: u64 = 0x1000;
+            const DST_GPA: u64 = 0x2000;
+
+            let width = 4u32;
+            let height = 4u32;
+            let mip_levels = 2u32;
+            let array_layers = 1u32;
+            let row_pitch_bytes = width * 4;
+
+            let layout = compute_guest_texture_layout(
+                AEROGPU_FORMAT_R8G8B8A8_UNORM,
+                width,
+                height,
+                mip_levels,
+                array_layers,
+                row_pitch_bytes,
+            )
+            .expect("compute guest layout");
+
+            let allocs = [
+                AerogpuAllocEntry {
+                    alloc_id: SRC_ALLOC_ID,
+                    flags: 0,
+                    gpa: SRC_GPA,
+                    size_bytes: layout.total_size,
+                    reserved0: 0,
+                },
+                AerogpuAllocEntry {
+                    alloc_id: DST_ALLOC_ID,
+                    flags: 0,
+                    gpa: DST_GPA,
+                    size_bytes: layout.total_size,
+                    reserved0: 0,
+                },
+            ];
+            let allocs = AllocTable::new(Some(&allocs)).unwrap();
+
+            let mut guest_mem = VecGuestMemory::new(0x10_000);
+
+            let mip0_offset = layout.mip_offsets[0] as usize;
+            let mip0_size =
+                (layout.mip_row_pitches[0] as usize) * (layout.mip_rows[0] as usize);
+            let mip1_offset = layout.mip_offsets[1] as usize;
+            let mip1_size =
+                (layout.mip_row_pitches[1] as usize) * (layout.mip_rows[1] as usize);
+
+            // Source: mip1 pattern 0xAA.
+            let mut src_bytes = vec![0u8; layout.total_size as usize];
+            src_bytes[mip1_offset..mip1_offset + mip1_size].fill(0xAA);
+            guest_mem.write(SRC_GPA, &src_bytes).unwrap();
+
+            // Destination: mip0 pattern 0x11, mip1 pattern 0x22.
+            let mut dst_bytes = vec![0u8; layout.total_size as usize];
+            dst_bytes[mip0_offset..mip0_offset + mip0_size].fill(0x11);
+            dst_bytes[mip1_offset..mip1_offset + mip1_size].fill(0x22);
+            guest_mem.write(DST_GPA, &dst_bytes).unwrap();
+
+            // Create SRC and DST as guest-backed RGBA8 textures with 2 mips.
+            for (handle, alloc_id) in [(SRC_TEX, SRC_ALLOC_ID), (DST_TEX, DST_ALLOC_ID)] {
+                let mut create = Vec::new();
+                create.extend_from_slice(&(AerogpuCmdOpcode::CreateTexture2d as u32).to_le_bytes());
+                create.extend_from_slice(&56u32.to_le_bytes());
+                create.extend_from_slice(&handle.to_le_bytes());
+                create.extend_from_slice(&AEROGPU_RESOURCE_USAGE_TEXTURE.to_le_bytes());
+                create.extend_from_slice(&AEROGPU_FORMAT_R8G8B8A8_UNORM.to_le_bytes());
+                create.extend_from_slice(&width.to_le_bytes());
+                create.extend_from_slice(&height.to_le_bytes());
+                create.extend_from_slice(&mip_levels.to_le_bytes());
+                create.extend_from_slice(&array_layers.to_le_bytes());
+                create.extend_from_slice(&row_pitch_bytes.to_le_bytes());
+                create.extend_from_slice(&alloc_id.to_le_bytes()); // backing_alloc_id
+                create.extend_from_slice(&0u32.to_le_bytes()); // backing_offset_bytes
+                create.extend_from_slice(&0u64.to_le_bytes()); // reserved0
+                assert_eq!(create.len(), 56);
+                exec.exec_create_texture2d(&create, &allocs)
+                    .expect("CREATE_TEXTURE2D should succeed");
+            }
+
+            // Copy the full mip1 subresource (2x2) from SRC to DST.
+            let mut copy = Vec::new();
+            copy.extend_from_slice(&(AerogpuCmdOpcode::CopyTexture2d as u32).to_le_bytes());
+            copy.extend_from_slice(&64u32.to_le_bytes());
+            copy.extend_from_slice(&DST_TEX.to_le_bytes());
+            copy.extend_from_slice(&SRC_TEX.to_le_bytes());
+            copy.extend_from_slice(&1u32.to_le_bytes()); // dst_mip_level
+            copy.extend_from_slice(&0u32.to_le_bytes()); // dst_array_layer
+            copy.extend_from_slice(&1u32.to_le_bytes()); // src_mip_level
+            copy.extend_from_slice(&0u32.to_le_bytes()); // src_array_layer
+            copy.extend_from_slice(&0u32.to_le_bytes()); // dst_x
+            copy.extend_from_slice(&0u32.to_le_bytes()); // dst_y
+            copy.extend_from_slice(&0u32.to_le_bytes()); // src_x
+            copy.extend_from_slice(&0u32.to_le_bytes()); // src_y
+            copy.extend_from_slice(&2u32.to_le_bytes()); // width
+            copy.extend_from_slice(&2u32.to_le_bytes()); // height
+            copy.extend_from_slice(&0u32.to_le_bytes()); // flags
+            copy.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+            assert_eq!(copy.len(), 64);
+
+            let mut encoder = exec
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("aerogpu_cmd test copy full mip1 encoder"),
+                });
+            let mut pending_writebacks = Vec::new();
+            exec.exec_copy_texture2d(
+                &mut encoder,
+                &copy,
+                &allocs,
+                &mut guest_mem,
+                &mut pending_writebacks,
+            )
+            .expect("COPY_TEXTURE2D should succeed");
+            assert!(
+                pending_writebacks.is_empty(),
+                "test does not request WRITEBACK_DST"
+            );
+            exec.submit_encoder(&mut encoder, "aerogpu_cmd test copy full mip1 submit");
+            exec.poll_wait();
+
+            // Ensure the untouched mip0 subresource is still populated from guest memory.
+            let bytes = exec
+                .read_texture_rgba8(DST_TEX)
+                .await
+                .expect("read_texture_rgba8");
+            assert_eq!(
+                bytes,
+                vec![0x11u8; (width * height * 4) as usize],
+                "COPY_TEXTURE2D into a dirty guest-backed texture must upload guest memory first when other subresources exist"
             );
         });
     }
