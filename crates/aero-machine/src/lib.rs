@@ -2028,6 +2028,28 @@ impl Machine {
         Ok(())
     }
 
+    /// Attach the machine's canonical [`SharedDisk`] to AHCI port 0 (if AHCI is enabled).
+    ///
+    /// This makes firmware INT13 disk reads and AHCI DMA observe the same underlying bytes.
+    ///
+    /// If the AHCI controller is not present, this is a no-op and returns `Ok(())`.
+    ///
+    /// This method is idempotent: once the shared disk is attached/configured for port 0, further
+    /// calls will not replace the existing drive.
+    pub fn attach_shared_disk_to_ahci_port0(&mut self) -> std::io::Result<()> {
+        let Some(ahci) = &self.ahci else {
+            return Ok(());
+        };
+        if self.ahci_port0_auto_attach_shared_disk {
+            return Ok(());
+        }
+
+        let drive = AtaDrive::new(Box::new(self.disk.clone()))?;
+        ahci.borrow_mut().attach_drive(0, drive);
+        self.ahci_port0_auto_attach_shared_disk = true;
+        Ok(())
+    }
+
     /// Detach any drive currently attached to the canonical AHCI port 0.
     pub fn detach_ahci_drive_port0(&mut self) {
         let Some(ahci) = self.ahci.as_ref() else {
