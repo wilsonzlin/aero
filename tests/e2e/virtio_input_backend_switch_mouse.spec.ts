@@ -144,6 +144,26 @@ test("IO worker switches mouse input from PS/2 (i8042 AUX packets) to virtio-inp
       await recyclePromise;
     };
 
+    const sendMouseButtonsBatch = async (buttons: number): Promise<void> => {
+      const count = 1;
+      const buf = new ArrayBuffer((2 + count * 4) * 4);
+      const words = new Int32Array(buf);
+      words[0] = count | 0;
+      words[1] = 0;
+      const base = 2;
+      words[base + 0] = 3; // InputEventType.MouseButtons
+      words[base + 1] = 0;
+      words[base + 2] = buttons | 0;
+      words[base + 3] = 0;
+
+      const recyclePromise = waitForIoMessage((data) => {
+        if (!data || typeof data !== "object") return false;
+        return (data as { type?: unknown }).type === "in:input-batch-recycle";
+      });
+      ioWorker.postMessage({ type: "in:input-batch", buffer: buf, recycle: true }, [buf]);
+      await recyclePromise;
+    };
+
     const cpuWorkerCode = `
       import { openRingByKind } from "${location.origin}/web/src/ipc/ipc.ts";
       import { IO_IPC_CMD_QUEUE_KIND, IO_IPC_EVT_QUEUE_KIND } from "${location.origin}/web/src/runtime/shared_layout.ts";
@@ -343,12 +363,15 @@ test("IO worker switches mouse input from PS/2 (i8042 AUX packets) to virtio-inp
           return { virtioOk, idDword, subsysDword, foundMouseBdf };
         }
 
-        // Enable memory decoding (PCI command bit1) so BAR-backed MMIO is active.
-        cfgWriteU16(0x04, cfgReadU16(0x04) | 0x0002);
+         // Enable memory decoding (PCI command bit1) + bus mastering (bit2) so BAR-backed MMIO is
+         // active and the device is allowed to DMA into guest memory (virtqueue reads/writes).
+         cfgWriteU16(0x04, cfgReadU16(0x04) | 0x0006);
 
         const bar0Low = cfgReadU32(0x10);
         const bar0High = cfgReadU32(0x14);
-        bar0Base = (BigInt(bar0High) << 32n) | BigInt(bar0Low & 0xffff_fff0);
+         // Note: avoid bitwise ops on numbers here because JS bitwise ops use signed i32 and can produce a
+         // negative value for addresses >= 2^31.
+         bar0Base = (BigInt(bar0High) << 32n) | (BigInt(bar0Low) & 0xffff_fff0n);
 
         const commonBase = bar0Base + 0x0000n;
         const deviceStatusBefore = mmioReadU8(commonBase + 0x14n);
@@ -356,13 +379,13 @@ test("IO worker switches mouse input from PS/2 (i8042 AUX packets) to virtio-inp
         return { virtioOk, idDword, subsysDword, foundMouseBdf, bar0Low, bar0High, deviceStatusBefore };
       }
 
-      function virtioInitAndSetupQueue0() {
-        const commonBase = bar0Base + 0x0000n;
-        const notifyBase = bar0Base + 0x1000n;
+       function virtioInitAndSetupQueue0() {
+         const commonBase = bar0Base + 0x0000n;
+         const notifyBase = bar0Base + 0x1000n;
 
-        // Virtio modern init.
-        mmioWriteU8(commonBase + 0x14n, VIRTIO_STATUS_ACKNOWLEDGE);
-        mmioWriteU8(commonBase + 0x14n, VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER);
+         // Virtio modern init.
+         mmioWriteU8(commonBase + 0x14n, VIRTIO_STATUS_ACKNOWLEDGE);
+         mmioWriteU8(commonBase + 0x14n, VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER);
 
         for (const sel of [0, 1]) {
           mmioWriteU32(commonBase + 0x00n, sel);
@@ -371,15 +394,10 @@ test("IO worker switches mouse input from PS/2 (i8042 AUX packets) to virtio-inp
           mmioWriteU32(commonBase + 0x0cn, f);
         }
 
+        // FEATURES_OK: the driver has accepted the feature set.
         mmioWriteU8(commonBase + 0x14n, VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK);
-        mmioWriteU8(
-          commonBase + 0x14n,
-          VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK | VIRTIO_STATUS_DRIVER_OK,
-        );
 
-        const deviceStatusAfter = mmioReadU8(commonBase + 0x14n);
-
-        // Queue config (eventq = queue 0).
+        // Queue config (eventq = queue 0). Do this before DRIVER_OK (spec-correct).
         descBase = 0x1000;
         availBase = 0x2000;
         usedBase = 0x3000;
@@ -418,6 +436,13 @@ test("IO worker switches mouse input from PS/2 (i8042 AUX packets) to virtio-inp
           guestWriteU32(usedBase + 4 + i * 8 + 4, 0);
         }
 
+        // DRIVER_OK: the driver is ready; the device can now start processing queues.
+        mmioWriteU8(
+          commonBase + 0x14n,
+          VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK | VIRTIO_STATUS_DRIVER_OK,
+        );
+        const deviceStatusAfter = mmioReadU8(commonBase + 0x14n);
+
         // Notify queue 0 (notify_off_multiplier is fixed to 4 in contract v1).
         mmioWriteU16(notifyBase + BigInt((notifyOff >>> 0) * 4), 0);
         usedIdxBefore = guestReadU16(usedBase + 2);
@@ -427,11 +452,54 @@ test("IO worker switches mouse input from PS/2 (i8042 AUX packets) to virtio-inp
 
       function collectAfterPhase2() {
         const i8042 = drainI8042();
+        const startIdx = usedIdxBefore;
 
         const deadline = (typeof performance?.now === "function" ? performance.now() : Date.now()) + 2_000;
         let usedIdxAfter = guestReadU16(usedBase + 2);
         while (usedIdxAfter === usedIdxBefore && (typeof performance?.now === "function" ? performance.now() : Date.now()) < deadline) {
           usedIdxAfter = guestReadU16(usedBase + 2);
+        }
+        if (usedIdxAfter === usedIdxBefore) {
+          // Provide some diagnostics to make failures actionable.
+          let deviceStatus = 0;
+          let pciCommand = 0;
+          let queueEnable = 0;
+          let bar0Low = 0;
+          let bar0High = 0;
+          try {
+            const commonBase = bar0Base + 0x0000n;
+            deviceStatus = mmioReadU8(commonBase + 0x14n);
+            queueEnable = mmioReadU16(commonBase + 0x1cn);
+          } catch {
+            deviceStatus = 0;
+            queueEnable = 0;
+          }
+          try {
+            pciCommand = cfgReadU16(0x04);
+          } catch {
+            pciCommand = 0;
+          }
+          try {
+            bar0Low = cfgReadU32(0x10);
+            bar0High = cfgReadU32(0x14);
+          } catch {
+            bar0Low = 0;
+            bar0High = 0;
+          }
+          throw new Error(
+            [
+              "Timed out waiting for virtio-input used.idx to advance after injection.",
+              "usedIdxBefore=" + usedIdxBefore + " usedIdxAfter=" + usedIdxAfter,
+              "bar0Base=0x" + bar0Base.toString(16) + " bar0Low=0x" + bar0Low.toString(16) + " bar0High=0x" + bar0High.toString(16),
+              "pciCommand=0x" +
+                pciCommand.toString(16) +
+                " deviceStatus=0x" +
+                deviceStatus.toString(16) +
+                " queueEnable=" +
+                queueEnable,
+              "i8042Bytes=" + i8042.bytes.length,
+            ].join(" "),
+          );
         }
 
         const delta = (usedIdxAfter - usedIdxBefore) & 0xffff;
@@ -446,7 +514,9 @@ test("IO worker switches mouse input from PS/2 (i8042 AUX packets) to virtio-inp
           events.push(ev);
         }
 
-        return { i8042, usedIdxBefore, usedIdxAfter, delta, used, events };
+        // Advance the cursor so subsequent calls read only newly-produced events.
+        usedIdxBefore = usedIdxAfter;
+        return { i8042, usedIdxBefore: startIdx, usedIdxAfter, delta, used, events };
       }
 
       function isEvent(ev, type_, code, value) {
@@ -575,9 +645,15 @@ test("IO worker switches mouse input from PS/2 (i8042 AUX packets) to virtio-inp
       // Phase 2: guest completes virtio init + DRIVER_OK; mouse goes through virtio-input eventq.
       const virtioInit = await cpuCall("virtioInit");
       await sendMouseMoveBatch(dx, dyPs2);
-      const phase2 = await cpuCall("collectAfterPhase2");
+      const phase2Move = await cpuCall("collectAfterPhase2");
 
-      return { initRes, dx, dyPs2, phase1, virtioInit, phase2 };
+      // Optional: verify button events also route exclusively to virtio-input post-switch.
+      await sendMouseButtonsBatch(0x01);
+      const phase2BtnDown = await cpuCall("collectAfterPhase2");
+      await sendMouseButtonsBatch(0x00);
+      const phase2BtnUp = await cpuCall("collectAfterPhase2");
+
+      return { initRes, dx, dyPs2, phase1, virtioInit, phase2Move, phase2BtnDown, phase2BtnUp };
     } finally {
       cpuWorker.terminate();
       ioWorker.terminate();
@@ -596,16 +672,34 @@ test("IO worker switches mouse input from PS/2 (i8042 AUX packets) to virtio-inp
 
   // After virtio DRIVER_OK and queue provisioning, i8042 should be quiet.
   expect(result.virtioInit.deviceStatusAfter & 0x0f).toBe(0x0f);
-  expect(result.phase2.i8042.bytes).toEqual([]);
+  expect(result.phase2Move.i8042.bytes).toEqual([]);
 
   // For a single mouse move, expect EV_REL(REL_X), EV_REL(REL_Y), EV_SYN(SYN_REPORT).
-  expect(result.phase2.delta).toBe(3);
-  expect(result.phase2.used.map((u: { len: number }) => u.len)).toEqual([8, 8, 8]);
+  expect(result.phase2Move.delta).toBe(3);
+  expect(result.phase2Move.used.map((u: { len: number }) => u.len)).toEqual([8, 8, 8]);
 
-  expect(result.phase2.events).toEqual([
+  expect(result.phase2Move.events).toEqual([
     { type_: 2, code: 0, value: result.dx },
     // IO worker flips dy (PS/2 up => virtio down).
     { type_: 2, code: 1, value: -result.dyPs2 },
+    { type_: 0, code: 0, value: 0 },
+  ]);
+
+  // Button down: EV_KEY(BTN_LEFT=0x110), EV_SYN(SYN_REPORT).
+  expect(result.phase2BtnDown.i8042.bytes).toEqual([]);
+  expect(result.phase2BtnDown.delta).toBe(2);
+  expect(result.phase2BtnDown.used.map((u: { len: number }) => u.len)).toEqual([8, 8]);
+  expect(result.phase2BtnDown.events).toEqual([
+    { type_: 1, code: 0x110, value: 1 },
+    { type_: 0, code: 0, value: 0 },
+  ]);
+
+  // Button up: EV_KEY(BTN_LEFT=0x110), EV_SYN(SYN_REPORT).
+  expect(result.phase2BtnUp.i8042.bytes).toEqual([]);
+  expect(result.phase2BtnUp.delta).toBe(2);
+  expect(result.phase2BtnUp.used.map((u: { len: number }) => u.len)).toEqual([8, 8]);
+  expect(result.phase2BtnUp.events).toEqual([
+    { type_: 1, code: 0x110, value: 0 },
     { type_: 0, code: 0, value: 0 },
   ]);
 });

@@ -284,13 +284,15 @@ test("IO worker switches keyboard input from i8042 scancodes to virtio-input aft
               throw new Error("Unexpected virtio-input fn0 ID: 0x" + (idFn0 >>> 0).toString(16));
             }
 
-            // Enable memory decoding.
-            const cmdReg = pciRead16(io, 0, 10, 0, 0x04);
-            pciWrite16(io, 0, 10, 0, 0x04, cmdReg | 0x2);
+             // Enable PCI memory decoding (bit1) + bus mastering (DMA, bit2).
+             const cmdReg = pciRead16(io, 0, 10, 0, 0x04);
+             pciWrite16(io, 0, 10, 0, 0x04, cmdReg | 0x6);
 
             const bar0Lo = pciRead32(io, 0, 10, 0, 0x10);
             const bar0Hi = pciRead32(io, 0, 10, 0, 0x14);
-            const bar0Base = (BigInt(bar0Hi >>> 0) << 32n) | BigInt(bar0Lo & 0xffff_fff0);
+            // Note: avoid bitwise ops on numbers here because JS bitwise ops use signed i32 and can
+            // produce a negative value for addresses >= 2^31.
+            const bar0Base = (BigInt(bar0Hi >>> 0) << 32n) | (BigInt(bar0Lo) & 0xffff_fff0n);
 
             const commonBase = bar0Base + 0x0000n;
             const notifyBase = bar0Base + 0x1000n;
@@ -305,9 +307,8 @@ test("IO worker switches keyboard input from i8042 scancodes to virtio-input aft
               mmioWriteU32(commonBase + 0x0cn, f);
             }
             mmioWriteU8(commonBase + 0x14n, VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK);
-            mmioWriteU8(commonBase + 0x14n, VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK | VIRTIO_STATUS_DRIVER_OK);
 
-            // Queue 0 config (eventq).
+            // Queue 0 config (eventq). Do this before DRIVER_OK (spec-correct).
             const desc = 0x1000;
             const avail = 0x2000;
             const used = 0x3000;
@@ -347,6 +348,9 @@ test("IO worker switches keyboard input from i8042 scancodes to virtio-input aft
               guestWriteU32(used + 4 + i * 8 + 0, 0);
               guestWriteU32(used + 4 + i * 8 + 4, 0);
             }
+
+            // DRIVER_OK: the driver is ready; the device can now start processing queues.
+            mmioWriteU8(commonBase + 0x14n, VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK | VIRTIO_STATUS_DRIVER_OK);
 
             // Notify queue 0 (notify_off_multiplier is fixed to 4 in contract v1).
             mmioWriteU16(notifyBase + BigInt((notifyOff >>> 0) * 4), 0);
