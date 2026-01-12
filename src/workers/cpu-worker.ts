@@ -594,7 +594,15 @@ async function runTieredVm(iterations: number, threshold: number) {
     const tableIndex = existingIndex ?? allocTableIndex();
     jitFns[tableIndex] = block as (cpu_ptr: number, jit_ctx_ptr: number) => bigint;
 
-    const evicted = vm.install_tier1_block(BigInt(entryRipU32), tableIndex, BigInt(entryRipU32), resp.meta.code_byte_len);
+    // wasm-bindgen APIs differ across versions: older builds returned a list of evicted RIPs
+    // from `install_tier1_block`, while newer builds return `void`. Capture as `unknown` so
+    // we can best-effort free table indices without breaking typecheck.
+    const evicted: unknown = vm.install_tier1_block(
+      BigInt(entryRipU32),
+      tableIndex,
+      BigInt(entryRipU32),
+      resp.meta.code_byte_len,
+    ) as unknown;
     installedByRip.set(entryRipU32, tableIndex);
 
     // If the JIT cache evicted older blocks, free their table indices so they can be reused.
@@ -618,7 +626,7 @@ async function runTieredVm(iterations: number, threshold: number) {
     } else if (evicted && typeof evicted === 'object' && ArrayBuffer.isView(evicted)) {
       // Older WASM builds may return a typed array (e.g. Uint32Array).
       // Some runtimes may also use BigInt typed arrays; handle both.
-      const view = evicted as ArrayLike<unknown>;
+      const view = evicted as unknown as ArrayLike<unknown>;
       const len = (view as { length?: unknown }).length;
       if (typeof len === 'number' && Number.isFinite(len) && len > 0) {
         for (let i = 0; i < len; i++) {
