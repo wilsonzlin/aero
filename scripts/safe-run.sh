@@ -258,6 +258,11 @@ should_retry_rustc_thread_error() {
     if grep -q "fork: retry: Resource temporarily unavailable" "${stderr_log}"; then
         return 0
     fi
+    if grep -q "could not execute process" "${stderr_log}" \
+        && grep -Eq "Resource temporarily unavailable|WouldBlock|os error 11|EAGAIN" "${stderr_log}"
+    then
+        return 0
+    fi
     if grep -q "failed to spawn" "${stderr_log}" \
         && grep -Eq "Resource temporarily unavailable|WouldBlock|os error 11|EAGAIN" "${stderr_log}"
     then
