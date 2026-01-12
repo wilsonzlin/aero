@@ -36,6 +36,23 @@ declare global {
         traceEnabled?: boolean;
       };
     };
+
+    /**
+     * E2E-visible state for the legacy `/web/index.html` canonical Machine panel.
+     */
+    __aeroMachinePanelTest?: {
+      ready: boolean;
+      vgaSupported: boolean;
+      framesPresented: number;
+      sharedFramesPublished?: number;
+      error: string | null;
+    };
+
+    /**
+     * Optional SharedArrayBuffer-backed framebuffer published by the legacy `/web/index.html`
+     * canonical Machine panel (RGBA8888 + header defined by `display/framebuffer_protocol.ts`).
+     */
+    __aeroMachineVgaFramebuffer?: SharedArrayBuffer;
   }
 
   /**
