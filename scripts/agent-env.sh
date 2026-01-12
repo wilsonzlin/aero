@@ -310,6 +310,39 @@ fi
 # Node.js - cap V8 heap to avoid runaway memory.
 # Keep any existing NODE_OPTIONS (e.g. --import hooks) while ensuring we have a
 # sane max-old-space-size set.
+# Node does *not* allow `--test-concurrency` in NODE_OPTIONS; strip it defensively so
+# `node` invocations work even if the outer environment (or older scripts) injected it.
+if [[ "${NODE_OPTIONS:-}" == *"--test-concurrency"* ]]; then
+  aero_node_options=()
+  # shellcheck disable=SC2206
+  aero_node_options=(${NODE_OPTIONS})
+  new_node_options=()
+  i=0
+  while [[ $i -lt ${#aero_node_options[@]} ]]; do
+    tok="${aero_node_options[$i]}"
+    if [[ "${tok}" == "--test-concurrency="* ]]; then
+      i=$((i + 1))
+      continue
+    fi
+    if [[ "${tok}" == "--test-concurrency" ]]; then
+      # Also drop the next token if it looks like a value (not another flag).
+      if [[ $((i + 1)) -lt ${#aero_node_options[@]} ]]; then
+        next="${aero_node_options[$((i + 1))]}"
+        if [[ "${next}" != "-"* ]]; then
+          i=$((i + 2))
+          continue
+        fi
+      fi
+      i=$((i + 1))
+      continue
+    fi
+    new_node_options+=("${tok}")
+    i=$((i + 1))
+  done
+  export NODE_OPTIONS="${new_node_options[*]}"
+  export NODE_OPTIONS="${NODE_OPTIONS# }"
+  unset aero_node_options new_node_options tok next i 2>/dev/null || true
+fi
 if [[ "${NODE_OPTIONS:-}" != *"--max-old-space-size="* ]]; then
   export NODE_OPTIONS="${NODE_OPTIONS:-} --max-old-space-size=4096"
   export NODE_OPTIONS="${NODE_OPTIONS# }"
