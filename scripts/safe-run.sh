@@ -44,7 +44,10 @@ should_retry_rustc_thread_error() {
     # Some panic renderings wrap/line-wrap the `Os { ... }` struct or the unwrap header such that it
     # no longer appears on a single line. Treat the entire stderr log as one line (newlines -> spaces)
     # and retry if the near-exact unwrap(EAGAIN) signature matches.
-    if tr '\n' ' ' < "${stderr_log}" | grep -Eq "${unwrap_eagain_re}"; then
+    #
+    # Use process substitution (instead of a pipe) so the match result doesn't depend on `pipefail`
+    # semantics if the upstream `tr` exits early due to SIGPIPE after `grep -q` finds a match.
+    if grep -Eq "${unwrap_eagain_re}" <(tr '\n' ' ' < "${stderr_log}"); then
         return 0
     fi
     if grep -Eq "thread 'rustc' panicked|panicked at" "${stderr_log}" \
