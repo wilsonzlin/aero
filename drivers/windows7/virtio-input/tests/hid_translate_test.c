@@ -138,12 +138,18 @@ static void test_keyboard_function_key_f1_report(void) {
   cap_clear(&cap);
   hid_translate_init(&t, capture_emit, &cap);
 
-  /* Press F1, flush. */
+  /* Press+release F1, flushing after each. */
   send_key(&t, VIRTIO_INPUT_KEY_F1, 1);
   send_syn(&t);
 
   uint8_t expect1[HID_TRANSLATE_KEYBOARD_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_KEYBOARD, 0, 0, 0x3A, 0, 0, 0, 0, 0};
   expect_report(&cap, 0, expect1, sizeof(expect1));
+
+  send_key(&t, VIRTIO_INPUT_KEY_F1, 0);
+  send_syn(&t);
+
+  uint8_t expect2[HID_TRANSLATE_KEYBOARD_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_KEYBOARD, 0, 0, 0, 0, 0, 0, 0, 0};
+  expect_report(&cap, 1, expect2, sizeof(expect2));
 }
 
 static void test_keyboard_overflow_queue(void) {
