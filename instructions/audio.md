@@ -164,6 +164,7 @@ Canonical implementation:
 - Ring consumer (AudioWorklet): `web/src/platform/audio-worklet-processor.js`
 - Ring layout/constants + helper math (TS): `web/src/audio/audio_worklet_ring.ts`
 - Ring layout/constants + helper math (layout-only, importable by AudioWorklet): `web/src/platform/audio_worklet_ring_layout.js`
+- Ring snapshot restore helper (JS): `web/src/platform/audio_ring_restore.ts` (`restoreAudioWorkletRing`)
 - Ring layout/constants + WASM producer bridge: `crates/platform/src/audio/worklet_bridge.rs`
 
 ```typescript
