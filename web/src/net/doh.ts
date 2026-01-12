@@ -1,6 +1,19 @@
+import { ResponseTooLargeError, readJsonResponseWithLimit, readResponseBytesWithLimit } from "../storage/response_json";
+
 export interface DohAResult {
   address: string;
   ttl: number;
+}
+
+const MAX_DOH_MESSAGE_BYTES = 1024 * 1024; // 1 MiB
+const MAX_DOH_JSON_BYTES = 1024 * 1024; // 1 MiB
+
+async function cancelBody(resp: Response): Promise<void> {
+  try {
+    await resp.body?.cancel();
+  } catch {
+    // ignore
+  }
 }
 
 /**
@@ -27,13 +40,24 @@ export async function resolveAOverDoh(
     },
     body: query,
   });
-  if (!resp.ok) return null;
+  if (!resp.ok) {
+    await cancelBody(resp);
+    return null;
+  }
 
   const contentType = resp.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase();
-  if (contentType !== "application/dns-message") return null;
+  if (contentType !== "application/dns-message") {
+    await cancelBody(resp);
+    return null;
+  }
 
-  const message = new Uint8Array(await resp.arrayBuffer());
-  return parseFirstAAnswer(message, id);
+  try {
+    const message = await readResponseBytesWithLimit(resp, { maxBytes: MAX_DOH_MESSAGE_BYTES, label: "DoH response" });
+    return parseFirstAAnswer(message, id);
+  } catch (err) {
+    if (err instanceof ResponseTooLargeError) return null;
+    throw err;
+  }
 }
 
 // Legacy helper retained for compatibility with older integrations.
@@ -57,9 +81,18 @@ export async function resolveAOverDohJson(
       Accept: "application/dns-json",
     },
   });
-  if (!resp.ok) return null;
+  if (!resp.ok) {
+    await cancelBody(resp);
+    return null;
+  }
 
-  const json: unknown = await resp.json();
+  let json: unknown;
+  try {
+    json = await readJsonResponseWithLimit(resp, { maxBytes: MAX_DOH_JSON_BYTES, label: "DoH JSON response" });
+  } catch (err) {
+    if (err instanceof ResponseTooLargeError) return null;
+    throw err;
+  }
   if (!json || typeof json !== "object") return null;
 
   const answer = (json as any).Answer as Array<any> | undefined;

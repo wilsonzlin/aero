@@ -41,5 +41,19 @@ describe("ImageGatewayClient DiskAccessLease mapping", () => {
     expect(lease.credentialsMode).toBe("omit");
     expect(lease.expiresAt?.toISOString()).toBe("2026-01-10T00:00:00.000Z");
   });
-});
 
+  it("rejects oversized JSON responses", async () => {
+    const fetchFn = vi.fn(async () => {
+      return new Response("{}", {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+          "content-length": String(1024 * 1024 + 1),
+        },
+      });
+    });
+
+    const client = new ImageGatewayClient({ fetch: fetchFn, baseUrl: "https://gw.example.test" });
+    await expect(client.createDiskAccessLease("img1")).rejects.toHaveProperty("name", "ResponseTooLargeError");
+  });
+});

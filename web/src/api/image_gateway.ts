@@ -1,4 +1,7 @@
 import type { DiskAccessLease } from "../storage/disk_access_lease";
+import { readJsonResponseWithLimit } from "../storage/response_json";
+
+const MAX_IMAGE_GATEWAY_JSON_BYTES = 1024 * 1024; // 1 MiB
 
 export type ImageGatewaySignedCookie = {
   name: string;
@@ -70,7 +73,10 @@ export class ImageGatewayClient {
     if (!resp.ok) {
       throw new Error(`image-gateway metadata failed (${resp.status})`);
     }
-    return (await resp.json()) as ImageGatewayImageMetadataResponse;
+    return (await readJsonResponseWithLimit(resp, {
+      maxBytes: MAX_IMAGE_GATEWAY_JSON_BYTES,
+      label: "image-gateway metadata response",
+    })) as ImageGatewayImageMetadataResponse;
   }
 
   async getStreamUrl(imageId: string): Promise<ImageGatewayStreamUrlResponse> {
@@ -83,7 +89,10 @@ export class ImageGatewayClient {
     if (!resp.ok) {
       throw new Error(`image-gateway stream-url failed (${resp.status})`);
     }
-    return (await resp.json()) as ImageGatewayStreamUrlResponse;
+    return (await readJsonResponseWithLimit(resp, {
+      maxBytes: MAX_IMAGE_GATEWAY_JSON_BYTES,
+      label: "image-gateway stream-url response",
+    })) as ImageGatewayStreamUrlResponse;
   }
 
   /**
@@ -150,4 +159,3 @@ class ImageGatewayDiskAccessLease implements DiskAccessLease {
     return this.refreshPromise;
   }
 }
-
