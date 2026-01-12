@@ -75,4 +75,29 @@ describe("io/devices/I8042Controller (PS/2 mouse)", () => {
     expect(i8042.portRead(0x60, 1)).toBe(0x49);
     expect(i8042.portRead(0x60, 1)).toBe(0x00);
   });
-});
+
+  it("tracks button state while the mouse port is disabled and reflects it in the next packet", () => {
+    const irqSink: IrqSink = { raiseIrq: vi.fn(), lowerIrq: vi.fn() };
+    const i8042 = new I8042Controller(irqSink);
+
+    // Enable data reporting.
+    i8042.portWrite(0x64, 1, 0xd4);
+    i8042.portWrite(0x60, 1, 0xf4);
+    expect(i8042.portRead(0x60, 1)).toBe(0xfa); // ACK
+
+    // Disable the AUX (mouse) port.
+    i8042.portWrite(0x64, 1, 0xa7);
+
+    // Update the host button mask while the port is disabled. No output bytes should be queued.
+    i8042.injectMouseButtons(0x01);
+    expect(i8042.portRead(0x64, 1) & 0x01).toBe(0x00);
+
+    // Re-enable the port and inject motion; the packet should include the held button bit.
+    i8042.portWrite(0x64, 1, 0xa8);
+    i8042.injectMouseMove(1, 0);
+
+    expect(i8042.portRead(0x60, 1)).toBe(0x09); // left button + bit3
+    expect(i8042.portRead(0x60, 1)).toBe(0x01);
+    expect(i8042.portRead(0x60, 1)).toBe(0x00);
+  });
+}); 

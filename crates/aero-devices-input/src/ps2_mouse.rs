@@ -105,6 +105,14 @@ impl Ps2Mouse {
         self.buttons
     }
 
+    pub(crate) fn set_button_state(&mut self, button: Ps2MouseButton, pressed: bool) {
+        if pressed {
+            self.buttons |= button.bit();
+        } else {
+            self.buttons &= !button.bit();
+        }
+    }
+
     pub fn inject_motion(&mut self, dx: i32, dy: i32, wheel: i32) {
         // In stream mode, PS/2 devices only report motion when data reporting is enabled.
         // Real guests will typically reset/configure the mouse while reporting is disabled,

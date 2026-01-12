@@ -395,8 +395,13 @@ impl I8042Controller {
 
     pub fn inject_mouse_button(&mut self, button: Ps2MouseButton, pressed: bool) {
         if !self.mouse_port_enabled() {
+            // When the AUX port is disabled, the controller suppresses mouse output. We still keep
+            // an up-to-date button image so that the next injected motion packet (after the port
+            // is re-enabled) carries the correct button bits.
+            self.mouse.set_button_state(button, pressed);
             return;
         }
+
         self.mouse.inject_button(button, pressed);
         self.service_output();
     }

@@ -721,9 +721,9 @@ class Ps2Mouse {
     }
   }
 
-  setButtons(buttonMask: number): void {
+  setButtons(buttonMask: number, emitPacket = true): void {
     this.buttons = buttonMask & 0xff;
-    if (this.mode === "stream" && this.reportingEnabled) {
+    if (emitPacket && this.mode === "stream" && this.reportingEnabled) {
       this.#sendMovementPacket();
     }
   }
@@ -1079,8 +1079,11 @@ export class I8042Controller implements PortIoHandler {
    * Bits: 0=left, 1=right, 2=middle.
    */
   injectMouseButtons(buttonMask: number): void {
-    if ((this.#commandByte & 0x20) !== 0) return;
-    this.#mouse.setButtons(buttonMask & 0xff);
+    const enabled = (this.#commandByte & 0x20) === 0;
+    // If the mouse port is disabled, drop the button-change packet but keep the internal button
+    // image up to date so the next motion packet (after re-enable) carries the correct button bits.
+    this.#mouse.setButtons(buttonMask & 0xff, enabled);
+    if (!enabled) return;
     this.#pumpDeviceQueues();
     this.#syncStatusAndIrq();
   }
