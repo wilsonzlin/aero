@@ -12,6 +12,7 @@ const referencedScripts = [
   "../scripts/build-bootsector.sh",
   "../scripts/ci/check-iac.sh",
   "../scripts/ci/detect-wasm-crate.sh",
+  "../scripts/compare-benchmarks.sh",
   "../scripts/mem-limit.sh",
   "../scripts/prepare-freedos.sh",
   "../scripts/prepare-windows7.sh",
@@ -31,4 +32,3 @@ test("scripts referenced as ./scripts/*.sh are executable", { skip: process.plat
     assert.ok((mode & 0o111) !== 0, `${relPath} is not executable (expected chmod +x / git mode 100755)`);
   }
 });
-
