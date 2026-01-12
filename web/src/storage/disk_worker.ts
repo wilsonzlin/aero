@@ -188,6 +188,9 @@ async function opfsReadLruChunkCacheBytes(
   remoteCacheDir: FileSystemDirectoryHandle,
   cacheKey: string,
 ): Promise<number> {
+  // Keep in sync with `OpfsLruChunkCache`'s index bounds.
+  const MAX_LRU_INDEX_JSON_BYTES = 64 * 1024 * 1024; // 64 MiB
+
   try {
     const cacheDir = await remoteCacheDir.getDirectoryHandle(cacheKey, { create: false });
 
@@ -195,6 +198,10 @@ async function opfsReadLruChunkCacheBytes(
     try {
       const indexHandle = await cacheDir.getFileHandle("index.json", { create: false });
       const file = await indexHandle.getFile();
+      if (!Number.isFinite(file.size) || file.size < 0 || file.size > MAX_LRU_INDEX_JSON_BYTES) {
+        // Treat absurdly large indices as corrupt and fall back to scanning.
+        throw new Error("index.json too large");
+      }
       const raw = await file.text();
       if (raw.trim()) {
         try {
@@ -203,12 +210,12 @@ async function opfsReadLruChunkCacheBytes(
             const chunks = (parsed as { chunks?: unknown }).chunks;
             if (chunks && typeof chunks === "object") {
               let total = 0;
-              for (const meta of Object.values(chunks as Record<string, unknown>)) {
+              const obj = chunks as Record<string, unknown>;
+              for (const key in obj) {
+                const meta = obj[key];
                 if (!meta || typeof meta !== "object") continue;
                 const byteLength = (meta as { byteLength?: unknown }).byteLength;
-                if (typeof byteLength === "number" && Number.isFinite(byteLength) && byteLength > 0) {
-                  total += byteLength;
-                }
+                if (typeof byteLength === "number" && Number.isFinite(byteLength) && byteLength > 0) total += byteLength;
               }
               return total;
             }

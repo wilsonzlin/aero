@@ -87,4 +87,31 @@ describe("OpfsLruChunkCache", () => {
     expect(stats.totalBytes).toBe(6);
     expect(stats.chunkCount).toBe(1);
   });
+
+  it("treats oversized index.json files as corrupt without attempting to read them", async () => {
+    const root = new MemoryDirectoryHandle("root");
+    restoreOpfs = installMemoryOpfs(root).restore;
+
+    const cacheKey = "test";
+    // Pre-create the directory structure so we can inject a fake index.json before opening.
+    const aeroDir = await root.getDirectoryHandle("aero", { create: true });
+    const disksDir = await aeroDir.getDirectoryHandle("disks", { create: true });
+    const remoteDir = await disksDir.getDirectoryHandle("remote-cache", { create: true });
+    const baseDir = await remoteDir.getDirectoryHandle(cacheKey, { create: true });
+    const indexHandle = await baseDir.getFileHandle("index.json", { create: true });
+
+    // Inject a file object that reports a huge size and throws if read. The cache should
+    // treat it as corrupt based on size alone.
+    (indexHandle as any).getFile = async () => ({
+      size: 64 * 1024 * 1024 + 1,
+      async text() {
+        throw new Error("should not read oversized index.json");
+      },
+      async arrayBuffer() {
+        throw new Error("should not read oversized index.json");
+      },
+    });
+
+    await expect(OpfsLruChunkCache.open({ cacheKey, chunkSize: 4, maxBytes: 1024 })).resolves.toBeDefined();
+  });
 });

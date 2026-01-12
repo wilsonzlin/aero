@@ -47,6 +47,13 @@ type ChunkIndexV1 = {
   chunks: Record<string, { byteLength: number; lastAccess: number }>;
 };
 
+// Defensive bound: index.json can be attacker-controlled/corrupt and should not be allowed to
+// trigger arbitrarily large allocations/parses.
+const MAX_INDEX_JSON_BYTES = 64 * 1024 * 1024; // 64 MiB
+// Cap the number of entries we'll accept from an index file. This prevents pathological O(n) work
+// on corrupt state even when the JSON file is within the byte limit.
+const MAX_INDEX_CHUNK_ENTRIES = 1_000_000;
+
 function splitPath(path: string): string[] {
   const trimmed = path.trim();
   const parts = trimmed.split("/").filter((p) => p.length > 0);
@@ -103,6 +110,58 @@ function signatureMatches(a: RemoteChunkCacheSignature | undefined, b: RemoteChu
     a.sizeBytes === b.sizeBytes &&
     a.chunkSize === b.chunkSize
   );
+}
+
+function validateSignature(signature: unknown): RemoteChunkCacheSignature | undefined {
+  if (signature === undefined) return undefined;
+  if (!signature || typeof signature !== "object") return undefined;
+  const s = signature as Partial<RemoteChunkCacheSignature>;
+  if (typeof s.imageId !== "string" || !s.imageId.trim()) return undefined;
+  if (typeof s.version !== "string" || !s.version.trim()) return undefined;
+  if (s.etag !== null && s.etag !== undefined && typeof s.etag !== "string") return undefined;
+  if (typeof s.sizeBytes !== "number" || !Number.isSafeInteger(s.sizeBytes) || s.sizeBytes <= 0) return undefined;
+  if (typeof s.chunkSize !== "number" || !Number.isSafeInteger(s.chunkSize) || s.chunkSize <= 0) return undefined;
+  return {
+    imageId: s.imageId,
+    version: s.version,
+    etag: s.etag ?? null,
+    sizeBytes: s.sizeBytes,
+    chunkSize: s.chunkSize,
+  };
+}
+
+function validateIndex(parsed: unknown, expectedChunkSize: number): ChunkIndexV1 | null {
+  if (!parsed || typeof parsed !== "object") return null;
+  const obj = parsed as Partial<ChunkIndexV1>;
+  if (obj.version !== 1) return null;
+  if (typeof obj.chunkSize !== "number" || !Number.isSafeInteger(obj.chunkSize) || obj.chunkSize <= 0) return null;
+  if (obj.chunkSize !== expectedChunkSize) return null;
+  if (typeof obj.accessCounter !== "number" || !Number.isSafeInteger(obj.accessCounter) || obj.accessCounter < 0) return null;
+  if (!obj.chunks || typeof obj.chunks !== "object" || Array.isArray(obj.chunks)) return null;
+
+  const chunks = obj.chunks as Record<string, unknown>;
+  let count = 0;
+  for (const key in chunks) {
+    count += 1;
+    if (count > MAX_INDEX_CHUNK_ENTRIES) return null;
+    const meta = chunks[key];
+    if (!meta || typeof meta !== "object") return null;
+    const byteLength = (meta as { byteLength?: unknown }).byteLength;
+    const lastAccess = (meta as { lastAccess?: unknown }).lastAccess;
+    if (typeof byteLength !== "number" || !Number.isSafeInteger(byteLength) || byteLength < 0) return null;
+    if (typeof lastAccess !== "number" || !Number.isSafeInteger(lastAccess) || lastAccess < 0) return null;
+  }
+
+  const signature = validateSignature(obj.signature);
+  if (obj.signature !== undefined && !signature) return null;
+
+  return {
+    version: 1,
+    signature,
+    chunkSize: obj.chunkSize,
+    accessCounter: obj.accessCounter,
+    chunks: obj.chunks as ChunkIndexV1["chunks"],
+  };
 }
 
 /**
@@ -252,9 +311,16 @@ export class OpfsLruChunkCache implements RemoteChunkCacheBackend {
     try {
       const handle = await base.getFileHandle("index.json", { create: false });
       const file = await handle.getFile();
+      const size = file.size;
+      if (!Number.isFinite(size) || size <= 0) return null;
+      if (size > MAX_INDEX_JSON_BYTES) {
+        // Treat absurdly large indices as corrupt and rebuild from disk.
+        return null;
+      }
       const raw = await file.text();
       if (!raw.trim()) return null;
-      return JSON.parse(raw) as ChunkIndexV1;
+      const parsed = JSON.parse(raw) as unknown;
+      return validateIndex(parsed, this.chunkSize);
     } catch (err) {
       if (err instanceof DOMException && err.name === "NotFoundError") return null;
       // JSON parse errors etc: treat as missing.
@@ -303,7 +369,7 @@ export class OpfsLruChunkCache implements RemoteChunkCacheBackend {
     const evicted: number[] = [];
     if (this.maxBytes === null) return evicted;
 
-    while (this.totalBytes > this.maxBytes && Object.keys(this.index.chunks).length > 0) {
+    while (this.totalBytes > this.maxBytes) {
       let victim: number | null = null;
       let victimAccess = Number.POSITIVE_INFINITY;
 

@@ -18,6 +18,10 @@ export const OPFS_REMOTE_CACHE_DIR = "remote-cache";
 
 export const METADATA_VERSION = 2;
 
+// Defensive bound: OPFS metadata can become corrupt/attacker-controlled; avoid reading/parsing
+// arbitrarily large JSON blobs.
+const MAX_OPFS_METADATA_BYTES = 64 * 1024 * 1024; // 64 MiB
+
 export type DiskBackend = "opfs" | "idb";
 export type DiskKind = "hdd" | "cd";
 export type DiskFormat = "raw" | "iso" | "qcow2" | "vhd" | "aerospar" | "unknown";
@@ -379,6 +383,12 @@ export async function opfsReadState(): Promise<DiskManagerState> {
   const fileHandle = await disksDir.getFileHandle(OPFS_METADATA_FILE, { create: true });
   const file = await fileHandle.getFile();
   if (file.size === 0) return emptyState();
+  if (!Number.isFinite(file.size) || file.size < 0) return emptyState();
+  if (file.size > MAX_OPFS_METADATA_BYTES) {
+    // Treat absurdly large metadata as corrupt and start fresh. This is best-effort; callers can
+    // recreate disk records by re-importing if needed.
+    return emptyState();
+  }
   const text = await file.text();
   if (!text.trim()) return emptyState();
   const { state, migrated } = upgradeDiskManagerStateJson(text);
