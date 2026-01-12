@@ -326,6 +326,63 @@ fn upload_resource_bc1_texture_roundtrip_cpu_fallback() -> Result<()> {
         Ok(())
     })
 }
+
+#[test]
+fn upload_resource_bc1_small_mip_reaches_edge_ok() -> Result<()> {
+    pollster::block_on(async {
+        let (device, queue) = match create_device_queue().await {
+            Ok(v) => v,
+            Err(err) => {
+                common::skip_or_panic(module_path!(), &format!("{err:#}"));
+                return Ok(());
+            }
+        };
+        let mut resources = AerogpuResourceManager::new(device, queue);
+
+        // A 2x2 BC1 mip still occupies a single 4x4 block in memory. WebGPU allows this as a
+        // full-mip upload (the copy reaches the edge).
+        let tex_handle = 4;
+        resources.create_texture2d(
+            tex_handle,
+            Texture2dCreateDesc {
+                usage_flags: AEROGPU_RESOURCE_USAGE_TEXTURE,
+                format: AEROGPU_FORMAT_BC1_RGBA_UNORM,
+                width: 2,
+                height: 2,
+                mip_levels: 1,
+                array_layers: 1,
+                row_pitch_bytes: 8,
+                backing_alloc_id: 0,
+                backing_offset_bytes: 0,
+            },
+        )?;
+
+        let bc1_data: Vec<u8> = vec![
+            0xff, 0xff, // color0
+            0x00, 0x00, // color1
+            0x00, 0x55, 0xaa, 0xff, // indices
+        ];
+
+        resources.upload_resource(
+            tex_handle,
+            DirtyRange {
+                offset_bytes: 0,
+                size_bytes: bc1_data.len() as u64,
+            },
+            &bc1_data,
+        )?;
+
+        let tex = resources.texture2d(tex_handle)?;
+        assert_eq!(tex.desc.texture_format, wgpu::TextureFormat::Rgba8Unorm);
+
+        let expected_rgba8 = aero_gpu::decompress_bc1_rgba8(2, 2, &bc1_data);
+        let readback =
+            read_texture_rgba8(resources.device(), resources.queue(), &tex.texture, 2, 2).await?;
+        assert_eq!(readback, expected_rgba8);
+
+        Ok(())
+    })
+}
 #[test]
 fn create_texture2d_requires_row_pitch_for_backed_textures() -> Result<()> {
     pollster::block_on(async {
