@@ -940,6 +940,7 @@ function renderMachinePanel(): HTMLElement {
       let sharedVgaWidth = 0;
       let sharedVgaHeight = 0;
       let sharedVgaStrideBytes = 0;
+      let sharedVgaFrameCounter = 0;
 
       function ensureSharedVga(width: number, height: number, strideBytes: number): ReturnType<typeof wrapSharedFramebuffer> | null {
         if (typeof SharedArrayBuffer === "undefined") return null;
@@ -965,6 +966,9 @@ function renderMachinePanel(): HTMLElement {
 
           sharedVga = wrapSharedFramebuffer(sharedVgaSab, 0);
           initFramebufferHeader(sharedVga.header, { width, height, strideBytes });
+          // Keep the frame counter monotonic across SharedArrayBuffer resizes so tests/harnesses
+          // can treat it as a stable "frames published" counter.
+          storeHeaderI32(sharedVga.header, HEADER_INDEX_FRAME_COUNTER, sharedVgaFrameCounter);
           sharedVgaWidth = width;
           sharedVgaHeight = height;
           sharedVgaStrideBytes = strideBytes;
@@ -978,6 +982,7 @@ function renderMachinePanel(): HTMLElement {
         if (!sharedVga) {
           sharedVga = wrapSharedFramebuffer(sharedVgaSab, 0);
           initFramebufferHeader(sharedVga.header, { width, height, strideBytes });
+          storeHeaderI32(sharedVga.header, HEADER_INDEX_FRAME_COUNTER, sharedVgaFrameCounter);
           sharedVgaWidth = width;
           sharedVgaHeight = height;
           sharedVgaStrideBytes = strideBytes;
@@ -1098,7 +1103,8 @@ function renderMachinePanel(): HTMLElement {
           const shared = ensureSharedVga(width, height, strideBytes);
           if (shared) {
             shared.pixelsU8.set(src.subarray(0, requiredSrcBytes));
-            addHeaderI32(shared.header, HEADER_INDEX_FRAME_COUNTER, 1);
+            sharedVgaFrameCounter = (sharedVgaFrameCounter + 1) >>> 0;
+            storeHeaderI32(shared.header, HEADER_INDEX_FRAME_COUNTER, sharedVgaFrameCounter);
             testState.sharedFramesPublished += 1;
           }
 
