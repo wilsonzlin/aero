@@ -5784,6 +5784,7 @@ static void PrintUsage() {
       "  --require-snd             Fail if virtio-snd is missing (default: SKIP)\n"
       "  --test-snd                Alias for --require-snd\n"
       "  --test-input-events       Run virtio-input end-to-end HID input report test (optional)\n"
+      "                           (or set env var AERO_VIRTIO_SELFTEST_TEST_INPUT_EVENTS=1)\n"
       "  --require-snd-capture     Fail if virtio-snd capture is missing (default: SKIP)\n"
       "  --test-snd-capture        Run virtio-snd capture smoke test if available (default: auto when virtio-snd is present)\n"
       "  --test-snd-buffer-limits  Run virtio-snd large WASAPI buffer/period stress test (optional)\n"
