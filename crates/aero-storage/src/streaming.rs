@@ -35,6 +35,13 @@ const CACHE_META_VERSION: u32 = 2;
 // downloads whole chunks into memory before persisting them to the cache backend, so the
 // chunk size must remain reasonably small.
 const MAX_STREAMING_CHUNK_SIZE: u64 = 64 * 1024 * 1024; // 64 MiB
+// Bound best-effort sequential prefetch. When `read_ahead_chunks` is misconfigured (or attacker
+// controlled), prefetching too far ahead can cause large background downloads and cache growth.
+//
+// We cap both the number of chunks and the total prefetched byte volume to keep the work bounded
+// even when `chunk_size` is very small.
+const MAX_STREAMING_READ_AHEAD_CHUNKS: u64 = 1024;
+const MAX_STREAMING_READ_AHEAD_BYTES: u64 = 512 * 1024 * 1024; // 512 MiB
 
 #[derive(Debug, Error, Clone)]
 pub enum StreamingDiskError {
@@ -631,6 +638,24 @@ impl StreamingDisk {
             return Err(StreamingDiskError::Protocol(format!(
                 "chunk_size ({}) exceeds max supported ({MAX_STREAMING_CHUNK_SIZE})",
                 config.options.chunk_size
+            )));
+        }
+        if config.options.read_ahead_chunks > MAX_STREAMING_READ_AHEAD_CHUNKS {
+            return Err(StreamingDiskError::Protocol(format!(
+                "read_ahead_chunks ({}) exceeds max supported ({MAX_STREAMING_READ_AHEAD_CHUNKS})",
+                config.options.read_ahead_chunks
+            )));
+        }
+        let read_ahead_bytes = config
+            .options
+            .read_ahead_chunks
+            .checked_mul(config.options.chunk_size)
+            .ok_or_else(|| {
+                StreamingDiskError::Protocol("read_ahead_chunks * chunk_size overflow".to_string())
+            })?;
+        if read_ahead_bytes > MAX_STREAMING_READ_AHEAD_BYTES {
+            return Err(StreamingDiskError::Protocol(format!(
+                "read_ahead prefetch bytes ({read_ahead_bytes}) exceeds max supported ({MAX_STREAMING_READ_AHEAD_BYTES})"
             )));
         }
         if config.options.max_retries == 0 {
