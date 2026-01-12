@@ -24,6 +24,14 @@ const MAGIC = "AEROSPAR";
 const VERSION = 1;
 const HEADER_SIZE = 64;
 
+// Keep sparse file decoding bounded: sparse images may be corrupted or untrusted
+// (e.g. downloaded caches). These limits prevent huge allocations on open().
+//
+// Align with Rust storage snapshot bounds (MAX_OVERLAY_BLOCK_SIZE_BYTES).
+const MAX_BLOCK_SIZE_BYTES = 64 * 1024 * 1024;
+// Bound the in-memory table allocation in open() (Uint8Array + Float64Array).
+const MAX_TABLE_BYTES = 64 * 1024 * 1024;
+
 function alignUp(value: number, alignment: number): number {
   if (alignment <= 0) throw new Error("alignment must be > 0");
   const aligned = Math.ceil(value / alignment) * alignment;
@@ -43,6 +51,15 @@ function toSafeNumber(v: bigint, field: string): number {
     throw new Error(`field ${field} is not a safe JS integer (${v})`);
   }
   return n;
+}
+
+function isPowerOfTwo(n: number): boolean {
+  return n > 0 && (BigInt(n) & (BigInt(n) - 1n)) === 0n;
+}
+
+function alignUpBigInt(value: bigint, alignment: bigint): bigint {
+  if (alignment <= 0n) throw new Error("alignment must be > 0");
+  return ((value + alignment - 1n) / alignment) * alignment;
 }
 
 async function getOpfsDir(dirPath: string): Promise<DirectoryHandle> {
@@ -104,6 +121,48 @@ function decodeHeader(bytes: Uint8Array): SparseHeader {
   const dataOffset = toSafeNumber(view.getBigUint64(48, true), "dataOffset");
   const allocatedBlocks = toSafeNumber(view.getBigUint64(56, true), "allocatedBlocks");
 
+  // ---- Validation (bounds + consistency) ----
+  if (blockSizeBytes <= 0) {
+    throw new Error(`invalid blockSizeBytes=${blockSizeBytes}`);
+  }
+  if (blockSizeBytes % SECTOR_SIZE !== 0) {
+    throw new Error("blockSizeBytes must be a multiple of 512");
+  }
+  if (!isPowerOfTwo(blockSizeBytes)) {
+    throw new Error("blockSizeBytes must be a power of two");
+  }
+  if (blockSizeBytes > MAX_BLOCK_SIZE_BYTES) {
+    throw new Error(`blockSizeBytes too large: ${blockSizeBytes} (max ${MAX_BLOCK_SIZE_BYTES})`);
+  }
+
+  if (diskSizeBytes <= 0) {
+    throw new Error(`invalid diskSizeBytes=${diskSizeBytes}`);
+  }
+  if (diskSizeBytes % SECTOR_SIZE !== 0) {
+    throw new Error("diskSizeBytes must be a multiple of 512");
+  }
+
+  if (tableEntries <= 0) {
+    throw new Error(`invalid tableEntries=${tableEntries}`);
+  }
+  const expectedEntries =
+    (BigInt(diskSizeBytes) + BigInt(blockSizeBytes) - 1n) / BigInt(blockSizeBytes);
+  if (BigInt(tableEntries) !== expectedEntries) {
+    throw new Error(`tableEntries mismatch: expected=${expectedEntries} actual=${tableEntries}`);
+  }
+
+  const expectedDataOffset = alignUpBigInt(
+    BigInt(HEADER_SIZE) + BigInt(tableEntries) * 8n,
+    BigInt(blockSizeBytes),
+  );
+  if (BigInt(dataOffset) !== expectedDataOffset) {
+    throw new Error(`dataOffset mismatch: expected=${expectedDataOffset} actual=${dataOffset}`);
+  }
+
+  if (allocatedBlocks > tableEntries) {
+    throw new Error(`allocatedBlocks out of range: ${allocatedBlocks} (tableEntries=${tableEntries})`);
+  }
+
   return {
     version,
     blockSizeBytes,
@@ -150,6 +209,9 @@ export class OpfsAeroSparseDisk implements SparseBlockDisk {
     if (!Number.isSafeInteger(opts.diskSizeBytes) || opts.diskSizeBytes <= 0) {
       throw new Error(`invalid diskSizeBytes=${opts.diskSizeBytes}`);
     }
+    if (opts.diskSizeBytes % SECTOR_SIZE !== 0) {
+      throw new Error("diskSizeBytes must be a multiple of 512");
+    }
     if (!Number.isSafeInteger(opts.blockSizeBytes) || opts.blockSizeBytes <= 0) {
       throw new Error(`invalid blockSizeBytes=${opts.blockSizeBytes}`);
     }
@@ -159,9 +221,15 @@ export class OpfsAeroSparseDisk implements SparseBlockDisk {
     if ((BigInt(opts.blockSizeBytes) & (BigInt(opts.blockSizeBytes) - 1n)) !== 0n) {
       throw new Error("blockSizeBytes must be a power of two");
     }
+    if (opts.blockSizeBytes > MAX_BLOCK_SIZE_BYTES) {
+      throw new Error(`blockSizeBytes too large: ${opts.blockSizeBytes} (max ${MAX_BLOCK_SIZE_BYTES})`);
+    }
 
     const tableEntries = divCeil(opts.diskSizeBytes, opts.blockSizeBytes);
     const tableBytes = tableEntries * 8;
+    if (!Number.isSafeInteger(tableBytes) || tableBytes < 0 || tableBytes > MAX_TABLE_BYTES) {
+      throw new Error(`sparse table too large: ${tableBytes} bytes (max ${MAX_TABLE_BYTES})`);
+    }
     const dataOffset = alignUp(HEADER_SIZE + tableBytes, opts.blockSizeBytes);
 
     const dir = opts.dir ?? (await getOpfsDir(opts.dirPath ?? OPFS_DISKS_PATH));
@@ -198,28 +266,43 @@ export class OpfsAeroSparseDisk implements SparseBlockDisk {
     const file = await dir.getFileHandle(name, { create: false });
     const sync = await file.createSyncAccessHandle();
 
-    const headerBytes = new Uint8Array(HEADER_SIZE);
-    const n = sync.read(headerBytes, { at: 0 });
-    if (n !== HEADER_SIZE) {
-      sync.close();
-      throw new Error(`short header read: expected=${HEADER_SIZE} actual=${n}`);
-    }
-    const header = decodeHeader(headerBytes);
+    try {
+      const headerBytes = new Uint8Array(HEADER_SIZE);
+      const n = sync.read(headerBytes, { at: 0 });
+      if (n !== HEADER_SIZE) {
+        throw new Error(`short header read: expected=${HEADER_SIZE} actual=${n}`);
+      }
+      const header = decodeHeader(headerBytes);
 
-    const tableBytesLen = header.tableEntries * 8;
-    const tableBytes = new Uint8Array(tableBytesLen);
-    const t = sync.read(tableBytes, { at: HEADER_SIZE });
-    if (t !== tableBytesLen) {
-      sync.close();
-      throw new Error(`short table read: expected=${tableBytesLen} actual=${t}`);
-    }
-    const view = new DataView(tableBytes.buffer, tableBytes.byteOffset, tableBytes.byteLength);
-    const table = new Float64Array(header.tableEntries);
-    for (let i = 0; i < header.tableEntries; i++) {
-      table[i] = toSafeNumber(view.getBigUint64(i * 8, true), `table[${i}]`);
-    }
+      const tableBytesLenBig = BigInt(header.tableEntries) * 8n;
+      if (tableBytesLenBig > BigInt(Number.MAX_SAFE_INTEGER)) {
+        throw new Error("sparse table size overflow");
+      }
+      if (tableBytesLenBig > BigInt(MAX_TABLE_BYTES)) {
+        throw new Error(`sparse table too large: ${tableBytesLenBig} bytes (max ${MAX_TABLE_BYTES})`);
+      }
+      const tableBytesLen = Number(tableBytesLenBig);
 
-    return new OpfsAeroSparseDisk(sync, header, table, opts.maxCachedBlocks ?? 64);
+      const tableBytes = new Uint8Array(tableBytesLen);
+      const t = sync.read(tableBytes, { at: HEADER_SIZE });
+      if (t !== tableBytesLen) {
+        throw new Error(`short table read: expected=${tableBytesLen} actual=${t}`);
+      }
+      const view = new DataView(tableBytes.buffer, tableBytes.byteOffset, tableBytes.byteLength);
+      const table = new Float64Array(header.tableEntries);
+      for (let i = 0; i < header.tableEntries; i++) {
+        table[i] = toSafeNumber(view.getBigUint64(i * 8, true), `table[${i}]`);
+      }
+
+      return new OpfsAeroSparseDisk(sync, header, table, opts.maxCachedBlocks ?? 64);
+    } catch (err) {
+      try {
+        sync.close();
+      } catch {
+        // ignore best-effort close failures
+      }
+      throw err;
+    }
   }
 
   isBlockAllocated(blockIndex: number): boolean {
