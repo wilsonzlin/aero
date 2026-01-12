@@ -2,6 +2,7 @@ use super::pic::Pic8259;
 use crate::io::{IoPortBus, PortIoDevice};
 use aero_interrupts::apic::{IoApic, IoApicId, LapicInterruptSink, LocalApic};
 use aero_interrupts::clock::Clock;
+use aero_interrupts::pic8259::{MASTER_DATA, SLAVE_DATA};
 use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
 use aero_io_snapshot::io::state::{
     IoSnapshot, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
@@ -181,12 +182,23 @@ impl PlatformInterrupts {
 
         let num_gsis = ioapic.lock().unwrap().num_redirection_entries();
 
+        // `Pic8259::new` programs vector offsets using the standard legacy init sequence.
+        // The 8259A clears IMR during initialization (enabling all IRQ lines), which is not a
+        // great power-on default for our platform: once the CPU enables IF after BIOS POST,
+        // periodic timers (PIT/HPET) could start delivering interrupts before the guest has
+        // installed real handlers, vectoring into BIOS default `HLT;IRET` stubs.
+        //
+        // Mask all IRQs by default; guest software can explicitly unmask lines as needed.
+        let mut pic = Pic8259::new(0x08, 0x70);
+        pic.port_write_u8(MASTER_DATA, 0xFF);
+        pic.port_write_u8(SLAVE_DATA, 0xFF);
+
         Self {
             mode: PlatformInterruptMode::LegacyPic,
             isa_irq_to_gsi,
             gsi_level: vec![false; num_gsis],
 
-            pic: Pic8259::new(0x08, 0x70),
+            pic,
             ioapic,
             lapic,
             lapic_clock,
