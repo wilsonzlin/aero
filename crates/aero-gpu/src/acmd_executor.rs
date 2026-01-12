@@ -208,7 +208,12 @@ impl AeroGpuAcmdExecutor {
                         },
                     );
 
-                    self.shared_surfaces.register_handle(texture_handle);
+                    if let Err(e) = self.shared_surfaces.register_handle(texture_handle) {
+                        // Avoid leaking the newly-created texture if the handle is invalid
+                        // (e.g. collides with an imported alias).
+                        self.textures.remove(&texture_handle);
+                        return Err(AeroGpuAcmdExecutorError::Backend(e.to_string()));
+                    }
                 }
                 AeroGpuCmd::SetRenderTargets {
                     color_count,

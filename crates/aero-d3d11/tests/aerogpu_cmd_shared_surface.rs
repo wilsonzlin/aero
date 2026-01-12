@@ -494,3 +494,86 @@ fn aerogpu_cmd_shared_surface_destroy_resource_refcounts_aliases() {
         );
     });
 }
+
+#[test]
+fn aerogpu_cmd_shared_surface_rejects_creating_resource_under_alias_handle() {
+    pollster::block_on(async {
+        let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+            Ok(exec) => exec,
+            Err(e) => {
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                return;
+            }
+        };
+
+        const TEX: u32 = 1;
+        const ALIAS: u32 = 2;
+        const WIDTH: u32 = 4;
+        const HEIGHT: u32 = 4;
+        const TOKEN: u64 = 0x0123_4567_89AB_CDEF;
+
+        let mut stream = Vec::new();
+        stream.extend_from_slice(&AEROGPU_CMD_STREAM_MAGIC.to_le_bytes());
+        stream.extend_from_slice(&AEROGPU_ABI_VERSION_U32.to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes()); // size_bytes (patched later)
+        stream.extend_from_slice(&0u32.to_le_bytes()); // flags
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved1
+
+        // CREATE_TEXTURE2D (TEX)
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::CreateTexture2d as u32);
+        stream.extend_from_slice(&TEX.to_le_bytes()); // texture_handle
+        stream.extend_from_slice(&AEROGPU_RESOURCE_USAGE_RENDER_TARGET.to_le_bytes()); // usage_flags
+        stream.extend_from_slice(&(AerogpuFormat::B8G8R8A8Unorm as u32).to_le_bytes()); // format
+        stream.extend_from_slice(&WIDTH.to_le_bytes());
+        stream.extend_from_slice(&HEIGHT.to_le_bytes());
+        stream.extend_from_slice(&1u32.to_le_bytes()); // mip_levels
+        stream.extend_from_slice(&1u32.to_le_bytes()); // array_layers
+        stream.extend_from_slice(&0u32.to_le_bytes()); // row_pitch_bytes
+        stream.extend_from_slice(&0u32.to_le_bytes()); // backing_alloc_id
+        stream.extend_from_slice(&0u32.to_le_bytes()); // backing_offset_bytes
+        stream.extend_from_slice(&0u64.to_le_bytes()); // reserved0
+        end_cmd(&mut stream, start);
+
+        // EXPORT_SHARED_SURFACE (TEX -> TOKEN)
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::ExportSharedSurface as u32);
+        stream.extend_from_slice(&TEX.to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes());
+        stream.extend_from_slice(&TOKEN.to_le_bytes());
+        end_cmd(&mut stream, start);
+
+        // IMPORT_SHARED_SURFACE (ALIAS -> TOKEN)
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::ImportSharedSurface as u32);
+        stream.extend_from_slice(&ALIAS.to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes());
+        stream.extend_from_slice(&TOKEN.to_le_bytes());
+        end_cmd(&mut stream, start);
+
+        // Buggy guest behavior: attempt to create a new texture using the alias handle.
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::CreateTexture2d as u32);
+        stream.extend_from_slice(&ALIAS.to_le_bytes()); // texture_handle (alias)
+        stream.extend_from_slice(&AEROGPU_RESOURCE_USAGE_RENDER_TARGET.to_le_bytes());
+        stream.extend_from_slice(&(AerogpuFormat::B8G8R8A8Unorm as u32).to_le_bytes());
+        stream.extend_from_slice(&WIDTH.to_le_bytes());
+        stream.extend_from_slice(&HEIGHT.to_le_bytes());
+        stream.extend_from_slice(&1u32.to_le_bytes());
+        stream.extend_from_slice(&1u32.to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes());
+        stream.extend_from_slice(&0u64.to_le_bytes());
+        end_cmd(&mut stream, start);
+
+        let total_size = stream.len() as u32;
+        stream[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
+            .copy_from_slice(&total_size.to_le_bytes());
+
+        let mut guest_mem = VecGuestMemory::new(0);
+        let err = exec.execute_cmd_stream(&stream, None, &mut guest_mem).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("CREATE_TEXTURE2D") && msg.contains("alias"),
+            "expected CREATE_TEXTURE2D under alias handle to be rejected, got: {msg}"
+        );
+    });
+}

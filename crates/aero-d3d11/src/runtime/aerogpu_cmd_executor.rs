@@ -3311,8 +3311,19 @@ impl AerogpuD3d11Executor {
         let backing_alloc_id = read_u32_le(cmd_bytes, 24)?;
         let backing_offset_bytes = read_u32_le(cmd_bytes, 28)?;
 
+        if buffer_handle == 0 {
+            bail!("CREATE_BUFFER: buffer_handle 0 is reserved");
+        }
         if size_bytes == 0 {
             bail!("CREATE_BUFFER: size_bytes must be > 0");
+        }
+
+        if let Some(&existing) = self.shared_surfaces.handles.get(&buffer_handle) {
+            if existing != buffer_handle {
+                bail!(
+                    "CREATE_BUFFER: buffer_handle {buffer_handle} is already an alias (underlying={existing})"
+                );
+            }
         }
 
         let usage = map_buffer_usage_flags(usage_flags);
@@ -3369,11 +3380,21 @@ impl AerogpuD3d11Executor {
         let backing_alloc_id = read_u32_le(cmd_bytes, 40)?;
         let backing_offset_bytes = read_u32_le(cmd_bytes, 44)?;
 
+        if texture_handle == 0 {
+            bail!("CREATE_TEXTURE2D: texture_handle 0 is reserved");
+        }
         if width == 0 || height == 0 {
             bail!("CREATE_TEXTURE2D: width/height must be non-zero");
         }
         if mip_levels == 0 || array_layers == 0 {
             bail!("CREATE_TEXTURE2D: mip_levels/array_layers must be >= 1");
+        }
+        if let Some(&existing) = self.shared_surfaces.handles.get(&texture_handle) {
+            if existing != texture_handle {
+                bail!(
+                    "CREATE_TEXTURE2D: texture_handle {texture_handle} is already an alias (underlying={existing})"
+                );
+            }
         }
 
         let bc_enabled = self

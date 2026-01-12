@@ -7,7 +7,7 @@ fn shared_surface_export_import_resolves_alias_and_refcounts() {
     let alias = 0x20u32;
     let token = 0x1122_3344_5566_7788u64;
 
-    table.register_handle(original);
+    table.register_handle(original).unwrap();
     table.export(original, token).unwrap();
     table.import(alias, token).unwrap();
 
@@ -28,8 +28,8 @@ fn shared_surface_export_is_idempotent_but_retarget_is_rejected() {
     let mut table = SharedSurfaceTable::default();
     let token = 0xAAu64;
 
-    table.register_handle(1);
-    table.register_handle(2);
+    table.register_handle(1).unwrap();
+    table.register_handle(2).unwrap();
 
     table.export(1, token).unwrap();
     table.export(1, token).unwrap();
@@ -46,8 +46,8 @@ fn shared_surface_import_is_idempotent_but_alias_rebind_is_rejected() {
     let token_a = 0xA0u64;
     let token_b = 0xB0u64;
 
-    table.register_handle(1);
-    table.register_handle(3);
+    table.register_handle(1).unwrap();
+    table.register_handle(3).unwrap();
 
     table.export(1, token_a).unwrap();
     table.export(3, token_b).unwrap();
@@ -68,7 +68,7 @@ fn shared_surface_import_is_idempotent_but_alias_rebind_is_rejected() {
 #[test]
 fn shared_surface_token_zero_is_rejected() {
     let mut table = SharedSurfaceTable::default();
-    table.register_handle(1);
+    table.register_handle(1).unwrap();
     assert!(matches!(
         table.export(1, 0),
         Err(SharedSurfaceError::InvalidToken(0))
@@ -97,8 +97,8 @@ fn shared_surface_token_reuse_after_release_is_rejected() {
     let mut table = SharedSurfaceTable::default();
     let token = 0xDEAD_BEEF_u64;
 
-    table.register_handle(1);
-    table.register_handle(2);
+    table.register_handle(1).unwrap();
+    table.register_handle(2).unwrap();
 
     table.export(1, token).unwrap();
     assert!(table.release_token(token));
@@ -106,5 +106,22 @@ fn shared_surface_token_reuse_after_release_is_rejected() {
     assert!(matches!(
         table.export(2, token),
         Err(SharedSurfaceError::TokenRetired(_))
+    ));
+}
+
+#[test]
+fn shared_surface_register_handle_rejects_alias_handles() {
+    let mut table = SharedSurfaceTable::default();
+    let original = 1u32;
+    let alias = 2u32;
+    let token = 0x1234_5678u64;
+
+    table.register_handle(original).unwrap();
+    table.export(original, token).unwrap();
+    table.import(alias, token).unwrap();
+
+    assert!(matches!(
+        table.register_handle(alias),
+        Err(SharedSurfaceError::HandleIsAlias { .. })
     ));
 }

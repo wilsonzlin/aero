@@ -30,6 +30,10 @@ pub(crate) enum SharedSurfaceError {
         "shared surface token 0x{share_token:016X} refers to destroyed handle 0x{underlying:08X}"
     )]
     TokenRefersToDestroyed { share_token: u64, underlying: u32 },
+    #[error(
+        "shared surface handle 0x{handle:08X} is already an alias for 0x{underlying:08X}"
+    )]
+    HandleIsAlias { handle: u32, underlying: u32 },
 }
 
 /// Shared surface bookkeeping for `EXPORT_SHARED_SURFACE` / `IMPORT_SHARED_SURFACE`.
@@ -78,15 +82,22 @@ impl SharedSurfaceTable {
         self.refcounts.clear();
     }
 
-    pub(crate) fn register_handle(&mut self, handle: u32) {
+    pub(crate) fn register_handle(&mut self, handle: u32) -> Result<(), SharedSurfaceError> {
         if handle == 0 {
-            return;
+            return Err(SharedSurfaceError::InvalidHandle(handle));
         }
-        if self.handles.contains_key(&handle) {
-            return;
+        if let Some(&existing) = self.handles.get(&handle) {
+            if existing != handle {
+                return Err(SharedSurfaceError::HandleIsAlias {
+                    handle,
+                    underlying: existing,
+                });
+            }
+            return Ok(());
         }
         self.handles.insert(handle, handle);
         *self.refcounts.entry(handle).or_insert(0) += 1;
+        Ok(())
     }
 
     pub(crate) fn resolve_handle(&self, handle: u32) -> u32 {
