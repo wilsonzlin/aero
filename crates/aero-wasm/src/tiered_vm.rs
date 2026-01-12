@@ -53,6 +53,19 @@ extern "C" {
 const JIT_EXIT_SENTINEL_I64: i64 = -1;
 const DEFAULT_TLB_SALT: u64 = 0x1234_5678_9abc_def0;
 
+/// Offset (relative to `cpu_ptr`) of a `u32` flag written by the JS host to indicate whether
+/// the just-executed Tier-1 block committed architectural side effects.
+///
+/// The CPU worker can speculatively execute a Tier-1 block and roll back the `CpuState` + guest
+/// RAM writes on runtime exits (`jit_exit`/`jit_exit_mmio`/`page_fault`). When rollback happens,
+/// the block did *not* retire guest instructions, so the tiered dispatcher must not advance
+/// time/TSC or interrupt shadow state.
+///
+/// Placing this flag after the Tier-2 context avoids collisions with `TRACE_EXIT_REASON` and
+/// other Tier-2 metadata slots.
+const COMMIT_FLAG_OFFSET: u32 = TIER2_CTX_OFFSET + TIER2_CTX_SIZE;
+const COMMIT_FLAG_BYTES: u32 = 4;
+
 fn wasm_memory_byte_len() -> u64 {
     // `memory_size(0)` returns the number of 64KiB wasm pages.
     let pages = core::arch::wasm32::memory_size(0) as u64;
@@ -430,9 +443,23 @@ impl WasmJitBackend {
     }
 
     #[inline]
+    fn write_u32_at(&self, addr: u32, value: u32) {
+        // Safety: `addr` is a wasm linear-memory pointer into the dedicated JIT ABI buffer.
+        unsafe {
+            core::ptr::write_unaligned(addr as *mut u32, value);
+        }
+    }
+
+    #[inline]
     fn read_u64_at(&self, addr: u32) -> u64 {
         // Safety: `addr` is a wasm linear-memory pointer into the dedicated JIT ABI buffer.
         unsafe { core::ptr::read_unaligned(addr as *const u64) }
+    }
+
+    #[inline]
+    fn read_u32_at(&self, addr: u32) -> u32 {
+        // Safety: `addr` is a wasm linear-memory pointer into the dedicated JIT ABI buffer.
+        unsafe { core::ptr::read_unaligned(addr as *const u32) }
     }
 
     fn sync_cpu_to_abi(&self, state: &aero_cpu_core::state::CpuState) {
@@ -475,28 +502,19 @@ impl JitBackend for WasmJitBackend {
     fn execute(&mut self, table_index: u32, cpu: &mut Self::Cpu) -> JitBlockExit {
         self.sync_cpu_to_abi(&cpu.cpu.state);
 
+        let commit_flag_ptr = self
+            .cpu_ptr
+            .checked_add(COMMIT_FLAG_OFFSET)
+            .expect("commit_flag_ptr overflow");
+        // Default to "committed": JS will clear this flag if it rolled back guest state.
+        self.write_u32_at(commit_flag_ptr, 1);
+
         let ret = js_jit_call(table_index, self.cpu_ptr, self.jit_ctx_ptr);
 
         self.sync_cpu_from_abi(&mut cpu.cpu.state);
 
         let exit_to_interpreter = ret == JIT_EXIT_SENTINEL_I64;
-        let committed = if exit_to_interpreter {
-            // The JS host may speculatively execute a Tier-1 block and then roll back CPU+RAM state
-            // when the block triggers a runtime exit (MMIO, bailout, page fault) without deopt
-            // metadata. In those cases, the tiered dispatcher must not retire instructions/time.
-            //
-            // The JS glue sets `globalThis.__aero_jit_last_committed` for the most recent
-            // `__aero_jit_call` invocation. Treat missing/invalid values as "committed" for
-            // backwards-compatibility with older hosts.
-            let global = js_sys::global();
-            let key = JsValue::from_str("__aero_jit_last_committed");
-            match Reflect::get(&global, &key) {
-                Ok(v) => v.as_bool().unwrap_or(true),
-                Err(_) => true,
-            }
-        } else {
-            true
-        };
+        let committed = self.read_u32_at(commit_flag_ptr) != 0;
         let next_rip = if exit_to_interpreter {
             cpu.cpu.state.rip()
         } else {
@@ -573,8 +591,8 @@ impl WasmTieredVm {
 
         let compile_queue = CompileQueue::new();
 
-        // JIT ABI buffer: CpuState + jit_ctx + tier2_ctx.
-        let jit_abi_len = (TIER2_CTX_OFFSET + TIER2_CTX_SIZE) as usize;
+        // JIT ABI buffer: CpuState + jit_ctx + tier2_ctx + commit flag.
+        let jit_abi_len = (COMMIT_FLAG_OFFSET + COMMIT_FLAG_BYTES) as usize;
         let mut jit_abi = JitAbiBuffer::new(jit_abi_len, CPU_STATE_ALIGN);
         let tlb_salt = DEFAULT_TLB_SALT;
         jit_abi.init_jit_ctx_header(guest_base as u64, tlb_salt);

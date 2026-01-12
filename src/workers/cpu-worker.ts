@@ -33,6 +33,23 @@ const CPU_STATE_SIZE = 1072;
 const CPU_RAX_OFF = 0;
 const CPU_RIP_OFF = 128;
 
+// Tier-1 JIT call status slot (mirrors `crates/aero-jit-x86/src/jit_ctx.rs` + `crates/aero-wasm/src/tiered_vm.rs`).
+//
+// Layout (relative to `cpuPtr`):
+//   CpuState (CPU_STATE_SIZE)
+//   JitContext (header + inline TLB)
+//   Tier-2 ctx (12 bytes)
+//   commit_flag (u32)
+//
+// JS sets `commit_flag = 0` when it rolls back architectural + memory effects on runtime exits.
+// The tiered dispatcher uses this to avoid retiring guest instructions for rolled-back blocks.
+const JIT_CTX_HEADER_BYTES = 16;
+const JIT_TLB_ENTRIES = 256;
+const JIT_TLB_ENTRY_BYTES = 16;
+const JIT_CTX_TOTAL_BYTES = JIT_CTX_HEADER_BYTES + JIT_TLB_ENTRIES * JIT_TLB_ENTRY_BYTES;
+const TIER2_CTX_BYTES = 12;
+const COMMIT_FLAG_OFFSET = CPU_STATE_SIZE + JIT_CTX_TOTAL_BYTES + TIER2_CTX_BYTES;
+
 // Tier-1 "exit to interpreter" sentinel return value (`u64::MAX` encoded as `i64`).
 const JIT_EXIT_SENTINEL_I64 = -1n;
 
@@ -171,6 +188,11 @@ async function runTieredVm(iterations: number, threshold: number) {
 
     refreshMemU8();
 
+    const commitFlagAddr = (cpuPtr + COMMIT_FLAG_OFFSET) >>> 0;
+    // Default to "committed". Rollback paths clear this before returning so the WASM tiered VM can
+    // report `JitBlockExit { committed: false }`.
+    dv.setUint32(commitFlagAddr, 1, true);
+
     // Per-call HostExitState + guest RAM write log.
     const exitState: HostExitState = { mmio_exit: false, jit_exit: false, page_fault: false };
     const writeLog: WriteLogEntry[] = [];
@@ -192,10 +214,6 @@ async function runTieredVm(iterations: number, threshold: number) {
     const exitToInterpreter = ret === JIT_EXIT_SENTINEL_I64;
     const shouldRollback = exitToInterpreter && hostExitStateShouldRollback(exitState);
 
-    // Expose whether the last block committed via a global flag so the wasm runtime can avoid
-    // retiring instructions/time on rolled-back exits.
-    (globalThis as unknown as { __aero_jit_last_committed?: unknown }).__aero_jit_last_committed = !shouldRollback;
-
     if (shouldRollback) {
       // Roll back guest RAM writes (reverse order) and restore pre-block CPU state.
       refreshMemU8();
@@ -204,6 +222,7 @@ async function runTieredVm(iterations: number, threshold: number) {
         memU8.set(entry.old_value_bytes, entry.addr);
       }
       memU8.set(cpuSnapshot, cpuPtr);
+      dv.setUint32(commitFlagAddr, 0, true);
     } else if (writeLog.length && onGuestWrite) {
       // Notify the tiered runtime of committed guest writes so it can bump code page versions for
       // self-modifying code invalidation. We intentionally skip this on rolled-back exits.
@@ -417,6 +436,31 @@ async function runTieredVm(iterations: number, threshold: number) {
 
       const storeAfter = dv.getUint32(storeLinear, true);
       if (storeAfter !== preStore) return false;
+
+      const commitAfter = dv.getUint32(cpuPtr + COMMIT_FLAG_OFFSET, true);
+      if (commitAfter !== 0) return false;
+
+      // Optional sanity check: if we exit-to-interpreter without triggering a rollback condition,
+      // the commit flag should remain 1 (the default).
+      const committedIndex = nextTableIndex++;
+      jitFns[committedIndex] = (cpu_ptr: number, _jit_ctx_ptr: number): bigint => {
+        const rax = dv.getBigUint64(cpu_ptr + CPU_RAX_OFF, true);
+        dv.setBigUint64(cpu_ptr + CPU_RAX_OFF, rax + 2n, true);
+        return JIT_EXIT_SENTINEL_I64;
+      };
+
+      // Seed the commit flag with 0 so we can confirm `__aero_jit_call` resets it to 1 on entry.
+      dv.setUint32(cpuPtr + COMMIT_FLAG_OFFSET, 0, true);
+      dv.setBigUint64(cpuPtr + CPU_RAX_OFF, preRax, true);
+
+      const retCommitted = (globalThis as unknown as { __aero_jit_call: (idx: number, cpu: number, ctx: number) => bigint })
+        .__aero_jit_call(committedIndex, cpuPtr, 0);
+      if (retCommitted !== JIT_EXIT_SENTINEL_I64) return false;
+
+      const commitCommitted = dv.getUint32(cpuPtr + COMMIT_FLAG_OFFSET, true);
+      if (commitCommitted !== 1) return false;
+      const raxCommitted = dv.getBigUint64(cpuPtr + CPU_RAX_OFF, true);
+      if (raxCommitted !== preRax + 2n) return false;
 
       return true;
     } catch {
