@@ -35,13 +35,14 @@ virtio driver health via **COM1 serial** (host-captured), stdout, and a log file
     - at least one **keyboard-only** HID device exists
     - at least one **mouse-only** HID device exists
     - no matched HID device advertises both keyboard and mouse application collections (contract v1 expects two separate PCI functions).
-  - Optional end-to-end report delivery marker (`virtio-input-events`):
-    - Used by the host harness when it injects deterministic input events via QMP (`input-send-event`).
+  - Optional end-to-end **event delivery** smoke test (`virtio-input-events`):
+    - Disabled by default (so the selftest remains fully headless and does not depend on host-side input injection).
+    - Enable with `--test-input-events` (or env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_EVENTS=1`).
     - The selftest opens the virtio-input keyboard + mouse HID interfaces and reads **input reports** directly via `ReadFile`
       on the HID device path (no window focus required).
-    - Emits a readiness marker (`...|READY`), then waits for injected events and emits `...|PASS` or `...|FAIL|reason=...`.
-    - This marker is intended to be enforced only when the host harness enables input injection; it does **not** affect the
-      overall `AERO_VIRTIO_SELFTEST|RESULT|...` marker.
+    - When enabled, the test emits a readiness marker (`AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|READY`), then waits
+      (with a hard timeout) for host-injected events (intended to be paired with QMP `input-send-event` injection) and emits
+      `...|PASS|...` or `...|FAIL|reason=...|...`.
 - **virtio-snd** (optional; playback runs automatically when a supported virtio-snd device is detected)
   - Detect the virtio-snd PCI function via SetupAPI hardware IDs:
     - `PCI\VEN_1AF4&DEV_1059` (modern; strict INF matches `PCI\VEN_1AF4&DEV_1059&REV_01`)
@@ -122,17 +123,17 @@ Note: For deterministic DNS testing under QEMU slirp, the default `--dns-host` i
 The host harness parses these markers from COM1 serial:
 
 ```
-AERO_VIRTIO_SELFTEST|START|...
-AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS
-AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS|...
-#
-# Optional: end-to-end virtio-input event delivery (requires host-side QMP injection).
-AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|READY
-AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|PASS|...
-# Note: this marker does not affect the overall RESULT marker; without host injection it may FAIL with reason=timeout.
+ AERO_VIRTIO_SELFTEST|START|...
+ AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS
+ AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS|...
+ AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|SKIP|flag_not_set
 
-# virtio-snd may be SKIP/PASS/FAIL depending on flags and device presence.
-# Capture is reported separately as "virtio-snd-capture".
+ # Optional: end-to-end virtio-input event delivery (requires host-side QMP injection):
+ # AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|READY
+ # AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|PASS|...
+
+ # virtio-snd may be SKIP/PASS/FAIL depending on flags and device presence.
+ # Capture is reported separately as "virtio-snd-capture".
 #
 # Example: virtio-snd not present (or not required) => skip:
 AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP
@@ -157,6 +158,12 @@ AERO_VIRTIO_SELFTEST|RESULT|FAIL
 Notes:
 - If no supported virtio-snd PCI function is detected (and no capture flags are set), the tool emits
   `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP` and `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|flag_not_set`.
+- The optional virtio-input event delivery marker is always emitted:
+  - Default (not enabled): `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|SKIP|flag_not_set`
+  - When `--test-input-events` (or `AERO_VIRTIO_SELFTEST_TEST_INPUT_EVENTS=1`) is enabled:
+    - emits `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|READY` once the read loop is armed
+    `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|PASS|...` or `...|FAIL|reason=...|...`
+  - The overall selftest `RESULT` is only affected by `virtio-input-events` when the flag/env var is enabled.
 - If `--require-snd` / `--test-snd` is set and the PCI device is missing, the tool emits
   `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL`.
   (In this case, the capture marker uses `...|device_missing` and is `SKIP` by default unless `--require-snd-capture` is set.)

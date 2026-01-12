@@ -95,7 +95,14 @@ param(
   # Note: The host harness's virtio-snd test path expects a modern-only virtio-snd device (PCI\VEN_1AF4&DEV_1059&REV_01).
   # This flag is intended for debugging/backcompat when running the guest selftest outside the strict harness setup.
   [Parameter(Mandatory = $false)]
-  [switch]$AllowVirtioSndTransitional
+  [switch]$AllowVirtioSndTransitional,
+
+  # If set, enable the guest selftest's end-to-end virtio-input event delivery test
+  # (adds `--test-input-events` to the scheduled task).
+  #
+  # This is required when running the host harness with `-WithInputEvents` / `--with-input-events`.
+  [Parameter(Mandatory = $false)]
+  [switch]$TestInputEvents
 )
 
 Set-StrictMode -Version Latest
@@ -399,6 +406,11 @@ if ($AllowVirtioSndTransitional) {
   $allowVirtioSndTransitionalArg = " --allow-virtio-snd-transitional"
 }
 
+$testInputEventsArg = ""
+if ($TestInputEvents) {
+  $testInputEventsArg = " --test-input-events"
+}
+
 $enableTestSigningCmd = ""
 if ($EnableTestSigning) {
   $enableTestSigningCmd = @"
@@ -446,7 +458,7 @@ $enableTestSigningCmd
 
 REM Configure auto-run on boot (runs as SYSTEM).
 schtasks /Create /F /TN "AeroVirtioSelftest" /SC ONSTART /RU SYSTEM ^
-  /TR "\"C:\AeroTests\aero-virtio-selftest.exe\" --http-url \"$HttpUrl\" --dns-host \"$DnsHost\"$blkArg$requireSndArg$disableSndArg$disableSndCaptureArg$testSndCaptureArg$requireSndCaptureArg$requireNonSilenceArg$allowVirtioSndTransitionalArg" >> "%LOG%" 2>&1
+  /TR "\"C:\AeroTests\aero-virtio-selftest.exe\" --http-url \"$HttpUrl\" --dns-host \"$DnsHost\"$blkArg$testInputEventsArg$requireSndArg$disableSndArg$disableSndCaptureArg$testSndCaptureArg$requireSndCaptureArg$requireNonSilenceArg$allowVirtioSndTransitionalArg" >> "%LOG%" 2>&1
 
 echo [AERO] provision done >> "%LOG%"
 $autoRebootCmd
@@ -478,12 +490,15 @@ The script will:
 
 After reboot, the host harness can boot the VM and parse PASS/FAIL from COM1 serial.
 
-Notes:
-- The virtio-blk selftest requires a usable/mounted virtio volume. If your VM boots from a non-virtio disk,
-  consider attaching a separate virtio data disk with a drive letter and using the selftest option `--blk-root`.
- - By default, virtio-snd is optional (SKIP if missing). To require it, generate this media with `-RequireSnd` (adds `--require-snd`).
-  - To skip the virtio-snd test entirely, generate this media with `-DisableSnd`.
-    Note: if you run the host harness with `-WithVirtioSnd` / `--with-virtio-snd`, it expects virtio-snd to PASS (not SKIP).
+ Notes:
+ - The virtio-blk selftest requires a usable/mounted virtio volume. If your VM boots from a non-virtio disk,
+   consider attaching a separate virtio data disk with a drive letter and using the selftest option `--blk-root`.
+ - The virtio-input end-to-end event delivery test (HID input reports) is disabled by default.
+   - To enable it (required when running the host harness with `-WithInputEvents` / `--with-input-events`),
+     generate this media with `-TestInputEvents` (adds `--test-input-events` to the scheduled task).
+  - By default, virtio-snd is optional (SKIP if missing). To require it, generate this media with `-RequireSnd` (adds `--require-snd`).
+   - To skip the virtio-snd test entirely, generate this media with `-DisableSnd`.
+     Note: if you run the host harness with `-WithVirtioSnd` / `--with-virtio-snd`, it expects virtio-snd to PASS (not SKIP).
    - To skip capture-only checks (while still exercising playback), generate this media with `-DisableSndCapture` (adds `--disable-snd-capture`).
      Note: if you run the host harness with `-WithVirtioSnd` / `--with-virtio-snd`, it expects virtio-snd-capture to PASS (not SKIP).
    - To run the virtio-snd capture smoke test (and enable the full-duplex regression test):

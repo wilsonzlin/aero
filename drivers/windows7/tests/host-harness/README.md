@@ -11,6 +11,9 @@ This directory contains the host-side scripts used to run the Windows 7 guest se
   - Windows PowerShell 5.1 or PowerShell 7+ should work
 - A **prepared Windows 7 image** that:
   - has the virtio drivers installed (virtio-blk + virtio-net + virtio-input, modern-only)
+    - To enable the optional end-to-end virtio-input event delivery smoke test (HID input reports),
+      the guest selftest must be provisioned with `--test-input-events` (or env var
+      `AERO_VIRTIO_SELFTEST_TEST_INPUT_EVENTS=1`).
   - has virtio-snd installed if you intend to test audio
     - the guest selftest will exercise virtio-snd playback automatically when a virtio-snd device is present and confirm
       a capture endpoint is registered
@@ -52,22 +55,28 @@ pwsh ./drivers/windows7/tests/host-harness/Invoke-AeroVirtioWin7Tests.ps1 `
   -TimeoutSeconds 600
 ```
 
-### virtio-input (end-to-end event delivery)
+### virtio-input event delivery (QMP input injection)
 
-The base guest selftest validates virtio-input by enumerating HID devices and sanity-checking the report descriptors.
-To deterministically prove that **real virtio-input events** flow through the driver stack, enable the optional
-virtio-input event injection path:
+The default virtio-input selftest (`virtio-input`) validates **enumeration + report descriptors** only.
+To regression-test **actual input event delivery** (virtio queues → KMDF HID → user-mode `ReadFile`), the guest
+includes an optional `virtio-input-events` section that reads real HID input reports.
 
-- PowerShell: `-WithVirtioInputEvents`
-- Python: `--with-virtio-input-events`
+To enable end-to-end testing:
+
+1. Provision the guest image so the scheduled selftest runs with `--test-input-events`
+   (for example via `New-AeroWin7TestImage.ps1 -TestInputEvents`).
+2. Run the host harness with `-WithInputEvents` (alias: `-WithVirtioInputEvents`) / `--with-input-events`
+   (alias: `--with-virtio-input-events`) so it injects keyboard/mouse events via QMP (`input-send-event`) and
+   requires the guest marker:
+   `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|PASS|...`
 
 When enabled, the harness:
 
 1. Waits for the guest readiness marker: `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|READY`
-2. Injects a small input sequence via QMP `input-send-event`:
+2. Injects a deterministic input sequence via QMP `input-send-event`:
    - keyboard: `'a'` press + release
    - mouse: relative move + left click
-3. Requires the guest marker `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|PASS`
+3. Requires the guest marker `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|PASS|...`
 
 The harness also emits a host-side marker for the injection step itself (useful for debugging flaky setups and for log
 scraping in CI):
@@ -78,27 +87,31 @@ scraping in CI):
 Note: On some QEMU builds, `input-send-event` may not accept the `device=` routing parameter. In that case the harness
 falls back to broadcasting the input events and reports `kbd_mode=broadcast` / `mouse_mode=broadcast` in the marker.
 
-PowerShell example:
+PowerShell:
 
 ```powershell
 pwsh ./drivers/windows7/tests/host-harness/Invoke-AeroVirtioWin7Tests.ps1 `
   -QemuSystem qemu-system-x86_64 `
   -DiskImagePath ./win7-aero-tests.qcow2 `
-  -WithVirtioInputEvents `
+  -WithInputEvents `
   -TimeoutSeconds 600
 ```
 
-Python example:
+
+Python:
 
 ```bash
 python3 drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py \
   --qemu-system qemu-system-x86_64 \
   --disk-image ./win7-aero-tests.qcow2 \
-  --with-virtio-input-events \
+  --with-input-events \
   --timeout-seconds 600 \
   --snapshot
 ```
 
+Note: If the guest was provisioned without `--test-input-events`, it will emit:
+`AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|SKIP|flag_not_set`.
+The host harness only requires `virtio-input-events|PASS` when `-WithInputEvents` / `--with-input-events` is set.
 ### virtio-snd (audio)
 
 If your test image includes the virtio-snd driver, you can ask the harness to attach a virtio-snd PCI device:
@@ -305,7 +318,7 @@ only if you explicitly want the base image to be mutated.
   - When `RESULT|PASS` is seen, the harness also requires that the guest emitted per-test markers for:
     - `AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS`
     - `AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS`
-    - `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|PASS` when `-WithVirtioInputEvents` / `--with-virtio-input-events` is enabled
+    - (only when `-WithInputEvents` / `--with-input-events` is enabled) `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|PASS`
     - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS` or `...|SKIP` (if `-WithVirtioSnd` / `--with-virtio-snd` is set, it must be `PASS`)
     - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|PASS` or `...|SKIP` (if `-WithVirtioSnd` / `--with-virtio-snd` is set, it must be `PASS`)
     - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|PASS` or `...|SKIP` (if `-WithVirtioSnd` / `--with-virtio-snd` is set, it must be `PASS`)

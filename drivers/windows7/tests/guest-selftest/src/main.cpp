@@ -72,6 +72,10 @@ struct Options {
   // buffer duration/period. This is used to exercise virtio-snd buffer sizing limits.
   bool test_snd_buffer_limits = false;
 
+  // If set, run an end-to-end virtio-input event delivery test that reads actual HID input reports.
+  // This is intended to be paired with host-side QMP `input-send-event` injection.
+  bool test_input_events = false;
+
   DWORD net_timeout_sec = 120;
   DWORD io_file_size_mib = 32;
   DWORD io_chunk_kib = 1024;
@@ -1849,6 +1853,10 @@ struct VirtioInputTestResult {
   int unknown_devices = 0;
   int keyboard_collections = 0;
   int mouse_collections = 0;
+  // Best-effort: capture at least one interface path for the keyboard-only and mouse-only virtio-input
+  // HID devices so optional end-to-end input report tests can open them.
+  std::wstring keyboard_device_path;
+  std::wstring mouse_device_path;
   std::string reason;
 };
 
@@ -2086,8 +2094,10 @@ static VirtioInputTestResult VirtioInputTest(Logger& log) {
       out.ambiguous_devices++;
     } else if (has_keyboard) {
       out.keyboard_devices++;
+      if (out.keyboard_device_path.empty()) out.keyboard_device_path = device_path;
     } else if (has_mouse) {
       out.mouse_devices++;
+      if (out.mouse_device_path.empty()) out.mouse_device_path = device_path;
     } else {
       out.unknown_devices++;
     }
@@ -2253,7 +2263,6 @@ static HANDLE OpenHidDeviceForRead(const wchar_t* path) {
   const DWORD share = FILE_SHARE_READ | FILE_SHARE_WRITE;
   const DWORD flags = FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OVERLAPPED;
   const DWORD desired_accesses[] = {GENERIC_READ | GENERIC_WRITE, GENERIC_READ};
-
   for (const DWORD access : desired_accesses) {
     HANDLE h = CreateFileW(path, access, share, nullptr, OPEN_EXISTING, flags, nullptr);
     if (h != INVALID_HANDLE_VALUE) return h;
@@ -5693,6 +5702,7 @@ static void PrintUsage() {
       "  --disable-snd-capture     Skip virtio-snd capture test (emit SKIP)\n"
       "  --require-snd             Fail if virtio-snd is missing (default: SKIP)\n"
       "  --test-snd                Alias for --require-snd\n"
+      "  --test-input-events       Run virtio-input end-to-end HID input report test (optional)\n"
       "  --require-snd-capture     Fail if virtio-snd capture is missing (default: SKIP)\n"
       "  --test-snd-capture        Run virtio-snd capture smoke test if available (default: auto when virtio-snd is present)\n"
       "  --test-snd-buffer-limits  Run virtio-snd large WASAPI buffer/period stress test (optional)\n"
@@ -5774,6 +5784,8 @@ int wmain(int argc, wchar_t** argv) {
       opt.disable_snd_capture = true;
     } else if (arg == L"--require-snd" || arg == L"--test-snd") {
       opt.require_snd = true;
+    } else if (arg == L"--test-input-events") {
+      opt.test_input_events = true;
     } else if (arg == L"--require-snd-capture") {
       opt.require_snd_capture = true;
     } else if (arg == L"--test-snd-capture") {
@@ -5820,6 +5832,10 @@ int wmain(int argc, wchar_t** argv) {
     opt.test_snd_capture = true;
   }
 
+  if (!opt.test_input_events && EnvVarTruthy(L"AERO_VIRTIO_SELFTEST_TEST_INPUT_EVENTS")) {
+    opt.test_input_events = true;
+  }
+
   if (opt.disable_snd &&
       (opt.require_snd || opt.require_snd_capture || opt.test_snd_capture || opt.test_snd_buffer_limits ||
        opt.require_non_silence)) {
@@ -5859,30 +5875,28 @@ int wmain(int argc, wchar_t** argv) {
            input.reason.empty() ? "-" : input.reason.c_str());
   all_ok = all_ok && input.ok;
 
-  // virtio-input end-to-end event delivery:
-  //
-  // This test reads HID input reports directly from the virtio-input HID minidriver and matches
-  // deterministic host-injected input events (keyboard + mouse). The host harness enables injection
-  // via QMP `input-send-event` and can optionally enforce this marker.
-  //
-  // The marker is emitted unconditionally, but does NOT affect the overall selftest RESULT marker by
-  // default (so existing harness runs that do not perform QMP injection remain unchanged).
-  const auto input_events = VirtioInputEventsTest(log);
-  if (input_events.ok) {
-    log.Logf(
-        "AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|PASS|kbd_reports=%d|mouse_reports=%d|kbd_a_down=%d|kbd_a_up=%d|mouse_move=%d|mouse_left_down=%d|mouse_left_up=%d",
-        input_events.keyboard_reports, input_events.mouse_reports, input_events.saw_key_a_down ? 1 : 0,
-        input_events.saw_key_a_up ? 1 : 0, input_events.saw_mouse_move ? 1 : 0,
-        input_events.saw_mouse_left_down ? 1 : 0, input_events.saw_mouse_left_up ? 1 : 0);
+  if (!opt.test_input_events) {
+    log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|SKIP|flag_not_set");
   } else {
-    log.Logf(
-        "AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|FAIL|reason=%s|err=%lu|kbd_reports=%d|mouse_reports=%d|kbd_a_down=%d|kbd_a_up=%d|mouse_move=%d|mouse_left_down=%d|mouse_left_up=%d",
-        input_events.reason.empty() ? "unknown" : input_events.reason.c_str(),
-        static_cast<unsigned long>(input_events.win32_error), input_events.keyboard_reports,
-        input_events.mouse_reports, input_events.saw_key_a_down ? 1 : 0, input_events.saw_key_a_up ? 1 : 0,
-        input_events.saw_mouse_move ? 1 : 0, input_events.saw_mouse_left_down ? 1 : 0,
-        input_events.saw_mouse_left_up ? 1 : 0);
+    const auto input_events = VirtioInputEventsTest(log);
+    if (input_events.ok) {
+      log.Logf(
+          "AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|PASS|kbd_reports=%d|mouse_reports=%d|kbd_a_down=%d|kbd_a_up=%d|mouse_move=%d|mouse_left_down=%d|mouse_left_up=%d",
+          input_events.keyboard_reports, input_events.mouse_reports, input_events.saw_key_a_down ? 1 : 0,
+          input_events.saw_key_a_up ? 1 : 0, input_events.saw_mouse_move ? 1 : 0,
+          input_events.saw_mouse_left_down ? 1 : 0, input_events.saw_mouse_left_up ? 1 : 0);
+    } else {
+      log.Logf(
+          "AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|FAIL|reason=%s|err=%lu|kbd_reports=%d|mouse_reports=%d|kbd_a_down=%d|kbd_a_up=%d|mouse_move=%d|mouse_left_down=%d|mouse_left_up=%d",
+          input_events.reason.empty() ? "unknown" : input_events.reason.c_str(),
+          static_cast<unsigned long>(input_events.win32_error), input_events.keyboard_reports,
+          input_events.mouse_reports, input_events.saw_key_a_down ? 1 : 0, input_events.saw_key_a_up ? 1 : 0,
+          input_events.saw_mouse_move ? 1 : 0, input_events.saw_mouse_left_down ? 1 : 0,
+          input_events.saw_mouse_left_up ? 1 : 0);
+    }
+    all_ok = all_ok && input_events.ok;
   }
+
   // virtio-snd:
   //
   // The host harness can optionally attach a virtio-snd PCI function. When the device is present,
