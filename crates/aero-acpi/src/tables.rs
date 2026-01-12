@@ -313,11 +313,16 @@ impl AcpiTables {
 }
 
 fn align_up(value: u64, align: u64) -> u64 {
-    debug_assert!(align.is_power_of_two() || align == 1);
-    if align <= 1 {
+    assert_ne!(align, 0, "alignment must be non-zero");
+    if align == 1 {
         return value;
     }
-    (value + (align - 1)) & !(align - 1)
+    let rem = value % align;
+    if rem == 0 {
+        value
+    } else {
+        value.checked_add(align - rem).expect("alignment overflow")
+    }
 }
 
 fn checksum(data: &[u8]) -> u8 {
@@ -1347,6 +1352,36 @@ mod tests {
         assert_eq!(&rsdp[0..8], b"RSD PTR ");
         assert_eq!(checksum(&rsdp[..20]), 0);
         assert_eq!(checksum(&rsdp), 0);
+    }
+
+    #[test]
+    fn placement_alignment_supports_non_power_of_two_values() {
+        // `AcpiPlacement::alignment` is a configuration knob and should behave sensibly even when
+        // set to values that are not powers of two.
+        let cfg = AcpiConfig::default();
+        let placement = AcpiPlacement {
+            alignment: 24,
+            ..Default::default()
+        };
+        let tables = AcpiTables::build(&cfg, placement);
+        let addrs = tables.addresses;
+
+        for (name, addr) in [
+            ("DSDT", addrs.dsdt),
+            ("FACS", addrs.facs),
+            ("FADT", addrs.fadt),
+            ("MADT", addrs.madt),
+            ("HPET", addrs.hpet),
+            ("RSDT", addrs.rsdt),
+            ("XSDT", addrs.xsdt),
+        ] {
+            assert_eq!(
+                addr % placement.alignment,
+                0,
+                "{name} not aligned to {} (addr=0x{addr:x})",
+                placement.alignment
+            );
+        }
     }
 
     #[test]
