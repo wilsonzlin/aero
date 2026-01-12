@@ -362,26 +362,34 @@ async function runTieredVm(iterations: number, threshold: number) {
     mem_read_u32: (_cpuPtr: number, addr: bigint) => dv.getUint32(guest_base + u64ToNumber(addr), true) | 0,
     mem_read_u64: (_cpuPtr: number, addr: bigint) => asI64(dv.getBigUint64(guest_base + u64ToNumber(addr), true)),
     mem_write_u8: (_cpuPtr: number, addr: bigint, value: number) => {
-      const linear = guest_base + u64ToNumber(addr);
+      const off = u64ToNumber(addr);
+      if (off >= guest_size) return;
+      const linear = guest_base + off;
       logWrite(linear, 1);
       dv.setUint8(linear, value & 0xff);
       // If the helper is used outside a JIT block (unlikely), still bump code versions.
       if (!activeWriteLog && onGuestWrite) onGuestWrite(addr, 1);
     },
     mem_write_u16: (_cpuPtr: number, addr: bigint, value: number) => {
-      const linear = guest_base + u64ToNumber(addr);
+      const off = u64ToNumber(addr);
+      if (off + 2 > guest_size) return;
+      const linear = guest_base + off;
       logWrite(linear, 2);
       dv.setUint16(linear, value & 0xffff, true);
       if (!activeWriteLog && onGuestWrite) onGuestWrite(addr, 2);
     },
     mem_write_u32: (_cpuPtr: number, addr: bigint, value: number) => {
-      const linear = guest_base + u64ToNumber(addr);
+      const off = u64ToNumber(addr);
+      if (off + 4 > guest_size) return;
+      const linear = guest_base + off;
       logWrite(linear, 4);
       dv.setUint32(linear, value >>> 0, true);
       if (!activeWriteLog && onGuestWrite) onGuestWrite(addr, 4);
     },
     mem_write_u64: (_cpuPtr: number, addr: bigint, value: bigint) => {
-      const linear = guest_base + u64ToNumber(addr);
+      const off = u64ToNumber(addr);
+      if (off + 8 > guest_size) return;
+      const linear = guest_base + off;
       logWrite(linear, 8);
       dv.setBigUint64(linear, asU64(value), true);
       if (!activeWriteLog && onGuestWrite) onGuestWrite(addr, 8);
