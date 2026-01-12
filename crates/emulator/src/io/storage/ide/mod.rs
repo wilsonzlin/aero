@@ -914,8 +914,8 @@ impl IdeController {
 
     fn decode_bus_master(&self, port: u16) -> Option<(usize, u16)> {
         let base = self.bus_master_base;
-        if port >= base && port < base + 16 {
-            let off = port - base;
+        let off = port.checked_sub(base)?;
+        if off < 16 {
             let chan = (off / 8) as usize;
             let reg_off = off % 8;
             return Some((chan, reg_off));

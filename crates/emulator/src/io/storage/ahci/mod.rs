@@ -240,7 +240,9 @@ impl AhciController {
         if clb == 0 {
             return Err(AhciError::InvalidPrdt);
         }
-        let header_addr = clb + (slot as u64) * CommandHeader::SIZE as u64;
+        // Guest-controlled DMA base addresses can be arbitrary; use wrapping arithmetic so
+        // malformed values can't panic under overflow checks (e.g. fuzzing).
+        let header_addr = clb.wrapping_add((slot as u64).wrapping_mul(CommandHeader::SIZE as u64));
         let header = CommandHeader::read_from(mem, header_addr);
 
         let mut cfis = [0u8; 64];
@@ -268,10 +270,10 @@ impl AhciController {
             return Err(AhciError::InvalidPrdt);
         }
         let mut prdt = Vec::with_capacity(header.prdt_len as usize);
-        let mut addr = header.ctba + 0x80;
+        let mut addr = header.ctba.wrapping_add(0x80);
         for _ in 0..header.prdt_len {
             prdt.push(PrdEntry::read_from(mem, addr));
-            addr += PrdEntry::SIZE as u64;
+            addr = addr.wrapping_add(PrdEntry::SIZE as u64);
         }
         Ok(prdt)
     }
@@ -413,7 +415,7 @@ impl AhciController {
         }
         let fis = build_reg_d2h_fis(status, error);
         // D2H Register FIS is stored at offset 0x40 of the received FIS area.
-        mem.write_physical(self.port0.fb + 0x40, &fis);
+        mem.write_physical(self.port0.fb.wrapping_add(0x40), &fis);
     }
 
     fn port0_mmio_read_dword(&mut self, offset: u64) -> u32 {

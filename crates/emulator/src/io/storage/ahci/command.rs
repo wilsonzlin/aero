@@ -16,9 +16,11 @@ impl CommandHeader {
 
     pub fn read_from(mem: &mut dyn MemoryBus, paddr: u64) -> Self {
         let dw0 = mem.read_u32(paddr);
-        let prdbc = mem.read_u32(paddr + 4);
-        let ctba_low = mem.read_u32(paddr + 8) as u64;
-        let ctba_high = mem.read_u32(paddr + 12) as u64;
+        // Use wrapping arithmetic so malformed guest DMA addresses can't panic under overflow
+        // checks (e.g. fuzzing).
+        let prdbc = mem.read_u32(paddr.wrapping_add(4));
+        let ctba_low = mem.read_u32(paddr.wrapping_add(8)) as u64;
+        let ctba_high = mem.read_u32(paddr.wrapping_add(12)) as u64;
 
         let cfl_dwords = (dw0 & 0x1f) as u8;
         let write = dw0 & (1 << 6) != 0;
@@ -34,7 +36,7 @@ impl CommandHeader {
     }
 
     pub fn write_prdbc(mem: &mut dyn MemoryBus, paddr: u64, value: u32) {
-        mem.write_u32(paddr + 4, value);
+        mem.write_u32(paddr.wrapping_add(4), value);
     }
 }
 
@@ -50,8 +52,8 @@ impl PrdEntry {
 
     pub fn read_from(mem: &mut dyn MemoryBus, paddr: u64) -> Self {
         let dba_low = mem.read_u32(paddr) as u64;
-        let dba_high = mem.read_u32(paddr + 4) as u64;
-        let dbc = mem.read_u32(paddr + 12);
+        let dba_high = mem.read_u32(paddr.wrapping_add(4)) as u64;
+        let dbc = mem.read_u32(paddr.wrapping_add(12));
         Self {
             dba: dba_low | (dba_high << 32),
             dbc,
