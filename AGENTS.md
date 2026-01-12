@@ -76,7 +76,7 @@ AERO_TIMEOUT=1200 AERO_MEM_LIMIT=16G AERO_CARGO_BUILD_JOBS=2 bash ./scripts/safe
 Troubleshooting (some agent environments lose executable bits and/or tracked fixtures):
 
 - If you get `Permission denied` running `./scripts/*.sh`, run via bash: `bash ./scripts/safe-run.sh …` (same for `agent-env-setup.sh`).
-- If `git status` shows lots of changes that are only mode changes, or tracked files appear deleted, restore the checkout:
+- If `git status` shows lots of changes that are only mode changes, or tracked files appear deleted/empty, restore the checkout:
   - `git checkout -- .` (bigger hammer), or at least:
   - `git checkout -- scripts tools/packaging/aero_packager/testdata tools/disk-streaming-browser-e2e/fixtures`
   - Non-git fallback: `find scripts -name '*.sh' -exec chmod +x {} +`

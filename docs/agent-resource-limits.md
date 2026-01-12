@@ -48,7 +48,7 @@ bash ./scripts/agent-env-setup.sh
 > Troubleshooting: in some agent environments, the working tree can lose executable bits and/or be missing tracked fixtures.
 >
 > - If you get `Permission denied` running `./scripts/*.sh`, run via bash: `bash ./scripts/agent-env-setup.sh` / `bash ./scripts/safe-run.sh …`.
-> - If `git status` shows many mode-only changes or deleted tracked files, restore the checkout:
+> - If `git status` shows many mode-only changes or deleted/empty tracked files, restore the checkout:
 >   - `git checkout -- .` (bigger hammer), or at least:
 >   - `git checkout -- scripts tools/packaging/aero_packager/testdata tools/disk-streaming-browser-e2e/fixtures`
 >   - Non-git fallback: `find scripts -name '*.sh' -exec chmod +x {} +`
