@@ -31,7 +31,7 @@ use aero_cpu_core::assist::AssistContext;
 use aero_cpu_core::interp::tier0::exec::{run_batch_cpu_core_with_assists, BatchExit};
 use aero_cpu_core::interp::tier0::Tier0Config;
 use aero_cpu_core::interrupts::CpuExit;
-use aero_cpu_core::state::{CpuMode, CpuState, RFLAGS_IF};
+use aero_cpu_core::state::{gpr, CpuMode, CpuState, RFLAGS_IF};
 use aero_cpu_core::{AssistReason, CpuCore, Exception};
 use aero_devices::a20_gate::A20Gate as A20GateDevice;
 use aero_devices::acpi_pm::{
@@ -2852,6 +2852,9 @@ impl Machine {
     }
 
     fn handle_bios_interrupt(&mut self, vector: u8) {
+        let ax_before = self.cpu.state.gpr[gpr::RAX] as u16;
+        let bx_before = self.cpu.state.gpr[gpr::RBX] as u16;
+
         // Keep the core's A20 view coherent with the chipset latch while executing BIOS services.
         self.cpu.state.a20_enabled = self.chipset.a20().enabled();
         {
@@ -2872,17 +2875,41 @@ impl Machine {
             match self.bios.video.vbe.current_mode {
                 Some(mode) => {
                     if let Some(mode_info) = self.bios.video.vbe.find_mode(mode) {
+                        let width = mode_info.width;
+                        let height = mode_info.height;
+                        let bpp = mode_info.bpp as u16;
+
+                        let bank = self.bios.video.vbe.bank;
+                        let virt_width = self.bios.video.vbe.logical_width_pixels.max(width);
+                        let x_off = self.bios.video.vbe.display_start_x;
+                        let y_off = self.bios.video.vbe.display_start_y;
+
                         let mut vga = vga.borrow_mut();
-                        vga.set_svga_mode(
-                            mode_info.width,
-                            mode_info.height,
-                            mode_info.bpp as u16,
-                            /* lfb */ true,
-                        );
-                        vga.vbe.bank = self.bios.video.vbe.bank;
-                        vga.vbe.virt_width = self.bios.video.vbe.logical_width_pixels;
-                        vga.vbe.x_offset = self.bios.video.vbe.display_start_x;
-                        vga.vbe.y_offset = self.bios.video.vbe.display_start_y;
+                        vga.set_svga_mode(width, height, bpp, /* lfb */ true);
+
+                        // Mirror BIOS VBE state into Bochs VBE_DISPI regs via the port I/O path so
+                        // the VGA device marks the output dirty when panning/stride changes.
+                        vga.port_write(0x01CE, 2, 0x0005);
+                        vga.port_write(0x01CF, 2, u32::from(bank));
+                        vga.port_write(0x01CE, 2, 0x0006);
+                        vga.port_write(0x01CF, 2, u32::from(virt_width));
+                        vga.port_write(0x01CE, 2, 0x0008);
+                        vga.port_write(0x01CF, 2, u32::from(x_off));
+                        vga.port_write(0x01CE, 2, 0x0009);
+                        vga.port_write(0x01CF, 2, u32::from(y_off));
+
+                        // The BIOS VBE implementation clears VRAM byte-at-a-time via the
+                        // `MemoryBus` before we program the VGA device's VBE enable bits, so those
+                        // MMIO writes may have been ignored. If the guest did not set the VBE "no
+                        // clear" bit, perform an efficient host-side clear after enabling the mode.
+                        if ax_before == 0x4F02 && (bx_before & 0x8000) == 0 {
+                            let bytes_per_pixel = ((bpp as usize) + 7) / 8;
+                            let clear_len = (width as usize)
+                                .saturating_mul(height as usize)
+                                .saturating_mul(bytes_per_pixel.max(1));
+                            let clear_len = clear_len.min(vga.vram().len());
+                            vga.vram_mut()[..clear_len].fill(0);
+                        }
                     }
                 }
                 None => {
