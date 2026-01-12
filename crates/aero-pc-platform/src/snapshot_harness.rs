@@ -1,7 +1,9 @@
-use aero_snapshot::io_snapshot_bridge::{apply_io_snapshot_to_device, device_state_from_io_snapshot};
+use aero_snapshot::io_snapshot_bridge::{
+    apply_io_snapshot_to_device, device_state_from_io_snapshot,
+};
 use aero_snapshot::{
-    CpuState, DeviceId, DeviceState, DiskOverlayRefs, MmuState, Result, SnapshotError, SnapshotMeta,
-    SnapshotSource, SnapshotTarget,
+    CpuState, DeviceId, DeviceState, DiskOverlayRefs, MmuState, Result, SnapshotError,
+    SnapshotMeta, SnapshotSource, SnapshotTarget,
 };
 
 use crate::PcPlatform;
@@ -169,8 +171,7 @@ impl SnapshotTarget for PcPlatformSnapshotHarness<'_> {
                     }
                 }
                 id if id == DeviceId::HPET => {
-                    if apply_io_snapshot_to_device(&state, &mut *self.pc.hpet.borrow_mut())
-                        .is_err()
+                    if apply_io_snapshot_to_device(&state, &mut *self.pc.hpet.borrow_mut()).is_err()
                     {
                         self.restore_error =
                             Some(SnapshotError::Corrupt("failed to restore HPET state"));

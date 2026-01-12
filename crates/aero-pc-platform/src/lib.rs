@@ -44,9 +44,9 @@ use std::rc::Rc;
 
 mod cpu_core;
 mod pci_mmio;
+pub use aero_devices::pci::PciConfigSyncedMmioBar;
 pub use cpu_core::{PcCpuBus, PcInterruptController};
 pub use pci_mmio::{PciBarMmioHandler, PciBarMmioRouter};
-pub use aero_devices::pci::PciConfigSyncedMmioBar;
 
 mod firmware_pci;
 pub use firmware_pci::{PciConfigPortsBiosAdapter, SharedPciConfigPortsBiosAdapter};
@@ -1477,9 +1477,7 @@ impl PcPlatform {
                     .expect("failed to allocate in-memory IDE disk");
                 let drive = AtaDrive::new(Box::new(disk))
                     .expect("in-memory IDE disk should be 512-byte aligned");
-                ide.borrow_mut()
-                    .controller
-                    .attach_primary_master_ata(drive);
+                ide.borrow_mut().controller.attach_primary_master_ata(drive);
             }
 
             let profile = aero_devices::pci::profile::IDE_PIIX3;
@@ -1850,8 +1848,12 @@ impl PcPlatform {
     ///
     /// The handler is keyed by `(bdf, bar_index)` and is dispatched to whenever that BAR currently
     /// decodes the accessed MMIO address (respecting PCI command MEM decoding and BAR relocation).
-    pub fn register_pci_mmio_bar_handler<T>(&mut self, bdf: PciBdf, bar: u8, handler: Rc<RefCell<T>>)
-    where
+    pub fn register_pci_mmio_bar_handler<T>(
+        &mut self,
+        bdf: PciBdf,
+        bar: u8,
+        handler: Rc<RefCell<T>>,
+    ) where
         T: MmioHandler + 'static,
     {
         self.pci_mmio_router

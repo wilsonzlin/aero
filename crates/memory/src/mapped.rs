@@ -201,11 +201,13 @@ impl MappedGuestMemory {
 
     #[inline]
     fn check_range(&self, paddr: u64, len: usize) -> GuestMemoryResult<u64> {
-        let end = paddr.checked_add(len as u64).ok_or(GuestMemoryError::OutOfRange {
-            paddr,
-            len,
-            size: self.phys_size,
-        })?;
+        let end = paddr
+            .checked_add(len as u64)
+            .ok_or(GuestMemoryError::OutOfRange {
+                paddr,
+                len,
+                size: self.phys_size,
+            })?;
         if end > self.phys_size {
             return Err(GuestMemoryError::OutOfRange {
                 paddr,
@@ -302,7 +304,10 @@ impl GuestMemory for MappedGuestMemory {
             return None;
         }
 
-        let idx = self.regions.partition_point(|r| r.phys_start <= paddr).checked_sub(1)?;
+        let idx = self
+            .regions
+            .partition_point(|r| r.phys_start <= paddr)
+            .checked_sub(1)?;
         let region = self.regions.get(idx)?;
         if paddr >= region.phys_end || end > region.phys_end {
             return None;
@@ -318,7 +323,10 @@ impl GuestMemory for MappedGuestMemory {
             return None;
         }
 
-        let idx = self.regions.partition_point(|r| r.phys_start <= paddr).checked_sub(1)?;
+        let idx = self
+            .regions
+            .partition_point(|r| r.phys_start <= paddr)
+            .checked_sub(1)?;
         let region = self.regions.get(idx)?;
         if paddr >= region.phys_end || end > region.phys_end {
             return None;
@@ -475,4 +483,3 @@ mod tests {
         assert_eq!(&buf[16..], &pattern);
     }
 }
-

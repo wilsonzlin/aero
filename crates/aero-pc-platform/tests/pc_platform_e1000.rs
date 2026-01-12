@@ -1,8 +1,8 @@
 use aero_cpu_core::mem::CpuBus as _;
+use aero_devices::pci::profile::NIC_E1000_82540EM;
 use aero_devices::pci::{
     PciInterruptPin, PciIntxRouter, PciIntxRouterConfig, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT,
 };
-use aero_devices::pci::profile::NIC_E1000_82540EM;
 use aero_interrupts::apic::IOAPIC_MMIO_BASE;
 use aero_net_e1000::{ICR_TXDW, MIN_L2_FRAME_LEN};
 use aero_pc_platform::{PcCpuBus, PcPlatform, PcPlatformConfig};
@@ -20,27 +20,39 @@ fn cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
 }
 
 fn read_cfg_u32(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8) -> u32 {
-    pc.io
-        .write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bus, device, function, offset));
+    pc.io.write(
+        PCI_CFG_ADDR_PORT,
+        4,
+        cfg_addr(bus, device, function, offset),
+    );
     pc.io.read(PCI_CFG_DATA_PORT, 4)
 }
 
 fn read_cfg_u8(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8) -> u8 {
-    pc.io
-        .write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bus, device, function, offset));
+    pc.io.write(
+        PCI_CFG_ADDR_PORT,
+        4,
+        cfg_addr(bus, device, function, offset),
+    );
     let port = PCI_CFG_DATA_PORT + u16::from(offset & 3);
     pc.io.read(port, 1) as u8
 }
 
 fn write_cfg_u16(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8, value: u16) {
-    pc.io
-        .write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bus, device, function, offset));
+    pc.io.write(
+        PCI_CFG_ADDR_PORT,
+        4,
+        cfg_addr(bus, device, function, offset),
+    );
     pc.io.write(PCI_CFG_DATA_PORT, 2, u32::from(value));
 }
 
 fn write_cfg_u32(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8, value: u32) {
-    pc.io
-        .write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bus, device, function, offset));
+    pc.io.write(
+        PCI_CFG_ADDR_PORT,
+        4,
+        cfg_addr(bus, device, function, offset),
+    );
     pc.io.write(PCI_CFG_DATA_PORT, 4, value);
 }
 
@@ -121,8 +133,14 @@ fn pc_platform_enumerates_e1000_and_assigns_bars() {
     // Class/subclass/prog-if/revision should match the device profile.
     let class_rev = read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x08);
     assert_eq!(class_rev & 0xFF, u32::from(NIC_E1000_82540EM.revision_id));
-    assert_eq!((class_rev >> 8) & 0xFF, u32::from(NIC_E1000_82540EM.class.prog_if));
-    assert_eq!((class_rev >> 16) & 0xFF, u32::from(NIC_E1000_82540EM.class.sub_class));
+    assert_eq!(
+        (class_rev >> 8) & 0xFF,
+        u32::from(NIC_E1000_82540EM.class.prog_if)
+    );
+    assert_eq!(
+        (class_rev >> 16) & 0xFF,
+        u32::from(NIC_E1000_82540EM.class.sub_class)
+    );
     assert_eq!(
         (class_rev >> 24) & 0xFF,
         u32::from(NIC_E1000_82540EM.class.base_class)
@@ -174,7 +192,10 @@ fn pc_platform_sets_e1000_intx_line_and_pin_registers() {
     let bdf = NIC_E1000_82540EM.bdf;
 
     let line = read_cfg_u8(&mut pc, bdf.bus, bdf.device, bdf.function, 0x3c);
-    assert_eq!(line, 11, "00:05.0 INTA# should route to GSI/IRQ11 by default");
+    assert_eq!(
+        line, 11,
+        "00:05.0 INTA# should route to GSI/IRQ11 by default"
+    );
 
     let pin = read_cfg_u8(&mut pc, bdf.bus, bdf.device, bdf.function, 0x3d);
     assert_eq!(pin, 1, "Interrupt Pin should be INTA#");
@@ -187,27 +208,45 @@ fn pc_platform_e1000_bar_probes_return_size_masks() {
 
     // BAR0: 0x20_000-byte MMIO.
     let bar0_orig = read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x10);
-    write_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x10, 0xFFFF_FFFF);
+    write_cfg_u32(
+        &mut pc,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        0x10,
+        0xFFFF_FFFF,
+    );
     let bar0_probe = read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x10);
     assert_eq!(
-        bar0_probe,
-        0xFFFE_0000,
+        bar0_probe, 0xFFFE_0000,
         "BAR0 probe should return size mask for 0x20_000-byte MMIO BAR"
     );
     write_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x10, bar0_orig);
-    assert_eq!(read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x10), bar0_orig);
+    assert_eq!(
+        read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x10),
+        bar0_orig
+    );
 
     // BAR1: 0x40-byte I/O (IOADDR/IODATA) window.
     let bar1_orig = read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x14);
-    write_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x14, 0xFFFF_FFFF);
+    write_cfg_u32(
+        &mut pc,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        0x14,
+        0xFFFF_FFFF,
+    );
     let bar1_probe = read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x14);
     assert_eq!(
-        bar1_probe,
-        0xFFFF_FFC1,
+        bar1_probe, 0xFFFF_FFC1,
         "BAR1 probe should return size mask for 0x40-byte I/O BAR"
     );
     write_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x14, bar1_orig);
-    assert_eq!(read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x14), bar1_orig);
+    assert_eq!(
+        read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x14),
+        bar1_orig
+    );
 }
 
 #[test]
@@ -224,7 +263,8 @@ fn pc_platform_routes_e1000_mmio_through_bar0() {
 
     // PhysicalMemoryBus issues MMIO writes in chunks up to 8 bytes; ensure the E1000 MMIO mapping
     // handles 64-bit writes by splitting into supported access sizes.
-    pc.memory.write_u64(bar0_base + 0x1000, 0xaabb_ccdd_eeff_0011);
+    pc.memory
+        .write_u64(bar0_base + 0x1000, 0xaabb_ccdd_eeff_0011);
     assert_eq!(pc.memory.read_u32(bar0_base + 0x1000), 0xeeff_0011);
     assert_eq!(pc.memory.read_u32(bar0_base + 0x1004), 0xaabb_ccdd);
 }
@@ -269,7 +309,8 @@ fn pc_platform_gates_e1000_io_and_mmio_on_independent_pci_command_bits() {
     let status_io = bus.io_read(iodata, 4).unwrap() as u32;
     assert_eq!(status_io, status_mmio);
 
-    let command = (read_cfg_u32(&mut bus.platform, bdf.bus, bdf.device, bdf.function, 0x04) & 0xffff) as u16;
+    let command =
+        (read_cfg_u32(&mut bus.platform, bdf.bus, bdf.device, bdf.function, 0x04) & 0xffff) as u16;
 
     // Disable PCI memory decoding but keep I/O decoding enabled: MMIO should be gated, I/O should still work.
     write_cfg_u16(
@@ -496,6 +537,79 @@ fn pc_platform_respects_pci_interrupt_disable_bit_for_e1000_intx() {
 }
 
 #[test]
+fn pc_platform_resyncs_e1000_pci_command_before_polling_intx_level() {
+    let mut pc = PcPlatform::new_with_e1000(2 * 1024 * 1024);
+    let bdf = NIC_E1000_82540EM.bdf;
+    let bar0_base = read_e1000_bar0_base(&mut pc);
+
+    // Unmask IRQ2 (cascade) and IRQ11 so we can observe INTx via the legacy PIC.
+    {
+        let mut interrupts = pc.interrupts.borrow_mut();
+        interrupts.pic_mut().set_offsets(0x20, 0x28);
+        interrupts.pic_mut().set_masked(2, false);
+        interrupts.pic_mut().set_masked(11, false);
+    }
+    assert_eq!(pc.interrupts.borrow().pic().get_pending_vector(), None);
+
+    // Enable TXDW interrupt and set the cause.
+    pc.memory.write_u32(bar0_base + 0x00D0, ICR_TXDW); // IMS
+    pc.memory.write_u32(bar0_base + 0x00C8, ICR_TXDW); // ICS
+
+    let e1000 = pc.e1000().expect("E1000 should be enabled");
+    assert!(e1000.borrow().irq_level());
+
+    let command = read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04) as u16;
+
+    // Disable INTx in PCI command register (bit 10), then run the platform's E1000 processing step
+    // so the device model's internal PCI config copy observes the INTx disable bit.
+    write_cfg_u16(
+        &mut pc,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        0x04,
+        command | (1 << 10),
+    );
+    pc.process_e1000();
+    assert!(
+        !e1000.borrow().irq_level(),
+        "E1000 device model should suppress its IRQ when COMMAND.INTX_DISABLE is set"
+    );
+
+    // Re-enable INTx in the guest-facing PCI config space without processing the device model. This
+    // leaves the E1000 model with a stale copy of the PCI command register (INTx still disabled).
+    write_cfg_u16(
+        &mut pc,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        0x04,
+        command & !(1 << 10),
+    );
+    assert!(
+        !e1000.borrow().irq_level(),
+        "E1000 model should still see stale INTx disable bit until the platform resyncs PCI config"
+    );
+
+    // Polling INTx lines must resync PCI command state before querying the device model so the
+    // cleared INTx disable bit takes effect immediately.
+    pc.poll_pci_intx_lines();
+    assert!(
+        e1000.borrow().irq_level(),
+        "poll_pci_intx_lines should resync PCI command and expose the pending E1000 interrupt"
+    );
+
+    assert_eq!(
+        pc.interrupts
+            .borrow()
+            .pic()
+            .get_pending_vector()
+            .and_then(|v| pc.interrupts.borrow().pic().vector_to_irq(v)),
+        Some(11)
+    );
+}
+
+#[test]
 fn pc_platform_routes_e1000_intx_via_ioapic_in_apic_mode() {
     let mut pc = PcPlatform::new_with_e1000(2 * 1024 * 1024);
     let bar0_base = read_e1000_bar0_base(&mut pc);
@@ -596,14 +710,7 @@ fn pc_platform_routes_e1000_io_bar_after_bar1_reprogramming() {
     assert_eq!(new_base % 0x40, 0);
 
     // Relocate BAR1.
-    write_cfg_u32(
-        &mut pc,
-        bdf.bus,
-        bdf.device,
-        bdf.function,
-        0x14,
-        new_base,
-    );
+    write_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x14, new_base);
 
     let bar0_base = read_e1000_bar0_base(&mut pc);
     let mmio_status = pc.memory.read_u32(bar0_base + 0x08);
@@ -671,7 +778,11 @@ fn pc_platform_defers_e1000_dma_until_process_e1000() {
 
     let mut status = [0u8; 1];
     pc.memory.read_physical(0x1000 + 12, &mut status);
-    assert_eq!(status[0] & 0x01, 0, "DD should not be set before process_e1000()");
+    assert_eq!(
+        status[0] & 0x01,
+        0,
+        "DD should not be set before process_e1000()"
+    );
 
     pc.process_e1000();
 
@@ -680,7 +791,11 @@ fn pc_platform_defers_e1000_dma_until_process_e1000() {
     assert_eq!(causes & ICR_TXDW, ICR_TXDW);
 
     pc.memory.read_physical(0x1000 + 12, &mut status);
-    assert_ne!(status[0] & 0x01, 0, "DD should be set after process_e1000()");
+    assert_ne!(
+        status[0] & 0x01,
+        0,
+        "DD should be set after process_e1000()"
+    );
 }
 
 #[test]
@@ -724,7 +839,11 @@ fn pc_platform_e1000_dma_writes_mark_dirty_pages_when_enabled() {
 
     let mut status = [0u8; 1];
     pc.memory.read_physical(0x1000 + 12, &mut status);
-    assert_ne!(status[0] & 0x01, 0, "DD should be set after process_e1000()");
+    assert_ne!(
+        status[0] & 0x01,
+        0,
+        "DD should be set after process_e1000()"
+    );
 
     let page_size = u64::from(pc.memory.dirty_page_size());
     let expected_page = 0x1000u64 / page_size;
