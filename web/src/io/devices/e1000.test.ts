@@ -190,12 +190,14 @@ describe("io/devices/E1000PciDevice", () => {
     const netRx = openRingByKind(buffer, IO_IPC_NET_RX_QUEUE_KIND);
 
     const pciConfigWrite = vi.fn();
+    const setPciCommand = vi.fn();
     const bridge: E1000BridgeLike = {
       pci_config_write: pciConfigWrite,
       mmio_read: vi.fn(() => 0),
       mmio_write: vi.fn(),
       io_read: vi.fn(() => 0),
       io_write: vi.fn(),
+      set_pci_command: setPciCommand,
       poll: vi.fn(),
       receive_frame: vi.fn(),
       pop_tx_frame: vi.fn(() => undefined),
@@ -219,5 +221,7 @@ describe("io/devices/E1000PciDevice", () => {
     expect(pciConfigWrite).toHaveBeenCalledTimes(1);
     // The PCI bus callback is invoked on the aligned dword (0x04..0x07).
     expect(pciConfigWrite).toHaveBeenCalledWith(0x04, 4, 0x0004);
+    expect(setPciCommand).toHaveBeenCalledTimes(1);
+    expect(setPciCommand).toHaveBeenCalledWith(0x0004);
   });
 });

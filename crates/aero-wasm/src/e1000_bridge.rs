@@ -261,11 +261,18 @@ impl E1000Bridge {
         }
         let mut buf = vec![0u8; len];
         frame.copy_to(&mut buf);
-        self.dev.receive_frame(&mut self.mem, &buf);
+        // Avoid an extra copy: `E1000Device::receive_frame` takes `&[u8]` and clones into a new
+        // `Vec<u8>`. We already have an owned buffer from the JS → WASM copy, so enqueue it
+        // directly.
+        self.dev.enqueue_rx_frame(buf);
+        self.dev.poll(&mut self.mem);
     }
 
     pub fn pop_tx_frame(&mut self) -> Option<Uint8Array> {
         let frame = self.dev.pop_tx_frame()?;
+        if frame.len() < MIN_L2_FRAME_LEN || frame.len() > MAX_L2_FRAME_LEN {
+            return None;
+        }
         Some(Uint8Array::from(frame.as_slice()))
     }
 
