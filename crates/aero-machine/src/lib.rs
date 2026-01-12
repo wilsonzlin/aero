@@ -64,8 +64,8 @@ use aero_platform::reset::{ResetKind, ResetLatch};
 use aero_snapshot as snapshot;
 use firmware::bios::{A20Gate, Bios, BiosBus, BiosConfig, BlockDevice, DiskError, FirmwareMemory};
 use memory::{
-    DenseMemory, DirtyGuestMemory, DirtyTracker, GuestMemoryError, GuestMemoryMapping,
-    MapError, MappedGuestMemory, MemoryBus as _, MmioHandler, PhysicalMemoryBus,
+    DenseMemory, DirtyGuestMemory, DirtyTracker, GuestMemoryError, GuestMemoryMapping, MapError,
+    MappedGuestMemory, MemoryBus as _, MmioHandler, PhysicalMemoryBus,
 };
 
 mod pci_firmware;
@@ -296,26 +296,27 @@ impl SystemMemory {
             // Match the BIOS E820 map behavior: once RAM extends into the PCIe ECAM / PCI hole
             // below 4GiB, remap the remainder above 4GiB.
             let high_len = ram_size_bytes - low_ram_end;
-            let phys_size = FOUR_GIB + high_len;
-            Box::new(
-                MappedGuestMemory::new(
-                    Box::new(ram),
-                    phys_size,
-                    vec![
-                        GuestMemoryMapping {
-                            phys_start: 0,
-                            phys_end: low_ram_end,
-                            inner_offset: 0,
-                        },
-                        GuestMemoryMapping {
-                            phys_start: FOUR_GIB,
-                            phys_end: phys_size,
-                            inner_offset: low_ram_end,
-                        },
-                    ],
-                )
-                .expect("valid PC RAM remapping layout"),
+            let phys_size = FOUR_GIB
+                .checked_add(high_len)
+                .ok_or(MachineError::GuestMemoryTooLarge(ram_size_bytes))?;
+            let mapped = MappedGuestMemory::new(
+                Box::new(ram),
+                phys_size,
+                vec![
+                    GuestMemoryMapping {
+                        phys_start: 0,
+                        phys_end: low_ram_end,
+                        inner_offset: 0,
+                    },
+                    GuestMemoryMapping {
+                        phys_start: FOUR_GIB,
+                        phys_end: phys_size,
+                        inner_offset: low_ram_end,
+                    },
+                ],
             )
+            .map_err(|_| MachineError::GuestMemoryTooLarge(ram_size_bytes))?;
+            Box::new(mapped)
         } else {
             Box::new(ram)
         };
@@ -2405,7 +2406,9 @@ impl snapshot::SnapshotSource for Machine {
             if first < buf.len() {
                 let phys = FOUR_GIB;
                 ram.read_into(phys, &mut buf[first..])
-                    .map_err(|_err: GuestMemoryError| snapshot::SnapshotError::Corrupt("ram read failed"))?;
+                    .map_err(|_err: GuestMemoryError| {
+                        snapshot::SnapshotError::Corrupt("ram read failed")
+                    })?;
             }
             return Ok(());
         }
@@ -2823,7 +2826,9 @@ impl snapshot::SnapshotTarget for Machine {
             if first < data.len() {
                 let phys = FOUR_GIB;
                 ram.write_from(phys, &data[first..])
-                    .map_err(|_err: GuestMemoryError| snapshot::SnapshotError::Corrupt("ram write failed"))?;
+                    .map_err(|_err: GuestMemoryError| {
+                        snapshot::SnapshotError::Corrupt("ram write failed")
+                    })?;
             }
             return Ok(());
         }
@@ -4861,5 +4866,58 @@ mod tests {
 
         assert_eq!(restored.cpu.pending.interrupt_inhibit(), expected_inhibit);
         assert_eq!(restored.cpu.pending.external_interrupts, expected_external);
+    }
+
+    #[test]
+    fn pc_ram_is_remapped_above_4gib_and_pci_hole_is_open_bus() {
+        // Exercise the PC-style RAM layout without allocating multi-GB dense backing memory.
+        //
+        // - low RAM:  [0, PCIE_ECAM_BASE)
+        // - hole:     [PCIE_ECAM_BASE, 4GiB) (open bus)
+        // - high RAM: [4GiB, 4GiB + (ram_size - PCIE_ECAM_BASE))
+        const FOUR_GIB: u64 = 0x1_0000_0000;
+        let low_end = firmware::bios::PCIE_ECAM_BASE;
+        let high_len = 0x2000u64;
+        let ram_size_bytes = low_end + high_len;
+        let phys_size = FOUR_GIB + high_len;
+
+        let backing = memory::SparseMemory::new(ram_size_bytes).unwrap();
+        let (backing, _dirty) =
+            DirtyGuestMemory::new(Box::new(backing), SNAPSHOT_DIRTY_PAGE_SIZE);
+
+        let mapped = MappedGuestMemory::new(
+            Box::new(backing),
+            phys_size,
+            vec![
+                GuestMemoryMapping {
+                    phys_start: 0,
+                    phys_end: low_end,
+                    inner_offset: 0,
+                },
+                GuestMemoryMapping {
+                    phys_start: FOUR_GIB,
+                    phys_end: phys_size,
+                    inner_offset: low_end,
+                },
+            ],
+        )
+        .unwrap();
+
+        let mut bus = PhysicalMemoryBus::new(Box::new(mapped));
+
+        // Writing to high RAM at 4GiB should succeed and be observable via the same address.
+        bus.write_physical(FOUR_GIB, &[0xAA]);
+        let mut byte = [0u8; 1];
+        bus.read_physical(FOUR_GIB, &mut byte);
+        assert_eq!(byte[0], 0xAA);
+
+        // The reserved PCI hole should behave like open bus.
+        let hole_addr = low_end + 0x1000;
+        bus.read_physical(hole_addr, &mut byte);
+        assert_eq!(byte[0], 0xFF);
+
+        bus.write_physical(hole_addr, &[0x00]);
+        bus.read_physical(hole_addr, &mut byte);
+        assert_eq!(byte[0], 0xFF);
     }
 }
