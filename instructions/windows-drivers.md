@@ -408,13 +408,14 @@ python3 drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py \
 2. ☐ Read [`docs/windows/README.md`](../docs/windows/README.md)
 3. ☐ Read [`docs/windows7-virtio-driver-contract.md`](../docs/windows7-virtio-driver-contract.md)
 4. ☐ Read [`docs/windows-device-contract.md`](../docs/windows-device-contract.md)
-5. ☐ Read [`drivers/windows7/tests/README.md`](../drivers/windows7/tests/README.md) (selftest + harness)
-6. ☐ Read [`drivers/aerogpu/tests/win7/README.md`](../drivers/aerogpu/tests/win7/README.md) (AeroGPU guest validation suite)
-7. ☐ Run contract checks locally (`python3 scripts/ci/check-windows7-virtio-contract-consistency.py`, `python3 scripts/ci/check-windows-virtio-contract.py --check`, `python3 scripts/ci/gen-guest-tools-devices-cmd.py --check`)
-8. ☐ Set up Windows build environment (WDK)
-9. ☐ Explore `drivers/aerogpu/` and `drivers/windows7/`
-10. ☐ Build existing drivers to verify toolchain
-11. ☐ Pick a task from the tables above and begin
+5. ☐ Read [`docs/windows7-guest-tools.md`](../docs/windows7-guest-tools.md) (how the drivers are installed/switch-over order)
+6. ☐ Read [`drivers/windows7/tests/README.md`](../drivers/windows7/tests/README.md) (selftest + harness)
+7. ☐ Read [`drivers/aerogpu/tests/win7/README.md`](../drivers/aerogpu/tests/win7/README.md) (AeroGPU guest validation suite)
+8. ☐ Run contract checks locally (`python3 scripts/ci/check-windows7-virtio-contract-consistency.py`, `python3 scripts/ci/check-windows-virtio-contract.py --check`, `python3 scripts/ci/gen-guest-tools-devices-cmd.py --check`)
+9. ☐ Set up Windows build environment (WDK)
+10. ☐ Explore `drivers/aerogpu/` and `drivers/windows7/`
+11. ☐ Build existing drivers to verify toolchain
+12. ☐ Pick a task from the tables above and begin
 
 ---
 
