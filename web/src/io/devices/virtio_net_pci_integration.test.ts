@@ -225,6 +225,7 @@ describe("io/devices/virtio-net (pci bridge integration)", () => {
     let pciAddr: PciAddress | null = null;
     try {
       pciAddr = mgr.registerPciDevice(dev);
+      expect(pciAddr).toEqual(dev.bdf);
 
       // Basic PCI identification.
       const idDword = cfgReadU32(pciAddr, 0x00);
