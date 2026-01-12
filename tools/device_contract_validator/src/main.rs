@@ -174,7 +174,6 @@ fn index_devices(devices: &[DeviceEntry]) -> Result<BTreeMap<String, DeviceEntry
 
 fn validate_contract_entries(devices: &BTreeMap<String, DeviceEntry>) -> Result<()> {
     let rev_re = regex::Regex::new(r"(?i)&REV_([0-9A-F]{2})").expect("static regex must compile");
-
     for (name, dev) in devices {
         let vendor = parse_hex_u16(&dev.pci_vendor_id)
             .with_context(|| format!("{name}: invalid pci_vendor_id"))?;

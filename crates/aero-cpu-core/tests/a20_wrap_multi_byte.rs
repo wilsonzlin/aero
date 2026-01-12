@@ -177,7 +177,7 @@ impl CpuBus for SparseBus {
     fn fetch(&mut self, vaddr: u64, max_len: usize) -> Result<[u8; 15], Exception> {
         let mut buf = [0u8; 15];
         let len = max_len.min(15);
-        for (i, byte) in buf.iter_mut().enumerate().take(len) {
+        for (i, byte) in buf.iter_mut().take(len).enumerate() {
             let addr = vaddr.checked_add(i as u64).ok_or(Exception::MemoryFault)?;
             *byte = self.read_u8(addr)?;
         }

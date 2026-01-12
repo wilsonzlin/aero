@@ -251,8 +251,9 @@ impl Machine {
             }
             Mnemonic::Wrmsr => {
                 let idx = self.cpu.read_reg(Register::ECX) as u32;
-                let val = (self.cpu.read_reg(Register::EDX) << 32)
-                    | (self.cpu.read_reg(Register::EAX) & 0xFFFF_FFFF);
+                let edx = self.cpu.read_reg(Register::EDX) & 0xFFFF_FFFF;
+                let eax = self.cpu.read_reg(Register::EAX) & 0xFFFF_FFFF;
+                let val = (edx << 32) | eax;
                 if idx == 0x10 {
                     self.cpu.msr.tsc = val;
                 } else {
@@ -486,7 +487,7 @@ impl CpuBus for Bus<'_> {
         let mut buf = [0u8; 15];
         let len = max_len.min(15);
         for (i, slot) in buf.iter_mut().enumerate().take(len) {
-            *slot = self.read_u8(vaddr + i as u64)?;
+            *slot = self.read_u8(vaddr.wrapping_add(i as u64))?;
         }
         Ok(buf)
     }

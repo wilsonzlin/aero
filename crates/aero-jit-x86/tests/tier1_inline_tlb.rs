@@ -412,7 +412,7 @@ fn run_wasm_inner(
 
     mem[ram_base as usize..ram_base as usize + ram.len()].copy_from_slice(&ram);
 
-    let pages = (total_len.div_ceil(65_536)) as u32;
+    let pages = total_len.div_ceil(65_536) as u32;
     let (mut store, memory, func) = instantiate(&wasm, pages, ram_size);
     memory.write(&mut store, 0, &mem).unwrap();
 

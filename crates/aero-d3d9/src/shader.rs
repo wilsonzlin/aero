@@ -1338,16 +1338,15 @@ impl ShaderCache {
         use std::collections::hash_map::Entry;
 
         let hash = blake3::hash(bytes);
-        let cached = match self.map.entry(hash) {
-            Entry::Occupied(e) => e.into_mut(),
+        match self.map.entry(hash) {
+            Entry::Occupied(e) => Ok(e.into_mut()),
             Entry::Vacant(e) => {
-                let hash = *e.key();
                 let program = parse(bytes)?;
                 let ir = to_ir(&program);
                 let wgsl = generate_wgsl(&ir);
-                e.insert(CachedShader { hash, ir, wgsl })
+                let hash = *e.key();
+                Ok(e.insert(CachedShader { hash, ir, wgsl }))
             }
-        };
-        Ok(cached)
+        }
     }
 }

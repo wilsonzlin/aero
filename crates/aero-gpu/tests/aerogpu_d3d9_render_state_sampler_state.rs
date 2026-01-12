@@ -232,12 +232,12 @@ fn d3d9_cmd_stream_render_state_and_sampler_state_are_honored() {
     // Quad B: constant UV near the boundary between two texels (for filter test).
     let uv_const = [0.49f32, 0.5f32];
 
-    for i in 0..6 {
-        for f in quad_pos[i] {
+    for (pos, uv) in quad_pos.iter().zip(quad_uv) {
+        for &f in pos {
             push_f32(&mut vb_data, f);
         }
-        push_f32(&mut vb_data, quad_uv[i][0]);
-        push_f32(&mut vb_data, quad_uv[i][1]);
+        push_f32(&mut vb_data, uv[0]);
+        push_f32(&mut vb_data, uv[1]);
         push_f32(&mut vb_data, 0.0);
         push_f32(&mut vb_data, 0.0);
     }

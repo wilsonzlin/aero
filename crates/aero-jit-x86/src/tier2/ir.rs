@@ -449,7 +449,7 @@ impl Instr {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum TraceKind {
     #[default]
     Linear,

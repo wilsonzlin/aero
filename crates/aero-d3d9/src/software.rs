@@ -4,7 +4,7 @@
 //! requiring a GPU / WebGPU implementation in CI.
 
 use std::collections::HashMap;
-use std::ops::{Add as _, Mul as _, Neg as _, Sub as _};
+use std::ops::{Add, Mul, Neg, Sub};
 
 use crate::{
     shader::{
@@ -81,7 +81,7 @@ impl Vec4 {
     }
 }
 
-impl std::ops::Add for Vec4 {
+impl Add for Vec4 {
     type Output = Self;
 
     fn add(self, rhs: Self) -> Self::Output {
@@ -94,7 +94,7 @@ impl std::ops::Add for Vec4 {
     }
 }
 
-impl std::ops::Sub for Vec4 {
+impl Sub for Vec4 {
     type Output = Self;
 
     fn sub(self, rhs: Self) -> Self::Output {
@@ -107,7 +107,7 @@ impl std::ops::Sub for Vec4 {
     }
 }
 
-impl std::ops::Mul for Vec4 {
+impl Mul for Vec4 {
     type Output = Self;
 
     fn mul(self, rhs: Self) -> Self::Output {
@@ -120,7 +120,7 @@ impl std::ops::Mul for Vec4 {
     }
 }
 
-impl std::ops::Neg for Vec4 {
+impl Neg for Vec4 {
     type Output = Self;
 
     fn neg(self) -> Self::Output {
@@ -137,14 +137,14 @@ fn swizzle(v: Vec4, swz: Swizzle) -> Vec4 {
 fn apply_src_modifier(v: Vec4, modifier: SrcModifier) -> Vec4 {
     match modifier {
         SrcModifier::None => v,
-        SrcModifier::Negate => v.neg(),
-        SrcModifier::Bias => v.sub(Vec4::splat(0.5)),
-        SrcModifier::BiasNegate => v.sub(Vec4::splat(0.5)).neg(),
-        SrcModifier::Sign => v.mul_scalar(2.0).sub(Vec4::splat(1.0)),
-        SrcModifier::SignNegate => v.mul_scalar(2.0).sub(Vec4::splat(1.0)).neg(),
-        SrcModifier::Comp => Vec4::splat(1.0).sub(v),
+        SrcModifier::Negate => -v,
+        SrcModifier::Bias => v - Vec4::splat(0.5),
+        SrcModifier::BiasNegate => -(v - Vec4::splat(0.5)),
+        SrcModifier::Sign => v.mul_scalar(2.0) - Vec4::splat(1.0),
+        SrcModifier::SignNegate => -(v.mul_scalar(2.0) - Vec4::splat(1.0)),
+        SrcModifier::Comp => Vec4::splat(1.0) - v,
         SrcModifier::X2 => v.mul_scalar(2.0),
-        SrcModifier::X2Negate => v.mul_scalar(2.0).neg(),
+        SrcModifier::X2Negate => -v.mul_scalar(2.0),
         SrcModifier::Dz => {
             let z = v.z.max(f32::EPSILON);
             v.div_scalar(z)
@@ -154,8 +154,8 @@ fn apply_src_modifier(v: Vec4, modifier: SrcModifier) -> Vec4 {
             v.div_scalar(w)
         }
         SrcModifier::Abs => v.abs(),
-        SrcModifier::AbsNegate => v.abs().neg(),
-        SrcModifier::Not => Vec4::splat(1.0).sub(v),
+        SrcModifier::AbsNegate => -v.abs(),
+        SrcModifier::Not => Vec4::splat(1.0) - v,
     }
 }
 
@@ -267,7 +267,7 @@ impl Texture2D {
                 let c01 = self.get(x0, y1);
                 let c11 = self.get(x1, y1);
 
-                let lerp = |a: Vec4, b: Vec4, t: f32| a.mul_scalar(1.0 - t).add(b.mul_scalar(t));
+                let lerp = |a: Vec4, b: Vec4, t: f32| a.mul_scalar(1.0 - t) + b.mul_scalar(t);
                 let cx0 = lerp(c00, c10, tx);
                 let cx1 = lerp(c01, c11, tx);
                 lerp(cx0, cx1, ty)
@@ -318,11 +318,11 @@ fn blend_factor(factor: BlendFactor, src: Vec4, dst: Vec4) -> Vec4 {
         BlendFactor::Zero => Vec4::splat(0.0),
         BlendFactor::One => Vec4::splat(1.0),
         BlendFactor::SrcColor => src,
-        BlendFactor::OneMinusSrcColor => Vec4::splat(1.0).sub(src),
+        BlendFactor::OneMinusSrcColor => Vec4::splat(1.0) - src,
         BlendFactor::SrcAlpha => Vec4::splat(src.w),
         BlendFactor::OneMinusSrcAlpha => Vec4::splat(1.0 - src.w),
         BlendFactor::DstColor => dst,
-        BlendFactor::OneMinusDstColor => Vec4::splat(1.0).sub(dst),
+        BlendFactor::OneMinusDstColor => Vec4::splat(1.0) - dst,
         BlendFactor::DstAlpha => Vec4::splat(dst.w),
         BlendFactor::OneMinusDstAlpha => Vec4::splat(1.0 - dst.w),
     }
@@ -334,12 +334,12 @@ fn blend(state: BlendState, src: Vec4, dst: Vec4) -> Vec4 {
     }
     let sf = blend_factor(state.src_factor, src, dst);
     let df = blend_factor(state.dst_factor, src, dst);
-    let s = src.mul(sf);
-    let d = dst.mul(df);
+    let s = src * sf;
+    let d = dst * df;
     match state.op {
-        BlendOp::Add => s.add(d),
-        BlendOp::Subtract => s.sub(d),
-        BlendOp::ReverseSubtract => d.sub(s),
+        BlendOp::Add => s + d,
+        BlendOp::Subtract => s - d,
+        BlendOp::ReverseSubtract => d - s,
     }
 }
 
@@ -538,7 +538,7 @@ fn run_vertex_shader(
                         let dst = inst.dst.unwrap();
                         let a = exec_src(inst.src[0], &temps, inputs, &empty_t, &constants);
                         let b = exec_src(inst.src[1], &temps, inputs, &empty_t, &constants);
-                        let v = apply_result_modifier(a.add(b), inst.result_modifier);
+                        let v = apply_result_modifier(a + b, inst.result_modifier);
                         exec_dst(
                             dst,
                             &mut temps,
@@ -553,7 +553,7 @@ fn run_vertex_shader(
                         let dst = inst.dst.unwrap();
                         let a = exec_src(inst.src[0], &temps, inputs, &empty_t, &constants);
                         let b = exec_src(inst.src[1], &temps, inputs, &empty_t, &constants);
-                        let v = apply_result_modifier(a.sub(b), inst.result_modifier);
+                        let v = apply_result_modifier(a - b, inst.result_modifier);
                         exec_dst(
                             dst,
                             &mut temps,
@@ -568,7 +568,7 @@ fn run_vertex_shader(
                         let dst = inst.dst.unwrap();
                         let a = exec_src(inst.src[0], &temps, inputs, &empty_t, &constants);
                         let b = exec_src(inst.src[1], &temps, inputs, &empty_t, &constants);
-                        let v = apply_result_modifier(a.mul(b), inst.result_modifier);
+                        let v = apply_result_modifier(a * b, inst.result_modifier);
                         exec_dst(
                             dst,
                             &mut temps,
@@ -616,7 +616,7 @@ fn run_vertex_shader(
                         let a = exec_src(inst.src[0], &temps, inputs, &empty_t, &constants);
                         let b = exec_src(inst.src[1], &temps, inputs, &empty_t, &constants);
                         let c = exec_src(inst.src[2], &temps, inputs, &empty_t, &constants);
-                        let v = apply_result_modifier(a.mul(b).add(c), inst.result_modifier);
+                        let v = apply_result_modifier(a * b + c, inst.result_modifier);
                         exec_dst(
                             dst,
                             &mut temps,
@@ -859,7 +859,7 @@ fn run_pixel_shader(
                         let dst = inst.dst.unwrap();
                         let a = exec_src(inst.src[0], &temps, inputs_v, inputs_t, &constants);
                         let b = exec_src(inst.src[1], &temps, inputs_v, inputs_t, &constants);
-                        let v = apply_result_modifier(a.add(b), inst.result_modifier);
+                        let v = apply_result_modifier(a + b, inst.result_modifier);
                         exec_dst(
                             dst,
                             &mut temps,
@@ -874,7 +874,7 @@ fn run_pixel_shader(
                         let dst = inst.dst.unwrap();
                         let a = exec_src(inst.src[0], &temps, inputs_v, inputs_t, &constants);
                         let b = exec_src(inst.src[1], &temps, inputs_v, inputs_t, &constants);
-                        let v = apply_result_modifier(a.sub(b), inst.result_modifier);
+                        let v = apply_result_modifier(a - b, inst.result_modifier);
                         exec_dst(
                             dst,
                             &mut temps,
@@ -889,7 +889,7 @@ fn run_pixel_shader(
                         let dst = inst.dst.unwrap();
                         let a = exec_src(inst.src[0], &temps, inputs_v, inputs_t, &constants);
                         let b = exec_src(inst.src[1], &temps, inputs_v, inputs_t, &constants);
-                        let v = apply_result_modifier(a.mul(b), inst.result_modifier);
+                        let v = apply_result_modifier(a * b, inst.result_modifier);
                         exec_dst(
                             dst,
                             &mut temps,
@@ -937,7 +937,7 @@ fn run_pixel_shader(
                         let a = exec_src(inst.src[0], &temps, inputs_v, inputs_t, &constants);
                         let b = exec_src(inst.src[1], &temps, inputs_v, inputs_t, &constants);
                         let c = exec_src(inst.src[2], &temps, inputs_v, inputs_t, &constants);
-                        let v = apply_result_modifier(a.mul(b).add(c), inst.result_modifier);
+                        let v = apply_result_modifier(a * b + c, inst.result_modifier);
                         exec_dst(
                             dst,
                             &mut temps,
@@ -1292,10 +1292,7 @@ fn rasterize_triangle(
                             .copied()
                             .unwrap_or(Vec4::ZERO)
                             .mul_scalar(c.inv_w);
-                        let v = va
-                            .mul_scalar(b0)
-                            .add(vb.mul_scalar(b1))
-                            .add(vc.mul_scalar(b2))
+                        let v = (va.mul_scalar(b0) + vb.mul_scalar(b1) + vc.mul_scalar(b2))
                             .mul_scalar(w);
                         out.insert(k, v);
                     }

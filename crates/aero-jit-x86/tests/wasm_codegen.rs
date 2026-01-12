@@ -403,7 +403,7 @@ fn run_wasm(
 
     cpu.write_to_mem(&mut mem, 0);
 
-    let pages = (mem.len().div_ceil(65_536)) as u32;
+    let pages = mem.len().div_ceil(65_536) as u32;
     let ram_size = mem.len() as u64 - cpu.ram_base;
     let (mut store, memory, func) = instantiate(&wasm, pages, ram_size);
     memory.write(&mut store, 0, &mem).unwrap();

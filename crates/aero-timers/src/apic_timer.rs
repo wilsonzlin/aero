@@ -48,7 +48,10 @@ impl LocalApicTimer {
     fn ns_from_ticks_ceil(&self, ticks: u64) -> u64 {
         let numer = (ticks as u128) * 1_000_000_000u128;
         let denom = self.freq_hz as u128;
-        numer.div_ceil(denom) as u64
+        if denom == 0 {
+            return u64::MAX;
+        }
+        numer.div_ceil(denom).min(u64::MAX as u128) as u64
     }
 
     fn counts_per_period_ticks(&self) -> Option<u64> {

@@ -3160,11 +3160,11 @@ impl AerogpuD3d9Executor {
                 texture,
             } => {
                 // For now, treat all sampler bindings as pixel shader (DWM path).
-                let slot = slot as usize;
+                let slot_idx = slot as usize;
                 if shader_stage == cmd::AerogpuShaderStage::Pixel as u32
-                    && slot < self.state.textures_ps.len()
+                    && slot_idx < self.state.textures_ps.len()
                 {
-                    self.state.textures_ps[slot] = texture;
+                    self.state.textures_ps[slot_idx] = texture;
                     self.bind_group_dirty = true;
                 }
                 Ok(())

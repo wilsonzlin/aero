@@ -251,7 +251,7 @@ fn tier0_assists_protected_int_iret_switches_to_tss_stack() {
     assert_eq!(bus.read_u32(frame_base + 4).unwrap() as u16, 0x1B); // old CS
     assert_eq!(
         bus.read_u32(frame_base + 8).unwrap(),
-        (RFLAGS_RESERVED1 | RFLAGS_IF) as u32
+        (RFLAGS_RESERVED1 | RFLAGS_IF) as u32,
     ); // old EFLAGS
     assert_eq!(bus.read_u32(frame_base + 12).unwrap(), sp_pushed as u32); // old ESP
     assert_eq!(bus.read_u32(frame_base + 16).unwrap() as u16, 0x23); // old SS

@@ -1323,7 +1323,9 @@ fn build_config_descriptor(
     out
 }
 
-fn report_descriptor_report_lengths(report_descriptor_bytes: &[u8]) -> ReportLengthMaps {
+fn report_descriptor_report_lengths(
+    report_descriptor_bytes: &[u8],
+) -> ReportDescriptorReportLengths {
     let Ok(collections) = report_descriptor::parse_report_descriptor(report_descriptor_bytes)
     else {
         return (
@@ -1357,7 +1359,7 @@ fn report_descriptor_report_lengths(report_descriptor_bytes: &[u8]) -> ReportLen
     )
 }
 
-type ReportLengthMaps = (
+type ReportDescriptorReportLengths = (
     bool,
     BTreeMap<u8, usize>,
     BTreeMap<u8, usize>,

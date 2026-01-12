@@ -352,9 +352,7 @@ mod tests {
         // Trigger 3-color mode by making color0 <= color1.
         // color0=0x0000 (black), color1=0xffff (white).
         // indices: first texel uses index 3 (transparent), rest index 0 (black).
-        let mut indices: u32 = 0;
-        indices |= 3u32;
-        let idx_bytes = indices.to_le_bytes();
+        let idx_bytes = 3u32.to_le_bytes();
         let bc1 = [
             0x00,
             0x00, // color0

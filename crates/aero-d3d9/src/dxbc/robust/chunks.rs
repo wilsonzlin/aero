@@ -11,15 +11,19 @@ impl FourCc {
     pub const fn as_bytes(&self) -> &[u8; 4] {
         &self.0
     }
-}
 
-impl From<&str> for FourCc {
-    fn from(s: &str) -> Self {
+    pub fn from_tag(s: &str) -> Self {
         let mut out = [0u8; 4];
         for (dst, src) in out.iter_mut().zip(s.as_bytes().iter().copied()) {
             *dst = src;
         }
         Self(out)
+    }
+}
+
+impl From<&str> for FourCc {
+    fn from(s: &str) -> Self {
+        Self::from_tag(s)
     }
 }
 

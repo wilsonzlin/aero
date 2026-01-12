@@ -10,7 +10,7 @@ use aero_net_stack::packet::{
     EtherType, EthernetFrame, EthernetFrameBuilder, Ipv4Packet, Ipv4PacketBuilder, Ipv4Protocol,
     MacAddr, TcpFlags, TcpSegment, TcpSegmentBuilder, UdpPacketBuilder,
 };
-use emulator::io::net::stack::{Action, StackConfig, TcpProxyEvent};
+use emulator::io::net::stack::{Action, HostPolicy, StackConfig, TcpProxyEvent};
 use emulator::io::net::trace::{
     CaptureArtifactOnPanic, NetTraceConfig, NetTracer, TracedNetworkStack,
 };
@@ -203,8 +203,13 @@ fn tcp_proxy_echo_end_to_end() {
         }
     });
 
-    let mut cfg = StackConfig::default();
-    cfg.host_policy.enabled = true;
+    let cfg = StackConfig {
+        host_policy: HostPolicy {
+            enabled: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
     let guest_mac = MacAddr([0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff]);
     let remote_ip = Ipv4Addr::new(127, 0, 0, 1);
 

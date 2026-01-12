@@ -759,6 +759,8 @@ impl IoSnapshot for NvmeController {
     fn save_state(&self) -> Vec<u8> {
         // INTMC is write-only in this device model; we store 0 for compatibility with the shared
         // snapshot state struct.
+        //
+        // This controller processes commands synchronously, so there is no meaningful in-flight state.
         let state = NvmeControllerState {
             cap: self.cap,
             vs: self.vs,
@@ -812,7 +814,6 @@ impl IoSnapshot for NvmeController {
                 })
                 .collect(),
             intx_level: self.intx_level,
-            // This controller processes commands synchronously, so there is no meaningful in-flight state.
             in_flight: Vec::new(),
         };
 

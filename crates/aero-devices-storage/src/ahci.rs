@@ -623,7 +623,7 @@ fn complete_command(
     mem.write_u32(header_addr + 4, bytes_transferred);
 
     let status = ATA_STATUS_DRDY | ATA_STATUS_DSC;
-    port_regs.tfd = status as u32;
+    port_regs.tfd = u32::from(status);
 
     write_d2h_fis(mem, port_regs.fb, status, 0);
 

@@ -109,42 +109,47 @@ impl D3d9ShaderCache {
         let payload_format = ShaderPayloadFormat::detect(bytes);
 
         // Ensure the shader artifact exists (translate/compile on miss).
-        if let std::collections::hash_map::Entry::Vacant(e) = self.by_hash.entry(hash) {
-            let token_stream = extract_token_stream(payload_format, bytes)?;
-            let program = shader::parse(token_stream)?;
+        let hash = match self.by_hash.entry(hash) {
+            std::collections::hash_map::Entry::Occupied(entry) => *entry.key(),
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                let token_stream = extract_token_stream(payload_format, bytes)?;
+                let program = shader::parse(token_stream)?;
 
-            debug!(
-                shader_hash = %hash.to_hex(),
-                format = ?payload_format,
-                stage = ?program.version.stage,
-                sm_major = program.version.model.major,
-                sm_minor = program.version.model.minor,
-                "aerogpu d3d9 shader payload"
-            );
+                let hash = *entry.key();
+                debug!(
+                    shader_hash = %hash.to_hex(),
+                    format = ?payload_format,
+                    stage = ?program.version.stage,
+                    sm_major = program.version.model.major,
+                    sm_minor = program.version.model.minor,
+                    "aerogpu d3d9 shader payload"
+                );
 
-            let ir = shader::to_ir(&program);
-            let wgsl = shader::generate_wgsl(&ir);
+                let ir = shader::to_ir(&program);
+                let wgsl = shader::generate_wgsl(&ir);
 
-            let label = format!(
-                "aerogpu-d3d9-shader-{:?}-{}",
-                program.version.stage,
-                hash.to_hex()
-            );
-            let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some(&label),
-                source: wgpu::ShaderSource::Wgsl(wgsl.wgsl.clone().into()),
-            });
+                let label = format!(
+                    "aerogpu-d3d9-shader-{:?}-{}",
+                    program.version.stage,
+                    hash.to_hex()
+                );
+                let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some(&label),
+                    source: wgpu::ShaderSource::Wgsl(wgsl.wgsl.clone().into()),
+                });
 
-            e.insert(CachedD3d9Shader {
-                hash,
-                payload_format,
-                version: program.version,
-                wgsl: wgsl.wgsl,
-                entry_point: wgsl.entry_point,
-                bind_group_layout: wgsl.bind_group_layout,
-                module,
-            });
-        }
+                entry.insert(CachedD3d9Shader {
+                    hash,
+                    payload_format,
+                    version: program.version,
+                    wgsl: wgsl.wgsl,
+                    entry_point: wgsl.entry_point,
+                    bind_group_layout: wgsl.bind_group_layout,
+                    module,
+                });
+                hash
+            }
+        };
 
         let artifact = self
             .by_hash

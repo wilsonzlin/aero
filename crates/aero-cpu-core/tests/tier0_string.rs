@@ -181,8 +181,8 @@ impl CpuBus for SparseBus {
     fn fetch(&mut self, vaddr: u64, max_len: usize) -> Result<[u8; 15], aero_cpu_core::Exception> {
         let mut buf = [0u8; 15];
         let len = max_len.min(15);
-        for (i, byte) in buf.iter_mut().enumerate().take(len) {
-            *byte = self.read_u8_raw(vaddr + i as u64);
+        for (i, byte) in buf.iter_mut().take(len).enumerate() {
+            *byte = self.read_u8_raw(vaddr.wrapping_add(i as u64));
         }
         Ok(buf)
     }

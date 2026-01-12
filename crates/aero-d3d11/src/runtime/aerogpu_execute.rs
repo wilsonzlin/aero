@@ -830,7 +830,7 @@ fn build_vertex_state(
     })
 }
 
-type RenderPassColorAttachments<'a> = (
+type ColorAttachments<'a> = (
     Vec<Option<wgpu::RenderPassColorAttachment<'a>>>,
     Vec<ColorTargetKey>,
     (u32, u32),
@@ -839,7 +839,7 @@ type RenderPassColorAttachments<'a> = (
 fn build_color_attachments<'a>(
     resources: &'a AerogpuResources,
     state: &D3D11ShadowState,
-) -> Result<RenderPassColorAttachments<'a>> {
+) -> Result<ColorAttachments<'a>> {
     let mut attachments = Vec::new();
     let mut keys = Vec::new();
 

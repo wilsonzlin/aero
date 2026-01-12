@@ -961,7 +961,6 @@ fn atomic_rmw_sized<B: Bus, R>(
             let (new, r) = f(old as u64);
             (new as u32, r)
         }),
-        8 => bus.atomic_rmw::<u64, _>(addr, f),
         _ => bus.atomic_rmw::<u64, _>(addr, f),
     };
     cpu.log_event("atomic_rmw");

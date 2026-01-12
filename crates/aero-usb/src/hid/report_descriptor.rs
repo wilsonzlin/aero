@@ -760,7 +760,8 @@ pub fn parse_report_descriptor(bytes: &[u8]) -> Result<Vec<HidCollectionInfo>, H
                             .usages
                             .first()
                             .copied()
-                            .unwrap_or_else(|| local.usage_minimum.unwrap_or_default());
+                            .or(local.usage_minimum)
+                            .unwrap_or_default();
 
                         collection_stack.push(HidCollectionInfo {
                             usage_page,

@@ -11,7 +11,7 @@ fn cull_mode_respects_front_face() {
     let raster = RasterizerState {
         cull_mode: CullMode::CW,
         front_counter_clockwise: false, // front is CW
-        ..Default::default()
+        ..RasterizerState::default()
     };
     let (front_face, cull_mode) = translate_cull_and_front_face(&raster);
     assert_eq!(front_face, wgpu::FrontFace::Cw);
@@ -20,7 +20,7 @@ fn cull_mode_respects_front_face() {
     let raster = RasterizerState {
         cull_mode: CullMode::CW,
         front_counter_clockwise: true, // front is CCW
-        ..Default::default()
+        ..RasterizerState::default()
     };
     let (front_face, cull_mode) = translate_cull_and_front_face(&raster);
     assert_eq!(front_face, wgpu::FrontFace::Ccw);
