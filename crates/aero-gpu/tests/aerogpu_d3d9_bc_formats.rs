@@ -385,6 +385,49 @@ fn d3d9_cmd_stream_bc3_texture_direct_guest_backed_upload_and_sample() {
 }
 
 #[test]
+fn d3d9_cmd_stream_bc2_texture_direct_guest_backed_upload_and_sample() {
+    // BC2/DXT3 4x4 block encoding solid red with alpha=255.
+    //
+    // Layout:
+    // - 64-bit explicit alpha (4 bits per texel)
+    // - BC1 color block
+    let bc2_block = [
+        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, // alpha (all 0xF)
+        0x00, 0xF8, // color0 (red)
+        0x00, 0xF8, // color1 (red)
+        0x00, 0x00, 0x00, 0x00, // color indices (all 0)
+    ];
+
+    run_bc_texture_direct_guest_backed_upload_and_sample(
+        AEROGPU_FORMAT_BC2_RGBA_UNORM,
+        16, // row_pitch_bytes (1 BC2 block row)
+        &bc2_block,
+        [255, 0, 0, 255],
+    );
+}
+
+#[test]
+fn d3d9_cmd_stream_bc7_texture_direct_guest_backed_upload_and_sample() {
+    // Pick a deterministic BC7 block whose decode output is a solid color. We don't care what the
+    // color is, as long as it isn't the clear color (black) so sampling is observable.
+    let bc7_block = [0xFFu8; 16];
+    let decoded = aero_gpu::decompress_bc7_rgba8(4, 4, &bc7_block);
+    let expected_rgba: [u8; 4] = decoded[0..4].try_into().unwrap();
+
+    for px in decoded.chunks_exact(4) {
+        assert_eq!(px, &expected_rgba);
+    }
+    assert_ne!(expected_rgba, [0, 0, 0, 255]);
+
+    run_bc_texture_direct_guest_backed_upload_and_sample(
+        AEROGPU_FORMAT_BC7_RGBA_UNORM,
+        16, // row_pitch_bytes (1 BC7 block row)
+        &bc7_block,
+        expected_rgba,
+    );
+}
+
+#[test]
 fn d3d9_cmd_stream_bc3_texture_cpu_fallback_upload_and_sample() {
     // BC3/DXT5 4x4 block encoding solid red with alpha=255.
     //
