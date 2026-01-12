@@ -4,7 +4,7 @@ use aero_devices::pci::profile::IDE_PIIX3;
 use aero_devices_storage::atapi::AtapiCdrom;
 use aero_devices::pci::{PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
 use aero_machine::{Machine, MachineConfig, RunExit};
-use aero_storage::{MemBackend, RawDisk, SECTOR_SIZE};
+use aero_storage::{MemBackend, RawDisk, VirtualDisk as _, SECTOR_SIZE};
 
 fn cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
     0x8000_0000
@@ -22,6 +22,11 @@ fn write_cfg_u16(m: &mut Machine, bus: u8, device: u8, function: u8, offset: u8,
 fn write_cfg_u32(m: &mut Machine, bus: u8, device: u8, function: u8, offset: u8, value: u32) {
     m.io_write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bus, device, function, offset));
     m.io_write(PCI_CFG_DATA_PORT, 4, value);
+}
+
+fn read_cfg_u32(m: &mut Machine, bus: u8, device: u8, function: u8, offset: u8) -> u32 {
+    m.io_write(0xCF8, 4, cfg_addr(bus, device, function, offset));
+    m.io_read(0xCFC, 4)
 }
 
 fn write_ivt_entry(m: &mut Machine, vector: u8, segment: u16, offset: u16) {
@@ -262,6 +267,130 @@ fn machine_ide_secondary_identify_packet_raises_irq15_and_wakes_halted_cpu() {
 
     panic!(
         "IDE IRQ15 interrupt handler did not run (flag=0x{:02x})",
+        m.read_physical_u8(u64::from(flag_addr))
+    );
+}
+
+#[test]
+fn machine_ide_primary_dma_read_fills_memory_and_wakes_halted_cpu_via_irq14() {
+    const RAM_SIZE: u64 = 2 * 1024 * 1024;
+
+    let mut m = Machine::new(MachineConfig {
+        ram_size_bytes: RAM_SIZE,
+        enable_pc_platform: true,
+        enable_ide: true,
+        // Keep this test focused on IDE Bus Master DMA + ISA IRQ wiring.
+        enable_vga: false,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        enable_e1000: false,
+        ..Default::default()
+    })
+    .unwrap();
+
+    // Attach a small disk to IDE primary master and seed it with a known prefix.
+    let capacity = 4 * SECTOR_SIZE as u64;
+    let mut disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
+    let mut sector0 = vec![0u8; SECTOR_SIZE];
+    sector0[0..8].copy_from_slice(b"DMA-BOOT");
+    disk.write_sectors(0, &sector0).unwrap();
+    m.attach_ide_primary_master_disk(Box::new(disk)).unwrap();
+
+    // Route IRQ14 into a real-mode handler that writes a flag byte.
+    let vector = 0x2E_u8; // PIC slave base 0x28 + (IRQ14-8)
+    let handler_addr = 0x8000u64;
+    let code_base = 0x9000u64;
+    let flag_addr = 0x0500u16;
+    let flag_value = 0x3C_u8;
+
+    install_real_mode_handler(&mut m, handler_addr, flag_addr, flag_value);
+    install_hlt_loop(&mut m, code_base);
+    write_ivt_entry(&mut m, vector, 0x0000, handler_addr as u16);
+    setup_real_mode_cpu(&mut m, code_base);
+
+    // Halt the CPU first so the interrupt must wake it.
+    assert!(matches!(m.run_slice(16), RunExit::Halted { .. }));
+
+    // Enable IRQ14 delivery through the legacy PIC.
+    {
+        let interrupts = m
+            .platform_interrupts()
+            .expect("pc platform should provide interrupts");
+        let mut ints = interrupts.borrow_mut();
+        ints.pic_mut().set_offsets(0x20, 0x28);
+        // Unmask cascade + IRQ14.
+        ints.pic_mut().set_masked(2, false);
+        ints.pic_mut().set_masked(14, false);
+    }
+
+    let bdf = IDE_PIIX3.bdf;
+
+    // Read BAR4 so the test is resilient to future default base changes.
+    let bar4_raw = read_cfg_u32(&mut m, bdf.bus, bdf.device, bdf.function, 0x20);
+    let bm_base = (bar4_raw & 0xFFFF_FFFC) as u16;
+    assert_ne!(bm_base, 0, "expected IDE BMIDE BAR4 to be programmed");
+
+    // Prepare a single-entry PRD table (512 bytes, end-of-table).
+    let prd_addr = 0x1000u64;
+    let data_buf = 0x2000u64;
+    m.write_physical_u32(prd_addr, data_buf as u32);
+    m.write_physical_u16(prd_addr + 4, SECTOR_SIZE as u16);
+    m.write_physical_u16(prd_addr + 6, 0x8000);
+
+    // Clear the destination buffer to a sentinel value first.
+    m.write_physical(data_buf, &[0u8; 8]);
+
+    // Enable only PCI I/O decoding for IDE (not bus mastering yet). This should allow guests to
+    // program the BMIDE registers but prevent DMA progress.
+    write_cfg_u16(&mut m, bdf.bus, bdf.device, bdf.function, 0x04, 0x0001);
+
+    // Program BMIDE: PRDT base + start DMA in the "device -> memory" direction (bit3=1).
+    m.io_write(bm_base + 4, 4, prd_addr as u32);
+    m.io_write(bm_base + 2, 1, 0x06); // clear error/irq bits (defensive)
+    m.io_write(bm_base + 0, 1, 0x09);
+
+    // Issue ATA READ DMA (0xC8) for LBA 0, count 1, primary master.
+    m.io_write(0x1F2, 1, 1);
+    m.io_write(0x1F3, 1, 0);
+    m.io_write(0x1F4, 1, 0);
+    m.io_write(0x1F5, 1, 0);
+    m.io_write(0x1F6, 1, 0xE0);
+    m.io_write(0x1F7, 1, 0xC8);
+
+    // With bus mastering disabled, the DMA transfer must not complete.
+    for _ in 0..3 {
+        let _ = m.run_slice(256);
+        assert_ne!(
+            m.read_physical_u8(data_buf),
+            b'D',
+            "DMA should not run until PCI COMMAND.BME is enabled"
+        );
+        assert_ne!(
+            m.read_physical_u8(u64::from(flag_addr)),
+            flag_value,
+            "IRQ14 should not fire until DMA completes"
+        );
+    }
+
+    // Enable bus mastering: DMA should now complete and raise IRQ14.
+    write_cfg_u16(&mut m, bdf.bus, bdf.device, bdf.function, 0x04, 0x0005);
+
+    for _ in 0..10 {
+        let _ = m.run_slice(256);
+        if m.read_physical_u8(u64::from(flag_addr)) == flag_value {
+            let prefix = m.read_physical_bytes(data_buf, 8);
+            assert_eq!(prefix.as_slice(), b"DMA-BOOT");
+
+            let bm_status = m.io_read(bm_base + 2, 1) as u8;
+            assert_ne!(bm_status & 0x04, 0, "BMIDE status IRQ bit should be set");
+            return;
+        }
+    }
+
+    panic!(
+        "IDE primary DMA IRQ14 interrupt handler did not run (flag=0x{:02x})",
         m.read_physical_u8(u64::from(flag_addr))
     );
 }
