@@ -108,10 +108,38 @@ impl PortIoDevice for PciConfigPort {
     }
 }
 
-pub fn register_pci_config_ports(bus: &mut IoPortBus, cfg: SharedPciConfigPorts) {
-    for port in PCI_CFG_ADDR_PORT..=PCI_CFG_DATA_PORT + 3 {
-        bus.register(port, Box::new(PciConfigPort::new(cfg.clone(), port)));
+/// Range-mapped PCI config mechanism #1 ports.
+///
+/// The bus mapping spans `0xCF8..=0xCFF` so byte/word accesses to both the address and data dwords
+/// are handled correctly. Individual ports (e.g. `0xCF9`) may be overridden by exact port mappings
+/// such as the legacy reset control register.
+struct PciConfigPortRange {
+    cfg: SharedPciConfigPorts,
+}
+
+impl PciConfigPortRange {
+    pub fn new(cfg: SharedPciConfigPorts) -> Self {
+        Self { cfg }
     }
+}
+
+impl PortIoDevice for PciConfigPortRange {
+    fn read(&mut self, port: u16, size: u8) -> u32 {
+        self.cfg.borrow_mut().io_read(port, size)
+    }
+
+    fn write(&mut self, port: u16, size: u8, value: u32) {
+        self.cfg.borrow_mut().io_write(port, size, value);
+    }
+}
+
+pub fn register_pci_config_ports(bus: &mut IoPortBus, cfg: SharedPciConfigPorts) {
+    const PCI_CFG_PORTS_LEN: u16 = (PCI_CFG_DATA_PORT + 4) - PCI_CFG_ADDR_PORT;
+    bus.register_range(
+        PCI_CFG_ADDR_PORT,
+        PCI_CFG_PORTS_LEN,
+        Box::new(PciConfigPortRange::new(cfg)),
+    );
 }
 
 #[cfg(test)]
