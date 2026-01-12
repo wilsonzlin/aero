@@ -464,6 +464,7 @@ fn tier2_code_version_guard_can_inline_version_table_reads() {
         Tier2WasmOptions {
             inline_tlb: false,
             code_version_guard_import: false,
+            ..Default::default()
         },
     );
     validate_wasm(&wasm);
@@ -585,6 +586,7 @@ fn tier2_inline_tlb_option_is_ignored_for_memory_free_traces() {
         Tier2WasmOptions {
             inline_tlb: true,
             code_version_guard_import: true,
+            ..Default::default()
         },
     );
     validate_wasm(&wasm);

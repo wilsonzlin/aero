@@ -385,6 +385,7 @@ fn run_trace(
         Tier2WasmOptions {
             inline_tlb: true,
             code_version_guard_import: true,
+            ..Default::default()
         },
     );
     validate_wasm(&wasm);

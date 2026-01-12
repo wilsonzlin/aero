@@ -22,13 +22,57 @@ pub const EXPORT_BLOCK_FN: &str = crate::wasm::abi::EXPORT_BLOCK_FN;
 /// Backwards-compatible alias for [`EXPORT_BLOCK_FN`].
 pub const EXPORT_TIER1_BLOCK_FN: &str = EXPORT_BLOCK_FN;
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy)]
 pub struct Tier1WasmOptions {
     /// Enable the inline direct-mapped JIT TLB + direct guest RAM fast-path for same-page loads
     /// and stores.
     ///
     /// Note: this option is ignored unless the crate feature `tier1-inline-tlb` is enabled.
     pub inline_tlb: bool,
+
+    /// Whether the imported `env.memory` is expected to be a shared memory (i.e. created with
+    /// `WebAssembly.Memory({ shared: true, ... })`).
+    ///
+    /// Note: shared memories require a declared maximum page count.
+    pub memory_shared: bool,
+    /// Minimum size (in 64KiB pages) of the imported `env.memory`.
+    pub memory_min_pages: u32,
+    /// Maximum size (in 64KiB pages) of the imported `env.memory`.
+    ///
+    /// Required when [`Tier1WasmOptions::memory_shared`] is `true`.
+    pub memory_max_pages: Option<u32>,
+}
+
+impl Default for Tier1WasmOptions {
+    fn default() -> Self {
+        Self {
+            inline_tlb: false,
+            // Preserve existing behaviour by default: import an unshared memory with min=1 and no
+            // maximum.
+            memory_shared: false,
+            memory_min_pages: 1,
+            memory_max_pages: None,
+        }
+    }
+}
+
+impl Tier1WasmOptions {
+    fn validate_memory_import(self) {
+        if let Some(max) = self.memory_max_pages {
+            assert!(
+                self.memory_min_pages <= max,
+                "invalid env.memory import type: min_pages ({}) > max_pages ({})",
+                self.memory_min_pages,
+                max
+            );
+        }
+        if self.memory_shared {
+            assert!(
+                self.memory_max_pages.is_some(),
+                "invalid env.memory import type: shared memories require max_pages"
+            );
+        }
+    }
 }
 
 #[derive(Clone, Copy, Default)]
@@ -158,15 +202,16 @@ impl Tier1WasmCodegen {
             .function([ValType::I32, ValType::I32], [ValType::I64]);
         module.section(&types);
 
+        options.validate_memory_import();
         let mut imports = ImportSection::new();
         imports.import(
             IMPORT_MODULE,
             IMPORT_MEMORY,
             MemoryType {
-                minimum: 1,
-                maximum: None,
+                minimum: u64::from(options.memory_min_pages),
+                maximum: options.memory_max_pages.map(u64::from),
                 memory64: false,
-                shared: false,
+                shared: options.memory_shared,
                 page_size_log2: None,
             },
         );

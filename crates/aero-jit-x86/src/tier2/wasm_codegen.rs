@@ -30,6 +30,17 @@ pub struct Tier2WasmOptions {
     /// Enable the inline direct-mapped JIT TLB + direct guest RAM fast-path for same-page loads
     /// and stores.
     pub inline_tlb: bool,
+    /// Whether the imported `env.memory` is expected to be a shared memory (i.e. created with
+    /// `WebAssembly.Memory({ shared: true, ... })`).
+    ///
+    /// Note: shared memories require a declared maximum page count.
+    pub memory_shared: bool,
+    /// Minimum size (in 64KiB pages) of the imported `env.memory`.
+    pub memory_min_pages: u32,
+    /// Maximum size (in 64KiB pages) of the imported `env.memory`.
+    ///
+    /// Required when [`Tier2WasmOptions::memory_shared`] is `true`.
+    pub memory_max_pages: Option<u32>,
     /// Whether Tier-2 code-version guards should call the legacy host import
     /// `env.code_page_version(cpu_ptr, page) -> i64`.
     ///
@@ -42,9 +53,33 @@ impl Default for Tier2WasmOptions {
     fn default() -> Self {
         Self {
             inline_tlb: false,
+            // Preserve existing behaviour by default: import an unshared memory with min=1 and no
+            // maximum.
+            memory_shared: false,
+            memory_min_pages: 1,
+            memory_max_pages: None,
             // Preserve the existing ABI by default: tests and embedding code can simulate
             // mid-trace invalidation by hooking this import.
             code_version_guard_import: true,
+        }
+    }
+}
+
+impl Tier2WasmOptions {
+    fn validate_memory_import(self) {
+        if let Some(max) = self.memory_max_pages {
+            assert!(
+                self.memory_min_pages <= max,
+                "invalid env.memory import type: min_pages ({}) > max_pages ({})",
+                self.memory_min_pages,
+                max
+            );
+        }
+        if self.memory_shared {
+            assert!(
+                self.memory_max_pages.is_some(),
+                "invalid env.memory import type: shared memories require max_pages"
+            );
         }
     }
 }
@@ -176,15 +211,16 @@ impl Tier2WasmCodegen {
             .function([ValType::I32, ValType::I32], [ValType::I64]);
         module.section(&types);
 
+        options.validate_memory_import();
         let mut imports = ImportSection::new();
         imports.import(
             IMPORT_MODULE,
             IMPORT_MEMORY,
             MemoryType {
-                minimum: 1,
-                maximum: None,
+                minimum: u64::from(options.memory_min_pages),
+                maximum: options.memory_max_pages.map(u64::from),
                 memory64: false,
-                shared: false,
+                shared: options.memory_shared,
                 page_size_log2: None,
             },
         );

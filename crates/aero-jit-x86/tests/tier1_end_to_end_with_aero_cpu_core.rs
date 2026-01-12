@@ -120,7 +120,10 @@ fn tier1_hotness_triggers_compile_and_subsequent_execution_uses_jit() {
     assert_eq!(requested, vec![entry]);
 
     let mut compiler = Tier1Compiler::new(backend.clone(), backend.clone())
-        .with_wasm_options(Tier1WasmOptions { inline_tlb: true });
+        .with_wasm_options(Tier1WasmOptions {
+            inline_tlb: true,
+            ..Default::default()
+        });
     for rip in requested {
         compiler
             .compile_and_install(dispatcher.jit_mut(), rip)

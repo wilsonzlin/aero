@@ -380,7 +380,13 @@ fn run_wasm_inner(
     prefill_tlb: Option<(u64, u64)>,
 ) -> (u64, CpuState, Vec<u8>, HostState) {
     let wasm = Tier1WasmCodegen::new()
-        .compile_block_with_options(block, Tier1WasmOptions { inline_tlb: true });
+        .compile_block_with_options(
+            block,
+            Tier1WasmOptions {
+                inline_tlb: true,
+                ..Default::default()
+            },
+        );
     validate_wasm(&wasm);
 
     let ram_base = (JIT_CTX_PTR as u64) + (JitContext::TOTAL_BYTE_SIZE as u64);

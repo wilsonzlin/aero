@@ -329,7 +329,10 @@ fn wasm_tier1_inline_tlb_option_is_ignored_for_memory_free_blocks() {
 
     let wasm = Tier1WasmCodegen::new().compile_block_with_options(
         &ir,
-        aero_jit_x86::tier1::Tier1WasmOptions { inline_tlb: true },
+        aero_jit_x86::tier1::Tier1WasmOptions {
+            inline_tlb: true,
+            ..Default::default()
+        },
     );
     validate_wasm(&wasm);
 
