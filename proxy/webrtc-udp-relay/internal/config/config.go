@@ -13,6 +13,7 @@ import (
 
 	"github.com/pion/webrtc/v4"
 
+	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/l2tunnel"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/origin"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/udpproto"
 )
@@ -564,12 +565,12 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 	fs.IntVar(&maxDatagramPayloadBytes, "max-datagram-payload-bytes", maxDatagramPayloadBytes, "Max UDP datagram payload bytes for relay frames (env "+EnvMaxDatagramPayloadBytes+")")
 	fs.StringVar(&l2BackendWSURL, "l2-backend-ws-url", l2BackendWSURL, "Backend WebSocket URL for L2 tunnel bridging (env "+EnvL2BackendWSURL+")")
 	fs.StringVar(&l2BackendWSOrigin, "l2-backend-ws-origin", l2BackendWSOrigin, "Origin header value to send when dialing the L2 backend WebSocket (env "+EnvL2BackendWSOrigin+")")
-	fs.StringVar(&l2BackendWSToken, "l2-backend-token", l2BackendWSToken, "Optional token to present to the L2 backend via WebSocket subprotocol (sent as aero-l2-token.<token>; env "+EnvL2BackendToken+")")
+	fs.StringVar(&l2BackendWSToken, "l2-backend-token", l2BackendWSToken, "Optional token to present to the L2 backend via WebSocket subprotocol (sent as "+l2tunnel.TokenSubprotocolPrefix+"<token>; env "+EnvL2BackendToken+")")
 	fs.StringVar(
 		&l2BackendWSToken,
 		"l2-backend-ws-token",
 		l2BackendWSToken,
-		"Optional token to present to the L2 backend via WebSocket subprotocol (sent as aero-l2-token.<token>; env "+EnvL2BackendWSToken+")",
+		"Optional token to present to the L2 backend via WebSocket subprotocol (sent as "+l2tunnel.TokenSubprotocolPrefix+"<token>; env "+EnvL2BackendWSToken+")",
 	)
 	fs.BoolVar(&l2BackendForwardOrigin, "l2-backend-forward-origin", l2BackendForwardOrigin, "Forward Origin header when dialing the L2 backend WebSocket (env "+EnvL2BackendForwardOrigin+")")
 	fs.StringVar(&l2BackendAuthForwardModeFlag, "l2-backend-auth-forward-mode", l2BackendAuthForwardModeStr, "L2 backend auth forwarding mode: none, query, subprotocol (env "+EnvL2BackendAuthForwardMode+")")
