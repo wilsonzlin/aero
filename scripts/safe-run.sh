@@ -351,6 +351,12 @@ should_retry_rustc_thread_error() {
     then
         return 0
     fi
+    # Some build scripts (notably `autocfg`) collapse process-spawn failures into a generic
+    # "could not execute rustc" error without preserving the underlying OS errno. This is
+    # frequently transient under shared-host contention, so treat it as retryable.
+    if grep -q "could not execute rustc" "${stderr_log}"; then
+        return 0
+    fi
     if grep -q "failed to spawn" "${stderr_log}" \
         && grep -Eq "Resource temporarily unavailable|WouldBlock|os error 11|EAGAIN" "${stderr_log}"
     then
