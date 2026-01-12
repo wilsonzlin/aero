@@ -913,7 +913,7 @@ async function runTieredVm(iterations: number, threshold: number) {
     return true;
   };
 
-      const runBigIntImportsTest = async (): Promise<boolean> => {
+  const runBigIntImportsTest = async (): Promise<boolean> => {
     try {
       // Pick deterministic addresses in guest RAM that are not touched by the hot-loop code at 0x1000.
       // We use guest RAM as a scratch region for the Tier-1 ABI buffer (CpuState + jit_ctx + tier2_ctx + commit flag).
