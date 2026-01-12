@@ -52,6 +52,8 @@ pub struct PumpCounts {
     pub tx_frames: usize,
     /// Host → guest frames fetched from the backend via [`NetworkBackend::poll_receive`] and
     /// queued into the NIC.
+    ///
+    /// Frames that are too small/large for the E1000 model are dropped and are **not** counted.
     pub rx_frames: usize,
 }
 
@@ -172,6 +174,14 @@ pub fn tick_e1000_with_counts<B: NetworkBackend + ?Sized>(
         let Some(frame) = backend.poll_receive() else {
             break;
         };
+        // `E1000Device::enqueue_rx_frame` already drops invalid frames, but we
+        // pre-filter here so `PumpCounts::rx_frames` accurately reflects frames
+        // actually queued into the NIC.
+        if frame.len() < aero_net_e1000::MIN_L2_FRAME_LEN
+            || frame.len() > aero_net_e1000::MAX_L2_FRAME_LEN
+        {
+            continue;
+        }
         nic.enqueue_rx_frame(frame);
         counts.rx_frames += 1;
     }
@@ -594,6 +604,51 @@ mod tests {
         pump.poll(&mut mem);
         assert_eq!(mem.read_vec(bufs[2], frames[2].len()), frames[2]);
     }
+    #[test]
+    fn rx_invalid_frames_are_dropped_and_not_counted() {
+        #[derive(Default)]
+        struct Backend {
+            rx: VecDeque<Vec<u8>>,
+        }
+
+        impl NetworkBackend for Backend {
+            fn transmit(&mut self, _frame: Vec<u8>) {}
+
+            fn poll_receive(&mut self) -> Option<Vec<u8>> {
+                self.rx.pop_front()
+            }
+        }
+
+        let mut mem = TestMem::new(0x80_000);
+        let mut nic = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
+        nic.pci_config_write(0x04, 2, 0x4); // Bus Master Enable
+
+        configure_rx_ring(&mut nic, 0x2000, 2, 1);
+        write_rx_desc(&mut mem, 0x2000, 0x3000, 0);
+        write_rx_desc(&mut mem, 0x2010, 0x3400, 0);
+
+        let valid = build_test_frame(b"ok");
+
+        let mut backend = Backend {
+            rx: VecDeque::from([
+                vec![],                      // invalid (empty)
+                vec![0xAA; 13],              // invalid (< 14)
+                valid.clone(),               // valid
+            ]),
+        };
+
+        let counts = tick_e1000_with_counts(&mut nic, &mut mem, &mut backend, 0, 3);
+        assert_eq!(
+            counts,
+            PumpCounts {
+                tx_frames: 0,
+                rx_frames: 1,
+            }
+        );
+        assert!(backend.rx.is_empty());
+        assert_eq!(mem.read_vec(0x3000, valid.len()), valid);
+    }
+
     #[test]
     fn rx_budget_prevents_infinite_backend_loop() {
         #[derive(Default)]
