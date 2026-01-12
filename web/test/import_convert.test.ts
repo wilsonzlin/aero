@@ -946,6 +946,32 @@ test("convertToAeroSparse: rejects fixed VHD with invalid data_offset", async ()
   );
 });
 
+test("convertToAeroSparse: rejects fixed VHD that is truncated", async () => {
+  const footerSize = 512;
+  const logicalSize = 1024;
+
+  const footer = new Uint8Array(footerSize);
+  footer.set(new TextEncoder().encode("conectix"), 0);
+  writeU32BE(footer, 8, 2); // features
+  writeU32BE(footer, 12, 0x0001_0000); // file_format_version
+  writeU64BE(footer, 16, 0xffff_ffff_ffff_ffffn); // data_offset (fixed)
+  writeU64BE(footer, 48, BigInt(logicalSize)); // current size
+  writeU32BE(footer, 60, 2); // disk type fixed
+  writeU32BE(footer, 64, vhdChecksum(footer, 64));
+
+  // Only provide 1 sector of payload (512 bytes) + EOF footer, but footer advertises 1024 bytes.
+  const file = new Uint8Array(512 + footerSize);
+  file.fill(0x5a, 0, 512);
+  file.set(footer, file.length - footerSize);
+
+  const src = new MemSource(file);
+  const sync = new MemSyncAccessHandle();
+  await assert.rejects(
+    convertToAeroSparse(src, "vhd", sync, { blockSizeBytes: 512 }),
+    (err: any) => err instanceof Error && /VHD fixed disk truncated/i.test(err.message),
+  );
+});
+
 test("convertToAeroSparse: supports cancellation via AbortSignal", async () => {
   const blockSize = 512;
   const logical = new Uint8Array(blockSize * 8);

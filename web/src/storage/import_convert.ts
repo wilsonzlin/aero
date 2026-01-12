@@ -629,6 +629,10 @@ async function convertVhdToSparse(
         }
       }
     }
+    const requiredLen = baseOffset + logicalSize + 512;
+    if (!Number.isSafeInteger(requiredLen) || src.size < requiredLen) {
+      throw new Error("VHD fixed disk truncated");
+    }
     return await convertRawSliceToSparse(src, sync, blockSize, logicalSize, baseOffset, options, "vhd");
   }
 
