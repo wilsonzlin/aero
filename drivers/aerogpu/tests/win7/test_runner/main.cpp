@@ -895,6 +895,7 @@ int main(int argc, char** argv) {
       "d3d9ex_dwm_probe",
       "d3d9ex_event_query",
       "d3d9ex_dwm_ddi_sanity",
+      "d3d9ex_getters_sanity",
       "d3d9ex_submit_fence_stress",
       "fence_state_sanity",
       "ring_state_sanity",

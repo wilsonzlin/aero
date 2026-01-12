@@ -61,6 +61,7 @@ drivers/aerogpu/tests/win7/
   d3d9ex_dwm_probe/
   d3d9ex_event_query/
   d3d9ex_dwm_ddi_sanity/
+  d3d9ex_getters_sanity/
   d3d9ex_submit_fence_stress/
   fence_state_sanity/
   ring_state_sanity/
@@ -305,6 +306,7 @@ In a Win7 VM with AeroGPU installed and working correctly:
 * `d3d9ex_dwm_probe` reports composition enabled (or successfully enables it)
 * `d3d9ex_event_query` validates that `GetData(D3DGETDATA_DONOTFLUSH)` is non-blocking (initial poll before `Flush`), that `D3DQUERYTYPE_EVENT` eventually signals, and stresses interleaved submissions + `PresentEx(D3DPRESENT_DONOTWAIT)` throttling (default: 2 threads; pass `--process-stress` to run the stress phase across 2 processes). Window is hidden by default; pass `--show` to display it.
 * `d3d9ex_dwm_ddi_sanity` sanity-checks D3D9Ex/DDI calls used by DWM and common apps (`CheckDeviceState`, `WaitForVBlank`, GPU thread priority, resource residency) to ensure they are non-blocking and return expected values
+* `d3d9ex_getters_sanity` validates D3D9Ex state getter/setter roundtrips (`GetViewport`, `GetScissorRect`, `GetRenderState`, `GetSamplerState`, `GetTexture`, `GetStreamSource`, `GetIndices`, `GetVertexDeclaration`, `GetFVF`, shader bindings, and shader constant getters) to ensure basic UMD state tracking is correct
 * `d3d9ex_submit_fence_stress` runs a tight `Clear` + `Issue(D3DISSUE_END)` + `PresentEx(D3DPRESENT_DONOTWAIT)` loop and validates that the AeroGPU D3D9 UMD reports **monotonic per-submission fences** via debug logs (captured with the DBWIN protocol); when possible it also cross-checks `AEROGPU_ESCAPE_OP_QUERY_FENCE` completion against the observed fence. On **AGPU** devices it additionally validates that the most recent PRESENT submission is marked with `AEROGPU_SUBMIT_FLAG_PRESENT` in the ring descriptor and that the submission includes a non-zero `alloc_table_gpa` (skipped on legacy devices unless `--require-agpu`/`--require-umd` are specified).
 * `fence_state_sanity` queries the KMD `QUERY_FENCE` escape repeatedly and validates that submitted/completed fences are monotonic and obey `completed <= submitted` (`--samples=N`, `--interval-ms=N`; skips if the escape is not supported)
 * `ring_state_sanity` dumps ring state via `AEROGPU_ESCAPE_OP_DUMP_RING_V2` and validates basic invariants (`cmd_gpa/cmd_size` pairing, AGPU `alloc_table_gpa/alloc_table_size` pairing, monotonic head/tail on AGPU) (`--ring-id=N`, `--samples=N`, `--interval-ms=N`; skips if the escape is not supported)
