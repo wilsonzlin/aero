@@ -12,6 +12,9 @@ const BDA_KEYBOARD_FLAGS_OFFSET: u64 = 0x17; // 0x417 absolute
 const BDA_KEYBOARD_BUF_HEAD_OFFSET: u64 = 0x1A; // 0x41A absolute
 const BDA_KEYBOARD_BUF_TAIL_OFFSET: u64 = 0x1C; // 0x41C absolute
 const BDA_KEYBOARD_BUF_START: u16 = 0x001E; // 0x40:0x1E -> 0x41E absolute
+const BDA_KEYBOARD_BUF_END: u16 = 0x003E; // 0x40:0x3E -> 0x43E absolute
+const BDA_KEYBOARD_BUF_START_PTR_OFFSET: u64 = 0x80; // 0x480 absolute
+const BDA_KEYBOARD_BUF_END_PTR_OFFSET: u64 = 0x82; // 0x482 absolute
 const BDA_MEM_SIZE_KB_OFFSET: u64 = 0x13; // 0x413 absolute
 
 pub fn init_ivt(bus: &mut dyn BiosBus) {
@@ -77,6 +80,11 @@ pub fn init_bda(bus: &mut dyn BiosBus) {
     bus.write_u16(BDA_BASE + BDA_KEYBOARD_FLAGS_OFFSET, 0);
     bus.write_u16(BDA_BASE + BDA_KEYBOARD_BUF_HEAD_OFFSET, BDA_KEYBOARD_BUF_START);
     bus.write_u16(BDA_BASE + BDA_KEYBOARD_BUF_TAIL_OFFSET, BDA_KEYBOARD_BUF_START);
+    bus.write_u16(
+        BDA_BASE + BDA_KEYBOARD_BUF_START_PTR_OFFSET,
+        BDA_KEYBOARD_BUF_START,
+    );
+    bus.write_u16(BDA_BASE + BDA_KEYBOARD_BUF_END_PTR_OFFSET, BDA_KEYBOARD_BUF_END);
 
     // Conventional memory size in KiB (up to EBDA).
     let base_mem_kb = (EBDA_BASE / 1024) as u16;
@@ -117,6 +125,14 @@ mod tests {
         assert_eq!(
             mem.read_u16(BDA_BASE + BDA_KEYBOARD_BUF_TAIL_OFFSET),
             BDA_KEYBOARD_BUF_START
+        );
+        assert_eq!(
+            mem.read_u16(BDA_BASE + BDA_KEYBOARD_BUF_START_PTR_OFFSET),
+            BDA_KEYBOARD_BUF_START
+        );
+        assert_eq!(
+            mem.read_u16(BDA_BASE + BDA_KEYBOARD_BUF_END_PTR_OFFSET),
+            BDA_KEYBOARD_BUF_END
         );
     }
 }
