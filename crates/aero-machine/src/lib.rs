@@ -5388,6 +5388,86 @@ mod tests {
     }
 
     #[test]
+    fn pc_e1000_intx_is_synced_even_when_external_interrupt_queue_is_full() {
+        let mut m = Machine::new(MachineConfig {
+            ram_size_bytes: 2 * 1024 * 1024,
+            enable_pc_platform: true,
+            enable_serial: false,
+            enable_i8042: false,
+            enable_a20_gate: false,
+            enable_reset_ctrl: false,
+            enable_e1000: true,
+            ..Default::default()
+        })
+        .unwrap();
+
+        let interrupts = m.platform_interrupts().expect("pc platform enabled");
+        let pci_intx = m.pci_intx_router().expect("pc platform enabled");
+
+        let bdf = aero_devices::pci::profile::NIC_E1000_82540EM.bdf;
+        let gsi = pci_intx.borrow().gsi_for_intx(bdf, PciInterruptPin::IntA);
+        let expected_vector = if gsi < 8 {
+            0x20u8.wrapping_add(gsi as u8)
+        } else {
+            0x28u8.wrapping_add((gsi as u8).wrapping_sub(8))
+        };
+
+        // Configure the legacy PIC to use the standard remapped offsets and unmask the routed IRQ.
+        {
+            let mut ints = interrupts.borrow_mut();
+            ints.pic_mut().set_offsets(0x20, 0x28);
+            // If the routed GSI maps to the slave PIC, ensure cascade (IRQ2) is unmasked as well.
+            ints.pic_mut().set_masked(2, false);
+            if let Ok(irq) = u8::try_from(gsi) {
+                if irq < 16 {
+                    ints.pic_mut().set_masked(irq, false);
+                }
+            }
+        }
+
+        // Assert E1000 INTx level by enabling + setting a cause bit.
+        let e1000 = m.e1000().expect("e1000 enabled");
+        {
+            let mut dev = e1000.borrow_mut();
+            dev.mmio_write_reg(0x00D0, 4, aero_net_e1000::ICR_TXDW); // IMS
+            dev.mmio_write_reg(0x00C8, 4, aero_net_e1000::ICR_TXDW); // ICS
+            assert!(dev.irq_level());
+        }
+
+        // Prior to running a slice, the INTx level has not been synced into the platform
+        // interrupt controller yet.
+        assert_eq!(
+            PlatformInterruptController::get_pending(&*interrupts.borrow()),
+            None
+        );
+
+        // Fill the external interrupt FIFO to its capacity (1) and disable IF so the CPU cannot
+        // drain it. Even though no additional vectors can be enqueued, the machine must still sync
+        // PCI INTx sources so the interrupt controller sees the asserted line.
+        const ENTRY_IP: u16 = 0x1000;
+        m.mem
+            .inner
+            .borrow_mut()
+            .write_physical(u64::from(ENTRY_IP), &[0x90, 0x90, 0x90, 0x90]);
+        init_real_mode_cpu(&mut m, ENTRY_IP, 0);
+        m.cpu.state.halted = true;
+        m.cpu.pending.inject_external_interrupt(0xF0);
+        assert_eq!(m.cpu.pending.external_interrupts, vec![0xF0]);
+
+        let exit = m.run_slice(5);
+        assert_eq!(exit, RunExit::Halted { executed: 0 });
+
+        // The FIFO is still full, so no new vector should have been enqueued.
+        assert_eq!(m.cpu.pending.external_interrupts, vec![0xF0]);
+
+        // But the platform interrupt controller should now see the pending INTx vector.
+        assert_eq!(
+            PlatformInterruptController::get_pending(&*interrupts.borrow()),
+            Some(expected_vector)
+        );
+    }
+
+    #[test]
     fn pc_e1000_intx_asserted_via_bar1_io_wakes_hlt_in_same_slice() {
         let mut m = Machine::new(MachineConfig {
             ram_size_bytes: 2 * 1024 * 1024,
