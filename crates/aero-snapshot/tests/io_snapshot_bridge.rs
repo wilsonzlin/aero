@@ -11,7 +11,7 @@ use aero_snapshot::{
     MmuState, Result, SaveOptions, SnapshotError, SnapshotMeta, SnapshotSource, SnapshotTarget,
 };
 
-const DEVICE_ID_I8042: DeviceId = DeviceId(0x8042);
+const DEVICE_ID_I8042: DeviceId = DeviceId::I8042;
 
 struct TestSource {
     device_state: DeviceState,
