@@ -3,6 +3,7 @@
 use arbitrary::Unstructured;
 use libfuzzer_sys::fuzz_target;
 
+use aero_devices::pci::capabilities::PCI_CONFIG_SPACE_SIZE;
 use aero_devices::pci::PciDevice;
 use aero_devices_storage::ata::{
     AtaDrive, ATA_CMD_FLUSH_CACHE, ATA_CMD_FLUSH_CACHE_EXT, ATA_CMD_IDENTIFY, ATA_CMD_READ_DMA_EXT,
@@ -176,6 +177,8 @@ fn write_cfis(mem: &mut dyn MemoryBus, ctba: u64, cfis: &[u8; 64]) {
 enum MmioOp {
     Read { offset: u64, size: usize },
     Write { offset: u64, size: usize, value: u64 },
+    ConfigRead { offset: u16, size: usize },
+    ConfigWrite { offset: u16, size: usize, value: u32 },
     Process,
 }
 
@@ -222,7 +225,7 @@ fuzz_target!(|data: &[u8]| {
     let mut ops = Vec::with_capacity(ops_len);
     for _ in 0..ops_len {
         let kind: u8 = u.arbitrary().unwrap_or(0);
-        match kind % 3 {
+        match kind % 5 {
             0 => {
                 // Bias towards known register offsets to reach deeper state transitions.
                 let use_known: bool = u.arbitrary().unwrap_or(true);
@@ -252,6 +255,50 @@ fuzz_target!(|data: &[u8]| {
                 let size = decode_size(u.arbitrary().unwrap_or(0));
                 let value: u64 = u.arbitrary().unwrap_or(0);
                 ops.push(MmioOp::Write { offset, size, value });
+            }
+            2 => {
+                // PCI config read.
+                let size = match u.arbitrary::<u8>().unwrap_or(0) % 3 {
+                    0 => 1,
+                    1 => 2,
+                    _ => 4,
+                };
+                let max_off = (PCI_CONFIG_SPACE_SIZE - size) as u16;
+                let seed: u16 = u.arbitrary().unwrap_or(0);
+                let offset = if max_off == 0 { 0 } else { seed % (max_off + 1) };
+                ops.push(MmioOp::ConfigRead { offset, size });
+            }
+            3 => {
+                // PCI config write. Keep accesses valid to avoid asserting in the PCI config
+                // framework (e.g. BAR writes require aligned dword accesses).
+                let which: u8 = u.arbitrary().unwrap_or(0);
+                if which % 2 == 0 {
+                    // Command register (0x04..0x05). Allow 1/2/4-byte writes.
+                    let size = match u.arbitrary::<u8>().unwrap_or(0) % 3 {
+                        0 => 1,
+                        1 => 2,
+                        _ => 4,
+                    };
+                    let mut value: u32 = u.arbitrary().unwrap_or(0);
+                    // Bias towards keeping MEM + BUSMASTER enabled so we still reach deeper DMA paths.
+                    let force_enable: bool = u.arbitrary().unwrap_or(true);
+                    if force_enable {
+                        value |= (1 << 1) | (1 << 2);
+                    }
+                    ops.push(MmioOp::ConfigWrite {
+                        offset: 0x04,
+                        size,
+                        value,
+                    });
+                } else {
+                    // BAR5 (ABAR) dword write at 0x24 (0x10 + 5*4).
+                    let value: u32 = u.arbitrary().unwrap_or(0);
+                    ops.push(MmioOp::ConfigWrite {
+                        offset: 0x10 + 5 * 4,
+                        size: 4,
+                        value,
+                    });
+                }
             }
             _ => ops.push(MmioOp::Process),
         }
@@ -387,6 +434,16 @@ fuzz_target!(|data: &[u8]| {
                 size,
                 value,
             } => dev.mmio_write(offset, size, value),
+            MmioOp::ConfigRead { offset, size } => {
+                let _ = dev.config_mut().read(offset, size);
+            }
+            MmioOp::ConfigWrite {
+                offset,
+                size,
+                value,
+            } => {
+                let _ = dev.config_mut().write_with_effects(offset, size, value);
+            }
             MmioOp::Process => dev.process(&mut mem),
         }
     }
@@ -418,5 +475,8 @@ fuzz_target!(|data: &[u8]| {
     }
 
     // Always process at least once so a synthesized command can't be "optimized away".
+    // Re-enable PCI bus mastering (and MMIO decode) so we still execute the command list even if
+    // earlier fuzzed PCI config writes disabled DMA.
+    dev.config_mut().set_command((1 << 1) | (1 << 2));
     dev.process(&mut mem);
 });
