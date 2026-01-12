@@ -1,7 +1,7 @@
 mod common;
 
 use aero_gpu::aerogpu_executor::{AeroGpuExecutor, AllocEntry, AllocTable};
-use aero_gpu::{readback_rgba8, GuestMemory, TextureRegion, VecGuestMemory};
+use aero_gpu::{readback_buffer, readback_rgba8, GuestMemory, TextureRegion, VecGuestMemory};
 use aero_protocol::aerogpu::{
     aerogpu_cmd::{
         AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode,
@@ -1574,6 +1574,174 @@ fn executor_bc_writeback_uses_physical_copy_extents() {
             .read(TEX_GPA + mip0_size_bytes as u64, &mut mip1)
             .unwrap();
         assert_eq!(mip1, mip1_block);
+    });
+}
+
+#[test]
+fn executor_bc_dirty_range_upload_pads_small_mips() {
+    const TEST_NAME: &str =
+        concat!(module_path!(), "::executor_bc_dirty_range_upload_pads_small_mips");
+    pollster::block_on(async {
+        if env_truthy("AERO_DISABLE_WGPU_TEXTURE_COMPRESSION") {
+            common::skip_or_panic(
+                TEST_NAME,
+                "AERO_DISABLE_WGPU_TEXTURE_COMPRESSION is set; skipping native BC path tests",
+            );
+            return;
+        }
+
+        let (device, queue) = match create_device_queue_bc().await {
+            Some(v) => v,
+            None => {
+                common::skip_or_panic(TEST_NAME, "no wgpu adapter supports TEXTURE_COMPRESSION_BC");
+                return;
+            }
+        };
+
+        let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
+
+        const TEX_GPA: u64 = 0x1000;
+        const TEX_ALLOC_ID: u32 = 1;
+
+        // BC1 4x4 mip chain (mip0 4x4, mip1 2x2): 1 block each.
+        let mip0_block = [0xAAu8; 8];
+        let mip1_block = [0x5Au8; 8];
+        let mut backing_bytes = Vec::new();
+        backing_bytes.extend_from_slice(&mip0_block);
+        backing_bytes.extend_from_slice(&mip1_block);
+
+        let mut guest = VecGuestMemory::new(0x4000);
+        guest.write(TEX_GPA, &backing_bytes).unwrap();
+
+        let alloc_table = AllocTable::new([(
+            TEX_ALLOC_ID,
+            AllocEntry {
+                flags: 0,
+                gpa: TEX_GPA,
+                size_bytes: backing_bytes.len() as u64,
+            },
+        )])
+        .expect("alloc table");
+
+        let stream = build_stream(|out| {
+            // CREATE_TEXTURE2D src (handle=1) BC1 4x4 with mip1=2x2, guest-backed.
+            emit_packet(out, AerogpuCmdOpcode::CreateTexture2d as u32, |out| {
+                push_u32(out, 1); // texture_handle
+                push_u32(out, AEROGPU_RESOURCE_USAGE_TEXTURE); // usage_flags
+                push_u32(out, AerogpuFormat::BC1RgbaUnorm as u32); // format
+                push_u32(out, 4); // width
+                push_u32(out, 4); // height
+                push_u32(out, 2); // mip_levels
+                push_u32(out, 1); // array_layers
+                push_u32(out, 8); // row_pitch_bytes (mip0 block row)
+                push_u32(out, TEX_ALLOC_ID); // backing_alloc_id
+                push_u32(out, 0); // backing_offset_bytes
+                push_u64(out, 0); // reserved0
+            });
+
+            // CREATE_TEXTURE2D dst (handle=2) BC1 4x4 with mip1=2x2, host-owned.
+            emit_packet(out, AerogpuCmdOpcode::CreateTexture2d as u32, |out| {
+                push_u32(out, 2); // texture_handle
+                push_u32(out, AEROGPU_RESOURCE_USAGE_TEXTURE); // usage_flags
+                push_u32(out, AerogpuFormat::BC1RgbaUnorm as u32); // format
+                push_u32(out, 4); // width
+                push_u32(out, 4); // height
+                push_u32(out, 2); // mip_levels
+                push_u32(out, 1); // array_layers
+                push_u32(out, 0); // row_pitch_bytes (unused when backing_alloc_id == 0)
+                push_u32(out, 0); // backing_alloc_id
+                push_u32(out, 0); // backing_offset_bytes
+                push_u64(out, 0); // reserved0
+            });
+
+            // RESOURCE_DIRTY_RANGE: mark mip1 as dirty, so the executor must upload it from guest
+            // memory using a 4x4 physical copy extent (even though the mip is 2x2 logical).
+            emit_packet(out, AerogpuCmdOpcode::ResourceDirtyRange as u32, |out| {
+                push_u32(out, 1); // resource_handle
+                push_u32(out, 0); // reserved0
+                push_u64(out, 8); // offset_bytes (mip1 offset)
+                push_u64(out, 8); // size_bytes (one BC1 block)
+            });
+
+            // COPY_TEXTURE2D: copy the full mip1 (2x2 logical). This forces the executor to flush
+            // the dirty guest-backed mip before issuing the copy.
+            emit_packet(out, AerogpuCmdOpcode::CopyTexture2d as u32, |out| {
+                push_u32(out, 2); // dst_texture
+                push_u32(out, 1); // src_texture
+                push_u32(out, 1); // dst_mip_level
+                push_u32(out, 0); // dst_array_layer
+                push_u32(out, 1); // src_mip_level
+                push_u32(out, 0); // src_array_layer
+                push_u32(out, 0); // dst_x
+                push_u32(out, 0); // dst_y
+                push_u32(out, 0); // src_x
+                push_u32(out, 0); // src_y
+                push_u32(out, 2); // width (logical mip1)
+                push_u32(out, 2); // height (logical mip1)
+                push_u32(out, 0); // flags
+                push_u32(out, 0); // reserved0
+            });
+        });
+
+        exec.device()
+            .push_error_scope(wgpu::ErrorFilter::Validation);
+        let report = exec.process_cmd_stream(&stream, &mut guest, Some(&alloc_table));
+        assert!(report.is_ok(), "report had errors: {:#?}", report.events);
+
+        #[cfg(not(target_arch = "wasm32"))]
+        exec.device().poll(wgpu::Maintain::Wait);
+        #[cfg(target_arch = "wasm32")]
+        exec.device().poll(wgpu::Maintain::Poll);
+
+        let err = exec.device().pop_error_scope().await;
+        assert!(
+            err.is_none(),
+            "expected no wgpu validation error for BC mip dirty-range uploads with non-multiple dimensions, got {err:?}"
+        );
+
+        // Ensure we actually exercised the native BC path; otherwise neither the upload nor copy
+        // would require block rounding.
+        let src_tex = exec.texture(1).expect("BC src texture");
+        assert_wgpu_texture_is_native_bc(exec.device(), exec.queue(), src_tex).await;
+
+        // Read back dst mip1 and verify that the copied block matches the guest backing.
+        let dst_tex = exec.texture(2).expect("BC dst texture");
+        let buffer = exec.device().create_buffer(&wgpu::BufferDescriptor {
+            label: Some("aerogpu.executor.bc.dirty_range_mip1_readback"),
+            size: 256, // aligned bytes_per_row * 1 block row
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let mut encoder = exec
+            .device()
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("aerogpu.executor.bc.dirty_range_mip1_readback.encoder"),
+            });
+        encoder.copy_texture_to_buffer(
+            wgpu::ImageCopyTexture {
+                texture: dst_tex,
+                mip_level: 1,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::ImageCopyBuffer {
+                buffer: &buffer,
+                layout: wgpu::ImageDataLayout {
+                    offset: 0,
+                    bytes_per_row: Some(256),
+                    rows_per_image: Some(1),
+                },
+            },
+            wgpu::Extent3d {
+                width: 4,
+                height: 4,
+                depth_or_array_layers: 1,
+            },
+        );
+        exec.queue().submit([encoder.finish()]);
+
+        let readback = readback_buffer(exec.device(), &buffer, 0..8).await;
+        assert_eq!(readback, mip1_block);
     });
 }
 
