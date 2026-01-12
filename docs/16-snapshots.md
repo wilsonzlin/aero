@@ -90,7 +90,7 @@ To keep restore behavior deterministic and avoid ambiguous state merges, the dec
 | `CPU` | Architectural CPU state (v1: minimal; v2: `aero_cpu_core::state::CpuState` compatible) |
 | `CPUS` | Multi-vCPU CPU state (v1: minimal; v2: `aero_cpu_core::state::CpuState` compatible) |
 | `MMU` | System/MMU state (v1: minimal; v2: control/debug/MSR + descriptor tables) |
-| `DEVICES` | List of device states (PIC/APIC/PIT/RTC/I8042/HPET/ACPI_PM/PCI/Disk/VGA/etc) as typed TLVs |
+| `DEVICES` | List of device states (PIC/APIC/PIT/RTC/I8042/HPET/ACPI_PM/PCI/PCI_CFG/PCI_INTX/Disk/VGA/etc) as typed TLVs |
 | `DISKS` | References to disk base images + overlay images |
 | `RAM` | Guest RAM contents (either full snapshot or dirty-page diff) |
 
@@ -115,7 +115,7 @@ Beyond BIOS/RAM, a PcPlatform snapshot is expected to include `DEVICES` entries 
 
 Restore notes:
 
-- **HPET:** after restoring HPET state, call `Hpet::poll()` (or run one platform tick/poll iteration) to re-drive any pending **level-triggered** interrupt lines based on `general_int_status`. (`load_state()` intentionally does not directly touch the interrupt sink.)
+- **HPET:** after restoring HPET state, call `Hpet::poll(&mut sink)` (or run one platform tick/poll iteration) to re-drive any pending **level-triggered** interrupt lines based on `general_int_status`. (`load_state()` intentionally does not directly touch the interrupt sink.)
 - **ACPI PM determinism:** `PM_TMR` must be derived from deterministic virtual time for stable snapshot/restore. Avoid basing it on host wall-clock / `Instant` (which will make snapshots nondeterministic and can introduce time jumps on restore).
 
 #### Common platform device ids (outer `DeviceId`)
@@ -132,9 +132,23 @@ Some platform devices are snapshotted as their own `DEVICES` entries and use ded
 - `DeviceId::ACPI_PM` (`16`) — ACPI power management registers (PM1 + PM timer)
 - `DeviceId::HPET` (`17`) — HPET timer state
 
-Note: `aero-snapshot` rejects duplicate `(DeviceId, version, flags)` tuples inside `DEVICES`. Since both `PciConfigPorts` and `PciIntxRouter` currently snapshot as `SnapshotVersion (1.0)`, they cannot both be stored as separate entries with the same outer `(DeviceId::PCI, 1, 0)` key. Use either:
+Note: `aero-snapshot` rejects duplicate `(DeviceId, version, flags)` tuples inside `DEVICES`. Since both `PciConfigPorts` and `PciIntxRouter` currently snapshot as `SnapshotVersion (1.0)`, they cannot both be stored as separate entries with the same outer `(DeviceId::PCI, 1, 0)` key. Canonical snapshots therefore store PCI core state as:
 
 - a single outer entry: `PCI` containing the `PciCoreSnapshot` wrapper (`PCIC`).
+
+#### ACPI PM (`DeviceId::ACPI_PM`)
+
+Determinism note: the ACPI PM timer register `PM_TMR` must be derived from **deterministic platform time**
+(`Clock::now_ns()` / a shared `ManualClock`), not host wall-clock time (e.g. `std::time::Instant`). Snapshot
+restore reconstructs the timer phase relative to `now_ns()`, so using a non-deterministic time source will
+cause the restored `PM_TMR` value/phase to differ across restores.
+
+#### HPET (`DeviceId::HPET`)
+
+Restore note: after applying HPET state, call `Hpet::poll(&mut sink)` (or run an equivalent one-shot platform
+timer tick/poll) once to re-drive any asserted **level-triggered** GSIs implied by the restored
+`general_int_status`. The per-timer `irq_asserted` field is runtime/sink-handshake state and is intentionally
+not snapshotted, so a post-restore poll is required to make the sink observe restored asserted levels.
 
 Snapshot readers may also accept older snapshots that stored PCI config ports and INTx routing as separate `PCI_CFG` + `PCI_INTX` entries.
 
@@ -171,24 +185,24 @@ device must avoid emitting spurious IRQ pulses purely due to buffered output byt
 
 ### PCI core state (`aero-devices`)
 
-The PCI core in `crates/devices` snapshots only **guest-visible PCI-layer state** (not device-internal emulation state).
+The PCI core in `crates/devices` snapshots only **guest-visible PCI-layer state** (not device-internal
+emulation state) using `aero-io-snapshot` TLVs.
 
-**Snapshot layout constraint:** `aero_snapshot` rejects duplicate `(DeviceId, version, flags)` tuples in `DEVICES` (see above). Since `DeviceState.version/flags` mirror `aero-io-snapshot` `(major, minor)`, `PciConfigPorts` (`PCPT`) and `PciIntxRouter` (`INTX`) cannot both be stored as separate entries under the same outer `DeviceId::PCI` key (they would both be `(PCI, 1, 0)` today).
-
-Therefore, PCI core state must be stored as a **single** `DeviceId::PCI` entry:
-
-That `DeviceId::PCI` entry should contain an `aero-io-snapshot` blob produced by the PCI core wrapper
-(`aero_devices::pci::PciCoreSnapshot`, inner `DEVICE_ID = PCIC`). The wrapper nests the following
-sub-snapshots as TLV fields (forward-compatible by skipping unknown tags):
+The inner `aero-io-snapshot` `DEVICE_ID`s used by the PCI core are nested under a single outer
+`DeviceId::PCI` entry via the PCI core wrapper (`aero_devices::pci::PciCoreSnapshot`, inner `DEVICE_ID = PCIC`):
 
 - tag `1`: `PCPT` — `PciConfigPorts`: wraps the config mechanism state and per-function config spaces:
   - `PCF1` — `PciConfigMechanism1` 0xCF8 address latch
   - `PCIB` — `PciBusSnapshot` (per-BDF 256-byte config space image + BAR base/probe state)
 - tag `2`: `INTX` — `PciIntxRouter` (PIRQ routing + asserted INTx levels)
 
-Backward compatibility note: older snapshots may store the above as separate `PCI_CFG` (`PCPT`) + `PCI_INTX` (`INTX`) `DEVICES` entries. Readers can accept those by restoring both, but writers should prefer the single-entry `PCI` wrapper to match the canonical encoding.
+Backward compatibility note: older snapshots may store the above as separate `PCI_CFG` (`PCPT`) +
+`PCI_INTX` (`INTX`) `DEVICES` entries. Readers can accept those by restoring both, but writers should prefer
+the single-entry `PCI` wrapper to match the canonical encoding.
 
-Restore ordering note: `PciIntxRouter::load_state()` restores internal refcounts but cannot touch the platform interrupt sink. Snapshot restore code should call `PciIntxRouter::sync_levels_to_sink()` **after restoring the platform interrupt controller complex** to re-drive any asserted GSIs (e.g. level-triggered INTx lines).
+Restore ordering note: `PciIntxRouter::load_state()` restores internal refcounts but cannot touch the platform
+interrupt sink. Snapshot restore code should call `PciIntxRouter::sync_levels_to_sink()` **after restoring the
+platform interrupt controller complex** to re-drive any asserted GSIs (e.g. level-triggered INTx lines).
 
 ### Storage controllers (AHCI / IDE / ATAPI)
 
