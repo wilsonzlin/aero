@@ -286,9 +286,9 @@ That `PCIC` wrapper contains nested io-snapshots as TLV fields:
   - `PCIB` — `PciBusSnapshot` (per-BDF 256-byte config space image + BAR base/probe state)
 - tag `2`: `INTX` — `PciIntxRouter` (PIRQ routing + asserted INTx levels)
 
-Backward compatibility note: older snapshots may store these as split entries (`PCI_CFG` + `PCI_INTX`), or store `PCPT` under the legacy
-outer id `DeviceId::PCI`. Snapshot restore code should accept those encodings, but snapshot writers should prefer the single-entry `PCI`
-wrapper above to match the canonical layout.
+Backward compatibility note: older snapshots may store these as split entries (`PCI_CFG` + `PCI_INTX`), or store `PCPT` **or** `INTX`
+directly under the legacy outer id `DeviceId::PCI`. Snapshot restore code should accept those encodings, but snapshot writers should prefer
+the single-entry `PCI` wrapper above to match the canonical layout.
 
 Restore ordering note: `PciIntxRouter::load_state()` restores internal refcounts but cannot touch the platform
 interrupt sink. Snapshot restore code should call `PciIntxRouter::sync_levels_to_sink()` **after restoring the
