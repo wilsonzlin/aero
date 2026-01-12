@@ -89,6 +89,11 @@ impl E1000TickPump {
 /// This is the low-level, allocation-free pump primitive intended for integration layers that
 /// already own the NIC and backend (e.g. the PC platform, a WASM runtime, or a canonical machine).
 ///
+/// Note: [`E1000Device`] gates *all* DMA (descriptor reads/writes, RX buffer writes, etc.) on the
+/// PCI Bus Master Enable bit (PCI command register bit 2). If bus mastering is not enabled, the
+/// pump will not make progress delivering frames into guest memory. Callers are expected to set
+/// this bit during PCI enumeration (or in tests via `nic.pci_config_write(0x04, 2, 0x4)`).
+///
 /// Ordering is deterministic and mirrors virtio-net:
 /// 1) `nic.poll(mem)` to process DMA and publish queued guest TX.
 /// 2) Drain up to `max_tx_frames_per_tick` from `nic.pop_tx_frame()` and call `backend.transmit`.
