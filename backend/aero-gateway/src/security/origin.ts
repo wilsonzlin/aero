@@ -13,6 +13,17 @@ function authorityHasUserinfo(raw: string): boolean {
   return trimmed.slice(start, end).includes('@');
 }
 
+function asciiStartsWithIgnoreCase(s: string, prefix: string): boolean {
+  if (s.length < prefix.length) return false;
+  for (let i = 0; i < prefix.length; i++) {
+    let c = s.charCodeAt(i);
+    // ASCII upper -> lower
+    if (c >= 0x41 && c <= 0x5a) c += 0x20;
+    if (c !== prefix.charCodeAt(i)) return false;
+  }
+  return true;
+}
+
 export function normalizeOriginString(origin: string): string | null {
   const trimmed = origin.trim();
   if (trimmed === '') return null;
@@ -38,8 +49,13 @@ export function normalizeOriginString(origin: string): string | null {
   // Require an explicit scheme://host serialization; WHATWG URL parsers accept
   // weird variants like `https:example.com` and will normalize them to an
   // authority URL, but browsers don't emit those in Origin headers.
-  const lower = trimmed.toLowerCase();
-  const schemePrefix = lower.startsWith('http://') ? 'http://' : lower.startsWith('https://') ? 'https://' : null;
+  // Avoid allocating a lowercase copy of the full Origin header; we only need a
+  // case-insensitive check for the scheme prefix.
+  const schemePrefix = asciiStartsWithIgnoreCase(trimmed, 'http://')
+    ? 'http://'
+    : asciiStartsWithIgnoreCase(trimmed, 'https://')
+      ? 'https://'
+      : null;
   if (!schemePrefix) return null;
   if (trimmed.charAt(schemePrefix.length) === '/') return null;
   // Allow an optional trailing slash, but reject any other path segments.
