@@ -95,6 +95,12 @@ It should:
 
 This test catches the common bug where `share_token` is (incorrectly) derived from the process-local shared `HANDLE` value: producer and consumer handles differ, so `IMPORT_SHARED_SURFACE` would fail to resolve the previously-exported surface.
 
+Optional debug-only validation (when supported by the KMD):
+
+- Use `AEROGPU_ESCAPE_OP_MAP_SHARED_HANDLE` (via `D3DKMTEscape`) to map a process-local shared `HANDLE` to a stable 32-bit **debug token**.
+- The producer and consumer should observe the same debug token even when their numeric `HANDLE` values differ.
+- This debug token is **not** the protocol `u64 share_token` used by `EXPORT_SHARED_SURFACE` / `IMPORT_SHARED_SURFACE`; it exists only to help bring-up tooling prove that handle duplication/inheritance is working correctly.
+
 ## Validation: alloc_id uniqueness under DWM-like batching
 
 Use the multi-producer D3D9Ex test app:
