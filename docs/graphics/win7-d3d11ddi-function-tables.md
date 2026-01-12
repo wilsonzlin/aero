@@ -426,7 +426,7 @@ Optional but common for real apps:
 
 | Field | Status | Stub failure mode |
 |---|---|---|
-| `pfnOpenResource` | REQUIRED-BUT-STUBBABLE | `HRESULT`: `E_NOTIMPL` until shared resources are implemented. |
+| `pfnOpenResource` | REQUIRED-BUT-STUBBABLE | `HRESULT`: `E_NOTIMPL` is acceptable for early bring-up, but breaks DXGI/D3D11 shared-resource interop (`ID3D11Device::OpenSharedResource`). AeroGPU implements this in the Win7/WDDM 1.1 WDK UMD build (see `drivers/aerogpu/tests/win7/d3d11_shared_surface_ipc/`). |
 
 #### 4.2.3 Views (SRV / RTV / DSV / UAV)
 
