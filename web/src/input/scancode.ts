@@ -77,5 +77,12 @@ export function shouldPreventDefaultForKeyboardEvent(event: KeyboardEvent): bool
     // Let browser shortcuts (copy/paste/tab close/etc.) win by default.
     return false;
   }
+
+  // Alt-based shortcuts are frequently used by browsers (e.g. focusing menus / address bar).
+  // When the VM has focus, prefer delivering Alt-modified keystrokes to the guest.
+  if (event.altKey) {
+    return true;
+  }
+
   return DEFAULT_PREVENT_DEFAULT_CODES.has(event.code);
 }

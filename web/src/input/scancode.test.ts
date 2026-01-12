@@ -2,11 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import { shouldPreventDefaultForKeyboardEvent } from "./scancode";
 
-function makeEvent(opts: { code: string; ctrlKey?: boolean; metaKey?: boolean }): KeyboardEvent {
+function makeEvent(opts: { code: string; ctrlKey?: boolean; metaKey?: boolean; altKey?: boolean }): KeyboardEvent {
   return {
     code: opts.code,
     ctrlKey: opts.ctrlKey ?? false,
     metaKey: opts.metaKey ?? false,
+    altKey: opts.altKey ?? false,
   } as unknown as KeyboardEvent;
 }
 
@@ -47,6 +48,15 @@ describe("shouldPreventDefaultForKeyboardEvent", () => {
       expect(shouldPreventDefaultForKeyboardEvent(makeEvent({ code, ctrlKey: true }))).toBe(false);
       expect(shouldPreventDefaultForKeyboardEvent(makeEvent({ code, metaKey: true }))).toBe(false);
     }
+  });
+
+  it("prevents default for Alt-modified keystrokes by default", () => {
+    expect(shouldPreventDefaultForKeyboardEvent(makeEvent({ code: "KeyD", altKey: true }))).toBe(true);
+    expect(shouldPreventDefaultForKeyboardEvent(makeEvent({ code: "Digit4", altKey: true }))).toBe(true);
+
+    // Ctrl/Meta are treated as "host shortcut" modifiers and should override the Alt rule.
+    expect(shouldPreventDefaultForKeyboardEvent(makeEvent({ code: "KeyD", altKey: true, ctrlKey: true }))).toBe(false);
+    expect(shouldPreventDefaultForKeyboardEvent(makeEvent({ code: "KeyD", altKey: true, metaKey: true }))).toBe(false);
   });
 
   it("does not prevent default for ordinary keys by default", () => {
