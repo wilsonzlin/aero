@@ -3795,6 +3795,73 @@ mod tests {
             "CPU should wake from HLT once PCI INTx is delivered via IOAPIC"
         );
     }
+
+    #[test]
+    fn pc_e1000_bar1_io_is_routed_and_gated_by_pci_command_io_enable() {
+        let mut m = Machine::new(MachineConfig {
+            ram_size_bytes: 2 * 1024 * 1024,
+            enable_pc_platform: true,
+            enable_serial: false,
+            enable_i8042: false,
+            enable_a20_gate: false,
+            enable_reset_ctrl: false,
+            enable_e1000: true,
+            ..Default::default()
+        })
+        .unwrap();
+
+        let bdf = aero_devices::pci::profile::NIC_E1000_82540EM.bdf;
+
+        // BAR1 should be assigned during BIOS POST and routed via the machine's PCI I/O window.
+        let bar1_base = {
+            let pci_cfg = m.pci_config_ports().expect("pc platform enabled");
+            let mut pci_cfg = pci_cfg.borrow_mut();
+            pci_cfg
+                .bus_mut()
+                .device_config(bdf)
+                .and_then(|cfg| cfg.bar_range(1))
+                .expect("missing E1000 BAR1")
+                .base
+        };
+
+        let ioaddr_port = u16::try_from(bar1_base).expect("E1000 BAR1 should fit in u16 I/O space");
+        let iodata_port = ioaddr_port.wrapping_add(4);
+
+        // Seed a known register value in the device model.
+        let e1000 = m.e1000().expect("e1000 enabled");
+        e1000
+            .borrow_mut()
+            .mmio_write_u32_reg(0x00D0, 0x1234_5678); // IMS
+
+        // Disable PCI I/O decoding: the I/O window should behave as unmapped (reads return 0xFF).
+        {
+            let pci_cfg = m.pci_config_ports().expect("pc platform enabled");
+            let mut pci_cfg = pci_cfg.borrow_mut();
+            let cfg = pci_cfg
+                .bus_mut()
+                .device_config_mut(bdf)
+                .expect("E1000 device missing from PCI bus");
+            cfg.set_command(0x0000);
+        }
+
+        m.io_write(ioaddr_port, 4, 0x00D0); // IOADDR = IMS
+        assert_eq!(m.io_read(iodata_port, 4), 0xFFFF_FFFF);
+
+        // Re-enable PCI I/O decoding: reads/writes should be dispatched to the E1000 model.
+        {
+            let pci_cfg = m.pci_config_ports().expect("pc platform enabled");
+            let mut pci_cfg = pci_cfg.borrow_mut();
+            let cfg = pci_cfg
+                .bus_mut()
+                .device_config_mut(bdf)
+                .expect("E1000 device missing from PCI bus");
+            cfg.set_command(0x0001);
+        }
+
+        m.io_write(ioaddr_port, 4, 0x00D0); // IOADDR = IMS
+        assert_eq!(m.io_read(iodata_port, 4), 0x1234_5678);
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn machine_e1000_tx_ring_requires_bus_master_and_transmits_to_ring_backend() {
