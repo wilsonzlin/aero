@@ -1413,7 +1413,7 @@ impl AerogpuD3d11Executor {
         let pipeline_layout = {
             let device = &self.device;
             let cache = &mut self.pipeline_layout_cache;
-            cache.get_or_create_with(pipeline_bindings.layout_key.clone(), || {
+            cache.get_or_create_with(&pipeline_bindings.layout_key, || {
                 let layout_refs: Vec<&wgpu::BindGroupLayout> = pipeline_bindings
                     .group_layouts
                     .iter()

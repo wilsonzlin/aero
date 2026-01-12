@@ -1,4 +1,3 @@
-use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -49,22 +48,19 @@ impl<V> PipelineLayoutCache<V> {
 }
 
 impl<V: Clone> PipelineLayoutCache<V> {
-    pub fn get_or_create_with<F>(&mut self, key: PipelineLayoutKey, create: F) -> V
+    pub fn get_or_create_with<F>(&mut self, key: &PipelineLayoutKey, create: F) -> V
     where
         F: FnOnce() -> V,
     {
-        match self.layouts.entry(key) {
-            Entry::Occupied(entry) => {
-                self.hits += 1;
-                entry.get().clone()
-            }
-            Entry::Vacant(entry) => {
-                self.misses += 1;
-                let value = create();
-                entry.insert(value.clone());
-                value
-            }
+        if let Some(value) = self.layouts.get(key) {
+            self.hits += 1;
+            return value.clone();
         }
+
+        self.misses += 1;
+        let value = create();
+        self.layouts.insert(key.clone(), value.clone());
+        value
     }
 }
 
@@ -72,7 +68,7 @@ impl PipelineLayoutCache<Arc<wgpu::PipelineLayout>> {
     pub fn get_or_create(
         &mut self,
         device: &wgpu::Device,
-        key: PipelineLayoutKey,
+        key: &PipelineLayoutKey,
         bind_group_layouts: &[&wgpu::BindGroupLayout],
         label: Option<&str>,
     ) -> Arc<wgpu::PipelineLayout> {
@@ -125,7 +121,7 @@ mod tests {
 
         let k = key(&[0x11, 0x22]);
         for _ in 0..4 {
-            let v = cache.get_or_create_with(k.clone(), || {
+            let v = cache.get_or_create_with(&k, || {
                 let next = created.get() + 1;
                 created.set(next);
                 next
@@ -143,9 +139,12 @@ mod tests {
     fn different_keys_miss_independently() {
         let mut cache = PipelineLayoutCache::<u32>::new();
 
-        let v1 = cache.get_or_create_with(key(&[1]), || 10);
-        let v2 = cache.get_or_create_with(key(&[2]), || 20);
-        let v1_again = cache.get_or_create_with(key(&[1]), || 30);
+        let k1 = key(&[1]);
+        let k2 = key(&[2]);
+
+        let v1 = cache.get_or_create_with(&k1, || 10);
+        let v2 = cache.get_or_create_with(&k2, || 20);
+        let v1_again = cache.get_or_create_with(&k1, || 30);
 
         assert_eq!(v1, 10);
         assert_eq!(v2, 20);
@@ -191,18 +190,10 @@ mod tests {
             let mut cache: PipelineLayoutCache<Arc<wgpu::PipelineLayout>> = PipelineLayoutCache::new();
             let bind_group_layouts = [cached_bgl.layout.as_ref()];
 
-            let a = cache.get_or_create(
-                device,
-                key.clone(),
-                &bind_group_layouts,
-                Some("aero pipeline layout"),
-            );
-            let b = cache.get_or_create(
-                device,
-                key.clone(),
-                &bind_group_layouts,
-                Some("aero pipeline layout"),
-            );
+            let a =
+                cache.get_or_create(device, &key, &bind_group_layouts, Some("aero pipeline layout"));
+            let b =
+                cache.get_or_create(device, &key, &bind_group_layouts, Some("aero pipeline layout"));
 
             assert!(Arc::ptr_eq(&a, &b));
             assert_eq!(
@@ -216,4 +207,3 @@ mod tests {
         });
     }
 }
-

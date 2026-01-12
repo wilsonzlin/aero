@@ -676,7 +676,7 @@ impl AerogpuCmdRuntime {
             .collect();
         let pipeline_layout = self.pipeline_layout_cache.get_or_create(
             &self.device,
-            layout_key.clone(),
+            &layout_key,
             &bind_group_layout_refs,
             Some("aero-d3d11 aerogpu pipeline layout"),
         );
