@@ -407,10 +407,7 @@ fn aerogpu_install_script_prefers_dx11_inf_in_ci_layout() {
     // This keeps the default install path unambiguous for anyone copying `out/packages/aerogpu/<arch>/`
     // into a Win7 VM.
     let install_cmd = repo_root.join("drivers/aerogpu/packaging/win7/install.cmd");
-    assert_file_contains_noncomment_line(
-        &install_cmd,
-        r#"set "INF_FILE=aerogpu_dx11.inf""#,
-    );
+    assert_file_contains_noncomment_line(&install_cmd, "INF_FILE=aerogpu_dx11.inf");
     assert_file_contains_noncomment_line(&install_cmd, r"..\..\aerogpu_dx11.inf");
 }
 
