@@ -422,6 +422,17 @@ impl PciConfig {
             1 => self.regs[offset] = value as u8,
             2 => self.regs[offset..offset + 2].copy_from_slice(&(value as u16).to_le_bytes()),
             4 => {
+                // PCI command register writes are commonly performed as a full dword store, but the
+                // upper 16 bits are the Status register which is largely read-only / RW1C on real
+                // hardware. Guests frequently write `0` in the upper half while intending to update
+                // Command only; such writes must not clobber Status.
+                if offset == 0x04 {
+                    let status = u16::from_le_bytes(self.regs[0x06..0x08].try_into().unwrap());
+                    let command = (value & 0xffff) as u16;
+                    self.regs[0x04..0x06].copy_from_slice(&command.to_le_bytes());
+                    self.regs[0x06..0x08].copy_from_slice(&status.to_le_bytes());
+                    return;
+                }
                 if offset == 0x10 {
                     if value == 0xffff_ffff {
                         self.bar0_probe = true;
@@ -1860,6 +1871,21 @@ mod tests {
         // Re-enable INTx: since the interrupt cause is still pending, the line should reassert.
         dev.pci_config_write(0x04, 2, 0);
         assert!(dev.irq_level());
+    }
+
+    #[test]
+    fn pci_command_dword_write_does_not_clobber_status() {
+        let mut dev = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
+
+        // Seed a non-zero Status register value.
+        dev.pci_config_write(0x06, 2, 0x1234);
+
+        // Guest writes the full dword at 0x04 with Status=0 while intending to update Command.
+        dev.pci_config_write(0x04, 4, 0x0004); // COMMAND.BME
+
+        assert_eq!(dev.pci_config_read(0x06, 2) as u16, 0x1234);
+        assert_eq!(dev.pci_config_read(0x04, 2) as u16, 0x0004);
+        assert_eq!(dev.pci_config_read(0x04, 4), 0x1234_0004);
     }
 
     #[test]
