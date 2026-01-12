@@ -273,8 +273,15 @@ fn translate_ps(
     let target_reg = io
         .ps_sv_target0_register
         .ok_or(ShaderTranslateError::PixelShaderMissingSvTarget0)?;
+    let target_param = io.outputs.get(&target_reg).ok_or(
+        ShaderTranslateError::SignatureMissingRegister {
+            io: "output",
+            register: target_reg,
+        },
+    )?;
     w.line("");
-    w.line(&format!("return o{target_reg};"));
+    let return_expr = apply_sig_mask_to_vec4(&format!("o{target_reg}"), target_param.param.mask);
+    w.line(&format!("return {return_expr};"));
     w.dedent();
     w.line("}");
 
@@ -650,7 +657,14 @@ impl IoMaps {
             .ok_or(ShaderTranslateError::MissingSignature(
                 "vertex output SV_Position",
             ))?;
-        w.line(&format!("out.pos = o{pos_reg};"));
+        let pos_param = self.outputs.get(&pos_reg).ok_or(
+            ShaderTranslateError::SignatureMissingRegister {
+                io: "output",
+                register: pos_reg,
+            },
+        )?;
+        let pos_expr = apply_sig_mask_to_vec4(&format!("o{pos_reg}"), pos_param.param.mask);
+        w.line(&format!("out.pos = {pos_expr};"));
         for p in self.outputs.values() {
             if p.param.register == pos_reg {
                 continue;
@@ -699,7 +713,13 @@ impl IoMaps {
             }
             ShaderStage::Pixel => {
                 if Some(reg) == self.ps_position_register {
-                    return Ok("input.pos".to_owned());
+                    let p = self.inputs.get(&reg).ok_or(
+                        ShaderTranslateError::SignatureMissingRegister {
+                            io: "input",
+                            register: reg,
+                        },
+                    )?;
+                    return Ok(apply_sig_mask_to_vec4("input.pos", p.param.mask));
                 }
                 if Some(reg) == self.ps_front_facing_register {
                     let p = self.inputs.get(&reg).ok_or(
