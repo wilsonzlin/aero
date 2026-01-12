@@ -824,6 +824,62 @@ fn restore_snapshot_rejects_dirty_ram_count_exceeding_max_pages() {
 }
 
 #[test]
+fn restore_snapshot_rejects_dirty_ram_page_list_not_strictly_increasing() {
+    let total_len = 2 * 4096u64;
+    let page_size = 4096u32;
+
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(SNAPSHOT_MAGIC);
+    bytes.extend_from_slice(&SNAPSHOT_VERSION_V1.to_le_bytes());
+    bytes.push(SNAPSHOT_ENDIANNESS_LITTLE);
+    bytes.push(0);
+    bytes.extend_from_slice(&0u32.to_le_bytes());
+
+    let meta = SnapshotMeta {
+        snapshot_id: 2,
+        parent_snapshot_id: Some(1),
+        created_unix_ms: 0,
+        label: None,
+    };
+    let mut meta_payload = Vec::new();
+    meta.encode(&mut meta_payload).unwrap();
+    push_section(&mut bytes, SectionId::META, 1, 0, &meta_payload);
+
+    let mut cpu_payload = Vec::new();
+    CpuState::default().encode(&mut cpu_payload).unwrap();
+    push_section(&mut bytes, SectionId::CPU, 2, 0, &cpu_payload);
+
+    let count = 2u64;
+    let mut ram_payload = Vec::new();
+    ram_payload.extend_from_slice(&total_len.to_le_bytes());
+    ram_payload.extend_from_slice(&page_size.to_le_bytes());
+    ram_payload.push(RamMode::Dirty as u8);
+    ram_payload.push(Compression::None as u8);
+    ram_payload.extend_from_slice(&0u16.to_le_bytes());
+    ram_payload.extend_from_slice(&count.to_le_bytes());
+
+    // Unsorted page list: 1 then 0. The decoder now requires strict increasing order.
+    ram_payload.extend_from_slice(&1u64.to_le_bytes()); // page_idx
+    ram_payload.extend_from_slice(&page_size.to_le_bytes()); // uncompressed_len
+    ram_payload.extend_from_slice(&page_size.to_le_bytes()); // compressed_len
+    ram_payload.extend_from_slice(&vec![0xAAu8; page_size as usize]);
+
+    ram_payload.extend_from_slice(&0u64.to_le_bytes()); // page_idx
+    ram_payload.extend_from_slice(&page_size.to_le_bytes()); // uncompressed_len
+    ram_payload.extend_from_slice(&page_size.to_le_bytes()); // compressed_len
+    ram_payload.extend_from_slice(&vec![0xBBu8; page_size as usize]);
+
+    push_section(&mut bytes, SectionId::RAM, 1, 0, &ram_payload);
+
+    let mut target = DummyTarget::new(total_len as usize);
+    let err = restore_snapshot(&mut Cursor::new(bytes), &mut target).unwrap_err();
+    assert!(matches!(
+        err,
+        SnapshotError::Corrupt("dirty page list not strictly increasing")
+    ));
+}
+
+#[test]
 fn inspect_and_restore_reject_invalid_ram_page_size() {
     // `ram::MAX_PAGE_SIZE` is 2 MiB; keep the test payload minimal by setting total_len=0.
     let invalid_page_size = 2 * 1024 * 1024 + 1;

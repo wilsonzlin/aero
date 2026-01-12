@@ -145,6 +145,12 @@ fn encode_dirty<W: Write>(
     dirty_pages: &[u64],
     mut read_ram: impl FnMut(u64, &mut [u8]) -> Result<()>,
 ) -> Result<()> {
+    // The `dirty_pages` list can originate from runtime tracking; keep encoding deterministic by
+    // sorting + de-duplicating page indices before serializing.
+    let mut dirty_pages: Vec<u64> = dirty_pages.to_vec();
+    dirty_pages.sort_unstable();
+    dirty_pages.dedup();
+
     w.write_u64_le(
         dirty_pages
             .len()
@@ -157,7 +163,7 @@ fn encode_dirty<W: Write>(
     if opts.compression == Compression::Lz4 {
         compressed.resize(max_lz4_compressed_len(opts.page_size) as usize, 0);
     }
-    for &page_idx in dirty_pages {
+    for page_idx in dirty_pages {
         let offset = page_idx
             .checked_mul(page_size)
             .ok_or(SnapshotError::Corrupt("dirty page offset overflow"))?;
@@ -297,8 +303,17 @@ fn decode_dirty<R: Read>(
     if compression == Compression::Lz4 {
         decompressed.resize(page_size as usize, 0);
     }
+    let mut prev_page_idx: Option<u64> = None;
     for _ in 0..count {
         let page_idx = r.read_u64_le()?;
+        if let Some(prev) = prev_page_idx {
+            if page_idx <= prev {
+                return Err(SnapshotError::Corrupt(
+                    "dirty page list not strictly increasing",
+                ));
+            }
+        }
+        prev_page_idx = Some(page_idx);
         let offset = page_idx
             .checked_mul(page_size_u64)
             .ok_or(SnapshotError::Corrupt("dirty page offset overflow"))?;
