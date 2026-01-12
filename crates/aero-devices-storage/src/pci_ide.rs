@@ -574,6 +574,28 @@ impl IdeController {
         }
     }
 
+    /// Reset the controller's guest-visible register/state machine back to its power-on baseline,
+    /// while preserving attached drives/media/backends.
+    pub fn reset(&mut self) {
+        // Reset each channel's task file / PIO state machine, but keep the attached device models.
+        self.primary.reset();
+        self.secondary.reset();
+
+        // Reset host-controlled registers to their power-on defaults.
+        //
+        // Note: `Channel::reset()` is also used for the IDE software reset (SRST) edge, which does
+        // not clear the device control register. For a controller-level reset (PCI/platform
+        // reset), we want a full baseline.
+        self.primary.control = 0;
+        self.secondary.control = 0;
+
+        // Reset Bus Master IDE registers, but preserve DMA capability bits derived from attached
+        // devices.
+        for chan in &mut self.bus_master {
+            chan.reset();
+        }
+    }
+
     pub fn bus_master_base(&self) -> u16 {
         self.bus_master_base
     }
