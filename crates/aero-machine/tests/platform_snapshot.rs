@@ -1,6 +1,7 @@
 use aero_machine::{Machine, MachineConfig};
 use aero_platform::interrupts::{InterruptController, InterruptInput, PlatformInterruptMode};
 use pretty_assertions::assert_eq;
+use std::io::{Cursor, Read};
 
 use aero_devices::acpi_pm::{
     DEFAULT_ACPI_ENABLE, DEFAULT_PM1A_EVT_BLK, DEFAULT_PM_TMR_BLK, DEFAULT_SMI_CMD_PORT,
@@ -51,6 +52,88 @@ fn cfg_write(m: &mut Machine, bdf: PciBdf, offset: u16, size: u8, value: u32) {
 fn cfg_read(m: &mut Machine, bdf: PciBdf, offset: u16, size: u8) -> u32 {
     m.io_write(0xCF8, 4, cfg_addr(bdf, offset));
     m.io_read(0xCFC + (offset & 3), size)
+}
+
+fn reverse_devices_section(bytes: &[u8]) -> Vec<u8> {
+    use aero_snapshot as snapshot;
+
+    const FILE_HEADER_LEN: usize = 16;
+    const SECTION_HEADER_LEN: usize = 16;
+
+    let mut r = Cursor::new(bytes);
+    let mut file_header = [0u8; FILE_HEADER_LEN];
+    r.read_exact(&mut file_header).unwrap();
+
+    let mut out = Vec::with_capacity(bytes.len());
+    out.extend_from_slice(&file_header);
+
+    while (r.position() as usize) < bytes.len() {
+        let mut section_header = [0u8; SECTION_HEADER_LEN];
+        // Valid snapshots end cleanly at EOF.
+        if let Err(e) = r.read_exact(&mut section_header) {
+            if e.kind() == std::io::ErrorKind::UnexpectedEof {
+                break;
+            }
+            panic!("failed to read section header: {e}");
+        }
+
+        let id = u32::from_le_bytes(section_header[0..4].try_into().unwrap());
+        let version = u16::from_le_bytes(section_header[4..6].try_into().unwrap());
+        let flags = u16::from_le_bytes(section_header[6..8].try_into().unwrap());
+        let len = u64::from_le_bytes(section_header[8..16].try_into().unwrap());
+
+        let mut payload = vec![0u8; len as usize];
+        r.read_exact(&mut payload).unwrap();
+
+        if id != snapshot::SectionId::DEVICES.0 {
+            out.extend_from_slice(&section_header);
+            out.extend_from_slice(&payload);
+            continue;
+        }
+
+        let mut pr = Cursor::new(&payload);
+        let mut count_bytes = [0u8; 4];
+        pr.read_exact(&mut count_bytes).unwrap();
+        let count = u32::from_le_bytes(count_bytes) as usize;
+
+        let mut entries = Vec::with_capacity(count);
+        for _ in 0..count {
+            let mut dev_header = [0u8; 16];
+            pr.read_exact(&mut dev_header).unwrap();
+            let dev_len = u64::from_le_bytes(dev_header[8..16].try_into().unwrap());
+            let mut dev_data = vec![0u8; dev_len as usize];
+            pr.read_exact(&mut dev_data).unwrap();
+
+            let mut entry = Vec::with_capacity(dev_header.len() + dev_data.len());
+            entry.extend_from_slice(&dev_header);
+            entry.extend_from_slice(&dev_data);
+            entries.push(entry);
+        }
+
+        assert_eq!(
+            pr.position() as usize,
+            payload.len(),
+            "devices section parse did not consume full payload"
+        );
+
+        entries.reverse();
+
+        let mut new_payload = Vec::with_capacity(payload.len());
+        let new_count: u32 = entries.len().try_into().unwrap();
+        new_payload.extend_from_slice(&new_count.to_le_bytes());
+        for entry in entries {
+            new_payload.extend_from_slice(&entry);
+        }
+        let new_len: u64 = new_payload.len().try_into().unwrap();
+
+        out.extend_from_slice(&id.to_le_bytes());
+        out.extend_from_slice(&version.to_le_bytes());
+        out.extend_from_slice(&flags.to_le_bytes());
+        out.extend_from_slice(&new_len.to_le_bytes());
+        out.extend_from_slice(&new_payload);
+    }
+
+    out
 }
 
 #[test]
@@ -403,6 +486,52 @@ fn snapshot_restore_syncs_pci_intx_levels_into_interrupt_controller() {
     }
 
     assert_eq!(interrupts.borrow().get_pending(), Some(0x51));
+}
+
+#[test]
+fn snapshot_restore_is_independent_of_devices_section_order() {
+    let mut src = Machine::new(pc_machine_config()).unwrap();
+    let interrupts = src.platform_interrupts().unwrap();
+    let pci_intx = src.pci_intx_router().unwrap();
+
+    // Route IOAPIC GSI10 -> vector 0x52, active-low, level-triggered, masked.
+    {
+        let mut ints = interrupts.borrow_mut();
+        ints.set_mode(PlatformInterruptMode::Apic);
+        let low = 0x52u32 | (1 << 13) | (1 << 15) | (1 << 16);
+        program_ioapic_entry(&mut *ints, 10, low, 0);
+    }
+
+    // Assert a PCI INTx line that routes to GSI10 (device 0, INTA#).
+    {
+        let mut ints = interrupts.borrow_mut();
+        pci_intx
+            .borrow_mut()
+            .assert_intx(PciBdf::new(0, 0, 0), PciInterruptPin::IntA, &mut *ints);
+    }
+
+    // Corrupt the sink state to ensure restore must call `sync_levels_to_sink` even if
+    // snapshot device ordering changes.
+    interrupts.borrow_mut().lower_irq(InterruptInput::Gsi(10));
+
+    let snap = src.take_snapshot_full().unwrap();
+    let snap = reverse_devices_section(&snap);
+
+    let mut restored = Machine::new(pc_machine_config()).unwrap();
+    restored.restore_snapshot_bytes(&snap).unwrap();
+
+    let interrupts = restored.platform_interrupts().unwrap();
+    assert_eq!(interrupts.borrow().get_pending(), None);
+
+    // Unmask the IOAPIC entry. If restore is order-independent and the sync fixup ran, unmasking
+    // delivers immediately.
+    {
+        let mut ints = interrupts.borrow_mut();
+        let low = 0x52u32 | (1 << 13) | (1 << 15);
+        program_ioapic_entry(&mut *ints, 10, low, 0);
+    }
+
+    assert_eq!(interrupts.borrow().get_pending(), Some(0x52));
 }
 
 #[test]
