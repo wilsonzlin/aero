@@ -363,6 +363,10 @@ If these entries are missing, re-run `setup.cmd` as Administrator and reboot onc
    - If the device reports `REV_00`, the in-tree Aero `aero_virtio_input.inf` will not bind; ensure your emulator/QEMU config sets `x-pci-revision=0x01` (and preferably `disable-legacy=on`).
 6. If Device Manager shows signing or driver errors for the input device, resolve them first (Code 52 / Code 28 / Code 10), then switch back to virtio-input.
 
+For the consolidated end-to-end virtio-input validation plan (Rust device model + Win7 driver + web runtime routing), see:
+
+- [`docs/virtio-input-test-plan.md`](./virtio-input-test-plan.md)
+
 ## Issue: Device Manager Code 28 (drivers not installed)
 
 **Symptom**
