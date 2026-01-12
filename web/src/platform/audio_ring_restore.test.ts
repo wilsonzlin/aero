@@ -4,8 +4,6 @@ import { getRingBufferLevelFrames, type AudioRingBufferLayout } from "./audio";
 import { restoreAudioWorkletRing, type AudioWorkletRingStateLike } from "./audio_ring_restore";
 import {
   HEADER_U32_LEN,
-  READ_FRAME_INDEX,
-  WRITE_FRAME_INDEX,
   requiredBytes,
   wrapRingBuffer,
 } from "../audio/audio_worklet_ring";
@@ -55,6 +53,19 @@ describe("restoreAudioWorkletRing", () => {
     expect(ring.samples).toEqual(new Float32Array(ring.samples.length));
   });
 
+  it("clamps using the actual ring capacity even if snapshot capacityFrames differs", () => {
+    const ring = createTestRingBuffer(1, 8);
+    ring.samples.fill(1);
+
+    const state: AudioWorkletRingStateLike = { capacityFrames: 16, readPos: 0, writePos: 100 };
+    restoreAudioWorkletRing(ring, state);
+
+    // Clamp must use the actual ring capacity (8), not the snapshot's 16.
+    expect(Atomics.load(ring.readIndex, 0)).toBe(92);
+    expect(Atomics.load(ring.writeIndex, 0)).toBe(100);
+    expect(getRingBufferLevelFrames(ring)).toBe(8);
+  });
+
   it("treats read/write positions as wrapping u32 counters", () => {
     const ring = createTestRingBuffer(1, 8);
     ring.samples.fill(1);
@@ -82,6 +93,20 @@ describe("restoreAudioWorkletRing", () => {
     expect(Atomics.load(ring.writeIndex, 0)).toBe(1);
     expect(getRingBufferLevelFrames(ring)).toBe(8);
     expect(ring.samples).toEqual(new Float32Array(ring.samples.length));
+  });
+
+  it("does not modify underrun/overrun counters", () => {
+    const ring = createTestRingBuffer(1, 8);
+    ring.samples.fill(1);
+
+    Atomics.store(ring.underrunCount, 0, 123);
+    Atomics.store(ring.overrunCount, 0, 456);
+
+    const state: AudioWorkletRingStateLike = { capacityFrames: 8, readPos: 1, writePos: 2 };
+    restoreAudioWorkletRing(ring, state);
+
+    expect(Atomics.load(ring.underrunCount, 0)).toBe(123);
+    expect(Atomics.load(ring.overrunCount, 0)).toBe(456);
   });
 
   it("ignores snapshot capacity mismatches and proceeds", () => {
