@@ -1,9 +1,11 @@
 use aero_devices::pci::{
-    profile::NVME_CONTROLLER, PciDevice as _, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT,
+    profile::NVME_CONTROLLER, PciDevice as _, PciInterruptPin, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT,
 };
-use aero_io_snapshot::io::state::IoSnapshot;
 use aero_devices_nvme::NvmeController;
-use aero_pc_platform::PcPlatform;
+use aero_interrupts::apic::IOAPIC_MMIO_BASE;
+use aero_io_snapshot::io::state::IoSnapshot;
+use aero_pc_platform::{PcPlatform, PcPlatformConfig};
+use aero_platform::interrupts::{InterruptController, PlatformInterruptMode};
 use aero_storage::{MemBackend, RawDisk, VirtualDisk, SECTOR_SIZE};
 use memory::MemoryBus as _;
 
@@ -38,6 +40,15 @@ fn read_nvme_bar0_base(pc: &mut PcPlatform) -> u64 {
     let bar0_lo = read_cfg_u32(pc, bdf.bus, bdf.device, bdf.function, 0x10);
     let bar0_hi = read_cfg_u32(pc, bdf.bus, bdf.device, bdf.function, 0x14);
     (u64::from(bar0_hi) << 32) | u64::from(bar0_lo & 0xffff_fff0)
+}
+
+fn program_ioapic_entry(pc: &mut PcPlatform, gsi: u32, low: u32, high: u32) {
+    let redtbl_low = 0x10u32 + gsi * 2;
+    let redtbl_high = redtbl_low + 1;
+    pc.memory.write_u32(IOAPIC_MMIO_BASE, redtbl_low);
+    pc.memory.write_u32(IOAPIC_MMIO_BASE + 0x10, low);
+    pc.memory.write_u32(IOAPIC_MMIO_BASE, redtbl_high);
+    pc.memory.write_u32(IOAPIC_MMIO_BASE + 0x10, high);
 }
 
 fn build_command(opc: u8) -> [u8; 64] {
@@ -350,6 +361,91 @@ fn pc_platform_nvme_admin_identify_produces_completion_and_intx() {
         .vector_to_irq(pending)
         .expect("pending vector should decode to an IRQ number");
     assert_eq!(irq, 13);
+}
+
+#[test]
+fn pc_platform_routes_nvme_intx_via_ioapic_in_apic_mode() {
+    let mut pc = PcPlatform::new_with_config(
+        2 * 1024 * 1024,
+        PcPlatformConfig {
+            enable_nvme: true,
+            enable_ahci: false,
+            enable_uhci: false,
+            ..Default::default()
+        },
+    );
+    let bdf = NVME_CONTROLLER.bdf;
+
+    // Switch the platform into APIC mode via IMCR (0x22/0x23).
+    pc.io.write_u8(0x22, 0x70);
+    pc.io.write_u8(0x23, 0x01);
+    assert_eq!(pc.interrupts.borrow().mode(), PlatformInterruptMode::Apic);
+
+    // Route the NVMe INTx line to vector 0x61, level-triggered + active-low.
+    let vector = 0x61u32;
+    let low = vector | (1 << 13) | (1 << 15); // polarity_low + level-triggered, unmasked
+    let gsi = pc.pci_intx.gsi_for_intx(bdf, PciInterruptPin::IntA);
+    program_ioapic_entry(&mut pc, gsi, low, 0);
+
+    // Enable Memory Space + Bus Mastering so the platform allows DMA processing.
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0006);
+
+    let bar0_base = read_nvme_bar0_base(&mut pc);
+
+    let asq = 0x10000u64;
+    let acq = 0x20000u64;
+    let id_buf = 0x30000u64;
+
+    // Configure + enable controller.
+    pc.memory.write_u32(bar0_base + 0x0024, 0x000f_000f); // AQA
+    pc.memory.write_u64(bar0_base + 0x0028, asq); // ASQ
+    pc.memory.write_u64(bar0_base + 0x0030, acq); // ACQ
+    pc.memory.write_u32(bar0_base + 0x0014, 1); // CC.EN
+
+    // Admin IDENTIFY (controller) command in SQ0 entry 0.
+    let mut cmd = [0u8; 64];
+    cmd[0] = 0x06; // IDENTIFY
+    cmd[2..4].copy_from_slice(&0x1234u16.to_le_bytes()); // CID
+    cmd[24..32].copy_from_slice(&id_buf.to_le_bytes()); // PRP1
+    cmd[40..44].copy_from_slice(&0x01u32.to_le_bytes()); // CDW10: CNS=1 (controller)
+    pc.memory.write_physical(asq, &cmd);
+
+    // Ring SQ0 tail doorbell.
+    pc.memory.write_u32(bar0_base + 0x1000, 1);
+
+    pc.process_nvme();
+
+    assert!(
+        pc.nvme
+            .as_ref()
+            .expect("nvme should be enabled")
+            .borrow()
+            .irq_level(),
+        "NVMe should assert INTx when a completion is pending"
+    );
+
+    pc.poll_pci_intx_lines();
+
+    // IOAPIC should have delivered the vector through the LAPIC.
+    assert_eq!(pc.interrupts.borrow().get_pending(), Some(vector as u8));
+
+    // Simulate CPU taking the interrupt.
+    pc.interrupts.borrow_mut().acknowledge(vector as u8);
+
+    // Consume the completion by advancing CQ0 head, which should deassert INTx.
+    pc.memory.write_u32(bar0_base + 0x1004, 1); // CQ0 head = 1
+    pc.poll_pci_intx_lines();
+    assert!(
+        !pc.nvme
+            .as_ref()
+            .expect("nvme should be enabled")
+            .borrow()
+            .irq_level()
+    );
+
+    // End-of-interrupt should *not* cause a redelivery now that the line is deasserted.
+    pc.interrupts.borrow_mut().eoi(vector as u8);
+    assert_eq!(pc.interrupts.borrow().get_pending(), None);
 }
 
 #[test]
