@@ -31,6 +31,11 @@ pub const DEFAULT_CHUNK_SIZE: u64 = 1024 * 1024; // 1MiB
 
 const CACHE_META_VERSION: u32 = 2;
 
+// Bound per-request allocation size when streaming from untrusted servers. `StreamingDisk`
+// downloads whole chunks into memory before persisting them to the cache backend, so the
+// chunk size must remain reasonably small.
+const MAX_STREAMING_CHUNK_SIZE: u64 = 64 * 1024 * 1024; // 64 MiB
+
 #[derive(Debug, Error, Clone)]
 pub enum StreamingDiskError {
     #[error("remote server does not support HTTP Range requests")]
@@ -308,9 +313,7 @@ impl ChunkStore for SparseFileChunkStore {
 
         let len_u64 = end - start;
         let len: usize = len_u64.try_into().map_err(|_| {
-            StreamingDiskError::Protocol(format!(
-                "chunk length {len_u64} does not fit in usize"
-            ))
+            StreamingDiskError::Protocol(format!("chunk length {len_u64} does not fit in usize"))
         })?;
         let mut buf = alloc_zeroed(len)?;
         let mut file = self
@@ -622,6 +625,12 @@ impl StreamingDisk {
                 "chunk_size must be a non-zero multiple of sector size ({DEFAULT_SECTOR_SIZE})"
             )));
         }
+        if config.options.chunk_size > MAX_STREAMING_CHUNK_SIZE {
+            return Err(StreamingDiskError::Protocol(format!(
+                "chunk_size ({}) exceeds max supported ({MAX_STREAMING_CHUNK_SIZE})",
+                config.options.chunk_size
+            )));
+        }
         if config.options.max_retries == 0 {
             return Err(StreamingDiskError::Protocol(
                 "max_retries must be greater than zero".to_string(),
@@ -898,7 +907,9 @@ impl StreamingDisk {
                 let chunk_start = chunk_index.checked_mul(chunk_size).ok_or_else(|| {
                     StreamingDiskError::Protocol("chunk offset overflow".to_string())
                 })?;
-                let chunk_end = chunk_start.saturating_add(chunk_size).min(self.inner.total_size);
+                let chunk_end = chunk_start
+                    .saturating_add(chunk_size)
+                    .min(self.inner.total_size);
                 {
                     let mut state = self.inner.state.lock().await;
                     state.downloaded.remove(chunk_start, chunk_end);
@@ -927,7 +938,9 @@ impl StreamingDisk {
         if chunk_start >= self.inner.total_size {
             return Ok(());
         }
-        let chunk_end = chunk_start.saturating_add(chunk_size).min(self.inner.total_size);
+        let chunk_end = chunk_start
+            .saturating_add(chunk_size)
+            .min(self.inner.total_size);
 
         {
             let state = self.inner.state.lock().await;

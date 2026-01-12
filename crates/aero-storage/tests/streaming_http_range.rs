@@ -651,6 +651,29 @@ async fn request_headers_are_sent_on_all_http_requests() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn reject_absurd_chunk_size() {
+    let image: Vec<u8> = (0..2048).map(|i| (i % 251) as u8).collect();
+    let (url, _state, shutdown) =
+        start_range_server_with_options(image, RangeServerOptions::new("etag-chunk-size")).await;
+
+    let cache_dir = tempdir().unwrap();
+    let mut config = StreamingDiskConfig::new(url, cache_dir.path());
+    config.cache_backend = StreamingCacheBackend::Directory;
+    // `StreamingDisk` should reject very large chunk sizes up-front to avoid huge
+    // allocations for a single Range fetch.
+    config.options.chunk_size = 128 * 1024 * 1024; // 128 MiB
+    config.options.read_ahead_chunks = 0;
+
+    let err = StreamingDisk::open(config)
+        .await
+        .err()
+        .expect("expected error");
+    assert!(matches!(err, StreamingDiskError::Protocol(_)));
+
+    let _ = shutdown.send(());
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn missing_required_header_fails_open_with_http_error() {
     let image: Vec<u8> = (0..2048).map(|i| (i % 251) as u8).collect();
     let (url, _state, shutdown) = start_range_server_with_options(
