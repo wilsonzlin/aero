@@ -105,6 +105,14 @@ export interface PciDevice {
    * hook returns so devices cannot interfere with BAR decoding/mapping.
    */
   initPciConfig?(config: Uint8Array): void;
+  /**
+   * Optional hook for integrations that need to mirror PCI config-space state into an underlying
+   * device model.
+   *
+   * Called after the bus has applied the guest write to the PCI command register (0x04, low 16
+   * bits). The argument is the new 16-bit command value.
+   */
+  onPciCommandWrite?(command: number): void;
 
   /**
    * Optional hook invoked during PCI function registration to allow the device
@@ -483,7 +491,12 @@ export class PciBus implements PortIoHandler {
       const cur = readU32LE(fn.config, alignedOff);
       const newValue = ((cur & 0xffff_0000) | (value & 0x0000_ffff)) >>> 0;
       writeU32LE(fn.config, alignedOff, newValue);
-      if ((cur & 0xffff) !== (newValue & 0xffff)) this.#refreshDeviceDecoding(fn);
+      const oldCommand = cur & 0xffff;
+      const newCommand = newValue & 0xffff;
+      if (oldCommand !== newCommand) {
+        this.#refreshDeviceDecoding(fn);
+        fn.device.onPciCommandWrite?.(newCommand);
+      }
       return;
     }
 

@@ -188,6 +188,29 @@ describe("io/bus/pci", () => {
     expect(cfg.readU8(0, 0, 0x0e)).toBe(0x80);
   });
 
+  it("notifies devices of PCI command register writes", () => {
+    const portBus = new PortIoBus();
+    const mmioBus = new MmioBus();
+    const pciBus = new PciBus(portBus, mmioBus);
+    pciBus.registerToPortBus();
+
+    let seen: number | null = null;
+    const dev: PciDevice = {
+      name: "cmd_hook",
+      vendorId: 0x1234,
+      deviceId: 0x5678,
+      classCode: 0,
+      onPciCommandWrite: (command) => {
+        seen = command;
+      },
+    };
+    const addr = pciBus.registerDevice(dev, { device: 0, function: 0 });
+
+    const cfg = makeCfgIo(portBus);
+    cfg.writeU16(addr.device, addr.function, 0x04, 0x0007);
+    expect(seen).toBe(0x0007);
+  });
+
   it("implements 64-bit MMIO BAR sizing probes (low/high dwords)", () => {
     const portBus = new PortIoBus();
     const mmioBus = new MmioBus();

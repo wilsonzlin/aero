@@ -198,6 +198,15 @@ impl E1000Bridge {
         self.dev.io_write(offset, size, value);
     }
 
+    /// Update the device model's PCI command register (offset 0x04, low 16 bits).
+    ///
+    /// Some integrations (e.g. the JS `PciBus`) model PCI config space separately from the Rust
+    /// E1000 device model, but still need the E1000 to observe COMMAND.BME (bit 2) so DMA is gated
+    /// correctly. Call this whenever the guest updates the PCI command register.
+    pub fn set_pci_command(&mut self, command: u32) {
+        self.dev.pci_config_write(0x04, 2, command & 0xffff);
+    }
+
     pub fn poll(&mut self) {
         self.dev.poll(&mut self.mem);
     }

@@ -8,6 +8,12 @@ export type E1000BridgeLike = {
   mmio_write(offset: number, size: number, value: number): void;
   io_read(offset: number, size: number): number;
   io_write(offset: number, size: number, value: number): void;
+  /**
+   * Update the underlying device model's PCI command register (0x04, low 16 bits).
+   *
+   * Optional for older WASM builds.
+   */
+  set_pci_command?: (command: number) => void;
   poll(): void;
   receive_frame(frame: Uint8Array): void;
   // wasm-bindgen represents `Option<Uint8Array>` as `undefined` in most builds,
@@ -137,6 +143,16 @@ export class E1000PciDevice implements PciDevice, TickableDevice {
       // ignore device errors during guest IO
     }
     this.#syncIrq();
+  }
+
+  onPciCommandWrite(command: number): void {
+    if (this.#destroyed) return;
+    const cmd = command & 0xffff;
+    try {
+      this.#bridge.set_pci_command?.(cmd);
+    } catch {
+      // ignore device errors during guest PCI config writes
+    }
   }
 
   tick(_nowMs: number): void {

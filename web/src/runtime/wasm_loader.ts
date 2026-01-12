@@ -206,6 +206,12 @@ export interface WasmApi {
         mmio_write(offset: number, size: number, value: number): void;
         io_read(offset: number, size: number): number;
         io_write(offset: number, size: number, value: number): void;
+        /**
+         * Update the device model's PCI command register (offset 0x04, low 16 bits).
+         *
+         * Optional for older WASM builds.
+         */
+        set_pci_command?(command: number): void;
         poll(): void;
         receive_frame(frame: Uint8Array): void;
         // wasm-bindgen represents `Option<Uint8Array>` as `undefined` in most builds,
