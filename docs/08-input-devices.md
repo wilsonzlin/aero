@@ -623,6 +623,7 @@ The repository includes a concrete browser-side input capture implementation:
 - `web/src/input/scancode.ts` — small helpers (allocation-free lookup + browser `preventDefault` policy).
   - The default policy prevents browser/UI actions while the VM is focused (e.g. function keys like **F5** refresh, **Alt** menu/address-bar focus, browser navigation keys like **BrowserBack**).
   - `Meta` shortcuts are intentionally *not* prevented by default so host shortcuts can win when desired.
+    - Exception: browser navigation keys like `BrowserBack` are always swallowed to avoid navigating away from the VM.
   - `Ctrl`-only shortcuts are also not prevented by default (copy/paste/etc.), but `Ctrl+Alt` (often reported for **AltGr** layouts) is treated as a capture combination and prevented by default so it reaches the guest reliably.
 
 #### Worker Transport / Wire Format
