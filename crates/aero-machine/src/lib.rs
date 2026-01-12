@@ -903,7 +903,9 @@ impl Machine {
     /// Run the CPU for at most `max_insts` guest instructions.
     pub fn run_slice(&mut self, max_insts: u64) -> RunExit {
         let mut executed = 0u64;
-        let cfg = Tier0Config::default();
+        // Keep Tier-0 instruction gating coherent with the CPUID surface that assists expose to the
+        // guest.
+        let cfg = Tier0Config::from_cpuid(&self.assist.features);
         while executed < max_insts {
             if let Some(kind) = self.reset_latch.take() {
                 self.flush_serial();
