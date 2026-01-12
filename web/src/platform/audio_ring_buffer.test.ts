@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { getRingBufferOverrunCount, writeRingBufferInterleaved, type AudioRingBufferLayout } from "./audio";
-import { HEADER_U32_LEN, OVERRUN_COUNT_INDEX, READ_FRAME_INDEX, requiredBytes, wrapRingBuffer } from "../audio/audio_worklet_ring";
+import { HEADER_U32_LEN, requiredBytes, wrapRingBuffer } from "../audio/audio_worklet_ring";
 
 function createTestRingBuffer(channelCount: number, capacityFrames: number): AudioRingBufferLayout {
   const buffer = new SharedArrayBuffer(requiredBytes(capacityFrames, channelCount));
@@ -60,7 +60,7 @@ describe("writeRingBufferInterleaved overrun telemetry", () => {
     const ring = createTestRingBuffer(1, 1);
 
     // Seed the counter near u32::MAX.
-    Atomics.store(ring.header, OVERRUN_COUNT_INDEX, 0xffff_fffe);
+    Atomics.store(ring.overrunCount, 0, 0xffff_fffe);
 
     // Fill the ring buffer so the next write is fully dropped.
     expect(writeRingBufferInterleaved(ring, new Float32Array([0]), 48_000, 48_000)).toBe(1);
@@ -79,7 +79,7 @@ describe("writeRingBufferInterleaved overrun telemetry", () => {
 
     // Simulate the consumer draining 2 frames so the next write wraps: 1 frame at the end
     // and 2 frames at the start.
-    Atomics.store(ring.header, READ_FRAME_INDEX, 2);
+    Atomics.store(ring.readIndex, 0, 2);
 
     const second = Float32Array.from([100, 101, 102, 103, 104, 105]);
     expect(writeRingBufferInterleaved(ring, second, 48_000, 48_000)).toBe(3);
