@@ -102,6 +102,15 @@ import { UhciHidTopologyManager } from "../hid/uhci_hid_topology";
 import { WasmHidGuestBridge, type HidGuestBridge, type HidHostSink } from "../hid/wasm_hid_guest_bridge";
 import { WasmUhciHidGuestBridge } from "../hid/wasm_uhci_hid_guest_bridge";
 import {
+  HEADER_BYTES as AUDIO_OUT_HEADER_BYTES,
+  HEADER_U32_LEN as AUDIO_OUT_HEADER_U32_LEN,
+  OVERRUN_COUNT_INDEX as AUDIO_OUT_OVERRUN_COUNT_INDEX,
+  READ_FRAME_INDEX as AUDIO_OUT_READ_FRAME_INDEX,
+  UNDERRUN_COUNT_INDEX as AUDIO_OUT_UNDERRUN_COUNT_INDEX,
+  WRITE_FRAME_INDEX as AUDIO_OUT_WRITE_FRAME_INDEX,
+  framesAvailableClamped as audioOutFramesAvailableClamped,
+} from "../audio/audio_worklet_ring";
+import {
   isHidAttachHubMessage as isHidPassthroughAttachHubMessage,
   isHidAttachMessage as isHidPassthroughAttachMessage,
   isHidDetachMessage as isHidPassthroughDetachMessage,
@@ -1450,13 +1459,6 @@ let audioOutCapacityFrames = 0;
 let audioOutTelemetryActive = false;
 let audioOutTelemetryNextMs = 0;
 
-const AUDIO_OUT_HEADER_U32_LEN = 4;
-const AUDIO_OUT_HEADER_BYTES = AUDIO_OUT_HEADER_U32_LEN * Uint32Array.BYTES_PER_ELEMENT;
-const AUDIO_OUT_READ_FRAME_INDEX = 0;
-const AUDIO_OUT_WRITE_FRAME_INDEX = 1;
-const AUDIO_OUT_UNDERRUN_COUNT_INDEX = 2;
-const AUDIO_OUT_OVERRUN_COUNT_INDEX = 3;
-
 const AUDIO_OUT_TELEMETRY_INTERVAL_MS = 50;
 
 let perfWriter: PerfWriter | null = null;
@@ -1553,8 +1555,7 @@ function attachAudioRingBuffer(ringBuffer: SharedArrayBuffer | null, capacityFra
 function ringBufferLevelFrames(header: Uint32Array, capacityFrames: number): number {
   const read = Atomics.load(header, AUDIO_OUT_READ_FRAME_INDEX) >>> 0;
   const write = Atomics.load(header, AUDIO_OUT_WRITE_FRAME_INDEX) >>> 0;
-  const available = (write - read) >>> 0;
-  return Math.min(available, capacityFrames >>> 0);
+  return audioOutFramesAvailableClamped(read, write, capacityFrames >>> 0);
 }
 
 function maybePublishAudioOutTelemetry(nowMs: number): void {
