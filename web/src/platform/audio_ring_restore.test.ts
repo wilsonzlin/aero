@@ -4,8 +4,6 @@ import { getRingBufferLevelFrames, type AudioRingBufferLayout } from "./audio";
 import { restoreAudioWorkletRing, type AudioWorkletRingStateLike } from "./audio_ring_restore";
 import {
   HEADER_U32_LEN,
-  READ_FRAME_INDEX,
-  WRITE_FRAME_INDEX,
   requiredBytes,
   wrapRingBuffer,
 } from "../audio/audio_worklet_ring";
@@ -38,6 +36,19 @@ describe("restoreAudioWorkletRing", () => {
 
     expect(Atomics.load(ring.readIndex, 0)).toBe(2);
     expect(Atomics.load(ring.writeIndex, 0)).toBe(5);
+    expect(ring.samples).toEqual(new Float32Array(ring.samples.length));
+  });
+
+  it("treats non-finite snapshot indices as 0 (u32 coercion)", () => {
+    const ring = createTestRingBuffer(1, 8);
+    ring.samples.fill(1);
+
+    const state: AudioWorkletRingStateLike = { capacityFrames: 0, readPos: Number.NaN, writePos: Number.POSITIVE_INFINITY };
+    restoreAudioWorkletRing(ring, state);
+
+    expect(Atomics.load(ring.readIndex, 0)).toBe(0);
+    expect(Atomics.load(ring.writeIndex, 0)).toBe(0);
+    expect(getRingBufferLevelFrames(ring)).toBe(0);
     expect(ring.samples).toEqual(new Float32Array(ring.samples.length));
   });
 
