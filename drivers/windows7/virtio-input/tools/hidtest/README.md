@@ -91,6 +91,7 @@ hidtest.exe --led-hidd 0x07
 Negative test (invalid METHOD_NEITHER pointer; should fail cleanly without crashing the guest):
 
 ```bat
+hidtest.exe --keyboard --ioctl-bad-xfer-packet
 hidtest.exe --keyboard --ioctl-bad-write-report
 ```
 

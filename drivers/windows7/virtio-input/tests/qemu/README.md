@@ -237,6 +237,7 @@ Copy `hidtest.exe` into the guest and run it from an elevated Command Prompt.
 
 6. (Optional) negative tests (invalid user pointers; should fail cleanly without crashing the guest):
    ```bat
+   hidtest.exe --keyboard --ioctl-bad-xfer-packet
    hidtest.exe --keyboard --ioctl-bad-write-report
    hidtest.exe --keyboard --hidd-bad-set-output-report
    ```
