@@ -822,6 +822,45 @@ fn machine_ide_bmide_bar4_routing_tracks_pci_bar_reprogramming() {
 }
 
 #[test]
+fn machine_ide_bmide_bar4_is_gated_by_pci_command_io_enable() {
+    const RAM_SIZE: u64 = 2 * 1024 * 1024;
+
+    let mut m = Machine::new(MachineConfig {
+        ram_size_bytes: RAM_SIZE,
+        enable_pc_platform: true,
+        enable_ide: true,
+        // Keep this test focused on PCI COMMAND.IO gating for the BMIDE BAR4 I/O window.
+        enable_serial: false,
+        enable_i8042: false,
+        enable_reset_ctrl: false,
+        ..Default::default()
+    })
+    .unwrap();
+
+    // Attach a disk so the controller is instantiated and responds.
+    let capacity = 8 * SECTOR_SIZE as u64;
+    let disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
+    m.attach_ide_primary_master_disk(Box::new(disk)).unwrap();
+
+    let bdf = IDE_PIIX3.bdf;
+
+    // Resolve the default BMIDE BAR4 base (assigned by BIOS).
+    let bar4_raw = read_cfg_u32(&mut m, bdf.bus, bdf.device, bdf.function, 0x20);
+    let bm_base = (bar4_raw & 0xFFFF_FFFC) as u16;
+    assert_ne!(bm_base, 0, "expected BMIDE BAR4 base to be programmed");
+
+    // Disable PCI I/O decode: BAR I/O accesses should return all-ones (open bus).
+    write_cfg_u16(&mut m, bdf.bus, bdf.device, bdf.function, 0x04, 0x0000);
+    let status = m.io_read(bm_base + 2, 1) as u8;
+    assert_eq!(status, 0xFF);
+
+    // Re-enable PCI I/O decode: BAR I/O accesses should now reach the device.
+    write_cfg_u16(&mut m, bdf.bus, bdf.device, bdf.function, 0x04, 0x0001);
+    let status = m.io_read(bm_base + 2, 1) as u8;
+    assert_eq!(status, 0x20);
+}
+
+#[test]
 fn machine_ide_secondary_identify_packet_raises_irq15_and_wakes_halted_cpu() {
     const RAM_SIZE: u64 = 2 * 1024 * 1024;
 
