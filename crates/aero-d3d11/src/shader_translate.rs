@@ -68,6 +68,12 @@ pub enum ShaderTranslateError {
         io: &'static str,
         register: u32,
     },
+    ConflictingSignatureRegister {
+        io: &'static str,
+        register: u32,
+        first: String,
+        second: String,
+    },
     InvalidSignatureMask {
         io: &'static str,
         semantic: String,
@@ -99,6 +105,15 @@ impl fmt::Display for ShaderTranslateError {
             ShaderTranslateError::SignatureMissingRegister { io, register } => {
                 write!(f, "{io} signature does not declare register {register}")
             }
+            ShaderTranslateError::ConflictingSignatureRegister {
+                io,
+                register,
+                first,
+                second,
+            } => write!(
+                f,
+                "{io} signature declares multiple parameters for register {register} with incompatible system-value mappings ({first} vs {second})"
+            ),
             ShaderTranslateError::InvalidSignatureMask {
                 io,
                 semantic,
@@ -312,22 +327,56 @@ fn build_io_maps(
         }
     }
 
-    let mut inputs = BTreeMap::new();
+    let mut inputs: BTreeMap<u32, ParamInfo> = BTreeMap::new();
     for p in &isgn.parameters {
         let sys_value = resolve_sys_value_type(p, &input_sivs);
-        inputs.insert(
-            p.register,
-            ParamInfo::from_sig_param("input", p, sys_value)?,
-        );
+        let info = ParamInfo::from_sig_param("input", p, sys_value)?;
+        match inputs.get_mut(&p.register) {
+            Some(existing) => {
+                if existing.sys_value != info.sys_value || existing.builtin != info.builtin {
+                    return Err(ShaderTranslateError::ConflictingSignatureRegister {
+                        io: "input",
+                        register: p.register,
+                        first: format!("{}{}", existing.param.semantic_name, existing.param.semantic_index),
+                        second: format!("{}{}", info.param.semantic_name, info.param.semantic_index),
+                    });
+                }
+
+                let mut merged_param = existing.param.clone();
+                merged_param.mask |= info.param.mask;
+                merged_param.read_write_mask |= info.param.read_write_mask;
+                *existing = ParamInfo::from_sig_param("input", &merged_param, existing.sys_value)?;
+            }
+            None => {
+                inputs.insert(p.register, info);
+            }
+        }
     }
 
-    let mut outputs = BTreeMap::new();
+    let mut outputs: BTreeMap<u32, ParamInfo> = BTreeMap::new();
     for p in &osgn.parameters {
         let sys_value = resolve_sys_value_type(p, &output_sivs);
-        outputs.insert(
-            p.register,
-            ParamInfo::from_sig_param("output", p, sys_value)?,
-        );
+        let info = ParamInfo::from_sig_param("output", p, sys_value)?;
+        match outputs.get_mut(&p.register) {
+            Some(existing) => {
+                if existing.sys_value != info.sys_value || existing.builtin != info.builtin {
+                    return Err(ShaderTranslateError::ConflictingSignatureRegister {
+                        io: "output",
+                        register: p.register,
+                        first: format!("{}{}", existing.param.semantic_name, existing.param.semantic_index),
+                        second: format!("{}{}", info.param.semantic_name, info.param.semantic_index),
+                    });
+                }
+
+                let mut merged_param = existing.param.clone();
+                merged_param.mask |= info.param.mask;
+                merged_param.read_write_mask |= info.param.read_write_mask;
+                *existing = ParamInfo::from_sig_param("output", &merged_param, existing.sys_value)?;
+            }
+            None => {
+                outputs.insert(p.register, info);
+            }
+        }
     }
 
     let mut vs_position_reg = outputs

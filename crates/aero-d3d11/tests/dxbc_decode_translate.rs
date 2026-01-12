@@ -214,6 +214,81 @@ fn translates_signature_driven_vs_with_empty_input_signature_without_empty_struc
 }
 
 #[test]
+fn translates_packed_signature_params_by_merging_masks() {
+    // DXBC signatures can pack multiple semantics into a single register (e.g. TEXCOORD0.xy and
+    // TEXCOORD1.zw both mapped to register 1). The translator should treat the register as a full
+    // vec4 rather than clobbering components based on whichever signature parameter it sees last.
+    let osgn_params = vec![
+        sig_param("SV_Position", 0, 0, 0b1111),
+        sig_param("TEXCOORD", 0, 1, 0b0011), // xy
+        sig_param("TEXCOORD", 1, 1, 0b1100), // zw
+    ];
+
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, Vec::new()),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (FOURCC_OSGN, build_signature_chunk(&osgn_params)),
+    ]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    let imm = |x: f32, y: f32, z: f32, w: f32| SrcOperand {
+        kind: SrcKind::ImmediateF32([x.to_bits(), y.to_bits(), z.to_bits(), w.to_bits()]),
+        swizzle: Swizzle::XYZW,
+        modifier: OperandModifier::None,
+    };
+    let dst_out = |idx: u32, mask: u8| aero_d3d11::DstOperand {
+        reg: RegisterRef {
+            file: RegFile::Output,
+            index: idx,
+        },
+        mask: WriteMask(mask),
+        saturate: false,
+    };
+
+    let module = Sm4Module {
+        stage: ShaderStage::Vertex,
+        model: ShaderModel { major: 4, minor: 0 },
+        decls: Vec::new(),
+        instructions: vec![
+            // o0 = vec4(0,0,0,1) (position)
+            Sm4Inst::Mov {
+                dst: dst_out(0, 0b1111),
+                src: imm(0.0, 0.0, 0.0, 1.0),
+            },
+            // o1.xy = (1,0)
+            Sm4Inst::Mov {
+                dst: dst_out(1, 0b0011),
+                src: imm(1.0, 0.0, 0.0, 0.0),
+            },
+            // o1.zw = (1,1)
+            Sm4Inst::Mov {
+                dst: dst_out(1, 0b1100),
+                src: imm(0.0, 0.0, 1.0, 1.0),
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_parses(&translated.wgsl);
+
+    // If the packed masks are not merged, the translator would emit a default-fill expression such
+    // as `out.o1 = vec4<f32>(0.0, 0.0, o1.z, o1.w);` (dropping xy) or `out.o1 = vec4<f32>(o1.x,
+    // o1.y, 0.0, 1.0);` (dropping zw). After merging masks, we should preserve the full register.
+    assert!(
+        translated.wgsl.contains("out.o1 = o1;"),
+        "expected packed register assignment to preserve all components:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        !translated.wgsl.contains("out.o1 = vec4<f32>"),
+        "unexpected default-fill applied to packed register:\n{}",
+        translated.wgsl
+    );
+}
+
+#[test]
 fn decodes_and_translates_sample_shader_from_dxbc() {
     const DCL_INPUT: u32 = 0x100;
     const DCL_OUTPUT: u32 = 0x101;
