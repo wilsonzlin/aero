@@ -716,6 +716,27 @@ impl D3D9Runtime {
             return Err(RuntimeError::TextureAlreadyExists(texture_id));
         }
 
+        if desc.width == 0 || desc.height == 0 {
+            return Err(RuntimeError::Validation(
+                "create_texture: width/height must be non-zero".into(),
+            ));
+        }
+        if desc.mip_level_count == 0 {
+            return Err(RuntimeError::Validation(
+                "create_texture: mip_level_count must be >= 1".into(),
+            ));
+        }
+        // WebGPU validation requires `mip_level_count` to be within the possible chain length for
+        // the given dimensions.
+        let max_dim = desc.width.max(desc.height);
+        let max_mip_levels = 32u32.saturating_sub(max_dim.leading_zeros());
+        if desc.mip_level_count > max_mip_levels {
+            return Err(RuntimeError::Validation(format!(
+                "create_texture: mip_level_count {} exceeds maximum {} for {}x{} texture",
+                desc.mip_level_count, max_mip_levels, desc.width, desc.height
+            )));
+        }
+
         let format = desc.format.to_wgpu();
         let view_formats = if self
             .downlevel_flags
