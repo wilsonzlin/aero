@@ -290,10 +290,11 @@ function presentVgaFrame(): void {
   if (width === 0 || height === 0) return;
 
   const strideFn = (m as unknown as { vga_stride_bytes?: () => number }).vga_stride_bytes;
-  const strideBytes = (typeof strideFn === "function" ? strideFn.call(m) : width * 4) >>> 0;
+  let strideBytes = (typeof strideFn === "function" ? strideFn.call(m) : width * 4) >>> 0;
   if (strideBytes < width * 4) return;
 
-  const requiredBytes = strideBytes * height;
+  const requiredDstBytes = width * height * 4;
+  let requiredBytes = strideBytes * height;
   if (requiredBytes > MAX_VGA_FRAME_BYTES) return;
 
   let pixels: Uint8Array | null = null;
@@ -303,10 +304,19 @@ function presentVgaFrame(): void {
   if (mem && typeof ptrFn === "function" && typeof lenFn === "function") {
     const ptr = ptrFn.call(m) >>> 0;
     const len = lenFn.call(m) >>> 0;
-    if (ptr !== 0 && len >= requiredBytes) {
-      const buf = mem.buffer;
-      if (ptr + requiredBytes <= buf.byteLength) {
-        pixels = new Uint8Array(buf, ptr, requiredBytes);
+    if (ptr !== 0) {
+      // Some builds may report a stride but still expose a tightly-packed framebuffer length.
+      // If the length matches `width*height*4`, treat it as tightly packed to avoid rejecting
+      // the scanout entirely.
+      if (len < requiredBytes && len === requiredDstBytes) {
+        strideBytes = width * 4;
+        requiredBytes = requiredDstBytes;
+      }
+      if (len >= requiredBytes) {
+        const buf = mem.buffer;
+        if (ptr + requiredBytes <= buf.byteLength) {
+          pixels = new Uint8Array(buf, ptr, requiredBytes);
+        }
       }
     }
   }
@@ -321,6 +331,10 @@ function presentVgaFrame(): void {
     }
   }
 
+  if (pixels && pixels.byteLength < requiredBytes && pixels.byteLength === requiredDstBytes) {
+    strideBytes = width * 4;
+    requiredBytes = requiredDstBytes;
+  }
   if (!pixels || pixels.byteLength < requiredBytes) return;
 
   if (transport === "shared") {
