@@ -911,6 +911,7 @@ int main(int argc, char** argv) {
       "d3d9_raster_status_pacing",
       "dwm_flush_pacing",
       "d3d9ex_triangle",
+      "d3d9ex_stateblock_sanity",
       "d3d9ex_multiframe_triangle",
       "d3d9ex_vb_dirty_range",
       "d3d9ex_stretchrect",

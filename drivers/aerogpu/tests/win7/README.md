@@ -315,6 +315,7 @@ In a Win7 VM with AeroGPU installed and working correctly:
 * `d3d9_raster_status_sanity` samples `IDirect3DDevice9::GetRasterStatus` and fails if vblank state never toggles or `ScanLine` is stuck (validates `D3DKMTGetScanLine` → `DxgkDdiGetScanLine` basic correctness)
 * `d3d9_raster_status_pacing` samples `IDirect3DDevice9::GetRasterStatus` and fails if `InVBlank` never becomes true or scanline is stuck (useful for `DxgkDdiGetScanLine` bring-up)
 * `d3d9ex_triangle` renders a green triangle over a red clear and confirms **corner red + center green** via readback
+* `d3d9ex_stateblock_sanity` validates `IDirect3DStateBlock9` record/apply/capture behavior by recording device state (texture + pixel shader constants + viewport), mutating it, then verifying `Apply()` restores the recorded state and `Capture()` updates it (validated via readback: **green then red**)
 * `d3d9ex_multiframe_triangle` renders multiple frames using a persistent dynamic vertex buffer and confirms the **center pixel changes across frames** via readback
 * `d3d9ex_vb_dirty_range` renders a green triangle using a vertex buffer updated via `Lock/Unlock` and confirms **corner red + center green** via readback (catches regressions in vertex-buffer dirty-range tracking / upload)
 * `d3d9ex_stretchrect` exercises compositor-critical D3D9Ex DDIs: `ColorFill`, `UpdateSurface`, `StretchRect`, and `UpdateTexture` (validated via readback)

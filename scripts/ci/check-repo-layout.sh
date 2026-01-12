@@ -96,6 +96,11 @@ for md in md_files:
     for m in pattern.finditer(text):
         referenced = m.group(1)
 
+        # Ignore glob patterns like `./scripts/*.sh` — these are not literal file
+        # paths, and are often used in docs as troubleshooting advice.
+        if any(ch in referenced for ch in ("*", "?", "[", "]")):
+            continue
+
         candidates = []
 
         # Try repo-root relative first (e.g. `./scripts/foo.sh`, `drivers/scripts/foo.sh`).
