@@ -27,6 +27,12 @@ function maskToSize(value: number, size: number): number {
  * BAR4 is an I/O range with the UHCI register block (0x20 bytes). The actual controller
  * logic (TD/QH traversal, guest RAM reads/writes, passthrough device) lives in Rust
  * (`WebUsbUhciBridge`).
+ *
+ * IRQ semantics:
+ * This device uses PCI INTx, which is level-triggered. The WASM bridge exposes the current line
+ * level via `irq_level()`, and we forward only level transitions through {@link IrqSink}.
+ *
+ * See `docs/irq-semantics.md`.
  */
 export class UhciWebUsbPciDevice implements PciDevice, TickableDevice {
   readonly name = "uhci_webusb";

@@ -37,6 +37,13 @@ function maskToSize(value: number, size: number): number {
  *
  * Exposes a single IO BAR (BAR4) containing the 0x20-byte UHCI register block and
  * advances the controller one 1ms frame at a time via {@link tick}.
+ *
+ * IRQ semantics:
+ * UHCI uses PCI INTx, which is level-triggered. The WASM bridge exposes the current INTx level via
+ * {@link UhciControllerBridgeLike.irq_asserted}, and this device forwards only level transitions
+ * to the runtime's {@link IrqSink} (`raiseIrq` on 0→1, `lowerIrq` on 1→0).
+ *
+ * See `docs/irq-semantics.md`.
  */
 export class UhciPciDevice implements PciDevice, TickableDevice {
   readonly name = "uhci";

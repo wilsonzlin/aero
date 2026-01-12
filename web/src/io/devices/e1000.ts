@@ -213,6 +213,10 @@ export class E1000PciDevice implements PciDevice, TickableDevice {
   }
 
   #syncIrq(): void {
+    // E1000 uses PCI INTx, which is level-triggered. The WASM bridge exposes the current INTx
+    // level; forward only level transitions to the runtime (`raiseIrq` on 0→1, `lowerIrq` on 1→0).
+    //
+    // See `docs/irq-semantics.md`.
     let asserted = false;
     try {
       asserted = Boolean(this.#bridge.irq_level());
@@ -226,4 +230,3 @@ export class E1000PciDevice implements PciDevice, TickableDevice {
     else this.#irqSink.lowerIrq(this.irqLine);
   }
 }
-

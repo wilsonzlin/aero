@@ -93,6 +93,5 @@ should:
 ## Summary (current sources in `web/src`)
 
 - **i8042 (ISA IRQ1/IRQ12)**: edge-triggered → model as pulses (`raiseIrq` then `lowerIrq`).
-- **UHCI (PCI INTx)**: level-triggered → model as line assertion (`raiseIrq` while pending,
-  `lowerIrq` when cleared).
-
+- **PCI INTx devices** (e.g. **UHCI**, **E1000**): level-triggered → model as line assertion
+  (`raiseIrq` while pending, `lowerIrq` when cleared / acknowledged).
