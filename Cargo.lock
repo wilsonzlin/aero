@@ -1844,6 +1844,7 @@ dependencies = [
  "aero-edid",
  "aero-pc-constants",
  "aero-platform",
+ "font8x8",
  "memory",
 ]
 

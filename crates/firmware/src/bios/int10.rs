@@ -4,7 +4,7 @@ use crate::{
     memory::{real_addr, MemoryBus},
 };
 
-use super::Bios;
+use super::{Bios, BIOS_SEGMENT, VGA_FONT_8X16_OFFSET};
 
 impl Bios {
     pub fn handle_int10(&mut self, cpu: &mut CpuState, memory: &mut impl MemoryBus) {
@@ -162,6 +162,24 @@ impl Bios {
                 let page = cpu.bh();
                 let count = cpu.cx();
                 self.video.vga.write_char_only(memory, page, ch, count);
+            }
+            0x11 => {
+                // Character generator routines.
+                //
+                // The most common subfunction used by DOS-era software is AL=30h "Get Font
+                // Information", which returns a pointer to the ROM font table.
+                match cpu.al() {
+                    0x30 => {
+                        // Return the built-in 8x16 font table in the system BIOS ROM.
+                        cpu.set_es(BIOS_SEGMENT);
+                        cpu.set_bp(VGA_FONT_8X16_OFFSET);
+                        cpu.set_cx(16); // bytes per character
+                        cpu.set_dl(24); // rows - 1 (25 rows)
+                    }
+                    _ => {
+                        // Unhandled subfunction.
+                    }
+                }
             }
             0x13 => {
                 // Write String

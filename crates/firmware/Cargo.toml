@@ -9,6 +9,7 @@ aero-acpi = { path = "../aero-acpi" }
 aero-edid = { path = "../aero-edid" }
 aero-cpu-core = { path = "../aero-cpu-core" }
 aero-pc-constants = { path = "../aero-pc-constants" }
+font8x8 = "0.3"
 memory = { path = "../memory" }
 
 [dev-dependencies]

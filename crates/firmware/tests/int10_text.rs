@@ -1,6 +1,6 @@
 use firmware::{
     bda::{BiosDataArea, BDA_VIDEO_MODE_ADDR},
-    bios::Bios,
+    bios::{Bios, BIOS_SEGMENT, VGA_FONT_8X16_OFFSET},
     cpu::CpuState,
     memory::{MemoryBus, VecMemory},
     rtc::{CmosRtc, DateTime},
@@ -361,4 +361,28 @@ fn int10_write_char_only_preserves_existing_attribute_and_cursor() {
     assert_eq!(mem.read_u8(0xB8003), 0x1F);
     // Cursor remains unchanged.
     assert_eq!(BiosDataArea::read_cursor_pos_page0(&mut mem), (0, 0));
+}
+
+#[test]
+fn int10_get_font_info_returns_8x16_font_pointer() {
+    let mut mem = VecMemory::new(2 * 1024 * 1024);
+    let mut bios = Bios::new(CmosRtc::new(DateTime::new(2026, 1, 1, 0, 0, 0)));
+    let mut cpu = CpuState::default();
+
+    cpu.rcx = 0x1234_5678_0000_0000;
+    cpu.rdx = 0xFEDC_BA98_0000_1200;
+
+    cpu.set_ax(0x1130); // AH=11h, AL=30h
+    cpu.set_bh(0x06); // request 8x16 font (common convention)
+
+    bios.handle_int10(&mut cpu, &mut mem);
+
+    assert_eq!(cpu.es(), BIOS_SEGMENT);
+    assert_eq!(cpu.bp(), VGA_FONT_8X16_OFFSET);
+    assert_eq!(cpu.cx(), 16);
+    assert_eq!(cpu.dl(), 24);
+
+    // Preserve upper register bits.
+    assert_eq!(cpu.rcx & !0xFFFF, 0x1234_5678_0000_0000);
+    assert_eq!(cpu.rdx & !0xFF, 0xFEDC_BA98_0000_1200);
 }

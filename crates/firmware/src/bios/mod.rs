@@ -80,6 +80,9 @@ pub const INT15_STUB_OFFSET: u16 = 0xE600;
 pub const INT16_STUB_OFFSET: u16 = 0xE700;
 pub const INT1A_STUB_OFFSET: u16 = 0xE900;
 pub const DEFAULT_INT_STUB_OFFSET: u16 = 0xEF00;
+/// Offset of the built-in 8x16 font table returned by INT 10h AH=11h AL=30h ("Get Font
+/// Information").
+pub const VGA_FONT_8X16_OFFSET: u16 = 0xD000;
 /// IVT vector 0x1E: diskette parameter table pointer.
 pub const DISKETTE_PARAM_TABLE_OFFSET: u16 = 0xE100;
 /// IVT vector 0x41/0x46: legacy fixed disk parameter table pointer(s).
@@ -508,6 +511,7 @@ impl memory::MemoryBus for TestMemory {
 mod tests {
     use super::*;
     use aero_cpu_core::state::{gpr, RFLAGS_IF};
+    use font8x8::{UnicodeFonts, BASIC_FONTS};
 
     fn boot_sector(pattern: u8) -> [u8; 512] {
         let mut sector = [pattern; 512];
@@ -559,6 +563,19 @@ mod tests {
                 0x00, 0x00
             ]
         );
+
+        // Built-in 8x16 font table (INT 10h AH=11h AL=30h).
+        //
+        // Verify the bitmap for 'A' (0x41) is present and uses the expected 8x8-basic-derived
+        // glyph scaled to 8x16 (each row duplicated).
+        let a_glyph = VGA_FONT_8X16_OFFSET as usize + (0x41usize * 16);
+        let glyph8 = BASIC_FONTS.get('A').unwrap_or([0u8; 8]);
+        let mut expected = [0u8; 16];
+        for (row, bits) in glyph8.iter().copied().enumerate() {
+            expected[row * 2] = bits;
+            expected[row * 2 + 1] = bits;
+        }
+        assert_eq!(&rom_image[a_glyph..a_glyph + 16], &expected);
     }
 
     #[test]

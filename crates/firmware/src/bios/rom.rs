@@ -1,8 +1,10 @@
 use super::{
     BIOS_SIZE, DEFAULT_INT_STUB_OFFSET, DISKETTE_PARAM_TABLE_OFFSET, FIXED_DISK_PARAM_TABLE_OFFSET,
     INT10_STUB_OFFSET, INT13_STUB_OFFSET, INT15_STUB_OFFSET, INT16_STUB_OFFSET, INT1A_STUB_OFFSET,
-    VIDEO_PARAM_TABLE_OFFSET,
+    VGA_FONT_8X16_OFFSET, VIDEO_PARAM_TABLE_OFFSET,
 };
+
+use font8x8::{UnicodeFonts, BASIC_FONTS};
 
 /// Build the 64KiB BIOS ROM image.
 ///
@@ -96,6 +98,14 @@ pub fn build_bios_rom() -> Vec<u8> {
     ];
     write_stub(&mut rom, VIDEO_PARAM_TABLE_OFFSET, &video_param_table);
 
+    // VGA font table (INT 10h AH=11h AL=30h).
+    //
+    // We provide a simple 8x16 bitmap font derived from `font8x8`'s BASIC font table by duplicating
+    // each 8x8 scanline twice. This is not a full CP437 font, but it is sufficient for ASCII text
+    // consumers that retrieve the font via BIOS calls.
+    let font_8x16 = build_font8x16();
+    write_stub(&mut rom, VGA_FONT_8X16_OFFSET, &font_8x16);
+
     // Optional ROM signature (harmless and convenient for identification).
     rom[BIOS_SIZE - 2] = 0x55;
     rom[BIOS_SIZE - 1] = 0xAA;
@@ -107,4 +117,17 @@ fn write_stub(rom: &mut [u8], offset: u16, stub: &[u8]) {
     let off = offset as usize;
     let end = off + stub.len();
     rom[off..end].copy_from_slice(stub);
+}
+
+fn build_font8x16() -> [u8; 256 * 16] {
+    let mut font = [0u8; 256 * 16];
+    for ch in 0u16..=0xFF {
+        let glyph8 = BASIC_FONTS.get((ch as u8) as char).unwrap_or([0u8; 8]);
+        let base = usize::from(ch as u8) * 16;
+        for (row, bits) in glyph8.iter().copied().enumerate() {
+            font[base + row * 2] = bits;
+            font[base + row * 2 + 1] = bits;
+        }
+    }
+    font
 }
