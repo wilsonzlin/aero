@@ -2,6 +2,7 @@ use aero_devices::acpi_pm::{
     register_acpi_pm, AcpiPmCallbacks, AcpiPmConfig, AcpiPmIo, PM1_STS_PWRBTN, SLP_TYP_S5,
 };
 use aero_devices::irq::IrqLine;
+use aero_io_snapshot::io::state::IoSnapshot;
 use aero_platform::io::IoPortBus;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -66,4 +67,71 @@ fn s5_sleep_requests_poweroff() {
     let pm1_cnt = ((SLP_TYP_S5 as u32) << 10) | (1u32 << 13);
     bus.write(cfg.pm1a_cnt_blk, 2, pm1_cnt);
     assert_eq!(power_off_count.get(), 1);
+}
+
+#[test]
+fn pm_tmr_is_deterministic_and_wraps_24bit() {
+    const PM_TIMER_HZ: u64 = 3_579_545;
+    const PM_TIMER_MASK_24BIT: u32 = 0x00FF_FFFF;
+
+    let cfg = AcpiPmConfig::default();
+
+    // Two sub-tick updates should accumulate and match a single larger update.
+    let pm_a = Rc::new(RefCell::new(AcpiPmIo::new(cfg)));
+    let mut bus_a = IoPortBus::new();
+    register_acpi_pm(&mut bus_a, pm_a.clone());
+
+    pm_a.borrow_mut().advance_ns(279);
+    pm_a.borrow_mut().advance_ns(279);
+    let v_a = bus_a.read(cfg.pm_tmr_blk, 4);
+
+    let pm_b = Rc::new(RefCell::new(AcpiPmIo::new(cfg)));
+    let mut bus_b = IoPortBus::new();
+    register_acpi_pm(&mut bus_b, pm_b.clone());
+
+    pm_b.borrow_mut().advance_ns(558);
+    let v_b = bus_b.read(cfg.pm_tmr_blk, 4);
+
+    assert_eq!(v_a, v_b);
+    assert_eq!(v_a & PM_TIMER_MASK_24BIT, 1);
+
+    // Large delta should wrap at 24 bits.
+    let pm_wrap = Rc::new(RefCell::new(AcpiPmIo::new(cfg)));
+    let mut bus_wrap = IoPortBus::new();
+    register_acpi_pm(&mut bus_wrap, pm_wrap.clone());
+
+    pm_wrap.borrow_mut().advance_ns(5_000_000_000); // 5 seconds
+    let v_wrap = bus_wrap.read(cfg.pm_tmr_blk, 4);
+
+    let expected = ((PM_TIMER_HZ * 5) as u32) & PM_TIMER_MASK_24BIT;
+    assert_eq!(v_wrap & PM_TIMER_MASK_24BIT, expected);
+}
+
+#[test]
+fn pm_tmr_snapshot_roundtrip_preserves_timer_state() {
+    let cfg = AcpiPmConfig::default();
+
+    let pm = Rc::new(RefCell::new(AcpiPmIo::new(cfg)));
+    let mut bus = IoPortBus::new();
+    register_acpi_pm(&mut bus, pm.clone());
+
+    pm.borrow_mut().advance_ns(279);
+    pm.borrow_mut().advance_ns(279);
+    let before = bus.read(cfg.pm_tmr_blk, 4);
+
+    let snapshot = pm.borrow().save_state();
+    assert_eq!(snapshot, pm.borrow().save_state());
+
+    let restored = Rc::new(RefCell::new(AcpiPmIo::new(cfg)));
+    restored.borrow_mut().load_state(&snapshot).unwrap();
+    let mut bus2 = IoPortBus::new();
+    register_acpi_pm(&mut bus2, restored.clone());
+
+    let after = bus2.read(cfg.pm_tmr_blk, 4);
+    assert_eq!(before, after);
+
+    // Subsequent time advances should stay in sync.
+    pm.borrow_mut().advance_ns(1_000_000_000);
+    restored.borrow_mut().advance_ns(1_000_000_000);
+    assert_eq!(bus.read(cfg.pm_tmr_blk, 4), bus2.read(cfg.pm_tmr_blk, 4));
 }

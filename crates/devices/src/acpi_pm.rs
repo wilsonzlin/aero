@@ -447,6 +447,7 @@ impl<C: Clock> IoSnapshot for AcpiPmIo<C> {
         const TAG_GPE0_STS: u16 = 4;
         const TAG_GPE0_EN: u16 = 5;
         const TAG_PM_TIMER_ELAPSED_NS: u16 = 6;
+        const TAG_SCI_LEVEL: u16 = 7;
 
         let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
         w.field_u16(TAG_PM1_STS, self.pm1_sts);
@@ -455,6 +456,7 @@ impl<C: Clock> IoSnapshot for AcpiPmIo<C> {
         w.field_bytes(TAG_GPE0_STS, self.gpe0_sts.clone());
         w.field_bytes(TAG_GPE0_EN, self.gpe0_en.clone());
         w.field_u64(TAG_PM_TIMER_ELAPSED_NS, self.timer_elapsed_ns());
+        w.field_bool(TAG_SCI_LEVEL, self.sci_level);
 
         // Host wiring (`callbacks`) and the clock itself are intentionally not serialized.
         w.finish()
@@ -467,6 +469,7 @@ impl<C: Clock> IoSnapshot for AcpiPmIo<C> {
         const TAG_GPE0_STS: u16 = 4;
         const TAG_GPE0_EN: u16 = 5;
         const TAG_PM_TIMER_ELAPSED_NS: u16 = 6;
+        const TAG_SCI_LEVEL: u16 = 7;
 
         let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
         r.ensure_device_major(Self::DEVICE_VERSION.major)?;
@@ -502,6 +505,9 @@ impl<C: Clock> IoSnapshot for AcpiPmIo<C> {
             self.timer_base_ns = now.wrapping_sub(elapsed);
         }
         self.timer_last_clock_ns = now;
+
+        // `sci_level` is derived from the register state; it is snapshotted for completeness.
+        let _ = r.bool(TAG_SCI_LEVEL)?;
 
         // Re-drive SCI based on the restored latch/enabled state.
         self.update_sci();
