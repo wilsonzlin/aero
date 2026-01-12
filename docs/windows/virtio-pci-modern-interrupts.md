@@ -333,7 +333,9 @@ In either case, fall back to vector 0 mapping (or to INTx if you decide MSI-X is
 ### Pseudocode: vector programming (with fallback)
 
 ```c
+#ifndef VIRTIO_PCI_MSI_NO_VECTOR
 #define VIRTIO_PCI_MSI_NO_VECTOR ((USHORT)0xFFFF)
+#endif
 
 static USHORT MsixVectorFromWdfInterrupt(_In_ WDFINTERRUPT Interrupt)
 {
