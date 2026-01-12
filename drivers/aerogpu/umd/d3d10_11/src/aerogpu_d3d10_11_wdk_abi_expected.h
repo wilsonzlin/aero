@@ -10,6 +10,10 @@
 //   drivers/aerogpu/umd/d3d10_11/tools/wdk_abi_probe/
 // against the same WDK headers used by CI (see `ci/install-wdk.ps1`).
 //
+// Tip: after capturing probe output for both architectures, you can regenerate
+// this file automatically with:
+//   drivers/aerogpu/umd/d3d10_11/tools/wdk_abi_probe/gen_expected_header.py
+//
 // NOTE: This file intentionally contains only preprocessor `#define`s so it can be
 // included from any translation unit without pulling in additional headers.
 //
@@ -146,4 +150,3 @@
 #else
   #error "Unsupported architecture for AeroGPU D3D10/11 WDK ABI expected values."
 #endif
-
