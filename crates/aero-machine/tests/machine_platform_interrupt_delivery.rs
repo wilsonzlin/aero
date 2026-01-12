@@ -615,3 +615,180 @@ fn machine_i8042_mouse_irq12_is_gated_by_i8042_command_byte() {
         );
     }
 }
+
+#[test]
+fn machine_i8042_keyboard_port_disable_suppresses_output_until_reenabled() {
+    let vector = 0x21u8; // IRQ1 with PIC base 0x20
+    let flag_addr = 0x0508u16;
+    let flag_value = 0x33u8;
+
+    let boot = build_real_mode_interrupt_wait_boot_sector(vector, flag_addr, flag_value);
+
+    let mut cfg = pc_machine_config();
+    cfg.enable_i8042 = true;
+    let mut m = Machine::new(cfg).unwrap();
+    m.set_disk_image(boot.to_vec()).unwrap();
+    m.reset();
+
+    run_until_halt(&mut m);
+
+    // Configure PIC offsets and unmask IRQ1 so we can observe any keyboard IRQ pulses.
+    {
+        let interrupts = m.platform_interrupts().unwrap();
+        let mut ints = interrupts.borrow_mut();
+        ints.pic_mut().set_offsets(0x20, 0x28);
+        ints.pic_mut().set_masked(1, false);
+    }
+
+    // Disable the keyboard port via i8042 command 0xAD.
+    m.io_write(0x64, 1, 0xAD);
+
+    m.inject_browser_key("KeyA", true);
+
+    assert_eq!(
+        m.io_read(0x64, 1) as u8 & 0x01,
+        0,
+        "output buffer should remain empty while keyboard port is disabled"
+    );
+    {
+        let interrupts = m.platform_interrupts().unwrap();
+        assert_eq!(
+            interrupts.borrow().get_pending(),
+            None,
+            "IRQ1 should not be latched while keyboard port is disabled"
+        );
+    }
+
+    // Re-enable the keyboard port via i8042 command 0xAE. The previously-injected scancode should
+    // now flow into the output buffer and generate a keyboard IRQ.
+    m.io_write(0x64, 1, 0xAE);
+
+    assert_ne!(
+        m.io_read(0x64, 1) as u8 & 0x01,
+        0,
+        "output buffer should become full once keyboard port is re-enabled"
+    );
+    {
+        let interrupts = m.platform_interrupts().unwrap();
+        assert_eq!(
+            interrupts.borrow().get_pending(),
+            Some(vector),
+            "IRQ1 should be latched once keyboard port is re-enabled"
+        );
+    }
+
+    for _ in 0..10 {
+        let _ = m.run_slice(256);
+        if m.read_physical_u8(u64::from(flag_addr)) == flag_value {
+            return;
+        }
+    }
+
+    panic!(
+        "IRQ1 handler did not run after re-enabling keyboard port (flag=0x{:02x})",
+        m.read_physical_u8(u64::from(flag_addr))
+    );
+}
+
+#[test]
+fn machine_i8042_mouse_port_disable_drops_motion_until_reenabled() {
+    // IRQ12 with PIC base 0x28 => vector 0x2C.
+    let vector = 0x2Cu8;
+    let flag_addr = 0x0509u16;
+    let flag_value = 0x44u8;
+
+    let boot = build_real_mode_interrupt_wait_boot_sector(vector, flag_addr, flag_value);
+
+    let mut cfg = pc_machine_config();
+    cfg.enable_i8042 = true;
+    let mut m = Machine::new(cfg).unwrap();
+    m.set_disk_image(boot.to_vec()).unwrap();
+    m.reset();
+
+    run_until_halt(&mut m);
+
+    // Configure PIC offsets and unmask cascade + IRQ12.
+    {
+        let interrupts = m.platform_interrupts().unwrap();
+        let mut ints = interrupts.borrow_mut();
+        ints.pic_mut().set_offsets(0x20, 0x28);
+        ints.pic_mut().set_masked(2, false);
+        ints.pic_mut().set_masked(12, false);
+    }
+
+    // Enable PS/2 mouse reporting while IRQ12 is still disabled, drain ACK.
+    m.io_write(0x64, 1, 0xD4);
+    m.io_write(0x60, 1, 0xF4);
+    let ack = m.io_read(0x60, 1) as u8;
+    assert_eq!(ack, 0xFA);
+
+    // Enable i8042 IRQ12 generation.
+    m.io_write(0x64, 1, 0x60);
+    m.io_write(0x60, 1, 0x47);
+
+    // Disable mouse port via i8042 command 0xA7.
+    m.io_write(0x64, 1, 0xA7);
+
+    m.inject_mouse_motion(1, 1, 0);
+
+    assert_eq!(
+        m.io_read(0x64, 1) as u8 & 0x01,
+        0,
+        "output buffer should remain empty while mouse port is disabled"
+    );
+    {
+        let interrupts = m.platform_interrupts().unwrap();
+        assert_eq!(
+            interrupts.borrow().get_pending(),
+            None,
+            "IRQ12 should not be latched while mouse port is disabled"
+        );
+    }
+
+    // Re-enable mouse port via i8042 command 0xA8. Host-side injected mouse motion should be
+    // dropped while the port is disabled (to avoid buffering large cursor jumps), so re-enabling
+    // the port should *not* suddenly produce an output byte or IRQ12.
+    m.io_write(0x64, 1, 0xA8);
+
+    assert_eq!(
+        m.io_read(0x64, 1) as u8 & 0x01,
+        0,
+        "output buffer should remain empty after re-enabling mouse port (disabled-port motion is dropped)"
+    );
+    {
+        let interrupts = m.platform_interrupts().unwrap();
+        assert_eq!(
+            interrupts.borrow().get_pending(),
+            None,
+            "IRQ12 should not be latched after re-enabling mouse port (disabled-port motion is dropped)"
+        );
+    }
+
+    // Inject motion again with the port enabled; now we should observe output + IRQ12 delivery.
+    m.inject_mouse_motion(1, 1, 0);
+    assert_ne!(
+        m.io_read(0x64, 1) as u8 & 0x01,
+        0,
+        "output buffer should become full once mouse port is enabled and motion is injected"
+    );
+    {
+        let interrupts = m.platform_interrupts().unwrap();
+        assert_eq!(
+            interrupts.borrow().get_pending(),
+            Some(vector),
+            "IRQ12 should be latched once mouse port is enabled and motion is injected"
+        );
+    }
+
+    for _ in 0..10 {
+        let _ = m.run_slice(256);
+        if m.read_physical_u8(u64::from(flag_addr)) == flag_value {
+            return;
+        }
+    }
+
+    panic!(
+        "IRQ12 handler did not run after re-enabling mouse port (flag=0x{:02x})",
+        m.read_physical_u8(u64::from(flag_addr))
+    );
+}
