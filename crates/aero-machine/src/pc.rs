@@ -7,8 +7,8 @@
 //!
 #![forbid(unsafe_code)]
 
-use std::collections::HashMap;
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
 
