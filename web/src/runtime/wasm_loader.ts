@@ -964,7 +964,7 @@ export interface WasmApi {
         set_audio_ring_buffer?(sab: SharedArrayBuffer | null | undefined, capacityFrames: number, channelCount: number): void;
 
         /**
-         * Deterministic device snapshot bytes (aero-io-snapshot TLV blob).
+         * Deterministic snapshot/restore helpers (aero-io-snapshot TLV blob, inner `HDA0`).
          *
          * Optional for older WASM builds.
          */

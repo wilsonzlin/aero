@@ -670,6 +670,9 @@ type AudioHdaSnapshotBridgeLike = {
 let audioHdaBridge: AudioHdaSnapshotBridgeLike | null = null;
 
 function resolveAudioHdaSnapshotBridge(): AudioHdaSnapshotBridgeLike | null {
+  // Preferred: the live guest HDA controller bridge owned by the IO worker.
+  // This is the canonical device instance during real VM runs.
+  if (hdaControllerBridge) return hdaControllerBridge as unknown as AudioHdaSnapshotBridgeLike;
   if (audioHdaBridge) return audioHdaBridge;
 
   // Allow other runtimes/experiments to attach an HDA bridge via a well-known global.

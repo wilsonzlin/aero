@@ -165,7 +165,6 @@ impl HdaControllerBridge {
         if let Some(state) = self.pending_audio_ring_state.take() {
             bridge.restore_state(&state);
         }
-
         self.audio_ring = Some(bridge);
         Ok(())
     }
@@ -316,15 +315,17 @@ impl HdaControllerBridge {
     ///
     /// If an AudioWorklet ring is attached, its indices are included for determinism.
     pub fn save_state(&self) -> Vec<u8> {
-        let ring_state = self
-            .audio_ring
-            .as_ref()
-            .map(|w| w.snapshot_state())
-            .unwrap_or(AudioWorkletRingState {
+        let ring_state = if let Some(ring) = self.audio_ring.as_ref() {
+            ring.snapshot_state()
+        } else if let Some(state) = self.pending_audio_ring_state.as_ref() {
+            state.clone()
+        } else {
+            AudioWorkletRingState {
                 capacity_frames: 0,
                 write_pos: 0,
                 read_pos: 0,
-            });
+            }
+        };
 
         let state = self.hda.snapshot_state(ring_state);
         state.save_state()
@@ -343,11 +344,12 @@ impl HdaControllerBridge {
 
         self.hda.restore_state(&state);
 
+        let ring_state = state.worklet_ring;
         if let Some(ring) = self.audio_ring.as_ref() {
-            ring.restore_state(&state.worklet_ring);
+            ring.restore_state(&ring_state);
             self.pending_audio_ring_state = None;
         } else {
-            self.pending_audio_ring_state = Some(state.worklet_ring);
+            self.pending_audio_ring_state = Some(ring_state);
         }
 
         Ok(())
@@ -416,6 +418,26 @@ mod tests {
 
         // The call should complete without panicking even though the DMA address is invalid.
         bridge.step_frames(128);
+    }
+
+    #[wasm_bindgen_test]
+    fn hda_snapshot_state_roundtrips() {
+        let mut guest = vec![0u8; 0x8000];
+        let guest_base = guest.as_mut_ptr() as u32;
+        let guest_size = guest.len() as u32;
+
+        let mut bridge = HdaControllerBridge::new(guest_base, guest_size).unwrap();
+        bridge.set_output_rate_hz(44_100).unwrap();
+        // Mutate some guest-visible registers to ensure we aren't snapshotting the all-zero default.
+        bridge.mmio_write(0x0c, 2, 0x1234); // WAKEEN
+        bridge.mmio_write(0x20, 4, 0x0000_0001); // INTCTL
+
+        let snap = bridge.save_state();
+
+        let mut restored = HdaControllerBridge::new(guest_base, guest_size).unwrap();
+        restored.load_state(&snap).unwrap();
+        let snap2 = restored.save_state();
+        assert_eq!(snap2, snap);
     }
 
     #[wasm_bindgen_test]
