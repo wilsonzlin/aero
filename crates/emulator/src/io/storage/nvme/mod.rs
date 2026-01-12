@@ -263,6 +263,35 @@ impl NvmeController {
         self.process_queue(mem, qid);
     }
 
+    fn update_sq_tail(&mut self, qid: u16, tail: u16) {
+        if qid == 0 {
+            if let Some(admin) = self.admin.as_mut() {
+                admin.sq.tail = tail % admin.sq.size;
+            }
+            return;
+        }
+        if let Some(sq) = self.io_sqs.get_mut(&qid) {
+            sq.tail = tail % sq.size;
+        }
+    }
+
+    fn has_pending_submissions(&self) -> bool {
+        if let Some(admin) = self.admin.as_ref() {
+            if admin.sq.head != admin.sq.tail {
+                return true;
+            }
+        }
+        self.io_sqs.values().any(|sq| sq.head != sq.tail)
+    }
+
+    fn process_all_queues(&mut self, mem: &mut dyn MemoryBus) {
+        self.process_queue(mem, 0);
+        let qids: Vec<u16> = self.io_sqs.keys().copied().collect();
+        for qid in qids {
+            self.process_queue(mem, qid);
+        }
+    }
+
     fn process_queue(&mut self, mem: &mut dyn MemoryBus, qid: u16) {
         if self.csts & CSTS_RDY == 0 {
             return;
@@ -628,6 +657,7 @@ pub struct NvmePciDevice {
     config: PciConfigSpace,
     pub bar0: u64,
     bar0_probe: bool,
+    deferred_processing: bool,
     pub controller: NvmeController,
 }
 
@@ -650,6 +680,7 @@ impl NvmePciDevice {
             config,
             bar0,
             bar0_probe: false,
+            deferred_processing: false,
             controller,
         }
     }
@@ -675,11 +706,13 @@ impl PciDevice for NvmePciDevice {
     }
 
     fn config_write(&mut self, offset: u16, size: usize, value: u32) {
+        let prev_command = self.config.read(0x04, 2) as u16;
         if offset == 0x10 && size == 4 {
             if value == 0xffff_ffff {
                 self.bar0_probe = true;
                 self.bar0 = 0;
                 self.config.write(offset, size, 0);
+                self.update_deferred_processing(prev_command);
                 return;
             }
 
@@ -687,6 +720,7 @@ impl PciDevice for NvmePciDevice {
             let addr_lo = (value & 0xffff_fff0) as u64;
             self.bar0 = (self.bar0 & 0xffff_ffff_0000_0000) | addr_lo;
             self.config.write(offset, size, (addr_lo as u32) | 0x4);
+            self.update_deferred_processing(prev_command);
             return;
         }
         if offset == 0x14 && size == 4 {
@@ -694,25 +728,112 @@ impl PciDevice for NvmePciDevice {
                 self.bar0_probe = true;
                 self.bar0 &= 0xffff_ffff;
                 self.config.write(offset, size, 0);
+                self.update_deferred_processing(prev_command);
                 return;
             }
 
             self.bar0_probe = false;
             self.bar0 = (self.bar0 & 0x0000_0000_ffff_ffff) | ((value as u64) << 32);
             self.config.write(offset, size, value);
+            self.update_deferred_processing(prev_command);
             return;
         }
         self.config.write(offset, size, value);
+        self.update_deferred_processing(prev_command);
     }
 }
 
 impl MmioDevice for NvmePciDevice {
     fn mmio_read(&mut self, mem: &mut dyn MemoryBus, offset: u64, size: usize) -> u32 {
+        let command = self.config.read(0x04, 2) as u16;
+        // Gate MMIO on PCI command Memory Space Enable (bit 1).
+        if (command & (1 << 1)) == 0 {
+            return match size {
+                1 => 0xff,
+                2 => 0xffff,
+                4 => u32::MAX,
+                _ => 0,
+            };
+        }
+
+        self.maybe_process_deferred(mem, command);
         self.controller.mmio_read(mem, offset, size)
     }
 
     fn mmio_write(&mut self, mem: &mut dyn MemoryBus, offset: u64, size: usize, value: u32) {
+        let command = self.config.read(0x04, 2) as u16;
+        // Gate MMIO on PCI command Memory Space Enable (bit 1).
+        if (command & (1 << 1)) == 0 {
+            return;
+        }
+
+        self.maybe_process_deferred(mem, command);
+
+        // Gate bus-master DMA on PCI command Bus Master Enable (bit 2).
+        //
+        // For NVMe, DMA is triggered by SQ tail doorbell writes. When BME is clear, latch the
+        // tail pointer but do not execute queue processing or touch guest memory.
+        if (command & (1 << 2)) == 0 {
+            let aligned = offset & !3;
+            if aligned >= NVME_DOORBELL_BASE {
+                let stride = self.controller.doorbell_stride();
+                let rel = aligned - NVME_DOORBELL_BASE;
+                let db_index = rel / stride;
+                let qid = (db_index / 2) as u16;
+                let is_cq = db_index % 2 == 1;
+
+                if !is_cq {
+                    let shift = (offset & 3) * 8;
+                    let value32 = match size {
+                        1 => (value & 0xff) << shift,
+                        2 => (value & 0xffff) << shift,
+                        4 => value,
+                        _ => return,
+                    };
+
+                    let merged = if size == 4 {
+                        value32
+                    } else {
+                        let cur = self.controller.mmio_read(mem, aligned, 4);
+                        let mask = match size {
+                            1 => 0xffu32 << shift,
+                            2 => 0xffffu32 << shift,
+                            _ => 0,
+                        };
+                        (cur & !mask) | value32
+                    };
+
+                    self.controller.update_sq_tail(qid, merged as u16);
+                    self.deferred_processing = self.controller.has_pending_submissions();
+                    return;
+                }
+            }
+        }
+
         self.controller.mmio_write(mem, offset, size, value);
+    }
+}
+
+impl NvmePciDevice {
+    fn update_deferred_processing(&mut self, prev_command: u16) {
+        let command = self.config.read(0x04, 2) as u16;
+        let prev_bme = (prev_command & (1 << 2)) != 0;
+        let next_bme = (command & (1 << 2)) != 0;
+
+        if !prev_bme && next_bme && self.controller.has_pending_submissions() {
+            self.deferred_processing = true;
+        }
+    }
+
+    fn maybe_process_deferred(&mut self, mem: &mut dyn MemoryBus, command: u16) {
+        if !self.deferred_processing {
+            return;
+        }
+        if (command & (1 << 2)) == 0 {
+            return;
+        }
+        self.controller.process_all_queues(mem);
+        self.deferred_processing = self.controller.has_pending_submissions();
     }
 }
 
@@ -731,6 +852,8 @@ impl From<PrpError> for NvmeStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::io::pci::{MmioDevice, PciDevice};
+    use crate::io::storage::disk::MemDisk;
     use aero_storage::{MemBackend, RawDisk, SECTOR_SIZE};
     use aero_storage_adapters::AeroVirtualDiskAsNvmeBackend;
 
@@ -794,6 +917,80 @@ mod tests {
         ctrl.mmio_write_u32(mem, NVME_REG_ACQ_HI, 0);
         ctrl.mmio_write_u32(mem, NVME_REG_CC, (6 << 16) | (4 << 20) | CC_EN);
         ctrl
+    }
+
+    #[test]
+    fn pci_wrapper_gates_bar0_mmio_on_pci_command_mem_bit() {
+        let disk = Box::new(MemDisk::new(16));
+        let ctrl = NvmeController::new(disk);
+        let mut dev = NvmePciDevice::new(ctrl, 0xfebf_0000);
+        let mut mem = VecMemory::new(0x10000);
+
+        // With COMMAND.MEM clear, reads should float high and writes should be ignored.
+        assert_eq!(dev.mmio_read(&mut mem, NVME_REG_CAP, 4), u32::MAX);
+        dev.mmio_write(&mut mem, NVME_REG_CC, 4, CC_EN);
+
+        // Enable MMIO decoding and verify the earlier write did not take effect.
+        dev.config_write(0x04, 2, 1 << 1);
+        assert_ne!(dev.mmio_read(&mut mem, NVME_REG_CAP, 4), u32::MAX);
+        assert_eq!(dev.mmio_read(&mut mem, NVME_REG_CC, 4) & CC_EN, 0);
+    }
+
+    #[test]
+    fn pci_wrapper_gates_nvme_dma_on_pci_command_bme_bit() {
+        let disk = Box::new(MemDisk::new(16));
+        let ctrl = NvmeController::new(disk);
+        let mut dev = NvmePciDevice::new(ctrl, 0xfebf_0000);
+        let mut mem = VecMemory::new(4 * 1024 * 1024);
+
+        // Enable MMIO decoding but leave bus mastering disabled.
+        dev.config_write(0x04, 2, 1 << 1);
+
+        dev.mmio_write(&mut mem, NVME_REG_AQA, 4, 0x0003_0003);
+        dev.mmio_write(&mut mem, NVME_REG_ASQ, 4, 0x10_000);
+        dev.mmio_write(&mut mem, NVME_REG_ASQ_HI, 4, 0);
+        dev.mmio_write(&mut mem, NVME_REG_ACQ, 4, 0x20_000);
+        dev.mmio_write(&mut mem, NVME_REG_ACQ_HI, 4, 0);
+        dev.mmio_write(&mut mem, NVME_REG_CC, 4, (6 << 16) | (4 << 20) | CC_EN);
+
+        let identify_buf = 0x30_000u64;
+        for i in 0..4096u64 {
+            mem.write_u8(identify_buf + i, 0xaa);
+        }
+        for i in 0..16u64 {
+            mem.write_u8(0x20_000 + i, 0xee);
+        }
+
+        let cid = 0x1234u16;
+        let cmd_addr = 0x10_000u64;
+        let mut cmd = [0u32; 16];
+        cmd[0] = OPC_ADMIN_IDENTIFY as u32 | ((cid as u32) << 16);
+        cmd[6] = identify_buf as u32;
+        cmd[7] = (identify_buf >> 32) as u32;
+        cmd[10] = 1;
+        write_cmd(&mut mem, cmd_addr, cmd);
+
+        // Ring SQ0 tail; with BME disabled the command must not DMA or complete.
+        dev.mmio_write(&mut mem, NVME_DOORBELL_BASE, 4, 1);
+
+        assert_eq!(mem.read_u16(identify_buf), 0xaaaa);
+        let (_, _, _, dw3) = read_cqe(&mut mem, 0x20_000, 0);
+        assert_eq!(dw3, 0xeeee_eeee);
+        assert!(!dev.controller.irq_level());
+
+        // Enable bus mastering; the pending command should complete on the next MMIO access.
+        dev.config_write(0x04, 2, (1 << 1) | (1 << 2));
+        let _ = dev.mmio_read(&mut mem, NVME_REG_CSTS, 4);
+
+        let (_, _, _, dw3) = read_cqe(&mut mem, 0x20_000, 0);
+        assert_eq!((dw3 & 0xffff) as u16, cid);
+        let status = (dw3 >> 16) as u16;
+        assert_eq!(status & 1, 1);
+        assert_eq!((status >> 1) & 0xff, 0);
+
+        let vid = mem.read_u16(identify_buf);
+        assert_eq!(vid, 0x1b36);
+        assert!(dev.controller.irq_level());
     }
 
     #[test]

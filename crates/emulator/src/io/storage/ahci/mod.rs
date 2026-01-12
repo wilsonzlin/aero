@@ -677,6 +677,7 @@ pub struct AhciPciDevice {
     config: PciConfigSpace,
     pub abar: u32,
     abar_probe: bool,
+    deferred_poll: bool,
     pub controller: AhciController,
 }
 
@@ -704,6 +705,7 @@ impl AhciPciDevice {
             config,
             abar,
             abar_probe: false,
+            deferred_poll: false,
             controller,
         }
     }
@@ -721,30 +723,113 @@ impl PciDevice for AhciPciDevice {
     }
 
     fn config_write(&mut self, offset: u16, size: usize, value: u32) {
+        let prev_command = self.config.read(0x04, 2) as u16;
         // Allow BAR relocation and command register toggles.
         if offset == 0x24 && size == 4 {
             if value == 0xffff_ffff {
                 self.abar_probe = true;
                 self.abar = 0;
                 self.config.write(offset, size, 0);
+                self.update_deferred_poll(prev_command);
                 return;
             }
             self.abar_probe = false;
             self.abar = value & 0xffff_fff0;
             self.config.write(offset, size, self.abar);
+            self.update_deferred_poll(prev_command);
             return;
         }
         self.config.write(offset, size, value);
+        self.update_deferred_poll(prev_command);
     }
 }
 
 impl MmioDevice for AhciPciDevice {
     fn mmio_read(&mut self, mem: &mut dyn MemoryBus, offset: u64, size: usize) -> u32 {
+        let command = self.config.read(0x04, 2) as u16;
+        // Gate MMIO on PCI command Memory Space Enable (bit 1).
+        if (command & (1 << 1)) == 0 {
+            return match size {
+                1 => 0xff,
+                2 => 0xffff,
+                4 => u32::MAX,
+                _ => 0,
+            };
+        }
+
+        self.maybe_poll_deferred(mem, command);
         self.controller.mmio_read(mem, offset, size)
     }
 
     fn mmio_write(&mut self, mem: &mut dyn MemoryBus, offset: u64, size: usize, value: u32) {
+        let command = self.config.read(0x04, 2) as u16;
+        // Gate MMIO on PCI command Memory Space Enable (bit 1).
+        if (command & (1 << 1)) == 0 {
+            return;
+        }
+
+        self.maybe_poll_deferred(mem, command);
+
+        // Gate bus-master DMA on PCI command Bus Master Enable (bit 2).
+        //
+        // For AHCI, the command list / FIS structures live in guest memory and are accessed via
+        // DMA when PxCI is written. When BME is clear, we latch PxCI but defer processing.
+        if (command & (1 << 2)) == 0 {
+            let aligned = offset & !3;
+            if aligned == HBA_PORTS_BASE + PX_CI {
+                let shift = (offset & 3) * 8;
+                let value32 = match size {
+                    1 => (value & 0xff) << shift,
+                    2 => (value & 0xffff) << shift,
+                    4 => value,
+                    _ => return,
+                };
+
+                let merged = if size == 4 {
+                    value32
+                } else {
+                    let cur = self.controller.mmio_read(mem, aligned, 4);
+                    let mask = match size {
+                        1 => 0xffu32 << shift,
+                        2 => 0xffffu32 << shift,
+                        _ => 0,
+                    };
+                    (cur & !mask) | value32
+                };
+
+                self.controller.port0.ci = merged;
+                self.deferred_poll = self.controller.port0.ci != 0;
+                return;
+            }
+        }
+
         self.controller.mmio_write(mem, offset, size, value)
+    }
+}
+
+impl AhciPciDevice {
+    fn update_deferred_poll(&mut self, prev_command: u16) {
+        let command = self.config.read(0x04, 2) as u16;
+        let prev_bme = (prev_command & (1 << 2)) != 0;
+        let next_bme = (command & (1 << 2)) != 0;
+
+        // If the guest enables bus mastering and there is already a pending command, schedule a
+        // poll on the next MMIO access.
+        if !prev_bme && next_bme && self.controller.port0.ci != 0 {
+            self.deferred_poll = true;
+        }
+    }
+
+    fn maybe_poll_deferred(&mut self, mem: &mut dyn MemoryBus, command: u16) {
+        if !self.deferred_poll {
+            return;
+        }
+        if (command & (1 << 2)) == 0 {
+            return;
+        }
+        self.controller.poll(mem);
+        // Keep retrying until the command engine drains PxCI (or the guest disables ST/FRE).
+        self.deferred_poll = self.controller.port0.ci != 0;
     }
 }
 
@@ -830,6 +915,7 @@ fn write_ata_string(words: &mut [u16], s: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::io::pci::{MmioDevice, PciDevice};
     use crate::io::storage::disk::MemDisk;
     use memory::MemoryBus;
     use std::sync::{Arc, Mutex};
@@ -926,6 +1012,89 @@ mod tests {
         mem.write_u32(addr, dba as u32);
         mem.write_u32(addr + 4, (dba >> 32) as u32);
         mem.write_u32(addr + 12, dbc);
+    }
+
+    #[test]
+    fn pci_wrapper_gates_abar_mmio_on_pci_command_mem_bit() {
+        let disk = Box::new(MemDisk::new(16));
+        let mut mem = VecMemory::new(0x10_000);
+        let controller = AhciController::new(disk);
+        let mut dev = AhciPciDevice::new(controller, 0xfebf_0000);
+
+        // With COMMAND.MEM clear, reads should float high and writes should be ignored.
+        assert_eq!(dev.mmio_read(&mut mem, HBA_CAP, 4), u32::MAX);
+        dev.mmio_write(&mut mem, HBA_GHC, 4, GHC_AE | GHC_IE);
+
+        // Enable MMIO decoding and verify the earlier write did not take effect.
+        dev.config_write(0x04, 2, 1 << 1);
+        assert_ne!(dev.mmio_read(&mut mem, HBA_CAP, 4), u32::MAX);
+        assert_eq!(dev.mmio_read(&mut mem, HBA_GHC, 4) & GHC_IE, 0);
+        assert_eq!(dev.mmio_read(&mut mem, HBA_GHC, 4) & GHC_AE, GHC_AE);
+    }
+
+    #[test]
+    fn pci_wrapper_gates_ahci_dma_on_pci_command_bme_bit() {
+        let mut disk = MemDisk::new(16);
+        // Fill sectors with deterministic bytes (index modulo 256).
+        for (i, b) in disk.data_mut().iter_mut().enumerate() {
+            *b = (i & 0xff) as u8;
+        }
+        let disk = Box::new(disk);
+
+        let mut mem = VecMemory::new(0x20_000);
+        let controller = AhciController::new(disk);
+        let mut dev = AhciPciDevice::new(controller, 0xfebf_0000);
+
+        let clb = 0x1000u64;
+        let fb = 0x2000u64;
+        let ctba = 0x3000u64;
+        let dst = 0x4000u64;
+
+        // Enable MMIO decoding but leave bus mastering disabled.
+        dev.config_write(0x04, 2, 1 << 1);
+
+        dev.mmio_write(&mut mem, HBA_GHC, 4, GHC_AE | GHC_IE);
+        dev.mmio_write(&mut mem, HBA_PORTS_BASE + PX_CLB, 4, clb as u32);
+        dev.mmio_write(&mut mem, HBA_PORTS_BASE + PX_CLBU, 4, (clb >> 32) as u32);
+        dev.mmio_write(&mut mem, HBA_PORTS_BASE + PX_FB, 4, fb as u32);
+        dev.mmio_write(&mut mem, HBA_PORTS_BASE + PX_FBU, 4, (fb >> 32) as u32);
+        dev.mmio_write(&mut mem, HBA_PORTS_BASE + PX_IE, 4, PXIE_DHRE);
+        dev.mmio_write(
+            &mut mem,
+            HBA_PORTS_BASE + PX_CMD,
+            4,
+            PXCMD_FRE | PXCMD_ST | PXCMD_SUD,
+        );
+
+        // Command header for slot 0.
+        let header = build_cmd_header(5, false, 1, ctba);
+        mem.write_physical(clb, &header);
+        write_reg_h2d_fis(&mut mem, ctba, ATA_CMD_READ_DMA_EXT, 2, 1);
+        write_prd(&mut mem, ctba + 0x80, dst, 512);
+
+        // Prefill destination so we can detect missing DMA writes.
+        mem.write_physical(dst, &[0xaa; 512]);
+
+        // Submit the command; with BME disabled it must not DMA or complete.
+        dev.mmio_write(&mut mem, HBA_PORTS_BASE + PX_CI, 4, 1);
+        assert_eq!(dev.mmio_read(&mut mem, HBA_PORTS_BASE + PX_CI, 4), 1);
+        assert_eq!(dev.mmio_read(&mut mem, HBA_PORTS_BASE + PX_IS, 4), 0);
+        assert!(!dev.controller.irq_level());
+
+        let mut got = [0u8; 512];
+        mem.read_physical(dst, &mut got);
+        assert_eq!(got, [0xaa; 512]);
+
+        // Enable bus mastering; the pending command should complete on the next MMIO access.
+        dev.config_write(0x04, 2, (1 << 1) | (1 << 2));
+        let _ = dev.mmio_read(&mut mem, HBA_IS, 4);
+
+        assert_eq!(dev.mmio_read(&mut mem, HBA_PORTS_BASE + PX_CI, 4), 0);
+        assert!(dev.controller.irq_level());
+
+        mem.read_physical(dst, &mut got);
+        let expected = core::array::from_fn(|i| ((2 * 512 + i) & 0xff) as u8);
+        assert_eq!(got, expected);
     }
 
     #[test]
