@@ -244,7 +244,7 @@ if [[ ${#NONEXEC_SCRIPTS[@]} -gt 0 || ${#MISSING_SCRIPTS[@]} -gt 0 || ${#MISSING
 fi
 
 if [[ ${#MISSING_SCRIPTS[@]} -gt 0 ]]; then
-  msg="Missing tracked scripts:"
+  msg="Missing tracked scripts (or empty files):"
   for rel in "${MISSING_SCRIPTS[@]}"; do msg+=$'\n'"  - ${rel}"; done
   msg+=$'\n'"Fix:"
   msg+=$'\n'"  git checkout -- scripts"
@@ -276,7 +276,7 @@ else
 fi
 
 if [[ ${#MISSING_FIXTURES[@]} -gt 0 ]]; then
-  msg="Missing tracked fixtures (some tools/tests rely on these):"
+  msg="Missing/empty tracked fixtures (some tools/tests rely on these):"
   for rel in "${MISSING_FIXTURES[@]}"; do msg+=$'\n'"  - ${rel}"; done
   msg+=$'\n'"Fix:"
   msg+=$'\n'"  git checkout -- tools/packaging/aero_packager/testdata tools/disk-streaming-browser-e2e/fixtures"

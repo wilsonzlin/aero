@@ -87,7 +87,7 @@ for rel in "with-timeout.sh" "run_limited.sh"; do
     # Treat 0-byte scripts as missing too; an empty helper script would make safe-run
     # silently skip enforcing timeouts/limits.
     if [[ ! -s "${dep}" ]]; then
-        echo "[safe-run] error: missing required script: scripts/${rel}" >&2
+        echo "[safe-run] error: missing/empty required script: scripts/${rel}" >&2
         echo "[safe-run] Your checkout may be incomplete. Try:" >&2
         echo "  git checkout -- scripts" >&2
         echo "  # or reset the whole working tree:" >&2
