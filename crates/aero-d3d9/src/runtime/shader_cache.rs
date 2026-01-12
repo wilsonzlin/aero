@@ -159,6 +159,16 @@ impl ShaderCache {
         }
     }
 
+    /// Returns `true` if the browser persistent shader cache (IndexedDB/OPFS) has been disabled
+    /// for the remainder of the session.
+    ///
+    /// Persistence is treated as best-effort: any failure to open the backing store, compute a
+    /// persistent key, or read/write entries will disable persistence and the cache will fall back
+    /// to in-memory-only behavior.
+    pub fn is_persistent_disabled(&self) -> bool {
+        self.persistent_state == PersistentCacheState::Disabled
+    }
+
     fn disable_persistent(&mut self) {
         self.persistent_state = PersistentCacheState::Disabled;
         self.persistent = None;

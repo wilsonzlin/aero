@@ -2070,6 +2070,10 @@ impl AerogpuD3d9Executor {
                     )
                 })?;
 
+            self.stats.set_d3d9_shader_cache_disabled(
+                self.persistent_shader_cache.is_persistent_disabled(),
+            );
+
             let aero_d3d9::runtime::PersistedShaderArtifact { wgsl, reflection } = artifact;
 
             let reflection: PersistentShaderReflection = match serde_json::from_value(reflection) {
@@ -2085,6 +2089,9 @@ impl AerogpuD3d9Executor {
                             .persistent_shader_cache
                             .invalidate(dxbc_bytes, flags.clone())
                             .await;
+                        self.stats.set_d3d9_shader_cache_disabled(
+                            self.persistent_shader_cache.is_persistent_disabled(),
+                        );
                         continue;
                     }
                     return self.create_shader_dxbc_in_memory(shader_handle, expected_stage, dxbc_bytes);
@@ -2111,6 +2118,9 @@ impl AerogpuD3d9Executor {
                             .persistent_shader_cache
                             .invalidate(dxbc_bytes, flags.clone())
                             .await;
+                        self.stats.set_d3d9_shader_cache_disabled(
+                            self.persistent_shader_cache.is_persistent_disabled(),
+                        );
                         continue;
                     }
                     return self.create_shader_dxbc_in_memory(shader_handle, expected_stage, dxbc_bytes);
@@ -2139,6 +2149,9 @@ impl AerogpuD3d9Executor {
                             .persistent_shader_cache
                             .invalidate(dxbc_bytes, flags.clone())
                             .await;
+                        self.stats.set_d3d9_shader_cache_disabled(
+                            self.persistent_shader_cache.is_persistent_disabled(),
+                        );
                         continue;
                     }
                     return self.create_shader_dxbc_in_memory(shader_handle, expected_stage, dxbc_bytes);
