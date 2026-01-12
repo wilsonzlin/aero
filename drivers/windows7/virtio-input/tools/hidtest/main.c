@@ -118,6 +118,8 @@ typedef struct OPTIONS {
     int ioctl_bad_get_device_descriptor;
     int ioctl_bad_get_string;
     int ioctl_bad_get_indexed_string;
+    int ioctl_bad_get_string_out;
+    int ioctl_bad_get_indexed_string_out;
     int hidd_bad_set_output_report;
     int dump_desc;
     int want_keyboard;
@@ -391,7 +393,8 @@ static void print_usage(void)
     wprintf(L"             [--ioctl-bad-xfer-packet | --ioctl-bad-write-report]\n");
     wprintf(L"             [--ioctl-bad-set-output-xfer-packet | --ioctl-bad-set-output-report | --hidd-bad-set-output-report]\n");
     wprintf(L"             [--ioctl-bad-get-report-descriptor | --ioctl-bad-get-device-descriptor |\n");
-    wprintf(L"              --ioctl-bad-get-string | --ioctl-bad-get-indexed-string]\n");
+    wprintf(L"              --ioctl-bad-get-string | --ioctl-bad-get-indexed-string |\n");
+    wprintf(L"              --ioctl-bad-get-string-out | --ioctl-bad-get-indexed-string-out]\n");
     wprintf(L"\n");
     wprintf(L"Options:\n");
     wprintf(L"  --list          List all present HID interfaces and exit\n");
@@ -431,6 +434,12 @@ static void print_usage(void)
     wprintf(L"                 (negative test for METHOD_NEITHER hardening; should fail, no crash)\n");
     wprintf(L"  --ioctl-bad-get-indexed-string\n");
     wprintf(L"                 Send IOCTL_HID_GET_INDEXED_STRING with an invalid input buffer pointer\n");
+    wprintf(L"                 (negative test for METHOD_NEITHER hardening; should fail, no crash)\n");
+    wprintf(L"  --ioctl-bad-get-string-out\n");
+    wprintf(L"                 Send IOCTL_HID_GET_STRING with an invalid output buffer pointer\n");
+    wprintf(L"                 (negative test for METHOD_NEITHER hardening; should fail, no crash)\n");
+    wprintf(L"  --ioctl-bad-get-indexed-string-out\n");
+    wprintf(L"                 Send IOCTL_HID_GET_INDEXED_STRING with an invalid output buffer pointer\n");
     wprintf(L"                 (negative test for METHOD_NEITHER hardening; should fail, no crash)\n");
     wprintf(L"  --hidd-bad-set-output-report\n");
     wprintf(L"                 Call HidD_SetOutputReport with an invalid buffer pointer\n");
@@ -1434,6 +1443,56 @@ static void ioctl_bad_get_indexed_string(const SELECTED_DEVICE *dev)
     print_last_error_w(L"DeviceIoControl(IOCTL_HID_GET_INDEXED_STRING bad input buffer)");
 }
 
+static void ioctl_bad_get_string_out(const SELECTED_DEVICE *dev)
+{
+    ULONG stringId = 1; // HID_STRING_ID_IMANUFACTURER
+    DWORD bytes = 0;
+    BOOL ok;
+
+    if (dev == NULL || dev->handle == INVALID_HANDLE_VALUE) {
+        wprintf(L"Invalid device handle\n");
+        return;
+    }
+
+    wprintf(L"\nIssuing IOCTL_HID_GET_STRING with invalid output buffer pointer...\n");
+    ok = DeviceIoControl(dev->handle, IOCTL_HID_GET_STRING, &stringId, (DWORD)sizeof(stringId), (PVOID)(ULONG_PTR)0x1, 256, &bytes, NULL);
+    if (ok) {
+        wprintf(L"Unexpected success (bytes=%lu)\n", bytes);
+        return;
+    }
+
+    print_last_error_w(L"DeviceIoControl(IOCTL_HID_GET_STRING bad output buffer)");
+}
+
+static void ioctl_bad_get_indexed_string_out(const SELECTED_DEVICE *dev)
+{
+    ULONG stringIndex = 1;
+    DWORD bytes = 0;
+    BOOL ok;
+
+    if (dev == NULL || dev->handle == INVALID_HANDLE_VALUE) {
+        wprintf(L"Invalid device handle\n");
+        return;
+    }
+
+    wprintf(L"\nIssuing IOCTL_HID_GET_INDEXED_STRING with invalid output buffer pointer...\n");
+    ok = DeviceIoControl(
+        dev->handle,
+        IOCTL_HID_GET_INDEXED_STRING,
+        &stringIndex,
+        (DWORD)sizeof(stringIndex),
+        (PVOID)(ULONG_PTR)0x1,
+        256,
+        &bytes,
+        NULL);
+    if (ok) {
+        wprintf(L"Unexpected success (bytes=%lu)\n", bytes);
+        return;
+    }
+
+    print_last_error_w(L"DeviceIoControl(IOCTL_HID_GET_INDEXED_STRING bad output buffer)");
+}
+
 static void hidd_bad_set_output_report(const SELECTED_DEVICE *dev)
 {
     BOOL ok;
@@ -1532,6 +1591,16 @@ int wmain(int argc, wchar_t **argv)
 
         if (wcscmp(argv[i], L"--ioctl-bad-get-indexed-string") == 0) {
             opt.ioctl_bad_get_indexed_string = 1;
+            continue;
+        }
+
+        if (wcscmp(argv[i], L"--ioctl-bad-get-string-out") == 0) {
+            opt.ioctl_bad_get_string_out = 1;
+            continue;
+        }
+
+        if (wcscmp(argv[i], L"--ioctl-bad-get-indexed-string-out") == 0) {
+            opt.ioctl_bad_get_indexed_string_out = 1;
             continue;
         }
 
@@ -1659,6 +1728,14 @@ int wmain(int argc, wchar_t **argv)
         wprintf(L"--led/--led-hidd/--led-ioctl-set-output and --ioctl-bad-get-indexed-string are mutually exclusive.\n");
         return 2;
     }
+    if (opt.have_led_mask && opt.ioctl_bad_get_string_out) {
+        wprintf(L"--led/--led-hidd/--led-ioctl-set-output and --ioctl-bad-get-string-out are mutually exclusive.\n");
+        return 2;
+    }
+    if (opt.have_led_mask && opt.ioctl_bad_get_indexed_string_out) {
+        wprintf(L"--led/--led-hidd/--led-ioctl-set-output and --ioctl-bad-get-indexed-string-out are mutually exclusive.\n");
+        return 2;
+    }
     if (opt.have_led_mask && opt.ioctl_bad_xfer_packet) {
         wprintf(L"--led/--led-hidd/--led-ioctl-set-output and --ioctl-bad-xfer-packet are mutually exclusive.\n");
         return 2;
@@ -1708,30 +1785,46 @@ int wmain(int argc, wchar_t **argv)
         return 2;
     }
     if ((opt.ioctl_bad_get_report_descriptor || opt.ioctl_bad_get_device_descriptor || opt.ioctl_bad_get_string ||
-         opt.ioctl_bad_get_indexed_string) &&
+         opt.ioctl_bad_get_indexed_string || opt.ioctl_bad_get_string_out || opt.ioctl_bad_get_indexed_string_out) &&
         (opt.ioctl_bad_xfer_packet || opt.ioctl_bad_write_report || opt.ioctl_bad_set_output_xfer_packet || opt.ioctl_bad_set_output_report ||
          opt.hidd_bad_set_output_report)) {
         wprintf(L"Descriptor/string negative tests are mutually exclusive with output-report negative tests.\n");
         return 2;
     }
     if (opt.ioctl_bad_get_report_descriptor &&
-        (opt.ioctl_bad_get_device_descriptor || opt.ioctl_bad_get_string || opt.ioctl_bad_get_indexed_string)) {
+        (opt.ioctl_bad_get_device_descriptor || opt.ioctl_bad_get_string || opt.ioctl_bad_get_indexed_string ||
+         opt.ioctl_bad_get_string_out || opt.ioctl_bad_get_indexed_string_out)) {
         wprintf(L"--ioctl-bad-get-report-descriptor is mutually exclusive with other descriptor/string negative tests.\n");
         return 2;
     }
     if (opt.ioctl_bad_get_device_descriptor &&
-        (opt.ioctl_bad_get_report_descriptor || opt.ioctl_bad_get_string || opt.ioctl_bad_get_indexed_string)) {
+        (opt.ioctl_bad_get_report_descriptor || opt.ioctl_bad_get_string || opt.ioctl_bad_get_indexed_string ||
+         opt.ioctl_bad_get_string_out || opt.ioctl_bad_get_indexed_string_out)) {
         wprintf(L"--ioctl-bad-get-device-descriptor is mutually exclusive with other descriptor/string negative tests.\n");
         return 2;
     }
     if (opt.ioctl_bad_get_string &&
-        (opt.ioctl_bad_get_report_descriptor || opt.ioctl_bad_get_device_descriptor || opt.ioctl_bad_get_indexed_string)) {
+        (opt.ioctl_bad_get_report_descriptor || opt.ioctl_bad_get_device_descriptor || opt.ioctl_bad_get_indexed_string ||
+         opt.ioctl_bad_get_string_out || opt.ioctl_bad_get_indexed_string_out)) {
         wprintf(L"--ioctl-bad-get-string is mutually exclusive with other descriptor/string negative tests.\n");
         return 2;
     }
     if (opt.ioctl_bad_get_indexed_string &&
-        (opt.ioctl_bad_get_report_descriptor || opt.ioctl_bad_get_device_descriptor || opt.ioctl_bad_get_string)) {
+        (opt.ioctl_bad_get_report_descriptor || opt.ioctl_bad_get_device_descriptor || opt.ioctl_bad_get_string ||
+         opt.ioctl_bad_get_string_out || opt.ioctl_bad_get_indexed_string_out)) {
         wprintf(L"--ioctl-bad-get-indexed-string is mutually exclusive with other descriptor/string negative tests.\n");
+        return 2;
+    }
+    if (opt.ioctl_bad_get_string_out &&
+        (opt.ioctl_bad_get_report_descriptor || opt.ioctl_bad_get_device_descriptor || opt.ioctl_bad_get_string ||
+         opt.ioctl_bad_get_indexed_string || opt.ioctl_bad_get_indexed_string_out)) {
+        wprintf(L"--ioctl-bad-get-string-out is mutually exclusive with other descriptor/string negative tests.\n");
+        return 2;
+    }
+    if (opt.ioctl_bad_get_indexed_string_out &&
+        (opt.ioctl_bad_get_report_descriptor || opt.ioctl_bad_get_device_descriptor || opt.ioctl_bad_get_string ||
+         opt.ioctl_bad_get_indexed_string || opt.ioctl_bad_get_string_out)) {
+        wprintf(L"--ioctl-bad-get-indexed-string-out is mutually exclusive with other descriptor/string negative tests.\n");
         return 2;
     }
 
@@ -1827,6 +1920,16 @@ int wmain(int argc, wchar_t **argv)
     }
     if (opt.ioctl_bad_get_indexed_string) {
         ioctl_bad_get_indexed_string(&dev);
+        free_selected_device(&dev);
+        return 0;
+    }
+    if (opt.ioctl_bad_get_string_out) {
+        ioctl_bad_get_string_out(&dev);
+        free_selected_device(&dev);
+        return 0;
+    }
+    if (opt.ioctl_bad_get_indexed_string_out) {
+        ioctl_bad_get_indexed_string_out(&dev);
         free_selected_device(&dev);
         return 0;
     }
