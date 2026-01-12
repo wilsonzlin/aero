@@ -138,30 +138,16 @@ fn build_signature_chunk(params: &[SigParam]) -> Vec<u8> {
 }
 
 fn build_ps_sample_t0_s0_outside_uv_dxbc() -> Vec<u8> {
-    // Hand-authored minimal DXBC container: ISGN(SV_Position + COLOR0) + OSGN(SV_Target0) +
+    // Hand-authored minimal DXBC container: ISGN(empty) + OSGN(SV_Target0) +
     // SHDR(token stream).
     //
     // Token stream is SM4-ish and only relies on `aero_d3d11`'s subset decoder:
     //   sample o0, l(1.25, 0.5, 0, 0), t0, s0
     //   ret
     //
-    // We include a dummy COLOR0 input to satisfy WebGPU's stage-interface validation: our
-    // VS fixture writes `@location(1)` (COLOR0) and WebGPU requires that the fragment stage
-    // declares a matching input, even if unused.
-    let isgn = build_signature_chunk(&[
-        SigParam {
-            semantic_name: "SV_Position",
-            semantic_index: 0,
-            register: 0,
-            mask: 0x0f,
-        },
-        SigParam {
-            semantic_name: "COLOR",
-            semantic_index: 0,
-            register: 1,
-            mask: 0x0f,
-        },
-    ]);
+    // The shader uses constant UVs and does not read any inputs, but we still include an ISGN chunk
+    // so the executor selects the signature-driven translator (needed for `sample`).
+    let isgn = build_signature_chunk(&[]);
     let osgn = build_signature_chunk(&[SigParam {
         semantic_name: "SV_Target",
         semantic_index: 0,

@@ -176,29 +176,17 @@ fn build_ps_solid_red_dxbc() -> Vec<u8> {
 }
 
 fn build_ps_cbuffer0_dxbc() -> Vec<u8> {
-    // Hand-authored minimal DXBC container: ISGN(SV_Position + COLOR0) + OSGN(SV_Target0) +
+    // Hand-authored minimal DXBC container: ISGN(empty) + OSGN(SV_Target0) +
     // SHDR(token stream).
     //
     // Token stream (SM4 subset):
     //   mov o0, cb0[0]
     //   ret
     //
-    // The COLOR0 input is unused, but included to satisfy WebGPU stage-interface validation for the
-    // `vs_passthrough.dxbc` fixture which outputs `@location(1)`.
-    let isgn = build_signature_chunk(&[
-        SigParam {
-            semantic_name: "SV_Position",
-            semantic_index: 0,
-            register: 0,
-            mask: 0x0f,
-        },
-        SigParam {
-            semantic_name: "COLOR",
-            semantic_index: 0,
-            register: 1,
-            mask: 0x0f,
-        },
-    ]);
+    // The shader does not consume any inputs, but we still include an ISGN chunk so the runtime
+    // selects the signature-driven translator instead of the bootstrap fallback (which does not
+    // support constant buffers).
+    let isgn = build_signature_chunk(&[]);
     let osgn = build_signature_chunk(&[SigParam {
         semantic_name: "SV_Target",
         semantic_index: 0,
@@ -244,20 +232,7 @@ fn build_ps_cbuffer0_dxbc() -> Vec<u8> {
 
 fn build_ps_cbuffer0_sm5_dxbc() -> Vec<u8> {
     // Same as `build_ps_cbuffer0_dxbc`, but encoded as SM5 (`SHEX`, ps_5_0).
-    let isgn = build_signature_chunk(&[
-        SigParam {
-            semantic_name: "SV_Position",
-            semantic_index: 0,
-            register: 0,
-            mask: 0x0f,
-        },
-        SigParam {
-            semantic_name: "COLOR",
-            semantic_index: 0,
-            register: 1,
-            mask: 0x0f,
-        },
-    ]);
+    let isgn = build_signature_chunk(&[]);
     let osgn = build_signature_chunk(&[SigParam {
         semantic_name: "SV_Target",
         semantic_index: 0,
@@ -297,23 +272,7 @@ fn build_ps_cbuffer0_sm5_dxbc() -> Vec<u8> {
 
 fn build_ps_cbuffer_sm5_dxbc(slot: u32, reg: u32) -> Vec<u8> {
     // Generalized variant of `build_ps_cbuffer0_sm5_dxbc` that reads from `cb{slot}[{reg}]`.
-    //
-    // Note: The COLOR0 input is unused, but included to satisfy WebGPU stage-interface validation
-    // for the `vs_passthrough.dxbc` fixture which outputs `@location(1)`.
-    let isgn = build_signature_chunk(&[
-        SigParam {
-            semantic_name: "SV_Position",
-            semantic_index: 0,
-            register: 0,
-            mask: 0x0f,
-        },
-        SigParam {
-            semantic_name: "COLOR",
-            semantic_index: 0,
-            register: 1,
-            mask: 0x0f,
-        },
-    ]);
+    let isgn = build_signature_chunk(&[]);
     let osgn = build_signature_chunk(&[SigParam {
         semantic_name: "SV_Target",
         semantic_index: 0,
@@ -813,20 +772,14 @@ fn build_ps_ld_t0_sm5_dxbc(x: i32, y: i32, mip: i32) -> Vec<u8> {
 fn build_ps_cbuffer0_sm5_sig_v1_dxbc() -> Vec<u8> {
     // Equivalent to `build_ps_cbuffer0_sm5_dxbc`, but uses `ISG1`/`OSG1` signature chunks with the
     // 32-byte v1 entry layout.
-    let isgn = build_signature_chunk_v1(&[
-        SigParam {
-            semantic_name: "SV_Position",
-            semantic_index: 0,
-            register: 0,
-            mask: 0x0f,
-        },
-        SigParam {
-            semantic_name: "COLOR",
-            semantic_index: 0,
-            register: 1,
-            mask: 0x0f,
-        },
-    ]);
+    // Keep a non-empty ISG1 chunk so the v1 parsing path is exercised, but do not require any
+    // interpolant locations.
+    let isgn = build_signature_chunk_v1(&[SigParam {
+        semantic_name: "SV_Position",
+        semantic_index: 0,
+        register: 0,
+        mask: 0x0f,
+    }]);
     let osgn = build_signature_chunk_v1(&[SigParam {
         semantic_name: "SV_Target",
         semantic_index: 0,

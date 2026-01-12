@@ -148,30 +148,16 @@ fn build_signature_chunk(params: &[SigParam]) -> Vec<u8> {
 }
 
 fn build_ps_sample_t0_s0_dxbc(u: f32, v: f32) -> Vec<u8> {
-    // Hand-authored minimal DXBC container: ISGN(SV_Position + COLOR0) + OSGN(SV_Target0) +
+    // Hand-authored minimal DXBC container: ISGN(empty) + OSGN(SV_Target0) +
     // SHDR(token stream).
     //
     // Token stream is SM4-ish and only relies on `aero_d3d11`'s subset decoder:
     //   sample o0, l(u, v, 0, 0), t0, s0
     //   ret
     //
-    // We include a dummy COLOR0 input to satisfy WebGPU's stage-interface validation: our
-    // VS fixture writes `@location(1)` (COLOR0) and WebGPU requires that the fragment stage
-    // declares a matching input, even if unused.
-    let isgn = build_signature_chunk(&[
-        SigParam {
-            semantic_name: "SV_Position",
-            semantic_index: 0,
-            register: 0,
-            mask: 0x0f,
-        },
-        SigParam {
-            semantic_name: "COLOR",
-            semantic_index: 0,
-            register: 1,
-            mask: 0x0f,
-        },
-    ]);
+    // The shader samples with an immediate coordinate and does not consume any inputs, but we
+    // still include an ISGN chunk so the signature-driven translator is used.
+    let isgn = build_signature_chunk(&[]);
     let osgn = build_signature_chunk(&[SigParam {
         semantic_name: "SV_Target",
         semantic_index: 0,
@@ -222,23 +208,9 @@ fn build_ps_ld_t0_mip_dxbc(mip_level: u32) -> Vec<u8> {
     //   ld o0, l(0, 0, 0, 0), t0
     //   ret
     //
-    // We include a dummy COLOR0 input to satisfy WebGPU's stage-interface validation: our
-    // VS fixture writes `@location(1)` (COLOR0) and WebGPU requires that the fragment stage
-    // declares a matching input, even if unused.
-    let isgn = build_signature_chunk(&[
-        SigParam {
-            semantic_name: "SV_Position",
-            semantic_index: 0,
-            register: 0,
-            mask: 0x0f,
-        },
-        SigParam {
-            semantic_name: "COLOR",
-            semantic_index: 0,
-            register: 1,
-            mask: 0x0f,
-        },
-    ]);
+    // `ld` uses an immediate coordinate and does not consume any inputs, but we still include an
+    // ISGN chunk so the signature-driven translator is used.
+    let isgn = build_signature_chunk(&[]);
     let osgn = build_signature_chunk(&[SigParam {
         semantic_name: "SV_Target",
         semantic_index: 0,
@@ -289,20 +261,7 @@ fn build_ps_ld_t0_f32_coord_dxbc(x: f32, y: f32, mip: f32) -> Vec<u8> {
     // Unlike `build_ps_ld_t0_mip_dxbc`, which stores the mip as raw integer bits, this helper stores
     // coordinates/LOD as numeric float values. This exercises the `textureLoad` argument recovery
     // logic that prefers `i32(f32)` when the lane looks like an exact integer.
-    let isgn = build_signature_chunk(&[
-        SigParam {
-            semantic_name: "SV_Position",
-            semantic_index: 0,
-            register: 0,
-            mask: 0x0f,
-        },
-        SigParam {
-            semantic_name: "COLOR",
-            semantic_index: 0,
-            register: 1,
-            mask: 0x0f,
-        },
-    ]);
+    let isgn = build_signature_chunk(&[]);
     let osgn = build_signature_chunk(&[SigParam {
         semantic_name: "SV_Target",
         semantic_index: 0,
