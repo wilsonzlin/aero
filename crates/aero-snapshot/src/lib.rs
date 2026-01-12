@@ -34,6 +34,8 @@ use std::io::{Read, Seek, SeekFrom, Write};
 
 use crate::io::{ReadLeExt, WriteLeExt};
 
+const DUPLICATE_DEVICE_ENTRY: &str = "duplicate device entry (id/version/flags must be unique)";
+
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SaveOptions {
     pub ram: RamWriteOptions,
@@ -169,7 +171,7 @@ pub fn save_snapshot<W: Write + Seek, S: SnapshotSource>(
         if devices.windows(2).any(|w| {
             w[0].id.0 == w[1].id.0 && w[0].version == w[1].version && w[0].flags == w[1].flags
         }) {
-            return Err(SnapshotError::Corrupt("duplicate device entry"));
+            return Err(SnapshotError::Corrupt(DUPLICATE_DEVICE_ENTRY));
         }
         let count: u32 = devices
             .len()
@@ -479,7 +481,7 @@ fn restore_snapshot_impl<R: Read, T: SnapshotTarget>(
                         let device = DeviceState::decode(&mut section_reader, 64 * 1024 * 1024)?;
                         let key = (device.id.0, device.version, device.flags);
                         if !seen.insert(key) {
-                            return Err(SnapshotError::Corrupt("duplicate device entry"));
+                            return Err(SnapshotError::Corrupt(DUPLICATE_DEVICE_ENTRY));
                         }
                         devices.push(device);
                     }

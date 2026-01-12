@@ -294,7 +294,7 @@ fn save_snapshot_rejects_duplicate_device_entries() {
     let err = save_snapshot(&mut cursor, &mut source, options).unwrap_err();
     assert!(matches!(
         err,
-        SnapshotError::Corrupt("duplicate device entry")
+        SnapshotError::Corrupt("duplicate device entry (id/version/flags must be unique)")
     ));
 }
 
@@ -344,7 +344,7 @@ fn restore_snapshot_rejects_duplicate_device_entries() {
     let err = restore_snapshot(&mut Cursor::new(bytes), &mut target).unwrap_err();
     assert!(matches!(
         err,
-        SnapshotError::Corrupt("duplicate device entry")
+        SnapshotError::Corrupt("duplicate device entry (id/version/flags must be unique)")
     ));
 }
 
