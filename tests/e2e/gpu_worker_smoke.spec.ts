@@ -7,7 +7,7 @@ async function waitForReady(page: Page) {
 test("gpu worker smoke: renders pattern and returns screenshot hash", async ({ page, browserName }) => {
   test.skip(browserName !== "chromium", "OffscreenCanvas + WebGL2-in-worker coverage is Chromium-only for now.");
 
-  await page.goto("http://127.0.0.1:5173/web/gpu-worker-smoke.html", { waitUntil: "load" });
+  await page.goto("/web/gpu-worker-smoke.html", { waitUntil: "load" });
   await waitForReady(page);
 
   const result = await page.evaluate(async () => {
@@ -43,7 +43,7 @@ test("gpu worker smoke: renders pattern and returns screenshot hash", async ({ p
 test("gpu worker smoke: disableWebGpu forces WebGL2 fallback", async ({ page, browserName }) => {
   test.skip(browserName !== "chromium", "OffscreenCanvas + WebGL2-in-worker coverage is Chromium-only for now.");
 
-  await page.goto("http://127.0.0.1:5173/web/gpu-worker-smoke.html?disableWebGpu=1", { waitUntil: "load" });
+  await page.goto("/web/gpu-worker-smoke.html?disableWebGpu=1", { waitUntil: "load" });
   await waitForReady(page);
 
   const result = await page.evaluate(() => {

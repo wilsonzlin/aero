@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 
 test("IO worker switches keyboard input from i8042 scancodes to virtio-input after DRIVER_OK (no duplicates)", async ({ page }) => {
   test.setTimeout(60_000);
-  await page.goto("http://127.0.0.1:5173/", { waitUntil: "load" });
+  await page.goto("/", { waitUntil: "load" });
 
   const support = await page.evaluate(() => {
     const crossOriginIsolated = globalThis.crossOriginIsolated === true;

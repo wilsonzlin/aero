@@ -5,7 +5,7 @@ async function waitForReady(page: Page) {
 }
 
 test("aerogpu alloc_table backing: GPU worker uploads from shared guest RAM via RESOURCE_DIRTY_RANGE", async ({ page }) => {
-  await page.goto("http://127.0.0.1:5173/web/aerogpu-alloc-table-smoke.html", { waitUntil: "load" });
+  await page.goto("/web/aerogpu-alloc-table-smoke.html", { waitUntil: "load" });
 
   const support = await page.evaluate(() => {
     let wasmThreads = false;

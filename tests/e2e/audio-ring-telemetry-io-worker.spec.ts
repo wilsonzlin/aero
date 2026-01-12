@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 
 test("IO worker publishes AudioWorklet ring telemetry into StatusIndex.Audio*", async ({ page }) => {
   test.setTimeout(30_000);
-  await page.goto("http://127.0.0.1:5173/", { waitUntil: "load" });
+  await page.goto("/", { waitUntil: "load" });
 
   const support = await page.evaluate(() => {
     let wasm = false;

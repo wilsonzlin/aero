@@ -26,7 +26,7 @@ async function waitForReady(page: Page) {
   await page.waitForFunction(() => (window as any).__aeroTest?.ready === true);
 }
 
-test("vm boot: boots deterministic boot sector end-to-end (WASM VM + IO worker + GPU worker)", async ({ page, browserName }) => {
+test("vm boot: boots deterministic boot sector end-to-end (WASM VM + IO worker + GPU worker)", async ({ page, browserName }, testInfo) => {
   if (!HAS_THREADED_WASM_BUNDLE) {
     const message = [
       "Threaded WASM package missing (required for shared-memory worker runtime).",
@@ -48,7 +48,8 @@ test("vm boot: boots deterministic boot sector end-to-end (WASM VM + IO worker +
 
   const server: DiskImageServer = await startDiskImageServer({ data: BOOT_IMAGE_BYTES, enableCors: true });
   try {
-    const url = new URL("http://127.0.0.1:5173/web/vm-boot-vga-serial-smoke.html");
+    const baseUrl = testInfo.project.use.baseURL ?? "http://127.0.0.1:5173";
+    const url = new URL("/web/vm-boot-vga-serial-smoke.html", baseUrl);
     url.searchParams.set("diskUrl", server.url("/disk.img"));
     await page.goto(url.toString(), { waitUntil: "load" });
 

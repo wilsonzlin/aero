@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 
-const fixtureUrl = 'http://127.0.0.1:5173/tests/e2e/fixtures/input_capture.html';
+const fixtureUrl = '/tests/e2e/fixtures/input_capture.html';
 
 type ParsedEvent = {
   type: number;

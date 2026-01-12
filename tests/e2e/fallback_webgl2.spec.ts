@@ -38,7 +38,7 @@ function expectPattern(samples: SampleResult) {
 test('Chromium: WebGPU path renders expected pattern when available @webgpu', async ({ page, browserName }) => {
   test.skip(browserName !== 'chromium');
 
-  await page.goto('http://127.0.0.1:5173/', { waitUntil: 'load' });
+  await page.goto('/', { waitUntil: 'load' });
   const hasWebGpuAdapter = await page.evaluate(async () => {
     const gpu = (navigator as any).gpu as any;
     if (!gpu) return false;
@@ -56,7 +56,7 @@ test('Chromium: WebGPU path renders expected pattern when available @webgpu', as
     test.skip(true, 'WebGPU adapter unavailable in this Chromium environment');
   }
 
-  await page.goto('http://127.0.0.1:5173/web/gpu-smoke.html?backend=webgpu', { waitUntil: 'load' });
+  await page.goto('/web/gpu-smoke.html?backend=webgpu', { waitUntil: 'load' });
 
   await waitForReady(page);
   const initState = await page.evaluate(() => (window as any).__aeroTest);
@@ -73,7 +73,7 @@ test('Chromium: WebGPU path renders expected pattern when available @webgpu', as
 });
 
 test('WebGL2: forced backend renders expected pattern', async ({ page }) => {
-  await page.goto('http://127.0.0.1:5173/web/gpu-smoke.html?backend=webgl2', { waitUntil: 'load' });
+  await page.goto('/web/gpu-smoke.html?backend=webgl2', { waitUntil: 'load' });
   const samples = await getSamples(page);
   expect(samples.backend).toBe('webgl2');
   expectPattern(samples);
@@ -85,7 +85,7 @@ test('WebKit/Firefox: auto backend selection falls back to WebGL2 when WebGPU is
 }) => {
   test.skip(browserName === 'chromium');
 
-  await page.goto('http://127.0.0.1:5173/web/gpu-smoke.html?backend=auto', { waitUntil: 'load' });
+  await page.goto('/web/gpu-smoke.html?backend=auto', { waitUntil: 'load' });
   const samples = await getSamples(page);
   expect(samples.backend).toBe('webgl2');
   expectPattern(samples);

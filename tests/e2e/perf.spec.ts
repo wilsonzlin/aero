@@ -44,7 +44,7 @@ async function assertPerfExportAvailable(url: string, page: import('@playwright/
 }
 
 test('perf export works on dev server', async ({ page }) => {
-  await assertPerfExportAvailable('http://127.0.0.1:5173/', page);
+  await assertPerfExportAvailable('/', page);
 });
 
 test('perf export works on preview server', async ({ page }) => {

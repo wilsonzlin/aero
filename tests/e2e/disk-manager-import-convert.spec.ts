@@ -4,7 +4,7 @@ test.describe("disk manager: importDiskConverted()", () => {
   test.skip(({ browserName }) => browserName !== "chromium", "requires Chromium OPFS sync access handles");
 
   test.beforeEach(async ({ page }, testInfo) => {
-    await page.goto("http://127.0.0.1:5173/", { waitUntil: "load" });
+    await page.goto("/", { waitUntil: "load" });
 
     const supported = await page.evaluate(async () => {
       if (!navigator.storage?.getDirectory) return false;

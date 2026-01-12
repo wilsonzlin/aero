@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-const fixtureUrl = "http://127.0.0.1:5173/tests/e2e/fixtures/input_capture_io_worker.html";
+const fixtureUrl = "/tests/e2e/fixtures/input_capture_io_worker.html";
 
 test("IO worker receives batched input events", async ({ page }) => {
   await page.goto(fixtureUrl);
@@ -36,4 +36,3 @@ test("IO worker receives batched input events", async ({ page }) => {
   expect(batchCount).toBeGreaterThan(0);
   expect(eventCount).toBeGreaterThan(0);
 });
-

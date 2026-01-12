@@ -43,7 +43,7 @@ function expectPattern(samples: SampleResult) {
 test('GPU worker: WebGPU path renders expected pattern when available @webgpu', async ({ page, browserName }) => {
   test.skip(browserName !== 'chromium');
 
-  await page.goto('http://127.0.0.1:5173/', { waitUntil: 'load' });
+  await page.goto('/', { waitUntil: 'load' });
   const hasWebGpuAdapter = await page.evaluate(async () => {
     const gpu = (navigator as any).gpu as any;
     if (!gpu) return false;
@@ -63,7 +63,7 @@ test('GPU worker: WebGPU path renders expected pattern when available @webgpu', 
 
   // Force the smoke page to request the WebGPU backend. The default page
   // behavior prefers WebGL2 to keep non-WebGPU CI runs deterministic.
-  await page.goto('http://127.0.0.1:5173/web/gpu-worker-smoke.html?backend=webgpu', { waitUntil: 'load' });
+  await page.goto('/web/gpu-worker-smoke.html?backend=webgpu', { waitUntil: 'load' });
   const samples = await getSamples(page);
 
   const statusText = await page.evaluate(() => document.getElementById('status')?.textContent ?? '');

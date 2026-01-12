@@ -88,10 +88,14 @@ function resolveFreePort(opts: {
   return port;
 }
 
-const DEV_PORT = 5173;
-// Some runner environments already have common Vite ports bound (e.g. 4173). Probe for an
+// Some runner environments already have common Vite ports bound (e.g. 5173/4173). Probe for an
 // available port so Playwright can still boot its web servers, and export the resolved origins
 // for tests that need to hardcode them (e.g. COOP/COEP/CSP coverage).
+const DEV_PORT = resolveFreePort({
+  portEnv: 'AERO_PLAYWRIGHT_DEV_PORT',
+  originEnv: 'AERO_PLAYWRIGHT_DEV_ORIGIN',
+  start: 5173,
+});
 const PREVIEW_PORT = resolveFreePort({
   portEnv: 'AERO_PLAYWRIGHT_PREVIEW_PORT',
   originEnv: 'AERO_PLAYWRIGHT_PREVIEW_ORIGIN',
@@ -102,9 +106,10 @@ const CSP_POC_PORT = resolveFreePort({
   originEnv: 'AERO_PLAYWRIGHT_CSP_ORIGIN',
   start: 4180,
 });
-const DEV_ORIGIN = `http://127.0.0.1:${DEV_PORT}`;
+const DEV_ORIGIN = process.env.AERO_PLAYWRIGHT_DEV_ORIGIN ?? `http://127.0.0.1:${DEV_PORT}`;
 const PREVIEW_ORIGIN = process.env.AERO_PLAYWRIGHT_PREVIEW_ORIGIN ?? `http://127.0.0.1:${PREVIEW_PORT}`;
 const CSP_POC_ORIGIN = process.env.AERO_PLAYWRIGHT_CSP_ORIGIN ?? `http://127.0.0.1:${CSP_POC_PORT}`;
+process.env.AERO_PLAYWRIGHT_DEV_ORIGIN = DEV_ORIGIN;
 process.env.AERO_PLAYWRIGHT_PREVIEW_ORIGIN = PREVIEW_ORIGIN;
 process.env.AERO_PLAYWRIGHT_CSP_ORIGIN = CSP_POC_ORIGIN;
 const EXPOSE_GC = process.env.AERO_PLAYWRIGHT_EXPOSE_GC === '1';

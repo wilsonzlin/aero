@@ -17,7 +17,7 @@ test.describe("runtime disk worker (HTTP Range)", () => {
   });
 
   test("can open and read bytes via RuntimeDiskClient", async ({ page }) => {
-    await page.goto("http://127.0.0.1:5173/", { waitUntil: "load" });
+    await page.goto("/", { waitUntil: "load" });
 
     const result = await page.evaluate(
       async ({ url }) => {

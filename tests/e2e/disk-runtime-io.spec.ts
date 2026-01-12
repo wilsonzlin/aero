@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 
 test.describe("runtime disk IO worker", () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto("http://127.0.0.1:5173/", { waitUntil: "load" });
+    await page.goto("/", { waitUntil: "load" });
     await page.evaluate(async () => {
       const { DiskManager } = await import("/web/src/storage/disk_manager.ts");
       await DiskManager.clearAllStorage();

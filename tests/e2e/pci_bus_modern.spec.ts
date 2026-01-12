@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 test("PCI bus: multifunction + mmio64 BAR + capability list", async ({ page }) => {
-  await page.goto("http://127.0.0.1:5173/", { waitUntil: "load" });
+  await page.goto("/", { waitUntil: "load" });
 
   const result = await page.evaluate(async () => {
     if (!globalThis.crossOriginIsolated || typeof SharedArrayBuffer === "undefined") {

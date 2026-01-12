@@ -349,7 +349,7 @@ test.describe.serial('udp relay (webrtc)', () => {
     const apiKey = 'secret';
     const relay = await startRelay({ authMode: 'api_key', apiKey });
     try {
-      await page.goto('http://127.0.0.1:5173/', { waitUntil: 'load' });
+      await page.goto('/', { waitUntil: 'load' });
       expectEcho(await runRoundTrip(page, relay.origin, echo.port, apiKey), '127.0.0.1', echo.port);
       expectEcho(await runRoundTrip(page, relay.origin, echo.port, apiKey, '127.0.0.1', 'http-offer'), '127.0.0.1', echo.port);
       expectEcho(await runRoundTripWebSocket(page, relay.origin, echo.port, apiKey), '127.0.0.1', echo.port);
@@ -363,7 +363,7 @@ test.describe.serial('udp relay (webrtc)', () => {
     const token = makeJWT(jwtSecret);
     const relay = await startRelay({ authMode: 'jwt', jwtSecret, token });
     try {
-      await page.goto('http://127.0.0.1:5173/', { waitUntil: 'load' });
+      await page.goto('/', { waitUntil: 'load' });
       expectEcho(await runRoundTrip(page, relay.origin, echo.port, token), '127.0.0.1', echo.port);
       expectEcho(await runRoundTrip(page, relay.origin, echo.port, token, '127.0.0.1', 'http-offer'), '127.0.0.1', echo.port);
       expectEcho(await runRoundTripWebSocket(page, relay.origin, echo.port, token), '127.0.0.1', echo.port);
@@ -374,7 +374,7 @@ test.describe.serial('udp relay (webrtc)', () => {
 
   test('connectUdpRelay establishes DataChannel and relays UDP', async ({ page }) => {
     const relay = await startRelay({ authMode: 'none' });
-    await page.goto('http://127.0.0.1:5173/', { waitUntil: 'load' });
+    await page.goto('/', { waitUntil: 'load' });
 
     try {
       expectEcho(await runRoundTrip(page, relay.origin, echo.port), '127.0.0.1', echo.port);
@@ -395,7 +395,7 @@ test.describe.serial('udp relay (webrtc)', () => {
 
     const relay = await startRelay({ authMode: 'none' });
     try {
-      await page.goto('http://127.0.0.1:5173/', { waitUntil: 'load' });
+      await page.goto('/', { waitUntil: 'load' });
       const expectedIp = '0000:0000:0000:0000:0000:0000:0000:0001';
       expectEcho(await runRoundTrip(page, relay.origin, echo6.port, undefined, '::1'), expectedIp, echo6.port);
       expectEcho(await runRoundTrip(page, relay.origin, echo6.port, undefined, '::1', 'legacy-offer'), expectedIp, echo6.port);

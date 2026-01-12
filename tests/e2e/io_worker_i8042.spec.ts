@@ -3,7 +3,7 @@ import { expect, test } from "@playwright/test";
 import { PCI_MMIO_BASE } from "../../web/src/arch/guest_phys";
 
 test("CPU↔IO AIPC: i8042 port I/O roundtrip in browser workers", async ({ page }) => {
-  await page.goto("http://127.0.0.1:5173/", { waitUntil: "load" });
+  await page.goto("/", { waitUntil: "load" });
 
   const result = await page.evaluate(async () => {
     if (!globalThis.crossOriginIsolated || typeof SharedArrayBuffer === "undefined") {
@@ -94,7 +94,7 @@ test("CPU↔IO AIPC: i8042 port I/O roundtrip in browser workers", async ({ page
 });
 
 test("CPU↔IO AIPC: PCI config + BAR-backed MMIO dispatch in browser workers", async ({ page }) => {
-  await page.goto("http://127.0.0.1:5173/", { waitUntil: "load" });
+  await page.goto("/", { waitUntil: "load" });
 
   const result = await page.evaluate(async () => {
     if (!globalThis.crossOriginIsolated || typeof SharedArrayBuffer === "undefined") {

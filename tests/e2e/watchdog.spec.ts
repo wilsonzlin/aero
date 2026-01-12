@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 
 test('VM watchdog trips on a non-yielding CPU worker without freezing the page', async ({ page }) => {
-  await page.goto('http://127.0.0.1:5173/', { waitUntil: 'load' });
+  await page.goto('/', { waitUntil: 'load' });
   await page.waitForSelector('#vm-safety-panel');
 
   const beforeTicks = await page.evaluate(() => window.__aeroUiTicks ?? 0);
@@ -33,7 +33,7 @@ test('VM watchdog trips on a non-yielding CPU worker without freezing the page',
 });
 
 test('VM reports resource limit errors and can reset without reload', async ({ page }) => {
-  await page.goto('http://127.0.0.1:5173/', { waitUntil: 'load' });
+  await page.goto('/', { waitUntil: 'load' });
   await page.waitForSelector('#vm-safety-panel');
 
   await page.fill('#vm-guest-mib', '64');
@@ -53,7 +53,7 @@ test('VM reports resource limit errors and can reset without reload', async ({ p
 });
 
 test('VM enforces cache limits without killing the VM', async ({ page }) => {
-  await page.goto('http://127.0.0.1:5173/', { waitUntil: 'load' });
+  await page.goto('/', { waitUntil: 'load' });
   await page.waitForSelector('#vm-safety-panel');
 
   await page.fill('#vm-max-disk-cache-mib', '1');
@@ -72,7 +72,7 @@ test('VM enforces cache limits without killing the VM', async ({ page }) => {
 });
 
 test('VM auto-saves a crash snapshot when enabled', async ({ page }) => {
-  await page.goto('http://127.0.0.1:5173/', { waitUntil: 'load' });
+  await page.goto('/', { waitUntil: 'load' });
   await page.waitForSelector('#vm-safety-panel');
 
   await page.check('#vm-auto-snapshot');

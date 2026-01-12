@@ -7,7 +7,7 @@ async function waitForReady(page: Page) {
 test("shared framebuffer: cursor overlay blends in presenter worker", async ({ page, browserName }) => {
   test.skip(browserName !== "chromium", "OffscreenCanvas + WebGL2-in-worker coverage is Chromium-only for now.");
 
-  await page.goto("http://127.0.0.1:5173/web/shared-framebuffer-cursor-overlay.html", { waitUntil: "load" });
+  await page.goto("/web/shared-framebuffer-cursor-overlay.html", { waitUntil: "load" });
   await waitForReady(page);
 
   const result = await page.evaluate(() => {
@@ -25,4 +25,3 @@ test("shared framebuffer: cursor overlay blends in presenter worker", async ({ p
   expect((result as any).pass).toBe(true);
   expect((result as any).sample).toEqual([128, 0, 127, 255]);
 });
-

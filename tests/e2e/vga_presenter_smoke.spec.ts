@@ -5,7 +5,7 @@ async function waitForReady(page: Page) {
 }
 
 test("vga presenter smoke: Canvas2D blit shows correct quadrants", async ({ page }) => {
-  await page.goto("http://127.0.0.1:5173/web/vga-presenter-smoke.html", { waitUntil: "load" });
+  await page.goto("/web/vga-presenter-smoke.html", { waitUntil: "load" });
   await waitForReady(page);
 
   const result = await page.evaluate(async () => {
@@ -26,4 +26,3 @@ test("vga presenter smoke: Canvas2D blit shows correct quadrants", async ({ page
   expect(result.samples.bottomLeft).toEqual([0, 0, 255, 255]);
   expect(result.samples.bottomRight).toEqual([255, 255, 255, 255]);
 });
-

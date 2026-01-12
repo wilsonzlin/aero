@@ -41,7 +41,7 @@ async function assertCrossOriginIsolated(page: Page) {
 }
 
 test('dev server is cross-origin isolated (COOP/COEP)', async ({ page }) => {
-  const resp = await page.goto('http://127.0.0.1:5173/', { waitUntil: 'load' });
+  const resp = await page.goto('/', { waitUntil: 'load' });
   expect(resp).toBeTruthy();
   assertResponseHeadersContain(resp!.headers(), crossOriginIsolationHeaders);
   assertResponseHeadersContain(resp!.headers(), baselineSecurityHeaders);

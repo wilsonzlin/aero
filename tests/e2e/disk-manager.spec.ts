@@ -3,7 +3,7 @@ import { expect, test } from '@playwright/test';
 test.describe('web disk image manager', () => {
   test.beforeEach(async ({ page }) => {
     // Use the Vite dev server so we can import source modules under /web/.
-    await page.goto('http://127.0.0.1:5173/', { waitUntil: 'load' });
+    await page.goto('/', { waitUntil: 'load' });
     await page.evaluate(async (diskManagerSpec: string) => {
       const { DiskManager } = await import(diskManagerSpec);
       await DiskManager.clearAllStorage();

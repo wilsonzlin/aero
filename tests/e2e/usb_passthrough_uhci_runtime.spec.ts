@@ -1,8 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { fileURLToPath } from "node:url";
 
-const BASE_URL = "http://127.0.0.1:5173";
-
 const THREADED_WASM_BINARY_RELEASE = fileURLToPath(
   new URL("../../web/src/wasm/pkg-threaded/aero_wasm_bg.wasm", import.meta.url),
 );
@@ -15,11 +13,12 @@ const THREADED_WASM_JS_DEV = fileURLToPath(
 );
 
 async function hasThreadedWasmBundle(page: import("@playwright/test").Page): Promise<boolean> {
+  const baseUrl = new URL(page.url()).origin;
   // `wasm_loader.ts` fetches these paths when instantiating the threaded build.
   const check = async (wasmPath: string, jsPath: string): Promise<boolean> => {
-    const wasm = await page.request.get(`${BASE_URL}${wasmPath}`);
+    const wasm = await page.request.get(new URL(wasmPath, baseUrl).toString());
     if (!wasm.ok()) return false;
-    const js = await page.request.get(`${BASE_URL}${jsPath}`);
+    const js = await page.request.get(new URL(jsPath, baseUrl).toString());
     return js.ok();
   };
 
@@ -32,7 +31,7 @@ async function hasThreadedWasmBundle(page: import("@playwright/test").Page): Pro
 test("runtime UHCI: WebHID + WebUSB passthrough are guest-visible (NAK while pending)", async ({ page }) => {
   test.setTimeout(45_000);
 
-  await page.goto(`${BASE_URL}/`, { waitUntil: "load" });
+  await page.goto(`/`, { waitUntil: "load" });
 
   const hasBundle = await hasThreadedWasmBundle(page);
   if (!hasBundle) {

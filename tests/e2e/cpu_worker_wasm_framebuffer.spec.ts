@@ -37,7 +37,7 @@ test("cpu worker wasm demo: publishes shared framebuffer frames from WASM", asyn
     }
     test.skip(true, message);
   }
-  await page.goto("http://127.0.0.1:5173/web/cpu-worker-wasm-framebuffer-smoke.html", { waitUntil: "load" });
+  await page.goto("/web/cpu-worker-wasm-framebuffer-smoke.html", { waitUntil: "load" });
 
   const support = await page.evaluate(() => {
     let wasmThreads = false;

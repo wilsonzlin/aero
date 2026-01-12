@@ -206,9 +206,9 @@ test.describe.serial('l2 tunnel (session auth)', () => {
   // This spec may need to compile `aero-l2-proxy` on first run. Give it ample time so CI isn't flaky on cold caches.
   test.describe.configure({ timeout: 600_000 });
 
-  test('session-authenticated WebSocket /l2 negotiates subprotocol and relays frames', async ({ page }) => {
+  test('session-authenticated WebSocket /l2 negotiates subprotocol and relays frames', async ({ page }, testInfo) => {
     const sessionSecret = 'aero-e2e-session-secret';
-    const webOrigin = 'http://127.0.0.1:5173';
+    const webOrigin = testInfo.project.use.baseURL ?? 'http://127.0.0.1:5173';
 
     const udpEcho = await startUdpEchoServer();
     const gatewayPort = await getFreeTcpPort();
@@ -226,7 +226,7 @@ test.describe.serial('l2 tunnel (session auth)', () => {
         udpEchoPort: udpEcho.port,
       });
 
-      await page.goto('http://127.0.0.1:5173/tests/e2e/fixtures/l2_tunnel.html', { waitUntil: 'load' });
+      await page.goto('/tests/e2e/fixtures/l2_tunnel.html', { waitUntil: 'load' });
 
       const result = await page.evaluate(
         async ({ gatewayOrigin, l2ProxyOrigin, udpEchoPort }) => {

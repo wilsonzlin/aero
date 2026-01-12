@@ -2,8 +2,7 @@ import { expect, test } from '@playwright/test';
 
 import { isWebGPURequired } from '../util/env';
 
-const DEV_SERVER = 'http://127.0.0.1:5173';
-const GPU_SMOKE_URL = `${DEV_SERVER}/web/src/pages/gpu_smoke.html`;
+const GPU_SMOKE_URL = `/web/src/pages/gpu_smoke.html`;
 
 const EXPECTED_TEST_PATTERN_SHA256 =
   'a42e8433ee338fcf505b803b5a52a663478c7009ef85c7652206b4a06d3b76a8';

@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-const fixtureUrl = "http://127.0.0.1:5173/tests/e2e/fixtures/usb_hid_bridge.html";
+const fixtureUrl = "/tests/e2e/fixtures/usb_hid_bridge.html";
 
 test("InputCapture → HID usage → UsbHidBridge produces keyboard + mouse reports", async ({ page }) => {
   await page.goto(fixtureUrl);
