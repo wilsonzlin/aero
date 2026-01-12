@@ -10,6 +10,21 @@ let guestBase = 0;
 let guestSize = 0;
 
 let jitWasmApiPromise: Promise<JitWasmApi> | null = null;
+let canPostWasmModule: boolean | null = null;
+
+function isDataCloneError(err: unknown): boolean {
+  const domException = (globalThis as unknown as { DOMException?: unknown }).DOMException;
+  if (typeof domException === 'function') {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    if (err instanceof (domException as any) && (err as { name?: unknown }).name === 'DataCloneError') return true;
+  }
+  if (err && typeof err === 'object') {
+    const name = (err as { name?: unknown }).name;
+    if (name === 'DataCloneError') return true;
+  }
+  const message = err instanceof Error ? err.message : String(err);
+  return /DataCloneError|could not be cloned/i.test(message);
+}
 
 function postMessageToCpu(msg: JitToCpuMessage, transfer?: Transferable[]) {
   ctx.postMessage(msg, transfer ?? []);
@@ -163,7 +178,6 @@ async function handleCompileRequest(req: CompileBlockRequest & { type: 'CompileB
   }
 
   try {
-    const module = await WebAssembly.compile(wasmBytes);
     const base = {
       type: 'CompileBlockResponse' as const,
       id: req.id,
@@ -171,11 +185,21 @@ async function handleCompileRequest(req: CompileBlockRequest & { type: 'CompileB
       meta: { wasm_byte_len: wasmBytes.byteLength, code_byte_len: compilation.code_byte_len },
     };
 
+    if (canPostWasmModule === false) {
+      postMessageToCpu({ ...base, wasm_bytes: wasmBytes }, [wasmBytes.buffer]);
+      return;
+    }
+
+    const module = await WebAssembly.compile(wasmBytes);
+
     // Prefer returning a compiled `WebAssembly.Module` (avoids compiling again in the CPU worker),
     // but fall back to raw bytes when structured cloning the module isn't supported.
     try {
       postMessageToCpu({ ...base, wasm_module: module });
-    } catch {
+      canPostWasmModule = true;
+    } catch (err) {
+      // If WebAssembly.Module cannot be structured-cloned, avoid compiling modules next time.
+      if (canPostWasmModule === null && isDataCloneError(err)) canPostWasmModule = false;
       postMessageToCpu({ ...base, wasm_bytes: wasmBytes }, [wasmBytes.buffer]);
     }
   } catch (err) {
@@ -195,6 +219,8 @@ ctx.addEventListener('message', (ev: MessageEvent<CpuToJitMessage>) => {
       sharedMemory = msg.memory;
       guestBase = msg.guest_base;
       guestSize = msg.guest_size;
+      // Warm up the compiler module in the background so the first hot block compile has lower latency.
+      void loadJitWasmApi().catch(() => {});
       break;
     case 'CompileBlockRequest':
       void handleCompileRequest(msg);
