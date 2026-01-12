@@ -1200,9 +1200,8 @@ impl AerogpuD3d9Executor {
         guest_memory: &mut dyn GuestMemory,
         alloc_table: Option<&AllocTable>,
     ) -> Result<(), AerogpuD3d9Error> {
-        self.switch_context(context_id);
-
         let stream = parse_cmd_stream(bytes)?;
+        self.switch_context(context_id);
         let mut pending_writebacks = Vec::new();
         let mut ctx = SubmissionCtx {
             guest_memory: Some(guest_memory),
@@ -1255,12 +1254,13 @@ impl AerogpuD3d9Executor {
         bytes: &[u8],
         mut ctx: SubmissionCtx<'_>,
     ) -> Result<(), AerogpuD3d9Error> {
+        let stream = parse_cmd_stream(bytes)?;
+
         // Avoid partially executing streams on wasm when `WRITEBACK_DST` is present. The writeback
         // requires `wgpu::Buffer::map_async` completion, which is delivered via the JS event loop
         // and cannot be waited on synchronously.
         #[cfg(target_arch = "wasm32")]
-        let stream = {
-            let stream = parse_cmd_stream(bytes)?;
+        {
             let has_writeback = stream.cmds.iter().any(|cmd| match cmd {
                 AeroGpuCmd::CopyBuffer { flags, .. } | AeroGpuCmd::CopyTexture2d { flags, .. } => {
                     (flags & AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0
@@ -1273,15 +1273,9 @@ impl AerogpuD3d9Executor {
                         .into(),
                 ));
             }
-            self.switch_context(context_id);
-            stream
-        };
+        }
 
-        #[cfg(not(target_arch = "wasm32"))]
-        let stream = {
-            self.switch_context(context_id);
-            parse_cmd_stream(bytes)?
-        };
+        self.switch_context(context_id);
         let mut pending_writebacks = Vec::new();
         for cmd in stream.cmds {
             if let Err(err) = self.execute_cmd(cmd, &mut ctx, &mut pending_writebacks) {
