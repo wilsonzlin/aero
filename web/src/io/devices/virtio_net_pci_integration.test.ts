@@ -238,6 +238,8 @@ describe("io/devices/virtio-net (pci bridge integration)", () => {
       const bar0LowInitial = cfgReadU32(pciAddr, 0x10);
       const bar0HighInitial = cfgReadU32(pciAddr, 0x14);
       // Bits 2:1 = 0b10 indicates a 64-bit memory BAR.
+      expect(bar0LowInitial & 0x0f).toBe(0x04);
+      expect(bar0HighInitial).toBe(0);
       expect(bar0LowInitial & 0x6).toBe(0x4);
       const oldBar0Base = (BigInt(bar0HighInitial) << 32n) | BigInt(bar0LowInitial & 0xffff_fff0);
 
@@ -270,6 +272,10 @@ describe("io/devices/virtio-net (pci bridge integration)", () => {
       expect(caps.isrLen).toBe(0x0020);
       expect(caps.deviceOff).toBe(0x3000);
       expect(caps.deviceLen).toBe(0x0100);
+
+      // BAR decoding must be gated on the PCI command register MEM enable bit.
+      // Before enabling it, reads should see the unmapped default (all-ones).
+      expect(mgr.mmioRead(oldBar0Base + BigInt(caps.commonOff!), 4) >>> 0).toBe(0xffff_ffff);
 
       // BAR sizing probe (guest writes all-ones then reads back size mask).
       // For BAR0 size=0x4000, mask is 0xFFFF_FFFF_FFFF_C000 (low dword includes type bits 0x4).
