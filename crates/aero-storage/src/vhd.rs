@@ -194,7 +194,13 @@ impl<B: StorageBackend> VhdDisk<B> {
                     backend.read_at(0, &mut raw_footer_copy)?;
                     if raw_footer_copy[..8] == VHD_FOOTER_COOKIE {
                         if let Ok(copy) = VhdFooter::parse(raw_footer_copy) {
-                            if copy.raw == footer.raw && copy.disk_type == VHD_DISK_TYPE_FIXED {
+                            // Some tools populate the optional footer copy at offset 0 but do not
+                            // keep all fields perfectly in sync with the EOF footer (e.g. differing
+                            // timestamps or UUIDs). Treat any valid fixed-disk footer copy with a
+                            // matching virtual size as indicating the payload begins at offset 512.
+                            if copy.disk_type == VHD_DISK_TYPE_FIXED
+                                && copy.current_size == footer.current_size
+                            {
                                 fixed_data_offset = SECTOR_SIZE as u64;
                             }
                         }

@@ -384,6 +384,28 @@ fn make_vhd_fixed_with_footer_copy() -> MemBackend {
     backend
 }
 
+fn make_vhd_fixed_with_footer_copy_non_identical() -> MemBackend {
+    let virtual_size = 64 * 1024u64;
+    let mut data = vec![0u8; virtual_size as usize];
+    data[0..10].copy_from_slice(b"hello vhd!");
+
+    let footer = make_vhd_footer(virtual_size, 2, u64::MAX);
+    let mut footer_copy = footer;
+    // Mutate a non-structural field (timestamp) so the footer copy differs from the EOF footer
+    // while remaining a valid footer with a correct checksum.
+    write_be_u32(&mut footer_copy, 24, 1234);
+    let checksum = vhd_footer_checksum(&footer_copy);
+    write_be_u32(&mut footer_copy, 64, checksum);
+
+    let mut backend = MemBackend::default();
+    backend.write_at(0, &footer_copy).unwrap(); // footer copy
+    backend.write_at(SECTOR_SIZE as u64, &data).unwrap();
+    backend
+        .write_at(SECTOR_SIZE as u64 + virtual_size, &footer)
+        .unwrap();
+    backend
+}
+
 fn make_vhd_dynamic_empty(virtual_size: u64, block_size: u32) -> MemBackend {
     assert_eq!(virtual_size % SECTOR_SIZE as u64, 0);
     assert_eq!(block_size as usize % SECTOR_SIZE, 0);
@@ -1221,6 +1243,27 @@ fn vhd_fixed_fixture_read() {
 #[test]
 fn vhd_fixed_footer_copy_is_supported() {
     let backend = make_vhd_fixed_with_footer_copy();
+    let mut disk = VhdDisk::open(backend).unwrap();
+
+    let mut sector = [0u8; SECTOR_SIZE];
+    disk.read_sectors(0, &mut sector).unwrap();
+    assert_eq!(&sector[..10], b"hello vhd!");
+
+    // Writes should also be offset correctly and persist.
+    let data = vec![0xCCu8; SECTOR_SIZE];
+    disk.write_sectors(1, &data).unwrap();
+    disk.flush().unwrap();
+
+    let backend = disk.into_backend();
+    let mut reopened = VhdDisk::open(backend).unwrap();
+    let mut back = vec![0u8; SECTOR_SIZE];
+    reopened.read_sectors(1, &mut back).unwrap();
+    assert_eq!(back, data);
+}
+
+#[test]
+fn vhd_fixed_footer_copy_non_identical_is_supported() {
+    let backend = make_vhd_fixed_with_footer_copy_non_identical();
     let mut disk = VhdDisk::open(backend).unwrap();
 
     let mut sector = [0u8; SECTOR_SIZE];
