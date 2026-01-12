@@ -1109,8 +1109,8 @@ fn aerogpu_cmd_rebinds_allocation_backed_texture_between_draws_uploads_second_te
 
         // Allocation-backed textures start `dirty=true` on the host and are uploaded lazily on
         // first use. This test binds TEX_RED before the first draw (so it gets uploaded), then
-        // binds TEX_GREEN between draws. The second bind should force the executor to end the
-        // current render pass so TEX_GREEN can be uploaded before the second draw.
+        // binds TEX_GREEN between draws. Since TEX_GREEN was not used by any prior draw in the
+        // pass, the executor should upload it without restarting the render pass.
         let alloc_id = 1u32;
         let alloc_gpa = 0x100u64;
         let allocs = [AerogpuAllocEntry {
@@ -1323,6 +1323,11 @@ fn aerogpu_cmd_rebinds_allocation_backed_texture_between_draws_uploads_second_te
         exec.execute_cmd_stream(&stream, Some(&allocs), &mut guest_mem)
             .expect("execute_cmd_stream should succeed");
         exec.poll_wait();
+
+        let stats = exec.cache_stats();
+        assert_eq!(stats.bind_group_layouts.misses, 2);
+        assert_eq!(stats.bind_group_layouts.hits, 0);
+        assert_eq!(stats.bind_group_layouts.entries, 2);
 
         let pixels = exec.read_texture_rgba8(RT).await.unwrap();
         assert_eq!(pixels.len(), 2 * 4);

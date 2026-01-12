@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -1617,6 +1617,10 @@ impl AerogpuD3d11Executor {
         // `SET_SHADER_CONSTANTS_F` via `queue.write_buffer` without reordering it ahead of the
         // earlier draw commands.
         let mut legacy_constants_used = [false; 3];
+        let mut used_textures_in_pass: HashSet<u32> = render_targets.iter().copied().collect();
+        if let Some(handle) = depth_stencil {
+            used_textures_in_pass.insert(handle);
+        }
 
         loop {
             let Some(next) = stream.iter.peek() else {
@@ -2249,7 +2253,10 @@ impl AerogpuD3d11Executor {
                             .map_err(|_| anyhow!("SET_TEXTURE: slot out of range"))?;
                         if slot_usize < used_slots.len() && used_slots[slot_usize] {
                             if let Some(tex) = self.resources.textures.get(&texture) {
-                                if tex.dirty && tex.backing.is_some() {
+                                if tex.dirty
+                                    && tex.backing.is_some()
+                                    && used_textures_in_pass.contains(&texture)
+                                {
                                     break;
                                 }
                             }
@@ -2477,6 +2484,20 @@ impl AerogpuD3d11Executor {
                             legacy_constants_used
                                 [ShaderStage::Pixel.as_bind_group_index() as usize] = true;
                         }
+
+                        for (group_index, group_bindings) in
+                            pipeline_bindings.group_bindings.iter().enumerate()
+                        {
+                            let stage = group_index_to_stage(group_index as u32)?;
+                            let stage_bindings = self.bindings.stage(stage);
+                            for binding in group_bindings {
+                                if let crate::BindingKind::Texture2D { slot } = &binding.kind {
+                                    if let Some(tex) = stage_bindings.texture(*slot) {
+                                        used_textures_in_pass.insert(tex.texture);
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
                 OPCODE_DRAW_INDEXED => {
@@ -2557,6 +2578,20 @@ impl AerogpuD3d11Executor {
                         {
                             legacy_constants_used
                                 [ShaderStage::Pixel.as_bind_group_index() as usize] = true;
+                        }
+
+                        for (group_index, group_bindings) in
+                            pipeline_bindings.group_bindings.iter().enumerate()
+                        {
+                            let stage = group_index_to_stage(group_index as u32)?;
+                            let stage_bindings = self.bindings.stage(stage);
+                            for binding in group_bindings {
+                                if let crate::BindingKind::Texture2D { slot } = &binding.kind {
+                                    if let Some(tex) = stage_bindings.texture(*slot) {
+                                        used_textures_in_pass.insert(tex.texture);
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -2780,7 +2815,39 @@ impl AerogpuD3d11Executor {
                     }
                 }
                 OPCODE_SET_PRIMITIVE_TOPOLOGY => self.exec_set_primitive_topology(cmd_bytes)?,
-                OPCODE_SET_TEXTURE => self.exec_set_texture(cmd_bytes)?,
+                OPCODE_SET_TEXTURE => {
+                    // Allow first-use uploads of allocation-backed textures inside a render pass by
+                    // reordering the upload ahead of the pass submission. This is only safe when
+                    // the texture has not been used by any previously recorded draw in this pass.
+                    if cmd_bytes.len() >= 20 {
+                        let stage_raw = read_u32_le(cmd_bytes, 8)?;
+                        let slot = read_u32_le(cmd_bytes, 12)?;
+                        let texture = read_u32_le(cmd_bytes, 16)?;
+                        if texture != 0 {
+                            let Some(stage) = ShaderStage::from_aerogpu_u32(stage_raw) else {
+                                bail!("SET_TEXTURE: unknown shader stage {stage_raw}");
+                            };
+                            let used_slots = match stage {
+                                ShaderStage::Vertex => &used_textures_vs,
+                                ShaderStage::Pixel => &used_textures_ps,
+                                ShaderStage::Compute => &used_textures_cs,
+                            };
+                            let slot_usize: usize = slot
+                                .try_into()
+                                .map_err(|_| anyhow!("SET_TEXTURE: slot out of range"))?;
+                            if slot_usize < used_slots.len() && used_slots[slot_usize] {
+                                let needs_upload =
+                                    self.resources.textures.get(&texture).is_some_and(|tex| {
+                                        tex.dirty && tex.backing.is_some()
+                                    });
+                                if needs_upload && !used_textures_in_pass.contains(&texture) {
+                                    self.upload_texture_from_guest_memory(texture, allocs, guest_mem)?;
+                                }
+                            }
+                        }
+                    }
+                    self.exec_set_texture(cmd_bytes)?;
+                }
                 OPCODE_SET_SAMPLER_STATE => self.exec_set_sampler_state(cmd_bytes)?,
                 OPCODE_SET_RENDER_STATE => {}
                 OPCODE_CREATE_SAMPLER => self.exec_create_sampler(cmd_bytes)?,
@@ -4881,9 +4948,8 @@ impl AerogpuD3d11Executor {
         Ok(())
     }
 
-    fn ensure_texture_uploaded(
+    fn upload_texture_from_guest_memory(
         &mut self,
-        encoder: &mut wgpu::CommandEncoder,
         texture_handle: u32,
         allocs: &AllocTable,
         guest_mem: &mut dyn GuestMemory,
@@ -4950,12 +5016,7 @@ impl AerogpuD3d11Executor {
             .checked_add(backing.offset_bytes)
             .ok_or_else(|| anyhow!("texture upload GPA overflow"))?;
 
-        // Preserve command stream ordering relative to any previously encoded GPU work.
-        self.submit_encoder_if_has_commands(
-            encoder,
-            "aerogpu_cmd encoder after implicit texture upload",
-        );
-
+        let queue = &self.queue;
         let Some(tex) = self.resources.textures.get_mut(&texture_handle) else {
             return Ok(());
         };
@@ -5130,7 +5191,7 @@ impl AerogpuD3d11Executor {
                     .ok_or_else(|| anyhow!("texture upload GPA overflow"))?;
 
                 upload_subresource(
-                    &self.queue,
+                    queue,
                     &tex.texture,
                     desc.format,
                     level,
@@ -5146,6 +5207,34 @@ impl AerogpuD3d11Executor {
 
         tex.dirty = false;
         Ok(())
+    }
+
+    fn ensure_texture_uploaded(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        texture_handle: u32,
+        allocs: &AllocTable,
+        guest_mem: &mut dyn GuestMemory,
+    ) -> Result<()> {
+        let backing = match self.resources.textures.get(&texture_handle) {
+            Some(tex) if tex.dirty => tex.backing,
+            _ => return Ok(()),
+        };
+
+        let Some(_backing) = backing else {
+            if let Some(tex) = self.resources.textures.get_mut(&texture_handle) {
+                tex.dirty = false;
+            }
+            return Ok(());
+        };
+
+        // Preserve command stream ordering relative to any previously encoded GPU work.
+        self.submit_encoder_if_has_commands(
+            encoder,
+            "aerogpu_cmd encoder after implicit texture upload",
+        );
+
+        self.upload_texture_from_guest_memory(texture_handle, allocs, guest_mem)
     }
 }
 
