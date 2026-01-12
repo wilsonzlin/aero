@@ -72,6 +72,26 @@ describe("io/devices/HdaPciDevice", () => {
     expect(dev.bars).toEqual([{ kind: "mmio32", size: 0x4000 }, null, null, null, null, null]);
   });
 
+  it("forwards PCI command register writes into the WASM bridge when set_pci_command is available", () => {
+    const bridge: HdaControllerBridgeLike = {
+      mmio_read: vi.fn(() => 0),
+      mmio_write: vi.fn(),
+      step_frames: vi.fn(),
+      irq_level: vi.fn(() => false),
+      set_pci_command: vi.fn(),
+      set_mic_ring_buffer: vi.fn(),
+      set_capture_sample_rate_hz: vi.fn(),
+      free: vi.fn(),
+    };
+    const irqSink: IrqSink = { raiseIrq: vi.fn(), lowerIrq: vi.fn() };
+    const dev = new HdaPciDevice({ bridge, irqSink });
+
+    // Use a value with upper bits set to ensure the device masks to 16-bit.
+    dev.onPciCommandWrite?.(0x1_0004);
+    expect(bridge.set_pci_command).toHaveBeenCalledTimes(1);
+    expect(bridge.set_pci_command).toHaveBeenLastCalledWith(0x0004);
+  });
+
   it("gates DMA/time progression on PCI Command.BusMasterEnable (bit 2)", () => {
     const bridge: HdaControllerBridgeLike = {
       mmio_read: vi.fn(() => 0),

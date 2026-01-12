@@ -84,6 +84,13 @@ pub struct HdaControllerBridge {
     mic_ring: Option<MicBridge>,
 
     pending_audio_ring_state: Option<AudioWorkletRingState>,
+
+    /// Mirror of the guest-written PCI command register (offset 0x04, low 16 bits).
+    ///
+    /// Used to enforce PCI Bus Master Enable (bit 2) gating for DMA. In the browser runtime the
+    /// PCI config space lives in TypeScript, so JS must forward command register writes into this
+    /// bridge via [`Self::set_pci_command`].
+    pci_command: u16,
 }
 
 #[wasm_bindgen]
@@ -140,7 +147,15 @@ impl HdaControllerBridge {
             audio_ring: None,
             mic_ring: None,
             pending_audio_ring_state: None,
+            pci_command: 0,
         })
+    }
+
+    /// Mirror the guest-written PCI command register (0x04, low 16 bits) into this bridge.
+    ///
+    /// This is used to enforce PCI Bus Master Enable gating for DMA in [`Self::process`].
+    pub fn set_pci_command(&mut self, command: u32) {
+        self.pci_command = (command & 0xffff) as u16;
     }
 
     /// Return the host/output sample rate used by the controller when emitting audio.
@@ -281,6 +296,11 @@ impl HdaControllerBridge {
     ///   interrupts, etc.) progresses; host audio is dropped.
     pub fn process(&mut self, frames: u32) {
         if frames == 0 {
+            return;
+        }
+
+        // Only allow DMA when PCI Bus Master Enable is set (command bit 2).
+        if (self.pci_command & (1 << 2)) == 0 {
             return;
         }
 

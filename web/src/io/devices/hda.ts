@@ -8,6 +8,14 @@ export type HdaControllerBridgeLike = {
   mmio_write(offset: number, size: number, value: number): void;
 
   /**
+   * Optional PCI command register mirror (offset 0x04, 16-bit).
+   *
+   * Newer WASM builds may enforce DMA gating on Bus Master Enable internally, so the JS PCI bus
+   * must forward command register writes into the WASM device model.
+   */
+  set_pci_command?: (command: number) => void;
+
+  /**
    * Newer stepping API.
    */
   process?: (frames: number) => void;
@@ -175,6 +183,17 @@ export class HdaPciDevice implements PciDevice, TickableDevice {
     this.#busMasterEnabled = (cmd & (1 << 2)) !== 0;
     // PCI Command bit 10: Interrupt Disable (INTx must not be asserted).
     this.#intxDisabled = (cmd & (1 << 10)) !== 0;
+
+    // Mirror into the WASM device model (when supported) so it can enforce DMA gating coherently.
+    const setCmd = this.#bridge.set_pci_command;
+    if (typeof setCmd === "function") {
+      try {
+        setCmd.call(this.#bridge, cmd >>> 0);
+      } catch {
+        // ignore device errors during PCI config writes
+      }
+    }
+
     this.#syncIrq();
   }
 

@@ -1145,6 +1145,12 @@ export interface WasmApi {
         readonly output_sample_rate_hz?: number;
         mmio_read(offset: number, size: number): number;
         mmio_write(offset: number, size: number, value: number): void;
+        /**
+         * Update the device model's PCI command register (offset 0x04, low 16 bits).
+         *
+         * Optional for older WASM builds.
+         */
+        set_pci_command?(command: number): void;
 
         attach_audio_ring(ringSab: SharedArrayBuffer, capacityFrames: number, channelCount: number): void;
         detach_audio_ring(): void;
