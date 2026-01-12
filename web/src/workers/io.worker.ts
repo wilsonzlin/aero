@@ -2736,6 +2736,12 @@ async function handleVmSnapshotRestoreFromOpfs(path: string): Promise<{
       if (usbBytes) restoreUsbDeviceState(usbBytes);
       if (i8042Bytes) restoreI8042DeviceState(i8042Bytes);
       if (hdaBytes) restoreAudioHdaDeviceState(hdaBytes);
+      // If the snapshot contains E1000 state but the NIC wasn't initialized yet, register it
+      // *before* restoring PCI config state so the PCI snapshot (command/BAR programming) is
+      // applied to the newly created function.
+      if (pciBytes && e1000Bytes && !e1000Bridge && !virtioNetDevice) {
+        maybeInitE1000Device();
+      }
       if (pciBytes) restorePciDeviceState(pciBytes);
       if (e1000Bytes) restoreE1000DeviceState(e1000Bytes);
       if (netStackBytes) restoreNetStackDeviceState(netStackBytes);
@@ -2817,6 +2823,9 @@ async function handleVmSnapshotRestoreFromOpfs(path: string): Promise<{
       }
       if (hdaBytes) {
         restoreAudioHdaDeviceState(hdaBytes);
+      }
+      if (pciBytes && e1000Bytes && !e1000Bridge && !virtioNetDevice) {
+        maybeInitE1000Device();
       }
       if (pciBytes) {
         restorePciDeviceState(pciBytes);
