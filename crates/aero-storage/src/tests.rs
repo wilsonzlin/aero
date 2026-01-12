@@ -298,7 +298,7 @@ fn sparse_open_rejects_block_size_not_multiple_of_512() {
 #[test]
 fn sparse_open_rejects_block_size_too_large() {
     let mut backend = MemBackend::new();
-    let header = make_header(4096, 32 * 1024 * 1024, 0); // 32 MiB
+    let header = make_header(4096, 128 * 1024 * 1024, 0); // 128 MiB
     backend.write_at(0, &header.encode()).unwrap();
     let err = open_sparse_err(backend);
     assert!(matches!(
@@ -314,7 +314,7 @@ fn sparse_create_rejects_block_size_too_large() {
         backend,
         AeroSparseConfig {
             disk_size_bytes: 4096,
-            block_size_bytes: 32 * 1024 * 1024,
+            block_size_bytes: 128 * 1024 * 1024,
         },
     ) {
         Ok(_) => panic!("expected create to fail"),

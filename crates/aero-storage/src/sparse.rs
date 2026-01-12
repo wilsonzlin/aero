@@ -11,7 +11,10 @@ const MAX_TABLE_BYTES: u64 = 128 * 1024 * 1024; // 128 MiB
 const MAX_TABLE_ENTRIES: u64 = MAX_TABLE_BYTES / 8;
 // Keep allocation units bounded. Extremely large block sizes cause pathological I/O patterns
 // (e.g. allocating a single block can require zero-filling gigabytes).
-const MAX_BLOCK_SIZE_BYTES: u32 = 16 * 1024 * 1024; // 16 MiB
+//
+// Note: this cap should stay in sync with snapshot-layer overlay validation
+// (`MAX_OVERLAY_BLOCK_SIZE_BYTES` in `aero-io-snapshot`).
+const MAX_BLOCK_SIZE_BYTES: u32 = 64 * 1024 * 1024; // 64 MiB
 
 /// Parameters used when creating a new sparse disk.
 #[derive(Copy, Clone, Debug)]
