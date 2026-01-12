@@ -606,6 +606,7 @@ if [[ $# -lt 1 ]]; then
     echo "Environment variables:" >&2
     echo "  AERO_TIMEOUT=600     Timeout in seconds (default: 600 = 10 min)" >&2
     echo "  AERO_MEM_LIMIT=12G   Memory limit (default: 12G)" >&2
+    echo "  AERO_NODE_TEST_MEM_LIMIT=32G  Fallback memory limit for 'node --test' when AERO_MEM_LIMIT is unset (helps WASM-heavy Node tests under RLIMIT_AS)" >&2
     echo "  AERO_ISOLATE_CARGO_HOME=1  Override CARGO_HOME to ./.cargo-home (opt-in, avoids registry lock contention on shared hosts)" >&2
     echo "  AERO_DISABLE_RUSTC_WRAPPER=1  Force-disable rustc wrappers (clears RUSTC_WRAPPER env vars; overrides Cargo config build.rustc-wrapper)" >&2
     echo "  AERO_CARGO_BUILD_JOBS=1  Cargo parallelism for agent sandboxes (default: 1; overrides CARGO_BUILD_JOBS if set)" >&2
