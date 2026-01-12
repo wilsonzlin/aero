@@ -1013,6 +1013,17 @@ impl PcPlatform {
         )
     }
 
+    pub fn new_with_nvme_dirty_tracking(ram_size: usize) -> Self {
+        Self::new_with_config_dirty_tracking(
+            ram_size,
+            PcPlatformConfig {
+                enable_nvme: true,
+                ..Default::default()
+            },
+            DEFAULT_DIRTY_PAGE_SIZE,
+        )
+    }
+
     pub fn new_with_nvme_disk(ram_size: usize, disk: Box<dyn VirtualDisk + Send>) -> Self {
         Self::new_with_config_and_nvme_disk(
             ram_size,

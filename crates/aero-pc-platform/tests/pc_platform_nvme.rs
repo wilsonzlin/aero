@@ -498,6 +498,64 @@ fn pc_platform_gates_nvme_dma_on_pci_bus_master_enable() {
 }
 
 #[test]
+fn pc_platform_nvme_dma_writes_mark_dirty_pages_when_enabled() {
+    let mut pc = PcPlatform::new_with_nvme_dirty_tracking(2 * 1024 * 1024);
+    let bdf = NVME_CONTROLLER.bdf;
+
+    // Enable Memory Space + Bus Mastering so the platform allows DMA processing.
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0006);
+
+    let bar0_base = read_nvme_bar0_base(&mut pc);
+
+    let asq = 0x10000u64;
+    let acq = 0x20000u64;
+    let id_buf = 0x30000u64;
+
+    // Configure + enable controller.
+    pc.memory.write_u32(bar0_base + 0x0024, 0x000f_000f); // AQA
+    pc.memory.write_u64(bar0_base + 0x0028, asq); // ASQ
+    pc.memory.write_u64(bar0_base + 0x0030, acq); // ACQ
+    pc.memory.write_u32(bar0_base + 0x0014, 1); // CC.EN
+
+    // Admin IDENTIFY (controller) command in SQ0 entry 0.
+    let mut cmd = [0u8; 64];
+    cmd[0] = 0x06; // IDENTIFY
+    cmd[2..4].copy_from_slice(&0x1234u16.to_le_bytes()); // CID
+    cmd[24..32].copy_from_slice(&id_buf.to_le_bytes()); // PRP1
+    cmd[40..44].copy_from_slice(&0x01u32.to_le_bytes()); // CDW10: CNS=1 (controller)
+    pc.memory.write_physical(asq, &cmd);
+
+    // Clear dirty tracking for CPU-initiated setup writes. We want to observe only the DMA writes
+    // performed by the device model.
+    pc.memory.clear_dirty();
+
+    // Ring SQ0 tail doorbell and process DMA.
+    pc.memory.write_u32(bar0_base + 0x1000, 1);
+    pc.process_nvme();
+
+    // Identify data should be written.
+    let vid = pc.memory.read_u16(id_buf);
+    assert_eq!(vid, 0x1b36);
+
+    let page_size = u64::from(pc.memory.dirty_page_size());
+    let expected_identify_page = id_buf / page_size;
+    let expected_cq_page = acq / page_size;
+
+    let dirty = pc
+        .memory
+        .take_dirty_pages()
+        .expect("dirty tracking enabled");
+    assert!(
+        dirty.contains(&expected_identify_page),
+        "dirty pages should include IDENTIFY DMA buffer page (got {dirty:?})"
+    );
+    assert!(
+        dirty.contains(&expected_cq_page),
+        "dirty pages should include completion queue page (got {dirty:?})"
+    );
+}
+
+#[test]
 fn pc_platform_new_with_nvme_disk_reflects_backend_capacity_in_identify_namespace() {
     const DISK_SECTORS: u64 = 2048;
     let disk = RawDisk::create(MemBackend::new(), DISK_SECTORS * SECTOR_SIZE as u64)
