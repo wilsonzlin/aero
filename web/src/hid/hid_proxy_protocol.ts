@@ -13,7 +13,7 @@ export type HidAttachMessage = {
    * Optional hint for the guest-side USB attachment path.
    *
    * This is forward-compatible with the "external hub behind root port 0" topology
-   * used by `WebHidPassthroughManager` (paths like `0.3`).
+   * used by `WebHidPassthroughManager` (paths like `0.4`).
    */
   guestPath?: GuestUsbPath;
   /**

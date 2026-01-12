@@ -18,7 +18,7 @@ export type UhciRuntimeHidApi = {
 
   /**
    * Optional newer entrypoint that supports WebHID passthrough devices behind the external hub
-   * topology (e.g. guest paths like `0.3`).
+   * topology (e.g. guest paths like `0.4`).
    */
   webhid_attach_at_path?(
     deviceId: number,
