@@ -143,7 +143,7 @@ WASM modules **inside a worker**:
 
 > Note: `crates/aero-wasm` exposes multiple WASM-facing VM wrappers. The canonical **full-system** export is
 > `aero_wasm::Machine` (backed by `aero_machine::Machine`). The current CPU-worker runtime uses the legacy CPU-only
-> `WasmVm` / `WasmTieredVm` exports.
+> `WasmVm` export (and may use `WasmTieredVm` for tiered/JIT execution).
 >
 > See [`docs/vm-crate-map.md`](./vm-crate-map.md) and [ADR 0014](./adr/0014-canonical-machine-stack.md) for the
 > up-to-date mapping.
