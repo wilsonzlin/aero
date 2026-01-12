@@ -78,6 +78,11 @@ This topology is treated as part of the platform ABI: drift should be caught by 
 └─────────────────────────────────────────────────────────────────┘
 ```
 
+> Important: IndexedDB is **async-only** in the browser. The canonical Rust disk/controller stack
+> (`aero-storage::{StorageBackend, VirtualDisk}` + `aero-devices-storage` AHCI/IDE) is
+> **synchronous**, so IndexedDB cannot be used directly from that path without a cross-worker
+> design. See: [`19-indexeddb-storage-story.md`](./19-indexeddb-storage-story.md).
+
 ---
 
 ## AHCI Controller Emulation
@@ -280,6 +285,11 @@ The canonical Rust disk image formats live in `crates/aero-storage/` and current
 In the repo, the OPFS backend is implemented in Rust/wasm32 in `crates/aero-opfs`
 (e.g. `aero_opfs::OpfsBackend` / `aero_opfs::OpfsByteStorage`).
 
+For the Rust controller path, **OPFS SyncAccessHandle is the expected backend** because it is
+actually synchronous inside a Worker and can implement `aero_storage::StorageBackend` /
+`aero_storage::VirtualDisk`. IndexedDB is async-only; see:
+[`19-indexeddb-storage-story.md`](./19-indexeddb-storage-story.md).
+
 ```rust
 pub struct OpfsBackend {
     file_handle: FileSystemFileHandle,
@@ -327,6 +337,10 @@ impl DiskBackend for OpfsBackend {
 ```
 
 ### Sector Cache (IndexedDB)
+
+IndexedDB can still be useful for *async* host-layer caching and disk management, but it is not a
+drop-in backend for the synchronous Rust controller stack. See:
+[`19-indexeddb-storage-story.md`](./19-indexeddb-storage-story.md).
 
 ```rust
 pub struct SectorCache {

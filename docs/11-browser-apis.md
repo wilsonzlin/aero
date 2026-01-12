@@ -1447,7 +1447,7 @@ const compat = {
         }
         
         if (!navigator.storage?.getDirectory) {
-            issues.push('OPFS not supported - using IndexedDB fallback');
+            issues.push('OPFS not supported - IndexedDB fallback is async-only (Rust sync controller path unavailable)');
         }
         
         return issues;
@@ -1457,6 +1457,9 @@ const compat = {
         if (navigator.storage?.getDirectory) {
             return new OpfsStorage();
         }
+        // IndexedDB is async-only; if the runtime uses a synchronous Rust controller stack,
+        // it cannot “block on IndexedDB” in the same worker without deadlocking.
+        // See: docs/19-indexeddb-storage-story.md
         return new IndexedDbStorage();
     }
 };

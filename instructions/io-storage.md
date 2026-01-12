@@ -42,6 +42,7 @@ Storage is on the **critical boot path**. Windows 7 cannot start without a worki
 
 - [`docs/05-storage-subsystem.md`](../docs/05-storage-subsystem.md) — Storage architecture
 - [`docs/05-storage-topology-win7.md`](../docs/05-storage-topology-win7.md) — Canonical Win7 storage topology (PCI BDFs + AHCI/IDE media mapping)
+- [`docs/19-indexeddb-storage-story.md`](../docs/19-indexeddb-storage-story.md) — IndexedDB (async) vs Rust controller (sync) integration plan
 - [`docs/16-remote-disk-image-delivery.md`](../docs/16-remote-disk-image-delivery.md) — Remote disk streaming
 - [`docs/18-chunked-disk-image-format.md`](../docs/18-chunked-disk-image-format.md) — Chunked format
 
