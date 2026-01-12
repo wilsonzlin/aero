@@ -17,7 +17,10 @@ fn env_var_truthy(name: &str) -> bool {
     };
 
     let v = raw.trim();
-    v == "1" || v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("yes") || v.eq_ignore_ascii_case("on")
+    v == "1"
+        || v.eq_ignore_ascii_case("true")
+        || v.eq_ignore_ascii_case("yes")
+        || v.eq_ignore_ascii_case("on")
 }
 
 async fn create_executor_with_bc_features() -> Option<AerogpuD3d9Executor> {
@@ -175,9 +178,7 @@ fn d3d9_bc_writeback_pads_small_mips() {
     // physical extent on wgpu).
     writer.resource_dirty_range(SRC_TEX, mip0_size_bytes as u64, mip1_size_bytes as u64);
     // Copy mip1 (2x2 logical) and write it back into the destination guest backing.
-    writer.copy_texture2d_writeback_dst(
-        DST_TEX, SRC_TEX, 1, 0, 1, 0, 0, 0, 0, 0, 2, 2,
-    );
+    writer.copy_texture2d_writeback_dst(DST_TEX, SRC_TEX, 1, 0, 1, 0, 0, 0, 0, 0, 2, 2);
     let stream = writer.finish();
 
     match exec.execute_cmd_stream_with_guest_memory(&stream, &mut guest, Some(&alloc_table)) {
@@ -203,4 +204,3 @@ fn d3d9_bc_writeback_pads_small_mips() {
         .unwrap();
     assert_eq!(mip1, vec![0x5Au8; mip1_size_bytes]);
 }
-
