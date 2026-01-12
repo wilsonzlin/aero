@@ -25,7 +25,6 @@ export function tryInitVirtioNetDevice(opts: {
   let bridge: InstanceType<NonNullable<WasmApi["VirtioNetPciBridge"]>>;
   try {
     // Some wasm-bindgen builds enforce constructor arity. Prefer the 4-arg
-    // Some wasm-bindgen builds enforce constructor arity. Prefer the 4-arg
     // signature (transport selector) when available, but gracefully fall back to
     // the legacy 3-arg constructor.
     //

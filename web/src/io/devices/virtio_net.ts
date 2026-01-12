@@ -374,5 +374,3 @@ export class VirtioNetPciDevice implements PciDevice, TickableDevice {
     else this.#irqSink.lowerIrq(this.irqLine);
   }
 }
-
-export type VirtioNetPciTransport = "modern" | "transitional" | "legacy";
