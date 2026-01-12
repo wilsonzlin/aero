@@ -677,34 +677,51 @@ async function convertVhdToSparse(
   if (!Number.isSafeInteger(blockTotalSize) || blockTotalSize <= 0) throw new Error("invalid VHD block size");
   const bitmap = new Uint8Array(bitmapSize);
   const buf = new Uint8Array(dyn.blockSize);
-  const totalBlocks = divCeil(logicalSize, dyn.blockSize);
+  const totalBlocks = expectedEntries;
 
   // Pre-validate BAT entries to avoid reading metadata as block payload when the image is corrupt.
-  const batBytes = batSizeOnDisk;
+  const blockTotalSectors = blockTotalSize / 512;
+  if (!Number.isSafeInteger(blockTotalSectors) || blockTotalSectors <= 0) throw new Error("invalid VHD block size");
+  const footerSector = footerOffset / 512;
   const metadataRanges: Array<{ start: number; end: number }> = [
-    { start: 0, end: 512 }, // footer copy
-    { start: footer.dataOffset, end: dynHeaderEnd }, // dynamic header
-    { start: dyn.tableOffset, end: dyn.tableOffset + batBytes }, // BAT
+    { start: 0, end: 1 }, // footer copy
+    { start: footer.dataOffset / 512, end: dynHeaderEnd / 512 }, // dynamic header
+    { start: dyn.tableOffset / 512, end: batEndOnDisk / 512 }, // BAT (including padding)
   ];
 
-  const allocatedBlockOffsets: number[] = [];
+  // First pass: validate all allocated BAT entries and count them.
+  let allocatedCount = 0;
   for (let blockIndex = 0; blockIndex < totalBlocks; blockIndex++) {
     const entry = bat.entries[blockIndex]!;
     if (entry === VHD_BAT_FREE) continue;
-    const blockOff = entry * 512;
-    if (!Number.isSafeInteger(blockOff) || blockOff < 512) throw new Error("VHD block offset invalid");
-    const end = blockOff + blockTotalSize;
-    if (!Number.isSafeInteger(end) || end > footerOffset) throw new Error("VHD block out of range");
+    if (entry < 1) throw new Error("VHD block offset invalid");
+    const startSector = entry;
+    const endSector = startSector + blockTotalSectors;
+    if (endSector > footerSector) throw new Error("VHD block out of range");
     for (const r of metadataRanges) {
-      if (rangesOverlap(blockOff, end, r.start, r.end)) throw new Error("VHD block overlaps metadata");
+      if (rangesOverlap(startSector, endSector, r.start, r.end)) throw new Error("VHD block overlaps metadata");
     }
-    allocatedBlockOffsets.push(blockOff);
+    allocatedCount++;
   }
-  allocatedBlockOffsets.sort((a, b) => a - b);
-  for (let i = 1; i < allocatedBlockOffsets.length; i++) {
-    const prev = allocatedBlockOffsets[i - 1]!;
-    const cur = allocatedBlockOffsets[i]!;
-    if (cur < prev + blockTotalSize) throw new Error("VHD blocks overlap");
+
+  // Second pass: collect allocated block starts, sort, and detect overlaps/duplicates.
+  let allocatedStarts: Uint32Array;
+  try {
+    allocatedStarts = new Uint32Array(allocatedCount);
+  } catch {
+    throw new Error("VHD too many allocated blocks");
+  }
+  let pos = 0;
+  for (let blockIndex = 0; blockIndex < totalBlocks; blockIndex++) {
+    const entry = bat.entries[blockIndex]!;
+    if (entry === VHD_BAT_FREE) continue;
+    allocatedStarts[pos++] = entry;
+  }
+  allocatedStarts.sort();
+  for (let i = 1; i < allocatedStarts.length; i++) {
+    const prev = allocatedStarts[i - 1]!;
+    const cur = allocatedStarts[i]!;
+    if (cur < prev + blockTotalSectors) throw new Error("VHD blocks overlap");
   }
 
   for (let blockIndex = 0; blockIndex < totalBlocks; blockIndex++) {
@@ -1045,6 +1062,7 @@ class VhdFooter {
 
   static async read(src: RandomAccessSource): Promise<VhdFooter> {
     if (src.size < 512) throw new Error("VHD too small");
+    if (src.size % 512 !== 0) throw new Error("VHD file length misaligned");
     const footerBytes = await src.readAt(src.size - 512, 512);
     return VhdFooter.parse(footerBytes);
   }

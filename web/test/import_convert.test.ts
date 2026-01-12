@@ -855,6 +855,15 @@ test("convertToAeroSparse: rejects fixed VHD with data_offset != u64::MAX", asyn
   );
 });
 
+test("convertToAeroSparse: rejects VHD with misaligned file length", async () => {
+  const src = new MemSource(new Uint8Array(513));
+  const sync = new MemSyncAccessHandle();
+  await assert.rejects(
+    convertToAeroSparse(src, "vhd", sync, { blockSizeBytes: 512 }),
+    (err: any) => err instanceof Error && /VHD file length misaligned/i.test(err.message),
+  );
+});
+
 test("convertToAeroSparse: fixed VHD footer copy at offset 0 is ignored", async () => {
   const { file, logical } = buildFixedVhdFixtureWithFooterCopy();
   const src = new MemSource(file);
