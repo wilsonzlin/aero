@@ -269,6 +269,8 @@ function publishSharedFrame(width: number, height: number, strideBytes: number, 
       sab = new SharedArrayBuffer(bytes);
     } catch {
       transport = "copy";
+      // Preserve a monotonic frame counter across transport changes (shared -> copy).
+      copyFrameCounter = sharedFrameCounter;
       sharedSab = null;
       sharedFb = null;
       post({ type: "machineVga.ready", transport: "copy" } satisfies MachineVgaWorkerReadyMessage);
@@ -280,6 +282,8 @@ function publishSharedFrame(width: number, height: number, strideBytes: number, 
       next = wrapSharedFramebuffer(sab, 0);
     } catch {
       transport = "copy";
+      // Preserve a monotonic frame counter across transport changes (shared -> copy).
+      copyFrameCounter = sharedFrameCounter;
       sharedSab = null;
       sharedFb = null;
       post({ type: "machineVga.ready", transport: "copy" } satisfies MachineVgaWorkerReadyMessage);
