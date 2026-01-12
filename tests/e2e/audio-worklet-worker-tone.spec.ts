@@ -51,9 +51,18 @@ test("AudioWorklet output runs and does not underrun with CPU-worker tone produc
       return { ok: false, error: "missing backend" };
     }
     try {
+      const beforeEnabled = typeof backend.isEnabled === "function" ? backend.isEnabled() : null;
+      if (typeof backend.enable === "function") backend.enable();
+      const afterEnable = typeof backend.isEnabled === "function" ? backend.isEnabled() : null;
+      if (typeof backend.disable === "function") backend.disable();
+      const afterDisable = typeof backend.isEnabled === "function" ? backend.isEnabled() : null;
+
       const bytes = await backend.downloadPcapng();
       return {
         ok: true,
+        beforeEnabled,
+        afterEnable,
+        afterDisable,
         byteLength: bytes.byteLength,
         head: Array.from(bytes.slice(0, 4)),
       };
@@ -64,6 +73,8 @@ test("AudioWorklet output runs and does not underrun with CPU-worker tone produc
 
   expect(netTrace.ok).toBe(true);
   if (netTrace.ok) {
+    expect(netTrace.afterEnable).toBe(true);
+    expect(netTrace.afterDisable).toBe(false);
     expect(netTrace.byteLength).toBeGreaterThan(0);
     // PCAPNG section header block magic.
     expect(netTrace.head).toEqual([0x0a, 0x0d, 0x0d, 0x0a]);
