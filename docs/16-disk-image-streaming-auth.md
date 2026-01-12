@@ -18,6 +18,7 @@ This spec is written for both:
 
 Related:
 - [Storage Subsystem](./05-storage-subsystem.md) (client-side streaming disk design)
+- [Storage trait consolidation](./20-storage-trait-consolidation.md) (repo-wide canonical disk/backend traits)
 - [Disk Image Lifecycle and Access Control](./17-disk-image-lifecycle-and-access-control.md) (uploads/ownership/sharing/writeback)
 - [Remote Disk Image Delivery](./16-remote-disk-image-delivery.md) (object store + CDN deployment contract)
 - [HTTP Range + CDN Behavior](./17-range-cdn-behavior.md) (CloudFront/Cloudflare caching/limits considerations)
