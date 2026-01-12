@@ -139,6 +139,53 @@ describe("io/devices/E1000PciDevice", () => {
     expect(Array.from(netTx.tryPop()!)).toEqual([0x01]);
   });
 
+  it("clears any pending host-side TX frame and re-syncs the IRQ level on snapshot restore", () => {
+    // Capacity 8 bytes: enough for a single 1-byte payload record
+    // (len=1 => record size alignUp(4+1,4)=8).
+    const { buffer } = createIpcBuffer([
+      { kind: IO_IPC_NET_TX_QUEUE_KIND, capacityBytes: 8 },
+      { kind: IO_IPC_NET_RX_QUEUE_KIND, capacityBytes: 256 },
+    ]);
+    const netTx = openRingByKind(buffer, IO_IPC_NET_TX_QUEUE_KIND);
+    const netRx = openRingByKind(buffer, IO_IPC_NET_RX_QUEUE_KIND);
+
+    // Fill the ring so pushes fail.
+    expect(netTx.tryPush(new Uint8Array([0x00]))).toBe(true);
+
+    // First frame becomes pending (ring full); second frame should be the next one flushed after
+    // snapshot restore because the pending host-side buffer is intentionally cleared.
+    const txQueue: Uint8Array[] = [new Uint8Array([0x01]), new Uint8Array([0x02])];
+    const bridge: E1000BridgeLike = {
+      mmio_read: vi.fn(() => 0),
+      mmio_write: vi.fn(),
+      io_read: vi.fn(() => 0),
+      io_write: vi.fn(),
+      poll: vi.fn(),
+      receive_frame: vi.fn(),
+      pop_tx_frame: vi.fn(() => txQueue.shift()),
+      irq_level: vi.fn(() => true),
+      free: vi.fn(),
+    };
+    const irqSink: IrqSink = { raiseIrq: vi.fn(), lowerIrq: vi.fn() };
+
+    const dev = new E1000PciDevice({ bridge, irqSink, netTxRing: netTx, netRxRing: netRx });
+
+    dev.tick(0);
+    expect(bridge.pop_tx_frame).toHaveBeenCalledTimes(1);
+
+    // Snapshot restore should clear transient state and re-drive the INTx level.
+    dev.onSnapshotRestore();
+    expect(irqSink.raiseIrq).toHaveBeenCalledTimes(1);
+    expect(irqSink.raiseIrq).toHaveBeenCalledWith(10);
+
+    // Consume the old entry so the ring can accept a new frame.
+    expect(Array.from(netTx.tryPop()!)).toEqual([0x00]);
+
+    dev.tick(1);
+    expect(bridge.pop_tx_frame).toHaveBeenCalledTimes(2);
+    expect(Array.from(netTx.tryPop()!)).toEqual([0x02]);
+  });
+
   it("treats PCI INTx as a level-triggered IRQ and only emits transitions on edges", () => {
     const { buffer } = createIpcBuffer([
       { kind: IO_IPC_NET_TX_QUEUE_KIND, capacityBytes: 4096 },
