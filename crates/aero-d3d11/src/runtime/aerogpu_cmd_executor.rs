@@ -8928,18 +8928,8 @@ mod tests {
                 "upload_texture_from_guest_memory must mark guest backing as current"
             );
 
-            // Recreate `host_shadow` via another UPLOAD_RESOURCE and ensure RESOURCE_DIRTY_RANGE
-            // invalidates it as well.
-            exec.upload_resource_payload(TEX, 0, full_data.len() as u64, &full_data)
-                .expect("full UPLOAD_RESOURCE should succeed");
-            assert!(
-                exec.resources
-                    .textures
-                    .get(&TEX)
-                    .is_some_and(|tex| tex.host_shadow.is_some()),
-                "UPLOAD_RESOURCE should repopulate host_shadow"
-            );
-
+            // RESOURCE_DIRTY_RANGE should mark the guest backing stale again (GPU is now out of sync
+            // with guest memory).
             let mut dirty = Vec::new();
             dirty.extend_from_slice(&(AerogpuCmdOpcode::ResourceDirtyRange as u32).to_le_bytes());
             dirty.extend_from_slice(&32u32.to_le_bytes());
@@ -8954,15 +8944,30 @@ mod tests {
                 exec.resources
                     .textures
                     .get(&TEX)
-                    .is_some_and(|tex| tex.host_shadow.is_none()),
-                "RESOURCE_DIRTY_RANGE must invalidate stale host_shadow"
+                    .is_some_and(|tex| !tex.guest_backing_is_current),
+                "RESOURCE_DIRTY_RANGE must mark guest backing as stale"
             );
+
+            // Recreate `host_shadow` via another UPLOAD_RESOURCE and ensure RESOURCE_DIRTY_RANGE
+            // invalidates it as well.
+            exec.upload_resource_payload(TEX, 0, full_data.len() as u64, &full_data)
+                .expect("full UPLOAD_RESOURCE should succeed");
             assert!(
                 exec.resources
                     .textures
                     .get(&TEX)
-                    .is_some_and(|tex| !tex.guest_backing_is_current),
-                "RESOURCE_DIRTY_RANGE must mark guest backing as stale"
+                    .is_some_and(|tex| tex.host_shadow.is_some()),
+                "UPLOAD_RESOURCE should repopulate host_shadow"
+            );
+
+            exec.exec_resource_dirty_range(&dirty)
+                .expect("RESOURCE_DIRTY_RANGE should succeed");
+            assert!(
+                exec.resources
+                    .textures
+                    .get(&TEX)
+                    .is_some_and(|tex| tex.host_shadow.is_none()),
+                "RESOURCE_DIRTY_RANGE must invalidate stale host_shadow"
             );
         });
     }
