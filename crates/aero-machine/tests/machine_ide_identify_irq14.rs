@@ -235,9 +235,9 @@ fn machine_ide_pio_is_gated_by_pci_command_io_enable() {
 
     // Attempt ATA IDENTIFY DEVICE with I/O decode disabled: writes should be ignored and reads
     // should return all-ones (open bus).
-    m.io_write(0x1F6, 1, 0xA0);
-    m.io_write(0x1F7, 1, 0xEC);
-    let word0 = m.io_read(0x1F0, 2) as u16;
+    m.io_write(PRIMARY_PORTS.cmd_base + 6, 1, 0xA0);
+    m.io_write(PRIMARY_PORTS.cmd_base + 7, 1, 0xEC);
+    let word0 = m.io_read(PRIMARY_PORTS.cmd_base, 2) as u16;
     assert_eq!(word0, 0xFFFF);
 
     for _ in 0..5 {
@@ -251,9 +251,9 @@ fn machine_ide_pio_is_gated_by_pci_command_io_enable() {
 
     // Re-enable PCI I/O decode and re-issue IDENTIFY: it should now complete and deliver IRQ14.
     write_cfg_u16(&mut m, bdf.bus, bdf.device, bdf.function, 0x04, 0x0001);
-    m.io_write(0x1F6, 1, 0xA0);
-    m.io_write(0x1F7, 1, 0xEC);
-    let word0 = m.io_read(0x1F0, 2) as u16;
+    m.io_write(PRIMARY_PORTS.cmd_base + 6, 1, 0xA0);
+    m.io_write(PRIMARY_PORTS.cmd_base + 7, 1, 0xEC);
+    let word0 = m.io_read(PRIMARY_PORTS.cmd_base, 2) as u16;
     assert_eq!(word0, 0x0040);
 
     for _ in 0..10 {
