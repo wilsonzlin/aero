@@ -87,46 +87,46 @@ describe("io/devices/virtio_input", () => {
     expect(cfg.readU32(0, 0, 0x10) & 0xf).toBe(0x4);
     expect(cfg.readU32(0, 0, 0x14)).toBe(0x0000_0000);
 
-    // Cap list must be present and start at 0x50 per contract v1.
+    // Cap list must be present and start at 0x40 (standard PCI convention; Aero virtio contract v1).
     expect(cfg.readU16(0, 0, 0x06) & 0x0010).toBe(0x0010);
-    expect(cfg.readU8(0, 0, 0x34)).toBe(0x50);
+    expect(cfg.readU8(0, 0, 0x34)).toBe(0x40);
 
-    // COMMON cap @0x50.
+    // COMMON cap @0x40.
+    expect(cfg.readU8(0, 0, 0x40)).toBe(0x09);
+    expect(cfg.readU8(0, 0, 0x41)).toBe(0x50);
+    expect(cfg.readU8(0, 0, 0x42)).toBe(16);
+    expect(cfg.readU8(0, 0, 0x43)).toBe(1);
+    expect(cfg.readU8(0, 0, 0x44)).toBe(0);
+    expect(cfg.readU32(0, 0, 0x48)).toBe(0x0000);
+    expect(cfg.readU32(0, 0, 0x4c)).toBe(0x0100);
+
+    // NOTIFY cap @0x50.
     expect(cfg.readU8(0, 0, 0x50)).toBe(0x09);
-    expect(cfg.readU8(0, 0, 0x51)).toBe(0x60);
-    expect(cfg.readU8(0, 0, 0x52)).toBe(16);
-    expect(cfg.readU8(0, 0, 0x53)).toBe(1);
+    expect(cfg.readU8(0, 0, 0x51)).toBe(0x64);
+    expect(cfg.readU8(0, 0, 0x52)).toBe(20);
+    expect(cfg.readU8(0, 0, 0x53)).toBe(2);
     expect(cfg.readU8(0, 0, 0x54)).toBe(0);
-    expect(cfg.readU32(0, 0, 0x58)).toBe(0x0000);
+    expect(cfg.readU32(0, 0, 0x58)).toBe(0x1000);
     expect(cfg.readU32(0, 0, 0x5c)).toBe(0x0100);
+    expect(cfg.readU32(0, 0, 0x60)).toBe(4);
 
-    // NOTIFY cap @0x60.
-    expect(cfg.readU8(0, 0, 0x60)).toBe(0x09);
-    expect(cfg.readU8(0, 0, 0x61)).toBe(0x74);
-    expect(cfg.readU8(0, 0, 0x62)).toBe(20);
-    expect(cfg.readU8(0, 0, 0x63)).toBe(2);
-    expect(cfg.readU8(0, 0, 0x64)).toBe(0);
-    expect(cfg.readU32(0, 0, 0x68)).toBe(0x1000);
-    expect(cfg.readU32(0, 0, 0x6c)).toBe(0x0100);
-    expect(cfg.readU32(0, 0, 0x70)).toBe(4);
+    // ISR cap @0x64.
+    expect(cfg.readU8(0, 0, 0x64)).toBe(0x09);
+    expect(cfg.readU8(0, 0, 0x65)).toBe(0x74);
+    expect(cfg.readU8(0, 0, 0x66)).toBe(16);
+    expect(cfg.readU8(0, 0, 0x67)).toBe(3);
+    expect(cfg.readU8(0, 0, 0x68)).toBe(0);
+    expect(cfg.readU32(0, 0, 0x6c)).toBe(0x2000);
+    expect(cfg.readU32(0, 0, 0x70)).toBe(0x0020);
 
-    // ISR cap @0x74.
+    // DEVICE cap @0x74.
     expect(cfg.readU8(0, 0, 0x74)).toBe(0x09);
-    expect(cfg.readU8(0, 0, 0x75)).toBe(0x84);
+    expect(cfg.readU8(0, 0, 0x75)).toBe(0x00);
     expect(cfg.readU8(0, 0, 0x76)).toBe(16);
-    expect(cfg.readU8(0, 0, 0x77)).toBe(3);
+    expect(cfg.readU8(0, 0, 0x77)).toBe(4);
     expect(cfg.readU8(0, 0, 0x78)).toBe(0);
-    expect(cfg.readU32(0, 0, 0x7c)).toBe(0x2000);
-    expect(cfg.readU32(0, 0, 0x80)).toBe(0x0020);
-
-    // DEVICE cap @0x84.
-    expect(cfg.readU8(0, 0, 0x84)).toBe(0x09);
-    expect(cfg.readU8(0, 0, 0x85)).toBe(0x00);
-    expect(cfg.readU8(0, 0, 0x86)).toBe(16);
-    expect(cfg.readU8(0, 0, 0x87)).toBe(4);
-    expect(cfg.readU8(0, 0, 0x88)).toBe(0);
-    expect(cfg.readU32(0, 0, 0x8c)).toBe(0x3000);
-    expect(cfg.readU32(0, 0, 0x90)).toBe(0x0100);
+    expect(cfg.readU32(0, 0, 0x7c)).toBe(0x3000);
+    expect(cfg.readU32(0, 0, 0x80)).toBe(0x0100);
 
     // BAR sizing probe should reflect 0x4000.
     cfg.writeU32(0, 0, 0x10, 0xffff_ffff);
