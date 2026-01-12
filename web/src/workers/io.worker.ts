@@ -3451,12 +3451,15 @@ function maybeUpdateMouseInputBackend(opts: { virtioMouseOk: boolean }): void {
     return;
   }
 
-  if (syntheticUsbHidAttached && usbHid && safeSyntheticUsbHidConfigured(syntheticUsbMouse)) {
-    mouseInputBackend = "usb";
+  // Prefer PS/2 mouse injection whenever an i8042 controller is available so mouse input works
+  // even when the synthetic USB HID mouse is absent/unconfigured.
+  if (i8042Wasm || i8042Ts) {
+    mouseInputBackend = "ps2";
     return;
   }
 
-  mouseInputBackend = "ps2";
+  // Final fallback: enqueue synthetic USB HID reports (if available).
+  mouseInputBackend = "usb";
 }
 
 function drainSyntheticUsbHidReports(): void {
