@@ -324,6 +324,11 @@ aerogpu_add_win7_test(d3d11_caps_smoke
 )
 target_link_libraries(d3d11_caps_smoke PRIVATE d3d11 dxgi)
 
+aerogpu_add_win7_test(d3d11_shared_texture_ipc
+  d3d11_shared_texture_ipc/main.cpp
+)
+target_link_libraries(d3d11_shared_texture_ipc PRIVATE d3d11 dxgi)
+
 aerogpu_add_win7_test(d3d11_rs_om_state_sanity
   d3d11_rs_om_state_sanity/main.cpp
 )

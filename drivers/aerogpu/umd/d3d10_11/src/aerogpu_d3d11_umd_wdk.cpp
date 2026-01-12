@@ -690,6 +690,84 @@ static void TrackStagingWriteLocked(Device* dev, Resource* dst) {
   dev->pending_staging_writes.push_back(dst);
 }
 
+template <typename T, typename = void>
+struct has_member_pOpenAllocationInfo : std::false_type {};
+template <typename T>
+struct has_member_pOpenAllocationInfo<T, std::void_t<decltype(std::declval<T>().pOpenAllocationInfo)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_pAllocationInfo : std::false_type {};
+template <typename T>
+struct has_member_pAllocationInfo<T, std::void_t<decltype(std::declval<T>().pAllocationInfo)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_hKMResource : std::false_type {};
+template <typename T>
+struct has_member_hKMResource<T, std::void_t<decltype(std::declval<T>().hKMResource)>> : std::true_type {};
+
+template <typename OpenT, bool HasOpen, bool HasAlloc>
+struct OpenResourceAllocInfoAccess;
+
+template <typename OpenT, bool HasAlloc>
+struct OpenResourceAllocInfoAccess<OpenT, true, HasAlloc> {
+  using AllocInfoT = std::remove_pointer_t<decltype(std::declval<OpenT>().pOpenAllocationInfo)>;
+  static AllocInfoT* get(const OpenT* p) {
+    return p ? p->pOpenAllocationInfo : nullptr;
+  }
+};
+
+template <typename OpenT>
+struct OpenResourceAllocInfoAccess<OpenT, false, true> {
+  using AllocInfoT = std::remove_pointer_t<decltype(std::declval<OpenT>().pAllocationInfo)>;
+  static AllocInfoT* get(const OpenT* p) {
+    return p ? p->pAllocationInfo : nullptr;
+  }
+};
+
+static bool ConsumeWddmAllocPrivV2(const void* priv_data, UINT priv_data_size, aerogpu_wddm_alloc_priv_v2* out) {
+  if (out) {
+    std::memset(out, 0, sizeof(*out));
+  }
+  if (!out || !priv_data || priv_data_size < sizeof(aerogpu_wddm_alloc_priv)) {
+    return false;
+  }
+
+  // The v1 and v2 layouts share the same header (magic/version). Probe the
+  // version and decode into a v2-shaped struct.
+  aerogpu_wddm_alloc_priv header{};
+  std::memcpy(&header, priv_data, sizeof(header));
+  if (header.magic != AEROGPU_WDDM_ALLOC_PRIV_MAGIC) {
+    return false;
+  }
+
+  if (header.version == AEROGPU_WDDM_ALLOC_PRIV_VERSION_2) {
+    if (priv_data_size < sizeof(aerogpu_wddm_alloc_priv_v2)) {
+      return false;
+    }
+    std::memcpy(out, priv_data, sizeof(*out));
+    return true;
+  }
+
+  if (header.version == AEROGPU_WDDM_ALLOC_PRIV_VERSION) {
+    out->magic = header.magic;
+    out->version = AEROGPU_WDDM_ALLOC_PRIV_VERSION_2;
+    out->alloc_id = header.alloc_id;
+    out->flags = header.flags;
+    out->share_token = header.share_token;
+    out->size_bytes = header.size_bytes;
+    out->reserved0 = header.reserved0;
+    out->kind = AEROGPU_WDDM_ALLOC_KIND_UNKNOWN;
+    out->width = 0;
+    out->height = 0;
+    out->format = 0;
+    out->row_pitch_bytes = 0;
+    out->reserved1 = 0;
+    return true;
+  }
+
+  return false;
+}
+
 static void TrackWddmAllocForSubmitLocked(Device* dev, const Resource* res) {
   if (!dev || !res) {
     return;
@@ -2246,6 +2324,35 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
       return hr;
     }
 
+    // Consume the (potentially updated) allocation private driver data. For
+    // shared allocations, the Win7 KMD fills a stable non-zero share_token.
+    aerogpu_wddm_alloc_priv_v2 priv_out{};
+    if (ConsumeWddmAllocPrivV2(alloc_info[0].pPrivateDriverData,
+                               static_cast<UINT>(alloc_info[0].PrivateDriverDataSize),
+                               &priv_out)) {
+      if (priv_out.alloc_id != 0) {
+        alloc_id = priv_out.alloc_id;
+      }
+      if (is_shared) {
+        if ((priv_out.flags & AEROGPU_WDDM_ALLOC_PRIV_FLAG_SHARED) == 0 || priv_out.share_token == 0) {
+          static std::once_flag log_once;
+          std::call_once(log_once, [] {
+            AEROGPU_D3D10_11_LOG("CreateResource11: shared allocation missing share_token in returned private data");
+          });
+          return E_FAIL;
+        }
+        res->share_token = priv_out.share_token;
+      } else {
+        res->share_token = 0;
+      }
+    } else if (is_shared) {
+      static std::once_flag log_once;
+      std::call_once(log_once, [] {
+        AEROGPU_D3D10_11_LOG("CreateResource11: shared allocation missing/invalid private driver data");
+      });
+      return E_FAIL;
+    }
+
     uint64_t km_resource = 0;
     __if_exists(D3DDDICB_ALLOCATE::hKMResource) {
       km_resource = static_cast<uint64_t>(alloc.hKMResource);
@@ -2418,6 +2525,7 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
 #endif
     const bool want_guest_backed = !is_shared && !is_primary && !is_staging && !is_rt && !is_ds;
     cpu_visible = cpu_visible || want_guest_backed;
+    res->is_shared = is_shared;
     HRESULT hr = allocate_one(alloc_size, cpu_visible, is_rt, is_ds, is_shared, is_primary, 0);
     if (FAILED(hr)) {
       SetError(dev, hr);
@@ -2460,7 +2568,14 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
 
     TrackWddmAllocForSubmitLocked(dev, res);
 
-    if (res->is_shared && res->share_token != 0) {
+    if (is_shared) {
+      if (res->share_token == 0) {
+        SetError(dev, E_FAIL);
+        deallocate_if_needed();
+        res->~Resource();
+        return E_FAIL;
+      }
+
       // Shared resources must be importable cross-process as soon as
       // CreateResource returns. Export the resource and force a submission so
       // the host observes the share_token mapping immediately (mirrors D3D9Ex
@@ -2475,10 +2590,10 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
       export_cmd->resource_handle = res->handle;
       export_cmd->reserved0 = 0;
       export_cmd->share_token = res->share_token;
-
       HRESULT submit_hr = S_OK;
       submit_locked(dev, /*want_present=*/false, &submit_hr);
       if (FAILED(submit_hr)) {
+        SetError(dev, submit_hr);
         deallocate_if_needed();
         res->~Resource();
         return submit_hr;
@@ -2539,6 +2654,7 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
 #endif
     const bool want_guest_backed = !is_shared && !is_primary && !is_staging && !is_rt && !is_ds;
     cpu_visible = cpu_visible || want_guest_backed;
+    res->is_shared = is_shared;
     HRESULT hr = allocate_one(total_bytes, cpu_visible, is_rt, is_ds, is_shared, is_primary, res->row_pitch_bytes);
     if (FAILED(hr)) {
       SetError(dev, hr);
@@ -2589,7 +2705,13 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
 
     TrackWddmAllocForSubmitLocked(dev, res);
 
-    if (res->is_shared && res->share_token != 0) {
+    if (is_shared) {
+      if (res->share_token == 0) {
+        SetError(dev, E_FAIL);
+        deallocate_if_needed();
+        res->~Resource();
+        return E_FAIL;
+      }
       auto* export_cmd =
           dev->cmd.append_fixed<aerogpu_cmd_export_shared_surface>(AEROGPU_CMD_EXPORT_SHARED_SURFACE);
       if (!export_cmd) {
@@ -2600,10 +2722,10 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
       export_cmd->resource_handle = res->handle;
       export_cmd->reserved0 = 0;
       export_cmd->share_token = res->share_token;
-
       HRESULT submit_hr = S_OK;
       submit_locked(dev, /*want_present=*/false, &submit_hr);
       if (FAILED(submit_hr)) {
+        SetError(dev, submit_hr);
         deallocate_if_needed();
         res->~Resource();
         return submit_hr;
@@ -2618,9 +2740,9 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
 }
 
 HRESULT AEROGPU_APIENTRY OpenResource11(D3D11DDI_HDEVICE hDevice,
-                                        const D3D11DDIARG_OPENRESOURCE* pOpenResource,
-                                        D3D11DDI_HRESOURCE hResource,
-                                        D3D11DDI_HRTRESOURCE) {
+                                         const D3D11DDIARG_OPENRESOURCE* pOpenResource,
+                                         D3D11DDI_HRESOURCE hResource,
+                                         D3D11DDI_HRTRESOURCE) {
   if (!hDevice.pDrvPrivate || !pOpenResource || !hResource.pDrvPrivate) {
     return E_INVALIDARG;
   }

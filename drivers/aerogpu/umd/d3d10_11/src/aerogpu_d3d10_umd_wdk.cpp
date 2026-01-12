@@ -772,9 +772,9 @@ struct AeroGpuResource {
   // 0 if the resource is not shareable.
   uint64_t share_token = 0;
 
-  // True if this resource was created with D3D10_RESOURCE_MISC_SHARED.
+  // True if this resource was created as shareable (D3D10/D3D11 `*_RESOURCE_MISC_SHARED`).
   bool is_shared = false;
-  // True if this resource is an imported alias (OpenResource/OpenSharedResource).
+  // True if this resource is an imported alias created via OpenResource/OpenSharedResource.
   bool is_shared_alias = false;
 
   uint32_t bind_flags = 0;
@@ -822,6 +822,48 @@ struct AeroGpuResource {
   uint32_t mapped_wddm_pitch = 0;
   uint32_t mapped_wddm_slice_pitch = 0;
 };
+
+static bool ConsumeWddmAllocPrivV2(const void* priv_data, UINT priv_data_size, aerogpu_wddm_alloc_priv_v2* out) {
+  if (out) {
+    std::memset(out, 0, sizeof(*out));
+  }
+  if (!out || !priv_data || priv_data_size < sizeof(aerogpu_wddm_alloc_priv)) {
+    return false;
+  }
+
+  aerogpu_wddm_alloc_priv header{};
+  std::memcpy(&header, priv_data, sizeof(header));
+  if (header.magic != AEROGPU_WDDM_ALLOC_PRIV_MAGIC) {
+    return false;
+  }
+
+  if (header.version == AEROGPU_WDDM_ALLOC_PRIV_VERSION_2) {
+    if (priv_data_size < sizeof(aerogpu_wddm_alloc_priv_v2)) {
+      return false;
+    }
+    std::memcpy(out, priv_data, sizeof(*out));
+    return true;
+  }
+
+  if (header.version == AEROGPU_WDDM_ALLOC_PRIV_VERSION) {
+    out->magic = header.magic;
+    out->version = AEROGPU_WDDM_ALLOC_PRIV_VERSION_2;
+    out->alloc_id = header.alloc_id;
+    out->flags = header.flags;
+    out->share_token = header.share_token;
+    out->size_bytes = header.size_bytes;
+    out->reserved0 = header.reserved0;
+    out->kind = AEROGPU_WDDM_ALLOC_KIND_UNKNOWN;
+    out->width = 0;
+    out->height = 0;
+    out->format = 0;
+    out->row_pitch_bytes = 0;
+    out->reserved1 = 0;
+    return true;
+  }
+
+  return false;
+}
 
 struct AeroGpuShader {
   aerogpu_handle_t handle = 0;
@@ -1882,6 +1924,35 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
       return hr;
     }
 
+    // Consume the (potentially updated) allocation private driver data. For
+    // shared allocations, the Win7 KMD fills a stable non-zero share_token.
+    aerogpu_wddm_alloc_priv_v2 priv_out{};
+    if (ConsumeWddmAllocPrivV2(alloc_info[0].pPrivateDriverData,
+                               static_cast<UINT>(alloc_info[0].PrivateDriverDataSize),
+                               &priv_out)) {
+      if (priv_out.alloc_id != 0) {
+        alloc_id = priv_out.alloc_id;
+      }
+      if (is_shared) {
+        if ((priv_out.flags & AEROGPU_WDDM_ALLOC_PRIV_FLAG_SHARED) == 0 || priv_out.share_token == 0) {
+          static std::once_flag log_once;
+          std::call_once(log_once, [] {
+            AEROGPU_D3D10_11_LOG("D3D10 CreateResource: shared allocation missing share_token in returned private data");
+          });
+          return E_FAIL;
+        }
+        res->share_token = priv_out.share_token;
+      } else {
+        res->share_token = 0;
+      }
+    } else if (is_shared) {
+      static std::once_flag log_once;
+      std::call_once(log_once, [] {
+        AEROGPU_D3D10_11_LOG("D3D10 CreateResource: shared allocation missing/invalid private driver data");
+      });
+      return E_FAIL;
+    }
+
     uint64_t km_resource = 0;
     __if_exists(D3DDDICB_ALLOCATE::hKMResource) {
       km_resource = static_cast<uint64_t>(alloc.hKMResource);
@@ -1992,6 +2063,7 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
 #else
     is_shared = (res->misc_flags & D3D10_RESOURCE_MISC_SHARED) != 0;
 #endif
+    res->is_shared = is_shared;
     const bool want_guest_backed = !is_shared && !is_primary && !is_staging && !is_rt && !is_ds;
     cpu_visible = cpu_visible || want_guest_backed;
 
@@ -2073,7 +2145,14 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
       EmitUploadLocked(hDevice, dev, res, 0, res->storage.size());
     }
 
-    if (res->is_shared && res->share_token != 0) {
+    if (is_shared) {
+      if (res->share_token == 0) {
+        SetError(hDevice, E_FAIL);
+        deallocate_if_needed();
+        res->~AeroGpuResource();
+        return E_FAIL;
+      }
+
       // Shared resources must be importable cross-process as soon as CreateResource
       // returns. Since AeroGPU resource creation is expressed via the command
       // stream, export the resource and force a submission so the host observes
@@ -2092,6 +2171,7 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
       HRESULT submit_hr = S_OK;
       submit_locked(dev, /*want_present=*/false, &submit_hr);
       if (FAILED(submit_hr)) {
+        SetError(hDevice, submit_hr);
         deallocate_if_needed();
         res->~AeroGpuResource();
         return submit_hr;
@@ -2152,6 +2232,7 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
 #else
     is_shared = (res->misc_flags & D3D10_RESOURCE_MISC_SHARED) != 0;
 #endif
+    res->is_shared = is_shared;
     const bool want_guest_backed = !is_shared && !is_primary && !is_staging && !is_rt && !is_ds;
     cpu_visible = cpu_visible || want_guest_backed;
 
@@ -2254,7 +2335,13 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
       EmitUploadLocked(hDevice, dev, res, 0, res->storage.size());
     }
 
-    if (res->is_shared && res->share_token != 0) {
+    if (is_shared) {
+      if (res->share_token == 0) {
+        SetError(hDevice, E_FAIL);
+        deallocate_if_needed();
+        res->~AeroGpuResource();
+        return E_FAIL;
+      }
       auto* export_cmd =
           dev->cmd.append_fixed<aerogpu_cmd_export_shared_surface>(AEROGPU_CMD_EXPORT_SHARED_SURFACE);
       if (!export_cmd) {
@@ -2269,6 +2356,7 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
       HRESULT submit_hr = S_OK;
       submit_locked(dev, /*want_present=*/false, &submit_hr);
       if (FAILED(submit_hr)) {
+        SetError(hDevice, submit_hr);
         deallocate_if_needed();
         res->~AeroGpuResource();
         return submit_hr;
@@ -2458,7 +2546,6 @@ HRESULT APIENTRY OpenResource(D3D10DDI_HDEVICE hDevice,
   import_cmd->out_resource_handle = res->handle;
   import_cmd->reserved0 = 0;
   import_cmd->share_token = res->share_token;
-
   return S_OK;
 }
 

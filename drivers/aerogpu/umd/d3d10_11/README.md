@@ -102,12 +102,18 @@ All append helpers return `nullptr` (and set `CmdStreamError`) on failure (for e
 
 ### Shared surface note
 
-DXGI/D3D10/11 shared resource interop is implemented in the **Win7/WDDM 1.1 WDK build** of this UMD.
+DXGI/D3D10/11 shared resource interop is implemented in the **Win7/WDDM 1.1 WDK builds** of this UMD:
 
-The protocol supports cross-process sharing via `AEROGPU_CMD_EXPORT_SHARED_SURFACE` /
-`AEROGPU_CMD_IMPORT_SHARED_SURFACE` and a stable cross-process `share_token` carried in preserved
-WDDM allocation private driver data (`aerogpu_wddm_alloc_priv.share_token` in
-`drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`).
+- The protocol supports cross-process sharing via `AEROGPU_CMD_EXPORT_SHARED_SURFACE` /
+  `AEROGPU_CMD_IMPORT_SHARED_SURFACE` and a stable cross-process `share_token` carried in preserved
+  WDDM allocation private driver data (`aerogpu_wddm_alloc_priv.share_token` in
+  `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`).
+- Creating a shareable resource (for example: `D3D11_RESOURCE_MISC_SHARED`) causes the UMD to emit
+  `AEROGPU_CMD_EXPORT_SHARED_SURFACE` exactly once after allocation, using the stable `share_token`
+  returned in preserved WDDM allocation private driver data.
+- Opening a shared resource (cross-process `OpenSharedResource`) causes the UMD to parse the preserved
+  allocation private driver data and emit `AEROGPU_CMD_IMPORT_SHARED_SURFACE` using the same
+  `share_token`.
 
 On Win7/WDDM 1.1, `share_token` must be stable across guest processes. AeroGPU does
 **not** use the numeric value of the D3D shared `HANDLE` as `share_token` (handle
@@ -125,16 +131,12 @@ KMD can build the per-submit allocation table for guest-backed resources.
 
 For shared allocations, `alloc_id` must avoid collisions across guest processes and must stay in the UMD-owned range (`alloc_id <= 0x7fffffff`, non-zero).
 
-Implementation notes:
+Canonical contract and rationale: `docs/graphics/win7-shared-surfaces-share-token.md`.
 
-* On `CreateResource` of a shared resource, the UMD emits `EXPORT_SHARED_SURFACE` after the normal create packet and forces a submission so other processes can immediately import the resource.
-* On `OpenResource` of a shared allocation, the UMD creates a new alias handle and emits `IMPORT_SHARED_SURFACE` using the preserved `share_token`.
-
-See also: `docs/graphics/win7-shared-surfaces-share-token.md`.
-
-Win7 validation:
+Win7 validation/regression tests:
 
 - `drivers/aerogpu/tests/win7/d3d11_shared_surface_ipc/`
+- `drivers/aerogpu/tests/win7/d3d11_shared_texture_ipc/`
 - `drivers/aerogpu/tests/win7/d3d10_shared_surface_ipc/`
 - `drivers/aerogpu/tests/win7/d3d10_1_shared_surface_ipc/`
 
