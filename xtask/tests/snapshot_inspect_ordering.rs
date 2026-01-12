@@ -415,6 +415,91 @@ fn snapshot_inspect_notes_unsorted_cpus_section() {
         ));
 }
 
+struct CpuEntrySummarySource;
+
+impl SnapshotSource for CpuEntrySummarySource {
+    fn snapshot_meta(&mut self) -> SnapshotMeta {
+        SnapshotMeta {
+            snapshot_id: 9,
+            parent_snapshot_id: Some(8),
+            created_unix_ms: 0,
+            label: Some("inspect-cpus-entry-summary".to_string()),
+        }
+    }
+
+    fn cpu_state(&self) -> CpuState {
+        CpuState::default()
+    }
+
+    fn cpu_states(&self) -> Vec<VcpuSnapshot> {
+        let mut cpu0 = CpuState::default();
+        cpu0.rip = 0x1234;
+        let mut cpu1 = CpuState::default();
+        cpu1.rip = 0x5678;
+        cpu1.halted = true;
+        vec![
+            VcpuSnapshot {
+                apic_id: 0,
+                cpu: cpu0,
+                internal_state: vec![0xAA, 0xBB, 0xCC],
+            },
+            VcpuSnapshot {
+                apic_id: 1,
+                cpu: cpu1,
+                internal_state: Vec::new(),
+            },
+        ]
+    }
+
+    fn mmu_state(&self) -> MmuState {
+        MmuState::default()
+    }
+
+    fn device_states(&self) -> Vec<DeviceState> {
+        Vec::new()
+    }
+
+    fn disk_overlays(&self) -> DiskOverlayRefs {
+        DiskOverlayRefs::default()
+    }
+
+    fn ram_len(&self) -> usize {
+        4096
+    }
+
+    fn read_ram(&self, _offset: u64, buf: &mut [u8]) -> aero_snapshot::Result<()> {
+        buf.fill(0);
+        Ok(())
+    }
+
+    fn take_dirty_pages(&mut self) -> Option<Vec<u64>> {
+        None
+    }
+}
+
+#[test]
+fn snapshot_inspect_decodes_basic_cpus_entry_cpu_state() {
+    let tmp = tempfile::tempdir().unwrap();
+    let snap = tmp.path().join("cpus_entry_summary.aerosnap");
+
+    let mut source = CpuEntrySummarySource;
+    let mut cursor = Cursor::new(Vec::new());
+    save_snapshot(&mut cursor, &mut source, SaveOptions::default()).unwrap();
+    fs::write(&snap, cursor.into_inner()).unwrap();
+
+    Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["snapshot", "inspect", snap.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("CPUS:"))
+        .stdout(predicate::str::contains("apic_id=0"))
+        .stdout(predicate::str::contains("rip=0x1234"))
+        .stdout(predicate::str::contains("internal_len=3"))
+        .stdout(predicate::str::contains("apic_id=1"))
+        .stdout(predicate::str::contains("rip=0x5678"))
+        .stdout(predicate::str::contains("halted=true"));
+}
+
 struct AeroIoSnapshotDeviceSource;
 
 impl SnapshotSource for AeroIoSnapshotDeviceSource {
