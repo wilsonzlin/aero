@@ -167,6 +167,18 @@ fn validate_etag(id: &str, etag: &str) -> Result<(), ManifestError> {
         });
     }
 
+    // Reject any whitespace inside the ETag itself (OWS around the value is handled by `trim()`).
+    //
+    // This rejects both invalid entity-tags (spaces are not allowed per RFC 9110) and any
+    // whitespace-based header injection attempts.
+    if etag.chars().any(|c| c.is_whitespace()) {
+        return Err(ManifestError::InvalidEtag {
+            id: super::truncate_for_error(id, super::MAX_IMAGE_ID_LEN),
+            etag: super::truncate_for_error(etag, 512),
+            reason: "etag must not contain whitespace".to_string(),
+        });
+    }
+
     HeaderValue::from_str(etag).map_err(|err| ManifestError::InvalidEtag {
         id: super::truncate_for_error(id, super::MAX_IMAGE_ID_LEN),
         etag: super::truncate_for_error(etag, 512),
@@ -338,6 +350,20 @@ mod tests {
             r#"{
               "images": [
                 { "id": "bad", "file": "bad.img", "name": "Bad", "etag": "unquoted", "public": true }
+              ]
+            }"#,
+        )
+        .unwrap_err();
+
+        assert!(matches!(err, ManifestError::InvalidEtag { .. }));
+    }
+
+    #[test]
+    fn rejects_etag_with_internal_whitespace() {
+        let err = Manifest::parse_str(
+            r#"{
+              "images": [
+                { "id": "bad", "file": "bad.img", "name": "Bad", "etag": "\"v 1\"", "public": true }
               ]
             }"#,
         )
