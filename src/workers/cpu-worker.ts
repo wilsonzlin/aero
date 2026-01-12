@@ -385,10 +385,20 @@ async function runTieredVm(iterations: number, threshold: number) {
     const notify = vmAny.on_guest_write ?? vmAny.jit_on_guest_write;
     if (typeof notify === 'function') {
       onGuestWrite = (paddr: bigint, len: number) => {
+        const paddrU64 = asU64(paddr);
+        const lenU32 = len >>> 0;
         try {
-          (notify as (paddr: bigint, len: number) => void).call(vm, asU64(paddr), len >>> 0);
+          (notify as (paddr: bigint, len: number) => void).call(vm, paddrU64, lenU32);
+          return;
         } catch {
-          // ignore
+          // Backwards-compat: older wasm-bindgen APIs may expose these methods with `u32` params
+          // (number) instead of `u64` (BigInt). Fall back to a lossy-but-safe u32 conversion when
+          // the BigInt call fails.
+          try {
+            (notify as (paddr: number, len: number) => void).call(vm, u64ToNumber(paddrU64), lenU32);
+          } catch {
+            // ignore
+          }
         }
       };
     } else {
@@ -680,12 +690,18 @@ async function runTieredVm(iterations: number, threshold: number) {
     // wasm-bindgen APIs differ across versions: newer builds return a list of evicted RIPs from
     // `install_tier1_block`, while older builds returned `void`. Capture as `unknown` so we can
     // best-effort free table indices without breaking typecheck.
-    const evicted: unknown = vm.install_tier1_block(
-      BigInt(entryRipU32),
-      tableIndex,
-      BigInt(entryRipU32),
-      resp.meta.code_byte_len,
-    ) as unknown;
+    let evicted: unknown;
+    try {
+      evicted = vm.install_tier1_block(BigInt(entryRipU32), tableIndex, BigInt(entryRipU32), resp.meta.code_byte_len) as unknown;
+    } catch {
+      // Backwards-compat: older wasm-bindgen exports used u32 params (number) instead of u64 (BigInt).
+      evicted = (vm.install_tier1_block as unknown as (...args: unknown[]) => unknown)(
+        entryRipU32,
+        tableIndex,
+        entryRipU32,
+        resp.meta.code_byte_len,
+      );
+    }
     installedByRip.set(entryRipU32, tableIndex);
 
     // If the JIT cache evicted older blocks, free their table indices so they can be reused.
