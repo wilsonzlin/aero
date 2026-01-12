@@ -3131,18 +3131,27 @@ static bool HttpPostLargeDeterministic(Logger& log, const std::wstring& url, uin
     for (size_t i = 0; i < n; i++) {
       buf[i] = static_cast<uint8_t>((total_written + i) & 0xFFu);
     }
-    DWORD written = 0;
-    if (!WinHttpWriteData(request, buf.data(), static_cast<DWORD>(n), &written)) {
-      log.Logf("virtio-net: WinHttpWriteData failed err=%lu", GetLastError());
-      write_ok = false;
-      break;
+
+    // WinHTTP is expected to write the full requested length in synchronous mode, but handle
+    // partial writes defensively so we never accidentally skip bytes in the deterministic payload.
+    size_t sent = 0;
+    while (sent < n) {
+      DWORD written = 0;
+      const DWORD to_write = static_cast<DWORD>(std::min<size_t>(n - sent, UINT_MAX));
+      if (!WinHttpWriteData(request, buf.data() + sent, to_write, &written)) {
+        log.Logf("virtio-net: WinHttpWriteData failed err=%lu", GetLastError());
+        write_ok = false;
+        break;
+      }
+      if (written == 0) {
+        log.LogLine("virtio-net: WinHttpWriteData returned 0 bytes written");
+        write_ok = false;
+        break;
+      }
+      sent += static_cast<size_t>(written);
+      total_written += static_cast<uint64_t>(written);
     }
-    if (written == 0) {
-      log.LogLine("virtio-net: WinHttpWriteData returned 0 bytes written");
-      write_ok = false;
-      break;
-    }
-    total_written += static_cast<uint64_t>(written);
+    if (!write_ok) break;
   }
 
   if (bytes_sent_out) *bytes_sent_out = total_written;
