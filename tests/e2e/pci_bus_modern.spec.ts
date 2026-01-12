@@ -186,9 +186,9 @@ test("PCI bus: multifunction + mmio64 BAR + capability list", async ({ page }) =
 
   // PCI capability list: status bit4 + pointer at 0x34 + linked list next pointers.
   expect(result.status & 0x10).toBe(0x10);
-  expect(result.capPtr).toBe(0x40);
+  expect(result.capPtr).toBe(0x50);
   expect(result.cap0Id).toBe(0x09);
-  expect(result.cap0Next).toBe(0x50);
+  expect(result.cap0Next).toBe(0x60);
   expect(result.cap1Id).toBe(0x09);
   expect(result.cap1Next).toBe(0x00);
 
