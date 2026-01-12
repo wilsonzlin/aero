@@ -15,7 +15,15 @@ export function setupRateLimit(app: FastifyInstance, opts: { requestsPerMinute: 
     if (request.method === 'OPTIONS') return;
 
     const route = request.routeOptions?.url;
-    if (route === '/healthz' || route === '/readyz' || route === '/metrics') return;
+    // Health/metrics endpoints should remain usable even when request rate
+    // limiting is enabled (liveness probes, dashboards, etc).
+    //
+    // When the gateway is deployed behind a reverse proxy under a base path
+    // (e.g. `/aero`), the same handlers may be registered under that prefix
+    // (e.g. `/aero/healthz`), so match by suffix instead of exact equality.
+    if (route && (route === '/healthz' || route.endsWith('/healthz') || route === '/readyz' || route.endsWith('/readyz') || route === '/metrics' || route.endsWith('/metrics'))) {
+      return;
+    }
 
     const key = getClientKey(request.ip);
     if (!limiter.allow(key)) {

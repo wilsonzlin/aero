@@ -100,3 +100,27 @@ test('rate limiter keys off X-Forwarded-For when TRUST_PROXY=1', async () => {
 
   await app.close();
 });
+
+test('rate limiter does not apply to /healthz, /readyz, or /metrics (including base-path variants)', async () => {
+  const { app } = buildServer({ ...baseConfig, PUBLIC_BASE_URL: 'http://localhost/base' });
+  await app.ready();
+
+  // Consume the 1 req/min budget.
+  const first = await app.inject({ method: 'GET', url: '/base/version', headers: { origin: 'http://localhost' } });
+  assert.equal(first.statusCode, 200);
+
+  const limited = await app.inject({ method: 'GET', url: '/base/version', headers: { origin: 'http://localhost' } });
+  assert.equal(limited.statusCode, 429);
+
+  // Exempt operational endpoints should still respond.
+  const health = await app.inject({ method: 'GET', url: '/base/healthz' });
+  assert.equal(health.statusCode, 200);
+
+  const ready = await app.inject({ method: 'GET', url: '/base/readyz' });
+  assert.equal(ready.statusCode, 200);
+
+  const metrics = await app.inject({ method: 'GET', url: '/base/metrics' });
+  assert.equal(metrics.statusCode, 200);
+
+  await app.close();
+});
