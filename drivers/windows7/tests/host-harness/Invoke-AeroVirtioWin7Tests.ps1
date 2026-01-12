@@ -904,52 +904,6 @@ function Get-AeroFreeTcpPort {
   }
 }
 
-function Try-AeroQmpSendInputEvents {
-  param(
-    [Parameter(Mandatory = $true)] [string]$Host,
-    [Parameter(Mandatory = $true)] [int]$Port
-  )
-
-  $deadline = [DateTime]::UtcNow.AddSeconds(2)
-  while ([DateTime]::UtcNow -lt $deadline) {
-    $client = $null
-    try {
-      $client = [System.Net.Sockets.TcpClient]::new()
-      $client.ReceiveTimeout = 2000
-      $client.SendTimeout = 2000
-      $client.Connect($Host, $Port)
-
-      $stream = $client.GetStream()
-      $reader = [System.IO.StreamReader]::new($stream, [System.Text.Encoding]::UTF8, $false, 4096, $true)
-      $writer = [System.IO.StreamWriter]::new($stream, [System.Text.Encoding]::UTF8, 4096, $true)
-      $writer.NewLine = "`n"
-      $writer.AutoFlush = $true
-
-      # Greeting.
-      $null = $reader.ReadLine()
-      $writer.WriteLine('{"execute":"qmp_capabilities"}')
-      $null = $reader.ReadLine()
-
-      # Keyboard: press + release 'a' (qcode).
-      $writer.WriteLine('{"execute":"input-send-event","arguments":{"events":[{"type":"key","data":{"down":true,"key":{"type":"qcode","data":"a"}}},{"type":"key","data":{"down":false,"key":{"type":"qcode","data":"a"}}}]}}')
-      $null = $reader.ReadLine()
-
-      # Mouse: small relative motion + left click.
-      $writer.WriteLine('{"execute":"input-send-event","arguments":{"events":[{"type":"rel","data":{"axis":"x","value":5}},{"type":"rel","data":{"axis":"y","value":-3}},{"type":"btn","data":{"down":true,"button":"left"}},{"type":"btn","data":{"down":false,"button":"left"}}]}}')
-      $null = $reader.ReadLine()
-
-      return $true
-    } catch {
-      Start-Sleep -Milliseconds 100
-      continue
-    } finally {
-      if ($client) { $client.Close() }
-    }
-  }
-
-  return $false
-}
-
 function Try-AeroQmpQuit {
   param(
     [Parameter(Mandatory = $true)] [string]$Host,
