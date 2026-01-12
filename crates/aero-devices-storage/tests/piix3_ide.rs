@@ -12,7 +12,7 @@ use aero_devices_storage::pci_ide::{
 use aero_io_snapshot::io::state::IoSnapshot;
 use aero_io_snapshot::io::storage::state::MAX_IDE_DATA_BUFFER_BYTES;
 use aero_platform::io::IoPortBus;
-use aero_storage::{MemBackend, RawDisk, VirtualDisk, SECTOR_SIZE};
+use aero_storage::{DiskError, MemBackend, RawDisk, Result, VirtualDisk, SECTOR_SIZE};
 use memory::{Bus, MemoryBus};
 
 #[derive(Debug)]
@@ -49,6 +49,80 @@ fn read_u16(dev: &mut Piix3IdePciDevice, offset: u16) -> u16 {
 
 fn read_u32(dev: &mut Piix3IdePciDevice, offset: u16) -> u32 {
     dev.config_mut().read(offset, 4)
+}
+
+#[derive(Debug, Default)]
+struct RecordingDisk {
+    capacity_bytes: u64,
+    last_write_lba: Option<u64>,
+    last_write_len: usize,
+}
+
+impl RecordingDisk {
+    fn new(sectors: u64) -> Self {
+        Self {
+            capacity_bytes: sectors * SECTOR_SIZE as u64,
+            ..Default::default()
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct SharedRecordingDisk(Rc<RefCell<RecordingDisk>>);
+
+impl VirtualDisk for SharedRecordingDisk {
+    fn capacity_bytes(&self) -> u64 {
+        self.0.borrow().capacity_bytes
+    }
+
+    fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<()> {
+        let cap = self.capacity_bytes();
+        let end = offset
+            .checked_add(buf.len() as u64)
+            .ok_or(DiskError::OffsetOverflow)?;
+        if end > cap {
+            return Err(DiskError::OutOfBounds {
+                offset,
+                len: buf.len(),
+                capacity: cap,
+            });
+        }
+        buf.fill(0);
+        Ok(())
+    }
+
+    fn write_at(&mut self, offset: u64, buf: &[u8]) -> Result<()> {
+        let cap = self.capacity_bytes();
+        let end = offset
+            .checked_add(buf.len() as u64)
+            .ok_or(DiskError::OffsetOverflow)?;
+        if end > cap {
+            return Err(DiskError::OutOfBounds {
+                offset,
+                len: buf.len(),
+                capacity: cap,
+            });
+        }
+        assert_eq!(
+            offset % SECTOR_SIZE as u64,
+            0,
+            "ATA should only issue sector-aligned writes"
+        );
+        assert!(
+            buf.len().is_multiple_of(SECTOR_SIZE),
+            "ATA should only issue whole-sector writes"
+        );
+
+        let lba = offset / SECTOR_SIZE as u64;
+        let mut inner = self.0.borrow_mut();
+        inner.last_write_lba = Some(lba);
+        inner.last_write_len = buf.len();
+        Ok(())
+    }
+
+    fn flush(&mut self) -> Result<()> {
+        Ok(())
+    }
 }
 
 #[test]
@@ -217,6 +291,52 @@ fn ata_lba48_oversized_pio_write_is_rejected_without_allocating_buffer() {
     assert_eq!(status & 0x08, 0, "DRQ should be clear (no data phase)");
     assert_ne!(status & 0x01, 0, "ERR should be set");
     assert_eq!(io.read(PRIMARY_PORTS.cmd_base + 1, 1) as u8, 0x04);
+}
+
+#[test]
+fn ata_pio_write_sectors_ext_uses_lba48_hob_bytes() {
+    // Use a "high" LBA value that requires HOB bytes (LBA3..LBA5) to be carried through for
+    // LBA48 commands. This ensures we don't accidentally truncate to 28-bit addressing.
+    let lba: u64 = 0x01_00_00_00;
+    let shared = Rc::new(RefCell::new(RecordingDisk::new(lba + 16)));
+    let disk = SharedRecordingDisk(shared.clone());
+
+    let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
+    ide.borrow_mut()
+        .controller
+        .attach_primary_master_ata(AtaDrive::new(Box::new(disk)).unwrap());
+    ide.borrow_mut().config_mut().set_command(0x0001); // IO decode
+
+    let mut ioports = IoPortBus::new();
+    register_piix3_ide_ports(&mut ioports, ide.clone());
+
+    // Select master, LBA mode.
+    ioports.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
+
+    // Sector count (48-bit): high byte then low byte => 1 sector.
+    ioports.write(PRIMARY_PORTS.cmd_base + 2, 1, 0x00);
+    ioports.write(PRIMARY_PORTS.cmd_base + 2, 1, 0x01);
+
+    // LBA bytes (48-bit): write high bytes first, then low bytes.
+    // LBA = 0x01_00_00_00 => HOB LBA0=0x01, others 0.
+    ioports.write(PRIMARY_PORTS.cmd_base + 3, 1, 0x01);
+    ioports.write(PRIMARY_PORTS.cmd_base + 3, 1, 0x00);
+    ioports.write(PRIMARY_PORTS.cmd_base + 4, 1, 0x00);
+    ioports.write(PRIMARY_PORTS.cmd_base + 4, 1, 0x00);
+    ioports.write(PRIMARY_PORTS.cmd_base + 5, 1, 0x00);
+    ioports.write(PRIMARY_PORTS.cmd_base + 5, 1, 0x00);
+
+    // Command: WRITE SECTORS EXT.
+    ioports.write(PRIMARY_PORTS.cmd_base + 7, 1, 0x34);
+
+    // Transfer one sector (PIO OUT).
+    for i in 0..256u16 {
+        ioports.write(PRIMARY_PORTS.cmd_base, 2, i as u32);
+    }
+
+    let inner = shared.borrow();
+    assert_eq!(inner.last_write_lba, Some(lba));
+    assert_eq!(inner.last_write_len, SECTOR_SIZE);
 }
 
 #[test]
