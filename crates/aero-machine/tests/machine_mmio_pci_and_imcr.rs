@@ -2,7 +2,7 @@ use aero_devices::pci::{profile, PciBdf};
 use aero_machine::{Machine, MachineConfig};
 use aero_platform::interrupts::{InterruptController, InterruptInput, PlatformInterruptMode};
 use aero_devices::hpet::HPET_MMIO_BASE;
-use aero_interrupts::apic::IOAPIC_MMIO_BASE;
+use aero_interrupts::apic::{IOAPIC_MMIO_BASE, LAPIC_MMIO_BASE};
 use firmware::bios::PCIE_ECAM_BASE;
 use pretty_assertions::assert_eq;
 
@@ -405,4 +405,32 @@ fn pci_bar_reprogramming_relocates_io_and_mmio_routing_for_e1000() {
     // New addresses should route again.
     assert_ne!(m.read_physical_u32(new_mmio_base), 0xFFFF_FFFF);
     assert_ne!(m.io_read(new_io_base, 4), 0xFFFF_FFFF);
+}
+
+#[test]
+fn lapic_mmio_timer_can_fire_in_apic_mode() {
+    let vector = 0x40u8;
+
+    let mut m = Machine::new(mmio_machine_config()).unwrap();
+    enable_a20(&mut m);
+
+    // Ensure LAPIC delivery is active for get_pending().
+    m.platform_interrupts()
+        .unwrap()
+        .borrow_mut()
+        .set_mode(PlatformInterruptMode::Apic);
+
+    // Program LAPIC timer via the MMIO window:
+    // - divide config: 0xB => divisor 1 (fast ticks)
+    // - LVT timer: vector 0x40 (one-shot, unmasked)
+    // - initial count: 10
+    m.write_physical_u32(LAPIC_MMIO_BASE + 0x3E0, 0xBu32);
+    m.write_physical_u32(LAPIC_MMIO_BASE + 0x320, u32::from(vector));
+    m.write_physical_u32(LAPIC_MMIO_BASE + 0x380, 10u32);
+
+    let interrupts = m.platform_interrupts().unwrap();
+    interrupts.borrow().tick(9);
+    assert_eq!(interrupts.borrow().get_pending(), None);
+    interrupts.borrow().tick(1);
+    assert_eq!(interrupts.borrow().get_pending(), Some(vector));
 }
