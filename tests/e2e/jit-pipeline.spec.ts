@@ -15,6 +15,10 @@ function getPath(obj: unknown, path: string): unknown {
 
 function parseMaybeNumber(value: unknown): number | undefined {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'bigint') {
+    const asNumber = Number(value);
+    return Number.isFinite(asNumber) ? asNumber : undefined;
+  }
   if (typeof value === 'string') {
     const trimmed = value.trim().toLowerCase();
     if (!trimmed) return undefined;
@@ -49,6 +53,13 @@ function findBlockTableIndexByRip(result: unknown, rip: number): number | null {
     (r.blocks && typeof r.blocks === 'object' ? (r.blocks as Record<string, unknown>).installedBlocks : undefined),
     (r.blocks && typeof r.blocks === 'object' ? (r.blocks as Record<string, unknown>).installed : undefined),
     r.installed,
+    // Tier-0/Tier-1 pipeline variants.
+    (r.tier1 && typeof r.tier1 === 'object' ? (r.tier1 as Record<string, unknown>).installed_blocks : undefined),
+    (r.tier1 && typeof r.tier1 === 'object' ? (r.tier1 as Record<string, unknown>).installedBlocks : undefined),
+    (r.tier1 && typeof r.tier1 === 'object' ? (r.tier1 as Record<string, unknown>).installed : undefined),
+    (r.jit && typeof r.jit === 'object' ? (r.jit as Record<string, unknown>).installed_blocks : undefined),
+    (r.jit && typeof r.jit === 'object' ? (r.jit as Record<string, unknown>).installedBlocks : undefined),
+    (r.jit && typeof r.jit === 'object' ? (r.jit as Record<string, unknown>).installed : undefined),
   ];
   for (const maybeArr of candidateArrays) {
     if (!Array.isArray(maybeArr)) continue;
@@ -68,6 +79,10 @@ function findBlockTableIndexByRip(result: unknown, rip: number): number | null {
     r.installedByRip,
     r.installed_table_index_by_rip,
     r.installedTableIndexByRip,
+    (r.tier1 && typeof r.tier1 === 'object' ? (r.tier1 as Record<string, unknown>).installed_by_rip : undefined),
+    (r.tier1 && typeof r.tier1 === 'object' ? (r.tier1 as Record<string, unknown>).installedByRip : undefined),
+    (r.jit && typeof r.jit === 'object' ? (r.jit as Record<string, unknown>).installed_by_rip : undefined),
+    (r.jit && typeof r.jit === 'object' ? (r.jit as Record<string, unknown>).installedByRip : undefined),
   ];
   for (const maybeMap of candidateMaps) {
     if (!maybeMap || typeof maybeMap !== 'object' || Array.isArray(maybeMap)) continue;
@@ -108,6 +123,12 @@ function hasCompiledRip(result: unknown, rip: number): boolean {
     (r.blocks && typeof r.blocks === 'object' ? (r.blocks as Record<string, unknown>).compiledBlocks : undefined),
     (r.blocks && typeof r.blocks === 'object' ? (r.blocks as Record<string, unknown>).compiled : undefined),
     r.compiled,
+    (r.tier1 && typeof r.tier1 === 'object' ? (r.tier1 as Record<string, unknown>).compiled_blocks : undefined),
+    (r.tier1 && typeof r.tier1 === 'object' ? (r.tier1 as Record<string, unknown>).compiledBlocks : undefined),
+    (r.tier1 && typeof r.tier1 === 'object' ? (r.tier1 as Record<string, unknown>).compiled : undefined),
+    (r.jit && typeof r.jit === 'object' ? (r.jit as Record<string, unknown>).compiled_blocks : undefined),
+    (r.jit && typeof r.jit === 'object' ? (r.jit as Record<string, unknown>).compiledBlocks : undefined),
+    (r.jit && typeof r.jit === 'object' ? (r.jit as Record<string, unknown>).compiled : undefined),
   ];
   for (const maybeArr of candidateArrays) {
     if (!Array.isArray(maybeArr)) continue;
@@ -123,7 +144,14 @@ function hasCompiledRip(result: unknown, rip: number): boolean {
     }
   }
 
-  const candidateMaps: unknown[] = [r.compiled_by_rip, r.compiledByRip];
+  const candidateMaps: unknown[] = [
+    r.compiled_by_rip,
+    r.compiledByRip,
+    (r.tier1 && typeof r.tier1 === 'object' ? (r.tier1 as Record<string, unknown>).compiled_by_rip : undefined),
+    (r.tier1 && typeof r.tier1 === 'object' ? (r.tier1 as Record<string, unknown>).compiledByRip : undefined),
+    (r.jit && typeof r.jit === 'object' ? (r.jit as Record<string, unknown>).compiled_by_rip : undefined),
+    (r.jit && typeof r.jit === 'object' ? (r.jit as Record<string, unknown>).compiledByRip : undefined),
+  ];
   for (const maybeMap of candidateMaps) {
     if (!maybeMap || typeof maybeMap !== 'object' || Array.isArray(maybeMap)) continue;
     for (const key of Object.keys(maybeMap as Record<string, unknown>)) {
@@ -198,11 +226,15 @@ test('Tier-1 JIT pipeline compiles, installs, and executes a block', async ({ pa
   const interpExecutions =
     firstNumberAtPaths(result, [
       'interp_executions',
+      'interp_blocks',
+      'interp_blocks_total',
       'tier0_executions',
       'tier0_execs',
       'tier0_exec_count',
       'tier0.exec_count',
       'tier0.execCount',
+      'run_blocks.interp_blocks',
+      'runBlocks.interp_blocks',
       'tier0_blocks_executed',
       'tier0_blocks',
       'tier0.blocks',
@@ -216,11 +248,15 @@ test('Tier-1 JIT pipeline compiles, installs, and executes a block', async ({ pa
   const jitExecutions =
     firstNumberAtPaths(result, [
       'jit_executions',
+      'jit_blocks',
+      'jit_blocks_total',
       'tier1_executions',
       'tier1_execs',
       'tier1_exec_count',
       'tier1.exec_count',
       'tier1.execCount',
+      'run_blocks.jit_blocks',
+      'runBlocks.jit_blocks',
       'tier1_blocks_executed',
       'tier1_blocks',
       'tier1.blocks',
