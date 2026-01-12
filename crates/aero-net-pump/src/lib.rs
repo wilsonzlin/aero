@@ -547,6 +547,56 @@ mod tests {
     }
 
     #[test]
+    fn rx_budget_prevents_infinite_backend_loop() {
+        #[derive(Default)]
+        struct InfiniteRxBackend {
+            calls: usize,
+            frame: Vec<u8>,
+        }
+
+        impl NetworkBackend for InfiniteRxBackend {
+            fn transmit(&mut self, _frame: Vec<u8>) {}
+
+            fn poll_receive(&mut self) -> Option<Vec<u8>> {
+                self.calls += 1;
+                Some(self.frame.clone())
+            }
+        }
+
+        let mut mem = TestMem::new(0x80_000);
+        let mut nic = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
+        nic.pci_config_write(0x04, 2, 0x4); // Bus Master Enable
+
+        // Enough RX descriptors to accept multiple frames in a single flush.
+        configure_rx_ring(&mut nic, 0x2000, 4, 3);
+        write_rx_desc(&mut mem, 0x2000, 0x3000, 0);
+        write_rx_desc(&mut mem, 0x2010, 0x3400, 0);
+        write_rx_desc(&mut mem, 0x2020, 0x3800, 0);
+        write_rx_desc(&mut mem, 0x2030, 0x3C00, 0);
+
+        let frame = build_test_frame(b"infinite");
+        let mut backend = InfiniteRxBackend {
+            calls: 0,
+            frame: frame.clone(),
+        };
+
+        let mut pump = E1000TickPump::new(0, 5);
+        let counts = pump.tick_with_counts(&mut nic, &mut mem, &mut backend);
+
+        assert_eq!(backend.calls, 5);
+        assert_eq!(
+            counts,
+            PumpCounts {
+                tx_frames: 0,
+                rx_frames: 5,
+            }
+        );
+
+        // At least one frame should have been written into guest memory.
+        assert_eq!(mem.read_vec(0x3000, frame.len()), frame);
+    }
+
+    #[test]
     fn same_poll_backend_response_is_delivered_to_guest() {
         #[derive(Default)]
         struct EchoBackend {
