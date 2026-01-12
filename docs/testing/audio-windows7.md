@@ -102,6 +102,12 @@ Inside the Windows 7 guest:
    - Expected: **Driver Provider** is `Microsoft`
    - Optional: click **Driver Details** and confirm `hdaudio.sys` is present
 
+4. Optional (CLI verification):
+
+```cmd
+wmic path Win32_SoundDevice get Name,Manufacturer,Status,PNPDeviceID
+```
+
 Expected outcome:
 
 - Windows should use the **Microsoft** inbox driver stack automatically.
@@ -227,6 +233,7 @@ Optional end-to-end verification (more obvious than a level meter):
   - Likely PCI wiring/identity issue (class code, BAR sizing, IRQ/MSI, device not on PCI bus)
 - **Yellow bang / “Unknown device”**
   - Likely config space mismatch or missing required capabilities
+  - Often appears as `Multimedia Audio Controller` under `Other devices`
 - **Controller exists but no “High Definition Audio Device”**
   - HDA codec enumeration or CORB/RIRB verb path issue (bus driver loaded, function driver can’t bring up codec)
 
