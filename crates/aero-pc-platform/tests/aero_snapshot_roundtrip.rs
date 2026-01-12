@@ -57,7 +57,7 @@ impl SnapshotSource for PcPlatformSnapshotHarness {
 
         // Platform interrupt controller complex (PIC + IOAPIC + LAPIC).
         devices.push(device_state_from_io_snapshot(
-            DeviceId::APIC,
+            DeviceId::PLATFORM_INTERRUPTS,
             &*self.platform.interrupts.borrow(),
         ));
 
@@ -77,7 +77,7 @@ impl SnapshotSource for PcPlatformSnapshotHarness {
 
         // PCI.
         devices.push(device_state_from_io_snapshot(
-            DeviceId::PCI,
+            DeviceId::PCI_CFG,
             &*self.platform.pci_cfg.borrow(),
         ));
         devices.push(device_state_from_io_snapshot(
@@ -143,11 +143,11 @@ impl SnapshotTarget for PcPlatformSnapshotHarness {
 
         for state in states {
             match state.id {
-                DeviceId::APIC => interrupts = Some(state),
+                DeviceId::PLATFORM_INTERRUPTS | DeviceId::APIC => interrupts = Some(state),
                 DeviceId::PIT => pit = Some(state),
                 DeviceId::RTC => rtc = Some(state),
                 DeviceId::HPET => hpet = Some(state),
-                DeviceId::PCI => pci_cfg = Some(state),
+                DeviceId::PCI_CFG | DeviceId::PCI => pci_cfg = Some(state),
                 DeviceId::PCI_INTX_ROUTER => pci_intx = Some(state),
                 DeviceId::ACPI_PM => acpi_pm = Some(state),
                 DeviceId::MEMORY => memory = Some(state),
@@ -387,4 +387,3 @@ fn aero_snapshot_restore_syncs_pci_intx_levels_into_interrupt_controller() {
 
     assert_eq!(levels[expected_gsi as usize], 1);
 }
-
