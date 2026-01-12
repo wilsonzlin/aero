@@ -120,6 +120,26 @@ class MemoryMetadataStore implements RemoteRangeDiskMetadataStore {
 
 type RangeServerState = {
   sizeBytes: number;
+  /**
+   * When set, GET Range requests are validated against this size (and 416 responses include
+   * `Content-Range: bytes * / <realSizeBytes>`), while HEAD continues to report `sizeBytes` until
+   * updated. (The extra spaces avoid writing the comment terminator sequence.)
+   *
+   * This lets tests model a stale size probe / CDN drift scenario where the client believes the
+   * resource is larger than it actually is.
+   */
+  realSizeBytes?: number;
+  /**
+   * When true, any range with an end beyond `realSizeBytes` returns 416 instead of truncating.
+   *
+   * Note: This is stricter than RFC 7233, but some servers/proxies behave this way.
+   */
+  return416IfEndBeyondRealSize?: boolean;
+  /**
+   * When true, if the server returns a 416 it will also update `sizeBytes` to `realSizeBytes`,
+   * simulating a re-probe that subsequently returns the correct size.
+   */
+  fixHeadSizeAfter416?: boolean;
   etag?: string;
   lastModified?: string;
   requiredToken?: string;
@@ -133,6 +153,8 @@ type RangeServerState = {
 
 type RangeServerStats = {
   rangeGets: number;
+  headRequests: number;
+  range416s: number;
   lastRange?: string;
   lastIfRange?: string;
   seenIfRanges: string[];
@@ -144,7 +166,7 @@ async function startRangeServer(state: RangeServerState): Promise<{
   stats: RangeServerStats;
   close: () => Promise<void>;
 }> {
-  const stats: RangeServerStats = { rangeGets: 0, seenIfRanges: [] };
+  const stats: RangeServerStats = { rangeGets: 0, headRequests: 0, range416s: 0, seenIfRanges: [] };
 
   const server = http.createServer((req, res) => {
     if (state.requiredToken) {
@@ -181,6 +203,7 @@ async function startRangeServer(state: RangeServerState): Promise<{
     if (state.lastModified) res.setHeader("last-modified", state.lastModified);
 
     if (method === "HEAD") {
+      stats.headRequests += 1;
       res.statusCode = 200;
       res.setHeader("content-length", String(state.sizeBytes));
       res.end();
@@ -193,10 +216,12 @@ async function startRangeServer(state: RangeServerState): Promise<{
       return;
     }
 
+    const realSizeBytes = state.realSizeBytes ?? state.sizeBytes;
+
     if (typeof range !== "string" || state.ignoreRange) {
       res.statusCode = 200;
-      res.setHeader("content-length", String(state.sizeBytes));
-      res.end(state.getBytes(0, state.sizeBytes));
+      res.setHeader("content-length", String(realSizeBytes));
+      res.end(state.getBytes(0, realSizeBytes));
       return;
     }
 
@@ -240,21 +265,29 @@ async function startRangeServer(state: RangeServerState): Promise<{
       }
     }
 
-    if (start >= state.sizeBytes) {
+    if (
+      start >= realSizeBytes ||
+      (state.return416IfEndBeyondRealSize === true && endInclusive >= realSizeBytes)
+    ) {
+      stats.range416s += 1;
       res.statusCode = 416;
+      res.setHeader("content-range", `bytes */${realSizeBytes}`);
       res.end();
+      if (state.fixHeadSizeAfter416 && state.realSizeBytes !== undefined) {
+        state.sizeBytes = state.realSizeBytes;
+      }
       return;
     }
 
-    const end = Math.min(endInclusive, state.sizeBytes - 1);
+    const end = Math.min(endInclusive, realSizeBytes - 1);
     const endExclusive = end + 1;
     const body = state.getBytes(start, endExclusive);
 
     res.statusCode = 206;
     if (state.wrongContentRange) {
-      res.setHeader("content-range", `bytes ${start + 1}-${end}/${state.sizeBytes}`);
+      res.setHeader("content-range", `bytes ${start + 1}-${end}/${realSizeBytes}`);
     } else {
-      res.setHeader("content-range", `bytes ${start}-${end}/${state.sizeBytes}`);
+      res.setHeader("content-range", `bytes ${start}-${end}/${realSizeBytes}`);
     }
     res.setHeader("content-length", String(body.byteLength));
     res.end(body);
@@ -643,6 +676,49 @@ describe("RemoteRangeDisk", () => {
 
     expect(server.stats.seenIfRanges).toContain("\"v2\"");
     expect(server.stats.rangeGets).toBeGreaterThanOrEqual(3);
+  });
+
+  it("treats 416 Range Not Satisfiable as size drift, invalidates, re-probes, and retries", async () => {
+    const chunkSize = 4096;
+    const realSizeBytes = chunkSize + SECTOR_SIZE;
+    const reportedSizeBytes = 2 * chunkSize;
+    const data = makeTestData(realSizeBytes);
+
+    const server = await startRangeServer({
+      // The initial probe (HEAD) reports a larger size than is actually available.
+      sizeBytes: reportedSizeBytes,
+      realSizeBytes,
+      // Some servers return 416 when the requested end extends beyond the resource length.
+      return416IfEndBeyondRealSize: true,
+      // After serving a 416, start reporting the real size so the client's re-probe can succeed.
+      fixHeadSizeAfter416: true,
+      etag: "\"v1\"",
+      getBytes: (s, e) => data.slice(s, e),
+    });
+    activeServers.push(server.close);
+
+    const disk = await RemoteRangeDisk.open(server.url, {
+      cacheKeyParts: {
+        imageId: "range-416-drift",
+        version: "v1",
+        deliveryType: remoteRangeDeliveryType(chunkSize),
+      },
+      chunkSize,
+      metadataStore: new MemoryMetadataStore(),
+      sparseCacheFactory: new MemorySparseCacheFactory(),
+      readAheadChunks: 0,
+    });
+
+    const lba = chunkSize / SECTOR_SIZE;
+    const buf = new Uint8Array(SECTOR_SIZE);
+    await disk.readSectors(lba, buf);
+    expect(buf).toEqual(data.subarray(chunkSize, chunkSize + buf.byteLength));
+
+    // The client should have re-probed after the 416.
+    expect(server.stats.headRequests).toBe(2);
+    expect(server.stats.range416s).toBe(1);
+    expect(server.stats.rangeGets).toBe(2);
+    expect(disk.capacityBytes).toBe(realSizeBytes);
   });
 
   it("rejects servers that ignore Range requests", async () => {

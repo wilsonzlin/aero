@@ -244,6 +244,23 @@ function parseContentRangeHeader(header: string): { start: number; endInclusive:
   };
 }
 
+function parseUnsatisfiedContentRangeHeader(header: string): { total: number } {
+  // Example: "bytes */12345" (used with 416 Range Not Satisfiable)
+  const m = /^bytes\s+\*\/(\d+|\*)$/i.exec(header.trim());
+  if (!m) {
+    throw new Error(`invalid Content-Range: ${header}`);
+  }
+  const totalRaw = m[1];
+  if (totalRaw === "*") {
+    throw new Error(`unsupported Content-Range total='*': ${header}`);
+  }
+  const total = BigInt(totalRaw);
+  if (total <= 0n) {
+    throw new Error(`invalid Content-Range total: ${header}`);
+  }
+  return { total: toSafeNumber(total, "content-range total") };
+}
+
 function bytesToHex(bytes: Uint8Array): string {
   let out = "";
   for (let i = 0; i < bytes.length; i++) {
@@ -994,6 +1011,25 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
         }
       }
       throw new Error(`remote server ignored Range request (expected 206, got ${resp.status})`);
+    }
+
+    if (resp.status === 416) {
+      // A 416 indicates that our requested range is not satisfiable. This can happen when the
+      // representation has changed (often size drift), while our cache metadata/validators still
+      // point at the previous size. Many servers include `Content-Range: bytes */<total>` for 416,
+      // which we treat as a strong signal that our cached size is wrong.
+      await cancelBody(resp);
+      const contentRange = resp.headers.get("content-range");
+      if (contentRange) {
+        // Best-effort parse; if it's malformed we still treat this as a mismatch event so the
+        // invalidation loop can re-probe the remote.
+        try {
+          parseUnsatisfiedContentRangeHeader(contentRange);
+        } catch {
+          // ignore parse errors
+        }
+      }
+      throw new RemoteValidatorMismatchError(resp.status);
     }
 
     if (resp.status !== 206) {
