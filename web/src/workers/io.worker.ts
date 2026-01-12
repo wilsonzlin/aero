@@ -712,7 +712,10 @@ function resolveAudioHdaSnapshotBridge(): AudioHdaSnapshotBridgeLike | null {
       return candidate as AudioHdaSnapshotBridgeLike;
     }
   }
-  return null;
+
+  // Fall back to the live guest-visible HDA controller bridge (if present). Older WASM builds may
+  // not expose snapshot exports on this bridge; callers treat missing hooks as "no snapshot support".
+  return hdaControllerBridge as unknown as AudioHdaSnapshotBridgeLike | null;
 }
 
 function snapshotAudioHdaDeviceState(): { kind: string; bytes: Uint8Array } | null {
