@@ -1011,3 +1011,104 @@ fn snapshot_inspect_decodes_memory_device_state() {
         .stdout(predicate::str::contains("MEMORY(11)"))
         .stdout(predicate::str::contains("a20_enabled=true"));
 }
+
+struct BiosDeviceSource;
+
+impl SnapshotSource for BiosDeviceSource {
+    fn snapshot_meta(&mut self) -> SnapshotMeta {
+        SnapshotMeta {
+            snapshot_id: 11,
+            parent_snapshot_id: Some(10),
+            created_unix_ms: 0,
+            label: Some("inspect-bios-device".to_string()),
+        }
+    }
+
+    fn cpu_state(&self) -> CpuState {
+        CpuState::default()
+    }
+
+    fn mmu_state(&self) -> MmuState {
+        MmuState::default()
+    }
+
+    fn device_states(&self) -> Vec<DeviceState> {
+        // Minimal `firmware::bios::BiosSnapshot::encode` compatible payload.
+        let mut data = Vec::new();
+        let memory_size_bytes: u64 = 64 * 1024 * 1024;
+        data.extend_from_slice(&memory_size_bytes.to_le_bytes());
+        data.push(0x80); // boot_drive
+
+        // `CmosRtcSnapshot` (14 bytes).
+        data.extend_from_slice(&2026u16.to_le_bytes()); // year
+        data.extend_from_slice(&[1, 2, 3, 4, 5]); // month/day/hour/minute/second
+        data.extend_from_slice(&0u32.to_le_bytes()); // nanosecond
+        data.extend_from_slice(&[1, 1, 0]); // bcd_mode/hour_24/daylight_savings
+
+        // `BdaTimeSnapshot` (21 bytes).
+        data.extend_from_slice(&1234u32.to_le_bytes()); // tick_count
+        data.extend_from_slice(&0u128.to_le_bytes()); // tick_remainder
+        data.push(0); // midnight_flag
+
+        // e820_map len (0).
+        data.extend_from_slice(&0u32.to_le_bytes());
+        // keyboard_queue len (0).
+        data.extend_from_slice(&0u32.to_le_bytes());
+
+        // video_mode.
+        data.push(0x03);
+
+        // tty_output.
+        let tty = b"hello";
+        data.extend_from_slice(&(tty.len() as u32).to_le_bytes());
+        data.extend_from_slice(tty);
+
+        // rsdp_addr absent.
+        data.push(0);
+
+        vec![DeviceState {
+            id: DeviceId::BIOS,
+            version: 1,
+            flags: 0,
+            data,
+        }]
+    }
+
+    fn disk_overlays(&self) -> DiskOverlayRefs {
+        DiskOverlayRefs::default()
+    }
+
+    fn ram_len(&self) -> usize {
+        4096
+    }
+
+    fn read_ram(&self, _offset: u64, buf: &mut [u8]) -> aero_snapshot::Result<()> {
+        buf.fill(0);
+        Ok(())
+    }
+
+    fn take_dirty_pages(&mut self) -> Option<Vec<u64>> {
+        None
+    }
+}
+
+#[test]
+fn snapshot_inspect_decodes_bios_device_state() {
+    let tmp = tempfile::tempdir().unwrap();
+    let snap = tmp.path().join("bios_device.aerosnap");
+
+    let mut source = BiosDeviceSource;
+    let mut cursor = Cursor::new(Vec::new());
+    save_snapshot(&mut cursor, &mut source, SaveOptions::default()).unwrap();
+    fs::write(&snap, cursor.into_inner()).unwrap();
+
+    Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["snapshot", "inspect", snap.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("BIOS(10)"))
+        .stdout(predicate::str::contains("boot_drive=0x80"))
+        .stdout(predicate::str::contains("mem_size_bytes=67108864"))
+        .stdout(predicate::str::contains("video_mode=0x03"))
+        .stdout(predicate::str::contains("tty_len=5"));
+}

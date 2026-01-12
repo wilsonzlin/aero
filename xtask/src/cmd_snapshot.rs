@@ -828,6 +828,16 @@ fn print_devices_section_summary(file: &mut fs::File, section: &SnapshotSectionI
             detail = Some(format!(" a20_enabled={a20_enabled}"));
         }
 
+        // Firmware/BIOS runtime state (`DeviceId::BIOS`).
+        //
+        // This payload is currently emitted by `firmware::bios::BiosSnapshot::encode` and is not an
+        // `aero-io-snapshot` blob, so `inspect` does a small best-effort decode here.
+        if id == DeviceId::BIOS.0 && version == 1 && flags == 0 {
+            if let Some(s) = decode_bios_device_detail(file, data_start, data_end) {
+                detail = Some(s);
+            }
+        }
+
         entries.push(DeviceSummaryEntry {
             id,
             version,
@@ -907,6 +917,135 @@ fn print_devices_section_summary(file: &mut fs::File, section: &SnapshotSectionI
             entries.len() - MAX_LISTED
         );
     }
+}
+
+fn decode_bios_device_detail(file: &mut fs::File, data_start: u64, data_end: u64) -> Option<String> {
+    fn skip_to(file: &mut fs::File, data_end: u64, skip: u64) -> Option<()> {
+        let pos = file.stream_position().ok()?;
+        let next = pos.checked_add(skip)?;
+        if next > data_end {
+            return None;
+        }
+        file.seek(SeekFrom::Start(next)).ok()?;
+        Some(())
+    }
+
+    file.seek(SeekFrom::Start(data_start)).ok()?;
+
+    let memory_size_bytes = read_u64_le_lossy(file).ok()?;
+    let boot_drive = read_u8_lossy(file).ok()?;
+
+    // `CmosRtcSnapshot` (14 bytes) + `BdaTimeSnapshot` (21 bytes).
+    skip_to(file, data_end, 14 + 21)?;
+
+    // E820 map.
+    let e820_len = read_u32_le_lossy(file).ok()?;
+    skip_to(file, data_end, 24u64.saturating_mul(u64::from(e820_len)))?;
+
+    // Keyboard queue.
+    let keys_len = read_u32_le_lossy(file).ok()?;
+    skip_to(file, data_end, 2u64.saturating_mul(u64::from(keys_len)))?;
+
+    let video_mode = read_u8_lossy(file).ok()?;
+
+    // TTY output.
+    let tty_len = read_u32_le_lossy(file).ok()?;
+    skip_to(file, data_end, u64::from(tty_len))?;
+
+    // RSDP addr (optional).
+    let rsdp_present = read_u8_lossy(file).ok()?;
+    let rsdp_addr = match rsdp_present {
+        0 => None,
+        1 => Some(read_u64_le_lossy(file).ok()?),
+        _ => None,
+    };
+
+    // Optional extension blocks (best-effort).
+    let mut last_int13_status: Option<u8> = None;
+    let mut vbe_mode: Option<u16> = None;
+    let mut cpu_count: Option<u8> = None;
+    let mut enable_acpi: Option<bool> = None;
+
+    loop {
+        let pos = file.stream_position().ok()?;
+        if pos >= data_end {
+            break;
+        }
+        let tag = match read_u8_lossy(file) {
+            Ok(v) => v,
+            Err(_) => break,
+        };
+        match tag {
+            // v2 extension: last INT 13h status + VBE state.
+            1 => {
+                last_int13_status = read_u8_lossy(file).ok();
+
+                // `VbeSnapshot` starts with a presence byte for `current_mode`.
+                let mode_tag = match read_u8_lossy(file) {
+                    Ok(v) => v,
+                    Err(_) => break,
+                };
+                match mode_tag {
+                    0 => {}
+                    1 => vbe_mode = read_u16_le_lossy(file).ok(),
+                    _ => break,
+                }
+
+                // Skip the rest of the VBE snapshot (fixed-size fields + palette).
+                // lfb_base(u32) + bank(u16) + logical_width(u16) + bytes_per_scan_line(u16)
+                // + display_start_x(u16) + display_start_y(u16) + dac_width(u8) + palette(1024).
+                skip_to(file, data_end, 4 + 2 + 2 + 2 + 2 + 2 + 1 + 1024)?;
+            }
+            // v3 extension: BIOS config + firmware table placement metadata.
+            2 => {
+                cpu_count = read_u8_lossy(file).ok();
+                enable_acpi = read_u8_lossy(file).ok().map(|v| v != 0);
+
+                // Skip `AcpiPlacement` (5 * u64) + `pirq_to_gsi` ([u32; 4]).
+                skip_to(file, data_end, 40 + 16)?;
+
+                for _ in 0..2 {
+                    let present = match read_u8_lossy(file) {
+                        Ok(v) => v,
+                        Err(_) => return None,
+                    };
+                    if present != 0 {
+                        // base(u64) + len(u64)
+                        skip_to(file, data_end, 16)?;
+                    }
+                }
+                let present = match read_u8_lossy(file) {
+                    Ok(v) => v,
+                    Err(_) => return None,
+                };
+                if present != 0 {
+                    skip_to(file, data_end, 4)?;
+                }
+            }
+            _ => break,
+        }
+    }
+
+    let mut s = format!(
+        " boot_drive=0x{boot_drive:02x} mem_size_bytes={memory_size_bytes} video_mode=0x{video_mode:02x} tty_len={tty_len} e820_len={e820_len} keys_len={keys_len}"
+    );
+    if let Some(addr) = rsdp_addr {
+        s.push_str(&format!(" rsdp_addr=0x{addr:x}"));
+    }
+    if let Some(status) = last_int13_status {
+        s.push_str(&format!(" last_int13_status=0x{status:02x}"));
+    }
+    if let Some(mode) = vbe_mode {
+        s.push_str(&format!(" vbe_mode=0x{mode:04x}"));
+    }
+    if let Some(count) = cpu_count {
+        s.push_str(&format!(" cpu_count={count}"));
+    }
+    if let Some(enabled) = enable_acpi {
+        s.push_str(&format!(" acpi={enabled}"));
+    }
+
+    Some(s)
 }
 
 fn print_cpus_section_summary(file: &mut fs::File, section: &SnapshotSectionInfo) {
@@ -1207,6 +1346,12 @@ fn read_u16_le_lossy(r: &mut impl Read) -> std::io::Result<u16> {
     let mut buf = [0u8; 2];
     r.read_exact(&mut buf)?;
     Ok(u16::from_le_bytes(buf))
+}
+
+fn read_u8_lossy(r: &mut impl Read) -> std::io::Result<u8> {
+    let mut buf = [0u8; 1];
+    r.read_exact(&mut buf)?;
+    Ok(buf[0])
 }
 
 fn read_u32_le_lossy(r: &mut impl Read) -> std::io::Result<u32> {
