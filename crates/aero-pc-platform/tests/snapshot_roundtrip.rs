@@ -9,6 +9,7 @@ use aero_devices_storage::ata::{AtaDrive, ATA_CMD_READ_DMA_EXT, ATA_CMD_WRITE_DM
 use aero_devices_storage::atapi::{AtapiCdrom, IsoBackend};
 use aero_devices_storage::pci_ide::{PRIMARY_PORTS, SECONDARY_PORTS};
 use aero_io_snapshot::io::state::IoSnapshot;
+use aero_interrupts::apic::IOAPIC_MMIO_BASE;
 use aero_pc_platform::PcPlatform;
 use aero_platform::interrupts::{
     InterruptController, InterruptInput, PlatformInterruptMode, PlatformInterrupts, IMCR_DATA_PORT,
@@ -19,19 +20,19 @@ use memory::MemoryBus as _;
 use std::io;
 use std::sync::{Arc, Mutex};
 
-fn program_ioapic_entry(ints: &mut PlatformInterrupts, gsi: u32, low: u32, high: u32) {
+fn program_ioapic_entry(pc: &mut PcPlatform, gsi: u32, low: u32, high: u32) {
     let redtbl_low = 0x10u32 + gsi * 2;
     let redtbl_high = redtbl_low + 1;
-    ints.ioapic_mmio_write(0x00, redtbl_low);
-    ints.ioapic_mmio_write(0x10, low);
-    ints.ioapic_mmio_write(0x00, redtbl_high);
-    ints.ioapic_mmio_write(0x10, high);
+    pc.memory.write_u32(IOAPIC_MMIO_BASE, redtbl_low);
+    pc.memory.write_u32(IOAPIC_MMIO_BASE + 0x10, low);
+    pc.memory.write_u32(IOAPIC_MMIO_BASE, redtbl_high);
+    pc.memory.write_u32(IOAPIC_MMIO_BASE + 0x10, high);
 }
 
-fn ioapic_remote_irr_set(ints: &mut PlatformInterrupts, gsi: u32) -> bool {
+fn ioapic_remote_irr_set(pc: &mut PcPlatform, gsi: u32) -> bool {
     let redtbl_low = 0x10u32 + gsi * 2;
-    ints.ioapic_mmio_write(0x00, redtbl_low);
-    let low = ints.ioapic_mmio_read(0x10);
+    pc.memory.write_u32(IOAPIC_MMIO_BASE, redtbl_low);
+    let low = pc.memory.read_u32(IOAPIC_MMIO_BASE + 0x10);
     (low & (1 << 14)) != 0
 }
 
@@ -58,16 +59,13 @@ fn pc_platform_snapshot_roundtrip_preserves_acpi_sci_interrupt_and_platform_devi
     pc.io.write_u8(IMCR_SELECT_PORT, IMCR_INDEX);
     pc.io.write_u8(IMCR_DATA_PORT, 0x01);
     assert_eq!(pc.interrupts.borrow().mode(), PlatformInterruptMode::Apic);
-    {
-        let mut ints = pc.interrupts.borrow_mut();
 
-        // Program SCI (GSI9) to a known vector. ACPI tables specify active-low + level-triggered.
-        let low = u32::from(SCI_VECTOR) | (1 << 13) | (1 << 15); // polarity_low + level-triggered
-        program_ioapic_entry(&mut ints, SCI_GSI, low, 0);
+    // Program SCI (GSI9) to a known vector. ACPI tables specify active-low + level-triggered.
+    let low = u32::from(SCI_VECTOR) | (1 << 13) | (1 << 15); // polarity_low + level-triggered
+    program_ioapic_entry(&mut pc, SCI_GSI, low, 0);
 
-        // Route PIT IRQ0 (GSI2 in our ACPI/IOAPIC setup) to a known vector.
-        program_ioapic_entry(&mut ints, PIT_GSI, u32::from(PIT_VECTOR), 0);
-    }
+    // Route PIT IRQ0 (GSI2 in our ACPI/IOAPIC setup) to a known vector.
+    program_ioapic_entry(&mut pc, PIT_GSI, u32::from(PIT_VECTOR), 0);
 
     // Put the i8042 controller into a non-default state (output buffer filled) so snapshot/restore
     // exercises the controller state machine.
@@ -105,13 +103,10 @@ fn pc_platform_snapshot_roundtrip_preserves_acpi_sci_interrupt_and_platform_devi
     pc.acpi_pm.borrow_mut().trigger_power_button();
 
     assert_eq!(pc.interrupts.borrow().get_pending(), Some(SCI_VECTOR));
-    {
-        let mut ints = pc.interrupts.borrow_mut();
-        assert!(
-            ioapic_remote_irr_set(&mut ints, SCI_GSI),
-            "level-triggered SCI must set IOAPIC Remote-IRR once delivered"
-        );
-    }
+    assert!(
+        ioapic_remote_irr_set(&mut pc, SCI_GSI),
+        "level-triggered SCI must set IOAPIC Remote-IRR once delivered"
+    );
 
     // --- Snapshot key platform devices (each must be deterministic).
     let interrupts_state = {
@@ -199,12 +194,14 @@ fn pc_platform_snapshot_roundtrip_preserves_acpi_sci_interrupt_and_platform_devi
 
     // Remote-IRR should remain set until EOI, even after acknowledging in the LAPIC.
     {
-        let mut ints = pc2.interrupts.borrow_mut();
-        assert!(ioapic_remote_irr_set(&mut ints, SCI_GSI));
-        ints.acknowledge(SCI_VECTOR);
-        assert_eq!(ints.get_pending(), None);
+        assert!(ioapic_remote_irr_set(&mut pc2, SCI_GSI));
+        {
+            let mut ints = pc2.interrupts.borrow_mut();
+            ints.acknowledge(SCI_VECTOR);
+            assert_eq!(ints.get_pending(), None);
+        }
         assert!(
-            ioapic_remote_irr_set(&mut ints, SCI_GSI),
+            ioapic_remote_irr_set(&mut pc2, SCI_GSI),
             "Remote-IRR should remain set until EOI"
         );
     }
@@ -219,12 +216,14 @@ fn pc_platform_snapshot_roundtrip_preserves_acpi_sci_interrupt_and_platform_devi
 
     // EOI after SCI is deasserted should clear Remote-IRR without causing re-delivery.
     {
-        let mut ints = pc2.interrupts.borrow_mut();
-        assert!(ioapic_remote_irr_set(&mut ints, SCI_GSI));
-        ints.eoi(SCI_VECTOR);
-        assert_eq!(ints.get_pending(), None);
+        assert!(ioapic_remote_irr_set(&mut pc2, SCI_GSI));
+        {
+            let mut ints = pc2.interrupts.borrow_mut();
+            ints.eoi(SCI_VECTOR);
+            assert_eq!(ints.get_pending(), None);
+        }
         assert!(
-            !ioapic_remote_irr_set(&mut ints, SCI_GSI),
+            !ioapic_remote_irr_set(&mut pc2, SCI_GSI),
             "EOI should clear Remote-IRR once SCI is deasserted"
         );
     }
@@ -283,16 +282,13 @@ fn pc_platform_snapshot_roundtrip_redrives_hpet_and_pci_intx_levels_after_restor
     pc.io.write_u8(IMCR_SELECT_PORT, IMCR_INDEX);
     pc.io.write_u8(IMCR_DATA_PORT, 0x01);
     assert_eq!(pc.interrupts.borrow().mode(), PlatformInterruptMode::Apic);
-    {
-        let mut ints = pc.interrupts.borrow_mut();
 
-        // HPET + PCI INTx are typically active-low + level-triggered in PC ACPI setups.
-        let hpet_low = u32::from(HPET_VECTOR) | (1 << 13) | (1 << 15);
-        program_ioapic_entry(&mut ints, HPET_GSI, hpet_low, 0);
+    // HPET + PCI INTx are typically active-low + level-triggered in PC ACPI setups.
+    let hpet_low = u32::from(HPET_VECTOR) | (1 << 13) | (1 << 15);
+    program_ioapic_entry(&mut pc, HPET_GSI, hpet_low, 0);
 
-        let pci_low = u32::from(PCI_VECTOR) | (1 << 13) | (1 << 15);
-        program_ioapic_entry(&mut ints, PCI_GSI, pci_low, 0);
-    }
+    let pci_low = u32::from(PCI_VECTOR) | (1 << 13) | (1 << 15);
+    program_ioapic_entry(&mut pc, PCI_GSI, pci_low, 0);
 
     // --- HPET: configure timer2 to fire once and latch a pending level interrupt.
     let timer_idx: u64 = 2;
@@ -451,10 +447,7 @@ fn pc_platform_snapshot_roundtrip_preserves_rtc_irq8_and_requires_status_c_clear
     pc.io.write_u8(IMCR_SELECT_PORT, IMCR_INDEX);
     pc.io.write_u8(IMCR_DATA_PORT, 0x01);
     assert_eq!(pc.interrupts.borrow().mode(), PlatformInterruptMode::Apic);
-    {
-        let mut ints = pc.interrupts.borrow_mut();
-        program_ioapic_entry(&mut ints, RTC_GSI, u32::from(RTC_VECTOR), 0);
-    }
+    program_ioapic_entry(&mut pc, RTC_GSI, u32::from(RTC_VECTOR), 0);
 
     // Enable RTC update-ended interrupts (UIE).
     pc.io.write_u8(RTC_PORT_INDEX, RTC_REG_STATUS_B);
@@ -790,13 +783,9 @@ fn pc_platform_snapshot_roundtrip_preserves_storage_controllers_and_allows_backe
     pc.io.write_u8(IMCR_DATA_PORT, 0x01);
     assert_eq!(pc.interrupts.borrow().mode(), PlatformInterruptMode::Apic);
 
-    {
-        let mut ints = pc.interrupts.borrow_mut();
-
-        // PCI INTx is active-low + level-triggered.
-        let low = u32::from(AHCI_VECTOR) | (1 << 13) | (1 << 15);
-        program_ioapic_entry(&mut ints, ahci_gsi, low, 0);
-    }
+    // PCI INTx is active-low + level-triggered.
+    let low = u32::from(AHCI_VECTOR) | (1 << 13) | (1 << 15);
+    program_ioapic_entry(&mut pc, ahci_gsi, low, 0);
 
     let ahci_abar = {
         let mut cfg_ports = pc.pci_cfg.borrow_mut();
@@ -841,13 +830,10 @@ fn pc_platform_snapshot_roundtrip_preserves_storage_controllers_and_allows_backe
 
     assert!(pc.ahci.as_ref().unwrap().borrow().intx_level());
     assert_eq!(pc.interrupts.borrow().get_pending(), Some(AHCI_VECTOR));
-    {
-        let mut ints = pc.interrupts.borrow_mut();
-        assert!(
-            ioapic_remote_irr_set(&mut ints, ahci_gsi),
-            "level-triggered AHCI INTx should set IOAPIC Remote-IRR once delivered"
-        );
-    }
+    assert!(
+        ioapic_remote_irr_set(&mut pc, ahci_gsi),
+        "level-triggered AHCI INTx should set IOAPIC Remote-IRR once delivered"
+    );
 
     let mut out = [0u8; 4];
     pc.memory.read_physical(data_buf, &mut out);
@@ -966,18 +952,15 @@ fn pc_platform_snapshot_roundtrip_preserves_storage_controllers_and_allows_backe
         .write_u32(ahci_abar2 + PORT_BASE + PORT_REG_IS, PORT_IS_DHRS);
     pc2.poll_pci_intx_lines();
 
-    {
-        let mut ints = pc2.interrupts.borrow_mut();
-        assert!(
-            ioapic_remote_irr_set(&mut ints, ahci_gsi),
-            "Remote-IRR should remain set until EOI"
-        );
-        ints.eoi(AHCI_VECTOR);
-        assert!(
-            !ioapic_remote_irr_set(&mut ints, ahci_gsi),
-            "EOI should clear Remote-IRR once INTx is deasserted"
-        );
-    }
+    assert!(
+        ioapic_remote_irr_set(&mut pc2, ahci_gsi),
+        "Remote-IRR should remain set until EOI"
+    );
+    pc2.interrupts.borrow_mut().eoi(AHCI_VECTOR);
+    assert!(
+        !ioapic_remote_irr_set(&mut pc2, ahci_gsi),
+        "EOI should clear Remote-IRR once INTx is deasserted"
+    );
     assert_eq!(
         pc2.interrupts.borrow().get_pending(),
         None,

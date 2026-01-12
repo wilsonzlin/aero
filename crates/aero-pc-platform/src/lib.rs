@@ -692,7 +692,6 @@ fn all_ones(size: usize) -> u64 {
         _ => u64::MAX,
     }
 }
-
 struct VirtioPciBar0Mmio {
     dev: Rc<RefCell<VirtioPciDevice>>,
 }
