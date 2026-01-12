@@ -82,6 +82,18 @@ fn ring_backend_paths_work() {
 }
 
 #[test]
+fn ring_backend_stats_are_available_through_network_backend_trait_object() {
+    let tx = Arc::new(RingBuffer::new(64));
+    let rx = Arc::new(RingBuffer::new(64));
+
+    let backend: Box<dyn NetworkBackend> = Box::new(L2TunnelRingBackend::new(tx, rx));
+    assert_eq!(
+        backend.l2_ring_stats(),
+        Some(L2TunnelRingBackendStats::default())
+    );
+}
+
+#[test]
 fn traits_are_reexported() {
     fn assert_frame_ring_impl<T: FrameRing>() {}
     fn assert_network_backend_impl<T: NetworkBackend>() {}
