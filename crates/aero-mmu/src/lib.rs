@@ -77,42 +77,44 @@ impl<T: memory::MemoryBus + ?Sized> MemoryBus for T {
 impl MemoryBus for aero_mem::MemoryBus {
     #[inline]
     fn read_u8(&mut self, paddr: u64) -> u8 {
-        (&*self).read_u8(paddr)
+        (&*self).try_read_u8(paddr).unwrap_or(0xFF)
     }
 
     #[inline]
     fn read_u16(&mut self, paddr: u64) -> u16 {
-        (&*self).read_u16(paddr)
+        (&*self).try_read_u16(paddr).unwrap_or(0xFFFF)
     }
 
     #[inline]
     fn read_u32(&mut self, paddr: u64) -> u32 {
-        (&*self).read_u32(paddr)
+        (&*self).try_read_u32(paddr).unwrap_or(0xFFFF_FFFF)
     }
 
     #[inline]
     fn read_u64(&mut self, paddr: u64) -> u64 {
-        (&*self).read_u64(paddr)
+        (&*self)
+            .try_read_u64(paddr)
+            .unwrap_or(0xFFFF_FFFF_FFFF_FFFF)
     }
 
     #[inline]
     fn write_u8(&mut self, paddr: u64, value: u8) {
-        (&*self).write_u8(paddr, value)
+        let _ = (&*self).try_write_u8(paddr, value);
     }
 
     #[inline]
     fn write_u16(&mut self, paddr: u64, value: u16) {
-        (&*self).write_u16(paddr, value)
+        let _ = (&*self).try_write_u16(paddr, value);
     }
 
     #[inline]
     fn write_u32(&mut self, paddr: u64, value: u32) {
-        (&*self).write_u32(paddr, value)
+        let _ = (&*self).try_write_u32(paddr, value);
     }
 
     #[inline]
     fn write_u64(&mut self, paddr: u64, value: u64) {
-        (&*self).write_u64(paddr, value)
+        let _ = (&*self).try_write_u64(paddr, value);
     }
 }
 
