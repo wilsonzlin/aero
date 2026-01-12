@@ -1,6 +1,6 @@
 use std::io;
 
-use aero_devices::pci::profile::IDE_PIIX3;
+use aero_devices::pci::profile::{IDE_PIIX3, ISA_PIIX3};
 use aero_devices_storage::ata::AtaDrive;
 use aero_devices_storage::atapi::{AtapiCdrom, IsoBackend};
 use aero_devices_storage::pci_ide::{PRIMARY_PORTS, SECONDARY_PORTS};
@@ -21,6 +21,14 @@ fn read_cfg_u32(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: 
     pc.io.read(0xCFC, 4)
 }
 
+fn read_vendor_id(pc: &mut PcPlatform, bus: u8, device: u8, function: u8) -> u16 {
+    (read_cfg_u32(pc, bus, device, function, 0x00) & 0xffff) as u16
+}
+
+fn read_header_type(pc: &mut PcPlatform, bus: u8, device: u8, function: u8) -> u8 {
+    ((read_cfg_u32(pc, bus, device, function, 0x0c) >> 16) & 0xff) as u8
+}
+
 fn write_cfg_u16(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8, value: u16) {
     pc.io.write(0xCF8, 4, cfg_addr(bus, device, function, offset));
     pc.io.write(0xCFC, 2, u32::from(value));
@@ -30,6 +38,27 @@ fn read_io_bar_base(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, bar:
     let off = 0x10 + bar * 4;
     let val = read_cfg_u32(pc, bus, device, function, off);
     u16::try_from(val & 0xFFFF_FFFC).unwrap()
+}
+
+fn enumerate_bus0(pc: &mut PcPlatform) -> Vec<(u8, u8)> {
+    let mut found = Vec::new();
+    for device in 0u8..32 {
+        let vendor = read_vendor_id(pc, 0, device, 0);
+        if vendor == 0xffff {
+            continue;
+        }
+        found.push((device, 0));
+
+        let header_type = read_header_type(pc, 0, device, 0);
+        let functions = if (header_type & 0x80) != 0 { 8 } else { 1 };
+        for function in 1u8..functions {
+            let vendor = read_vendor_id(pc, 0, device, function);
+            if vendor != 0xffff {
+                found.push((device, function));
+            }
+        }
+    }
+    found
 }
 
 #[test]
@@ -53,6 +82,35 @@ fn pc_platform_enumerates_ide_and_preserves_legacy_bar_bases() {
     assert_eq!(read_io_bar_base(&mut pc, bdf.bus, bdf.device, bdf.function, 2), 0x170);
     assert_eq!(read_io_bar_base(&mut pc, bdf.bus, bdf.device, bdf.function, 3), 0x374);
     assert_eq!(read_io_bar_base(&mut pc, bdf.bus, bdf.device, bdf.function, 4), 0xC000);
+}
+
+#[test]
+fn pc_platform_presents_piix3_as_a_multifunction_device() {
+    let mut pc = PcPlatform::new_with_ide(2 * 1024 * 1024);
+
+    let found = enumerate_bus0(&mut pc);
+    assert!(
+        found.contains(&(ISA_PIIX3.bdf.device, ISA_PIIX3.bdf.function)),
+        "missing {}",
+        ISA_PIIX3.name
+    );
+    assert!(
+        found.contains(&(IDE_PIIX3.bdf.device, IDE_PIIX3.bdf.function)),
+        "missing {}",
+        IDE_PIIX3.name
+    );
+
+    let header_type = read_header_type(
+        &mut pc,
+        ISA_PIIX3.bdf.bus,
+        ISA_PIIX3.bdf.device,
+        ISA_PIIX3.bdf.function,
+    );
+    assert_ne!(
+        header_type & 0x80,
+        0,
+        "PIIX3 function 0 should advertise multi-function"
+    );
 }
 
 #[test]

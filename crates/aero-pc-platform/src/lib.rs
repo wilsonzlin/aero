@@ -115,6 +115,27 @@ struct IdePciConfigDevice {
     config: aero_devices::pci::PciConfigSpace,
 }
 
+struct Piix3IsaPciConfigDevice {
+    config: aero_devices::pci::PciConfigSpace,
+}
+
+impl Piix3IsaPciConfigDevice {
+    fn new() -> Self {
+        let config = aero_devices::pci::profile::ISA_PIIX3.build_config_space();
+        Self { config }
+    }
+}
+
+impl PciDevice for Piix3IsaPciConfigDevice {
+    fn config(&self) -> &aero_devices::pci::PciConfigSpace {
+        &self.config
+    }
+
+    fn config_mut(&mut self) -> &mut aero_devices::pci::PciConfigSpace {
+        &mut self.config
+    }
+}
+
 impl IdePciConfigDevice {
     fn new() -> Self {
         let mut config = aero_devices::pci::profile::IDE_PIIX3.build_config_space();
@@ -585,10 +606,20 @@ impl PcPlatform {
         };
 
         let ide = if config.enable_ide {
+            let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
+
+            // PIIX3 is a multi-function PCI device. Ensure function 0 exists and has the
+            // multi-function bit set so OSes enumerate the IDE function at 00:01.1.
+            {
+                let bdf = aero_devices::pci::profile::ISA_PIIX3.bdf;
+                pci_cfg
+                    .borrow_mut()
+                    .bus_mut()
+                    .add_device(bdf, Box::new(Piix3IsaPciConfigDevice::new()));
+            }
+
             let profile = aero_devices::pci::profile::IDE_PIIX3;
             let bdf = profile.bdf;
-
-            let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
 
             let mut dev = IdePciConfigDevice::new();
             pci_intx.configure_device_intx(bdf, Some(PciInterruptPin::IntA), dev.config_mut());
