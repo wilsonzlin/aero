@@ -1,4 +1,5 @@
-use std::collections::HashMap;
+use lru::LruCache;
+use std::num::NonZeroUsize;
 
 use crate::util::align_up_u64;
 use crate::util::checked_range;
@@ -14,6 +15,13 @@ const QCOW2_OFLAG_ZERO: u64 = 1 << 0;
 
 // Hard cap to avoid absurd allocations when parsing untrusted images.
 const MAX_TABLE_BYTES: u64 = 128 * 1024 * 1024; // 128 MiB
+
+// Bound in-memory metadata caching when accessing untrusted images.
+//
+// Each L2 table or refcount block is exactly one cluster in size. We size the cache based on
+// a fixed budget in bytes divided by cluster size.
+const QCOW2_L2_CACHE_BUDGET_BYTES: u64 = 16 * 1024 * 1024; // 16 MiB
+const QCOW2_REFCOUNT_CACHE_BUDGET_BYTES: u64 = 16 * 1024 * 1024; // 16 MiB
 
 #[derive(Debug, Clone)]
 struct Qcow2Header {
@@ -169,8 +177,8 @@ pub struct Qcow2Disk<B> {
     header: Qcow2Header,
     l1_table: Vec<u64>,
     refcount_table: Vec<u64>,
-    l2_cache: HashMap<u64, Vec<u64>>,
-    refcount_cache: HashMap<u64, Vec<u16>>,
+    l2_cache: LruCache<u64, Vec<u64>>,
+    refcount_cache: LruCache<u64, Vec<u16>>,
     next_free_offset: u64,
 }
 
@@ -252,13 +260,30 @@ impl<B: StorageBackend> Qcow2Disk<B> {
 
         let next_free_offset = align_up_u64(file_len, cluster_size)?;
 
+        let cluster_size_usize: usize = cluster_size
+            .try_into()
+            .map_err(|_| DiskError::Unsupported("qcow2 cluster size too large"))?;
+        let l2_cache_cap_entries = (QCOW2_L2_CACHE_BUDGET_BYTES / cluster_size).max(1) as usize;
+        let refcount_cache_cap_entries =
+            (QCOW2_REFCOUNT_CACHE_BUDGET_BYTES / cluster_size).max(1) as usize;
+        // Clamp cache sizes to avoid absurd entry counts for tiny cluster sizes.
+        let max_entries = (QCOW2_L2_CACHE_BUDGET_BYTES as usize / cluster_size_usize).max(1);
+        let l2_cache_cap_entries = l2_cache_cap_entries.min(max_entries);
+        let refcount_cache_cap_entries = refcount_cache_cap_entries.min(max_entries);
+
+        let l2_cache_cap = NonZeroUsize::new(l2_cache_cap_entries)
+            .ok_or(DiskError::InvalidConfig("qcow2 l2 cache size is zero"))?;
+        let refcount_cache_cap = NonZeroUsize::new(refcount_cache_cap_entries).ok_or(
+            DiskError::InvalidConfig("qcow2 refcount cache size is zero"),
+        )?;
+
         Ok(Self {
             backend,
             header,
             l1_table,
             refcount_table,
-            l2_cache: HashMap::new(),
-            refcount_cache: HashMap::new(),
+            l2_cache: LruCache::new(l2_cache_cap),
+            refcount_cache: LruCache::new(refcount_cache_cap),
             next_free_offset,
         })
     }
@@ -355,11 +380,11 @@ impl<B: StorageBackend> Qcow2Disk<B> {
     }
 
     fn ensure_l2_cached(&mut self, l2_offset: u64) -> Result<()> {
-        if self.l2_cache.contains_key(&l2_offset) {
+        if self.l2_cache.get(&l2_offset).is_some() {
             return Ok(());
         }
         let table = self.load_l2_table(l2_offset)?;
-        self.l2_cache.insert(l2_offset, table);
+        let _ = self.l2_cache.push(l2_offset, table);
         Ok(())
     }
 
@@ -427,7 +452,7 @@ impl<B: StorageBackend> Qcow2Disk<B> {
             .l2_entries_per_table()
             .try_into()
             .map_err(|_| DiskError::Unsupported("qcow2 l2 table too large"))?;
-        self.l2_cache.insert(new_l2_offset, vec![0u64; l2_entries]);
+        let _ = self.l2_cache.push(new_l2_offset, vec![0u64; l2_entries]);
 
         Ok(new_l2_offset)
     }
@@ -547,7 +572,7 @@ impl<B: StorageBackend> Qcow2Disk<B> {
     }
 
     fn ensure_refcount_block_cached(&mut self, block_offset: u64) -> Result<()> {
-        if self.refcount_cache.contains_key(&block_offset) {
+        if self.refcount_cache.get(&block_offset).is_some() {
             return Ok(());
         }
 
@@ -561,7 +586,7 @@ impl<B: StorageBackend> Qcow2Disk<B> {
         for chunk in buf.chunks_exact(2) {
             entries.push(u16::from_be_bytes([chunk[0], chunk[1]]));
         }
-        self.refcount_cache.insert(block_offset, entries);
+        let _ = self.refcount_cache.push(block_offset, entries);
         Ok(())
     }
 }
