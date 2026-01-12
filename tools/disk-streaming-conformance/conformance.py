@@ -101,6 +101,11 @@ def _csv_tokens(value: str) -> set[str]:
     return {token.strip().lower() for token in value.split(",") if token.strip()}
 
 
+def _media_type(value: str) -> str:
+    # `Content-Type` may include parameters; for conformance we only care about the base type.
+    return value.split(";", 1)[0].strip().lower()
+
+
 def _authorization_value(token: str) -> str:
     token = token.strip()
     # Allow either a raw token ("abc...") or a full Authorization header value
@@ -987,6 +992,75 @@ def _test_head_conditional_if_modified_since(
         return TestResult(name=name, status="FAIL", details=str(e))
 
 
+def _test_content_headers(
+    *,
+    name: str,
+    resp: HttpResponse | None,
+) -> TestResult:
+    if resp is None:
+        return TestResult(name=name, status="SKIP", details="skipped (no response)")
+
+    issues: list[str] = []
+
+    content_type = _header(resp, "Content-Type")
+    if content_type is None:
+        issues.append("missing Content-Type")
+    else:
+        media_type = _media_type(content_type)
+        if media_type != "application/octet-stream":
+            issues.append(f"unexpected Content-Type {content_type!r} (expected application/octet-stream)")
+
+    xcto = _header(resp, "X-Content-Type-Options")
+    if xcto is None:
+        issues.append("missing X-Content-Type-Options (recommended: nosniff)")
+    else:
+        if xcto.strip().lower() != "nosniff":
+            issues.append(f"unexpected X-Content-Type-Options {xcto!r} (expected 'nosniff')")
+
+    cache_control = _header(resp, "Cache-Control")
+    if cache_control is None:
+        issues.append("missing Cache-Control (recommended: include no-transform)")
+    else:
+        if "no-transform" not in _csv_tokens(cache_control):
+            issues.append(f"Cache-Control missing no-transform: {cache_control!r}")
+
+    if issues:
+        return TestResult(name=name, status="WARN", details="; ".join(issues))
+    return TestResult(name=name, status="PASS")
+
+
+def _test_get_content_headers(
+    *,
+    base_url: str,
+    origin: str | None,
+    authorization: str | None,
+    timeout_s: float,
+) -> TestResult:
+    name = "GET: Content-Type is application/octet-stream and X-Content-Type-Options=nosniff"
+    try:
+        headers: dict[str, str] = {
+            "Accept-Encoding": "identity",
+            "Range": "bytes=0-0",
+        }
+        if origin is not None:
+            headers["Origin"] = origin
+        if authorization is not None:
+            headers["Authorization"] = authorization
+
+        resp = _request(
+            url=base_url,
+            method="GET",
+            headers=headers,
+            timeout_s=timeout_s,
+            max_body_bytes=2,
+        )
+        _require(resp.status == 206, f"expected 206, got {resp.status}")
+        _require_cors(resp, origin)
+        return _test_content_headers(name=name, resp=resp)
+    except TestFailure as e:
+        return TestResult(name=name, status="FAIL", details=str(e))
+
+
 def _test_cors_vary_origin(
     *,
     resp: HttpResponse | None,
@@ -1220,6 +1294,12 @@ def main(argv: Sequence[str]) -> int:
     last_modified = head_info.last_modified if head_info is not None else None
 
     results.append(
+        _test_content_headers(
+            name="HEAD: Content-Type is application/octet-stream and X-Content-Type-Options=nosniff",
+            resp=head_info.resp if head_info is not None else None,
+        )
+    )
+    results.append(
         _test_cors_allow_credentials_sane(
             resp=head_info.resp if head_info is not None else None,
             origin=origin,
@@ -1266,6 +1346,14 @@ def main(argv: Sequence[str]) -> int:
             authorization=authorization,
             timeout_s=timeout_s,
             expect_corp=expect_corp,
+        )
+    )
+    results.append(
+        _test_get_content_headers(
+            base_url=base_url,
+            origin=origin,
+            authorization=authorization,
+            timeout_s=timeout_s,
         )
     )
 

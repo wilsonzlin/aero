@@ -242,6 +242,10 @@ async fn disk_headers_middleware(
         HeaderName::from_static("cross-origin-resource-policy"),
         state.cfg.corp_policy.as_header_value(),
     );
+    resp.headers_mut().insert(
+        HeaderName::from_static("x-content-type-options"),
+        HeaderValue::from_static("nosniff"),
+    );
     resp
 }
 

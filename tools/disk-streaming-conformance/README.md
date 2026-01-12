@@ -8,6 +8,9 @@ Validates that a disk image streaming endpoint is compatible with Aero’s brows
 - `GET` Range responses are safe for byte-addressed reads (no compression transforms):
   - `Cache-Control` includes `no-transform`
   - `Content-Encoding` is absent or `identity`
+- Recommended content headers are present (`GET`/`HEAD`):
+  - `Content-Type: application/octet-stream`
+  - `X-Content-Type-Options: nosniff`
 - `If-Range` semantics (defence against mixed-version bytes):
   - `GET Range` with `If-Range: <strong-etag>` returns `206` (skipped if ETag is missing or weak)
   - `GET Range` with `If-Range: "mismatch"` returns `200` (preferred) or `412`
@@ -82,12 +85,14 @@ Disk streaming conformance
   AUTH:     (none)
 
 PASS HEAD: Accept-Ranges=bytes and Content-Length is present - size=2147483648 (2.00 GiB)
+PASS HEAD: Content-Type is application/octet-stream and X-Content-Type-Options=nosniff
 PASS CORS: Allow-Credentials does not contradict Allow-Origin - (no Allow-Credentials)
 SKIP CORS: Vary includes Origin when Allow-Origin echoes a specific origin - skipped (Allow-Origin is '*')
 PASS HEAD: If-None-Match returns 304 Not Modified - status=304
 PASS HEAD: If-Modified-Since returns 304 Not Modified - status=304
 PASS HEAD: Cross-Origin-Resource-Policy is set - value='same-site'
 PASS GET: Cross-Origin-Resource-Policy is set - value='same-site'
+PASS GET: Content-Type is application/octet-stream and X-Content-Type-Options=nosniff
 PASS GET: valid Range (first byte) returns 206 with correct Content-Range and body length - Content-Range='bytes 0-0/2147483648'
 SKIP private: 206 responses are not publicly cacheable (Cache-Control) - skipped (no --token provided)
 PASS GET: valid Range (mid-file) returns 206 with correct Content-Range and body length - Content-Range='bytes 1073741824-1073741824/2147483648'
@@ -99,7 +104,7 @@ PASS GET: If-Modified-Since returns 304 Not Modified - status=304
 PASS OPTIONS: CORS preflight allows Range + If-Range headers + If-None-Match - status=204
 PASS OPTIONS: CORS preflight allows If-Modified-Since header - status=204
 
-Summary: 15 passed, 0 failed, 0 warned, 2 skipped
+Summary: 17 passed, 0 failed, 0 warned, 2 skipped
 ```
 
 ## Strict mode
@@ -109,6 +114,7 @@ Summary: 15 passed, 0 failed, 0 warned, 2 skipped
 - `Transfer-Encoding: chunked` on `206` responses (some CDNs mishandle it)
 - Missing `Cross-Origin-Resource-Policy`
 - `Cross-Origin-Resource-Policy` present but with an unexpected value
+- Missing recommended content headers (e.g. `X-Content-Type-Options: nosniff`)
 - Private responses missing `Cache-Control: no-store`
 - `If-Range` mismatch returning `412` instead of `200`
 - `If-Modified-Since` not returning `304` (this check is WARN-only by default)
