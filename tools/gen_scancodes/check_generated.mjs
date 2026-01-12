@@ -32,8 +32,7 @@ try {
   console.error(
     `\nScancode generated outputs are out of date.\n` +
       `Regenerate and commit the result:\n` +
-      `  node tools/gen_scancodes/gen_scancodes.mjs\n`,
+      `  npm run gen:scancodes\n`,
   );
   process.exit(1);
 }
-
