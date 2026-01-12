@@ -443,20 +443,64 @@ if [[ "${is_cargo_cmd}" == "true" ]]; then
     # can hit per-user thread limits (EAGAIN/"Resource temporarily unavailable"). Limit lld's
     # internal parallelism to match our overall Cargo build parallelism.
     #
-    # ⚠️ WASM NOTE:
-    # When linking wasm32 targets, rustc typically invokes `rust-lld -flavor wasm` *directly*
-    # (not via `cc -Wl,...`). The `-Wl,` prefix is treated as a literal argument and causes:
+    # ⚠️ RUSTFLAGS / WASM NOTE:
+    # `RUSTFLAGS` applies to *all* targets. Injecting the native-style
+    # `-C link-arg=-Wl,--threads=...` globally works for the host target, but breaks wasm builds
+    # because rustc invokes `rust-lld -flavor wasm` directly and `rust-lld` does not understand
+    # `-Wl,`:
     #   rust-lld: error: unknown argument: -Wl,--threads=...
-    # Prefer passing lld's flag directly for wasm targets (`--threads=N`).
+    #
+    # This can bite indirectly: e.g. `safe-run.sh cargo run -p xtask -- test-all` builds xtask for
+    # the host target and then spawns `wasm-pack`, which in turn spawns `cargo --target wasm32-*`.
+    # If we inject `-Wl,--threads=...` into `RUSTFLAGS`, the nested wasm build fails.
+    #
+    # Instead, set Cargo's per-target rustflags environment variables:
+    #   CARGO_TARGET_<TRIPLE>_RUSTFLAGS
+    #
+    # This keeps the host linker capped while allowing nested wasm builds to succeed.
     #
     # Restrict this to Linux: other platforms may use different linkers that don't accept
     # `--threads=`.
     if [[ "$(uname 2>/dev/null || true)" == "Linux" ]]; then
-        # Determine the Cargo build target so we can pick an appropriate `rust-lld` threads flag.
-        #
-        # Precedence matches Cargo itself:
-        # - `cargo --target <triple>` / `--target=<triple>` overrides everything.
-        # - Otherwise, fall back to `CARGO_BUILD_TARGET` (often set by agent shells or configs).
+        aero_lld_threads="${CARGO_BUILD_JOBS:-1}"
+
+        _aero_add_lld_threads_rustflags() {
+            local target="${1}"
+            local threads="${aero_lld_threads}"
+
+            local var="CARGO_TARGET_${target^^}_RUSTFLAGS"
+            var="${var//-/_}"
+            var="${var//./_}"
+
+            local current="${!var:-}"
+
+            # If something injected the native-style `-Wl,--threads=...` into this wasm target's rustflags,
+            # rewrite it into the wasm-compatible form.
+            if [[ "${target}" == wasm32-* ]] && [[ "${current}" == *"-Wl,--threads="* ]]; then
+                current="${current//-C link-arg=-Wl,--threads=/-C link-arg=--threads=}"
+                current="${current//-Clink-arg=-Wl,--threads=/-C link-arg=--threads=}"
+            fi
+
+            # Only add if we don't already have a threads flag (either form).
+            if [[ "${current}" != *"--threads="* ]] && [[ "${current}" != *"-Wl,--threads="* ]]; then
+                if [[ "${target}" == wasm32-* ]]; then
+                    current="${current} -C link-arg=--threads=${threads}"
+                else
+                    current="${current} -C link-arg=-Wl,--threads=${threads}"
+                fi
+                current="${current# }"
+            fi
+
+            export "${var}=${current}"
+        }
+
+        # Determine host target triple for default (no `--target`) Cargo invocations.
+        aero_host_target=""
+        if command -v rustc >/dev/null 2>&1; then
+            aero_host_target="$(rustc -vV 2>/dev/null | sed -n 's/^host: //p' | head -n1)"
+        fi
+
+        # Determine the explicit Cargo target triple, if any.
         aero_target=""
         prev=""
         for arg in "${@:2}"; do
@@ -484,28 +528,61 @@ if [[ "${is_cargo_cmd}" == "true" ]]; then
         if [[ -z "${aero_target}" ]]; then
             aero_target="${CARGO_BUILD_TARGET:-}"
         fi
-
-        # If a native environment has already injected `-Wl,--threads=...` into RUSTFLAGS (commonly
-        # via `scripts/agent-env.sh`), rewrite it into the wasm-compatible form when the Cargo target
-        # is wasm32. Otherwise, `rust-lld -flavor wasm` fails with:
-        #   rust-lld: error: unknown argument: -Wl,--threads=...
-        if [[ "${aero_target}" == wasm32-* ]] && [[ "${RUSTFLAGS:-}" == *"-Wl,--threads="* ]]; then
-            # Handle both `-C link-arg=...` and `-Clink-arg=...` spellings.
-            export RUSTFLAGS="${RUSTFLAGS//-C link-arg=-Wl,--threads=/-C link-arg=--threads=}"
-            export RUSTFLAGS="${RUSTFLAGS//-Clink-arg=-Wl,--threads=/-C link-arg=--threads=}"
+        if [[ -z "${aero_target}" ]]; then
+            aero_target="${aero_host_target}"
         fi
 
-        if [[ "${RUSTFLAGS:-}" != *"--threads="* ]]; then
-            aero_lld_threads="${CARGO_BUILD_JOBS:-1}"
-            if [[ "${aero_target}" == wasm32-* ]]; then
-                export RUSTFLAGS="${RUSTFLAGS:-} -C link-arg=--threads=${aero_lld_threads}"
-            else
-                export RUSTFLAGS="${RUSTFLAGS:-} -C link-arg=-Wl,--threads=${aero_lld_threads}"
-            fi
+        # If RUSTFLAGS contains linker thread flags, strip them so they don't apply to every target.
+        # We re-apply the limit via per-target env vars.
+        if [[ "${RUSTFLAGS:-}" == *"--threads="* || "${RUSTFLAGS:-}" == *"-Wl,--threads="* ]]; then
+            # Tokenize on whitespace (defensive: treat RUSTFLAGS as a simple space-separated list).
+            # This intentionally does *not* try to preserve complex quoting; safe-run is designed to
+            # sanitize agent environments, not to be a perfect shell parser.
+            #
+            # Remove both spellings:
+            # - `-C link-arg=-Wl,--threads=N` / `-Clink-arg=-Wl,--threads=N`
+            # - `-C link-arg=--threads=N`     / `-Clink-arg=--threads=N`
+            aero_rustflags=()
+            # shellcheck disable=SC2206
+            aero_rustflags=(${RUSTFLAGS})
+            new_rustflags=()
+            i=0
+            while [[ $i -lt ${#aero_rustflags[@]} ]]; do
+                tok="${aero_rustflags[$i]}"
+                next=""
+                if [[ $((i + 1)) -lt ${#aero_rustflags[@]} ]]; then
+                    next="${aero_rustflags[$((i + 1))]}"
+                fi
+
+                if [[ "${tok}" == "-C" ]] && ([[ "${next}" == link-arg=-Wl,--threads=* ]] || [[ "${next}" == link-arg=--threads=* ]]); then
+                    i=$((i + 2))
+                    continue
+                fi
+                if [[ "${tok}" == -Clink-arg=-Wl,--threads=* ]] || [[ "${tok}" == -Clink-arg=--threads=* ]]; then
+                    i=$((i + 1))
+                    continue
+                fi
+
+                new_rustflags+=("${tok}")
+                i=$((i + 1))
+            done
+
+            export RUSTFLAGS="${new_rustflags[*]}"
             export RUSTFLAGS="${RUSTFLAGS# }"
+            unset aero_rustflags new_rustflags tok next i 2>/dev/null || true
         fi
 
-        unset aero_lld_threads aero_target prev 2>/dev/null || true
+        if [[ -n "${aero_host_target}" ]]; then
+            _aero_add_lld_threads_rustflags "${aero_host_target}"
+        fi
+        if [[ -n "${aero_target}" ]]; then
+            _aero_add_lld_threads_rustflags "${aero_target}"
+        fi
+        # Ensure tools that spawn wasm builds (e.g. wasm-pack) also get a wasm32 threads cap.
+        _aero_add_lld_threads_rustflags "wasm32-unknown-unknown"
+
+        unset aero_lld_threads aero_target aero_host_target prev 2>/dev/null || true
+        unset -f _aero_add_lld_threads_rustflags 2>/dev/null || true
     fi
 fi
 
