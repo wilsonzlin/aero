@@ -10,6 +10,10 @@
 //! **`aero_machine::Machine`**.
 #![forbid(unsafe_code)]
 
+mod guest_time;
+
+pub use guest_time::GuestTime;
+
 use std::cell::RefCell;
 use std::fmt;
 use std::io::{Cursor, Read, Seek, Write};
