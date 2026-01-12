@@ -580,7 +580,8 @@ mod wasm {
                 .map_err(|err| JsValue::from_str(&err.to_string())),
             (None, None) => d3d9_state
                 .executor
-                .execute_cmd_stream_for_context(context_id, &bytes)
+                .execute_cmd_stream_for_context_async(context_id, &bytes)
+                .await
                 .map_err(|err| JsValue::from_str(&err.to_string())),
         };
 

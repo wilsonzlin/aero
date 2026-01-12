@@ -13,6 +13,8 @@ use aero_protocol::aerogpu::aerogpu_cmd::AEROGPU_COPY_FLAG_WRITEBACK_DST;
 use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
 use aero_protocol::aerogpu::aerogpu_ring as ring;
 use futures_intrusive::channel::shared::oneshot_channel;
+#[cfg(target_arch = "wasm32")]
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tracing::debug;
 use wgpu::util::DeviceExt;
@@ -38,6 +40,9 @@ pub struct AerogpuD3d9Executor {
     stats: Arc<GpuStats>,
 
     shader_cache: shader::ShaderCache,
+    /// WASM-only persistent shader translation cache (IndexedDB/OPFS).
+    #[cfg(target_arch = "wasm32")]
+    persistent_shader_cache: aero_d3d9::runtime::ShaderCache,
 
     resources: HashMap<u32, Resource>,
     /// Handle indirection table for shared resources.
@@ -322,6 +327,45 @@ struct Shader {
     entry_point: &'static str,
     uses_semantic_locations: bool,
     used_samplers_mask: u16,
+}
+
+/// Persisted shader reflection metadata stored alongside cached WGSL.
+///
+/// This is intentionally minimal: it includes only the fields the D3D9 executor needs to bind
+/// vertex inputs and select the correct entry point without re-parsing DXBC on cache hit.
+#[cfg(target_arch = "wasm32")]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PersistentShaderReflection {
+    stage: PersistentShaderStage,
+    entry_point: String,
+    uses_semantic_locations: bool,
+    used_samplers_mask: u16,
+}
+
+#[cfg(target_arch = "wasm32")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum PersistentShaderStage {
+    Vertex,
+    Pixel,
+}
+
+#[cfg(target_arch = "wasm32")]
+impl PersistentShaderStage {
+    fn from_stage(stage: shader::ShaderStage) -> Self {
+        match stage {
+            shader::ShaderStage::Vertex => Self::Vertex,
+            shader::ShaderStage::Pixel => Self::Pixel,
+        }
+    }
+
+    fn to_stage(self) -> shader::ShaderStage {
+        match self {
+            Self::Vertex => shader::ShaderStage::Vertex,
+            Self::Pixel => shader::ShaderStage::Pixel,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -987,6 +1031,8 @@ impl AerogpuD3d9Executor {
             queue,
             stats,
             shader_cache: shader::ShaderCache::default(),
+            #[cfg(target_arch = "wasm32")]
+            persistent_shader_cache: aero_d3d9::runtime::ShaderCache::new(),
             resources: HashMap::new(),
             resource_handles: HashMap::new(),
             resource_refcounts: HashMap::new(),
@@ -1026,6 +1072,10 @@ impl AerogpuD3d9Executor {
 
     pub fn reset(&mut self) {
         self.shader_cache = shader::ShaderCache::default();
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.persistent_shader_cache = aero_d3d9::runtime::ShaderCache::new();
+        }
         self.resources.clear();
         self.resource_handles.clear();
         self.resource_refcounts.clear();
@@ -1416,6 +1466,51 @@ impl AerogpuD3d9Executor {
         )
     }
 
+    pub async fn execute_cmd_stream_for_context_async(
+        &mut self,
+        context_id: u32,
+        bytes: &[u8],
+    ) -> Result<(), AerogpuD3d9Error> {
+        let stream = parse_cmd_stream(bytes)?;
+
+        // Without guest memory, WRITEBACK_DST cannot be committed. Reject early to avoid partially
+        // executing the stream.
+        let writeback_at = stream.cmds.iter().position(|cmd| match cmd {
+            AeroGpuCmd::CopyBuffer { flags, .. } | AeroGpuCmd::CopyTexture2d { flags, .. } => {
+                (flags & AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0
+            }
+            _ => false,
+        });
+        if let Some(at) = writeback_at {
+            return Err(AerogpuD3d9Error::Validation(format!(
+                "WRITEBACK_DST requires guest memory (call execute_cmd_stream_with_guest_memory_for_context_async); first WRITEBACK_DST at packet {at}"
+            )));
+        }
+
+        self.switch_context(context_id);
+        let mut pending_writebacks = Vec::new();
+        let mut ctx = SubmissionCtx {
+            guest_memory: None,
+            alloc_table: None,
+        };
+        for cmd in stream.cmds {
+            if let Err(err) = self
+                .execute_cmd_async(cmd, &mut ctx, &mut pending_writebacks)
+                .await
+            {
+                self.encoder = None;
+                self.queue.submit([]);
+                return Err(err);
+            }
+        }
+        self.flush()?;
+        debug_assert!(
+            pending_writebacks.is_empty(),
+            "pending writebacks should be impossible without guest memory"
+        );
+        Ok(())
+    }
+
     pub fn execute_cmd_stream_with_guest_memory(
         &mut self,
         bytes: &[u8],
@@ -1477,7 +1572,10 @@ impl AerogpuD3d9Executor {
             alloc_table,
         };
         for cmd in stream.cmds {
-            if let Err(err) = self.execute_cmd(cmd, &mut ctx, &mut pending_writebacks) {
+            if let Err(err) = self
+                .execute_cmd_async(cmd, &mut ctx, &mut pending_writebacks)
+                .await
+            {
                 self.encoder = None;
                 self.queue.submit([]);
                 return Err(err);
@@ -1853,6 +1951,280 @@ impl AerogpuD3d9Executor {
         }
         self.shared_surface_by_token.remove(&share_token);
         self.retired_share_tokens.insert(share_token);
+    }
+
+    fn create_shader_dxbc_in_memory(
+        &mut self,
+        shader_handle: u32,
+        expected_stage: shader::ShaderStage,
+        dxbc_bytes: &[u8],
+    ) -> Result<(), AerogpuD3d9Error> {
+        let key = xxhash_rust::xxh3::xxh3_64(dxbc_bytes);
+        let cached = self
+            .shader_cache
+            .get_or_translate(dxbc_bytes)
+            .map_err(|e| AerogpuD3d9Error::ShaderTranslation(e.to_string()))?;
+        match cached.source {
+            shader::ShaderCacheLookupSource::Memory => {
+                self.stats.inc_d3d9_shader_cache_memory_hits();
+            }
+            shader::ShaderCacheLookupSource::Translated => {
+                self.stats.inc_d3d9_shader_translate_calls();
+            }
+        }
+        let bytecode_stage = cached.ir.version.stage;
+        if expected_stage != bytecode_stage {
+            return Err(AerogpuD3d9Error::ShaderStageMismatch {
+                shader_handle,
+                expected: expected_stage,
+                actual: bytecode_stage,
+            });
+        }
+
+        let wgsl = cached.wgsl.wgsl.clone();
+        let module = self
+            .device
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("aerogpu-d3d9.shader"),
+                source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(wgsl.as_str())),
+            });
+
+        let mut used_samplers_mask = 0u16;
+        for &s in &cached.ir.used_samplers {
+            if (s as usize) < MAX_SAMPLERS {
+                used_samplers_mask |= 1u16 << s;
+            } else {
+                debug!(
+                    shader_handle,
+                    sampler = s,
+                    "shader uses out-of-range sampler index"
+                );
+            }
+        }
+
+        self.shaders.insert(
+            shader_handle,
+            Shader {
+                stage: bytecode_stage,
+                key,
+                module,
+                wgsl,
+                entry_point: cached.wgsl.entry_point,
+                uses_semantic_locations: cached.ir.uses_semantic_locations
+                    && bytecode_stage == shader::ShaderStage::Vertex,
+                used_samplers_mask,
+            },
+        );
+        Ok(())
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    async fn create_shader_dxbc_persistent(
+        &mut self,
+        shader_handle: u32,
+        expected_stage: shader::ShaderStage,
+        dxbc_bytes: &[u8],
+    ) -> Result<(), AerogpuD3d9Error> {
+        let key = xxhash_rust::xxh3::xxh3_64(dxbc_bytes);
+
+        let flags = aero_d3d9::runtime::ShaderTranslationFlags {
+            half_pixel_center: false,
+            caps_hash: None,
+        };
+
+        // At most one invalidation+retranslate retry for corruption defense.
+        let mut invalidated_once = false;
+
+        loop {
+            let (artifact, source) = self
+                .persistent_shader_cache
+                .get_or_translate_with_source(dxbc_bytes, flags.clone(), || async {
+                    let program = shader::parse(dxbc_bytes).map_err(|e| e.to_string())?;
+                    let ir = shader::to_ir(&program);
+                    let wgsl = shader::generate_wgsl(&ir);
+
+                    let mut used_samplers_mask = 0u16;
+                    for &s in &ir.used_samplers {
+                        if (s as usize) < MAX_SAMPLERS {
+                            used_samplers_mask |= 1u16 << s;
+                        }
+                    }
+
+                    let reflection = PersistentShaderReflection {
+                        stage: PersistentShaderStage::from_stage(ir.version.stage),
+                        entry_point: wgsl.entry_point.to_string(),
+                        uses_semantic_locations: ir.uses_semantic_locations,
+                        used_samplers_mask,
+                    };
+                    let reflection = serde_json::to_value(reflection).map_err(|e| e.to_string())?;
+
+                    Ok(aero_d3d9::runtime::PersistedShaderArtifact {
+                        wgsl: wgsl.wgsl,
+                        reflection,
+                    })
+                })
+                .await
+                .map_err(|err| {
+                    AerogpuD3d9Error::ShaderTranslation(
+                        err.as_string().unwrap_or_else(|| format!("{err:?}")),
+                    )
+                })?;
+
+            let aero_d3d9::runtime::PersistedShaderArtifact { wgsl, reflection } = artifact;
+
+            let reflection: PersistentShaderReflection = match serde_json::from_value(reflection) {
+                Ok(v) => v,
+                Err(err) => {
+                    debug!(
+                        ?err,
+                        "cached shader reflection is malformed; invalidating and retranslating"
+                    );
+                    if !invalidated_once {
+                        invalidated_once = true;
+                        let _ = self
+                            .persistent_shader_cache
+                            .invalidate(dxbc_bytes, flags.clone())
+                            .await;
+                        continue;
+                    }
+                    return self.create_shader_dxbc_in_memory(shader_handle, expected_stage, dxbc_bytes);
+                }
+            };
+
+            let bytecode_stage = reflection.stage.to_stage();
+            if expected_stage != bytecode_stage {
+                return Err(AerogpuD3d9Error::ShaderStageMismatch {
+                    shader_handle,
+                    expected: expected_stage,
+                    actual: bytecode_stage,
+                });
+            }
+
+            let entry_point: &'static str = match reflection.entry_point.as_str() {
+                "vs_main" => "vs_main",
+                "fs_main" => "fs_main",
+                other => {
+                    debug!(shader_handle, entry_point = other, "cached shader entry point is unsupported; invalidating and retranslating");
+                    if !invalidated_once {
+                        invalidated_once = true;
+                        let _ = self
+                            .persistent_shader_cache
+                            .invalidate(dxbc_bytes, flags.clone())
+                            .await;
+                        continue;
+                    }
+                    return self.create_shader_dxbc_in_memory(shader_handle, expected_stage, dxbc_bytes);
+                }
+            };
+
+            // Optional: validate cached WGSL on persistent hit to guard against corruption/staleness.
+            let module = if source == aero_d3d9::runtime::ShaderCacheSource::Persistent {
+                self.device.push_error_scope(wgpu::ErrorFilter::Validation);
+                let module = self
+                    .device
+                    .create_shader_module(wgpu::ShaderModuleDescriptor {
+                        label: Some("aerogpu-d3d9.shader.cached"),
+                        source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(wgsl.as_str())),
+                    });
+                self.device.poll(wgpu::Maintain::Poll);
+                let err = self.device.pop_error_scope().await;
+                if let Some(err) = err {
+                    debug!(
+                        ?err,
+                        "cached WGSL failed wgpu validation; invalidating and retranslating"
+                    );
+                    if !invalidated_once {
+                        invalidated_once = true;
+                        let _ = self
+                            .persistent_shader_cache
+                            .invalidate(dxbc_bytes, flags.clone())
+                            .await;
+                        continue;
+                    }
+                    return self.create_shader_dxbc_in_memory(shader_handle, expected_stage, dxbc_bytes);
+                }
+                module
+            } else {
+                self.device
+                    .create_shader_module(wgpu::ShaderModuleDescriptor {
+                        label: Some("aerogpu-d3d9.shader"),
+                        source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(wgsl.as_str())),
+                    })
+            };
+
+            match source {
+                aero_d3d9::runtime::ShaderCacheSource::Memory => {
+                    self.stats.inc_d3d9_shader_cache_memory_hits();
+                }
+                aero_d3d9::runtime::ShaderCacheSource::Persistent => {
+                    self.stats.inc_d3d9_shader_cache_persistent_hits();
+                }
+                aero_d3d9::runtime::ShaderCacheSource::Translated => {
+                    self.stats.inc_d3d9_shader_cache_persistent_misses();
+                    self.stats.inc_d3d9_shader_translate_calls();
+                }
+            }
+
+            self.shaders.insert(
+                shader_handle,
+                Shader {
+                    stage: bytecode_stage,
+                    key,
+                    module,
+                    wgsl,
+                    entry_point,
+                    uses_semantic_locations: reflection.uses_semantic_locations
+                        && bytecode_stage == shader::ShaderStage::Vertex,
+                    used_samplers_mask: reflection.used_samplers_mask,
+                },
+            );
+            return Ok(());
+        }
+    }
+
+    async fn execute_cmd_async(
+        &mut self,
+        cmd: AeroGpuCmd<'_>,
+        ctx: &mut SubmissionCtx<'_>,
+        pending_writebacks: &mut Vec<PendingWriteback>,
+    ) -> Result<(), AerogpuD3d9Error> {
+        #[cfg(target_arch = "wasm32")]
+        match cmd {
+            AeroGpuCmd::CreateShaderDxbc {
+                shader_handle,
+                stage,
+                dxbc_bytes,
+                ..
+            } => {
+                if shader_handle == 0 {
+                    return Err(AerogpuD3d9Error::Validation(
+                        "CREATE_SHADER_DXBC: shader handle 0 is reserved".into(),
+                    ));
+                }
+                if self.handle_in_use(shader_handle) {
+                    return Err(AerogpuD3d9Error::ShaderHandleInUse(shader_handle));
+                }
+
+                let expected_stage = match stage {
+                    s if s == cmd::AerogpuShaderStage::Vertex as u32 => shader::ShaderStage::Vertex,
+                    s if s == cmd::AerogpuShaderStage::Pixel as u32 => shader::ShaderStage::Pixel,
+                    _ => {
+                        return Err(AerogpuD3d9Error::Validation(format!(
+                            "CREATE_SHADER_DXBC: unsupported stage {stage}"
+                        )));
+                    }
+                };
+
+                self.create_shader_dxbc_persistent(shader_handle, expected_stage, dxbc_bytes)
+                    .await
+            }
+            other => self.execute_cmd(other, ctx, pending_writebacks),
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.execute_cmd(cmd, ctx, pending_writebacks)
+        }
     }
 
     fn execute_cmd(
@@ -3771,60 +4143,7 @@ impl AerogpuD3d9Executor {
                     }
                 };
 
-                let key = xxhash_rust::xxh3::xxh3_64(dxbc_bytes);
-                let cached = self
-                    .shader_cache
-                    .get_or_translate(dxbc_bytes)
-                    .map_err(|e| AerogpuD3d9Error::ShaderTranslation(e.to_string()))?;
-                match cached.source {
-                    shader::ShaderCacheLookupSource::Memory => {
-                        self.stats.inc_d3d9_shader_cache_memory_hits();
-                    }
-                    shader::ShaderCacheLookupSource::Translated => {
-                        self.stats.inc_d3d9_shader_translate_calls();
-                    }
-                }
-                let bytecode_stage = cached.ir.version.stage;
-                if expected_stage != bytecode_stage {
-                    return Err(AerogpuD3d9Error::ShaderStageMismatch {
-                        shader_handle,
-                        expected: expected_stage,
-                        actual: bytecode_stage,
-                    });
-                }
-                let wgsl = cached.wgsl.wgsl.clone();
-                let module = self
-                    .device
-                    .create_shader_module(wgpu::ShaderModuleDescriptor {
-                        label: Some("aerogpu-d3d9.shader"),
-                        source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(wgsl.as_str())),
-                    });
-                let mut used_samplers_mask = 0u16;
-                for &s in &cached.ir.used_samplers {
-                    if (s as usize) < MAX_SAMPLERS {
-                        used_samplers_mask |= 1u16 << s;
-                    } else {
-                        debug!(
-                            shader_handle,
-                            sampler = s,
-                            "shader uses out-of-range sampler index"
-                        );
-                    }
-                }
-                self.shaders.insert(
-                    shader_handle,
-                    Shader {
-                        stage: bytecode_stage,
-                        key,
-                        module,
-                        wgsl,
-                        entry_point: cached.wgsl.entry_point,
-                        uses_semantic_locations: cached.ir.uses_semantic_locations
-                            && bytecode_stage == shader::ShaderStage::Vertex,
-                        used_samplers_mask,
-                    },
-                );
-                Ok(())
+                self.create_shader_dxbc_in_memory(shader_handle, expected_stage, dxbc_bytes)
             }
             AeroGpuCmd::DestroyShader { shader_handle } => {
                 self.shaders.remove(&shader_handle);

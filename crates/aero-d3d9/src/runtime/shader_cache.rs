@@ -226,7 +226,7 @@ impl ShaderCache {
     ) -> Result<(PersistedShaderArtifact, ShaderCacheSource), JsValue>
     where
         F: FnOnce() -> Fut,
-        Fut: std::future::Future<Output = Result<PersistedShaderArtifact, JsValue>>,
+        Fut: std::future::Future<Output = Result<PersistedShaderArtifact, String>>,
     {
         let mem_key = compute_in_memory_key(dxbc, &flags);
 
@@ -281,7 +281,9 @@ impl ShaderCache {
         }
 
         // Cache miss: translate.
-        let translated = translate_fn().await?;
+        let translated = translate_fn()
+            .await
+            .map_err(|e| JsValue::from_str(&e))?;
 
         // Populate the per-session cache regardless of persistent availability.
         self.in_memory.insert(mem_key, translated.clone());
