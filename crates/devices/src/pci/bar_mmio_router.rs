@@ -158,7 +158,12 @@ impl PciBarMmioRouter {
                 continue;
             }
 
-            let bar_end = range.base.saturating_add(range.size);
+            let Some(bar_end) = range.base.checked_add(range.size) else {
+                // Treat overflowing BAR ranges as unmapped. Guests can program arbitrary BAR bases;
+                // avoid turning an invalid base+size combination into an effectively unbounded
+                // range via saturating arithmetic.
+                continue;
+            };
             if paddr < range.base || access_end > bar_end {
                 continue;
             }
@@ -602,6 +607,56 @@ mod tests {
         assert_eq!(&state.mem[0x10..0x14], &[0xD4, 0xC3, 0xB2, 0xA1]);
         assert_eq!(state.writes.len(), 1);
         assert_eq!(state.reads.len(), 1);
+    }
+
+    #[test]
+    fn does_not_dispatch_when_bar_end_overflows_u64() {
+        // Guests can program arbitrary BAR bases. If `base + size` overflows, treat the BAR as
+        // unmapped rather than saturating the range end to `u64::MAX` (which would incorrectly
+        // route almost all high addresses).
+        let window_base = 0xFFFF_FFFF_FFFF_0000;
+        let bdf = PciBdf::new(0, 12, 0);
+
+        let mut bus = PciBus::new();
+        let mut cfg = PciConfigSpace::new(0x1234, 0x5678);
+        cfg.set_bar_definition(
+            0,
+            PciBarDefinition::Mmio64 {
+                size: 0x2000,
+                prefetchable: false,
+            },
+        );
+        bus.add_device(bdf, Box::new(TestDev { cfg }));
+
+        let cfg_ports: SharedPciConfigPorts = Rc::new(RefCell::new(PciConfigPorts::with_bus(bus)));
+
+        let (mmio, state) = TestMmio::new(0x2000);
+        let mut router = PciBarMmioRouter::new(window_base, cfg_ports.clone());
+        router.register_bar(bdf, 0, Box::new(mmio));
+
+        // Program BAR0 near the top of the u64 address space so `base + size` overflows.
+        let bar0_base = 0xFFFF_FFFF_FFFF_E000u64;
+        {
+            let mut cfg_ports_mut = cfg_ports.borrow_mut();
+            cfg_ports_mut.bus_mut().write_config(bdf, 0x04, 2, 0x0002);
+            // BAR0 low dword.
+            cfg_ports_mut
+                .bus_mut()
+                .write_config(bdf, 0x10, 4, bar0_base as u32);
+            // BAR0 high dword.
+            cfg_ports_mut
+                .bus_mut()
+                .write_config(bdf, 0x14, 4, (bar0_base >> 32) as u32);
+        }
+
+        let off = bar0_base - window_base;
+        let got = MmioHandler::read(&mut router, off, 4);
+        assert_eq!(got, all_ones(4));
+        MmioHandler::write(&mut router, off, 4, 0x1122_3344);
+
+        let state = state.lock().unwrap();
+        assert!(state.reads.is_empty());
+        assert!(state.writes.is_empty());
     }
 
     #[test]
