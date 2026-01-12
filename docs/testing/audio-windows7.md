@@ -13,7 +13,9 @@ This is a **manual**, **reproducible** smoke test to validate that Windows 7’s
 Important:
 
 - This checklist is for the **baseline HDA device**.
-  - If your VM profile/device model is set to **virtio-snd**, Windows will enumerate a different device and this checklist won’t apply.
+  - In the browser runtime, the IO worker typically prefers **HDA** when it is present (virtio-snd may still be registered but is not
+    the active ring-attached audio device).
+  - If you are running a configuration that omits HDA and uses **virtio-snd** as the active guest audio device, this checklist won’t apply.
 
 ---
 
