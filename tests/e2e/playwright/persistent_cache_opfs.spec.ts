@@ -55,31 +55,98 @@ test("large shader payload spills to OPFS when available", async ({}, testInfo) 
 
   try {
     const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "aero-shader-cache-opfs-"));
-    const logs: string[] = [];
 
-    const context = await chromium.launchPersistentContext(userDataDir, {
-      headless: true,
-      // WebGPU may be behind a flag in some Chromium configurations.
-      args: ["--enable-unsafe-webgpu"],
-    });
-    const page = await context.newPage();
-    page.on("console", (msg) => logs.push(msg.text()));
+    async function runOnce(): Promise<{
+      key: string;
+      cacheHit: boolean;
+      opfsAvailable: boolean;
+      opfsFileExists: boolean;
+      idbShaderRecord: { storage: string | null; opfsFile: string | null; hasWgsl: boolean } | null;
+      logs: string[];
+    }> {
+      const logs: string[] = [];
+      const context = await chromium.launchPersistentContext(userDataDir, {
+        headless: true,
+        // WebGPU may be behind a flag in some Chromium configurations.
+        args: ["--enable-unsafe-webgpu"],
+      });
+      const page = await context.newPage();
+      page.on("console", (msg) => logs.push(msg.text()));
 
-    await page.goto(`${server.baseUrl}/shader_cache_demo.html?large=1`);
-    await page.waitForFunction(() => (window as any).__shaderCacheDemo !== undefined);
+      await page.goto(`${server.baseUrl}/shader_cache_demo.html?large=1`);
+      await page.waitForFunction(() => (window as any).__shaderCacheDemo !== undefined);
 
-    const result = await page.evaluate(() => (window as any).__shaderCacheDemo);
-    await context.close();
+      const result = await page.evaluate(() => (window as any).__shaderCacheDemo);
+      if (result?.error) {
+        await context.close();
+        throw new Error(`demo page failed: ${result.error}\nlogs:\n${logs.join("\n")}`);
+      }
 
-    if (result?.error) {
-      throw new Error(`demo page failed: ${result.error}\nlogs:\n${logs.join("\n")}`);
+      const idbShaderRecord = await page.evaluate(async (key: string) => {
+        const DB_NAME = "aero-gpu-cache";
+        const DB_VERSION = 1;
+        const STORE_SHADERS = "shaders";
+
+        const db = await new Promise<IDBDatabase>((resolve, reject) => {
+          const req = indexedDB.open(DB_NAME, DB_VERSION);
+          req.onerror = () => reject(req.error ?? new Error("IndexedDB open failed"));
+          req.onsuccess = () => resolve(req.result);
+        });
+
+        try {
+          const tx = db.transaction([STORE_SHADERS], "readonly");
+          const store = tx.objectStore(STORE_SHADERS);
+          const record = await new Promise<any>((resolve, reject) => {
+            const req = store.get(key);
+            req.onerror = () => reject(req.error ?? new Error("IndexedDB get failed"));
+            req.onsuccess = () => resolve(req.result ?? null);
+          });
+          await new Promise<void>((resolve) => {
+            tx.oncomplete = () => resolve();
+            tx.onabort = () => resolve(); // best-effort; return what we have
+            tx.onerror = () => resolve();
+          });
+
+          if (!record) return null;
+          return {
+            storage: typeof record.storage === "string" ? record.storage : null,
+            opfsFile: typeof record.opfsFile === "string" ? record.opfsFile : null,
+            hasWgsl: typeof record.wgsl === "string",
+          };
+        } finally {
+          db.close();
+        }
+      }, result.key);
+
+      await context.close();
+
+      return {
+        key: String(result.key),
+        cacheHit: !!result.cacheHit,
+        opfsAvailable: !!result.opfsAvailable,
+        opfsFileExists: !!result.opfsFileExists,
+        idbShaderRecord: idbShaderRecord ?? null,
+        logs,
+      };
     }
 
-    if (!result.opfsAvailable) {
+    const first = await runOnce();
+    if (!first.opfsAvailable) {
       test.skip(true, "OPFS not available in this Chromium configuration");
     }
+    expect(first.cacheHit).toBe(false);
+    expect(first.opfsFileExists).toBe(true);
+    expect(first.logs.some((l) => l.includes("shader_translate: begin"))).toBe(true);
+    expect(first.idbShaderRecord?.storage).toBe("opfs");
+    expect(first.idbShaderRecord?.opfsFile).toBe(`${first.key}.json`);
+    expect(first.idbShaderRecord?.hasWgsl).toBe(false);
 
-    expect(result.opfsFileExists).toBe(true);
+    const second = await runOnce();
+    expect(second.key).toBe(first.key);
+    expect(second.cacheHit).toBe(true);
+    expect(second.opfsFileExists).toBe(true);
+    expect(second.logs.some((l) => l.includes("shader_translate: begin"))).toBe(false);
+    expect(second.idbShaderRecord?.storage).toBe("opfs");
   } finally {
     await server.close();
   }
