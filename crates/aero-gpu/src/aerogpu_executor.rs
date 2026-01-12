@@ -4286,40 +4286,61 @@ fn fs_main() -> @location(0) vec4<f32> {
 }
 
 fn coalesce_ranges(ranges: &mut Vec<Range<u64>>) {
-    ranges.sort_by_key(|r| r.start);
-    let mut out: Vec<Range<u64>> = Vec::with_capacity(ranges.len());
-    for r in ranges.drain(..) {
+    // Use an unstable sort to avoid allocating a scratch buffer for large guest-controlled range
+    // lists. We don't require stable ordering when start positions are equal.
+    ranges.sort_unstable_by_key(|r| r.start);
+
+    // Coalesce in-place to avoid a second allocation proportional to `ranges.len()`.
+    let mut out_len = 0usize;
+    for i in 0..ranges.len() {
+        let r = ranges[i].clone();
         if r.start >= r.end {
             continue;
         }
-        if let Some(last) = out.last_mut() {
-            if r.start <= last.end {
-                last.end = last.end.max(r.end);
-                continue;
-            }
+
+        if out_len == 0 {
+            ranges[0] = r;
+            out_len = 1;
+            continue;
         }
-        out.push(r);
+
+        let last = &mut ranges[out_len - 1];
+        if r.start <= last.end {
+            last.end = last.end.max(r.end);
+        } else {
+            ranges[out_len] = r;
+            out_len += 1;
+        }
     }
-    *ranges = out;
+    ranges.truncate(out_len);
 }
 
 #[cfg(test)]
 fn coalesce_ranges_u32(ranges: &mut Vec<Range<u32>>) {
-    ranges.sort_by_key(|r| r.start);
-    let mut out: Vec<Range<u32>> = Vec::with_capacity(ranges.len());
-    for r in ranges.drain(..) {
+    ranges.sort_unstable_by_key(|r| r.start);
+
+    let mut out_len = 0usize;
+    for i in 0..ranges.len() {
+        let r = ranges[i].clone();
         if r.start >= r.end {
             continue;
         }
-        if let Some(last) = out.last_mut() {
-            if r.start <= last.end {
-                last.end = last.end.max(r.end);
-                continue;
-            }
+
+        if out_len == 0 {
+            ranges[0] = r;
+            out_len = 1;
+            continue;
         }
-        out.push(r);
+
+        let last = &mut ranges[out_len - 1];
+        if r.start <= last.end {
+            last.end = last.end.max(r.end);
+        } else {
+            ranges[out_len] = r;
+            out_len += 1;
+        }
     }
-    *ranges = out;
+    ranges.truncate(out_len);
 }
 
 #[cfg(test)]
