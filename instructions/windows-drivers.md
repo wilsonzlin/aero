@@ -43,7 +43,8 @@ These drivers run **inside the guest Windows 7** and communicate with the emulat
 | `drivers/windows7/tests/guest-selftest/` | `aero-virtio-selftest.exe` (runs inside Win7 guest; emits serial markers) |
 | `drivers/windows7/tests/host-harness/` | QEMU host harness that runs the guest selftest and returns a deterministic PASS/FAIL |
 | `drivers/win7/virtio/` | Win7 KMDF virtio scaffolding + capability parser tests (non-shipping test drivers) |
-| `drivers/protocol/` | Protocol definitions (shared with emulator) |
+| `drivers/aerogpu/protocol/` | AeroGPU protocol headers (PCI IDs, MMIO register map, ring ABI, command stream) |
+| `drivers/protocol/` | Protocol definitions (shared with emulator; currently used for virtio) |
 | `drivers/protocol/virtio/` | Rust virtio protocol definitions + unit tests (`cargo test`) |
 | `guest-tools/` | Guest tools packaging and installer |
 | `docs/windows-device-contract.{md,json}` | Machine-readable PCI/INF/service binding contract consumed by CI + Guest Tools |
