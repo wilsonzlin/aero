@@ -47,7 +47,29 @@ pub fn detect_format<B: StorageBackend>(backend: &mut B) -> Result<DiskFormat> {
             let mut footer = [0u8; VHD_FOOTER_SIZE];
             backend.read_at(0, &mut footer)?;
             if looks_like_vhd_footer(&footer, len) {
-                return Ok(DiskFormat::Vhd);
+                // For fixed disks, a valid footer at offset 0 implies the optional footer copy is
+                // present, meaning the file must be large enough to contain:
+                //   footer_copy (512) + data (current_size) + eof_footer (512)
+                //
+                // Without this check, a raw disk image whose first sector coincidentally resembles
+                // a VHD footer could be misclassified as a VHD and then fail to open.
+                let disk_type = be_u32(&footer[60..64]);
+                if disk_type == 2 {
+                    let current_size = be_u64(&footer[48..56]);
+                    let Some(required) = current_size
+                        .checked_add((VHD_FOOTER_SIZE as u64) * 2)
+                    else {
+                        return Ok(DiskFormat::Raw);
+                    };
+                    if len < required {
+                        // Likely a fixed VHD without a footer copy (detected via EOF footer below),
+                        // or a false positive. Keep detection conservative.
+                    } else {
+                        return Ok(DiskFormat::Vhd);
+                    }
+                } else {
+                    return Ok(DiskFormat::Vhd);
+                }
             }
         }
     }
