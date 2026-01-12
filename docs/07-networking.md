@@ -1097,6 +1097,10 @@ When running the **worker-based web runtime** with the **Option C L2 tunnel**, y
 raw Ethernet frames being forwarded between the guest and the tunnel client and export them as a
 `.pcapng` file (openable in Wireshark).
 
+Note: this is implemented in the web runtime (TypeScript) and is separate from the Rust-side
+`crates/emulator/src/io/net/trace/` `NetTracer` described above; both export PCAPNG, but they run in
+different runtimes and capture at different boundaries.
+
 #### What it captures (L2 boundary)
 
 The web tracing capture is taken at the **L2 forwarder boundary** in the browser:
