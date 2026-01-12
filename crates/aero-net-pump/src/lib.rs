@@ -675,6 +675,48 @@ mod tests {
     }
 
     #[test]
+    fn rx_delivery_waits_until_bus_master_is_enabled() {
+        let mut mem = TestMem::new(0x80_000);
+        let mut nic = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
+
+        // RX ring: one usable descriptor.
+        configure_rx_ring(&mut nic, 0x2000, 2, 1);
+        write_rx_desc(&mut mem, 0x2000, 0x3000, 0);
+        write_rx_desc(&mut mem, 0x2010, 0x3400, 0);
+
+        let frame = build_test_frame(b"rx");
+
+        let mut backend = L2TunnelBackend::new();
+        backend.push_rx_frame(frame.clone());
+
+        // With bus mastering disabled (default), the pump can dequeue the frame from the backend
+        // and enqueue it into the NIC, but the NIC must not DMA into guest memory yet.
+        let counts0 = tick_e1000_with_counts(&mut nic, &mut mem, &mut backend, 0, 1);
+        assert_eq!(
+            counts0,
+            PumpCounts {
+                tx_frames: 0,
+                rx_frames: 1,
+            }
+        );
+        assert_eq!(backend.poll_receive(), None);
+        assert_eq!(mem.read_vec(0x3000, frame.len()), vec![0u8; frame.len()]);
+
+        // Enable bus mastering and tick again: the pending frame should now be DMA-written to the
+        // guest RX buffer.
+        nic.pci_config_write(0x04, 2, 0x4); // Bus Master Enable
+        let counts1 = tick_e1000_with_counts(&mut nic, &mut mem, &mut backend, 0, 0);
+        assert_eq!(
+            counts1,
+            PumpCounts {
+                tx_frames: 0,
+                rx_frames: 0,
+            }
+        );
+        assert_eq!(mem.read_vec(0x3000, frame.len()), frame);
+    }
+
+    #[test]
     fn zero_budgets_do_not_call_backend() {
         #[derive(Default)]
         struct PanicBackend;
