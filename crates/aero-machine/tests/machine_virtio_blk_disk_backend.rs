@@ -123,3 +123,60 @@ fn machine_attach_virtio_blk_disk_preserves_state_and_survives_reset() {
         "dropping the machine should drop the virtio-blk disk backend"
     );
 }
+
+#[test]
+fn machine_set_disk_backend_does_not_clobber_host_attached_virtio_blk_backend() {
+    let mut m = Machine::new(MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_virtio_blk: true,
+        // Keep the machine minimal and deterministic for a focused test.
+        enable_ahci: false,
+        enable_nvme: false,
+        enable_ide: false,
+        enable_uhci: false,
+        enable_vga: false,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        enable_e1000: false,
+        enable_virtio_net: false,
+        ..Default::default()
+    })
+    .unwrap();
+
+    let dropped = Arc::new(AtomicBool::new(false));
+    let capacity = 16 * SECTOR_SIZE as u64;
+    let disk = DropDetectDisk {
+        inner: RawDisk::create(MemBackend::new(), capacity).unwrap(),
+        dropped: dropped.clone(),
+    };
+
+    m.attach_virtio_blk_disk(Box::new(disk))
+        .expect("attaching virtio-blk disk should succeed");
+
+    // Replacing the shared disk backend should not clobber an explicitly attached virtio-blk disk.
+    let shared_replacement = RawDisk::create(MemBackend::new(), capacity).unwrap();
+    m.set_disk_backend(Box::new(shared_replacement))
+        .expect("set_disk_backend should succeed");
+
+    assert!(
+        !dropped.load(Ordering::SeqCst),
+        "set_disk_backend dropped the host-attached virtio-blk disk backend"
+    );
+
+    // Reset should still preserve the attached disk backend.
+    m.reset();
+    assert!(
+        !dropped.load(Ordering::SeqCst),
+        "machine reset dropped the virtio-blk disk backend"
+    );
+
+    // Dropping the machine should drop the backend (sanity check that we were actually attached).
+    drop(m);
+    assert!(
+        dropped.load(Ordering::SeqCst),
+        "dropping the machine should drop the virtio-blk disk backend"
+    );
+}

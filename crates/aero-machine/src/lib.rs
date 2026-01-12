@@ -1770,15 +1770,15 @@ pub struct Machine {
     /// clobber the host-provided backend.
     ahci_port0_auto_attach_shared_disk: bool,
     /// Whether the machine should automatically keep its canonical [`SharedDisk`] attached to the
-    /// canonical virtio-blk device (if enabled).
+    /// canonical virtio-blk device.
     ///
-    /// By default, [`Machine`] uses `SharedDisk` as the virtio-blk backend so BIOS INT13, AHCI,
-    /// and virtio-blk can observe consistent disk bytes.
+    /// By default, [`Machine::set_disk_backend`] / [`Machine::set_disk_image`] rebuild the
+    /// virtio-blk device to point at the shared disk so BIOS INT13, AHCI, and virtio-blk can
+    /// observe consistent disk bytes.
     ///
     /// When a host/test explicitly attaches a different disk backend to virtio-blk via
-    /// [`Machine::attach_virtio_blk_disk`], this flag is cleared so subsequent
-    /// [`Machine::set_disk_backend`] / [`Machine::set_disk_image`] calls do not clobber the
-    /// host-provided backend.
+    /// [`Machine::attach_virtio_blk_disk`], this flag is cleared so subsequent shared-disk updates
+    /// do not clobber the host-provided backend.
     virtio_blk_auto_attach_shared_disk: bool,
     network_backend: Option<Box<dyn NetworkBackend>>,
 
@@ -2022,38 +2022,14 @@ impl Machine {
         }
 
         // Canonical virtio-blk device.
-        if let Some(virtio_blk) = self.virtio_blk.as_ref() {
-            if self.virtio_blk_auto_attach_shared_disk {
-                // virtio-blk capacity is derived from the backend size at device creation time, so
-                // when the shared disk backend is replaced we rebuild the device to keep the
-                // reported `VirtioBlkConfig::capacity` coherent.
-                *virtio_blk.borrow_mut() = VirtioPciDevice::new(
-                    Box::new(VirtioBlk::new(Box::new(self.disk.clone()))),
-                    Box::new(NoopVirtioInterruptSink),
-                );
-
-                // Mirror PCI config state into the transport model so snapshots taken immediately
-                // after swapping the disk backend see a coherent PCI config image.
-                if let Some(pci_cfg) = &self.pci_cfg {
-                    let bdf = aero_devices::pci::profile::VIRTIO_BLK.bdf;
-                    let (command, bar0_base) = {
-                        let mut pci_cfg = pci_cfg.borrow_mut();
-                        let cfg = pci_cfg.bus_mut().device_config(bdf);
-                        let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
-                        let bar0_base = cfg
-                            .and_then(|cfg| cfg.bar_range(0))
-                            .map(|range| range.base)
-                            .unwrap_or(0);
-                        (command, bar0_base)
-                    };
-
-                    let mut virtio_blk = virtio_blk.borrow_mut();
-                    virtio_blk.set_pci_command(command);
-                    if bar0_base != 0 {
-                        virtio_blk.config_mut().set_bar_base(0, bar0_base);
-                    }
-                }
-            }
+        if self.virtio_blk_auto_attach_shared_disk {
+            // virtio-blk capacity is derived from the backend size at device creation time, so when
+            // the shared disk backend is replaced we rebuild the device to keep the reported
+            // `VirtioBlkConfig::capacity` coherent.
+            //
+            // Preserve virtio-pci transport state so snapshot restore flows can reattach disk bytes
+            // without losing queue configuration / negotiated features.
+            self.swap_virtio_blk_backend_preserving_state(Box::new(self.disk.clone()))?;
         }
         Ok(())
     }
@@ -2375,16 +2351,7 @@ impl Machine {
         self.virtio_blk.clone()
     }
 
-    /// Attach a disk backend to the virtio-blk controller, if present.
-    ///
-    /// Virtio-blk requires a `VirtualDisk + Send` backend (unlike AHCI/IDE which accept the
-    /// non-`Send` [`SharedDisk`]).
-    ///
-    /// This method preserves the virtio-blk controller's guest-visible state (PCI config + virtio
-    /// transport registers/queues) by snapshotting the current device model state and re-loading
-    /// it after swapping the host disk backend. This is intended for host-managed snapshot restore
-    /// flows where the disk contents live outside the snapshot blob.
-    pub fn attach_virtio_blk_disk(
+    fn swap_virtio_blk_backend_preserving_state(
         &mut self,
         disk: Box<dyn aero_storage::VirtualDisk + Send>,
     ) -> Result<(), MachineError> {
@@ -2451,6 +2418,28 @@ impl Machine {
         }
 
         Ok(())
+    }
+
+    /// Attach a disk backend to the virtio-blk controller, if present.
+    ///
+    /// Virtio-blk requires a `VirtualDisk + Send` backend (unlike AHCI/IDE which accept the
+    /// non-`Send` [`SharedDisk`]).
+    ///
+    /// This method preserves the virtio-blk controller's guest-visible state (PCI config + virtio
+    /// transport registers/queues) by snapshotting the current device model state and re-loading
+    /// it after swapping the host disk backend. This is intended for host-managed snapshot restore
+    /// flows where the disk contents live outside the snapshot blob.
+    pub fn attach_virtio_blk_disk(
+        &mut self,
+        disk: Box<dyn aero_storage::VirtualDisk + Send>,
+    ) -> Result<(), MachineError> {
+        if self.virtio_blk.is_none() {
+            return Ok(());
+        }
+        // Host explicitly attached a virtio-blk disk backend. Do not overwrite this device with
+        // the machine's shared disk when `set_disk_backend`/`set_disk_image` are called.
+        self.virtio_blk_auto_attach_shared_disk = false;
+        self.swap_virtio_blk_backend_preserving_state(disk)
     }
 
     /// Returns the PIIX3-compatible UHCI (USB 1.1) controller, if present.
