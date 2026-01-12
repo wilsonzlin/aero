@@ -15,6 +15,71 @@ use memory::MemoryBus;
 /// Default frame budget for each direction per [`E1000Pump::poll`] call.
 pub const DEFAULT_MAX_FRAMES_PER_POLL: usize = 256;
 
+/// Number of frames pumped in each direction during a tick/poll.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct PumpCounts {
+    pub tx_frames: usize,
+    pub rx_frames: usize,
+}
+
+/// Configuration-only pump helper for integration layers that *borrow* the NIC and backend.
+///
+/// This matches the common "tick" style used by emulator main loops: the pump stores budgets and
+/// `tick()` is called once per emulation slice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct E1000TickPump {
+    pub max_tx_frames_per_tick: usize,
+    pub max_rx_frames_per_tick: usize,
+}
+
+impl Default for E1000TickPump {
+    fn default() -> Self {
+        Self {
+            max_tx_frames_per_tick: DEFAULT_MAX_FRAMES_PER_POLL,
+            max_rx_frames_per_tick: DEFAULT_MAX_FRAMES_PER_POLL,
+        }
+    }
+}
+
+impl E1000TickPump {
+    pub fn new(max_tx_frames_per_tick: usize, max_rx_frames_per_tick: usize) -> Self {
+        Self {
+            max_tx_frames_per_tick,
+            max_rx_frames_per_tick,
+        }
+    }
+
+    pub fn tick<B: NetworkBackend + ?Sized>(
+        &mut self,
+        nic: &mut E1000Device,
+        mem: &mut dyn MemoryBus,
+        backend: &mut B,
+    ) {
+        tick_e1000(
+            nic,
+            mem,
+            backend,
+            self.max_tx_frames_per_tick,
+            self.max_rx_frames_per_tick,
+        );
+    }
+
+    pub fn tick_with_counts<B: NetworkBackend + ?Sized>(
+        &mut self,
+        nic: &mut E1000Device,
+        mem: &mut dyn MemoryBus,
+        backend: &mut B,
+    ) -> PumpCounts {
+        tick_e1000_with_counts(
+            nic,
+            mem,
+            backend,
+            self.max_tx_frames_per_tick,
+            self.max_rx_frames_per_tick,
+        )
+    }
+}
+
 /// Pump frames between a borrowed [`E1000Device`] and a borrowed [`NetworkBackend`].
 ///
 /// This is the low-level, allocation-free pump primitive intended for integration layers that
@@ -33,6 +98,25 @@ pub fn tick_e1000<B: NetworkBackend + ?Sized>(
     max_tx_frames_per_tick: usize,
     max_rx_frames_per_tick: usize,
 ) {
+    let _ = tick_e1000_with_counts(
+        nic,
+        mem,
+        backend,
+        max_tx_frames_per_tick,
+        max_rx_frames_per_tick,
+    );
+}
+
+/// Like [`tick_e1000`], but returns the number of frames processed in each direction.
+pub fn tick_e1000_with_counts<B: NetworkBackend + ?Sized>(
+    nic: &mut E1000Device,
+    mem: &mut dyn MemoryBus,
+    backend: &mut B,
+    max_tx_frames_per_tick: usize,
+    max_rx_frames_per_tick: usize,
+) -> PumpCounts {
+    let mut counts = PumpCounts::default();
+
     // Step 1: allow the NIC to process descriptor rings (DMA).
     nic.poll(mem);
 
@@ -42,6 +126,7 @@ pub fn tick_e1000<B: NetworkBackend + ?Sized>(
             break;
         };
         backend.transmit(frame);
+        counts.tx_frames += 1;
     }
 
     // Step 3: inject host RX frames.
@@ -50,10 +135,13 @@ pub fn tick_e1000<B: NetworkBackend + ?Sized>(
             break;
         };
         nic.enqueue_rx_frame(frame);
+        counts.rx_frames += 1;
     }
 
     // Step 4: flush injected RX frames into guest buffers.
     nic.poll(mem);
+
+    counts
 }
 
 /// Moves Ethernet frames between an [`E1000Device`] and a host-side [`NetworkBackend`].
@@ -300,6 +388,61 @@ mod tests {
         tick_e1000(&mut nic, &mut mem, backend.as_mut(), 16, 16);
 
         assert_eq!(&*tx_log.borrow(), &[pkt_out]);
+    }
+
+    #[test]
+    fn tick_with_counts_reports_processed_frames() {
+        let mut mem = TestMem::new(0x80_000);
+        let mut nic = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
+        nic.pci_config_write(0x04, 2, 0x4); // Bus Master Enable
+
+        let mut backend = L2TunnelBackend::new();
+
+        // Two TX frames but a budget of 1 per tick.
+        configure_tx_ring(&mut nic, 0x1000, 4);
+        let tx0 = build_test_frame(b"tx0");
+        let tx1 = build_test_frame(b"tx1");
+        mem.write(0x4000, &tx0);
+        mem.write(0x4200, &tx1);
+        write_tx_desc(&mut mem, 0x1000, 0x4000, tx0.len() as u16, 0b0000_1001, 0);
+        write_tx_desc(&mut mem, 0x1010, 0x4200, tx1.len() as u16, 0b0000_1001, 0);
+        nic.mmio_write_u32_reg(0x3818, 2); // TDT
+
+        // Two RX frames but a budget of 1 per tick.
+        // Use 4 descriptors so at least 2 are usable without the guest updating the tail.
+        configure_rx_ring(&mut nic, 0x2000, 4, 3);
+        write_rx_desc(&mut mem, 0x2000, 0x3000, 0);
+        write_rx_desc(&mut mem, 0x2010, 0x3400, 0);
+        write_rx_desc(&mut mem, 0x2020, 0x3800, 0);
+        write_rx_desc(&mut mem, 0x2030, 0x3C00, 0);
+
+        let rx0 = build_test_frame(b"rx0");
+        let rx1 = build_test_frame(b"rx1");
+        backend.push_rx_frame(rx0.clone());
+        backend.push_rx_frame(rx1.clone());
+
+        let mut pump = E1000TickPump::new(1, 1);
+        let counts0 = pump.tick_with_counts(&mut nic, &mut mem, &mut backend);
+        assert_eq!(
+            counts0,
+            PumpCounts {
+                tx_frames: 1,
+                rx_frames: 1,
+            }
+        );
+        assert_eq!(backend.drain_tx_frames(), vec![tx0.clone()]);
+        assert_eq!(mem.read_vec(0x3000, rx0.len()), rx0);
+
+        let counts1 = pump.tick_with_counts(&mut nic, &mut mem, &mut backend);
+        assert_eq!(
+            counts1,
+            PumpCounts {
+                tx_frames: 1,
+                rx_frames: 1,
+            }
+        );
+        assert_eq!(backend.drain_tx_frames(), vec![tx1]);
+        assert_eq!(mem.read_vec(0x3400, rx1.len()), rx1);
     }
 
     #[test]
