@@ -406,6 +406,7 @@ impl PortIoDevice for PcIdeBusMasterBar {
     }
 }
 
+
 /// UHCI (BAR4) handler registered via the platform's `PciIoWindow`.
 ///
 /// The `port` argument is interpreted as the device-relative offset within BAR4.

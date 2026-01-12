@@ -1,5 +1,8 @@
-use aero_devices::acpi_pm::{PM1_STS_PWRBTN, DEFAULT_PM_TMR_BLK};
-use aero_devices::pci::{profile, PciBdf, PciCoreSnapshot, PciInterruptPin};
+use aero_devices::acpi_pm::{
+    DEFAULT_ACPI_ENABLE, DEFAULT_PM1A_EVT_BLK, DEFAULT_PM_TMR_BLK, DEFAULT_SMI_CMD_PORT,
+    PM1_STS_PWRBTN,
+};
+use aero_devices::pci::{profile, PciBdf, PciCoreSnapshot, PciInterruptPin, PCI_CFG_ADDR_PORT};
 use aero_devices::pit8254::{PIT_CH0, PIT_CMD, PIT_HZ};
 use aero_devices_storage::ata::{AtaDrive, ATA_CMD_READ_DMA_EXT, ATA_CMD_WRITE_DMA_EXT};
 use aero_devices_storage::atapi::{AtapiCdrom, IsoBackend};
@@ -70,8 +73,12 @@ fn pc_platform_snapshot_roundtrip_preserves_acpi_sci_interrupt_and_platform_devi
 
     // Put the PCI config ports into a non-default state (address latch set) so PCI core snapshot is
     // meaningfully exercised.
-    pc.io.write(0xCF8, 4, 0x8000_0000 | (7 << 11) | 0x3C);
-    let expected_pci_addr_latch = pc.io.read(0xCF8, 4);
+    pc.io.write(
+        PCI_CFG_ADDR_PORT,
+        4,
+        0x8000_0000 | (7 << 11) | 0x3C,
+    );
+    let expected_pci_addr_latch = pc.io.read(PCI_CFG_ADDR_PORT, 4);
 
     // Program PIT channel0 and advance time partway through the period (no IRQ yet).
     pc.io.write_u8(PIT_CMD, 0x34); // ch0, lobyte/hibyte, mode2, binary
@@ -85,8 +92,13 @@ fn pc_platform_snapshot_roundtrip_preserves_acpi_sci_interrupt_and_platform_devi
     pc.tick(pit_step_ns);
 
     // --- Trigger a level-triggered interrupt source (ACPI power button -> SCI).
-    pc.io.write_u8(0xB2, 0xA0); // ACPI enable handshake.
-    pc.io.write(0x0402, 2, u32::from(PM1_STS_PWRBTN)); // PM1_EN.PWRBTN_EN
+    pc.io
+        .write_u8(DEFAULT_SMI_CMD_PORT, DEFAULT_ACPI_ENABLE); // ACPI enable handshake.
+    pc.io.write(
+        DEFAULT_PM1A_EVT_BLK + 2,
+        2,
+        u32::from(PM1_STS_PWRBTN),
+    ); // PM1_EN.PWRBTN_EN
     pc.acpi_pm.borrow_mut().trigger_power_button();
 
     assert_eq!(pc.interrupts.borrow().get_pending(), Some(SCI_VECTOR));
@@ -165,7 +177,7 @@ fn pc_platform_snapshot_roundtrip_preserves_acpi_sci_interrupt_and_platform_devi
 
     // --- Assertions after restore.
     assert_eq!(
-        pc2.io.read(0xCF8, 4),
+        pc2.io.read(PCI_CFG_ADDR_PORT, 4),
         expected_pci_addr_latch,
         "PCI config address latch should survive snapshot/restore"
     );
@@ -193,7 +205,8 @@ fn pc_platform_snapshot_roundtrip_preserves_acpi_sci_interrupt_and_platform_devi
     }
 
     // Clearing the PM1 status bit should deassert SCI.
-    pc2.io.write(0x0400, 2, u32::from(PM1_STS_PWRBTN)); // PM1_STS write-1-to-clear
+    pc2.io
+        .write(DEFAULT_PM1A_EVT_BLK, 2, u32::from(PM1_STS_PWRBTN)); // PM1_STS write-1-to-clear
     assert!(
         !pc2.acpi_pm.borrow().sci_level(),
         "clearing PM1_STS should deassert SCI"
