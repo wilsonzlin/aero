@@ -22,7 +22,7 @@ printf "%s" "\${RUSTFLAGS:-}"
   return { dir, cargoPath };
 }
 
-test("safe-run: uses --threads=<n> for wasm32 targets (rust-lld -flavor wasm)", { skip: process.platform === "win32" }, () => {
+test("safe-run: uses --threads=<n> for wasm32 targets (rust-lld -flavor wasm)", { skip: process.platform !== "linux" }, () => {
   const { dir } = makeFakeCargoBin();
   try {
     const env = { ...process.env };
@@ -49,7 +49,7 @@ test("safe-run: uses --threads=<n> for wasm32 targets (rust-lld -flavor wasm)", 
   }
 });
 
-test("safe-run: rewrites -Wl,--threads=<n> into --threads=<n> for wasm32 targets", { skip: process.platform === "win32" }, () => {
+test("safe-run: rewrites -Wl,--threads=<n> into --threads=<n> for wasm32 targets", { skip: process.platform !== "linux" }, () => {
   const { dir } = makeFakeCargoBin();
   try {
     const env = { ...process.env };
@@ -75,7 +75,7 @@ test("safe-run: rewrites -Wl,--threads=<n> into --threads=<n> for wasm32 targets
   }
 });
 
-test("safe-run: rewrites -Clink-arg=-Wl,--threads=<n> into --threads=<n> for wasm32 targets", { skip: process.platform === "win32" }, () => {
+test("safe-run: rewrites -Clink-arg=-Wl,--threads=<n> into --threads=<n> for wasm32 targets", { skip: process.platform !== "linux" }, () => {
   const { dir } = makeFakeCargoBin();
   try {
     const env = { ...process.env };
@@ -101,7 +101,7 @@ test("safe-run: rewrites -Clink-arg=-Wl,--threads=<n> into --threads=<n> for was
   }
 });
 
-test("safe-run: falls back to CARGO_BUILD_TARGET for wasm32 when no --target flag is provided", { skip: process.platform === "win32" }, () => {
+test("safe-run: falls back to CARGO_BUILD_TARGET for wasm32 when no --target flag is provided", { skip: process.platform !== "linux" }, () => {
   const { dir } = makeFakeCargoBin();
   try {
     const env = { ...process.env };
@@ -123,7 +123,7 @@ test("safe-run: falls back to CARGO_BUILD_TARGET for wasm32 when no --target fla
   }
 });
 
-test("safe-run: uses -Wl,--threads=<n> for native targets (cc -Wl,... passthrough)", { skip: process.platform === "win32" }, () => {
+test("safe-run: uses -Wl,--threads=<n> for native targets (cc -Wl,... passthrough)", { skip: process.platform !== "linux" }, () => {
   const { dir } = makeFakeCargoBin();
   try {
     const env = { ...process.env };
