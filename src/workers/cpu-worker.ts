@@ -725,8 +725,9 @@ async function runTieredVm(iterations: number, threshold: number) {
           } catch {
             // ignore out-of-range
           }
+        } else if (typeof v === 'number' && Number.isFinite(v)) {
+          releaseEvictedRip(v);
         }
-        else if (typeof v === 'number' && Number.isFinite(v)) releaseEvictedRip(v);
       }
     } else if (ArrayBuffer.isView(evicted)) {
       // Older WASM builds may return a typed array (e.g. Uint32Array).
