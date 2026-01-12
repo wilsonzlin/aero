@@ -159,7 +159,7 @@ pub struct MachineConfig {
     ///
     /// Port mappings:
     ///
-    /// - Legacy VGA window: `0x3B0..0x3E0` (covers both mono and color decode ranges, e.g.
+    /// - Legacy VGA ports: `0x3B0..0x3DF` (covers both mono and color decode ranges, e.g.
     ///   `0x3B4/0x3B5` and `0x3D4/0x3D5`)
     /// - Bochs VBE: `0x01CE/0x01CF`
     pub enable_vga: bool,

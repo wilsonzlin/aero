@@ -284,7 +284,7 @@ assign any other device to `00:02.0`.
 The canonical `aero_machine::Machine` currently uses `aero_gpu_vga` (VGA + Bochs VBE_DISPI) for
 boot display:
 
-* Legacy VGA ports: `0x3C0..0x3DF`
+* Legacy VGA ports: `0x3B0..0x3DF` (includes both mono and color decode ranges; common subset `0x3C0..0x3DF`)
 * VBE ports: `0x01CE/0x01CF`
 * Legacy VRAM window: `0xA0000..0xBFFFF`
 * Fixed SVGA linear framebuffer (LFB): `0xE000_0000` (within the reserved below-4 GiB PCI/MMIO hole)
