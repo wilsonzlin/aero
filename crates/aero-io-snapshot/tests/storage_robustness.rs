@@ -46,6 +46,112 @@ fn nvme_snapshot_rejects_excessive_in_flight_command_count() {
 }
 
 #[test]
+fn nvme_snapshot_rejects_admin_sq_size_zero() {
+    const TAG_ADMIN_SQ: u16 = 5;
+
+    let admin_sq = Encoder::new()
+        .u16(0) // qid
+        .u64(0) // base
+        .u16(0) // size (invalid)
+        .u16(0) // head
+        .u16(0) // tail
+        .u16(0) // cqid
+        .finish();
+
+    let mut w = SnapshotWriter::new(
+        NvmeControllerState::DEVICE_ID,
+        NvmeControllerState::DEVICE_VERSION,
+    );
+    w.field_bytes(TAG_ADMIN_SQ, admin_sq);
+
+    let mut state = NvmeControllerState::default();
+    let err = state
+        .load_state(&w.finish())
+        .expect_err("snapshot should reject admin SQ size 0");
+    assert_eq!(err, SnapshotError::InvalidFieldEncoding("nvme sq size"));
+}
+
+#[test]
+fn nvme_snapshot_rejects_admin_cq_size_zero() {
+    const TAG_ADMIN_CQ: u16 = 6;
+
+    let admin_cq = Encoder::new()
+        .u16(0) // qid
+        .u64(0) // base
+        .u16(0) // size (invalid)
+        .u16(0) // head
+        .u16(0) // tail
+        .bool(true) // phase
+        .bool(true) // irq_enabled
+        .finish();
+
+    let mut w = SnapshotWriter::new(
+        NvmeControllerState::DEVICE_ID,
+        NvmeControllerState::DEVICE_VERSION,
+    );
+    w.field_bytes(TAG_ADMIN_CQ, admin_cq);
+
+    let mut state = NvmeControllerState::default();
+    let err = state
+        .load_state(&w.finish())
+        .expect_err("snapshot should reject admin CQ size 0");
+    assert_eq!(err, SnapshotError::InvalidFieldEncoding("nvme cq size"));
+}
+
+#[test]
+fn nvme_snapshot_rejects_admin_sq_head_out_of_bounds() {
+    const TAG_ADMIN_SQ: u16 = 5;
+
+    let admin_sq = Encoder::new()
+        .u16(0) // qid
+        .u64(0) // base
+        .u16(1) // size
+        .u16(1) // head (invalid; must be < size)
+        .u16(0) // tail
+        .u16(0) // cqid
+        .finish();
+
+    let mut w = SnapshotWriter::new(
+        NvmeControllerState::DEVICE_ID,
+        NvmeControllerState::DEVICE_VERSION,
+    );
+    w.field_bytes(TAG_ADMIN_SQ, admin_sq);
+
+    let mut state = NvmeControllerState::default();
+    let err = state
+        .load_state(&w.finish())
+        .expect_err("snapshot should reject out-of-bounds admin SQ head");
+    assert_eq!(err, SnapshotError::InvalidFieldEncoding("nvme sq head/tail"));
+}
+
+#[test]
+fn nvme_snapshot_rejects_admin_cq_tail_out_of_bounds() {
+    const TAG_ADMIN_CQ: u16 = 6;
+
+    let admin_cq = Encoder::new()
+        .u16(0) // qid
+        .u64(0) // base
+        .u16(1) // size
+        .u16(0) // head
+        .u16(1) // tail (invalid; must be < size)
+        .bool(true) // phase
+        .bool(true) // irq_enabled
+        .finish();
+
+    let mut w = SnapshotWriter::new(
+        NvmeControllerState::DEVICE_ID,
+        NvmeControllerState::DEVICE_VERSION,
+    );
+    w.field_bytes(TAG_ADMIN_CQ, admin_cq);
+
+    let mut state = NvmeControllerState::default();
+    let err = state
+        .load_state(&w.finish())
+        .expect_err("snapshot should reject out-of-bounds admin CQ tail");
+    assert_eq!(err, SnapshotError::InvalidFieldEncoding("nvme cq head/tail"));
+}
+
+#[test]
 fn disk_backend_state_rejects_excessive_string_length() {
     // Keep in sync with `MAX_DISK_STRING_BYTES` in `aero-io-snapshot`.
     const MAX_LEN: u32 = 64 * 1024;

@@ -1484,8 +1484,12 @@ impl IoSnapshot for NvmeControllerState {
             if count > MAX_IO_QUEUES {
                 return Err(SnapshotError::InvalidFieldEncoding("nvme io queue count"));
             }
-            self.io_sqs.reserve(count);
-            self.io_cqs.reserve(count);
+            self.io_sqs
+                .try_reserve_exact(count)
+                .map_err(|_| SnapshotError::OutOfMemory)?;
+            self.io_cqs
+                .try_reserve_exact(count)
+                .map_err(|_| SnapshotError::OutOfMemory)?;
             for idx in 0..count {
                 let qid = idx as u16 + 1;
                 let sq = NvmeSubmissionQueueState {
@@ -1518,7 +1522,9 @@ impl IoSnapshot for NvmeControllerState {
             if count > MAX_IO_QUEUES {
                 return Err(SnapshotError::InvalidFieldEncoding("nvme io sq count"));
             }
-            self.io_sqs.reserve(count);
+            self.io_sqs
+                .try_reserve_exact(count)
+                .map_err(|_| SnapshotError::OutOfMemory)?;
             for _ in 0..count {
                 self.io_sqs.push(NvmeSubmissionQueueState {
                     qid: d.u16()?,
@@ -1540,7 +1546,9 @@ impl IoSnapshot for NvmeControllerState {
             if count > MAX_IO_QUEUES {
                 return Err(SnapshotError::InvalidFieldEncoding("nvme io cq count"));
             }
-            self.io_cqs.reserve(count);
+            self.io_cqs
+                .try_reserve_exact(count)
+                .map_err(|_| SnapshotError::OutOfMemory)?;
             for _ in 0..count {
                 self.io_cqs.push(NvmeCompletionQueueState {
                     qid: d.u16()?,
@@ -1565,7 +1573,9 @@ impl IoSnapshot for NvmeControllerState {
             if count > MAX_IN_FLIGHT_COMMANDS {
                 return Err(SnapshotError::InvalidFieldEncoding("nvme in_flight count"));
             }
-            self.in_flight.reserve(count);
+            self.in_flight
+                .try_reserve_exact(count)
+                .map_err(|_| SnapshotError::OutOfMemory)?;
             for _ in 0..count {
                 self.in_flight.push(NvmeInFlightCommandState {
                     cid: d.u16()?,
@@ -1575,6 +1585,39 @@ impl IoSnapshot for NvmeControllerState {
                 });
             }
             d.finish()?;
+        }
+
+        fn validate_sq(sq: &NvmeSubmissionQueueState) -> SnapshotResult<()> {
+            if sq.size == 0 {
+                return Err(SnapshotError::InvalidFieldEncoding("nvme sq size"));
+            }
+            if sq.head >= sq.size || sq.tail >= sq.size {
+                return Err(SnapshotError::InvalidFieldEncoding("nvme sq head/tail"));
+            }
+            Ok(())
+        }
+
+        fn validate_cq(cq: &NvmeCompletionQueueState) -> SnapshotResult<()> {
+            if cq.size == 0 {
+                return Err(SnapshotError::InvalidFieldEncoding("nvme cq size"));
+            }
+            if cq.head >= cq.size || cq.tail >= cq.size {
+                return Err(SnapshotError::InvalidFieldEncoding("nvme cq head/tail"));
+            }
+            Ok(())
+        }
+
+        if let Some(ref sq) = self.admin_sq {
+            validate_sq(sq)?;
+        }
+        if let Some(ref cq) = self.admin_cq {
+            validate_cq(cq)?;
+        }
+        for sq in &self.io_sqs {
+            validate_sq(sq)?;
+        }
+        for cq in &self.io_cqs {
+            validate_cq(cq)?;
         }
 
         Ok(())
