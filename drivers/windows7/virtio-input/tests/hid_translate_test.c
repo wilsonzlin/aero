@@ -62,6 +62,19 @@ static void test_linux_keycode_abi_values(void) {
    * virtio wire. If these enums drift from the Linux input ABI, the mapping
    * layer may still compile but keys will not work end-to-end.
    */
+  assert(VIRTIO_INPUT_KEY_ESC == 1);
+  assert(VIRTIO_INPUT_KEY_ENTER == 28);
+  assert(VIRTIO_INPUT_KEY_A == 30);
+  assert(VIRTIO_INPUT_KEY_Z == 44);
+  assert(VIRTIO_INPUT_KEY_0 == 11);
+  assert(VIRTIO_INPUT_KEY_9 == 10);
+  assert(VIRTIO_INPUT_KEY_LEFTCTRL == 29);
+  assert(VIRTIO_INPUT_KEY_RIGHTCTRL == 97);
+  assert(VIRTIO_INPUT_KEY_LEFTSHIFT == 42);
+  assert(VIRTIO_INPUT_KEY_RIGHTSHIFT == 54);
+  assert(VIRTIO_INPUT_KEY_LEFTALT == 56);
+  assert(VIRTIO_INPUT_KEY_RIGHTALT == 100);
+  assert(VIRTIO_INPUT_KEY_CAPSLOCK == 58);
   assert(VIRTIO_INPUT_KEY_F1 == 59);
   assert(VIRTIO_INPUT_KEY_F2 == 60);
   assert(VIRTIO_INPUT_KEY_F3 == 61);
@@ -74,6 +87,18 @@ static void test_linux_keycode_abi_values(void) {
   assert(VIRTIO_INPUT_KEY_F10 == 68);
   assert(VIRTIO_INPUT_KEY_F11 == 87);
   assert(VIRTIO_INPUT_KEY_F12 == 88);
+  assert(VIRTIO_INPUT_KEY_HOME == 102);
+  assert(VIRTIO_INPUT_KEY_UP == 103);
+  assert(VIRTIO_INPUT_KEY_PAGEUP == 104);
+  assert(VIRTIO_INPUT_KEY_LEFT == 105);
+  assert(VIRTIO_INPUT_KEY_RIGHT == 106);
+  assert(VIRTIO_INPUT_KEY_END == 107);
+  assert(VIRTIO_INPUT_KEY_DOWN == 108);
+  assert(VIRTIO_INPUT_KEY_PAGEDOWN == 109);
+  assert(VIRTIO_INPUT_KEY_INSERT == 110);
+  assert(VIRTIO_INPUT_KEY_DELETE == 111);
+  assert(VIRTIO_INPUT_KEY_LEFTMETA == 125);
+  assert(VIRTIO_INPUT_KEY_RIGHTMETA == 126);
 }
 
 static void test_mapping(void) {
@@ -98,6 +123,15 @@ static void test_mapping(void) {
   assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_F10) == 0x43);
   assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_F11) == 0x44);
   assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_F12) == 0x45);
+  assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_INSERT) == 0x49);
+  assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_HOME) == 0x4A);
+  assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_PAGEUP) == 0x4B);
+  assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_DELETE) == 0x4C);
+  assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_END) == 0x4D);
+  assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_PAGEDOWN) == 0x4E);
+  assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_RIGHT) == 0x4F);
+  assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_LEFT) == 0x50);
+  assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_DOWN) == 0x51);
   assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_UP) == 0x52);
 
   /* Modifiers are handled as a bitmask, not returned as usages. */
