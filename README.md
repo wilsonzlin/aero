@@ -472,7 +472,7 @@ when available, with an IndexedDB fallback when OPFS sync access handles are una
 
 - Import with progress, list/delete, export/download
 - Select an image as “active” (persisted in `localStorage`)
-- Minimal I/O worker stub to open the active disk via `FileSystemSyncAccessHandle` and report its size
+- Minimal I/O worker stub (OPFS only) to open the active disk via `FileSystemSyncAccessHandle` and report its size
 
 ### OPFS smoke test (manual)
 
