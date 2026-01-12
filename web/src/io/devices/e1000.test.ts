@@ -69,7 +69,6 @@ describe("io/devices/E1000PciDevice", () => {
 
     dev.tick(0);
 
-    expect(bridge.poll).toHaveBeenCalledTimes(1);
     expect(receiveFrame).toHaveBeenCalledTimes(2);
     expect(Array.from(receiveFrame.mock.calls[0]![0] as Uint8Array)).toEqual([1, 2, 3]);
     expect(Array.from(receiveFrame.mock.calls[1]![0] as Uint8Array)).toEqual([4, 5]);

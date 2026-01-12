@@ -13,7 +13,7 @@ use wasm_bindgen::prelude::*;
 
 use js_sys::Uint8Array;
 
-use aero_net_e1000::{E1000Device, E1000_IO_SIZE, E1000_MMIO_SIZE};
+use aero_net_e1000::{E1000Device, E1000_IO_SIZE, E1000_MMIO_SIZE, MAX_L2_FRAME_LEN, MIN_L2_FRAME_LEN};
 use memory::MemoryBus;
 
 fn js_error(message: impl core::fmt::Display) -> JsValue {
@@ -223,8 +223,20 @@ impl E1000Bridge {
         self.dev.irq_level()
     }
 
-    pub fn receive_frame(&mut self, frame: &[u8]) {
-        self.dev.receive_frame(&mut self.mem, frame);
+    pub fn receive_frame(&mut self, frame: &Uint8Array) {
+        // NOTE: Keep this signature as `Uint8Array` (not `&[u8]`).
+        // wasm-bindgen eagerly copies `&[u8]` parameters into wasm linear memory
+        // before calling Rust, which would allow untrusted callers to trigger a
+        // large transient allocation even though the E1000 model drops oversized
+        // frames. By accepting `Uint8Array` we can validate the length first and
+        // only copy bounded frames.
+        let len = frame.length() as usize;
+        if len < MIN_L2_FRAME_LEN || len > MAX_L2_FRAME_LEN {
+            return;
+        }
+        let mut buf = vec![0u8; len];
+        frame.copy_to(&mut buf);
+        self.dev.receive_frame(&mut self.mem, &buf);
     }
 
     pub fn pop_tx_frame(&mut self) -> Option<Uint8Array> {

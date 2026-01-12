@@ -32,6 +32,7 @@ const E1000_IO_BAR_SIZE = 0x40;
 // unused by the other built-in devices (i8042=IRQ1, UART=IRQ4, UHCI=IRQ11).
 const E1000_IRQ_LINE = 0x0a;
 
+// Avoid spending unbounded time draining rings if the tab was backgrounded.
 const MAX_FRAMES_PER_TICK = 128;
 
 function maskToSize(value: number, size: number): number {
@@ -40,6 +41,16 @@ function maskToSize(value: number, size: number): number {
   return value >>> 0;
 }
 
+/**
+ * Minimal E1000 PCI function backed by the WASM `E1000Bridge`.
+ *
+ * Exposes:
+ * - BAR0 (MMIO32): E1000 register window
+ * - BAR1 (IO): IOADDR/IODATA window
+ *
+ * The tick loop wires the device's host-facing TX/RX queues to the NET_TX/NET_RX
+ * shared rings used by `net.worker.ts`.
+ */
 export class E1000PciDevice implements PciDevice, TickableDevice {
   readonly name = "e1000";
   readonly vendorId = 0x8086;
@@ -47,6 +58,9 @@ export class E1000PciDevice implements PciDevice, TickableDevice {
   readonly classCode = E1000_CLASS_CODE;
   readonly revisionId = 0x00;
   readonly irqLine = E1000_IRQ_LINE;
+
+  // QEMU places the E1000 at 00:05.0 by default; keep a stable address so guest driver
+  // installation and test snapshots are deterministic.
   readonly bdf = { bus: 0, device: 5, function: 0 };
 
   readonly bars: ReadonlyArray<PciBar | null> = [
@@ -63,6 +77,7 @@ export class E1000PciDevice implements PciDevice, TickableDevice {
   readonly #netTxRing: RingBuffer;
   readonly #netRxRing: RingBuffer;
 
+  // If the NET_TX ring is full, hold exactly one pending frame so we don't drop it.
   #pendingTxFrame: Uint8Array | null = null;
   #irqLevel = false;
   #destroyed = false;
@@ -178,6 +193,8 @@ export class E1000PciDevice implements PciDevice, TickableDevice {
       this.#irqSink.lowerIrq(this.irqLine);
       this.#irqLevel = false;
     }
+
+    this.#pendingTxFrame = null;
 
     try {
       this.#bridge.free();
