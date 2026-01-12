@@ -265,10 +265,51 @@ impl UsbHidPassthrough {
 
         self.last_input_reports.insert(report_id, out.clone());
 
+        // USB interrupt endpoints are not active until the device has been configured. Input
+        // reports that arrive before `SET_CONFIGURATION` completes should not be queued and later
+        // replayed as stale events. Instead, keep only the last image per report ID and seed it
+        // once the device is configured.
+        if self.configuration == 0 {
+            return;
+        }
+
         if self.pending_input_reports.len() >= self.max_pending_input_reports {
             self.pending_input_reports.pop_front();
         }
         self.pending_input_reports.push_back(out);
+    }
+
+    fn seed_input_reports_on_configuration(&mut self) {
+        let relative_ranges = scan_relative_input_bit_ranges(&self.hid_report_descriptor);
+
+        for (&report_id, report) in &self.last_input_reports {
+            let mut seeded = report.clone();
+
+            let base = usize::from(report_id != 0) * 8;
+            if let Some(ranges) = relative_ranges.get(&report_id) {
+                for &(start, len) in ranges {
+                    clear_bits(
+                        &mut seeded,
+                        base.saturating_add(start as usize),
+                        len as usize,
+                    );
+                }
+            }
+
+            // Only enqueue reports that represent a non-default state (keys/buttons held, etc).
+            let mut default = vec![0u8; seeded.len()];
+            if report_id != 0 && !default.is_empty() {
+                default[0] = report_id;
+            }
+            if seeded == default {
+                continue;
+            }
+
+            if self.pending_input_reports.len() >= self.max_pending_input_reports {
+                self.pending_input_reports.pop_front();
+            }
+            self.pending_input_reports.push_back(seeded);
+        }
     }
 
     fn push_output_report(&mut self, report: UsbHidPassthroughOutputReport) {
@@ -455,6 +496,7 @@ impl UsbDeviceModel for UsbHidPassthrough {
                     if config > 1 {
                         return ControlResponse::Stall;
                     }
+                    let prev = self.configuration;
                     self.configuration = config;
                     if self.configuration == 0 {
                         self.pending_input_reports.clear();
@@ -462,6 +504,11 @@ impl UsbDeviceModel for UsbHidPassthrough {
                         self.last_input_reports.clear();
                         self.last_output_reports.clear();
                         self.last_feature_reports.clear();
+                    } else if prev == 0 {
+                        // Drop any reports that may have been persisted/restored while
+                        // unconfigured, then seed the current state from `last_input_reports`.
+                        self.pending_input_reports.clear();
+                        self.seed_input_reports_on_configuration();
                     }
                     ControlResponse::Ack
                 }
@@ -1094,6 +1141,107 @@ fn scan_report_descriptor_bits(report_descriptor: &[u8]) -> ScanReportDescriptor
     (report_ids_in_use, input_bits, output_bits, feature_bits)
 }
 
+fn scan_relative_input_bit_ranges(report_descriptor: &[u8]) -> BTreeMap<u8, Vec<(u64, u64)>> {
+    let mut global = ScanGlobalState::default();
+    let mut global_stack: Vec<ScanGlobalState> = Vec::new();
+
+    let mut offsets: BTreeMap<u8, u64> = BTreeMap::new();
+    let mut out: BTreeMap<u8, Vec<(u64, u64)>> = BTreeMap::new();
+
+    let mut i = 0usize;
+    while i < report_descriptor.len() {
+        let prefix = report_descriptor[i];
+        i += 1;
+
+        if prefix == 0xFE {
+            // Long item: bSize, bTag, data...
+            if i + 2 > report_descriptor.len() {
+                break;
+            }
+            let size = report_descriptor[i] as usize;
+            i += 2;
+            i = i.saturating_add(size);
+            continue;
+        }
+
+        let size = match prefix & 0x03 {
+            0 => 0usize,
+            1 => 1usize,
+            2 => 2usize,
+            3 => 4usize,
+            _ => 0usize,
+        };
+
+        if i + size > report_descriptor.len() {
+            break;
+        }
+
+        let item_type = (prefix >> 2) & 0x03;
+        let tag = (prefix >> 4) & 0x0F;
+
+        let data = &report_descriptor[i..i + size];
+        i += size;
+
+        match (item_type, tag) {
+            // Global items.
+            (1, 7) => global.report_size = scan_parse_unsigned(data),
+            (1, 9) => global.report_count = scan_parse_unsigned(data),
+            (1, 8) => global.report_id = scan_parse_unsigned(data),
+            (1, 10) => {
+                // Push
+                if data.is_empty() {
+                    global_stack.push(global);
+                }
+            }
+            (1, 11) => {
+                // Pop
+                if data.is_empty() {
+                    if let Some(prev) = global_stack.pop() {
+                        global = prev;
+                    }
+                }
+            }
+            // Main item: Input
+            (0, 8) => {
+                let Ok(report_id) = u8::try_from(global.report_id) else {
+                    continue;
+                };
+                let bits =
+                    u64::from(global.report_size).saturating_mul(u64::from(global.report_count));
+                let start = offsets.get(&report_id).copied().unwrap_or(0);
+                offsets.insert(report_id, start.saturating_add(bits));
+
+                // Input main item flags: bit 2 is Relative(1)/Absolute(0).
+                let relative = !data.is_empty() && (data[0] & 0x04) != 0;
+                if relative {
+                    out.entry(report_id).or_default().push((start, bits));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    out
+}
+
+fn clear_bits(bytes: &mut [u8], start_bit: usize, len_bits: usize) {
+    if len_bits == 0 {
+        return;
+    }
+
+    let total_bits = bytes.len().saturating_mul(8);
+    if start_bit >= total_bits {
+        return;
+    }
+
+    let end_bit = start_bit.saturating_add(len_bits).min(total_bits);
+    for bit in start_bit..end_bit {
+        let byte = bit / 8;
+        let bit_in_byte = bit % 8;
+        bytes[byte] &= !(1u8 << bit_in_byte);
+    }
+}
+
 fn encode_report_map(map: &BTreeMap<u8, Vec<u8>>) -> Vec<u8> {
     let mut enc = Encoder::new().u32(map.len() as u32);
     for (&report_id, data) in map {
@@ -1379,6 +1527,38 @@ mod tests {
         ]
     }
 
+    fn sample_mouse_report_descriptor_relative_xy() -> Vec<u8> {
+        vec![
+            0x05, 0x01, // Usage Page (Generic Desktop)
+            0x09, 0x02, // Usage (Mouse)
+            0xa1, 0x01, // Collection (Application)
+            0x85, 0x01, // Report ID (1)
+            0x09, 0x01, // Usage (Pointer)
+            0xa1, 0x00, // Collection (Physical)
+            0x05, 0x09, // Usage Page (Buttons)
+            0x19, 0x01, // Usage Minimum (Button 1)
+            0x29, 0x03, // Usage Maximum (Button 3)
+            0x15, 0x00, // Logical Minimum (0)
+            0x25, 0x01, // Logical Maximum (1)
+            0x95, 0x03, // Report Count (3)
+            0x75, 0x01, // Report Size (1)
+            0x81, 0x02, // Input (Data,Var,Abs)
+            0x95, 0x01, // Report Count (1)
+            0x75, 0x05, // Report Size (5)
+            0x81, 0x01, // Input (Const,Array,Abs) padding
+            0x05, 0x01, // Usage Page (Generic Desktop)
+            0x09, 0x30, // Usage (X)
+            0x09, 0x31, // Usage (Y)
+            0x15, 0x81, // Logical Minimum (-127)
+            0x25, 0x7f, // Logical Maximum (127)
+            0x75, 0x08, // Report Size (8)
+            0x95, 0x02, // Report Count (2)
+            0x81, 0x06, // Input (Data,Var,Rel)
+            0xc0, // End Collection
+            0xc0, // End Collection
+        ]
+    }
+
     fn sample_report_descriptor_output_with_id() -> Vec<u8> {
         vec![
             0x05, 0x01, // Usage Page (Generic Desktop)
@@ -1493,6 +1673,77 @@ mod tests {
         assert_eq!(
             dev.handle_in_transfer(INTERRUPT_IN_EP, 64),
             UsbInResult::Data(vec![0x11, 0x22])
+        );
+    }
+
+    #[test]
+    fn configuration_seeds_last_report_but_clears_relative_axes() {
+        let report = sample_mouse_report_descriptor_relative_xy();
+        let mut dev = UsbHidPassthroughHandle::new(
+            0x1234,
+            0x5678,
+            "Vendor".into(),
+            "Product".into(),
+            None,
+            report,
+            false,
+            None,
+            None,
+            None,
+        );
+
+        // Buttons + relative motion before configuration.
+        dev.push_input_report(1, &[0x01, 0x05, 0xfb]);
+        assert_eq!(
+            dev.handle_in_transfer(INTERRUPT_IN_EP, 64),
+            UsbInResult::Nak
+        );
+
+        configure_device(&mut dev);
+
+        // Seed report should preserve the held button bit, but clear relative X/Y deltas.
+        assert_eq!(
+            dev.handle_in_transfer(INTERRUPT_IN_EP, 64),
+            UsbInResult::Data(vec![1, 0x01, 0x00, 0x00])
+        );
+        assert_eq!(
+            dev.handle_in_transfer(INTERRUPT_IN_EP, 64),
+            UsbInResult::Nak
+        );
+
+        // After configuration, relative motion should be delivered unchanged.
+        dev.push_input_report(1, &[0x01, 0x05, 0xfb]);
+        assert_eq!(
+            dev.handle_in_transfer(INTERRUPT_IN_EP, 64),
+            UsbInResult::Data(vec![1, 0x01, 0x05, 0xfb])
+        );
+    }
+
+    #[test]
+    fn configuration_does_not_seed_pure_relative_motion() {
+        let report = sample_mouse_report_descriptor_relative_xy();
+        let mut dev = UsbHidPassthroughHandle::new(
+            0x1234,
+            0x5678,
+            "Vendor".into(),
+            "Product".into(),
+            None,
+            report,
+            false,
+            None,
+            None,
+            None,
+        );
+
+        dev.push_input_report(1, &[0x00, 0x10, 0xf0]);
+
+        configure_device(&mut dev);
+
+        // Relative motion is cleared to zero; with no buttons held the seeded report is default,
+        // so nothing should be queued.
+        assert_eq!(
+            dev.handle_in_transfer(INTERRUPT_IN_EP, 64),
+            UsbInResult::Nak
         );
     }
 
