@@ -55,6 +55,47 @@ impl PciBdf {
             function,
         }
     }
+
+    /// Packs this BDF into a compact `u16` key using the standard PCI config-address bit layout.
+    ///
+    /// Layout (LSB..MSB):
+    /// - bits 0..=2: function (0-7)
+    /// - bits 3..=7: device (0-31)
+    /// - bits 8..=15: bus (0-255)
+    ///
+    /// This matches the BDF portion of PCI config mechanism #1 (`0xCF8`) after shifting right by 8:
+    /// `packed = (cfg_addr >> 8) & 0xFFFF`.
+    ///
+    /// # Panics
+    ///
+    /// Panics in debug builds if `device >= 32` or `function >= 8`.
+    pub fn pack_u16(self) -> u16 {
+        debug_assert!(self.device < 32, "PCI device out of range: {}", self.device);
+        debug_assert!(
+            self.function < 8,
+            "PCI function out of range: {}",
+            self.function
+        );
+        (u16::from(self.bus) << 8) | (u16::from(self.device) << 3) | u16::from(self.function)
+    }
+
+    /// Unpacks a `u16` produced by [`PciBdf::pack_u16`] back into a [`PciBdf`].
+    pub fn unpack_u16(v: u16) -> Self {
+        let bus = (v >> 8) as u8;
+        let device = ((v >> 3) & 0x1f) as u8;
+        let function = (v & 0x7) as u8;
+
+        // These should always hold due to the masks above, but keep them as debug assertions to
+        // document the intended ranges.
+        debug_assert!(device < 32);
+        debug_assert!(function < 8);
+
+        Self {
+            bus,
+            device,
+            function,
+        }
+    }
 }
 
 impl core::cmp::Ord for PciBdf {
