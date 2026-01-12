@@ -4,7 +4,8 @@ use aero_cpu_core::state::{
 
 use super::{
     disk_err_to_int13_status, set_real_mode_seg, Bios, BiosBus, BiosMemoryBus, BlockDevice,
-    BDA_BASE, EBDA_BASE, EBDA_SIZE,
+    BDA_BASE, BIOS_SEGMENT, DISKETTE_PARAM_TABLE_OFFSET, EBDA_BASE, EBDA_SIZE,
+    FIXED_DISK_PARAM_TABLE_OFFSET,
 };
 use crate::cpu::CpuState as FirmwareCpuState;
 
@@ -597,10 +598,18 @@ fn handle_int13(
             } else {
                 fixed_drive_count(bus)
             };
+            let table_off = if drive < 0x80 {
+                DISKETTE_PARAM_TABLE_OFFSET
+            } else {
+                FIXED_DISK_PARAM_TABLE_OFFSET
+            };
 
             cpu.gpr[gpr::RCX] = (cpu.gpr[gpr::RCX] & !0xFFFF) | (cl as u64) | ((ch as u64) << 8);
             // DL = number of drives; DH = max head.
             cpu.gpr[gpr::RDX] = (cpu.gpr[gpr::RDX] & !0xFFFF) | (dl as u64) | ((dh as u64) << 8);
+            // Return a pointer to the appropriate parameter table (classic BIOS convention).
+            set_real_mode_seg(&mut cpu.segments.es, BIOS_SEGMENT);
+            cpu.gpr[gpr::RDI] = (cpu.gpr[gpr::RDI] & !0xFFFF) | (table_off as u64);
             cpu.gpr[gpr::RAX] &= !0xFF00u64;
             bios.last_int13_status = 0;
             cpu.rflags &= !FLAG_CF;
@@ -1519,6 +1528,32 @@ mod tests {
         assert_eq!(cpu.gpr[gpr::RCX] as u16, 0x4F12);
         // DH=heads-1=1, DL=drive count=1
         assert_eq!(cpu.gpr[gpr::RDX] as u16, 0x0101);
+        assert_eq!(cpu.segments.es.selector, super::super::BIOS_SEGMENT);
+        assert_eq!(cpu.gpr[gpr::RDI] as u16, super::super::DISKETTE_PARAM_TABLE_OFFSET);
+    }
+
+    #[test]
+    fn int13_get_drive_parameters_fixed_disk_reports_geometry_and_param_table_pointer() {
+        let mut bios = Bios::new(super::super::BiosConfig::default());
+        let disk_bytes = vec![0u8; 512 * 8];
+        let mut disk = InMemoryDisk::new(disk_bytes);
+
+        let mut cpu = CpuState::new(CpuMode::Real);
+        cpu.gpr[gpr::RAX] = 0x0800; // AH=08h
+        cpu.gpr[gpr::RDX] = 0x0080; // DL=HDD0
+
+        let mut mem = TestMemory::new(2 * 1024 * 1024);
+        ivt::init_bda(&mut mem, 0x80);
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
+
+        assert_eq!(cpu.rflags & FLAG_CF, 0);
+        assert_eq!(cpu.gpr[gpr::RCX] as u16, 0xFFFF);
+        assert_eq!(cpu.gpr[gpr::RDX] as u16, 0x0F01);
+        assert_eq!(cpu.segments.es.selector, super::super::BIOS_SEGMENT);
+        assert_eq!(
+            cpu.gpr[gpr::RDI] as u16,
+            super::super::FIXED_DISK_PARAM_TABLE_OFFSET
+        );
     }
 
     #[test]
