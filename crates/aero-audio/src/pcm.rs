@@ -510,6 +510,16 @@ mod tests {
     }
 
     #[test]
+    fn parse_hda_format_max_channels() {
+        // Low nibble encodes channels-1. 0xF => 16 channels.
+        let fmt = (1 << 4) | 0xF; // 16-bit, 16 channels
+        let parsed = StreamFormat::from_hda_format(fmt);
+        assert_eq!(parsed.channels, 16);
+        assert_eq!(parsed.bytes_per_sample(), 2);
+        assert_eq!(parsed.bytes_per_frame(), 32);
+    }
+
+    #[test]
     #[should_panic(expected = "unsupported bits per sample")]
     fn bytes_per_sample_panics_for_unsupported_bits() {
         let fmt = StreamFormat {
@@ -536,6 +546,17 @@ mod tests {
         let mut out_bytes = vec![1u8, 2, 3];
         encode_mono_f32_to_pcm_into(&[0.25, -0.25], fmt, &mut out_bytes);
         assert!(out_bytes.is_empty(), "out must be cleared on early return");
+    }
+
+    #[test]
+    fn decode_encode_unknown_bits_are_silent() {
+        // `decode_one_sample` and `encode_one_sample` are defensive and return silence for
+        // unsupported bits-per-sample codes.
+        assert_eq!(decode_one_sample(&[0xAA, 0xBB, 0xCC, 0xDD], 12), 0.0);
+
+        let mut out = [0xFFu8; 4];
+        encode_one_sample(&mut out, 12, 0.75);
+        assert_eq!(out, [0, 0, 0, 0]);
     }
 
     #[test]
@@ -665,6 +686,15 @@ mod tests {
     }
 
     #[test]
+    fn pcm_20bit_decode_ignores_upper_bits_in_container() {
+        // The implementation treats only the low 20 bits as sample payload.
+        let low = (-12345i32) & 0x000F_FFFF;
+        let raw_with_garbage = (low as u32) | 0xF000_0000; // set high bits (incl. sign bit)
+        let decoded = decode_one_sample(&raw_with_garbage.to_le_bytes(), 20);
+        assert_f32_approx_eq(decoded, -12345.0 / 524_288.0, 1e-6);
+    }
+
+    #[test]
     fn pcm_24bit_sign_extension_scaling_and_clipping() {
         fn decode_raw_24(v: i32) -> f32 {
             let raw = (v & 0x00FF_FFFF) as u32; // low 24 bits, upper bits zero
@@ -726,6 +756,15 @@ mod tests {
             let encoded = encode_24(decoded);
             assert_eq!(encoded, v, "24-bit round-trip failed for {v}");
         }
+    }
+
+    #[test]
+    fn pcm_24bit_decode_ignores_upper_bits_in_container() {
+        // The implementation treats only the low 24 bits as sample payload.
+        let low = (123_456i32) & 0x00FF_FFFF;
+        let raw_with_garbage = (low as u32) | 0xAA00_0000;
+        let decoded = decode_one_sample(&raw_with_garbage.to_le_bytes(), 24);
+        assert_f32_approx_eq(decoded, 123_456.0 / 8_388_608.0, 1e-6);
     }
 
     #[test]
