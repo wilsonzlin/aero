@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "docs/**"
+      - "instructions/**"
       - "AGENTS.md"
       - "README*"
       - ".markdownlint-cli2.jsonc"
@@ -45,6 +46,7 @@ on:
     branches: ["main"]
     paths:
       - "docs/**"
+      - "instructions/**"
       - "AGENTS.md"
       - "README*"
       - ".markdownlint-cli2.jsonc"
@@ -112,6 +114,7 @@ jobs:
             AGENTS.md
             README*.md
             docs/**/*.md
+            instructions/**/*.md
 
       - name: Check docs for emulator-only USB path pointers
         run: python3 scripts/ci/check-usb-doc-paths.py
@@ -142,6 +145,7 @@ jobs:
             AGENTS.md
             README*.md
             docs
+            instructions
           fail: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -172,6 +176,7 @@ jobs:
             AGENTS.md
             README*.md
             docs
+            instructions
           fail: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
