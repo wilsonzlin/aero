@@ -115,10 +115,13 @@ async function handleCompileRequest(req: CompileBlockRequest & { type: 'CompileB
   let compilation: Tier1BlockCompilation;
   try {
     const api = await loadJitWasmApi();
+    // The JIT WASM ABI has evolved; keep a permissive callable view for
+    // backwards-compat with older generated bindings.
+    const compileAny = api.compile_tier1_block as unknown as (...args: any[]) => unknown;
     const codeWindow = sliceCodeWindow(entryRip, maxBytes);
     let result: unknown;
     try {
-      result = api.compile_tier1_block(
+      result = compileAny(
         BigInt(entryRip),
         codeWindow,
         maxInsts,
@@ -129,9 +132,9 @@ async function handleCompileRequest(req: CompileBlockRequest & { type: 'CompileB
     } catch {
       // Backwards-compat: older JIT wasm builds used simpler argument lists.
       try {
-        result = api.compile_tier1_block(entryRip, maxBytes) as unknown;
+        result = compileAny(entryRip, maxBytes) as unknown;
       } catch {
-        result = api.compile_tier1_block(codeWindow, entryRip, maxBytes) as unknown;
+        result = compileAny(codeWindow, entryRip, maxBytes) as unknown;
       }
     }
     compilation = normalizeTier1Compilation(result, maxBytes);
