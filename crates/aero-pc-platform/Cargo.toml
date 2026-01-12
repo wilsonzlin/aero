@@ -16,7 +16,3 @@ aero-pc-constants = { path = "../aero-pc-constants" }
 aero-storage = { path = "../aero-storage" }
 aero-net-e1000 = { path = "../aero-net-e1000" }
 memory = { path = "../memory" }
-
-[dev-dependencies]
-aero-io-snapshot = { path = "../aero-io-snapshot" }
-emulator = { path = "../emulator" }
