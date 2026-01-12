@@ -50,6 +50,23 @@ describe("io/devices/virtio_input hidUsageToLinuxKeyCode", () => {
     }
   });
 
+  it("maps contract-required alphanumerics, Enter/Esc, and function keys", () => {
+    // A..Z.
+    expect(hidUsageToLinuxKeyCode(0x04)).toBe(30); // KEY_A
+    expect(hidUsageToLinuxKeyCode(0x1d)).toBe(44); // KEY_Z
+
+    // 0..9.
+    expect(hidUsageToLinuxKeyCode(0x27)).toBe(11); // KEY_0
+
+    // Enter / Esc.
+    expect(hidUsageToLinuxKeyCode(0x28)).toBe(28); // KEY_ENTER
+    expect(hidUsageToLinuxKeyCode(0x29)).toBe(1); // KEY_ESC
+
+    // Function keys.
+    expect(hidUsageToLinuxKeyCode(0x3a)).toBe(59); // KEY_F1
+    expect(hidUsageToLinuxKeyCode(0x45)).toBe(88); // KEY_F12
+  });
+
   it("keeps DOM->HID->Linux key mapping consistent for representative keys", () => {
     const cases: Array<{ code: string; linuxKey: number }> = [
       { code: "Minus", linuxKey: 12 }, // KEY_MINUS
