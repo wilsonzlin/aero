@@ -69,6 +69,7 @@ Warning: `X-Debug-User` is **not production auth**. Replace this with real authe
 - Returns `416 Range Not Satisfiable` with `Content-Range: bytes */<size>` for invalid/unsatisfiable ranges.
 - Returns `413 Payload Too Large` when multi-range limits are exceeded (`DISK_GATEWAY_MAX_RANGES`, `DISK_GATEWAY_MAX_TOTAL_BYTES`).
 - Sets `Accept-Ranges: bytes`, `Content-Length`, and a (strong) `ETag`.
+- Sets `Content-Type: application/octet-stream` and `X-Content-Type-Options: nosniff`.
 - Supports basic conditional requests:
   - `If-None-Match` → `304 Not Modified`
   - `If-Range` + `Range` → `206` when matched, otherwise ignores `Range` and returns a full `200`
