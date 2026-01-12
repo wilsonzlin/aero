@@ -2,6 +2,7 @@ use std::collections::HashSet;
 
 use aero_devices::pci::capabilities::PCI_CAP_ID_VENDOR_SPECIFIC;
 use aero_devices::pci::profile::*;
+use aero_devices::pci::PciBdf;
 
 #[test]
 fn canonical_ids_and_class_codes() {
@@ -57,6 +58,16 @@ fn canonical_ids_and_class_codes() {
     // AERO-W7-VIRTIO v1: virtio-input is exposed as keyboard + mouse functions.
     assert_eq!(VIRTIO_INPUT_KEYBOARD.subsystem_id, 0x0010);
     assert_eq!(VIRTIO_INPUT_MOUSE.subsystem_id, 0x0011);
+}
+
+#[test]
+fn canonical_bdfs_are_stable() {
+    // BDFs are not part of Windows driver binding (which is primarily VID/DID/class), but the
+    // canonical machine and driver/packaging docs assume stable device numbering for predictable
+    // guest enumeration and debugging.
+    //
+    // In particular, `00:07.0` is reserved for the AeroGPU (A3A0:0001) device contract.
+    assert_eq!(AEROGPU.bdf, PciBdf::new(0, 0x07, 0));
 }
 
 #[test]
