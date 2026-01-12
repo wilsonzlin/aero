@@ -376,11 +376,7 @@ impl CmdWriter {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn create_texture2d(
-        &mut self,
-        id: ResourceId,
-        desc: Texture2dDesc,
-    ) {
+    pub fn create_texture2d(&mut self, id: ResourceId, desc: Texture2dDesc) {
         self.push_cmd(
             D3D11Opcode::CreateTexture2D,
             &[
@@ -396,11 +392,7 @@ impl CmdWriter {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn update_texture2d(
-        &mut self,
-        texture_id: ResourceId,
-        update: Texture2dUpdate<'_>,
-    ) {
+    pub fn update_texture2d(&mut self, texture_id: ResourceId, update: Texture2dUpdate<'_>) {
         self.push_cmd_with_bytes(
             D3D11Opcode::UpdateTexture2D,
             &[
@@ -669,13 +661,13 @@ pub struct VertexBufferLayoutDesc<'a> {
     pub attributes: &'a [VertexAttributeDesc],
 }
 
-    pub struct BindingDesc {
-        pub binding: u32,
-        pub ty: BindingType,
-        pub visibility: ShaderStageFlags,
-        /// For storage textures, the declared format. Otherwise ignored.
-        pub storage_texture_format: Option<DxgiFormat>,
-    }
+pub struct BindingDesc {
+    pub binding: u32,
+    pub ty: BindingType,
+    pub visibility: ShaderStageFlags,
+    /// For storage textures, the declared format. Otherwise ignored.
+    pub storage_texture_format: Option<DxgiFormat>,
+}
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct Texture2dDesc {

@@ -1148,10 +1148,7 @@ struct PixelContext<'a> {
 
 /// Draw a triangle list.
 #[allow(clippy::too_many_arguments)]
-pub fn draw(
-    target: &mut RenderTarget,
-    params: DrawParams<'_>,
-) {
+pub fn draw(target: &mut RenderTarget, params: DrawParams<'_>) {
     let DrawParams {
         vs,
         ps,

@@ -234,14 +234,7 @@ fn tcp_proxy_echo_end_to_end() {
     };
 
     // SYN from guest to remote.
-    let syn = wrap_tcp_ipv4_eth(
-        guest_ep,
-        remote_ep,
-        guest_isn,
-        0,
-        TcpFlags::SYN,
-        &[],
-    );
+    let syn = wrap_tcp_ipv4_eth(guest_ep, remote_ep, guest_isn, 0, TcpFlags::SYN, &[]);
     stack.transmit_at(syn, 20);
 
     let actions = stack.drain_actions();

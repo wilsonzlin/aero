@@ -157,10 +157,19 @@ fn submit_control(
     resp_capacity: usize,
 ) -> Vec<u8> {
     mem.write(ctrlq.req_addr, req).unwrap();
-    mem.write(ctrlq.resp_addr, &vec![0u8; resp_capacity]).unwrap();
+    mem.write(ctrlq.resp_addr, &vec![0u8; resp_capacity])
+        .unwrap();
 
     // Request (read-only) + response (write-only).
-    write_desc(mem, ctrlq.desc, 0, ctrlq.req_addr, req.len() as u32, 0x0001, 1);
+    write_desc(
+        mem,
+        ctrlq.desc,
+        0,
+        ctrlq.req_addr,
+        req.len() as u32,
+        0x0001,
+        1,
+    );
     write_desc(
         mem,
         ctrlq.desc,
@@ -293,14 +302,7 @@ fn virtio_gpu_2d_scanout_via_virtqueue() {
     let mut req = ctrl_hdr(proto::VIRTIO_GPU_CMD_GET_EDID);
     proto::write_u32_le(&mut req, 0); // scanout_id
     proto::write_u32_le(&mut req, 0); // padding
-    let resp = submit_control(
-        &mut dev,
-        &mut mem,
-        &caps,
-        &mut ctrlq,
-        &req,
-        2048,
-    );
+    let resp = submit_control(&mut dev, &mut mem, &caps, &mut ctrlq, &req, 2048);
     assert_eq!(
         u32::from_le_bytes(resp[0..4].try_into().unwrap()),
         proto::VIRTIO_GPU_RESP_OK_EDID
@@ -314,14 +316,7 @@ fn virtio_gpu_2d_scanout_via_virtqueue() {
     proto::write_u32_le(&mut req, proto::VIRTIO_GPU_FORMAT_B8G8R8A8_UNORM);
     proto::write_u32_le(&mut req, 4);
     proto::write_u32_le(&mut req, 4);
-    let resp = submit_control(
-        &mut dev,
-        &mut mem,
-        &caps,
-        &mut ctrlq,
-        &req,
-        64,
-    );
+    let resp = submit_control(&mut dev, &mut mem, &caps, &mut ctrlq, &req, 64);
     assert_eq!(
         u32::from_le_bytes(resp[0..4].try_into().unwrap()),
         proto::VIRTIO_GPU_RESP_OK_NODATA
@@ -345,14 +340,7 @@ fn virtio_gpu_2d_scanout_via_virtqueue() {
     proto::write_u64_le(&mut req, 0xA000);
     proto::write_u32_le(&mut req, 32);
     proto::write_u32_le(&mut req, 0);
-    let resp = submit_control(
-        &mut dev,
-        &mut mem,
-        &caps,
-        &mut ctrlq,
-        &req,
-        64,
-    );
+    let resp = submit_control(&mut dev, &mut mem, &caps, &mut ctrlq, &req, 64);
     assert_eq!(
         u32::from_le_bytes(resp[0..4].try_into().unwrap()),
         proto::VIRTIO_GPU_RESP_OK_NODATA
@@ -364,42 +352,21 @@ fn virtio_gpu_2d_scanout_via_virtqueue() {
     proto::write_u64_le(&mut req, 0);
     proto::write_u32_le(&mut req, 1);
     proto::write_u32_le(&mut req, 0);
-    let _ = submit_control(
-        &mut dev,
-        &mut mem,
-        &caps,
-        &mut ctrlq,
-        &req,
-        64,
-    );
+    let _ = submit_control(&mut dev, &mut mem, &caps, &mut ctrlq, &req, 64);
 
     // SET_SCANOUT.
     let mut req = ctrl_hdr(proto::VIRTIO_GPU_CMD_SET_SCANOUT);
     push_rect(&mut req, proto::Rect::new(0, 0, 4, 4));
     proto::write_u32_le(&mut req, 0); // scanout_id
     proto::write_u32_le(&mut req, 1); // resource_id
-    let _ = submit_control(
-        &mut dev,
-        &mut mem,
-        &caps,
-        &mut ctrlq,
-        &req,
-        64,
-    );
+    let _ = submit_control(&mut dev, &mut mem, &caps, &mut ctrlq, &req, 64);
 
     // RESOURCE_FLUSH (fullscreen) -> triggers `present()`.
     let mut req = ctrl_hdr(proto::VIRTIO_GPU_CMD_RESOURCE_FLUSH);
     push_rect(&mut req, proto::Rect::new(0, 0, 4, 4));
     proto::write_u32_le(&mut req, 1); // resource_id
     proto::write_u32_le(&mut req, 0); // padding
-    let _ = submit_control(
-        &mut dev,
-        &mut mem,
-        &caps,
-        &mut ctrlq,
-        &req,
-        64,
-    );
+    let _ = submit_control(&mut dev, &mut mem, &caps, &mut ctrlq, &req, 64);
     assert_eq!(&*shared_scanout.borrow(), pixels.as_slice());
 
     // Partial update: overwrite a 2x2 rect at (1,1).
@@ -432,27 +399,13 @@ fn virtio_gpu_2d_scanout_via_virtqueue() {
     proto::write_u64_le(&mut req, offset);
     proto::write_u32_le(&mut req, 1);
     proto::write_u32_le(&mut req, 0);
-    let _ = submit_control(
-        &mut dev,
-        &mut mem,
-        &caps,
-        &mut ctrlq,
-        &req,
-        64,
-    );
+    let _ = submit_control(&mut dev, &mut mem, &caps, &mut ctrlq, &req, 64);
 
     let mut req = ctrl_hdr(proto::VIRTIO_GPU_CMD_RESOURCE_FLUSH);
     push_rect(&mut req, rect);
     proto::write_u32_le(&mut req, 1);
     proto::write_u32_le(&mut req, 0);
-    let _ = submit_control(
-        &mut dev,
-        &mut mem,
-        &caps,
-        &mut ctrlq,
-        &req,
-        64,
-    );
+    let _ = submit_control(&mut dev, &mut mem, &caps, &mut ctrlq, &req, 64);
 
     assert_eq!(&*shared_scanout.borrow(), expected.as_slice());
 }

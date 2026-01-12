@@ -296,12 +296,7 @@ impl StreamEncoder {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn texture_create(
-        &mut self,
-        context_id: u32,
-        texture_id: u32,
-        desc: TextureCreateDesc,
-    ) {
+    pub fn texture_create(&mut self, context_id: u32, texture_id: u32, desc: TextureCreateDesc) {
         let mut payload = Vec::with_capacity(28);
         payload.extend_from_slice(&context_id.to_le_bytes());
         payload.extend_from_slice(&texture_id.to_le_bytes());
@@ -515,11 +510,7 @@ impl StreamEncoder {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn set_viewport(
-        &mut self,
-        context_id: u32,
-        viewport: ViewportDesc,
-    ) {
+    pub fn set_viewport(&mut self, context_id: u32, viewport: ViewportDesc) {
         let mut payload = Vec::with_capacity(28);
         payload.extend_from_slice(&context_id.to_le_bytes());
         payload.extend_from_slice(&viewport.x.to_le_bytes());

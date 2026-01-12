@@ -221,12 +221,7 @@ struct ChainSubmit {
     in_len: u32,
 }
 
-fn submit_chain(
-    dev: &mut VirtioPciDevice,
-    mem: &mut GuestRam,
-    caps: &Caps,
-    submit: ChainSubmit,
-) {
+fn submit_chain(dev: &mut VirtioPciDevice, mem: &mut GuestRam, caps: &Caps, submit: ChainSubmit) {
     write_desc(
         mem,
         submit.desc_table,
@@ -249,12 +244,7 @@ fn submit_chain(
     // Add to avail ring.
     let elem_addr = submit.avail_addr + 4 + u64::from(submit.avail_idx) * 2;
     write_u16_le(mem, elem_addr, 0).unwrap();
-    write_u16_le(
-        mem,
-        submit.avail_addr + 2,
-        submit.avail_idx.wrapping_add(1),
-    )
-    .unwrap();
+    write_u16_le(mem, submit.avail_addr + 2, submit.avail_idx.wrapping_add(1)).unwrap();
 
     dev.bar0_write(
         caps.notify + u64::from(submit.queue_index) * u64::from(caps.notify_mult),

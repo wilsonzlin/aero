@@ -463,11 +463,12 @@ impl AerogpuCmdRuntime {
             &self.device,
             key,
             move |device, vs_module, fs_module| {
-                let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some("aero-d3d11 aerogpu pipeline layout"),
-                    bind_group_layouts: &[],
-                    push_constant_ranges: &[],
-                });
+                let pipeline_layout =
+                    device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                        label: Some("aero-d3d11 aerogpu pipeline layout"),
+                        bind_group_layouts: &[],
+                        push_constant_ranges: &[],
+                    });
 
                 let vertex_buffers: Vec<wgpu::VertexBufferLayout<'_>> = owned_vertex_layouts
                     .iter()

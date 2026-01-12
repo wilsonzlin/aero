@@ -10,12 +10,7 @@ struct Endpoint {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn make_ipv4_tcp_frame(
-    src: Endpoint,
-    dst: Endpoint,
-    flags: u8,
-    payload: &[u8],
-) -> Vec<u8> {
+fn make_ipv4_tcp_frame(src: Endpoint, dst: Endpoint, flags: u8, payload: &[u8]) -> Vec<u8> {
     let ip_header_len = 20usize;
     let tcp_header_len = 20usize;
 

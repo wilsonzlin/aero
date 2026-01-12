@@ -403,12 +403,7 @@ fn drive_capture_to_running(
     let _ = ctrl_avail_idx;
 }
 
-fn submit_rx(
-    dev: &mut VirtioPciDevice,
-    mem: &mut GuestRam,
-    caps: &Caps,
-    submit: RxSubmit<'_>,
-) {
+fn submit_rx(dev: &mut VirtioPciDevice, mem: &mut GuestRam, caps: &Caps, submit: RxSubmit<'_>) {
     let resp_index = submit.payload_descs.len() as u16 + 1;
 
     write_desc(
@@ -451,12 +446,7 @@ fn submit_rx(
 
     let elem_addr = submit.avail_addr + 4 + u64::from(submit.avail_idx) * 2;
     write_u16_le(mem, elem_addr, 0).unwrap();
-    write_u16_le(
-        mem,
-        submit.avail_addr + 2,
-        submit.avail_idx.wrapping_add(1),
-    )
-    .unwrap();
+    write_u16_le(mem, submit.avail_addr + 2, submit.avail_idx.wrapping_add(1)).unwrap();
 
     kick_queue(dev, mem, caps, VIRTIO_SND_QUEUE_RX);
 }

@@ -439,9 +439,14 @@ impl<'a> TextureManager<'a> {
         };
 
         match selection.upload_transform {
-            TextureUploadTransform::Direct => {
-                upload_direct(&mut upload, &texture, region, requested_format, mip_size, data)
-            }
+            TextureUploadTransform::Direct => upload_direct(
+                &mut upload,
+                &texture,
+                region,
+                requested_format,
+                mip_size,
+                data,
+            ),
             TextureUploadTransform::Bc1ToRgba8 => {
                 let blocks_w = region.size.width.div_ceil(4) as usize;
                 let blocks_h = region.size.height.div_ceil(4) as usize;
@@ -811,8 +816,8 @@ fn upload_with_alignment(
     let mut encoder = ctx
         .device
         .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-        label: Some("aero-gpu.texture_upload_staging.encoder"),
-    });
+            label: Some("aero-gpu.texture_upload_staging.encoder"),
+        });
     encoder.copy_buffer_to_texture(
         wgpu::ImageCopyBuffer {
             buffer: &staging,

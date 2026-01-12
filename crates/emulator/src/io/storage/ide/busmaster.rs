@@ -93,7 +93,6 @@ pub struct BusMasterChannel {
     drive_dma_capable: [bool; 2],
 }
 
-
 impl BusMasterChannel {
     pub fn new() -> Self {
         Self {
