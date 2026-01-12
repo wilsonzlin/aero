@@ -220,6 +220,77 @@ impl SnapshotSource for DirtyRamSource {
     }
 }
 
+struct TwoDeviceSource {
+    ram: Vec<u8>,
+}
+
+impl TwoDeviceSource {
+    fn new(ram_len: usize) -> Self {
+        let mut ram = Vec::with_capacity(ram_len);
+        ram.extend((0..ram_len).map(|i| (i as u8).wrapping_mul(19)));
+        Self { ram }
+    }
+}
+
+impl SnapshotSource for TwoDeviceSource {
+    fn snapshot_meta(&mut self) -> SnapshotMeta {
+        SnapshotMeta {
+            snapshot_id: 10,
+            parent_snapshot_id: Some(9),
+            created_unix_ms: 0,
+            label: Some("xtask-two-devices".to_string()),
+        }
+    }
+
+    fn cpu_state(&self) -> CpuState {
+        CpuState::default()
+    }
+
+    fn mmu_state(&self) -> MmuState {
+        MmuState::default()
+    }
+
+    fn device_states(&self) -> Vec<DeviceState> {
+        vec![
+            DeviceState {
+                id: DeviceId::PIT,
+                version: 1,
+                flags: 0,
+                data: vec![1],
+            },
+            DeviceState {
+                id: DeviceId::SERIAL,
+                version: 1,
+                flags: 0,
+                data: vec![2, 3],
+            },
+        ]
+    }
+
+    fn disk_overlays(&self) -> DiskOverlayRefs {
+        DiskOverlayRefs::default()
+    }
+
+    fn ram_len(&self) -> usize {
+        self.ram.len()
+    }
+
+    fn read_ram(&self, offset: u64, buf: &mut [u8]) -> aero_snapshot::Result<()> {
+        let offset: usize = offset
+            .try_into()
+            .map_err(|_| aero_snapshot::SnapshotError::Corrupt("ram offset overflow"))?;
+        let end = offset
+            .checked_add(buf.len())
+            .ok_or(aero_snapshot::SnapshotError::Corrupt("ram read overflow"))?;
+        buf.copy_from_slice(&self.ram[offset..end]);
+        Ok(())
+    }
+
+    fn take_dirty_pages(&mut self) -> Option<Vec<u64>> {
+        None
+    }
+}
+
 fn read_u32_le(bytes: &[u8]) -> u32 {
     u32::from_le_bytes(bytes[..4].try_into().unwrap())
 }
@@ -309,6 +380,31 @@ fn append_duplicate_section(snapshot: &mut Vec<u8>, id: SectionId) {
     assert!(end <= snapshot.len());
     let section_bytes = snapshot[header_start..end].to_vec();
     snapshot.extend_from_slice(&section_bytes);
+}
+
+fn corrupt_second_device_entry_to_duplicate_first(snapshot: &mut [u8]) {
+    let index = aero_snapshot::inspect_snapshot(&mut Cursor::new(&snapshot)).unwrap();
+    let devices = index
+        .sections
+        .iter()
+        .find(|s| s.id == SectionId::DEVICES)
+        .expect("DEVICES section missing");
+
+    let mut off = devices.offset as usize;
+    let count = read_u32_le(&snapshot[off..off + 4]);
+    assert!(count >= 2);
+    off += 4;
+
+    let id0 = read_u32_le(&snapshot[off..off + 4]);
+    let version0 = u16::from_le_bytes(snapshot[off + 4..off + 6].try_into().unwrap());
+    let flags0 = u16::from_le_bytes(snapshot[off + 6..off + 8].try_into().unwrap());
+    let len0 = read_u64_le(&snapshot[off + 8..off + 16]) as usize;
+
+    let entry1 = off + 16 + len0;
+    assert!(entry1 + 8 <= (devices.offset + devices.len) as usize);
+    snapshot[entry1..entry1 + 4].copy_from_slice(&id0.to_le_bytes());
+    snapshot[entry1 + 4..entry1 + 6].copy_from_slice(&version0.to_le_bytes());
+    snapshot[entry1 + 6..entry1 + 8].copy_from_slice(&flags0.to_le_bytes());
 }
 
 fn corrupt_devices_section_len_to_two_and_insert_ram(snapshot: &mut Vec<u8>) {
@@ -534,6 +630,91 @@ fn snapshot_validate_rejects_duplicate_meta_sections() {
 }
 
 #[test]
+fn snapshot_validate_rejects_duplicate_cpu_sections() {
+    let tmp = tempfile::tempdir().unwrap();
+    let snap = tmp.path().join("dup_cpu.aerosnap");
+    write_snapshot(&snap);
+
+    let mut bytes = fs::read(&snap).unwrap();
+    append_duplicate_section(&mut bytes, SectionId::CPU);
+    fs::write(&snap, &bytes).unwrap();
+
+    Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["snapshot", "validate", snap.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("duplicate CPU/CPUS section"));
+}
+
+#[test]
+fn snapshot_validate_rejects_duplicate_ram_sections() {
+    let tmp = tempfile::tempdir().unwrap();
+    let snap = tmp.path().join("dup_ram.aerosnap");
+    write_snapshot(&snap);
+
+    let mut bytes = fs::read(&snap).unwrap();
+    append_duplicate_section(&mut bytes, SectionId::RAM);
+    fs::write(&snap, &bytes).unwrap();
+
+    Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["snapshot", "validate", snap.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("duplicate RAM section"));
+}
+
+#[test]
+fn snapshot_validate_rejects_duplicate_mmu_sections() {
+    let tmp = tempfile::tempdir().unwrap();
+    let snap = tmp.path().join("dup_mmu.aerosnap");
+    write_snapshot(&snap);
+
+    let mut bytes = fs::read(&snap).unwrap();
+    append_duplicate_section(&mut bytes, SectionId::MMU);
+    fs::write(&snap, &bytes).unwrap();
+
+    Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["snapshot", "validate", snap.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("duplicate MMU section"));
+}
+
+#[test]
+fn snapshot_validate_rejects_duplicate_devices_sections() {
+    let tmp = tempfile::tempdir().unwrap();
+    let snap = tmp.path().join("dup_devices_section.aerosnap");
+    write_snapshot(&snap);
+
+    let mut bytes = fs::read(&snap).unwrap();
+    append_duplicate_section(&mut bytes, SectionId::DEVICES);
+    fs::write(&snap, &bytes).unwrap();
+
+    Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["snapshot", "validate", snap.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("duplicate DEVICES section"));
+}
+
+#[test]
+fn snapshot_validate_rejects_duplicate_disks_sections() {
+    let tmp = tempfile::tempdir().unwrap();
+    let snap = tmp.path().join("dup_disks_section.aerosnap");
+    write_snapshot(&snap);
+
+    let mut bytes = fs::read(&snap).unwrap();
+    append_duplicate_section(&mut bytes, SectionId::DISKS);
+    fs::write(&snap, &bytes).unwrap();
+
+    Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["snapshot", "validate", snap.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("duplicate DISKS section"));
+}
+
+#[test]
 fn snapshot_validate_rejects_duplicate_apic_ids_in_cpus_section() {
     let tmp = tempfile::tempdir().unwrap();
     let snap = tmp.path().join("dup_apic.aerosnap");
@@ -580,6 +761,25 @@ fn snapshot_validate_rejects_dirty_ram_page_list_not_strictly_increasing() {
         .stderr(predicate::str::contains(
             "dirty page list not strictly increasing",
         ));
+}
+
+#[test]
+fn snapshot_validate_rejects_duplicate_device_entries() {
+    let tmp = tempfile::tempdir().unwrap();
+    let snap = tmp.path().join("dup_device_entry.aerosnap");
+
+    let mut source = TwoDeviceSource::new(4096);
+    let mut cursor = Cursor::new(Vec::new());
+    aero_snapshot::save_snapshot(&mut cursor, &mut source, SaveOptions::default()).unwrap();
+    let mut bytes = cursor.into_inner();
+    corrupt_second_device_entry_to_duplicate_first(&mut bytes);
+    fs::write(&snap, &bytes).unwrap();
+
+    Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["snapshot", "validate", snap.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("duplicate device entry"));
 }
 
 #[test]
@@ -709,6 +909,70 @@ fn write_disk_snapshot(path: &std::path::Path) -> Vec<u8> {
     bytes
 }
 
+struct TwoDiskSource;
+
+impl SnapshotSource for TwoDiskSource {
+    fn snapshot_meta(&mut self) -> SnapshotMeta {
+        SnapshotMeta {
+            snapshot_id: 5,
+            parent_snapshot_id: Some(4),
+            created_unix_ms: 0,
+            label: Some("xtask-two-disks".to_string()),
+        }
+    }
+
+    fn cpu_state(&self) -> CpuState {
+        CpuState::default()
+    }
+
+    fn mmu_state(&self) -> MmuState {
+        MmuState::default()
+    }
+
+    fn device_states(&self) -> Vec<DeviceState> {
+        Vec::new()
+    }
+
+    fn disk_overlays(&self) -> DiskOverlayRefs {
+        DiskOverlayRefs {
+            disks: vec![
+                DiskOverlayRef {
+                    disk_id: 0,
+                    base_image: "base0.img".to_string(),
+                    overlay_image: "overlay0.img".to_string(),
+                },
+                DiskOverlayRef {
+                    disk_id: 1,
+                    base_image: "base1.img".to_string(),
+                    overlay_image: "overlay1.img".to_string(),
+                },
+            ],
+        }
+    }
+
+    fn ram_len(&self) -> usize {
+        4096
+    }
+
+    fn read_ram(&self, _offset: u64, buf: &mut [u8]) -> aero_snapshot::Result<()> {
+        buf.fill(0);
+        Ok(())
+    }
+
+    fn take_dirty_pages(&mut self) -> Option<Vec<u64>> {
+        None
+    }
+}
+
+fn write_two_disk_snapshot(path: &std::path::Path) -> Vec<u8> {
+    let mut source = TwoDiskSource;
+    let mut cursor = Cursor::new(Vec::new());
+    aero_snapshot::save_snapshot(&mut cursor, &mut source, SaveOptions::default()).unwrap();
+    let bytes = cursor.into_inner();
+    fs::write(path, &bytes).unwrap();
+    bytes
+}
+
 fn corrupt_disks_base_image_first_byte(snapshot: &mut [u8]) {
     let index = aero_snapshot::inspect_snapshot(&mut Cursor::new(&snapshot)).unwrap();
     let disks = index
@@ -748,6 +1012,41 @@ fn corrupt_disks_base_image_len(snapshot: &mut [u8], new_len: u32) {
     snapshot[off..off + 4].copy_from_slice(&new_len.to_le_bytes());
 }
 
+fn corrupt_second_disk_id_to_duplicate_first(snapshot: &mut [u8]) {
+    let index = aero_snapshot::inspect_snapshot(&mut Cursor::new(&snapshot)).unwrap();
+    let disks = index
+        .sections
+        .iter()
+        .find(|s| s.id == SectionId::DISKS)
+        .expect("DISKS section missing");
+
+    let mut off = disks.offset as usize;
+    let end = (disks.offset + disks.len) as usize;
+    assert!(off + 4 <= end);
+    let count = read_u32_le(&snapshot[off..off + 4]);
+    assert!(count >= 2);
+    off += 4;
+
+    assert!(off + 4 <= end);
+    let disk_id0 = read_u32_le(&snapshot[off..off + 4]);
+    off += 4;
+
+    assert!(off + 4 <= end);
+    let base_len0 = read_u32_le(&snapshot[off..off + 4]) as usize;
+    off += 4;
+    assert!(off + base_len0 <= end);
+    off += base_len0;
+
+    assert!(off + 4 <= end);
+    let overlay_len0 = read_u32_le(&snapshot[off..off + 4]) as usize;
+    off += 4;
+    assert!(off + overlay_len0 <= end);
+    off += overlay_len0;
+
+    assert!(off + 4 <= end);
+    snapshot[off..off + 4].copy_from_slice(&disk_id0.to_le_bytes());
+}
+
 fn corrupt_cpus_count_to_zero(snapshot: &mut [u8]) {
     let index = aero_snapshot::inspect_snapshot(&mut Cursor::new(&snapshot)).unwrap();
     let cpus = index
@@ -772,6 +1071,21 @@ fn snapshot_validate_rejects_disks_invalid_utf8() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("disk base_image: invalid utf-8"));
+}
+
+#[test]
+fn snapshot_validate_rejects_duplicate_disk_entries() {
+    let tmp = tempfile::tempdir().unwrap();
+    let snap = tmp.path().join("dup_disk_entry.aerosnap");
+    let mut bytes = write_two_disk_snapshot(&snap);
+    corrupt_second_disk_id_to_duplicate_first(&mut bytes);
+    fs::write(&snap, &bytes).unwrap();
+
+    Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["snapshot", "validate", snap.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("duplicate disk entry"));
 }
 
 #[test]
