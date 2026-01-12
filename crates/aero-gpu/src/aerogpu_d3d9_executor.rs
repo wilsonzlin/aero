@@ -17,7 +17,7 @@ use thiserror::Error;
 use tracing::debug;
 use wgpu::util::DeviceExt;
 
-use crate::aerogpu_executor::AllocTable;
+use crate::aerogpu_executor::{AllocEntry, AllocTable};
 use crate::guest_memory::{GuestMemory, GuestMemoryError};
 use crate::protocol::{parse_cmd_stream, AeroGpuCmd, AeroGpuCmdStreamParseError};
 use crate::texture_manager::TextureRegion;
@@ -99,6 +99,17 @@ pub struct PresentedScanout<'a> {
 struct SubmissionCtx<'a> {
     guest_memory: Option<&'a mut dyn GuestMemory>,
     alloc_table: Option<&'a AllocTable>,
+}
+
+impl<'a> SubmissionCtx<'a> {
+    fn require_alloc_entry(&self, alloc_id: u32) -> Result<&'a AllocEntry, AerogpuD3d9Error> {
+        let table = self
+            .alloc_table
+            .ok_or(AerogpuD3d9Error::MissingAllocationTable(alloc_id))?;
+        table
+            .get(alloc_id)
+            .ok_or(AerogpuD3d9Error::MissingAllocTable(alloc_id))
+    }
 }
 
 #[derive(Debug)]
@@ -198,7 +209,9 @@ pub enum AerogpuD3d9Error {
         "shared surface alias handle {alias} already bound (existing_handle={existing} new_handle={new})"
     )]
     SharedSurfaceAliasAlreadyBound { alias: u32, existing: u32, new: u32 },
-    #[error("missing alloc table entry for alloc_id={0}")]
+    #[error("submission is missing an allocation table required to resolve alloc_id={0}")]
+    MissingAllocationTable(u32),
+    #[error("allocation table does not contain alloc_id={0}")]
     MissingAllocTable(u32),
     #[error("missing guest memory for dirty guest-backed resource {0}")]
     MissingGuestMemory(u32),
@@ -1637,10 +1650,7 @@ impl AerogpuD3d9Executor {
                 let backing = if backing_alloc_id == 0 {
                     None
                 } else {
-                    let entry = ctx
-                        .alloc_table
-                        .and_then(|t| t.get(backing_alloc_id))
-                        .ok_or(AerogpuD3d9Error::MissingAllocTable(backing_alloc_id))?;
+                    let entry = ctx.require_alloc_entry(backing_alloc_id)?;
                     let backing_offset = backing_offset_bytes as u64;
                     let required = backing_offset.checked_add(size_bytes).ok_or_else(|| {
                         AerogpuD3d9Error::Validation("buffer backing overflow".into())
@@ -1767,10 +1777,7 @@ impl AerogpuD3d9Executor {
                                 .into(),
                         ));
                     }
-                    let entry = ctx
-                        .alloc_table
-                        .and_then(|t| t.get(backing_alloc_id))
-                        .ok_or(AerogpuD3d9Error::MissingAllocTable(backing_alloc_id))?;
+                    let entry = ctx.require_alloc_entry(backing_alloc_id)?;
                     let bpp = bytes_per_pixel(format);
                     let expected_row_pitch = width.checked_mul(bpp).ok_or_else(|| {
                         AerogpuD3d9Error::Validation("CREATE_TEXTURE2D: row pitch overflow".into())
@@ -2307,10 +2314,7 @@ impl AerogpuD3d9Executor {
                             return Err(AerogpuD3d9Error::MissingGuestMemory(dst_buffer));
                         }
 
-                        let alloc = ctx
-                            .alloc_table
-                            .and_then(|t| t.get(dst_backing.alloc_id))
-                            .ok_or(AerogpuD3d9Error::MissingAllocTable(dst_backing.alloc_id))?;
+                        let alloc = ctx.require_alloc_entry(dst_backing.alloc_id)?;
                         if (alloc.flags & ring::AEROGPU_ALLOC_FLAG_READONLY) != 0 {
                             return Err(AerogpuD3d9Error::Validation(format!(
                                 "COPY_BUFFER: WRITEBACK_DST to READONLY alloc_id={}",
@@ -2645,10 +2649,7 @@ impl AerogpuD3d9Executor {
                             ));
                         }
 
-                        let alloc = ctx
-                            .alloc_table
-                            .and_then(|t| t.get(dst_backing.alloc_id))
-                            .ok_or(AerogpuD3d9Error::MissingAllocTable(dst_backing.alloc_id))?;
+                        let alloc = ctx.require_alloc_entry(dst_backing.alloc_id)?;
                         if (alloc.flags & ring::AEROGPU_ALLOC_FLAG_READONLY) != 0 {
                             return Err(AerogpuD3d9Error::Validation(format!(
                                 "COPY_TEXTURE2D: WRITEBACK_DST to READONLY alloc_id={}",
@@ -3423,9 +3424,7 @@ impl AerogpuD3d9Executor {
                         "RESOURCE_DIRTY_RANGE on host-owned buffer {resource_handle} is not supported (use UPLOAD_RESOURCE)"
                     )));
                 };
-                ctx.alloc_table
-                    .and_then(|t| t.get(backing.alloc_id))
-                    .ok_or(AerogpuD3d9Error::MissingAllocTable(backing.alloc_id))?;
+                ctx.require_alloc_entry(backing.alloc_id)?;
                 if end > *size {
                     return Err(AerogpuD3d9Error::Validation(format!(
                         "buffer dirty range out of bounds (handle={resource_handle} end={end} size={size})"
@@ -3447,9 +3446,7 @@ impl AerogpuD3d9Executor {
                         "RESOURCE_DIRTY_RANGE on host-owned texture {resource_handle} is not supported (use UPLOAD_RESOURCE)"
                     )));
                 };
-                ctx.alloc_table
-                    .and_then(|t| t.get(backing.alloc_id))
-                    .ok_or(AerogpuD3d9Error::MissingAllocTable(backing.alloc_id))?;
+                ctx.require_alloc_entry(backing.alloc_id)?;
                 if end > backing.size_bytes {
                     return Err(AerogpuD3d9Error::Validation(format!(
                         "texture dirty range out of bounds (handle={resource_handle} end={end} size={})",
@@ -3490,13 +3487,13 @@ impl AerogpuD3d9Executor {
         if dirty_ranges.is_empty() {
             return Ok(());
         }
+        let (alloc_gpa, alloc_size_bytes) = {
+            let alloc = ctx.require_alloc_entry(backing.alloc_id)?;
+            (alloc.gpa, alloc.size_bytes)
+        };
         let Some(guest_memory) = ctx.guest_memory.as_deref_mut() else {
             return Err(AerogpuD3d9Error::MissingGuestMemory(handle));
         };
-        let table = ctx
-            .alloc_table
-            .and_then(|t| t.get(backing.alloc_id))
-            .ok_or(AerogpuD3d9Error::MissingAllocTable(backing.alloc_id))?;
 
         let mut encoder = encoder;
         let ranges = dirty_ranges.clone();
@@ -3514,15 +3511,14 @@ impl AerogpuD3d9Executor {
             let alloc_end = alloc_offset
                 .checked_add(len_u64)
                 .ok_or_else(|| AerogpuD3d9Error::Validation("buffer backing overflow".into()))?;
-            if alloc_end > table.size_bytes {
+            if alloc_end > alloc_size_bytes {
                 return Err(AerogpuD3d9Error::Validation(format!(
                     "buffer backing out of bounds (alloc_id={} offset=0x{:x} size=0x{:x} alloc_size=0x{:x})",
-                    backing.alloc_id, alloc_offset, len_u64, table.size_bytes
+                    backing.alloc_id, alloc_offset, len_u64, alloc_size_bytes
                 )));
             }
 
-            let src_gpa = table
-                .gpa
+            let src_gpa = alloc_gpa
                 .checked_add(alloc_offset)
                 .ok_or_else(|| AerogpuD3d9Error::Validation("buffer backing overflow".into()))?;
             if src_gpa.checked_add(len_u64).is_none() {
@@ -3613,24 +3609,24 @@ impl AerogpuD3d9Executor {
         if dirty_ranges.is_empty() {
             return Ok(());
         }
+        let (alloc_gpa, alloc_size_bytes) = {
+            let alloc = ctx.require_alloc_entry(backing.alloc_id)?;
+            (alloc.gpa, alloc.size_bytes)
+        };
         let Some(guest_memory) = ctx.guest_memory.as_deref_mut() else {
             return Err(AerogpuD3d9Error::MissingGuestMemory(handle));
         };
-        let alloc_entry = ctx
-            .alloc_table
-            .and_then(|t| t.get(backing.alloc_id))
-            .ok_or(AerogpuD3d9Error::MissingAllocTable(backing.alloc_id))?;
         let backing_end = backing
             .alloc_offset_bytes
             .checked_add(backing.size_bytes)
             .ok_or_else(|| AerogpuD3d9Error::Validation("texture backing overflow".into()))?;
-        if backing_end > alloc_entry.size_bytes {
+        if backing_end > alloc_size_bytes {
             return Err(AerogpuD3d9Error::Validation(format!(
                 "texture backing out of bounds (alloc_id={} offset=0x{:x} size=0x{:x} alloc_size=0x{:x})",
                 backing.alloc_id,
                 backing.alloc_offset_bytes,
                 backing.size_bytes,
-                alloc_entry.size_bytes
+                alloc_size_bytes
             )));
         }
 
@@ -3693,7 +3689,7 @@ impl AerogpuD3d9Executor {
                         .ok_or_else(|| {
                             AerogpuD3d9Error::Validation("texture backing overflow".into())
                         })?;
-                let src_gpa = alloc_entry.gpa.checked_add(alloc_offset).ok_or_else(|| {
+                let src_gpa = alloc_gpa.checked_add(alloc_offset).ok_or_else(|| {
                     AerogpuD3d9Error::Validation("texture backing overflow".into())
                 })?;
                 if src_gpa.checked_add(unpadded_bpr as u64).is_none() {

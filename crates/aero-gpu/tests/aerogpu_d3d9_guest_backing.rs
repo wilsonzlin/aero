@@ -1218,6 +1218,138 @@ fn d3d9_copy_buffer_writeback_rejects_readonly_alloc() {
 }
 
 #[test]
+fn d3d9_copy_buffer_writeback_requires_alloc_table_each_submit() {
+    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
+        Ok(exec) => exec,
+        Err(AerogpuD3d9Error::AdapterNotFound) => {
+            common::skip_or_panic(module_path!(), "wgpu adapter not found");
+            return;
+        }
+        Err(err) => panic!("failed to create executor: {err}"),
+    };
+
+    const OPC_CREATE_BUFFER: u32 = AerogpuCmdOpcode::CreateBuffer as u32;
+    const OPC_UPLOAD_RESOURCE: u32 = AerogpuCmdOpcode::UploadResource as u32;
+    const OPC_COPY_BUFFER: u32 = AerogpuCmdOpcode::CopyBuffer as u32;
+
+    const SRC_HANDLE: u32 = 1;
+    const DST_HANDLE: u32 = 2;
+
+    const DST_ALLOC_ID: u32 = 1;
+    const DST_GPA: u64 = 0x1000;
+
+    let mut guest_memory = VecGuestMemory::new(0x4000);
+    guest_memory
+        .write(DST_GPA, &[0xEEu8; 16])
+        .expect("write dst sentinel");
+
+    let alloc_table = AllocTable::new([(
+        DST_ALLOC_ID,
+        AllocEntry {
+            flags: 0,
+            gpa: DST_GPA,
+            size_bytes: 0x1000,
+        },
+    )])
+    .expect("alloc table");
+
+    let pattern = [
+        0xDEu8, 0xAD, 0xBE, 0xEF, 0xAA, 0xBB, 0xCC, 0xDD, 0x10, 0x20, 0x30, 0x40, 0x55, 0x66, 0x77,
+        0x88,
+    ];
+
+    // Submit 1: create SRC and DST, upload SRC payload.
+    let stream_create = build_stream(|out| {
+        emit_packet(out, OPC_CREATE_BUFFER, |out| {
+            push_u32(out, SRC_HANDLE);
+            push_u32(out, 0); // usage_flags
+            push_u64(out, pattern.len() as u64); // size_bytes
+            push_u32(out, 0); // backing_alloc_id
+            push_u32(out, 0); // backing_offset_bytes
+            push_u64(out, 0); // reserved0
+        });
+
+        emit_packet(out, OPC_CREATE_BUFFER, |out| {
+            push_u32(out, DST_HANDLE);
+            push_u32(out, 0); // usage_flags
+            push_u64(out, pattern.len() as u64); // size_bytes
+            push_u32(out, DST_ALLOC_ID); // backing_alloc_id
+            push_u32(out, 0); // backing_offset_bytes
+            push_u64(out, 0); // reserved0
+        });
+
+        emit_packet(out, OPC_UPLOAD_RESOURCE, |out| {
+            push_u32(out, SRC_HANDLE);
+            push_u32(out, 0); // reserved0
+            push_u64(out, 0); // offset_bytes
+            push_u64(out, pattern.len() as u64); // size_bytes
+            out.extend_from_slice(&pattern);
+        });
+    });
+
+    exec.execute_cmd_stream_with_guest_memory(
+        &stream_create,
+        &mut guest_memory,
+        Some(&alloc_table),
+    )
+    .expect("create should succeed");
+
+    let stream_copy = build_stream(|out| {
+        emit_packet(out, OPC_COPY_BUFFER, |out| {
+            push_u32(out, DST_HANDLE);
+            push_u32(out, SRC_HANDLE);
+            push_u64(out, 0); // dst_offset_bytes
+            push_u64(out, 0); // src_offset_bytes
+            push_u64(out, pattern.len() as u64); // size_bytes
+            push_u32(out, AEROGPU_COPY_FLAG_WRITEBACK_DST);
+            push_u32(out, 0); // reserved0
+        });
+    });
+
+    // Submit 2: COPY_BUFFER (WRITEBACK_DST) but no alloc table.
+    let err = exec
+        .execute_cmd_stream_with_guest_memory(&stream_copy, &mut guest_memory, None)
+        .expect_err("expected missing alloc table error");
+    match err {
+        AerogpuD3d9Error::MissingAllocationTable(alloc_id) => assert_eq!(alloc_id, DST_ALLOC_ID),
+        other => panic!("unexpected error: {other}"),
+    }
+    let mut out = [0u8; 16];
+    guest_memory.read(DST_GPA, &mut out).unwrap();
+    assert_eq!(out, [0xEEu8; 16]);
+
+    // Submit 3: alloc table present but missing the dst alloc_id.
+    let bad_alloc_table = AllocTable::new([(
+        DST_ALLOC_ID + 1,
+        AllocEntry {
+            flags: 0,
+            gpa: 0x2000,
+            size_bytes: 0x1000,
+        },
+    )])
+    .expect("bad alloc table");
+    let err = exec
+        .execute_cmd_stream_with_guest_memory(
+            &stream_copy,
+            &mut guest_memory,
+            Some(&bad_alloc_table),
+        )
+        .expect_err("expected missing alloc_id error");
+    match err {
+        AerogpuD3d9Error::MissingAllocTable(alloc_id) => assert_eq!(alloc_id, DST_ALLOC_ID),
+        other => panic!("unexpected error: {other}"),
+    }
+    guest_memory.read(DST_GPA, &mut out).unwrap();
+    assert_eq!(out, [0xEEu8; 16]);
+
+    // Submit 4: correct alloc table.
+    exec.execute_cmd_stream_with_guest_memory(&stream_copy, &mut guest_memory, Some(&alloc_table))
+        .expect("writeback should succeed");
+    guest_memory.read(DST_GPA, &mut out).unwrap();
+    assert_eq!(out, pattern);
+}
+
+#[test]
 fn d3d9_copy_buffer_writeback_does_not_consume_dirty_ranges_on_alloc_table_error() {
     let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
         Ok(exec) => exec,
@@ -1856,6 +1988,159 @@ fn d3d9_copy_texture2d_writeback_writes_guest_backing() {
     expected[row_pitch as usize..row_pitch as usize + bpr as usize]
         .copy_from_slice(&src_tex_data[bpr as usize..bpr as usize * 2]);
     assert_eq!(out, expected);
+}
+
+#[test]
+fn d3d9_copy_texture2d_writeback_requires_alloc_table_each_submit() {
+    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
+        Ok(exec) => exec,
+        Err(AerogpuD3d9Error::AdapterNotFound) => {
+            common::skip_or_panic(module_path!(), "wgpu adapter not found");
+            return;
+        }
+        Err(err) => panic!("failed to create executor: {err}"),
+    };
+
+    const OPC_CREATE_TEXTURE2D: u32 = AerogpuCmdOpcode::CreateTexture2d as u32;
+    const OPC_UPLOAD_RESOURCE: u32 = AerogpuCmdOpcode::UploadResource as u32;
+    const OPC_COPY_TEXTURE2D: u32 = AerogpuCmdOpcode::CopyTexture2d as u32;
+
+    const AEROGPU_FORMAT_R8G8B8A8_UNORM: u32 = AerogpuFormat::R8G8B8A8Unorm as u32;
+
+    const SRC_TEX: u32 = 1;
+    const DST_TEX: u32 = 2;
+
+    const DST_ALLOC_ID: u32 = 1;
+    const DST_GPA: u64 = 0x1000;
+
+    let width = 1u32;
+    let height = 1u32;
+    let row_pitch = 4u32;
+    let backing_len = (row_pitch * height) as usize;
+
+    let mut guest_memory = VecGuestMemory::new(0x4000);
+    guest_memory
+        .write(DST_GPA, &[0xEEu8; 4])
+        .expect("write dst sentinel");
+
+    let alloc_table = AllocTable::new([(
+        DST_ALLOC_ID,
+        AllocEntry {
+            flags: 0,
+            gpa: DST_GPA,
+            size_bytes: 0x1000,
+        },
+    )])
+    .expect("alloc table");
+
+    let src_tex_data = [1u8, 2, 3, 4];
+
+    // Submit 1: create SRC/DST and upload SRC bytes.
+    let stream_create = build_stream(|out| {
+        emit_packet(out, OPC_CREATE_TEXTURE2D, |out| {
+            push_u32(out, SRC_TEX);
+            push_u32(out, AEROGPU_RESOURCE_USAGE_TEXTURE);
+            push_u32(out, AEROGPU_FORMAT_R8G8B8A8_UNORM);
+            push_u32(out, width);
+            push_u32(out, height);
+            push_u32(out, 1); // mip_levels
+            push_u32(out, 1); // array_layers
+            push_u32(out, 0); // row_pitch_bytes (tight packing)
+            push_u32(out, 0); // backing_alloc_id
+            push_u32(out, 0); // backing_offset_bytes
+            push_u64(out, 0); // reserved0
+        });
+
+        emit_packet(out, OPC_UPLOAD_RESOURCE, |out| {
+            push_u32(out, SRC_TEX);
+            push_u32(out, 0); // reserved0
+            push_u64(out, 0); // offset_bytes
+            push_u64(out, src_tex_data.len() as u64); // size_bytes
+            out.extend_from_slice(&src_tex_data);
+        });
+
+        emit_packet(out, OPC_CREATE_TEXTURE2D, |out| {
+            push_u32(out, DST_TEX);
+            push_u32(out, AEROGPU_RESOURCE_USAGE_TEXTURE);
+            push_u32(out, AEROGPU_FORMAT_R8G8B8A8_UNORM);
+            push_u32(out, width);
+            push_u32(out, height);
+            push_u32(out, 1); // mip_levels
+            push_u32(out, 1); // array_layers
+            push_u32(out, row_pitch);
+            push_u32(out, DST_ALLOC_ID);
+            push_u32(out, 0); // backing_offset_bytes
+            push_u64(out, 0); // reserved0
+        });
+    });
+
+    exec.execute_cmd_stream_with_guest_memory(
+        &stream_create,
+        &mut guest_memory,
+        Some(&alloc_table),
+    )
+    .expect("create should succeed");
+
+    let stream_copy = build_stream(|out| {
+        emit_packet(out, OPC_COPY_TEXTURE2D, |out| {
+            push_u32(out, DST_TEX);
+            push_u32(out, SRC_TEX);
+            push_u32(out, 0); // dst_mip_level
+            push_u32(out, 0); // dst_array_layer
+            push_u32(out, 0); // src_mip_level
+            push_u32(out, 0); // src_array_layer
+            push_u32(out, 0); // dst_x
+            push_u32(out, 0); // dst_y
+            push_u32(out, 0); // src_x
+            push_u32(out, 0); // src_y
+            push_u32(out, width);
+            push_u32(out, height);
+            push_u32(out, AEROGPU_COPY_FLAG_WRITEBACK_DST);
+            push_u32(out, 0); // reserved0
+        });
+    });
+
+    // Submit 2: COPY_TEXTURE2D (WRITEBACK_DST) but no alloc table.
+    let err = exec
+        .execute_cmd_stream_with_guest_memory(&stream_copy, &mut guest_memory, None)
+        .expect_err("expected missing alloc table error");
+    match err {
+        AerogpuD3d9Error::MissingAllocationTable(alloc_id) => assert_eq!(alloc_id, DST_ALLOC_ID),
+        other => panic!("unexpected error: {other}"),
+    }
+    let mut out = vec![0u8; backing_len];
+    guest_memory.read(DST_GPA, &mut out).unwrap();
+    assert_eq!(out, vec![0xEEu8; 4]);
+
+    // Submit 3: alloc table present but missing dst alloc_id.
+    let bad_alloc_table = AllocTable::new([(
+        DST_ALLOC_ID + 1,
+        AllocEntry {
+            flags: 0,
+            gpa: 0x2000,
+            size_bytes: 0x1000,
+        },
+    )])
+    .expect("bad alloc table");
+    let err = exec
+        .execute_cmd_stream_with_guest_memory(
+            &stream_copy,
+            &mut guest_memory,
+            Some(&bad_alloc_table),
+        )
+        .expect_err("expected missing alloc_id error");
+    match err {
+        AerogpuD3d9Error::MissingAllocTable(alloc_id) => assert_eq!(alloc_id, DST_ALLOC_ID),
+        other => panic!("unexpected error: {other}"),
+    }
+    guest_memory.read(DST_GPA, &mut out).unwrap();
+    assert_eq!(out, vec![0xEEu8; 4]);
+
+    // Submit 4: correct alloc table.
+    exec.execute_cmd_stream_with_guest_memory(&stream_copy, &mut guest_memory, Some(&alloc_table))
+        .expect("writeback should succeed");
+    guest_memory.read(DST_GPA, &mut out).unwrap();
+    assert_eq!(&out[..4], &src_tex_data);
 }
 
 #[test]
