@@ -997,7 +997,14 @@ pub fn generate_wgsl(ir: &ShaderIr) -> WgslOutput {
             // Instruction emission.
             let mut indent = 1usize;
             for inst in &ir.ops {
-                emit_inst(&mut wgsl, &mut indent, inst, &ir.const_defs_f32, const_base);
+                emit_inst(
+                    &mut wgsl,
+                    &mut indent,
+                    inst,
+                    &ir.const_defs_f32,
+                    const_base,
+                    ir.version.stage,
+                );
             }
             debug_assert_eq!(indent, 1, "unbalanced if/endif indentation");
 
@@ -1110,7 +1117,14 @@ pub fn generate_wgsl(ir: &ShaderIr) -> WgslOutput {
 
             let mut indent = 1usize;
             for inst in &ir.ops {
-                emit_inst(&mut wgsl, &mut indent, inst, &ir.const_defs_f32, const_base);
+                emit_inst(
+                    &mut wgsl,
+                    &mut indent,
+                    inst,
+                    &ir.const_defs_f32,
+                    const_base,
+                    ir.version.stage,
+                );
             }
             debug_assert_eq!(indent, 1, "unbalanced if/endif indentation");
             wgsl.push_str("  var out: PsOutput;\n");
@@ -1140,6 +1154,7 @@ fn emit_inst(
     inst: &Instruction,
     const_defs_f32: &BTreeMap<u16, [f32; 4]>,
     const_base: u32,
+    stage: ShaderStage,
 ) {
     match inst.op {
         Op::Nop => {}
@@ -1294,7 +1309,11 @@ fn emit_inst(
             } else {
                 format!("({}).xy", coord_expr)
             };
-            let mut sample = format!("textureSample(tex{}, samp{}, {})", s, s, uv);
+            let mut sample = match stage {
+                // Vertex stage has no implicit derivatives, so use an explicit LOD.
+                ShaderStage::Vertex => format!("textureSampleLevel(tex{}, samp{}, {}, 0.0)", s, s, uv),
+                ShaderStage::Pixel => format!("textureSample(tex{}, samp{}, {})", s, s, uv),
+            };
             sample = apply_result_modifier(sample, inst.result_modifier);
             if let Some(mask) = mask_suffix(dst.mask) {
                 push_indent(wgsl, *indent);
