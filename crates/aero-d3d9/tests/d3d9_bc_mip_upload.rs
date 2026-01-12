@@ -211,3 +211,60 @@ fn d3d9_bc_create_texture_falls_back_for_non_block_aligned_dimensions() {
     #[cfg(not(target_arch = "wasm32"))]
     rm.device().poll(wgpu::Maintain::Wait);
 }
+
+#[test]
+fn d3d9_bc_create_texture_falls_back_for_tiny_dimensions() {
+    let (device, queue) = match pollster::block_on(request_device_with_bc_features()) {
+        Some(device) => device,
+        None => {
+            skip_or_panic(module_path!(), "TEXTURE_COMPRESSION_BC not supported");
+            return;
+        }
+    };
+
+    let mut rm = ResourceManager::new(device, queue, ResourceManagerOptions::default());
+    rm.begin_frame();
+
+    const TEX: GuestResourceId = 1;
+
+    // wgpu validation rejects creating BC textures whose base mip dimensions are not multiples of
+    // 4x4. (e.g. 1x1 BC1). The resource manager must fall back to BGRA8 + CPU decompression.
+    rm.create_texture(
+        TEX,
+        TextureDesc {
+            kind: TextureKind::Texture2D {
+                width: 1,
+                height: 1,
+                levels: 1,
+            },
+            format: D3DFormat::Dxt1,
+            pool: D3DPool::Default,
+            usage: TextureUsageKind::Sampled,
+        },
+    )
+    .unwrap();
+
+    assert_eq!(
+        rm.texture(TEX).unwrap().wgpu_format(),
+        wgpu::TextureFormat::Bgra8Unorm
+    );
+
+    // 1x1 BC1 is still stored as a single 4x4 block in the D3D/guest layout: 8 bytes.
+    {
+        let locked = rm.lock_texture_rect(TEX, 0, 0, LockFlags::empty()).unwrap();
+        assert_eq!(locked.data.len(), 8);
+        locked.data.copy_from_slice(&[0u8; 8]);
+    }
+    rm.unlock_texture_rect(TEX).unwrap();
+
+    let mut encoder = rm
+        .device()
+        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("aero-d3d9 bc tiny create test encoder"),
+        });
+    rm.encode_uploads(&mut encoder);
+    rm.submit(encoder);
+
+    #[cfg(not(target_arch = "wasm32"))]
+    rm.device().poll(wgpu::Maintain::Wait);
+}
