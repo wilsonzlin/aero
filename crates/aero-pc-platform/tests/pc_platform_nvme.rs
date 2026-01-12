@@ -161,6 +161,38 @@ fn pc_platform_nvme_mmio_is_gated_by_pci_command_mem() {
 }
 
 #[test]
+fn pc_platform_nvme_mmio_syncs_device_command_before_each_access() {
+    let mut pc = PcPlatform::new_with_nvme(2 * 1024 * 1024);
+    let bdf = NVME_CONTROLLER.bdf;
+    let bar0_base = read_nvme_bar0_base(&mut pc);
+
+    let command = read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04) & 0xffff;
+    assert_ne!(command & 0x2, 0, "BIOS POST should enable memory decoding");
+
+    let nvme = pc.nvme.as_ref().expect("NVMe enabled").clone();
+
+    // Simulate a stale device-side PCI command register copy.
+    nvme.borrow_mut().config_mut().set_command(0);
+
+    // With COMMAND.MEM disabled in the device model, direct MMIO reads return all-ones.
+    assert_eq!(
+        memory::MmioHandler::read(&mut *nvme.borrow_mut(), 0x0000, 4) as u32,
+        0xFFFF_FFFF
+    );
+
+    // Through the platform MMIO bus, the access should still succeed because the MMIO router
+    // mirrors the live PCI command register into the device model before dispatch.
+    let cap_platform = pc.memory.read_u32(bar0_base + 0x0000);
+    assert_ne!(cap_platform, 0xFFFF_FFFF);
+
+    // And the device model should now observe a synced command register.
+    assert_eq!(
+        memory::MmioHandler::read(&mut *nvme.borrow_mut(), 0x0000, 4) as u32,
+        cap_platform
+    );
+}
+
+#[test]
 fn pc_platform_nvme_bar0_relocation_is_honored_by_mmio_routing() {
     let mut pc = PcPlatform::new_with_nvme(2 * 1024 * 1024);
     let bdf = NVME_CONTROLLER.bdf;
