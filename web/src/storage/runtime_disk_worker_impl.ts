@@ -28,7 +28,12 @@ import { idbDeleteDiskData, opfsDeleteDisk, opfsGetDiskFileHandle } from "./impo
 import { RemoteRangeDisk, defaultRemoteRangeUrl, type RemoteRangeDiskMetadataStore } from "./remote_range_disk";
 import { RemoteChunkedDisk } from "./remote_chunked_disk";
 import { RANGE_STREAM_CHUNK_SIZE } from "./chunk_sizes";
-import { RemoteCacheManager, remoteChunkedDeliveryType, remoteRangeDeliveryType } from "./remote_cache_manager";
+import {
+  RemoteCacheManager,
+  remoteChunkedDeliveryType,
+  remoteRangeDeliveryType,
+  validateRemoteCacheMetaV1,
+} from "./remote_cache_manager";
 import {
   deserializeRuntimeDiskSnapshot,
   serializeRuntimeDiskSnapshot,
@@ -182,15 +187,25 @@ function remoteRangeMetaFileName(cacheFileName: string): string {
   return `${cacheFileName}.remote-range-meta.json`;
 }
 
+// Defensive bound: binding/meta JSON files can become corrupt/attacker-controlled. Keep reads small
+// to avoid pathological allocations and JSON parse overhead.
+const MAX_OPFS_BINDING_BYTES = 64 * 1024 * 1024; // 64 MiB
+
 function opfsRemoteRangeDiskMetadataStore(metaFileName: string): RemoteRangeDiskMetadataStore {
   return {
     async read(_cacheId: string) {
       try {
         const handle = await opfsGetDiskFileHandle(metaFileName, { create: false });
         const file = await handle.getFile();
+        if (!Number.isFinite(file.size) || file.size < 0 || file.size > MAX_OPFS_BINDING_BYTES) return null;
         const text = await file.text();
         if (!text.trim()) return null;
-        return JSON.parse(text) as any;
+        try {
+          const parsed = JSON.parse(text) as unknown;
+          return validateRemoteCacheMetaV1(parsed);
+        } catch {
+          return null;
+        }
       } catch (err) {
         if (err instanceof DOMException && err.name === "NotFoundError") return null;
         // Corrupt JSON / transient failures: treat as missing so callers can regenerate.
@@ -213,9 +228,20 @@ async function readCacheBinding(fileName: string): Promise<RemoteCacheBinding | 
   try {
     const handle = await opfsGetDiskFileHandle(fileName, { create: false });
     const file = await handle.getFile();
+    if (!Number.isFinite(file.size) || file.size < 0 || file.size > MAX_OPFS_BINDING_BYTES) return null;
     const text = await file.text();
     if (!text.trim()) return null;
-    return JSON.parse(text) as RemoteCacheBinding;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text) as unknown;
+    } catch {
+      return null;
+    }
+    if (!parsed || typeof parsed !== "object") return null;
+    const obj = parsed as Partial<RemoteCacheBinding>;
+    if (obj.version !== 1) return null;
+    if (!obj.base || typeof obj.base !== "object") return null;
+    return obj as RemoteCacheBinding;
   } catch (err) {
     if (err instanceof DOMException && err.name === "NotFoundError") return null;
     return null;

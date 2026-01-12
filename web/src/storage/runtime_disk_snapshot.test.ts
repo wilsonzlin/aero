@@ -85,6 +85,11 @@ describe("runtime disk snapshot payload", () => {
     expect(json).not.toContain("cookie");
   });
 
+  it("rejects oversized payloads", () => {
+    const bytes = new Uint8Array(1024 * 1024 + 1);
+    expect(() => deserializeRuntimeDiskSnapshot(bytes)).toThrow(/too large/);
+  });
+
   it("rejects wrong version", () => {
     const snapshot = sampleSnapshot() as any;
     snapshot.version = 2;

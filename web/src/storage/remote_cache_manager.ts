@@ -192,7 +192,7 @@ function toArrayBufferUint8(data: Uint8Array): Uint8Array<ArrayBuffer> {
     : new Uint8Array(data);
 }
 
-function validateMeta(parsed: unknown): RemoteCacheMetaV1 | null {
+export function validateRemoteCacheMetaV1(parsed: unknown): RemoteCacheMetaV1 | null {
   if (!parsed || typeof parsed !== "object") return null;
   const obj = parsed as Partial<RemoteCacheMetaV1>;
   if (obj.version !== META_VERSION) return null;
@@ -322,7 +322,7 @@ export class RemoteCacheManager {
       const raw = await file.text();
       if (!raw.trim()) return null;
       const parsed = JSON.parse(raw) as unknown;
-      return validateMeta(parsed);
+      return validateRemoteCacheMetaV1(parsed);
     } catch (err) {
       if (isNotFoundError(err)) return null;
       // Corrupt/invalid meta: treat as absent so callers can invalidate/heal.

@@ -8,6 +8,7 @@ export type RemoteDiskValidator =
 // corrupted snapshots cannot force pathological allocations.
 //
 // Keep these limits in sync with Rust (`crates/aero-io-snapshot/src/io/storage/state.rs`).
+const MAX_SNAPSHOT_BYTES = 1024 * 1024; // 1 MiB
 const MAX_DISKS = 64;
 const MAX_DISK_STRING_BYTES = 64 * 1024;
 const MAX_REMOTE_CHUNK_SIZE_BYTES = 64 * 1024 * 1024;
@@ -371,6 +372,9 @@ function validateBackendSnapshot(
 }
 
 export function deserializeRuntimeDiskSnapshot(bytes: Uint8Array): RuntimeDiskSnapshot {
+  if (bytes.byteLength > MAX_SNAPSHOT_BYTES) {
+    throw new Error(`Invalid disk snapshot payload (too large: max=${MAX_SNAPSHOT_BYTES} bytes).`);
+  }
   const json = new TextDecoder().decode(bytes);
   let parsed: unknown;
   try {
