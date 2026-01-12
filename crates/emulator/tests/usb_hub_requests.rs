@@ -658,19 +658,19 @@ fn usb_hub_standard_get_descriptor_accepts_hub_descriptor_type() {
 fn usb_hub_interrupt_bitmap_scales_with_port_count() {
     const HUB_DESCRIPTOR_TYPE: u16 = 0x29;
 
-    let mut hub = UsbHubDevice::with_port_count(8);
-    hub.attach(8, Box::new(DummyUsbDevice));
+    let mut hub = UsbHubDevice::with_port_count(16);
+    hub.attach(16, Box::new(DummyUsbDevice));
 
     assert_eq!(
         hub.handle_control_request(set_configuration(1), None),
         ControlResponse::Ack
     );
 
-    let UsbInResult::Data(bitmap) = hub.handle_in_transfer(HUB_INTERRUPT_IN_EP, 2) else {
+    let UsbInResult::Data(bitmap) = hub.handle_in_transfer(HUB_INTERRUPT_IN_EP, 3) else {
         panic!("expected port-change bitmap");
     };
-    assert_eq!(bitmap.len(), 2);
-    assert_ne!(bitmap[1] & 0x01, 0); // bit8 = port8 change.
+    assert_eq!(bitmap.len(), 3);
+    assert_ne!(bitmap[2] & 0x01, 0); // bit16 = port16 change.
 
     let ControlResponse::Data(desc) = hub.handle_control_request(
         setup(
@@ -685,16 +685,18 @@ fn usb_hub_interrupt_bitmap_scales_with_port_count() {
         panic!("expected Data response");
     };
 
-    assert_eq!(desc.len(), 11);
-    assert_eq!(desc[0], 11);
+    assert_eq!(desc.len(), 13);
+    assert_eq!(desc[0], 13);
     assert_eq!(desc[1], HUB_DESCRIPTOR_TYPE as u8);
-    assert_eq!(desc[2], 8);
+    assert_eq!(desc[2], 16);
 
-    // DeviceRemovable + PortPwrCtrlMask bitmaps for 8 ports are 2 bytes each.
+    // DeviceRemovable + PortPwrCtrlMask bitmaps for 16 ports are 3 bytes each.
     assert_eq!(desc[7], 0x00);
     assert_eq!(desc[8], 0x00);
-    assert_eq!(desc[9], 0xFE);
-    assert_eq!(desc[10], 0x01);
+    assert_eq!(desc[9], 0x00);
+    assert_eq!(desc[10], 0xFE);
+    assert_eq!(desc[11], 0xFF);
+    assert_eq!(desc[12], 0x01);
 
     // Interrupt endpoint wMaxPacketSize should match the bitmap length.
     let ControlResponse::Data(cfg) = hub.handle_control_request(
@@ -709,7 +711,7 @@ fn usb_hub_interrupt_bitmap_scales_with_port_count() {
     ) else {
         panic!("expected configuration descriptor response");
     };
-    assert_eq!(cfg[22], 2);
+    assert_eq!(cfg[22], 3);
     assert_eq!(cfg[23], 0);
 }
 
