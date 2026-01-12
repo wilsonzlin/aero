@@ -32,8 +32,11 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@types/node": "^20.11.30",
     "autocannon": "^7.15.0",
     "dns-packet": "^5.6.1",
-    "fast-check": "^3.16.0"
+    "fast-check": "^3.16.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.5.4"
   }
 }
