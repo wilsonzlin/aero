@@ -253,8 +253,12 @@ async function handleCompileRequest(req: CompileBlockRequest & { type: 'CompileB
   }
 
   if (req.debug_sync) {
-    const debugSyncOffset =
-      guestBase >= DEBUG_SYNC_TAIL_GUARD_BYTES ? guestBase - DEBUG_SYNC_TAIL_GUARD_BYTES : 0;
+    if (guestBase < DEBUG_SYNC_TAIL_GUARD_BYTES) {
+      throw new Error(
+        `debug_sync unavailable: guest_base (${guestBase}) < tail guard bytes (${DEBUG_SYNC_TAIL_GUARD_BYTES})`,
+      );
+    }
+    const debugSyncOffset = guestBase - DEBUG_SYNC_TAIL_GUARD_BYTES;
     if ((debugSyncOffset & 3) !== 0 || debugSyncOffset + 4 > sharedMemory.buffer.byteLength) {
       throw new Error(
         `debug_sync offset out of bounds: offset=${debugSyncOffset} guest_base=${guestBase} mem_bytes=${sharedMemory.buffer.byteLength}`,
