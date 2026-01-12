@@ -29,14 +29,6 @@ pub trait NetworkBackend {
     fn poll_receive(&mut self) -> Option<Vec<u8>> {
         None
     }
-
-    /// Return ring-backend-specific statistics (when supported).
-    ///
-    /// This is primarily intended for debugging the browser `NET_TX`/`NET_RX` ring path. Backends
-    /// that do not expose these counters should return `None`.
-    fn l2_ring_stats(&self) -> Option<L2TunnelRingBackendStats> {
-        None
-    }
 }
 
 impl<T: NetworkBackend + ?Sized> NetworkBackend for Box<T> {
@@ -47,10 +39,6 @@ impl<T: NetworkBackend + ?Sized> NetworkBackend for Box<T> {
     fn poll_receive(&mut self) -> Option<Vec<u8>> {
         <T as NetworkBackend>::poll_receive(&mut **self)
     }
-
-    fn l2_ring_stats(&self) -> Option<L2TunnelRingBackendStats> {
-        <T as NetworkBackend>::l2_ring_stats(&**self)
-    }
 }
 
 impl<T: NetworkBackend + ?Sized> NetworkBackend for &mut T {
@@ -60,10 +48,6 @@ impl<T: NetworkBackend + ?Sized> NetworkBackend for &mut T {
 
     fn poll_receive(&mut self) -> Option<Vec<u8>> {
         <T as NetworkBackend>::poll_receive(&mut **self)
-    }
-
-    fn l2_ring_stats(&self) -> Option<L2TunnelRingBackendStats> {
-        <T as NetworkBackend>::l2_ring_stats(&**self)
     }
 }
 
@@ -80,9 +64,5 @@ impl<B: NetworkBackend> NetworkBackend for Option<B> {
 
     fn poll_receive(&mut self) -> Option<Vec<u8>> {
         self.as_mut().and_then(|backend| backend.poll_receive())
-    }
-
-    fn l2_ring_stats(&self) -> Option<L2TunnelRingBackendStats> {
-        self.as_ref().and_then(|backend| backend.l2_ring_stats())
     }
 }

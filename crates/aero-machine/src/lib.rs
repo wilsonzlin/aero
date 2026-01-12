@@ -49,7 +49,7 @@ use aero_devices::rtc_cmos::{register_rtc_cmos, RtcCmos, SharedRtcCmos};
 use aero_devices::serial::{register_serial16550, Serial16550, SharedSerial16550};
 pub use aero_devices_input::Ps2MouseButton;
 use aero_interrupts::apic::{IOAPIC_MMIO_BASE, IOAPIC_MMIO_SIZE, LAPIC_MMIO_BASE, LAPIC_MMIO_SIZE};
-use aero_net_backend::{FrameRing, L2TunnelRingBackend, L2TunnelRingBackendStats, NetworkBackend};
+use aero_net_backend::{FrameRing, L2TunnelRingBackend, NetworkBackend};
 use aero_net_e1000::E1000Device;
 use aero_net_pump::tick_e1000;
 use aero_pc_platform::{PciBarMmioRouter, PciIoBarHandler, PciIoBarRouter};
@@ -778,13 +778,6 @@ impl Machine {
     /// Detach (drop) any currently installed network backend.
     pub fn detach_network(&mut self) {
         self.network_backend = None;
-    }
-
-    /// Return statistics for the currently attached `NET_TX`/`NET_RX` ring backend (if present).
-    pub fn network_backend_l2_ring_stats(&self) -> Option<L2TunnelRingBackendStats> {
-        self.network_backend
-            .as_ref()
-            .and_then(|backend| backend.l2_ring_stats())
     }
 
     /// Debug/testing helper: read a single guest physical byte.
