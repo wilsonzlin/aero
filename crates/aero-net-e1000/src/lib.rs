@@ -1207,6 +1207,7 @@ impl E1000Device {
             }
             // The hardware head (RDH) must not catch up to the software tail (RDT).
             // Keep one descriptor unused to avoid ambiguity in full/empty conditions.
+            // This means a ring programmed with N descriptors provides N-1 usable RX buffers.
             if head == tail {
                 break;
             }
