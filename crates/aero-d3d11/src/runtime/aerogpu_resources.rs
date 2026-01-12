@@ -1094,18 +1094,51 @@ fn upload_texture_from_linear_bytes(
                         std::borrow::Cow::Owned(tmp)
                     };
 
+                // `aero_gpu::decompress_bc*_rgba8` asserts on input length; validate here to avoid
+                // panicking on malformed guest data.
+                let expected_bc_len: usize = match format_layout_info(desc.format)? {
+                    TextureFormatLayout::BlockCompressed {
+                        block_width,
+                        block_height,
+                        bytes_per_block,
+                    } => {
+                        let blocks_w = linear.width.div_ceil(block_width) as usize;
+                        let blocks_h = linear.height.div_ceil(block_height) as usize;
+                        blocks_w
+                            .checked_mul(blocks_h)
+                            .and_then(|v| v.checked_mul(bytes_per_block as usize))
+                            .ok_or_else(|| anyhow!("BC decompression size overflow"))?
+                    }
+                    TextureFormatLayout::Uncompressed { .. } => {
+                        bail!(
+                            "BC decompression upload transform requires a BC format (got {:?})",
+                            desc.format
+                        );
+                    }
+                };
+                if bc_tight.len() != expected_bc_len {
+                    bail!(
+                        "BC decompression data length mismatch: expected {} bytes for {}x{} {:?}, got {}",
+                        expected_bc_len,
+                        linear.width,
+                        linear.height,
+                        desc.format,
+                        bc_tight.len()
+                    );
+                }
+
                 let rgba = match desc.upload_transform {
                     TextureUploadTransform::Bc1ToRgba8 => {
-                        decompress_bc1_rgba8(linear.width, linear.height, &bc_tight)
+                        decompress_bc1_rgba8(linear.width, linear.height, bc_tight.as_ref())
                     }
                     TextureUploadTransform::Bc2ToRgba8 => {
-                        decompress_bc2_rgba8(linear.width, linear.height, &bc_tight)
+                        decompress_bc2_rgba8(linear.width, linear.height, bc_tight.as_ref())
                     }
                     TextureUploadTransform::Bc3ToRgba8 => {
-                        decompress_bc3_rgba8(linear.width, linear.height, &bc_tight)
+                        decompress_bc3_rgba8(linear.width, linear.height, bc_tight.as_ref())
                     }
                     TextureUploadTransform::Bc7ToRgba8 => {
-                        decompress_bc7_rgba8(linear.width, linear.height, &bc_tight)
+                        decompress_bc7_rgba8(linear.width, linear.height, bc_tight.as_ref())
                     }
                     TextureUploadTransform::Direct => unreachable!(),
                 };
