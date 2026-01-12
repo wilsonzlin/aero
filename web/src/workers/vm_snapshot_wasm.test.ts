@@ -96,6 +96,16 @@ describe("workers/vm_snapshot_wasm", () => {
     expect(vmSnapshotDeviceKindToId(VM_SNAPSHOT_DEVICE_E1000_KIND)).toBe(VM_SNAPSHOT_DEVICE_ID_E1000);
     expect(vmSnapshotDeviceIdToKind(VM_SNAPSHOT_DEVICE_ID_E1000)).toBe(VM_SNAPSHOT_DEVICE_E1000_KIND);
 
+    // Ensure these stable device ids do not collide.
+    const ids = [
+      VM_SNAPSHOT_DEVICE_ID_USB,
+      VM_SNAPSHOT_DEVICE_ID_I8042,
+      VM_SNAPSHOT_DEVICE_ID_AUDIO_HDA,
+      VM_SNAPSHOT_DEVICE_ID_NET_STACK,
+      VM_SNAPSHOT_DEVICE_ID_E1000,
+    ];
+    expect(new Set(ids).size).toBe(ids.length);
+
     // Forward compatibility: unknown device IDs should still roundtrip through WorkerVmSnapshot.
     expect(vmSnapshotDeviceKindToId("device.999")).toBe(999);
     expect(vmSnapshotDeviceIdToKind(999)).toBe("device.999");

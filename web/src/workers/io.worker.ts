@@ -674,6 +674,7 @@ type AudioHdaSnapshotBridgeLike = {
 
 // Optional HDA audio device bridge. This is populated by the audio integration when present.
 let audioHdaBridge: AudioHdaSnapshotBridgeLike | null = null;
+let pendingAudioHdaSnapshotBytes: Uint8Array | null = null;
 
 function resolveAudioHdaSnapshotBridge(): AudioHdaSnapshotBridgeLike | null {
   // Preferred: the live guest HDA controller bridge owned by the IO worker.
@@ -721,12 +722,20 @@ function snapshotAudioHdaDeviceState(): { kind: string; bytes: Uint8Array } | nu
 
 function restoreAudioHdaDeviceState(bytes: Uint8Array): void {
   const bridge = resolveAudioHdaSnapshotBridge();
-  if (!bridge) return;
+  if (!bridge) {
+    // The HDA device bridge may not be initialized yet (WASM init races worker init). Cache the
+    // blob and apply it once the bridge becomes available.
+    const copy = new Uint8Array(bytes.byteLength);
+    copy.set(bytes);
+    pendingAudioHdaSnapshotBytes = copy;
+    return;
+  }
 
   const load =
     (bridge as unknown as { load_state?: unknown }).load_state ?? (bridge as unknown as { restore_state?: unknown }).restore_state;
   if (typeof load !== "function") return;
   load.call(bridge, bytes);
+  pendingAudioHdaSnapshotBytes = null;
 }
 
 type NetStackSnapshotBridgeLike = {
@@ -1598,6 +1607,17 @@ function maybeInitHdaDevice(): void {
         channelCount: audioOutChannelCount,
         dstSampleRateHz: audioOutDstSampleRate,
       });
+    }
+
+    // Apply any cached snapshot state captured before the HDA bridge was initialized.
+    if (pendingAudioHdaSnapshotBytes) {
+      const pending = pendingAudioHdaSnapshotBytes;
+      pendingAudioHdaSnapshotBytes = null;
+      try {
+        restoreAudioHdaDeviceState(pending);
+      } catch (err) {
+        console.warn("[io.worker] Failed to apply pending HDA snapshot state after init", err);
+      }
     }
   } catch (err) {
     console.warn("[io.worker] Failed to initialize HDA controller bridge", err);
@@ -4069,6 +4089,7 @@ function shutdown(): void {
       hdaDevice = null;
       hdaControllerBridge = null;
       audioHdaBridge = null;
+      pendingAudioHdaSnapshotBytes = null;
       try {
         usbDemoApi?.free();
       } catch {
