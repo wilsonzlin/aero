@@ -175,6 +175,8 @@ fn save_bytes<S: SnapshotSource>(source: &mut S) -> Vec<u8> {
 
 struct SplitSource {
     meta: SnapshotMeta,
+    cfg_id: DeviceId,
+    intx_id: DeviceId,
     pci_cfg: RefCell<PciConfigPorts>,
     pci_intx: RefCell<PciIntxRouter>,
     ram: Vec<u8>,
@@ -196,8 +198,8 @@ impl SnapshotSource for SplitSource {
 
     fn device_states(&self) -> Vec<DeviceState> {
         vec![
-            device_state_from_io_snapshot(DeviceId::PCI, &*self.pci_cfg.borrow()),
-            device_state_from_io_snapshot(DeviceId::PCI_INTX_ROUTER, &*self.pci_intx.borrow()),
+            device_state_from_io_snapshot(self.cfg_id, &*self.pci_cfg.borrow()),
+            device_state_from_io_snapshot(self.intx_id, &*self.pci_intx.borrow()),
         ]
     }
 
@@ -223,6 +225,8 @@ impl SnapshotSource for SplitSource {
 }
 
 struct SplitTarget {
+    cfg_id: DeviceId,
+    intx_id: DeviceId,
     pci_cfg: PciConfigPorts,
     pci_intx: PciIntxRouter,
     ram: Vec<u8>,
@@ -235,9 +239,9 @@ impl SnapshotTarget for SplitTarget {
 
     fn restore_device_states(&mut self, states: Vec<DeviceState>) {
         for state in states {
-            if state.id == DeviceId::PCI {
+            if state.id == self.cfg_id {
                 apply_io_snapshot_to_device(&state, &mut self.pci_cfg).unwrap();
-            } else if state.id == DeviceId::PCI_INTX_ROUTER {
+            } else if state.id == self.intx_id {
                 apply_io_snapshot_to_device(&state, &mut self.pci_intx).unwrap();
             }
         }
@@ -330,6 +334,18 @@ fn pci_io_snapshot_roundtrips_through_aero_snapshot_file() {
 
 #[test]
 fn pci_io_snapshot_split_entries_roundtrip_through_aero_snapshot_file() {
+    // Legacy mapping: store PCI config ports (`PCPT`) directly under `DeviceId::PCI`.
+    split_roundtrip(DeviceId::PCI);
+}
+
+#[test]
+fn pci_io_snapshot_split_entries_pci_cfg_roundtrip_through_aero_snapshot_file() {
+    // Canonical mapping: store PCI config ports (`PCPT`) under `DeviceId::PCI_CFG` to avoid
+    // collisions with the separate `DeviceId::PCI_INTX_ROUTER` entry.
+    split_roundtrip(DeviceId::PCI_CFG);
+}
+
+fn split_roundtrip(cfg_id: DeviceId) {
     let (bus, bdf) = make_bus();
     let mut pci_cfg = PciConfigPorts::with_bus(bus);
 
@@ -365,20 +381,25 @@ fn pci_io_snapshot_split_entries_roundtrip_through_aero_snapshot_file() {
             created_unix_ms: 0,
             label: None,
         },
+        cfg_id,
+        intx_id: DeviceId::PCI_INTX_ROUTER,
         pci_cfg: RefCell::new(pci_cfg),
         pci_intx: RefCell::new(pci_intx),
         ram: vec![0u8; 4096],
     };
 
     // Saving must be deterministic and must not trip the `(DeviceId, version, flags)` uniqueness
-    // constraint, because the split-out PCI core entries use distinct outer IDs (`PCI` and
-    // `PCI_INTX_ROUTER`).
+    // constraint, because the split-out PCI core entries use distinct outer IDs for:
+    // - config ports (`PCPT`), and
+    // - INTx routing (`INTX`).
     let snap1 = save_bytes(&mut source);
     let snap2 = save_bytes(&mut source);
     assert_eq!(snap1, snap2, "snapshot bytes must be deterministic");
 
     let (bus2, _) = make_bus();
     let mut target = SplitTarget {
+        cfg_id,
+        intx_id: DeviceId::PCI_INTX_ROUTER,
         pci_cfg: PciConfigPorts::with_bus(bus2),
         pci_intx: PciIntxRouter::new(PciIntxRouterConfig::default()),
         ram: vec![0u8; 4096],
