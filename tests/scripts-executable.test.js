@@ -113,6 +113,19 @@ test("scripts referenced as ./scripts/*.sh are executable", { skip: process.plat
     // Linux will fail with `Exec format error`.
     const firstLine = fs.readFileSync(absPath, "utf8").split(/\r?\n/, 1)[0];
     assert.ok(firstLine.startsWith("#!"), `${relPath} is missing a shebang (expected first line to start with '#!')`);
+
+    // Also ensure the shebang line uses LF, not CRLF. The Linux kernel does not
+    // strip '\r' from the interpreter path, so `#!/usr/bin/env bash\r\n` fails
+    // with "bad interpreter".
+    const raw = fs.readFileSync(absPath);
+    const nl = raw.indexOf(0x0a);
+    if (nl !== -1) {
+      assert.notEqual(
+        raw[nl - 1],
+        0x0d,
+        `${relPath} has CRLF line ending on the shebang (use LF to avoid "bad interpreter")`,
+      );
+    }
   }
 });
 
