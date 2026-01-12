@@ -1,3 +1,4 @@
+use aero_devices::pci::PciInterruptPin;
 use aero_devices::pci::profile::{HDA_ICH6, SATA_AHCI_ICH9};
 use aero_interrupts::apic::IOAPIC_MMIO_BASE;
 use aero_pc_platform::{PcPlatform, PcPlatformConfig};
@@ -440,15 +441,16 @@ fn pc_platform_routes_hda_intx_via_ioapic_in_apic_mode() {
     pc.io.write_u8(0x23, 0x01);
     assert_eq!(pc.interrupts.borrow().mode(), PlatformInterruptMode::Apic);
 
-    // Program IOAPIC entry for GSI10 to vector 0x60, level-triggered, active-low (default PCI INTx wiring).
+    // Route the HDA INTx line to vector 0x60, level-triggered + active-low.
     let vector = 0x60u32;
     let low = vector | (1 << 13) | (1 << 15); // polarity_low + level-triggered, unmasked
-    program_ioapic_entry(&mut pc, 10, low, 0);
+    let bdf = HDA_ICH6.bdf;
+    let gsi = pc.pci_intx.gsi_for_intx(bdf, PciInterruptPin::IntA);
+    program_ioapic_entry(&mut pc, gsi, low, 0);
 
     // Bring controller out of reset.
     pc.memory.write_u32(bar0_base + 0x08, 1);
 
-    let bdf = HDA_ICH6.bdf;
     // Allow HDA CORB/RIRB DMA while processing.
     write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0006);
 

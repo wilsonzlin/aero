@@ -1,5 +1,5 @@
 use aero_cpu_core::mem::CpuBus as _;
-use aero_devices::pci::{PciIntxRouter, PciIntxRouterConfig};
+use aero_devices::pci::{PciInterruptPin, PciIntxRouter, PciIntxRouterConfig};
 use aero_devices::pci::profile::NIC_E1000_82540EM;
 use aero_interrupts::apic::IOAPIC_MMIO_BASE;
 use aero_net_e1000::{ICR_TXDW, MIN_L2_FRAME_LEN};
@@ -501,10 +501,13 @@ fn pc_platform_routes_e1000_intx_via_ioapic_in_apic_mode() {
     pc.io.write_u8(0x23, 0x01);
     assert_eq!(pc.interrupts.borrow().mode(), PlatformInterruptMode::Apic);
 
-    // Program IOAPIC entry for GSI11 to vector 0x61, level-triggered, active-low (default PCI INTx wiring).
+    // Route the E1000 INTx line to vector 0x61, level-triggered + active-low.
     let vector = 0x61u32;
     let low = vector | (1 << 13) | (1 << 15); // polarity_low + level-triggered, unmasked
-    program_ioapic_entry(&mut pc, 11, low, 0);
+    let gsi = pc
+        .pci_intx
+        .gsi_for_intx(NIC_E1000_82540EM.bdf, PciInterruptPin::IntA);
+    program_ioapic_entry(&mut pc, gsi, low, 0);
 
     // Enable the interrupt and set the cause.
     pc.memory.write_u32(bar0_base + 0x00D0, ICR_TXDW); // IMS
@@ -528,10 +531,13 @@ fn pc_platform_e1000_intx_deasserts_after_icr_read_in_apic_mode() {
     pc.io.write_u8(0x23, 0x01);
     assert_eq!(pc.interrupts.borrow().mode(), PlatformInterruptMode::Apic);
 
-    // Program IOAPIC entry for GSI11 to vector 0x62, level-triggered, active-low.
+    // Route the E1000 INTx line to vector 0x62, level-triggered + active-low.
     let vector = 0x62u32;
     let low = vector | (1 << 13) | (1 << 15);
-    program_ioapic_entry(&mut pc, 11, low, 0);
+    let gsi = pc
+        .pci_intx
+        .gsi_for_intx(NIC_E1000_82540EM.bdf, PciInterruptPin::IntA);
+    program_ioapic_entry(&mut pc, gsi, low, 0);
 
     // Enable the interrupt and set the cause.
     pc.memory.write_u32(bar0_base + 0x00D0, ICR_TXDW); // IMS

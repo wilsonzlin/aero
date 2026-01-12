@@ -1,4 +1,5 @@
 use aero_devices::pci::profile::{VIRTIO_BLK, VIRTIO_CAP_COMMON, VIRTIO_CAP_DEVICE, VIRTIO_CAP_ISR, VIRTIO_CAP_NOTIFY};
+use aero_devices::pci::PciInterruptPin;
 use aero_devices::pci::PciResourceAllocatorConfig;
 use aero_io_snapshot::io::state::IoSnapshot;
 use aero_interrupts::apic::IOAPIC_MMIO_BASE;
@@ -558,10 +559,11 @@ fn pc_platform_routes_virtio_blk_intx_via_ioapic_in_apic_mode() {
     pc.io.write_u8(0x23, 0x01);
     assert_eq!(pc.interrupts.borrow().mode(), PlatformInterruptMode::Apic);
 
-    // Program IOAPIC entry for GSI11 to vector 0x61, level-triggered, active-low (default PCI INTx wiring).
+    // Route the virtio-blk INTx line to vector 0x61, level-triggered + active-low.
     let vector = 0x61u32;
     let low = vector | (1 << 13) | (1 << 15); // polarity_low + level-triggered, unmasked
-    program_ioapic_entry(&mut pc, 11, low, 0);
+    let gsi = pc.pci_intx.gsi_for_intx(bdf, PciInterruptPin::IntA);
+    program_ioapic_entry(&mut pc, gsi, low, 0);
 
     // Enable memory decoding + Bus Mastering so the device can DMA during processing.
     write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0006);

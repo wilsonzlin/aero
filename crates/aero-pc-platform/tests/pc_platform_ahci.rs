@@ -1,5 +1,5 @@
 use aero_devices::pci::profile::SATA_AHCI_ICH9;
-use aero_devices::pci::PciDevice;
+use aero_devices::pci::{PciDevice, PciInterruptPin};
 use aero_devices_storage::ata::{ATA_CMD_IDENTIFY, ATA_CMD_READ_DMA_EXT};
 use aero_interrupts::apic::IOAPIC_MMIO_BASE;
 use aero_pc_platform::PcPlatform;
@@ -562,13 +562,12 @@ fn pc_platform_routes_ahci_intx_via_ioapic_in_apic_mode() {
     pc.io.write_u8(0x23, 0x01);
     assert_eq!(pc.interrupts.borrow().mode(), PlatformInterruptMode::Apic);
 
-    // Program IOAPIC entry for GSI12 (ICH9 AHCI 00:02.0 INTA#) to vector 0x60, level-triggered,
-    // active-low (default PCI INTx wiring).
+    // Route the AHCI INTx line to vector 0x60, level-triggered + active-low.
     let vector = 0x60u32;
     let low = vector | (1 << 13) | (1 << 15); // polarity_low + level-triggered, unmasked
-    program_ioapic_entry(&mut pc, 12, low, 0);
-
     let bdf = SATA_AHCI_ICH9.bdf;
+    let gsi = pc.pci_intx.gsi_for_intx(bdf, PciInterruptPin::IntA);
+    program_ioapic_entry(&mut pc, gsi, low, 0);
 
     // Reprogram BAR5 within the platform's PCI MMIO window for determinism.
     let bar5_base: u64 = 0xE100_0000;
