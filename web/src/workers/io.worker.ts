@@ -1409,6 +1409,14 @@ type SetMicrophoneRingBufferMessage = {
   sampleRate?: number;
 };
 
+type SetAudioRingBufferMessage = {
+  type: "setAudioRingBuffer";
+  ringBuffer: SharedArrayBuffer | null;
+  capacityFrames: number;
+  channelCount: number;
+  dstSampleRate: number;
+};
+
 type SetBootDisksMessage = {
   type: "setBootDisks";
   mounts: MountConfig;
@@ -1430,6 +1438,26 @@ const bootDisksInitPromise = new Promise<void>((resolve) => {
 
 let micRingBuffer: SharedArrayBuffer | null = null;
 let micSampleRate = 0;
+
+// Audio output ring buffer attachment (AudioWorklet producer-side).
+//
+// The actual audio producer lives in different workers depending on runtime mode:
+// - CPU worker: demo tone / mic loopback
+// - IO worker: guest HDA device (real VM runs)
+let audioOutRingBuffer: SharedArrayBuffer | null = null;
+let audioOutHeader: Uint32Array | null = null;
+let audioOutCapacityFrames = 0;
+let audioOutTelemetryActive = false;
+let audioOutTelemetryNextMs = 0;
+
+const AUDIO_OUT_HEADER_U32_LEN = 4;
+const AUDIO_OUT_HEADER_BYTES = AUDIO_OUT_HEADER_U32_LEN * Uint32Array.BYTES_PER_ELEMENT;
+const AUDIO_OUT_READ_FRAME_INDEX = 0;
+const AUDIO_OUT_WRITE_FRAME_INDEX = 1;
+const AUDIO_OUT_UNDERRUN_COUNT_INDEX = 2;
+const AUDIO_OUT_OVERRUN_COUNT_INDEX = 3;
+
+const AUDIO_OUT_TELEMETRY_INTERVAL_MS = 50;
 
 let perfWriter: PerfWriter | null = null;
 let perfFrameHeader: Int32Array | null = null;
@@ -1500,6 +1528,67 @@ function attachMicRingBuffer(ringBuffer: SharedArrayBuffer | null, sampleRate?: 
 
   micRingBuffer = ringBuffer;
   micSampleRate = (sampleRate ?? 0) | 0;
+}
+
+function attachAudioRingBuffer(ringBuffer: SharedArrayBuffer | null, capacityFrames?: number): void {
+  if (ringBuffer !== null) {
+    const Sab = globalThis.SharedArrayBuffer;
+    if (typeof Sab === "undefined") {
+      throw new Error("SharedArrayBuffer is unavailable; audio output requires crossOriginIsolated.");
+    }
+    if (!(ringBuffer instanceof Sab)) {
+      throw new Error("setAudioRingBuffer expects a SharedArrayBuffer or null.");
+    }
+    if (ringBuffer.byteLength < AUDIO_OUT_HEADER_BYTES) {
+      throw new Error(`audio ring buffer is too small: need at least ${AUDIO_OUT_HEADER_BYTES} bytes`);
+    }
+  }
+
+  audioOutRingBuffer = ringBuffer;
+  audioOutHeader = ringBuffer ? new Uint32Array(ringBuffer, 0, AUDIO_OUT_HEADER_U32_LEN) : null;
+  audioOutCapacityFrames = (capacityFrames ?? 0) >>> 0;
+  audioOutTelemetryNextMs = 0;
+}
+
+function ringBufferLevelFrames(header: Uint32Array, capacityFrames: number): number {
+  const read = Atomics.load(header, AUDIO_OUT_READ_FRAME_INDEX) >>> 0;
+  const write = Atomics.load(header, AUDIO_OUT_WRITE_FRAME_INDEX) >>> 0;
+  const available = (write - read) >>> 0;
+  return Math.min(available, capacityFrames >>> 0);
+}
+
+function maybePublishAudioOutTelemetry(nowMs: number): void {
+  // The IO worker should only publish these counters when the guest HDA device is
+  // active (i.e. during real VM runs). The CPU worker owns these counters during
+  // demo tone / loopback mode.
+  const header = audioOutHeader;
+  const capacityFrames = audioOutCapacityFrames;
+  const hdaActive = !!currentConfig?.activeDiskImage;
+  const shouldPublish = hdaActive && !!header && capacityFrames > 0;
+
+  if (!shouldPublish) {
+    if (audioOutTelemetryActive) {
+      audioOutTelemetryActive = false;
+      audioOutTelemetryNextMs = 0;
+      Atomics.store(status, StatusIndex.AudioBufferLevelFrames, 0);
+      Atomics.store(status, StatusIndex.AudioUnderrunCount, 0);
+      Atomics.store(status, StatusIndex.AudioOverrunCount, 0);
+    }
+    return;
+  }
+
+  audioOutTelemetryActive = true;
+  if (audioOutTelemetryNextMs !== 0 && nowMs < audioOutTelemetryNextMs) return;
+
+  const bufferLevelFrames = ringBufferLevelFrames(header, capacityFrames);
+  const underrunCount = Atomics.load(header, AUDIO_OUT_UNDERRUN_COUNT_INDEX) >>> 0;
+  const overrunCount = Atomics.load(header, AUDIO_OUT_OVERRUN_COUNT_INDEX) >>> 0;
+
+  Atomics.store(status, StatusIndex.AudioBufferLevelFrames, bufferLevelFrames | 0);
+  Atomics.store(status, StatusIndex.AudioUnderrunCount, underrunCount | 0);
+  Atomics.store(status, StatusIndex.AudioOverrunCount, overrunCount | 0);
+
+  audioOutTelemetryNextMs = nowMs + AUDIO_OUT_TELEMETRY_INTERVAL_MS;
 }
 
 function queueDiskIo(op: () => Promise<void>): void {
@@ -2115,6 +2204,7 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
       | Partial<InputBatchMessage>
       | Partial<SetBootDisksMessage>
       | Partial<SetMicrophoneRingBufferMessage>
+      | Partial<SetAudioRingBufferMessage>
       | Partial<HidProxyMessage>
       | Partial<UsbRingDetachMessage>
       | Partial<UsbSelectedMessage>
@@ -2238,6 +2328,12 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
     if ((data as Partial<SetMicrophoneRingBufferMessage>).type === "setMicrophoneRingBuffer") {
       const msg = data as Partial<SetMicrophoneRingBufferMessage>;
       attachMicRingBuffer((msg.ringBuffer as SharedArrayBuffer | null) ?? null, msg.sampleRate);
+      return;
+    }
+
+    if ((data as Partial<SetAudioRingBufferMessage>).type === "setAudioRingBuffer") {
+      const msg = data as Partial<SetAudioRingBufferMessage>;
+      attachAudioRingBuffer((msg.ringBuffer as SharedArrayBuffer | null) ?? null, msg.capacityFrames);
       return;
     }
 
@@ -2620,6 +2716,10 @@ function startIoIpcServer(): void {
           handleUsbDemoFailure("tick", err);
         }
       }
+
+      // Publish AudioWorklet-ring producer telemetry when the IO worker is acting
+      // as the audio producer (guest HDA device in VM mode).
+      maybePublishAudioOutTelemetry(nowMs);
 
       if (perfActive) perfIoMs += performance.now() - t0;
       maybeEmitPerfSample();

@@ -30,8 +30,9 @@ export const StatusIndex = {
   IoInputBatchCounter: 2,
   IoInputEventCounter: 3,
 
-  // Audio telemetry (producer-side). Values are updated by the worker producing
-  // audio for the AudioWorklet ring buffer.
+  // Audio telemetry (producer-side). Owned by the active audio producer:
+  // - CPU worker (demo tone / mic loopback)
+  // - I/O worker (guest HDA device during real VM runs)
   //
   // Counters are expressed in frames and stored as wrapping u32 values.
   AudioBufferLevelFrames: 4,

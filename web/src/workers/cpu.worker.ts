@@ -1562,6 +1562,11 @@ async function runLoopInner(): Promise<void> {
             }
 
             // Export a tiny amount of producer-side telemetry for the UI.
+            //
+            // NOTE: These StatusIndex.Audio* counters are owned by the active audio
+            // producer. The CPU worker publishes them for demo tone/loopback mode;
+            // during real VM runs (guest HDA in the IO worker) the IO worker should
+            // publish these instead.
             if (typeof bridge.buffer_level_frames === "function") level = bridge.buffer_level_frames() | 0;
             if (typeof bridge.underrun_count === "function") underruns = bridge.underrun_count() | 0;
             if (typeof bridge.overrun_count === "function") overruns = bridge.overrun_count() | 0;
