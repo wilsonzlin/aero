@@ -99,3 +99,39 @@ fn text_mode_cursor_overlay_renders_from_crtc_regs() {
     assert_eq!(px1, 0xFFAA_0000);
 }
 
+#[test]
+fn text_mode_cursor_overlay_respects_disable_bit() {
+    let cfg = MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: false,
+        enable_vga: true,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        enable_e1000: false,
+        enable_virtio_net: false,
+        ..Default::default()
+    };
+
+    // Cursor at (0,0), but disabled via CH bit5.
+    let boot = build_cursor_boot_sector(0, 0, 0x20, 0x00);
+    let mut m = Machine::new(cfg).unwrap();
+    m.set_disk_image(boot.to_vec()).unwrap();
+    m.reset();
+    run_until_halt(&mut m);
+
+    // Space glyph is all background pixels, so if the cursor is disabled we should see only the
+    // background color.
+    m.write_physical_u8(0xB8000, b' ');
+    m.write_physical_u8(0xB8001, 0x1F);
+
+    let vga = m.vga().expect("VGA enabled");
+    let pixel0 = {
+        let mut vga = vga.borrow_mut();
+        vga.present();
+        vga.get_framebuffer()[0]
+    };
+
+    assert_eq!(pixel0, 0xFFAA_0000);
+}
