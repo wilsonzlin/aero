@@ -124,7 +124,6 @@ export RAYON_NUM_THREADS="${RAYON_NUM_THREADS:-$CARGO_BUILD_JOBS}"
 
 # Reduce codegen parallelism per crate to limit memory spikes and avoid hitting per-user thread
 # limits in constrained sandboxes.
-#
 # Keep any existing RUSTFLAGS, but don't re-add codegen-units when sourced twice.
 #
 # Heuristic: align per-crate parallelism with overall Cargo build parallelism so the total number
@@ -137,15 +136,20 @@ if [[ "${RUSTFLAGS:-}" != *"codegen-units="* ]]; then
     else
       echo "warning: invalid AERO_RUST_CODEGEN_UNITS value: ${AERO_RUST_CODEGEN_UNITS} (expected positive integer); using ${_aero_codegen_units}" >&2
     fi
+  elif [[ -n "${AERO_CODEGEN_UNITS:-}" ]]; then
+    if [[ "${AERO_CODEGEN_UNITS}" =~ ^[1-9][0-9]*$ ]]; then
+      _aero_codegen_units="${AERO_CODEGEN_UNITS}"
+    else
+      echo "warning: invalid AERO_CODEGEN_UNITS value: ${AERO_CODEGEN_UNITS} (expected positive integer); using ${_aero_codegen_units}" >&2
+    fi
   fi
-
   if ! [[ "${_aero_codegen_units}" =~ ^[1-9][0-9]*$ ]]; then
     _aero_codegen_units=1
   fi
 
   # cap at 4 to avoid overly slow per-crate codegen when users opt into higher Cargo parallelism.
-  # Opt out via AERO_RUST_CODEGEN_UNITS.
-  if [[ -z "${AERO_RUST_CODEGEN_UNITS:-}" ]] && [[ "${_aero_codegen_units}" -gt 4 ]]; then
+  # Opt out via AERO_RUST_CODEGEN_UNITS (or its shorthand alias, AERO_CODEGEN_UNITS).
+  if [[ -z "${AERO_RUST_CODEGEN_UNITS:-}" && -z "${AERO_CODEGEN_UNITS:-}" && "${_aero_codegen_units}" -gt 4 ]]; then
     _aero_codegen_units=4
   fi
 

@@ -65,21 +65,27 @@ if [[ "${1:-}" == "cargo" || "${1:-}" == */cargo ]]; then
         _aero_codegen_units="${CARGO_BUILD_JOBS:-1}"
 
         # Allow explicit override without requiring users to manually edit RUSTFLAGS.
+        # `AERO_CODEGEN_UNITS` is a shorthand alias for `AERO_RUST_CODEGEN_UNITS`.
         if [[ -n "${AERO_RUST_CODEGEN_UNITS:-}" ]]; then
             if [[ "${AERO_RUST_CODEGEN_UNITS}" =~ ^[1-9][0-9]*$ ]]; then
                 _aero_codegen_units="${AERO_RUST_CODEGEN_UNITS}"
             else
                 echo "[safe-run] warning: invalid AERO_RUST_CODEGEN_UNITS value: ${AERO_RUST_CODEGEN_UNITS} (expected positive integer); using ${_aero_codegen_units}" >&2
             fi
+        elif [[ -n "${AERO_CODEGEN_UNITS:-}" ]]; then
+            if [[ "${AERO_CODEGEN_UNITS}" =~ ^[1-9][0-9]*$ ]]; then
+                _aero_codegen_units="${AERO_CODEGEN_UNITS}"
+            else
+                echo "[safe-run] warning: invalid AERO_CODEGEN_UNITS value: ${AERO_CODEGEN_UNITS} (expected positive integer); using ${_aero_codegen_units}" >&2
+            fi
         fi
-
         if ! [[ "${_aero_codegen_units}" =~ ^[1-9][0-9]*$ ]]; then
             _aero_codegen_units=1
         fi
 
         # cap at 4 to avoid overly slow per-crate codegen when users opt into higher Cargo parallelism.
-        # Opt out via AERO_RUST_CODEGEN_UNITS.
-        if [[ -z "${AERO_RUST_CODEGEN_UNITS:-}" ]] && [[ "${_aero_codegen_units}" -gt 4 ]]; then
+        # Opt out via AERO_RUST_CODEGEN_UNITS (or its shorthand alias, AERO_CODEGEN_UNITS).
+        if [[ -z "${AERO_RUST_CODEGEN_UNITS:-}" && -z "${AERO_CODEGEN_UNITS:-}" && "${_aero_codegen_units}" -gt 4 ]]; then
             _aero_codegen_units=4
         fi
 
@@ -112,7 +118,7 @@ if [[ $# -lt 1 ]]; then
     echo "  AERO_MEM_LIMIT=12G   Memory limit (default: 12G)" >&2
     echo "  AERO_CARGO_BUILD_JOBS=1  Cargo parallelism for agent sandboxes (default: 1; overrides CARGO_BUILD_JOBS if set)" >&2
     echo "  CARGO_BUILD_JOBS=1       Cargo parallelism override (used when AERO_CARGO_BUILD_JOBS is unset)" >&2
-    echo "  AERO_RUST_CODEGEN_UNITS=4  rustc per-crate codegen-units override (default: min(CARGO_BUILD_JOBS, 4))" >&2
+    echo "  AERO_RUST_CODEGEN_UNITS=4  rustc per-crate codegen-units override (default: min(CARGO_BUILD_JOBS, 4); alias: AERO_CODEGEN_UNITS)" >&2
     echo "" >&2
     echo "Examples:" >&2
     echo "  $0 cargo build --locked" >&2
