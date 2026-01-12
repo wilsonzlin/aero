@@ -235,8 +235,16 @@ export class VmCoordinator extends EventTarget {
         throw new Error("setMicrophoneRingBuffer expects a SharedArrayBuffer or null.");
       }
     }
+
+    const sr = (sampleRate ?? 0) | 0;
+    const changed = this._micRingBuffer !== ringBuffer || this._micSampleRate !== sr;
     this._micRingBuffer = ringBuffer;
-    this._micSampleRate = (sampleRate ?? 0) | 0;
+    this._micSampleRate = sr;
+
+    // Avoid resending identical attachments: in worker runtimes, re-attaching can flush
+    // buffered mic samples (readPos := writePos), which would drop live audio and cause
+    // glitches if called redundantly.
+    if (!changed) return;
     this._send({ type: "setMicrophoneRingBuffer", ringBuffer, sampleRate: this._micSampleRate });
   }
 
