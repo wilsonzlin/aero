@@ -200,6 +200,7 @@ async function runTieredVm(iterations: number, threshold: number) {
   }
 
   // Install JS-side tier-1 call table that the WASM tiered runtime imports via `globalThis.__aero_jit_call`.
+  // Slots are recycled on cache eviction so the table stays bounded.
   const jitFns: Array<((cpu_ptr: number, jit_ctx_ptr: number) => bigint) | undefined> = [];
   let lastJitReturnType: string | null = null;
   let lastJitReturnIsSentinel = false;
@@ -430,6 +431,7 @@ async function runTieredVm(iterations: number, threshold: number) {
   let nextTableIndex = 0;
   const freeTableIndices: number[] = [];
   const installedByRip = new Map<number, number>();
+  const compilingByRip = new Set<number>();
   let interp_executions = 0;
   let jit_executions = 0;
 
@@ -557,6 +559,17 @@ async function runTieredVm(iterations: number, threshold: number) {
     }
   };
 
+  const allocTableIndex = (): number => {
+    const reused = freeTableIndices.pop();
+    if (reused !== undefined) return reused;
+    return nextTableIndex++;
+  };
+
+  const freeTableIndex = (idx: number) => {
+    jitFns[idx] = undefined;
+    freeTableIndices.push(idx);
+  };
+
   async function installTier1(resp: CompileBlockResponse): Promise<number> {
     const module =
       resp.wasm_module ??
@@ -572,25 +585,29 @@ async function runTieredVm(iterations: number, threshold: number) {
       throw new Error('JIT block module did not export a callable `block` function');
     }
 
-    const tableIndex = freeTableIndices.pop() ?? nextTableIndex++;
-    jitFns[tableIndex] = block as (cpu_ptr: number, jit_ctx_ptr: number) => bigint;
     const entryRipU32 = resp.entry_rip >>> 0;
+
+    // Reuse the existing table slot if this RIP was compiled before. This makes recompilation
+    // (self-modifying code invalidation) overwrite the previous slot rather than growing the JS
+    // call table unboundedly.
+    const existingIndex = installedByRip.get(entryRipU32);
+    const tableIndex = existingIndex ?? allocTableIndex();
+    jitFns[tableIndex] = block as (cpu_ptr: number, jit_ctx_ptr: number) => bigint;
+
     const evicted = vm.install_tier1_block(BigInt(entryRipU32), tableIndex, BigInt(entryRipU32), resp.meta.code_byte_len);
     installedByRip.set(entryRipU32, tableIndex);
 
     // If the JIT cache evicted older blocks, free their table indices so they can be reused.
     const releaseEvictedRip = (rip: number) => {
       const ripU32 = rip >>> 0;
-      if (ripU32 === entryRipU32) return;
+      if (ripU32 === 0 || ripU32 === entryRipU32) return;
       const idx = installedByRip.get(ripU32);
       if (idx === undefined) return;
       installedByRip.delete(ripU32);
       if (ripU32 === ENTRY_RIP && installedIndex === idx) {
         installedIndex = null;
       }
-      // Clearing the slot avoids accidentally calling into an evicted block.
-      jitFns[idx] = undefined;
-      freeTableIndices.push(idx);
+      freeTableIndex(idx);
     };
 
     if (Array.isArray(evicted)) {
@@ -610,10 +627,54 @@ async function runTieredVm(iterations: number, threshold: number) {
           else if (typeof v === 'number' && Number.isFinite(v)) releaseEvictedRip(v);
         }
       }
+    } else if (evicted && typeof evicted === 'object') {
+      // Best-effort: treat as iterable.
+      try {
+        for (const v of evicted as unknown as Iterable<unknown>) {
+          if (typeof v === 'bigint') releaseEvictedRip(u64AsNumber(v));
+          else if (typeof v === 'number' && Number.isFinite(v)) releaseEvictedRip(v);
+        }
+      } catch {
+        // ignore
+      }
     }
-
     return tableIndex;
   }
+
+  const drainCompileRequests = (): number[] => {
+    const out: number[] = [];
+    const compileReqs = vm.drain_compile_requests();
+    for (const entry_rip of compileReqs as unknown as Iterable<unknown>) {
+      let entryRipU32: number | undefined;
+      if (typeof entry_rip === 'bigint') {
+        try {
+          entryRipU32 = u64ToNumber(entry_rip) >>> 0;
+        } catch {
+          entryRipU32 = undefined;
+        }
+      } else if (typeof entry_rip === 'number' && Number.isFinite(entry_rip)) {
+        entryRipU32 = entry_rip >>> 0;
+      }
+      if (!entryRipU32) continue;
+      out.push(entryRipU32);
+    }
+    return out;
+  };
+
+  const compileAndInstall = async (entryRipNum: number): Promise<number | null> => {
+    const entryRipU32 = entryRipNum >>> 0;
+    if (!entryRipU32) return null;
+    if (compilingByRip.has(entryRipU32)) return null;
+    compilingByRip.add(entryRipU32);
+    try {
+      const resp = await requestCompile(entryRipU32);
+      const idx = await installTier1(resp);
+      if (entryRipU32 === ENTRY_RIP) installedIndex = idx;
+      return idx;
+    } finally {
+      compilingByRip.delete(entryRipU32);
+    }
+  };
 
   // Run the tiered VM loop, forwarding compile requests to the JIT worker.
   let installedIndex: number | null = null;
@@ -640,37 +701,22 @@ async function runTieredVm(iterations: number, threshold: number) {
     recordRunCounts(runResult);
     remainingBlocks -= batch;
 
-    const compileReqs = vm.drain_compile_requests();
-    for (const entry_rip of compileReqs as unknown as Iterable<unknown>) {
-      let entryRipU32: number | undefined;
-      if (typeof entry_rip === 'bigint') {
-        try {
-          entryRipU32 = u64ToNumber(entry_rip) >>> 0;
-        } catch {
-          entryRipU32 = undefined;
-        }
-      } else if (typeof entry_rip === 'number' && Number.isFinite(entry_rip)) {
-        entryRipU32 = entry_rip >>> 0;
+    try {
+      for (const entryRipNum of drainCompileRequests()) {
+        await compileAndInstall(entryRipNum);
       }
-      if (entryRipU32 === undefined) continue;
-      if (installedByRip.has(entryRipU32)) continue;
+    } catch (err) {
+      postToMain({
+        type: 'CpuWorkerError',
+        reason: `JIT compile failed: ${err instanceof Error ? err.message : String(err)}`,
+      });
+      jitWorker.terminate();
       try {
-        const resp = await requestCompile(entryRipU32);
-        const idx = await installTier1(resp);
-        if (resp.entry_rip === ENTRY_RIP) installedIndex = idx;
-      } catch (err) {
-        postToMain({
-          type: 'CpuWorkerError',
-          reason: `JIT compile failed: ${err instanceof Error ? err.message : String(err)}`,
-        });
-        jitWorker.terminate();
-        try {
-          vm.free();
-        } catch {
-          // ignore
-        }
-        return;
+        vm.free();
+      } catch {
+        // ignore
       }
+      return;
     }
 
     const interpTotal = Math.max(
@@ -704,6 +750,90 @@ async function runTieredVm(iterations: number, threshold: number) {
       } catch {
         break;
       }
+    }
+  }
+
+  // Regression: self-modifying code invalidation must trigger recompilation even if the RIP was
+  // installed once already (JS must not ignore compile requests solely based on prior installs).
+  if (installedIndex !== null) {
+    try {
+      const jitBeforeInvalidation = jit_executions;
+
+      // Patch the guest code bytes in-place (modify the `add eax, imm8` immediate from 1 -> 2).
+      const patched = new Uint8Array([0x66, 0x83, 0xc0, 0x02, 0xeb, 0xfa]);
+      new Uint8Array(memory.buffer).set(patched, guest_base + ENTRY_RIP);
+      if (!onGuestWrite) {
+        throw new Error('WasmTieredVm.on_guest_write is unavailable; cannot test self-modifying code invalidation');
+      }
+      onGuestWrite(BigInt(ENTRY_RIP), patched.byteLength);
+
+      let sawRecompileRequest = false;
+
+      // Drive the VM until it requests recompilation for ENTRY_RIP and we install the result.
+      for (let i = 0; i < 256; i++) {
+        recordRunCounts(vm.run_blocks(1));
+
+        const reqs = drainCompileRequests();
+        if (reqs.includes(ENTRY_RIP)) sawRecompileRequest = true;
+        for (const entryRipNum of reqs) {
+          await compileAndInstall(entryRipNum);
+        }
+
+        if (sawRecompileRequest && installedIndex !== null) break;
+
+        await new Promise((r) => {
+          const t = setTimeout(r, 0);
+          (t as unknown as { unref?: () => void }).unref?.();
+        });
+      }
+
+      if (!sawRecompileRequest) {
+        postToMain({
+          type: 'CpuWorkerError',
+          reason: 'Self-modifying code regression: expected ENTRY_RIP to be re-requested for compilation after invalidation',
+        });
+        jitWorker.terminate();
+        try {
+          vm.free();
+        } catch {
+          // ignore
+        }
+        return;
+      }
+
+      // After reinstall, Tier-1 execution should resume (jit blocks count increases).
+      for (let i = 0; i < 64 && jit_executions <= jitBeforeInvalidation; i++) {
+        recordRunCounts(vm.run_blocks(1));
+        for (const entryRipNum of drainCompileRequests()) {
+          await compileAndInstall(entryRipNum);
+        }
+      }
+
+      if (jit_executions <= jitBeforeInvalidation) {
+        postToMain({
+          type: 'CpuWorkerError',
+          reason: 'Self-modifying code regression: Tier-1 JIT execution did not resume after recompilation',
+        });
+        jitWorker.terminate();
+        try {
+          vm.free();
+        } catch {
+          // ignore
+        }
+        return;
+      }
+    } catch (err) {
+      postToMain({
+        type: 'CpuWorkerError',
+        reason: `Self-modifying code regression: unexpected error during recompilation: ${err instanceof Error ? err.message : String(err)}`,
+      });
+      jitWorker.terminate();
+      try {
+        vm.free();
+      } catch {
+        // ignore
+      }
+      return;
     }
   }
 
