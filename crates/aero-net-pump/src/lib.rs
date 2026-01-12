@@ -1563,6 +1563,32 @@ mod tests {
             "TDT should remain unchanged by hardware"
         );
 
+        // ACK delivery must not overwrite the already-delivered OFFER frames.
+        assert_eq!(
+            mem.read_vec(rx_bufs[0], rx0_len as usize),
+            offer0_frame,
+            "unexpected overwrite of RX buffer 0 (OFFER frame) during ACK tick"
+        );
+        assert_eq!(
+            mem.read_vec(rx_bufs[1], rx1_len as usize),
+            offer1_frame,
+            "unexpected overwrite of RX buffer 1 (OFFER frame) during ACK tick"
+        );
+        let (rx0_buf_after, rx0_len_after, rx0_status_after, rx0_errors_after) =
+            read_rx_desc_fields(&mem, 0x2000);
+        let (rx1_buf_after, rx1_len_after, rx1_status_after, rx1_errors_after) =
+            read_rx_desc_fields(&mem, 0x2010);
+        assert_eq!(
+            (rx0_buf_after, rx0_len_after, rx0_status_after, rx0_errors_after),
+            (rx0_buf, rx0_len, rx0_status, rx0_errors),
+            "RX desc 0 should not be modified after OFFER tick"
+        );
+        assert_eq!(
+            (rx1_buf_after, rx1_len_after, rx1_status_after, rx1_errors_after),
+            (rx1_buf, rx1_len, rx1_status, rx1_errors),
+            "RX desc 1 should not be modified after OFFER tick"
+        );
+
         let tx1_status = mem.read_vec(0x1010 + 12, 1)[0];
         assert_ne!(
             tx1_status & 0b0000_0001,
