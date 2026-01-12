@@ -241,6 +241,7 @@ impl<TX: FrameRing, RX: FrameRing> NetworkBackend for L2TunnelRingBackend<TX, RX
 #[cfg(test)]
 mod tests {
     use std::cell::Cell;
+    use std::rc::Rc;
     use std::sync::Arc;
 
     use aero_ipc::ring::{PopError, RingBuffer};
@@ -435,5 +436,31 @@ mod tests {
         assert_eq!(backend.poll_receive(), None);
         assert_eq!(rx.calls(), 1);
         assert_eq!(backend.stats().rx_corrupt, 1);
+    }
+
+    #[test]
+    fn backend_works_with_boxed_rings_via_frame_ring_impl() {
+        let tx = Box::new(RingBuffer::new(64));
+        let rx = Box::new(RingBuffer::new(64));
+        let mut backend = L2TunnelRingBackend::new(tx, rx);
+
+        backend.transmit(vec![1, 2, 3]);
+        assert_eq!(backend.tx_ring().try_pop_vec(), Ok(vec![1, 2, 3]));
+
+        backend.rx_ring().try_push(&[9]).unwrap();
+        assert_eq!(backend.poll_receive(), Some(vec![9]));
+    }
+
+    #[test]
+    fn backend_works_with_rc_rings_via_frame_ring_impl() {
+        let tx = Rc::new(RingBuffer::new(64));
+        let rx = Rc::new(RingBuffer::new(64));
+        let mut backend = L2TunnelRingBackend::new(tx.clone(), rx.clone());
+
+        backend.transmit(vec![4, 5]);
+        assert_eq!(tx.try_pop(), Ok(vec![4, 5]));
+
+        rx.try_push(&[8]).unwrap();
+        assert_eq!(backend.poll_receive(), Some(vec![8]));
     }
 }
