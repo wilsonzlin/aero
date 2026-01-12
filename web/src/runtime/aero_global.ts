@@ -45,8 +45,13 @@ export function installAeroGlobal(): void {
   }
   aero.bench.runStorageBench = runStorageBenchGlobal;
 
-  aero.bench.runGuestCpuBench = async (opts: GuestCpuBenchOpts): Promise<GuestCpuBenchRun> => {
-    const result = await runGuestCpuBench(opts);
+  function runGuestCpuBenchGlobal(opts?: unknown): Promise<unknown>;
+  function runGuestCpuBenchGlobal(opts: GuestCpuBenchOpts): Promise<GuestCpuBenchRun>;
+  async function runGuestCpuBenchGlobal(opts?: unknown): Promise<unknown> {
+    if (!opts || typeof opts !== "object") {
+      throw new Error('Guest CPU benchmark: options object is required (expected "variant" and "mode").');
+    }
+    const result = await runGuestCpuBench(opts as GuestCpuBenchOpts);
     const exported: GuestCpuBenchPerfExport = {
       iters_per_run: result.iters_per_run,
       warmup_runs: result.warmup_runs,
@@ -67,7 +72,8 @@ export function installAeroGlobal(): void {
     setBenchmark("guest_cpu", exported);
     installAeroGlobals();
     return result;
-  };
+  }
+  aero.bench.runGuestCpuBench = runGuestCpuBenchGlobal;
 
   installAeroGlobals();
 }
