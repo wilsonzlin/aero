@@ -1164,6 +1164,11 @@ In the repo’s browser host UI (repo-root Vite app; see `src/main.ts`), there i
 Tip: if you're debugging **early boot networking** (DHCP/DNS), enable tracing before starting the VM
 so you don't miss the initial traffic.
 
+Worker-runtime prerequisite: this tracing runs in the net worker and requires the worker-based web
+runtime (SharedArrayBuffer/cross-origin isolation). If `SharedArrayBuffer` is unavailable, the net
+worker (and thus tracing) will not run. See:
+[`11-browser-apis.md`](./11-browser-apis.md#cross-origin-isolation-coopcoep-deployment-requirements).
+
 Disabling tracing stops recording new frames but does **not** automatically clear any frames already
 buffered in memory (use **Clear capture** or download/export to reset).
 
