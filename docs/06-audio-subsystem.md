@@ -269,7 +269,10 @@ Microphone input is a host resource and is **not serialized in VM snapshots**. T
 into the ring while the VM is snapshot-paused, or before the guest capture device has attached as the ring consumer.
 
 To avoid replaying *stale* mic samples (which would manifest as large capture latency after resume), consumers discard any
-already-buffered samples when attaching the ring by advancing `readPos` to the current `writePos` (i.e. `readPos := writePos`).
+already-buffered samples by advancing `readPos` to the current `writePos` (i.e. `readPos := writePos`) on:
+
+- ring attachment (late attach while the producer is already running)
+- snapshot resume / other pause boundaries where the producer may have continued writing while the VM was stopped
 
 ### HDA capture exposure (guest)
 
