@@ -168,4 +168,54 @@ describe("InputCapture wheel handling", () => {
       expect(posted).toHaveLength(0);
     });
   });
+
+  it("drops fractional mouse movement remainder when pointer lock exits so it cannot cause a later spurious pixel", () => {
+    withStubbedDocument(() => {
+      const canvas = {
+        tabIndex: 0,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        focus: () => {},
+      } as unknown as HTMLCanvasElement;
+
+      const ioWorker = { postMessage: () => {} };
+      const capture = new InputCapture(canvas, ioWorker, {
+        enableGamepad: false,
+        recycleBuffers: false,
+        mouseSensitivity: 0.5,
+      });
+
+      (capture as any).hasFocus = true;
+      (capture as any).pointerLock.locked = true;
+
+      const preventDefault = vi.fn();
+      const stopPropagation = vi.fn();
+
+      // movementX=1 with sensitivity 0.5 => 0.5px remainder, no whole-pixel event yet.
+      (capture as any).handleMouseMove({
+        movementX: 1,
+        movementY: 0,
+        preventDefault,
+        stopPropagation,
+        timeStamp: 0,
+      } as unknown as MouseEvent);
+      expect((capture as any).queue.size).toBe(0);
+
+      // Pointer lock exits; remainder should be dropped.
+      (capture as any).pointerLock.locked = false;
+      (capture as any).handlePointerLockChange(false);
+
+      // Re-enter pointer lock and move again. If remainder leaked, we'd get a full pixel event now.
+      (capture as any).pointerLock.locked = true;
+      (capture as any).handleMouseMove({
+        movementX: 1,
+        movementY: 0,
+        preventDefault,
+        stopPropagation,
+        timeStamp: 1,
+      } as unknown as MouseEvent);
+
+      expect((capture as any).queue.size).toBe(0);
+    });
+  });
 });

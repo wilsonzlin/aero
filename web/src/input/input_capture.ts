@@ -125,12 +125,18 @@ export class InputCapture {
     // If pointer lock exits while the canvas is not focused, we will stop
     // capturing keyboard/mouse events, which can leave the guest with latched
     // input state. Emit a best-effort "all released" snapshot immediately.
+    if (!locked) {
+      // Pointer lock boundaries are a natural "capture session" boundary: drop any fractional
+      // deltas from the prior session so they can't leak into a later session and cause a
+      // spurious pixel or wheel tick.
+      this.resetAccumulatedMotion();
+    }
+
     if (locked || this.hasFocus) {
       return;
     }
 
     const nowUs = toTimestampUs(performance.now());
-    this.resetAccumulatedMotion();
     this.suppressedKeyUps.clear();
     this.releaseAllKeys();
     this.setMouseButtons(0);
