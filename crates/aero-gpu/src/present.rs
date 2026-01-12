@@ -1037,4 +1037,103 @@ mod tests {
         ));
         assert_eq!(presenter.writer().calls.len(), 0);
     }
+
+    #[test]
+    fn max_rects_per_frame_zero_disables_uploads_entirely() {
+        let (width, height, bpp) = (10u32, 10u32, 4usize);
+        let stride = 40usize;
+
+        let full_row_bytes = width as usize * bpp;
+        let frame_len = min_frame_len(stride, height as usize, full_row_bytes);
+        let frame_data = patterned_bytes(frame_len);
+
+        let r1 = Rect::new(0, 0, 1, 1);
+        let r2 = Rect::new(9, 9, 1, 1);
+
+        let mut presenter = Presenter::new(width, height, bpp, RecordingWriter::default())
+            .with_max_rects_per_frame(0);
+        let telemetry = presenter.present(&frame_data, stride, Some(&[r1, r2])).unwrap();
+
+        assert_eq!(presenter.writer().calls.len(), 0);
+        assert_eq!(
+            telemetry,
+            PresentTelemetry {
+                rects_requested: 2,
+                rects_after_merge: 2,
+                rects_uploaded: 0,
+                bytes_uploaded: 0,
+            }
+        );
+        assert_eq!(telemetry.merge_rate(), 1.0);
+    }
+
+    #[test]
+    fn last_telemetry_is_not_updated_on_error() {
+        let (width, height, bpp) = (64u32, 4u32, 4usize);
+        let stride = 256usize;
+
+        let full_row_bytes = width as usize * bpp;
+        let frame_len = min_frame_len(stride, height as usize, full_row_bytes);
+        let frame_data = patterned_bytes(frame_len);
+
+        let mut presenter = Presenter::new(width, height, bpp, RecordingWriter::default());
+        let ok = presenter.present(&frame_data, stride, None).unwrap();
+        assert_eq!(presenter.last_telemetry(), ok);
+
+        // Force an error; last_telemetry should remain unchanged.
+        let err = presenter.present(&frame_data, full_row_bytes - 1, None).unwrap_err();
+        assert!(matches!(err, PresentError::StrideTooSmall { .. }));
+        assert_eq!(presenter.last_telemetry(), ok);
+    }
+
+    #[test]
+    fn height1_present_accepts_frame_data_without_stride_padding() {
+        let (width, height, bpp) = (64u32, 1u32, 4usize);
+        let row_bytes = width as usize * bpp; // 256
+        let stride = row_bytes + 4; // padded, but there is only one row.
+
+        let frame_data = patterned_bytes(row_bytes);
+
+        let mut presenter = Presenter::new(width, height, bpp, RecordingWriter::default());
+        let telemetry = presenter.present(&frame_data, stride, None).unwrap();
+
+        assert_eq!(presenter.writer().calls.len(), 1);
+        let call = &presenter.writer().calls[0];
+
+        assert_eq!(call.rect, Rect::new(0, 0, width, height));
+        assert_eq!(call.bytes_per_row, row_bytes);
+        assert_eq!(call.data, frame_data);
+
+        assert_eq!(telemetry.bytes_uploaded, row_bytes);
+    }
+
+    #[test]
+    fn present_drops_empty_dirty_rects() {
+        let (width, height, bpp) = (10u32, 10u32, 4usize);
+        let stride = 40usize;
+
+        let full_row_bytes = width as usize * bpp;
+        let frame_len = min_frame_len(stride, height as usize, full_row_bytes);
+        let frame_data = patterned_bytes(frame_len);
+
+        let empty_w = Rect::new(1, 1, 0, 5);
+        let empty_h = Rect::new(1, 1, 5, 0);
+
+        let mut presenter = Presenter::new(width, height, bpp, RecordingWriter::default());
+        let telemetry = presenter
+            .present(&frame_data, stride, Some(&[empty_w, empty_h]))
+            .unwrap();
+
+        assert_eq!(presenter.writer().calls.len(), 0);
+        assert_eq!(
+            telemetry,
+            PresentTelemetry {
+                rects_requested: 2,
+                rects_after_merge: 0,
+                rects_uploaded: 0,
+                bytes_uploaded: 0,
+            }
+        );
+        assert_eq!(telemetry.merge_rate(), 1.0);
+    }
 }
