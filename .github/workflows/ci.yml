@@ -221,8 +221,8 @@ jobs:
       - name: cargo clippy
         run: cargo clippy ${{ steps.setup-rust.outputs.cargo_locked_flag }} --workspace --all-targets --all-features -- -D warnings
 
-      - name: cargo test (wasm32, aero-d3d11, no-run)
-        run: cargo test ${{ steps.setup-rust.outputs.cargo_locked_flag }} --target wasm32-unknown-unknown -p aero-d3d11 --tests --no-run
+      - name: cargo test (wasm32, workspace, no-run)
+        run: cargo test ${{ steps.setup-rust.outputs.cargo_locked_flag }} --target wasm32-unknown-unknown --workspace --tests --no-run
 
       - name: cargo test (wasm32, aero-gpu, no-run)
         run: cargo test ${{ steps.setup-rust.outputs.cargo_locked_flag }} --target wasm32-unknown-unknown -p aero-gpu --tests --no-run
