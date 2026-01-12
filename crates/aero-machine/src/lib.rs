@@ -2133,13 +2133,13 @@ impl snapshot::SnapshotTarget for Machine {
                     .is_ok();
         }
 
-        // 6) After HPET restore, poll once so any level-triggered lines implied by restored
-        // interrupt status are asserted immediately.
+        // 6) After HPET restore, re-drive any level-triggered lines implied by restored interrupt
+        // status immediately.
         if restored_hpet {
             if let (Some(hpet), Some(interrupts)) = (&self.hpet, &self.interrupts) {
                 let mut hpet = hpet.borrow_mut();
                 let mut interrupts = interrupts.borrow_mut();
-                hpet.poll(&mut *interrupts);
+                hpet.sync_levels_to_sink(&mut *interrupts);
             }
         }
 

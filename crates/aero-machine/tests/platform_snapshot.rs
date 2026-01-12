@@ -921,7 +921,7 @@ fn snapshot_restore_preserves_lapic_timer_state() {
 }
 
 #[test]
-fn snapshot_restore_polls_hpet_once_to_reassert_level_lines() {
+fn snapshot_restore_syncs_hpet_level_lines() {
     let mut src = Machine::new(pc_machine_config()).unwrap();
     let interrupts = src.platform_interrupts().unwrap();
     let hpet = src.hpet().unwrap();
@@ -956,7 +956,7 @@ fn snapshot_restore_polls_hpet_once_to_reassert_level_lines() {
 
     // Corrupt the sink state: HPET has an interrupt pending (general_int_status bit set), but the
     // platform interrupt controller line is deasserted. HPET `irq_asserted` is not snapshotted, so
-    // restore must poll once to re-drive the level line.
+    // restore must explicitly re-drive the level line into the interrupt sink.
     interrupts.borrow_mut().lower_irq(InterruptInput::Gsi(2));
 
     let snap = src.take_snapshot_full().unwrap();
@@ -967,8 +967,8 @@ fn snapshot_restore_polls_hpet_once_to_reassert_level_lines() {
     let interrupts = restored.platform_interrupts().unwrap();
     assert_eq!(interrupts.borrow().get_pending(), None);
 
-    // Unmask the IOAPIC entry. If Machine restore called `Hpet::poll()` after state restore, the
-    // asserted level is re-driven and unmasking delivers immediately.
+    // Unmask the IOAPIC entry. If Machine restore re-drove HPET's level lines after state restore,
+    // the asserted level is present and unmasking delivers immediately.
     {
         let mut ints = interrupts.borrow_mut();
         let low = 0x61u32 | (1 << 15); // unmasked

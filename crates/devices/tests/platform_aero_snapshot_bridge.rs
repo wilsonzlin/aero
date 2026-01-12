@@ -266,7 +266,7 @@ fn hpet_io_snapshot_roundtrips_through_aero_snapshot_file() {
         }
     }
 
-    restored_hpet.poll(&mut ioapic1);
+    restored_hpet.sync_levels_to_sink(&mut ioapic1);
     assert!(
         ioapic1.is_asserted(2),
         "level-triggered interrupt should be reasserted based on general_int_status"
