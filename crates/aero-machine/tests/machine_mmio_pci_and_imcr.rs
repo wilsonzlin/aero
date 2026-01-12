@@ -3,6 +3,7 @@ use aero_devices::pci::{profile, PciBdf, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
 use aero_interrupts::apic::{IOAPIC_MMIO_BASE, LAPIC_MMIO_BASE};
 use aero_machine::{Machine, MachineConfig};
 use aero_platform::interrupts::{InterruptController, InterruptInput, PlatformInterruptMode};
+use aero_storage::{MemBackend, RawDisk, SECTOR_SIZE};
 use firmware::bios::PCIE_ECAM_BASE;
 use pretty_assertions::assert_eq;
 
@@ -190,6 +191,54 @@ fn imcr_port_switch_to_apic_mode_delivers_ioapic_interrupt_programmed_via_mmio()
 
     panic!(
         "IOAPIC interrupt was not delivered after IMCR switch (flag=0x{:02x})",
+        m.read_physical_u8(u64::from(flag_addr))
+    );
+}
+
+#[test]
+fn imcr_port_switch_to_apic_mode_delivers_ide_irq14_programmed_via_mmio() {
+    let vector = 0x60u8;
+    let flag_addr = 0x0500u16;
+    let flag_value = 0xA6u8;
+
+    let boot = build_real_mode_imcr_interrupt_wait_boot_sector(vector, flag_addr, flag_value);
+
+    let mut cfg = mmio_machine_config();
+    cfg.enable_ide = true;
+    cfg.enable_vga = false;
+
+    let mut m = Machine::new(cfg).unwrap();
+    m.set_disk_image(boot.to_vec()).unwrap();
+    m.reset();
+    enable_a20(&mut m);
+
+    // Attach a disk to IDE primary master so ATA IDENTIFY has a target.
+    let disk = RawDisk::create(MemBackend::new(), 8 * SECTOR_SIZE as u64).unwrap();
+    m.attach_ide_primary_master_disk(Box::new(disk)).unwrap();
+
+    // Route ISA IRQ14 (GSI14) -> vector 0x60, edge-triggered, active-high (ISA wiring).
+    program_ioapic_entry(&mut m, 14, u32::from(vector), 0);
+
+    // Ensure PCI command enables I/O decode for the IDE function.
+    cfg_write(&mut m, profile::IDE_PIIX3.bdf, 0x04, 2, 0x0001);
+
+    // Issue ATA IDENTIFY DEVICE (0xEC) via legacy ports.
+    m.io_write(0x1F6, 1, 0xA0);
+    m.io_write(0x1F7, 1, 0xEC);
+
+    // Verify that IDENTIFY data is reachable via the data port (0x1F0).
+    let word0 = m.io_read(0x1F0, 2) as u16;
+    assert_eq!(word0, 0x0040);
+
+    for _ in 0..50 {
+        let _ = m.run_slice(10_000);
+        if m.read_physical_u8(u64::from(flag_addr)) == flag_value {
+            return;
+        }
+    }
+
+    panic!(
+        "IDE IRQ14 was not delivered after IMCR switch to APIC mode (flag=0x{:02x})",
         m.read_physical_u8(u64::from(flag_addr))
     );
 }
