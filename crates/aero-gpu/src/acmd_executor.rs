@@ -128,11 +128,12 @@ impl AeroGpuAcmdExecutor {
         }
         .ok_or_else(|| GpuError::Backend("no suitable wgpu adapter found".into()))?;
 
+        let requested_features = crate::wgpu_features::negotiated_features(&adapter);
         let (device, queue) = adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
                     label: Some("aero-gpu ACMD executor"),
-                    required_features: wgpu::Features::empty(),
+                    required_features: requested_features,
                     required_limits: wgpu::Limits::downlevel_defaults(),
                 },
                 None,

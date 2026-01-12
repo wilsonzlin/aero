@@ -959,14 +959,7 @@ impl AerogpuD3d9Executor {
 
         let downlevel_flags = adapter.get_downlevel_capabilities().flags;
 
-        let mut required_features = wgpu::Features::empty();
-        if adapter
-            .features()
-            .contains(wgpu::Features::TEXTURE_COMPRESSION_BC)
-        {
-            required_features |= wgpu::Features::TEXTURE_COMPRESSION_BC;
-        }
-
+        let required_features = crate::wgpu_features::negotiated_features(&adapter);
         let (device, queue) = adapter
             .request_device(
                 &wgpu::DeviceDescriptor {

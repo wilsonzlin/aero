@@ -40,6 +40,7 @@ mod bc_decompress;
 mod readback;
 mod texture_format;
 mod texture_manager;
+mod wgpu_features;
 
 pub mod aerogpu_d3d9;
 pub mod aerogpu_executor;
