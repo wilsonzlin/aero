@@ -17,6 +17,7 @@ Minimal user-mode HID probe utility for validating the `virtio-input` HID minidr
 - Optionally writes a keyboard LED output report (`ReportID=1`) via:
   - `WriteFile` (exercises `IOCTL_HID_WRITE_REPORT`)
   - `HidD_SetOutputReport` (exercises `IOCTL_HID_SET_OUTPUT_REPORT`)
+  - `DeviceIoControl(IOCTL_HID_SET_OUTPUT_REPORT)` (explicit IOCTL test path)
 - Includes optional negative tests that pass invalid METHOD_NEITHER pointers (should fail cleanly without crashing the guest).
 
 ## Aero virtio-input IDs / expectations
