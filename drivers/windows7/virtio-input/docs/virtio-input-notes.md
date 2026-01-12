@@ -72,3 +72,17 @@ minidriver.
 - INF: `inf/aero_virtio_input.inf`
 - Service name: `aero_virtio_input`
 - Driver binary: `aero_virtio_input.sys`
+
+## HID IOCTL buffer safety (METHOD_NEITHER)
+
+Many `IOCTL_HID_*` requests (including `IOCTL_HID_WRITE_REPORT` / `IOCTL_HID_SET_OUTPUT_REPORT`) use
+**METHOD_NEITHER**. When the request originates from user mode, the request's input/output buffers
+and the pointers embedded in `HID_XFER_PACKET` (e.g. `reportBuffer`) may be **user-mode pointers**.
+
+The driver must not blindly dereference these addresses. The virtio-input driver handles this by:
+
+- Checking `WdfRequestGetRequestorMode(Request)`.
+- For `UserMode`, probing/locking and mapping the relevant user addresses into system space via MDLs
+  (`IoAllocateMdl` + `MmProbeAndLockPages` + `MmGetSystemAddressForMdlSafe`), and releasing MDLs on
+  request cleanup.
+- Keeping a fast path for `KernelMode` requests.
