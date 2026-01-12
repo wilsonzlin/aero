@@ -218,7 +218,9 @@ pub struct CacheStatus {
 pub struct StreamingTelemetry {
     pub bytes_downloaded: AtomicU64,
     pub range_requests: AtomicU64,
+    /// Number of chunks served entirely from the local cache (no HTTP fetch was required).
     pub cache_hit_chunks: AtomicU64,
+    /// Number of chunk fetches initiated (deduplicated across concurrent readers).
     pub cache_miss_chunks: AtomicU64,
 }
 
@@ -947,22 +949,9 @@ impl StreamingDisk {
             .saturating_add(chunk_size)
             .min(self.inner.total_size);
 
-        {
-            let state = self.inner.state.lock().await;
-            if state.downloaded.contains_range(chunk_start, chunk_end) {
-                self.inner
-                    .telemetry
-                    .cache_hit_chunks
-                    .fetch_add(1, Ordering::Relaxed);
-                return Ok(());
-            }
-        }
-
-        self.inner
-            .telemetry
-            .cache_miss_chunks
-            .fetch_add(1, Ordering::Relaxed);
-
+        // Serialize in-flight tracking behind a single lock so:
+        // - only the first reader performs the HTTP fetch (others join)
+        // - telemetry `cache_miss_chunks` counts *downloads*, not joiners.
         let waiter_rx = {
             let mut state = self.inner.state.lock().await;
             if state.downloaded.contains_range(chunk_start, chunk_end) {
@@ -979,6 +968,10 @@ impl StreamingDisk {
                 Some(rx)
             } else {
                 state.in_flight.insert(chunk_index, Vec::new());
+                self.inner
+                    .telemetry
+                    .cache_miss_chunks
+                    .fetch_add(1, Ordering::Relaxed);
                 None
             }
         };

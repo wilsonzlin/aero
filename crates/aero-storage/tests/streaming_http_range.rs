@@ -410,6 +410,11 @@ async fn streaming_reads_and_reuses_cache() {
         2,
         "second read should be served from cache"
     );
+    let telemetry = disk.telemetry_snapshot();
+    assert_eq!(telemetry.range_requests, 2);
+    assert_eq!(telemetry.bytes_downloaded, 2 * 1024);
+    assert_eq!(telemetry.cache_miss_chunks, 2);
+    assert_eq!(telemetry.cache_hit_chunks, 2);
 
     drop(disk);
 
@@ -521,6 +526,11 @@ async fn inflight_dedup_avoids_duplicate_fetches() {
         1,
         "concurrent reads of the same chunk should be deduplicated"
     );
+    let telemetry = disk.telemetry_snapshot();
+    assert_eq!(telemetry.range_requests, 1);
+    assert_eq!(telemetry.bytes_downloaded, 1024);
+    assert_eq!(telemetry.cache_miss_chunks, 1);
+    assert_eq!(telemetry.cache_hit_chunks, 0);
 
     let _ = shutdown.send(());
 }
