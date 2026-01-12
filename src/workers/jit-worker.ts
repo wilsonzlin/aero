@@ -162,7 +162,7 @@ async function handleCompileRequest(req: CompileBlockRequest & { type: 'CompileB
     return;
   }
 
-  if (!Number.isFinite(req.id) || !Number.isInteger(req.id) || req.id < 0) {
+  if (!Number.isSafeInteger(req.id) || req.id < 0) {
     postMessageToCpu({
       type: 'CompileError',
       id: req.id,
@@ -182,7 +182,7 @@ async function handleCompileRequest(req: CompileBlockRequest & { type: 'CompileB
     return;
   }
 
-  if (!Number.isFinite(req.entry_rip) || !Number.isInteger(req.entry_rip) || req.entry_rip < 0 || req.entry_rip > 0xffffffff) {
+  if (!Number.isSafeInteger(req.entry_rip) || req.entry_rip < 0 || req.entry_rip > 0xffffffff) {
     postMessageToCpu({
       type: 'CompileError',
       id: req.id,
