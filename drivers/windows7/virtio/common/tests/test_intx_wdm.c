@@ -238,6 +238,49 @@ static void test_connect_disconnect_calls_wdk_routines(void)
     assert(WdkTestGetIoDisconnectInterruptCount() == 1);
 }
 
+static void test_reconnect_after_disconnect(void)
+{
+    VIRTIO_INTX intx;
+    volatile UCHAR isr_reg = 0;
+    CM_PARTIAL_RESOURCE_DESCRIPTOR desc;
+    intx_test_ctx_t ctx;
+    NTSTATUS status;
+
+    desc = make_int_desc();
+    RtlZeroMemory(&ctx, sizeof(ctx));
+
+    WdkTestResetIoConnectInterruptCount();
+    WdkTestResetIoDisconnectInterruptCount();
+
+    /* First connect + disconnect cycle (exercise a spurious interrupt). */
+    status = VirtioIntxConnect(NULL, &desc, &isr_reg, evt_config, evt_queue, NULL, &ctx, &intx);
+    assert(status == STATUS_SUCCESS);
+    ctx.expected_intx = &intx;
+
+    isr_reg = 0;
+    assert(WdkTestTriggerInterrupt(intx.InterruptObject) == FALSE);
+
+    VirtioIntxDisconnect(&intx);
+    assert(WdkTestGetIoConnectInterruptCount() == 1);
+    assert(WdkTestGetIoDisconnectInterruptCount() == 1);
+
+    /* Second connect + disconnect cycle (ensure structure reuse is safe). */
+    RtlZeroMemory(&ctx, sizeof(ctx));
+
+    status = VirtioIntxConnect(NULL, &desc, &isr_reg, evt_config, evt_queue, NULL, &ctx, &intx);
+    assert(status == STATUS_SUCCESS);
+    ctx.expected_intx = &intx;
+
+    isr_reg = VIRTIO_PCI_ISR_QUEUE_INTERRUPT;
+    assert(WdkTestTriggerInterrupt(intx.InterruptObject) != FALSE);
+    assert(WdkTestRunQueuedDpc(&intx.Dpc) != FALSE);
+    assert(ctx.queue_calls == 1);
+
+    VirtioIntxDisconnect(&intx);
+    assert(WdkTestGetIoConnectInterruptCount() == 2);
+    assert(WdkTestGetIoDisconnectInterruptCount() == 2);
+}
+
 static void test_disconnect_uninitialized_is_safe(void)
 {
     VIRTIO_INTX intx;
@@ -894,6 +937,7 @@ int main(void)
     test_connect_descriptor_translation();
     test_connect_failure_zeroes_state();
     test_connect_disconnect_calls_wdk_routines();
+    test_reconnect_after_disconnect();
     test_disconnect_uninitialized_is_safe();
     test_disconnect_is_idempotent();
     test_spurious_interrupt();
