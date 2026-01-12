@@ -191,8 +191,7 @@ fn map_aero_storage_error_to_io(err: aero_storage::DiskError) -> io::Error {
         err @ aero_storage::DiskError::OutOfBounds { .. } => {
             io::Error::new(io::ErrorKind::UnexpectedEof, err)
         }
-        err @ (aero_storage::DiskError::Unsupported(_)
-        | aero_storage::DiskError::NotSupported(_)) => {
+        err @ (aero_storage::DiskError::Unsupported(_) | aero_storage::DiskError::NotSupported(_)) => {
             io::Error::new(io::ErrorKind::Unsupported, err)
         }
         err @ aero_storage::DiskError::QuotaExceeded => io::Error::new(io::ErrorKind::StorageFull, err),
@@ -228,9 +227,7 @@ mod tests {
 
         // Out of bounds.
         let mut buf = [0u8; SECTOR_SIZE];
-        let err = adapter
-            .read_at_aligned(cap, &mut buf)
-            .unwrap_err();
+        let err = adapter.read_at_aligned(cap, &mut buf).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
     }
 
