@@ -32,7 +32,12 @@ impl<'a> DnsQuery<'a> {
 pub fn qname_to_string(qname: &[u8]) -> Result<alloc::string::String, PacketError> {
     use alloc::string::String;
 
-    let mut out = String::new();
+    // Upper bound on the output length is `qname.len()`: the encoded name includes 1-byte label
+    // length prefixes (and a 0 terminator), so the decoded string is always <= this.
+    //
+    // Pre-allocate to avoid repeated growth reallocations in hot paths (DNS policy checks, cache
+    // keys, etc).
+    let mut out = String::with_capacity(qname.len());
     let mut off = 0usize;
     while off < qname.len() {
         let len = qname[off] as usize;
