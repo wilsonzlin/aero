@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use aero_ipc::ring::{PopError, RingBuffer};
+use aero_ipc::ring::{PopError, PushError, RingBuffer};
 use aero_machine::{Machine, MachineConfig};
 use aero_net_backend::L2TunnelRingBackendStats;
 use aero_net_e1000::MIN_L2_FRAME_LEN;
@@ -26,8 +26,10 @@ fn machine_e1000_l2_tunnel_rings_tx_rx_stats_smoke() {
     // No backend attached yet.
     assert!(m.network_backend_l2_ring_stats().is_none());
 
-    let tx_ring = Arc::new(RingBuffer::new(16 * 1024));
-    let rx_ring = Arc::new(RingBuffer::new(16 * 1024));
+    // Keep the rings small so tests that intentionally fill them (to validate drop counters)
+    // complete quickly.
+    let tx_ring = Arc::new(RingBuffer::new(256));
+    let rx_ring = Arc::new(RingBuffer::new(4 * 1024));
     m.attach_l2_tunnel_rings(tx_ring.clone(), rx_ring.clone());
 
     // Initial stats should be present and zeroed.
@@ -146,4 +148,62 @@ fn machine_e1000_l2_tunnel_rings_tx_rx_stats_smoke() {
     assert_eq!(stats.rx_popped_frames, 1);
     assert_eq!(stats.rx_dropped_oversize, 0);
     assert_eq!(stats.rx_corrupt, 0);
+
+    // --------------------------------
+    // Guest -> host drop when NET_TX ring is full
+    // --------------------------------
+    // Fill the NET_TX ring directly (bypassing the backend stats) so subsequent guest TX is forced
+    // to hit `PushError::Full` inside `L2TunnelRingBackend::transmit`.
+    let dummy_frame = vec![0x55u8; MIN_L2_FRAME_LEN];
+    let mut filled = 0usize;
+    loop {
+        match tx_ring.try_push(&dummy_frame) {
+            Ok(()) => filled += 1,
+            Err(PushError::Full) => break,
+            Err(err) => panic!("unexpected NET_TX fill error: {err:?}"),
+        }
+    }
+    assert!(filled > 0, "expected NET_TX ring to accept at least one record");
+
+    // Write a second TX descriptor at index 1 and advance TDT.
+    let tx_buf2: u64 = 0x24_000;
+    let tx_frame2: Vec<u8> = (0..MIN_L2_FRAME_LEN).map(|i| 0x80 | i as u8).collect();
+    m.write_physical(tx_buf2, &tx_frame2);
+    let mut tx_desc2 = [0u8; 16];
+    tx_desc2[0..8].copy_from_slice(&tx_buf2.to_le_bytes());
+    tx_desc2[8..10].copy_from_slice(&(tx_frame2.len() as u16).to_le_bytes());
+    tx_desc2[11] = 0x01 | 0x08; // EOP | RS
+    m.write_physical(tx_desc_base + 16, &tx_desc2);
+    m.write_physical_u32(bar0_base + 0x3818, 2); // TDT = 2
+
+    m.poll_network();
+
+    // Drain the dummy frames we used to saturate the ring; the second guest TX frame should not
+    // have been pushed because the ring was full.
+    for _ in 0..filled {
+        assert_eq!(tx_ring.try_pop(), Ok(dummy_frame.clone()));
+    }
+    assert_eq!(tx_ring.try_pop(), Err(PopError::Empty));
+
+    let stats = m
+        .network_backend_l2_ring_stats()
+        .expect("expected ring backend stats");
+    assert_eq!(stats.tx_pushed_frames, 1);
+    assert_eq!(stats.tx_dropped_full, 1);
+
+    // --------------------------------
+    // Host -> guest drop when NET_RX frame is oversize for the ring backend
+    // --------------------------------
+    rx_ring
+        .try_push(&vec![0u8; 3000])
+        .expect("NET_RX ring try_push should succeed");
+    m.poll_network();
+
+    assert_eq!(rx_ring.try_pop(), Err(PopError::Empty));
+
+    let stats = m
+        .network_backend_l2_ring_stats()
+        .expect("expected ring backend stats");
+    assert_eq!(stats.rx_popped_frames, 1);
+    assert_eq!(stats.rx_dropped_oversize, 1);
 }
