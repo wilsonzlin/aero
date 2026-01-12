@@ -120,7 +120,21 @@ impl fmt::Display for ShaderTranslateError {
                 "unsupported write mask {mask:?} for {opcode} at instruction index {inst_index}"
             ),
             ShaderTranslateError::ResourceSlotOutOfRange { kind, slot, max } => {
-                write!(f, "{kind} slot {slot} is out of range (max {max})")
+                match *kind {
+                    "cbuffer" => write!(
+                        f,
+                        "cbuffer slot {slot} is out of range (max {max}); b# slots map to @binding({BINDING_BASE_CBUFFER} + slot) and must stay below the texture base @binding({BINDING_BASE_TEXTURE})"
+                    ),
+                    "texture" => write!(
+                        f,
+                        "texture slot {slot} is out of range (max {max}); t# slots map to @binding({BINDING_BASE_TEXTURE} + slot) and must stay below the sampler base @binding({BINDING_BASE_SAMPLER})"
+                    ),
+                    "sampler" => write!(
+                        f,
+                        "sampler slot {slot} is out of range (max {max}); s# slots map to @binding({BINDING_BASE_SAMPLER} + slot)"
+                    ),
+                    _ => write!(f, "{kind} slot {slot} is out of range (max {max})"),
+                }
             }
             ShaderTranslateError::PixelShaderMissingSvTarget0 => {
                 write!(f, "pixel shader output signature is missing SV_Target0")

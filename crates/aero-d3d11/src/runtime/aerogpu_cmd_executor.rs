@@ -4287,7 +4287,8 @@ impl AerogpuD3d11Executor {
 
         if slot as usize >= DEFAULT_MAX_TEXTURE_SLOTS {
             bail!(
-                "SET_TEXTURE: slot out of supported range (slot={slot} max={DEFAULT_MAX_TEXTURE_SLOTS})"
+                "SET_TEXTURE: slot out of supported range (slot={slot} max_slot={})",
+                DEFAULT_MAX_TEXTURE_SLOTS - 1
             );
         }
 
@@ -4409,7 +4410,8 @@ impl AerogpuD3d11Executor {
             .ok_or_else(|| anyhow!("SET_SAMPLERS: slot range overflow"))?;
         if end_slot as usize > DEFAULT_MAX_SAMPLER_SLOTS {
             bail!(
-                "SET_SAMPLERS: slot range out of supported range (range={start_slot}..{end_slot} max={DEFAULT_MAX_SAMPLER_SLOTS})"
+                "SET_SAMPLERS: slot range out of supported range (range={start_slot}..{end_slot} max_slot={})",
+                DEFAULT_MAX_SAMPLER_SLOTS - 1
             );
         }
 
@@ -4462,7 +4464,8 @@ impl AerogpuD3d11Executor {
             .ok_or_else(|| anyhow!("SET_CONSTANT_BUFFERS: slot range overflow"))?;
         if end_slot as usize > DEFAULT_MAX_CONSTANT_BUFFER_SLOTS {
             bail!(
-                "SET_CONSTANT_BUFFERS: slot range out of supported range (range={start_slot}..{end_slot} max={DEFAULT_MAX_CONSTANT_BUFFER_SLOTS})"
+                "SET_CONSTANT_BUFFERS: slot range out of supported range (range={start_slot}..{end_slot} max_slot={})",
+                DEFAULT_MAX_CONSTANT_BUFFER_SLOTS - 1
             );
         }
 
