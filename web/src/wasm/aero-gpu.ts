@@ -150,7 +150,27 @@ export async function request_screenshot(): Promise<Uint8Array> {
 
 export function get_frame_timings(): FrameTimingsReport | null {
   const mod = requireLoaded();
+  if (typeof mod.get_frame_timings !== "function") return null;
   return mod.get_frame_timings() as FrameTimingsReport | null;
+}
+
+export function get_gpu_stats(): unknown | undefined {
+  const mod = requireLoaded();
+  const fn = mod.get_gpu_stats ?? mod.getGpuStats;
+  if (typeof fn !== "function") return undefined;
+  return fn();
+}
+
+export function drain_gpu_events(): unknown {
+  const mod = requireLoaded();
+  const fn =
+    mod.drain_gpu_events ??
+    mod.drain_gpu_error_events ??
+    mod.take_gpu_events ??
+    mod.take_gpu_error_events ??
+    mod.drainGpuEvents;
+  if (typeof fn !== "function") return [];
+  return fn();
 }
 
 export function destroy_gpu(): void {

@@ -214,7 +214,7 @@ const resetAerogpuContexts = (): void => {
   aerogpuWasmPresentCount = 0n;
 };
 
-type AeroGpuWasmApi = typeof import("../wasm/aero-gpu.ts");
+type AeroGpuWasmApi = typeof import("../wasm/aero-gpu");
 
 let aerogpuWasm: AeroGpuWasmApi | null = null;
 let aerogpuWasmLoadPromise: Promise<AeroGpuWasmApi> | null = null;
@@ -227,7 +227,7 @@ async function loadAerogpuWasm(): Promise<AeroGpuWasmApi> {
   if (aerogpuWasm) return aerogpuWasm;
   if (!aerogpuWasmLoadPromise) {
     aerogpuWasmLoadPromise = (async () => {
-      const mod = (await import("../wasm/aero-gpu.ts")) as AeroGpuWasmApi;
+      const mod = (await import("../wasm/aero-gpu")) as AeroGpuWasmApi;
       await mod.default();
       aerogpuWasm = mod;
       return mod;
@@ -915,6 +915,16 @@ function postStatsMessage(wasmStats?: unknown): void {
   });
 }
 
+function mergeWasmTelemetry(wasmStats: unknown | undefined, frameTimings: unknown | undefined): unknown | undefined {
+  if (wasmStats === undefined && frameTimings === undefined) return undefined;
+  if (frameTimings === undefined) return wasmStats;
+  if (wasmStats === undefined) return { frame_timings: frameTimings };
+  if (typeof wasmStats === "object" && wasmStats !== null && !Array.isArray(wasmStats)) {
+    return { ...(wasmStats as Record<string, unknown>), frame_timings: frameTimings };
+  }
+  return { stats: wasmStats, frame_timings: frameTimings };
+}
+
 function getModuleExportFn<T extends (...args: any[]) => any>(names: readonly string[]): T | null {
   const mod = presentModule as Record<string, unknown> | null;
   if (!mod) return null;
@@ -925,19 +935,32 @@ function getModuleExportFn<T extends (...args: any[]) => any>(names: readonly st
   return null;
 }
 
+function parseMaybeJson(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+}
+
 async function tryGetWasmStats(): Promise<unknown | undefined> {
   const fn = getModuleExportFn<() => unknown | Promise<unknown>>(["get_gpu_stats", "getGpuStats"]);
   if (!fn) return undefined;
   try {
+    return parseMaybeJson(await fn());
+  } catch {
+    return undefined;
+  }
+}
+
+async function tryGetWasmFrameTimings(): Promise<unknown | undefined> {
+  const fn = getModuleExportFn<() => unknown | Promise<unknown>>(["get_frame_timings", "getFrameTimings"]);
+  if (!fn) return undefined;
+  try {
     const value = await fn();
-    if (typeof value === "string") {
-      try {
-        return JSON.parse(value);
-      } catch {
-        return value;
-      }
-    }
-    return value;
+    if (value == null) return undefined;
+    return parseMaybeJson(value);
   } catch {
     return undefined;
   }
@@ -957,6 +980,40 @@ async function tryDrainWasmEvents(): Promise<GpuRuntimeErrorEvent[]> {
     return normalizeGpuEventBatch(value);
   } catch {
     return [];
+  }
+}
+
+function shouldPollAerogpuWasmTelemetry(): boolean {
+  // Only the wgpu-backed WebGL2 presenter uses `aero-gpu-wasm` for frame presentation.
+  return presenter?.backend === "webgl2_wgpu";
+}
+
+async function tryDrainAerogpuWasmEvents(): Promise<GpuRuntimeErrorEvent[]> {
+  if (!shouldPollAerogpuWasmTelemetry()) return [];
+  try {
+    const mod = await loadAerogpuWasm();
+    const raw = await mod.drain_gpu_events();
+    return normalizeGpuEventBatch(raw);
+  } catch {
+    return [];
+  }
+}
+
+async function tryGetAerogpuWasmTelemetry(): Promise<unknown | undefined> {
+  if (!shouldPollAerogpuWasmTelemetry()) return undefined;
+  try {
+    const mod = await loadAerogpuWasm();
+    const stats = parseMaybeJson(await mod.get_gpu_stats());
+    let frameTimings: unknown | undefined = undefined;
+    try {
+      const timings = mod.get_frame_timings();
+      if (timings != null) frameTimings = timings;
+    } catch {
+      frameTimings = undefined;
+    }
+    return mergeWasmTelemetry(stats === undefined ? undefined : stats, frameTimings);
+  } catch {
+    return undefined;
   }
 }
 
@@ -982,8 +1039,23 @@ async function telemetryTick(): Promise<void> {
 
     if (isDeviceLost) return;
 
-    const wasmStats = await tryGetWasmStats();
-    postStatsMessage(wasmStats);
+    const aerogpuEvents = await tryDrainAerogpuWasmEvents();
+    if (aerogpuEvents.length > 0) {
+      postGpuEvents(aerogpuEvents);
+      for (const ev of aerogpuEvents) {
+        if (isDeviceLost) break;
+        if (ev.category.toLowerCase() === "devicelost" && (ev.severity === "error" || ev.severity === "fatal")) {
+          handleDeviceLost(ev.message, { source: "aero-gpu-wasm", event: ev }, true);
+          break;
+        }
+      }
+    }
+
+    if (isDeviceLost) return;
+
+    const wasmStats = mergeWasmTelemetry(await tryGetWasmStats(), await tryGetWasmFrameTimings());
+    const aerogpuWasmTelemetry = await tryGetAerogpuWasmTelemetry();
+    postStatsMessage(wasmStats ?? aerogpuWasmTelemetry);
   } finally {
     telemetryTickInFlight = false;
   }

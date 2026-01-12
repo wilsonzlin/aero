@@ -15,6 +15,8 @@ declare global {
       hash?: string;
       expectedHash?: string;
       pass?: boolean;
+      lastStats?: unknown;
+      lastWasmStats?: unknown;
       samplePixels?: () => Promise<{
         backend: string;
         width: number;
@@ -50,6 +52,18 @@ function renderError(message: string) {
   const status = $("status");
   if (status) status.textContent = message;
   window.__aeroTest = { ready: true, error: message };
+}
+
+function safeJsonStringify(value: unknown): string {
+  try {
+    return JSON.stringify(value, (_key, v) => (typeof v === "bigint" ? v.toString() : v));
+  } catch {
+    try {
+      return String(value);
+    } catch {
+      return "<unprintable>";
+    }
+  }
 }
 
 function createExpectedTestPattern(width: number, height: number): Uint8Array {
@@ -115,6 +129,7 @@ async function main() {
   canvas.style.height = `${cssHeight}px`;
 
   try {
+    let statsLinesWritten = 0;
     const requestedBackend = getBackendParam();
     const disableWebGpu = getBoolParam("disableWebGpu");
     // In practice, WebGPU-in-worker can be flaky in headless Chromium unless
@@ -138,6 +153,17 @@ async function main() {
         for (const ev of msg.events) {
           status.textContent += `gpu_event ${ev.severity} ${ev.category}: ${ev.message}\n`;
         }
+      },
+      onStats: (msg) => {
+        // Print a small preview of WASM telemetry so the page can be used as a
+        // diagnostics wiring check (particularly for the wgpu-backed WebGL2 presenter).
+        window.__aeroTest = { ...(window.__aeroTest ?? {}), lastStats: msg, lastWasmStats: msg.wasm };
+        if (!status) return;
+        if (!msg.wasm) return;
+        if (statsLinesWritten >= 1) return;
+        statsLinesWritten += 1;
+        const preview = safeJsonStringify(msg.wasm);
+        status.textContent += `gpu_stats wasm=${preview.slice(0, 400)}${preview.length > 400 ? "…" : ""}\n`;
       },
     });
 
@@ -173,6 +199,8 @@ async function main() {
       hash,
       expectedHash,
       pass,
+      lastStats: window.__aeroTest?.lastStats,
+      lastWasmStats: window.__aeroTest?.lastWasmStats,
       samplePixels: async () => ({
         backend: ready.backendKind,
         width: screenshot.width,
