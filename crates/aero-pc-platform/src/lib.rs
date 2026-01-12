@@ -43,10 +43,8 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 mod cpu_core;
-mod pci_mmio;
-pub use aero_devices::pci::PciConfigSyncedMmioBar;
+pub use aero_devices::pci::{PciBarMmioHandler, PciBarMmioRouter, PciConfigSyncedMmioBar};
 pub use cpu_core::{PcCpuBus, PcInterruptController};
-pub use pci_mmio::{PciBarMmioHandler, PciBarMmioRouter};
 
 mod firmware_pci;
 pub use firmware_pci::{PciConfigPortsBiosAdapter, SharedPciConfigPortsBiosAdapter};
