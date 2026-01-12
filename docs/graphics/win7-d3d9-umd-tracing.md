@@ -155,6 +155,7 @@ Fields:
 - function name: DDI entrypoint
 - `a0..a3`: key arguments (packed as needed; see below)
 - `hr`: HRESULT returned by the entrypoint
+  - `hr=0x7fffffff` is a special “pending” marker that indicates the call was recorded but had not yet reached its `return` path when the dump was taken (rare; typically only possible if the process is crashing or a dump trigger fires mid-call).
 
 ### Common argument packings
 
