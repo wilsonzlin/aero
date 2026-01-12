@@ -53,6 +53,10 @@ describe("InputCapture preventDefault policy", () => {
         (capture as any).handleKeyDown(event);
         expect(preventDefault).toHaveBeenCalledTimes(1);
         expect(stopPropagation).toHaveBeenCalledTimes(1);
+
+        (capture as any).handleKeyUp(event);
+        expect(preventDefault).toHaveBeenCalledTimes(2);
+        expect(stopPropagation).toHaveBeenCalledTimes(2);
       }
     });
   });
@@ -77,6 +81,10 @@ describe("InputCapture preventDefault policy", () => {
       (capture as any).handleMouseDown(ev);
       expect(preventDefault).toHaveBeenCalledTimes(1);
       expect(stopPropagation).toHaveBeenCalledTimes(1);
+
+      (capture as any).handleMouseUp(ev);
+      expect(preventDefault).toHaveBeenCalledTimes(2);
+      expect(stopPropagation).toHaveBeenCalledTimes(2);
     });
   });
 
