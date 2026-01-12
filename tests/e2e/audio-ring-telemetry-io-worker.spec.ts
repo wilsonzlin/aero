@@ -44,6 +44,9 @@ test("IO worker publishes AudioWorklet ring telemetry into StatusIndex.Audio*", 
     const { ringCtrl } = await import("/web/src/ipc/layout.ts");
     const { MessageType } = await import("/web/src/runtime/protocol.ts");
     const { requiredBytes: audioRequiredBytes, wrapRingBuffer: wrapAudioRingBuffer } = await import("/web/src/audio/audio_worklet_ring.ts");
+    const { openRingByKind } = await import("/web/src/ipc/ipc.ts");
+    const { queueKind } = await import("/web/src/ipc/layout.ts");
+    const { encodeCommand, decodeEvent } = await import("/web/src/ipc/protocol.ts");
 
     const WASM_PAGE_BYTES = 64 * 1024;
     const guestBase = RUNTIME_RESERVED_BYTES >>> 0;
@@ -71,6 +74,20 @@ test("IO worker publishes AudioWorklet ring telemetry into StatusIndex.Audio*", 
     const sharedFramebuffer = new SharedArrayBuffer(64);
 
     const ioWorker = new Worker(new URL("/web/src/workers/io.worker.ts", location.href), { type: "module" });
+    let workerError: string | null = null;
+
+    ioWorker.addEventListener("message", (ev) => {
+      const data = ev.data as unknown;
+      if (!data || typeof data !== "object") return;
+      const msg = data as { type?: unknown; message?: unknown };
+      if (msg.type === MessageType.ERROR) {
+        workerError = typeof msg.message === "string" ? msg.message : "IO worker reported an unknown error";
+      }
+    });
+
+    ioWorker.addEventListener("error", (ev) => {
+      workerError = ev.message || "IO worker error";
+    });
 
     const waitForMessage = (predicate: (data: unknown) => boolean, timeoutMs = 10_000): Promise<unknown> => {
       return new Promise((resolve, reject) => {
@@ -81,9 +98,18 @@ test("IO worker publishes AudioWorklet ring telemetry into StatusIndex.Audio*", 
         (timer as unknown as { unref?: () => void }).unref?.();
 
         const onMessage = (ev: MessageEvent<unknown>) => {
-          if (!predicate(ev.data)) return;
+          const data = ev.data;
+          if (data && typeof data === "object") {
+            const msg = data as { type?: unknown; message?: unknown };
+            if (msg.type === MessageType.ERROR) {
+              cleanup();
+              reject(new Error(typeof msg.message === "string" ? msg.message : "IO worker reported an unknown error"));
+              return;
+            }
+          }
+          if (!predicate(data)) return;
           cleanup();
-          resolve(ev.data);
+          resolve(data);
         };
         const onError = (ev: ErrorEvent) => {
           cleanup();
@@ -105,6 +131,9 @@ test("IO worker publishes AudioWorklet ring telemetry into StatusIndex.Audio*", 
     ): Promise<{ level: number; underrun: number; overrun: number }> => {
       const start = typeof performance?.now === "function" ? performance.now() : Date.now();
       while ((typeof performance?.now === "function" ? performance.now() : Date.now()) - start < timeoutMs) {
+        if (workerError) {
+          throw new Error(`IO worker failed: ${workerError}`);
+        }
         const level = Atomics.load(status, StatusIndex.AudioBufferLevelFrames) >>> 0;
         const underrun = Atomics.load(status, StatusIndex.AudioUnderrunCount) >>> 0;
         const overrun = Atomics.load(status, StatusIndex.AudioOverrunCount) >>> 0;
@@ -137,6 +166,46 @@ test("IO worker publishes AudioWorklet ring telemetry into StatusIndex.Audio*", 
       const msg = data as { type?: unknown; role?: unknown };
       return msg.type === MessageType.READY && msg.role === "io";
     });
+
+    // Smoke-check that the IO IPC server loop is alive by sending a NOP and waiting for an ACK.
+    const ioCmd = openRingByKind(ioIpcSab, queueKind.CMD);
+    const ioEvt = openRingByKind(ioIpcSab, queueKind.EVT);
+    const nopSeq = 1;
+    const nopBytes = encodeCommand({ kind: "nop", seq: nopSeq });
+    const startAck = typeof performance?.now === "function" ? performance.now() : Date.now();
+    let pushed = false;
+    while ((typeof performance?.now === "function" ? performance.now() : Date.now()) - startAck < 2_000) {
+      if (workerError) throw new Error(`IO worker failed before ACK: ${workerError}`);
+      if (ioCmd.tryPush(nopBytes)) {
+        pushed = true;
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    if (!pushed) {
+      throw new Error("Timed out pushing NOP into IO IPC cmd ring.");
+    }
+    let acked = false;
+    while ((typeof performance?.now === "function" ? performance.now() : Date.now()) - startAck < 2_000) {
+      if (workerError) throw new Error(`IO worker failed before ACK: ${workerError}`);
+      const bytes = ioEvt.tryPop();
+      if (!bytes) {
+        await new Promise((resolve) => setTimeout(resolve, 1));
+        continue;
+      }
+      try {
+        const evt = decodeEvent(bytes);
+        if (evt.kind === "ack" && evt.seq === nopSeq) {
+          acked = true;
+          break;
+        }
+      } catch {
+        // ignore malformed events
+      }
+    }
+    if (!acked) {
+      throw new Error("Timed out waiting for IO IPC NOP ack.");
+    }
 
     const capacityFrames = 128;
     const channelCount = 2;
