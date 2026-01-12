@@ -152,6 +152,7 @@ Canonical implementation:
 
 - Output setup (main thread): `web/src/platform/audio.ts` (`createAudioOutput`)
 - Ring consumer (AudioWorklet): `web/src/platform/audio-worklet-processor.js`
+- Ring layout/constants + helper math (TS): `web/src/audio/audio_worklet_ring.ts`
 - Ring layout/constants + WASM producer bridge: `crates/platform/src/audio/worklet_bridge.rs`
 
 ```typescript
