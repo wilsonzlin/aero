@@ -7,6 +7,7 @@ pub mod msi;
 pub mod profile;
 
 mod acpi;
+mod bar_mmio_router;
 mod bios;
 mod bus;
 mod ecam;
@@ -16,6 +17,7 @@ mod resources;
 mod snapshot;
 
 pub use acpi::{build_prt_bus0, dsdt_asl, PciPrtEntry, ACPI_PCI_ROOT_NAME};
+pub use bar_mmio_router::PciBarMmioRouter;
 pub use bios::bios_post;
 pub use bus::{PciBus, PciBusSnapshot, PciConfigMechanism1, PciMappedBar};
 pub use config::{
