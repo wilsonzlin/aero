@@ -5,4 +5,5 @@
 //! per-frame copies. This crate defines the in-memory layout and the atomic
 //! publish protocol for the shared framebuffer.
 
+pub mod scanout_state;
 pub mod shared_framebuffer;
