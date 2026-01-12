@@ -129,7 +129,9 @@ test("jit i64 BigInt ABI: rollback fixture returns sentinel and uses BigInt para
   let sawWrite = false;
   let sawExit = false;
 
-  const memory = new WebAssembly.Memory({ initial: 1, maximum: 16, shared: true });
+  // The fixture expects a shared memory with min=1 and some max; use a tiny max to keep the
+  // unit test lightweight.
+  const memory = new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true });
 
   const env = {
     memory,
