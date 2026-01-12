@@ -1094,6 +1094,17 @@ impl<O: AudioSink + 'static, I: AudioCaptureSource + 'static> VirtioDevice for V
                     return Err(VirtioDeviceError::BadDescriptorChain);
                 }
 
+                // Prevent unbounded growth if a corrupted/malicious driver repeatedly publishes
+                // event buffers (e.g. by moving `avail.idx` far ahead and causing the transport to
+                // re-consume stale ring entries). A correct driver cannot have more outstanding
+                // event buffers than the queue size.
+                let max_buffers = queue.size() as usize;
+                if max_buffers != 0 && self.event_buffers.len() >= max_buffers {
+                    return queue
+                        .add_used(mem, chain.head_index(), 0)
+                        .map_err(|_| VirtioDeviceError::IoError);
+                }
+
                 self.event_buffers.push_back(chain);
                 self.flush_eventq(queue, mem)
             }
@@ -1178,9 +1189,27 @@ impl<O: AudioSink + 'static, I: AudioCaptureSource + 'static> VirtioDevice for V
 mod tests {
     use super::*;
     use crate::devices::VirtioDevice;
+    use crate::memory::{read_u16_le, write_u16_le, write_u32_le, write_u64_le, GuestRam};
+    use crate::queue::{PoppedDescriptorChain, VirtQueue, VirtQueueConfig, VIRTQ_DESC_F_WRITE};
 
     fn status(resp: &[u8]) -> u32 {
         u32::from_le_bytes(resp[0..4].try_into().unwrap())
+    }
+
+    fn write_desc(
+        mem: &mut GuestRam,
+        table: u64,
+        index: u16,
+        addr: u64,
+        len: u32,
+        flags: u16,
+        next: u16,
+    ) {
+        let base = table + u64::from(index) * 16;
+        write_u64_le(mem, base, addr).unwrap();
+        write_u32_le(mem, base + 8, len).unwrap();
+        write_u16_le(mem, base + 12, flags).unwrap();
+        write_u16_le(mem, base + 14, next).unwrap();
     }
 
     #[test]
@@ -1322,5 +1351,60 @@ mod tests {
         assert_eq!(entry[24], VIRTIO_SND_D_INPUT);
         assert_eq!(entry[25], CAPTURE_CHANNELS);
         assert_eq!(entry[26], CAPTURE_CHANNELS);
+    }
+
+    #[test]
+    fn event_buffer_queue_is_bounded() {
+        let mut snd = VirtioSnd::new(aero_audio::ring::AudioRingBuffer::new_stereo(8));
+        let mut mem = GuestRam::new(0x10000);
+
+        let desc_table = 0x1000;
+        let avail = 0x2000;
+        let used = 0x3000;
+
+        let qsize = 8u16;
+        let mut queue = VirtQueue::new(
+            VirtQueueConfig {
+                size: qsize,
+                desc_addr: desc_table,
+                avail_addr: avail,
+                used_addr: used,
+            },
+            false,
+        )
+        .unwrap();
+
+        for i in 0..qsize {
+            let buf_addr = 0x4000 + u64::from(i) * 0x100;
+            write_desc(&mut mem, desc_table, i, buf_addr, 8, VIRTQ_DESC_F_WRITE, 0);
+        }
+
+        // Malicious: claim there are 1000 available entries, but only provide `qsize` ring slots.
+        let avail_idx = 1000u16;
+        write_u16_le(&mut mem, avail, 0).unwrap();
+        write_u16_le(&mut mem, avail + 2, avail_idx).unwrap();
+        for i in 0..qsize {
+            write_u16_le(&mut mem, avail + 4 + u64::from(i) * 2, i).unwrap();
+        }
+        write_u16_le(&mut mem, used, 0).unwrap();
+        write_u16_le(&mut mem, used + 2, 0).unwrap();
+
+        for _ in 0..avail_idx {
+            let chain = match queue.pop_descriptor_chain(&mem).unwrap().unwrap() {
+                PoppedDescriptorChain::Chain(chain) => chain,
+                PoppedDescriptorChain::Invalid { error, .. } => {
+                    panic!("unexpected descriptor chain parse error: {error:?}")
+                }
+            };
+            snd.process_queue(VIRTIO_SND_QUEUE_EVENT, chain, &mut queue, &mut mem)
+                .unwrap();
+        }
+
+        assert_eq!(snd.event_buffers.len(), qsize as usize);
+        assert_eq!(
+            read_u16_le(&mem, used + 2).unwrap(),
+            avail_idx - qsize,
+            "extra event buffers should be completed with used.len=0 once the internal queue is full"
+        );
     }
 }
