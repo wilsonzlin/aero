@@ -1,7 +1,11 @@
 use crate::address_filter::AddressFilter;
 use crate::chipset::A20GateHandle;
 use crate::dirty_memory::{DirtyTrackingHandle, DirtyTrackingMemory, DEFAULT_DIRTY_PAGE_SIZE};
-use memory::{DenseMemory, GuestMemory, MapError, MmioHandler, PhysicalMemoryBus};
+use aero_pc_constants::PCIE_ECAM_BASE;
+use memory::{
+    DenseMemory, GuestMemory, MapError, MappedGuestMemory, MappedRegion, MmioHandler,
+    PhysicalMemoryBus,
+};
 use std::sync::Arc;
 
 /// Base address of the system BIOS ROM in the 20-bit real-mode memory window.
@@ -30,12 +34,50 @@ pub struct MemoryBus {
 }
 
 impl MemoryBus {
+    /// Wrap a contiguous RAM backend with the PC high-memory layout when RAM exceeds the PCIe ECAM
+    /// base.
+    ///
+    /// When RAM is larger than [`PCIE_ECAM_BASE`], firmware reserves the physical range
+    /// `PCIE_ECAM_BASE..4GiB` for PCIe ECAM and other MMIO windows, and remaps the RAM that would
+    /// have occupied that hole to start at 4GiB.
+    fn wrap_pc_high_memory(ram: Box<dyn GuestMemory>) -> Box<dyn GuestMemory> {
+        let ram_bytes = ram.size();
+        if ram_bytes <= PCIE_ECAM_BASE {
+            return ram;
+        }
+
+        const HIGH_RAM_BASE: u64 = 0x1_0000_0000;
+        let high_len = ram_bytes - PCIE_ECAM_BASE;
+        let high_end = HIGH_RAM_BASE
+            .checked_add(high_len)
+            .expect("high RAM end overflow");
+
+        Box::new(MappedGuestMemory::new(
+            ram,
+            vec![
+                // Low RAM: [0..PCIE_ECAM_BASE)
+                MappedRegion {
+                    guest_start: 0,
+                    inner_start: 0,
+                    len: PCIE_ECAM_BASE,
+                },
+                // High RAM: [4GiB..4GiB + (ram_bytes - PCIE_ECAM_BASE))
+                MappedRegion {
+                    guest_start: HIGH_RAM_BASE,
+                    inner_start: PCIE_ECAM_BASE,
+                    len: high_end - HIGH_RAM_BASE,
+                },
+            ],
+        ))
+    }
+
     pub fn new(filter: AddressFilter, ram_size: usize) -> Self {
         let ram = DenseMemory::new(ram_size as u64).expect("failed to allocate guest RAM");
         Self::with_ram(filter, Box::new(ram))
     }
 
     pub fn with_ram(filter: AddressFilter, ram: Box<dyn GuestMemory>) -> Self {
+        let ram = Self::wrap_pc_high_memory(ram);
         Self {
             filter,
             bus: PhysicalMemoryBus::new(ram),
@@ -58,11 +100,14 @@ impl MemoryBus {
         ram: Box<dyn GuestMemory>,
         page_size: u32,
     ) -> Self {
+        // Important: dirty tracking must wrap the backing memory *before* we apply any guest
+        // physical remapping so dirty page indices remain in `[0..ram_bytes)`.
         let dirty_ram = DirtyTrackingMemory::new(ram, page_size);
         let handle = dirty_ram.tracking_handle();
+        let ram = Self::wrap_pc_high_memory(Box::new(dirty_ram));
         Self {
             filter,
-            bus: PhysicalMemoryBus::new(Box::new(dirty_ram)),
+            bus: PhysicalMemoryBus::new(ram),
             dirty: Some(handle),
         }
     }

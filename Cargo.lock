@@ -527,6 +527,7 @@ dependencies = [
  "aero-interrupts",
  "aero-io-snapshot",
  "aero-mmu",
+ "aero-pc-constants",
  "firmware",
  "js-sys",
  "memory",
