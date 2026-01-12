@@ -625,3 +625,46 @@ block 0x6100:
 
     assert_block_ir(&code, entry, cpu, bus, expected);
 }
+
+#[test]
+fn group2_shl_al_imm8_masks_count_like_x86() {
+    // mov al, 1
+    // shl al, 9  (C0 /4 ib)
+    // ret
+    //
+    // x86 masks 8-bit shift counts to 5 bits, so 9 is *not* reduced to 1.
+    let code = [
+        0xb0, 0x01, // mov al, 1
+        0xc0, 0xe0, 0x09, // shl al, 9
+        0xc3, // ret
+    ];
+
+    let entry = 0x6200u64;
+
+    let mut cpu = CpuState {
+        rip: entry,
+        ..Default::default()
+    };
+    write_gpr(&mut cpu, Gpr::Rsp, 0x9000);
+
+    let mut bus = SimpleBus::new(0x10000);
+    bus.write(0x9000, Width::W64, 0x7000);
+
+    let expected = "\
+block 0x6200:
+  v0 = const.i8 0x1
+  write.al v0
+  v1 = read.al
+  v2 = const.i8 0x9
+  v3 = shl.i8 v1, v2
+  write.al v3
+  v4 = read.rsp
+  v5 = load.i64 [v4]
+  v6 = const.i64 0x8
+  v7 = add.i64 v4, v6
+  write.rsp v7
+  term jmp [v5]
+";
+
+    assert_block_ir(&code, entry, cpu, bus, expected);
+}

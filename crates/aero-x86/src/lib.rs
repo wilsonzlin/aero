@@ -802,8 +802,8 @@ pub mod tier1 {
                     }
                 }
             }
-            // 0xC1/0xD1 shifts are decoded below as `InstKind::Shift` so Tier1 can keep the shift
-            // count as a `u8` instead of embedding it into an `Operand::Imm`.
+            // Group2 shifts (0xC0/0xC1/0xD0/0xD1) are decoded below as `InstKind::Shift` so Tier1
+            // can keep the shift count as a `u8` instead of embedding it into an `Operand::Imm`.
             0x05 | 0x25 | 0x0d | 0x35 | 0x2d | 0x3d | 0xa9 => {
                 let (op, is_cmp, is_test, acc) = match opcode1 {
                     0x05 => (AluOp::Add, false, false, Gpr::Rax),
@@ -930,6 +930,27 @@ pub mod tier1 {
                     width,
                 }
             }
+            0xd0 => {
+                let (dst, modrm) =
+                    decode_modrm_operand(bytes, &mut offset, rex, rex.present, Width::W8)?;
+                let group = modrm.reg & 0x7;
+                let op = match group {
+                    4 => ShiftOp::Shl,
+                    5 => ShiftOp::Shr,
+                    7 => ShiftOp::Sar,
+                    _ => {
+                        return Err(DecodeError {
+                            message: "unsupported 0xD0 group",
+                        })
+                    }
+                };
+                InstKind::Shift {
+                    op,
+                    dst,
+                    count: 1,
+                    width: Width::W8,
+                }
+            }
             0xc1 => {
                 let (dst, modrm) =
                     decode_modrm_operand(bytes, &mut offset, rex, rex.present, width)?;
@@ -951,6 +972,29 @@ pub mod tier1 {
                     dst,
                     count: imm8,
                     width,
+                }
+            }
+            0xc0 => {
+                let (dst, modrm) =
+                    decode_modrm_operand(bytes, &mut offset, rex, rex.present, Width::W8)?;
+                let group = modrm.reg & 0x7;
+                let op = match group {
+                    4 => ShiftOp::Shl,
+                    5 => ShiftOp::Shr,
+                    7 => ShiftOp::Sar,
+                    _ => {
+                        return Err(DecodeError {
+                            message: "unsupported 0xC0 group",
+                        })
+                    }
+                };
+                let imm8 = read_u8(bytes, offset)?;
+                offset += 1;
+                InstKind::Shift {
+                    op,
+                    dst,
+                    count: imm8,
+                    width: Width::W8,
                 }
             }
             0xff => {
