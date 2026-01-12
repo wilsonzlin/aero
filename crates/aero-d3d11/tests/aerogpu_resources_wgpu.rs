@@ -10,6 +10,11 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
 use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
 use anyhow::{anyhow, Context, Result};
 
+// NOTE: These values are reserved for future AeroGPU ABI extensions and are not part of
+// `aero_protocol::AerogpuFormat` yet. The runtime matches these numeric values directly, aligned
+// with common DXGI_FORMAT discriminants for forward-compatibility.
+const AEROGPU_FORMAT_BC1_RGBA_UNORM: u32 = 71; // DXGI_FORMAT_BC1_UNORM
+
 async fn create_device_queue() -> Result<(wgpu::Device, wgpu::Queue)> {
     #[cfg(unix)]
     {
@@ -257,6 +262,70 @@ fn upload_resource_buffer_and_texture_roundtrip() -> Result<()> {
         let readback =
             read_texture_rgba8(resources.device(), resources.queue(), &tex.texture, 2, 2).await?;
         assert_eq!(readback, tex_data);
+
+        Ok(())
+    })
+}
+
+#[test]
+fn upload_resource_bc1_texture_roundtrip_cpu_fallback() -> Result<()> {
+    pollster::block_on(async {
+        let (device, queue) = match create_device_queue().await {
+            Ok(v) => v,
+            Err(err) => {
+                common::skip_or_panic(module_path!(), &format!("{err:#}"));
+                return Ok(());
+            }
+        };
+        let mut resources = AerogpuResourceManager::new(device, queue);
+
+        let tex_handle = 3;
+        resources.create_texture2d(
+            tex_handle,
+            Texture2dCreateDesc {
+                usage_flags: AEROGPU_RESOURCE_USAGE_TEXTURE,
+                format: AEROGPU_FORMAT_BC1_RGBA_UNORM,
+                width: 4,
+                height: 4,
+                mip_levels: 1,
+                array_layers: 1,
+                // BC1: 4x4 blocks, 8 bytes per block. One block row => 8 bytes.
+                row_pitch_bytes: 8,
+                backing_alloc_id: 0,
+                backing_offset_bytes: 0,
+            },
+        )?;
+
+        // A single 4x4 BC1 block:
+        // color0=0xffff (white), color1=0x0000 (black), indices:
+        // row0 -> 0 (white)
+        // row1 -> 1 (black)
+        // row2 -> 2 (2/3 white -> 170 gray)
+        // row3 -> 3 (1/3 white -> 85 gray)
+        let bc1_data: Vec<u8> = vec![
+            0xff, 0xff, // color0
+            0x00, 0x00, // color1
+            0x00, 0x55, 0xaa, 0xff, // indices
+        ];
+
+        resources.upload_resource(
+            tex_handle,
+            DirtyRange {
+                offset_bytes: 0,
+                size_bytes: bc1_data.len() as u64,
+            },
+            &bc1_data,
+        )?;
+
+        // Device features in these tests are empty, so BC formats must fall back to RGBA8.
+        let tex = resources.texture2d(tex_handle)?;
+        assert_eq!(tex.desc.format, wgpu::TextureFormat::Bc1RgbaUnorm);
+        assert_eq!(tex.desc.texture_format, wgpu::TextureFormat::Rgba8Unorm);
+
+        let expected_rgba8 = aero_gpu::decompress_bc1_rgba8(4, 4, &bc1_data);
+        let readback =
+            read_texture_rgba8(resources.device(), resources.queue(), &tex.texture, 4, 4).await?;
+        assert_eq!(readback, expected_rgba8);
 
         Ok(())
     })
