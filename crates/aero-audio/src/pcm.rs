@@ -913,7 +913,7 @@ mod tests {
     }
 
     #[test]
-    fn decode_pcm_to_stereo_f32_uses_first_two_channels_for_multichannel_8_24_32bit() {
+    fn decode_pcm_to_stereo_f32_uses_first_two_channels_for_multichannel_8_20_24_32bit() {
         // 8-bit, 4 channels: only first two channels contribute.
         let fmt = StreamFormat {
             sample_rate_hz: 48_000,
@@ -925,6 +925,23 @@ mod tests {
         assert_eq!(out.len(), 1);
         assert_f32_approx_eq(out[0][0], -1.0, 1e-6);
         assert_f32_approx_eq(out[0][1], 127.0 / 128.0, 1e-6);
+
+        // 20-bit, 4 channels: only first two channels contribute and offsets must use 4-byte
+        // containers per sample.
+        let fmt = StreamFormat {
+            sample_rate_hz: 48_000,
+            bits_per_sample: 20,
+            channels: 4,
+        };
+        let mut input = Vec::new();
+        input.extend_from_slice(&262_144i32.to_le_bytes()); // 0.5
+        input.extend_from_slice(&(-262_144i32).to_le_bytes()); // -0.5
+        input.extend_from_slice(&524_287i32.to_le_bytes()); // ~1.0 (ignored)
+        input.extend_from_slice(&(-524_288i32).to_le_bytes()); // -1.0 (ignored)
+        let out = decode_pcm_to_stereo_f32(&input, fmt);
+        assert_eq!(out.len(), 1);
+        assert_f32_approx_eq(out[0][0], 0.5, 1e-6);
+        assert_f32_approx_eq(out[0][1], -0.5, 1e-6);
 
         // 24-bit, 4 channels: only first two channels contribute and offsets must use 4-byte
         // containers per sample.
