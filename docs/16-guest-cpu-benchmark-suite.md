@@ -46,12 +46,14 @@ type GuestCpuBenchOpts = {
   mode: GuestCpuMode;
 
   // Preferred: run until seconds budget is reached (multiple runs).
+  // Must be a finite number > 0.
   seconds?: number;
 
   // Optional: run a single *measured* payload invocation for N iterations.
   // The harness will also perform an unmeasured "reference run" (same variant/iters)
   // to derive `expected_checksum` and assert determinism.
   // This is mainly for debugging; the main suite uses `seconds`.
+  // Must be an integer in the u32 range (> 0).
   iters?: number;
 };
 
