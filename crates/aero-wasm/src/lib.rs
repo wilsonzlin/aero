@@ -2580,26 +2580,11 @@ impl Machine {
     /// Bits above `0x07` are ignored.
     pub fn inject_mouse_buttons_mask(&mut self, mask: u8) {
         let next = mask & 0x07;
-
-        if self.mouse_buttons_known {
-            let prev = self.mouse_buttons;
-            let delta = prev ^ next;
-            if (delta & 0x01) != 0 {
-                self.inject_mouse_left((next & 0x01) != 0);
-            }
-            if (delta & 0x02) != 0 {
-                self.inject_mouse_right((next & 0x02) != 0);
-            }
-            if (delta & 0x04) != 0 {
-                self.inject_mouse_middle((next & 0x04) != 0);
-            }
-        } else {
-            // We don't know what state the underlying machine restored (e.g. after snapshot
-            // restore), so set every button explicitly.
-            self.inject_mouse_left((next & 0x01) != 0);
-            self.inject_mouse_right((next & 0x02) != 0);
-            self.inject_mouse_middle((next & 0x04) != 0);
-        }
+        // Delegate to the canonical machine helper so we compute deltas using authoritative guest
+        // device state. The guest can reset the PS/2 mouse independently, making a purely
+        // host-side "previous buttons" cache stale (and potentially turning this into a no-op even
+        // when the guest button image was cleared).
+        self.inner.inject_ps2_mouse_buttons(next);
 
         self.mouse_buttons = next;
         self.mouse_buttons_known = true;
@@ -2910,5 +2895,40 @@ mod machine_mouse_button_cache_tests {
         m.reset();
         assert!(m.mouse_buttons_known);
         assert_eq!(m.mouse_buttons, 0x00);
+    }
+
+    #[test]
+    fn mouse_buttons_mask_resyncs_after_guest_mouse_reset() {
+        let mut m = Machine::new(16 * 1024 * 1024).expect("Machine::new should succeed");
+
+        // Enable mouse reporting so button injections generate stream packets.
+        m.inner.io_write(0x64, 1, 0xD4);
+        m.inner.io_write(0x60, 1, 0xF4);
+        assert_eq!(m.inner.io_read(0x60, 1) as u8, 0xFA); // ACK
+
+        // Set left pressed; this should generate a packet.
+        m.inject_mouse_buttons_mask(0x01);
+        let pressed_packet: Vec<u8> = (0..3)
+            .map(|_| m.inner.io_read(0x60, 1) as u8)
+            .collect();
+        assert_eq!(pressed_packet, vec![0x09, 0x00, 0x00]);
+
+        // Guest resets the mouse (D4 FF). This clears the device-side button image.
+        m.inner.io_write(0x64, 1, 0xD4);
+        m.inner.io_write(0x60, 1, 0xFF);
+        assert_eq!(m.inner.io_read(0x60, 1) as u8, 0xFA); // ACK
+        assert_eq!(m.inner.io_read(0x60, 1) as u8, 0xAA); // self-test pass
+        assert_eq!(m.inner.io_read(0x60, 1) as u8, 0x00); // device id
+
+        // Re-enable reporting after reset (D4 F4).
+        m.inner.io_write(0x64, 1, 0xD4);
+        m.inner.io_write(0x60, 1, 0xF4);
+        assert_eq!(m.inner.io_read(0x60, 1) as u8, 0xFA); // ACK
+
+        // Re-apply the same absolute button mask. This should not be a no-op: the device state was
+        // reset, so we expect a new packet with left pressed.
+        m.inject_mouse_buttons_mask(0x01);
+        let packet: Vec<u8> = (0..3).map(|_| m.inner.io_read(0x60, 1) as u8).collect();
+        assert_eq!(packet, vec![0x09, 0x00, 0x00]);
     }
 }
