@@ -62,7 +62,7 @@ impl DeviceId {
     pub const MEMORY: DeviceId = DeviceId(11);
     /// Guest-visible USB controller/runtime state.
     pub const USB: DeviceId = DeviceId(12);
-    /// Legacy i8042 PS/2 controller state.
+    /// i8042 / PS/2 controller state (keyboard + mouse).
     pub const I8042: DeviceId = DeviceId(13);
     /// Optional split-out PCI config mechanism #1 ports (`0xCF8/0xCFC`) and PCI bus config-space
     /// state.

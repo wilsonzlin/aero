@@ -346,6 +346,21 @@ impl I8042Controller {
         self.inject_set2_key(sc, pressed);
     }
 
+    /// Host-side injection helper: enqueue raw keyboard scancode bytes.
+    ///
+    /// This is primarily intended for the browser runtime, where the JS capture
+    /// layer already translates `KeyboardEvent.code` into PS/2 Set-2 scancode
+    /// byte sequences (`web/src/input/scancodes.ts`).
+    ///
+    /// Bytes injected here are treated as keyboard-originated output and are
+    /// therefore subject to:
+    /// - keyboard scanning enabled/disabled state, and
+    /// - i8042 command-byte Set-2 -> Set-1 translation when enabled.
+    pub fn inject_keyboard_bytes(&mut self, bytes: &[u8]) {
+        self.keyboard.inject_bytes(bytes);
+        self.service_output();
+    }
+
     pub fn inject_set2_key(&mut self, scancode: Set2Scancode, pressed: bool) {
         self.keyboard.inject_key(scancode, pressed);
         self.service_output();
