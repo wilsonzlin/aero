@@ -329,18 +329,18 @@ mod tests {
         let mut guest = vec![0u8; 16];
         let guest_base = guest.as_mut_ptr() as u32;
 
-        // Construct the memory adapter directly so we can exercise the `addr+len` overflow path:
-        // `guest_size == u32::MAX` allows `addr` to be near the end of the address space while still
-        // being considered "in range" for the initial `addr < guest_size` check.
-        let mem = LinearGuestMemory {
+        // Construct the memory adapter directly so we can exercise the `addr+len` overflow path.
+        let mem = crate::HdaGuestMemory {
             guest_base,
-            guest_size: u32::MAX,
+            // Allow almost any `addr` through the `end > guest_size` check so we can hit the
+            // `checked_add` overflow path for `addr + len`.
+            guest_size: u64::MAX,
         };
 
-        // `addr + len` overflows u32, so the adapter must treat it as out-of-bounds and
+        // `addr + len` overflows u64, so the adapter must treat it as out-of-bounds and
         // return a zero-filled read without panicking.
         let mut buf = [0xAAu8; 8];
-        mem.read_physical(u64::from(u32::MAX - 1), &mut buf);
+        mem.read_physical(u64::MAX - 1, &mut buf);
         assert_eq!(buf, [0u8; 8]);
     }
 }
