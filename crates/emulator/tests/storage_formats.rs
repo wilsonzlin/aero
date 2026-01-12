@@ -340,6 +340,84 @@ fn qcow2_write_persists_after_reopen() {
 }
 
 #[test]
+fn qcow2_rejects_oversized_l1_table() {
+    const MAX_TABLE_BYTES: u64 = 128 * 1024 * 1024;
+
+    let cluster_bits = 9u32; // 512-byte clusters
+    let cluster_size = 1u64 << cluster_bits;
+    let l2_entries_per_table = cluster_size / 8;
+
+    // Choose a virtual size that requires an L1 table just barely larger than MAX_TABLE_BYTES.
+    let required_l1_entries = (MAX_TABLE_BYTES / 8) + 1;
+    let guest_clusters = required_l1_entries
+        .checked_mul(l2_entries_per_table)
+        .expect("guest_clusters overflow");
+    let virtual_size = guest_clusters
+        .checked_mul(cluster_size)
+        .expect("virtual_size overflow");
+
+    let l1_size =
+        u32::try_from(required_l1_entries).expect("required_l1_entries too large for u32");
+
+    let mut storage = MemStorage::with_len(104);
+    let mut header = [0u8; 104];
+    header[0..4].copy_from_slice(b"QFI\xfb");
+    write_be_u32(&mut header, 4, 3); // version
+    write_be_u32(&mut header, 20, cluster_bits);
+    write_be_u64(&mut header, 24, virtual_size);
+    write_be_u32(&mut header, 36, l1_size);
+    write_be_u64(&mut header, 40, cluster_size); // l1_table_offset
+    write_be_u64(&mut header, 48, cluster_size * 2); // refcount_table_offset
+    write_be_u32(&mut header, 56, 1); // refcount_table_clusters
+    write_be_u64(&mut header, 72, 0); // incompatible_features
+    write_be_u32(&mut header, 96, 4); // refcount_order (16-bit)
+    write_be_u32(&mut header, 100, 104); // header_length
+    storage.write_at(0, &header).unwrap();
+
+    let res = emulator::io::storage::formats::Qcow2Disk::open(storage);
+    assert!(matches!(
+        res,
+        Err(DiskError::Unsupported("qcow2 l1 table too large"))
+    ));
+}
+
+#[test]
+fn qcow2_rejects_oversized_refcount_table() {
+    const MAX_TABLE_BYTES: u64 = 128 * 1024 * 1024;
+
+    let cluster_bits = 16u32; // 64KiB clusters
+    let cluster_size = 1u64 << cluster_bits;
+    let refcount_table_clusters = (MAX_TABLE_BYTES / cluster_size) + 1;
+    let refcount_table_clusters =
+        u32::try_from(refcount_table_clusters).expect("refcount_table_clusters too large for u32");
+
+    // Ensure the file is long enough for the (small) L1 table so we hit the refcount cap instead
+    // of failing with a truncated L1 table.
+    let file_len = cluster_size + 8;
+    let mut storage = MemStorage::with_len(file_len as usize);
+
+    let mut header = [0u8; 104];
+    header[0..4].copy_from_slice(b"QFI\xfb");
+    write_be_u32(&mut header, 4, 3); // version
+    write_be_u32(&mut header, 20, cluster_bits);
+    write_be_u64(&mut header, 24, cluster_size); // virtual_size
+    write_be_u32(&mut header, 36, 1); // l1_size
+    write_be_u64(&mut header, 40, cluster_size); // l1_table_offset
+    write_be_u64(&mut header, 48, cluster_size * 2); // refcount_table_offset
+    write_be_u32(&mut header, 56, refcount_table_clusters);
+    write_be_u64(&mut header, 72, 0); // incompatible_features
+    write_be_u32(&mut header, 96, 4); // refcount_order (16-bit)
+    write_be_u32(&mut header, 100, 104); // header_length
+    storage.write_at(0, &header).unwrap();
+
+    let res = emulator::io::storage::formats::Qcow2Disk::open(storage);
+    assert!(matches!(
+        res,
+        Err(DiskError::Unsupported("qcow2 refcount table too large"))
+    ));
+}
+
+#[test]
 fn vhd_fixed_fixture_read() {
     let storage = make_vhd_fixed_with_pattern();
     let mut drive = VirtualDrive::open_auto(storage, 512, WriteCachePolicy::WriteThrough).unwrap();
@@ -412,6 +490,43 @@ fn vhd_dynamic_write_persists_after_reopen() {
     let mut back = vec![0u8; SECTOR_SIZE];
     reopened.read_sectors(3, &mut back).unwrap();
     assert_eq!(back, data);
+}
+
+#[test]
+fn vhd_dynamic_rejects_oversized_bat() {
+    const MAX_BAT_BYTES: u64 = 128 * 1024 * 1024;
+
+    let block_size = 512u32;
+    let required_entries = (MAX_BAT_BYTES / 4) + 1;
+    let virtual_size = required_entries * block_size as u64;
+
+    let dyn_header_offset = 512u64;
+    let table_offset = dyn_header_offset + 1024;
+    let footer = make_vhd_footer(virtual_size, 3, dyn_header_offset);
+
+    let file_len = 512 + 1024 + 512;
+    let mut storage = MemStorage::with_len(file_len as usize);
+    storage.write_at(0, &footer).unwrap();
+    storage.write_at(file_len - 512, &footer).unwrap();
+
+    let mut dyn_header = [0u8; 1024];
+    dyn_header[0..8].copy_from_slice(b"cxsparse");
+    write_be_u64(&mut dyn_header, 8, u64::MAX);
+    write_be_u64(&mut dyn_header, 16, table_offset);
+    write_be_u32(&mut dyn_header, 24, 0x0001_0000);
+    write_be_u32(
+        &mut dyn_header,
+        28,
+        u32::try_from(required_entries).expect("required_entries too large for u32"),
+    );
+    write_be_u32(&mut dyn_header, 32, block_size);
+    storage.write_at(dyn_header_offset, &dyn_header).unwrap();
+
+    let res = emulator::io::storage::formats::VhdDisk::open(storage);
+    assert!(matches!(
+        res,
+        Err(DiskError::Unsupported("vhd bat too large"))
+    ));
 }
 
 #[derive(Clone, Debug)]

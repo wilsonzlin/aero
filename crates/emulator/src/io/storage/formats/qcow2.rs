@@ -12,11 +12,14 @@ const QCOW2_OFLAG_COMPRESSED: u64 = 1 << 62;
 // "Zero cluster" flag (introduced in qcow2 v3). Treat as unallocated.
 const QCOW2_OFLAG_ZERO: u64 = 1 << 0;
 
+// Hard cap to avoid absurd allocations when parsing untrusted images.
+const MAX_TABLE_BYTES: u64 = 128 * 1024 * 1024; // 128 MiB
+
 #[derive(Debug, Clone)]
 struct Qcow2Header {
     cluster_bits: u32,
     size: u64,
-    l1_size: u32,
+    l1_entries: u64,
     l1_table_offset: u64,
     refcount_table_offset: u64,
     refcount_table_clusters: u32,
@@ -49,6 +52,8 @@ impl Qcow2Header {
         let l1_table_offset = be_u64(&header_72[40..48]);
         let refcount_table_offset = be_u64(&header_72[48..56]);
         let refcount_table_clusters = be_u32(&header_72[56..60]);
+        let nb_snapshots = be_u32(&header_72[60..64]);
+        let snapshots_offset = be_u64(&header_72[64..72]);
 
         let (incompatible_features, refcount_order, header_length) = if version == 3 {
             if len < 104 {
@@ -72,6 +77,13 @@ impl Qcow2Header {
         if version == 3 && header_length < 104 {
             return Err(DiskError::CorruptImage("qcow2 header_length too small"));
         }
+        if len < header_length as u64 {
+            return Err(DiskError::CorruptImage("qcow2 header truncated"));
+        }
+        let header_length_u64 = header_length as u64;
+        if l1_table_offset < header_length_u64 || refcount_table_offset < header_length_u64 {
+            return Err(DiskError::CorruptImage("qcow2 table overlaps header"));
+        }
 
         if crypt_method != 0 {
             return Err(DiskError::Unsupported("qcow2 encryption"));
@@ -79,6 +91,10 @@ impl Qcow2Header {
 
         if backing_file_offset != 0 || backing_file_size != 0 {
             return Err(DiskError::Unsupported("qcow2 backing file"));
+        }
+
+        if nb_snapshots != 0 || snapshots_offset != 0 {
+            return Err(DiskError::Unsupported("qcow2 internal snapshots"));
         }
 
         if size == 0 {
@@ -110,6 +126,13 @@ impl Qcow2Header {
         }
 
         let cluster_size = 1u64 << cluster_bits;
+        if !l1_table_offset.is_multiple_of(cluster_size)
+            || !refcount_table_offset.is_multiple_of(cluster_size)
+        {
+            return Err(DiskError::CorruptImage(
+                "qcow2 table offset not cluster aligned",
+            ));
+        }
         let l2_entries_per_table = cluster_size / 8;
         let guest_clusters = size.div_ceil(cluster_size);
         let required_l1 = guest_clusters.div_ceil(l2_entries_per_table);
@@ -117,10 +140,17 @@ impl Qcow2Header {
             return Err(DiskError::CorruptImage("qcow2 l1 table too small"));
         }
 
+        let l1_bytes = required_l1
+            .checked_mul(8)
+            .ok_or(DiskError::Unsupported("qcow2 l1 table too large"))?;
+        if l1_bytes > MAX_TABLE_BYTES {
+            return Err(DiskError::Unsupported("qcow2 l1 table too large"));
+        }
+
         Ok(Self {
             cluster_bits,
             size,
-            l1_size,
+            l1_entries: required_l1,
             l1_table_offset,
             refcount_table_offset,
             refcount_table_clusters,
@@ -146,36 +176,111 @@ impl<S: ByteStorage> Qcow2Disk<S> {
     pub fn open(mut storage: S) -> DiskResult<Self> {
         let header = Qcow2Header::parse(&mut storage)?;
         let cluster_size = header.cluster_size();
+        let file_len = storage.len()?;
 
-        let l1_entries = usize::try_from(header.l1_size)
-            .map_err(|_| DiskError::Unsupported("qcow2 l1 table too large"))?;
-        let l1_bytes = l1_entries
+        // ----- L1 table -----
+        let l1_bytes = header
+            .l1_entries
             .checked_mul(8)
             .ok_or(DiskError::Unsupported("qcow2 l1 table too large"))?;
-        let mut l1_buf = vec![0u8; l1_bytes];
-        storage.read_at(header.l1_table_offset, &mut l1_buf)?;
-        let mut l1_table = Vec::with_capacity(l1_entries);
-        for chunk in l1_buf.chunks_exact(8) {
-            l1_table.push(be_u64(chunk));
+        if l1_bytes > MAX_TABLE_BYTES {
+            return Err(DiskError::Unsupported("qcow2 l1 table too large"));
+        }
+        let l1_entries: usize = header
+            .l1_entries
+            .try_into()
+            .map_err(|_| DiskError::Unsupported("qcow2 l1 table too large"))?;
+        let l1_bytes_usize: usize = l1_bytes
+            .try_into()
+            .map_err(|_| DiskError::Unsupported("qcow2 l1 table too large"))?;
+
+        let l1_end = header
+            .l1_table_offset
+            .checked_add(l1_bytes)
+            .ok_or(DiskError::OutOfBounds)?;
+        if l1_end > file_len {
+            return Err(DiskError::CorruptImage("qcow2 l1 table truncated"));
         }
 
+        // ----- Refcount table -----
         let refcount_table_bytes = (header.refcount_table_clusters as u64)
             .checked_mul(cluster_size)
             .ok_or(DiskError::Unsupported("qcow2 refcount table too large"))?;
+        if refcount_table_bytes > MAX_TABLE_BYTES {
+            return Err(DiskError::Unsupported("qcow2 refcount table too large"));
+        }
         let refcount_bytes_usize = usize::try_from(refcount_table_bytes)
             .map_err(|_| DiskError::Unsupported("qcow2 refcount table too large"))?;
         if !refcount_table_bytes.is_multiple_of(8) {
             return Err(DiskError::CorruptImage("qcow2 refcount table size invalid"));
         }
-        let mut refcount_buf = vec![0u8; refcount_bytes_usize];
-        storage.read_at(header.refcount_table_offset, &mut refcount_buf)?;
-        let mut refcount_table = Vec::with_capacity(refcount_bytes_usize / 8);
-        for chunk in refcount_buf.chunks_exact(8) {
-            refcount_table.push(be_u64(chunk));
+        let refcount_end = header
+            .refcount_table_offset
+            .checked_add(refcount_table_bytes)
+            .ok_or(DiskError::OutOfBounds)?;
+        if refcount_end > file_len {
+            return Err(DiskError::CorruptImage("qcow2 refcount table truncated"));
         }
 
-        let file_len = storage.len()?;
-        let next_free_offset = align_up(file_len, cluster_size);
+        if ranges_overlap(
+            header.l1_table_offset,
+            l1_end,
+            header.refcount_table_offset,
+            refcount_end,
+        ) {
+            return Err(DiskError::CorruptImage("qcow2 metadata tables overlap"));
+        }
+
+        // Read the L1 table without allocating an additional full-size temporary buffer.
+        let mut l1_table = Vec::new();
+        l1_table
+            .try_reserve_exact(l1_entries)
+            .map_err(|_| DiskError::Unsupported("qcow2 l1 table too large"))?;
+        let mut l1_buf = Vec::new();
+        l1_buf
+            .try_reserve_exact(64 * 1024)
+            .map_err(|_| DiskError::Unsupported("qcow2 l1 table too large"))?;
+        l1_buf.resize(64 * 1024, 0);
+        let mut remaining = l1_bytes_usize;
+        let mut off = header.l1_table_offset;
+        while remaining > 0 {
+            let read_len = remaining.min(l1_buf.len());
+            storage.read_at(off, &mut l1_buf[..read_len])?;
+            for chunk in l1_buf[..read_len].chunks_exact(8) {
+                l1_table.push(be_u64(chunk));
+            }
+            off = off
+                .checked_add(read_len as u64)
+                .ok_or(DiskError::OutOfBounds)?;
+            remaining -= read_len;
+        }
+
+        // Read the refcount table without allocating an additional full-size temporary buffer.
+        let refcount_entries = refcount_bytes_usize / 8;
+        let mut refcount_table = Vec::new();
+        refcount_table
+            .try_reserve_exact(refcount_entries)
+            .map_err(|_| DiskError::Unsupported("qcow2 refcount table too large"))?;
+        let mut refcount_buf = Vec::new();
+        refcount_buf
+            .try_reserve_exact(64 * 1024)
+            .map_err(|_| DiskError::Unsupported("qcow2 refcount table too large"))?;
+        refcount_buf.resize(64 * 1024, 0);
+        let mut remaining = refcount_bytes_usize;
+        let mut off = header.refcount_table_offset;
+        while remaining > 0 {
+            let read_len = remaining.min(refcount_buf.len());
+            storage.read_at(off, &mut refcount_buf[..read_len])?;
+            for chunk in refcount_buf[..read_len].chunks_exact(8) {
+                refcount_table.push(be_u64(chunk));
+            }
+            off = off
+                .checked_add(read_len as u64)
+                .ok_or(DiskError::OutOfBounds)?;
+            remaining -= read_len;
+        }
+
+        let next_free_offset = align_up(file_len, cluster_size)?;
 
         Ok(Self {
             storage,
@@ -606,15 +711,15 @@ fn be_u64(bytes: &[u8]) -> u64 {
     ])
 }
 
-fn align_up(value: u64, align: u64) -> u64 {
+fn align_up(value: u64, align: u64) -> DiskResult<u64> {
     if align == 0 {
-        return value;
+        return Ok(value);
     }
     let rem = value % align;
     if rem == 0 {
-        value
+        Ok(value)
     } else {
-        value + (align - rem)
+        value.checked_add(align - rem).ok_or(DiskError::OutOfBounds)
     }
 }
 
@@ -622,12 +727,17 @@ fn write_zeroes<S: ByteStorage>(storage: &mut S, mut offset: u64, mut len: u64) 
     const CHUNK: usize = 64 * 1024;
     let buf = [0u8; CHUNK];
     while len > 0 {
-        let to_write = (len as usize).min(CHUNK);
+        let to_write_u64 = len.min(CHUNK as u64);
+        let to_write = to_write_u64 as usize;
         storage.write_at(offset, &buf[..to_write])?;
         offset = offset
-            .checked_add(to_write as u64)
+            .checked_add(to_write_u64)
             .ok_or(DiskError::OutOfBounds)?;
-        len -= to_write as u64;
+        len -= to_write_u64;
     }
     Ok(())
+}
+
+fn ranges_overlap(start_a: u64, end_a: u64, start_b: u64, end_b: u64) -> bool {
+    start_a < end_b && start_b < end_a
 }
