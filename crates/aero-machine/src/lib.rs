@@ -1853,7 +1853,7 @@ impl snapshot::SnapshotSource for Machine {
         devices.push(
             cpu_internal
                 .to_device_state()
-                .expect("CpuInternalState::to_device_state should be infallible"),
+                .expect("failed to encode CPU_INTERNAL CpuInternalState device state"),
         );
         devices
     }
@@ -2155,10 +2155,8 @@ impl snapshot::SnapshotTarget for Machine {
 
         // CPU_INTERNAL: machine-defined CPU bookkeeping (interrupt shadow + external interrupt FIFO).
         if let Some(state) = by_id.remove(&snapshot::DeviceId::CPU_INTERNAL) {
-            if state.version == snapshot::CpuInternalState::VERSION {
-                if let Ok(decoded) = snapshot::CpuInternalState::from_device_state(&state) {
-                    snapshot::apply_cpu_internal_state_to_cpu_core(&decoded, &mut self.cpu);
-                }
+            if let Ok(decoded) = snapshot::CpuInternalState::from_device_state(&state) {
+                snapshot::apply_cpu_internal_state_to_cpu_core(&decoded, &mut self.cpu);
             }
         }
     }
