@@ -367,7 +367,7 @@ fn test_boot_sector_fixture_writes_vga_text() {
     assert_eq!(vga, tests::fixtures::boot::boot_vga_serial::EXPECTED_VGA_TEXT_BYTES);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_windows_7_boot() {
     let mut vm = VirtualMachine::new(Config {
         memory: 2 * GB,
@@ -624,7 +624,7 @@ fn test_mouse_packet_generation() {
 ```rust
 // NOTE: End-to-end Windows application tests require a user-supplied Windows
 // installation and are not expected to run in default OSS CI.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_notepad() {
     let vm = boot_windows_7().await;
     
@@ -644,7 +644,7 @@ async fn test_notepad() {
     assert!(ocr_contains(screenshot, "Hello, World!"));
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_calculator() {
     let vm = boot_windows_7().await;
     
@@ -661,7 +661,7 @@ async fn test_calculator() {
     assert_eq!(result, "4");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_internet_explorer() {
     let vm = boot_windows_7().await;
     
