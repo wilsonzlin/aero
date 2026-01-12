@@ -36,19 +36,22 @@ impl<T> DrainQueue<T> {
     /// Push an item, truncating the queue to at most `max_len` by dropping the
     /// oldest items.
     ///
-    /// If `max_len` is 0, the item is dropped.
-    pub fn push_bounded(&self, item: T, max_len: usize) {
+    /// Returns the number of dropped items (including the newly pushed item when
+    /// `max_len` is 0).
+    pub fn push_bounded(&self, item: T, max_len: usize) -> usize {
         if max_len == 0 {
-            return;
+            return 1;
         }
         let mut guard = self.lock();
+        let mut dropped = 0usize;
         if guard.len() >= max_len {
             // Keep the most recent items. This is O(n) but expected to be cheap
             // given the small bounded size and low event frequency.
-            let drop_count = guard.len() + 1 - max_len;
-            guard.drain(0..drop_count);
+            dropped = guard.len() + 1 - max_len;
+            guard.drain(0..dropped);
         }
         guard.push(item);
+        dropped
     }
 
     pub fn drain(&self) -> Vec<T> {
@@ -102,9 +105,26 @@ mod tests {
     #[test]
     fn push_bounded_drops_oldest() {
         let q = DrainQueue::new();
-        q.push_bounded(1, 2);
-        q.push_bounded(2, 2);
-        q.push_bounded(3, 2);
+        assert_eq!(q.push_bounded(1, 2), 0);
+        assert_eq!(q.push_bounded(2, 2), 0);
+        assert_eq!(q.push_bounded(3, 2), 1);
         assert_eq!(q.drain(), vec![2, 3]);
+    }
+
+    #[test]
+    fn push_bounded_max_len_zero_drops_item() {
+        let q = DrainQueue::new();
+        assert_eq!(q.push_bounded(1, 0), 1);
+        assert!(q.drain().is_empty());
+    }
+
+    #[test]
+    fn push_bounded_can_drop_multiple_items() {
+        let q = DrainQueue::new();
+        q.push(1);
+        q.push(2);
+        q.push(3);
+        assert_eq!(q.push_bounded(4, 2), 2);
+        assert_eq!(q.drain(), vec![3, 4]);
     }
 }
