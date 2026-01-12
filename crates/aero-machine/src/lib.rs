@@ -20,6 +20,7 @@ use std::fmt;
 use std::io::{Cursor, Read, Seek, Write};
 use std::rc::Rc;
 use std::sync::Arc;
+use std::time::Duration;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -1230,7 +1231,7 @@ impl Machine {
         self.vga.clone()
     }
 
-    /// Advance deterministic platform time and poll any timer devices.
+    /// Advance deterministic machine/platform time and poll any timer devices.
     ///
     /// This is used by [`Machine::run_slice`] to keep PIT/RTC/HPET/LAPIC timers progressing
     /// deterministically (based on executed CPU cycles, including while the CPU is halted), and
@@ -1239,6 +1240,14 @@ impl Machine {
         if delta_ns == 0 {
             return;
         }
+
+        // Keep the core's A20 view coherent with the chipset latch even when advancing time
+        // without executing instructions, and advance BIOS time-of-day / BDA tick count from the
+        // canonical tick loop.
+        self.cpu.state.a20_enabled = self.chipset.a20().enabled();
+        self.bios
+            .advance_time(&mut self.mem, Duration::from_nanos(delta_ns));
+
         if let Some(clock) = &self.platform_clock {
             clock.advance_ns(delta_ns);
         }
