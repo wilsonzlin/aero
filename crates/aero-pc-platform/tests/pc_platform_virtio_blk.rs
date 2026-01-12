@@ -4,6 +4,8 @@ use aero_io_snapshot::io::state::IoSnapshot;
 use aero_interrupts::apic::IOAPIC_MMIO_BASE;
 use aero_pc_platform::{PcPlatform, PcPlatformConfig};
 use aero_platform::interrupts::{InterruptController, PlatformInterruptMode};
+use aero_storage::VirtualDisk;
+use aero_virtio::devices::blk::{BlockBackend, VirtioBlk, VIRTIO_BLK_SECTOR_SIZE};
 use memory::MemoryBus as _;
 
 fn cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
@@ -135,6 +137,38 @@ fn pc_platform_routes_virtio_blk_mmio_after_bar0_reprogramming() {
 
     // New base should decode and preserve state.
     assert_eq!(pc.memory.read_u8(new_base + COMMON + 0x14), 1);
+}
+
+#[test]
+fn pc_platform_virtio_blk_device_cfg_reports_capacity_and_block_size() {
+    let mut pc = PcPlatform::new_with_virtio_blk(2 * 1024 * 1024);
+
+    let expected = {
+        let virtio = pc.virtio_blk.as_ref().expect("virtio-blk enabled");
+        let mut virtio = virtio.borrow_mut();
+        let blk = virtio
+            .device_as_any_mut()
+            .downcast_mut::<VirtioBlk<Box<dyn VirtualDisk + Send>>>()
+            .expect("virtio device should be VirtioBlk");
+        let backend = blk.backend_mut();
+        (
+            backend.len() / VIRTIO_BLK_SECTOR_SIZE,
+            backend.blk_size(),
+        )
+    };
+
+    let bar0_base = read_bar0_base(&mut pc);
+    assert_ne!(bar0_base, 0);
+
+    // BAR0 layout for Aero's virtio-pci contract:
+    // - device cfg @ 0x3000 (virtio-blk capacity, segment limits, block size, ...)
+    const DEVICE_CFG: u64 = 0x3000;
+
+    let capacity = pc.memory.read_u64(bar0_base + DEVICE_CFG);
+    let blk_size = pc.memory.read_u32(bar0_base + DEVICE_CFG + 20);
+
+    assert_eq!(capacity, expected.0);
+    assert_eq!(blk_size, expected.1);
 }
 
 #[test]
