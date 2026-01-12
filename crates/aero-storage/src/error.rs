@@ -2,6 +2,16 @@ use thiserror::Error;
 
 pub type Result<T> = std::result::Result<T, DiskError>;
 
+/// Unified error type for Aero disk/storage operations.
+///
+/// This enum is used by both native helpers (e.g. host-side streaming) and
+/// browser/wasm32 backends (e.g. OPFS in `crates/aero-opfs`). As a result it
+/// includes variants that map cleanly from browser storage failures such as quota
+/// exhaustion or a backend being locked by another context.
+///
+/// Note: [`DiskError::Io`] intentionally stores a human-readable `String` rather
+/// than `std::io::Error` so wasm32 implementations can surface errors originating
+/// from JavaScript/DOM APIs without requiring a platform-specific error type.
 #[derive(Debug, Error)]
 pub enum DiskError {
     #[error("unaligned buffer length {len} (expected multiple of {alignment})")]
@@ -47,6 +57,9 @@ pub enum DiskError {
     #[error("backend unavailable")]
     BackendUnavailable,
 
+    /// Generic I/O failure.
+    ///
+    /// This is a catch-all for errors that do not map to a more structured variant.
     #[error("io error: {0}")]
     Io(String),
 }
