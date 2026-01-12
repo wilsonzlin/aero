@@ -656,7 +656,7 @@ export function mountWebHidPassthroughPanel(host: HTMLElement, manager: WebHidPa
       (reservedPorts > 0
         ? `Ports 1..=${reservedPorts} are reserved for synthetic HID devices (keyboard/mouse/gamepad). ` +
           `Passthrough devices attach behind it using paths like 0.${reservedPorts + 1}. `
-        : "Passthrough devices attach behind it using paths like 0.3. ") +
+        : `Passthrough devices attach behind it using paths like 0.${UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT}. `) +
       "UHCI root port 1 is reserved for the guest-visible WebUSB passthrough device.",
   });
 
