@@ -11,6 +11,11 @@ function hex32(value: number): string {
   return `0x${(value >>> 0).toString(16).padStart(8, "0")}`;
 }
 
+function describeError(err: unknown): string {
+  if (err instanceof Error) return `${err.name}: ${err.message}`;
+  return String(err);
+}
+
 function describeMemory(memory: WebAssembly.Memory): string {
   const bytes = memory.buffer.byteLength;
   const shared =
@@ -92,9 +97,11 @@ export function assertWasmMemoryWiring(opts: {
 
   const memBytes = memory.buffer.byteLength;
   const memDesc = describeMemory(memory);
-  const linearOffset =
-    opts.linearOffset ??
-    (() => {
+  let linearOffset: number;
+  if (typeof opts.linearOffset === "number") {
+    linearOffset = opts.linearOffset;
+  } else {
+    try {
       const base = computeDefaultWasmMemoryProbeOffset({ api, memory });
       // Avoid cross-context races when multiple workers probe the same shared memory
       // concurrently by spreading the default probe offset across a small window.
@@ -106,8 +113,24 @@ export function assertWasmMemoryWiring(opts: {
       // See `crates/aero-wasm/src/runtime_alloc.rs` (`HEAP_TAIL_GUARD_BYTES`).
       const spreadWords = 16; // 16 * 4 = 64 bytes window
       const delta = (hashStringFNV1a32(context) % spreadWords) * 4;
-      return base >= delta ? base - delta : base;
-    })();
+      linearOffset = base >= delta ? base - delta : base;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw err instanceof WasmMemoryWiringError
+        ? new WasmMemoryWiringError(`[${context}] ${msg}`)
+        : new WasmMemoryWiringError(
+            [
+              `[${context}] Failed to compute WASM memory probe offset.`,
+              `memory=${memDesc}`,
+              "",
+              `error: ${describeError(err)}`,
+              "",
+              "This usually means the WASM build is missing required exports (e.g. guest_ram_layout) or the worker is running an out-of-date wasm-pack output.",
+              "Rebuild the WASM package and ensure the worker is loading the updated module.",
+            ].join("\n"),
+          );
+    }
+  }
 
   if (!Number.isSafeInteger(linearOffset) || linearOffset < 0 || linearOffset + 4 > memBytes) {
     throw new WasmMemoryWiringError(
@@ -125,7 +148,22 @@ export function assertWasmMemoryWiring(opts: {
   try {
     // Direction 1: wasm -> JS (mem_store_u32 writes, JS reads).
     const wasmWrite = 0x11223344;
-    api.mem_store_u32(linearOffset, wasmWrite);
+    try {
+      api.mem_store_u32(linearOffset, wasmWrite);
+    } catch (err) {
+      throw new WasmMemoryWiringError(
+        [
+          `[${context}] WASM memory wiring probe failed (mem_store_u32 threw).`,
+          `mem_store_u32(offset=${hex32(linearOffset)}) threw while writing ${hex32(wasmWrite)}.`,
+          `memory=${memDesc}`,
+          "",
+          `error: ${describeError(err)}`,
+          "",
+          "This can happen if the worker instantiated the WASM module with a different (usually smaller) WebAssembly.Memory than the coordinator-provided guest memory.",
+          "Ensure the worker passes the coordinator-provided WebAssembly.Memory to initWasmForContext/initWasm and that the WASM build imports memory.",
+        ].join("\n"),
+      );
+    }
     const gotFromJs = readU32LE(u8, 0);
     if (gotFromJs !== (wasmWrite >>> 0)) {
       throw new WasmMemoryWiringError(
@@ -143,7 +181,23 @@ export function assertWasmMemoryWiring(opts: {
     // Direction 2: JS -> wasm (JS writes, mem_load_u32 reads).
     const jsWrite = 0x55667788;
     writeU32LE(u8, 0, jsWrite);
-    const gotFromWasm = api.mem_load_u32(linearOffset) >>> 0;
+    let gotFromWasm: number;
+    try {
+      gotFromWasm = api.mem_load_u32(linearOffset) >>> 0;
+    } catch (err) {
+      throw new WasmMemoryWiringError(
+        [
+          `[${context}] WASM memory wiring probe failed (mem_load_u32 threw).`,
+          `mem_load_u32(offset=${hex32(linearOffset)}) threw after JS wrote ${hex32(jsWrite)}.`,
+          `memory=${memDesc}`,
+          "",
+          `error: ${describeError(err)}`,
+          "",
+          "This can happen if the worker instantiated the WASM module with a different WebAssembly.Memory than the coordinator-provided guest memory.",
+          "Ensure the worker passes the coordinator-provided WebAssembly.Memory to initWasmForContext/initWasm and that the WASM build imports memory.",
+        ].join("\n"),
+      );
+    }
     if (gotFromWasm !== (jsWrite >>> 0)) {
       throw new WasmMemoryWiringError(
         [

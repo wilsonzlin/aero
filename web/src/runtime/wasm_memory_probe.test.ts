@@ -107,4 +107,40 @@ describe("runtime/wasm_memory_probe", () => {
     expect(() => assertWasmMemoryWiring({ api, memory, linearOffset: offset, context: "test" })).toThrow(WasmMemoryWiringError);
     expect(dv.getUint32(offset, true)).toBe(0x0badf00d);
   });
+
+  it("wraps mem_store_u32 traps in WasmMemoryWiringError", () => {
+    const memory = new WebAssembly.Memory({ initial: 1 });
+    const dv = new DataView(memory.buffer);
+    const offset = 64;
+    dv.setUint32(offset, 0xdeadbeef, true);
+
+    const api = {
+      mem_store_u32: (_off: number, _value: number) => {
+        throw new WebAssembly.RuntimeError("memory access out of bounds");
+      },
+      mem_load_u32: (_off: number) => 0,
+      guest_ram_layout: (_desiredBytes: number) => ({ guest_base: 0, guest_size: 0, runtime_reserved: 0 }),
+    };
+
+    expect(() => assertWasmMemoryWiring({ api, memory, linearOffset: offset, context: "test" })).toThrow(WasmMemoryWiringError);
+    expect(dv.getUint32(offset, true)).toBe(0xdeadbeef);
+  });
+
+  it("wraps mem_load_u32 traps in WasmMemoryWiringError", () => {
+    const memory = new WebAssembly.Memory({ initial: 1 });
+    const dv = new DataView(memory.buffer);
+    const offset = 128;
+    dv.setUint32(offset, 0xcafebabe, true);
+
+    const api = {
+      mem_store_u32: (off: number, value: number) => dv.setUint32(off, value >>> 0, true),
+      mem_load_u32: (_off: number) => {
+        throw new WebAssembly.RuntimeError("memory access out of bounds");
+      },
+      guest_ram_layout: (_desiredBytes: number) => ({ guest_base: 0, guest_size: 0, runtime_reserved: 0 }),
+    };
+
+    expect(() => assertWasmMemoryWiring({ api, memory, linearOffset: offset, context: "test" })).toThrow(WasmMemoryWiringError);
+    expect(dv.getUint32(offset, true)).toBe(0xcafebabe);
+  });
 });
