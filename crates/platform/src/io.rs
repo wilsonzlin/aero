@@ -434,4 +434,62 @@ mod tests {
             assert_eq!(bus.read(old, 4), 0xFFFF_FFFF);
         }
     }
+
+    #[derive(Debug)]
+    struct RangeEcho {
+        base: u16,
+        len: u16,
+    }
+
+    impl PortIoDevice for RangeEcho {
+        fn read(&mut self, port: u16, size: u8) -> u32 {
+            debug_assert_eq!(size, 4);
+            let offset = port.wrapping_sub(self.base);
+            debug_assert!(offset < self.len);
+            0xAA00_0000 | u32::from(offset)
+        }
+
+        fn write(&mut self, _port: u16, _size: u8, _value: u32) {}
+    }
+
+    #[derive(Debug)]
+    struct ExactValue;
+
+    impl PortIoDevice for ExactValue {
+        fn read(&mut self, _port: u16, _size: u8) -> u32 {
+            0xDEAD_BEEF
+        }
+
+        fn write(&mut self, _port: u16, _size: u8, _value: u32) {}
+    }
+
+    #[test]
+    fn exact_port_registration_takes_precedence_over_range_and_unregistration_restores_range() {
+        let mut bus = IoPortBus::new();
+
+        const BASE: u16 = 0x3000;
+        const LEN: u16 = 4;
+        const OVERRIDE_PORT: u16 = BASE + 2;
+
+        bus.register_range(
+            BASE,
+            LEN,
+            Box::new(RangeEcho {
+                base: BASE,
+                len: LEN,
+            }),
+        );
+
+        // Baseline: the range device handles all ports.
+        assert_eq!(bus.read(BASE, 4), 0xAA00_0000);
+        assert_eq!(bus.read(OVERRIDE_PORT, 4), 0xAA00_0002);
+
+        // Registering an exact port mapping should override range dispatch.
+        bus.register(OVERRIDE_PORT, Box::new(ExactValue));
+        assert_eq!(bus.read(OVERRIDE_PORT, 4), 0xDEAD_BEEF);
+
+        // Unregistering the exact port mapping should fall back to the range device again.
+        assert!(bus.unregister(OVERRIDE_PORT).is_some());
+        assert_eq!(bus.read(OVERRIDE_PORT, 4), 0xAA00_0002);
+    }
 }
