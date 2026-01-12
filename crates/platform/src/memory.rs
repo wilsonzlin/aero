@@ -71,10 +71,22 @@ impl MemoryBus {
         self.filter.a20()
     }
 
+    /// Returns the underlying guest RAM backend.
+    ///
+    /// This bypasses all chipset-level address filtering (including A20 masking) because it
+    /// accesses the raw [`memory::GuestMemory`] implementation directly.
+    ///
+    /// Use this for host-side operations that must observe *true* physical RAM contents (e.g.
+    /// snapshot save/restore). Guest-visible physical accesses should go through
+    /// [`MemoryBus::read_physical`] / [`MemoryBus::write_physical`] so they correctly model the
+    /// platform's address filtering behavior.
     pub fn ram(&self) -> &dyn GuestMemory {
         &*self.bus.ram
     }
 
+    /// Mutable access to the underlying guest RAM backend.
+    ///
+    /// Like [`MemoryBus::ram`], this bypasses chipset-level address filtering (A20, etc).
     pub fn ram_mut(&mut self) -> &mut dyn GuestMemory {
         &mut *self.bus.ram
     }
