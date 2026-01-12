@@ -182,6 +182,24 @@ sub-snapshots as TLV fields (forward-compatible by skipping unknown tags):
 
 Restore ordering note: `PciIntxRouter::load_state()` restores internal refcounts but cannot touch the platform interrupt sink. Snapshot restore code should call `PciIntxRouter::sync_levels_to_sink()` **after restoring the platform interrupt controller complex** to re-drive any asserted GSIs (e.g. level-triggered INTx lines).
 
+### Storage controllers (AHCI / IDE / ATAPI)
+
+Storage controller device models should snapshot **guest-visible controller state** (registers, in-flight PIO/DMA progress, IRQ status) but must not inline host-specific disk/ISO backends or any disk contents.
+
+In the `crates/aero-devices-storage` stack this means:
+
+- AHCI (`AhciController` / `AhciPciDevice`) snapshots capture HBA + per-port register state (inner `aero-io-snapshot` `DEVICE_ID = AHCI` / `AHCP`).
+- PIIX3 IDE (`Piix3IdePciDevice`) snapshots capture PCI config, channel taskfile/status, and Bus Master IDE state (inner `DEVICE_ID = IDE0`).
+
+**Restore contract:** storage controllers intentionally drop any attached host backends during `IoSnapshot::load_state()`:
+
+- AHCI ports clear attached `AtaDrive` instances.
+- IDE ATA/ATAPI channels drop attached disks/ISOs; ATAPI devices are restored as “placeholder” CD-ROMs so guest-visible sense/tray/media flags survive without a backend.
+
+The platform/coordinator must **re-attach** the appropriate disks/ISOs after restore (based on external configuration) before resuming guest execution.
+
+ATAPI note: the guest-visible “disc present” state is snapshotted explicitly (independent of whether a host ISO backend is currently attached), so reattaching an ISO backend does not implicitly “insert media” from the guest’s perspective.
+
 ---
 
 ## CPU section encoding
