@@ -185,55 +185,69 @@ function Try-HandleAeroHttpRequest {
   if (-not $Listener.Pending()) { return $false }
 
   $client = $Listener.AcceptTcpClient()
+  # Defensive timeouts: if the guest connects but stalls (or stops reading mid-body),
+  # don't block the harness wait loop indefinitely.
+  $client.ReceiveTimeout = 60000
+  $client.SendTimeout = 60000
   try {
-    $stream = $client.GetStream()
-    $reader = [System.IO.StreamReader]::new($stream, [System.Text.Encoding]::ASCII, $false, 4096, $true)
-    $requestLine = $reader.ReadLine()
-    if ($null -eq $requestLine) { return $true }
+    try {
+      $stream = $client.GetStream()
+      $stream.ReadTimeout = 60000
+      $stream.WriteTimeout = 60000
+      $reader = [System.IO.StreamReader]::new($stream, [System.Text.Encoding]::ASCII, $false, 4096, $true)
+      $requestLine = $reader.ReadLine()
+      if ($null -eq $requestLine) { return $true }
 
-    # Drain headers.
-    while ($true) {
-      $line = $reader.ReadLine()
-      if ($null -eq $line -or $line.Length -eq 0) { break }
-    }
-
-    $ok = $false
-    $large = $false
-    if ($requestLine -match "^GET\s+(\S+)\s+HTTP/") {
-      $reqPath = $Matches[1]
-      if ($reqPath -eq $Path) { $ok = $true }
-      elseif ($reqPath -eq "$Path-large" -or $reqPath -eq (Get-AeroSelftestLargePath -Path $Path)) {
-        $ok = $true
-        $large = $true
+      # Drain headers.
+      while ($true) {
+        $line = $reader.ReadLine()
+        if ($null -eq $line -or $line.Length -eq 0) { break }
       }
+
+      $ok = $false
+      $large = $false
+      if ($requestLine -match "^(GET|HEAD)\s+(\S+)\s+HTTP/") {
+        $reqPath = $Matches[2]
+        if ($reqPath -eq $Path) { $ok = $true }
+        elseif ($reqPath -eq "$Path-large" -or $reqPath -eq (Get-AeroSelftestLargePath -Path $Path)) {
+          $ok = $true
+          $large = $true
+        }
+      }
+
+      $statusLine = if ($ok) { "HTTP/1.1 200 OK" } else { "HTTP/1.1 404 Not Found" }
+      $contentType = "text/plain"
+      $bodyBytes = $null
+      if ($ok -and $large) {
+        # Deterministic 1 MiB payload (0..255 repeating) for sustained virtio-net TX/RX stress.
+        $contentType = "application/octet-stream"
+        $bodyBytes = Get-AeroSelftestLargePayload
+      } else {
+        $body = if ($ok) { "OK`n" } else { "NOT_FOUND`n" }
+        $bodyBytes = [System.Text.Encoding]::ASCII.GetBytes($body)
+      }
+
+      $hdr = @(
+        $statusLine,
+        "Content-Type: $contentType",
+        "Content-Length: $($bodyBytes.Length)",
+        "Connection: close",
+        "",
+        ""
+      ) -join "`r`n"
+
+      $hdrBytes = [System.Text.Encoding]::ASCII.GetBytes($hdr)
+      $stream.Write($hdrBytes, 0, $hdrBytes.Length)
+      if (-not ($requestLine -like "HEAD *")) {
+        $stream.Write($bodyBytes, 0, $bodyBytes.Length)
+      }
+      $stream.Flush()
+      return $true
+    } catch {
+      # Best-effort: never fail the harness due to an HTTP socket error; the guest selftest
+      # will report connectivity failures via serial markers.
+      return $true
     }
-
-    $statusLine = if ($ok) { "HTTP/1.1 200 OK" } else { "HTTP/1.1 404 Not Found" }
-    $contentType = "text/plain"
-    $bodyBytes = $null
-    if ($ok -and $large) {
-      # Deterministic 1 MiB payload (0..255 repeating) for sustained virtio-net TX/RX stress.
-      $contentType = "application/octet-stream"
-      $bodyBytes = Get-AeroSelftestLargePayload
-    } else {
-      $body = if ($ok) { "OK`n" } else { "NOT_FOUND`n" }
-      $bodyBytes = [System.Text.Encoding]::ASCII.GetBytes($body)
-    }
-
-    $hdr = @(
-      $statusLine,
-      "Content-Type: $contentType",
-      "Content-Length: $($bodyBytes.Length)",
-      "Connection: close",
-      "",
-      ""
-    ) -join "`r`n"
-
-    $hdrBytes = [System.Text.Encoding]::ASCII.GetBytes($hdr)
-    $stream.Write($hdrBytes, 0, $hdrBytes.Length)
-    $stream.Write($bodyBytes, 0, $bodyBytes.Length)
-    $stream.Flush()
-    return $true
   } finally {
     $client.Close()
   }
