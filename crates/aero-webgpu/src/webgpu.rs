@@ -97,7 +97,9 @@ impl WebGpuContext {
                 backends: wgpu::Backends::GL,
                 ..Default::default()
             });
-            match Self::request_internal(gl_instance, BackendKind::WebGpu, options.clone(), None).await {
+            match Self::request_internal(gl_instance, BackendKind::WebGpu, options.clone(), None)
+                .await
+            {
                 Ok(ctx) => Ok(ctx),
                 Err(WebGpuInitError::NoAdapter) => {
                     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
