@@ -77,6 +77,28 @@ describe("io/bus/pci", () => {
     expect(cfg.readU32(7, 0, 0x00)).toBe(0x5678_1234);
   });
 
+  it("allows overriding PciDevice.bdf via an explicit registerDevice() address", () => {
+    const portBus = new PortIoBus();
+    const mmioBus = new MmioBus();
+    const pciBus = new PciBus(portBus, mmioBus);
+    pciBus.registerToPortBus();
+
+    const dev: PciDevice = {
+      name: "bdf_override_dev",
+      vendorId: 0x1234,
+      deviceId: 0x5678,
+      classCode: 0,
+      bdf: { bus: 0, device: 7, function: 0 },
+    };
+    const addr = pciBus.registerDevice(dev, { device: 3, function: 0 });
+    expect(addr).toEqual({ bus: 0, device: 3, function: 0 });
+
+    const cfg = makeCfgIo(portBus);
+    expect(cfg.readU32(3, 0, 0x00)).toBe(0x5678_1234);
+    // The original bdf should remain empty.
+    expect(cfg.readU32(7, 0, 0x00)).toBe(0xffff_ffff);
+  });
+
   it("populates Subsystem Vendor ID / Subsystem ID (0x2c..0x2f) by default", () => {
     const portBus = new PortIoBus();
     const mmioBus = new MmioBus();
