@@ -212,6 +212,37 @@ static void test_disconnect_uninitialized_is_safe(void)
     assert(intx.PendingIsrStatus == 0);
 }
 
+static void test_disconnect_is_idempotent(void)
+{
+    VIRTIO_INTX intx;
+    volatile UCHAR isr_reg = 0;
+    CM_PARTIAL_RESOURCE_DESCRIPTOR desc;
+    NTSTATUS status;
+
+    desc = make_int_desc();
+
+    status = VirtioIntxConnect(NULL, &desc, &isr_reg, NULL, NULL, NULL, NULL, &intx);
+    assert(status == STATUS_SUCCESS);
+
+    VirtioIntxDisconnect(&intx);
+
+    assert(intx.Initialized == FALSE);
+    assert(intx.InterruptObject == NULL);
+    assert(intx.IsrStatusRegister == NULL);
+    assert(intx.DpcInFlight == 0);
+    assert(intx.PendingIsrStatus == 0);
+    assert(intx.Dpc.Inserted == FALSE);
+
+    /* Allow drivers to call VirtioIntxDisconnect multiple times during teardown. */
+    VirtioIntxDisconnect(&intx);
+
+    assert(intx.Initialized == FALSE);
+    assert(intx.InterruptObject == NULL);
+    assert(intx.IsrStatusRegister == NULL);
+    assert(intx.DpcInFlight == 0);
+    assert(intx.PendingIsrStatus == 0);
+}
+
 static void test_spurious_interrupt(void)
 {
     VIRTIO_INTX intx;
@@ -561,6 +592,7 @@ int main(void)
     test_connect_descriptor_translation();
     test_connect_failure_zeroes_state();
     test_disconnect_uninitialized_is_safe();
+    test_disconnect_is_idempotent();
     test_spurious_interrupt();
     test_null_callbacks_safe();
     test_spurious_interrupt_does_not_affect_pending();
