@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::fs;
 use std::io::{Read, Seek, SeekFrom};
 
@@ -192,17 +193,71 @@ fn cmd_validate(args: Vec<String>) -> Result<()> {
 }
 
 fn validate_index(path: &str, index: &SnapshotIndex) -> Result<()> {
-    let has_cpu = index
+    // Validate section-level invariants that `aero-snapshot`'s restore path enforces, so
+    // `cargo xtask snapshot validate` agrees with what a real restore would accept.
+    //
+    // (Inspection is allowed to show duplicate/ambiguous structures; validation should not.)
+    let cpu_section_count = index
         .sections
         .iter()
-        .any(|s| s.id == SectionId::CPU || s.id == SectionId::CPUS);
-    if !has_cpu {
+        .filter(|s| s.id == SectionId::CPU || s.id == SectionId::CPUS)
+        .count();
+    if cpu_section_count == 0 {
         return Err(XtaskError::Message("missing CPU/CPUS section".to_string()));
     }
+    if cpu_section_count > 1 {
+        return Err(XtaskError::Message(
+            "duplicate CPU/CPUS section".to_string(),
+        ));
+    }
 
-    let has_ram = index.sections.iter().any(|s| s.id == SectionId::RAM);
-    if !has_ram {
+    let ram_section_count = index
+        .sections
+        .iter()
+        .filter(|s| s.id == SectionId::RAM)
+        .count();
+    if ram_section_count == 0 {
         return Err(XtaskError::Message("missing RAM section".to_string()));
+    }
+    if ram_section_count > 1 {
+        return Err(XtaskError::Message("duplicate RAM section".to_string()));
+    }
+
+    if index
+        .sections
+        .iter()
+        .filter(|s| s.id == SectionId::META)
+        .count()
+        > 1
+    {
+        return Err(XtaskError::Message("duplicate META section".to_string()));
+    }
+    if index
+        .sections
+        .iter()
+        .filter(|s| s.id == SectionId::MMU)
+        .count()
+        > 1
+    {
+        return Err(XtaskError::Message("duplicate MMU section".to_string()));
+    }
+    if index
+        .sections
+        .iter()
+        .filter(|s| s.id == SectionId::DEVICES)
+        .count()
+        > 1
+    {
+        return Err(XtaskError::Message("duplicate DEVICES section".to_string()));
+    }
+    if index
+        .sections
+        .iter()
+        .filter(|s| s.id == SectionId::DISKS)
+        .count()
+        > 1
+    {
+        return Err(XtaskError::Message("duplicate DISKS section".to_string()));
     }
     if index.ram.is_none() {
         return Err(XtaskError::Message(
@@ -346,6 +401,7 @@ fn validate_cpus_section(file: &mut fs::File, section: &SnapshotSectionInfo) -> 
         return Err(XtaskError::Message("too many CPUs".to_string()));
     }
 
+    let mut seen_apic_ids = HashSet::new();
     for _ in 0..count {
         let entry_len = read_u64_le(&mut section_reader)?;
         if entry_len > section_reader.limit() {
@@ -353,7 +409,12 @@ fn validate_cpus_section(file: &mut fs::File, section: &SnapshotSectionInfo) -> 
         }
 
         let mut entry_reader = (&mut section_reader).take(entry_len);
-        validate_vcpu_entry(&mut entry_reader, section.version)?;
+        let apic_id = validate_vcpu_entry(&mut entry_reader, section.version)?;
+        if !seen_apic_ids.insert(apic_id) {
+            return Err(XtaskError::Message(
+                "duplicate APIC ID in CPU list".to_string(),
+            ));
+        }
         // Skip any forward-compatible additions.
         std::io::copy(&mut entry_reader, &mut std::io::sink())
             .map_err(|e| XtaskError::Message(format!("read CPU entry: {e}")))?;
@@ -362,8 +423,8 @@ fn validate_cpus_section(file: &mut fs::File, section: &SnapshotSectionInfo) -> 
     Ok(())
 }
 
-fn validate_vcpu_entry(entry_reader: &mut impl Read, version: u16) -> Result<()> {
-    let _apic_id = read_u32_le(entry_reader)?;
+fn validate_vcpu_entry(entry_reader: &mut impl Read, version: u16) -> Result<u32> {
+    let apic_id = read_u32_le(entry_reader)?;
 
     if version == 1 {
         let _ = CpuState::decode_v1(entry_reader)
@@ -393,7 +454,7 @@ fn validate_vcpu_entry(entry_reader: &mut impl Read, version: u16) -> Result<()>
         ));
     }
 
-    Ok(())
+    Ok(apic_id)
 }
 
 fn validate_mmu_section(file: &mut fs::File, section: &SnapshotSectionInfo) -> Result<()> {
@@ -439,11 +500,15 @@ fn validate_devices_section(file: &mut fs::File, section: &SnapshotSectionInfo) 
         return Err(XtaskError::Message("too many devices".to_string()));
     }
 
+    let mut seen = HashSet::new();
     for _ in 0..count {
         ensure_section_remaining(file, section_end, 4 + 2 + 2 + 8, "device entry header")?;
-        let _id = read_u32_le(file)?;
-        let _version = read_u16_le(file)?;
-        let _flags = read_u16_le(file)?;
+        let id = read_u32_le(file)?;
+        let version = read_u16_le(file)?;
+        let flags = read_u16_le(file)?;
+        if !seen.insert((id, version, flags)) {
+            return Err(XtaskError::Message("duplicate device entry".to_string()));
+        }
         let len = read_u64_le(file)?;
         if len > MAX_DEVICE_ENTRY_LEN {
             return Err(XtaskError::Message("device entry too large".to_string()));
@@ -481,8 +546,12 @@ fn validate_disks_section(file: &mut fs::File, section: &SnapshotSectionInfo) ->
         return Err(XtaskError::Message("too many disks".to_string()));
     }
 
+    let mut seen = HashSet::new();
     for _ in 0..count {
-        let _disk_id = read_u32_le(&mut limited)?;
+        let disk_id = read_u32_le(&mut limited)?;
+        if !seen.insert(disk_id) {
+            return Err(XtaskError::Message("duplicate disk entry".to_string()));
+        }
         validate_string_u32_utf8(&mut limited, MAX_DISK_PATH_LEN, "disk base_image")?;
         validate_string_u32_utf8(&mut limited, MAX_DISK_PATH_LEN, "disk overlay_image")?;
     }

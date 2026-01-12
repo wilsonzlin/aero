@@ -198,6 +198,57 @@ fn corrupt_first_vcpu_internal_len(snapshot: &mut [u8]) {
     snapshot[internal_len_off..internal_len_off + 8].copy_from_slice(&new.to_le_bytes());
 }
 
+fn corrupt_second_vcpu_apic_id(snapshot: &mut [u8], new_apic_id: u32) {
+    let index = aero_snapshot::inspect_snapshot(&mut Cursor::new(&snapshot)).unwrap();
+    let cpus = index
+        .sections
+        .iter()
+        .find(|s| s.id == SectionId::CPUS)
+        .expect("CPUS section missing");
+
+    let mut off = cpus.offset as usize;
+    assert!(off + 4 <= snapshot.len());
+    let count = read_u32_le(&snapshot[off..off + 4]);
+    assert!(count >= 2);
+    off += 4;
+
+    // Entry framing: u64 entry_len followed by entry payload.
+    assert!(off + 8 <= snapshot.len());
+    let entry_len0 = read_u64_le(&snapshot[off..off + 8]) as usize;
+    let entry0_start = off + 8;
+    let entry0_end = entry0_start + entry_len0;
+    assert!(entry0_end <= snapshot.len());
+    off = entry0_end;
+
+    assert!(off + 8 <= snapshot.len());
+    let entry_len1 = read_u64_le(&snapshot[off..off + 8]) as usize;
+    let entry1_start = off + 8;
+    let entry1_end = entry1_start + entry_len1;
+    assert!(entry1_end <= snapshot.len());
+
+    // vCPU entry begins with u32 apic_id.
+    assert!(entry1_start + 4 <= snapshot.len());
+    snapshot[entry1_start..entry1_start + 4].copy_from_slice(&new_apic_id.to_le_bytes());
+}
+
+fn append_duplicate_section(snapshot: &mut Vec<u8>, id: SectionId) {
+    let index = aero_snapshot::inspect_snapshot(&mut Cursor::new(snapshot.as_slice())).unwrap();
+    let section = index
+        .sections
+        .iter()
+        .find(|s| s.id == id)
+        .unwrap_or_else(|| panic!("{id} section missing"));
+    let header_start = section
+        .offset
+        .checked_sub(16)
+        .expect("section offset underflow") as usize;
+    let payload_len: usize = section.len.try_into().expect("section len fits usize");
+    let end = header_start + 16 + payload_len;
+    assert!(end <= snapshot.len());
+    let section_bytes = snapshot[header_start..end].to_vec();
+    snapshot.extend_from_slice(&section_bytes);
+}
+
 fn corrupt_devices_section_len_to_two_and_insert_ram(snapshot: &mut Vec<u8>) {
     let index = aero_snapshot::inspect_snapshot(&mut Cursor::new(&snapshot)).unwrap();
     let devices = index
@@ -373,6 +424,42 @@ fn snapshot_validate_supports_multi_cpu_and_rejects_corrupt_internal_len() {
         .args(["snapshot", "validate", corrupt_path.to_str().unwrap()])
         .assert()
         .failure();
+}
+
+#[test]
+fn snapshot_validate_rejects_duplicate_meta_sections() {
+    let tmp = tempfile::tempdir().unwrap();
+    let snap = tmp.path().join("dup_meta.aerosnap");
+    write_snapshot(&snap);
+
+    let mut bytes = fs::read(&snap).unwrap();
+    append_duplicate_section(&mut bytes, SectionId::META);
+    fs::write(&snap, &bytes).unwrap();
+
+    Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["snapshot", "validate", snap.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("duplicate META section"));
+}
+
+#[test]
+fn snapshot_validate_rejects_duplicate_apic_ids_in_cpus_section() {
+    let tmp = tempfile::tempdir().unwrap();
+    let snap = tmp.path().join("dup_apic.aerosnap");
+
+    let mut source = MultiCpuSource::new(4096);
+    let mut cursor = Cursor::new(Vec::new());
+    aero_snapshot::save_snapshot(&mut cursor, &mut source, SaveOptions::default()).unwrap();
+    let mut bytes = cursor.into_inner();
+    corrupt_second_vcpu_apic_id(&mut bytes, 0);
+    fs::write(&snap, &bytes).unwrap();
+
+    Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["snapshot", "validate", snap.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("duplicate APIC ID in CPU list"));
 }
 
 #[test]
