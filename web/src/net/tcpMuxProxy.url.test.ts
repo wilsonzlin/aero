@@ -65,6 +65,22 @@ describe("WebSocketTcpMuxProxyClient URL normalization", () => {
     }
   });
 
+  it("normalizes http:// base URLs to ws:// and appends /tcp-mux", async () => {
+    const g = globalThis as unknown as Record<string, unknown>;
+    const originalWebSocket = g.WebSocket;
+    g.WebSocket = FakeWebSocket;
+
+    try {
+      const client = new WebSocketTcpMuxProxyClient("http://example.com/base");
+      expect(FakeWebSocket.last).not.toBeNull();
+      expect(FakeWebSocket.last!.url).toBe("ws://example.com/base/tcp-mux");
+      await client.shutdown();
+    } finally {
+      if (originalWebSocket === undefined) delete g.WebSocket;
+      else g.WebSocket = originalWebSocket;
+    }
+  });
+
   it("keeps ws:// scheme when provided explicitly", async () => {
     const g = globalThis as unknown as Record<string, unknown>;
     const originalWebSocket = g.WebSocket;
