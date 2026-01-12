@@ -704,7 +704,7 @@ export interface WasmApi {
         /**
          * Drain de-duplicated compile requests (entry RIPs).
          */
-        drain_compile_requests(): bigint[] | Uint32Array;
+        drain_compile_requests(): bigint[] | Uint32Array | BigInt64Array | BigUint64Array;
         /**
          * Notify the embedded JIT runtime that the guest wrote to memory.
          *
@@ -724,7 +724,7 @@ export interface WasmApi {
             tableIndex: number,
             codePaddr: bigint | number,
             byteLen: number,
-        ): bigint[] | Uint32Array | void;
+        ): bigint[] | Uint32Array | BigInt64Array | BigUint64Array | void;
         /**
          * Notify the JIT runtime that guest code bytes were modified (e.g. DMA writes).
          */
