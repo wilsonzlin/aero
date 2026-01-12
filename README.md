@@ -228,11 +228,19 @@ The diagnostics page:
 ## WASM builds (threaded vs single fallback)
 
 Browsers only enable `SharedArrayBuffer` (and therefore WASM shared memory / threads) in **cross-origin isolated**
-contexts (`COOP` + `COEP` headers). To keep the web app usable even without those headers, we build two wasm-pack
-packages from the same Rust crate (`crates/aero-wasm`):
+contexts (`COOP` + `COEP` headers). To keep the web app usable even without those headers, we build two WASM
+variants (**threaded** and **single-threaded**). Each variant produces one or more wasm-pack packages under
+`web/src/wasm/`:
 
-- `web/src/wasm/pkg-threaded/` – shared-memory build (SAB + Atomics), intended for `crossOriginIsolated` contexts.
-- `web/src/wasm/pkg-single/` – non-shared-memory build that can run without COOP/COEP (degraded functionality is OK).
+- Core VM/runtime (`crates/aero-wasm`):
+  - `web/src/wasm/pkg-threaded/` – shared-memory build (SAB + Atomics), intended for `crossOriginIsolated` contexts.
+  - `web/src/wasm/pkg-single/` – non-shared-memory build that can run without COOP/COEP (degraded functionality is OK).
+- GPU runtime (`crates/aero-gpu-wasm`):
+  - `web/src/wasm/pkg-threaded-gpu/`
+  - `web/src/wasm/pkg-single-gpu/`
+- Tier-1 compiler / JIT support (`crates/aero-jit-wasm`, when present):
+  - `web/src/wasm/pkg-jit-threaded/`
+  - `web/src/wasm/pkg-jit-single/`
 
 At runtime, `web/src/runtime/wasm_loader.ts` selects the best variant and returns a stable API surface.
 
@@ -275,7 +283,7 @@ npm -w web run wasm:build:threaded
 npm -w web run wasm:build:single
 ```
 
-Generated output is written into `web/src/wasm/pkg-{threaded,single}/` and is gitignored.
+Generated output is written into `web/src/wasm/pkg-*` and is gitignored.
 
 ### Testing the fallback path (no COOP/COEP)
 

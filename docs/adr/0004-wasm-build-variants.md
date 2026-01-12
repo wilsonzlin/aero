@@ -25,10 +25,21 @@ Ship **two WebAssembly build variants**:
 
 ### Implementation details (repo-specific)
 
-This repo implements the two variants as **two wasm-pack packages** built from `crates/aero-wasm`:
+This repo implements the two variants as **two sets of wasm-pack packages** (single vs threaded).
+
+The canonical VM/runtime crate (`crates/aero-wasm`) produces:
 
 - `web/src/wasm/pkg-threaded/` – shared-memory build (requires `crossOriginIsolated`).
 - `web/src/wasm/pkg-single/` – non-shared-memory fallback build.
+
+Additional wasm-pack packages follow the same variant split (where applicable), for example:
+
+- GPU runtime (`crates/aero-gpu-wasm`):
+  - `web/src/wasm/pkg-threaded-gpu/`
+  - `web/src/wasm/pkg-single-gpu/`
+- Tier-1 compiler / JIT support (`crates/aero-jit-wasm`, when present):
+  - `web/src/wasm/pkg-jit-threaded/`
+  - `web/src/wasm/pkg-jit-single/`
 
 Build commands:
 
