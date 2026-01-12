@@ -869,6 +869,13 @@ def _is_weak_etag(etag: str) -> bool:
     return etag.strip().lower().startswith("w/")
 
 
+def _strip_weak_etag_prefix(etag: str) -> str:
+    etag = etag.strip()
+    if etag.lower().startswith("w/"):
+        return etag[2:].strip()
+    return etag
+
+
 def _is_single_etag(etag: str) -> bool:
     # If-Range only accepts a single validator. We conservatively skip if it looks like a list.
     # (ETag values can technically contain commas inside quotes, but it's extremely uncommon.)
@@ -932,6 +939,50 @@ def _test_etag_strength(etag: str | None) -> TestResult:
     if not etag.startswith('"'):
         return TestResult(name=name, status="WARN", details=f"ETag does not look quoted: {etag!r}")
     return TestResult(name=name, status="PASS")
+
+
+def _test_get_etag_matches_head(
+    *,
+    base_url: str,
+    origin: str | None,
+    authorization: str | None,
+    timeout_s: float,
+    max_body_bytes: int,
+    head_etag: str | None,
+) -> TestResult:
+    name = "GET: ETag matches HEAD ETag"
+    if head_etag is None:
+        return TestResult(name=name, status="SKIP", details="skipped (no ETag from HEAD)")
+
+    try:
+        headers: dict[str, str] = {
+            "Accept-Encoding": "identity",
+            "Range": "bytes=0-0",
+        }
+        if origin is not None:
+            headers["Origin"] = origin
+        if authorization is not None:
+            headers["Authorization"] = authorization
+
+        resp = _request(
+            url=base_url,
+            method="GET",
+            headers=headers,
+            timeout_s=timeout_s,
+            max_body_bytes=min(max_body_bytes, 1024),
+        )
+        _require_cors(resp, origin)
+        _require(resp.status == 206, f"expected 206, got {resp.status}")
+
+        get_etag = _header(resp, "ETag")
+        _require(get_etag is not None, "missing ETag on 206 response")
+
+        if _strip_weak_etag_prefix(get_etag) != _strip_weak_etag_prefix(head_etag):
+            raise TestFailure(f"ETag mismatch: HEAD={head_etag!r} GET={get_etag!r}")
+
+        return TestResult(name=name, status="PASS")
+    except TestFailure as e:
+        return TestResult(name=name, status="FAIL", details=str(e))
 
 def _test_if_range_mismatch(
     *,
@@ -1478,6 +1529,16 @@ def main(argv: Sequence[str]) -> int:
     last_modified = head_info.last_modified if head_info is not None else None
 
     results.append(_test_etag_strength(etag))
+    results.append(
+        _test_get_etag_matches_head(
+            base_url=base_url,
+            origin=origin,
+            authorization=authorization,
+            timeout_s=timeout_s,
+            max_body_bytes=max_body_bytes,
+            head_etag=etag,
+        )
+    )
     results.append(
         _test_content_headers(
             name="HEAD: Content-Type is application/octet-stream and X-Content-Type-Options=nosniff",

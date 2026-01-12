@@ -104,6 +104,7 @@ Disk streaming conformance
 
 PASS HEAD: Accept-Ranges=bytes and Content-Length is present - size=2147483648 (2.00 GiB)
 PASS HEAD: ETag is strong (recommended for If-Range)
+PASS GET: ETag matches HEAD ETag
 PASS HEAD: Content-Type is application/octet-stream and X-Content-Type-Options=nosniff
 PASS CORS: Allow-Credentials does not contradict Allow-Origin - (no Allow-Credentials)
 SKIP CORS: Vary includes Origin when Allow-Origin echoes a specific origin - skipped (Allow-Origin is '*')
@@ -123,7 +124,7 @@ PASS GET: If-Modified-Since returns 304 Not Modified - status=304
 PASS OPTIONS: CORS preflight allows Range + If-Range headers + If-None-Match - status=204
 PASS OPTIONS: CORS preflight allows If-Modified-Since header - status=204
 
-Summary: 18 passed, 0 failed, 0 warned, 2 skipped
+Summary: 19 passed, 0 failed, 0 warned, 2 skipped
 ```
 
 ## Strict mode
@@ -134,6 +135,7 @@ Summary: 18 passed, 0 failed, 0 warned, 2 skipped
 - Missing `Cross-Origin-Resource-Policy`
 - `Cross-Origin-Resource-Policy` present but with an unexpected value
 - Weak `ETag` validators (If-Range requires strong ETag)
+- ETag mismatch between HEAD and GET responses
 - Missing recommended content headers (e.g. `X-Content-Type-Options: nosniff`)
 - Unexpected `Content-Encoding` (disk bytes must be served as identity / no compression transforms)
 - Private responses missing `Cache-Control: no-store`
