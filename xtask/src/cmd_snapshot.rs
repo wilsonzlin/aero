@@ -982,8 +982,24 @@ fn decode_bios_device_detail(
     let memory_size_bytes = read_u64_le_lossy(file).ok()?;
     let boot_drive = read_u8_lossy(file).ok()?;
 
-    // `CmosRtcSnapshot` (14 bytes) + `BdaTimeSnapshot` (21 bytes).
-    skip_to(file, data_end, 14 + 21)?;
+    // `CmosRtcSnapshot` (14 bytes).
+    let rtc_year = read_u16_le_lossy(file).ok()?;
+    let rtc_month = read_u8_lossy(file).ok()?;
+    let rtc_day = read_u8_lossy(file).ok()?;
+    let rtc_hour = read_u8_lossy(file).ok()?;
+    let rtc_minute = read_u8_lossy(file).ok()?;
+    let rtc_second = read_u8_lossy(file).ok()?;
+    let rtc_nanosecond = read_u32_le_lossy(file).ok()?;
+    let rtc_bcd_mode = read_u8_lossy(file).ok()? != 0;
+    let rtc_hour_24 = read_u8_lossy(file).ok()? != 0;
+    let rtc_daylight_savings = read_u8_lossy(file).ok()? != 0;
+
+    // `BdaTimeSnapshot` (21 bytes).
+    let bda_tick_count = read_u32_le_lossy(file).ok()?;
+    let mut bda_tick_remainder = [0u8; 16];
+    file.read_exact(&mut bda_tick_remainder).ok()?;
+    let bda_tick_remainder = u128::from_le_bytes(bda_tick_remainder);
+    let bda_midnight_flag = read_u8_lossy(file).ok()?;
 
     // E820 map.
     let e820_len = read_u32_le_lossy(file).ok()?;
@@ -1074,7 +1090,7 @@ fn decode_bios_device_detail(
     }
 
     let mut s = format!(
-        " boot_drive=0x{boot_drive:02x} mem_size_bytes={memory_size_bytes} video_mode=0x{video_mode:02x} tty_len={tty_len} e820_len={e820_len} keys_len={keys_len}"
+        " boot_drive=0x{boot_drive:02x} mem_size_bytes={memory_size_bytes} rtc={rtc_year:04}-{rtc_month:02}-{rtc_day:02} {rtc_hour:02}:{rtc_minute:02}:{rtc_second:02}.{rtc_nanosecond:09} rtc_bcd={rtc_bcd_mode} rtc_hour_24={rtc_hour_24} rtc_dst={rtc_daylight_savings} bda_tick_count={bda_tick_count} bda_tick_remainder={bda_tick_remainder} bda_midnight_flag={bda_midnight_flag} video_mode=0x{video_mode:02x} tty_len={tty_len} e820_len={e820_len} keys_len={keys_len}"
     );
     if let Some(addr) = rsdp_addr {
         s.push_str(&format!(" rsdp_addr=0x{addr:x}"));

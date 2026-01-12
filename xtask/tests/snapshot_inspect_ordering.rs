@@ -1109,6 +1109,8 @@ fn snapshot_inspect_decodes_bios_device_state() {
         .stdout(predicate::str::contains("BIOS(10)"))
         .stdout(predicate::str::contains("boot_drive=0x80"))
         .stdout(predicate::str::contains("mem_size_bytes=67108864"))
+        .stdout(predicate::str::contains("rtc=2026-01-02 03:04:05.000000000"))
+        .stdout(predicate::str::contains("bda_tick_count=1234"))
         .stdout(predicate::str::contains("video_mode=0x03"))
         .stdout(predicate::str::contains("tty_len=5"));
 }
