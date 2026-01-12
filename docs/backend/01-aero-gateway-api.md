@@ -174,6 +174,15 @@ If the gateway is configured with a UDP relay base URL (`UDP_RELAY_BASE_URL`), t
 }
 ```
 
+Notes:
+
+- `udpRelay.baseUrl` may be configured as either an **HTTP(S)** or **WebSocket (WS/S)** URL
+  (the gateway accepts `http:`, `https:`, `ws:`, `wss:`).
+- Clients must normalize schemes based on the endpoint transport:
+  - For HTTP endpoints (`/webrtc/ice`, `/webrtc/offer`): use `http(s)://` (`ws://` → `http://`, `wss://` → `https://`).
+  - For WebSocket signaling (`/webrtc/signal`) and `/udp` WebSocket fallback: use `ws(s)://` (`http://` → `ws://`, `https://` → `wss://`).
+  - In particular, browser `fetch()` **does not support** `ws://`/`wss://` URLs.
+
 Token rules:
 
 - `authMode=none`: `token` and `expiresAt` are omitted.

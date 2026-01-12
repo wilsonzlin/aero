@@ -117,6 +117,22 @@ test('POST /session includes udpRelay endpoints when configured (auth_mode=none)
   await app.close();
 });
 
+test('POST /session preserves ws(s) UDP_RELAY_BASE_URL schemes in udpRelay.baseUrl', async () => {
+  const { app } = buildServer({
+    ...baseConfig,
+    UDP_RELAY_BASE_URL: 'wss://relay.example.com',
+    UDP_RELAY_AUTH_MODE: 'none',
+  });
+  await app.ready();
+
+  const res = await app.inject({ method: 'POST', url: '/session', headers: { origin: 'http://localhost' } });
+  assert.equal(res.statusCode, 201);
+  const body = JSON.parse(res.body) as any;
+  assert.equal(body.udpRelay.baseUrl, 'wss://relay.example.com');
+
+  await app.close();
+});
+
 test('POST /session includes api_key token when configured', async () => {
   const { app } = buildServer({
     ...baseConfig,

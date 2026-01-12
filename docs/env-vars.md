@@ -47,7 +47,7 @@ These are not required for the core build/test pipeline, but are common when run
 
 | Variable | Meaning | Default | Consumed by | Examples |
 | --- | --- | --- | --- | --- |
-| `UDP_RELAY_BASE_URL` | Base URL of the UDP relay service (`proxy/webrtc-udp-relay`) used by `backend/aero-gateway` to return `udpRelay` connection metadata in `POST /session`. | *(unset)* | `backend/aero-gateway` | `UDP_RELAY_BASE_URL=https://relay.example.com` |
+| `UDP_RELAY_BASE_URL` | Base URL of the UDP relay service (`proxy/webrtc-udp-relay`) used by `backend/aero-gateway` to return `udpRelay` connection metadata in `POST /session`. Accepts `http(s)://` or `ws(s)://`. Browser clients must normalize between HTTP and WebSocket schemes when calling relay endpoints (e.g. `fetch()` does not support `ws(s)://`). | *(unset)* | `backend/aero-gateway` | `UDP_RELAY_BASE_URL=https://relay.example.com`, `UDP_RELAY_BASE_URL=wss://relay.example.com` |
 | `UDP_RELAY_AUTH_MODE` | Relay auth mode used by `backend/aero-gateway` when minting `udpRelay.token` (`none`, `api_key`, `jwt`). | `none` | `backend/aero-gateway` | `UDP_RELAY_AUTH_MODE=jwt` |
 | `UDP_RELAY_API_KEY` | API key to return when `UDP_RELAY_AUTH_MODE=api_key` (intended for local/dev only). | *(unset)* | `backend/aero-gateway` | `UDP_RELAY_API_KEY=dev-key` |
 | `UDP_RELAY_JWT_SECRET` | HS256 secret used when `UDP_RELAY_AUTH_MODE=jwt` (gateway mints short-lived JWTs for the relay). | *(unset)* | `backend/aero-gateway` | `UDP_RELAY_JWT_SECRET=...` |
