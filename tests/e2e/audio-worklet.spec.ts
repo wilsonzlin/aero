@@ -16,6 +16,34 @@ test("AudioWorklet output runs and does not underrun with synthetic tone", async
     return out?.enabled === true && out?.context?.state === "running";
   });
 
+  await page.waitForFunction(
+    () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const out = (globalThis as any).__aeroAudioOutput;
+      if (!out?.ringBuffer?.samples || !out?.ringBuffer?.writeIndex) return false;
+      const samples: Float32Array = out.ringBuffer.samples;
+      const writeIndex: Uint32Array = out.ringBuffer.writeIndex;
+      const cc = out.ringBuffer.channelCount | 0;
+      const cap = out.ringBuffer.capacityFrames | 0;
+      if (cc <= 0 || cap <= 0) return false;
+      const write = Atomics.load(writeIndex, 0) >>> 0;
+      const framesToInspect = Math.min(1024, cap);
+      const startFrame = (write - framesToInspect) >>> 0;
+      let maxAbs = 0;
+      for (let i = 0; i < framesToInspect; i++) {
+        const frame = (startFrame + i) % cap;
+        const base = frame * cc;
+        for (let c = 0; c < cc; c++) {
+          const s = samples[base + c] ?? 0;
+          const a = Math.abs(s);
+          if (a > maxAbs) maxAbs = a;
+        }
+      }
+      return maxAbs > 0.01;
+    },
+    { timeout: 10_000 },
+  );
+
   await page.waitForTimeout(1000);
 
   const result = await page.evaluate(() => {
@@ -26,6 +54,28 @@ test("AudioWorklet output runs and does not underrun with synthetic tone", async
       state: out?.context?.state,
       underruns: typeof out?.getUnderrunCount === "function" ? out.getUnderrunCount() : null,
       overruns: typeof out?.getOverrunCount === "function" ? out.getOverrunCount() : null,
+      maxAbsSample: (() => {
+        if (!out?.ringBuffer?.samples || !out?.ringBuffer?.writeIndex) return null;
+        const samples: Float32Array = out.ringBuffer.samples;
+        const writeIndex: Uint32Array = out.ringBuffer.writeIndex;
+        const cc = out.ringBuffer.channelCount | 0;
+        const cap = out.ringBuffer.capacityFrames | 0;
+        if (cc <= 0 || cap <= 0) return null;
+        const write = Atomics.load(writeIndex, 0) >>> 0;
+        const framesToInspect = Math.min(1024, cap);
+        const startFrame = (write - framesToInspect) >>> 0;
+        let maxAbs = 0;
+        for (let i = 0; i < framesToInspect; i++) {
+          const frame = (startFrame + i) % cap;
+          const base = frame * cc;
+          for (let c = 0; c < cc; c++) {
+            const s = samples[base + c] ?? 0;
+            const a = Math.abs(s);
+            if (a > maxAbs) maxAbs = a;
+          }
+        }
+        return maxAbs;
+      })(),
     };
   });
 
@@ -35,4 +85,6 @@ test("AudioWorklet output runs and does not underrun with synthetic tone", async
   // Underruns are counted as missing frames (a single render quantum is 128 frames).
   expect(result.underruns).toBeLessThanOrEqual(128);
   expect(result.overruns).toBe(0);
+  expect(result.maxAbsSample).not.toBeNull();
+  expect(result.maxAbsSample as number).toBeGreaterThan(0.01);
 });
