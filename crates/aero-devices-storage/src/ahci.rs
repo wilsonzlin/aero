@@ -212,13 +212,17 @@ impl AhciController {
     }
 
     fn ports_implemented(&self) -> u32 {
-        let mut pi = 0u32;
-        for (idx, port) in self.ports.iter().enumerate() {
-            if port.drive.is_some() {
-                pi |= 1 << idx;
-            }
+        // AHCI PI (Ports Implemented) is a hardware strap indicating which ports exist in the HBA.
+        // It should not depend on whether a drive is currently attached.
+        //
+        // Guests (including Windows' storahci) enumerate ports using this bitmask, then check per-
+        // port status registers (e.g. PxSSTS) to determine whether a device is present.
+        let ports = self.ports.len();
+        if ports >= 32 {
+            u32::MAX
+        } else {
+            (1u32 << ports) - 1
         }
-        pi
     }
 
     fn hba_is(&self) -> u32 {
@@ -744,6 +748,14 @@ mod tests {
         // Clear the interrupt.
         ctl.write_u32(PORT_BASE + PORT_REG_IS, PORT_IS_DHRS);
         assert!(!irq.level());
+    }
+
+    #[test]
+    fn ports_implemented_reflects_hba_port_count_not_drive_presence() {
+        let irq = TestIrqLine::default();
+        let mut ctl = AhciController::new(Box::new(irq), 1);
+        // With one port, PI should report bit0 set even if no drive is attached.
+        assert_eq!(ctl.read_u32(HBA_REG_PI), 1);
     }
 
     #[test]
