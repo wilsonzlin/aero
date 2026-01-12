@@ -59,6 +59,10 @@ if command -v node &>/dev/null; then
         EXPECTED_NODE=$(cat "$REPO_ROOT/.nvmrc" | tr -d '\r\n ')
         CURRENT_MAJOR=$(node -p "process.versions.node.split('.')[0]" 2>/dev/null || echo "")
         EXPECTED_MAJOR=$(echo "$EXPECTED_NODE" | cut -d. -f1)
+        # `.nvmrc` commonly allows a leading `v` prefix (e.g. `v22.11.0`). Strip it so we don't
+        # incorrectly treat a matching Node major as a mismatch.
+        EXPECTED_MAJOR="${EXPECTED_MAJOR#v}"
+        EXPECTED_MAJOR="${EXPECTED_MAJOR#V}"
         if [[ "$CURRENT_MAJOR" != "$EXPECTED_MAJOR" ]]; then
             WARNINGS+=("Node.js version mismatch: have $NODE_VERSION, want $EXPECTED_NODE")
         fi

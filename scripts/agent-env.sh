@@ -411,6 +411,10 @@ fi
 if command -v node >/dev/null 2>&1; then
   if [[ -f "${REPO_ROOT}/.nvmrc" ]]; then
     expected_major="$(cut -d. -f1 "${REPO_ROOT}/.nvmrc" | tr -d '\r\n ' | head -n1)"
+    # `.nvmrc` commonly allows a leading `v` prefix (e.g. `v22.11.0`). Strip it so we don't
+    # incorrectly treat a matching Node major as a mismatch.
+    expected_major="${expected_major#v}"
+    expected_major="${expected_major#V}"
     current_major="$(node -p "process.versions.node.split('.')[0]" 2>/dev/null || true)"
     if [[ -n "${expected_major}" && -n "${current_major}" && "${current_major}" != "${expected_major}" ]]; then
       if [[ -z "${AERO_ALLOW_UNSUPPORTED_NODE:-}" ]]; then

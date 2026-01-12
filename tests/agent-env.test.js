@@ -107,6 +107,29 @@ test("agent-env: sets AERO_ALLOW_UNSUPPORTED_NODE when Node major differs from .
   }
 });
 
+test("agent-env: ignores a leading v prefix in .nvmrc when comparing Node majors", { skip: process.platform === "win32" }, () => {
+  const repoRoot = setupTempRepo();
+  try {
+    const currentMajor = Number(process.versions.node.split(".")[0]);
+    assert.ok(Number.isFinite(currentMajor) && currentMajor > 0, `unexpected Node major: ${process.versions.node}`);
+    fs.writeFileSync(path.join(repoRoot, ".nvmrc"), `v${currentMajor}.0.0\n`, "utf8");
+
+    const env = { ...process.env };
+    delete env.AERO_ALLOW_UNSUPPORTED_NODE;
+
+    const stdout = execFileSync("bash", ["-c", 'source scripts/agent-env.sh >/dev/null; printf "%s" "${AERO_ALLOW_UNSUPPORTED_NODE:-}"'], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    assert.equal(stdout, "");
+  } finally {
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
 test(
   "agent-env: does not override an explicit AERO_ALLOW_UNSUPPORTED_NODE value when .nvmrc major mismatches",
   { skip: process.platform === "win32" },
