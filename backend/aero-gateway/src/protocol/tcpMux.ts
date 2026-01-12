@@ -52,7 +52,7 @@ export class TcpMuxFrameParser {
 
   push(chunk: Buffer): TcpMuxFrame[] {
     if (chunk.length === 0) return [];
-    this.buffer = this.buffer.length === 0 ? chunk : Buffer.concat([this.buffer, chunk]);
+    this.buffer = this.buffer.length === 0 ? chunk : concat2(this.buffer, chunk);
 
     const frames: TcpMuxFrame[] = [];
 
@@ -92,6 +92,13 @@ export class TcpMuxFrameParser {
     if (this.buffer.length === 0) return;
     throw new Error(`truncated tcp-mux frame stream (${this.buffer.length} pending bytes)`);
   }
+}
+
+function concat2(a: Buffer, b: Buffer): Buffer {
+  const out = Buffer.allocUnsafe(a.length + b.length);
+  a.copy(out, 0);
+  b.copy(out, a.length);
+  return out;
 }
 
 export type TcpMuxOpenPayload = {
