@@ -1,27 +1,18 @@
 import { describe, expect, it } from "vitest";
 
 import { AeroAudioProcessor, addUnderrunFrames } from "./audio-worklet-processor.js";
-import {
-  HEADER_BYTES,
-  HEADER_U32_LEN,
-  READ_FRAME_INDEX,
-  UNDERRUN_COUNT_INDEX,
-  WRITE_FRAME_INDEX,
-  requiredBytes,
-  wrapRingBuffer,
-} from "../audio/audio_worklet_ring";
+import { requiredBytes, wrapRingBuffer } from "../audio/audio_worklet_ring";
+import type { AudioWorkletRingBufferViews } from "../audio/audio_worklet_ring";
 
 function makeRingBuffer(capacityFrames: number, channelCount: number): {
   sab: SharedArrayBuffer;
-  header: Uint32Array;
-  samples: Float32Array;
+  views: AudioWorkletRingBufferViews;
 } {
   const sab = new SharedArrayBuffer(requiredBytes(capacityFrames, channelCount));
   const views = wrapRingBuffer(sab, capacityFrames, channelCount);
   return {
     sab,
-    header: views.header,
-    samples: views.samples,
+    views,
   };
 }
 
@@ -33,13 +24,13 @@ describe("audio-worklet-processor underrun counter", () => {
     // by validating behavior via a minimal render pass.
     const capacityFrames = 1;
     const channelCount = 1;
-    const { sab, header, samples } = makeRingBuffer(capacityFrames, channelCount);
+    const { sab, views } = makeRingBuffer(capacityFrames, channelCount);
 
     // Seed exactly 1 frame in the buffer and ensure the processor consumes it.
-    Atomics.store(header, READ_FRAME_INDEX, 0);
-    Atomics.store(header, WRITE_FRAME_INDEX, 1);
-    Atomics.store(header, UNDERRUN_COUNT_INDEX, 0);
-    samples[0] = 0.5;
+    Atomics.store(views.readIndex, 0, 0);
+    Atomics.store(views.writeIndex, 0, 1);
+    Atomics.store(views.underrunCount, 0, 0);
+    views.samples[0] = 0.5;
 
     const proc = new AeroAudioProcessor({
       processorOptions: { ringBuffer: sab, channelCount, capacityFrames },
@@ -49,27 +40,22 @@ describe("audio-worklet-processor underrun counter", () => {
     proc.process([], outputs);
 
     expect(outputs[0][0]).toEqual(Float32Array.from([0.5]));
-    expect(Atomics.load(header, READ_FRAME_INDEX) >>> 0).toBe(1);
-    expect(Atomics.load(header, UNDERRUN_COUNT_INDEX) >>> 0).toBe(0);
-
-    // Also lock the byte-level header size that the worklet hardcodes (the
-    // `Float32Array(ringBuffer, 16)` offset and `Uint32Array(..., 4)` length).
-    expect(HEADER_U32_LEN).toBe(4);
-    expect(HEADER_BYTES).toBe(16);
+    expect(Atomics.load(views.readIndex, 0) >>> 0).toBe(1);
+    expect(Atomics.load(views.underrunCount, 0) >>> 0).toBe(0);
   });
 
   it("counts missing frames (not underrun events)", () => {
     const capacityFrames = 4;
     const channelCount = 2;
-    const { sab, header, samples } = makeRingBuffer(capacityFrames, channelCount);
+    const { sab, views } = makeRingBuffer(capacityFrames, channelCount);
 
     // Two frames available.
-    Atomics.store(header, READ_FRAME_INDEX, 0); // readFrameIndex
-    Atomics.store(header, WRITE_FRAME_INDEX, 2); // writeFrameIndex
-    Atomics.store(header, UNDERRUN_COUNT_INDEX, 0); // underrunCount
+    Atomics.store(views.readIndex, 0, 0); // readFrameIndex
+    Atomics.store(views.writeIndex, 0, 2); // writeFrameIndex
+    Atomics.store(views.underrunCount, 0, 0); // underrunCount
 
     // Interleaved samples: [L0, R0, L1, R1, ...]
-    samples.set([0.1, 0.2, 1.1, 1.2]);
+    views.samples.set([0.1, 0.2, 1.1, 1.2]);
 
     const proc = new AeroAudioProcessor({
       processorOptions: { ringBuffer: sab, channelCount, capacityFrames },
@@ -87,8 +73,8 @@ describe("audio-worklet-processor underrun counter", () => {
     expect(outputs[0][0]).toEqual(Float32Array.from([0.1, 1.1, 0, 0]));
     expect(outputs[0][1]).toEqual(Float32Array.from([0.2, 1.2, 0, 0]));
 
-    expect(Atomics.load(header, READ_FRAME_INDEX) >>> 0).toBe(2);
-    expect(Atomics.load(header, UNDERRUN_COUNT_INDEX) >>> 0).toBe(2);
+    expect(Atomics.load(views.readIndex, 0) >>> 0).toBe(2);
+    expect(Atomics.load(views.underrunCount, 0) >>> 0).toBe(2);
     expect(lastMessage).toEqual({
       type: "underrun",
       underrunFramesAdded: 2,
@@ -105,7 +91,7 @@ describe("audio-worklet-processor underrun counter", () => {
     expect(outputs2[0][1]).toEqual(new Float32Array(framesNeeded));
 
     // Missing 4 more frames -> total 6.
-    expect(Atomics.load(header, UNDERRUN_COUNT_INDEX) >>> 0).toBe(6);
+    expect(Atomics.load(views.underrunCount, 0) >>> 0).toBe(6);
     expect(lastMessage).toEqual({
       type: "underrun",
       underrunFramesAdded: 4,
@@ -115,11 +101,11 @@ describe("audio-worklet-processor underrun counter", () => {
   });
 
   it("wraps the underrun counter as u32", () => {
-    const { header } = makeRingBuffer(1, 1);
-    Atomics.store(header, UNDERRUN_COUNT_INDEX, 0xffff_fffe);
+    const { views } = makeRingBuffer(1, 1);
+    Atomics.store(views.underrunCount, 0, 0xffff_fffe);
 
-    const total = addUnderrunFrames(header, 4);
+    const total = addUnderrunFrames(views.header, 4);
     expect(total).toBe(2);
-    expect(Atomics.load(header, UNDERRUN_COUNT_INDEX) >>> 0).toBe(2);
+    expect(Atomics.load(views.underrunCount, 0) >>> 0).toBe(2);
   });
 });
