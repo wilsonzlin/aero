@@ -97,6 +97,7 @@ drivers/aerogpu/tests/win7/
   d3d11_triangle/
   d3d11_map_do_not_wait/
   d3d11_texture/
+  d3d11_shared_texture_ipc/
   d3d11_caps_smoke/
   d3d11_rs_om_state_sanity/
   d3d11_geometry_shader_smoke/
@@ -350,6 +351,7 @@ In a Win7 VM with AeroGPU installed and working correctly:
 * `d3d11_triangle` uses `D3D11CreateDeviceAndSwapChain` (hardware), verifies the D3D11 runtime path (`d3d11.dll`) and the AeroGPU `OpenAdapter11` export, and confirms **corner red + center green** via readback
 * `d3d11_map_do_not_wait` validates that `Map(READ, DO_NOT_WAIT)` is a non-blocking poll (returns `DXGI_ERROR_WAS_STILL_DRAWING` while work is in flight, never hangs)
 * `d3d11_texture` draws a textured triangle using a 2x2 BGRA texture and validates that the **center pixel samples the expected texel** (corner remains clear color) via staging readback
+* `d3d11_shared_texture_ipc` creates a D3D11 shareable texture in one process, duplicates the shared `HANDLE` into a second process, opens it via `OpenSharedResource`, and validates the consumer can read back the producer's clear color (catches bugs where the driver treats the numeric handle value as a stable cross-process token)
 * `d3d11_caps_smoke` validates the expected D3D11 feature level and common format support bits used by the runtime
 * `d3d11_rs_om_state_sanity` validates D3D11 rasterizer + blend state correctness (scissor enable/disable + `RSSetState(NULL)`, cull mode/front-face, depth clip enable/disable, alpha blending + write mask + blend factor + sample mask) via readback (requires feature level >= 10_0)
 * `d3d11_geometry_shader_smoke` renders a triangle through the Geometry Shader stage (requires feature level >= 10_0) and confirms **corner red + center green** via readback
