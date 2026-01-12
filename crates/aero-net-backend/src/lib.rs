@@ -22,13 +22,13 @@ pub use aero_ipc::ring::{PopError, PushError};
 /// This is intentionally minimal: devices only need a way to transmit Ethernet frames to the
 /// outside world. Incoming frames are delivered via device-specific queues (e.g. RX rings).
 pub trait NetworkBackend {
+    /// Transmit a guest → host Ethernet frame.
     fn transmit(&mut self, frame: Vec<u8>);
 
     /// Poll for a host → guest Ethernet frame.
     ///
-    /// NIC models like the E1000 and virtio-net can call this during their poll loop to allow a
-    /// user-space network stack backend to return immediate responses (ARP/DHCP/DNS, etc.) in the
-    /// same tick.
+    /// Backends may return immediate responses (ARP/DHCP/DNS, etc.) when the guest transmits,
+    /// allowing round-trips within a single emulation tick when used by a pump.
     fn poll_receive(&mut self) -> Option<Vec<u8>> {
         None
     }

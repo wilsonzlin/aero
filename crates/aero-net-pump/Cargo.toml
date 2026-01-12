@@ -1,0 +1,11 @@
+[package]
+name = "aero-net-pump"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+aero-net-backend = { path = "../aero-net-backend" }
+aero-net-e1000 = { path = "../aero-net-e1000" }
+memory = { path = "../memory" }
+
