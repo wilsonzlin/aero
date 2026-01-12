@@ -1112,3 +1112,69 @@ fn snapshot_inspect_decodes_bios_device_state() {
         .stdout(predicate::str::contains("video_mode=0x03"))
         .stdout(predicate::str::contains("tty_len=5"));
 }
+
+struct SerialDeviceSource;
+
+impl SnapshotSource for SerialDeviceSource {
+    fn snapshot_meta(&mut self) -> SnapshotMeta {
+        SnapshotMeta {
+            snapshot_id: 12,
+            parent_snapshot_id: Some(11),
+            created_unix_ms: 0,
+            label: Some("inspect-serial-device".to_string()),
+        }
+    }
+
+    fn cpu_state(&self) -> CpuState {
+        CpuState::default()
+    }
+
+    fn mmu_state(&self) -> MmuState {
+        MmuState::default()
+    }
+
+    fn device_states(&self) -> Vec<DeviceState> {
+        vec![DeviceState {
+            id: DeviceId::SERIAL,
+            version: 1,
+            flags: 0,
+            data: b"0123456789abcdefZYXWVUTSRQPONMLK".to_vec(),
+        }]
+    }
+
+    fn disk_overlays(&self) -> DiskOverlayRefs {
+        DiskOverlayRefs::default()
+    }
+
+    fn ram_len(&self) -> usize {
+        4096
+    }
+
+    fn read_ram(&self, _offset: u64, buf: &mut [u8]) -> aero_snapshot::Result<()> {
+        buf.fill(0);
+        Ok(())
+    }
+
+    fn take_dirty_pages(&mut self) -> Option<Vec<u64>> {
+        None
+    }
+}
+
+#[test]
+fn snapshot_inspect_decodes_serial_device_state() {
+    let tmp = tempfile::tempdir().unwrap();
+    let snap = tmp.path().join("serial_device.aerosnap");
+
+    let mut source = SerialDeviceSource;
+    let mut cursor = Cursor::new(Vec::new());
+    save_snapshot(&mut cursor, &mut source, SaveOptions::default()).unwrap();
+    fs::write(&snap, cursor.into_inner()).unwrap();
+
+    Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["snapshot", "inspect", snap.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("SERIAL(8)"))
+        .stdout(predicate::str::contains("serial_prefix=\"0123456789abcdef\""))
+        .stdout(predicate::str::contains("serial_tail=\"ZYXWVUTSRQPONMLK\""));
+}

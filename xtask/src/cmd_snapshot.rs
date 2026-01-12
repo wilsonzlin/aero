@@ -370,6 +370,22 @@ fn print_devices_section_summary(file: &mut fs::File, section: &SnapshotSectionI
         format!("{bus:02x}:{dev:02x}.{func:x}")
     }
 
+    fn escape_preview_bytes(bytes: &[u8]) -> String {
+        let mut out = String::new();
+        for b in bytes.iter().copied() {
+            match b {
+                b'\n' => out.push_str("\\n"),
+                b'\r' => out.push_str("\\r"),
+                b'\t' => out.push_str("\\t"),
+                b'\\' => out.push_str("\\\\"),
+                b'"' => out.push_str("\\\""),
+                0x20..=0x7e => out.push(char::from(b)),
+                other => out.push_str(&format!("\\x{other:02x}")),
+            }
+        }
+        out
+    }
+
     let mut entries: Vec<DeviceSummaryEntry> = Vec::with_capacity(count as usize);
     for _ in 0..count {
         let pos = match file.stream_position() {
@@ -836,6 +852,33 @@ fn print_devices_section_summary(file: &mut fs::File, section: &SnapshotSectionI
             if let Some(s) = decode_bios_device_detail(file, data_start, data_end) {
                 detail = Some(s);
             }
+        }
+
+        // Serial output log (`DeviceId::SERIAL`).
+        //
+        // This is stored as raw bytes (not an `aero-io-snapshot` blob). Print a small escaped
+        // prefix/tail preview to make it easier to sanity check snapshots in CI and debugging.
+        if id == DeviceId::SERIAL.0 && version == 1 && flags == 0 {
+            let prefix = escape_preview_bytes(&header[..header_len]);
+            let mut s = format!(" serial_prefix=\"{prefix}\"");
+
+            if len > header_len as u64 {
+                let tail_len: usize = usize::try_from(len.min(16)).unwrap_or(16);
+                if tail_len != 0 {
+                    let tail_start = data_end.saturating_sub(tail_len as u64);
+                    if tail_start > data_start {
+                        let mut tail = vec![0u8; tail_len];
+                        if file.seek(SeekFrom::Start(tail_start)).is_ok()
+                            && file.read_exact(&mut tail).is_ok()
+                        {
+                            let tail = escape_preview_bytes(&tail);
+                            s.push_str(&format!(" serial_tail=\"{tail}\""));
+                        }
+                    }
+                }
+            }
+
+            detail = Some(s);
         }
 
         entries.push(DeviceSummaryEntry {
