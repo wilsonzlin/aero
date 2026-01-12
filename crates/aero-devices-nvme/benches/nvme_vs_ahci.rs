@@ -1,15 +1,26 @@
+#[cfg(target_arch = "wasm32")]
+fn main() {}
+
+#[cfg(not(target_arch = "wasm32"))]
 use aero_devices_nvme::{DiskBackend, DiskError, DiskResult, NvmeController};
+#[cfg(not(target_arch = "wasm32"))]
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+#[cfg(not(target_arch = "wasm32"))]
 use emulator::io::storage::ahci::{registers as ahci_regs, AhciController};
+#[cfg(not(target_arch = "wasm32"))]
 use emulator::io::storage::disk as emu_disk;
+#[cfg(not(target_arch = "wasm32"))]
 use memory::MemoryBus;
 
+#[cfg(not(target_arch = "wasm32"))]
 const PAGE_SIZE: usize = 4096;
 
+#[cfg(not(target_arch = "wasm32"))]
 struct BenchMem {
     buf: Vec<u8>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl BenchMem {
     fn new(size: usize) -> Self {
         Self {
@@ -18,6 +29,7 @@ impl BenchMem {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl MemoryBus for BenchMem {
     fn read_physical(&mut self, paddr: u64, buf: &mut [u8]) {
         let start = paddr as usize;
@@ -32,6 +44,7 @@ impl MemoryBus for BenchMem {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn bench_scatter_copy(c: &mut Criterion) {
     let mut group = c.benchmark_group("scatter_copy");
     for size_kib in [4usize, 64, 256, 1024] {
@@ -73,11 +86,13 @@ fn bench_scatter_copy(c: &mut Criterion) {
     group.finish();
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 struct VecDisk {
     sector_size: u32,
     data: Vec<u8>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl VecDisk {
     fn new(total_sectors: u64) -> Self {
         let sector_size = 512u32;
@@ -118,6 +133,7 @@ impl VecDisk {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl DiskBackend for VecDisk {
     fn sector_size(&self) -> u32 {
         self.sector_size
@@ -146,22 +162,27 @@ impl DiskBackend for VecDisk {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn write_nvme_cmd(mem: &mut dyn MemoryBus, addr: u64, cmd: &[u8; 64]) {
     mem.write_physical(addr, cmd);
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn set_cmd_u16(cmd: &mut [u8; 64], offset: usize, val: u16) {
     cmd[offset..offset + 2].copy_from_slice(&val.to_le_bytes());
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn set_cmd_u32(cmd: &mut [u8; 64], offset: usize, val: u32) {
     cmd[offset..offset + 4].copy_from_slice(&val.to_le_bytes());
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn set_cmd_u64(cmd: &mut [u8; 64], offset: usize, val: u64) {
     cmd[offset..offset + 8].copy_from_slice(&val.to_le_bytes());
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn bench_device_read_4k(c: &mut Criterion) {
     const ASQ: u64 = 0x10_000;
     const ACQ: u64 = 0x20_000;
@@ -319,5 +340,7 @@ fn bench_device_read_4k(c: &mut Criterion) {
     group.finish();
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 criterion_group!(benches, bench_scatter_copy, bench_device_read_4k);
+#[cfg(not(target_arch = "wasm32"))]
 criterion_main!(benches);

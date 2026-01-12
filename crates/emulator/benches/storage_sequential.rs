@@ -1,13 +1,22 @@
+#[cfg(target_arch = "wasm32")]
+fn main() {}
+
+#[cfg(not(target_arch = "wasm32"))]
 use criterion::{criterion_group, criterion_main, Criterion};
+#[cfg(not(target_arch = "wasm32"))]
 use emulator::io::storage::cache::{BlockCache, BlockCacheConfig};
+#[cfg(not(target_arch = "wasm32"))]
 use emulator::io::storage::disk::{ByteStorage, DiskBackend, WriteCachePolicy};
+#[cfg(not(target_arch = "wasm32"))]
 use emulator::io::storage::formats::raw::RawDisk;
 
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Default)]
 struct MemStorage {
     data: Vec<u8>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl ByteStorage for MemStorage {
     fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> emulator::io::storage::DiskResult<()> {
         let offset = offset as usize;
@@ -40,6 +49,7 @@ impl ByteStorage for MemStorage {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn bench_sequential_rw(c: &mut Criterion) {
     const SECTOR_SIZE: u32 = 512;
     const BYTES: usize = 64 * 1024 * 1024;
@@ -67,5 +77,7 @@ fn bench_sequential_rw(c: &mut Criterion) {
     });
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 criterion_group!(benches, bench_sequential_rw);
+#[cfg(not(target_arch = "wasm32"))]
 criterion_main!(benches);

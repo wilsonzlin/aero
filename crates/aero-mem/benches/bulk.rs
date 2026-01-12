@@ -1,9 +1,17 @@
+#[cfg(target_arch = "wasm32")]
+fn main() {}
+
+#[cfg(not(target_arch = "wasm32"))]
 use aero_mem::{MemoryBus, PhysicalMemory, PhysicalMemoryOptions};
+#[cfg(not(target_arch = "wasm32"))]
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+#[cfg(not(target_arch = "wasm32"))]
 use std::sync::Arc;
 
+#[cfg(not(target_arch = "wasm32"))]
 const MIB: u64 = 1024 * 1024;
 
+#[cfg(not(target_arch = "wasm32"))]
 fn bench_bulk(c: &mut Criterion) {
     let ram_size = 64 * MIB;
     let opts = PhysicalMemoryOptions {
@@ -65,5 +73,7 @@ fn bench_bulk(c: &mut Criterion) {
     group.finish();
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 criterion_group!(benches, bench_bulk);
+#[cfg(not(target_arch = "wasm32"))]
 criterion_main!(benches);
