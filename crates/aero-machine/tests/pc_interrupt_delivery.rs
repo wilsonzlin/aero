@@ -1,8 +1,7 @@
 #![cfg(not(target_arch = "wasm32"))]
 
-use aero_devices::pci::profile::{NIC_E1000_82540EM, SATA_AHCI_ICH9};
+use aero_devices::pci::profile::{AHCI_ABAR_BAR_INDEX, NIC_E1000_82540EM, SATA_AHCI_ICH9};
 use aero_devices::pci::PciInterruptPin;
-use aero_devices_storage::pci_ahci::AHCI_ABAR_BAR_INDEX;
 use aero_machine::pc::PcMachine;
 use aero_machine::RunExit;
 use aero_net_e1000::ICR_TXDW;

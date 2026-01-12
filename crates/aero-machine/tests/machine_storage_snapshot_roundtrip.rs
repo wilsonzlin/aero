@@ -3,7 +3,6 @@
 use aero_devices::pci::{profile, PciInterruptPin, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
 use aero_devices_storage::ata::{AtaDrive, ATA_CMD_READ_DMA_EXT, ATA_CMD_WRITE_DMA_EXT};
 use aero_devices_storage::atapi::{AtapiCdrom, IsoBackend};
-use aero_devices_storage::pci_ahci::AHCI_ABAR_BAR_INDEX;
 use aero_devices_storage::pci_ide::{PRIMARY_PORTS, SECONDARY_PORTS};
 use aero_io_snapshot::io::state::IoSnapshot;
 use aero_io_snapshot::io::storage::state::DiskControllersSnapshot;
@@ -36,7 +35,7 @@ const PORT_CMD_FRE: u32 = 1 << 4;
 const PORT_IS_DHRS: u32 = 1 << 0;
 
 // PCI config space offset of the AHCI ABAR register (BAR5 on Intel ICH9).
-const AHCI_ABAR_CFG_OFFSET: u8 = 0x10 + 4 * AHCI_ABAR_BAR_INDEX;
+const AHCI_ABAR_CFG_OFFSET: u8 = 0x10 + 4 * profile::AHCI_ABAR_BAR_INDEX;
 
 fn pci_cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
     0x8000_0000

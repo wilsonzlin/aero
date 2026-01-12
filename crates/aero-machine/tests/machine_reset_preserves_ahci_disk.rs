@@ -1,9 +1,8 @@
 #![cfg(not(target_arch = "wasm32"))]
 
-use aero_devices::pci::profile::SATA_AHCI_ICH9;
+use aero_devices::pci::profile::{AHCI_ABAR_BAR_INDEX, SATA_AHCI_ICH9};
 use aero_devices::pci::{PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
 use aero_devices_storage::ata::ATA_CMD_READ_DMA_EXT;
-use aero_devices_storage::pci_ahci::AHCI_ABAR_BAR_INDEX;
 use aero_machine::{Machine, MachineConfig};
 use aero_storage::{MemBackend, RawDisk, VirtualDisk, SECTOR_SIZE};
 

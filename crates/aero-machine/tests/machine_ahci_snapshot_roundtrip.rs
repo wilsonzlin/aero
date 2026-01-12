@@ -2,10 +2,9 @@
 
 use std::io::{Cursor, Read, Seek, SeekFrom};
 
-use aero_devices::pci::profile::SATA_AHCI_ICH9;
+use aero_devices::pci::profile::{AHCI_ABAR_BAR_INDEX, SATA_AHCI_ICH9};
 use aero_devices::pci::{PciBdf, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
 use aero_devices_storage::ata::ATA_CMD_READ_DMA_EXT;
-use aero_devices_storage::pci_ahci::AHCI_ABAR_BAR_INDEX;
 use aero_io_snapshot::io::storage::state::DiskControllersSnapshot;
 use aero_machine::{Machine, MachineConfig};
 use aero_snapshot as snapshot;

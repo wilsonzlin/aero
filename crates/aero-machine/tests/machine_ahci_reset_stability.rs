@@ -2,9 +2,8 @@
 
 use std::rc::Rc;
 
-use aero_devices::pci::profile::SATA_AHCI_ICH9;
+use aero_devices::pci::profile::{AHCI_ABAR_BAR_INDEX, SATA_AHCI_ICH9};
 use aero_devices::pci::{PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
-use aero_devices_storage::pci_ahci::AHCI_ABAR_BAR_INDEX;
 use aero_machine::{Machine, MachineConfig};
 
 // PCI config space offset of the AHCI ABAR register (BAR5 on Intel ICH9).
