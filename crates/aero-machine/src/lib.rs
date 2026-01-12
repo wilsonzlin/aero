@@ -73,9 +73,9 @@ use aero_net_pump::tick_e1000;
 use aero_pc_platform::{PciIoBarHandler, PciIoBarRouter};
 use aero_platform::address_filter::AddressFilter;
 use aero_platform::chipset::{A20GateHandle, ChipsetState};
+use aero_platform::interrupts::msi::MsiMessage;
 use aero_platform::interrupts::{
-    InterruptController as PlatformInterruptController, InterruptInput, MsiMessage,
-    PlatformInterrupts,
+    InterruptController as PlatformInterruptController, InterruptInput, PlatformInterrupts,
 };
 use aero_platform::io::{IoPortBus, PortIoDevice as _};
 use aero_platform::memory::MemoryBus as PlatformMemoryBus;
@@ -5755,9 +5755,7 @@ impl snapshot::SnapshotTarget for Machine {
             // runtime-only and are not currently serialized in snapshot state. Clear them before
             // applying the transport snapshot, then rewind queue progress so the transport will
             // re-pop the guest-provided buffers post-restore.
-            if let Some(net) =
-                virtio.device_mut::<VirtioNet<Option<Box<dyn NetworkBackend>>>>()
-            {
+            if let Some(net) = virtio.device_mut::<VirtioNet<Option<Box<dyn NetworkBackend>>>>() {
                 aero_virtio::devices::VirtioDevice::reset(net);
             }
 

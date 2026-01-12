@@ -8,11 +8,11 @@ const JOURNAL_SIZE: u64 = 4096;
 const JOURNAL_MAGIC: [u8; 4] = *b"JNL1";
 // DoS guard: avoid allocating absurdly large in-memory allocation tables for untrusted images.
 const MAX_TABLE_BYTES: u64 = 128 * 1024 * 1024; // 128 MiB
-// DoS guard: keep allocation blocks bounded. Extremely large block sizes can cause pathological
-// behavior (e.g. allocating a single block can require zero-filling gigabytes).
-//
-// This cap intentionally matches the one used by the canonical `AEROSPAR` format in
-// `crates/aero-storage` so legacy images cannot request more work per block than current ones.
+                                                // DoS guard: keep allocation blocks bounded. Extremely large block sizes can cause pathological
+                                                // behavior (e.g. allocating a single block can require zero-filling gigabytes).
+                                                //
+                                                // This cap intentionally matches the one used by the canonical `AEROSPAR` format in
+                                                // `crates/aero-storage` so legacy images cannot request more work per block than current ones.
 const MAX_BLOCK_SIZE_BYTES: u32 = 64 * 1024 * 1024; // 64 MiB
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -792,7 +792,10 @@ mod tests {
         };
         let enc = header.encode();
         let err = SparseHeader::decode(&enc).unwrap_err();
-        assert!(matches!(err, DiskError::Unsupported("block size too large")));
+        assert!(matches!(
+            err,
+            DiskError::Unsupported("block size too large")
+        ));
     }
 
     #[test]

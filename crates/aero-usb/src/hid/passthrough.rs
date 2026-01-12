@@ -207,7 +207,9 @@ impl UsbHidPassthroughHandle {
             return Ok(None);
         };
         if manufacturer.len() > MAX_STRING_BYTES {
-            return Err(SnapshotError::InvalidFieldEncoding("manufacturer too large"));
+            return Err(SnapshotError::InvalidFieldEncoding(
+                "manufacturer too large",
+            ));
         }
         let manufacturer = String::from_utf8(manufacturer.to_vec())
             .map_err(|_| SnapshotError::InvalidFieldEncoding("manufacturer"))?;
@@ -1501,8 +1503,7 @@ impl IoSnapshot for UsbHidPassthrough {
         {
             w.field_bytes(HIDP_SNAP_TAG_MANUFACTURER, s.into_bytes());
         }
-        if let Some(s) = decode_string_descriptor_utf16le(self.product_string_descriptor.as_ref())
-        {
+        if let Some(s) = decode_string_descriptor_utf16le(self.product_string_descriptor.as_ref()) {
             w.field_bytes(HIDP_SNAP_TAG_PRODUCT, s.into_bytes());
         }
         if let Some(desc) = self.serial_string_descriptor.as_ref() {

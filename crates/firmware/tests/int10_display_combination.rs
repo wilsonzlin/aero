@@ -25,4 +25,3 @@ fn int10_get_display_combination_code_reports_vga_color() {
     assert_eq!(cpu.rax & !0xFFFF, 0x1234_5678_0000_0000);
     assert_eq!(cpu.rbx & !0xFFFF, 0xFEDC_BA98_0000_0000);
 }
-

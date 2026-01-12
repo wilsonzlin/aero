@@ -644,9 +644,7 @@ fn print_devices_section_summary(file: &mut fs::File, section: &SnapshotSectionI
                                     ));
                                 }
                                 DeviceInnerHeader::LegacyAero { version, flags } => {
-                                    parts.push(format!(
-                                        "cfg=legacy-AERO v{version} flags={flags}"
-                                    ));
+                                    parts.push(format!("cfg=legacy-AERO v{version} flags={flags}"));
                                 }
                             }
                         }
@@ -666,9 +664,8 @@ fn print_devices_section_summary(file: &mut fs::File, section: &SnapshotSectionI
                                     ));
                                 }
                                 DeviceInnerHeader::LegacyAero { version, flags } => {
-                                    parts.push(format!(
-                                        "intx=legacy-AERO v{version} flags={flags}"
-                                    ));
+                                    parts
+                                        .push(format!("intx=legacy-AERO v{version} flags={flags}"));
                                 }
                             }
                         }
@@ -1419,7 +1416,11 @@ fn validate_disks_section(file: &mut fs::File, section: &SnapshotSectionInfo) ->
             ));
         }
         validate_string_u32_utf8(&mut limited, limits::MAX_DISK_PATH_LEN, "disk base_image")?;
-        validate_string_u32_utf8(&mut limited, limits::MAX_DISK_PATH_LEN, "disk overlay_image")?;
+        validate_string_u32_utf8(
+            &mut limited,
+            limits::MAX_DISK_PATH_LEN,
+            "disk overlay_image",
+        )?;
     }
 
     Ok(())

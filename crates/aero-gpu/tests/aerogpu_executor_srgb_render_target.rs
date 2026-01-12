@@ -635,7 +635,10 @@ fn executor_upload_x8_srgb_forces_opaque_alpha() {
             });
 
             let report = exec.process_cmd_stream(&stream, &mut guest, None);
-            assert!(report.is_ok(), "executor reported errors ({label}): {report:?}");
+            assert!(
+                report.is_ok(),
+                "executor reported errors ({label}): {report:?}"
+            );
 
             let tex = exec.texture(tex_handle).expect("texture should exist");
             let rgba = readback_rgba8(

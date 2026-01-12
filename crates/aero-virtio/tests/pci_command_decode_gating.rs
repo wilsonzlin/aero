@@ -35,7 +35,8 @@ fn virtio_pci_bar0_mmio_is_gated_on_pci_command_mem() {
 #[test]
 fn virtio_pci_legacy_io_is_gated_on_pci_command_io() {
     let blk = VirtioBlk::new(MemDisk::new(16 * 512));
-    let mut dev = VirtioPciDevice::new_transitional(Box::new(blk), Box::new(InterruptLog::default()));
+    let mut dev =
+        VirtioPciDevice::new_transitional(Box::new(blk), Box::new(InterruptLog::default()));
 
     // PCI COMMAND starts cleared (decode disabled). Reads should behave like open bus.
     let mut status = [0u8; 1];

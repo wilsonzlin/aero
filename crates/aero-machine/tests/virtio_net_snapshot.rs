@@ -483,10 +483,7 @@ fn snapshot_restore_replays_inflight_virtio_net_rx_buffers() {
         (VirtioNetHdr::BASE_LEN + frame2.len()) as u32
     );
     assert_eq!(
-        vm.read_physical_bytes(
-            buf_addr + VirtioNetHdr::BASE_LEN as u64,
-            frame2.len()
-        ),
+        vm.read_physical_bytes(buf_addr + VirtioNetHdr::BASE_LEN as u64, frame2.len()),
         frame2
     );
     assert!(backend_state.borrow().rx.is_empty());

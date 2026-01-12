@@ -769,7 +769,5 @@ fn snapshot_inspect_decodes_legacy_pcic_wrapper_nested_headers() {
         .args(["snapshot", "inspect", snap.to_str().unwrap()])
         .assert()
         .success()
-        .stdout(predicate::str::contains(
-            "cfg=PCPT v1.0 intx=INTX v1.0",
-        ));
+        .stdout(predicate::str::contains("cfg=PCPT v1.0 intx=INTX v1.0"));
 }

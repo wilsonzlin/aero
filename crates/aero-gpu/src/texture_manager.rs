@@ -435,10 +435,9 @@ impl<'a> TextureManager<'a> {
                 mip_level_count: total_mips,
             });
         }
-        let resolved_mip_level_count =
-            view_desc
-                .mip_level_count
-                .unwrap_or(total_mips - view_desc.base_mip_level);
+        let resolved_mip_level_count = view_desc
+            .mip_level_count
+            .unwrap_or(total_mips - view_desc.base_mip_level);
         if view_desc
             .base_mip_level
             .checked_add(resolved_mip_level_count)
@@ -459,10 +458,9 @@ impl<'a> TextureManager<'a> {
                 array_layers: total_layers,
             });
         }
-        let resolved_array_layer_count =
-            view_desc
-                .array_layer_count
-                .unwrap_or(total_layers - view_desc.base_array_layer);
+        let resolved_array_layer_count = view_desc
+            .array_layer_count
+            .unwrap_or(total_layers - view_desc.base_array_layer);
         if view_desc
             .base_array_layer
             .checked_add(resolved_array_layer_count)
