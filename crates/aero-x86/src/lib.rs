@@ -1178,7 +1178,14 @@ pub mod tier1 {
                         dst: opnd,
                         width,
                     },
-                    6 => InstKind::Push { src: opnd },
+                    6 => {
+                        if operand_override {
+                            // See `0x50..=0x57` case below.
+                            InstKind::Invalid
+                        } else {
+                            InstKind::Push { src: opnd }
+                        }
+                    }
                     _ => {
                         return Err(DecodeError {
                             message: "unsupported 0xFF group",
@@ -1187,28 +1194,45 @@ pub mod tier1 {
                 }
             }
             0x50..=0x57 => {
-                let reg_code = (opcode1 - 0x50) | if rex.b { 8 } else { 0 };
-                let reg = Operand::Reg(Reg {
-                    gpr: decode_gpr(reg_code)?,
-                    width: stack_width,
-                    high8: false,
-                });
-                InstKind::Push { src: reg }
+                if operand_override {
+                    // Operand-size overridden PUSH/POP change the stack operand width (16-bit in
+                    // 32/64-bit modes, 32-bit in 16-bit mode). Tier-1 translation currently assumes
+                    // the stack width is derived solely from the block bitness, so we conservatively
+                    // bail out to the interpreter instead of miscompiling.
+                    InstKind::Invalid
+                } else {
+                    let reg_code = (opcode1 - 0x50) | if rex.b { 8 } else { 0 };
+                    let reg = Operand::Reg(Reg {
+                        gpr: decode_gpr(reg_code)?,
+                        width: stack_width,
+                        high8: false,
+                    });
+                    InstKind::Push { src: reg }
+                }
             }
             0x58..=0x5f => {
-                let reg_code = (opcode1 - 0x58) | if rex.b { 8 } else { 0 };
-                let reg = Operand::Reg(Reg {
-                    gpr: decode_gpr(reg_code)?,
-                    width: stack_width,
-                    high8: false,
-                });
-                InstKind::Pop { dst: reg }
+                if operand_override {
+                    // See `0x50..=0x57` case above.
+                    InstKind::Invalid
+                } else {
+                    let reg_code = (opcode1 - 0x58) | if rex.b { 8 } else { 0 };
+                    let reg = Operand::Reg(Reg {
+                        gpr: decode_gpr(reg_code)?,
+                        width: stack_width,
+                        high8: false,
+                    });
+                    InstKind::Pop { dst: reg }
+                }
             }
             0x6a => {
                 let imm8 = read_u8(bytes, offset)? as i8 as i64 as u64;
                 offset += 1;
-                InstKind::Push {
-                    src: Operand::Imm(imm8),
+                if operand_override {
+                    InstKind::Invalid
+                } else {
+                    InstKind::Push {
+                        src: Operand::Imm(imm8),
+                    }
                 }
             }
             0x68 => {
@@ -1228,8 +1252,12 @@ pub mod tier1 {
                         imm32 as u64
                     }
                 };
-                InstKind::Push {
-                    src: Operand::Imm(imm),
+                if operand_override {
+                    InstKind::Invalid
+                } else {
+                    InstKind::Push {
+                        src: Operand::Imm(imm),
+                    }
                 }
             }
             0xe9 => {
@@ -1256,37 +1284,53 @@ pub mod tier1 {
                             (rip + offset as u64).wrapping_add(rel32 as u64) & ip_mask(bitness);
                         InstKind::CallRel { target }
                     }
-                    // In 16/32-bit modes, CALL's displacement and pushed return-address size follow
-                    // the operand-size attribute. Tier1 currently only supports the default form
-                    // (no operand-size override) so we can keep translation semantics simple.
                     32 => {
+                        // In 32-bit mode, the CALL displacement and pushed return-address size
+                        // follow the operand-size attribute (rel32/ret32 by default, rel16/ret16
+                        // when overridden). Tier-1 translation does not currently model per-call
+                        // return-address width, so we decode the full instruction length but bail
+                        // out to the interpreter when the operand-size override is present.
+                        let rel_width = if operand_override { Width::W16 } else { Width::W32 };
+                        let rel = read_rel(bytes, offset, rel_width)?;
+                        offset += rel_width.bytes();
                         if operand_override {
-                            return Err(DecodeError {
-                                message: "unsupported operand-size override for CALL",
-                            });
+                            InstKind::Invalid
+                        } else {
+                            let target = (rip + offset as u64).wrapping_add(rel as u64)
+                                & ip_mask(bitness);
+                            InstKind::CallRel { target }
                         }
-                        let rel32 = read_rel(bytes, offset, Width::W32)?;
-                        offset += 4;
-                        let target =
-                            (rip + offset as u64).wrapping_add(rel32 as u64) & ip_mask(bitness);
-                        InstKind::CallRel { target }
                     }
                     16 => {
+                        // In 16-bit mode, CALL uses rel16/ret16 by default, and rel32/ret32 when
+                        // the operand-size override is present. Tier-1 translation does not
+                        // currently model per-call return-address width, so we decode the full
+                        // instruction length but bail out to the interpreter for the overridden
+                        // form.
+                        let rel_width = if operand_override { Width::W32 } else { Width::W16 };
+                        let rel = read_rel(bytes, offset, rel_width)?;
+                        offset += rel_width.bytes();
                         if operand_override {
-                            return Err(DecodeError {
-                                message: "unsupported operand-size override for CALL",
-                            });
+                            InstKind::Invalid
+                        } else {
+                            let target = (rip + offset as u64).wrapping_add(rel as u64)
+                                & ip_mask(bitness);
+                            InstKind::CallRel { target }
                         }
-                        let rel16 = read_rel(bytes, offset, Width::W16)?;
-                        offset += 2;
-                        let target =
-                            (rip + offset as u64).wrapping_add(rel16 as u64) & ip_mask(bitness);
-                        InstKind::CallRel { target }
                     }
                     _ => unreachable!(),
                 }
             }
-            0xc3 => InstKind::Ret,
+            0xc3 => {
+                if operand_override && bitness != 64 {
+                    // Operand-size overridden RET changes the popped return-address width in
+                    // 16/32-bit modes. Tier-1 translation assumes stack width == block bitness, so
+                    // bail out to the interpreter to avoid miscompilation.
+                    InstKind::Invalid
+                } else {
+                    InstKind::Ret
+                }
+            }
             0x70..=0x7f => {
                 let cc = opcode1 - 0x70;
                 let cond = Cond::from_cc(cc).ok_or(DecodeError {

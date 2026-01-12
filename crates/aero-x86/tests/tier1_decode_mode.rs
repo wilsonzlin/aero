@@ -362,10 +362,7 @@ fn decode_one_mode_32bit_opsize_override_push_imm16() {
     // In 32-bit mode, 0x66 selects 16-bit operand size, and PUSH imm uses an imm16.
     let inst = decode_one_mode(0x1000, &[0x66, 0x68, 0x34, 0x12], 32);
     assert_eq!(inst.len, 4);
-    assert_eq!(
-        inst.kind,
-        InstKind::Push {
-            src: Operand::Imm(0x1234),
-        }
-    );
+    // Tier-1 translation does not currently model operand-size overridden stack ops, so the
+    // minimal decoder treats them as unsupported to avoid miscompilation.
+    assert_eq!(inst.kind, InstKind::Invalid);
 }
