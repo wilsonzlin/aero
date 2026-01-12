@@ -1185,7 +1185,7 @@ impl Emitter<'_> {
         // Note: this helper is only reached for translations that are already marked as RAM
         // (`TLB_FLAG_IS_RAM`), so we don't need to handle the hole here.
         const HIGH_RAM_BASE: i64 = 0x1_0000_0000;
-        const LOW_RAM_END: i64 = 0xB000_0000;
+        const LOW_RAM_END: i64 = aero_pc_constants::PCIE_ECAM_BASE as i64;
         self.func
             .instruction(&Instruction::LocalTee(self.layout.scratch_vpn_local()));
         self.func.instruction(&Instruction::I64Const(HIGH_RAM_BASE));

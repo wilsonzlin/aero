@@ -839,7 +839,7 @@ impl Emitter<'_> {
         // If paddr >= 4GiB:
         //   paddr = 0xB000_0000 + (paddr - 4GiB)
         const HIGH_RAM_BASE: i64 = 0x1_0000_0000;
-        const LOW_RAM_END: i64 = 0xB000_0000;
+        const LOW_RAM_END: i64 = aero_pc_constants::PCIE_ECAM_BASE as i64;
         self.f
             .instruction(&Instruction::LocalTee(self.layout.scratch_vpn_local()));
         self.f.instruction(&Instruction::I64Const(HIGH_RAM_BASE));

@@ -13,6 +13,7 @@ tier1-inline-tlb = []
 [dependencies]
 wasm-encoder = "0.244.0"
 thiserror = "2.0.17"
+aero-pc-constants = { path = "../aero-pc-constants" }
 aero-cpu-core = { path = "../aero-cpu-core" }
 aero-types = { path = "../aero-types" }
 aero-x86 = { path = "../aero-x86" }

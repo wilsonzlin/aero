@@ -345,6 +345,7 @@ name = "aero-jit-x86"
 version = "0.1.0"
 dependencies = [
  "aero-cpu-core",
+ "aero-pc-constants",
  "aero-types",
  "aero-x86",
  "memoffset",
