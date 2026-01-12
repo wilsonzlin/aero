@@ -79,7 +79,7 @@ fn looks_like_vhd_footer(footer: &[u8; 512], file_len: u64) -> bool {
     }
 
     let current_size = be_u64(&footer[48..56]);
-    if current_size == 0 || current_size % 512 != 0 {
+    if current_size == 0 || !current_size.is_multiple_of(512) {
         return false;
     }
     let disk_type = be_u32(&footer[60..64]);
@@ -103,7 +103,7 @@ fn looks_like_vhd_footer(footer: &[u8; 512], file_len: u64) -> bool {
             if data_offset == u64::MAX {
                 return false;
             }
-            if data_offset % 512 != 0 {
+            if !data_offset.is_multiple_of(512) {
                 return false;
             }
             if data_offset < 512 {

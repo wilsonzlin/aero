@@ -200,10 +200,7 @@ fn handle_int13(
                     let heads = 2u8;
                     let spt = 18u8;
                     let denom = u64::from(heads) * u64::from(spt);
-                    let cyl = (denom != 0)
-                        .then(|| total_sectors / denom)
-                        .unwrap_or(1)
-                        .clamp(1, 1024);
+                    let cyl = if denom != 0 { total_sectors / denom } else { 1 }.clamp(1, 1024);
                     (cyl as u16, heads, spt)
                 }
             }
