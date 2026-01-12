@@ -15,7 +15,7 @@
 use crate::irq::{IrqLine, NoIrq};
 use crate::{clock::Clock, clock::NullClock};
 use aero_io_snapshot::io::state::{
-    IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
+    IoSnapshot, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
 };
 use aero_platform::io::{IoPortBus, PortIoDevice};
 use std::cell::RefCell;
@@ -435,14 +435,7 @@ impl<C: Clock> AcpiPmIo<C> {
     fn reset_state(&mut self) {
         self.pm1_sts = 0;
         self.pm1_en = 0;
-        self.pm1_cnt = if self.cfg.start_enabled {
-            PM1_CNT_SCI_EN
-        } else {
-            0
-        };
-        if self.cfg.start_enabled {
-            self.pm1_cnt |= PM1_CNT_SCI_EN;
-        }
+        self.pm1_cnt = if self.cfg.start_enabled { PM1_CNT_SCI_EN } else { 0 };
         for b in &mut self.gpe0_sts {
             *b = 0;
         }
@@ -524,16 +517,14 @@ impl<C: Clock> IoSnapshot for AcpiPmIo<C> {
         }
 
         if let Some(buf) = r.bytes(TAG_GPE0_STS) {
-            if buf.len() != self.gpe0_sts.len() {
-                return Err(SnapshotError::InvalidFieldEncoding("gpe0_sts"));
+            for (dst, src) in self.gpe0_sts.iter_mut().zip(buf.iter().copied()) {
+                *dst = src;
             }
-            self.gpe0_sts.copy_from_slice(buf);
         }
         if let Some(buf) = r.bytes(TAG_GPE0_EN) {
-            if buf.len() != self.gpe0_en.len() {
-                return Err(SnapshotError::InvalidFieldEncoding("gpe0_en"));
+            for (dst, src) in self.gpe0_en.iter_mut().zip(buf.iter().copied()) {
+                *dst = src;
             }
-            self.gpe0_en.copy_from_slice(buf);
         }
 
         let now = self.clock.now_ns();

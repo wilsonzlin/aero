@@ -17,6 +17,25 @@ impl IrqLine for TestIrqLine {
     }
 }
 
+#[derive(Clone)]
+struct TestIrqLevel(Rc<Cell<bool>>);
+
+impl TestIrqLevel {
+    fn new() -> Self {
+        Self(Rc::new(Cell::new(false)))
+    }
+
+    fn level(&self) -> bool {
+        self.0.get()
+    }
+}
+
+impl IrqLine for TestIrqLevel {
+    fn set_level(&self, level: bool) {
+        self.0.set(level);
+    }
+}
+
 #[test]
 fn pm1_status_write_one_to_clear_and_sci_level() {
     let cfg = AcpiPmConfig::default();
@@ -141,4 +160,106 @@ fn pm_tmr_snapshot_roundtrip_preserves_timer_state() {
     pm.borrow_mut().advance_ns(1_000_000_000);
     restored.borrow_mut().advance_ns(1_000_000_000);
     assert_eq!(bus.read(cfg.pm_tmr_blk, 4), bus2.read(cfg.pm_tmr_blk, 4));
+}
+
+#[test]
+fn snapshot_roundtrip_preserves_pm1_gpe_sci_and_pm_timer_deterministically() {
+    let cfg = AcpiPmConfig::default();
+    let gpe_half = u16::from(cfg.gpe0_blk_len) / 2;
+
+    let irq0 = TestIrqLevel::new();
+    let callbacks0 = AcpiPmCallbacks {
+        sci_irq: Box::new(irq0.clone()),
+        request_power_off: None,
+    };
+
+    let pm0 = Rc::new(RefCell::new(AcpiPmIo::new_with_callbacks(cfg, callbacks0)));
+    let mut bus0 = IoPortBus::new();
+    register_acpi_pm(&mut bus0, pm0.clone());
+
+    // Enable PWRBTN in PM1_EN and a sample GPE0 bit.
+    bus0.write(cfg.pm1a_evt_blk + 2, 2, u32::from(PM1_STS_PWRBTN));
+    bus0.write(cfg.gpe0_blk + gpe_half, 1, 0x01);
+
+    pm0.borrow_mut().trigger_power_button();
+    pm0.borrow_mut().trigger_gpe0(0, 0x01);
+    assert!(
+        !pm0.borrow().sci_level(),
+        "SCI must remain deasserted until ACPI is enabled"
+    );
+
+    // ACPI enable handshake: write ACPI_ENABLE to SMI_CMD.
+    bus0.write(cfg.smi_cmd_port, 1, u32::from(cfg.acpi_enable_cmd));
+    assert!(pm0.borrow().sci_level());
+    assert!(irq0.level());
+
+    // Advance PM_TMR to a non-zero value.
+    pm0.borrow_mut().advance_ns(1_000_000);
+    let tmr0 = bus0.read(cfg.pm_tmr_blk, 4);
+    assert_ne!(tmr0 & 0x00FF_FFFF, 0, "PM_TMR should advance once ticked");
+
+    // Snapshot bytes must be deterministic for a fixed device state.
+    let snap1 = pm0.borrow().save_state();
+    let snap2 = pm0.borrow().save_state();
+    assert_eq!(snap1, snap2);
+
+    // Restore into a fresh device with a fresh IRQ line (starts deasserted).
+    let irq1 = TestIrqLevel::new();
+    let callbacks1 = AcpiPmCallbacks {
+        sci_irq: Box::new(irq1.clone()),
+        request_power_off: None,
+    };
+    let pm1 = Rc::new(RefCell::new(AcpiPmIo::new_with_callbacks(cfg, callbacks1)));
+    pm1.borrow_mut().load_state(&snap1).unwrap();
+
+    let mut bus1 = IoPortBus::new();
+    register_acpi_pm(&mut bus1, pm1.clone());
+
+    assert!(
+        irq1.level(),
+        "load_state should re-drive SCI based on pending PM1/GPE bits"
+    );
+
+    // Guest-visible registers should match across snapshot/restore.
+    assert_eq!(bus0.read(cfg.pm1a_evt_blk, 2), bus1.read(cfg.pm1a_evt_blk, 2)); // PM1_STS
+    assert_eq!(
+        bus0.read(cfg.pm1a_evt_blk + 2, 2),
+        bus1.read(cfg.pm1a_evt_blk + 2, 2)
+    ); // PM1_EN
+    assert_eq!(bus0.read(cfg.pm1a_cnt_blk, 2), bus1.read(cfg.pm1a_cnt_blk, 2)); // PM1_CNT
+
+    for i in 0..gpe_half {
+        assert_eq!(
+            bus0.read(cfg.gpe0_blk + i, 1),
+            bus1.read(cfg.gpe0_blk + i, 1),
+            "GPE0_STS byte {} mismatch",
+            i
+        );
+        assert_eq!(
+            bus0.read(cfg.gpe0_blk + gpe_half + i, 1),
+            bus1.read(cfg.gpe0_blk + gpe_half + i, 1),
+            "GPE0_EN byte {} mismatch",
+            i
+        );
+    }
+
+    // PM_TMR should continue from the same point after restore.
+    assert_eq!(bus0.read(cfg.pm_tmr_blk, 4), bus1.read(cfg.pm_tmr_blk, 4));
+
+    // Clearing PM1_STS should not deassert SCI while a GPE remains pending.
+    bus0.write(cfg.pm1a_evt_blk, 2, u32::from(PM1_STS_PWRBTN));
+    bus1.write(cfg.pm1a_evt_blk, 2, u32::from(PM1_STS_PWRBTN));
+    assert!(irq0.level());
+    assert!(irq1.level());
+
+    // Clearing GPE0_STS should deassert SCI once no other events are pending.
+    bus0.write(cfg.gpe0_blk, 1, 0x01);
+    bus1.write(cfg.gpe0_blk, 1, 0x01);
+    assert!(!irq0.level());
+    assert!(!irq1.level());
+
+    // PM timer must advance deterministically after restore.
+    pm0.borrow_mut().advance_ns(123_456_789);
+    pm1.borrow_mut().advance_ns(123_456_789);
+    assert_eq!(bus0.read(cfg.pm_tmr_blk, 4), bus1.read(cfg.pm_tmr_blk, 4));
 }

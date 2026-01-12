@@ -5,7 +5,7 @@ use aero_devices::acpi_pm::{AcpiPmCallbacks, AcpiPmConfig, AcpiPmIo, PM1_STS_PWR
 use aero_devices::clock::ManualClock;
 use aero_devices::irq::IrqLine;
 use aero_io_snapshot::io::state::{
-    IoSnapshot, SnapshotError, SnapshotVersion, SnapshotWriter,
+    IoSnapshot, SnapshotVersion, SnapshotWriter,
 };
 use aero_platform::io::PortIoDevice;
 
@@ -164,18 +164,32 @@ fn snapshot_load_ignores_unknown_tags() {
 }
 
 #[test]
-fn snapshot_load_rejects_gpe0_length_mismatch() {
+fn snapshot_load_tolerates_gpe0_length_mismatch_for_forward_compat() {
     let cfg = AcpiPmConfig::default();
     let half = (cfg.gpe0_blk_len as usize) / 2;
 
-    // Build an intentionally invalid snapshot: GPE0_STS is the wrong length.
+    // Build a snapshot with a mismatched-length GPE0_STS field and ensure it still restores.
     const TAG_GPE0_STS: u16 = 4;
     let mut w = SnapshotWriter::new(*b"ACPM", SnapshotVersion::new(1, 0));
-    w.field_bytes(TAG_GPE0_STS, vec![0u8; half.saturating_add(1)]);
+    w.field_bytes(TAG_GPE0_STS, vec![0xAA, 0xBB, 0xCC, 0xDD, 0xEE]);
     let bytes = w.finish();
 
     let clock = ManualClock::new();
     let mut pm = AcpiPmIo::new_with_callbacks_and_clock(cfg, AcpiPmCallbacks::default(), clock);
-    let err = pm.load_state(&bytes).unwrap_err();
-    assert_eq!(err, SnapshotError::InvalidFieldEncoding("gpe0_sts"));
+    pm.load_state(&bytes).unwrap();
+
+    // The device's GPE0 status array is `half` bytes long; it should load the prefix and ignore
+    // the extra trailing byte.
+    if half >= 1 {
+        assert_eq!(pm.read(cfg.gpe0_blk, 1) as u8, 0xAA);
+    }
+    if half >= 2 {
+        assert_eq!(pm.read(cfg.gpe0_blk + 1, 1) as u8, 0xBB);
+    }
+    if half >= 3 {
+        assert_eq!(pm.read(cfg.gpe0_blk + 2, 1) as u8, 0xCC);
+    }
+    if half >= 4 {
+        assert_eq!(pm.read(cfg.gpe0_blk + 3, 1) as u8, 0xDD);
+    }
 }
