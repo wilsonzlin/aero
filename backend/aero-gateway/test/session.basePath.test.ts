@@ -55,12 +55,14 @@ test('POST /session endpoint discovery includes PUBLIC_BASE_URL base path', asyn
   const { app } = buildServer(baseConfig);
   await app.ready();
 
-  const res = await app.inject({ method: 'POST', url: '/session' });
-  assert.equal(res.statusCode, 201);
+  for (const url of ['/session', '/base/session'] as const) {
+    const res = await app.inject({ method: 'POST', url });
+    assert.equal(res.statusCode, 201);
 
-  const body = JSON.parse(res.body);
-  assert.equal(body?.endpoints?.l2, '/base/l2');
-  assert.equal(body?.endpoints?.tcp, '/base/tcp');
+    const body = JSON.parse(res.body);
+    assert.equal(body?.endpoints?.l2, '/base/l2');
+    assert.equal(body?.endpoints?.tcp, '/base/tcp');
+  }
 
   await app.close();
 });

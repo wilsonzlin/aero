@@ -54,6 +54,13 @@ function joinBasePath(basePath: string, endpointPath: string): string {
   return `${basePath}${suffix}`;
 }
 
+function stripBasePathPrefix(basePath: string, requestPath: string): string {
+  if (basePath === '' || basePath === '/') return requestPath;
+  if (requestPath === basePath) return '/';
+  if (requestPath.startsWith(`${basePath}/`)) return requestPath.slice(basePath.length);
+  return requestPath;
+}
+
 function findFrontendDistDir(): string | null {
   const candidates = [
     path.resolve(process.cwd(), '../../dist'),
@@ -162,16 +169,14 @@ export function buildServer(config: Config): ServerBundle {
 
   const metrics = setupMetrics(app);
 
-  app.get('/healthz', async () => ({ ok: true }));
-
-  app.get('/readyz', async (_request, reply) => {
+  const handleHealthz = async () => ({ ok: true });
+  const handleReadyz = async (_request: unknown, reply: import('fastify').FastifyReply) => {
     if (shuttingDown) return reply.code(503).send({ ok: false });
     return { ok: true };
-  });
+  };
+  const handleVersion = async () => getVersionInfo();
 
-  app.get('/version', async () => getVersionInfo());
-
-  app.post('/session', async (request, reply) => {
+  const handlePostSession = async (request: import('fastify').FastifyRequest, reply: import('fastify').FastifyReply) => {
     if (request.body !== undefined && (typeof request.body !== 'object' || request.body === null || Array.isArray(request.body))) {
       return reply.code(400).send({ error: 'bad_request', message: 'Request body must be a JSON object' });
     }
@@ -221,9 +226,9 @@ export function buildServer(config: Config): ServerBundle {
     if (udpRelay) response.udpRelay = udpRelay;
 
     return response;
-  });
+  };
 
-  app.post('/udp-relay/token', async (request, reply) => {
+  const handlePostUdpRelayToken = async (request: import('fastify').FastifyRequest, reply: import('fastify').FastifyReply) => {
     if (!config.UDP_RELAY_BASE_URL) {
       return reply.code(404).send({ error: 'not_found', message: 'UDP relay not configured' });
     }
@@ -250,10 +255,10 @@ export function buildServer(config: Config): ServerBundle {
 
     reply.header('cache-control', 'no-store');
     return tokenInfo;
-  });
+  };
 
   // Helper endpoint to validate Secure cookie behaviour in local dev (TLS vs proxy TLS termination).
-  app.get('/session', async (request, reply) => {
+  const handleGetSessionHelper = async (request: import('fastify').FastifyRequest, reply: import('fastify').FastifyReply) => {
     const existing = sessions.verifySessionCookie(request.headers.cookie);
     const { token } = sessions.issueSession(existing);
     const secure = isRequestSecure(request.raw, { trustProxy: config.TRUST_PROXY });
@@ -267,7 +272,53 @@ export function buildServer(config: Config): ServerBundle {
       }),
     );
     return { ok: true };
-  });
+  };
+
+  const handleMetrics = async (_request: unknown, reply: import('fastify').FastifyReply) => {
+    reply.header('content-type', metrics.registry.contentType);
+    return metrics.registry.metrics();
+  };
+
+  const handleE2e = async (_request: unknown, reply: import('fastify').FastifyReply) => {
+    reply.type('text/html; charset=utf-8');
+    reply.header('cache-control', 'no-store');
+    return e2ePageHtml();
+  };
+
+  app.get('/healthz', handleHealthz);
+  app.get('/readyz', handleReadyz);
+  app.get('/version', handleVersion);
+  app.post('/session', handlePostSession);
+  app.post('/udp-relay/token', handlePostUdpRelayToken);
+  app.get('/session', handleGetSessionHelper);
+
+  const dohDeps = setupDohRoutes(app, config, metrics.dns, sessions);
+
+  if (process.env.AERO_GATEWAY_E2E === '1') {
+    app.get('/e2e', handleE2e);
+  }
+
+  // Some reverse proxies forward the base path prefix to the gateway (no rewrite).
+  // To keep `PUBLIC_BASE_URL` + endpoint discovery consistent with such setups,
+  // also serve HTTP routes under the configured base path.
+  if (basePath !== '/') {
+    app.register(
+      async (prefixed) => {
+        prefixed.get('/healthz', handleHealthz);
+        prefixed.get('/readyz', handleReadyz);
+        prefixed.get('/version', handleVersion);
+        prefixed.post('/session', handlePostSession);
+        prefixed.post('/udp-relay/token', handlePostUdpRelayToken);
+        prefixed.get('/session', handleGetSessionHelper);
+        prefixed.get('/metrics', handleMetrics);
+        setupDohRoutes(prefixed, config, metrics.dns, sessions, dohDeps);
+        if (process.env.AERO_GATEWAY_E2E === '1') {
+          prefixed.get('/e2e', handleE2e);
+        }
+      },
+      { prefix: basePath },
+    );
+  }
 
   // WebSocket upgrade endpoints (/tcp and /tcp-mux) are handled at the Node HTTP
   // server layer (Fastify does not natively handle arbitrary upgrade routing).
@@ -288,7 +339,9 @@ export function buildServer(config: Config): ServerBundle {
       return;
     }
 
-    if (url.pathname === '/tcp') {
+    const requestPath = stripBasePathPrefix(basePath, url.pathname);
+
+    if (requestPath === '/tcp') {
       const session = sessions.verifySessionCookie(req.headers.cookie);
       if (!session) {
         respondUpgradeHttp(socket, 401, 'Unauthorized');
@@ -310,7 +363,7 @@ export function buildServer(config: Config): ServerBundle {
       return;
     }
 
-    if (url.pathname === '/tcp-mux') {
+    if (requestPath === '/tcp-mux') {
       const session = sessions.verifySessionCookie(req.headers.cookie);
       if (!session) {
         respondUpgradeHttp(socket, 401, 'Unauthorized');
@@ -337,15 +390,6 @@ export function buildServer(config: Config): ServerBundle {
 
     respondUpgradeHttp(socket, 404, 'Not Found');
   });
-  setupDohRoutes(app, config, metrics.dns, sessions);
-
-  if (process.env.AERO_GATEWAY_E2E === '1') {
-    app.get('/e2e', async (_request, reply) => {
-      reply.type('text/html; charset=utf-8');
-      reply.header('cache-control', 'no-store');
-      return e2ePageHtml();
-    });
-  }
 
   // Handle CORS preflight requests, even when no route matches.
   app.options('/*', async (_request, reply) => reply.code(204).send());

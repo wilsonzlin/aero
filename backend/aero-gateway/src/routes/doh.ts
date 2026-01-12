@@ -20,9 +20,20 @@ export function decodeBase64UrlToBuffer(base64url: string): Buffer {
 
 type DohQuery = { dns?: string };
 
-export function setupDohRoutes(app: FastifyInstance, config: Config, metrics: DnsMetrics, sessions: SessionManager): void {
-  const resolver = new DnsResolver(config, metrics);
-  const rateLimiter = new TokenBucketRateLimiter(config.DNS_QPS_PER_IP, config.DNS_BURST_PER_IP);
+export type DohRouteDeps = Readonly<{
+  resolver: DnsResolver;
+  rateLimiter: TokenBucketRateLimiter;
+}>;
+
+export function setupDohRoutes(
+  app: FastifyInstance,
+  config: Config,
+  metrics: DnsMetrics,
+  sessions: SessionManager,
+  deps: Partial<DohRouteDeps> = {},
+): DohRouteDeps {
+  const resolver = deps.resolver ?? new DnsResolver(config, metrics);
+  const rateLimiter = deps.rateLimiter ?? new TokenBucketRateLimiter(config.DNS_QPS_PER_IP, config.DNS_BURST_PER_IP);
   setupDnsJsonRoutes(app, config, { resolver, rateLimiter, sessions });
 
   function sendDnsMessage(reply: import('fastify').FastifyReply, statusCode: number, message: Buffer) {
@@ -40,11 +51,16 @@ export function setupDohRoutes(app: FastifyInstance, config: Config, metrics: Dn
     return sendDnsMessage(reply, statusCode, encodeDnsErrorResponse(opts));
   }
 
-  app.addContentTypeParser(
-    'application/dns-message',
-    { parseAs: 'buffer' },
-    (_request, body, done) => done(null, body),
-  );
+  // `addContentTypeParser` is global across the Fastify instance (it is inherited
+  // by registered plugins/children). If we install DoH routes under multiple
+  // prefixes (e.g. base-path aliases), avoid re-registering the parser.
+  if (!app.hasContentTypeParser('application/dns-message')) {
+    app.addContentTypeParser(
+      'application/dns-message',
+      { parseAs: 'buffer' },
+      (_request, body, done) => done(null, body),
+    );
+  }
 
   app.route({
     method: ['GET', 'POST'],
@@ -150,4 +166,6 @@ export function setupDohRoutes(app: FastifyInstance, config: Config, metrics: Dn
       }
     },
   });
+
+  return { resolver, rateLimiter };
 }
