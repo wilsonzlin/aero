@@ -2574,31 +2574,12 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
         // Upcoming IO-worker devices (e.g. HDA audio) rely on DMA into shared guest RAM;
         // if the module is instantiated with a private memory, device models will silently
         // break. Fail fast with a clear error instead of running in a subtly corrupted mode.
-        // Probe within guest RAM so we validate the exact region DMA-backed devices will access.
-        // Use a distinct offset from the CPU worker probe so concurrent init cannot race on the
-        // same 32-bit word and trigger false-negative wiring failures.
-        const memProbeGuestOffset = 0x104;
-        // Prefer the coordinator-provided guest RAM base from the shared status SAB so we
-        // validate the exact same address mapping used by the JS device models.
+        // Probe within the runtime-reserved region (immediately below guest RAM) so the check is
+        // side-effect-free from the guest's perspective.
         //
-        // (We fall back to the WASM-exported `guest_ram_layout()` contract if the status view
-        // isn't readable for some reason.)
-        let guestBaseBytes = 0;
-        try {
-          const statusView = new Int32Array(init.controlSab, 0, 64);
-          guestBaseBytes = Atomics.load(statusView, StatusIndex.GuestBase) >>> 0;
-        } catch {
-          guestBaseBytes = 0;
-        }
-        if (guestBaseBytes === 0) {
-          guestBaseBytes = api.guest_ram_layout(0).guest_base >>> 0;
-        }
-        assertWasmMemoryWiring({
-          api,
-          memory: init.guestMemory,
-          linearOffset: guestBaseBytes + memProbeGuestOffset,
-          context: "io.worker",
-        });
+        // The CPU worker runs a similar probe using a distinct word so the two workers can
+        // initialize concurrently without racing.
+        assertWasmMemoryWiring({ api, memory: init.guestMemory, context: "io.worker" });
         wasmApi = api;
         pendingWasmInit = { api, variant };
         usbHid = new api.UsbHidBridge();
