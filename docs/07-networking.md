@@ -1151,6 +1151,9 @@ In the repo’s browser host UI (repo-root Vite app; see `src/main.ts`), there i
 - **Save capture to OPFS** (Origin Private File System) at a configurable path (default
   `captures/aero-net-trace.pcapng`).
 
+Tip: if you're debugging **early boot networking** (DHCP/DNS), enable tracing before starting the VM
+so you don't miss the initial traffic.
+
 Disabling tracing stops recording new frames but does **not** automatically clear any frames already
 buffered in memory (use **Clear capture** or download/export to reset).
 
@@ -1241,6 +1244,13 @@ The web tracing buffer is held in-memory and has an explicit size cap to prevent
 - Exporting via the UI (or `downloadPcapng`) uses the net worker’s `takePcapng()` path, which
   **clears the buffer after exporting**. Use this (or the clear button / API) to keep captures
   bounded during long debugging sessions.
+
+Performance note: enabling tracing copies each captured frame into an in-memory buffer (so it has
+CPU + memory overhead). Keep tracing disabled unless actively debugging.
+
+Server-side alternative: the production L2 proxy can optionally write per-session `.pcapng` files via
+`AERO_L2_CAPTURE_DIR` (see **L2 proxy observability** below). Capturing on both ends can help debug
+tunnel framing vs. proxy-side stack issues.
 
 ### Privacy / Security Warning
 
