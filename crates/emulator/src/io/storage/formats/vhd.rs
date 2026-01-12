@@ -192,7 +192,15 @@ impl<S: ByteStorage> VhdDisk<S> {
                             if copy.disk_type == VHD_DISK_TYPE_FIXED
                                 && copy.current_size == footer.current_size
                             {
-                                fixed_data_offset = 512;
+                                // Only treat the footer copy as present if the file is large enough
+                                // to contain it + the data region + the required EOF footer.
+                                let required_with_copy = footer
+                                    .current_size
+                                    .checked_add(1024)
+                                    .ok_or(DiskError::CorruptImage("vhd current_size overflow"))?;
+                                if len >= required_with_copy {
+                                    fixed_data_offset = 512;
+                                }
                             }
                         }
                     }

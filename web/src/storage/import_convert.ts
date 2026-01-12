@@ -581,12 +581,18 @@ async function convertVhdToSparse(
     // valid (but not necessarily byte-for-byte identical to the EOF footer), the data region
     // begins immediately after it.
     let baseOffset = 0;
+    const requiredWithFooterCopy = footer.currentSize + 1024;
     if (src.size >= 1024) {
       const cookie0 = await src.readAt(0, 8);
       if (ascii(cookie0) === "conectix") {
         try {
           const footer0 = VhdFooter.parse(await src.readAt(0, 512));
-          if (footer0.diskType === VHD_TYPE_FIXED && footer0.currentSize === footer.currentSize) {
+          if (
+            footer0.diskType === VHD_TYPE_FIXED &&
+            footer0.currentSize === footer.currentSize &&
+            Number.isSafeInteger(requiredWithFooterCopy) &&
+            src.size >= requiredWithFooterCopy
+          ) {
             baseOffset = 512;
           }
         } catch {

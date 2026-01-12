@@ -259,10 +259,16 @@ function buildFixedVhdFixtureWithFooterCopy(): { file: Uint8Array; logical: Uint
   writeU32BE(footer, 60, 2); // disk type fixed
   writeU32BE(footer, 64, vhdChecksum(footer, 64));
 
+  // Some tools may write a footer copy at offset 0 that differs from the EOF footer but still
+  // describes the same disk size.
+  const footer0 = footer.slice();
+  writeU64BE(footer0, 40, BigInt(logicalSize + 512)); // original size (ignored by conversion)
+  writeU32BE(footer0, 64, vhdChecksum(footer0, 64));
+
   const fileSize = footerSize + logicalSize + footerSize;
   const file = new Uint8Array(fileSize);
   // Optional footer copy at offset 0.
-  file.set(footer, 0);
+  file.set(footer0, 0);
 
   const sector0 = new Uint8Array(512);
   for (let i = 0; i < sector0.length; i++) sector0[i] = (0x10 + i) & 0xff;

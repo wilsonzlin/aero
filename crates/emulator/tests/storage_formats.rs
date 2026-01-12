@@ -195,9 +195,14 @@ fn make_vhd_fixed_with_footer_copy() -> MemStorage {
     data[0..10].copy_from_slice(b"hello vhd!");
 
     let footer = make_vhd_footer(virtual_size, 2, u64::MAX);
+    let mut footer_copy = footer;
+    // Make the footer copy valid but not byte-for-byte identical to the EOF footer.
+    write_be_u64(&mut footer_copy, 40, virtual_size + 512);
+    let checksum = vhd_footer_checksum(&footer_copy);
+    write_be_u32(&mut footer_copy, 64, checksum);
 
     let mut storage = MemStorage::default();
-    storage.write_at(0, &footer).unwrap();
+    storage.write_at(0, &footer_copy).unwrap();
     storage.write_at(512, &data).unwrap();
     storage.write_at(512 + virtual_size, &footer).unwrap();
     storage
