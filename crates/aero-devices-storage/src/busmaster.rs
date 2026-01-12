@@ -70,8 +70,10 @@ pub struct PrdEntry {
 impl PrdEntry {
     pub fn read_from(mem: &mut dyn MemoryBus, paddr: u64) -> Self {
         let addr = mem.read_u32(paddr);
-        let byte_count = mem.read_u16(paddr + 4);
-        let flags = mem.read_u16(paddr + 6);
+        // Use wrapping arithmetic so malformed guest PRD pointers can't panic under
+        // overflow-check builds.
+        let byte_count = mem.read_u16(paddr.wrapping_add(4));
+        let flags = mem.read_u16(paddr.wrapping_add(6));
         Self {
             addr,
             byte_count,

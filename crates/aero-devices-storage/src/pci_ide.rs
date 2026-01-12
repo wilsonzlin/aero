@@ -1427,7 +1427,10 @@ pub fn register_piix3_ide_ports(bus: &mut IoPortBus, ide: SharedPiix3IdePciDevic
 
     // Bus Master IDE (BAR4): 16 bytes, both channels.
     let bm_base = ide.borrow().bus_master_base();
-    for port in bm_base..bm_base + 16 {
+    // Use saturating arithmetic so a pathological BAR base near `u16::MAX` can't overflow/panic
+    // under overflow-check builds (e.g. fuzzing). If the region would extend past 0xFFFF, we only
+    // register ports up to `u16::MAX` (there is no wraparound in the x86 I/O port space).
+    for port in bm_base..=bm_base.saturating_add(15) {
         bus.register(port, Box::new(Piix3IdePort::new(ide.clone(), port)));
     }
 }
