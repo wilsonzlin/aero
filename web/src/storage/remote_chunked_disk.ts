@@ -1090,6 +1090,8 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
 
     let cache: ChunkCache;
     if (resolved.cacheLimitBytes === 0) {
+      // cacheLimitBytes=0 is defined as "disable caching entirely". Ensure we do not open or
+      // read/write any persistent cache backend (OPFS or IndexedDB).
       cache = new NoopChunkCache();
     } else if (options.store) {
       // Tests can inject an in-memory store to avoid depending on OPFS/IDB.

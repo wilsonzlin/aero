@@ -145,6 +145,83 @@ describe("RemoteChunkedDisk (IndexedDB cache)", () => {
     await disk3.close();
   });
 
+  it("disables persistent caching entirely when cacheLimitBytes is 0", async () => {
+    const chunkSize = 512 * 1024;
+    const totalSize = chunkSize;
+    const chunkCount = 1;
+
+    const img = buildTestImageBytes(totalSize);
+    const chunks = [img.slice(0, totalSize)];
+
+    const { baseUrl, hits, close } = await withServer((req, res) => {
+      const url = new URL(req.url ?? "/", "http://localhost");
+      if (url.pathname === "/manifest.json") {
+        res.statusCode = 200;
+        res.setHeader("content-type", "application/json");
+        res.setHeader("etag", '"m1"');
+        res.end(
+          JSON.stringify({
+            schema: "aero.chunked-disk-image.v1",
+            imageId: "test",
+            version: "v1",
+            mimeType: "application/octet-stream",
+            totalSize,
+            chunkSize,
+            chunkCount,
+            chunkIndexWidth: 8,
+          }),
+        );
+        return;
+      }
+
+      if (url.pathname === "/chunks/00000000.bin") {
+        res.statusCode = 200;
+        res.setHeader("content-type", "application/octet-stream");
+        res.end(chunks[0]);
+        return;
+      }
+
+      res.statusCode = 404;
+      res.end("not found");
+    });
+    closeServer = close;
+
+    const manifestUrl = `${baseUrl}/manifest.json`;
+    const openOpts = {
+      cacheBackend: "idb" as const,
+      cacheLimitBytes: 0,
+      prefetchSequentialChunks: 0,
+      retryBaseDelayMs: 0,
+    };
+
+    const disk1 = await RemoteChunkedDisk.open(manifestUrl, openOpts);
+    expect(disk1.getTelemetrySnapshot().cachedBytes).toBe(0);
+
+    const buf1 = new Uint8Array(512);
+    await disk1.readSectors(0, buf1);
+    expect(buf1).toEqual(img.slice(0, 512));
+    expect(hits.get("/chunks/00000000.bin")).toBe(1);
+    expect(disk1.getTelemetrySnapshot().cachedBytes).toBe(0);
+
+    // Repeat read should not use any cache (always re-fetch).
+    const buf2 = new Uint8Array(512);
+    await disk1.readSectors(0, buf2);
+    expect(buf2).toEqual(img.slice(0, 512));
+    expect(hits.get("/chunks/00000000.bin")).toBe(2);
+    expect(disk1.getTelemetrySnapshot().cachedBytes).toBe(0);
+
+    await disk1.close();
+
+    // Re-open should not persist/consult a cache.
+    const disk2 = await RemoteChunkedDisk.open(manifestUrl, openOpts);
+    const buf3 = new Uint8Array(512);
+    await disk2.readSectors(0, buf3);
+    expect(buf3).toEqual(img.slice(0, 512));
+    expect(hits.get("/chunks/00000000.bin")).toBe(3);
+    expect(disk2.getTelemetrySnapshot().cachedBytes).toBe(0);
+    await disk2.close();
+  });
+
   it("reuses the cache across signed manifest URLs when imageId+version is stable", async () => {
     const chunkSize = 512 * 1024;
     const totalSize = chunkSize;
