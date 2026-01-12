@@ -282,6 +282,12 @@ enum IdeDevice {
 struct Channel {
     ports: IdePortMap,
     devices: [Option<IdeDevice>; 2],
+    /// Guest-visible drive presence for each device slot.
+    ///
+    /// This is intentionally tracked separately from `devices`: during snapshot restore we drop
+    /// host-side backends (e.g. `AtaDrive`) but still need the controller to behave as though the
+    /// drive exists from the guest's perspective (taskfile/status reads, IRQ acking, etc).
+    drive_present: [bool; 2],
 
     tf: TaskFile,
     status: u8,
@@ -308,6 +314,7 @@ impl Channel {
         Self {
             ports,
             devices: [None, None],
+            drive_present: [false, false],
             tf: TaskFile::default(),
             status: IDE_STATUS_DRDY,
             error: 0,
@@ -577,23 +584,27 @@ impl IdeController {
 
     pub fn attach_primary_master_ata(&mut self, drive: AtaDrive) {
         self.primary.devices[0] = Some(IdeDevice::Ata(Box::new(drive)));
+        self.primary.drive_present[0] = true;
         self.bus_master[0].set_drive_dma_capable(0, true);
     }
 
     pub fn attach_secondary_master_ata(&mut self, drive: AtaDrive) {
         self.secondary.devices[0] = Some(IdeDevice::Ata(Box::new(drive)));
+        self.secondary.drive_present[0] = true;
         self.bus_master[1].set_drive_dma_capable(0, true);
     }
 
     pub fn attach_primary_master_atapi(&mut self, dev: AtapiCdrom) {
         let dma = dev.supports_dma();
         self.primary.devices[0] = Some(IdeDevice::Atapi(dev));
+        self.primary.drive_present[0] = true;
         self.bus_master[0].set_drive_dma_capable(0, dma);
     }
 
     pub fn attach_secondary_master_atapi(&mut self, dev: AtapiCdrom) {
         let dma = dev.supports_dma();
         self.secondary.devices[0] = Some(IdeDevice::Atapi(dev));
+        self.secondary.drive_present[0] = true;
         self.bus_master[1].set_drive_dma_capable(0, dma);
     }
 
@@ -615,6 +626,7 @@ impl IdeController {
                 self.bus_master[0].set_drive_dma_capable(0, dma);
             }
         }
+        self.primary.drive_present[0] = true;
     }
 
     pub fn attach_secondary_master_atapi_backend_for_restore(
@@ -633,6 +645,7 @@ impl IdeController {
                 self.bus_master[1].set_drive_dma_capable(0, dma);
             }
         }
+        self.secondary.drive_present[0] = true;
     }
 
     fn decode_bus_master(&self, port: u16) -> Option<(usize, u16)> {
@@ -724,6 +737,19 @@ impl IdeController {
     }
 
     fn read_cmd_reg(chan: &mut Channel, reg: u16, size: u8) -> u32 {
+        let dev_idx = chan.selected_drive() as usize;
+        // If the currently-selected drive is not present, float the bus high (all ones). This
+        // matches common PATA probing logic where reading Status/AltStatus returns 0xFF when no
+        // device responds.
+        if !chan.drive_present[dev_idx] {
+            return match size {
+                1 => 0xFF,
+                2 => 0xFFFF,
+                4 => 0xFFFF_FFFF,
+                _ => 0xFFFF_FFFF,
+            };
+        }
+
         match reg {
             ATA_REG_DATA => match size {
                 1 => chan.data_in_u8() as u32,
@@ -746,6 +772,16 @@ impl IdeController {
     }
 
     fn write_cmd_reg(chan: &mut Channel, reg: u16, size: u8, val: u32) {
+        // Writes only affect the currently-selected device. If it is absent, ignore writes so a
+        // guest probing for a slave device does not accidentally perturb the master device's
+        // taskfile register image.
+        //
+        // Always honor writes to the Device/Head register because those are used to select a drive.
+        let dev_idx = chan.selected_drive() as usize;
+        if reg != ATA_REG_DEVICE && !chan.drive_present[dev_idx] {
+            return;
+        }
+
         match reg {
             ATA_REG_DATA => match size {
                 1 => chan.data_out_u8(val as u8),
@@ -769,6 +805,10 @@ impl IdeController {
     }
 
     fn read_ctrl_reg(chan: &mut Channel, reg: u16) -> u32 {
+        let dev_idx = chan.selected_drive() as usize;
+        if !chan.drive_present[dev_idx] {
+            return 0xFF;
+        }
         match reg {
             ATA_CTRL_ALT_STATUS_DEVICE_CTRL => chan.status as u32,
             ATA_CTRL_DRIVE_ADDRESS => 0,
@@ -1201,7 +1241,15 @@ impl Piix3IdePciDevice {
                 .map(|(lba, sectors)| IdePioWriteState { lba, sectors });
 
             let drives = core::array::from_fn(|idx| match chan.devices[idx].as_ref() {
-                None => IdeDriveState::None,
+                None => {
+                    if chan.drive_present[idx] {
+                        IdeDriveState::Ata(aero_io_snapshot::io::storage::state::IdeAtaDeviceState {
+                            udma_mode: 2,
+                        })
+                    } else {
+                        IdeDriveState::None
+                    }
+                }
                 Some(IdeDevice::Ata(dev)) => IdeDriveState::Ata(dev.snapshot_state()),
                 Some(IdeDevice::Atapi(dev)) => IdeDriveState::Atapi(dev.snapshot_state()),
             });
@@ -1341,6 +1389,7 @@ impl Piix3IdePciDevice {
             // re-attach disks/ISOs after restore.
             for slot in 0..2 {
                 chan.devices[slot] = None;
+                chan.drive_present[slot] = false;
                 bm.set_drive_dma_capable(slot, false);
             }
 
@@ -1351,12 +1400,14 @@ impl Piix3IdePciDevice {
                         // ATA backends are host-managed (snapshotted separately). Guests may still
                         // observe DMA capability bits, so restore them conservatively.
                         bm.set_drive_dma_capable(slot, true);
+                        chan.drive_present[slot] = true;
                     }
                     IdeDriveState::Atapi(s) => {
                         let mut dev = AtapiCdrom::new(None);
                         dev.restore_state(s);
                         bm.set_drive_dma_capable(slot, dev.supports_dma());
                         chan.devices[slot] = Some(IdeDevice::Atapi(dev));
+                        chan.drive_present[slot] = true;
                     }
                 }
             }

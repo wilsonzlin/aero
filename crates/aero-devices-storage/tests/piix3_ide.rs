@@ -284,6 +284,37 @@ fn ata_boot_sector_read_via_legacy_pio_ports_dword_reads() {
 }
 
 #[test]
+fn ata_slave_absent_floats_bus_high_and_does_not_raise_irq() {
+    let capacity = 4 * SECTOR_SIZE as u64;
+    let disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
+
+    let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
+    ide.borrow_mut()
+        .controller
+        .attach_primary_master_ata(AtaDrive::new(Box::new(disk)).unwrap());
+    ide.borrow_mut().config_mut().set_command(0x0001); // IO decode
+
+    let mut io = IoPortBus::new();
+    register_piix3_ide_ports(&mut io, ide.clone());
+
+    // Select slave on the primary channel (no device attached there).
+    io.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xF0);
+
+    // Status/alt-status should float high.
+    assert_eq!(io.read(PRIMARY_PORTS.cmd_base + 7, 1) as u8, 0xFF);
+    assert_eq!(io.read(PRIMARY_PORTS.ctrl_base, 1) as u8, 0xFF);
+
+    // Commands to an absent device should be ignored (no IRQ side effects).
+    io.write(PRIMARY_PORTS.cmd_base + 7, 1, 0xEC); // IDENTIFY DEVICE
+    assert!(!ide.borrow().controller.primary_irq_pending());
+
+    // Switching back to master should still allow normal operations.
+    io.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
+    io.write(PRIMARY_PORTS.cmd_base + 7, 1, 0xEC);
+    assert!(ide.borrow().controller.primary_irq_pending());
+}
+
+#[test]
 fn ata_pio_write_sector_via_byte_data_port_writes_roundtrip() {
     let capacity = 8 * SECTOR_SIZE as u64;
     let disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
