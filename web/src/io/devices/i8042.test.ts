@@ -373,6 +373,18 @@ describe("io/devices/I8042Controller", () => {
     expect(irqSink.raiseIrq).not.toHaveBeenCalledWith(12);
   });
 
+  it("passes through raw Set-2 keyboard scancodes when translation is disabled", () => {
+    const irqSink: IrqSink = { raiseIrq: vi.fn(), lowerIrq: vi.fn() };
+    const dev = new I8042Controller(irqSink);
+
+    // Disable Set-2 -> Set-1 translation (command byte bit 6) while leaving IRQ1 enabled.
+    dev.portWrite(0x0064, 1, 0x60);
+    dev.portWrite(0x0060, 1, 0x05);
+
+    dev.injectKeyboardBytes(new Uint8Array([0x1c, 0xf0, 0x1c]));
+    expect(drainAllOutputBytes(dev)).toEqual([0x1c, 0xf0, 0x1c]);
+  });
+
   it("translates PrintScreen Set-2 scancode sequences to Set-1 multi-byte sequences", () => {
     const irqSink: IrqSink = { raiseIrq: vi.fn(), lowerIrq: vi.fn() };
     const dev = new I8042Controller(irqSink);
