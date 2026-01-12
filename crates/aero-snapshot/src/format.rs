@@ -60,6 +60,9 @@ impl DeviceId {
     /// (`u16`) in the standard PCI config-address layout:
     /// `(bus << 8) | (device << 3) | function`.
     ///
+    /// For deterministic encoding, nested controller entries should be written in ascending BDF
+    /// order.
+    ///
     /// Example nested controllers include `AHCP` (AHCI PCI), `VPCI` (virtio-pci), and `NVMP` (NVMe
     /// PCI).
     ///

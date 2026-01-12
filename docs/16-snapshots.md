@@ -208,11 +208,13 @@ This means multiple storage controllers **cannot** be stored as multiple outer `
 
 If both are stored using `aero_snapshot::io_snapshot_bridge::device_state_from_io_snapshot(DeviceId::DISK_CONTROLLER, ...)`, they would both map to the same outer `(DeviceId::DISK_CONTROLLER = 6, version = 1, flags = 0)` key, which is treated as corrupt.
 
-**Canonical encoding:** store **exactly one** outer `DeviceId::DISK_CONTROLLER` entry whose payload is an `aero-io-snapshot` TLV blob with inner `DEVICE_ID = DSKC` and `SnapshotVersion (1.0)`. That `DSKC` wrapper can then contain *multiple* nested controller snapshots keyed by PCI BDF (bus/device/function), e.g.:
+**Canonical encoding:** store **exactly one** outer `DeviceId::DISK_CONTROLLER` entry whose payload is an `aero-io-snapshot` TLV blob with inner `DEVICE_ID = DSKC` and `SnapshotVersion (1.0)`. That `DSKC` wrapper can then contain *multiple* nested controller `aero-io-snapshot` blobs keyed by PCI BDF (bus/device/function), e.g.:
 
 - `AHCP` (AHCI PCI)
 - `VPCI` (virtio-pci based storage controllers, e.g. virtio-blk)
 - `NVMP` (NVMe PCI)
+
+For deterministic encoding, nested controller entries should be written in canonical order: ascending PCI BDF.
 
 Restore behavior: when restoring the `DSKC` wrapper, snapshot consumers should apply only the controller entries that exist in the target machine. Unknown/extra controller entries (unknown device id, unknown BDF, or simply a controller type that is not present) should be ignored for forward compatibility.
 
