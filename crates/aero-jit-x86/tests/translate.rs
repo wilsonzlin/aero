@@ -668,3 +668,44 @@ block 0x6200:
 
     assert_block_ir(&code, entry, cpu, bus, expected);
 }
+
+#[test]
+fn group2_shl_eax_imm1_zero_extends_to_64() {
+    // mov rax, 0xffff_ffff_0000_0001
+    // shl eax, 1  (D1 /4, 32-bit op => zero-extends into rax)
+    // ret
+    let code = [
+        0x48, 0xb8, 0x01, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, // mov rax, 0xffffffff00000001
+        0xd1, 0xe0, // shl eax, 1
+        0xc3, // ret
+    ];
+
+    let entry = 0x6300u64;
+
+    let mut cpu = CpuState {
+        rip: entry,
+        ..Default::default()
+    };
+    write_gpr(&mut cpu, Gpr::Rsp, 0x9000);
+
+    let mut bus = SimpleBus::new(0x10000);
+    bus.write(0x9000, Width::W64, 0x7000);
+
+    let expected = "\
+block 0x6300:
+  v0 = const.i64 0xffffffff00000001
+  write.rax v0
+  v1 = read.eax
+  v2 = const.i32 0x1
+  v3 = shl.i32 v1, v2
+  write.eax v3
+  v4 = read.rsp
+  v5 = load.i64 [v4]
+  v6 = const.i64 0x8
+  v7 = add.i64 v4, v6
+  write.rsp v7
+  term jmp [v5]
+";
+
+    assert_block_ir(&code, entry, cpu, bus, expected);
+}
