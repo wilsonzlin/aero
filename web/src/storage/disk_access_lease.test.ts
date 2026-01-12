@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   DiskAccessLeaseRefresher,
+  MAX_TIMEOUT_MS,
   fetchWithDiskAccessLease,
   fetchWithDiskAccessLeaseForUrl,
   type DiskAccessLease,
@@ -30,6 +31,52 @@ describe("DiskAccessLeaseRefresher", () => {
       expect(refresh).toHaveBeenCalledTimes(1);
     } finally {
       refresher.stop();
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not overflow timers when expiresAt is far in the future", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const expiryMs = 100 * 24 * 60 * 60 * 1000; // 100 days
+    const lease: DiskAccessLease = {
+      url: "https://cdn.example.test/disk.img?sig=1",
+      credentialsMode: "omit",
+      expiresAt: new Date(expiryMs),
+      refresh: async () => lease,
+    };
+    const refresh = vi.spyOn(lease, "refresh").mockImplementation(async () => {
+      // Prevent an immediate re-refresh loop after expiry by extending the lease.
+      lease.expiresAt = new Date(expiryMs + 1_000);
+      return lease;
+    });
+    const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+
+    const refresher = new DiskAccessLeaseRefresher(lease, { refreshMarginMs: 0 });
+    refresher.start();
+
+    try {
+      // First schedule should clamp to MAX_TIMEOUT_MS (check timer).
+      expect(setTimeoutSpy.mock.calls[0]?.[1]).toBe(MAX_TIMEOUT_MS);
+
+      await vi.advanceTimersByTimeAsync(MAX_TIMEOUT_MS);
+      expect(refresh).toHaveBeenCalledTimes(0);
+
+      // Check timer should have rescheduled another MAX_TIMEOUT_MS check.
+      expect(setTimeoutSpy.mock.calls[1]?.[1]).toBe(MAX_TIMEOUT_MS);
+      await vi.advanceTimersByTimeAsync(MAX_TIMEOUT_MS);
+      expect(refresh).toHaveBeenCalledTimes(0);
+
+      // Fast-forward to just before expiry; refresh must not have happened early.
+      await vi.advanceTimersByTimeAsync(expiryMs - 2 * MAX_TIMEOUT_MS - 1);
+      expect(refresh).toHaveBeenCalledTimes(0);
+
+      // At expiry, refresh should fire exactly once.
+      await vi.advanceTimersByTimeAsync(1);
+      expect(refresh).toHaveBeenCalledTimes(1);
+    } finally {
+      refresher.stop();
+      setTimeoutSpy.mockRestore();
       vi.useRealTimers();
     }
   });

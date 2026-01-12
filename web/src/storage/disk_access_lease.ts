@@ -25,6 +25,11 @@ export interface DiskAccessLease {
 
 export const DEFAULT_LEASE_REFRESH_MARGIN_MS = 60_000;
 const LEASE_REFRESH_FAILURE_RETRY_MS = 10_000;
+// In both browsers and Node, `setTimeout()` has an effective maximum delay of
+// ~2^31-1 ms (~24.8 days). Passing a larger value can overflow/clamp and cause the
+// callback to run immediately (or very soon), potentially hammering the lease
+// refresh endpoint if a buggy/misconfigured server returns a far-future `expiresAt`.
+export const MAX_TIMEOUT_MS = 2_147_483_647;
 
 export function computeLeaseRefreshDelayMs(
   expiresAt: Date,
@@ -78,6 +83,17 @@ export class DiskAccessLeaseRefresher {
     if (!expiresAt) return;
 
     const delayMs = computeLeaseRefreshDelayMs(expiresAt, Date.now(), this.refreshMarginMs);
+    if (delayMs > MAX_TIMEOUT_MS) {
+      // `setTimeout` can't represent this delay. Instead, schedule a "check timer" for the
+      // maximum supported delay and re-run scheduling when it fires.
+      this.timerId = setTimeout(() => {
+        this.timerId = null;
+        this.schedule();
+      }, MAX_TIMEOUT_MS);
+      (this.timerId as unknown as { unref?: () => void }).unref?.();
+      return;
+    }
+
     this.timerId = setTimeout(() => {
       this.timerId = null;
       void this.runRefresh();
