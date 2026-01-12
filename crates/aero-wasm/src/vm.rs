@@ -775,6 +775,60 @@ export function installAeroMmioTestShims() {
     }
 
     #[wasm_bindgen_test]
+    fn wasm_phys_bus_straddling_ram_and_mmio_reads_and_writes_bytewise() {
+        installAeroMmioTestShims();
+
+        let mut guest = vec![0u8; 0x10];
+        let guest_base = guest.as_mut_ptr() as u32;
+        let guest_size = guest.len() as u64;
+
+        let mut bus = WasmPhysBus {
+            guest_base,
+            guest_size,
+        };
+
+        // Read across the end of RAM: the first byte comes from RAM and the remaining bytes are
+        // sourced via MMIO shims.
+        guest[0x0F] = 0xAA;
+        let value = bus.read_u32(0x0F);
+        assert_eq!(value, 0x12_11_10_AA);
+
+        let calls = mmio_calls();
+        assert_eq!(calls.length(), 3, "expected 3 byte MMIO reads for a straddle");
+
+        for (idx, addr) in [(0, 0x10), (1, 0x11), (2, 0x12)] {
+            let call = calls.get(idx);
+            assert_eq!(call_prop_str(&call, "kind"), "read");
+            assert_eq!(call_prop_u32(&call, "addr"), addr);
+            assert_eq!(call_prop_u32(&call, "size"), 1);
+        }
+
+        // Reset call log.
+        Reflect::set(
+            &js_sys::global(),
+            &JsValue::from_str("__aero_test_mmio_calls"),
+            &Array::new(),
+        )
+        .expect("clear call log");
+
+        // Write across the end of RAM: first byte should land in RAM, remainder should be routed
+        // to MMIO byte writes.
+        bus.write_u32(0x0F, 0x4433_2211);
+        assert_eq!(guest[0x0F], 0x11);
+
+        let calls = mmio_calls();
+        assert_eq!(calls.length(), 3, "expected 3 byte MMIO writes for a straddle");
+
+        for (idx, addr, byte) in [(0, 0x10, 0x22), (1, 0x11, 0x33), (2, 0x12, 0x44)] {
+            let call = calls.get(idx);
+            assert_eq!(call_prop_str(&call, "kind"), "write");
+            assert_eq!(call_prop_u32(&call, "addr"), addr);
+            assert_eq!(call_prop_u32(&call, "size"), 1);
+            assert_eq!(call_prop_u32(&call, "value"), byte);
+        }
+    }
+
+    #[wasm_bindgen_test]
     fn wasm_vm_a20_enabled_ptr_controls_real_mode_wraparound() {
         installAeroMmioTestShims();
 
