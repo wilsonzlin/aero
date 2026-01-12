@@ -244,6 +244,7 @@ test("safe-run.sh does not force rustc codegen-units by default (Linux)", { skip
     delete env.CARGO_BUILD_JOBS;
     delete env.AERO_CARGO_BUILD_JOBS;
     delete env.AERO_RUST_CODEGEN_UNITS;
+    delete env.AERO_CODEGEN_UNITS;
     delete env.RUSTFLAGS;
     env.PATH = `${binDir}${path.delimiter}${env.PATH || ""}`;
 
@@ -274,6 +275,7 @@ test("safe-run.sh does not force codegen-units based on AERO_CARGO_BUILD_JOBS (L
     delete env.CARGO_BUILD_JOBS;
     delete env.RUSTFLAGS;
     delete env.AERO_RUST_CODEGEN_UNITS;
+    delete env.AERO_CODEGEN_UNITS;
     env.AERO_CARGO_BUILD_JOBS = "2";
     env.PATH = `${binDir}${path.delimiter}${env.PATH || ""}`;
 
