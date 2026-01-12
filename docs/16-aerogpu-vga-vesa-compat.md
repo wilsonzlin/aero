@@ -227,8 +227,12 @@ pub struct ScanoutState {
 The update rule:
 
 1. Writer populates all fields except `generation`
-2. Writer increments `generation` last (release semantics)
+2. Writer publishes the update by incrementing `generation` last (release semantics)
 3. Reader snapshots `generation`, reads fields, then re-reads `generation` to verify a consistent view
+
+**Implementation note (recommended):** To prevent readers from observing a partially-updated
+descriptor, implementations may temporarily mark `generation` as “busy” (e.g. by setting a high
+bit) during an update. Readers should retry if `generation` is marked busy.
 
 This makes scanout switching glitch-free without locks.
 
