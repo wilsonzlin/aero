@@ -201,10 +201,10 @@ fn bench_device_read_4k(c: &mut Criterion) {
         let mut ctrl = NvmeController::new(Box::new(disk));
 
         // Admin SQ/CQ setup and enable.
-        ctrl.mmio_write(0x0024, 4, 0x000f_000f, &mut mem);
-        ctrl.mmio_write(0x0028, 8, ASQ, &mut mem);
-        ctrl.mmio_write(0x0030, 8, ACQ, &mut mem);
-        ctrl.mmio_write(0x0014, 4, 1, &mut mem);
+        ctrl.mmio_write(0x0024, 4, 0x000f_000f);
+        ctrl.mmio_write(0x0028, 8, ASQ);
+        ctrl.mmio_write(0x0030, 8, ACQ);
+        ctrl.mmio_write(0x0014, 4, 1);
 
         // Create IO CQ (qid=1).
         let mut cmd = [0u8; 64];
@@ -214,7 +214,8 @@ fn bench_device_read_4k(c: &mut Criterion) {
         set_cmd_u32(&mut cmd, 40, (63u32 << 16) | 1); // qsize=64, qid=1
         set_cmd_u32(&mut cmd, 44, 0x3); // PC + IEN
         write_nvme_cmd(&mut mem, ASQ, &cmd);
-        ctrl.mmio_write(0x1000, 4, 1, &mut mem);
+        ctrl.mmio_write(0x1000, 4, 1);
+        ctrl.process(&mut mem);
 
         // Create IO SQ (qid=1, cqid=1).
         let mut cmd = [0u8; 64];
@@ -224,10 +225,11 @@ fn bench_device_read_4k(c: &mut Criterion) {
         set_cmd_u32(&mut cmd, 40, (63u32 << 16) | 1); // qsize=64, qid=1
         set_cmd_u32(&mut cmd, 44, 1); // cqid=1
         write_nvme_cmd(&mut mem, ASQ + 64, &cmd);
-        ctrl.mmio_write(0x1000, 4, 2, &mut mem);
+        ctrl.mmio_write(0x1000, 4, 2);
+        ctrl.process(&mut mem);
 
         // Consume the two admin completions so INTx doesn't stay asserted.
-        ctrl.mmio_write(0x1004, 4, 2, &mut mem);
+        ctrl.mmio_write(0x1004, 4, 2);
 
         let mut sq_tail: u16 = 0;
         let mut cq_head: u16 = 0;
@@ -244,10 +246,11 @@ fn bench_device_read_4k(c: &mut Criterion) {
             write_nvme_cmd(&mut mem, IO_SQ + u64::from(slot) * 64, &cmd);
 
             sq_tail = (sq_tail + 1) % 64;
-            ctrl.mmio_write(0x1008, 4, u64::from(sq_tail), &mut mem);
+            ctrl.mmio_write(0x1008, 4, u64::from(sq_tail));
+            ctrl.process(&mut mem);
 
             cq_head = (cq_head + 1) % 64;
-            ctrl.mmio_write(0x100c, 4, u64::from(cq_head), &mut mem);
+            ctrl.mmio_write(0x100c, 4, u64::from(cq_head));
 
             cid = cid.wrapping_add(1);
         });

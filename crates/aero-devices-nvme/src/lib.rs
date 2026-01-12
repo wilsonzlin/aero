@@ -18,7 +18,7 @@
 //! - Only legacy INTx is modelled here (via [`NvmeController::intx_level`]).
 //!   MSI/MSI-X are intentionally omitted for now.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use aero_devices::pci::capabilities::PCI_CONFIG_SPACE_SIZE;
 use aero_devices::pci::{profile, PciBarDefinition, PciConfigSpace, PciConfigSpaceState, PciDevice};
@@ -36,7 +36,7 @@ use aero_io_snapshot::io::storage::state::{
 /// capacity is not a multiple of 512, the trailing partial sector is ignored and
 /// only the largest whole-sector prefix is exposed via [`DiskBackend::total_sectors`].
 pub use aero_storage_adapters::AeroVirtualDiskAsNvmeBackend as AeroStorageDiskAdapter;
-use memory::MemoryBus;
+use memory::{MemoryBus, MmioHandler};
 
 mod aero_storage_adapter;
 pub use aero_storage_adapter::NvmeDiskFromAeroStorage;
@@ -319,6 +319,12 @@ pub struct NvmeController {
     io_sqs: HashMap<u16, SubmissionQueue>,
     io_cqs: HashMap<u16, CompletionQueue>,
 
+    /// Submission queue doorbell writes that have not yet been processed.
+    ///
+    /// MMIO handlers are not allowed to access guest memory (DMA), so we defer SQ processing to an
+    /// explicit [`NvmeController::process`] step performed by the platform.
+    pending_sq_tail: BTreeMap<u16, u16>,
+
     /// Legacy INTx level (asserted = true). MSI/MSI-X are not modelled.
     pub intx_level: bool,
 }
@@ -347,6 +353,7 @@ impl NvmeController {
             admin_cq: None,
             io_sqs: HashMap::new(),
             io_cqs: HashMap::new(),
+            pending_sq_tail: BTreeMap::new(),
             intx_level: false,
         }
     }
@@ -370,7 +377,7 @@ impl NvmeController {
         Self::try_new_from_virtual_disk(Box::new(disk))
     }
 
-    pub fn bar0_len(&self) -> u64 {
+    pub const fn bar0_len() -> u64 {
         // Registers (0x0..0x1000) + a small doorbell region for a few queues.
         0x4000
     }
@@ -398,7 +405,7 @@ impl NvmeController {
         out
     }
 
-    pub fn mmio_write(&mut self, offset: u64, size: usize, value: u64, memory: &mut dyn MemoryBus) {
+    pub fn mmio_write(&mut self, offset: u64, size: usize, value: u64) {
         // Like `mmio_read`, implement writes by collecting byte-lane updates into 32-bit writes.
         // This supports:
         // - 64-bit registers written via two 32-bit operations (ASQ/ACQ)
@@ -437,7 +444,7 @@ impl NvmeController {
                 continue;
             }
 
-            self.mmio_write_u32(word_off, write_val, be_mask, memory);
+            self.mmio_write_u32(word_off, write_val, be_mask);
         }
     }
 
@@ -455,17 +462,41 @@ impl NvmeController {
             0x002c => (self.asq >> 32) as u32,
             0x0030 => self.acq as u32,
             0x0034 => (self.acq >> 32) as u32,
+            _ if offset >= 0x1000 => {
+                if self.csts & 1 == 0 {
+                    return 0;
+                }
+
+                let stride = 4u64 << ((self.cap >> 32) & 0xf);
+                if stride == 0 {
+                    return 0;
+                }
+                // Ignore reserved words within a stride larger than 4 bytes.
+                if ((offset - 0x1000) % stride) >= 4 {
+                    return 0;
+                }
+
+                let idx = (offset - 0x1000) / stride;
+                let qid = (idx / 2) as u16;
+                let is_cq = idx % 2 == 1;
+                let val = if is_cq {
+                    if qid == 0 {
+                        self.admin_cq.as_ref().map(|cq| cq.head).unwrap_or(0)
+                    } else {
+                        self.io_cqs.get(&qid).map(|cq| cq.head).unwrap_or(0)
+                    }
+                } else if qid == 0 {
+                    self.admin_sq.as_ref().map(|sq| sq.tail).unwrap_or(0)
+                } else {
+                    self.io_sqs.get(&qid).map(|sq| sq.tail).unwrap_or(0)
+                };
+                u32::from(val)
+            }
             _ => 0,
         }
     }
 
-    fn mmio_write_u32(
-        &mut self,
-        offset: u64,
-        write_val: u32,
-        be_mask: u32,
-        memory: &mut dyn MemoryBus,
-    ) {
+    fn mmio_write_u32(&mut self, offset: u64, write_val: u32, be_mask: u32) {
         match offset {
             // INTMS: write-1-to-set bits in the interrupt mask.
             0x000c => {
@@ -527,30 +558,41 @@ impl NvmeController {
             }
             // Doorbells: treat the 32-bit register as a whole (but allow byte enables).
             _ if offset >= 0x1000 => {
-                // Doorbell values are 16-bit; preserve the unwritten bytes to avoid surprising
-                // behaviour if a guest uses sub-dword writes.
-                let mut current = 0u32;
                 let stride = 4u64 << ((self.cap >> 32) & 0xf);
-                if stride != 0 {
-                    let idx = (offset - 0x1000) / stride;
-                    let qid = (idx / 2) as u16;
-                    let is_cq = idx % 2 == 1;
-                    let val = if is_cq {
-                        if qid == 0 {
-                            self.admin_cq.as_ref().map(|cq| cq.head).unwrap_or(0)
-                        } else {
-                            self.io_cqs.get(&qid).map(|cq| cq.head).unwrap_or(0)
-                        }
-                    } else if qid == 0 {
-                        self.admin_sq.as_ref().map(|sq| sq.tail).unwrap_or(0)
-                    } else {
-                        self.io_sqs.get(&qid).map(|sq| sq.tail).unwrap_or(0)
-                    };
-                    current = u32::from(val);
+                if stride == 0 {
+                    return;
+                }
+                // Ignore reserved words within a stride larger than 4 bytes.
+                if ((offset - 0x1000) % stride) >= 4 {
+                    return;
                 }
 
+                let idx = (offset - 0x1000) / stride;
+                let qid = (idx / 2) as u16;
+                let is_cq = idx % 2 == 1;
+
+                // Doorbell values are 16-bit; preserve the unwritten bytes to avoid surprising
+                // behaviour if a guest uses sub-dword writes.
+                let val = if self.csts & 1 == 0 {
+                    0u16
+                } else if is_cq {
+                    if qid == 0 {
+                        self.admin_cq.as_ref().map(|cq| cq.head).unwrap_or(0)
+                    } else {
+                        self.io_cqs.get(&qid).map(|cq| cq.head).unwrap_or(0)
+                    }
+                } else if qid == 0 {
+                    self.admin_sq.as_ref().map(|sq| sq.tail).unwrap_or(0)
+                } else {
+                    self.io_sqs.get(&qid).map(|sq| sq.tail).unwrap_or(0)
+                };
+
+                let current = u32::from(val);
                 let merged = (current & !be_mask) | (write_val & be_mask);
-                self.write_doorbell(offset, merged, memory);
+
+                // MMIO handlers are not allowed to DMA. For SQ doorbells this records the new tail
+                // and defers submission/completion processing to `NvmeController::process()`.
+                self.write_doorbell(offset, merged);
             }
             _ => {}
         }
@@ -591,6 +633,7 @@ impl NvmeController {
         });
         self.io_sqs.clear();
         self.io_cqs.clear();
+        self.pending_sq_tail.clear();
         self.csts = 1; // RDY
         self.refresh_intx_level();
     }
@@ -601,10 +644,11 @@ impl NvmeController {
         self.admin_cq = None;
         self.io_sqs.clear();
         self.io_cqs.clear();
+        self.pending_sq_tail.clear();
         self.intx_level = false;
     }
 
-    fn write_doorbell(&mut self, offset: u64, value: u32, memory: &mut dyn MemoryBus) {
+    fn write_doorbell(&mut self, offset: u64, value: u32) {
         if self.csts & 1 == 0 {
             return;
         }
@@ -621,7 +665,7 @@ impl NvmeController {
         }
 
         self.set_sq_tail(qid, val);
-        self.process_sq(qid, memory);
+        self.pending_sq_tail.insert(qid, val);
     }
 
     fn set_sq_tail(&mut self, qid: u16, tail: u16) {
@@ -670,6 +714,28 @@ impl NvmeController {
             return;
         }
         self.process_queue_pair_io(qid, memory)
+    }
+
+    /// Process any DMA work that was made pending by MMIO doorbell writes.
+    ///
+    /// This is intended to be called from a platform "device processing" step, where the caller
+    /// has access to guest physical memory (`memory::MemoryBus`).
+    pub fn process(&mut self, memory: &mut dyn MemoryBus) {
+        if self.csts & 1 == 0 {
+            self.pending_sq_tail.clear();
+            return;
+        }
+
+        let pending = std::mem::take(&mut self.pending_sq_tail);
+        for (qid, tail) in pending {
+            // Re-apply the most recently written tail value in case the queue was created after
+            // the doorbell write (possible when admin queue processing is deferred).
+            self.set_sq_tail(qid, tail);
+            self.process_sq(qid, memory);
+        }
+
+        // Ensure interrupt level stays coherent even if no queues were processed.
+        self.refresh_intx_level();
     }
 
     fn process_queue_pair_admin(&mut self, memory: &mut dyn MemoryBus) {
@@ -1130,6 +1196,8 @@ impl IoSnapshot for NvmeController {
             );
         }
 
+        self.pending_sq_tail.clear();
+
         // Recompute derived INTx level so it stays coherent with restored masks + queue state.
         self.refresh_intx_level();
         Ok(())
@@ -1275,14 +1343,11 @@ impl NvmePciDevice {
         config.set_bar_definition(
             0,
             PciBarDefinition::Mmio64 {
-                size: controller.bar0_len(),
+                size: NvmeController::bar0_len(),
                 prefetchable: false,
             },
         );
-        Self {
-            config,
-            controller,
-        }
+        Self { config, controller }
     }
 
     /// Construct an NVMe PCI device from an [`aero_storage::VirtualDisk`].
@@ -1321,12 +1386,52 @@ impl NvmePciDevice {
         self.config.write(offset, 4, value);
     }
 
-    pub fn mmio_read(&mut self, offset: u64, size: usize) -> u64 {
-        self.controller.mmio_read(offset, size)
+    pub fn controller(&self) -> &NvmeController {
+        &self.controller
     }
 
-    pub fn mmio_write(&mut self, offset: u64, size: usize, value: u64, mem: &mut dyn MemoryBus) {
-        self.controller.mmio_write(offset, size, value, mem);
+    pub fn controller_mut(&mut self) -> &mut NvmeController {
+        &mut self.controller
+    }
+
+    /// Process any DMA work that was made pending by MMIO doorbell writes.
+    pub fn process(&mut self, memory: &mut dyn MemoryBus) {
+        self.controller.process(memory);
+    }
+}
+
+impl Default for NvmePciDevice {
+    fn default() -> Self {
+        // Default to a small in-memory disk.
+        #[derive(Clone)]
+        struct EmptyDisk;
+        impl DiskBackend for EmptyDisk {
+            fn sector_size(&self) -> u32 {
+                512
+            }
+            fn total_sectors(&self) -> u64 {
+                0
+            }
+            fn read_sectors(&mut self, _lba: u64, _buffer: &mut [u8]) -> DiskResult<()> {
+                Err(DiskError::OutOfRange {
+                    lba: 0,
+                    sectors: 0,
+                    capacity_sectors: 0,
+                })
+            }
+            fn write_sectors(&mut self, _lba: u64, _buffer: &[u8]) -> DiskResult<()> {
+                Err(DiskError::OutOfRange {
+                    lba: 0,
+                    sectors: 0,
+                    capacity_sectors: 0,
+                })
+            }
+            fn flush(&mut self) -> DiskResult<()> {
+                Ok(())
+            }
+        }
+
+        Self::new(Box::new(EmptyDisk))
     }
 }
 
@@ -1337,6 +1442,16 @@ impl PciDevice for NvmePciDevice {
 
     fn config_mut(&mut self) -> &mut PciConfigSpace {
         &mut self.config
+    }
+}
+
+impl MmioHandler for NvmePciDevice {
+    fn read(&mut self, offset: u64, size: usize) -> u64 {
+        self.controller.mmio_read(offset, size)
+    }
+
+    fn write(&mut self, offset: u64, size: usize, value: u64) {
+        self.controller.mmio_write(offset, size, value)
     }
 }
 
@@ -1560,36 +1675,35 @@ mod tests {
         let disk = TestDisk::new(1024);
         let mut dev = NvmePciDevice::new(from_virtual_disk(Box::new(disk)).unwrap());
 
-        dev.pci_write_u32(0x10, 0xffff_ffff);
-        let mask_lo = dev.pci_read_u32(0x10);
-        let mask_hi = dev.pci_read_u32(0x14);
-        let size = dev.controller.bar0_len() as u32;
+        dev.config_mut().write(0x10, 4, 0xffff_ffff);
+        let mask_lo = dev.config_mut().read(0x10, 4);
+        let mask_hi = dev.config_mut().read(0x14, 4);
+        let size = NvmeController::bar0_len() as u32;
         assert_eq!(mask_lo, (!(size - 1)) & 0xffff_fff0 | 0x4);
         assert_eq!(mask_hi, 0xffff_ffff);
 
-        dev.pci_write_u32(0x10, 0xfebf_0000);
-        dev.pci_write_u32(0x14, 0);
-        assert_eq!(dev.pci_read_u32(0x10), 0xfebf_0004);
-        assert_eq!(dev.pci_read_u32(0x14), 0);
+        dev.config_mut().write(0x10, 4, 0xfebf_0000);
+        dev.config_mut().write(0x14, 4, 0);
+        assert_eq!(dev.config_mut().read(0x10, 4), 0xfebf_0004);
+        assert_eq!(dev.config_mut().read(0x14, 4), 0);
 
         assert_eq!(
             dev.pci_read_u32(0x00),
             (profile::PCI_DEVICE_ID_QEMU_NVME as u32) << 16
                 | (profile::PCI_VENDOR_ID_REDHAT_QEMU as u32)
         );
-        assert_eq!(dev.pci_read_u32(0x08), 0x01_08_02_00);
+        assert_eq!(dev.config_mut().read(0x08, 4), 0x01_08_02_00);
     }
 
     #[test]
     fn registers_enable_sets_rdy() {
         let disk = TestDisk::new(1024);
         let mut ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)).unwrap());
-        let mut mem = TestMem::new(1024 * 1024);
 
-        ctrl.mmio_write(0x0024, 4, 0x000f_000f, &mut mem); // 16/16 queues
-        ctrl.mmio_write(0x0028, 8, 0x10000, &mut mem);
-        ctrl.mmio_write(0x0030, 8, 0x20000, &mut mem);
-        ctrl.mmio_write(0x0014, 4, 1, &mut mem);
+        ctrl.mmio_write(0x0024, 4, 0x000f_000f); // 16/16 queues
+        ctrl.mmio_write(0x0028, 8, 0x10000);
+        ctrl.mmio_write(0x0030, 8, 0x20000);
+        ctrl.mmio_write(0x0014, 4, 1);
 
         assert_eq!(ctrl.mmio_read(0x001c, 4) & 1, 1);
     }
@@ -1610,13 +1724,12 @@ mod tests {
     fn aqa_fields_map_to_admin_queue_sizes() {
         let disk = TestDisk::new(1024);
         let mut ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)).unwrap());
-        let mut mem = TestMem::new(1024 * 1024);
 
         // ASQS = 8 entries, ACQS = 4 entries (both are 0-based in AQA).
-        ctrl.mmio_write(0x0024, 4, (7u64 << 16) | 3, &mut mem);
-        ctrl.mmio_write(0x0028, 8, 0x10000, &mut mem);
-        ctrl.mmio_write(0x0030, 8, 0x20000, &mut mem);
-        ctrl.mmio_write(0x0014, 4, 1, &mut mem);
+        ctrl.mmio_write(0x0024, 4, (7u64 << 16) | 3);
+        ctrl.mmio_write(0x0028, 8, 0x10000);
+        ctrl.mmio_write(0x0030, 8, 0x20000);
+        ctrl.mmio_write(0x0014, 4, 1);
 
         assert_eq!(ctrl.admin_sq.as_ref().unwrap().size, 8);
         assert_eq!(ctrl.admin_cq.as_ref().unwrap().size, 4);
@@ -1632,15 +1745,15 @@ mod tests {
         let acq = 0x20000u64;
         let id_buf = 0x30000u64;
 
-        ctrl.mmio_write(0x0024, 4, 0x000f_000f, &mut mem);
+        ctrl.mmio_write(0x0024, 4, 0x000f_000f);
 
         // Program ASQ/ACQ via two 32-bit writes each, as many guests do.
-        ctrl.mmio_write(0x0028, 4, asq as u32 as u64, &mut mem);
-        ctrl.mmio_write(0x002c, 4, (asq >> 32) as u32 as u64, &mut mem);
-        ctrl.mmio_write(0x0030, 4, acq as u32 as u64, &mut mem);
-        ctrl.mmio_write(0x0034, 4, (acq >> 32) as u32 as u64, &mut mem);
+        ctrl.mmio_write(0x0028, 4, asq as u32 as u64);
+        ctrl.mmio_write(0x002c, 4, (asq >> 32) as u32 as u64);
+        ctrl.mmio_write(0x0030, 4, acq as u32 as u64);
+        ctrl.mmio_write(0x0034, 4, (acq >> 32) as u32 as u64);
 
-        ctrl.mmio_write(0x0014, 4, 1, &mut mem);
+        ctrl.mmio_write(0x0014, 4, 1);
         assert_eq!(ctrl.mmio_read(0x001c, 4) & 1, 1, "CSTS.RDY should be set");
 
         let mut cmd = build_command(0x06);
@@ -1649,7 +1762,8 @@ mod tests {
         set_cdw10(&mut cmd, 0x01); // CNS=1 (controller)
 
         mem.write_physical(asq, &cmd);
-        ctrl.mmio_write(0x1000, 4, 1, &mut mem); // SQ0 tail = 1
+        ctrl.mmio_write(0x1000, 4, 1); // SQ0 tail = 1
+        ctrl.process(&mut mem);
 
         let cqe = read_cqe(&mut mem, acq);
         assert_eq!(cqe.cid, 0x1234);
@@ -1672,10 +1786,10 @@ mod tests {
         let acq = 0x20000;
         let id_buf = 0x30000;
 
-        ctrl.mmio_write(0x0024, 4, 0x000f_000f, &mut mem);
-        ctrl.mmio_write(0x0028, 8, asq, &mut mem);
-        ctrl.mmio_write(0x0030, 8, acq, &mut mem);
-        ctrl.mmio_write(0x0014, 4, 1, &mut mem);
+        ctrl.mmio_write(0x0024, 4, 0x000f_000f);
+        ctrl.mmio_write(0x0028, 8, asq);
+        ctrl.mmio_write(0x0030, 8, acq);
+        ctrl.mmio_write(0x0014, 4, 1);
 
         let mut cmd = build_command(0x06);
         set_cid(&mut cmd, 0x1234);
@@ -1683,7 +1797,8 @@ mod tests {
         set_cdw10(&mut cmd, 0x01); // CNS=1 (controller)
 
         mem.write_physical(asq, &cmd);
-        ctrl.mmio_write(0x1000, 4, 1, &mut mem); // SQ0 tail = 1
+        ctrl.mmio_write(0x1000, 4, 1); // SQ0 tail = 1
+        ctrl.process(&mut mem);
 
         let cqe = read_cqe(&mut mem, acq);
         assert_eq!(cqe.cid, 0x1234);
@@ -1710,10 +1825,10 @@ mod tests {
         let write_buf = 0x60000;
         let read_buf = 0x61000;
 
-        ctrl.mmio_write(0x0024, 4, 0x000f_000f, &mut mem);
-        ctrl.mmio_write(0x0028, 8, asq, &mut mem);
-        ctrl.mmio_write(0x0030, 8, acq, &mut mem);
-        ctrl.mmio_write(0x0014, 4, 1, &mut mem);
+        ctrl.mmio_write(0x0024, 4, 0x000f_000f);
+        ctrl.mmio_write(0x0028, 8, asq);
+        ctrl.mmio_write(0x0030, 8, acq);
+        ctrl.mmio_write(0x0014, 4, 1);
 
         // Create IO CQ (qid=1, size=16, PC+IEN).
         let mut cmd = build_command(0x05);
@@ -1722,7 +1837,8 @@ mod tests {
         set_cdw10(&mut cmd, (15u32 << 16) | 1);
         set_cdw11(&mut cmd, 0x3);
         mem.write_physical(asq, &cmd);
-        ctrl.mmio_write(0x1000, 4, 1, &mut mem);
+        ctrl.mmio_write(0x1000, 4, 1);
+        ctrl.process(&mut mem);
 
         // Create IO SQ (qid=1, size=16, CQID=1).
         let mut cmd = build_command(0x01);
@@ -1731,7 +1847,8 @@ mod tests {
         set_cdw10(&mut cmd, (15u32 << 16) | 1);
         set_cdw11(&mut cmd, 1);
         mem.write_physical(asq + 64, &cmd);
-        ctrl.mmio_write(0x1000, 4, 2, &mut mem);
+        ctrl.mmio_write(0x1000, 4, 2);
+        ctrl.process(&mut mem);
 
         // WRITE 1 sector at LBA 0.
         let payload: Vec<u8> = (0..sector_size as u32).map(|v| (v & 0xff) as u8).collect();
@@ -1745,7 +1862,8 @@ mod tests {
         set_cdw11(&mut cmd, 0); // slba high
         set_cdw12(&mut cmd, 0); // nlb = 0
         mem.write_physical(io_sq, &cmd);
-        ctrl.mmio_write(0x1008, 4, 1, &mut mem); // SQ1 tail = 1
+        ctrl.mmio_write(0x1008, 4, 1); // SQ1 tail = 1
+        ctrl.process(&mut mem);
 
         let cqe = read_cqe(&mut mem, io_cq);
         assert_eq!(cqe.cid, 0x10);
@@ -1758,7 +1876,8 @@ mod tests {
         set_prp1(&mut cmd, read_buf);
         set_cdw12(&mut cmd, 0);
         mem.write_physical(io_sq + 64, &cmd);
-        ctrl.mmio_write(0x1008, 4, 2, &mut mem); // SQ1 tail = 2
+        ctrl.mmio_write(0x1008, 4, 2); // SQ1 tail = 2
+        ctrl.process(&mut mem);
 
         let cqe = read_cqe(&mut mem, io_cq + 16);
         assert_eq!(cqe.cid, 0x11);
@@ -1773,7 +1892,8 @@ mod tests {
         set_cid(&mut cmd, 0x12);
         set_nsid(&mut cmd, 1);
         mem.write_physical(io_sq + 2 * 64, &cmd);
-        ctrl.mmio_write(0x1008, 4, 3, &mut mem);
+        ctrl.mmio_write(0x1008, 4, 3);
+        ctrl.process(&mut mem);
         assert_eq!(disk_state.flush_count(), 1);
 
         // Sanity: disk image contains the written sector.
@@ -1794,10 +1914,10 @@ mod tests {
         let io_cq = 0x40000;
         let io_sq = 0x50000;
 
-        ctrl.mmio_write(0x0024, 4, 0x000f_000f, &mut mem);
-        ctrl.mmio_write(0x0028, 8, asq, &mut mem);
-        ctrl.mmio_write(0x0030, 8, acq, &mut mem);
-        ctrl.mmio_write(0x0014, 4, 1, &mut mem);
+        ctrl.mmio_write(0x0024, 4, 0x000f_000f);
+        ctrl.mmio_write(0x0028, 8, asq);
+        ctrl.mmio_write(0x0030, 8, acq);
+        ctrl.mmio_write(0x0014, 4, 1);
 
         // Create IO CQ (qid=1, size=2).
         let mut cmd = build_command(0x05);
@@ -1806,7 +1926,8 @@ mod tests {
         set_cdw10(&mut cmd, (1u32 << 16) | 1);
         set_cdw11(&mut cmd, 0x3); // PC+IEN
         mem.write_physical(asq, &cmd);
-        ctrl.mmio_write(0x1000, 4, 1, &mut mem);
+        ctrl.mmio_write(0x1000, 4, 1);
+        ctrl.process(&mut mem);
 
         // Create IO SQ (qid=1, size=2, cqid=1).
         let mut cmd = build_command(0x01);
@@ -1815,10 +1936,11 @@ mod tests {
         set_cdw10(&mut cmd, (1u32 << 16) | 1);
         set_cdw11(&mut cmd, 1);
         mem.write_physical(asq + 64, &cmd);
-        ctrl.mmio_write(0x1000, 4, 2, &mut mem);
+        ctrl.mmio_write(0x1000, 4, 2);
+        ctrl.process(&mut mem);
 
         // Consume admin CQ entries (2 completions from queue creation) so INTx reflects I/O CQ.
-        ctrl.mmio_write(0x1004, 4, 2, &mut mem);
+        ctrl.mmio_write(0x1004, 4, 2);
 
         let sq_tail_db = 0x1008;
         let cq_head_db = 0x100c;
@@ -1828,7 +1950,8 @@ mod tests {
         set_cid(&mut cmd, 0x10);
         set_nsid(&mut cmd, 1);
         mem.write_physical(io_sq, &cmd);
-        ctrl.mmio_write(sq_tail_db, 4, 1, &mut mem);
+        ctrl.mmio_write(sq_tail_db, 4, 1);
+        ctrl.process(&mut mem);
         assert!(ctrl.intx_level);
 
         let cqe = read_cqe(&mut mem, io_cq);
@@ -1836,7 +1959,7 @@ mod tests {
         assert_eq!(cqe.status & 0x1, 1);
         assert_eq!(cqe.status & !0x1, 0);
 
-        ctrl.mmio_write(cq_head_db, 4, 1, &mut mem);
+        ctrl.mmio_write(cq_head_db, 4, 1);
         assert!(!ctrl.intx_level);
 
         // 2) FLUSH at SQ slot 1, CQ slot 1, phase=1 (tail wraps after posting).
@@ -1844,7 +1967,8 @@ mod tests {
         set_cid(&mut cmd, 0x11);
         set_nsid(&mut cmd, 1);
         mem.write_physical(io_sq + 64, &cmd);
-        ctrl.mmio_write(sq_tail_db, 4, 0, &mut mem);
+        ctrl.mmio_write(sq_tail_db, 4, 0);
+        ctrl.process(&mut mem);
         assert!(ctrl.intx_level);
 
         let cqe = read_cqe(&mut mem, io_cq + 16);
@@ -1852,7 +1976,7 @@ mod tests {
         assert_eq!(cqe.status & 0x1, 1);
         assert_eq!(cqe.status & !0x1, 0);
 
-        ctrl.mmio_write(cq_head_db, 4, 0, &mut mem);
+        ctrl.mmio_write(cq_head_db, 4, 0);
         assert!(!ctrl.intx_level);
 
         // 3) FLUSH at SQ slot 0 again, CQ slot 0 again, phase toggles to 0.
@@ -1860,7 +1984,8 @@ mod tests {
         set_cid(&mut cmd, 0x12);
         set_nsid(&mut cmd, 1);
         mem.write_physical(io_sq, &cmd);
-        ctrl.mmio_write(sq_tail_db, 4, 1, &mut mem);
+        ctrl.mmio_write(sq_tail_db, 4, 1);
+        ctrl.process(&mut mem);
 
         let cqe = read_cqe(&mut mem, io_cq);
         assert_eq!(cqe.cid, 0x12);

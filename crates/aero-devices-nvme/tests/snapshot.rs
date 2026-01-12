@@ -143,10 +143,11 @@ fn snapshot_restore_preserves_pending_completion_and_disk_contents() {
     let write_buf = 0x60000;
     let read_buf = 0x61000;
 
-    dev.mmio_write(0x0024, 4, 0x000f_000f, &mut mem);
-    dev.mmio_write(0x0028, 8, asq, &mut mem);
-    dev.mmio_write(0x0030, 8, acq, &mut mem);
-    dev.mmio_write(0x0014, 4, 1, &mut mem);
+    // Configure + enable controller.
+    dev.controller.mmio_write(0x0024, 4, 0x000f_000f);
+    dev.controller.mmio_write(0x0028, 8, asq);
+    dev.controller.mmio_write(0x0030, 8, acq);
+    dev.controller.mmio_write(0x0014, 4, 1);
 
     // Create IO CQ (qid=1, size=16, PC+IEN).
     let mut cmd = build_command(0x05);
@@ -155,7 +156,8 @@ fn snapshot_restore_preserves_pending_completion_and_disk_contents() {
     set_cdw10(&mut cmd, (15u32 << 16) | 1);
     set_cdw11(&mut cmd, 0x3);
     mem.write_physical(asq, &cmd);
-    dev.mmio_write(0x1000, 4, 1, &mut mem); // SQ0 tail = 1
+    dev.controller.mmio_write(0x1000, 4, 1); // SQ0 tail = 1
+    dev.process(&mut mem);
 
     // Create IO SQ (qid=1, size=16, CQID=1).
     let mut cmd = build_command(0x01);
@@ -164,10 +166,11 @@ fn snapshot_restore_preserves_pending_completion_and_disk_contents() {
     set_cdw10(&mut cmd, (15u32 << 16) | 1);
     set_cdw11(&mut cmd, 1);
     mem.write_physical(asq + 64, &cmd);
-    dev.mmio_write(0x1000, 4, 2, &mut mem); // SQ0 tail = 2
+    dev.controller.mmio_write(0x1000, 4, 2); // SQ0 tail = 2
+    dev.process(&mut mem);
 
     // Consume admin CQ completions so INTx level reflects IO CQ only.
-    dev.mmio_write(0x1004, 4, 2, &mut mem);
+    dev.controller.mmio_write(0x1004, 4, 2);
 
     // WRITE 1 sector at LBA 0 (completion left pending in the IO CQ).
     let payload: Vec<u8> = (0..512u32).map(|v| (v & 0xff) as u8).collect();
@@ -181,7 +184,8 @@ fn snapshot_restore_preserves_pending_completion_and_disk_contents() {
     set_cdw11(&mut cmd, 0);
     set_cdw12(&mut cmd, 0);
     mem.write_physical(io_sq, &cmd);
-    dev.mmio_write(0x1008, 4, 1, &mut mem); // SQ1 tail = 1
+    dev.controller.mmio_write(0x1008, 4, 1); // SQ1 tail = 1
+    dev.process(&mut mem);
 
     assert!(dev.irq_level());
 
@@ -209,7 +213,7 @@ fn snapshot_restore_preserves_pending_completion_and_disk_contents() {
     assert_eq!(cqe.status & !0x1, 0); // success
 
     // Consume completion and ensure INTx deasserts.
-    restored.mmio_write(0x100c, 4, 1, &mut mem2); // CQ1 head = 1
+    restored.controller.mmio_write(0x100c, 4, 1); // CQ1 head = 1
     assert!(!restored.irq_level());
 
     // READ it back after restore.
@@ -221,7 +225,8 @@ fn snapshot_restore_preserves_pending_completion_and_disk_contents() {
     set_cdw11(&mut cmd, 0);
     set_cdw12(&mut cmd, 0);
     mem2.write_physical(io_sq + 64, &cmd);
-    restored.mmio_write(0x1008, 4, 2, &mut mem2); // SQ1 tail = 2
+    restored.controller.mmio_write(0x1008, 4, 2); // SQ1 tail = 2
+    restored.process(&mut mem2);
 
     let cqe = read_cqe(&mut mem2, io_cq + 16);
     assert_eq!(cqe.cid, 0x11);
@@ -246,10 +251,10 @@ fn snapshot_restore_preserves_cq_phase_across_wrap() {
     let io_cq = 0x40000;
     let io_sq = 0x50000;
 
-    dev.mmio_write(0x0024, 4, 0x000f_000f, &mut mem);
-    dev.mmio_write(0x0028, 8, asq, &mut mem);
-    dev.mmio_write(0x0030, 8, acq, &mut mem);
-    dev.mmio_write(0x0014, 4, 1, &mut mem);
+    dev.controller.mmio_write(0x0024, 4, 0x000f_000f);
+    dev.controller.mmio_write(0x0028, 8, asq);
+    dev.controller.mmio_write(0x0030, 8, acq);
+    dev.controller.mmio_write(0x0014, 4, 1);
 
     // Create IO CQ (qid=1, size=2, PC+IEN).
     let mut cmd = build_command(0x05);
@@ -258,7 +263,8 @@ fn snapshot_restore_preserves_cq_phase_across_wrap() {
     set_cdw10(&mut cmd, (1u32 << 16) | 1);
     set_cdw11(&mut cmd, 0x3);
     mem.write_physical(asq, &cmd);
-    dev.mmio_write(0x1000, 4, 1, &mut mem);
+    dev.controller.mmio_write(0x1000, 4, 1);
+    dev.process(&mut mem);
 
     // Create IO SQ (qid=1, size=2, CQID=1).
     let mut cmd = build_command(0x01);
@@ -267,10 +273,11 @@ fn snapshot_restore_preserves_cq_phase_across_wrap() {
     set_cdw10(&mut cmd, (1u32 << 16) | 1);
     set_cdw11(&mut cmd, 1);
     mem.write_physical(asq + 64, &cmd);
-    dev.mmio_write(0x1000, 4, 2, &mut mem);
+    dev.controller.mmio_write(0x1000, 4, 2);
+    dev.process(&mut mem);
 
     // Consume admin CQ completions (2 entries).
-    dev.mmio_write(0x1004, 4, 2, &mut mem);
+    dev.controller.mmio_write(0x1004, 4, 2);
 
     let sq_tail_db = 0x1008;
     let cq_head_db = 0x100c;
@@ -280,10 +287,11 @@ fn snapshot_restore_preserves_cq_phase_across_wrap() {
     set_cid(&mut cmd, 0x10);
     set_nsid(&mut cmd, 1);
     mem.write_physical(io_sq, &cmd);
-    dev.mmio_write(sq_tail_db, 4, 1, &mut mem);
+    dev.controller.mmio_write(sq_tail_db, 4, 1);
+    dev.process(&mut mem);
     assert!(dev.irq_level());
 
-    dev.mmio_write(cq_head_db, 4, 1, &mut mem);
+    dev.controller.mmio_write(cq_head_db, 4, 1);
     assert!(!dev.irq_level());
 
     // 2) FLUSH at SQ slot 1, CQ slot 1, phase=1 (tail wraps and toggles phase for the *next* CQE).
@@ -291,7 +299,8 @@ fn snapshot_restore_preserves_cq_phase_across_wrap() {
     set_cid(&mut cmd, 0x11);
     set_nsid(&mut cmd, 1);
     mem.write_physical(io_sq + 64, &cmd);
-    dev.mmio_write(sq_tail_db, 4, 0, &mut mem);
+    dev.controller.mmio_write(sq_tail_db, 4, 0);
+    dev.process(&mut mem);
     assert!(dev.irq_level());
 
     // Snapshot while CQ tail has wrapped (phase has toggled) but CQE#2 is still pending.
@@ -312,7 +321,7 @@ fn snapshot_restore_preserves_cq_phase_across_wrap() {
     assert_eq!(cqe.status & !0x1, 0);
 
     // Consume CQE#2 (head wraps to 0).
-    restored.mmio_write(cq_head_db, 4, 0, &mut mem2);
+    restored.controller.mmio_write(cq_head_db, 4, 0);
     assert!(!restored.irq_level());
 
     // 3) Next FLUSH should reuse CQ slot 0 with phase=0 (because the tail wrapped after CQE#2).
@@ -320,7 +329,8 @@ fn snapshot_restore_preserves_cq_phase_across_wrap() {
     set_cid(&mut cmd, 0x12);
     set_nsid(&mut cmd, 1);
     mem2.write_physical(io_sq, &cmd);
-    restored.mmio_write(sq_tail_db, 4, 1, &mut mem2);
+    restored.controller.mmio_write(sq_tail_db, 4, 1);
+    restored.process(&mut mem2);
 
     let cqe = read_cqe(&mut mem2, io_cq);
     assert_eq!(cqe.cid, 0x12);
@@ -394,10 +404,10 @@ fn snapshot_restore_preserves_pci_interrupt_disable_masking() {
     let io_sq = 0x50000;
     let write_buf = 0x60000;
 
-    dev.mmio_write(0x0024, 4, 0x000f_000f, &mut mem);
-    dev.mmio_write(0x0028, 8, asq, &mut mem);
-    dev.mmio_write(0x0030, 8, acq, &mut mem);
-    dev.mmio_write(0x0014, 4, 1, &mut mem);
+    dev.controller.mmio_write(0x0024, 4, 0x000f_000f);
+    dev.controller.mmio_write(0x0028, 8, asq);
+    dev.controller.mmio_write(0x0030, 8, acq);
+    dev.controller.mmio_write(0x0014, 4, 1);
 
     // Create IO CQ (qid=1, size=16, PC+IEN).
     let mut cmd = build_command(0x05);
@@ -406,7 +416,8 @@ fn snapshot_restore_preserves_pci_interrupt_disable_masking() {
     set_cdw10(&mut cmd, (15u32 << 16) | 1);
     set_cdw11(&mut cmd, 0x3);
     mem.write_physical(asq, &cmd);
-    dev.mmio_write(0x1000, 4, 1, &mut mem);
+    dev.controller.mmio_write(0x1000, 4, 1);
+    dev.process(&mut mem);
 
     // Create IO SQ (qid=1, size=16, CQID=1).
     let mut cmd = build_command(0x01);
@@ -415,10 +426,11 @@ fn snapshot_restore_preserves_pci_interrupt_disable_masking() {
     set_cdw10(&mut cmd, (15u32 << 16) | 1);
     set_cdw11(&mut cmd, 1);
     mem.write_physical(asq + 64, &cmd);
-    dev.mmio_write(0x1000, 4, 2, &mut mem);
+    dev.controller.mmio_write(0x1000, 4, 2);
+    dev.process(&mut mem);
 
     // Consume admin CQ completions.
-    dev.mmio_write(0x1004, 4, 2, &mut mem);
+    dev.controller.mmio_write(0x1004, 4, 2);
 
     // Post a write to generate a pending IO completion (asserts controller INTx).
     let payload: Vec<u8> = (0..512u32).map(|v| (v & 0xff) as u8).collect();
@@ -432,7 +444,8 @@ fn snapshot_restore_preserves_pci_interrupt_disable_masking() {
     set_cdw11(&mut cmd, 0);
     set_cdw12(&mut cmd, 0);
     mem.write_physical(io_sq, &cmd);
-    dev.mmio_write(0x1008, 4, 1, &mut mem);
+    dev.controller.mmio_write(0x1008, 4, 1);
+    dev.process(&mut mem);
 
     assert!(dev.controller.intx_level, "controller should have a pending interrupt");
     assert!(

@@ -21,6 +21,9 @@ use aero_devices_storage::ata::AtaDrive;
 use aero_devices_storage::atapi::AtapiCdrom;
 use aero_devices_storage::pci_ide::{Piix3IdePciDevice, PRIMARY_PORTS, SECONDARY_PORTS};
 use aero_devices_storage::AhciPciDevice;
+use aero_devices_nvme::{
+    DiskBackend as NvmeDiskBackend, DiskError as NvmeDiskError, NvmeController, NvmePciDevice,
+};
 use aero_interrupts::apic::{IOAPIC_MMIO_BASE, IOAPIC_MMIO_SIZE, LAPIC_MMIO_BASE, LAPIC_MMIO_SIZE};
 use aero_virtio::devices::blk::{MemDisk, VirtioBlk};
 use aero_virtio::memory::{GuestMemory as VirtioGuestMemory, GuestMemoryError as VirtioGuestMemoryError};
@@ -66,6 +69,7 @@ pub enum ResetEvent {
 #[derive(Debug, Clone, Copy)]
 pub struct PcPlatformConfig {
     pub enable_hda: bool,
+    pub enable_nvme: bool,
     pub enable_ahci: bool,
     pub enable_ide: bool,
     pub enable_e1000: bool,
@@ -78,6 +82,7 @@ impl Default for PcPlatformConfig {
     fn default() -> Self {
         Self {
             enable_hda: false,
+            enable_nvme: false,
             // The canonical PC platform always includes an ICH9 AHCI controller so guests can
             // boot from SATA disks without additional configuration.
             enable_ahci: true,
@@ -189,6 +194,34 @@ impl VirtioBlkPciConfigDevice {
 }
 
 impl PciDevice for VirtioBlkPciConfigDevice {
+    fn config(&self) -> &aero_devices::pci::PciConfigSpace {
+        &self.config
+    }
+
+    fn config_mut(&mut self) -> &mut aero_devices::pci::PciConfigSpace {
+        &mut self.config
+    }
+}
+
+struct NvmePciConfigDevice {
+    config: aero_devices::pci::PciConfigSpace,
+}
+
+impl NvmePciConfigDevice {
+    fn new() -> Self {
+        let mut config = aero_devices::pci::profile::NVME_CONTROLLER.build_config_space();
+        config.set_bar_definition(
+            0,
+            PciBarDefinition::Mmio64 {
+                size: NvmeController::bar0_len(),
+                prefetchable: false,
+            },
+        );
+        Self { config }
+    }
+}
+
+impl PciDevice for NvmePciConfigDevice {
     fn config(&self) -> &aero_devices::pci::PciConfigSpace {
         &self.config
     }
@@ -399,6 +432,93 @@ impl PortIoDevice for PcUhciIoBar {
             .borrow_mut()
             .controller_mut()
             .io_write(port, size, value);
+    }
+}
+
+struct RamNvmeDisk {
+    sector_size: u32,
+    data: Vec<u8>,
+}
+
+impl RamNvmeDisk {
+    fn new(sectors: u64) -> Self {
+        let sector_size = 512u32;
+        Self {
+            sector_size,
+            data: vec![0u8; sectors as usize * sector_size as usize],
+        }
+    }
+}
+
+impl NvmeDiskBackend for RamNvmeDisk {
+    fn sector_size(&self) -> u32 {
+        self.sector_size
+    }
+
+    fn total_sectors(&self) -> u64 {
+        (self.data.len() as u64) / (self.sector_size as u64)
+    }
+
+    fn read_sectors(&mut self, lba: u64, buffer: &mut [u8]) -> Result<(), NvmeDiskError> {
+        let sector_size = self.sector_size as usize;
+        if !buffer.len().is_multiple_of(sector_size) {
+            return Err(NvmeDiskError::UnalignedBuffer {
+                len: buffer.len(),
+                sector_size: self.sector_size,
+            });
+        }
+
+        let sectors = (buffer.len() / sector_size) as u64;
+        let end_lba = lba.checked_add(sectors).ok_or(NvmeDiskError::OutOfRange {
+            lba,
+            sectors,
+            capacity_sectors: self.total_sectors(),
+        })?;
+        let cap = self.total_sectors();
+        if end_lba > cap {
+            return Err(NvmeDiskError::OutOfRange {
+                lba,
+                sectors,
+                capacity_sectors: cap,
+            });
+        }
+
+        let offset = lba as usize * sector_size;
+        buffer.copy_from_slice(&self.data[offset..offset + buffer.len()]);
+        Ok(())
+    }
+
+    fn write_sectors(&mut self, lba: u64, buffer: &[u8]) -> Result<(), NvmeDiskError> {
+        let sector_size = self.sector_size as usize;
+        if !buffer.len().is_multiple_of(sector_size) {
+            return Err(NvmeDiskError::UnalignedBuffer {
+                len: buffer.len(),
+                sector_size: self.sector_size,
+            });
+        }
+
+        let sectors = (buffer.len() / sector_size) as u64;
+        let end_lba = lba.checked_add(sectors).ok_or(NvmeDiskError::OutOfRange {
+            lba,
+            sectors,
+            capacity_sectors: self.total_sectors(),
+        })?;
+        let cap = self.total_sectors();
+        if end_lba > cap {
+            return Err(NvmeDiskError::OutOfRange {
+                lba,
+                sectors,
+                capacity_sectors: cap,
+            });
+        }
+
+        let offset = lba as usize * sector_size;
+        self.data[offset..offset + buffer.len()].copy_from_slice(buffer);
+        Ok(())
+    }
+
+    fn flush(&mut self) -> Result<(), NvmeDiskError> {
+        Ok(())
     }
 }
 
@@ -732,6 +852,7 @@ pub struct PcPlatform {
     pub acpi_pm: SharedAcpiPmIo<ManualClock>,
 
     pub hda: Option<Rc<RefCell<HdaPciDevice>>>,
+    pub nvme: Option<Rc<RefCell<NvmePciDevice>>>,
     pub ahci: Option<Rc<RefCell<AhciPciDevice>>>,
     pub ide: Option<Rc<RefCell<Piix3IdePciDevice>>>,
     e1000: Option<Rc<RefCell<E1000Device>>>,
@@ -784,6 +905,16 @@ impl PcPlatform {
                 ..Default::default()
             },
             DEFAULT_DIRTY_PAGE_SIZE,
+        )
+    }
+
+    pub fn new_with_nvme(ram_size: usize) -> Self {
+        Self::new_with_config(
+            ram_size,
+            PcPlatformConfig {
+                enable_nvme: true,
+                ..Default::default()
+            },
         )
     }
 
@@ -1037,6 +1168,35 @@ impl PcPlatform {
                 .add_device(bdf, Box::new(dev));
 
             Some(hda)
+        } else {
+            None
+        };
+
+        let nvme = if config.enable_nvme {
+            let profile = aero_devices::pci::profile::NVME_CONTROLLER;
+            let bdf = profile.bdf;
+
+            let nvme = Rc::new(RefCell::new(NvmePciDevice::new(Box::new(
+                RamNvmeDisk::new(1024),
+            ))));
+
+            {
+                let nvme_for_intx = nvme.clone();
+                pci_intx_sources.push(PciIntxSource {
+                    bdf,
+                    pin: PciInterruptPin::IntA,
+                    query_level: Box::new(move |_pc| nvme_for_intx.borrow().irq_level()),
+                });
+            }
+
+            let mut dev = NvmePciConfigDevice::new();
+            pci_intx.configure_device_intx(bdf, Some(PciInterruptPin::IntA), dev.config_mut());
+            pci_cfg
+                .borrow_mut()
+                .bus_mut()
+                .add_device(bdf, Box::new(dev));
+
+            Some(nvme)
         } else {
             None
         };
@@ -1330,7 +1490,14 @@ impl PcPlatform {
                 aero_devices::pci::profile::VIRTIO_BLK.bdf,
                 0,
                 VirtioPciBar0Mmio { dev: virtio_blk },
-            )
+            );
+        }
+        if let Some(nvme) = nvme.clone() {
+            pci_mmio_router.register_shared_handler(
+                aero_devices::pci::profile::NVME_CONTROLLER.bdf,
+                0,
+                nvme,
+            );
         }
         memory
             .map_mmio(
@@ -1396,6 +1563,7 @@ impl PcPlatform {
             pci_intx,
             acpi_pm,
             hda,
+            nvme,
             ahci,
             ide,
             e1000,
@@ -1577,6 +1745,28 @@ impl PcPlatform {
             mem: RefCell::new(&mut self.memory),
         };
         hda.controller_mut().process(&mut mem, output_frames);
+    }
+
+    pub fn process_nvme(&mut self) {
+        let Some(nvme) = self.nvme.as_ref() else {
+            return;
+        };
+
+        // Only allow the device to DMA when Bus Mastering is enabled (PCI command bit 2).
+        let bdf = aero_devices::pci::profile::NVME_CONTROLLER.bdf;
+        let bus_master_enabled = {
+            let mut pci_cfg = self.pci_cfg.borrow_mut();
+            pci_cfg
+                .bus_mut()
+                .device_config(bdf)
+                .is_some_and(|cfg| (cfg.command() & (1 << 2)) != 0)
+        };
+        if !bus_master_enabled {
+            return;
+        };
+
+        let mut nvme = nvme.borrow_mut();
+        nvme.controller_mut().process(&mut self.memory);
     }
 
     pub fn process_ahci(&mut self) {

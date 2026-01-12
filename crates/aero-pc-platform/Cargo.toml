@@ -10,6 +10,7 @@ aero-mmu = { path = "../aero-mmu" }
 aero-cpu-core = { path = "../aero-cpu-core" }
 aero-devices = { path = "../devices" }
 aero-devices-storage = { path = "../aero-devices-storage" }
+aero-devices-nvme = { path = "../aero-devices-nvme" }
 aero-interrupts = { path = "../aero-interrupts" }
 aero-net-e1000 = { path = "../aero-net-e1000" }
 aero-platform = { path = "../platform" }
