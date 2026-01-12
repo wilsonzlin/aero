@@ -1,3 +1,5 @@
+#![cfg(not(target_arch = "wasm32"))]
+
 use std::sync::Arc;
 
 use aero_ipc::ring::RingBuffer;
