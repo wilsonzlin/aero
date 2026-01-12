@@ -26,6 +26,14 @@ export const MAX_REMOTE_CHUNK_SIZE_BYTES = 64 * 1024 * 1024; // 64 MiB
  * unbounded allocations on malicious inputs.
  */
 export const MAX_REMOTE_CHUNK_COUNT = 500_000;
+// Defensive bounds for user-provided tuning knobs. These values can come from untrusted snapshot
+// metadata or external configuration, so keep them bounded to avoid pathological background work
+// (e.g. thousands of background chunk prefetches or hundreds of concurrent 64MiB downloads).
+const MAX_REMOTE_PREFETCH_SEQUENTIAL_CHUNKS = 1024;
+const MAX_REMOTE_PREFETCH_SEQUENTIAL_BYTES = 512 * 1024 * 1024; // 512 MiB
+const MAX_REMOTE_MAX_ATTEMPTS = 32;
+const MAX_REMOTE_MAX_CONCURRENT_FETCHES = 128;
+const MAX_REMOTE_INFLIGHT_BYTES = 512 * 1024 * 1024; // 512 MiB
 
 export type ChunkedDiskManifestV1 = {
   schema: "aero.chunked-disk-image.v1";
@@ -1081,11 +1089,24 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
     if (!Number.isSafeInteger(resolved.maxConcurrentFetches) || resolved.maxConcurrentFetches <= 0) {
       throw new Error(`invalid maxConcurrentFetches=${resolved.maxConcurrentFetches}`);
     }
+    if (resolved.maxConcurrentFetches > MAX_REMOTE_MAX_CONCURRENT_FETCHES) {
+      throw new Error(
+        `maxConcurrentFetches too large: max=${MAX_REMOTE_MAX_CONCURRENT_FETCHES} got=${resolved.maxConcurrentFetches}`,
+      );
+    }
     if (!Number.isSafeInteger(resolved.prefetchSequentialChunks) || resolved.prefetchSequentialChunks < 0) {
       throw new Error(`invalid prefetchSequentialChunks=${resolved.prefetchSequentialChunks}`);
     }
+    if (resolved.prefetchSequentialChunks > MAX_REMOTE_PREFETCH_SEQUENTIAL_CHUNKS) {
+      throw new Error(
+        `prefetchSequentialChunks too large: max=${MAX_REMOTE_PREFETCH_SEQUENTIAL_CHUNKS} got=${resolved.prefetchSequentialChunks}`,
+      );
+    }
     if (!Number.isSafeInteger(resolved.maxAttempts) || resolved.maxAttempts <= 0) {
       throw new Error(`invalid maxAttempts=${resolved.maxAttempts}`);
+    }
+    if (resolved.maxAttempts > MAX_REMOTE_MAX_ATTEMPTS) {
+      throw new Error(`maxAttempts too large: max=${MAX_REMOTE_MAX_ATTEMPTS} got=${resolved.maxAttempts}`);
     }
     if (!Number.isSafeInteger(resolved.retryBaseDelayMs) || resolved.retryBaseDelayMs < 0) {
       throw new Error(`invalid retryBaseDelayMs=${resolved.retryBaseDelayMs}`);
@@ -1098,6 +1119,24 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
     if (!resp.ok) throw new Error(`failed to fetch manifest: ${resp.status}`);
     const json = (await resp.json()) as unknown;
     const manifest = parseManifest(json);
+
+    // Keep sequential prefetch and in-flight concurrency bounded. Compute using BigInt to avoid
+    // overflow/precision loss for extreme inputs.
+    const chunkSizeBytes = BigInt(manifest.chunkSize);
+    const totalSizeBytes = BigInt(manifest.totalSize);
+    const perFetchBytes = chunkSizeBytes < totalSizeBytes ? chunkSizeBytes : totalSizeBytes;
+    const inflightBytes = BigInt(resolved.maxConcurrentFetches) * perFetchBytes;
+    if (inflightBytes > BigInt(MAX_REMOTE_INFLIGHT_BYTES)) {
+      throw new Error(
+        `inflight bytes too large: max=${MAX_REMOTE_INFLIGHT_BYTES} got=${inflightBytes.toString()}`,
+      );
+    }
+    const prefetchBytes = BigInt(resolved.prefetchSequentialChunks) * chunkSizeBytes;
+    if (prefetchBytes > BigInt(MAX_REMOTE_PREFETCH_SEQUENTIAL_BYTES)) {
+      throw new Error(
+        `prefetch bytes too large: max=${MAX_REMOTE_PREFETCH_SEQUENTIAL_BYTES} got=${prefetchBytes.toString()}`,
+      );
+    }
 
     const manifestV1 = json as ChunkedDiskManifestV1;
     const derivedImageId =

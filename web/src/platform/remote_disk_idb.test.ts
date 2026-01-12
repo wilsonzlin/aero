@@ -119,6 +119,39 @@ describe("RemoteStreamingDisk (IndexedDB cache)", () => {
     await clearIdb();
   });
 
+  it("rejects block sizes larger than 64MiB", async () => {
+    await expect(
+      RemoteStreamingDisk.open("https://example.invalid/disk.img", {
+        blockSize: 128 * 1024 * 1024,
+        cacheBackend: "idb",
+        cacheLimitBytes,
+        prefetchSequentialBlocks: 0,
+      }),
+    ).rejects.toThrow(/blockSize.*max/i);
+  });
+
+  it("rejects excessive prefetchSequentialBlocks", async () => {
+    await expect(
+      RemoteStreamingDisk.open("https://example.invalid/disk.img", {
+        blockSize: 1024 * 1024,
+        cacheBackend: "idb",
+        cacheLimitBytes,
+        prefetchSequentialBlocks: 1025,
+      }),
+    ).rejects.toThrow(/prefetchSequentialBlocks.*max/i);
+  });
+
+  it("rejects excessive prefetchSequentialBlocks byte volume", async () => {
+    await expect(
+      RemoteStreamingDisk.open("https://example.invalid/disk.img", {
+        blockSize: 64 * 1024 * 1024,
+        cacheBackend: "idb",
+        cacheLimitBytes,
+        prefetchSequentialBlocks: 9,
+      }),
+    ).rejects.toThrow(/prefetch bytes too large/i);
+  });
+
   it("caches fetched blocks in IndexedDB and reuses them on subsequent reads", async () => {
     const blockSize = 1024 * 1024;
     // NOTE: `RemoteStreamingDisk` treats `cacheLimitBytes=0` as "cache disabled".

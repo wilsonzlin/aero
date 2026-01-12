@@ -14,6 +14,14 @@ import { RemoteCacheManager, type RemoteCacheKeyParts, type RemoteCacheMetaV1 } 
 
 // Keep in sync with the Rust snapshot bounds where sensible.
 const MAX_REMOTE_CHUNK_SIZE_BYTES = 64 * 1024 * 1024; // 64 MiB
+// Defensive bounds for user-provided tuning knobs. These values can come from untrusted snapshot
+// metadata or external configuration, so keep them bounded to avoid pathological background work
+// (e.g. hundreds of concurrent 64MiB fetches).
+const MAX_REMOTE_READ_AHEAD_CHUNKS = 1024;
+const MAX_REMOTE_READ_AHEAD_BYTES = 512 * 1024 * 1024; // 512 MiB
+const MAX_REMOTE_MAX_RETRIES = 32;
+const MAX_REMOTE_MAX_CONCURRENT_FETCHES = 128;
+const MAX_REMOTE_INFLIGHT_BYTES = 512 * 1024 * 1024; // 512 MiB
 
 export function defaultRemoteRangeUrl(base: RemoteDiskBaseSnapshot): string {
   // NOTE: This is intentionally *not* a signed URL. Auth is expected to be handled
@@ -696,17 +704,41 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
     if (!Number.isInteger(maxConcurrentFetches) || maxConcurrentFetches <= 0) {
       throw new Error(`invalid maxConcurrentFetches=${maxConcurrentFetches}`);
     }
+    if (maxConcurrentFetches > MAX_REMOTE_MAX_CONCURRENT_FETCHES) {
+      throw new Error(
+        `maxConcurrentFetches too large: max=${MAX_REMOTE_MAX_CONCURRENT_FETCHES} got=${maxConcurrentFetches}`,
+      );
+    }
     if (!Number.isInteger(maxRetries) || maxRetries < 0) {
       throw new Error(`invalid maxRetries=${maxRetries}`);
     }
+    if (maxRetries > MAX_REMOTE_MAX_RETRIES) {
+      throw new Error(`maxRetries too large: max=${MAX_REMOTE_MAX_RETRIES} got=${maxRetries}`);
+    }
     if (!Number.isInteger(readAheadChunks) || readAheadChunks < 0) {
       throw new Error(`invalid readAheadChunks=${readAheadChunks}`);
+    }
+    if (readAheadChunks > MAX_REMOTE_READ_AHEAD_CHUNKS) {
+      throw new Error(`readAheadChunks too large: max=${MAX_REMOTE_READ_AHEAD_CHUNKS} got=${readAheadChunks}`);
     }
     if (!Number.isInteger(retryBaseDelayMs) || retryBaseDelayMs <= 0) {
       throw new Error(`invalid retryBaseDelayMs=${retryBaseDelayMs}`);
     }
     if (!Number.isInteger(leaseRefreshMarginMs) || leaseRefreshMarginMs < 0) {
       throw new Error(`invalid leaseRefreshMarginMs=${leaseRefreshMarginMs}`);
+    }
+
+    // Keep sequential prefetch bounded (best-effort). Compute with BigInt to avoid overflow /
+    // precision loss near `Number.MAX_SAFE_INTEGER`.
+    const readAheadBytes = BigInt(readAheadChunks) * BigInt(chunkSize);
+    if (readAheadBytes > BigInt(MAX_REMOTE_READ_AHEAD_BYTES)) {
+      throw new Error(
+        `readAhead bytes too large: max=${MAX_REMOTE_READ_AHEAD_BYTES} got=${readAheadBytes.toString()}`,
+      );
+    }
+    const inflightBytes = BigInt(maxConcurrentFetches) * BigInt(chunkSize);
+    if (inflightBytes > BigInt(MAX_REMOTE_INFLIGHT_BYTES)) {
+      throw new Error(`inflight bytes too large: max=${MAX_REMOTE_INFLIGHT_BYTES} got=${inflightBytes.toString()}`);
     }
 
     const fetchFn = options.fetchFn ?? fetch;

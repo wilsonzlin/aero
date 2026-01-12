@@ -405,6 +405,71 @@ describe("RemoteRangeDisk", () => {
     ).rejects.toThrow(/chunkSize.*max/i);
   });
 
+  it("rejects excessive readAheadChunks", async () => {
+    const chunkSize = 1024 * 1024;
+    await expect(
+      RemoteRangeDisk.open("http://example.invalid/image.bin", {
+        cacheKeyParts: { imageId: "too-big-read-ahead", version: "v1", deliveryType: remoteRangeDeliveryType(chunkSize) },
+        chunkSize,
+        readAheadChunks: 1025,
+        metadataStore: new MemoryMetadataStore(),
+        sparseCacheFactory: new MemorySparseCacheFactory(),
+      }),
+    ).rejects.toThrow(/readAheadChunks.*max/i);
+  });
+
+  it("rejects excessive readAheadChunks byte volume", async () => {
+    const chunkSize = 1024 * 1024; // 1 MiB
+    await expect(
+      RemoteRangeDisk.open("http://example.invalid/image.bin", {
+        cacheKeyParts: { imageId: "too-big-read-ahead-bytes", version: "v1", deliveryType: remoteRangeDeliveryType(chunkSize) },
+        chunkSize,
+        readAheadChunks: 513, // 513 MiB > 512 MiB cap
+        metadataStore: new MemoryMetadataStore(),
+        sparseCacheFactory: new MemorySparseCacheFactory(),
+      }),
+    ).rejects.toThrow(/readAhead bytes too large/i);
+  });
+
+  it("rejects excessive maxRetries", async () => {
+    const chunkSize = 1024 * 1024;
+    await expect(
+      RemoteRangeDisk.open("http://example.invalid/image.bin", {
+        cacheKeyParts: { imageId: "too-many-retries", version: "v1", deliveryType: remoteRangeDeliveryType(chunkSize) },
+        chunkSize,
+        maxRetries: 33,
+        metadataStore: new MemoryMetadataStore(),
+        sparseCacheFactory: new MemorySparseCacheFactory(),
+      }),
+    ).rejects.toThrow(/maxRetries.*max/i);
+  });
+
+  it("rejects excessive maxConcurrentFetches count", async () => {
+    const chunkSize = 1024 * 1024;
+    await expect(
+      RemoteRangeDisk.open("http://example.invalid/image.bin", {
+        cacheKeyParts: { imageId: "too-many-fetches", version: "v1", deliveryType: remoteRangeDeliveryType(chunkSize) },
+        chunkSize,
+        maxConcurrentFetches: 129,
+        metadataStore: new MemoryMetadataStore(),
+        sparseCacheFactory: new MemorySparseCacheFactory(),
+      }),
+    ).rejects.toThrow(/maxConcurrentFetches.*max/i);
+  });
+
+  it("rejects excessive maxConcurrentFetches byte volume", async () => {
+    const chunkSize = 8 * 1024 * 1024; // 8 MiB
+    await expect(
+      RemoteRangeDisk.open("http://example.invalid/image.bin", {
+        cacheKeyParts: { imageId: "too-many-inflight-bytes", version: "v1", deliveryType: remoteRangeDeliveryType(chunkSize) },
+        chunkSize,
+        maxConcurrentFetches: 65, // 65 * 8 MiB = 520 MiB > 512 MiB cap
+        metadataStore: new MemoryMetadataStore(),
+        sparseCacheFactory: new MemorySparseCacheFactory(),
+      }),
+    ).rejects.toThrow(/inflight bytes too large/i);
+  });
+
   it("single read triggers exactly one Range fetch", async () => {
     const chunkSize = 1024 * 1024;
     const data = makeTestData(2 * chunkSize);

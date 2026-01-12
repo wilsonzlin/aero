@@ -14,6 +14,15 @@ import {
 export type ByteRange = { start: number; end: number };
 
 export const REMOTE_DISK_SECTOR_SIZE = 512;
+// Defensive bounds for remote range streaming. `RemoteStreamingDisk` downloads whole blocks into
+// memory, so extremely large `blockSize` or aggressive prefetch settings can cause pathological
+// allocations and background work.
+//
+// Keep these in sync with the remote storage layer (`RemoteRangeDisk` / `RemoteChunkedDisk`) where
+// possible.
+const MAX_REMOTE_BLOCK_SIZE_BYTES = 64 * 1024 * 1024; // 64 MiB
+const MAX_REMOTE_PREFETCH_SEQUENTIAL_BLOCKS = 1024;
+const MAX_REMOTE_PREFETCH_SEQUENTIAL_BYTES = 512 * 1024 * 1024; // 512 MiB
 
 function rangeLen(r: ByteRange): number {
   return r.end - r.start;
@@ -473,14 +482,6 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
   ): Promise<RemoteStreamingDisk> {
     if (!params.sourceId) throw new Error("sourceId must not be empty");
 
-    const probe = await probeRemoteDisk(params.lease.url, { credentials: params.lease.credentialsMode });
-    if (!probe.partialOk) {
-      throw new Error(
-        "Remote server does not appear to support HTTP Range requests (required). " +
-          "Ensure it returns 206 Partial Content and exposes Content-Range via CORS.",
-      );
-    }
-
     const resolvedCacheLimitBytes =
       options.cacheLimitBytes === undefined ? 512 * 1024 * 1024 : options.cacheLimitBytes;
 
@@ -495,6 +496,11 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
     if (!Number.isSafeInteger(resolved.blockSize) || resolved.blockSize <= 0) {
       throw new Error(`Invalid blockSize=${resolved.blockSize}`);
     }
+    if (resolved.blockSize > MAX_REMOTE_BLOCK_SIZE_BYTES) {
+      throw new Error(
+        `blockSize too large: max=${MAX_REMOTE_BLOCK_SIZE_BYTES} got=${resolved.blockSize}`,
+      );
+    }
     if (resolved.blockSize % REMOTE_DISK_SECTOR_SIZE !== 0) {
       throw new Error(`blockSize must be a multiple of ${REMOTE_DISK_SECTOR_SIZE}`);
     }
@@ -506,6 +512,17 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
     if (!Number.isSafeInteger(resolved.prefetchSequentialBlocks) || resolved.prefetchSequentialBlocks < 0) {
       throw new Error(`Invalid prefetchSequentialBlocks=${resolved.prefetchSequentialBlocks}`);
     }
+    if (resolved.prefetchSequentialBlocks > MAX_REMOTE_PREFETCH_SEQUENTIAL_BLOCKS) {
+      throw new Error(
+        `prefetchSequentialBlocks too large: max=${MAX_REMOTE_PREFETCH_SEQUENTIAL_BLOCKS} got=${resolved.prefetchSequentialBlocks}`,
+      );
+    }
+    const prefetchBytes = BigInt(resolved.prefetchSequentialBlocks) * BigInt(resolved.blockSize);
+    if (prefetchBytes > BigInt(MAX_REMOTE_PREFETCH_SEQUENTIAL_BYTES)) {
+      throw new Error(
+        `prefetch bytes too large: max=${MAX_REMOTE_PREFETCH_SEQUENTIAL_BYTES} got=${prefetchBytes.toString()}`,
+      );
+    }
     if (!Number.isSafeInteger(resolved.leaseRefreshMarginMs) || resolved.leaseRefreshMarginMs < 0) {
       throw new Error(`Invalid leaseRefreshMarginMs=${resolved.leaseRefreshMarginMs}`);
     }
@@ -515,6 +532,16 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
       if (!Number.isSafeInteger(expectedSizeBytes) || expectedSizeBytes <= 0) {
         throw new Error(`Invalid expectedSizeBytes=${expectedSizeBytes}`);
       }
+    }
+
+    const probe = await probeRemoteDisk(params.lease.url, { credentials: params.lease.credentialsMode });
+    if (!probe.partialOk) {
+      throw new Error(
+        "Remote server does not appear to support HTTP Range requests (required). " +
+          "Ensure it returns 206 Partial Content and exposes Content-Range via CORS.",
+      );
+    }
+    if (expectedSizeBytes !== undefined) {
       if (expectedSizeBytes !== probe.size) {
         throw new Error(`Remote disk size mismatch: expected=${expectedSizeBytes} actual=${probe.size}`);
       }

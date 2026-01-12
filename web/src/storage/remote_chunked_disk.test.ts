@@ -234,6 +234,109 @@ describe("RemoteChunkedDisk", () => {
     ).rejects.toThrow(/chunkSize.*max/i);
   });
 
+  it("rejects excessive prefetchSequentialChunks", async () => {
+    await expect(
+      RemoteChunkedDisk.open("https://example.invalid/manifest.json", {
+        store: new TestMemoryStore(),
+        prefetchSequentialChunks: 1025,
+      }),
+    ).rejects.toThrow(/prefetchSequentialChunks.*max/i);
+  });
+
+  it("rejects excessive maxAttempts", async () => {
+    await expect(
+      RemoteChunkedDisk.open("https://example.invalid/manifest.json", {
+        store: new TestMemoryStore(),
+        maxAttempts: 33,
+      }),
+    ).rejects.toThrow(/maxAttempts.*max/i);
+  });
+
+  it("rejects excessive maxConcurrentFetches count", async () => {
+    await expect(
+      RemoteChunkedDisk.open("https://example.invalid/manifest.json", {
+        store: new TestMemoryStore(),
+        maxConcurrentFetches: 129,
+      }),
+    ).rejects.toThrow(/maxConcurrentFetches.*max/i);
+  });
+
+  it("rejects excessive maxConcurrentFetches byte volume", async () => {
+    const chunkSize = 8 * 1024 * 1024; // 8 MiB
+    const chunkCount = 1;
+    const totalSize = chunkSize * chunkCount;
+
+    const manifest = {
+      schema: "aero.chunked-disk-image.v1",
+      imageId: "test",
+      version: "v1",
+      mimeType: "application/octet-stream",
+      totalSize,
+      chunkSize,
+      chunkCount,
+      chunkIndexWidth: 1,
+    };
+
+    const { baseUrl, close } = await withServer((_req, res) => {
+      const url = new URL(_req.url ?? "/", "http://localhost");
+      if (url.pathname === "/manifest.json") {
+        res.statusCode = 200;
+        res.setHeader("content-type", "application/json");
+        res.end(JSON.stringify(manifest));
+        return;
+      }
+      res.statusCode = 404;
+      res.end("not found");
+    });
+    closeServer = close;
+
+    await expect(
+      RemoteChunkedDisk.open(`${baseUrl}/manifest.json`, {
+        store: new TestMemoryStore(),
+        maxConcurrentFetches: 65, // 65 * 8 MiB = 520 MiB > 512 MiB cap
+        prefetchSequentialChunks: 0,
+      }),
+    ).rejects.toThrow(/inflight bytes too large/i);
+  });
+
+  it("rejects excessive prefetchSequentialChunks byte volume", async () => {
+    const chunkSize = 64 * 1024 * 1024; // 64 MiB
+    const chunkCount = 1;
+    const totalSize = chunkSize * chunkCount;
+
+    const manifest = {
+      schema: "aero.chunked-disk-image.v1",
+      imageId: "test",
+      version: "v1",
+      mimeType: "application/octet-stream",
+      totalSize,
+      chunkSize,
+      chunkCount,
+      chunkIndexWidth: 1,
+    };
+
+    const { baseUrl, close } = await withServer((_req, res) => {
+      const url = new URL(_req.url ?? "/", "http://localhost");
+      if (url.pathname === "/manifest.json") {
+        res.statusCode = 200;
+        res.setHeader("content-type", "application/json");
+        res.end(JSON.stringify(manifest));
+        return;
+      }
+      res.statusCode = 404;
+      res.end("not found");
+    });
+    closeServer = close;
+
+    await expect(
+      RemoteChunkedDisk.open(`${baseUrl}/manifest.json`, {
+        store: new TestMemoryStore(),
+        maxConcurrentFetches: 1,
+        prefetchSequentialChunks: 9, // 9 * 64 MiB = 576 MiB > 512 MiB cap
+      }),
+    ).rejects.toThrow(/prefetch bytes too large/i);
+  });
+
   it("maps byte offsets to chunk indexes and serves data from cache on repeat reads", async () => {
     const chunkSize = 1024; // multiple of 512
     const totalSize = 2560; // 2 full chunks + 1 half chunk
