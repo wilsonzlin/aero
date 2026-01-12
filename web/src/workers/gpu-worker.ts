@@ -54,6 +54,8 @@ import {
   type SharedFramebufferLayout,
 } from "../ipc/shared-layout";
 
+import { SCANOUT_SOURCE_WDDM, snapshotScanoutState, type ScanoutStateSnapshot } from "../ipc/scanout_state";
+
 import {
   FRAMEBUFFER_FORMAT_RGBA8888,
   FRAMEBUFFER_MAGIC,
@@ -135,6 +137,8 @@ let latestFrameTimings: FrameTimingsReport | null = null;
 let commandRing: RingBuffer | null = null;
 let eventRing: RingBuffer | null = null;
 let runtimePollTimer: number | null = null;
+
+let scanoutState: Int32Array | null = null;
 
 // Optional `present()` entrypoint supplied by a dynamically imported module.
 // When unset, the worker uses the built-in presenter backends.
@@ -1461,6 +1465,14 @@ const presentOnce = async (): Promise<boolean> => {
   try {
     const frame = getCurrentFrameInfo();
     const dirtyRects = frame?.dirtyRects ?? null;
+    let scanoutSnap: ScanoutStateSnapshot | null = null;
+    if (scanoutState) {
+      try {
+        scanoutSnap = snapshotScanoutState(scanoutState);
+      } catch {
+        scanoutSnap = null;
+      }
+    }
     if (isDeviceLost) return false;
 
     const clearSharedFramebufferDirty = () => {
@@ -1489,6 +1501,30 @@ const presentOnce = async (): Promise<boolean> => {
     }
 
     if (presenter) {
+      // If scanoutState indicates WDDM owns scanout and we have a most-recent AeroGPU frame,
+      // prefer that over the legacy shared framebuffer. This prevents "flash back" to legacy
+      // output after WDDM has claimed scanout, matching `docs/16-aerogpu-vga-vesa-compat.md` §5.
+      if (scanoutSnap?.source === SCANOUT_SOURCE_WDDM) {
+        const last = aerogpuLastPresentedFrame;
+        if (last) {
+          if (last.width !== presenterSrcWidth || last.height !== presenterSrcHeight) {
+            presenterSrcWidth = last.width;
+            presenterSrcHeight = last.height;
+            if (presenter.backend === "webgpu") surfaceReconfigures += 1;
+            presenter.resize(last.width, last.height, outputDpr);
+            presenterNeedsFullUpload = true;
+          }
+
+          if (presenterNeedsFullUpload || aerogpuLastOutputSource !== "aerogpu") {
+            presenter.present(last.rgba8, last.width * BYTES_PER_PIXEL_RGBA8);
+            presenterNeedsFullUpload = false;
+          }
+          aerogpuLastOutputSource = "aerogpu";
+          clearSharedFramebufferDirty();
+          return true;
+        }
+      }
+
       if (!frame) return false;
 
       if (frame.width !== presenterSrcWidth || frame.height !== presenterSrcHeight) {
@@ -1519,7 +1555,11 @@ const presentOnce = async (): Promise<boolean> => {
 
     // Headless: treat as successfully presented so the shared frame state can
     // transition back to PRESENTED and avoid DIRTY→tick spam.
-    aerogpuLastOutputSource = "framebuffer";
+    if (scanoutSnap?.source === SCANOUT_SOURCE_WDDM && aerogpuLastPresentedFrame) {
+      aerogpuLastOutputSource = "aerogpu";
+    } else {
+      aerogpuLastOutputSource = "framebuffer";
+    }
     clearSharedFramebufferDirty();
     return true;
   } finally {
@@ -2048,7 +2088,8 @@ const handleRuntimeInit = (init: WorkerInitMessage) => {
   };
   const views = createSharedMemoryViews(segments);
   status = views.status;
-  (globalThis as unknown as { __aeroScanoutState?: Int32Array }).__aeroScanoutState = views.scanoutStateI32;
+  scanoutState = views.scanoutStateI32 ?? null;
+  (globalThis as unknown as { __aeroScanoutState?: Int32Array }).__aeroScanoutState = scanoutState ?? undefined;
   // Guest physical addresses (GPAs) in AeroGPU submissions are byte offsets into this view.
   guestU8 = views.guestU8;
   if (aerogpuWasm) {
