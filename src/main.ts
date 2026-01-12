@@ -1327,6 +1327,11 @@ function renderAudioPanel(): HTMLElement {
       try {
         workerCoordinator.start(workerConfig);
         workerCoordinator.getIoWorker()?.postMessage({ type: 'setBootDisks', mounts: {}, hdd: null, cd: null });
+        // This demo configures the *IO worker*'s HDA device to consume samples from the synthetic
+        // microphone ring and DMA-write captured PCM into guest RAM. Even though the coordinator is
+        // running in "demo mode" (no active disk image), we must explicitly route the mic ring to
+        // the IO worker so the HDA capture device is the sole consumer (SPSC).
+        workerCoordinator.setMicrophoneRingBufferOwner("io");
         workerCoordinator.setMicrophoneRingBuffer(syntheticMic.ringBuffer, syntheticMic.sampleRate);
         workerCoordinator.setAudioOutputRingBuffer(
           output.ringBuffer.buffer,
