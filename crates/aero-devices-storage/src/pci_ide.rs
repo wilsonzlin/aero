@@ -1572,3 +1572,40 @@ pub fn register_piix3_ide_ports(bus: &mut IoPortBus, ide: SharedPiix3IdePciDevic
         bus.register(port, Box::new(Piix3IdePort::new(ide.clone(), port)));
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ide_controller_reset_clears_control_registers_and_bus_master_state() {
+        let mut ctl = IdeController::new(0xFFF0);
+
+        // Seed device control registers; `Channel::reset()` does not clear these, so the
+        // controller-level reset must.
+        ctl.primary.control = 0xAA;
+        ctl.secondary.control = 0x55;
+
+        // Seed Bus Master register blocks with non-zero command + PRD pointers.
+        ctl.bus_master[0].set_drive_dma_capable(0, true);
+        ctl.bus_master[1].set_drive_dma_capable(1, true);
+        ctl.bus_master[0].write(0, 1, 0x09);
+        ctl.bus_master[0].write(4, 4, 0x1234_5678);
+        ctl.bus_master[1].write(0, 1, 0x09);
+        ctl.bus_master[1].write(4, 4, 0x8765_4321);
+
+        ctl.reset();
+
+        assert_eq!(ctl.primary.control, 0);
+        assert_eq!(ctl.secondary.control, 0);
+
+        assert_eq!(ctl.bus_master[0].read(0, 1), 0);
+        assert_eq!(ctl.bus_master[0].read(4, 4), 0);
+        assert_eq!(ctl.bus_master[1].read(0, 1), 0);
+        assert_eq!(ctl.bus_master[1].read(4, 4), 0);
+
+        // DMA capability bits should remain stable across controller resets.
+        assert_eq!(ctl.bus_master[0].read(2, 1) & (1 << 5), 1 << 5);
+        assert_eq!(ctl.bus_master[1].read(2, 1) & (1 << 6), 1 << 6);
+    }
+}
