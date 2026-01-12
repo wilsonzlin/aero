@@ -96,6 +96,8 @@ Negative test (invalid METHOD_NEITHER pointer; should fail cleanly without crash
 ```bat
 hidtest.exe --keyboard --ioctl-bad-xfer-packet
 hidtest.exe --keyboard --ioctl-bad-write-report
+hidtest.exe --keyboard --ioctl-bad-set-output-xfer-packet
+hidtest.exe --keyboard --ioctl-bad-set-output-report
 ```
 
 Negative test (invalid `HidD_SetOutputReport` buffer pointer; should fail cleanly without crashing the guest):

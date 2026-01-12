@@ -47,6 +47,11 @@
 #define IOCTL_HID_WRITE_REPORT HID_CTL_CODE(3)
 #endif
 
+#ifndef IOCTL_HID_SET_OUTPUT_REPORT
+// IOCTL_HID_SET_OUTPUT_REPORT is typically HID_CTL_CODE(0x0B) (METHOD_NEITHER).
+#define IOCTL_HID_SET_OUTPUT_REPORT HID_CTL_CODE(0x0B)
+#endif
+
 // Historical/alternate function code seen in some header sets. If our primary
 // definition fails at runtime, we try this as a fallback.
 #ifndef IOCTL_HID_GET_REPORT_DESCRIPTOR_ALT
@@ -96,6 +101,8 @@ typedef struct OPTIONS {
     int led_cycle;
     int ioctl_bad_xfer_packet;
     int ioctl_bad_write_report;
+    int ioctl_bad_set_output_xfer_packet;
+    int ioctl_bad_set_output_report;
     int hidd_bad_set_output_report;
     int dump_desc;
     int want_keyboard;
@@ -364,7 +371,8 @@ static void print_usage(void)
     wprintf(L"  hidtest.exe [--list]\n");
     wprintf(L"  hidtest.exe [--keyboard|--mouse] [--index N] [--vid 0x1234] [--pid 0x5678]\n");
     wprintf(L"             [--led 0x07 | --led-hidd 0x07 | --led-cycle] [--dump-desc]\n");
-    wprintf(L"             [--ioctl-bad-xfer-packet | --ioctl-bad-write-report | --hidd-bad-set-output-report]\n");
+    wprintf(L"             [--ioctl-bad-xfer-packet | --ioctl-bad-write-report]\n");
+    wprintf(L"             [--ioctl-bad-set-output-xfer-packet | --ioctl-bad-set-output-report | --hidd-bad-set-output-report]\n");
     wprintf(L"\n");
     wprintf(L"Options:\n");
     wprintf(L"  --list          List all present HID interfaces and exit\n");
@@ -384,6 +392,12 @@ static void print_usage(void)
     wprintf(L"                 (negative test for METHOD_NEITHER hardening; should fail, no crash)\n");
     wprintf(L"  --ioctl-bad-write-report\n");
     wprintf(L"                 Send IOCTL_HID_WRITE_REPORT with an invalid reportBuffer pointer\n");
+    wprintf(L"                 (negative test for METHOD_NEITHER hardening; should fail, no crash)\n");
+    wprintf(L"  --ioctl-bad-set-output-xfer-packet\n");
+    wprintf(L"                 Send IOCTL_HID_SET_OUTPUT_REPORT with an invalid HID_XFER_PACKET pointer\n");
+    wprintf(L"                 (negative test for METHOD_NEITHER hardening; should fail, no crash)\n");
+    wprintf(L"  --ioctl-bad-set-output-report\n");
+    wprintf(L"                 Send IOCTL_HID_SET_OUTPUT_REPORT with an invalid reportBuffer pointer\n");
     wprintf(L"                 (negative test for METHOD_NEITHER hardening; should fail, no crash)\n");
     wprintf(L"  --hidd-bad-set-output-report\n");
     wprintf(L"                 Call HidD_SetOutputReport with an invalid buffer pointer\n");
@@ -1186,6 +1200,70 @@ static void ioctl_bad_xfer_packet(const SELECTED_DEVICE *dev)
     print_last_error_w(L"DeviceIoControl(IOCTL_HID_WRITE_REPORT bad HID_XFER_PACKET)");
 }
 
+static void ioctl_bad_set_output_xfer_packet(const SELECTED_DEVICE *dev)
+{
+    DWORD bytes = 0;
+    BOOL ok;
+
+    if (dev == NULL || dev->handle == INVALID_HANDLE_VALUE) {
+        wprintf(L"Invalid device handle\n");
+        return;
+    }
+
+    if ((dev->desired_access & GENERIC_WRITE) == 0) {
+        wprintf(L"Device was not opened with GENERIC_WRITE; cannot issue IOCTL_HID_SET_OUTPUT_REPORT\n");
+        return;
+    }
+
+    wprintf(L"\nIssuing IOCTL_HID_SET_OUTPUT_REPORT with invalid HID_XFER_PACKET pointer...\n");
+    ok = DeviceIoControl(dev->handle, IOCTL_HID_SET_OUTPUT_REPORT, (PVOID)(ULONG_PTR)0x1, 64, NULL, 0, &bytes, NULL);
+    if (ok) {
+        wprintf(L"Unexpected success (bytes=%lu)\n", bytes);
+        return;
+    }
+
+    print_last_error_w(L"DeviceIoControl(IOCTL_HID_SET_OUTPUT_REPORT bad HID_XFER_PACKET)");
+}
+
+static void ioctl_bad_set_output_report(const SELECTED_DEVICE *dev)
+{
+    typedef struct HID_XFER_PACKET_MIN {
+        PUCHAR reportBuffer;
+        ULONG reportBufferLen;
+        UCHAR reportId;
+    } HID_XFER_PACKET_MIN;
+
+    BYTE inbuf[64];
+    HID_XFER_PACKET_MIN *pkt;
+    DWORD bytes = 0;
+    BOOL ok;
+
+    if (dev == NULL || dev->handle == INVALID_HANDLE_VALUE) {
+        wprintf(L"Invalid device handle\n");
+        return;
+    }
+
+    if ((dev->desired_access & GENERIC_WRITE) == 0) {
+        wprintf(L"Device was not opened with GENERIC_WRITE; cannot issue IOCTL_HID_SET_OUTPUT_REPORT\n");
+        return;
+    }
+
+    ZeroMemory(inbuf, sizeof(inbuf));
+    pkt = (HID_XFER_PACKET_MIN *)inbuf;
+    pkt->reportId = 1; // keyboard
+    pkt->reportBufferLen = 2;
+    pkt->reportBuffer = (PUCHAR)(ULONG_PTR)0x1; // invalid user pointer
+
+    wprintf(L"\nIssuing IOCTL_HID_SET_OUTPUT_REPORT with invalid reportBuffer=%p...\n", pkt->reportBuffer);
+    ok = DeviceIoControl(dev->handle, IOCTL_HID_SET_OUTPUT_REPORT, inbuf, (DWORD)sizeof(inbuf), NULL, 0, &bytes, NULL);
+    if (ok) {
+        wprintf(L"Unexpected success (bytes=%lu)\n", bytes);
+        return;
+    }
+
+    print_last_error_w(L"DeviceIoControl(IOCTL_HID_SET_OUTPUT_REPORT bad reportBuffer)");
+}
+
 static void hidd_bad_set_output_report(const SELECTED_DEVICE *dev)
 {
     BOOL ok;
@@ -1254,6 +1332,16 @@ int wmain(int argc, wchar_t **argv)
 
         if (wcscmp(argv[i], L"--ioctl-bad-write-report") == 0) {
             opt.ioctl_bad_write_report = 1;
+            continue;
+        }
+
+        if (wcscmp(argv[i], L"--ioctl-bad-set-output-xfer-packet") == 0) {
+            opt.ioctl_bad_set_output_xfer_packet = 1;
+            continue;
+        }
+
+        if (wcscmp(argv[i], L"--ioctl-bad-set-output-report") == 0) {
+            opt.ioctl_bad_set_output_report = 1;
             continue;
         }
 
@@ -1368,6 +1456,34 @@ int wmain(int argc, wchar_t **argv)
         wprintf(L"--ioctl-bad-write-report and --hidd-bad-set-output-report are mutually exclusive.\n");
         return 2;
     }
+    if (opt.have_led_mask && opt.ioctl_bad_set_output_xfer_packet) {
+        wprintf(L"--led/--led-hidd and --ioctl-bad-set-output-xfer-packet are mutually exclusive.\n");
+        return 2;
+    }
+    if (opt.have_led_mask && opt.ioctl_bad_set_output_report) {
+        wprintf(L"--led/--led-hidd and --ioctl-bad-set-output-report are mutually exclusive.\n");
+        return 2;
+    }
+    if (opt.ioctl_bad_set_output_xfer_packet && opt.ioctl_bad_set_output_report) {
+        wprintf(L"--ioctl-bad-set-output-xfer-packet and --ioctl-bad-set-output-report are mutually exclusive.\n");
+        return 2;
+    }
+    if (opt.ioctl_bad_set_output_xfer_packet && opt.hidd_bad_set_output_report) {
+        wprintf(L"--ioctl-bad-set-output-xfer-packet and --hidd-bad-set-output-report are mutually exclusive.\n");
+        return 2;
+    }
+    if (opt.ioctl_bad_set_output_report && opt.hidd_bad_set_output_report) {
+        wprintf(L"--ioctl-bad-set-output-report and --hidd-bad-set-output-report are mutually exclusive.\n");
+        return 2;
+    }
+    if (opt.ioctl_bad_set_output_xfer_packet && (opt.ioctl_bad_xfer_packet || opt.ioctl_bad_write_report)) {
+        wprintf(L"--ioctl-bad-set-output-xfer-packet is mutually exclusive with IOCTL_HID_WRITE_REPORT negative tests.\n");
+        return 2;
+    }
+    if (opt.ioctl_bad_set_output_report && (opt.ioctl_bad_xfer_packet || opt.ioctl_bad_write_report)) {
+        wprintf(L"--ioctl-bad-set-output-report is mutually exclusive with IOCTL_HID_WRITE_REPORT negative tests.\n");
+        return 2;
+    }
 
     if (!enumerate_hid_devices(&opt, &dev)) {
         wprintf(L"No matching HID devices found.\n");
@@ -1429,6 +1545,16 @@ int wmain(int argc, wchar_t **argv)
     }
     if (opt.ioctl_bad_xfer_packet) {
         ioctl_bad_xfer_packet(&dev);
+        free_selected_device(&dev);
+        return 0;
+    }
+    if (opt.ioctl_bad_set_output_xfer_packet) {
+        ioctl_bad_set_output_xfer_packet(&dev);
+        free_selected_device(&dev);
+        return 0;
+    }
+    if (opt.ioctl_bad_set_output_report) {
+        ioctl_bad_set_output_report(&dev);
         free_selected_device(&dev);
         return 0;
     }

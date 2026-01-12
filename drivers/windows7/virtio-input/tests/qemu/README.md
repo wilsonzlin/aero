@@ -243,6 +243,8 @@ Copy `hidtest.exe` into the guest and run it from an elevated Command Prompt.
    ```bat
    hidtest.exe --keyboard --ioctl-bad-xfer-packet
    hidtest.exe --keyboard --ioctl-bad-write-report
+   hidtest.exe --keyboard --ioctl-bad-set-output-xfer-packet
+   hidtest.exe --keyboard --ioctl-bad-set-output-report
    hidtest.exe --keyboard --hidd-bad-set-output-report
    ```
 
