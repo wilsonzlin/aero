@@ -833,30 +833,131 @@ impl AerogpuD3d11Executor {
             .get(&texture_id)
             .ok_or_else(|| anyhow!("unknown texture {texture_id}"))?;
 
-        let needs_bgra_swizzle = match texture.desc.format {
-            wgpu::TextureFormat::Rgba8Unorm | wgpu::TextureFormat::Rgba8UnormSrgb => false,
-            wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb => true,
-            other => bail!(
-                "read_texture_rgba8 only supports Rgba8/Bgra8 Unorm(+Srgb) formats (got {other:?})"
-            ),
-        };
-
         let width = texture.desc.width;
         let height = texture.desc.height;
 
-        let bytes_per_pixel = 4u32;
-        let unpadded_bytes_per_row = width
-            .checked_mul(bytes_per_pixel)
-            .ok_or_else(|| anyhow!("read_texture_rgba8: bytes_per_row overflow"))?;
-        let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-        let padded_bytes_per_row = unpadded_bytes_per_row
-            .checked_add(align - 1)
-            .map(|v| v / align)
-            .and_then(|v| v.checked_mul(align))
-            .ok_or_else(|| anyhow!("read_texture_rgba8: padded bytes_per_row overflow"))?;
-        let buffer_size = (padded_bytes_per_row as u64)
-            .checked_mul(height as u64)
-            .ok_or_else(|| anyhow!("read_texture_rgba8: staging buffer size overflow"))?;
+        // Compute the buffer layout based on the source format. For block-compressed textures, the
+        // copy layout uses block rows (4x4 blocks for BC formats).
+        let (padded_bytes_per_row, rows_per_image, buffer_size, bc_readback_info) =
+            match texture.desc.format {
+                wgpu::TextureFormat::Rgba8Unorm
+                | wgpu::TextureFormat::Rgba8UnormSrgb
+                | wgpu::TextureFormat::Bgra8Unorm
+                | wgpu::TextureFormat::Bgra8UnormSrgb => {
+                    let bytes_per_pixel = 4u32;
+                    let unpadded_bytes_per_row = width
+                        .checked_mul(bytes_per_pixel)
+                        .ok_or_else(|| anyhow!("read_texture_rgba8: bytes_per_row overflow"))?;
+                    let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+                    let padded_bytes_per_row = unpadded_bytes_per_row
+                        .checked_add(align - 1)
+                        .map(|v| v / align)
+                        .and_then(|v| v.checked_mul(align))
+                        .ok_or_else(|| anyhow!("read_texture_rgba8: padded bytes_per_row overflow"))?;
+                    let buffer_size = (padded_bytes_per_row as u64)
+                        .checked_mul(height as u64)
+                        .ok_or_else(|| anyhow!("read_texture_rgba8: staging buffer size overflow"))?;
+                    (
+                        padded_bytes_per_row,
+                        height,
+                        buffer_size,
+                        None::<(AerogpuBcFormat, u32, u32)>,
+                    )
+                }
+                wgpu::TextureFormat::Bc1RgbaUnorm | wgpu::TextureFormat::Bc1RgbaUnormSrgb => {
+                    let block_bytes = 8u32;
+                    let blocks_w = width.div_ceil(4);
+                    let blocks_h = height.div_ceil(4);
+                    let tight_bpr = blocks_w
+                        .checked_mul(block_bytes)
+                        .ok_or_else(|| anyhow!("read_texture_rgba8: BC bytes_per_row overflow"))?;
+                    let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+                    let padded_bpr = tight_bpr
+                        .checked_add(align - 1)
+                        .map(|v| v / align)
+                        .and_then(|v| v.checked_mul(align))
+                        .ok_or_else(|| anyhow!("read_texture_rgba8: BC padded bytes_per_row overflow"))?;
+                    let buffer_size = (padded_bpr as u64)
+                        .checked_mul(blocks_h as u64)
+                        .ok_or_else(|| anyhow!("read_texture_rgba8: BC staging buffer size overflow"))?;
+                    (
+                        padded_bpr,
+                        blocks_h,
+                        buffer_size,
+                        Some((AerogpuBcFormat::Bc1, tight_bpr, blocks_h)),
+                    )
+                }
+                wgpu::TextureFormat::Bc2RgbaUnorm | wgpu::TextureFormat::Bc2RgbaUnormSrgb => {
+                    let block_bytes = 16u32;
+                    let blocks_w = width.div_ceil(4);
+                    let blocks_h = height.div_ceil(4);
+                    let tight_bpr = blocks_w
+                        .checked_mul(block_bytes)
+                        .ok_or_else(|| anyhow!("read_texture_rgba8: BC bytes_per_row overflow"))?;
+                    let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+                    let padded_bpr = tight_bpr
+                        .checked_add(align - 1)
+                        .map(|v| v / align)
+                        .and_then(|v| v.checked_mul(align))
+                        .ok_or_else(|| anyhow!("read_texture_rgba8: BC padded bytes_per_row overflow"))?;
+                    let buffer_size = (padded_bpr as u64)
+                        .checked_mul(blocks_h as u64)
+                        .ok_or_else(|| anyhow!("read_texture_rgba8: BC staging buffer size overflow"))?;
+                    (
+                        padded_bpr,
+                        blocks_h,
+                        buffer_size,
+                        Some((AerogpuBcFormat::Bc2, tight_bpr, blocks_h)),
+                    )
+                }
+                wgpu::TextureFormat::Bc3RgbaUnorm | wgpu::TextureFormat::Bc3RgbaUnormSrgb => {
+                    let block_bytes = 16u32;
+                    let blocks_w = width.div_ceil(4);
+                    let blocks_h = height.div_ceil(4);
+                    let tight_bpr = blocks_w
+                        .checked_mul(block_bytes)
+                        .ok_or_else(|| anyhow!("read_texture_rgba8: BC bytes_per_row overflow"))?;
+                    let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+                    let padded_bpr = tight_bpr
+                        .checked_add(align - 1)
+                        .map(|v| v / align)
+                        .and_then(|v| v.checked_mul(align))
+                        .ok_or_else(|| anyhow!("read_texture_rgba8: BC padded bytes_per_row overflow"))?;
+                    let buffer_size = (padded_bpr as u64)
+                        .checked_mul(blocks_h as u64)
+                        .ok_or_else(|| anyhow!("read_texture_rgba8: BC staging buffer size overflow"))?;
+                    (
+                        padded_bpr,
+                        blocks_h,
+                        buffer_size,
+                        Some((AerogpuBcFormat::Bc3, tight_bpr, blocks_h)),
+                    )
+                }
+                wgpu::TextureFormat::Bc7RgbaUnorm | wgpu::TextureFormat::Bc7RgbaUnormSrgb => {
+                    let block_bytes = 16u32;
+                    let blocks_w = width.div_ceil(4);
+                    let blocks_h = height.div_ceil(4);
+                    let tight_bpr = blocks_w
+                        .checked_mul(block_bytes)
+                        .ok_or_else(|| anyhow!("read_texture_rgba8: BC bytes_per_row overflow"))?;
+                    let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+                    let padded_bpr = tight_bpr
+                        .checked_add(align - 1)
+                        .map(|v| v / align)
+                        .and_then(|v| v.checked_mul(align))
+                        .ok_or_else(|| anyhow!("read_texture_rgba8: BC padded bytes_per_row overflow"))?;
+                    let buffer_size = (padded_bpr as u64)
+                        .checked_mul(blocks_h as u64)
+                        .ok_or_else(|| anyhow!("read_texture_rgba8: BC staging buffer size overflow"))?;
+                    (
+                        padded_bpr,
+                        blocks_h,
+                        buffer_size,
+                        Some((AerogpuBcFormat::Bc7, tight_bpr, blocks_h)),
+                    )
+                }
+                other => bail!("read_texture_rgba8 does not support format {other:?}"),
+            };
 
         let staging = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("aero-d3d11 aerogpu_cmd read_texture staging"),
@@ -883,7 +984,7 @@ impl AerogpuD3d11Executor {
                 layout: wgpu::ImageDataLayout {
                     offset: 0,
                     bytes_per_row: Some(padded_bytes_per_row),
-                    rows_per_image: Some(height),
+                    rows_per_image: Some(rows_per_image),
                 },
             },
             wgpu::Extent3d {
@@ -908,41 +1009,94 @@ impl AerogpuD3d11Executor {
             .context("wgpu: map_async failed")?;
 
         let mapped = slice.get_mapped_range();
-        let out_len = (unpadded_bytes_per_row as u64)
-            .checked_mul(height as u64)
-            .ok_or_else(|| anyhow!("read_texture_rgba8: output size overflow"))?;
-        let out_len_usize: usize = out_len
-            .try_into()
-            .map_err(|_| anyhow!("read_texture_rgba8: output size out of range"))?;
-        let unpadded_bpr_usize: usize = unpadded_bytes_per_row
-            .try_into()
-            .map_err(|_| anyhow!("read_texture_rgba8: bytes_per_row out of range"))?;
         let padded_bpr_usize: usize = padded_bytes_per_row
             .try_into()
             .map_err(|_| anyhow!("read_texture_rgba8: padded bytes_per_row out of range"))?;
 
-        let mut out = Vec::with_capacity(out_len_usize);
-        for row in 0..height as usize {
-            let start = row
-                .checked_mul(padded_bpr_usize)
-                .ok_or_else(|| anyhow!("read_texture_rgba8: row offset overflow"))?;
-            let end = start
-                .checked_add(unpadded_bpr_usize)
-                .ok_or_else(|| anyhow!("read_texture_rgba8: row end overflow"))?;
-            out.extend_from_slice(
-                mapped
-                    .get(start..end)
-                    .ok_or_else(|| anyhow!("read_texture_rgba8: staging buffer too small"))?,
+        let out = if let Some((bc, tight_bpr, block_rows)) = bc_readback_info {
+            // Extract tight BC bytes (strip `bytes_per_row` padding) and CPU-decompress to RGBA8 so
+            // tests can validate BC textures even when compression features are enabled.
+            let tight_bpr_usize: usize = tight_bpr
+                .try_into()
+                .map_err(|_| anyhow!("read_texture_rgba8: BC bytes_per_row out of range"))?;
+            let block_rows_usize: usize = block_rows
+                .try_into()
+                .map_err(|_| anyhow!("read_texture_rgba8: BC rows out of range"))?;
+
+            let mut bc_bytes = Vec::with_capacity(
+                tight_bpr_usize
+                    .checked_mul(block_rows_usize)
+                    .ok_or_else(|| anyhow!("read_texture_rgba8: BC output size overflow"))?,
             );
-        }
+            for row in 0..block_rows_usize {
+                let start = row
+                    .checked_mul(padded_bpr_usize)
+                    .ok_or_else(|| anyhow!("read_texture_rgba8: BC row offset overflow"))?;
+                let end = start
+                    .checked_add(tight_bpr_usize)
+                    .ok_or_else(|| anyhow!("read_texture_rgba8: BC row end overflow"))?;
+                bc_bytes.extend_from_slice(
+                    mapped
+                        .get(start..end)
+                        .ok_or_else(|| anyhow!("read_texture_rgba8: BC staging buffer too small"))?,
+                );
+            }
+
+            match bc {
+                AerogpuBcFormat::Bc1 => aero_gpu::decompress_bc1_rgba8(width, height, &bc_bytes),
+                AerogpuBcFormat::Bc2 => aero_gpu::decompress_bc2_rgba8(width, height, &bc_bytes),
+                AerogpuBcFormat::Bc3 => aero_gpu::decompress_bc3_rgba8(width, height, &bc_bytes),
+                AerogpuBcFormat::Bc7 => aero_gpu::decompress_bc7_rgba8(width, height, &bc_bytes),
+            }
+        } else {
+            let needs_bgra_swizzle = match texture.desc.format {
+                wgpu::TextureFormat::Rgba8Unorm | wgpu::TextureFormat::Rgba8UnormSrgb => false,
+                wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb => true,
+                other => bail!(
+                    "read_texture_rgba8 only supports RGBA/BGRA formats or BC formats (got {other:?})"
+                ),
+            };
+
+            let bytes_per_pixel = 4u32;
+            let unpadded_bytes_per_row = width
+                .checked_mul(bytes_per_pixel)
+                .ok_or_else(|| anyhow!("read_texture_rgba8: bytes_per_row overflow"))?;
+            let out_len = (unpadded_bytes_per_row as u64)
+                .checked_mul(height as u64)
+                .ok_or_else(|| anyhow!("read_texture_rgba8: output size overflow"))?;
+            let out_len_usize: usize = out_len
+                .try_into()
+                .map_err(|_| anyhow!("read_texture_rgba8: output size out of range"))?;
+            let unpadded_bpr_usize: usize = unpadded_bytes_per_row
+                .try_into()
+                .map_err(|_| anyhow!("read_texture_rgba8: bytes_per_row out of range"))?;
+
+            let mut out = Vec::with_capacity(out_len_usize);
+            for row in 0..height as usize {
+                let start = row
+                    .checked_mul(padded_bpr_usize)
+                    .ok_or_else(|| anyhow!("read_texture_rgba8: row offset overflow"))?;
+                let end = start
+                    .checked_add(unpadded_bpr_usize)
+                    .ok_or_else(|| anyhow!("read_texture_rgba8: row end overflow"))?;
+                out.extend_from_slice(
+                    mapped
+                        .get(start..end)
+                        .ok_or_else(|| anyhow!("read_texture_rgba8: staging buffer too small"))?,
+                );
+            }
+
+            if needs_bgra_swizzle {
+                for px in out.chunks_exact_mut(4) {
+                    px.swap(0, 2);
+                }
+            }
+
+            out
+        };
+
         drop(mapped);
         staging.unmap();
-
-        if needs_bgra_swizzle {
-            for px in out.chunks_exact_mut(4) {
-                px.swap(0, 2);
-            }
-        }
 
         Ok(out)
     }
