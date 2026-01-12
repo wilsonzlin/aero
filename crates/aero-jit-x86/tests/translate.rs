@@ -709,3 +709,46 @@ block 0x6300:
 
     assert_block_ir(&code, entry, cpu, bus, expected);
 }
+
+#[test]
+fn group2_sar_al_imm1_decodes_d0() {
+    // mov al, 0x80
+    // sar al, 1  (D0 /7)
+    // ret
+    let code = [
+        0xb0, 0x80, // mov al, 0x80
+        0xd0, 0xf8, // sar al, 1
+        0xc3, // ret
+    ];
+
+    let entry = 0x6400u64;
+
+    let mut cpu = CpuState {
+        rip: entry,
+        ..Default::default()
+    };
+    write_gpr(&mut cpu, Gpr::Rsp, 0x9000);
+    // Ensure 8-bit writes preserve the rest of the 64-bit GPR.
+    write_gpr(&mut cpu, Gpr::Rax, 0x1122_3344_5566_7788);
+
+    let mut bus = SimpleBus::new(0x10000);
+    bus.write(0x9000, Width::W64, 0x7000);
+
+    let expected = "\
+block 0x6400:
+  v0 = const.i8 0x80
+  write.al v0
+  v1 = read.al
+  v2 = const.i8 0x1
+  v3 = sar.i8 v1, v2
+  write.al v3
+  v4 = read.rsp
+  v5 = load.i64 [v4]
+  v6 = const.i64 0x8
+  v7 = add.i64 v4, v6
+  write.rsp v7
+  term jmp [v5]
+";
+
+    assert_block_ir(&code, entry, cpu, bus, expected);
+}
