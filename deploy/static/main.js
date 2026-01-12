@@ -93,10 +93,25 @@ try {
   const el = document.querySelector("#session");
   el.textContent = sessionOk ? "ok" : `unexpected (${res.status})`;
   el.className = sessionOk ? "ok" : "bad";
+
+  const l2LimitsEl = document.querySelector("#session-l2-limits");
+  const maxFramePayloadBytes = sessionJson?.limits?.l2?.maxFramePayloadBytes;
+  const maxControlPayloadBytes = sessionJson?.limits?.l2?.maxControlPayloadBytes;
+  if (typeof maxFramePayloadBytes === "number" && typeof maxControlPayloadBytes === "number") {
+    l2LimitsEl.textContent = `frame=${maxFramePayloadBytes} control=${maxControlPayloadBytes}`;
+    l2LimitsEl.className = "ok";
+  } else {
+    l2LimitsEl.textContent = sessionOk ? "missing" : "n/a";
+    l2LimitsEl.className = sessionOk ? "bad" : "";
+  }
 } catch (err) {
   const el = document.querySelector("#session");
   el.textContent = "failed";
   el.className = "bad";
+
+  const l2LimitsEl = document.querySelector("#session-l2-limits");
+  l2LimitsEl.textContent = "n/a";
+  l2LimitsEl.className = "";
 }
 
 try {
