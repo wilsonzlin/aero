@@ -19,6 +19,10 @@
   This page is intended for quick manual verification that IndexedDB is usable as a sparse block
   store when OPFS is unavailable.
 </p>
+<p>
+  Note: IndexedDB is async-only and does not currently back the synchronous Rust disk/controller
+  path (which expects OPFS sync access handles). This page is a host-side diagnostic only.
+</p>
 
 <pre id="log">Running…</pre>
 
@@ -93,4 +97,3 @@
     log(`Self-test: FAIL (${e && e.name ? e.name : e})`);
   }
 </script>
-
