@@ -1,6 +1,6 @@
 # Windows 7 Driver Troubleshooting (Aero Guest Tools)
 
-This document covers common Windows 7 issues after installing **Aero Guest Tools** and switching the VM from baseline emulated devices (**AHCI/e1000/VGA**) to paravirtual devices (**virtio + Aero GPU**).
+This document covers common Windows 7 issues after installing **Aero Guest Tools** and switching the VM from baseline emulated devices (**AHCI/IDE/e1000/VGA**) to paravirtual devices (**virtio + Aero GPU**).
 
 If you have not installed Guest Tools yet, start here:
 

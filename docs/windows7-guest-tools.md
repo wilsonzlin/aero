@@ -139,7 +139,7 @@ Recommended (but optional): take a snapshot/checkpoint here if your host environ
 
 ### Optional (recommended for x64): install SHA-2 updates before Guest Tools
 
-If you expect to use **SHA-256 / SHA-2-signed** driver packages, install the required SHA-2 updates (commonly **KB3033929**, and sometimes also **KB4474419**) while you are still on baseline devices (AHCI/e1000/VGA). This avoids confusing “unsigned driver” failures later.
+If you expect to use **SHA-256 / SHA-2-signed** driver packages, install the required SHA-2 updates (commonly **KB3033929**, and sometimes also **KB4474419**) while you are still on baseline devices (AHCI/IDE/e1000/VGA). This avoids confusing “unsigned driver” failures later.
 
 See: [`docs/windows7-driver-troubleshooting.md`](./windows7-driver-troubleshooting.md#issue-missing-kb3033929-sha-256-signature-support)
 
