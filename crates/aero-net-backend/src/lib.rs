@@ -22,6 +22,14 @@ pub trait NetworkBackend {
     /// Transmit a guest → host Ethernet frame.
     fn transmit(&mut self, frame: Vec<u8>);
 
+    /// Best-effort stats for the ring-buffer-backed [`L2TunnelRingBackend`].
+    ///
+    /// Most backends do not provide these stats; the default implementation returns `None`.
+    /// This is primarily used for debugging/instrumentation in host glue.
+    fn l2_ring_stats(&self) -> Option<L2TunnelRingBackendStats> {
+        None
+    }
+
     /// Poll for a host → guest Ethernet frame.
     ///
     /// Backends may return immediate responses (ARP/DHCP/DNS, etc.) when the guest transmits,
