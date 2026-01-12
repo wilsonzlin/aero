@@ -417,6 +417,7 @@ function computeInterfaceOptionsLength(desc: PcapngInterfaceDescription): number
   let len = 0;
   if (desc.name !== undefined) {
     const bytes = textEncoder.encode(desc.name);
+    assertU16Len(bytes.byteLength, "if_name option length");
     len += 4 + bytes.byteLength + pad4(bytes.byteLength);
   }
   if (desc.tsResolPower10 !== undefined) {
@@ -431,6 +432,7 @@ function computeInterfaceOptionsLength(desc: PcapngInterfaceDescription): number
 function writeInterfaceOptions(w: ByteWriter, desc: PcapngInterfaceDescription): void {
   if (desc.name !== undefined) {
     const bytes = textEncoder.encode(desc.name);
+    assertU16Len(bytes.byteLength, "if_name option length");
     w.writeU16(PCAPNG_IF_OPTION_NAME);
     w.writeU16(bytes.byteLength);
     w.writeBytes(bytes);
@@ -451,6 +453,7 @@ function writeInterfaceOptions(w: ByteWriter, desc: PcapngInterfaceDescription):
 export function writePcapng(capture: PcapngCapture): Uint8Array<ArrayBuffer> {
   const userAppl = capture.userAppl ?? "aero";
   const userApplBytes = textEncoder.encode(userAppl);
+  assertU16Len(userApplBytes.byteLength, "shb_userappl option length");
   const shbOptLen = optTotalLen(userApplBytes.byteLength);
   const shbOptsLen = shbOptLen + 4; // + opt_end
 
@@ -471,6 +474,7 @@ export function writePcapng(capture: PcapngCapture): Uint8Array<ArrayBuffer> {
     totalLen += 32 + dataLen + pad4(dataLen) + optsLen;
   }
 
+  assertU32(totalLen, "pcapng capture total length");
   const w = new ByteWriter(totalLen);
 
   // SHB
