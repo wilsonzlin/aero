@@ -309,7 +309,27 @@ test('Tier-1 JIT pipeline compiles, installs, and executes a block', async ({ pa
 
   // Verify RIP=0x1000 was compiled+installed.
   expect(hasCompiledRip(result, ENTRY_RIP)).toBe(true);
-  expect(findBlockTableIndexByRip(result, ENTRY_RIP)).not.toBeNull();
+  const installedTableIndex = findBlockTableIndexByRip(result, ENTRY_RIP);
+  expect(installedTableIndex).not.toBeNull();
+  if (installedTableIndex !== null) {
+    expect(Number.isInteger(installedTableIndex)).toBe(true);
+    expect(installedTableIndex).toBeGreaterThanOrEqual(0);
+  }
+
+  // If the legacy/placeholder fields are still present, ensure they agree with the derived
+  // install info.
+  const legacyInstalledIndex = parseMaybeNumber((result as any).installed_table_index);
+  if (legacyInstalledIndex !== undefined && installedTableIndex !== null) {
+    expect(legacyInstalledIndex).toBe(installedTableIndex);
+  }
+  const legacyRuntimeIndex = parseMaybeNumber((result as any).runtime_installed_table_index);
+  if (legacyRuntimeIndex !== undefined && installedTableIndex !== null) {
+    expect(legacyRuntimeIndex).toBe(installedTableIndex);
+  }
+  const legacyRuntimeRip = parseMaybeNumber((result as any).runtime_installed_entry_rip);
+  if (legacyRuntimeRip !== undefined) {
+    expect(legacyRuntimeRip).toBe(ENTRY_RIP);
+  }
 
   // Correctness: runtime exits must roll back side effects so interpreter fallback can re-execute.
   expect((result as any).rollback_ok).toBe(true);
