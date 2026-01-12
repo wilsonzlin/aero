@@ -225,26 +225,23 @@ export function installNetTraceUI(container: HTMLElement, backend: NetTraceBacke
       void pollStats();
     }, 500);
 
+    const onPageHide = () => {
+      lifetime.abort();
+    };
+    const onBeforeUnload = () => {
+      lifetime.abort();
+    };
+    window.addEventListener("pagehide", onPageHide);
+    window.addEventListener("beforeunload", onBeforeUnload);
+
     signal.addEventListener(
       "abort",
       () => {
         window.clearInterval(timerId);
+        window.removeEventListener("pagehide", onPageHide);
+        window.removeEventListener("beforeunload", onBeforeUnload);
       },
       { once: true },
-    );
-    window.addEventListener(
-      "pagehide",
-      () => {
-        lifetime.abort();
-      },
-      { signal },
-    );
-    window.addEventListener(
-      "beforeunload",
-      () => {
-        lifetime.abort();
-      },
-      { signal },
     );
 
     void pollStats();
