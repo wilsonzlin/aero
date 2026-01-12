@@ -13,38 +13,30 @@ const THREADED_WASM_BINARY = fileURLToPath(
 );
 const HAS_THREADED_WASM_BINARY = existsSync(THREADED_WASM_BINARY);
 
-let server!: DiskImageServer;
-
 async function waitForReady(page: Page) {
   await page.waitForFunction(() => (window as any).__aeroTest?.ready === true);
 }
 
-test.describe("vm boot (VGA + serial)", () => {
-  test.beforeAll(async () => {
-    if (!HAS_THREADED_WASM_BINARY) {
-      const message = [
-        "Threaded WASM package missing (required for shared-memory worker runtime).",
-        "",
-        `Expected: ${THREADED_WASM_BINARY}`,
-        "",
-        "Build it with (from the repo root):",
-        "  npm -w web run wasm:build",
-      ].join("\n");
-      if (process.env.CI) {
-        throw new Error(message);
-      }
-      test.skip(true, message);
+test("vm boot: boots deterministic boot sector end-to-end (WASM VM + IO worker + GPU worker)", async ({ page, browserName }) => {
+  if (!HAS_THREADED_WASM_BINARY) {
+    const message = [
+      "Threaded WASM package missing (required for shared-memory worker runtime).",
+      "",
+      `Expected: ${THREADED_WASM_BINARY}`,
+      "",
+      "Build it with (from the repo root):",
+      "  npm -w web run wasm:build",
+    ].join("\n");
+    if (process.env.CI) {
+      throw new Error(message);
     }
-    server = await startDiskImageServer({ data: BOOT_IMAGE_BYTES, enableCors: true });
-  });
+    test.skip(true, message);
+  }
 
-  test.afterAll(async () => {
-    await server.close();
-  });
+  test.skip(browserName !== "chromium", "OffscreenCanvas + WebGL2-in-worker coverage is Chromium-only for now.");
 
-  test("boots deterministic boot sector end-to-end (WASM VM + IO worker + GPU worker)", async ({ page, browserName }) => {
-    test.skip(browserName !== "chromium", "OffscreenCanvas + WebGL2-in-worker coverage is Chromium-only for now.");
-
+  const server: DiskImageServer = await startDiskImageServer({ data: BOOT_IMAGE_BYTES, enableCors: true });
+  try {
     const url = new URL("http://127.0.0.1:5173/web/vm-boot-vga-serial-smoke.html");
     url.searchParams.set("diskUrl", server.url("/disk.img"));
     await page.goto(url.toString(), { waitUntil: "load" });
@@ -99,5 +91,7 @@ test.describe("vm boot (VGA + serial)", () => {
 
     const metrics = (result as any).metrics;
     expect(metrics?.framesPresented ?? 0).toBeGreaterThan(0);
-  });
+  } finally {
+    await server.close();
+  }
 });
