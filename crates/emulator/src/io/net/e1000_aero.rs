@@ -67,9 +67,10 @@ impl MmioDevice for E1000PciDevice {
 
     fn mmio_write(&mut self, mem: &mut dyn MemoryBus, offset: u64, size: usize, value: u32) {
         // Preserve the legacy behavior for `MmioDevice` callers: register writes are immediately
-        // followed by a poll() so doorbells kick DMA "soon", while the register-only path remains
-        // compatible with `memory::MmioHandler`.
-        self.nic.mmio_write(mem, offset, size, value);
+        // followed by a poll() so doorbells kick DMA "soon", while still respecting PCI
+        // COMMAND.BME gating (no DMA/polling until the guest enables bus mastering).
+        self.nic.mmio_write_reg(offset, size, value);
+        self.poll(mem);
     }
 }
 
