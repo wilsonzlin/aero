@@ -49,6 +49,9 @@ pub use pci_mmio::{PciBarMmioHandler, PciBarMmioRouter};
 mod firmware_pci;
 pub use firmware_pci::{PciConfigPortsBiosAdapter, SharedPciConfigPortsBiosAdapter};
 
+mod pci_io_router;
+pub use pci_io_router::{PciIoBarHandler, PciIoBarRouter};
+
 /// Base physical address of the PCIe ECAM ("MMCONFIG") window.
 ///
 /// This follows the QEMU Q35 convention (256MiB window at 0xB000_0000 covering buses 0..=255).
