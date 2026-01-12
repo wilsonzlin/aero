@@ -15,6 +15,7 @@ use aero_protocol::aerogpu::{
 };
 
 const AEROGPU_FORMAT_BC1_RGBA_UNORM: u32 = AerogpuFormat::BC1RgbaUnorm as u32;
+const AEROGPU_FORMAT_BC3_RGBA_UNORM: u32 = AerogpuFormat::BC3RgbaUnorm as u32;
 
 async fn create_executor_no_bc_features() -> Option<AerogpuD3d9Executor> {
     common::ensure_xdg_runtime_dir();
@@ -198,6 +199,48 @@ fn assemble_ps_texld_s3() -> Vec<u8> {
 
 #[test]
 fn d3d9_cmd_stream_bc1_texture_cpu_fallback_upload_and_sample() {
+    // BC1 4x4 block encoding a solid red color (0xF800 in RGB565).
+    let bc1_block = [
+        0x00, 0xF8, // color0
+        0x00, 0xF8, // color1
+        0x00, 0x00, 0x00, 0x00, // indices
+    ];
+
+    run_bc_texture_cpu_fallback_upload_and_sample(
+        AEROGPU_FORMAT_BC1_RGBA_UNORM,
+        8, // row_pitch_bytes (1 BC1 block row)
+        &bc1_block,
+    );
+}
+
+#[test]
+fn d3d9_cmd_stream_bc3_texture_cpu_fallback_upload_and_sample() {
+    // BC3/DXT5 4x4 block encoding solid red with alpha=255.
+    //
+    // Layout:
+    // - alpha0, alpha1
+    // - 48-bit alpha indices
+    // - BC1 color block
+    let bc3_block = [
+        0xFF, 0xFF, // alpha0, alpha1
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // alpha indices (all 0 -> alpha0)
+        0x00, 0xF8, // color0 (red)
+        0x00, 0xF8, // color1 (red)
+        0x00, 0x00, 0x00, 0x00, // color indices (all 0)
+    ];
+
+    run_bc_texture_cpu_fallback_upload_and_sample(
+        AEROGPU_FORMAT_BC3_RGBA_UNORM,
+        16, // row_pitch_bytes (1 BC3 block row)
+        &bc3_block,
+    );
+}
+
+fn run_bc_texture_cpu_fallback_upload_and_sample(
+    sample_format: u32,
+    sample_row_pitch_bytes: u32,
+    sample_block_bytes: &[u8],
+) {
     let mut exec = match pollster::block_on(create_executor_no_bc_features()) {
         Some(exec) => exec,
         None => {
@@ -273,13 +316,6 @@ fn d3d9_cmd_stream_bc1_texture_cpu_fallback_upload_and_sample() {
     push_u8(&mut vertex_decl, 0); // usage_index
     assert_eq!(vertex_decl.len(), 16);
 
-    // BC1 4x4 block encoding a solid red color (0xF800 in RGB565).
-    let bc1_block = [
-        0x00, 0xF8, // color0
-        0x00, 0xF8, // color1
-        0x00, 0x00, 0x00, 0x00, // indices
-    ];
-
     let stream = build_stream(|out| {
         emit_packet(out, OPC_CREATE_TEXTURE2D, |out| {
             push_u32(out, RT_HANDLE);
@@ -301,12 +337,12 @@ fn d3d9_cmd_stream_bc1_texture_cpu_fallback_upload_and_sample() {
         emit_packet(out, OPC_CREATE_TEXTURE2D, |out| {
             push_u32(out, SAMPLE_TEX_HANDLE);
             push_u32(out, AEROGPU_RESOURCE_USAGE_TEXTURE);
-            push_u32(out, AEROGPU_FORMAT_BC1_RGBA_UNORM);
+            push_u32(out, sample_format);
             push_u32(out, 4); // width
             push_u32(out, 4); // height
             push_u32(out, 1); // mip_levels
             push_u32(out, 1); // array_layers
-            push_u32(out, 8); // row_pitch_bytes (1 BC1 block row)
+            push_u32(out, sample_row_pitch_bytes);
             push_u32(out, 0); // backing_alloc_id
             push_u32(out, 0); // backing_offset_bytes
             push_u64(out, 0); // reserved0
@@ -316,8 +352,8 @@ fn d3d9_cmd_stream_bc1_texture_cpu_fallback_upload_and_sample() {
             push_u32(out, SAMPLE_TEX_HANDLE);
             push_u32(out, 0); // reserved0
             push_u64(out, 0); // offset_bytes
-            push_u64(out, bc1_block.len() as u64);
-            out.extend_from_slice(&bc1_block);
+            push_u64(out, sample_block_bytes.len() as u64);
+            out.extend_from_slice(sample_block_bytes);
         });
 
         emit_packet(out, OPC_CREATE_BUFFER, |out| {
@@ -469,7 +505,7 @@ fn d3d9_cmd_stream_bc1_texture_cpu_fallback_upload_and_sample() {
     assert_eq!(
         px(32, 16),
         [255, 0, 0, 255],
-        "inside probe should be the sampled BC1 texture color"
+        "inside probe should be the sampled BC texture color"
     );
 }
 
