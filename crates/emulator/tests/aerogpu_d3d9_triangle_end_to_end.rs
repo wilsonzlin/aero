@@ -1203,7 +1203,9 @@ fn aerogpu_ring_submission_executes_win7_fixedfunc_triangle_stream() {
         rgba[idx..idx + 4].try_into().unwrap()
     };
 
-    // Equivalent to Win7 `d3d9ex_triangle`: center should be green, corner should be red.
+    // Geometry based on Win7 `d3d9ex_triangle`: center should be vertex color, corner should be
+    // clear color. We use a non-symmetric vertex color (red) to catch D3DCOLOR channel-ordering
+    // regressions.
     assert_eq!(px(width / 2, height / 2), [255, 0, 0, 255]);
     assert_eq!(px(5, 5), [0, 0, 0, 255]);
 }

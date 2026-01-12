@@ -318,10 +318,10 @@ In a Win7 VM with AeroGPU installed and working correctly:
 * `transfer_feature_sanity` validates that AGPU devices advertising an ABI compatible with the current driver (`AEROGPU_ABI_MAJOR`, minor>=1) also advertise `AEROGPU_UMDPRIV_FEATURE_TRANSFER` via `DXGKQAITYPE_UMDRIVERPRIVATE` (fails fast on missing transfer/copy support required by D3D9/D3D11 readback paths; skipped on legacy device models unless `--require-agpu` is set)
 * `d3d9_raster_status_sanity` samples `IDirect3DDevice9::GetRasterStatus` and fails if vblank state never toggles or `ScanLine` is stuck (validates `D3DKMTGetScanLine` → `DxgkDdiGetScanLine` basic correctness)
 * `d3d9_raster_status_pacing` samples `IDirect3DDevice9::GetRasterStatus` and fails if `InVBlank` never becomes true or scanline is stuck (useful for `DxgkDdiGetScanLine` bring-up)
-* `d3d9ex_triangle` renders a green triangle over a red clear and confirms **corner red + center green** via readback
+* `d3d9ex_triangle` renders a blue triangle over a red clear and confirms **corner red + center blue** via readback
 * `d3d9ex_stateblock_sanity` validates `IDirect3DStateBlock9` record/apply/capture behavior by recording device state (texture + pixel shader constants + viewport), mutating it, then verifying `Apply()` restores the recorded state and `Capture()` updates it (validated via readback: **green then red**)
 * `d3d9ex_multiframe_triangle` renders multiple frames using a persistent dynamic vertex buffer and confirms the **center pixel changes across frames** via readback
-* `d3d9ex_vb_dirty_range` renders a green triangle using a vertex buffer updated via `Lock/Unlock` and confirms **corner red + center green** via readback (catches regressions in vertex-buffer dirty-range tracking / upload)
+* `d3d9ex_vb_dirty_range` renders a blue triangle using a vertex buffer updated via `Lock/Unlock` and confirms **corner red + center blue** via readback (catches regressions in vertex-buffer dirty-range tracking / upload)
 * `d3d9ex_stretchrect` exercises compositor-critical D3D9Ex DDIs: `ColorFill`, `UpdateSurface`, `StretchRect`, and `UpdateTexture` (validated via readback)
 * `d3d9ex_query_latency` validates D3D9Ex `D3DQUERYTYPE_EVENT` polling + max frame latency APIs (prints query completion timing + configured latency)
 * `d3d9ex_shared_surface` creates a D3D9Ex shared render-target (prefers texture; falls back to shared surface), duplicates the shared handle into a child process, and validates cross-process pixel visibility via readback (pass `--no-validate-sharing` to skip readback validation)

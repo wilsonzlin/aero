@@ -207,7 +207,9 @@ static int RunD3D9ExTriangle(int argc, char** argv) {
   dev->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
 
   const DWORD kRed = D3DCOLOR_XRGB(255, 0, 0);
-  const DWORD kGreen = D3DCOLOR_XRGB(0, 255, 0);
+  // Use a non-symmetric vertex color so we catch D3DCOLOR channel-ordering regressions
+  // (e.g. BGRA-in-memory vs RGBA-in-shader).
+  const DWORD kBlue = D3DCOLOR_XRGB(0, 0, 255);
 
   Vertex verts[3];
   // Triangle that covers the center pixel while leaving the top-left corner untouched, so we
@@ -216,17 +218,17 @@ static int RunD3D9ExTriangle(int argc, char** argv) {
   verts[0].y = (float)kHeight * 0.25f;
   verts[0].z = 0.5f;
   verts[0].rhw = 1.0f;
-  verts[0].color = kGreen;
+  verts[0].color = kBlue;
   verts[1].x = (float)kWidth * 0.75f;
   verts[1].y = (float)kHeight * 0.25f;
   verts[1].z = 0.5f;
   verts[1].rhw = 1.0f;
-  verts[1].color = kGreen;
+  verts[1].color = kBlue;
   verts[2].x = (float)kWidth * 0.5f;
   verts[2].y = (float)kHeight * 0.75f;
   verts[2].z = 0.5f;
   verts[2].rhw = 1.0f;
-  verts[2].color = kGreen;
+  verts[2].color = kBlue;
 
   hr = dev->Clear(0, NULL, D3DCLEAR_TARGET, kRed, 1.0f, 0);
   if (FAILED(hr)) {
@@ -298,7 +300,7 @@ static int RunD3D9ExTriangle(int argc, char** argv) {
   const uint32_t center = aerogpu_test::ReadPixelBGRA(lr.pBits, (int)lr.Pitch, cx, cy);
   const uint32_t corner = aerogpu_test::ReadPixelBGRA(lr.pBits, (int)lr.Pitch, 5, 5);
 
-  const uint32_t expected = 0xFF00FF00u;  // BGRA = (0, 255, 0, 255).
+  const uint32_t expected = 0xFF0000FFu;  // BGRA = (255, 0, 0, 255) = blue.
   const uint32_t expected_corner = 0xFFFF0000u;  // BGRA = (0, 0, 255, 255).
   if ((center & 0x00FFFFFFu) != (expected & 0x00FFFFFFu) ||
       (corner & 0x00FFFFFFu) != (expected_corner & 0x00FFFFFFu)) {
