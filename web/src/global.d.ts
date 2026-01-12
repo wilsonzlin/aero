@@ -48,6 +48,10 @@ declare global {
   // Declare them as global vars so TypeScript understands `globalThis.__aero_*` accesses.
   // eslint-disable-next-line no-var
   var __aero_jit_call: ((tableIndex: number, cpuPtr: number, jitCtxPtr: number) => bigint) | undefined;
+  // Optional debugging/telemetry flag set by JS shims to indicate whether the most recent Tier-1
+  // invocation was committed (as opposed to rolled back).
+  // eslint-disable-next-line no-var
+  var __aero_jit_last_committed: boolean | undefined;
   // eslint-disable-next-line no-var
   var __aero_io_port_read: ((port: number, size: number) => number) | undefined;
   // eslint-disable-next-line no-var
@@ -64,6 +68,7 @@ declare global {
      * Wasm signature: `__aero_jit_call(table_index: i32, cpu_ptr: i32, jit_ctx_ptr: i32) -> i64`.
      */
     __aero_jit_call?: (tableIndex: number, cpuPtr: number, jitCtxPtr: number) => bigint;
+    __aero_jit_last_committed?: boolean;
 
     /**
      * Port I/O shims for the minimal VM loop (`crates/aero-wasm/src/vm.rs`).

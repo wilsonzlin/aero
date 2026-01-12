@@ -576,7 +576,6 @@ function renderMachinePanel(): HTMLElement {
 
   const output = el("pre", { text: "" });
   const error = el("pre", { text: "" });
-  const vgaInfo = el("pre", { text: "" });
   const vgaCanvas = el("canvas") as HTMLCanvasElement;
   vgaCanvas.style.width = "640px";
   vgaCanvas.style.height = "480px";
@@ -693,6 +692,9 @@ function renderMachinePanel(): HTMLElement {
         setError("Machine demo: Canvas 2D context unavailable.");
         return;
       }
+      // TS does not narrow captured variables inside nested functions (even for `const`),
+      // so stash the non-null canvas context for the VGA present closure.
+      const ctx2 = ctx;
 
       const hasVga =
         !!wasmMemory &&
@@ -766,7 +768,7 @@ function renderMachinePanel(): HTMLElement {
             }
           }
 
-          ctx.putImageData(imageData, 0, 0);
+          ctx2.putImageData(imageData, 0, 0);
           testState.framesPresented += 1;
           vgaInfo.textContent = `vga: ${width}x${height} stride=${strideBytes} frames=${testState.framesPresented}`;
         } catch (err) {
@@ -861,7 +863,6 @@ function renderMachinePanel(): HTMLElement {
     el("div", { class: "row" }, canvas),
     vgaInfo,
     output,
-    vgaInfo,
     vgaCanvas,
     error,
   );
