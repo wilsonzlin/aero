@@ -914,12 +914,45 @@ fn snapshot_stores_pci_core_under_single_device_id_pci_entry() {
 
         if id == aero_snapshot::DeviceId::PCI {
             pci_entries += 1;
-            // `aero-io-snapshot` header is 16 bytes. Verify this is the PCI core wrapper (`PCIC`).
+            // `aero-io-snapshot` header is 16 bytes. Verify this is the PCI core wrapper (`PCIC`)
+            // and that it contains both:
+            // - tag 1: `PCPT` (PciConfigPorts)
+            // - tag 2: `INTX` (PciIntxRouter)
             let mut hdr = [0u8; 16];
             r.read_exact(&mut hdr).unwrap();
             assert_eq!(&hdr[0..4], b"AERO");
             assert_eq!(&hdr[8..12], b"PCIC");
-            skip_exact(&mut r, len.saturating_sub(hdr.len() as u64));
+
+            let mut remaining = len.saturating_sub(hdr.len() as u64);
+            let mut found_pcpt = false;
+            let mut found_intx = false;
+            while remaining > 0 {
+                let tag = read_u16_le(&mut r);
+                let field_len = u64::from(read_u32_le(&mut r));
+                remaining = remaining.saturating_sub(2 + 4);
+
+                if tag == 1 || tag == 2 {
+                    let mut inner_hdr = [0u8; 16];
+                    r.read_exact(&mut inner_hdr).unwrap();
+                    assert_eq!(&inner_hdr[0..4], b"AERO");
+                    assert_eq!(
+                        &inner_hdr[8..12],
+                        if tag == 1 { b"PCPT" } else { b"INTX" }
+                    );
+                    skip_exact(&mut r, field_len.saturating_sub(inner_hdr.len() as u64));
+                    if tag == 1 {
+                        found_pcpt = true;
+                    } else {
+                        found_intx = true;
+                    }
+                } else {
+                    skip_exact(&mut r, field_len);
+                }
+                remaining = remaining.saturating_sub(field_len);
+            }
+
+            assert!(found_pcpt, "PCIC snapshot missing PCPT field");
+            assert!(found_intx, "PCIC snapshot missing INTX field");
         } else {
             if id == aero_snapshot::DeviceId::PCI_INTX {
                 pci_intx_entries += 1;
