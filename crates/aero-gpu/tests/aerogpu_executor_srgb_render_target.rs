@@ -193,6 +193,92 @@ fn executor_clear_srgb_render_target_is_supported() {
 }
 
 #[test]
+fn executor_clear_bgra_srgb_render_target_encodes_linear_values() {
+    pollster::block_on(async {
+        let (device, queue) = match create_device_queue().await {
+            Some(v) => v,
+            None => {
+                common::skip_or_panic(module_path!(), "no wgpu adapter available");
+                return;
+            }
+        };
+
+        let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
+        let mut guest = VecGuestMemory::new(0x1000);
+
+        const RT_HANDLE: u32 = 1;
+
+        let stream = build_stream(|out| {
+            // CREATE_TEXTURE2D BGRA sRGB render target.
+            emit_packet(out, AerogpuCmdOpcode::CreateTexture2d as u32, |out| {
+                push_u32(out, RT_HANDLE); // texture_handle
+                push_u32(out, AEROGPU_RESOURCE_USAGE_RENDER_TARGET); // usage_flags
+                push_u32(out, AerogpuFormat::B8G8R8A8UnormSrgb as u32); // format
+                push_u32(out, 1); // width
+                push_u32(out, 1); // height
+                push_u32(out, 1); // mip_levels
+                push_u32(out, 1); // array_layers
+                push_u32(out, 0); // row_pitch_bytes
+                push_u32(out, 0); // backing_alloc_id
+                push_u32(out, 0); // backing_offset_bytes
+                push_u64(out, 0); // reserved0
+            });
+
+            // SET_RENDER_TARGETS: color0 = RT_HANDLE.
+            emit_packet(out, AerogpuCmdOpcode::SetRenderTargets as u32, |out| {
+                push_u32(out, 1); // color_count
+                push_u32(out, 0); // depth_stencil
+                push_u32(out, RT_HANDLE); // colors[0]
+                for _ in 1..8 {
+                    push_u32(out, 0);
+                }
+            });
+
+            // CLEAR to linear 0.5 red. Stored bytes should be sRGB encoded (~188) in BGRA order.
+            emit_packet(out, AerogpuCmdOpcode::Clear as u32, |out| {
+                push_u32(out, AEROGPU_CLEAR_COLOR);
+                push_f32_bits(out, 0.5); // r
+                push_f32_bits(out, 0.0); // g
+                push_f32_bits(out, 0.0); // b
+                push_f32_bits(out, 1.0); // a
+                push_f32_bits(out, 1.0); // depth (unused)
+                push_u32(out, 0); // stencil
+            });
+        });
+
+        let report = exec.process_cmd_stream(&stream, &mut guest, None);
+        assert!(report.is_ok(), "executor reported errors: {report:?}");
+
+        let rt = exec.texture(RT_HANDLE).expect("render target texture");
+        let rgba = readback_rgba8(
+            exec.device(),
+            exec.queue(),
+            rt,
+            TextureRegion {
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                size: wgpu::Extent3d {
+                    width: 1,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
+            },
+        )
+        .await;
+
+        let px = &rgba[0..4];
+        // Texture is BGRA: expect [B,G,R,A] = [0,0,~188,255].
+        assert!(px[0] <= 2, "expected b~0, got {}", px[0]);
+        assert!(px[1] <= 2, "expected g~0, got {}", px[1]);
+        assert!(
+            (185..=190).contains(&px[2]),
+            "expected sRGB-encoded ~188 red in BGRA order, got {px:?}"
+        );
+        assert_eq!(px[3], 255);
+    });
+}
+
+#[test]
 fn executor_samples_srgb_texture_and_decodes_texels() {
     pollster::block_on(async {
         let (device, queue) = match create_device_queue().await {
@@ -340,6 +426,163 @@ fn executor_samples_srgb_texture_and_decodes_texels() {
             (120..=135).contains(&px[0]) && px[0] == px[1] && px[1] == px[2],
             "expected sRGB texel to decode to ~128 linear, got {px:?}"
         );
+        assert_eq!(px[3], 255);
+    });
+}
+
+#[test]
+fn executor_samples_bgra_srgb_texture_and_decodes_texels() {
+    pollster::block_on(async {
+        let (device, queue) = match create_device_queue().await {
+            Some(v) => v,
+            None => {
+                common::skip_or_panic(module_path!(), "no wgpu adapter available");
+                return;
+            }
+        };
+
+        let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
+        let mut guest = VecGuestMemory::new(0x1000);
+
+        // Full-screen triangle (pos: vec2<f32>).
+        let verts: [f32; 6] = [-1.0, -1.0, 3.0, -1.0, -1.0, 3.0];
+        let mut vb_bytes = Vec::new();
+        for v in verts {
+            vb_bytes.extend_from_slice(&v.to_le_bytes());
+        }
+
+        // BGRA sRGB texel storing ~0.5 red in sRGB space.
+        //
+        // - Stored bytes: [B,G,R,A] = [0,0,188,255]
+        // - When sampled from an sRGB texture, this should decode to linear ~0.5 red, which stores
+        //   as ~128 in an UNORM render target.
+        let bgra_srgb_red = [0u8, 0u8, 188u8, 255u8];
+
+        const VB_HANDLE: u32 = 1;
+        const TEX_HANDLE: u32 = 2;
+        const RT_HANDLE: u32 = 3;
+
+        let stream = build_stream(|out| {
+            // CREATE_BUFFER (handle=1) vertex buffer.
+            emit_packet(out, AerogpuCmdOpcode::CreateBuffer as u32, |out| {
+                push_u32(out, VB_HANDLE); // buffer_handle
+                push_u32(out, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER); // usage_flags
+                push_u64(out, vb_bytes.len() as u64); // size_bytes
+                push_u32(out, 0); // backing_alloc_id
+                push_u32(out, 0); // backing_offset_bytes
+                push_u64(out, 0); // reserved0
+            });
+
+            // CREATE_TEXTURE2D (handle=2) 1x1 BGRA sRGB texture (sampled).
+            emit_packet(out, AerogpuCmdOpcode::CreateTexture2d as u32, |out| {
+                push_u32(out, TEX_HANDLE); // texture_handle
+                push_u32(out, AEROGPU_RESOURCE_USAGE_TEXTURE); // usage_flags
+                push_u32(out, AerogpuFormat::B8G8R8A8UnormSrgb as u32); // format
+                push_u32(out, 1); // width
+                push_u32(out, 1); // height
+                push_u32(out, 1); // mip_levels
+                push_u32(out, 1); // array_layers
+                push_u32(out, 0); // row_pitch_bytes
+                push_u32(out, 0); // backing_alloc_id
+                push_u32(out, 0); // backing_offset_bytes
+                push_u64(out, 0); // reserved0
+            });
+            emit_packet(out, AerogpuCmdOpcode::UploadResource as u32, |out| {
+                push_u32(out, TEX_HANDLE); // resource_handle
+                push_u32(out, 0); // reserved0
+                push_u64(out, 0); // offset_bytes
+                push_u64(out, bgra_srgb_red.len() as u64); // size_bytes
+                out.extend_from_slice(&bgra_srgb_red);
+            });
+
+            // CREATE_TEXTURE2D (handle=3) 1x1 linear render target.
+            emit_packet(out, AerogpuCmdOpcode::CreateTexture2d as u32, |out| {
+                push_u32(out, RT_HANDLE); // texture_handle
+                push_u32(out, AEROGPU_RESOURCE_USAGE_RENDER_TARGET); // usage_flags
+                push_u32(out, AerogpuFormat::R8G8B8A8Unorm as u32); // format
+                push_u32(out, 1); // width
+                push_u32(out, 1); // height
+                push_u32(out, 1); // mip_levels
+                push_u32(out, 1); // array_layers
+                push_u32(out, 0); // row_pitch_bytes
+                push_u32(out, 0); // backing_alloc_id
+                push_u32(out, 0); // backing_offset_bytes
+                push_u64(out, 0); // reserved0
+            });
+
+            // SET_RENDER_TARGETS: color0 = RT_HANDLE.
+            emit_packet(out, AerogpuCmdOpcode::SetRenderTargets as u32, |out| {
+                push_u32(out, 1); // color_count
+                push_u32(out, 0); // depth_stencil
+                push_u32(out, RT_HANDLE); // colors[0]
+                for _ in 1..8 {
+                    push_u32(out, 0);
+                }
+            });
+
+            // SET_TEXTURE (ps slot 0) = TEX_HANDLE.
+            emit_packet(out, AerogpuCmdOpcode::SetTexture as u32, |out| {
+                push_u32(out, AerogpuShaderStage::Pixel as u32);
+                push_u32(out, 0); // slot
+                push_u32(out, TEX_HANDLE); // texture handle
+                push_u32(out, 0); // reserved0
+            });
+
+            // UPLOAD_RESOURCE vertex buffer bytes.
+            emit_packet(out, AerogpuCmdOpcode::UploadResource as u32, |out| {
+                push_u32(out, VB_HANDLE); // resource_handle
+                push_u32(out, 0); // reserved0
+                push_u64(out, 0); // offset_bytes
+                push_u64(out, vb_bytes.len() as u64); // size_bytes
+                out.extend_from_slice(&vb_bytes);
+            });
+
+            // SET_VERTEX_BUFFERS: slot 0 = buffer 1.
+            emit_packet(out, AerogpuCmdOpcode::SetVertexBuffers as u32, |out| {
+                push_u32(out, 0); // start_slot
+                push_u32(out, 1); // buffer_count
+                push_u32(out, VB_HANDLE); // binding[0].buffer
+                push_u32(out, 8); // binding[0].stride_bytes
+                push_u32(out, 0); // binding[0].offset_bytes
+                push_u32(out, 0); // binding[0].reserved0
+            });
+
+            // DRAW: full-screen triangle.
+            emit_packet(out, AerogpuCmdOpcode::Draw as u32, |out| {
+                push_u32(out, 3); // vertex_count
+                push_u32(out, 1); // instance_count
+                push_u32(out, 0); // first_vertex
+                push_u32(out, 0); // first_instance
+            });
+        });
+
+        let report = exec.process_cmd_stream(&stream, &mut guest, None);
+        assert!(report.is_ok(), "executor reported errors: {report:?}");
+
+        let rt = exec.texture(RT_HANDLE).expect("render target texture");
+        let rgba = readback_rgba8(
+            exec.device(),
+            exec.queue(),
+            rt,
+            TextureRegion {
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                size: wgpu::Extent3d {
+                    width: 1,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
+            },
+        )
+        .await;
+
+        let px = &rgba[0..4];
+        assert!(
+            (120..=135).contains(&px[0]),
+            "expected sRGB texel to decode to ~128 linear red, got {px:?}"
+        );
+        assert!(px[1] <= 2, "expected g~0, got {}", px[1]);
+        assert!(px[2] <= 2, "expected b~0, got {}", px[2]);
         assert_eq!(px[3], 255);
     });
 }
