@@ -458,6 +458,9 @@ mod tests {
         let guest_size = guest.len() as u32;
 
         let mut bridge = HdaControllerBridge::new(guest_base, guest_size, None).unwrap();
+        // `HdaControllerBridge::process` is gated on PCI Bus Master Enable (command bit 2); enable
+        // it so this test exercises the DMA path.
+        bridge.set_pci_command(1 << 2);
 
         // Bring controller out of reset.
         bridge.hda.mmio_write(0x08, 4, 0x1); // GCTL.CRST
