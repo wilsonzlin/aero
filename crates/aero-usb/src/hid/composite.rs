@@ -68,7 +68,7 @@ impl KeyboardInterface {
         self.pending_reports.clear();
     }
 
-    fn key_event(&mut self, usage: u8, pressed: bool) {
+    fn key_event(&mut self, usage: u8, pressed: bool, configured: bool) {
         if usage == 0 {
             return;
         }
@@ -93,7 +93,7 @@ impl KeyboardInterface {
             changed = before_len != self.pressed_keys.len();
         }
 
-        if changed {
+        if changed && configured {
             self.enqueue_current_report();
         }
     }
@@ -160,15 +160,18 @@ impl MouseInterface {
         self.pending_reports.clear();
     }
 
-    fn push_report(&mut self, report: MouseReport) {
+    fn push_report(&mut self, report: MouseReport, configured: bool) {
+        if !configured {
+            return;
+        }
         if self.pending_reports.len() >= MAX_PENDING_MOUSE_REPORTS {
             self.pending_reports.pop_front();
         }
         self.pending_reports.push_back(report);
     }
 
-    fn button_event(&mut self, button_bit: u8, pressed: bool) {
-        self.flush_motion();
+    fn button_event(&mut self, button_bit: u8, pressed: bool, configured: bool) {
+        self.flush_motion(configured);
         let before = self.buttons;
         if pressed {
             self.buttons |= button_bit;
@@ -176,27 +179,30 @@ impl MouseInterface {
             self.buttons &= !button_bit;
         }
         if self.buttons != before {
-            self.push_report(MouseReport {
-                buttons: self.buttons,
-                x: 0,
-                y: 0,
-                wheel: 0,
-            });
+            self.push_report(
+                MouseReport {
+                    buttons: self.buttons,
+                    x: 0,
+                    y: 0,
+                    wheel: 0,
+                },
+                configured,
+            );
         }
     }
 
-    fn movement(&mut self, dx: i32, dy: i32) {
+    fn movement(&mut self, dx: i32, dy: i32, configured: bool) {
         self.dx += dx;
         self.dy += dy;
-        self.flush_motion();
+        self.flush_motion(configured);
     }
 
-    fn wheel(&mut self, delta: i32) {
+    fn wheel(&mut self, delta: i32, configured: bool) {
         self.wheel += delta;
-        self.flush_motion();
+        self.flush_motion(configured);
     }
 
-    fn flush_motion(&mut self) {
+    fn flush_motion(&mut self, configured: bool) {
         while self.dx != 0 || self.dy != 0 || self.wheel != 0 {
             let step_x = self.dx.clamp(-127, 127) as i8;
             let step_y = self.dy.clamp(-127, 127) as i8;
@@ -206,12 +212,15 @@ impl MouseInterface {
             self.dy -= step_y as i32;
             self.wheel -= step_wheel as i32;
 
-            self.push_report(MouseReport {
-                buttons: self.buttons,
-                x: step_x,
-                y: step_y,
-                wheel: step_wheel,
-            });
+            self.push_report(
+                MouseReport {
+                    buttons: self.buttons,
+                    x: step_x,
+                    y: step_y,
+                    wheel: step_wheel,
+                },
+                configured,
+            );
         }
     }
 
@@ -268,7 +277,7 @@ impl GamepadInterface {
         self.pending_reports.clear();
     }
 
-    fn buttons_mask_event(&mut self, button_mask: u16, pressed: bool) {
+    fn buttons_mask_event(&mut self, button_mask: u16, pressed: bool, configured: bool) {
         let before = self.buttons;
         if pressed {
             self.buttons |= button_mask;
@@ -276,37 +285,37 @@ impl GamepadInterface {
             self.buttons &= !button_mask;
         }
         if before != self.buttons {
-            self.enqueue_current_report();
+            self.enqueue_current_report(configured);
         }
     }
 
-    fn button_event(&mut self, button_idx: u8, pressed: bool) {
+    fn button_event(&mut self, button_idx: u8, pressed: bool, configured: bool) {
         if !(1..=16).contains(&button_idx) {
             return;
         }
         let mask = 1u16 << (button_idx - 1);
-        self.buttons_mask_event(mask, pressed);
+        self.buttons_mask_event(mask, pressed, configured);
     }
 
-    fn set_buttons(&mut self, buttons: u16) {
+    fn set_buttons(&mut self, buttons: u16, configured: bool) {
         if self.buttons != buttons {
             self.buttons = buttons;
-            self.enqueue_current_report();
+            self.enqueue_current_report(configured);
         }
     }
 
-    fn set_hat(&mut self, hat: Option<u8>) {
+    fn set_hat(&mut self, hat: Option<u8>, configured: bool) {
         let hat = match hat {
             Some(v) if v <= 7 => v,
             _ => 8,
         };
         if self.hat != hat {
             self.hat = hat;
-            self.enqueue_current_report();
+            self.enqueue_current_report(configured);
         }
     }
 
-    fn set_axes(&mut self, x: i8, y: i8, rx: i8, ry: i8) {
+    fn set_axes(&mut self, x: i8, y: i8, rx: i8, ry: i8, configured: bool) {
         let x = x.clamp(-127, 127);
         let y = y.clamp(-127, 127);
         let rx = rx.clamp(-127, 127);
@@ -317,11 +326,11 @@ impl GamepadInterface {
             self.y = y;
             self.rx = rx;
             self.ry = ry;
-            self.enqueue_current_report();
+            self.enqueue_current_report(configured);
         }
     }
 
-    fn set_report(&mut self, report: GamepadReport) {
+    fn set_report(&mut self, report: GamepadReport, configured: bool) {
         let hat = match report.hat {
             v if v <= 7 => v,
             _ => 8,
@@ -347,7 +356,7 @@ impl GamepadInterface {
         self.y = y;
         self.rx = rx;
         self.ry = ry;
-        self.enqueue_current_report();
+        self.enqueue_current_report(configured);
     }
 
     fn current_input_report(&self) -> GamepadReport {
@@ -361,7 +370,10 @@ impl GamepadInterface {
         }
     }
 
-    fn enqueue_current_report(&mut self) {
+    fn enqueue_current_report(&mut self, configured: bool) {
+        if !configured {
+            return;
+        }
         let report = self.current_input_report().to_bytes();
         if report != self.last_report {
             self.last_report = report;
@@ -409,72 +421,82 @@ impl UsbCompositeHidInputHandle {
 
     pub fn key_event(&self, usage: u8, pressed: bool) {
         let mut dev = self.0.borrow_mut();
-        dev.keyboard.key_event(usage, pressed);
-        if dev.suspended && dev.remote_wakeup_enabled && dev.configuration != 0 {
+        let configured = dev.configuration != 0;
+        dev.keyboard.key_event(usage, pressed, configured);
+        if dev.suspended && dev.remote_wakeup_enabled && configured {
             dev.remote_wakeup_pending = true;
         }
     }
 
     pub fn mouse_button_event(&self, button_bit: u8, pressed: bool) {
         let mut dev = self.0.borrow_mut();
-        dev.mouse.button_event(button_bit, pressed);
-        if dev.suspended && dev.remote_wakeup_enabled && dev.configuration != 0 {
+        let configured = dev.configuration != 0;
+        dev.mouse.button_event(button_bit, pressed, configured);
+        if dev.suspended && dev.remote_wakeup_enabled && configured {
             dev.remote_wakeup_pending = true;
         }
     }
 
     pub fn mouse_movement(&self, dx: i32, dy: i32) {
         let mut dev = self.0.borrow_mut();
-        dev.mouse.movement(dx, dy);
-        if dev.suspended && dev.remote_wakeup_enabled && dev.configuration != 0 {
+        let configured = dev.configuration != 0;
+        dev.mouse.movement(dx, dy, configured);
+        if dev.suspended && dev.remote_wakeup_enabled && configured {
             dev.remote_wakeup_pending = true;
         }
     }
 
     pub fn mouse_wheel(&self, delta: i32) {
         let mut dev = self.0.borrow_mut();
-        dev.mouse.wheel(delta);
-        if dev.suspended && dev.remote_wakeup_enabled && dev.configuration != 0 {
+        let configured = dev.configuration != 0;
+        dev.mouse.wheel(delta, configured);
+        if dev.suspended && dev.remote_wakeup_enabled && configured {
             dev.remote_wakeup_pending = true;
         }
     }
 
     pub fn gamepad_button_event(&self, button_idx: u8, pressed: bool) {
         let mut dev = self.0.borrow_mut();
-        dev.gamepad.button_event(button_idx, pressed);
-        if dev.suspended && dev.remote_wakeup_enabled && dev.configuration != 0 {
+        let configured = dev.configuration != 0;
+        dev.gamepad.button_event(button_idx, pressed, configured);
+        if dev.suspended && dev.remote_wakeup_enabled && configured {
             dev.remote_wakeup_pending = true;
         }
     }
 
     pub fn gamepad_buttons_mask_event(&self, button_mask: u16, pressed: bool) {
         let mut dev = self.0.borrow_mut();
-        dev.gamepad.buttons_mask_event(button_mask, pressed);
-        if dev.suspended && dev.remote_wakeup_enabled && dev.configuration != 0 {
+        let configured = dev.configuration != 0;
+        dev.gamepad
+            .buttons_mask_event(button_mask, pressed, configured);
+        if dev.suspended && dev.remote_wakeup_enabled && configured {
             dev.remote_wakeup_pending = true;
         }
     }
 
     pub fn gamepad_set_buttons(&self, buttons: u16) {
         let mut dev = self.0.borrow_mut();
-        dev.gamepad.set_buttons(buttons);
-        if dev.suspended && dev.remote_wakeup_enabled && dev.configuration != 0 {
+        let configured = dev.configuration != 0;
+        dev.gamepad.set_buttons(buttons, configured);
+        if dev.suspended && dev.remote_wakeup_enabled && configured {
             dev.remote_wakeup_pending = true;
         }
     }
 
     pub fn gamepad_set_hat(&self, hat: Option<u8>) {
         let mut dev = self.0.borrow_mut();
-        dev.gamepad.set_hat(hat);
-        if dev.suspended && dev.remote_wakeup_enabled && dev.configuration != 0 {
+        let configured = dev.configuration != 0;
+        dev.gamepad.set_hat(hat, configured);
+        if dev.suspended && dev.remote_wakeup_enabled && configured {
             dev.remote_wakeup_pending = true;
         }
     }
 
     pub fn gamepad_set_axes(&self, x: i8, y: i8, rx: i8, ry: i8) {
         let mut dev = self.0.borrow_mut();
-        dev.gamepad.set_axes(x, y, rx, ry);
-        if dev.suspended && dev.remote_wakeup_enabled && dev.configuration != 0 {
+        let configured = dev.configuration != 0;
+        dev.gamepad.set_axes(x, y, rx, ry, configured);
+        if dev.suspended && dev.remote_wakeup_enabled && configured {
             dev.remote_wakeup_pending = true;
         }
     }
@@ -482,8 +504,9 @@ impl UsbCompositeHidInputHandle {
     /// Updates the entire 8-byte gamepad report state in one call.
     pub fn gamepad_set_report(&self, report: GamepadReport) {
         let mut dev = self.0.borrow_mut();
-        dev.gamepad.set_report(report);
-        if dev.suspended && dev.remote_wakeup_enabled && dev.configuration != 0 {
+        let configured = dev.configuration != 0;
+        dev.gamepad.set_report(report, configured);
+        if dev.suspended && dev.remote_wakeup_enabled && configured {
             dev.remote_wakeup_pending = true;
         }
     }
@@ -1002,10 +1025,50 @@ impl UsbDeviceModel for UsbCompositeHidInput {
                     if config > 1 {
                         return ControlResponse::Stall;
                     }
+                    let prev = self.configuration;
                     self.configuration = config;
                     if self.configuration == 0 {
                         self.clear_reports();
                         self.remote_wakeup_pending = false;
+                    } else if prev == 0 {
+                        // Do not buffer interrupt reports while unconfigured; when becoming
+                        // configured, enqueue the current state for any held inputs so they are
+                        // visible without requiring a new input transition.
+                        self.clear_reports();
+                        self.remote_wakeup_pending = false;
+
+                        // Reset report baselines so the current state compares against defaults
+                        // rather than the last report from a previous configuration.
+                        self.keyboard.last_report = [0; 8];
+                        self.gamepad.last_report = GamepadReport {
+                            buttons: 0,
+                            hat: 8,
+                            x: 0,
+                            y: 0,
+                            rx: 0,
+                            ry: 0,
+                        }
+                        .to_bytes();
+
+                        // Drop any motion accumulated while unconfigured to avoid replaying it
+                        // later as a cursor "jump".
+                        self.mouse.dx = 0;
+                        self.mouse.dy = 0;
+                        self.mouse.wheel = 0;
+
+                        self.keyboard.enqueue_current_report();
+                        if self.mouse.buttons != 0 {
+                            self.mouse.push_report(
+                                MouseReport {
+                                    buttons: self.mouse.buttons,
+                                    x: 0,
+                                    y: 0,
+                                    wheel: 0,
+                                },
+                                true,
+                            );
+                        }
+                        self.gamepad.enqueue_current_report(true);
                     }
                     ControlResponse::Ack
                 }
@@ -1506,6 +1569,22 @@ mod tests {
         u16::from_le_bytes([bytes[offset], bytes[offset + 1]])
     }
 
+    fn configure(dev: &mut UsbCompositeHidInputHandle) {
+        assert_eq!(
+            dev.handle_control_request(
+                SetupPacket {
+                    bm_request_type: 0x00,
+                    b_request: USB_REQUEST_SET_CONFIGURATION,
+                    w_value: 1,
+                    w_index: 0,
+                    w_length: 0,
+                },
+                None,
+            ),
+            ControlResponse::Ack
+        );
+    }
+
     #[test]
     fn config_descriptor_has_three_interfaces_and_endpoints() {
         let mut dev = UsbCompositeHidInput::new();
@@ -1623,5 +1702,74 @@ mod tests {
             );
             assert_eq!(resp, ControlResponse::Data(expected.to_vec()));
         }
+    }
+
+    #[test]
+    fn configuration_enqueues_held_keyboard_key_state() {
+        let mut dev = UsbCompositeHidInputHandle::new();
+        dev.key_event(0x04, true);
+
+        assert_eq!(
+            dev.handle_in_transfer(KEYBOARD_INTERRUPT_IN_EP, 8),
+            UsbInResult::Nak
+        );
+
+        configure(&mut dev);
+        assert_eq!(
+            dev.handle_in_transfer(KEYBOARD_INTERRUPT_IN_EP, 8),
+            UsbInResult::Data(vec![0, 0, 0x04, 0, 0, 0, 0, 0])
+        );
+    }
+
+    #[test]
+    fn configuration_does_not_replay_transient_keyboard_keypress() {
+        let mut dev = UsbCompositeHidInputHandle::new();
+        dev.key_event(0x04, true);
+        dev.key_event(0x04, false);
+
+        assert_eq!(
+            dev.handle_in_transfer(KEYBOARD_INTERRUPT_IN_EP, 8),
+            UsbInResult::Nak
+        );
+
+        configure(&mut dev);
+        assert_eq!(
+            dev.handle_in_transfer(KEYBOARD_INTERRUPT_IN_EP, 8),
+            UsbInResult::Nak
+        );
+    }
+
+    #[test]
+    fn configuration_does_not_replay_unconfigured_mouse_motion() {
+        let mut dev = UsbCompositeHidInputHandle::new();
+        dev.mouse_movement(10, 0);
+
+        assert_eq!(
+            dev.handle_in_transfer(MOUSE_INTERRUPT_IN_EP, 4),
+            UsbInResult::Nak
+        );
+
+        configure(&mut dev);
+        assert_eq!(
+            dev.handle_in_transfer(MOUSE_INTERRUPT_IN_EP, 4),
+            UsbInResult::Nak
+        );
+    }
+
+    #[test]
+    fn configuration_enqueues_held_mouse_button_state() {
+        let mut dev = UsbCompositeHidInputHandle::new();
+        dev.mouse_button_event(0x01, true);
+
+        assert_eq!(
+            dev.handle_in_transfer(MOUSE_INTERRUPT_IN_EP, 4),
+            UsbInResult::Nak
+        );
+
+        configure(&mut dev);
+        assert_eq!(
+            dev.handle_in_transfer(MOUSE_INTERRUPT_IN_EP, 4),
+            UsbInResult::Data(vec![0x01, 0x00, 0x00, 0x00])
+        );
     }
 }

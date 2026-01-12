@@ -423,6 +423,13 @@ impl UsbHidGamepad {
     }
 
     fn enqueue_current_report(&mut self) {
+        // USB interrupt endpoints are not active until the device has been configured. Track the
+        // current state regardless, but do not buffer reports that would get delivered later as
+        // stale input.
+        if self.configuration == 0 {
+            return;
+        }
+
         let report = self.current_input_report().to_bytes();
         if report != self.last_report {
             self.last_report = report;
@@ -430,7 +437,7 @@ impl UsbHidGamepad {
                 self.pending_reports.pop_front();
             }
             self.pending_reports.push_back(report);
-            if self.suspended && self.remote_wakeup_enabled && self.configuration != 0 {
+            if self.suspended && self.remote_wakeup_enabled {
                 self.remote_wakeup_pending = true;
             }
         }
@@ -555,10 +562,27 @@ impl UsbDeviceModel for UsbHidGamepad {
                     if config > 1 {
                         return ControlResponse::Stall;
                     }
+                    let prev = self.configuration;
                     self.configuration = config;
                     if self.configuration == 0 {
                         self.pending_reports.clear();
                         self.remote_wakeup_pending = false;
+                    } else if prev == 0 {
+                        // We drop interrupt reports while unconfigured. When the host configures
+                        // the device, enqueue a report for the current state (if non-default) so
+                        // held buttons/axes become visible without requiring a new input event.
+                        self.pending_reports.clear();
+                        self.remote_wakeup_pending = false;
+                        self.last_report = GamepadReport {
+                            buttons: 0,
+                            hat: 8,
+                            x: 0,
+                            y: 0,
+                            rx: 0,
+                            ry: 0,
+                        }
+                        .to_bytes();
+                        self.enqueue_current_report();
                     }
                     ControlResponse::Ack
                 }
@@ -975,16 +999,27 @@ mod tests {
     }
 
     #[test]
-    fn does_not_send_interrupt_reports_until_configured() {
+    fn configuration_enqueues_held_state() {
         let mut pad = UsbHidGamepad::new();
         pad.button_event(1, true);
         assert_eq!(pad.handle_in_transfer(INTERRUPT_IN_EP, 8), UsbInResult::Nak);
 
         configure_gamepad(&mut pad);
-        assert!(matches!(
+        assert_eq!(
             pad.handle_in_transfer(INTERRUPT_IN_EP, 8),
-            UsbInResult::Data(_)
-        ));
+            UsbInResult::Data(vec![0x01, 0x00, 0x08, 0, 0, 0, 0, 0])
+        );
+    }
+
+    #[test]
+    fn configuration_does_not_replay_transient_button_click() {
+        let mut pad = UsbHidGamepad::new();
+        pad.button_event(1, true);
+        pad.button_event(1, false);
+        assert_eq!(pad.handle_in_transfer(INTERRUPT_IN_EP, 8), UsbInResult::Nak);
+
+        configure_gamepad(&mut pad);
+        assert_eq!(pad.handle_in_transfer(INTERRUPT_IN_EP, 8), UsbInResult::Nak);
     }
 
     #[test]

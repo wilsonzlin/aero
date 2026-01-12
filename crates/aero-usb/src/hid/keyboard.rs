@@ -337,6 +337,13 @@ impl UsbHidKeyboard {
     }
 
     fn enqueue_current_report(&mut self) {
+        // USB devices are not permitted to send interrupt reports while unconfigured
+        // (`SET_CONFIGURATION` has not completed). The synthetic keyboard tracks key state
+        // regardless, but must not buffer reports that would get delivered later as stale events.
+        if self.configuration == 0 {
+            return;
+        }
+
         let report = self.current_input_report().to_bytes();
         if report != self.last_report {
             self.last_report = report;
@@ -466,10 +473,20 @@ impl UsbDeviceModel for UsbHidKeyboard {
                     if config > 1 {
                         return ControlResponse::Stall;
                     }
+                    let prev = self.configuration;
                     self.configuration = config;
                     if self.configuration == 0 {
                         self.pending_reports.clear();
                         self.remote_wakeup_pending = false;
+                    } else if prev == 0 {
+                        // We intentionally do not buffer input reports while unconfigured. When the
+                        // host transitions us into the configured state, enqueue a report for the
+                        // current key state (if non-empty) so held keys become visible without
+                        // requiring a new key event.
+                        self.pending_reports.clear();
+                        self.remote_wakeup_pending = false;
+                        self.last_report = [0; 8];
+                        self.enqueue_current_report();
                     }
                     ControlResponse::Ack
                 }
@@ -1087,14 +1104,27 @@ mod tests {
     }
 
     #[test]
-    fn does_not_send_interrupt_reports_until_configured() {
+    fn configuration_enqueues_held_key_state() {
         let mut kb = UsbHidKeyboard::new();
 
         kb.key_event(0x04, true);
         assert!(poll_interrupt_in(&mut kb).is_none());
 
         configure_keyboard(&mut kb);
-        assert!(poll_interrupt_in(&mut kb).is_some());
+        let report = poll_interrupt_in(&mut kb).expect("expected report for held key");
+        assert_eq!(report, [0x00, 0x00, 0x04, 0, 0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn configuration_does_not_replay_transient_keypress() {
+        let mut kb = UsbHidKeyboard::new();
+
+        kb.key_event(0x04, true);
+        kb.key_event(0x04, false);
+        assert!(poll_interrupt_in(&mut kb).is_none());
+
+        configure_keyboard(&mut kb);
+        assert!(poll_interrupt_in(&mut kb).is_none());
     }
 
     #[test]

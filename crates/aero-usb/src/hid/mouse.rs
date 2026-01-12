@@ -284,11 +284,17 @@ impl UsbHidMouse {
     }
 
     fn push_report(&mut self, report: MouseReport) {
+        // USB interrupt endpoints are not active until the device is configured. We still track
+        // button state, but do not buffer motion/button reports that would get replayed later as
+        // stale input.
+        if self.configuration == 0 {
+            return;
+        }
         if self.pending_reports.len() >= MAX_PENDING_REPORTS {
             self.pending_reports.pop_front();
         }
         self.pending_reports.push_back(report);
-        if self.suspended && self.remote_wakeup_enabled && self.configuration != 0 {
+        if self.suspended && self.remote_wakeup_enabled {
             self.remote_wakeup_pending = true;
         }
     }
@@ -468,10 +474,31 @@ impl UsbDeviceModel for UsbHidMouse {
                     if config > 1 {
                         return ControlResponse::Stall;
                     }
+                    let prev = self.configuration;
                     self.configuration = config;
                     if self.configuration == 0 {
                         self.pending_reports.clear();
                         self.remote_wakeup_pending = false;
+                        self.dx = 0;
+                        self.dy = 0;
+                        self.wheel = 0;
+                    } else if prev == 0 {
+                        // We drop motion/button reports while unconfigured. When the host
+                        // configures the device, enqueue the current button state (if any) so held
+                        // buttons are visible without requiring another button transition.
+                        self.pending_reports.clear();
+                        self.remote_wakeup_pending = false;
+                        self.dx = 0;
+                        self.dy = 0;
+                        self.wheel = 0;
+                        if self.buttons != 0 {
+                            self.push_report(MouseReport {
+                                buttons: self.buttons,
+                                x: 0,
+                                y: 0,
+                                wheel: 0,
+                            });
+                        }
                     }
                     ControlResponse::Ack
                 }
@@ -937,13 +964,37 @@ mod tests {
     }
 
     #[test]
-    fn does_not_send_interrupt_reports_until_configured() {
+    fn does_not_buffer_motion_reports_while_unconfigured() {
         let mut mouse = UsbHidMouse::new();
         mouse.movement(10, 0);
         assert!(poll_interrupt_in(&mut mouse).is_none());
 
         configure_mouse(&mut mouse);
-        assert!(poll_interrupt_in(&mut mouse).is_some());
+        assert!(poll_interrupt_in(&mut mouse).is_none());
+    }
+
+    #[test]
+    fn configuration_enqueues_held_button_state() {
+        let mut mouse = UsbHidMouse::new();
+
+        mouse.button_event(0x01, true); // left button
+        assert!(poll_interrupt_in(&mut mouse).is_none());
+
+        configure_mouse(&mut mouse);
+        let report = poll_interrupt_in(&mut mouse).expect("expected report for held button");
+        assert_eq!(report, vec![0x01, 0x00, 0x00, 0x00]);
+    }
+
+    #[test]
+    fn configuration_does_not_replay_transient_button_click() {
+        let mut mouse = UsbHidMouse::new();
+
+        mouse.button_event(0x01, true);
+        mouse.button_event(0x01, false);
+        assert!(poll_interrupt_in(&mut mouse).is_none());
+
+        configure_mouse(&mut mouse);
+        assert!(poll_interrupt_in(&mut mouse).is_none());
     }
 
     #[test]
