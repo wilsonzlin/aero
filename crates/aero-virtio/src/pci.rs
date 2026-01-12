@@ -304,6 +304,11 @@ impl VirtioPciDevice {
         }
     }
 
+    /// Write to the modern virtio-pci BAR0 register space.
+    ///
+    /// This method is intentionally **side-effect free with respect to guest memory**: queue
+    /// notifications only mark a queue as needing service. Call [`VirtioPciDevice::process_notified_queues`]
+    /// later with access to guest RAM to execute the notified virtqueues.
     pub fn bar0_write(&mut self, offset: u64, data: &[u8]) {
         if !self.modern_enabled {
             return;
@@ -365,6 +370,10 @@ impl VirtioPciDevice {
     }
 
     /// Write to the legacy virtio-pci I/O port register block.
+    ///
+    /// Like [`VirtioPciDevice::bar0_write`], this method does not access guest memory. Queue
+    /// notifications only mark a queue as pending; call [`VirtioPciDevice::process_notified_queues`]
+    /// later with access to guest RAM to execute the virtqueue(s).
     pub fn legacy_io_write(&mut self, offset: u64, data: &[u8]) {
         if !self.legacy_io_enabled {
             return;
