@@ -43,11 +43,11 @@ use aero_devices::reset_ctrl::{ResetCtrl, RESET_CTRL_PORT};
 use aero_devices::rtc_cmos::{register_rtc_cmos, RtcCmos, SharedRtcCmos};
 use aero_devices::serial::{register_serial16550, Serial16550, SharedSerial16550};
 pub use aero_devices_input::Ps2MouseButton;
+use aero_net_backend::NetworkBackend;
 use aero_platform::chipset::{A20GateHandle, ChipsetState};
 use aero_platform::interrupts::PlatformInterrupts;
 use aero_platform::io::IoPortBus;
 use aero_platform::reset::{ResetKind, ResetLatch};
-use aero_net_backend::NetworkBackend;
 use aero_snapshot as snapshot;
 use firmware::bios::{A20Gate, Bios, BiosBus, BiosConfig, BlockDevice, DiskError, FirmwareMemory};
 use memory::{DenseMemory, MapError, MemoryBus as _, PhysicalMemoryBus};
@@ -473,7 +473,7 @@ pub struct Machine {
     rtc: Option<SharedRtcCmos<ManualClock, PlatformIrqLine>>,
     pci_cfg: Option<SharedPciConfigPorts>,
     pci_intx: Option<Rc<RefCell<PciIntxRouter>>>,
-    acpi_pm: Option<SharedAcpiPmIo>,
+    acpi_pm: Option<SharedAcpiPmIo<ManualClock>>,
     hpet: Option<Rc<RefCell<hpet::Hpet<ManualClock>>>>,
 
     bios: Bios,
@@ -623,7 +623,7 @@ impl Machine {
     }
 
     /// Returns the ACPI PM I/O device, if present.
-    pub fn acpi_pm(&self) -> Option<SharedAcpiPmIo> {
+    pub fn acpi_pm(&self) -> Option<SharedAcpiPmIo<ManualClock>> {
         self.acpi_pm.clone()
     }
 
@@ -821,12 +821,15 @@ impl Machine {
                 .set_memory_size_bytes(self.cfg.ram_size_bytes);
             register_rtc_cmos(&mut self.io, rtc.clone());
 
-            let acpi_pm = Rc::new(RefCell::new(AcpiPmIo::new_with_callbacks(
+            // Wire ACPI PM to the shared deterministic platform clock so `PM_TMR` progresses only
+            // when the host advances `ManualClock` (via `Machine::tick_platform`).
+            let acpi_pm = Rc::new(RefCell::new(AcpiPmIo::new_with_callbacks_and_clock(
                 AcpiPmConfig::default(),
                 AcpiPmCallbacks {
                     sci_irq: Box::new(PlatformIrqLine::isa(interrupts.clone(), 9)),
                     request_power_off: None,
                 },
+                clock.clone(),
             )));
             register_acpi_pm(&mut self.io, acpi_pm.clone());
 
