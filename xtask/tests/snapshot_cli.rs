@@ -644,6 +644,7 @@ fn snapshot_inspect_prints_meta_and_ram_summary() {
         .stdout(predicate::str::contains("Sections:"))
         .stdout(predicate::str::contains("offset="))
         .stdout(predicate::str::contains("CPU:"))
+        .stdout(predicate::str::contains("MMU:"))
         .stdout(predicate::str::contains("DEVICES:"))
         .stdout(predicate::str::contains("SERIAL("))
         .stdout(predicate::str::contains("RAM:"))

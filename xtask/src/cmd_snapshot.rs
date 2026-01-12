@@ -3,8 +3,8 @@ use std::fs;
 use std::io::{Read, Seek, SeekFrom};
 
 use aero_snapshot::{
-    limits, Compression, CpuState, DeviceId, DiskOverlayRefs, RamMode, SectionId, SnapshotError,
-    SnapshotIndex, SnapshotSectionInfo, SnapshotTarget,
+    limits, Compression, CpuState, DeviceId, DiskOverlayRefs, MmuState, RamMode, SectionId,
+    SnapshotError, SnapshotIndex, SnapshotSectionInfo, SnapshotTarget,
 };
 
 use crate::error::{Result, XtaskError};
@@ -112,6 +112,10 @@ fn cmd_inspect(args: Vec<String>) -> Result<()> {
         println!("CPU:");
         print_cpu_section_summary(&mut file, cpu);
     }
+    if let Some(mmu) = index.sections.iter().find(|s| s.id == SectionId::MMU) {
+        println!("MMU:");
+        print_mmu_section_summary(&mut file, mmu);
+    }
     if let Some(devices) = index.sections.iter().find(|s| s.id == SectionId::DEVICES) {
         println!("DEVICES:");
         print_devices_section_summary(&mut file, devices);
@@ -207,6 +211,49 @@ fn print_cpu_section_summary(file: &mut fs::File, section: &SnapshotSectionInfo)
     // Ensure we don't accidentally run past the declared section bounds when decoding corrupted
     // snapshots (defensive; decode already reads via the bounded `Take`).
     let _ = section_end;
+}
+
+fn print_mmu_section_summary(file: &mut fs::File, section: &SnapshotSectionInfo) {
+    if section.len == 0 {
+        println!("  <empty section>");
+        return;
+    }
+    if let Err(e) = file.seek(SeekFrom::Start(section.offset)) {
+        println!("  <failed to seek: {e}>");
+        return;
+    }
+    let mut limited = file.take(section.len);
+    let mmu = if section.version == 1 {
+        MmuState::decode_v1(&mut limited)
+    } else if section.version >= 2 {
+        MmuState::decode_v2(&mut limited)
+    } else {
+        println!("  <unsupported MMU section version {}>", section.version);
+        return;
+    };
+    let mmu = match mmu {
+        Ok(v) => v,
+        Err(e) => {
+            println!("  <failed to decode MMU state: {e}>");
+            return;
+        }
+    };
+
+    // Best-effort summary: keep this small and stable; avoid printing large arrays.
+    println!("  cr0: 0x{:x}", mmu.cr0);
+    println!("  cr3: 0x{:x}", mmu.cr3);
+    println!("  cr4: 0x{:x}", mmu.cr4);
+    println!("  efer: 0x{:x}", mmu.efer);
+    println!("  apic_base: 0x{:x}", mmu.apic_base);
+    println!("  tsc: 0x{:x}", mmu.tsc);
+    println!(
+        "  gdtr: base=0x{:x} limit=0x{:x}",
+        mmu.gdtr_base, mmu.gdtr_limit
+    );
+    println!(
+        "  idtr: base=0x{:x} limit=0x{:x}",
+        mmu.idtr_base, mmu.idtr_limit
+    );
 }
 
 fn print_devices_section_summary(file: &mut fs::File, section: &SnapshotSectionInfo) {
