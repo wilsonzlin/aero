@@ -184,13 +184,13 @@ Within the `COMMON_CFG` capability region (BAR0 + `0x0000`), `virtio_pci_common_
 | `0x04` | 4 | `device_feature` | R | Feature bits selected by `device_feature_select`. |
 | `0x08` | 4 | `driver_feature_select` | R/W | Selector (0/1). |
 | `0x0C` | 4 | `driver_feature` | R/W | Feature bits selected by `driver_feature_select`. |
-| `0x10` | 2 | `msix_config` | R/W | MSI-X vector for config interrupts (`0xFFFF` = disabled). Optional in v1. |
+| `0x10` | 2 | `msix_config` | R/W | MSI-X vector for config interrupts (`VIRTIO_PCI_MSI_NO_VECTOR` / `0xFFFF` = disabled). Optional in v1. |
 | `0x12` | 2 | `num_queues` | R | Number of virtqueues implemented by the device. |
 | `0x14` | 1 | `device_status` | R/W | Virtio status byte. Writing 0 resets the device. |
 | `0x15` | 1 | `config_generation` | R | Config generation counter. |
 | `0x16` | 2 | `queue_select` | R/W | Selects which queue subsequent `queue_*` fields refer to. |
 | `0x18` | 2 | `queue_size` | R | Maximum size for selected queue (in descriptors). |
-| `0x1A` | 2 | `queue_msix_vector` | R/W | MSI-X vector for selected queue (`0xFFFF` = disabled). Optional in v1. |
+| `0x1A` | 2 | `queue_msix_vector` | R/W | MSI-X vector for selected queue (`VIRTIO_PCI_MSI_NO_VECTOR` / `0xFFFF` = disabled). Optional in v1. |
 | `0x1C` | 2 | `queue_enable` | R/W | 0 = disabled, 1 = enabled. |
 | `0x1E` | 2 | `queue_notify_off` | R | Notify offset for selected queue. |
 | `0x20` | 8 | `queue_desc` | R/W | 64-bit guest physical address of descriptor table. |
