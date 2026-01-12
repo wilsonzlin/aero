@@ -998,16 +998,7 @@ export interface WasmApi {
          * Prefer {@link attach_mic_ring} + {@link detach_mic_ring} for new code.
          */
         set_mic_ring_buffer(sab?: SharedArrayBuffer): void;
-        /**
-         * Legacy audio ring attachment helper retained for older call sites.
-         *
-         * Prefer {@link attach_audio_ring} + {@link detach_audio_ring} for new code.
-         */
-        set_audio_ring_buffer?(sab: SharedArrayBuffer | undefined, capacityFrames: number, channelCount: number): void;
         set_capture_sample_rate_hz(sampleRateHz: number): void;
-
-        save_state?(): Uint8Array;
-        load_state?(bytes: Uint8Array): void;
 
         buffer_level_frames(): number;
         overrun_count(): number;
