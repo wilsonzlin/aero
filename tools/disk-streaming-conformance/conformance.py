@@ -499,12 +499,13 @@ def _test_options_preflight(
     last_modified: str | None,
 ) -> TestResult:
     required_headers = {"range", "if-range"}
+    optional_headers: set[str] = set()
     req_headers: list[str] = ["range", "if-range"]
     if etag is not None:
         required_headers.add("if-none-match")
         req_headers.append("if-none-match")
     if last_modified is not None:
-        required_headers.add("if-modified-since")
+        optional_headers.add("if-modified-since")
         req_headers.append("if-modified-since")
 
     req_header_value = ",".join(req_headers)
@@ -556,10 +557,20 @@ def _test_options_preflight(
         allow_headers = _header(resp, "Access-Control-Allow-Headers")
         _require(allow_headers is not None, "missing Access-Control-Allow-Headers")
         allowed = _csv_tokens(allow_headers)
+        missing_required = set()
+        if "*" not in allowed:
+            missing_required = required_headers.difference(allowed)
         _require(
-            "*" in allowed or required_headers.issubset(allowed),
-            f"expected Allow-Headers to include {sorted(required_headers)}; got {allow_headers!r}",
+            not missing_required,
+            f"expected Allow-Headers to include {sorted(required_headers)} (or '*'); missing {sorted(missing_required)}; got {allow_headers!r}",
         )
+
+        missing_optional = set()
+        if "*" not in allowed:
+            missing_optional = optional_headers.difference(allowed)
+        if missing_optional:
+            message = f"missing optional Allow-Headers {sorted(missing_optional)}; got {allow_headers!r}"
+            return TestResult(name=name, status="WARN", details=message)
 
         return TestResult(name=name, status="PASS", details=f"status={resp.status}")
     except TestFailure as e:

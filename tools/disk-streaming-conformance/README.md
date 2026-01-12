@@ -86,7 +86,7 @@ PASS GET: Range + If-Range (matching ETag) returns 206 - Content-Range='bytes 0-
 PASS GET: Range + If-Range ("mismatch") does not return mixed-version 206 - status=200 (Range ignored)
 PASS GET: If-None-Match returns 304 Not Modified - status=304
 PASS GET: If-Modified-Since returns 304 Not Modified - status=304
-PASS OPTIONS: CORS preflight allows Range + If-Range + conditional headers - status=204
+PASS OPTIONS: CORS preflight allows Range + If-Range headers + If-None-Match + If-Modified-Since - status=204
 
 Summary: 13 passed, 0 failed, 0 warned, 1 skipped
 ```
