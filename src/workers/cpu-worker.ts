@@ -620,7 +620,13 @@ async function runTieredVm(iterations: number, threshold: number) {
 
     if (Array.isArray(evicted)) {
       for (const v of evicted) {
-        if (typeof v === 'bigint') releaseEvictedRip(u64AsNumber(v));
+        if (typeof v === 'bigint') {
+          try {
+            releaseEvictedRip(u64ToNumber(v));
+          } catch {
+            // ignore out-of-range
+          }
+        }
         else if (typeof v === 'number' && Number.isFinite(v)) releaseEvictedRip(v);
       }
     } else if (evicted && typeof evicted === 'object' && ArrayBuffer.isView(evicted)) {
@@ -631,7 +637,13 @@ async function runTieredVm(iterations: number, threshold: number) {
       if (typeof len === 'number' && Number.isFinite(len) && len > 0) {
         for (let i = 0; i < len; i++) {
           const v = view[i];
-          if (typeof v === 'bigint') releaseEvictedRip(u64AsNumber(v));
+          if (typeof v === 'bigint') {
+            try {
+              releaseEvictedRip(u64ToNumber(v));
+            } catch {
+              // ignore out-of-range
+            }
+          }
           else if (typeof v === 'number' && Number.isFinite(v)) releaseEvictedRip(v);
         }
       }
@@ -639,7 +651,13 @@ async function runTieredVm(iterations: number, threshold: number) {
       // Best-effort: treat as iterable.
       try {
         for (const v of evicted as unknown as Iterable<unknown>) {
-          if (typeof v === 'bigint') releaseEvictedRip(u64AsNumber(v));
+          if (typeof v === 'bigint') {
+            try {
+              releaseEvictedRip(u64ToNumber(v));
+            } catch {
+              // ignore out-of-range
+            }
+          }
           else if (typeof v === 'number' && Number.isFinite(v)) releaseEvictedRip(v);
         }
       } catch {
