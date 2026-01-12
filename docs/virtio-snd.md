@@ -38,8 +38,9 @@ explicit device-selection mechanism is added (detach HDA rings and attach virtio
 
 Limitations (current):
 
-- VM snapshot/restore does not yet capture virtio-snd internal device state in the browser runtime. In-place snapshot restore while
-  virtio-snd is active is not currently deterministic/supported.
+- VM snapshot/restore is supported in the browser runtime under kind `"audio.virtio_snd"` (`DeviceId::VIRTIO_SND = 22`).
+- Snapshots preserve guest-visible virtio-pci + stream state and AudioWorklet ring indices, but do not serialize host audio
+  contents (rings are cleared to silence on restore).
 
 Scope:
 

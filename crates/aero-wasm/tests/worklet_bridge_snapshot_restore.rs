@@ -533,3 +533,103 @@ fn virtio_snd_pci_bridge_attach_mic_ring_discards_buffered_samples() {
 
     drop(guest);
 }
+
+#[wasm_bindgen_test]
+fn virtio_snd_pci_bridge_save_load_restores_worklet_ring_and_clears_samples() {
+    let capacity_frames = 8;
+    let channel_count = 2;
+
+    let mut guest = vec![0u8; 0x4000];
+    let guest_base = guest.as_mut_ptr() as u32;
+    let guest_size = guest.len() as u32;
+
+    let mut snd = VirtioSndPciBridge::new(guest_base, guest_size).unwrap();
+
+    let ring = WorkletBridge::new(capacity_frames, channel_count).unwrap();
+    let sab = ring.shared_buffer();
+    snd.attach_audio_ring(sab.clone(), capacity_frames, channel_count)
+        .unwrap();
+
+    let header = Uint32Array::new_with_byte_offset_and_length(&sab, 0, HEADER_U32_LEN as u32);
+    let samples = Float32Array::new_with_byte_offset_and_length(
+        &sab,
+        HEADER_BYTES as u32,
+        capacity_frames * channel_count,
+    );
+
+    // Seed ring state.
+    let input: Vec<f32> = (0..(6 * channel_count)).map(|v| (v + 1) as f32).collect();
+    assert_eq!(ring.write_f32_interleaved(&input), 6);
+    atomics_store_u32(&header, READ_FRAME_INDEX as u32, 2);
+
+    let snap = snd.save_state();
+
+    // Corrupt indices and samples.
+    atomics_store_u32(&header, READ_FRAME_INDEX as u32, 123);
+    atomics_store_u32(&header, WRITE_FRAME_INDEX as u32, 456);
+    let _ = samples.fill(123.0, 0, samples.length());
+
+    snd.load_state(&snap).unwrap();
+
+    assert_eq!(atomics_load_u32(&header, READ_FRAME_INDEX as u32), 2);
+    assert_eq!(atomics_load_u32(&header, WRITE_FRAME_INDEX as u32), 6);
+    for i in 0..samples.length() {
+        assert_eq!(samples.get_index(i), 0.0, "sample[{i}] not cleared");
+    }
+
+    drop(guest);
+}
+
+#[wasm_bindgen_test]
+fn virtio_snd_pci_bridge_deferred_ring_restore_applies_on_attach() {
+    let capacity_frames = 8;
+    let channel_count = 2;
+
+    let mut guest = vec![0u8; 0x4000];
+    let guest_base = guest.as_mut_ptr() as u32;
+    let guest_size = guest.len() as u32;
+
+    let mut snd = VirtioSndPciBridge::new(guest_base, guest_size).unwrap();
+
+    let ring = WorkletBridge::new(capacity_frames, channel_count).unwrap();
+    let sab = ring.shared_buffer();
+    snd.attach_audio_ring(sab.clone(), capacity_frames, channel_count)
+        .unwrap();
+
+    let header = Uint32Array::new_with_byte_offset_and_length(&sab, 0, HEADER_U32_LEN as u32);
+    let samples = Float32Array::new_with_byte_offset_and_length(
+        &sab,
+        HEADER_BYTES as u32,
+        capacity_frames * channel_count,
+    );
+
+    let input: Vec<f32> = (0..(6 * channel_count)).map(|v| (v + 1) as f32).collect();
+    assert_eq!(ring.write_f32_interleaved(&input), 6);
+    atomics_store_u32(&header, READ_FRAME_INDEX as u32, 2);
+
+    let snap = snd.save_state();
+
+    // Detach the ring and restore snapshot bytes while no ring is attached; this should defer
+    // ring restore.
+    snd.detach_audio_ring();
+
+    // Corrupt indices and samples.
+    atomics_store_u32(&header, READ_FRAME_INDEX as u32, 123);
+    atomics_store_u32(&header, WRITE_FRAME_INDEX as u32, 456);
+    let _ = samples.fill(123.0, 0, samples.length());
+
+    snd.load_state(&snap).unwrap();
+    // Ring is detached, so indices should not change yet.
+    assert_eq!(atomics_load_u32(&header, READ_FRAME_INDEX as u32), 123);
+
+    // Reattach; deferred indices should now be applied and samples cleared.
+    snd.attach_audio_ring(sab.clone(), capacity_frames, channel_count)
+        .unwrap();
+    assert_eq!(atomics_load_u32(&header, READ_FRAME_INDEX as u32), 2);
+    assert_eq!(atomics_load_u32(&header, WRITE_FRAME_INDEX as u32), 6);
+    for i in 0..samples.length() {
+        assert_eq!(samples.get_index(i), 0.0, "sample[{i}] not cleared");
+    }
+
+    drop(guest);
+}

@@ -155,6 +155,7 @@ import { drainIoHidInputRing } from "./io_hid_input_ring";
 import { UhciRuntimeExternalHubConfigManager } from "./uhci_runtime_hub_config";
 import {
   VM_SNAPSHOT_DEVICE_AUDIO_HDA_KIND,
+  VM_SNAPSHOT_DEVICE_AUDIO_VIRTIO_SND_KIND,
   VM_SNAPSHOT_DEVICE_E1000_KIND,
   VM_SNAPSHOT_DEVICE_I8042_KIND,
   VM_SNAPSHOT_DEVICE_KIND_PREFIX_ID,
@@ -908,6 +909,58 @@ function restoreAudioHdaDeviceState(bytes: Uint8Array): void {
     }
   } catch (err) {
     console.warn("[io.worker] HDA audio load_state failed:", err);
+    cachePending();
+  }
+}
+
+let pendingAudioVirtioSndSnapshotBytes: Uint8Array | null = null;
+
+function snapshotAudioVirtioSndDeviceState(): { kind: string; bytes: Uint8Array } | null {
+  const dev = virtioSndDevice;
+  if (!dev) return null;
+  if (!dev.canSaveState()) return null;
+
+  // If we restored virtio-snd state previously but the current runtime cannot restore it (older WASM
+  // build), preserve the cached blob rather than overwriting it with a potentially incompatible
+  // snapshot.
+  if (!dev.canLoadState()) {
+    if (snapshotRestoredDeviceBlobs.some((d) => d.kind === VM_SNAPSHOT_DEVICE_AUDIO_VIRTIO_SND_KIND)) {
+      return null;
+    }
+  }
+
+  const bytes = dev.saveState();
+  if (bytes instanceof Uint8Array) return { kind: VM_SNAPSHOT_DEVICE_AUDIO_VIRTIO_SND_KIND, bytes };
+  return null;
+}
+
+function restoreAudioVirtioSndDeviceState(bytes: Uint8Array): void {
+  // virtio-snd is optional and may not be initialized yet. Attempt to init before applying state
+  // so snapshots remain forwards-compatible across runtime builds.
+  if (!virtioSndDevice) {
+    maybeInitVirtioSndDevice();
+  }
+
+  const cachePending = () => {
+    const copy = new Uint8Array(bytes.byteLength);
+    copy.set(bytes);
+    pendingAudioVirtioSndSnapshotBytes = copy;
+  };
+
+  const dev = virtioSndDevice;
+  if (!dev) {
+    cachePending();
+    return;
+  }
+  if (!dev.canLoadState()) {
+    cachePending();
+    return;
+  }
+
+  const ok = dev.loadState(bytes);
+  if (ok) {
+    pendingAudioVirtioSndSnapshotBytes = null;
+  } else {
     cachePending();
   }
 }
@@ -2013,6 +2066,17 @@ function maybeInitVirtioSndDevice(): void {
       // ignore
     }
   }
+
+  // Apply any pending snapshot bytes captured before the virtio-snd device was initialized.
+  if (pendingAudioVirtioSndSnapshotBytes) {
+    try {
+      if (dev.loadState(pendingAudioVirtioSndSnapshotBytes)) {
+        pendingAudioVirtioSndSnapshotBytes = null;
+      }
+    } catch {
+      // ignore
+    }
+  }
 }
 
 type UsbPassthroughDemo = InstanceType<NonNullable<WasmApi["UsbPassthroughDemo"]>>;
@@ -2978,6 +3042,7 @@ async function handleVmSnapshotSaveToOpfs(
     const usb = snapshotUsbDeviceState();
     const ps2 = snapshotI8042DeviceState();
     const hda = snapshotAudioHdaDeviceState();
+    const vsnd = snapshotAudioVirtioSndDeviceState();
     const pci = snapshotPciDeviceState();
     const e1000 = snapshotE1000DeviceState();
     const netStack = snapshotNetStackDeviceState();
@@ -2988,6 +3053,7 @@ async function handleVmSnapshotSaveToOpfs(
     if (usb) freshDevices.push(usb);
     if (ps2) freshDevices.push(ps2);
     if (hda) freshDevices.push(hda);
+    if (vsnd) freshDevices.push(vsnd);
     if (pci) freshDevices.push(pci);
     if (e1000) freshDevices.push(e1000);
     if (netStack) freshDevices.push(netStack);
@@ -3099,6 +3165,7 @@ async function handleVmSnapshotRestoreFromOpfs(path: string): Promise<{
       let usbBytes: Uint8Array | null = null;
       let i8042Bytes: Uint8Array | null = null;
       let hdaBytes: Uint8Array | null = null;
+      let virtioSndBytes: Uint8Array | null = null;
       let pciBytes: Uint8Array | null = null;
       let e1000Bytes: Uint8Array | null = null;
       let netStackBytes: Uint8Array | null = null;
@@ -3118,6 +3185,7 @@ async function handleVmSnapshotRestoreFromOpfs(path: string): Promise<{
         if (kind === VM_SNAPSHOT_DEVICE_USB_KIND) usbBytes = e.bytes;
         if (kind === VM_SNAPSHOT_DEVICE_I8042_KIND) i8042Bytes = e.bytes;
         if (kind === VM_SNAPSHOT_DEVICE_AUDIO_HDA_KIND) hdaBytes = e.bytes;
+        if (kind === VM_SNAPSHOT_DEVICE_AUDIO_VIRTIO_SND_KIND) virtioSndBytes = e.bytes;
         if (kind === VM_SNAPSHOT_DEVICE_PCI_CFG_KIND) pciBytes = e.bytes;
         if (kind === VM_SNAPSHOT_DEVICE_E1000_KIND) e1000Bytes = e.bytes;
         if (kind === VM_SNAPSHOT_DEVICE_NET_STACK_KIND) netStackBytes = e.bytes;
@@ -3127,6 +3195,7 @@ async function handleVmSnapshotRestoreFromOpfs(path: string): Promise<{
       if (usbBytes) restoreUsbDeviceState(usbBytes);
       if (i8042Bytes) restoreI8042DeviceState(i8042Bytes);
       if (hdaBytes) restoreAudioHdaDeviceState(hdaBytes);
+      if (virtioSndBytes) restoreAudioVirtioSndDeviceState(virtioSndBytes);
       // If the snapshot contains E1000 state but the NIC wasn't initialized yet, register it
       // before restoring PCI config state so the PCI snapshot (command/BAR programming) is
       // applied to the newly created function.
@@ -3160,6 +3229,7 @@ async function handleVmSnapshotRestoreFromOpfs(path: string): Promise<{
       let usbBytes: Uint8Array | null = null;
       let i8042Bytes: Uint8Array | null = null;
       let hdaBytes: Uint8Array | null = null;
+      let virtioSndBytes: Uint8Array | null = null;
       let pciBytes: Uint8Array | null = null;
       let e1000Bytes: Uint8Array | null = null;
       let netStackBytes: Uint8Array | null = null;
@@ -3195,6 +3265,9 @@ async function handleVmSnapshotRestoreFromOpfs(path: string): Promise<{
         if (canonicalKind === VM_SNAPSHOT_DEVICE_AUDIO_HDA_KIND) {
           hdaBytes = e.data;
         }
+        if (canonicalKind === VM_SNAPSHOT_DEVICE_AUDIO_VIRTIO_SND_KIND) {
+          virtioSndBytes = e.data;
+        }
         if (canonicalKind === VM_SNAPSHOT_DEVICE_PCI_CFG_KIND) {
           pciBytes = e.data;
         }
@@ -3216,6 +3289,9 @@ async function handleVmSnapshotRestoreFromOpfs(path: string): Promise<{
       }
       if (hdaBytes) {
         restoreAudioHdaDeviceState(hdaBytes);
+      }
+      if (virtioSndBytes) {
+        restoreAudioVirtioSndDeviceState(virtioSndBytes);
       }
       if (pciBytes && e1000Bytes && !e1000Bridge && !virtioNetDevice) {
         maybeInitE1000Device();

@@ -4,6 +4,8 @@ use aero_audio::sink::AudioSink;
 pub use aero_audio::capture::AudioCaptureSource;
 pub use aero_audio::capture::SilenceCaptureSource as NullCaptureSource;
 
+use aero_io_snapshot::io::audio::state as io_state;
+
 use crate::devices::{VirtioDevice, VirtioDeviceError};
 use crate::memory::GuestMemory;
 use crate::pci::{VIRTIO_F_RING_INDIRECT_DESC, VIRTIO_F_VERSION_1};
@@ -58,6 +60,20 @@ pub const PCM_SAMPLE_RATE_HZ: u32 = 48_000;
 /// 256KiB is ~1.3s of stereo S16_LE at 48kHz (and ~2.6s of mono capture), which is plenty for the
 /// minimal Win7 contract while still bounding worst-case allocations.
 const MAX_PCM_XFER_BYTES: u64 = 256 * 1024;
+
+/// Defensive upper bound for host-provided sample rates.
+///
+/// Host integrations (including the browser/WASM runtime) may provide the output/capture sample
+/// rates used for resampling. Snapshot files may also come from untrusted sources. Clamp rates to a
+/// reasonable maximum to avoid allocating multi-gigabyte scratch buffers if a caller passes an
+/// absurd value.
+///
+/// Keep this consistent with the equivalent clamp in the WASM virtio-snd bridge.
+const MAX_HOST_SAMPLE_RATE_HZ: u32 = 384_000;
+
+fn clamp_host_sample_rate_hz(rate_hz: u32) -> u32 {
+    rate_hz.clamp(1, MAX_HOST_SAMPLE_RATE_HZ)
+}
 
 const PLAYBACK_CHANNELS: u8 = 2;
 /// Capture stream channel count.
@@ -257,6 +273,105 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
 
     pub fn capture_telemetry(&self) -> CaptureTelemetry {
         self.capture_telemetry
+    }
+
+    /// Snapshot the virtio-snd internal stream state into an `aero-io-snapshot` schema.
+    ///
+    /// This does **not** snapshot virtqueue transport state; that lives in `VirtioPciDevice`.
+    pub fn snapshot_state(&self) -> io_state::VirtioSndState {
+        let encode_stream = |s: &PcmStream| -> io_state::VirtioSndStreamState {
+            let state = match s.state {
+                StreamState::Idle => 0,
+                StreamState::ParamsSet => 1,
+                StreamState::Prepared => 2,
+                StreamState::Running => 3,
+            };
+            let params = s.params.map(|p| io_state::VirtioSndPcmParamsState {
+                buffer_bytes: p.buffer_bytes,
+                period_bytes: p.period_bytes,
+                channels: p.channels,
+                format: p.format,
+                rate: p.rate,
+            });
+            io_state::VirtioSndStreamState { state, params }
+        };
+
+        io_state::VirtioSndState {
+            playback: encode_stream(&self.playback),
+            capture: encode_stream(&self.capture),
+            capture_telemetry: io_state::VirtioSndCaptureTelemetryState {
+                dropped_samples: self.capture_telemetry.dropped_samples,
+                underrun_samples: self.capture_telemetry.underrun_samples,
+                underrun_responses: self.capture_telemetry.underrun_responses,
+            },
+            host_sample_rate_hz: self.host_sample_rate_hz,
+            capture_sample_rate_hz: self.capture_sample_rate_hz,
+        }
+    }
+
+    /// Restore virtio-snd internal stream state from a snapshot.
+    ///
+    /// The snapshot schema does not include queued/resampled audio; those buffers are reset to
+    /// silence deterministically.
+    pub fn restore_state(&mut self, state: &io_state::VirtioSndState) {
+        let decode_stream = |dst: &mut PcmStream, src: &io_state::VirtioSndStreamState| {
+            dst.params = src.params.as_ref().map(|p| PcmParams {
+                buffer_bytes: p.buffer_bytes,
+                period_bytes: p.period_bytes,
+                channels: p.channels,
+                format: p.format,
+                rate: p.rate,
+            });
+            dst.state = match src.state {
+                0 => StreamState::Idle,
+                1 => StreamState::ParamsSet,
+                2 => StreamState::Prepared,
+                3 => StreamState::Running,
+                _ => StreamState::Idle,
+            };
+        };
+
+        decode_stream(&mut self.playback, &state.playback);
+        decode_stream(&mut self.capture, &state.capture);
+        self.capture_telemetry = CaptureTelemetry {
+            dropped_samples: state.capture_telemetry.dropped_samples,
+            underrun_samples: state.capture_telemetry.underrun_samples,
+            underrun_responses: state.capture_telemetry.underrun_responses,
+        };
+
+        // Rates in older snapshots (or corrupted inputs) may be 0. Treat 0 as "use the guest
+        // contract rate" (48kHz) so resampling code continues to work.
+        let host_rate = if state.host_sample_rate_hz == 0 {
+            PCM_SAMPLE_RATE_HZ
+        } else {
+            state.host_sample_rate_hz
+        };
+        // Default capture to the restored host rate if missing.
+        let capture_rate = if state.capture_sample_rate_hz == 0 {
+            host_rate
+        } else {
+            state.capture_sample_rate_hz
+        };
+
+        self.host_sample_rate_hz = clamp_host_sample_rate_hz(host_rate);
+        self.capture_sample_rate_hz = clamp_host_sample_rate_hz(capture_rate);
+
+        // Reset resamplers and scratch buffers deterministically. Snapshot restores preserve
+        // guest-visible stream state but do not attempt to restore buffered host audio.
+        self.resampler
+            .reset_rates(PCM_SAMPLE_RATE_HZ, self.host_sample_rate_hz);
+        self.capture_resampler
+            .reset_rates(self.capture_sample_rate_hz, PCM_SAMPLE_RATE_HZ);
+        self.decoded_frames_scratch.clear();
+        self.resampled_scratch.clear();
+        self.capture_frames_scratch.clear();
+        self.capture_interleaved_scratch.clear();
+        self.capture_samples_scratch.clear();
+
+        // Event queue buffers are guest-provided and are not serialized; clear any cached chains so
+        // the transport can repopulate them after restore (see `VirtioPciDevice::rewind_*` helper).
+        self.event_buffers.clear();
+        self.pending_events.clear();
     }
 
     fn process_control(

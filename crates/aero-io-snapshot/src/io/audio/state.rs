@@ -1,6 +1,6 @@
 use crate::io::state::codec::{Decoder, Encoder};
 use crate::io::state::{
-    IoSnapshot, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
+    IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -545,6 +545,232 @@ impl IoSnapshot for HdaControllerState {
             let mut d = Decoder::new(buf);
             self.codec.output_pin_power_state = d.u8()?;
             self.codec_capture.mic_pin_power_state = d.u8()?;
+            d.finish()?;
+        }
+
+        if let Some(buf) = r.bytes(TAG_WORKLET_RING) {
+            let mut d = Decoder::new(buf);
+            self.worklet_ring.capacity_frames = d.u32()?;
+            self.worklet_ring.write_pos = d.u32()?;
+            self.worklet_ring.read_pos = d.u32()?;
+            d.finish()?;
+        }
+
+        Ok(())
+    }
+}
+
+// -------------------------------------------------------------------------------------------------
+// virtio-snd (virtio-pci) snapshot state
+// -------------------------------------------------------------------------------------------------
+
+/// Serializable PCM parameters for a virtio-snd stream.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VirtioSndPcmParamsState {
+    pub buffer_bytes: u32,
+    pub period_bytes: u32,
+    pub channels: u8,
+    pub format: u8,
+    pub rate: u8,
+}
+
+/// Serializable per-stream state for virtio-snd.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VirtioSndStreamState {
+    /// Stream state encoded as:
+    /// - 0: Idle
+    /// - 1: ParamsSet
+    /// - 2: Prepared
+    /// - 3: Running
+    pub state: u8,
+    pub params: Option<VirtioSndPcmParamsState>,
+}
+
+/// Host-side microphone capture telemetry counters.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct VirtioSndCaptureTelemetryState {
+    pub dropped_samples: u64,
+    pub underrun_samples: u64,
+    pub underrun_responses: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VirtioSndState {
+    pub playback: VirtioSndStreamState,
+    pub capture: VirtioSndStreamState,
+    pub capture_telemetry: VirtioSndCaptureTelemetryState,
+    /// Host/output sample rate used by the virtio-snd playback path.
+    pub host_sample_rate_hz: u32,
+    /// Host/input sample rate used by the virtio-snd capture path.
+    pub capture_sample_rate_hz: u32,
+}
+
+impl Default for VirtioSndState {
+    fn default() -> Self {
+        Self {
+            playback: VirtioSndStreamState {
+                state: 0,
+                params: None,
+            },
+            capture: VirtioSndStreamState {
+                state: 0,
+                params: None,
+            },
+            capture_telemetry: VirtioSndCaptureTelemetryState::default(),
+            host_sample_rate_hz: 0,
+            capture_sample_rate_hz: 0,
+        }
+    }
+}
+
+/// Full virtio-snd PCI function state as stored in `aero-io-snapshot`.
+///
+/// This includes:
+/// - virtio-pci transport state (`DEVICE_ID = VPCI`) as opaque bytes
+/// - virtio-snd internal stream state
+/// - AudioWorklet output ring indices (but not ring contents)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VirtioSndPciState {
+    pub virtio_pci: Vec<u8>,
+    pub snd: VirtioSndState,
+    pub worklet_ring: AudioWorkletRingState,
+}
+
+impl Default for VirtioSndPciState {
+    fn default() -> Self {
+        Self {
+            virtio_pci: Vec::new(),
+            snd: VirtioSndState::default(),
+            worklet_ring: AudioWorkletRingState {
+                capacity_frames: 0,
+                write_pos: 0,
+                read_pos: 0,
+            },
+        }
+    }
+}
+
+impl IoSnapshot for VirtioSndPciState {
+    const DEVICE_ID: [u8; 4] = *b"VSND";
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
+
+    fn save_state(&self) -> Vec<u8> {
+        const TAG_VIRTIO_PCI: u16 = 1;
+        const TAG_HOST_SAMPLE_RATE_HZ: u16 = 2;
+        const TAG_CAPTURE_SAMPLE_RATE_HZ: u16 = 3;
+
+        const TAG_PLAYBACK_STREAM: u16 = 10;
+        const TAG_CAPTURE_STREAM: u16 = 11;
+        const TAG_CAPTURE_TELEMETRY: u16 = 12;
+
+        const TAG_WORKLET_RING: u16 = 20;
+
+        let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
+
+        w.field_bytes(TAG_VIRTIO_PCI, self.virtio_pci.clone());
+        w.field_u32(TAG_HOST_SAMPLE_RATE_HZ, self.snd.host_sample_rate_hz);
+        w.field_u32(TAG_CAPTURE_SAMPLE_RATE_HZ, self.snd.capture_sample_rate_hz);
+
+        let encode_stream = |s: &VirtioSndStreamState| -> Vec<u8> {
+            let mut enc = Encoder::new().u8(s.state).bool(s.params.is_some());
+            if let Some(p) = s.params.as_ref() {
+                enc = enc
+                    .u32(p.buffer_bytes)
+                    .u32(p.period_bytes)
+                    .u8(p.channels)
+                    .u8(p.format)
+                    .u8(p.rate);
+            }
+            enc.finish()
+        };
+        w.field_bytes(TAG_PLAYBACK_STREAM, encode_stream(&self.snd.playback));
+        w.field_bytes(TAG_CAPTURE_STREAM, encode_stream(&self.snd.capture));
+
+        let telemetry = Encoder::new()
+            .u64(self.snd.capture_telemetry.dropped_samples)
+            .u64(self.snd.capture_telemetry.underrun_samples)
+            .u64(self.snd.capture_telemetry.underrun_responses)
+            .finish();
+        w.field_bytes(TAG_CAPTURE_TELEMETRY, telemetry);
+
+        let ring = Encoder::new()
+            .u32(self.worklet_ring.capacity_frames)
+            .u32(self.worklet_ring.write_pos)
+            .u32(self.worklet_ring.read_pos)
+            .finish();
+        w.field_bytes(TAG_WORKLET_RING, ring);
+
+        w.finish()
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
+        // Defensive bounds: snapshot files may be untrusted.
+        const MAX_VIRTIO_PCI_BYTES: usize = 64 * 1024;
+
+        const TAG_VIRTIO_PCI: u16 = 1;
+        const TAG_HOST_SAMPLE_RATE_HZ: u16 = 2;
+        const TAG_CAPTURE_SAMPLE_RATE_HZ: u16 = 3;
+
+        const TAG_PLAYBACK_STREAM: u16 = 10;
+        const TAG_CAPTURE_STREAM: u16 = 11;
+        const TAG_CAPTURE_TELEMETRY: u16 = 12;
+
+        const TAG_WORKLET_RING: u16 = 20;
+
+        let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
+        r.ensure_device_major(Self::DEVICE_VERSION.major)?;
+
+        let Some(virtio_pci) = r.bytes(TAG_VIRTIO_PCI) else {
+            return Err(SnapshotError::InvalidFieldEncoding(
+                "missing virtio-pci state",
+            ));
+        };
+        if virtio_pci.len() > MAX_VIRTIO_PCI_BYTES {
+            return Err(SnapshotError::InvalidFieldEncoding(
+                "virtio-pci state too large",
+            ));
+        }
+        self.virtio_pci.clear();
+        self.virtio_pci.extend_from_slice(virtio_pci);
+
+        if let Some(v) = r.u32(TAG_HOST_SAMPLE_RATE_HZ)? {
+            self.snd.host_sample_rate_hz = v;
+        }
+        if let Some(v) = r.u32(TAG_CAPTURE_SAMPLE_RATE_HZ)? {
+            self.snd.capture_sample_rate_hz = v;
+        }
+
+        let decode_stream = |buf: &[u8]| -> SnapshotResult<VirtioSndStreamState> {
+            let mut d = Decoder::new(buf);
+            let state = d.u8()?;
+            let has_params = d.bool()?;
+            let params = if has_params {
+                Some(VirtioSndPcmParamsState {
+                    buffer_bytes: d.u32()?,
+                    period_bytes: d.u32()?,
+                    channels: d.u8()?,
+                    format: d.u8()?,
+                    rate: d.u8()?,
+                })
+            } else {
+                None
+            };
+            d.finish()?;
+            Ok(VirtioSndStreamState { state, params })
+        };
+
+        if let Some(buf) = r.bytes(TAG_PLAYBACK_STREAM) {
+            self.snd.playback = decode_stream(buf)?;
+        }
+        if let Some(buf) = r.bytes(TAG_CAPTURE_STREAM) {
+            self.snd.capture = decode_stream(buf)?;
+        }
+
+        if let Some(buf) = r.bytes(TAG_CAPTURE_TELEMETRY) {
+            let mut d = Decoder::new(buf);
+            self.snd.capture_telemetry.dropped_samples = d.u64()?;
+            self.snd.capture_telemetry.underrun_samples = d.u64()?;
+            self.snd.capture_telemetry.underrun_responses = d.u64()?;
             d.finish()?;
         }
 

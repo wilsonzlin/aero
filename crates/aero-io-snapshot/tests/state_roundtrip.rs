@@ -1,6 +1,7 @@
 use aero_io_snapshot::io::audio::state::{
     AudioWorkletRingState, HdaCodecCaptureState, HdaCodecState, HdaControllerState,
-    HdaStreamRuntimeState, HdaStreamState,
+    HdaStreamRuntimeState, HdaStreamState, VirtioSndCaptureTelemetryState, VirtioSndPciState,
+    VirtioSndPcmParamsState, VirtioSndState, VirtioSndStreamState,
 };
 use aero_io_snapshot::io::network::state::{
     DhcpLease, Ipv4Addr, LegacyNetworkStackState, NatKey, NatProtocol, NatValue, TcpRestorePolicy,
@@ -512,4 +513,50 @@ fn hda_state_roundtrip() {
     let mut restored = HdaControllerState::default();
     restored.load_state(&snap).unwrap();
     assert_eq!(hda, restored);
+}
+
+#[test]
+fn virtio_snd_pci_state_roundtrip() {
+    let state = VirtioSndPciState {
+        virtio_pci: vec![0xaa, 0xbb, 0xcc],
+        snd: VirtioSndState {
+            playback: VirtioSndStreamState {
+                state: 3,
+                params: Some(VirtioSndPcmParamsState {
+                    buffer_bytes: 4096,
+                    period_bytes: 1024,
+                    channels: 2,
+                    format: 0x05,
+                    rate: 0x07,
+                }),
+            },
+            capture: VirtioSndStreamState {
+                state: 2,
+                params: Some(VirtioSndPcmParamsState {
+                    buffer_bytes: 2048,
+                    period_bytes: 512,
+                    channels: 1,
+                    format: 0x05,
+                    rate: 0x07,
+                }),
+            },
+            capture_telemetry: VirtioSndCaptureTelemetryState {
+                dropped_samples: 123,
+                underrun_samples: 456,
+                underrun_responses: 7,
+            },
+            host_sample_rate_hz: 48_000,
+            capture_sample_rate_hz: 44_100,
+        },
+        worklet_ring: AudioWorkletRingState {
+            capacity_frames: 256,
+            write_pos: 42,
+            read_pos: 7,
+        },
+    };
+
+    let snap = state.save_state();
+    let mut restored = VirtioSndPciState::default();
+    restored.load_state(&snap).unwrap();
+    assert_eq!(state, restored);
 }

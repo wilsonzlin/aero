@@ -117,6 +117,15 @@ impl DeviceId {
     /// Platform interrupt controller/routing state (`PlatformInterrupts`: PIC + LAPIC/IOAPIC +
     /// IMCR routing).
     pub const PLATFORM_INTERRUPTS: DeviceId = DeviceId(21);
+    /// Guest-visible virtio-snd (virtio-pci) audio device state.
+    ///
+    /// This ID is used by the worker-based web runtime when virtio-snd is present as either:
+    /// - the active audio device (in WASM builds that omit HDA), or
+    /// - an additional enumerated PCI function alongside HDA.
+    ///
+    /// See `docs/16-snapshots.md` and `web/src/workers/vm_snapshot_wasm.ts` for the stable mapping
+    /// to the string kind `audio.virtio_snd`.
+    pub const VIRTIO_SND: DeviceId = DeviceId(22);
 
     pub fn name(self) -> Option<&'static str> {
         match self {
@@ -141,6 +150,7 @@ impl DeviceId {
             DeviceId::E1000 => Some("E1000"),
             DeviceId::NET_STACK => Some("NET_STACK"),
             DeviceId::PLATFORM_INTERRUPTS => Some("PLATFORM_INTERRUPTS"),
+            DeviceId::VIRTIO_SND => Some("VIRTIO_SND"),
             _ => None,
         }
     }

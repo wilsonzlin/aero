@@ -12,7 +12,7 @@
 
 use wasm_bindgen::prelude::*;
 
-use js_sys::SharedArrayBuffer;
+use js_sys::{SharedArrayBuffer, Uint8Array};
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -20,10 +20,13 @@ use std::rc::Rc;
 use aero_audio::capture::AudioCaptureSource;
 use aero_audio::sink::AudioSink;
 
+use aero_io_snapshot::io::audio::state::{AudioWorkletRingState, VirtioSndPciState};
+use aero_io_snapshot::io::state::IoSnapshot as _;
+
 use aero_platform::audio::mic_bridge::MicBridge;
 use aero_platform::audio::worklet_bridge::WorkletBridge;
 
-use aero_virtio::devices::snd::VirtioSnd;
+use aero_virtio::devices::snd::{VIRTIO_SND_QUEUE_EVENT, VirtioSnd};
 use aero_virtio::memory::{GuestMemory, GuestMemoryError};
 use aero_virtio::pci::{InterruptSink, VIRTIO_STATUS_DRIVER_OK, VirtioPciDevice};
 
@@ -246,6 +249,14 @@ impl OptionalWorkletSink {
     fn detach(&mut self) {
         self.ring = None;
     }
+
+    fn worklet_ring(&self) -> Option<&WorkletBridge> {
+        self.ring.as_ref()
+    }
+
+    fn snapshot_ring_state(&self) -> Option<AudioWorkletRingState> {
+        self.ring.as_ref().map(|r| r.snapshot_state())
+    }
 }
 
 impl AudioSink for OptionalWorkletSink {
@@ -276,6 +287,13 @@ impl OptionalMicCaptureSource {
 
     fn detach(&mut self) {
         self.ring = None;
+    }
+
+    fn discard_buffered_samples_after_restore(&mut self) {
+        if let Some(ring) = self.ring.as_mut() {
+            ring.discard_buffered_samples();
+            ring.reset_dropped_samples_baseline();
+        }
     }
 }
 
@@ -322,6 +340,8 @@ pub struct VirtioSndPciBridge {
     dev: VirtioPciDevice,
     irq_asserted: Rc<Cell<bool>>,
     pci_command: u16,
+
+    pending_audio_ring_state: Option<AudioWorkletRingState>,
 }
 
 #[wasm_bindgen]
@@ -351,6 +371,7 @@ impl VirtioSndPciBridge {
             dev,
             irq_asserted: asserted,
             pci_command: 0,
+            pending_audio_ring_state: None,
         })
     }
 
@@ -434,9 +455,35 @@ impl VirtioSndPciBridge {
         capacity_frames: u32,
         channel_count: u32,
     ) -> Result<(), JsValue> {
-        self.snd_mut()
-            .output_mut()
-            .attach(ring_sab, capacity_frames, channel_count)
+        // Avoid borrow conflicts: take pending state before borrowing `self.dev` via `snd_mut()`.
+        let mut pending_state = self.pending_audio_ring_state.take();
+
+        {
+            let snd = self.snd_mut();
+            let output = snd.output_mut();
+            output.attach(ring_sab, capacity_frames, channel_count)?;
+
+            // Apply a deferred ring restore if `load_state` was called before the host reattached
+            // the AudioWorklet ring.
+            if let Some(mut state) = pending_state.take() {
+                if let Some(ring) = output.worklet_ring() {
+                    // Snapshot state stores the ring capacity for determinism/debugging, but
+                    // restores must be best-effort. If the host allocates a different capacity than
+                    // what was captured in the snapshot, clear the field so
+                    // `WorkletBridge::restore_state` bypasses its debug-only capacity assertion.
+                    if state.capacity_frames != 0 && state.capacity_frames != ring.capacity_frames()
+                    {
+                        state.capacity_frames = 0;
+                    }
+                    ring.restore_state(&state);
+                } else {
+                    pending_state = Some(state);
+                }
+            }
+        }
+
+        self.pending_audio_ring_state = pending_state;
+        Ok(())
     }
 
     pub fn detach_audio_ring(&mut self) {
@@ -495,6 +542,101 @@ impl VirtioSndPciBridge {
         self.snd_mut()
             .set_capture_sample_rate_hz(clamp_host_sample_rate_hz(rate));
         Ok(())
+    }
+
+    /// Serialize the current virtio-snd PCI function state into a deterministic snapshot blob.
+    ///
+    /// This includes:
+    /// - virtio-pci transport state (`VPCI`)
+    /// - virtio-snd internal state (stream state + host sample rates)
+    /// - AudioWorklet ring indices (but not audio contents)
+    pub fn save_state(&mut self) -> Vec<u8> {
+        let virtio_pci = self.dev.save_state();
+
+        let snd_state;
+        let attached_ring_state;
+        {
+            let snd = self.snd_mut();
+            snd_state = snd.snapshot_state();
+            attached_ring_state = snd.output_mut().snapshot_ring_state();
+        }
+
+        let ring_state = if let Some(state) = attached_ring_state {
+            state
+        } else if let Some(state) = self.pending_audio_ring_state.as_ref() {
+            state.clone()
+        } else {
+            AudioWorkletRingState {
+                capacity_frames: 0,
+                write_pos: 0,
+                read_pos: 0,
+            }
+        };
+
+        let state = VirtioSndPciState {
+            virtio_pci,
+            snd: snd_state,
+            worklet_ring: ring_state,
+        };
+        state.save_state()
+    }
+
+    /// Restore virtio-snd PCI function state from a snapshot blob produced by [`save_state`].
+    pub fn load_state(&mut self, bytes: &[u8]) -> Result<(), JsValue> {
+        let mut state = VirtioSndPciState::default();
+        state
+            .load_state(bytes)
+            .map_err(|e| js_error(format!("Invalid virtio-snd snapshot: {e}")))?;
+
+        self.dev
+            .load_state(&state.virtio_pci)
+            .map_err(|e| js_error(format!("Invalid virtio-pci snapshot: {e}")))?;
+
+        // Restore virtio-snd internal state and clear any cached eventq buffers/events (they are
+        // runtime-only and are not serialized).
+        self.snd_mut().restore_state(&state.snd);
+
+        // The virtio-snd event queue may have had guest-posted buffers popped and cached by the
+        // device without producing used entries. Those cached buffers are not serialized; rewind
+        // queue progress so the transport will re-pop them post-restore.
+        self.dev
+            .rewind_queue_next_avail_to_next_used(VIRTIO_SND_QUEUE_EVENT);
+
+        // Microphone input samples are not serialized in the snapshot; discard any host-buffered
+        // samples so capture resumes from the most recent audio.
+        self.snd_mut()
+            .capture_source_mut()
+            .discard_buffered_samples_after_restore();
+
+        // Restore (or defer restoring) the AudioWorklet output ring indices.
+        let ring_state = state.worklet_ring;
+        let mut pending_state = Some(ring_state);
+        {
+            let output = self.snd_mut().output_mut();
+            if let Some(ring) = output.worklet_ring() {
+                if let Some(mut ring_state) = pending_state.take() {
+                    if ring_state.capacity_frames != 0
+                        && ring_state.capacity_frames != ring.capacity_frames()
+                    {
+                        ring_state.capacity_frames = 0;
+                    }
+                    ring.restore_state(&ring_state);
+                }
+            }
+        }
+        self.pending_audio_ring_state = pending_state;
+
+        Ok(())
+    }
+
+    /// Snapshot the full device state as deterministic bytes.
+    pub fn snapshot_state(&mut self) -> Uint8Array {
+        Uint8Array::from(self.save_state().as_slice())
+    }
+
+    /// Restore device state from deterministic snapshot bytes.
+    pub fn restore_state(&mut self, bytes: &[u8]) -> Result<(), JsValue> {
+        self.load_state(bytes)
     }
 }
 

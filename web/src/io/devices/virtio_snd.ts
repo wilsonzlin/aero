@@ -18,6 +18,11 @@ export type VirtioSndPciBridgeLike = {
   set_host_sample_rate_hz(rate: number): void;
   set_mic_ring_buffer(ringSab?: SharedArrayBuffer | null): void;
   set_capture_sample_rate_hz(rate: number): void;
+  // Optional snapshot hooks.
+  save_state?: () => Uint8Array;
+  snapshot_state?: () => Uint8Array;
+  load_state?: (bytes: Uint8Array) => void;
+  restore_state?: (bytes: Uint8Array) => void;
   free(): void;
 };
 
@@ -243,6 +248,51 @@ export class VirtioSndPciDevice implements PciDevice, TickableDevice {
       console.info("[virtio-snd] driver_ok");
     }
     return ok;
+  }
+
+  canSaveState(): boolean {
+    const b = this.#bridge as unknown as Record<string, unknown>;
+    return typeof b["save_state"] === "function" || typeof b["snapshot_state"] === "function";
+  }
+
+  canLoadState(): boolean {
+    const b = this.#bridge as unknown as Record<string, unknown>;
+    return typeof b["load_state"] === "function" || typeof b["restore_state"] === "function";
+  }
+
+  saveState(): Uint8Array | null {
+    if (this.#destroyed) return null;
+    const bridgeAny = this.#bridge as unknown as {
+      save_state?: unknown;
+      snapshot_state?: unknown;
+    };
+    const save = typeof bridgeAny.save_state === "function" ? bridgeAny.save_state : typeof bridgeAny.snapshot_state === "function" ? bridgeAny.snapshot_state : null;
+    if (!save) return null;
+    try {
+      const bytes = (save as () => unknown).call(this.#bridge) as unknown;
+      if (bytes instanceof Uint8Array) return bytes;
+    } catch {
+      // ignore
+    }
+    return null;
+  }
+
+  loadState(bytes: Uint8Array): boolean {
+    if (this.#destroyed) return false;
+    const bridgeAny = this.#bridge as unknown as {
+      load_state?: unknown;
+      restore_state?: unknown;
+    };
+    const load =
+      typeof bridgeAny.load_state === "function" ? bridgeAny.load_state : typeof bridgeAny.restore_state === "function" ? bridgeAny.restore_state : null;
+    if (!load) return false;
+    try {
+      (load as (bytes: Uint8Array) => unknown).call(this.#bridge, bytes);
+      this.#syncIrq();
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   setAudioRingBuffer(opts: {

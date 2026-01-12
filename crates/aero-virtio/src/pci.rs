@@ -993,6 +993,32 @@ impl VirtioPciDevice {
         Some((vq.next_avail(), vq.next_used(), vq.event_idx()))
     }
 
+    /// Rewind a queue's device-side `next_avail` index to its current `next_used`.
+    ///
+    /// Some virtio devices (notably virtio-snd's `eventq`) can pop available descriptor chains and
+    /// cache them internally without producing used entries. Those cached chains are runtime-only
+    /// and are not currently serialized in snapshot state. After restoring the virtio-pci transport
+    /// snapshot, callers can use this helper to "replay" any such in-flight avail entries by
+    /// rewinding `next_avail` back to `next_used` so the transport will re-pop them on the next
+    /// poll.
+    ///
+    /// This is a best-effort operation: if the queue is not configured/enabled, it is a no-op.
+    pub fn rewind_queue_next_avail_to_next_used(&mut self, queue: u16) {
+        let Some(q) = self.queues.get_mut(queue as usize) else {
+            return;
+        };
+        let Some(vq) = q.queue.as_mut() else {
+            return;
+        };
+
+        let next_used = vq.next_used();
+        let event_idx = vq.event_idx();
+        vq.restore_progress(next_used, next_used, event_idx);
+        // Mark as pending so integrations that only service queues on notifications will still
+        // re-process the rewritten entries without requiring an explicit guest kick.
+        q.pending_notify = true;
+    }
+
     fn snapshot_pci_state(&self) -> SnapshotPciConfigSpaceState {
         let state = self.config.snapshot_state();
         SnapshotPciConfigSpaceState {

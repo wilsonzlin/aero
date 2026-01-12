@@ -1,4 +1,5 @@
 use aero_audio::sink::AudioSink;
+use aero_io_snapshot::io::state::IoSnapshot;
 use aero_virtio::devices::snd::{
     VirtioSnd, VIRTIO_SND_PCM_FMT_S16, VIRTIO_SND_PCM_RATE_48000, VIRTIO_SND_QUEUE_CONTROL,
     VIRTIO_SND_QUEUE_EVENT, VIRTIO_SND_QUEUE_RX, VIRTIO_SND_QUEUE_TX, VIRTIO_SND_R_PCM_PREPARE,
@@ -356,6 +357,123 @@ fn virtio_snd_eventq_buffers_are_not_completed_without_events() {
     let mut isr = [0u8; 1];
     dev.bar0_read(caps.isr, &mut isr);
     assert_eq!(isr[0], 0);
+}
+
+#[test]
+fn virtio_snd_snapshot_restore_can_rewind_eventq_progress_to_recover_buffers() {
+    // The virtio-snd event queue can pop guest-provided buffers without completing them (no used
+    // entries) because Aero's contract currently defines no events. The device model caches those
+    // descriptor chains internally. Since snapshot state does not serialize the cached chains, a
+    // restore must rewind `next_avail` to `next_used` so the transport can re-pop them.
+
+    let snd = VirtioSnd::new(aero_audio::ring::AudioRingBuffer::new_stereo(8));
+    let mut dev = VirtioPciDevice::new(Box::new(snd), Box::new(InterruptLog::default()));
+    let caps = parse_caps(&mut dev);
+
+    let mut mem = GuestRam::new(0x20000);
+
+    // Feature negotiation: accept everything the device offers.
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE,
+    );
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
+    );
+
+    bar_write_u32(&mut dev, &mut mem, caps.common, 0);
+    let f0 = bar_read_u32(&mut dev, caps.common + 0x04);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 0);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f0);
+
+    bar_write_u32(&mut dev, &mut mem, caps.common, 1);
+    let f1 = bar_read_u32(&mut dev, caps.common + 0x04);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 1);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f1);
+
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK,
+    );
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE
+            | VIRTIO_STATUS_DRIVER
+            | VIRTIO_STATUS_FEATURES_OK
+            | VIRTIO_STATUS_DRIVER_OK,
+    );
+
+    // Configure event queue 1.
+    let desc = 0x1000;
+    let avail = 0x2000;
+    let used = 0x3000;
+    configure_queue(
+        &mut dev,
+        &mut mem,
+        &caps,
+        VIRTIO_SND_QUEUE_EVENT,
+        desc,
+        avail,
+        used,
+    );
+
+    // Post one writable buffer and have the device pop it (but not complete it).
+    let buf = 0x4000;
+    mem.write(buf, &[0u8; 8]).unwrap();
+    write_desc(&mut mem, desc, 0, buf, 8, VIRTQ_DESC_F_WRITE, 0);
+    write_u16_le(&mut mem, avail + 4, 0).unwrap();
+    write_u16_le(&mut mem, avail + 2, 1).unwrap();
+
+    dev.bar0_write(
+        caps.notify + u64::from(VIRTIO_SND_QUEUE_EVENT) * u64::from(caps.notify_mult),
+        &VIRTIO_SND_QUEUE_EVENT.to_le_bytes(),
+    );
+    dev.process_notified_queues(&mut mem);
+    assert_eq!(
+        dev.debug_queue_progress(VIRTIO_SND_QUEUE_EVENT),
+        Some((1, 0, false))
+    );
+
+    let snap = dev.save_state();
+    let mem_snap = mem.clone();
+
+    // Restore into a fresh device instance (same guest memory image).
+    let snd2 = VirtioSnd::new(aero_audio::ring::AudioRingBuffer::new_stereo(8));
+    let mut restored = VirtioPciDevice::new(Box::new(snd2), Box::new(InterruptLog::default()));
+    restored.load_state(&snap).unwrap();
+    let mut mem2 = mem_snap.clone();
+
+    // Without rewinding, the transport believes it has already consumed the avail entry.
+    assert_eq!(
+        restored.debug_queue_progress(VIRTIO_SND_QUEUE_EVENT),
+        Some((1, 0, false))
+    );
+    restored.process_notified_queues(&mut mem2);
+    assert_eq!(
+        restored.debug_queue_progress(VIRTIO_SND_QUEUE_EVENT),
+        Some((1, 0, false))
+    );
+
+    // Rewind `next_avail` to `next_used` so the device can re-pop the guest buffer.
+    restored.rewind_queue_next_avail_to_next_used(VIRTIO_SND_QUEUE_EVENT);
+    assert_eq!(
+        restored.debug_queue_progress(VIRTIO_SND_QUEUE_EVENT),
+        Some((0, 0, false))
+    );
+    restored.process_notified_queues(&mut mem2);
+    assert_eq!(
+        restored.debug_queue_progress(VIRTIO_SND_QUEUE_EVENT),
+        Some((1, 0, false))
+    );
 }
 
 #[test]

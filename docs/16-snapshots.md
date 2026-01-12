@@ -142,6 +142,7 @@ Some platform devices are snapshotted as their own `DEVICES` entries and use ded
 - `DeviceId::HDA` (`18`) — guest-visible HD Audio (HDA) controller/runtime state (inner `HDA0`)
 - `DeviceId::E1000` (`19`) — Intel E1000 NIC (`aero-net-e1000`, inner `E1K0`)
 - `DeviceId::NET_STACK` (`20`) — user-space network stack/backend state (`aero-io-snapshot` inner `NETS`; legacy NAT stack state uses `NETL`)
+- `DeviceId::VIRTIO_SND` (`22`) — guest-visible virtio-snd (virtio-pci) device state (web runtime: inner `VSND`)
 
 Note: `aero-snapshot` rejects duplicate `(DeviceId, version, flags)` tuples inside `DEVICES`. Since both `PciConfigPorts` and
 `PciIntxRouter` currently snapshot as `SnapshotVersion (1.0)`, they cannot both be stored as separate entries with the same outer
@@ -200,6 +201,7 @@ For forward compatibility, the runtime also supports a fallback spelling for unk
 | `E1000` | `19` | `net.e1000` | Intel E1000 NIC device model state |
 | `NET_STACK` | `20` | `net.stack` | User-space network stack/backend state (DHCP/DNS cache + connection bookkeeping) |
 | `PLATFORM_INTERRUPTS` | `21` | `device.21` | Platform interrupt controller/routing state |
+| `VIRTIO_SND` | `22` | `audio.virtio_snd` | virtio-snd (virtio-pci) audio device state |
 
 #### Disk controllers (`DeviceId::DISK_CONTROLLER` = `6`)
 
