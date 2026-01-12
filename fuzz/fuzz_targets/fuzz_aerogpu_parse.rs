@@ -803,6 +803,12 @@ fuzz_target!(|data: &[u8]| {
     );
 
     fuzz_cmd_stream(&cmd_synth);
+    // Also try a misaligned slice to exercise `align_to`/prefix handling in variable-length
+    // packet decoders (SET_VERTEX_BUFFERS/SET_SAMPLERS/SET_CONSTANT_BUFFERS, ...).
+    let mut cmd_synth_misaligned = Vec::with_capacity(cmd_synth.len().saturating_add(1));
+    cmd_synth_misaligned.push(0);
+    cmd_synth_misaligned.extend_from_slice(&cmd_synth);
+    fuzz_cmd_stream(&cmd_synth_misaligned[1..]);
 
     // Also exercise the higher-level command processor's guest-input validation paths.
     //
@@ -1154,6 +1160,69 @@ fuzz_target!(|data: &[u8]| {
     let cmd_proc_handle_reuse_after_destroy = w.finish();
     fuzz_command_processor(&cmd_proc_handle_reuse_after_destroy, Some(&allocs));
 
+    // - ImportSharedSurface must reject importing into a handle already used by a non-shared
+    //   resource (`SharedSurfaceHandleInUse`).
+    let mut w = AerogpuCmdWriter::new();
+    write_guest_texture2d_4x4_bgra8(&mut w, tex_handle, alloc_id);
+    w.export_shared_surface(tex_handle, share_token);
+    w.create_buffer(
+        alias_handle,
+        /*usage_flags=*/ 0,
+        /*size_bytes=*/ 4,
+        /*backing_alloc_id=*/ 0,
+        /*backing_offset_bytes=*/ 0,
+    );
+    w.import_shared_surface(alias_handle, share_token);
+    let cmd_proc_import_handle_in_use = w.finish();
+    fuzz_command_processor(&cmd_proc_import_handle_in_use, Some(&allocs));
+
+    // - ImportSharedSurface must also reject importing into the destroyed original handle while
+    //   aliases keep the underlying surface alive (`SharedSurfaceHandleInUse`).
+    let mut w = AerogpuCmdWriter::new();
+    write_guest_texture2d_4x4_bgra8(&mut w, tex_handle, alloc_id);
+    w.export_shared_surface(tex_handle, share_token);
+    w.import_shared_surface(alias_handle, share_token);
+    w.destroy_resource(tex_handle);
+    w.import_shared_surface(tex_handle, share_token);
+    let cmd_proc_import_destroyed_handle = w.finish();
+    fuzz_command_processor(&cmd_proc_import_destroyed_handle, Some(&allocs));
+
+    // - CreateRebindMismatch: re-creating a texture handle with different immutable parameters.
+    let mut w = AerogpuCmdWriter::new();
+    write_guest_texture2d_4x4_bgra8(&mut w, tex_handle, alloc_id);
+    w.create_texture2d(
+        tex_handle,
+        /*usage_flags=*/ 0,
+        pci::AerogpuFormat::B8G8R8A8Unorm as u32,
+        /*width=*/ 8,
+        /*height=*/ 4,
+        /*mip_levels=*/ 1,
+        /*array_layers=*/ 1,
+        /*row_pitch_bytes=*/ 32,
+        alloc_id,
+        /*backing_offset_bytes=*/ 0,
+    );
+    let cmd_proc_tex_rebind = w.finish();
+    fuzz_command_processor(&cmd_proc_tex_rebind, Some(&allocs));
+
+    // - InvalidCreateTexture2d: reject non-zero row_pitch_bytes smaller than the minimum tight
+    //   pitch for the format/width.
+    let mut w = AerogpuCmdWriter::new();
+    w.create_texture2d(
+        tex_handle,
+        /*usage_flags=*/ 0,
+        pci::AerogpuFormat::B8G8R8A8Unorm as u32,
+        /*width=*/ 4,
+        /*height=*/ 4,
+        /*mip_levels=*/ 1,
+        /*array_layers=*/ 1,
+        /*row_pitch_bytes=*/ 15,
+        alloc_id,
+        /*backing_offset_bytes=*/ 0,
+    );
+    let cmd_proc_bad_row_pitch = w.finish();
+    fuzz_command_processor(&cmd_proc_bad_row_pitch, Some(&allocs));
+
     // Patched alloc table: force valid magic/version/stride and a self-consistent entry_count.
     let mut alloc_patched = alloc_bytes.to_vec();
     if alloc_patched.len() < ring::AerogpuAllocTableHeader::SIZE_BYTES {
@@ -1189,6 +1258,12 @@ fuzz_target!(|data: &[u8]| {
     alloc_one[entry_off + 16..entry_off + 24].copy_from_slice(&0x1000u64.to_le_bytes()); // size_bytes
     alloc_one[entry_off + 24..entry_off + 32].fill(0); // reserved0
     fuzz_alloc_table(&alloc_one);
+    // Also decode from a misaligned base pointer to exercise the per-entry decode path even when
+    // `entry_stride_bytes` matches the canonical entry size.
+    let mut alloc_one_misaligned = Vec::with_capacity(alloc_one.len().saturating_add(1));
+    alloc_one_misaligned.push(0);
+    alloc_one_misaligned.extend_from_slice(&alloc_one);
+    fuzz_alloc_table(&alloc_one_misaligned[1..]);
 
     // Patched alloc table (forward-compat stride): declare a larger entry stride to exercise the
     // per-entry decode paths (rather than the fast aligned/borrowed slice path).
