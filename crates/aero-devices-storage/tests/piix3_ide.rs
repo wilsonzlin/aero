@@ -247,6 +247,60 @@ fn ata_boot_sector_read_via_legacy_pio_ports_byte_reads() {
 }
 
 #[test]
+fn ata_pio_write_sector_via_byte_data_port_writes_roundtrip() {
+    let capacity = 8 * SECTOR_SIZE as u64;
+    let disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
+
+    let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
+    ide.borrow_mut()
+        .controller
+        .attach_primary_master_ata(AtaDrive::new(Box::new(disk)).unwrap());
+    ide.borrow_mut().config_mut().set_command(0x0001); // IO decode
+
+    let mut io = IoPortBus::new();
+    register_piix3_ide_ports(&mut io, ide.clone());
+
+    let lba = 2u8;
+
+    // WRITE SECTORS for LBA 2, 1 sector.
+    io.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0); // master + LBA
+    io.write(PRIMARY_PORTS.cmd_base + 2, 1, 1); // count
+    io.write(PRIMARY_PORTS.cmd_base + 3, 1, u32::from(lba)); // lba0
+    io.write(PRIMARY_PORTS.cmd_base + 4, 1, 0); // lba1
+    io.write(PRIMARY_PORTS.cmd_base + 5, 1, 0); // lba2
+    io.write(PRIMARY_PORTS.cmd_base + 7, 1, 0x30); // WRITE SECTORS
+
+    let mut pattern = [0u8; SECTOR_SIZE];
+    for (i, b) in pattern.iter_mut().enumerate() {
+        *b = (i as u8).wrapping_mul(3).wrapping_add(7);
+    }
+
+    // Transfer the sector via 8-bit data port writes.
+    for b in pattern {
+        io.write(PRIMARY_PORTS.cmd_base, 1, u32::from(b));
+    }
+
+    // READ SECTORS for LBA 2, 1 sector.
+    io.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
+    io.write(PRIMARY_PORTS.cmd_base + 2, 1, 1);
+    io.write(PRIMARY_PORTS.cmd_base + 3, 1, u32::from(lba));
+    io.write(PRIMARY_PORTS.cmd_base + 4, 1, 0);
+    io.write(PRIMARY_PORTS.cmd_base + 5, 1, 0);
+    io.write(PRIMARY_PORTS.cmd_base + 7, 1, 0x20); // READ SECTORS
+
+    let mut out = [0u8; SECTOR_SIZE];
+    for b in &mut out {
+        *b = io.read(PRIMARY_PORTS.cmd_base, 1) as u8;
+    }
+
+    let mut expected = [0u8; SECTOR_SIZE];
+    for (i, b) in expected.iter_mut().enumerate() {
+        *b = (i as u8).wrapping_mul(3).wrapping_add(7);
+    }
+    assert_eq!(out, expected);
+}
+
+#[test]
 fn ata_pio_read_out_of_bounds_raises_irq_and_sets_err() {
     let capacity = SECTOR_SIZE as u64; // 1 sector
     let disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
