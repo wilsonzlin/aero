@@ -319,9 +319,17 @@ impl AeroGpuAcmdExecutor {
                     {
                         if last_ref {
                             self.textures.remove(&underlying);
+                            if self.render_target == underlying {
+                                self.render_target = 0;
+                            }
+                            self.presented_scanouts.retain(|_, v| *v != underlying);
                         }
                     } else {
                         self.textures.remove(&resource_handle);
+                        if self.render_target == resource_handle {
+                            self.render_target = 0;
+                        }
+                        self.presented_scanouts.retain(|_, v| *v != resource_handle);
                     }
                 }
                 _ => {}
@@ -426,6 +434,8 @@ fn is_bc_format(format: u32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
+    use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
 
     #[test]
     fn map_texture_format_accepts_uncompressed_srgb_formats() {
@@ -455,5 +465,38 @@ mod tests {
             message.contains("BC"),
             "expected error message to mention BC, got: {message}"
         );
+    }
+
+    #[test]
+    fn destroy_resource_clears_presented_scanout() {
+        pollster::block_on(async {
+            let mut exec = AeroGpuAcmdExecutor::new_headless().await.unwrap();
+
+            const TEX: u32 = 1;
+            const SCANOUT: u32 = 0;
+
+            let mut w = AerogpuCmdWriter::new();
+            w.create_texture2d(
+                TEX,
+                /*usage_flags=*/ 0,
+                AerogpuFormat::B8G8R8A8Unorm as u32,
+                /*width=*/ 4,
+                /*height=*/ 4,
+                /*mip_levels=*/ 1,
+                /*array_layers=*/ 1,
+                /*row_pitch_bytes=*/ 0,
+                /*backing_alloc_id=*/ 0,
+                /*backing_offset_bytes=*/ 0,
+            );
+            w.set_render_targets(&[TEX], /*depth_stencil=*/ 0);
+            w.present(SCANOUT, /*flags=*/ 0);
+            w.destroy_resource(TEX);
+
+            exec.execute_submission(&w.finish(), None).unwrap();
+
+            // The scanout should be cleared rather than pointing at a destroyed texture.
+            let scanout = exec.read_presented_scanout_rgba8(SCANOUT).await.unwrap();
+            assert!(scanout.is_none(), "expected scanout to be cleared after destroy");
+        });
     }
 }
