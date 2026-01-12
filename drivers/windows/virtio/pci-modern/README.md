@@ -25,6 +25,7 @@ module.
 - 64-bit feature negotiation (requires `VIRTIO_F_VERSION_1`)
 - Split-virtqueue programming helpers (desc/avail/used addresses, `queue_enable`)
 - Queue notification helper (doorbell write)
+- MSI-X vector programming helpers (`msix_config`, `queue_msix_vector`) with readback validation
 - Device-specific config read/write with `config_generation` retry logic
 
 ## AERO-W7-VIRTIO v1 contract enforcement (STRICT mode)
@@ -69,6 +70,9 @@ This module is **transport-only**. Drivers integrating it must provide:
 - Per-driver device ID filtering (e.g. `0x1059` for virtio-snd) if required by the driver package
 - DMA allocations for virtqueues and request buffers (device sees guest physical addresses)
 - Interrupt wiring (INTx + ISR polling/ack)
+
+If a driver uses MSI-X routing, vector selectors may be disabled by programming
+`VIRTIO_PCI_MSI_NO_VECTOR` into `msix_config` / `queue_msix_vector`.
 
 ## Integration sketch
 
