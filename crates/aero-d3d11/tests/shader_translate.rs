@@ -200,8 +200,8 @@ fn translates_vertex_packed_input_signature_by_splitting_locations() {
     // translator must split the packed register into multiple WGSL inputs and reconstruct the
     // original `v#` register when emitting instructions.
     let isgn_params = vec![
-        sig_param("POSITION", 0, 0, 0b0011),  // v0.xy
-        sig_param("TEXCOORD", 0, 0, 0b1100),  // v0.zw
+        sig_param("POSITION", 0, 0, 0b0011), // v0.xy
+        sig_param("TEXCOORD", 0, 0, 0b1100), // v0.zw
     ];
     let osgn_params = vec![sig_param("SV_Position", 0, 0, 0b1111)];
 

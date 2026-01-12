@@ -373,7 +373,10 @@ impl AerogpuResourceManager {
         let reflection = if stage == AerogpuShaderStage::Vertex && signature_driven {
             let module = program.decode().context("decode SM4/5 token stream")?;
             ShaderReflection {
-                vs_input_signature: extract_vs_input_signature_unique_locations(&signatures, &module)?,
+                vs_input_signature: extract_vs_input_signature_unique_locations(
+                    &signatures,
+                    &module,
+                )?,
             }
         } else {
             build_shader_reflection(stage, &signatures)
@@ -742,10 +745,8 @@ fn extract_vs_input_signature_unique_locations(
             .copied()
             .or_else(|| (p.system_value_type != 0).then_some(p.system_value_type));
 
-        let is_builtin = matches!(
-            sys_value,
-            Some(D3D_NAME_VERTEX_ID | D3D_NAME_INSTANCE_ID)
-        ) || p.semantic_name.eq_ignore_ascii_case("SV_VertexID")
+        let is_builtin = matches!(sys_value, Some(D3D_NAME_VERTEX_ID | D3D_NAME_INSTANCE_ID))
+            || p.semantic_name.eq_ignore_ascii_case("SV_VertexID")
             || p.semantic_name.eq_ignore_ascii_case("SV_InstanceID");
         if is_builtin {
             continue;

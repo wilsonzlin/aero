@@ -516,7 +516,9 @@ mod tests {
             Err(err) => err,
         };
         match err {
-            FrameSourceError::SharedFramebuffer(SharedFramebufferError::UnalignedBasePtr { .. }) => {}
+            FrameSourceError::SharedFramebuffer(SharedFramebufferError::UnalignedBasePtr {
+                ..
+            }) => {}
             other => panic!("expected UnalignedBasePtr, got {other:?}"),
         }
     }

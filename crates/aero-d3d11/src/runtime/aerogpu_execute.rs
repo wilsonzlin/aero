@@ -461,13 +461,13 @@ impl AerogpuCmdRuntime {
             }
             other => bail!("unsupported shader stage for aerogpu_cmd executor: {other:?}"),
         };
- 
+
         let signatures = parse_signatures(&dxbc).context("parse DXBC signatures")?;
         let signature_driven = signatures.isgn.is_some() && signatures.osgn.is_some();
         let (wgsl, reflection, vs_input_signature) = if signature_driven {
             let module = program.decode().context("decode SM4/5 token stream")?;
-            let translated =
-                translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).context("translate WGSL")?;
+            let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures)
+                .context("translate WGSL")?;
 
             let vs_input_signature = if stage == ShaderStage::Vertex {
                 extract_vs_input_signature_unique_locations(&signatures, &module)
@@ -1450,10 +1450,8 @@ fn extract_vs_input_signature_unique_locations(
             .copied()
             .or_else(|| (p.system_value_type != 0).then_some(p.system_value_type));
 
-        let is_builtin = matches!(
-            sys_value,
-            Some(D3D_NAME_VERTEX_ID | D3D_NAME_INSTANCE_ID)
-        ) || p.semantic_name.eq_ignore_ascii_case("SV_VertexID")
+        let is_builtin = matches!(sys_value, Some(D3D_NAME_VERTEX_ID | D3D_NAME_INSTANCE_ID))
+            || p.semantic_name.eq_ignore_ascii_case("SV_VertexID")
             || p.semantic_name.eq_ignore_ascii_case("SV_InstanceID");
         if is_builtin {
             continue;

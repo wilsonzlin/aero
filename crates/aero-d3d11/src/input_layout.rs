@@ -543,9 +543,7 @@ pub fn map_layout_to_shader_locations(
         })?;
 
         if used_locations.insert(shader_location, ()).is_some() {
-            return Err(InputLayoutError::DuplicateShaderLocation {
-                shader_location,
-            });
+            return Err(InputLayoutError::DuplicateShaderLocation { shader_location });
         }
 
         let fmt = dxgi_format_to_vertex_format(elem.dxgi_format)?;
@@ -711,9 +709,7 @@ pub fn map_layout_to_shader_locations_compact(
         })?;
 
         if used_locations.insert(shader_location, ()).is_some() {
-            return Err(InputLayoutError::DuplicateShaderLocation {
-                shader_location,
-            });
+            return Err(InputLayoutError::DuplicateShaderLocation { shader_location });
         }
 
         let fmt = dxgi_format_to_vertex_format(elem.dxgi_format)?;

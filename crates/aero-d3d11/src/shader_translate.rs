@@ -813,17 +813,19 @@ impl IoMaps {
                     )?;
                     return Ok(expand_to_vec4("f32(input.instance_id)", p));
                 }
-                let field_indices = self
-                    .vs_input_fields_by_register
-                    .get(&reg)
-                    .ok_or(ShaderTranslateError::SignatureMissingRegister {
+                let field_indices = self.vs_input_fields_by_register.get(&reg).ok_or(
+                    ShaderTranslateError::SignatureMissingRegister {
                         io: "input",
                         register: reg,
-                    })?;
+                    },
+                )?;
 
                 if field_indices.len() == 1 {
                     let f = &self.vs_input_fields[field_indices[0]];
-                    return Ok(expand_to_vec4(&format!("input.{}", f.field_name()), &f.info));
+                    return Ok(expand_to_vec4(
+                        &format!("input.{}", f.field_name()),
+                        &f.info,
+                    ));
                 }
 
                 // D3D signatures can pack multiple semantics into the same input register. WebGPU
@@ -832,8 +834,10 @@ impl IoMaps {
                 let mut comps: [Option<(String, String)>; 4] = [None, None, None, None];
                 for &idx in field_indices {
                     let f = &self.vs_input_fields[idx];
-                    let semantic =
-                        format!("{}{}", f.info.param.semantic_name, f.info.param.semantic_index);
+                    let semantic = format!(
+                        "{}{}",
+                        f.info.param.semantic_name, f.info.param.semantic_index
+                    );
                     let base = format!("input.{}", f.field_name());
 
                     for (dst_comp, bit) in [(0usize, 1u8), (1, 2), (2, 4), (3, 8)] {
