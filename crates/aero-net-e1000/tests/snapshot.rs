@@ -1,7 +1,7 @@
 #![cfg(feature = "io-snapshot")]
 
 use aero_io_snapshot::io::state::codec::Encoder;
-use aero_io_snapshot::io::state::{IoSnapshot, SnapshotError, SnapshotWriter};
+use aero_io_snapshot::io::state::{IoSnapshot, SnapshotError, SnapshotVersion, SnapshotWriter};
 use aero_net_e1000::{
     E1000Device, ICR_TXDW, MAX_L2_FRAME_LEN, MAX_TX_AGGREGATE_LEN, MIN_L2_FRAME_LEN,
 };
@@ -503,4 +503,60 @@ fn snapshot_rejects_other_regs_duplicate_key() {
         err,
         SnapshotError::InvalidFieldEncoding("e1000 other_regs duplicate key")
     );
+}
+
+#[test]
+fn snapshot_rejects_inconsistent_irq_level_field() {
+    // Tags from `aero_io_snapshot::io::net::state::E1000DeviceState`.
+    const TAG_ICR: u16 = 20;
+    const TAG_IMS: u16 = 21;
+    const TAG_IRQ_LEVEL: u16 = 22;
+
+    // Make computed IRQ level true (icr & ims != 0), but save irq_level=false.
+    let mut w = SnapshotWriter::new(
+        <E1000Device as IoSnapshot>::DEVICE_ID,
+        <E1000Device as IoSnapshot>::DEVICE_VERSION,
+    );
+    w.field_u32(TAG_ICR, ICR_TXDW);
+    w.field_u32(TAG_IMS, ICR_TXDW);
+    w.field_bool(TAG_IRQ_LEVEL, false);
+    let bytes = w.finish();
+
+    let mut dev = E1000Device::new([0; 6]);
+    let err = dev.load_state(&bytes).unwrap_err();
+    assert_eq!(err, SnapshotError::InvalidFieldEncoding("e1000 irq_level"));
+}
+
+#[test]
+fn snapshot_rejects_unsupported_major_version() {
+    // Write a snapshot with the correct device ID but an unsupported major version.
+    let unsupported = SnapshotVersion::new(<E1000Device as IoSnapshot>::DEVICE_VERSION.major + 1, 0);
+    let w = SnapshotWriter::new(<E1000Device as IoSnapshot>::DEVICE_ID, unsupported);
+    let bytes = w.finish();
+
+    let mut dev = E1000Device::new([0; 6]);
+    let err = dev.load_state(&bytes).unwrap_err();
+    assert_eq!(
+        err,
+        SnapshotError::UnsupportedDeviceMajorVersion {
+            found: unsupported.major,
+            supported: <E1000Device as IoSnapshot>::DEVICE_VERSION.major,
+        }
+    );
+}
+
+#[test]
+fn snapshot_reader_rejects_duplicate_tlv_tags() {
+    // SnapshotReader should reject duplicate field tags at parse time.
+    let mut w = SnapshotWriter::new(
+        <E1000Device as IoSnapshot>::DEVICE_ID,
+        <E1000Device as IoSnapshot>::DEVICE_VERSION,
+    );
+    w.field_u32(10, 0x1111_1111);
+    w.field_u32(10, 0x2222_2222);
+    let bytes = w.finish();
+
+    let mut dev = E1000Device::new([0; 6]);
+    let err = dev.load_state(&bytes).unwrap_err();
+    assert_eq!(err, SnapshotError::DuplicateFieldTag(10));
 }
