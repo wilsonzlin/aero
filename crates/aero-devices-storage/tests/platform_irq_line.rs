@@ -26,10 +26,9 @@ fn ide_controller_accepts_platform_irq_lines() {
     let irq14 = PlatformIrqLine::isa(interrupts.clone(), 14);
     let irq15 = PlatformIrqLine::isa(interrupts, 15);
 
-    let mut ide = IdeController::new();
+    let mut ide = IdeController::new(Box::new(irq14), Box::new(irq15));
 
     // Simple IO reads/writes should compile and run with platform IRQ lines.
-    let _ = ide.read_u8(0x1F0, &irq14, &irq15);
-    ide.write_u8(0x1F0, 0, &irq14, &irq15);
+    let _ = ide.read_u8(0x1F0);
+    ide.write_u8(0x1F0, 0);
 }
-
