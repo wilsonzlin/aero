@@ -1018,12 +1018,19 @@ function renderMachinePanel(): HTMLElement {
         }
       };
 
+      const onContextMenu = (ev: MouseEvent): void => {
+        // Avoid the browser context menu stealing focus when the canvas is being used
+        // as a VM input surface.
+        ev.preventDefault();
+      };
+
       canvas.addEventListener("keydown", onKeyDown);
       canvas.addEventListener("keyup", onKeyUp);
       canvas.addEventListener("mousemove", onMouseMove);
       canvas.addEventListener("wheel", onWheel, { passive: false });
       canvas.addEventListener("mousedown", onMouseDown);
       canvas.addEventListener("mouseup", onMouseUp);
+      canvas.addEventListener("contextmenu", onContextMenu);
 
       const detachInput = () => {
         canvas.removeEventListener("keydown", onKeyDown);
@@ -1032,6 +1039,7 @@ function renderMachinePanel(): HTMLElement {
         canvas.removeEventListener("wheel", onWheel);
         canvas.removeEventListener("mousedown", onMouseDown);
         canvas.removeEventListener("mouseup", onMouseUp);
+        canvas.removeEventListener("contextmenu", onContextMenu);
       };
 
       const timer = window.setInterval(() => {
