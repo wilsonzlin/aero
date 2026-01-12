@@ -1,3 +1,5 @@
+import { PCI_MMIO_BASE_MIB } from "../arch/guest_phys.ts";
+
 export const AERO_LOG_LEVELS = ["trace", "debug", "info", "warn", "error"] as const;
 export type AeroLogLevel = (typeof AERO_LOG_LEVELS)[number];
 
@@ -14,8 +16,8 @@ export interface AeroConfig {
 export type AeroConfigKey = keyof AeroConfig;
 
 export const AERO_GUEST_MEMORY_MIN_MIB = 256;
-export const AERO_GUEST_MEMORY_MAX_MIB = 4096;
-export const AERO_GUEST_MEMORY_PRESETS_MIB = [256, 512, 1024, 2048, 4096] as const;
+export const AERO_GUEST_MEMORY_MAX_MIB = PCI_MMIO_BASE_MIB;
+export const AERO_GUEST_MEMORY_PRESETS_MIB = [256, 512, 1024, 2048, 3072, AERO_GUEST_MEMORY_MAX_MIB] as const;
 
 export const AERO_UI_SCALE_MIN = 0.5;
 export const AERO_UI_SCALE_MAX = 3;

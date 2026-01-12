@@ -4,6 +4,7 @@ import { parseIpcBuffer } from "../ipc/ipc";
 import { RingBuffer } from "../ipc/ring_buffer";
 import { RECORD_ALIGN, ringCtrl } from "../ipc/layout";
 import { Worker, type WorkerOptions } from "node:worker_threads";
+import { PCI_MMIO_BASE } from "../arch/guest_phys.ts";
 import {
   COMMAND_RING_CAPACITY_BYTES,
   CONTROL_BYTES,
@@ -23,6 +24,7 @@ import {
   StatusIndex,
   WORKER_ROLES,
   allocateSharedMemorySegments,
+  computeGuestRamLayout,
   createSharedMemoryViews,
   ringRegionsForWorker,
   setReadyFlag,
@@ -138,6 +140,14 @@ describe("runtime/shared_layout", () => {
     expect(views.guestU8.buffer).toBe(segments.guestMemory.buffer);
     expect(views.sharedFramebuffer).toBe(segments.sharedFramebuffer);
     expect(views.sharedFramebufferOffsetBytes).toBe(segments.sharedFramebufferOffsetBytes);
+  });
+
+  it("clamps maximum guest RAM size below the PCI MMIO aperture", () => {
+    // Requesting "as much as possible" (u32 max) should clamp to the start of the fixed
+    // PCI MMIO aperture so PCI BARs can never overlap guest RAM.
+    const layout = computeGuestRamLayout(0xffff_ffff);
+    expect(layout.guest_size).toBeLessThanOrEqual(PCI_MMIO_BASE);
+    expect(layout.guest_size).toBe(PCI_MMIO_BASE);
   });
 
   it("falls back to standalone shared framebuffer when guest RAM is too small to embed it", () => {

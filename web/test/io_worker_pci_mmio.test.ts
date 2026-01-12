@@ -5,6 +5,7 @@ import { once } from "node:events";
 
 import { SharedRingBuffer } from "../src/io/ipc/ring_buffer.ts";
 import { IO_MESSAGE_STRIDE_U32 } from "../src/io/ipc/io_protocol.ts";
+import { PCI_MMIO_BASE } from "../src/arch/guest_phys.ts";
 
 test("I/O worker: PCI config (0xCF8/0xCFC) + BAR-backed MMIO dispatch", async () => {
   const req = SharedRingBuffer.create({ capacity: 128, stride: IO_MESSAGE_STRIDE_U32 });
@@ -56,7 +57,7 @@ test("I/O worker: PCI config (0xCF8/0xCFC) + BAR-backed MMIO dispatch", async ()
   assert.equal(result.irqLineAfter >>> 0, 0x0c);
   assert.equal(result.irqPinBefore >>> 0, 0x02);
   assert.equal(result.irqPinAfter >>> 0, 0x02);
-  assert.equal(result.bar0 >>> 0, 0xe000_0000);
+  assert.equal(result.bar0 >>> 0, PCI_MMIO_BASE);
   assert.equal(result.bar1Before >>> 0, 0x0000_0000);
   assert.equal(result.bar1After >>> 0, 0x0000_0000);
   assert.equal(result.mmioReadback >>> 0, 0x1234_5678);

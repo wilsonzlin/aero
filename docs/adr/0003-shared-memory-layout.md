@@ -43,9 +43,12 @@ Therefore **guest physical address 0 cannot map to linear memory offset 0**.
 
 We reserve a fixed, page-aligned region at the bottom of wasm linear memory for the runtime:
 
-- `runtime_reserved` = **64 MiB**
-- `guest_base` = `align_up(runtime_reserved, 64KiB)` (currently also 64 MiB)
-- `guest_size` = clamped to fit wasm32's 4 GiB maximum: `guest_size ≤ 4GiB - guest_base`
+- `runtime_reserved` = **128 MiB**
+- `guest_base` = `align_up(runtime_reserved, 64KiB)` (currently also 128 MiB)
+- `guest_size` is clamped so that:
+  - it fits within wasm32's 4 GiB linear-memory maximum: `guest_size ≤ 4GiB - guest_base`
+  - it does **not** overlap the fixed PCI MMIO aperture used by the web I/O worker:
+    `guest_size ≤ PCI_MMIO_BASE` (currently `PCI_MMIO_BASE = 0xE0000000`, i.e. 3.5 GiB)
 
 The guest RAM mapping is:
 
@@ -58,6 +61,25 @@ wasm linear memory (0..4GiB)
 │  (stack/heap/statics)   │                              │                     │
 │-------------------------│------------------------------│---------------------│
 ```
+
+### Addendum: guest physical address map (RAM vs PCI MMIO)
+
+Independently from the **wasm linear memory** layout, the emulator needs a consistent **32-bit guest physical address** map so PCI MMIO BAR space cannot overlap guest RAM:
+
+```
+guest physical address space (32-bit)
+
+0                          guest_size                    PCI_MMIO_BASE          4GiB
+│--------------------------│-----------------------------│----------------------│
+│ guest RAM                │ (reserved / unmapped hole)  │ PCI MMIO aperture    │
+│                          │                             │ (PCI BARs live here) │
+│--------------------------│-----------------------------│----------------------│
+```
+
+The web runtime enforces this by clamping `guest_size` to `<= PCI_MMIO_BASE` in both:
+
+- Rust/WASM layout contract: `crates/aero-wasm/src/lib.rs` (`guest_ram_layout`)
+- TS layout mirror used by the coordinator: `web/src/runtime/shared_layout.ts` (`computeGuestRamLayout`)
 
 Contract:
 

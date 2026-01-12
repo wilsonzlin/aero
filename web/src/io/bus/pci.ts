@@ -2,6 +2,7 @@ import { defaultReadValue } from "../ipc/io_protocol.ts";
 import type { PortIoHandler } from "./portio.ts";
 import type { PortIoBus } from "./portio.ts";
 import type { MmioBus, MmioHandle } from "./mmio.ts";
+import { PCI_MMIO_BASE } from "../../arch/guest_phys.ts";
 
 export type PciBar =
   | {
@@ -211,7 +212,7 @@ export class PciBus implements PortIoHandler {
   #addrReg = 0;
 
   // Simple allocators for auto-assigned BARs (legacy 32-bit).
-  #nextMmioBase = 0xe000_0000n;
+  #nextMmioBase = BigInt(PCI_MMIO_BASE);
   #nextIoBase = 0xc000;
 
   constructor(portBus: PortIoBus, mmioBus: MmioBus) {

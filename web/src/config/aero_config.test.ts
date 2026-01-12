@@ -53,7 +53,7 @@ describe("AeroConfig", () => {
     },
   });
 
-  expect(resolved.effective.guestMemoryMiB).toBe(4096);
+  expect(resolved.effective.guestMemoryMiB).toBe(3584);
   expect(resolved.effective.logLevel).toBe("info");
   });
 

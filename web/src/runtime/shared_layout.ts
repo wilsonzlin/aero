@@ -1,6 +1,7 @@
 import { RECORD_ALIGN, queueKind, ringCtrl } from "../ipc/layout";
 import { requiredFramebufferBytes } from "../display/framebuffer_protocol";
 import { createIpcBuffer } from "../ipc/ipc";
+import { PCI_MMIO_BASE } from "../arch/guest_phys.ts";
 import {
   computeSharedFramebufferLayout,
   FramebufferFormat,
@@ -139,7 +140,7 @@ export function createIoIpcSab(): SharedArrayBuffer {
  *  - IPC buffers remain small and cache-friendly.
  *  - Guest RAM can be resized/failed independently of IPC buffers.
  */
-export const GUEST_RAM_PRESETS_MIB = [256, 512, 1024, 2048, 3072, 4096] as const;
+export const GUEST_RAM_PRESETS_MIB = [256, 512, 1024, 2048, 3072, 3584] as const;
 export type GuestRamMiB = number;
 export const DEFAULT_GUEST_RAM_MIB: GuestRamMiB = 512;
 
@@ -273,9 +274,13 @@ export function computeGuestRamLayout(desiredGuestBytes: number): GuestRamLayout
   const runtimeReserved = guestBase;
 
   const basePages = Math.floor(guestBase / WASM_PAGE_BYTES);
-  const desiredPages = bytesToPages(desired);
-  const totalPages = Math.min(MAX_WASM32_PAGES, basePages + desiredPages);
-  const guestPages = Math.max(0, totalPages - basePages);
+  const maxGuestPagesByWasm = Math.max(0, MAX_WASM32_PAGES - basePages);
+  const maxGuestBytesByWasm = maxGuestPagesByWasm * WASM_PAGE_BYTES;
+  const maxGuestBytes = Math.min(maxGuestBytesByWasm, PCI_MMIO_BASE);
+
+  const desiredPages = bytesToPages(Math.min(desired, maxGuestBytes));
+  const totalPages = basePages + desiredPages;
+  const guestPages = desiredPages;
 
   return {
     guest_base: guestBase,

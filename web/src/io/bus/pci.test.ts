@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { PCI_MMIO_BASE } from "../../arch/guest_phys.ts";
+import { computeGuestRamLayout } from "../../runtime/shared_layout.ts";
 import { MmioBus } from "./mmio.ts";
 import { PciBus } from "./pci.ts";
 import { PortIoBus } from "./portio.ts";
@@ -484,7 +486,10 @@ describe("io/bus/pci", () => {
 
     // BAR0 should reflect the bus-assigned base, not the value written by initPciConfig().
     const bar0 = cfg.readU32(addr.device, addr.function, 0x10);
-    expect(bar0).toBe(0xe000_0000);
+    expect(bar0 >>> 0).toBe(PCI_MMIO_BASE);
+    // The web runtime clamps guest RAM to live below the PCI MMIO aperture. Ensure
+    // our auto-assigned BAR base is outside the maximum guest RAM region.
+    expect(bar0 >>> 0).toBeGreaterThanOrEqual(computeGuestRamLayout(0xffff_ffff).guest_size);
 
     // BAR1 is unimplemented and must read as 0 even if initPciConfig scribbled.
     expect(cfg.readU32(addr.device, addr.function, 0x14)).toBe(0);

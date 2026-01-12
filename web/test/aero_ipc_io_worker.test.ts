@@ -4,6 +4,7 @@ import { Worker } from "node:worker_threads";
 import { once } from "node:events";
 
 import { alignUp, ringCtrl } from "../src/ipc/layout.ts";
+import { PCI_MMIO_BASE } from "../src/arch/guest_phys.ts";
 
 function createCmdEvtSharedBuffer(cmdCapBytes: number, evtCapBytes: number): { sab: SharedArrayBuffer; cmdOffset: number; evtOffset: number } {
   const cmdOffset = 0;
@@ -113,7 +114,7 @@ test("AIPC I/O worker: PCI config + BAR-backed MMIO dispatch", async () => {
 
   assert.equal(result.ok, true);
   assert.equal(result.idDword >>> 0, 0x5678_1234);
-  assert.equal(result.bar0 >>> 0, 0xe000_0000);
+  assert.equal(result.bar0 >>> 0, PCI_MMIO_BASE);
   assert.equal(result.mmioReadback >>> 0, 0x1234_5678);
 
   await cpuWorker.terminate();

@@ -236,13 +236,20 @@ pub fn guest_ram_layout(desired_bytes: u32) -> GuestRamLayout {
     );
     let base_pages = guest_base / guest_layout::WASM_PAGE_BYTES;
 
+    // Guest RAM lives in the 32-bit guest physical address space.
+    //
+    // Clamp it to:
+    // - the wasm32 4GiB linear-memory limit (accounting for the runtime-reserved region), and
+    // - the fixed PCI MMIO aperture start, so PCI BARs never overlap guest RAM.
+    let max_guest_pages_by_wasm = guest_layout::MAX_WASM32_PAGES.saturating_sub(base_pages);
+    let max_guest_bytes_by_wasm = max_guest_pages_by_wasm * guest_layout::WASM_PAGE_BYTES;
+    let max_guest_bytes = max_guest_bytes_by_wasm.min(guest_layout::PCI_MMIO_BASE);
+
     // `desired_bytes` is u32 so it cannot represent 4GiB; align up safely in u64.
     let desired_bytes_aligned =
         guest_layout::align_up(desired_bytes as u64, guest_layout::WASM_PAGE_BYTES);
-    let desired_pages = desired_bytes_aligned / guest_layout::WASM_PAGE_BYTES;
-
-    let total_pages = (base_pages + desired_pages).min(guest_layout::MAX_WASM32_PAGES);
-    let guest_pages = total_pages.saturating_sub(base_pages);
+    let desired_bytes_clamped = desired_bytes_aligned.min(max_guest_bytes);
+    let guest_pages = desired_bytes_clamped / guest_layout::WASM_PAGE_BYTES;
     let guest_size = guest_pages * guest_layout::WASM_PAGE_BYTES;
 
     GuestRamLayout {
