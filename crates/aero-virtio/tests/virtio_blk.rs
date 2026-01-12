@@ -726,6 +726,78 @@ fn virtio_pci_modern_intx_disable_suppresses_line_but_retains_pending() {
 }
 
 #[test]
+fn virtio_pci_snapshot_preserves_pending_intx_while_intx_disable_set() {
+    // This test exercises a subtle interaction:
+    // - the device has a pending legacy interrupt (internal latch set)
+    // - the guest has disabled INTx delivery via `PCI COMMAND.INTX_DISABLE`
+    // - we snapshot/restore while delivery is disabled
+    //
+    // The pending latch must be preserved so the interrupt is delivered when INTx is re-enabled
+    // after restore.
+    let irq0 = TestIrq::default();
+    let (mut dev, caps, mut mem, backing, flushes, irq0) = setup_with_irq(irq0);
+
+    // Complete a request to set the legacy interrupt pending latch.
+    let header = 0x7000;
+    let status = 0x9000;
+    write_u32_le(&mut mem, header, VIRTIO_BLK_T_FLUSH).unwrap();
+    write_u32_le(&mut mem, header + 4, 0).unwrap();
+    write_u64_le(&mut mem, header + 8, 0).unwrap();
+    mem.write(status, &[0xff]).unwrap();
+
+    write_desc(&mut mem, DESC_TABLE, 0, header, 16, 0x0001, 1);
+    write_desc(&mut mem, DESC_TABLE, 1, status, 1, 0x0002, 0);
+    write_u16_le(&mut mem, AVAIL_RING, 0).unwrap();
+    write_u16_le(&mut mem, AVAIL_RING + 2, 1).unwrap();
+    write_u16_le(&mut mem, AVAIL_RING + 4, 0).unwrap();
+    write_u16_le(&mut mem, USED_RING, 0).unwrap();
+    write_u16_le(&mut mem, USED_RING + 2, 0).unwrap();
+
+    dev.bar0_write(caps.notify, &0u16.to_le_bytes());
+    dev.process_notified_queues(&mut mem);
+
+    assert_eq!(mem.get_slice(status, 1).unwrap()[0], 0);
+    assert_eq!(flushes.get(), 1);
+    assert_eq!(dev.debug_queue_used_idx(&mem, 0), Some(1));
+    assert_eq!(irq0.legacy_count(), 1);
+    assert!(irq0.legacy_level());
+
+    // Disable INTx delivery but *do not* read ISR (so the internal pending latch remains set).
+    dev.config_write(0x04, &0x0404u16.to_le_bytes()); // BME + INTX_DISABLE
+    assert!(!irq0.legacy_level(), "INTx line should be deasserted when disabled");
+    assert!(!dev.irq_level());
+
+    // Snapshot while INTX_DISABLE is set.
+    let snap_bytes = dev.save_state();
+    let mem_snap = mem.clone();
+
+    // Restore into a fresh device instance (same disk backend, same guest memory image).
+    let irq1 = TestIrq::default();
+    let backend = SharedDisk {
+        data: backing.clone(),
+        flushes: flushes.clone(),
+    };
+    let blk = VirtioBlk::new(backend);
+    let mut restored = VirtioPciDevice::new(Box::new(blk), Box::new(irq1.clone()));
+    restored.load_state(&snap_bytes).unwrap();
+    let mem2 = mem_snap.clone();
+
+    // INTX_DISABLE should still suppress the external line after restore, but the pending latch
+    // must be preserved.
+    assert_eq!(restored.debug_queue_used_idx(&mem2, 0), Some(1));
+    assert_eq!(flushes.get(), 1);
+    assert_eq!(irq1.legacy_count(), 0);
+    assert!(!irq1.legacy_level());
+    assert!(!restored.irq_level());
+
+    // Re-enable INTx and confirm the pending interrupt is delivered without additional queue work.
+    restored.config_write(0x04, &0x0004u16.to_le_bytes()); // BME only
+    assert_eq!(irq1.legacy_count(), 1);
+    assert!(irq1.legacy_level());
+    assert!(restored.irq_level());
+}
+
+#[test]
 fn malformed_chains_return_ioerr_without_panicking() {
     let (mut dev, caps, mut mem, _backing, _flushes) = setup();
 
