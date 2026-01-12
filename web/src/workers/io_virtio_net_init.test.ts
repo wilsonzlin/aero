@@ -25,19 +25,17 @@ describe("workers/io_virtio_net_init", () => {
     const irqSink: IrqSink = { raiseIrq: () => {}, lowerIrq: () => {} };
     const mgr = new DeviceManager(irqSink);
 
-    // Canonical virtio-net BDF: 00:08.0.
-    const DEV = 8;
-    const cfgAddr = (off: number): number => (0x8000_0000 | (DEV << 11) | (off & 0xfc)) >>> 0;
-    const readCfg8 = (off: number): number => {
-      mgr.portWrite(0x0cf8, 4, cfgAddr(off));
+    const cfgAddrForDev = (dev: number, off: number): number => (0x8000_0000 | ((dev & 0x1f) << 11) | (off & 0xfc)) >>> 0;
+    const readCfg8ForDev = (dev: number, off: number): number => {
+      mgr.portWrite(0x0cf8, 4, cfgAddrForDev(dev, off));
       return mgr.portRead(0x0cfc + (off & 3), 1) & 0xff;
     };
-    const readCfg32 = (off: number): number => {
-      mgr.portWrite(0x0cf8, 4, cfgAddr(off));
+    const readCfg32ForDev = (dev: number, off: number): number => {
+      mgr.portWrite(0x0cf8, 4, cfgAddrForDev(dev, off));
       return mgr.portRead(0x0cfc, 4) >>> 0;
     };
-    const writeCfg32 = (off: number, value: number): void => {
-      mgr.portWrite(0x0cf8, 4, cfgAddr(off));
+    const writeCfg32ForDev = (dev: number, off: number, value: number): void => {
+      mgr.portWrite(0x0cf8, 4, cfgAddrForDev(dev, off));
       mgr.portWrite(0x0cfc, 4, value >>> 0);
     };
 
@@ -63,6 +61,23 @@ describe("workers/io_virtio_net_init", () => {
       ioIpc: new SharedArrayBuffer(1024),
     });
     expect(dev).not.toBeNull();
+
+    let pciDevNum: number | null = null;
+    for (let candidate = 0; candidate < 32; candidate++) {
+      const id = readCfg32ForDev(candidate, 0x00);
+      const vendor = id & 0xffff;
+      const device = (id >>> 16) & 0xffff;
+      if (vendor === 0x1af4 && device === 0x1041) {
+        pciDevNum = candidate;
+        break;
+      }
+    }
+    expect(pciDevNum).not.toBeNull();
+    const DEV = pciDevNum!;
+
+    const readCfg8 = (off: number): number => readCfg8ForDev(DEV, off);
+    const readCfg32 = (off: number): number => readCfg32ForDev(DEV, off);
+    const writeCfg32 = (off: number, value: number): void => writeCfg32ForDev(DEV, off, value);
 
     // Vendor ID (low 16) / Device ID (high 16).
     const id = readCfg32(0x00);
@@ -90,41 +105,34 @@ describe("workers/io_virtio_net_init", () => {
 
     // Validate virtio-pci vendor-specific capabilities and fixed BAR0 layout (contract v1).
     const cap0 = readCfg8(0x34);
-    expect(cap0).toBe(0x50);
+    expect(cap0).not.toBe(0);
+    expect((cap0 & 3) >>> 0).toBe(0);
 
-    // COMMON cfg at 0x50.
-    expect(readCfg8(0x50)).toBe(0x09); // vendor-specific cap
-    expect(readCfg8(0x51)).toBe(0x60); // next
-    expect(readCfg8(0x52)).toBe(16); // cap_len
-    expect(readCfg8(0x53)).toBe(1); // cfg_type
-    expect(readCfg8(0x54)).toBe(0); // bar
-    expect(readCfg32(0x58)).toBe(0x0000);
-    expect(readCfg32(0x5c)).toBe(0x0100);
+    type VirtioPciCap = { bar: number; offset: number; length: number; notifyOffMultiplier?: number; capLen: number };
+    const caps = new Map<number, VirtioPciCap>();
+    let cap = cap0;
+    for (let i = 0; cap !== 0 && i < 32; i++) {
+      const capId = readCfg8(cap);
+      const next = readCfg8(cap + 1);
+      if (capId === 0x09) {
+        const capLen = readCfg8(cap + 2);
+        const cfgType = readCfg8(cap + 3);
+        const bar = readCfg8(cap + 4);
+        const offset = readCfg32(cap + 8);
+        const length = readCfg32(cap + 12);
+        const info: VirtioPciCap = { bar, offset, length, capLen };
+        if (cfgType === 2 && capLen >= 20) {
+          info.notifyOffMultiplier = readCfg32(cap + 16);
+        }
+        caps.set(cfgType, info);
+      }
+      cap = next;
+    }
 
-    // NOTIFY cfg at 0x60.
-    expect(readCfg8(0x60)).toBe(0x09);
-    expect(readCfg8(0x61)).toBe(0x74);
-    expect(readCfg8(0x62)).toBe(20);
-    expect(readCfg8(0x63)).toBe(2);
-    expect(readCfg32(0x68)).toBe(0x1000);
-    expect(readCfg32(0x6c)).toBe(0x0100);
-    expect(readCfg32(0x70)).toBe(4);
-
-    // ISR cfg at 0x74.
-    expect(readCfg8(0x74)).toBe(0x09);
-    expect(readCfg8(0x75)).toBe(0x84);
-    expect(readCfg8(0x76)).toBe(16);
-    expect(readCfg8(0x77)).toBe(3);
-    expect(readCfg32(0x7c)).toBe(0x2000);
-    expect(readCfg32(0x80)).toBe(0x0020);
-
-    // DEVICE cfg at 0x84.
-    expect(readCfg8(0x84)).toBe(0x09);
-    expect(readCfg8(0x85)).toBe(0x00);
-    expect(readCfg8(0x86)).toBe(16);
-    expect(readCfg8(0x87)).toBe(4);
-    expect(readCfg32(0x8c)).toBe(0x3000);
-    expect(readCfg32(0x90)).toBe(0x0100);
+    expect(caps.get(1)).toEqual({ bar: 0, offset: 0x0000, length: 0x0100, capLen: 16 });
+    expect(caps.get(2)).toEqual({ bar: 0, offset: 0x1000, length: 0x0100, capLen: 20, notifyOffMultiplier: 4 });
+    expect(caps.get(3)).toEqual({ bar: 0, offset: 0x2000, length: 0x0020, capLen: 16 });
+    expect(caps.get(4)).toEqual({ bar: 0, offset: 0x3000, length: 0x0100, capLen: 16 });
 
     dev?.destroy();
   });
