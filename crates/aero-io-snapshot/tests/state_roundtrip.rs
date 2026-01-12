@@ -18,6 +18,110 @@ use aero_io_snapshot::io::storage::state::{
 };
 
 #[test]
+fn hda_controller_state_roundtrip() {
+    let hda = HdaControllerState {
+        gctl: 0x0000_0001,
+        wakeen: 0x1234,
+        statests: 0x5678,
+        intctl: 0x9abc_def0,
+        intsts: 0x1111_2222,
+        output_rate_hz: 44_100,
+        capture_sample_rate_hz: 48_000,
+        dplbase: 0x0000_8000,
+        dpubase: 0x0000_0001,
+
+        corblbase: 0x0010_0000,
+        corbubase: 0x0000_0002,
+        corbwp: 7,
+        corbrp: 3,
+        corbctl: 0x12,
+        corbsts: 0x34,
+        corbsize: 0x02,
+
+        rirblbase: 0x0020_0000,
+        rirbubase: 0x0000_0003,
+        rirbwp: 9,
+        rirbctl: 0x56,
+        rirbsts: 0x78,
+        rirbsize: 0x02,
+        rintcnt: 4,
+
+        streams: vec![
+            HdaStreamState {
+                ctl: 0x1111_2222,
+                lpib: 0x3333_4444,
+                cbl: 0x0000_2000,
+                lvi: 0x55,
+                fifow: 0x66,
+                fifos: 0x77,
+                fmt: 0x0011,
+                bdpl: 0x8888_9999,
+                bdpu: 0xaaaa_bbbb,
+            },
+            HdaStreamState {
+                ctl: 0xdead_beef,
+                lpib: 0x0102_0304,
+                cbl: 0x0000_1000,
+                lvi: 0x02,
+                fifow: 0x10,
+                fifos: 0x20,
+                fmt: 0x0010,
+                bdpl: 0xcccc_dddd,
+                bdpu: 0xeeee_ffff,
+            },
+        ],
+        stream_runtime: vec![
+            HdaStreamRuntimeState {
+                bdl_index: 2,
+                bdl_offset: 16,
+                last_fmt_raw: 0x0011,
+                resampler_src_pos_bits: 0x3ff0_0000_0000_0000, // 1.0f64
+                resampler_queued_frames: 128,
+            },
+            HdaStreamRuntimeState {
+                bdl_index: 1,
+                bdl_offset: 0,
+                last_fmt_raw: 0x0010,
+                resampler_src_pos_bits: 0x4000_0000_0000_0000, // 2.0f64
+                resampler_queued_frames: 0,
+            },
+        ],
+        stream_capture_frame_accum: vec![0, 123_456_789],
+        codec: HdaCodecState {
+            output_stream_id: 1,
+            output_channel: 0,
+            output_format: 0x1234,
+            amp_gain_left: 0x12,
+            amp_gain_right: 0x34,
+            amp_mute_left: true,
+            amp_mute_right: false,
+            pin_conn_select: 2,
+            pin_ctl: 0x55,
+            output_pin_power_state: 3,
+            afg_power_state: 1,
+        },
+        codec_capture: HdaCodecCaptureState {
+            input_stream_id: 2,
+            input_channel: 1,
+            input_format: 0x2345,
+            mic_pin_conn_select: 1,
+            mic_pin_ctl: 0x66,
+            mic_pin_power_state: 2,
+        },
+        worklet_ring: AudioWorkletRingState {
+            capacity_frames: 256,
+            write_pos: 1024,
+            read_pos: 900,
+        },
+    };
+
+    let snap = hda.save_state();
+    let mut restored = HdaControllerState::default();
+    restored.load_state(&snap).unwrap();
+    assert_eq!(hda, restored);
+}
+
+#[test]
 fn disk_layer_state_roundtrip() {
     let disk = DiskLayerState::new(
         DiskBackendState::Local(LocalDiskBackendState {
