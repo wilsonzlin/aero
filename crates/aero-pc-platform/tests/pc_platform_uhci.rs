@@ -39,6 +39,7 @@ const TD_STATUS_DATA_BUFFER_ERROR: u32 = 1 << 21;
 const TD_STATUS_NAK: u32 = 1 << 19;
 const TD_STATUS_CRC_TIMEOUT: u32 = 1 << 18;
 const TD_CTRL_IOC: u32 = 1 << 24;
+const TD_CTRL_SPD: u32 = 1 << 29;
 
 // UHCI root hub PORTSC bits (Intel UHCI spec / Linux uhci-hcd).
 const PORTSC_CSC: u16 = 0x0002;
@@ -1296,6 +1297,124 @@ fn pc_platform_uhci_ioc_completion_asserts_intx_via_pic() {
         .pic()
         .get_pending_vector()
         .expect("UHCI IRQ should be pending after IOC TD completion");
+    let pending_irq = pc
+        .interrupts
+        .borrow()
+        .pic()
+        .vector_to_irq(vector)
+        .expect("pending vector should decode to an IRQ number");
+    assert_eq!(pending_irq, irq);
+
+    // Consume + EOI the interrupt so we can observe deassertion cleanly.
+    {
+        let mut interrupts = pc.interrupts.borrow_mut();
+        interrupts.pic_mut().acknowledge(vector);
+        interrupts.pic_mut().eoi(vector);
+    }
+
+    // Clear the status bit (W1C) and ensure the line deasserts.
+    pc.io
+        .write(bar4_base + REG_USBSTS, 2, u32::from(USBSTS_USBINT));
+    pc.poll_pci_intx_lines();
+    assert_eq!(pc.interrupts.borrow().pic().get_pending_vector(), None);
+}
+
+#[test]
+fn pc_platform_uhci_short_packet_sets_usbint_and_asserts_intx_when_spd_enabled() {
+    let mut pc = PcPlatform::new(2 * 1024 * 1024);
+    let bdf = USB_UHCI_PIIX3.bdf;
+    let bar4_base = read_uhci_bar4_base(&mut pc);
+    let gsi = pc.pci_intx.gsi_for_intx(bdf, PciInterruptPin::IntA);
+    let irq = u8::try_from(gsi).expect("UHCI INTx should route to a PIC IRQ in legacy mode");
+
+    // Unmask IRQ2 (cascade) + the routed IRQ so we can observe UHCI interrupts through the PIC.
+    {
+        let mut interrupts = pc.interrupts.borrow_mut();
+        interrupts.pic_mut().set_offsets(0x20, 0x28);
+        interrupts.pic_mut().set_masked(2, false);
+        interrupts.pic_mut().set_masked(irq, false);
+    }
+
+    let keyboard = UsbHidKeyboardHandle::new();
+    pc.uhci
+        .as_ref()
+        .expect("UHCI should be enabled")
+        .borrow_mut()
+        .controller_mut()
+        .hub_mut()
+        .attach(0, Box::new(keyboard.clone()));
+
+    // Enable Bus Mastering so UHCI can DMA the schedule/TD state.
+    let command = read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04) as u16;
+    write_cfg_u16(
+        &mut pc,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        0x04,
+        command | (1 << 2),
+    );
+    pc.tick(0);
+
+    init_frame_list(&mut pc);
+    reset_port(&mut pc, bar4_base, REG_PORTSC1);
+
+    pc.io.write(bar4_base + REG_FLBASEADD, 4, FRAME_LIST_BASE);
+    pc.io.write(bar4_base + REG_FRNUM, 2, 0);
+    // Enable short-packet interrupts (but not IOC), so USBINT gating is tested on the short-packet
+    // cause.
+    pc.io.write(
+        bar4_base + REG_USBINTR,
+        2,
+        u32::from(USBINTR_SHORT_PACKET),
+    );
+    pc.io.write(
+        bar4_base + REG_USBCMD,
+        2,
+        u32::from(USBCMD_RS | USBCMD_MAXP),
+    );
+
+    // Enumerate keyboard at address 5.
+    control_no_data(
+        &mut pc,
+        0,
+        [0x00, 0x05, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00], // SET_ADDRESS(5)
+    );
+    control_no_data(
+        &mut pc,
+        5,
+        [0x00, 0x09, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00], // SET_CONFIGURATION(1)
+    );
+
+    // Generate an 8-byte HID report and schedule an interrupt-IN TD that:
+    // - requests a much larger max_len than the device will return (short packet), and
+    // - sets SPD so the controller reports short packets via USBINT.
+    keyboard.key_event(0x04, true); // 'a'
+    write_td(
+        &mut pc,
+        TD0,
+        1,
+        td_status(true) | TD_CTRL_SPD,
+        td_token(PID_IN, 5, 1, 0, 64),
+        BUF_INT,
+    );
+    run_one_frame(&mut pc, TD0);
+
+    assert_ne!(
+        pc.io.read(bar4_base + REG_USBSTS, 2) as u16 & USBSTS_USBINT,
+        0,
+        "UHCI schedule completion should set USBSTS.USBINT on short packet when SPD is set"
+    );
+
+    // Propagate the asserted INTx line into the PIC and observe the pending vector.
+    pc.poll_pci_intx_lines();
+
+    let vector = pc
+        .interrupts
+        .borrow()
+        .pic()
+        .get_pending_vector()
+        .expect("UHCI IRQ should be pending after short packet detection");
     let pending_irq = pc
         .interrupts
         .borrow()
