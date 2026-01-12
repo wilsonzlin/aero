@@ -247,108 +247,6 @@ struct GuestTextureBacking {
     size_bytes: u64,
 }
 
-/// Subresource layout for guest-backed textures with mip levels and array layers.
-///
-/// MVP layout:
-/// - Subresources are tightly packed (no per-row padding beyond `mip_width * bpp`).
-/// - For each array layer, mip levels are laid out sequentially starting at mip 0.
-/// - Array layers are laid out sequentially.
-#[derive(Debug, Clone, Copy)]
-struct GuestTextureSubresourceLayout {
-    width: u32,
-    height: u32,
-    mip_level_count: u32,
-    array_layers: u32,
-    bytes_per_pixel: u32,
-}
-
-impl GuestTextureSubresourceLayout {
-    fn new(
-        width: u32,
-        height: u32,
-        mip_level_count: u32,
-        array_layers: u32,
-        bytes_per_pixel: u32,
-    ) -> Self {
-        Self {
-            width,
-            height,
-            mip_level_count,
-            array_layers,
-            bytes_per_pixel,
-        }
-    }
-
-    fn mip_width(&self, mip_level: u32) -> u32 {
-        mip_dim(self.width, mip_level)
-    }
-
-    fn mip_height(&self, mip_level: u32) -> u32 {
-        mip_dim(self.height, mip_level)
-    }
-
-    fn subresource_row_pitch_bytes(
-        &self,
-        _array_layer: u32,
-        mip_level: u32,
-    ) -> Result<u32, AerogpuD3d9Error> {
-        self.mip_width(mip_level).checked_mul(self.bytes_per_pixel).ok_or_else(|| {
-            AerogpuD3d9Error::Validation("texture subresource row pitch overflow".into())
-        })
-    }
-
-    fn subresource_size_bytes(
-        &self,
-        array_layer: u32,
-        mip_level: u32,
-    ) -> Result<u64, AerogpuD3d9Error> {
-        let bpr = self.subresource_row_pitch_bytes(array_layer, mip_level)? as u64;
-        let height = self.mip_height(mip_level) as u64;
-        bpr.checked_mul(height)
-            .ok_or_else(|| AerogpuD3d9Error::Validation("texture subresource size overflow".into()))
-    }
-
-    fn layer_size_bytes(&self) -> Result<u64, AerogpuD3d9Error> {
-        let mut total = 0u64;
-        for mip in 0..self.mip_level_count {
-            total = total
-                .checked_add(self.subresource_size_bytes(0, mip)?)
-                .ok_or_else(|| AerogpuD3d9Error::Validation("texture backing overflow".into()))?;
-        }
-        Ok(total)
-    }
-
-    fn total_size_bytes(&self) -> Result<u64, AerogpuD3d9Error> {
-        let layer = self.layer_size_bytes()?;
-        layer
-            .checked_mul(self.array_layers as u64)
-            .ok_or_else(|| AerogpuD3d9Error::Validation("texture backing overflow".into()))
-    }
-
-    fn subresource_offset_bytes(
-        &self,
-        array_layer: u32,
-        mip_level: u32,
-    ) -> Result<u64, AerogpuD3d9Error> {
-        if array_layer >= self.array_layers || mip_level >= self.mip_level_count {
-            return Err(AerogpuD3d9Error::Validation(
-                "subresource index out of bounds".into(),
-            ));
-        }
-
-        let layer_size = self.layer_size_bytes()?;
-        let mut offset = layer_size
-            .checked_mul(array_layer as u64)
-            .ok_or_else(|| AerogpuD3d9Error::Validation("texture backing overflow".into()))?;
-        for mip in 0..mip_level {
-            offset = offset
-                .checked_add(self.subresource_size_bytes(array_layer, mip)?)
-                .ok_or_else(|| AerogpuD3d9Error::Validation("texture backing overflow".into()))?;
-        }
-        Ok(offset)
-    }
-}
-
 #[derive(Debug, Clone, Copy)]
 struct TextureWritebackPlan {
     backing: GuestTextureBacking,
@@ -3568,24 +3466,46 @@ impl AerogpuD3d9Executor {
                                 // Single-subresource: allow padded row pitch (the legacy path).
                                 (0u64, dst_backing.row_pitch_bytes)
                             } else {
-                                // Multi-subresource: MVP assumes tight packing in guest memory.
-                                let layout = GuestTextureSubresourceLayout::new(
+                                let layout = guest_texture_linear_layout(
+                                    dst_format_raw,
                                     dst_w,
                                     dst_h,
                                     dst_mips,
                                     dst_layers,
-                                    guest_bpp,
-                                );
-                                let offset =
-                                    layout.subresource_offset_bytes(dst_array_layer, dst_mip_level)?;
-                                let row_pitch = layout
-                                    .subresource_row_pitch_bytes(dst_array_layer, dst_mip_level)?;
-
-                                let sub_size = layout.subresource_size_bytes(
-                                    dst_array_layer,
-                                    dst_mip_level,
+                                    dst_backing.row_pitch_bytes,
                                 )?;
-                                let sub_end = offset.checked_add(sub_size).ok_or_else(|| {
+                                debug_assert_eq!(layout.total_size_bytes, dst_backing.size_bytes);
+
+                                let layer_off = layout
+                                    .layer_stride_bytes
+                                    .checked_mul(dst_array_layer as u64)
+                                    .ok_or_else(|| {
+                                        AerogpuD3d9Error::Validation(
+                                            "COPY_TEXTURE2D: dst subresource overflow".into(),
+                                        )
+                                    })?;
+                                let in_layer_off = *layout
+                                    .mip_offsets
+                                    .get(dst_mip_level as usize)
+                                    .ok_or_else(|| {
+                                        AerogpuD3d9Error::Validation(
+                                            "COPY_TEXTURE2D: dst mip index out of bounds".into(),
+                                        )
+                                    })?;
+                                let in_layer_end = if dst_mip_level + 1 < dst_mips {
+                                    *layout
+                                        .mip_offsets
+                                        .get((dst_mip_level + 1) as usize)
+                                        .ok_or_else(|| {
+                                            AerogpuD3d9Error::Validation(
+                                                "COPY_TEXTURE2D: dst mip index out of bounds"
+                                                    .into(),
+                                            )
+                                        })?
+                                } else {
+                                    layout.layer_stride_bytes
+                                };
+                                let sub_end = layer_off.checked_add(in_layer_end).ok_or_else(|| {
                                     AerogpuD3d9Error::Validation(
                                         "COPY_TEXTURE2D: dst subresource overflow".into(),
                                     )
@@ -3595,6 +3515,20 @@ impl AerogpuD3d9Executor {
                                         "COPY_TEXTURE2D: dst subresource out of bounds".into(),
                                     ));
                                 }
+
+                                let offset = layer_off.checked_add(in_layer_off).ok_or_else(|| {
+                                    AerogpuD3d9Error::Validation(
+                                        "COPY_TEXTURE2D: dst subresource overflow".into(),
+                                    )
+                                })?;
+
+                                let dst_block = aerogpu_format_texel_block_info(dst_format_raw)?;
+                                let mip_w = mip_extent(dst_w, dst_mip_level);
+                                let row_pitch = if dst_mip_level == 0 {
+                                    dst_backing.row_pitch_bytes
+                                } else {
+                                    dst_block.row_pitch_bytes(mip_w)?
+                                };
 
                                 (offset, row_pitch)
                             };
@@ -7881,12 +7815,16 @@ fn map_aerogpu_format(format: u32) -> Result<wgpu::TextureFormat, AerogpuD3d9Err
 fn bytes_per_pixel_aerogpu_format(format_raw: u32) -> Result<u32, AerogpuD3d9Error> {
     Ok(match format_raw {
         x if x == AerogpuFormat::B8G8R8A8Unorm as u32
-            || x == AerogpuFormat::B8G8R8X8Unorm as u32 =>
+            || x == AerogpuFormat::B8G8R8X8Unorm as u32
+            || x == AerogpuFormat::B8G8R8A8UnormSrgb as u32
+            || x == AerogpuFormat::B8G8R8X8UnormSrgb as u32 =>
         {
             4
         }
         x if x == AerogpuFormat::R8G8B8A8Unorm as u32
-            || x == AerogpuFormat::R8G8B8X8Unorm as u32 =>
+            || x == AerogpuFormat::R8G8B8X8Unorm as u32
+            || x == AerogpuFormat::R8G8B8A8UnormSrgb as u32
+            || x == AerogpuFormat::R8G8B8X8UnormSrgb as u32 =>
         {
             4
         }
