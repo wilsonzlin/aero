@@ -330,6 +330,53 @@ mod jit_abi_constants_tests {
         );
         assert_eq!(read_u32(&obj, "commit_flag_bytes"), 4);
 
+        // Self-consistency checks: ensure the exported values satisfy the same layout contract
+        // that the JS host relies on.
+        let cpu_state_size = read_u32(&obj, "cpu_state_size");
+        let cpu_state_align = read_u32(&obj, "cpu_state_align");
+        assert_eq!(
+            cpu_state_size % cpu_state_align,
+            0,
+            "cpu_state_size must be a multiple of cpu_state_align"
+        );
+
+        let jit_ctx_header_bytes = read_u32(&obj, "jit_ctx_header_bytes");
+        let jit_ctx_tlb_offset = read_u32(&obj, "jit_ctx_tlb_offset");
+        assert_eq!(
+            jit_ctx_tlb_offset, jit_ctx_header_bytes,
+            "jit_ctx_tlb_offset must equal jit_ctx_header_bytes"
+        );
+
+        let jit_ctx_total_bytes = read_u32(&obj, "jit_ctx_total_bytes");
+        let jit_tlb_entries = read_u32(&obj, "jit_tlb_entries");
+        let jit_tlb_entry_bytes = read_u32(&obj, "jit_tlb_entry_bytes");
+        let derived_total_u64 = u64::from(jit_ctx_header_bytes)
+            + u64::from(jit_tlb_entries) * u64::from(jit_tlb_entry_bytes);
+        assert!(
+            derived_total_u64 <= u64::from(u32::MAX),
+            "derived jit ctx total bytes must fit in u32"
+        );
+        let derived_total = derived_total_u64 as u32;
+        assert_eq!(
+            jit_ctx_total_bytes, derived_total,
+            "jit_ctx_total_bytes must match header + entries*entry_bytes"
+        );
+
+        let tier2_ctx_offset = read_u32(&obj, "tier2_ctx_offset");
+        assert_eq!(
+            tier2_ctx_offset,
+            cpu_state_size + jit_ctx_total_bytes,
+            "tier2_ctx_offset must follow CpuState + JitContext"
+        );
+
+        let tier2_ctx_size = read_u32(&obj, "tier2_ctx_size");
+        let commit_flag_offset = read_u32(&obj, "commit_flag_offset");
+        assert_eq!(
+            commit_flag_offset,
+            tier2_ctx_offset + tier2_ctx_size,
+            "commit_flag_offset must follow tier2 ctx"
+        );
+
         let gpr =
             Reflect::get(&obj, &JsValue::from_str("cpu_gpr_off")).expect("cpu_gpr_off missing");
         let gpr = gpr
