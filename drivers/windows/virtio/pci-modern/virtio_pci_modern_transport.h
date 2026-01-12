@@ -202,7 +202,7 @@ NTSTATUS VirtioPciModernTransportSetupQueue(VIRTIO_PCI_MODERN_TRANSPORT *Transpo
 VOID VirtioPciModernTransportDisableQueue(VIRTIO_PCI_MODERN_TRANSPORT *Transport, UINT16 QueueIndex);
 NTSTATUS VirtioPciModernTransportNotifyQueue(VIRTIO_PCI_MODERN_TRANSPORT *Transport, UINT16 QueueIndex);
 
-/* MSI-X helpers (vectors may be set to 0xFFFF to disable). */
+/* MSI-X helpers (vectors may be set to VIRTIO_PCI_MSI_NO_VECTOR to disable). */
 NTSTATUS VirtioPciModernTransportSetConfigMsixVector(VIRTIO_PCI_MODERN_TRANSPORT *Transport, UINT16 Vector);
 NTSTATUS VirtioPciModernTransportSetQueueMsixVector(VIRTIO_PCI_MODERN_TRANSPORT *Transport, UINT16 QueueIndex, UINT16 Vector);
 

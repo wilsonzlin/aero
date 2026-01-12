@@ -131,7 +131,7 @@ NTSTATUS VirtioPciInterruptsProgramMsixVectors(
  * Sequence:
  *   - Set ResetInProgress (DPCs bail out).
  *   - Disable OS interrupt delivery (WdfInterruptDisable).
- *   - If MSI-X: clear device routing (msix_config/queue_msix_vector = 0xFFFF).
+ *   - If MSI-X: clear device routing (msix_config/queue_msix_vector = VIRTIO_PCI_MSI_NO_VECTOR).
  *   - Synchronize with in-flight DPCs (ConfigLock + per-queue locks).
  *
  * Callers must still ensure their device/queue state is otherwise quiesced.
