@@ -2672,6 +2672,64 @@ mod tests {
         assert_ne!(updated.status & TXD_STAT_DD, 0);
     }
 
+    #[test]
+    fn rx_dma_is_gated_on_pci_bus_master_enable() {
+        let mut dev = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
+
+        // Configure RX ring: 2 descriptors at 0x3000.
+        // With the device model's \"keep one unused\" rule, this provides 1 usable RX buffer.
+        dev.mmio_write_u32_reg(REG_RDBAL, 0x3000);
+        dev.mmio_write_u32_reg(REG_RDLEN, (RxDesc::LEN as u32) * 2);
+        dev.mmio_write_u32_reg(REG_RDH, 0);
+        dev.mmio_write_u32_reg(REG_RDT, 1);
+        dev.mmio_write_u32_reg(REG_RCTL, RCTL_EN);
+
+        // Enable RX interrupts so we can observe IRQ assertion after delivery.
+        dev.mmio_write_u32_reg(REG_IMS, ICR_RXT0);
+
+        // Queue a frame for delivery.
+        let frame = vec![0x11u8; MIN_L2_FRAME_LEN];
+        dev.enqueue_rx_frame(frame.clone());
+
+        // With bus mastering disabled, poll must not touch guest memory.
+        let mut panic_mem = PanicMem;
+        dev.poll(&mut panic_mem);
+        assert_eq!(dev.rx_pending.len(), 1);
+
+        // Set up guest memory for the RX descriptor + buffer.
+        let mut mem = TestMem::new(0x10_000);
+        mem.write_bytes(
+            0x3000,
+            &RxDesc {
+                buffer_addr: 0x4000,
+                length: 0,
+                checksum: 0,
+                status: 0,
+                errors: 0,
+                special: 0,
+            }
+            .to_bytes(),
+        );
+        mem.write_bytes(0x4000, &[0xAA; MIN_L2_FRAME_LEN]);
+
+        // Enable Bus Mastering and poll again: now RX should flush into guest memory.
+        dev.pci_config_write(0x04, 2, 0x4);
+        dev.poll(&mut mem);
+
+        assert!(dev.rx_pending.is_empty());
+        assert_eq!(mem.read_bytes(0x4000, frame.len()), frame);
+
+        let updated = RxDesc::from_bytes(read_desc::<{ RxDesc::LEN }>(&mut mem, 0x3000));
+        assert_ne!(updated.status & RXD_STAT_DD, 0);
+        assert_ne!(updated.status & RXD_STAT_EOP, 0);
+        assert_eq!(updated.length as usize, frame.len());
+
+        assert!(dev.irq_level());
+        let icr = dev.mmio_read_u32(REG_ICR);
+        assert_eq!(icr & ICR_RXT0, ICR_RXT0);
+        assert!(!dev.irq_level());
+    }
+
     #[cfg(feature = "io-snapshot")]
     #[test]
     fn snapshot_roundtrip_is_lossless() {
