@@ -112,3 +112,12 @@ test('loadConfig accepts ws(s) UDP_RELAY_BASE_URL schemes', () => {
     'wss://relay.example.com',
   );
 });
+
+test('loadConfig surfaces L2 tunnel payload limits from aero-l2-proxy env var aliases', () => {
+  const config = loadConfig({
+    AERO_L2_MAX_FRAME_PAYLOAD: '9000',
+    AERO_L2_MAX_CONTROL_PAYLOAD: '321',
+  });
+  assert.equal(config.L2_MAX_FRAME_PAYLOAD_BYTES, 9000);
+  assert.equal(config.L2_MAX_CONTROL_PAYLOAD_BYTES, 321);
+});
