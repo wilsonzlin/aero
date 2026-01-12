@@ -161,7 +161,10 @@ async function handleCompileRequest(req: CompileBlockRequest & { type: 'CompileB
         result = compileTier1BlockCompat(codeBytes, entryRip, maxBytes) as unknown;
       }
     }
-    compilation = normalizeTier1Compilation(result, maxBytes);
+    // Older JIT WASM builds returned only the `Uint8Array` wasm bytes and did not expose the
+    // decoded block length. Fall back to a conservative bound that never exceeds the provided
+    // code slice or configured max.
+    compilation = normalizeTier1Compilation(result, Math.min(maxBytes, codeBytes.byteLength));
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     postMessageToCpu({ type: 'CompileError', id: req.id, entry_rip: req.entry_rip, reason: message });

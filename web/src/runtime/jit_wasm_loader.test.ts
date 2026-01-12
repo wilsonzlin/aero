@@ -145,4 +145,42 @@ describe("runtime/jit_wasm_loader", () => {
     },
     20_000
   );
+
+  it(
+    "exports initJitWasmForContext (for worker/main-thread symmetry) and reuses the same init cache",
+    async () => {
+      const module = await WebAssembly.compile(WASM_EMPTY_MODULE_BYTES);
+
+      let importerCalls = 0;
+      const fakeModule = {
+        default: async (_input?: unknown) => {},
+        compile_tier1_block: () => ({
+          wasm_bytes: new Uint8Array(WASM_EMPTY_MODULE_BYTES),
+          code_byte_len: 0,
+          exit_to_interpreter: false,
+        }),
+      };
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (globalThis as any).__aeroJitWasmJsImporterOverride = {
+        single: async () => {
+          importerCalls += 1;
+          return fakeModule;
+        },
+      };
+
+      const { initJitWasmForContext } = await import("./jit_wasm_loader");
+      const { api } = await initJitWasmForContext({ module });
+      // Second call should reuse the memoized init promise.
+      await initJitWasmForContext({ module });
+
+      expect(importerCalls).toBe(1);
+
+      const { wasm_bytes: bytes } = api.compile_tier1_block(0n, new Uint8Array([0xc3]), 64, 1024, false, false);
+      const bytesForWasm: Uint8Array<ArrayBuffer> =
+        bytes.buffer instanceof ArrayBuffer ? (bytes as Uint8Array<ArrayBuffer>) : (new Uint8Array(bytes) as Uint8Array<ArrayBuffer>);
+      expect(WebAssembly.validate(bytesForWasm)).toBe(true);
+    },
+    20_000
+  );
 });
