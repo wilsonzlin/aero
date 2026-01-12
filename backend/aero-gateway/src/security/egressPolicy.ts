@@ -102,7 +102,11 @@ export function targetMatchesPattern(target: TargetHost, pattern: HostnamePatter
 
 export function normalizeHostname(rawHost: string): string {
   const trimmed = rawHost.trim();
-  const withoutTrailingDot = trimmed.replace(/\.+$/, "");
+  let end = trimmed.length;
+  while (end > 0 && trimmed.charCodeAt(end - 1) === 0x2e /* '.' */) {
+    end -= 1;
+  }
+  const withoutTrailingDot = end === trimmed.length ? trimmed : trimmed.slice(0, end);
   if (!withoutTrailingDot) throw new Error("Invalid hostname");
 
   const ascii = domainToASCII(withoutTrailingDot);
