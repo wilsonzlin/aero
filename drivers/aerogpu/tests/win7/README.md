@@ -238,6 +238,34 @@ To also write BMP dumps next to the binaries:
 run_all.cmd --dump
 ```
 
+### D3D9 UMD call tracing (bring-up / debugging)
+
+When debugging D3D9Ex tests (especially early bring-up issues where a test or `dwm.exe` fails before you get useful logs),
+it can be helpful to capture the **in-UMD D3D9UMDDI call trace**.
+
+See:
+
+* `docs/graphics/win7-d3d9-umd-tracing.md`
+
+Example: dump the trace on the first stubbed DDI hit (useful for spotting which unimplemented entrypoint the runtime exercised):
+
+```cmd
+set AEROGPU_D3D9_TRACE=1
+set AEROGPU_D3D9_TRACE_MODE=unique
+set AEROGPU_D3D9_TRACE_FILTER=stub
+set AEROGPU_D3D9_TRACE_DUMP_ON_STUB=1
+set AEROGPU_D3D9_TRACE_DUMP_ON_DETACH=1
+```
+
+By default on Windows, the trace dump is emitted via `OutputDebugStringA` (view with Sysinternals DebugView).
+For console tests, you can also set:
+
+```cmd
+set AEROGPU_D3D9_TRACE_STDERR=1
+```
+
+so the dump is echoed to the process `stderr` stream.
+
 ### JSON output
 
 To write an aggregated suite report:
