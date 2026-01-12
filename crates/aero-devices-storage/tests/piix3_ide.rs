@@ -268,6 +268,33 @@ fn ata_bus_master_dma_read_write_roundtrip() {
 }
 
 #[test]
+fn bus_master_registers_mask_command_bits_and_require_dword_prd_writes() {
+    let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
+    ide.borrow_mut().config_mut().set_command(0x0001); // IO decode
+
+    let mut ioports = IoPortBus::new();
+    register_piix3_ide_ports(&mut ioports, ide.clone());
+
+    let bm_base = ide.borrow().bus_master_base();
+
+    // Command register only exposes bits 0 (start) and 3 (direction).
+    ioports.write(bm_base, 1, 0xFF);
+    assert_eq!(ioports.read(bm_base, 1) as u8, 0x09);
+
+    // Clear start while keeping direction.
+    ioports.write(bm_base, 1, 0x08);
+    assert_eq!(ioports.read(bm_base, 1) as u8, 0x08);
+
+    // PRD address register only updates on 32-bit writes and is 4-byte aligned.
+    ioports.write(bm_base + 4, 4, 0x1234_5679);
+    assert_eq!(ioports.read(bm_base + 4, 4), 0x1234_5678);
+
+    // Partial write must be ignored.
+    ioports.write(bm_base + 4, 2, 0xABCD);
+    assert_eq!(ioports.read(bm_base + 4, 4), 0x1234_5678);
+}
+
+#[test]
 fn bus_master_status_register_is_rw1c_for_irq_and_error_bits() {
     let capacity = 4 * SECTOR_SIZE as u64;
     let mut disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
