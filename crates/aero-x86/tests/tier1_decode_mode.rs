@@ -244,6 +244,18 @@ fn decode_one_mode_32bit_opsize_override_jmp_rel16() {
 }
 
 #[test]
+fn decode_one_mode_32bit_opsize_override_jmp_rel16_zero_extends_ip() {
+    // In 32-bit mode, near branches with operand-size override use a 16-bit offset (IP) and
+    // zero-extend the result into EIP.
+    //
+    // 66 E9 01 00 at 0x0001_FFFB:
+    // next EIP would be 0x0001_FFFF, but IP=0xFFFF and +1 wraps to 0x0000.
+    let inst = decode_one_mode(0x0001_fffb, &[0x66, 0xe9, 0x01, 0x00], 32);
+    assert_eq!(inst.len, 4);
+    assert_eq!(inst.kind, InstKind::JmpRel { target: 0x0 });
+}
+
+#[test]
 fn decode_one_mode_16bit_call_rel16_uses_imm16() {
     // call near +0 (rel16) in 16-bit mode:
     // next IP = 0x2003, target = 0x2003
@@ -281,6 +293,35 @@ fn decode_one_mode_32bit_opsize_override_jcc_rel16() {
             target: 0x4007
         }
     );
+}
+
+#[test]
+fn decode_one_mode_32bit_opsize_override_jcc_rel16_zero_extends_fallthrough() {
+    // Like `decode_one_mode_32bit_opsize_override_jmp_rel16_zero_extends_ip`, but for near Jcc.
+    //
+    // 66 0F 84 01 00 at 0x0001_FFFA:
+    // next EIP would be 0x0001_FFFF, but IP=0xFFFF and +1 wraps to 0x0000.
+    let inst = decode_one_mode(0x0001_fffa, &[0x66, 0x0f, 0x84, 0x01, 0x00], 32);
+    assert_eq!(inst.len, 5);
+    assert_eq!(
+        inst.kind,
+        InstKind::JccRel {
+            cond: Cond::E,
+            target: 0x0
+        }
+    );
+    assert_eq!(inst.next_rip(), 0xffff);
+}
+
+#[test]
+fn decode_one_mode_16bit_opsize_override_near_jmp_bails() {
+    // In 16-bit mode, 0x66 selects 32-bit operand size, and near JMP uses a rel32 offset.
+    //
+    // Tier-1 currently assumes a fixed 16-bit instruction pointer in `bitness=16`, so it bails
+    // out instead of mis-compiling.
+    let inst = decode_one_mode(0x1000, &[0x66, 0xe9, 0x01, 0x00, 0x00, 0x00], 16);
+    assert_eq!(inst.len, 6);
+    assert_eq!(inst.kind, InstKind::Invalid);
 }
 
 #[test]

@@ -315,12 +315,13 @@ pub mod tier1 {
         pub rip: u64,
         pub len: u8,
         pub kind: InstKind,
+        next_rip: u64,
     }
 
     impl DecodedInst {
         #[must_use]
         pub fn next_rip(&self) -> u64 {
-            self.rip + self.len as u64
+            self.next_rip
         }
 
         #[must_use]
@@ -527,6 +528,32 @@ pub mod tier1 {
                 }
             }
             _ => Width::W32,
+        }
+    }
+
+    fn near_branch_ip_mask(bitness: u32, operand_override: bool) -> u64 {
+        match bitness {
+            // Near branches in 64-bit mode always update RIP.
+            64 => u64::MAX,
+            // In 32-bit mode, the operand-size override selects a 16-bit offset (IP) for near
+            // branches.
+            32 => {
+                if operand_override {
+                    0xffff
+                } else {
+                    0xffff_ffff
+                }
+            }
+            // In 16-bit mode, the operand-size override selects a 32-bit offset (EIP) for near
+            // branches, which Tier-1 does not currently model (we bail out in that case).
+            16 => {
+                if operand_override {
+                    0xffff_ffff
+                } else {
+                    0xffff
+                }
+            }
+            _ => u64::MAX,
         }
     }
 
@@ -741,6 +768,7 @@ pub mod tier1 {
                 rip,
                 len: 1,
                 kind: InstKind::Invalid,
+                next_rip: rip.wrapping_add(1) & ip_mask(bitness),
             },
         }
     }
@@ -787,16 +815,19 @@ pub mod tier1 {
         let opcode1 = read_u8(bytes, offset)?;
         offset += 1;
         if address_override {
+            let next_rip = rip.wrapping_add(offset as u64) & ip_mask(bitness);
             return Ok(DecodedInst {
                 rip,
                 len: offset as u8,
                 kind: InstKind::Invalid,
+                next_rip,
             });
         }
 
         let width = op_width(bitness, rex, operand_override);
         let stack_width = stack_width(bitness, operand_override);
 
+        let mut next_rip_mask = ip_mask(bitness);
         let kind = match opcode1 {
             0x90 => {
                 // 0x90 is `xchg (e)ax, (e)ax` which is a NOP. In 64-bit mode, REX.B can extend the
@@ -1290,8 +1321,20 @@ pub mod tier1 {
                 let rel_width = near_branch_disp_width(bitness, operand_override);
                 let rel = read_rel(bytes, offset, rel_width)?;
                 offset += rel_width.bytes();
-                let target = (rip + offset as u64).wrapping_add(rel as u64) & ip_mask(bitness);
-                InstKind::JmpRel { target }
+                if bitness == 16 && operand_override {
+                    // In 16-bit mode, the operand-size override selects a 32-bit near-branch offset
+                    // (EIP) which can escape the 16-bit IP space. Tier-1 currently assumes a fixed
+                    // IP width derived from the block bitness, so we bail out to the interpreter
+                    // instead of miscompiling.
+                    InstKind::Invalid
+                } else {
+                    let mask = near_branch_ip_mask(bitness, operand_override);
+                    if bitness == 32 && operand_override {
+                        next_rip_mask = mask;
+                    }
+                    let target = (rip + offset as u64).wrapping_add(rel as u64) & mask;
+                    InstKind::JmpRel { target }
+                }
             }
             0xeb => {
                 let rel8 = read_u8(bytes, offset)? as i8;
@@ -1388,9 +1431,17 @@ pub mod tier1 {
                         let rel_width = near_branch_disp_width(bitness, operand_override);
                         let rel = read_rel(bytes, offset, rel_width)?;
                         offset += rel_width.bytes();
-                        let target =
-                            (rip + offset as u64).wrapping_add(rel as u64) & ip_mask(bitness);
-                        InstKind::JccRel { cond, target }
+                        if bitness == 16 && operand_override {
+                            // See `0xE9` case above.
+                            InstKind::Invalid
+                        } else {
+                            let mask = near_branch_ip_mask(bitness, operand_override);
+                            if bitness == 32 && operand_override {
+                                next_rip_mask = mask;
+                            }
+                            let target = (rip + offset as u64).wrapping_add(rel as u64) & mask;
+                            InstKind::JccRel { cond, target }
+                        }
                     }
                     0x90..=0x9f => {
                         let cc = opcode2 - 0x90;
@@ -1461,10 +1512,12 @@ pub mod tier1 {
             }
         };
 
+        let next_rip = rip.wrapping_add(offset as u64) & next_rip_mask;
         Ok(DecodedInst {
             rip,
             len: offset as u8,
             kind,
+            next_rip,
         })
     }
 }
