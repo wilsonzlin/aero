@@ -402,3 +402,81 @@ fn pc_platform_snapshot_roundtrip_redrives_hpet_and_pci_intx_levels_after_restor
 
     assert_eq!(pc2.interrupts.borrow().get_pending(), None);
 }
+
+#[test]
+fn pc_platform_snapshot_roundtrip_preserves_rtc_irq8_and_requires_status_c_clear() {
+    const RAM_SIZE: usize = 2 * 1024 * 1024;
+
+    const RTC_GSI: u32 = 8;
+    const RTC_VECTOR: u8 = 0x48;
+
+    const RTC_PORT_INDEX: u16 = 0x70;
+    const RTC_PORT_DATA: u16 = 0x71;
+    const RTC_REG_STATUS_B: u8 = 0x0B;
+    const RTC_REG_STATUS_C: u8 = 0x0C;
+    const RTC_REG_B_24H: u8 = 1 << 1;
+    const RTC_REG_B_UIE: u8 = 1 << 4;
+
+    let mut pc = PcPlatform::new(RAM_SIZE);
+    {
+        let mut ints = pc.interrupts.borrow_mut();
+        ints.set_mode(PlatformInterruptMode::Apic);
+        program_ioapic_entry(&mut ints, RTC_GSI, u32::from(RTC_VECTOR), 0);
+    }
+
+    // Enable RTC update-ended interrupts (UIE).
+    pc.io.write_u8(RTC_PORT_INDEX, RTC_REG_STATUS_B);
+    pc.io.write_u8(RTC_PORT_DATA, RTC_REG_B_24H | RTC_REG_B_UIE);
+
+    // Advance one second to trigger UF/IRQ8.
+    pc.tick(1_000_000_000);
+    assert_eq!(
+        pc.interrupts.borrow().get_pending(),
+        Some(RTC_VECTOR),
+        "RTC IRQ8 should deliver after a one-second tick once UIE is enabled"
+    );
+
+    // Snapshot deterministically.
+    let interrupts_state = {
+        let ints = pc.interrupts.borrow();
+        deterministic_snapshot(&*ints, "PlatformInterrupts")
+    };
+    let rtc_state = {
+        let rtc = pc.rtc();
+        let rtc = rtc.borrow();
+        deterministic_snapshot(&*rtc, "RTC")
+    };
+
+    // Restore into a fresh platform.
+    let mut pc2 = PcPlatform::new(RAM_SIZE);
+    pc2.interrupts
+        .borrow_mut()
+        .load_state(&interrupts_state)
+        .unwrap();
+    pc2.rtc().borrow_mut().load_state(&rtc_state).unwrap();
+
+    // Pending vector should survive restore.
+    assert_eq!(pc2.interrupts.borrow().get_pending(), Some(RTC_VECTOR));
+
+    // Ack + EOI without reading Status C: line stays asserted, so edge-triggered IOAPIC should not
+    // re-fire on subsequent ticks.
+    pc2.interrupts.borrow_mut().acknowledge(RTC_VECTOR);
+    pc2.interrupts.borrow_mut().eoi(RTC_VECTOR);
+    assert_eq!(pc2.interrupts.borrow().get_pending(), None);
+
+    pc2.tick(1_000_000_000);
+    assert_eq!(
+        pc2.interrupts.borrow().get_pending(),
+        None,
+        "RTC line stays asserted until Status C is read; no new edge should be observed"
+    );
+
+    // Reading Status C clears the latch and deasserts IRQ8.
+    pc2.io.write_u8(RTC_PORT_INDEX, RTC_REG_STATUS_C);
+    let status_c = pc2.io.read_u8(RTC_PORT_DATA);
+    assert_ne!(status_c & 0x10, 0, "UF should be set in Status C");
+
+    // Now another second edge should deliver again.
+    pc2.tick(1_000_000_000);
+    assert_eq!(pc2.interrupts.borrow().get_pending(), Some(RTC_VECTOR));
+}
