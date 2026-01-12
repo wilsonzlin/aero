@@ -3450,14 +3450,30 @@ impl snapshot::SnapshotTarget for Machine {
         // Prefer the dedicated `PLATFORM_INTERRUPTS` id, but accept the historical `APIC` id for
         // backward compatibility with older snapshots.
         let mut restored_interrupts = false;
-        let interrupts_state = by_id
-            .remove(&snapshot::DeviceId::PLATFORM_INTERRUPTS)
-            .or_else(|| by_id.remove(&snapshot::DeviceId::APIC));
-        if let (Some(interrupts), Some(state)) = (&self.interrupts, interrupts_state) {
+        // Prefer the dedicated `PLATFORM_INTERRUPTS` entry, but if it fails to apply (e.g. due to a
+        // forward-incompatible version), fall back to the historical `APIC` entry when present.
+        let interrupts_state = by_id.remove(&snapshot::DeviceId::PLATFORM_INTERRUPTS);
+        let apic_state = by_id.remove(&snapshot::DeviceId::APIC);
+        if let Some(interrupts) = &self.interrupts {
             let mut interrupts = interrupts.borrow_mut();
-            restored_interrupts =
-                snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(&state, &mut *interrupts)
-                    .is_ok();
+            if let Some(state) = interrupts_state {
+                restored_interrupts =
+                    snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(&state, &mut *interrupts)
+                        .is_ok();
+                if !restored_interrupts {
+                    if let Some(state) = apic_state {
+                        restored_interrupts = snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
+                            &state,
+                            &mut *interrupts,
+                        )
+                        .is_ok();
+                    }
+                }
+            } else if let Some(state) = apic_state {
+                restored_interrupts =
+                    snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(&state, &mut *interrupts)
+                        .is_ok();
+            }
         }
 
         let mut restored_pci_intx = false;
@@ -3521,10 +3537,20 @@ impl snapshot::SnapshotTarget for Machine {
                         // If a dedicated `PCI_CFG` entry is present, prefer it for config ports.
                         if let Some(cfg_state) = pci_cfg_state.take() {
                             let mut cfg_ports = pci_cfg.borrow_mut();
-                            let _ = snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
+                            // Prefer split-out `PCI_CFG`, but fall back to the legacy `DeviceId::PCI`
+                            // payload if the new entry fails to apply (e.g. unsupported future
+                            // version).
+                            if snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
                                 &cfg_state,
                                 &mut *cfg_ports,
-                            );
+                            )
+                            .is_err()
+                            {
+                                let _ = snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
+                                    &state,
+                                    &mut *cfg_ports,
+                                );
+                            }
                         } else {
                             let mut cfg_ports = pci_cfg.borrow_mut();
                             let _ = snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
@@ -3573,10 +3599,17 @@ impl snapshot::SnapshotTarget for Machine {
                 // Config ports only. Prefer the dedicated `PCI_CFG` entry if present.
                 let mut cfg_ports = pci_cfg.borrow_mut();
                 if let Some(cfg_state) = pci_cfg_state.take() {
-                    let _ = snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
+                    if snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
                         &cfg_state,
                         &mut *cfg_ports,
-                    );
+                    )
+                    .is_err()
+                    {
+                        let _ = snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
+                            &state,
+                            &mut *cfg_ports,
+                        );
+                    }
                 } else {
                     let _ = snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
                         &state,

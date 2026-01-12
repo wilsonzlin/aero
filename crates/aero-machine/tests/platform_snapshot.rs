@@ -705,6 +705,43 @@ fn restore_device_states_prefers_pci_cfg_over_legacy_pci_entry() {
 }
 
 #[test]
+fn restore_device_states_falls_back_to_legacy_pci_cfg_when_pci_cfg_snapshot_is_invalid() {
+    let mut src = Machine::new(pc_machine_config()).unwrap();
+    let pci_cfg = src.pci_config_ports().expect("pc platform enabled");
+
+    // Put the PCI config ports into a non-default state (the 0xCF8 address latch is part of the
+    // `PciConfigMechanism1` snapshot).
+    let latch = cfg_addr(PciBdf::new(0, 1, 0), 0x10);
+    src.io_write(0xCF8, 4, latch);
+    assert_eq!(src.io_read(0xCF8, 4), latch);
+
+    // Provide a valid legacy `DeviceId::PCI` (`PCPT`) payload.
+    let legacy_state = {
+        let pci_cfg = pci_cfg.borrow();
+        snapshot::io_snapshot_bridge::device_state_from_io_snapshot(snapshot::DeviceId::PCI, &*pci_cfg)
+    };
+
+    // Provide an invalid canonical `PCI_CFG` payload by corrupting the outer version.
+    let mut bad_canonical_state = {
+        let pci_cfg = pci_cfg.borrow();
+        snapshot::io_snapshot_bridge::device_state_from_io_snapshot(
+            snapshot::DeviceId::PCI_CFG,
+            &*pci_cfg,
+        )
+    };
+    bad_canonical_state.version = bad_canonical_state.version.wrapping_add(1);
+
+    let mut restored = Machine::new(pc_machine_config()).unwrap();
+    snapshot::SnapshotTarget::restore_device_states(
+        &mut restored,
+        vec![legacy_state, bad_canonical_state],
+    );
+
+    // Restore should fall back to the legacy `DeviceId::PCI` payload when `PCI_CFG` is invalid.
+    assert_eq!(restored.io_read(0xCF8, 4), latch);
+}
+
+#[test]
 fn restore_device_states_prefers_pci_intx_router_over_legacy_pci_entry() {
     let src = Machine::new(pc_machine_config()).unwrap();
     let pci_intx = src.pci_intx_router().expect("pc platform enabled");
@@ -822,6 +859,55 @@ fn restore_device_states_falls_back_to_legacy_pci_intx_when_pci_intx_router_snap
         sink.events
     };
     assert_eq!(restored_events, expected_legacy_events);
+}
+
+#[test]
+fn restore_device_states_falls_back_to_legacy_apic_when_platform_interrupts_snapshot_is_invalid() {
+    let src = Machine::new(pc_machine_config()).unwrap();
+    let interrupts = src.platform_interrupts().unwrap();
+
+    // Configure APIC routing but keep the entry masked so a pending interrupt only appears after
+    // we later unmask it.
+    let vector = 0x53u32;
+    {
+        let mut ints = interrupts.borrow_mut();
+        ints.set_mode(PlatformInterruptMode::Apic);
+        // Active-low, level-triggered, masked.
+        let low = vector | (1 << 13) | (1 << 15) | (1 << 16);
+        program_ioapic_entry(&mut ints, 10, low, 0);
+        ints.raise_irq(InterruptInput::Gsi(10));
+        assert_eq!(ints.get_pending(), None);
+    }
+
+    // Provide a valid legacy APIC device blob.
+    let apic_state =
+        snapshot::io_snapshot_bridge::device_state_from_io_snapshot(snapshot::DeviceId::APIC, &*interrupts.borrow());
+
+    // Provide an invalid `PLATFORM_INTERRUPTS` blob by corrupting the outer version.
+    let mut bad_platform_state = snapshot::io_snapshot_bridge::device_state_from_io_snapshot(
+        snapshot::DeviceId::PLATFORM_INTERRUPTS,
+        &*interrupts.borrow(),
+    );
+    bad_platform_state.version = bad_platform_state.version.wrapping_add(1);
+
+    let mut restored = Machine::new(pc_machine_config()).unwrap();
+    snapshot::SnapshotTarget::restore_device_states(
+        &mut restored,
+        vec![bad_platform_state, apic_state],
+    );
+
+    let interrupts = restored.platform_interrupts().unwrap();
+    assert_eq!(interrupts.borrow().get_pending(), None);
+
+    // Unmask the IOAPIC entry. If restore fell back to the legacy APIC payload, the restored
+    // asserted level should deliver immediately.
+    {
+        let mut ints = interrupts.borrow_mut();
+        let low = vector | (1 << 13) | (1 << 15); // active-low, level-triggered, unmasked
+        program_ioapic_entry(&mut ints, 10, low, 0);
+    }
+
+    assert_eq!(interrupts.borrow().get_pending(), Some(vector as u8));
 }
 
 #[test]
