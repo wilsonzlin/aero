@@ -82,6 +82,8 @@ Disk streaming conformance
   AUTH:     (none)
 
 PASS HEAD: Accept-Ranges=bytes and Content-Length is present - size=2147483648 (2.00 GiB)
+PASS CORS: Allow-Credentials does not contradict Allow-Origin - (no Allow-Credentials)
+SKIP CORS: Vary includes Origin when Allow-Origin echoes a specific origin - skipped (Allow-Origin is '*')
 PASS HEAD: If-None-Match returns 304 Not Modified - status=304
 PASS HEAD: If-Modified-Since returns 304 Not Modified - status=304
 PASS HEAD: Cross-Origin-Resource-Policy is set - value='same-site'
@@ -97,7 +99,7 @@ PASS GET: If-Modified-Since returns 304 Not Modified - status=304
 PASS OPTIONS: CORS preflight allows Range + If-Range headers + If-None-Match - status=204
 PASS OPTIONS: CORS preflight allows If-Modified-Since header - status=204
 
-Summary: 14 passed, 0 failed, 0 warned, 1 skipped
+Summary: 15 passed, 0 failed, 0 warned, 2 skipped
 ```
 
 ## Strict mode
