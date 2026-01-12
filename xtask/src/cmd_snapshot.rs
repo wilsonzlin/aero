@@ -777,6 +777,43 @@ fn print_devices_section_summary(file: &mut fs::File, section: &SnapshotSectionI
                 }
             }
 
+            // Special-case decoding for `aero_snapshot::DeviceId::CPU_INTERNAL` (raw bytes, not an
+            // `aero-io-snapshot` TLV).
+            //
+            // This entry is expected to store `aero_snapshot::CpuInternalState` (v2) and is useful
+            // to inspect when debugging interrupt-shadow/pending IRQ behavior across snapshots.
+            if id == DeviceId::CPU_INTERNAL.0 && version == 2 && flags == 0 && header_len >= 5 {
+                let interrupt_inhibit = header[0];
+                let pending_len = u32::from_le_bytes([header[1], header[2], header[3], header[4]]);
+
+                let expected_len = 1u64
+                    .saturating_add(4)
+                    .saturating_add(u64::from(pending_len));
+                let mut s = format!(
+                    " interrupt_inhibit={interrupt_inhibit} pending_len={pending_len}"
+                );
+                if expected_len != len {
+                    s.push_str(&format!(" (expected_len={expected_len})"));
+                }
+
+                let preview_avail = header_len.saturating_sub(5);
+                let preview_len = preview_avail
+                    .min(pending_len as usize)
+                    .min(8);
+                if preview_len != 0 {
+                    s.push_str(" pending_preview=[");
+                    for (idx, b) in header[5..5 + preview_len].iter().copied().enumerate() {
+                        if idx != 0 {
+                            s.push_str(", ");
+                        }
+                        s.push_str(&format!("0x{b:02x}"));
+                    }
+                    s.push(']');
+                }
+
+                detail = Some(s);
+            }
+
             inner
         } else {
             None

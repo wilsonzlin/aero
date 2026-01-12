@@ -774,3 +774,80 @@ fn snapshot_inspect_decodes_legacy_pcic_wrapper_nested_headers() {
         .success()
         .stdout(predicate::str::contains("cfg=PCPT v1.0 intx=INTX v1.0"));
 }
+
+struct CpuInternalDeviceSource;
+
+impl SnapshotSource for CpuInternalDeviceSource {
+    fn snapshot_meta(&mut self) -> SnapshotMeta {
+        SnapshotMeta {
+            snapshot_id: 8,
+            parent_snapshot_id: Some(7),
+            created_unix_ms: 0,
+            label: Some("inspect-cpu-internal".to_string()),
+        }
+    }
+
+    fn cpu_state(&self) -> CpuState {
+        CpuState::default()
+    }
+
+    fn mmu_state(&self) -> MmuState {
+        MmuState::default()
+    }
+
+    fn device_states(&self) -> Vec<DeviceState> {
+        // `CpuInternalState` (v2) encoding:
+        //   u8 interrupt_inhibit
+        //   u32 pending_len
+        //   u8[pending_len] pending_external_interrupts
+        let interrupt_inhibit: u8 = 7;
+        let pending = [0x20u8, 0x21u8, 0x28u8];
+        let mut data = Vec::new();
+        data.push(interrupt_inhibit);
+        data.extend_from_slice(&(pending.len() as u32).to_le_bytes());
+        data.extend_from_slice(&pending);
+
+        vec![DeviceState {
+            id: DeviceId::CPU_INTERNAL,
+            version: 2,
+            flags: 0,
+            data,
+        }]
+    }
+
+    fn disk_overlays(&self) -> DiskOverlayRefs {
+        DiskOverlayRefs::default()
+    }
+
+    fn ram_len(&self) -> usize {
+        4096
+    }
+
+    fn read_ram(&self, _offset: u64, buf: &mut [u8]) -> aero_snapshot::Result<()> {
+        buf.fill(0);
+        Ok(())
+    }
+
+    fn take_dirty_pages(&mut self) -> Option<Vec<u64>> {
+        None
+    }
+}
+
+#[test]
+fn snapshot_inspect_decodes_cpu_internal_device_state_header() {
+    let tmp = tempfile::tempdir().unwrap();
+    let snap = tmp.path().join("cpu_internal.aerosnap");
+
+    let mut source = CpuInternalDeviceSource;
+    let mut cursor = Cursor::new(Vec::new());
+    save_snapshot(&mut cursor, &mut source, SaveOptions::default()).unwrap();
+    fs::write(&snap, cursor.into_inner()).unwrap();
+
+    Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["snapshot", "inspect", snap.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("CPU_INTERNAL(9)"))
+        .stdout(predicate::str::contains("interrupt_inhibit=7 pending_len=3"))
+        .stdout(predicate::str::contains("pending_preview=[0x20, 0x21, 0x28]"));
+}
