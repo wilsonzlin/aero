@@ -2623,10 +2623,10 @@ mod wasm {
                     filter_mode,
                     clear_color,
                 )
-                .await
-                {
+                    .await
+                    {
                     Ok((presenter, device, queue, adapter_info, downlevel_flags)) => {
-                        let shader_cache_caps_hash =
+                        let stable_caps_hash =
                             compute_d3d9_shader_cache_caps_hash(backend_kind, &adapter_info);
                         let mut executor = AerogpuD3d9Executor::new(
                             device,
@@ -2634,7 +2634,9 @@ mod wasm {
                             downlevel_flags,
                             gpu_stats().clone(),
                         );
-                        executor.set_shader_cache_caps_hash(Some(shader_cache_caps_hash.clone()));
+                        let shader_cache_caps_hash = executor
+                            .set_shader_cache_caps_hash(Some(stable_caps_hash))
+                            .unwrap_or_default();
 
                         D3D9_STATE.with(|slot| {
                             *slot.borrow_mut() = Some(AerogpuD3d9State {
@@ -2714,7 +2716,9 @@ mod wasm {
                 compute_d3d9_shader_cache_caps_hash(GpuBackendKind::WebGpu, &adapter_info);
             let mut executor =
                 AerogpuD3d9Executor::new(device, queue, downlevel_flags, gpu_stats().clone());
-            executor.set_shader_cache_caps_hash(Some(shader_cache_caps_hash.clone()));
+            let shader_cache_caps_hash = executor
+                .set_shader_cache_caps_hash(Some(shader_cache_caps_hash))
+                .unwrap_or_default();
             D3D9_STATE.with(|slot| {
                 *slot.borrow_mut() = Some(AerogpuD3d9State {
                     backend_kind: GpuBackendKind::WebGpu,

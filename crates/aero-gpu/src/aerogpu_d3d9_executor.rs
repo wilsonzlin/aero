@@ -1109,15 +1109,25 @@ impl AerogpuD3d9Executor {
     /// keys on wasm.
     ///
     /// On non-wasm targets this is a no-op (persistent caching is not supported).
-    pub fn set_shader_cache_caps_hash(&mut self, caps_hash: Option<String>) {
+    pub fn set_shader_cache_caps_hash(&mut self, caps_hash: Option<String>) -> Option<String> {
         #[cfg(target_arch = "wasm32")]
         {
-            self.persistent_shader_cache_flags.caps_hash = caps_hash;
+            if let Some(stable_fingerprint) = caps_hash {
+                // Combine the stable backend+adapter fingerprint (provided by the wasm frontend)
+                // with a hash of relevant wgpu capabilities/limits. This avoids reusing cached
+                // WGSL across incompatible backend/compiler/capability sets.
+                let wgpu_caps_hash = compute_wgpu_caps_hash(&self.device, self.downlevel_flags);
+                let wgpu_caps_short = wgpu_caps_hash.get(..16).unwrap_or(&wgpu_caps_hash);
+                self.persistent_shader_cache_flags.caps_hash =
+                    Some(format!("{stable_fingerprint}-{wgpu_caps_short}"));
+            }
+            return self.persistent_shader_cache_flags.caps_hash.clone();
         }
 
         #[cfg(not(target_arch = "wasm32"))]
         {
             let _ = caps_hash;
+            None
         }
     }
 
