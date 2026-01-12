@@ -69,6 +69,12 @@ NTSTATUS IoConnectInterrupt(_Out_ PKINTERRUPT* InterruptObject,
 
     intr->ServiceRoutine = ServiceRoutine;
     intr->ServiceContext = ServiceContext;
+    intr->Vector = Vector;
+    intr->Irql = Irql;
+    intr->SynchronizeIrql = SynchronizeIrql;
+    intr->InterruptMode = InterruptMode;
+    intr->ShareVector = ShareVector;
+    intr->ProcessorEnableMask = ProcessorEnableMask;
     *InterruptObject = intr;
 
     return STATUS_SUCCESS;

@@ -120,6 +120,48 @@ static void test_connect_validation(void)
     assert(status == STATUS_NOT_SUPPORTED);
 }
 
+static void test_connect_descriptor_translation(void)
+{
+    VIRTIO_INTX intx;
+    volatile UCHAR isr_reg = 0;
+    CM_PARTIAL_RESOURCE_DESCRIPTOR desc;
+    intx_test_ctx_t ctx;
+    NTSTATUS status;
+
+    /* Latched + shared -> Latched + ShareVector=TRUE */
+    desc = make_int_desc();
+    desc.Flags = CM_RESOURCE_INTERRUPT_LATCHED;
+
+    RtlZeroMemory(&ctx, sizeof(ctx));
+    status = VirtioIntxConnect(NULL, &desc, &isr_reg, evt_config, evt_queue, NULL, &ctx, &intx);
+    assert(status == STATUS_SUCCESS);
+
+    assert(intx.InterruptObject != NULL);
+    assert(intx.InterruptObject->InterruptMode == Latched);
+    assert(intx.InterruptObject->ShareVector == TRUE);
+    assert(intx.InterruptObject->Vector == desc.u.Interrupt.Vector);
+    assert(intx.InterruptObject->Irql == (KIRQL)desc.u.Interrupt.Level);
+    assert(intx.InterruptObject->SynchronizeIrql == (KIRQL)desc.u.Interrupt.Level);
+    assert(intx.InterruptObject->ProcessorEnableMask == (KAFFINITY)desc.u.Interrupt.Affinity);
+
+    VirtioIntxDisconnect(&intx);
+
+    /* Level-sensitive + non-shared -> LevelSensitive + ShareVector=FALSE */
+    desc = make_int_desc();
+    desc.ShareDisposition = 0;
+    desc.Flags = 0;
+
+    RtlZeroMemory(&ctx, sizeof(ctx));
+    status = VirtioIntxConnect(NULL, &desc, &isr_reg, evt_config, evt_queue, NULL, &ctx, &intx);
+    assert(status == STATUS_SUCCESS);
+
+    assert(intx.InterruptObject != NULL);
+    assert(intx.InterruptObject->InterruptMode == LevelSensitive);
+    assert(intx.InterruptObject->ShareVector == FALSE);
+
+    VirtioIntxDisconnect(&intx);
+}
+
 static void test_spurious_interrupt(void)
 {
     VIRTIO_INTX intx;
@@ -362,6 +404,7 @@ static void test_evt_dpc_dispatch_override(void)
 int main(void)
 {
     test_connect_validation();
+    test_connect_descriptor_translation();
     test_spurious_interrupt();
     test_queue_config_dispatch();
     test_bit_accumulation_single_dpc();

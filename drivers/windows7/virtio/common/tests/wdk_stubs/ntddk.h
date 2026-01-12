@@ -310,15 +310,21 @@ struct _KDPC {
     BOOLEAN Inserted;
 };
 
-struct _KINTERRUPT {
-    PKSERVICE_ROUTINE ServiceRoutine;
-    PVOID ServiceContext;
-};
-
 typedef enum _KINTERRUPT_MODE {
     LevelSensitive = 0,
     Latched = 1,
 } KINTERRUPT_MODE;
+
+struct _KINTERRUPT {
+    PKSERVICE_ROUTINE ServiceRoutine;
+    PVOID ServiceContext;
+    ULONG Vector;
+    KIRQL Irql;
+    KIRQL SynchronizeIrql;
+    KINTERRUPT_MODE InterruptMode;
+    BOOLEAN ShareVector;
+    KAFFINITY ProcessorEnableMask;
+};
 
 /* CM_PARTIAL_RESOURCE_DESCRIPTOR (minimal interrupt subset). */
 typedef struct _CM_PARTIAL_RESOURCE_DESCRIPTOR {
