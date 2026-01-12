@@ -90,6 +90,68 @@ describe("input_backend_selection", () => {
       ).toBe("virtio");
     });
 
+    it("switches to virtio immediately after release when virtio becomes available mid-press", () => {
+      let current: "ps2" | "usb" | "virtio" = "ps2";
+
+      // Mouse button is pressed while only PS/2 is available.
+      current = chooseMouseInputBackend({
+        current,
+        buttonsHeld: true,
+        virtioOk: false,
+        usbOk: false,
+      });
+      expect(current).toBe("ps2");
+
+      // Virtio becomes available mid-press: backend must not change yet.
+      current = chooseMouseInputBackend({
+        current,
+        buttonsHeld: true,
+        virtioOk: true,
+        usbOk: false,
+      });
+      expect(current).toBe("ps2");
+
+      // Release: backend may now switch.
+      current = chooseMouseInputBackend({
+        current,
+        buttonsHeld: false,
+        virtioOk: true,
+        usbOk: false,
+      });
+      expect(current).toBe("virtio");
+    });
+
+    it("switches to usb immediately after release when usb becomes available mid-press", () => {
+      let current: "ps2" | "usb" | "virtio" = "ps2";
+
+      // Mouse button is pressed while only PS/2 is available.
+      current = chooseMouseInputBackend({
+        current,
+        buttonsHeld: true,
+        virtioOk: false,
+        usbOk: false,
+      });
+      expect(current).toBe("ps2");
+
+      // USB becomes available mid-press (e.g. synthetic USB mouse is configured): backend must not change yet.
+      current = chooseMouseInputBackend({
+        current,
+        buttonsHeld: true,
+        virtioOk: false,
+        usbOk: true,
+      });
+      expect(current).toBe("ps2");
+
+      // Release: backend may now switch.
+      current = chooseMouseInputBackend({
+        current,
+        buttonsHeld: false,
+        virtioOk: false,
+        usbOk: true,
+      });
+      expect(current).toBe("usb");
+    });
+
     it("falls back to usb when virtio is unavailable and usb is ok", () => {
       expect(
         chooseMouseInputBackend({
@@ -113,4 +175,3 @@ describe("input_backend_selection", () => {
     });
   });
 });
-
