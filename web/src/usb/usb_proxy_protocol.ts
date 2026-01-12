@@ -161,7 +161,14 @@ export function isUsbHostAction(value: unknown): value is UsbHostAction {
     case "controlIn":
       return isUsbSetupPacket(value.setup);
     case "controlOut":
-      return isUsbSetupPacket(value.setup) && value.data instanceof Uint8Array;
+      return (
+        isUsbSetupPacket(value.setup) &&
+        value.data instanceof Uint8Array &&
+        // The control-transfer setup packet includes the expected data-stage size. For correctness,
+        // require that the payload length matches so the broker can choose the correct WebUSB call
+        // signature (omit the data argument when wLength is 0).
+        value.data.byteLength === value.setup.wLength
+      );
     case "bulkIn":
       return isUsbInEndpointAddress(value.endpoint) && isUint32(value.length);
     case "bulkOut":

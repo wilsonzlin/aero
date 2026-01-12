@@ -24,7 +24,7 @@ describe("usb/usb_proxy_protocol", () => {
 
     const actions: UsbHostAction[] = [
       { kind: "controlIn", id: 1, setup },
-      { kind: "controlOut", id: 2, setup, data: Uint8Array.of(1, 2, 3) },
+      { kind: "controlOut", id: 2, setup: { ...setup, wLength: 3 }, data: Uint8Array.of(1, 2, 3) },
       { kind: "bulkIn", id: 3, endpoint: 0x81, length: 64 },
       { kind: "bulkOut", id: 4, endpoint: 2, data: Uint8Array.of(9, 8, 7) },
     ];
@@ -49,6 +49,16 @@ describe("usb/usb_proxy_protocol", () => {
     // Setup packet fields are u8/u16.
     expect(isUsbHostAction({ kind: "controlIn", id: 1, setup: { ...setup, wLength: 0x1_0000 } })).toBe(false);
     expect(isUsbHostAction({ kind: "controlIn", id: 1, setup: { ...setup, bmRequestType: 0x1_00 } })).toBe(false);
+
+    // controlOut data length must match wLength.
+    expect(
+      isUsbHostAction({
+        kind: "controlOut",
+        id: 1,
+        setup: { ...setup, wLength: 1 },
+        data: Uint8Array.of(1, 2),
+      }),
+    ).toBe(false);
 
     // Endpoint is u8, length is non-negative.
     expect(isUsbHostAction({ kind: "bulkIn", id: 1, endpoint: 0x1_00, length: 8 })).toBe(false);
