@@ -4,6 +4,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { isWebGPURequired } from "../util/env";
+
 type RunResult = {
   translateCalls: number;
   persistentHits: number;
@@ -36,6 +38,32 @@ test("D3D9 shader cache partitions across WebGPU vs WebGL2 backends @webgpu", as
         "--force-color-profile=srgb",
       ],
     });
+
+    {
+      // Probe for WebGPU availability up front so we can skip gracefully in environments where
+      // `chromium-webgpu` still cannot create an adapter (e.g. GPU-blocklisted runners).
+      const probe = await context.newPage();
+      await probe.goto(`${baseUrl}/`, { waitUntil: "load" });
+      const hasWebGpuAdapter = await probe.evaluate(async () => {
+        const gpu = (navigator as any).gpu as any;
+        if (!gpu) return false;
+        try {
+          const adapter = await gpu.requestAdapter();
+          return !!adapter;
+        } catch {
+          return false;
+        }
+      });
+      await probe.close().catch(() => {});
+
+      if (!hasWebGpuAdapter) {
+        const message = "WebGPU adapter unavailable in this Chromium environment";
+        if (isWebGPURequired()) {
+          throw new Error(message);
+        }
+        test.skip(true, message);
+      }
+    }
 
     const runOnce = async (forceBackend: "webgl2_wgpu" | "webgpu"): Promise<RunResult> => {
       const logs: string[] = [];
