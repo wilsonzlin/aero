@@ -44,6 +44,11 @@ It:
      so older selftest binaries cannot accidentally pass
   - when --with-virtio-snd is enabled, virtio-snd, virtio-snd-capture, and virtio-snd-duplex must PASS (not SKIP)
   - when --with-input-events (alias: --with-virtio-input-events) is enabled, virtio-input-events must PASS (not FAIL/missing)
+
+For convenience when scraping CI logs, the harness may also emit a host-side virtio-net marker when the guest
+includes large-transfer fields:
+
+- `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_LARGE|PASS/FAIL/INFO|large_ok=...|large_bytes=...|large_fnv1a64=...|large_mbps=...`
 """
 
 from __future__ import annotations
