@@ -29,6 +29,16 @@ static BOOLEAN VirtioInputAsciiEqualsInsensitive(_In_reads_bytes_(Len) const CHA
 
 static ULONG VirtioInputGetCollectionNumberFromCreateRequest(_In_ WDFREQUEST Request)
 {
+    /*
+     * IRP_MJ_CREATE can originate from user mode. The EA buffer pointer in the
+     * create parameters may then reference user memory. This driver only needs
+     * collection EAs for HIDCLASS/kernel opens, so ignore user-mode EAs to avoid
+     * dereferencing untrusted pointers.
+     */
+    if (WdfRequestGetRequestorMode(Request) == UserMode) {
+        return 0;
+    }
+
     PIRP irp = WdfRequestWdmGetIrp(Request);
     PIO_STACK_LOCATION irpSp = IoGetCurrentIrpStackLocation(irp);
 
@@ -101,7 +111,9 @@ static VOID VirtioInputEvtDeviceFileCreate(_In_ WDFDEVICE Device, _In_ WDFREQUES
 
     PIRP irp = WdfRequestWdmGetIrp(Request);
     PIO_STACK_LOCATION irpSp = (irp == NULL) ? NULL : IoGetCurrentIrpStackLocation(irp);
-    fileCtx->HasCollectionEa = (irpSp != NULL && irpSp->Parameters.Create.EaBuffer != NULL && irpSp->Parameters.Create.EaLength != 0);
+    fileCtx->HasCollectionEa =
+        (WdfRequestGetRequestorMode(Request) == KernelMode && irpSp != NULL && irpSp->Parameters.Create.EaBuffer != NULL &&
+         irpSp->Parameters.Create.EaLength != 0);
 
     fileCtx->CollectionNumber = VirtioInputGetCollectionNumberFromCreateRequest(Request);
 
