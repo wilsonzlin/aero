@@ -218,6 +218,31 @@ impl VirtQueue {
         self.event_idx = enabled;
     }
 
+    /// Current device-side avail ring index.
+    pub fn next_avail(&self) -> u16 {
+        self.next_avail
+    }
+
+    /// Current device-side used ring index.
+    pub fn next_used(&self) -> u16 {
+        self.next_used
+    }
+
+    /// Whether `VIRTIO_F_RING_EVENT_IDX` is enabled for this queue.
+    pub fn event_idx(&self) -> bool {
+        self.event_idx
+    }
+
+    /// Restore the device-side progress counters for this virtqueue.
+    ///
+    /// This is used by VM snapshot/restore so already-consumed avail entries are not reprocessed
+    /// after restore.
+    pub fn restore_progress(&mut self, next_avail: u16, next_used: u16, event_idx: bool) {
+        self.next_avail = next_avail;
+        self.next_used = next_used;
+        self.event_idx = event_idx;
+    }
+
     pub fn pop_descriptor_chain<M: GuestMemory + ?Sized>(
         &mut self,
         mem: &M,

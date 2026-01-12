@@ -6,12 +6,13 @@ use aero_virtio::memory::{
     read_u32_le, write_u16_le, write_u32_le, write_u64_le, GuestMemory, GuestRam,
 };
 use aero_virtio::pci::{
-    InterruptLog, VirtioPciDevice, PCI_VENDOR_ID_VIRTIO, VIRTIO_PCI_CAP_COMMON_CFG,
+    InterruptLog, InterruptSink, VirtioPciDevice, PCI_VENDOR_ID_VIRTIO, VIRTIO_PCI_CAP_COMMON_CFG,
     VIRTIO_PCI_CAP_DEVICE_CFG, VIRTIO_PCI_CAP_ISR_CFG, VIRTIO_PCI_CAP_NOTIFY_CFG,
     VIRTIO_STATUS_ACKNOWLEDGE, VIRTIO_STATUS_DRIVER, VIRTIO_STATUS_DRIVER_OK,
     VIRTIO_STATUS_FEATURES_OK,
 };
 use aero_storage::{MemBackend, RawDisk, VirtualDisk};
+use aero_io_snapshot::io::state::IoSnapshot;
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -159,6 +160,46 @@ type Setup = (
     Rc<Cell<u32>>,
 );
 
+#[derive(Clone, Default)]
+struct TestIrq {
+    legacy_count: Rc<Cell<u64>>,
+    legacy_level: Rc<Cell<bool>>,
+}
+
+impl TestIrq {
+    fn legacy_count(&self) -> u64 {
+        self.legacy_count.get()
+    }
+
+    fn legacy_level(&self) -> bool {
+        self.legacy_level.get()
+    }
+}
+
+impl InterruptSink for TestIrq {
+    fn raise_legacy_irq(&mut self) {
+        self.legacy_level.set(true);
+        self.legacy_count.set(self.legacy_count.get().saturating_add(1));
+    }
+
+    fn lower_legacy_irq(&mut self) {
+        self.legacy_level.set(false);
+    }
+
+    fn signal_msix(&mut self, _vector: u16) {
+        // Not exercised by these tests.
+    }
+}
+
+type SetupWithIrq = (
+    VirtioPciDevice,
+    Caps,
+    GuestRam,
+    Rc<RefCell<Vec<u8>>>,
+    Rc<Cell<u32>>,
+    TestIrq,
+);
+
 fn setup_pci_device(mut dev: VirtioPciDevice) -> (VirtioPciDevice, Caps, GuestRam) {
     // Basic PCI identification.
     let mut id = [0u8; 4];
@@ -258,6 +299,22 @@ fn setup() -> Setup {
     let (dev, caps, mem) = setup_pci_device(dev);
 
     (dev, caps, mem, backing, flushes)
+}
+
+fn setup_with_irq(irq: TestIrq) -> SetupWithIrq {
+    let backing = Rc::new(RefCell::new(vec![0u8; 4096]));
+    let flushes = Rc::new(Cell::new(0u32));
+    let backend = SharedDisk {
+        data: backing.clone(),
+        flushes: flushes.clone(),
+    };
+
+    let blk = VirtioBlk::new(backend);
+    let dev = VirtioPciDevice::new(Box::new(blk), Box::new(irq.clone()));
+
+    let (dev, caps, mem) = setup_pci_device(dev);
+
+    (dev, caps, mem, backing, flushes, irq)
 }
 
 fn kick_queue0(dev: &mut VirtioPciDevice, caps: &Caps, mem: &mut GuestRam) {
@@ -412,6 +469,78 @@ fn virtio_blk_flush_calls_backend_flush() {
     assert_eq!(mem.get_slice(status, 1).unwrap()[0], 0);
     assert_eq!(flushes.get(), 1);
     assert_eq!(read_u32_le(&mem, USED_RING + 8).unwrap(), 0);
+}
+
+#[test]
+fn virtio_blk_snapshot_restore_preserves_virtqueue_progress_and_does_not_duplicate_requests() {
+    let irq0 = TestIrq::default();
+    let (mut dev, caps, mut mem, backing, flushes, irq0) = setup_with_irq(irq0);
+
+    // Build a FLUSH request so duplicate processing is observable via `flushes`.
+    let header = 0x7000;
+    let status = 0x9000;
+
+    write_u32_le(&mut mem, header, VIRTIO_BLK_T_FLUSH).unwrap();
+    write_u32_le(&mut mem, header + 4, 0).unwrap();
+    write_u64_le(&mut mem, header + 8, 0).unwrap();
+    mem.write(status, &[0xff]).unwrap();
+
+    write_desc(&mut mem, DESC_TABLE, 0, header, 16, 0x0001, 1);
+    write_desc(&mut mem, DESC_TABLE, 1, status, 1, 0x0002, 0);
+
+    write_u16_le(&mut mem, AVAIL_RING, 0).unwrap();
+    write_u16_le(&mut mem, AVAIL_RING + 2, 1).unwrap();
+    write_u16_le(&mut mem, AVAIL_RING + 4, 0).unwrap();
+
+    write_u16_le(&mut mem, USED_RING, 0).unwrap();
+    write_u16_le(&mut mem, USED_RING + 2, 0).unwrap();
+
+    kick_queue0(&mut dev, &caps, &mut mem);
+
+    assert_eq!(mem.get_slice(status, 1).unwrap()[0], 0);
+    assert_eq!(flushes.get(), 1);
+    assert_eq!(dev.debug_queue_used_idx(&mem, 0), Some(1));
+    assert_eq!(dev.debug_queue_progress(0), Some((1, 1, false)));
+    assert_eq!(irq0.legacy_count(), 1);
+    assert!(irq0.legacy_level(), "legacy irq should be asserted after flush completion");
+
+    // Snapshot the device + guest memory image after completion.
+    let snap_bytes = dev.save_state();
+    let mem_snap = mem.clone();
+
+    // Restore into a fresh device instance (same disk backend, same guest memory image).
+    let irq1 = TestIrq::default();
+    let backend = SharedDisk {
+        data: backing.clone(),
+        flushes: flushes.clone(),
+    };
+    let blk = VirtioBlk::new(backend);
+    let mut restored = VirtioPciDevice::new(Box::new(blk), Box::new(irq1.clone()));
+    restored.load_state(&snap_bytes).unwrap();
+    let mut mem2 = mem_snap.clone();
+    let caps_restored = parse_caps(&restored);
+
+    // Ensure virtqueue progress is preserved.
+    assert_eq!(restored.debug_queue_used_idx(&mem2, 0), Some(1));
+    assert_eq!(restored.debug_queue_progress(0), Some((1, 1, false)));
+
+    // Kicking the queue without adding new avail entries must not re-run the request.
+    let irq_before = irq1.legacy_count();
+    kick_queue0(&mut restored, &caps_restored, &mut mem2);
+    assert_eq!(flushes.get(), 1, "duplicate FLUSH should not be executed after restore");
+    assert_eq!(restored.debug_queue_used_idx(&mem2, 0), Some(1));
+    assert_eq!(irq1.legacy_count(), irq_before);
+
+    // Add another FLUSH request and ensure it still completes post-restore.
+    mem2.write(status, &[0xff]).unwrap();
+    write_u16_le(&mut mem2, AVAIL_RING + 4 + 2, 0).unwrap(); // ring[1] = head 0
+    write_u16_le(&mut mem2, AVAIL_RING + 2, 2).unwrap(); // idx = 2
+
+    kick_queue0(&mut restored, &caps_restored, &mut mem2);
+    assert_eq!(mem2.get_slice(status, 1).unwrap()[0], 0);
+    assert_eq!(flushes.get(), 2);
+    assert_eq!(restored.debug_queue_used_idx(&mem2, 0), Some(2));
+    assert_eq!(restored.debug_queue_progress(0), Some((2, 2, false)));
 }
 
 #[test]

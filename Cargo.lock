@@ -615,6 +615,7 @@ version = "0.1.0"
 dependencies = [
  "aero-audio",
  "aero-devices",
+ "aero-io-snapshot",
  "aero-storage",
  "nt-packetlib",
  "virtio-gpu-proto",

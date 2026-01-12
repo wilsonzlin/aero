@@ -3,6 +3,16 @@ use crate::memory::{read_u16_le, GuestMemory};
 use crate::queue::{PoppedDescriptorChain, VirtQueue, VirtQueueConfig};
 use core::any::Any;
 
+use aero_io_snapshot::io::state::{
+    IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
+};
+use aero_io_snapshot::io::virtio::state::{
+    PciConfigSpaceState as SnapshotPciConfigSpaceState,
+    VirtQueueProgressState as SnapshotVirtQueueProgressState,
+    VirtioPciQueueState as SnapshotVirtioPciQueueState,
+    VirtioPciTransportState as SnapshotVirtioPciTransportState,
+};
+
 pub const PCI_VENDOR_ID_VIRTIO: u16 = 0x1af4;
 
 /// Modern virtio-pci device IDs: `0x1040 + <virtio device id>`.
@@ -996,6 +1006,161 @@ impl VirtioPciDevice {
         read_u16_le(mem, used_idx_addr).ok()
     }
 
+    /// Debug helper returning the device-side virtqueue progress counters for the given queue.
+    ///
+    /// This is primarily intended for snapshot/restore tests to ensure restores do not reprocess
+    /// previously-consumed avail ring entries.
+    pub fn debug_queue_progress(&self, queue: u16) -> Option<(u16, u16, bool)> {
+        let q = self.queues.get(queue as usize)?;
+        let vq = q.queue.as_ref()?;
+        Some((vq.next_avail(), vq.next_used(), vq.event_idx()))
+    }
+
+    fn snapshot_pci_state(&self) -> SnapshotPciConfigSpaceState {
+        let mut bar_base = [0u64; 6];
+        let mut bar_probe = [false; 6];
+
+        // BAR0 (MMIO64) occupies BAR0/BAR1.
+        bar_base[0] = self.bar0;
+        bar_probe[0] = self.bar0_probe;
+
+        // BAR2 (legacy I/O) when transitional/legacy is enabled.
+        bar_base[2] = u64::from(self.bar2);
+        bar_probe[2] = self.bar2_probe;
+
+        SnapshotPciConfigSpaceState {
+            bytes: self.config_space,
+            bar_base,
+            bar_probe,
+        }
+    }
+
+    fn snapshot_transport_state(&self) -> SnapshotVirtioPciTransportState {
+        let mut queues = Vec::with_capacity(self.queues.len());
+
+        for q in &self.queues {
+            let progress = if let Some(vq) = q.queue.as_ref() {
+                SnapshotVirtQueueProgressState {
+                    next_avail: vq.next_avail(),
+                    next_used: vq.next_used(),
+                    event_idx: vq.event_idx(),
+                }
+            } else {
+                SnapshotVirtQueueProgressState {
+                    next_avail: 0,
+                    next_used: 0,
+                    event_idx: self.negotiated_event_idx(),
+                }
+            };
+
+            queues.push(SnapshotVirtioPciQueueState {
+                desc_addr: q.desc_addr,
+                avail_addr: q.avail_addr,
+                used_addr: q.used_addr,
+                enable: q.enable,
+                msix_vector: q.msix_vector,
+                notify_off: q.notify_off,
+                progress,
+            });
+        }
+
+        SnapshotVirtioPciTransportState {
+            device_status: self.device_status,
+            negotiated_features: self.negotiated_features,
+            device_feature_select: self.device_feature_select,
+            driver_feature_select: self.driver_feature_select,
+            driver_features: self.driver_features,
+            msix_config_vector: self.msix_config_vector,
+            queue_select: self.queue_select,
+            isr_status: self.isr_status,
+            legacy_intx_level: self.legacy_irq_asserted,
+            queues,
+        }
+    }
+
+    fn restore_pci_state(&mut self, state: &SnapshotPciConfigSpaceState) {
+        self.config_space = state.bytes;
+        self.command = u16::from_le_bytes([self.config_space[0x04], self.config_space[0x05]]);
+
+        self.bar0 = state.bar_base[0];
+        self.bar0_probe = state.bar_probe[0];
+
+        // BAR2 is only meaningful for legacy/transitional devices; clamp to u32.
+        self.bar2 = u32::try_from(state.bar_base[2]).unwrap_or(0);
+        self.bar2_probe = state.bar_probe[2];
+    }
+
+    fn restore_transport_state(&mut self, state: &SnapshotVirtioPciTransportState) {
+        self.device_status = state.device_status;
+        self.negotiated_features = state.negotiated_features;
+        self.device_feature_select = state.device_feature_select;
+        self.driver_feature_select = state.driver_feature_select;
+        self.driver_features = state.driver_features;
+        self.msix_config_vector = state.msix_config_vector;
+        self.queue_select = state.queue_select;
+
+        // Restore virtio device feature state.
+        self.device.set_features(self.negotiated_features);
+        self.features_negotiated = (self.device_status & VIRTIO_STATUS_FEATURES_OK) != 0;
+
+        // Restore queues.
+        let apply = state.queues.len().min(self.queues.len());
+        for i in 0..apply {
+            let saved = &state.queues[i];
+            let q = &mut self.queues[i];
+
+            q.desc_addr = saved.desc_addr;
+            q.avail_addr = saved.avail_addr;
+            q.used_addr = saved.used_addr;
+            q.msix_vector = saved.msix_vector;
+            q.notify_off = saved.notify_off;
+
+            q.enable = saved.enable;
+            if q.enable {
+                q.queue = VirtQueue::new(
+                    VirtQueueConfig {
+                        size: q.size,
+                        desc_addr: q.desc_addr,
+                        avail_addr: q.avail_addr,
+                        used_addr: q.used_addr,
+                    },
+                    saved.progress.event_idx,
+                )
+                .ok()
+                .map(|mut vq| {
+                    vq.restore_progress(
+                        saved.progress.next_avail,
+                        saved.progress.next_used,
+                        saved.progress.event_idx,
+                    );
+                    vq
+                });
+            } else {
+                q.queue = None;
+            }
+        }
+
+        // Restore interrupt state deterministically.
+        self.isr_status = state.isr_status;
+
+        if self.legacy_irq_asserted != state.legacy_intx_level {
+            if state.legacy_intx_level {
+                self.interrupts.raise_legacy_irq();
+            } else {
+                self.interrupts.lower_legacy_irq();
+            }
+        }
+        self.legacy_irq_asserted = state.legacy_intx_level;
+
+        // Snapshot schema is modern-only. If the guest had started driver initialization, ensure we
+        // continue to reject legacy register accesses after restore.
+        self.transport_mode = if self.device_status == 0 {
+            TransportMode::Unknown
+        } else {
+            TransportMode::Modern
+        };
+    }
+
     fn pci_device_id(&self) -> u16 {
         let typ = self.device.device_type();
         if self.use_transitional_device_id {
@@ -1042,6 +1207,57 @@ impl VirtioPciDevice {
             self.legacy_irq_asserted = false;
         }
         isr
+    }
+}
+
+impl IoSnapshot for VirtioPciDevice {
+    const DEVICE_ID: [u8; 4] = *b"VPCI";
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
+
+    fn save_state(&self) -> Vec<u8> {
+        const TAG_PCI_CONFIG: u16 = 1;
+        const TAG_TRANSPORT: u16 = 2;
+        const TAG_VIRTIO_DEVICE_TYPE: u16 = 3;
+
+        let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
+
+        w.field_u16(TAG_VIRTIO_DEVICE_TYPE, self.device.device_type());
+        w.field_bytes(TAG_PCI_CONFIG, self.snapshot_pci_state().encode());
+        w.field_bytes(TAG_TRANSPORT, self.snapshot_transport_state().encode());
+
+        w.finish()
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
+        const TAG_PCI_CONFIG: u16 = 1;
+        const TAG_TRANSPORT: u16 = 2;
+        const TAG_VIRTIO_DEVICE_TYPE: u16 = 3;
+
+        let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
+        r.ensure_device_major(Self::DEVICE_VERSION.major)?;
+
+        if let Some(v) = r.u16(TAG_VIRTIO_DEVICE_TYPE)? {
+            if v != self.device.device_type() {
+                return Err(SnapshotError::InvalidFieldEncoding(
+                    "virtio device type mismatch",
+                ));
+            }
+        }
+
+        if let Some(buf) = r.bytes(TAG_PCI_CONFIG) {
+            let pci = SnapshotPciConfigSpaceState::decode(buf)?;
+            self.restore_pci_state(&pci);
+        }
+
+        let Some(buf) = r.bytes(TAG_TRANSPORT) else {
+            return Err(SnapshotError::InvalidFieldEncoding(
+                "missing virtio transport state",
+            ));
+        };
+        let transport = SnapshotVirtioPciTransportState::decode(buf)?;
+        self.restore_transport_state(&transport);
+
+        Ok(())
     }
 }
 
