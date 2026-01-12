@@ -1282,7 +1282,7 @@ def main() -> int:
                     if need_input_events:
                         if saw_virtio_input_events_skip:
                             print(
-                                "FAIL: virtio-input-events test was skipped (flag_not_set) but "
+                                "FAIL: VIRTIO_INPUT_EVENTS_SKIPPED: virtio-input-events test was skipped (flag_not_set) but "
                                 "--with-input-events was enabled (provision the guest with --test-input-events)",
                                 file=sys.stderr,
                             )
@@ -1291,7 +1291,7 @@ def main() -> int:
                             break
                         if saw_virtio_input_events_fail:
                             print(
-                                "FAIL: virtio-input-events test reported FAIL while --with-input-events was enabled",
+                                "FAIL: VIRTIO_INPUT_EVENTS_FAILED: virtio-input-events test reported FAIL while --with-input-events was enabled",
                                 file=sys.stderr,
                             )
                             _print_tail(serial_log)
@@ -1378,7 +1378,7 @@ def main() -> int:
                             if need_input_events:
                                 if saw_virtio_input_events_fail:
                                     print(
-                                        "FAIL: selftest RESULT=PASS but virtio-input-events test reported FAIL "
+                                        "FAIL: VIRTIO_INPUT_EVENTS_FAILED: selftest RESULT=PASS but virtio-input-events test reported FAIL "
                                         "while --with-input-events was enabled",
                                         file=sys.stderr,
                                     )
@@ -1388,13 +1388,13 @@ def main() -> int:
                                 if not saw_virtio_input_events_pass:
                                     if saw_virtio_input_events_skip:
                                         print(
-                                            "FAIL: virtio-input-events test was skipped (flag_not_set) but "
+                                            "FAIL: VIRTIO_INPUT_EVENTS_SKIPPED: virtio-input-events test was skipped (flag_not_set) but "
                                             "--with-input-events was enabled (provision the guest with --test-input-events)",
                                             file=sys.stderr,
                                         )
                                     else:
                                         print(
-                                            "FAIL: selftest RESULT=PASS but did not emit virtio-input-events test marker "
+                                            "FAIL: MISSING_VIRTIO_INPUT_EVENTS: selftest RESULT=PASS but did not emit virtio-input-events test marker "
                                             "while --with-input-events was enabled",
                                             file=sys.stderr,
                                         )
@@ -1577,7 +1577,7 @@ def main() -> int:
                         if need_input_events:
                             if saw_virtio_input_events_fail:
                                 print(
-                                    "FAIL: virtio-input-events test reported FAIL while --with-input-events was enabled",
+                                    "FAIL: VIRTIO_INPUT_EVENTS_FAILED: virtio-input-events test reported FAIL while --with-input-events was enabled",
                                     file=sys.stderr,
                                 )
                                 _print_tail(serial_log)
@@ -1586,13 +1586,13 @@ def main() -> int:
                             if not saw_virtio_input_events_pass:
                                 if saw_virtio_input_events_skip:
                                     print(
-                                        "FAIL: virtio-input-events test was skipped (flag_not_set) but "
+                                        "FAIL: VIRTIO_INPUT_EVENTS_SKIPPED: virtio-input-events test was skipped (flag_not_set) but "
                                         "--with-input-events was enabled (provision the guest with --test-input-events)",
                                         file=sys.stderr,
                                     )
                                 else:
                                     print(
-                                        "FAIL: did not observe virtio-input-events PASS marker while --with-input-events was enabled",
+                                        "FAIL: MISSING_VIRTIO_INPUT_EVENTS: did not observe virtio-input-events PASS marker while --with-input-events was enabled",
                                         file=sys.stderr,
                                     )
                                 _print_tail(serial_log)
@@ -1624,7 +1624,7 @@ def main() -> int:
                     and time.monotonic() - virtio_input_marker_time > 20.0
                 ):
                     print(
-                        "FAIL: did not observe virtio-input-events marker after virtio-input completed while "
+                        "FAIL: MISSING_VIRTIO_INPUT_EVENTS: did not observe virtio-input-events marker after virtio-input completed while "
                         "--with-input-events was enabled (guest selftest too old or missing --test-input-events)",
                         file=sys.stderr,
                     )
@@ -1943,7 +1943,7 @@ def main() -> int:
                             if need_input_events:
                                 if saw_virtio_input_events_fail:
                                     print(
-                                        "FAIL: virtio-input-events test reported FAIL while --with-input-events was enabled",
+                                        "FAIL: VIRTIO_INPUT_EVENTS_FAILED: virtio-input-events test reported FAIL while --with-input-events was enabled",
                                         file=sys.stderr,
                                     )
                                     _print_tail(serial_log)
@@ -1952,13 +1952,13 @@ def main() -> int:
                                 if not saw_virtio_input_events_pass:
                                     if saw_virtio_input_events_skip:
                                         print(
-                                            "FAIL: virtio-input-events test was skipped (flag_not_set) but "
+                                            "FAIL: VIRTIO_INPUT_EVENTS_SKIPPED: virtio-input-events test was skipped (flag_not_set) but "
                                             "--with-input-events was enabled (provision the guest with --test-input-events)",
                                             file=sys.stderr,
                                         )
                                     else:
                                         print(
-                                            "FAIL: did not observe virtio-input-events PASS marker while --with-input-events was enabled",
+                                            "FAIL: MISSING_VIRTIO_INPUT_EVENTS: did not observe virtio-input-events PASS marker while --with-input-events was enabled",
                                             file=sys.stderr,
                                         )
                                     _print_tail(serial_log)
