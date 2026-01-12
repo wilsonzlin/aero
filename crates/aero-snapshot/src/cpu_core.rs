@@ -19,8 +19,12 @@ pub fn apply_cpu_internal_state_to_cpu_core(
     state: &CpuInternalState,
     core: &mut aero_cpu_core::CpuCore,
 ) {
+    // CPU_INTERNAL v2 only captures the external interrupt FIFO and the interrupt shadow counter.
+    // Any other non-architectural pending-event state is intentionally not represented and is
+    // cleared here to avoid resuming with stale bookkeeping.
+    core.pending = Default::default();
+
     core.pending.set_interrupt_inhibit(state.interrupt_inhibit);
-    core.pending.external_interrupts.clear();
     core.pending
         .external_interrupts
         .extend(state.pending_external_interrupts.iter().copied());

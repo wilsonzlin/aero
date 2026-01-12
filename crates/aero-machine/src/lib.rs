@@ -3299,6 +3299,35 @@ mod tests {
     }
 
     #[test]
+    fn snapshot_restore_preserves_interrupt_shadow_and_ages_after_one_instruction() {
+        let cfg = MachineConfig {
+            ram_size_bytes: 2 * 1024 * 1024,
+            ..Default::default()
+        };
+
+        let mut src = Machine::new(cfg.clone()).unwrap();
+
+        // Program: NOP; HLT.
+        src.write_physical(0x100, &[0x90, 0xF4]);
+        src.cpu.state.mode = CpuMode::Real;
+        src.cpu.state.segments.cs.selector = 0;
+        src.cpu.state.segments.cs.base = 0;
+        src.cpu.state.set_rip(0x100);
+        src.cpu.state.halted = false;
+
+        src.cpu.pending.set_interrupt_inhibit(1);
+        let snap = src.take_snapshot_full().unwrap();
+
+        let mut restored = Machine::new(cfg).unwrap();
+        restored.restore_snapshot_bytes(&snap).unwrap();
+
+        assert_eq!(restored.cpu.pending.interrupt_inhibit(), 1);
+        let exit = restored.run_slice(1);
+        assert_eq!(exit.executed(), 1);
+        assert_eq!(restored.cpu.pending.interrupt_inhibit(), 0);
+    }
+
+    #[test]
     fn inject_keyboard_and_mouse_produces_i8042_output_bytes() {
         let mut m = Machine::new(MachineConfig {
             ram_size_bytes: 2 * 1024 * 1024,
