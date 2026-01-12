@@ -392,7 +392,8 @@ fn pc_platform_defers_e1000_dma_until_process_e1000() {
     pc.process_e1000();
 
     assert_eq!(pc.e1000_pop_tx_frame().as_deref(), Some(pkt_out.as_slice()));
-    assert!(pc.e1000.as_ref().unwrap().borrow().irq_level());
+    let causes = pc.memory.read_u32(bar0_base + 0x00C0);
+    assert_eq!(causes & ICR_TXDW, ICR_TXDW);
 
     pc.memory.read_physical(0x1000 + 12, &mut status);
     assert_ne!(status[0] & 0x01, 0, "DD should be set after process_e1000()");

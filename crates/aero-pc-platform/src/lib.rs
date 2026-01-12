@@ -607,7 +607,7 @@ pub struct PcPlatform {
     pub hda: Option<Rc<RefCell<HdaPciDevice>>>,
     pub ahci: Option<Rc<RefCell<AhciPciDevice>>>,
     pub ide: Option<Rc<RefCell<Piix3IdePciDevice>>>,
-    pub e1000: Option<Rc<RefCell<E1000Device>>>,
+    e1000: Option<Rc<RefCell<E1000Device>>>,
     pub uhci: Option<Rc<RefCell<UhciPciDevice>>>,
 
     pci_intx_sources: Vec<PciIntxSource>,
