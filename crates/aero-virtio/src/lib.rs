@@ -5,5 +5,6 @@
 
 pub mod devices;
 pub mod memory;
+pub mod mmio;
 pub mod pci;
 pub mod queue;

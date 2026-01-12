@@ -9,6 +9,7 @@ aero-audio = { path = "../aero-audio" }
 aero-io-snapshot = { path = "../aero-io-snapshot" }
 aero-net-backend = { path = "../aero-net-backend" }
 aero-storage = { path = "../aero-storage" }
+aero-memory = { package = "memory", path = "../memory" }
 nt-packetlib = { path = "../nt-packetlib" }
 virtio-gpu-proto = { path = "../virtio-gpu-proto" }
 

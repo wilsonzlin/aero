@@ -368,57 +368,181 @@ impl NvmeController {
     }
 
     pub fn mmio_read(&self, offset: u64, size: usize) -> u64 {
-        match (offset, size) {
-            (0x0000, 8) => self.cap,
-            (0x0008, 4) => self.vs as u64,
-            (0x000c, 4) => self.intms as u64,
-            (0x0010, 4) => 0, // INTMC is write-only.
-            (0x0014, 4) => self.cc as u64,
-            (0x001c, 4) => self.csts as u64,
-            (0x0024, 4) => self.aqa as u64,
-            (0x0028, 8) => self.asq,
-            (0x0030, 8) => self.acq,
+        // `PhysicalMemoryBus` issues naturally-aligned MMIO reads in sizes 1/2/4/8. Guests may also
+        // access 64-bit registers via two 32-bit operations (e.g. CAP, ASQ, ACQ).
+        //
+        // Implement reads by slicing bytes out of the containing 32-bit word.
+        let size = size.clamp(1, 8);
+        let mut out = 0u64;
+
+        for i in 0..size {
+            let byte_off = match offset.checked_add(i as u64) {
+                Some(v) => v,
+                None => break,
+            };
+            let word_off = byte_off & !3;
+            let shift = ((byte_off & 3) * 8) as u32;
+            let word = self.mmio_read_u32(word_off);
+            let byte = ((word >> shift) & 0xFF) as u64;
+            out |= byte << (i * 8);
+        }
+
+        out
+    }
+
+    pub fn mmio_write(&mut self, offset: u64, size: usize, value: u64, memory: &mut dyn MemoryBus) {
+        // Like `mmio_read`, implement writes by collecting byte-lane updates into 32-bit writes.
+        // This supports:
+        // - 64-bit registers written via two 32-bit operations (ASQ/ACQ)
+        // - sub-word accesses where the bus chooses 1/2-byte operations.
+        let size = size.clamp(1, 8);
+
+        let mut idx = 0usize;
+        while idx < size {
+            let byte_off = match offset.checked_add(idx as u64) {
+                Some(v) => v,
+                None => break,
+            };
+            let word_off = byte_off & !3;
+
+            // Collect all bytes that fall into this 32-bit word.
+            let mut be_mask = 0u32;
+            let mut write_val = 0u32;
+            while idx < size {
+                let off = match offset.checked_add(idx as u64) {
+                    Some(v) => v,
+                    None => break,
+                };
+                if (off & !3) != word_off {
+                    break;
+                }
+
+                let byte_idx_in_word = (off & 3) as usize;
+                let shift = (byte_idx_in_word * 8) as u32;
+                let byte = ((value >> (idx * 8)) & 0xFF) as u32;
+                write_val |= byte << shift;
+                be_mask |= 0xFFu32 << shift;
+                idx += 1;
+            }
+
+            if be_mask == 0 {
+                continue;
+            }
+
+            self.mmio_write_u32(word_off, write_val, be_mask, memory);
+        }
+    }
+
+    fn mmio_read_u32(&self, offset: u64) -> u32 {
+        match offset {
+            0x0000 => self.cap as u32,
+            0x0004 => (self.cap >> 32) as u32,
+            0x0008 => self.vs,
+            0x000c => self.intms,
+            0x0010 => 0, // INTMC is write-only.
+            0x0014 => self.cc,
+            0x001c => self.csts,
+            0x0024 => self.aqa,
+            0x0028 => self.asq as u32,
+            0x002c => (self.asq >> 32) as u32,
+            0x0030 => self.acq as u32,
+            0x0034 => (self.acq >> 32) as u32,
             _ => 0,
         }
     }
 
-    pub fn mmio_write(&mut self, offset: u64, size: usize, value: u64, memory: &mut dyn MemoryBus) {
-        match (offset, size) {
-            (0x000c, 4) => {
-                self.intms |= value as u32;
+    fn mmio_write_u32(
+        &mut self,
+        offset: u64,
+        write_val: u32,
+        be_mask: u32,
+        memory: &mut dyn MemoryBus,
+    ) {
+        match offset {
+            // INTMS: write-1-to-set bits in the interrupt mask.
+            0x000c => {
+                self.intms |= write_val & be_mask;
                 self.refresh_intx_level();
             }
-            (0x0010, 4) => {
-                self.intms &= !(value as u32);
+            // INTMC: write-1-to-clear bits in the interrupt mask.
+            0x0010 => {
+                self.intms &= !(write_val & be_mask);
                 self.refresh_intx_level();
             }
-            (0x0014, 4) => {
-                let prev_en = self.cc & 1 != 0;
-                self.cc = value as u32;
-                let new_en = self.cc & 1 != 0;
+            // CC: full register write (with byte-enables).
+            0x0014 => {
+                let prev_en = (self.cc & 1) != 0;
+                let merged = (self.cc & !be_mask) | (write_val & be_mask);
+                self.cc = merged;
+                let new_en = (self.cc & 1) != 0;
                 if !prev_en && new_en {
                     self.enable();
                 } else if prev_en && !new_en {
                     self.disable();
                 }
             }
-            (0x0024, 4) => {
+            // AQA: writable only when CC.EN=0.
+            0x0024 => {
                 if self.cc & 1 == 0 {
-                    self.aqa = value as u32;
+                    self.aqa = (self.aqa & !be_mask) | (write_val & be_mask);
                 }
             }
-            (0x0028, 8) => {
+            // ASQ (low/high dword): writable only when CC.EN=0.
+            0x0028 => {
                 if self.cc & 1 == 0 {
-                    self.asq = value;
+                    let cur = self.asq as u32;
+                    let merged = (cur & !be_mask) | (write_val & be_mask);
+                    self.asq = (self.asq & 0xffff_ffff_0000_0000) | (merged as u64);
                 }
             }
-            (0x0030, 8) => {
+            0x002c => {
                 if self.cc & 1 == 0 {
-                    self.acq = value;
+                    let cur = (self.asq >> 32) as u32;
+                    let merged = (cur & !be_mask) | (write_val & be_mask);
+                    self.asq = (self.asq & 0x0000_0000_ffff_ffff) | ((merged as u64) << 32);
                 }
             }
-            _ if offset >= 0x1000 && size == 4 => {
-                self.write_doorbell(offset, value as u32, memory);
+            // ACQ (low/high dword): writable only when CC.EN=0.
+            0x0030 => {
+                if self.cc & 1 == 0 {
+                    let cur = self.acq as u32;
+                    let merged = (cur & !be_mask) | (write_val & be_mask);
+                    self.acq = (self.acq & 0xffff_ffff_0000_0000) | (merged as u64);
+                }
+            }
+            0x0034 => {
+                if self.cc & 1 == 0 {
+                    let cur = (self.acq >> 32) as u32;
+                    let merged = (cur & !be_mask) | (write_val & be_mask);
+                    self.acq = (self.acq & 0x0000_0000_ffff_ffff) | ((merged as u64) << 32);
+                }
+            }
+            // Doorbells: treat the 32-bit register as a whole (but allow byte enables).
+            _ if offset >= 0x1000 => {
+                // Doorbell values are 16-bit; preserve the unwritten bytes to avoid surprising
+                // behaviour if a guest uses sub-dword writes.
+                let mut current = 0u32;
+                let stride = 4u64 << ((self.cap >> 32) & 0xf);
+                if stride != 0 {
+                    let idx = (offset - 0x1000) / stride;
+                    let qid = (idx / 2) as u16;
+                    let is_cq = idx % 2 == 1;
+                    let val = if is_cq {
+                        if qid == 0 {
+                            self.admin_cq.as_ref().map(|cq| cq.head).unwrap_or(0)
+                        } else {
+                            self.io_cqs.get(&qid).map(|cq| cq.head).unwrap_or(0)
+                        }
+                    } else if qid == 0 {
+                        self.admin_sq.as_ref().map(|sq| sq.tail).unwrap_or(0)
+                    } else {
+                        self.io_sqs.get(&qid).map(|sq| sq.tail).unwrap_or(0)
+                    };
+                    current = u32::from(val);
+                }
+
+                let merged = (current & !be_mask) | (write_val & be_mask);
+                self.write_doorbell(offset, merged, memory);
             }
             _ => {}
         }
@@ -1463,6 +1587,18 @@ mod tests {
     }
 
     #[test]
+    fn cap_can_be_read_as_two_dwords() {
+        let disk = TestDisk::new(1024);
+        let ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)).unwrap());
+
+        let cap64 = ctrl.mmio_read(0x0000, 8);
+        let cap_lo = ctrl.mmio_read(0x0000, 4) as u32;
+        let cap_hi = ctrl.mmio_read(0x0004, 4) as u32;
+        let cap32 = (cap_lo as u64) | ((cap_hi as u64) << 32);
+        assert_eq!(cap64, cap32);
+    }
+
+    #[test]
     fn aqa_fields_map_to_admin_queue_sizes() {
         let disk = TestDisk::new(1024);
         let mut ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)).unwrap());
@@ -1476,6 +1612,46 @@ mod tests {
 
         assert_eq!(ctrl.admin_sq.as_ref().unwrap().size, 8);
         assert_eq!(ctrl.admin_cq.as_ref().unwrap().size, 4);
+    }
+
+    #[test]
+    fn admin_identify_controller_supports_split_asq_acq_writes() {
+        let disk = TestDisk::new(1024);
+        let mut ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)).unwrap());
+        let mut mem = TestMem::new(1024 * 1024);
+
+        let asq = 0x10000u64;
+        let acq = 0x20000u64;
+        let id_buf = 0x30000u64;
+
+        ctrl.mmio_write(0x0024, 4, 0x000f_000f, &mut mem);
+
+        // Program ASQ/ACQ via two 32-bit writes each, as many guests do.
+        ctrl.mmio_write(0x0028, 4, asq as u32 as u64, &mut mem);
+        ctrl.mmio_write(0x002c, 4, (asq >> 32) as u32 as u64, &mut mem);
+        ctrl.mmio_write(0x0030, 4, acq as u32 as u64, &mut mem);
+        ctrl.mmio_write(0x0034, 4, (acq >> 32) as u32 as u64, &mut mem);
+
+        ctrl.mmio_write(0x0014, 4, 1, &mut mem);
+        assert_eq!(ctrl.mmio_read(0x001c, 4) & 1, 1, "CSTS.RDY should be set");
+
+        let mut cmd = build_command(0x06);
+        set_cid(&mut cmd, 0x1234);
+        set_prp1(&mut cmd, id_buf);
+        set_cdw10(&mut cmd, 0x01); // CNS=1 (controller)
+
+        mem.write_physical(asq, &cmd);
+        ctrl.mmio_write(0x1000, 4, 1, &mut mem); // SQ0 tail = 1
+
+        let cqe = read_cqe(&mut mem, acq);
+        assert_eq!(cqe.cid, 0x1234);
+        assert_eq!(cqe.sqid, 0);
+        assert_eq!(cqe.status & 0x1, 1); // phase
+        assert_eq!(cqe.status & !0x1, 0); // success
+
+        // Identify data should have been DMA'd into guest memory.
+        let vid = mem.read_u16(id_buf);
+        assert_eq!(vid, 0x1b36);
     }
 
     #[test]
