@@ -1060,6 +1060,19 @@ impl Machine {
         if let Some(ctrl) = &self.i8042 {
             ctrl.borrow_mut().inject_mouse_button(button, pressed);
         }
+
+        // Keep the absolute-mask helper (`inject_ps2_mouse_buttons`) coherent even if callers mix
+        // the per-button APIs and the absolute-mask API.
+        let bit = match button {
+            Ps2MouseButton::Left => 0x01,
+            Ps2MouseButton::Right => 0x02,
+            Ps2MouseButton::Middle => 0x04,
+        };
+        if pressed {
+            self.ps2_mouse_buttons |= bit;
+        } else {
+            self.ps2_mouse_buttons &= !bit;
+        }
     }
 
     pub fn inject_mouse_left(&mut self, pressed: bool) {
@@ -3050,6 +3063,35 @@ mod tests {
         m.inject_ps2_mouse_motion(0, 5, 0);
         let packet: Vec<u8> = (0..3).map(|_| ctrl.borrow_mut().read_port(0x60)).collect();
         assert_eq!(packet, vec![0x08, 0x00, 0x05]);
+    }
+
+    #[test]
+    fn mixing_per_button_and_absolute_mask_mouse_injection_does_not_stick_buttons() {
+        let mut m = Machine::new(MachineConfig {
+            ram_size_bytes: 2 * 1024 * 1024,
+            ..Default::default()
+        })
+        .unwrap();
+        let ctrl = m.i8042.as_ref().expect("i8042 enabled").clone();
+
+        // Enable mouse reporting so injected events generate stream packets.
+        {
+            let mut dev = ctrl.borrow_mut();
+            dev.write_port(0x64, 0xD4);
+            dev.write_port(0x60, 0xF4);
+        }
+        assert_eq!(ctrl.borrow_mut().read_port(0x60), 0xFA); // ACK
+
+        // Press left via the per-button API.
+        m.inject_mouse_button(Ps2MouseButton::Left, true);
+        let pressed_packet: Vec<u8> = (0..3).map(|_| ctrl.borrow_mut().read_port(0x60)).collect();
+        assert_eq!(pressed_packet, vec![0x09, 0x00, 0x00]);
+
+        // Release via the absolute-mask API.
+        m.inject_ps2_mouse_buttons(0x00);
+        assert_ne!(ctrl.borrow_mut().read_port(0x64) & 0x01, 0);
+        let released_packet: Vec<u8> = (0..3).map(|_| ctrl.borrow_mut().read_port(0x60)).collect();
+        assert_eq!(released_packet, vec![0x08, 0x00, 0x00]);
     }
 
     #[test]
