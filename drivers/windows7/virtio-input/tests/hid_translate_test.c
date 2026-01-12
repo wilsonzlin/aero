@@ -189,6 +189,42 @@ static void test_keyboard_modifier_reports(void) {
   expect_report(&cap, 4, expect5, sizeof(expect5));
 }
 
+static void test_keyboard_all_modifier_bits_report(void) {
+  struct captured_reports cap;
+  struct hid_translate t;
+
+  cap_clear(&cap);
+  hid_translate_init(&t, capture_emit, &cap);
+
+  /* Press all 8 modifiers, flush once. */
+  send_key(&t, VIRTIO_INPUT_KEY_LEFTCTRL, 1);
+  send_key(&t, VIRTIO_INPUT_KEY_LEFTSHIFT, 1);
+  send_key(&t, VIRTIO_INPUT_KEY_LEFTALT, 1);
+  send_key(&t, VIRTIO_INPUT_KEY_LEFTMETA, 1);
+  send_key(&t, VIRTIO_INPUT_KEY_RIGHTCTRL, 1);
+  send_key(&t, VIRTIO_INPUT_KEY_RIGHTSHIFT, 1);
+  send_key(&t, VIRTIO_INPUT_KEY_RIGHTALT, 1);
+  send_key(&t, VIRTIO_INPUT_KEY_RIGHTMETA, 1);
+  send_syn(&t);
+
+  uint8_t expect1[HID_TRANSLATE_KEYBOARD_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_KEYBOARD, 0xFF, 0, 0, 0, 0, 0, 0, 0};
+  expect_report(&cap, 0, expect1, sizeof(expect1));
+
+  /* Release all 8 modifiers, flush once. */
+  send_key(&t, VIRTIO_INPUT_KEY_LEFTCTRL, 0);
+  send_key(&t, VIRTIO_INPUT_KEY_LEFTSHIFT, 0);
+  send_key(&t, VIRTIO_INPUT_KEY_LEFTALT, 0);
+  send_key(&t, VIRTIO_INPUT_KEY_LEFTMETA, 0);
+  send_key(&t, VIRTIO_INPUT_KEY_RIGHTCTRL, 0);
+  send_key(&t, VIRTIO_INPUT_KEY_RIGHTSHIFT, 0);
+  send_key(&t, VIRTIO_INPUT_KEY_RIGHTALT, 0);
+  send_key(&t, VIRTIO_INPUT_KEY_RIGHTMETA, 0);
+  send_syn(&t);
+
+  uint8_t expect2[HID_TRANSLATE_KEYBOARD_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_KEYBOARD, 0x00, 0, 0, 0, 0, 0, 0, 0};
+  expect_report(&cap, 1, expect2, sizeof(expect2));
+}
+
 static void test_keyboard_reports(void) {
   struct captured_reports cap;
   struct hid_translate t;
@@ -420,6 +456,7 @@ int main(void) {
   test_linux_keycode_abi_values();
   test_mapping();
   test_keyboard_modifier_reports();
+  test_keyboard_all_modifier_bits_report();
   test_keyboard_reports();
   test_keyboard_function_key_reports();
   test_keyboard_overflow_queue();
