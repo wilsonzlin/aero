@@ -35,17 +35,10 @@ should_retry_rustc_thread_error() {
     if grep -Eq "${unwrap_eagain_re}" "${stderr_log}"; then
         return 0
     fi
-    # Some panic renderings wrap/line-wrap the `Os { ... }` struct such that it no longer appears on
-    # the same line as the `called Result::unwrap()` text. Handle this without requiring the more
-    # general "panicked at + EAGAIN marker" fallback by conservatively requiring:
-    # - an unwrap panic header
-    # - the Os { ... } struct with code 11 + WouldBlock
-    local unwrap_header_re='called[[:space:]]+`?Result::unwrap\(\)`?[[:space:]]+on[[:space:]]+an[[:space:]]+`?Err`?[[:space:]]+value:'
-    if grep -Eq "${unwrap_header_re}" "${stderr_log}" \
-        && grep -Eq 'Os[[:space:]]*\{' "${stderr_log}" \
-        && grep -Eq 'code:[[:space:]]*11' "${stderr_log}" \
-        && grep -Eq 'kind:[[:space:]]*WouldBlock' "${stderr_log}"
-    then
+    # Some panic renderings wrap/line-wrap the `Os { ... }` struct or the unwrap header such that it
+    # no longer appears on a single line. Treat the entire stderr log as one line (newlines -> spaces)
+    # and retry if the near-exact unwrap(EAGAIN) signature matches.
+    if tr '\n' ' ' < "${stderr_log}" | grep -Eq "${unwrap_eagain_re}"; then
         return 0
     fi
     if grep -Eq "thread 'rustc' panicked|panicked at" "${stderr_log}" \
