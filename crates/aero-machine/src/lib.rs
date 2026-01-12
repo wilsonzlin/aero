@@ -1280,9 +1280,11 @@ impl snapshot::SnapshotTarget for Machine {
             (&self.interrupts, by_id.remove(&snapshot::DeviceId::APIC))
         {
             let mut interrupts = interrupts.borrow_mut();
-            let _ =
-                snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(&state, &mut *interrupts);
-            restored_interrupts = true;
+            restored_interrupts = snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
+                &state,
+                &mut *interrupts,
+            )
+            .is_ok();
         }
 
         let mut restored_pci_intx = false;
@@ -1317,7 +1319,8 @@ impl snapshot::SnapshotTarget for Machine {
                     snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(&state, &mut *pci_cfg);
             }
         } else if let (Some(pci_cfg), Some(state)) = (&self.pci_cfg, pci_cfg_state) {
-            // Older snapshots used a dedicated `DeviceId::PCI_CFG` entry for config ports.
+            // Backward compatibility: older snapshots stored only config ports under the
+            // dedicated `PCI_CFG` device id.
             let mut pci_cfg = pci_cfg.borrow_mut();
             let _ =
                 snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(&state, &mut *pci_cfg);
@@ -1368,8 +1371,11 @@ impl snapshot::SnapshotTarget for Machine {
         let mut restored_hpet = false;
         if let (Some(hpet), Some(state)) = (&self.hpet, by_id.remove(&snapshot::DeviceId::HPET)) {
             let mut hpet = hpet.borrow_mut();
-            let _ = snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(&state, &mut *hpet);
-            restored_hpet = true;
+            restored_hpet = snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
+                &state,
+                &mut *hpet,
+            )
+            .is_ok();
         }
 
         // 6) After HPET restore, poll once so any level-triggered lines implied by restored

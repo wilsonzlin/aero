@@ -142,18 +142,25 @@ fn snapshot_source_emits_single_pci_entry_for_pci_core() {
     let m = Machine::new(pc_machine_config()).unwrap();
     let devices = snapshot::SnapshotSource::device_states(&m);
 
+    let pci = devices
+        .iter()
+        .find(|d| d.id == snapshot::DeviceId::PCI)
+        .expect("machine snapshot should include a PCI entry when pc platform is enabled");
+
+    // The PCI device entry should be the combined PCI core snapshot (inner `PCIC`).
     assert!(
-        devices.iter().any(|d| d.id == snapshot::DeviceId::PCI),
-        "machine snapshot should include a PCI entry when pc platform is enabled"
+        pci.data.len() >= 12,
+        "PCI device state too short for io-snapshot header"
     );
-    assert!(
-        devices.iter().all(|d| d.id != snapshot::DeviceId::PCI_CFG),
-        "machine snapshot should not emit a separate DeviceId::PCI_CFG entry for config ports"
+    assert_eq!(
+        &pci.data[8..12],
+        b"PCIC",
+        "expected PCI device entry to be a combined PciCoreSnapshot (inner PCIC)"
     );
-    assert!(
-        devices.iter().all(|d| d.id != snapshot::DeviceId::PCI_INTX),
-        "machine snapshot should not emit a separate DeviceId::PCI_INTX entry for the INTx router"
-    );
+
+    // We should not emit the optional split-out entries when using the core wrapper.
+    assert!(!devices.iter().any(|d| d.id == snapshot::DeviceId::PCI_CFG));
+    assert!(!devices.iter().any(|d| d.id == snapshot::DeviceId::PCI_INTX));
 }
 
 #[test]
