@@ -988,4 +988,96 @@ describe("io/bus/pci", () => {
 
     expect(restoredCommand).toBe(0x0006);
   });
+
+  it("restores without transient BAR overlap when devices are registered in a different order", () => {
+    // Snapshot bus: register dev0 then dev1.
+    const portBus = new PortIoBus();
+    const mmioBus = new MmioBus();
+    const pciBus = new PciBus(portBus, mmioBus);
+    pciBus.registerToPortBus();
+
+    const dev0Reads: number[] = [];
+    const dev1Reads: number[] = [];
+    const dev0: PciDevice = {
+      name: "dev0",
+      vendorId: 0x1111,
+      deviceId: 0x0001,
+      classCode: 0,
+      bars: [{ kind: "mmio32", size: 0x1000 }, null, null, null, null, null],
+      mmioRead: () => {
+        dev0Reads.push(1);
+        return 0xaaaa_0000;
+      },
+    };
+    const dev1: PciDevice = {
+      name: "dev1",
+      vendorId: 0x2222,
+      deviceId: 0x0002,
+      classCode: 0,
+      bars: [{ kind: "mmio32", size: 0x1000 }, null, null, null, null, null],
+      mmioRead: () => {
+        dev1Reads.push(1);
+        return 0xbbbb_0000;
+      },
+    };
+    pciBus.registerDevice(dev0, { device: 0, function: 0 });
+    pciBus.registerDevice(dev1, { device: 1, function: 0 });
+
+    const cfg = makeCfgIo(portBus);
+    cfg.writeU16(0, 0, 0x04, 0x0002);
+    cfg.writeU16(1, 0, 0x04, 0x0002);
+
+    // Avoid JS bitwise ops here: BAR bases like 0xE000_0000 are >2^31 and would be sign-extended
+    // if we used `& 0xffff_fff0` on a Number.
+    const base0 = BigInt(cfg.readU32(0, 0, 0x10)) & 0xffff_fff0n;
+    const base1 = BigInt(cfg.readU32(1, 0, 0x10)) & 0xffff_fff0n;
+
+    // Sanity: snapshot bus is mapped at expected bases.
+    expect(mmioBus.read(base0, 4)).toBe(0xaaaa_0000);
+    expect(mmioBus.read(base1, 4)).toBe(0xbbbb_0000);
+
+    const snapshot = pciBus.saveState();
+
+    // Restore bus: register dev1 first (different order), which will initially allocate BAR bases
+    // in the opposite order. loadState() must not transiently overlap BAR mappings while it replays
+    // the snapshot config space image.
+    const portBus2 = new PortIoBus();
+    const mmioBus2 = new MmioBus();
+    const pciBus2 = new PciBus(portBus2, mmioBus2);
+    pciBus2.registerToPortBus();
+
+    let dev0Reads2 = 0;
+    let dev1Reads2 = 0;
+    const dev0b: PciDevice = {
+      name: "dev0",
+      vendorId: 0x1111,
+      deviceId: 0x0001,
+      classCode: 0,
+      bars: [{ kind: "mmio32", size: 0x1000 }, null, null, null, null, null],
+      mmioRead: () => {
+        dev0Reads2++;
+        return 0xaaaa_1111;
+      },
+    };
+    const dev1b: PciDevice = {
+      name: "dev1",
+      vendorId: 0x2222,
+      deviceId: 0x0002,
+      classCode: 0,
+      bars: [{ kind: "mmio32", size: 0x1000 }, null, null, null, null, null],
+      mmioRead: () => {
+        dev1Reads2++;
+        return 0xbbbb_2222;
+      },
+    };
+    // Different registration order (dev1 first).
+    pciBus2.registerDevice(dev1b, { device: 1, function: 0 });
+    pciBus2.registerDevice(dev0b, { device: 0, function: 0 });
+
+    expect(() => pciBus2.loadState(snapshot)).not.toThrow();
+    expect(mmioBus2.read(base0, 4)).toBe(0xaaaa_1111);
+    expect(mmioBus2.read(base1, 4)).toBe(0xbbbb_2222);
+    expect(dev0Reads2).toBe(1);
+    expect(dev1Reads2).toBe(1);
+  });
 });

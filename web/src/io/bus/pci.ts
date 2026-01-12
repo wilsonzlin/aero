@@ -1103,6 +1103,24 @@ export class PciBus implements PortIoHandler {
     this.#nextMmioBase = nextMmioBase;
     this.#nextIoBase = nextIoBase & 0xffff;
 
+    // Clear existing BAR mappings and disable decoding before replaying guest-visible config dwords.
+    // This avoids transient MMIO/PIO BAR overlaps when the restore-time device registration order
+    // differs from the snapshot-time order (e.g. when devices are registered conditionally).
+    for (let dev = 0; dev < 32; dev++) {
+      const fns = this.#functions[dev]!;
+      for (let fnNum = 0; fnNum < 8; fnNum++) {
+        const fn = fns[fnNum];
+        if (!fn) continue;
+        // Clear Command.IO/MEM/BME bits; status bits (0x06..0x07) are preserved.
+        fn.config[0x04] = 0x00;
+        fn.config[0x05] = 0x00;
+        for (const slot of fn.bars) {
+          if (!slot || slot.part !== "low") continue;
+          this.#unmapBar(slot.bar);
+        }
+      }
+    }
+
     for (let i = 0; i < count; i++) {
       const dev = r.u8() & 0xff;
       const fnNum = r.u8() & 0xff;
@@ -1118,13 +1136,20 @@ export class PciBus implements PortIoHandler {
 
       // Apply config space image as a sequence of aligned dword writes so BAR mapping invariants
       // and device hooks (`onPciCommandWrite`, `pciConfigWrite`) are respected.
+      //
+      // Restore ordering matters: apply BAR bases before enabling decoding via the PCI command
+      // register. Otherwise a command write can cause the bus to map BARs at their *current* base
+      // (from restore-time registration) and then later BAR writes can transiently overlap with
+      // other devices.
       for (let off = 0; off < 256; off += 4) {
+        if (off === 0x04) continue;
         const value = readU32LE(cfg, off);
-        // For the command/status dword (0x04), avoid treating the upper 16 bits as a guest write:
-        // Status is RO/RW1C on real hardware and should not be modified by snapshot restore.
-        const mask = off === 0x04 ? 0x0000_ffff : 0xffff_ffff;
-        this.#writeConfigDword(fn, off, value, mask);
+        this.#writeConfigDword(fn, off, value, 0xffff_ffff);
       }
+
+      // Apply command bits last; do not treat status bits as guest-writable during restore.
+      const cmdValue = readU32LE(cfg, 0x04);
+      this.#writeConfigDword(fn, 0x04, cmdValue, 0x0000_ffff);
     }
   }
 }
