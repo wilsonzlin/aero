@@ -843,11 +843,13 @@ fn virtio_blk_virtual_disk_backend_maps_browser_storage_failures_to_ioerr() {
         }
     }
 
-    let disks: &[(
+    type DiskIoErrors = (
         fn() -> StorageDiskError,
         fn() -> StorageDiskError,
         fn() -> StorageDiskError,
-    )] = &[
+    );
+
+    let disks: &[DiskIoErrors] = &[
         (quota_exceeded, quota_exceeded, quota_exceeded),
         (in_use, in_use, in_use),
         (invalid_state, invalid_state, invalid_state),
