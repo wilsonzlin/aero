@@ -830,6 +830,7 @@ class Qcow2 {
     if (nbSnapshots !== 0) throw new Error("qcow2 snapshots unsupported");
 
     const clusterSize = 1 << clusterBits;
+    if (l1TableOffset % clusterSize !== 0) throw new Error("invalid qcow2 l1_table_offset");
     const l2Entries = clusterSize / 8;
     const totalClusters = divCeil(logicalSize, clusterSize);
     const requiredL1 = divCeil(totalClusters, l2Entries);
@@ -852,6 +853,7 @@ class Qcow2 {
       if (entry === 0n) continue;
       const l2Off = Number(entry);
       if (!Number.isSafeInteger(l2Off) || l2Off <= 0) throw new Error("invalid qcow2 l2 table offset");
+      if (l2Off % clusterSize !== 0) throw new Error("invalid qcow2 l2 table offset");
       const l2 = await src.readAt(l2Off, clusterSize);
 
       for (let l2Index = 0; l2Index < l2Entries; l2Index++) {
@@ -863,6 +865,7 @@ class Qcow2 {
         if ((val & QCOW2_OFLAG_ZERO) !== 0n) continue;
         const dataOff = Number(val & QCOW2_OFFSET_MASK);
         if (!Number.isSafeInteger(dataOff) || dataOff <= 0) throw new Error("invalid qcow2 data offset");
+        if (dataOff % clusterSize !== 0) throw new Error("invalid qcow2 data offset");
         if (dataOff === 0) continue;
         clusterOffsets[clusterIndex] = dataOff;
       }
