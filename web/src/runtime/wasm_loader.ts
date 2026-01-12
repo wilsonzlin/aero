@@ -762,6 +762,18 @@ export interface WasmApi {
          * Optional for older WASM builds.
          */
         serial_output_len?(): number;
+        /**
+         * VGA scanout helpers (legacy text/VBE).
+         *
+         * Optional for older WASM builds.
+         */
+        vga_present?(): boolean;
+        vga_width?(): number;
+        vga_height?(): number;
+        vga_stride_bytes?(): number;
+        vga_framebuffer_ptr?(): number;
+        vga_framebuffer_len_bytes?(): number;
+        vga_framebuffer_rgba8888_copy?(): Uint8Array | null;
         inject_browser_key(code: string, pressed: boolean): void;
         /**
          * PS/2 mouse injection helpers (optional for older WASM builds).

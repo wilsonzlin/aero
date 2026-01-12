@@ -16,6 +16,7 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 aero-cpu-core = { path = "../aero-cpu-core" }
 aero-io-snapshot = { path = "../aero-io-snapshot" }
+aero-gpu-vga = { path = "../aero-gpu-vga" }
 aero-machine = { path = "../aero-machine" }
 aero-net-backend = { path = "../aero-net-backend" }
 aero-usb = { path = "../aero-usb" }

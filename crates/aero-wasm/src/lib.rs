@@ -1,5 +1,6 @@
 // Note: The threaded WASM build must compile on stable Rust; avoid unstable features here.
 
+use aero_gpu_vga::DisplayOutput;
 use wasm_bindgen::prelude::*;
 
 pub mod guest_cpu_bench;
@@ -261,12 +262,8 @@ pub fn jit_abi_constants() -> JsValue {
             gpr_off_u32[i] = *off as u32;
         }
         let gpr_arr = Uint32Array::from(&gpr_off_u32[..]);
-        Reflect::set(
-            &obj,
-            &JsValue::from_str("cpu_gpr_off"),
-            &gpr_arr.into(),
-        )
-        .expect("Reflect::set(cpu_gpr_off) should succeed on a fresh object");
+        Reflect::set(&obj, &JsValue::from_str("cpu_gpr_off"), &gpr_arr.into())
+            .expect("Reflect::set(cpu_gpr_off) should succeed on a fresh object");
 
         obj.into()
     }
@@ -334,8 +331,8 @@ mod jit_abi_constants_tests {
         );
         assert_eq!(read_u32(&obj, "commit_flag_bytes"), 4);
 
-        let gpr = Reflect::get(&obj, &JsValue::from_str("cpu_gpr_off"))
-            .expect("cpu_gpr_off missing");
+        let gpr =
+            Reflect::get(&obj, &JsValue::from_str("cpu_gpr_off")).expect("cpu_gpr_off missing");
         let gpr = gpr
             .dyn_into::<Uint32Array>()
             .expect("cpu_gpr_off must be Uint32Array");
@@ -2296,9 +2293,7 @@ pub struct Machine {
     mouse_buttons: u8,
     mouse_buttons_known: bool,
     #[cfg(target_arch = "wasm32")]
-    net_ring_backend: Option<
-        Rc<RefCell<L2TunnelRingBackend<SharedRingBuffer, SharedRingBuffer>>>,
-    >,
+    net_ring_backend: Option<Rc<RefCell<L2TunnelRingBackend<SharedRingBuffer, SharedRingBuffer>>>>,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -2332,6 +2327,7 @@ impl Machine {
             // topology (PIC/PIT/RTC/PCI/ACPI) and a guest-visible NIC.
             enable_pc_platform: true,
             enable_e1000: true,
+            enable_vga: true,
             ..Default::default()
         };
         let inner =
@@ -2369,6 +2365,93 @@ impl Machine {
     /// Return the current serial output length without copying the bytes into JS.
     pub fn serial_output_len(&mut self) -> u32 {
         self.inner.serial_output_len().min(u64::from(u32::MAX)) as u32
+    }
+
+    // -------------------------------------------------------------------------
+    // VGA scanout (RGBA8888)
+    // -------------------------------------------------------------------------
+
+    /// Present the VGA output (re-render the front buffer if necessary).
+    ///
+    /// Returns `false` if the underlying machine was built without VGA support.
+    pub fn vga_present(&mut self) -> bool {
+        let Some(vga) = self.inner.vga() else {
+            return false;
+        };
+        vga.borrow_mut().present();
+        true
+    }
+
+    /// Current VGA output width in pixels (0 if VGA is absent).
+    pub fn vga_width(&mut self) -> u32 {
+        let Some(vga) = self.inner.vga() else {
+            return 0;
+        };
+        let (w, _) = vga.borrow().get_resolution();
+        w
+    }
+
+    /// Current VGA output height in pixels (0 if VGA is absent).
+    pub fn vga_height(&mut self) -> u32 {
+        let Some(vga) = self.inner.vga() else {
+            return 0;
+        };
+        let (_, h) = vga.borrow().get_resolution();
+        h
+    }
+
+    /// Current VGA framebuffer stride in bytes.
+    ///
+    /// This is always `vga_width() * 4` for RGBA8888 (0 if VGA is absent).
+    pub fn vga_stride_bytes(&mut self) -> u32 {
+        self.vga_width().saturating_mul(4)
+    }
+
+    /// Pointer (into wasm linear memory) to the VGA RGBA8888 framebuffer.
+    ///
+    /// Returns `0` if VGA is absent.
+    ///
+    /// # Safety contract (JS/host)
+    /// The caller must re-query this pointer after each [`Machine::vga_present`] call because the
+    /// front buffer pointer may change (front/back swap or resize).
+    pub fn vga_framebuffer_ptr(&mut self) -> u32 {
+        let Some(vga) = self.inner.vga() else {
+            return 0;
+        };
+        let vga = vga.borrow();
+        let fb: &[u32] = vga.get_framebuffer();
+        u32::try_from(fb.as_ptr() as usize).unwrap_or(0)
+    }
+
+    /// Length in bytes of the VGA framebuffer.
+    ///
+    /// Returns `0` if VGA is absent.
+    ///
+    /// The caller must re-query this length after each [`Machine::vga_present`] call because it
+    /// may change (front/back swap or resize).
+    pub fn vga_framebuffer_len_bytes(&mut self) -> u32 {
+        let Some(vga) = self.inner.vga() else {
+            return 0;
+        };
+        let vga = vga.borrow();
+        let fb: &[u32] = vga.get_framebuffer();
+        let bytes = fb.len().saturating_mul(4);
+        u32::try_from(bytes).unwrap_or(u32::MAX)
+    }
+
+    /// Convenience API: return a copy of the VGA RGBA8888 framebuffer as a `Uint8Array`.
+    ///
+    /// Returns `null` if VGA is absent.
+    #[cfg(target_arch = "wasm32")]
+    pub fn vga_framebuffer_rgba8888_copy(&mut self) -> JsValue {
+        let Some(vga) = self.inner.vga() else {
+            return JsValue::NULL;
+        };
+        let vga = vga.borrow();
+        let fb: &[u32] = vga.get_framebuffer();
+        // Safety: `fb` is a valid slice of `u32` pixels; reinterpret as raw bytes.
+        let bytes = unsafe { core::slice::from_raw_parts(fb.as_ptr() as *const u8, fb.len() * 4) };
+        Uint8Array::from(bytes).into()
     }
 
     /// Inject a browser-style keyboard event into the guest PS/2 i8042 controller.
@@ -2511,9 +2594,10 @@ impl Machine {
         rx: SharedRingBuffer,
     ) -> Result<(), JsValue> {
         let backend = Rc::new(RefCell::new(L2TunnelRingBackend::new(tx, rx)));
-        self.inner.set_network_backend(Box::new(SharedL2TunnelRingBackend {
-            inner: backend.clone(),
-        }));
+        self.inner
+            .set_network_backend(Box::new(SharedL2TunnelRingBackend {
+                inner: backend.clone(),
+            }));
         self.net_ring_backend = Some(backend);
         Ok(())
     }

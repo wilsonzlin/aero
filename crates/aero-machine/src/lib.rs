@@ -106,6 +106,11 @@ pub struct MachineConfig {
     ///
     /// Requires [`MachineConfig::enable_pc_platform`].
     pub enable_ide: bool,
+    /// Whether to attach the legacy VGA/VBE device model.
+    ///
+    /// When enabled, guest physical accesses to the legacy VGA window (`0xA0000..0xC0000`) and
+    /// VGA/VBE port I/O are routed to an [`aero_gpu_vga::VgaDevice`].
+    pub enable_vga: bool,
     /// Whether to attach a COM1 16550 serial device at `0x3F8`.
     pub enable_serial: bool,
     /// Whether to attach a legacy i8042 controller at ports `0x60/0x64`.
@@ -130,6 +135,7 @@ impl Default for MachineConfig {
             enable_pc_platform: false,
             enable_ahci: false,
             enable_ide: false,
+            enable_vga: false,
             enable_serial: true,
             enable_i8042: true,
             enable_a20_gate: true,
@@ -845,6 +851,67 @@ impl aero_platform::io::PortIoDevice for PciIoBarWindow {
             _ => return,
         };
         let _ = self.router.dispatch_write(port, size_usize, value);
+    }
+}
+
+struct VgaLegacyMmio {
+    base: u64,
+    vga: Rc<RefCell<VgaDevice>>,
+}
+
+impl MmioHandler for VgaLegacyMmio {
+    fn read(&mut self, offset: u64, size: usize) -> u64 {
+        if !(1..=8).contains(&size) {
+            return u64::MAX;
+        }
+
+        let mut out = 0u64;
+        let base = self.base.wrapping_add(offset);
+        let mut vga = self.vga.borrow_mut();
+        for i in 0..size {
+            let paddr = base.wrapping_add(i as u64);
+            let b = vga.mem_read_u8(u32::try_from(paddr).unwrap_or(0)) as u64;
+            out |= b << (i * 8);
+        }
+        out
+    }
+
+    fn write(&mut self, offset: u64, size: usize, value: u64) {
+        if !(1..=8).contains(&size) {
+            return;
+        }
+
+        let base = self.base.wrapping_add(offset);
+        let mut vga = self.vga.borrow_mut();
+        for i in 0..size {
+            let paddr = base.wrapping_add(i as u64);
+            let b = ((value >> (i * 8)) & 0xFF) as u8;
+            vga.mem_write_u8(u32::try_from(paddr).unwrap_or(0), b);
+        }
+    }
+}
+
+struct VgaPortWindow {
+    vga: Rc<RefCell<VgaDevice>>,
+}
+
+impl aero_platform::io::PortIoDevice for VgaPortWindow {
+    fn read(&mut self, port: u16, size: u8) -> u32 {
+        let size = match size {
+            1 | 2 | 4 => size as usize,
+            _ => return u32::MAX,
+        };
+        let mut vga = self.vga.borrow_mut();
+        vga.port_read(port, size)
+    }
+
+    fn write(&mut self, port: u16, size: u8, value: u32) {
+        let size = match size {
+            1 | 2 | 4 => size as usize,
+            _ => return,
+        };
+        let mut vga = self.vga.borrow_mut();
+        vga.port_write(port, size, value);
     }
 }
 
@@ -1706,6 +1773,48 @@ impl Machine {
 
         // Rebuild port I/O devices for deterministic power-on state.
         self.io = IoPortBus::new();
+
+        if self.cfg.enable_vga {
+            // VGA is a special legacy device whose MMIO window lives in the low 1MiB region. The
+            // physical bus supports MMIO overlays on top of RAM, so mapping this window is safe
+            // even when guest RAM is a dense `[0, ram_size_bytes)` range.
+            const VGA_LEGACY_MMIO_BASE: u64 = 0x000A_0000;
+            const VGA_LEGACY_MMIO_SIZE: u64 = 0x0002_0000; // 128KiB: A0000-BFFFF
+
+            // VGA shared device instances must remain stable across resets because MMIO mappings in
+            // the physical memory bus persist. Reset device state in-place while keeping `Rc`
+            // identities stable.
+            let vga: Rc<RefCell<VgaDevice>> = match &self.vga {
+                Some(vga) => {
+                    *vga.borrow_mut() = VgaDevice::new();
+                    vga.clone()
+                }
+                None => {
+                    let vga = Rc::new(RefCell::new(VgaDevice::new()));
+                    self.vga = Some(vga.clone());
+                    vga
+                }
+            };
+
+            self.mem
+                .map_mmio_once(VGA_LEGACY_MMIO_BASE, VGA_LEGACY_MMIO_SIZE, || {
+                    Box::new(VgaLegacyMmio {
+                        base: VGA_LEGACY_MMIO_BASE,
+                        vga: vga.clone(),
+                    })
+                });
+
+            // Register VGA ports (attribute/sequencer/graphics/CRTC/DAC + Bochs VBE_DISPI).
+            self.io.register_range(
+                0x03B0,
+                0x0030, // 0x3B0..0x3DF
+                Box::new(VgaPortWindow { vga: vga.clone() }),
+            );
+            self.io
+                .register_range(0x01CE, 0x0002, Box::new(VgaPortWindow { vga }));
+        } else {
+            self.vga = None;
+        }
 
         if self.cfg.enable_pc_platform {
             // PC platform shared device instances must remain stable across resets because MMIO

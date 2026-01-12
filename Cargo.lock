@@ -681,6 +681,7 @@ dependencies = [
  "aero-audio",
  "aero-cpu-core",
  "aero-devices-input",
+ "aero-gpu-vga",
  "aero-io-snapshot",
  "aero-ipc",
  "aero-jit-x86",
