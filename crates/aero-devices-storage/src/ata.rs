@@ -1,8 +1,6 @@
 use std::fmt;
 use std::io;
 
-use aero_io_snapshot::io::storage::state::IdeAtaDeviceState;
-
 use aero_storage::{DiskError, VirtualDisk, SECTOR_SIZE};
 
 pub const ATA_STATUS_BSY: u8 = 0x80;
@@ -83,14 +81,15 @@ impl AtaDrive {
         self.write_cache_enabled
     }
 
-    pub fn snapshot_state(&self) -> IdeAtaDeviceState {
-        // The current ATA model does not track UDMA configuration, but snapshots
-        // include it for compatibility with other IDE implementations.
-        IdeAtaDeviceState { udma_mode: 2 }
+    pub fn snapshot_state(&self) -> aero_io_snapshot::io::storage::state::IdeAtaDeviceState {
+        // The current ATA model does not track UDMA configuration, but snapshots include it for
+        // compatibility with other IDE implementations.
+        aero_io_snapshot::io::storage::state::IdeAtaDeviceState { udma_mode: 2 }
     }
 
-    pub fn restore_state(&mut self, _state: &IdeAtaDeviceState) {
+    pub fn restore_state(&mut self, _state: &aero_io_snapshot::io::storage::state::IdeAtaDeviceState) {
         // Nothing to restore currently; disk contents are managed by the backing `VirtualDisk`.
+        let _ = &self.disk;
     }
 }
 

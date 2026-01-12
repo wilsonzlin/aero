@@ -254,9 +254,10 @@ impl BusMasterChannel {
     }
 
     pub fn restore_state(&mut self, state: &IdeBusMasterChannelState) {
-        self.cmd = state.cmd;
-        self.status = state.status;
-        self.prd_addr = state.prd_addr;
+        // Keep the restored state consistent with what the guest can program via register writes.
+        self.cmd = state.cmd & 0x09; // start + direction only
+        self.status = state.status & 0x07; // active + error + irq only (capability bits are derived)
+        self.prd_addr = state.prd_addr & 0xFFFF_FFFC;
     }
 }
 
