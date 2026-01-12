@@ -281,8 +281,9 @@ fn fuzz_bc_decompress(bytes: &[u8]) {
     if bytes.len() < 4 {
         return;
     }
-    let width = bytes[0] as u32;
-    let height = bytes[1] as u32;
+    // Cap dimensions to keep decompression costs predictable (especially BC7).
+    let width = (bytes[0] & 63) as u32;
+    let height = (bytes[1] & 63) as u32;
     let mip_level_count = (bytes[2] % 16) as u32;
     let selector = bytes[3] & 3;
     let data = &bytes[4..];
