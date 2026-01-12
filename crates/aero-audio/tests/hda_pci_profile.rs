@@ -51,7 +51,8 @@ fn hda_pci_config_matches_canonical_profile() {
         pirq_to_gsi: [5, 6, 7, 8],
     });
     router.configure_device_intx(HDA_ICH6.bdf, Some(PciInterruptPin::IntA), dev.config_mut());
-    assert_eq!(read_u8(&mut dev, 0x3c), 5);
+    let expected_gsi = router.gsi_for_intx(HDA_ICH6.bdf, PciInterruptPin::IntA);
+    assert_eq!(read_u8(&mut dev, 0x3c), u8::try_from(expected_gsi).unwrap());
     assert_eq!(read_u8(&mut dev, 0x3d), 1);
 
     // BAR0 size probing should report the HDA MMIO size.

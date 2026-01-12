@@ -1,6 +1,7 @@
 use aero_devices::pci::profile::{
     IDE_PIIX3, NIC_E1000_82540EM, NVME_CONTROLLER, SATA_AHCI_ICH9, USB_UHCI_PIIX3,
 };
+use aero_devices::pci::{PciIntxRouter, PciIntxRouterConfig};
 
 #[cfg(feature = "legacy-audio")]
 use aero_devices::pci::profile::HDA_ICH6;
@@ -81,8 +82,12 @@ fn uhci_pci_config_matches_canonical_profile() {
     let uhci = UhciPciDevice::new(UhciController::new(), 0);
     assert_basic_identity(&uhci, USB_UHCI_PIIX3);
 
-    // Canonical routing is 00:01.2 INTA# -> IRQ 11.
-    assert_eq!(read_u8(&uhci, 0x3c), 0x0b);
+    let router = PciIntxRouter::new(PciIntxRouterConfig::default());
+    let expected_pin = USB_UHCI_PIIX3
+        .interrupt_pin
+        .expect("profile should provide interrupt pin");
+    let expected_gsi = router.gsi_for_intx(USB_UHCI_PIIX3.bdf, expected_pin);
+    assert_eq!(read_u8(&uhci, 0x3c), u8::try_from(expected_gsi).unwrap());
 
     // UHCI uses BAR4 (I/O) at 0x20.
     assert_eq!(read_u32(&uhci, 0x20) & 0x1, 0x1);
