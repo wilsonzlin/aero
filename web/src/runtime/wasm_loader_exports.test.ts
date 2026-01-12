@@ -234,6 +234,42 @@ describe("runtime/wasm_loader (optional exports)", () => {
     expect(api.E1000Bridge).toBe(FakeE1000Bridge);
   });
 
+  it("surfaces PcMachine when present", async () => {
+    const module = await WebAssembly.compile(WASM_EMPTY_MODULE_BYTES);
+
+    class FakePcMachine {
+      constructor(_ramSizeBytes: number) {}
+
+      reset(): void {}
+      set_disk_image(_bytes: Uint8Array): void {}
+      attach_l2_tunnel_rings(_tx: unknown, _rx: unknown): void {}
+      detach_network(): void {}
+      poll_network(): void {}
+      run_slice(_maxInsts: number): { kind: number; executed: number; detail: string; free(): void } {
+        return { kind: 0, executed: 0, detail: "", free: () => {} };
+      }
+      free(): void {}
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (globalThis as any).__aeroWasmJsImporterOverride = {
+      single: async () => ({
+        default: async (_input?: unknown) => {},
+        greet: (name: string) => `hello ${name}`,
+        add: (a: number, b: number) => a + b,
+        version: () => 1,
+        sum: (a: number, b: number) => a + b,
+        mem_store_u32: (_offset: number, _value: number) => {},
+        mem_load_u32: (_offset: number) => 0,
+        guest_ram_layout: (_desiredBytes: number) => ({ guest_base: 0, guest_size: 0, runtime_reserved: 0 }),
+        PcMachine: FakePcMachine,
+      }),
+    };
+
+    const { api } = await initWasm({ variant: "single", module });
+    expect(api.PcMachine).toBe(FakePcMachine);
+  });
+
   it("surfaces VirtioInputPciDevice when present", async () => {
     const module = await WebAssembly.compile(WASM_EMPTY_MODULE_BYTES);
 
