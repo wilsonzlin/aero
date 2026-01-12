@@ -179,11 +179,22 @@ fn validate_etag(id: &str, etag: &str) -> Result<(), ManifestError> {
         });
     }
 
-    HeaderValue::from_str(etag).map_err(|err| ManifestError::InvalidEtag {
+    let header_value = HeaderValue::from_str(etag).map_err(|err| ManifestError::InvalidEtag {
         id: super::truncate_for_error(id, super::MAX_IMAGE_ID_LEN),
         etag: super::truncate_for_error(etag, 512),
         reason: format!("invalid HTTP header value: {err}"),
     })?;
+
+    // `HeaderValue::from_str` allows obs-text, but the server's conditional request logic parses
+    // `If-None-Match` / `If-Range` using `to_str()`. Reject non-visible ASCII so ETags can be
+    // round-tripped by clients for revalidation.
+    header_value
+        .to_str()
+        .map_err(|err| ManifestError::InvalidEtag {
+            id: super::truncate_for_error(id, super::MAX_IMAGE_ID_LEN),
+            etag: super::truncate_for_error(etag, 512),
+            reason: format!("etag must contain only visible ASCII characters: {err}"),
+        })?;
 
     // Enforce HTTP entity-tag format (RFC 9110 § 8.8.3). We validate this separately from
     // `HeaderValue` parsing so operators get a clear manifest error rather than surprising cache
@@ -336,6 +347,20 @@ mod tests {
             r#"{
               "images": [
                 { "id": "bad", "file": "bad.img", "name": "Bad", "etag": "bad\netag", "public": true }
+              ]
+            }"#,
+        )
+        .unwrap_err();
+
+        assert!(matches!(err, ManifestError::InvalidEtag { .. }));
+    }
+
+    #[test]
+    fn rejects_non_ascii_etag() {
+        let err = Manifest::parse_str(
+            r#"{
+              "images": [
+                { "id": "bad", "file": "bad.img", "name": "Bad", "etag": "\"é\"", "public": true }
               ]
             }"#,
         )

@@ -52,7 +52,21 @@ where
         let trimmed = etag.trim();
         if looks_like_etag(trimmed) {
             match HeaderValue::from_str(trimmed) {
-                Ok(v) => return v,
+                Ok(v) => {
+                    // `HeaderValue::from_str` allows obs-text, but our conditional request logic
+                    // (`If-None-Match` / `If-Range`) parses request headers using `to_str()`, which
+                    // rejects non-visible ASCII. Ensure the value we emit is representable as a
+                    // header string so clients can round-trip it back to us for cache revalidation.
+                    if v.to_str().is_ok() {
+                        return v;
+                    }
+
+                    let etag_for_log = super::observability::truncate_for_span(trimmed, 256);
+                    tracing::warn!(
+                        etag = ?etag_for_log.as_ref(),
+                        "store-provided ETag contains non-visible ASCII; using fallback"
+                    );
+                }
                 Err(err) => {
                     let etag_for_log = super::observability::truncate_for_span(trimmed, 256);
                     tracing::warn!(

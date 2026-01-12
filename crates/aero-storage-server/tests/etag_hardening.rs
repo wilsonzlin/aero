@@ -209,3 +209,46 @@ async fn invalid_unquoted_store_etag_falls_back_for_meta_endpoint_and_json_body(
 
     assert_eq!(res.status(), StatusCode::NOT_MODIFIED);
 }
+
+#[tokio::test]
+async fn non_ascii_store_etag_falls_back_for_bytes_endpoint_and_allows_304() {
+    let last_modified = UNIX_EPOCH + Duration::from_secs(3_000);
+    let store = Arc::new(InvalidEtagStore::new(
+        "test.img",
+        b"Hello, world!".to_vec(),
+        "\"é\"",
+        Some(last_modified),
+    ));
+    let app = setup_app(store);
+
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/v1/images/test.img/data")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let expected = cache::weak_etag_from_size_and_mtime(13, Some(last_modified));
+    assert_eq!(res.headers()[header::ETAG].to_str().unwrap(), expected);
+
+    let res = app
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/v1/images/test.img/data")
+                .header(header::IF_NONE_MATCH, expected)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(res.status(), StatusCode::NOT_MODIFIED);
+}
