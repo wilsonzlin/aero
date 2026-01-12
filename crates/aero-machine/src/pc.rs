@@ -311,16 +311,18 @@ impl PcMachine {
     }
 
     fn take_reset_kind(&mut self) -> Option<ResetKind> {
-        // Preserve ordering, but only surface a single event per slice.
-        self.bus
-            .platform
-            .take_reset_events()
-            .into_iter()
-            .next()
-            .map(|ev| match ev {
-                ResetEvent::Cpu => ResetKind::Cpu,
-                ResetEvent::System => ResetKind::System,
-            })
+        // The PC platform may record multiple reset requests before the machine loop consumes them
+        // (e.g. multiple devices asserting reset lines). Surface at most one reset per slice and
+        // prefer a full system reset over a CPU-only reset, matching `ResetLatch` semantics used by
+        // the non-`PcMachine` integration.
+        let mut saw_cpu = false;
+        for ev in self.bus.platform.take_reset_events() {
+            match ev {
+                ResetEvent::System => return Some(ResetKind::System),
+                ResetEvent::Cpu => saw_cpu = true,
+            }
+        }
+        if saw_cpu { Some(ResetKind::Cpu) } else { None }
     }
 
     fn poll_and_queue_one_external_interrupt(&mut self) -> bool {
@@ -604,10 +606,13 @@ mod tests {
     use aero_cpu_core::state::CpuMode;
     use aero_cpu_core::state::RFLAGS_IF;
     use aero_cpu_core::CpuCore;
+    use aero_devices::reset_ctrl::RESET_CTRL_PORT;
     use aero_devices::pci::profile::NIC_E1000_82540EM;
     use aero_devices::pci::PciInterruptPin;
     use aero_net_e1000::ICR_TXDW;
     use aero_platform::interrupts::InterruptController as PlatformInterruptController;
+    use aero_platform::reset::ResetKind;
+    use crate::RunExit;
     use memory::MemoryBus as _;
 
     #[test]
@@ -854,5 +859,26 @@ mod tests {
         // halted path, delivers INTx, runs ISR, and then re-halts.
         let _ = pc.run_slice(200);
         assert_eq!(pc.bus.platform.memory.read_u8(0x2000), 0xAA);
+    }
+
+    #[test]
+    fn pc_machine_multiple_reset_requests_prefer_system_reset() {
+        let mut pc = PcMachine::new(2 * 1024 * 1024);
+
+        // Queue a CPU reset request followed by a system reset request before entering the run
+        // loop. System reset should win.
+        pc.bus.platform.io.write_u8(RESET_CTRL_PORT, 0x05); // RESET_ENABLE | CPU_RESET
+        pc.bus.platform.io.write_u8(
+            RESET_CTRL_PORT,
+            aero_devices::reset_ctrl::RESET_CTRL_RESET_VALUE,
+        );
+
+        match pc.run_slice(16) {
+            RunExit::ResetRequested { kind, executed } => {
+                assert_eq!(executed, 0);
+                assert_eq!(kind, ResetKind::System);
+            }
+            other => panic!("unexpected run exit: {other:?}"),
+        }
     }
 }
