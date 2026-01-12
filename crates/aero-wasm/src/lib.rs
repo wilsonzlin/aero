@@ -1595,6 +1595,10 @@ impl HdaPlaybackDemo {
             return Err(JsValue::from_str("hostSampleRate must be non-zero"));
         }
 
+        // Defensive clamp: this is a JS-callable demo API, so avoid allocating multi-gigabyte
+        // buffers if a caller passes an absurd sample rate.
+        let host_sample_rate = host_sample_rate.clamp(1, 384_000);
+
         let bridge = WorkletBridge::from_shared_buffer(ring_sab, capacity_frames, channel_count)?;
 
         let hda = HdaController::new_with_output_rate(host_sample_rate);
