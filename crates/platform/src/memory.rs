@@ -104,7 +104,25 @@ impl MemoryBus {
     }
 
     pub fn map_rom(&mut self, start: u64, data: Arc<[u8]>) -> Result<(), MapError> {
-        self.bus.map_rom(start, data)
+        let len = data.len();
+        match self.bus.map_rom(start, data) {
+            Ok(()) => Ok(()),
+            Err(MapError::Overlap) => {
+                // BIOS resets may re-map the same ROM windows. Treat identical overlaps as
+                // idempotent, but reject unexpected overlaps to avoid silently corrupting the bus.
+                let already_mapped = self
+                    .bus
+                    .rom_regions()
+                    .iter()
+                    .any(|r| r.start == start && r.data.len() == len);
+                if already_mapped {
+                    Ok(())
+                } else {
+                    Err(MapError::Overlap)
+                }
+            }
+            Err(MapError::AddressOverflow) => Err(MapError::AddressOverflow),
+        }
     }
 
     pub fn map_mmio(

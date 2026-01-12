@@ -2,6 +2,7 @@ use aero_platform::address_filter::AddressFilter;
 use aero_platform::dirty_memory::DEFAULT_DIRTY_PAGE_SIZE;
 use aero_platform::memory::{MemoryBus, BIOS_RESET_VECTOR_PHYS, BIOS_ROM_BASE, BIOS_ROM_SIZE};
 use aero_platform::ChipsetState;
+use memory::MapError;
 use std::sync::{Arc, Mutex};
 
 #[derive(Default)]
@@ -205,7 +206,11 @@ fn a20_masking_does_not_apply_to_direct_ram_backend_access() {
 fn dirty_tracking_marks_ram_writes_from_non_cpu_paths() {
     let chipset = ChipsetState::new(true);
     let filter = AddressFilter::new(chipset.a20());
-    let mut bus = MemoryBus::new_with_dirty_tracking(filter, 16 * 1024 * 1024, DEFAULT_DIRTY_PAGE_SIZE);
+    let mut bus = MemoryBus::new_with_dirty_tracking(
+        filter,
+        16 * 1024 * 1024,
+        DEFAULT_DIRTY_PAGE_SIZE,
+    );
 
     // Start clean.
     assert!(bus.take_dirty_pages().unwrap().is_empty());
@@ -222,4 +227,29 @@ fn dirty_tracking_marks_ram_writes_from_non_cpu_paths() {
 
     // Drain semantics.
     assert!(bus.take_dirty_pages().unwrap().is_empty());
+}
+
+#[test]
+fn map_rom_is_idempotent_for_identical_remaps() {
+    let mut bus = new_bus(true, 0);
+    let start = 0x1000u64;
+    let rom = Arc::<[u8]>::from([0xAAu8, 0xBB, 0xCC, 0xDD].as_slice());
+
+    assert_eq!(bus.map_rom(start, Arc::clone(&rom)), Ok(()));
+    assert_eq!(bus.map_rom(start, rom), Ok(()));
+}
+
+#[test]
+fn map_rom_still_errors_on_conflicting_overlaps() {
+    let mut bus = new_bus(true, 0);
+    let start = 0x2000u64;
+
+    bus.map_rom(start, Arc::<[u8]>::from([0u8; 4].as_slice()))
+        .unwrap();
+
+    // Same start but different length is not considered an idempotent re-map.
+    assert_eq!(
+        bus.map_rom(start, Arc::<[u8]>::from([0u8; 5].as_slice())),
+        Err(MapError::Overlap)
+    );
 }
