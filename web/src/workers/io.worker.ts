@@ -2081,13 +2081,13 @@ function attachAudioRingBuffer(
 }
 
 function maybePublishAudioOutTelemetry(nowMs: number): void {
-  // The IO worker should only publish these counters when the guest HDA device is
-  // active (i.e. during real VM runs). The CPU worker owns these counters during
-  // demo tone / loopback mode.
   const views = audioOutViews;
   const capacityFrames = audioOutCapacityFrames;
-  const hdaActive = !!currentConfig?.activeDiskImage;
-  const shouldPublish = hdaActive && !!views && capacityFrames > 0;
+  // The coordinator owns ring-buffer attachment policy so that the AudioWorklet
+  // ring remains single-producer/single-consumer (SPSC). When the IO worker is
+  // attached to the audio output ring, it is the producer and should publish
+  // producer-side telemetry.
+  const shouldPublish = !!views && capacityFrames > 0;
 
   if (!shouldPublish) {
     if (audioOutTelemetryActive) {
