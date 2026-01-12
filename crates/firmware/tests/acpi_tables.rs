@@ -8,6 +8,7 @@ use firmware::acpi::{
     DEFAULT_PCI_MMIO_START, RSDP_CHECKSUM_LEN_V1, RSDP_V2_SIZE,
 };
 use memory::{DenseMemory, GuestMemory};
+use std::path::PathBuf;
 
 fn build_tables(cpu_count: u8) -> AcpiTables {
     let config = AcpiConfig::new(cpu_count, 0x1_0000_0000); // 4GiB
@@ -451,6 +452,24 @@ fn dsdt_contains_pci_routing_and_resources() {
     assert_eq!(read_u32_le(aml, off + 10), expected_start);
     assert_eq!(read_u32_le(aml, off + 14), expected_end);
     assert_eq!(read_u32_le(aml, off + 22), expected_size);
+}
+
+#[test]
+fn shipped_dsdt_aml_matches_aero_acpi_generator() {
+    let cfg = aero_acpi::AcpiConfig::default();
+    let placement = aero_acpi::AcpiPlacement::default();
+    let generated = aero_acpi::AcpiTables::build(&cfg, placement).dsdt;
+
+    let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    path.push("acpi");
+    path.push("dsdt.aml");
+    let on_disk = std::fs::read(&path)
+        .unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
+
+    assert_eq!(
+        on_disk, generated,
+        "crates/firmware/acpi/dsdt.aml is out of date; regenerate it with: cargo run -p firmware --bin gen_dsdt"
+    );
 }
 
 fn read_table_from_mem<M: GuestMemory>(mem: &M, addr: u64) -> Vec<u8> {
