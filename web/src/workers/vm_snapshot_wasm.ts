@@ -20,7 +20,13 @@ export const VM_SNAPSHOT_DEVICE_ID_E1000 = 19;
 // NOTE: This must match the Rust `DeviceId` assignment.
 export const VM_SNAPSHOT_DEVICE_ID_NET_STACK = 20;
 
-const VM_SNAPSHOT_DEVICE_KIND_PREFIX_ID = "device.";
+/**
+ * Forward-compatible kind prefix for unknown/opaque device IDs.
+ *
+ * The web runtime may emit device blobs with kinds like `device.123` so that older WASM builds can
+ * still roundtrip unrecognized devices without dropping state.
+ */
+export const VM_SNAPSHOT_DEVICE_KIND_PREFIX_ID = "device.";
 
 export const VM_SNAPSHOT_SAVE_TO_OPFS_EXPORT_NAMES = [
   // Preferred names (Task 1078).

@@ -2,6 +2,7 @@ import type { WasmApi } from "../runtime/wasm_loader";
 import type { VmSnapshotDeviceBlob } from "../runtime/snapshot_protocol";
 import {
   VM_SNAPSHOT_DEVICE_E1000_KIND,
+  VM_SNAPSHOT_DEVICE_KIND_PREFIX_ID,
   VM_SNAPSHOT_DEVICE_NET_STACK_KIND,
   VM_SNAPSHOT_DEVICE_USB_KIND,
   parseAeroIoSnapshotVersion,
@@ -19,8 +20,6 @@ export type IoWorkerSnapshotRuntimes = Readonly<{
   netE1000: unknown | null;
   netStack: unknown | null;
 }>;
-
-const VM_SNAPSHOT_DEVICE_KIND_PREFIX_ID = "device.";
 
 function snapshotDeviceKindForWasm(kind: string): string {
   // WASM snapshot free-function exports historically understood `device.<id>` blobs (and may lag

@@ -149,6 +149,7 @@ import {
   VM_SNAPSHOT_DEVICE_AUDIO_HDA_KIND,
   VM_SNAPSHOT_DEVICE_E1000_KIND,
   VM_SNAPSHOT_DEVICE_I8042_KIND,
+  VM_SNAPSHOT_DEVICE_KIND_PREFIX_ID,
   VM_SNAPSHOT_DEVICE_NET_STACK_KIND,
   VM_SNAPSHOT_DEVICE_USB_KIND,
   parseAeroIoSnapshotVersion,
@@ -841,8 +842,6 @@ function restoreNetStackDeviceState(bytes: Uint8Array): void {
   // tables, but resuming live connections without an out-of-band handshake is unsafe.
   applyNetStackTcpRestorePolicy(bridge, "drop");
 }
-
-const VM_SNAPSHOT_DEVICE_KIND_PREFIX_ID = "device.";
 
 function snapshotDeviceKindForWasm(kind: string): string {
   // WASM snapshot free-function exports historically only understood `usb.uhci` and `device.<id>`.
