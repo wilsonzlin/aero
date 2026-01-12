@@ -89,6 +89,11 @@ pattern = re.compile(
     # JS scripts referenced by path in docs: restrict to repo-root relative prefixes to avoid
     # false positives on in-doc JS import snippets like `import ... from './foo.js'`.
     r"(?:scripts[\\/]|drivers[\\/]|infra[\\/]|deploy[\\/]|backend[\\/]|tools[\\/]|ci[\\/]|guest-tools[\\/]|web[\\/]|server[\\/]|poc[\\/]|bench[\\/])[^\s`]+?\.js"
+    r"|"
+    # TypeScript scripts invoked via Node's `--experimental-strip-types` (or similar).
+    # Keep this narrow (bench/scripts only) to avoid treating general code pointers
+    # as runnable scripts.
+    r"(?:scripts[\\/]|bench[\\/])[^\s`]+?\.ts"
     r")\b"
 )
 
