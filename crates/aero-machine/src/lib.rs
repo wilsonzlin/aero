@@ -3043,6 +3043,23 @@ impl snapshot::SnapshotTarget for Machine {
                                 &mut *cfg_ports,
                             );
                         }
+                        // If a dedicated `PCI_INTX_ROUTER` entry is also present, prefer it for INTx
+                        // routing state even if the combined core wrapper applied successfully.
+                        //
+                        // This keeps restore behavior symmetric with `PCI_CFG` and allows snapshot
+                        // coordinators to ship both legacy and split-out PCI entries (with the
+                        // split-out entries taking precedence).
+                        if let Some(intx_state) = pci_intx_state.take() {
+                            let mut pci_intx = pci_intx.borrow_mut();
+                            if snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
+                                &intx_state,
+                                &mut *pci_intx,
+                            )
+                            .is_ok()
+                            {
+                                restored_pci_intx = true;
+                            }
+                        }
                     }
                     Err(_) => {
                         // If a dedicated `PCI_CFG` entry is present, prefer it for config ports.
@@ -3061,15 +3078,38 @@ impl snapshot::SnapshotTarget for Machine {
                         }
 
                         // Backward compatibility: some snapshots stored `PciIntxRouter` (`INTX`)
-                        // directly under the historical `DeviceId::PCI`.
-                        let mut pci_intx = pci_intx.borrow_mut();
-                        if snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
-                            &state,
-                            &mut *pci_intx,
-                        )
-                        .is_ok()
-                        {
-                            restored_pci_intx = true;
+                        // directly under the historical `DeviceId::PCI`. However, if a dedicated
+                        // `PCI_INTX_ROUTER` entry is present, prefer it.
+                        if let Some(intx_state) = pci_intx_state.take() {
+                            // Prefer the split-out `PCI_INTX_ROUTER` entry when present, but fall
+                            // back to the legacy `DeviceId::PCI` payload if the new entry fails to
+                            // apply (e.g. because it is from an unsupported future version).
+                            let mut pci_intx = pci_intx.borrow_mut();
+                            if snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
+                                &intx_state,
+                                &mut *pci_intx,
+                            )
+                            .is_ok()
+                            {
+                                restored_pci_intx = true;
+                            } else if snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
+                                &state,
+                                &mut *pci_intx,
+                            )
+                            .is_ok()
+                            {
+                                restored_pci_intx = true;
+                            }
+                        } else {
+                            let mut pci_intx = pci_intx.borrow_mut();
+                            if snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
+                                &state,
+                                &mut *pci_intx,
+                            )
+                            .is_ok()
+                            {
+                                restored_pci_intx = true;
+                            }
                         }
                     }
                 }
