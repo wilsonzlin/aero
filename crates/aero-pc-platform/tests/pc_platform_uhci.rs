@@ -14,6 +14,7 @@ use aero_snapshot::DeviceId;
 use aero_usb::hid::gamepad::UsbHidGamepadHandle;
 use aero_usb::hid::keyboard::UsbHidKeyboardHandle;
 use aero_usb::hid::mouse::UsbHidMouseHandle;
+use aero_usb::hub::UsbHubDevice;
 use aero_usb::uhci::regs::*;
 use aero_usb::uhci::UhciController;
 use memory::MemoryBus as _;
@@ -179,6 +180,31 @@ fn reset_port(pc: &mut PcPlatform, bar4_base: u16, portsc_offset: u16) {
     // Trigger port reset and wait the UHCI-mandated ~50ms.
     write_portsc(pc, bar4_base, portsc_offset, PORTSC_PR);
     pc.tick(50_000_000);
+}
+
+fn control_no_data(pc: &mut PcPlatform, devaddr: u8, setup: [u8; 8]) {
+    pc.memory.write_physical(BUF_SETUP as u64, &setup);
+    write_td(
+        pc,
+        TD0,
+        TD1,
+        td_status(true),
+        td_token(PID_SETUP, devaddr, 0, 0, 8),
+        BUF_SETUP,
+    );
+    // Status stage: IN ZLP, DATA1.
+    write_td(
+        pc,
+        TD1,
+        1,
+        td_status(true),
+        td_token(PID_IN, devaddr, 0, 1, 0),
+        0,
+    );
+    run_one_frame(pc, TD0);
+
+    assert_eq!(pc.memory.read_u32(TD0 as u64 + 4) & TD_STATUS_ACTIVE, 0);
+    assert_eq!(pc.memory.read_u32(TD1 as u64 + 4) & TD_STATUS_ACTIVE, 0);
 }
 
 #[test]
@@ -1331,4 +1357,110 @@ fn pc_platform_uhci_interrupt_in_reads_hid_gamepad_reports_via_dma() {
     let st = pc.memory.read_u32(TD0 as u64 + 4);
     assert_ne!(st & TD_STATUS_ACTIVE, 0);
     assert_ne!(st & TD_STATUS_NAK, 0);
+}
+
+#[test]
+fn pc_platform_uhci_external_hub_delivers_keyboard_report_via_dma() {
+    let mut pc = PcPlatform::new(2 * 1024 * 1024);
+    let bdf = USB_UHCI_PIIX3.bdf;
+    let bar4_base = read_uhci_bar4_base(&mut pc);
+
+    let keyboard = UsbHidKeyboardHandle::new();
+
+    // Root port0: external USB hub.
+    pc.uhci
+        .as_ref()
+        .expect("UHCI should be enabled")
+        .borrow_mut()
+        .controller_mut()
+        .hub_mut()
+        .attach(0, Box::new(UsbHubDevice::new()));
+
+    // Attach a keyboard behind the hub (port 1).
+    pc.uhci
+        .as_ref()
+        .unwrap()
+        .borrow_mut()
+        .controller_mut()
+        .hub_mut()
+        .attach_at_path(&[0, 1], Box::new(keyboard.clone()))
+        .unwrap();
+
+    // Enable Bus Mastering so UHCI can DMA the schedule/TD state.
+    let command = read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04) as u16;
+    write_cfg_u16(
+        &mut pc,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        0x04,
+        command | (1 << 2),
+    );
+    pc.tick(0);
+
+    init_frame_list(&mut pc);
+    reset_port(&mut pc, bar4_base, REG_PORTSC1);
+
+    pc.io
+        .write(bar4_base + REG_FLBASEADD, 4, FRAME_LIST_BASE);
+    pc.io.write(bar4_base + REG_FRNUM, 2, 0);
+    pc.io.write(
+        bar4_base + REG_USBCMD,
+        2,
+        u32::from(USBCMD_RS | USBCMD_MAXP),
+    );
+
+    // Enumerate hub itself at address 1.
+    control_no_data(
+        &mut pc,
+        0,
+        [0x00, 0x05, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00], // SET_ADDRESS(1)
+    );
+    control_no_data(
+        &mut pc,
+        1,
+        [0x00, 0x09, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00], // SET_CONFIGURATION(1)
+    );
+
+    // Power + reset downstream hub port 1.
+    control_no_data(
+        &mut pc,
+        1,
+        [0x23, 0x03, 0x08, 0x00, 0x01, 0x00, 0x00, 0x00], // SET_FEATURE(PORT_POWER) port=1
+    );
+    control_no_data(
+        &mut pc,
+        1,
+        [0x23, 0x03, 0x04, 0x00, 0x01, 0x00, 0x00, 0x00], // SET_FEATURE(PORT_RESET) port=1
+    );
+    pc.tick(50_000_000);
+
+    // Enumerate the downstream keyboard at address 5.
+    control_no_data(
+        &mut pc,
+        0,
+        [0x00, 0x05, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00], // SET_ADDRESS(5)
+    );
+    control_no_data(
+        &mut pc,
+        5,
+        [0x00, 0x09, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00], // SET_CONFIGURATION(1)
+    );
+
+    keyboard.key_event(0x04, true); // 'a'
+
+    // Poll interrupt endpoint 1 at address 5.
+    write_td(
+        &mut pc,
+        TD0,
+        1,
+        td_status(true),
+        td_token(PID_IN, 5, 1, 0, 8),
+        BUF_INT,
+    );
+    run_one_frame(&mut pc, TD0);
+
+    let mut report = [0u8; 8];
+    pc.memory.read_physical(BUF_INT as u64, &mut report);
+    assert_eq!(report, [0x00, 0x00, 0x04, 0, 0, 0, 0, 0]);
 }
