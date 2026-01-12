@@ -895,7 +895,11 @@ impl VirtioPciDevice {
                 return;
             };
 
-            loop {
+            // Bound the amount of guest-driven work processed per poll so a corrupted/malicious
+            // driver can't force us into a long (potentially 65k-iteration) drain loop by
+            // bumping `avail.idx` far ahead of `next_avail`.
+            let max_chains = queue.size() as usize;
+            for _ in 0..max_chains {
                 let popped = match queue.pop_descriptor_chain(mem) {
                     Ok(Some(popped)) => popped,
                     Ok(None) => break,
@@ -1334,4 +1338,147 @@ fn read_le_bytes_u32(src: &[u8]) -> u32 {
     let take = src.len().min(4);
     buf[..take].copy_from_slice(&src[..take]);
     u32::from_le_bytes(buf)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::devices::{VirtioDevice, VirtioDeviceError};
+    use crate::memory::{read_u16_le, write_u16_le, write_u32_le, write_u64_le, GuestRam};
+    use crate::queue::VirtQueue;
+
+    #[derive(Default)]
+    struct NoopInterrupts;
+
+    impl InterruptSink for NoopInterrupts {
+        fn raise_legacy_irq(&mut self) {}
+        fn lower_legacy_irq(&mut self) {}
+        fn signal_msix(&mut self, _vector: u16) {}
+    }
+
+    struct CountingDevice {
+        calls: usize,
+        max_calls: usize,
+    }
+
+    impl CountingDevice {
+        fn new(max_calls: usize) -> Self {
+            Self {
+                calls: 0,
+                max_calls,
+            }
+        }
+    }
+
+    impl VirtioDevice for CountingDevice {
+        fn device_type(&self) -> u16 {
+            0
+        }
+
+        fn device_features(&self) -> u64 {
+            0
+        }
+
+        fn set_features(&mut self, _features: u64) {}
+
+        fn num_queues(&self) -> u16 {
+            1
+        }
+
+        fn queue_max_size(&self, _queue: u16) -> u16 {
+            8
+        }
+
+        fn process_queue(
+            &mut self,
+            _queue_index: u16,
+            chain: crate::queue::DescriptorChain,
+            queue: &mut VirtQueue,
+            mem: &mut dyn crate::memory::GuestMemory,
+        ) -> Result<bool, VirtioDeviceError> {
+            self.calls += 1;
+            assert!(
+                self.calls <= self.max_calls,
+                "VirtioPciDevice should not process more than the queue size worth of descriptor chains per poll"
+            );
+            queue
+                .add_used(mem, chain.head_index(), 0)
+                .map_err(|_| VirtioDeviceError::IoError)
+        }
+
+        fn read_config(&self, _offset: u64, data: &mut [u8]) {
+            data.fill(0);
+        }
+
+        fn write_config(&mut self, _offset: u64, _data: &[u8]) {}
+
+        fn reset(&mut self) {
+            self.calls = 0;
+        }
+
+        fn as_any(&self) -> &dyn core::any::Any {
+            self
+        }
+
+        fn as_any_mut(&mut self) -> &mut dyn core::any::Any {
+            self
+        }
+    }
+
+    fn write_desc(
+        mem: &mut GuestRam,
+        table: u64,
+        index: u16,
+        addr: u64,
+        len: u32,
+        flags: u16,
+        next: u16,
+    ) {
+        let base = table + u64::from(index) * 16;
+        write_u64_le(mem, base, addr).unwrap();
+        write_u32_le(mem, base + 8, len).unwrap();
+        write_u16_le(mem, base + 12, flags).unwrap();
+        write_u16_le(mem, base + 14, next).unwrap();
+    }
+
+    #[test]
+    fn poll_limits_descriptor_chain_processing_to_queue_size() {
+        let mut mem = GuestRam::new(0x3000);
+
+        let mut pci = VirtioPciDevice::new_legacy_only(
+            Box::new(CountingDevice::new(8)),
+            Box::new(NoopInterrupts::default()),
+        );
+
+        // Enable queue 0 using a legacy PFN at 0x1000.
+        pci.legacy_io_write(VIRTIO_PCI_LEGACY_QUEUE_SEL, &0u16.to_le_bytes());
+        pci.legacy_io_write(VIRTIO_PCI_LEGACY_QUEUE_PFN, &1u32.to_le_bytes());
+
+        let (desc, avail, used) = legacy_vring_addresses(1, 8);
+
+        // Descriptor 0: a trivially-valid one-element chain.
+        write_desc(&mut mem, desc, 0, 0, 0, 0, 0);
+
+        // avail.flags = 0 (interrupts enabled), avail.idx far ahead to simulate a corrupted/malicious driver.
+        write_u16_le(&mut mem, avail, 0).unwrap();
+        write_u16_le(&mut mem, avail + 2, u16::MAX).unwrap();
+        for i in 0..8u64 {
+            write_u16_le(&mut mem, avail + 4 + i * 2, 0).unwrap();
+        }
+
+        write_u16_le(&mut mem, used, 0).unwrap();
+        write_u16_le(&mut mem, used + 2, 0).unwrap();
+
+        // Without the poll budget, this would try to drain ~65k descriptor chains.
+        pci.poll(&mut mem);
+
+        let calls = pci
+            .device_mut::<CountingDevice>()
+            .expect("device downcast")
+            .calls;
+        assert_eq!(calls, 8);
+
+        // We should have produced 8 used entries.
+        assert_eq!(read_u16_le(&mem, used + 2).unwrap(), 8);
+    }
 }
