@@ -108,6 +108,21 @@ fn pci_bar1_io_indicator_bit_is_present_in_byte_reads() {
 }
 
 #[test]
+fn pci_bar_partial_writes_update_decoded_bar_fields() {
+    // Regression test: if a guest performs 8/16-bit writes into BAR dwords, the decoded BAR fields
+    // must remain coherent (since BAR reads consult the decoded fields for probe behavior).
+    let mut dev = E1000Device::new([0x52, 0x54, 0, 0x12, 0x34, 0x56]);
+
+    // Program BAR0 by writing only the high 16 bits.
+    dev.pci_config_write(0x12, 2, 0xFEBF);
+    assert_eq!(dev.pci_read_u32(0x10), 0xFEBF_0000);
+
+    // Program BAR1 via a 16-bit write; bit0 must remain set.
+    dev.pci_config_write(0x14, 2, 0xC000);
+    assert_eq!(dev.pci_read_u32(0x14), 0xC001);
+}
+
+#[test]
 fn eeprom_read_returns_mac_words() {
     let mac = [0x52, 0x54, 0x00, 0x12, 0x34, 0x56];
     let mut dev = E1000Device::new(mac);

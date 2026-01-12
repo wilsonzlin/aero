@@ -450,8 +450,52 @@ impl PciConfig {
     pub fn write(&mut self, offset: u16, size: usize, value: u32) {
         let offset = offset as usize;
         match size {
-            1 => self.regs[offset] = value as u8,
-            2 => self.regs[offset..offset + 2].copy_from_slice(&(value as u16).to_le_bytes()),
+            1 | 2 => {
+                // BARs are conceptually 32-bit registers, but some guests may perform byte/word
+                // writes. Keep the decoded BAR fields coherent by reassembling a 32-bit value and
+                // delegating to the existing 32-bit BAR handlers.
+                if offset >= 0x10 && offset + size <= 0x14 {
+                    let shift = ((offset - 0x10) * 8) as u32;
+                    let mask = match size {
+                        2 => 0xffffu32 << shift,
+                        1 => 0xffu32 << shift,
+                        _ => 0,
+                    };
+                    let cur = self.read_u32_raw(0x10);
+                    let val = match size {
+                        2 => (value & 0xffff) << shift,
+                        1 => (value & 0xff) << shift,
+                        _ => 0,
+                    };
+                    let new = (cur & !mask) | (val & mask);
+                    self.write(0x10, 4, new);
+                    return;
+                }
+                if offset >= 0x14 && offset + size <= 0x18 {
+                    let shift = ((offset - 0x14) * 8) as u32;
+                    let mask = match size {
+                        2 => 0xffffu32 << shift,
+                        1 => 0xffu32 << shift,
+                        _ => 0,
+                    };
+                    let cur = self.read_u32_raw(0x14);
+                    let val = match size {
+                        2 => (value & 0xffff) << shift,
+                        1 => (value & 0xff) << shift,
+                        _ => 0,
+                    };
+                    let new = (cur & !mask) | (val & mask);
+                    self.write(0x14, 4, new);
+                    return;
+                }
+
+                match size {
+                    1 => self.regs[offset] = value as u8,
+                    2 => self.regs[offset..offset + 2]
+                        .copy_from_slice(&(value as u16).to_le_bytes()),
+                    _ => {}
+                }
+            }
             4 => {
                 // PCI command register writes are commonly performed as a full dword store, but the
                 // upper 16 bits are the Status register which is largely read-only / RW1C on real
