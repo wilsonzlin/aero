@@ -263,8 +263,8 @@ fn ata_lba48_oversized_pio_read_is_rejected_without_entering_data_phase() {
     ide.io_write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
 
     // Sector count (48-bit): high then low.
-    ide.io_write(PRIMARY_PORTS.cmd_base + 2, 1, (sectors >> 8) as u32);
-    ide.io_write(PRIMARY_PORTS.cmd_base + 2, 1, (sectors & 0xFF) as u32);
+    ide.io_write(PRIMARY_PORTS.cmd_base + 2, 1, sectors >> 8);
+    ide.io_write(PRIMARY_PORTS.cmd_base + 2, 1, sectors & 0xFF);
 
     // LBA = 0 (48-bit writes, high then low for each byte).
     ide.io_write(PRIMARY_PORTS.cmd_base + 3, 1, 0);
@@ -296,8 +296,8 @@ fn ata_lba48_oversized_pio_write_is_rejected_without_allocating_buffer() {
     ide.attach_primary_master_ata(AtaDevice::new(Box::new(disk), "Aero HDD"));
 
     ide.io_write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
-    ide.io_write(PRIMARY_PORTS.cmd_base + 2, 1, (sectors >> 8) as u32);
-    ide.io_write(PRIMARY_PORTS.cmd_base + 2, 1, (sectors & 0xFF) as u32);
+    ide.io_write(PRIMARY_PORTS.cmd_base + 2, 1, sectors >> 8);
+    ide.io_write(PRIMARY_PORTS.cmd_base + 2, 1, sectors & 0xFF);
     ide.io_write(PRIMARY_PORTS.cmd_base + 3, 1, 0);
     ide.io_write(PRIMARY_PORTS.cmd_base + 3, 1, 0);
     ide.io_write(PRIMARY_PORTS.cmd_base + 4, 1, 0);

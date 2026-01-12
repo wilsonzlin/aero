@@ -278,7 +278,7 @@ impl NetworkStack {
     ///
     /// To keep TTL behavior stable across snapshot/restore, we align the post-restore time base to
     /// the snapshotted `last_now_ms` on the first call after `load_state()`.
-    fn to_internal_now_ms(&mut self, now_ms: Millis) -> Millis {
+    fn sync_internal_now_ms(&mut self, now_ms: Millis) -> Millis {
         if let Some(anchor) = self.restore_time_anchor_ms.take() {
             let diff = anchor as i128 - now_ms as i128;
             self.time_offset_ms = diff.clamp(i64::MIN as i128, i64::MAX as i128) as i64;
@@ -299,7 +299,7 @@ impl NetworkStack {
     }
 
     pub fn process_outbound_ethernet(&mut self, frame: &[u8], now_ms: Millis) -> Vec<Action> {
-        let now_ms = self.to_internal_now_ms(now_ms);
+        let now_ms = self.sync_internal_now_ms(now_ms);
         let eth = match EthernetFrame::parse(frame) {
             Ok(eth) => eth,
             Err(_) => return Vec::new(),
@@ -318,7 +318,7 @@ impl NetworkStack {
     pub fn handle_tcp_proxy_event(&mut self, event: TcpProxyEvent, now_ms: Millis) -> Vec<Action> {
         // Keep the internal time base in sync even though most TCP proxy events don't currently
         // depend on `now_ms`.
-        let _ = self.to_internal_now_ms(now_ms);
+        let _ = self.sync_internal_now_ms(now_ms);
         let mut out = Vec::new();
 
         // Data is latency-sensitive; handle it without any extra bookkeeping first.
@@ -403,7 +403,7 @@ impl NetworkStack {
     }
 
     pub fn handle_udp_proxy_event(&mut self, event: UdpProxyEvent, now_ms: Millis) -> Vec<Action> {
-        let _ = self.to_internal_now_ms(now_ms);
+        let _ = self.sync_internal_now_ms(now_ms);
         let guest_mac = match self.guest_mac {
             Some(m) => m,
             None => return Vec::new(),
@@ -450,7 +450,7 @@ impl NetworkStack {
     }
 
     pub fn handle_dns_resolved(&mut self, resolved: DnsResolved, now_ms: Millis) -> Vec<Action> {
-        let now_ms = self.to_internal_now_ms(now_ms);
+        let now_ms = self.sync_internal_now_ms(now_ms);
         let pending = match self.pending_dns.remove(&resolved.request_id) {
             Some(p) => p,
             None => return Vec::new(),
