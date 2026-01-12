@@ -2278,54 +2278,6 @@ impl Machine {
         self.nvme.clone()
     }
 
-    /// Attach a disk backend to the NVMe controller, if present.
-    ///
-    /// NVMe currently requires a disk whose capacity is a multiple of 512 bytes (the fixed LBA
-    /// size exposed by the device model).
-    pub fn attach_nvme_disk(
-        &mut self,
-        disk: Box<dyn aero_storage::VirtualDisk + Send>,
-    ) -> Result<(), MachineError> {
-        let Some(nvme) = &self.nvme else {
-            return Ok(());
-        };
-
-        if !disk.capacity_bytes().is_multiple_of(512) {
-            return Err(MachineError::DiskBackend(
-                "nvme disk capacity must be a multiple of 512 bytes".to_string(),
-            ));
-        }
-
-        // Replace the device model while keeping the `Rc` identity stable for persistent MMIO
-        // mappings.
-        let new_dev = NvmePciDevice::try_new_from_virtual_disk(disk)
-            .map_err(|e| MachineError::DiskBackend(format!("{e:?}")))?;
-        *nvme.borrow_mut() = new_dev;
-
-        // Keep internal PCI config coherent with the canonical `PciConfigPorts` state.
-        if let Some(pci_cfg) = &self.pci_cfg {
-            let bdf = aero_devices::pci::profile::NVME_CONTROLLER.bdf;
-            let (command, bar0_base) = {
-                let mut pci_cfg = pci_cfg.borrow_mut();
-                let cfg = pci_cfg.bus_mut().device_config(bdf);
-                let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
-                let bar0_base = cfg
-                    .and_then(|cfg| cfg.bar_range(0))
-                    .map(|range| range.base)
-                    .unwrap_or(0);
-                (command, bar0_base)
-            };
-
-            let mut dev = nvme.borrow_mut();
-            dev.config_mut().set_command(command);
-            if bar0_base != 0 {
-                dev.config_mut().set_bar_base(0, bar0_base);
-            }
-        }
-
-        Ok(())
-    }
-
     /// Returns the E1000 NIC device, if present.
     pub fn e1000(&self) -> Option<Rc<RefCell<E1000Device>>> {
         self.e1000.clone()
@@ -2437,6 +2389,12 @@ impl Machine {
         let Some(nvme) = &self.nvme else {
             return Ok(());
         };
+
+        if !disk.capacity_bytes().is_multiple_of(512) {
+            return Err(MachineError::DiskBackend(
+                "nvme disk capacity must be a multiple of 512 bytes".to_string(),
+            ));
+        }
 
         // Preserve the device model's in-flight state (queues, pending interrupts, PCI config
         // snapshot bytes, etc.) while swapping the disk backend.
