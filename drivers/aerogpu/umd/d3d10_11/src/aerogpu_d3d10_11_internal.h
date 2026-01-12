@@ -311,6 +311,98 @@ enum class ResourceKind : uint32_t {
   Texture2D = 2,
 };
 
+struct Texture2DSubresourceLayout {
+  uint32_t mip_level = 0;
+  uint32_t array_layer = 0;
+  uint32_t width = 0;
+  uint32_t height = 0;
+  uint64_t offset_bytes = 0;
+  // Row pitch in bytes (texel rows for linear formats, block rows for BC).
+  uint32_t row_pitch_bytes = 0;
+  // Number of "layout rows" in this subresource (texel rows for linear formats, block rows for BC).
+  uint32_t rows_in_layout = 0;
+  uint64_t size_bytes = 0;
+};
+
+inline uint32_t aerogpu_mip_dim(uint32_t base, uint32_t mip_level) {
+  if (base == 0) {
+    return 0;
+  }
+  const uint32_t shifted = (mip_level >= 32) ? 0u : (base >> mip_level);
+  return std::max(1u, shifted);
+}
+
+inline bool build_texture2d_subresource_layouts(uint32_t aerogpu_format,
+                                                uint32_t width,
+                                                uint32_t height,
+                                                uint32_t mip_levels,
+                                                uint32_t array_layers,
+                                                uint32_t mip0_row_pitch_bytes,
+                                                std::vector<Texture2DSubresourceLayout>* out_layouts,
+                                                uint64_t* out_total_bytes) {
+  if (!out_layouts || !out_total_bytes) {
+    return false;
+  }
+  out_layouts->clear();
+  *out_total_bytes = 0;
+
+  if (width == 0 || height == 0 || mip_levels == 0 || array_layers == 0) {
+    return false;
+  }
+  if (mip0_row_pitch_bytes == 0) {
+    return false;
+  }
+
+  const uint64_t subresource_count = static_cast<uint64_t>(mip_levels) * static_cast<uint64_t>(array_layers);
+  if (subresource_count == 0 || subresource_count > static_cast<uint64_t>(SIZE_MAX)) {
+    return false;
+  }
+  out_layouts->reserve(static_cast<size_t>(subresource_count));
+
+  uint64_t offset = 0;
+  for (uint32_t layer = 0; layer < array_layers; ++layer) {
+    for (uint32_t mip = 0; mip < mip_levels; ++mip) {
+      const uint32_t mip_w = aerogpu_mip_dim(width, mip);
+      const uint32_t mip_h = aerogpu_mip_dim(height, mip);
+      const uint32_t tight_row_pitch = aerogpu_texture_min_row_pitch_bytes(aerogpu_format, mip_w);
+      const uint32_t rows = aerogpu_texture_num_rows(aerogpu_format, mip_h);
+      if (tight_row_pitch == 0 || rows == 0) {
+        return false;
+      }
+
+      const uint32_t row_pitch = (mip == 0) ? mip0_row_pitch_bytes : tight_row_pitch;
+      if (row_pitch < tight_row_pitch) {
+        return false;
+      }
+
+      const uint64_t size_bytes = static_cast<uint64_t>(row_pitch) * static_cast<uint64_t>(rows);
+      if (size_bytes == 0) {
+        return false;
+      }
+
+      Texture2DSubresourceLayout layout{};
+      layout.mip_level = mip;
+      layout.array_layer = layer;
+      layout.width = mip_w;
+      layout.height = mip_h;
+      layout.offset_bytes = offset;
+      layout.row_pitch_bytes = row_pitch;
+      layout.rows_in_layout = rows;
+      layout.size_bytes = size_bytes;
+      out_layouts->push_back(layout);
+
+      const uint64_t next = offset + size_bytes;
+      if (next < offset) {
+        return false;
+      }
+      offset = next;
+    }
+  }
+
+  *out_total_bytes = offset;
+  return true;
+}
+
 struct Adapter {
   std::atomic<uint32_t> next_handle{1};
 
@@ -538,6 +630,7 @@ struct Resource {
   uint32_t array_size = 1;
   uint32_t dxgi_format = 0;
   uint32_t row_pitch_bytes = 0;
+  std::vector<Texture2DSubresourceLayout> tex2d_subresources;
 
   // CPU-visible backing storage for resource uploads / staging reads.
   std::vector<uint8_t> storage;
@@ -551,6 +644,7 @@ struct Resource {
   bool mapped = false;
   uint32_t mapped_map_type = 0;
   uint32_t mapped_map_flags = 0;
+  uint32_t mapped_subresource = 0;
   uint64_t mapped_offset = 0;
   uint64_t mapped_size = 0;
 

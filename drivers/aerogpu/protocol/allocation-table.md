@@ -141,21 +141,82 @@ The host must validate `backing_offset_bytes + size_bytes <= alloc.size_bytes`.
 
 ### `CREATE_TEXTURE2D`
 
-When `backing_alloc_id != 0`, textures are backed by a **linear** guest-memory layout:
+When `backing_alloc_id != 0`, textures are backed by a **linear packed subresource chain** in guest memory.
+
+#### Subresource order / indexing
+
+Subresources use the D3D11 ordering:
+
+```
+subresource = mip + array_layer * mip_levels
+```
+
+The backing is packed in increasing `(array_layer, mip)` order:
+
+```
+for array_layer in 0..array_layers {
+  for mip in 0..mip_levels {
+    write subresource(mip, array_layer)
+  }
+}
+```
+
+There is **no additional alignment/padding** between subresources.
+
+#### Per-mip row pitch
+
+`CREATE_TEXTURE2D.row_pitch_bytes` describes the row pitch of **mip 0** only.
+
+For `mip > 0`, the backing uses a **tight** row pitch with no padding:
+
+```
+row_pitch_bytes(mip>0) = min_row_pitch_bytes(format, mip_width)
+```
+
+where:
+
+```
+mip_width  = max(1, width  >> mip)
+mip_height = max(1, height >> mip)
+```
+
+For block-compressed (BC) formats, `row_pitch_bytes` is measured in **block rows** (4x4 blocks):
+
+```
+blocks_w = ceil(mip_width / 4)
+row_pitch_bytes = blocks_w * bytes_per_block
+rows_in_layout  = ceil(mip_height / 4)
+```
+
+For linear RGBA/BGRA formats:
+
+```
+row_pitch_bytes = mip_width * bytes_per_pixel
+rows_in_layout  = mip_height
+```
+
+#### Subresource size and base address
+
+Each subresource is stored as:
+
+```
+subresource_size_bytes = row_pitch_bytes(subresource) * rows_in_layout(subresource)
+```
+
+and is packed sequentially. The first byte of `(mip=0,array_layer=0)` begins at:
 
 ```
 base_gpa = alloc_table[backing_alloc_id].gpa
-row0 = base_gpa + backing_offset_bytes
-rowN = row0 + N * row_pitch_bytes
+subresource0_base = base_gpa + backing_offset_bytes
 ```
 
 The host must validate:
 
 - `row_pitch_bytes != 0`
-- `row_pitch_bytes >= width * bytes_per_pixel(format)`
-- `backing_offset_bytes + row_pitch_bytes * height <= alloc.size_bytes`
+- `row_pitch_bytes >= min_row_pitch_bytes(format, width)` (mip0 minimum)
+- `backing_offset_bytes + total_packed_size_bytes(mip_levels, array_layers) <= alloc.size_bytes`
 
-> MVP: Win7 shared-surface interop currently assumes `mip_levels=1` and `array_layers=1`.
+> Win7 shared-surface interop currently assumes `mip_levels=1` and `array_layers=1`.
 
 ## `READONLY` semantics
 

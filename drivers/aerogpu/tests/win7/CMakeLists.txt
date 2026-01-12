@@ -379,6 +379,11 @@ aerogpu_add_win7_test(d3d11_texture_sampling_sanity
 )
 target_link_libraries(d3d11_texture_sampling_sanity PRIVATE d3d11 dxgi)
 
+aerogpu_add_win7_test(d3d11_texture_mips_array_sanity
+  d3d11_texture_mips_array_sanity/main.cpp
+)
+target_link_libraries(d3d11_texture_mips_array_sanity PRIVATE d3d11 dxgi)
+
 aerogpu_add_win7_test(d3d11_dynamic_constant_buffer_sanity
   d3d11_dynamic_constant_buffer_sanity/main.cpp
 )
