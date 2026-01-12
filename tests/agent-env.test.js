@@ -502,6 +502,18 @@ test("agent-env: rewrites -Wl,--threads=<n> into --threads=<n> for wasm32 target
 test("agent-env: strips lld --threads link-args from global RUSTFLAGS (nested wasm safety)", { skip: process.platform !== "linux" }, () => {
   const repoRoot = setupTempRepo();
   try {
+    const env = {
+      ...process.env,
+      AERO_CARGO_BUILD_JOBS: "2",
+      // Simulate an outer environment that tried to cap lld threads via global RUSTFLAGS.
+      // This should not leak into wasm32 builds.
+      RUSTFLAGS: "-C link-arg=-Wl,--threads=99 -Clink-arg=--threads=100 -C opt-level=2",
+    };
+    // `safe-run.sh` (and some CI/agent sandboxes) can inject per-target rustflags into the outer
+    // environment. This test wants to validate that `agent-env.sh` computes the wasm32 threads cap
+    // from scratch, so ensure the variable is unset for determinism.
+    delete env.CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS;
+
     const stdout = execFileSync(
       "bash",
       [
@@ -511,13 +523,7 @@ test("agent-env: strips lld --threads link-args from global RUSTFLAGS (nested wa
       {
         cwd: repoRoot,
         encoding: "utf8",
-        env: {
-          ...process.env,
-          AERO_CARGO_BUILD_JOBS: "2",
-          // Simulate an outer environment that tried to cap lld threads via global RUSTFLAGS.
-          // This should not leak into wasm32 builds.
-          RUSTFLAGS: "-C link-arg=-Wl,--threads=99 -Clink-arg=--threads=100 -C opt-level=2",
-        },
+        env,
         stdio: ["ignore", "pipe", "pipe"],
       },
     );
