@@ -755,6 +755,7 @@ describe("usb/UHCI synthetic HID passthrough integration (WASM)", () => {
     const load =
       (runtime as unknown as { load_state?: unknown }).load_state ?? (runtime as unknown as { restore_state?: unknown }).restore_state;
     if (typeof save !== "function" || typeof load !== "function") return;
+    const grow = (runtime as unknown as { webhid_attach_hub?: unknown }).webhid_attach_hub;
 
     const HidBridge = api.UsbHidPassthroughBridge;
     const keyboardDev = new HidBridge(
@@ -794,6 +795,12 @@ describe("usb/UHCI synthetic HID passthrough integration (WASM)", () => {
     runtime.attach_usb_hid_passthrough_device([0, 4], extraDev);
 
     load.call(runtime, snapshotBytes);
+
+    // Grow the external hub after restore to ensure passthrough bookkeeping doesn't reattach
+    // devices that were not present in the snapshot.
+    if (typeof grow === "function") {
+      grow.call(runtime, [EXTERNAL_HUB_ROOT_PORT], 32);
+    }
 
     const uhci: { io_write(offset: number, size: number, value: number): void; step_frame(): void; tick_1ms(): void } = {
       io_write: (offset, size, value) => runtime.port_write(offset >>> 0, size >>> 0, value >>> 0),

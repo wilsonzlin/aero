@@ -10,7 +10,7 @@ use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
 use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader, SnapshotVersion, SnapshotWriter};
 use aero_usb::hid::passthrough::{UsbHidPassthroughHandle, UsbHidPassthroughOutputReport};
 use aero_usb::hid::webhid;
-use aero_usb::hub::UsbHubDevice;
+use aero_usb::hub::{UsbHub, UsbHubDevice};
 use aero_usb::passthrough::{
     SetupPacket as PassthroughSetupPacket, UsbHostAction, UsbHostCompletion, UsbHostCompletionIn,
     UsbHostCompletionOut,
@@ -1456,12 +1456,54 @@ impl UhciRuntime {
     }
 
     fn grow_external_hub(&mut self, new_port_count: u8) -> Result<(), JsValue> {
-        let Some(state) = self.external_hub.as_mut() else {
+        let Some(current_state) = self.external_hub.as_ref() else {
             return Err(js_error("Cannot grow external hub: hub is not attached"));
         };
-        if new_port_count <= state.port_count {
+        if new_port_count <= current_state.port_count {
             return Ok(());
         }
+
+        let passthrough_candidates: Vec<(Vec<u8>, u8, UsbHidPassthroughHandle)> = self
+            .usb_hid_passthrough_devices
+            .iter()
+            .filter_map(|(path, dev)| {
+                if path.len() < 2 || path[0] as usize != EXTERNAL_HUB_ROOT_PORT {
+                    return None;
+                }
+                let hub_port = path[1];
+                if hub_port == 0 {
+                    return None;
+                }
+                // Avoid clobbering WebHID devices.
+                if self.webhid_hub_ports.contains_key(&hub_port) {
+                    return None;
+                }
+
+                Some((path.clone(), hub_port, dev.clone()))
+            })
+            .collect();
+
+        // Identify which externally managed passthrough devices are currently attached behind the
+        // old hub so we can reattach only those after hub replacement. The handle map can include
+        // devices that were attached previously but are not part of the current topology (e.g.
+        // devices attached after a snapshot, then removed by restore).
+        let passthrough_to_reattach: Vec<(Vec<u8>, UsbHidPassthroughHandle)> = {
+            let Some(hub) = self.external_hub_mut() else {
+                return Err(js_error("Cannot grow external hub: hub device is missing"));
+            };
+
+            passthrough_candidates
+                .into_iter()
+                .filter_map(|(path, hub_port, dev)| {
+                    let idx = (hub_port - 1) as usize;
+                    if hub.downstream_device_mut(idx).is_none() {
+                        return None;
+                    }
+
+                    Some((path.clone(), dev.clone()))
+                })
+                .collect()
+        };
 
         // Replace the hub device at root port 0 so the guest sees a real hotplug event and can
         // re-read the hub descriptor (port count, etc).
@@ -1471,7 +1513,9 @@ impl UhciRuntime {
         self.ctrl
             .hub_mut()
             .attach(EXTERNAL_HUB_ROOT_PORT, Box::new(hub));
-        state.port_count = new_port_count;
+        if let Some(state) = self.external_hub.as_mut() {
+            state.port_count = new_port_count;
+        }
 
         // Reattach any existing downstream devices behind the new hub.
         let to_reattach: Vec<(u8, UsbHidPassthroughHandle)> = self
@@ -1497,23 +1541,9 @@ impl UhciRuntime {
             )?;
         }
 
-        // Reattach any externally managed HID passthrough devices (e.g. synthetic browser input
-        // devices) that were previously attached behind the external hub.
-        let passthrough_to_reattach: Vec<(Vec<u8>, UsbHidPassthroughHandle)> = self
-            .usb_hid_passthrough_devices
-            .iter()
-            .map(|(path, dev)| (path.clone(), dev.clone()))
-            .collect();
-
+        // Reattach externally managed HID passthrough devices that were attached behind the old
+        // hub.
         for (path, dev) in passthrough_to_reattach {
-            if path.len() < 2 || path[0] as usize != EXTERNAL_HUB_ROOT_PORT {
-                continue;
-            }
-            let hub_port = path[1];
-            // Avoid clobbering WebHID devices.
-            if self.webhid_hub_ports.contains_key(&hub_port) {
-                continue;
-            }
             crate::uhci_controller_bridge::attach_device_at_path(
                 &mut self.ctrl,
                 &path,
