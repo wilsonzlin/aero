@@ -1,5 +1,6 @@
 use aero_devices::hpet::HPET_MMIO_BASE;
 use aero_devices::pci::{profile, PciBdf, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
+use aero_devices_storage::atapi::AtapiCdrom;
 use aero_interrupts::apic::{IOAPIC_MMIO_BASE, LAPIC_MMIO_BASE};
 use aero_machine::{Machine, MachineConfig};
 use aero_platform::interrupts::{InterruptController, InterruptInput, PlatformInterruptMode};
@@ -239,6 +240,53 @@ fn imcr_port_switch_to_apic_mode_delivers_ide_irq14_programmed_via_mmio() {
 
     panic!(
         "IDE IRQ14 was not delivered after IMCR switch to APIC mode (flag=0x{:02x})",
+        m.read_physical_u8(u64::from(flag_addr))
+    );
+}
+
+#[test]
+fn imcr_port_switch_to_apic_mode_delivers_ide_irq15_programmed_via_mmio() {
+    let vector = 0x61u8;
+    let flag_addr = 0x0501u16;
+    let flag_value = 0x5Au8;
+
+    let boot = build_real_mode_imcr_interrupt_wait_boot_sector(vector, flag_addr, flag_value);
+
+    let mut cfg = mmio_machine_config();
+    cfg.enable_ide = true;
+    cfg.enable_vga = false;
+
+    let mut m = Machine::new(cfg).unwrap();
+    m.set_disk_image(boot.to_vec()).unwrap();
+    m.reset();
+    enable_a20(&mut m);
+
+    // Attach an ATAPI device to IDE secondary master so IDENTIFY PACKET can raise IRQ15.
+    m.attach_ide_secondary_master_atapi(AtapiCdrom::new(None));
+
+    // Route ISA IRQ15 (GSI15) -> vector 0x61, edge-triggered, active-high (ISA wiring).
+    program_ioapic_entry(&mut m, 15, u32::from(vector), 0);
+
+    // Ensure PCI command enables I/O decode for the IDE function.
+    cfg_write(&mut m, profile::IDE_PIIX3.bdf, 0x04, 2, 0x0001);
+
+    // ATAPI IDENTIFY PACKET DEVICE (0xA1) via secondary legacy ports.
+    m.io_write(0x176, 1, 0xA0); // select secondary master
+    m.io_write(0x177, 1, 0xA1);
+
+    // Verify that IDENTIFY data is reachable via the data port (0x170).
+    let word0 = m.io_read(0x170, 2) as u16;
+    assert_eq!(word0, 0x8581);
+
+    for _ in 0..50 {
+        let _ = m.run_slice(10_000);
+        if m.read_physical_u8(u64::from(flag_addr)) == flag_value {
+            return;
+        }
+    }
+
+    panic!(
+        "IDE IRQ15 was not delivered after IMCR switch to APIC mode (flag=0x{:02x})",
         m.read_physical_u8(u64::from(flag_addr))
     );
 }
