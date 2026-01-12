@@ -211,6 +211,11 @@ fn pc_platform_nvme_bar0_relocation_is_honored_by_mmio_routing() {
     let old_base = read_nvme_bar0_base(&mut pc);
     assert_ne!(old_base, 0, "BAR0 should be assigned during BIOS POST");
 
+    // Touch state at the old base so we can ensure it survives BAR reprogramming.
+    // INTMS is write-1-to-set.
+    pc.memory.write_u32(old_base + 0x000c, 0x1234_5678);
+    assert_eq!(pc.memory.read_u32(old_base + 0x000c), 0x1234_5678);
+
     // Pick a new aligned base within the platform's PCI MMIO window.
     let bar_len = NvmeController::bar0_len();
     let new_base = old_base + (bar_len * 16);
@@ -248,6 +253,9 @@ fn pc_platform_nvme_bar0_relocation_is_honored_by_mmio_routing() {
     // New base should decode.
     let cap_new = pc.memory.read_u32(new_base);
     assert_ne!(cap_new, 0xffff_ffff, "new BAR0 base should route");
+
+    // Controller state must be preserved when BAR0 moves.
+    assert_eq!(pc.memory.read_u32(new_base + 0x000c), 0x1234_5678);
 
     // Writes at the new base should take effect.
     pc.memory.write_u32(new_base + 0x0024, 0x000f_000f); // AQA
