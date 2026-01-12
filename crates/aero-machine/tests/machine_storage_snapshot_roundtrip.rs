@@ -780,17 +780,11 @@ fn machine_storage_snapshot_roundtrip_preserves_controllers_and_allows_backend_r
 fn machine_restore_accepts_legacy_multi_disk_controller_entries() {
     const RAM_SIZE: u64 = 2 * 1024 * 1024;
 
-    let cfg = MachineConfig {
-        ram_size_bytes: RAM_SIZE,
-        enable_pc_platform: true,
-        enable_ahci: true,
-        enable_ide: true,
-        enable_serial: false,
-        enable_i8042: false,
-        enable_a20_gate: false,
-        enable_reset_ctrl: false,
-        ..Default::default()
-    };
+    let mut cfg = MachineConfig::win7_storage_defaults(RAM_SIZE);
+    cfg.enable_serial = false;
+    cfg.enable_i8042 = false;
+    cfg.enable_a20_gate = false;
+    cfg.enable_reset_ctrl = false;
 
     // Seed IDE disk so we can observe PIO progress: first 8 bytes are "BOOTREST".
     let ide_disk = SharedDisk::new(16);

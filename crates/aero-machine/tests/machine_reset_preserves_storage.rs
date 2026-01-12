@@ -207,18 +207,13 @@ fn ide_atapi_read_lba1(m: &mut Machine) -> Vec<u8> {
 
 #[test]
 fn machine_reset_preserves_ahci_and_ide_media() {
-    let mut m = Machine::new(MachineConfig {
-        ram_size_bytes: 2 * 1024 * 1024,
-        enable_pc_platform: true,
-        enable_serial: false,
-        enable_i8042: false,
-        enable_a20_gate: false,
-        enable_reset_ctrl: false,
-        enable_ahci: true,
-        enable_ide: true,
-        ..Default::default()
-    })
-    .expect("machine config should be valid");
+    let mut cfg = MachineConfig::win7_storage_defaults(2 * 1024 * 1024);
+    cfg.enable_serial = false;
+    cfg.enable_i8042 = false;
+    cfg.enable_a20_gate = false;
+    cfg.enable_reset_ctrl = false;
+
+    let mut m = Machine::new(cfg).expect("machine config should be valid");
 
     // Attach an AHCI disk with a recognizable boot sector.
     {
