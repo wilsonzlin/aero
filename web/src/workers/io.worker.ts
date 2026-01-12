@@ -1586,9 +1586,23 @@ function maybeInitHdaDevice(): void {
     audioHdaBridge = canSave && canLoad ? (bridge as AudioHdaSnapshotBridgeLike) : null;
     hdaDevice = dev;
     try {
-      mgr.registerPciDevice(dev, { device: 4, function: 0 });
-    } catch {
-      mgr.registerPciDevice(dev);
+      const addr = mgr.registerPciDevice(dev, { device: 4, function: 0 });
+      // Keep `device.bdf` consistent with what was actually registered for debugging.
+      (dev as unknown as { bdf?: { bus: number; device: number; function: number } }).bdf = addr;
+    } catch (err) {
+      // If the canonical 00:04.0 slot is occupied (or registration otherwise fails),
+      // fall back to the PCI bus allocator so the device can still attach.
+      const anyDev = dev as unknown as { bdf?: { bus: number; device: number; function: number } };
+      const prevBdf = anyDev.bdf;
+      try {
+        // Temporarily clear `bdf` so registerPciDevice() uses auto allocation instead.
+        anyDev.bdf = undefined;
+        const addr = mgr.registerPciDevice(dev);
+        anyDev.bdf = addr;
+      } catch (err2) {
+        anyDev.bdf = prevBdf;
+        throw err2;
+      }
     }
     mgr.addTickable(dev);
 
