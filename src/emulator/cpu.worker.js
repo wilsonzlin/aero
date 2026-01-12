@@ -133,6 +133,16 @@ function attachMicRingBuffer(ringBuffer, sampleRate) {
   micSampleRate = (sampleRate ?? 0) | 0;
   micLastRms = 0;
   micLastDropped = 0;
+
+  // The AudioWorklet microphone producer can start writing before (or while) this worker is
+  // attached as the consumer. To avoid replaying stale samples (large perceived latency),
+  // discard any buffered data when attaching by advancing readPos := writePos.
+  try {
+    const writePos = Atomics.load(micHeader, MIC_WRITE_POS_INDEX) >>> 0;
+    Atomics.store(micHeader, MIC_READ_POS_INDEX, writePos);
+  } catch {
+    // ignore
+  }
 }
 
 function consumeMicSamples() {
@@ -415,6 +425,17 @@ ctx.onmessage = (ev) => {
       case "resume": {
         if (!running) break;
         paused = false;
+        // The host-side microphone producer can continue writing into the ring buffer while the
+        // VM is paused. Discard any buffered samples on resume so capture/loopback starts from
+        // the most recent audio rather than replaying a stale backlog.
+        if (micHeader) {
+          try {
+            const writePos = Atomics.load(micHeader, MIC_WRITE_POS_INDEX) >>> 0;
+            Atomics.store(micHeader, MIC_READ_POS_INDEX, writePos);
+          } catch {
+            // ignore
+          }
+        }
         post({ type: "resumed" });
         wakeLoop();
         break;
@@ -423,6 +444,16 @@ ctx.onmessage = (ev) => {
         if (!running) break;
         stepsRemaining += 1;
         paused = false;
+        // Treat stepping like a resume boundary for mic capture: if the worker was paused for a
+        // while, discard any buffered samples so the next tick observes current audio.
+        if (micHeader) {
+          try {
+            const writePos = Atomics.load(micHeader, MIC_WRITE_POS_INDEX) >>> 0;
+            Atomics.store(micHeader, MIC_READ_POS_INDEX, writePos);
+          } catch {
+            // ignore
+          }
+        }
         post({ type: "stepping" });
         wakeLoop();
         break;
