@@ -1,3 +1,4 @@
+use aero_devices::hpet::HPET_MMIO_BASE;
 use aero_machine::{Machine, MachineConfig, RunExit};
 use aero_platform::interrupts::{InterruptController, InterruptInput, PlatformInterruptMode};
 use pretty_assertions::assert_eq;
@@ -13,6 +14,25 @@ fn pc_machine_config() -> MachineConfig {
         enable_reset_ctrl: false,
         ..Default::default()
     }
+}
+
+fn pc_machine_mmio_config() -> MachineConfig {
+    MachineConfig {
+        // Low RAM is fine; the MMIO ranges are well above 1MiB.
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_serial: false,
+        enable_i8042: false,
+        // HPET/MMIO bases rely on bit20; tests that touch MMIO should enable the A20 gate.
+        enable_a20_gate: true,
+        enable_reset_ctrl: false,
+        ..Default::default()
+    }
+}
+
+fn enable_a20(m: &mut Machine) {
+    // Fast A20 gate at port 0x92: bit1 enables A20.
+    m.io_write(0x92, 1, 0x02);
 }
 
 fn build_real_mode_interrupt_wait_boot_sector(
@@ -93,7 +113,12 @@ fn run_until_halt(m: &mut Machine) {
     panic!("machine did not reach HLT in time");
 }
 
-fn program_ioapic_entry(ints: &mut aero_platform::interrupts::PlatformInterrupts, gsi: u32, low: u32, high: u32) {
+fn program_ioapic_entry(
+    ints: &mut aero_platform::interrupts::PlatformInterrupts,
+    gsi: u32,
+    low: u32,
+    high: u32,
+) {
     let redtbl_low = 0x10u32 + gsi * 2;
     let redtbl_high = redtbl_low + 1;
     ints.ioapic_mmio_write(0x00, redtbl_low);
@@ -193,6 +218,64 @@ fn machine_pit_irq0_wakes_cpu_from_hlt_in_apic_mode() {
 
     panic!(
         "PIT IRQ0 (IOAPIC) handler did not run (flag=0x{:02x})",
+        m.read_physical_u8(u64::from(flag_addr))
+    );
+}
+
+#[test]
+fn machine_hpet_timer0_wakes_cpu_from_hlt_in_apic_mode() {
+    // HPET timer0 defaults to GSI2 (matching the ACPI MADT legacy timer interrupt source override).
+    const HPET_GSI: u32 = 2;
+
+    // Use a deterministic IOAPIC vector and a small real-mode handler that flips a flag.
+    let vector = 0x61u8;
+    let flag_addr = 0x0506u16;
+    let flag_value = 0xF0u8;
+
+    let boot = build_real_mode_interrupt_wait_boot_sector(vector, flag_addr, flag_value);
+
+    let mut m = Machine::new(pc_machine_mmio_config()).unwrap();
+    m.set_disk_image(boot.to_vec()).unwrap();
+    m.reset();
+
+    // Ensure the guest reaches `sti; hlt` so the HPET interrupt must wake it.
+    run_until_halt(&mut m);
+
+    // Enable A20 before touching MMIO (HPET base 0xFED0_0000 aliases to IOAPIC at 0xFEC0_0000 when
+    // A20 is disabled).
+    enable_a20(&mut m);
+
+    // Switch interrupt routing to APIC mode and route HPET GSI2 to `vector`.
+    {
+        let interrupts = m.platform_interrupts().unwrap();
+        let mut ints = interrupts.borrow_mut();
+        ints.set_mode(PlatformInterruptMode::Apic);
+
+        // HPET timer interrupts are typically level-triggered, active-high.
+        let low = u32::from(vector) | (1 << 15);
+        program_ioapic_entry(&mut ints, HPET_GSI, low, 0);
+    }
+
+    // Program HPET timer0 via guest-visible MMIO:
+    // - route: 2 (GSI2)
+    // - level-triggered
+    // - interrupt enabled
+    let timer0_cfg = (2u64 << 9) | (1 << 1) | (1 << 2);
+    m.write_physical_u64(HPET_MMIO_BASE + 0x100, timer0_cfg);
+    // Comparator: 10_000 ticks at 10MHz is 1ms (counter_clk_period_fs=100_000_000).
+    m.write_physical_u64(HPET_MMIO_BASE + 0x108, 10_000);
+    // Enable HPET (general config).
+    m.write_physical_u64(HPET_MMIO_BASE + 0x010, 1);
+
+    for _ in 0..50 {
+        let _ = m.run_slice(10_000);
+        if m.read_physical_u8(u64::from(flag_addr)) == flag_value {
+            return;
+        }
+    }
+
+    panic!(
+        "HPET timer0 interrupt did not wake HLT CPU (flag=0x{:02x})",
         m.read_physical_u8(u64::from(flag_addr))
     );
 }
@@ -357,7 +440,10 @@ fn machine_i8042_mouse_motion_raises_irq12_and_wakes_hlt_cpu() {
     m.io_write(0x64, 1, 0xD4); // i8042: next data write goes to mouse
     m.io_write(0x60, 1, 0xF4); // mouse: enable data reporting (ACK 0xFA)
     let ack = m.io_read(0x60, 1) as u8;
-    assert_eq!(ack, 0xFA, "expected mouse ACK after enabling data reporting");
+    assert_eq!(
+        ack, 0xFA,
+        "expected mouse ACK after enabling data reporting"
+    );
 
     // Enable i8042 IRQ12 generation (command byte bit 1) while keeping the default settings
     // (IRQ1 enabled + translation enabled).
@@ -477,7 +563,10 @@ fn machine_i8042_mouse_motion_delivers_via_ioapic_in_apic_mode() {
     m.io_write(0x64, 1, 0xD4);
     m.io_write(0x60, 1, 0xF4);
     let ack = m.io_read(0x60, 1) as u8;
-    assert_eq!(ack, 0xFA, "expected mouse ACK after enabling data reporting");
+    assert_eq!(
+        ack, 0xFA,
+        "expected mouse ACK after enabling data reporting"
+    );
 
     // Enable i8042 IRQ12 generation.
     m.io_write(0x64, 1, 0x60);

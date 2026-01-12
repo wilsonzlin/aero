@@ -1,5 +1,6 @@
 #![cfg(not(target_arch = "wasm32"))]
 
+use aero_devices::hpet::HPET_MMIO_BASE;
 use aero_devices::pit8254::{PIT_CH0, PIT_CMD, PIT_HZ};
 use aero_machine::pc::PcMachine;
 use aero_machine::RunExit;
@@ -89,10 +90,7 @@ fn pc_machine_pit_irq0_wakes_hlt_cpu() {
     let flag_addr = 0x0500u16;
     let flag_value = 0xA5u8;
 
-    pc.bus
-        .platform
-        .memory
-        .write_u8(u64::from(flag_addr), 0x00);
+    pc.bus.platform.memory.write_u8(u64::from(flag_addr), 0x00);
     install_real_mode_handler(&mut pc, handler_addr, flag_addr, flag_value);
     install_hlt_loop(&mut pc, code_base);
     write_ivt_entry(&mut pc, vector, 0x0000, handler_addr as u16);
@@ -146,10 +144,7 @@ fn pc_machine_pit_irq0_wakes_hlt_cpu_in_apic_mode() {
     let flag_addr = 0x0501u16;
     let flag_value = 0x5Au8;
 
-    pc.bus
-        .platform
-        .memory
-        .write_u8(u64::from(flag_addr), 0x00);
+    pc.bus.platform.memory.write_u8(u64::from(flag_addr), 0x00);
     install_real_mode_handler(&mut pc, handler_addr, flag_addr, flag_value);
     install_hlt_loop(&mut pc, code_base);
     write_ivt_entry(&mut pc, vector, 0x0000, handler_addr as u16);
@@ -185,6 +180,70 @@ fn pc_machine_pit_irq0_wakes_hlt_cpu_in_apic_mode() {
 
     panic!(
         "real-mode PIT IRQ0 IOAPIC handler did not run (flag=0x{:02x})",
+        pc.bus.platform.memory.read_u8(u64::from(flag_addr))
+    );
+}
+
+#[test]
+fn pc_machine_hpet_timer0_wakes_hlt_cpu_in_apic_mode() {
+    let mut pc = PcMachine::new(2 * 1024 * 1024);
+
+    // HPET timer0 defaults to GSI2 in our platform + ACPI tables.
+    let vector = 0x61u8;
+    let hpet_gsi = 2u32;
+
+    let handler_addr = 0x1200u64;
+    let code_base = 0x2200u64;
+    let flag_addr = 0x0502u16;
+    let flag_value = 0xC3u8;
+
+    pc.bus.platform.memory.write_u8(u64::from(flag_addr), 0x00);
+    install_real_mode_handler(&mut pc, handler_addr, flag_addr, flag_value);
+    install_hlt_loop(&mut pc, code_base);
+    write_ivt_entry(&mut pc, vector, 0x0000, handler_addr as u16);
+    setup_real_mode_cpu(&mut pc, code_base);
+
+    // Enter HLT first so the HPET interrupt must wake the CPU.
+    assert!(matches!(pc.run_slice(16), RunExit::Halted { .. }));
+
+    // Enable A20 so HPET base (0xFED0_0000) doesn't alias to IOAPIC (0xFEC0_0000).
+    pc.bus.platform.chipset.a20().set_enabled(true);
+
+    // Switch to APIC mode and route HPET GSI2 to `vector`.
+    {
+        let mut ints = pc.bus.platform.interrupts.borrow_mut();
+        ints.set_mode(PlatformInterruptMode::Apic);
+        let low = u32::from(vector) | (1 << 15); // level-triggered, active-high
+        program_ioapic_entry(&mut ints, hpet_gsi, low, 0);
+    }
+
+    // Program HPET timer0 via guest-visible MMIO.
+    // Configure Timer0: route=2, level-triggered, interrupt enabled.
+    let timer0_cfg = (2u64 << 9) | (1 << 1) | (1 << 2);
+    pc.bus
+        .platform
+        .memory
+        .write_physical(HPET_MMIO_BASE + 0x100, &timer0_cfg.to_le_bytes());
+    // Comparator: 10_000 ticks at 10MHz is 1ms.
+    pc.bus
+        .platform
+        .memory
+        .write_physical(HPET_MMIO_BASE + 0x108, &10_000u64.to_le_bytes());
+    // Enable HPET (general config).
+    pc.bus
+        .platform
+        .memory
+        .write_physical(HPET_MMIO_BASE + 0x010, &1u64.to_le_bytes());
+
+    for _ in 0..50 {
+        let _ = pc.run_slice(256);
+        if pc.bus.platform.memory.read_u8(u64::from(flag_addr)) == flag_value {
+            return;
+        }
+    }
+
+    panic!(
+        "real-mode HPET timer0 interrupt did not wake HLT CPU (flag=0x{:02x})",
         pc.bus.platform.memory.read_u8(u64::from(flag_addr))
     );
 }
