@@ -72,13 +72,32 @@ export interface UsbPassthroughDemoApi {
   poll_last_result(): unknown;
 }
 
+const MAX_COERCED_BYTES = 1024 * 1024;
+
+function ensureTransferableBytes(bytes: Uint8Array): Uint8Array | null {
+  // For `postMessage` safety/perf, avoid passing TypedArrays that reference:
+  // - a SharedArrayBuffer (would implicitly share the entire underlying buffer), or
+  // - a subview of a larger ArrayBuffer (would prevent transfers / expose unrelated bytes).
+  if (bytes.byteLength > MAX_COERCED_BYTES) return null;
+  const buf = bytes.buffer;
+  if (buf instanceof ArrayBuffer && bytes.byteOffset === 0 && bytes.byteLength === buf.byteLength) return bytes;
+  const out = new Uint8Array(bytes.byteLength);
+  out.set(bytes);
+  return out;
+}
+
 function coerceBytes(value: unknown): Uint8Array | null {
-  if (value instanceof Uint8Array) return value;
-  if (value instanceof ArrayBuffer) return new Uint8Array(value);
-  if (typeof SharedArrayBuffer !== "undefined" && value instanceof SharedArrayBuffer) {
+  if (value instanceof Uint8Array) return ensureTransferableBytes(value);
+  if (value instanceof ArrayBuffer) {
+    if (value.byteLength > MAX_COERCED_BYTES) return null;
     return new Uint8Array(value);
   }
+  if (typeof SharedArrayBuffer !== "undefined" && value instanceof SharedArrayBuffer) {
+    if (value.byteLength > MAX_COERCED_BYTES) return null;
+    return ensureTransferableBytes(new Uint8Array(value));
+  }
   if (Array.isArray(value)) {
+    if (value.length > MAX_COERCED_BYTES) return null;
     const out = new Uint8Array(value.length);
     for (let i = 0; i < value.length; i += 1) {
       const b = value[i];

@@ -354,6 +354,60 @@ describe("UsbPassthroughDemoRuntime", () => {
     expect(Array.from(msg.result.data)).toEqual([1, 2]);
   });
 
+  it("copies SAB-backed Uint8Array demo result payloads to ArrayBuffer-backed bytes", () => {
+    if (typeof SharedArrayBuffer === "undefined") return;
+    const sab = new SharedArrayBuffer(4);
+    const view = new Uint8Array(sab);
+    view.set([1, 2, 3, 4]);
+
+    const demo = new FakeDemo();
+    demo.nextResult = { status: "success", data: view.subarray(1, 3) };
+
+    const posted: any[] = [];
+    const runtime = new UsbPassthroughDemoRuntime({
+      demo,
+      postMessage: (msg) => posted.push(msg),
+    });
+
+    runtime.pollResults();
+
+    expect(posted).toHaveLength(1);
+    const msg = posted[0];
+    expect(msg.type).toBe("usb.demoResult");
+    expect(msg.result.status).toBe("success");
+    expect(msg.result.data).toBeInstanceOf(Uint8Array);
+    expect(msg.result.data.buffer).toBeInstanceOf(ArrayBuffer);
+    expect(Array.from(msg.result.data)).toEqual([2, 3]);
+  });
+
+  it("copies Uint8Array subviews emitted by the demo before forwarding to the broker", () => {
+    const demo = new FakeDemo();
+    const big = Uint8Array.of(9, 8, 7, 6, 5, 4);
+    const sub = new Uint8Array(big.buffer, 2, 2);
+    demo.actions.push({
+      kind: "bulkOut",
+      id: 1,
+      endpoint: 0x02,
+      data: sub,
+    });
+
+    const posted: any[] = [];
+    const runtime = new UsbPassthroughDemoRuntime({
+      demo,
+      postMessage: (msg) => posted.push(msg),
+    });
+
+    runtime.tick();
+
+    expect(posted).toHaveLength(1);
+    const msg = posted[0];
+    expect(msg.type).toBe("usb.action");
+    expect(msg.action.kind).toBe("bulkOut");
+    expect(msg.action.data).toBeInstanceOf(Uint8Array);
+    expect(msg.action.data.buffer).toBeInstanceOf(ArrayBuffer);
+    expect(Array.from(msg.action.data)).toEqual([7, 6]);
+  });
+
   it("throws when the demo emits an invalid result payload", () => {
     const demo = new FakeDemo();
     demo.nextResult = { status: "success", data: ["oops"] };
