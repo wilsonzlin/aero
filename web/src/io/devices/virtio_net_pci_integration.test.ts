@@ -195,10 +195,6 @@ describe("io/devices/virtio-net (pci bridge integration)", () => {
       mgr.portWrite(0x0cf8, 4, cfgAddr(addr, off));
       return mgr.portRead(0x0cfc + (off & 3), 4) >>> 0;
     };
-    const cfgWriteU16 = (addr: PciAddress, off: number, value: number) => {
-      mgr.portWrite(0x0cf8, 4, cfgAddr(addr, off));
-      mgr.portWrite(0x0cfc + (off & 3), 2, value & 0xffff);
-    };
     const cfgWriteU32 = (addr: PciAddress, off: number, value: number) => {
       mgr.portWrite(0x0cf8, 4, cfgAddr(addr, off));
       mgr.portWrite(0x0cfc + (off & 3), 4, value >>> 0);
@@ -223,8 +219,19 @@ describe("io/devices/virtio-net (pci bridge integration)", () => {
       cfgWriteU32(pciAddr, 0x14, newBar0High);
 
       // Enable PCI memory decoding (Command register bit 1).
+      // Many guests write the full 32-bit dword at 0x04 with the upper (Status)
+      // bits as zero; the TS PCI bus must preserve status bits such as
+      // CAP_LIST used by virtio-pci.
+      const statusBefore = cfgReadU16(pciAddr, 0x06);
+      expect((statusBefore & 0x0010) !== 0).toBe(true);
+
       const cmd = cfgReadU16(pciAddr, 0x04);
-      cfgWriteU16(pciAddr, 0x04, cmd | 0x2);
+      cfgWriteU32(pciAddr, 0x04, (cmd | 0x2) >>> 0);
+
+      const statusAfter = cfgReadU16(pciAddr, 0x06);
+      expect((statusAfter & 0x0010) !== 0).toBe(true);
+      const cmdAfter = cfgReadU16(pciAddr, 0x04);
+      expect((cmdAfter & 0x0002) !== 0).toBe(true);
 
       // Compute mapped MMIO base.
       const bar0Low = cfgReadU32(pciAddr, 0x10);
