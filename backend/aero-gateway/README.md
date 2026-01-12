@@ -69,7 +69,7 @@ docker run --rm -p 8080:8080 aero-gateway
 - `GET /readyz` readiness
 - `GET /version` build/version info
 - `GET /metrics` Prometheus metrics
-- `POST /session` issues the `aero_session` cookie used by `/dns-query`, `/tcp`, and `/tcp-mux` (and advertises same-origin endpoint paths for browser clients)
+- `POST /session` issues the `aero_session` cookie used by `/dns-query`, `/tcp`, and `/tcp-mux` (and advertises base-path-aware endpoint paths for browser clients via the `endpoints` object)
   - `endpoints.l2` points at the Option C L2 tunnel endpoint (`/l2`, subprotocol `aero-l2-tunnel-v1`), which is served by `aero-l2-proxy` behind the reverse proxy (not by the Node gateway process itself).
   - `limits.l2` provides protocol payload size caps (`FRAME` vs control messages) so clients can tune buffering.
   - When the gateway is configured with `UDP_RELAY_BASE_URL`, the JSON response also includes `udpRelay` metadata (base URL + endpoints + short-lived token) for `proxy/webrtc-udp-relay`.
@@ -137,6 +137,8 @@ Required / commonly used:
 - `PORT` (default: `8080`)
 - `LOG_LEVEL` (default: `info`)
 - `PUBLIC_BASE_URL` (default: `http://localhost:${PORT}`, or `https://localhost:${PORT}` when `TLS_ENABLED=1`)
+  - May include a path prefix when served behind a reverse proxy at a subpath (e.g. `https://example.com/aero`).
+  - `POST /session` endpoint discovery prefixes `endpoints.*` with the `.pathname` of this URL.
 - `ALLOWED_ORIGINS` (comma-separated origins; default: `PUBLIC_BASE_URL` origin)
 - `CROSS_ORIGIN_ISOLATION=1` to enable COOP/COEP headers
 - `TRUST_PROXY=1` to trust `X-Forwarded-*` headers from a reverse proxy (only enable when not directly exposed)
