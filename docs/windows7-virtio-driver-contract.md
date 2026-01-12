@@ -786,10 +786,13 @@ The device MUST use Linux input event types/codes (`EV_KEY`, `EV_REL`, `EV_SYN`,
   - `type = EV_REL`, `code = REL_WHEEL`
   - `value` is signed tick count (typically ±1)
 - Buttons:
-  - `type = EV_KEY`, `code = BTN_LEFT / BTN_RIGHT / BTN_MIDDLE`
+  - `type = EV_KEY`, `code = BTN_LEFT / BTN_RIGHT / BTN_MIDDLE / BTN_SIDE / BTN_EXTRA`
   - `value = 1` press, `0` release
+  - `BTN_SIDE` and `BTN_EXTRA` correspond to the common "back/forward" mouse buttons (aka mouse buttons 4/5).
 - Minimum required advertised event types (device MUST advertise them via `EV_BITS` with `subsel = 0`):
   - `EV_SYN`, `EV_KEY`, `EV_REL`
+- Minimum required supported button codes (mouse, advertised via `EV_BITS` with `subsel = EV_KEY`):
+  - `BTN_LEFT`, `BTN_RIGHT`, `BTN_MIDDLE`, `BTN_SIDE`, `BTN_EXTRA`
 
 ##### Status queue (`statusq`) behavior
 
