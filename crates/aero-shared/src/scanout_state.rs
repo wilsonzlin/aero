@@ -158,6 +158,7 @@ impl ScanoutState {
             if gen0 & SCANOUT_STATE_GENERATION_BUSY_BIT != 0 {
                 // Writer in progress.
                 std::hint::spin_loop();
+                test_yield();
                 continue;
             }
 
@@ -171,6 +172,7 @@ impl ScanoutState {
 
             let gen1 = self.generation.load(Ordering::SeqCst);
             if gen0 != gen1 {
+                test_yield();
                 continue;
             }
 
@@ -322,5 +324,62 @@ mod tests {
 
         writer.join().unwrap();
         reader.join().unwrap();
+    }
+}
+
+#[cfg(all(test, feature = "loom"))]
+mod loom_tests {
+    use super::*;
+
+    use loom::sync::Arc;
+    use loom::thread;
+
+    #[test]
+    fn snapshot_never_observes_partial_publish() {
+        loom::model(|| {
+            let state = Arc::new(ScanoutState::new());
+
+            // Initialize to a coherent state using the same invariant relation as the update.
+            state.publish(ScanoutStateUpdate {
+                source: SCANOUT_SOURCE_WDDM,
+                base_paddr_lo: 3,
+                base_paddr_hi: 4,
+                width: 0,
+                height: 1,
+                pitch_bytes: 2,
+                format: SCANOUT_FORMAT_B8G8R8X8,
+            });
+
+            let writer_state = state.clone();
+            let reader_state = state.clone();
+
+            let writer = thread::spawn(move || {
+                writer_state.publish(ScanoutStateUpdate {
+                    source: SCANOUT_SOURCE_WDDM,
+                    base_paddr_lo: 4,
+                    base_paddr_hi: 5,
+                    width: 1,
+                    height: 2,
+                    pitch_bytes: 3,
+                    format: SCANOUT_FORMAT_B8G8R8X8,
+                });
+            });
+
+            let reader = thread::spawn(move || {
+                let snap = reader_state.snapshot();
+
+                assert_eq!(snap.source, SCANOUT_SOURCE_WDDM);
+                assert_eq!(snap.format, SCANOUT_FORMAT_B8G8R8X8);
+
+                let token = snap.width;
+                assert_eq!(snap.height, token.wrapping_add(1));
+                assert_eq!(snap.pitch_bytes, token.wrapping_add(2));
+                assert_eq!(snap.base_paddr_lo, token.wrapping_add(3));
+                assert_eq!(snap.base_paddr_hi, token.wrapping_add(4));
+            });
+
+            writer.join().unwrap();
+            reader.join().unwrap();
+        });
     }
 }
