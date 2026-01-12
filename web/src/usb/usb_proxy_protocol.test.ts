@@ -131,6 +131,8 @@ describe("usb/usb_proxy_protocol", () => {
     const ringDetach = { type: "usb.ringDetach", reason: "disable fast path" };
     expect(isUsbRingDetachMessage(ringDetach)).toBe(true);
     expect(isUsbProxyMessage(ringDetach)).toBe(true);
+    expect(isUsbProxyMessage({ type: "usb.ringDetach" })).toBe(true);
+    expect(isUsbProxyMessage({ type: "usb.ringDetach", reason: 123 })).toBe(false);
     expect(
       isUsbProxyMessage({
         type: "usb.guest.status",
