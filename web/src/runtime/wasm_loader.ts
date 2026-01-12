@@ -236,6 +236,12 @@ export interface WasmApi {
             io_write(offset: number, size: number, value: number): void;
             tick_1ms(): void;
             irq_asserted(): boolean;
+            /**
+             * Update the device model's PCI command register (offset 0x04, low 16 bits).
+             *
+             * Optional for older WASM builds.
+             */
+            set_pci_command?(command: number): void;
             save_state?(): Uint8Array;
             load_state?(bytes: Uint8Array): void;
             snapshot_state?: () => Uint8Array;
@@ -257,6 +263,12 @@ export interface WasmApi {
             tick_1ms(): void;
 
             irq_asserted(): boolean;
+            /**
+             * Update the device model's PCI command register (offset 0x04, low 16 bits).
+             *
+             * Optional for older WASM builds.
+             */
+            set_pci_command?(command: number): void;
 
             save_state?(): Uint8Array;
             load_state?(bytes: Uint8Array): void;
@@ -650,6 +662,12 @@ export interface WasmApi {
         io_write(offset: number, size: number, value: number): void;
         step_frames(frames: number): void;
         irq_level(): boolean;
+        /**
+         * Update the device model's PCI command register (offset 0x04, low 16 bits).
+         *
+         * Optional for older WASM builds.
+         */
+        set_pci_command?(command: number): void;
         set_connected(connected: boolean): void;
 
         detach_at_path(path: number[]): void;

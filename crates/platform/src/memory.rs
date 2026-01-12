@@ -73,7 +73,6 @@ impl MemoryBus {
             ],
         )
         .expect("valid PC RAM remapping layout");
-
         Box::new(mapped)
     }
 

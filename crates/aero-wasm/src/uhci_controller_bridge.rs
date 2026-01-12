@@ -190,6 +190,7 @@ pub struct UhciControllerBridge {
     guest_base: u32,
     guest_size: u64,
     webusb: Option<UsbWebUsbPassthroughDevice>,
+    pci_command: u16,
 }
 
 impl UhciControllerBridge {
@@ -238,7 +239,18 @@ impl UhciControllerBridge {
             guest_base,
             guest_size: guest_size_u64,
             webusb: None,
+            pci_command: 0,
         })
+    }
+
+    /// Mirror the guest-written PCI command register (0x04, low 16 bits) into the WASM device
+    /// wrapper.
+    ///
+    /// This is used to enforce PCI Bus Master Enable gating for DMA. In a JS runtime, the PCI
+    /// configuration space lives in TypeScript (`PciBus`), so the WASM bridge must be updated via
+    /// this explicit hook.
+    pub fn set_pci_command(&mut self, command: u32) {
+        self.pci_command = (command & 0xffff) as u16;
     }
 
     #[wasm_bindgen(getter)]
@@ -270,6 +282,10 @@ impl UhciControllerBridge {
     /// Advance the controller by exactly `frames` UHCI frames (1ms each).
     pub fn step_frames(&mut self, frames: u32) {
         if frames == 0 {
+            return;
+        }
+        // Only DMA when PCI Bus Master Enable is set (command bit 2).
+        if (self.pci_command & (1 << 2)) == 0 {
             return;
         }
         let mut mem = WasmGuestMemory {

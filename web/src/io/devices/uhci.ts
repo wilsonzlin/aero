@@ -6,6 +6,12 @@ export type UhciControllerBridgeLike = {
   io_read(offset: number, size: number): number;
   io_write(offset: number, size: number, value: number): void;
   /**
+   * Optional hook for mirroring PCI command register writes into the underlying device model.
+   *
+   * When present, this can be used by WASM bridges to enforce DMA gating based on Bus Master Enable.
+   */
+  set_pci_command?(command: number): void;
+  /**
    * Legacy 1ms stepping API (older WASM builds).
    */
   tick_1ms?: () => void;
@@ -98,7 +104,18 @@ export class UhciPciDevice implements PciDevice, TickableDevice {
 
   onPciCommandWrite(command: number): void {
     if (this.#destroyed) return;
-    this.#pciCommand = command & 0xffff;
+    const cmd = command & 0xffff;
+    this.#pciCommand = cmd;
+
+    // Mirror into the WASM bridge so it can enforce PCI Bus Master Enable gating for DMA.
+    const setCmd = this.#bridge.set_pci_command;
+    if (typeof setCmd === "function") {
+      try {
+        setCmd.call(this.#bridge, cmd >>> 0);
+      } catch {
+        // ignore device errors during PCI config writes
+      }
+    }
 
     // Interrupt Disable bit can immediately drop INTx level.
     this.#syncIrq();
