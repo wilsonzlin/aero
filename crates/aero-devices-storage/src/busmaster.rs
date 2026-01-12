@@ -118,10 +118,10 @@ impl BusMasterChannel {
         }
     }
 
-    /// Reset the Bus Master IDE register state back to its initial power-on baseline.
+    /// Reset the Bus Master IDE register block back to its power-on state.
     ///
-    /// This intentionally preserves the per-drive DMA capability flags, which reflect attached
-    /// drive/media capabilities and are not directly guest-programmable.
+    /// This intentionally preserves `drive_dma_capable` because it reflects attached device/media
+    /// capabilities (host-managed) rather than guest-programmable state.
     pub fn reset(&mut self) {
         self.cmd = 0;
         self.status = 0;

@@ -66,7 +66,7 @@ use aero_io_snapshot::io::state::{
     IoSnapshot, SnapshotError as IoSnapshotError, SnapshotReader as IoSnapshotReader,
     SnapshotResult as IoSnapshotResult, SnapshotVersion, SnapshotWriter,
 };
-use aero_io_snapshot::io::storage::state::DiskControllersSnapshot;
+use aero_io_snapshot::io::storage::dskc::DiskControllersSnapshot;
 use aero_net_backend::{FrameRing, L2TunnelRingBackend, L2TunnelRingBackendStats, NetworkBackend};
 use aero_net_e1000::E1000Device;
 use aero_net_pump::tick_e1000;

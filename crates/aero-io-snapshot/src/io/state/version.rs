@@ -258,6 +258,14 @@ impl<'a> SnapshotReader<'a> {
         self.fields.get(&tag).copied()
     }
 
+    /// Iterate over all TLV fields in canonical tag order.
+    ///
+    /// This is useful for wrapper snapshots that embed a dynamic set of tagged sub-snapshots (e.g.
+    /// disk controller snapshots keyed by PCI BDF).
+    pub fn iter_fields(&self) -> impl Iterator<Item = (u16, &'a [u8])> + '_ {
+        self.fields.iter().map(|(&tag, &bytes)| (tag, bytes))
+    }
+
     pub fn u8(&self, tag: u16) -> SnapshotResult<Option<u8>> {
         let Some(bytes) = self.bytes(tag) else {
             return Ok(None);
