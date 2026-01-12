@@ -12,7 +12,7 @@
 
 mod guest_time;
 
-pub use guest_time::GuestTime;
+pub use guest_time::{GuestTime, DEFAULT_GUEST_CPU_HZ};
 
 use std::cell::RefCell;
 use std::fmt;

@@ -12,6 +12,11 @@
 //! `GuestTime` avoids that stall (and cumulative rounding drift) by maintaining an explicit
 //! remainder accumulator so fractional nanoseconds eventually "carry" into a non-zero `delta_ns`.
 
+/// Default virtual CPU frequency used for guest time accounting.
+///
+/// This matches the default deterministic TSC frequency used by `aero_cpu_core`.
+pub const DEFAULT_GUEST_CPU_HZ: u64 = aero_cpu_core::time::DEFAULT_TSC_HZ;
+
 /// Deterministic instruction/cycle → nanosecond converter with remainder accumulation.
 #[derive(Debug, Clone)]
 pub struct GuestTime {
@@ -36,6 +41,11 @@ impl GuestTime {
             cpu_hz,
             remainder: 0,
         }
+    }
+
+    /// Construct a guest time accumulator that matches the current `CpuCore` TSC frequency.
+    pub fn new_from_cpu(cpu: &aero_cpu_core::CpuCore) -> Self {
+        Self::new(cpu.time.tsc_hz())
     }
 
     /// Returns the configured virtual CPU frequency in Hz.
@@ -70,5 +80,11 @@ impl GuestTime {
         } else {
             delta_ns as u64
         }
+    }
+}
+
+impl Default for GuestTime {
+    fn default() -> Self {
+        Self::new(DEFAULT_GUEST_CPU_HZ)
     }
 }
