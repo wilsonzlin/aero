@@ -1621,6 +1621,8 @@ impl AerogpuD3d11Executor {
                 OPCODE_DRAW
                 | OPCODE_DRAW_INDEXED
                 | OPCODE_RESOURCE_DIRTY_RANGE
+                | OPCODE_CREATE_SAMPLER
+                | OPCODE_DESTROY_SAMPLER
                 | OPCODE_BIND_SHADERS
                 | OPCODE_SET_SHADER_CONSTANTS_F
                 | OPCODE_SET_INPUT_LAYOUT
@@ -2605,6 +2607,8 @@ impl AerogpuD3d11Executor {
                 OPCODE_SET_PRIMITIVE_TOPOLOGY => self.exec_set_primitive_topology(cmd_bytes)?,
                 OPCODE_SET_TEXTURE => self.exec_set_texture(cmd_bytes)?,
                 OPCODE_SET_SAMPLER_STATE => self.exec_set_sampler_state(cmd_bytes)?,
+                OPCODE_CREATE_SAMPLER => self.exec_create_sampler(cmd_bytes)?,
+                OPCODE_DESTROY_SAMPLER => self.exec_destroy_sampler(cmd_bytes)?,
                 OPCODE_SET_SAMPLERS => self.exec_set_samplers(cmd_bytes)?,
                 OPCODE_SET_CONSTANT_BUFFERS => self.exec_set_constant_buffers(cmd_bytes)?,
                 OPCODE_NOP | OPCODE_DEBUG_MARKER => {}

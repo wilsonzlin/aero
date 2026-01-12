@@ -313,6 +313,14 @@ fn decode_ld(saturate: bool, r: &mut InstrReader<'_>) -> Result<Sm4Inst, Sm4Deco
     // Optional explicit LOD operand.
     let explicit_lod = decode_src(r)?;
     if r.is_eof() {
+        // Treat vector swizzles as offset-like operands (e.g. `Texture2D.Load(..., offset)`)
+        // rather than an explicit LOD. Explicit LOD operands are scalar in practice (replicated
+        // swizzle), while offsets require multiple components.
+        let swz = explicit_lod.swizzle.0;
+        let is_scalar = swz[0] == swz[1] && swz[0] == swz[2] && swz[0] == swz[3];
+        if !is_scalar {
+            return Ok(Sm4Inst::Unknown { opcode: OPCODE_LD });
+        }
         return Ok(Sm4Inst::Ld {
             dst,
             coord,
