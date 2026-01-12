@@ -17,8 +17,12 @@ const MAX_DISK_CONTROLLER_SNAPSHOT_BYTES: usize = 32 * 1024 * 1024;
 // Disk controller multiplexing wrapper
 // ----------------------------------------
 
-/// Snapshot wrapper that can hold multiple disk-controller `aero-io-snapshot` blobs keyed by PCI
-/// BDF (`bus<<8 | device<<3 | function`).
+/// Snapshot wrapper that can hold multiple disk-controller `aero-io-snapshot` blobs keyed by a
+/// packed PCI BDF (`u16`) using the standard PCI config-address layout:
+/// `(bus << 8) | (device << 3) | function`.
+///
+/// Producers/consumers outside this crate (e.g. machine integration) should prefer
+/// `aero_devices::pci::PciBdf::{pack_u16, unpack_u16}` to avoid re-encoding inconsistencies.
 ///
 /// This is intended for higher-level snapshot formats that need to store multiple distinct
 /// controller implementations (AHCI, virtio-blk, NVMe, ...) under a single device entry.
