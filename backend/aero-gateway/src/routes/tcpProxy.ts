@@ -232,11 +232,11 @@ class WebSocketTcpBridge {
 
   start(head: Buffer): void {
     if (head.length > 0) {
-      this.wsBuffer = Buffer.concat([this.wsBuffer, head]);
+      this.wsBuffer = this.wsBuffer.length === 0 ? head : Buffer.concat([this.wsBuffer, head]);
     }
 
     this.wsSocket.on("data", (data) => {
-      this.wsBuffer = Buffer.concat([this.wsBuffer, data]);
+      this.wsBuffer = this.wsBuffer.length === 0 ? data : Buffer.concat([this.wsBuffer, data]);
       this.drainWebSocketFrames();
     });
     this.wsSocket.on("error", () => this.close());
@@ -421,7 +421,10 @@ function tryReadFrame(buffer: Buffer, maxPayloadBytes: number): TryReadFrameResu
     payload = unmask(payload, maskKey!);
   }
 
-  return { frame: { fin, opcode, payload }, remaining };
+  // If we consumed the entire buffer, avoid keeping a reference to the backing allocation
+  // via an empty subarray view.
+  const remainingTrimmed = remaining.length === 0 ? Buffer.alloc(0) : remaining;
+  return { frame: { fin, opcode, payload }, remaining: remainingTrimmed };
 }
 
 function unmask(payload: Buffer, key: Buffer): Buffer {
