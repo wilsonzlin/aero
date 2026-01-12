@@ -180,6 +180,25 @@ fn pc_machine_network_backend_l2_ring_stats_work_for_boxed_ring_backend() {
 }
 
 #[test]
+fn pc_machine_detach_network_clears_ring_stats() {
+    let tx_ring = Arc::new(RingBuffer::new(1024));
+    let rx_ring = Arc::new(RingBuffer::new(1024));
+
+    let mut m = PcMachine::new_with_config(PcMachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_e1000: true,
+        ..Default::default()
+    })
+    .unwrap();
+
+    m.attach_l2_tunnel_rings(tx_ring, rx_ring);
+    assert!(m.network_backend_l2_ring_stats().is_some());
+
+    m.detach_network();
+    assert!(m.network_backend_l2_ring_stats().is_none());
+}
+
+#[test]
 fn pc_machine_e1000_tx_completes_descriptor_without_network_backend() {
     let mut m = PcMachine::new_with_config(PcMachineConfig {
         ram_size_bytes: 2 * 1024 * 1024,
