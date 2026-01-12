@@ -1214,6 +1214,8 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
         if (maybeStatus === 412) {
           // IfMatch failed (most likely due to an If-Range check). Per RFC 9110, ignore Range and
           // return the full representation to avoid mixed-version bytes.
+          requestedRange = undefined;
+          ifMatch = undefined;
           try {
             s3Res = await deps.s3.send(
               new GetObjectCommand({
@@ -1230,8 +1232,7 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
             }
             throw retryErr;
           }
-        }
-        if (maybeStatus === 416) {
+        } else if (maybeStatus === 416) {
           await sendRangeNotSatisfiable({
             reply,
             config: deps.config,
@@ -1241,11 +1242,9 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
             record,
           });
           return;
-        }
-        if (maybeStatus === 404) {
+        } else if (maybeStatus === 404) {
           throw new ApiError(404, "Image object not found", "NOT_FOUND");
-        }
-        if (maybeStatus >= 400 && maybeStatus < 500) {
+        } else if (maybeStatus >= 400 && maybeStatus < 500) {
           throw new ApiError(maybeStatus, "S3 request rejected", "S3_ERROR");
         }
       }

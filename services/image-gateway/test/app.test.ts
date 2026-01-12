@@ -851,6 +851,72 @@ describe("app", () => {
     expect(res.headers["cross-origin-resource-policy"]).toBe("same-site");
   });
 
+  it("retries without Range when S3 returns 412 for IfMatch (If-Range race)", async () => {
+    const config = makeConfig();
+    const store = new MemoryImageStore();
+    const ownerId = "user-1";
+    const imageId = "image-1";
+
+    store.create({
+      id: imageId,
+      ownerId,
+      createdAt: new Date().toISOString(),
+      version: "v1",
+      s3Key: "images/user-1/image-1/v1/disk.img",
+      uploadId: "upload-1",
+      status: "complete",
+      etag: '"etag"',
+    });
+
+    let getObjectCalls = 0;
+    const s3 = {
+      async send(command: unknown) {
+        if (command instanceof GetObjectCommand) {
+          getObjectCalls += 1;
+          if (getObjectCalls === 1) {
+            expect(command.input.Range).toBe("bytes=0-4");
+            expect(command.input.IfMatch).toBe('"etag"');
+            const err = new Error("PreconditionFailed") as Error & {
+              $metadata?: { httpStatusCode?: number };
+            };
+            err.$metadata = { httpStatusCode: 412 };
+            throw err;
+          }
+          expect(command.input.Range).toBeUndefined();
+          expect(command.input.IfMatch).toBeUndefined();
+          return {
+            Body: Readable.from([Buffer.from("hello")]),
+            ContentLength: 5,
+            ETag: '"etag-new"',
+            ContentType: "application/octet-stream",
+            CacheControl: CACHE_CONTROL_PRIVATE_NO_STORE,
+          };
+        }
+        throw new Error("unexpected command");
+      },
+    } as unknown as S3Client;
+
+    const app = buildApp({ config, s3, store });
+    await app.ready();
+
+    const res = await app.inject({
+      method: "GET",
+      url: `/v1/images/${imageId}/range`,
+      headers: {
+        "x-user-id": ownerId,
+        range: "bytes=0-4",
+        "if-range": '"etag"',
+      },
+    });
+
+    expect(getObjectCalls).toBe(2);
+    expect(res.statusCode).toBe(200);
+    expect(res.headers["content-range"]).toBeUndefined();
+    expect(res.headers["etag"]).toBe('"etag-new"');
+    expect(res.headers["cache-control"]).toBe(CACHE_CONTROL_PRIVATE_NO_STORE);
+    expect(res.payload).toBe("hello");
+  });
+
   it("handles CORS preflight with OPTIONS", async () => {
     const config = makeConfig();
     const store = new MemoryImageStore();
