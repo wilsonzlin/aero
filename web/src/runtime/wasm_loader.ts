@@ -757,7 +757,8 @@ export interface WasmApi {
     /**
      * Canonical full-system VM (`aero_machine::Machine`).
      */
-    Machine: new (ramSizeBytes: number) => {
+    Machine: {
+        new (ramSizeBytes: number): {
         reset(): void;
         set_disk_image(bytes: Uint8Array): void;
         run_slice(maxInsts: number): { kind: number; executed: number; detail: string; free(): void };
@@ -900,7 +901,34 @@ export interface WasmApi {
         snapshot_full_to_opfs?(path: string): Promise<void>;
         snapshot_dirty_to_opfs?(path: string): Promise<void>;
         restore_snapshot_from_opfs?(path: string): Promise<void>;
+        /**
+         * Snapshot `DISKS` section support (disk overlay refs).
+         *
+         * Optional for older WASM builds.
+         */
+        set_ahci_port0_disk_overlay_ref?(base_image: string, overlay_image: string): void;
+        clear_ahci_port0_disk_overlay_ref?(): void;
+        set_ide_secondary_master_atapi_overlay_ref?(base_image: string, overlay_image: string): void;
+        clear_ide_secondary_master_atapi_overlay_ref?(): void;
+        set_ide_primary_master_ata_overlay_ref?(base_image: string, overlay_image: string): void;
+        clear_ide_primary_master_ata_overlay_ref?(): void;
+        take_restored_disk_overlays?():
+            | {
+                  disk_id: number;
+                  base_image: string;
+                  overlay_image: string;
+              }[]
+            | null;
         free(): void;
+        };
+        /**
+         * Stable snapshot `disk_id` helpers for the canonical Win7 storage topology.
+         *
+         * Optional for older WASM builds.
+         */
+        disk_id_primary_hdd?(): number;
+        disk_id_install_media?(): number;
+        disk_id_ide_primary_master?(): number;
     };
 
     /**
