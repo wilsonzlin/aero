@@ -26,6 +26,7 @@ typedef struct intx_test_ctx {
     int queue_calls;
     int dpc_calls;
     UCHAR last_isr_status;
+    int trigger_once;
 } intx_test_ctx_t;
 
 static VOID evt_config(_Inout_ PVIRTIO_INTX Intx, _In_opt_ PVOID Cookie)
@@ -42,6 +43,29 @@ static VOID evt_queue(_Inout_ PVIRTIO_INTX Intx, _In_opt_ PVOID Cookie)
     assert(ctx != NULL);
     assert(Intx == ctx->expected_intx);
     ctx->queue_calls++;
+}
+
+static VOID evt_queue_trigger_interrupt_once(_Inout_ PVIRTIO_INTX Intx, _In_opt_ PVOID Cookie)
+{
+    intx_test_ctx_t* ctx = (intx_test_ctx_t*)Cookie;
+    assert(ctx != NULL);
+    assert(Intx == ctx->expected_intx);
+
+    ctx->queue_calls++;
+
+    /*
+     * Simulate another interrupt arriving while the DPC is executing. This
+     * exercises DpcInFlight tracking across the "ISR queues DPC while DPC is
+     * running" case.
+     */
+    if (ctx->trigger_once == 0) {
+        ctx->trigger_once = 1;
+
+        /* Trigger a config interrupt. */
+        *Intx->IsrStatusRegister = VIRTIO_PCI_ISR_CONFIG_INTERRUPT;
+        assert(WdkTestTriggerInterrupt(Intx->InterruptObject) != FALSE);
+        assert(*Intx->IsrStatusRegister == 0);
+    }
 }
 
 static VOID evt_dpc(_Inout_ PVIRTIO_INTX Intx, _In_ UCHAR IsrStatus, _In_opt_ PVOID Cookie)
@@ -228,6 +252,55 @@ static void test_disconnect_cancels_queued_dpc(void)
     assert(intx.Dpc.Inserted == FALSE);
 }
 
+static void test_interrupt_during_dpc_requeues(void)
+{
+    VIRTIO_INTX intx;
+    volatile UCHAR isr_reg = 0;
+    CM_PARTIAL_RESOURCE_DESCRIPTOR desc;
+    intx_test_ctx_t ctx;
+    NTSTATUS status;
+
+    desc = make_int_desc();
+    RtlZeroMemory(&ctx, sizeof(ctx));
+
+    status = VirtioIntxConnect(NULL, &desc, &isr_reg, evt_config, evt_queue_trigger_interrupt_once, NULL, &ctx, &intx);
+    assert(status == STATUS_SUCCESS);
+    ctx.expected_intx = &intx;
+
+    /* First interrupt: queue bit -> queues a DPC. */
+    isr_reg = VIRTIO_PCI_ISR_QUEUE_INTERRUPT;
+    assert(WdkTestTriggerInterrupt(intx.InterruptObject) != FALSE);
+    assert(isr_reg == 0);
+    assert(intx.DpcInFlight == 1);
+    assert(intx.Dpc.Inserted != FALSE);
+
+    /* Run the DPC. It will trigger another interrupt while executing. */
+    assert(WdkTestRunQueuedDpc(&intx.Dpc) != FALSE);
+
+    /*
+     * A second interrupt occurred during the DPC and should have re-queued the
+     * KDPC. DpcInFlight should still be 1 (queued but not yet run).
+     */
+    assert(intx.IsrCount == 2);
+    assert(intx.DpcCount == 1);
+    assert(intx.Dpc.Inserted != FALSE);
+    assert(intx.DpcInFlight == 1);
+    assert(intx.PendingIsrStatus == VIRTIO_PCI_ISR_CONFIG_INTERRUPT);
+    assert(ctx.queue_calls == 1);
+    assert(ctx.config_calls == 0);
+
+    /* Now run the second DPC. */
+    assert(WdkTestRunQueuedDpc(&intx.Dpc) != FALSE);
+    assert(intx.Dpc.Inserted == FALSE);
+    assert(intx.DpcCount == 2);
+    assert(intx.DpcInFlight == 0);
+    assert(intx.PendingIsrStatus == 0);
+    assert(ctx.queue_calls == 1);
+    assert(ctx.config_calls == 1);
+
+    VirtioIntxDisconnect(&intx);
+}
+
 static void test_evt_dpc_dispatch_override(void)
 {
     VIRTIO_INTX intx;
@@ -262,9 +335,9 @@ int main(void)
     test_queue_config_dispatch();
     test_bit_accumulation_single_dpc();
     test_disconnect_cancels_queued_dpc();
+    test_interrupt_during_dpc_requeues();
     test_evt_dpc_dispatch_override();
 
     printf("virtio_intx_wdm_tests: PASS\n");
     return 0;
 }
-
