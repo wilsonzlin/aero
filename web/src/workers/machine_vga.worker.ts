@@ -38,6 +38,25 @@ type MachineVgaWorkerStopMessage = {
   type: "machineVga.stop";
 };
 
+type MachineVgaWorkerInjectBrowserKeyMessage = {
+  type: "machineVga.inject_browser_key";
+  code: string;
+  pressed: boolean;
+};
+
+type MachineVgaWorkerInjectMouseMotionMessage = {
+  type: "machineVga.inject_mouse_motion";
+  dx: number;
+  dy: number;
+  wheel?: number;
+};
+
+type MachineVgaWorkerInjectMouseButtonMessage = {
+  type: "machineVga.inject_mouse_button";
+  button: number;
+  pressed: boolean;
+};
+
 type MachineVgaWorkerReadyMessage = {
   type: "machineVga.ready";
   transport: "shared" | "copy";
@@ -416,5 +435,56 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
       post({ type: "machineVga.error", message } satisfies MachineVgaWorkerErrorMessage);
       stop();
     });
+    return;
+  }
+
+  const m = machine;
+  if (!m) return;
+
+  if ((msg as Partial<MachineVgaWorkerInjectBrowserKeyMessage>).type === "machineVga.inject_browser_key") {
+    const input = msg as MachineVgaWorkerInjectBrowserKeyMessage;
+    if (typeof input.code !== "string") return;
+    const pressed = input.pressed === true;
+    try {
+      m.inject_browser_key(input.code, pressed);
+    } catch {
+      // ignore
+    }
+    return;
+  }
+
+  if ((msg as Partial<MachineVgaWorkerInjectMouseMotionMessage>).type === "machineVga.inject_mouse_motion") {
+    const input = msg as MachineVgaWorkerInjectMouseMotionMessage;
+    const dx = typeof input.dx === "number" ? input.dx : 0;
+    const dy = typeof input.dy === "number" ? input.dy : 0;
+    const wheel = typeof input.wheel === "number" ? input.wheel : 0;
+    const motion = (m as unknown as { inject_mouse_motion?: unknown }).inject_mouse_motion;
+    const ps2Motion = (m as unknown as { inject_ps2_mouse_motion?: unknown }).inject_ps2_mouse_motion;
+    try {
+      if (typeof motion === "function") {
+        (motion as (dx: number, dy: number, wheel: number) => void).call(m, dx | 0, dy | 0, wheel | 0);
+      } else if (typeof ps2Motion === "function") {
+        // `inject_ps2_mouse_motion` expects +Y up; browser deltas are +Y down.
+        (ps2Motion as (dx: number, dy: number, wheel: number) => void).call(m, dx | 0, (-dy) | 0, wheel | 0);
+      }
+    } catch {
+      // ignore
+    }
+    return;
+  }
+
+  if ((msg as Partial<MachineVgaWorkerInjectMouseButtonMessage>).type === "machineVga.inject_mouse_button") {
+    const input = msg as MachineVgaWorkerInjectMouseButtonMessage;
+    const button = typeof input.button === "number" ? input.button : -1;
+    const pressed = input.pressed === true;
+    const fn = (m as unknown as { inject_mouse_button?: unknown }).inject_mouse_button;
+    try {
+      if (typeof fn === "function") {
+        (fn as (button: number, pressed: boolean) => void).call(m, button | 0, pressed);
+      }
+    } catch {
+      // ignore
+    }
+    return;
   }
 };

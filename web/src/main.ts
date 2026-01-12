@@ -1183,6 +1183,102 @@ function renderMachineWorkerPanel(): HTMLElement {
   let presenter: VgaPresenter | null = null;
   let shared: ReturnType<typeof wrapSharedFramebuffer> | null = null;
   let sharedPollTimer: number | null = null;
+  let inputAttached = false;
+
+  const postToWorker = (msg: unknown): void => {
+    const w = worker;
+    if (!w) return;
+    try {
+      w.postMessage(msg);
+    } catch {
+      // ignore
+    }
+  };
+
+  const onKeyDown = (ev: KeyboardEvent): void => {
+    if (!testState.running) return;
+    if (ev.repeat) return;
+    postToWorker({ type: "machineVga.inject_browser_key", code: ev.code, pressed: true });
+    ev.preventDefault();
+  };
+
+  const onKeyUp = (ev: KeyboardEvent): void => {
+    if (!testState.running) return;
+    postToWorker({ type: "machineVga.inject_browser_key", code: ev.code, pressed: false });
+    ev.preventDefault();
+  };
+
+  const onMouseMove = (ev: MouseEvent): void => {
+    if (!testState.running) return;
+    // Use `movementX/Y` so pointer-lock deltas work when enabled.
+    const dx = ev.movementX | 0;
+    const dy = ev.movementY | 0;
+    if (dx === 0 && dy === 0) return;
+    postToWorker({ type: "machineVga.inject_mouse_motion", dx, dy, wheel: 0 });
+    ev.preventDefault();
+  };
+
+  const onWheel = (ev: WheelEvent): void => {
+    if (!testState.running) return;
+    const dy = ev.deltaY;
+    if (!Number.isFinite(dy) || dy === 0) return;
+    // PS/2 wheel: positive is wheel up, whereas WheelEvent.deltaY is positive down.
+    const wheel = (-Math.sign(dy)) | 0;
+    if (wheel === 0) return;
+    postToWorker({ type: "machineVga.inject_mouse_motion", dx: 0, dy: 0, wheel });
+    ev.preventDefault();
+  };
+
+  const onMouseDown = (ev: MouseEvent): void => {
+    if (!testState.running) return;
+    postToWorker({ type: "machineVga.inject_mouse_button", button: ev.button | 0, pressed: true });
+    ev.preventDefault();
+  };
+
+  const onMouseUp = (ev: MouseEvent): void => {
+    if (!testState.running) return;
+    postToWorker({ type: "machineVga.inject_mouse_button", button: ev.button | 0, pressed: false });
+    ev.preventDefault();
+  };
+
+  const onContextMenu = (ev: MouseEvent): void => {
+    // Avoid the browser context menu stealing focus.
+    ev.preventDefault();
+  };
+
+  const detachInput = (): void => {
+    if (!inputAttached) return;
+    inputAttached = false;
+    canvas.removeEventListener("keydown", onKeyDown);
+    canvas.removeEventListener("keyup", onKeyUp);
+    canvas.removeEventListener("mousemove", onMouseMove);
+    canvas.removeEventListener("wheel", onWheel);
+    canvas.removeEventListener("mousedown", onMouseDown);
+    canvas.removeEventListener("mouseup", onMouseUp);
+    canvas.removeEventListener("contextmenu", onContextMenu);
+  };
+
+  const attachInput = (): void => {
+    if (inputAttached) return;
+    inputAttached = true;
+    canvas.addEventListener("keydown", onKeyDown);
+    canvas.addEventListener("keyup", onKeyUp);
+    canvas.addEventListener("mousemove", onMouseMove);
+    canvas.addEventListener("wheel", onWheel, { passive: false });
+    canvas.addEventListener("mousedown", onMouseDown);
+    canvas.addEventListener("mouseup", onMouseUp);
+    canvas.addEventListener("contextmenu", onContextMenu);
+  };
+
+  canvas.addEventListener("dblclick", () => {
+    const fn = (canvas as unknown as { requestPointerLock?: unknown }).requestPointerLock;
+    if (typeof fn !== "function") return;
+    try {
+      fn.call(canvas);
+    } catch {
+      // ignore
+    }
+  });
 
   const stop = (): void => {
     testState.running = false;
@@ -1205,6 +1301,7 @@ function renderMachineWorkerPanel(): HTMLElement {
       }
       worker = null;
     }
+    detachInput();
     if (presenter) {
       presenter.destroy();
       presenter = null;
@@ -1227,6 +1324,7 @@ function renderMachineWorkerPanel(): HTMLElement {
     status.textContent = "Machine worker demo: starting…";
     const w = new Worker(new URL("./workers/machine_vga.worker.ts", import.meta.url), { type: "module" });
     worker = w;
+    attachInput();
 
     w.addEventListener("message", (ev: MessageEvent<unknown>) => {
       const msg = ev.data as any;
