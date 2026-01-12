@@ -43,6 +43,34 @@ fn enable_ide_requires_enable_pc_platform() {
 }
 
 #[test]
+fn enable_nvme_requires_enable_pc_platform() {
+    let cfg = MachineConfig {
+        enable_pc_platform: false,
+        enable_nvme: true,
+        ..Default::default()
+    };
+
+    assert!(matches!(
+        Machine::new(cfg),
+        Err(MachineError::NvmeRequiresPcPlatform)
+    ));
+}
+
+#[test]
+fn enable_virtio_blk_requires_enable_pc_platform() {
+    let cfg = MachineConfig {
+        enable_pc_platform: false,
+        enable_virtio_blk: true,
+        ..Default::default()
+    };
+
+    assert!(matches!(
+        Machine::new(cfg),
+        Err(MachineError::VirtioBlkRequiresPcPlatform)
+    ));
+}
+
+#[test]
 fn enable_uhci_requires_enable_pc_platform() {
     let cfg = MachineConfig {
         enable_pc_platform: false,
