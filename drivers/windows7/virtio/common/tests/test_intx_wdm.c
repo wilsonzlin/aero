@@ -195,6 +195,31 @@ static void test_connect_failure_zeroes_state(void)
     WdkTestSetIoConnectInterruptStatus(STATUS_SUCCESS);
 }
 
+static void test_connect_disconnect_calls_wdk_routines(void)
+{
+    VIRTIO_INTX intx;
+    volatile UCHAR isr_reg = 0;
+    CM_PARTIAL_RESOURCE_DESCRIPTOR desc;
+    NTSTATUS status;
+
+    WdkTestResetIoConnectInterruptCount();
+    WdkTestResetIoDisconnectInterruptCount();
+
+    desc = make_int_desc();
+
+    status = VirtioIntxConnect(NULL, &desc, &isr_reg, NULL, NULL, NULL, NULL, &intx);
+    assert(status == STATUS_SUCCESS);
+    assert(WdkTestGetIoConnectInterruptCount() == 1);
+    assert(WdkTestGetIoDisconnectInterruptCount() == 0);
+
+    VirtioIntxDisconnect(&intx);
+    assert(WdkTestGetIoDisconnectInterruptCount() == 1);
+
+    /* Disconnect again should not call IoDisconnectInterrupt again. */
+    VirtioIntxDisconnect(&intx);
+    assert(WdkTestGetIoDisconnectInterruptCount() == 1);
+}
+
 static void test_disconnect_uninitialized_is_safe(void)
 {
     VIRTIO_INTX intx;
@@ -776,6 +801,7 @@ int main(void)
     test_connect_validation();
     test_connect_descriptor_translation();
     test_connect_failure_zeroes_state();
+    test_connect_disconnect_calls_wdk_routines();
     test_disconnect_uninitialized_is_safe();
     test_disconnect_is_idempotent();
     test_spurious_interrupt();

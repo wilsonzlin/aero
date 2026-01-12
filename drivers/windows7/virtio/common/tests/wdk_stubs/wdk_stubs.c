@@ -19,6 +19,8 @@ static KIRQL g_current_irql = PASSIVE_LEVEL;
  */
 static ULONGLONG g_interrupt_time_100ns = 0;
 static ULONG g_dbg_print_ex_count = 0;
+static ULONG g_io_connect_interrupt_count = 0;
+static ULONG g_io_disconnect_interrupt_count = 0;
 static ULONG g_ke_delay_execution_thread_count = 0;
 static ULONG g_ke_stall_execution_processor_count = 0;
 
@@ -82,6 +84,8 @@ NTSTATUS IoConnectInterrupt(_Out_ PKINTERRUPT* InterruptObject,
         return STATUS_INVALID_PARAMETER;
     }
 
+    g_io_connect_interrupt_count++;
+
     if (!NT_SUCCESS(g_IoConnectInterruptStatus)) {
         return g_IoConnectInterruptStatus;
     }
@@ -106,6 +110,7 @@ NTSTATUS IoConnectInterrupt(_Out_ PKINTERRUPT* InterruptObject,
 
 VOID IoDisconnectInterrupt(_In_ PKINTERRUPT InterruptObject)
 {
+    g_io_disconnect_interrupt_count++;
     free(InterruptObject);
 }
 
@@ -247,6 +252,26 @@ ULONG WdkTestGetKeStallExecutionProcessorCount(VOID)
 VOID WdkTestResetKeStallExecutionProcessorCount(VOID)
 {
     g_ke_stall_execution_processor_count = 0;
+}
+
+ULONG WdkTestGetIoConnectInterruptCount(VOID)
+{
+    return g_io_connect_interrupt_count;
+}
+
+VOID WdkTestResetIoConnectInterruptCount(VOID)
+{
+    g_io_connect_interrupt_count = 0;
+}
+
+ULONG WdkTestGetIoDisconnectInterruptCount(VOID)
+{
+    return g_io_disconnect_interrupt_count;
+}
+
+VOID WdkTestResetIoDisconnectInterruptCount(VOID)
+{
+    g_io_disconnect_interrupt_count = 0;
 }
 
 BOOLEAN WdkTestTriggerInterrupt(_In_ PKINTERRUPT InterruptObject)

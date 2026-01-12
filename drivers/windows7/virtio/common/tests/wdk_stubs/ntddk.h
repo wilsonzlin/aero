@@ -407,3 +407,8 @@ VOID WdkTestResetKeDelayExecutionThreadCount(VOID);
 
 ULONG WdkTestGetKeStallExecutionProcessorCount(VOID);
 VOID WdkTestResetKeStallExecutionProcessorCount(VOID);
+
+ULONG WdkTestGetIoConnectInterruptCount(VOID);
+VOID WdkTestResetIoConnectInterruptCount(VOID);
+ULONG WdkTestGetIoDisconnectInterruptCount(VOID);
+VOID WdkTestResetIoDisconnectInterruptCount(VOID);
