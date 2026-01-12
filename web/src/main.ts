@@ -573,7 +573,9 @@ function renderMachinePanel(): HTMLElement {
   const vgaInfo = el("pre", { text: "" });
   const inputHint = el("div", {
     class: "mono",
-    text: "Tip: click the canvas to focus + request pointer lock (keyboard/mouse will be forwarded to the guest).",
+    text:
+      "Tip: click the canvas to focus + request pointer lock (keyboard/mouse will be forwarded to the guest). " +
+      "VBE mode test: add ?machineVbe=1280x720 to the URL to boot straight into a Bochs VBE 32bpp mode.",
   });
   const canvas = el("canvas", { id: "canonical-machine-vga-canvas" }) as HTMLCanvasElement;
   canvas.tabIndex = 0;
@@ -1617,7 +1619,12 @@ function renderMachineWorkerPanel(): HTMLElement {
     "div",
     { class: "panel" },
     el("h2", { text: "Machine (canonical VM) – worker VGA scanout demo" }),
-    el("div", { class: "hint", text: "Runs the canonical aero-machine VM inside a Dedicated Worker and publishes VGA scanout via the framebuffer protocol." }),
+    el("div", {
+      class: "hint",
+      text:
+        "Runs the canonical aero-machine VM inside a Dedicated Worker and publishes VGA scanout via the framebuffer protocol. " +
+        "VBE mode test: add ?machineWorkerVbe=1280x720 to the URL to boot the worker into a Bochs VBE 32bpp mode.",
+    }),
     el("div", { class: "row" }, startButton, stopButton),
     status,
     el("div", { class: "row" }, canvas),
