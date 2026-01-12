@@ -62,11 +62,11 @@ fn pit_irq0_pulse_after_accumulated_guest_time() {
 
     // Minimum nanoseconds required to produce 4 PIT input ticks:
     // ticks = floor(ns * PIT_HZ / 1e9)  =>  ns = ceil(ticks * 1e9 / PIT_HZ)
-    let ns_needed = ((4u128) * 1_000_000_000u128 + (PIT_HZ as u128) - 1) / (PIT_HZ as u128);
+    let ns_needed = ((4u128) * 1_000_000_000u128).div_ceil(PIT_HZ as u128);
 
     // Convert that to the minimum number of cycles needed at `DEFAULT_GUEST_CPU_HZ`.
     let cycles_needed =
-        (ns_needed * (DEFAULT_GUEST_CPU_HZ as u128) + 1_000_000_000u128 - 1) / 1_000_000_000u128;
+        (ns_needed * (DEFAULT_GUEST_CPU_HZ as u128)).div_ceil(1_000_000_000u128);
 
     for _ in 0..(cycles_needed as u64) {
         let delta_ns = time.advance_guest_time_for_instructions(1);

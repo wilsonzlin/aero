@@ -31,9 +31,9 @@ fn disable_a20(m: &mut Machine) {
 fn program_ioapic_entry(m: &mut Machine, gsi: u32, low: u32, high: u32) {
     let redtbl_low = 0x10u32 + gsi * 2;
     let redtbl_high = redtbl_low + 1;
-    m.write_physical_u32(IOAPIC_MMIO_BASE + 0x00, redtbl_low);
+    m.write_physical_u32(IOAPIC_MMIO_BASE, redtbl_low);
     m.write_physical_u32(IOAPIC_MMIO_BASE + 0x10, low);
-    m.write_physical_u32(IOAPIC_MMIO_BASE + 0x00, redtbl_high);
+    m.write_physical_u32(IOAPIC_MMIO_BASE, redtbl_high);
     m.write_physical_u32(IOAPIC_MMIO_BASE + 0x10, high);
 }
 
@@ -216,20 +216,20 @@ fn ioapic_mmio_supports_partial_and_unaligned_accesses() {
     let redtbl_high = redtbl_low + 1;
 
     // Program IOREGSEL with a 1-byte write.
-    m.write_physical_u8(IOAPIC_MMIO_BASE + 0x00, redtbl_low as u8);
+    m.write_physical_u8(IOAPIC_MMIO_BASE, redtbl_low as u8);
     // Program IOWIN using two 16-bit writes (partial word updates).
     m.write_physical_u16(IOAPIC_MMIO_BASE + 0x10, low as u16);
     m.write_physical_u16(IOAPIC_MMIO_BASE + 0x12, (low >> 16) as u16);
 
     // Read back the low dword via the aligned 32-bit register window.
-    m.write_physical_u8(IOAPIC_MMIO_BASE + 0x00, redtbl_low as u8);
+    m.write_physical_u8(IOAPIC_MMIO_BASE, redtbl_low as u8);
     assert_eq!(m.read_physical_u32(IOAPIC_MMIO_BASE + 0x10), low);
 
     // Program the high dword similarly.
-    m.write_physical_u8(IOAPIC_MMIO_BASE + 0x00, redtbl_high as u8);
+    m.write_physical_u8(IOAPIC_MMIO_BASE, redtbl_high as u8);
     m.write_physical_u16(IOAPIC_MMIO_BASE + 0x10, high as u16);
     m.write_physical_u16(IOAPIC_MMIO_BASE + 0x12, (high >> 16) as u16);
-    m.write_physical_u8(IOAPIC_MMIO_BASE + 0x00, redtbl_high as u8);
+    m.write_physical_u8(IOAPIC_MMIO_BASE, redtbl_high as u8);
     assert_eq!(m.read_physical_u32(IOAPIC_MMIO_BASE + 0x10), high);
 
     // Now assert the input line and ensure the vector becomes pending.

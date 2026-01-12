@@ -3538,9 +3538,9 @@ mod tests {
 
         {
             let mut bus = m.mem.inner.borrow_mut();
-            bus.write_physical_u32(IOAPIC_MMIO_BASE + 0x00, redtbl_low);
+            bus.write_physical_u32(IOAPIC_MMIO_BASE, redtbl_low);
             bus.write_physical_u32(IOAPIC_MMIO_BASE + 0x10, low);
-            bus.write_physical_u32(IOAPIC_MMIO_BASE + 0x00, redtbl_high);
+            bus.write_physical_u32(IOAPIC_MMIO_BASE, redtbl_high);
             bus.write_physical_u32(IOAPIC_MMIO_BASE + 0x10, 0);
         }
 
