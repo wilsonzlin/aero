@@ -193,6 +193,20 @@ fn network_device_blobs_roundtrip_is_deterministic_and_ordered() {
         cursor.into_inner()
     };
 
+    // Regression: device ordering in the container should be stable regardless of the ordering
+    // returned by `SnapshotSource::device_states`.
+    let bytes_sorted_devices = {
+        let mut cursor = Cursor::new(Vec::new());
+        let mut source_sorted = TestSource {
+            meta: meta.clone(),
+            devices: vec![expected_e1000_state.clone(), expected_net_stack_state.clone()],
+            ram: Vec::new(),
+        };
+        save_snapshot(&mut cursor, &mut source_sorted, save_opts).unwrap();
+        cursor.into_inner()
+    };
+    assert_eq!(bytes_sorted_devices, bytes1);
+
     let mut target = TestTarget::new(0);
     restore_snapshot(&mut Cursor::new(&bytes1), &mut target).unwrap();
 
