@@ -648,7 +648,12 @@ function renderMachinePanel(): HTMLElement {
     sector.set([0xba, 0xf8, 0x03], off);
     off += 3;
 
+    // Reserve enough room for the fixed tail instructions (sti + hlt/jmp) plus the 0x55AA boot
+    // signature at bytes 510..511. Truncate overly-long messages rather than throwing.
+    const FOOTER_BYTES = 4;
     for (const b of msgBytes) {
+      // Per-byte encoding: mov al, imm8 (2 bytes) + out dx, al (1 byte).
+      if (off + 3 > 510 - FOOTER_BYTES) break;
       // mov al, imm8
       sector.set([0xb0, b], off);
       off += 2;
@@ -672,10 +677,109 @@ function renderMachinePanel(): HTMLElement {
     return sector;
   }
 
+  function buildVbeBootSector(opts: { message: string; width: number; height: number }): Uint8Array {
+    const msgBytes = encoder.encode(opts.message);
+    const width = Math.max(1, Math.min(0xffff, Math.trunc(opts.width)));
+    const height = Math.max(1, Math.min(0xffff, Math.trunc(opts.height)));
+    const sector = new Uint8Array(512);
+    let off = 0;
+
+    // Program a Bochs VBE mode (WxHx32) and write a single red pixel at (0,0).
+    // cld
+    sector[off++] = 0xfc;
+
+    // mov dx, 0x01CE  (Bochs VBE index port)
+    sector.set([0xba, 0xce, 0x01], off);
+    off += 3;
+
+    const writeVbeReg = (index: number, value: number) => {
+      // mov ax, imm16 (index)
+      sector.set([0xb8, index & 0xff, (index >>> 8) & 0xff], off);
+      off += 3;
+      // out dx, ax
+      sector[off++] = 0xef;
+      // inc dx (0x01CF)
+      sector[off++] = 0x42;
+      // mov ax, imm16 (value)
+      sector.set([0xb8, value & 0xff, (value >>> 8) & 0xff], off);
+      off += 3;
+      // out dx, ax
+      sector[off++] = 0xef;
+      // dec dx (back to 0x01CE)
+      sector[off++] = 0x4a;
+    };
+
+    // XRES = width
+    writeVbeReg(0x0001, width);
+    // YRES = height
+    writeVbeReg(0x0002, height);
+    // BPP = 32
+    writeVbeReg(0x0003, 32);
+    // ENABLE = 0x0041 (enable + LFB)
+    writeVbeReg(0x0004, 0x0041);
+    // BANK = 0
+    writeVbeReg(0x0005, 0);
+
+    // mov ax, 0xA000 ; mov es, ax ; xor di, di
+    sector.set([0xb8, 0x00, 0xa0, 0x8e, 0xc0, 0x31, 0xff], off);
+    off += 7;
+
+    // Write a red pixel at (0,0) in BGRX format expected by the SVGA renderer.
+    // mov al, 0x00 ; stosb ; stosb ; mov al, 0xff ; stosb ; mov al, 0x00 ; stosb
+    sector.set([0xb0, 0x00, 0xaa, 0xaa, 0xb0, 0xff, 0xaa, 0xb0, 0x00, 0xaa], off);
+    off += 10;
+
+    // Serial output (COM1).
+    // mov dx, 0x3f8
+    sector.set([0xba, 0xf8, 0x03], off);
+    off += 3;
+    const FOOTER_BYTES = 4;
+    for (const b of msgBytes) {
+      // Per-byte encoding: mov al, imm8 (2 bytes) + out dx, al (1 byte).
+      if (off + 3 > 510 - FOOTER_BYTES) break;
+      sector.set([0xb0, b, 0xee], off); // mov al, imm8 ; out dx, al
+      off += 3;
+    }
+
+    // cli; hlt; jmp $
+    sector[off++] = 0xfa;
+    sector[off++] = 0xf4;
+    sector.set([0xeb, 0xfe], off);
+    off += 2;
+
+    // Boot signature.
+    sector[510] = 0x55;
+    sector[511] = 0xaa;
+    return sector;
+  }
+
   wasmInitPromise
     .then(({ api, variant, wasmMemory }) => {
       const machine = new api.Machine(2 * 1024 * 1024);
-      machine.set_disk_image(buildSerialBootSector("Hello from aero-machine\\n"));
+      const bootMessage = "Hello from aero-machine\\n";
+      const search = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : new URLSearchParams();
+      const vbeRaw = search.get("machineVbe");
+      let diskImage = buildSerialBootSector(bootMessage);
+      if (vbeRaw) {
+        const match = /^(\d+)x(\d+)$/.exec(vbeRaw.trim());
+        if (match) {
+          const width = Number.parseInt(match[1] ?? "", 10);
+          const height = Number.parseInt(match[2] ?? "", 10);
+          const requiredBytes = width * height * 4;
+          if (
+            Number.isFinite(width) &&
+            Number.isFinite(height) &&
+            width > 0 &&
+            height > 0 &&
+            Number.isFinite(requiredBytes) &&
+            requiredBytes > 0 &&
+            requiredBytes <= MAX_VGA_FRAME_BYTES
+          ) {
+            diskImage = buildVbeBootSector({ message: bootMessage, width, height });
+          }
+        }
+      }
+      machine.set_disk_image(diskImage);
       machine.reset();
 
       status.textContent = `Machine ready (WASM ${variant}). Booting…`;
