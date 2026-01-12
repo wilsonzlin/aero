@@ -276,6 +276,19 @@ mod tests {
     }
 
     #[test]
+    fn device_backend_as_virtual_disk_reports_offset_overflow() {
+        let backend = Box::new(VecBackend::new(4));
+        let mut disk = DeviceBackendAsAeroVirtualDisk::new(backend);
+
+        let mut out = [0u8; 1];
+        let err = disk.read_at(u64::MAX, &mut out).unwrap_err();
+        assert!(matches!(err, aero_storage::DiskError::OffsetOverflow));
+
+        let err = disk.write_at(u64::MAX, &[0u8; 1]).unwrap_err();
+        assert!(matches!(err, aero_storage::DiskError::OffsetOverflow));
+    }
+
+    #[test]
     fn device_backend_as_virtual_disk_preserves_embedded_disk_error() {
         struct ErrorBackend {
             err: fn() -> io::Error,
