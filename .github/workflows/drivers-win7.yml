@@ -12,6 +12,7 @@ on:
       - "scripts/ci/check-win7-virtqueue-split-headers.py"
       - "scripts/ci/check-virtqueue-split-driver-builds.py"
       - "scripts/ci/check-win7-virtio-header-collisions.py"
+      - "scripts/ci/check-win7-contiguous-free-mismatch.py"
       - "scripts/ci/check-aerogpu-d3d9-def-stdcall.py"
       - "scripts/ci/check-aerogpu-d3d10-def-stdcall.py"
       - ".github/actions/setup-rust/**"
@@ -39,6 +40,7 @@ on:
       - "scripts/ci/check-win7-virtqueue-split-headers.py"
       - "scripts/ci/check-virtqueue-split-driver-builds.py"
       - "scripts/ci/check-win7-virtio-header-collisions.py"
+      - "scripts/ci/check-win7-contiguous-free-mismatch.py"
       - "scripts/ci/check-aerogpu-d3d9-def-stdcall.py"
       - "scripts/ci/check-aerogpu-d3d10-def-stdcall.py"
       - ".github/actions/setup-rust/**"
@@ -95,6 +97,9 @@ jobs:
 
       - name: Check Win7 virtio-blk teardown helper is not duplicated
         run: python3 scripts/ci/check-win7-virtio-blk-no-duplicate-freeresources.py
+
+      - name: Check Win7 contiguous alloc/free pairing (Mm*ContiguousMemorySpecifyCache)
+        run: python3 scripts/ci/check-win7-contiguous-free-mismatch.py
 
   virtio-host-tests-linux:
     name: Virtio host tests (Linux, ${{ matrix.cc }})

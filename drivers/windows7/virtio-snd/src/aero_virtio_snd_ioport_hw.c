@@ -108,7 +108,9 @@ static VOID VirtIoSndFreeTxPool(_Inout_ PAEROVIOSND_DEVICE_EXTENSION Dx) {
   Dx->TxEntryCount = 0;
 
   if (Dx->TxBufferVa) {
-    MmFreeContiguousMemory(Dx->TxBufferVa);
+    if (Dx->TxBufferBytes != 0) {
+      MmFreeContiguousMemorySpecifyCache(Dx->TxBufferVa, Dx->TxBufferBytes, MmCached);
+    }
     Dx->TxBufferVa = NULL;
   }
   Dx->TxBufferPa.QuadPart = 0;
@@ -120,7 +122,9 @@ static VOID VirtIoSndFreeTxPool(_Inout_ PAEROVIOSND_DEVICE_EXTENSION Dx) {
 
 static VOID VirtIoSndFreeControlBuffer(_Inout_ PAEROVIOSND_DEVICE_EXTENSION Dx) {
   if (Dx->ControlBufferVa) {
-    MmFreeContiguousMemory(Dx->ControlBufferVa);
+    if (Dx->ControlBufferBytes != 0) {
+      MmFreeContiguousMemorySpecifyCache(Dx->ControlBufferVa, Dx->ControlBufferBytes, MmCached);
+    }
     Dx->ControlBufferVa = NULL;
   }
   Dx->ControlBufferPa.QuadPart = 0;

@@ -207,7 +207,7 @@ VirtioSndOsAllocDma(void* ctx, size_t size, size_t alignment, virtio_dma_buffer_
     out->size = size;
 
     if ((out->paddr & ((UINT64)alignment - 1u)) != 0) {
-        MmFreeContiguousMemory(va);
+        MmFreeContiguousMemorySpecifyCache(va, size, MmNonCached);
         RtlZeroMemory(out, sizeof(*out));
         return VIRTIO_FALSE;
     }
@@ -224,7 +224,7 @@ VirtioSndOsFreeDma(void* ctx, virtio_dma_buffer_t* buf)
         return;
     }
 
-    MmFreeContiguousMemory(buf->vaddr);
+    MmFreeContiguousMemorySpecifyCache(buf->vaddr, buf->size, MmNonCached);
     RtlZeroMemory(buf, sizeof(*buf));
 }
 
