@@ -35,7 +35,9 @@ pub(crate) fn guest_ram_phys_end_exclusive(ram_bytes: u64) -> u64 {
     if ram_bytes <= PCIE_ECAM_BASE {
         ram_bytes
     } else {
-        HIGH_RAM_BASE + (ram_bytes - PCIE_ECAM_BASE)
+        // Use saturating math so pathological `ram_bytes` inputs (e.g. fuzzing/tests that use
+        // `u64::MAX`) cannot panic via u64 addition overflow.
+        HIGH_RAM_BASE.saturating_add(ram_bytes - PCIE_ECAM_BASE)
     }
 }
 
@@ -59,7 +61,7 @@ pub(crate) fn translate_guest_paddr_range(ram_bytes: u64, paddr: u64, len: usize
 
         let high_ram_bytes = ram_bytes.saturating_sub(PCIE_ECAM_BASE);
         if high_ram_bytes != 0 {
-            let high_end = HIGH_RAM_BASE + high_ram_bytes;
+            let high_end = HIGH_RAM_BASE.saturating_add(high_ram_bytes);
             if (HIGH_RAM_BASE..=high_end).contains(&paddr) {
                 let ram_offset = PCIE_ECAM_BASE + (paddr - HIGH_RAM_BASE);
                 return GuestRamRange::Ram { ram_offset };
@@ -71,9 +73,10 @@ pub(crate) fn translate_guest_paddr_range(ram_bytes: u64, paddr: u64, len: usize
 
     let chunk = translate_guest_paddr_chunk(ram_bytes, paddr, len);
     match chunk {
-        GuestRamChunk::Ram { ram_offset, len: chunk_len } if chunk_len == len => {
-            GuestRamRange::Ram { ram_offset }
-        }
+        GuestRamChunk::Ram {
+            ram_offset,
+            len: chunk_len,
+        } if chunk_len == len => GuestRamRange::Ram { ram_offset },
         GuestRamChunk::Hole { len: chunk_len } if chunk_len == len => GuestRamRange::Hole,
         _ => GuestRamRange::OutOfBounds,
     }
@@ -100,7 +103,7 @@ pub(crate) fn translate_guest_paddr_chunk(ram_bytes: u64, paddr: u64, len: usize
 
     // High RAM size is any remaining bytes above the low-RAM cap.
     let high_ram_bytes = ram_bytes.saturating_sub(PCIE_ECAM_BASE);
-    let high_ram_end = HIGH_RAM_BASE + high_ram_bytes;
+    let high_ram_end = HIGH_RAM_BASE.saturating_add(high_ram_bytes);
 
     let (kind, max_len_u64) = if paddr < low_ram_bytes {
         (
@@ -113,7 +116,10 @@ pub(crate) fn translate_guest_paddr_chunk(ram_bytes: u64, paddr: u64, len: usize
     } else if paddr < PCIE_ECAM_BASE {
         // Address is below ECAM but past the end of low RAM (only possible when `ram_bytes` is
         // smaller than `PCIE_ECAM_BASE`).
-        (GuestRamChunk::OutOfBounds { len: 0 }, PCIE_ECAM_BASE - paddr)
+        (
+            GuestRamChunk::OutOfBounds { len: 0 },
+            PCIE_ECAM_BASE - paddr,
+        )
     } else if paddr < HIGH_RAM_BASE {
         (GuestRamChunk::Hole { len: 0 }, HIGH_RAM_BASE - paddr)
     } else if high_ram_bytes != 0 && paddr < high_ram_end {
