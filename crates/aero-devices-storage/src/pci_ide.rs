@@ -574,19 +574,6 @@ impl IdeController {
         }
     }
 
-    /// Reset controller state back to its initial ("power-on") baseline while preserving attached
-    /// drives/media.
-    pub fn reset(&mut self) {
-        self.primary.reset();
-        self.primary.control = 0;
-        self.secondary.reset();
-        self.secondary.control = 0;
-
-        for bm in &mut self.bus_master {
-            bm.reset();
-        }
-    }
-
     pub fn bus_master_base(&self) -> u16 {
         self.bus_master_base
     }
