@@ -1243,11 +1243,11 @@ impl Machine {
 
     /// Convenience constructor for the canonical Windows 7 storage topology.
     ///
-    /// This is equivalent to `Machine::new(MachineConfig::win7_storage(ram_size_bytes))`.
+    /// This is equivalent to `Machine::new(MachineConfig::win7_storage_defaults(ram_size_bytes))`.
     ///
     /// See `docs/05-storage-topology-win7.md` for the normative BDFs and media attachment mapping.
     pub fn new_with_win7_storage(ram_size_bytes: u64) -> Result<Self, MachineError> {
-        Self::new(MachineConfig::win7_storage(ram_size_bytes))
+        Self::new(MachineConfig::win7_storage_defaults(ram_size_bytes))
     }
 
     fn map_pc_platform_mmio_regions(&mut self) {
