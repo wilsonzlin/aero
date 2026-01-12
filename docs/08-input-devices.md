@@ -41,6 +41,16 @@ machine.inject_mouse_buttons_mask(0x01 | 0x02); // left+right held
 machine.inject_mouse_buttons_mask(0x00); // release all
 ```
 
+If the WASM build exports `MouseButton`/`MouseButtons`, callers can avoid hardcoding numeric values:
+
+```ts
+const MB = api.MouseButton ?? { Left: 0, Middle: 1, Right: 2 };
+const MBS = api.MouseButtons ?? { Left: 1, Right: 2, Middle: 4 };
+
+machine.inject_mouse_button(MB.Left, true);
+machine.inject_mouse_buttons_mask(MBS.Left | MBS.Right);
+```
+
 Note: the PS/2 mouse model only emits movement packets when mouse reporting is enabled (e.g. after
 the guest sends `0xF4` via the i8042 “write to mouse” command). Most OS drivers enable this during
 boot; very early bare-metal tests may need to do so explicitly.
