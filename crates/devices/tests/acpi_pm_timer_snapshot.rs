@@ -28,7 +28,7 @@ fn pm_tmr_advances_with_tick() {
     assert_eq!(t0, 0, "PM_TMR must start at 0 for deterministic devices");
 
     // 1 second at 3.579545MHz.
-    pm.borrow_mut().advance_ns(1_000_000_000);
+    pm.borrow_mut().tick(1_000_000_000);
     let t1 = bus.read(cfg.pm_tmr_blk, 4);
     assert_eq!(t1, 3_579_545);
     assert_ne!(t0, t1);
@@ -64,7 +64,7 @@ fn snapshot_roundtrip_restores_pm_timer_and_registers() {
     assert!(pm1.borrow().sci_level());
     assert_eq!(sci_log_1.borrow().as_slice(), &[true]);
 
-    pm1.borrow_mut().advance_ns(500_000_000);
+    pm1.borrow_mut().tick(500_000_000);
     let pm_tmr_before = bus1.read(cfg.pm_tmr_blk, 4);
 
     let pm1_sts_before = bus1.read(cfg.pm1a_evt_blk, 2) as u16;
@@ -105,7 +105,7 @@ fn snapshot_roundtrip_restores_pm_timer_and_registers() {
     assert_eq!(bus2.read(gpe0_enable_base, 1) as u8, gpe0_en_before);
 
     // Further time progression should remain deterministic.
-    pm1.borrow_mut().advance_ns(123_456);
-    pm2.borrow_mut().advance_ns(123_456);
+    pm1.borrow_mut().tick(123_456);
+    pm2.borrow_mut().tick(123_456);
     assert_eq!(bus1.read(cfg.pm_tmr_blk, 4), bus2.read(cfg.pm_tmr_blk, 4));
 }
