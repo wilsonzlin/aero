@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import type { WasmApi } from "../runtime/wasm_loader";
 import {
+  VM_SNAPSHOT_DEVICE_AUDIO_HDA_KIND,
   VM_SNAPSHOT_DEVICE_I8042_KIND,
+  VM_SNAPSHOT_DEVICE_ID_AUDIO_HDA,
   VM_SNAPSHOT_DEVICE_ID_I8042,
   VM_SNAPSHOT_DEVICE_ID_USB,
   VM_SNAPSHOT_DEVICE_USB_KIND,
@@ -79,6 +81,11 @@ describe("workers/vm_snapshot_wasm", () => {
     expect(vmSnapshotDeviceIdToKind(VM_SNAPSHOT_DEVICE_ID_I8042)).toBe(VM_SNAPSHOT_DEVICE_I8042_KIND);
     expect(vmSnapshotDeviceKindToId("unknown")).toBeNull();
     expect(vmSnapshotDeviceIdToKind(999)).toBeNull();
+  });
+
+  it("maps HDA audio device kinds/ids for WorkerVmSnapshot", () => {
+    expect(vmSnapshotDeviceKindToId(VM_SNAPSHOT_DEVICE_AUDIO_HDA_KIND)).toBe(VM_SNAPSHOT_DEVICE_ID_AUDIO_HDA);
+    expect(vmSnapshotDeviceIdToKind(VM_SNAPSHOT_DEVICE_ID_AUDIO_HDA)).toBe(VM_SNAPSHOT_DEVICE_AUDIO_HDA_KIND);
   });
 
   it("parses aero-io-snapshot TLV version header when present", () => {

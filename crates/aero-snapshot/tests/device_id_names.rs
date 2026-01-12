@@ -19,6 +19,7 @@ fn platform_device_ids_have_stable_names_and_numbers() {
         (DeviceId::PCI_INTX, 15u32, "PCI_INTX"),
         (DeviceId::ACPI_PM, 16u32, "ACPI_PM"),
         (DeviceId::HPET, 17u32, "HPET"),
+        (DeviceId::HDA, 18u32, "HDA"),
     ];
 
     for (id, expected_num, expected_name) in cases {

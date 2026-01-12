@@ -68,6 +68,8 @@ impl DeviceId {
     pub const ACPI_PM: DeviceId = DeviceId(16);
     /// High Precision Event Timer (HPET) state.
     pub const HPET: DeviceId = DeviceId(17);
+    /// Guest-visible HD Audio (HDA) controller/runtime state.
+    pub const HDA: DeviceId = DeviceId(18);
 
     pub fn name(self) -> Option<&'static str> {
         match self {
@@ -88,6 +90,7 @@ impl DeviceId {
             DeviceId::PCI_INTX => Some("PCI_INTX"),
             DeviceId::ACPI_PM => Some("ACPI_PM"),
             DeviceId::HPET => Some("HPET"),
+            DeviceId::HDA => Some("HDA"),
             _ => None,
         }
     }

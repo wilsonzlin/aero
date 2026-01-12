@@ -141,6 +141,7 @@ import { IoWorkerLegacyHidPassthroughAdapter } from "./io_hid_passthrough_legacy
 import { drainIoHidInputRing } from "./io_hid_input_ring";
 import { UhciRuntimeExternalHubConfigManager } from "./uhci_runtime_hub_config";
 import {
+  VM_SNAPSHOT_DEVICE_AUDIO_HDA_KIND,
   VM_SNAPSHOT_DEVICE_I8042_KIND,
   VM_SNAPSHOT_DEVICE_USB_KIND,
   parseAeroIoSnapshotVersion,
@@ -339,6 +340,60 @@ function restoreUsbDeviceState(bytes: Uint8Array): void {
 function restoreI8042DeviceState(bytes: Uint8Array): void {
   if (!i8042) return;
   i8042.loadState(bytes);
+}
+
+type AudioHdaSnapshotBridgeLike = {
+  save_state?: () => Uint8Array;
+  snapshot_state?: () => Uint8Array;
+  load_state?: (bytes: Uint8Array) => void;
+  restore_state?: (bytes: Uint8Array) => void;
+};
+
+// Optional HDA audio device bridge. This is populated by the audio integration when present.
+let audioHdaBridge: AudioHdaSnapshotBridgeLike | null = null;
+
+function resolveAudioHdaSnapshotBridge(): AudioHdaSnapshotBridgeLike | null {
+  if (audioHdaBridge) return audioHdaBridge;
+
+  // Allow other runtimes/experiments to attach an HDA bridge via a well-known global.
+  // This is intentionally best-effort so snapshots can still be loaded in environments
+  // without audio support.
+  const anyGlobal = globalThis as unknown as Record<string, unknown>;
+  const candidate =
+    anyGlobal["__aeroAudioHdaBridge"] ??
+    anyGlobal["__aero_hda_bridge"] ??
+    anyGlobal["__aero_audio_hda_bridge"] ??
+    anyGlobal["__aero_io_hda_bridge"] ??
+    null;
+  if (!candidate) return null;
+  if (typeof candidate !== "object" && typeof candidate !== "function") return null;
+  return candidate as AudioHdaSnapshotBridgeLike;
+}
+
+function snapshotAudioHdaDeviceState(): { kind: string; bytes: Uint8Array } | null {
+  const bridge = resolveAudioHdaSnapshotBridge();
+  if (!bridge) return null;
+
+  const save =
+    (bridge as unknown as { save_state?: unknown }).save_state ?? (bridge as unknown as { snapshot_state?: unknown }).snapshot_state;
+  if (typeof save !== "function") return null;
+  try {
+    const bytes = save.call(bridge) as unknown;
+    if (bytes instanceof Uint8Array) return { kind: VM_SNAPSHOT_DEVICE_AUDIO_HDA_KIND, bytes };
+  } catch (err) {
+    console.warn("[io.worker] HDA audio save_state failed:", err);
+  }
+  return null;
+}
+
+function restoreAudioHdaDeviceState(bytes: Uint8Array): void {
+  const bridge = resolveAudioHdaSnapshotBridge();
+  if (!bridge) return;
+
+  const load =
+    (bridge as unknown as { load_state?: unknown }).load_state ?? (bridge as unknown as { restore_state?: unknown }).restore_state;
+  if (typeof load !== "function") return;
+  load.call(bridge, bytes);
 }
 
 // Keep broker IDs from overlapping between multiple concurrent USB action sources (UHCI runtime,
@@ -1727,9 +1782,11 @@ async function handleVmSnapshotSaveToOpfs(path: string, cpu: ArrayBuffer, mmu: A
 
     const usb = snapshotUsbDeviceState();
     const ps2 = snapshotI8042DeviceState();
+    const hda = snapshotAudioHdaDeviceState();
     const devices: Array<{ kind: string; bytes: Uint8Array }> = [];
     if (usb) devices.push(usb);
     if (ps2) devices.push(ps2);
+    if (hda) devices.push(hda);
 
     const saveExport = resolveVmSnapshotSaveToOpfsExport(api);
     if (!saveExport) {
@@ -1813,7 +1870,7 @@ async function handleVmSnapshotRestoreFromOpfs(path: string): Promise<{
         devices.push({ kind: e.kind, bytes: copyU8ToArrayBuffer(e.bytes) });
       }
 
-      // Apply device state locally (IO worker owns USB).
+      // Apply device state locally (IO worker owns USB + audio device instances).
       const usbBlob = devicesRaw.find(
         (entry): entry is { kind: string; bytes: Uint8Array } =>
           !!entry &&
@@ -1821,8 +1878,18 @@ async function handleVmSnapshotRestoreFromOpfs(path: string): Promise<{
           (entry as { kind: string }).kind === VM_SNAPSHOT_DEVICE_USB_KIND &&
           (entry as { bytes?: unknown }).bytes instanceof Uint8Array,
       );
+      const audioBlob = devicesRaw.find(
+        (entry): entry is { kind: string; bytes: Uint8Array } =>
+          !!entry &&
+          typeof (entry as { kind?: unknown }).kind === "string" &&
+          (entry as { kind: string }).kind === VM_SNAPSHOT_DEVICE_AUDIO_HDA_KIND &&
+          (entry as { bytes?: unknown }).bytes instanceof Uint8Array,
+      );
       if (usbBlob) {
         restoreUsbDeviceState(usbBlob.bytes);
+      }
+      if (audioBlob) {
+        restoreAudioHdaDeviceState(audioBlob.bytes);
       }
 
       const i8042Blob = devicesRaw.find(
@@ -1856,6 +1923,7 @@ async function handleVmSnapshotRestoreFromOpfs(path: string): Promise<{
       const devices: VmSnapshotDeviceBlob[] = [];
       let usbBytes: Uint8Array | null = null;
       let i8042Bytes: Uint8Array | null = null;
+      let hdaBytes: Uint8Array | null = null;
       for (const entry of rec.devices) {
         if (!entry || typeof entry !== "object") {
           throw new Error(
@@ -1883,6 +1951,9 @@ async function handleVmSnapshotRestoreFromOpfs(path: string): Promise<{
         if (kind === VM_SNAPSHOT_DEVICE_I8042_KIND) {
           i8042Bytes = e.data;
         }
+        if (kind === VM_SNAPSHOT_DEVICE_AUDIO_HDA_KIND) {
+          hdaBytes = e.data;
+        }
         devices.push({ kind, bytes: copyU8ToArrayBuffer(e.data) });
       }
 
@@ -1891,6 +1962,9 @@ async function handleVmSnapshotRestoreFromOpfs(path: string): Promise<{
       }
       if (i8042Bytes) {
         restoreI8042DeviceState(i8042Bytes);
+      }
+      if (hdaBytes) {
+        restoreAudioHdaDeviceState(hdaBytes);
       }
 
       return {
