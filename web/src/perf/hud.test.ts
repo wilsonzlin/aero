@@ -297,5 +297,78 @@ describe("Perf HUD Trace JSON export", () => {
     expect(blob.parts).toEqual([payload]);
     expect(traceButton!.disabled).toBe(false);
   });
-});
 
+  it("does not trigger HUD hotkeys when the keydown event is already preventDefault()'d", () => {
+    const keydownListeners: Array<(ev: any) => void> = [];
+    const windowWithEvents = globalThis.window as unknown as {
+      addEventListener: (type: string, listener: (ev: any) => void) => void;
+      removeEventListener: (type: string, listener: (ev: any) => void) => void;
+      setInterval?: (cb: () => void, ms: number) => unknown;
+      clearInterval?: (id: unknown) => void;
+    };
+    windowWithEvents.addEventListener = (type, listener) => {
+      if (type === "keydown") keydownListeners.push(listener);
+    };
+    windowWithEvents.removeEventListener = () => {};
+    // Avoid creating real timers in unit tests.
+    windowWithEvents.setInterval = () => 0;
+    windowWithEvents.clearInterval = () => {};
+
+    const ctx = {
+      setTransform: vi.fn(),
+      clearRect: vi.fn(),
+      beginPath: vi.fn(),
+      moveTo: vi.fn(),
+      lineTo: vi.fn(),
+      stroke: vi.fn(),
+      strokeStyle: "",
+      lineWidth: 0,
+    };
+    vi.spyOn(
+      HTMLCanvasElement.prototype as unknown as { getContext: (contextId: string, options?: unknown) => unknown },
+      "getContext",
+    ).mockImplementation((contextId) => (contextId === "2d" ? ctx : null));
+
+    const perf = {
+      getHudSnapshot: (out: PerfHudSnapshot) => out,
+      setHudActive: () => {},
+      captureStart: () => {},
+      captureStop: () => {},
+      captureReset: () => {},
+      export: () => ({}),
+    } as unknown as PerfApi;
+
+    installHud(perf);
+
+    expect(keydownListeners).toHaveLength(1);
+
+    const hud = (globalThis.document as unknown as FakeDocument)
+      .querySelectorAll<FakeHTMLElement>("div")
+      .find((el) => el.className === "aero-perf-hud");
+    expect(hud).toBeTruthy();
+    expect(hud!.hidden).toBe(true);
+
+    const invoke = (defaultPrevented: boolean) => {
+      const preventDefault = vi.fn();
+      keydownListeners[0]!({
+        repeat: false,
+        target: null,
+        key: "F2",
+        code: "F2",
+        ctrlKey: false,
+        shiftKey: false,
+        defaultPrevented,
+        preventDefault,
+      });
+      return preventDefault;
+    };
+
+    const alreadyPrevented = invoke(true);
+    expect(alreadyPrevented).not.toHaveBeenCalled();
+    expect(hud!.hidden).toBe(true);
+
+    const fresh = invoke(false);
+    expect(fresh).toHaveBeenCalledTimes(1);
+    expect(hud!.hidden).toBe(false);
+  });
+});
