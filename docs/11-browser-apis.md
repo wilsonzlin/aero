@@ -767,7 +767,8 @@ async function importDiskImage(file, progressCallback) {
 
 Note: IndexedDB is async. The Rust/wasm32 async IndexedDB block store lives in `crates/st-idb`,
 and it is not currently exposed as a synchronous `aero_storage::StorageBackend` /
-`aero_storage::VirtualDisk` (see `docs/19-indexeddb-storage-story.md`).
+`aero_storage::VirtualDisk`; see [`19-indexeddb-storage-story.md`](./19-indexeddb-storage-story.md)
+and [`20-storage-trait-consolidation.md`](./20-storage-trait-consolidation.md).
 
 IndexedDB is used for **small key/value** data that benefits from persistence across sessions but does not require OPFS throughput:
 
@@ -1493,7 +1494,7 @@ const compat = {
         }
         // IndexedDB is async-only; if the runtime uses a synchronous Rust controller stack,
         // it cannot “block on IndexedDB” in the same worker without deadlocking.
-        // See: docs/19-indexeddb-storage-story.md
+        // See: docs/19-indexeddb-storage-story.md and docs/20-storage-trait-consolidation.md
         return new IndexedDbStorage();
     }
 };

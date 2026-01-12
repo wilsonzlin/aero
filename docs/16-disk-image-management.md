@@ -13,8 +13,9 @@ This repository now includes a minimal, browser-side **disk image manager** inte
 
 Note: IndexedDB storage is async and is used here as a host-side fallback for disk management and
 import/export flows. It is not currently exposed as a synchronous `aero_storage::StorageBackend` /
-`aero_storage::VirtualDisk` for the boot-critical Rust controller path (see
-[`docs/19-indexeddb-storage-story.md`](./19-indexeddb-storage-story.md)).
+`aero_storage::VirtualDisk` for the boot-critical Rust controller path; see
+[`19-indexeddb-storage-story.md`](./19-indexeddb-storage-story.md) and
+[`20-storage-trait-consolidation.md`](./20-storage-trait-consolidation.md).
 
 Implementation lives in:
 

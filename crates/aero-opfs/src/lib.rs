@@ -7,9 +7,16 @@
 //! (hyphens become underscores).
 //!
 //! The primary, boot-critical storage path is OPFS `FileSystemSyncAccessHandle` (fast and
-//! synchronous in a Dedicated Worker). Some additional backends (async OPFS APIs, IndexedDB)
-//! exist as async-only fallbacks for host-side tooling and environments where sync handles
-//! are unavailable.
+//! synchronous in a Dedicated Worker).
+//!
+//! Some additional backends (async OPFS APIs, IndexedDB) exist as async-only fallbacks for
+//! host-side tooling and environments where sync handles are unavailable. Those async-only
+//! backends do **not** implement the canonical synchronous `aero_storage::{StorageBackend, VirtualDisk}`
+//! traits used by the Rust disk/controller stack.
+//!
+//! See:
+//! - `docs/19-indexeddb-storage-story.md`
+//! - `docs/20-storage-trait-consolidation.md`
 //!
 //! Main types:
 //!

@@ -358,7 +358,8 @@ for the full browser backend design.
 
 Note: IndexedDB-based storage is async and is not currently exposed as a synchronous
 `aero_storage::StorageBackend` / `aero_storage::VirtualDisk`. See
-[`docs/19-indexeddb-storage-story.md`](./19-indexeddb-storage-story.md).
+[`docs/19-indexeddb-storage-story.md`](./19-indexeddb-storage-story.md) and
+[`docs/20-storage-trait-consolidation.md`](./20-storage-trait-consolidation.md).
 
 
 ### Network Tasks

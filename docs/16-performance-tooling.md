@@ -363,7 +363,8 @@ The storage bench is a Playwright-driven macrobench (`bench/runner.ts storage_io
 
 Note: this suite measures host-side OPFS/IndexedDB throughput. IndexedDB is async-only and does not
 currently back the synchronous Rust disk/controller path (`aero_storage::{StorageBackend, VirtualDisk}`).
-See: [`19-indexeddb-storage-story.md`](./19-indexeddb-storage-story.md).
+See: [`19-indexeddb-storage-story.md`](./19-indexeddb-storage-story.md) and
+[`20-storage-trait-consolidation.md`](./20-storage-trait-consolidation.md).
 
 To reproduce the CI compare locally:
 

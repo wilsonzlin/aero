@@ -18,7 +18,8 @@ implemented in Rust/wasm32 in `crates/aero-opfs`.
 Aero can fall back to IndexedDB for some host-side storage flows when OPFS sync access handles are
 unavailable, but IndexedDB is async-only and does not currently back the synchronous Rust
 disk/controller path; see
-[`19-indexeddb-storage-story.md`](./19-indexeddb-storage-story.md).
+[`19-indexeddb-storage-story.md`](./19-indexeddb-storage-story.md) and the canonical trait mapping in
+[`20-storage-trait-consolidation.md`](./20-storage-trait-consolidation.md).
 
 ## Legal / Responsible Use (Important)
 
