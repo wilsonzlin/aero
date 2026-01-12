@@ -538,4 +538,132 @@ mod tests {
         let got6 = MmioHandler::read(&mut router, 0x10, 6);
         assert_eq!(got6, (1u64 << 48) - 1);
     }
+
+    #[test]
+    fn routes_mmio64_bar_base_above_4gib() {
+        // Place the PCI MMIO window above 4GiB so BAR0 programming uses the 64-bit BAR path and
+        // the router must perform 64-bit address arithmetic.
+        let window_base = 0x1_0000_0000;
+        let bdf = PciBdf::new(0, 8, 0);
+
+        let mut bus = PciBus::new();
+        let mut cfg = PciConfigSpace::new(0x1234, 0x5678);
+        cfg.set_bar_definition(
+            0,
+            PciBarDefinition::Mmio64 {
+                size: 0x1000,
+                prefetchable: false,
+            },
+        );
+        bus.add_device(bdf, Box::new(TestDev { cfg }));
+
+        let cfg_ports: SharedPciConfigPorts = Rc::new(RefCell::new(PciConfigPorts::with_bus(bus)));
+
+        let (mmio, state) = TestMmio::new(0x1000);
+        let mut router = PciBarMmioRouter::new(window_base, cfg_ports.clone());
+        router.register_bar(bdf, 0, Box::new(mmio));
+
+        // Program BAR0 and enable MEM decoding.
+        let bar0_base = window_base + 0x2000;
+        {
+            let mut cfg_ports_mut = cfg_ports.borrow_mut();
+            cfg_ports_mut.bus_mut().write_config(bdf, 0x04, 2, 0x0002);
+            // BAR0 low dword.
+            cfg_ports_mut
+                .bus_mut()
+                .write_config(bdf, 0x10, 4, bar0_base as u32);
+            // BAR0 high dword.
+            cfg_ports_mut
+                .bus_mut()
+                .write_config(bdf, 0x14, 4, (bar0_base >> 32) as u32);
+        }
+
+        let dev_offset = 0x10u64;
+        let off = (bar0_base - window_base) + dev_offset;
+
+        MmioHandler::write(&mut router, off, 4, 0xA1B2_C3D4);
+        let got = MmioHandler::read(&mut router, off, 4);
+        assert_eq!(got, 0xA1B2_C3D4);
+
+        let state = state.lock().unwrap();
+        assert_eq!(&state.mem[0x10..0x14], &[0xD4, 0xC3, 0xB2, 0xA1]);
+        assert_eq!(state.writes.len(), 1);
+        assert_eq!(state.reads.len(), 1);
+    }
+
+    #[test]
+    fn ignores_io_bar_kind_even_if_bar_base_matches_window() {
+        let window_base = 0x8000_0000;
+        let bdf = PciBdf::new(0, 9, 0);
+
+        let mut bus = PciBus::new();
+        let mut cfg = PciConfigSpace::new(0x1234, 0x5678);
+        cfg.set_bar_definition(0, PciBarDefinition::Io { size: 0x20 });
+        bus.add_device(bdf, Box::new(TestDev { cfg }));
+
+        let cfg_ports: SharedPciConfigPorts = Rc::new(RefCell::new(PciConfigPorts::with_bus(bus)));
+
+        let (mmio, state) = TestMmio::new(0x20);
+        let mut router = PciBarMmioRouter::new(window_base, cfg_ports.clone());
+        router.register_bar(bdf, 0, Box::new(mmio));
+
+        let bar0_base = window_base + 0x2000;
+        {
+            let mut cfg_ports_mut = cfg_ports.borrow_mut();
+            // Enable MEM decoding so any non-routing is attributable to BAR kind mismatch (I/O vs
+            // MMIO), not command gating.
+            cfg_ports_mut.bus_mut().write_config(bdf, 0x04, 2, 0x0002);
+            cfg_ports_mut
+                .bus_mut()
+                .write_config(bdf, 0x10, 4, bar0_base as u32);
+        }
+
+        let off = (bar0_base - window_base) + 0x10;
+        let got = MmioHandler::read(&mut router, off, 4);
+        assert_eq!(got, all_ones(4));
+        assert!(state.lock().unwrap().reads.is_empty());
+    }
+
+    #[test]
+    fn does_not_dispatch_accesses_that_cross_bar_end() {
+        let window_base = 0x8000_0000;
+        let bdf = PciBdf::new(0, 10, 0);
+
+        let mut bus = PciBus::new();
+        let mut cfg = PciConfigSpace::new(0x1234, 0x5678);
+        cfg.set_bar_definition(
+            0,
+            PciBarDefinition::Mmio32 {
+                size: 0x1000,
+                prefetchable: false,
+            },
+        );
+        bus.add_device(bdf, Box::new(TestDev { cfg }));
+
+        let cfg_ports: SharedPciConfigPorts = Rc::new(RefCell::new(PciConfigPorts::with_bus(bus)));
+
+        let (mmio, state) = TestMmio::new(0x1000);
+        let mut router = PciBarMmioRouter::new(window_base, cfg_ports.clone());
+        router.register_bar(bdf, 0, Box::new(mmio));
+
+        // Program BAR0 and enable MEM decoding.
+        let bar0_base = window_base + 0x2000;
+        {
+            let mut cfg_ports_mut = cfg_ports.borrow_mut();
+            cfg_ports_mut.bus_mut().write_config(bdf, 0x04, 2, 0x0002);
+            cfg_ports_mut
+                .bus_mut()
+                .write_config(bdf, 0x10, 4, bar0_base as u32);
+        }
+
+        // This 8-byte access starts inside the BAR but extends past the end.
+        let off = (bar0_base - window_base) + 0xFF9;
+        let got = MmioHandler::read(&mut router, off, 8);
+        assert_eq!(got, u64::MAX);
+        MmioHandler::write(&mut router, off, 8, 0x1122_3344_5566_7788);
+
+        let state = state.lock().unwrap();
+        assert!(state.reads.is_empty());
+        assert!(state.writes.is_empty());
+    }
 }
