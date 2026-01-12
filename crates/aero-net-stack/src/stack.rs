@@ -176,10 +176,10 @@ struct TcpConn {
 
 impl TcpConn {
     fn on_guest_ack(&mut self, ack: u32) {
-        if !self.syn_acked && ack.wrapping_sub(self.our_isn) >= 1 {
+        if !self.syn_acked && seq_after(ack, self.our_isn) {
             self.syn_acked = true;
         }
-        if self.fin_sent && !self.fin_acked && ack.wrapping_sub(self.fin_seq) >= 1 {
+        if self.fin_sent && !self.fin_acked && seq_after(ack, self.fin_seq) {
             self.fin_acked = true;
         }
     }
@@ -188,6 +188,11 @@ impl TcpConn {
         // Remove when both sides have exchanged FINs and the guest ACKed our FIN.
         self.guest_fin_received && self.fin_sent && self.fin_acked
     }
+}
+
+fn seq_after(a: u32, b: u32) -> bool {
+    let diff = a.wrapping_sub(b);
+    diff != 0 && diff < 0x8000_0000
 }
 
 #[derive(Debug, Clone)]

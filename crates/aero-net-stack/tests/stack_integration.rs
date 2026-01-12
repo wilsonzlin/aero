@@ -176,6 +176,73 @@ fn dhcp_dns_tcp_flow() {
 }
 
 #[test]
+fn tcp_invalid_ack_does_not_complete_handshake() {
+    let mut stack = NetworkStack::new(StackConfig::default());
+    let guest_mac = MacAddr([0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0xee]);
+    dhcp_handshake(&mut stack, guest_mac);
+    stack.set_network_enabled(true);
+
+    let remote_ip = Ipv4Addr::new(93, 184, 216, 34);
+    let guest_port = 40100;
+    let guest_isn = 9000;
+
+    let syn = wrap_tcp_ipv4_eth(
+        guest_mac,
+        stack.config().our_mac,
+        stack.config().guest_ip,
+        remote_ip,
+        guest_port,
+        80,
+        guest_isn,
+        0,
+        TcpFlags::SYN,
+        &[],
+    );
+    let actions = stack.process_outbound_ethernet(&syn, 0);
+    let (conn_id, syn_ack_frame) = extract_tcp_connect_and_frame(&actions);
+    let syn_ack = parse_tcp_from_frame(&syn_ack_frame);
+
+    // Send an ACK that does not acknowledge the stack's SYN (ack_number < our_isn).
+    let bad_ack = wrap_tcp_ipv4_eth(
+        guest_mac,
+        stack.config().our_mac,
+        stack.config().guest_ip,
+        remote_ip,
+        guest_port,
+        80,
+        guest_isn + 1,
+        0,
+        TcpFlags::ACK,
+        &[],
+    );
+    assert!(stack.process_outbound_ethernet(&bad_ack, 1).is_empty());
+
+    // If the proxy side closes before the handshake is actually complete, the guest should see an
+    // RST (not a FIN).
+    let actions = stack.handle_tcp_proxy_event(
+        TcpProxyEvent::Closed {
+            connection_id: conn_id,
+        },
+        2,
+    );
+    let frame = extract_single_frame(&actions);
+    let seg = parse_tcp_from_frame(&frame);
+    assert!(
+        seg.flags().contains(TcpFlags::RST),
+        "expected RST, got {:?}",
+        seg.flags()
+    );
+    assert!(
+        !seg.flags().contains(TcpFlags::FIN),
+        "unexpected FIN in {:?}",
+        seg.flags()
+    );
+
+    // Sanity-check: the earlier SYN-ACK we sent is a SYN|ACK (a regression guard for the setup).
+    assert_eq!(syn_ack.flags(), TcpFlags::SYN | TcpFlags::ACK);
+}
+
+#[test]
 fn dns_aaaa_query_returns_notimp() {
     let mut stack = NetworkStack::new(StackConfig::default());
     let guest_mac = MacAddr([0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0xee]);
