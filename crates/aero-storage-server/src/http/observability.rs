@@ -31,6 +31,22 @@ pub(crate) fn record_image_id(image_id: &str) {
     tracing::Span::current().record("image_id", tracing::field::display(&truncated));
 }
 
+fn truncate_for_span(value: &str, max_len: usize) -> std::borrow::Cow<'_, str> {
+    if value.len() <= max_len {
+        return std::borrow::Cow::Borrowed(value);
+    }
+
+    // Truncate at a valid UTF-8 boundary.
+    let mut end = max_len;
+    while end > 0 && !value.is_char_boundary(end) {
+        end -= 1;
+    }
+
+    let mut out = value[..end].to_string();
+    out.push_str("...");
+    std::borrow::Cow::Owned(out)
+}
+
 pub(crate) async fn middleware(
     State(metrics): State<Arc<Metrics>>,
     req: Request<Body>,
@@ -53,7 +69,7 @@ pub(crate) async fn middleware(
         .to_string();
 
     let method = req.method().clone();
-    let path = req.uri().path();
+    let path = truncate_for_span(req.uri().path(), 256);
     let user_id = req
         .headers()
         .get("x-aero-user-id")
