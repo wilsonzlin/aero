@@ -1951,6 +1951,27 @@ function maybeInitHdaDevice(): void {
       });
     }
 
+    // If virtio-snd was initialized before HDA (e.g. HDA init failed once and later succeeded),
+    // ensure it is detached from the shared audio/mic rings. The AudioWorklet rings are SPSC and
+    // must never have multiple producers/consumers.
+    if (virtioSndDevice) {
+      try {
+        virtioSndDevice.setMicRingBuffer(null);
+      } catch {
+        // ignore
+      }
+      try {
+        virtioSndDevice.setAudioRingBuffer({
+          ringBuffer: null,
+          capacityFrames: audioOutCapacityFrames,
+          channelCount: audioOutChannelCount,
+          dstSampleRateHz: audioOutDstSampleRate,
+        });
+      } catch {
+        // ignore
+      }
+    }
+
     // Apply any cached snapshot state captured before the HDA bridge was initialized.
     if (pendingAudioHdaSnapshotBytes) {
       const pending = pendingAudioHdaSnapshotBytes;
