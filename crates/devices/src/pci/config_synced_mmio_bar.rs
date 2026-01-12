@@ -65,7 +65,8 @@ impl<T: MmioHandler + PciDevice> MmioHandler for PciConfigSyncedMmioBar<T> {
             return all_ones(size);
         }
         self.sync_pci_state();
-        MmioHandler::read(&mut *self.dev.borrow_mut(), offset, size)
+        // Mask to avoid leaking junk in upper bits for sub-8-byte reads.
+        MmioHandler::read(&mut *self.dev.borrow_mut(), offset, size) & all_ones(size)
     }
 
     fn write(&mut self, offset: u64, size: usize, value: u64) {
@@ -73,7 +74,9 @@ impl<T: MmioHandler + PciDevice> MmioHandler for PciConfigSyncedMmioBar<T> {
             return;
         }
         self.sync_pci_state();
-        MmioHandler::write(&mut *self.dev.borrow_mut(), offset, size, value);
+        // Mask to enforce byte-enable semantics even for handlers that treat `value` as a full
+        // 64-bit quantity.
+        MmioHandler::write(&mut *self.dev.borrow_mut(), offset, size, value & all_ones(size));
     }
 }
 
@@ -239,5 +242,81 @@ mod tests {
             assert_eq!(dev.last_command, 0);
             assert_eq!(dev.last_bar_base, 0x5678_0000);
         }
+    }
+
+    #[test]
+    fn pci_config_synced_mmio_bar_masks_values_to_access_size() {
+        let bdf = PciBdf::new(0, 3, 0);
+        let bar = 0;
+
+        let pci_cfg = Rc::new(RefCell::new(PciConfigPorts::new()));
+        pci_cfg
+            .borrow_mut()
+            .bus_mut()
+            .add_device(bdf, Box::new(TestPciConfigDevice::new(bar)));
+
+        struct UnmaskedMmioDevice {
+            config: PciConfigSpace,
+            last_write_value: u64,
+        }
+
+        impl UnmaskedMmioDevice {
+            fn new(bar: u8) -> Self {
+                let mut config = PciConfigSpace::new(0xabcd, 0xef01);
+                config.set_bar_definition(
+                    bar,
+                    PciBarDefinition::Mmio32 {
+                        size: 0x1000,
+                        prefetchable: false,
+                    },
+                );
+                Self {
+                    config,
+                    last_write_value: 0,
+                }
+            }
+        }
+
+        impl PciDevice for UnmaskedMmioDevice {
+            fn config(&self) -> &PciConfigSpace {
+                &self.config
+            }
+
+            fn config_mut(&mut self) -> &mut PciConfigSpace {
+                &mut self.config
+            }
+        }
+
+        impl MmioHandler for UnmaskedMmioDevice {
+            fn read(&mut self, _offset: u64, _size: usize) -> u64 {
+                u64::MAX
+            }
+
+            fn write(&mut self, _offset: u64, _size: usize, value: u64) {
+                self.last_write_value = value;
+            }
+        }
+
+        // Enable MEM decoding so the wrapper syncs a non-zero command register.
+        {
+            let mut pci_cfg = pci_cfg.borrow_mut();
+            let cfg = pci_cfg
+                .bus_mut()
+                .device_config_mut(bdf)
+                .expect("missing config device");
+            cfg.set_command(0x2);
+            cfg.set_bar_base(bar, 0x1234_0000);
+        }
+
+        let dev = Rc::new(RefCell::new(UnmaskedMmioDevice::new(bar)));
+        let mut mmio = PciConfigSyncedMmioBar::new(pci_cfg.clone(), dev.clone(), bdf, bar);
+
+        // Underlying device returns u64::MAX regardless of size, but the wrapper should mask it.
+        assert_eq!(mmio.read(0, 1), 0xFF);
+        assert_eq!(mmio.read(0, 4), 0xFFFF_FFFF);
+
+        // Writes should also be masked before reaching the device.
+        mmio.write(0, 4, u64::MAX);
+        assert_eq!(dev.borrow().last_write_value, 0xFFFF_FFFF);
     }
 }
