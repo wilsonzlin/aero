@@ -911,7 +911,9 @@ describe("usb/UHCI synthetic HID passthrough integration (WASM)", () => {
     const guestSize = layout.guest_size >>> 0;
 
     const runtime = new api.UhciRuntime(guestBase, guestSize);
-    if (typeof runtime.attach_usb_hid_passthrough_device !== "function") return;
+    // TypeScript doesn't narrow optional methods across closures; capture a stable function handle.
+    const attach = runtime.attach_usb_hid_passthrough_device;
+    if (typeof attach !== "function") return;
     if (typeof (runtime as unknown as { webhid_attach_at_path?: unknown }).webhid_attach_at_path !== "function") return;
 
     const collections = [
@@ -975,6 +977,6 @@ describe("usb/UHCI synthetic HID passthrough integration (WASM)", () => {
 
     const HidBridge = api.UsbHidPassthroughBridge;
     const dev = new HidBridge(0x1234, 0x0002, "Aero", "Collision", undefined, USB_HID_GAMEPAD_REPORT_DESCRIPTOR, false);
-    expect(() => runtime.attach_usb_hid_passthrough_device([0, 4], dev)).toThrow();
+    expect(() => attach.call(runtime, [0, 4], dev)).toThrow();
   });
 });
