@@ -3,9 +3,19 @@ use crate::{DiskError, Result};
 /// A resizable, byte-addressed backing store for disk images.
 ///
 /// In the browser this is typically implemented by OPFS `FileSystemSyncAccessHandle`
-/// (fast, synchronous in a Worker) or IndexedDB (async, higher latency). Those browser
-/// backends are implemented in TypeScript; this trait exists so the pure Rust disk image
-/// formats can be unit-tested without browser APIs.
+/// (fast, synchronous in a Worker).
+///
+/// A concrete wasm32 implementation is provided by the `aero-opfs` crate:
+///
+/// ```text
+/// aero-opfs::OpfsByteStorage
+/// ```
+///
+/// IndexedDB-backed storage is generally async and therefore does not currently implement
+/// this synchronous trait.
+///
+/// This trait also allows the pure Rust disk image formats to be unit-tested without any
+/// browser APIs.
 pub trait StorageBackend {
     /// Current length in bytes.
     fn len(&mut self) -> Result<u64>;

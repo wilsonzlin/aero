@@ -9,11 +9,18 @@
 //! - [`AeroCowDisk`]: copy-on-write overlay on top of a base disk
 //! - [`BlockCachedDisk`]: LRU, write-back block cache wrapper
 //!
-//! In the browser, HTTP streaming + OPFS caching is handled by the TypeScript host
-//! layer. For host-side testing and development, this crate also includes an
-//! optional (native-only) HTTP Range streaming helper.
+//! In the browser, local persistence is typically backed by OPFS. Aero provides a
+//! Rust/wasm32 OPFS backend implementation in `crates/aero-opfs` that implements
+//! [`StorageBackend`] (byte-addressed) and [`VirtualDisk`] (disk-oriented).
 //!
-//! Browser backends (OPFS primary, IndexedDB fallback) live in the TypeScript glue layer.
+//! Higher-level orchestration such as remote HTTP streaming, caching policy, and UI
+//! integration may still be handled by the TypeScript host layer.
+//!
+//! For host-side testing and development, this crate also includes an optional
+//! (native-only) HTTP Range streaming helper.
+//!
+//! Note: IndexedDB-based storage is generally async and is not currently exposed as a
+//! synchronous [`StorageBackend`] in this crate.
 
 mod backend;
 mod cache;

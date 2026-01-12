@@ -2,8 +2,15 @@
 
 This crate contains Aero’s virtual disk abstractions and pure Rust disk image formats.
 
-Browser persistence backends (OPFS + IndexedDB) live in the TypeScript host layer, but
-the formats here are designed to be used directly with those backends.
+In the browser, the primary persistence backend is OPFS. Aero provides a Rust/wasm32
+implementation in `crates/aero-opfs` (e.g. `OpfsByteStorage`) that implements
+`aero_storage::StorageBackend`/`aero_storage::VirtualDisk`.
+
+Higher-level orchestration such as remote HTTP streaming/caching and UI integration may
+still live in the TypeScript host layer.
+
+Note: IndexedDB-based storage is generally async and is not currently exposed as a sync
+`aero_storage::StorageBackend`.
 
 ## Using `aero-storage` disks with device models
 
