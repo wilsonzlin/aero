@@ -532,6 +532,55 @@ fn command_processor_rejects_import_into_existing_buffer_handle() {
 }
 
 #[test]
+fn command_processor_release_shared_surface_unknown_token_is_noop() {
+    let mut proc = AeroGpuCommandProcessor::new();
+
+    const TEX: u32 = 0x10;
+    const ALIAS: u32 = 0x20;
+    const TOKEN: u64 = 0xDEAD_BEEF_CAFE_F00D;
+
+    let stream = build_stream(|out| {
+        emit_packet(out, AeroGpuOpcode::CreateTexture2d as u32, |out| {
+            push_u32(out, TEX); // texture_handle
+            push_u32(out, 0); // usage_flags
+            push_u32(out, 3); // format (opaque numeric)
+            push_u32(out, 1); // width
+            push_u32(out, 1); // height
+            push_u32(out, 1); // mip_levels
+            push_u32(out, 1); // array_layers
+            push_u32(out, 4); // row_pitch_bytes
+            push_u32(out, 0); // backing_alloc_id
+            push_u32(out, 0); // backing_offset_bytes
+            push_u64(out, 0); // reserved0
+        });
+
+        // Token has not been exported yet; this should not retire it.
+        emit_packet(out, AeroGpuOpcode::ReleaseSharedSurface as u32, |out| {
+            push_u64(out, TOKEN);
+            push_u64(out, 0); // reserved0
+        });
+
+        emit_packet(out, AeroGpuOpcode::ExportSharedSurface as u32, |out| {
+            push_u32(out, TEX); // resource_handle
+            push_u32(out, 0); // reserved0
+            push_u64(out, TOKEN);
+        });
+
+        emit_packet(out, AeroGpuOpcode::ImportSharedSurface as u32, |out| {
+            push_u32(out, ALIAS); // out_resource_handle
+            push_u32(out, 0); // reserved0
+            push_u64(out, TOKEN);
+        });
+    });
+
+    proc.process_submission(&stream, 0)
+        .expect("release-before-export must not retire the token");
+
+    assert_eq!(proc.lookup_shared_surface_token(TOKEN), Some(TEX));
+    assert_eq!(proc.resolve_shared_surface(ALIAS), TEX);
+}
+
+#[test]
 fn command_processor_rejects_reexporting_token_after_release() {
     let mut proc = AeroGpuCommandProcessor::new();
 
