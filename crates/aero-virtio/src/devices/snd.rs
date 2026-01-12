@@ -607,13 +607,18 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
     fn handle_rx_chain(&mut self, mem: &mut dyn GuestMemory, chain: &DescriptorChain) -> u32 {
         let mut hdr = [0u8; 8];
         let mut hdr_len = 0usize;
-        let out_bytes: usize = chain
-            .descriptors()
-            .iter()
-            .filter(|d| !d.is_write_only())
-            .map(|d| d.len as usize)
-            .sum();
-        let extra_out = out_bytes > hdr.len();
+        // Sum the device-readable descriptor lengths using saturating arithmetic so malicious
+        // guests cannot trigger `usize` overflow (notably on 32-bit targets like wasm32).
+        //
+        // We only need to know whether the total exceeds the 8-byte header.
+        let mut out_bytes_total: u64 = 0;
+        for d in chain.descriptors().iter().filter(|d| !d.is_write_only()) {
+            out_bytes_total = out_bytes_total.saturating_add(d.len as u64);
+            if out_bytes_total > hdr.len() as u64 {
+                break;
+            }
+        }
+        let extra_out = out_bytes_total > hdr.len() as u64;
 
         for desc in chain.descriptors().iter().filter(|d| !d.is_write_only()) {
             if hdr_len >= hdr.len() {
