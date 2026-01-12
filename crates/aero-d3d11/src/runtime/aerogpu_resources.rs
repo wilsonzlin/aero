@@ -754,19 +754,19 @@ pub fn map_aerogpu_format(format: u32) -> Result<wgpu::TextureFormat> {
         x if x == AerogpuFormat::B8G8R8X8Unorm as u32 => wgpu::TextureFormat::Bgra8Unorm,
         x if x == AerogpuFormat::R8G8B8A8Unorm as u32 => wgpu::TextureFormat::Rgba8Unorm,
         x if x == AerogpuFormat::R8G8B8X8Unorm as u32 => wgpu::TextureFormat::Rgba8Unorm,
-        // sRGB formats (AeroGPU protocol extensions; values align with common DXGI_FORMAT
-        // discriminants for forward-compatibility).
-        29 => wgpu::TextureFormat::Rgba8UnormSrgb, // DXGI_FORMAT_R8G8B8A8_UNORM_SRGB
-        91 | 93 => wgpu::TextureFormat::Bgra8UnormSrgb, // DXGI_FORMAT_B8G8R8A8_UNORM_SRGB / B8G8R8X8_UNORM_SRGB
-        // BC formats (DXGI_FORMAT_BC* numeric values).
-        71 => wgpu::TextureFormat::Bc1RgbaUnorm,
-        72 => wgpu::TextureFormat::Bc1RgbaUnormSrgb,
-        74 => wgpu::TextureFormat::Bc2RgbaUnorm,
-        75 => wgpu::TextureFormat::Bc2RgbaUnormSrgb,
-        77 => wgpu::TextureFormat::Bc3RgbaUnorm,
-        78 => wgpu::TextureFormat::Bc3RgbaUnormSrgb,
-        98 => wgpu::TextureFormat::Bc7RgbaUnorm,
-        99 => wgpu::TextureFormat::Bc7RgbaUnormSrgb,
+        x if x == AerogpuFormat::B8G8R8A8UnormSrgb as u32 => wgpu::TextureFormat::Bgra8UnormSrgb,
+        x if x == AerogpuFormat::B8G8R8X8UnormSrgb as u32 => wgpu::TextureFormat::Bgra8UnormSrgb,
+        x if x == AerogpuFormat::R8G8B8A8UnormSrgb as u32 => wgpu::TextureFormat::Rgba8UnormSrgb,
+        x if x == AerogpuFormat::R8G8B8X8UnormSrgb as u32 => wgpu::TextureFormat::Rgba8UnormSrgb,
+
+        x if x == AerogpuFormat::BC1RgbaUnorm as u32 => wgpu::TextureFormat::Bc1RgbaUnorm,
+        x if x == AerogpuFormat::BC1RgbaUnormSrgb as u32 => wgpu::TextureFormat::Bc1RgbaUnormSrgb,
+        x if x == AerogpuFormat::BC2RgbaUnorm as u32 => wgpu::TextureFormat::Bc2RgbaUnorm,
+        x if x == AerogpuFormat::BC2RgbaUnormSrgb as u32 => wgpu::TextureFormat::Bc2RgbaUnormSrgb,
+        x if x == AerogpuFormat::BC3RgbaUnorm as u32 => wgpu::TextureFormat::Bc3RgbaUnorm,
+        x if x == AerogpuFormat::BC3RgbaUnormSrgb as u32 => wgpu::TextureFormat::Bc3RgbaUnormSrgb,
+        x if x == AerogpuFormat::BC7RgbaUnorm as u32 => wgpu::TextureFormat::Bc7RgbaUnorm,
+        x if x == AerogpuFormat::BC7RgbaUnormSrgb as u32 => wgpu::TextureFormat::Bc7RgbaUnormSrgb,
         x if x == AerogpuFormat::D24UnormS8Uint as u32 => wgpu::TextureFormat::Depth24PlusStencil8,
         x if x == AerogpuFormat::D32Float as u32 => wgpu::TextureFormat::Depth32Float,
         _ => bail!("unsupported aerogpu_format {format}"),
@@ -1340,19 +1340,19 @@ mod tests {
             wgpu::TextureFormat::Rgba8Unorm
         );
         assert_eq!(
-            map_aerogpu_format(29).unwrap(),
+            map_aerogpu_format(AerogpuFormat::R8G8B8A8UnormSrgb as u32).unwrap(),
             wgpu::TextureFormat::Rgba8UnormSrgb
         );
         assert_eq!(
-            map_aerogpu_format(91).unwrap(),
+            map_aerogpu_format(AerogpuFormat::B8G8R8A8UnormSrgb as u32).unwrap(),
             wgpu::TextureFormat::Bgra8UnormSrgb
         );
         assert_eq!(
-            map_aerogpu_format(71).unwrap(),
+            map_aerogpu_format(AerogpuFormat::BC1RgbaUnorm as u32).unwrap(),
             wgpu::TextureFormat::Bc1RgbaUnorm
         );
         assert_eq!(
-            map_aerogpu_format(78).unwrap(),
+            map_aerogpu_format(AerogpuFormat::BC3RgbaUnormSrgb as u32).unwrap(),
             wgpu::TextureFormat::Bc3RgbaUnormSrgb
         );
         assert!(map_aerogpu_format(AerogpuFormat::Invalid as u32).is_err());

@@ -10,11 +10,6 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
 use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
 use anyhow::{anyhow, Context, Result};
 
-// NOTE: These values are reserved for future AeroGPU ABI extensions and are not part of
-// `aero_protocol::AerogpuFormat` yet. The runtime matches these numeric values directly, aligned
-// with common DXGI_FORMAT discriminants for forward-compatibility.
-const AEROGPU_FORMAT_BC1_RGBA_UNORM: u32 = 71; // DXGI_FORMAT_BC1_UNORM
-
 async fn create_device_queue() -> Result<(wgpu::Device, wgpu::Queue)> {
     #[cfg(unix)]
     {
@@ -284,7 +279,7 @@ fn upload_resource_bc1_texture_roundtrip_cpu_fallback() -> Result<()> {
             tex_handle,
             Texture2dCreateDesc {
                 usage_flags: AEROGPU_RESOURCE_USAGE_TEXTURE,
-                format: AEROGPU_FORMAT_BC1_RGBA_UNORM,
+                format: AerogpuFormat::BC1RgbaUnorm as u32,
                 width: 4,
                 height: 4,
                 mip_levels: 1,
