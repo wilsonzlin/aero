@@ -6,6 +6,7 @@ Related docs:
 - [Disk Image Streaming (HTTP Range + Auth + COOP/COEP)](../16-disk-image-streaming-auth.md) (normative protocol + CORS/COEP requirements)
 - [Disk Image Lifecycle and Access Control](../17-disk-image-lifecycle-and-access-control.md) (uploads/ownership/sharing/writeback scopes for hosted service)
 - [Remote Disk Image Delivery](../16-remote-disk-image-delivery.md) (object store + CDN delivery contract)
+- [Storage trait consolidation](../20-storage-trait-consolidation.md) (repo-wide canonical disk/backend traits)
 
 The intended use case is:
 
