@@ -258,20 +258,21 @@ export function encodeDnsName(name: string): Buffer {
 }
 
 export function encodeDnsQuery(options: DnsQueryEncodeOptions): Buffer {
-  const header = Buffer.alloc(12);
-  header.writeUInt16BE(options.id & 0xffff, 0);
-  header.writeUInt16BE(options.flags ?? 0x0100, 2); // RD by default
-  header.writeUInt16BE(1, 4);
-  header.writeUInt16BE(0, 6);
-  header.writeUInt16BE(0, 8);
-  header.writeUInt16BE(0, 10);
-
   const qname = encodeDnsName(options.name);
-  const qtail = Buffer.alloc(4);
-  qtail.writeUInt16BE(options.type & 0xffff, 0);
-  qtail.writeUInt16BE((options.class ?? 1) & 0xffff, 2);
+  const out = Buffer.allocUnsafe(12 + qname.length + 4);
 
-  return Buffer.concat([header, qname, qtail]);
+  out.writeUInt16BE(options.id & 0xffff, 0);
+  out.writeUInt16BE(options.flags ?? 0x0100, 2); // RD by default
+  out.writeUInt16BE(1, 4);
+  out.writeUInt16BE(0, 6);
+  out.writeUInt16BE(0, 8);
+  out.writeUInt16BE(0, 10);
+
+  qname.copy(out, 12);
+  const tailOffset = 12 + qname.length;
+  out.writeUInt16BE(options.type & 0xffff, tailOffset);
+  out.writeUInt16BE((options.class ?? 1) & 0xffff, tailOffset + 2);
+  return out;
 }
 
 export interface DnsAAnswer {
@@ -308,38 +309,49 @@ function encodeIpv4(address: string): Buffer {
 export function encodeDnsResponseA(options: DnsResponseEncodeOptions): Buffer {
   const answers = options.answers;
 
-  const header = Buffer.alloc(12);
-  header.writeUInt16BE(options.id & 0xffff, 0);
-  header.writeUInt16BE(options.flags ?? 0x8180, 2); // Standard response + RA
-  header.writeUInt16BE(1, 4);
-  header.writeUInt16BE(answers.length, 6);
-  header.writeUInt16BE(0, 8);
-  header.writeUInt16BE(0, 10);
-
   const questionName = encodeDnsName(options.question.name);
-  const questionTail = Buffer.alloc(4);
-  questionTail.writeUInt16BE(options.question.type & 0xffff, 0);
-  questionTail.writeUInt16BE(options.question.class & 0xffff, 2);
-  const question = Buffer.concat([questionName, questionTail]);
-
-  const answerBuffers: Buffer[] = [];
+  const answerParts: Array<{ name: Buffer; ipv4: Buffer; ttl: number }> = [];
+  let totalBytes = 12 + questionName.length + 4;
   for (const answer of answers) {
     const name = encodeDnsName(answer.name);
-    const fixed = Buffer.alloc(10);
-    fixed.writeUInt16BE(1, 0); // A
-    fixed.writeUInt16BE(1, 2); // IN
-    fixed.writeUInt32BE(answer.ttl >>> 0, 4);
-    fixed.writeUInt16BE(4, 8);
-    answerBuffers.push(Buffer.concat([name, fixed, encodeIpv4(answer.address)]));
+    const ipv4 = encodeIpv4(answer.address);
+    answerParts.push({ name, ipv4, ttl: answer.ttl });
+    totalBytes += name.length + 10 + ipv4.length;
   }
 
-  return Buffer.concat([header, question, ...answerBuffers]);
+  const out = Buffer.allocUnsafe(totalBytes);
+  out.writeUInt16BE(options.id & 0xffff, 0);
+  out.writeUInt16BE(options.flags ?? 0x8180, 2); // Standard response + RA
+  out.writeUInt16BE(1, 4);
+  out.writeUInt16BE(answers.length, 6);
+  out.writeUInt16BE(0, 8);
+  out.writeUInt16BE(0, 10);
+
+  let offset = 12;
+  questionName.copy(out, offset);
+  offset += questionName.length;
+  out.writeUInt16BE(options.question.type & 0xffff, offset);
+  out.writeUInt16BE(options.question.class & 0xffff, offset + 2);
+  offset += 4;
+
+  for (const answer of answerParts) {
+    answer.name.copy(out, offset);
+    offset += answer.name.length;
+
+    out.writeUInt16BE(1, offset); // A
+    out.writeUInt16BE(1, offset + 2); // IN
+    out.writeUInt32BE(answer.ttl >>> 0, offset + 4);
+    out.writeUInt16BE(answer.ipv4.length, offset + 8);
+    offset += 10;
+
+    answer.ipv4.copy(out, offset);
+    offset += answer.ipv4.length;
+  }
+
+  return out;
 }
 
 export function encodeDnsErrorResponse(options: DnsErrorResponseEncodeOptions): Buffer {
-  const header = Buffer.alloc(12);
-  header.writeUInt16BE(options.id & 0xffff, 0);
-
   const queryFlags = options.queryFlags ?? 0;
   const flags =
     0x8000 | // QR
@@ -348,19 +360,29 @@ export function encodeDnsErrorResponse(options: DnsErrorResponseEncodeOptions): 
     0x0080 | // RA
     (options.rcode & 0x000f);
 
-  header.writeUInt16BE(flags, 2);
-
   const hasQuestion = Boolean(options.question);
-  header.writeUInt16BE(hasQuestion ? 1 : 0, 4);
-  header.writeUInt16BE(0, 6);
-  header.writeUInt16BE(0, 8);
-  header.writeUInt16BE(0, 10);
-
-  if (!options.question) return header;
+  if (!options.question) {
+    const out = Buffer.alloc(12);
+    out.writeUInt16BE(options.id & 0xffff, 0);
+    out.writeUInt16BE(flags, 2);
+    out.writeUInt16BE(0, 4);
+    out.writeUInt16BE(0, 6);
+    out.writeUInt16BE(0, 8);
+    out.writeUInt16BE(0, 10);
+    return out;
+  }
 
   const qname = encodeDnsName(options.question.name);
-  const qtail = Buffer.alloc(4);
-  qtail.writeUInt16BE(options.question.type & 0xffff, 0);
-  qtail.writeUInt16BE(options.question.class & 0xffff, 2);
-  return Buffer.concat([header, qname, qtail]);
+  const out = Buffer.allocUnsafe(12 + qname.length + 4);
+  out.writeUInt16BE(options.id & 0xffff, 0);
+  out.writeUInt16BE(flags, 2);
+  out.writeUInt16BE(hasQuestion ? 1 : 0, 4);
+  out.writeUInt16BE(0, 6);
+  out.writeUInt16BE(0, 8);
+  out.writeUInt16BE(0, 10);
+  qname.copy(out, 12);
+  const tailOffset = 12 + qname.length;
+  out.writeUInt16BE(options.question.type & 0xffff, tailOffset);
+  out.writeUInt16BE(options.question.class & 0xffff, tailOffset + 2);
+  return out;
 }
