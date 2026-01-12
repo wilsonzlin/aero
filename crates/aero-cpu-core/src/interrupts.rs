@@ -531,10 +531,6 @@ pub fn exec_interrupt_assist_decoded<B: CpuBus>(
                 _ => unreachable!(),
             };
 
-            if matches!(cpu.state.mode, CpuMode::Real | CpuMode::Vm86) {
-                cpu.state.set_pending_bios_int(vector);
-            }
-
             cpu.pending.raise_software_interrupt(vector, next_ip);
             cpu.deliver_pending_event(bus)?;
             Ok(InterruptAssistOutcome::Retired {
