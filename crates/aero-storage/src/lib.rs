@@ -17,7 +17,9 @@
 //! ```rust,no_run
 //! use aero_storage::{DiskImage, MemBackend, VirtualDisk};
 //!
-//! // In production this would be an OPFS/IndexedDB backend; MemBackend is for tests/examples.
+//! // In production this could be an OPFS backend such as `aero_opfs::OpfsByteStorage` (wasm32).
+//! // IndexedDB-based storage is generally async and is not currently exposed as a sync
+//! // `aero_storage::StorageBackend` in this crate.
 //! let backend = MemBackend::with_len(1024 * 1024).unwrap();
 //! let mut disk = DiskImage::open_auto(backend).unwrap();
 //!
