@@ -210,25 +210,29 @@ AEROGPU_D3D10_11_WDK_ASSERT_OFFSETOF(D3D10DDIARG_OPENADAPTER,
 #endif
 
 #if defined(AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D10DDIARG_OPENADAPTER_hRTAdapter)
+  #if defined(__cplusplus)
 __if_exists(D3D10DDIARG_OPENADAPTER::hRTAdapter) {
   AEROGPU_D3D10_11_WDK_ASSERT_OFFSETOF(D3D10DDIARG_OPENADAPTER,
                                        hRTAdapter,
                                        AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D10DDIARG_OPENADAPTER_hRTAdapter);
 }
+  #endif
 #endif
 
 #if defined(AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D10DDIARG_OPENADAPTER_hAdapter)
 AEROGPU_D3D10_11_WDK_ASSERT_OFFSETOF(D3D10DDIARG_OPENADAPTER,
-                                     hAdapter,
-                                     AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D10DDIARG_OPENADAPTER_hAdapter);
+                                      hAdapter,
+                                      AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D10DDIARG_OPENADAPTER_hAdapter);
 #endif
 
 #if defined(AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D10DDIARG_OPENADAPTER_pAdapterCallbacks)
+  #if defined(__cplusplus)
 __if_exists(D3D10DDIARG_OPENADAPTER::pAdapterCallbacks) {
   AEROGPU_D3D10_11_WDK_ASSERT_OFFSETOF(D3D10DDIARG_OPENADAPTER,
                                        pAdapterCallbacks,
                                        AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D10DDIARG_OPENADAPTER_pAdapterCallbacks);
 }
+  #endif
 #endif
 
 #if defined(AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D10DDIARG_OPENADAPTER_pAdapterFuncs)
@@ -311,11 +315,13 @@ AEROGPU_D3D10_11_WDK_ASSERT_OFFSETOF(D3D11DDI_ADAPTERFUNCS,
 #endif
 
 #if defined(AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D11DDI_ADAPTERFUNCS_pfnCalcPrivateDeviceContextSize)
+  #if defined(__cplusplus)
 __if_exists(D3D11DDI_ADAPTERFUNCS::pfnCalcPrivateDeviceContextSize) {
   AEROGPU_D3D10_11_WDK_ASSERT_OFFSETOF(D3D11DDI_ADAPTERFUNCS,
                                        pfnCalcPrivateDeviceContextSize,
                                        AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D11DDI_ADAPTERFUNCS_pfnCalcPrivateDeviceContextSize);
 }
+  #endif
 #endif
 
 #if defined(AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D11DDI_ADAPTERFUNCS_pfnCreateDevice)
@@ -422,11 +428,13 @@ AEROGPU_D3D10_11_WDK_ASSERT_OFFSETOF(D3D11DDI_DEVICEFUNCS,
 #endif
 
 #if defined(AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D11DDI_DEVICEFUNCS_pfnRotateResourceIdentities)
+  #if defined(__cplusplus)
 __if_exists(D3D11DDI_DEVICEFUNCS::pfnRotateResourceIdentities) {
   AEROGPU_D3D10_11_WDK_ASSERT_OFFSETOF(D3D11DDI_DEVICEFUNCS,
                                        pfnRotateResourceIdentities,
                                        AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D11DDI_DEVICEFUNCS_pfnRotateResourceIdentities);
 }
+  #endif
 #endif
 
 #if defined(AEROGPU_D3D10_11_WDK_ABI_EXPECT_SIZEOF_D3D11DDI_DEVICECONTEXTFUNCS)
@@ -452,20 +460,24 @@ AEROGPU_D3D10_11_WDK_ASSERT_OFFSETOF(D3D11DDI_DEVICECONTEXTFUNCS,
 #endif
 
 #if defined(AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D11DDI_DEVICECONTEXTFUNCS_pfnPresent)
+  #if defined(__cplusplus)
 __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnPresent) {
   AEROGPU_D3D10_11_WDK_ASSERT_OFFSETOF(D3D11DDI_DEVICECONTEXTFUNCS,
                                        pfnPresent,
                                        AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D11DDI_DEVICECONTEXTFUNCS_pfnPresent);
 }
+  #endif
 #endif
 
 #if defined(AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D11DDI_DEVICECONTEXTFUNCS_pfnRotateResourceIdentities)
+  #if defined(__cplusplus)
 __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnRotateResourceIdentities) {
   AEROGPU_D3D10_11_WDK_ASSERT_OFFSETOF(
       D3D11DDI_DEVICECONTEXTFUNCS,
       pfnRotateResourceIdentities,
       AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D11DDI_DEVICECONTEXTFUNCS_pfnRotateResourceIdentities);
 }
+  #endif
 #endif
 
 #endif // AEROGPU_UMD_USE_WDK_HEADERS
