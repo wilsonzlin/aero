@@ -139,6 +139,14 @@ impl IdeChannel {
         self.dev_ctl & 0x02 == 0
     }
 
+    fn sync_irq_line(&self, irq: &dyn IrqLine) {
+        if self.interrupts_enabled() && self.irq_asserted {
+            irq.set_level(true);
+        } else {
+            irq.set_level(false);
+        }
+    }
+
     fn hob(&self) -> bool {
         // Device control bit 7: HOB.
         self.dev_ctl & 0x80 != 0
@@ -511,17 +519,20 @@ impl IdeChannel {
     }
 }
 
-#[derive(Debug)]
 pub struct IdeController {
     primary: IdeChannel,
     secondary: IdeChannel,
+    irq14: Box<dyn IrqLine>,
+    irq15: Box<dyn IrqLine>,
 }
 
 impl IdeController {
-    pub fn new() -> Self {
+    pub fn new(irq14: Box<dyn IrqLine>, irq15: Box<dyn IrqLine>) -> Self {
         Self {
             primary: IdeChannel::new(),
             secondary: IdeChannel::new(),
+            irq14,
+            irq15,
         }
     }
 
@@ -532,37 +543,30 @@ impl IdeController {
         }
     }
 
-    fn channel_for_port_mut(&mut self, port: u16) -> Option<(&mut IdeChannel, u16, bool)> {
+    fn decode_port(port: u16) -> Option<(IdeChannelId, u16, bool)> {
         // Returns (channel, offset, is_alt_status/dev_ctl).
         if (PRIMARY_BASE..=PRIMARY_BASE + 7).contains(&port) {
-            return Some((&mut self.primary, port - PRIMARY_BASE, false));
+            return Some((IdeChannelId::Primary, port - PRIMARY_BASE, false));
         }
         if (SECONDARY_BASE..=SECONDARY_BASE + 7).contains(&port) {
-            return Some((&mut self.secondary, port - SECONDARY_BASE, false));
+            return Some((IdeChannelId::Secondary, port - SECONDARY_BASE, false));
         }
         if port == PRIMARY_CTRL || port == PRIMARY_CTRL + 1 {
-            return Some((&mut self.primary, port - PRIMARY_CTRL, true));
+            return Some((IdeChannelId::Primary, port - PRIMARY_CTRL, true));
         }
         if port == SECONDARY_CTRL || port == SECONDARY_CTRL + 1 {
-            return Some((&mut self.secondary, port - SECONDARY_CTRL, true));
+            return Some((IdeChannelId::Secondary, port - SECONDARY_CTRL, true));
         }
         None
     }
 
-    fn is_primary_port(port: u16) -> bool {
-        (PRIMARY_BASE..=PRIMARY_BASE + 7).contains(&port)
-            || port == PRIMARY_CTRL
-            || port == PRIMARY_CTRL + 1
-    }
-
-    pub fn read_u8(&mut self, port: u16, irq14: &dyn IrqLine, irq15: &dyn IrqLine) -> u8 {
-        let Some((channel, offset, ctrl)) = self.channel_for_port_mut(port) else {
+    pub fn read_u8(&mut self, port: u16) -> u8 {
+        let Some((chan_id, offset, ctrl)) = Self::decode_port(port) else {
             return 0;
         };
-        let irq = if Self::is_primary_port(port) {
-            irq14
-        } else {
-            irq15
+        let (channel, irq): (&mut IdeChannel, &dyn IrqLine) = match chan_id {
+            IdeChannelId::Primary => (&mut self.primary, &*self.irq14),
+            IdeChannelId::Secondary => (&mut self.secondary, &*self.irq15),
         };
 
         if !ctrl {
@@ -579,32 +583,29 @@ impl IdeController {
         }
     }
 
-    pub fn read_u16(&mut self, port: u16, irq14: &dyn IrqLine, irq15: &dyn IrqLine) -> u16 {
-        let Some((channel, offset, ctrl)) = self.channel_for_port_mut(port) else {
+    pub fn read_u16(&mut self, port: u16) -> u16 {
+        let Some((chan_id, offset, ctrl)) = Self::decode_port(port) else {
             return 0;
         };
-        let irq = if Self::is_primary_port(port) {
-            irq14
-        } else {
-            irq15
+        let (channel, irq): (&mut IdeChannel, &dyn IrqLine) = match chan_id {
+            IdeChannelId::Primary => (&mut self.primary, &*self.irq14),
+            IdeChannelId::Secondary => (&mut self.secondary, &*self.irq15),
         };
 
         if ctrl || offset != 0 {
-            return (self.read_u8(port, irq14, irq15) as u16)
-                | ((self.read_u8(port, irq14, irq15) as u16) << 8);
+            return (self.read_u8(port) as u16) | ((self.read_u8(port) as u16) << 8);
         }
 
         channel.pio_read(2, irq) as u16
     }
 
-    pub fn write_u8(&mut self, port: u16, val: u8, irq14: &dyn IrqLine, irq15: &dyn IrqLine) {
-        let Some((channel, offset, ctrl)) = self.channel_for_port_mut(port) else {
+    pub fn write_u8(&mut self, port: u16, val: u8) {
+        let Some((chan_id, offset, ctrl)) = Self::decode_port(port) else {
             return;
         };
-        let irq = if Self::is_primary_port(port) {
-            irq14
-        } else {
-            irq15
+        let (channel, irq): (&mut IdeChannel, &dyn IrqLine) = match chan_id {
+            IdeChannelId::Primary => (&mut self.primary, &*self.irq14),
+            IdeChannelId::Secondary => (&mut self.secondary, &*self.irq15),
         };
 
         if !ctrl {
@@ -621,29 +622,22 @@ impl IdeController {
         }
     }
 
-    pub fn write_u16(&mut self, port: u16, val: u16, irq14: &dyn IrqLine, irq15: &dyn IrqLine) {
-        let Some((channel, offset, ctrl)) = self.channel_for_port_mut(port) else {
+    pub fn write_u16(&mut self, port: u16, val: u16) {
+        let Some((chan_id, offset, ctrl)) = Self::decode_port(port) else {
             return;
         };
-        let irq = if Self::is_primary_port(port) {
-            irq14
-        } else {
-            irq15
+        let (channel, irq): (&mut IdeChannel, &dyn IrqLine) = match chan_id {
+            IdeChannelId::Primary => (&mut self.primary, &*self.irq14),
+            IdeChannelId::Secondary => (&mut self.secondary, &*self.irq15),
         };
 
         if ctrl || offset != 0 {
-            self.write_u8(port, (val & 0xFF) as u8, irq14, irq15);
-            self.write_u8(port, (val >> 8) as u8, irq14, irq15);
+            self.write_u8(port, (val & 0xFF) as u8);
+            self.write_u8(port, (val >> 8) as u8);
             return;
         }
 
         channel.pio_write(2, val as u32, irq);
-    }
-}
-
-impl Default for IdeController {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -653,7 +647,9 @@ mod tests {
     use crate::bus::TestIrqLine;
 
     fn setup_controller() -> (IdeController, TestIrqLine, TestIrqLine) {
-        let mut ctl = IdeController::new();
+        let irq14 = TestIrqLine::default();
+        let irq15 = TestIrqLine::default();
+        let mut ctl = IdeController::new(Box::new(irq14.clone()), Box::new(irq15.clone()));
 
         use aero_storage::{MemBackend, RawDisk, VirtualDisk};
 
@@ -666,51 +662,51 @@ mod tests {
         let drive = AtaDrive::new(Box::new(disk)).unwrap();
         ctl.attach_drive(IdeChannelId::Primary, 0, drive);
 
-        (ctl, TestIrqLine::default(), TestIrqLine::default())
+        (ctl, irq14, irq15)
     }
 
     #[test]
     fn identify_works() {
-        let (mut ctl, irq14, irq15) = setup_controller();
+        let (mut ctl, irq14, _irq15) = setup_controller();
 
         // Select LBA mode + master.
-        ctl.write_u8(PRIMARY_BASE + 6, 0xE0, &irq14, &irq15);
-        ctl.write_u8(PRIMARY_BASE + 7, ATA_CMD_IDENTIFY, &irq14, &irq15);
+        ctl.write_u8(PRIMARY_BASE + 6, 0xE0);
+        ctl.write_u8(PRIMARY_BASE + 7, ATA_CMD_IDENTIFY);
 
         assert!(irq14.level());
 
         let mut buf = [0u8; SECTOR_SIZE];
         for i in 0..(SECTOR_SIZE / 2) {
-            let w = ctl.read_u16(PRIMARY_BASE, &irq14, &irq15);
+            let w = ctl.read_u16(PRIMARY_BASE);
             buf[i * 2..i * 2 + 2].copy_from_slice(&w.to_le_bytes());
         }
 
         // Signature: word 0 low byte should be 0x40.
         assert_eq!(buf[0], 0x40);
         // Reading status clears IRQ.
-        let _ = ctl.read_u8(PRIMARY_BASE + 7, &irq14, &irq15);
+        let _ = ctl.read_u8(PRIMARY_BASE + 7);
         assert!(!irq14.level());
     }
 
     #[test]
     fn read_sector_pio() {
-        let (mut ctl, irq14, irq15) = setup_controller();
+        let (mut ctl, irq14, _irq15) = setup_controller();
 
         // Read sector 1 via READ SECTORS.
-        ctl.write_u8(PRIMARY_BASE + 6, 0xE0, &irq14, &irq15); // LBA
-        ctl.write_u8(PRIMARY_BASE + 2, 1, &irq14, &irq15); // count
-        ctl.write_u8(PRIMARY_BASE + 3, 1, &irq14, &irq15); // lba low
-        ctl.write_u8(PRIMARY_BASE + 4, 0, &irq14, &irq15);
-        ctl.write_u8(PRIMARY_BASE + 5, 0, &irq14, &irq15);
-        ctl.write_u8(PRIMARY_BASE + 7, ATA_CMD_READ_SECTORS, &irq14, &irq15);
+        ctl.write_u8(PRIMARY_BASE + 6, 0xE0); // LBA
+        ctl.write_u8(PRIMARY_BASE + 2, 1); // count
+        ctl.write_u8(PRIMARY_BASE + 3, 1); // lba low
+        ctl.write_u8(PRIMARY_BASE + 4, 0);
+        ctl.write_u8(PRIMARY_BASE + 5, 0);
+        ctl.write_u8(PRIMARY_BASE + 7, ATA_CMD_READ_SECTORS);
 
         assert!(irq14.level());
 
         // First 4 bytes of sector 1 are [1,2,3,4].
-        let b0 = ctl.read_u8(PRIMARY_BASE, &irq14, &irq15);
-        let b1 = ctl.read_u8(PRIMARY_BASE, &irq14, &irq15);
-        let b2 = ctl.read_u8(PRIMARY_BASE, &irq14, &irq15);
-        let b3 = ctl.read_u8(PRIMARY_BASE, &irq14, &irq15);
+        let b0 = ctl.read_u8(PRIMARY_BASE);
+        let b1 = ctl.read_u8(PRIMARY_BASE);
+        let b2 = ctl.read_u8(PRIMARY_BASE);
+        let b3 = ctl.read_u8(PRIMARY_BASE);
         assert_eq!([b0, b1, b2, b3], [1, 2, 3, 4]);
     }
 }

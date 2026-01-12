@@ -155,8 +155,8 @@ fn ahci_pci_snapshot_roundtrip_preserves_pci_config_mmio_regs_and_irq_level() {
     let drive = AtaDrive::new(Box::new(disk)).unwrap();
 
     let mut restored = AhciPciDevice::new(1);
-    restored.attach_drive(0, drive);
     restored.load_state(&snap).unwrap();
+    restored.attach_drive(0, drive);
 
     assert_eq!(restored.config().snapshot_state(), pci_before);
 

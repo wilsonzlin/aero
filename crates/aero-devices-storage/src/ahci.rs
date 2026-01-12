@@ -14,10 +14,8 @@ use std::io;
 
 use aero_io_snapshot::io::state::{IoSnapshot, SnapshotResult, SnapshotVersion};
 use aero_io_snapshot::io::storage::state::{AhciControllerState, AhciHbaState, AhciPortState};
-
 use aero_storage::SECTOR_SIZE;
 use memory::MemoryBus;
-
 use crate::ata::{
     AtaDrive, ATA_CMD_FLUSH_CACHE, ATA_CMD_FLUSH_CACHE_EXT, ATA_CMD_IDENTIFY, ATA_CMD_READ_DMA_EXT,
     ATA_CMD_SET_FEATURES, ATA_CMD_WRITE_DMA_EXT, ATA_ERROR_ABRT, ATA_STATUS_DRDY, ATA_STATUS_DSC,
@@ -179,6 +177,7 @@ impl PortRegs {
 
 #[derive(Debug)]
 struct AhciPort {
+    present: bool,
     regs: PortRegs,
     drive: Option<AtaDrive>,
 }
@@ -186,6 +185,7 @@ struct AhciPort {
 impl AhciPort {
     fn new() -> Self {
         Self {
+            present: false,
             regs: PortRegs::new(false),
             drive: None,
         }
@@ -193,12 +193,16 @@ impl AhciPort {
 
     fn attach_drive(&mut self, drive: AtaDrive) {
         self.drive = Some(drive);
-        self.regs = PortRegs::new(true);
+        if !self.present {
+            self.present = true;
+            self.regs = PortRegs::new(true);
+        }
         self.regs.update_running_bits();
     }
 
     fn clear_drive(&mut self) {
         self.drive = None;
+        self.present = false;
         self.regs = PortRegs::new(false);
         self.regs.update_running_bits();
     }
@@ -261,8 +265,7 @@ impl AhciController {
     fn reset(&mut self) {
         self.hba.reset();
         for port in &mut self.ports {
-            let present = port.drive.is_some();
-            port.regs = PortRegs::new(present);
+            port.regs = PortRegs::new(port.present);
             port.regs.update_running_bits();
         }
         self.update_irq();
@@ -511,10 +514,12 @@ impl AhciController {
         self.hba.bohc = state.hba.bohc;
         self.hba.vs = state.hba.vs;
 
-        // Reset ports to a deterministic baseline (but preserve whether a drive is attached).
+        // Reset ports to a deterministic baseline and clear transient host-side disk backends.
+        // The platform is responsible for re-attaching disks post-restore.
         for port in &mut self.ports {
-            let present = port.drive.is_some();
-            port.regs = PortRegs::new(present);
+            port.drive = None;
+            port.present = false;
+            port.regs = PortRegs::new(false);
             port.regs.update_running_bits();
         }
 
@@ -534,6 +539,7 @@ impl AhciController {
             port.regs.serr = p.serr;
             port.regs.sact = p.sact;
             port.regs.ci = p.ci;
+            port.present = p.sig != 0 || p.ssts != 0;
             port.regs.update_running_bits();
         }
 
@@ -546,6 +552,9 @@ impl IoSnapshot for AhciController {
     const DEVICE_VERSION: SnapshotVersion = <AhciControllerState as IoSnapshot>::DEVICE_VERSION;
 
     fn save_state(&self) -> Vec<u8> {
+        // This AHCI model completes commands synchronously in [`AhciController::process`]. Any
+        // outstanding work is fully represented by guest-visible registers (e.g. PxCI/PxSACT), so
+        // we don't need additional in-flight bookkeeping in the snapshot.
         self.snapshot_state().save_state()
     }
 

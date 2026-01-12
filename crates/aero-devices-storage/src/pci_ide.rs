@@ -21,7 +21,7 @@ use aero_storage::SECTOR_SIZE;
 use memory::MemoryBus;
 
 use crate::ata::AtaDrive;
-use crate::atapi::{AtapiCdrom, PacketResult};
+use crate::atapi::{AtapiCdrom, IsoBackend, PacketResult};
 use crate::busmaster::{BusMasterChannel, DmaCommit, DmaRequest};
 
 const IDE_STATUS_BSY: u8 = 0x80;
@@ -557,6 +557,44 @@ impl IdeController {
         let dma = dev.supports_dma();
         self.secondary.devices[0] = Some(IdeDevice::Atapi(dev));
         self.bus_master[1].set_drive_dma_capable(0, dma);
+    }
+
+    /// Re-attaches a host ISO backend to an existing ATAPI device without changing guest-visible
+    /// media state.
+    ///
+    /// This is intended for snapshot restore: the controller snapshot restores the ATAPI device's
+    /// internal state (tray/sense/media_changed) but drops the host backend reference.
+    pub fn attach_primary_master_atapi_backend_for_restore(&mut self, backend: Box<dyn IsoBackend>) {
+        match self.primary.devices[0].as_mut() {
+            Some(IdeDevice::Atapi(dev)) => {
+                dev.attach_backend_for_restore(backend);
+                self.bus_master[0].set_drive_dma_capable(0, dev.supports_dma());
+            }
+            _ => {
+                let dev = AtapiCdrom::new(Some(backend));
+                let dma = dev.supports_dma();
+                self.primary.devices[0] = Some(IdeDevice::Atapi(dev));
+                self.bus_master[0].set_drive_dma_capable(0, dma);
+            }
+        }
+    }
+
+    pub fn attach_secondary_master_atapi_backend_for_restore(
+        &mut self,
+        backend: Box<dyn IsoBackend>,
+    ) {
+        match self.secondary.devices[0].as_mut() {
+            Some(IdeDevice::Atapi(dev)) => {
+                dev.attach_backend_for_restore(backend);
+                self.bus_master[1].set_drive_dma_capable(0, dev.supports_dma());
+            }
+            _ => {
+                let dev = AtapiCdrom::new(Some(backend));
+                let dma = dev.supports_dma();
+                self.secondary.devices[0] = Some(IdeDevice::Atapi(dev));
+                self.bus_master[1].set_drive_dma_capable(0, dma);
+            }
+        }
     }
 
     fn decode_bus_master(&self, port: u16) -> Option<(usize, u16)> {
@@ -1214,12 +1252,27 @@ impl Piix3IdePciDevice {
 
             bm.restore_state(&state.bus_master);
 
-            // Restore per-drive state (where compatible with the currently-attached device).
+            // Restore drive-visible state but drop any host-side backends. The platform must
+            // re-attach disks/ISOs after restore.
             for slot in 0..2 {
-                match (chan.devices[slot].as_mut(), &state.drives[slot]) {
-                    (Some(IdeDevice::Ata(dev)), IdeDriveState::Ata(s)) => dev.restore_state(s),
-                    (Some(IdeDevice::Atapi(dev)), IdeDriveState::Atapi(s)) => dev.restore_state(s),
-                    _ => {}
+                chan.devices[slot] = None;
+                bm.set_drive_dma_capable(slot, false);
+            }
+
+            for slot in 0..2 {
+                match &state.drives[slot] {
+                    IdeDriveState::None => {}
+                    IdeDriveState::Ata(_s) => {
+                        // ATA backends are host-managed (snapshotted separately). Guests may still
+                        // observe DMA capability bits, so restore them conservatively.
+                        bm.set_drive_dma_capable(slot, true);
+                    }
+                    IdeDriveState::Atapi(s) => {
+                        let mut dev = AtapiCdrom::new(None);
+                        dev.restore_state(s);
+                        bm.set_drive_dma_capable(slot, dev.supports_dma());
+                        chan.devices[slot] = Some(IdeDevice::Atapi(dev));
+                    }
                 }
             }
         }

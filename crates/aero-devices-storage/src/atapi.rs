@@ -139,6 +139,19 @@ impl AtapiCdrom {
         self.media_changed = true;
     }
 
+    /// Attach a host backend without changing any guest-visible media/tray state.
+    ///
+    /// This is intended for snapshot restore paths where the guest already "sees" a disc and we
+    /// only need to re-establish the host-side backing store after deserialization.
+    pub fn attach_backend_for_restore(&mut self, backend: Box<dyn IsoBackend>) {
+        self.backend = Some(backend);
+    }
+
+    /// Detach the host backend without mutating guest-visible media state.
+    pub fn detach_backend_for_restore(&mut self) {
+        self.backend = None;
+    }
+
     pub fn set_sense(&mut self, key: u8, asc: u8, ascq: u8) {
         self.sense = Sense { key, asc, ascq };
     }
@@ -563,11 +576,9 @@ impl AtapiCdrom {
             ascq: state.ascq,
         };
 
-        // Media contents are host-managed (snapshotted separately as a disk/ISO layer),
-        // but the guest must observe the same "media present" behavior after restore.
-        if !state.media_present {
-            self.backend = None;
-        }
+        // The host ISO backend is treated as transient and must be re-attached by the platform
+        // after restore (similar to `DiskLayerState::attach_backend`).
+        self.backend = None;
     }
 }
 
