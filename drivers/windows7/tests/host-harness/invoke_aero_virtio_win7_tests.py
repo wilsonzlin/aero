@@ -1892,6 +1892,8 @@ def main() -> int:
                 # Surface host-side audio failures even if the guest selftest passed.
                 result_code = 4
 
+        _emit_virtio_net_large_host_marker(tail)
+
         return result_code if result_code is not None else 2
 
 
@@ -2301,6 +2303,71 @@ def _compute_wave_metrics_16bit_equiv(
 
 def _sanitize_marker_value(value: str) -> str:
     return value.replace("|", "/").replace("\n", " ").replace("\r", " ").strip()
+
+
+def _try_extract_last_marker_line(tail: bytes, prefix: bytes) -> Optional[str]:
+    """
+    Return the last full line in `tail` that starts with `prefix`.
+
+    The returned line is decoded as UTF-8 with replacement and stripped.
+    """
+    last: Optional[bytes] = None
+    for line in tail.splitlines():
+        if line.startswith(prefix):
+            last = line
+    if last is None:
+        return None
+    try:
+        return last.decode("utf-8", errors="replace").strip()
+    except Exception:
+        return None
+
+
+def _parse_marker_kv_fields(marker_line: str) -> dict[str, str]:
+    """
+    Parse a marker line with `|` separators and `key=value` fields.
+
+    Example:
+      AERO_VIRTIO_SELFTEST|TEST|virtio-net|PASS|large_ok=1|large_bytes=1048576|...
+    """
+    out: dict[str, str] = {}
+    for tok in marker_line.split("|"):
+        if "=" not in tok:
+            continue
+        k, v = tok.split("=", 1)
+        k = k.strip()
+        v = v.strip()
+        if not k:
+            continue
+        out[k] = v
+    return out
+
+
+def _emit_virtio_net_large_host_marker(tail: bytes) -> None:
+    """
+    Best-effort: emit a host-side marker describing the guest's virtio-net large transfer metrics.
+
+    This does not affect harness PASS/FAIL; it's only for log scraping/diagnostics.
+    """
+    marker_line = _try_extract_last_marker_line(tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-net|")
+    if marker_line is None:
+        return
+
+    fields = _parse_marker_kv_fields(marker_line)
+    if "large_bytes" not in fields and "large_mbps" not in fields and "large_fnv1a64" not in fields:
+        return
+
+    status = "INFO"
+    if fields.get("large_ok") == "1":
+        status = "PASS"
+    elif fields.get("large_ok") == "0":
+        status = "FAIL"
+
+    parts = [f"AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_LARGE|{status}"]
+    for k in ("large_ok", "large_bytes", "large_fnv1a64", "large_mbps"):
+        if k in fields:
+            parts.append(f"{k}={_sanitize_marker_value(fields[k])}")
+    print("|".join(parts))
 
 
 def _verify_virtio_snd_wav_non_silent(path: Path, *, peak_threshold: int, rms_threshold: int) -> bool:
