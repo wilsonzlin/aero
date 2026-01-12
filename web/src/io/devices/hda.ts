@@ -68,6 +68,8 @@ export class HdaPciDevice implements PciDevice, TickableDevice {
 
   #clock: AudioFrameClock | null = null;
   #outputRateHz = HDA_DEFAULT_OUTPUT_RATE_HZ;
+  #busMasterEnabled = false;
+  #intxDisabled = false;
   #irqLevel = false;
   #destroyed = false;
 
@@ -98,6 +100,16 @@ export class HdaPciDevice implements PciDevice, TickableDevice {
     } catch {
       // ignore device errors during guest IO
     }
+    this.#syncIrq();
+  }
+
+  onPciCommandWrite(command: number): void {
+    if (this.#destroyed) return;
+    const cmd = command & 0xffff;
+    // PCI Command bit 2: Bus Master Enable (DMA allowed).
+    this.#busMasterEnabled = (cmd & (1 << 2)) !== 0;
+    // PCI Command bit 10: Interrupt Disable (INTx must not be asserted).
+    this.#intxDisabled = (cmd & (1 << 10)) !== 0;
     this.#syncIrq();
   }
 
@@ -139,7 +151,8 @@ export class HdaPciDevice implements PciDevice, TickableDevice {
       frames = clock.advanceTo(nowNs);
     }
 
-    if (frames > 0) {
+    // Only allow the device to DMA when PCI Bus Mastering is enabled (PCI command bit 2).
+    if (frames > 0 && this.#busMasterEnabled) {
       try {
         this.#bridge.step_frames(frames >>> 0);
       } catch {
@@ -243,10 +256,12 @@ export class HdaPciDevice implements PciDevice, TickableDevice {
 
   #syncIrq(): void {
     let asserted = false;
-    try {
-      asserted = Boolean(this.#bridge.irq_level());
-    } catch {
-      asserted = false;
+    if (!this.#intxDisabled) {
+      try {
+        asserted = Boolean(this.#bridge.irq_level());
+      } catch {
+        asserted = false;
+      }
     }
     if (asserted === this.#irqLevel) return;
     this.#irqLevel = asserted;

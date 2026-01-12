@@ -27,6 +27,8 @@ describe("io/devices/hda tick scheduling", () => {
     };
 
     const dev = new HdaPciDevice({ bridge, irqSink: irq });
+    // Enable bus mastering so the device tick will actually advance the HDA model.
+    dev.onPciCommandWrite?.(1 << 2);
 
     // First tick initializes the internal clock.
     dev.tick(0);
@@ -68,5 +70,62 @@ describe("io/devices/HdaPciDevice", () => {
     expect(dev.interruptPin).toBe(0x01);
     expect(dev.bdf).toEqual({ bus: 0, device: 4, function: 0 });
     expect(dev.bars).toEqual([{ kind: "mmio32", size: 0x4000 }, null, null, null, null, null]);
+  });
+
+  it("gates DMA/time progression on PCI Command.BusMasterEnable (bit 2)", () => {
+    const bridge: HdaControllerBridgeLike = {
+      mmio_read: vi.fn(() => 0),
+      mmio_write: vi.fn(),
+      step_frames: vi.fn(),
+      irq_level: vi.fn(() => false),
+      set_mic_ring_buffer: vi.fn(),
+      set_capture_sample_rate_hz: vi.fn(),
+      free: vi.fn(),
+    };
+    const irqSink: IrqSink = { raiseIrq: vi.fn(), lowerIrq: vi.fn() };
+    const dev = new HdaPciDevice({ bridge, irqSink });
+
+    // First tick initializes the clock.
+    dev.tick(0);
+    // No bus mastering yet -> no processing.
+    dev.tick(1);
+    expect(bridge.step_frames).not.toHaveBeenCalled();
+
+    // Enable bus mastering: next tick should process only the new delta (not "catch up").
+    dev.onPciCommandWrite?.(1 << 2);
+    dev.tick(2);
+    expect(bridge.step_frames).toHaveBeenCalledTimes(1);
+    expect(bridge.step_frames).toHaveBeenLastCalledWith(48);
+  });
+
+  it("gates INTx assertion when PCI Command.InterruptDisable (bit 10) is set", () => {
+    const bridge: HdaControllerBridgeLike = {
+      mmio_read: vi.fn(() => 0),
+      mmio_write: vi.fn(),
+      step_frames: vi.fn(),
+      irq_level: vi.fn(() => true),
+      set_mic_ring_buffer: vi.fn(),
+      set_capture_sample_rate_hz: vi.fn(),
+      free: vi.fn(),
+    };
+    const irqSink: IrqSink = { raiseIrq: vi.fn(), lowerIrq: vi.fn() };
+    const dev = new HdaPciDevice({ bridge, irqSink });
+
+    // Initial tick should observe irq_level=true and raise the IRQ.
+    dev.tick(0);
+    expect(irqSink.raiseIrq).toHaveBeenCalledTimes(1);
+    expect(irqSink.lowerIrq).toHaveBeenCalledTimes(0);
+
+    // Disabling INTx should force-deassert the line immediately.
+    dev.onPciCommandWrite?.(1 << 10);
+    expect(irqSink.lowerIrq).toHaveBeenCalledTimes(1);
+
+    // While disabled, the IRQ must not be asserted.
+    dev.tick(1);
+    expect(irqSink.raiseIrq).toHaveBeenCalledTimes(1);
+
+    // Re-enable INTx: since irq_level() is still true, it should re-assert.
+    dev.onPciCommandWrite?.(0);
+    expect(irqSink.raiseIrq).toHaveBeenCalledTimes(2);
   });
 });
