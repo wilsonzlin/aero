@@ -1,6 +1,6 @@
 #![cfg(target_arch = "wasm32")]
 
-use aero_net_e1000::{ICR_RXT0, ICR_TXDW};
+use aero_net_e1000::{ICR_RXT0, ICR_TXDW, MAX_L2_FRAME_LEN, MIN_L2_FRAME_LEN};
 use aero_wasm::E1000Bridge;
 use js_sys::Uint8Array;
 use wasm_bindgen_test::wasm_bindgen_test;
@@ -51,7 +51,8 @@ fn build_test_frame(payload: &[u8]) -> Vec<u8> {
 fn e1000_bridge_smoke_tx_rx_and_bme_gating() {
     // Synthetic guest RAM region above the bounded `runtime_alloc` heap.
     let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x40_000);
-    let guest = unsafe { core::slice::from_raw_parts_mut(guest_base as *mut u8, guest_size as usize) };
+    let guest =
+        unsafe { core::slice::from_raw_parts_mut(guest_base as *mut u8, guest_size as usize) };
 
     let mut bridge = E1000Bridge::new(guest_base, guest_size, None).expect("E1000Bridge::new");
 
@@ -126,5 +127,37 @@ fn e1000_bridge_smoke_tx_rx_and_bme_gating() {
     assert!(bridge.irq_level(), "expected IRQ asserted after TX/RX completion");
     let causes = bridge.mmio_read(0x00C0, 4);
     assert_eq!(causes & (ICR_TXDW | ICR_RXT0), ICR_TXDW | ICR_RXT0);
+    assert!(!bridge.irq_level(), "expected IRQ deasserted after ICR read");
+
+    // Invalid host RX frames should be ignored without touching guest memory or asserting IRQ.
+    //
+    // Use the second RX buffer so we can validate that the frame would have been DMA'd if it were
+    // accepted.
+    guest[0x3400..0x3400 + 16].fill(0xAA);
+    bridge.receive_frame(&Uint8Array::new_with_length((MIN_L2_FRAME_LEN - 1) as u32));
+    bridge.poll();
+    assert_eq!(&guest[0x3400..0x3400 + 16], &[0xAA; 16]);
+    assert!(
+        !bridge.irq_level(),
+        "expected no IRQ asserted after short frame is dropped"
+    );
+
+    bridge.receive_frame(&Uint8Array::new_with_length((MAX_L2_FRAME_LEN + 1) as u32));
+    bridge.poll();
+    assert_eq!(&guest[0x3400..0x3400 + 16], &[0xAA; 16]);
+    assert!(
+        !bridge.irq_level(),
+        "expected no IRQ asserted after oversized frame is dropped"
+    );
+
+    // Valid host RX: deliver into the next available descriptor.
+    let pkt_in2 = build_test_frame(b"host->guest2");
+    bridge.receive_frame(&Uint8Array::from(pkt_in2.as_slice()));
+    bridge.poll();
+    assert_eq!(&guest[0x3400..0x3400 + pkt_in2.len()], pkt_in2.as_slice());
+
+    assert!(bridge.irq_level(), "expected IRQ asserted after RX delivery");
+    let causes = bridge.mmio_read(0x00C0, 4); // ICR (read clears)
+    assert_eq!(causes & ICR_RXT0, ICR_RXT0);
     assert!(!bridge.irq_level(), "expected IRQ deasserted after ICR read");
 }
