@@ -51,7 +51,9 @@ function isWindowGlobal(): boolean {
 
 function ensureAeroGlobal(): any {
   const g = globalThis as any;
-  if (!g.aero) g.aero = {};
+  // Be defensive: callers may have set `globalThis.aero` (i.e. `window.aero`) to
+  // a non-object value.
+  if (!g.aero || typeof g.aero !== "object") g.aero = {};
   return g.aero;
 }
 
