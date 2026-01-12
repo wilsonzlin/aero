@@ -331,6 +331,9 @@ type KeyboardInputBackend = "ps2" | "usb" | "virtio";
 let keyboardInputBackend: KeyboardInputBackend = "ps2";
 const pressedKeyboardHidUsages = new Uint8Array(256);
 let pressedKeyboardHidUsageCount = 0;
+type MouseInputBackend = "ps2" | "usb" | "virtio";
+let mouseInputBackend: MouseInputBackend = "ps2";
+let mouseButtonsMask = 0;
 let wasmApi: WasmApi | null = null;
 let usbPassthroughRuntime: WebUsbPassthroughRuntime | null = null;
 let usbPassthroughDebugTimer: number | undefined;
@@ -3115,6 +3118,7 @@ function startIoIpcServer(): void {
       mgr.tick(vmNowMs);
       flushSyntheticUsbHidPendingInputReports();
       maybeUpdateKeyboardInputBackend({ virtioKeyboardOk: virtioInputKeyboard?.driverOk() ?? false });
+      maybeUpdateMouseInputBackend({ virtioMouseOk: virtioInputMouse?.driverOk() ?? false });
       drainSyntheticUsbHidOutputReports();
       hidGuest.poll?.();
       void usbPassthroughRuntime?.pollOnce();
@@ -3367,6 +3371,24 @@ function maybeUpdateKeyboardInputBackend(opts: { virtioKeyboardOk: boolean }): v
   keyboardInputBackend = "ps2";
 }
 
+function maybeUpdateMouseInputBackend(opts: { virtioMouseOk: boolean }): void {
+  // Avoid switching input backends while a mouse button is held down to prevent leaving the
+  // prior backend with a latched "button down" state (stuck drag).
+  if ((mouseButtonsMask & 0x07) !== 0) return;
+
+  if (opts.virtioMouseOk && virtioInputMouse) {
+    mouseInputBackend = "virtio";
+    return;
+  }
+
+  if (syntheticUsbHidAttached && usbHid && safeSyntheticUsbHidConfigured(syntheticUsbMouse)) {
+    mouseInputBackend = "usb";
+    return;
+  }
+
+  mouseInputBackend = "ps2";
+}
+
 function drainSyntheticUsbHidReports(): void {
   const source = usbHid;
   if (!source) return;
@@ -3532,8 +3554,8 @@ function handleInputBatch(buffer: ArrayBuffer): void {
   // Ensure synthetic USB HID devices exist (when supported) before processing this batch so we
   // can consistently decide whether to use the legacy PS/2 scancode injection path.
   maybeInitSyntheticUsbHidDevices();
-  const syntheticUsbMouseConfigured = safeSyntheticUsbHidConfigured(syntheticUsbMouse);
   maybeUpdateKeyboardInputBackend({ virtioKeyboardOk });
+  maybeUpdateMouseInputBackend({ virtioMouseOk });
 
   const base = 2;
   for (let i = 0; i < count; i++) {
@@ -3560,13 +3582,17 @@ function handleInputBatch(buffer: ArrayBuffer): void {
       case InputEventType.MouseMove: {
         const dx = words[off + 2] | 0;
         const dyPs2 = words[off + 3] | 0;
-        if (virtioMouseOk && virtioMouse) {
-          // Input batches use PS/2 convention: positive = up. virtio-input uses Linux REL_Y where positive = down.
-          virtioMouse.injectRelMove(dx, -dyPs2);
-        } else if (!syntheticUsbMouseConfigured && i8042Wasm) {
-          i8042Wasm.injectMouseMove(dx, dyPs2);
-        } else if (!syntheticUsbMouseConfigured && i8042Ts) {
-          i8042Ts.injectMouseMotion(dx, dyPs2, 0);
+        if (mouseInputBackend === "virtio") {
+          if (virtioMouseOk && virtioMouse) {
+            // Input batches use PS/2 convention: positive = up. virtio-input uses Linux REL_Y where positive = down.
+            virtioMouse.injectRelMove(dx, -dyPs2);
+          }
+        } else if (mouseInputBackend === "ps2") {
+          if (i8042Wasm) {
+            i8042Wasm.injectMouseMove(dx, dyPs2);
+          } else if (i8042Ts) {
+            i8042Ts.injectMouseMotion(dx, dyPs2, 0);
+          }
         } else {
           // PS/2 convention: positive is up. HID convention: positive is down.
           usbHid?.mouse_move(dx, -dyPs2);
@@ -3575,12 +3601,17 @@ function handleInputBatch(buffer: ArrayBuffer): void {
       }
       case InputEventType.MouseButtons: {
         const buttons = words[off + 2] & 0xff;
-        if (virtioMouseOk && virtioMouse) {
-          virtioMouse.injectMouseButtons(buttons);
-        } else if (!syntheticUsbMouseConfigured && i8042Wasm) {
-          i8042Wasm.injectMouseButtons(buttons);
-        } else if (!syntheticUsbMouseConfigured && i8042Ts) {
-          i8042Ts.injectMouseButtons(buttons);
+        mouseButtonsMask = buttons & 0x07;
+        if (mouseInputBackend === "virtio") {
+          if (virtioMouseOk && virtioMouse) {
+            virtioMouse.injectMouseButtons(buttons);
+          }
+        } else if (mouseInputBackend === "ps2") {
+          if (i8042Wasm) {
+            i8042Wasm.injectMouseButtons(buttons);
+          } else if (i8042Ts) {
+            i8042Ts.injectMouseButtons(buttons);
+          }
         } else {
           usbHid?.mouse_buttons(buttons);
         }
@@ -3588,12 +3619,16 @@ function handleInputBatch(buffer: ArrayBuffer): void {
       }
       case InputEventType.MouseWheel: {
         const dz = words[off + 2] | 0;
-        if (virtioMouseOk && virtioMouse) {
-          virtioMouse.injectWheel(dz);
-        } else if (!syntheticUsbMouseConfigured && i8042Wasm) {
-          i8042Wasm.injectMouseWheel(dz);
-        } else if (!syntheticUsbMouseConfigured && i8042Ts) {
-          i8042Ts.injectMouseMotion(0, 0, dz);
+        if (mouseInputBackend === "virtio") {
+          if (virtioMouseOk && virtioMouse) {
+            virtioMouse.injectWheel(dz);
+          }
+        } else if (mouseInputBackend === "ps2") {
+          if (i8042Wasm) {
+            i8042Wasm.injectMouseWheel(dz);
+          } else if (i8042Ts) {
+            i8042Ts.injectMouseMotion(0, 0, dz);
+          }
         } else {
           usbHid?.mouse_wheel(dz);
         }
@@ -3610,7 +3645,7 @@ function handleInputBatch(buffer: ArrayBuffer): void {
         // Only inject PS/2 scancodes when the PS/2 keyboard backend is active. Other backends
         // (synthetic USB HID / virtio-input) rely on `KeyHidUsage` events and would otherwise
         // cause duplicated input in the guest.
-        if (!virtioKeyboardOk && keyboardInputBackend === "ps2") {
+        if (keyboardInputBackend === "ps2") {
           if (i8042Wasm) {
             i8042Wasm.injectKeyScancode(packed, len);
           } else if (i8042Ts) {
@@ -3632,6 +3667,7 @@ function handleInputBatch(buffer: ArrayBuffer): void {
   // Re-evaluate backend selection after processing this batch; key-up events can make it safe to
   // transition away from PS/2 scancode injection.
   maybeUpdateKeyboardInputBackend({ virtioKeyboardOk });
+  maybeUpdateMouseInputBackend({ virtioMouseOk });
 
   // Forward newly queued USB HID reports into the guest-visible UHCI USB HID devices.
   drainSyntheticUsbHidReports();
@@ -3692,6 +3728,8 @@ function shutdown(): void {
       keyboardInputBackend = "ps2";
       pressedKeyboardHidUsages.fill(0);
       pressedKeyboardHidUsageCount = 0;
+      mouseInputBackend = "ps2";
+      mouseButtonsMask = 0;
 
       webUsbGuestBridge = null;
 
