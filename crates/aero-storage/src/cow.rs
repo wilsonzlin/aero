@@ -84,13 +84,16 @@ impl<Base: VirtualDisk, OverlayBackend: StorageBackend> VirtualDisk
         checked_range(offset, buf.len(), self.capacity_bytes())?;
 
         let block_size = self.overlay.header().block_size_u64();
+        let block_size_usize: usize = block_size
+            .try_into()
+            .map_err(|_| DiskError::OffsetOverflow)?;
         let mut pos = 0usize;
         while pos < buf.len() {
             let abs = offset + pos as u64;
             let block_idx = abs / block_size;
             let within = (abs % block_size) as usize;
             let remaining = buf.len() - pos;
-            let chunk_len = (block_size as usize - within).min(remaining);
+            let chunk_len = (block_size_usize - within).min(remaining);
 
             let (phys, existed) = self.overlay.ensure_block_allocated(block_idx)?;
 
@@ -103,24 +106,68 @@ impl<Base: VirtualDisk, OverlayBackend: StorageBackend> VirtualDisk
                 continue;
             }
 
-            // For partial writes we must preserve bytes we are not touching.
-            // If the block is newly allocated, seed it from the base disk first.
-            let mut block = vec![0u8; block_size as usize];
-
             if existed {
-                self.overlay.read_from_alloc_table(phys, 0, &mut block)?;
-            } else {
-                // Read base data for this block (truncate for the final partial block).
-                let block_start = block_idx
-                    .checked_mul(block_size)
-                    .ok_or(DiskError::OffsetOverflow)?;
-                let max_len = (self.capacity_bytes() - block_start).min(block_size);
-                self.base
-                    .read_at(block_start, &mut block[..max_len as usize])?;
+                // Existing overlay blocks already contain the correct bytes for regions we are
+                // not touching; avoid a full-block read-modify-write.
+                self.overlay
+                    .write_to_alloc_table(phys, within, &buf[pos..pos + chunk_len])?;
+                pos += chunk_len;
+                continue;
             }
 
-            block[within..within + chunk_len].copy_from_slice(&buf[pos..pos + chunk_len]);
-            self.overlay.write_to_alloc_table(phys, 0, &block)?;
+            // Newly allocated block: seed untouched bytes from the base disk, then apply the
+            // guest write. Do this in small chunks to avoid allocating an entire block-sized
+            // buffer (blocks can be large).
+            let block_start = block_idx
+                .checked_mul(block_size)
+                .ok_or(DiskError::OffsetOverflow)?;
+            let max_len_u64 = (self.capacity_bytes() - block_start).min(block_size);
+            let max_len: usize = max_len_u64
+                .try_into()
+                .map_err(|_| DiskError::OffsetOverflow)?;
+
+            let mut scratch = [0u8; 4096];
+
+            // Prefix before the write.
+            let mut base_off = block_start;
+            let mut overlay_off = 0usize;
+            let mut remaining_prefix = within.min(max_len);
+            while remaining_prefix > 0 {
+                let chunk = remaining_prefix.min(scratch.len());
+                self.base.read_at(base_off, &mut scratch[..chunk])?;
+                self.overlay
+                    .write_to_alloc_table(phys, overlay_off, &scratch[..chunk])?;
+                base_off = base_off
+                    .checked_add(chunk as u64)
+                    .ok_or(DiskError::OffsetOverflow)?;
+                overlay_off += chunk;
+                remaining_prefix -= chunk;
+            }
+
+            // The actual write.
+            self.overlay
+                .write_to_alloc_table(phys, within, &buf[pos..pos + chunk_len])?;
+
+            // Suffix after the write.
+            let write_end = within + chunk_len;
+            if write_end < max_len {
+                let mut base_off = block_start
+                    .checked_add(write_end as u64)
+                    .ok_or(DiskError::OffsetOverflow)?;
+                let mut overlay_off = write_end;
+                let mut remaining_suffix = max_len - write_end;
+                while remaining_suffix > 0 {
+                    let chunk = remaining_suffix.min(scratch.len());
+                    self.base.read_at(base_off, &mut scratch[..chunk])?;
+                    self.overlay
+                        .write_to_alloc_table(phys, overlay_off, &scratch[..chunk])?;
+                    base_off = base_off
+                        .checked_add(chunk as u64)
+                        .ok_or(DiskError::OffsetOverflow)?;
+                    overlay_off += chunk;
+                    remaining_suffix -= chunk;
+                }
+            }
 
             pos += chunk_len;
         }
