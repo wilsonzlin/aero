@@ -44,6 +44,7 @@ values-local.yaml
 !**/*.tfvars.example
 crash.log
 crash.*.log
+rustc-ice-*
 
 # OS / editor files
 .DS_Store

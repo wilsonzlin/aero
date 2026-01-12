@@ -347,6 +347,35 @@ If you're doing something unusual (like building with `-j16`), wrap it in a memo
 
 ## Troubleshooting
 
+### rustc fails to spawn helper threads ("Resource temporarily unavailable")
+
+In heavily constrained sandboxes (especially when building `wasm32-unknown-unknown` + `wasm-threaded`), Rust may fail to create its internal thread pools and ICE with errors like:
+
+```text
+failed to spawn helper thread: Os { code: 11, kind: WouldBlock, message: "Resource temporarily unavailable" }
+```
+
+Mitigations (start with the top-most):
+
+```bash
+# Limit how many rustc processes Cargo runs in parallel.
+export CARGO_BUILD_JOBS=1
+
+# rustc uses Rayon internally; keep its pool small as well.
+export RAYON_NUM_THREADS=1
+
+# If you still hit thread-spawn failures in debug/dev builds, also reduce per-crate
+# codegen parallelism (especially helpful for threaded wasm builds).
+export CARGO_PROFILE_DEV_CODEGEN_UNITS=1
+```
+
+Example (threaded WASM dev build of the core package):
+
+```bash
+CARGO_BUILD_JOBS=1 RAYON_NUM_THREADS=1 CARGO_PROFILE_DEV_CODEGEN_UNITS=1 \
+  node web/scripts/build_wasm.mjs threaded dev --packages core
+```
+
 ### Build was killed unexpectedly
 
 Probably OOM. Check with:
