@@ -46,6 +46,7 @@ import type { MountConfig } from "../storage/metadata";
 import { RuntimeDiskClient, type DiskImageMetadata } from "../storage/runtime_disk_client";
 import {
   isUsbRingAttachMessage,
+  isUsbRingDetachMessage,
   isUsbCompletionMessage,
   isUsbSelectedMessage,
   type UsbActionMessage,
@@ -55,6 +56,7 @@ import {
   type UsbHostAction,
   type UsbHostCompletion,
   type UsbRingAttachMessage,
+  type UsbRingDetachMessage,
   type UsbSelectedMessage,
 } from "../usb/usb_proxy_protocol";
 import { applyUsbSelectedToWebUsbUhciBridge, type WebUsbUhciHotplugBridgeLike } from "../usb/uhci_webusb_bridge";
@@ -1635,6 +1637,7 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
       | Partial<SetBootDisksMessage>
       | Partial<SetMicrophoneRingBufferMessage>
       | Partial<HidProxyMessage>
+      | Partial<UsbRingDetachMessage>
       | Partial<UsbSelectedMessage>
       | Partial<UsbCompletionMessage>
       | Partial<UsbPassthroughDemoRunMessage>
@@ -1820,6 +1823,14 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
 
     if (isUsbRingAttachMessage(data)) {
       usbRingAttach = data;
+      return;
+    }
+
+    if (isUsbRingDetachMessage(data)) {
+      // The SAB rings are an optional fast path. If they are detached (e.g. due to ring corruption),
+      // clear the cached attach payload so newly constructed runtimes don't attempt to re-use the
+      // stale ring handles.
+      usbRingAttach = null;
       return;
     }
 
