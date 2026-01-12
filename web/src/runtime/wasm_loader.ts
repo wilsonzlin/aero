@@ -247,14 +247,14 @@ export interface WasmApi {
         irq_level(): boolean;
         mac_addr?(): Uint8Array;
         /**
-         * Deterministic snapshot/restore helpers (aero-io-snapshot TLV bytes).
+         * Snapshot/restore the guest-visible NIC model state as an `aero-io-snapshot` blob.
          *
          * Optional for older WASM builds.
          */
         save_state?(): Uint8Array;
         load_state?(bytes: Uint8Array): void;
-        snapshot_state?: () => Uint8Array;
-        restore_state?: (bytes: Uint8Array) => void;
+        snapshot_state?(): Uint8Array;
+        restore_state?(bytes: Uint8Array): void;
         free(): void;
     };
 

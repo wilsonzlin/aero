@@ -16,6 +16,7 @@ export type E1000BridgeLike = {
   pop_tx_frame(): Uint8Array | null | undefined;
   irq_level(): boolean;
   mac_addr?: () => Uint8Array;
+
   /**
    * Optional PCI command register mirror (offset 0x04, 16-bit).
    *
@@ -236,6 +237,20 @@ export class E1000PciDevice implements PciDevice, TickableDevice {
     }
 
     // INTx disable bit can immediately drop the line; keep the sink coherent.
+    this.#syncIrq();
+  }
+
+  /**
+   * Called after VM snapshot restore.
+   *
+   * The WASM bridge restores the guest-visible device model state, but the JS wrapper also holds
+   * some transient host-side state (e.g. a frame temporarily buffered when the NET_TX ring was
+   * full). Clear that state and re-sample the device's INTx level so the I/O worker's IRQ sink
+   * reflects any restored asserted interrupt.
+   */
+  onSnapshotRestore(): void {
+    if (this.#destroyed) return;
+    this.#pendingTxFrame = null;
     this.#syncIrq();
   }
 

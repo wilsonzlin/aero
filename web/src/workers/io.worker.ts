@@ -554,6 +554,23 @@ function snapshotI8042DeviceState(): { kind: string; bytes: Uint8Array } | null 
   return null;
 }
 
+function snapshotE1000DeviceState(): { kind: string; bytes: Uint8Array } | null {
+  const bridge = e1000Bridge;
+  if (!bridge) return null;
+
+  const save =
+    (bridge as unknown as { save_state?: unknown }).save_state ??
+    (bridge as unknown as { snapshot_state?: unknown }).snapshot_state;
+  if (typeof save !== "function") return null;
+  try {
+    const bytes = save.call(bridge) as unknown;
+    if (bytes instanceof Uint8Array) return { kind: VM_SNAPSHOT_DEVICE_E1000_KIND, bytes };
+  } catch (err) {
+    console.warn("[io.worker] E1000 save_state failed:", err);
+  }
+  return null;
+}
+
 function restoreUsbDeviceState(bytes: Uint8Array): void {
   const runtime = uhciRuntime;
   if (runtime) {
@@ -591,6 +608,35 @@ function restoreI8042DeviceState(bytes: Uint8Array): void {
     } catch (err) {
       console.warn("[io.worker] i8042 loadState failed:", err);
     }
+  }
+}
+
+function restoreE1000DeviceState(bytes: Uint8Array): void {
+  // The E1000 NIC is optional and may not be initialized if virtio-net is present. If the snapshot
+  // includes E1000 state but virtio-net is absent, attempt to initialize the NIC before applying
+  // state so snapshots remain forwards-compatible across runtime builds.
+  if (!e1000Bridge && !virtioNetDevice) {
+    maybeInitE1000Device();
+  }
+
+  const bridge = e1000Bridge;
+  if (!bridge) return;
+
+  const load =
+    (bridge as unknown as { load_state?: unknown }).load_state ??
+    (bridge as unknown as { restore_state?: unknown }).restore_state;
+  if (typeof load !== "function") return;
+
+  try {
+    load.call(bridge, bytes);
+  } catch (err) {
+    console.warn("[io.worker] E1000 load_state failed:", err);
+  }
+
+  try {
+    e1000Device?.onSnapshotRestore();
+  } catch {
+    // ignore
   }
 }
 
@@ -2299,6 +2345,13 @@ async function handleVmSnapshotRestoreFromOpfs(path: string): Promise<{
           (entry as { kind: string }).kind === VM_SNAPSHOT_DEVICE_AUDIO_HDA_KIND &&
           (entry as { bytes?: unknown }).bytes instanceof Uint8Array,
       );
+      const e1000Blob = devicesRaw.find(
+        (entry): entry is { kind: string; bytes: Uint8Array } =>
+          !!entry &&
+          typeof (entry as { kind?: unknown }).kind === "string" &&
+          (entry as { kind: string }).kind === VM_SNAPSHOT_DEVICE_E1000_KIND &&
+          (entry as { bytes?: unknown }).bytes instanceof Uint8Array,
+      );
       if (usbBlob) {
         restoreUsbDeviceState(usbBlob.bytes);
       }
@@ -2315,6 +2368,9 @@ async function handleVmSnapshotRestoreFromOpfs(path: string): Promise<{
       );
       if (i8042Blob) {
         restoreI8042DeviceState(i8042Blob.bytes);
+      }
+      if (e1000Blob) {
+        restoreE1000DeviceState(e1000Blob.bytes);
       }
 
       const e1000Blob = devicesRaw.find(
