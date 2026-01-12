@@ -1,7 +1,10 @@
 use core::fmt;
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::binding_model::{BINDING_BASE_CBUFFER, BINDING_BASE_SAMPLER, BINDING_BASE_TEXTURE};
+use crate::binding_model::{
+    BINDING_BASE_CBUFFER, BINDING_BASE_SAMPLER, BINDING_BASE_TEXTURE, MAX_CBUFFER_SLOTS,
+    MAX_SAMPLER_SLOTS, MAX_TEXTURE_SLOTS,
+};
 use crate::signature::{DxbcSignature, DxbcSignatureParameter, ShaderSignatures};
 use crate::sm4::ShaderStage;
 use crate::sm4_ir::{
@@ -80,6 +83,11 @@ pub enum ShaderTranslateError {
         opcode: &'static str,
         mask: WriteMask,
     },
+    ResourceSlotOutOfRange {
+        kind: &'static str,
+        slot: u32,
+        max: u32,
+    },
     PixelShaderMissingSvTarget0,
 }
 
@@ -111,6 +119,9 @@ impl fmt::Display for ShaderTranslateError {
                 f,
                 "unsupported write mask {mask:?} for {opcode} at instruction index {inst_index}"
             ),
+            ShaderTranslateError::ResourceSlotOutOfRange { kind, slot, max } => {
+                write!(f, "{kind} slot {slot} is out of range (max {max})")
+            }
             ShaderTranslateError::PixelShaderMissingSvTarget0 => {
                 write!(f, "pixel shader output signature is missing SV_Target0")
             }
@@ -152,7 +163,7 @@ fn translate_vs(
     osgn: &DxbcSignature,
 ) -> Result<ShaderTranslation, ShaderTranslateError> {
     let io = build_io_maps(module, isgn, osgn)?;
-    let resources = scan_resources(module);
+    let resources = scan_resources(module)?;
 
     let reflection = ShaderReflection {
         inputs: io.inputs_reflection(),
@@ -197,7 +208,7 @@ fn translate_ps(
     osgn: &DxbcSignature,
 ) -> Result<ShaderTranslation, ShaderTranslateError> {
     let io = build_io_maps(module, isgn, osgn)?;
-    let resources = scan_resources(module);
+    let resources = scan_resources(module)?;
 
     let reflection = ShaderReflection {
         inputs: io.inputs_reflection(),
@@ -913,7 +924,22 @@ impl ResourceUsage {
     }
 }
 
-fn scan_resources(module: &Sm4Module) -> ResourceUsage {
+fn scan_resources(module: &Sm4Module) -> Result<ResourceUsage, ShaderTranslateError> {
+    fn validate_slot(
+        kind: &'static str,
+        slot: u32,
+        max_slots: u32,
+    ) -> Result<(), ShaderTranslateError> {
+        if slot >= max_slots {
+            return Err(ShaderTranslateError::ResourceSlotOutOfRange {
+                kind,
+                slot,
+                max: max_slots.saturating_sub(1),
+            });
+        }
+        Ok(())
+    }
+
     let mut cbuffers: BTreeMap<u32, u32> = BTreeMap::new();
     let mut textures = BTreeSet::new();
     let mut samplers = BTreeSet::new();
@@ -927,36 +953,40 @@ fn scan_resources(module: &Sm4Module) -> ResourceUsage {
     }
 
     for inst in &module.instructions {
-        let mut scan_src = |src: &crate::sm4_ir::SrcOperand| {
+        let mut scan_src = |src: &crate::sm4_ir::SrcOperand| -> Result<(), ShaderTranslateError> {
             if let SrcKind::ConstantBuffer { slot, reg } = src.kind {
+                validate_slot("cbuffer", slot, MAX_CBUFFER_SLOTS)?;
                 let entry = cbuffers.entry(slot).or_insert(0);
                 *entry = (*entry).max(reg + 1);
             }
+            Ok(())
         };
         match inst {
-            Sm4Inst::Mov { dst: _, src } => scan_src(src),
+            Sm4Inst::Mov { dst: _, src } => scan_src(src)?,
             Sm4Inst::Add { dst: _, a, b }
             | Sm4Inst::Mul { dst: _, a, b }
             | Sm4Inst::Dp3 { dst: _, a, b }
             | Sm4Inst::Dp4 { dst: _, a, b }
             | Sm4Inst::Min { dst: _, a, b }
             | Sm4Inst::Max { dst: _, a, b } => {
-                scan_src(a);
-                scan_src(b);
+                scan_src(a)?;
+                scan_src(b)?;
             }
             Sm4Inst::Mad { dst: _, a, b, c } => {
-                scan_src(a);
-                scan_src(b);
-                scan_src(c);
+                scan_src(a)?;
+                scan_src(b)?;
+                scan_src(c)?;
             }
-            Sm4Inst::Rcp { dst: _, src } | Sm4Inst::Rsq { dst: _, src } => scan_src(src),
+            Sm4Inst::Rcp { dst: _, src } | Sm4Inst::Rsq { dst: _, src } => scan_src(src)?,
             Sm4Inst::Sample {
                 dst: _,
                 coord,
                 texture,
                 sampler,
             } => {
-                scan_src(coord);
+                scan_src(coord)?;
+                validate_slot("texture", texture.slot, MAX_TEXTURE_SLOTS)?;
+                validate_slot("sampler", sampler.slot, MAX_SAMPLER_SLOTS)?;
                 textures.insert(texture.slot);
                 samplers.insert(sampler.slot);
             }
@@ -967,8 +997,10 @@ fn scan_resources(module: &Sm4Module) -> ResourceUsage {
                 sampler,
                 lod,
             } => {
-                scan_src(coord);
-                scan_src(lod);
+                scan_src(coord)?;
+                scan_src(lod)?;
+                validate_slot("texture", texture.slot, MAX_TEXTURE_SLOTS)?;
+                validate_slot("sampler", sampler.slot, MAX_SAMPLER_SLOTS)?;
                 textures.insert(texture.slot);
                 samplers.insert(sampler.slot);
             }
@@ -978,8 +1010,9 @@ fn scan_resources(module: &Sm4Module) -> ResourceUsage {
                 texture,
                 lod,
             } => {
-                scan_src(coord);
-                scan_src(lod);
+                scan_src(coord)?;
+                scan_src(lod)?;
+                validate_slot("texture", texture.slot, MAX_TEXTURE_SLOTS)?;
                 textures.insert(texture.slot);
             }
             Sm4Inst::Unknown { .. } => {}
@@ -995,11 +1028,11 @@ fn scan_resources(module: &Sm4Module) -> ResourceUsage {
         }
     }
 
-    ResourceUsage {
+    Ok(ResourceUsage {
         cbuffers,
         textures,
         samplers,
-    }
+    })
 }
 
 fn emit_temp_and_output_decls(

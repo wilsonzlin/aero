@@ -1,8 +1,12 @@
-use aero_d3d11::binding_model::{BINDING_BASE_CBUFFER, BINDING_BASE_SAMPLER, BINDING_BASE_TEXTURE};
+use aero_d3d11::binding_model::{
+    BINDING_BASE_CBUFFER, BINDING_BASE_SAMPLER, BINDING_BASE_TEXTURE, MAX_CBUFFER_SLOTS,
+    MAX_TEXTURE_SLOTS,
+};
 use aero_d3d11::{
     parse_signatures, translate_sm4_module_to_wgsl, BindingKind, Builtin, DxbcFile,
     DxbcSignatureParameter, FourCC, OperandModifier, RegFile, RegisterRef, SamplerRef, ShaderModel,
-    ShaderStage, Sm4Decl, Sm4Inst, Sm4Module, SrcKind, SrcOperand, Swizzle, TextureRef, WriteMask,
+    ShaderStage, ShaderTranslateError, Sm4Decl, Sm4Inst, Sm4Module, SrcKind, SrcOperand, Swizzle,
+    TextureRef, WriteMask,
 };
 
 const FOURCC_SHEX: FourCC = FourCC(*b"SHEX");
@@ -762,4 +766,88 @@ fn translates_ps_front_facing_builtin_from_system_value_type() {
         .expect("missing v0 reflection");
     assert_eq!(v0.builtin, Some(Builtin::FrontFacing));
     assert_eq!(v0.location, None);
+}
+
+#[test]
+fn rejects_texture_slot_out_of_range() {
+    let isgn_params = vec![
+        sig_param("SV_Position", 0, 0, 0b1111),
+        sig_param("TEXCOORD", 0, 1, 0b0011),
+    ];
+    let osgn_params = vec![sig_param("SV_Target", 0, 0, 0b1111)];
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, Vec::new()),
+        (FOURCC_ISGN, build_signature_chunk(&isgn_params)),
+        (FOURCC_OSGN, build_signature_chunk(&osgn_params)),
+    ]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    let module = Sm4Module {
+        stage: ShaderStage::Pixel,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: Vec::new(),
+        instructions: vec![
+            Sm4Inst::Sample {
+                dst: dst(RegFile::Temp, 0, WriteMask::XYZW),
+                coord: src_reg(RegFile::Input, 1),
+                texture: TextureRef { slot: 128 },
+                sampler: SamplerRef { slot: 0 },
+            },
+            Sm4Inst::Mov {
+                dst: dst(RegFile::Output, 0, WriteMask::XYZW),
+                src: src_reg(RegFile::Temp, 0),
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let err = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).unwrap_err();
+    assert!(matches!(
+        err,
+        ShaderTranslateError::ResourceSlotOutOfRange {
+            kind: "texture",
+            slot: 128,
+            max
+        } if max == MAX_TEXTURE_SLOTS - 1
+    ));
+}
+
+#[test]
+fn rejects_constant_buffer_slot_out_of_range() {
+    let osgn_params = vec![sig_param("SV_Target", 0, 0, 0b1111)];
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, Vec::new()),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (FOURCC_OSGN, build_signature_chunk(&osgn_params)),
+    ]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    let module = Sm4Module {
+        stage: ShaderStage::Pixel,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: Vec::new(),
+        instructions: vec![
+            Sm4Inst::Mov {
+                dst: dst(RegFile::Output, 0, WriteMask::XYZW),
+                src: SrcOperand {
+                    kind: SrcKind::ConstantBuffer { slot: 32, reg: 0 },
+                    swizzle: Swizzle::XYZW,
+                    modifier: OperandModifier::None,
+                },
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let err = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).unwrap_err();
+    assert!(matches!(
+        err,
+        ShaderTranslateError::ResourceSlotOutOfRange {
+            kind: "cbuffer",
+            slot: 32,
+            max
+        } if max == MAX_CBUFFER_SLOTS - 1
+    ));
 }
