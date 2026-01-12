@@ -5,6 +5,7 @@ use std::sync::{
 
 use aero_devices::pci::capabilities::PCI_CONFIG_SPACE_SIZE;
 use aero_devices::pci::{profile, PciConfigSpace, PciConfigSpaceState, PciDevice};
+use aero_devices::irq::IrqLine;
 use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
 use aero_io_snapshot::io::state::{
     IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
@@ -14,7 +15,7 @@ use memory::MmioHandler;
 
 use crate::ahci::AhciController;
 use crate::ata::AtaDrive;
-use crate::bus::{IrqLine, MemoryBusGuestMemory};
+use crate::bus::MemoryBusGuestMemory;
 
 /// AHCI ABAR (HBA registers) size in bytes.
 pub const AHCI_ABAR_SIZE: u64 = 0x2000;

@@ -14,7 +14,7 @@ use crate::ata::{
     ATA_CMD_WRITE_SECTORS_EXT, ATA_ERROR_ABRT, ATA_STATUS_BSY, ATA_STATUS_DRDY, ATA_STATUS_DRQ,
     ATA_STATUS_ERR,
 };
-use crate::IrqLine;
+use aero_devices::irq::IrqLine;
 
 const PRIMARY_BASE: u16 = 0x1F0;
 const PRIMARY_CTRL: u16 = 0x3F6;

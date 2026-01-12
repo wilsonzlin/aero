@@ -23,7 +23,7 @@ use crate::ata::{
     ATA_STATUS_ERR,
 };
 use crate::bus::{GuestMemory, GuestMemoryExt};
-use crate::IrqLine;
+use aero_devices::irq::IrqLine;
 
 const HBA_REG_CAP: u64 = 0x00;
 const HBA_REG_GHC: u64 = 0x04;

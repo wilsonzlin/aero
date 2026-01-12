@@ -1,3 +1,4 @@
+use aero_devices::irq::IrqLine;
 use std::cell::RefCell;
 use std::fmt;
 
@@ -56,11 +57,6 @@ pub trait GuestMemoryExt: GuestMemory {
 
 impl<T: GuestMemory + ?Sized> GuestMemoryExt for T {}
 
-/// Interrupt line used by devices that signal legacy INTx-style interrupts.
-pub trait IrqLine {
-    fn set_level(&self, high: bool);
-}
-
 /// Adapter that lets storage devices DMA through the platform's [`memory::MemoryBus`].
 ///
 /// The storage device models in this crate use [`GuestMemory`] as a very small DMA surface.
@@ -108,7 +104,6 @@ impl GuestMemory for MemoryBusGuestMemory<'_> {
         self.bus.borrow_mut().write_physical(paddr, buf);
     }
 }
-
 #[derive(Default)]
 struct TestIrqLineState {
     level: bool,
