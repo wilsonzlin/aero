@@ -23,6 +23,17 @@ pub const L2_TUNNEL_TYPE_ERROR: u8 = 0x7F;
 pub const L2_TUNNEL_DEFAULT_MAX_FRAME_PAYLOAD: usize = 2048;
 pub const L2_TUNNEL_DEFAULT_MAX_CONTROL_PAYLOAD: usize = 256;
 
+// Structured `ERROR` payload codes (see `docs/l2-tunnel-protocol.md`).
+pub const L2_TUNNEL_ERROR_CODE_PROTOCOL_ERROR: u16 = 1;
+pub const L2_TUNNEL_ERROR_CODE_AUTH_REQUIRED: u16 = 2;
+pub const L2_TUNNEL_ERROR_CODE_AUTH_INVALID: u16 = 3;
+pub const L2_TUNNEL_ERROR_CODE_ORIGIN_MISSING: u16 = 4;
+pub const L2_TUNNEL_ERROR_CODE_ORIGIN_DENIED: u16 = 5;
+pub const L2_TUNNEL_ERROR_CODE_QUOTA_BYTES: u16 = 6;
+pub const L2_TUNNEL_ERROR_CODE_QUOTA_FPS: u16 = 7;
+pub const L2_TUNNEL_ERROR_CODE_QUOTA_CONNECTIONS: u16 = 8;
+pub const L2_TUNNEL_ERROR_CODE_BACKPRESSURE: u16 = 9;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Limits {
     pub max_frame_payload: usize,

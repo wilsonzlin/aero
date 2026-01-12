@@ -7,15 +7,16 @@
 /// Protocol-level error codes carried inside `L2_TUNNEL_TYPE_ERROR` payloads.
 ///
 /// Numeric values are stable and must not be changed once released.
-pub const ERROR_CODE_PROTOCOL_ERROR: u16 = 1;
-pub const ERROR_CODE_AUTH_REQUIRED: u16 = 2;
-pub const ERROR_CODE_AUTH_INVALID: u16 = 3;
-pub const ERROR_CODE_ORIGIN_MISSING: u16 = 4;
-pub const ERROR_CODE_ORIGIN_DENIED: u16 = 5;
-pub const ERROR_CODE_QUOTA_BYTES: u16 = 6;
-pub const ERROR_CODE_QUOTA_FPS: u16 = 7;
-pub const ERROR_CODE_QUOTA_CONNECTIONS: u16 = 8;
-pub const ERROR_CODE_BACKPRESSURE: u16 = 9;
+pub const ERROR_CODE_PROTOCOL_ERROR: u16 = aero_l2_protocol::L2_TUNNEL_ERROR_CODE_PROTOCOL_ERROR;
+pub const ERROR_CODE_AUTH_REQUIRED: u16 = aero_l2_protocol::L2_TUNNEL_ERROR_CODE_AUTH_REQUIRED;
+pub const ERROR_CODE_AUTH_INVALID: u16 = aero_l2_protocol::L2_TUNNEL_ERROR_CODE_AUTH_INVALID;
+pub const ERROR_CODE_ORIGIN_MISSING: u16 = aero_l2_protocol::L2_TUNNEL_ERROR_CODE_ORIGIN_MISSING;
+pub const ERROR_CODE_ORIGIN_DENIED: u16 = aero_l2_protocol::L2_TUNNEL_ERROR_CODE_ORIGIN_DENIED;
+pub const ERROR_CODE_QUOTA_BYTES: u16 = aero_l2_protocol::L2_TUNNEL_ERROR_CODE_QUOTA_BYTES;
+pub const ERROR_CODE_QUOTA_FPS: u16 = aero_l2_protocol::L2_TUNNEL_ERROR_CODE_QUOTA_FPS;
+pub const ERROR_CODE_QUOTA_CONNECTIONS: u16 =
+    aero_l2_protocol::L2_TUNNEL_ERROR_CODE_QUOTA_CONNECTIONS;
+pub const ERROR_CODE_BACKPRESSURE: u16 = aero_l2_protocol::L2_TUNNEL_ERROR_CODE_BACKPRESSURE;
 
 /// Encode an `ERROR` payload using the structured binary form.
 ///
