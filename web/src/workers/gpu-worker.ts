@@ -704,6 +704,20 @@ const maybePublishWddmScanout = (width: number, height: number): void => {
   const words = scanoutState;
   if (!words) return;
 
+  // Avoid clobbering a device-model-owned WDDM scanout descriptor (which would
+  // populate base_paddr to point at guest memory or VRAM). We only publish a
+  // placeholder descriptor when:
+  // - the current source is not WDDM (claiming scanout), or
+  // - the current source is WDDM but base_paddr is 0 (our placeholder).
+  try {
+    const snap = snapshotScanoutState(words);
+    if (snap.source === SCANOUT_SOURCE_WDDM) {
+      if ((snap.basePaddrLo | snap.basePaddrHi) !== 0) return;
+    }
+  } catch {
+    // If snapshot fails (shouldn't), fall through and attempt a best-effort publish.
+  }
+
   const w = Math.max(0, width | 0) >>> 0;
   const h = Math.max(0, height | 0) >>> 0;
   const pitchBytes = Math.imul(w, BYTES_PER_PIXEL_RGBA8) >>> 0;
