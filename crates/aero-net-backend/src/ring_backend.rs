@@ -217,10 +217,6 @@ impl<TX: FrameRing, RX: FrameRing> NetworkBackend for L2TunnelRingBackend<TX, RX
         }
     }
 
-    fn l2_ring_stats(&self) -> Option<L2TunnelRingBackendStats> {
-        Some(self.stats)
-    }
-
     fn poll_receive(&mut self) -> Option<Vec<u8>> {
         if self.rx_broken {
             return None;
