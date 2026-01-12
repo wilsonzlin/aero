@@ -26,15 +26,16 @@ Binaries are staged under:
 - `out/packages/aerogpu/x86/` and `out/packages/aerogpu/x64/` (INF+CAT staged packages)
 - `out/artifacts/` (ZIP/ISO bundles)
 
-CI artifacts stage `aerogpu.inf` (**D3D9-only**) by default.
+CI artifacts stage `aerogpu_dx11.inf` (**DX11-capable**) by default, and also include `aerogpu.inf`
+(D3D9-only variant).
 
 Legacy binding INFs are shipped under `legacy/` for emulator builds that intentionally expose the deprecated legacy device model:
 
 - `legacy/aerogpu.inf` (D3D9-only; shipped by default)
 - `legacy/aerogpu_dx11.inf` (D3D9 + D3D10/11; optional/opt-in)
 
-The canonical DX11-capable variant uses `aerogpu_dx11.inf` (adds D3D10/11 UMDs) and is manual/opt-in (see below and
-`drivers/aerogpu/packaging/win7/README.md`).
+The canonical DX11-capable variant uses `aerogpu_dx11.inf` (adds D3D10/11 UMDs). It is staged in CI by default;
+see `drivers/aerogpu/packaging/win7/README.md` for install notes.
 
 ## CI (GitHub Actions)
 
@@ -53,16 +54,15 @@ Artifacts produced by the workflow:
 Catalog generation (`ci/make-catalogs.ps1`) is driven by `drivers/aerogpu/ci-package.json`:
 
 - `infFiles` selects which INF(s) to stage at the **package root**. AeroGPU CI currently stages:
-  - `packaging/win7/aerogpu.inf` (D3D9-only package; canonical binding)
-  To stage the DX11-capable package in CI, add:
-  - `packaging/win7/aerogpu_dx11.inf`
+  - `packaging/win7/aerogpu_dx11.inf` (DX11-capable package; canonical binding)
+  - `packaging/win7/aerogpu.inf` (D3D9-only variant)
   Legacy binding INFs are shipped separately under `legacy/` (see `drivers/aerogpu/legacy/`):
   - `legacy/aerogpu.inf` (D3D9-only; staged by default)
   - `legacy/aerogpu_dx11.inf` (D3D9 + D3D10/11; add to `additionalFiles` if you stage DX11 payloads)
 - `wow64Files` lists x86 UMD DLLs that must be present in the x64 package during `Inf2Cat`.
-  AeroGPU includes `aerogpu_d3d9.dll` by default (required for Win7 x64 WOW64).
-  If you stage any DX11-capable INF (`aerogpu_dx11.inf` and/or `legacy/aerogpu_dx11.inf`), also add
-  `aerogpu_d3d10.dll` so it can be hashed into the x64 catalog.
+  AeroGPU includes:
+  - `aerogpu_d3d9.dll` (required for Win7 x64 WOW64 D3D9)
+  - `aerogpu_d3d10.dll` (required for Win7 x64 WOW64 D3D10/11 when staging DX11-capable INFs)
 
 Details: `docs/16-driver-packaging-and-signing.md`.
 

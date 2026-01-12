@@ -35,6 +35,7 @@ package root and falls back to `aerogpu.inf`.
 - DX11-capable (recommended; includes D3D10/11 UMDs):
 
   ```bat
+  :: CI-staged packages: installs aerogpu_dx11.inf when it is present at the package root.
   install.cmd
   ```
 

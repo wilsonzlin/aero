@@ -24,12 +24,11 @@ set "INF_FILE=%~1"
 if "%INF_FILE%"=="" (
   rem Prefer the DX11-capable package when available.
   rem
-  rem CI-staged packages place the INF(s) at the package root (two levels above this script),
-  rem while repo/manual packaging places the INF(s) next to this script.
+  rem CI-staged packages place the INF(s) at the package root (two levels above this script).
+  rem If the DX11-capable INF is not staged at the package root, fall back to the D3D9-only INF.
+  rem (Repo/manual packaging keeps the INFs next to this script.)
   set "INF_FILE=aerogpu.inf"
   if exist "%SCRIPT_DIR%..\..\aerogpu_dx11.inf" (
-    set "INF_FILE=aerogpu_dx11.inf"
-  ) else if exist "aerogpu_dx11.inf" (
     set "INF_FILE=aerogpu_dx11.inf"
   )
 )
