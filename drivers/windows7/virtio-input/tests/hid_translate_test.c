@@ -508,6 +508,40 @@ static void test_keyboard_overflow_queue(void) {
   expect_report(&cap, 1, expect2, sizeof(expect2));
 }
 
+static void test_keyboard_overflow_queue_does_not_emit_on_queued_press(void) {
+  struct captured_reports cap;
+  struct hid_translate t;
+
+  cap_clear(&cap);
+  hid_translate_init(&t, capture_emit, &cap);
+
+  /* Press 6 keys, flush. */
+  send_key(&t, VIRTIO_INPUT_KEY_A, 1);
+  send_key(&t, VIRTIO_INPUT_KEY_B, 1);
+  send_key(&t, VIRTIO_INPUT_KEY_C, 1);
+  send_key(&t, VIRTIO_INPUT_KEY_D, 1);
+  send_key(&t, VIRTIO_INPUT_KEY_E, 1);
+  send_key(&t, VIRTIO_INPUT_KEY_F, 1);
+  send_syn(&t);
+
+  assert(cap.count == 1);
+  uint8_t expect1[HID_TRANSLATE_KEYBOARD_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_KEYBOARD, 0, 0, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09};
+  expect_report(&cap, 0, expect1, sizeof(expect1));
+
+  /* Press a 7th key; it is queued (not visible) so no new report should emit. */
+  send_key(&t, VIRTIO_INPUT_KEY_G, 1);
+  send_syn(&t);
+  assert(cap.count == 1);
+
+  /* Release B; queued G becomes visible and now a report should emit. */
+  send_key(&t, VIRTIO_INPUT_KEY_B, 0);
+  send_syn(&t);
+
+  assert(cap.count == 2);
+  uint8_t expect2[HID_TRANSLATE_KEYBOARD_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_KEYBOARD, 0, 0, 0x04, 0x06, 0x07, 0x08, 0x09, 0x0A};
+  expect_report(&cap, 1, expect2, sizeof(expect2));
+}
+
 static void test_mouse_reports(void) {
   struct captured_reports cap;
   struct hid_translate t;
@@ -640,6 +674,7 @@ int main(void) {
   test_keyboard_function_key_reports();
   test_keyboard_function_key_reports_le();
   test_keyboard_overflow_queue();
+  test_keyboard_overflow_queue_does_not_emit_on_queued_press();
   test_mouse_reports();
   test_reset_emits_release_reports();
   test_keyboard_only_enable();

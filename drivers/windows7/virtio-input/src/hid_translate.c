@@ -208,24 +208,6 @@ static bool hid_translate_keyboard_list_contains(const struct hid_translate *t, 
   return false;
 }
 
-static bool hid_translate_keyboard_list_remove(struct hid_translate *t, uint8_t usage) {
-  uint8_t i;
-  uint8_t j;
-  for (i = 0; i < t->keyboard_pressed_len; ++i) {
-    if (t->keyboard_pressed[i] != usage) {
-      continue;
-    }
-
-    /* Stable remove. */
-    for (j = (uint8_t)(i + 1); j < t->keyboard_pressed_len; ++j) {
-      t->keyboard_pressed[j - 1] = t->keyboard_pressed[j];
-    }
-    t->keyboard_pressed_len--;
-    return true;
-  }
-  return false;
-}
-
 static bool hid_translate_keyboard_list_append(struct hid_translate *t, uint8_t usage) {
   if (t->keyboard_pressed_len >= HID_TRANSLATE_MAX_PRESSED_KEYS) {
     /*
@@ -236,6 +218,26 @@ static bool hid_translate_keyboard_list_append(struct hid_translate *t, uint8_t 
   }
   t->keyboard_pressed[t->keyboard_pressed_len++] = usage;
   return true;
+}
+
+static bool hid_translate_keyboard_list_remove_affects_report(struct hid_translate *t, uint8_t usage) {
+  uint8_t i;
+  uint8_t j;
+  for (i = 0; i < t->keyboard_pressed_len; ++i) {
+    if (t->keyboard_pressed[i] != usage) {
+      continue;
+    }
+
+    bool affects_report = (i < 6);
+
+    /* Stable remove. */
+    for (j = (uint8_t)(i + 1); j < t->keyboard_pressed_len; ++j) {
+      t->keyboard_pressed[j - 1] = t->keyboard_pressed[j];
+    }
+    t->keyboard_pressed_len--;
+    return affects_report;
+  }
+  return false;
 }
 
 static void hid_translate_emit_keyboard_report(struct hid_translate *t) {
@@ -297,6 +299,7 @@ static void hid_translate_handle_keyboard_key(struct hid_translate *t, uint16_t 
     if (hid_translate_keyboard_list_contains(t, usage)) {
       return;
     }
+    uint8_t old_len = t->keyboard_pressed_len;
     if (hid_translate_keyboard_list_append(t, usage)) {
       /*
        * Deterministic 6KRO policy:
@@ -305,10 +308,18 @@ static void hid_translate_handle_keyboard_key(struct hid_translate *t, uint16_t 
        *   - Additional keys are queued and become visible once earlier keys are
        *     released.
        */
-      t->keyboard_dirty = true;
+      if (old_len < 6) {
+        t->keyboard_dirty = true;
+      }
     }
   } else {
-    if (hid_translate_keyboard_list_remove(t, usage)) {
+    /*
+     * Only mark the report dirty if the release affects the visible boot-protocol
+     * 6-key array. Releasing a queued key (beyond the first 6) does not change
+     * the report payload, so emitting a duplicate report is unnecessary and can
+     * contribute to report ring pressure.
+     */
+    if (hid_translate_keyboard_list_remove_affects_report(t, usage)) {
       t->keyboard_dirty = true;
     }
   }
