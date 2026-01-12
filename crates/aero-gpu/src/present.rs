@@ -451,7 +451,9 @@ fn min_frame_len(stride: usize, height: usize, row_bytes: usize) -> usize {
 
 fn align_up(val: usize, align: usize) -> usize {
     debug_assert!(align.is_power_of_two());
-    (val + (align - 1)) & !(align - 1)
+    val.checked_add(align - 1)
+        .map(|v| v & !(align - 1))
+        .unwrap_or(usize::MAX)
 }
 
 pub mod wgpu_writer {
@@ -537,6 +539,13 @@ mod tests {
             out.push((state >> 24) as u8);
         }
         out
+    }
+
+    #[test]
+    fn align_up_saturates_on_overflow() {
+        // Ensure we don't wrap on `val + (align-1)` and accidentally produce a small stride.
+        let v = usize::MAX - 128;
+        assert_eq!(align_up(v, COPY_BYTES_PER_ROW_ALIGNMENT), usize::MAX);
     }
 
     #[test]
