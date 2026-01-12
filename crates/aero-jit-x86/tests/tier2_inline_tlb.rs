@@ -659,3 +659,87 @@ fn tier2_inline_tlb_high_ram_remap_load_uses_contiguous_ram_offset() {
     assert_eq!(host.slow_mem_reads, 0);
     assert_eq!(host.slow_mem_writes, 0);
 }
+
+#[test]
+fn tier2_inline_tlb_high_ram_remap_store_uses_contiguous_ram_offset() {
+    const HIGH_RAM_BASE: u64 = 0x1_0000_0000;
+
+    let desired_offset: usize = 0x10000;
+    let ram_base: u64 = 0x5000_0000 + desired_offset as u64;
+
+    let trace = TraceIr {
+        prologue: Vec::new(),
+        body: vec![
+            Instr::StoreMem {
+                addr: Operand::Const(HIGH_RAM_BASE),
+                src: Operand::Const(0xab),
+                width: Width::W8,
+            },
+            Instr::LoadMem {
+                dst: ValueId(0),
+                addr: Operand::Const(HIGH_RAM_BASE),
+                width: Width::W8,
+            },
+            Instr::StoreReg {
+                reg: Gpr::Rax,
+                src: Operand::Value(ValueId(0)),
+            },
+        ],
+        kind: TraceKind::Linear,
+    };
+
+    let plan = RegAllocPlan::default();
+    let wasm = Tier2WasmCodegen::new().compile_trace_with_options(
+        &trace,
+        &plan,
+        Tier2WasmOptions {
+            inline_tlb: true,
+            code_version_guard_import: true,
+            ..Default::default()
+        },
+    );
+    validate_wasm(&wasm);
+
+    let mut ram = vec![0u8; 0x20_000];
+    ram[desired_offset] = 0;
+
+    let cpu_ptr = ram.len() as u64;
+    let cpu_ptr_usize = cpu_ptr as usize;
+    let jit_ctx_ptr_usize = cpu_ptr_usize + (abi::CPU_STATE_SIZE as usize);
+    let total_len =
+        jit_ctx_ptr_usize + JitContext::TOTAL_BYTE_SIZE + (jit_ctx::TIER2_CTX_SIZE as usize);
+    let mut mem = vec![0u8; total_len];
+
+    mem[..ram.len()].copy_from_slice(&ram);
+    write_cpu_rip(&mut mem, cpu_ptr_usize, 0x1000);
+    write_cpu_rflags(&mut mem, cpu_ptr_usize, 0x2);
+
+    let ctx = JitContext {
+        ram_base,
+        tlb_salt: 0x1234_5678_9abc_def0,
+    };
+    ctx.write_header_to_mem(&mut mem, jit_ctx_ptr_usize);
+
+    let pages = total_len.div_ceil(65_536) as u32;
+    let ram_size = HIGH_RAM_BASE + 0x1000;
+    let (mut store, memory, func) = instantiate(&wasm, pages, ram_size);
+    memory.write(&mut store, 0, &mem).unwrap();
+
+    let _ret = func
+        .call(&mut store, (cpu_ptr as i32, jit_ctx_ptr_usize as i32))
+        .unwrap();
+
+    let mut got_mem = vec![0u8; total_len];
+    memory.read(&store, 0, &mut got_mem).unwrap();
+
+    let got_ram = &got_mem[..ram.len()];
+    assert_eq!(got_ram[desired_offset], 0xab);
+
+    let rax = read_u64_le(&got_mem, cpu_ptr_usize + abi::gpr_offset(Gpr::Rax.as_u8() as usize) as usize);
+    assert_eq!(rax & 0xff, 0xab);
+
+    let host = *store.data();
+    assert_eq!(host.mmu_translate_calls, 1);
+    assert_eq!(host.slow_mem_reads, 0);
+    assert_eq!(host.slow_mem_writes, 0);
+}
