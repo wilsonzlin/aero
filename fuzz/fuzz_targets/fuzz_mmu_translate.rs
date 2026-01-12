@@ -156,7 +156,7 @@ fuzz_target!(|data: &[u8]| {
         }
     }
 
-    let mmu = Mmu {
+    let mut mmu = Mmu {
         cr0,
         cr3,
         cr4,
@@ -164,7 +164,7 @@ fuzz_target!(|data: &[u8]| {
         cpl,
     };
 
-    let result = mmu.translate(&mut bus, vaddr, access);
+    let result = mmu.translate(&mut bus, vaddr, access, cpl);
     if let Some(expected) = expected_paddr {
         assert_eq!(result, Ok(expected));
     }

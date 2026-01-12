@@ -18,6 +18,15 @@ path = "../crates/memory"
 [dependencies.aero-snapshot]
 path = "../crates/aero-snapshot"
 
+[dependencies.aero-devices-storage]
+path = "../crates/aero-devices-storage"
+
+[dependencies.aero-storage]
+path = "../crates/aero-storage"
+
+[dependencies.aero-http-range]
+path = "../crates/aero-http-range"
+
 [[bin]]
 name = "fuzz_mmu_translate"
 path = "fuzz_targets/fuzz_mmu_translate.rs"
@@ -33,5 +42,23 @@ doc = false
 [[bin]]
 name = "fuzz_snapshot_decode"
 path = "fuzz_targets/fuzz_snapshot_decode.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_ahci"
+path = "fuzz_targets/fuzz_ahci.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_ide"
+path = "fuzz_targets/fuzz_ide.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_http_range"
+path = "fuzz_targets/fuzz_http_range.rs"
 test = false
 doc = false

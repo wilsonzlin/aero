@@ -1,0 +1,6 @@
+[toolchain]
+# `cargo-fuzz` requires nightly (`-Zsanitizer=...`). Keep the rest of the repository pinned to
+# stable via the root `rust-toolchain.toml`, but override to nightly when working in `fuzz/`.
+channel = "nightly-2025-12-08"
+profile = "minimal"
+

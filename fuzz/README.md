@@ -1,6 +1,11 @@
 # Fuzzing
 
-This crate uses [`cargo-fuzz`](https://github.com/rust-fuzz/cargo-fuzz) (libFuzzer) to stress the MMU page-walker and the physical bus routing logic.
+This crate uses [`cargo-fuzz`](https://github.com/rust-fuzz/cargo-fuzz) (libFuzzer) to stress a few "guest input parsing" paths, including:
+
+- MMU page walking / translation
+- Physical bus routing logic
+- Storage controller emulation (AHCI + IDE)
+- HTTP `Range` header parsing (`aero-http-range`)
 
 ## Prereqs
 
@@ -17,10 +22,37 @@ From the repository root:
 ```bash
 cargo +"$nightly" fuzz run fuzz_mmu_translate
 cargo +"$nightly" fuzz run fuzz_bus_rw
+cargo +"$nightly" fuzz run fuzz_ahci
+cargo +"$nightly" fuzz run fuzz_ide
+cargo +"$nightly" fuzz run fuzz_http_range
 ```
 
 To run time-bounded:
 
 ```bash
 cargo +"$nightly" fuzz run fuzz_mmu_translate -- -max_total_time=10
+```
+
+## Smoke runs
+
+Build all targets:
+
+```bash
+cd fuzz && cargo +"$nightly" fuzz build
+```
+
+The `fuzz/` directory includes its own `rust-toolchain.toml` (nightly), so you can also run these
+from inside `fuzz/` without specifying a `+toolchain`:
+
+```bash
+cd fuzz && cargo fuzz build
+```
+
+Note: an explicit `RUSTUP_TOOLCHAIN=...` environment variable overrides `rust-toolchain.toml`.
+
+Run a bounded number of iterations:
+
+```bash
+cd fuzz && cargo +"$nightly" fuzz run fuzz_ahci -- -runs=10000
+cd fuzz && cargo fuzz run fuzz_ahci -- -runs=10000
 ```
