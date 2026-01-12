@@ -856,6 +856,12 @@ class Qcow2 {
     if (!Number.isSafeInteger(headerLength) || headerLength <= 0) throw new Error("invalid qcow2 header_length");
     if (version === 3 && headerLength < 104) throw new Error("invalid qcow2 header_length");
     if (src.size < headerLength) throw new Error("qcow2 header truncated");
+    if (version === 3) {
+      const incompatibleFeatures = readU64BE(hdr, 72);
+      if (incompatibleFeatures !== 0n) throw new Error("qcow2 incompatible features unsupported");
+      const refcountOrder = readU32BE(hdr, 96);
+      if (refcountOrder !== 4) throw new Error("qcow2 refcount order unsupported");
+    }
 
     const backingFileOffset = readU64BE(hdr, 8);
     const backingFileSize = readU32BE(hdr, 16);

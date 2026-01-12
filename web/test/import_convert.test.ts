@@ -521,6 +521,28 @@ test("convertToAeroSparse: rejects qcow2 v3 where header_length overlaps tables"
   );
 });
 
+test("convertToAeroSparse: rejects qcow2 v3 incompatible features", async () => {
+  const file = new Uint8Array(104);
+  file.set([0x51, 0x46, 0x49, 0xfb], 0); // magic
+  writeU32BE(file, 4, 3); // version
+  writeU32BE(file, 20, 9); // cluster_bits = 9 => 512B clusters
+  writeU64BE(file, 24, 512n); // virtual size
+  writeU32BE(file, 36, 1); // l1_size
+  writeU64BE(file, 40, 512n); // l1_table_offset
+  writeU64BE(file, 48, 1024n); // refcount_table_offset
+  writeU32BE(file, 56, 1); // refcount_table_clusters
+  writeU64BE(file, 72, 1n); // incompatible_features
+  writeU32BE(file, 96, 4); // refcount_order
+  writeU32BE(file, 100, 104); // header_length
+
+  const src = new MemSource(file);
+  const sync = new MemSyncAccessHandle();
+  await assert.rejects(
+    convertToAeroSparse(src, "qcow2", sync, { blockSizeBytes: 512 }),
+    (err: any) => err instanceof Error && /qcow2 incompatible features unsupported/i.test(err.message),
+  );
+});
+
 test("convertToAeroSparse: dynamic VHD respects BAT + sector bitmap", async () => {
   const { file, logical } = buildDynamicVhdFixture();
   const src = new MemSource(file);
