@@ -300,41 +300,45 @@ impl memory::MemoryBus for SystemMemory {
     }
 }
 
-struct PhysBus<'a> {
-    mem: &'a mut SystemMemory,
-}
-
-impl aero_mmu::MemoryBus for PhysBus<'_> {
+impl aero_mmu::MemoryBus for SystemMemory {
+    #[inline]
     fn read_u8(&mut self, paddr: u64) -> u8 {
-        self.mem.read_u8(paddr)
+        memory::MemoryBus::read_u8(self, paddr)
     }
 
+    #[inline]
     fn read_u16(&mut self, paddr: u64) -> u16 {
-        self.mem.read_u16(paddr)
+        memory::MemoryBus::read_u16(self, paddr)
     }
 
+    #[inline]
     fn read_u32(&mut self, paddr: u64) -> u32 {
-        self.mem.read_u32(paddr)
+        memory::MemoryBus::read_u32(self, paddr)
     }
 
+    #[inline]
     fn read_u64(&mut self, paddr: u64) -> u64 {
-        self.mem.read_u64(paddr)
+        memory::MemoryBus::read_u64(self, paddr)
     }
 
+    #[inline]
     fn write_u8(&mut self, paddr: u64, value: u8) {
-        self.mem.write_u8(paddr, value);
+        memory::MemoryBus::write_u8(self, paddr, value)
     }
 
+    #[inline]
     fn write_u16(&mut self, paddr: u64, value: u16) {
-        self.mem.write_u16(paddr, value);
+        memory::MemoryBus::write_u16(self, paddr, value)
     }
 
+    #[inline]
     fn write_u32(&mut self, paddr: u64, value: u32) {
-        self.mem.write_u32(paddr, value);
+        memory::MemoryBus::write_u32(self, paddr, value)
     }
 
+    #[inline]
     fn write_u64(&mut self, paddr: u64, value: u64) {
-        self.mem.write_u64(paddr, value);
+        memory::MemoryBus::write_u64(self, paddr, value)
     }
 }
 
@@ -941,8 +945,7 @@ impl Machine {
             }
 
             let remaining = max_insts - executed;
-            let phys = PhysBus { mem: &mut self.mem };
-            let mut bus = aero_cpu_core::PagingBus::new_with_io(phys, &mut self.io);
+            let mut bus = aero_cpu_core::PagingBus::new_with_io(&mut self.mem, &mut self.io);
 
             let batch = run_batch_cpu_core_with_assists(
                 &cfg,
