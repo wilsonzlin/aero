@@ -91,6 +91,8 @@ fn emu_err_from_aero_err(err: aero_storage::DiskError) -> DiskError {
         },
         aero_storage::DiskError::OutOfBounds { .. } => DiskError::OutOfBounds,
         aero_storage::DiskError::OffsetOverflow => DiskError::Unsupported("offset overflow"),
+        aero_storage::DiskError::CorruptImage(msg) => DiskError::CorruptImage(msg),
+        aero_storage::DiskError::Unsupported(msg) => DiskError::Unsupported(msg),
         aero_storage::DiskError::InvalidSparseHeader(msg) => DiskError::CorruptImage(msg),
         aero_storage::DiskError::InvalidConfig(msg) => DiskError::Unsupported(msg),
         aero_storage::DiskError::CorruptSparseImage(msg) => DiskError::CorruptImage(msg),

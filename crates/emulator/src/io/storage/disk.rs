@@ -188,6 +188,8 @@ fn map_storage_disk_error(
                 .unwrap_or(AeroVirtualDiskAsNvmeBackend::SECTOR_SIZE),
         },
         StorageDiskError::OffsetOverflow => DiskError::Unsupported("offset overflow"),
+        StorageDiskError::CorruptImage(msg) => DiskError::CorruptImage(msg),
+        StorageDiskError::Unsupported(msg) => DiskError::Unsupported(msg),
         StorageDiskError::InvalidSparseHeader(msg) => DiskError::CorruptImage(msg),
         StorageDiskError::InvalidConfig(msg) => DiskError::Unsupported(msg),
         StorageDiskError::CorruptSparseImage(msg) => DiskError::CorruptImage(msg),

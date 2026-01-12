@@ -16,6 +16,8 @@ fn disk_error_from_storage(err: StorageDiskError) -> DiskError {
         },
         StorageDiskError::OutOfBounds { .. } => DiskError::OutOfBounds,
         StorageDiskError::OffsetOverflow => DiskError::Unsupported("offset overflow"),
+        StorageDiskError::CorruptImage(msg) => DiskError::CorruptImage(msg),
+        StorageDiskError::Unsupported(msg) => DiskError::Unsupported(msg),
         StorageDiskError::InvalidSparseHeader(msg) => DiskError::CorruptImage(msg),
         StorageDiskError::InvalidConfig(msg) => DiskError::Unsupported(msg),
         StorageDiskError::CorruptSparseImage(msg) => DiskError::CorruptImage(msg),
