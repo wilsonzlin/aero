@@ -27,7 +27,7 @@ use aero_io_snapshot::io::state::{
 use aero_io_snapshot::io::storage::state::{
     NvmeCompletionQueueState, NvmeControllerState, NvmeSubmissionQueueState,
 };
-use aero_storage_adapters::AeroVirtualDiskAsNvmeBackend;
+pub use aero_storage_adapters::AeroVirtualDiskAsNvmeBackend as AeroStorageDiskAdapter;
 use memory::MemoryBus;
 
 const PAGE_SIZE: usize = 4096;
@@ -58,9 +58,9 @@ pub trait DiskBackend: Send {
     fn flush(&mut self) -> DiskResult<()>;
 }
 
-impl DiskBackend for AeroVirtualDiskAsNvmeBackend {
+impl DiskBackend for AeroStorageDiskAdapter {
     fn sector_size(&self) -> u32 {
-        AeroVirtualDiskAsNvmeBackend::SECTOR_SIZE
+        AeroStorageDiskAdapter::SECTOR_SIZE
     }
 
     fn total_sectors(&self) -> u64 {
@@ -132,7 +132,7 @@ impl DiskBackend for AeroVirtualDiskAsNvmeBackend {
 
 /// Convenience helper to wrap an [`aero_storage::VirtualDisk`] as an NVMe [`DiskBackend`].
 pub fn from_virtual_disk(d: Box<dyn aero_storage::VirtualDisk + Send>) -> Box<dyn DiskBackend> {
-    Box::new(AeroVirtualDiskAsNvmeBackend::new(d))
+    Box::new(AeroStorageDiskAdapter::new(d))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
