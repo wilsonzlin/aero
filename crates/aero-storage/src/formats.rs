@@ -21,7 +21,7 @@ pub fn detect_format<B: StorageBackend>(backend: &mut B) -> Result<DiskFormat> {
 
     // QCOW2: check the magic and a plausible version field. A QCOW2 header is at least 72 bytes.
     //
-    // For truncated images (< 8 bytes) that still match the magic, treat them as QCOW2 so callers
+    // For truncated images (< 72 bytes) that still match the magic, treat them as QCOW2 so callers
     // get a corruption error instead of silently falling back to raw. For non-truncated images,
     // keep detection conservative by only accepting v2/v3.
     if (4..8).contains(&len) {
@@ -43,6 +43,12 @@ pub fn detect_format<B: StorageBackend>(backend: &mut B) -> Result<DiskFormat> {
             first8.copy_from_slice(&first12[..8]);
 
             if first8[..4] == QCOW2_MAGIC {
+                // Any QCOW2 magic in a file too small to contain the full v2 header should be
+                // treated as QCOW2 so callers see "header truncated" instead of silently opening
+                // as raw.
+                if len < 72 {
+                    return Ok(DiskFormat::Qcow2);
+                }
                 let version = be_u32(&first8[4..8]);
                 if version == 2 || version == 3 {
                     return Ok(DiskFormat::Qcow2);
@@ -105,6 +111,9 @@ pub fn detect_format<B: StorageBackend>(backend: &mut B) -> Result<DiskFormat> {
             let mut first8 = [0u8; 8];
             backend.read_at(0, &mut first8)?;
             if first8[..4] == QCOW2_MAGIC {
+                if len < 72 {
+                    return Ok(DiskFormat::Qcow2);
+                }
                 let version = be_u32(&first8[4..8]);
                 if version == 2 || version == 3 {
                     return Ok(DiskFormat::Qcow2);

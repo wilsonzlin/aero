@@ -330,7 +330,9 @@ fn detect_format_recognizes_truncated_vhd_cookie() {
 
 #[test]
 fn detect_format_does_not_misclassify_qcow2_magic_with_bad_version() {
-    let mut backend = MemBackend::with_len(8).unwrap();
+    // Use a file large enough to contain the minimum QCOW2 v2 header size (72 bytes). For smaller
+    // files, we intentionally treat QCOW2 magic as truncated QCOW2 so callers get a useful error.
+    let mut backend = MemBackend::with_len(72).unwrap();
     backend.write_at(0, b"QFI\xfb").unwrap();
     backend.write_at(4, &99u32.to_be_bytes()).unwrap(); // invalid version
     assert_eq!(detect_format(&mut backend).unwrap(), DiskFormat::Raw);

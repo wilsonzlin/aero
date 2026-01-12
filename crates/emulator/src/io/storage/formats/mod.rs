@@ -23,7 +23,7 @@ pub fn detect_format<S: ByteStorage>(storage: &mut S) -> DiskResult<DiskFormat> 
 
     // QCOW2: check the magic and a plausible version field. A QCOW2 header is at least 72 bytes.
     //
-    // For truncated images (< 8 bytes) that still match the magic, treat them as QCOW2 so callers
+    // For truncated images (< 72 bytes) that still match the magic, treat them as QCOW2 so callers
     // get a corruption error instead of silently falling back to raw.
     if (4..8).contains(&len) {
         let mut first4 = [0u8; 4];
@@ -56,6 +56,10 @@ pub fn detect_format<S: ByteStorage>(storage: &mut S) -> DiskResult<DiskFormat> 
 
     if let Some(first8) = first8 {
         if first8[..4] == QCOW2_MAGIC {
+            if len < 72 {
+                return Ok(DiskFormat::Qcow2);
+            }
+
             let version = be_u32(&first8[4..8]);
             if version == 2 || version == 3 {
                 return Ok(DiskFormat::Qcow2);

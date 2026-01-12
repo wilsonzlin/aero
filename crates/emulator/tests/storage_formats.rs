@@ -312,7 +312,9 @@ fn detect_qcow2_and_vhd() {
 
 #[test]
 fn detect_qcow2_bad_version_falls_back_to_raw() {
-    let mut storage = MemStorage::with_len(8);
+    // Use a file large enough to contain the minimum QCOW2 v2 header size (72 bytes). For smaller
+    // files, we intentionally treat QCOW2 magic as truncated QCOW2 so callers get a useful error.
+    let mut storage = MemStorage::with_len(72);
     let mut header = [0u8; 8];
     header[..4].copy_from_slice(b"QFI\xfb");
     write_be_u32(&mut header, 4, 1);
@@ -322,8 +324,14 @@ fn detect_qcow2_bad_version_falls_back_to_raw() {
 
 #[test]
 fn detect_qcow2_magic_with_truncated_header_is_qcow2() {
-    let mut storage = MemStorage::with_len(4);
-    storage.write_at(0, b"QFI\xfb").unwrap();
+    // 8 bytes is enough to include a version field, but still too small to contain the full QCOW2
+    // v2 header (72 bytes). Detection should still classify this as QCOW2 so `open_auto` reports
+    // a truncation error rather than treating it as raw.
+    let mut storage = MemStorage::with_len(8);
+    let mut header = [0u8; 8];
+    header[..4].copy_from_slice(b"QFI\xfb");
+    write_be_u32(&mut header, 4, 1);
+    storage.write_at(0, &header).unwrap();
     assert_eq!(detect_format(&mut storage).unwrap(), DiskFormat::Qcow2);
 
     let res = VirtualDrive::open_auto(storage, 512, WriteCachePolicy::WriteThrough);
