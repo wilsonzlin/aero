@@ -182,6 +182,9 @@ impl IoSnapshot for NetworkStackState {
         const TAG_NEXT_CONN_ID: u16 = 4;
         const TAG_TCP_CONNS: u16 = 5;
 
+        const MAX_NAT_ENTRIES: usize = 65_536;
+        const MAX_TCP_PROXY_CONNS: usize = 65_536;
+
         let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
         r.ensure_device_major(Self::DEVICE_VERSION.major)?;
 
@@ -191,7 +194,7 @@ impl IoSnapshot for NetworkStackState {
             }
             self.mac_addr.copy_from_slice(mac);
         }
-        self.next_conn_id = r.u32(TAG_NEXT_CONN_ID)?.unwrap_or(1);
+        self.next_conn_id = r.u32(TAG_NEXT_CONN_ID)?.unwrap_or(1).max(1);
 
         self.dhcp_lease = if let Some(buf) = r.bytes(TAG_DHCP) {
             let mut d = Decoder::new(buf);
@@ -225,6 +228,9 @@ impl IoSnapshot for NetworkStackState {
         if let Some(buf) = r.bytes(TAG_NAT) {
             let mut d = Decoder::new(buf);
             let count = d.u32()? as usize;
+            if count > MAX_NAT_ENTRIES {
+                return Err(SnapshotError::InvalidFieldEncoding("too many nat entries"));
+            }
             for _ in 0..count {
                 let proto = match d.u8()? {
                     6 => NatProtocol::Tcp,
@@ -265,6 +271,11 @@ impl IoSnapshot for NetworkStackState {
         if let Some(buf) = r.bytes(TAG_TCP_CONNS) {
             let mut d = Decoder::new(buf);
             let count = d.u32()? as usize;
+            if count > MAX_TCP_PROXY_CONNS {
+                return Err(SnapshotError::InvalidFieldEncoding(
+                    "too many tcp proxy connections",
+                ));
+            }
             for _ in 0..count {
                 let id = d.u32()?;
                 let remote_ip = {
