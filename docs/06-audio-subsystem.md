@@ -20,6 +20,7 @@ Canonical implementation pointers (to avoid duplicated stacks):
 - `crates/aero-virtio/src/devices/snd.rs` — canonical virtio-snd device model.
 - `docs/windows7-virtio-driver-contract.md` — definitive Windows 7 virtio device/transport contract (`AERO-W7-VIRTIO`, includes virtio-snd).
 - `crates/platform/src/audio/worklet_bridge.rs` — playback `SharedArrayBuffer` ring layout + producer-side helper (`WorkletBridge`).
+- `web/src/platform/audio.ts` — Web Audio output setup + JS ring producer helpers.
 - `web/src/platform/audio-worklet-processor.js` — AudioWorklet playback ring consumer.
 - `crates/platform/src/audio/mic_bridge.rs` — microphone `SharedArrayBuffer` ring layout + consumer-side helper (`MicBridge`).
 - `web/src/audio/mic_ring.js` + `web/src/audio/mic-worklet-processor.js` — microphone ring helpers + AudioWorklet producer.
