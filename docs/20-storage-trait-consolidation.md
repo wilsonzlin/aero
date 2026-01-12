@@ -16,8 +16,8 @@ This document is the repo’s **source of truth** for:
 
 See also:
 
-- `docs/05-storage-subsystem.md` (subsystem overview)
-- `docs/19-indexeddb-storage-story.md` (the async-vs-sync browser constraint analysis)
+- [`05-storage-subsystem.md`](./05-storage-subsystem.md) (subsystem overview)
+- [`19-indexeddb-storage-story.md`](./19-indexeddb-storage-story.md) (the async-vs-sync browser constraint analysis)
 
 ---
 

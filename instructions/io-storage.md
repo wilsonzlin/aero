@@ -40,11 +40,12 @@ Storage is on the **critical boot path**. Windows 7 cannot start without a worki
 
 **Must read:**
 
-- [`docs/05-storage-subsystem.md`](../docs/05-storage-subsystem.md) — Storage architecture
-- [`docs/05-storage-topology-win7.md`](../docs/05-storage-topology-win7.md) — Canonical Win7 storage topology (PCI BDFs + AHCI/IDE media mapping)
-- [`docs/19-indexeddb-storage-story.md`](../docs/19-indexeddb-storage-story.md) — IndexedDB (async) vs Rust controller (sync) integration plan
-- [`docs/16-remote-disk-image-delivery.md`](../docs/16-remote-disk-image-delivery.md) — Remote disk streaming
-- [`docs/18-chunked-disk-image-format.md`](../docs/18-chunked-disk-image-format.md) — Chunked format
+ - [`docs/05-storage-subsystem.md`](../docs/05-storage-subsystem.md) — Storage architecture
+ - [`docs/05-storage-topology-win7.md`](../docs/05-storage-topology-win7.md) — Canonical Win7 storage topology (PCI BDFs + AHCI/IDE media mapping)
+ - [`docs/20-storage-trait-consolidation.md`](../docs/20-storage-trait-consolidation.md) — Canonical disk/backend traits + consolidation plan
+ - [`docs/19-indexeddb-storage-story.md`](../docs/19-indexeddb-storage-story.md) — IndexedDB (async) vs Rust controller (sync) integration plan
+ - [`docs/16-remote-disk-image-delivery.md`](../docs/16-remote-disk-image-delivery.md) — Remote disk streaming
+ - [`docs/18-chunked-disk-image-format.md`](../docs/18-chunked-disk-image-format.md) — Chunked format
 
 **Reference:**
 
@@ -73,7 +74,8 @@ Storage is on the **critical boot path**. Windows 7 cannot start without a worki
 
 Note: IndexedDB-based storage is async and is not currently exposed as a synchronous
 `aero_storage::StorageBackend` / `aero_storage::VirtualDisk`. See
-[`docs/19-indexeddb-storage-story.md`](../docs/19-indexeddb-storage-story.md).
+[`docs/19-indexeddb-storage-story.md`](../docs/19-indexeddb-storage-story.md) and the canonical trait
+mapping in [`docs/20-storage-trait-consolidation.md`](../docs/20-storage-trait-consolidation.md).
 
 ### NVMe Tasks
 

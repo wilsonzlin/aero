@@ -2,7 +2,7 @@
 
 See also:
 
-- `docs/20-storage-trait-consolidation.md` (repo-wide disk/backend trait inventory + canonical trait guidance)
+- [`20-storage-trait-consolidation.md`](./20-storage-trait-consolidation.md) (repo-wide disk/backend trait inventory + canonical trait guidance)
 
 ## Context / problem statement
 

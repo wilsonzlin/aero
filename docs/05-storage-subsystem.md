@@ -81,7 +81,8 @@ This topology is treated as part of the platform ABI: drift should be caught by 
 > Important: IndexedDB is **async-only** in the browser. The canonical Rust disk/controller stack
 > (`aero-storage::{StorageBackend, VirtualDisk}` + `aero-devices-storage` AHCI/IDE) is
 > **synchronous**, so IndexedDB cannot be used directly from that path without a cross-worker
-> design. See: [`19-indexeddb-storage-story.md`](./19-indexeddb-storage-story.md).
+> design. See: [`19-indexeddb-storage-story.md`](./19-indexeddb-storage-story.md) and the canonical
+> trait guidance in [`20-storage-trait-consolidation.md`](./20-storage-trait-consolidation.md).
 
 ---
 
