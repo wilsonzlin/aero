@@ -340,7 +340,9 @@ Notes:
 
 - `etag` must be a valid HTTP **entity-tag**, including quotes (e.g. `"v1"` or `W/"v1"`). Prefer a
   **strong** ETag (no `W/`) so clients can use `If-Range` for safe range resumption.
-- `last_modified` must be an RFC3339 timestamp (e.g. `2026-01-10T00:00:00Z`).
+- `last_modified` must be an RFC3339 timestamp (e.g. `2026-01-10T00:00:00Z`) and must be at or
+  after `1970-01-01T00:00:00Z` (pre-epoch times cannot be represented in an HTTP `Last-Modified`
+  header).
 
 If no manifest is present, the server may fall back to a stable directory listing (development
 only).
