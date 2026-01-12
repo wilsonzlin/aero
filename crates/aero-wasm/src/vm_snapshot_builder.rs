@@ -21,7 +21,7 @@ use wasm_bindgen::prelude::*;
 
 use js_sys::{Array, Object, Reflect, Uint8Array};
 
-use aero_snapshot::{CpuState, DeviceId, DeviceState, DiskOverlayRefs, MmuState, SnapshotMeta};
+use aero_snapshot::{CpuInternalState, CpuState, DeviceId, DeviceState, DiskOverlayRefs, MmuState, SnapshotMeta};
 
 use crate::vm_snapshot_device_kind::{kind_from_device_id, parse_device_kind};
 
@@ -95,7 +95,7 @@ fn decode_mmu_state(bytes: &[u8]) -> Result<MmuState, JsValue> {
 
 fn device_default_version_flags(id: DeviceId) -> (u16, u16) {
     if id == DeviceId::CPU_INTERNAL {
-        return (aero_snapshot::CpuInternalState::VERSION, 0);
+        return (CpuInternalState::VERSION, 0);
     }
     (1, 0)
 }

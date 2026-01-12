@@ -1134,11 +1134,16 @@ export class WorkerCoordinator {
       // container alongside shared guest RAM + device blobs.
       const cpuBuf = cpuState.cpu;
       const mmuBuf = cpuState.mmu;
+      const devices = cpuState.devices;
+      const transfers: Transferable[] = [cpuBuf, mmuBuf];
+      if (devices) {
+        for (const dev of devices) transfers.push(dev.bytes);
+      }
       const saved = await this.snapshotRpc<VmSnapshotSavedMessage>(
         io.worker,
-        { kind: "vm.snapshot.saveToOpfs", path, cpu: cpuBuf, mmu: mmuBuf },
+        { kind: "vm.snapshot.saveToOpfs", path, cpu: cpuBuf, mmu: mmuBuf, ...(devices ? { devices } : {}) },
         "vm.snapshot.saved",
-        { timeoutMs: 120_000, transfer: [cpuBuf, mmuBuf] },
+        { timeoutMs: 120_000, transfer: transfers },
       );
       this.assertSnapshotOk("saveToOpfs", saved);
     } finally {
@@ -1186,11 +1191,16 @@ export class WorkerCoordinator {
 
       const cpuBuf = restored.cpu;
       const mmuBuf = restored.mmu;
+      const devices = restored.devices;
+      const transfers: Transferable[] = [cpuBuf, mmuBuf];
+      if (devices) {
+        for (const dev of devices) transfers.push(dev.bytes);
+      }
       const cpuSet = await this.snapshotRpc<VmSnapshotCpuStateSetMessage>(
         cpu.worker,
-        { kind: "vm.snapshot.setCpuState", cpu: cpuBuf, mmu: mmuBuf },
+        { kind: "vm.snapshot.setCpuState", cpu: cpuBuf, mmu: mmuBuf, ...(devices ? { devices } : {}) },
         "vm.snapshot.cpuStateSet",
-        { timeoutMs: 10_000, transfer: [cpuBuf, mmuBuf] },
+        { timeoutMs: 10_000, transfer: transfers },
       );
       this.assertSnapshotOk("setCpuState", cpuSet);
     } finally {

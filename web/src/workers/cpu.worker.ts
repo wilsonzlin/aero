@@ -1795,9 +1795,28 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
           const mmuBuf = new Uint8Array(mmu.byteLength);
           mmuBuf.set(mmu);
 
+          const devices: Array<{ kind: string; bytes: ArrayBuffer }> = [];
+          const transfers: Transferable[] = [cpuBuf.buffer, mmuBuf.buffer];
+
+          // Optional CPU-owned device state (e.g. CPU_INTERNAL: interrupt shadow + pending external IRQ FIFO).
+          const cpuInternal = (saved as { cpu_internal?: unknown } | null | undefined)?.cpu_internal;
+          if (cpuInternal instanceof Uint8Array) {
+            const blob = new Uint8Array(cpuInternal.byteLength);
+            blob.set(cpuInternal);
+            devices.push({ kind: "device.9", bytes: blob.buffer });
+            transfers.push(blob.buffer);
+          }
+
           ctx.postMessage(
-            { kind: "vm.snapshot.cpuState", requestId, ok: true, cpu: cpuBuf.buffer, mmu: mmuBuf.buffer } satisfies VmSnapshotCpuStateMessage,
-            [cpuBuf.buffer, mmuBuf.buffer],
+            {
+              kind: "vm.snapshot.cpuState",
+              requestId,
+              ok: true,
+              cpu: cpuBuf.buffer,
+              mmu: mmuBuf.buffer,
+              ...(devices.length ? { devices } : {}),
+            } satisfies VmSnapshotCpuStateMessage,
+            transfers,
           );
         } catch (err) {
           ctx.postMessage({
@@ -1823,6 +1842,28 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
             throw new Error("vm.snapshot.setCpuState expected ArrayBuffer payloads.");
           }
           load.call(vm, new Uint8Array(snapshotMsg.cpu), new Uint8Array(snapshotMsg.mmu));
+
+          const devicesRaw = (snapshotMsg as Partial<{ devices: unknown }>).devices;
+          if (Array.isArray(devicesRaw)) {
+            for (const entry of devicesRaw) {
+              if (!entry || typeof entry !== "object") continue;
+              const rec = entry as { kind?: unknown; bytes?: unknown };
+              if (rec.kind !== "device.9") continue;
+              if (!(rec.bytes instanceof ArrayBuffer)) continue;
+
+              const loadInternal = (vm as unknown as { load_cpu_internal_state_v2?: unknown }).load_cpu_internal_state_v2;
+              if (typeof loadInternal !== "function") {
+                console.warn(
+                  "[cpu.worker] Snapshot contains CPU_INTERNAL device blob but WasmVm.load_cpu_internal_state_v2 is unavailable; ignoring.",
+                );
+                break;
+              }
+
+              // Apply after load_state_v2 (which clears pending state).
+              (loadInternal as (bytes: Uint8Array) => void).call(vm, new Uint8Array(rec.bytes));
+              break;
+            }
+          }
           ctx.postMessage({ kind: "vm.snapshot.cpuStateSet", requestId, ok: true } satisfies VmSnapshotCpuStateSetMessage);
         } catch (err) {
           ctx.postMessage({

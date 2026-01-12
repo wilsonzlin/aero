@@ -92,12 +92,14 @@ describe("runtime/coordinator (worker VM snapshots)", () => {
 
     const cpuBuf = new ArrayBuffer(4);
     const mmuBuf = new ArrayBuffer(8);
+    const cpuInternalBuf = new ArrayBuffer(2);
     cpu.emitMessage({
       kind: "vm.snapshot.cpuState",
       requestId: cpu.posted[1]!.message.requestId,
       ok: true,
       cpu: cpuBuf,
       mmu: mmuBuf,
+      devices: [{ kind: "device.9", bytes: cpuInternalBuf }],
     });
     await flushMicrotasks();
 
@@ -105,7 +107,8 @@ describe("runtime/coordinator (worker VM snapshots)", () => {
     expect(io.posted[1]?.message.path).toBe("state/test.snap");
     expect(io.posted[1]?.message.cpu).toBe(cpuBuf);
     expect(io.posted[1]?.message.mmu).toBe(mmuBuf);
-    expect(io.posted[1]?.transfer).toEqual([cpuBuf, mmuBuf]);
+    expect(io.posted[1]?.message.devices).toEqual([{ kind: "device.9", bytes: cpuInternalBuf }]);
+    expect(io.posted[1]?.transfer).toEqual([cpuBuf, mmuBuf, cpuInternalBuf]);
 
     io.emitMessage({ kind: "vm.snapshot.saved", requestId: io.posted[1]!.message.requestId, ok: true });
     await flushMicrotasks();
@@ -156,16 +159,19 @@ describe("runtime/coordinator (worker VM snapshots)", () => {
 
     const cpuBuf = new ArrayBuffer(4);
     const mmuBuf = new ArrayBuffer(8);
+    const cpuInternalBuf = new ArrayBuffer(2);
     cpu.emitMessage({
       kind: "vm.snapshot.cpuState",
       requestId: cpu.posted[1]!.message.requestId,
       ok: true,
       cpu: cpuBuf,
       mmu: mmuBuf,
+      devices: [{ kind: "device.9", bytes: cpuInternalBuf }],
     });
     await flushMicrotasks();
 
     expect(io.posted[1]?.message.kind).toBe("vm.snapshot.saveToOpfs");
+    expect(io.posted[1]?.message.devices).toEqual([{ kind: "device.9", bytes: cpuInternalBuf }]);
     io.emitMessage({ kind: "vm.snapshot.saved", requestId: io.posted[1]!.message.requestId, ok: true });
     await flushMicrotasks();
 
@@ -266,20 +272,22 @@ describe("runtime/coordinator (worker VM snapshots)", () => {
     expect(io.posted[1]?.message.kind).toBe("vm.snapshot.restoreFromOpfs");
     const cpuBuf = new ArrayBuffer(4);
     const mmuBuf = new ArrayBuffer(8);
+    const cpuInternalBuf = new ArrayBuffer(2);
     io.emitMessage({
       kind: "vm.snapshot.restored",
       requestId: io.posted[1]!.message.requestId,
       ok: true,
       cpu: cpuBuf,
       mmu: mmuBuf,
-      devices: [],
+      devices: [{ kind: "device.9", bytes: cpuInternalBuf }],
     });
     await flushMicrotasks();
 
     expect(cpu.posted[1]?.message.kind).toBe("vm.snapshot.setCpuState");
     expect(cpu.posted[1]?.message.cpu).toBe(cpuBuf);
     expect(cpu.posted[1]?.message.mmu).toBe(mmuBuf);
-    expect(cpu.posted[1]?.transfer).toEqual([cpuBuf, mmuBuf]);
+    expect(cpu.posted[1]?.message.devices).toEqual([{ kind: "device.9", bytes: cpuInternalBuf }]);
+    expect(cpu.posted[1]?.transfer).toEqual([cpuBuf, mmuBuf, cpuInternalBuf]);
 
     cpu.emitMessage({ kind: "vm.snapshot.cpuStateSet", requestId: cpu.posted[1]!.message.requestId, ok: true });
     await flushMicrotasks();

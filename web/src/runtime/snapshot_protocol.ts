@@ -53,6 +53,12 @@ export type VmSnapshotCpuStateMessage =
       ok: true;
       cpu: ArrayBuffer;
       mmu: ArrayBuffer;
+      /**
+       * Optional CPU-owned device blobs (e.g. CPU_INTERNAL) that must be persisted alongside CPU/MMU.
+       *
+       * Backwards compatibility: older CPU workers omit this field.
+       */
+      devices?: VmSnapshotDeviceBlob[];
     };
 
 export type VmSnapshotSetCpuStateMessage = {
@@ -60,6 +66,12 @@ export type VmSnapshotSetCpuStateMessage = {
   requestId: VmSnapshotRequestId;
   cpu: ArrayBuffer;
   mmu: ArrayBuffer;
+  /**
+   * Optional CPU-owned device blobs (e.g. CPU_INTERNAL) recovered from the snapshot file.
+   *
+   * Backwards compatibility: older coordinators omit this field.
+   */
+  devices?: VmSnapshotDeviceBlob[];
 };
 
 export type VmSnapshotCpuStateSetMessage = {
@@ -79,6 +91,12 @@ export type VmSnapshotSaveToOpfsMessage = {
   path: string;
   cpu: ArrayBuffer;
   mmu: ArrayBuffer;
+  /**
+   * Optional device blobs supplied by the coordinator (typically CPU-owned device state such as CPU_INTERNAL).
+   *
+   * Backwards compatibility: older coordinators omit this field.
+   */
+  devices?: VmSnapshotDeviceBlob[];
 };
 
 export type VmSnapshotSavedMessage = {

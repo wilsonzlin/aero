@@ -396,11 +396,13 @@ impl WasmVm {
 
     /// Serialize the current CPU/MMU execution state (v2 encoding).
     ///
-    /// Returns a JS object `{ cpu: Uint8Array, mmu: Uint8Array }` that can be persisted by the
-    /// CPU worker and later restored via [`WasmVm::load_state_v2`].
+    /// Returns a JS object `{ cpu: Uint8Array, mmu: Uint8Array, cpu_internal: Uint8Array }` that
+    /// can be persisted by the CPU worker and later restored via [`WasmVm::load_state_v2`] +
+    /// [`WasmVm::load_cpu_internal_state_v2`].
     pub fn save_state_v2(&self) -> Result<JsValue, JsValue> {
         let cpu_state = aero_snapshot::cpu_state_from_cpu_core(&self.cpu.state);
         let mmu_state = aero_snapshot::mmu_state_from_cpu_core(&self.cpu.state);
+        let cpu_internal_state = aero_snapshot::cpu_internal_state_from_cpu_core(&self.cpu);
 
         let mut cpu = Vec::new();
         cpu_state
@@ -412,17 +414,26 @@ impl WasmVm {
             .encode_v2(&mut mmu)
             .map_err(|e| js_error(&format!("Failed to encode MMU state: {e}")))?;
 
+        let cpu_internal = cpu_internal_state
+            .to_device_state()
+            .map_err(|e| js_error(&format!("Failed to encode CPU internal state: {e}")))?
+            .data;
+
         let cpu_js = Uint8Array::from(cpu.as_slice());
         let mmu_js = Uint8Array::from(mmu.as_slice());
+        let cpu_internal_js = Uint8Array::from(cpu_internal.as_slice());
 
         let obj = Object::new();
         let cpu_key = JsValue::from_str("cpu");
         let mmu_key = JsValue::from_str("mmu");
+        let cpu_internal_key = JsValue::from_str("cpu_internal");
 
         Reflect::set(&obj, &cpu_key, cpu_js.as_ref())
             .map_err(|_| js_error("Failed to build snapshot object (cpu)"))?;
         Reflect::set(&obj, &mmu_key, mmu_js.as_ref())
             .map_err(|_| js_error("Failed to build snapshot object (mmu)"))?;
+        Reflect::set(&obj, &cpu_internal_key, cpu_internal_js.as_ref())
+            .map_err(|_| js_error("Failed to build snapshot object (cpu_internal)"))?;
 
         Ok(obj.into())
     }
@@ -471,6 +482,25 @@ impl WasmVm {
         // `state.msr.tsc` directly after advancing).
         self.cpu.state.msr.tsc = mmu_state.tsc;
 
+        Ok(())
+    }
+
+    /// Restore non-architectural CPU bookkeeping produced by [`WasmVm::save_state_v2`].
+    ///
+    /// This restores the `DeviceId::CPU_INTERNAL` v2 encoding (interrupt shadow + pending external
+    /// interrupts). It is safe to call immediately after [`WasmVm::load_state_v2`], which clears
+    /// all pending-event state to deterministic defaults.
+    pub fn load_cpu_internal_state_v2(&mut self, bytes: &[u8]) -> Result<(), JsValue> {
+        if bytes.len() > MAX_STATE_BLOB_LEN {
+            return Err(js_error(&format!(
+                "CPU_INTERNAL state blob too large: {} bytes (max {MAX_STATE_BLOB_LEN})",
+                bytes.len()
+            )));
+        }
+
+        let state = aero_snapshot::CpuInternalState::decode(&mut std::io::Cursor::new(bytes))
+            .map_err(|e| js_error(&format!("Failed to decode CPU internal state: {e}")))?;
+        aero_snapshot::apply_cpu_internal_state_to_cpu_core(&state, &mut self.cpu);
         Ok(())
     }
 }

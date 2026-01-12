@@ -985,10 +985,16 @@ export interface WasmApi {
          *
          * Used by the multi-worker VM snapshot orchestrator (CPU + IO workers).
          *
+      * Optional while older WASM builds are still in circulation.
+      */
+        save_state_v2?: () => { cpu: Uint8Array; mmu: Uint8Array; cpu_internal?: Uint8Array };
+        load_state_v2?: (cpu: Uint8Array, mmu: Uint8Array) => void;
+        /**
+         * Restore non-architectural CPU bookkeeping (`DeviceId::CPU_INTERNAL`, v2).
+         *
          * Optional while older WASM builds are still in circulation.
          */
-        save_state_v2?: () => { cpu: Uint8Array; mmu: Uint8Array };
-        load_state_v2?: (cpu: Uint8Array, mmu: Uint8Array) => void;
+        load_cpu_internal_state_v2?: (bytes: Uint8Array) => void;
         free(): void;
     };
 

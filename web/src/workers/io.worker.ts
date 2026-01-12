@@ -2865,7 +2865,12 @@ async function applyBootDisks(msg: SetBootDisksMessage): Promise<void> {
   cdDisk = openedCd;
 }
 
-async function handleVmSnapshotSaveToOpfs(path: string, cpu: ArrayBuffer, mmu: ArrayBuffer): Promise<void> {
+async function handleVmSnapshotSaveToOpfs(
+  path: string,
+  cpu: ArrayBuffer,
+  mmu: ArrayBuffer,
+  coordinatorDevices?: VmSnapshotDeviceBlob[],
+): Promise<void> {
   if (snapshotOpInFlight) {
     throw new Error("VM snapshot operation already in progress.");
   }
@@ -2892,6 +2897,18 @@ async function handleVmSnapshotSaveToOpfs(path: string, cpu: ArrayBuffer, mmu: A
     if (pci) freshDevices.push(pci);
     if (e1000) freshDevices.push(e1000);
     if (netStack) freshDevices.push(netStack);
+
+    // Merge in any coordinator-provided device blobs (e.g. CPU-owned device state like CPU_INTERNAL).
+    // Treat these as "fresh" so they override any cached restored blobs of the same kind.
+    if (Array.isArray(coordinatorDevices)) {
+      for (const dev of coordinatorDevices) {
+        if (!dev || typeof dev !== "object") continue;
+        if (typeof (dev as { kind?: unknown }).kind !== "string") continue;
+        if (!((dev as { bytes?: unknown }).bytes instanceof ArrayBuffer)) continue;
+        const kind = normalizeRestoredDeviceKind((dev as { kind: string }).kind);
+        freshDevices.push({ kind, bytes: new Uint8Array((dev as { bytes: ArrayBuffer }).bytes) });
+      }
+    }
 
     const freshKinds = new Set(freshDevices.map((d) => d.kind));
     const devices: Array<{ kind: string; bytes: Uint8Array }> = [];
@@ -2934,7 +2951,9 @@ async function handleVmSnapshotSaveToOpfs(path: string, cpu: ArrayBuffer, mmu: A
         if (id === null) {
           throw new Error(`Unsupported VM snapshot device kind: ${device.kind}`);
         }
-        const { version, flags } = parseAeroIoSnapshotVersion(device.bytes);
+        // CPU_INTERNAL (`DeviceId::CPU_INTERNAL = 9`) uses a raw v2 encoding (no `AERO` header), so
+        // we must not rely on `parseAeroIoSnapshotVersion`'s default fallback (v1.0).
+        const { version, flags } = id === 9 ? { version: 2, flags: 0 } : parseAeroIoSnapshotVersion(device.bytes);
         builder.add_device_state(id, version, flags, device.bytes);
       }
 
@@ -3532,7 +3551,11 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
               if (!(snapshotMsg.cpu instanceof ArrayBuffer) || !(snapshotMsg.mmu instanceof ArrayBuffer)) {
                 throw new Error("vm.snapshot.saveToOpfs expected cpu/mmu ArrayBuffer payloads.");
               }
-              await handleVmSnapshotSaveToOpfs(snapshotMsg.path, snapshotMsg.cpu, snapshotMsg.mmu);
+              const devicesRaw = (snapshotMsg as Partial<{ devices: unknown }>).devices;
+              const devices: VmSnapshotDeviceBlob[] | undefined = Array.isArray(devicesRaw)
+                ? (devicesRaw as VmSnapshotDeviceBlob[])
+                : undefined;
+              await handleVmSnapshotSaveToOpfs(snapshotMsg.path, snapshotMsg.cpu, snapshotMsg.mmu, devices);
               ctx.postMessage({ kind: "vm.snapshot.saved", requestId, ok: true } satisfies VmSnapshotSavedMessage);
             } catch (err) {
               ctx.postMessage({
