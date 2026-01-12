@@ -63,6 +63,7 @@ describe("ipc/scanout_state", () => {
 
     try {
       const deadlineMs = Date.now() + 10_000;
+      let snapshotsValidated = 0;
       while (Atomics.load(ctrl, 0) === 0) {
         if (Date.now() > deadlineMs) {
           throw new Error("timed out waiting for scanout writer worker to finish");
@@ -82,8 +83,10 @@ describe("ipc/scanout_state", () => {
         expect(snap.pitchBytes >>> 0).toBe((token + 2) >>> 0);
         expect(snap.basePaddrLo >>> 0).toBe((token + 3) >>> 0);
         expect(snap.basePaddrHi >>> 0).toBe((token + 4) >>> 0);
+        snapshotsValidated += 1;
       }
 
+      expect(snapshotsValidated).toBeGreaterThan(0);
       await workerDone;
     } finally {
       // Ensure we don't leak a background worker if the test fails mid-loop.
