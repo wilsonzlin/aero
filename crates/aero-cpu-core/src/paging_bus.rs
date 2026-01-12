@@ -3,11 +3,12 @@ use crate::mem::CpuBus;
 use aero_mmu::{AccessType, MemoryBus, Mmu, TranslateFault};
 use core::fmt;
 
-/// A paging-aware [`CpuBus`] implementation backed by [`aero_mmu::Mmu`].
+/// Port I/O backend for [`PagingBus`].
 ///
-/// The tier-0 interpreter passes *linear* addresses to [`CpuBus`] methods. This
-/// adapter translates them to physical addresses via `aero-mmu` before accessing
-/// the underlying physical bus `B`.
+/// Tier-0 implements IN/OUT/INS*/OUTS* via [`CpuBus::io_read`] and
+/// [`CpuBus::io_write`]. [`PagingBus`] is primarily responsible for translating
+/// linear memory accesses, but it also implements [`CpuBus`] and therefore needs
+/// a way to forward port I/O to an embedding-specific device model.
 pub trait IoBus {
     fn io_read(&mut self, port: u16, size: u32) -> Result<u64, Exception>;
     fn io_write(&mut self, port: u16, size: u32, val: u64) -> Result<(), Exception>;
@@ -37,8 +38,10 @@ impl<T: IoBus + ?Sized> IoBus for Box<T> {
     }
 }
 
-/// Default port-I/O backend that behaves like the old `PagingBus` stub I/O: all
-/// reads return `0` and all writes are ignored.
+/// Default port I/O backend used by [`PagingBus::new`].
+///
+/// This preserves the historical behaviour of `PagingBus` where port I/O was
+/// stubbed out (reads return 0 and writes are ignored).
 #[derive(Clone, Copy, Default)]
 pub struct NoIo;
 
@@ -54,6 +57,11 @@ impl IoBus for NoIo {
     }
 }
 
+/// A paging-aware [`CpuBus`] implementation backed by [`aero_mmu::Mmu`].
+///
+/// The tier-0 interpreter passes *linear* addresses to [`CpuBus`] methods. This
+/// adapter translates them to physical addresses via `aero-mmu` before accessing
+/// the underlying physical bus `B`.
 pub struct PagingBus<B, IO = NoIo> {
     mmu: Mmu,
     phys: B,
