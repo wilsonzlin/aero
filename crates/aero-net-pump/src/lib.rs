@@ -1132,6 +1132,7 @@ mod tests {
         eth_dst: MacAddr,
         ip_src: Ipv4Addr,
         ip_dst: Ipv4Addr,
+        wire_len: usize,
         dhcp: DhcpMessage,
     }
 
@@ -1163,6 +1164,7 @@ mod tests {
             eth_dst: eth.dest_mac(),
             ip_src: ip.src_ip(),
             ip_dst: ip.dst_ip(),
+            wire_len: EthernetFrame::HEADER_LEN + ip.total_len(),
             dhcp,
         }
     }
@@ -1341,6 +1343,16 @@ mod tests {
         let offer1_frame = mem.read_vec(rx_bufs[1], rx1_len as usize);
         let offer0 = parse_dhcp_from_frame(&offer0_frame);
         let offer1 = parse_dhcp_from_frame(&offer1_frame);
+        assert_eq!(
+            offer0.wire_len,
+            rx0_len as usize,
+            "offer0 RX descriptor length should match IPv4 total length"
+        );
+        assert_eq!(
+            offer1.wire_len,
+            rx1_len as usize,
+            "offer1 RX descriptor length should match IPv4 total length"
+        );
         for (i, offer) in [offer0, offer1].iter().enumerate() {
             assert_eq!(offer.dhcp.transaction_id, xid, "offer{i} XID mismatch");
             assert_eq!(
@@ -1543,6 +1555,16 @@ mod tests {
         let ack1_frame = mem.read_vec(rx_bufs[3], rx3_len as usize);
         let ack0 = parse_dhcp_from_frame(&ack0_frame);
         let ack1 = parse_dhcp_from_frame(&ack1_frame);
+        assert_eq!(
+            ack0.wire_len,
+            rx2_len as usize,
+            "ack0 RX descriptor length should match IPv4 total length"
+        );
+        assert_eq!(
+            ack1.wire_len,
+            rx3_len as usize,
+            "ack1 RX descriptor length should match IPv4 total length"
+        );
         for (i, ack) in [ack0, ack1].iter().enumerate() {
             assert_eq!(ack.dhcp.transaction_id, xid, "ack{i} XID mismatch");
             assert_eq!(
