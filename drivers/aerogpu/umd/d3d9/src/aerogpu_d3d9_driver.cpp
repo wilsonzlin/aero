@@ -2648,10 +2648,13 @@ inline void stateblock_record_shader_locked(Device* dev, uint32_t stage, Shader*
     return;
   }
   StateBlock* sb = dev->recording_state_block;
+  // Be permissive: some D3D9 header/runtime combinations may not use the exact
+  // {0,1} encoding at the DDI boundary. Match the main shader binding path
+  // (`device_set_shader`), which treats any non-VS stage as PS.
   if (stage == kD3d9ShaderStageVs) {
     sb->user_vs_set = true;
     sb->user_vs = sh;
-  } else if (stage == kD3d9ShaderStagePs) {
+  } else {
     sb->user_ps_set = true;
     sb->user_ps = sh;
   }
@@ -2672,11 +2675,9 @@ inline void stateblock_record_shader_const_f_locked(
   if (stage == kD3d9ShaderStageVs) {
     mask = &sb->vs_const_mask;
     dst = sb->vs_consts.data();
-  } else if (stage == kD3d9ShaderStagePs) {
+  } else {
     mask = &sb->ps_const_mask;
     dst = sb->ps_consts.data();
-  } else {
-    return;
   }
 
   if (start_reg >= 256) {
