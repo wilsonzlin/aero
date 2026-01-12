@@ -32,12 +32,33 @@ if (( ${#tracked_agent_notes[@]} > 0 )); then
   die "local-only agent note file(s) are tracked; remove them from git: ${tracked_agent_notes[*]}"
 fi
 
-# QEMU boot integration tests are sourced from the workspace root `tests/` directory.
-# Some are registered as `[[test]]` targets under `crates/emulator/Cargo.toml`, while others are
-# standard integration tests of the workspace root package (`aero`).
+# QEMU boot test docs guardrail:
+# The QEMU boot integration tests live under the workspace root `tests/` directory, but are
+# explicitly registered as `[[test]]` targets in `crates/emulator/Cargo.toml` (paths like
+# `../../tests/boot_sector.rs`).
 #
-# Documentation may therefore reference either `cargo test -p aero --test ...` or
-# `cargo test -p emulator --test ...` depending on context; do not enforce one here.
+# Docs should consistently instruct running them via the `emulator` crate:
+#   cargo test -p emulator --test <...> --locked
+#
+# While Cargo also auto-registers workspace-root `tests/*.rs` under the `aero` package, we avoid
+# `-p aero` for these boot tests because:
+# - `boot_basic` needs `firmware`/`memory` dev-deps that `aero` intentionally does not carry, and
+# - `aero` has heavyweight GPU dev-dependencies that significantly slow compilation.
+#
+# Fail CI if any tracked markdown suggests running these boot tests via `-p aero`.
+qemu_boot_test_aero_re='cargo test.*(-p aero.*--test (boot_sector|freedos_boot|windows7_boot|boot_basic)|--test (boot_sector|freedos_boot|windows7_boot|boot_basic).*-p aero)'
+if git grep -n -E "${qemu_boot_test_aero_re}" -- '*.md' >/dev/null; then
+  echo "error: docs must run QEMU boot integration tests via -p emulator (registered via crates/emulator/Cargo.toml [[test]]), not -p aero" >&2
+  git grep -n -E "${qemu_boot_test_aero_re}" -- '*.md' >&2
+  exit 1
+fi
+
+# Keep scripts/prepare-windows7.sh (referenced by the ignored test) aligned with the same guidance.
+if git grep -n -E "${qemu_boot_test_aero_re}" -- 'scripts/prepare-windows7.sh' >/dev/null; then
+  echo "error: scripts/prepare-windows7.sh must instruct running windows7_boot via -p emulator (not -p aero)" >&2
+  git grep -n -E "${qemu_boot_test_aero_re}" -- 'scripts/prepare-windows7.sh' >&2
+  exit 1
+fi
 
 # Doc-referenced scripts should always exist in-tree.
 #
