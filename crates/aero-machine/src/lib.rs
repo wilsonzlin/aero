@@ -3893,7 +3893,10 @@ impl Machine {
                         // `MemoryBus` before we program the VGA device's VBE enable bits, so those
                         // MMIO writes may have been ignored. If the guest did not set the VBE "no
                         // clear" bit, perform an efficient host-side clear after enabling the mode.
-                        if ax_before == 0x4F02 && (bx_before & 0x8000) == 0 {
+                        if ax_before == 0x4F02
+                            && ax_after == 0x004F
+                            && (bx_before & 0x8000) == 0
+                        {
                             let bytes_per_pixel = (bpp as usize).div_ceil(8);
                             let clear_len = (width as usize)
                                 .saturating_mul(height as usize)

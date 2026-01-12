@@ -156,6 +156,42 @@ fn build_vbe_palette_boot_sector() -> [u8; 512] {
     sector
 }
 
+fn build_vbe_failed_mode_set_does_not_clear_boot_sector() -> [u8; 512] {
+    let mut sector = [0u8; 512];
+    let mut i = 0usize;
+
+    // mov ax, 0x4F02
+    sector[i..i + 3].copy_from_slice(&[0xB8, 0x02, 0x4F]);
+    i += 3;
+    // mov bx, 0xC118 (mode 0x118 + LFB requested + no-clear)
+    sector[i..i + 3].copy_from_slice(&[0xBB, 0x18, 0xC1]);
+    i += 3;
+    // int 0x10
+    sector[i..i + 2].copy_from_slice(&[0xCD, 0x10]);
+    i += 2;
+
+    // Attempt to set an invalid mode (should fail). Use no-clear=0 so the machine-side
+    // synchronization must not accidentally clear the *current* framebuffer when the BIOS call
+    // fails.
+    //
+    // mov ax, 0x4F02
+    sector[i..i + 3].copy_from_slice(&[0xB8, 0x02, 0x4F]);
+    i += 3;
+    // mov bx, 0x3FFF (invalid mode; no-clear bit 15 is clear)
+    sector[i..i + 3].copy_from_slice(&[0xBB, 0xFF, 0x3F]);
+    i += 3;
+    // int 0x10
+    sector[i..i + 2].copy_from_slice(&[0xCD, 0x10]);
+    i += 2;
+
+    // hlt
+    sector[i] = 0xF4;
+
+    sector[510] = 0x55;
+    sector[511] = 0xAA;
+    sector
+}
+
 #[test]
 fn bios_vbe_sync_mode_and_lfb_base() {
     let cfg = MachineConfig {
@@ -261,5 +297,45 @@ fn bios_vbe_palette_sync_updates_vga_dac() {
     };
 
     // Palette entry 1 was set to red (B=0,G=0,R=0x3F).
+    assert_eq!(pixel0, 0xFF00_00FF);
+}
+
+#[test]
+fn bios_vbe_failed_mode_set_does_not_clear_existing_framebuffer() {
+    let cfg = MachineConfig {
+        ram_size_bytes: 64 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_vga: true,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        enable_e1000: false,
+        ..Default::default()
+    };
+
+    let mut m = Machine::new(cfg).unwrap();
+    m.set_disk_image(build_vbe_failed_mode_set_does_not_clear_boot_sector().to_vec())
+        .unwrap();
+    m.reset();
+
+    // Pre-fill the first pixel in VRAM. The boot sector sets mode 0x118 with no-clear, then
+    // attempts (and fails) to set an invalid VBE mode. The existing framebuffer contents must be
+    // preserved across the failing INT 10h call.
+    let vga = m.vga().expect("pc platform should include VGA");
+    {
+        let mut vga = vga.borrow_mut();
+        vga.vram_mut()[0..4].copy_from_slice(&0x00FF_0000u32.to_le_bytes());
+    }
+
+    run_until_halt(&mut m);
+
+    let pixel0 = {
+        let mut vga = vga.borrow_mut();
+        vga.present();
+        assert_eq!(vga.get_resolution(), (1024, 768));
+        vga.get_framebuffer()[0]
+    };
+
     assert_eq!(pixel0, 0xFF00_00FF);
 }
