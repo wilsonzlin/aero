@@ -1093,57 +1093,73 @@ class Qcow2 {
       refcountRemaining -= len;
     }
 
-    const l1 = await src.readAt(l1TableOffset, l1Bytes);
     const clusterOffsets = new Float64Array(totalClusters);
 
-    for (let l1Index = 0; l1Index < requiredL1; l1Index++) {
+    // Read the L1 table in chunks to avoid allocating `l1Bytes` all at once (can be up to 128MiB).
+    const l1ChunkSize = 64 * 1024;
+    const l1BufLen = Math.min(l1ChunkSize, l1Bytes);
+    let l1Remaining = l1Bytes;
+    let l1Off = l1TableOffset;
+    let l1Index = 0;
+    while (l1Remaining > 0) {
       if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
-      const rawL1Entry = readU64BE(l1, l1Index * 8);
-      if (rawL1Entry === 0n) continue;
-      if ((rawL1Entry & QCOW2_OFLAG_COMPRESSED) !== 0n) throw new Error("qcow2 compressed l1 unsupported");
-      if ((rawL1Entry & lowMask) !== 0n) throw new Error("qcow2 unaligned l1 entry");
+      const len = Math.min(l1Remaining, l1BufLen);
+      const chunk = await src.readAt(l1Off, len);
 
-      const l2OffBig = rawL1Entry & QCOW2_OFFSET_MASK;
-      const l2Off = Number(l2OffBig);
-      if (!Number.isSafeInteger(l2Off) || l2Off <= 0) throw new Error("invalid qcow2 l2 table offset");
-      if (l2Off % clusterSize !== 0) throw new Error("invalid qcow2 l2 table offset");
-      validateClusterNotOverlappingMetadata(l2Off);
-      if (metadataClusters.has(l2Off)) throw new Error("qcow2 metadata clusters overlap");
-      if (metadataClusters.size >= QCOW2_MAX_METADATA_CLUSTERS) throw new Error("qcow2 too many metadata clusters");
-      metadataClusters.add(l2Off);
+      for (let off = 0; off < len; off += 8) {
+        const rawL1Entry = readU64BE(chunk, off);
+        if (rawL1Entry !== 0n) {
+          if ((rawL1Entry & QCOW2_OFLAG_COMPRESSED) !== 0n) throw new Error("qcow2 compressed l1 unsupported");
+          if ((rawL1Entry & lowMask) !== 0n) throw new Error("qcow2 unaligned l1 entry");
 
-      const l2End = l2Off + clusterSize;
-      if (!Number.isSafeInteger(l2End) || l2End > src.size) throw new Error("qcow2 l2 table truncated");
-      const l2 = await src.readAt(l2Off, clusterSize);
+          const l2OffBig = rawL1Entry & QCOW2_OFFSET_MASK;
+          const l2Off = Number(l2OffBig);
+          if (!Number.isSafeInteger(l2Off) || l2Off <= 0) throw new Error("invalid qcow2 l2 table offset");
+          if (l2Off % clusterSize !== 0) throw new Error("invalid qcow2 l2 table offset");
+          validateClusterNotOverlappingMetadata(l2Off);
+          if (metadataClusters.has(l2Off)) throw new Error("qcow2 metadata clusters overlap");
+          if (metadataClusters.size >= QCOW2_MAX_METADATA_CLUSTERS) throw new Error("qcow2 too many metadata clusters");
+          metadataClusters.add(l2Off);
 
-      for (let l2Index = 0; l2Index < l2Entries; l2Index++) {
-        const clusterIndex = l1Index * l2Entries + l2Index;
-        if (clusterIndex >= totalClusters) break;
-        const val = readU64BE(l2, l2Index * 8);
-        if (val === 0n) continue;
-        if ((val & QCOW2_OFLAG_COMPRESSED) !== 0n) throw new Error("qcow2 compressed clusters unsupported");
-        if ((val & QCOW2_OFLAG_ZERO) !== 0n) {
-          // For "zero clusters", the offset bits must be zero and only the zero flag may be set in
-          // the low (alignment) bits.
-          if ((val & lowMask) !== QCOW2_OFLAG_ZERO) throw new Error("qcow2 invalid zero cluster entry");
-          if ((val & QCOW2_OFFSET_MASK) !== 0n) throw new Error("qcow2 invalid zero cluster entry");
-          continue;
+          const l2End = l2Off + clusterSize;
+          if (!Number.isSafeInteger(l2End) || l2End > src.size) throw new Error("qcow2 l2 table truncated");
+          const l2 = await src.readAt(l2Off, clusterSize);
+
+          for (let l2Index = 0; l2Index < l2Entries; l2Index++) {
+            const clusterIndex = l1Index * l2Entries + l2Index;
+            if (clusterIndex >= totalClusters) break;
+            const val = readU64BE(l2, l2Index * 8);
+            if (val === 0n) continue;
+            if ((val & QCOW2_OFLAG_COMPRESSED) !== 0n) throw new Error("qcow2 compressed clusters unsupported");
+            if ((val & QCOW2_OFLAG_ZERO) !== 0n) {
+              // For "zero clusters", the offset bits must be zero and only the zero flag may be set in
+              // the low (alignment) bits.
+              if ((val & lowMask) !== QCOW2_OFLAG_ZERO) throw new Error("qcow2 invalid zero cluster entry");
+              if ((val & QCOW2_OFFSET_MASK) !== 0n) throw new Error("qcow2 invalid zero cluster entry");
+              continue;
+            }
+            if ((val & lowMask) !== 0n) throw new Error("qcow2 unaligned l2 entry");
+
+            const dataOffBig = val & QCOW2_OFFSET_MASK;
+            if (dataOffBig === 0n) throw new Error("invalid qcow2 data offset");
+            const dataOff = Number(dataOffBig);
+            if (!Number.isSafeInteger(dataOff) || dataOff <= 0) throw new Error("invalid qcow2 data offset");
+            if (dataOff % clusterSize !== 0) throw new Error("invalid qcow2 data offset");
+            validateClusterNotOverlappingMetadata(dataOff);
+            if (metadataClusters.has(dataOff)) throw new Error("qcow2 data cluster overlaps metadata");
+            const guestOff = clusterIndex * clusterSize;
+            const copyLen = Math.min(clusterSize, logicalSize - guestOff);
+            const dataEnd = dataOff + copyLen;
+            if (!Number.isSafeInteger(dataEnd) || dataEnd > src.size) throw new Error("qcow2 data cluster truncated");
+            clusterOffsets[clusterIndex] = dataOff;
+          }
         }
-        if ((val & lowMask) !== 0n) throw new Error("qcow2 unaligned l2 entry");
 
-        const dataOffBig = val & QCOW2_OFFSET_MASK;
-        if (dataOffBig === 0n) throw new Error("invalid qcow2 data offset");
-        const dataOff = Number(dataOffBig);
-        if (!Number.isSafeInteger(dataOff) || dataOff <= 0) throw new Error("invalid qcow2 data offset");
-        if (dataOff % clusterSize !== 0) throw new Error("invalid qcow2 data offset");
-        validateClusterNotOverlappingMetadata(dataOff);
-        if (metadataClusters.has(dataOff)) throw new Error("qcow2 data cluster overlaps metadata");
-        const guestOff = clusterIndex * clusterSize;
-        const copyLen = Math.min(clusterSize, logicalSize - guestOff);
-        const dataEnd = dataOff + copyLen;
-        if (!Number.isSafeInteger(dataEnd) || dataEnd > src.size) throw new Error("qcow2 data cluster truncated");
-        clusterOffsets[clusterIndex] = dataOff;
+        l1Index++;
       }
+
+      l1Off += len;
+      l1Remaining -= len;
     }
 
     return new Qcow2(logicalSize, clusterSize, clusterOffsets);
