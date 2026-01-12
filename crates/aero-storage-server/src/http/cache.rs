@@ -70,6 +70,8 @@ where
             let etag_for_log = super::observability::truncate_for_span(etag, 256);
             tracing::warn!(
                 etag = ?etag_for_log.as_ref(),
+                len = etag.len(),
+                max_len = MAX_ETAG_LEN,
                 "store-provided ETag is too long; using fallback"
             );
         } else {

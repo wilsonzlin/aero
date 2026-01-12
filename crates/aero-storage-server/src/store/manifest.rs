@@ -172,7 +172,7 @@ fn validate_etag(id: &str, etag: &str) -> Result<(), ManifestError> {
         return Err(ManifestError::InvalidEtag {
             id: super::truncate_for_error(id, super::MAX_IMAGE_ID_LEN),
             etag: super::truncate_for_error(etag, 512),
-            reason: "etag is too long".to_string(),
+            reason: format!("etag is too long (max {MAX_ETAG_LEN} bytes)"),
         });
     }
 
