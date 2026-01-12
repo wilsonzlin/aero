@@ -32,7 +32,11 @@ if (( ${#tracked_agent_notes[@]} > 0 )); then
   die "local-only agent note file(s) are tracked; remove them from git: ${tracked_agent_notes[*]}"
 fi
 
-# Doc-referenced shell scripts should always be executable.
+# Doc-referenced scripts should always exist in-tree.
+#
+# Additionally, shell scripts (`.sh`) referenced directly in docs should be
+# executable in git (100755) so users can run them verbatim without hitting
+# "permission denied".
 #
 # Some documentation recommends running scripts directly (e.g. `./path/to/foo.sh`,
 # `drivers/scripts/foo.sh`).
@@ -56,13 +60,16 @@ md_files = [p for p in tracked if p.endswith(".md")]
 # Match:
 # - Explicit invocations: `./foo.sh`, `./some/path/foo.sh`
 # - Repo-root relative paths: `drivers/scripts/foo.sh`, `scripts/ci/bar.sh`, etc.
+# - Other repo-local helper scripts referenced in docs (PowerShell, Python, CMD).
 #
 # Note: many docs embed commands inside backticks, so treat backtick as a stop
 # character in addition to whitespace.
 #
 # We intentionally match only paths that look like repo-local references (common
 # top-level dirs) to avoid accidentally matching URLs that end in `.sh`.
-pattern = re.compile(r"(?<!\w)((?:\./|\.\./|scripts/|drivers/|infra/|deploy/|backend/|tools/)[^\s`]+?\.sh)\b")
+pattern = re.compile(
+    r"(?<![\w/])((?:\./|\.\./|scripts/|drivers/|infra/|deploy/|backend/|tools/|ci/|guest-tools/)[^\s`]+?\.(?:sh|py|ps1|cmd))\b"
+)
 
 
 def git_mode(path):
@@ -132,7 +139,10 @@ for path in sorted(doc_refs.keys()):
     if mode is None:
         errors.append("%s: referenced by docs but is not present in git (refs: %s)" % (path, refs))
         continue
-    if mode != "100755":
+
+    # Only `.sh` scripts need to be marked executable in git; `.py`/`.ps1`/`.cmd`
+    # are invoked via an interpreter (or rely on Windows file associations).
+    if path.endswith(".sh") and mode != "100755":
         errors.append("%s: referenced by docs but is not executable in git (mode %s; refs: %s)" % (path, mode, refs))
 
 if errors:
@@ -140,10 +150,10 @@ if errors:
         print("error: %s" % e, file=sys.stderr)
     raise SystemExit(1)
 
-print("Docs script executability check: OK (%d scripts referenced)" % len(doc_refs))
+print("Docs script reference check: OK (%d scripts referenced)" % len(doc_refs))
 PY
 else
-  echo "warning: python3 not found; skipping docs script executability check" >&2
+  echo "warning: python3 not found; skipping docs script reference check" >&2
 fi
 
 # Windows driver CI packaging template guardrails.
