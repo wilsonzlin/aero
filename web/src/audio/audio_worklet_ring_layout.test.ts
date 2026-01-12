@@ -39,5 +39,16 @@ describe("audio_worklet_ring SharedArrayBuffer layout", () => {
     Atomics.store(views.header, WRITE_FRAME_INDEX, 10);
     expect(getRingBufferLevelFrames(views.header, 4)).toBe(4);
   });
-});
 
+  it("wrapRingBuffer exposes header subviews that share memory", () => {
+    const sab = new SharedArrayBuffer(requiredBytes(4, 2));
+    const views = wrapRingBuffer(sab, 4, 2);
+
+    Atomics.store(views.header, READ_FRAME_INDEX, 123);
+    Atomics.store(views.header, WRITE_FRAME_INDEX, 456);
+
+    expect(Atomics.load(views.readIndex, 0)).toBe(123);
+    expect(Atomics.load(views.writeIndex, 0)).toBe(456);
+    expect(views.samples.length).toBe(8);
+  });
+});
