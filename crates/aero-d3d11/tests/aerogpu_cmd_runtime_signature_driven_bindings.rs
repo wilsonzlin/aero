@@ -341,6 +341,48 @@ fn build_vs_passthrough_pos_sm5_dxbc() -> Vec<u8> {
     build_dxbc(&[(*b"ISGN", isgn), (*b"OSGN", osgn), (*b"SHEX", shex)])
 }
 
+fn build_vs_passthrough_pos_sm5_sig_v1_dxbc() -> Vec<u8> {
+    // Same as `build_vs_passthrough_pos_sm5_dxbc`, but uses `ISG1`/`OSG1` signature chunks with
+    // the 32-byte v1 entry layout.
+    let isgn = build_signature_chunk_v1(&[SigParam {
+        semantic_name: "POSITION",
+        semantic_index: 0,
+        register: 0,
+        mask: 0x07,
+    }]);
+    let osgn = build_signature_chunk_v1(&[SigParam {
+        semantic_name: "SV_Position",
+        semantic_index: 0,
+        register: 0,
+        mask: 0x0f,
+    }]);
+
+    let version_token = 0x0001_0050u32; // vs_5_0
+    let mov_token = 0x01u32 | (5u32 << 11);
+    let dst_o0 = 0x0010_f022u32;
+    let src_v0 = 0x001e_4016u32;
+    let ret_token = 0x3eu32 | (1u32 << 11);
+
+    let mut tokens = vec![
+        version_token,
+        0, // length patched below
+        mov_token,
+        dst_o0,
+        0, // o0
+        src_v0,
+        0, // v0
+        ret_token,
+    ];
+    tokens[1] = tokens.len() as u32;
+
+    let mut shex = Vec::with_capacity(tokens.len() * 4);
+    for t in tokens {
+        shex.extend_from_slice(&t.to_le_bytes());
+    }
+
+    build_dxbc(&[(*b"ISG1", isgn), (*b"OSG1", osgn), (*b"SHEX", shex)])
+}
+
 fn build_ps_sample_l_t0_s0_sm5_dxbc(u: f32, v: f32) -> Vec<u8> {
     // Minimal PS (ps_5_0) that samples `t0`/`s0` at a constant coordinate and returns it as
     // SV_Target0.
@@ -775,6 +817,88 @@ fn aerogpu_cmd_runtime_signature_driven_constant_buffer_binding() {
             wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
         );
 
+        let mut colors = [None; 8];
+        colors[0] = Some(RTEX);
+        rt.set_render_targets(&colors, None);
+
+        rt.bind_shaders(Some(VS), Some(PS));
+        rt.set_input_layout(Some(IL));
+        rt.set_vertex_buffers(
+            0,
+            &[VertexBufferBinding {
+                buffer: VB,
+                stride: std::mem::size_of::<VertexPos3>() as u32,
+                offset: 0,
+            }],
+        );
+        rt.set_primitive_topology(PrimitiveTopology::TriangleList);
+        rt.set_rasterizer_state(RasterizerState {
+            cull_mode: None,
+            front_face: wgpu::FrontFace::Ccw,
+            scissor_enable: false,
+        });
+
+        rt.draw(3, 1, 0, 0).unwrap();
+        rt.poll_wait();
+
+        let pixels = rt.read_texture_rgba8(RTEX).await.unwrap();
+        assert_eq!(pixels.len(), 4 * 4 * 4);
+        for (i, px) in pixels.chunks_exact(4).enumerate() {
+            assert_eq!(px, &[255, 0, 0, 255], "pixel index {i}");
+        }
+    });
+}
+
+#[test]
+fn aerogpu_cmd_runtime_signature_driven_vs_sig_v1_position_binding() {
+    // End-to-end regression test for parsing signature-v1 (`ISG1`/`OSG1`) chunks in a vertex shader
+    // and using the resulting signature for input-layout mapping.
+    pollster::block_on(async {
+        let mut rt = match AerogpuCmdRuntime::new_for_tests().await {
+            Ok(rt) => rt,
+            Err(err) => {
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({err:#})"));
+                return;
+            }
+        };
+
+        const VS: u32 = 1;
+        const PS: u32 = 2;
+        const IL: u32 = 3;
+        const VB: u32 = 4;
+        const RTEX: u32 = 5;
+
+        rt.create_shader_dxbc(VS, &build_vs_passthrough_pos_sm5_sig_v1_dxbc())
+            .unwrap();
+        rt.create_shader_dxbc(PS, &build_ps_solid_red_dxbc()).unwrap();
+        rt.create_input_layout(IL, &build_ilay_pos3()).unwrap();
+
+        let vertices: [VertexPos3; 3] = [
+            VertexPos3 {
+                pos: [-1.0, -1.0, 0.0],
+            },
+            VertexPos3 {
+                pos: [3.0, -1.0, 0.0],
+            },
+            VertexPos3 {
+                pos: [-1.0, 3.0, 0.0],
+            },
+        ];
+        rt.create_buffer(
+            VB,
+            std::mem::size_of_val(&vertices) as u64,
+            wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        );
+        rt.write_buffer(VB, 0, bytemuck::bytes_of(&vertices))
+            .unwrap();
+
+        rt.create_texture2d(
+            RTEX,
+            4,
+            4,
+            wgpu::TextureFormat::Rgba8Unorm,
+            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        );
         let mut colors = [None; 8];
         colors[0] = Some(RTEX);
         rt.set_render_targets(&colors, None);
