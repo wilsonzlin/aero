@@ -1448,7 +1448,8 @@ impl MemoryAccess for HdaGuestMemory {
 
         while off < buf.len() {
             let remaining = buf.len() - off;
-            let chunk = crate::guest_phys::translate_guest_paddr_chunk(self.guest_size, paddr, remaining);
+            let chunk =
+                crate::guest_phys::translate_guest_paddr_chunk(self.guest_size, paddr, remaining);
             let chunk_len = match chunk {
                 crate::guest_phys::GuestRamChunk::Ram { ram_offset, len } => {
                     let Some(linear) = (self.guest_base as u64)
@@ -1504,7 +1505,8 @@ impl MemoryAccess for HdaGuestMemory {
 
         while off < buf.len() {
             let remaining = buf.len() - off;
-            let chunk = crate::guest_phys::translate_guest_paddr_chunk(self.guest_size, paddr, remaining);
+            let chunk =
+                crate::guest_phys::translate_guest_paddr_chunk(self.guest_size, paddr, remaining);
             let chunk_len = match chunk {
                 crate::guest_phys::GuestRamChunk::Ram { ram_offset, len } => {
                     let Some(linear) = (self.guest_base as u64)
@@ -1517,11 +1519,7 @@ impl MemoryAccess for HdaGuestMemory {
                     // Safety: `translate_guest_paddr_chunk` bounds-checks against the configured guest
                     // RAM size and `linear` is a wasm32-compatible linear address.
                     unsafe {
-                        core::ptr::copy_nonoverlapping(
-                            buf[off..].as_ptr(),
-                            linear as *mut u8,
-                            len,
-                        );
+                        core::ptr::copy_nonoverlapping(buf[off..].as_ptr(), linear as *mut u8, len);
                     }
                     len
                 }
@@ -2543,6 +2541,32 @@ impl Machine {
         self.inner.inject_browser_key(code, pressed);
     }
 
+    /// Inject up to 4 raw PS/2 Set-2 scancode bytes into the guest i8042 keyboard device.
+    ///
+    /// This matches the format used by `web/src/input/event_queue.ts` (`InputEventType.KeyScancode`):
+    /// - `packed`: little-endian packed bytes (b0 in bits 0..7)
+    /// - `len`: number of valid bytes in `packed` (1..=4)
+    ///
+    /// Bytes are treated as Set-2 scancode bytes (including `0xE0`/`0xF0` prefixes).
+    pub fn inject_key_scancode_bytes(&mut self, packed: u32, len: u8) {
+        let len = len.min(4) as usize;
+        if len == 0 {
+            return;
+        }
+
+        let mut bytes = [0u8; 4];
+        for (i, slot) in bytes.iter_mut().enumerate().take(len) {
+            *slot = ((packed >> (i * 8)) & 0xff) as u8;
+        }
+
+        self.inner.inject_key_scancode_bytes(&bytes[..len]);
+    }
+
+    /// Inject an arbitrary-length raw PS/2 Set-2 scancode byte sequence into the guest i8042 keyboard device.
+    pub fn inject_keyboard_bytes(&mut self, bytes: &[u8]) {
+        self.inner.inject_key_scancode_bytes(bytes);
+    }
+
     /// Inject a relative PS/2 mouse movement event (plus optional wheel delta).
     ///
     /// Coordinate conventions:
@@ -2995,9 +3019,7 @@ mod machine_mouse_button_cache_tests {
 
         // Set left pressed; this should generate a packet.
         m.inject_mouse_buttons_mask(0x01);
-        let pressed_packet: Vec<u8> = (0..3)
-            .map(|_| m.inner.io_read(0x60, 1) as u8)
-            .collect();
+        let pressed_packet: Vec<u8> = (0..3).map(|_| m.inner.io_read(0x60, 1) as u8).collect();
         assert_eq!(pressed_packet, vec![0x09, 0x00, 0x00]);
 
         // Guest resets the mouse (D4 FF). This clears the device-side button image.

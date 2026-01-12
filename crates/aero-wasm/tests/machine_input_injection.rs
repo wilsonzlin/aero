@@ -16,6 +16,10 @@ fn machine_mouse_injection_exports_forward_without_panicking() {
     // Keyboard injection is already exposed; ensure it still works.
     m.inject_browser_key("KeyA", true);
     m.inject_browser_key("KeyA", false);
+    // Raw Set-2 scancode byte injection (matches `InputEventType.KeyScancode`).
+    m.inject_key_scancode_bytes(0x1C, 1); // make
+    m.inject_key_scancode_bytes(0x0000_1CF0, 2); // break: F0 1C (packed LE)
+    m.inject_keyboard_bytes(&[0x1C]);
 
     // Mouse motion + wheel.
     m.inject_mouse_motion(10, 5, 1);

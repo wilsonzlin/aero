@@ -825,6 +825,22 @@ export interface WasmApi {
         vga_framebuffer_rgba8888_copy?(): Uint8Array | null;
         inject_browser_key(code: string, pressed: boolean): void;
         /**
+         * Inject up to 4 raw PS/2 Set-2 scancode bytes.
+         *
+         * Format matches `InputEventType.KeyScancode` (`web/src/input/event_queue.ts`):
+         * - `packed`: little-endian packed bytes (b0 in bits 0..7)
+         * - `len`: number of valid bytes (1..=4)
+         *
+         * Optional for older WASM builds.
+         */
+        inject_key_scancode_bytes?(packed: number, len: number): void;
+        /**
+         * Inject an arbitrary-length raw PS/2 Set-2 scancode byte sequence.
+         *
+         * Optional for older WASM builds.
+         */
+        inject_keyboard_bytes?(bytes: Uint8Array): void;
+        /**
          * PS/2 mouse injection helpers (optional for older WASM builds).
          */
         inject_mouse_motion?(dx: number, dy: number, wheel: number): void;

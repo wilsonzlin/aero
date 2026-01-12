@@ -1945,6 +1945,16 @@ impl Machine {
         }
     }
 
+    /// Inject raw PS/2 Set-2 keyboard scancode bytes into the i8042 controller, if present.
+    ///
+    /// This is intended for callers that already have Set-2 byte sequences (including `0xE0` and
+    /// `0xF0` prefixes), such as the browser runtime input capture pipeline.
+    pub fn inject_key_scancode_bytes(&mut self, bytes: &[u8]) {
+        if let Some(ctrl) = &self.i8042 {
+            ctrl.borrow_mut().inject_key_scancode_bytes(bytes);
+        }
+    }
+
     /// Inject relative mouse motion into the i8042 controller, if present.
     ///
     /// `dx` is positive to the right and `dy` is positive down (browser-style). The underlying PS/2
@@ -4823,6 +4833,24 @@ mod tests {
         m.inject_mouse_motion(10, 5, 0);
         let packet: Vec<u8> = (0..3).map(|_| ctrl.borrow_mut().read_port(0x60)).collect();
         assert_eq!(packet, vec![0x28, 10, 0xFB]);
+    }
+
+    #[test]
+    fn inject_key_scancode_bytes_produces_i8042_output_bytes() {
+        let mut m = Machine::new(MachineConfig {
+            ram_size_bytes: 2 * 1024 * 1024,
+            ..Default::default()
+        })
+        .unwrap();
+        let ctrl = m.i8042.as_ref().expect("i8042 enabled").clone();
+
+        // Raw Set-2 bytes: make 0x1C, break 0xF0 0x1C. The i8042 translation bit is enabled by
+        // default, so we observe Set-1 scancodes on port 0x60.
+        m.inject_key_scancode_bytes(&[0x1C]);
+        m.inject_key_scancode_bytes(&[0xF0, 0x1C]);
+
+        assert_eq!(ctrl.borrow_mut().read_port(0x60), 0x1e);
+        assert_eq!(ctrl.borrow_mut().read_port(0x60), 0x9e);
     }
 
     #[test]

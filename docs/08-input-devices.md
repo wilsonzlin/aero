@@ -11,6 +11,11 @@ For JS/WASM-side input testing and future in-browser integration, the canonical 
 The WASM-facing wrapper exposes input injection methods that map directly to PS/2 (i8042):
 
 - Keyboard: `Machine.inject_browser_key(code, pressed)` where `code` is DOM `KeyboardEvent.code`.
+- Keyboard (raw Set-2 bytes, matches `web/src/input/event_queue.ts` packing):
+  - `Machine.inject_key_scancode_bytes(packed, len)` where:
+    - `packed` is little-endian packed bytes (b0 in bits 0..7) containing up to 4 bytes
+    - `len` is the number of valid bytes (1..=4)
+  - `Machine.inject_keyboard_bytes(bytes)` for arbitrary-length Set-2 byte sequences (e.g. multi-byte keys like PrintScreen/Pause).
 - Mouse motion + wheel: `Machine.inject_mouse_motion(dx, dy, wheel)`
   - `dx`/`dy` use browser-style coordinates: +X is right, +Y is down.
   - `wheel` uses PS/2 convention: positive is wheel up.
