@@ -379,7 +379,7 @@ fn parse_range_header(header: &str, total_size: u64) -> Result<(u64, u64), Statu
     Ok((start, end_exclusive))
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "current_thread")]
 async fn streaming_reads_and_reuses_cache() {
     let image: Vec<u8> = (0..(4096 + 123)).map(|i| (i % 251) as u8).collect();
     let (url, state, shutdown) =
@@ -431,7 +431,7 @@ async fn streaming_reads_and_reuses_cache() {
     let _ = shutdown.send(());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "current_thread")]
 async fn cache_invalidates_on_validator_change() {
     let image: Vec<u8> = (0..4096).map(|i| (i % 251) as u8).collect();
     let (url, state1, shutdown1) =
@@ -479,7 +479,7 @@ async fn cache_invalidates_on_validator_change() {
     let _ = shutdown2.send(());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "current_thread")]
 async fn inflight_dedup_avoids_duplicate_fetches() {
     let image: Vec<u8> = (0..4096).map(|i| (i % 251) as u8).collect();
     let (url, state, shutdown) =
@@ -525,7 +525,7 @@ async fn inflight_dedup_avoids_duplicate_fetches() {
     let _ = shutdown.send(());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "current_thread")]
 async fn retries_transient_http_errors() {
     let image: Vec<u8> = (0..2048).map(|i| (i % 251) as u8).collect();
     let (url, state, shutdown) = start_range_server_with_options(
@@ -557,7 +557,7 @@ async fn retries_transient_http_errors() {
     let _ = shutdown.send(());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "current_thread")]
 async fn integrity_manifest_rejects_corrupt_chunk() {
     use sha2::{Digest, Sha256};
 
@@ -598,7 +598,7 @@ async fn integrity_manifest_rejects_corrupt_chunk() {
     let _ = shutdown.send(());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "current_thread")]
 async fn if_range_mismatch_is_reported_as_validator_mismatch() {
     let image: Vec<u8> = (0..4096).map(|i| (i % 251) as u8).collect();
     let (url, state, shutdown) =
@@ -622,7 +622,7 @@ async fn if_range_mismatch_is_reported_as_validator_mismatch() {
     let _ = shutdown.send(());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "current_thread")]
 async fn request_headers_are_sent_on_all_http_requests() {
     let image: Vec<u8> = (0..2048).map(|i| (i % 251) as u8).collect();
     let (url, state, shutdown) = start_range_server_with_options(
@@ -650,7 +650,7 @@ async fn request_headers_are_sent_on_all_http_requests() {
     let _ = shutdown.send(());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "current_thread")]
 async fn missing_required_header_fails_open_with_http_error() {
     let image: Vec<u8> = (0..2048).map(|i| (i % 251) as u8).collect();
     let (url, _state, shutdown) = start_range_server_with_options(
@@ -675,7 +675,7 @@ async fn missing_required_header_fails_open_with_http_error() {
     let _ = shutdown.send(());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "current_thread")]
 async fn open_fails_when_config_validator_mismatches_remote_etag() {
     let image: Vec<u8> = (0..2048).map(|i| (i % 251) as u8).collect();
     let (url, _state, shutdown) =
@@ -695,7 +695,7 @@ async fn open_fails_when_config_validator_mismatches_remote_etag() {
     let _ = shutdown.send(());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "current_thread")]
 async fn http_errors_redact_url_query() {
     // Create a URL that should fail to connect (unused local port), but embeds a query token.
     // The returned error message should not leak the query string.
@@ -719,7 +719,7 @@ async fn http_errors_redact_url_query() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "current_thread")]
 async fn last_modified_is_used_as_validator_when_etag_missing() {
     let image: Vec<u8> = (0..(4096 + 123)).map(|i| (i % 251) as u8).collect();
     let last_modified = "Mon, 01 Jan 2024 00:00:00 GMT";
@@ -758,7 +758,7 @@ async fn last_modified_is_used_as_validator_when_etag_missing() {
     let _ = shutdown.send(());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "current_thread")]
 async fn range_not_supported_is_reported_when_server_ignores_range() {
     let image: Vec<u8> = (0..2048).map(|i| (i % 251) as u8).collect();
     let (url, _state, shutdown) = start_range_server_with_options(
@@ -785,7 +785,7 @@ async fn range_not_supported_is_reported_when_server_ignores_range() {
     let _ = shutdown.send(());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "current_thread")]
 async fn content_range_mismatch_is_protocol_error() {
     let image: Vec<u8> = (0..2048).map(|i| (i % 251) as u8).collect();
     let (url, _state, shutdown) = start_range_server_with_options(
@@ -812,7 +812,7 @@ async fn content_range_mismatch_is_protocol_error() {
     let _ = shutdown.send(());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "current_thread")]
 async fn content_encoding_is_rejected() {
     let image: Vec<u8> = (0..2048).map(|i| (i % 251) as u8).collect();
     let (url, _state, shutdown) = start_range_server_with_options(
@@ -839,7 +839,7 @@ async fn content_encoding_is_rejected() {
     let _ = shutdown.send(());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "current_thread")]
 async fn cache_invalidates_when_cache_backend_changes() {
     let image: Vec<u8> = (0..4096).map(|i| (i % 251) as u8).collect();
     let (url, state, shutdown) =
@@ -882,7 +882,7 @@ async fn cache_invalidates_when_cache_backend_changes() {
     let _ = shutdown.send(());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "current_thread")]
 async fn corrupt_cache_metadata_is_treated_as_invalidation() {
     let image: Vec<u8> = (0..4096).map(|i| (i % 251) as u8).collect();
     let (url, state, shutdown) =
@@ -926,7 +926,7 @@ async fn corrupt_cache_metadata_is_treated_as_invalidation() {
     let _ = shutdown.send(());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "current_thread")]
 async fn weak_etag_does_not_break_range_fetches() {
     // RFC 9110 disallows weak validators in `If-Range`. Some servers respond with `200 OK` (full
     // representation) instead of `206 Partial Content` when clients send `If-Range: W/"..."`.
@@ -958,7 +958,7 @@ async fn weak_etag_does_not_break_range_fetches() {
     let _ = shutdown.send(());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "current_thread")]
 async fn weak_etag_change_is_detected_even_without_if_range() {
     // When the validator is a weak ETag, `StreamingDisk` omits `If-Range` to avoid servers
     // treating it as a mismatch per RFC 9110. We still want to detect when the server starts

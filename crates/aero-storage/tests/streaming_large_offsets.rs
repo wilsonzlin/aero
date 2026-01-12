@@ -174,7 +174,7 @@ fn parse_range_header(header: &str, total_size: u64) -> Result<(u64, u64), Statu
     Ok((start, end_inclusive + 1))
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "current_thread")]
 async fn streaming_disk_reads_offsets_beyond_4gib_without_truncation() {
     let dir = tempdir().unwrap();
     let path = dir.path().join("sparse.img");
