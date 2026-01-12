@@ -498,6 +498,9 @@ VirtioSndCtrlSendSyncLocked(
     RtlCopyMemory(ctx->ReqBuf, Req, ReqLen);
     RtlZeroMemory(ctx->RespBuf, RespCap);
 
+    /* Ensure request/response buffer writes are visible before publishing descriptors. */
+    KeMemoryBarrier();
+
     sg[0].addr = ctx->DmaBuf.DmaAddr + (UINT64)reqOffset;
     sg[0].len = (UINT32)ReqLen;
     sg[0].write = FALSE;
