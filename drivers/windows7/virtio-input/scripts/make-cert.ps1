@@ -34,6 +34,11 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version 2.0
 
+$certutil = Get-Command certutil.exe -ErrorAction SilentlyContinue
+if (-not $certutil) {
+  throw "certutil.exe not found in PATH."
+}
+
 if (-not (Test-Path -LiteralPath $OutDir)) {
   New-Item -ItemType Directory -Path $OutDir | Out-Null
 }
