@@ -172,3 +172,55 @@ impl GuestMemory for DirtyGuestMemory {
         Some(slice)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::phys::DenseMemory;
+
+    const PAGE_SIZE: u32 = 4096;
+
+    #[test]
+    fn write_from_marks_pages_and_take_drains() {
+        let inner = DenseMemory::new(3 * u64::from(PAGE_SIZE)).unwrap();
+        let (mut mem, tracker) = DirtyGuestMemory::new(Box::new(inner), PAGE_SIZE);
+
+        // Touch page 2 first to ensure the returned list is sorted.
+        mem.write_from(0x2000, &[0xCC]).unwrap();
+
+        // Cross a page boundary: last byte of page 0 + first byte of page 1.
+        mem.write_from(0x0FFF, &[0xAA, 0xBB]).unwrap();
+
+        assert_eq!(tracker.take_dirty_pages(), vec![0, 1, 2]);
+        assert!(tracker.take_dirty_pages().is_empty());
+    }
+
+    #[test]
+    fn get_slice_mut_marks_pages_dirty_conservatively() {
+        let inner = DenseMemory::new(2 * u64::from(PAGE_SIZE)).unwrap();
+        let (mut mem, tracker) = DirtyGuestMemory::new(Box::new(inner), PAGE_SIZE);
+
+        assert!(tracker.take_dirty_pages().is_empty());
+
+        // Request a mutable slice; even if the caller doesn't end up mutating it, the wrapper must
+        // conservatively mark the page dirty.
+        let slice = mem.get_slice_mut(0x1000, 4).unwrap();
+        slice.copy_from_slice(&[1, 2, 3, 4]);
+
+        assert_eq!(tracker.take_dirty_pages(), vec![1]);
+    }
+
+    #[test]
+    fn reads_do_not_mark_pages_dirty() {
+        let inner = DenseMemory::new(2 * u64::from(PAGE_SIZE)).unwrap();
+        let (mut mem, tracker) = DirtyGuestMemory::new(Box::new(inner), PAGE_SIZE);
+
+        mem.write_from(0x0, &[0xAA]).unwrap();
+        assert_eq!(tracker.take_dirty_pages(), vec![0]);
+
+        tracker.clear_dirty();
+        let mut buf = [0u8; 1];
+        mem.read_into(0x0, &mut buf).unwrap();
+        assert!(tracker.take_dirty_pages().is_empty());
+    }
+}
