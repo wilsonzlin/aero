@@ -820,21 +820,40 @@ fn machine_i8042_keyboard_port_disable_suppresses_output_until_reenabled() {
         );
     }
 
-    // Re-enable the keyboard port via i8042 command 0xAE. The previously-injected scancode should
-    // now flow into the output buffer and generate a keyboard IRQ.
+    // Re-enable the keyboard port via i8042 command 0xAE.
+    //
+    // Host-side key injection is intentionally dropped while the port is disabled (the controller
+    // is holding the clock line low). Re-enabling the port should *not* suddenly flush stale key
+    // events into the output buffer.
     m.io_write(I8042_STATUS_PORT, 1, 0xAE);
 
+    assert_eq!(
+        m.io_read(I8042_STATUS_PORT, 1) as u8 & 0x01,
+        0,
+        "output buffer should remain empty after re-enabling keyboard port (disabled-port key injection is dropped)"
+    );
+    {
+        let interrupts = m.platform_interrupts().unwrap();
+        assert_eq!(
+            interrupts.borrow().get_pending(),
+            None,
+            "IRQ1 should not be latched after re-enabling keyboard port (disabled-port key injection is dropped)"
+        );
+    }
+
+    // Inject a key with the port enabled; now we should observe output + IRQ1 delivery.
+    m.inject_browser_key("KeyA", true);
     assert_ne!(
         m.io_read(I8042_STATUS_PORT, 1) as u8 & 0x01,
         0,
-        "output buffer should become full once keyboard port is re-enabled"
+        "output buffer should become full once keyboard port is enabled and a key is injected"
     );
     {
         let interrupts = m.platform_interrupts().unwrap();
         assert_eq!(
             interrupts.borrow().get_pending(),
             Some(vector),
-            "IRQ1 should be latched once keyboard port is re-enabled"
+            "IRQ1 should be latched once keyboard port is enabled and a key is injected"
         );
     }
 
