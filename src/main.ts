@@ -8,6 +8,7 @@ import './style.css';
 import { installPerfHud } from '../web/src/perf/hud_entry';
 import { perf } from '../web/src/perf/perf';
 import { installAeroGlobal } from '../web/src/runtime/aero_global';
+import { installNetTraceBackendOnAeroGlobal } from '../web/src/net/trace_backend';
 import { installNetTraceUI, type NetTraceBackend } from '../web/src/net/trace_ui';
 import { RuntimeDiskClient } from '../web/src/storage/runtime_disk_client';
 
@@ -993,6 +994,7 @@ function renderAudioPanel(): HTMLElement {
   let toneTimer: number | null = null;
   let tonePhase = 0;
   const workerCoordinator = new WorkerCoordinator();
+  installNetTraceBackendOnAeroGlobal(workerCoordinator);
   let hdaDemoWorker: Worker | null = null;
   let hdaDemoStats: { [k: string]: unknown } | null = null;
   let loopbackTimer: number | null = null;

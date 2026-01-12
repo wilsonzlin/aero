@@ -28,6 +28,7 @@ import { VgaPresenter } from "./display/vga_presenter";
 import { installAeroGlobal } from "./runtime/aero_global";
 import { createWebGpuCanvasContext, requestWebGpuDevice } from "./platform/webgpu";
 import { WorkerCoordinator } from "./runtime/coordinator";
+import { installNetTraceBackendOnAeroGlobal } from "./net/trace_backend";
 import { initWasm, type WasmApi, type WasmVariant } from "./runtime/wasm_loader";
 import { precompileWasm } from "./runtime/wasm_preload";
 import { IO_IPC_HID_IN_QUEUE_KIND, type WorkerRole } from "./runtime/shared_layout";
@@ -71,6 +72,7 @@ perf.instant("boot:main:start", "p");
 installAeroGlobals();
 
 const workerCoordinator = new WorkerCoordinator();
+installNetTraceBackendOnAeroGlobal(workerCoordinator);
 const usbBroker = new UsbBroker();
 const diskManagerPromise = DiskManager.create();
 
