@@ -324,7 +324,7 @@ export interface WasmApi {
         attach_l2_tunnel_rings(tx: SharedRingBufferHandle, rx: SharedRingBufferHandle): void;
         detach_network(): void;
         poll_network(): void;
-        run_slice(max_insts: number): { kind: RunExitKind; executed: number; detail: string };
+        run_slice(max_insts: number): { kind: number; executed: number; detail: string };
         free(): void;
     };
 

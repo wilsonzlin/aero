@@ -1171,6 +1171,26 @@ export class WorkerCoordinator {
     this.resetNetRingsForSnapshot();
   }
 
+  private resetNetRingsForSnapshot(): void {
+    const shared = this.shared;
+    if (!shared) {
+      throw new Error("Cannot reset NET rings for snapshot: shared memory is not initialized.");
+    }
+
+    // NET_TX/NET_RX rings live in the shared `ioIpc` region and are not included in
+    // snapshot files. Reset them at snapshot boundaries so stale frames don't leak
+    // into restored VM state.
+    //
+    // NOTE: `RingBuffer.reset()` is only safe when there are no concurrent producers
+    // or consumers. `pauseWorkersForSnapshot()` enforces that invariant.
+    const ioIpc = shared.segments.ioIpc;
+    try {
+      openRingByKind(ioIpc, IO_IPC_NET_TX_QUEUE_KIND).reset();
+      openRingByKind(ioIpc, IO_IPC_NET_RX_QUEUE_KIND).reset();
+    } catch (err) {
+      console.warn("[coordinator] Failed to reset NET_TX/NET_RX rings during snapshot:", err);
+    }
+  }
   private assertSnapshotOk(context: string, msg: { ok: boolean; error?: VmSnapshotSerializedError; kind?: unknown }): void {
     if (msg.ok) return;
     const err = msg.error;
@@ -1202,22 +1222,6 @@ export class WorkerCoordinator {
       timeoutMs: 5_000,
     });
     await Promise.allSettled([netResume]);
-  }
-
-  private resetNetRingsForSnapshot(): void {
-    const shared = this.shared;
-    if (!shared) return;
-
-    // NET_TX/NET_RX rings live in the shared `ioIpc` region and are not included in
-    // snapshot files. Reset them at snapshot boundaries so stale frames don't leak
-    // into restored VM state.
-    const ioIpc = shared.segments.ioIpc;
-    try {
-      openRingByKind(ioIpc, IO_IPC_NET_TX_QUEUE_KIND).reset();
-      openRingByKind(ioIpc, IO_IPC_NET_RX_QUEUE_KIND).reset();
-    } catch (err) {
-      console.warn("[coordinator] Failed to reset NET_TX/NET_RX rings during snapshot:", err);
-    }
   }
 
   private snapshotRpc<TResponse extends { kind: string; requestId: number }>(
