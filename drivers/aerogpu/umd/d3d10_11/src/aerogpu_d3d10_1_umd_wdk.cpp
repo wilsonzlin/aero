@@ -285,6 +285,97 @@ uint32_t dxgi_format_to_aerogpu(uint32_t dxgi_format) {
   }
 }
 
+// D3D9 D3DFORMAT subset (numeric values from d3d9types.h).
+//
+// AeroGPU encodes legacy D3D9 shared-surface descriptors into
+// `aerogpu_wddm_alloc_priv.reserved0` (see `AEROGPU_WDDM_ALLOC_PRIV_DESC_*` macros).
+// When the D3D10.1 runtime opens such a resource, the OpenResource DDI does not
+// necessarily provide enough information to reconstruct the resource
+// description, so we fall back to this encoding.
+constexpr uint32_t kD3d9FmtA8R8G8B8 = 21; // D3DFMT_A8R8G8B8
+constexpr uint32_t kD3d9FmtX8R8G8B8 = 22; // D3DFMT_X8R8G8B8
+constexpr uint32_t kD3d9FmtA8B8G8R8 = 32; // D3DFMT_A8B8G8R8
+constexpr uint32_t kD3d9FmtX8B8G8R8 = 33; // D3DFMT_X8B8G8R8
+
+static bool D3d9FormatToDxgi(uint32_t d3d9_format, uint32_t* dxgi_format_out, uint32_t* bpp_out) {
+  if (dxgi_format_out) {
+    *dxgi_format_out = 0;
+  }
+  if (bpp_out) {
+    *bpp_out = 0;
+  }
+  if (!dxgi_format_out || !bpp_out) {
+    return false;
+  }
+
+  switch (d3d9_format) {
+    case kD3d9FmtA8R8G8B8:
+      *dxgi_format_out = kDxgiFormatB8G8R8A8Unorm;
+      *bpp_out = 4;
+      return true;
+    case kD3d9FmtX8R8G8B8:
+      *dxgi_format_out = kDxgiFormatB8G8R8X8Unorm;
+      *bpp_out = 4;
+      return true;
+    case kD3d9FmtA8B8G8R8:
+      *dxgi_format_out = kDxgiFormatR8G8B8A8Unorm;
+      *bpp_out = 4;
+      return true;
+    case kD3d9FmtX8B8G8R8:
+      // DXGI has no X8 variant; treat as UNORM and rely on bind flags/sampling
+      // to ignore alpha when needed.
+      *dxgi_format_out = kDxgiFormatR8G8B8A8Unorm;
+      *bpp_out = 4;
+      return true;
+    default:
+      return false;
+  }
+}
+
+static bool FixupLegacyPrivForOpenResource(aerogpu_wddm_alloc_priv_v2* priv) {
+  if (!priv) {
+    return false;
+  }
+  if (priv->kind != AEROGPU_WDDM_ALLOC_KIND_UNKNOWN) {
+    return true;
+  }
+
+  if (AEROGPU_WDDM_ALLOC_PRIV_DESC_PRESENT(priv->reserved0)) {
+    const uint32_t d3d9_format = static_cast<uint32_t>(AEROGPU_WDDM_ALLOC_PRIV_DESC_FORMAT(priv->reserved0));
+    const uint32_t width = static_cast<uint32_t>(AEROGPU_WDDM_ALLOC_PRIV_DESC_WIDTH(priv->reserved0));
+    const uint32_t height = static_cast<uint32_t>(AEROGPU_WDDM_ALLOC_PRIV_DESC_HEIGHT(priv->reserved0));
+    if (width == 0 || height == 0) {
+      return false;
+    }
+
+    uint32_t dxgi_format = 0;
+    uint32_t bpp = 0;
+    if (!D3d9FormatToDxgi(d3d9_format, &dxgi_format, &bpp)) {
+      return false;
+    }
+
+    const uint64_t row_pitch = static_cast<uint64_t>(width) * static_cast<uint64_t>(bpp);
+    if (row_pitch == 0 || row_pitch > 0xFFFFFFFFull) {
+      return false;
+    }
+
+    priv->kind = AEROGPU_WDDM_ALLOC_KIND_TEXTURE2D;
+    priv->width = width;
+    priv->height = height;
+    priv->format = dxgi_format;
+    priv->row_pitch_bytes = static_cast<uint32_t>(row_pitch);
+    return true;
+  }
+
+  // If no descriptor marker is present, treat legacy v1 blobs as generic buffers.
+  if (priv->size_bytes != 0) {
+    priv->kind = AEROGPU_WDDM_ALLOC_KIND_BUFFER;
+    return true;
+  }
+
+  return false;
+}
+
 struct AerogpuTextureFormatLayout {
   // For linear formats, block_width/block_height are 1 and bytes_per_block is
   // the bytes-per-texel value.
@@ -2906,9 +2997,10 @@ HRESULT AEROGPU_APIENTRY OpenResource(D3D10DDI_HDEVICE hDevice,
   }
 
   aerogpu_wddm_alloc_priv_v2 priv{};
-  const size_t copy_bytes = std::min(static_cast<size_t>(priv_size), sizeof(priv));
-  std::memcpy(&priv, priv_data, copy_bytes);
-  if (priv.magic != AEROGPU_WDDM_ALLOC_PRIV_MAGIC || priv.version != AEROGPU_WDDM_ALLOC_PRIV_VERSION_2) {
+  if (!ConsumeWddmAllocPrivV2(priv_data, static_cast<UINT>(priv_size), &priv)) {
+    return E_INVALIDARG;
+  }
+  if (!FixupLegacyPrivForOpenResource(&priv)) {
     return E_INVALIDARG;
   }
   if ((priv.flags & AEROGPU_WDDM_ALLOC_PRIV_FLAG_IS_SHARED) == 0 || priv.share_token == 0 || priv.alloc_id == 0) {

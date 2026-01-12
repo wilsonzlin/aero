@@ -114,6 +114,10 @@ DXGI/D3D10/11 shared resource interop is implemented in the **Win7/WDDM 1.1 WDK 
 - Opening a shared resource (cross-process `OpenSharedResource`) causes the UMD to parse the preserved
   allocation private driver data and emit `AEROGPU_CMD_IMPORT_SHARED_SURFACE` using the same
   `share_token`.
+- When opening shared resources created by **D3D9Ex** (legacy v1 private-data blobs),
+  the D3D10/11 UMD falls back to the `reserved0` surface descriptor encoding
+  (`AEROGPU_WDDM_ALLOC_PRIV_DESC_*` in `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`) to recover
+  `width/height/format` and map the D3D9 format to a compatible `DXGI_FORMAT`.
 
 On Win7/WDDM 1.1, `share_token` must be stable across guest processes. AeroGPU does
 **not** use the numeric value of the D3D shared `HANDLE` as `share_token` (handle

@@ -50,6 +50,11 @@ preserved private-data blob:
 - for `aerogpu_wddm_alloc_priv_v2`, via `row_pitch_bytes`
 - and for legacy consumers, via the low 32 bits of `reserved0` when the D3D9 surface descriptor marker bit is not set
 
+Additionally, when a **D3D9Ex producer** shares a surface with a **DXGI/D3D10/D3D11 consumer**, the opening D3D10/11 UMD may need
+to recover the resource description from the legacy v1 private-data blob. AeroGPU encodes a minimal D3D9 surface descriptor
+into `reserved0` (marker bit set; `format/width/height`), and the D3D10/11 UMD maps that descriptor back to a suitable
+`DXGI_FORMAT` when opening such resources.
+
 ### Collision policy
 
 `share_token` must be treated as a **globally unique** identifier:
