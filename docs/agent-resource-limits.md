@@ -189,16 +189,18 @@ kill -KILL -$PGID    # SIGKILL if still alive
 
 ### Find and Kill Orphans
 
-```bash
-# Find processes using excessive memory
-ps aux --sort=-%mem | head -20
+  ```bash
+  # Find processes using excessive memory
+  ps aux --sort=-%mem | head -20
 
-# Find your orphaned cargo/rustc processes
-pgrep -u $(whoami) -f 'cargo|rustc|node|chrome' | xargs -r ps -p
+  # Find your orphaned cargo/rustc processes
+  pgrep -u $(whoami) -f 'cargo|rustc|node|chrome' | xargs -r ps -p
 
-# Kill them
-pkill -u $(whoami) -f 'cargo build'
-```
+  # Kill a specific PID (choose from the pgrep output above)
+  kill -TERM <PID>
+  sleep 2
+  kill -KILL <PID>
+  ```
 
 ### Clean Up Lock Files
 
@@ -287,7 +289,7 @@ dmesg | tail -20 | grep -i oom
 Retry with:
 
 ```bash
-./scripts/mem-limit.sh 12G cargo build --locked
+./scripts/run_limited.sh --as 12G -- cargo build --locked
 ```
 
 ### Cargo says "Blocking waiting for file lock on package cache"
@@ -527,14 +529,14 @@ set -euo pipefail
 
 TIMEOUT=600
 MEM_LIMIT=12G
-CMD="cargo build --release --locked"
+CMD=(cargo build --release --locked)
 
-echo "[run] Starting: $CMD"
+echo "[run] Starting: ${CMD[*]}"
 echo "[run] Timeout: ${TIMEOUT}s, Memory limit: $MEM_LIMIT"
 
 # Capture both stdout and stderr, with timeout and memory limit
-if ! ./scripts/with-timeout.sh "$TIMEOUT" ./scripts/mem-limit.sh "$MEM_LIMIT" $CMD 2>&1 | tee build.log; then
-    echo "[run] FAILED: $CMD" >&2
+if ! AERO_TIMEOUT="$TIMEOUT" AERO_MEM_LIMIT="$MEM_LIMIT" ./scripts/safe-run.sh "${CMD[@]}" 2>&1 | tee build.log; then
+    echo "[run] FAILED: ${CMD[*]}" >&2
     echo "[run] Last 50 lines of output:" >&2
     tail -50 build.log >&2
     exit 1
@@ -546,14 +548,14 @@ if [[ ! -f target/release/aero ]]; then
     exit 1
 fi
 
-echo "[run] SUCCESS: $CMD"
+echo "[run] SUCCESS: ${CMD[*]}"
 ```
 
 ### Quick Defensive One-Liners
 
 ```bash
 # Build with all protections
-./scripts/with-timeout.sh 600 ./scripts/mem-limit.sh 12G cargo build --locked 2>&1 | tee build.log
+AERO_TIMEOUT=600 AERO_MEM_LIMIT=12G ./scripts/safe-run.sh cargo build --locked 2>&1 | tee build.log
 
 # Test with timeout (tests should be fast)
 ./scripts/with-timeout.sh 300 cargo test --locked 2>&1 | tee test.log
@@ -573,8 +575,10 @@ When something fails:
 
 2. **Kill orphans:**
    ```bash
-   pkill -u $(whoami) -f 'rustc'
-   pkill -u $(whoami) -f 'chrome'
+   # Use the output from step 1; be intentional and kill specific PIDs.
+   kill -TERM <PID>
+   sleep 2
+   kill -KILL <PID>
    ```
 
 3. **Clean corrupted state:**
@@ -605,7 +609,7 @@ Use this for integration testing once the emulator can boot. Do not redistribute
 ## Summary
 
 1. **Assume hostility** — every process can hang, OOM, or misbehave
-2. **Memory is the hard constraint** — use `mem-limit.sh` or `systemd-run` for heavy builds
+2. **Memory is the hard constraint** — use `run_limited.sh`/`safe-run.sh` for heavy builds
 3. **Timeouts are mandatory** — no command runs without a deadline
 4. **Verify outputs** — exit code 0 doesn't mean success
 5. **Kill aggressively** — SIGTERM, wait, SIGKILL; clean up orphans
