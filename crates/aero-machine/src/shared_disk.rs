@@ -10,19 +10,19 @@ use crate::MachineError;
 ///
 /// This adapter is intentionally defined in `aero-machine` so both:
 /// - firmware BIOS INT13 (`firmware::bios::BlockDevice`), and
-/// - PCI storage controllers (AHCI/NVMe/virtio-blk; `aero_storage::VirtualDisk`)
+/// - PCI storage controllers that accept a non-`Send` `aero_storage::VirtualDisk` backend (e.g.
+///   AHCI)
 ///   can operate on the *same* disk image when a guest transitions between them.
 ///
 /// See `docs/20-storage-trait-consolidation.md`.
 #[derive(Clone)]
 pub struct SharedDisk {
-    // NOTE: `VirtualDisk` backends are not necessarily `Send` on wasm32 (e.g. OPFS backends may
-    // hold JS values). The canonical `aero_machine::Machine` is single-threaded today (it holds
-    // `Rc<RefCell<_>>` device models), so we intentionally do *not* require `Send` here.
+    // NOTE: This wrapper is intentionally `!Send`/`!Sync` because it is implemented in terms of
+    // `Rc<RefCell<_>>`. The canonical `aero_machine::Machine` is single-threaded today, so this is
+    // sufficient for BIOS + controller disk sharing in that environment.
     //
-    // Callers that need a `Send` disk (e.g. some controller/device models) should use a backend
-    // type that is itself `Send` and plumb it through the relevant controller wiring rather than
-    // relying on this wrapper to add thread-safety.
+    // Some device models (e.g. NVMe / virtio-blk) require `VirtualDisk + Send` backends; this type
+    // cannot be used there.
     inner: Rc<RefCell<Box<dyn VirtualDisk>>>,
 }
 
