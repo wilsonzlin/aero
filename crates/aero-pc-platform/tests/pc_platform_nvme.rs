@@ -71,6 +71,10 @@ fn set_prp1(cmd: &mut [u8; 64], prp1: u64) {
     cmd[24..32].copy_from_slice(&prp1.to_le_bytes());
 }
 
+fn set_prp2(cmd: &mut [u8; 64], prp2: u64) {
+    cmd[32..40].copy_from_slice(&prp2.to_le_bytes());
+}
+
 fn set_cdw10(cmd: &mut [u8; 64], val: u32) {
     cmd[40..44].copy_from_slice(&val.to_le_bytes());
 }
@@ -992,6 +996,244 @@ fn pc_platform_new_with_nvme_disk_uses_backend_for_read_and_write_io() {
         0,
         "OOB write should return a non-success NVMe status"
     );
+}
+
+#[test]
+fn pc_platform_nvme_prp2_cross_page_write_and_read_roundtrip() {
+    const RAM_SIZE: usize = 2 * 1024 * 1024;
+    const DISK_SECTORS: u64 = 128;
+    const SECTORS: u32 = 10; // 5120 bytes, spans PRP1+PRP2
+    const PAGE_SIZE: usize = 4096;
+
+    let disk = RawDisk::create(MemBackend::new(), DISK_SECTORS * SECTOR_SIZE as u64)
+        .expect("failed to allocate in-memory NVMe disk");
+    let mut pc = PcPlatform::new_with_nvme_disk(RAM_SIZE, Box::new(disk));
+
+    let bdf = NVME_CONTROLLER.bdf;
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0006);
+
+    let bar0_base = read_nvme_bar0_base(&mut pc);
+
+    let asq = 0x10000u64;
+    let acq = 0x20000u64;
+    let io_cq = 0x40000u64;
+    let io_sq = 0x50000u64;
+
+    let write_page0 = 0x70000u64;
+    let write_page1 = write_page0 + 0x1000;
+    let read_page0 = 0x72000u64;
+    let read_page1 = read_page0 + 0x1000;
+
+    // Admin SQ/CQ setup and enable.
+    pc.memory.write_u32(bar0_base + 0x0024, 0x000f_000f); // 16/16 queues
+    pc.memory.write_u64(bar0_base + 0x0028, asq);
+    pc.memory.write_u64(bar0_base + 0x0030, acq);
+    pc.memory.write_u32(bar0_base + 0x0014, 1); // CC.EN
+    assert_eq!(pc.memory.read_u32(bar0_base + 0x001c) & 1, 1);
+
+    // Create IO CQ (qid=1, size=16, PC+IEN).
+    let mut cmd = build_command(0x05);
+    set_cid(&mut cmd, 1);
+    set_prp1(&mut cmd, io_cq);
+    set_cdw10(&mut cmd, (15u32 << 16) | 1);
+    set_cdw11(&mut cmd, 0x3);
+    pc.memory.write_physical(asq, &cmd);
+    pc.memory.write_u32(bar0_base + 0x1000, 1); // SQ0 tail = 1
+    pc.process_nvme();
+
+    // Create IO SQ (qid=1, size=16, CQID=1).
+    let mut cmd = build_command(0x01);
+    set_cid(&mut cmd, 2);
+    set_prp1(&mut cmd, io_sq);
+    set_cdw10(&mut cmd, (15u32 << 16) | 1);
+    set_cdw11(&mut cmd, 1);
+    pc.memory.write_physical(asq + 64, &cmd);
+    pc.memory.write_u32(bar0_base + 0x1000, 2); // SQ0 tail = 2
+    pc.process_nvme();
+
+    // Consume admin CQ completions so INTx reflects the I/O queue only.
+    pc.memory.write_u32(bar0_base + 0x1004, 2); // CQ0 head = 2
+
+    let len = (SECTORS as usize) * SECTOR_SIZE;
+    let payload: Vec<u8> = (0..len).map(|v| (v & 0xff) as u8).collect();
+    assert!(len > PAGE_SIZE);
+    assert!(len <= PAGE_SIZE + SECTOR_SIZE * 4);
+
+    pc.memory
+        .write_physical(write_page0, &payload[..PAGE_SIZE]);
+    pc.memory
+        .write_physical(write_page1, &payload[PAGE_SIZE..]);
+
+    // WRITE spanning PRP1+PRP2.
+    let cid_write: u16 = 0x40;
+    let mut cmd = build_command(0x01);
+    set_cid(&mut cmd, cid_write);
+    set_nsid(&mut cmd, 1);
+    set_prp1(&mut cmd, write_page0);
+    set_prp2(&mut cmd, write_page1);
+    set_cdw10(&mut cmd, 0); // LBA low
+    set_cdw11(&mut cmd, 0); // LBA high
+    set_cdw12(&mut cmd, SECTORS - 1); // nlb
+    pc.memory.write_physical(io_sq, &cmd);
+    pc.memory.write_u32(bar0_base + 0x1008, 1); // SQ1 tail = 1
+    pc.process_nvme();
+
+    let cqe = read_cqe(&mut pc, io_cq);
+    assert_eq!(cqe.cid, cid_write);
+    assert_eq!(cqe.status & !0x1, 0);
+
+    // READ spanning PRP1+PRP2.
+    pc.memory.write_physical(read_page0, &vec![0u8; PAGE_SIZE]);
+    pc.memory.write_physical(read_page1, &vec![0u8; PAGE_SIZE]);
+
+    let cid_read: u16 = 0x41;
+    let mut cmd = build_command(0x02);
+    set_cid(&mut cmd, cid_read);
+    set_nsid(&mut cmd, 1);
+    set_prp1(&mut cmd, read_page0);
+    set_prp2(&mut cmd, read_page1);
+    set_cdw10(&mut cmd, 0);
+    set_cdw11(&mut cmd, 0);
+    set_cdw12(&mut cmd, SECTORS - 1);
+    pc.memory.write_physical(io_sq + 64, &cmd);
+    pc.memory.write_u32(bar0_base + 0x1008, 2); // SQ1 tail = 2
+    pc.process_nvme();
+
+    let cqe = read_cqe(&mut pc, io_cq + 16);
+    assert_eq!(cqe.cid, cid_read);
+    assert_eq!(cqe.status & !0x1, 0);
+
+    let mut out = vec![0u8; payload.len()];
+    pc.memory.read_physical(read_page0, &mut out[..PAGE_SIZE]);
+    pc.memory.read_physical(read_page1, &mut out[PAGE_SIZE..]);
+    assert_eq!(out, payload);
+}
+
+#[test]
+fn pc_platform_nvme_prp_list_multi_page_write_and_read_roundtrip() {
+    const RAM_SIZE: usize = 2 * 1024 * 1024;
+    const DISK_SECTORS: u64 = 128;
+    const SECTORS: u32 = 20; // 10240 bytes, spans PRP list
+    const PAGE_SIZE: usize = 4096;
+
+    let disk = RawDisk::create(MemBackend::new(), DISK_SECTORS * SECTOR_SIZE as u64)
+        .expect("failed to allocate in-memory NVMe disk");
+    let mut pc = PcPlatform::new_with_nvme_disk(RAM_SIZE, Box::new(disk));
+
+    let bdf = NVME_CONTROLLER.bdf;
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0006);
+
+    let bar0_base = read_nvme_bar0_base(&mut pc);
+
+    let asq = 0x10000u64;
+    let acq = 0x20000u64;
+    let io_cq = 0x40000u64;
+    let io_sq = 0x50000u64;
+
+    let write_page0 = 0x74000u64;
+    let write_page1 = write_page0 + 0x1000;
+    let write_page2 = write_page1 + 0x1000;
+    let write_prp_list = write_page2 + 0x1000;
+
+    let read_page0 = 0x78000u64;
+    let read_page1 = read_page0 + 0x1000;
+    let read_page2 = read_page1 + 0x1000;
+    let read_prp_list = read_page2 + 0x1000;
+
+    // Admin SQ/CQ setup and enable.
+    pc.memory.write_u32(bar0_base + 0x0024, 0x000f_000f); // 16/16 queues
+    pc.memory.write_u64(bar0_base + 0x0028, asq);
+    pc.memory.write_u64(bar0_base + 0x0030, acq);
+    pc.memory.write_u32(bar0_base + 0x0014, 1); // CC.EN
+    assert_eq!(pc.memory.read_u32(bar0_base + 0x001c) & 1, 1);
+
+    // Create IO CQ (qid=1, size=16, PC+IEN).
+    let mut cmd = build_command(0x05);
+    set_cid(&mut cmd, 1);
+    set_prp1(&mut cmd, io_cq);
+    set_cdw10(&mut cmd, (15u32 << 16) | 1);
+    set_cdw11(&mut cmd, 0x3);
+    pc.memory.write_physical(asq, &cmd);
+    pc.memory.write_u32(bar0_base + 0x1000, 1); // SQ0 tail = 1
+    pc.process_nvme();
+
+    // Create IO SQ (qid=1, size=16, CQID=1).
+    let mut cmd = build_command(0x01);
+    set_cid(&mut cmd, 2);
+    set_prp1(&mut cmd, io_sq);
+    set_cdw10(&mut cmd, (15u32 << 16) | 1);
+    set_cdw11(&mut cmd, 1);
+    pc.memory.write_physical(asq + 64, &cmd);
+    pc.memory.write_u32(bar0_base + 0x1000, 2); // SQ0 tail = 2
+    pc.process_nvme();
+
+    // Consume admin CQ completions so INTx reflects the I/O queue only.
+    pc.memory.write_u32(bar0_base + 0x1004, 2); // CQ0 head = 2
+
+    let len = (SECTORS as usize) * SECTOR_SIZE;
+    let payload: Vec<u8> = (0..len).map(|v| (v & 0xff) as u8).collect();
+    assert!(len > 2 * PAGE_SIZE);
+
+    // Build the PRP list entries pointing at the remaining pages.
+    pc.memory.write_u64(write_prp_list, write_page1);
+    pc.memory.write_u64(write_prp_list + 8, write_page2);
+
+    pc.memory
+        .write_physical(write_page0, &payload[..PAGE_SIZE]);
+    pc.memory
+        .write_physical(write_page1, &payload[PAGE_SIZE..PAGE_SIZE * 2]);
+    pc.memory
+        .write_physical(write_page2, &payload[PAGE_SIZE * 2..]);
+
+    // WRITE spanning PRP list.
+    let cid_write: u16 = 0x50;
+    let mut cmd = build_command(0x01);
+    set_cid(&mut cmd, cid_write);
+    set_nsid(&mut cmd, 1);
+    set_prp1(&mut cmd, write_page0);
+    set_prp2(&mut cmd, write_prp_list);
+    set_cdw10(&mut cmd, 0);
+    set_cdw11(&mut cmd, 0);
+    set_cdw12(&mut cmd, SECTORS - 1);
+    pc.memory.write_physical(io_sq, &cmd);
+    pc.memory.write_u32(bar0_base + 0x1008, 1); // SQ1 tail = 1
+    pc.process_nvme();
+
+    let cqe = read_cqe(&mut pc, io_cq);
+    assert_eq!(cqe.cid, cid_write);
+    assert_eq!(cqe.status & !0x1, 0);
+
+    // READ spanning PRP list.
+    pc.memory.write_u64(read_prp_list, read_page1);
+    pc.memory.write_u64(read_prp_list + 8, read_page2);
+
+    pc.memory.write_physical(read_page0, &vec![0u8; PAGE_SIZE]);
+    pc.memory.write_physical(read_page1, &vec![0u8; PAGE_SIZE]);
+    pc.memory.write_physical(read_page2, &vec![0u8; PAGE_SIZE]);
+
+    let cid_read: u16 = 0x51;
+    let mut cmd = build_command(0x02);
+    set_cid(&mut cmd, cid_read);
+    set_nsid(&mut cmd, 1);
+    set_prp1(&mut cmd, read_page0);
+    set_prp2(&mut cmd, read_prp_list);
+    set_cdw10(&mut cmd, 0);
+    set_cdw11(&mut cmd, 0);
+    set_cdw12(&mut cmd, SECTORS - 1);
+    pc.memory.write_physical(io_sq + 64, &cmd);
+    pc.memory.write_u32(bar0_base + 0x1008, 2); // SQ1 tail = 2
+    pc.process_nvme();
+
+    let cqe = read_cqe(&mut pc, io_cq + 16);
+    assert_eq!(cqe.cid, cid_read);
+    assert_eq!(cqe.status & !0x1, 0);
+
+    let mut out = vec![0u8; payload.len()];
+    pc.memory.read_physical(read_page0, &mut out[..PAGE_SIZE]);
+    pc.memory
+        .read_physical(read_page1, &mut out[PAGE_SIZE..PAGE_SIZE * 2]);
+    pc.memory.read_physical(read_page2, &mut out[PAGE_SIZE * 2..]);
+    assert_eq!(out, payload);
 }
 
 #[test]
