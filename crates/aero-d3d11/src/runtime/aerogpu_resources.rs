@@ -947,6 +947,10 @@ fn wgpu_compressed_texture_dimensions_compatible(
     height: u32,
     mip_levels: u32,
 ) -> Result<bool> {
+    if mip_levels == 0 {
+        return Ok(false);
+    }
+
     let TextureFormatLayout::BlockCompressed {
         block_width,
         block_height,
@@ -960,6 +964,16 @@ fn wgpu_compressed_texture_dimensions_compatible(
     // when smaller than a full block (e.g. 2x2 BC). Fall back to an uncompressed host format when
     // the base dimensions are not aligned.
     if !width.is_multiple_of(block_width) || !height.is_multiple_of(block_height) {
+        return Ok(false);
+    }
+
+    // WebGPU validation requires `mip_level_count` to be within the possible chain length for the
+    // given dimensions (regardless of format). Rejecting this here avoids creating textures that
+    // wgpu/WebGPU would reject, and prevents pathological loops if the guest provides an
+    // excessively large mip count.
+    let max_dim = width.max(height);
+    let max_mip_levels = 32u32.saturating_sub(max_dim.leading_zeros());
+    if mip_levels > max_mip_levels {
         return Ok(false);
     }
 
@@ -1518,6 +1532,25 @@ mod tests {
             4,
             4,
             2
+        )
+        .unwrap());
+    }
+
+    #[test]
+    fn bc_dimension_compatibility_rejects_mip_levels_beyond_possible_chain_length() {
+        // WebGPU does not allow mip_level_count to exceed the number of distinct mip extents.
+        assert!(!wgpu_compressed_texture_dimensions_compatible(
+            wgpu::TextureFormat::Bc1RgbaUnorm,
+            4,
+            4,
+            4
+        )
+        .unwrap());
+        assert!(wgpu_compressed_texture_dimensions_compatible(
+            wgpu::TextureFormat::Bc1RgbaUnorm,
+            4,
+            4,
+            3
         )
         .unwrap());
     }
