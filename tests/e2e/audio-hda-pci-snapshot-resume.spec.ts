@@ -81,7 +81,8 @@ test("IO-worker HDA PCI audio does not fast-forward after worker snapshot restor
     { timeout: 60_000 },
   );
 
-  const snapshotPath = `state/playwright-hda-pci-snapshot-${Date.now()}.snap`;
+  // Generate a per-test snapshot path to avoid collisions when Playwright runs specs in parallel.
+  const snapshotPath = `state/playwright-hda-pci-snapshot-${Date.now()}-${Math.random().toString(16).slice(2)}.snap`;
 
   // Save snapshot via coordinator (pause → save → resume).
   const saveResult = await page.evaluate(async (path) => {
