@@ -40,7 +40,7 @@ use aero_devices::i8042::{I8042Ports, SharedI8042Controller};
 use aero_devices::irq::PlatformIrqLine;
 use aero_devices::pci::{
     bios_post, register_pci_config_ports, PciBdf, PciConfigPorts, PciCoreSnapshot, PciDevice,
-    PciEcamConfig, PciEcamMmio, PciInterruptPin, PciIntxRouter, PciIntxRouterConfig,
+    GsiLevelSink, PciEcamConfig, PciEcamMmio, PciInterruptPin, PciIntxRouter, PciIntxRouterConfig,
     PciResourceAllocator, PciResourceAllocatorConfig, SharedPciConfigPorts,
 };
 use aero_devices::pic8259::register_pic8259_on_platform_interrupts;
@@ -2663,6 +2663,11 @@ impl snapshot::SnapshotTarget for Machine {
 
         // 3) After restoring both the interrupt controller and the PCI INTx router, re-drive any
         // asserted level-triggered GSIs into the interrupt sink.
+        //
+        // NOTE: Other restored devices may also touch shared GSIs (e.g. HPET can be configured to
+        // route a timer to IRQ10), so we reassert PCI INTx levels again at the end of device state
+        // restore to avoid losing an asserted PCI line due to another device deasserting the same
+        // GSI while its own interrupt is inactive.
         if restored_interrupts && restored_pci_intx {
             if let (Some(pci_intx), Some(interrupts)) = (&self.pci_intx, &self.interrupts) {
                 let pci_intx = pci_intx.borrow();
@@ -2731,6 +2736,34 @@ impl snapshot::SnapshotTarget for Machine {
         // and some device models surface their INTx level via polling rather than storing it in
         // the router snapshot.
         self.sync_pci_intx_sources_to_interrupts();
+
+        // Reassert PCI INTx levels after restoring other devices that may have modified shared GSI
+        // lines during `load_state()` or their own sync fixups (e.g. HPET).
+        //
+        // We intentionally only *raise* asserted lines here (and never lower) so this fixup cannot
+        // clobber another device's asserted level on a shared GSI.
+        if restored_interrupts && restored_pci_intx {
+            if let (Some(pci_intx), Some(interrupts)) = (&self.pci_intx, &self.interrupts) {
+                struct AssertOnlySink<'a, T: GsiLevelSink + ?Sized> {
+                    inner: &'a mut T,
+                }
+
+                impl<T: GsiLevelSink + ?Sized> GsiLevelSink for AssertOnlySink<'_, T> {
+                    fn set_gsi_level(&mut self, gsi: u32, level: bool) {
+                        if level {
+                            self.inner.set_gsi_level(gsi, true);
+                        }
+                    }
+                }
+
+                let pci_intx = pci_intx.borrow();
+                let mut interrupts = interrupts.borrow_mut();
+                let mut sink = AssertOnlySink {
+                    inner: &mut *interrupts,
+                };
+                pci_intx.sync_levels_to_sink(&mut sink);
+            }
+        }
 
         // CPU_INTERNAL: machine-defined CPU bookkeeping (interrupt shadow + external interrupt FIFO).
         if let Some(state) = by_id.remove(&snapshot::DeviceId::CPU_INTERNAL) {
