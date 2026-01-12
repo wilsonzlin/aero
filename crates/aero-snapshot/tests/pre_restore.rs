@@ -3,8 +3,9 @@
 use std::io::Cursor;
 
 use aero_snapshot::{
-    restore_snapshot, save_snapshot, CpuState, DeviceState, DiskOverlayRefs, MmuState, SaveOptions,
-    SnapshotMeta, SnapshotSource, SnapshotTarget,
+    restore_snapshot, restore_snapshot_with_options, save_snapshot, CpuState, DeviceState,
+    DiskOverlayRefs, MmuState, RestoreOptions, SaveOptions, SnapshotMeta, SnapshotSource,
+    SnapshotTarget,
 };
 
 #[derive(Clone)]
@@ -88,18 +89,34 @@ impl SnapshotTarget for PreRestoreTarget {
     }
 
     fn restore_cpu_state(&mut self, _state: CpuState) {
+        assert_eq!(
+            self.pre_restore_calls, 1,
+            "pre_restore must be called before any restore_* hooks"
+        );
         self.restored_cpu = true;
     }
 
     fn restore_mmu_state(&mut self, _state: MmuState) {
+        assert_eq!(
+            self.pre_restore_calls, 1,
+            "pre_restore must be called before any restore_* hooks"
+        );
         self.restored_mmu = true;
     }
 
     fn restore_device_states(&mut self, _states: Vec<DeviceState>) {
+        assert_eq!(
+            self.pre_restore_calls, 1,
+            "pre_restore must be called before any restore_* hooks"
+        );
         self.restored_devices = true;
     }
 
     fn restore_disk_overlays(&mut self, _overlays: DiskOverlayRefs) {
+        assert_eq!(
+            self.pre_restore_calls, 1,
+            "pre_restore must be called before any restore_* hooks"
+        );
         self.restored_disks = true;
     }
 
@@ -108,6 +125,10 @@ impl SnapshotTarget for PreRestoreTarget {
     }
 
     fn write_ram(&mut self, offset: u64, data: &[u8]) -> aero_snapshot::Result<()> {
+        assert_eq!(
+            self.pre_restore_calls, 1,
+            "pre_restore must be called before any restore_* hooks"
+        );
         let offset: usize = offset
             .try_into()
             .map_err(|_| aero_snapshot::SnapshotError::Corrupt("ram offset overflow"))?;
@@ -146,6 +167,25 @@ fn pre_restore_is_called_on_success() {
 }
 
 #[test]
+fn pre_restore_is_called_on_success_for_restore_snapshot_with_options() {
+    let bytes = save_tiny_snapshot();
+
+    let mut target = PreRestoreTarget::new(256);
+    restore_snapshot_with_options(
+        &mut Cursor::new(&bytes),
+        &mut target,
+        RestoreOptions::default(),
+    )
+    .expect("restore_snapshot_with_options should succeed");
+
+    assert_eq!(target.pre_restore_calls, 1);
+    assert!(target.restored_cpu);
+    assert!(target.restored_mmu);
+    assert!(target.restored_devices);
+    assert!(target.restored_disks);
+}
+
+#[test]
 fn pre_restore_is_called_even_if_restore_fails_after_header() {
     // Header is valid, but the file ends immediately after the header (no sections).
     let bytes = save_tiny_snapshot();
@@ -165,4 +205,3 @@ fn pre_restore_is_not_called_for_invalid_header() {
     assert!(restore_snapshot(&mut Cursor::new(&bytes), &mut target).is_err());
     assert_eq!(target.pre_restore_calls, 0);
 }
-
