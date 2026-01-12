@@ -34,15 +34,18 @@ function scriptsReferencedByDocs() {
   //   ./scripts/safe-run.sh cargo test --locked
   //   (cd infra/local-object-store && ./verify.sh)
   // Keep the character class conservative; `.sh` is an unambiguous terminator.
-  const re = /\.\/[0-9A-Za-z_./-]+\.sh/g;
+  //
+  // Note: avoid matching inside `../foo.sh` or `../../foo.sh` by requiring the
+  // `./` not be preceded by another dot.
+  const re = /(^|[^.])(\\.\/[0-9A-Za-z_./-]+\.sh)/gm;
 
   const scripts = new Set();
   const missing = [];
   for (const relDocPath of markdownFiles) {
     const absDocPath = path.join(repoRoot, relDocPath);
     const content = fs.readFileSync(absDocPath, "utf8");
-    const matches = content.match(re) ?? [];
-    for (const match of matches) {
+    for (const m of content.matchAll(re)) {
+      const match = m[2];
       const relPathNoDot = match.replace(/^\.\//, "");
       // First try repo-root relative (common case in root-level commands).
       const absRepoRoot = path.join(repoRoot, relPathNoDot);
