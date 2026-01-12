@@ -20,6 +20,10 @@ import { handleTcpMuxUpgrade } from './routes/tcpMux.js';
 import { handleTcpProxyUpgrade } from './routes/tcpProxy.js';
 import { buildUdpRelaySessionInfo, mintUdpRelayToken } from './udpRelay.js';
 import { getVersionInfo } from './version.js';
+import {
+  L2_TUNNEL_DEFAULT_MAX_CONTROL_PAYLOAD_BYTES,
+  L2_TUNNEL_DEFAULT_MAX_FRAME_PAYLOAD_BYTES,
+} from './protocol/l2Tunnel.js';
 
 type ServerBundle = {
   app: FastifyInstance;
@@ -198,6 +202,8 @@ export function buildServer(config: Config): ServerBundle {
 
     reply.header('cache-control', 'no-store');
     reply.code(201);
+    const l2MaxFramePayloadBytes = config.L2_MAX_FRAME_PAYLOAD_BYTES ?? L2_TUNNEL_DEFAULT_MAX_FRAME_PAYLOAD_BYTES;
+    const l2MaxControlPayloadBytes = config.L2_MAX_CONTROL_PAYLOAD_BYTES ?? L2_TUNNEL_DEFAULT_MAX_CONTROL_PAYLOAD_BYTES;
     const response: Record<string, unknown> = {
       session: { expiresAt: new Date(session.expiresAtMs).toISOString() },
       endpoints,
@@ -209,7 +215,7 @@ export function buildServer(config: Config): ServerBundle {
           idleTimeoutMs: config.TCP_PROXY_IDLE_TIMEOUT_MS,
         },
         dns: { maxQueryBytes: config.DNS_MAX_QUERY_BYTES },
-        l2: { maxFramePayloadBytes: 2048, maxControlPayloadBytes: 256 },
+        l2: { maxFramePayloadBytes: l2MaxFramePayloadBytes, maxControlPayloadBytes: l2MaxControlPayloadBytes },
       },
     };
 

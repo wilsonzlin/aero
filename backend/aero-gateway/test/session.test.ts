@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { buildServer } from '../src/server.js';
+import {
+  L2_TUNNEL_DEFAULT_MAX_CONTROL_PAYLOAD_BYTES,
+  L2_TUNNEL_DEFAULT_MAX_FRAME_PAYLOAD_BYTES,
+} from '../src/protocol/l2Tunnel.js';
 
 const baseConfig = {
   HOST: '127.0.0.1',
@@ -80,7 +84,10 @@ test('POST /session sets aero_session cookie and returns CreateSessionResponse',
     udpRelayToken: '/udp-relay/token',
   });
   assert.deepEqual(body.limits?.dns, { maxQueryBytes: 4096 });
-  assert.deepEqual(body.limits?.l2, { maxFramePayloadBytes: 2048, maxControlPayloadBytes: 256 });
+  assert.deepEqual(body.limits?.l2, {
+    maxFramePayloadBytes: L2_TUNNEL_DEFAULT_MAX_FRAME_PAYLOAD_BYTES,
+    maxControlPayloadBytes: L2_TUNNEL_DEFAULT_MAX_CONTROL_PAYLOAD_BYTES,
+  });
   assert.equal(body.limits?.tcp?.maxConnections, 64);
   assert.equal(body.limits?.tcp?.maxMessageBytes, 1024 * 1024);
   assert.equal(body.limits?.tcp?.connectTimeoutMs, 10_000);

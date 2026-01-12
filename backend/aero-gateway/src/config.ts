@@ -1,6 +1,10 @@
 import fs from 'node:fs';
 import { z } from 'zod';
 import { normalizeAllowedOriginString } from './security/origin.js';
+import {
+  L2_TUNNEL_DEFAULT_MAX_CONTROL_PAYLOAD_BYTES,
+  L2_TUNNEL_DEFAULT_MAX_FRAME_PAYLOAD_BYTES,
+} from './protocol/l2Tunnel.js';
 
 const logLevels = ['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'] as const;
 const udpRelayAuthModes = ['none', 'api_key', 'jwt'] as const;
@@ -69,6 +73,16 @@ export type Config = Readonly<{
   UDP_RELAY_TOKEN_TTL_SECONDS: number;
   UDP_RELAY_AUDIENCE: string;
   UDP_RELAY_ISSUER: string;
+
+  /**
+   * Optional L2 tunnel framing payload limits surfaced via `POST /session`.
+   *
+   * These should match the configured `aero-l2-proxy` limits (e.g.
+   * `AERO_L2_MAX_FRAME_PAYLOAD`, `AERO_L2_MAX_CONTROL_PAYLOAD`) so browser clients
+   * can cap their outbound frames accordingly.
+   */
+  L2_MAX_FRAME_PAYLOAD_BYTES?: number;
+  L2_MAX_CONTROL_PAYLOAD_BYTES?: number;
 }>;
 
 type Env = Record<string, string | undefined>;
@@ -241,6 +255,29 @@ export function loadConfig(env: Env = process.env): Config {
     }
   }
 
+  function parseOptionalPositiveInt(name: string, value: string | undefined): number | null {
+    const trimmed = value?.trim();
+    if (!trimmed) return null;
+    const parsed = Number(trimmed);
+    if (!Number.isInteger(parsed) || parsed <= 0) {
+      throw new Error(`${name} must be a positive integer, got ${JSON.stringify(value)}`);
+    }
+    return parsed;
+  }
+
+  // L2 tunnel payload sizes are owned by `crates/aero-l2-proxy` but are surfaced
+  // via the gateway's session bootstrap response for client-side bounds checks.
+  //
+  // Support the proxy's canonical env var names as aliases so deployments can
+  // share configuration across services.
+  const l2MaxFramePayloadBytes =
+    parseOptionalPositiveInt('AERO_L2_MAX_FRAME_PAYLOAD', env.AERO_L2_MAX_FRAME_PAYLOAD) ??
+    parseOptionalPositiveInt('AERO_L2_MAX_FRAME_SIZE', env.AERO_L2_MAX_FRAME_SIZE) ??
+    L2_TUNNEL_DEFAULT_MAX_FRAME_PAYLOAD_BYTES;
+  const l2MaxControlPayloadBytes =
+    parseOptionalPositiveInt('AERO_L2_MAX_CONTROL_PAYLOAD', env.AERO_L2_MAX_CONTROL_PAYLOAD) ??
+    L2_TUNNEL_DEFAULT_MAX_CONTROL_PAYLOAD_BYTES;
+
   return {
     HOST: raw.HOST,
     PORT: raw.PORT,
@@ -297,5 +334,8 @@ export function loadConfig(env: Env = process.env): Config {
     UDP_RELAY_TOKEN_TTL_SECONDS: raw.UDP_RELAY_TOKEN_TTL_SECONDS,
     UDP_RELAY_AUDIENCE: udpRelayAudience,
     UDP_RELAY_ISSUER: udpRelayIssuer,
+
+    L2_MAX_FRAME_PAYLOAD_BYTES: l2MaxFramePayloadBytes,
+    L2_MAX_CONTROL_PAYLOAD_BYTES: l2MaxControlPayloadBytes,
   };
 }
