@@ -176,10 +176,40 @@ export function installNetTraceUI(container: HTMLElement, backend: NetTraceBacke
       await writable.write(bytesForIo);
       await writable.close();
       status.textContent = `Saved capture to OPFS: ${path} (${bytes.byteLength.toLocaleString()} bytes)`;
+      await refreshStats?.();
     } catch (err) {
       status.textContent = err instanceof Error ? err.message : String(err);
     }
   });
+
+  const saveSnapshotButton = backend.exportPcapng ? document.createElement("button") : null;
+  if (saveSnapshotButton) {
+    saveSnapshotButton.textContent = "Save snapshot to OPFS";
+    saveSnapshotButton.addEventListener("click", async () => {
+      status.textContent = "";
+      try {
+        const path = opfsPath.value.trim();
+        if (!path) {
+          throw new Error("OPFS path must not be empty.");
+        }
+
+        const bytes = await backend.exportPcapng!();
+        const bytesForIo: Uint8Array<ArrayBuffer> =
+          bytes.buffer instanceof ArrayBuffer
+            ? (bytes as Uint8Array<ArrayBuffer>)
+            : (new Uint8Array(bytes) as Uint8Array<ArrayBuffer>);
+        const handle = await openFileHandle(path, { create: true });
+        const writable = await handle.createWritable();
+        await writable.write(bytesForIo);
+        await writable.close();
+        status.textContent = `Saved snapshot to OPFS: ${path} (${bytes.byteLength.toLocaleString()} bytes)`;
+        // Snapshot does not drain; still refresh in case the backend updated stats.
+        await refreshStats?.();
+      } catch (err) {
+        status.textContent = err instanceof Error ? err.message : String(err);
+      }
+    });
+  }
 
   const buttonRow = document.createElement("div");
   buttonRow.className = "row";
@@ -191,6 +221,9 @@ export function installNetTraceUI(container: HTMLElement, backend: NetTraceBacke
     buttonRow.appendChild(downloadSnapshotButton);
   }
   buttonRow.appendChild(saveButton);
+  if (saveSnapshotButton) {
+    buttonRow.appendChild(saveSnapshotButton);
+  }
   wrapper.appendChild(buttonRow);
 
   const opfsRow = document.createElement("div");
