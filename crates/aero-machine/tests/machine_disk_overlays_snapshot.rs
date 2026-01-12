@@ -1,6 +1,9 @@
+#![cfg(not(target_arch = "wasm32"))]
+
 use aero_machine::{Machine, MachineConfig};
 use aero_snapshot as snapshot;
 use pretty_assertions::assert_eq;
+use aero_storage::{MemBackend, RawDisk, SECTOR_SIZE};
 
 struct CaptureDiskOverlaysTarget {
     ram: Vec<u8>,
@@ -61,6 +64,10 @@ fn machine_snapshot_writes_and_restores_disk_overlay_refs_with_stable_disk_ids()
     };
 
     let mut src = Machine::new(cfg.clone()).unwrap();
+
+    // Attach a dummy disk backend to AHCI port 0 so this test mirrors a real configured machine.
+    let disk = RawDisk::create(MemBackend::new(), 8 * SECTOR_SIZE as u64).unwrap();
+    src.attach_ahci_disk_port0(Box::new(disk)).unwrap();
 
     // Simulate a configured storage topology by setting overlay references for the canonical disk
     // slots. (Actual disk contents/backends are external to snapshots.)
