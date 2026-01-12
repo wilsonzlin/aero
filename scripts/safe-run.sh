@@ -208,14 +208,16 @@ case "${AERO_ISOLATE_CARGO_HOME:-}" in
     # contention for the common default case.
     _aero_default_cargo_home=""
     if [[ -n "${HOME:-}" ]]; then
-      _aero_default_cargo_home="$HOME/.cargo"
+      _aero_default_cargo_home="${HOME%/}/.cargo"
     fi
+    _aero_effective_cargo_home="${CARGO_HOME:-}"
+    _aero_effective_cargo_home="${_aero_effective_cargo_home%/}"
     if [[ -d "$REPO_ROOT/.cargo-home" ]] \
-      && { [[ -z "${CARGO_HOME:-}" ]] || [[ "${CARGO_HOME:-}" == "${_aero_default_cargo_home}" ]]; }
+      && { [[ -z "${_aero_effective_cargo_home}" ]] || [[ -n "${_aero_default_cargo_home}" && "${_aero_effective_cargo_home}" == "${_aero_default_cargo_home}" ]]; }
     then
       export CARGO_HOME="$REPO_ROOT/.cargo-home"
     fi
-    unset _aero_default_cargo_home 2>/dev/null || true
+    unset _aero_default_cargo_home _aero_effective_cargo_home 2>/dev/null || true
     ;;
   1 | true | TRUE | yes | YES | on | ON)
     export CARGO_HOME="$REPO_ROOT/.cargo-home"
