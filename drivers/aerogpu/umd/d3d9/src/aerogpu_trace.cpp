@@ -307,15 +307,15 @@ const char* func_name(D3d9TraceFunc func) {
     case D3d9TraceFunc::DeviceSetGammaRamp:
       return "Device::SetGammaRamp (stub)";
     case D3d9TraceFunc::DeviceCreateStateBlock:
-      return "Device::CreateStateBlock (stub)";
+      return "Device::CreateStateBlock";
     case D3d9TraceFunc::DeviceDeleteStateBlock:
-      return "Device::DeleteStateBlock (stub)";
+      return "Device::DeleteStateBlock";
     case D3d9TraceFunc::DeviceCaptureStateBlock:
-      return "Device::CaptureStateBlock (stub)";
+      return "Device::CaptureStateBlock";
     case D3d9TraceFunc::DeviceApplyStateBlock:
-      return "Device::ApplyStateBlock (stub)";
+      return "Device::ApplyStateBlock";
     case D3d9TraceFunc::DeviceValidateDevice:
-      return "Device::ValidateDevice (stub)";
+      return "Device::ValidateDevice";
     case D3d9TraceFunc::DeviceSetSoftwareVertexProcessing:
       return "Device::SetSoftwareVertexProcessing (stub)";
     case D3d9TraceFunc::DeviceSetCursorProperties:
@@ -359,9 +359,9 @@ const char* func_name(D3d9TraceFunc func) {
     case D3d9TraceFunc::DeviceGetScissorRect:
       return "Device::GetScissorRect (stub)";
     case D3d9TraceFunc::DeviceBeginStateBlock:
-      return "Device::BeginStateBlock (stub)";
+      return "Device::BeginStateBlock";
     case D3d9TraceFunc::DeviceEndStateBlock:
-      return "Device::EndStateBlock (stub)";
+      return "Device::EndStateBlock";
     case D3d9TraceFunc::DeviceGetMaterial:
       return "Device::GetMaterial (stub)";
     case D3d9TraceFunc::DeviceGetLight:
