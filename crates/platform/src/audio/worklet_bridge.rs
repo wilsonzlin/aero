@@ -37,6 +37,13 @@ pub const HEADER_BYTES: usize = HEADER_U32_LEN * 4;
 /// `2^20` frames is ~21s at 48kHz; at stereo f32 this is ~8MiB of sample storage.
 const MAX_RING_CAPACITY_FRAMES: u32 = 1_048_576;
 
+/// Maximum number of audio channels supported by the worklet ring buffer helpers.
+///
+/// The current Aero audio output contract is mono or stereo `f32` (interleaved). Bounding the
+/// channel count prevents callers from accidentally allocating multi-gigabyte rings by passing an
+/// absurd channel count.
+const MAX_RING_CHANNEL_COUNT: u32 = 2;
+
 #[inline]
 pub fn frames_available(read_idx: u32, write_idx: u32) -> u32 {
     write_idx.wrapping_sub(read_idx)
@@ -84,6 +91,7 @@ impl InterleavedRingBuffer {
         assert!(capacity_frames > 0, "capacity_frames must be non-zero");
         assert!(channel_count > 0, "channel_count must be non-zero");
         let capacity_frames = capacity_frames.min(MAX_RING_CAPACITY_FRAMES);
+        let channel_count = channel_count.min(MAX_RING_CHANNEL_COUNT);
         Self {
             capacity_frames,
             channel_count,
@@ -307,6 +315,16 @@ mod tests {
     }
 
     #[test]
+    fn test_new_clamps_excessive_channel_count_to_avoid_oom() {
+        let rb = InterleavedRingBuffer::new(8, u32::MAX);
+        assert_eq!(rb.channel_count, MAX_RING_CHANNEL_COUNT);
+        assert_eq!(
+            rb.storage.len(),
+            rb.capacity_frames as usize * rb.channel_count as usize
+        );
+    }
+
+    #[test]
     fn test_snapshot_restore_clamps_indices_when_write_ahead_of_capacity() {
         let state = AudioWorkletRingState {
             capacity_frames: 8,
@@ -382,6 +400,11 @@ mod wasm {
             if channel_count == 0 {
                 return Err(JsValue::from_str("channel_count must be non-zero"));
             }
+            if channel_count > MAX_RING_CHANNEL_COUNT {
+                return Err(JsValue::from_str(&format!(
+                    "channel_count must be <= {MAX_RING_CHANNEL_COUNT}"
+                )));
+            }
 
             let (byte_len, sample_capacity) = layout_bytes_u32(capacity_frames, channel_count)
                 .ok_or_else(|| JsValue::from_str("Requested ring buffer layout exceeds 4GiB"))?;
@@ -431,6 +454,11 @@ mod wasm {
             }
             if channel_count == 0 {
                 return Err(JsValue::from_str("channel_count must be non-zero"));
+            }
+            if channel_count > MAX_RING_CHANNEL_COUNT {
+                return Err(JsValue::from_str(&format!(
+                    "channel_count must be <= {MAX_RING_CHANNEL_COUNT}"
+                )));
             }
 
             let (required, sample_capacity) = layout_bytes_u32(capacity_frames, channel_count)

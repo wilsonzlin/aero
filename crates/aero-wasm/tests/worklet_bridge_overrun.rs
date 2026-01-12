@@ -126,6 +126,35 @@ fn worklet_bridge_rejects_layout_exceeding_4gib() {
 }
 
 #[wasm_bindgen_test]
+fn worklet_bridge_rejects_excessive_capacity_frames() {
+    // Keep in sync with `aero_platform::audio::worklet_bridge`'s internal cap.
+    const MAX_RING_CAPACITY_FRAMES: u32 = 1_048_576;
+
+    let err = match WorkletBridge::new(MAX_RING_CAPACITY_FRAMES + 1, 2) {
+        Ok(_) => panic!("expected WorkletBridge::new to fail for excessive capacity_frames"),
+        Err(err) => err,
+    };
+    let msg = err.as_string().unwrap_or_default();
+    assert!(
+        msg.contains("capacity_frames must be <="),
+        "expected capacity_frames cap error, got: {msg}"
+    );
+}
+
+#[wasm_bindgen_test]
+fn worklet_bridge_rejects_excessive_channel_count() {
+    let err = match WorkletBridge::new(8, 3) {
+        Ok(_) => panic!("expected WorkletBridge::new to fail for excessive channel_count"),
+        Err(err) => err,
+    };
+    let msg = err.as_string().unwrap_or_default();
+    assert!(
+        msg.contains("channel_count must be <="),
+        "expected channel_count cap error, got: {msg}"
+    );
+}
+
+#[wasm_bindgen_test]
 fn worklet_bridge_overrun_count_wraps_u32() {
     let bridge = WorkletBridge::new(1, 1).unwrap();
 
