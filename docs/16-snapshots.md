@@ -136,7 +136,8 @@ Some platform devices are snapshotted as their own `DEVICES` entries and use ded
 
 Note: `aero-snapshot` rejects duplicate `(DeviceId, version, flags)` tuples inside `DEVICES`. Since both `PciConfigPorts` and
 `PciIntxRouter` currently snapshot as `SnapshotVersion (1.0)`, they cannot both be stored as separate entries with the same outer
-`(DeviceId::PCI, 1, 0)` key. Canonical full-machine snapshots store PCI core state as a *single* `DeviceId::PCI` entry (see `PCI core state` below).
+`(DeviceId::PCI, 1, 0)` key. Canonical full-machine snapshots store PCI core state as a *single* `DeviceId::PCI` entry
+(inner `PCIC`; see `PCI core state` below). Legacy snapshots may use split-out `PCI_CFG` + `PCI_INTX` entries.
 
 #### ACPI PM (`DeviceId::ACPI_PM`)
 
