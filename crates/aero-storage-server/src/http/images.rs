@@ -281,8 +281,14 @@ async fn full_response(
     }
 
     let mut response = Response::new(if want_body {
-        let span =
-            tracing::info_span!("store_read", image_id = %image_id, start = 0_u64, len = meta.size);
+        let image_id_for_span =
+            crate::http::observability::truncate_for_span(image_id, crate::store::MAX_IMAGE_ID_LEN);
+        let span = tracing::info_span!(
+            "store_read",
+            image_id = %image_id_for_span,
+            start = 0_u64,
+            len = meta.size
+        );
         match state
             .store
             .open_range(image_id, 0, meta.size)
@@ -339,9 +345,11 @@ async fn single_range_response(
     }
 
     let mut response = Response::new(if want_body {
+        let image_id_for_span =
+            crate::http::observability::truncate_for_span(image_id, crate::store::MAX_IMAGE_ID_LEN);
         let span = tracing::info_span!(
             "store_read",
-            image_id = %image_id,
+            image_id = %image_id_for_span,
             start = range.start,
             len = range_len,
         );

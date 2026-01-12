@@ -12,26 +12,7 @@ use uuid::Uuid;
 
 use crate::metrics::Metrics;
 
-pub(crate) fn record_image_id(image_id: &str) {
-    // `image_id` originates from the URL path; keep it bounded in tracing fields to avoid
-    // excessive allocations/log spam in case validation is bypassed elsewhere.
-    if image_id.len() <= crate::store::MAX_IMAGE_ID_LEN {
-        tracing::Span::current().record("image_id", tracing::field::display(image_id));
-        return;
-    }
-
-    // Truncate at a valid UTF-8 boundary.
-    let mut end = crate::store::MAX_IMAGE_ID_LEN;
-    while end > 0 && !image_id.is_char_boundary(end) {
-        end -= 1;
-    }
-
-    let mut truncated = image_id[..end].to_string();
-    truncated.push_str("...");
-    tracing::Span::current().record("image_id", tracing::field::display(&truncated));
-}
-
-fn truncate_for_span(value: &str, max_len: usize) -> std::borrow::Cow<'_, str> {
+pub(crate) fn truncate_for_span(value: &str, max_len: usize) -> std::borrow::Cow<'_, str> {
     if value.len() <= max_len {
         return std::borrow::Cow::Borrowed(value);
     }
@@ -45,6 +26,13 @@ fn truncate_for_span(value: &str, max_len: usize) -> std::borrow::Cow<'_, str> {
     let mut out = value[..end].to_string();
     out.push_str("...");
     std::borrow::Cow::Owned(out)
+}
+
+pub(crate) fn record_image_id(image_id: &str) {
+    // `image_id` originates from the URL path; keep it bounded in tracing fields to avoid
+    // excessive allocations/log spam in case validation is bypassed elsewhere.
+    let image_id = truncate_for_span(image_id, crate::store::MAX_IMAGE_ID_LEN);
+    tracing::Span::current().record("image_id", tracing::field::display(&image_id));
 }
 
 pub(crate) async fn middleware(
