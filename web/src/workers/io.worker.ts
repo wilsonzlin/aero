@@ -149,6 +149,7 @@ import {
   VM_SNAPSHOT_DEVICE_AUDIO_HDA_KIND,
   VM_SNAPSHOT_DEVICE_E1000_KIND,
   VM_SNAPSHOT_DEVICE_I8042_KIND,
+  VM_SNAPSHOT_DEVICE_NET_STACK_KIND,
   VM_SNAPSHOT_DEVICE_USB_KIND,
   parseAeroIoSnapshotVersion,
   resolveVmSnapshotRestoreFromOpfsExport,
@@ -700,6 +701,81 @@ function restoreAudioHdaDeviceState(bytes: Uint8Array): void {
   load.call(bridge, bytes);
 }
 
+type NetStackSnapshotBridgeLike = {
+  save_state?: () => Uint8Array;
+  snapshot_state?: () => Uint8Array;
+  load_state?: (bytes: Uint8Array) => void;
+  restore_state?: (bytes: Uint8Array) => void;
+};
+
+// Optional host-side network stack state bridge. This is populated by networking integrations when present.
+let netStackBridge: NetStackSnapshotBridgeLike | null = null;
+
+function resolveNetStackSnapshotBridge(): NetStackSnapshotBridgeLike | null {
+  if (netStackBridge) return netStackBridge;
+
+  // Allow other runtimes/experiments to attach a network stack bridge via a well-known global.
+  // This is intentionally best-effort so snapshots can still be loaded in environments without
+  // network-stack support.
+  const anyGlobal = globalThis as unknown as Record<string, unknown>;
+  const candidate =
+    anyGlobal["__aeroNetStackBridge"] ??
+    anyGlobal["__aero_net_stack_bridge"] ??
+    anyGlobal["__aero_io_net_stack_bridge"] ??
+    null;
+  if (!candidate) return null;
+  if (typeof candidate !== "object" && typeof candidate !== "function") return null;
+  return candidate as NetStackSnapshotBridgeLike;
+}
+
+function snapshotNetStackDeviceState(): { kind: string; bytes: Uint8Array } | null {
+  const bridge = resolveNetStackSnapshotBridge();
+  if (!bridge) return null;
+
+  const save =
+    (bridge as unknown as { save_state?: unknown }).save_state ?? (bridge as unknown as { snapshot_state?: unknown }).snapshot_state;
+  if (typeof save !== "function") return null;
+  try {
+    const bytes = save.call(bridge) as unknown;
+    if (bytes instanceof Uint8Array) return { kind: VM_SNAPSHOT_DEVICE_NET_STACK_KIND, bytes };
+  } catch (err) {
+    console.warn("[io.worker] NET_STACK save_state failed:", err);
+  }
+  return null;
+}
+
+function restoreNetStackDeviceState(bytes: Uint8Array): void {
+  const bridge = resolveNetStackSnapshotBridge();
+  if (!bridge) return;
+
+  const load =
+    (bridge as unknown as { load_state?: unknown }).load_state ?? (bridge as unknown as { restore_state?: unknown }).restore_state;
+  if (typeof load !== "function") return;
+  try {
+    load.call(bridge, bytes);
+  } catch (err) {
+    console.warn("[io.worker] NET_STACK load_state failed:", err);
+  }
+}
+
+const VM_SNAPSHOT_DEVICE_KIND_PREFIX_ID = "device.";
+
+function snapshotDeviceKindForWasm(kind: string): string {
+  // WASM snapshot free-function exports historically only understood `usb.uhci` and `device.<id>`.
+  // Use the numeric-id spelling when we can map it so new device kinds can roundtrip even when the
+  // wasm bindings haven't been updated yet.
+  const id = vmSnapshotDeviceKindToId(kind);
+  if (id === null) return kind;
+  return `${VM_SNAPSHOT_DEVICE_KIND_PREFIX_ID}${id >>> 0}`;
+}
+
+function normalizeRestoredDeviceKind(kind: string): string {
+  if (kind.startsWith(VM_SNAPSHOT_DEVICE_KIND_PREFIX_ID)) {
+    const id = vmSnapshotDeviceKindToId(kind);
+    if (id !== null) return vmSnapshotDeviceIdToKind(id);
+  }
+  return kind;
+}
 // Keep broker IDs from overlapping between multiple concurrent USB action sources (UHCI runtime,
 // harness panel, demo driver, etc). The demo uses 1_000_000_000 and the harness uses 2_000_000_000.
 const UHCI_RUNTIME_WEBUSB_ID_BASE = 3_000_000_000;
@@ -2213,6 +2289,7 @@ async function handleVmSnapshotSaveToOpfs(path: string, cpu: ArrayBuffer, mmu: A
     const ps2 = snapshotI8042DeviceState();
     const hda = snapshotAudioHdaDeviceState();
     const e1000 = snapshotE1000DeviceState();
+    const netStack = snapshotNetStackDeviceState();
 
     // Merge in any previously restored device blobs so unknown/unhandled device state survives a
     // restore → save cycle (forward compatibility).
@@ -2221,6 +2298,7 @@ async function handleVmSnapshotSaveToOpfs(path: string, cpu: ArrayBuffer, mmu: A
     if (ps2) freshDevices.push(ps2);
     if (hda) freshDevices.push(hda);
     if (e1000) freshDevices.push(e1000);
+    if (netStack) freshDevices.push(netStack);
 
     const freshKinds = new Set(freshDevices.map((d) => d.kind));
     const devices: Array<{ kind: string; bytes: Uint8Array }> = [];
@@ -2244,7 +2322,7 @@ async function handleVmSnapshotSaveToOpfs(path: string, cpu: ArrayBuffer, mmu: A
 
     if (saveExport.kind === "free-function") {
       // Build a JS-friendly device blob list; wasm-bindgen can accept this as `JsValue`.
-      const devicePayload = devices.map((d) => ({ kind: d.kind, bytes: d.bytes }));
+      const devicePayload = devices.map((d) => ({ kind: snapshotDeviceKindForWasm(d.kind), bytes: d.bytes }));
 
       // Always pass fresh Uint8Array views for the CPU state so callers can transfer the ArrayBuffer.
       const cpuBytes = new Uint8Array(cpu);
@@ -2312,57 +2390,34 @@ async function handleVmSnapshotRestoreFromOpfs(path: string): Promise<{
       const devicesRaw = Array.isArray(rec.devices) ? rec.devices : [];
       const devices: VmSnapshotDeviceBlob[] = [];
       const cachedDevices: Array<{ kind: string; bytes: Uint8Array }> = [];
+      let usbBytes: Uint8Array | null = null;
+      let i8042Bytes: Uint8Array | null = null;
+      let hdaBytes: Uint8Array | null = null;
+      let e1000Bytes: Uint8Array | null = null;
+      let netStackBytes: Uint8Array | null = null;
       for (const entry of devicesRaw) {
         if (!entry || typeof entry !== "object") continue;
         const e = entry as { kind?: unknown; bytes?: unknown };
         if (typeof e.kind !== "string") continue;
         if (!(e.bytes instanceof Uint8Array)) continue;
-        cachedDevices.push({ kind: e.kind, bytes: e.bytes });
-        devices.push({ kind: e.kind, bytes: copyU8ToArrayBuffer(e.bytes) });
+
+        const kind = normalizeRestoredDeviceKind(e.kind);
+        cachedDevices.push({ kind, bytes: e.bytes });
+        devices.push({ kind, bytes: copyU8ToArrayBuffer(e.bytes) });
+
+        if (kind === VM_SNAPSHOT_DEVICE_USB_KIND) usbBytes = e.bytes;
+        if (kind === VM_SNAPSHOT_DEVICE_I8042_KIND) i8042Bytes = e.bytes;
+        if (kind === VM_SNAPSHOT_DEVICE_AUDIO_HDA_KIND) hdaBytes = e.bytes;
+        if (kind === VM_SNAPSHOT_DEVICE_E1000_KIND) e1000Bytes = e.bytes;
+        if (kind === VM_SNAPSHOT_DEVICE_NET_STACK_KIND) netStackBytes = e.bytes;
       }
 
-      // Apply device state locally (IO worker owns USB + input/audio device instances).
-      const usbBlob = devicesRaw.find(
-        (entry): entry is { kind: string; bytes: Uint8Array } =>
-          !!entry &&
-          typeof (entry as { kind?: unknown }).kind === "string" &&
-          (entry as { kind: string }).kind === VM_SNAPSHOT_DEVICE_USB_KIND &&
-          (entry as { bytes?: unknown }).bytes instanceof Uint8Array,
-      );
-      const audioBlob = devicesRaw.find(
-        (entry): entry is { kind: string; bytes: Uint8Array } =>
-          !!entry &&
-          typeof (entry as { kind?: unknown }).kind === "string" &&
-          (entry as { kind: string }).kind === VM_SNAPSHOT_DEVICE_AUDIO_HDA_KIND &&
-          (entry as { bytes?: unknown }).bytes instanceof Uint8Array,
-      );
-      const e1000Blob = devicesRaw.find(
-        (entry): entry is { kind: string; bytes: Uint8Array } =>
-          !!entry &&
-          typeof (entry as { kind?: unknown }).kind === "string" &&
-          (entry as { kind: string }).kind === VM_SNAPSHOT_DEVICE_E1000_KIND &&
-          (entry as { bytes?: unknown }).bytes instanceof Uint8Array,
-      );
-      if (usbBlob) {
-        restoreUsbDeviceState(usbBlob.bytes);
-      }
-      if (audioBlob) {
-        restoreAudioHdaDeviceState(audioBlob.bytes);
-      }
-
-      const i8042Blob = devicesRaw.find(
-        (entry): entry is { kind: string; bytes: Uint8Array } =>
-          !!entry &&
-          typeof (entry as { kind?: unknown }).kind === "string" &&
-          (entry as { kind: string }).kind === VM_SNAPSHOT_DEVICE_I8042_KIND &&
-          (entry as { bytes?: unknown }).bytes instanceof Uint8Array,
-      );
-      if (i8042Blob) {
-        restoreI8042DeviceState(i8042Blob.bytes);
-      }
-      if (e1000Blob) {
-        restoreE1000DeviceState(e1000Blob.bytes);
-      }
+      // Apply device state locally when the device exists in this build.
+      if (usbBytes) restoreUsbDeviceState(usbBytes);
+      if (i8042Bytes) restoreI8042DeviceState(i8042Bytes);
+      if (hdaBytes) restoreAudioHdaDeviceState(hdaBytes);
+      if (e1000Bytes) restoreE1000DeviceState(e1000Bytes);
+      if (netStackBytes) restoreNetStackDeviceState(netStackBytes);
       snapshotRestoredDeviceBlobs = cachedDevices;
 
       return {
@@ -2388,6 +2443,7 @@ async function handleVmSnapshotRestoreFromOpfs(path: string): Promise<{
       let i8042Bytes: Uint8Array | null = null;
       let hdaBytes: Uint8Array | null = null;
       let e1000Bytes: Uint8Array | null = null;
+      let netStackBytes: Uint8Array | null = null;
       for (const entry of rec.devices) {
         if (!entry || typeof entry !== "object") {
           throw new Error(
@@ -2421,6 +2477,9 @@ async function handleVmSnapshotRestoreFromOpfs(path: string): Promise<{
         if (kind === VM_SNAPSHOT_DEVICE_E1000_KIND) {
           e1000Bytes = e.data;
         }
+        if (kind === VM_SNAPSHOT_DEVICE_NET_STACK_KIND) {
+          netStackBytes = e.data;
+        }
         cachedDevices.push({ kind, bytes: e.data });
         devices.push({ kind, bytes: copyU8ToArrayBuffer(e.data) });
       }
@@ -2436,6 +2495,9 @@ async function handleVmSnapshotRestoreFromOpfs(path: string): Promise<{
       }
       if (e1000Bytes) {
         restoreE1000DeviceState(e1000Bytes);
+      }
+      if (netStackBytes) {
+        restoreNetStackDeviceState(netStackBytes);
       }
 
       snapshotRestoredDeviceBlobs = cachedDevices;
