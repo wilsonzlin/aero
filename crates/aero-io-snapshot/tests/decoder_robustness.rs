@@ -40,3 +40,94 @@ fn snapshot_reader_rejects_excessive_field_count() {
     };
     assert_eq!(err, SnapshotError::InvalidFieldEncoding("too many fields"));
 }
+
+#[test]
+fn snapshot_reader_rejects_duplicate_field_tags() {
+    const DEVICE_ID: [u8; 4] = *b"TEST";
+
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(b"AERO");
+    bytes.extend_from_slice(&1u16.to_le_bytes()); // format version major
+    bytes.extend_from_slice(&0u16.to_le_bytes()); // format version minor
+    bytes.extend_from_slice(&DEVICE_ID);
+    bytes.extend_from_slice(&1u16.to_le_bytes()); // device version major
+    bytes.extend_from_slice(&0u16.to_le_bytes()); // device version minor
+
+    // Two identical tags (1) with empty payloads.
+    for _ in 0..2 {
+        bytes.extend_from_slice(&1u16.to_le_bytes());
+        bytes.extend_from_slice(&0u32.to_le_bytes());
+    }
+
+    let err = match SnapshotReader::parse(&bytes, DEVICE_ID) {
+        Ok(_) => panic!("expected SnapshotReader::parse to reject duplicate field tags"),
+        Err(err) => err,
+    };
+    assert_eq!(err, SnapshotError::DuplicateFieldTag(1));
+}
+
+#[test]
+fn snapshot_reader_rejects_invalid_magic() {
+    const DEVICE_ID: [u8; 4] = *b"TEST";
+
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(b"NOPE");
+    bytes.extend_from_slice(&1u16.to_le_bytes()); // format version major
+    bytes.extend_from_slice(&0u16.to_le_bytes()); // format version minor
+    bytes.extend_from_slice(&DEVICE_ID);
+    bytes.extend_from_slice(&1u16.to_le_bytes()); // device version major
+    bytes.extend_from_slice(&0u16.to_le_bytes()); // device version minor
+
+    let err = match SnapshotReader::parse(&bytes, DEVICE_ID) {
+        Ok(_) => panic!("expected SnapshotReader::parse to reject invalid magic"),
+        Err(err) => err,
+    };
+    assert_eq!(err, SnapshotError::InvalidMagic);
+}
+
+#[test]
+fn snapshot_reader_rejects_device_id_mismatch() {
+    const EXPECTED: [u8; 4] = *b"TEST";
+
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(b"AERO");
+    bytes.extend_from_slice(&1u16.to_le_bytes()); // format version major
+    bytes.extend_from_slice(&0u16.to_le_bytes()); // format version minor
+    bytes.extend_from_slice(b"NOPE"); // wrong device id
+    bytes.extend_from_slice(&1u16.to_le_bytes()); // device version major
+    bytes.extend_from_slice(&0u16.to_le_bytes()); // device version minor
+
+    let err = match SnapshotReader::parse(&bytes, EXPECTED) {
+        Ok(_) => panic!("expected SnapshotReader::parse to reject device id mismatch"),
+        Err(err) => err,
+    };
+    assert_eq!(
+        err,
+        SnapshotError::DeviceIdMismatch {
+            expected: EXPECTED,
+            found: *b"NOPE",
+        }
+    );
+}
+
+#[test]
+fn snapshot_reader_rejects_unsupported_format_major() {
+    const DEVICE_ID: [u8; 4] = *b"TEST";
+
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(b"AERO");
+    bytes.extend_from_slice(&2u16.to_le_bytes()); // format version major (unsupported)
+    bytes.extend_from_slice(&0u16.to_le_bytes()); // format version minor
+    bytes.extend_from_slice(&DEVICE_ID);
+    bytes.extend_from_slice(&1u16.to_le_bytes()); // device version major
+    bytes.extend_from_slice(&0u16.to_le_bytes()); // device version minor
+
+    let err = match SnapshotReader::parse(&bytes, DEVICE_ID) {
+        Ok(_) => panic!("expected SnapshotReader::parse to reject unsupported format major"),
+        Err(err) => err,
+    };
+    assert!(matches!(
+        err,
+        SnapshotError::UnsupportedFormatVersion { .. }
+    ));
+}
