@@ -10,6 +10,105 @@
 #define CM_RESOURCE_INTERRUPT_MESSAGE 0x0004
 #endif
 
+typedef struct _VIRTIOSND_EVENTQ_DRAIN_CONTEXT {
+    PVIRTIOSND_DEVICE_EXTENSION Dx;
+    ULONG Reposted;
+} VIRTIOSND_EVENTQ_DRAIN_CONTEXT, *PVIRTIOSND_EVENTQ_DRAIN_CONTEXT;
+
+static VOID VirtIoSndIntxDrainEventqUsed(
+    _In_ USHORT QueueIndex,
+    _In_opt_ void* Cookie,
+    _In_ UINT32 UsedLen,
+    _In_opt_ void* Context)
+{
+    PVIRTIOSND_EVENTQ_DRAIN_CONTEXT ctx;
+    PVIRTIOSND_DEVICE_EXTENSION dx;
+    ULONG_PTR poolBase;
+    ULONG_PTR poolEnd;
+    ULONG_PTR cookiePtr;
+    ULONG_PTR off;
+    VIRTIOSND_SG sg;
+    NTSTATUS status;
+
+    UNREFERENCED_PARAMETER(QueueIndex);
+
+    ctx = (PVIRTIOSND_EVENTQ_DRAIN_CONTEXT)Context;
+    if (ctx == NULL) {
+        return;
+    }
+
+    dx = ctx->Dx;
+    if (dx == NULL) {
+        return;
+    }
+
+    /*
+     * Contract v1 defines no event messages; ignore contents.
+     *
+     * Still drain used entries to avoid ring space leaks if a future device model
+     * starts emitting events (or if a buggy device completes event buffers).
+     */
+    if (Cookie == NULL) {
+        VIRTIOSND_TRACE_ERROR("eventq completion with NULL cookie (len=%lu)\n", (ULONG)UsedLen);
+        return;
+    }
+
+    if (dx->Removed) {
+        /*
+         * On surprise removal avoid MMIO accesses; do not repost/kick.
+         * Best-effort draining is still useful to keep queue state consistent.
+         */
+        return;
+    }
+
+    if (dx->EventqBufferPool.Va == NULL || dx->EventqBufferPool.DmaAddr == 0 || dx->EventqBufferPool.Size == 0) {
+        VIRTIOSND_TRACE_ERROR("eventq completion but buffer pool is not initialized (cookie=%p len=%lu)\n", Cookie, (ULONG)UsedLen);
+        return;
+    }
+
+    poolBase = (ULONG_PTR)dx->EventqBufferPool.Va;
+    poolEnd = poolBase + (ULONG_PTR)dx->EventqBufferPool.Size;
+    cookiePtr = (ULONG_PTR)Cookie;
+
+    if (cookiePtr < poolBase || cookiePtr >= poolEnd) {
+        VIRTIOSND_TRACE_ERROR("eventq completion cookie out of range (cookie=%p len=%lu)\n", Cookie, (ULONG)UsedLen);
+        return;
+    }
+
+    /* Ensure cookie points at the start of one of our fixed-size buffers. */
+    off = cookiePtr - poolBase;
+    if ((off % (ULONG_PTR)VIRTIOSND_EVENTQ_BUFFER_SIZE) != 0) {
+        VIRTIOSND_TRACE_ERROR("eventq completion cookie misaligned (cookie=%p len=%lu)\n", Cookie, (ULONG)UsedLen);
+        return;
+    }
+
+    if (off + (ULONG_PTR)VIRTIOSND_EVENTQ_BUFFER_SIZE > poolEnd - poolBase) {
+        VIRTIOSND_TRACE_ERROR("eventq completion cookie range overflow (cookie=%p len=%lu)\n", Cookie, (ULONG)UsedLen);
+        return;
+    }
+
+    if (UsedLen > (UINT32)VIRTIOSND_EVENTQ_BUFFER_SIZE) {
+        /* Device bug: used length should never exceed posted writable capacity. */
+        VIRTIOSND_TRACE_ERROR(
+            "eventq completion length too large: %lu > %u (cookie=%p)\n",
+            (ULONG)UsedLen,
+            (UINT)VIRTIOSND_EVENTQ_BUFFER_SIZE,
+            Cookie);
+    }
+
+    sg.addr = dx->EventqBufferPool.DmaAddr + (UINT64)off;
+    sg.len = (UINT32)VIRTIOSND_EVENTQ_BUFFER_SIZE;
+    sg.write = TRUE;
+
+    status = VirtioSndQueueSubmit(&dx->Queues[VIRTIOSND_QUEUE_EVENT], &sg, 1, Cookie);
+    if (!NT_SUCCESS(status)) {
+        VIRTIOSND_TRACE_ERROR("eventq repost failed: 0x%08X (cookie=%p)\n", (UINT)status, Cookie);
+        return;
+    }
+
+    ctx->Reposted++;
+}
+
 static BOOLEAN VirtIoSndIntxIsSharedInterrupt(_In_ const CM_PARTIAL_RESOURCE_DESCRIPTOR *Desc)
 {
     /*
@@ -61,6 +160,7 @@ static VOID VirtIoSndIntxQueueUsed(
 static VOID VirtIoSndIntxQueueWork(_Inout_ PVIRTIO_INTX Intx, _In_opt_ PVOID Cookie)
 {
     PVIRTIOSND_DEVICE_EXTENSION dx;
+    VIRTIOSND_EVENTQ_DRAIN_CONTEXT eventqDrain;
 
     UNREFERENCED_PARAMETER(Intx);
 
@@ -73,6 +173,13 @@ static VOID VirtIoSndIntxQueueWork(_Inout_ PVIRTIO_INTX Intx, _In_opt_ PVOID Coo
      * INTx doesn't identify which queue fired; drain the queues that may have
      * in-flight cookies.
      */
+    eventqDrain.Dx = dx;
+    eventqDrain.Reposted = 0;
+    VirtioSndQueueSplitDrainUsed(&dx->QueueSplit[VIRTIOSND_QUEUE_EVENT], VirtIoSndIntxDrainEventqUsed, &eventqDrain);
+    if (eventqDrain.Reposted != 0 && !dx->Removed) {
+        VirtioSndQueueKick(&dx->Queues[VIRTIOSND_QUEUE_EVENT]);
+    }
+
     VirtioSndQueueSplitDrainUsed(&dx->QueueSplit[VIRTIOSND_QUEUE_CONTROL], VirtIoSndIntxQueueUsed, dx);
 
     /*

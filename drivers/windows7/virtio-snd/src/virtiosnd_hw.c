@@ -375,6 +375,96 @@ static NTSTATUS VirtIoSndValidateDeviceCfg(_Inout_ PVIRTIOSND_DEVICE_EXTENSION D
     return STATUS_SUCCESS;
 }
 
+static VOID VirtIoSndEventqUninit(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx)
+{
+    if (Dx == NULL) {
+        return;
+    }
+
+    Dx->EventqBufferCount = 0;
+    VirtIoSndFreeCommonBuffer(&Dx->DmaCtx, &Dx->EventqBufferPool);
+    Dx->EventqBufferCount = 0;
+}
+
+/*
+ * Best-effort: virtio-snd contract v1 does not define event messages, so failure
+ * to allocate/post eventq buffers must not prevent audio streaming.
+ */
+static VOID VirtIoSndEventqInitBestEffort(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx)
+{
+    NTSTATUS status;
+    ULONG desired;
+    ULONG posted;
+    USHORT qsz;
+    SIZE_T totalBytes;
+    ULONG i;
+    VIRTIOSND_QUEUE* q;
+
+    if (Dx == NULL) {
+        return;
+    }
+
+    VirtIoSndEventqUninit(Dx);
+
+    q = &Dx->Queues[VIRTIOSND_QUEUE_EVENT];
+    if (q->Ops == NULL || q->Ctx == NULL) {
+        return;
+    }
+
+    desired = VIRTIOSND_EVENTQ_BUFFER_COUNT;
+    qsz = VirtioSndQueueGetSize(q);
+    if (qsz != 0 && desired > (ULONG)qsz) {
+        desired = (ULONG)qsz;
+    }
+
+    if (desired == 0) {
+        return;
+    }
+
+    totalBytes = (SIZE_T)desired * (SIZE_T)VIRTIOSND_EVENTQ_BUFFER_SIZE;
+    status = VirtIoSndAllocCommonBuffer(&Dx->DmaCtx, totalBytes, FALSE, &Dx->EventqBufferPool);
+    if (!NT_SUCCESS(status)) {
+        VIRTIOSND_TRACE_ERROR("eventq: failed to allocate buffer pool (%Iu bytes): 0x%08X\n", totalBytes, (UINT)status);
+        VirtIoSndEventqUninit(Dx);
+        return;
+    }
+
+    /*
+     * This DMA buffer is shared with the (potentially untrusted) device; clear
+     * it to avoid leaking stale kernel memory.
+     */
+    RtlZeroMemory(Dx->EventqBufferPool.Va, Dx->EventqBufferPool.Size);
+    Dx->EventqBufferCount = desired;
+
+    posted = 0;
+    for (i = 0; i < desired; ++i) {
+        VIRTIOSND_SG sg;
+        PUCHAR va;
+        UINT64 dma;
+
+        va = (PUCHAR)Dx->EventqBufferPool.Va + ((SIZE_T)i * (SIZE_T)VIRTIOSND_EVENTQ_BUFFER_SIZE);
+        dma = Dx->EventqBufferPool.DmaAddr + ((UINT64)i * (UINT64)VIRTIOSND_EVENTQ_BUFFER_SIZE);
+
+        sg.addr = dma;
+        sg.len = (UINT32)VIRTIOSND_EVENTQ_BUFFER_SIZE;
+        sg.write = TRUE; /* device writes event messages */
+
+        status = VirtioSndQueueSubmit(q, &sg, 1, va);
+        if (!NT_SUCCESS(status)) {
+            VIRTIOSND_TRACE_ERROR("eventq: failed to post buffer %lu/%lu: 0x%08X\n", i, desired, (UINT)status);
+            break;
+        }
+        posted++;
+    }
+
+    if (posted == 0) {
+        VirtIoSndEventqUninit(Dx);
+        return;
+    }
+
+    VirtioSndQueueKick(q);
+}
+
 static NTSTATUS VirtIoSndSetupQueues(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx)
 {
     NTSTATUS status;
@@ -581,6 +671,8 @@ VOID VirtIoSndStopHardware(PVIRTIOSND_DEVICE_EXTENSION Dx)
     (VOID)InterlockedExchange(&Dx->RxEngineInitialized, 0);
     VirtIoSndRxUninit(&Dx->Rx);
 
+    VirtIoSndEventqUninit(Dx);
+
     VirtIoSndDestroyQueues(Dx);
 
     VirtIoSndDmaUninit(&Dx->DmaCtx);
@@ -773,6 +865,8 @@ NTSTATUS VirtIoSndStartHardware(
         VIRTIOSND_TRACE_ERROR("queue setup failed: 0x%08X\n", (UINT)status);
         goto fail;
     }
+
+    VirtIoSndEventqInitBestEffort(Dx);
 
     /* Initialize the protocol engines now that queues are available. */
     VirtioSndCtrlInit(&Dx->Control, &Dx->DmaCtx, &Dx->Queues[VIRTIOSND_QUEUE_CONTROL]);
