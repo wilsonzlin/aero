@@ -17,6 +17,7 @@ and the corresponding tests:
 
 - `crates/devices/tests/win7_storage_topology.rs` (PCI profile constants + INTx routing)
 - `crates/aero-pc-platform/tests/pc_platform_win7_storage.rs` (platform integration wiring)
+- `crates/aero-pc-platform/tests/windows7_storage_topology.rs` (end-to-end AHCI + ATAPI read tests)
 
 ---
 
@@ -41,6 +42,9 @@ compatibility-first defaults, keep NVMe disabled unless explicitly opted into by
 Implementation note (Rust): `aero_pc_platform::PcPlatform::new_with_win7_storage(...)` is a
 convenience constructor that enables this controller set at the canonical BDFs for integration
 tests and bring-up.
+
+`aero_pc_platform::PcPlatform::new_with_windows7_storage_topology(...)` additionally attaches an
+AHCI HDD (port 0) and an IDE/ATAPI CD-ROM (secondary master) so tests can validate real I/O.
 
 ---
 
@@ -88,6 +92,38 @@ Note: `IDE_PIIX3` is PCI function `00:01.1`. For OS enumeration to reliably disc
 platform should also expose the PIIX3 ISA bridge function (`aero_devices::pci::profile::ISA_PIIX3`
 at `00:01.0`) with the multi-function bit set in its header type (see
 `docs/pci-device-compatibility.md`).
+
+---
+
+## Legacy IDE compatibility expectations (normative)
+
+Even though the IDE controller is a PCI function (`00:01.1`), the canonical topology exposes it in
+**legacy compatibility mode** so classic BIOS/boot-loader software and Windows 7’s IDE/ATAPI stack
+can talk to it via the fixed ISA-compatible I/O port map.
+
+### Legacy port map (compat mode)
+
+| Channel | Command block | Control block (alt status/devctl) | IRQ |
+|---------|---------------|------------------------------------|-----|
+| Primary | `0x1F0..=0x1F7` | `0x3F6..=0x3F7` | IRQ14 |
+| Secondary | `0x170..=0x177` | `0x376..=0x377` | IRQ15 |
+
+### PCI BAR expectations (PIIX3 IDE)
+
+| BAR | Meaning | Expected base |
+|-----|---------|---------------|
+| BAR0 | Primary command block | `0x1F0` |
+| BAR1 | Primary control block base (alt status/devctl at `+2`) | `0x3F4` |
+| BAR2 | Secondary command block | `0x170` |
+| BAR3 | Secondary control block base (alt status/devctl at `+2`) | `0x374` |
+| BAR4 | Bus Master IDE (BMIDE), 16 bytes | default `0xC000` (relocatable) |
+
+Note: `BAR1`/`BAR3` use the PCI IDE convention where the **alt status/devctl port** is at
+`base + 2` (hence `0x3F4 + 2 = 0x3F6`, `0x374 + 2 = 0x376`).
+
+### AHCI MMIO (ABAR) expectation
+
+The ICH9 AHCI controller exposes the ABAR register block via **BAR5** (MMIO), size `0x2000`.
 
 ---
 

@@ -52,6 +52,9 @@ pub use firmware_pci::{PciConfigPortsBiosAdapter, SharedPciConfigPortsBiosAdapte
 mod pci_io_router;
 pub use pci_io_router::{PciIoBarHandler, PciIoBarRouter};
 
+mod windows7_storage;
+pub use windows7_storage::Windows7StorageTopologyConfig;
+
 /// Base physical address of the PCIe ECAM ("MMCONFIG") window.
 ///
 /// This follows the QEMU Q35 convention (256MiB window at 0xB000_0000 covering buses 0..=255).
@@ -1026,6 +1029,23 @@ impl PcPlatform {
             },
             DEFAULT_DIRTY_PAGE_SIZE,
         )
+    }
+
+    /// Constructs the canonical Windows 7 boot/install storage topology and attaches media.
+    ///
+    /// Topology (fixed):
+    /// - AHCI HDD on `00:02.0` (port 0)
+    /// - IDE/ATAPI CD-ROM on `00:01.1` (secondary channel, master drive)
+    ///
+    /// For the normative contract, see: `docs/05-storage-topology-win7.md`.
+    pub fn new_with_windows7_storage_topology(
+        ram_size: usize,
+        storage: Windows7StorageTopologyConfig,
+    ) -> Self {
+        let mut pc = Self::new_with_win7_storage(ram_size);
+        pc.attach_ahci_drive_port0(storage.hdd);
+        pc.attach_ide_secondary_master_atapi(storage.cdrom);
+        pc
     }
 
     pub fn new_with_e1000(ram_size: usize) -> Self {
