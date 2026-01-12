@@ -2,7 +2,7 @@ use crate::clock::Clock;
 use crate::ioapic::GsiSink;
 use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
 use aero_io_snapshot::io::state::{
-    IoSnapshot, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
+    IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
 };
 
 pub const HPET_MMIO_BASE: u64 = 0xFED0_0000;
@@ -217,6 +217,13 @@ impl<C: Clock> IoSnapshot for Hpet<C> {
         if let Some(buf) = r.bytes(TAG_TIMERS) {
             let mut d = Decoder::new(buf);
             let count = d.u32()? as usize;
+            // HPET exposes up to 32 timers (cap register encodes "num_timers - 1" in 5 bits).
+            // Reject snapshots that claim an excessive timer count to avoid unbounded work /
+            // allocations on malformed input.
+            const MAX_SNAPSHOT_TIMERS: usize = 32;
+            if count > MAX_SNAPSHOT_TIMERS {
+                return Err(SnapshotError::InvalidFieldEncoding("timers"));
+            }
             for idx in 0..count {
                 let config = d.u64()?;
                 let comparator = d.u64()?;

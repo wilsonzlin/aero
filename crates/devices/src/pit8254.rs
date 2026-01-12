@@ -10,7 +10,7 @@
 
 use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
 use aero_io_snapshot::io::state::{
-    IoSnapshot, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
+    IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
 };
 use aero_platform::interrupts::{InterruptInput, PlatformInterrupts};
 use aero_platform::io::{IoPortBus, PortIoDevice};
@@ -598,6 +598,13 @@ impl IoSnapshot for Pit8254 {
         if let Some(buf) = r.bytes(TAG_CHANNELS) {
             let mut d = Decoder::new(buf);
             let count = d.u32()? as usize;
+            // The PIT has 3 channels in real hardware, but the snapshot format is forward
+            // compatible by encoding the channel count. Reject obviously excessive values to
+            // avoid unbounded decode work on malformed snapshots.
+            const MAX_SNAPSHOT_CHANNELS: usize = 32;
+            if count > MAX_SNAPSHOT_CHANNELS {
+                return Err(SnapshotError::InvalidFieldEncoding("channels"));
+            }
             for idx in 0..count {
                 let mode = d.u8()?;
                 let bcd = d.bool()?;
