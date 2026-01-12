@@ -369,14 +369,15 @@ bash ./scripts/safe-run.sh cargo test -p aero-interrupts --locked
 bash ./scripts/safe-run.sh cargo test -p aero-timers --locked
 
 # Boot tests
+# Note: these integration tests live in the workspace root crate (`aero`) under `tests/`.
 # Note: the first `cargo test` in a clean/contended agent sandbox can take >10 minutes.
 # If you hit safe-run timeouts during compilation, bump the timeout via AERO_TIMEOUT.
-AERO_TIMEOUT=1200 bash ./scripts/safe-run.sh cargo test -p emulator --test boot_sector --locked
-AERO_TIMEOUT=1200 bash ./scripts/safe-run.sh cargo test -p emulator --test freedos_boot --locked
+AERO_TIMEOUT=1200 bash ./scripts/safe-run.sh cargo test -p aero --test boot_sector --locked
+AERO_TIMEOUT=1200 bash ./scripts/safe-run.sh cargo test -p aero --test freedos_boot --locked
 
 # Full Windows 7 boot (local only; requires a user-supplied Windows 7 disk image)
 bash ./scripts/prepare-windows7.sh
-AERO_TIMEOUT=1200 bash ./scripts/safe-run.sh cargo test -p emulator --test windows7_boot --locked -- --ignored
+AERO_TIMEOUT=1200 bash ./scripts/safe-run.sh cargo test -p aero --test windows7_boot --locked -- --ignored
 ```
 
 ---
