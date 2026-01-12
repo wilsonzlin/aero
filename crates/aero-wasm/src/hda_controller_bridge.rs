@@ -274,6 +274,7 @@ impl HdaControllerBridge {
 mod tests {
     use super::*;
 
+    use aero_audio::mem::MemoryAccess;
     use wasm_bindgen_test::wasm_bindgen_test;
 
     #[wasm_bindgen_test]
