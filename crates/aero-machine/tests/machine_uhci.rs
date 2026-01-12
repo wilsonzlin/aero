@@ -191,3 +191,67 @@ fn uhci_tick_remainder_roundtrips_through_snapshot_restore() {
     let after_tick = restored.io_read(base_restored + regs::REG_FRNUM, 2) as u16;
     assert_eq!(after_tick, (before.wrapping_add(1)) & 0x07ff);
 }
+
+#[test]
+fn uhci_snapshot_restore_roundtrips_controller_state() {
+    let cfg = MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_uhci: true,
+        // Keep the machine minimal/deterministic for this snapshot test.
+        enable_vga: false,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        enable_e1000: false,
+        ..Default::default()
+    };
+
+    let mut m = Machine::new(cfg).unwrap();
+
+    let base = {
+        let pci_cfg = m
+            .pci_config_ports()
+            .expect("pc platform should expose pci_cfg");
+        let mut pci_cfg = pci_cfg.borrow_mut();
+        let cfg = pci_cfg
+            .bus_mut()
+            .device_config(USB_UHCI_PIIX3.bdf)
+            .expect("UHCI PCI function should exist");
+        let bar4_base = cfg.bar_range(4).map(|range| range.base).unwrap_or(0);
+        u16::try_from(bar4_base).expect("UHCI BAR4 base should fit in u16")
+    };
+
+    // Start the controller and advance a handful of frames.
+    m.io_write(base + regs::REG_USBCMD, 2, u32::from(regs::USBCMD_RS));
+    let frnum_start = m.io_read(base + regs::REG_FRNUM, 2) as u16;
+    for _ in 0..5 {
+        m.tick_platform(1_000_000);
+    }
+    let frnum_before = m.io_read(base + regs::REG_FRNUM, 2) as u16;
+    assert_eq!(frnum_before, (frnum_start.wrapping_add(5)) & 0x07ff);
+
+    let snap = m.take_snapshot_full().expect("take_snapshot_full");
+
+    // Mutate state after snapshot so we can observe restoration. Tick 1.5ms so we advance a full
+    // frame and leave a 0.5ms remainder in the machine.
+    m.tick_platform(1_500_000);
+    let frnum_mutated = m.io_read(base + regs::REG_FRNUM, 2) as u16;
+    assert_eq!(frnum_mutated, (frnum_before.wrapping_add(1)) & 0x07ff);
+
+    m.restore_snapshot_bytes(&snap).expect("restore_snapshot");
+
+    let frnum_restored = m.io_read(base + regs::REG_FRNUM, 2) as u16;
+    assert_eq!(frnum_restored, frnum_before);
+
+    // Ensure snapshot restore does not preserve stale host-side sub-ms UHCI tick remainder.
+    m.tick_platform(500_000);
+    let frnum_after_half_ms = m.io_read(base + regs::REG_FRNUM, 2) as u16;
+    assert_eq!(frnum_after_half_ms, frnum_before);
+
+    // Ticking should continue from the restored value.
+    m.tick_platform(500_000);
+    let frnum_after = m.io_read(base + regs::REG_FRNUM, 2) as u16;
+    assert_eq!(frnum_after, frnum_mutated);
+}
