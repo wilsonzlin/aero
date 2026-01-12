@@ -201,7 +201,8 @@ impl AeroGpuLegacyPciDevice {
         );
 
         // BAR0 (MMIO regs), non-prefetchable 32-bit.
-        config_space.set_u32(0x10, bar0 & 0xffff_fff0);
+        let bar0 = bar0 & !(AEROGPU_LEGACY_BAR0_SIZE_BYTES as u32 - 1) & 0xffff_fff0;
+        config_space.set_u32(0x10, bar0);
 
         // Interrupt pin INTA#.
         config_space.write(0x3d, 1, 1);
@@ -498,20 +499,29 @@ impl AeroGpuLegacyPciDevice {
 
 impl PciDevice for AeroGpuLegacyPciDevice {
     fn config_read(&self, offset: u16, size: usize) -> u32 {
-        if offset == 0x10 && size == 4 && self.bar0_probe {
-            return (!(AEROGPU_LEGACY_BAR0_SIZE_BYTES as u32 - 1)) & 0xffff_fff0;
+        if offset == 0x10 && size == 4 {
+            return if self.bar0_probe {
+                (!(AEROGPU_LEGACY_BAR0_SIZE_BYTES as u32 - 1)) & 0xffff_fff0
+            } else {
+                self.bar0
+            };
         }
         self.config.read(offset, size)
     }
 
     fn config_write(&mut self, offset: u16, size: usize, value: u32) {
         if offset == 0x10 && size == 4 {
+            let addr_mask = !(AEROGPU_LEGACY_BAR0_SIZE_BYTES as u32 - 1) & 0xffff_fff0;
             if value == 0xffff_ffff {
                 self.bar0_probe = true;
+                self.bar0 = 0;
+                self.config.write(offset, size, 0);
             } else {
                 self.bar0_probe = false;
-                self.bar0 = value & 0xffff_fff0;
+                self.bar0 = value & addr_mask;
+                self.config.write(offset, size, self.bar0);
             }
+            return;
         }
         self.config.write(offset, size, value);
     }

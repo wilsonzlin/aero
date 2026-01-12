@@ -40,7 +40,7 @@ impl HdaPciDevice {
         config.set_u16(0x2e, 0x2668);
 
         // BAR0: Non-prefetchable 32-bit MMIO.
-        let bar0 = bar0 & 0xffff_fff0;
+        let bar0 = bar0 & !(Self::MMIO_BAR_SIZE - 1) & 0xffff_fff0;
         config.set_u32(0x10, bar0);
 
         // Interrupt pin INTA#.
@@ -108,7 +108,7 @@ impl PciDevice for HdaPciDevice {
                 self.bar0 = 0;
             } else {
                 self.bar0_probe = false;
-                self.bar0 = value & 0xffff_fff0;
+                self.bar0 = value & !(Self::MMIO_BAR_SIZE - 1) & 0xffff_fff0;
             }
             self.config.write(offset, size, self.bar0);
             return;
@@ -163,7 +163,7 @@ mod tests {
         );
 
         dev.config_write(0x10, 4, 0xdead_beef);
-        assert_eq!(dev.config_read(0x10, 4), 0xdead_bee0);
+        assert_eq!(dev.config_read(0x10, 4), 0xdead_8000);
     }
 
     #[test]

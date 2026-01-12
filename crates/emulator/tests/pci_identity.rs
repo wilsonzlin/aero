@@ -115,6 +115,10 @@ fn ahci_pci_config_matches_canonical_profile() {
     dev.config_write(abar_cfg_off, 4, 0xffff_ffff);
     let mask = dev.config_read(abar_cfg_off, 4);
     assert_eq!(mask, !(AHCI_ABAR_SIZE_U32 - 1) & 0xffff_fff0);
+
+    // BAR bases must be masked by the BAR size alignment (not just 16 bytes).
+    dev.config_write(abar_cfg_off, 4, 0xdead_beef);
+    assert_eq!(dev.config_read(abar_cfg_off, 4), 0xdead_beef & mask);
 }
 
 #[test]
@@ -131,6 +135,10 @@ fn hda_pci_config_matches_canonical_profile() {
         !(HdaPciDevice::MMIO_BAR_SIZE - 1) & 0xffff_fff0,
         "hda BAR0 size probe mismatch"
     );
+
+    // BAR bases must be masked by the BAR size alignment (not just 16 bytes).
+    dev.config_write(0x10, 4, 0xdead_beef);
+    assert_eq!(dev.config_read(0x10, 4), 0xdead_beef & mask);
 }
 
 #[test]
@@ -158,6 +166,17 @@ fn nvme_pci_config_matches_canonical_profile() {
         (!(NvmeController::BAR0_SIZE as u32 - 1) & 0xffff_fff0) | 0x4
     );
     assert_eq!(mask_hi, 0xffff_ffff);
+
+    // BAR base writes must be masked to the BAR size and preserve the read-only 64-bit indicator
+    // bit (0x4) regardless of the guest-written value.
+    let bar0_flags = mask_lo & 0xf;
+    let bar0_addr_mask = mask_lo & !0xf;
+    dev.config_write(0x10, 4, 0xdead_bee0);
+    assert_eq!(
+        dev.config_read(0x10, 4),
+        (0xdead_bee0 & bar0_addr_mask) | bar0_flags
+    );
+    assert_eq!(dev.config_read(0x14, 4), 0);
 }
 
 #[test]

@@ -727,7 +727,9 @@ impl NvmePciDevice {
         config.write(0x0b, 1, 0x01);
 
         // BAR0/BAR1: 64-bit non-prefetchable MMIO.
-        config.set_u32(0x10, (bar0 as u32 & 0xffff_fff0) | 0x4);
+        let bar0_addr_mask_lo = !(NvmeController::BAR0_SIZE as u32 - 1) & 0xffff_fff0;
+        let bar0 = (bar0 & 0xffff_ffff_0000_0000) | (bar0 & u64::from(bar0_addr_mask_lo));
+        config.set_u32(0x10, (bar0 as u32 & bar0_addr_mask_lo) | 0x4);
         config.set_u32(0x14, (bar0 >> 32) as u32);
         config.write(0x3d, 1, 1);
 
@@ -759,10 +761,11 @@ impl NvmePciDevice {
 impl PciDevice for NvmePciDevice {
     fn config_read(&self, offset: u16, size: usize) -> u32 {
         if offset == 0x10 && size == 4 {
+            let addr_mask_lo = !(NvmeController::BAR0_SIZE as u32 - 1) & 0xffff_fff0;
             return if self.bar0_probe {
-                (!(NvmeController::BAR0_SIZE as u32 - 1) & 0xffff_fff0) | 0x4
+                addr_mask_lo | 0x4
             } else {
-                (self.bar0 as u32 & 0xffff_fff0) | 0x4
+                (self.bar0 as u32 & addr_mask_lo) | 0x4
             };
         }
         if offset == 0x14 && size == 4 {
@@ -787,7 +790,8 @@ impl PciDevice for NvmePciDevice {
             }
 
             self.bar0_probe = false;
-            let addr_lo = (value & 0xffff_fff0) as u64;
+            let addr_mask_lo = !(NvmeController::BAR0_SIZE as u32 - 1) & 0xffff_fff0;
+            let addr_lo = (value & addr_mask_lo) as u64;
             self.bar0 = (self.bar0 & 0xffff_ffff_0000_0000) | addr_lo;
             self.config.write(offset, size, (addr_lo as u32) | 0x4);
             self.update_deferred_processing(prev_command);

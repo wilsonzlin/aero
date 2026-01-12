@@ -103,6 +103,22 @@ fn aerogpu_abi_constants_match_aero_protocol() {
 }
 
 #[test]
+fn aerogpu_pci_bar0_is_masked_to_bar_size_alignment() {
+    let mut dev = AeroGpuPciDevice::new(AeroGpuDeviceConfig::default(), 0);
+
+    dev.config_write(0x10, 4, 0xffff_ffff);
+    let mask = dev.config_read(0x10, 4);
+    assert_eq!(
+        mask,
+        (!(emu::AEROGPU_PCI_BAR0_SIZE_BYTES as u32 - 1)) & 0xffff_fff0
+    );
+
+    dev.config_write(0x10, 4, 0xdead_beef);
+    assert_eq!(dev.config_read(0x10, 4), 0xdead_beef & mask);
+    assert_eq!(dev.bar0, 0xdead_beef & mask);
+}
+
+#[test]
 fn aerogpu_pci_config_space_uses_protocol_identity() {
     let dev = AeroGpuPciDevice::new(AeroGpuDeviceConfig::default(), 0);
 
