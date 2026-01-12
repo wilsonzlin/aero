@@ -63,6 +63,26 @@ impl IoPortBus {
         }
     }
 
+    /// Unregister a range-mapped device previously registered via [`Self::register_range`].
+    ///
+    /// Returns the removed range device if a range exactly matching `(start, len)` exists.
+    pub fn unregister_range_device(
+        &mut self,
+        start: u16,
+        len: u16,
+    ) -> Option<Box<dyn PortIoDevice>> {
+        if len == 0 {
+            return None;
+        }
+
+        let idx = self.ranges.partition_point(|r| r.start < start);
+        let cand = self.ranges.get(idx)?;
+        if cand.start != start || cand.len != len {
+            return None;
+        }
+        Some(self.ranges.remove(idx).dev)
+    }
+
     /// Register a device for a contiguous range of I/O ports.
     ///
     /// The provided factory is invoked once per port. It can be used to build
@@ -335,5 +355,83 @@ mod tests {
         assert!(bus.unregister(BASE2).is_some());
         assert_eq!(bus.read(BASE2, 4), 0xFFFF_FFFF);
         assert_eq!(bus.read(BASE2.wrapping_add(1), 4), 0xDEAD_BEEF + 1);
+    }
+
+    #[derive(Debug)]
+    struct SharedStateRange {
+        state: Rc<RefCell<SharedState>>,
+        base: u16,
+        len: u16,
+    }
+
+    impl PortIoDevice for SharedStateRange {
+        fn read(&mut self, port: u16, size: u8) -> u32 {
+            debug_assert_eq!(size, 4);
+            let offset = port.wrapping_sub(self.base);
+            debug_assert!(offset < self.len);
+            let state = self.state.borrow();
+            state.value.wrapping_add(u32::from(offset))
+        }
+
+        fn write(&mut self, port: u16, size: u8, value: u32) {
+            debug_assert_eq!(size, 4);
+            let offset = port.wrapping_sub(self.base);
+            debug_assert!(offset < self.len);
+            let _ = offset;
+            self.state.borrow_mut().value = value;
+        }
+    }
+
+    #[test]
+    fn unregister_range_device_allows_clean_remap_of_range_mapping() {
+        let mut bus = IoPortBus::new();
+
+        const LEN: u16 = 4;
+        const BASE1: u16 = 0x1000;
+        const BASE2: u16 = 0x2000;
+
+        let state = Rc::new(RefCell::new(SharedState::default()));
+
+        bus.register_range(
+            BASE1,
+            LEN,
+            Box::new(SharedStateRange {
+                state: state.clone(),
+                base: BASE1,
+                len: LEN,
+            }),
+        );
+
+        for off in 0..LEN {
+            let port = BASE1.wrapping_add(off);
+            bus.write(port, 4, 0x1234_0000);
+            assert_eq!(bus.read(port, 4), 0x1234_0000 + u32::from(off));
+        }
+
+        // Unregister the range mapping.
+        assert!(bus.unregister_range_device(BASE1, LEN).is_some());
+        for off in 0..LEN {
+            let port = BASE1.wrapping_add(off);
+            assert_eq!(bus.read(port, 4), 0xFFFF_FFFF);
+        }
+
+        // Re-register at a new base and ensure the old base stays unmapped.
+        bus.register_range(
+            BASE2,
+            LEN,
+            Box::new(SharedStateRange {
+                state: state.clone(),
+                base: BASE2,
+                len: LEN,
+            }),
+        );
+
+        bus.write(BASE2, 4, 0xDEAD_BEEF);
+        for off in 0..LEN {
+            let port = BASE2.wrapping_add(off);
+            assert_eq!(bus.read(port, 4), 0xDEAD_BEEF + u32::from(off));
+            let old = BASE1.wrapping_add(off);
+            assert_eq!(bus.read(old, 4), 0xFFFF_FFFF);
+        }
     }
 }
