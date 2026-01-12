@@ -44,8 +44,11 @@ namespace {
 
 using namespace aerogpu::d3d10_11;
 
-// Compile-time sanity: avoid `sizeof()` assertions since WDKs can add fields, but
-// ensure the core FL10_0 entrypoints we rely on exist.
+// Compile-time sanity: keep local checks to "member exists" only.
+//
+// ABI-critical size/offset conformance checks (struct layout + x86 export
+// decoration) are handled separately by `aerogpu_d3d10_11_wdk_abi_asserts.h`
+// when building against real WDK headers.
 static_assert(std::is_member_object_pointer_v<decltype(&D3D11DDI_DEVICEFUNCS::pfnCreateResource)>,
               "Expected D3D11DDI_DEVICEFUNCS::pfnCreateResource");
 static_assert(std::is_member_object_pointer_v<decltype(&D3D11DDI_DEVICECONTEXTFUNCS::pfnDraw)>,
