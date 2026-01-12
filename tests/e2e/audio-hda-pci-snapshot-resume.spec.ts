@@ -396,6 +396,20 @@ test("IO-worker HDA PCI audio does not fast-forward after worker snapshot restor
     { timeout: 60_000 },
   );
 
+  // Confirm the AudioWorklet resumes consuming frames after restore (read index advances).
+  await page.waitForFunction(
+    (baselineRead) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const out = (globalThis as any).__aeroAudioOutputHdaPciDevice;
+      if (!out?.enabled) return false;
+      const ring = out.ringBuffer as { readIndex: Uint32Array };
+      const read = Atomics.load(ring.readIndex, 0) >>> 0;
+      return ((read - (baselineRead as number)) >>> 0) > 0;
+    },
+    afterRestore!.read,
+    { timeout: 20_000 },
+  );
+
   // Ensure the IO-worker HDA device is producing actual (non-silent) samples after restore.
   await waitForAudioOutputNonSilent(page, "__aeroAudioOutputHdaPciDevice", { threshold: 0.01 });
 

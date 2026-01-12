@@ -185,10 +185,12 @@ Note: the CPU worker continuously publishes a shared framebuffer demo into guest
 `CPU_WORKER_DEMO_FRAMEBUFFER_OFFSET_BYTES` / `DEMO_FB_OFFSET`). Any audio harness that uses fixed guest-physical scratch buffers
 (CORB/RIRB/BDL/PCM) must keep them disjoint from those regions, otherwise the framebuffer publish loop will corrupt device state
 and cause flaky tests.
-- **E2E test**: `tests/e2e/audio-worklet-hda-pci-device.spec.ts` asserts that:
-  - ring read + write indices advance,
-  - samples are **non-silent** (not just index movement),
-  - underruns/overruns stay bounded.
+- **E2E tests**:
+  - `tests/e2e/audio-worklet-hda-pci-device.spec.ts` asserts that:
+    - ring read + write indices advance,
+    - samples are **non-silent** (not just index movement),
+    - underruns/overruns stay bounded.
+  - `tests/e2e/audio-hda-pci-snapshot-resume.spec.ts` asserts that playback does not burst/fast-forward after snapshot restore.
 
 ---
 
