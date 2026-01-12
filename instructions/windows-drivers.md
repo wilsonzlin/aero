@@ -64,6 +64,8 @@ These drivers run **inside the guest Windows 7** and communicate with the emulat
 
 - [`docs/16-windows7-driver-build-and-signing.md`](../docs/16-windows7-driver-build-and-signing.md) — Build toolchain
 - [`docs/16-driver-packaging-and-signing.md`](../docs/16-driver-packaging-and-signing.md) — Packaging and catalogs
+- [`drivers/README.md`](../drivers/README.md) — What CI actually ships (artifact names, release workflow, Guest Tools media)
+- [`docs/virtio-windows-drivers.md`](../docs/virtio-windows-drivers.md) — Virtio driver packaging options (in-tree vs virtio-win)
 - [`docs/windows7-driver-troubleshooting.md`](../docs/windows7-driver-troubleshooting.md) — Debugging tips
 - [`docs/16-aerogpu-vga-vesa-compat.md`](../docs/16-aerogpu-vga-vesa-compat.md) — AeroGPU VGA compat
 - [`drivers/aerogpu/README.md`](../drivers/aerogpu/README.md) — AeroGPU build/CI entrypoint + key docs
@@ -103,6 +105,7 @@ These checks exist specifically to prevent “driver installs but doesn’t bind
 - Win7 toolchain smoke (WDK provisioning + `Inf2Cat /os:7_X86,7_X64`): [`.github/workflows/toolchain-win7-smoke.yml`](../.github/workflows/toolchain-win7-smoke.yml)
 - virtio-win packaging smoke tests (optional flow, upstream virtio-win bundles): [`.github/workflows/virtio-win-packaging-smoke.yml`](../.github/workflows/virtio-win-packaging-smoke.yml)
 - Sample virtio driver ISO build + smoke tests: [`.github/workflows/virtio-driver-iso.yml`](../.github/workflows/virtio-driver-iso.yml)
+- Tagged release pipeline (publishes signed driver bundles + Guest Tools as GitHub Release assets): [`.github/workflows/release-drivers-win7.yml`](../.github/workflows/release-drivers-win7.yml)
 
 Local equivalents for fast iteration:
 
