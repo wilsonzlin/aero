@@ -1251,7 +1251,7 @@ mod tests {
             channels: 4,
         };
         encode_mono_f32_to_pcm_into(&[0.25], fmt_4ch, &mut out);
-        assert_eq!(out.len(), 2 * 4);
+        assert_eq!(out.len(), fmt_4ch.bytes_per_frame());
         let ch0 = i16::from_le_bytes([out[0], out[1]]);
         let ch1 = i16::from_le_bytes([out[2], out[3]]);
         let ch2 = i16::from_le_bytes([out[4], out[5]]);

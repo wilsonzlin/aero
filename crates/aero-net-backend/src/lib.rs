@@ -34,7 +34,7 @@ pub trait NetworkBackend {
     /// rings).
     ///
     /// Most backends do not expose ring stats (and return `None`). This is primarily used for
-    /// debugging/instrumentation in host glue.
+    /// debugging/instrumentation and to observe queue utilization/backpressure.
     fn l2_ring_stats(&self) -> Option<L2TunnelRingBackendStats> {
         None
     }
