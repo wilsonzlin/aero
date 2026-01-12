@@ -603,6 +603,9 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
   // ---------------------------------------------------------------------------
   // StateBlock round-trip: record state, clobber, apply, validate.
   // ---------------------------------------------------------------------------
+  const int vs_i_sb[4] = {101, 102, 103, 104};
+  const BOOL ps_b_sb[2] = {TRUE, FALSE};
+
   ComPtr<IDirect3DStateBlock9> sb;
   hr = dev->BeginStateBlock();
   if (FAILED(hr)) {
@@ -648,6 +651,15 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
     return reporter.FailHresult("SetTransform(D3DTS_WORLD) (stateblock)", hr);
   }
 
+  hr = dev->SetVertexShaderConstantI(10, vs_i_sb, 1);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetVertexShaderConstantI (stateblock)", hr);
+  }
+  hr = dev->SetPixelShaderConstantB(7, ps_b_sb, 2);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetPixelShaderConstantB (stateblock)", hr);
+  }
+
   hr = dev->EndStateBlock(sb.put());
   if (FAILED(hr) || !sb) {
     return reporter.FailHresult("EndStateBlock", hr);
@@ -688,6 +700,17 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
     hr = dev->SetTextureStageState(0, D3DTSS_COLOROP, (DWORD)D3DTOP_MODULATE2X);
     if (FAILED(hr)) {
       return reporter.FailHresult("SetTextureStageState(D3DTSS_COLOROP) (clobber)", hr);
+    }
+
+    const int vs_i_clobber[4] = {-1, -2, -3, -4};
+    hr = dev->SetVertexShaderConstantI(10, vs_i_clobber, 1);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetVertexShaderConstantI (clobber)", hr);
+    }
+    const BOOL ps_b_clobber[2] = {FALSE, TRUE};
+    hr = dev->SetPixelShaderConstantB(7, ps_b_clobber, 2);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetPixelShaderConstantB (clobber)", hr);
     }
   }
 
@@ -765,6 +788,31 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
     }
     if (!MatrixEqual(got_world, world_sb)) {
       return reporter.Fail("stateblock restore mismatch: WORLD matrix mismatch");
+    }
+
+    int got_i[4] = {};
+    hr = dev->GetVertexShaderConstantI(10, got_i, 1);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("GetVertexShaderConstantI (after Apply)", hr);
+    }
+    if (std::memcmp(got_i, vs_i_sb, sizeof(vs_i_sb)) != 0) {
+      return reporter.Fail("stateblock restore mismatch: VertexShaderConstantI");
+    }
+
+    BOOL got_b[2] = {};
+    hr = dev->GetPixelShaderConstantB(7, got_b, 2);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("GetPixelShaderConstantB (after Apply)", hr);
+    }
+    for (int i = 0; i < 2; ++i) {
+      const BOOL a = ps_b_sb[i] ? TRUE : FALSE;
+      const BOOL b = got_b[i] ? TRUE : FALSE;
+      if (a != b) {
+        return reporter.Fail("stateblock restore mismatch: PixelShaderConstantB[%d] got=%d expected=%d",
+                             i,
+                             (int)b,
+                             (int)a);
+      }
     }
   }
 

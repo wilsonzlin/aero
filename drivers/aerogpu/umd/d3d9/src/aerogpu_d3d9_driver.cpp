@@ -170,16 +170,29 @@ struct StateBlock {
   bool fvf_set = false;
   uint32_t fvf = 0;
 
-  // Shader bindings (D3D9 stages: VS/PS) + float constants.
+  // Shader bindings (D3D9 stages: VS/PS) + constant registers.
   bool user_vs_set = false;
   Shader* user_vs = nullptr;
   bool user_ps_set = false;
   Shader* user_ps = nullptr;
 
+  // Float4 constant registers.
   std::bitset<256> vs_const_mask{};
   std::array<float, 256 * 4> vs_consts{};
   std::bitset<256> ps_const_mask{};
   std::array<float, 256 * 4> ps_consts{};
+
+  // Int4 constant registers.
+  std::bitset<256> vs_const_i_mask{};
+  std::array<int32_t, 256 * 4> vs_consts_i{};
+  std::bitset<256> ps_const_i_mask{};
+  std::array<int32_t, 256 * 4> ps_consts_i{};
+
+  // Bool constant registers.
+  std::bitset<256> vs_const_b_mask{};
+  std::array<uint8_t, 256> vs_consts_b{};
+  std::bitset<256> ps_const_b_mask{};
+  std::array<uint8_t, 256> ps_consts_b{};
 };
 
 namespace {
@@ -2710,6 +2723,68 @@ inline void stateblock_record_shader_const_f_locked(
     std::memcpy(dst + static_cast<size_t>(start_reg + i) * 4,
                 pData + static_cast<size_t>(i) * 4,
                 4 * sizeof(float));
+  }
+}
+
+inline void stateblock_record_shader_const_i_locked(
+    Device* dev,
+    uint32_t stage,
+    uint32_t start_reg,
+    const int32_t* pData,
+    uint32_t vec4_count) {
+  if (!dev || !dev->recording_state_block || !pData || vec4_count == 0) {
+    return;
+  }
+  StateBlock* sb = dev->recording_state_block;
+  std::bitset<256>* mask = nullptr;
+  int32_t* dst = nullptr;
+  if (stage == kD3d9ShaderStageVs) {
+    mask = &sb->vs_const_i_mask;
+    dst = sb->vs_consts_i.data();
+  } else {
+    mask = &sb->ps_const_i_mask;
+    dst = sb->ps_consts_i.data();
+  }
+
+  if (start_reg >= 256) {
+    return;
+  }
+  const uint32_t write_regs = std::min(vec4_count, 256u - start_reg);
+  for (uint32_t i = 0; i < write_regs; ++i) {
+    mask->set(start_reg + i);
+    std::memcpy(dst + static_cast<size_t>(start_reg + i) * 4,
+                pData + static_cast<size_t>(i) * 4,
+                4 * sizeof(int32_t));
+  }
+}
+
+inline void stateblock_record_shader_const_b_locked(
+    Device* dev,
+    uint32_t stage,
+    uint32_t start_reg,
+    const uint8_t* pData,
+    uint32_t bool_count) {
+  if (!dev || !dev->recording_state_block || !pData || bool_count == 0) {
+    return;
+  }
+  StateBlock* sb = dev->recording_state_block;
+  std::bitset<256>* mask = nullptr;
+  uint8_t* dst = nullptr;
+  if (stage == kD3d9ShaderStageVs) {
+    mask = &sb->vs_const_b_mask;
+    dst = sb->vs_consts_b.data();
+  } else {
+    mask = &sb->ps_const_b_mask;
+    dst = sb->ps_consts_b.data();
+  }
+
+  if (start_reg >= 256) {
+    return;
+  }
+  const uint32_t write = std::min(bool_count, 256u - start_reg);
+  for (uint32_t i = 0; i < write; ++i) {
+    mask->set(start_reg + i);
+    dst[start_reg + i] = pData[i] ? 1u : 0u;
   }
 }
 
@@ -9304,6 +9379,16 @@ static void stateblock_init_for_type_locked(Device* dev, StateBlock* sb, uint32_
       sb->ps_const_mask.set(r);
     }
     std::memcpy(sb->ps_consts.data(), dev->ps_consts_f, sizeof(float) * 256u * 4u);
+
+    for (uint32_t r = 0; r < 256; ++r) {
+      sb->ps_const_i_mask.set(r);
+    }
+    std::memcpy(sb->ps_consts_i.data(), dev->ps_consts_i, sizeof(int32_t) * 256u * 4u);
+
+    for (uint32_t r = 0; r < 256; ++r) {
+      sb->ps_const_b_mask.set(r);
+    }
+    std::memcpy(sb->ps_consts_b.data(), dev->ps_consts_b, sizeof(uint8_t) * 256u);
   }
 
   if (is_vertex) {
@@ -9335,6 +9420,16 @@ static void stateblock_init_for_type_locked(Device* dev, StateBlock* sb, uint32_
       sb->vs_const_mask.set(r);
     }
     std::memcpy(sb->vs_consts.data(), dev->vs_consts_f, sizeof(float) * 256u * 4u);
+
+    for (uint32_t r = 0; r < 256; ++r) {
+      sb->vs_const_i_mask.set(r);
+    }
+    std::memcpy(sb->vs_consts_i.data(), dev->vs_consts_i, sizeof(int32_t) * 256u * 4u);
+
+    for (uint32_t r = 0; r < 256; ++r) {
+      sb->vs_const_b_mask.set(r);
+    }
+    std::memcpy(sb->vs_consts_b.data(), dev->vs_consts_b, sizeof(uint8_t) * 256u);
   }
 }
 
@@ -9432,6 +9527,22 @@ static void stateblock_capture_locked(Device* dev, StateBlock* sb) {
       std::memcpy(sb->ps_consts.data() + static_cast<size_t>(r) * 4,
                   dev->ps_consts_f + static_cast<size_t>(r) * 4,
                   4 * sizeof(float));
+    }
+    if (sb->vs_const_i_mask.test(r)) {
+      std::memcpy(sb->vs_consts_i.data() + static_cast<size_t>(r) * 4,
+                  dev->vs_consts_i + static_cast<size_t>(r) * 4,
+                  4 * sizeof(int32_t));
+    }
+    if (sb->ps_const_i_mask.test(r)) {
+      std::memcpy(sb->ps_consts_i.data() + static_cast<size_t>(r) * 4,
+                  dev->ps_consts_i + static_cast<size_t>(r) * 4,
+                  4 * sizeof(int32_t));
+    }
+    if (sb->vs_const_b_mask.test(r)) {
+      sb->vs_consts_b[r] = dev->vs_consts_b[r];
+    }
+    if (sb->ps_const_b_mask.test(r)) {
+      sb->ps_consts_b[r] = dev->ps_consts_b[r];
     }
   }
 }
@@ -9736,6 +9847,86 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
   }
   if (sb->ps_const_mask.any()) {
     const HRESULT hr = apply_consts(kD3d9ShaderStagePs, sb->ps_const_mask, sb->ps_consts.data(), dev->ps_consts_f);
+    if (FAILED(hr)) {
+      return hr;
+    }
+  }
+
+  // Shader int/bool constants are currently cached only (not emitted to the
+  // AeroGPU command stream), but they must still round-trip via getters and state
+  // blocks.
+  auto apply_consts_i = [&](uint32_t stage,
+                            const std::bitset<256>& mask,
+                            const int32_t* src,
+                            int32_t* dst) -> HRESULT {
+    uint32_t reg = 0;
+    while (reg < 256) {
+      if (!mask.test(reg)) {
+        ++reg;
+        continue;
+      }
+      uint32_t start = reg;
+      uint32_t end = reg;
+      while (end + 1 < 256 && mask.test(end + 1)) {
+        ++end;
+      }
+      const uint32_t count = (end - start + 1);
+      std::memcpy(dst + static_cast<size_t>(start) * 4,
+                  src + static_cast<size_t>(start) * 4,
+                  static_cast<size_t>(count) * 4 * sizeof(int32_t));
+      stateblock_record_shader_const_i_locked(dev,
+                                             stage,
+                                             start,
+                                             src + static_cast<size_t>(start) * 4,
+                                             count);
+      reg = end + 1;
+    }
+    return S_OK;
+  };
+
+  auto apply_consts_b = [&](uint32_t stage,
+                            const std::bitset<256>& mask,
+                            const uint8_t* src,
+                            uint8_t* dst) -> HRESULT {
+    uint32_t reg = 0;
+    while (reg < 256) {
+      if (!mask.test(reg)) {
+        ++reg;
+        continue;
+      }
+      uint32_t start = reg;
+      uint32_t end = reg;
+      while (end + 1 < 256 && mask.test(end + 1)) {
+        ++end;
+      }
+      const uint32_t count = (end - start + 1);
+      std::memcpy(dst + start, src + start, static_cast<size_t>(count) * sizeof(uint8_t));
+      stateblock_record_shader_const_b_locked(dev, stage, start, src + start, count);
+      reg = end + 1;
+    }
+    return S_OK;
+  };
+
+  if (sb->vs_const_i_mask.any()) {
+    const HRESULT hr = apply_consts_i(kD3d9ShaderStageVs, sb->vs_const_i_mask, sb->vs_consts_i.data(), dev->vs_consts_i);
+    if (FAILED(hr)) {
+      return hr;
+    }
+  }
+  if (sb->ps_const_i_mask.any()) {
+    const HRESULT hr = apply_consts_i(kD3d9ShaderStagePs, sb->ps_const_i_mask, sb->ps_consts_i.data(), dev->ps_consts_i);
+    if (FAILED(hr)) {
+      return hr;
+    }
+  }
+  if (sb->vs_const_b_mask.any()) {
+    const HRESULT hr = apply_consts_b(kD3d9ShaderStageVs, sb->vs_const_b_mask, sb->vs_consts_b.data(), dev->vs_consts_b);
+    if (FAILED(hr)) {
+      return hr;
+    }
+  }
+  if (sb->ps_const_b_mask.any()) {
+    const HRESULT hr = apply_consts_b(kD3d9ShaderStagePs, sb->ps_const_b_mask, sb->ps_consts_b.data(), dev->ps_consts_b);
     if (FAILED(hr)) {
       return hr;
     }
@@ -11002,6 +11193,7 @@ HRESULT device_set_shader_const_i_impl(
   for (uint32_t i = 0; i < elems; ++i) {
     dst[base + i] = static_cast<int32_t>(pData[i]);
   }
+  stateblock_record_shader_const_i_locked(dev, st, start, dst + base, count);
   return trace.ret(S_OK);
 }
 
@@ -11090,6 +11282,7 @@ HRESULT device_set_shader_const_b_impl(
   for (uint32_t i = 0; i < count; ++i) {
     dst[start + i] = pData[i] ? 1u : 0u;
   }
+  stateblock_record_shader_const_b_locked(dev, st, start, dst + start, count);
   return trace.ret(S_OK);
 }
 
