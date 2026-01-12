@@ -123,6 +123,11 @@ aerogpu_add_win7_test(umd_private_sanity
 )
 target_link_libraries(umd_private_sanity PRIVATE user32 gdi32)
 
+aerogpu_add_win7_test(transfer_feature_sanity
+  transfer_feature_sanity/main.cpp
+)
+target_link_libraries(transfer_feature_sanity PRIVATE user32 gdi32)
+
 aerogpu_add_win7_test(d3d9_raster_status_sanity
   d3d9_raster_status_sanity/main.cpp
 )

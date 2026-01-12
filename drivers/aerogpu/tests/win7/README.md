@@ -43,7 +43,7 @@ Common flags:
 * `--require-agpu` – for tests with AGPU-only validation paths (e.g. ring descriptor/alloc table checks), fail instead of skipping when the active device/ring format is legacy.
 * `--display \\.\DISPLAYn` – for `vblank_wait`: pick a display (default: primary).
 * `--ring-id=N` – for `ring_state_sanity`: which ring ID to dump (default 0).
-* `--allow-remote` – skip tests that are not meaningful under RDP (`SM_REMOTESESSION=1`): `device_state_sanity`, `d3d9ex_dwm_probe`, `d3d9ex_submit_fence_stress`, `fence_state_sanity`, `ring_state_sanity`, `dwm_flush_pacing`, `wait_vblank_pacing`, `vblank_wait`, `vblank_wait_pacing`, `vblank_wait_sanity`, `vblank_state_sanity`, `get_scanline_sanity`, `scanout_state_sanity`, `dump_createalloc_sanity`, `umd_private_sanity`, `d3d9_raster_status_sanity`, `d3d9_raster_status_pacing`.
+* `--allow-remote` – skip tests that are not meaningful under RDP (`SM_REMOTESESSION=1`): `device_state_sanity`, `d3d9ex_dwm_probe`, `d3d9ex_submit_fence_stress`, `fence_state_sanity`, `ring_state_sanity`, `dwm_flush_pacing`, `wait_vblank_pacing`, `vblank_wait`, `vblank_wait_pacing`, `vblank_wait_sanity`, `vblank_state_sanity`, `get_scanline_sanity`, `scanout_state_sanity`, `dump_createalloc_sanity`, `umd_private_sanity`, `transfer_feature_sanity`, `d3d9_raster_status_sanity`, `d3d9_raster_status_pacing`.
 * `--help` / `/?` – print per-test usage.
 
 ## Layout
@@ -73,6 +73,7 @@ drivers/aerogpu/tests/win7/
   scanout_state_sanity/
   dump_createalloc_sanity/
   umd_private_sanity/
+  transfer_feature_sanity/
   d3d9_raster_status_sanity/
   d3d9_raster_status_pacing/
   dwm_flush_pacing/
@@ -314,6 +315,7 @@ In a Win7 VM with AeroGPU installed and working correctly:
 * `scanout_state_sanity` queries AeroGPU scanout state via `AEROGPU_ESCAPE_OP_QUERY_SCANOUT` and validates that cached mode state matches the MMIO scanout registers and desktop resolution (catches broken/missing `DxgkDdiCommitVidPn` mode caching; skips if the escape is not supported)
 * `dump_createalloc_sanity` dumps the KMD CreateAllocation trace via `AEROGPU_ESCAPE_OP_DUMP_CREATEALLOCATION` and validates it is non-empty and internally consistent (helps diagnose allocation flag/pitch/share_token issues without a kernel debugger; skips if the escape is not supported)
 * `umd_private_sanity` probes `D3DKMTQueryAdapterInfo(KMTQAITYPE_UMDRIVERPRIVATE)` and validates the returned `aerogpu_umd_private_v1` discovery blob (catches ABI/feature discovery regressions that can break UMD initialization)
+* `transfer_feature_sanity` validates that AGPU devices advertising an ABI compatible with the current driver (`AEROGPU_ABI_MAJOR`, minor>=1) also advertise `AEROGPU_UMDPRIV_FEATURE_TRANSFER` via `DXGKQAITYPE_UMDRIVERPRIVATE` (fails fast on missing transfer/copy support required by D3D9/D3D11 readback paths; skipped on legacy device models unless `--require-agpu` is set)
 * `d3d9_raster_status_sanity` samples `IDirect3DDevice9::GetRasterStatus` and fails if vblank state never toggles or `ScanLine` is stuck (validates `D3DKMTGetScanLine` → `DxgkDdiGetScanLine` basic correctness)
 * `d3d9_raster_status_pacing` samples `IDirect3DDevice9::GetRasterStatus` and fails if `InVBlank` never becomes true or scanline is stuck (useful for `DxgkDdiGetScanLine` bring-up)
 * `d3d9ex_triangle` renders a green triangle over a red clear and confirms **corner red + center green** via readback
