@@ -11,7 +11,7 @@ It is designed for the default workflow:
    - virtio-blk (storage)
    - virtio-net (network)
    - virtio-input (keyboard/mouse) *(optional)*
-   - virtio-snd (audio) *(optional; may not be supported in all runtimes — keep HDA as fallback)*
+   - virtio-snd (audio) *(optional; browser runtime prefers HDA when present, so virtio-snd is active in HDA-less builds or with an explicit selection mechanism — keep HDA as fallback)*
    - Aero WDDM GPU
 4. Boot and let Plug and Play bind the newly-present devices to the staged driver packages.
 
