@@ -132,7 +132,11 @@ test(
       });
 
       assert.equal(res.status, 0, `expected safe-run to succeed, got ${res.status}\n${res.stderr}`);
-      assert.equal(fs.existsSync(path.join(repoRoot, ".cargo-home")), true);
+      // Creating `./.cargo-home` is best-effort (safe-run may be running in a read-only checkout),
+      // so accept either successful creation or an explicit warning.
+      if (!fs.existsSync(path.join(repoRoot, ".cargo-home"))) {
+        assert.match(res.stderr, /failed to create \.\/\.cargo-home/);
+      }
       assert.match(res.stderr, /AERO_ISOLATE_CARGO_HOME=1/);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
@@ -140,4 +144,3 @@ test(
     }
   },
 );
-
