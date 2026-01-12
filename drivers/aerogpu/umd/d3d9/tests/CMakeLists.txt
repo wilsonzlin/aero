@@ -148,6 +148,23 @@ set_target_properties(aerogpu_d3d9_trace_dump_on_stub_tests PROPERTIES
 
 add_test(NAME aerogpu_d3d9_trace_dump_on_stub_tests COMMAND aerogpu_d3d9_trace_dump_on_stub_tests)
 
+add_executable(aerogpu_d3d9_trace_dump_on_stub_noop_tests
+    trace_dump_on_stub_noop_tests.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/../src/aerogpu_trace.cpp
+)
+
+target_include_directories(aerogpu_d3d9_trace_dump_on_stub_noop_tests PRIVATE
+    ${CMAKE_CURRENT_LIST_DIR}/../src
+    ${CMAKE_CURRENT_LIST_DIR}/../include
+)
+
+set_target_properties(aerogpu_d3d9_trace_dump_on_stub_noop_tests PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED YES
+)
+
+add_test(NAME aerogpu_d3d9_trace_dump_on_stub_noop_tests COMMAND aerogpu_d3d9_trace_dump_on_stub_noop_tests)
+
 add_executable(aerogpu_d3d9_trace_dump_on_stub_filtered_tests
     trace_dump_on_stub_filtered_tests.cpp
     ${CMAKE_CURRENT_LIST_DIR}/../src/aerogpu_trace.cpp
