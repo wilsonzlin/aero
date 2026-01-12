@@ -570,8 +570,7 @@ function renderMachinePanel(): HTMLElement {
   const vgaInfo = el("pre", { text: "" });
   const inputHint = el("div", {
     class: "mono",
-    text:
-      "Tip: click the canvas to focus it (keyboard/mouse will be forwarded to the guest). Double-click to request pointer lock (if supported).",
+    text: "Tip: click the canvas to focus + request pointer lock (keyboard/mouse will be forwarded to the guest).",
   });
   const canvas = el("canvas", { id: "canonical-machine-vga-canvas" }) as HTMLCanvasElement;
   canvas.tabIndex = 0;
@@ -580,16 +579,6 @@ function renderMachinePanel(): HTMLElement {
   canvas.style.border = "1px solid rgba(127, 127, 127, 0.5)";
   canvas.style.background = "#000";
   canvas.style.imageRendering = "pixelated";
-  canvas.addEventListener("click", () => canvas.focus());
-  canvas.addEventListener("dblclick", () => {
-    const fn = (canvas as unknown as { requestPointerLock?: unknown }).requestPointerLock;
-    if (typeof fn !== "function") return;
-    try {
-      fn.call(canvas);
-    } catch {
-      // ignore
-    }
-  });
 
   const output = el("pre", { text: "" });
   const error = el("pre", { text: "" });
@@ -700,6 +689,7 @@ function renderMachinePanel(): HTMLElement {
 
       // Optional input capture: drive the machine's i8042 PS/2 keyboard/mouse devices directly.
       // This uses the same `InputCapture` batching/scancode translation as the I/O worker path.
+      let inputCapture: InputCapture | null = null;
       {
         const messageListeners: ((ev: MessageEvent<unknown>) => void)[] = [];
         const inputTarget: InputBatchTarget & {
@@ -770,12 +760,23 @@ function renderMachinePanel(): HTMLElement {
           },
         };
 
-        const inputCapture = new InputCapture(canvas, inputTarget, {
+        const capture = new InputCapture(canvas, inputTarget, {
           enableGamepad: false,
           recycleBuffers: true,
         });
-        inputCapture.start();
+        capture.start();
+        inputCapture = capture;
       }
+
+      const stopInputCapture = (): void => {
+        if (!inputCapture) return;
+        try {
+          inputCapture.stop();
+        } catch {
+          // ignore
+        }
+        inputCapture = null;
+      };
 
       const hasVgaPresent = typeof machine.vga_present === "function";
       const hasVgaSize = typeof machine.vga_width === "function" && typeof machine.vga_height === "function";
@@ -970,110 +971,6 @@ function renderMachinePanel(): HTMLElement {
         }
       }
 
-      let running = true;
-
-      const onKeyDown = (ev: KeyboardEvent): void => {
-        if (!running) return;
-        const fn = (machine as unknown as { inject_browser_key?: unknown }).inject_browser_key;
-        if (typeof fn !== "function") return;
-        try {
-          fn.call(machine, ev.code, true);
-          ev.preventDefault();
-        } catch {
-          // ignore
-        }
-      };
-
-      const onKeyUp = (ev: KeyboardEvent): void => {
-        if (!running) return;
-        const fn = (machine as unknown as { inject_browser_key?: unknown }).inject_browser_key;
-        if (typeof fn !== "function") return;
-        try {
-          fn.call(machine, ev.code, false);
-          ev.preventDefault();
-        } catch {
-          // ignore
-        }
-      };
-
-      const onMouseMove = (ev: MouseEvent): void => {
-        if (!running) return;
-        const fn = (machine as unknown as { inject_mouse_motion?: unknown }).inject_mouse_motion;
-        if (typeof fn !== "function") return;
-        // Use browser-style coordinates: +X right, +Y down.
-        const dx = ev.movementX | 0;
-        const dy = ev.movementY | 0;
-        if (dx === 0 && dy === 0) return;
-        try {
-          fn.call(machine, dx, dy, 0);
-        } catch {
-          // ignore
-        }
-      };
-
-      const onWheel = (ev: WheelEvent): void => {
-        if (!running) return;
-        const fn = (machine as unknown as { inject_mouse_motion?: unknown }).inject_mouse_motion;
-        if (typeof fn !== "function") return;
-        // DOM WheelEvent: deltaY < 0 is wheel up. Machine uses PS/2 convention: positive is wheel up.
-        const wheel = ev.deltaY === 0 ? 0 : ev.deltaY < 0 ? 1 : -1;
-        if (wheel === 0) return;
-        try {
-          fn.call(machine, 0, 0, wheel);
-          ev.preventDefault();
-        } catch {
-          // ignore
-        }
-      };
-
-      const onMouseDown = (ev: MouseEvent): void => {
-        if (!running) return;
-        const fn = (machine as unknown as { inject_mouse_button?: unknown }).inject_mouse_button;
-        if (typeof fn !== "function") return;
-        try {
-          fn.call(machine, ev.button | 0, true);
-          ev.preventDefault();
-        } catch {
-          // ignore
-        }
-      };
-
-      const onMouseUp = (ev: MouseEvent): void => {
-        if (!running) return;
-        const fn = (machine as unknown as { inject_mouse_button?: unknown }).inject_mouse_button;
-        if (typeof fn !== "function") return;
-        try {
-          fn.call(machine, ev.button | 0, false);
-          ev.preventDefault();
-        } catch {
-          // ignore
-        }
-      };
-
-      const onContextMenu = (ev: MouseEvent): void => {
-        // Avoid the browser context menu stealing focus when the canvas is being used
-        // as a VM input surface.
-        ev.preventDefault();
-      };
-
-      canvas.addEventListener("keydown", onKeyDown);
-      canvas.addEventListener("keyup", onKeyUp);
-      canvas.addEventListener("mousemove", onMouseMove);
-      canvas.addEventListener("wheel", onWheel, { passive: false });
-      canvas.addEventListener("mousedown", onMouseDown);
-      canvas.addEventListener("mouseup", onMouseUp);
-      canvas.addEventListener("contextmenu", onContextMenu);
-
-      const detachInput = () => {
-        canvas.removeEventListener("keydown", onKeyDown);
-        canvas.removeEventListener("keyup", onKeyUp);
-        canvas.removeEventListener("mousemove", onMouseMove);
-        canvas.removeEventListener("wheel", onWheel);
-        canvas.removeEventListener("mousedown", onMouseDown);
-        canvas.removeEventListener("mouseup", onMouseUp);
-        canvas.removeEventListener("contextmenu", onContextMenu);
-      };
-
       const timer = window.setInterval(() => {
         const exit = machine.run_slice(50_000);
         const exitKind = exit.kind;
@@ -1094,8 +991,7 @@ function renderMachinePanel(): HTMLElement {
         // Keep ticking while halted so injected interrupts (keyboard/mouse) can wake the CPU.
         if (exitKind !== 0 && exitKind !== 1) {
           window.clearInterval(timer);
-          running = false;
-          detachInput();
+          stopInputCapture();
           try {
             (machine as unknown as { free?: () => void }).free?.();
           } catch {
