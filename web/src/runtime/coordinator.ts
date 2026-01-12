@@ -466,7 +466,8 @@ export class WorkerCoordinator {
   }
 
   updateConfig(config: AeroConfig): void {
-    if (this.activeConfig && aeroConfigsEqual(this.activeConfig, config)) {
+    const prevConfig = this.activeConfig;
+    if (prevConfig && aeroConfigsEqual(prevConfig, config)) {
       return;
     }
     this.activeConfig = config;
@@ -499,6 +500,14 @@ export class WorkerCoordinator {
 
     if (!config.enableWorkers) {
       this.stop();
+      return;
+    }
+
+    // Switching the virtio-net PCI transport changes what the guest sees on the PCI bus
+    // (device ID, BAR layout, and optional legacy I/O decode). This cannot be safely
+    // hot-swapped, so force a full restart to apply the new mode.
+    if (prevConfig && prevConfig.virtioNetMode !== config.virtioNetMode) {
+      this.restart();
       return;
     }
 
@@ -2064,6 +2073,7 @@ function aeroConfigsEqual(a: AeroConfig, b: AeroConfig): boolean {
     a.proxyUrl === b.proxyUrl &&
     a.activeDiskImage === b.activeDiskImage &&
     a.logLevel === b.logLevel &&
-    a.uiScale === b.uiScale
+    a.uiScale === b.uiScale &&
+    a.virtioNetMode === b.virtioNetMode
   );
 }

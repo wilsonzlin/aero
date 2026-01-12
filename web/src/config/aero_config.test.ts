@@ -24,6 +24,7 @@ describe("AeroConfig", () => {
   expect(resolved.effective.activeDiskImage).toBeNull();
   expect(resolved.effective.logLevel).toBe("info");
   expect(resolved.effective.uiScale).toBeUndefined();
+  expect(resolved.effective.virtioNetMode).toBe("modern");
   });
 
   it("defaults: enableWorkers defaults off when capabilities do not support it", () => {
@@ -97,6 +98,12 @@ describe("AeroConfig", () => {
   expect(parsed.lockedKeys.has("enableWorkers")).toBe(true);
   expect(parsed.lockedKeys.has("proxyUrl")).toBe(true);
   expect(parsed.overrides.proxyUrl).toBe("https://example.com");
+  });
+
+  it("query parsing: accepts virtioNetMode override", () => {
+  const parsed = parseAeroConfigQueryOverrides("?virtioNetMode=legacy");
+  expect(parsed.lockedKeys.has("virtioNetMode")).toBe(true);
+  expect(parsed.overrides.virtioNetMode).toBe("legacy");
   });
 
   it("query parsing: accepts same-origin proxy paths", () => {

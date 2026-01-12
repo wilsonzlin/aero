@@ -1823,6 +1823,7 @@ function maybeInitVirtioNetDevice(): void {
     guestBase,
     guestSize,
     ioIpc: ioIpcSab,
+    mode: currentConfig?.virtioNetMode,
   });
   if (dev) {
     virtioNetDevice = dev;

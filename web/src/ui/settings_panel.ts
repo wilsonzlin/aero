@@ -17,6 +17,10 @@ export function mountSettingsPanel(container: HTMLElement, manager: AeroConfigMa
     "Guest networking (Option C L2 tunnel). Use the gateway base URL (e.g. https://gateway.example.com or /; not /l2). " +
     "Aero will POST /session (with credentials) then connect to /l2.";
 
+  const virtioNetModeHelpText =
+    "Virtio-net PCI transport mode. Modern is the default Aero contract; transitional/legacy are for virtio-win compatibility. " +
+    "Changing this requires a restart to apply.";
+
   const memorySelect = document.createElement("select");
   let customMemoryOption: HTMLOptionElement | null = null;
   for (const mem of AERO_GUEST_MEMORY_PRESETS_MIB) {
@@ -62,6 +66,20 @@ export function mountSettingsPanel(container: HTMLElement, manager: AeroConfigMa
   const logHint = document.createElement("div");
   logHint.className = "hint";
 
+  const virtioNetModeSelect = document.createElement("select");
+  for (const [value, label] of [
+    ["modern", "modern (default)"],
+    ["transitional", "transitional (modern + legacy I/O BAR)"],
+    ["legacy", "legacy-only (forces legacy driver)"],
+  ] as const) {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = label;
+    virtioNetModeSelect.appendChild(option);
+  }
+  const virtioNetModeHint = document.createElement("div");
+  virtioNetModeHint.className = "hint";
+
   const resetButton = document.createElement("button");
   resetButton.type = "button";
   resetButton.textContent = "Reset to defaults";
@@ -69,6 +87,7 @@ export function mountSettingsPanel(container: HTMLElement, manager: AeroConfigMa
   fieldset.appendChild(makeRow("Guest memory", memorySelect, memoryHint));
   fieldset.appendChild(makeRow("Enable workers", workersCheckbox, workersHint));
   fieldset.appendChild(makeRow("Enable WebGPU", webgpuCheckbox, webgpuHint));
+  fieldset.appendChild(makeRow("Virtio-net mode", virtioNetModeSelect, virtioNetModeHint));
   fieldset.appendChild(makeRow("Proxy URL", proxyInput, proxyHint, proxyError));
   fieldset.appendChild(makeRow("Log level", logSelect, logHint));
   fieldset.appendChild(resetButton);
@@ -86,6 +105,9 @@ export function mountSettingsPanel(container: HTMLElement, manager: AeroConfigMa
   });
   logSelect.addEventListener("change", () => {
     manager.updateStoredConfig({ logLevel: logSelect.value as AeroConfig["logLevel"] });
+  });
+  virtioNetModeSelect.addEventListener("change", () => {
+    manager.updateStoredConfig({ virtioNetMode: virtioNetModeSelect.value as AeroConfig["virtioNetMode"] });
   });
 
   function commitProxy(): void {
@@ -119,9 +141,13 @@ export function mountSettingsPanel(container: HTMLElement, manager: AeroConfigMa
   function renderState(state: ResolvedAeroConfig): void {
     setLocked(memorySelect, memoryHint, state, "guestMemoryMiB");
     setLocked(logSelect, logHint, state, "logLevel");
+    setLocked(virtioNetModeSelect, virtioNetModeHint, state, "virtioNetMode");
     setLocked(proxyInput, proxyHint, state, "proxyUrl");
     if (!state.lockedKeys.has("proxyUrl")) {
       proxyHint.textContent = proxyHelpText;
+    }
+    if (!state.lockedKeys.has("virtioNetMode")) {
+      virtioNetModeHint.textContent = virtioNetModeHelpText;
     }
 
     const desiredMem = String(state.effective.guestMemoryMiB);
@@ -138,6 +164,7 @@ export function mountSettingsPanel(container: HTMLElement, manager: AeroConfigMa
     }
     memorySelect.value = desiredMem;
     logSelect.value = state.effective.logLevel;
+    virtioNetModeSelect.value = state.effective.virtioNetMode ?? "modern";
 
     if (document.activeElement !== proxyInput) {
       proxyInput.value = state.effective.proxyUrl ?? "";

@@ -1,4 +1,5 @@
 import { PCI_MMIO_BASE_MIB } from "../arch/guest_phys.ts";
+import type { VirtioNetPciMode } from "../io/devices/virtio_net.ts";
 
 export const AERO_LOG_LEVELS = ["trace", "debug", "info", "warn", "error"] as const;
 export type AeroLogLevel = (typeof AERO_LOG_LEVELS)[number];
@@ -11,6 +12,15 @@ export interface AeroConfig {
   activeDiskImage: string | null;
   logLevel: AeroLogLevel;
   uiScale?: number;
+  /**
+   * Selects which virtio-pci transport to expose for virtio-net:
+   * - "modern": modern-only (Aero contract v1, status quo)
+   * - "transitional": modern virtio-pci + legacy I/O port BAR (virtio-win compatibility)
+   * - "legacy": legacy-only virtio-pci (forces legacy driver path)
+   *
+   * Defaults to "modern".
+   */
+  virtioNetMode?: VirtioNetPciMode;
 }
 
 export type AeroConfigKey = keyof AeroConfig;
@@ -108,6 +118,26 @@ function parseLogLevel(value: unknown): AeroLogLevel | undefined {
   return undefined;
 }
 
+function parseVirtioNetMode(value: unknown): VirtioNetPciMode | undefined {
+  if (typeof value === "string") {
+    const v = value.trim().toLowerCase();
+    if (v === "modern") return "modern";
+    if (v === "transitional" || v === "transition") return "transitional";
+    if (v === "legacy" || v === "legacy-only") return "legacy";
+    return undefined;
+  }
+  if (typeof value === "number") {
+    if (value === 0) return "modern";
+    if (value === 1) return "transitional";
+    if (value === 2) return "legacy";
+    return undefined;
+  }
+  if (typeof value === "boolean") {
+    return value ? "transitional" : "modern";
+  }
+  return undefined;
+}
+
 export function detectAeroBrowserCapabilities(): AeroBrowserCapabilities {
   const hasWorker = typeof Worker !== "undefined";
   const hasSAB = typeof SharedArrayBuffer !== "undefined";
@@ -153,6 +183,7 @@ export function getDefaultAeroConfig(
     proxyUrl: null,
     activeDiskImage: null,
     logLevel: "info",
+    virtioNetMode: "modern",
   };
 }
 
@@ -265,6 +296,15 @@ export function parseAeroConfigOverrides(input: unknown): ParsedAeroConfigOverri
     }
   }
 
+  if (hasOwn(input, "virtioNetMode")) {
+    const parsed = parseVirtioNetMode(input.virtioNetMode);
+    if (parsed !== undefined) {
+      overrides.virtioNetMode = parsed;
+    } else {
+      issues.push({ key: "virtioNetMode", message: 'virtioNetMode must be "modern", "transitional", or "legacy".' });
+    }
+  }
+
   return { overrides, issues };
 }
 
@@ -340,6 +380,17 @@ export function parseAeroConfigQueryOverrides(search: string): ParsedAeroQueryOv
       overrides.uiScale = parsed.value;
       lockedKeys.add("uiScale");
       if ("issue" in parsed) issues.push({ key: "uiScale", message: parsed.issue });
+    }
+  }
+
+  const virtioNetMode = params.get("virtioNetMode");
+  if (virtioNetMode !== null) {
+    const parsed = parseVirtioNetMode(virtioNetMode);
+    if (parsed !== undefined) {
+      overrides.virtioNetMode = parsed;
+      lockedKeys.add("virtioNetMode");
+    } else {
+      issues.push({ key: "virtioNetMode", message: 'virtioNetMode must be "modern", "transitional", or "legacy".' });
     }
   }
 
