@@ -84,11 +84,12 @@ test("large shader payload spills to OPFS when available", async ({}, testInfo) 
 
       const idbShaderRecord = await page.evaluate(async (key: string) => {
         const DB_NAME = "aero-gpu-cache";
-        const DB_VERSION = 1;
         const STORE_SHADERS = "shaders";
 
         const db = await new Promise<IDBDatabase>((resolve, reject) => {
-          const req = indexedDB.open(DB_NAME, DB_VERSION);
+          // Open without forcing a schema version so the test stays compatible
+          // if the cache bumps `DB_VERSION` in the future.
+          const req = indexedDB.open(DB_NAME);
           req.onerror = () => reject(req.error ?? new Error("IndexedDB open failed"));
           req.onsuccess = () => resolve(req.result);
         });
