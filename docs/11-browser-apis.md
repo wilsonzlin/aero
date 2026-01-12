@@ -327,6 +327,17 @@ function initializeMemory() {
     const { guest_base, guest_size } = shared.guestLayout;
 
     function guestToLinear(paddr) {
+        // NOTE: This helper assumes a simple flat guest-RAM layout (paddr 0..guest_size).
+        //
+        // On the canonical PC/Q35 platform, guest physical RAM is not necessarily a single
+        // contiguous range once we reserve:
+        // - PCIe ECAM at 0xB000_0000..0xC000_0000, and
+        // - the PCI/MMIO hole at 0xC000_0000..0x1_0000_0000,
+        // and remap any remaining RAM above 4GiB.
+        //
+        // In that case, paddr->linear becomes a *piecewise* mapping and MMIO/hole accesses must be
+        // routed to device handlers (or treated as open-bus reads). See ADR 0003 and
+        // `crates/firmware/src/bios/interrupts.rs::build_e820_map`.
         if (paddr < 0 || paddr >= guest_size) throw new RangeError('guest paddr out of range');
         return guest_base + paddr;
     }
