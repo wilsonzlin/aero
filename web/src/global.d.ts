@@ -1,4 +1,5 @@
 import type { AeroGlobalApi } from '../../shared/aero_api.ts';
+import type { GuestCpuBenchOpts, GuestCpuBenchRun } from './bench/guest_cpu_types';
 import type { MicrobenchSuiteOptions, MicrobenchSuiteResultV1 } from './bench/types';
 import type { StorageBenchOpts, StorageBenchResult } from './bench/storage_types';
 import type { WebGpuBenchOptions, WebGpuBenchResult } from './bench/webgpu_bench';
@@ -20,6 +21,7 @@ declare global {
       netTrace?: NetTraceBackend;
       bench?: {
         runWebGpuBench?: (opts?: WebGpuBenchOptions) => Promise<WebGpuBenchResult>;
+        runGuestCpuBench?: (opts: GuestCpuBenchOpts) => Promise<GuestCpuBenchRun>;
         runMicrobenchSuite?: (opts?: MicrobenchSuiteOptions) => Promise<MicrobenchSuiteResultV1>;
         runStorageBench?: (opts?: StorageBenchOpts) => Promise<StorageBenchResult>;
       };

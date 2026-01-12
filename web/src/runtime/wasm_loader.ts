@@ -39,6 +39,12 @@ export type UhciControllerBridgeHandle = {
     free(): void;
 };
 
+export type GuestCpuBenchHarnessHandle = {
+    payload_info(variant: string): unknown;
+    run_payload_once(variant: string, itersPerRun: number): unknown;
+    free(): void;
+};
+
 export interface WasmApi {
     greet(name: string): string;
     add(a: number, b: number): number;
@@ -406,16 +412,13 @@ export interface WasmApi {
       * Optional while older wasm builds are still in circulation.
       */
     synthesize_webhid_report_descriptor?: (collectionsJson: unknown) => Uint8Array;
+
     /**
-     * Guest CPU benchmark harness (used by microbench tooling).
+     * Guest CPU benchmark harness (PF-008).
      *
-     * Optional for older WASM builds.
+     * Optional while older wasm builds are still in circulation.
      */
-    GuestCpuBenchHarness?: new () => {
-        payload_info(variant: string): unknown;
-        run_payload_once(variant: string, iters: number): unknown;
-        free(): void;
-    };
+    GuestCpuBenchHarness?: new () => GuestCpuBenchHarnessHandle;
     CpuWorkerDemo?: new (
         ramSizeBytes: number,
         framebufferOffsetBytes: number,
