@@ -13,7 +13,7 @@ use http_body_util::BodyExt;
 use sha2::{Digest, Sha256};
 use tower::ServiceExt;
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn admin_endpoints_require_api_key() {
     let app = build_app(GatewayConfig {
         admin_api_key: Some("topsecret".to_string()),
@@ -67,7 +67,7 @@ async fn admin_endpoints_require_api_key() {
     assert!(payload.get("version").is_some());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn capture_writes_files_without_session_secret_and_enforces_limits() {
     let tmp = tempfile::tempdir().unwrap();
     let capture_dir = tmp.path().to_path_buf();

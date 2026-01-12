@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use anyhow::{anyhow, Result};
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires a user-supplied Windows 7 disk image; see scripts/prepare-windows7.sh"]
 async fn windows7_boot_placeholder() -> Result<()> {
     let Some(mut vm) = harness::QemuVm::spawn(harness::QemuConfig {

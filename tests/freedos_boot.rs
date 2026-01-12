@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn freedos_boot_smoke() -> Result<()> {
     let freedos_img = harness::repo_root().join("test-images/freedos/fd14-boot-aero.img");
     harness::ensure_ci_prereq(

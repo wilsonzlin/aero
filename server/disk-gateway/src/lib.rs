@@ -961,7 +961,7 @@ mod tests {
         file.flush().await.unwrap();
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn range_206_has_correct_headers_and_body() {
         let tmp = tempfile::tempdir().unwrap();
         let public_dir = tmp.path().join("public");
@@ -1016,7 +1016,7 @@ mod tests {
         assert_eq!(&body[..], b"bcd");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn get_without_range_returns_200_with_full_body() {
         let tmp = tempfile::tempdir().unwrap();
         let public_dir = tmp.path().join("public");
@@ -1061,7 +1061,7 @@ mod tests {
         assert_eq!(&body[..], b"abcdef");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn get_if_none_match_returns_304() {
         let tmp = tempfile::tempdir().unwrap();
         let public_dir = tmp.path().join("public");
@@ -1092,7 +1092,7 @@ mod tests {
         assert!(body.is_empty());
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn get_if_range_match_returns_206() {
         let tmp = tempfile::tempdir().unwrap();
         let public_dir = tmp.path().join("public");
@@ -1124,7 +1124,7 @@ mod tests {
         assert_eq!(&body[..], b"bcd");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn get_if_range_mismatch_ignores_range_and_returns_200() {
         let tmp = tempfile::tempdir().unwrap();
         let public_dir = tmp.path().join("public");
@@ -1152,7 +1152,7 @@ mod tests {
         assert_eq!(&body[..], b"abcdef");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn head_without_range_returns_headers_only() {
         let tmp = tempfile::tempdir().unwrap();
         let public_dir = tmp.path().join("public");
@@ -1197,7 +1197,7 @@ mod tests {
         assert!(body.is_empty());
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn head_if_none_match_returns_304() {
         let tmp = tempfile::tempdir().unwrap();
         let public_dir = tmp.path().join("public");
@@ -1228,7 +1228,7 @@ mod tests {
         assert!(body.is_empty());
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn head_range_206_has_headers_only() {
         let tmp = tempfile::tempdir().unwrap();
         let public_dir = tmp.path().join("public");
@@ -1267,7 +1267,7 @@ mod tests {
         assert!(body.is_empty());
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn multi_range_returns_multipart_206() {
         let tmp = tempfile::tempdir().unwrap();
         let public_dir = tmp.path().join("public");
@@ -1310,7 +1310,7 @@ mod tests {
         assert_eq!(body_str, expected);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn multi_range_abuse_guard_returns_413() {
         let tmp = tempfile::tempdir().unwrap();
         let public_dir = tmp.path().join("public");
@@ -1333,7 +1333,7 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn max_total_bytes_guard_returns_413() {
         let tmp = tempfile::tempdir().unwrap();
         let public_dir = tmp.path().join("public");
@@ -1356,7 +1356,7 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn range_416_has_content_range_star() {
         let tmp = tempfile::tempdir().unwrap();
         let public_dir = tmp.path().join("public");
@@ -1390,7 +1390,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn range_supports_offsets_beyond_4gib_and_suffix_ranges() {
         let tmp = tempfile::tempdir().unwrap();
         let public_dir = tmp.path().join("public");
@@ -1442,7 +1442,7 @@ mod tests {
         assert_eq!(&body[..], LARGE_SENTINEL_END);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn cors_preflight_includes_range_and_authorization() {
         let tmp = tempfile::tempdir().unwrap();
         let public_dir = tmp.path().join("public");
@@ -1488,7 +1488,7 @@ mod tests {
         assert!(allow_headers.contains("If-Range"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn private_image_requires_token() {
         let tmp = tempfile::tempdir().unwrap();
         let public_dir = tmp.path().join("public");
@@ -1515,7 +1515,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn private_image_denies_bad_token() {
         let tmp = tempfile::tempdir().unwrap();
         let public_dir = tmp.path().join("public");
@@ -1543,7 +1543,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn private_image_allows_valid_token() {
         let tmp = tempfile::tempdir().unwrap();
         let public_dir = tmp.path().join("public");
@@ -1586,7 +1586,7 @@ mod tests {
         assert_eq!(&body[..], b"top");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn rejects_dotdot_image_id() {
         let tmp = tempfile::tempdir().unwrap();
         let public_dir = tmp.path().join("public");
@@ -1612,7 +1612,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn rejects_dotdot_user_id() {
         let tmp = tempfile::tempdir().unwrap();
         let public_dir = tmp.path().join("public");

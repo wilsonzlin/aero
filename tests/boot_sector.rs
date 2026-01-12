@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn boot_sector_minimal_image() -> Result<()> {
     let bootsector = include_bytes!("fixtures/bootsector.bin");
 
