@@ -10,6 +10,6 @@
     "packaging/win7/trust_test_cert.cmd",
     "packaging/win7/verify_umd_registration.cmd"
   ],
-  "infFiles": ["packaging/win7/aerogpu.inf"],
-  "wow64Files": ["aerogpu_d3d9.dll"]
+  "infFiles": ["packaging/win7/aerogpu_dx11.inf", "packaging/win7/aerogpu.inf"],
+  "wow64Files": ["aerogpu_d3d9.dll", "aerogpu_d3d10.dll"]
 }

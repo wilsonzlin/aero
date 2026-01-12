@@ -21,7 +21,18 @@ set "PNPUTIL=%SYS32%\pnputil.exe"
 pushd "%SCRIPT_DIR%" >nul
 
 set "INF_FILE=%~1"
-if "%INF_FILE%"=="" set "INF_FILE=aerogpu.inf"
+if "%INF_FILE%"=="" (
+  rem Prefer the DX11-capable package when available.
+  rem
+  rem CI-staged packages place the INF(s) at the package root (two levels above this script),
+  rem while repo/manual packaging places the INF(s) next to this script.
+  set "INF_FILE=aerogpu.inf"
+  if exist "%SCRIPT_DIR%..\..\aerogpu_dx11.inf" (
+    set "INF_FILE=aerogpu_dx11.inf"
+  ) else if exist "aerogpu_dx11.inf" (
+    set "INF_FILE=aerogpu_dx11.inf"
+  )
+)
 
 rem CI-staged packages place the INF/binaries at the package root, with helper scripts
 rem under packaging\win7\. Support both layouts:

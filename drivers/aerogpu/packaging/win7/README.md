@@ -9,7 +9,7 @@ This directory contains a **Windows 7 SP1** driver package skeleton for the Aero
 
 It also includes scripts for **test-signing** and **install/uninstall** in a Win7 VM.
 
-## 0) CI packages vs manual packaging (D3D9-only vs DX11)
+## 0) CI packages vs manual packaging (DX11-capable vs DX9-only)
 
 ### CI-produced artifacts (out/packages / release ZIP)
 
@@ -17,44 +17,35 @@ CI stages the INF(s) and built binaries at the **package root** (e.g. `out/packa
 
 The helper scripts (`install.cmd`, `sign_test.cmd`, etc.) auto-detect the package root when run from within this folder, so you do **not** need to copy/move the INF/binaries into `packaging/win7/` for CI-produced packages.
 
-Packaging is controlled by `drivers/aerogpu/ci-package.json`. By default, CI packages are **D3D9-only**:
+Packaging is controlled by `drivers/aerogpu/ci-package.json`. By default, CI packages are **DX11-capable**
+so they can run the D3D10/D3D11 guest validation suite:
 
 - Included:
-  - `aerogpu.inf` (canonical HWID binding: `A3A0:0001`)
+  - `aerogpu_dx11.inf` (canonical HWID binding: `A3A0:0001`; includes D3D10/11 UMD registration)
+  - `aerogpu.inf` (D3D9-only variant; useful for bring-up/regression)
   - `legacy/aerogpu.inf` (legacy HWID binding: `1AED:0001`; shipped under `legacy/` to avoid INF name collisions)
 - Not included:
-  - `aerogpu_dx11.inf` (optional D3D10/11 UMD variant)
   - `legacy/aerogpu_dx11.inf` (optional legacy D3D10/11 UMD variant)
 
-### Getting the optional DX11 INF (`aerogpu_dx11.inf`)
+When invoked with no arguments, `packaging\\win7\\install.cmd` prefers `aerogpu_dx11.inf` when present at the
+package root and falls back to `aerogpu.inf`.
 
-To get/install the optional D3D10/11 UMD variant:
+### Choosing which INF to install (DX11 vs DX9-only)
 
-- **Option A (recommended for dev): manual staging + test signing**
+- DX11-capable (recommended; includes D3D10/11 UMDs):
 
-  Use `drivers\aerogpu\build\stage_packaging_win7.cmd` + `sign_test.cmd`, then install with:
+  ```bat
+  install.cmd
+  ```
 
   ```bat
   install.cmd aerogpu_dx11.inf
   ```
 
-- **Option B (CI customization): stage the DX11 INF in CI**
+- D3D9-only (does not require the D3D10/11 UMDs, and clears any stale DX11 UMD registration):
 
-  Edit `drivers/aerogpu/ci-package.json` to include the optional INF and required WOW64 payload
-  so `Inf2Cat /os:7_X64` succeeds:
-
-  - Add `packaging/win7/aerogpu_dx11.inf` to `infFiles`.
-  - Add `aerogpu_d3d10.dll` to `wow64Files`.
-  - Optional: if you also want the **legacy** bring-up INF to include the D3D10/11 UMDs, add
-    `legacy/aerogpu_dx11.inf` to `additionalFiles`.
-
-  Example (keep any existing `additionalFiles` entries):
-
-  ```json
-  {
-    "infFiles": ["packaging/win7/aerogpu.inf", "packaging/win7/aerogpu_dx11.inf"],
-    "wow64Files": ["aerogpu_d3d9.dll", "aerogpu_d3d10.dll"]
-  }
+  ```bat
+  install.cmd aerogpu.inf
   ```
 
 ## 1) Expected build outputs
@@ -72,8 +63,8 @@ Copy the built driver binaries into this directory (same folder as the `.inf` fi
 > ```
 >
 > If you built via the CI scripts, skip staging and instead copy/install the ready-to-install
-> package under `out/packages/aerogpu/<arch>/` (see section 3). Note: CI outputs are
-> **D3D9-only** by default (`aerogpu.inf` + `legacy/aerogpu.inf`); see section 0 for how to get the DX11 variant.
+> package under `out/packages/aerogpu/<arch>/` (see section 3). Note: CI outputs are **DX11-capable** by
+> default; `install.cmd` (no args) will pick `aerogpu_dx11.inf` when available.
 
 ### Required (D3D9)
 
@@ -197,12 +188,13 @@ This produces:
 - The signing certificate at:
   - `out/certs/aero-test.cer`
 
-By default, these CI-staged packages are **D3D9-only** and include:
+By default, these CI-staged packages are **DX11-capable** and include:
 
-- `aerogpu.inf` at the package root (canonical `PCI\VEN_A3A0&DEV_0001`)
+- `aerogpu_dx11.inf` at the package root (canonical `PCI\VEN_A3A0&DEV_0001`)
+- `aerogpu.inf` at the package root (D3D9-only variant)
 - `legacy/aerogpu.inf` for the deprecated legacy bring-up device model (`PCI\VEN_1AED&DEV_0001`)
 
-The optional DX11 INFs (`aerogpu_dx11.inf` and `legacy/aerogpu_dx11.inf`) are not included unless you customize
+The optional legacy DX11 INF (`legacy/aerogpu_dx11.inf`) is not included unless you customize
 `drivers/aerogpu/ci-package.json` (see section 0).
 
 See **4.1 Host-signed package** for the Win7 VM install steps.
@@ -245,6 +237,9 @@ shutdown /r /t 0
 
 ```bat
 cd C:\path\to\out\packages\aerogpu\x64
+:: DX11-capable (recommended; required for D3D10/D3D11 validation):
+pnputil -i -a aerogpu_dx11.inf
+:: D3D9-only variant:
 pnputil -i -a aerogpu.inf
 :: legacy bring-up device model:
 pnputil -i -a legacy\aerogpu.inf
@@ -258,8 +253,8 @@ packaging\win7\install.cmd legacy\aerogpu_dx11.inf
 :: install.cmd also runs packaging\win7\verify_umd_registration.cmd to sanity-check UMD placement + registry values.
 ```
 
-Note: CI packages include `aerogpu.inf` and `legacy/aerogpu.inf` (D3D9-only) by default. To install the optional
-D3D10/11 UMD variant(s) (`aerogpu_dx11.inf` and/or `legacy/aerogpu_dx11.inf`), see section 0.
+Note: CI packages include both `aerogpu_dx11.inf` (DX11-capable) and `aerogpu.inf` (D3D9-only) by default.
+`packaging\\win7\\install.cmd` (no args) prefers `aerogpu_dx11.inf` when present. See section 0.
 
 ### 4.2 Sign inside the Win7 VM (optional)
 
@@ -290,7 +285,7 @@ Notes:
 - `install.cmd` runs `verify_umd_registration.cmd` after install and returns non-zero if required UMD files/registry values are missing.
 - If you have `devcon.exe` available, you can place it in this directory (next to `install.cmd`) and the script will use it as a fallback for device update if `pnputil` fails.
 
-To install with the optional D3D10/11 UMDs:
+To install the DX11-capable variant explicitly:
 
 ```bat
 install.cmd aerogpu_dx11.inf
