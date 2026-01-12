@@ -270,6 +270,7 @@ export class HdaPciDevice implements PciDevice, TickableDevice {
     if (this.#destroyed) return;
     const sr = sampleRateHz >>> 0;
     if (sr === 0) return;
+    if (sr === this.#micSampleRateHz) return;
     this.#micSampleRateHz = sr;
     this.#syncMic();
   }
