@@ -377,6 +377,10 @@ impl I8042Controller {
         self.service_output();
     }
 
+    pub fn mouse_buttons_mask(&self) -> u8 {
+        self.mouse.buttons_mask()
+    }
+
     fn read_status(&mut self) -> u8 {
         let mut status = self.status;
         if self.last_write_was_command {

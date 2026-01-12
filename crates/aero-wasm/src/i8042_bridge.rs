@@ -91,6 +91,7 @@ impl I8042Bridge {
     /// Write a single byte to the guest I/O port space.
     pub fn port_write(&mut self, port: u16, value: u8) {
         self.ctrl.write_port(port, value);
+        self.mouse_buttons = self.ctrl.mouse_buttons_mask() & 0x07;
     }
 
     /// Inject up to 4 Set-2 keyboard scancode bytes.
@@ -187,11 +188,9 @@ impl I8042Bridge {
         self.ctrl
             .load_state(bytes)
             .map_err(|e| js_error(format!("Invalid i8042 snapshot: {e}")))?;
-        // The snapshot contains the guest-visible mouse button state. Reset the host-side
-        // "last injected" button image so subsequent injections compute deltas from a
-        // deterministic baseline. (This may cause one redundant button transition, but avoids
-        // sticking buttons across restore if the host state is stale.)
-        self.mouse_buttons = 0;
+        // The snapshot contains the mouse button image; keep our host-side injection tracker in
+        // sync so subsequent absolute button-mask injections compute correct deltas.
+        self.mouse_buttons = self.ctrl.mouse_buttons_mask() & 0x07;
         Ok(())
     }
 }

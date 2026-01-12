@@ -77,6 +77,25 @@ describe("I8042Bridge (wasm)", () => {
       expect(b0).toBe(0x08);
       expect(b1).toBe(5);
       expect(b2).toBe(3);
+
+      // Snapshot/restore should keep the internal mouse button image in sync with the host-side
+      // button-mask injector. Regression: if the bridge resets its internal tracking to 0 on
+      // restore, a queued button-release (mask=0) after restore may become a no-op and leave the
+      // guest with a stuck mouse button.
+      dev.inject_mouse_buttons(0x01);
+      // Drain the button packet.
+      while ((dev.port_read(0x64) & 0x01) !== 0) dev.port_read(0x60);
+      const snap = dev.save_state();
+      dev.inject_mouse_buttons(0x00);
+      while ((dev.port_read(0x64) & 0x01) !== 0) dev.port_read(0x60);
+
+      dev.load_state(snap);
+      // Try to release after restore.
+      dev.inject_mouse_buttons(0x00);
+      dev.inject_mouse_move(0, 0);
+      const s0 = dev.port_read(0x60);
+      // bit0 is left button; should be released.
+      expect(s0 & 0x01).toBe(0);
     } finally {
       dev.free();
     }

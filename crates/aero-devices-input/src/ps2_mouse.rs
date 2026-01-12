@@ -101,6 +101,10 @@ impl Ps2Mouse {
         self.device_id
     }
 
+    pub fn buttons_mask(&self) -> u8 {
+        self.buttons
+    }
+
     pub fn inject_motion(&mut self, dx: i32, dy: i32, wheel: i32) {
         self.dx += dx;
         self.dy += dy;
