@@ -54,6 +54,11 @@ pub struct RestoreOptions {
 pub trait SnapshotSource {
     fn snapshot_meta(&mut self) -> SnapshotMeta;
     fn cpu_state(&self) -> CpuState;
+    /// Snapshot representation of all vCPUs in the guest.
+    ///
+    /// Ordering note: implementations may return vCPU entries in any order.
+    /// [`save_snapshot`] canonicalizes the list by sorting on `apic_id` and rejects duplicate
+    /// `apic_id` values.
     fn cpu_states(&self) -> Vec<VcpuSnapshot> {
         vec![VcpuSnapshot {
             apic_id: 0,
@@ -62,7 +67,17 @@ pub trait SnapshotSource {
         }]
     }
     fn mmu_state(&self) -> MmuState;
+    /// Snapshot representation of device state entries.
+    ///
+    /// Ordering note: implementations may return device entries in any order.
+    /// [`save_snapshot`] canonicalizes the list by sorting on `(device_id, version, flags)` and
+    /// rejects duplicate `(device_id, version, flags)` tuples.
     fn device_states(&self) -> Vec<DeviceState>;
+    /// Snapshot representation of externally-managed disk overlay references.
+    ///
+    /// Ordering note: implementations may return disk entries in any order.
+    /// [`save_snapshot`] canonicalizes the list by sorting on `disk_id` and rejects duplicate
+    /// `disk_id` values.
     fn disk_overlays(&self) -> DiskOverlayRefs;
 
     fn ram_len(&self) -> usize;
@@ -95,6 +110,11 @@ pub trait SnapshotTarget {
     fn pre_restore(&mut self) {}
     fn restore_meta(&mut self, _meta: SnapshotMeta) {}
     fn restore_cpu_state(&mut self, state: CpuState);
+    /// Restore multiple vCPUs.
+    ///
+    /// Ordering note: when restoring snapshots from [`restore_snapshot`] (and variants), vCPU
+    /// entries are sorted by `apic_id` before being passed to targets to ensure deterministic
+    /// restore behavior even when snapshot producers emit entries in arbitrary order.
     fn restore_cpu_states(&mut self, states: Vec<VcpuSnapshot>) -> Result<()> {
         if states.len() != 1 {
             return Err(SnapshotError::Corrupt(
@@ -109,7 +129,17 @@ pub trait SnapshotTarget {
         Ok(())
     }
     fn restore_mmu_state(&mut self, state: MmuState);
+    /// Restore device state entries.
+    ///
+    /// Ordering note: when restoring snapshots from [`restore_snapshot`] (and variants), device
+    /// entries are sorted by `(device_id, version, flags)` before being passed to targets to ensure
+    /// deterministic restore behavior even when snapshot producers emit entries in arbitrary order.
     fn restore_device_states(&mut self, states: Vec<DeviceState>);
+    /// Restore externally-managed disk overlay references.
+    ///
+    /// Ordering note: when restoring snapshots from [`restore_snapshot`] (and variants), disk
+    /// entries are sorted by `disk_id` before being passed to targets to ensure deterministic
+    /// restore behavior even when snapshot producers emit entries in arbitrary order.
     fn restore_disk_overlays(&mut self, overlays: DiskOverlayRefs);
 
     fn ram_len(&self) -> usize;

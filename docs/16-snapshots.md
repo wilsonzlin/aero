@@ -75,6 +75,9 @@ This framing enables **backward-compatible schema evolution**:
     - `disk_id = 2` → (optional) IDE PIIX3 primary master ATA disk
 - `CPUS` entries are written in canonical order: ascending `apic_id`.
 - Dirty-page RAM snapshots canonicalize the dirty page list: sorted ascending, deduplicated, and validated against the guest RAM size.
+- Snapshot restore also canonicalizes list ordering **before** passing data to the restore target:
+  - `restore_snapshot` sorts `CPUS` by `apic_id`, `DEVICES` by `(device_id, version, flags)`, and `DISKS` by `disk_id`.
+  - This makes restore deterministic even if a snapshot producer writes entries in arbitrary order.
 
 ### Validation / corruption handling
 
