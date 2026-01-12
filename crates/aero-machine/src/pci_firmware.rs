@@ -60,6 +60,11 @@ fn cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
     // PCI Configuration Mechanism #1 address (0xCF8).
     //
     // Bits 7:2 encode the DWORD-aligned register number; bits 1:0 are reserved and read as 0.
+    assert_eq!(
+        offset & 0x3,
+        0,
+        "PCI config dword offset must be 4-byte aligned"
+    );
     0x8000_0000
         | (u32::from(bus) << 16)
         | (u32::from(device) << 11)
@@ -122,12 +127,22 @@ impl firmware::bios::PciConfigSpace for SharedPciConfigPortsBiosAdapter {
 
 impl firmware::bios::PciConfigSpace for PciBusBiosAdapter<'_> {
     fn read_config_dword(&mut self, bus: u8, device: u8, function: u8, offset: u8) -> u32 {
+        assert_eq!(
+            offset & 0x3,
+            0,
+            "PCI config dword offset must be 4-byte aligned"
+        );
         let bdf = PciBdf::new(bus, device, function);
         let offset = u16::from(offset & 0xFC);
         self.bus.read_config(bdf, offset, 4)
     }
 
     fn write_config_dword(&mut self, bus: u8, device: u8, function: u8, offset: u8, value: u32) {
+        assert_eq!(
+            offset & 0x3,
+            0,
+            "PCI config dword offset must be 4-byte aligned"
+        );
         let bdf = PciBdf::new(bus, device, function);
         let offset = u16::from(offset & 0xFC);
         self.bus.write_config(bdf, offset, 4, value);
@@ -137,7 +152,7 @@ impl firmware::bios::PciConfigSpace for PciBusBiosAdapter<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aero_devices::pci::{PciBdf, PciBus, PciInterruptPin};
+    use aero_devices::pci::{profile, PciBus, PciInterruptPin};
     use firmware::bios::{A20Gate, Bios, BiosConfig, BlockDevice, FirmwareMemory, InMemoryDisk};
     use memory::{DenseMemory, MapError, PhysicalMemoryBus};
     use pretty_assertions::assert_eq;
@@ -266,9 +281,9 @@ mod tests {
     fn firmware_bios_pci_enumeration_programs_interrupt_line_via_cfg_ports() {
         let mut pci_bus = PciBus::new();
 
-        let bdf = PciBdf::new(0, 1, 0);
-        let mut cfg = aero_devices::pci::PciConfigSpace::new(0x1234, 0x5678);
-        cfg.set_interrupt_pin(PciInterruptPin::IntA.to_config_u8());
+        let profile = profile::NIC_E1000_82540EM;
+        let bdf = profile.bdf;
+        let cfg = profile.build_config_space();
         pci_bus.add_device(bdf, Box::new(StubPciDev { cfg }));
 
         let mut pci_ports = PciConfigPorts::with_bus(pci_bus);
@@ -311,9 +326,9 @@ mod tests {
     fn firmware_bios_pci_enumeration_programs_interrupt_line_via_pci_bus() {
         let mut pci_bus = PciBus::new();
 
-        let bdf = PciBdf::new(0, 1, 0);
-        let mut cfg = aero_devices::pci::PciConfigSpace::new(0x1234, 0x5678);
-        cfg.set_interrupt_pin(PciInterruptPin::IntA.to_config_u8());
+        let profile = profile::NIC_E1000_82540EM;
+        let bdf = profile.bdf;
+        let cfg = profile.build_config_space();
         pci_bus.add_device(bdf, Box::new(StubPciDev { cfg }));
 
         let mut adapter = PciBusBiosAdapter::new(&mut pci_bus);
@@ -347,9 +362,9 @@ mod tests {
     fn firmware_bios_pci_enumeration_programs_interrupt_line_via_shared_cfg_ports() {
         let mut pci_bus = PciBus::new();
 
-        let bdf = PciBdf::new(0, 1, 0);
-        let mut cfg = aero_devices::pci::PciConfigSpace::new(0x1234, 0x5678);
-        cfg.set_interrupt_pin(PciInterruptPin::IntA.to_config_u8());
+        let profile = profile::NIC_E1000_82540EM;
+        let bdf = profile.bdf;
+        let cfg = profile.build_config_space();
         pci_bus.add_device(bdf, Box::new(StubPciDev { cfg }));
 
         let pci_ports: SharedPciConfigPorts =
