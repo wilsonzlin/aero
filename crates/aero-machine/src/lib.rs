@@ -2751,10 +2751,9 @@ impl Machine {
                 let mut ahci_dev = ahci.borrow_mut();
                 ahci_dev.config_mut().set_command(command);
                 if bar5_base != 0 {
-                    ahci_dev.config_mut().set_bar_base(
-                        aero_devices::pci::profile::AHCI_ABAR_BAR_INDEX,
-                        bar5_base,
-                    );
+                    ahci_dev
+                        .config_mut()
+                        .set_bar_base(aero_devices::pci::profile::AHCI_ABAR_BAR_INDEX, bar5_base);
                 }
 
                 let mut level = ahci_dev.intx_level();
@@ -3702,10 +3701,8 @@ impl Machine {
                 let mut ahci = ahci.borrow_mut();
                 ahci.config_mut().set_command(command);
                 if bar5_base != 0 {
-                    ahci.config_mut().set_bar_base(
-                        aero_devices::pci::profile::AHCI_ABAR_BAR_INDEX,
-                        bar5_base,
-                    );
+                    ahci.config_mut()
+                        .set_bar_base(aero_devices::pci::profile::AHCI_ABAR_BAR_INDEX, bar5_base);
                 }
             }
             if let Some(nvme) = nvme.as_ref() {
@@ -4087,10 +4084,8 @@ impl Machine {
         let mut dev = ahci.borrow_mut();
         dev.config_mut().set_command(command);
         if bar5_base != 0 {
-            dev.config_mut().set_bar_base(
-                aero_devices::pci::profile::AHCI_ABAR_BAR_INDEX,
-                bar5_base,
-            );
+            dev.config_mut()
+                .set_bar_base(aero_devices::pci::profile::AHCI_ABAR_BAR_INDEX, bar5_base);
         }
 
         if bus_master_enabled {
@@ -4962,10 +4957,8 @@ impl snapshot::SnapshotSource for Machine {
                 let mut ahci = ahci.borrow_mut();
                 ahci.config_mut().set_command(command);
                 if bar5_base != 0 {
-                    ahci.config_mut().set_bar_base(
-                        aero_devices::pci::profile::AHCI_ABAR_BAR_INDEX,
-                        bar5_base,
-                    );
+                    ahci.config_mut()
+                        .set_bar_base(aero_devices::pci::profile::AHCI_ABAR_BAR_INDEX, bar5_base);
                 }
             }
             disk_controllers.insert(bdf.pack_u16(), ahci.borrow().save_state());

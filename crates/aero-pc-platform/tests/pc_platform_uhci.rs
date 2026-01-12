@@ -1363,11 +1363,8 @@ fn pc_platform_uhci_short_packet_sets_usbint_and_asserts_intx_when_spd_enabled()
     pc.io.write(bar4_base + REG_FRNUM, 2, 0);
     // Enable short-packet interrupts (but not IOC), so USBINT gating is tested on the short-packet
     // cause.
-    pc.io.write(
-        bar4_base + REG_USBINTR,
-        2,
-        u32::from(USBINTR_SHORT_PACKET),
-    );
+    pc.io
+        .write(bar4_base + REG_USBINTR, 2, u32::from(USBINTR_SHORT_PACKET));
     pc.io.write(
         bar4_base + REG_USBCMD,
         2,
