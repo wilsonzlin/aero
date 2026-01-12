@@ -804,6 +804,7 @@ mod tests {
     use super::*;
     use crate::bus::{TestIrqLine, TestMemory};
     use aero_storage::{MemBackend, RawDisk, VirtualDisk};
+    use memory::MemoryBus;
 
     fn setup_controller() -> (AhciController, TestIrqLine, TestMemory, AtaDrive) {
         let irq = TestIrqLine::default();

@@ -84,6 +84,7 @@ impl MemoryBus for TestMemory {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use memory::MemoryBus;
 
     #[test]
     fn test_memory_read_write_primitives() {
