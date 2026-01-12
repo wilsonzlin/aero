@@ -2821,11 +2821,16 @@ static bool HttpGet(Logger& log, const std::wstring& url) {
   return status >= 200 && status < 300;
 }
 
-static bool HttpGetLargeDeterministic(Logger& log, const std::wstring& url) {
+static bool HttpGetLargeDeterministic(Logger& log, const std::wstring& url, uint64_t* bytes_read_out,
+                                      uint64_t* fnv1a64_out, double* mbps_out) {
   static const uint64_t kExpectedBytes = 1024ull * 1024ull;
   // FNV-1a 64-bit hash of bytes 0..255 repeated to 1 MiB.
   static const uint64_t kExpectedHash = 0x8505ae4435522325ull;
   static const uint64_t kFnvOffsetBasis = 14695981039346656037ull; // 0xcbf29ce484222325
+
+  if (bytes_read_out) *bytes_read_out = 0;
+  if (fnv1a64_out) *fnv1a64_out = 0;
+  if (mbps_out) *mbps_out = 0.0;
 
   URL_COMPONENTS comp{};
   comp.dwStructSize = sizeof(comp);
@@ -3005,6 +3010,9 @@ static bool HttpGetLargeDeterministic(Logger& log, const std::wstring& url) {
 
   const double sec = std::max(0.000001, timer.SecondsSinceStart());
   const double mbps = (static_cast<double>(total_read) / (1024.0 * 1024.0)) / sec;
+  if (bytes_read_out) *bytes_read_out = total_read;
+  if (fnv1a64_out) *fnv1a64_out = hash;
+  if (mbps_out) *mbps_out = mbps;
   log.Logf("virtio-net: HTTP GET large done url=%s status=%lu bytes_read=%llu sec=%.2f mbps=%.2f "
            "fnv1a64=0x%016llx%s",
            WideToUtf8(url).c_str(), status, static_cast<unsigned long long>(total_read), sec, mbps,
@@ -3043,11 +3051,20 @@ static bool HttpGetLargeDeterministic(Logger& log, const std::wstring& url) {
   return true;
 }
 
-static bool VirtioNetTest(Logger& log, const Options& opt) {
+struct VirtioNetTestResult {
+  bool ok = false;
+  bool large_ok = false;
+  uint64_t large_bytes = 0;
+  uint64_t large_hash = 0;
+  double large_mbps = 0.0;
+};
+
+static VirtioNetTestResult VirtioNetTest(Logger& log, const Options& opt) {
+  VirtioNetTestResult out{};
   const auto adapters = DetectVirtioNetAdapters(log);
   if (adapters.empty()) {
     log.LogLine("virtio-net: no virtio net adapters detected");
-    return false;
+    return out;
   }
 
   log.Logf("virtio-net: waiting for link+dhcp timeout_sec=%lu", opt.net_timeout_sec);
@@ -3075,7 +3092,7 @@ static bool VirtioNetTest(Logger& log, const Options& opt) {
 
   if (!chosen.has_value()) {
     log.LogLine("virtio-net: timed out waiting for adapter to be UP with non-APIPA IPv4");
-    return false;
+    return out;
   }
 
   // Ensure the selected NIC is using the in-tree Aero virtio-net miniport, not a third-party
@@ -3116,11 +3133,11 @@ static bool VirtioNetTest(Logger& log, const Options& opt) {
   const auto dhcp_enabled = IsDhcpEnabledForAdapterGuid(chosen->instance_id);
   if (!dhcp_enabled.has_value()) {
     log.LogLine("virtio-net: failed to query DHCP enabled state");
-    return false;
+    return out;
   }
   if (!*dhcp_enabled) {
     log.LogLine("virtio-net: DHCP is not enabled for the virtio adapter");
-    return false;
+    return out;
   }
 
   const uint32_t host = ntohl(chosen_ip.S_un.S_addr);
@@ -3132,10 +3149,15 @@ static bool VirtioNetTest(Logger& log, const Options& opt) {
            WideToUtf8(chosen_friendly).c_str(), WideToUtf8(chosen->instance_id).c_str(), a, b, c,
            d);
 
-  if (!DnsResolveWithFallback(log, opt.dns_host)) return false;
-  if (!HttpGet(log, opt.http_url)) return false;
-  if (!HttpGetLargeDeterministic(log, UrlAppendSuffix(opt.http_url, L"-large"))) return false;
-  return true;
+  if (!DnsResolveWithFallback(log, opt.dns_host)) return out;
+  if (!HttpGet(log, opt.http_url)) return out;
+
+  const std::wstring large_url = UrlAppendSuffix(opt.http_url, L"-large");
+  out.large_ok = HttpGetLargeDeterministic(log, large_url, &out.large_bytes, &out.large_hash, &out.large_mbps);
+  if (!out.large_ok) return out;
+
+  out.ok = true;
+  return out;
 }
 
 static const char* MmDeviceStateToString(DWORD state) {
@@ -6305,9 +6327,13 @@ int wmain(int argc, wchar_t** argv) {
     log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-net|FAIL");
     all_ok = false;
   } else {
-    const bool net_ok = VirtioNetTest(log, opt);
-    log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-net|%s", net_ok ? "PASS" : "FAIL");
-    all_ok = all_ok && net_ok;
+    const auto net = VirtioNetTest(log, opt);
+    log.Logf(
+        "AERO_VIRTIO_SELFTEST|TEST|virtio-net|%s|large_ok=%d|large_bytes=%llu|large_fnv1a64=0x%016llx|large_mbps=%.2f",
+        net.ok ? "PASS" : "FAIL", net.large_ok ? 1 : 0,
+        static_cast<unsigned long long>(net.large_bytes), static_cast<unsigned long long>(net.large_hash),
+        net.large_mbps);
+    all_ok = all_ok && net.ok;
     WSACleanup();
   }
 
