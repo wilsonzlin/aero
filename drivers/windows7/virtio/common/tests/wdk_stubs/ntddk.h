@@ -1,9 +1,16 @@
 /* SPDX-License-Identifier: MIT OR Apache-2.0 */
 /*
- * Minimal host-buildable ntddk.h stub for unit testing WDM helpers.
+ * Minimal host-buildable ntddk.h stub for virtio common host-side unit tests.
  *
- * This is NOT a complete WDK replacement. It only defines what
- * virtio_pci_intx_wdm.{h,c} requires.
+ * This is NOT a complete WDK replacement. It only provides the small subset of
+ * WDK surface area required by the test targets under
+ * `drivers/windows7/virtio/common/tests/` (e.g. virtio_pci_intx_wdm and
+ * virtio_pci_modern_miniport).
+ *
+ * Note: There are multiple `ntddk.h` shims in this repository for different
+ * test suites. Each CMake test target must add this directory to its include
+ * path (and ideally with `BEFORE`) to ensure it compiles against the intended
+ * stub header.
  */
 
 #pragma once
