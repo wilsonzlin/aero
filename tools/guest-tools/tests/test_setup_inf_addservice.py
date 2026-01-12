@@ -423,6 +423,42 @@ class SetupInfAddServiceTests(unittest.TestCase):
             )
 
     @unittest.skipUnless(os.name == "nt", "requires Windows cmd.exe")
+    def test_validate_storage_service_infs_handles_special_chars_in_paths(self) -> None:
+        repo_root = Path(__file__).resolve().parents[3]
+        setup_cmd = repo_root / "guest-tools" / "setup.cmd"
+        self.assertTrue(setup_cmd.exists(), f"missing setup.cmd at: {setup_cmd}")
+
+        service = "viostor"
+
+        with tempfile.TemporaryDirectory(prefix="aero-guest-tools-inf-validate-") as tmp:
+            tmp_path = Path(tmp)
+            driver_dir = tmp_path / "drivers (a&b)"
+            driver_dir.mkdir(parents=True, exist_ok=True)
+
+            # UTF-16 INF so the scan-list PowerShell fallback is exercised, with special
+            # characters in the path (parentheses and &).
+            ok_inf = driver_dir / "ok.inf"
+            ok_inf.write_bytes(
+                (
+                    "\r\n".join(
+                        [
+                            "; UTF-16LE INF fixture",
+                            "[DefaultInstall.NT]",
+                            f'AddService = "{service}", 0x00000002, Service_Inst',
+                        ]
+                    )
+                    + "\r\n"
+                ).encode("utf-16")
+            )
+
+            result = self._run_validate_selftest(setup_cmd, driver_dir, service)
+            self.assertEqual(
+                result.returncode,
+                0,
+                msg=f"expected validation to succeed with special chars in paths, got {result.returncode}. Output:\n{result.stdout}",
+            )
+
+    @unittest.skipUnless(os.name == "nt", "requires Windows cmd.exe")
     def test_validate_storage_service_infs_ignores_commented_utf16_addservice(self) -> None:
         repo_root = Path(__file__).resolve().parents[3]
         setup_cmd = repo_root / "guest-tools" / "setup.cmd"
