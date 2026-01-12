@@ -189,7 +189,13 @@ if [[ "$(uname 2>/dev/null || true)" == "Linux" ]]; then
   _aero_add_lld_threads_rustflags() {
     local target="${1}"
     local threads="${CARGO_BUILD_JOBS:-1}"
-    local var="CARGO_TARGET_${target^^}_RUSTFLAGS"
+    # `CARGO_TARGET_<TRIPLE>_RUSTFLAGS` uses an uppercased triple with `-`/`.` replaced by `_`.
+    #
+    # Avoid Bash 4+ `${var^^}` so this script stays compatible with older `/bin/bash` (notably
+    # macOS, which still ships Bash 3.2).
+    local target_upper
+    target_upper="$(printf '%s' "${target}" | tr '[:lower:]' '[:upper:]')"
+    local var="CARGO_TARGET_${target_upper}_RUSTFLAGS"
     var="${var//-/_}"
     var="${var//./_}"
 
