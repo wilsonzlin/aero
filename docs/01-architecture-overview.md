@@ -182,24 +182,24 @@ To support SMP guests, the CPU emulation worker hosts **2+ vCPUs**:
 ┌─────────────────────────────────────────────────────────────────┐
 │ Address Range        │ Size     │ Description                   │
 ├─────────────────────────────────────────────────────────────────┤
-│ 0x0000_0000 - 0x0009_FFFF │ 640 KB   │ Conventional Memory       │
-│ 0x000A_0000 - 0x000B_FFFF │ 128 KB   │ AeroGPU legacy VGA window │
-│ 0x000C_0000 - 0x000C_7FFF │ 32 KB    │ Video BIOS                │
-│ 0x000C_8000 - 0x000E_FFFF │ 160 KB   │ Adapter ROM Area          │
-│ 0x000F_0000 - 0x000F_FFFF │ 64 KB    │ System BIOS               │
-│ 0x0010_0000 - 0x00EF_FFFF │ 14 MB    │ Extended Memory (ISA hole)│
-│ 0x00F0_0000 - 0x00FF_FFFF │ 1 MB     │ ISA Memory Hole           │
-│ 0x0100_0000 - 0xAFFF_FFFF │ ~2.75 GB │ Extended Memory (config-dependent)│
-│ 0xB000_0000 - 0xBFFF_FFFF │ 256 MiB  │ PCIe ECAM (MMCONFIG, ACPI MCFG)│
-│ 0xC000_0000 - 0xFEBF_FFFF │ ~1 GB    │ PCI MMIO Space            │
-│ 0xFEC0_0000 - 0xFEC0_0FFF │ 4 KB     │ I/O APIC                  │
-│ 0xFED0_0000 - 0xFED0_03FF │ 1 KB     │ HPET                      │
-│ 0xFEE0_0000 - 0xFEE0_0FFF │ 4 KB     │ Local APIC               │
-│ 0xFFFF_0000 - 0xFFFF_FFFF │ 64 KB    │ BIOS Shadow / Reset Vec   │
+│ 0x0000_0000 - 0x0009_EFFF │ 636 KiB  │ Conventional memory (RAM) │
+│ 0x0009_F000 - 0x0009_FFFF │ 4 KiB    │ EBDA (reserved)           │
+│ 0x000A_0000 - 0x000F_FFFF │ 384 KiB  │ VGA/BIOS/option ROM (res) │
+│ 0x0010_0000 - 0xAFFF_FFFF │ ~2.75 GiB│ Low RAM (usable; ≤ ECAM)  │
+│ 0xB000_0000 - 0xBFFF_FFFF │ 256 MiB  │ PCIe ECAM (MMCONFIG/MCFG) │
+│ 0xC000_0000 - 0xFFFF_FFFF │ 1 GiB    │ PCI/MMIO hole (reserved)  │
+│   0xFEC0_0000 - 0xFEC0_0FFF │ 4 KiB  │ I/O APIC MMIO (within hole)│
+│   0xFED0_0000 - 0xFED0_03FF │ 1 KiB  │ HPET MMIO (within hole)   │
+│   0xFEE0_0000 - 0xFEE0_0FFF │ 4 KiB  │ Local APIC (within hole)  │
+│   0xFFFF_0000 - 0xFFFF_FFFF │ 64 KiB │ BIOS reset-vector alias   │
+│ 0x1_0000_0000 - ...        │ ...     │ High RAM remap (>4 GiB)   │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-Note: Aero’s baseline browser build uses wasm32 and is therefore constrained to **< 4GiB** of contiguous guest RAM. With an ECAM window at `0xB000_0000`, the largest contiguous low-RAM window is **< 2.75GiB**; larger RAM configurations require remapping some RAM above 4GiB, which in turn requires a segmented/sparse host backing model (or wasm `memory64`).
+Note: Aero’s baseline browser build uses wasm32 and is therefore constrained to **< 4 GiB** of
+contiguous guest RAM. With an ECAM window at `0xB000_0000`, the largest contiguous low-RAM window is
+**< 2.75 GiB**; larger RAM configurations require remapping some RAM above 4 GiB, which in turn
+requires a segmented/sparse host backing model (or wasm `memory64`).
 
 ### I/O Port Map (Selected)
 
