@@ -132,13 +132,15 @@ test("canonical Machine panel: renders VGA scanout to a canvas", async ({ page }
     const pixelsLen = Math.min(Math.max(0, sab.byteLength - HEADER_BYTES), Math.max(0, strideBytes) * Math.max(0, height));
     const pixels = new Uint8Array(sab, HEADER_BYTES, pixelsLen);
 
-    const sampleW = Math.max(0, Math.min(16, width));
-    const sampleH = Math.max(0, Math.min(16, height));
+    // Scan the shared framebuffer for any non-black pixel. Avoid only sampling the top-left:
+    // some VGA modes may keep early pixels black (e.g. borders/padding).
     let nonBlack = false;
-    for (let y = 0; y < sampleH && !nonBlack; y++) {
-      for (let x = 0; x < sampleW && !nonBlack; x++) {
-        const off = y * strideBytes + x * 4;
-        if (off + 2 >= pixels.length) continue;
+    const rowBytes = Math.max(0, width) * 4;
+    for (let y = 0; y < height && !nonBlack; y++) {
+      const rowOff = y * strideBytes;
+      if (rowOff + rowBytes > pixels.length) break;
+      for (let x = 0; x < width && !nonBlack; x++) {
+        const off = rowOff + x * 4;
         const r = pixels[off] ?? 0;
         const g = pixels[off + 1] ?? 0;
         const b = pixels[off + 2] ?? 0;
