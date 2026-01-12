@@ -349,6 +349,25 @@ elif ! [[ "${RUST_TEST_THREADS}" =~ ^[1-9][0-9]*$ ]]; then
 fi
 unset _aero_default_rust_test_threads 2>/dev/null || true
 
+# cargo-nextest runs test binaries in parallel, with its own concurrency setting
+# (`--test-threads`, env: `NEXTEST_TEST_THREADS`). This is separate from libtest's
+# `RUST_TEST_THREADS` and can also exceed per-user thread limits on shared hosts.
+#
+# Keep it aligned with our overall Cargo parallelism knob (`CARGO_BUILD_JOBS`) for reliability.
+_aero_default_nextest_threads="${CARGO_BUILD_JOBS:-1}"
+if ! [[ "${_aero_default_nextest_threads}" =~ ^[1-9][0-9]*$ ]]; then
+    _aero_default_nextest_threads=1
+fi
+if [[ -z "${NEXTEST_TEST_THREADS:-}" ]]; then
+    export NEXTEST_TEST_THREADS="${_aero_default_nextest_threads}"
+elif [[ "${NEXTEST_TEST_THREADS}" == "num-cpus" ]]; then
+    : # allow explicit opt-out
+elif ! [[ "${NEXTEST_TEST_THREADS}" =~ ^[1-9][0-9]*$ ]]; then
+    echo "[safe-run] warning: invalid NEXTEST_TEST_THREADS value: ${NEXTEST_TEST_THREADS} (expected positive integer or 'num-cpus'); using ${_aero_default_nextest_threads}" >&2
+    export NEXTEST_TEST_THREADS="${_aero_default_nextest_threads}"
+fi
+unset _aero_default_nextest_threads 2>/dev/null || true
+
 # rustc has its own internal worker thread pool (separate from Cargo's `-j` / build jobs).
 # In constrained agent sandboxes, the default pool size (often `num_cpus`) can exceed
 # per-user thread/process limits and cause rustc to ICE with:
@@ -774,6 +793,7 @@ if [[ $# -lt 1 ]]; then
     echo "  RAYON_NUM_THREADS=1      Rayon global pool size (default: CARGO_BUILD_JOBS)" >&2
     echo "  RUST_TEST_THREADS=1      Rust test harness parallelism (default: CARGO_BUILD_JOBS)" >&2
     echo "  AERO_TOKIO_WORKER_THREADS=1  Tokio runtime worker threads for Aero binaries that support it (default: CARGO_BUILD_JOBS)" >&2
+    echo "  NEXTEST_TEST_THREADS=1   cargo-nextest test concurrency (default: CARGO_BUILD_JOBS; accepts 'num-cpus' to opt out)" >&2
     echo "  AERO_RUST_CODEGEN_UNITS=<n>  Optional rustc per-crate codegen-units override (alias: AERO_CODEGEN_UNITS)" >&2
     echo "" >&2
     echo "Examples:" >&2
@@ -857,7 +877,7 @@ done
 echo "[safe-run] Command: $*" >&2
 echo "[safe-run] Timeout: ${TIMEOUT}s, Memory: ${MEM_LIMIT}" >&2
 if [[ "${is_cargo_cmd}" == "true" ]]; then
-    echo "[safe-run] Cargo jobs: ${CARGO_BUILD_JOBS:-}  rustc worker threads: ${RUSTC_WORKER_THREADS:-}  rayon threads: ${RAYON_NUM_THREADS:-}  test threads: ${RUST_TEST_THREADS:-}  tokio worker threads: ${AERO_TOKIO_WORKER_THREADS:-}" >&2
+    echo "[safe-run] Cargo jobs: ${CARGO_BUILD_JOBS:-}  rustc worker threads: ${RUSTC_WORKER_THREADS:-}  rayon threads: ${RAYON_NUM_THREADS:-}  test threads: ${RUST_TEST_THREADS:-}  nextest threads: ${NEXTEST_TEST_THREADS:-}  tokio worker threads: ${AERO_TOKIO_WORKER_THREADS:-}" >&2
 fi
 echo "[safe-run] Started: $(date -Iseconds 2>/dev/null || date)" >&2
 

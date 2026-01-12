@@ -71,6 +71,7 @@ bash ./scripts/safe-run.sh cargo test --locked   # Test with timeout + memory li
   #   - AERO_TIMEOUT / AERO_MEM_LIMIT apply to safe-run's timeout + RLIMIT_AS wrapper.
   #   - AERO_CARGO_BUILD_JOBS controls Cargo parallelism (defaults to -j1 for reliability in constrained sandboxes).
   #   - RUST_TEST_THREADS controls Rust's built-in test harness parallelism (libtest). Agent helper scripts default it to CARGO_BUILD_JOBS for reliability under tight thread limits.
+  #   - NEXTEST_TEST_THREADS controls cargo-nextest test concurrency (nextest has its own runner parallelism, separate from RUST_TEST_THREADS).
   #   - AERO_TOKIO_WORKER_THREADS controls Tokio runtime worker threads for supported Aero binaries (e.g. aero-l2-proxy, disk-gateway). Agent helper scripts default it to CARGO_BUILD_JOBS for reliability under tight thread limits.
   #   - AERO_ISOLATE_CARGO_HOME=1 isolates Cargo registry/cache state per checkout to avoid "Blocking waiting for file lock on package cache" on shared hosts.
   #     - `scripts/safe-run.sh` will also create `./.cargo-home` automatically when it detects that lock contention, and will auto-use it on future runs as long as you're using the default Cargo home (`$HOME/.cargo`).

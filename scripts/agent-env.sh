@@ -178,6 +178,26 @@ elif ! [[ "${RUST_TEST_THREADS}" =~ ^[1-9][0-9]*$ ]]; then
 fi
 unset _aero_default_rust_test_threads 2>/dev/null || true
 
+# cargo-nextest runs tests in parallel with its own concurrency setting (env:
+# `NEXTEST_TEST_THREADS`), which is separate from libtest's `RUST_TEST_THREADS`.
+# Under shared-host contention, the default can exceed per-user thread limits and
+# cause EAGAIN/WouldBlock failures.
+#
+# Keep it aligned with our overall Cargo parallelism for reliability.
+_aero_default_nextest_threads="${CARGO_BUILD_JOBS:-1}"
+if ! [[ "${_aero_default_nextest_threads}" =~ ^[1-9][0-9]*$ ]]; then
+  _aero_default_nextest_threads=1
+fi
+if [[ -z "${NEXTEST_TEST_THREADS:-}" ]]; then
+  export NEXTEST_TEST_THREADS="${_aero_default_nextest_threads}"
+elif [[ "${NEXTEST_TEST_THREADS}" == "num-cpus" ]]; then
+  : # allow explicit opt-out
+elif ! [[ "${NEXTEST_TEST_THREADS}" =~ ^[1-9][0-9]*$ ]]; then
+  echo "warning: invalid NEXTEST_TEST_THREADS value: ${NEXTEST_TEST_THREADS} (expected positive integer or 'num-cpus'); using ${_aero_default_nextest_threads}" >&2
+  export NEXTEST_TEST_THREADS="${_aero_default_nextest_threads}"
+fi
+unset _aero_default_nextest_threads 2>/dev/null || true
+
 # Tokio defaults to spawning one worker thread per CPU core for multi-thread runtimes.
 # In thread-limited agent sandboxes this can exceed per-user thread limits and cause
 # EAGAIN/WouldBlock failures. Some Aero binaries read this repo-specific env var to cap
@@ -411,6 +431,7 @@ echo "  CARGO_BUILD_JOBS=$CARGO_BUILD_JOBS"
 echo "  RUSTC_WORKER_THREADS=$RUSTC_WORKER_THREADS"
 echo "  RAYON_NUM_THREADS=$RAYON_NUM_THREADS"
 echo "  RUST_TEST_THREADS=$RUST_TEST_THREADS"
+echo "  NEXTEST_TEST_THREADS=$NEXTEST_TEST_THREADS"
 echo "  AERO_TOKIO_WORKER_THREADS=$AERO_TOKIO_WORKER_THREADS"
 echo "  RUSTFLAGS=${RUSTFLAGS:-}"
 echo "  CARGO_INCREMENTAL=$CARGO_INCREMENTAL"

@@ -250,6 +250,51 @@ test("safe-run.sh sanitizes invalid AERO_TOKIO_WORKER_THREADS (Linux)", { skip: 
   assert.equal(stdout, "2|2");
 });
 
+test("safe-run.sh defaults NEXTEST_TEST_THREADS to CARGO_BUILD_JOBS (Linux)", { skip: process.platform !== "linux" }, () => {
+  const env = { ...process.env };
+  delete env.CARGO_BUILD_JOBS;
+  delete env.AERO_CARGO_BUILD_JOBS;
+  delete env.NEXTEST_TEST_THREADS;
+
+  const stdout = execFileSync(path.join(repoRoot, "scripts/safe-run.sh"), ["bash", "-c", 'printf "%s|%s" "$CARGO_BUILD_JOBS" "$NEXTEST_TEST_THREADS"'], {
+    cwd: repoRoot,
+    env,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  assert.equal(stdout, "1|1");
+});
+
+test("safe-run.sh sanitizes invalid NEXTEST_TEST_THREADS (Linux)", { skip: process.platform !== "linux" }, () => {
+  const env = { ...process.env };
+  delete env.CARGO_BUILD_JOBS;
+  env.AERO_CARGO_BUILD_JOBS = "2";
+  env.NEXTEST_TEST_THREADS = "nope";
+
+  const stdout = execFileSync(path.join(repoRoot, "scripts/safe-run.sh"), ["bash", "-c", 'printf "%s|%s" "$CARGO_BUILD_JOBS" "$NEXTEST_TEST_THREADS"'], {
+    cwd: repoRoot,
+    env,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  assert.equal(stdout, "2|2");
+});
+
+test("safe-run.sh preserves NEXTEST_TEST_THREADS=num-cpus opt-out (Linux)", { skip: process.platform !== "linux" }, () => {
+  const env = { ...process.env };
+  delete env.CARGO_BUILD_JOBS;
+  env.AERO_CARGO_BUILD_JOBS = "2";
+  env.NEXTEST_TEST_THREADS = "num-cpus";
+
+  const stdout = execFileSync(path.join(repoRoot, "scripts/safe-run.sh"), ["bash", "-c", 'printf "%s|%s" "$CARGO_BUILD_JOBS" "$NEXTEST_TEST_THREADS"'], {
+    cwd: repoRoot,
+    env,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  assert.equal(stdout, "2|num-cpus");
+});
+
 test("safe-run.sh defaults RUST_TEST_THREADS for cargo test (Linux)", { skip: process.platform !== "linux" }, () => {
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "aero-safe-run-test-threads-"));
   try {
