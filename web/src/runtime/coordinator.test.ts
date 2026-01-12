@@ -108,6 +108,74 @@ describe("runtime/coordinator", () => {
     expect(restartSpy).toHaveBeenCalledTimes(1);
   });
 
+  it("restarts the VM when virtioInputMode changes (PCI contract change)", () => {
+    const coordinator = new WorkerCoordinator();
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 1 });
+    const shared = createSharedMemoryViews(segments);
+    (coordinator as any).shared = shared;
+    (coordinator as any).activeConfig = {
+      guestMemoryMiB: 1,
+      enableWorkers: true,
+      enableWebGPU: false,
+      proxyUrl: null,
+      activeDiskImage: null,
+      logLevel: "info",
+      virtioNetMode: "modern",
+      virtioInputMode: "modern",
+    };
+    (coordinator as any).spawnWorker("cpu", segments);
+    (coordinator as any).spawnWorker("io", segments);
+
+    const restartSpy = vi.spyOn(coordinator, "restart").mockImplementation(() => {});
+
+    coordinator.updateConfig({
+      guestMemoryMiB: 1,
+      enableWorkers: true,
+      enableWebGPU: false,
+      proxyUrl: null,
+      activeDiskImage: null,
+      logLevel: "info",
+      virtioNetMode: "modern",
+      virtioInputMode: "legacy",
+    });
+
+    expect(restartSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("restarts the VM when virtioSndMode changes (PCI contract change)", () => {
+    const coordinator = new WorkerCoordinator();
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 1 });
+    const shared = createSharedMemoryViews(segments);
+    (coordinator as any).shared = shared;
+    (coordinator as any).activeConfig = {
+      guestMemoryMiB: 1,
+      enableWorkers: true,
+      enableWebGPU: false,
+      proxyUrl: null,
+      activeDiskImage: null,
+      logLevel: "info",
+      virtioNetMode: "modern",
+      virtioSndMode: "modern",
+    };
+    (coordinator as any).spawnWorker("cpu", segments);
+    (coordinator as any).spawnWorker("io", segments);
+
+    const restartSpy = vi.spyOn(coordinator, "restart").mockImplementation(() => {});
+
+    coordinator.updateConfig({
+      guestMemoryMiB: 1,
+      enableWorkers: true,
+      enableWebGPU: false,
+      proxyUrl: null,
+      activeDiskImage: null,
+      logLevel: "info",
+      virtioNetMode: "modern",
+      virtioSndMode: "legacy",
+    });
+
+    expect(restartSpy).toHaveBeenCalledTimes(1);
+  });
+
   it("allows VM start when activeDiskImage is set even without OPFS SyncAccessHandle", () => {
     const coordinator = new WorkerCoordinator();
 

@@ -503,6 +503,20 @@ export class WorkerCoordinator {
       this.restart();
       return;
     }
+    // Switching virtio-input's PCI transport changes what the guest sees on the PCI bus
+    // (device IDs for both functions, BAR layout, and optional legacy I/O decode). This cannot be
+    // safely hot-swapped, so force a full restart to apply the new mode.
+    if (prevConfig && prevConfig.virtioInputMode !== config.virtioInputMode) {
+      this.restart();
+      return;
+    }
+    // Switching virtio-snd's PCI transport changes what the guest sees on the PCI bus
+    // (device ID, BAR layout, and optional legacy I/O decode). This cannot be safely hot-swapped,
+    // so force a full restart to apply the new mode.
+    if (prevConfig && prevConfig.virtioSndMode !== config.virtioSndMode) {
+      this.restart();
+      return;
+    }
 
     const desiredLayout = computeGuestRamLayout(config.guestMemoryMiB * 1024 * 1024);
     if (this.shared.guestLayout.guest_size !== desiredLayout.guest_size) {
@@ -2223,6 +2237,8 @@ function aeroConfigsEqual(a: AeroConfig, b: AeroConfig): boolean {
     a.activeDiskImage === b.activeDiskImage &&
     a.logLevel === b.logLevel &&
     a.uiScale === b.uiScale &&
-    a.virtioNetMode === b.virtioNetMode
+    a.virtioNetMode === b.virtioNetMode &&
+    a.virtioInputMode === b.virtioInputMode &&
+    a.virtioSndMode === b.virtioSndMode
   );
 }
