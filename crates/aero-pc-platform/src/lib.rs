@@ -403,51 +403,6 @@ impl PortIoDevice for PcIdeBusMasterBar {
     }
 }
 
-/// AHCI (BAR5) handler registered via the platform's `PciBarMmioRouter`.
-///
-/// The PCI config space used for guest enumeration is owned by `PciConfigPorts` and is distinct
-/// from the `AhciPciDevice` model instance. Keep the device model's PCI command register in sync
-/// for every MMIO access so the controller's own gating behavior (MEMORY_ENABLE/BUS_MASTER, INTx
-/// disable) matches what the guest programmed in config space.
-#[derive(Clone)]
-struct PcAhciMmioBar {
-    pci_cfg: SharedPciConfigPorts,
-    ahci: Rc<RefCell<AhciPciDevice>>,
-    bdf: PciBdf,
-}
-
-impl PciBarMmioHandler for PcAhciMmioBar {
-    fn read(&mut self, offset: u64, size: usize) -> u64 {
-        let command = {
-            let mut pci_cfg = self.pci_cfg.borrow_mut();
-            pci_cfg
-                .bus_mut()
-                .device_config(self.bdf)
-                .map(|cfg| cfg.command())
-                .unwrap_or(0)
-        };
-
-        let mut ahci = self.ahci.borrow_mut();
-        ahci.config_mut().set_command(command);
-        ahci.mmio_read(offset, size)
-    }
-
-    fn write(&mut self, offset: u64, size: usize, value: u64) {
-        let command = {
-            let mut pci_cfg = self.pci_cfg.borrow_mut();
-            pci_cfg
-                .bus_mut()
-                .device_config(self.bdf)
-                .map(|cfg| cfg.command())
-                .unwrap_or(0)
-        };
-
-        let mut ahci = self.ahci.borrow_mut();
-        ahci.config_mut().set_command(command);
-        ahci.mmio_write(offset, size, value);
-    }
-}
-
 /// UHCI (BAR4) handler registered via the platform's `PciIoWindow`.
 ///
 /// The `port` argument is interpreted as the device-relative offset within BAR4.
