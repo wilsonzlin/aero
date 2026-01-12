@@ -23,8 +23,32 @@ fn request_device() -> Option<(wgpu::Device, wgpu::Queue)> {
         })
         .unwrap_or(false);
 
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let needs_runtime_dir = std::env::var("XDG_RUNTIME_DIR")
+            .ok()
+            .map(|v| v.is_empty())
+            .unwrap_or(true);
+        if needs_runtime_dir {
+            let dir = std::env::temp_dir().join(format!(
+                "aero-d3d9-xdg-runtime-{}-fixed-function",
+                std::process::id()
+            ));
+            let _ = std::fs::create_dir_all(&dir);
+            let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+            std::env::set_var("XDG_RUNTIME_DIR", &dir);
+        }
+    }
+
+    // Prefer GL on Linux CI to avoid crashes in some Vulkan software adapters (lavapipe/llvmpipe).
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-        backends: wgpu::Backends::PRIMARY,
+        backends: if cfg!(target_os = "linux") {
+            wgpu::Backends::GL
+        } else {
+            wgpu::Backends::PRIMARY
+        },
         ..Default::default()
     });
 
@@ -32,7 +56,14 @@ fn request_device() -> Option<(wgpu::Device, wgpu::Queue)> {
         power_preference: wgpu::PowerPreference::LowPower,
         compatible_surface: None,
         force_fallback_adapter: true,
-    }));
+    }))
+    .or_else(|| {
+        pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::LowPower,
+            compatible_surface: None,
+            force_fallback_adapter: false,
+        }))
+    });
 
     let adapter = match adapter {
         Some(adapter) => adapter,
