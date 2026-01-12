@@ -950,12 +950,6 @@ impl ResourceUsage {
 }
 
 fn scan_resources(module: &Sm4Module) -> Result<ResourceUsage, ShaderTranslateError> {
-    // D3D11 exposes 14 constant buffer slots (`b0..b13`) per shader stage.
-    // Our binding model can represent up to `MAX_CBUFFER_SLOTS` without colliding with textures,
-    // so enforce both constraints.
-    const D3D11_CBUFFER_SLOT_COUNT: u32 = 14;
-    let max_cbuffer_slots = D3D11_CBUFFER_SLOT_COUNT.min(MAX_CBUFFER_SLOTS);
-
     fn validate_slot(
         kind: &'static str,
         slot: u32,
@@ -985,7 +979,7 @@ fn scan_resources(module: &Sm4Module) -> Result<ResourceUsage, ShaderTranslateEr
     for inst in &module.instructions {
         let mut scan_src = |src: &crate::sm4_ir::SrcOperand| -> Result<(), ShaderTranslateError> {
             if let SrcKind::ConstantBuffer { slot, reg } = src.kind {
-                validate_slot("cbuffer", slot, max_cbuffer_slots)?;
+                validate_slot("cbuffer", slot, MAX_CBUFFER_SLOTS)?;
                 let entry = cbuffers.entry(slot).or_insert(0);
                 *entry = (*entry).max(reg + 1);
             }
@@ -1590,7 +1584,7 @@ mod tests {
             ShaderTranslateError::ResourceSlotOutOfRange {
                 kind: "cbuffer",
                 slot: 32,
-                max: 13
+                max: 31
             }
         ));
     }

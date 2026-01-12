@@ -1,6 +1,6 @@
 use aero_d3d11::binding_model::{
-    BINDING_BASE_CBUFFER, BINDING_BASE_SAMPLER, BINDING_BASE_TEXTURE, MAX_SAMPLER_SLOTS,
-    MAX_TEXTURE_SLOTS,
+    BINDING_BASE_CBUFFER, BINDING_BASE_SAMPLER, BINDING_BASE_TEXTURE, MAX_CBUFFER_SLOTS,
+    MAX_SAMPLER_SLOTS, MAX_TEXTURE_SLOTS,
 };
 use aero_d3d11::{
     parse_signatures, translate_sm4_module_to_wgsl, BindingKind, Builtin, DxbcFile,
@@ -460,6 +460,50 @@ fn translates_cbuffer_and_arithmetic_ops() {
 }
 
 #[test]
+fn translates_cbuffer_at_max_slot() {
+    let osgn_params = vec![sig_param("SV_Target", 0, 0, 0b1111)];
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, Vec::new()),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (FOURCC_OSGN, build_signature_chunk(&osgn_params)),
+    ]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    let slot = MAX_CBUFFER_SLOTS - 1;
+    let module = Sm4Module {
+        stage: ShaderStage::Pixel,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: Vec::new(),
+        instructions: vec![
+            Sm4Inst::Mov {
+                dst: dst(RegFile::Temp, 0, WriteMask::XYZW),
+                src: src_cb(slot, 0),
+            },
+            Sm4Inst::Mov {
+                dst: dst(RegFile::Output, 0, WriteMask::XYZW),
+                src: src_reg(RegFile::Temp, 0),
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_parses(&translated.wgsl);
+    assert!(translated
+        .wgsl
+        .contains(&format!("@group(1) @binding({slot}) var<uniform> cb{slot}: Cb{slot};")));
+
+    let cb_binding = translated
+        .reflection
+        .bindings
+        .iter()
+        .find(|b| matches!(b.kind, BindingKind::ConstantBuffer { slot: s, .. } if s == slot))
+        .expect("missing constant buffer binding");
+    assert_eq!(cb_binding.binding, BINDING_BASE_CBUFFER + slot);
+}
+
+#[test]
 fn translates_sample_l() {
     let isgn_params = vec![
         sig_param("SV_Position", 0, 0, 0b1111),
@@ -907,7 +951,7 @@ fn rejects_constant_buffer_slot_out_of_range() {
             kind: "cbuffer",
             slot: 32,
             max
-        } if max == 13
+        } if max == MAX_CBUFFER_SLOTS - 1
     ));
 }
 
