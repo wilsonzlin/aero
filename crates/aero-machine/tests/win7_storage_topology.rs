@@ -204,6 +204,15 @@ fn machine_win7_storage_topology_nvme_enabled_has_canonical_bdf_and_interrupt_li
         .device_config_mut(NVME_BDF)
         .expect("NVME_CONTROLLER config function missing from PCI bus");
 
+    let id = cfg.vendor_device_id();
+    assert_eq!(id.vendor_id, 0x1b36, "NVMe vendor ID drifted");
+    assert_eq!(id.device_id, 0x0010, "NVMe device ID drifted");
+    let class = cfg.class_code();
+    let class_code = (u32::from(class.class) << 16)
+        | (u32::from(class.subclass) << 8)
+        | u32::from(class.prog_if);
+    assert_eq!(class_code, 0x010802, "NVMe class code drifted");
+
     assert_eq!(
         cfg.bar_definition(0),
         Some(PciBarDefinition::Mmio64 {
