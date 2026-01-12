@@ -4,6 +4,12 @@ version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 
+[features]
+# Internal feature used by the build system to ensure the threaded/shared-memory
+# build is fully "thread-ready" for wasm-bindgen's threads transform. This must
+# not affect the public JS API.
+wasm-threaded = []
+
 [lib]
 crate-type = ["cdylib"]
 
@@ -13,4 +19,3 @@ wasm-bindgen = "0.2"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 js-sys = "0.3"
-
