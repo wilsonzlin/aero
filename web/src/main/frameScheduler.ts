@@ -9,6 +9,12 @@ import {
   type GpuRuntimeInitOptions,
   type GpuRuntimeOutMessage,
 } from '../ipc/gpu-protocol';
+import {
+  SCANOUT_SOURCE_WDDM,
+  SCANOUT_STATE_GENERATION_BUSY_BIT,
+  ScanoutStateIndex,
+  wrapScanoutState,
+} from '../ipc/scanout_state';
 import { perf } from '../perf/perf';
 
 import { DebugOverlay } from '../../ui/debug_overlay.ts';
@@ -24,6 +30,12 @@ export type FrameSchedulerOptions = {
   sharedFrameState: SharedArrayBuffer;
   sharedFramebuffer: SharedArrayBuffer;
   sharedFramebufferOffsetBytes?: number;
+  /**
+   * Optional shared scanout state used to wake the GPU worker even when the legacy
+   * shared framebuffer is idle (e.g. once WDDM scanout takes over).
+   */
+  scanoutState?: SharedArrayBuffer;
+  scanoutStateOffsetBytes?: number;
   canvas?: OffscreenCanvas;
   initOptions?: GpuRuntimeInitOptions;
   showDebugOverlay?: boolean;
@@ -41,6 +53,8 @@ export const startFrameScheduler = ({
   sharedFrameState,
   sharedFramebuffer,
   sharedFramebufferOffsetBytes,
+  scanoutState,
+  scanoutStateOffsetBytes,
   canvas,
   initOptions,
   showDebugOverlay = true,
@@ -61,6 +75,20 @@ export const startFrameScheduler = ({
   let lastTelemetry: unknown = null;
 
   const frameState = new Int32Array(sharedFrameState);
+
+  // Optional scanout state, used to keep ticking even when frameState is PRESENTED.
+  let scanoutWords: Int32Array | null = null;
+  let lastScanoutGeneration = 0;
+  if (scanoutState instanceof SharedArrayBuffer) {
+    try {
+      scanoutWords = wrapScanoutState(scanoutState, scanoutStateOffsetBytes ?? 0);
+      lastScanoutGeneration = Atomics.load(scanoutWords, ScanoutStateIndex.GENERATION) >>> 0;
+      lastScanoutGeneration &= ~SCANOUT_STATE_GENERATION_BUSY_BIT;
+    } catch {
+      scanoutWords = null;
+      lastScanoutGeneration = 0;
+    }
+  }
   perf.registerWorker(gpuWorker, { threadName: 'gpu-presenter' });
   try {
     gpuWorker.postMessage(
@@ -119,8 +147,27 @@ export const startFrameScheduler = ({
 
   const shouldSendTick = () => {
     const status = Atomics.load(frameState, FRAME_STATUS_INDEX);
+    // While a present is in flight, avoid spamming ticks; the worker will flip the
+    // status back to PRESENTED once it completes.
+    if (status === FRAME_PRESENTING) return false;
     if (status === FRAME_DIRTY) return true;
-    if (status === FRAME_PRESENTING || status === FRAME_PRESENTED) return false;
+
+    // When scanout is WDDM-owned (or being updated), keep the tick loop running so
+    // the GPU worker can flush vsync-paced completions and/or poll the scanout
+    // source even if the legacy shared framebuffer is idle.
+    if (scanoutWords) {
+      const gen = Atomics.load(scanoutWords, ScanoutStateIndex.GENERATION) >>> 0;
+      if ((gen & SCANOUT_STATE_GENERATION_BUSY_BIT) !== 0) return true;
+      const source = Atomics.load(scanoutWords, ScanoutStateIndex.SOURCE) >>> 0;
+      if (source === SCANOUT_SOURCE_WDDM) return true;
+      const stableGen = gen & ~SCANOUT_STATE_GENERATION_BUSY_BIT;
+      if (stableGen !== lastScanoutGeneration) {
+        lastScanoutGeneration = stableGen;
+        return true;
+      }
+    }
+
+    if (status === FRAME_PRESENTED) return false;
     return true;
   };
 

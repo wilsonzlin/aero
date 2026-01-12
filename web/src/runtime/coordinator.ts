@@ -759,6 +759,14 @@ export class WorkerCoordinator {
     return { sab: shared.sharedFramebuffer, offsetBytes: shared.sharedFramebufferOffsetBytes };
   }
 
+  getScanoutState(): { sab: SharedArrayBuffer; offsetBytes: number } | null {
+    const shared = this.shared;
+    if (!shared) return null;
+    const sab = shared.scanoutState;
+    if (!(sab instanceof SharedArrayBuffer)) return null;
+    return { sab, offsetBytes: shared.scanoutStateOffsetBytes ?? 0 };
+  }
+
   getGuestMemory(): WebAssembly.Memory | null {
     return this.shared?.segments.guestMemory ?? null;
   }

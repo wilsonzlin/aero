@@ -3441,6 +3441,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
         const gpuWorker = workerCoordinator.getWorker("gpu");
         const frameStateSab = workerCoordinator.getFrameStateSab();
         const sharedFramebuffer = workerCoordinator.getSharedFramebuffer();
+        const scanoutStateInfo = workerCoordinator.getScanoutState();
         if (gpuWorker && frameStateSab && sharedFramebuffer) {
           // Reset any previously transferred canvas before re-attaching it to a
           // new worker.
@@ -3473,6 +3474,9 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
             sharedFrameState: frameStateSab,
             sharedFramebuffer: sharedFramebuffer.sab,
             sharedFramebufferOffsetBytes: sharedFramebuffer.offsetBytes,
+            ...(scanoutStateInfo
+              ? { scanoutState: scanoutStateInfo.sab, scanoutStateOffsetBytes: scanoutStateInfo.offsetBytes }
+              : {}),
             canvas: offscreen,
             initOptions: offscreen
               ? {
@@ -3790,6 +3794,8 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
       sharedFramebufferLine.textContent = `shared framebuffer: seq=${seq} active=${active}`;
     }
 
+    const scanoutStateInfo = workerCoordinator.getScanoutState();
+
     if (!frameScheduler) {
       gpuMetricsLine.textContent = "gpu metrics: (uninitialized)";
     } else {
@@ -3852,6 +3858,9 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
         sharedFrameState: frameStateSab,
         sharedFramebuffer: sharedFramebufferInfo.sab,
         sharedFramebufferOffsetBytes: sharedFramebufferInfo.offsetBytes,
+        ...(scanoutStateInfo
+          ? { scanoutState: scanoutStateInfo.sab, scanoutStateOffsetBytes: scanoutStateInfo.offsetBytes }
+          : {}),
         canvas: offscreen,
         initOptions: offscreen
           ? {
