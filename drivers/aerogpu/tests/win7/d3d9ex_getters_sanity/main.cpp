@@ -2,6 +2,7 @@
 #include "..\\common\\aerogpu_test_report.h"
 
 #include <d3d9.h>
+#include <cstring>
 
 using aerogpu_test::ComPtr;
 
@@ -324,6 +325,101 @@ static int RunD3D9ExGettersSanity(int argc, char** argv) {
         return reporter.Fail("GetAutoGenFilterType mismatch: got=%lu expected %lu",
                              (unsigned long)got_filter,
                              (unsigned long)D3DTEXF_POINT);
+      }
+    }
+  }
+
+  // --- Gamma ramp ---
+  {
+    D3DGAMMARAMP ramp;
+    ZeroMemory(&ramp, sizeof(ramp));
+    for (UINT i = 0; i < 256; ++i) {
+      const DWORD raw = i * 257u;
+      // Bias so we don't match the default identity ramp.
+      const DWORD biased = (raw + 13u > 0xFFFFu) ? 0xFFFFu : (raw + 13u);
+      const WORD v = (WORD)biased;
+      ramp.red[i] = v;
+      ramp.green[i] = v;
+      ramp.blue[i] = v;
+    }
+    dev->SetGammaRamp(0, 0, &ramp);
+
+    D3DGAMMARAMP got_ramp;
+    ZeroMemory(&got_ramp, sizeof(got_ramp));
+    dev->GetGammaRamp(0, &got_ramp);
+    if (memcmp(&got_ramp, &ramp, sizeof(ramp)) != 0) {
+      return reporter.Fail("GetGammaRamp mismatch after SetGammaRamp");
+    }
+  }
+
+  // --- Clip status ---
+  {
+    D3DCLIPSTATUS9 clip;
+    ZeroMemory(&clip, sizeof(clip));
+    clip.ClipUnion = 0x00000011u;
+    clip.ClipIntersection = 0x00000022u;
+    hr = dev->SetClipStatus(&clip);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetClipStatus", hr);
+    }
+    D3DCLIPSTATUS9 got_clip;
+    ZeroMemory(&got_clip, sizeof(got_clip));
+    hr = dev->GetClipStatus(&got_clip);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("GetClipStatus", hr);
+    }
+    if (got_clip.ClipUnion != clip.ClipUnion || got_clip.ClipIntersection != clip.ClipIntersection) {
+      return reporter.Fail("GetClipStatus mismatch: got {union=0x%08lX inter=0x%08lX} expected {union=0x%08lX inter=0x%08lX}",
+                           (unsigned long)got_clip.ClipUnion,
+                           (unsigned long)got_clip.ClipIntersection,
+                           (unsigned long)clip.ClipUnion,
+                           (unsigned long)clip.ClipIntersection);
+    }
+  }
+
+  // --- Palettes ---
+  //
+  // Palettized texture support is runtime/adapter dependent. If palette APIs are
+  // rejected, treat as a supported skip.
+  {
+    PALETTEENTRY pal[256];
+    ZeroMemory(pal, sizeof(pal));
+    for (UINT i = 0; i < 256; ++i) {
+      pal[i].peRed = (BYTE)i;
+      pal[i].peGreen = (BYTE)(i * 3);
+      pal[i].peBlue = (BYTE)(i * 7);
+      pal[i].peFlags = 0;
+    }
+    hr = dev->SetPaletteEntries(0, pal);
+    if (FAILED(hr)) {
+      aerogpu_test::PrintfStdout("INFO: %s: skipping palette APIs (SetPaletteEntries hr=0x%08lX)",
+                                 kTestName,
+                                 (unsigned long)hr);
+    } else {
+      hr = dev->SetCurrentTexturePalette(0);
+      if (FAILED(hr)) {
+        aerogpu_test::PrintfStdout("INFO: %s: skipping palette APIs (SetCurrentTexturePalette hr=0x%08lX)",
+                                   kTestName,
+                                   (unsigned long)hr);
+      } else {
+        PALETTEENTRY got_pal[256];
+        ZeroMemory(got_pal, sizeof(got_pal));
+        hr = dev->GetPaletteEntries(0, got_pal);
+        if (FAILED(hr)) {
+          return reporter.FailHresult("GetPaletteEntries", hr);
+        }
+        if (memcmp(got_pal, pal, sizeof(pal)) != 0) {
+          return reporter.Fail("GetPaletteEntries mismatch");
+        }
+        UINT got_cur = 0xFFFFFFFFu;
+        hr = dev->GetCurrentTexturePalette(&got_cur);
+        if (FAILED(hr)) {
+          return reporter.FailHresult("GetCurrentTexturePalette", hr);
+        }
+        if (got_cur != 0) {
+          return reporter.Fail("GetCurrentTexturePalette mismatch: got=%u expected=0",
+                               (unsigned)got_cur);
+        }
       }
     }
   }
