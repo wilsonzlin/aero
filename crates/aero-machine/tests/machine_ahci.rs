@@ -399,11 +399,15 @@ fn machine_exposes_ich9_ahci_at_canonical_bdf_and_bar5_mmio_works() {
     let id = m.io_read(0xCFC, 4);
     assert_eq!(id, 0x2922_8086);
 
-    // Interrupt Line should match the canonical PciIntxRouterConfig::default() mapping:
-    // 00:02.0 INTA# -> PIRQ C -> GSI 12.
+    // Interrupt Line should match the active PCI INTx router configuration.
+    let expected_gsi = {
+        let router = m.pci_intx_router().expect("pc platform enabled");
+        let gsi = router.borrow().gsi_for_intx(bdf, PciInterruptPin::IntA);
+        gsi
+    };
     m.io_write(0xCF8, 4, cfg_addr(bdf.bus, bdf.device, bdf.function, 0x3C));
     let irq_line = m.io_read(0xCFC, 1) as u8;
-    assert_eq!(irq_line, 12);
+    assert_eq!(irq_line, u8::try_from(expected_gsi).unwrap());
 
     // BAR5 should be assigned by firmware POST and routed through the PCI MMIO window.
     m.io_write(
