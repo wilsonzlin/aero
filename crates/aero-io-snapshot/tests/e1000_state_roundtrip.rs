@@ -8,7 +8,8 @@ fn e1000_device_state_roundtrip_is_lossless() {
     state.pci_regs[0..4].copy_from_slice(&0x100E_8086u32.to_le_bytes());
     state.pci_bar0 = 0xDEAD_BEE0;
     state.pci_bar0_probe = false;
-    state.pci_bar1 = 0xC001;
+    // In probe mode, the device model resets BAR1 to 0x1 (I/O indicator bit set).
+    state.pci_bar1 = 0x1;
     state.pci_bar1_probe = true;
 
     state.ctrl = 0x0123_4567;

@@ -397,6 +397,12 @@ impl IoSnapshot for E1000DeviceState {
         if (self.pci_bar1 & 0x3) != 0x1 {
             return Err(SnapshotError::InvalidFieldEncoding("e1000 pci bar1"));
         }
+        if self.pci_bar0_probe && self.pci_bar0 != 0 {
+            return Err(SnapshotError::InvalidFieldEncoding("e1000 pci bar0_probe"));
+        }
+        if self.pci_bar1_probe && self.pci_bar1 != 0x1 {
+            return Err(SnapshotError::InvalidFieldEncoding("e1000 pci bar1_probe"));
+        }
 
         self.ctrl = r.u32(TAG_CTRL)?.unwrap_or(self.ctrl);
         self.status = r.u32(TAG_STATUS)?.unwrap_or(self.status);

@@ -496,6 +496,44 @@ fn snapshot_rejects_invalid_pci_bar1_io_flag() {
 }
 
 #[test]
+fn snapshot_rejects_pci_bar0_probe_with_nonzero_bar0() {
+    // Tags from `aero_io_snapshot::io::net::state::E1000DeviceState`.
+    const TAG_PCI_BAR0: u16 = 2;
+    const TAG_PCI_BAR0_PROBE: u16 = 3;
+
+    let mut w = SnapshotWriter::new(
+        <E1000Device as IoSnapshot>::DEVICE_ID,
+        <E1000Device as IoSnapshot>::DEVICE_VERSION,
+    );
+    w.field_u32(TAG_PCI_BAR0, 0xDEAD_BEE0); // aligned
+    w.field_bool(TAG_PCI_BAR0_PROBE, true);
+    let bytes = w.finish();
+
+    let mut dev = E1000Device::new([0; 6]);
+    let err = dev.load_state(&bytes).unwrap_err();
+    assert_eq!(err, SnapshotError::InvalidFieldEncoding("e1000 pci bar0_probe"));
+}
+
+#[test]
+fn snapshot_rejects_pci_bar1_probe_with_nondefault_bar1() {
+    // Tags from `aero_io_snapshot::io::net::state::E1000DeviceState`.
+    const TAG_PCI_BAR1: u16 = 4;
+    const TAG_PCI_BAR1_PROBE: u16 = 5;
+
+    let mut w = SnapshotWriter::new(
+        <E1000Device as IoSnapshot>::DEVICE_ID,
+        <E1000Device as IoSnapshot>::DEVICE_VERSION,
+    );
+    w.field_u32(TAG_PCI_BAR1, 0xC001); // valid I/O BAR encoding but not the probe/reset value
+    w.field_bool(TAG_PCI_BAR1_PROBE, true);
+    let bytes = w.finish();
+
+    let mut dev = E1000Device::new([0; 6]);
+    let err = dev.load_state(&bytes).unwrap_err();
+    assert_eq!(err, SnapshotError::InvalidFieldEncoding("e1000 pci bar1_probe"));
+}
+
+#[test]
 fn snapshot_rejects_out_of_range_tx_ring_indices() {
     // Tags from `aero_io_snapshot::io::net::state::E1000DeviceState`.
     const TAG_TDLEN: u16 = 52;
