@@ -10008,6 +10008,9 @@ HRESULT device_get_render_state_impl(D3DDDI_HDEVICE hDevice, StateT state, Value
                       static_cast<uint64_t>(d3d9_to_u32(state)),
                       d3d9_trace_arg_ptr(pValue),
                       0);
+  // Always initialize output when possible so callers can't accidentally consume
+  // uninitialized memory if they ignore the HRESULT.
+  d3d9_write_u32(pValue, 0u);
   if (!hDevice.pDrvPrivate || !pValue) {
     return trace.ret(E_INVALIDARG);
   }
@@ -10036,6 +10039,7 @@ HRESULT device_get_sampler_state_impl(D3DDDI_HDEVICE hDevice, StageT stage, Stat
                       d3d9_trace_pack_u32_u32(d3d9_to_u32(stage), d3d9_to_u32(state)),
                       d3d9_trace_arg_ptr(pValue),
                       0);
+  d3d9_write_u32(pValue, 0u);
   if (!hDevice.pDrvPrivate || !pValue) {
     return trace.ret(E_INVALIDARG);
   }
@@ -10065,6 +10069,7 @@ HRESULT device_get_texture_impl(D3DDDI_HDEVICE hDevice, StageT stage, HandleT* p
                       static_cast<uint64_t>(d3d9_to_u32(stage)),
                       d3d9_trace_arg_ptr(phTexture),
                       0);
+  d3d9_write_handle(phTexture, nullptr);
   if (!hDevice.pDrvPrivate || !phTexture) {
     return trace.ret(E_INVALIDARG);
   }
@@ -10093,6 +10098,7 @@ HRESULT device_get_render_target_impl(D3DDDI_HDEVICE hDevice, SlotT slot, Handle
                       static_cast<uint64_t>(d3d9_to_u32(slot)),
                       d3d9_trace_arg_ptr(phSurface),
                       0);
+  d3d9_write_handle(phSurface, nullptr);
   if (!hDevice.pDrvPrivate || !phSurface) {
     return trace.ret(E_INVALIDARG);
   }
@@ -10121,6 +10127,7 @@ HRESULT device_get_depth_stencil_impl(D3DDDI_HDEVICE hDevice, HandleT* phSurface
                       d3d9_trace_arg_ptr(phSurface),
                       0,
                       0);
+  d3d9_write_handle(phSurface, nullptr);
   if (!hDevice.pDrvPrivate || !phSurface) {
     return trace.ret(E_INVALIDARG);
   }
@@ -10145,6 +10152,14 @@ HRESULT device_get_viewport_impl(D3DDDI_HDEVICE hDevice, ViewportT* pViewport) {
                       d3d9_trace_arg_ptr(pViewport),
                       0,
                       0);
+  if (pViewport) {
+    pViewport->X = 0;
+    pViewport->Y = 0;
+    pViewport->Width = 0;
+    pViewport->Height = 0;
+    pViewport->MinZ = 0;
+    pViewport->MaxZ = 1;
+  }
   if (!hDevice.pDrvPrivate || !pViewport) {
     return trace.ret(E_INVALIDARG);
   }
@@ -10174,6 +10189,10 @@ HRESULT device_get_scissor_rect_impl(D3DDDI_HDEVICE hDevice, RectT* pRect, BoolT
                       d3d9_trace_arg_ptr(pRect),
                       d3d9_trace_arg_ptr(pEnabled),
                       0);
+  if (pRect) {
+    *pRect = {};
+  }
+  d3d9_write_u32(pEnabled, 0u);
   if (!hDevice.pDrvPrivate || !pRect) {
     return trace.ret(E_INVALIDARG);
   }
@@ -10214,6 +10233,9 @@ HRESULT device_get_stream_source_impl(
                       d3d9_trace_arg_ptr(phVb),
                       d3d9_trace_pack_u32_u32(d3d9_trace_arg_ptr(pOffset) != 0 ? 1u : 0u,
                                               d3d9_trace_arg_ptr(pStride) != 0 ? 1u : 0u));
+  d3d9_write_handle(phVb, nullptr);
+  d3d9_write_u32(pOffset, 0u);
+  d3d9_write_u32(pStride, 0u);
   if (!hDevice.pDrvPrivate || !phVb || !pOffset || !pStride) {
     return trace.ret(E_INVALIDARG);
   }
@@ -10245,13 +10267,16 @@ HRESULT device_get_indices_impl(D3DDDI_HDEVICE hDevice, HandleT* phIb, FormatT* 
                       d3d9_trace_arg_ptr(phIb),
                       d3d9_trace_arg_ptr(pFormat),
                       d3d9_trace_arg_ptr(pOffset));
+  d3d9_write_handle(phIb, nullptr);
+  d3d9_write_u32(pFormat, 0u);
+  d3d9_write_u32(pOffset, 0u);
   if (!hDevice.pDrvPrivate || !phIb || !pFormat || !pOffset) {
     return trace.ret(E_INVALIDARG);
   }
   auto* dev = as_device(hDevice);
   std::lock_guard<std::mutex> lock(dev->mutex);
   d3d9_write_handle(phIb, dev->index_buffer);
-  *pFormat = static_cast<FormatT>(dev->index_format);
+  d3d9_write_u32(pFormat, static_cast<uint32_t>(dev->index_format));
   d3d9_write_u32(pOffset, dev->index_offset_bytes);
   return trace.ret(S_OK);
 }
@@ -10271,13 +10296,18 @@ HRESULT device_get_shader_impl(D3DDDI_HDEVICE hDevice, StageT stage, HandleT* ph
                       static_cast<uint64_t>(d3d9_to_u32(stage)),
                       d3d9_trace_arg_ptr(phShader),
                       0);
+  d3d9_write_handle(phShader, nullptr);
   if (!hDevice.pDrvPrivate || !phShader) {
     return trace.ret(E_INVALIDARG);
   }
+  const uint32_t st = d3d9_to_u32(stage);
+  if (st != kD3d9ShaderStageVs && st != kD3d9ShaderStagePs) {
+    return trace.ret(kD3DErrInvalidCall);
+  }
   auto* dev = as_device(hDevice);
   std::lock_guard<std::mutex> lock(dev->mutex);
-  Shader* sh = (d3d9_to_u32(stage) == kD3d9ShaderStageVs) ? dev->user_vs : dev->user_ps;
-  phShader->pDrvPrivate = sh;
+  Shader* sh = (st == kD3d9ShaderStageVs) ? dev->user_vs : dev->user_ps;
+  d3d9_write_handle(phShader, sh);
   return trace.ret(S_OK);
 }
 
@@ -10307,6 +10337,9 @@ HRESULT device_get_shader_const_f_impl(
   if (!hDevice.pDrvPrivate || !pData || count == 0) {
     return trace.ret(E_INVALIDARG);
   }
+  if (st != kD3d9ShaderStageVs && st != kD3d9ShaderStagePs) {
+    return trace.ret(kD3DErrInvalidCall);
+  }
   if (start >= 256) {
     return trace.ret(kD3DErrInvalidCall);
   }
@@ -10335,6 +10368,7 @@ HRESULT device_get_fvf_impl(D3DDDI_HDEVICE hDevice, ValueT* pFvf) {
                       d3d9_trace_arg_ptr(pFvf),
                       0,
                       0);
+  d3d9_write_u32(pFvf, 0u);
   if (!hDevice.pDrvPrivate || !pFvf) {
     return trace.ret(E_INVALIDARG);
   }
@@ -10359,12 +10393,13 @@ HRESULT device_get_vertex_decl_impl(D3DDDI_HDEVICE hDevice, HandleT* phDecl) {
                       d3d9_trace_arg_ptr(phDecl),
                       0,
                       0);
+  d3d9_write_handle(phDecl, nullptr);
   if (!hDevice.pDrvPrivate || !phDecl) {
     return trace.ret(E_INVALIDARG);
   }
   auto* dev = as_device(hDevice);
   std::lock_guard<std::mutex> lock(dev->mutex);
-  phDecl->pDrvPrivate = dev->vertex_decl;
+  d3d9_write_handle(phDecl, dev->vertex_decl);
   return trace.ret(S_OK);
 }
 
