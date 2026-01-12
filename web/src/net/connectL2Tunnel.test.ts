@@ -90,43 +90,6 @@ describe("net/connectL2Tunnel", () => {
     }
   });
 
-  it("accepts same-origin relative gatewayBaseUrl (resolves against location.href)", async () => {
-    const originalFetch = globalThis.fetch;
-    const originalWs = (globalThis as unknown as Record<string, unknown>).WebSocket;
-    const originalLocation = (globalThis as unknown as Record<string, unknown>).location;
-
-    const fetchMock = vi.fn(async () => {
-      return new Response("{}", { status: 201, headers: { "Content-Type": "application/json" } });
-    }) as unknown as typeof fetch;
-    globalThis.fetch = fetchMock;
-
-    (globalThis as unknown as Record<string, unknown>).location = { href: "https://gateway.example.com/app/index.html" };
-
-    resetFakeWebSocket();
-    (globalThis as unknown as Record<string, unknown>).WebSocket = FakeWebSocket as unknown as WebSocketConstructor;
-
-    const events: L2TunnelEvent[] = [];
-    const tunnel = await connectL2Tunnel("/base", {
-      mode: "ws",
-      sink: (ev) => events.push(ev),
-    });
-
-    try {
-      expect(fetchMock).toHaveBeenCalledTimes(1);
-      const [url] = (fetchMock as unknown as { mock: { calls: any[][] } }).mock.calls[0]!;
-      expect(url).toBe("https://gateway.example.com/base/session");
-
-      expect(FakeWebSocket.last?.url).toBe("wss://gateway.example.com/base/l2");
-    } finally {
-      tunnel.close();
-      globalThis.fetch = originalFetch;
-      if (originalWs === undefined) delete (globalThis as { WebSocket?: unknown }).WebSocket;
-      else (globalThis as unknown as Record<string, unknown>).WebSocket = originalWs;
-      if (originalLocation === undefined) delete (globalThis as { location?: unknown }).location;
-      else (globalThis as unknown as Record<string, unknown>).location = originalLocation;
-    }
-  });
-
   it("supports explicit wss:// gateway URLs (bootstraps session over https and reuses /l2 path)", async () => {
     const originalFetch = globalThis.fetch;
     const originalWs = (globalThis as unknown as Record<string, unknown>).WebSocket;
@@ -167,7 +130,13 @@ describe("net/connectL2Tunnel", () => {
     const originalLocation = (globalThis as unknown as Record<string, unknown>).location;
 
     const fetchMock = vi.fn(async () => {
-      return new Response("{}", { status: 201, headers: { "Content-Type": "application/json" } });
+      // Real gateways return `endpoints.l2`; include it so this test exercises
+      // the `buildWebSocketUrlFromEndpoint()` path (which must also handle
+      // relative gatewayBaseUrl values like "/base").
+      return new Response(JSON.stringify({ endpoints: { l2: "/l2" } }), {
+        status: 201,
+        headers: { "Content-Type": "application/json" },
+      });
     }) as unknown as typeof fetch;
     globalThis.fetch = fetchMock;
 
