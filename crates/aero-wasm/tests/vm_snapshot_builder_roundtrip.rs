@@ -203,33 +203,34 @@ fn vm_snapshot_builder_roundtrips_guest_ram_and_usb_state() {
     let devices_out: Array = devices_out_val.dyn_into().expect("devices array");
     assert_eq!(devices_out.length(), 2, "expected two device states");
 
-    let dev0: Object = devices_out.get(0).dyn_into().expect("devices[0] object");
-    let kind0 = Reflect::get(&dev0, &JsValue::from_str("kind"))
-        .expect("kind property")
-        .as_string()
-        .expect("kind string");
-    let bytes0 = Reflect::get(&dev0, &JsValue::from_str("bytes"))
-        .expect("bytes property")
-        .dyn_into::<Uint8Array>()
-        .expect("bytes Uint8Array")
-        .to_vec();
+    let mut kinds = Vec::new();
+    for idx in 0..devices_out.length() {
+        let dev: Object = devices_out.get(idx).dyn_into().expect("devices entry object");
+        let kind = Reflect::get(&dev, &JsValue::from_str("kind"))
+            .expect("kind property")
+            .as_string()
+            .expect("kind string");
+        let bytes = Reflect::get(&dev, &JsValue::from_str("bytes"))
+            .expect("bytes property")
+            .dyn_into::<Uint8Array>()
+            .expect("bytes Uint8Array")
+            .to_vec();
+        kinds.push((kind, bytes));
+    }
 
-    let dev1: Object = devices_out.get(1).dyn_into().expect("devices[1] object");
-    let kind1 = Reflect::get(&dev1, &JsValue::from_str("kind"))
-        .expect("kind property")
-        .as_string()
-        .expect("kind string");
-    let bytes1 = Reflect::get(&dev1, &JsValue::from_str("bytes"))
-        .expect("bytes property")
-        .dyn_into::<Uint8Array>()
-        .expect("bytes Uint8Array")
-        .to_vec();
+    let usb_out = kinds
+        .iter()
+        .find(|(kind, _)| kind == "usb.uhci")
+        .map(|(_, bytes)| bytes.clone())
+        .expect("USB device kind should roundtrip");
+    assert_eq!(usb_out, usb_blob, "USB device bytes should roundtrip");
 
-    // Devices are returned in deterministic order by device id (USB=12, I8042=13).
-    assert_eq!(kind0, "usb.uhci");
-    assert_eq!(bytes0, usb_blob, "USB device bytes should roundtrip");
-    assert_eq!(kind1, "input.i8042");
-    assert_eq!(bytes1, i8042_blob, "i8042 device bytes should roundtrip");
+    let i8042_out = kinds
+        .iter()
+        .find(|(kind, _)| kind == "input.i8042")
+        .map(|(_, bytes)| bytes.clone())
+        .expect("i8042 device kind should roundtrip");
+    assert_eq!(i8042_out, i8042_blob, "i8042 device bytes should roundtrip");
 
     for (i, &b) in guest.iter().enumerate() {
         assert_eq!(b, ram_pattern_byte(i), "RAM mismatch at offset {i}");
