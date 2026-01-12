@@ -1,6 +1,9 @@
 use std::fmt;
 use std::io;
 
+use aero_io_snapshot::io::state::{
+    IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
+};
 use aero_storage::{DiskError, VirtualDisk, SECTOR_SIZE};
 
 pub const ATA_STATUS_BSY: u8 = 0x80;
@@ -102,6 +105,42 @@ impl fmt::Debug for AtaDrive {
     }
 }
 
+impl IoSnapshot for AtaDrive {
+    const DEVICE_ID: [u8; 4] = *b"ATAD";
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
+
+    fn save_state(&self) -> Vec<u8> {
+        const TAG_SECTOR_COUNT: u16 = 1;
+        const TAG_WRITE_CACHE_ENABLED: u16 = 2;
+
+        let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
+        w.field_u64(TAG_SECTOR_COUNT, self.sector_count());
+        w.field_bool(TAG_WRITE_CACHE_ENABLED, self.write_cache_enabled);
+        w.finish()
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
+        const TAG_SECTOR_COUNT: u16 = 1;
+        const TAG_WRITE_CACHE_ENABLED: u16 = 2;
+
+        let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
+        r.ensure_device_major(Self::DEVICE_VERSION.major)?;
+
+        if let Some(sector_count) = r.u64(TAG_SECTOR_COUNT)? {
+            if sector_count != self.sector_count() {
+                return Err(SnapshotError::InvalidFieldEncoding(
+                    "ata sector_count mismatch",
+                ));
+            }
+        }
+        if let Some(enabled) = r.bool(TAG_WRITE_CACHE_ENABLED)? {
+            self.write_cache_enabled = enabled;
+        }
+
+        Ok(())
+    }
+}
+
 fn build_identify_sector(sector_count: u64) -> [u8; SECTOR_SIZE] {
     // ATA IDENTIFY DEVICE is a 256-word structure in little-endian word order.
     // String fields are stored with bytes swapped within each word.
@@ -190,6 +229,7 @@ fn write_ata_string(words: &mut [u16; 256], start: usize, len_words: usize, s: &
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aero_io_snapshot::io::state::{IoSnapshot, SnapshotError};
     use aero_storage::{MemBackend, RawDisk};
 
     #[test]
@@ -204,5 +244,33 @@ mod tests {
         let w61 = u16::from_le_bytes([id[122], id[123]]) as u32;
         let lba28 = w60 | (w61 << 16);
         assert_eq!(lba28, 1024);
+    }
+
+    #[test]
+    fn snapshot_roundtrip_preserves_write_cache_enabled() {
+        let capacity = 16 * SECTOR_SIZE as u64;
+        let disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
+        let mut drive = AtaDrive::new(Box::new(disk)).unwrap();
+        drive.set_write_cache_enabled(false);
+
+        let snap = drive.save_state();
+
+        let disk2 = RawDisk::create(MemBackend::new(), capacity).unwrap();
+        let mut restored = AtaDrive::new(Box::new(disk2)).unwrap();
+        assert!(restored.write_cache_enabled());
+        restored.load_state(&snap).unwrap();
+        assert!(!restored.write_cache_enabled());
+    }
+
+    #[test]
+    fn snapshot_rejects_sector_count_mismatch() {
+        let disk = RawDisk::create(MemBackend::new(), 16 * SECTOR_SIZE as u64).unwrap();
+        let drive = AtaDrive::new(Box::new(disk)).unwrap();
+        let snap = drive.save_state();
+
+        let disk2 = RawDisk::create(MemBackend::new(), 32 * SECTOR_SIZE as u64).unwrap();
+        let mut restored = AtaDrive::new(Box::new(disk2)).unwrap();
+        let err = restored.load_state(&snap).unwrap_err();
+        assert_eq!(err, SnapshotError::InvalidFieldEncoding("ata sector_count mismatch"));
     }
 }
