@@ -157,6 +157,16 @@ pub fn translate_sm4_module_to_wgsl(
     }
 }
 
+/// Scans a decoded SM4/SM5 module and produces bind group layout entries for the
+/// module's declared shader stage.
+///
+/// Note: Full compute-stage WGSL translation is not implemented yet, but the
+/// binding model reserves `@group(2)` for compute resources. This helper is used
+/// by tests and is intended to support future compute-stage translation work.
+pub fn reflect_resource_bindings(module: &Sm4Module) -> Vec<Binding> {
+    scan_resources(module).bindings(module.stage)
+}
+
 fn translate_vs(
     module: &Sm4Module,
     isgn: &DxbcSignature,
@@ -852,6 +862,7 @@ impl ResourceUsage {
         let visibility = match stage {
             ShaderStage::Vertex => wgpu::ShaderStages::VERTEX,
             ShaderStage::Pixel => wgpu::ShaderStages::FRAGMENT,
+            ShaderStage::Compute => wgpu::ShaderStages::COMPUTE,
             _ => wgpu::ShaderStages::empty(),
         };
         let group = Self::stage_bind_group(stage);
