@@ -172,7 +172,17 @@ impl IoSnapshot for NetworkStackSnapshotState {
         const TAG_TCP_CONNS: u16 = 7;
         const TAG_LAST_NOW_MS: u16 = 8;
 
-        let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
+        // Older versions accidentally used a different device id in the `aero-io-snapshot` header.
+        // Accept that legacy id for backward compatibility, but always serialize with the
+        // canonical `DEVICE_ID`.
+        const LEGACY_DEVICE_ID: [u8; 4] = [0x4e, 0x53, 0x54, 0x4b];
+        let r = match SnapshotReader::parse(bytes, Self::DEVICE_ID) {
+            Ok(r) => r,
+            Err(SnapshotError::DeviceIdMismatch { found, .. }) if found == LEGACY_DEVICE_ID => {
+                SnapshotReader::parse(bytes, LEGACY_DEVICE_ID)?
+            }
+            Err(e) => return Err(e),
+        };
         r.ensure_device_major(Self::DEVICE_VERSION.major)?;
 
         self.guest_mac = if let Some(mac) = r.bytes(TAG_GUEST_MAC) {
