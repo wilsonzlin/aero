@@ -1,6 +1,5 @@
+use aero_devices::pci::profile::{NVME_CONTROLLER, SATA_AHCI_ICH9, USB_UHCI_PIIX3};
 use aero_devices::reset_ctrl::RESET_CTRL_RESET_VALUE;
-use aero_devices::pci::profile::NVME_CONTROLLER;
-use aero_devices::pci::profile::USB_UHCI_PIIX3;
 use aero_pc_platform::{PcPlatform, ResetEvent};
 use memory::MemoryBus as _;
 
@@ -24,6 +23,18 @@ fn write_cfg_u16(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset:
     pc.io.write(0xCFC, 2, u32::from(value));
 }
 
+fn write_cfg_u32(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8, value: u32) {
+    pc.io
+        .write(0xCF8, 4, cfg_addr(bus, device, function, offset));
+    pc.io.write(0xCFC, 4, value);
+}
+
+fn read_ahci_bar5_base(pc: &mut PcPlatform) -> u64 {
+    let bdf = SATA_AHCI_ICH9.bdf;
+    let bar5 = read_cfg_u32(pc, bdf.bus, bdf.device, bdf.function, 0x24);
+    u64::from(bar5 & 0xffff_fff0)
+}
+
 fn read_nvme_bar0_base(pc: &mut PcPlatform) -> u64 {
     let bdf = NVME_CONTROLLER.bdf;
     let bar0_lo = read_cfg_u32(pc, bdf.bus, bdf.device, bdf.function, 0x10);
@@ -35,14 +46,10 @@ fn read_nvme_bar0_base(pc: &mut PcPlatform) -> u64 {
 fn pc_platform_reset_restores_deterministic_power_on_state() {
     let mut pc = PcPlatform::new(2 * 1024 * 1024);
 
-    // Capture an initial piece of PCI state so we can verify it's restored deterministically.
-    let uhci_bar4_addr = 0x8000_0000
-        | ((USB_UHCI_PIIX3.bdf.bus as u32) << 16)
-        | ((USB_UHCI_PIIX3.bdf.device as u32) << 11)
-        | ((USB_UHCI_PIIX3.bdf.function as u32) << 8)
-        | 0x20;
-    pc.io.write(0xCF8, 4, uhci_bar4_addr);
-    let uhci_bar4_before = pc.io.read(0xCFC, 4);
+    // Capture initial PCI state so we can verify it's restored deterministically.
+    let bar5_base_before = read_ahci_bar5_base(&mut pc);
+    let uhci_bdf = USB_UHCI_PIIX3.bdf;
+    let uhci_bar4_before = read_cfg_u32(&mut pc, uhci_bdf.bus, uhci_bdf.device, uhci_bdf.function, 0x20);
 
     // Mutate some state:
     // - Enable A20.
@@ -54,16 +61,26 @@ fn pc_platform_reset_restores_deterministic_power_on_state() {
     assert_eq!(pc.io.read(0xCF8, 4), 0x8000_0000);
 
     // - Relocate UHCI BAR4 to a different base (to ensure PCI resources are reset deterministically).
-    pc.io.write(0xCF8, 4, uhci_bar4_addr);
-    pc.io.write(0xCFC, 4, 0xD000);
-    pc.io.write(0xCF8, 4, uhci_bar4_addr);
-    let uhci_bar4_after = pc.io.read(0xCFC, 4);
+    write_cfg_u32(&mut pc, uhci_bdf.bus, uhci_bdf.device, uhci_bdf.function, 0x20, 0xD000);
+    let uhci_bar4_after = read_cfg_u32(&mut pc, uhci_bdf.bus, uhci_bdf.device, uhci_bdf.function, 0x20);
     assert_ne!(uhci_bar4_after, uhci_bar4_before);
 
     // - Queue a reset event.
     pc.io.write_u8(0xCF9, RESET_CTRL_RESET_VALUE);
     assert_eq!(pc.take_reset_events(), vec![ResetEvent::System]);
     pc.io.write_u8(0xCF9, RESET_CTRL_RESET_VALUE);
+
+    // - Disable PCI memory decoding for AHCI and move BAR5.
+    let bdf = SATA_AHCI_ICH9.bdf;
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0);
+    write_cfg_u32(
+        &mut pc,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        0x24,
+        (bar5_base_before + 0x10_0000) as u32,
+    );
 
     // Now reset back to baseline.
     pc.reset();
@@ -78,8 +95,20 @@ fn pc_platform_reset_restores_deterministic_power_on_state() {
     assert_eq!(pc.io.read(0xCF8, 4), 0);
 
     // UHCI BAR4 should be restored to its initial BIOS-assigned value.
-    pc.io.write(0xCF8, 4, uhci_bar4_addr);
-    assert_eq!(pc.io.read(0xCFC, 4), uhci_bar4_before);
+    let uhci_bar4_after_reset = read_cfg_u32(&mut pc, uhci_bdf.bus, uhci_bdf.device, uhci_bdf.function, 0x20);
+    assert_eq!(uhci_bar4_after_reset, uhci_bar4_before);
+
+    // BIOS POST should deterministically reassign AHCI BAR5 to its original base.
+    let bar5_base_after = read_ahci_bar5_base(&mut pc);
+    assert_eq!(bar5_base_after, bar5_base_before);
+
+    // Enable A20 so the AHCI MMIO base doesn't alias across the 1MiB boundary (A20 gate).
+    pc.io.write_u8(0x92, 0x02);
+
+    // AHCI CAP register must be readable again after reset (i.e. MMIO decoding was restored).
+    let cap = pc.memory.read_u32(bar5_base_after);
+    assert_ne!(cap, 0xFFFF_FFFF);
+    assert_ne!(cap & 0x8000_0000, 0);
 }
 
 #[test]
