@@ -22,7 +22,10 @@ fn maskmov_includes_implicit_memory_operand() {
 
     let inst = decode(&bytes, DecodeMode::Bits64, 0).expect("decode");
     assert_eq!(
-        inst.operands.iter().filter(|op| matches!(op, Operand::Memory(_))).count(),
+        inst.operands
+            .iter()
+            .filter(|op| matches!(op, Operand::Memory(_)))
+            .count(),
         1,
         "expected implicit memory operand for MASKMOV*"
     );
@@ -54,4 +57,3 @@ fn ignored_segment_prefixes_do_not_clear_fs_gs_in_long_mode() {
     let mem = decode_maskmov_mem(&bytes);
     assert_eq!(mem.segment, Some(SegmentReg::FS));
 }
-
