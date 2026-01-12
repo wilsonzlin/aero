@@ -296,6 +296,10 @@ See [`docs/16-windows7-driver-build-and-signing.md`](../docs/16-windows7-driver-
 pwsh ci/install-wdk.ps1
 pwsh ci/build-drivers.ps1 -ToolchainJson out/toolchain.json -Drivers aerogpu windows7/virtio-blk windows7/virtio-net windows7/virtio-input windows7/virtio-snd
 
+# Note: CI only builds/packages drivers that explicitly opt in via `ci-package.json`
+# under the driver directory (and have at least one `.inf`), to avoid accidentally
+# shipping scaffolding/test drivers.
+
 # Optional: generate catalogs + test-sign + bundle artifacts (Guest Tools ISO/zip, etc.)
 pwsh ci/make-catalogs.ps1 -ToolchainJson out/toolchain.json
 pwsh ci/sign-drivers.ps1 -ToolchainJson out/toolchain.json
