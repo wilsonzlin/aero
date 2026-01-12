@@ -1,0 +1,245 @@
+# Windows 7 audio smoke test (in-box HDA driver)
+
+This is a **manual**, **reproducible** smoke test to validate that Windows 7’s **in-box HD Audio (Intel HDA) driver stack** works end-to-end once the emulated HDA controller is wired into the real Aero worker runtime:
+
+- Windows enumerates the **PCI controller** (“High Definition Audio Controller”)
+- Windows enumerates the **audio function** (“High Definition Audio Device”)
+- **Playback** works (system sounds / WAV playback reaches the host speakers)
+- **Recording** works (browser `getUserMedia` mic capture reaches the guest recording endpoint)
+
+> Windows 7 uses the inbox `hdaudbus.sys` (bus) + `hdaudio.sys` (function) drivers.
+> The goal of this smoke test is to confirm we do **not** need a custom driver just to get basic sound.
+
+---
+
+## Prerequisites (host/browser)
+
+- Use a Chromium-based browser for initial bring-up (Chrome/Edge).
+- The page must be **cross-origin isolated** (`COOP` + `COEP`) so `SharedArrayBuffer` works (needed for low-latency audio rings).
+- **Host audio output** must be functional (speakers/headphones connected, not muted).
+- **Host microphone** available (for capture test) and permission can be granted.
+
+### Windows 7 media
+
+Per [`AGENTS.md`](../../AGENTS.md), a Win7 ISO is available on the agent machine:
+
+```
+/state/win7.iso
+```
+
+Do **not** commit or redistribute Windows media/images.
+
+---
+
+## 1) Boot the Windows 7 test image
+
+This section describes what to do in the Aero **web UI** (the exact page/controls may change over time; the intent is what matters).
+
+### 1.1 Start the web app
+
+From the repo root:
+
+```bash
+npm ci
+npm run dev:web
+```
+
+Open the printed local URL (usually `http://127.0.0.1:5173/`).
+
+### 1.2 Ensure audio can start (autoplay policy)
+
+Most browsers require a **user gesture** to start audio output. Before expecting guest audio:
+
+- In the UI, click the **Audio “Init/Enable audio output”** button (whatever it is called in the current build).
+- Confirm the host-side audio status shows:
+  - `AudioContext: running` (not `suspended`)
+  - Ring buffer counters are visible (see §3.2).
+
+### 1.3 Boot Windows 7
+
+Use the UI’s disk management / mount controls to boot Windows:
+
+- Mount a **Windows 7 system disk** as HDD, *or* create a blank HDD and mount the Win7 ISO as CD to install once.
+  - The disk UI typically infers `*.iso` as a CD image.
+- Start the VM/workers (UI button often labeled “Start workers” / “Start VM”).
+- Wait for Windows to reach the desktop.
+
+**If you are installing from ISO:** once Windows is installed and boots successfully from the HDD, **unmount the ISO/CD** for subsequent boots so the test is faster and more deterministic.
+
+---
+
+## 2) Driver enumeration (Device Manager)
+
+Inside the Windows 7 guest:
+
+1. Open **Device Manager**:
+   - `Start` → right-click `Computer` → `Manage` → `Device Manager`
+2. Confirm the following entries exist and have **no yellow warning icon**:
+   - **System devices** → `High Definition Audio Controller`
+   - **Sound, video and game controllers** → `High Definition Audio Device`
+
+Expected outcome:
+
+- Windows should use the **Microsoft** inbox driver stack automatically.
+- `Control Panel → Sound` should show at least one **Playback** device and at least one **Recording** device (names may vary, but should map to the HDA device).
+
+---
+
+## 3) Playback test (system sounds / WAV)
+
+### 3.1 Trigger playback (guest)
+
+In Windows 7:
+
+1. Open `Control Panel → Sound` (or run `mmsys.cpl`).
+2. **Playback tab**:
+   - Select the default playback device (often `Speakers` / `High Definition Audio Device`).
+   - Click **Test**.
+
+Alternative (also deterministic):
+
+- `Control Panel → Sound → Sounds tab` → select any “Program Events” sound → click **Test**.
+
+Expected outcome:
+
+- You hear the test sound on the host speakers/headphones.
+- Windows shows playback activity (level meter/volume mixer).
+
+### 3.2 Observe host-side metrics (AudioWorklet ring buffer)
+
+While the guest is producing sound, capture the host-side metrics:
+
+**Required:**
+
+- **Ring buffer level** stays non-zero while audio plays (buffer is being filled/consumed).
+- **Underruns** do not rapidly increase.
+- **Overruns** remain `0` (or do not increase).
+
+Where to look:
+
+- If the web UI has an audio status box/HUD, record the values shown:
+  - `bufferLevelFrames`
+  - `underrunCount` (or `underrunFrames`)
+  - `overrunCount` (or `overrunFrames`)
+  - `sampleRate`
+
+If no UI exists, use DevTools Console to read the standard ring header (layout is documented in `docs/06-audio-subsystem.md`):
+
+```js
+// Find the active audio output object exposed by the host UI/runtime (name may vary by build).
+const out =
+  globalThis.__aeroAudioOutput ??
+  globalThis.__aeroAudioOutputWorker ??
+  globalThis.__aeroAudioOutputHdaDemo;
+
+out?.getMetrics?.()
+
+// Raw ring header counters (u32):
+// 0=readFrameIndex, 1=writeFrameIndex, 2=underrunCount, 3=overrunCount
+out?.ringBuffer?.header && {
+  read: Atomics.load(out.ringBuffer.header, 0) >>> 0,
+  write: Atomics.load(out.ringBuffer.header, 1) >>> 0,
+  underruns: Atomics.load(out.ringBuffer.header, 2) >>> 0,
+  overruns: Atomics.load(out.ringBuffer.header, 3) >>> 0,
+};
+```
+
+### 3.3 Observe guest DMA progress (if debug UI exists)
+
+If the build exposes HDA stream debug state, confirm that **guest-visible DMA progress advances** while the sound plays:
+
+- Output stream `LPIB` increases (and wraps modulo `CBL` for cyclic buffers)
+- If the **position buffer** is enabled, its value changes over time
+
+If DMA progress is stuck (e.g. `LPIB` never moves), the guest may “think” it is playing while the host produces silence.
+
+---
+
+## 4) Recording test (microphone capture)
+
+### 4.1 Grant browser microphone permission (host)
+
+In the Aero web UI:
+
+1. Click **Start microphone** (or equivalent).
+2. Approve the browser permission prompt (this is a `getUserMedia({ audio: … })` request).
+3. If the UI shows mic ring stats, confirm they update (e.g. buffered samples increases, dropped samples stays low).
+
+### 4.2 Verify the guest recording endpoint (Windows)
+
+In Windows 7:
+
+1. Open `Control Panel → Sound → Recording` tab.
+2. Confirm a recording device exists (typically `Microphone` / `High Definition Audio Device`).
+3. Speak into the host microphone and observe the **level meter** moves.
+
+Optional end-to-end verification (more obvious than a level meter):
+
+- Launch **Sound Recorder** in Windows, record ~3 seconds, and play it back.
+
+---
+
+## 5) Common failure modes + what to collect
+
+### A) Driver / enumeration failures
+
+- **No “High Definition Audio Controller” in Device Manager**
+  - Likely PCI wiring/identity issue (class code, BAR sizing, IRQ/MSI, device not on PCI bus)
+- **Yellow bang / “Unknown device”**
+  - Likely config space mismatch or missing required capabilities
+- **Controller exists but no “High Definition Audio Device”**
+  - HDA codec enumeration or CORB/RIRB verb path issue (bus driver loaded, function driver can’t bring up codec)
+
+Collect:
+
+- Screenshot of Device Manager showing the device tree + error icons.
+- Device Properties → Details → “Hardware Ids” for the failing entry (copy text).
+
+### B) Playback failures
+
+- **No sound, but Windows shows playback activity**
+  - Browser audio output not started (`AudioContext` is `suspended` / autoplay blocked)
+  - Output ring underrunning (producer not keeping up)
+  - Guest DMA progress stuck (stream not actually running)
+- **Clicks/stutter**
+  - Frequent underruns (buffer too small or CPU stalls)
+- **Overruns increasing**
+  - Producer writing too fast or not respecting backpressure
+
+Collect:
+
+- Audio ring metrics: buffer level + underrun/overrun counters + `AudioContext.state` + `sampleRate`.
+- If available: guest HDA stream debug (`LPIB`, `CBL`, position buffer).
+- Browser console logs (preserve timestamps; include `[cpu]`/`[io]` worker logs if present).
+
+### C) Microphone failures
+
+- **No recording device in Windows**
+  - Capture pin/stream not exposed or codec topology incomplete
+- **Device exists but level meter never moves**
+  - `getUserMedia` denied / not started, host mic muted, or capture ring not being drained into guest DMA
+
+Collect:
+
+- Browser permission status + any `getUserMedia` error shown in the console.
+- Mic ring stats (buffered/dropped) if available in UI.
+- Screenshot of the guest Recording tab.
+
+### D) Snapshot for bug reports (when available)
+
+If the runtime exposes a snapshot/save-state UI, save a snapshot immediately after reproducing:
+
+- Note the snapshot path (often `state/worker-vm-autosave.snap` in OPFS).
+- Export it for sharing. Example DevTools snippet (OPFS):
+
+```js
+const root = await navigator.storage.getDirectory();
+const fh = await root.getFileHandle("state/worker-vm-autosave.snap");
+const file = await fh.getFile();
+const url = URL.createObjectURL(file);
+const a = document.createElement("a");
+a.href = url;
+a.download = "worker-vm-autosave.snap";
+a.click();
+```
+
