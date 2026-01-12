@@ -193,9 +193,18 @@ function assertUsbOutEndpointAddress(value: number): void {
 
 function normalizeBytes(value: unknown): Uint8Array {
   if (value instanceof Uint8Array) {
-    // Avoid leaking SharedArrayBuffer-backed WASM memory across postMessage: ensure bytes are backed by an
-    // ArrayBuffer so structured-cloning can't share the entire underlying buffer.
-    if (value.buffer instanceof ArrayBuffer) return value;
+    // Avoid leaking (or copying) more than intended across postMessage:
+    // - If the bytes reference a SharedArrayBuffer (e.g. WASM threads), copy so we don't
+    //   implicitly share the entire underlying SAB.
+    // - If the bytes are a subview of a larger ArrayBuffer (e.g. WebAssembly.Memory.buffer),
+    //   copy so structured-cloning doesn't duplicate the entire underlying buffer.
+    if (
+      value.buffer instanceof ArrayBuffer &&
+      value.byteOffset === 0 &&
+      value.byteLength === value.buffer.byteLength
+    ) {
+      return value;
+    }
     const out = new Uint8Array(value.byteLength);
     out.set(value);
     return out;

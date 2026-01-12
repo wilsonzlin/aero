@@ -188,6 +188,43 @@ describe("usb/WebUsbUhciHarnessRuntime", () => {
     expect(Array.from(posted.data)).toEqual([8, 7]);
   });
 
+  it("copies ArrayBuffer subviews emitted by the harness before posting usb.action", () => {
+    const port = new FakePort();
+
+    const big = Uint8Array.of(0, 9, 8, 7, 6, 0);
+    const sub = new Uint8Array(big.buffer, 2, 2);
+
+    const action: UsbHostAction = { kind: "bulkOut", id: 1, endpoint: 0x02, data: sub };
+
+    const harness = {
+      tick: vi.fn(),
+      drain_actions: vi.fn(() => [action]),
+      push_completion: vi.fn(),
+      free: vi.fn(),
+    };
+
+    const runtime = new WebUsbUhciHarnessRuntime({
+      createHarness: () => harness,
+      port: port as unknown as MessagePort,
+      initiallyBlocked: false,
+    });
+    runtime.start();
+    runtime.pollOnce();
+
+    const postedActions = port.posted.filter((m) => (m as { type?: unknown }).type === "usb.action") as Array<{
+      type: "usb.action";
+      action: UsbHostAction;
+    }>;
+    expect(postedActions).toHaveLength(1);
+
+    const posted = postedActions[0]!.action;
+    if (posted.kind !== "bulkOut") throw new Error("unreachable");
+    expect(posted.data.buffer).toBeInstanceOf(ArrayBuffer);
+    // The payload should not carry the full underlying buffer (only the slice).
+    expect(posted.data.buffer.byteLength).toBe(2);
+    expect(Array.from(posted.data)).toEqual([8, 7]);
+  });
+
   it("stops + resets on usb.selected ok:false", () => {
     const port = new FakePort();
 
