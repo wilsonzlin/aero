@@ -4,6 +4,7 @@ import { ErrorCode, serializeError } from './errors.js';
 const DEFAULT_CONFIG = Object.freeze({
   cpu: {
     watchdogTimeoutMs: 2000,
+    ackTimeoutMs: 10_000,
   },
   autoSaveSnapshotOnCrash: false,
 });
@@ -49,12 +50,18 @@ export class VmCoordinator extends EventTarget {
     this.worker.on('error', (err) => this._onWorkerError(err));
     this.worker.on('exit', (code) => this._onWorkerExit(code));
 
-    await this._awaitAck('ready', { timeoutMs: 2000, message: 'Timed out waiting for CPU worker to initialize.' });
+    await this._awaitAck('ready', {
+      timeoutMs: this.config.cpu.ackTimeoutMs,
+      message: 'Timed out waiting for CPU worker to initialize.',
+    });
 
     this._startWatchdog();
     this._send({ type: 'start', mode });
 
-    await this._awaitAck('started', { timeoutMs: 2000, message: 'Timed out waiting for CPU worker to start.' });
+    await this._awaitAck('started', {
+      timeoutMs: this.config.cpu.ackTimeoutMs,
+      message: 'Timed out waiting for CPU worker to start.',
+    });
 
     this.lastHeartbeatAt = Date.now();
     this._setState('running');
@@ -64,7 +71,10 @@ export class VmCoordinator extends EventTarget {
     if (!this.worker) return;
     if (this.state !== 'running') return;
     this._send({ type: 'pause' });
-    await this._awaitAck('paused', { timeoutMs: 2000, message: 'Timed out waiting for CPU worker to pause.' });
+    await this._awaitAck('paused', {
+      timeoutMs: this.config.cpu.ackTimeoutMs,
+      message: 'Timed out waiting for CPU worker to pause.',
+    });
     this._setState('paused');
   }
 
@@ -72,7 +82,10 @@ export class VmCoordinator extends EventTarget {
     if (!this.worker) return;
     if (this.state !== 'paused') return;
     this._send({ type: 'resume' });
-    await this._awaitAck('resumed', { timeoutMs: 2000, message: 'Timed out waiting for CPU worker to resume.' });
+    await this._awaitAck('resumed', {
+      timeoutMs: this.config.cpu.ackTimeoutMs,
+      message: 'Timed out waiting for CPU worker to resume.',
+    });
     this.lastHeartbeatAt = Date.now();
     this._setState('running');
   }
@@ -81,8 +94,14 @@ export class VmCoordinator extends EventTarget {
     if (!this.worker) return;
     if (this.state !== 'paused') return;
     this._send({ type: 'step' });
-    await this._awaitAck('stepped', { timeoutMs: 2000, message: 'Timed out waiting for CPU worker to step.' });
-    await this._awaitAck('paused', { timeoutMs: 2000, message: 'Timed out waiting for CPU worker to pause after step.' });
+    await this._awaitAck('stepped', {
+      timeoutMs: this.config.cpu.ackTimeoutMs,
+      message: 'Timed out waiting for CPU worker to step.',
+    });
+    await this._awaitAck('paused', {
+      timeoutMs: this.config.cpu.ackTimeoutMs,
+      message: 'Timed out waiting for CPU worker to pause after step.',
+    });
     this._setState('paused');
   }
 
@@ -94,7 +113,10 @@ export class VmCoordinator extends EventTarget {
   async requestSnapshot({ reason = 'manual' } = {}) {
     if (!this.worker) return null;
     this._send({ type: 'requestSnapshot', reason });
-    const msg = await this._awaitAck('snapshot', { timeoutMs: 2000, message: 'Timed out waiting for snapshot.' });
+    const msg = await this._awaitAck('snapshot', {
+      timeoutMs: this.config.cpu.ackTimeoutMs,
+      message: 'Timed out waiting for snapshot.',
+    });
     return msg.snapshot;
   }
 
@@ -102,7 +124,10 @@ export class VmCoordinator extends EventTarget {
     if (!this.worker) throw new Error('VM is not running');
     const requestId = this._nextRequestId++;
     this._send({ type: 'cacheWrite', requestId, cache, sizeBytes, key });
-    const msg = await this._awaitAck('cacheWriteResult', { timeoutMs: 2000, message: 'Timed out waiting for cache write result.' });
+    const msg = await this._awaitAck('cacheWriteResult', {
+      timeoutMs: this.config.cpu.ackTimeoutMs,
+      message: 'Timed out waiting for cache write result.',
+    });
     if (msg?.requestId !== requestId) {
       throw new Error('Received mismatched cache write response.');
     }

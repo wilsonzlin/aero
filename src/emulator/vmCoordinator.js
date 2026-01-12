@@ -3,6 +3,7 @@ import { ErrorCode, serializeError } from "../errors.js";
 const DEFAULT_CONFIG = Object.freeze({
   cpu: {
     watchdogTimeoutMs: 2000,
+    ackTimeoutMs: 10_000,
   },
   autoSaveSnapshotOnCrash: false,
 });
@@ -158,7 +159,7 @@ export class VmCoordinator extends EventTarget {
     worker.postMessage({ type: "init", config: this.config });
 
     await this._awaitAck("ready", {
-      timeoutMs: 2000,
+      timeoutMs: this.config.cpu.ackTimeoutMs,
       message: "Timed out waiting for CPU worker to initialize.",
     });
 
@@ -174,7 +175,7 @@ export class VmCoordinator extends EventTarget {
     this._send({ type: "start", mode });
 
     await this._awaitAck("started", {
-      timeoutMs: 2000,
+      timeoutMs: this.config.cpu.ackTimeoutMs,
       message: "Timed out waiting for CPU worker to start.",
     });
 
@@ -186,7 +187,7 @@ export class VmCoordinator extends EventTarget {
     if (this.state !== "running") return;
     this._send({ type: "pause" });
     await this._awaitAck("paused", {
-      timeoutMs: 2000,
+      timeoutMs: this.config.cpu.ackTimeoutMs,
       message: "Timed out waiting for CPU worker to pause.",
     });
     this._setState("paused");
@@ -197,7 +198,7 @@ export class VmCoordinator extends EventTarget {
     if (this.state !== "paused") return;
     this._send({ type: "resume" });
     await this._awaitAck("resumed", {
-      timeoutMs: 2000,
+      timeoutMs: this.config.cpu.ackTimeoutMs,
       message: "Timed out waiting for CPU worker to resume.",
     });
     this.lastHeartbeatAt = Date.now();
@@ -209,11 +210,11 @@ export class VmCoordinator extends EventTarget {
     if (this.state !== "paused") return;
     this._send({ type: "step" });
     await this._awaitAck("stepped", {
-      timeoutMs: 2000,
+      timeoutMs: this.config.cpu.ackTimeoutMs,
       message: "Timed out waiting for CPU worker to step.",
     });
     await this._awaitAck("paused", {
-      timeoutMs: 2000,
+      timeoutMs: this.config.cpu.ackTimeoutMs,
       message: "Timed out waiting for CPU worker to pause after step.",
     });
     this._setState("paused");
@@ -243,7 +244,7 @@ export class VmCoordinator extends EventTarget {
     if (!this.worker) return null;
     this._send({ type: "requestSnapshot", reason });
     const msg = await this._awaitAck("snapshot", {
-      timeoutMs: 2000,
+      timeoutMs: this.config.cpu.ackTimeoutMs,
       message: "Timed out waiting for snapshot.",
     });
     return msg.snapshot;
@@ -256,7 +257,7 @@ export class VmCoordinator extends EventTarget {
     const requestId = this._nextRequestId++;
     this._send({ type: "cacheWrite", requestId, cache, sizeBytes, key });
     const msg = await this._awaitAck("cacheWriteResult", {
-      timeoutMs: 2000,
+      timeoutMs: this.config.cpu.ackTimeoutMs,
       message: "Timed out waiting for cache write result.",
     });
     if (msg?.requestId !== requestId) {
