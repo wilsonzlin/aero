@@ -14,3 +14,30 @@ fn enable_e1000_requires_enable_pc_platform() {
     ));
 }
 
+#[test]
+fn enable_ahci_requires_enable_pc_platform() {
+    let cfg = MachineConfig {
+        enable_pc_platform: false,
+        enable_ahci: true,
+        ..Default::default()
+    };
+
+    assert!(matches!(
+        Machine::new(cfg),
+        Err(MachineError::AhciRequiresPcPlatform)
+    ));
+}
+
+#[test]
+fn enable_ide_requires_enable_pc_platform() {
+    let cfg = MachineConfig {
+        enable_pc_platform: false,
+        enable_ide: true,
+        ..Default::default()
+    };
+
+    assert!(matches!(
+        Machine::new(cfg),
+        Err(MachineError::IdeRequiresPcPlatform)
+    ));
+}
