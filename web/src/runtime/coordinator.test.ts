@@ -105,6 +105,42 @@ describe("runtime/coordinator", () => {
     expect(Array.from(actualBytes)).toEqual(Array.from(expectedBytes));
   });
 
+  it("roundtrips net.trace.status request/response through the coordinator", async () => {
+    const coordinator = new WorkerCoordinator();
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 1 });
+    const shared = createSharedMemoryViews(segments);
+    (coordinator as any).shared = shared;
+    (coordinator as any).spawnWorker("net", segments);
+
+    const netInfo = (coordinator as any).workers.net as { instanceId: number; worker: MockWorker };
+    const netWorker = netInfo.worker;
+
+    const promise = coordinator.getNetTraceStats();
+
+    const lastPosted = netWorker.posted.at(-1)?.message as { kind?: unknown; requestId?: unknown } | undefined;
+    expect(lastPosted?.kind).toBe("net.trace.status");
+    expect(typeof lastPosted?.requestId).toBe("number");
+    const requestId = lastPosted!.requestId as number;
+
+    (coordinator as any).onWorkerMessage("net", netInfo.instanceId, {
+      kind: "net.trace.status",
+      requestId,
+      enabled: true,
+      records: 123,
+      bytes: 4567,
+      droppedRecords: 3,
+      droppedBytes: 9,
+    });
+
+    await expect(promise).resolves.toEqual({
+      enabled: true,
+      records: 123,
+      bytes: 4567,
+      droppedRecords: 3,
+      droppedBytes: 9,
+    });
+  });
+
   it("rejects pending net trace requests when the net worker is terminated", async () => {
     const coordinator = new WorkerCoordinator();
     const segments = allocateSharedMemorySegments({ guestRamMiB: 1 });
@@ -113,6 +149,19 @@ describe("runtime/coordinator", () => {
     (coordinator as any).spawnWorker("net", segments);
 
     const promise = coordinator.takeNetTracePcapng(60_000);
+    (coordinator as any).terminateWorker("net");
+
+    await expect(promise).rejects.toThrow(/net worker restarted/i);
+  });
+
+  it("rejects pending net trace status requests when the net worker is terminated", async () => {
+    const coordinator = new WorkerCoordinator();
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 1 });
+    const shared = createSharedMemoryViews(segments);
+    (coordinator as any).shared = shared;
+    (coordinator as any).spawnWorker("net", segments);
+
+    const promise = coordinator.getNetTraceStats(60_000);
     (coordinator as any).terminateWorker("net");
 
     await expect(promise).rejects.toThrow(/net worker restarted/i);

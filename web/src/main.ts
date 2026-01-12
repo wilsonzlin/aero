@@ -1529,6 +1529,14 @@ function renderNetTracePanel(): HTMLElement {
       requireNetWorkerReady();
       workerCoordinator.setNetTraceEnabled(false);
     },
+    clear: () => {
+      requireNetWorkerReady();
+      workerCoordinator.clearNetTrace();
+    },
+    getStats: async () => {
+      requireNetWorkerReady();
+      return await workerCoordinator.getNetTraceStats(1000);
+    },
     clearCapture: () => {
       requireNetWorkerReady();
       workerCoordinator.clearNetTrace();
