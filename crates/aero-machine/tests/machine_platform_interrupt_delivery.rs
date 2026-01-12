@@ -1,5 +1,7 @@
 use aero_devices::hpet::HPET_MMIO_BASE;
 use aero_devices::i8042::{I8042_DATA_PORT, I8042_STATUS_PORT};
+use aero_devices::pic8259::{MASTER_CMD, MASTER_DATA, SLAVE_CMD, SLAVE_DATA};
+use aero_devices::pit8254::{PIT_CH0, PIT_CMD};
 use aero_machine::{Machine, MachineConfig, RunExit};
 use aero_platform::interrupts::{InterruptController, InterruptInput, PlatformInterruptMode};
 use pretty_assertions::assert_eq;
@@ -147,23 +149,23 @@ fn machine_pit_irq0_wakes_cpu_from_hlt() {
     // Reprogram the PIC via its legacy I/O ports.
     // Standard 8259 remap sequence:
     //   ICW1=0x11, ICW2=0x20/0x28, ICW3=0x04/0x02, ICW4=0x01.
-    m.io_write(0x20, 1, 0x11);
-    m.io_write(0xA0, 1, 0x11);
-    m.io_write(0x21, 1, 0x20);
-    m.io_write(0xA1, 1, 0x28);
-    m.io_write(0x21, 1, 0x04);
-    m.io_write(0xA1, 1, 0x02);
-    m.io_write(0x21, 1, 0x01);
-    m.io_write(0xA1, 1, 0x01);
+    m.io_write(MASTER_CMD, 1, 0x11);
+    m.io_write(SLAVE_CMD, 1, 0x11);
+    m.io_write(MASTER_DATA, 1, 0x20);
+    m.io_write(SLAVE_DATA, 1, 0x28);
+    m.io_write(MASTER_DATA, 1, 0x04);
+    m.io_write(SLAVE_DATA, 1, 0x02);
+    m.io_write(MASTER_DATA, 1, 0x01);
+    m.io_write(SLAVE_DATA, 1, 0x01);
     // Unmask IRQ0 only.
-    m.io_write(0x21, 1, 0xFE);
-    m.io_write(0xA1, 1, 0xFF);
+    m.io_write(MASTER_DATA, 1, 0xFE);
+    m.io_write(SLAVE_DATA, 1, 0xFF);
 
     // Program PIT channel 0 for ~1kHz periodic interrupts (mode 2, lo/hi).
     // PIT tick rate is 1.193182 MHz, so divisor 1193 ~= 1ms period.
-    m.io_write(0x43, 1, 0x34);
-    m.io_write(0x40, 1, 1193 & 0xFF);
-    m.io_write(0x40, 1, 1193 >> 8);
+    m.io_write(PIT_CMD, 1, 0x34);
+    m.io_write(PIT_CH0, 1, 1193 & 0xFF);
+    m.io_write(PIT_CH0, 1, 1193 >> 8);
 
     // The machine should advance platform time even while halted so PIT IRQ0 can wake it.
     for _ in 0..200 {
@@ -205,9 +207,9 @@ fn machine_pit_irq0_wakes_cpu_from_hlt_in_apic_mode() {
     }
 
     // Program PIT channel 0 for ~1kHz periodic interrupts (mode 2, lo/hi).
-    m.io_write(0x43, 1, 0x34);
-    m.io_write(0x40, 1, 1193 & 0xFF);
-    m.io_write(0x40, 1, 1193 >> 8);
+    m.io_write(PIT_CMD, 1, 0x34);
+    m.io_write(PIT_CH0, 1, 1193 & 0xFF);
+    m.io_write(PIT_CH0, 1, 1193 >> 8);
 
     // The machine should advance platform time even while halted so PIT IRQ0 can wake it.
     for _ in 0..200 {
