@@ -2759,13 +2759,26 @@ static bool HttpGetLargeDeterministic(Logger& log, const std::wstring& url) {
            static_cast<unsigned long long>(hash),
            has_content_len ? "" : " (missing Content-Length)");
 
-  if (has_content_len && content_len != kExpectedBytes) {
+  bool header_ok = false;
+  if (!has_content_len) {
+    log.Logf("virtio-net: HTTP GET large missing Content-Length expected=%llu",
+             static_cast<unsigned long long>(kExpectedBytes));
+  } else if (content_len != kExpectedBytes) {
     log.Logf("virtio-net: HTTP GET large Content-Length mismatch got=%lu expected=%llu",
              static_cast<unsigned long>(content_len), static_cast<unsigned long long>(kExpectedBytes));
+  } else {
+    header_ok = true;
   }
 
-  if (!(status >= 200 && status < 300)) return false;
+  if (!(status >= 200 && status < 300)) {
+    if (status == 404) {
+      log.LogLine("virtio-net: HTTP GET large endpoint not found (404). Ensure the host harness serves "
+                  "`<http_url>-large`.");
+    }
+    return false;
+  }
   if (!read_ok) return false;
+  if (!header_ok) return false;
   if (total_read != kExpectedBytes || hash != kExpectedHash) {
     log.Logf("virtio-net: HTTP GET large body mismatch bytes_read=%llu expected_bytes=%llu hash=0x%016llx "
              "expected_hash=0x%016llx",
