@@ -165,6 +165,23 @@ struct StateBlock {
   std::bitset<Device::kMaxLights> light_valid_bits{};
   std::bitset<Device::kMaxLights> light_enable_mask{};
   std::bitset<Device::kMaxLights> light_enable_bits{};
+
+  // Misc legacy state (cached only, not currently emitted to the AeroGPU command
+  // stream), but must be round-trippable via Get* and state blocks.
+  bool gamma_ramp_set = false;
+  bool gamma_ramp_valid = false;
+  D3DGAMMARAMP gamma_ramp{};
+
+  bool clip_status_set = false;
+  bool clip_status_valid = false;
+  D3DCLIPSTATUS9 clip_status{};
+
+  std::bitset<Device::kMaxPalettes> palette_mask{};
+  std::array<std::array<PALETTEENTRY, 256>, Device::kMaxPalettes> palette_entries{};
+  std::bitset<Device::kMaxPalettes> palette_valid_bits{};
+
+  bool current_texture_palette_set = false;
+  uint32_t current_texture_palette = 0;
 #endif
 
   // Texture bindings (pixel shader stages only; 0..15).
@@ -2691,6 +2708,55 @@ inline void stateblock_record_light_enable_locked(Device* dev, uint32_t index, B
   } else {
     sb->light_enable_bits.reset(index);
   }
+}
+
+inline void stateblock_record_gamma_ramp_locked(Device* dev, const D3DGAMMARAMP& ramp, bool valid) {
+  if (!dev || !dev->recording_state_block) {
+    return;
+  }
+  StateBlock* sb = dev->recording_state_block;
+  sb->gamma_ramp_set = true;
+  sb->gamma_ramp_valid = valid;
+  sb->gamma_ramp = ramp;
+}
+
+inline void stateblock_record_clip_status_locked(Device* dev, const D3DCLIPSTATUS9& status, bool valid) {
+  if (!dev || !dev->recording_state_block) {
+    return;
+  }
+  StateBlock* sb = dev->recording_state_block;
+  sb->clip_status_set = true;
+  sb->clip_status_valid = valid;
+  sb->clip_status = status;
+}
+
+inline void stateblock_record_palette_entries_locked(Device* dev, uint32_t palette, const PALETTEENTRY* entries, bool valid) {
+  if (!dev || !dev->recording_state_block || !entries) {
+    return;
+  }
+  if (palette >= Device::kMaxPalettes) {
+    return;
+  }
+  StateBlock* sb = dev->recording_state_block;
+  sb->palette_mask.set(palette);
+  std::memcpy(sb->palette_entries[palette].data(), entries, sizeof(PALETTEENTRY) * 256u);
+  if (valid) {
+    sb->palette_valid_bits.set(palette);
+  } else {
+    sb->palette_valid_bits.reset(palette);
+  }
+}
+
+inline void stateblock_record_current_texture_palette_locked(Device* dev, uint32_t palette) {
+  if (!dev || !dev->recording_state_block) {
+    return;
+  }
+  if (palette >= Device::kMaxPalettes) {
+    return;
+  }
+  StateBlock* sb = dev->recording_state_block;
+  sb->current_texture_palette_set = true;
+  sb->current_texture_palette = palette;
 }
 #endif
 
@@ -9504,6 +9570,19 @@ static void stateblock_init_for_type_locked(Device* dev, StateBlock* sb, uint32_
       sb->ps_const_b_mask.set(r);
     }
     std::memcpy(sb->ps_consts_b.data(), dev->ps_consts_b, sizeof(uint8_t) * 256u);
+
+    // Palette tables (for palettized textures) + current texture palette.
+    for (uint32_t p = 0; p < Device::kMaxPalettes; ++p) {
+      sb->palette_mask.set(p);
+      std::memcpy(sb->palette_entries[p].data(), &dev->palette_entries[p][0], sizeof(dev->palette_entries[p]));
+      if (dev->palette_valid[p]) {
+        sb->palette_valid_bits.set(p);
+      } else {
+        sb->palette_valid_bits.reset(p);
+      }
+    }
+    sb->current_texture_palette_set = true;
+    sb->current_texture_palette = dev->current_texture_palette;
   }
 
   if (is_vertex) {
@@ -9544,6 +9623,10 @@ static void stateblock_init_for_type_locked(Device* dev, StateBlock* sb, uint32_
     }
 #endif
 
+    sb->clip_status_set = true;
+    sb->clip_status_valid = dev->clip_status_valid;
+    sb->clip_status = dev->clip_status;
+
     sb->vertex_decl_set = true;
     sb->vertex_decl = dev->vertex_decl;
     sb->fvf_set = true;
@@ -9577,6 +9660,12 @@ static void stateblock_init_for_type_locked(Device* dev, StateBlock* sb, uint32_
       sb->vs_const_b_mask.set(r);
     }
     std::memcpy(sb->vs_consts_b.data(), dev->vs_consts_b, sizeof(uint8_t) * 256u);
+  }
+
+  if (is_all) {
+    sb->gamma_ramp_set = true;
+    sb->gamma_ramp_valid = dev->gamma_ramp_valid;
+    sb->gamma_ramp = dev->gamma_ramp;
   }
 }
 
@@ -9635,6 +9724,32 @@ static void stateblock_capture_locked(Device* dev, StateBlock* sb) {
         sb->light_enable_bits.reset(i);
       }
     }
+  }
+
+  if (sb->gamma_ramp_set) {
+    sb->gamma_ramp_valid = dev->gamma_ramp_valid;
+    sb->gamma_ramp = dev->gamma_ramp;
+  }
+
+  if (sb->clip_status_set) {
+    sb->clip_status_valid = dev->clip_status_valid;
+    sb->clip_status = dev->clip_status;
+  }
+
+  for (uint32_t p = 0; p < Device::kMaxPalettes; ++p) {
+    if (!sb->palette_mask.test(p)) {
+      continue;
+    }
+    std::memcpy(sb->palette_entries[p].data(), &dev->palette_entries[p][0], sizeof(dev->palette_entries[p]));
+    if (dev->palette_valid[p]) {
+      sb->palette_valid_bits.set(p);
+    } else {
+      sb->palette_valid_bits.reset(p);
+    }
+  }
+
+  if (sb->current_texture_palette_set) {
+    sb->current_texture_palette = dev->current_texture_palette;
   }
 #endif
 
@@ -9905,6 +10020,32 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
       dev->light_enabled[i] = sb->light_enable_bits.test(i) ? TRUE : FALSE;
       stateblock_record_light_enable_locked(dev, i, dev->light_enabled[i]);
     }
+  }
+
+  if (sb->gamma_ramp_set) {
+    dev->gamma_ramp = sb->gamma_ramp;
+    dev->gamma_ramp_valid = sb->gamma_ramp_valid;
+    stateblock_record_gamma_ramp_locked(dev, dev->gamma_ramp, dev->gamma_ramp_valid);
+  }
+
+  if (sb->clip_status_set) {
+    dev->clip_status = sb->clip_status;
+    dev->clip_status_valid = sb->clip_status_valid;
+    stateblock_record_clip_status_locked(dev, dev->clip_status, dev->clip_status_valid);
+  }
+
+  for (uint32_t p = 0; p < Device::kMaxPalettes; ++p) {
+    if (!sb->palette_mask.test(p)) {
+      continue;
+    }
+    std::memcpy(&dev->palette_entries[p][0], sb->palette_entries[p].data(), sizeof(dev->palette_entries[p]));
+    dev->palette_valid[p] = sb->palette_valid_bits.test(p);
+    stateblock_record_palette_entries_locked(dev, p, &dev->palette_entries[p][0], dev->palette_valid[p]);
+  }
+
+  if (sb->current_texture_palette_set) {
+    dev->current_texture_palette = sb->current_texture_palette;
+    stateblock_record_current_texture_palette_locked(dev, dev->current_texture_palette);
   }
 #endif
 
@@ -11019,6 +11160,7 @@ HRESULT device_set_palette_entries_impl(D3DDDI_HDEVICE hDevice, PaletteT palette
   const size_t dst_bytes = sizeof(dev->palette_entries[idx]);
   std::memcpy(&dev->palette_entries[idx][0], pEntries, std::min(src_bytes, dst_bytes));
   dev->palette_valid[idx] = true;
+  stateblock_record_palette_entries_locked(dev, idx, &dev->palette_entries[idx][0], true);
   return trace.ret(S_OK);
 }
 
@@ -11082,6 +11224,7 @@ HRESULT device_set_current_texture_palette_impl(D3DDDI_HDEVICE hDevice, PaletteT
   auto* dev = as_device(hDevice);
   std::lock_guard<std::mutex> lock(dev->mutex);
   dev->current_texture_palette = idx;
+  stateblock_record_current_texture_palette_locked(dev, idx);
   return trace.ret(S_OK);
 }
 
@@ -11133,6 +11276,7 @@ HRESULT device_set_clip_status_impl(D3DDDI_HDEVICE hDevice, const ClipStatusT* p
   std::memset(&dev->clip_status, 0, sizeof(dev->clip_status));
   std::memcpy(&dev->clip_status, pClipStatus, std::min(sizeof(dev->clip_status), sizeof(*pClipStatus)));
   dev->clip_status_valid = true;
+  stateblock_record_clip_status_locked(dev, dev->clip_status, dev->clip_status_valid);
   return trace.ret(S_OK);
 }
 
@@ -11188,6 +11332,7 @@ HRESULT device_set_gamma_ramp_impl(D3DDDI_HDEVICE hDevice, A1 arg1, A2 arg2, con
   std::memset(&dev->gamma_ramp, 0, sizeof(dev->gamma_ramp));
   std::memcpy(&dev->gamma_ramp, pRamp, std::min(sizeof(dev->gamma_ramp), sizeof(*pRamp)));
   dev->gamma_ramp_valid = true;
+  stateblock_record_gamma_ramp_locked(dev, dev->gamma_ramp, dev->gamma_ramp_valid);
   return trace.ret(S_OK);
 }
 
