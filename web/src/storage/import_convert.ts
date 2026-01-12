@@ -1264,10 +1264,19 @@ class VhdBat {
   static async read(src: RandomAccessSource, tableOffset: number, entries: number): Promise<VhdBat> {
     const bytes = entries * 4;
     if (!Number.isSafeInteger(bytes) || bytes > VHD_MAX_BAT_BYTES) throw new Error("VHD BAT too large");
-
-    const batBytes = await src.readAt(tableOffset, bytes);
     const out = new Uint32Array(entries);
-    for (let i = 0; i < entries; i++) out[i] = readU32BE(batBytes, i * 4);
+    // Avoid allocating `bytes` twice (batBytes + Uint32Array) for large BATs. Read in chunks and
+    // decode entries incrementally.
+    const CHUNK_BYTES = 8 * 1024 * 1024; // 8 MiB (must be a multiple of 4)
+    let off = 0;
+    while (off < bytes) {
+      const len = Math.min(CHUNK_BYTES, bytes - off);
+      const chunk = await src.readAt(tableOffset + off, len);
+      for (let i = 0; i < len; i += 4) {
+        out[(off + i) >>> 2] = readU32BE(chunk, i);
+      }
+      off += len;
+    }
     return new VhdBat(out);
   }
 
