@@ -492,3 +492,192 @@ fn snapshot_inspect_shows_inner_aero_io_snapshot_device_id_when_present() {
         .success()
         .stdout(predicate::str::contains("inner=UHRT v1.0"));
 }
+
+struct DskcWrapperDeviceSource;
+
+impl SnapshotSource for DskcWrapperDeviceSource {
+    fn snapshot_meta(&mut self) -> SnapshotMeta {
+        SnapshotMeta {
+            snapshot_id: 5,
+            parent_snapshot_id: Some(4),
+            created_unix_ms: 0,
+            label: Some("inspect-dskc-wrapper".to_string()),
+        }
+    }
+
+    fn cpu_state(&self) -> CpuState {
+        CpuState::default()
+    }
+
+    fn mmu_state(&self) -> MmuState {
+        MmuState::default()
+    }
+
+    fn device_states(&self) -> Vec<DeviceState> {
+        fn io_snapshot_header(id: &[u8; 4]) -> Vec<u8> {
+            let mut out = vec![0u8; 16];
+            out[0..4].copy_from_slice(b"AERO");
+            // io-snapshot format v1.0
+            out[4..6].copy_from_slice(&1u16.to_le_bytes());
+            out[6..8].copy_from_slice(&0u16.to_le_bytes());
+            out[8..12].copy_from_slice(id);
+            // device snapshot version v1.0
+            out[12..14].copy_from_slice(&1u16.to_le_bytes());
+            out[14..16].copy_from_slice(&0u16.to_le_bytes());
+            out
+        }
+
+        // Nested controller snapshot header: AHCI PCI (`AHCP`) v1.0.
+        let nested = io_snapshot_header(b"AHCP");
+
+        // DSKC payload: tag 1 contains an `Encoder::vec_bytes` list.
+        //
+        // Encode one controller at packed_bdf 00:02.0.
+        let bdf_u16: u16 = (0u16 << 8) | (2u16 << 3) | 0u16;
+        let mut entry = Vec::new();
+        entry.extend_from_slice(&bdf_u16.to_le_bytes());
+        entry.extend_from_slice(&nested);
+
+        let mut controllers_buf = Vec::new();
+        controllers_buf.extend_from_slice(&1u32.to_le_bytes()); // count
+        controllers_buf.extend_from_slice(&(entry.len() as u32).to_le_bytes());
+        controllers_buf.extend_from_slice(&entry);
+
+        let mut data = io_snapshot_header(b"DSKC");
+        data.extend_from_slice(&1u16.to_le_bytes()); // tag
+        data.extend_from_slice(&(controllers_buf.len() as u32).to_le_bytes());
+        data.extend_from_slice(&controllers_buf);
+
+        vec![DeviceState {
+            id: DeviceId::DISK_CONTROLLER,
+            version: 1,
+            flags: 0,
+            data,
+        }]
+    }
+
+    fn disk_overlays(&self) -> DiskOverlayRefs {
+        DiskOverlayRefs::default()
+    }
+
+    fn ram_len(&self) -> usize {
+        4096
+    }
+
+    fn read_ram(&self, _offset: u64, buf: &mut [u8]) -> aero_snapshot::Result<()> {
+        buf.fill(0);
+        Ok(())
+    }
+
+    fn take_dirty_pages(&mut self) -> Option<Vec<u64>> {
+        None
+    }
+}
+
+#[test]
+fn snapshot_inspect_decodes_nested_dskc_controller_headers() {
+    let tmp = tempfile::tempdir().unwrap();
+    let snap = tmp.path().join("dskc_wrapper.aerosnap");
+
+    let mut source = DskcWrapperDeviceSource;
+    let mut cursor = Cursor::new(Vec::new());
+    save_snapshot(&mut cursor, &mut source, SaveOptions::default()).unwrap();
+    fs::write(&snap, cursor.into_inner()).unwrap();
+
+    Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["snapshot", "inspect", snap.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("controllers=[00:02.0 AHCP v1.0]"));
+}
+
+struct UsbcWrapperDeviceSource;
+
+impl SnapshotSource for UsbcWrapperDeviceSource {
+    fn snapshot_meta(&mut self) -> SnapshotMeta {
+        SnapshotMeta {
+            snapshot_id: 6,
+            parent_snapshot_id: Some(5),
+            created_unix_ms: 0,
+            label: Some("inspect-usbc-wrapper".to_string()),
+        }
+    }
+
+    fn cpu_state(&self) -> CpuState {
+        CpuState::default()
+    }
+
+    fn mmu_state(&self) -> MmuState {
+        MmuState::default()
+    }
+
+    fn device_states(&self) -> Vec<DeviceState> {
+        fn io_snapshot_header(id: &[u8; 4]) -> Vec<u8> {
+            let mut out = vec![0u8; 16];
+            out[0..4].copy_from_slice(b"AERO");
+            // io-snapshot format v1.0
+            out[4..6].copy_from_slice(&1u16.to_le_bytes());
+            out[6..8].copy_from_slice(&0u16.to_le_bytes());
+            out[8..12].copy_from_slice(id);
+            // device snapshot version v1.0
+            out[12..14].copy_from_slice(&1u16.to_le_bytes());
+            out[14..16].copy_from_slice(&0u16.to_le_bytes());
+            out
+        }
+
+        let nested = io_snapshot_header(b"UHCP");
+
+        let mut data = io_snapshot_header(b"USBC");
+        // tag 1: u64 remainder
+        data.extend_from_slice(&1u16.to_le_bytes());
+        data.extend_from_slice(&8u32.to_le_bytes());
+        data.extend_from_slice(&500_000u64.to_le_bytes());
+        // tag 2: nested snapshot bytes
+        data.extend_from_slice(&2u16.to_le_bytes());
+        data.extend_from_slice(&(nested.len() as u32).to_le_bytes());
+        data.extend_from_slice(&nested);
+
+        vec![DeviceState {
+            id: DeviceId::USB,
+            version: 1,
+            flags: 0,
+            data,
+        }]
+    }
+
+    fn disk_overlays(&self) -> DiskOverlayRefs {
+        DiskOverlayRefs::default()
+    }
+
+    fn ram_len(&self) -> usize {
+        4096
+    }
+
+    fn read_ram(&self, _offset: u64, buf: &mut [u8]) -> aero_snapshot::Result<()> {
+        buf.fill(0);
+        Ok(())
+    }
+
+    fn take_dirty_pages(&mut self) -> Option<Vec<u64>> {
+        None
+    }
+}
+
+#[test]
+fn snapshot_inspect_decodes_aero_machine_usbc_wrapper_fields() {
+    let tmp = tempfile::tempdir().unwrap();
+    let snap = tmp.path().join("usbc_wrapper.aerosnap");
+
+    let mut source = UsbcWrapperDeviceSource;
+    let mut cursor = Cursor::new(Vec::new());
+    save_snapshot(&mut cursor, &mut source, SaveOptions::default()).unwrap();
+    fs::write(&snap, cursor.into_inner()).unwrap();
+
+    Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["snapshot", "inspect", snap.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "remainder=500000ns nested=UHCP v1.0",
+        ));
+}

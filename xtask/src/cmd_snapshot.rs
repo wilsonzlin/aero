@@ -201,6 +201,7 @@ fn print_devices_section_summary(file: &mut fs::File, section: &SnapshotSectionI
         flags: u16,
         len: u64,
         inner: Option<DeviceInnerHeader>,
+        detail: Option<String>,
     }
 
     #[derive(Debug, Clone)]
@@ -226,6 +227,45 @@ fn print_devices_section_summary(file: &mut fs::File, section: &SnapshotSectionI
         } else {
             format!("0x{:02x}{:02x}{:02x}{:02x}", id[0], id[1], id[2], id[3])
         }
+    }
+
+    fn parse_device_inner_header(buf: &[u8]) -> Option<DeviceInnerHeader> {
+        if buf.len() < 4 || &buf[0..4] != b"AERO" {
+            return None;
+        }
+
+        // Try to detect an `aero-io-snapshot` header by checking whether the device id slot looks
+        // like a 4CC. If not, fall back to the legacy 8-byte `AERO` header (`u16 version, u16
+        // flags`).
+        if buf.len() >= 16 {
+            let device_id = [buf[8], buf[9], buf[10], buf[11]];
+            if device_id.iter().copied().all(is_ascii_tag_byte) {
+                let format_major = u16::from_le_bytes([buf[4], buf[5]]);
+                let format_minor = u16::from_le_bytes([buf[6], buf[7]]);
+                let dev_major = u16::from_le_bytes([buf[12], buf[13]]);
+                let dev_minor = u16::from_le_bytes([buf[14], buf[15]]);
+                return Some(DeviceInnerHeader::IoSnapshot {
+                    device_id,
+                    device_version: (dev_major, dev_minor),
+                    format_version: (format_major, format_minor),
+                });
+            }
+        }
+
+        if buf.len() >= 8 {
+            let version = u16::from_le_bytes([buf[4], buf[5]]);
+            let flags = u16::from_le_bytes([buf[6], buf[7]]);
+            return Some(DeviceInnerHeader::LegacyAero { version, flags });
+        }
+
+        None
+    }
+
+    fn bdf_to_string(bdf: u16) -> String {
+        let bus = (bdf >> 8) & 0xff;
+        let dev = (bdf >> 3) & 0x1f;
+        let func = bdf & 0x07;
+        format!("{bus:02x}:{dev:02x}.{func:x}")
     }
 
     let mut entries: Vec<DeviceSummaryEntry> = Vec::with_capacity(count as usize);
@@ -296,6 +336,7 @@ fn print_devices_section_summary(file: &mut fs::File, section: &SnapshotSectionI
         }
 
         // Parse `aero-io-snapshot` / legacy `AERO` device header for debugging.
+        let mut detail: Option<String> = None;
         let inner = if len >= 4 {
             let header_len = usize::try_from(len.min(16)).unwrap_or(16);
             let mut header = [0u8; 16];
@@ -304,36 +345,236 @@ fn print_devices_section_summary(file: &mut fs::File, section: &SnapshotSectionI
                 return;
             }
 
-            if header_len >= 4 && &header[0..4] == b"AERO" {
-                if header_len >= 16 {
-                    let device_id = [header[8], header[9], header[10], header[11]];
-                    if device_id.iter().copied().all(is_ascii_tag_byte) {
-                        let format_major = u16::from_le_bytes([header[4], header[5]]);
-                        let format_minor = u16::from_le_bytes([header[6], header[7]]);
-                        let dev_major = u16::from_le_bytes([header[12], header[13]]);
-                        let dev_minor = u16::from_le_bytes([header[14], header[15]]);
-                        Some(DeviceInnerHeader::IoSnapshot {
-                            device_id,
-                            device_version: (dev_major, dev_minor),
-                            format_version: (format_major, format_minor),
-                        })
-                    } else if header_len >= 8 {
-                        let version = u16::from_le_bytes([header[4], header[5]]);
-                        let flags = u16::from_le_bytes([header[6], header[7]]);
-                        Some(DeviceInnerHeader::LegacyAero { version, flags })
-                    } else {
-                        None
+            let inner = parse_device_inner_header(&header[..header_len]);
+
+            // Best-effort nested decoding for known wrapper payloads. This intentionally does not
+            // affect validation; it's purely a debugging aid.
+            if header_len == 16 {
+                if let Some(DeviceInnerHeader::IoSnapshot { device_id, .. }) = inner.as_ref() {
+                    // DiskControllersSnapshot (`DSKC`): tag 1 holds an `Encoder::vec_bytes` list of
+                    // (packed_bdf: u16 + nested io-snapshot bytes) entries.
+                    if device_id == b"DSKC" {
+                        let mut controllers: Vec<String> = Vec::new();
+                        let mut controller_count: Option<u32> = None;
+
+                        loop {
+                            let Ok(pos) = file.stream_position() else {
+                                break;
+                            };
+                            if pos >= data_end {
+                                break;
+                            }
+                            if data_end - pos < 6 {
+                                break;
+                            }
+                            let Ok(tag) = read_u16_le_lossy(file) else {
+                                break;
+                            };
+                            let Ok(field_len) = read_u32_le_lossy(file) else {
+                                break;
+                            };
+                            let Ok(field_start) = file.stream_position() else {
+                                break;
+                            };
+                            let Some(field_end) = field_start.checked_add(u64::from(field_len))
+                            else {
+                                break;
+                            };
+                            if field_end > data_end {
+                                break;
+                            }
+
+                            if tag == 1 {
+                                let Ok(count) = read_u32_le_lossy(file) else {
+                                    break;
+                                };
+                                controller_count = Some(count);
+                                for _ in 0..count {
+                                    let Ok(entry_len) = read_u32_le_lossy(file) else {
+                                        break;
+                                    };
+                                    if entry_len < 2 {
+                                        break;
+                                    }
+                                    let Ok(entry_start) = file.stream_position() else {
+                                        break;
+                                    };
+                                    let Some(entry_end) =
+                                        entry_start.checked_add(u64::from(entry_len))
+                                    else {
+                                        break;
+                                    };
+                                    if entry_end > field_end {
+                                        break;
+                                    }
+
+                                    let Ok(bdf) = read_u16_le_lossy(file) else {
+                                        break;
+                                    };
+                                    let nested_len = u64::from(entry_len - 2);
+                                    let mut nested_header = [0u8; 16];
+                                    let nested_header_len =
+                                        usize::try_from(nested_len.min(16)).unwrap_or(16);
+                                    let nested = if nested_header_len != 0
+                                        && file
+                                            .read_exact(&mut nested_header[..nested_header_len])
+                                            .is_ok()
+                                    {
+                                        parse_device_inner_header(
+                                            &nested_header[..nested_header_len],
+                                        )
+                                    } else {
+                                        None
+                                    };
+
+                                    let nested_desc = match nested {
+                                        Some(DeviceInnerHeader::IoSnapshot {
+                                            device_id,
+                                            device_version,
+                                            ..
+                                        }) => {
+                                            let (major, minor) = device_version;
+                                            format!(
+                                                "{} {} v{}.{}",
+                                                bdf_to_string(bdf),
+                                                format_fourcc(device_id),
+                                                major,
+                                                minor
+                                            )
+                                        }
+                                        Some(DeviceInnerHeader::LegacyAero { version, flags }) => {
+                                            format!(
+                                                "{} legacy-AERO v{} flags={}",
+                                                bdf_to_string(bdf),
+                                                version,
+                                                flags
+                                            )
+                                        }
+                                        None => format!("{} <unknown>", bdf_to_string(bdf)),
+                                    };
+                                    controllers.push(nested_desc);
+
+                                    let _ = file.seek(SeekFrom::Start(entry_end));
+                                    if controllers.len() >= 16 {
+                                        break;
+                                    }
+                                }
+                                let _ = file.seek(SeekFrom::Start(field_end));
+                                break;
+                            }
+
+                            let _ = file.seek(SeekFrom::Start(field_end));
+                        }
+
+                        if let Some(count) = controller_count {
+                            if !controllers.is_empty() {
+                                let more = if count as usize > controllers.len() {
+                                    format!(" ... ({} more)", count as usize - controllers.len())
+                                } else {
+                                    String::new()
+                                };
+                                detail = Some(format!(
+                                    " controllers=[{}]{}",
+                                    controllers.join(", "),
+                                    more
+                                ));
+                            } else {
+                                detail = Some(format!(" controllers={count}"));
+                            }
+                        }
                     }
-                } else if header_len >= 8 {
-                    let version = u16::from_le_bytes([header[4], header[5]]);
-                    let flags = u16::from_le_bytes([header[6], header[7]]);
-                    Some(DeviceInnerHeader::LegacyAero { version, flags })
-                } else {
-                    None
+
+                    // `aero_machine` USB UHCI wrapper (`USBC`): tag 1 holds the sub-ms tick
+                    // remainder (u64), tag 2 holds the nested UHCI snapshot bytes.
+                    if device_id == b"USBC" {
+                        let mut remainder: Option<u64> = None;
+                        let mut nested: Option<DeviceInnerHeader> = None;
+
+                        loop {
+                            let Ok(pos) = file.stream_position() else {
+                                break;
+                            };
+                            if pos >= data_end {
+                                break;
+                            }
+                            if data_end - pos < 6 {
+                                break;
+                            }
+                            let Ok(tag) = read_u16_le_lossy(file) else {
+                                break;
+                            };
+                            let Ok(field_len) = read_u32_le_lossy(file) else {
+                                break;
+                            };
+                            let Ok(field_start) = file.stream_position() else {
+                                break;
+                            };
+                            let Some(field_end) = field_start.checked_add(u64::from(field_len))
+                            else {
+                                break;
+                            };
+                            if field_end > data_end {
+                                break;
+                            }
+
+                            match tag {
+                                1 if field_len == 8 => {
+                                    let mut buf = [0u8; 8];
+                                    if file.read_exact(&mut buf).is_ok() {
+                                        remainder = Some(u64::from_le_bytes(buf));
+                                    }
+                                    let _ = file.seek(SeekFrom::Start(field_end));
+                                }
+                                2 => {
+                                    let mut hdr = [0u8; 16];
+                                    let hdr_len =
+                                        usize::try_from(u64::from(field_len).min(16)).unwrap_or(16);
+                                    if hdr_len != 0 && file.read_exact(&mut hdr[..hdr_len]).is_ok()
+                                    {
+                                        nested = parse_device_inner_header(&hdr[..hdr_len]);
+                                    }
+                                    let _ = file.seek(SeekFrom::Start(field_end));
+                                }
+                                _ => {
+                                    let _ = file.seek(SeekFrom::Start(field_end));
+                                }
+                            }
+                        }
+
+                        let mut parts: Vec<String> = Vec::new();
+                        if let Some(r) = remainder {
+                            parts.push(format!("remainder={r}ns"));
+                        }
+                        if let Some(nested) = nested {
+                            match nested {
+                                DeviceInnerHeader::IoSnapshot {
+                                    device_id,
+                                    device_version,
+                                    ..
+                                } => {
+                                    let (major, minor) = device_version;
+                                    parts.push(format!(
+                                        "nested={} v{}.{}",
+                                        format_fourcc(device_id),
+                                        major,
+                                        minor
+                                    ));
+                                }
+                                DeviceInnerHeader::LegacyAero { version, flags } => {
+                                    parts.push(format!(
+                                        "nested=legacy-AERO v{version} flags={flags}"
+                                    ));
+                                }
+                            }
+                        }
+                        if !parts.is_empty() {
+                            detail = Some(format!(" {}", parts.join(" ")));
+                        }
+                    }
                 }
-            } else {
-                None
             }
+
+            inner
         } else {
             None
         };
@@ -344,6 +585,7 @@ fn print_devices_section_summary(file: &mut fs::File, section: &SnapshotSectionI
             flags,
             len,
             inner,
+            detail,
         });
 
         if let Err(e) = file.seek(SeekFrom::Start(data_end)) {
@@ -398,14 +640,16 @@ fn print_devices_section_summary(file: &mut fs::File, section: &SnapshotSectionI
             }
             None => String::new(),
         };
+        let detail = entry.detail.as_deref().unwrap_or("");
         println!(
-            "  - {}: {} version={} flags={} len={}{}",
+            "  - {}: {} version={} flags={} len={}{}{}",
             idx,
             DeviceId(entry.id),
             entry.version,
             entry.flags,
             entry.len,
             inner,
+            detail,
         );
     }
     if entries.len() > MAX_LISTED {
