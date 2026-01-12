@@ -79,7 +79,7 @@ fn looks_like_vhd_footer(footer: &[u8; VHD_FOOTER_SIZE], file_len: u64) -> bool 
 
     // Virtual disk size.
     let current_size = be_u64(&footer[48..56]);
-    if current_size == 0 || current_size % (VHD_FOOTER_SIZE as u64) != 0 {
+    if current_size == 0 || !current_size.is_multiple_of(VHD_FOOTER_SIZE as u64) {
         return false;
     }
 
@@ -109,7 +109,7 @@ fn looks_like_vhd_footer(footer: &[u8; VHD_FOOTER_SIZE], file_len: u64) -> bool 
             if data_offset == u64::MAX {
                 return false;
             }
-            if data_offset % (VHD_FOOTER_SIZE as u64) != 0 {
+            if !data_offset.is_multiple_of(VHD_FOOTER_SIZE as u64) {
                 return false;
             }
             // The footer copy occupies the first sector of the file.
