@@ -47,6 +47,7 @@ cp "${REPO_ROOT}/scripts/run_limited.sh" "${test_repo}/scripts/"
 
 home1="${tmpdir}/home1"
 mkdir -p "${home1}/.cargo"
+home1_with_slash="${home1}/"
 
 ###############################################################################
 # Case 1: If ./.cargo-home exists and CARGO_HOME is explicitly set to $HOME/.cargo
@@ -57,7 +58,7 @@ mkdir -p "${test_repo}/.cargo-home"
 out="$(
   AERO_TIMEOUT=30 \
   AERO_MEM_LIMIT=unlimited \
-  HOME="${home1}" \
+  HOME="${home1_with_slash}" \
   CARGO_HOME="${home1}/.cargo" \
   bash "${test_repo}/scripts/safe-run.sh" bash -c 'printf "%s" "${CARGO_HOME}"'
 )"
@@ -86,7 +87,7 @@ rm -rf "${test_repo}/.cargo-home"
 out="$(
   AERO_TIMEOUT=30 \
   AERO_MEM_LIMIT=unlimited \
-  HOME="${home1}" \
+  HOME="${home1_with_slash}" \
   CARGO_HOME="${home1}/.cargo" \
   bash "${test_repo}/scripts/safe-run.sh" bash -c 'echo "Blocking waiting for file lock on package cache" >&2'
 )"
@@ -118,4 +119,3 @@ else
 fi
 
 echo "All safe-run Cargo home checks passed."
-

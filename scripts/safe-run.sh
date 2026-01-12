@@ -806,23 +806,25 @@ while true; do
                  #
                  # Keep this best-effort: do not fail the command if the directory cannot be
                  # created (e.g. read-only checkout).
-                 _aero_default_cargo_home=""
-                 if [[ -n "${HOME:-}" ]]; then
-                   _aero_default_cargo_home="$HOME/.cargo"
-                 fi
-                 if [[ ! -d "$REPO_ROOT/.cargo-home" ]] \
-                   && { [[ -z "${CARGO_HOME:-}" ]] || [[ "${CARGO_HOME:-}" == "${_aero_default_cargo_home}" ]]; }
-                 then
-                   if mkdir -p "$REPO_ROOT/.cargo-home" 2>/dev/null; then
-                     echo "[safe-run] note: created ./.cargo-home to reduce Cargo lock contention on future runs" >&2
-                   else
-                     echo "[safe-run] warning: failed to create ./.cargo-home (set AERO_ISOLATE_CARGO_HOME=1 to pick a custom path)" >&2
-                   fi
-                 fi
-                 unset _aero_default_cargo_home 2>/dev/null || true
-                 ;;
-             esac
-         fi
+                  _aero_default_cargo_home=""
+                  if [[ -n "${HOME:-}" ]]; then
+                    _aero_default_cargo_home="${HOME%/}/.cargo"
+                  fi
+                  _aero_effective_cargo_home="${CARGO_HOME:-}"
+                  _aero_effective_cargo_home="${_aero_effective_cargo_home%/}"
+                  if [[ ! -d "$REPO_ROOT/.cargo-home" ]] \
+                    && { [[ -z "${_aero_effective_cargo_home}" ]] || [[ -n "${_aero_default_cargo_home}" && "${_aero_effective_cargo_home}" == "${_aero_default_cargo_home}" ]]; }
+                  then
+                    if mkdir -p "$REPO_ROOT/.cargo-home" 2>/dev/null; then
+                      echo "[safe-run] note: created ./.cargo-home to reduce Cargo lock contention on future runs" >&2
+                    else
+                      echo "[safe-run] warning: failed to create ./.cargo-home (set AERO_ISOLATE_CARGO_HOME=1 to pick a custom path)" >&2
+                    fi
+                  fi
+                  unset _aero_default_cargo_home _aero_effective_cargo_home 2>/dev/null || true
+                  ;;
+              esac
+          fi
          rm -f "${stderr_log}"
          exit 0
     fi
@@ -853,22 +855,24 @@ while true; do
          if grep -q "Blocking waiting for file lock on package cache" "${stderr_log}"; then
              echo "[safe-run] Tip: avoid shared Cargo registry lock contention by isolating Cargo state:" >&2
              echo "[safe-run]   AERO_ISOLATE_CARGO_HOME=1 bash ./scripts/safe-run.sh ..." >&2
-             _aero_default_cargo_home=""
-             if [[ -n "${HOME:-}" ]]; then
-               _aero_default_cargo_home="$HOME/.cargo"
-             fi
-             if [[ ! -d "$REPO_ROOT/.cargo-home" ]] \
-               && { [[ -z "${CARGO_HOME:-}" ]] || [[ "${CARGO_HOME:-}" == "${_aero_default_cargo_home}" ]]; }
-             then
-               if mkdir -p "$REPO_ROOT/.cargo-home" 2>/dev/null; then
-                 echo "[safe-run] note: created ./.cargo-home to reduce Cargo lock contention on future runs" >&2
-               else
-                 echo "[safe-run] warning: failed to create ./.cargo-home (set AERO_ISOLATE_CARGO_HOME=1 to pick a custom path)" >&2
-               fi
-             fi
-             unset _aero_default_cargo_home 2>/dev/null || true
-         fi
-     fi
+              _aero_default_cargo_home=""
+              if [[ -n "${HOME:-}" ]]; then
+                _aero_default_cargo_home="${HOME%/}/.cargo"
+              fi
+              _aero_effective_cargo_home="${CARGO_HOME:-}"
+              _aero_effective_cargo_home="${_aero_effective_cargo_home%/}"
+              if [[ ! -d "$REPO_ROOT/.cargo-home" ]] \
+                && { [[ -z "${_aero_effective_cargo_home}" ]] || [[ -n "${_aero_default_cargo_home}" && "${_aero_effective_cargo_home}" == "${_aero_default_cargo_home}" ]]; }
+              then
+                if mkdir -p "$REPO_ROOT/.cargo-home" 2>/dev/null; then
+                  echo "[safe-run] note: created ./.cargo-home to reduce Cargo lock contention on future runs" >&2
+                else
+                  echo "[safe-run] warning: failed to create ./.cargo-home (set AERO_ISOLATE_CARGO_HOME=1 to pick a custom path)" >&2
+                fi
+              fi
+              unset _aero_default_cargo_home _aero_effective_cargo_home 2>/dev/null || true
+          fi
+      fi
 
      if [[ "${attempt}" -lt "${MAX_RETRIES}" ]] \
         && [[ "${is_retryable_cmd}" == "true" ]] \
