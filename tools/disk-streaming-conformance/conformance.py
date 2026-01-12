@@ -987,6 +987,74 @@ def _test_head_conditional_if_modified_since(
         return TestResult(name=name, status="FAIL", details=str(e))
 
 
+def _test_cors_vary_origin(
+    *,
+    resp: HttpResponse | None,
+    origin: str | None,
+) -> TestResult:
+    name = "CORS: Vary includes Origin when Allow-Origin echoes a specific origin"
+    if origin is None:
+        return TestResult(name=name, status="SKIP", details="skipped (no origin provided)")
+    if resp is None:
+        return TestResult(name=name, status="SKIP", details="skipped (no response)")
+
+    try:
+        allow_origin = _header(resp, "Access-Control-Allow-Origin")
+        _require(allow_origin is not None, "missing Access-Control-Allow-Origin")
+        allow_origin = allow_origin.strip()
+        if allow_origin == "*":
+            return TestResult(name=name, status="SKIP", details="skipped (Allow-Origin is '*')")
+        if allow_origin != origin:
+            raise TestFailure(f"expected Allow-Origin {origin!r}, got {allow_origin!r}")
+
+        vary = _header(resp, "Vary")
+        if vary is None:
+            return TestResult(name=name, status="WARN", details="missing Vary header (expected 'Origin')")
+        tokens = _csv_tokens(vary)
+        if "origin" not in tokens and "*" not in tokens:
+            return TestResult(
+                name=name,
+                status="WARN",
+                details=f"expected Vary to include 'Origin', got {vary!r}",
+            )
+        return TestResult(name=name, status="PASS", details=f"Vary={vary!r}")
+    except TestFailure as e:
+        return TestResult(name=name, status="FAIL", details=str(e))
+
+
+def _test_cors_allow_credentials_sane(
+    *,
+    resp: HttpResponse | None,
+    origin: str | None,
+) -> TestResult:
+    name = "CORS: Allow-Credentials does not contradict Allow-Origin"
+    if origin is None:
+        return TestResult(name=name, status="SKIP", details="skipped (no origin provided)")
+    if resp is None:
+        return TestResult(name=name, status="SKIP", details="skipped (no response)")
+
+    try:
+        allow_origin = _header(resp, "Access-Control-Allow-Origin")
+        _require(allow_origin is not None, "missing Access-Control-Allow-Origin")
+        allow_origin = allow_origin.strip()
+
+        allow_credentials = _header(resp, "Access-Control-Allow-Credentials")
+        if allow_credentials is None:
+            return TestResult(name=name, status="PASS", details="(no Allow-Credentials)")
+        ac = allow_credentials.strip().lower()
+        if ac != "true":
+            return TestResult(name=name, status="WARN", details=f"unexpected Allow-Credentials={allow_credentials!r}")
+        if allow_origin == "*":
+            return TestResult(
+                name=name,
+                status="WARN",
+                details="Allow-Credentials=true with Allow-Origin='*' will not work for credentialed fetches",
+            )
+        return TestResult(name=name, status="PASS", details=f"Allow-Credentials={allow_credentials!r}")
+    except TestFailure as e:
+        return TestResult(name=name, status="FAIL", details=str(e))
+
+
 def _test_corp_header(
     *,
     name: str,
@@ -1150,6 +1218,19 @@ def main(argv: Sequence[str]) -> int:
     size = head_info.size if head_info is not None else None
     etag = head_info.etag if head_info is not None else None
     last_modified = head_info.last_modified if head_info is not None else None
+
+    results.append(
+        _test_cors_allow_credentials_sane(
+            resp=head_info.resp if head_info is not None else None,
+            origin=origin,
+        )
+    )
+    results.append(
+        _test_cors_vary_origin(
+            resp=head_info.resp if head_info is not None else None,
+            origin=origin,
+        )
+    )
 
     results.append(
         _test_head_conditional_if_none_match(
