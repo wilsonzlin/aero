@@ -19,5 +19,6 @@ url = "2"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 hyper = { version = "0.14", features = ["full"] }
+proptest = "1"
 tempfile = "3"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
