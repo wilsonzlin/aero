@@ -764,6 +764,42 @@ export interface WasmApi {
         run_slice(maxInsts: number): { kind: number; executed: number; detail: string; free(): void };
         serial_output(): Uint8Array;
         /**
+         * Present the current VGA/VBE scanout into an RGBA8888 framebuffer stored in WASM linear memory.
+         *
+         * Optional for older WASM builds.
+         */
+        vga_present?(): void;
+        /**
+         * Width of the RGBA8888 framebuffer produced by {@link vga_present}.
+         *
+         * Optional for older WASM builds.
+         */
+        vga_width?(): number;
+        /**
+         * Height of the RGBA8888 framebuffer produced by {@link vga_present}.
+         *
+         * Optional for older WASM builds.
+         */
+        vga_height?(): number;
+        /**
+         * Bytes per row of the RGBA8888 framebuffer produced by {@link vga_present}.
+         *
+         * Optional for older WASM builds.
+         */
+        vga_stride_bytes?(): number;
+        /**
+         * Pointer to the RGBA8888 framebuffer produced by {@link vga_present}.
+         *
+         * Optional for older WASM builds.
+         */
+        vga_framebuffer_ptr?(): number;
+        /**
+         * Total byte length of the RGBA8888 framebuffer produced by {@link vga_present}.
+         *
+         * Optional for older WASM builds.
+         */
+        vga_framebuffer_len_bytes?(): number;
+        /**
          * Returns the number of bytes currently buffered in the serial output log.
          *
          * Optional for older WASM builds.
@@ -1195,6 +1231,16 @@ export interface WasmInitResult {
     variant: WasmVariant;
     reason: string;
     memory?: WasmInitMemoryInfo;
+    /**
+     * The instantiated module's linear memory (when it can be extracted).
+     *
+     * This is primarily useful for reading raw pixel buffers produced by WASM-side scanout
+     * helpers (e.g. VGA/VBE present-to-RGBA) without needing to depend on wasm-bindgen's
+     * internal `wasm.memory` export plumbing.
+     *
+     * Optional for older/custom init shims and test importer overrides.
+     */
+    wasmMemory?: WebAssembly.Memory;
 }
 
 export interface WasmInitOptions {
@@ -1639,6 +1685,7 @@ export async function initWasm(options: WasmInitOptions = {}): Promise<WasmInitR
                 variant: "single",
                 reason: "Using single-threaded WASM because the provided WebAssembly.Module was precompiled for it.",
                 memory: describeMemory(loaded.memory),
+                wasmMemory: loaded.memory,
             };
         }
 
@@ -1653,6 +1700,7 @@ export async function initWasm(options: WasmInitOptions = {}): Promise<WasmInitR
                     variant: "threaded",
                     reason: `Using threaded WASM because the provided WebAssembly.Module was precompiled for it. (${threadSupport.reason})`,
                     memory: describeMemory(loaded.memory),
+                    wasmMemory: loaded.memory,
                 };
             } catch (err) {
                 const message = err instanceof Error ? err.message : String(err);
@@ -1662,6 +1710,7 @@ export async function initWasm(options: WasmInitOptions = {}): Promise<WasmInitR
                     variant: "single",
                     reason: `Threaded WASM init failed (precompiled module provided); falling back to single. Error: ${message}`,
                     memory: describeMemory(loaded.memory),
+                    wasmMemory: loaded.memory,
                 };
             }
         }
@@ -1672,6 +1721,7 @@ export async function initWasm(options: WasmInitOptions = {}): Promise<WasmInitR
             variant: "single",
             reason: `Threaded precompiled module provided but the current runtime cannot use shared-memory WebAssembly; falling back to single. Reason: ${threadSupport.reason}`,
             memory: describeMemory(loaded.memory),
+            wasmMemory: loaded.memory,
         };
     }
 
@@ -1696,6 +1746,7 @@ export async function initWasm(options: WasmInitOptions = {}): Promise<WasmInitR
             variant: "threaded",
             reason: threadSupport.reason,
             memory: describeMemory(loaded.memory),
+            wasmMemory: loaded.memory,
         };
     }
 
@@ -1706,6 +1757,7 @@ export async function initWasm(options: WasmInitOptions = {}): Promise<WasmInitR
             variant: "single",
             reason: "Forced via initWasm({ variant: 'single' })",
             memory: describeMemory(loaded.memory),
+            wasmMemory: loaded.memory,
         };
     }
 
@@ -1717,6 +1769,7 @@ export async function initWasm(options: WasmInitOptions = {}): Promise<WasmInitR
                 variant: "threaded",
                 reason: threadSupport.reason,
                 memory: describeMemory(loaded.memory),
+                wasmMemory: loaded.memory,
             };
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
@@ -1726,10 +1779,17 @@ export async function initWasm(options: WasmInitOptions = {}): Promise<WasmInitR
                 variant: "single",
                 reason: `Threaded WASM init failed; falling back to single. Error: ${message}`,
                 memory: describeMemory(loaded.memory),
+                wasmMemory: loaded.memory,
             };
         }
     }
 
     const loaded = await loadSingle(options);
-    return { api: loaded.api, variant: "single", reason: threadSupport.reason, memory: describeMemory(loaded.memory) };
+    return {
+        api: loaded.api,
+        variant: "single",
+        reason: threadSupport.reason,
+        memory: describeMemory(loaded.memory),
+        wasmMemory: loaded.memory,
+    };
 }

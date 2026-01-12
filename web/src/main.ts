@@ -556,14 +556,32 @@ function downloadFile(file: Blob, filename: string): void {
 
 function renderMachinePanel(): HTMLElement {
   const status = el("pre", { text: "Initializing canonical machine…" });
+  const vgaInfo = el("pre", { text: "" });
+  const canvas = el("canvas", { id: "canonical-machine-vga-canvas" }) as HTMLCanvasElement;
+  canvas.style.width = "640px";
+  canvas.style.height = "400px";
+  canvas.style.border = "1px solid rgba(127, 127, 127, 0.5)";
+  canvas.style.background = "#000";
+  canvas.style.imageRendering = "pixelated";
+
   const output = el("pre", { text: "" });
   const error = el("pre", { text: "" });
 
   const decoder = new TextDecoder();
   const encoder = new TextEncoder();
 
+  // Expose machine panel state for Playwright smoke tests.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const testState = ((globalThis as any).__aeroMachinePanelTest = {
+    ready: false,
+    vgaSupported: false,
+    framesPresented: 0,
+    error: null as string | null,
+  });
+
   function setError(msg: string): void {
     error.textContent = msg;
+    testState.error = msg;
     console.error(msg);
   }
 
@@ -571,6 +589,31 @@ function renderMachinePanel(): HTMLElement {
     const msgBytes = encoder.encode(message);
     const sector = new Uint8Array(512);
     let off = 0;
+
+    // Emit a tiny VGA text-mode banner ("AERO!") into 0xB8000 so the machine demo
+    // has something visible on screen even before real disks/firmware are wired up.
+    //
+    // cld
+    sector[off++] = 0xfc;
+    // mov ax, 0xb800
+    sector.set([0xb8, 0x00, 0xb8], off);
+    off += 3;
+    // mov es, ax
+    sector.set([0x8e, 0xc0], off);
+    off += 2;
+    // xor di, di
+    sector.set([0x31, 0xff], off);
+    off += 2;
+    // mov ah, 0x1f  (white-on-blue)
+    sector.set([0xb4, 0x1f], off);
+    off += 2;
+    for (const ch of encoder.encode("AERO!")) {
+      // mov al, imm8
+      sector.set([0xb0, ch], off);
+      off += 2;
+      // stosw
+      sector[off++] = 0xab;
+    }
 
     // mov dx, 0x3f8
     sector.set([0xba, 0xf8, 0x03], off);
@@ -595,34 +638,132 @@ function renderMachinePanel(): HTMLElement {
   }
 
   wasmInitPromise
-    .then(({ api, variant }) => {
+    .then(({ api, variant, wasmMemory }) => {
       const machine = new api.Machine(2 * 1024 * 1024);
       machine.set_disk_image(buildSerialBootSector("Hello from aero-machine\\n"));
       machine.reset();
 
       status.textContent = `Machine ready (WASM ${variant}). Booting…`;
 
+      const ctx = canvas.getContext("2d", { alpha: false });
+      if (!ctx) {
+        testState.ready = true;
+        setError("Machine demo: Canvas 2D context unavailable.");
+        return;
+      }
+
+      const hasVga =
+        !!wasmMemory &&
+        typeof machine.vga_present === "function" &&
+        typeof machine.vga_width === "function" &&
+        typeof machine.vga_height === "function" &&
+        typeof machine.vga_stride_bytes === "function" &&
+        typeof machine.vga_framebuffer_ptr === "function" &&
+        typeof machine.vga_framebuffer_len_bytes === "function";
+
+      testState.vgaSupported = hasVga;
+      vgaInfo.textContent = hasVga ? "vga: ready" : "vga: unavailable (WASM build missing scanout exports)";
+
+      let imageData: ImageData | null = null;
+      let imageDataBytes: Uint8ClampedArray<ArrayBuffer> | null = null;
+      let dstWidth = 0;
+      let dstHeight = 0;
+      let vgaFailed = false;
+
+      function presentVgaFrame(): void {
+        if (!hasVga || !wasmMemory || vgaFailed) return;
+
+        try {
+          // Trigger WASM-side VGA/VBE scanout. This populates an RGBA framebuffer in
+          // WASM linear memory which we then blit onto the HTML canvas.
+          machine.vga_present?.();
+
+          const width = machine.vga_width?.() ?? 0;
+          const height = machine.vga_height?.() ?? 0;
+          const strideBytes = machine.vga_stride_bytes?.() ?? 0;
+          const ptr = machine.vga_framebuffer_ptr?.() ?? 0;
+          const lenBytes = machine.vga_framebuffer_len_bytes?.() ?? 0;
+
+          if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return;
+          if (!Number.isFinite(strideBytes) || strideBytes < width * 4) return;
+          if (!Number.isFinite(ptr) || !Number.isFinite(lenBytes) || ptr < 0 || lenBytes <= 0) return;
+
+          const requiredSrcBytes = strideBytes * height;
+          if (lenBytes < requiredSrcBytes) return;
+
+          const buf = wasmMemory.buffer;
+          if (ptr + lenBytes > buf.byteLength) return;
+
+          if (canvas.width !== width || canvas.height !== height) {
+            canvas.width = width;
+            canvas.height = height;
+          }
+
+          const requiredDstBytes = width * height * 4;
+          if (
+            !imageDataBytes ||
+            dstWidth !== width ||
+            dstHeight !== height ||
+            imageDataBytes.byteLength !== requiredDstBytes
+          ) {
+            dstWidth = width;
+            dstHeight = height;
+            imageDataBytes = new Uint8ClampedArray(requiredDstBytes);
+            imageData = new ImageData(imageDataBytes, width, height);
+          }
+          if (!imageData || !imageDataBytes) return;
+
+          const src = new Uint8ClampedArray(buf, ptr, requiredSrcBytes);
+          if (strideBytes === width * 4) {
+            imageDataBytes.set(src.subarray(0, requiredDstBytes));
+          } else {
+            for (let y = 0; y < height; y++) {
+              const srcOff = y * strideBytes;
+              const dstOff = y * width * 4;
+              imageDataBytes.set(src.subarray(srcOff, srcOff + width * 4), dstOff);
+            }
+          }
+
+          ctx.putImageData(imageData, 0, 0);
+          testState.framesPresented += 1;
+          vgaInfo.textContent = `vga: ${width}x${height} stride=${strideBytes} frames=${testState.framesPresented}`;
+        } catch (err) {
+          vgaFailed = true;
+          const message = err instanceof Error ? err.message : String(err);
+          vgaInfo.textContent = `vga: error (${message})`;
+          setError(`Machine demo VGA present failed: ${message}`);
+        }
+      }
+
       const timer = window.setInterval(() => {
         const exit = machine.run_slice(50_000);
+        const exitKind = exit.kind;
+        const exitExecuted = exit.executed;
+        const exitDetail = exit.detail;
+
         const bytes = machine.serial_output();
         if (bytes.byteLength) {
           output.textContent = `${output.textContent ?? ""}${decoder.decode(bytes)}`;
         }
 
-        status.textContent = `run_slice: kind=${exit.kind} executed=${exit.executed} detail=${exit.detail}`;
+        presentVgaFrame();
+
+        status.textContent = `run_slice: kind=${exitKind} executed=${exitExecuted} detail=${exitDetail}`;
         exit.free();
 
         // `RunExitKind::Completed` is 0. Stop once the guest halts/requests reset/needs assist.
-        if (exit.kind !== 0) {
+        if (exitKind !== 0) {
           window.clearInterval(timer);
         }
       }, 50);
       (timer as unknown as { unref?: () => void }).unref?.();
+      testState.ready = true;
     })
     .catch((err) => {
       const message = err instanceof Error ? err.message : String(err);
       status.textContent = "Machine unavailable (WASM init failed)";
       setError(message);
+      testState.ready = true;
     });
 
   return el(
@@ -630,6 +771,8 @@ function renderMachinePanel(): HTMLElement {
     { class: "panel" },
     el("h2", { text: "Machine (canonical VM) – serial boot demo" }),
     status,
+    el("div", { class: "row" }, canvas),
+    vgaInfo,
     output,
     error,
   );
