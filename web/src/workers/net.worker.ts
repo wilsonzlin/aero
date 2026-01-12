@@ -12,6 +12,11 @@ import { perf } from "../perf/perf";
 import { PERF_FRAME_HEADER_ENABLED_INDEX, PERF_FRAME_HEADER_FRAME_ID_INDEX } from "../perf/shared.js";
 import { installWorkerPerfHandlers } from "../perf/worker";
 import { PerfWriter } from "../perf/writer.js";
+import type {
+  CoordinatorToWorkerSnapshotMessage,
+  VmSnapshotPausedMessage,
+  VmSnapshotResumedMessage,
+} from "../runtime/snapshot_protocol";
 import {
   serializeVmSnapshotError,
   type CoordinatorToWorkerSnapshotMessage,
@@ -550,6 +555,14 @@ async function runLoop(): Promise<void> {
     drainRuntimeCommands();
     if (Atomics.load(status, StatusIndex.StopRequested) === 1) break;
 
+    if (snapshotPaused) {
+      // Snapshot pause: freeze NET_TX/NET_RX activity while the coordinator snapshots
+      // shared state. Keep servicing runtime control commands (above) so shutdown can
+      // still proceed.
+      await cmdRing.waitForDataAsync(100);
+      continue;
+    }
+
     forwarder.tick();
     if (l2TunnelProxyUrl !== null) {
       l2TunnelTelemetry?.tick(now);
@@ -792,7 +805,6 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
     if (typeof snapshotMsg.kind === "string" && snapshotMsg.kind.startsWith("vm.snapshot.")) {
       const requestId = snapshotMsg.requestId;
       if (typeof requestId !== "number") return;
-
       switch (snapshotMsg.kind) {
         case "vm.snapshot.pause": {
           try {
@@ -820,7 +832,7 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
               error: serializeVmSnapshotError(err),
             } satisfies VmSnapshotResumedMessage);
           }
-          return;
+           return;
         }
         default:
           return;

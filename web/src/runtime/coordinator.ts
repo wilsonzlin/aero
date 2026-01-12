@@ -11,6 +11,8 @@ import {
   WORKER_ROLES,
   type WorkerRole,
   CPU_WORKER_DEMO_GUEST_COUNTER_INDEX,
+  IO_IPC_NET_RX_QUEUE_KIND,
+  IO_IPC_NET_TX_QUEUE_KIND,
   StatusIndex,
   allocateSharedMemorySegments,
   checkSharedMemorySupport,
@@ -1021,38 +1023,18 @@ export class WorkerCoordinator {
 
     const cpu = this.workers.cpu;
     const io = this.workers.io;
-    const netInfo = this.workers.net;
-    if (!cpu?.worker || !io?.worker) {
-      throw new Error("Cannot save VM snapshot: CPU/IO workers are not running.");
+    const net = this.workers.net;
+    if (!cpu?.worker || !io?.worker || !net?.worker) {
+      throw new Error("Cannot save VM snapshot: CPU/IO/NET workers are not running.");
     }
-    if (cpu.status.state !== "ready" || io.status.state !== "ready") {
-      throw new Error("Cannot save VM snapshot: CPU/IO workers are not ready.");
+    if (cpu.status.state !== "ready" || io.status.state !== "ready" || net.status.state !== "ready") {
+      throw new Error("Cannot save VM snapshot: CPU/IO/NET workers are not ready.");
     }
-    const netWorker = netInfo?.status.state === "ready" ? netInfo.worker : undefined;
 
     this.snapshotInFlight = true;
     try {
-      const cpuPause = this.snapshotRpc<VmSnapshotPausedMessage>(cpu.worker, { kind: "vm.snapshot.pause" }, "vm.snapshot.paused", {
-        timeoutMs: 5_000,
-      });
-      const ioPause = this.snapshotRpc<VmSnapshotPausedMessage>(io.worker, { kind: "vm.snapshot.pause" }, "vm.snapshot.paused", {
-        timeoutMs: 5_000,
-      });
-      const [cpuPaused, ioPaused] = await Promise.all([cpuPause, ioPause]);
-      this.assertSnapshotOk("pause cpu", cpuPaused);
-      this.assertSnapshotOk("pause io", ioPaused);
+      await this.pauseWorkersForSnapshot({ cpu: cpu.worker, io: io.worker, net: net.worker });
 
-      // Important: pause/drain the NET worker only after the guest/device side is
-      // fully paused (CPU + IO), otherwise the net worker can drain NET_TX/NET_RX
-      // while IO is still producing frames and those late frames would survive the
-      // snapshot boundary.
-      if (netWorker) {
-        const netPause = await this.snapshotRpc<VmSnapshotPausedMessage>(netWorker, { kind: "vm.snapshot.pause" }, "vm.snapshot.paused", {
-          timeoutMs: 5_000,
-        });
-        this.assertSnapshotOk("pause net", netPause);
-      }
-      this.resetNetRingsForSnapshot();
       const cpuState = await this.snapshotRpc<VmSnapshotCpuStateMessage>(
         cpu.worker,
         { kind: "vm.snapshot.getCpuState" },
@@ -1092,34 +1074,18 @@ export class WorkerCoordinator {
 
     const cpu = this.workers.cpu;
     const io = this.workers.io;
-    const netInfo = this.workers.net;
-    if (!cpu?.worker || !io?.worker) {
-      throw new Error("Cannot restore VM snapshot: CPU/IO workers are not running.");
+    const net = this.workers.net;
+    if (!cpu?.worker || !io?.worker || !net?.worker) {
+      throw new Error("Cannot restore VM snapshot: CPU/IO/NET workers are not running.");
     }
-    if (cpu.status.state !== "ready" || io.status.state !== "ready") {
-      throw new Error("Cannot restore VM snapshot: CPU/IO workers are not ready.");
+    if (cpu.status.state !== "ready" || io.status.state !== "ready" || net.status.state !== "ready") {
+      throw new Error("Cannot restore VM snapshot: CPU/IO/NET workers are not ready.");
     }
-    const netWorker = netInfo?.status.state === "ready" ? netInfo.worker : undefined;
 
     this.snapshotInFlight = true;
     try {
-      const cpuPause = this.snapshotRpc<VmSnapshotPausedMessage>(cpu.worker, { kind: "vm.snapshot.pause" }, "vm.snapshot.paused", {
-        timeoutMs: 5_000,
-      });
-      const ioPause = this.snapshotRpc<VmSnapshotPausedMessage>(io.worker, { kind: "vm.snapshot.pause" }, "vm.snapshot.paused", {
-        timeoutMs: 5_000,
-      });
-      const [cpuPaused, ioPaused] = await Promise.all([cpuPause, ioPause]);
-      this.assertSnapshotOk("pause cpu", cpuPaused);
-      this.assertSnapshotOk("pause io", ioPaused);
+      await this.pauseWorkersForSnapshot({ cpu: cpu.worker, io: io.worker, net: net.worker });
 
-      if (netWorker) {
-        const netPause = await this.snapshotRpc<VmSnapshotPausedMessage>(netWorker, { kind: "vm.snapshot.pause" }, "vm.snapshot.paused", {
-          timeoutMs: 5_000,
-        });
-        this.assertSnapshotOk("pause net", netPause);
-      }
-      this.resetNetRingsForSnapshot();
       const restored = await this.snapshotRpc<VmSnapshotRestoredMessage>(
         io.worker,
         { kind: "vm.snapshot.restoreFromOpfs", path },
@@ -1147,6 +1113,50 @@ export class WorkerCoordinator {
         this.snapshotInFlight = false;
       }
     }
+  }
+
+  /**
+   * Pause CPU → IO → NET, then clear the NET_TX/NET_RX rings.
+   *
+   * Ordering matters:
+   * - NET_TX/NET_RX are shared-memory rings accessed by multiple workers (guest + host sides).
+   * - Resetting/draining them while any worker can still enqueue/dequeue is racy and can
+   *   leave stale Ethernet frames visible after snapshot restore.
+   * - Therefore, we pause the "guest" side first (CPU then IO), then pause NET, and only
+   *   once *all* participants are paused do we reset the rings.
+   */
+  private async pauseWorkersForSnapshot(opts: { cpu: Worker; io: Worker; net: Worker }): Promise<void> {
+    // NOTE: Pausing sequentially enforces the stronger ordering required to safely reset
+    // the NET rings without races from CPU/IO enqueue/dequeue.
+    const cpuPause = await this.snapshotRpc<VmSnapshotPausedMessage>(opts.cpu, { kind: "vm.snapshot.pause" }, "vm.snapshot.paused", {
+      timeoutMs: 5_000,
+    });
+    this.assertSnapshotOk("pause cpu", cpuPause);
+
+    const ioPause = await this.snapshotRpc<VmSnapshotPausedMessage>(opts.io, { kind: "vm.snapshot.pause" }, "vm.snapshot.paused", {
+      timeoutMs: 5_000,
+    });
+    this.assertSnapshotOk("pause io", ioPause);
+
+    const netPause = await this.snapshotRpc<VmSnapshotPausedMessage>(opts.net, { kind: "vm.snapshot.pause" }, "vm.snapshot.paused", {
+      timeoutMs: 5_000,
+    });
+    this.assertSnapshotOk("pause net", netPause);
+
+    // Now that CPU+IO+NET are all paused, it is safe to reset the NET_TX/NET_RX rings.
+    this.resetNetRingsForSnapshot();
+  }
+
+  private resetNetRingsForSnapshot(): void {
+    const shared = this.shared;
+    if (!shared) {
+      throw new Error("Cannot reset NET rings for snapshot: shared memory is not initialized.");
+    }
+
+    // NOTE: `RingBuffer.reset()` is only safe when there are no concurrent producers or
+    // consumers. `pauseWorkersForSnapshot()` enforces that invariant.
+    openRingByKind(shared.segments.ioIpc, IO_IPC_NET_TX_QUEUE_KIND).reset();
+    openRingByKind(shared.segments.ioIpc, IO_IPC_NET_RX_QUEUE_KIND).reset();
   }
 
   private assertSnapshotOk(context: string, msg: { ok: boolean; error?: VmSnapshotSerializedError; kind?: unknown }): void {
