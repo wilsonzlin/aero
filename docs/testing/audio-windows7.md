@@ -112,6 +112,13 @@ wmic path Win32_SoundDevice get Name,Manufacturer,Status,PNPDeviceID
    - In Device Manager: **System devices** → `High Definition Audio Controller` → **Properties** → **Driver Details**
    - Expected: `hdaudbus.sys` is present (Win7 inbox HDA bus driver).
 
+6. Optional (DxDiag report):
+
+```cmd
+dxdiag /t %TEMP%\\dxdiag.txt
+notepad %TEMP%\\dxdiag.txt
+```
+
 Expected outcome:
 
 - Windows should use the **Microsoft** inbox driver stack automatically.
@@ -261,6 +268,12 @@ Collect:
   - Browser audio output not started (`AudioContext` is `suspended` / autoplay blocked)
   - Output ring underrunning (producer not keeping up)
   - Guest DMA progress stuck (stream not actually running)
+- **No sound and no activity meter**
+  - Windows output device may not be the default (set default in `mmsys.cpl`)
+  - The app/tab may be muted:
+    - Windows: `sndvol.exe` (Volume Mixer)
+    - Chrome: tab mute / site mute
+  - Host OS output device may be incorrect (headphones vs speakers)
 - **No playback devices appear in `Control Panel → Sound`**
   - Driver enumeration may be incomplete, or Windows Audio services may be stopped
   - Check `services.msc`:
@@ -287,6 +300,7 @@ Collect:
   - `getUserMedia` denied / not started, host mic muted, or capture ring not being drained into guest DMA
   - Browser may be blocking mic access:
     - Chrome: site icon → **Site settings** → Microphone → Allow
+  - Another application may already be using the microphone exclusively (host OS dependent).
 
 Collect:
 
