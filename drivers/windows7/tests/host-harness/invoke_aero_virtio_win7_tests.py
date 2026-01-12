@@ -1414,7 +1414,7 @@ def main() -> int:
                                 # When we explicitly attach virtio-snd, the guest test must actually run and PASS
                                 # (it must not be skipped via --disable-snd).
                                 if not saw_virtio_snd_pass:
-                                    msg = "FAIL: virtio-snd test did not PASS while --with-virtio-snd was enabled"
+                                    msg = "FAIL: MISSING_VIRTIO_SND: virtio-snd test did not PASS while --with-virtio-snd was enabled"
                                     if saw_virtio_snd_skip:
                                         msg = _virtio_snd_skip_failure_message(tail)
                                     print(msg, file=sys.stderr)
@@ -1430,7 +1430,7 @@ def main() -> int:
                                     result_code = 1
                                     break
                                 if not saw_virtio_snd_capture_pass:
-                                    msg = "FAIL: virtio-snd capture test did not PASS while --with-virtio-snd was enabled"
+                                    msg = "FAIL: MISSING_VIRTIO_SND_CAPTURE: virtio-snd capture test did not PASS while --with-virtio-snd was enabled"
                                     if saw_virtio_snd_capture_skip:
                                         msg = _virtio_snd_capture_skip_failure_message(tail)
                                     print(msg, file=sys.stderr)
@@ -1531,7 +1531,7 @@ def main() -> int:
                                 result_code = 1
                                 break
                             if not saw_virtio_snd_pass:
-                                msg = "FAIL: virtio-snd test did not PASS while --with-virtio-snd was enabled"
+                                msg = "FAIL: MISSING_VIRTIO_SND: virtio-snd test did not PASS while --with-virtio-snd was enabled"
                                 if saw_virtio_snd_skip:
                                     msg = _virtio_snd_skip_failure_message(tail)
                                 print(msg, file=sys.stderr)
@@ -1547,7 +1547,7 @@ def main() -> int:
                                 result_code = 1
                                 break
                             if not saw_virtio_snd_capture_pass:
-                                msg = "FAIL: virtio-snd capture test did not PASS while --with-virtio-snd was enabled"
+                                msg = "FAIL: MISSING_VIRTIO_SND_CAPTURE: virtio-snd capture test did not PASS while --with-virtio-snd was enabled"
                                 if saw_virtio_snd_capture_skip:
                                     msg = _virtio_snd_capture_skip_failure_message(tail)
                                 print(msg, file=sys.stderr)
@@ -1784,7 +1784,7 @@ def main() -> int:
 
                                 if args.enable_virtio_snd:
                                     if not saw_virtio_snd_pass:
-                                        msg = "FAIL: virtio-snd test did not PASS while --with-virtio-snd was enabled"
+                                        msg = "FAIL: MISSING_VIRTIO_SND: virtio-snd test did not PASS while --with-virtio-snd was enabled"
                                         if saw_virtio_snd_skip:
                                             msg = _virtio_snd_skip_failure_message(tail)
                                         print(msg, file=sys.stderr)
@@ -1801,7 +1801,7 @@ def main() -> int:
                                         break
                                     if not saw_virtio_snd_capture_pass:
                                         msg = (
-                                            "FAIL: virtio-snd capture test did not PASS while --with-virtio-snd was enabled"
+                                            "FAIL: MISSING_VIRTIO_SND_CAPTURE: virtio-snd capture test did not PASS while --with-virtio-snd was enabled"
                                         )
                                         if saw_virtio_snd_capture_skip:
                                             msg = _virtio_snd_capture_skip_failure_message(tail)
@@ -1897,7 +1897,7 @@ def main() -> int:
                                     break
 
                                 if not saw_virtio_snd_pass:
-                                    msg = "FAIL: virtio-snd test did not PASS while --with-virtio-snd was enabled"
+                                    msg = "FAIL: MISSING_VIRTIO_SND: virtio-snd test did not PASS while --with-virtio-snd was enabled"
                                     if saw_virtio_snd_skip:
                                         msg = _virtio_snd_skip_failure_message(tail)
                                     print(msg, file=sys.stderr)
@@ -1913,7 +1913,7 @@ def main() -> int:
                                     result_code = 1
                                     break
                                 if not saw_virtio_snd_capture_pass:
-                                    msg = "FAIL: virtio-snd capture test did not PASS while --with-virtio-snd was enabled"
+                                    msg = "FAIL: MISSING_VIRTIO_SND_CAPTURE: virtio-snd capture test did not PASS while --with-virtio-snd was enabled"
                                     if saw_virtio_snd_capture_skip:
                                         msg = _virtio_snd_capture_skip_failure_message(tail)
                                     print(msg, file=sys.stderr)
