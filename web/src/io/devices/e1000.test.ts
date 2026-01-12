@@ -276,4 +276,43 @@ describe("io/devices/E1000PciDevice", () => {
     expect(setPciCommand).toHaveBeenCalledTimes(1);
     expect(setPciCommand).toHaveBeenCalledWith(0x0004);
   });
+
+  it("gates INTx assertion when COMMAND.INTX_DISABLE is set", () => {
+    const { buffer } = createIpcBuffer([
+      { kind: IO_IPC_NET_TX_QUEUE_KIND, capacityBytes: 256 },
+      { kind: IO_IPC_NET_RX_QUEUE_KIND, capacityBytes: 256 },
+    ]);
+    const netTx = openRingByKind(buffer, IO_IPC_NET_TX_QUEUE_KIND);
+    const netRx = openRingByKind(buffer, IO_IPC_NET_RX_QUEUE_KIND);
+
+    let irq = true;
+    const bridge: E1000BridgeLike = {
+      mmio_read: vi.fn(() => 0),
+      mmio_write: vi.fn(),
+      io_read: vi.fn(() => 0),
+      io_write: vi.fn(),
+      poll: vi.fn(),
+      receive_frame: vi.fn(),
+      pop_tx_frame: vi.fn(() => undefined),
+      irq_level: vi.fn(() => irq),
+      free: vi.fn(),
+    };
+    const irqSink: IrqSink = { raiseIrq: vi.fn(), lowerIrq: vi.fn() };
+
+    const dev = new E1000PciDevice({ bridge, irqSink, netTxRing: netTx, netRxRing: netRx });
+
+    // With INTx disabled, the wrapper must not assert the line.
+    dev.onPciCommandWrite?.(1 << 10);
+    expect(irqSink.raiseIrq).not.toHaveBeenCalled();
+
+    // Re-enable INTx: since the device is still asserting, we should now raise.
+    dev.onPciCommandWrite?.(0);
+    expect(irqSink.raiseIrq).toHaveBeenCalledTimes(1);
+    expect(irqSink.raiseIrq).toHaveBeenCalledWith(10);
+
+    // Disable INTx again: line should drop.
+    dev.onPciCommandWrite?.(1 << 10);
+    expect(irqSink.lowerIrq).toHaveBeenCalledTimes(1);
+    expect(irqSink.lowerIrq).toHaveBeenCalledWith(10);
+  });
 });
