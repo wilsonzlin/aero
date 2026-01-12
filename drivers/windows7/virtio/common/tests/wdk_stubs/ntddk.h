@@ -17,9 +17,15 @@ typedef void VOID;
 typedef uint8_t UCHAR;
 typedef uint16_t USHORT;
 typedef uint32_t ULONG;
+typedef uint64_t ULONG64;
 typedef int32_t LONG;
 typedef UCHAR BOOLEAN;
 typedef void* PVOID;
+typedef UCHAR* PUCHAR;
+typedef const UCHAR* PCUCHAR;
+typedef uint64_t ULONGLONG;
+typedef uintptr_t ULONG_PTR;
+typedef uintptr_t UINT_PTR;
 
 #ifndef TRUE
 #define TRUE ((BOOLEAN)1u)
@@ -36,6 +42,11 @@ typedef int32_t NTSTATUS;
 #define STATUS_INVALID_DEVICE_STATE ((NTSTATUS)0xC0000184u)
 #define STATUS_NOT_SUPPORTED ((NTSTATUS)0xC00000BBu)
 #define STATUS_INSUFFICIENT_RESOURCES ((NTSTATUS)0xC000009Au)
+#define STATUS_BUFFER_TOO_SMALL ((NTSTATUS)0xC0000023u)
+#define STATUS_DEVICE_CONFIGURATION_ERROR ((NTSTATUS)0xC0000182u)
+#define STATUS_IO_TIMEOUT ((NTSTATUS)0xC00000B5u)
+#define STATUS_NOT_FOUND ((NTSTATUS)0xC0000225u)
+#define STATUS_IO_DEVICE_ERROR ((NTSTATUS)0xC0000185u)
 
 #define NT_SUCCESS(Status) (((NTSTATUS)(Status)) >= 0)
 
@@ -76,6 +87,11 @@ typedef struct _DEVICE_OBJECT {
 #define _Inout_
 #define _In_opt_
 #define _Inout_opt_
+#define _In_reads_bytes_(x)
+#define _In_reads_bytes_opt_(x)
+#define _Out_writes_(x)
+#define _Out_writes_bytes_(x)
+#define _Must_inspect_result_
 #define _Out_
 #define _Out_opt_
 #define _IRQL_requires_max_(x)
@@ -92,6 +108,7 @@ typedef struct _DEVICE_OBJECT {
     } while (0)
 
 #define RtlZeroMemory(Destination, Length) (void)memset((Destination), 0, (Length))
+#define RtlCopyMemory(Destination, Source, Length) (void)memcpy((Destination), (Source), (Length))
 
 /* __forceinline used by the production code for small helpers. */
 #ifndef __forceinline
@@ -102,12 +119,146 @@ typedef struct _DEVICE_OBJECT {
 #endif
 #endif
 
-/* Register access: virtio ISR status is read-to-clear (ACK). */
+/*
+ * MMIO hook layer.
+ *
+ * Some unit tests need register accesses to behave like real devices (e.g.
+ * virtio modern selector-based registers). Tests can install a handler that
+ * emulates these semantics. If no handler is installed, accesses fall back to
+ * raw memory operations.
+ */
+typedef BOOLEAN (*WDK_MMIO_READ_HANDLER)(_In_ const volatile VOID* Register, _In_ size_t Width, _Out_ ULONGLONG* ValueOut);
+typedef BOOLEAN (*WDK_MMIO_WRITE_HANDLER)(_In_ volatile VOID* Register, _In_ size_t Width, _In_ ULONGLONG Value);
+
+VOID WdkSetMmioHandlers(_In_opt_ WDK_MMIO_READ_HANDLER ReadHandler, _In_opt_ WDK_MMIO_WRITE_HANDLER WriteHandler);
+BOOLEAN WdkMmioRead(_In_ const volatile VOID* Register, _In_ size_t Width, _Out_ ULONGLONG* ValueOut);
+BOOLEAN WdkMmioWrite(_In_ volatile VOID* Register, _In_ size_t Width, _In_ ULONGLONG Value);
+
+/*
+ * Register access.
+ *
+ * Default READ_REGISTER_UCHAR behaviour is read-to-clear to preserve existing
+ * virtio INTx ISR unit tests. Handlers can override this for non-ISR registers.
+ */
 static __forceinline UCHAR READ_REGISTER_UCHAR(volatile UCHAR* Register)
 {
-    UCHAR v = *Register;
-    *Register = 0;
-    return v;
+    ULONGLONG v;
+    if (WdkMmioRead((const volatile VOID*)Register, sizeof(UCHAR), &v) != FALSE) {
+        return (UCHAR)v;
+    }
+
+    /* Legacy default: read-to-clear (virtio ISR ACK). */
+    {
+        UCHAR raw = *Register;
+        *Register = 0;
+        return raw;
+    }
+}
+
+static __forceinline USHORT READ_REGISTER_USHORT(volatile USHORT* Register)
+{
+    ULONGLONG v;
+    if (WdkMmioRead((const volatile VOID*)Register, sizeof(USHORT), &v) != FALSE) {
+        return (USHORT)v;
+    }
+    return *Register;
+}
+
+static __forceinline ULONG READ_REGISTER_ULONG(volatile ULONG* Register)
+{
+    ULONGLONG v;
+    if (WdkMmioRead((const volatile VOID*)Register, sizeof(ULONG), &v) != FALSE) {
+        return (ULONG)v;
+    }
+    return *Register;
+}
+
+static __forceinline ULONG64 READ_REGISTER_ULONG64(volatile ULONG64* Register)
+{
+    ULONGLONG v;
+    if (WdkMmioRead((const volatile VOID*)Register, sizeof(ULONG64), &v) != FALSE) {
+        return (ULONG64)v;
+    }
+    return *Register;
+}
+
+static __forceinline VOID WRITE_REGISTER_UCHAR(volatile UCHAR* Register, UCHAR Value)
+{
+    if (WdkMmioWrite((volatile VOID*)Register, sizeof(UCHAR), (ULONGLONG)Value) != FALSE) {
+        return;
+    }
+    *Register = Value;
+}
+
+static __forceinline VOID WRITE_REGISTER_USHORT(volatile USHORT* Register, USHORT Value)
+{
+    if (WdkMmioWrite((volatile VOID*)Register, sizeof(USHORT), (ULONGLONG)Value) != FALSE) {
+        return;
+    }
+    *Register = Value;
+}
+
+static __forceinline VOID WRITE_REGISTER_ULONG(volatile ULONG* Register, ULONG Value)
+{
+    if (WdkMmioWrite((volatile VOID*)Register, sizeof(ULONG), (ULONGLONG)Value) != FALSE) {
+        return;
+    }
+    *Register = Value;
+}
+
+static __forceinline VOID WRITE_REGISTER_ULONG64(volatile ULONG64* Register, ULONG64 Value)
+{
+    if (WdkMmioWrite((volatile VOID*)Register, sizeof(ULONG64), (ULONGLONG)Value) != FALSE) {
+        return;
+    }
+    *Register = Value;
+}
+
+/* Memory barrier + spinlock primitives (sufficient for single-threaded host tests). */
+typedef struct _KSPIN_LOCK {
+    LONG locked;
+} KSPIN_LOCK, *PKSPIN_LOCK;
+
+static __forceinline VOID KeMemoryBarrier(VOID)
+{
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);
+}
+
+static __forceinline VOID KeInitializeSpinLock(_Out_ PKSPIN_LOCK SpinLock)
+{
+    if (SpinLock == NULL) {
+        return;
+    }
+    SpinLock->locked = 0;
+}
+
+static __forceinline VOID KeAcquireSpinLock(_Inout_ PKSPIN_LOCK SpinLock, _Out_ KIRQL* OldIrql)
+{
+    if (OldIrql != NULL) {
+        *OldIrql = PASSIVE_LEVEL;
+    }
+    if (SpinLock == NULL) {
+        return;
+    }
+
+    while (__atomic_exchange_n(&SpinLock->locked, 1, __ATOMIC_ACQUIRE) != 0) {
+        /* host tests are single-threaded; this should not spin. */
+    }
+}
+
+static __forceinline VOID KeReleaseSpinLock(_Inout_ PKSPIN_LOCK SpinLock, _In_ KIRQL OldIrql)
+{
+    (void)OldIrql;
+    if (SpinLock == NULL) {
+        return;
+    }
+    __atomic_store_n(&SpinLock->locked, 0, __ATOMIC_RELEASE);
+}
+
+static __forceinline VOID KeStallExecutionProcessor(_In_ ULONG Microseconds)
+{
+    (void)Microseconds;
+    /* Deterministic host tests: no-op. */
 }
 
 /* Interlocked primitives (single-process host tests). */

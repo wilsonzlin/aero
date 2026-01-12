@@ -4,6 +4,37 @@
 
 #include "ntddk.h"
 
+static WDK_MMIO_READ_HANDLER g_mmio_read_handler = NULL;
+static WDK_MMIO_WRITE_HANDLER g_mmio_write_handler = NULL;
+
+VOID WdkSetMmioHandlers(_In_opt_ WDK_MMIO_READ_HANDLER ReadHandler, _In_opt_ WDK_MMIO_WRITE_HANDLER WriteHandler)
+{
+    g_mmio_read_handler = ReadHandler;
+    g_mmio_write_handler = WriteHandler;
+}
+
+BOOLEAN WdkMmioRead(_In_ const volatile VOID* Register, _In_ size_t Width, _Out_ ULONGLONG* ValueOut)
+{
+    if (ValueOut == NULL) {
+        return FALSE;
+    }
+
+    if (g_mmio_read_handler == NULL) {
+        return FALSE;
+    }
+
+    return g_mmio_read_handler(Register, Width, ValueOut);
+}
+
+BOOLEAN WdkMmioWrite(_In_ volatile VOID* Register, _In_ size_t Width, _In_ ULONGLONG Value)
+{
+    if (g_mmio_write_handler == NULL) {
+        return FALSE;
+    }
+
+    return g_mmio_write_handler(Register, Width, Value);
+}
+
 NTSTATUS IoConnectInterrupt(_Out_ PKINTERRUPT* InterruptObject,
                             _In_ PKSERVICE_ROUTINE ServiceRoutine,
                             _In_ PVOID ServiceContext,
@@ -146,4 +177,3 @@ BOOLEAN WdkTestRunQueuedDpc(_Inout_ PKDPC Dpc)
     routine(Dpc, context, arg1, arg2);
     return TRUE;
 }
-

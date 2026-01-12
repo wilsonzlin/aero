@@ -320,7 +320,7 @@ VirtioPciWriteDriverFeatures(_Inout_ VIRTIO_PCI_DEVICE *Dev, _In_ UINT64 Feature
         return;
     }
 
-    lo = (ULONG)(Features & 0xFFFFFFFFui64);
+    lo = (ULONG)(Features & 0xFFFFFFFFULL);
     hi = (ULONG)(Features >> 32);
 
     VirtioPciCommonCfgLock(Dev, &oldIrql);
@@ -548,13 +548,13 @@ VirtioPciSetupQueue(_Inout_ VIRTIO_PCI_DEVICE *Dev,
         goto Exit;
     }
 
-    WRITE_REGISTER_ULONG((volatile ULONG *)&Dev->CommonCfg->queue_desc_lo, (ULONG)(DescPa & 0xFFFFFFFFui64));
+    WRITE_REGISTER_ULONG((volatile ULONG *)&Dev->CommonCfg->queue_desc_lo, (ULONG)(DescPa & 0xFFFFFFFFULL));
     WRITE_REGISTER_ULONG((volatile ULONG *)&Dev->CommonCfg->queue_desc_hi, (ULONG)(DescPa >> 32));
 
-    WRITE_REGISTER_ULONG((volatile ULONG *)&Dev->CommonCfg->queue_avail_lo, (ULONG)(AvailPa & 0xFFFFFFFFui64));
+    WRITE_REGISTER_ULONG((volatile ULONG *)&Dev->CommonCfg->queue_avail_lo, (ULONG)(AvailPa & 0xFFFFFFFFULL));
     WRITE_REGISTER_ULONG((volatile ULONG *)&Dev->CommonCfg->queue_avail_hi, (ULONG)(AvailPa >> 32));
 
-    WRITE_REGISTER_ULONG((volatile ULONG *)&Dev->CommonCfg->queue_used_lo, (ULONG)(UsedPa & 0xFFFFFFFFui64));
+    WRITE_REGISTER_ULONG((volatile ULONG *)&Dev->CommonCfg->queue_used_lo, (ULONG)(UsedPa & 0xFFFFFFFFULL));
     WRITE_REGISTER_ULONG((volatile ULONG *)&Dev->CommonCfg->queue_used_hi, (ULONG)(UsedPa >> 32));
 
     /*
