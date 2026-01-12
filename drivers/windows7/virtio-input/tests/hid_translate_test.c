@@ -118,6 +118,7 @@ static void test_linux_keycode_abi_values(void) {
   assert(VIRTIO_INPUT_KEY_LEFTALT == 56);
   assert(VIRTIO_INPUT_KEY_RIGHTALT == 100);
   assert(VIRTIO_INPUT_KEY_CAPSLOCK == 58);
+  assert(VIRTIO_INPUT_KEY_KPASTERISK == 55);
   assert(VIRTIO_INPUT_KEY_F1 == 59);
   assert(VIRTIO_INPUT_KEY_F2 == 60);
   assert(VIRTIO_INPUT_KEY_F3 == 61);
@@ -130,8 +131,15 @@ static void test_linux_keycode_abi_values(void) {
   assert(VIRTIO_INPUT_KEY_F10 == 68);
   assert(VIRTIO_INPUT_KEY_NUMLOCK == 69);
   assert(VIRTIO_INPUT_KEY_SCROLLLOCK == 70);
+  assert(VIRTIO_INPUT_KEY_KP1 == 79);
+  assert(VIRTIO_INPUT_KEY_KP0 == 82);
+  assert(VIRTIO_INPUT_KEY_KPDOT == 83);
+  assert(VIRTIO_INPUT_KEY_102ND == 86);
   assert(VIRTIO_INPUT_KEY_F11 == 87);
   assert(VIRTIO_INPUT_KEY_F12 == 88);
+  assert(VIRTIO_INPUT_KEY_KPENTER == 96);
+  assert(VIRTIO_INPUT_KEY_KPSLASH == 98);
+  assert(VIRTIO_INPUT_KEY_SYSRQ == 99);
   assert(VIRTIO_INPUT_KEY_HOME == 102);
   assert(VIRTIO_INPUT_KEY_UP == 103);
   assert(VIRTIO_INPUT_KEY_PAGEUP == 104);
@@ -142,8 +150,10 @@ static void test_linux_keycode_abi_values(void) {
   assert(VIRTIO_INPUT_KEY_PAGEDOWN == 109);
   assert(VIRTIO_INPUT_KEY_INSERT == 110);
   assert(VIRTIO_INPUT_KEY_DELETE == 111);
+  assert(VIRTIO_INPUT_KEY_PAUSE == 119);
   assert(VIRTIO_INPUT_KEY_LEFTMETA == 125);
   assert(VIRTIO_INPUT_KEY_RIGHTMETA == 126);
+  assert(VIRTIO_INPUT_KEY_MENU == 139);
 }
 
 static void test_mapping(void) {
@@ -169,7 +179,9 @@ static void test_mapping(void) {
   assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_F10) == 0x43);
   assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_F11) == 0x44);
   assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_F12) == 0x45);
+  assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_SYSRQ) == 0x46);
   assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_SCROLLLOCK) == 0x47);
+  assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_PAUSE) == 0x48);
   assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_INSERT) == 0x49);
   assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_HOME) == 0x4A);
   assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_PAGEUP) == 0x4B);
@@ -181,6 +193,24 @@ static void test_mapping(void) {
   assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_DOWN) == 0x51);
   assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_UP) == 0x52);
   assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_NUMLOCK) == 0x53);
+  assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_KPSLASH) == 0x54);
+  assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_KPASTERISK) == 0x55);
+  assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_KPMINUS) == 0x56);
+  assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_KPPLUS) == 0x57);
+  assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_KPENTER) == 0x58);
+  assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_KP1) == 0x59);
+  assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_KP2) == 0x5A);
+  assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_KP3) == 0x5B);
+  assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_KP4) == 0x5C);
+  assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_KP5) == 0x5D);
+  assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_KP6) == 0x5E);
+  assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_KP7) == 0x5F);
+  assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_KP8) == 0x60);
+  assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_KP9) == 0x61);
+  assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_KP0) == 0x62);
+  assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_KPDOT) == 0x63);
+  assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_102ND) == 0x64);
+  assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_MENU) == 0x65);
 
   /* Modifiers are handled as a bitmask, not returned as usages. */
   assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_LEFTCTRL) == 0);
@@ -488,6 +518,47 @@ static void test_keyboard_function_key_reports_le(void) {
   expect_report(&cap, 1, expect2, sizeof(expect2));
 }
 
+static void test_keyboard_keypad_and_misc_key_reports(void) {
+  struct captured_reports cap;
+  struct hid_translate t;
+
+  cap_clear(&cap);
+  hid_translate_init(&t, capture_emit, &cap);
+
+  /* PrintScreen (Linux KEY_SYSRQ). */
+  send_key(&t, VIRTIO_INPUT_KEY_SYSRQ, 1);
+  send_syn(&t);
+  uint8_t expect1[HID_TRANSLATE_KEYBOARD_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_KEYBOARD, 0, 0, 0x46, 0, 0, 0, 0, 0};
+  expect_report(&cap, 0, expect1, sizeof(expect1));
+
+  send_key(&t, VIRTIO_INPUT_KEY_SYSRQ, 0);
+  send_syn(&t);
+  uint8_t expect2[HID_TRANSLATE_KEYBOARD_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_KEYBOARD, 0, 0, 0, 0, 0, 0, 0, 0};
+  expect_report(&cap, 1, expect2, sizeof(expect2));
+
+  /* Keypad 1. */
+  send_key(&t, VIRTIO_INPUT_KEY_KP1, 1);
+  send_syn(&t);
+  uint8_t expect3[HID_TRANSLATE_KEYBOARD_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_KEYBOARD, 0, 0, 0x59, 0, 0, 0, 0, 0};
+  expect_report(&cap, 2, expect3, sizeof(expect3));
+
+  send_key(&t, VIRTIO_INPUT_KEY_KP1, 0);
+  send_syn(&t);
+  uint8_t expect4[HID_TRANSLATE_KEYBOARD_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_KEYBOARD, 0, 0, 0, 0, 0, 0, 0, 0};
+  expect_report(&cap, 3, expect4, sizeof(expect4));
+
+  /* Menu / Application key. */
+  send_key(&t, VIRTIO_INPUT_KEY_MENU, 1);
+  send_syn(&t);
+  uint8_t expect5[HID_TRANSLATE_KEYBOARD_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_KEYBOARD, 0, 0, 0x65, 0, 0, 0, 0, 0};
+  expect_report(&cap, 4, expect5, sizeof(expect5));
+
+  send_key(&t, VIRTIO_INPUT_KEY_MENU, 0);
+  send_syn(&t);
+  uint8_t expect6[HID_TRANSLATE_KEYBOARD_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_KEYBOARD, 0, 0, 0, 0, 0, 0, 0, 0};
+  expect_report(&cap, 5, expect6, sizeof(expect6));
+}
+
 static void test_mouse_reports_le(void) {
   struct captured_reports cap;
   struct hid_translate t;
@@ -705,6 +776,7 @@ int main(void) {
   test_keyboard_reports();
   test_keyboard_function_key_reports();
   test_keyboard_function_key_reports_le();
+  test_keyboard_keypad_and_misc_key_reports();
   test_keyboard_overflow_queue();
   test_keyboard_overflow_queue_does_not_emit_on_queued_press();
   test_mouse_reports();

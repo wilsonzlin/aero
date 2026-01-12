@@ -145,7 +145,9 @@ static const struct hid_translate_keymap_entry kLinuxToHidKeymap[] = {
     {VIRTIO_INPUT_KEY_F12, 0x45},
 
     /* System / locks. */
+    {VIRTIO_INPUT_KEY_SYSRQ, 0x46},
     {VIRTIO_INPUT_KEY_SCROLLLOCK, 0x47},
+    {VIRTIO_INPUT_KEY_PAUSE, 0x48},
 
     /* Navigation/editing. */
     {VIRTIO_INPUT_KEY_INSERT, 0x49},
@@ -159,6 +161,28 @@ static const struct hid_translate_keymap_entry kLinuxToHidKeymap[] = {
     {VIRTIO_INPUT_KEY_DOWN, 0x51},
     {VIRTIO_INPUT_KEY_UP, 0x52},
     {VIRTIO_INPUT_KEY_NUMLOCK, 0x53},
+
+    /* Keypad. */
+    {VIRTIO_INPUT_KEY_KPSLASH, 0x54},
+    {VIRTIO_INPUT_KEY_KPASTERISK, 0x55},
+    {VIRTIO_INPUT_KEY_KPMINUS, 0x56},
+    {VIRTIO_INPUT_KEY_KPPLUS, 0x57},
+    {VIRTIO_INPUT_KEY_KPENTER, 0x58},
+    {VIRTIO_INPUT_KEY_KP1, 0x59},
+    {VIRTIO_INPUT_KEY_KP2, 0x5A},
+    {VIRTIO_INPUT_KEY_KP3, 0x5B},
+    {VIRTIO_INPUT_KEY_KP4, 0x5C},
+    {VIRTIO_INPUT_KEY_KP5, 0x5D},
+    {VIRTIO_INPUT_KEY_KP6, 0x5E},
+    {VIRTIO_INPUT_KEY_KP7, 0x5F},
+    {VIRTIO_INPUT_KEY_KP8, 0x60},
+    {VIRTIO_INPUT_KEY_KP9, 0x61},
+    {VIRTIO_INPUT_KEY_KP0, 0x62},
+    {VIRTIO_INPUT_KEY_KPDOT, 0x63},
+
+    /* International/misc. */
+    {VIRTIO_INPUT_KEY_102ND, 0x64},
+    {VIRTIO_INPUT_KEY_MENU, 0x65},
 };
 
 uint8_t hid_translate_linux_key_to_hid_usage(uint16_t linux_key_code) {
