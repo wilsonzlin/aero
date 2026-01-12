@@ -238,8 +238,6 @@ impl Ps2Mouse {
             0xFF => {
                 // Reset.
                 self.reset_to_defaults();
-                self.device_id = 0x00;
-                self.sample_rate_seq = [0; 3];
                 self.push_out(0xFA);
                 self.push_out(0xAA);
                 self.push_out(0x00);
@@ -257,11 +255,15 @@ impl Ps2Mouse {
         self.resolution = 4;
         self.sample_rate = 100;
         self.reporting_enabled = false;
+        // Reset any IntelliMouse extension back to the base device ID.
+        self.device_id = 0x00;
+        self.sample_rate_seq = [0; 3];
         self.buttons = 0;
         self.dx = 0;
         self.dy = 0;
         self.wheel = 0;
         self.expecting_data = None;
+        self.out.clear();
     }
 
     fn handle_data_byte(&mut self, expecting: ExpectingData, byte: u8) {
@@ -617,5 +619,32 @@ mod tests {
         m.receive_byte(0xF2);
         assert_eq!(m.pop_output(), Some(0xFA));
         assert_eq!(m.pop_output(), Some(0x04));
+    }
+
+    #[test]
+    fn set_defaults_resets_intellimouse_extension() {
+        let mut m = Ps2Mouse::new();
+
+        // Enable IntelliMouse wheel extension: 200, 100, 80.
+        m.receive_byte(0xF3);
+        m.receive_byte(200);
+        m.receive_byte(0xF3);
+        m.receive_byte(100);
+        m.receive_byte(0xF3);
+        m.receive_byte(80);
+
+        while m.pop_output().is_some() {}
+
+        m.receive_byte(0xF2);
+        assert_eq!(m.pop_output(), Some(0xFA));
+        assert_eq!(m.pop_output(), Some(0x03));
+
+        // Reset defaults should disable the extension.
+        m.receive_byte(0xF6);
+        assert_eq!(m.pop_output(), Some(0xFA));
+
+        m.receive_byte(0xF2);
+        assert_eq!(m.pop_output(), Some(0xFA));
+        assert_eq!(m.pop_output(), Some(0x00));
     }
 }
