@@ -326,6 +326,17 @@ mod wasm {
         closed: bool,
     }
 
+    // OPFS backends are currently only used by single-threaded `wasm32-unknown-unknown` builds.
+    // `wasm-bindgen` JS handles (e.g. `JsValue`) are not `Send` by default, which prevents the
+    // backend from being stored inside `aero_machine::SharedDisk` (an `Arc<Mutex<..>>` wrapper that
+    // requires `Send`).
+    //
+    // Mark the backend as `Send` only when the wasm target does not have thread/atomics support.
+    // If we ever opt into wasm threads (`target-feature=+atomics`), this impl is intentionally
+    // disabled so we can revisit the safety story.
+    #[cfg(not(target_feature = "atomics"))]
+    unsafe impl Send for OpfsBackend {}
+
     impl core::fmt::Debug for OpfsBackend {
         fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
             f.debug_struct("OpfsBackend")
