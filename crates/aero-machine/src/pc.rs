@@ -114,8 +114,32 @@ pub struct PcMachine {
     bios: Bios,
     disk: VecBlockDevice,
 
-    network_backend: Option<Box<dyn NetworkBackend>>,
+    network_backend: Option<PcNetworkBackend>,
     e1000_mac_addr: Option<[u8; 6]>,
+}
+
+type DynFrameRing = Box<dyn FrameRing>;
+type DynRingBackend = L2TunnelRingBackend<DynFrameRing, DynFrameRing>;
+
+enum PcNetworkBackend {
+    Ring(DynRingBackend),
+    Other(Box<dyn NetworkBackend>),
+}
+
+impl NetworkBackend for PcNetworkBackend {
+    fn transmit(&mut self, frame: Vec<u8>) {
+        match self {
+            PcNetworkBackend::Ring(backend) => backend.transmit(frame),
+            PcNetworkBackend::Other(backend) => backend.transmit(frame),
+        }
+    }
+
+    fn poll_receive(&mut self) -> Option<Vec<u8>> {
+        match self {
+            PcNetworkBackend::Ring(backend) => backend.poll_receive(),
+            PcNetworkBackend::Other(backend) => backend.poll_receive(),
+        }
+    }
 }
 
 impl PcMachine {
@@ -217,7 +241,9 @@ impl PcMachine {
         tx: TX,
         rx: RX,
     ) {
-        self.network_backend = Some(Box::new(L2TunnelRingBackend::new(tx, rx)));
+        let tx: DynFrameRing = Box::new(tx);
+        let rx: DynFrameRing = Box::new(rx);
+        self.network_backend = Some(PcNetworkBackend::Ring(L2TunnelRingBackend::new(tx, rx)));
     }
 
     /// Convenience for native callers using [`aero_ipc::ring::RingBuffer`].
@@ -242,7 +268,7 @@ impl PcMachine {
 
     /// Install/replace the host-side network backend used by any emulated NICs (currently E1000).
     pub fn set_network_backend(&mut self, backend: Box<dyn NetworkBackend>) {
-        self.network_backend = Some(backend);
+        self.network_backend = Some(PcNetworkBackend::Other(backend));
     }
 
     /// Detach (drop) any currently installed network backend.
@@ -252,9 +278,10 @@ impl PcMachine {
 
     /// Return statistics for the currently attached `NET_TX`/`NET_RX` ring backend (if present).
     pub fn network_backend_l2_ring_stats(&self) -> Option<L2TunnelRingBackendStats> {
-        self.network_backend
-            .as_ref()
-            .and_then(|backend| backend.l2_ring_stats())
+        match self.network_backend.as_ref()? {
+            PcNetworkBackend::Ring(backend) => Some(backend.stats()),
+            PcNetworkBackend::Other(_) => None,
+        }
     }
 
     /// Reset the machine and transfer control to firmware POST (boot sector).

@@ -2050,12 +2050,6 @@ impl Machine {
 
             self.poll_network();
 
-            // Synchronize PCI INTx sources (e.g. E1000) into the platform interrupt controller
-            // *before* we poll for pending vectors. This must happen even when the guest cannot
-            // currently accept maskable interrupts (IF=0 / interrupt shadow) so level-triggered
-            // lines remain asserted until delivery is possible.
-            self.sync_pci_intx_sources_to_interrupts();
-
             // Poll the platform interrupt controller (PIC/IOAPIC+LAPIC) and enqueue at most one
             // pending external interrupt vector into the CPU core.
             //
@@ -2146,6 +2140,14 @@ impl Machine {
     }
 
     fn poll_platform_interrupt(&mut self, max_queued: usize) -> bool {
+        // Synchronize PCI INTx sources (e.g. E1000) into the platform interrupt controller *before*
+        // we poll/acknowledge for pending vectors.
+        //
+        // This must happen even when the guest cannot currently accept maskable interrupts (IF=0 /
+        // interrupt shadow), and even when our external-interrupt FIFO is at capacity, so
+        // level-triggered lines remain accurately asserted/deasserted until delivery is possible.
+        self.sync_pci_intx_sources_to_interrupts();
+
         if self.cpu.pending.external_interrupts.len() >= max_queued {
             return false;
         }
@@ -4399,6 +4401,144 @@ mod tests {
             !m.cpu.state.halted,
             "CPU should wake from HLT once PCI INTx is delivered"
         );
+    }
+
+    #[test]
+    fn pc_e1000_intx_asserted_via_bar1_io_wakes_hlt_in_same_slice() {
+        let mut m = Machine::new(MachineConfig {
+            ram_size_bytes: 2 * 1024 * 1024,
+            enable_pc_platform: true,
+            enable_serial: false,
+            enable_i8042: false,
+            enable_a20_gate: false,
+            enable_reset_ctrl: false,
+            enable_e1000: true,
+            ..Default::default()
+        })
+        .unwrap();
+
+        let interrupts = m.platform_interrupts().expect("pc platform enabled");
+        let pci_intx = m.pci_intx_router().expect("pc platform enabled");
+        let pci_cfg = m.pci_config_ports().expect("pc platform enabled");
+
+        let bdf = aero_devices::pci::profile::NIC_E1000_82540EM.bdf;
+        let gsi = pci_intx.borrow().gsi_for_intx(bdf, PciInterruptPin::IntA);
+        let expected_vector = if gsi < 8 {
+            0x20u8.wrapping_add(gsi as u8)
+        } else {
+            0x28u8.wrapping_add((gsi as u8).wrapping_sub(8))
+        };
+
+        // Configure the legacy PIC to use the standard remapped offsets and unmask the routed IRQ.
+        {
+            let mut ints = interrupts.borrow_mut();
+            ints.pic_mut().set_offsets(0x20, 0x28);
+            // If the routed GSI maps to the slave PIC, ensure cascade (IRQ2) is unmasked as well.
+            ints.pic_mut().set_masked(2, false);
+            if let Ok(irq) = u8::try_from(gsi) {
+                if irq < 16 {
+                    ints.pic_mut().set_masked(irq, false);
+                }
+            }
+        }
+
+        // Resolve the E1000 BAR1 I/O port base assigned by BIOS POST.
+        let bar1_base = {
+            let mut pci_cfg = pci_cfg.borrow_mut();
+            pci_cfg
+                .bus_mut()
+                .device_config(bdf)
+                .and_then(|cfg| cfg.bar_range(1))
+                .expect("missing E1000 BAR1")
+                .base
+        };
+        let ioaddr_port =
+            u16::try_from(bar1_base).expect("E1000 BAR1 should fit in u16 I/O space");
+        let iodata_port = ioaddr_port.wrapping_add(4);
+
+        // Install a trivial real-mode ISR for the routed vector.
+        //
+        // Handler:
+        //   mov byte ptr [0x2000], 0xAA
+        //   ; clear interrupt by reading ICR via BAR1
+        //   mov dx, ioaddr_port
+        //   mov eax, 0x00C0 (ICR)
+        //   out dx, eax
+        //   mov dx, iodata_port
+        //   in eax, dx
+        //   iret
+        const HANDLER_IP: u16 = 0x1100;
+        let mut handler = Vec::new();
+        handler.extend_from_slice(&[0xC6, 0x06, 0x00, 0x20, 0xAA]); // mov byte ptr [0x2000], 0xAA
+        handler.extend_from_slice(&[0xBA, ioaddr_port as u8, (ioaddr_port >> 8) as u8]); // mov dx, ioaddr_port
+        handler.extend_from_slice(&[0x66, 0xB8]);
+        handler.extend_from_slice(&0x00C0u32.to_le_bytes()); // mov eax, ICR
+        handler.extend_from_slice(&[0x66, 0xEF]); // out dx, eax
+        handler.extend_from_slice(&[0xBA, iodata_port as u8, (iodata_port >> 8) as u8]); // mov dx, iodata_port
+        handler.extend_from_slice(&[0x66, 0xED]); // in eax, dx
+        handler.push(0xCF); // iret
+        m.mem
+            .inner
+            .borrow_mut()
+            .write_physical(u64::from(HANDLER_IP), &handler);
+        write_ivt_entry(&mut m, expected_vector, HANDLER_IP, 0x0000);
+
+        // Guest program:
+        //   ; IMS = ICR_TXDW
+        //   mov dx, ioaddr_port
+        //   mov eax, 0x00D0 (IMS)
+        //   out dx, eax
+        //   mov dx, iodata_port
+        //   mov eax, ICR_TXDW
+        //   out dx, eax
+        //
+        //   ; ICS = ICR_TXDW (assert INTx)
+        //   mov dx, ioaddr_port
+        //   mov eax, 0x00C8 (ICS)
+        //   out dx, eax
+        //   mov dx, iodata_port
+        //   mov eax, ICR_TXDW
+        //   out dx, eax
+        //
+        //   hlt
+        //   hlt
+        const ENTRY_IP: u16 = 0x1000;
+        let mut code = Vec::new();
+        // IOADDR = IMS
+        code.extend_from_slice(&[0xBA, ioaddr_port as u8, (ioaddr_port >> 8) as u8]);
+        code.extend_from_slice(&[0x66, 0xB8]);
+        code.extend_from_slice(&0x00D0u32.to_le_bytes());
+        code.extend_from_slice(&[0x66, 0xEF]);
+        // IODATA = ICR_TXDW
+        code.extend_from_slice(&[0xBA, iodata_port as u8, (iodata_port >> 8) as u8]);
+        code.extend_from_slice(&[0x66, 0xB8]);
+        code.extend_from_slice(&aero_net_e1000::ICR_TXDW.to_le_bytes());
+        code.extend_from_slice(&[0x66, 0xEF]);
+        // IOADDR = ICS
+        code.extend_from_slice(&[0xBA, ioaddr_port as u8, (ioaddr_port >> 8) as u8]);
+        code.extend_from_slice(&[0x66, 0xB8]);
+        code.extend_from_slice(&0x00C8u32.to_le_bytes());
+        code.extend_from_slice(&[0x66, 0xEF]);
+        // IODATA = ICR_TXDW
+        code.extend_from_slice(&[0xBA, iodata_port as u8, (iodata_port >> 8) as u8]);
+        code.extend_from_slice(&[0x66, 0xB8]);
+        code.extend_from_slice(&aero_net_e1000::ICR_TXDW.to_le_bytes());
+        code.extend_from_slice(&[0x66, 0xEF]);
+        // HLT (twice so we can observe wakeup + re-halt deterministically).
+        code.extend_from_slice(&[0xF4, 0xF4]);
+
+        m.mem
+            .inner
+            .borrow_mut()
+            .write_physical(u64::from(ENTRY_IP), &code);
+        m.mem.inner.borrow_mut().write_physical(0x2000, &[0x00]);
+
+        init_real_mode_cpu(&mut m, ENTRY_IP, RFLAGS_IF);
+
+        // One slice should be sufficient: the guest asserts INTx, executes HLT, and the machine
+        // should sync + deliver the interrupt within the same `run_slice` call, running the ISR.
+        let _ = m.run_slice(100);
+        assert_eq!(m.read_physical_u8(0x2000), 0xAA);
     }
 
     #[test]
