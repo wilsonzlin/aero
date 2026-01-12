@@ -2,8 +2,9 @@ use aero_io_snapshot::io::state::codec::Encoder;
 use aero_io_snapshot::io::state::{IoSnapshot, SnapshotError, SnapshotVersion, SnapshotWriter};
 use aero_usb::hid::{UsbHidKeyboardHandle, UsbHidMouseHandle, UsbHidPassthroughHandle};
 use aero_usb::hub::UsbHubDevice;
+use aero_usb::passthrough::{UsbHostAction, UsbHostCompletion, UsbHostCompletionIn};
 use aero_usb::uhci::UhciController;
-use aero_usb::{SetupPacket, UsbInResult, UsbOutResult};
+use aero_usb::{SetupPacket, UsbInResult, UsbOutResult, UsbWebUsbPassthroughDevice};
 use core::any::Any;
 
 mod util;
@@ -776,6 +777,98 @@ fn uhci_snapshot_restore_reconstructs_hid_passthrough_device_behind_external_hub
         other => panic!("expected interrupt IN report, got {other:?}"),
     };
     assert_eq!(report, vec![0xaa, 0xbb]);
+}
+
+#[test]
+fn uhci_snapshot_restore_reconstructs_webusb_passthrough_device_without_pre_attaching_devices() {
+    let mut ctrl = UhciController::new();
+    let webusb = UsbWebUsbPassthroughDevice::new();
+    ctrl.hub_mut().attach(0, Box::new(webusb.clone()));
+
+    let mut mem = TestMemory::new(0x20_000);
+
+    // Reset + enable root port 0 so the bus routes packets.
+    ctrl.io_write(REG_PORTSC1, 2, PORTSC_PR as u32);
+    for _ in 0..50 {
+        ctrl.tick_1ms(&mut mem);
+    }
+
+    // Start a control-IN request that queues one host action and leaves the transfer pending.
+    let setup = SetupPacket {
+        bm_request_type: 0x80, // DeviceToHost | Standard | Device
+        b_request: 0x06,       // GET_DESCRIPTOR
+        w_value: 0x0100,       // DEVICE descriptor
+        w_index: 0,
+        w_length: 4,
+    };
+    {
+        let dev = ctrl
+            .hub_mut()
+            .device_mut_for_address(0)
+            .expect("expected WebUSB device at address 0");
+        assert_eq!(dev.handle_setup(setup), UsbOutResult::Ack);
+        assert_eq!(
+            dev.handle_in(0, 64),
+            UsbInResult::Nak,
+            "expected DATA stage to be pending without host completion"
+        );
+    }
+
+    let snap = ctrl.save_state();
+
+    // Restore from the controller snapshot alone (no pre-attached devices).
+    let mut restored = UhciController::new();
+    restored.load_state(&snap).unwrap();
+    assert_eq!(
+        restored.save_state(),
+        snap,
+        "UHCI controller snapshot should reconstruct and roundtrip byte-for-byte"
+    );
+
+    let restored_webusb = {
+        let dev = restored
+            .hub()
+            .port_device(0)
+            .expect("expected device on root port 0");
+        let any = dev.model() as &dyn Any;
+        any.downcast_ref::<UsbWebUsbPassthroughDevice>()
+            .expect("expected UsbWebUsbPassthroughDevice model")
+            .clone()
+    };
+
+    let actions = restored_webusb.drain_actions();
+    assert_eq!(actions.len(), 1);
+    let id = match &actions[0] {
+        UsbHostAction::ControlIn { id, setup: host } => {
+            assert_eq!(host.bm_request_type, setup.bm_request_type);
+            assert_eq!(host.b_request, setup.b_request);
+            assert_eq!(host.w_value, setup.w_value);
+            assert_eq!(host.w_index, setup.w_index);
+            assert_eq!(host.w_length, setup.w_length);
+            *id
+        }
+        other => panic!("unexpected host action: {other:?}"),
+    };
+
+    restored_webusb.push_completion(UsbHostCompletion::ControlIn {
+        id,
+        result: UsbHostCompletionIn::Success {
+            data: vec![0x12, 0x34, 0x56, 0x78],
+        },
+    });
+
+    let dev = restored
+        .hub_mut()
+        .device_mut_for_address(0)
+        .expect("expected WebUSB device at address 0");
+    let data = match dev.handle_in(0, 64) {
+        UsbInResult::Data(data) => data,
+        other => panic!("expected control IN data stage, got {other:?}"),
+    };
+    assert_eq!(data, vec![0x12, 0x34, 0x56, 0x78]);
+
+    // Status stage for control-IN is an OUT ZLP.
+    assert_eq!(dev.handle_out(0, &[]), UsbOutResult::Ack);
 }
 
 #[test]

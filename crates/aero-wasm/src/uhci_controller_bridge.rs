@@ -511,9 +511,11 @@ impl UhciControllerBridge {
         r.ensure_device_major(UHCI_BRIDGE_DEVICE_VERSION.major)
             .map_err(|e| js_error(format!("Invalid UHCI bridge snapshot: {e}")))?;
 
-        // Ensure the WebUSB passthrough device is connected before restoring port-connected state.
-        // The UHCI controller snapshot includes connected/enabled bits but does not create USB
-        // device instances.
+        // Ensure the WebUSB passthrough device is connected before restoring state so the bridge
+        // retains a `self.webusb` handle for draining actions / pushing completions.
+        //
+        // Note: the underlying `aero-usb` controller snapshot can now reconstruct common USB device
+        // models on its own, but the bridge still needs an owned handle to the passthrough device.
         if r.bytes(TAG_WEBUSB_DEVICE).is_some() && self.webusb.is_none() {
             self.set_connected(true);
         }

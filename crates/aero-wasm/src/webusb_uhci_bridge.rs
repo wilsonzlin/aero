@@ -413,8 +413,11 @@ impl WebUsbUhciBridge {
         r.ensure_device_major(WEBUSB_UHCI_BRIDGE_DEVICE_VERSION.major)
             .map_err(|e| JsValue::from_str(&format!("Invalid WebUSB UHCI bridge snapshot: {e}")))?;
 
-        // Ensure the topology exists before restoring port-connected state. The controller snapshot
-        // includes per-port connected/enabled bits but does not create USB device instances.
+        // Ensure the external hub + passthrough device exist before restoring so the bridge retains
+        // owned handles for host-side integration (draining actions / pushing completions).
+        //
+        // Note: the underlying `aero-usb` controller snapshot can now reconstruct common USB device
+        // models on its own, but the bridge still needs explicit `UsbHubDevice` / WebUSB handles.
         if r.bytes(TAG_EXTERNAL_HUB).is_some() && self.external_hub().is_none() {
             self.controller.hub_mut().attach(
                 ROOT_PORT_EXTERNAL_HUB,
