@@ -55,4 +55,7 @@ echo "[safe-run] Started: $(date -Iseconds 2>/dev/null || date)" >&2
 #
 # Use the shared helper so we support both GNU `timeout` and macOS `gtimeout`
 # consistently across scripts.
-exec "$SCRIPT_DIR/with-timeout.sh" "${TIMEOUT}" bash "$SCRIPT_DIR/run_limited.sh" --as "$MEM_LIMIT" -- "$@"
+#
+# Note: some agent environments lose executable bits in the working tree. Invoke
+# our helper via `bash` so safe-run still works even if scripts are 0644.
+exec bash "$SCRIPT_DIR/with-timeout.sh" "${TIMEOUT}" bash "$SCRIPT_DIR/run_limited.sh" --as "$MEM_LIMIT" -- "$@"
