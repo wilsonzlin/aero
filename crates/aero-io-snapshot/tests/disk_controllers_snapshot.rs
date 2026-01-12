@@ -135,3 +135,23 @@ fn disk_controllers_snapshot_rejects_excessive_nested_snapshot_size() {
         SnapshotError::InvalidFieldEncoding("disk controller snapshot too large")
     );
 }
+
+#[test]
+fn disk_controllers_snapshot_rejects_truncated_entry_payload() {
+    const TAG_CONTROLLERS: u16 = 1;
+
+    // One entry, declared length=2, but provide only 1 byte of entry payload.
+    let controllers = Encoder::new().u32(1).u32(2).u8(0xAA).finish();
+
+    let mut w = SnapshotWriter::new(
+        DiskControllersSnapshot::DEVICE_ID,
+        DiskControllersSnapshot::DEVICE_VERSION,
+    );
+    w.field_bytes(TAG_CONTROLLERS, controllers);
+
+    let mut state = DiskControllersSnapshot::default();
+    let err = state
+        .load_state(&w.finish())
+        .expect_err("snapshot should reject truncated disk controller entry payload");
+    assert_eq!(err, SnapshotError::UnexpectedEof);
+}
