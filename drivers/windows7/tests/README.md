@@ -108,6 +108,8 @@ attach an additional virtio disk with a drive letter (or run the selftest with `
   - When `-WithInputEvents` (alias: `-WithVirtioInputEvents`) / `--with-input-events` (alias: `--with-virtio-input-events`)
     is enabled, the harness also injects a small keyboard + mouse sequence via QMP (`input-send-event`) and requires
     `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|PASS`.
+    - Note: this requires a guest image provisioned with `--test-input-events` so the guest selftest enables the
+      `virtio-input-events` read loop (otherwise the guest reports `...|SKIP|flag_not_set`).
     - The harness also emits a host marker for the injection step itself:
       `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|PASS/FAIL|...`
 - Exits with `0` on PASS, non-zero on FAIL/timeout.
