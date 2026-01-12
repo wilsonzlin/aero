@@ -6,6 +6,7 @@ import {
   isUsbSelectedMessage,
   isUsbSetupPacket,
   getTransferablesForUsbActionMessage,
+  MAX_USB_PROXY_BYTES,
   usbErrorCompletion,
   type UsbActionMessage,
   type UsbHostAction,
@@ -89,8 +90,6 @@ function ensureTransferableBytes(bytes: Uint8Array): Uint8Array {
   out.set(bytes);
   return out;
 }
-
-const MAX_USB_PROXY_BYTES = 4 * 1024 * 1024;
 
 function normalizeBytes(value: unknown): Uint8Array | null {
   if (value instanceof Uint8Array) {

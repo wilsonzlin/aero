@@ -2,6 +2,8 @@ import type { SetupPacket, UsbHostAction, UsbHostCompletion } from "./usb_passth
 
 export type { SetupPacket, UsbHostAction, UsbHostCompletion } from "./usb_passthrough_types";
 
+export const MAX_USB_PROXY_BYTES = 4 * 1024 * 1024;
+
 export type UsbActionMessage = { type: "usb.action"; action: UsbHostAction };
 export type UsbCompletionMessage = { type: "usb.completion"; completion: UsbHostCompletion };
 export type UsbRingAttachMessage = {
@@ -142,6 +144,14 @@ function isUsbOutEndpointAddress(value: unknown): value is number {
   return isUsbEndpointAddress(value) && (value & 0x80) === 0;
 }
 
+function isUsbBytePayload(value: unknown): value is Uint8Array {
+  if (!(value instanceof Uint8Array)) return false;
+  if (value.byteLength > MAX_USB_PROXY_BYTES) return false;
+  if (!(value.buffer instanceof ArrayBuffer)) return false;
+  if (value.buffer.byteLength > MAX_USB_PROXY_BYTES) return false;
+  return true;
+}
+
 export function isUsbSetupPacket(value: unknown): value is SetupPacket {
   if (!isRecord(value)) return false;
   return (
@@ -163,16 +173,16 @@ export function isUsbHostAction(value: unknown): value is UsbHostAction {
     case "controlOut":
       return (
         isUsbSetupPacket(value.setup) &&
-        value.data instanceof Uint8Array &&
+        isUsbBytePayload(value.data) &&
         // The control-transfer setup packet includes the expected data-stage size. For correctness,
         // require that the payload length matches so the broker can choose the correct WebUSB call
         // signature (omit the data argument when wLength is 0).
         value.data.byteLength === value.setup.wLength
       );
     case "bulkIn":
-      return isUsbInEndpointAddress(value.endpoint) && isUint32(value.length);
+      return isUsbInEndpointAddress(value.endpoint) && isUint32(value.length) && value.length <= MAX_USB_PROXY_BYTES;
     case "bulkOut":
-      return isUsbOutEndpointAddress(value.endpoint) && value.data instanceof Uint8Array;
+      return isUsbOutEndpointAddress(value.endpoint) && isUsbBytePayload(value.data);
     default:
       return false;
   }
@@ -185,7 +195,7 @@ export function isUsbHostCompletion(value: unknown): value is UsbHostCompletion 
   switch (value.kind) {
     case "controlIn":
     case "bulkIn":
-      if (value.status === "success") return value.data instanceof Uint8Array;
+      if (value.status === "success") return isUsbBytePayload(value.data);
       if (value.status === "stall") return true;
       if (value.status === "error") return typeof value.message === "string";
       return false;

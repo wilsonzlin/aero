@@ -11,6 +11,7 @@ import {
   isUsbRingAttachMessage,
   isUsbRingAttachRequestMessage,
   isUsbRingDetachMessage,
+  MAX_USB_PROXY_BYTES,
   usbErrorCompletion,
   type UsbActionMessage,
   type UsbCompletionMessage,
@@ -64,6 +65,7 @@ describe("usb/usb_proxy_protocol", () => {
     expect(isUsbHostAction({ kind: "bulkIn", id: 1, endpoint: 0x1_00, length: 8 })).toBe(false);
     expect(isUsbHostAction({ kind: "bulkIn", id: 1, endpoint: 0x81, length: -1 })).toBe(false);
     expect(isUsbHostAction({ kind: "bulkIn", id: 1, endpoint: 0x81, length: 0xffff_ffff + 1 })).toBe(false);
+    expect(isUsbHostAction({ kind: "bulkIn", id: 1, endpoint: 0x81, length: MAX_USB_PROXY_BYTES + 1 })).toBe(false);
 
     // bytesWritten must be a non-negative safe integer.
     expect(isUsbHostCompletion({ kind: "bulkOut", id: 1, status: "success", bytesWritten: 1.5 })).toBe(false);
@@ -74,6 +76,29 @@ describe("usb/usb_proxy_protocol", () => {
     expect(
       isUsbProxyMessage({ type: "usb.selected", ok: true, info: { vendorId: 0x1_0000, productId: 1 } }),
     ).toBe(false);
+  });
+
+  it("rejects oversized and unsafe byte payload buffers in actions/completions", () => {
+    const setup = { bmRequestType: 0, bRequest: 9, wValue: 1, wIndex: 0, wLength: 1 };
+
+    const oversized = new Uint8Array(MAX_USB_PROXY_BYTES + 1);
+    expect(isUsbHostAction({ kind: "controlOut", id: 1, setup, data: oversized })).toBe(false);
+    expect(isUsbHostAction({ kind: "bulkOut", id: 2, endpoint: 0x02, data: oversized })).toBe(false);
+    expect(isUsbHostCompletion({ kind: "controlIn", id: 3, status: "success", data: oversized })).toBe(false);
+
+    // Reject subviews into oversized buffers: structured cloning can copy the full buffer, not just the view.
+    const largeBuffer = new ArrayBuffer(MAX_USB_PROXY_BYTES + 1);
+    const view = new Uint8Array(largeBuffer, 0, 1);
+    expect(isUsbHostAction({ kind: "bulkOut", id: 4, endpoint: 0x02, data: view })).toBe(false);
+    expect(isUsbHostCompletion({ kind: "bulkIn", id: 5, status: "success", data: view })).toBe(false);
+
+    // SharedArrayBuffer-backed payloads should not be accepted in wire messages (avoid sharing large SABs).
+    if (typeof SharedArrayBuffer !== "undefined") {
+      const sab = new SharedArrayBuffer(16);
+      const sabView = new Uint8Array(sab);
+      expect(isUsbHostAction({ kind: "bulkOut", id: 6, endpoint: 0x02, data: sabView })).toBe(false);
+      expect(isUsbHostCompletion({ kind: "bulkIn", id: 7, status: "success", data: sabView })).toBe(false);
+    }
   });
 
   it("rejects malformed usb.selected messages", () => {

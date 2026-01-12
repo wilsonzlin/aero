@@ -6,6 +6,7 @@ import {
   isUsbSetupPacket,
   isUsbHostAction,
   isUsbHostCompletion,
+  MAX_USB_PROXY_BYTES,
   usbErrorCompletion,
   type SetupPacket,
   type UsbActionMessage,
@@ -190,8 +191,6 @@ function assertUsbOutEndpointAddress(value: number): void {
     throw new Error(`Expected OUT endpoint address (e.g. 0x02), got 0x${value.toString(16)}`);
   }
 }
-
-const MAX_USB_PROXY_BYTES = 4 * 1024 * 1024;
 
 function normalizeBytes(value: unknown): Uint8Array {
   if (value instanceof Uint8Array) {
@@ -565,21 +564,21 @@ export class WebUsbUhciHarnessRuntime {
       const brokerAction = rewriteActionId(action, brokerId);
 
       const actionRing = this.#actionRing;
-        if (actionRing) {
-          try {
-            if (actionRing.pushAction(brokerAction)) {
-              this.#pending.set(brokerId, { action });
-              this.#pendingHarnessIds.add(id);
-              this.#actionsForwarded += 1;
-              this.#lastAction = action;
-              changed = true;
-              continue;
-            }
-          } catch (err) {
-            this.handleRingFailure(`USB action ring push failed: ${formatError(err)}`);
-            return;
+      if (actionRing) {
+        try {
+          if (actionRing.pushAction(brokerAction)) {
+            this.#pending.set(brokerId, { action });
+            this.#pendingHarnessIds.add(id);
+            this.#actionsForwarded += 1;
+            this.#lastAction = action;
+            changed = true;
+            continue;
           }
+        } catch (err) {
+          this.handleRingFailure(`USB action ring push failed: ${formatError(err)}`);
+          return;
         }
+      }
 
       const msg: UsbActionMessage = { type: "usb.action", action: brokerAction };
       try {
