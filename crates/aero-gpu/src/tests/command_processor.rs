@@ -6,7 +6,7 @@ use crate::{
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdStreamHeader as ProtocolCmdStreamHeader,
 };
-use aero_protocol::aerogpu::aerogpu_pci::AEROGPU_ABI_VERSION_U32;
+use aero_protocol::aerogpu::aerogpu_pci::{AerogpuFormat, AEROGPU_ABI_VERSION_U32};
 
 const CMD_STREAM_SIZE_BYTES_OFFSET: usize =
     core::mem::offset_of!(ProtocolCmdStreamHeader, size_bytes);
@@ -165,6 +165,72 @@ fn command_processor_rejects_invalid_create_buffer_alignment() {
 
     let err = proc.process_submission(&stream, 0).unwrap_err();
     assert!(matches!(err, CommandProcessorError::InvalidCreateBuffer));
+}
+
+#[test]
+fn command_processor_accepts_srgb_create_texture2d_formats() {
+    let mut proc = AeroGpuCommandProcessor::new();
+
+    let stream = build_stream(|out| {
+        for &(handle, format) in &[
+            (0x30, AerogpuFormat::B8G8R8A8UnormSrgb as u32),
+            (0x31, AerogpuFormat::B8G8R8X8UnormSrgb as u32),
+            (0x32, AerogpuFormat::R8G8B8A8UnormSrgb as u32),
+            (0x33, AerogpuFormat::R8G8B8X8UnormSrgb as u32),
+        ] {
+            emit_packet(out, AeroGpuOpcode::CreateTexture2d as u32, |out| {
+                push_u32(out, handle); // texture_handle
+                push_u32(out, 0); // usage_flags
+                push_u32(out, format); // format
+                push_u32(out, 4); // width
+                push_u32(out, 4); // height
+                push_u32(out, 1); // mip_levels
+                push_u32(out, 1); // array_layers
+                push_u32(out, 0); // row_pitch_bytes (host-owned => tight)
+                push_u32(out, 0); // backing_alloc_id
+                push_u32(out, 0); // backing_offset_bytes
+                push_u64(out, 0); // reserved0
+            });
+        }
+    });
+
+    proc.process_submission(&stream, 0)
+        .expect("sRGB CREATE_TEXTURE2D formats should be accepted");
+}
+
+#[test]
+fn command_processor_accepts_bc_create_texture2d_formats() {
+    let mut proc = AeroGpuCommandProcessor::new();
+
+    let stream = build_stream(|out| {
+        for &(handle, format) in &[
+            (0x40, AerogpuFormat::BC1RgbaUnorm as u32),
+            (0x41, AerogpuFormat::BC1RgbaUnormSrgb as u32),
+            (0x42, AerogpuFormat::BC2RgbaUnorm as u32),
+            (0x43, AerogpuFormat::BC2RgbaUnormSrgb as u32),
+            (0x44, AerogpuFormat::BC3RgbaUnorm as u32),
+            (0x45, AerogpuFormat::BC3RgbaUnormSrgb as u32),
+            (0x46, AerogpuFormat::BC7RgbaUnorm as u32),
+            (0x47, AerogpuFormat::BC7RgbaUnormSrgb as u32),
+        ] {
+            emit_packet(out, AeroGpuOpcode::CreateTexture2d as u32, |out| {
+                push_u32(out, handle); // texture_handle
+                push_u32(out, 0); // usage_flags
+                push_u32(out, format); // format
+                push_u32(out, 4); // width (one BC block)
+                push_u32(out, 4); // height (one BC block)
+                push_u32(out, 1); // mip_levels
+                push_u32(out, 1); // array_layers
+                push_u32(out, 0); // row_pitch_bytes (host-owned => tight)
+                push_u32(out, 0); // backing_alloc_id
+                push_u32(out, 0); // backing_offset_bytes
+                push_u64(out, 0); // reserved0
+            });
+        }
+    });
+
+    proc.process_submission(&stream, 0)
+        .expect("BC CREATE_TEXTURE2D formats should be accepted");
 }
 
 #[test]
