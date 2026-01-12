@@ -17,6 +17,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+Set-StrictMode -Version 2.0
 
 $CertPath = (Resolve-Path -LiteralPath $CertPath).Path
 
@@ -29,7 +30,10 @@ Write-Host "  LocalMachine\\TrustedPublisher"
 Write-Host ""
 
 & certutil.exe -addstore -f Root $CertPath | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "certutil.exe -addstore Root failed with exit code $LASTEXITCODE" }
+
 & certutil.exe -addstore -f TrustedPublisher $CertPath | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "certutil.exe -addstore TrustedPublisher failed with exit code $LASTEXITCODE" }
 
 Write-Host "OK: Certificate installed."
 
