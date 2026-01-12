@@ -1054,6 +1054,30 @@ export class WorkerCoordinator {
     this.audioRingProducerOwner = nextOwner;
   }
 
+  private syncAudioRingBufferAttachmentsForRole(role: AudioRingWorkerRole): void {
+    const info = this.workers[role];
+    if (!info) return;
+
+    const ringBuffer = this.audioRingBuffer;
+    const owner = this.effectiveAudioRingBufferOwner();
+    if (owner === "both") {
+      throw new Error("Audio ring buffer owner 'both' violates SPSC constraints; choose 'cpu', 'io', or 'none'.");
+    }
+
+    let nextOwner: AudioRingWorkerRole | null = null;
+    if (ringBuffer && (owner === "cpu" || owner === "io")) {
+      nextOwner = owner;
+    }
+    const attach = role === nextOwner;
+    info.worker.postMessage({
+      type: "setAudioRingBuffer",
+      ringBuffer: attach ? ringBuffer : null,
+      capacityFrames: attach ? this.audioCapacityFrames : 0,
+      channelCount: attach ? this.audioChannelCount : 0,
+      dstSampleRate: attach ? this.audioDstSampleRate : 0,
+    } satisfies SetAudioRingBufferMessage);
+  }
+
   private syncMicrophoneRingBufferAttachments(): void {
     const ringBuffer = this.micRingBuffer;
     const owner = this.effectiveMicrophoneRingBufferOwner();
@@ -1093,6 +1117,32 @@ export class WorkerCoordinator {
     }
 
     this.micRingConsumerOwner = nextOwner;
+  }
+
+  private syncMicrophoneRingBufferAttachmentsForRole(role: AudioRingWorkerRole): void {
+    const info = this.workers[role];
+    if (!info) return;
+
+    const ringBuffer = this.micRingBuffer;
+    const owner = this.effectiveMicrophoneRingBufferOwner();
+
+    if (owner === "both") {
+      throw new Error(
+        "Microphone ring buffer owner 'both' violates SPSC constraints; choose 'cpu', 'io', or 'none'.",
+      );
+    }
+
+    let nextOwner: AudioRingWorkerRole | null = null;
+    if (ringBuffer && (owner === "cpu" || owner === "io")) {
+      nextOwner = owner;
+    }
+
+    const attach = role === nextOwner;
+    info.worker.postMessage({
+      type: "setMicrophoneRingBuffer",
+      ringBuffer: attach ? ringBuffer : null,
+      sampleRate: attach ? this.micSampleRate : 0,
+    } satisfies SetMicrophoneRingBufferMessage);
   }
 
   async snapshotSaveToOpfs(path: string): Promise<void> {
@@ -1836,9 +1886,15 @@ export class WorkerCoordinator {
         this.syncNetTraceEnabledToWorker(info.worker);
       }
       // Forward optional audio/mic ring buffers using the current ownership policy.
-      // This is re-sent on READY so newly restarted workers inherit any existing attachments.
-      this.syncMicrophoneRingBufferAttachments();
-      this.syncAudioRingBufferAttachments();
+      //
+      // Only the CPU + IO workers can consume/produce these SharedArrayBuffer rings. Re-apply the
+      // attachments for newly READY audio workers so restarts inherit the current state, but avoid
+      // re-sending to other already-running workers (which can reset audio state / discard buffered
+      // microphone samples).
+      if (role === "cpu" || role === "io") {
+        this.syncMicrophoneRingBufferAttachmentsForRole(role);
+        this.syncAudioRingBufferAttachmentsForRole(role);
+      }
 
       // Kick the worker to start its minimal demo loop.
       void this.trySendCommand(info, { kind: "nop", seq: this.nextCmdSeq++ });
