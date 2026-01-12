@@ -1543,6 +1543,10 @@ function renderNetTracePanel(): HTMLElement {
       requireWorkersRunning();
       return await workerCoordinator.takeNetTracePcapng(30_000);
     },
+    exportPcapng: async () => {
+      requireWorkersRunning();
+      return await workerCoordinator.exportNetTracePcapng(30_000);
+    },
   });
 
   return panel;
