@@ -16,6 +16,10 @@ rem Access real System32 when running under WoW64 (32-bit cmd.exe on 64-bit Wind
 set "SYS32=%SystemRoot%\System32"
 if defined PROCESSOR_ARCHITEW6432 set "SYS32=%SystemRoot%\Sysnative"
 
+rem Internal CI/self-test hook: run the INF AddService parser without admin/side effects.
+rem Not a stable interface; used by tools/guest-tools/tests on Windows runners.
+if /i "%~1"=="/_selftest_inf_addservice" goto :_selftest_inf_addservice
+
 pushd "%SCRIPT_DIR%" >nul 2>&1
 if errorlevel 1 (
   echo ERROR: Could not cd to "%SCRIPT_DIR%".
@@ -178,6 +182,19 @@ echo.
 echo Logs are written to C:\AeroGuestTools\install.log
 popd >nul 2>&1
 exit /b 0
+
+:_selftest_inf_addservice
+rem Usage: setup.cmd /_selftest_inf_addservice <inf> <service>
+if "%~2"=="" (
+  echo ERROR: Missing INF path.
+  exit /b 2
+)
+if "%~3"=="" (
+  echo ERROR: Missing service name.
+  exit /b 2
+)
+call :inf_contains_addservice "%~2" "%~3"
+exit /b %ERRORLEVEL%
 
 :fail
 set "RC=%ERRORLEVEL%"
@@ -821,10 +838,15 @@ setlocal EnableDelayedExpansion
 set "INF_FILE=%~1"
 set "TARGET=%~2"
 
+set "HAD_FINDSTR=0"
 for /f "delims=" %%L in ('"%SYS32%\findstr.exe" /i /c:"AddService" "%INF_FILE%" 2^>nul') do (
+  set "HAD_FINDSTR=1"
   set "LINE=%%L"
   rem Ensure the line doesn't contain embedded quotes that would break subsequent parsing.
   set "LINE=!LINE:"=!"
+  rem Strip INF comments so patterns like `AddService = viostor;comment` still match,
+  rem while `; AddService = viostor` does not.
+  for /f "tokens=1 delims=;" %%C in ("!LINE!") do set "LINE=%%C"
   set "LEFT="
   set "RIGHT="
   for /f "tokens=1,* delims==" %%A in ("!LINE!") do (
@@ -839,12 +861,29 @@ for /f "delims=" %%L in ('"%SYS32%\findstr.exe" /i /c:"AddService" "%INF_FILE%" 
       set "REST=!RIGHT!"
       for /f "tokens=* delims= " %%R in ("!REST!") do set "REST=%%R"
       set "REST=!REST:"=!"
-      for /f "tokens=1 delims=, " %%S in ("!REST!") do set "SVC=%%S"
+      for /f "tokens=1 delims=,; " %%S in ("!REST!") do set "SVC=%%S"
       if /i "!SVC!"=="!TARGET!" (
         endlocal & exit /b 0
       )
     )
   )
+)
+
+rem If findstr produced any AddService-containing lines but none matched the target
+rem service name, there's no need for a slower/encoding-aware fallback.
+if "%HAD_FINDSTR%"=="1" (
+  endlocal & exit /b 1
+)
+
+rem Fallback for UTF-16LE (and other BOM-based) INF files: findstr/cmd parsing can yield
+rem no output at all. Use PowerShell 2.0 + .NET File.ReadAllText(), which is BOM-aware.
+set "PWSH=%SYS32%\WindowsPowerShell\v1.0\powershell.exe"
+if not exist "%PWSH%" set "PWSH=powershell.exe"
+set "AEROGT_INF_FILE=%INF_FILE%"
+set "AEROGT_INF_TARGET=%TARGET%"
+"%PWSH%" -NoProfile -ExecutionPolicy Bypass -Command "$inf=$env:AEROGT_INF_FILE; $target=$env:AEROGT_INF_TARGET; try{ $text=[System.IO.File]::ReadAllText($inf) }catch{ exit 1 }; foreach($line in ($text -split '\r\n|\n|\r')){ if($line.Length -gt 0 -and $line[0] -eq [char]0xFEFF){ $line=$line.Substring(1) }; $noComment=$line.Split(';')[0]; $noComment=$noComment.Replace([char]34,''); if($noComment -match '^\s*AddService\s*=\s*([^,;\s]+)'){ if([string]::Equals($matches[1],$target,[System.StringComparison]::OrdinalIgnoreCase)){ exit 0 } } }; exit 1" >nul 2>&1
+if not errorlevel 1 (
+  endlocal & exit /b 0
 )
 
 endlocal & exit /b 1
