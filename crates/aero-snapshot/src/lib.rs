@@ -87,6 +87,13 @@ pub trait SnapshotSource {
 }
 
 pub trait SnapshotTarget {
+    /// Called once at the start of a snapshot restore, after validating the snapshot file header.
+    ///
+    /// Snapshot restore is not transactional: callers may observe partial state if decode fails
+    /// partway through (e.g. due to corrupt inputs). `pre_restore` exists so targets can clear
+    /// transient "restore-only" state before any sections are applied, even when the caller uses
+    /// `aero_snapshot::restore_snapshot` directly instead of a higher-level wrapper.
+    fn pre_restore(&mut self) {}
     fn restore_meta(&mut self, _meta: SnapshotMeta) {}
     fn restore_cpu_state(&mut self, state: CpuState);
     fn restore_cpu_states(&mut self, states: Vec<VcpuSnapshot>) -> Result<()> {
@@ -334,6 +341,7 @@ fn restore_snapshot_impl<R: Read, T: SnapshotTarget>(
     prescanned_meta: Option<SnapshotMeta>,
 ) -> Result<()> {
     read_file_header(r)?;
+    target.pre_restore();
 
     const MAX_DEVICES_SECTION_LEN: u64 = 256 * 1024 * 1024;
     const MAX_DEVICE_COUNT: usize = 4096;

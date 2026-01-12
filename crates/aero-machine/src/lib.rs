@@ -1495,16 +1495,6 @@ pub struct Machine {
     ahci_port0_overlay: Option<snapshot::DiskOverlayRef>,
     ide_secondary_master_atapi_overlay: Option<snapshot::DiskOverlayRef>,
     ide_primary_master_overlay: Option<snapshot::DiskOverlayRef>,
-    /// Disk overlay refs staged during snapshot restore.
-    ///
-    /// `aero_snapshot::restore_snapshot` can restore sections in any order, so we cannot safely
-    /// clear/overwrite `restored_disk_overlays` in per-section callbacks (e.g. `restore_cpu_state`)
-    /// without risking clobbering a `DISKS` section that appears earlier in the file.
-    ///
-    /// Instead, `restore_disk_overlays` records refs here and `post_restore` commits them into
-    /// `restored_disk_overlays`. If no `DISKS` section was present, this remains `None` and the
-    /// commit clears any stale refs from the previous restore.
-    restored_disk_overlays_pending: Option<snapshot::DiskOverlayRefs>,
     restored_disk_overlays: Option<snapshot::DiskOverlayRefs>,
 
     // Optional PC platform devices. These are behind `Rc<RefCell<_>>` so their host wiring
@@ -1611,7 +1601,6 @@ impl Machine {
             ahci_port0_overlay: None,
             ide_secondary_master_atapi_overlay: None,
             ide_primary_master_overlay: None,
-            restored_disk_overlays_pending: None,
             restored_disk_overlays: None,
             platform_clock: None,
             interrupts: None,
@@ -2552,7 +2541,6 @@ impl Machine {
 
     pub fn restore_snapshot_from<R: Read>(&mut self, r: &mut R) -> snapshot::Result<()> {
         // Clear restore-only state before applying new sections.
-        self.restored_disk_overlays_pending = None;
         self.restored_disk_overlays = None;
         snapshot::restore_snapshot(r, self)
     }
@@ -2571,7 +2559,6 @@ impl Machine {
         self.serial_log.clear();
         self.reset_latch.clear();
         // Clear restore-only state before applying new snapshot sections.
-        self.restored_disk_overlays_pending = None;
         self.restored_disk_overlays = None;
 
         let expected_parent_snapshot_id = self.last_snapshot_id;
@@ -2608,7 +2595,6 @@ impl Machine {
         self.serial_log.clear();
         self.ps2_mouse_buttons = 0;
         self.guest_time.reset();
-        self.restored_disk_overlays_pending = None;
         self.restored_disk_overlays = None;
         self.display_fb.clear();
         self.display_width = 0;
@@ -4023,6 +4009,14 @@ impl snapshot::SnapshotSource for Machine {
 }
 
 impl snapshot::SnapshotTarget for Machine {
+    fn pre_restore(&mut self) {
+        // Clear restore-only state before applying any snapshot sections.
+        //
+        // `aero_snapshot` restore is section-order-independent, so this must not happen in a
+        // per-section callback like `restore_cpu_state`.
+        self.restored_disk_overlays = None;
+    }
+
     fn restore_meta(&mut self, meta: snapshot::SnapshotMeta) {
         self.last_snapshot_id = Some(meta.snapshot_id);
         self.next_snapshot_id = self
@@ -4544,10 +4538,7 @@ impl snapshot::SnapshotTarget for Machine {
 
         // Record the restored refs for the host/coordinator so it can re-open and re-attach the
         // appropriate storage backends after restore.
-        //
-        // Commit into `restored_disk_overlays` in `post_restore` so we can clear stale refs even if
-        // the snapshot lacks a `DISKS` section, without relying on snapshot section ordering.
-        self.restored_disk_overlays_pending = Some(overlays.clone());
+        self.restored_disk_overlays = Some(overlays.clone());
 
         // Also update the machine's configured overlay refs so subsequent snapshots (and host-side
         // queries) reflect the restored configuration.
@@ -4610,10 +4601,6 @@ impl snapshot::SnapshotTarget for Machine {
     }
 
     fn post_restore(&mut self) -> snapshot::Result<()> {
-        // Commit restored disk overlay refs (or clear stale refs when the snapshot had no DISKS
-        // section).
-        self.restored_disk_overlays = self.restored_disk_overlays_pending.take();
-
         // Network backends are external host state (e.g. live proxy connections) and are not part
         // of the snapshot format. Ensure we always drop any previously attached backend after
         // restoring, even if the caller bypasses the `Machine::restore_snapshot_*` helper methods
