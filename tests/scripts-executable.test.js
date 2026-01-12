@@ -348,3 +348,31 @@ test(
     }
   },
 );
+
+test(
+  "safe-run.sh prints actionable restore instructions if helper scripts are empty",
+  { skip: process.platform === "win32" },
+  () => {
+    const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "aero-safe-run-empty-helpers-"));
+    try {
+      const tmpScripts = path.join(tmpRoot, "scripts");
+      fs.mkdirSync(tmpScripts, { recursive: true });
+
+      fs.copyFileSync(path.join(repoRoot, "scripts", "safe-run.sh"), path.join(tmpScripts, "safe-run.sh"));
+      // Simulate a broken checkout producing 0-byte tracked files.
+      fs.writeFileSync(path.join(tmpScripts, "with-timeout.sh"), "", "utf8");
+      fs.writeFileSync(path.join(tmpScripts, "run_limited.sh"), "", "utf8");
+
+      const res = spawnSync("bash", ["scripts/safe-run.sh", "true"], {
+        cwd: tmpRoot,
+        encoding: "utf8",
+      });
+      assert.notEqual(res.status, 0);
+      assert.match(res.stderr, /\[safe-run\] error: missing\/empty required script: scripts\/with-timeout\.sh/);
+      assert.match(res.stderr, /git checkout -- scripts/);
+      assert.match(res.stderr, /git checkout -- \./);
+    } finally {
+      fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+  },
+);
