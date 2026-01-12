@@ -3,7 +3,7 @@ use std::io;
 use std::rc::Rc;
 
 use aero_devices::pci::profile::IDE_PIIX3;
-use aero_devices::pci::{PciBarDefinition, PciDevice};
+use aero_devices::pci::{bios_post, PciBarDefinition, PciDevice, PciPlatform, PciResourceAllocator, PciResourceAllocatorConfig};
 use aero_devices_storage::ata::AtaDrive;
 use aero_devices_storage::atapi::IsoBackend;
 use aero_devices_storage::pci_ide::{
@@ -419,4 +419,30 @@ fn ata_dma_missing_prd_eot_sets_error_status() {
 
     let st = ioports.read(bm_base + 2, 1) as u8;
     assert_eq!(st & 0x06, 0x06, "BMIDE status should have IRQ+ERR set");
+}
+
+#[test]
+fn bios_post_preserves_piix3_legacy_bar_bases() {
+    let mut bus = PciPlatform::build_bus();
+    let bdf = IDE_PIIX3.bdf;
+
+    // The device initializes its BARs to legacy port addresses; BIOS POST should preserve those
+    // fixed assignments rather than allocating new ones.
+    bus.add_device(bdf, Box::new(Piix3IdePciDevice::new()));
+
+    let mut alloc = PciResourceAllocator::new(PciResourceAllocatorConfig::default());
+    bios_post(&mut bus, &mut alloc).unwrap();
+
+    let cfg = bus.device_config(bdf).unwrap();
+
+    assert_eq!(cfg.bar_range(0).unwrap().base, 0x1F0);
+    assert_eq!(cfg.bar_range(1).unwrap().base, 0x3F4);
+    assert_eq!(cfg.bar_range(2).unwrap().base, 0x170);
+    assert_eq!(cfg.bar_range(3).unwrap().base, 0x374);
+    assert_eq!(
+        cfg.bar_range(4).unwrap().base,
+        u64::from(Piix3IdePciDevice::DEFAULT_BUS_MASTER_BASE)
+    );
+
+    assert_eq!(cfg.command() & 0x1, 0x1, "bios_post should enable IO decoding");
 }

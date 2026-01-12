@@ -85,6 +85,15 @@ impl PciBus {
                 let def = dev.config().bar_definition(bar_index);
                 let Some(def) = def else { continue };
 
+                // Some devices (e.g. legacy-compatible IDE controllers) may come with fixed BAR
+                // assignments that firmware should preserve. If the BAR already has a non-zero
+                // base address, keep it rather than allocating a new one.
+                if let Some(range) = dev.config().bar_range(bar_index) {
+                    if range.base != 0 {
+                        continue;
+                    }
+                }
+
                 let base = allocator.allocate_bar(def)?;
                 dev.config_mut().set_bar_base(bar_index, base);
             }
