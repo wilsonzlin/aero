@@ -85,13 +85,22 @@ static int RunD3D9ExFixedFuncStateRoundtrip(int argc, char** argv) {
   const char* kTestName = "d3d9ex_fixedfunc_state_roundtrip";
   if (aerogpu_test::HasHelpArg(argc, argv)) {
     aerogpu_test::PrintfStdout(
-        "Usage: %s.exe [--hidden] [--json[=PATH]] [--require-vid=0x####] [--require-did=0x####] "
+        "Usage: %s.exe [--hidden] [--json[=PATH]] [--allow-remote] [--require-vid=0x####] [--require-did=0x####] "
         "[--allow-microsoft] [--allow-non-aerogpu] [--require-umd]",
         kTestName);
     return 0;
   }
 
   aerogpu_test::TestReporter reporter(kTestName, argc, argv);
+
+  // Some environments (e.g. RDP sessions) can change adapter behavior; allow callers
+  // to explicitly skip this test in those cases.
+  const bool allow_remote = aerogpu_test::HasArg(argc, argv, "--allow-remote");
+  if (allow_remote && GetSystemMetrics(SM_REMOTESESSION)) {
+    aerogpu_test::PrintfStdout("INFO: %s: remote session detected; skipping", kTestName);
+    reporter.SetSkipped("remote_session");
+    return reporter.Pass();
+  }
 
   const bool allow_microsoft = aerogpu_test::HasArg(argc, argv, "--allow-microsoft");
   const bool allow_non_aerogpu = aerogpu_test::HasArg(argc, argv, "--allow-non-aerogpu");
@@ -350,4 +359,3 @@ int main(int argc, char** argv) {
   aerogpu_test::ConfigureProcessForAutomation();
   return RunD3D9ExFixedFuncStateRoundtrip(argc, argv);
 }
-
