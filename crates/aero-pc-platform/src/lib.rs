@@ -438,6 +438,60 @@ impl PortIoDevice for PcIdeBusMasterBar {
     }
 }
 
+/// AHCI ABAR (BAR5) handler registered via the platform's [`PciBarMmioRouter`].
+///
+/// The canonical PC platform models PCI config space via [`PciConfigPorts`], but the standalone
+/// [`AhciPciDevice`] instance also contains its own `PciConfigSpace` which gates MMIO on
+/// `PCI_COMMAND.MEMORY_ENABLE`.
+///
+/// Keep the device model's PCI command register mirrored from the canonical config space on every
+/// MMIO access so MMIO decoding respects guest writes to the command register.
+struct PcAhciMmioBar {
+    pci_cfg: SharedPciConfigPorts,
+    ahci: Rc<RefCell<AhciPciDevice>>,
+    bdf: PciBdf,
+}
+
+impl PcAhciMmioBar {
+    fn sync_config(&self) {
+        let (command, bar5_base) = {
+            let mut pci_cfg = self.pci_cfg.borrow_mut();
+            let bus = pci_cfg.bus_mut();
+            let cfg = bus.device_config(self.bdf);
+            let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
+            let bar5_base = cfg
+                .and_then(|cfg| cfg.bar_range(5))
+                .map(|range| range.base)
+                .unwrap_or(0);
+            (command, bar5_base)
+        };
+
+        let mut ahci = self.ahci.borrow_mut();
+        ahci.config_mut().set_command(command);
+        if bar5_base != 0 {
+            ahci.config_mut().set_bar_base(5, bar5_base);
+        }
+    }
+}
+
+impl PciBarMmioHandler for PcAhciMmioBar {
+    fn read(&mut self, offset: u64, size: usize) -> u64 {
+        if !(1..=8).contains(&size) {
+            return all_ones(size);
+        }
+        self.sync_config();
+        MmioHandler::read(&mut *self.ahci.borrow_mut(), offset, size)
+    }
+
+    fn write(&mut self, offset: u64, size: usize, value: u64) {
+        if !(1..=8).contains(&size) {
+            return;
+        }
+        self.sync_config();
+        MmioHandler::write(&mut *self.ahci.borrow_mut(), offset, size, value);
+    }
+}
+
 /// UHCI (BAR4) handler registered via the platform's `PciIoWindow`.
 ///
 /// The `port` argument is interpreted as the device-relative offset within BAR4.
