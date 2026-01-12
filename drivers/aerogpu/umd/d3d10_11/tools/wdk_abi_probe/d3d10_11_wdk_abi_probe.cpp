@@ -17,6 +17,9 @@
 #include <type_traits>
 #include <utility>
 
+// -----------------------------------------------------------------------------
+// Helper: member presence detection (C++17)
+// -----------------------------------------------------------------------------
 template <typename T, typename = void>
 struct has_member_pAdapterCallbacks : std::false_type {};
 template <typename T>
@@ -32,6 +35,40 @@ struct has_member_pfnCalcPrivateDeviceContextSize : std::false_type {};
 template <typename T>
 struct has_member_pfnCalcPrivateDeviceContextSize<T, std::void_t<decltype(std::declval<T>().pfnCalcPrivateDeviceContextSize)>>
     : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_pfnPresent : std::false_type {};
+template <typename T>
+struct has_member_pfnPresent<T, std::void_t<decltype(std::declval<T>().pfnPresent)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_pfnDraw : std::false_type {};
+template <typename T>
+struct has_member_pfnDraw<T, std::void_t<decltype(std::declval<T>().pfnDraw)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_pfnFlush : std::false_type {};
+template <typename T>
+struct has_member_pfnFlush<T, std::void_t<decltype(std::declval<T>().pfnFlush)>> : std::true_type {};
+
+// -----------------------------------------------------------------------------
+// Helper: x86 stdcall stack byte computation
+// -----------------------------------------------------------------------------
+// This mirrors the driver-side ABI assert helper (but uses C++17).
+#define AEROGPU_ABI_STACK_ROUND4(x) (((x) + 3) & ~((size_t)3))
+
+template <typename T>
+struct aerogpu_stdcall_stack_bytes;
+
+template <typename R>
+struct aerogpu_stdcall_stack_bytes<R(__stdcall*)(void)> {
+  static constexpr size_t value = 0;
+};
+
+template <typename R, typename A1>
+struct aerogpu_stdcall_stack_bytes<R(__stdcall*)(A1)> {
+  static constexpr size_t value = AEROGPU_ABI_STACK_ROUND4(sizeof(A1));
+};
 
 int main() {
   std::printf("== Win7 D3D10/11 UMD WDK ABI probe ==\n");
@@ -63,6 +100,22 @@ int main() {
     std::printf("  offsetof(pAdapterCallbacks) = <absent>\n");
   }
   std::printf("  offsetof(pAdapterFuncs) = %zu\n", offsetof(D3D10DDIARG_OPENADAPTER, pAdapterFuncs));
+  std::printf("\n");
+
+  std::printf("== D3D10DDI_ADAPTERFUNCS ==\n");
+  std::printf("  sizeof(D3D10DDI_ADAPTERFUNCS) = %zu\n", sizeof(D3D10DDI_ADAPTERFUNCS));
+  std::printf("  offsetof(pfnGetCaps) = %zu\n", offsetof(D3D10DDI_ADAPTERFUNCS, pfnGetCaps));
+  std::printf("  offsetof(pfnCalcPrivateDeviceSize) = %zu\n", offsetof(D3D10DDI_ADAPTERFUNCS, pfnCalcPrivateDeviceSize));
+  std::printf("  offsetof(pfnCreateDevice) = %zu\n", offsetof(D3D10DDI_ADAPTERFUNCS, pfnCreateDevice));
+  std::printf("  offsetof(pfnCloseAdapter) = %zu\n", offsetof(D3D10DDI_ADAPTERFUNCS, pfnCloseAdapter));
+  std::printf("\n");
+
+  std::printf("== D3D10_1DDI_ADAPTERFUNCS ==\n");
+  std::printf("  sizeof(D3D10_1DDI_ADAPTERFUNCS) = %zu\n", sizeof(D3D10_1DDI_ADAPTERFUNCS));
+  std::printf("  offsetof(pfnGetCaps) = %zu\n", offsetof(D3D10_1DDI_ADAPTERFUNCS, pfnGetCaps));
+  std::printf("  offsetof(pfnCalcPrivateDeviceSize) = %zu\n", offsetof(D3D10_1DDI_ADAPTERFUNCS, pfnCalcPrivateDeviceSize));
+  std::printf("  offsetof(pfnCreateDevice) = %zu\n", offsetof(D3D10_1DDI_ADAPTERFUNCS, pfnCreateDevice));
+  std::printf("  offsetof(pfnCloseAdapter) = %zu\n", offsetof(D3D10_1DDI_ADAPTERFUNCS, pfnCloseAdapter));
   std::printf("\n");
 
   std::printf("== Interface constants ==\n");
@@ -127,6 +180,28 @@ int main() {
               static_cast<unsigned>(D3D11DDICAPS_TYPE_SHADER));
   std::printf("\n");
 
+  std::printf("== D3D10DDI_DEVICEFUNCS ==\n");
+  std::printf("  sizeof(D3D10DDI_DEVICEFUNCS) = %zu\n", sizeof(D3D10DDI_DEVICEFUNCS));
+  std::printf("  offsetof(pfnDestroyDevice) = %zu\n", offsetof(D3D10DDI_DEVICEFUNCS, pfnDestroyDevice));
+  std::printf("  offsetof(pfnCreateResource) = %zu\n", offsetof(D3D10DDI_DEVICEFUNCS, pfnCreateResource));
+  if constexpr (has_member_pfnPresent<D3D10DDI_DEVICEFUNCS>::value) {
+    std::printf("  offsetof(pfnPresent) = %zu\n", offsetof(D3D10DDI_DEVICEFUNCS, pfnPresent));
+  } else {
+    std::printf("  offsetof(pfnPresent) = <absent>\n");
+  }
+  std::printf("\n");
+
+  std::printf("== D3D10_1DDI_DEVICEFUNCS ==\n");
+  std::printf("  sizeof(D3D10_1DDI_DEVICEFUNCS) = %zu\n", sizeof(D3D10_1DDI_DEVICEFUNCS));
+  std::printf("  offsetof(pfnDestroyDevice) = %zu\n", offsetof(D3D10_1DDI_DEVICEFUNCS, pfnDestroyDevice));
+  std::printf("  offsetof(pfnCreateResource) = %zu\n", offsetof(D3D10_1DDI_DEVICEFUNCS, pfnCreateResource));
+  if constexpr (has_member_pfnPresent<D3D10_1DDI_DEVICEFUNCS>::value) {
+    std::printf("  offsetof(pfnPresent) = %zu\n", offsetof(D3D10_1DDI_DEVICEFUNCS, pfnPresent));
+  } else {
+    std::printf("  offsetof(pfnPresent) = <absent>\n");
+  }
+  std::printf("\n");
+
   std::printf("== D3D11DDI_ADAPTERFUNCS ==\n");
   std::printf("  sizeof(D3D11DDI_ADAPTERFUNCS) = %zu\n", sizeof(D3D11DDI_ADAPTERFUNCS));
   std::printf("  offsetof(pfnGetCaps) = %zu\n", offsetof(D3D11DDI_ADAPTERFUNCS, pfnGetCaps));
@@ -141,14 +216,41 @@ int main() {
   std::printf("  offsetof(pfnCloseAdapter) = %zu\n", offsetof(D3D11DDI_ADAPTERFUNCS, pfnCloseAdapter));
   std::printf("\n");
 
+  std::printf("== D3D11DDI_DEVICEFUNCS ==\n");
+  std::printf("  sizeof(D3D11DDI_DEVICEFUNCS) = %zu\n", sizeof(D3D11DDI_DEVICEFUNCS));
+  std::printf("  offsetof(pfnDestroyDevice) = %zu\n", offsetof(D3D11DDI_DEVICEFUNCS, pfnDestroyDevice));
+  std::printf("  offsetof(pfnCreateResource) = %zu\n", offsetof(D3D11DDI_DEVICEFUNCS, pfnCreateResource));
+  if constexpr (has_member_pfnPresent<D3D11DDI_DEVICEFUNCS>::value) {
+    std::printf("  offsetof(pfnPresent) = %zu\n", offsetof(D3D11DDI_DEVICEFUNCS, pfnPresent));
+  } else {
+    std::printf("  offsetof(pfnPresent) = <absent>\n");
+  }
+  std::printf("\n");
+
+  std::printf("== D3D11DDI_DEVICECONTEXTFUNCS ==\n");
+  std::printf("  sizeof(D3D11DDI_DEVICECONTEXTFUNCS) = %zu\n", sizeof(D3D11DDI_DEVICECONTEXTFUNCS));
+  std::printf("  offsetof(pfnVsSetShader) = %zu\n", offsetof(D3D11DDI_DEVICECONTEXTFUNCS, pfnVsSetShader));
+  if constexpr (has_member_pfnDraw<D3D11DDI_DEVICECONTEXTFUNCS>::value) {
+    std::printf("  offsetof(pfnDraw) = %zu\n", offsetof(D3D11DDI_DEVICECONTEXTFUNCS, pfnDraw));
+  } else {
+    std::printf("  offsetof(pfnDraw) = <absent>\n");
+  }
+  if constexpr (has_member_pfnFlush<D3D11DDI_DEVICECONTEXTFUNCS>::value) {
+    std::printf("  offsetof(pfnFlush) = %zu\n", offsetof(D3D11DDI_DEVICECONTEXTFUNCS, pfnFlush));
+  } else {
+    std::printf("  offsetof(pfnFlush) = <absent>\n");
+  }
+  std::printf("\n");
+
   std::printf("== Exported entrypoints ==\n");
   std::printf("  runtime expects: OpenAdapter10, OpenAdapter10_2, OpenAdapter11\n");
   if (sizeof(void*) == 4) {
-    const unsigned stack_bytes = static_cast<unsigned>(sizeof(void*));
+    const unsigned stack_bytes = static_cast<unsigned>(aerogpu_stdcall_stack_bytes<PFND3D10DDI_OPENADAPTER>::value);
+    const unsigned stack_bytes_11 = static_cast<unsigned>(aerogpu_stdcall_stack_bytes<PFND3D11DDI_OPENADAPTER>::value);
     std::printf("  x86 stdcall decoration:\n");
     std::printf("    OpenAdapter10   => _OpenAdapter10@%u\n", stack_bytes);
     std::printf("    OpenAdapter10_2 => _OpenAdapter10_2@%u\n", stack_bytes);
-    std::printf("    OpenAdapter11   => _OpenAdapter11@%u\n", stack_bytes);
+    std::printf("    OpenAdapter11   => _OpenAdapter11@%u\n", stack_bytes_11);
   } else {
     std::printf("  x64: no stdcall decoration\n");
   }
