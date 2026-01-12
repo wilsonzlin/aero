@@ -376,6 +376,9 @@ The snapshot `DISKS` section encodes external disk image references as
 - Each entry is a `DiskOverlayRef { disk_id, base_image, overlay_image }`.
 - `base_image` / `overlay_image` are **opaque host identifiers** (e.g. a remote object key, a URL,
   or an OPFS path) and are not interpreted by `aero-snapshot`.
+  - Empty strings are allowed and mean "not configured" for that field. Snapshot producers may
+    still emit entries with empty fields to preserve a stable `disk_id` mapping even when no host
+    backend is currently attached.
 
 Note: `aero-snapshot` validates `base_image` / `overlay_image` only as bounded-length UTF-8 strings.
 **Empty strings are allowed.** Some snapshot adapters (notably the canonical

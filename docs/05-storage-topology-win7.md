@@ -122,6 +122,9 @@ section as `aero_snapshot::DiskOverlayRefs` entries (see [`docs/16-snapshots.md`
 Each entry is a `DiskOverlayRef { disk_id, base_image, overlay_image }` keyed by a stable `disk_id`
 (`u32`) that identifies a **logical attachment point** in the machine topology.
 
+Note: `base_image` / `overlay_image` are opaque host identifiers and may be empty strings to
+represent "not configured".
+
 When restoring a snapshot, storage controller device snapshots intentionally restore only
 guest-visible controller state and **drop any attached host backends** (disk files, ISO handles,
 etc.). The host/runtime must:
