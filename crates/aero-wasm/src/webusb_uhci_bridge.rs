@@ -216,6 +216,7 @@ impl WebUsbUhciBridge {
         };
 
         match size {
+            0 => 0,
             1 | 2 | 4 => self.controller.io_read(offset, size),
             _ => 0xffff_ffff,
         }

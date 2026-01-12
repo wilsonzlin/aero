@@ -358,6 +358,7 @@ impl VirtioNetPciBridge {
 
     pub fn mmio_read(&mut self, offset: u32, size: u8) -> u32 {
         let size = match size {
+            0 => return 0,
             1 | 2 | 4 => size as usize,
             _ => return 0xffff_ffff,
         };
@@ -416,6 +417,9 @@ impl VirtioNetPciBridge {
 
     /// Back-compat alias for `legacy_io_read` used by older JS runtimes.
     pub fn io_read(&mut self, offset: u32, size: u8) -> u32 {
+        if size == 0 {
+            return 0;
+        }
         if !matches!(size, 1 | 2 | 4) {
             return 0xffff_ffff;
         }

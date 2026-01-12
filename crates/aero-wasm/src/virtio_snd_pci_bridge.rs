@@ -553,6 +553,9 @@ impl VirtioSndPciBridge {
 
     /// Back-compat alias for `legacy_io_read` (mirrors `VirtioNetPciBridge`).
     pub fn io_read(&mut self, offset: u32, size: u8) -> u32 {
+        if size == 0 {
+            return 0;
+        }
         if !matches!(size, 1 | 2 | 4) {
             return 0xffff_ffff;
         }
