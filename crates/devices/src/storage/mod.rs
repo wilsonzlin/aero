@@ -312,10 +312,8 @@ mod tests {
             }
         }
 
-        let cases: &[(
-            fn() -> io::Error,
-            fn(&aero_storage::DiskError) -> bool,
-        )] = &[
+        type ErrorCase = (fn() -> io::Error, fn(&aero_storage::DiskError) -> bool);
+        let cases: &[ErrorCase] = &[
             (
                 || io::Error::new(io::ErrorKind::StorageFull, aero_storage::DiskError::QuotaExceeded),
                 |e| matches!(e, aero_storage::DiskError::QuotaExceeded),
@@ -335,10 +333,7 @@ mod tests {
             ),
             (
                 || {
-                    io::Error::new(
-                        io::ErrorKind::Other,
-                        aero_storage::DiskError::InvalidState("closed".to_string()),
-                    )
+                    io::Error::other(aero_storage::DiskError::InvalidState("closed".to_string()))
                 },
                 |e| matches!(
                     e,
@@ -358,7 +353,7 @@ mod tests {
                 ),
             ),
             (
-                || io::Error::new(io::ErrorKind::Other, aero_storage::DiskError::Io("boom".to_string())),
+                || io::Error::other(aero_storage::DiskError::Io("boom".to_string())),
                 |e| matches!(e, aero_storage::DiskError::Io(msg) if msg == "boom"),
             ),
         ];
