@@ -118,6 +118,24 @@ fn mmio_requires_pci_memory_space_enable() {
 }
 
 #[test]
+fn mmio_size0_is_noop() {
+    let mut dev = AhciPciDevice::new(1);
+
+    // Size-0 reads should be treated as a no-op and return 0 (even when MMIO decoding is disabled).
+    assert_eq!(dev.mmio_read(HBA_CAP, 0), 0);
+
+    // Enable MMIO decoding and ensure size-0 remains a no-op.
+    dev.config_mut().set_command(0x0002); // MEM
+    assert_eq!(dev.mmio_read(HBA_CAP, 0), 0);
+
+    // Size-0 writes should have no effect.
+    let before = dev.mmio_read(HBA_GHC, 4);
+    dev.mmio_write(HBA_GHC, 0, u64::from(GHC_AE | GHC_IE));
+    let after = dev.mmio_read(HBA_GHC, 4);
+    assert_eq!(after, before);
+}
+
+#[test]
 fn mmio_identify_and_read_dma_ext_via_pci_wrapper() {
     let capacity = 8 * SECTOR_SIZE as u64;
     let mut disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
