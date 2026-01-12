@@ -9,11 +9,15 @@ export type Tier1BlockCompilation = {
 export interface JitWasmApi {
   /**
    * Compile a Tier-1 x86 basic block into a standalone WASM module.
-   *
-   * This intentionally uses a permissive signature until the WASM ABI is stabilized.
    */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  compile_tier1_block: (...args: any[]) => Tier1BlockCompilation;
+  compile_tier1_block: (
+    entryRip: bigint,
+    codeBytes: Uint8Array,
+    maxInsts: number,
+    maxBytes: number,
+    inlineTlb: boolean,
+    memoryShared: boolean,
+  ) => Tier1BlockCompilation;
 }
 
 type RawJitWasmModule = any;
