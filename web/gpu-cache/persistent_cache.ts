@@ -357,7 +357,10 @@ async function readOpfsTextFile(dir, name) {
 async function writeOpfsTextFile(dir, name, contents) {
   try {
     const handle = await dir.getFileHandle(name, { create: true });
-    const writable = await handle.createWritable();
+    // Truncate by default so rewriting an existing key does not append and
+    // corrupt the JSON blob (implementation detail varies across browsers).
+    const writable =
+      (await handle.createWritable({ keepExistingData: false }).catch(() => null)) ?? (await handle.createWritable());
     await writable.write(contents);
     await writable.close();
     return true;
