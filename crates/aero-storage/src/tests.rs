@@ -179,7 +179,7 @@ fn sparse_open_rejects_oversized_allocation_table() {
         version: 1,
         block_size_bytes,
         disk_size_bytes,
-        table_entries: table_entries as u64,
+        table_entries,
         data_offset,
         allocated_blocks: 0,
     };
@@ -338,7 +338,7 @@ fn sparse_open_rejects_table_entry_before_data_offset() {
     write_table(
         &mut backend,
         &std::iter::once(phys)
-            .chain(std::iter::repeat(0).take(header.table_entries as usize - 1))
+            .chain(std::iter::repeat_n(0, header.table_entries as usize - 1))
             .collect::<Vec<u64>>(),
     );
 

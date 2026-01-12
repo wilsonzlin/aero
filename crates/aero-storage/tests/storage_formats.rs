@@ -391,7 +391,7 @@ fn aerosparse_rejects_table_entries_mismatch() {
 
     // Corrupt the header with an inconsistent table_entries.
     let mut bad_header = header;
-    bad_header.table_entries = bad_header.table_entries + 1;
+    bad_header.table_entries += 1;
     backend.write_at(0, &bad_header.encode()).unwrap();
 
     match AeroSparseDisk::open(backend) {
