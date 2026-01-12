@@ -100,6 +100,19 @@ static BOOLEAN virtio_modern_mmio_read(const volatile VOID* Register, size_t Wid
                         return TRUE;
                     }
                     break;
+                case 0x15: /* config_generation */
+                    if (Width == 1) {
+                        uint8_t gen;
+                        gen = g_sim->config_generation;
+                        if (g_sim->config_generation_step_on_read != 0) {
+                            g_sim->config_generation = (uint8_t)(g_sim->config_generation + 1u);
+                        }
+                        /* Keep backing memory consistent for any pass-through users. */
+                        mmio_store((volatile VOID*)&g_sim->common_cfg->config_generation, 1, (ULONGLONG)g_sim->config_generation);
+                        *ValueOut = (ULONGLONG)gen;
+                        return TRUE;
+                    }
+                    break;
                 case 0x16: /* queue_select */
                     if (Width == 2) {
                         *ValueOut = (ULONGLONG)g_sim->queue_select;
@@ -347,10 +360,15 @@ static BOOLEAN virtio_modern_mmio_write(volatile VOID* Register, size_t Width, U
                 case 0x14: /* device_status */
                     if (Width == 1) {
                         uint8_t v8 = (uint8_t)Value;
+                        uint8_t stored = v8;
+
+                        if (g_sim->reject_features_ok != 0 && (stored & VIRTIO_STATUS_FEATURES_OK) != 0) {
+                            stored = (uint8_t)(stored & (uint8_t)~VIRTIO_STATUS_FEATURES_OK);
+                        }
                         if (g_sim->status_write_count < VIRTIO_PCI_MODERN_MMIO_SIM_MAX_STATUS_WRITES) {
                             g_sim->status_writes[g_sim->status_write_count++] = v8;
                         }
-                        mmio_store(Register, Width, Value);
+                        mmio_store(Register, Width, stored);
                         return TRUE;
                     }
                     break;
@@ -547,4 +565,3 @@ void VirtioPciModernMmioSimUninstall(void)
     g_sim = NULL;
     WdkSetMmioHandlers(NULL, NULL);
 }
-

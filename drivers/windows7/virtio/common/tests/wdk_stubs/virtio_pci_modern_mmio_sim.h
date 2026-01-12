@@ -53,6 +53,10 @@ typedef struct VIRTIO_PCI_MODERN_MMIO_SIM {
     uint32_t driver_feature_select;
     uint16_t queue_select;
 
+    uint8_t config_generation;
+    uint8_t config_generation_step_on_read;
+    uint8_t reject_features_ok; /* if set, device clears FEATURES_OK on write */
+
     uint16_t num_queues;
     VIRTIO_PCI_MODERN_MMIO_SIM_QUEUE queues[VIRTIO_PCI_MODERN_MMIO_SIM_MAX_QUEUES];
 
@@ -75,4 +79,3 @@ void VirtioPciModernMmioSimUninstall(void);
 #ifdef __cplusplus
 }
 #endif
-

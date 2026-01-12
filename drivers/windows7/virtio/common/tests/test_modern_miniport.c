@@ -278,6 +278,54 @@ static void test_negotiate_features_success_and_status_sequence(void)
     VirtioPciModernMmioSimUninstall();
 }
 
+static void test_negotiate_features_device_rejects_features_ok(void)
+{
+    uint8_t bar0[TEST_BAR0_SIZE];
+    uint8_t pci_cfg[256];
+    VIRTIO_PCI_DEVICE dev;
+    VIRTIO_PCI_MODERN_MMIO_SIM sim;
+    NTSTATUS st;
+    uint64_t negotiated;
+    uint64_t required;
+    uint64_t wanted;
+
+    setup_device(&dev, bar0, pci_cfg);
+
+    VirtioPciModernMmioSimInit(&sim,
+                               dev.CommonCfg,
+                               (volatile uint8_t*)dev.NotifyBase,
+                               dev.NotifyLength,
+                               (volatile uint8_t*)dev.IsrStatus,
+                               dev.IsrLength,
+                               (volatile uint8_t*)dev.DeviceCfg,
+                               dev.DeviceCfgLength);
+
+    required = 1ull << 0;
+    wanted = 1ull << 1;
+
+    sim.host_features = VIRTIO_F_VERSION_1 | required | wanted;
+    sim.num_queues = 1;
+    sim.reject_features_ok = 1;
+
+    VirtioPciModernMmioSimInstall(&sim);
+
+    negotiated = 0;
+    st = VirtioPciNegotiateFeatures(&dev, required, wanted, &negotiated);
+    assert(st == STATUS_NOT_SUPPORTED);
+    assert(negotiated == 0);
+
+    /* Driver attempted to set FEATURES_OK but device cleared it before readback. */
+    assert(sim.status_write_count == 5);
+    assert(sim.status_writes[0] == 0);
+    assert(sim.status_writes[1] == VIRTIO_STATUS_ACKNOWLEDGE);
+    assert(sim.status_writes[2] == (VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER));
+    assert((sim.status_writes[3] & VIRTIO_STATUS_FEATURES_OK) != 0);
+    assert((VirtioPciGetStatus(&dev) & VIRTIO_STATUS_FEATURES_OK) == 0);
+    assert((sim.status_writes[4] & VIRTIO_STATUS_FAILED) != 0);
+
+    VirtioPciModernMmioSimUninstall();
+}
+
 static void test_setup_queue_programs_addresses_and_enables(void)
 {
     uint8_t bar0[TEST_BAR0_SIZE];
@@ -317,6 +365,89 @@ static void test_setup_queue_programs_addresses_and_enables(void)
     assert(sim.queues[1].queue_avail == avail);
     assert(sim.queues[1].queue_used == used);
     assert(sim.queues[1].queue_enable == 1);
+
+    VirtioPciModernMmioSimUninstall();
+}
+
+static void test_read_device_config_success(void)
+{
+    uint8_t bar0[TEST_BAR0_SIZE];
+    uint8_t pci_cfg[256];
+    VIRTIO_PCI_DEVICE dev;
+    VIRTIO_PCI_MODERN_MMIO_SIM sim;
+    uint8_t buf[17];
+    size_t i;
+    NTSTATUS st;
+
+    setup_device(&dev, bar0, pci_cfg);
+
+    /* Fill device-specific config space with a known pattern. */
+    for (i = 0; i < TEST_DEVICE_CFG_LEN; i++) {
+        bar0[TEST_DEVICE_CFG_OFF + i] = (uint8_t)(0xA0u + i);
+    }
+
+    VirtioPciModernMmioSimInit(&sim,
+                               dev.CommonCfg,
+                               (volatile uint8_t*)dev.NotifyBase,
+                               dev.NotifyLength,
+                               (volatile uint8_t*)dev.IsrStatus,
+                               dev.IsrLength,
+                               (volatile uint8_t*)dev.DeviceCfg,
+                               dev.DeviceCfgLength);
+
+    /* Stable config_generation -> read should succeed. */
+    sim.config_generation = 5;
+    sim.config_generation_step_on_read = 0;
+
+    VirtioPciModernMmioSimInstall(&sim);
+
+    memset(buf, 0, sizeof(buf));
+    st = VirtioPciReadDeviceConfig(&dev, /*Offset=*/1, buf, (ULONG)sizeof(buf));
+    assert(st == STATUS_SUCCESS);
+
+    for (i = 0; i < sizeof(buf); i++) {
+        assert(buf[i] == bar0[TEST_DEVICE_CFG_OFF + 1 + i]);
+    }
+
+    VirtioPciModernMmioSimUninstall();
+}
+
+static void test_read_device_config_generation_mismatch_times_out(void)
+{
+    uint8_t bar0[TEST_BAR0_SIZE];
+    uint8_t pci_cfg[256];
+    VIRTIO_PCI_DEVICE dev;
+    VIRTIO_PCI_MODERN_MMIO_SIM sim;
+    uint8_t buf[8];
+    NTSTATUS st;
+
+    setup_device(&dev, bar0, pci_cfg);
+
+    for (size_t i = 0; i < TEST_DEVICE_CFG_LEN; i++) {
+        bar0[TEST_DEVICE_CFG_OFF + i] = (uint8_t)i;
+    }
+
+    VirtioPciModernMmioSimInit(&sim,
+                               dev.CommonCfg,
+                               (volatile uint8_t*)dev.NotifyBase,
+                               dev.NotifyLength,
+                               (volatile uint8_t*)dev.IsrStatus,
+                               dev.IsrLength,
+                               (volatile uint8_t*)dev.DeviceCfg,
+                               dev.DeviceCfgLength);
+
+    /*
+     * Make config_generation change on every read so gen0 != gen1 every attempt
+     * and the helper eventually returns STATUS_IO_TIMEOUT.
+     */
+    sim.config_generation = 0;
+    sim.config_generation_step_on_read = 1;
+
+    VirtioPciModernMmioSimInstall(&sim);
+
+    memset(buf, 0, sizeof(buf));
+    st = VirtioPciReadDeviceConfig(&dev, /*Offset=*/0, buf, (ULONG)sizeof(buf));
+    assert(st == STATUS_IO_TIMEOUT);
 
     VirtioPciModernMmioSimUninstall();
 }
@@ -369,16 +500,71 @@ static void test_get_queue_notify_address_respects_multiplier(void)
     VirtioPciModernMmioSimUninstall();
 }
 
+static void test_notify_queue_populates_and_uses_cache(void)
+{
+    uint8_t bar0[TEST_BAR0_SIZE];
+    uint8_t pci_cfg[256];
+    VIRTIO_PCI_DEVICE dev;
+    VIRTIO_PCI_MODERN_MMIO_SIM sim;
+    volatile UINT16* cache[2];
+    volatile uint16_t* addr_a;
+    volatile uint16_t* addr_b;
+
+    setup_device(&dev, bar0, pci_cfg);
+
+    cache[0] = NULL;
+    cache[1] = NULL;
+    dev.QueueNotifyAddrCache = (volatile UINT16**)cache;
+    dev.QueueNotifyAddrCacheCount = 2;
+
+    VirtioPciModernMmioSimInit(&sim,
+                               dev.CommonCfg,
+                               (volatile uint8_t*)dev.NotifyBase,
+                               dev.NotifyLength,
+                               (volatile uint8_t*)dev.IsrStatus,
+                               dev.IsrLength,
+                               (volatile uint8_t*)dev.DeviceCfg,
+                               dev.DeviceCfgLength);
+
+    sim.num_queues = 2;
+    sim.queues[1].queue_size = 16;
+    sim.queues[1].queue_notify_off = 3;
+
+    VirtioPciModernMmioSimInstall(&sim);
+
+    addr_a = (volatile uint16_t*)((volatile uint8_t*)dev.NotifyBase + (3u * TEST_NOTIFY_OFF_MULT));
+    addr_b = (volatile uint16_t*)((volatile uint8_t*)dev.NotifyBase + (4u * TEST_NOTIFY_OFF_MULT));
+
+    *addr_a = 0;
+    VirtioPciNotifyQueue(&dev, 1);
+    assert(cache[1] == addr_a);
+    assert(*addr_a == 1);
+
+    /* Change device state; cached pointer should still be used. */
+    sim.queues[1].queue_notify_off = 4;
+    *addr_a = 0;
+    *addr_b = 0;
+
+    VirtioPciNotifyQueue(&dev, 1);
+    assert(*addr_a == 1);
+    assert(*addr_b == 0);
+
+    VirtioPciModernMmioSimUninstall();
+}
+
 int main(void)
 {
     test_init_ok();
     test_read_device_features();
     test_negotiate_features_missing_required_fails();
     test_negotiate_features_success_and_status_sequence();
+    test_negotiate_features_device_rejects_features_ok();
     test_setup_queue_programs_addresses_and_enables();
+    test_read_device_config_success();
+    test_read_device_config_generation_mismatch_times_out();
     test_get_queue_notify_address_respects_multiplier();
+    test_notify_queue_populates_and_uses_cache();
 
     printf("virtio_pci_modern_miniport_tests: PASS\n");
     return 0;
 }
-
