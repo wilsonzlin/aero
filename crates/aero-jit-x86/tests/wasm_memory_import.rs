@@ -114,3 +114,23 @@ fn tier2_wasm_memory_import_can_be_shared() {
     assert_eq!(mem.maximum, Some(4));
     assert_eq!(mem.page_size_log2, None);
 }
+
+#[test]
+fn tier2_wasm_memory_import_shared_defaults_to_4gib_maximum() {
+    let trace = trivial_tier2_trace();
+    let plan = RegAllocPlan::default();
+    let wasm = Tier2WasmCodegen::new().compile_trace_with_options(
+        &trace,
+        &plan,
+        Tier2WasmOptions {
+            memory_shared: true,
+            ..Default::default()
+        },
+    );
+    let mem = imported_memory_type(&wasm);
+    assert!(!mem.memory64);
+    assert!(mem.shared);
+    assert_eq!(mem.initial, 1);
+    assert_eq!(mem.maximum, Some(65_536));
+    assert_eq!(mem.page_size_log2, None);
+}
