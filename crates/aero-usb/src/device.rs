@@ -655,7 +655,8 @@ fn try_new_usb_device_model_from_snapshot(
         b"UMSE" => Ok(Some(Box::new(UsbHidMouseHandle::new()))),
         b"UGPD" => Ok(Some(Box::new(UsbHidGamepadHandle::new()))),
         b"UCMP" => Ok(Some(Box::new(UsbCompositeHidInputHandle::new()))),
-        b"HIDP" => Ok(None),
+        b"HIDP" => Ok(UsbHidPassthroughHandle::try_new_from_snapshot(model_snapshot)?
+            .map(|h| Box::new(h) as Box<dyn UsbDeviceModel>)),
         b"WUSB" => Ok(Some(Box::new(crate::UsbWebUsbPassthroughDevice::new()))),
         _ => Ok(None),
     }

@@ -1,6 +1,6 @@
 use aero_io_snapshot::io::state::codec::Encoder;
 use aero_io_snapshot::io::state::{IoSnapshot, SnapshotError, SnapshotVersion, SnapshotWriter};
-use aero_usb::hid::{UsbHidKeyboardHandle, UsbHidMouseHandle};
+use aero_usb::hid::{UsbHidKeyboardHandle, UsbHidMouseHandle, UsbHidPassthroughHandle};
 use aero_usb::hub::UsbHubDevice;
 use aero_usb::uhci::UhciController;
 use aero_usb::{SetupPacket, UsbInResult, UsbOutResult};
@@ -20,6 +20,35 @@ fn control_no_data(ctrl: &mut UhciController, addr: u8, setup: SetupPacket) {
         matches!(dev.handle_in(0, 0), UsbInResult::Data(data) if data.is_empty()),
         "expected ACK for status stage"
     );
+}
+
+fn control_in(ctrl: &mut UhciController, addr: u8, setup: SetupPacket) -> Vec<u8> {
+    let expected_len = setup.w_length as usize;
+    let dev = ctrl
+        .hub_mut()
+        .device_mut_for_address(addr)
+        .unwrap_or_else(|| panic!("expected USB device at address {addr}"));
+    assert_eq!(dev.handle_setup(setup), UsbOutResult::Ack);
+
+    let mut out = Vec::new();
+    loop {
+        match dev.handle_in(0, 64) {
+            UsbInResult::Data(chunk) => {
+                out.extend_from_slice(&chunk);
+                if chunk.len() < 64 {
+                    break;
+                }
+            }
+            UsbInResult::Nak => continue,
+            UsbInResult::Stall => panic!("unexpected STALL during control IN transfer"),
+            UsbInResult::Timeout => panic!("unexpected TIMEOUT during control IN transfer"),
+        }
+    }
+
+    // Status stage for control-IN is an OUT ZLP.
+    assert_eq!(dev.handle_out(0, &[]), UsbOutResult::Ack);
+    out.truncate(expected_len);
+    out
 }
 
 fn external_hub_ref(ctrl: &UhciController) -> &UsbHubDevice {
@@ -449,6 +478,126 @@ fn uhci_snapshot_restore_reconstructs_usb_topology_without_pre_attaching_devices
     assert!(mouse_report.len() >= 3);
     assert_eq!(mouse_report[1], 1);
     assert_eq!(mouse_report[2], 1);
+}
+
+#[test]
+fn uhci_snapshot_restore_reconstructs_hid_passthrough_device_without_pre_attaching_devices() {
+    let mut ctrl = UhciController::new();
+    let report_desc = vec![
+        0x06, 0x00, 0xff, // Usage Page (Vendor-defined 0xFF00)
+        0x09, 0x01, // Usage (0x01)
+        0xa1, 0x01, // Collection (Application)
+        0x15, 0x00, // Logical Minimum (0)
+        0x26, 0xff, 0x00, // Logical Maximum (255)
+        0x75, 0x08, // Report Size (8)
+        0x95, 0x02, // Report Count (2)
+        0x81, 0x02, // Input (Data,Var,Abs)
+        0xc0, // End Collection
+    ];
+
+    let hid = UsbHidPassthroughHandle::new(
+        0x1234,
+        0x5678,
+        "Vendor".to_string(),
+        "Product".to_string(),
+        Some("Serial".to_string()),
+        report_desc,
+        false, // no interrupt OUT
+        None,
+        Some(0x01),
+        Some(0x02),
+    );
+    ctrl.hub_mut().attach(0, Box::new(hid.clone()));
+
+    let mut mem = TestMemory::new(0x20_000);
+
+    // Reset + enable root port 0 so the bus routes packets.
+    ctrl.io_write(REG_PORTSC1, 2, PORTSC_PR as u32);
+    for _ in 0..50 {
+        ctrl.tick_1ms(&mut mem);
+    }
+
+    // Enumerate device to addr=1, cfg=1.
+    control_no_data(
+        &mut ctrl,
+        0,
+        SetupPacket {
+            bm_request_type: 0x00,
+            b_request: 0x05, // SET_ADDRESS
+            w_value: 1,
+            w_index: 0,
+            w_length: 0,
+        },
+    );
+    control_no_data(
+        &mut ctrl,
+        1,
+        SetupPacket {
+            bm_request_type: 0x00,
+            b_request: 0x09, // SET_CONFIGURATION
+            w_value: 1,
+            w_index: 0,
+            w_length: 0,
+        },
+    );
+
+    // Verify descriptor content before snapshot.
+    let dev_desc = control_in(
+        &mut ctrl,
+        1,
+        SetupPacket {
+            bm_request_type: 0x80, // DeviceToHost | Standard | Device
+            b_request: 0x06,       // GET_DESCRIPTOR
+            w_value: 0x0100,       // DEVICE descriptor
+            w_index: 0,
+            w_length: 18,
+        },
+    );
+    assert_eq!(u16::from_le_bytes([dev_desc[8], dev_desc[9]]), 0x1234);
+    assert_eq!(u16::from_le_bytes([dev_desc[10], dev_desc[11]]), 0x5678);
+
+    // Queue one input report.
+    hid.push_input_report(0, &[0xaa, 0xbb]);
+
+    let snap = ctrl.save_state();
+
+    // Restore from the controller snapshot alone (no pre-attached devices).
+    let mut restored = UhciController::new();
+    restored.load_state(&snap).unwrap();
+
+    assert_eq!(
+        restored.save_state(),
+        snap,
+        "UHCI controller snapshot should reconstruct and roundtrip byte-for-byte"
+    );
+
+    // Descriptor metadata should still match.
+    let restored_desc = control_in(
+        &mut restored,
+        1,
+        SetupPacket {
+            bm_request_type: 0x80,
+            b_request: 0x06,
+            w_value: 0x0100,
+            w_index: 0,
+            w_length: 18,
+        },
+    );
+    assert_eq!(u16::from_le_bytes([restored_desc[8], restored_desc[9]]), 0x1234);
+    assert_eq!(
+        u16::from_le_bytes([restored_desc[10], restored_desc[11]]),
+        0x5678
+    );
+
+    let dev = restored
+        .hub_mut()
+        .device_mut_for_address(1)
+        .expect("expected HID passthrough device at address 1");
+    let report = match dev.handle_in(1, 64) {
+        UsbInResult::Data(data) => data,
+        other => panic!("expected interrupt IN report, got {other:?}"),
+    };
+    assert_eq!(report, vec![0xaa, 0xbb]);
 }
 
 #[test]

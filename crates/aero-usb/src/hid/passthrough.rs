@@ -35,6 +35,68 @@ const DEFAULT_MAX_PACKET_SIZE: u16 = 64;
 const DEFAULT_MAX_PENDING_INPUT_REPORTS: usize = 256;
 const DEFAULT_MAX_PENDING_OUTPUT_REPORTS: usize = 256;
 
+// Snapshot metadata used to reconstruct passthrough devices without requiring the host to
+// pre-attach them before restoring a UHCI controller snapshot. These fields encode the static
+// descriptor/report configuration and therefore allow recreating the model instance.
+const HIDP_SNAP_TAG_VENDOR_ID: u16 = 15;
+const HIDP_SNAP_TAG_PRODUCT_ID: u16 = 16;
+const HIDP_SNAP_TAG_MANUFACTURER: u16 = 17;
+const HIDP_SNAP_TAG_PRODUCT: u16 = 18;
+const HIDP_SNAP_TAG_SERIAL: u16 = 19;
+const HIDP_SNAP_TAG_HID_REPORT_DESCRIPTOR: u16 = 20;
+const HIDP_SNAP_TAG_HAS_INTERRUPT_OUT: u16 = 21;
+const HIDP_SNAP_TAG_MAX_PACKET_SIZE: u16 = 22;
+const HIDP_SNAP_TAG_INTERFACE_SUBCLASS: u16 = 23;
+const HIDP_SNAP_TAG_INTERFACE_PROTOCOL: u16 = 24;
+
+fn decode_string_descriptor_utf16le(desc: &[u8]) -> Option<String> {
+    if desc.len() < 2 {
+        return None;
+    }
+    if desc[1] != USB_DESCRIPTOR_TYPE_STRING {
+        return None;
+    }
+    let len = desc[0] as usize;
+    if len < 2 || len > desc.len() {
+        return None;
+    }
+    let payload = &desc[2..len];
+    if payload.len() % 2 != 0 {
+        return None;
+    }
+    let units: Vec<u16> = payload
+        .chunks_exact(2)
+        .map(|b| u16::from_le_bytes([b[0], b[1]]))
+        .collect();
+    String::from_utf16(&units).ok()
+}
+
+fn parse_device_descriptor_fields(bytes: &[u8]) -> Option<(u16, u16, u16)> {
+    if bytes.len() < 12 {
+        return None;
+    }
+    let max_packet_size = bytes[7] as u16;
+    let vendor_id = u16::from_le_bytes([bytes[8], bytes[9]]);
+    let product_id = u16::from_le_bytes([bytes[10], bytes[11]]);
+    Some((vendor_id, product_id, max_packet_size))
+}
+
+fn parse_interface_descriptor_fields(bytes: &[u8]) -> Option<(u8, u8)> {
+    const INTERFACE_DESC_OFFSET: usize = 9;
+    if bytes.len() < INTERFACE_DESC_OFFSET + 9 {
+        return None;
+    }
+    // Config descriptor is always followed immediately by a single interface descriptor.
+    if bytes[INTERFACE_DESC_OFFSET] != 0x09
+        || bytes[INTERFACE_DESC_OFFSET + 1] != super::USB_DESCRIPTOR_TYPE_INTERFACE
+    {
+        return None;
+    }
+    let subclass = bytes[INTERFACE_DESC_OFFSET + 6];
+    let protocol = bytes[INTERFACE_DESC_OFFSET + 7];
+    Some((subclass, protocol))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UsbHidPassthroughOutputReport {
     /// HID report type as used by GET_REPORT/SET_REPORT:
@@ -114,6 +176,80 @@ impl UsbHidPassthroughHandle {
         Self {
             inner: Rc::new(RefCell::new(model)),
         }
+    }
+
+    pub(crate) fn try_new_from_snapshot(bytes: &[u8]) -> SnapshotResult<Option<Self>> {
+        const MAX_STRING_BYTES: usize = 16 * 1024;
+        const MAX_REPORT_DESCRIPTOR_BYTES: usize = 1024 * 1024;
+
+        let r = SnapshotReader::parse(bytes, UsbHidPassthrough::DEVICE_ID)?;
+        r.ensure_device_major(UsbHidPassthrough::DEVICE_VERSION.major)?;
+
+        let Some(vendor_id) = r.u16(HIDP_SNAP_TAG_VENDOR_ID)? else {
+            return Ok(None);
+        };
+        let Some(product_id) = r.u16(HIDP_SNAP_TAG_PRODUCT_ID)? else {
+            return Ok(None);
+        };
+        let Some(has_interrupt_out) = r.bool(HIDP_SNAP_TAG_HAS_INTERRUPT_OUT)? else {
+            return Ok(None);
+        };
+        let Some(report_desc) = r.bytes(HIDP_SNAP_TAG_HID_REPORT_DESCRIPTOR) else {
+            return Ok(None);
+        };
+        if report_desc.len() > MAX_REPORT_DESCRIPTOR_BYTES {
+            return Err(SnapshotError::InvalidFieldEncoding(
+                "hid report descriptor too large",
+            ));
+        }
+
+        let Some(manufacturer) = r.bytes(HIDP_SNAP_TAG_MANUFACTURER) else {
+            return Ok(None);
+        };
+        if manufacturer.len() > MAX_STRING_BYTES {
+            return Err(SnapshotError::InvalidFieldEncoding("manufacturer too large"));
+        }
+        let manufacturer = String::from_utf8(manufacturer.to_vec())
+            .map_err(|_| SnapshotError::InvalidFieldEncoding("manufacturer"))?;
+
+        let Some(product) = r.bytes(HIDP_SNAP_TAG_PRODUCT) else {
+            return Ok(None);
+        };
+        if product.len() > MAX_STRING_BYTES {
+            return Err(SnapshotError::InvalidFieldEncoding("product too large"));
+        }
+        let product = String::from_utf8(product.to_vec())
+            .map_err(|_| SnapshotError::InvalidFieldEncoding("product"))?;
+
+        let serial = match r.bytes(HIDP_SNAP_TAG_SERIAL) {
+            Some(bytes) => {
+                if bytes.len() > MAX_STRING_BYTES {
+                    return Err(SnapshotError::InvalidFieldEncoding("serial too large"));
+                }
+                Some(
+                    String::from_utf8(bytes.to_vec())
+                        .map_err(|_| SnapshotError::InvalidFieldEncoding("serial"))?,
+                )
+            }
+            None => None,
+        };
+
+        let max_packet_size = r.u16(HIDP_SNAP_TAG_MAX_PACKET_SIZE)?;
+        let interface_subclass = r.u8(HIDP_SNAP_TAG_INTERFACE_SUBCLASS)?;
+        let interface_protocol = r.u8(HIDP_SNAP_TAG_INTERFACE_PROTOCOL)?;
+
+        Ok(Some(Self::new(
+            vendor_id,
+            product_id,
+            manufacturer,
+            product,
+            serial,
+            report_desc.to_vec(),
+            has_interrupt_out,
+            max_packet_size,
+            interface_subclass,
+            interface_protocol,
+        )))
     }
 
     pub fn configured(&self) -> bool {
@@ -1280,7 +1416,7 @@ fn decode_report_map(
 
 impl IoSnapshot for UsbHidPassthrough {
     const DEVICE_ID: [u8; 4] = *b"HIDP";
-    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 1);
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 2);
 
     fn save_state(&self) -> Vec<u8> {
         const TAG_ADDRESS: u16 = 1;
@@ -1343,6 +1479,43 @@ impl IoSnapshot for UsbHidPassthrough {
                 .bytes(&report.data);
         }
         w.field_bytes(TAG_PENDING_OUTPUT_REPORTS, pending_out.finish());
+
+        // Static metadata required for reconstruction.
+        if let Some((vendor_id, product_id, max_packet_size)) =
+            parse_device_descriptor_fields(self.device_descriptor.as_ref())
+        {
+            w.field_u16(HIDP_SNAP_TAG_VENDOR_ID, vendor_id);
+            w.field_u16(HIDP_SNAP_TAG_PRODUCT_ID, product_id);
+            w.field_u16(HIDP_SNAP_TAG_MAX_PACKET_SIZE, max_packet_size);
+        }
+
+        if let Some((subclass, protocol)) =
+            parse_interface_descriptor_fields(self.config_descriptor.as_ref())
+        {
+            w.field_u8(HIDP_SNAP_TAG_INTERFACE_SUBCLASS, subclass);
+            w.field_u8(HIDP_SNAP_TAG_INTERFACE_PROTOCOL, protocol);
+        }
+
+        if let Some(s) =
+            decode_string_descriptor_utf16le(self.manufacturer_string_descriptor.as_ref())
+        {
+            w.field_bytes(HIDP_SNAP_TAG_MANUFACTURER, s.into_bytes());
+        }
+        if let Some(s) = decode_string_descriptor_utf16le(self.product_string_descriptor.as_ref())
+        {
+            w.field_bytes(HIDP_SNAP_TAG_PRODUCT, s.into_bytes());
+        }
+        if let Some(desc) = self.serial_string_descriptor.as_ref() {
+            if let Some(s) = decode_string_descriptor_utf16le(desc.as_ref()) {
+                w.field_bytes(HIDP_SNAP_TAG_SERIAL, s.into_bytes());
+            }
+        }
+
+        w.field_bytes(
+            HIDP_SNAP_TAG_HID_REPORT_DESCRIPTOR,
+            self.hid_report_descriptor.as_ref().to_vec(),
+        );
+        w.field_bool(HIDP_SNAP_TAG_HAS_INTERRUPT_OUT, self.has_interrupt_out);
 
         w.finish()
     }
