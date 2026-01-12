@@ -18,6 +18,9 @@ path = "../crates/memory"
 [dependencies.aero-snapshot]
 path = "../crates/aero-snapshot"
 
+[dependencies.aero-io-snapshot]
+path = "../crates/aero-io-snapshot"
+
 [dependencies.aero-devices-storage]
 path = "../crates/aero-devices-storage"
 

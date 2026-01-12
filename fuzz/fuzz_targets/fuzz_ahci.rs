@@ -5,6 +5,7 @@ use libfuzzer_sys::fuzz_target;
 
 use aero_devices::pci::capabilities::PCI_CONFIG_SPACE_SIZE;
 use aero_devices::pci::PciDevice;
+use aero_io_snapshot::io::state::IoSnapshot;
 use aero_devices_storage::ata::{
     AtaDrive, ATA_CMD_FLUSH_CACHE, ATA_CMD_FLUSH_CACHE_EXT, ATA_CMD_IDENTIFY, ATA_CMD_READ_DMA_EXT,
     ATA_CMD_SET_FEATURES, ATA_CMD_WRITE_DMA_EXT,
@@ -186,6 +187,7 @@ enum MmioOp {
     ConfigRead { offset: u16, size: usize },
     ConfigWrite { offset: u16, size: usize, value: u32 },
     Process,
+    SnapshotRoundtrip,
 }
 
 fuzz_target!(|data: &[u8]| {
@@ -231,6 +233,12 @@ fuzz_target!(|data: &[u8]| {
     let mut ops = Vec::with_capacity(ops_len);
     for _ in 0..ops_len {
         let kind: u8 = u.arbitrary().unwrap_or(0);
+        // Snapshot roundtrips are comparatively expensive; trigger them occasionally.
+        if kind % 16 == 0 {
+            ops.push(MmioOp::SnapshotRoundtrip);
+            continue;
+        }
+
         match kind % 5 {
             0 => {
                 // Bias towards known register offsets to reach deeper state transitions.
@@ -451,6 +459,24 @@ fuzz_target!(|data: &[u8]| {
                 let _ = dev.config_mut().write_with_effects(offset, size, value);
             }
             MmioOp::Process => dev.process(&mut mem),
+            MmioOp::SnapshotRoundtrip => {
+                let bytes = dev.save_state();
+                let mut restored = AhciPciDevice::new(num_ports);
+                if restored.load_state(&bytes).is_ok() {
+                    // The AHCI controller snapshot does not include the host-side disk backend.
+                    // Reattach a fresh disk so subsequent DMA paths remain reachable.
+                    let disk = match RawDisk::create(MemBackend::new(), capacity) {
+                        Ok(d) => d,
+                        Err(_) => continue,
+                    };
+                    let drive = match AtaDrive::new(Box::new(disk) as Box<dyn VirtualDisk>) {
+                        Ok(d) => d,
+                        Err(_) => continue,
+                    };
+                    restored.attach_drive(port_idx, drive);
+                    dev = restored;
+                }
+            }
         }
     }
 

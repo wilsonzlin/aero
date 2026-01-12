@@ -1226,6 +1226,7 @@ dependencies = [
  "aero-devices-storage",
  "aero-gpu",
  "aero-http-range",
+ "aero-io-snapshot",
  "aero-protocol",
  "aero-snapshot",
  "aero-storage",
