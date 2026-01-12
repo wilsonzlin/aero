@@ -365,6 +365,8 @@ describe("io/bus/pci", () => {
       classCode: 0,
       bars: [{ kind: "mmio64", size: 0x1_0000_0001 }, null, null, null, null, null],
     };
+    expect(() => pciBus.registerDevice(dev, { device: 0, function: 0 })).toThrow(/mmio64_bad_size_dev/i);
+    expect(() => pciBus.registerDevice(dev, { device: 0, function: 0 })).toThrow(/BAR0/i);
     expect(() => pciBus.registerDevice(dev, { device: 0, function: 0 })).toThrow(/power-of-two/i);
   });
 

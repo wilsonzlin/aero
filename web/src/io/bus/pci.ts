@@ -496,6 +496,9 @@ export class PciBus implements PortIoHandler {
     for (let i = 0; i < 6; i++) {
       const desc = barDescs[i] ?? null;
       if (!desc) continue;
+      if (!isPow2(desc.size)) {
+        throw new Error(`PCI device ${device.name}: BAR${i} size must be power-of-two, got ${desc.size}`);
+      }
 
       if (desc.kind === "mmio64") {
         if (i >= 5) {
