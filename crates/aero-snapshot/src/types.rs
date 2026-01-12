@@ -6,6 +6,9 @@ use crate::io::{ReadLeExt, WriteLeExt};
 
 const MAX_LABEL_LEN: u32 = 4 * 1024;
 const MAX_DISK_PATH_LEN: u32 = 64 * 1024;
+const MAX_DISK_REFS: usize = 256;
+const MAX_VCPU_INTERNAL_LEN: u64 = 64 * 1024 * 1024;
+const MAX_DEVICE_ENTRY_LEN: u64 = 64 * 1024 * 1024;
 const FXSAVE_AREA_SIZE: usize = 512;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -30,6 +33,9 @@ impl SnapshotMeta {
         match &self.label {
             Some(label) => {
                 w.write_u8(1)?;
+                if label.as_bytes().len() > MAX_LABEL_LEN as usize {
+                    return Err(SnapshotError::Corrupt("label too long"));
+                }
                 w.write_string_u32(label)?;
             }
             None => w.write_u8(0)?,
@@ -549,6 +555,9 @@ impl VcpuSnapshot {
             .len()
             .try_into()
             .map_err(|_| SnapshotError::Corrupt("vCPU internal state too large"))?;
+        if internal_len > MAX_VCPU_INTERNAL_LEN {
+            return Err(SnapshotError::Corrupt("vCPU internal state too large"));
+        }
         w.write_u64_le(internal_len)?;
         w.write_bytes(&self.internal_state)?;
         Ok(())
@@ -577,6 +586,9 @@ impl VcpuSnapshot {
             .len()
             .try_into()
             .map_err(|_| SnapshotError::Corrupt("vCPU internal state too large"))?;
+        if internal_len > MAX_VCPU_INTERNAL_LEN {
+            return Err(SnapshotError::Corrupt("vCPU internal state too large"));
+        }
         w.write_u64_le(internal_len)?;
         w.write_bytes(&self.internal_state)?;
         Ok(())
@@ -846,6 +858,9 @@ impl DeviceState {
             .len()
             .try_into()
             .map_err(|_| SnapshotError::Corrupt("device data too large"))?;
+        if len > MAX_DEVICE_ENTRY_LEN {
+            return Err(SnapshotError::Corrupt("device entry too large"));
+        }
         w.write_u64_le(len)?;
         w.write_bytes(&self.data)?;
         Ok(())
@@ -876,6 +891,9 @@ pub struct DiskOverlayRefs {
 
 impl DiskOverlayRefs {
     pub fn encode<W: Write>(&self, w: &mut W) -> Result<()> {
+        if self.disks.len() > MAX_DISK_REFS {
+            return Err(SnapshotError::Corrupt("too many disks"));
+        }
         let count: u32 = self
             .disks
             .len()
@@ -890,7 +908,7 @@ impl DiskOverlayRefs {
 
     pub fn decode<R: Read>(r: &mut R) -> Result<Self> {
         let count = r.read_u32_le()? as usize;
-        if count > 256 {
+        if count > MAX_DISK_REFS {
             return Err(SnapshotError::Corrupt("too many disks"));
         }
         let mut disks = Vec::with_capacity(count.min(64));
@@ -911,7 +929,13 @@ pub struct DiskOverlayRef {
 impl DiskOverlayRef {
     pub fn encode<W: Write>(&self, w: &mut W) -> Result<()> {
         w.write_u32_le(self.disk_id)?;
+        if self.base_image.as_bytes().len() > MAX_DISK_PATH_LEN as usize {
+            return Err(SnapshotError::Corrupt("disk base_image too long"));
+        }
         w.write_string_u32(&self.base_image)?;
+        if self.overlay_image.as_bytes().len() > MAX_DISK_PATH_LEN as usize {
+            return Err(SnapshotError::Corrupt("disk overlay_image too long"));
+        }
         w.write_string_u32(&self.overlay_image)?;
         Ok(())
     }

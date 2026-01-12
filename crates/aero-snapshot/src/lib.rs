@@ -36,6 +36,9 @@ use crate::io::{ReadLeExt, WriteLeExt};
 const DUPLICATE_DEVICE_ENTRY: &str = "duplicate device entry (id/version/flags must be unique)";
 const DUPLICATE_DISK_ENTRY: &str = "duplicate disk entry (disk_id must be unique)";
 const DUPLICATE_APIC_ID: &str = "duplicate APIC ID in CPU list (apic_id must be unique)";
+const MAX_DEVICES_SECTION_LEN: u64 = 256 * 1024 * 1024;
+const MAX_DEVICE_COUNT: usize = 4096;
+const MAX_CPU_COUNT: usize = 256;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SaveOptions {
@@ -173,6 +176,12 @@ pub fn save_snapshot<W: Write + Seek, S: SnapshotSource>(
     })?;
 
     let mut cpus = source.cpu_states();
+    if cpus.is_empty() {
+        return Err(SnapshotError::Corrupt("missing CPU entry"));
+    }
+    if cpus.len() > MAX_CPU_COUNT {
+        return Err(SnapshotError::Corrupt("too many CPUs"));
+    }
     cpus.sort_by_key(|cpu| cpu.apic_id);
     if cpus.windows(2).any(|w| w[0].apic_id == w[1].apic_id) {
         return Err(SnapshotError::Corrupt(DUPLICATE_APIC_ID));
@@ -205,6 +214,26 @@ pub fn save_snapshot<W: Write + Seek, S: SnapshotSource>(
 
     write_section(w, SectionId::DEVICES, 1, 0, |w| {
         let mut devices = source.device_states();
+        if devices.len() > MAX_DEVICE_COUNT {
+            return Err(SnapshotError::Corrupt("too many devices"));
+        }
+
+        // Keep the `DEVICES` payload within the same bounds enforced by restore.
+        //
+        // Restore validates the `section_len` from the TLV header *before* decoding entries, so we
+        // must ensure we never write a section that our own restore would reject.
+        let mut payload_len: u64 = 4; // u32 device count
+        for device in &devices {
+            // Device entry header: id(u32) + version(u16) + flags(u16) + len(u64).
+            payload_len = payload_len
+                .checked_add(4 + 2 + 2 + 8)
+                .and_then(|v| v.checked_add(u64::try_from(device.data.len()).unwrap_or(u64::MAX)))
+                .ok_or(SnapshotError::Corrupt("devices section too large"))?;
+        }
+        if payload_len > MAX_DEVICES_SECTION_LEN {
+            return Err(SnapshotError::Corrupt("devices section too large"));
+        }
+
         devices.sort_by_key(|device| (device.id.0, device.version, device.flags));
         if devices.windows(2).any(|w| {
             w[0].id.0 == w[1].id.0 && w[0].version == w[1].version && w[0].flags == w[1].flags
@@ -372,10 +401,6 @@ fn restore_snapshot_impl<R: Read, T: SnapshotTarget>(
     read_file_header(r)?;
     target.pre_restore();
 
-    const MAX_DEVICES_SECTION_LEN: u64 = 256 * 1024 * 1024;
-    const MAX_DEVICE_COUNT: usize = 4096;
-    const MAX_CPU_COUNT: usize = 256;
-
     // For dirty snapshots, we must validate parent snapshot id before applying RAM diffs.
     //
     // For `restore_snapshot` and `restore_snapshot_checked`, this means `META` must appear before
@@ -444,6 +469,9 @@ fn restore_snapshot_impl<R: Read, T: SnapshotTarget>(
                         return Err(SnapshotError::Corrupt("duplicate CPU/CPUS section"));
                     }
                     let count = section_reader.read_u32_le()? as usize;
+                    if count == 0 {
+                        return Err(SnapshotError::Corrupt("missing CPU entry"));
+                    }
                     if count > MAX_CPU_COUNT {
                         return Err(SnapshotError::Corrupt("too many CPUs"));
                     }
@@ -470,6 +498,9 @@ fn restore_snapshot_impl<R: Read, T: SnapshotTarget>(
                         return Err(SnapshotError::Corrupt("duplicate CPU/CPUS section"));
                     }
                     let count = section_reader.read_u32_le()? as usize;
+                    if count == 0 {
+                        return Err(SnapshotError::Corrupt("missing CPU entry"));
+                    }
                     if count > MAX_CPU_COUNT {
                         return Err(SnapshotError::Corrupt("too many CPUs"));
                     }

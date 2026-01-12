@@ -256,6 +256,237 @@ impl SnapshotSource for DuplicateCpuSource {
     }
 }
 
+struct EmptyCpuSource {
+    ram: Vec<u8>,
+}
+
+impl SnapshotSource for EmptyCpuSource {
+    fn snapshot_meta(&mut self) -> SnapshotMeta {
+        SnapshotMeta::default()
+    }
+
+    fn cpu_state(&self) -> CpuState {
+        CpuState::default()
+    }
+
+    fn cpu_states(&self) -> Vec<VcpuSnapshot> {
+        Vec::new()
+    }
+
+    fn mmu_state(&self) -> MmuState {
+        MmuState::default()
+    }
+
+    fn device_states(&self) -> Vec<DeviceState> {
+        Vec::new()
+    }
+
+    fn disk_overlays(&self) -> DiskOverlayRefs {
+        DiskOverlayRefs::default()
+    }
+
+    fn ram_len(&self) -> usize {
+        self.ram.len()
+    }
+
+    fn read_ram(&self, _offset: u64, _buf: &mut [u8]) -> Result<()> {
+        Ok(())
+    }
+
+    fn take_dirty_pages(&mut self) -> Option<Vec<u64>> {
+        None
+    }
+}
+
+struct TooManyCpuSource {
+    ram: Vec<u8>,
+}
+
+impl SnapshotSource for TooManyCpuSource {
+    fn snapshot_meta(&mut self) -> SnapshotMeta {
+        SnapshotMeta::default()
+    }
+
+    fn cpu_state(&self) -> CpuState {
+        CpuState::default()
+    }
+
+    fn cpu_states(&self) -> Vec<VcpuSnapshot> {
+        // One more than the current `aero-snapshot` restore-time MAX_CPU_COUNT (256).
+        let mut out = Vec::with_capacity(257);
+        for apic_id in 0..257u32 {
+            out.push(VcpuSnapshot {
+                apic_id,
+                cpu: CpuState::default(),
+                internal_state: Vec::new(),
+            });
+        }
+        out
+    }
+
+    fn mmu_state(&self) -> MmuState {
+        MmuState::default()
+    }
+
+    fn device_states(&self) -> Vec<DeviceState> {
+        Vec::new()
+    }
+
+    fn disk_overlays(&self) -> DiskOverlayRefs {
+        DiskOverlayRefs::default()
+    }
+
+    fn ram_len(&self) -> usize {
+        self.ram.len()
+    }
+
+    fn read_ram(&self, _offset: u64, _buf: &mut [u8]) -> Result<()> {
+        Ok(())
+    }
+
+    fn take_dirty_pages(&mut self) -> Option<Vec<u64>> {
+        None
+    }
+}
+
+struct TooManyDeviceSource {
+    ram: Vec<u8>,
+}
+
+impl SnapshotSource for TooManyDeviceSource {
+    fn snapshot_meta(&mut self) -> SnapshotMeta {
+        SnapshotMeta::default()
+    }
+
+    fn cpu_state(&self) -> CpuState {
+        CpuState::default()
+    }
+
+    fn mmu_state(&self) -> MmuState {
+        MmuState::default()
+    }
+
+    fn device_states(&self) -> Vec<DeviceState> {
+        // One more than the current restore-time MAX_DEVICE_COUNT (4096).
+        let mut out = Vec::with_capacity(4097);
+        for id in 0..4097u32 {
+            out.push(DeviceState {
+                id: DeviceId(id),
+                version: 1,
+                flags: 0,
+                data: Vec::new(),
+            });
+        }
+        out
+    }
+
+    fn disk_overlays(&self) -> DiskOverlayRefs {
+        DiskOverlayRefs::default()
+    }
+
+    fn ram_len(&self) -> usize {
+        self.ram.len()
+    }
+
+    fn read_ram(&self, _offset: u64, _buf: &mut [u8]) -> Result<()> {
+        Ok(())
+    }
+
+    fn take_dirty_pages(&mut self) -> Option<Vec<u64>> {
+        None
+    }
+}
+
+struct TooManyDiskSource {
+    ram: Vec<u8>,
+}
+
+impl SnapshotSource for TooManyDiskSource {
+    fn snapshot_meta(&mut self) -> SnapshotMeta {
+        SnapshotMeta::default()
+    }
+
+    fn cpu_state(&self) -> CpuState {
+        CpuState::default()
+    }
+
+    fn mmu_state(&self) -> MmuState {
+        MmuState::default()
+    }
+
+    fn device_states(&self) -> Vec<DeviceState> {
+        Vec::new()
+    }
+
+    fn disk_overlays(&self) -> DiskOverlayRefs {
+        let mut disks = Vec::with_capacity(257);
+        for disk_id in 0..257u32 {
+            disks.push(DiskOverlayRef {
+                disk_id,
+                base_image: "base.img".to_string(),
+                overlay_image: "overlay.img".to_string(),
+            });
+        }
+        DiskOverlayRefs { disks }
+    }
+
+    fn ram_len(&self) -> usize {
+        self.ram.len()
+    }
+
+    fn read_ram(&self, _offset: u64, _buf: &mut [u8]) -> Result<()> {
+        Ok(())
+    }
+
+    fn take_dirty_pages(&mut self) -> Option<Vec<u64>> {
+        None
+    }
+}
+
+struct LongDiskPathSource {
+    ram: Vec<u8>,
+}
+
+impl SnapshotSource for LongDiskPathSource {
+    fn snapshot_meta(&mut self) -> SnapshotMeta {
+        SnapshotMeta::default()
+    }
+
+    fn cpu_state(&self) -> CpuState {
+        CpuState::default()
+    }
+
+    fn mmu_state(&self) -> MmuState {
+        MmuState::default()
+    }
+
+    fn device_states(&self) -> Vec<DeviceState> {
+        Vec::new()
+    }
+
+    fn disk_overlays(&self) -> DiskOverlayRefs {
+        DiskOverlayRefs {
+            disks: vec![DiskOverlayRef {
+                disk_id: 0,
+                base_image: "x".repeat(64 * 1024 + 1),
+                overlay_image: "overlay.img".to_string(),
+            }],
+        }
+    }
+
+    fn ram_len(&self) -> usize {
+        self.ram.len()
+    }
+
+    fn read_ram(&self, _offset: u64, _buf: &mut [u8]) -> Result<()> {
+        Ok(())
+    }
+
+    fn take_dirty_pages(&mut self) -> Option<Vec<u64>> {
+        None
+    }
+}
+
 fn push_section(dst: &mut Vec<u8>, id: SectionId, version: u16, flags: u16, payload: &[u8]) {
     dst.extend_from_slice(&id.0.to_le_bytes());
     dst.extend_from_slice(&version.to_le_bytes());
@@ -436,6 +667,89 @@ fn save_snapshot_rejects_duplicate_apic_ids_in_cpu_list() {
 }
 
 #[test]
+fn save_snapshot_rejects_empty_cpu_list() {
+    let options = SaveOptions {
+        ram: RamWriteOptions {
+            compression: Compression::None,
+            chunk_size: 1024,
+            ..RamWriteOptions::default()
+        },
+    };
+
+    let mut source = EmptyCpuSource { ram: Vec::new() };
+    let mut cursor = Cursor::new(Vec::new());
+    let err = save_snapshot(&mut cursor, &mut source, options).unwrap_err();
+    assert!(matches!(err, SnapshotError::Corrupt("missing CPU entry")));
+}
+
+#[test]
+fn save_snapshot_rejects_too_many_cpus() {
+    let options = SaveOptions {
+        ram: RamWriteOptions {
+            compression: Compression::None,
+            chunk_size: 1024,
+            ..RamWriteOptions::default()
+        },
+    };
+
+    let mut source = TooManyCpuSource { ram: Vec::new() };
+    let mut cursor = Cursor::new(Vec::new());
+    let err = save_snapshot(&mut cursor, &mut source, options).unwrap_err();
+    assert!(matches!(err, SnapshotError::Corrupt("too many CPUs")));
+}
+
+#[test]
+fn save_snapshot_rejects_too_many_devices() {
+    let options = SaveOptions {
+        ram: RamWriteOptions {
+            compression: Compression::None,
+            chunk_size: 1024,
+            ..RamWriteOptions::default()
+        },
+    };
+
+    let mut source = TooManyDeviceSource { ram: Vec::new() };
+    let mut cursor = Cursor::new(Vec::new());
+    let err = save_snapshot(&mut cursor, &mut source, options).unwrap_err();
+    assert!(matches!(err, SnapshotError::Corrupt("too many devices")));
+}
+
+#[test]
+fn save_snapshot_rejects_too_many_disks() {
+    let options = SaveOptions {
+        ram: RamWriteOptions {
+            compression: Compression::None,
+            chunk_size: 1024,
+            ..RamWriteOptions::default()
+        },
+    };
+
+    let mut source = TooManyDiskSource { ram: Vec::new() };
+    let mut cursor = Cursor::new(Vec::new());
+    let err = save_snapshot(&mut cursor, &mut source, options).unwrap_err();
+    assert!(matches!(err, SnapshotError::Corrupt("too many disks")));
+}
+
+#[test]
+fn save_snapshot_rejects_disk_paths_exceeding_max_len() {
+    let options = SaveOptions {
+        ram: RamWriteOptions {
+            compression: Compression::None,
+            chunk_size: 1024,
+            ..RamWriteOptions::default()
+        },
+    };
+
+    let mut source = LongDiskPathSource { ram: Vec::new() };
+    let mut cursor = Cursor::new(Vec::new());
+    let err = save_snapshot(&mut cursor, &mut source, options).unwrap_err();
+    assert!(matches!(
+        err,
+        SnapshotError::Corrupt("disk base_image too long")
+    ));
+}
+
+#[test]
 fn restore_snapshot_rejects_duplicate_apic_ids_in_cpus_section() {
     let mut bytes = Vec::new();
     bytes.extend_from_slice(SNAPSHOT_MAGIC);
@@ -474,6 +788,32 @@ fn restore_snapshot_rejects_duplicate_apic_ids_in_cpus_section() {
         err,
         SnapshotError::Corrupt("duplicate APIC ID in CPU list (apic_id must be unique)")
     ));
+}
+
+#[test]
+fn restore_snapshot_rejects_cpus_section_with_zero_entries() {
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(SNAPSHOT_MAGIC);
+    bytes.extend_from_slice(&SNAPSHOT_VERSION_V1.to_le_bytes());
+    bytes.push(SNAPSHOT_ENDIANNESS_LITTLE);
+    bytes.push(0);
+    bytes.extend_from_slice(&0u32.to_le_bytes());
+
+    let cpus_payload = 0u32.to_le_bytes();
+    push_section(&mut bytes, SectionId::CPUS, 2, 0, &cpus_payload);
+
+    let mut ram_payload = Vec::new();
+    ram_payload.extend_from_slice(&0u64.to_le_bytes()); // total_len
+    ram_payload.extend_from_slice(&4096u32.to_le_bytes()); // page_size
+    ram_payload.push(RamMode::Full as u8);
+    ram_payload.push(Compression::None as u8);
+    ram_payload.extend_from_slice(&0u16.to_le_bytes()); // reserved
+    ram_payload.extend_from_slice(&4096u32.to_le_bytes()); // chunk_size
+    push_section(&mut bytes, SectionId::RAM, 1, 0, &ram_payload);
+
+    let mut target = DummyTarget::new(0);
+    let err = restore_snapshot(&mut Cursor::new(bytes), &mut target).unwrap_err();
+    assert!(matches!(err, SnapshotError::Corrupt("missing CPU entry")));
 }
 
 #[test]
