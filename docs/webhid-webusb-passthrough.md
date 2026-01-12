@@ -417,8 +417,9 @@ Recommended guardrails:
     `0x09`) that can be attached behind a root port to expose additional downstream ports.
     - Implementation: `crates/aero-usb/src/hub/device.rs`
     - UHCI integration tests: `crates/aero-usb/tests/uhci_external_hub.rs`
-  - Current host-side WebHID UI assumes an external hub is attached on UHCI root port 0 and allocates
-    passthrough devices behind it using guest paths like `0.3`.
+  - Current host-side WebHID UI assumes an external hub is attached on UHCI root port 0. The first few
+    downstream hub ports (1..3) are reserved for Aero's synthetic HID devices (keyboard/mouse/gamepad),
+    so WebHID passthrough allocations start at guest paths like `0.4`.
     - UHCI root port 1 is reserved for the guest-visible WebUSB passthrough device, so WebHID attachments
       do not use path `1`. Increase the external hub port count instead if you need more guest attachment
       paths.
