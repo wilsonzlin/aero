@@ -35,7 +35,7 @@ test("AudioWorklet producer does not burst after worker-VM snapshot restore", as
   await page.click("#init-audio-output-worker");
 
   await page.waitForFunction(() => {
-    // Exposed by the audio UI entrypoint (`web/src/main.ts`).
+    // Exposed by the repo-root harness audio panel (`src/main.ts`).
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const out = (globalThis as any).__aeroAudioOutputWorker;
     return out?.enabled === true && out?.context?.state === "running";
