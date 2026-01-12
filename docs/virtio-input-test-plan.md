@@ -368,6 +368,10 @@ Expected signal:
 If the guest was not provisioned with `--test-input-events`, the guest will emit:
 `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|SKIP|flag_not_set` and the harness will fail when `-WithInputEvents` / `--with-input-events` is enabled.
 
+If the guest selftest is too old (or otherwise misconfigured) and does not emit any `virtio-input-events` marker at all
+(READY/SKIP/PASS/FAIL) after completing `virtio-input`, the harness fails early with a `MISSING_VIRTIO_INPUT_EVENTS`
+reason. Update/re-provision the guest selftest binary.
+
 ---
 
 ## 5) Web runtime validation (browser → virtio-input routing)
