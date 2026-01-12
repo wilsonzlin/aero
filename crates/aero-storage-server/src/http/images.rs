@@ -738,3 +738,59 @@ where
         this.inner.as_mut().poll_next(cx)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::{metrics::Metrics, store::LocalFsImageStore};
+    use axum::{
+        body::Body,
+        http::{Request, StatusCode},
+        middleware,
+        routing::get,
+        Router,
+    };
+    use std::sync::Arc;
+    use tower::ServiceExt;
+
+    #[tokio::test]
+    async fn image_id_path_len_guard_intercepts_pathological_raw_segments() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(LocalFsImageStore::new(dir.path()));
+        let metrics = Arc::new(Metrics::new());
+        let state = ImagesState::new(store, metrics);
+
+        let app = Router::new()
+            .route("/v1/images/:image_id", get(|| async { StatusCode::OK }))
+            .with_state(state.clone())
+            .route_layer(middleware::from_fn_with_state(state, image_id_path_len_guard));
+
+        let too_long_raw = "a".repeat(crate::store::MAX_IMAGE_ID_LEN * 3 + 1);
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/v1/images/{too_long_raw}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+        // Boundary case: this is the longest raw segment that could still decode to exactly
+        // `MAX_IMAGE_ID_LEN` bytes (if every byte was percent-encoded).
+        let max_raw = "a".repeat(crate::store::MAX_IMAGE_ID_LEN * 3);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/v1/images/{max_raw}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+}
