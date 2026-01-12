@@ -1,11 +1,19 @@
 use alloc::boxed::Box;
 use alloc::vec::Vec;
+use core::any::Any;
 
 use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
 use aero_io_snapshot::io::state::{
     IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
 };
 
+use crate::hid::composite::UsbCompositeHidInput;
+use crate::hid::{
+    UsbCompositeHidInputHandle, UsbHidGamepad, UsbHidGamepadHandle, UsbHidKeyboard,
+    UsbHidKeyboardHandle, UsbHidMouse, UsbHidMouseHandle, UsbHidPassthrough,
+    UsbHidPassthroughHandle,
+};
+use crate::hub::UsbHubDevice;
 use crate::{
     ControlResponse, RequestDirection, RequestRecipient, RequestType, SetupPacket, UsbDeviceModel,
     UsbSpeed,
@@ -79,6 +87,18 @@ impl AttachedUsbDevice {
             control: None,
             model,
         }
+    }
+
+    pub(crate) fn try_new_from_snapshot(bytes: &[u8]) -> SnapshotResult<Option<Self>> {
+        let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
+        r.ensure_device_major(Self::DEVICE_VERSION.major)?;
+        let Some(model_snapshot) = r.bytes(ADEV_TAG_MODEL_SNAPSHOT) else {
+            return Ok(None);
+        };
+        let Some(model) = try_new_usb_device_model_from_snapshot(model_snapshot)? else {
+            return Ok(None);
+        };
+        Ok(Some(Self::new(model)))
     }
 
     pub fn address(&self) -> u8 {
@@ -552,31 +572,31 @@ fn decode_control_state(buf: &[u8]) -> SnapshotResult<ControlState> {
     Ok(ControlState { setup, stage })
 }
 
+const ADEV_TAG_ADDRESS: u16 = 1;
+const ADEV_TAG_PENDING_ADDRESS: u16 = 2;
+const ADEV_TAG_CONTROL: u16 = 3;
+const ADEV_TAG_MODEL_SNAPSHOT: u16 = 4;
+
 impl IoSnapshot for AttachedUsbDevice {
     const DEVICE_ID: [u8; 4] = *b"ADEV";
-    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 1);
 
     fn save_state(&self) -> Vec<u8> {
-        const TAG_ADDRESS: u16 = 1;
-        const TAG_PENDING_ADDRESS: u16 = 2;
-        const TAG_CONTROL: u16 = 3;
-
         let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
-        w.field_u8(TAG_ADDRESS, self.address);
+        w.field_u8(ADEV_TAG_ADDRESS, self.address);
         if let Some(addr) = self.pending_address {
-            w.field_u8(TAG_PENDING_ADDRESS, addr);
+            w.field_u8(ADEV_TAG_PENDING_ADDRESS, addr);
         }
         if let Some(control) = self.control.as_ref() {
-            w.field_bytes(TAG_CONTROL, encode_control_state(control));
+            w.field_bytes(ADEV_TAG_CONTROL, encode_control_state(control));
+        }
+        if let Some(model) = save_usb_device_model_snapshot(&*self.model) {
+            w.field_bytes(ADEV_TAG_MODEL_SNAPSHOT, model);
         }
         w.finish()
     }
 
     fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
-        const TAG_ADDRESS: u16 = 1;
-        const TAG_PENDING_ADDRESS: u16 = 2;
-        const TAG_CONTROL: u16 = 3;
-
         let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
         r.ensure_device_major(Self::DEVICE_VERSION.major)?;
 
@@ -585,14 +605,180 @@ impl IoSnapshot for AttachedUsbDevice {
         self.pending_address = None;
         self.control = None;
 
-        self.address = r.u8(TAG_ADDRESS)?.unwrap_or(0);
-        self.pending_address = r.u8(TAG_PENDING_ADDRESS)?;
-        if let Some(buf) = r.bytes(TAG_CONTROL) {
+        self.address = r.u8(ADEV_TAG_ADDRESS)?.unwrap_or(0);
+        self.pending_address = r.u8(ADEV_TAG_PENDING_ADDRESS)?;
+        if let Some(buf) = r.bytes(ADEV_TAG_CONTROL) {
             self.control = Some(decode_control_state(buf)?);
+        }
+        if let Some(model) = r.bytes(ADEV_TAG_MODEL_SNAPSHOT) {
+            apply_usb_device_model_snapshot(&mut *self.model, model)?;
         }
 
         Ok(())
     }
+}
+
+fn try_new_usb_device_model_from_snapshot(
+    model_snapshot: &[u8],
+) -> SnapshotResult<Option<Box<dyn UsbDeviceModel>>> {
+    // `SnapshotReader::parse` requires a concrete expected device ID. Peek at the snapshot header
+    // and dispatch to known model types.
+    if model_snapshot.len() < 16 {
+        return Err(SnapshotError::UnexpectedEof);
+    }
+    if model_snapshot[0..4] != *b"AERO" {
+        return Err(SnapshotError::InvalidMagic);
+    }
+    let device_id = [
+        model_snapshot[8],
+        model_snapshot[9],
+        model_snapshot[10],
+        model_snapshot[11],
+    ];
+
+    match &device_id {
+        b"UHUB" => {
+            const TAG_NUM_PORTS: u16 = 5;
+            let r = SnapshotReader::parse(model_snapshot, UsbHubDevice::DEVICE_ID)?;
+            r.ensure_device_major(UsbHubDevice::DEVICE_VERSION.major)?;
+
+            let num_ports = r.u32(TAG_NUM_PORTS)?.unwrap_or(4);
+            if !(1..=u8::MAX as u32).contains(&num_ports) {
+                return Err(SnapshotError::InvalidFieldEncoding("hub port count"));
+            }
+
+            Ok(Some(Box::new(UsbHubDevice::new_with_ports(num_ports as usize))))
+        }
+        b"UKBD" => Ok(Some(Box::new(UsbHidKeyboardHandle::new()))),
+        b"UMSE" => Ok(Some(Box::new(UsbHidMouseHandle::new()))),
+        b"UGPD" => Ok(Some(Box::new(UsbHidGamepadHandle::new()))),
+        b"UCMP" => Ok(Some(Box::new(UsbCompositeHidInputHandle::new()))),
+        b"HIDP" => Ok(None),
+        b"WUSB" => Ok(Some(Box::new(crate::UsbWebUsbPassthroughDevice::new()))),
+        _ => Ok(None),
+    }
+}
+
+fn save_usb_device_model_snapshot(model: &dyn UsbDeviceModel) -> Option<Vec<u8>> {
+    let any = model as &dyn Any;
+
+    if let Some(dev) = any.downcast_ref::<UsbHubDevice>() {
+        return Some(dev.save_state());
+    }
+
+    // Prefer handle types where available so host integrations can still clone the handle after
+    // downcasting the restored device tree.
+    if let Some(dev) = any.downcast_ref::<UsbHidKeyboardHandle>() {
+        return Some(dev.save_state());
+    }
+    if let Some(dev) = any.downcast_ref::<UsbHidMouseHandle>() {
+        return Some(dev.save_state());
+    }
+    if let Some(dev) = any.downcast_ref::<UsbHidGamepadHandle>() {
+        return Some(dev.save_state());
+    }
+    if let Some(dev) = any.downcast_ref::<UsbCompositeHidInputHandle>() {
+        return Some(dev.save_state());
+    }
+    if let Some(dev) = any.downcast_ref::<UsbHidPassthroughHandle>() {
+        return Some(dev.save_state());
+    }
+
+    // Concrete device types (less ergonomic for host access, but still supported).
+    if let Some(dev) = any.downcast_ref::<UsbHidKeyboard>() {
+        return Some(dev.save_state());
+    }
+    if let Some(dev) = any.downcast_ref::<UsbHidMouse>() {
+        return Some(dev.save_state());
+    }
+    if let Some(dev) = any.downcast_ref::<UsbHidGamepad>() {
+        return Some(dev.save_state());
+    }
+    if let Some(dev) = any.downcast_ref::<UsbCompositeHidInput>() {
+        return Some(dev.save_state());
+    }
+    if let Some(dev) = any.downcast_ref::<UsbHidPassthrough>() {
+        return Some(dev.save_state());
+    }
+
+    if let Some(dev) = any.downcast_ref::<crate::UsbWebUsbPassthroughDevice>() {
+        return Some(dev.save_state());
+    }
+
+    None
+}
+
+fn apply_usb_device_model_snapshot(
+    model: &mut dyn UsbDeviceModel,
+    bytes: &[u8],
+) -> SnapshotResult<()> {
+    // `SnapshotReader::parse` requires a concrete expected device ID. Peek at the snapshot header
+    // and dispatch to known model types.
+    if bytes.len() < 16 {
+        return Err(SnapshotError::UnexpectedEof);
+    }
+    if bytes[0..4] != *b"AERO" {
+        return Err(SnapshotError::InvalidMagic);
+    }
+    let device_id = [bytes[8], bytes[9], bytes[10], bytes[11]];
+
+    let any = model as &mut dyn Any;
+
+    match &device_id {
+        b"UHUB" => {
+            if let Some(dev) = any.downcast_mut::<UsbHubDevice>() {
+                return dev.load_state(bytes);
+            }
+        }
+        b"UKBD" => {
+            if let Some(dev) = any.downcast_mut::<UsbHidKeyboardHandle>() {
+                return dev.load_state(bytes);
+            }
+            if let Some(dev) = any.downcast_mut::<UsbHidKeyboard>() {
+                return dev.load_state(bytes);
+            }
+        }
+        b"UMSE" => {
+            if let Some(dev) = any.downcast_mut::<UsbHidMouseHandle>() {
+                return dev.load_state(bytes);
+            }
+            if let Some(dev) = any.downcast_mut::<UsbHidMouse>() {
+                return dev.load_state(bytes);
+            }
+        }
+        b"UGPD" => {
+            if let Some(dev) = any.downcast_mut::<UsbHidGamepadHandle>() {
+                return dev.load_state(bytes);
+            }
+            if let Some(dev) = any.downcast_mut::<UsbHidGamepad>() {
+                return dev.load_state(bytes);
+            }
+        }
+        b"UCMP" => {
+            if let Some(dev) = any.downcast_mut::<UsbCompositeHidInputHandle>() {
+                return dev.load_state(bytes);
+            }
+            if let Some(dev) = any.downcast_mut::<UsbCompositeHidInput>() {
+                return dev.load_state(bytes);
+            }
+        }
+        b"HIDP" => {
+            if let Some(dev) = any.downcast_mut::<UsbHidPassthroughHandle>() {
+                return dev.load_state(bytes);
+            }
+            if let Some(dev) = any.downcast_mut::<UsbHidPassthrough>() {
+                return dev.load_state(bytes);
+            }
+        }
+        b"WUSB" => {
+            if let Some(dev) = any.downcast_mut::<crate::UsbWebUsbPassthroughDevice>() {
+                return dev.load_state(bytes);
+            }
+        }
+        _ => {}
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]

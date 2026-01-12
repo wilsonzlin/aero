@@ -531,8 +531,15 @@ impl RootHub {
             };
             pd.finish()?;
 
-            if let (Some(state), Some(dev)) = (device_state, port.device.as_mut()) {
-                dev.load_state(&state)?;
+            if let Some(state) = device_state {
+                if port.device.is_none() {
+                    if let Some(dev) = AttachedUsbDevice::try_new_from_snapshot(&state)? {
+                        port.device = Some(dev);
+                    }
+                }
+                if let Some(dev) = port.device.as_mut() {
+                    dev.load_state(&state)?;
+                }
             }
         }
 
@@ -968,8 +975,15 @@ impl IoSnapshot for UsbHubDevice {
                 };
                 pd.finish()?;
 
-                if let (Some(state), Some(dev)) = (device_state, port.device.as_mut()) {
-                    dev.load_state(&state)?;
+                if let Some(state) = device_state {
+                    if port.device.is_none() {
+                        if let Some(dev) = AttachedUsbDevice::try_new_from_snapshot(&state)? {
+                            port.device = Some(dev);
+                        }
+                    }
+                    if let Some(dev) = port.device.as_mut() {
+                        dev.load_state(&state)?;
+                    }
                 }
             }
         }

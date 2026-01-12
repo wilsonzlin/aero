@@ -267,6 +267,191 @@ fn snapshot_roundtrip_is_deterministic_and_preserves_external_hub_reports() {
 }
 
 #[test]
+fn uhci_snapshot_restore_reconstructs_usb_topology_without_pre_attaching_devices() {
+    let mut ctrl = UhciController::new();
+    ctrl.hub_mut()
+        .attach(0, Box::new(UsbHubDevice::new_with_ports(4)));
+
+    let kb = UsbHidKeyboardHandle::new();
+    let mouse = UsbHidMouseHandle::new();
+    ctrl.hub_mut()
+        .attach_at_path(&[0, 1], Box::new(kb.clone()))
+        .expect("attach keyboard");
+    ctrl.hub_mut()
+        .attach_at_path(&[0, 2], Box::new(mouse.clone()))
+        .expect("attach mouse");
+
+    let mut mem = TestMemory::new(0x20_000);
+
+    // Reset + enable root port 0 so the bus routes packets.
+    ctrl.io_write(REG_PORTSC1, 2, PORTSC_PR as u32);
+    for _ in 0..50 {
+        ctrl.tick_1ms(&mut mem);
+    }
+
+    // Enumerate hub (addr=1, cfg=1).
+    control_no_data(
+        &mut ctrl,
+        0,
+        SetupPacket {
+            bm_request_type: 0x00,
+            b_request: 0x05, // SET_ADDRESS
+            w_value: 1,
+            w_index: 0,
+            w_length: 0,
+        },
+    );
+    control_no_data(
+        &mut ctrl,
+        1,
+        SetupPacket {
+            bm_request_type: 0x00,
+            b_request: 0x09, // SET_CONFIGURATION
+            w_value: 1,
+            w_index: 0,
+            w_length: 0,
+        },
+    );
+
+    // Hub port 1: power + reset, enumerate downstream keyboard to addr=2.
+    control_no_data(
+        &mut ctrl,
+        1,
+        SetupPacket {
+            bm_request_type: 0x23,
+            b_request: 0x03, // SET_FEATURE
+            w_value: 8,      // PORT_POWER
+            w_index: 1,
+            w_length: 0,
+        },
+    );
+    control_no_data(
+        &mut ctrl,
+        1,
+        SetupPacket {
+            bm_request_type: 0x23,
+            b_request: 0x03, // SET_FEATURE
+            w_value: 4,      // PORT_RESET
+            w_index: 1,
+            w_length: 0,
+        },
+    );
+    for _ in 0..50 {
+        ctrl.tick_1ms(&mut mem);
+    }
+    control_no_data(
+        &mut ctrl,
+        0,
+        SetupPacket {
+            bm_request_type: 0x00,
+            b_request: 0x05,
+            w_value: 2,
+            w_index: 0,
+            w_length: 0,
+        },
+    );
+    control_no_data(
+        &mut ctrl,
+        2,
+        SetupPacket {
+            bm_request_type: 0x00,
+            b_request: 0x09,
+            w_value: 1,
+            w_index: 0,
+            w_length: 0,
+        },
+    );
+
+    // Hub port 2: power + reset, enumerate downstream mouse to addr=3.
+    control_no_data(
+        &mut ctrl,
+        1,
+        SetupPacket {
+            bm_request_type: 0x23,
+            b_request: 0x03,
+            w_value: 8,
+            w_index: 2,
+            w_length: 0,
+        },
+    );
+    control_no_data(
+        &mut ctrl,
+        1,
+        SetupPacket {
+            bm_request_type: 0x23,
+            b_request: 0x03,
+            w_value: 4,
+            w_index: 2,
+            w_length: 0,
+        },
+    );
+    for _ in 0..50 {
+        ctrl.tick_1ms(&mut mem);
+    }
+    control_no_data(
+        &mut ctrl,
+        0,
+        SetupPacket {
+            bm_request_type: 0x00,
+            b_request: 0x05,
+            w_value: 3,
+            w_index: 0,
+            w_length: 0,
+        },
+    );
+    control_no_data(
+        &mut ctrl,
+        3,
+        SetupPacket {
+            bm_request_type: 0x00,
+            b_request: 0x09,
+            w_value: 1,
+            w_index: 0,
+            w_length: 0,
+        },
+    );
+
+    // Queue one report in each downstream device.
+    kb.key_event(0x04, true); // 'a'
+    mouse.movement(1, 1);
+
+    let ctrl_snap = ctrl.save_state();
+
+    // Restore from the controller snapshot alone (no pre-attached devices).
+    let mut restored_ctrl = UhciController::new();
+    restored_ctrl.load_state(&ctrl_snap).unwrap();
+
+    assert_eq!(
+        restored_ctrl.save_state(),
+        ctrl_snap,
+        "UHCI controller snapshot should reconstruct and roundtrip byte-for-byte"
+    );
+
+    let kb_dev = restored_ctrl
+        .hub_mut()
+        .device_mut_for_address(2)
+        .expect("expected keyboard at address 2");
+    let kb_report = match kb_dev.handle_in(1, 8) {
+        UsbInResult::Data(data) => data,
+        other => panic!("expected keyboard interrupt IN report, got {other:?}"),
+    };
+    assert_eq!(kb_report.len(), 8);
+    assert_eq!(kb_report[2], 0x04);
+
+    let mouse_dev = restored_ctrl
+        .hub_mut()
+        .device_mut_for_address(3)
+        .expect("expected mouse at address 3");
+    let mouse_report = match mouse_dev.handle_in(1, 4) {
+        UsbInResult::Data(data) => data,
+        other => panic!("expected mouse interrupt IN report, got {other:?}"),
+    };
+    assert!(mouse_report.len() >= 3);
+    assert_eq!(mouse_report[1], 1);
+    assert_eq!(mouse_report[2], 1);
+}
+
+#[test]
 fn snapshot_restore_rejects_truncated_bytes() {
     let ctrl = UhciController::new();
     let snap = ctrl.save_state();
