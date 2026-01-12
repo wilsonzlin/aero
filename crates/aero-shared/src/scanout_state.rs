@@ -309,6 +309,43 @@ mod tests {
     }
 
     #[test]
+    fn generation_wraps_without_leaking_busy_bit() {
+        let state = ScanoutState::new();
+
+        // Force the generation near the busy-bit boundary (high bit is reserved).
+        state
+            .generation
+            .store(0x7fff_fffe, Ordering::SeqCst);
+
+        let g0 = state.snapshot().generation;
+        assert_eq!(g0, 0x7fff_fffe);
+
+        let g1 = state.publish(ScanoutStateUpdate {
+            source: SCANOUT_SOURCE_LEGACY_TEXT,
+            base_paddr_lo: 0,
+            base_paddr_hi: 0,
+            width: 0,
+            height: 0,
+            pitch_bytes: 0,
+            format: SCANOUT_FORMAT_B8G8R8X8,
+        });
+        assert_eq!(g1, 0x7fff_ffff);
+        assert_eq!(g1 & SCANOUT_STATE_GENERATION_BUSY_BIT, 0);
+
+        let g2 = state.publish(ScanoutStateUpdate {
+            source: SCANOUT_SOURCE_LEGACY_TEXT,
+            base_paddr_lo: 0,
+            base_paddr_hi: 0,
+            width: 0,
+            height: 0,
+            pitch_bytes: 0,
+            format: SCANOUT_FORMAT_B8G8R8X8,
+        });
+        assert_eq!(g2, 0x0000_0000);
+        assert_eq!(g2 & SCANOUT_STATE_GENERATION_BUSY_BIT, 0);
+    }
+
+    #[test]
     fn snapshot_is_coherent_across_concurrent_updates() {
         let state = Arc::new(ScanoutState::new());
 
