@@ -122,5 +122,48 @@ mod tests {
         let off = (lba as usize) * SECTOR_SIZE;
         assert_eq!(&backend.as_slice()[off..off + SECTOR_SIZE], payload.as_slice());
     }
-}
 
+    #[test]
+    fn nvme_adapter_rejects_unaligned_capacity() {
+        // `aero_storage::RawDisk` can represent any byte length, but NVMe exposes capacity in
+        // whole 512-byte LBAs. The adapter must reject disks with a trailing partial sector.
+        let disk = RawDisk::create(MemBackend::new(), 513).unwrap();
+        assert!(matches!(
+            NvmeDiskFromAeroStorage::new(disk),
+            Err(DiskError::Io)
+        ));
+    }
+
+    #[test]
+    fn nvme_adapter_maps_unaligned_buffer() {
+        let disk = RawDisk::create(MemBackend::new(), (2 * SECTOR_SIZE) as u64).unwrap();
+        let mut adapter = NvmeDiskFromAeroStorage::new(disk).unwrap();
+
+        let mut buf = vec![0u8; SECTOR_SIZE + 1];
+        let err = adapter.read_sectors(0, &mut buf).unwrap_err();
+        assert_eq!(
+            err,
+            DiskError::UnalignedBuffer {
+                len: SECTOR_SIZE + 1,
+                sector_size: 512
+            }
+        );
+    }
+
+    #[test]
+    fn nvme_adapter_maps_out_of_range() {
+        let disk = RawDisk::create(MemBackend::new(), (2 * SECTOR_SIZE) as u64).unwrap();
+        let mut adapter = NvmeDiskFromAeroStorage::new(disk).unwrap();
+
+        let mut buf = vec![0u8; SECTOR_SIZE];
+        let err = adapter.read_sectors(2, &mut buf).unwrap_err();
+        assert_eq!(
+            err,
+            DiskError::OutOfRange {
+                lba: 2,
+                sectors: 1,
+                capacity_sectors: 2
+            }
+        );
+    }
+}
