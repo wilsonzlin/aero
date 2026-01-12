@@ -134,7 +134,7 @@ Some platform devices are snapshotted as their own `DEVICES` entries and use ded
 - `DeviceId::HPET` (`17`) — HPET timer state (inner `HPET`)
 - `DeviceId::HDA` (`18`) — guest-visible HD Audio (HDA) controller/runtime state (inner `HDA0`)
 - `DeviceId::E1000` (`19`) — Intel E1000 NIC (`aero-net-e1000`, inner `E1K0`)
-- `DeviceId::NET_STACK` (`20`) — user-space network stack/backend state (`aero-io-snapshot` inner `NSTK`)
+- `DeviceId::NET_STACK` (`20`) — user-space network stack/backend state (`aero-io-snapshot` inner `NETS`)
 
 Note: `aero-snapshot` rejects duplicate `(DeviceId, version, flags)` tuples inside `DEVICES`. Since both `PciConfigPorts` and
 `PciIntxRouter` currently snapshot as `SnapshotVersion (1.0)`, they cannot both be stored as separate entries with the same outer
@@ -205,7 +205,7 @@ Restore note: USB snapshots capture guest-visible controller/runtime state only.
 For the browser networking stack (e.g. tunnel/NAT state managed outside the guest-visible NIC device model), store a single device entry:
 
 - Outer `DeviceState.id = DeviceId::NET_STACK`
-- `DeviceState.data = aero-io-snapshot` TLV blob produced by the networking stack (inner `DEVICE_ID = NSTK`)
+- `DeviceState.data = aero-io-snapshot` TLV blob produced by the networking stack (inner `DEVICE_ID = NETS`)
 - `DeviceState.version` / `DeviceState.flags` mirror the inner device `SnapshotVersion (major, minor)`
 
 Restore note: `NET_STACK` snapshots capture *guest-visible* stack/backend bookkeeping (e.g. DHCP/DNS cache and connection bookkeeping) but **must not** attempt to bit-restore host resources. On restore, integrations should treat the following as reset and drop/recreate them:
