@@ -1965,8 +1965,13 @@ impl AerogpuD3d9Executor {
         if share_token == 0 {
             return;
         }
-        self.shared_surface_by_token.remove(&share_token);
-        self.retired_share_tokens.insert(share_token);
+        // Idempotent: unknown tokens are a no-op (see `aerogpu_cmd.h` contract).
+        //
+        // Only retire tokens that were actually exported at some point (present in
+        // `shared_surface_by_token`), or that are already retired.
+        if self.shared_surface_by_token.remove(&share_token).is_some() {
+            self.retired_share_tokens.insert(share_token);
+        }
     }
 
     fn create_shader_dxbc_in_memory(

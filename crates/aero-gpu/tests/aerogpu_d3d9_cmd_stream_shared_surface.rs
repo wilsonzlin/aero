@@ -328,6 +328,83 @@ fn d3d9_cmd_stream_release_shared_surface_invalidates_token_but_keeps_existing_a
 }
 
 #[test]
+fn d3d9_cmd_stream_release_shared_surface_unknown_token_is_noop() {
+    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
+        Ok(exec) => exec,
+        Err(AerogpuD3d9Error::AdapterNotFound) => {
+            common::skip_or_panic(module_path!(), "wgpu adapter not found");
+            return;
+        }
+        Err(err) => panic!("failed to create executor: {err}"),
+    };
+
+    const TEX_ORIGINAL: u32 = 0x10;
+    const TEX_ALIAS: u32 = 0x20;
+    const TOKEN: u64 = 0x1111_2222_3333_4444;
+
+    let width = 4u32;
+    let height = 4u32;
+
+    let stream = build_stream(|out| {
+        emit_create_texture2d_rgba8(out, TEX_ORIGINAL, width, height);
+
+        // Token has not been exported yet; this should be a no-op and must not retire the token.
+        emit_packet(out, OPC_RELEASE_SHARED_SURFACE, |out| {
+            push_u64(out, TOKEN);
+            push_u64(out, 0);
+        });
+
+        // Export/import should still succeed.
+        emit_packet(out, OPC_EXPORT_SHARED_SURFACE, |out| {
+            push_u32(out, TEX_ORIGINAL);
+            push_u32(out, 0);
+            push_u64(out, TOKEN);
+        });
+
+        emit_packet(out, OPC_IMPORT_SHARED_SURFACE, |out| {
+            push_u32(out, TEX_ALIAS);
+            push_u32(out, 0);
+            push_u64(out, TOKEN);
+        });
+
+        emit_packet(out, OPC_SET_RENDER_TARGETS, |out| {
+            push_u32(out, 1); // color_count
+            push_u32(out, 0); // depth_stencil
+            push_u32(out, TEX_ALIAS);
+            for _ in 0..7 {
+                push_u32(out, 0);
+            }
+        });
+
+        // Clear to solid green.
+        emit_packet(out, OPC_CLEAR, |out| {
+            push_u32(out, AEROGPU_CLEAR_COLOR);
+            push_f32(out, 0.0);
+            push_f32(out, 1.0);
+            push_f32(out, 0.0);
+            push_f32(out, 1.0);
+            push_f32(out, 1.0); // depth
+            push_u32(out, 0); // stencil
+        });
+
+        emit_packet(out, OPC_PRESENT, |out| {
+            push_u32(out, 0); // scanout_id
+            push_u32(out, 0); // flags
+        });
+    });
+
+    exec.execute_cmd_stream(&stream)
+        .expect("execute should succeed");
+
+    let (out_w, out_h, rgba) = pollster::block_on(exec.readback_texture_rgba8(TEX_ALIAS))
+        .expect("readback should succeed");
+    assert_eq!((out_w, out_h), (width, height));
+
+    let idx = ((2 * width + 2) * 4) as usize;
+    assert_eq!(&rgba[idx..idx + 4], &[0, 255, 0, 255]);
+}
+
+#[test]
 fn d3d9_cmd_stream_reusing_underlying_handle_while_alias_alive_is_an_error() {
     let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
         Ok(exec) => exec,
