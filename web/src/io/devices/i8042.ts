@@ -1030,7 +1030,31 @@ export class I8042Controller implements PortIoHandler {
    * - wheel: positive is wheel up
    */
   injectMouseMotion(dx: number, dy: number, wheel: number): void {
-    this.#mouse.movement(dx, dy, wheel);
+    // Controller command 0xA7 sets command byte bit 5 to disable the mouse port.
+    if ((this.#commandByte & 0x20) !== 0) return;
+    // In stream mode, drop movement while reporting is disabled to avoid buffering host deltas.
+    if (this.#mouse.mode === "stream" && !this.#mouse.reportingEnabled) return;
+
+    let remX = dx | 0;
+    let remY = dy | 0;
+    let remWheel = wheel | 0;
+
+    const deviceId = this.#mouse.deviceId & 0xff;
+    const wheelEnabled = deviceId === 0x03 || deviceId === 0x04;
+    if (!wheelEnabled) remWheel = 0;
+
+    // Split into multiple packets so each axis fits in a signed 8-bit delta and wheel fits
+    // in the IntelliMouse 4-bit signed nibble.
+    while (remX !== 0 || remY !== 0 || remWheel !== 0) {
+      const stepX = Math.max(-128, Math.min(127, remX));
+      const stepY = Math.max(-128, Math.min(127, remY));
+      const stepWheel = Math.max(-8, Math.min(7, remWheel));
+      remX = (remX - stepX) | 0;
+      remY = (remY - stepY) | 0;
+      remWheel = (remWheel - stepWheel) | 0;
+      this.#mouse.movement(stepX, stepY, stepWheel);
+    }
+
     this.#pumpDeviceQueues();
     this.#syncStatusAndIrq();
   }
@@ -1041,7 +1065,8 @@ export class I8042Controller implements PortIoHandler {
    * Bits: 0=left, 1=right, 2=middle.
    */
   injectMouseButtons(buttonMask: number): void {
-    this.#mouse.setButtons(buttonMask);
+    if ((this.#commandByte & 0x20) !== 0) return;
+    this.#mouse.setButtons(buttonMask & 0xff);
     this.#pumpDeviceQueues();
     this.#syncStatusAndIrq();
   }

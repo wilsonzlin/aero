@@ -3270,10 +3270,14 @@ function handleInputBatch(buffer: ArrayBuffer): void {
         if (virtioMouseOk && virtioMouse) {
           // Input batches use PS/2 convention: positive = up. virtio-input uses Linux REL_Y where positive = down.
           virtioMouse.injectRelMove(dx, -dyPs2);
-        } else {
+        } else if (syntheticUsbHidAttached) {
           // PS/2 convention: positive is up. HID convention: positive is down.
           usbHid?.mouse_move(dx, -dyPs2);
-          i8042?.injectMouseMotion(dx, dyPs2, 0);
+        } else if (i8042) {
+          i8042.injectMouseMotion(dx, dyPs2, 0);
+        } else {
+          // No PS/2 controller; fall back to USB HID.
+          usbHid?.mouse_move(dx, -dyPs2);
         }
         break;
       }
@@ -3281,9 +3285,12 @@ function handleInputBatch(buffer: ArrayBuffer): void {
         const buttons = words[off + 2] & 0xff;
         if (virtioMouseOk && virtioMouse) {
           virtioMouse.injectMouseButtons(buttons);
+        } else if (syntheticUsbHidAttached) {
+          usbHid?.mouse_buttons(buttons);
+        } else if (i8042) {
+          i8042.injectMouseButtons(buttons);
         } else {
           usbHid?.mouse_buttons(buttons);
-          i8042?.injectMouseButtons(buttons);
         }
         break;
       }
@@ -3291,9 +3298,12 @@ function handleInputBatch(buffer: ArrayBuffer): void {
         const dz = words[off + 2] | 0;
         if (virtioMouseOk && virtioMouse) {
           virtioMouse.injectWheel(dz);
+        } else if (syntheticUsbHidAttached) {
+          usbHid?.mouse_wheel(dz);
+        } else if (i8042) {
+          i8042.injectMouseMotion(0, 0, dz);
         } else {
           usbHid?.mouse_wheel(dz);
-          i8042?.injectMouseMotion(0, 0, dz);
         }
         break;
       }
