@@ -50,6 +50,10 @@ Implementation note (Rust): `aero_machine::Machine::new_with_win7_storage(...)` 
 are convenience helpers that enable this controller
 set at the canonical BDFs for integration tests and bring-up.
 
+These helpers keep non-storage devices conservative by default (for example, E1000 is disabled
+unless explicitly enabled by the caller) to reduce drift and keep Win7 install/boot behavior
+deterministic.
+
 Lower-level platform-only tests may use `aero_pc_platform::PcPlatform::new_with_win7_storage(...)`
 instead.
 
