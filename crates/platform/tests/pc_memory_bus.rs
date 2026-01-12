@@ -176,6 +176,32 @@ fn a20_masking_aliases_high_mmio_addresses() {
 }
 
 #[test]
+fn a20_masking_does_not_apply_to_direct_ram_backend_access() {
+    let mut bus = new_bus(false, 2 * 1024 * 1024);
+
+    // Seed distinct bytes in true physical RAM.
+    bus.ram_mut().write_u8_le(0x0, 0x11).unwrap();
+    bus.ram_mut().write_u8_le(0x1_00000, 0x22).unwrap();
+
+    // Guest-visible physical reads are A20-masked, so 0x1_00000 aliases to 0x0.
+    assert_eq!(bus.read_u8(0x0), 0x11);
+    assert_eq!(bus.read_u8(0x1_00000), 0x11);
+
+    // Snapshot/restore logic must bypass A20 masking and use the underlying RAM backend directly.
+    assert_eq!(bus.ram().read_u8_le(0x0).unwrap(), 0x11);
+    assert_eq!(bus.ram().read_u8_le(0x1_00000).unwrap(), 0x22);
+
+    // Guest-visible writes are also masked.
+    bus.write_u8(0x1_00000, 0x33);
+    assert_eq!(bus.ram().read_u8_le(0x0).unwrap(), 0x33);
+    assert_eq!(bus.ram().read_u8_le(0x1_00000).unwrap(), 0x22);
+
+    // Direct RAM backend writes still target the true physical address.
+    bus.ram_mut().write_u8_le(0x1_00000, 0x44).unwrap();
+    assert_eq!(bus.ram().read_u8_le(0x1_00000).unwrap(), 0x44);
+}
+
+#[test]
 fn dirty_tracking_marks_ram_writes_from_non_cpu_paths() {
     let chipset = ChipsetState::new(true);
     let filter = AddressFilter::new(chipset.a20());
