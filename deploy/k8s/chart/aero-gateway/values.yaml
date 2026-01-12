@@ -81,8 +81,10 @@ gateway:
 ##
 l2Tunnel:
   # Max payload bytes for FRAME messages (excluding the 4-byte L2 tunnel header).
+  # Must be a positive integer; `0`/null leaves the default in effect.
   maxFramePayloadBytes: null
   # Max payload bytes for control messages (PING/PONG/ERROR) (excluding the 4-byte header).
+  # Must be a positive integer; `0`/null leaves the default in effect.
   maxControlPayloadBytes: null
 
 ## Optional: L2 tunnel proxy (`aero-l2-proxy`) for Option C (ADR 0005).

@@ -86,6 +86,8 @@ l2Tunnel:
   maxControlPayloadBytes: 256
 ```
 
+Values must be positive integers; `0` is treated as unset (defaults apply).
+
 ### Auth mode (`AERO_L2_AUTH_MODE`)
 
 `aero-l2-proxy` can authenticate `/l2` WebSocket upgrades via `AERO_L2_AUTH_MODE`.

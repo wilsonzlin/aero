@@ -92,13 +92,15 @@ spec:
           env:
             - name: AERO_L2_PROXY_LISTEN_ADDR
               value: {{ printf "0.0.0.0:%v" .Values.l2Proxy.containerPort | quote }}
-            {{- if not (kindIs "invalid" .Values.l2Tunnel.maxFramePayloadBytes) }}
+            {{- $l2MaxFramePayload := int (.Values.l2Tunnel.maxFramePayloadBytes | default 0) -}}
+            {{- if gt $l2MaxFramePayload 0 }}
             - name: AERO_L2_MAX_FRAME_PAYLOAD
-              value: {{ .Values.l2Tunnel.maxFramePayloadBytes | quote }}
+              value: {{ $l2MaxFramePayload | quote }}
             {{- end }}
-            {{- if not (kindIs "invalid" .Values.l2Tunnel.maxControlPayloadBytes) }}
+            {{- $l2MaxControlPayload := int (.Values.l2Tunnel.maxControlPayloadBytes | default 0) -}}
+            {{- if gt $l2MaxControlPayload 0 }}
             - name: AERO_L2_MAX_CONTROL_PAYLOAD
-              value: {{ .Values.l2Tunnel.maxControlPayloadBytes | quote }}
+              value: {{ $l2MaxControlPayload | quote }}
             {{- end }}
             {{- if $allowedOriginsCsv }}
             - name: ALLOWED_ORIGINS
