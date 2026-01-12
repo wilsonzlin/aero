@@ -626,6 +626,51 @@ test("convertToAeroSparse: qcow2 sparse copy preserves logical bytes", async () 
   assert.equal(manifest.checksum.value, sparseChecksumCrc32(parsed));
 });
 
+test("convertToAeroSparse: rejects qcow2 with compressed l1 entry", async () => {
+  const { file } = buildQcow2Fixture();
+  const l1Offset = 1024;
+  const l2Offset = 1536;
+  // Set QCOW2_OFLAG_COMPRESSED (bit 62) on the L1 entry.
+  writeU64BE(file, l1Offset, (1n << 62n) | BigInt(l2Offset));
+
+  const src = new MemSource(file);
+  const sync = new MemSyncAccessHandle();
+  await assert.rejects(
+    convertToAeroSparse(src, "qcow2", sync, { blockSizeBytes: 512 }),
+    (err: any) => err instanceof Error && /qcow2 compressed l1/i.test(err.message),
+  );
+});
+
+test("convertToAeroSparse: rejects qcow2 with unaligned l2 entry", async () => {
+  const { file } = buildQcow2Fixture();
+  const l2Offset = 1536;
+  const data0Offset = 2048;
+  // Set a low bit that would be masked out by the offset mask but should still be rejected.
+  writeU64BE(file, l2Offset, BigInt(data0Offset) | 0x100n);
+
+  const src = new MemSource(file);
+  const sync = new MemSyncAccessHandle();
+  await assert.rejects(
+    convertToAeroSparse(src, "qcow2", sync, { blockSizeBytes: 512 }),
+    (err: any) => err instanceof Error && /qcow2 unaligned l2 entry/i.test(err.message),
+  );
+});
+
+test("convertToAeroSparse: rejects qcow2 with invalid zero cluster entry", async () => {
+  const { file } = buildQcow2Fixture();
+  const l2Offset = 1536;
+  const data0Offset = 2048;
+  // Set the ZERO flag but also include an offset (invalid per spec).
+  writeU64BE(file, l2Offset, BigInt(data0Offset) | 1n);
+
+  const src = new MemSource(file);
+  const sync = new MemSyncAccessHandle();
+  await assert.rejects(
+    convertToAeroSparse(src, "qcow2", sync, { blockSizeBytes: 512 }),
+    (err: any) => err instanceof Error && /qcow2 invalid zero cluster entry/i.test(err.message),
+  );
+});
+
 test("convertToAeroSparse: rejects qcow2 with too many clusters", async () => {
   // Construct a qcow2 header claiming a huge logical size with tiny clusters (512B).
   // This would require an enormous cluster offset map and should be rejected up front.

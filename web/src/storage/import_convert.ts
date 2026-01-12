@@ -1014,11 +1014,16 @@ class Qcow2 {
 
     const l1 = await src.readAt(l1TableOffset, l1Bytes);
     const clusterOffsets = new Float64Array(totalClusters);
+    const lowMask = (1n << BigInt(clusterBits)) - 1n;
 
     for (let l1Index = 0; l1Index < requiredL1; l1Index++) {
-      const entry = readU64BE(l1, l1Index * 8) & QCOW2_OFFSET_MASK;
-      if (entry === 0n) continue;
-      const l2Off = Number(entry);
+      const rawL1Entry = readU64BE(l1, l1Index * 8);
+      if (rawL1Entry === 0n) continue;
+      if ((rawL1Entry & QCOW2_OFLAG_COMPRESSED) !== 0n) throw new Error("qcow2 compressed l1 unsupported");
+      if ((rawL1Entry & lowMask) !== 0n) throw new Error("qcow2 unaligned l1 entry");
+
+      const l2OffBig = rawL1Entry & QCOW2_OFFSET_MASK;
+      const l2Off = Number(l2OffBig);
       if (!Number.isSafeInteger(l2Off) || l2Off <= 0) throw new Error("invalid qcow2 l2 table offset");
       if (l2Off % clusterSize !== 0) throw new Error("invalid qcow2 l2 table offset");
       const l2 = await src.readAt(l2Off, clusterSize);
@@ -1029,11 +1034,20 @@ class Qcow2 {
         const val = readU64BE(l2, l2Index * 8);
         if (val === 0n) continue;
         if ((val & QCOW2_OFLAG_COMPRESSED) !== 0n) throw new Error("qcow2 compressed clusters unsupported");
-        if ((val & QCOW2_OFLAG_ZERO) !== 0n) continue;
-        const dataOff = Number(val & QCOW2_OFFSET_MASK);
+        if ((val & QCOW2_OFLAG_ZERO) !== 0n) {
+          // For "zero clusters", the offset bits must be zero and only the zero flag may be set in
+          // the low (alignment) bits.
+          if ((val & lowMask) !== QCOW2_OFLAG_ZERO) throw new Error("qcow2 invalid zero cluster entry");
+          if ((val & QCOW2_OFFSET_MASK) !== 0n) throw new Error("qcow2 invalid zero cluster entry");
+          continue;
+        }
+        if ((val & lowMask) !== 0n) throw new Error("qcow2 unaligned l2 entry");
+
+        const dataOffBig = val & QCOW2_OFFSET_MASK;
+        if (dataOffBig === 0n) throw new Error("invalid qcow2 data offset");
+        const dataOff = Number(dataOffBig);
         if (!Number.isSafeInteger(dataOff) || dataOff <= 0) throw new Error("invalid qcow2 data offset");
         if (dataOff % clusterSize !== 0) throw new Error("invalid qcow2 data offset");
-        if (dataOff === 0) continue;
         clusterOffsets[clusterIndex] = dataOff;
       }
     }
