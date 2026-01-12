@@ -3,7 +3,7 @@
 This crate contains Aero’s virtual disk abstractions and pure Rust disk image formats.
 
 In the browser, the primary persistence backend is OPFS. Aero provides a Rust/wasm32
-implementation in `crates/aero-opfs` (e.g. `OpfsByteStorage`) that implements
+implementation in `crates/aero-opfs` (e.g. `aero_opfs::OpfsByteStorage`) that implements
 `aero_storage::StorageBackend`/`aero_storage::VirtualDisk`.
 
 Higher-level orchestration such as remote HTTP streaming/caching and UI integration may
