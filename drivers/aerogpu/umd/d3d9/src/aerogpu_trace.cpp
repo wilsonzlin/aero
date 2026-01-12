@@ -43,8 +43,45 @@ D3d9TraceRecord g_trace_records[kTraceCapacity]{};
 constexpr uint32_t kFuncCount = static_cast<uint32_t>(D3d9TraceFunc::kCount);
 constexpr uint32_t kSeenWordCount = (kFuncCount + 31) / 32;
 std::atomic<uint32_t> g_trace_seen[kSeenWordCount]{};
+uint32_t g_trace_filter[kSeenWordCount]{};
+bool g_trace_filter_enabled = false;
+uint32_t g_trace_filter_count = 0;
 
 std::atomic<bool> g_trace_dumped{false};
+
+bool trace_icontains(const char* s, const char* needle_lower) {
+  if (!s || !needle_lower) {
+    return false;
+  }
+  if (*needle_lower == '\0') {
+    return true;
+  }
+  const size_t needle_len = std::strlen(needle_lower);
+  for (const char* p = s; *p; ++p) {
+    size_t i = 0;
+    while (i < needle_len && p[i] &&
+           std::tolower(static_cast<unsigned char>(p[i])) == static_cast<unsigned char>(needle_lower[i])) {
+      ++i;
+    }
+    if (i == needle_len) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool filter_allows(D3d9TraceFunc func) {
+  if (!g_trace_filter_enabled) {
+    return true;
+  }
+  const uint32_t id = static_cast<uint32_t>(func);
+  if (id >= kFuncCount) {
+    return true;
+  }
+  const uint32_t word_index = id / 32;
+  const uint32_t bit = 1u << (id % 32);
+  return (g_trace_filter[word_index] & bit) != 0;
+}
 
 uint64_t trace_timestamp() {
 #if defined(_WIN32)
@@ -450,6 +487,10 @@ D3d9TraceRecord* alloc_record(D3d9TraceFunc func, uint64_t arg0, uint64_t arg1, 
     return nullptr;
   }
 
+  if (!filter_allows(func)) {
+    return nullptr;
+  }
+
   if (!should_log(func)) {
     return nullptr;
   }
@@ -523,6 +564,9 @@ void d3d9_trace_init_from_env() {
 
   // Configure before publishing `enabled`.
   g_trace_unique_only = true;
+  g_trace_filter_enabled = false;
+  g_trace_filter_count = kFuncCount;
+  std::memset(g_trace_filter, 0, sizeof(g_trace_filter));
   char mode[32] = {};
   if (env_get("AEROGPU_D3D9_TRACE_MODE", mode, sizeof(mode))) {
     for (char& c : mode) {
@@ -542,18 +586,78 @@ void d3d9_trace_init_from_env() {
   g_trace_dump_on_detach = env_bool("AEROGPU_D3D9_TRACE_DUMP_ON_DETACH");
   g_trace_dump_on_fail = env_bool("AEROGPU_D3D9_TRACE_DUMP_ON_FAIL");
 
+  char filter[512] = {};
+  if (env_get("AEROGPU_D3D9_TRACE_FILTER", filter, sizeof(filter))) {
+    g_trace_filter_enabled = true;
+    g_trace_filter_count = 0;
+    std::memset(g_trace_filter, 0, sizeof(g_trace_filter));
+
+    // Split on commas. Tokens are matched case-insensitively as substrings of the
+    // `func_name()` string (e.g. `StateBlock` matches all stateblock DDIs).
+    char* p = filter;
+    while (p && *p) {
+      while (*p == ',' || std::isspace(static_cast<unsigned char>(*p))) {
+        ++p;
+      }
+      if (!*p) {
+        break;
+      }
+
+      char* token = p;
+      while (*p && *p != ',') {
+        ++p;
+      }
+      if (*p == ',') {
+        *p = '\0';
+        ++p;
+      }
+
+      // Trim trailing whitespace.
+      char* end = token + std::strlen(token);
+      while (end > token && std::isspace(static_cast<unsigned char>(end[-1]))) {
+        --end;
+      }
+      *end = '\0';
+
+      // Lowercase the token in-place for matching.
+      for (char* c = token; *c; ++c) {
+        *c = static_cast<char>(std::tolower(static_cast<unsigned char>(*c)));
+      }
+      if (!*token) {
+        continue;
+      }
+
+      for (uint32_t id = 0; id < kFuncCount; ++id) {
+        const auto func = static_cast<D3d9TraceFunc>(id);
+        const char* name = func_name(func);
+        if (trace_icontains(name, token)) {
+          const uint32_t word_index = id / 32;
+          const uint32_t bit = 1u << (id % 32);
+          g_trace_filter[word_index] |= bit;
+        }
+      }
+    }
+
+    for (uint32_t i = 0; i < kSeenWordCount; ++i) {
+      g_trace_filter_count += static_cast<uint32_t>(__builtin_popcount(g_trace_filter[i]));
+    }
+  }
+
   if (!enabled) {
     return;
   }
 
   g_trace_enabled.store(true, std::memory_order_release);
 
-  trace_outf("aerogpu-d3d9-trace: enabled mode=%s max=%u dump_present=%u dump_on_detach=%u dump_on_fail=%u\n",
-             g_trace_unique_only ? "unique" : "all",
-             static_cast<unsigned>(g_trace_max_records),
-             static_cast<unsigned>(g_trace_dump_present_count),
-             static_cast<unsigned>(g_trace_dump_on_detach ? 1u : 0u),
-             static_cast<unsigned>(g_trace_dump_on_fail ? 1u : 0u));
+  trace_outf(
+      "aerogpu-d3d9-trace: enabled mode=%s max=%u dump_present=%u dump_on_detach=%u dump_on_fail=%u filter_on=%u filter_count=%u\n",
+      g_trace_unique_only ? "unique" : "all",
+      static_cast<unsigned>(g_trace_max_records),
+      static_cast<unsigned>(g_trace_dump_present_count),
+      static_cast<unsigned>(g_trace_dump_on_detach ? 1u : 0u),
+      static_cast<unsigned>(g_trace_dump_on_fail ? 1u : 0u),
+      static_cast<unsigned>(g_trace_filter_enabled ? 1u : 0u),
+      static_cast<unsigned>(g_trace_filter_count));
 }
 
 void d3d9_trace_on_process_detach() {

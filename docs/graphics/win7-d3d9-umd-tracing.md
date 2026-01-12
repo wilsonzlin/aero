@@ -37,6 +37,10 @@ Tracing is **disabled by default**. Enable it by setting environment variables i
 - `AEROGPU_D3D9_TRACE_MAX=<N>` (default: 512, clamped to `[1, 512]`)  
   Maximum number of records to store.
 
+- `AEROGPU_D3D9_TRACE_FILTER=<TOKENS>`  
+  Records only entrypoints whose trace name contains any of the comma-separated tokens (case-insensitive substring match).
+  Example: `AEROGPU_D3D9_TRACE_FILTER=StateBlock,ValidateDevice`
+
 ### Dump triggers (on-demand)
 
 The trace buffer is only dumped when triggered:
