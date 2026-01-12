@@ -52,6 +52,13 @@ test("computeShaderCacheKey is stable and sensitive to inputs", async () => {
   const k4 = await computeShaderCacheKey(dxbcA, { ...flagsBase, capsHash: "caps-b" });
   assert.notEqual(k1, k4);
 
+  // Changing any additional translation flags should change key (content_bytes component).
+  // This is relied upon by the D3D9 DXBC->WGSL shader cache, which adds a translator-version
+  // field to safely invalidate cached WGSL when translator semantics change.
+  const k5 = await computeShaderCacheKey(dxbcA, { ...flagsBase, d3d9TranslatorVersion: 1 });
+  const k6 = await computeShaderCacheKey(dxbcA, { ...flagsBase, d3d9TranslatorVersion: 2 });
+  assert.notEqual(k5, k6);
+
   // Sanity check: the backend kind is present and schema version is embedded.
   assert.match(k1, new RegExp(`gpu-cache-v${CACHE_SCHEMA_VERSION}-${BACKEND_KIND_DXBC_TO_WGSL}-`));
 });
