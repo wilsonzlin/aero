@@ -78,8 +78,8 @@ describe("restoreAudioWorkletRing", () => {
     const state: AudioWorkletRingStateLike = { capacityFrames: 8, readPos: 0xffff_fff0, writePos: 1 };
     restoreAudioWorkletRing(ring, state);
 
-    expect(Atomics.load(ring.header, READ_FRAME_INDEX)).toBe(0xffff_fff9);
-    expect(Atomics.load(ring.header, WRITE_FRAME_INDEX)).toBe(1);
+    expect(Atomics.load(ring.readIndex, 0)).toBe(0xffff_fff9);
+    expect(Atomics.load(ring.writeIndex, 0)).toBe(1);
     expect(getRingBufferLevelFrames(ring)).toBe(8);
     expect(ring.samples).toEqual(new Float32Array(ring.samples.length));
   });
