@@ -9583,6 +9583,10 @@ static void stateblock_init_for_type_locked(Device* dev, StateBlock* sb, uint32_
     }
     sb->current_texture_palette_set = true;
     sb->current_texture_palette = dev->current_texture_palette;
+
+    sb->gamma_ramp_set = true;
+    sb->gamma_ramp_valid = dev->gamma_ramp_valid;
+    sb->gamma_ramp = dev->gamma_ramp;
   }
 
   if (is_vertex) {
@@ -9662,11 +9666,6 @@ static void stateblock_init_for_type_locked(Device* dev, StateBlock* sb, uint32_
     std::memcpy(sb->vs_consts_b.data(), dev->vs_consts_b, sizeof(uint8_t) * 256u);
   }
 
-  if (is_all) {
-    sb->gamma_ramp_set = true;
-    sb->gamma_ramp_valid = dev->gamma_ramp_valid;
-    sb->gamma_ramp = dev->gamma_ramp;
-  }
 }
 
 static void stateblock_capture_locked(Device* dev, StateBlock* sb) {
@@ -15332,7 +15331,6 @@ HRESULT AEROGPU_D3D9_CALL device_query_resource_residency(
   }
 
   // System-memory-only model: resources are always considered resident.
-  AEROGPU_D3D9_STUB_LOG_ONCE();
 
   if (pArgs && pArgs->pResidencyStatus) {
     for (uint32_t i = 0; i < resource_count; i++) {
@@ -15356,8 +15354,6 @@ HRESULT AEROGPU_D3D9_CALL device_get_display_mode_ex(
   if (!hDevice.pDrvPrivate || !pGetModeEx) {
     return trace.ret(E_INVALIDARG);
   }
-
-  AEROGPU_D3D9_STUB_LOG_ONCE();
 
   auto* dev = as_device(hDevice);
   Adapter* adapter = dev->adapter;
@@ -15398,7 +15394,6 @@ HRESULT AEROGPU_D3D9_CALL device_compose_rects(
 
   // ComposeRects is used by some D3D9Ex clients (including DWM in some modes).
   // Initial bring-up: accept and no-op to keep composition alive.
-  AEROGPU_D3D9_STUB_LOG_ONCE();
   return trace.ret(S_OK);
 }
 
@@ -15471,7 +15466,6 @@ HRESULT AEROGPU_D3D9_CALL device_check_resource_residency(
     return trace.ret(E_INVALIDARG);
   }
   // System-memory-only model: resources are always considered resident.
-  AEROGPU_D3D9_STUB_LOG_ONCE();
   return trace.ret(S_OK);
 }
 
