@@ -4,6 +4,12 @@ use crate::io::state::{
 };
 use std::collections::BTreeMap;
 
+// Snapshots may be loaded from untrusted sources (e.g. downloaded files). Keep decoding bounded so
+// corrupted snapshots cannot force pathological allocations.
+const MAX_DISK_STRING_BYTES: usize = 64 * 1024;
+const MAX_REMOTE_CHUNK_SIZE_BYTES: u32 = 64 * 1024 * 1024;
+const MAX_OVERLAY_BLOCK_SIZE_BYTES: u32 = 64 * 1024 * 1024;
+
 // ----------------------------------------
 // Disk layer state (host-side)
 // ----------------------------------------
@@ -98,8 +104,12 @@ impl DiskBackendState {
 
     fn decode_string(d: &mut Decoder<'_>) -> SnapshotResult<String> {
         let len = d.u32()? as usize;
+        if len > MAX_DISK_STRING_BYTES {
+            return Err(SnapshotError::InvalidFieldEncoding("string too long"));
+        }
         let bytes = d.bytes(len)?;
-        String::from_utf8(bytes.to_vec())
+        std::str::from_utf8(bytes)
+            .map(|s| s.to_string())
             .map_err(|_| SnapshotError::InvalidFieldEncoding("string utf8"))
     }
 
@@ -113,6 +123,32 @@ impl DiskBackendState {
         let file_name = Self::decode_string(d)?;
         let disk_size_bytes = d.u64()?;
         let block_size_bytes = d.u32()?;
+        if disk_size_bytes == 0 {
+            return Err(SnapshotError::InvalidFieldEncoding("overlay disk_size"));
+        }
+        if disk_size_bytes % 512 != 0 {
+            return Err(SnapshotError::InvalidFieldEncoding(
+                "overlay disk_size not multiple of 512",
+            ));
+        }
+        if block_size_bytes == 0 {
+            return Err(SnapshotError::InvalidFieldEncoding("overlay block_size"));
+        }
+        if !block_size_bytes.is_multiple_of(512) {
+            return Err(SnapshotError::InvalidFieldEncoding(
+                "overlay block_size not multiple of 512",
+            ));
+        }
+        if !block_size_bytes.is_power_of_two() {
+            return Err(SnapshotError::InvalidFieldEncoding(
+                "overlay block_size power_of_two",
+            ));
+        }
+        if block_size_bytes > MAX_OVERLAY_BLOCK_SIZE_BYTES {
+            return Err(SnapshotError::InvalidFieldEncoding(
+                "overlay block_size too large",
+            ));
+        }
         Ok(DiskOverlayState {
             file_name,
             disk_size_bytes,
@@ -228,6 +264,17 @@ impl DiskBackendState {
                     _ => return Err(SnapshotError::InvalidFieldEncoding("validator_kind")),
                 };
                 let chunk_size = d.u32()?;
+                if chunk_size == 0 {
+                    return Err(SnapshotError::InvalidFieldEncoding("chunk_size"));
+                }
+                if !u64::from(chunk_size).is_multiple_of(512) {
+                    return Err(SnapshotError::InvalidFieldEncoding(
+                        "chunk_size not multiple of 512",
+                    ));
+                }
+                if chunk_size > MAX_REMOTE_CHUNK_SIZE_BYTES {
+                    return Err(SnapshotError::InvalidFieldEncoding("chunk_size too large"));
+                }
                 let overlay = Self::decode_overlay(&mut d)?;
                 let cache = Self::decode_cache(&mut d)?;
                 DiskBackendState::Remote(RemoteDiskBackendState {
@@ -297,16 +344,38 @@ impl DiskLayerState {
 
     pub fn read_sector(&mut self, lba: u64) -> Vec<u8> {
         let mut out = vec![0u8; self.sector_size];
+        let sector_size = self.sector_size as u64;
+        let offset = match lba.checked_mul(sector_size) {
+            Some(off) => off,
+            None => return out,
+        };
+        let Some(end) = offset.checked_add(sector_size) else {
+            return out;
+        };
+        if end > self.size_bytes {
+            return out;
+        }
         if let Some(backend) = &self.attached_backend {
-            backend.read_at(lba * self.sector_size as u64, &mut out);
+            backend.read_at(offset, &mut out);
         }
         out
     }
 
     pub fn write_sector(&mut self, lba: u64, data: &[u8]) {
         assert_eq!(data.len(), self.sector_size);
+        let sector_size = self.sector_size as u64;
+        let offset = match lba.checked_mul(sector_size) {
+            Some(off) => off,
+            None => return,
+        };
+        let Some(end) = offset.checked_add(sector_size) else {
+            return;
+        };
+        if end > self.size_bytes {
+            return;
+        }
         if let Some(backend) = self.attached_backend.as_mut() {
-            backend.write_at(lba * self.sector_size as u64, data);
+            backend.write_at(offset, data);
         }
     }
 
@@ -350,8 +419,12 @@ impl IoSnapshot for DiskLayerState {
         if let Some(buf) = r.bytes(TAG_BACKEND_STATE) {
             self.backend = DiskBackendState::decode(buf)?;
         } else if let Some(key) = r.bytes(TAG_BACKEND_KEY) {
+            if key.len() > MAX_DISK_STRING_BYTES {
+                return Err(SnapshotError::InvalidFieldEncoding("backend_key too long"));
+            }
             // Backward-compat: legacy snapshots only stored a backend key string.
-            let key = String::from_utf8(key.to_vec())
+            let key = std::str::from_utf8(key)
+                .map(|s| s.to_string())
                 .map_err(|_| SnapshotError::InvalidFieldEncoding("backend_key utf8"))?;
             self.backend = DiskBackendState::Local(LocalDiskBackendState {
                 kind: LocalDiskBackendKind::Other,
@@ -364,6 +437,38 @@ impl IoSnapshot for DiskLayerState {
         }
         if let Some(size) = r.u64(TAG_SIZE_BYTES)? {
             self.size_bytes = size;
+        }
+
+        match self.sector_size {
+            512 | 4096 => {}
+            _ => return Err(SnapshotError::InvalidFieldEncoding("sector_size")),
+        }
+        if self.size_bytes == 0 {
+            return Err(SnapshotError::InvalidFieldEncoding("disk_size"));
+        }
+        if self.size_bytes % (self.sector_size as u64) != 0 {
+            return Err(SnapshotError::InvalidFieldEncoding(
+                "disk_size not multiple of sector_size",
+            ));
+        }
+
+        match &self.backend {
+            DiskBackendState::Local(local) => {
+                if let Some(overlay) = &local.overlay {
+                    if overlay.disk_size_bytes != self.size_bytes {
+                        return Err(SnapshotError::InvalidFieldEncoding(
+                            "overlay disk_size mismatch",
+                        ));
+                    }
+                }
+            }
+            DiskBackendState::Remote(remote) => {
+                if remote.overlay.disk_size_bytes != self.size_bytes {
+                    return Err(SnapshotError::InvalidFieldEncoding(
+                        "overlay disk_size mismatch",
+                    ));
+                }
+            }
         }
 
         self.attached_backend = None;
