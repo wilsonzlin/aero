@@ -168,3 +168,70 @@ fn shared_surface_import_export_aliases_texture_handles() {
         );
     });
 }
+
+#[test]
+fn shared_surface_import_into_destroyed_original_handle_is_rejected() {
+    pollster::block_on(async {
+        ensure_xdg_runtime_dir();
+
+        const DEVICE_ID: u32 = 1;
+        const CONTEXT_ID: u32 = 1;
+
+        const TEX_ORIGINAL: u32 = 0x10;
+        const TEX_ALIAS: u32 = 0x20;
+
+        const TOKEN: u64 = 0x0123_4567_89AB_CDEF;
+
+        let mut processor = CommandProcessor::new(ProcessorConfig { validation: true });
+
+        let mut stream = StreamEncoder::new();
+        stream.device_create(DEVICE_ID);
+        stream.context_create(DEVICE_ID, CONTEXT_ID);
+        stream.texture_create(
+            CONTEXT_ID,
+            TEX_ORIGINAL,
+            TextureCreateDesc {
+                width: 4,
+                height: 4,
+                mip_level_count: 1,
+                format: TextureFormat::Rgba8Unorm,
+                usage: TextureUsage::RenderTarget as u32,
+            },
+        );
+        stream.export_shared_surface(TEX_ORIGINAL, TOKEN);
+        stream.import_shared_surface(TEX_ALIAS, TOKEN);
+
+        // Destroy the original handle; alias keeps the underlying texture alive.
+        stream.texture_destroy(CONTEXT_ID, TEX_ORIGINAL);
+
+        // Buggy guest behavior: attempt to re-import into the destroyed original handle value.
+        stream.import_shared_surface(TEX_ORIGINAL, TOKEN);
+
+        let report = processor.process(&stream.finish()).await;
+        if report.is_ok() {
+            panic!("expected import into destroyed original handle to fail validation");
+        }
+
+        let adapter_missing = report.events.iter().any(|event| match event {
+            ProcessorEvent::Error { message, .. } => message.contains("adapter not found"),
+            _ => false,
+        });
+        if adapter_missing {
+            common::skip_or_panic(module_path!(), "wgpu adapter not found");
+            return;
+        }
+
+        let msg = report
+            .events
+            .iter()
+            .find_map(|event| match event {
+                ProcessorEvent::Error { message, .. } => Some(message.as_str()),
+                _ => None,
+            })
+            .expect("expected an error event");
+        assert!(
+            msg.contains("still in use"),
+            "expected reserved-handle reuse to be rejected, got: {msg}"
+        );
+    });
+}

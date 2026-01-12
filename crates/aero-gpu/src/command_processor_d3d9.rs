@@ -110,6 +110,14 @@ impl SharedTextureState {
         if self.texture_handles.contains_key(&handle) {
             return Err(format!("texture handle {handle} already exists"));
         }
+        if self.texture_refcounts.contains_key(&handle) {
+            // Underlying handles remain reserved as long as any aliases still reference them. If an
+            // original handle was destroyed, reject reusing its numeric ID until the underlying
+            // texture is fully released.
+            return Err(format!(
+                "texture handle {handle} is still in use (underlying id kept alive by shared surface aliases)"
+            ));
+        }
         self.texture_handles.insert(handle, underlying);
         *self.texture_refcounts.entry(underlying).or_insert(0) += 1;
         Ok(())
@@ -120,10 +128,18 @@ impl SharedTextureState {
         runtime: &mut D3D9Runtime,
         handle: u32,
     ) -> Result<(), String> {
-        let underlying = self
-            .texture_handles
-            .remove(&handle)
-            .ok_or_else(|| format!("unknown texture handle {handle}"))?;
+        let underlying = match self.texture_handles.remove(&handle) {
+            Some(underlying) => underlying,
+            None => {
+                // If the original handle has already been destroyed (removed from `texture_handles`)
+                // but aliases keep the underlying texture alive (`texture_refcounts` still contains
+                // the underlying ID), treat duplicate destroys as an idempotent no-op.
+                if self.texture_refcounts.contains_key(&handle) {
+                    return Ok(());
+                }
+                return Err(format!("unknown texture handle {handle}"));
+            }
+        };
 
         let Some(count) = self.texture_refcounts.get_mut(&underlying) else {
             return Err(format!(
@@ -600,6 +616,14 @@ impl CommandProcessor {
                 }
                 if shared_textures.texture_handles.contains_key(&texture_id) {
                     return Err(format!("texture handle {texture_id} already exists"));
+                }
+                if shared_textures.texture_refcounts.contains_key(&texture_id) {
+                    // Underlying handles remain reserved as long as any aliases still reference
+                    // them. If the original handle was destroyed, reject reusing its numeric ID
+                    // until the underlying texture is fully released.
+                    return Err(format!(
+                        "texture handle {texture_id} is still in use (underlying id kept alive by shared surface aliases)"
+                    ));
                 }
 
                 let format = TextureFormat::from_u32(format_raw)
