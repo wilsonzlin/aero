@@ -61,7 +61,10 @@ use aero_devices_nvme::{NvmeController, NvmePciDevice};
 use aero_devices_storage::pci_ide::{Piix3IdePciDevice, PRIMARY_PORTS, SECONDARY_PORTS};
 use aero_gpu_vga::{DisplayOutput as _, PortIO as _, VgaDevice};
 use aero_interrupts::apic::{IOAPIC_MMIO_BASE, IOAPIC_MMIO_SIZE, LAPIC_MMIO_BASE, LAPIC_MMIO_SIZE};
-use aero_io_snapshot::io::state::IoSnapshot;
+use aero_io_snapshot::io::state::{
+    IoSnapshot, SnapshotError as IoSnapshotError, SnapshotReader as IoSnapshotReader,
+    SnapshotResult as IoSnapshotResult, SnapshotVersion, SnapshotWriter,
+};
 use aero_io_snapshot::io::storage::state::DiskControllersSnapshot;
 use aero_net_backend::{FrameRing, L2TunnelRingBackend, L2TunnelRingBackendStats, NetworkBackend};
 use aero_net_e1000::E1000Device;
@@ -2617,9 +2620,9 @@ impl Machine {
                 // can respect COMMAND.INTX_DISABLE (bit 10) while the machine owns the canonical PCI
                 // config space.
                 let mut level = {
-                    let mut virtio = virtio.borrow_mut();
-                    virtio.set_pci_command(command);
-                    virtio.irq_level()
+                    let mut virtio_dev = virtio.borrow_mut();
+                    virtio_dev.set_pci_command(command);
+                    virtio_dev.irq_level()
                 };
 
                 // Redundantly gate on the canonical PCI command register as well (defensive).
@@ -4412,6 +4415,43 @@ impl Machine {
     }
 }
 
+#[derive(Debug, Clone, Default)]
+struct MachineUsbUhciSnapshot {
+    uhci: Vec<u8>,
+    uhci_ns_remainder: u64,
+}
+
+impl MachineUsbUhciSnapshot {
+    const TAG_UHCI_NS_REMAINDER: u16 = 1;
+    const TAG_UHCI_STATE: u16 = 2;
+}
+
+impl IoSnapshot for MachineUsbUhciSnapshot {
+    const DEVICE_ID: [u8; 4] = *b"USBC";
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
+
+    fn save_state(&self) -> Vec<u8> {
+        let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
+        w.field_u64(Self::TAG_UHCI_NS_REMAINDER, self.uhci_ns_remainder);
+        w.field_bytes(Self::TAG_UHCI_STATE, self.uhci.clone());
+        w.finish()
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> IoSnapshotResult<()> {
+        let r = IoSnapshotReader::parse(bytes, Self::DEVICE_ID)?;
+        r.ensure_device_major(Self::DEVICE_VERSION.major)?;
+
+        self.uhci_ns_remainder = r.u64(Self::TAG_UHCI_NS_REMAINDER)?.unwrap_or(0);
+        let Some(buf) = r.bytes(Self::TAG_UHCI_STATE) else {
+            return Err(IoSnapshotError::InvalidFieldEncoding(
+                "missing nested UHCI snapshot",
+            ));
+        };
+        self.uhci = buf.to_vec();
+        Ok(())
+    }
+}
+
 impl snapshot::SnapshotSource for Machine {
     fn snapshot_meta(&mut self) -> snapshot::SnapshotMeta {
         let snapshot_id = self.next_snapshot_id;
@@ -4561,9 +4601,13 @@ impl snapshot::SnapshotSource for Machine {
                 }
             }
 
+            let wrapper = MachineUsbUhciSnapshot {
+                uhci: uhci.borrow().save_state(),
+                uhci_ns_remainder: self.uhci_ns_remainder,
+            };
             devices.push(snapshot::io_snapshot_bridge::device_state_from_io_snapshot(
                 snapshot::DeviceId::USB,
-                &*uhci.borrow(),
+                &wrapper,
             ));
         }
         // Storage controller(s).
@@ -4793,6 +4837,10 @@ impl snapshot::SnapshotTarget for Machine {
         // `aero_snapshot` restore is section-order-independent, so this must not happen in a
         // per-section callback like `restore_cpu_state`.
         self.restored_disk_overlays = None;
+        // Reset host-side UHCI tick remainder before applying any snapshot sections. Newer
+        // snapshots restore this field from `DeviceId::USB`; older snapshots will leave it at the
+        // deterministic default (0).
+        self.uhci_ns_remainder = 0;
     }
 
     fn restore_meta(&mut self, meta: snapshot::SnapshotMeta) {
@@ -4817,6 +4865,9 @@ impl snapshot::SnapshotTarget for Machine {
         // Reset pending CPU bookkeeping to a deterministic baseline, so restores from older
         // snapshots (that lack `CPU_INTERNAL`) still clear stale pending state.
         self.cpu.pending = Default::default();
+        // Reset host-side UHCI tick remainder so restores from older snapshots (that lack this
+        // field) do not preserve stale partial-tick state from the pre-restore execution.
+        self.uhci_ns_remainder = 0;
 
         // Restore ordering must be explicit and independent of snapshot file ordering so device
         // state is deterministic (especially for interrupt lines and PCI INTx routing).
@@ -5308,11 +5359,28 @@ impl snapshot::SnapshotTarget for Machine {
 
         // Restore USB controller state after the interrupt controller + PCI core so its IRQ level
         // can be re-driven deterministically.
-        if let (Some(uhci), Some(state)) = (&self.uhci, by_id.remove(&snapshot::DeviceId::USB)) {
-            let _ = snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
-                &state,
-                &mut *uhci.borrow_mut(),
-            );
+        if let Some(state) = by_id.remove(&snapshot::DeviceId::USB) {
+            if let Some(uhci) = &self.uhci {
+                const NS_PER_MS: u64 = 1_000_000;
+
+                // Canonical encoding: `DeviceId::USB` stores a `USBC` wrapper that includes both
+                // the guest-visible UHCI controller snapshot and the machine's host-side sub-ms
+                // tick remainder (`uhci_ns_remainder`).
+                if matches!(state.data.get(8..12), Some(id) if id == b"USBC") {
+                    let mut wrapper = MachineUsbUhciSnapshot::default();
+                    if wrapper.load_state(&state.data).is_ok() {
+                        self.uhci_ns_remainder = wrapper.uhci_ns_remainder % NS_PER_MS;
+                        let _ = uhci.borrow_mut().load_state(&wrapper.uhci);
+                    }
+                } else {
+                    // Backward compatibility: older snapshots stored the UHCI PCI device snapshot
+                    // (`UHCP`) directly under `DeviceId::USB`.
+                    let _ = snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
+                        &state,
+                        &mut *uhci.borrow_mut(),
+                    );
+                }
+            }
         }
 
         // Restore i8042 after the interrupt controller complex so any restored IRQ pulses are
@@ -5466,7 +5534,6 @@ impl snapshot::SnapshotTarget for Machine {
         self.mem.clear_dirty();
         self.cpu.state.a20_enabled = self.chipset.a20().enabled();
         self.resync_guest_time_from_tsc();
-        self.uhci_ns_remainder = 0;
 
         // Snapshot restore applies `DEVICES` before `RAM`, so any cursor sync that reads from the
         // BIOS Data Area must happen *after* RAM is restored (here in `post_restore`).
