@@ -182,6 +182,85 @@ if [[ "$FD_LIMIT" =~ ^[0-9]+$ ]]; then
     fi
 fi
 
+# ---- Check working tree integrity (exec bits + pinned fixtures) ----
+
+echo ""
+echo "Checking repo checkout integrity (scripts + fixtures)..."
+
+NONEXEC_SCRIPTS=()
+MISSING_SCRIPTS=()
+MISSING_FIXTURES=()
+
+for rel in \
+  "scripts/safe-run.sh" \
+  "scripts/run_limited.sh" \
+  "scripts/with-timeout.sh"
+do
+  path="$REPO_ROOT/$rel"
+  if [[ ! -e "$path" ]]; then
+    MISSING_SCRIPTS+=("$rel")
+    continue
+  fi
+  if [[ ! -x "$path" ]]; then
+    NONEXEC_SCRIPTS+=("$rel")
+  fi
+done
+
+# Pinned fixtures relied on by tooling/tests.
+for rel in \
+  "tools/disk-streaming-browser-e2e/fixtures/win7.img" \
+  "tools/disk-streaming-browser-e2e/fixtures/secret.img" \
+  "tools/packaging/aero_packager/testdata/drivers-aero-virtio/amd64/aero_virtio_blk/aero_virtio_blk.sys" \
+  "tools/packaging/aero_packager/testdata/drivers-aero-virtio/amd64/aero_virtio_net/aero_virtio_net.sys" \
+  "tools/packaging/aero_packager/testdata/drivers-aero-virtio/x86/aero_virtio_blk/aero_virtio_blk.sys" \
+  "tools/packaging/aero_packager/testdata/drivers-aero-virtio/x86/aero_virtio_net/aero_virtio_net.sys"
+do
+  path="$REPO_ROOT/$rel"
+  if [[ ! -f "$path" ]]; then
+    MISSING_FIXTURES+=("$rel")
+  fi
+done
+
+if [[ ${#NONEXEC_SCRIPTS[@]} -gt 0 || ${#MISSING_SCRIPTS[@]} -gt 0 || ${#MISSING_FIXTURES[@]} -gt 0 ]]; then
+  echo "  ! Detected an incomplete/broken working tree (common in some agent environments)"
+fi
+
+if [[ ${#MISSING_SCRIPTS[@]} -gt 0 ]]; then
+  msg="Missing tracked scripts:"
+  for rel in "${MISSING_SCRIPTS[@]}"; do msg+=$'\n'"  - ${rel}"; done
+  msg+=$'\n'"Fix:"
+  msg+=$'\n'"  git checkout -- scripts"
+  msg+=$'\n'"  # or restore just these paths:"
+  msg+=$'\n'"  git checkout -- ${MISSING_SCRIPTS[*]}"
+  WARNINGS+=("$msg")
+fi
+
+if [[ ${#NONEXEC_SCRIPTS[@]} -gt 0 ]]; then
+  msg="Scripts not executable (lost executable bits?):"
+  for rel in "${NONEXEC_SCRIPTS[@]}"; do msg+=$'\n'"  - ${rel}"; done
+  msg+=$'\n'"Workaround (does not require +x):"
+  msg+=$'\n'"  bash ./scripts/safe-run.sh cargo build --locked"
+  msg+=$'\n'"Fix (preferred):"
+  msg+=$'\n'"  git checkout -- scripts"
+  msg+=$'\n'"Non-git fallback:"
+  msg+=$'\n'"  chmod +x ${NONEXEC_SCRIPTS[*]}"
+  WARNINGS+=("$msg")
+else
+  echo "  ✓ Script executability looks OK"
+fi
+
+if [[ ${#MISSING_FIXTURES[@]} -gt 0 ]]; then
+  msg="Missing tracked fixtures (some tools/tests rely on these):"
+  for rel in "${MISSING_FIXTURES[@]}"; do msg+=$'\n'"  - ${rel}"; done
+  msg+=$'\n'"Fix:"
+  msg+=$'\n'"  git checkout -- tools/packaging/aero_packager/testdata tools/disk-streaming-browser-e2e/fixtures"
+  msg+=$'\n'"  # bigger hammer (resets the whole working tree):"
+  msg+=$'\n'"  git checkout -- ."
+  WARNINGS+=("$msg")
+else
+  echo "  ✓ Required fixtures present"
+fi
+
 # ---- Report results ----
 
 echo ""
@@ -198,7 +277,11 @@ fi
 if [[ ${#WARNINGS[@]} -gt 0 ]]; then
     echo "WARNINGS (may cause issues):"
     for warn in "${WARNINGS[@]}"; do
-        echo "  ! $warn"
+        # WARNINGS may contain newlines (copy/paste remediation commands). Prefix each
+        # line so multi-line entries stay readable.
+        while IFS= read -r line; do
+            echo "  ! $line"
+        done <<<"$warn"
     done
     echo ""
 fi
@@ -210,7 +293,7 @@ fi
 
 echo "Next steps:"
 echo "  1. Activate environment:  source $SCRIPT_DIR/agent-env.sh"
-echo "  2. Run builds safely:     ./scripts/safe-run.sh cargo build --locked"
+echo "  2. Run builds safely:     bash ./scripts/safe-run.sh cargo build --locked"
 echo ""
 echo "Windows 7 test ISO available at: /state/win7.iso"
 echo ""
