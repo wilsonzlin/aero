@@ -219,6 +219,10 @@ async function main() {
     pipelineOpfsFileExists,
     pipelineRoundtripOk,
   };
+
+  // Best-effort: close the IndexedDB handle so persistent-context tests can
+  // cleanly shut down without blocked transactions.
+  await cache.close();
 }
 
 main().catch((err) => {
