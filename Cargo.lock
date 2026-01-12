@@ -280,6 +280,7 @@ version = "0.1.0"
 dependencies = [
  "aero-d3d9",
  "aero-gpu",
+ "aero-pc-constants",
  "aero-protocol",
  "bytemuck",
  "futures-intrusive",

@@ -22,7 +22,7 @@ mod drain_queue;
 #[cfg(any(test, target_arch = "wasm32"))]
 mod guest_phys {
     /// End of low RAM / start of the ECAM+PCI hole.
-    pub const LOW_RAM_END: u64 = 0xB000_0000;
+    pub const LOW_RAM_END: u64 = aero_pc_constants::PCIE_ECAM_BASE;
     /// Base of remapped high RAM.
     pub const HIGH_RAM_START: u64 = 0x1_0000_0000;
 
