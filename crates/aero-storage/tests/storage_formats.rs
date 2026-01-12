@@ -161,6 +161,28 @@ fn make_vhd_fixed_with_footer_copy() -> MemBackend {
     storage
 }
 
+fn make_vhd_fixed_without_footer_copy_but_sector0_looks_like_footer() -> MemBackend {
+    // Construct a fixed VHD where sector 0 of the data region happens to resemble a valid VHD
+    // footer (including a correct checksum). This should *not* be treated as an optional footer
+    // copy, since the file length only includes a single required EOF footer.
+    let virtual_size = 1024 * 1024u64;
+    let mut data = vec![0u8; virtual_size as usize];
+
+    // Sector 0: bytes that form a valid fixed-disk footer.
+    let fake_footer = make_vhd_footer(virtual_size, 2, u64::MAX);
+    data[..512].copy_from_slice(&fake_footer);
+
+    // Sector 1: distinctive pattern so we can detect if the open path incorrectly skips sector 0.
+    data[512..520].copy_from_slice(b"PAYLOAD!");
+
+    let eof_footer = make_vhd_footer(virtual_size, 2, u64::MAX);
+
+    let mut storage = MemBackend::default();
+    storage.write_at(0, &data).unwrap();
+    storage.write_at(virtual_size, &eof_footer).unwrap();
+    storage
+}
+
 fn make_vhd_dynamic_empty(virtual_size: u64, block_size: u32) -> MemBackend {
     assert_eq!(virtual_size % SECTOR as u64, 0);
     assert_eq!(block_size as usize % SECTOR, 0);
@@ -252,6 +274,23 @@ fn detect_vhd_fixed_with_footer_copy() {
     let mut sector = [0u8; SECTOR];
     disk.read_sectors(0, &mut sector).unwrap();
     assert_eq!(&sector[..10], b"hello vhd!");
+}
+
+#[test]
+fn vhd_fixed_sector0_that_looks_like_footer_is_not_treated_as_footer_copy() {
+    let mut storage = make_vhd_fixed_without_footer_copy_but_sector0_looks_like_footer();
+    assert_eq!(detect_format(&mut storage).unwrap(), DiskFormat::Vhd);
+
+    let mut disk = DiskImage::open_auto(storage).unwrap();
+    assert_eq!(disk.format(), DiskFormat::Vhd);
+
+    let mut sector0 = [0u8; SECTOR];
+    disk.read_sectors(0, &mut sector0).unwrap();
+    assert_eq!(&sector0[..8], b"conectix");
+
+    let mut sector1 = [0u8; SECTOR];
+    disk.read_sectors(1, &mut sector1).unwrap();
+    assert_eq!(&sector1[..8], b"PAYLOAD!");
 }
 
 #[test]
