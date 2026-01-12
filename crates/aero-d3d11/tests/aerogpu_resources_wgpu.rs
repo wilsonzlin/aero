@@ -290,7 +290,8 @@ fn upload_resource_bc1_texture_roundtrip_cpu_fallback() -> Result<()> {
                 mip_levels: 1,
                 array_layers: 1,
                 // BC1: 4x4 blocks, 8 bytes per block. One block row => 8 bytes.
-                row_pitch_bytes: 8,
+                // Use a padded row pitch to exercise the runtime's repack path.
+                row_pitch_bytes: 12,
                 backing_alloc_id: 0,
                 backing_offset_bytes: 0,
             },
