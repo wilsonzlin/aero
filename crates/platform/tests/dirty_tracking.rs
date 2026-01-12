@@ -86,3 +86,25 @@ fn take_dirty_pages_returns_sorted_deduped_and_clears() {
     assert_eq!(bus.take_dirty_pages().unwrap(), Vec::<u64>::new());
 }
 
+#[test]
+fn get_slice_mut_marks_pages_dirty_conservatively() {
+    let mut bus = new_bus_with_dirty_tracking(2 * 4096);
+
+    // Borrowing a mutable slice is treated as a potential write, so we mark pages as dirty
+    // immediately even if the caller performs no actual mutation.
+    let slice = bus.ram_mut().get_slice_mut(0x0FFF, 2).unwrap();
+    slice.copy_from_slice(&[0xAA, 0xBB]);
+
+    let dirty = bus.take_dirty_pages().unwrap();
+    assert_eq!(dirty, vec![0, 1]);
+}
+
+#[test]
+fn clear_dirty_discards_accumulated_pages() {
+    let mut bus = new_bus_with_dirty_tracking(2 * 4096);
+
+    bus.write_physical(0x100, &[0x11, 0x22, 0x33]);
+    bus.clear_dirty();
+
+    assert_eq!(bus.take_dirty_pages().unwrap(), Vec::<u64>::new());
+}
