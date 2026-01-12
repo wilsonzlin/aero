@@ -29,12 +29,15 @@ These drivers run **inside the guest Windows 7** and communicate with the emulat
 | `drivers/aerogpu/kmd/` | Kernel-mode driver |
 | `drivers/aerogpu/umd/` | User-mode driver (D3D9/D3D10/D3D11 DDI) |
 | `drivers/windows7/` | Virtio drivers for Windows 7 |
+| `drivers/windows7/virtio/common/` | Shared Win7 virtio glue (WDM/NDIS/StorPort shims + split virtqueue impl) |
 | `drivers/windows7/virtio-blk/` | Block device driver |
 | `drivers/windows7/virtio-net/` | Network driver |
 | `drivers/windows7/virtio-input/` | HID input driver |
 | `drivers/windows7/virtio-snd/` | Audio driver |
+| `drivers/windows/virtio/` | Portable virtio helpers (shared with Win7 drivers; host-side tests build on Linux) |
 | `drivers/windows7/tests/guest-selftest/` | `aero-virtio-selftest.exe` (runs inside Win7 guest; emits serial markers) |
 | `drivers/windows7/tests/host-harness/` | QEMU host harness that runs the guest selftest and returns a deterministic PASS/FAIL |
+| `drivers/win7/virtio/` | Win7 KMDF virtio scaffolding + capability parser tests (non-shipping test drivers) |
 | `drivers/protocol/` | Protocol definitions (shared with emulator) |
 | `drivers/protocol/virtio/` | Rust virtio protocol definitions + unit tests (`cargo test`) |
 | `guest-tools/` | Guest tools packaging and installer |
@@ -60,6 +63,7 @@ These drivers run **inside the guest Windows 7** and communicate with the emulat
 - [`docs/windows7-driver-troubleshooting.md`](../docs/windows7-driver-troubleshooting.md) — Debugging tips
 - [`docs/16-aerogpu-vga-vesa-compat.md`](../docs/16-aerogpu-vga-vesa-compat.md) — AeroGPU VGA compat
 - [`drivers/aerogpu/README.md`](../drivers/aerogpu/README.md) — AeroGPU build/CI entrypoint + key docs
+- [`drivers/windows7/tests/README.md`](../drivers/windows7/tests/README.md) — Win7 virtio selftest + harness overview (incl. virtio-snd notes)
 - [`drivers/windows7/tests/host-harness/README.md`](../drivers/windows7/tests/host-harness/README.md) — Win7 virtio test harness (incl. virtio-snd wav capture)
 - [`drivers/windows7/tests/guest-selftest/README.md`](../drivers/windows7/tests/guest-selftest/README.md) — Guest selftest details (incl. virtio-snd playback/capture/duplex)
 
@@ -88,6 +92,25 @@ These checks exist specifically to prevent “driver installs but doesn’t bind
 - Windows virtio contract wiring (manifest ↔ INFs ↔ emulator ↔ guest-tools): [`.github/workflows/windows-virtio-contract.yml`](../.github/workflows/windows-virtio-contract.yml)
 - Device contract validator (JSON schema + invariants): [`.github/workflows/windows-device-contract.yml`](../.github/workflows/windows-device-contract.yml)
 - Virtio protocol crate tests: [`.github/workflows/virtio-protocol.yml`](../.github/workflows/virtio-protocol.yml)
+
+Local equivalents for fast iteration (Linux/macOS host):
+
+```bash
+# Virtio contract drift checks (docs ↔ INFs ↔ emulator PCI profiles + guest-tools specs)
+python3 scripts/ci/check-windows7-virtio-contract-consistency.py
+python3 scripts/ci/check-windows-virtio-contract.py --check
+
+# Device contract schema/invariants (same check as windows-device-contract.yml)
+cargo run -p device-contract-validator --locked
+
+# Rust virtio protocol unit tests (same as virtio-protocol.yml)
+cargo test --locked --manifest-path drivers/protocol/virtio/Cargo.toml
+
+# Host-side C unit tests for virtio helpers and virtio-snd protocol engines
+cmake -S . -B build-virtio-host-tests -DAERO_VIRTIO_BUILD_TESTS=ON -DAERO_AEROGPU_BUILD_TESTS=OFF -DCMAKE_BUILD_TYPE=Release
+cmake --build build-virtio-host-tests
+ctest --test-dir build-virtio-host-tests --output-on-failure
+```
 
 ---
 
@@ -264,6 +287,13 @@ For virtio-blk:
 - Read/write test files
 - Check performance (should be faster than emulated AHCI)
 
+For virtio end-to-end regression testing (recommended):
+
+- Guest selftest: `drivers/windows7/tests/guest-selftest/` (`aero-virtio-selftest.exe`)
+- Host harness: `drivers/windows7/tests/host-harness/` (boots QEMU + parses serial markers)
+  - Supports virtio-snd wav capture + non-silence verification when enabled.
+  - See: [`drivers/windows7/tests/README.md`](../drivers/windows7/tests/README.md)
+
 ---
 
 ## Quick Start Checklist
@@ -271,10 +301,13 @@ For virtio-blk:
 1. ☐ Read [`AGENTS.md`](../AGENTS.md) completely
 2. ☐ Read [`docs/windows/README.md`](../docs/windows/README.md)
 3. ☐ Read [`docs/windows7-virtio-driver-contract.md`](../docs/windows7-virtio-driver-contract.md)
-4. ☐ Set up Windows build environment (WDK)
-5. ☐ Explore `drivers/aerogpu/` and `drivers/windows7/`
-6. ☐ Build existing drivers to verify toolchain
-7. ☐ Pick a task from the tables above and begin
+4. ☐ Read [`docs/windows-device-contract.md`](../docs/windows-device-contract.md)
+5. ☐ Read [`drivers/windows7/tests/README.md`](../drivers/windows7/tests/README.md) (selftest + harness)
+6. ☐ Run contract checks locally (`python3 scripts/ci/check-windows7-virtio-contract-consistency.py`)
+7. ☐ Set up Windows build environment (WDK)
+8. ☐ Explore `drivers/aerogpu/` and `drivers/windows7/`
+9. ☐ Build existing drivers to verify toolchain
+10. ☐ Pick a task from the tables above and begin
 
 ---
 
