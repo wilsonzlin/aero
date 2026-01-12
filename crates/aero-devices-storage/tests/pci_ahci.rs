@@ -25,6 +25,7 @@ const PORT_CMD_ST: u32 = 1 << 0;
 const PORT_CMD_FRE: u32 = 1 << 4;
 
 const PORT_IS_DHRS: u32 = 1 << 0;
+const PORT_IS_TFES: u32 = 1 << 30;
 
 fn write_cmd_header(
     mem: &mut dyn MemoryBus,
@@ -225,4 +226,134 @@ fn interrupt_enable_bits_and_pci_interrupt_disable_gate_intx() {
     // Clearing PxIS should deassert the interrupt.
     dev.mmio_write(PORT_BASE + PORT_REG_IS, 4, u64::from(PORT_IS_DHRS));
     assert!(!dev.intx_level());
+}
+
+#[test]
+fn w1c_hba_is_byte_write_does_not_clear_other_port_summary_bits() {
+    // Regression test: sub-dword writes to RW1C registers must not inadvertently clear bits in
+    // unwritten bytes (e.g. by read-modify-write merging).
+    const HBA_IS: u64 = 0x08;
+
+    let capacity = 8 * SECTOR_SIZE as u64;
+    let disk0 = RawDisk::create(MemBackend::new(), capacity).unwrap();
+    let disk8 = RawDisk::create(MemBackend::new(), capacity).unwrap();
+
+    let mut dev = AhciPciDevice::new(9);
+    dev.attach_drive(0, AtaDrive::new(Box::new(disk0)).unwrap());
+    dev.attach_drive(8, AtaDrive::new(Box::new(disk8)).unwrap());
+    dev.config_mut().set_command(0x0006); // MEM + BUSMASTER
+
+    let mut mem = Bus::new(0x20_000);
+
+    // Port 0 command buffers.
+    let clb0 = 0x1000u64;
+    let fb0 = 0x2000u64;
+    let ctba0 = 0x3000u64;
+    let buf0 = 0x4000u64;
+
+    // Port 8 command buffers.
+    let clb8 = 0x5000u64;
+    let fb8 = 0x6000u64;
+    let ctba8 = 0x7000u64;
+    let buf8 = 0x8000u64;
+
+    let port0_base = PORT_BASE + 0 * 0x80;
+    let port8_base = PORT_BASE + 8 * 0x80;
+
+    // Enable global interrupts and AHCI mode.
+    dev.mmio_write(HBA_GHC, 4, u64::from(GHC_IE | GHC_AE));
+
+    // Program both ports.
+    for (port_base, clb, fb) in [(port0_base, clb0, fb0), (port8_base, clb8, fb8)] {
+        dev.mmio_write(port_base + PORT_REG_CLB, 4, clb);
+        dev.mmio_write(port_base + PORT_REG_FB, 4, fb);
+        dev.mmio_write(port_base + PORT_REG_IE, 4, u64::from(PORT_IS_DHRS));
+        dev.mmio_write(
+            port_base + PORT_REG_CMD,
+            4,
+            u64::from(PORT_CMD_ST | PORT_CMD_FRE),
+        );
+    }
+
+    // IDENTIFY DMA on both ports.
+    write_cmd_header(&mut mem, clb0, 0, ctba0, 1, false);
+    write_cfis(&mut mem, ctba0, ATA_CMD_IDENTIFY, 0, 0);
+    write_prdt(&mut mem, ctba0, 0, buf0, SECTOR_SIZE as u32);
+
+    write_cmd_header(&mut mem, clb8, 0, ctba8, 1, false);
+    write_cfis(&mut mem, ctba8, ATA_CMD_IDENTIFY, 0, 0);
+    write_prdt(&mut mem, ctba8, 0, buf8, SECTOR_SIZE as u32);
+
+    dev.mmio_write(port0_base + PORT_REG_CI, 4, 1);
+    dev.mmio_write(port8_base + PORT_REG_CI, 4, 1);
+    dev.process(&mut mem);
+
+    assert!(dev.intx_level());
+
+    let is = dev.mmio_read(HBA_IS, 4) as u32;
+    assert_eq!(is & ((1 << 0) | (1 << 8)), (1 << 0) | (1 << 8));
+
+    // Clear bit 0 via a *byte* write to HBA.IS.
+    dev.mmio_write(HBA_IS, 1, 1);
+
+    let is2 = dev.mmio_read(HBA_IS, 4) as u32;
+    assert_eq!(is2 & (1 << 0), 0);
+    assert_eq!(is2 & (1 << 8), 1 << 8);
+
+    // Port 8 interrupt is still pending, so INTx should remain asserted.
+    assert!(dev.intx_level());
+}
+
+#[test]
+fn w1c_px_is_byte_write_does_not_clear_other_status_bits() {
+    // Trigger both DHRS (bit 0) and TFES (bit 30) then clear DHRS via a byte write.
+    // The TFES bit lives in an upper byte of the same dword, so a buggy RMW merge would clear it.
+    let capacity = 8 * SECTOR_SIZE as u64;
+    let disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
+
+    let mut dev = AhciPciDevice::new(1);
+    dev.attach_drive(0, AtaDrive::new(Box::new(disk)).unwrap());
+    dev.config_mut().set_command(0x0006); // MEM + BUSMASTER
+
+    let mut mem = Bus::new(0x20_000);
+
+    let clb = 0x1000u64;
+    let fb = 0x2000u64;
+    let ctba = 0x3000u64;
+
+    dev.mmio_write(PORT_BASE + PORT_REG_CLB, 4, clb);
+    dev.mmio_write(PORT_BASE + PORT_REG_FB, 4, fb);
+    dev.mmio_write(HBA_GHC, 4, u64::from(GHC_IE | GHC_AE));
+    dev.mmio_write(
+        PORT_BASE + PORT_REG_IE,
+        4,
+        u64::from(PORT_IS_DHRS | PORT_IS_TFES),
+    );
+    dev.mmio_write(
+        PORT_BASE + PORT_REG_CMD,
+        4,
+        u64::from(PORT_CMD_ST | PORT_CMD_FRE),
+    );
+
+    // Program an IDENTIFY command with PRDTL=0 so DMA fails and the port raises TFES.
+    write_cmd_header(&mut mem, clb, 0, ctba, 0, false);
+    write_cfis(&mut mem, ctba, ATA_CMD_IDENTIFY, 0, 0);
+
+    dev.mmio_write(PORT_BASE + PORT_REG_CI, 4, 1);
+    dev.process(&mut mem);
+
+    let is = dev.mmio_read(PORT_BASE + PORT_REG_IS, 4) as u32;
+    assert_ne!(is & PORT_IS_DHRS, 0);
+    assert_ne!(is & PORT_IS_TFES, 0);
+    assert!(dev.intx_level());
+
+    // Clear DHRS via a byte write.
+    dev.mmio_write(PORT_BASE + PORT_REG_IS, 1, 1);
+
+    let is2 = dev.mmio_read(PORT_BASE + PORT_REG_IS, 4) as u32;
+    assert_eq!(is2 & PORT_IS_DHRS, 0);
+    assert_ne!(is2 & PORT_IS_TFES, 0);
+
+    // TFES is still enabled and pending, so INTx should remain asserted.
+    assert!(dev.intx_level());
 }
