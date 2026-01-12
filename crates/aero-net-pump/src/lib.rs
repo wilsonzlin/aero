@@ -15,6 +15,47 @@ use memory::MemoryBus;
 /// Default frame budget for each direction per [`E1000Pump::poll`] call.
 pub const DEFAULT_MAX_FRAMES_PER_POLL: usize = 256;
 
+/// Pump frames between a borrowed [`E1000Device`] and a borrowed [`NetworkBackend`].
+///
+/// This is the low-level, allocation-free pump primitive intended for integration layers that
+/// already own the NIC and backend (e.g. the PC platform, a WASM runtime, or a canonical machine).
+///
+/// Ordering is deterministic and mirrors virtio-net:
+/// 1) `nic.poll(mem)` to process DMA and publish queued guest TX.
+/// 2) Drain up to `max_tx_frames_per_tick` from `nic.pop_tx_frame()` and call `backend.transmit`.
+/// 3) Drain up to `max_rx_frames_per_tick` from `backend.poll_receive()` and call
+///    `nic.enqueue_rx_frame`.
+/// 4) Call `nic.poll(mem)` again to flush newly enqueued RX into guest buffers.
+pub fn tick_e1000<B: NetworkBackend + ?Sized>(
+    nic: &mut E1000Device,
+    mem: &mut dyn MemoryBus,
+    backend: &mut B,
+    max_tx_frames_per_tick: usize,
+    max_rx_frames_per_tick: usize,
+) {
+    // Step 1: allow the NIC to process descriptor rings (DMA).
+    nic.poll(mem);
+
+    // Step 2: forward guest TX frames.
+    for _ in 0..max_tx_frames_per_tick {
+        let Some(frame) = nic.pop_tx_frame() else {
+            break;
+        };
+        backend.transmit(frame);
+    }
+
+    // Step 3: inject host RX frames.
+    for _ in 0..max_rx_frames_per_tick {
+        let Some(frame) = backend.poll_receive() else {
+            break;
+        };
+        nic.enqueue_rx_frame(frame);
+    }
+
+    // Step 4: flush injected RX frames into guest buffers.
+    nic.poll(mem);
+}
+
 /// Moves Ethernet frames between an [`E1000Device`] and a host-side [`NetworkBackend`].
 #[derive(Debug)]
 pub struct E1000Pump<B> {
@@ -53,27 +94,13 @@ impl<B: NetworkBackend> E1000Pump<B> {
 
     /// Run one pump iteration.
     pub fn poll(&mut self, mem: &mut dyn MemoryBus) {
-        // Step 1: allow the NIC to process descriptor rings (DMA).
-        self.nic.poll(mem);
-
-        // Step 2: forward guest TX frames.
-        for _ in 0..self.max_tx_frames_per_poll {
-            let Some(frame) = self.nic.pop_tx_frame() else {
-                break;
-            };
-            self.backend.transmit(frame);
-        }
-
-        // Step 3: inject host RX frames.
-        for _ in 0..self.max_rx_frames_per_poll {
-            let Some(frame) = self.backend.poll_receive() else {
-                break;
-            };
-            self.nic.enqueue_rx_frame(frame);
-        }
-
-        // Step 4: flush injected RX frames into guest buffers.
-        self.nic.poll(mem);
+        tick_e1000(
+            &mut self.nic,
+            mem,
+            &mut self.backend,
+            self.max_tx_frames_per_poll,
+            self.max_rx_frames_per_poll,
+        );
     }
 
     pub fn nic(&self) -> &E1000Device {
@@ -118,7 +145,9 @@ mod tests {
     use super::*;
 
     use aero_net_backend::L2TunnelBackend;
+    use std::cell::RefCell;
     use std::collections::VecDeque;
+    use std::rc::Rc;
 
     struct TestMem {
         mem: Vec<u8>,
@@ -230,6 +259,47 @@ mod tests {
         pump.poll(&mut mem);
 
         assert_eq!(pump.backend_mut().drain_tx_frames(), vec![pkt_out]);
+    }
+
+    #[test]
+    fn tick_function_supports_trait_object_backend() {
+        let mut mem = TestMem::new(0x40_000);
+        let mut nic = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
+        nic.pci_config_write(0x04, 2, 0x4); // Bus Master Enable
+
+        #[derive(Clone, Default)]
+        struct RecordingBackend {
+            tx_log: Rc<RefCell<Vec<Vec<u8>>>>,
+        }
+
+        impl NetworkBackend for RecordingBackend {
+            fn transmit(&mut self, frame: Vec<u8>) {
+                self.tx_log.borrow_mut().push(frame);
+            }
+        }
+
+        let tx_log = Rc::new(RefCell::new(Vec::new()));
+        let mut backend: Box<dyn NetworkBackend> = Box::new(RecordingBackend {
+            tx_log: tx_log.clone(),
+        });
+
+        configure_tx_ring(&mut nic, 0x1000, 4);
+
+        let pkt_out = build_test_frame(b"guest->host");
+        mem.write(0x4000, &pkt_out);
+        write_tx_desc(
+            &mut mem,
+            0x1000,
+            0x4000,
+            pkt_out.len() as u16,
+            0b0000_1001, // EOP|RS
+            0,
+        );
+        nic.mmio_write_u32_reg(0x3818, 1); // TDT
+
+        tick_e1000(&mut nic, &mut mem, backend.as_mut(), 16, 16);
+
+        assert_eq!(&*tx_log.borrow(), &[pkt_out]);
     }
 
     #[test]
