@@ -56,6 +56,13 @@ const DEFAULT_PREVENT_DEFAULT_CODES = new Set<string>([
   "AltRight",
   // "Application"/context-menu key.
   "ContextMenu",
+  // Browser navigation keys (common on keyboards with multimedia buttons).
+  // Prevent them so users don't accidentally navigate away from the VM.
+  "BrowserBack",
+  "BrowserForward",
+  "BrowserRefresh",
+  "BrowserStop",
+  "BrowserHome",
   // Function keys are commonly bound to browser actions (help, refresh, fullscreen).
   // Prevent them while the VM capture is active so they can be delivered to the guest.
   "F1",

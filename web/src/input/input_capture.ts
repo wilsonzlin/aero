@@ -189,9 +189,14 @@ export class InputCapture {
       return;
     }
 
+    const shouldPreventDefault = shouldPreventDefaultForKeyboardEvent(event);
+
     const sc = ps2Set2ScancodeForCode(event.code);
     const usage = keyboardCodeToHidUsage(event.code);
     if (!sc && usage === null) {
+      if (shouldPreventDefault) {
+        event.preventDefault();
+      }
       return;
     }
 
@@ -199,7 +204,7 @@ export class InputCapture {
       this.pressedCodes.add(event.code);
     }
 
-    if (shouldPreventDefaultForKeyboardEvent(event)) {
+    if (shouldPreventDefault) {
       event.preventDefault();
     }
 
@@ -217,15 +222,20 @@ export class InputCapture {
       return;
     }
 
+    const shouldPreventDefault = shouldPreventDefaultForKeyboardEvent(event);
+
     const sc = ps2Set2ScancodeForCode(event.code);
     const usage = keyboardCodeToHidUsage(event.code);
     if (!sc && usage === null) {
+      if (shouldPreventDefault) {
+        event.preventDefault();
+      }
       return;
     }
 
     this.pressedCodes.delete(event.code);
 
-    if (shouldPreventDefaultForKeyboardEvent(event)) {
+    if (shouldPreventDefault) {
       event.preventDefault();
     }
 
@@ -263,11 +273,11 @@ export class InputCapture {
     if (!this.isCapturingMouse()) {
       return;
     }
+    event.preventDefault();
     const bit = buttonToMask(event.button);
     if (bit === 0) {
       return;
     }
-    event.preventDefault();
     this.setMouseButtons(this.mouseButtons | bit, event.timeStamp);
   };
 
@@ -275,11 +285,11 @@ export class InputCapture {
     if (!this.isCapturingMouse()) {
       return;
     }
+    event.preventDefault();
     const bit = buttonToMask(event.button);
     if (bit === 0) {
       return;
     }
-    event.preventDefault();
     this.setMouseButtons(this.mouseButtons & ~bit, event.timeStamp);
   };
 
