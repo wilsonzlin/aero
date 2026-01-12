@@ -181,6 +181,8 @@ describe("io/devices/HdaPciDevice audio ring attachment", () => {
     };
 
     const dev = new HdaPciDevice({ bridge, irqSink: irq });
+    // Enable bus mastering so the device tick will advance the HDA model.
+    dev.onPciCommandWrite?.(1 << 2);
 
     // Configure before the first tick so the clock initializes at 44.1kHz.
     dev.setAudioRingBuffer({ ringBuffer: null, capacityFrames: 0, channelCount: 0, dstSampleRateHz: 44_100 });
