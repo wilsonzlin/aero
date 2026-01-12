@@ -168,6 +168,37 @@ function installMockFetch(): () => void {
   };
 }
 
+async function expectNormalizedRelayUrls(baseUrl: string, expectedFetchUrl: string, expectedWebSocketUrl: string): Promise<void> {
+  const g = globalThis as unknown as Record<string, unknown>;
+  const originalPc = g.RTCPeerConnection;
+  const originalWs = g.WebSocket;
+  const restoreFetch = installMockFetch();
+
+  resetFakePeerConnection();
+  FakePeerConnection.nextDataChannel = new FakeRtcDataChannel("open");
+  ThrowingWebSocket.urls = [];
+  g.RTCPeerConnection = FakePeerConnection as unknown as typeof RTCPeerConnection;
+  g.WebSocket = ThrowingWebSocket as unknown as WebSocketConstructor;
+
+  try {
+    await expect(connectL2RelaySignaling({ baseUrl })).rejects.toThrow(/websocket/i);
+
+    const fetchMock = globalThis.fetch as unknown as { mock: { calls: any[][] } };
+    expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(1);
+    const [firstUrl] = fetchMock.mock.calls[0]!;
+    expect(typeof firstUrl).toBe("string");
+    expect(firstUrl).toBe(expectedFetchUrl);
+
+    expect(ThrowingWebSocket.urls[0]).toBe(expectedWebSocketUrl);
+  } finally {
+    restoreFetch();
+    if (originalPc === undefined) delete g.RTCPeerConnection;
+    else g.RTCPeerConnection = originalPc;
+    if (originalWs === undefined) delete g.WebSocket;
+    else g.WebSocket = originalWs;
+  }
+}
+
 describe("net/l2RelaySignalingClient", () => {
   it("creates an l2 DataChannel with reliable semantics (ordered)", async () => {
     const g = globalThis as unknown as Record<string, unknown>;
@@ -251,33 +282,26 @@ describe("net/l2RelaySignalingClient", () => {
   });
 
   it("normalizes wss:// relay base URLs (fetch over https and signal over wss)", async () => {
-    const g = globalThis as unknown as Record<string, unknown>;
-    const originalPc = g.RTCPeerConnection;
-    const originalWs = g.WebSocket;
-    const restoreFetch = installMockFetch();
+    await expectNormalizedRelayUrls(
+      "wss://relay.example.com",
+      "https://relay.example.com/webrtc/ice",
+      "wss://relay.example.com/webrtc/signal",
+    );
+  });
 
-    resetFakePeerConnection();
-    FakePeerConnection.nextDataChannel = new FakeRtcDataChannel("open");
-    ThrowingWebSocket.urls = [];
-    g.RTCPeerConnection = FakePeerConnection as unknown as typeof RTCPeerConnection;
-    g.WebSocket = ThrowingWebSocket as unknown as WebSocketConstructor;
+  it("normalizes ws:// relay base URLs (fetch over http and signal over ws)", async () => {
+    await expectNormalizedRelayUrls(
+      "ws://relay.example.com",
+      "http://relay.example.com/webrtc/ice",
+      "ws://relay.example.com/webrtc/signal",
+    );
+  });
 
-    try {
-      await expect(connectL2RelaySignaling({ baseUrl: "wss://relay.example.com" })).rejects.toThrow(/websocket/i);
-
-      const fetchMock = globalThis.fetch as unknown as { mock: { calls: any[][] } };
-      expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(1);
-      const [firstUrl] = fetchMock.mock.calls[0]!;
-      expect(typeof firstUrl).toBe("string");
-      expect(firstUrl).toBe("https://relay.example.com/webrtc/ice");
-
-      expect(ThrowingWebSocket.urls[0]).toBe("wss://relay.example.com/webrtc/signal");
-    } finally {
-      restoreFetch();
-      if (originalPc === undefined) delete g.RTCPeerConnection;
-      else g.RTCPeerConnection = originalPc;
-      if (originalWs === undefined) delete g.WebSocket;
-      else g.WebSocket = originalWs;
-    }
+  it("preserves path prefixes when normalizing relay base URLs", async () => {
+    await expectNormalizedRelayUrls(
+      "wss://relay.example.com/prefix/",
+      "https://relay.example.com/prefix/webrtc/ice",
+      "wss://relay.example.com/prefix/webrtc/signal",
+    );
   });
 });
