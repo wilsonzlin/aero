@@ -176,6 +176,75 @@ fn error_mapping_preserves_unsupported_roundtrip() {
 }
 
 #[test]
+fn error_mapping_preserves_not_supported_roundtrip() {
+    let err = aero_storage::DiskError::NotSupported("opfs".to_string());
+    let emu = aero_storage_disk_error_to_emulator(err);
+    assert_eq!(emu, DiskError::NotSupported("opfs".to_string()));
+
+    let back = emulator_disk_error_to_aero_storage(emu, None, None, None);
+    assert!(matches!(
+        back,
+        aero_storage::DiskError::NotSupported(msg) if msg == "opfs"
+    ));
+}
+
+#[test]
+fn error_mapping_preserves_quota_exceeded_roundtrip() {
+    let err = aero_storage::DiskError::QuotaExceeded;
+    let emu = aero_storage_disk_error_to_emulator(err);
+    assert_eq!(emu, DiskError::QuotaExceeded);
+
+    let back = emulator_disk_error_to_aero_storage(emu, None, None, None);
+    assert!(matches!(back, aero_storage::DiskError::QuotaExceeded));
+}
+
+#[test]
+fn error_mapping_preserves_in_use_roundtrip() {
+    let err = aero_storage::DiskError::InUse;
+    let emu = aero_storage_disk_error_to_emulator(err);
+    assert_eq!(emu, DiskError::InUse);
+
+    let back = emulator_disk_error_to_aero_storage(emu, None, None, None);
+    assert!(matches!(back, aero_storage::DiskError::InUse));
+}
+
+#[test]
+fn error_mapping_preserves_invalid_state_roundtrip() {
+    let err = aero_storage::DiskError::InvalidState("closed".to_string());
+    let emu = aero_storage_disk_error_to_emulator(err);
+    assert_eq!(emu, DiskError::InvalidState("closed".to_string()));
+
+    let back = emulator_disk_error_to_aero_storage(emu, None, None, None);
+    assert!(matches!(
+        back,
+        aero_storage::DiskError::InvalidState(msg) if msg == "closed"
+    ));
+}
+
+#[test]
+fn error_mapping_preserves_backend_unavailable_roundtrip() {
+    let err = aero_storage::DiskError::BackendUnavailable;
+    let emu = aero_storage_disk_error_to_emulator(err);
+    assert_eq!(emu, DiskError::BackendUnavailable);
+
+    let back = emulator_disk_error_to_aero_storage(emu, None, None, None);
+    assert!(matches!(back, aero_storage::DiskError::BackendUnavailable));
+}
+
+#[test]
+fn error_mapping_preserves_io_roundtrip() {
+    let err = aero_storage::DiskError::Io("boom".to_string());
+    let emu = aero_storage_disk_error_to_emulator(err);
+    assert_eq!(emu, DiskError::Io("boom".to_string()));
+
+    let back = emulator_disk_error_to_aero_storage(emu, None, None, None);
+    assert!(matches!(
+        back,
+        aero_storage::DiskError::Io(msg) if msg == "boom"
+    ));
+}
+
+#[test]
 fn virtual_disk_from_emu_disk_backend_supports_unaligned_reads() {
     let mut backend = EmuMemDisk::new(2);
     backend.data_mut()[0..512].fill(0xAA);
