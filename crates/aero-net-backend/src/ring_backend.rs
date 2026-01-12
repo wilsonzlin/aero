@@ -241,7 +241,6 @@ impl<TX: FrameRing, RX: FrameRing> NetworkBackend for L2TunnelRingBackend<TX, RX
                 }
             }
         }
-
         None
     }
 }

@@ -1,5 +1,5 @@
 use aero_devices::pci::profile::{HDA_ICH6, NIC_E1000_82540EM};
-use aero_devices::pci::PciResourceAllocatorConfig;
+use aero_devices::pci::{PciResourceAllocatorConfig, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
 use aero_pc_platform::{PcPlatform, PcPlatformConfig};
 use memory::MemoryBus as _;
 
@@ -13,14 +13,14 @@ fn cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
 
 fn read_cfg_u32(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8) -> u32 {
     pc.io
-        .write(0xCF8, 4, cfg_addr(bus, device, function, offset));
-    pc.io.read(0xCFC, 4)
+        .write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bus, device, function, offset));
+    pc.io.read(PCI_CFG_DATA_PORT, 4)
 }
 
 fn write_cfg_u32(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8, value: u32) {
     pc.io
-        .write(0xCF8, 4, cfg_addr(bus, device, function, offset));
-    pc.io.write(0xCFC, 4, value);
+        .write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bus, device, function, offset));
+    pc.io.write(PCI_CFG_DATA_PORT, 4, value);
 }
 
 fn read_bar0_base(pc: &mut PcPlatform, bdf: aero_devices::pci::PciBdf) -> u64 {

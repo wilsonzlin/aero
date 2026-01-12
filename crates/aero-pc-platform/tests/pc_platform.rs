@@ -1,7 +1,8 @@
 use aero_devices::acpi_pm::PM1_CNT_SCI_EN;
 use aero_devices::clock::Clock;
 use aero_devices::hpet::HPET_MMIO_BASE;
-use aero_devices::pci::PCI_CFG_DATA_PORT;
+use aero_devices::i8042::I8042_STATUS_PORT;
+use aero_devices::pci::{PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
 use aero_devices::reset_ctrl::RESET_CTRL_RESET_VALUE;
 use aero_io_snapshot::io::state::IoSnapshot;
 use aero_net_e1000::MIN_L2_FRAME_LEN;
@@ -28,7 +29,7 @@ fn pc_platform_wires_canonical_ports_mmio_and_reset_a20() {
     assert_ne!(pm1_cnt & PM1_CNT_SCI_EN, 0);
 
     // PCI config mechanism #1 ports (host bridge vendor/device ID).
-    pc.io.write(0xCF8, 4, 0x8000_0000);
+    pc.io.write(PCI_CFG_ADDR_PORT, 4, 0x8000_0000);
     let id = pc.io.read(PCI_CFG_DATA_PORT, 4);
     assert_eq!(id & 0xFFFF, 0x8086);
 
@@ -51,7 +52,7 @@ fn pc_platform_wires_canonical_ports_mmio_and_reset_a20() {
     assert_eq!(pc.take_reset_events(), vec![ResetEvent::System]);
 
     // i8042 reset command (0xFE) also surfaces as a platform reset event.
-    pc.io.write_u8(0x64, 0xFE);
+    pc.io.write_u8(I8042_STATUS_PORT, 0xFE);
     assert_eq!(pc.take_reset_events(), vec![ResetEvent::System]);
 }
 

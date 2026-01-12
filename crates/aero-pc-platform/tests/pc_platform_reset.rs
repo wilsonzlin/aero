@@ -1,4 +1,5 @@
 use aero_devices::pci::profile::{IDE_PIIX3, NVME_CONTROLLER, SATA_AHCI_ICH9, USB_UHCI_PIIX3};
+use aero_devices::pci::{PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
 use aero_devices::reset_ctrl::RESET_CTRL_RESET_VALUE;
 use aero_devices_storage::pci_ide::PRIMARY_PORTS;
 use aero_pc_platform::{PcPlatform, ResetEvent};
@@ -15,8 +16,8 @@ fn cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
 
 fn read_cfg_u32(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8) -> u32 {
     pc.io
-        .write(0xCF8, 4, cfg_addr(bus, device, function, offset));
-    pc.io.read(0xCFC, 4)
+        .write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bus, device, function, offset));
+    pc.io.read(PCI_CFG_DATA_PORT, 4)
 }
 
 fn read_io_bar_base(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, bar: u8) -> u16 {
@@ -27,14 +28,14 @@ fn read_io_bar_base(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, bar:
 
 fn write_cfg_u16(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8, value: u16) {
     pc.io
-        .write(0xCF8, 4, cfg_addr(bus, device, function, offset));
-    pc.io.write(0xCFC, 2, u32::from(value));
+        .write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bus, device, function, offset));
+    pc.io.write(PCI_CFG_DATA_PORT, 2, u32::from(value));
 }
 
 fn write_cfg_u32(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8, value: u32) {
     pc.io
-        .write(0xCF8, 4, cfg_addr(bus, device, function, offset));
-    pc.io.write(0xCFC, 4, value);
+        .write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bus, device, function, offset));
+    pc.io.write(PCI_CFG_DATA_PORT, 4, value);
 }
 
 fn read_ahci_bar5_base(pc: &mut PcPlatform) -> u64 {
@@ -64,9 +65,9 @@ fn pc_platform_reset_restores_deterministic_power_on_state() {
     pc.io.write_u8(0x92, 0x02);
     assert!(pc.chipset.a20().enabled());
 
-    // - Touch the PCI config address latch (0xCF8).
-    pc.io.write(0xCF8, 4, 0x8000_0000);
-    assert_eq!(pc.io.read(0xCF8, 4), 0x8000_0000);
+    // - Touch the PCI config address latch (PCI config mechanism #1).
+    pc.io.write(PCI_CFG_ADDR_PORT, 4, 0x8000_0000);
+    assert_eq!(pc.io.read(PCI_CFG_ADDR_PORT, 4), 0x8000_0000);
 
     // - Relocate UHCI BAR4 to a different base (to ensure PCI resources are reset deterministically).
     write_cfg_u32(&mut pc, uhci_bdf.bus, uhci_bdf.device, uhci_bdf.function, 0x20, 0xD000);
@@ -100,7 +101,7 @@ fn pc_platform_reset_restores_deterministic_power_on_state() {
     assert!(pc.take_reset_events().is_empty());
 
     // PCI config address latch should be cleared.
-    assert_eq!(pc.io.read(0xCF8, 4), 0);
+    assert_eq!(pc.io.read(PCI_CFG_ADDR_PORT, 4), 0);
 
     // UHCI BAR4 should be restored to its initial BIOS-assigned value.
     let uhci_bar4_after_reset = read_cfg_u32(&mut pc, uhci_bdf.bus, uhci_bdf.device, uhci_bdf.function, 0x20);

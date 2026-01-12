@@ -1,5 +1,5 @@
 use aero_cpu_core::mem::CpuBus;
-use aero_devices::pci::{PciBdf, PciBarKind};
+use aero_devices::pci::{PciBdf, PciBarKind, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
 use aero_devices::pci::profile::NIC_E1000_82540EM;
 use aero_pc_platform::{PcCpuBus, PcPlatform};
 use memory::MemoryBus as _;
@@ -13,15 +13,15 @@ fn cfg_addr(bdf: PciBdf, offset: u8) -> u32 {
 }
 
 fn read_cfg_u32(bus: &mut PcCpuBus, bdf: PciBdf, offset: u8) -> u32 {
-    bus.io_write(0xCF8, 4, u64::from(cfg_addr(bdf, offset)))
+    bus.io_write(PCI_CFG_ADDR_PORT, 4, u64::from(cfg_addr(bdf, offset)))
         .unwrap();
-    bus.io_read(0xCFC, 4).unwrap() as u32
+    bus.io_read(PCI_CFG_DATA_PORT, 4).unwrap() as u32
 }
 
 fn write_cfg_u32(bus: &mut PcCpuBus, bdf: PciBdf, offset: u8, value: u32) {
-    bus.io_write(0xCF8, 4, u64::from(cfg_addr(bdf, offset)))
+    bus.io_write(PCI_CFG_ADDR_PORT, 4, u64::from(cfg_addr(bdf, offset)))
         .unwrap();
-    bus.io_write(0xCFC, 4, u64::from(value)).unwrap();
+    bus.io_write(PCI_CFG_DATA_PORT, 4, u64::from(value)).unwrap();
 }
 
 #[test]

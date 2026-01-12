@@ -1,4 +1,6 @@
-use aero_devices::pci::{PciBarDefinition, PciBdf, PciConfigSpace, PciDevice};
+use aero_devices::pci::{
+    PciBarDefinition, PciBdf, PciConfigSpace, PciDevice, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT,
+};
 use aero_pc_platform::PcPlatform;
 use aero_platform::io::PortIoDevice;
 
@@ -11,18 +13,18 @@ fn cfg_addr(bdf: PciBdf, offset: u8) -> u32 {
 }
 
 fn read_cfg_u32(pc: &mut PcPlatform, bdf: PciBdf, offset: u8) -> u32 {
-    pc.io.write(0xCF8, 4, cfg_addr(bdf, offset));
-    pc.io.read(0xCFC, 4)
+    pc.io.write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bdf, offset));
+    pc.io.read(PCI_CFG_DATA_PORT, 4)
 }
 
 fn write_cfg_u16(pc: &mut PcPlatform, bdf: PciBdf, offset: u8, value: u16) {
-    pc.io.write(0xCF8, 4, cfg_addr(bdf, offset));
-    pc.io.write(0xCFC, 2, u32::from(value));
+    pc.io.write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bdf, offset));
+    pc.io.write(PCI_CFG_DATA_PORT, 2, u32::from(value));
 }
 
 fn write_cfg_u32(pc: &mut PcPlatform, bdf: PciBdf, offset: u8, value: u32) {
-    pc.io.write(0xCF8, 4, cfg_addr(bdf, offset));
-    pc.io.write(0xCFC, 4, value);
+    pc.io.write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bdf, offset));
+    pc.io.write(PCI_CFG_DATA_PORT, 4, value);
 }
 
 fn find_free_bdf(pc: &mut PcPlatform) -> PciBdf {

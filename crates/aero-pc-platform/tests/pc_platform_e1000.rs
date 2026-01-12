@@ -1,10 +1,14 @@
 use aero_cpu_core::mem::CpuBus as _;
-use aero_devices::pci::{PciInterruptPin, PciIntxRouter, PciIntxRouterConfig};
+use aero_devices::pci::{
+    PciInterruptPin, PciIntxRouter, PciIntxRouterConfig, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT,
+};
 use aero_devices::pci::profile::NIC_E1000_82540EM;
 use aero_interrupts::apic::IOAPIC_MMIO_BASE;
 use aero_net_e1000::{ICR_TXDW, MIN_L2_FRAME_LEN};
 use aero_pc_platform::{PcCpuBus, PcPlatform, PcPlatformConfig};
-use aero_platform::interrupts::{InterruptController, PlatformInterruptMode};
+use aero_platform::interrupts::{
+    InterruptController, PlatformInterruptMode, IMCR_DATA_PORT, IMCR_INDEX, IMCR_SELECT_PORT,
+};
 use memory::MemoryBus as _;
 
 fn cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
@@ -17,27 +21,27 @@ fn cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
 
 fn read_cfg_u32(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8) -> u32 {
     pc.io
-        .write(0xCF8, 4, cfg_addr(bus, device, function, offset));
-    pc.io.read(0xCFC, 4)
+        .write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bus, device, function, offset));
+    pc.io.read(PCI_CFG_DATA_PORT, 4)
 }
 
 fn read_cfg_u8(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8) -> u8 {
     pc.io
-        .write(0xCF8, 4, cfg_addr(bus, device, function, offset));
-    let port = 0xCFCu16 + u16::from(offset & 3);
+        .write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bus, device, function, offset));
+    let port = PCI_CFG_DATA_PORT + u16::from(offset & 3);
     pc.io.read(port, 1) as u8
 }
 
 fn write_cfg_u16(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8, value: u16) {
     pc.io
-        .write(0xCF8, 4, cfg_addr(bus, device, function, offset));
-    pc.io.write(0xCFC, 2, u32::from(value));
+        .write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bus, device, function, offset));
+    pc.io.write(PCI_CFG_DATA_PORT, 2, u32::from(value));
 }
 
 fn write_cfg_u32(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8, value: u32) {
     pc.io
-        .write(0xCF8, 4, cfg_addr(bus, device, function, offset));
-    pc.io.write(0xCFC, 4, value);
+        .write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bus, device, function, offset));
+    pc.io.write(PCI_CFG_DATA_PORT, 4, value);
 }
 
 fn read_e1000_bar0_base(pc: &mut PcPlatform) -> u64 {
@@ -496,9 +500,9 @@ fn pc_platform_routes_e1000_intx_via_ioapic_in_apic_mode() {
     let mut pc = PcPlatform::new_with_e1000(2 * 1024 * 1024);
     let bar0_base = read_e1000_bar0_base(&mut pc);
 
-    // Switch the platform into APIC mode via IMCR (0x22/0x23).
-    pc.io.write_u8(0x22, 0x70);
-    pc.io.write_u8(0x23, 0x01);
+    // Switch the platform into APIC mode via IMCR.
+    pc.io.write_u8(IMCR_SELECT_PORT, IMCR_INDEX);
+    pc.io.write_u8(IMCR_DATA_PORT, 0x01);
     assert_eq!(pc.interrupts.borrow().mode(), PlatformInterruptMode::Apic);
 
     // Route the E1000 INTx line to vector 0x61, level-triggered + active-low.
@@ -526,9 +530,9 @@ fn pc_platform_e1000_intx_deasserts_after_icr_read_in_apic_mode() {
     let mut pc = PcPlatform::new_with_e1000(2 * 1024 * 1024);
     let bar0_base = read_e1000_bar0_base(&mut pc);
 
-    // Switch the platform into APIC mode via IMCR (0x22/0x23).
-    pc.io.write_u8(0x22, 0x70);
-    pc.io.write_u8(0x23, 0x01);
+    // Switch the platform into APIC mode via IMCR.
+    pc.io.write_u8(IMCR_SELECT_PORT, IMCR_INDEX);
+    pc.io.write_u8(IMCR_DATA_PORT, 0x01);
     assert_eq!(pc.interrupts.borrow().mode(), PlatformInterruptMode::Apic);
 
     // Route the E1000 INTx line to vector 0x62, level-triggered + active-low.

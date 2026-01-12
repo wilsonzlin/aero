@@ -1,6 +1,7 @@
 use std::io;
 
 use aero_devices::pci::profile::{IDE_PIIX3, ISA_PIIX3, SATA_AHCI_ICH9};
+use aero_devices::pci::{PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
 use aero_devices_storage::ata::AtaDrive;
 use aero_devices_storage::atapi::{AtapiCdrom, IsoBackend};
 use aero_pc_platform::{PcPlatform, Windows7StorageTopologyConfig};
@@ -16,13 +17,15 @@ fn cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
 }
 
 fn read_cfg_u32(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8) -> u32 {
-    pc.io.write(0xCF8, 4, cfg_addr(bus, device, function, offset));
-    pc.io.read(0xCFC, 4)
+    pc.io
+        .write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bus, device, function, offset));
+    pc.io.read(PCI_CFG_DATA_PORT, 4)
 }
 
 fn write_cfg_u16(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8, value: u16) {
-    pc.io.write(0xCF8, 4, cfg_addr(bus, device, function, offset));
-    pc.io.write(0xCFC, 2, u32::from(value));
+    pc.io
+        .write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bus, device, function, offset));
+    pc.io.write(PCI_CFG_DATA_PORT, 2, u32::from(value));
 }
 
 struct MemIso {
