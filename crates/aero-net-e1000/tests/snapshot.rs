@@ -283,6 +283,56 @@ fn snapshot_roundtrip_preserves_pci_intx_disable_bit() {
 }
 
 #[test]
+fn snapshot_roundtrip_preserves_pci_bus_master_enable_bit() {
+    // Regression test: DMA must remain gated behind PCI COMMAND.BME across snapshot restore.
+    let mut dma = TestDma::new(0x20_000);
+    let mut dev = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
+
+    // Configure TX ring but intentionally do NOT enable bus mastering.
+    let tx_ring = 0x1000u64;
+    dev.mmio_write_u32_reg(REG_TDBAL, tx_ring as u32);
+    dev.mmio_write_u32_reg(REG_TDLEN, 2 * 16);
+    dev.mmio_write_u32_reg(REG_TDH, 0);
+    dev.mmio_write_u32_reg(REG_TDT, 0);
+    dev.mmio_write_u32_reg(REG_TCTL, TCTL_EN);
+
+    // Populate one descriptor and advance tail.
+    let frame = build_test_frame(b"guest->host");
+    let buf_addr = 0x4000u64;
+    dma.write(buf_addr, &frame);
+    write_tx_desc(
+        &mut dma,
+        tx_ring,
+        buf_addr,
+        frame.len() as u16,
+        TXD_CMD_EOP | TXD_CMD_RS,
+    );
+    dev.mmio_write_u32_reg(REG_TDT, 1);
+
+    // Take snapshot before any DMA.
+    let snapshot = dev.save_state();
+
+    let mut restored = E1000Device::new([0; 6]);
+    restored.load_state(&snapshot).unwrap();
+
+    // PCI bus mastering should still be disabled on restore.
+    assert_eq!(restored.pci_config_read(0x04, 2) & 0x4, 0);
+
+    // Polling should not DMA or complete the descriptor until BME is set.
+    restored.poll(&mut dma);
+    assert!(restored.pop_tx_frame().is_none());
+    assert_eq!(dma.read_vec(tx_ring + 12, 1)[0] & 0x1, 0);
+
+    // Enable bus mastering and poll again; now the descriptor should complete and the frame should
+    // be visible to the host.
+    restored.pci_config_write(0x04, 2, 0x4);
+    restored.poll(&mut dma);
+
+    assert_eq!(restored.pop_tx_frame().as_deref(), Some(frame.as_slice()));
+    assert_eq!(dma.read_vec(tx_ring + 12, 1)[0] & 0x1, 0x1);
+}
+
+#[test]
 fn snapshot_rejects_absurd_other_regs_count() {
     // TAG_OTHER_REGS = 90, encoded as: count (u32) then count*(u32,u32).
     let mut w = SnapshotWriter::new(
