@@ -29,7 +29,6 @@ pub use crate::types::{
     MmuState, SegmentState, SnapshotMeta, VcpuSnapshot,
 };
 
-use std::collections::HashSet;
 use std::io::{Read, Seek, SeekFrom, Write};
 
 use crate::io::{ReadLeExt, WriteLeExt};
@@ -419,17 +418,20 @@ fn restore_snapshot_impl<R: Read, T: SnapshotTarget>(
                         return Err(SnapshotError::Corrupt("too many CPUs"));
                     }
                     let mut cpus = Vec::with_capacity(count.min(64));
-                    let mut seen = HashSet::with_capacity(count.min(64));
                     for _ in 0..count {
                         let entry_len = section_reader.read_u64_le()?;
                         let mut entry_reader = (&mut section_reader).take(entry_len);
                         let cpu = VcpuSnapshot::decode_v1(&mut entry_reader, 64 * 1024 * 1024)?;
-                        if !seen.insert(cpu.apic_id) {
-                            return Err(SnapshotError::Corrupt(DUPLICATE_APIC_ID));
-                        }
                         // Skip any forward-compatible additions to the vCPU entry.
                         std::io::copy(&mut entry_reader, &mut std::io::sink())?;
                         cpus.push(cpu);
+                    }
+                    // Provide deterministic ordering to snapshot targets regardless of snapshot file
+                    // ordering. Snapshot encoding already canonicalizes by `apic_id`, but older or
+                    // external snapshot producers might not.
+                    cpus.sort_by_key(|cpu| cpu.apic_id);
+                    if cpus.windows(2).any(|w| w[0].apic_id == w[1].apic_id) {
+                        return Err(SnapshotError::Corrupt(DUPLICATE_APIC_ID));
                     }
                     target.restore_cpu_states(cpus)?;
                     seen_cpu = true;
@@ -442,17 +444,20 @@ fn restore_snapshot_impl<R: Read, T: SnapshotTarget>(
                         return Err(SnapshotError::Corrupt("too many CPUs"));
                     }
                     let mut cpus = Vec::with_capacity(count.min(64));
-                    let mut seen = HashSet::with_capacity(count.min(64));
                     for _ in 0..count {
                         let entry_len = section_reader.read_u64_le()?;
                         let mut entry_reader = (&mut section_reader).take(entry_len);
                         let cpu = VcpuSnapshot::decode_v2(&mut entry_reader, 64 * 1024 * 1024)?;
-                        if !seen.insert(cpu.apic_id) {
-                            return Err(SnapshotError::Corrupt(DUPLICATE_APIC_ID));
-                        }
                         // Skip any forward-compatible additions to the vCPU entry.
                         std::io::copy(&mut entry_reader, &mut std::io::sink())?;
                         cpus.push(cpu);
+                    }
+                    // Provide deterministic ordering to snapshot targets regardless of snapshot file
+                    // ordering. Snapshot encoding already canonicalizes by `apic_id`, but older or
+                    // external snapshot producers might not.
+                    cpus.sort_by_key(|cpu| cpu.apic_id);
+                    if cpus.windows(2).any(|w| w[0].apic_id == w[1].apic_id) {
+                        return Err(SnapshotError::Corrupt(DUPLICATE_APIC_ID));
                     }
                     target.restore_cpu_states(cpus)?;
                     seen_cpu = true;
@@ -486,14 +491,20 @@ fn restore_snapshot_impl<R: Read, T: SnapshotTarget>(
                         return Err(SnapshotError::Corrupt("too many devices"));
                     }
                     let mut devices = Vec::with_capacity(count.min(64));
-                    let mut seen = HashSet::with_capacity(count.min(64));
                     for _ in 0..count {
                         let device = DeviceState::decode(&mut section_reader, 64 * 1024 * 1024)?;
-                        let key = (device.id.0, device.version, device.flags);
-                        if !seen.insert(key) {
-                            return Err(SnapshotError::Corrupt(DUPLICATE_DEVICE_ENTRY));
-                        }
                         devices.push(device);
+                    }
+                    // Provide deterministic ordering to snapshot targets regardless of snapshot file
+                    // ordering. Snapshot encoding already canonicalizes by `(device_id, version, flags)`,
+                    // but older or external snapshot producers might not.
+                    devices.sort_by_key(|device| (device.id.0, device.version, device.flags));
+                    if devices.windows(2).any(|w| {
+                        w[0].id.0 == w[1].id.0
+                            && w[0].version == w[1].version
+                            && w[0].flags == w[1].flags
+                    }) {
+                        return Err(SnapshotError::Corrupt(DUPLICATE_DEVICE_ENTRY));
                     }
                     target.restore_device_states(devices);
                 }
