@@ -342,10 +342,10 @@ The L2 tunnel is a host transport (WebSocket/WebRTC DataChannel) carrying raw Et
 
 To avoid capturing partially-processed network traffic (and to ensure restored device state does not see stale ring contents):
 
-1. **Pause CPU + I/O** (stop guest execution + device emulation).
-2. **Then** drain/reset networking (net worker) and clear `NET_TX`/`NET_RX`.
-3. Save/restore snapshot bytes.
-4. Resume CPU + I/O; the net worker reconnects best-effort.
+1. **Pause CPU + I/O + NET** (stop guest execution + device emulation + frame forwarding).
+   - During `vm.snapshot.pause`, the net worker stops the tunnel forwarder and clears `NET_TX`/`NET_RX`.
+2. Save/restore snapshot bytes.
+3. **Resume CPU + I/O + NET**; the net worker reconnects best-effort.
 
 ### L2 tunnel forwarder (Option C) pause/drain policy
 
