@@ -108,6 +108,10 @@ Inside the Windows 7 guest:
 wmic path Win32_SoundDevice get Name,Manufacturer,Status,PNPDeviceID
 ```
 
+5. Optional (bus driver verification):
+   - In Device Manager: **System devices** → `High Definition Audio Controller` → **Properties** → **Driver Details**
+   - Expected: `hdaudbus.sys` is present (Win7 inbox HDA bus driver).
+
 Expected outcome:
 
 - Windows should use the **Microsoft** inbox driver stack automatically.
@@ -125,7 +129,10 @@ In Windows 7:
 2. **Playback tab**:
    - Select the default playback device (often `Speakers` / `High Definition Audio Device`).
    - (If needed) click **Set Default**.
-   - Click **Test**.
+    - Click **Test**.
+   - Tip: if you don’t see any devices, right-click the empty area and enable:
+     - **Show Disabled Devices**
+     - **Show Disconnected Devices**
 
 Alternative (also deterministic):
 
@@ -219,6 +226,9 @@ In Windows 7:
 
 1. Open `Control Panel → Sound → Recording` tab.
 2. Confirm a recording device exists (typically `Microphone` / `High Definition Audio Device`).
+   - Tip: if you don’t see any devices, right-click the empty area and enable:
+     - **Show Disabled Devices**
+     - **Show Disconnected Devices**
 3. Speak into the host microphone and observe the **level meter** moves.
 
 Optional end-to-end verification (more obvious than a level meter):
@@ -275,6 +285,8 @@ Collect:
   - Capture pin/stream not exposed or codec topology incomplete
 - **Device exists but level meter never moves**
   - `getUserMedia` denied / not started, host mic muted, or capture ring not being drained into guest DMA
+  - Browser may be blocking mic access:
+    - Chrome: site icon → **Site settings** → Microphone → Allow
 
 Collect:
 
@@ -322,4 +334,5 @@ When reporting a Win7 audio regression, include (at minimum):
   - Ring buffer counters (buffer level + underruns + overruns)
   - Browser console log output during the repro (including worker-prefixed logs like `[cpu]`, `[io]` if present)
   - If tracing is available, a **trace export** taken during the repro (Perf HUD → Trace Start/Stop → Trace JSON)
-  - Snapshot file exported after repro (if available)
+- Snapshot file exported after repro (if available)
+- For driver binding issues: a snippet from `C:\Windows\inf\setupapi.dev.log` around the audio device’s Hardware ID can be extremely helpful.
