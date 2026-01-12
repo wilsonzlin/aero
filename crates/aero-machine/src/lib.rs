@@ -505,6 +505,155 @@ impl aero_mmu::MemoryBus for SystemMemory {
     }
 }
 
+struct StrictIoPortBus<'a> {
+    io: &'a mut IoPortBus,
+}
+
+impl aero_cpu_core::paging_bus::IoBus for StrictIoPortBus<'_> {
+    fn io_read(&mut self, port: u16, size: u32) -> Result<u64, Exception> {
+        match size {
+            1 | 2 | 4 => Ok(u64::from(self.io.read(port, size as u8))),
+            _ => Err(Exception::InvalidOpcode),
+        }
+    }
+
+    fn io_write(&mut self, port: u16, size: u32, val: u64) -> Result<(), Exception> {
+        match size {
+            1 | 2 | 4 => {
+                self.io.write(port, size as u8, val as u32);
+                Ok(())
+            }
+            _ => Err(Exception::InvalidOpcode),
+        }
+    }
+}
+
+struct MachineCpuBus<'a> {
+    a20: A20GateHandle,
+    inner: aero_cpu_core::PagingBus<&'a mut SystemMemory, StrictIoPortBus<'a>>,
+}
+
+impl aero_cpu_core::mem::CpuBus for MachineCpuBus<'_> {
+    #[inline]
+    fn sync(&mut self, state: &CpuState) {
+        self.inner.sync(state);
+    }
+
+    #[inline]
+    fn invlpg(&mut self, vaddr: u64) {
+        self.inner.invlpg(vaddr);
+    }
+
+    #[inline]
+    fn read_u8(&mut self, vaddr: u64) -> Result<u8, Exception> {
+        self.inner.read_u8(vaddr)
+    }
+
+    #[inline]
+    fn read_u16(&mut self, vaddr: u64) -> Result<u16, Exception> {
+        self.inner.read_u16(vaddr)
+    }
+
+    #[inline]
+    fn read_u32(&mut self, vaddr: u64) -> Result<u32, Exception> {
+        self.inner.read_u32(vaddr)
+    }
+
+    #[inline]
+    fn read_u64(&mut self, vaddr: u64) -> Result<u64, Exception> {
+        self.inner.read_u64(vaddr)
+    }
+
+    #[inline]
+    fn read_u128(&mut self, vaddr: u64) -> Result<u128, Exception> {
+        self.inner.read_u128(vaddr)
+    }
+
+    #[inline]
+    fn write_u8(&mut self, vaddr: u64, val: u8) -> Result<(), Exception> {
+        self.inner.write_u8(vaddr, val)
+    }
+
+    #[inline]
+    fn write_u16(&mut self, vaddr: u64, val: u16) -> Result<(), Exception> {
+        self.inner.write_u16(vaddr, val)
+    }
+
+    #[inline]
+    fn write_u32(&mut self, vaddr: u64, val: u32) -> Result<(), Exception> {
+        self.inner.write_u32(vaddr, val)
+    }
+
+    #[inline]
+    fn write_u64(&mut self, vaddr: u64, val: u64) -> Result<(), Exception> {
+        self.inner.write_u64(vaddr, val)
+    }
+
+    #[inline]
+    fn write_u128(&mut self, vaddr: u64, val: u128) -> Result<(), Exception> {
+        self.inner.write_u128(vaddr, val)
+    }
+
+    #[inline]
+    fn atomic_rmw<T, R>(&mut self, addr: u64, f: impl FnOnce(T) -> (T, R)) -> Result<R, Exception>
+    where
+        T: aero_cpu_core::mem::CpuBusValue,
+        Self: Sized,
+    {
+        self.inner.atomic_rmw(addr, f)
+    }
+
+    #[inline]
+    fn read_bytes(&mut self, vaddr: u64, dst: &mut [u8]) -> Result<(), Exception> {
+        self.inner.read_bytes(vaddr, dst)
+    }
+
+    #[inline]
+    fn write_bytes(&mut self, vaddr: u64, src: &[u8]) -> Result<(), Exception> {
+        self.inner.write_bytes(vaddr, src)
+    }
+
+    #[inline]
+    fn preflight_write_bytes(&mut self, vaddr: u64, len: usize) -> Result<(), Exception> {
+        self.inner.preflight_write_bytes(vaddr, len)
+    }
+
+    #[inline]
+    fn supports_bulk_copy(&self) -> bool {
+        self.a20.enabled() && self.inner.supports_bulk_copy()
+    }
+
+    #[inline]
+    fn bulk_copy(&mut self, dst: u64, src: u64, len: usize) -> Result<bool, Exception> {
+        self.inner.bulk_copy(dst, src, len)
+    }
+
+    #[inline]
+    fn supports_bulk_set(&self) -> bool {
+        self.a20.enabled() && self.inner.supports_bulk_set()
+    }
+
+    #[inline]
+    fn bulk_set(&mut self, dst: u64, pattern: &[u8], repeat: usize) -> Result<bool, Exception> {
+        self.inner.bulk_set(dst, pattern, repeat)
+    }
+
+    #[inline]
+    fn fetch(&mut self, vaddr: u64, max_len: usize) -> Result<[u8; 15], Exception> {
+        self.inner.fetch(vaddr, max_len)
+    }
+
+    #[inline]
+    fn io_read(&mut self, port: u16, size: u32) -> Result<u64, Exception> {
+        self.inner.io_read(port, size)
+    }
+
+    #[inline]
+    fn io_write(&mut self, port: u16, size: u32, val: u64) -> Result<(), Exception> {
+        self.inner.io_write(port, size, val)
+    }
+}
+
 struct AhciPciConfigDevice {
     cfg: aero_devices::pci::PciConfigSpace,
 }
@@ -3257,8 +3406,15 @@ impl Machine {
             let _ = self.poll_platform_interrupt(MAX_QUEUED_EXTERNAL_INTERRUPTS);
 
             let remaining = max_insts - executed;
-            let mut bus = aero_cpu_core::PagingBus::new_with_io(&mut self.mem, &mut self.io);
-            std::mem::swap(&mut self.mmu, bus.mmu_mut());
+            let mut inner = aero_cpu_core::PagingBus::new_with_io(
+                &mut self.mem,
+                StrictIoPortBus { io: &mut self.io },
+            );
+            std::mem::swap(&mut self.mmu, inner.mmu_mut());
+            let mut bus = MachineCpuBus {
+                a20: self.chipset.a20(),
+                inner,
+            };
 
             let batch = run_batch_cpu_core_with_assists(
                 &cfg,
@@ -3267,7 +3423,7 @@ impl Machine {
                 &mut bus,
                 remaining,
             );
-            std::mem::swap(&mut self.mmu, bus.mmu_mut());
+            std::mem::swap(&mut self.mmu, bus.inner.mmu_mut());
             executed = executed.saturating_add(batch.executed);
 
             // Deterministically advance platform time based on executed CPU cycles.
