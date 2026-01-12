@@ -743,6 +743,12 @@ fn dma_read_sectors_into_guest(
             "PRDT too large for DMA read",
         ));
     }
+    if prdt_entries == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::UnexpectedEof,
+            "PRDT too small for DMA write",
+        ));
+    }
 
     let mut remaining = byte_len;
     let mut scratch = try_alloc_zeroed(MAX_DMA_CHUNK_BYTES)?;
@@ -814,6 +820,12 @@ fn dma_write_sectors_from_guest(
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             "PRDT too large for DMA write",
+        ));
+    }
+    if prdt_entries == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::UnexpectedEof,
+            "PRDT too small for DMA read",
         ));
     }
 
