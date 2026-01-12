@@ -417,6 +417,14 @@ fn lerp(a: f32, b: f32, t: f32) -> f32 {
 mod tests {
     use super::*;
 
+    fn assert_f32_approx_eq(actual: f32, expected: f32, tol: f32) {
+        let diff = (actual - expected).abs();
+        assert!(
+            diff <= tol,
+            "expected {expected}, got {actual} (|diff|={diff} > {tol})"
+        );
+    }
+
     #[test]
     fn parse_hda_format_48k_16bit_stereo() {
         // base=48k (bit14=0), mult=1, div=1, bits=16 (code 1), channels=2 -> fmt low nibble = 1.
@@ -432,6 +440,237 @@ mod tests {
         );
         assert_eq!(parsed.bytes_per_sample(), 2);
         assert_eq!(parsed.bytes_per_frame(), 4);
+    }
+
+    #[test]
+    fn parse_hda_format_44k1_base_rate_and_mult_div() {
+        // base=44.1k (bit14=1), mult=2 (code 1), div=1 (code 0), bits=24 (code 3), channels=1.
+        let fmt = (1 << 14) | (1 << 11) | (3 << 4) | 0;
+        let parsed = StreamFormat::from_hda_format(fmt);
+        assert_eq!(
+            parsed,
+            StreamFormat {
+                sample_rate_hz: 88_200,
+                bits_per_sample: 24,
+                channels: 1,
+            }
+        );
+
+        // base=48k, mult=3 (code 2), div=2 (code 1), bits=20 (code 2), channels=4.
+        let fmt = (2 << 11) | (1 << 8) | (2 << 4) | 3;
+        let parsed = StreamFormat::from_hda_format(fmt);
+        assert_eq!(
+            parsed,
+            StreamFormat {
+                sample_rate_hz: 72_000,
+                bits_per_sample: 20,
+                channels: 4,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_hda_format_bits_per_sample_code_mapping() {
+        // base=48k, mult/div=1, channels=1.
+        let cases: &[(u16, u8, usize)] = &[
+            (0, 8, 1),
+            (1, 16, 2),
+            (2, 20, 4),
+            (3, 24, 4),
+            (4, 32, 4),
+        ];
+        for &(code, bits, bps) in cases {
+            let fmt = (code << 4) | 0;
+            let parsed = StreamFormat::from_hda_format(fmt);
+            assert_eq!(parsed.sample_rate_hz, 48_000);
+            assert_eq!(parsed.bits_per_sample, bits);
+            assert_eq!(parsed.channels, 1);
+            assert_eq!(parsed.bytes_per_sample(), bps);
+        }
+    }
+
+    #[test]
+    fn pcm_decode_8bit_unsigned_bias() {
+        assert_f32_approx_eq(decode_one_sample(&[0], 8), -1.0, 1e-6);
+        assert_f32_approx_eq(decode_one_sample(&[128], 8), 0.0, 1e-6);
+        assert_f32_approx_eq(decode_one_sample(&[255], 8), 127.0 / 128.0, 1e-6);
+    }
+
+    #[test]
+    fn pcm_16bit_round_trip_and_clipping() {
+        fn decode_i16(v: i16) -> f32 {
+            decode_one_sample(&v.to_le_bytes(), 16)
+        }
+        fn encode_i16(sample: f32) -> i16 {
+            let mut out = [0u8; 2];
+            encode_one_sample(&mut out, 16, sample);
+            i16::from_le_bytes(out)
+        }
+
+        let values: &[i16] = &[i16::MIN, -12345, -1, 0, 1, 12345, i16::MAX];
+        for &v in values {
+            let decoded = decode_i16(v);
+            assert_f32_approx_eq(decoded, v as f32 / 32768.0, 1e-6);
+            let round_tripped = encode_i16(decoded);
+            assert_eq!(round_tripped, v, "round-trip failed for {v}");
+        }
+
+        // Clipping: values outside [-1.0, 1.0] saturate.
+        assert_eq!(encode_i16(1.0), i16::MAX);
+        assert_eq!(encode_i16(2.0), i16::MAX);
+        assert_eq!(encode_i16(-1.0), i16::MIN);
+        assert_eq!(encode_i16(-2.0), i16::MIN);
+    }
+
+    #[test]
+    fn pcm_20bit_sign_extension_scaling_and_clipping() {
+        fn decode_raw_20(v: i32) -> f32 {
+            let raw = (v & 0x000F_FFFF) as u32; // low 20 bits, upper bits zero
+            let bytes = raw.to_le_bytes();
+            decode_one_sample(&bytes, 20)
+        }
+        fn encode_20(sample: f32) -> i32 {
+            let mut out = [0u8; 4];
+            encode_one_sample(&mut out, 20, sample);
+            i32::from_le_bytes(out)
+        }
+
+        // Verify sign extension from the low 20 bits even when the stored upper bits are zero.
+        assert_f32_approx_eq(decode_raw_20(-524_288), -1.0, 1e-6);
+        assert_f32_approx_eq(decode_raw_20(-1), -1.0 / 524_288.0, 1e-6);
+        assert_f32_approx_eq(decode_raw_20(0), 0.0, 1e-6);
+        assert_f32_approx_eq(decode_raw_20(524_287), 524_287.0 / 524_288.0, 1e-6);
+
+        // Encode scaling and clipping.
+        assert_eq!(encode_20(0.5), 262_144);
+        assert_eq!(encode_20(-0.25), -131_072);
+        assert_eq!(encode_20(1.0), 524_287);
+        assert_eq!(encode_20(2.0), 524_287);
+        assert_eq!(encode_20(-1.0), -524_288);
+        assert_eq!(encode_20(-2.0), -524_288);
+    }
+
+    #[test]
+    fn pcm_24bit_sign_extension_scaling_and_clipping() {
+        fn decode_raw_24(v: i32) -> f32 {
+            let raw = (v & 0x00FF_FFFF) as u32; // low 24 bits, upper bits zero
+            let bytes = raw.to_le_bytes();
+            decode_one_sample(&bytes, 24)
+        }
+        fn encode_24(sample: f32) -> i32 {
+            let mut out = [0u8; 4];
+            encode_one_sample(&mut out, 24, sample);
+            i32::from_le_bytes(out)
+        }
+
+        assert_f32_approx_eq(decode_raw_24(-8_388_608), -1.0, 1e-6);
+        assert_f32_approx_eq(decode_raw_24(-1), -1.0 / 8_388_608.0, 1e-6);
+        assert_f32_approx_eq(decode_raw_24(0), 0.0, 1e-6);
+        assert_f32_approx_eq(
+            decode_raw_24(8_388_607),
+            8_388_607.0 / 8_388_608.0,
+            1e-6,
+        );
+
+        assert_eq!(encode_24(0.5), 4_194_304);
+        assert_eq!(encode_24(-0.25), -2_097_152);
+        assert_eq!(encode_24(1.0), 8_388_607);
+        assert_eq!(encode_24(2.0), 8_388_607);
+        assert_eq!(encode_24(-1.0), -8_388_608);
+        assert_eq!(encode_24(-2.0), -8_388_608);
+    }
+
+    #[test]
+    fn pcm_32bit_scaling_and_clipping() {
+        fn decode_i32(v: i32) -> f32 {
+            decode_one_sample(&v.to_le_bytes(), 32)
+        }
+        fn encode_i32(sample: f32) -> i32 {
+            let mut out = [0u8; 4];
+            encode_one_sample(&mut out, 32, sample);
+            i32::from_le_bytes(out)
+        }
+
+        assert_f32_approx_eq(decode_i32(i32::MIN), -1.0, 1e-6);
+        assert_f32_approx_eq(decode_i32(0), 0.0, 1e-6);
+        assert_f32_approx_eq(decode_i32(1 << 30), 0.5, 1e-6);
+        assert_f32_approx_eq(decode_i32(-(1 << 30)), -0.5, 1e-6);
+
+        assert_eq!(encode_i32(0.5), 1 << 30);
+        assert_eq!(encode_i32(-0.5), -(1 << 30));
+        assert_eq!(encode_i32(1.0), i32::MAX);
+        assert_eq!(encode_i32(2.0), i32::MAX);
+        assert_eq!(encode_i32(-1.0), i32::MIN);
+        assert_eq!(encode_i32(-2.0), i32::MIN);
+    }
+
+    #[test]
+    fn decode_pcm_to_stereo_f32_into_channel_mapping() {
+        // Mono is duplicated to L/R.
+        let fmt_mono = StreamFormat {
+            sample_rate_hz: 48_000,
+            bits_per_sample: 16,
+            channels: 1,
+        };
+        let input = 1234i16.to_le_bytes();
+        let mut out = Vec::new();
+        decode_pcm_to_stereo_f32_into(&input, fmt_mono, &mut out);
+        assert_eq!(out.len(), 1);
+        let expected = 1234.0 / 32768.0;
+        assert_f32_approx_eq(out[0][0], expected, 1e-6);
+        assert_f32_approx_eq(out[0][1], expected, 1e-6);
+
+        // >=2 channels: first two channels are used.
+        let fmt_4ch = StreamFormat {
+            sample_rate_hz: 48_000,
+            bits_per_sample: 16,
+            channels: 4,
+        };
+        let frame = [
+            1000i16.to_le_bytes(),
+            (-1000i16).to_le_bytes(),
+            2222i16.to_le_bytes(),
+            (-2222i16).to_le_bytes(),
+        ]
+        .concat();
+        decode_pcm_to_stereo_f32_into(&frame, fmt_4ch, &mut out);
+        assert_eq!(out.len(), 1);
+        assert_f32_approx_eq(out[0][0], 1000.0 / 32768.0, 1e-6);
+        assert_f32_approx_eq(out[0][1], -1000.0 / 32768.0, 1e-6);
+    }
+
+    #[test]
+    fn encode_mono_f32_to_pcm_into_channel_mapping() {
+        // channels==1 encodes mono frames.
+        let fmt_mono = StreamFormat {
+            sample_rate_hz: 48_000,
+            bits_per_sample: 16,
+            channels: 1,
+        };
+        let mut out = Vec::new();
+        encode_mono_f32_to_pcm_into(&[0.5, -0.5], fmt_mono, &mut out);
+        assert_eq!(out.len(), 2 * 2);
+        let a = i16::from_le_bytes([out[0], out[1]]);
+        let b = i16::from_le_bytes([out[2], out[3]]);
+        assert_eq!(a, 16384);
+        assert_eq!(b, -16384);
+
+        // channels>=2 duplicates into the first two channels, remaining channels are silence.
+        let fmt_4ch = StreamFormat {
+            sample_rate_hz: 48_000,
+            bits_per_sample: 16,
+            channels: 4,
+        };
+        encode_mono_f32_to_pcm_into(&[0.25], fmt_4ch, &mut out);
+        assert_eq!(out.len(), 1 * 2 * 4);
+        let ch0 = i16::from_le_bytes([out[0], out[1]]);
+        let ch1 = i16::from_le_bytes([out[2], out[3]]);
+        let ch2 = i16::from_le_bytes([out[4], out[5]]);
+        let ch3 = i16::from_le_bytes([out[6], out[7]]);
+        assert_eq!(ch0, 8192);
+        assert_eq!(ch1, 8192);
+        assert_eq!(ch2, 0);
+        assert_eq!(ch3, 0);
     }
 
     #[test]
