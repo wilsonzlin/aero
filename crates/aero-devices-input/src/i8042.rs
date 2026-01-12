@@ -383,11 +383,20 @@ impl I8042Controller {
     }
 
     pub fn inject_mouse_motion(&mut self, dx: i32, dy: i32, wheel: i32) {
+        // If the aux port is disabled, the controller suppresses mouse traffic (clock line held
+        // low). Host-side injection should not buffer motion and later deliver it when the guest
+        // re-enables the port; doing so would cause a large "cursor jump".
+        if !self.mouse_port_enabled() {
+            return;
+        }
         self.mouse.inject_motion(dx, dy, wheel);
         self.service_output();
     }
 
     pub fn inject_mouse_button(&mut self, button: Ps2MouseButton, pressed: bool) {
+        if !self.mouse_port_enabled() {
+            return;
+        }
         self.mouse.inject_button(button, pressed);
         self.service_output();
     }
