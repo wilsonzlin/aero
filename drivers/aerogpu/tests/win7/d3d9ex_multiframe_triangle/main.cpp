@@ -228,10 +228,10 @@ static int RunD3D9ExMultiframeTriangle(int argc, char** argv) {
   }
 
   const DWORD kRed = D3DCOLOR_XRGB(255, 0, 0);
-  // Use a non-symmetric vertex color so we catch D3DCOLOR channel-ordering regressions
+  // Use non-symmetric vertex colors so we catch D3DCOLOR channel-ordering regressions
   // (e.g. BGRA-in-memory vs RGBA-in-shader).
-  const DWORD kGreen = D3DCOLOR_XRGB(0, 255, 0);
   const DWORD kBlue = D3DCOLOR_XRGB(0, 0, 255);
+  const DWORD kYellow = D3DCOLOR_XRGB(255, 255, 0);
 
   // Create a dynamic vertex buffer once and update it each frame.
   ComPtr<IDirect3DVertexBuffer9> vb;
@@ -283,9 +283,9 @@ static int RunD3D9ExMultiframeTriangle(int argc, char** argv) {
   for (uint32_t frame = 0; frame < frames; ++frame) {
     PumpMessages();
 
-    // Alternate between blue and red. (Green is symmetric under BGRA<->RGBA swaps, so it would
-    // not catch channel-order regressions.)
-    const DWORD tri_color = (frame & 1) ? kRed : kBlue;
+    // Alternate between blue and yellow; both have R != B so they are sensitive to BGRA<->RGBA
+    // channel swaps.
+    const DWORD tri_color = (frame & 1) ? kYellow : kBlue;
 
     // Update VB contents.
     void* data = NULL;
@@ -363,9 +363,9 @@ static int RunD3D9ExMultiframeTriangle(int argc, char** argv) {
     }
   }
 
-  // Validate that the center pixel changes across frames (blue on frame 0, red on frame 1).
+  // Validate that the center pixel changes across frames (blue on frame 0, yellow on frame 1).
   const uint32_t expected0 = 0xFF0000FFu;  // BGRA = (255, 0, 0, 255) = blue
-  const uint32_t expected1 = 0xFFFF0000u;  // BGRA = (0, 0, 255, 255) = red
+  const uint32_t expected1 = 0xFFFFFF00u;  // BGRA = (0, 255, 255, 255) = yellow
   if ((first_center & 0x00FFFFFFu) != (expected0 & 0x00FFFFFFu) ||
       (second_center & 0x00FFFFFFu) != (expected1 & 0x00FFFFFFu)) {
     if (dump) {
