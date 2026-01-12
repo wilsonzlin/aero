@@ -239,7 +239,12 @@ Copy `hidtest.exe` into the guest and run it from an elevated Command Prompt.
    hidtest.exe --keyboard --led-hidd 0x02
    ```
 
-6. (Optional) negative tests (invalid user pointers; should fail cleanly without crashing the guest):
+6. (Optional) send a keyboard LED output report via `DeviceIoControl(IOCTL_HID_SET_OUTPUT_REPORT)`:
+   ```bat
+   hidtest.exe --keyboard --led-ioctl-set-output 0x02
+   ```
+
+7. (Optional) negative tests (invalid user pointers; should fail cleanly without crashing the guest):
    ```bat
    hidtest.exe --keyboard --ioctl-bad-xfer-packet
    hidtest.exe --keyboard --ioctl-bad-write-report

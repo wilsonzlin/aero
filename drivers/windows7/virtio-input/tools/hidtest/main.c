@@ -108,6 +108,7 @@ typedef struct OPTIONS {
     int have_index;
     int have_led_mask;
     int led_via_hidd;
+    int have_led_ioctl_set_output;
     int led_cycle;
     int ioctl_bad_xfer_packet;
     int ioctl_bad_write_report;
@@ -125,6 +126,7 @@ typedef struct OPTIONS {
     USHORT pid;
     DWORD index;
     BYTE led_mask;
+    BYTE led_ioctl_set_output_mask;
 } OPTIONS;
 
 typedef struct SELECTED_DEVICE {
@@ -385,6 +387,7 @@ static void print_usage(void)
     wprintf(L"  hidtest.exe [--list]\n");
     wprintf(L"  hidtest.exe [--keyboard|--mouse] [--index N] [--vid 0x1234] [--pid 0x5678]\n");
     wprintf(L"             [--led 0x07 | --led-hidd 0x07 | --led-cycle] [--dump-desc]\n");
+    wprintf(L"             [--led-ioctl-set-output 0x07]\n");
     wprintf(L"             [--ioctl-bad-xfer-packet | --ioctl-bad-write-report]\n");
     wprintf(L"             [--ioctl-bad-set-output-xfer-packet | --ioctl-bad-set-output-report | --hidd-bad-set-output-report]\n");
     wprintf(L"             [--ioctl-bad-get-report-descriptor | --ioctl-bad-get-device-descriptor |\n");
@@ -401,6 +404,8 @@ static void print_usage(void)
     wprintf(L"                 Bits: 0x01 NumLock, 0x02 CapsLock, 0x04 ScrollLock\n");
     wprintf(L"  --led-hidd 0xMASK\n");
     wprintf(L"                 Send keyboard LEDs using HidD_SetOutputReport (exercises IOCTL_HID_SET_OUTPUT_REPORT)\n");
+    wprintf(L"  --led-ioctl-set-output 0xMASK\n");
+    wprintf(L"                 Send keyboard LEDs using DeviceIoControl(IOCTL_HID_SET_OUTPUT_REPORT)\n");
     wprintf(L"  --led-cycle     Cycle keyboard LEDs to visually confirm write path\n");
     wprintf(L"  --dump-desc     Print the raw HID report descriptor bytes\n");
     wprintf(L"  --ioctl-bad-xfer-packet\n");
@@ -1077,6 +1082,55 @@ static int send_keyboard_led_report_hidd(const SELECTED_DEVICE *dev, BYTE led_ma
     return 1;
 }
 
+static int send_keyboard_led_report_ioctl_set_output(const SELECTED_DEVICE *dev, BYTE led_mask)
+{
+    typedef struct HID_XFER_PACKET_MIN {
+        PUCHAR reportBuffer;
+        ULONG reportBufferLen;
+        UCHAR reportId;
+    } HID_XFER_PACKET_MIN;
+
+    BYTE report[2];
+    HID_XFER_PACKET_MIN pkt;
+    DWORD bytes = 0;
+    BOOL ok;
+
+    if (dev == NULL || dev->handle == INVALID_HANDLE_VALUE) {
+        return 0;
+    }
+
+    if ((dev->desired_access & GENERIC_WRITE) == 0) {
+        wprintf(L"LED write requested, but device was opened read-only.\n");
+        return 0;
+    }
+
+    if (!dev->caps_valid || !(dev->caps.UsagePage == 0x01 && dev->caps.Usage == 0x06)) {
+        wprintf(L"LED write requested, but selected interface is not a keyboard collection.\n");
+        return 0;
+    }
+
+    report[0] = 1; // ReportID=1 (keyboard)
+    report[1] = led_mask;
+
+    ZeroMemory(&pkt, sizeof(pkt));
+    pkt.reportId = 1;
+    pkt.reportBuffer = report;
+    pkt.reportBufferLen = (ULONG)sizeof(report);
+
+    wprintf(L"DeviceIoControl(IOCTL_HID_SET_OUTPUT_REPORT) keyboard LEDs: ");
+    dump_hex(report, (DWORD)sizeof(report));
+    wprintf(L"\n");
+
+    ok = DeviceIoControl(dev->handle, IOCTL_HID_SET_OUTPUT_REPORT, &pkt, (DWORD)sizeof(pkt), NULL, 0, &bytes, NULL);
+    if (!ok) {
+        print_last_error_w(L"DeviceIoControl(IOCTL_HID_SET_OUTPUT_REPORT)");
+        return 0;
+    }
+
+    wprintf(L"IOCTL_HID_SET_OUTPUT_REPORT succeeded\n");
+    return 1;
+}
+
 static void cycle_keyboard_leds(const SELECTED_DEVICE *dev)
 {
     // Short sequence to guarantee visible state changes even if the current LED
@@ -1523,7 +1577,7 @@ int wmain(int argc, wchar_t **argv)
                 return 2;
             }
             if (opt.have_led_mask) {
-                wprintf(L"Only one of --led / --led-hidd may be specified.\n");
+                wprintf(L"Only one of --led / --led-hidd / --led-ioctl-set-output may be specified.\n");
                 return 2;
             }
             opt.have_led_mask = 1;
@@ -1540,12 +1594,29 @@ int wmain(int argc, wchar_t **argv)
                 return 2;
             }
             if (opt.have_led_mask) {
-                wprintf(L"Only one of --led / --led-hidd may be specified.\n");
+                wprintf(L"Only one of --led / --led-hidd / --led-ioctl-set-output may be specified.\n");
                 return 2;
             }
             opt.have_led_mask = 1;
             opt.led_via_hidd = 1;
             opt.led_mask = (BYTE)tmp;
+            i++;
+            continue;
+        }
+
+        if ((wcscmp(argv[i], L"--led-ioctl-set-output") == 0) && i + 1 < argc) {
+            USHORT tmp;
+            if (!parse_u16_hex(argv[i + 1], &tmp) || tmp > 0xFF) {
+                wprintf(L"Invalid LED mask: %ls\n", argv[i + 1]);
+                return 2;
+            }
+            if (opt.have_led_mask) {
+                wprintf(L"Only one of --led / --led-hidd / --led-ioctl-set-output may be specified.\n");
+                return 2;
+            }
+            opt.have_led_mask = 1;
+            opt.have_led_ioctl_set_output = 1;
+            opt.led_ioctl_set_output_mask = (BYTE)tmp;
             i++;
             continue;
         }
@@ -1565,7 +1636,7 @@ int wmain(int argc, wchar_t **argv)
         return 2;
     }
     if (opt.have_led_mask && opt.led_cycle) {
-        wprintf(L"--led/--led-hidd and --led-cycle are mutually exclusive.\n");
+        wprintf(L"--led/--led-hidd/--led-ioctl-set-output and --led-cycle are mutually exclusive.\n");
         return 2;
     }
     if (opt.have_led_mask && opt.ioctl_bad_write_report) {
@@ -1698,7 +1769,9 @@ int wmain(int argc, wchar_t **argv)
     }
 
     if (opt.have_led_mask) {
-        if (opt.led_via_hidd) {
+        if (opt.have_led_ioctl_set_output) {
+            send_keyboard_led_report_ioctl_set_output(&dev, opt.led_ioctl_set_output_mask);
+        } else if (opt.led_via_hidd) {
             send_keyboard_led_report_hidd(&dev, opt.led_mask);
         } else {
             send_keyboard_led_report(&dev, opt.led_mask);

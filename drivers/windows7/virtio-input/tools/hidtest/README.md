@@ -91,6 +91,12 @@ Write keyboard LEDs using `HidD_SetOutputReport` (exercises `IOCTL_HID_SET_OUTPU
 hidtest.exe --led-hidd 0x07
 ```
 
+Write keyboard LEDs using an explicit `DeviceIoControl(IOCTL_HID_SET_OUTPUT_REPORT)` call:
+
+```bat
+hidtest.exe --led-ioctl-set-output 0x07
+```
+
 Negative test (invalid METHOD_NEITHER pointer; should fail cleanly without crashing the guest):
 
 ```bat
