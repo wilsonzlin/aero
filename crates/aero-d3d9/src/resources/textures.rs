@@ -239,6 +239,22 @@ impl Texture {
             )
         };
 
+        // WebGPU requires block-compressed texture uploads to use the physical (block-rounded)
+        // extent, even for mips that are smaller than a full block (e.g. 2x2 still uploads as 4x4).
+        let (copy_width, copy_height) = if self.info.upload_is_compressed {
+            let blocks_w = mip_w.div_ceil(self.info.upload_block_width);
+            let blocks_h = mip_h.div_ceil(self.info.upload_block_height);
+            let copy_width = blocks_w
+                .checked_mul(self.info.upload_block_width)
+                .ok_or_else(|| anyhow!("BC upload width overflows u32"))?;
+            let copy_height = blocks_h
+                .checked_mul(self.info.upload_block_height)
+                .ok_or_else(|| anyhow!("BC upload height overflows u32"))?;
+            (copy_width, copy_height)
+        } else {
+            (mip_w, mip_h)
+        };
+
         let desc = TextureUploadDesc {
             mip_level: level,
             origin: wgpu::Origin3d {
@@ -248,8 +264,8 @@ impl Texture {
             },
             aspect: wgpu::TextureAspect::All,
             size: wgpu::Extent3d {
-                width: mip_w,
-                height: mip_h,
+                width: copy_width,
+                height: copy_height,
                 depth_or_array_layers: 1,
             },
             bytes_per_row: padded_bpr,
