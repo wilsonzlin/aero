@@ -928,6 +928,40 @@ mod tests {
     }
 
     #[test]
+    fn encode_mono_f32_to_pcm_writes_exact_bytes_for_8bit_unsigned() {
+        let fmt = StreamFormat {
+            sample_rate_hz: 48_000,
+            bits_per_sample: 8,
+            channels: 4,
+        };
+        let input: &[f32] = &[
+            -1.0,
+            -0.5,
+            0.0,
+            0.5,
+            1.0,
+            1.1,
+            -1.1,
+            f32::NAN,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+        ];
+        let out = encode_mono_f32_to_pcm(input, fmt);
+
+        // -1.0 -> 0, 0.0 -> 128, 1.0 -> 255.
+        // 0.5 -> 192, -0.5 -> 64.
+        // Values outside [-1, 1] are clipped; NaN casts to 0 after going through math.
+        let mut expected = Vec::new();
+        for &v in &[0u8, 64, 128, 192, 255, 255, 0, 0, 255, 0] {
+            // Duplicated into the first two channels.
+            expected.extend_from_slice(&[v, v]);
+            // Remaining channels are silence: 0.0 -> 128 in unsigned PCM.
+            expected.extend_from_slice(&[128u8, 128u8]);
+        }
+        assert_eq!(out, expected);
+    }
+
+    #[test]
     fn encode_mono_f32_to_pcm_writes_exact_bytes_for_16bit_clip_and_non_finite() {
         let fmt = StreamFormat {
             sample_rate_hz: 48_000,
