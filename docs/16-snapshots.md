@@ -283,12 +283,18 @@ The PCI core in `crates/aero-devices` snapshots only **guest-visible PCI-layer s
 `DeviceState.version/flags` mirror the inner `aero-io-snapshot` device `(major, minor)`, `PciConfigPorts` (`PCPT`) and `PciIntxRouter`
 (`INTX`) cannot both be stored as separate `(DeviceId::PCI, 1, 0)` entries.
 
-Canonical full-machine snapshots store these as **separate** `DEVICES` entries with distinct outer `DeviceId`s:
+When storing these `aero-io-snapshot` blobs as **separate** `DEVICES` entries (rather than wrapping them in `PciCoreSnapshot`), they must
+use distinct outer `DeviceId`s to avoid collisions:
 
-- `DeviceId::PCI_CFG` (`14`) for the `PciConfigPorts` TLV blob (`DEVICE_ID = PCPT`)
-- `DeviceId::PCI_INTX_ROUTER` (`15`) for the `PciIntxRouter` TLV blob (`DEVICE_ID = INTX`)
+- `PciConfigPorts` (`PCPT`): store as outer `DeviceId::PCI` with `(version, flags)` mirroring the inner `SnapshotVersion (major, minor)`.
+- `PciIntxRouter` (`INTX`): store as outer `DeviceId::PCI_INTX_ROUTER` with `(version, flags)` mirroring the inner `SnapshotVersion`.
 
-This split avoids `DEVICES` duplicate key collisions, since the section rejects duplicate `(device_id, version, flags)` tuples and both PCI TLVs commonly share the same inner snapshot `(major, minor)` (e.g. v1.0). It also reflects different restore orchestration: `PciIntxRouter` requires a post-restore `sync_levels_to_sink()` call once the platform interrupt controller/sink is restored, while `PCI_CFG` can be restored earlier.
+Canonical full-machine snapshots use the more explicit split-out IDs `DeviceId::PCI_CFG` (`14`) and `DeviceId::PCI_INTX_ROUTER` (`15`).
+
+This split avoids `DEVICES` duplicate key collisions, since the section rejects duplicate `(device_id, version, flags)` tuples and both PCI
+TLVs commonly share the same inner snapshot `(major, minor)` (e.g. v1.0). It also reflects different restore orchestration:
+`PciIntxRouter` requires a post-restore `sync_levels_to_sink()` call once the platform interrupt controller/sink is restored, while the PCI
+config ports snapshot can be restored earlier.
 
 Backward compatibility:
 

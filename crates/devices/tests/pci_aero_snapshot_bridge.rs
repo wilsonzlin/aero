@@ -196,7 +196,7 @@ impl SnapshotSource for SplitSource {
 
     fn device_states(&self) -> Vec<DeviceState> {
         vec![
-            device_state_from_io_snapshot(DeviceId::PCI_CFG, &*self.pci_cfg.borrow()),
+            device_state_from_io_snapshot(DeviceId::PCI, &*self.pci_cfg.borrow()),
             device_state_from_io_snapshot(DeviceId::PCI_INTX_ROUTER, &*self.pci_intx.borrow()),
         ]
     }
@@ -235,7 +235,7 @@ impl SnapshotTarget for SplitTarget {
 
     fn restore_device_states(&mut self, states: Vec<DeviceState>) {
         for state in states {
-            if state.id == DeviceId::PCI_CFG {
+            if state.id == DeviceId::PCI {
                 apply_io_snapshot_to_device(&state, &mut self.pci_cfg).unwrap();
             } else if state.id == DeviceId::PCI_INTX_ROUTER {
                 apply_io_snapshot_to_device(&state, &mut self.pci_intx).unwrap();
@@ -371,7 +371,7 @@ fn pci_io_snapshot_split_entries_roundtrip_through_aero_snapshot_file() {
     };
 
     // Saving must be deterministic and must not trip the `(DeviceId, version, flags)` uniqueness
-    // constraint, because the split-out PCI core entries use distinct outer IDs (`PCI_CFG` and
+    // constraint, because the split-out PCI core entries use distinct outer IDs (`PCI` and
     // `PCI_INTX_ROUTER`).
     let snap1 = save_bytes(&mut source);
     let snap2 = save_bytes(&mut source);
