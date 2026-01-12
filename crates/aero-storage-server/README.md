@@ -11,6 +11,8 @@ metrics and basic health endpoints.
 - `GET /readyz` – readiness probe, returns `200 OK` JSON `{ "status": "ok" }` when ready, and
   `503 Service Unavailable` JSON `{ "status": "error" }` when not ready
 - `GET /metrics` – Prometheus text exposition format (`text/plain; version=0.0.4`)
+  - Can be disabled (`--disable-metrics`) or protected with a bearer token
+    (`--metrics-auth-token`).
 - `GET /v1/images` – list available images
 - `GET /v1/images/:id/meta` – image metadata (size, etag, last_modified, etc)
 - `GET|HEAD /v1/images/:image_id` (or `/v1/images/:image_id/data`) – stream image bytes
@@ -41,6 +43,8 @@ Configuration is via **CLI flags with env var fallbacks** (powered by `clap`).
 | `--public-cache-max-age-secs` | `AERO_STORAGE_PUBLIC_CACHE_MAX_AGE_SECS` | `3600` |
 | `--cors-preflight-max-age-secs` | `AERO_STORAGE_CORS_PREFLIGHT_MAX_AGE_SECS` | `86400` |
 | `--require-range` | `AERO_STORAGE_REQUIRE_RANGE` | `false` |
+| `--disable-metrics` | `AERO_STORAGE_DISABLE_METRICS` | `false` |
+| `--metrics-auth-token` | `AERO_STORAGE_METRICS_AUTH_TOKEN` | _(unset)_ |
 
 Notes:
 
@@ -56,6 +60,11 @@ Notes:
   image bytes responses (defence-in-depth for `COEP: require-corp`). The default `same-site` works
   well when the app and storage server are on the same eTLD+1 (e.g. `app.example.com` and
   `images.example.com`).
+- `/metrics` is intended for Prometheus scraping and **should not be publicly exposed**. In
+  production, either restrict access at the network layer (e.g. private service / network policy),
+  protect it with `--metrics-auth-token`, or disable it with `--disable-metrics`.
+  - If both `--disable-metrics` and `--metrics-auth-token` are set, disablement wins (the endpoint
+    will not be mounted).
 
 ## Run
 

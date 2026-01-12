@@ -16,10 +16,13 @@ pub fn router(store: Arc<dyn ImageStore>, metrics: Arc<Metrics>) -> Router {
 }
 
 pub fn router_with_state(state: images::ImagesState) -> Router {
-    Router::<images::ImagesState>::new()
-        .merge(images::router())
-        .route("/metrics", get(metrics::handle))
-        .with_state(state)
+    let router = Router::<images::ImagesState>::new().merge(images::router());
+    let router = if state.metrics_endpoint_disabled() {
+        router
+    } else {
+        router.route("/metrics", get(metrics::handle))
+    };
+    router.with_state(state)
 }
 
 #[cfg(test)]

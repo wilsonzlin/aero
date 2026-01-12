@@ -62,6 +62,12 @@ async fn main() -> anyhow::Result<()> {
     state = state.with_cross_origin_resource_policy(HeaderValue::from_str(corp_policy)?);
     state = state.with_max_concurrent_bytes_requests(config.max_concurrent_bytes_requests);
     state = state.with_require_range(config.require_range);
+
+    if config.disable_metrics {
+        state = state.with_disable_metrics(true);
+    } else if let Some(token) = config.metrics_auth_token.as_deref() {
+        state = state.with_metrics_auth_token(token);
+    }
     let app = aero_storage_server::app(state);
 
     tracing::info!(
@@ -75,6 +81,8 @@ async fn main() -> anyhow::Result<()> {
         cors_preflight_max_age_secs = ?config.cors_preflight_max_age_secs,
         max_concurrent_bytes_requests = config.max_concurrent_bytes_requests,
         require_range = config.require_range,
+        disable_metrics = %config.disable_metrics,
+        metrics_auth_token_set = %config.metrics_auth_token.is_some(),
         "aero-storage-server listening"
     );
 

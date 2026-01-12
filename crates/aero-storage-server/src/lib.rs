@@ -46,6 +46,8 @@ pub struct AppState {
     public_cache_max_age: Option<Duration>,
     max_concurrent_bytes_requests: usize,
     require_range: bool,
+    metrics_endpoint_disabled: bool,
+    metrics_auth_token: Option<Arc<str>>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -59,6 +61,8 @@ impl AppState {
             public_cache_max_age: None,
             max_concurrent_bytes_requests: DEFAULT_MAX_CONCURRENT_BYTES_REQUESTS,
             require_range: false,
+            metrics_endpoint_disabled: false,
+            metrics_auth_token: None,
         }
     }
 
@@ -118,6 +122,18 @@ impl AppState {
         self.require_range = require_range;
         self
     }
+
+    /// Disable the `/metrics` endpoint entirely (it will not be mounted, so requests return `404`).
+    pub fn with_disable_metrics(mut self, disable_metrics: bool) -> Self {
+        self.metrics_endpoint_disabled = disable_metrics;
+        self
+    }
+
+    /// Require `Authorization: Bearer <token>` for the `/metrics` endpoint.
+    pub fn with_metrics_auth_token(mut self, metrics_auth_token: impl Into<String>) -> Self {
+        self.metrics_auth_token = Some(Arc::from(metrics_auth_token.into().into_boxed_str()));
+        self
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -128,6 +144,8 @@ pub fn app(state: AppState) -> axum::Router {
     let public_cache_max_age = state.public_cache_max_age;
     let max_concurrent_bytes_requests = state.max_concurrent_bytes_requests;
     let require_range = state.require_range;
+    let metrics_endpoint_disabled = state.metrics_endpoint_disabled;
+    let metrics_auth_token = state.metrics_auth_token.clone();
     let store = Arc::clone(&state.store);
     let metrics = Arc::new(Metrics::new());
 
@@ -135,7 +153,9 @@ pub fn app(state: AppState) -> axum::Router {
         .with_cors(cors)
         .with_cross_origin_resource_policy(cross_origin_resource_policy)
         .with_max_concurrent_bytes_requests(max_concurrent_bytes_requests)
-        .with_require_range(require_range);
+        .with_require_range(require_range)
+        .with_metrics_endpoint_disabled(metrics_endpoint_disabled)
+        .with_metrics_auth_token(metrics_auth_token);
     if let Some(range_options) = range_options {
         images_state = images_state.with_range_options(range_options);
     }
@@ -154,4 +174,3 @@ pub fn app(state: AppState) -> axum::Router {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use server::{start, RunningStorageServer, StorageServerConfig};
-

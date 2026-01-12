@@ -47,6 +47,8 @@ pub struct ImagesState {
     cross_origin_resource_policy: HeaderValue,
     public_cache_max_age: Duration,
     bytes_request_semaphore: Option<Arc<Semaphore>>,
+    metrics_endpoint_disabled: bool,
+    metrics_auth_token: Option<Arc<str>>,
 }
 
 impl ImagesState {
@@ -64,6 +66,8 @@ impl ImagesState {
             bytes_request_semaphore: Some(Arc::new(Semaphore::new(
                 crate::DEFAULT_MAX_CONCURRENT_BYTES_REQUESTS,
             ))),
+            metrics_endpoint_disabled: false,
+            metrics_auth_token: None,
         }
     }
 
@@ -134,8 +138,26 @@ impl ImagesState {
         self
     }
 
+    pub fn with_metrics_endpoint_disabled(mut self, metrics_endpoint_disabled: bool) -> Self {
+        self.metrics_endpoint_disabled = metrics_endpoint_disabled;
+        self
+    }
+
+    pub fn with_metrics_auth_token(mut self, metrics_auth_token: Option<Arc<str>>) -> Self {
+        self.metrics_auth_token = metrics_auth_token;
+        self
+    }
+
     pub(crate) fn metrics(&self) -> &Metrics {
         self.metrics.as_ref()
+    }
+
+    pub(crate) fn metrics_endpoint_disabled(&self) -> bool {
+        self.metrics_endpoint_disabled
+    }
+
+    pub(crate) fn metrics_auth_token(&self) -> Option<&str> {
+        self.metrics_auth_token.as_deref()
     }
 }
 

@@ -1,5 +1,5 @@
-use clap::Parser;
 use aero_storage_server::DEFAULT_MAX_CONCURRENT_BYTES_REQUESTS;
+use clap::Parser;
 use std::{env, net::SocketAddr, path::PathBuf};
 
 #[derive(Debug, Clone, Parser)]
@@ -57,6 +57,7 @@ struct Args {
     /// Environment variable: `AERO_STORAGE_LOG_LEVEL`.
     #[arg(long, env = "AERO_STORAGE_LOG_LEVEL")]
     log_level: Option<String>,
+
     /// Maximum number of bytes allowed to be served for a single `Range` request.
     ///
     /// Environment variable: `AERO_STORAGE_MAX_RANGE_BYTES`.
@@ -87,6 +88,7 @@ struct Args {
         default_value_t = DEFAULT_MAX_CONCURRENT_BYTES_REQUESTS
     )]
     max_concurrent_bytes_requests: usize,
+
     /// Require `Range` requests for image bytes endpoints (`GET /v1/images/:id`).
     ///
     /// When enabled, `GET` requests without a `Range` header will be rejected with
@@ -95,6 +97,18 @@ struct Args {
     /// Environment variable: `AERO_STORAGE_REQUIRE_RANGE`.
     #[arg(long)]
     require_range: bool,
+
+    /// Disable the `/metrics` endpoint entirely (it will not be mounted, so requests return `404`).
+    ///
+    /// Environment variable: `AERO_STORAGE_DISABLE_METRICS`.
+    #[arg(long)]
+    disable_metrics: bool,
+
+    /// Require `Authorization: Bearer <token>` for the `/metrics` endpoint.
+    ///
+    /// Environment variable: `AERO_STORAGE_METRICS_AUTH_TOKEN`.
+    #[arg(long, env = "AERO_STORAGE_METRICS_AUTH_TOKEN")]
+    metrics_auth_token: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -110,6 +124,8 @@ pub struct Config {
     pub cors_preflight_max_age_secs: Option<u64>,
     pub max_concurrent_bytes_requests: usize,
     pub require_range: bool,
+    pub disable_metrics: bool,
+    pub metrics_auth_token: Option<String>,
 }
 
 impl Config {
@@ -163,6 +179,15 @@ impl Config {
             .unwrap_or_else(|| "info".to_string());
 
         let require_range = args.require_range || parse_env_bool("AERO_STORAGE_REQUIRE_RANGE");
+        let disable_metrics = args.disable_metrics || parse_env_bool("AERO_STORAGE_DISABLE_METRICS");
+
+        let metrics_auth_token = args
+            .metrics_auth_token
+            .or_else(|| env::var("AERO_STORAGE_METRICS_AUTH_TOKEN").ok());
+        let metrics_auth_token = metrics_auth_token.and_then(|v| {
+            let v = v.trim().to_string();
+            (!v.is_empty()).then_some(v)
+        });
 
         Self {
             listen_addr,
@@ -174,8 +199,10 @@ impl Config {
             max_range_bytes: args.max_range_bytes,
             public_cache_max_age_secs: args.public_cache_max_age_secs,
             cors_preflight_max_age_secs: args.cors_preflight_max_age_secs,
-            require_range,
             max_concurrent_bytes_requests: args.max_concurrent_bytes_requests,
+            require_range,
+            disable_metrics,
+            metrics_auth_token,
         }
     }
 }
@@ -201,8 +228,9 @@ fn parse_env_bool(var: &str) -> bool {
 
     match value.trim().to_ascii_lowercase().as_str() {
         "" => false,
-        "1" | "true" | "yes" | "y" | "on" => true,
-        "0" | "false" | "no" | "n" | "off" => false,
+        "1" | "true" | "t" | "yes" | "y" | "on" => true,
+        "0" | "false" | "f" | "no" | "n" | "off" => false,
         other => panic!("{var} must be a boolean (got {other:?})"),
     }
 }
+
