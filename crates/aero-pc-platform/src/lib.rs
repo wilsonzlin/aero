@@ -25,8 +25,11 @@ use aero_devices_nvme::{
     DiskBackend as NvmeDiskBackend, DiskError as NvmeDiskError, NvmeController, NvmePciDevice,
 };
 use aero_interrupts::apic::{IOAPIC_MMIO_BASE, IOAPIC_MMIO_SIZE, LAPIC_MMIO_BASE, LAPIC_MMIO_SIZE};
+use aero_net_e1000::E1000Device;
 use aero_virtio::devices::blk::{MemDisk, VirtioBlk};
-use aero_virtio::memory::{GuestMemory as VirtioGuestMemory, GuestMemoryError as VirtioGuestMemoryError};
+use aero_virtio::memory::{
+    GuestMemory as VirtioGuestMemory, GuestMemoryError as VirtioGuestMemoryError,
+};
 use aero_virtio::pci::{InterruptSink as VirtioInterruptSink, VirtioPciDevice};
 use aero_platform::address_filter::AddressFilter;
 use aero_platform::chipset::ChipsetState;
@@ -34,11 +37,10 @@ use aero_platform::dirty_memory::DEFAULT_DIRTY_PAGE_SIZE;
 use aero_platform::interrupts::{InterruptInput, PlatformInterrupts};
 use aero_platform::io::{IoPortBus, PortIoDevice};
 use aero_platform::memory::MemoryBus;
-use aero_net_e1000::E1000Device;
 use aero_storage::VirtualDisk;
 use memory::{DenseMemory, GuestMemory, MmioHandler};
-use std::collections::HashMap;
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 mod cpu_core;
@@ -170,7 +172,12 @@ impl E1000PciConfigDevice {
                 prefetchable: false,
             },
         );
-        config.set_bar_definition(1, PciBarDefinition::Io { size: aero_net_e1000::E1000_IO_SIZE });
+        config.set_bar_definition(
+            1,
+            PciBarDefinition::Io {
+                size: aero_net_e1000::E1000_IO_SIZE,
+            },
+        );
         Self { config }
     }
 }
@@ -966,6 +973,8 @@ impl PcPlatform {
     /// Convenience constructor for the canonical Windows 7 storage topology:
     /// - AHCI HDD on `00:02.0` (port 0)
     /// - IDE/ATAPI on `00:01.1` (secondary master is typically used for the install ISO)
+    ///
+    /// See also: `docs/05-storage-topology-win7.md` (canonical PCI BDFs + media attachment mapping).
     pub fn new_with_win7_storage(ram_size: usize) -> Self {
         Self::new_with_config(
             ram_size,
@@ -1471,7 +1480,11 @@ impl PcPlatform {
         let mut pci_mmio_router =
             PciBarMmioRouter::new(pci_allocator_config.mmio_base, pci_cfg.clone());
         if let Some(hda) = hda.clone() {
-            pci_mmio_router.register_shared_handler(aero_devices::pci::profile::HDA_ICH6.bdf, 0, hda);
+            pci_mmio_router.register_shared_handler(
+                aero_devices::pci::profile::HDA_ICH6.bdf,
+                0,
+                hda,
+            );
         }
         if let Some(ahci) = ahci.clone() {
             // ICH9 AHCI uses BAR5 (ABAR).
@@ -1681,7 +1694,11 @@ impl PcPlatform {
         self.attach_ahci_drive(0, drive);
     }
 
-    pub fn attach_ahci_disk(&mut self, port: usize, disk: Box<dyn VirtualDisk>) -> std::io::Result<()> {
+    pub fn attach_ahci_disk(
+        &mut self,
+        port: usize,
+        disk: Box<dyn VirtualDisk>,
+    ) -> std::io::Result<()> {
         self.attach_ahci_drive(port, AtaDrive::new(disk)?);
         Ok(())
     }
