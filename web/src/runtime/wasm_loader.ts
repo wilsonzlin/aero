@@ -685,10 +685,6 @@ export interface WasmApi {
         jit_on_guest_write?(paddr: bigint | number, len: number): void;
         readonly interp_executions?: number;
         readonly jit_executions?: number;
-        readonly guest_base?: number;
-        readonly guest_size?: number;
-        readonly interp_blocks_total?: bigint;
-        readonly jit_blocks_total?: bigint;
         free(): void;
     };
 

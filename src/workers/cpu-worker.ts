@@ -426,13 +426,9 @@ async function runTieredVm(iterations: number, threshold: number) {
 
     const tableIndex = nextTableIndex++;
     jitFns[tableIndex] = block as (cpu_ptr: number, jit_ctx_ptr: number) => bigint;
-    vm.install_tier1_block(
-      BigInt(resp.entry_rip),
-      tableIndex,
-      BigInt(resp.entry_rip),
-      resp.meta.code_byte_len,
-    );
-    installedByRip.set(resp.entry_rip, tableIndex);
+    const entryRipU32 = resp.entry_rip >>> 0;
+    vm.install_tier1_block(BigInt(entryRipU32), tableIndex, BigInt(entryRipU32), resp.meta.code_byte_len);
+    installedByRip.set(entryRipU32, tableIndex);
     return tableIndex;
   }
 
@@ -442,21 +438,38 @@ async function runTieredVm(iterations: number, threshold: number) {
   let remainingBlocks = maxBlocks;
   while (remainingBlocks > 0) {
     const batch = Math.min(256, remainingBlocks);
-    recordRunCounts(vm.run_blocks(batch));
+    let runResult: unknown = undefined;
+    try {
+      runResult = vm.run_blocks(batch);
+    } catch (err) {
+      postToMain({
+        type: 'CpuWorkerError',
+        reason: `Tiered VM run_blocks failed: ${err instanceof Error ? err.message : String(err)}`,
+      });
+      jitWorker.terminate();
+      try {
+        vm.free();
+      } catch {
+        // ignore
+      }
+      return;
+    }
+    recordRunCounts(runResult);
     remainingBlocks -= batch;
 
     const compileReqs = vm.drain_compile_requests();
     for (const entry_rip of compileReqs as unknown as Iterable<unknown>) {
-      const entryRipNum =
-        typeof entry_rip === 'bigint'
-          ? u64AsNumber(entry_rip)
-          : typeof entry_rip === 'number'
-            ? entry_rip
-            : 0;
-      if (!entryRipNum) continue;
-      if (installedByRip.has(entryRipNum)) continue;
+      let entryRipNum: number | undefined;
+      if (typeof entry_rip === 'bigint') {
+        entryRipNum = u64AsNumber(entry_rip);
+      } else if (typeof entry_rip === 'number' && Number.isFinite(entry_rip)) {
+        entryRipNum = entry_rip >>> 0;
+      }
+      if (entryRipNum === undefined) continue;
+      const entryRipU32 = entryRipNum >>> 0;
+      if (installedByRip.has(entryRipU32)) continue;
       try {
-        const resp = await requestCompile(entryRipNum);
+        const resp = await requestCompile(entryRipU32);
         const idx = await installTier1(resp);
         if (resp.entry_rip === ENTRY_RIP) installedIndex = idx;
       } catch (err) {
@@ -474,7 +487,13 @@ async function runTieredVm(iterations: number, threshold: number) {
       }
     }
 
-    if (interp_executions > 0 && jit_executions > 0 && installedIndex !== null) {
+    const interpTotal = Math.max(
+      interp_executions,
+      readMaybeNumber(vm, 'interp_blocks_total'),
+      readMaybeNumber(vm, 'interp_executions'),
+    );
+    const jitTotal = Math.max(jit_executions, readMaybeNumber(vm, 'jit_blocks_total'), readMaybeNumber(vm, 'jit_executions'));
+    if (interpTotal > 0 && jitTotal > 0 && installedIndex !== null) {
       break;
     }
 
@@ -486,24 +505,45 @@ async function runTieredVm(iterations: number, threshold: number) {
   }
 
   // Ensure we exercise the installed block at least once.
-  if (installedIndex !== null && jit_executions === 0) {
-    for (let i = 0; i < 16 && jit_executions === 0; i++) {
-      recordRunCounts(vm.run_blocks(1));
+  if (installedIndex !== null) {
+    for (let i = 0; i < 16; i++) {
+      const jitTotal = Math.max(
+        jit_executions,
+        readMaybeNumber(vm, 'jit_blocks_total'),
+        readMaybeNumber(vm, 'jit_executions'),
+      );
+      if (jitTotal > 0) break;
+      try {
+        recordRunCounts(vm.run_blocks(1));
+      } catch {
+        break;
+      }
     }
   }
 
   void threshold;
   const rollback_ok = runRollbackTest();
 
+  const interp_executions_total = Math.max(
+    interp_executions,
+    readMaybeNumber(vm, 'interp_blocks_total'),
+    readMaybeNumber(vm, 'interp_executions'),
+  );
+  const jit_executions_total = Math.max(
+    jit_executions,
+    readMaybeNumber(vm, 'jit_blocks_total'),
+    readMaybeNumber(vm, 'jit_executions'),
+  );
+
   const runtimeInstalledTableIndex = installedIndex;
   const runtimeInstalledEntryRip = installedIndex !== null ? ENTRY_RIP : null;
   postToMain({
     type: 'CpuWorkerResult',
-    jit_executions,
+    jit_executions: jit_executions_total,
     // Historical field from the earlier placeholder pipeline: keep it non-zero so existing smoke
     // test assertions remain valid.
     helper_executions: Math.max(1, installedByRip.size),
-    interp_executions,
+    interp_executions: interp_executions_total,
     installed_table_index: installedIndex,
     runtime_installed_entry_rip: runtimeInstalledEntryRip,
     runtime_installed_table_index: runtimeInstalledTableIndex,
