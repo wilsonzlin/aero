@@ -64,6 +64,22 @@ The following crates are **not** canonical VM wiring. They are kept under `crate
 
 `crates/emulator` remains in the workspace as the current device + I/O model crate. It is *not* the canonical "VM wiring" surface consumed by `aero-wasm`.
 
+### 4) WASM/browser-facing VM wrappers (current state)
+
+`crates/aero-wasm` exposes multiple wasm-bindgen entrypoints that are easy to confuse:
+
+- **`Machine`** (canonical): a full-system VM wrapper around `aero_machine::Machine`. This is the
+  intended target for new browser integration work (PCI/device wiring, networking, snapshots, …).
+- **`WasmVm` / `WasmTieredVm`** (legacy CPU-worker runtime): CPU-only stepping loops used by
+  `web/src/workers/cpu.worker.ts`. They execute CPU in WASM but forward port I/O + MMIO back to JS
+  via shims (`globalThis.__aero_io_port_*`, `globalThis.__aero_mmio_*`), and `WasmTieredVm` also
+  calls out to JS for Tier-1 JIT blocks (`globalThis.__aero_jit_call`).
+- **`PcMachine`** (experimental): wasm-bindgen wrapper around `aero_machine::PcMachine` primarily
+  intended for experiments/tests; it allocates its own guest RAM and does not use the worker
+  runtime `guest_ram_layout` shared-memory contract.
+
+See also: [`docs/vm-crate-map.md`](../vm-crate-map.md) and [ADR 0014](./0014-canonical-machine-stack.md).
+
 ## Alternatives considered
 
 1. **Make `crates/emulator` the canonical VM wiring**

@@ -2271,6 +2271,13 @@ pub enum MouseButtons {
     Middle = 0x04,
 }
 
+/// Canonical full-system Aero VM exported to JS via wasm-bindgen.
+///
+/// This wrapper is backed by `aero_machine::Machine` and is the intended target for new browser
+/// integration work (device wiring, networking via `NET_TX`/`NET_RX` rings, snapshots, …).
+///
+/// The worker CPU runtime currently uses the legacy `WasmVm` / `WasmTieredVm` exports instead: they
+/// execute only the CPU core in WASM and forward port I/O / MMIO back to JS via shims.
 #[wasm_bindgen]
 pub struct Machine {
     inner: aero_machine::Machine,

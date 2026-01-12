@@ -10,6 +10,19 @@ The canonical VM wiring crate is:
 
 Everything that wants to *run the Aero machine* (browser WASM exports, host integration tests, snapshot tooling) should build on that crate.
 
+## Browser/WASM entrypoints (what runs where)
+
+The web runtime loads the `aero-wasm` wasm-bindgen package (built from `crates/aero-wasm`) and then
+uses different exports depending on the runtime path.
+
+| Rust crate | WASM export | Backing Rust runtime | JS entrypoint(s) | Notes |
+|---|---|---|---|---|
+| `crates/aero-wasm` | `Machine` | `aero_machine::Machine` (`crates/aero-machine`) | `web/src/main.ts` (demo today) | **Canonical full-system machine**. Owns PCI/IO/MMIO/device wiring in Rust/WASM and supports attaching `NET_TX`/`NET_RX` rings for networking. Intended future “main” web runtime. |
+| `crates/aero-wasm` | `WasmVm` | `aero_cpu_core` + `aero_mmu` | `web/src/workers/cpu.worker.ts` | **Legacy CPU-worker runtime**. CPU executes in WASM; all port I/O + MMIO are forwarded to JS via `globalThis.__aero_io_port_*` / `globalThis.__aero_mmio_*`. |
+| `crates/aero-wasm` | `WasmTieredVm` | `aero_cpu_core` tiered runtime + JS Tier-1 JIT calls | `web/src/workers/cpu.worker.ts` | Same as `WasmVm`, but with Tier-0+Tier-1 tiering; Tier-1 blocks execute via `globalThis.__aero_jit_call`. |
+| `crates/aero-wasm` | `PcMachine` | `aero_machine::PcMachine` (`crates/aero-machine`) | (not used by main runtime) | Experimental wrapper; allocates its own guest RAM inside the wasm module (does not use `guest_ram_layout`). |
+| `crates/aero-wasm` | `DemoVm` | wrapper around `aero_machine::Machine` | `web/src/workers/demo_vm_snapshot.worker.ts` | Deprecated snapshot demo API kept for UI panels. |
+
 ### High-level crate graph
 
 ```text

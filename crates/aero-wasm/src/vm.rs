@@ -1,12 +1,14 @@
-//! Minimal x86 VM loop for the browser worker runtime.
+//! Legacy CPU-only x86 VM loop used by the browser CPU worker runtime.
 //!
-//! This module is intentionally small: it wires the Tier-0 interpreter
-//! (`aero_cpu_core`) to the injected shared guest RAM inside the module's linear
-//! memory and routes port I/O back to JS.
+//! `WasmVm` is intentionally small: it wires the Tier-0 interpreter (`aero_cpu_core`) to the
+//! injected shared guest RAM inside the module's linear memory.
 //!
-//! The browser CPU worker installs `globalThis.__aero_io_port_read` /
-//! `globalThis.__aero_io_port_write` shims which forward to the I/O worker via
-//! the existing AIPC rings.
+//! This is **not** a full-system machine: port I/O and MMIO are forwarded back to JS via shims
+//! (`globalThis.__aero_io_port_*`, `globalThis.__aero_mmio_*`). The CPU worker installs these shims
+//! and typically forwards them to the I/O worker via AIPC rings.
+//!
+//! For new full-system work (PCI/devices/networking), prefer the canonical `Machine` WASM export
+//! (`crates/aero-wasm::Machine`, backed by `crates/aero-machine::Machine`).
 
 #![cfg(target_arch = "wasm32")]
 

@@ -1,15 +1,21 @@
-//! Tier-0 + Tier-1 tiered execution VM loop for the browser worker runtime.
+//! Legacy Tier-0 + Tier-1 tiered execution VM loop used by the browser CPU worker runtime.
+//!
+//! `WasmTieredVm` is the “tiered” sibling of [`crate::WasmVm`]: it executes CPU in WASM but is still
+//! **CPU-only** (not a full-system machine).
 //!
 //! This module wires up:
 //! - Tier-0 interpreter blocks (`aero_cpu_core::exec::Tier0Interpreter`)
 //! - Tier-1 JIT cache + tiering logic (`aero_cpu_core::jit::runtime::JitRuntime`)
 //! - Tiered dispatcher (`aero_cpu_core::exec::ExecDispatcher`)
 //!
-//! The Tier-1 backend is intentionally minimal: compiled blocks are executed by
-//! calling out to JS via `globalThis.__aero_jit_call(table_index, cpu_ptr, jit_ctx_ptr)`.
+//! Integration boundaries:
+//! - Compiled Tier-1 blocks are executed by calling out to JS via
+//!   `globalThis.__aero_jit_call(table_index, cpu_ptr, jit_ctx_ptr)`.
+//! - Port I/O is forwarded back to JS via `globalThis.__aero_io_port_*`.
 //!
-//! Compilation happens out-of-band in a separate JIT worker; this VM only exports a
-//! compile-request drain and an install hook for compiled blocks.
+//! This path exists primarily to iterate on CPU/JIT behavior in the worker runtime. For new
+//! full-system work (devices/networking), prefer the canonical `Machine` WASM export
+//! (`crates/aero-wasm::Machine`, backed by `crates/aero-machine::Machine`).
 
 #![cfg(target_arch = "wasm32")]
 
