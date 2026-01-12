@@ -234,7 +234,8 @@ impl PcMachine {
             ..Default::default()
         });
 
-        let mut pci_adapter = SharedPciConfigPortsBiosAdapter::new(self.bus.platform.pci_cfg.clone());
+        let mut pci_adapter =
+            SharedPciConfigPortsBiosAdapter::new(self.bus.platform.pci_cfg.clone());
         let mut bus = PlatformBiosBus {
             platform: &mut self.bus.platform,
             mapped_roms: HashMap::new(),

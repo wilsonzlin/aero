@@ -22,7 +22,7 @@ use aero_cpu_core::assist::AssistContext;
 use aero_cpu_core::interp::tier0::exec::{run_batch_cpu_core_with_assists, BatchExit};
 use aero_cpu_core::interp::tier0::Tier0Config;
 use aero_cpu_core::interrupts::CpuExit;
-use aero_cpu_core::state::{CpuMode, CpuState};
+use aero_cpu_core::state::{CpuMode, CpuState, RFLAGS_IF};
 use aero_cpu_core::{AssistReason, CpuCore, Exception};
 use aero_devices::a20_gate::A20Gate as A20GateDevice;
 use aero_devices::acpi_pm::{
@@ -44,7 +44,9 @@ use aero_devices::serial::{register_serial16550, Serial16550, SharedSerial16550}
 pub use aero_devices_input::Ps2MouseButton;
 use aero_net_backend::{FrameRing, L2TunnelRingBackend, NetworkBackend};
 use aero_platform::chipset::{A20GateHandle, ChipsetState};
-use aero_platform::interrupts::{InterruptController as PlatformInterruptController, PlatformInterrupts};
+use aero_platform::interrupts::{
+    InterruptController as PlatformInterruptController, PlatformInterrupts,
+};
 use aero_platform::io::IoPortBus;
 use aero_platform::reset::{ResetKind, ResetLatch};
 use aero_snapshot as snapshot;
@@ -934,7 +936,11 @@ impl Machine {
             // cannot cause an unbounded growth of the external interrupt FIFO when the guest has
             // interrupts masked (IF=0) or otherwise cannot accept delivery yet.
             const MAX_QUEUED_EXTERNAL_INTERRUPTS: usize = 1;
-            if self.cpu.pending.external_interrupts.len() < MAX_QUEUED_EXTERNAL_INTERRUPTS {
+            if self.cpu.pending.external_interrupts.len() < MAX_QUEUED_EXTERNAL_INTERRUPTS
+                && !self.cpu.pending.has_pending_event()
+                && (self.cpu.state.rflags() & RFLAGS_IF) != 0
+                && self.cpu.pending.interrupt_inhibit() == 0
+            {
                 if let Some(interrupts) = &self.interrupts {
                     let mut interrupts = interrupts.borrow_mut();
                     if let Some(vector) = PlatformInterruptController::get_pending(&*interrupts) {
@@ -1441,8 +1447,8 @@ mod tests {
     use pretty_assertions::assert_eq;
     use std::io::{Cursor, Read};
     use std::sync::{
-        Arc,
         atomic::{AtomicUsize, Ordering},
+        Arc,
     };
 
     fn build_serial_boot_sector(message: &[u8]) -> [u8; 512] {
@@ -2097,5 +2103,151 @@ mod tests {
         restored.restore_snapshot_bytes(&diff).unwrap();
 
         assert_eq!(restored.read_physical_bytes(addr, data.len()), data);
+    }
+
+    fn write_ivt_entry(m: &mut Machine, vector: u8, offset: u16, segment: u16) {
+        let addr = u64::from(vector) * 4;
+        let bytes = [
+            (offset & 0xFF) as u8,
+            (offset >> 8) as u8,
+            (segment & 0xFF) as u8,
+            (segment >> 8) as u8,
+        ];
+        m.mem.inner.borrow_mut().write_physical(addr, &bytes);
+    }
+
+    fn init_real_mode_cpu(m: &mut Machine, entry_ip: u16, rflags: u64) {
+        fn set_real_segment(seg: &mut aero_cpu_core::state::Segment, selector: u16) {
+            seg.selector = selector;
+            seg.base = u64::from(selector) << 4;
+            seg.limit = 0xFFFF;
+            seg.access = 0;
+        }
+
+        m.cpu.pending = Default::default();
+        set_real_segment(&mut m.cpu.state.segments.cs, 0);
+        set_real_segment(&mut m.cpu.state.segments.ds, 0);
+        set_real_segment(&mut m.cpu.state.segments.es, 0);
+        set_real_segment(&mut m.cpu.state.segments.ss, 0);
+        m.cpu.state.set_stack_ptr(0x8000);
+        m.cpu.state.set_rip(u64::from(entry_ip));
+        m.cpu.state.set_rflags(rflags);
+        m.cpu.state.halted = false;
+
+        // Ensure the real-mode IVT is in use.
+        m.cpu.state.tables.idtr.base = 0;
+        m.cpu.state.tables.idtr.limit = 0x03FF;
+    }
+
+    #[test]
+    fn pc_platform_irq_is_delivered_to_cpu_core() {
+        let mut m = Machine::new(MachineConfig {
+            ram_size_bytes: 2 * 1024 * 1024,
+            enable_pc_platform: true,
+            enable_serial: false,
+            enable_i8042: false,
+            enable_a20_gate: false,
+            enable_reset_ctrl: false,
+            ..Default::default()
+        })
+        .unwrap();
+
+        // Simple handler for IRQ0 (vector 0x20): write a byte to RAM and IRET.
+        //
+        // mov byte ptr [0x2000], 0xAA
+        // iret
+        const HANDLER_IP: u16 = 0x1100;
+        m.mem
+            .inner
+            .borrow_mut()
+            .write_physical(u64::from(HANDLER_IP), &[0xC6, 0x06, 0x00, 0x20, 0xAA, 0xCF]);
+        write_ivt_entry(&mut m, 0x20, HANDLER_IP, 0x0000);
+
+        // Program CPU at 0x1000 with a small NOP sled.
+        const ENTRY_IP: u16 = 0x1000;
+        m.mem
+            .inner
+            .borrow_mut()
+            .write_physical(u64::from(ENTRY_IP), &[0x90, 0x90, 0x90, 0x90, 0x90]);
+        m.mem.inner.borrow_mut().write_physical(0x2000, &[0x00]);
+
+        init_real_mode_cpu(&mut m, ENTRY_IP, RFLAGS_IF);
+
+        // Configure the legacy PIC to use the standard remapped offsets and unmask IRQ0.
+        let interrupts = m.platform_interrupts().expect("pc platform enabled");
+        {
+            let mut ints = interrupts.borrow_mut();
+            ints.pic_mut().set_offsets(0x20, 0x28);
+            for irq in 0..16 {
+                ints.pic_mut().set_masked(irq, irq != 0);
+            }
+
+            ints.raise_irq(aero_platform::interrupts::InterruptInput::IsaIrq(0));
+        }
+
+        // Simulate the CPU being halted: Tier-0 should wake it once the interrupt vector is delivered.
+        m.cpu.state.halted = true;
+
+        // Sanity: the interrupt controller sees the pending vector.
+        assert_eq!(
+            PlatformInterruptController::get_pending(&*interrupts.borrow()),
+            Some(0x20)
+        );
+
+        // Run a few instructions; the interrupt should be injected and delivered before the first
+        // guest instruction executes.
+        let exit = m.run_slice(5);
+        assert_eq!(exit, RunExit::Completed { executed: 5 });
+        assert_eq!(m.read_physical_u8(0x2000), 0xAA);
+        assert!(
+            !m.cpu.state.halted,
+            "CPU should wake from HLT once IRQ is delivered"
+        );
+    }
+
+    #[test]
+    fn pc_platform_irq_is_not_acknowledged_when_interrupts_disabled() {
+        let mut m = Machine::new(MachineConfig {
+            ram_size_bytes: 2 * 1024 * 1024,
+            enable_pc_platform: true,
+            enable_serial: false,
+            enable_i8042: false,
+            enable_a20_gate: false,
+            enable_reset_ctrl: false,
+            ..Default::default()
+        })
+        .unwrap();
+
+        const ENTRY_IP: u16 = 0x1000;
+        m.mem
+            .inner
+            .borrow_mut()
+            .write_physical(u64::from(ENTRY_IP), &[0x90, 0x90, 0x90, 0x90]);
+        init_real_mode_cpu(&mut m, ENTRY_IP, 0);
+
+        let interrupts = m.platform_interrupts().expect("pc platform enabled");
+        {
+            let mut ints = interrupts.borrow_mut();
+            ints.pic_mut().set_offsets(0x20, 0x28);
+            for irq in 0..16 {
+                ints.pic_mut().set_masked(irq, irq != 0);
+            }
+            ints.raise_irq(aero_platform::interrupts::InterruptInput::IsaIrq(0));
+        }
+
+        // Halted + IF=0: the CPU cannot accept maskable interrupts, so the machine should not
+        // acknowledge or enqueue the interrupt vector.
+        m.cpu.state.halted = true;
+        assert_eq!(
+            PlatformInterruptController::get_pending(&*interrupts.borrow()),
+            Some(0x20)
+        );
+        let exit = m.run_slice(5);
+        assert_eq!(exit, RunExit::Halted { executed: 0 });
+        assert!(m.cpu.pending.external_interrupts.is_empty());
+        assert_eq!(
+            PlatformInterruptController::get_pending(&*interrupts.borrow()),
+            Some(0x20)
+        );
     }
 }
