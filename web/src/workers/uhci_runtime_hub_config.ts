@@ -1,4 +1,5 @@
 import type { GuestUsbPath } from "../platform/hid_passthrough_protocol";
+import { EXTERNAL_HUB_ROOT_PORT, UHCI_SYNTHETIC_HID_HUB_PORT_COUNT } from "../usb/uhci_external_hub";
 
 export type UhciRuntimeExternalHubConfig = { guestPath: GuestUsbPath; portCount?: number };
 
@@ -12,7 +13,21 @@ export class UhciRuntimeExternalHubConfigManager {
   #pending: UhciRuntimeExternalHubConfig | null = null;
 
   setPending(guestPath: GuestUsbPath, portCount: number | undefined): void {
-    this.#pending = { guestPath, ...(portCount !== undefined ? { portCount } : {}) };
+    let clampedPortCount = portCount;
+    // Root port 0 hosts the external hub used by both WebHID passthrough and the synthetic
+    // keyboard/mouse/gamepad devices. Never configure the hub with fewer downstream ports than
+    // that reserved synthetic range (ports 1..3), otherwise those devices may fail to attach.
+    if (guestPath.length === 1 && guestPath[0] === EXTERNAL_HUB_ROOT_PORT && clampedPortCount !== undefined) {
+      if (!Number.isFinite(clampedPortCount)) {
+        clampedPortCount = UHCI_SYNTHETIC_HID_HUB_PORT_COUNT;
+      } else {
+        clampedPortCount = Math.max(
+          UHCI_SYNTHETIC_HID_HUB_PORT_COUNT,
+          Math.min(255, Math.floor(clampedPortCount)),
+        );
+      }
+    }
+    this.#pending = { guestPath, ...(clampedPortCount !== undefined ? { portCount: clampedPortCount } : {}) };
   }
 
   get pending(): UhciRuntimeExternalHubConfig | null {
@@ -32,4 +47,3 @@ export class UhciRuntimeExternalHubConfigManager {
     }
   }
 }
-

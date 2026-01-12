@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { UHCI_SYNTHETIC_HID_HUB_PORT_COUNT } from "../usb/uhci_external_hub";
 import { UhciRuntimeExternalHubConfigManager } from "./uhci_runtime_hub_config";
 
 describe("workers/uhci_runtime_hub_config", () => {
@@ -12,6 +13,17 @@ describe("workers/uhci_runtime_hub_config", () => {
     manager.apply(runtime);
 
     expect(webhid_attach_hub).toHaveBeenCalledWith([0], 16);
+  });
+
+  it("clamps external hub port count so it cannot shrink below the reserved synthetic HID range", () => {
+    const manager = new UhciRuntimeExternalHubConfigManager();
+    manager.setPending([0], 1);
+
+    const webhid_attach_hub = vi.fn();
+    const runtime = { webhid_attach_hub };
+    manager.apply(runtime);
+
+    expect(webhid_attach_hub).toHaveBeenCalledWith([0], UHCI_SYNTHETIC_HID_HUB_PORT_COUNT);
   });
 
   it("is a no-op when the runtime does not expose webhid_attach_hub", () => {
@@ -39,4 +51,3 @@ describe("workers/uhci_runtime_hub_config", () => {
     expect(warn.mock.calls[0]?.[0]).toContain("Failed to configure UHCI runtime external hub");
   });
 });
-

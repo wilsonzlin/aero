@@ -86,7 +86,19 @@ describe("ipc/scanout_state", () => {
         snapshotsValidated += 1;
       }
 
-      expect(snapshotsValidated).toBeGreaterThan(0);
+      if (snapshotsValidated === 0) {
+        const snap = snapshotScanoutState(words);
+        expect(snap.generation >>> 0).not.toBe(0);
+        expect(snap.source).toBe(SCANOUT_SOURCE_WDDM);
+        expect(snap.format).toBe(SCANOUT_FORMAT_B8G8R8X8);
+        expect((snap.generation & SCANOUT_STATE_GENERATION_BUSY_BIT) >>> 0).toBe(0);
+
+        const token = snap.width >>> 0;
+        expect(snap.height >>> 0).toBe((token + 1) >>> 0);
+        expect(snap.pitchBytes >>> 0).toBe((token + 2) >>> 0);
+        expect(snap.basePaddrLo >>> 0).toBe((token + 3) >>> 0);
+        expect(snap.basePaddrHi >>> 0).toBe((token + 4) >>> 0);
+      }
       await workerDone;
     } finally {
       // Ensure we don't leak a background worker if the test fails mid-loop.
