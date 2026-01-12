@@ -390,6 +390,7 @@ impl<B: StorageBackend> Qcow2Disk<B> {
             if end > file_len {
                 return Err(DiskError::CorruptImage("qcow2 l2 table truncated"));
             }
+            clusters.try_reserve(1).map_err(|_| DiskError::QuotaExceeded)?;
             clusters.push(l2_offset);
         }
 
@@ -403,6 +404,7 @@ impl<B: StorageBackend> Qcow2Disk<B> {
             if end > file_len {
                 return Err(DiskError::CorruptImage("qcow2 refcount block truncated"));
             }
+            clusters.try_reserve(1).map_err(|_| DiskError::QuotaExceeded)?;
             clusters.push(block_offset);
         }
 
@@ -420,10 +422,16 @@ impl<B: StorageBackend> Qcow2Disk<B> {
     fn record_metadata_cluster(&mut self, cluster_offset: u64) -> Result<()> {
         if let Some(last) = self.metadata_clusters.last().copied() {
             if cluster_offset > last {
+                self.metadata_clusters
+                    .try_reserve(1)
+                    .map_err(|_| DiskError::QuotaExceeded)?;
                 self.metadata_clusters.push(cluster_offset);
                 return Ok(());
             }
         } else {
+            self.metadata_clusters
+                .try_reserve(1)
+                .map_err(|_| DiskError::QuotaExceeded)?;
             self.metadata_clusters.push(cluster_offset);
             return Ok(());
         }
@@ -431,6 +439,9 @@ impl<B: StorageBackend> Qcow2Disk<B> {
         match self.metadata_clusters.binary_search(&cluster_offset) {
             Ok(_) => Err(DiskError::CorruptImage("qcow2 metadata clusters overlap")),
             Err(idx) => {
+                self.metadata_clusters
+                    .try_reserve(1)
+                    .map_err(|_| DiskError::QuotaExceeded)?;
                 self.metadata_clusters.insert(idx, cluster_offset);
                 Ok(())
             }

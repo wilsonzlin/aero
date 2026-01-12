@@ -389,6 +389,9 @@ impl<B: StorageBackend> VhdDisk<B> {
                     if block_end > footer_offset {
                         return Err(DiskError::CorruptImage("vhd block overlaps footer"));
                     }
+                    allocated_blocks
+                        .try_reserve(1)
+                        .map_err(|_| DiskError::QuotaExceeded)?;
                     allocated_blocks.push(block_start);
                 }
 
