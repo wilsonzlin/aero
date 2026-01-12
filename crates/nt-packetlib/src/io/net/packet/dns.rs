@@ -172,6 +172,56 @@ pub struct DnsResponseBuilder<'a> {
 }
 
 impl<'a> DnsResponseBuilder<'a> {
+    fn validate_qname(&self) -> Result<(), PacketError> {
+        // RFC1035: domain names are limited to 255 bytes in wire format (including length octets and
+        // the terminating 0-length label).
+        if self.qname.len() > 255 {
+            return Err(PacketError::Malformed("DNS QNAME too long"));
+        }
+
+        // Ensure the QNAME is a well-formed sequence of length-prefixed labels terminated by 0.
+        // We do not accept name compression pointers here (the stack's minimal DNS implementation
+        // only deals with uncompressed questions).
+        let mut off = 0usize;
+        while off < self.qname.len() {
+            let len_byte = self.qname[off];
+            off += 1;
+            if (len_byte & 0xc0) == 0xc0 {
+                return Err(PacketError::Unsupported("compressed DNS QNAME"));
+            }
+            if (len_byte & 0xc0) != 0 {
+                return Err(PacketError::Malformed(
+                    "DNS label length has reserved bits set",
+                ));
+            }
+
+            let len = len_byte as usize;
+            if len == 0 {
+                if off != self.qname.len() {
+                    return Err(PacketError::Malformed("DNS QNAME has trailing bytes"));
+                }
+                return Ok(());
+            }
+            if len > 63 {
+                return Err(PacketError::Malformed("DNS label length > 63"));
+            }
+            if off + len > self.qname.len() {
+                return Err(PacketError::Truncated {
+                    needed: off + len,
+                    actual: self.qname.len(),
+                });
+            }
+            off += len;
+        }
+
+        Err(PacketError::Malformed("DNS QNAME missing terminator"))
+    }
+
+    fn checked_len(&self) -> Result<usize, PacketError> {
+        self.validate_qname()?;
+        Ok(self.len())
+    }
+
     pub fn len(&self) -> usize {
         let mut len = 12 + self.qname.len() + 4;
         if self.answer_a.is_some() {
@@ -186,7 +236,7 @@ impl<'a> DnsResponseBuilder<'a> {
     }
 
     pub fn write(&self, out: &mut [u8]) -> Result<usize, PacketError> {
-        let len = self.len();
+        let len = self.checked_len()?;
         ensure_out_buf_len(out, len)?;
 
         // Header
@@ -233,7 +283,7 @@ impl<'a> DnsResponseBuilder<'a> {
 
     #[cfg(feature = "alloc")]
     pub fn build_vec(&self) -> Result<alloc::vec::Vec<u8>, PacketError> {
-        let len = self.len();
+        let len = self.checked_len()?;
         let mut buf = alloc::vec![0u8; len];
         let written = self.write(&mut buf)?;
         debug_assert_eq!(written, buf.len());
@@ -375,6 +425,33 @@ mod tests {
 
         assert_eq!(
             parse_single_query(&query).unwrap_err(),
+            PacketError::Malformed("DNS QNAME too long")
+        );
+    }
+
+    #[test]
+    fn dns_response_builder_rejects_qname_over_255_bytes() {
+        // 4 labels × (1 length byte + 63 payload bytes) + terminator = 257 bytes of QNAME.
+        let mut qname = Vec::new();
+        for _ in 0..4 {
+            qname.push(63);
+            qname.extend_from_slice(&[b'a'; 63]);
+        }
+        qname.push(0);
+
+        let builder = DnsResponseBuilder {
+            id: 1,
+            rd: true,
+            rcode: DnsResponseCode::NoError,
+            qname: &qname,
+            qtype: 1,
+            qclass: 1,
+            answer_a: None,
+            ttl: 0,
+        };
+
+        assert_eq!(
+            builder.build_vec().unwrap_err(),
             PacketError::Malformed("DNS QNAME too long")
         );
     }
