@@ -400,7 +400,7 @@ fn machine_exposes_ich9_ahci_at_canonical_bdf_and_bar5_mmio_works() {
     write_cfg_u16(&mut m, bdf.bus, bdf.device, bdf.function, 0x04, 0x0002);
 
     // Smoke-test BAR5 MMIO dispatch by reading CAP/PI.
-    let cap = m.read_physical_u32(bar5_base + 0x00);
+    let cap = m.read_physical_u32(bar5_base);
     let pi = m.read_physical_u32(bar5_base + 0x0C);
 
     assert_eq!(cap, 0x8000_1F00);

@@ -261,7 +261,6 @@ impl SnapshotTarget for PcPlatformSnapshotHarness<'_> {
                             self.restore_error = Some(SnapshotError::Corrupt(
                                 "failed to restore legacy PCI config ports state",
                             ));
-                            return;
                         }
                     }
                     // Legacy: INTx router stored directly under `DeviceId::PCI`.

@@ -5,6 +5,7 @@
 //! disks/ISOs attached. This test attaches:
 //! - an AHCI ATA disk (port 0)
 //! - an IDE secondary-master ATAPI CDROM
+//!
 //! Then verifies both remain readable after a `Machine::reset()`.
 
 use aero_devices::pci::profile::SATA_AHCI_ICH9;

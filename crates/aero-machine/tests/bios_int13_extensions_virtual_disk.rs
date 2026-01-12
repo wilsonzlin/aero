@@ -114,7 +114,7 @@ fn build_int13_ext_read_boot_sector(success: u8, fail: u8) -> [u8; 512] {
     // 4: buffer offset (u16)
     // 6: buffer segment (u16)
     // 8: starting LBA (u64)
-    sector[i + 0] = 0x10;
+    sector[i] = 0x10;
     sector[i + 1] = 0x00;
     sector[i + 2..i + 4].copy_from_slice(&1u16.to_le_bytes());
     sector[i + 4..i + 6].copy_from_slice(&0x0500u16.to_le_bytes());

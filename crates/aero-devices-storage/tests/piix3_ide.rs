@@ -374,7 +374,7 @@ fn reset_clears_channel_and_bus_master_state_but_preserves_attached_media() {
     // Mutate bus master registers to non-zero values.
     let bm_base = ide.borrow().bus_master_base();
     ioports.write(bm_base + 4, 4, 0x1234_5678);
-    ioports.write(bm_base + 0, 1, 0x01); // start
+    ioports.write(bm_base, 1, 0x01); // start
     assert_ne!(ioports.read(bm_base + 4, 4), 0);
 
     // Reset in-place (should preserve attached devices/backends).
@@ -392,7 +392,7 @@ fn reset_clears_channel_and_bus_master_state_but_preserves_attached_media() {
     assert_ne!(st & 0x40, 0, "DRDY should be set after reset");
 
     // Bus Master IDE runtime registers should be reset (active/error/irq cleared, PRD cleared).
-    let bm_cmd = ioports.read(bm_base + 0, 1) as u8;
+    let bm_cmd = ioports.read(bm_base, 1) as u8;
     assert_eq!(
         bm_cmd & 0x09,
         0,

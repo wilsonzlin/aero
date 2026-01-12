@@ -307,7 +307,7 @@ mod wasm {
                     "SharedArrayBuffer is too small to contain a mic ring buffer header",
                 ));
             }
-            if (byte_len - HEADER_BYTES) % core::mem::size_of::<f32>() != 0 {
+            if !(byte_len - HEADER_BYTES).is_multiple_of(core::mem::size_of::<f32>()) {
                 return Err(JsValue::from_str(
                     "SharedArrayBuffer mic ring buffer payload is not 4-byte aligned",
                 ));

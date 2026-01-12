@@ -487,7 +487,7 @@ mod wasm {
 
             let cc = self.channel_count as usize;
             let first_samples = first_frames as usize * cc;
-            let write_sample_pos = write_pos as u32 * self.channel_count;
+            let write_sample_pos = write_pos * self.channel_count;
             self.samples
                 .subarray(write_sample_pos, write_sample_pos + first_samples as u32)
                 .copy_from(&samples[..first_samples]);

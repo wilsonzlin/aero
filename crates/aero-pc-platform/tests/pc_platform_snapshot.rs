@@ -393,7 +393,8 @@ fn snapshot_restore_accepts_legacy_apic_and_pci_core_wrapper() {
     let bdf = PciBdf::new(0, 0, 0);
     let pin = PciInterruptPin::IntA;
     let expected_gsi = pc.pci_intx.gsi_for_intx(bdf, pin);
-    pc.pci_intx.assert_intx(bdf, pin, &mut NullSink::default());
+    let mut null_sink = NullSink;
+    pc.pci_intx.assert_intx(bdf, pin, &mut null_sink);
 
     // Sanity: GSI level is low at snapshot time.
     let intr_state = device_state_from_io_snapshot(DeviceId::APIC, &*pc.interrupts.borrow());

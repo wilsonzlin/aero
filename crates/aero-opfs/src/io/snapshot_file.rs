@@ -91,7 +91,7 @@ mod platform_handle {
             | DiskError::InvalidSparseHeader(_)
             | DiskError::CorruptSparseImage(_) => io::Error::new(io::ErrorKind::InvalidData, err),
             DiskError::InvalidConfig(_) => io::Error::new(io::ErrorKind::InvalidInput, err),
-            DiskError::Io(_) => io::Error::new(io::ErrorKind::Other, err),
+            DiskError::Io(_) => io::Error::other(err),
         }
     }
 

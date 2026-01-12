@@ -357,7 +357,7 @@ fn machine_ide_primary_dma_read_fills_memory_and_wakes_halted_cpu_via_irq14() {
     // Program BMIDE: PRDT base + start DMA in the "device -> memory" direction (bit3=1).
     m.io_write(bm_base + 4, 4, prd_addr as u32);
     m.io_write(bm_base + 2, 1, 0x06); // clear error/irq bits (defensive)
-    m.io_write(bm_base + 0, 1, 0x09);
+    m.io_write(bm_base, 1, 0x09);
 
     // Issue ATA READ DMA (0xC8) for LBA 0, count 1, primary master.
     m.io_write(0x1F2, 1, 1);

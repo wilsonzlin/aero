@@ -276,6 +276,10 @@ mod wasm {
             )
         }
 
+        pub fn is_empty(&mut self) -> DiskResult<bool> {
+            Ok(self.len()? == 0)
+        }
+
         pub fn set_len(&mut self, len: u64) -> DiskResult<()> {
             if self.closed {
                 return Err(DiskError::InvalidState(
@@ -366,7 +370,7 @@ mod wasm {
         }
 
         pub fn resize_bytes(&mut self, new_size: u64) -> DiskResult<()> {
-            if new_size % self.sector_size as u64 != 0 {
+            if !new_size.is_multiple_of(self.sector_size as u64) {
                 return Err(DiskError::Io(format!(
                     "disk size {new_size} is not a multiple of sector size {}",
                     self.sector_size
@@ -401,7 +405,7 @@ mod wasm {
             size_bytes: u64,
             progress: Option<&js_sys::Function>,
         ) -> DiskResult<Self> {
-            if size_bytes % DEFAULT_SECTOR_SIZE as u64 != 0 {
+            if !size_bytes.is_multiple_of(DEFAULT_SECTOR_SIZE as u64) {
                 return Err(DiskError::Io(format!(
                     "disk size {size_bytes} is not a multiple of sector size {DEFAULT_SECTOR_SIZE}"
                 )));
@@ -472,7 +476,7 @@ mod wasm {
                 ));
             }
 
-            if len_bytes as u64 % self.sector_size as u64 != 0 {
+            if !(len_bytes as u64).is_multiple_of(self.sector_size as u64) {
                 return Err(DiskError::UnalignedLength {
                     len: len_bytes,
                     alignment: self.sector_size as usize,
@@ -670,7 +674,7 @@ mod wasm {
             size_bytes: u64,
             progress: Option<&js_sys::Function>,
         ) -> DiskResult<Self> {
-            if size_bytes % DEFAULT_SECTOR_SIZE as u64 != 0 {
+            if !size_bytes.is_multiple_of(DEFAULT_SECTOR_SIZE as u64) {
                 return Err(DiskError::Io(format!(
                     "disk size {size_bytes} is not a multiple of sector size {DEFAULT_SECTOR_SIZE}"
                 )));
@@ -717,7 +721,7 @@ mod wasm {
                 ));
             }
 
-            if len_bytes as u64 % self.sector_size as u64 != 0 {
+            if !(len_bytes as u64).is_multiple_of(self.sector_size as u64) {
                 return Err(DiskError::UnalignedLength {
                     len: len_bytes,
                     alignment: self.sector_size as usize,
@@ -862,7 +866,7 @@ mod wasm {
         }
 
         pub async fn open(db_name: &str, size_bytes: u64) -> DiskResult<Self> {
-            if size_bytes % DEFAULT_SECTOR_SIZE as u64 != 0 {
+            if !size_bytes.is_multiple_of(DEFAULT_SECTOR_SIZE as u64) {
                 return Err(DiskError::Io(format!(
                     "disk size {size_bytes} is not a multiple of sector size {DEFAULT_SECTOR_SIZE}"
                 )));
@@ -889,7 +893,7 @@ mod wasm {
                 ));
             }
 
-            if len_bytes as u64 % self.sector_size as u64 != 0 {
+            if !(len_bytes as u64).is_multiple_of(self.sector_size as u64) {
                 return Err(DiskError::UnalignedLength {
                     len: len_bytes,
                     alignment: self.sector_size as usize,
