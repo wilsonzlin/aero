@@ -558,6 +558,10 @@ async function convertQcow2ToSparse(
   const writer = new AeroSparseWriter(sync, qcow.logicalSize, outBlockSize);
   let crc = crc32Init();
 
+  // Cap individual reads when copying cluster data so remote imports don't issue extremely large
+  // HTTP range requests when `outBlockSize` is large.
+  const QCOW2_COPY_RUN_MAX_BYTES = 8 * 1024 * 1024; // 8 MiB
+
   const clustersPerBlock = outBlockSize / qcow.clusterSize;
   const totalBlocks = divCeil(qcow.logicalSize, outBlockSize);
   const buf = new Uint8Array(outBlockSize);
@@ -599,6 +603,7 @@ async function convertQcow2ToSparse(
         const nextPhys = qcow.clusterOffsets[i + runClusters];
         if (nextPhys === 0) break;
         if (nextPhys !== phys + runClusters * qcow.clusterSize) break;
+        if ((runClusters + 1) * qcow.clusterSize > QCOW2_COPY_RUN_MAX_BYTES) break;
         runClusters++;
       }
 
