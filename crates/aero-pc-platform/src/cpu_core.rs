@@ -2,11 +2,14 @@ use crate::PcPlatform;
 use aero_cpu_core::interrupts::InterruptController as CpuInterruptController;
 use aero_cpu_core::mem::CpuBus;
 use aero_cpu_core::Exception;
+use aero_devices::pci::{PciBarKind, PciBdf, SharedPciConfigPorts};
 use aero_mmu::{AccessType, MemoryBus as MmuBus, Mmu, TranslateFault};
 use aero_platform::interrupts::{
     InterruptController as PlatformInterruptController, SharedPlatformInterrupts,
 };
 use memory::MemoryBus as PhysicalMemoryBus;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 const PAGE_SIZE: u64 = 4096;
 
@@ -65,20 +68,166 @@ impl CpuInterruptController for PcInterruptController {
     }
 }
 
+trait PciIoHandler {
+    fn io_read(&mut self, offset: u64, size: usize) -> u32;
+    fn io_write(&mut self, offset: u64, size: usize, value: u32);
+}
+
+struct PciIoBarHandler {
+    bdf: PciBdf,
+    bar_index: u8,
+    handler: Rc<RefCell<dyn PciIoHandler>>,
+}
+
+struct PciIoBarRouter {
+    pci_cfg: SharedPciConfigPorts,
+    handlers: Vec<PciIoBarHandler>,
+}
+
+impl PciIoBarRouter {
+    fn new(pci_cfg: SharedPciConfigPorts) -> Self {
+        Self {
+            pci_cfg,
+            handlers: Vec::new(),
+        }
+    }
+
+    fn register_handler(
+        &mut self,
+        bdf: PciBdf,
+        bar_index: u8,
+        handler: Rc<RefCell<dyn PciIoHandler>>,
+    ) {
+        self.handlers.push(PciIoBarHandler {
+            bdf,
+            bar_index,
+            handler,
+        });
+    }
+
+    fn dispatch_read(&self, port: u16, size: usize) -> Option<u32> {
+        let port_u64 = u64::from(port);
+        let access_end = port_u64.checked_add(size as u64)?;
+        if access_end > 0x1_0000 {
+            // Would wrap the 16-bit I/O port space.
+            return None;
+        }
+
+        for entry in &self.handlers {
+            let Some(bar) = (|| {
+                let mut pci_cfg = self.pci_cfg.borrow_mut();
+                let bus = pci_cfg.bus_mut();
+                let cfg = bus.device_config(entry.bdf)?;
+                if (cfg.command() & 0x1) == 0 {
+                    return None;
+                }
+                let bar = cfg.bar_range(entry.bar_index)?;
+                if bar.kind != PciBarKind::Io || bar.base == 0 {
+                    return None;
+                }
+                Some(bar)
+            })() else {
+                continue;
+            };
+
+            let bar_end = bar.end_exclusive();
+            if port_u64 >= bar.base && access_end <= bar_end {
+                let offset = port_u64 - bar.base;
+                let value = entry.handler.borrow_mut().io_read(offset, size);
+                return Some(value);
+            }
+        }
+
+        None
+    }
+
+    fn dispatch_write(&self, port: u16, size: usize, value: u32) -> bool {
+        let port_u64 = u64::from(port);
+        let Some(access_end) = port_u64.checked_add(size as u64) else {
+            return false;
+        };
+        if access_end > 0x1_0000 {
+            return false;
+        }
+
+        for entry in &self.handlers {
+            let bar = {
+                let mut pci_cfg = self.pci_cfg.borrow_mut();
+                let bus = pci_cfg.bus_mut();
+                let Some(cfg) = bus.device_config(entry.bdf) else {
+                    continue;
+                };
+
+                if (cfg.command() & 0x1) == 0 {
+                    continue;
+                }
+
+                let Some(bar) = cfg.bar_range(entry.bar_index) else {
+                    continue;
+                };
+                if bar.kind != PciBarKind::Io {
+                    continue;
+                }
+                if bar.base == 0 {
+                    continue;
+                }
+                bar
+            };
+
+            let bar_end = bar.end_exclusive();
+            if port_u64 >= bar.base && access_end <= bar_end {
+                let offset = port_u64 - bar.base;
+                entry.handler.borrow_mut().io_write(offset, size, value);
+                return true;
+            }
+        }
+
+        false
+    }
+}
+
 pub struct PcCpuBus {
     pub platform: PcPlatform,
     mmu: Mmu,
     cpl: u8,
     write_chunks: Vec<(u64, usize, usize)>,
+    pci_io_router: PciIoBarRouter,
 }
 
 impl PcCpuBus {
     pub fn new(platform: PcPlatform) -> Self {
+        let mut pci_io_router = PciIoBarRouter::new(platform.pci_cfg.clone());
+
+        if let Some(e1000) = platform.e1000.as_ref().cloned() {
+            struct E1000IoBar {
+                dev: Rc<RefCell<aero_net_e1000::E1000Device>>,
+            }
+
+            impl PciIoHandler for E1000IoBar {
+                fn io_read(&mut self, offset: u64, size: usize) -> u32 {
+                    let offset = u32::try_from(offset).unwrap_or(0);
+                    self.dev.borrow_mut().io_read(offset, size)
+                }
+
+                fn io_write(&mut self, offset: u64, size: usize, value: u32) {
+                    let offset = u32::try_from(offset).unwrap_or(0);
+                    self.dev.borrow_mut().io_write_reg(offset, size, value);
+                }
+            }
+
+            pci_io_router.register_handler(
+                aero_devices::pci::profile::NIC_E1000_82540EM.bdf,
+                1,
+                Rc::new(RefCell::new(E1000IoBar { dev: e1000 })),
+            );
+        }
+
         Self {
             platform,
             mmu: Mmu::new(),
             cpl: 0,
             write_chunks: Vec::new(),
+            pci_io_router,
         }
     }
 
@@ -522,39 +671,8 @@ impl CpuBus for PcCpuBus {
             _ => return Err(Exception::InvalidOpcode),
         };
 
-        if let Some(e1000) = self.platform.e1000.as_ref().cloned() {
-            let bdf = aero_devices::pci::profile::NIC_E1000_82540EM.bdf;
-            let (io_enabled, bar1) = {
-                let mut pci_cfg = self.platform.pci_cfg.borrow_mut();
-                let bus = pci_cfg.bus_mut();
-                let cfg = bus.device_config(bdf);
-                let io_enabled = cfg.is_some_and(|cfg| (cfg.command() & 0x1) != 0);
-                let bar1 = cfg.and_then(|cfg| cfg.bar_range(1));
-                (io_enabled, bar1)
-            };
-
-            if io_enabled {
-                if let Some(bar1) = bar1 {
-                    if bar1.base != 0 {
-                        let base = u16::try_from(bar1.base).ok();
-                        let bar_size = u16::try_from(bar1.size).ok();
-                        if let (Some(base), Some(bar_size)) = (base, bar_size) {
-                            let Some(port_end) = port.checked_add(size as u16) else {
-                                // I/O access would wrap the 16-bit port space.
-                                return Ok(self.platform.io.read(port, size as u8) as u64);
-                            };
-                            let Some(bar_end) = base.checked_add(bar_size) else {
-                                return Ok(self.platform.io.read(port, size as u8) as u64);
-                            };
-                            if port >= base && port_end <= bar_end {
-                                let offset = u32::from(port - base);
-                                let value = e1000.borrow_mut().io_read(offset, size_usize);
-                                return Ok(u64::from(value));
-                            }
-                        }
-                    }
-                }
-            }
+        if let Some(v) = self.pci_io_router.dispatch_read(port, size_usize) {
+            return Ok(u64::from(v));
         }
 
         Ok(self.platform.io.read(port, size as u8) as u64)
@@ -566,45 +684,11 @@ impl CpuBus for PcCpuBus {
             _ => return Err(Exception::InvalidOpcode),
         };
 
-        if let Some(e1000) = self.platform.e1000.as_ref().cloned() {
-            let bdf = aero_devices::pci::profile::NIC_E1000_82540EM.bdf;
-            let (io_enabled, bar1) = {
-                let mut pci_cfg = self.platform.pci_cfg.borrow_mut();
-                let bus = pci_cfg.bus_mut();
-                let cfg = bus.device_config(bdf);
-                let io_enabled = cfg.is_some_and(|cfg| (cfg.command() & 0x1) != 0);
-                let bar1 = cfg.and_then(|cfg| cfg.bar_range(1));
-                (io_enabled, bar1)
-            };
-
-            if io_enabled {
-                if let Some(bar1) = bar1 {
-                    if bar1.base != 0 {
-                        let base = u16::try_from(bar1.base).ok();
-                        let bar_size = u16::try_from(bar1.size).ok();
-                        if let (Some(base), Some(bar_size)) = (base, bar_size) {
-                            let Some(port_end) = port.checked_add(size as u16) else {
-                                self.platform.io.write(port, size as u8, val as u32);
-                                return Ok(());
-                            };
-                            let Some(bar_end) = base.checked_add(bar_size) else {
-                                self.platform.io.write(port, size as u8, val as u32);
-                                return Ok(());
-                            };
-                            if port >= base && port_end <= bar_end {
-                                let offset = u32::from(port - base);
-                                e1000.borrow_mut().io_write(
-                                    &mut self.platform.memory,
-                                    offset,
-                                    size_usize,
-                                    val as u32,
-                                );
-                                return Ok(());
-                            }
-                        }
-                    }
-                }
-            }
+        if self
+            .pci_io_router
+            .dispatch_write(port, size_usize, val as u32)
+        {
+            return Ok(());
         }
 
         self.platform.io.write(port, size as u8, val as u32);
