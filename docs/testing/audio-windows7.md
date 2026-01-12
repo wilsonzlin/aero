@@ -19,6 +19,14 @@ This is a **manual**, **reproducible** smoke test to validate that Windows 7’s
 - **Host audio output** must be functional (speakers/headphones connected, not muted).
 - **Host microphone** available (for capture test) and permission can be granted.
 
+Quick sanity checks (DevTools Console):
+
+```js
+crossOriginIsolated;
+typeof SharedArrayBuffer;
+typeof AudioContext;
+```
+
 ### Windows 7 media
 
 Per [`AGENTS.md`](../../AGENTS.md), a Win7 ISO is available on the agent machine:
@@ -84,6 +92,11 @@ Inside the Windows 7 guest:
    - **System devices** → `High Definition Audio Controller`
    - **Sound, video and game controllers** → `High Definition Audio Device`
 
+3. Confirm Windows is using the **in-box Microsoft driver**:
+   - Right-click `High Definition Audio Device` → **Properties** → **Driver** tab
+   - Expected: **Driver Provider** is `Microsoft`
+   - Optional: click **Driver Details** and confirm `hdaudio.sys` is present
+
 Expected outcome:
 
 - Windows should use the **Microsoft** inbox driver stack automatically.
@@ -128,6 +141,7 @@ While the guest is producing sound, capture the host-side metrics:
 - **Ring buffer level** stays non-zero while audio plays (buffer is being filled/consumed).
 - **Underruns** do not rapidly increase.
 - **Overruns** remain `0` (or do not increase).
+- (Optional but useful) **readFrameIndex** and **writeFrameIndex** advance over time.
 
 Where to look:
 
@@ -208,6 +222,7 @@ Collect:
 
 - Screenshot of Device Manager showing the device tree + error icons.
 - Device Properties → Details → “Hardware Ids” for the failing entry (copy text).
+- Device Properties → Driver tab (Provider, Version, Driver Details).
 
 ### B) Playback failures
 
