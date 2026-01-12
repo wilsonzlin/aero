@@ -161,6 +161,10 @@ This pattern is already used today:
 - Wrapper types: `crates/aero-storage-adapters`
 - `impl aero_devices_nvme::DiskBackend for AeroVirtualDiskAsNvmeBackend`: in `crates/aero-devices-nvme`
 - `impl aero_devices::storage::DiskBackend for AeroVirtualDiskAsDeviceBackend`: in `crates/devices`
+- BIOS/firmware bridge: `crates/aero-machine/src/shared_disk.rs` defines `SharedDisk`, a wrapper type
+  that implements both `firmware::bios::BlockDevice` and `aero_storage::VirtualDisk` so a single
+  disk image can be used consistently across the “boot firmware” and “PCI storage controller”
+  phases.
 
 If a new device crate needs a disk backend trait, it should follow the same structure:
 
