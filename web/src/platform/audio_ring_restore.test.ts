@@ -92,6 +92,19 @@ describe("restoreAudioWorkletRing", () => {
     expect(ring.samples).toEqual(new Float32Array(ring.samples.length));
   });
 
+  it("clamps using min(snapshot capacity, ring capacity) when snapshot capacityFrames is smaller than the ring", () => {
+    const ring = createTestRingBuffer(1, 8);
+    ring.samples.fill(1);
+
+    const state: AudioWorkletRingStateLike = { capacityFrames: 4, readPos: 0, writePos: 100 };
+    restoreAudioWorkletRing(ring, state);
+
+    // available = 100, but effective capacity is min(4, 8) = 4.
+    expect(Atomics.load(ring.readIndex, 0)).toBe(96);
+    expect(Atomics.load(ring.writeIndex, 0)).toBe(100);
+    expect(getRingBufferLevelFrames(ring)).toBe(4);
+  });
+
   it("treats read/write positions as wrapping u32 counters", () => {
     const ring = createTestRingBuffer(1, 8);
     ring.samples.fill(1);
@@ -135,7 +148,7 @@ describe("restoreAudioWorkletRing", () => {
     expect(Atomics.load(ring.overrunCount, 0)).toBe(456);
   });
 
-  it("ignores snapshot capacity mismatches and proceeds", () => {
+  it("does not throw on snapshot capacity mismatches", () => {
     const ring = createTestRingBuffer(1, 8);
     ring.samples.fill(1);
 

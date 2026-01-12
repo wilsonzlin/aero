@@ -31,9 +31,9 @@ export type AudioWorkletRingStateLike = {
  * - The snapshot preserves *indices only*; ring sample contents are cleared to
  *   silence on restore to avoid replaying stale host audio.
  * - If `state.capacityFrames` is non-zero and does not match the provided ring
- *   layout, we ignore it and proceed. JS cannot resize an existing
- *   SharedArrayBuffer, so clamping indices against the actual ring capacity is
- *   the safest behaviour and ensures progress immediately.
+ *   layout, we proceed without throwing. For safety (and to match the Rust
+ *   restore implementation), indices are clamped against the smaller of the
+ *   snapshot's capacity and the actual ring capacity.
  */
 export function restoreAudioWorkletRing(ring: AudioRingBufferLayout, state: AudioWorkletRingStateLike): void {
   // Clear sample contents first, so any subsequently-consumed frames are silent.
@@ -43,12 +43,11 @@ export function restoreAudioWorkletRing(ring: AudioRingBufferLayout, state: Audi
 
   // Treat all snapshot fields as wrapping u32 values.
   const snapshotCapacityFrames = state.capacityFrames >>> 0;
-  if (snapshotCapacityFrames !== 0 && snapshotCapacityFrames !== ringCapacityFrames) {
-    // Intentionally ignored; see function doc comment.
-  }
+  const effectiveCapacityFrames =
+    snapshotCapacityFrames !== 0 ? Math.min(snapshotCapacityFrames, ringCapacityFrames) : ringCapacityFrames;
 
   const writePos = state.writePos >>> 0;
-  const readPos = clampReadFrameIndexToCapacity(state.readPos, writePos, ringCapacityFrames);
+  const readPos = clampReadFrameIndexToCapacity(state.readPos, writePos, effectiveCapacityFrames);
 
   Atomics.store(ring.readIndex, 0, readPos);
   Atomics.store(ring.writeIndex, 0, writePos);
