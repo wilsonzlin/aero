@@ -1506,7 +1506,8 @@ static bool VirtioBlkReportLuns(Logger& log, HANDLE hPhysicalDrive) {
   }
 
   constexpr uint32_t kAllocLen = 16;
-  std::vector<uint8_t> resp(kAllocLen, 0);
+  // Fill with a non-zero pattern so truncated/short transfers don't get mistaken for an all-zero LUN entry.
+  std::vector<uint8_t> resp(kAllocLen, 0xCC);
 
   // SPC REPORT LUNS (0xA0) CDB is 12 bytes. Allocation length is a big-endian u32 at CDB[6..9].
   uint8_t cdb[12]{};
