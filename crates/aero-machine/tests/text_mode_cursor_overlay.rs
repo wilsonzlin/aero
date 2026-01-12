@@ -135,3 +135,63 @@ fn text_mode_cursor_overlay_respects_disable_bit() {
 
     assert_eq!(pixel0, 0xFFAA_0000);
 }
+
+#[test]
+fn text_mode_cursor_overlay_respects_crtc_start_address() {
+    let cfg = MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: false,
+        enable_vga: true,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        enable_e1000: false,
+        enable_virtio_net: false,
+        ..Default::default()
+    };
+
+    let mut m = Machine::new(cfg).unwrap();
+    let vga = m.vga().expect("VGA enabled");
+
+    // Force deterministic baseline.
+    {
+        let mut vga = vga.borrow_mut();
+        vga.set_text_mode_80x25();
+        vga.vram_mut().fill(0);
+    }
+
+    // Display page starting at cell 0x0800 (offset 0x1000 bytes into B8000).
+    let start_addr_cells = 0x0800u16;
+    m.io_write(0x3D4, 1, 0x0C);
+    m.io_write(0x3D5, 1, u32::from((start_addr_cells >> 8) as u8));
+    m.io_write(0x3D4, 1, 0x0D);
+    m.io_write(0x3D5, 1, u32::from((start_addr_cells & 0x00FF) as u8));
+
+    // Cursor at the top-left of the displayed page.
+    m.io_write(0x3D4, 1, 0x0A);
+    m.io_write(0x3D5, 1, 0x00); // enable, scanline 0
+    m.io_write(0x3D4, 1, 0x0B);
+    m.io_write(0x3D5, 1, 0x00); // 1 scanline tall
+    m.io_write(0x3D4, 1, 0x0E);
+    m.io_write(0x3D5, 1, u32::from((start_addr_cells >> 8) as u8));
+    m.io_write(0x3D4, 1, 0x0F);
+    m.io_write(0x3D5, 1, u32::from((start_addr_cells & 0x00FF) as u8));
+
+    // Write a space cell (white-on-blue) into the first cell of the displayed page so the cursor
+    // inversion is easy to detect.
+    let base = 0xB8000u64 + u64::from(start_addr_cells) * 2;
+    m.write_physical_u8(base, b' ');
+    m.write_physical_u8(base + 1, 0x1F);
+
+    let (width, px0, px1) = {
+        let mut vga = vga.borrow_mut();
+        vga.present();
+        let (w, _h) = vga.get_resolution();
+        let fb = vga.get_framebuffer();
+        (w, fb[0], fb[w as usize])
+    };
+    assert_eq!(width, 80 * 9);
+    assert_eq!(px0, 0xFFFF_FFFF);
+    assert_eq!(px1, 0xFFAA_0000);
+}
