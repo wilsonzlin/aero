@@ -6,8 +6,6 @@ use std::sync::Arc;
 use aero_devices_storage::ata::AtaDrive;
 use aero_machine::{Machine, MachineConfig};
 use aero_storage::{MemBackend, RawDisk, VirtualDisk, SECTOR_SIZE};
-use aero_virtio::devices::blk::VirtioBlk;
-use aero_virtio::pci::{InterruptSink, VirtioPciDevice};
 
 struct DropDetectDisk {
     inner: RawDisk<MemBackend>,
@@ -36,15 +34,6 @@ impl VirtualDisk for DropDetectDisk {
     fn flush(&mut self) -> aero_storage::Result<()> {
         self.inner.flush()
     }
-}
-
-#[derive(Debug, Default)]
-struct NoopVirtioInterruptSink;
-
-impl InterruptSink for NoopVirtioInterruptSink {
-    fn raise_legacy_irq(&mut self) {}
-    fn lower_legacy_irq(&mut self) {}
-    fn signal_msix(&mut self, _vector: u16) {}
 }
 
 #[test]
@@ -199,11 +188,7 @@ fn machine_reset_does_not_detach_virtio_blk_backend() {
         dropped: dropped.clone(),
     };
 
-    let virtio_blk = m.virtio_blk().expect("virtio-blk should be enabled");
-    *virtio_blk.borrow_mut() = VirtioPciDevice::new(
-        Box::new(VirtioBlk::new(Box::new(disk))),
-        Box::new(NoopVirtioInterruptSink),
-    );
+    m.attach_virtio_blk_disk(Box::new(disk));
 
     m.reset();
 
@@ -214,10 +199,7 @@ fn machine_reset_does_not_detach_virtio_blk_backend() {
 
     // Replacing the device should drop the previous backend (sanity check that it was attached).
     let replacement = RawDisk::create(MemBackend::new(), capacity).unwrap();
-    *virtio_blk.borrow_mut() = VirtioPciDevice::new(
-        Box::new(VirtioBlk::new(Box::new(replacement))),
-        Box::new(NoopVirtioInterruptSink),
-    );
+    m.attach_virtio_blk_disk(Box::new(replacement));
     assert!(
         dropped.load(Ordering::SeqCst),
         "replacing the virtio-blk device should drop the previous disk backend"

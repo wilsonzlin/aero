@@ -2226,6 +2226,46 @@ impl Machine {
         self.virtio_blk.clone()
     }
 
+    /// Attach a disk backend to the virtio-blk controller, if present.
+    ///
+    /// Virtio-blk requires a `VirtualDisk + Send` backend (unlike AHCI/IDE which accept the
+    /// non-`Send` [`SharedDisk`]).
+    pub fn attach_virtio_blk_disk(&mut self, disk: Box<dyn aero_storage::VirtualDisk + Send>) {
+        let Some(virtio_blk) = &self.virtio_blk else {
+            return;
+        };
+
+        // Replace the inner device model while keeping the `Rc` identity stable for persistent
+        // MMIO mappings.
+        *virtio_blk.borrow_mut() = VirtioPciDevice::new(
+            Box::new(VirtioBlk::new(disk)),
+            Box::new(NoopVirtioInterruptSink),
+        );
+
+        // Keep the device model's internal PCI config state coherent with the canonical PCI config
+        // space. This ensures `save_state()` sees consistent BAR programming without requiring an
+        // immediate `reset()` cycle.
+        if let Some(pci_cfg) = &self.pci_cfg {
+            let bdf = aero_devices::pci::profile::VIRTIO_BLK.bdf;
+            let (command, bar0_base) = {
+                let mut pci_cfg = pci_cfg.borrow_mut();
+                let cfg = pci_cfg.bus_mut().device_config(bdf);
+                let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
+                let bar0_base = cfg
+                    .and_then(|cfg| cfg.bar_range(0))
+                    .map(|range| range.base)
+                    .unwrap_or(0);
+                (command, bar0_base)
+            };
+
+            let mut dev = virtio_blk.borrow_mut();
+            dev.set_pci_command(command);
+            if bar0_base != 0 {
+                dev.config_mut().set_bar_base(0, bar0_base);
+            }
+        }
+    }
+
     /// Returns the PIIX3-compatible UHCI (USB 1.1) controller, if present.
     pub fn uhci(&self) -> Option<Rc<RefCell<UhciPciDevice>>> {
         self.uhci.clone()
