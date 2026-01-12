@@ -150,11 +150,31 @@ the repo includes a small demo harness:
   - The CPU worker (`web/src/workers/cpu.worker.ts`) instantiates the WASM export `HdaPlaybackDemo` and keeps the AudioWorklet ring buffer ~200ms full.
   - The demo programs a looping guest PCM buffer + BDL and uses the *real* HDA device model (`aero_audio::hda::HdaController`) to generate output.
 - **E2E test**: `tests/e2e/audio-worklet-hda-demo.spec.ts` asserts that:
-  - `AudioContext` reaches `running`,
-  - the ring buffer write index advances over time,
-  - underruns stay bounded and overruns remain 0.
+   - `AudioContext` reaches `running`,
+   - the ring buffer write index advances over time,
+   - underruns stay bounded and overruns remain 0.
 
 Note: this demo is a *test harness* for the HDA audio pipeline; the production VM device stack is owned by the IO worker.
+
+### End-to-end IO-worker HDA PCI/MMIO device path
+
+The CPU-worker HDA demo above is useful for validating the core HDA audio model + ring-buffer plumbing, but it does **not**
+exercise the *real* worker runtime device stack (PCI config space, BAR0 MMIO, IO-worker-owned HDA PCI function).
+
+To validate that full path, the repo-root harness exposes:
+
+- **UI button**: `#init-audio-hda-pci-device` (“Init audio output (HDA PCI device)”) in `src/main.ts`
+- **Implementation**:
+  - The main thread allocates an AudioWorklet output ring buffer and attaches it to the **IO worker** via
+    `WorkerCoordinator.setAudioRingBufferOwner("io")` + `setAudioRingBuffer(...)`.
+  - The CPU worker programs the **IO worker's** HDA PCI function (8086:2668) using the real:
+    - PCI config ports (0xCF8/0xCFC)
+    - BAR0 MMIO reads/writes
+  - The IO worker's WASM-backed `HdaPciDevice` then DMA-reads guest PCM and writes `f32` samples into the AudioWorklet ring.
+- **E2E test**: `tests/e2e/audio-worklet-hda-pci-device.spec.ts` asserts that:
+  - ring read + write indices advance,
+  - samples are **non-silent** (not just index movement),
+  - underruns/overruns stay bounded.
 
 ---
 
