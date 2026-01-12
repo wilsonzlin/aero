@@ -155,6 +155,7 @@ pub enum MachineError {
     InvalidCpuCount(u8),
     InvalidDiskSize(usize),
     GuestMemoryTooLarge(u64),
+    E1000RequiresPcPlatform,
 }
 
 impl fmt::Display for MachineError {
@@ -174,6 +175,9 @@ impl fmt::Display for MachineError {
                 f,
                 "guest RAM size {size} bytes does not fit in the current platform's usize"
             ),
+            MachineError::E1000RequiresPcPlatform => {
+                write!(f, "enable_e1000 requires enable_pc_platform=true")
+            }
         }
     }
 }
@@ -634,6 +638,9 @@ impl Machine {
     pub fn new(cfg: MachineConfig) -> Result<Self, MachineError> {
         if cfg.cpu_count != 1 {
             return Err(MachineError::InvalidCpuCount(cfg.cpu_count));
+        }
+        if cfg.enable_e1000 && !cfg.enable_pc_platform {
+            return Err(MachineError::E1000RequiresPcPlatform);
         }
 
         let chipset = ChipsetState::new(false);

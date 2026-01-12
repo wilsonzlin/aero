@@ -2199,6 +2199,10 @@ impl Machine {
     pub fn new(ram_size_bytes: u32) -> Result<Self, JsValue> {
         let cfg = aero_machine::MachineConfig {
             ram_size_bytes: ram_size_bytes as u64,
+            // The browser runtime expects the canonical full-system VM to include the PC platform
+            // topology (PIC/PIT/RTC/PCI/ACPI) and a guest-visible NIC.
+            enable_pc_platform: true,
+            enable_e1000: true,
             ..Default::default()
         };
         let inner =
@@ -2414,6 +2418,11 @@ impl Machine {
     /// Prefer [`Machine::detach_network`] for new code.
     pub fn detach_net_rings(&mut self) {
         self.detach_network();
+    }
+
+    /// Poll network devices (e.g. the PCI E1000) and bridge frames via any attached network backend.
+    pub fn poll_network(&mut self) {
+        self.inner.poll_network();
     }
 
     /// Return best-effort stats for the attached `NET_TX`/`NET_RX` ring backend (or `null`).

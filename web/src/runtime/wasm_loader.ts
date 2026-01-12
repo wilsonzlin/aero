@@ -719,6 +719,12 @@ export interface WasmApi {
          */
         detach_net_rings?(): void;
         /**
+         * Poll network devices and bridge frames to/from any attached network backend.
+         *
+         * Optional for older WASM builds.
+         */
+        poll_network?(): void;
+        /**
          * Network backend statistics (if exposed by the WASM build).
          *
          * Optional for older WASM builds.

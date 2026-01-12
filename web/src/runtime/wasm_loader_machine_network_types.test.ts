@@ -13,6 +13,7 @@ describe("runtime/wasm_loader (Machine network typings)", () => {
       attach_l2_tunnel_rings: (_tx: SharedRingBufferHandle, _rx: SharedRingBufferHandle) => {},
       attach_l2_tunnel_from_io_ipc_sab: (_sab: SharedArrayBuffer) => {},
       detach_network: () => {},
+      poll_network: () => {},
     } as unknown as Machine;
 
     const ring: SharedRingBufferHandle = {
@@ -44,6 +45,8 @@ describe("runtime/wasm_loader (Machine network typings)", () => {
       machine.detach_net_rings();
       // @ts-expect-error net_stats may be undefined
       machine.net_stats();
+      // @ts-expect-error poll_network may be undefined
+      machine.poll_network();
     }
     void assertStrictNullChecksEnforced;
 
@@ -64,6 +67,9 @@ describe("runtime/wasm_loader (Machine network typings)", () => {
     }
     if (machine.net_stats) {
       machine.net_stats();
+    }
+    if (machine.poll_network) {
+      machine.poll_network();
     }
 
     expect(true).toBe(true);
