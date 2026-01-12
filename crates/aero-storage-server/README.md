@@ -89,7 +89,8 @@ directory listing (development only).
 The manifest supports optional per-image cache validator overrides to enable stable browser (OPFS)
 and CDN caching even if filesystem mtimes change during copy/restore:
 
-- `etag`: a quoted HTTP entity-tag (e.g. `"win7-sp1-x64-v1"` or `W/"win7-sp1-x64-v1"`)
+- `etag`: a quoted HTTP entity-tag (e.g. `"win7-sp1-x64-v1"` or `W/"win7-sp1-x64-v1"`). Prefer a
+  strong (non-`W/`) tag so `If-Range` can be used for range resumption.
 - `last_modified`: an RFC3339 timestamp (e.g. `2026-01-10T00:00:00Z`)
 
 In production, strongly consider enabling `--require-manifest` (or `AERO_STORAGE_REQUIRE_MANIFEST`)
