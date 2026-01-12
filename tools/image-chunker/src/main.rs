@@ -454,7 +454,8 @@ fn chunk_count(total_size: u64, chunk_size: u64) -> u64 {
     if total_size == 0 {
         return 0;
     }
-    (total_size + chunk_size - 1) / chunk_size
+    // Use `div_ceil` to avoid overflow when `total_size` is near `u64::MAX`.
+    total_size.div_ceil(chunk_size)
 }
 
 fn normalize_prefix(prefix: &str) -> String {
@@ -986,6 +987,13 @@ mod tests {
         assert_eq!(chunk_count(1, 8), 1);
         assert_eq!(chunk_count(8, 8), 1);
         assert_eq!(chunk_count(9, 8), 2);
+    }
+
+    #[test]
+    fn chunk_count_does_not_overflow() {
+        // `total_size + chunk_size - 1` can overflow for large values; ensure we handle this
+        // correctly.
+        assert_eq!(chunk_count(u64::MAX, 2), u64::MAX.div_ceil(2));
     }
 
     #[test]
