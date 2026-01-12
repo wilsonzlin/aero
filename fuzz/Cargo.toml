@@ -35,7 +35,6 @@ path = "../crates/aero-gpu"
 
 [dependencies.aero-protocol]
 path = "../emulator/protocol"
-
 [[bin]]
 name = "fuzz_mmu_translate"
 path = "fuzz_targets/fuzz_mmu_translate.rs"
@@ -87,5 +86,11 @@ doc = false
 [[bin]]
 name = "fuzz_aerogpu_parse"
 path = "fuzz_targets/fuzz_aerogpu_parse.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_aerosparse_open"
+path = "fuzz_targets/fuzz_aerosparse_open.rs"
 test = false
 doc = false
