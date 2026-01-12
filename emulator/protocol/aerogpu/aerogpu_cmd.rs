@@ -1338,7 +1338,14 @@ impl<'a> AerogpuCmdStreamView<'a> {
     pub fn decode_from_le_bytes(buf: &'a [u8]) -> Result<Self, AerogpuCmdDecodeError> {
         let iter = AerogpuCmdStreamIter::new(buf)?;
         let header = *iter.header();
-        let packets = iter.collect::<Result<Vec<_>, _>>()?;
+        let mut packets = Vec::new();
+        for pkt in iter {
+            let pkt = pkt?;
+            packets
+                .try_reserve(1)
+                .map_err(|_| AerogpuCmdDecodeError::CountOverflow)?;
+            packets.push(pkt);
+        }
         Ok(Self { header, packets })
     }
 }

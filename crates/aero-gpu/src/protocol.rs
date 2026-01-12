@@ -1036,6 +1036,10 @@ pub fn parse_cmd_stream(
             },
         };
 
+        // Avoid process aborts from OOM when parsing guest-controlled streams.
+        if cmds.try_reserve(1).is_err() {
+            return Err(AeroGpuCmdStreamParseError::BufferTooSmall);
+        }
         cmds.push(cmd);
         offset = end;
     }
