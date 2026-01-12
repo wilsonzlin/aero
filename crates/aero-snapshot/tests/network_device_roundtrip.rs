@@ -308,6 +308,25 @@ fn networking_device_blobs_roundtrip_through_aero_snapshot_container() {
     let net_stack_resaved = device_state_from_io_snapshot(DeviceId::NET_STACK, &target.net_stack);
     assert_eq!(net_stack_resaved.data, expected_net_stack_state.data);
 
+    // Full file roundtrip: after restoring into concrete devices, re-saving a snapshot should
+    // reproduce the exact same container bytes.
+    let TestTarget {
+        e1000,
+        net_stack,
+        ram,
+        restored_states: _,
+    } = target;
+    let bytes3 = snapshot_bytes(
+        &mut TestSource {
+            e1000,
+            net_stack,
+            ram,
+            meta: SnapshotMeta::default(),
+        },
+        opts,
+    );
+    assert_eq!(bytes3, bytes1);
+
     // Sanity: these are true aero-io-snapshot TLV blobs.
     assert_eq!(&e1000_resaved.data[..4], b"AERO");
     assert_eq!(&net_stack_resaved.data[..4], b"AERO");
