@@ -88,7 +88,7 @@ pub enum PrpError {
 pub(crate) const NVME_MAX_DMA_BYTES: usize = 4 * 1024 * 1024;
 
 fn is_page_aligned(addr: u64, page_size: usize) -> bool {
-    (addr as usize).is_multiple_of(page_size)
+    page_size != 0 && addr.is_multiple_of(page_size as u64)
 }
 
 pub fn prp_segments(
@@ -106,7 +106,7 @@ pub fn prp_segments(
     }
 
     let mut segments = Vec::new();
-    let first_offset = prp1 as usize & (page_size - 1);
+    let first_offset = (prp1 % page_size as u64) as usize;
     let first_len = total_len.min(page_size - first_offset);
     segments.push((prp1, first_len));
 
@@ -223,9 +223,7 @@ pub fn dma_write_zeros(
         while remaining > 0 {
             let to_write = remaining.min(ZERO_CHUNK.len());
             mem.write_physical(cur, &ZERO_CHUNK[..to_write]);
-            cur = cur
-                .checked_add(to_write as u64)
-                .ok_or(PrpError::Invalid)?;
+            cur = cur.checked_add(to_write as u64).ok_or(PrpError::Invalid)?;
             remaining -= to_write;
         }
     }
@@ -243,7 +241,9 @@ mod tests {
 
     impl TestMem {
         fn with_len(len: usize) -> Self {
-            Self { data: vec![0xAA; len] }
+            Self {
+                data: vec![0xAA; len],
+            }
         }
     }
 

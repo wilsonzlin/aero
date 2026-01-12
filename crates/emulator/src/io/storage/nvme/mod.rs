@@ -509,7 +509,7 @@ impl NvmeController {
         let size = cmd.qsize();
         if size == 0
             || size > NVME_MAX_QUEUE_ENTRIES
-            || !(cmd.prp1 as usize).is_multiple_of(self.page_size)
+            || !cmd.prp1.is_multiple_of(self.page_size as u64)
         {
             return (0, NvmeStatus::invalid_field());
         }
@@ -534,7 +534,7 @@ impl NvmeController {
         let size = cmd.qsize();
         if size == 0
             || size > NVME_MAX_QUEUE_ENTRIES
-            || !(cmd.prp1 as usize).is_multiple_of(self.page_size)
+            || !cmd.prp1.is_multiple_of(self.page_size as u64)
         {
             return (0, NvmeStatus::invalid_field());
         }
