@@ -74,9 +74,7 @@ use aero_platform::io::{IoPortBus, PortIoDevice as _};
 use aero_platform::memory::MemoryBus as PlatformMemoryBus;
 use aero_platform::reset::{ResetKind, ResetLatch};
 use aero_snapshot as snapshot;
-use firmware::bda::{
-    BDA_CURSOR_POS_PAGE0_ADDR, BDA_CURSOR_SHAPE_ADDR, BDA_SCREEN_COLS_ADDR,
-};
+use firmware::bda::{BDA_CURSOR_POS_PAGE0_ADDR, BDA_CURSOR_SHAPE_ADDR, BDA_SCREEN_COLS_ADDR};
 use firmware::bios::{A20Gate, Bios, BiosBus, BiosConfig, BlockDevice, DiskError, FirmwareMemory};
 use memory::{
     DenseMemory, DirtyGuestMemory, DirtyTracker, GuestMemoryError, GuestMemoryMapping, MapError,
@@ -2917,9 +2915,7 @@ impl Machine {
 
         let row = pos >> 8;
         let col = pos & 0x00FF;
-        let cell_index = row
-            .saturating_mul(cols)
-            .saturating_add(col);
+        let cell_index = row.saturating_mul(cols).saturating_add(col);
 
         let cursor_start = (shape >> 8) as u8;
         let cursor_end = (shape & 0x00FF) as u8;
@@ -3421,6 +3417,9 @@ impl snapshot::SnapshotTarget for Machine {
                     firmware::bios::BiosSnapshot::decode(&mut Cursor::new(&state.data))
                 {
                     self.bios.restore_snapshot(snapshot, &mut self.mem);
+                    // Keep the BIOS VBE LFB base pinned to the emulated VGA device mapping even
+                    // when restoring snapshots that may have captured the legacy in-RAM default.
+                    self.bios.video.vbe.lfb_base = aero_gpu_vga::SVGA_LFB_BASE;
                 }
             }
         }
@@ -3843,6 +3842,13 @@ impl snapshot::SnapshotTarget for Machine {
             if let Ok(decoded) = snapshot::CpuInternalState::from_device_state(&state) {
                 snapshot::apply_cpu_internal_state_to_cpu_core(&decoded, &mut self.cpu);
             }
+        }
+
+        // If we're in BIOS text mode, ensure the VGA device's cursor overlay matches the BIOS Data
+        // Area state (cursor pos/shape). This keeps the video output coherent when restoring
+        // snapshots that include BIOS state but omit low-memory RAM pages.
+        if self.bios.video.vbe.current_mode.is_none() {
+            self.sync_text_mode_cursor_bda_to_vga_crtc();
         }
     }
 
