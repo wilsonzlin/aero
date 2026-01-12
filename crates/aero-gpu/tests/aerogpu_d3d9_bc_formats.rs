@@ -451,6 +451,7 @@ fn run_bc_texture_cpu_fallback_upload_and_sample(
         sample_row_pitch_bytes,
         sample_block_bytes,
         expected_rgba,
+        true,
     );
 }
 
@@ -484,6 +485,7 @@ fn run_bc_texture_direct_upload_and_sample(
         sample_row_pitch_bytes,
         sample_block_bytes,
         expected_rgba,
+        false,
     );
 }
 
@@ -493,6 +495,7 @@ fn run_bc_texture_upload_and_sample(
     sample_row_pitch_bytes: u32,
     sample_block_bytes: &[u8],
     expected_rgba: [u8; 4],
+    expect_sample_texture_readback_ok: bool,
 ) {
     const OPC_CREATE_BUFFER: u32 = AerogpuCmdOpcode::CreateBuffer as u32;
     const OPC_CREATE_TEXTURE2D: u32 = AerogpuCmdOpcode::CreateTexture2d as u32;
@@ -752,6 +755,28 @@ fn run_bc_texture_upload_and_sample(
         expected_rgba,
         "inside probe should be the sampled BC texture color"
     );
+
+    // Ensure we actually exercised the intended BC path:
+    // - CPU fallback path: the BC texture is mapped to RGBA8, and readback should succeed.
+    // - Native path: the texture remains BC-compressed, and RGBA8 readback should be rejected.
+    let sample_readback = pollster::block_on(exec.readback_texture_rgba8(SAMPLE_TEX_HANDLE));
+    if expect_sample_texture_readback_ok {
+        let (w, h, bytes) = sample_readback.expect("sample texture readback should succeed");
+        assert_eq!((w, h), (4, 4));
+        for px in bytes.chunks_exact(4) {
+            assert_eq!(px, expected_rgba);
+        }
+    } else {
+        match sample_readback {
+            Err(AerogpuD3d9Error::ReadbackUnsupported(handle)) => {
+                assert_eq!(handle, SAMPLE_TEX_HANDLE);
+            }
+            Err(other) => panic!("expected ReadbackUnsupported, got {other:?}"),
+            Ok((w, h, _)) => {
+                panic!("expected ReadbackUnsupported for BC texture, got Ok({w}x{h}) instead")
+            }
+        }
+    }
 }
 
 #[test]
