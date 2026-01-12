@@ -128,3 +128,73 @@ async fn manifest_provided_etag_and_last_modified_are_used_for_meta_endpoint() {
 
     assert_eq!(res.status(), StatusCode::NOT_MODIFIED);
 }
+
+#[tokio::test]
+async fn manifest_last_modified_drives_if_modified_since_for_bytes_endpoint() {
+    let (app, _dir) = setup_app_with_manifest().await;
+
+    let head = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::HEAD)
+                .uri("/v1/images/disk")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(head.status(), StatusCode::OK);
+    let last_modified = head.headers()[header::LAST_MODIFIED].to_str().unwrap().to_string();
+
+    // If-Modified-Since uses 1-second resolution; sending the exact Last-Modified value should
+    // return 304.
+    let res = app
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/v1/images/disk")
+                .header(header::IF_MODIFIED_SINCE, last_modified)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(res.status(), StatusCode::NOT_MODIFIED);
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    assert!(body.is_empty());
+}
+
+#[tokio::test]
+async fn manifest_last_modified_drives_if_modified_since_for_meta_endpoint() {
+    let (app, _dir) = setup_app_with_manifest().await;
+
+    let head = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::HEAD)
+                .uri("/v1/images/disk/meta")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(head.status(), StatusCode::OK);
+    let last_modified = head.headers()[header::LAST_MODIFIED].to_str().unwrap().to_string();
+
+    let res = app
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/v1/images/disk/meta")
+                .header(header::IF_MODIFIED_SINCE, last_modified)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(res.status(), StatusCode::NOT_MODIFIED);
+}
