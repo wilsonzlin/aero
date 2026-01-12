@@ -35,6 +35,7 @@ fuzz_target!(|data: &[u8]| {
     let mut u = Unstructured::new(data);
     let ops: usize = u.int_in_range(0usize..=MAX_OPS).unwrap_or(0);
     let touched_cap = cap.min(MAX_TOUCHED_CAP_BYTES);
+    let mut io_buf = [0u8; MAX_IO_BYTES];
     for _ in 0..ops {
         let is_write: bool = u.arbitrary().unwrap_or(false);
         let len: usize = u.int_in_range(0usize..=MAX_IO_BYTES).unwrap_or(0);
@@ -56,14 +57,12 @@ fuzz_target!(|data: &[u8]| {
         };
 
         if is_write {
-            let mut buf = vec![0u8; len];
-            for b in &mut buf {
-                *b = u.arbitrary().unwrap_or(0);
+            for b in &mut io_buf[..len] {
+                *b = u.arbitrary().unwrap_or(0u8);
             }
-            let _ = disk.write_at(off, &buf);
+            let _ = disk.write_at(off, &io_buf[..len]);
         } else {
-            let mut buf = vec![0u8; len];
-            let _ = disk.read_at(off, &mut buf);
+            let _ = disk.read_at(off, &mut io_buf[..len]);
         }
     }
 
@@ -77,6 +76,7 @@ fuzz_target!(|data: &[u8]| {
             let mut u = Unstructured::new(data);
             let ops: usize = u.int_in_range(0usize..=MAX_OPS).unwrap_or(0);
             let touched_cap = cap.min(MAX_TOUCHED_CAP_BYTES);
+            let mut io_buf = [0u8; MAX_IO_BYTES];
             for _ in 0..ops {
                 let is_write: bool = u.arbitrary().unwrap_or(false);
                 let len: usize = u.int_in_range(0usize..=MAX_IO_BYTES).unwrap_or(0);
@@ -97,14 +97,12 @@ fuzz_target!(|data: &[u8]| {
                 };
 
                 if is_write {
-                    let mut buf = vec![0u8; len];
-                    for b in &mut buf {
-                        *b = u.arbitrary().unwrap_or(0);
+                    for b in &mut io_buf[..len] {
+                        *b = u.arbitrary().unwrap_or(0u8);
                     }
-                    let _ = reopened.write_at(off, &buf);
+                    let _ = reopened.write_at(off, &io_buf[..len]);
                 } else {
-                    let mut buf = vec![0u8; len];
-                    let _ = reopened.read_at(off, &mut buf);
+                    let _ = reopened.read_at(off, &mut io_buf[..len]);
                 }
             }
         }
