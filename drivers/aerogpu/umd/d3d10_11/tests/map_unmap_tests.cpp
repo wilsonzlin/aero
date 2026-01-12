@@ -389,6 +389,10 @@ constexpr uint32_t kDxgiFormatB8G8R8A8UnormSrgb = 91; // DXGI_FORMAT_B8G8R8A8_UN
 constexpr uint32_t kDxgiFormatB8G8R8X8UnormSrgb = 93; // DXGI_FORMAT_B8G8R8X8_UNORM_SRGB
 constexpr uint32_t kDxgiFormatBc1Unorm = 71; // DXGI_FORMAT_BC1_UNORM
 constexpr uint32_t kDxgiFormatBc1UnormSrgb = 72; // DXGI_FORMAT_BC1_UNORM_SRGB
+constexpr uint32_t kDxgiFormatBc2Unorm = 74; // DXGI_FORMAT_BC2_UNORM
+constexpr uint32_t kDxgiFormatBc2UnormSrgb = 75; // DXGI_FORMAT_BC2_UNORM_SRGB
+constexpr uint32_t kDxgiFormatBc3Unorm = 77; // DXGI_FORMAT_BC3_UNORM
+constexpr uint32_t kDxgiFormatBc3UnormSrgb = 78; // DXGI_FORMAT_BC3_UNORM_SRGB
 constexpr uint32_t kDxgiFormatBc7Unorm = 98; // DXGI_FORMAT_BC7_UNORM
 constexpr uint32_t kDxgiFormatBc7UnormSrgb = 99; // DXGI_FORMAT_BC7_UNORM_SRGB
 
@@ -1117,6 +1121,10 @@ bool TestGuestBackedBcTextureUnmapDirtyRange() {
   static constexpr Case kCases[] = {
       {"DXGI_FORMAT_BC1_UNORM", kDxgiFormatBc1Unorm, AEROGPU_FORMAT_BC1_RGBA_UNORM, 8},
       {"DXGI_FORMAT_BC1_UNORM_SRGB", kDxgiFormatBc1UnormSrgb, AEROGPU_FORMAT_BC1_RGBA_UNORM_SRGB, 8},
+      {"DXGI_FORMAT_BC2_UNORM", kDxgiFormatBc2Unorm, AEROGPU_FORMAT_BC2_RGBA_UNORM, 16},
+      {"DXGI_FORMAT_BC2_UNORM_SRGB", kDxgiFormatBc2UnormSrgb, AEROGPU_FORMAT_BC2_RGBA_UNORM_SRGB, 16},
+      {"DXGI_FORMAT_BC3_UNORM", kDxgiFormatBc3Unorm, AEROGPU_FORMAT_BC3_RGBA_UNORM, 16},
+      {"DXGI_FORMAT_BC3_UNORM_SRGB", kDxgiFormatBc3UnormSrgb, AEROGPU_FORMAT_BC3_RGBA_UNORM_SRGB, 16},
       {"DXGI_FORMAT_BC7_UNORM", kDxgiFormatBc7Unorm, AEROGPU_FORMAT_BC7_RGBA_UNORM, 16},
       {"DXGI_FORMAT_BC7_UNORM_SRGB", kDxgiFormatBc7UnormSrgb, AEROGPU_FORMAT_BC7_RGBA_UNORM_SRGB, 16},
   };
@@ -3737,6 +3745,10 @@ bool TestBcTexture2DLayout() {
   static constexpr Case kCases[] = {
       {"DXGI_FORMAT_BC1_UNORM", kDxgiFormatBc1Unorm, AEROGPU_FORMAT_BC1_RGBA_UNORM, 8},
       {"DXGI_FORMAT_BC1_UNORM_SRGB", kDxgiFormatBc1UnormSrgb, AEROGPU_FORMAT_BC1_RGBA_UNORM_SRGB, 8},
+      {"DXGI_FORMAT_BC2_UNORM", kDxgiFormatBc2Unorm, AEROGPU_FORMAT_BC2_RGBA_UNORM, 16},
+      {"DXGI_FORMAT_BC2_UNORM_SRGB", kDxgiFormatBc2UnormSrgb, AEROGPU_FORMAT_BC2_RGBA_UNORM_SRGB, 16},
+      {"DXGI_FORMAT_BC3_UNORM", kDxgiFormatBc3Unorm, AEROGPU_FORMAT_BC3_RGBA_UNORM, 16},
+      {"DXGI_FORMAT_BC3_UNORM_SRGB", kDxgiFormatBc3UnormSrgb, AEROGPU_FORMAT_BC3_RGBA_UNORM_SRGB, 16},
       {"DXGI_FORMAT_BC7_UNORM", kDxgiFormatBc7Unorm, AEROGPU_FORMAT_BC7_RGBA_UNORM, 16},
       {"DXGI_FORMAT_BC7_UNORM_SRGB", kDxgiFormatBc7UnormSrgb, AEROGPU_FORMAT_BC7_RGBA_UNORM_SRGB, 16},
   };
