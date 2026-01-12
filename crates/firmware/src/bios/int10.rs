@@ -177,7 +177,7 @@ impl Bios {
                         cpu.set_es(BIOS_SEGMENT);
                         cpu.set_bp(VGA_FONT_8X16_OFFSET);
                         cpu.set_cx(16); // bytes per character
-                        cpu.set_dl(24); // rows - 1 (25 rows)
+                        cpu.set_dl(BiosDataArea::read_text_rows(memory).saturating_sub(1));
                     }
                     _ => {
                         // Unhandled subfunction.
@@ -207,7 +207,7 @@ impl Bios {
                 }
 
                 let cols = BiosDataArea::read_screen_cols(memory).max(1) as u32;
-                let rows = 25u32;
+                let rows = u32::from(BiosDataArea::read_text_rows(memory).max(1));
                 if u32::from(row0) >= rows || u32::from(col0) >= cols {
                     return;
                 }

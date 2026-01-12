@@ -378,6 +378,10 @@ fn int10_get_font_info_returns_8x16_font_pointer() {
     cpu.rcx = 0x1234_5678_0000_0000;
     cpu.rdx = 0xFEDC_BA98_0000_1200;
 
+    // Initialize text-mode BDA fields so rows-1 is well-defined.
+    cpu.set_ax(0x0003);
+    bios.handle_int10(&mut cpu, &mut mem);
+
     cpu.set_ax(0x1130); // AH=11h, AL=30h
     cpu.set_bh(0x06); // request 8x16 font (common convention)
 
