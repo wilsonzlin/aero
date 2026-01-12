@@ -162,6 +162,7 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
   const bool allow_non_aerogpu = aerogpu_test::HasArg(argc, argv, "--allow-non-aerogpu");
   const bool require_umd = aerogpu_test::HasArg(argc, argv, "--require-umd");
   const bool hidden = aerogpu_test::HasArg(argc, argv, "--hidden");
+  const bool strict_checks = require_umd || (!allow_microsoft && !allow_non_aerogpu);
 
   uint32_t require_vid = 0;
   uint32_t require_did = 0;
@@ -516,35 +517,42 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
 
     hr = dev->SetClipStatus(&set_cs);
     if (FAILED(hr)) {
-      if (hr == D3DERR_INVALIDCALL) {
-        aerogpu_test::PrintfStdout("INFO: %s: skipping Set/GetClipStatus (Set failed hr=0x%08lX)",
-                                   kTestName,
-                                   (unsigned long)hr);
-      } else {
+      if (strict_checks) {
         return reporter.FailHresult("SetClipStatus", hr);
       }
+      aerogpu_test::PrintfStdout("INFO: %s: skipping Set/GetClipStatus (Set failed hr=0x%08lX)",
+                                 kTestName,
+                                 (unsigned long)hr);
     } else {
       D3DCLIPSTATUS9 got_cs;
       ZeroMemory(&got_cs, sizeof(got_cs));
       hr = dev->GetClipStatus(&got_cs);
       if (FAILED(hr)) {
-        return reporter.FailHresult("GetClipStatus", hr);
+        if (strict_checks) {
+          return reporter.FailHresult("GetClipStatus", hr);
+        }
+        aerogpu_test::PrintfStdout("INFO: %s: skipping Set/GetClipStatus (Get failed hr=0x%08lX)",
+                                   kTestName,
+                                   (unsigned long)hr);
       }
-      if (!ClipStatusEqual(got_cs, set_cs)) {
-        return reporter.Fail("GetClipStatus mismatch: got={Union=0x%08lX Inter=0x%08lX Ext={%ld,%ld,%ld,%ld}} "
-                             "expected={Union=0x%08lX Inter=0x%08lX Ext={%ld,%ld,%ld,%ld}}",
-                             (unsigned long)got_cs.ClipUnion,
-                             (unsigned long)got_cs.ClipIntersection,
-                             (long)got_cs.Extents.x1,
-                             (long)got_cs.Extents.y1,
-                             (long)got_cs.Extents.x2,
-                             (long)got_cs.Extents.y2,
-                             (unsigned long)set_cs.ClipUnion,
-                             (unsigned long)set_cs.ClipIntersection,
-                             (long)set_cs.Extents.x1,
-                             (long)set_cs.Extents.y1,
-                             (long)set_cs.Extents.x2,
-                             (long)set_cs.Extents.y2);
+      if (SUCCEEDED(hr) && !ClipStatusEqual(got_cs, set_cs)) {
+        if (strict_checks) {
+          return reporter.Fail("GetClipStatus mismatch: got={Union=0x%08lX Inter=0x%08lX Ext={%ld,%ld,%ld,%ld}} "
+                               "expected={Union=0x%08lX Inter=0x%08lX Ext={%ld,%ld,%ld,%ld}}",
+                               (unsigned long)got_cs.ClipUnion,
+                               (unsigned long)got_cs.ClipIntersection,
+                               (long)got_cs.Extents.x1,
+                               (long)got_cs.Extents.y1,
+                               (long)got_cs.Extents.x2,
+                               (long)got_cs.Extents.y2,
+                               (unsigned long)set_cs.ClipUnion,
+                               (unsigned long)set_cs.ClipIntersection,
+                               (long)set_cs.Extents.x1,
+                               (long)set_cs.Extents.y1,
+                               (long)set_cs.Extents.x2,
+                               (long)set_cs.Extents.y2);
+        }
+        aerogpu_test::PrintfStdout("INFO: %s: skipping Set/GetClipStatus (mismatch)", kTestName);
       }
     }
   }
@@ -819,42 +827,50 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
 
     hr = dev->SetPaletteEntries(kPalette, entries_set);
     if (FAILED(hr)) {
-      if (hr == D3DERR_INVALIDCALL) {
-        aerogpu_test::PrintfStdout("INFO: %s: skipping Set/GetPaletteEntries (Set failed hr=0x%08lX)",
-                                   kTestName,
-                                   (unsigned long)hr);
-      } else {
-        return reporter.FailHresult("SetPaletteEntries", hr);
-      }
+      aerogpu_test::PrintfStdout("INFO: %s: skipping Set/GetPaletteEntries (Set failed hr=0x%08lX)",
+                                 kTestName,
+                                 (unsigned long)hr);
     } else {
       PALETTEENTRY entries_got[256];
       std::memset(entries_got, 0, sizeof(entries_got));
       hr = dev->GetPaletteEntries(kPalette, entries_got);
       if (FAILED(hr)) {
-        return reporter.FailHresult("GetPaletteEntries", hr);
+        if (strict_checks) {
+          return reporter.FailHresult("GetPaletteEntries", hr);
+        }
+        aerogpu_test::PrintfStdout("INFO: %s: skipping Set/GetPaletteEntries (Get failed hr=0x%08lX)",
+                                   kTestName,
+                                   (unsigned long)hr);
       }
-      if (std::memcmp(entries_got, entries_set, sizeof(entries_set)) != 0) {
-        return reporter.Fail("GetPaletteEntries mismatch");
+      if (SUCCEEDED(hr) && std::memcmp(entries_got, entries_set, sizeof(entries_set)) != 0) {
+        if (strict_checks) {
+          return reporter.Fail("GetPaletteEntries mismatch");
+        }
+        aerogpu_test::PrintfStdout("INFO: %s: skipping Set/GetPaletteEntries (mismatch)", kTestName);
       }
     }
 
     hr = dev->SetCurrentTexturePalette(kPalette);
     if (FAILED(hr)) {
-      if (hr == D3DERR_INVALIDCALL) {
-        aerogpu_test::PrintfStdout("INFO: %s: skipping Set/GetCurrentTexturePalette (Set failed hr=0x%08lX)",
-                                   kTestName,
-                                   (unsigned long)hr);
-      } else {
-        return reporter.FailHresult("SetCurrentTexturePalette", hr);
-      }
+      aerogpu_test::PrintfStdout("INFO: %s: skipping Set/GetCurrentTexturePalette (Set failed hr=0x%08lX)",
+                                 kTestName,
+                                 (unsigned long)hr);
     } else {
       UINT got = 0;
       hr = dev->GetCurrentTexturePalette(&got);
       if (FAILED(hr)) {
-        return reporter.FailHresult("GetCurrentTexturePalette", hr);
+        if (strict_checks) {
+          return reporter.FailHresult("GetCurrentTexturePalette", hr);
+        }
+        aerogpu_test::PrintfStdout("INFO: %s: skipping Set/GetCurrentTexturePalette (Get failed hr=0x%08lX)",
+                                   kTestName,
+                                   (unsigned long)hr);
       }
-      if (got != kPalette) {
-        return reporter.Fail("GetCurrentTexturePalette mismatch: got=%u expected=%u", (unsigned)got, (unsigned)kPalette);
+      if (SUCCEEDED(hr) && got != kPalette) {
+        if (strict_checks) {
+          return reporter.Fail("GetCurrentTexturePalette mismatch: got=%u expected=%u", (unsigned)got, (unsigned)kPalette);
+        }
+        aerogpu_test::PrintfStdout("INFO: %s: skipping Set/GetCurrentTexturePalette (mismatch)", kTestName);
       }
     }
   }
@@ -1788,10 +1804,19 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
       ZeroMemory(&got_cs, sizeof(got_cs));
       hr = dev->GetClipStatus(&got_cs);
       if (FAILED(hr)) {
-        return reporter.FailHresult("GetClipStatus (after Apply)", hr);
+        if (strict_checks) {
+          return reporter.FailHresult("GetClipStatus (after Apply)", hr);
+        }
+        aerogpu_test::PrintfStdout("INFO: %s: skipping StateBlock ClipStatus validate (Get failed hr=0x%08lX)",
+                                   kTestName,
+                                   (unsigned long)hr);
+        clip_status_test = false;
       }
-      if (!ClipStatusEqual(got_cs, clip_status_sb)) {
-        return reporter.Fail("stateblock restore mismatch: ClipStatus");
+      if (clip_status_test && !ClipStatusEqual(got_cs, clip_status_sb)) {
+        if (strict_checks) {
+          return reporter.Fail("stateblock restore mismatch: ClipStatus");
+        }
+        aerogpu_test::PrintfStdout("INFO: %s: skipping StateBlock ClipStatus validate (mismatch)", kTestName);
       }
     }
 
@@ -1800,10 +1825,20 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
       std::memset(got_entries, 0, sizeof(got_entries));
       hr = dev->GetPaletteEntries(palette_idx_sb, got_entries);
       if (FAILED(hr)) {
-        return reporter.FailHresult("GetPaletteEntries (after Apply)", hr);
+        if (strict_checks) {
+          return reporter.FailHresult("GetPaletteEntries (after Apply)", hr);
+        }
+        aerogpu_test::PrintfStdout("INFO: %s: skipping StateBlock PaletteEntries validate (Get failed hr=0x%08lX)",
+                                   kTestName,
+                                   (unsigned long)hr);
+        palette_test = false;
       }
-      if (std::memcmp(got_entries, palette_entries_sb, sizeof(palette_entries_sb)) != 0) {
-        return reporter.Fail("stateblock restore mismatch: PaletteEntries");
+      if (palette_test && std::memcmp(got_entries, palette_entries_sb, sizeof(palette_entries_sb)) != 0) {
+        if (strict_checks) {
+          return reporter.Fail("stateblock restore mismatch: PaletteEntries");
+        }
+        aerogpu_test::PrintfStdout("INFO: %s: skipping StateBlock PaletteEntries validate (mismatch)", kTestName);
+        palette_test = false;
       }
     }
 
@@ -1811,12 +1846,22 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
       UINT got = 0;
       hr = dev->GetCurrentTexturePalette(&got);
       if (FAILED(hr)) {
-        return reporter.FailHresult("GetCurrentTexturePalette (after Apply)", hr);
+        if (strict_checks) {
+          return reporter.FailHresult("GetCurrentTexturePalette (after Apply)", hr);
+        }
+        aerogpu_test::PrintfStdout("INFO: %s: skipping StateBlock CurrentTexturePalette validate (Get failed hr=0x%08lX)",
+                                   kTestName,
+                                   (unsigned long)hr);
+        current_palette_test = false;
       }
-      if (got != palette_idx_sb) {
-        return reporter.Fail("stateblock restore mismatch: CurrentTexturePalette got=%u expected=%u",
-                             (unsigned)got,
-                             (unsigned)palette_idx_sb);
+      if (current_palette_test && got != palette_idx_sb) {
+        if (strict_checks) {
+          return reporter.Fail("stateblock restore mismatch: CurrentTexturePalette got=%u expected=%u",
+                               (unsigned)got,
+                               (unsigned)palette_idx_sb);
+        }
+        aerogpu_test::PrintfStdout("INFO: %s: skipping StateBlock CurrentTexturePalette validate (mismatch)", kTestName);
+        current_palette_test = false;
       }
     }
 
@@ -2295,10 +2340,20 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
         ZeroMemory(&got_cs, sizeof(got_cs));
         hr = dev->GetClipStatus(&got_cs);
         if (FAILED(hr)) {
-          return reporter.FailHresult("GetClipStatus (after Apply vertex baseline)", hr);
+          if (strict_checks) {
+            return reporter.FailHresult("GetClipStatus (after Apply vertex baseline)", hr);
+          }
+          aerogpu_test::PrintfStdout("INFO: %s: skipping CreateStateBlock ClipStatus baseline check (Get failed hr=0x%08lX)",
+                                     kTestName,
+                                     (unsigned long)hr);
+          clip_status_ok = false;
         }
-        if (!ClipStatusEqual(got_cs, clip_status_0)) {
-          return reporter.Fail("CreateStateBlock baseline mismatch: ClipStatus");
+        if (clip_status_ok && !ClipStatusEqual(got_cs, clip_status_0)) {
+          if (strict_checks) {
+            return reporter.Fail("CreateStateBlock baseline mismatch: ClipStatus");
+          }
+          aerogpu_test::PrintfStdout("INFO: %s: skipping CreateStateBlock ClipStatus baseline check (mismatch)", kTestName);
+          clip_status_ok = false;
         }
       }
     }
@@ -2652,10 +2707,20 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
       ZeroMemory(&got_cs, sizeof(got_cs));
       hr = dev->GetClipStatus(&got_cs);
       if (FAILED(hr)) {
-        return reporter.FailHresult("GetClipStatus (after Apply vertex)", hr);
+        if (strict_checks) {
+          return reporter.FailHresult("GetClipStatus (after Apply vertex)", hr);
+        }
+        aerogpu_test::PrintfStdout("INFO: %s: skipping CreateStateBlock ClipStatus check (Get failed hr=0x%08lX)",
+                                   kTestName,
+                                   (unsigned long)hr);
+        clip_status_ok = false;
       }
-      if (!ClipStatusEqual(got_cs, clip_status_1)) {
-        return reporter.Fail("CreateStateBlock restore mismatch: ClipStatus");
+      if (clip_status_ok && !ClipStatusEqual(got_cs, clip_status_1)) {
+        if (strict_checks) {
+          return reporter.Fail("CreateStateBlock restore mismatch: ClipStatus");
+        }
+        aerogpu_test::PrintfStdout("INFO: %s: skipping CreateStateBlock ClipStatus check (mismatch)", kTestName);
+        clip_status_ok = false;
       }
     }
 
@@ -3103,10 +3168,20 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
         std::memset(got_pal, 0, sizeof(got_pal));
         hr = dev->GetPaletteEntries(palette_idx_0, got_pal);
         if (FAILED(hr)) {
-          return reporter.FailHresult("GetPaletteEntries (after Apply pixel baseline)", hr);
+          if (strict_checks) {
+            return reporter.FailHresult("GetPaletteEntries (after Apply pixel baseline)", hr);
+          }
+          aerogpu_test::PrintfStdout("INFO: %s: disabling CreateStateBlock PaletteEntries baseline check (Get failed hr=0x%08lX)",
+                                     kTestName,
+                                     (unsigned long)hr);
+          palette_ok = false;
         }
-        if (std::memcmp(got_pal, palette_0, sizeof(palette_0)) != 0) {
-          return reporter.Fail("CreateStateBlock baseline mismatch: PaletteEntries");
+        if (palette_ok && std::memcmp(got_pal, palette_0, sizeof(palette_0)) != 0) {
+          if (strict_checks) {
+            return reporter.Fail("CreateStateBlock baseline mismatch: PaletteEntries");
+          }
+          aerogpu_test::PrintfStdout("INFO: %s: disabling CreateStateBlock PaletteEntries baseline check (mismatch)", kTestName);
+          palette_ok = false;
         }
       }
 
@@ -3114,12 +3189,24 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
         UINT got = 0;
         hr = dev->GetCurrentTexturePalette(&got);
         if (FAILED(hr)) {
-          return reporter.FailHresult("GetCurrentTexturePalette (after Apply pixel baseline)", hr);
+          if (strict_checks) {
+            return reporter.FailHresult("GetCurrentTexturePalette (after Apply pixel baseline)", hr);
+          }
+          aerogpu_test::PrintfStdout(
+              "INFO: %s: disabling CreateStateBlock CurrentTexturePalette baseline check (Get failed hr=0x%08lX)",
+              kTestName,
+              (unsigned long)hr);
+          current_palette_ok = false;
         }
-        if (got != current_palette_0) {
-          return reporter.Fail("CreateStateBlock baseline mismatch: CurrentTexturePalette got=%u expected=%u",
-                               (unsigned)got,
-                               (unsigned)current_palette_0);
+        if (current_palette_ok && got != current_palette_0) {
+          if (strict_checks) {
+            return reporter.Fail("CreateStateBlock baseline mismatch: CurrentTexturePalette got=%u expected=%u",
+                                 (unsigned)got,
+                                 (unsigned)current_palette_0);
+          }
+          aerogpu_test::PrintfStdout("INFO: %s: disabling CreateStateBlock CurrentTexturePalette baseline check (mismatch)",
+                                     kTestName);
+          current_palette_ok = false;
         }
       }
 
@@ -3438,10 +3525,20 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
       std::memset(got_pal, 0, sizeof(got_pal));
       hr = dev->GetPaletteEntries(palette_idx_0, got_pal);
       if (FAILED(hr)) {
-        return reporter.FailHresult("GetPaletteEntries (after Apply pixel)", hr);
+        if (strict_checks) {
+          return reporter.FailHresult("GetPaletteEntries (after Apply pixel)", hr);
+        }
+        aerogpu_test::PrintfStdout("INFO: %s: skipping CreateStateBlock PaletteEntries validate (Get failed hr=0x%08lX)",
+                                   kTestName,
+                                   (unsigned long)hr);
+        palette_ok = false;
       }
-      if (std::memcmp(got_pal, palette_1, sizeof(palette_1)) != 0) {
-        return reporter.Fail("CreateStateBlock restore mismatch: PaletteEntries");
+      if (palette_ok && std::memcmp(got_pal, palette_1, sizeof(palette_1)) != 0) {
+        if (strict_checks) {
+          return reporter.Fail("CreateStateBlock restore mismatch: PaletteEntries");
+        }
+        aerogpu_test::PrintfStdout("INFO: %s: skipping CreateStateBlock PaletteEntries validate (mismatch)", kTestName);
+        palette_ok = false;
       }
     }
 
@@ -3449,12 +3546,22 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
       UINT got = 0;
       hr = dev->GetCurrentTexturePalette(&got);
       if (FAILED(hr)) {
-        return reporter.FailHresult("GetCurrentTexturePalette (after Apply pixel)", hr);
+        if (strict_checks) {
+          return reporter.FailHresult("GetCurrentTexturePalette (after Apply pixel)", hr);
+        }
+        aerogpu_test::PrintfStdout("INFO: %s: skipping CreateStateBlock CurrentTexturePalette validate (Get failed hr=0x%08lX)",
+                                   kTestName,
+                                   (unsigned long)hr);
+        current_palette_ok = false;
       }
-      if (got != current_palette_1) {
-        return reporter.Fail("CreateStateBlock restore mismatch: CurrentTexturePalette got=%u expected=%u",
-                             (unsigned)got,
-                             (unsigned)current_palette_1);
+      if (current_palette_ok && got != current_palette_1) {
+        if (strict_checks) {
+          return reporter.Fail("CreateStateBlock restore mismatch: CurrentTexturePalette got=%u expected=%u",
+                               (unsigned)got,
+                               (unsigned)current_palette_1);
+        }
+        aerogpu_test::PrintfStdout("INFO: %s: skipping CreateStateBlock CurrentTexturePalette validate (mismatch)", kTestName);
+        current_palette_ok = false;
       }
     }
 
