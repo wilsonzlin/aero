@@ -75,6 +75,10 @@ See also:
   Defined in: [`web/src/storage/remote_chunked_disk.ts`](../web/src/storage/remote_chunked_disk.ts)
 - `DiskAccessLease` (async, refreshable “signed URL lease” used by remote disk readers)\
   Defined in: [`web/src/storage/disk_access_lease.ts`](../web/src/storage/disk_access_lease.ts)
+- `RemoteCacheDirectoryHandle` / `RemoteCacheFileHandle` / `RemoteCacheFile` / `RemoteCacheWritableFileStream` (async, OPFS-like handle abstractions used by the remote cache manager)\
+  Defined in: [`web/src/storage/remote_cache_manager.ts`](../web/src/storage/remote_cache_manager.ts)
+- `RemoteChunkCacheBackend` (async, chunk cache backend interface for OPFS LRU chunk caches)\
+  Defined in: [`web/src/storage/remote/opfs_lru_chunk_cache.ts`](../web/src/storage/remote/opfs_lru_chunk_cache.ts)
 
 ---
 

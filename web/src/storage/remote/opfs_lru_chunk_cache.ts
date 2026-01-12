@@ -19,6 +19,17 @@ export type RemoteChunkCacheSignature = {
   chunkSize: number;
 };
 
+/**
+ * Backend interface for a persistent chunk cache.
+ *
+ * This is used by remote disk implementations that cache fixed-size chunks locally (OPFS/IDB).
+ *
+ * Canonical trait note:
+ * This is an implementation-detail cache interface, not a disk abstraction. The canonical TS disk
+ * interface is `AsyncSectorDisk`.
+ *
+ * See `docs/20-storage-trait-consolidation.md`.
+ */
 export interface RemoteChunkCacheBackend {
   getChunk(index: number, expectedByteLength: number): Promise<Uint8Array | null>;
   putChunk(index: number, data: Uint8Array): Promise<RemoteChunkCachePutResult>;

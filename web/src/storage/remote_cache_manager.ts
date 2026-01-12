@@ -98,6 +98,17 @@ export type RemoteCacheStatus = {
   cachedChunks: number;
 };
 
+/**
+ * Minimal file/dir handle interfaces used by {@link RemoteCacheManager}.
+ *
+ * These are intentionally OPFS-shaped so we can use OPFS directly in production, while tests (or
+ * alternate environments) can provide lightweight in-memory implementations.
+ *
+ * Canonical trait note:
+ * These are *not* disk abstractions. The canonical TS disk interface is `AsyncSectorDisk`.
+ *
+ * See `docs/20-storage-trait-consolidation.md`.
+ */
 export interface RemoteCacheFile {
   readonly size: number;
   text(): Promise<string>;
