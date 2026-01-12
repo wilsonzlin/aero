@@ -33,6 +33,70 @@ impl DiskBackend for AeroVirtualDiskAsDeviceBackend {
     }
 }
 
+/// Adapter for treating a `aero-devices` disk backend as an `aero-storage` [`aero_storage::VirtualDisk`].
+///
+/// This is primarily useful for reusing `aero-storage` disk wrappers (e.g. caches or sparse formats)
+/// on top of an existing device-model backend.
+pub struct DeviceBackendAsAeroVirtualDisk {
+    backend: Box<dyn DiskBackend>,
+}
+
+impl DeviceBackendAsAeroVirtualDisk {
+    pub fn new(backend: Box<dyn DiskBackend>) -> Self {
+        Self { backend }
+    }
+
+    pub fn into_inner(self) -> Box<dyn DiskBackend> {
+        self.backend
+    }
+
+    fn check_bounds(&self, offset: u64, len: usize) -> aero_storage::Result<()> {
+        let len_u64 =
+            u64::try_from(len).map_err(|_| aero_storage::DiskError::OffsetOverflow)?;
+        let end = offset
+            .checked_add(len_u64)
+            .ok_or(aero_storage::DiskError::OffsetOverflow)?;
+
+        let capacity_bytes = self.backend.len();
+        if end > capacity_bytes {
+            return Err(aero_storage::DiskError::OutOfBounds {
+                offset,
+                len,
+                capacity: capacity_bytes,
+            });
+        }
+        Ok(())
+    }
+}
+
+impl aero_storage::VirtualDisk for DeviceBackendAsAeroVirtualDisk {
+    fn capacity_bytes(&self) -> u64 {
+        self.backend.len()
+    }
+
+    fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> aero_storage::Result<()> {
+        self.check_bounds(offset, buf.len())?;
+
+        self.backend
+            .read_at(offset, buf)
+            .map_err(|e| aero_storage::DiskError::Io(e.to_string()))
+    }
+
+    fn write_at(&mut self, offset: u64, buf: &[u8]) -> aero_storage::Result<()> {
+        self.check_bounds(offset, buf.len())?;
+
+        self.backend
+            .write_at(offset, buf)
+            .map_err(|e| aero_storage::DiskError::Io(e.to_string()))
+    }
+
+    fn flush(&mut self) -> aero_storage::Result<()> {
+        self.backend
+            .flush()
+            .map_err(|e| aero_storage::DiskError::Io(e.to_string()))
+    }
+}
+
 pub struct VirtualDrive {
     sector_size: u32,
     backend: Box<dyn DiskBackend>,
@@ -98,5 +162,76 @@ impl std::fmt::Debug for VirtualDrive {
             .field("sector_size", &self.sector_size)
             .field("capacity_bytes", &self.capacity_bytes())
             .finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aero_storage::VirtualDisk;
+
+    struct VecBackend {
+        data: Vec<u8>,
+    }
+
+    impl VecBackend {
+        fn new(len: usize) -> Self {
+            Self { data: vec![0; len] }
+        }
+    }
+
+    impl DiskBackend for VecBackend {
+        fn len(&self) -> u64 {
+            self.data.len() as u64
+        }
+
+        fn read_at(&self, offset: u64, buf: &mut [u8]) -> io::Result<()> {
+            let offset = usize::try_from(offset).map_err(|_| io::ErrorKind::InvalidInput)?;
+            let end = offset
+                .checked_add(buf.len())
+                .ok_or(io::ErrorKind::InvalidInput)?;
+            if end > self.data.len() {
+                return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "oob"));
+            }
+            buf.copy_from_slice(&self.data[offset..end]);
+            Ok(())
+        }
+
+        fn write_at(&mut self, offset: u64, buf: &[u8]) -> io::Result<()> {
+            let offset = usize::try_from(offset).map_err(|_| io::ErrorKind::InvalidInput)?;
+            let end = offset
+                .checked_add(buf.len())
+                .ok_or(io::ErrorKind::InvalidInput)?;
+            if end > self.data.len() {
+                return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "oob"));
+            }
+            self.data[offset..end].copy_from_slice(buf);
+            Ok(())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn device_backend_as_virtual_disk_allows_unaligned_reads() {
+        let backend = Box::new(VecBackend::new(8));
+        let mut disk = DeviceBackendAsAeroVirtualDisk::new(backend);
+
+        disk.write_at(1, b"abc").unwrap();
+        let mut out = [0u8; 3];
+        disk.read_at(1, &mut out).unwrap();
+        assert_eq!(&out, b"abc");
+    }
+
+    #[test]
+    fn device_backend_as_virtual_disk_reports_out_of_bounds() {
+        let backend = Box::new(VecBackend::new(4));
+        let mut disk = DeviceBackendAsAeroVirtualDisk::new(backend);
+
+        let mut out = [0u8; 1];
+        let err = disk.read_at(4, &mut out).unwrap_err();
+        assert!(matches!(err, aero_storage::DiskError::OutOfBounds { .. }));
     }
 }
