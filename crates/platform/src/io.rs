@@ -397,7 +397,10 @@ mod tests {
         assert!(bus.unregister_range_device(BASE1, LEN).is_some());
         for off in 0..LEN {
             let port = BASE1.wrapping_add(off);
+            assert_eq!(bus.read(port, 1), 0xFF);
+            assert_eq!(bus.read(port, 2), 0xFFFF);
             assert_eq!(bus.read(port, 4), 0xFFFF_FFFF);
+            bus.write(port, 4, 0xFFFF_FFFF);
         }
 
         // Re-register at a new base and ensure the old base stays unmapped.
