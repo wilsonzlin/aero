@@ -14,6 +14,9 @@ The tracing implementation is **logging/introspection only**:
 
 Source: `drivers/aerogpu/umd/d3d9/src/aerogpu_trace.*`
 
+The recommended repro apps below are part of the Win7 guest validation suite.
+Build/run instructions live in: `drivers/aerogpu/tests/win7/README.md`.
+
 ---
 
 ## Enabling tracing
@@ -114,7 +117,7 @@ This trace is meant to be lightweight, so most values are logged as raw integers
 
 - `Device::CreateStateBlock`
   - `a0 = hDevice.pDrvPrivate`
-  - `a1 = state block type` (typically `D3DSBT_ALL`, `D3DSBT_PIXELSTATE`, or `D3DSBT_VERTEXSTATE`)
+  - `a1 = state block type` (`D3DSBT_ALL=1`, `D3DSBT_PIXELSTATE=2`, `D3DSBT_VERTEXSTATE=3`)
   - `a2 = out stateblock handle pointer` (either `phStateBlock` or the CreateStateBlock args struct pointer)
   - `a3 = (unused)`
 
