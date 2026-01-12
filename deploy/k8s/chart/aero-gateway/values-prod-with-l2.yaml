@@ -33,6 +33,13 @@ l2Proxy:
   auth:
     mode: "session"
 
+# Optional: override L2 tunnel payload limits (bytes).
+# These are enforced by `aero-l2-proxy` and surfaced to clients via `POST /session` `limits.l2.*`.
+# Keep gateway + proxy in sync by setting them here (so both Deployments get the same env vars).
+#l2Tunnel:
+#  maxFramePayloadBytes: 2048
+#  maxControlPayloadBytes: 256
+
 podDisruptionBudget:
   enabled: true
   minAvailable: 1
