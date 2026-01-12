@@ -59,6 +59,7 @@ pub struct PcPlatformConfig {
     pub enable_ahci: bool,
     pub enable_ide: bool,
     pub enable_e1000: bool,
+    pub mac_addr: Option<[u8; 6]>,
 }
 
 impl Default for PcPlatformConfig {
@@ -69,6 +70,8 @@ impl Default for PcPlatformConfig {
             // boot from SATA disks without additional configuration.
             enable_ahci: true,
             enable_ide: false,
+            enable_e1000: false,
+            mac_addr: None,
         }
     }
 }
@@ -298,6 +301,57 @@ impl PortIoDevice for PcIdeBusMasterBar {
         let base = { self.ide.borrow().bus_master_base() };
         let abs_port = base.wrapping_add(port);
         self.ide.borrow_mut().io_write(abs_port, size, value);
+    }
+}
+
+#[derive(Clone)]
+struct E1000IoBarPort {
+    pci_cfg: SharedPciConfigPorts,
+    e1000: Rc<RefCell<E1000Device>>,
+    bdf: PciBdf,
+    base: u16,
+    port: u16,
+}
+
+impl E1000IoBarPort {
+    fn bar1(&self) -> Option<(bool, PciBarRange)> {
+        let mut pci_cfg = self.pci_cfg.borrow_mut();
+        let bus = pci_cfg.bus_mut();
+        let cfg = bus.device_config(self.bdf)?;
+        let io_enabled = (cfg.command() & 0x1) != 0;
+        let bar1 = cfg.bar_range(1)?;
+        Some((io_enabled, bar1))
+    }
+
+    fn decode_enabled(&self) -> bool {
+        let Some((io_enabled, bar1)) = self.bar1() else {
+            return false;
+        };
+        io_enabled && bar1.base == u64::from(self.base) && bar1.base != 0
+    }
+}
+
+impl PortIoDevice for E1000IoBarPort {
+    fn read(&mut self, port: u16, size: u8) -> u32 {
+        debug_assert_eq!(port, self.port);
+        let size = size.clamp(1, 4) as usize;
+        if !self.decode_enabled() {
+            return all_ones(size) as u32;
+        }
+
+        let offset = u32::from(port.wrapping_sub(self.base));
+        self.e1000.borrow_mut().io_read(offset, size)
+    }
+
+    fn write(&mut self, port: u16, size: u8, value: u32) {
+        debug_assert_eq!(port, self.port);
+        let size = size.clamp(1, 4) as usize;
+        if !self.decode_enabled() {
+            return;
+        }
+
+        let offset = u32::from(port.wrapping_sub(self.base));
+        self.e1000.borrow_mut().io_write_reg(offset, size, value);
     }
 }
 
@@ -1019,12 +1073,13 @@ impl PcPlatform {
         };
 
         let e1000 = if config.enable_e1000 {
+            const DEFAULT_MAC: [u8; 6] = [0x52, 0x54, 0x00, 0x12, 0x34, 0x56];
+
             let profile = aero_devices::pci::profile::NIC_E1000_82540EM;
             let bdf = profile.bdf;
 
-            let e1000 = Rc::new(RefCell::new(E1000Device::new([
-                0x52, 0x54, 0x00, 0x12, 0x34, 0x56,
-            ])));
+            let mac = config.mac_addr.unwrap_or(DEFAULT_MAC);
+            let e1000 = Rc::new(RefCell::new(E1000Device::new(mac)));
 
             {
                 let e1000_for_intx = e1000.clone();
@@ -1118,6 +1173,43 @@ impl PcPlatform {
                 prev.is_none(),
                 "duplicate IDE Bus Master BAR4 handler registration for {bdf:?}"
             );
+        }
+
+        // Register E1000 BAR1 I/O ports after BIOS POST has assigned an address.
+        //
+        // Limitation: BAR1 port handlers are registered once after BIOS POST. If the guest later
+        // reprograms BAR1, PcPlatform does not currently unregister/remap the I/O port range.
+        if let Some(e1000_dev) = e1000.as_ref() {
+            let bdf = aero_devices::pci::profile::NIC_E1000_82540EM.bdf;
+            let bar1_base = {
+                let mut pci_cfg = pci_cfg.borrow_mut();
+                pci_cfg
+                    .bus_mut()
+                    .device_config(bdf)
+                    .and_then(|cfg| cfg.bar_range(1))
+                    .map(|bar| bar.base)
+                    .unwrap_or(0)
+            };
+            if bar1_base != 0 {
+                if let Ok(base_u16) = u16::try_from(bar1_base) {
+                    let len = usize::try_from(aero_net_e1000::E1000_IO_SIZE).unwrap_or(0);
+                    for off in 0..len {
+                        let Some(port) = base_u16.checked_add(off as u16) else {
+                            break;
+                        };
+                        io.register(
+                            port,
+                            Box::new(E1000IoBarPort {
+                                pci_cfg: pci_cfg.clone(),
+                                e1000: e1000_dev.clone(),
+                                bdf,
+                                base: base_u16,
+                                port,
+                            }),
+                        );
+                    }
+                }
+            }
         }
 
         // Map the PCI MMIO window used by `PciResourceAllocator` so BAR reprogramming is reflected

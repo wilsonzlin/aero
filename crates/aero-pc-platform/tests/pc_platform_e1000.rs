@@ -179,3 +179,23 @@ fn pc_platform_respects_pci_interrupt_disable_bit_for_e1000_intx() {
         .expect("pending vector should decode to an IRQ number");
     assert_eq!(irq, 11);
 }
+
+#[test]
+fn pc_platform_routes_e1000_io_bar() {
+    let mut pc = PcPlatform::new_with_e1000(2 * 1024 * 1024);
+    let io_base = read_e1000_bar1_base(&mut pc);
+    assert_ne!(io_base, 0);
+    assert_eq!(io_base % 0x40, 0);
+    let io_base = u16::try_from(io_base).expect("BAR1 base should fit in u16 for IoPortBus");
+
+    let bar0_base = read_e1000_bar0_base(&mut pc);
+    let mmio_status = pc.memory.read_u32(bar0_base + 0x08);
+    assert_ne!(mmio_status, 0xFFFF_FFFF);
+
+    // IOADDR (offset 0x00) selects the target MMIO register.
+    pc.io.write(io_base, 4, 0x0000_0008);
+
+    // IODATA (offset 0x04) reads from the selected MMIO register (STATUS).
+    let io_status = pc.io.read(io_base + 0x04, 4);
+    assert_eq!(io_status, mmio_status);
+}
