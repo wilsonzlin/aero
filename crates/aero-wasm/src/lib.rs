@@ -2294,8 +2294,7 @@ impl Machine {
         tx: SharedRingBuffer,
         rx: SharedRingBuffer,
     ) -> Result<(), JsValue> {
-        let backend = aero_net_backend::L2TunnelRingBackend::new(tx, rx);
-        self.inner.set_network_backend(Box::new(backend));
+        self.inner.attach_l2_tunnel_rings_wasm(tx, rx);
         Ok(())
     }
 
