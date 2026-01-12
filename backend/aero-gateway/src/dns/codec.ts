@@ -296,14 +296,31 @@ export interface DnsResponseEncodeOptions {
 }
 
 function encodeIpv4(address: string): Buffer {
-  const parts = address.split(".");
-  if (parts.length !== 4) throw new Error("Invalid IPv4 address");
-  const bytes = parts.map((p) => {
-    const value = Number.parseInt(p, 10);
-    if (!Number.isFinite(value) || value < 0 || value > 255) throw new Error("Invalid IPv4 address");
-    return value;
-  });
-  return Buffer.from(bytes);
+  const out = Buffer.allocUnsafe(4);
+  let octet = 0;
+  let value = 0;
+  let sawDigit = false;
+
+  for (let i = 0; i <= address.length; i += 1) {
+    const c = i === address.length ? 0x2e /* '.' */ : address.charCodeAt(i);
+    if (c === 0x2e /* '.' */) {
+      if (!sawDigit) throw new Error("Invalid IPv4 address");
+      if (octet >= 4) throw new Error("Invalid IPv4 address");
+      out[octet] = value;
+      octet += 1;
+      value = 0;
+      sawDigit = false;
+      continue;
+    }
+
+    if (c < 0x30 /* '0' */ || c > 0x39 /* '9' */) throw new Error("Invalid IPv4 address");
+    sawDigit = true;
+    value = value * 10 + (c - 0x30);
+    if (value > 255) throw new Error("Invalid IPv4 address");
+  }
+
+  if (octet !== 4) throw new Error("Invalid IPv4 address");
+  return out;
 }
 
 export function encodeDnsResponseA(options: DnsResponseEncodeOptions): Buffer {
