@@ -199,40 +199,56 @@ export async function probeRemoteDisk(
   }
 
   const probe = await fetch(url, { method: "GET", headers: { Range: "bytes=0-0" }, credentials: opts.credentials });
-  const contentRange = probe.headers.get("content-range") ?? "";
-  const partialOk = probe.status === 206;
-  if (!etag) etag = probe.headers.get("etag");
-  if (!lastModified) lastModified = probe.headers.get("last-modified");
+  try {
+    const contentRange = probe.headers.get("content-range") ?? "";
+    const partialOk = probe.status === 206;
+    if (!etag) etag = probe.headers.get("etag");
+    if (!lastModified) lastModified = probe.headers.get("last-modified");
 
-  if (size === null && partialOk) {
-    if (!contentRange) {
+    if (size === null && partialOk) {
+      if (!contentRange) {
+        throw new Error(
+          "Range probe returned 206 Partial Content, but Content-Range is not visible. " +
+            "If this is cross-origin, the server must set Access-Control-Expose-Headers: Content-Range, Content-Length.",
+        );
+      }
+      size = parseContentRangeHeader(contentRange).total;
+    }
+
+    if (size === null || !Number.isFinite(size) || size <= 0) {
       throw new Error(
-        "Range probe returned 206 Partial Content, but Content-Range is not visible. " +
-          "If this is cross-origin, the server must set Access-Control-Expose-Headers: Content-Range, Content-Length.",
+        "Remote server did not provide a readable image size via Content-Length (HEAD) or Content-Range (Range GET).",
       );
     }
-    size = parseContentRangeHeader(contentRange).total;
-  }
 
-  if (size === null || !Number.isFinite(size) || size <= 0) {
-    throw new Error(
-      "Remote server did not provide a readable image size via Content-Length (HEAD) or Content-Range (Range GET).",
-    );
-  }
+    if (!acceptRanges) {
+      acceptRanges = probe.headers.get("accept-ranges") ?? "";
+    }
 
-  if (!acceptRanges) {
-    acceptRanges = probe.headers.get("accept-ranges") ?? "";
-  }
+    // Consume or cancel the body so we don't leave a potentially-large stream dangling if the
+    // server ignores Range and returns a full representation.
+    if (partialOk) {
+      const body = await readResponseBytesWithLimit(probe, { maxBytes: 1, label: "range probe body" });
+      if (body.byteLength !== 1) {
+        throw new Error(`Range probe returned unexpected body length ${body.byteLength} (expected 1)`);
+      }
+    } else {
+      await cancelBody(probe);
+    }
 
-  return {
-    size,
-    etag,
-    lastModified,
-    acceptRanges,
-    rangeProbeStatus: probe.status,
-    partialOk,
-    contentRange,
-  };
+    return {
+      size,
+      etag,
+      lastModified,
+      acceptRanges,
+      rangeProbeStatus: probe.status,
+      partialOk,
+      contentRange,
+    };
+  } finally {
+    // Best-effort: ensure we don't leak a connection if any of the above parsing throws.
+    await cancelBody(probe);
+  }
 }
 
 function parseContentRangeHeader(header: string): { start: number; endExclusive: number; total: number } {
