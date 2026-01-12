@@ -641,7 +641,9 @@ export class PciBus implements PortIoHandler {
     if (p === 0x0cf8) {
       // Only support 32-bit writes for now (typical for PCI config).
       if (size !== 4) return;
-      this.#addrReg = v >>> 0;
+      // PCI config mechanism #1: bits 1:0 are reserved (DWORD-aligned register number) and should
+      // read back as 0.
+      this.#addrReg = (v & 0xffff_fffc) >>> 0;
       return;
     }
     if (p >= 0x0cfc && p <= 0x0cff) {
@@ -1221,7 +1223,8 @@ export class PciBus implements PortIoHandler {
     }
 
     // Apply core bus state (config-address register + allocators).
-    this.#addrReg = addrReg >>> 0;
+    // PCI config mechanism #1: bits 1:0 are reserved and always read back as 0.
+    this.#addrReg = (addrReg & 0xffff_fffc) >>> 0;
     this.#nextMmioBase = nextMmioBase;
     this.#nextIoBase = nextIoBase & 0xffff;
 

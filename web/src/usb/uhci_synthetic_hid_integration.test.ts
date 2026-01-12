@@ -878,6 +878,7 @@ describe("usb/UHCI synthetic HID passthrough integration (WASM)", () => {
     const guestSize = layout.guest_size >>> 0;
 
     const runtime = new api.UhciRuntime(guestBase, guestSize);
+    // TypeScript doesn't narrow optional methods across closures; capture a stable function handle.
     const attach = runtime.attach_usb_hid_passthrough_device;
     if (typeof attach !== "function") return;
 

@@ -59,6 +59,17 @@ describe("io/bus/pci", () => {
     expect(cfg.readU32(0, 1, 0x00)).toBe(0x4444_3333);
   });
 
+  it("masks bits 1:0 in the PCI config address register (0xCF8) per mechanism #1", () => {
+    const portBus = new PortIoBus();
+    const mmioBus = new MmioBus();
+    const pciBus = new PciBus(portBus, mmioBus);
+    pciBus.registerToPortBus();
+
+    // Bits 1:0 are reserved and should read back as 0 (DWORD-aligned register number).
+    portBus.write(0x0cf8, 4, 0x8000_0003);
+    expect(portBus.read(0x0cf8, 4) >>> 0).toBe(0x8000_0000);
+  });
+
   it("uses PciDevice.bdf as the default registration address", () => {
     const portBus = new PortIoBus();
     const mmioBus = new MmioBus();
