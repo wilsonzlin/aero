@@ -2240,6 +2240,9 @@ impl Machine {
             self.bios.post(&mut self.cpu.state, bus, &mut self.disk);
         }
         self.cpu.state.a20_enabled = self.chipset.a20().enabled();
+        if self.bios.video.vbe.current_mode.is_none() {
+            self.sync_text_mode_cursor_bda_to_vga_crtc();
+        }
         self.mem.clear_dirty();
     }
 
@@ -2438,6 +2441,45 @@ impl Machine {
         RunExit::Completed { executed }
     }
 
+    fn sync_text_mode_cursor_bda_to_vga_crtc(&mut self) {
+        let Some(vga) = &self.vga else {
+            return;
+        };
+
+        // BIOS Data Area (BDA) cursor state is the canonical source of truth for text-mode cursor
+        // position/shape in our HLE BIOS. The emulated VGA device renders the cursor overlay based
+        // on CRTC registers, so we mirror the BDA fields into those regs when in BIOS text mode.
+        //
+        // BDA layout:
+        // - 0x044A: screen columns (u16)
+        // - 0x0450: cursor pos for page 0 (row:hi, col:lo)
+        // - 0x0460: cursor shape (start:hi, end:lo)
+        let cols = self.mem.read_u16(0x044A).max(1);
+        let pos = self.mem.read_u16(0x0450);
+        let shape = self.mem.read_u16(0x0460);
+
+        let row = (pos >> 8) as u16;
+        let col = (pos & 0x00FF) as u16;
+        let cell_index = row
+            .saturating_mul(cols)
+            .saturating_add(col);
+
+        let cursor_start = (shape >> 8) as u8;
+        let cursor_end = (shape & 0x00FF) as u8;
+
+        let mut vga = vga.borrow_mut();
+
+        // CRTC index/data ports are 0x3D4/0x3D5.
+        vga.port_write(0x3D4, 1, 0x0A);
+        vga.port_write(0x3D5, 1, cursor_start as u32);
+        vga.port_write(0x3D4, 1, 0x0B);
+        vga.port_write(0x3D5, 1, cursor_end as u32);
+        vga.port_write(0x3D4, 1, 0x0E);
+        vga.port_write(0x3D5, 1, u32::from((cell_index >> 8) as u8));
+        vga.port_write(0x3D4, 1, 0x0F);
+        vga.port_write(0x3D5, 1, u32::from((cell_index & 0x00FF) as u8));
+    }
+
     fn handle_bios_interrupt(&mut self, vector: u8) {
         // Keep the core's A20 view coherent with the chipset latch while executing BIOS services.
         self.cpu.state.a20_enabled = self.chipset.a20().enabled();
@@ -2445,6 +2487,13 @@ impl Machine {
         self.bios
             .dispatch_interrupt(vector, &mut self.cpu.state, bus, &mut self.disk);
         self.cpu.state.a20_enabled = self.chipset.a20().enabled();
+
+        // INT 10h text services update the BDA cursor state but do not perform VGA port I/O.
+        // Keep the emulated VGA device coherent so its cursor overlay matches BIOS state during
+        // early boot.
+        if vector == 0x10 && self.bios.video.vbe.current_mode.is_none() {
+            self.sync_text_mode_cursor_bda_to_vga_crtc();
+        }
     }
 
     fn poll_platform_interrupt(&mut self, max_queued: usize) -> bool {
