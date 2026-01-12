@@ -7,7 +7,9 @@
 //! - `crates/aero-pc-platform/tests/pc_platform_win7_storage.rs`
 //! - `crates/aero-pc-platform/tests/windows7_storage_topology.rs`
 
-use aero_devices::pci::profile::{IDE_PIIX3, ISA_PIIX3, NVME_CONTROLLER, SATA_AHCI_ICH9};
+use aero_devices::pci::profile::{
+    AHCI_ABAR_BAR_INDEX, AHCI_ABAR_SIZE_U32, IDE_PIIX3, ISA_PIIX3, NVME_CONTROLLER, SATA_AHCI_ICH9,
+};
 use aero_devices::pci::{
     PciBarDefinition, PciBarKind, PciBdf, PciInterruptPin, PciIntxRouter, PciIntxRouterConfig,
 };
@@ -161,9 +163,9 @@ fn machine_win7_storage_topology_has_stable_bdfs_and_interrupt_lines() {
         // `aero_devices::pci::profile::*` constants) so we catch accidental drift in the profile
         // layer as well.
         assert_eq!(
-            cfg.bar_definition(5),
+            cfg.bar_definition(AHCI_ABAR_BAR_INDEX),
             Some(PciBarDefinition::Mmio32 {
-                size: 0x2000,
+                size: AHCI_ABAR_SIZE_U32,
                 prefetchable: false
             }),
             "SATA_AHCI_ICH9 BAR5 definition drifted"
