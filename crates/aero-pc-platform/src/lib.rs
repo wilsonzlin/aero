@@ -21,12 +21,10 @@ use aero_devices_storage::ata::AtaDrive;
 use aero_devices_storage::atapi::AtapiCdrom;
 use aero_devices_storage::pci_ide::{Piix3IdePciDevice, PRIMARY_PORTS, SECONDARY_PORTS};
 use aero_devices_storage::AhciPciDevice;
-use aero_devices_nvme::{
-    DiskBackend as NvmeDiskBackend, DiskError as NvmeDiskError, NvmeController, NvmePciDevice,
-};
+use aero_devices_nvme::{NvmeController, NvmePciDevice};
 use aero_interrupts::apic::{IOAPIC_MMIO_BASE, IOAPIC_MMIO_SIZE, LAPIC_MMIO_BASE, LAPIC_MMIO_SIZE};
 use aero_net_e1000::E1000Device;
-use aero_virtio::devices::blk::{MemDisk, VirtioBlk};
+use aero_virtio::devices::blk::VirtioBlk;
 use aero_virtio::memory::{
     GuestMemory as VirtioGuestMemory, GuestMemoryError as VirtioGuestMemoryError,
 };
@@ -37,7 +35,7 @@ use aero_platform::dirty_memory::DEFAULT_DIRTY_PAGE_SIZE;
 use aero_platform::interrupts::{InterruptInput, PlatformInterrupts};
 use aero_platform::io::{IoPortBus, PortIoDevice};
 use aero_platform::memory::MemoryBus;
-use aero_storage::VirtualDisk;
+use aero_storage::{MemBackend, RawDisk, VirtualDisk, SECTOR_SIZE};
 use memory::{DenseMemory, GuestMemory, MmioHandler};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -442,93 +440,6 @@ impl PortIoDevice for PcUhciIoBar {
             .borrow_mut()
             .controller_mut()
             .io_write(port, size, value);
-    }
-}
-
-struct RamNvmeDisk {
-    sector_size: u32,
-    data: Vec<u8>,
-}
-
-impl RamNvmeDisk {
-    fn new(sectors: u64) -> Self {
-        let sector_size = 512u32;
-        Self {
-            sector_size,
-            data: vec![0u8; sectors as usize * sector_size as usize],
-        }
-    }
-}
-
-impl NvmeDiskBackend for RamNvmeDisk {
-    fn sector_size(&self) -> u32 {
-        self.sector_size
-    }
-
-    fn total_sectors(&self) -> u64 {
-        (self.data.len() as u64) / (self.sector_size as u64)
-    }
-
-    fn read_sectors(&mut self, lba: u64, buffer: &mut [u8]) -> Result<(), NvmeDiskError> {
-        let sector_size = self.sector_size as usize;
-        if !buffer.len().is_multiple_of(sector_size) {
-            return Err(NvmeDiskError::UnalignedBuffer {
-                len: buffer.len(),
-                sector_size: self.sector_size,
-            });
-        }
-
-        let sectors = (buffer.len() / sector_size) as u64;
-        let end_lba = lba.checked_add(sectors).ok_or(NvmeDiskError::OutOfRange {
-            lba,
-            sectors,
-            capacity_sectors: self.total_sectors(),
-        })?;
-        let cap = self.total_sectors();
-        if end_lba > cap {
-            return Err(NvmeDiskError::OutOfRange {
-                lba,
-                sectors,
-                capacity_sectors: cap,
-            });
-        }
-
-        let offset = lba as usize * sector_size;
-        buffer.copy_from_slice(&self.data[offset..offset + buffer.len()]);
-        Ok(())
-    }
-
-    fn write_sectors(&mut self, lba: u64, buffer: &[u8]) -> Result<(), NvmeDiskError> {
-        let sector_size = self.sector_size as usize;
-        if !buffer.len().is_multiple_of(sector_size) {
-            return Err(NvmeDiskError::UnalignedBuffer {
-                len: buffer.len(),
-                sector_size: self.sector_size,
-            });
-        }
-
-        let sectors = (buffer.len() / sector_size) as u64;
-        let end_lba = lba.checked_add(sectors).ok_or(NvmeDiskError::OutOfRange {
-            lba,
-            sectors,
-            capacity_sectors: self.total_sectors(),
-        })?;
-        let cap = self.total_sectors();
-        if end_lba > cap {
-            return Err(NvmeDiskError::OutOfRange {
-                lba,
-                sectors,
-                capacity_sectors: cap,
-            });
-        }
-
-        let offset = lba as usize * sector_size;
-        self.data[offset..offset + buffer.len()].copy_from_slice(buffer);
-        Ok(())
-    }
-
-    fn flush(&mut self) -> Result<(), NvmeDiskError> {
-        Ok(())
     }
 }
 
@@ -1194,9 +1105,17 @@ impl PcPlatform {
             let profile = aero_devices::pci::profile::NVME_CONTROLLER;
             let bdf = profile.bdf;
 
-            let nvme = Rc::new(RefCell::new(NvmePciDevice::new(Box::new(
-                RamNvmeDisk::new(1024),
-            ))));
+            // Use an `aero-storage` disk image as the backend for the NVMe controller so the same
+            // underlying disk abstraction can be reused across controllers (AHCI/NVMe/virtio-blk).
+            let disk = RawDisk::create(
+                MemBackend::new(),
+                1024u64 * SECTOR_SIZE as u64,
+            )
+            .expect("failed to allocate in-memory NVMe disk");
+            let nvme = Rc::new(RefCell::new(
+                NvmePciDevice::try_new_from_aero_storage(disk)
+                    .expect("in-memory NVMe disk should be 512-byte aligned"),
+            ));
 
             {
                 let nvme_for_intx = nvme.clone();
@@ -1351,8 +1270,13 @@ impl PcPlatform {
             let profile = aero_devices::pci::profile::VIRTIO_BLK;
             let bdf = profile.bdf;
 
+            // Use an `aero-storage` disk image so callers can reuse the same disk abstraction across
+            // different controllers without bespoke glue.
+            let disk = RawDisk::create(MemBackend::new(), (16 * 1024 * 1024) as u64)
+                .expect("failed to allocate in-memory virtio-blk disk");
+            let backend: Box<dyn VirtualDisk + Send> = Box::new(disk);
             let virtio_blk = Rc::new(RefCell::new(VirtioPciDevice::new(
-                Box::new(VirtioBlk::new(MemDisk::new(16 * 1024 * 1024))),
+                Box::new(VirtioBlk::new(backend)),
                 Box::new(NoopVirtioInterruptSink),
             )));
 
