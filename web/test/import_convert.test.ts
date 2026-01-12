@@ -152,6 +152,8 @@ function buildDynamicVhdFixture(): { file: Uint8Array; logical: Uint8Array } {
 
   const footer = new Uint8Array(footerSize);
   footer.set(new TextEncoder().encode("conectix"), 0);
+  writeU32BE(footer, 8, 2); // features
+  writeU32BE(footer, 12, 0x0001_0000); // file_format_version
   writeU64BE(footer, 16, BigInt(dynHeaderOffset)); // data offset
   writeU64BE(footer, 48, BigInt(logicalSize)); // current size
   writeU32BE(footer, 60, 3); // disk type dynamic
@@ -196,6 +198,8 @@ function buildFixedVhdFixtureWithFooterCopy(): { file: Uint8Array; logical: Uint
 
   const footer = new Uint8Array(footerSize);
   footer.set(new TextEncoder().encode("conectix"), 0);
+  writeU32BE(footer, 8, 2); // features
+  writeU32BE(footer, 12, 0x0001_0000); // file_format_version
   // Fixed disks use dataOffset = u64::MAX.
   writeU64BE(footer, 16, 0xffff_ffff_ffff_ffffn);
   writeU64BE(footer, 48, BigInt(logicalSize)); // current size
@@ -311,6 +315,22 @@ test("detectFormat: qcow2/vhd/iso signatures", async () => {
     const fmt = await detectFormat(new MemSource(file), "disk.unknown");
     assert.equal(fmt, "iso");
   }
+});
+
+test("detectFormat: does not misclassify qcow2 magic with invalid version", async () => {
+  const file = new Uint8Array(8);
+  file.set([0x51, 0x46, 0x49, 0xfb], 0);
+  writeU32BE(file, 4, 99);
+  const fmt = await detectFormat(new MemSource(file), "disk.unknown");
+  assert.equal(fmt, "raw");
+});
+
+test("detectFormat: does not misclassify VHD cookie without valid footer", async () => {
+  const file = new Uint8Array(512);
+  file.set(new TextEncoder().encode("conectix"), 0);
+  // Missing file_format_version, checksum, etc.
+  const fmt = await detectFormat(new MemSource(file), "disk.unknown");
+  assert.equal(fmt, "raw");
 });
 
 test("convertToAeroSparse: raw roundtrip preserves logical bytes and sparseness", async () => {

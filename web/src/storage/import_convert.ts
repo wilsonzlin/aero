@@ -149,20 +149,40 @@ export async function importConvertToOpfs(
 export async function detectFormat(src: RandomAccessSource, filename?: string): Promise<ImageFormat> {
   const ext = filename?.split(".").pop()?.toLowerCase();
 
-  // qcow2: "QFI\xfb" at offset 0
-  if (src.size >= 4) {
-    const sig = await src.readAt(0, 4);
-    if (sig[0] === 0x51 && sig[1] === 0x46 && sig[2] === 0x49 && sig[3] === 0xfb) return "qcow2";
+  // qcow2: "QFI\xfb" at offset 0 + a plausible version at offset 4.
+  if (src.size >= 8) {
+    const sig = await src.readAt(0, 8);
+    if (sig[0] === 0x51 && sig[1] === 0x46 && sig[2] === 0x49 && sig[3] === 0xfb) {
+      const version = readU32BE(sig, 4);
+      if (version === 2 || version === 3) return "qcow2";
+    }
   }
 
-  // VHD: "conectix" at start (dynamic) and at end (all VHDs).
-  if (src.size >= 8) {
-    const cookie0 = await src.readAt(0, 8);
-    if (ascii(cookie0) === "conectix") return "vhd";
-  }
+  // VHD: check for a valid footer at end (fixed and dynamic disks).
   if (src.size >= 512) {
     const cookieEnd = await src.readAt(src.size - 512, 8);
-    if (ascii(cookieEnd) === "conectix") return "vhd";
+    if (ascii(cookieEnd) === "conectix") {
+      try {
+        VhdFooter.parse(await src.readAt(src.size - 512, 512));
+        return "vhd";
+      } catch {
+        // Not a valid footer.
+      }
+    }
+  }
+
+  // VHD: dynamic disks typically store a footer copy at offset 0. Some fixed disks may also
+  // contain a redundant footer copy at offset 0.
+  if (src.size >= 512) {
+    const cookie0 = await src.readAt(0, 8);
+    if (ascii(cookie0) === "conectix") {
+      try {
+        VhdFooter.parse(await src.readAt(0, 512));
+        return "vhd";
+      } catch {
+        // Not a valid footer.
+      }
+    }
   }
 
   // ISO9660: "CD001" at 0x8001.
@@ -825,6 +845,11 @@ class VhdFooter {
     if (footerBytes.byteLength !== 512) throw new Error("invalid VHD footer length");
     if (ascii(footerBytes.subarray(0, 8)) !== "conectix") throw new Error("missing VHD footer cookie");
 
+    // VHD footers use big-endian fields and have a fixed format version.
+    // https://learn.microsoft.com/en-us/windows/win32/fileio/vhd-specification
+    const fileFormatVersion = readU32BE(footerBytes, 12);
+    if (fileFormatVersion !== 0x0001_0000) throw new Error("invalid VHD file_format_version");
+
     const storedChecksum = readU32BE(footerBytes, 64);
     const copy = footerBytes.slice();
     copy.fill(0, 64, 68);
@@ -837,6 +862,18 @@ class VhdFooter {
     const currentSize = Number(readU64BE(footerBytes, 48));
     const diskType = readU32BE(footerBytes, 60);
     if (!Number.isSafeInteger(currentSize) || currentSize <= 0) throw new Error("invalid VHD current_size");
+    if (currentSize % 512 !== 0) throw new Error("invalid VHD current_size");
+
+    if (diskType !== VHD_TYPE_FIXED && diskType !== VHD_TYPE_DYNAMIC) {
+      throw new Error("unsupported VHD disk_type");
+    }
+    if (diskType === VHD_TYPE_FIXED) {
+      if (dataOffset !== Number(0xffff_ffff_ffff_ffffn)) throw new Error("invalid VHD data_offset");
+    } else {
+      if (!Number.isSafeInteger(dataOffset) || dataOffset <= 0) throw new Error("invalid VHD data_offset");
+      if (dataOffset % 512 !== 0) throw new Error("invalid VHD data_offset");
+      if (dataOffset < 512) throw new Error("invalid VHD data_offset");
+    }
     return new VhdFooter(dataOffset, currentSize, diskType, footerBytes.slice());
   }
 
