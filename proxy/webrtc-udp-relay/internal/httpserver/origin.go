@@ -93,10 +93,11 @@ func NormalizedOriginFromRequest(r *http.Request) string {
 		return originHeader
 	}
 
-	host := strings.ToLower(strings.TrimSpace(r.Host))
+	host := strings.TrimSpace(r.Host)
 	if host == "" {
 		return ""
 	}
+	host = asciiLowerIfNeeded(host)
 
 	scheme := ""
 	if xfProto := strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")); xfProto != "" {
@@ -104,9 +105,12 @@ func NormalizedOriginFromRequest(r *http.Request) string {
 		if i := strings.IndexByte(xfProto, ','); i >= 0 {
 			xfProto = xfProto[:i]
 		}
-		xfProto = strings.ToLower(strings.TrimSpace(xfProto))
-		if xfProto == "http" || xfProto == "https" {
-			scheme = xfProto
+		xfProto = strings.TrimSpace(xfProto)
+		switch {
+		case strings.EqualFold(xfProto, "http"):
+			scheme = "http"
+		case strings.EqualFold(xfProto, "https"):
+			scheme = "https"
 		}
 	}
 	if scheme == "" {
@@ -122,4 +126,21 @@ func NormalizedOriginFromRequest(r *http.Request) string {
 		return normalized
 	}
 	return candidate
+}
+
+func asciiLowerIfNeeded(s string) string {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c >= 'A' && c <= 'Z' {
+			b := []byte(s)
+			for j := i; j < len(b); j++ {
+				c := b[j]
+				if c >= 'A' && c <= 'Z' {
+					b[j] = c + ('a' - 'A')
+				}
+			}
+			return string(b)
+		}
+	}
+	return s
 }
