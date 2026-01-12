@@ -7,6 +7,7 @@ import {
   framesFree,
   getRingBufferLevelFrames as getAudioWorkletRingLevelFrames,
   requiredBytes as audioWorkletRingRequiredBytes,
+  type AudioWorkletRingBufferViews,
   wrapRingBuffer as wrapAudioWorkletRingBuffer,
 } from "../audio/audio_worklet_ring";
 
@@ -41,29 +42,23 @@ export type CreateAudioOutputOptions = {
   ringBuffer?: SharedArrayBuffer;
 };
 
-export type AudioRingBufferLayout = {
-  /**
-   * Shared ring buffer used for inter-thread audio sample transport.
-   *
-   * Layout (little-endian):
-   * - u32 readFrameIndex (bytes 0..4)
-   * - u32 writeFrameIndex (bytes 4..8)
-   * - u32 underrunCount (bytes 8..12): total missing output frames rendered as silence due to underruns (wraps at 2^32)
-   * - u32 overrunCount (bytes 12..16): frames dropped by the producer due to buffer full (wraps at 2^32)
-   * - f32 samples[] (bytes 16..)
-   *
-   * Indices are monotonically-increasing frame counters (wrapping naturally at
-   * 2^32). The producer writes samples first, then atomically advances
-   * `writeFrameIndex`. The consumer reads available frames (clamped to the
-   * configured capacity) and then atomically advances `readFrameIndex`.
-   */
+/**
+ * Shared ring buffer used for inter-thread audio sample transport.
+ *
+ * Layout (little-endian):
+ * - u32 readFrameIndex (bytes 0..4)
+ * - u32 writeFrameIndex (bytes 4..8)
+ * - u32 underrunCount (bytes 8..12): total missing output frames rendered as silence due to underruns (wraps at 2^32)
+ * - u32 overrunCount (bytes 12..16): frames dropped by the producer due to buffer full (wraps at 2^32)
+ * - f32 samples[] (bytes 16..)
+ *
+ * Indices are monotonically-increasing frame counters (wrapping naturally at
+ * 2^32). The producer writes samples first, then atomically advances
+ * `writeFrameIndex`. The consumer reads available frames (clamped to the
+ * configured capacity) and then atomically advances `readFrameIndex`.
+ */
+export type AudioRingBufferLayout = AudioWorkletRingBufferViews & {
   buffer: SharedArrayBuffer;
-  header: Uint32Array;
-  readIndex: Uint32Array;
-  writeIndex: Uint32Array;
-  underrunCount: Uint32Array;
-  overrunCount: Uint32Array;
-  samples: Float32Array;
   channelCount: number;
   capacityFrames: number;
 };
