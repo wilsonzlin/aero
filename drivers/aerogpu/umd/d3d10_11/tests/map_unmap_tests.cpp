@@ -4370,6 +4370,152 @@ bool TestGuestBackedUpdateSubresourceUPBcTextureBoxDirtyRange() {
 #endif
 }
 
+bool TestHostOwnedUpdateSubresourceUPBcTextureBoxRejectsMisaligned() {
+#if AEROGPU_ABI_MINOR < 2
+  // ABI 1.2 adds BC formats.
+  return true;
+#else
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev,
+                            /*want_backing_allocations=*/false,
+                            /*async_fences=*/false),
+             "InitTestDevice(UpdateSubresourceUP invalid box bc tex2d host-owned)")) {
+    return false;
+  }
+
+  TestResource tex{};
+  if (!Check(CreateStagingTexture2DWithFormat(&dev,
+                                              /*width=*/5,
+                                              /*height=*/5,
+                                              kDxgiFormatBc7Unorm,
+                                              /*cpu_access_flags=*/0,
+                                              &tex),
+             "CreateStagingTexture2DWithFormat(BC7)")) {
+    return false;
+  }
+
+  // Misaligned left (must be multiple of 4 for BC formats).
+  AEROGPU_DDI_BOX box{};
+  box.left = 1;
+  box.right = 5;
+  box.top = 0;
+  box.bottom = 4;
+  box.front = 0;
+  box.back = 1;
+
+  const uint8_t junk[16] = {};
+  dev.device_funcs.pfnUpdateSubresourceUP(dev.hDevice,
+                                          tex.hResource,
+                                          /*dst_subresource=*/0,
+                                          &box,
+                                          junk,
+                                          /*SysMemPitch=*/0,
+                                          /*SysMemSlicePitch=*/0);
+
+  const HRESULT hr = dev.device_funcs.pfnFlush(dev.hDevice);
+  if (!Check(hr == S_OK, "Flush after UpdateSubresourceUP(invalid bc box)")) {
+    return false;
+  }
+
+  if (!Check(ValidateStream(dev.harness.last_stream.data(), dev.harness.last_stream.size()), "ValidateStream")) {
+    return false;
+  }
+
+  const uint8_t* stream = dev.harness.last_stream.data();
+  const size_t stream_len = StreamBytesUsed(stream, dev.harness.last_stream.size());
+
+  if (!Check(CountOpcode(stream, stream_len, AEROGPU_CMD_CREATE_TEXTURE2D) == 1, "CREATE_TEXTURE2D emitted")) {
+    return false;
+  }
+  if (!Check(CountOpcode(stream, stream_len, AEROGPU_CMD_UPLOAD_RESOURCE) == 0,
+             "invalid BC UpdateSubresourceUP(box) should not emit UPLOAD_RESOURCE")) {
+    return false;
+  }
+  if (!Check(CountOpcode(stream, stream_len, AEROGPU_CMD_RESOURCE_DIRTY_RANGE) == 0,
+             "invalid BC UpdateSubresourceUP(box) should not emit RESOURCE_DIRTY_RANGE")) {
+    return false;
+  }
+
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, tex.hResource);
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+#endif
+}
+
+bool TestGuestBackedUpdateSubresourceUPBcTextureBoxRejectsMisaligned() {
+#if AEROGPU_ABI_MINOR < 2
+  // ABI 1.2 adds BC formats.
+  return true;
+#else
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev,
+                            /*want_backing_allocations=*/true,
+                            /*async_fences=*/false),
+             "InitTestDevice(UpdateSubresourceUP invalid box bc tex2d guest-backed)")) {
+    return false;
+  }
+
+  TestResource tex{};
+  if (!Check(CreateStagingTexture2DWithFormat(&dev,
+                                              /*width=*/5,
+                                              /*height=*/5,
+                                              kDxgiFormatBc7Unorm,
+                                              /*cpu_access_flags=*/0,
+                                              &tex),
+             "CreateStagingTexture2DWithFormat(BC7 guest-backed)")) {
+    return false;
+  }
+
+  // Misaligned left (must be multiple of 4 for BC formats).
+  AEROGPU_DDI_BOX box{};
+  box.left = 1;
+  box.right = 5;
+  box.top = 0;
+  box.bottom = 4;
+  box.front = 0;
+  box.back = 1;
+
+  const uint8_t junk[16] = {};
+  dev.device_funcs.pfnUpdateSubresourceUP(dev.hDevice,
+                                          tex.hResource,
+                                          /*dst_subresource=*/0,
+                                          &box,
+                                          junk,
+                                          /*SysMemPitch=*/0,
+                                          /*SysMemSlicePitch=*/0);
+
+  const HRESULT hr = dev.device_funcs.pfnFlush(dev.hDevice);
+  if (!Check(hr == S_OK, "Flush after UpdateSubresourceUP(invalid bc box guest-backed)")) {
+    return false;
+  }
+
+  if (!Check(ValidateStream(dev.harness.last_stream.data(), dev.harness.last_stream.size()), "ValidateStream")) {
+    return false;
+  }
+
+  const uint8_t* stream = dev.harness.last_stream.data();
+  const size_t stream_len = StreamBytesUsed(stream, dev.harness.last_stream.size());
+
+  if (!Check(CountOpcode(stream, stream_len, AEROGPU_CMD_CREATE_TEXTURE2D) == 1, "CREATE_TEXTURE2D emitted")) {
+    return false;
+  }
+  if (!Check(CountOpcode(stream, stream_len, AEROGPU_CMD_UPLOAD_RESOURCE) == 0,
+             "invalid BC UpdateSubresourceUP(box) should not emit UPLOAD_RESOURCE")) {
+    return false;
+  }
+  if (!Check(CountOpcode(stream, stream_len, AEROGPU_CMD_RESOURCE_DIRTY_RANGE) == 0,
+             "invalid BC UpdateSubresourceUP(box) should not emit RESOURCE_DIRTY_RANGE")) {
+    return false;
+  }
+
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, tex.hResource);
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+#endif
+}
+
 bool TestHostOwnedCreateBufferInitialDataUploads() {
   TestDevice dev{};
   if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false, /*async_fences=*/false), "InitTestDevice(CreateResource initial buffer host-owned)")) {
@@ -5444,6 +5590,8 @@ int main() {
   ok &= TestGuestBackedUpdateSubresourceUPTextureBoxDirtyRange();
   ok &= TestHostOwnedUpdateSubresourceUPBcTextureBoxUploads();
   ok &= TestGuestBackedUpdateSubresourceUPBcTextureBoxDirtyRange();
+  ok &= TestHostOwnedUpdateSubresourceUPBcTextureBoxRejectsMisaligned();
+  ok &= TestGuestBackedUpdateSubresourceUPBcTextureBoxRejectsMisaligned();
   ok &= TestHostOwnedCreateBufferInitialDataUploads();
   ok &= TestGuestBackedCreateBufferInitialDataDirtyRange();
   ok &= TestHostOwnedCreateTextureInitialDataUploads();
