@@ -159,8 +159,8 @@ async fn serve_image(
     req_headers: HeaderMap,
     want_body: bool,
 ) -> Response {
-    let meta = match state.store.get_meta(&image_id).await {
-        Ok(meta) => meta,
+    let image = match state.store.get_image(&image_id).await {
+        Ok(image) => image,
         Err(StoreError::NotFound) | Err(StoreError::InvalidImageId { .. }) => {
             return response_with_status(StatusCode::NOT_FOUND, &state, &req_headers);
         }
@@ -171,18 +171,21 @@ async fn serve_image(
         }
         Err(StoreError::Io(err)) => {
             state.metrics.inc_store_error("meta");
-            tracing::error!(error = %err, "store get_meta failed");
+            tracing::error!(error = %err, "store get_image failed");
             return response_with_status(StatusCode::INTERNAL_SERVER_ERROR, &state, &req_headers);
         }
         Err(StoreError::InvalidRange { .. }) => {
-            // `get_meta` doesn't currently produce this, but keep mapping defensive.
+            // `get_image` doesn't currently produce this, but keep mapping defensive.
             state.metrics.inc_store_error("meta");
             return response_with_status(StatusCode::INTERNAL_SERVER_ERROR, &state, &req_headers);
         }
     };
 
+    let image_public = image.public;
+    let meta = image.meta;
+
     let len = meta.size;
-    let cache_control = data_cache_control_value(&state, &req_headers);
+    let cache_control = data_cache_control_value(&state, &req_headers, image_public);
 
     // Conditional requests (`If-None-Match` / `If-Modified-Since`) are evaluated against the
     // ETag we would send on success. Some store implementations may not provide an ETag; in that
@@ -492,7 +495,20 @@ fn insert_data_cache_headers(
     }
 }
 
-fn data_cache_control_value(state: &ImagesState, req_headers: &HeaderMap) -> HeaderValue {
+fn data_cache_control_value(
+    state: &ImagesState,
+    req_headers: &HeaderMap,
+    image_public: bool,
+) -> HeaderValue {
+    // Respect the per-image manifest cacheability. Even if a request is made without credentials,
+    // a manifest-private image must not become publicly cacheable.
+    //
+    // This aligns the bytes endpoints with the safety expectations documented in
+    // `docs/16-disk-image-streaming-auth.md`.
+    if !image_public {
+        return HeaderValue::from_static("private, no-store, no-transform");
+    }
+
     // Treat any request that includes credentials (Authorization header or cookies) as private.
     // This is a conservative default: public disk bytes responses should be cacheable, but
     // authenticated responses must not be cached by shared intermediaries.
