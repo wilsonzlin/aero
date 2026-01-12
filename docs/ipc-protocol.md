@@ -228,6 +228,11 @@ Each message begins with a 16-bit `tag` identifying the variant; the rest is var
 | `0x0104` | `DiskRead` | `u32 id`, `u64 disk_offset`, `u32 len`, `u64 guest_offset` |
 | `0x0105` | `DiskWrite` | `u32 id`, `u64 disk_offset`, `u32 len`, `u64 guest_offset` |
  
+Note: for `DiskRead`/`DiskWrite`, `guest_offset` is a **guest physical address** (GPA). On PC/Q35,
+guest RAM is non-contiguous once it exceeds the PCIe ECAM base (`0xB000_0000`) due to the ECAM/PCI
+hole + high-RAM remap above 4 GiB. Implementations must translate GPAs back into their backing store
+before indexing a flat byte array.
+
 ### 7.2 Events (worker → coordinator)
  
 | Tag | Name | Payload |
