@@ -731,6 +731,19 @@ static bool SupportsTransfer(const AeroGpuDevice* dev) {
   return (major == AEROGPU_ABI_MAJOR) && (minor >= 1);
 }
 
+static bool SupportsSrgbFormats(const AeroGpuDevice* dev) {
+  // ABI 1.2 adds explicit sRGB format variants. When running against an older
+  // host/device ABI, map sRGB DXGI formats to UNORM to keep the command stream
+  // compatible.
+  if (!dev || !dev->adapter || !dev->adapter->umd_private_valid) {
+    return false;
+  }
+  const aerogpu_umd_private_v1& blob = dev->adapter->umd_private;
+  const uint32_t major = blob.device_abi_version_u32 >> 16;
+  const uint32_t minor = blob.device_abi_version_u32 & 0xFFFFu;
+  return (major == AEROGPU_ABI_MAJOR) && (minor >= 2);
+}
+
 static bool SupportsBcFormats(const AeroGpuDevice* dev) {
   if (!dev || !dev->adapter || !dev->adapter->umd_private_valid) {
     return false;
@@ -739,6 +752,25 @@ static bool SupportsBcFormats(const AeroGpuDevice* dev) {
   const uint32_t major = blob.device_abi_version_u32 >> 16;
   const uint32_t minor = blob.device_abi_version_u32 & 0xFFFFu;
   return (major == AEROGPU_ABI_MAJOR) && (minor >= 2);
+}
+
+static uint32_t dxgi_format_to_aerogpu_compat(const AeroGpuDevice* dev, uint32_t dxgi_format) {
+  if (!SupportsSrgbFormats(dev)) {
+    switch (dxgi_format) {
+      case kDxgiFormatB8G8R8A8UnormSrgb:
+        dxgi_format = kDxgiFormatB8G8R8A8Unorm;
+        break;
+      case kDxgiFormatB8G8R8X8UnormSrgb:
+        dxgi_format = kDxgiFormatB8G8R8X8Unorm;
+        break;
+      case kDxgiFormatR8G8B8A8UnormSrgb:
+        dxgi_format = kDxgiFormatR8G8B8A8Unorm;
+        break;
+      default:
+        break;
+    }
+  }
+  return dxgi_format_to_aerogpu(dxgi_format);
 }
 
 static bool SupportsBcFormatsAdapter(const AeroGpuAdapter* adapter) {
@@ -1257,7 +1289,7 @@ void emit_upload_resource_locked(AeroGpuDevice* dev,
 
   HRESULT copy_hr = S_OK;
   if (res->kind == ResourceKind::Texture2D && upload_offset == 0 && upload_size == res->storage.size()) {
-    const uint32_t aer_fmt = dxgi_format_to_aerogpu(res->dxgi_format);
+    const uint32_t aer_fmt = dxgi_format_to_aerogpu_compat(dev, res->dxgi_format);
     if (aer_fmt == AEROGPU_FORMAT_INVALID) {
       copy_hr = E_INVALIDARG;
       goto Unlock;
@@ -1800,7 +1832,7 @@ struct CopyResourceImpl<Ret(AEROGPU_APIENTRY*)(Args...)> {
           return finish(E_INVALIDARG);
         }
 
-        const uint32_t aer_fmt = dxgi_format_to_aerogpu(dst->dxgi_format);
+        const uint32_t aer_fmt = dxgi_format_to_aerogpu_compat(dev, dst->dxgi_format);
         if (aer_fmt == AEROGPU_FORMAT_INVALID) {
           return finish(E_NOTIMPL);
         }
@@ -2597,7 +2629,7 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
       AEROGPU_D3D10_RET_HR(E_NOTIMPL);
     }
 
-    const uint32_t aer_fmt = dxgi_format_to_aerogpu(static_cast<uint32_t>(pDesc->Format));
+    const uint32_t aer_fmt = dxgi_format_to_aerogpu_compat(dev, static_cast<uint32_t>(pDesc->Format));
     if (aer_fmt == AEROGPU_FORMAT_INVALID) {
       deallocate_if_needed();
       res->~AeroGpuResource();
@@ -2957,7 +2989,7 @@ HRESULT AEROGPU_APIENTRY OpenResource(D3D10DDI_HDEVICE hDevice,
     res->kind = ResourceKind::Buffer;
     res->size_bytes = static_cast<uint64_t>(priv.size_bytes);
   } else if (priv.kind == AEROGPU_WDDM_ALLOC_KIND_TEXTURE2D) {
-    const uint32_t aer_fmt = dxgi_format_to_aerogpu(static_cast<uint32_t>(priv.format));
+    const uint32_t aer_fmt = dxgi_format_to_aerogpu_compat(dev, static_cast<uint32_t>(priv.format));
     if (aer_fmt == AEROGPU_FORMAT_INVALID) {
       res->~AeroGpuResource();
       return E_INVALIDARG;
@@ -3266,7 +3298,7 @@ uint64_t resource_total_bytes(const AeroGpuResource* res) {
     case ResourceKind::Buffer:
       return res->size_bytes;
     case ResourceKind::Texture2D: {
-      const uint32_t aer_fmt = dxgi_format_to_aerogpu(res->dxgi_format);
+      const uint32_t aer_fmt = dxgi_format_to_aerogpu_compat(dev, res->dxgi_format);
       if (aer_fmt == AEROGPU_FORMAT_INVALID) {
         return 0;
       }
@@ -3361,7 +3393,7 @@ HRESULT map_resource_locked(AeroGpuDevice* dev,
 
     pMapped->pData = res->storage.empty() ? nullptr : res->storage.data();
     if (res->kind == ResourceKind::Texture2D) {
-      const uint32_t aer_fmt = dxgi_format_to_aerogpu(res->dxgi_format);
+      const uint32_t aer_fmt = dxgi_format_to_aerogpu_compat(dev, res->dxgi_format);
       const uint32_t rows = aerogpu_texture_num_rows(aer_fmt, res->height);
       pMapped->RowPitch = res->row_pitch_bytes;
       pMapped->DepthPitch = res->row_pitch_bytes * rows;
@@ -3440,7 +3472,7 @@ HRESULT map_resource_locked(AeroGpuDevice* dev,
     if (map_type == kD3DMapWriteDiscard) {
       if (res->kind == ResourceKind::Texture2D) {
         const uint32_t pitch = res->mapped_wddm_pitch ? res->mapped_wddm_pitch : res->row_pitch_bytes;
-        const uint32_t aer_fmt = dxgi_format_to_aerogpu(res->dxgi_format);
+        const uint32_t aer_fmt = dxgi_format_to_aerogpu_compat(dev, res->dxgi_format);
         const uint32_t rows = aerogpu_texture_num_rows(aer_fmt, res->height);
         const uint64_t bytes = static_cast<uint64_t>(pitch) * static_cast<uint64_t>(rows);
         if (pitch != 0 && bytes <= static_cast<uint64_t>(SIZE_MAX)) {
@@ -3452,7 +3484,7 @@ HRESULT map_resource_locked(AeroGpuDevice* dev,
     } else if (!is_guest_backed && res->kind == ResourceKind::Texture2D) {
       const uint32_t src_pitch = res->row_pitch_bytes;
       const uint32_t dst_pitch = res->mapped_wddm_pitch ? res->mapped_wddm_pitch : src_pitch;
-      const uint32_t aer_fmt = dxgi_format_to_aerogpu(res->dxgi_format);
+      const uint32_t aer_fmt = dxgi_format_to_aerogpu_compat(dev, res->dxgi_format);
       const uint32_t row_bytes = aerogpu_texture_min_row_pitch_bytes(aer_fmt, res->width);
       const uint32_t rows = aerogpu_texture_num_rows(aer_fmt, res->height);
       if (row_bytes != 0 && rows != 0 && src_pitch != 0 && dst_pitch != 0 &&
@@ -3476,7 +3508,7 @@ HRESULT map_resource_locked(AeroGpuDevice* dev,
       const uint32_t dst_pitch = res->row_pitch_bytes;
       const uint32_t src_pitch = res->mapped_wddm_pitch ? res->mapped_wddm_pitch : dst_pitch;
 
-      const uint32_t aer_fmt = dxgi_format_to_aerogpu(res->dxgi_format);
+      const uint32_t aer_fmt = dxgi_format_to_aerogpu_compat(dev, res->dxgi_format);
       const uint32_t row_bytes = aerogpu_texture_min_row_pitch_bytes(aer_fmt, res->width);
       const uint32_t rows = aerogpu_texture_num_rows(aer_fmt, res->height);
       if (row_bytes != 0 && rows != 0 && src_pitch != 0 && dst_pitch != 0 &&
@@ -3503,7 +3535,7 @@ HRESULT map_resource_locked(AeroGpuDevice* dev,
   if (res->kind == ResourceKind::Texture2D) {
     const uint32_t pitch = res->mapped_wddm_pitch ? res->mapped_wddm_pitch : res->row_pitch_bytes;
     pMapped->RowPitch = pitch;
-    const uint32_t aer_fmt = dxgi_format_to_aerogpu(res->dxgi_format);
+    const uint32_t aer_fmt = dxgi_format_to_aerogpu_compat(dev, res->dxgi_format);
     const uint32_t rows = aerogpu_texture_num_rows(aer_fmt, res->height);
     const uint32_t slice = res->mapped_wddm_slice_pitch ? res->mapped_wddm_slice_pitch : pitch * rows;
     pMapped->DepthPitch = slice;
@@ -3541,7 +3573,7 @@ void unmap_resource_locked(AeroGpuDevice* dev, AeroGpuResource* res, uint32_t su
         const size_t copy_bytes = static_cast<size_t>(std::min<uint64_t>(size, remaining));
         if (copy_bytes) {
           if (res->kind == ResourceKind::Texture2D) {
-            const uint32_t aer_fmt = dxgi_format_to_aerogpu(res->dxgi_format);
+            const uint32_t aer_fmt = dxgi_format_to_aerogpu_compat(dev, res->dxgi_format);
             const uint32_t row_bytes = aerogpu_texture_min_row_pitch_bytes(aer_fmt, res->width);
             const uint32_t rows = aerogpu_texture_num_rows(aer_fmt, res->height);
             const uint32_t src_pitch = res->mapped_wddm_pitch ? res->mapped_wddm_pitch : res->row_pitch_bytes;
@@ -4464,7 +4496,7 @@ void AEROGPU_APIENTRY ClearRenderTargetView(D3D10DDI_HDEVICE hDevice,
     const uint8_t b = float_to_unorm8(rgba[2]);
     const uint8_t a = float_to_unorm8(rgba[3]);
 
-    const uint32_t aer_fmt = dxgi_format_to_aerogpu(res->dxgi_format);
+    const uint32_t aer_fmt = dxgi_format_to_aerogpu_compat(dev, res->dxgi_format);
     const uint32_t bpp = bytes_per_pixel_aerogpu(aer_fmt);
     if (aer_fmt == AEROGPU_FORMAT_INVALID || bpp != 4) {
       // Only maintain CPU-side shadow clears for the uncompressed 32-bit RGBA/BGRA formats
@@ -4958,7 +4990,7 @@ void AEROGPU_APIENTRY Draw(D3D10DDI_HDEVICE hDevice, UINT vertex_count, UINT sta
     if (rt->kind == ResourceKind::Texture2D && vb->kind == ResourceKind::Buffer && rt->width && rt->height &&
         vb->storage.size() >= static_cast<size_t>(dev->current_vb_offset) +
                                 static_cast<size_t>(start_vertex + 3) * static_cast<size_t>(dev->current_vb_stride)) {
-      const uint32_t aer_fmt = dxgi_format_to_aerogpu(rt->dxgi_format);
+      const uint32_t aer_fmt = dxgi_format_to_aerogpu_compat(dev, rt->dxgi_format);
       const uint32_t bpp = bytes_per_pixel_aerogpu(aer_fmt);
       if (aer_fmt == AEROGPU_FORMAT_INVALID || bpp != 4) {
         goto EmitDrawCmd;
@@ -5412,7 +5444,7 @@ void AEROGPU_APIENTRY UpdateSubresourceUP(D3D10DDI_HDEVICE hDevice,
       set_error(dev, E_NOTIMPL);
       return;
     }
-    const uint32_t aer_fmt = dxgi_format_to_aerogpu(res->dxgi_format);
+    const uint32_t aer_fmt = dxgi_format_to_aerogpu_compat(dev, res->dxgi_format);
     if (aer_fmt == AEROGPU_FORMAT_INVALID) {
       set_error(dev, E_INVALIDARG);
       return;
