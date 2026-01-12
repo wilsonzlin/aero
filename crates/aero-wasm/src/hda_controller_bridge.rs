@@ -495,4 +495,26 @@ mod tests {
         mem.read_physical(u64::MAX - 1, &mut buf);
         assert_eq!(buf, [0u8; 8]);
     }
+
+    #[wasm_bindgen_test]
+    fn snapshot_roundtrip_restores_mmio_registers() {
+        let mut guest = vec![0u8; 0x4000];
+        let guest_base = guest.as_mut_ptr() as u32;
+        let guest_size = guest.len() as u32;
+
+        let mut bridge = HdaControllerBridge::new(guest_base, guest_size).unwrap();
+
+        // Mutate a guest-visible register (GCTL).
+        bridge.mmio_write(0x08, 4, 0x1);
+        let before = bridge.mmio_read(0x08, 4);
+
+        let bytes = bridge.save_state();
+
+        // Change state again so restore has something to do.
+        bridge.mmio_write(0x08, 4, 0x0);
+        assert_ne!(bridge.mmio_read(0x08, 4), before);
+
+        bridge.load_state(&bytes).unwrap();
+        assert_eq!(bridge.mmio_read(0x08, 4), before);
+    }
 }
