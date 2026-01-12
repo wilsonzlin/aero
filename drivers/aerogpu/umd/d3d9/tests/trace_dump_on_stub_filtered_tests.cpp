@@ -22,9 +22,9 @@ int main() {
  
   aerogpu::d3d9_trace_init_from_env();
  
-  // The cursor DDI is stubbed, but it should be filtered out here (no dump).
+  // The ProcessVertices DDI is stubbed, but it should be filtered out here (no dump).
   {
-    aerogpu::D3d9TraceCall trace(aerogpu::D3d9TraceFunc::DeviceSetCursorProperties, 0xabc, 0, 0, 0);
+    aerogpu::D3d9TraceCall trace(aerogpu::D3d9TraceFunc::DeviceProcessVertices, 0xabc, 0, 0, 0);
     trace.ret(S_OK);
   }
  
@@ -35,7 +35,7 @@ int main() {
     std::fprintf(stdout, "FAIL: did not expect dump to trigger for filtered-out stub (log=%s)\n", out_path.c_str());
     return 1;
   }
-  if (output.find("Device::SetCursorProperties") != std::string::npos) {
+  if (output.find("Device::ProcessVertices") != std::string::npos) {
     std::fprintf(stdout, "FAIL: did not expect filtered-out entry to appear (log=%s)\n", out_path.c_str());
     return 1;
   }

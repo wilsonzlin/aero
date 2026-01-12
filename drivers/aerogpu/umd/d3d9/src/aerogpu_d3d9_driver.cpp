@@ -1142,6 +1142,46 @@ std::array<uint64_t, 4> d3d9_stub_trace_args(const Args&... args) {
     }                                                                                             \
   }
 
+// Same as AEROGPU_D3D9_DEFINE_DDI_STUB, but without the "stub" log-once and with
+// a name that does not include "(stub)" in trace strings. These entrypoints are
+// treated as benign bring-up no-ops (returning a stable HRESULT) rather than
+// "missing" functionality.
+#define AEROGPU_D3D9_DEFINE_DDI_NOOP(member, trace_func, ok_hr)                                   \
+  template <typename Fn>                                                                          \
+  struct aerogpu_d3d9_noop_##member;                                                              \
+  template <typename Ret, typename... Args>                                                       \
+  struct aerogpu_d3d9_noop_##member<Ret(__stdcall*)(Args...)> {                                   \
+    static Ret __stdcall member(Args... args) {                                                    \
+      const auto packed = d3d9_stub_trace_args(args...);                                          \
+      D3d9TraceCall trace(trace_func, packed[0], packed[1], packed[2], packed[3]);                \
+      if constexpr (std::is_same_v<Ret, void>) {                                                   \
+        (void)trace.ret(ok_hr);                                                                    \
+        return;                                                                                    \
+      }                                                                                            \
+      if constexpr (std::is_same_v<Ret, HRESULT>) {                                                \
+        return trace.ret(ok_hr);                                                                   \
+      }                                                                                            \
+      (void)trace.ret(ok_hr);                                                                      \
+      return Ret{};                                                                                \
+    }                                                                                              \
+  };                                                                                               \
+  template <typename Ret, typename... Args>                                                       \
+  struct aerogpu_d3d9_noop_##member<Ret(*)(Args...)> {                                             \
+    static Ret member(Args... args) {                                                              \
+      const auto packed = d3d9_stub_trace_args(args...);                                          \
+      D3d9TraceCall trace(trace_func, packed[0], packed[1], packed[2], packed[3]);                \
+      if constexpr (std::is_same_v<Ret, void>) {                                                   \
+        (void)trace.ret(ok_hr);                                                                    \
+        return;                                                                                    \
+      }                                                                                            \
+      if constexpr (std::is_same_v<Ret, HRESULT>) {                                                \
+        return trace.ret(ok_hr);                                                                   \
+      }                                                                                            \
+      (void)trace.ret(ok_hr);                                                                      \
+      return Ret{};                                                                                \
+    }                                                                                              \
+  }
+
 // Stubbed entrypoints: keep these non-NULL so the Win7 runtime can call into the
 // UMD without crashing. See `drivers/aerogpu/umd/d3d9/README.md`.
 // (Legacy fixed-function Set*/Get* state is cached and implemented elsewhere.)
@@ -1151,14 +1191,14 @@ std::array<uint64_t, 4> d3d9_stub_trace_args(const Args&... args) {
 
 // D3D9Ex image processing API. Treat as a no-op until the fixed-function path is
 // fully implemented (DWM should not rely on it).
-AEROGPU_D3D9_DEFINE_DDI_STUB(pfnSetConvolutionMonoKernel, D3d9TraceFunc::DeviceSetConvolutionMonoKernel, S_OK);
-AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGenerateMipSubLevels, D3d9TraceFunc::DeviceGenerateMipSubLevels, S_OK);
+AEROGPU_D3D9_DEFINE_DDI_NOOP(pfnSetConvolutionMonoKernel, D3d9TraceFunc::DeviceSetConvolutionMonoKernel, S_OK);
+AEROGPU_D3D9_DEFINE_DDI_NOOP(pfnGenerateMipSubLevels, D3d9TraceFunc::DeviceGenerateMipSubLevels, S_OK);
 
 // Cursor management is not implemented yet, but these can be treated as benign
 // no-ops for bring-up.
-AEROGPU_D3D9_DEFINE_DDI_STUB(pfnSetCursorProperties, D3d9TraceFunc::DeviceSetCursorProperties, S_OK);
-AEROGPU_D3D9_DEFINE_DDI_STUB(pfnSetCursorPosition, D3d9TraceFunc::DeviceSetCursorPosition, S_OK);
-AEROGPU_D3D9_DEFINE_DDI_STUB(pfnShowCursor, D3d9TraceFunc::DeviceShowCursor, S_OK);
+AEROGPU_D3D9_DEFINE_DDI_NOOP(pfnSetCursorProperties, D3d9TraceFunc::DeviceSetCursorProperties, S_OK);
+AEROGPU_D3D9_DEFINE_DDI_NOOP(pfnSetCursorPosition, D3d9TraceFunc::DeviceSetCursorPosition, S_OK);
+AEROGPU_D3D9_DEFINE_DDI_NOOP(pfnShowCursor, D3d9TraceFunc::DeviceShowCursor, S_OK);
 
 // Patch rendering (N-Patch/patches) and ProcessVertices are not supported yet.
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnDrawRectPatch, D3d9TraceFunc::DeviceDrawRectPatch, D3DERR_NOTAVAILABLE);
@@ -1167,7 +1207,7 @@ AEROGPU_D3D9_DEFINE_DDI_STUB(pfnDeletePatch, D3d9TraceFunc::DeviceDeletePatch, D
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnProcessVertices, D3d9TraceFunc::DeviceProcessVertices, D3DERR_NOTAVAILABLE);
 
 // Dialog-box mode impacts present/occlusion semantics; treat as a no-op for bring-up.
-AEROGPU_D3D9_DEFINE_DDI_STUB(pfnSetDialogBoxMode, D3d9TraceFunc::DeviceSetDialogBoxMode, S_OK);
+AEROGPU_D3D9_DEFINE_DDI_NOOP(pfnSetDialogBoxMode, D3d9TraceFunc::DeviceSetDialogBoxMode, S_OK);
 
 // Legacy user-pointer draw path (indexed). Implemented (see device_draw_indexed_primitive_up).
 
@@ -1177,6 +1217,7 @@ AEROGPU_D3D9_DEFINE_DDI_STUB(pfnSetDialogBoxMode, D3d9TraceFunc::DeviceSetDialog
 // (Shader bool/int constant getters are implemented and cached elsewhere.)
 
 #undef AEROGPU_D3D9_DEFINE_DDI_STUB
+#undef AEROGPU_D3D9_DEFINE_DDI_NOOP
 
 // -----------------------------------------------------------------------------
 // Type-safe D3D9 DDI thunks (WDK builds)
@@ -16299,17 +16340,17 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
   if constexpr (aerogpu_has_member_pfnSetCursorProperties<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(
         pfnSetCursorProperties,
-        aerogpu_d3d9_stub_pfnSetCursorProperties<decltype(pDeviceFuncs->pfnSetCursorProperties)>::pfnSetCursorProperties);
+        aerogpu_d3d9_noop_pfnSetCursorProperties<decltype(pDeviceFuncs->pfnSetCursorProperties)>::pfnSetCursorProperties);
   }
   if constexpr (aerogpu_has_member_pfnSetCursorPosition<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(
         pfnSetCursorPosition,
-        aerogpu_d3d9_stub_pfnSetCursorPosition<decltype(pDeviceFuncs->pfnSetCursorPosition)>::pfnSetCursorPosition);
+        aerogpu_d3d9_noop_pfnSetCursorPosition<decltype(pDeviceFuncs->pfnSetCursorPosition)>::pfnSetCursorPosition);
   }
   if constexpr (aerogpu_has_member_pfnShowCursor<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(
         pfnShowCursor,
-        aerogpu_d3d9_stub_pfnShowCursor<decltype(pDeviceFuncs->pfnShowCursor)>::pfnShowCursor);
+        aerogpu_d3d9_noop_pfnShowCursor<decltype(pDeviceFuncs->pfnShowCursor)>::pfnShowCursor);
   }
   if constexpr (aerogpu_has_member_pfnSetPaletteEntries<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(
@@ -16364,7 +16405,7 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
   if constexpr (aerogpu_has_member_pfnSetDialogBoxMode<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(
         pfnSetDialogBoxMode,
-        aerogpu_d3d9_stub_pfnSetDialogBoxMode<decltype(pDeviceFuncs->pfnSetDialogBoxMode)>::pfnSetDialogBoxMode);
+        aerogpu_d3d9_noop_pfnSetDialogBoxMode<decltype(pDeviceFuncs->pfnSetDialogBoxMode)>::pfnSetDialogBoxMode);
   }
 
   AEROGPU_SET_D3D9DDI_FN(pfnSetStreamSource, device_set_stream_source);
@@ -16573,7 +16614,7 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
   if constexpr (aerogpu_has_member_pfnSetConvolutionMonoKernel<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(
         pfnSetConvolutionMonoKernel,
-        aerogpu_d3d9_stub_pfnSetConvolutionMonoKernel<decltype(
+        aerogpu_d3d9_noop_pfnSetConvolutionMonoKernel<decltype(
             pDeviceFuncs->pfnSetConvolutionMonoKernel)>::pfnSetConvolutionMonoKernel);
   }
   if constexpr (aerogpu_has_member_pfnSetAutoGenFilterType<D3D9DDI_DEVICEFUNCS>::value) {
@@ -16591,7 +16632,7 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
   if constexpr (aerogpu_has_member_pfnGenerateMipSubLevels<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(
         pfnGenerateMipSubLevels,
-        aerogpu_d3d9_stub_pfnGenerateMipSubLevels<decltype(
+        aerogpu_d3d9_noop_pfnGenerateMipSubLevels<decltype(
             pDeviceFuncs->pfnGenerateMipSubLevels)>::pfnGenerateMipSubLevels);
   }
 

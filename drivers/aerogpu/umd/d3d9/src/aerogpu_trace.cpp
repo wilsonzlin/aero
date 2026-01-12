@@ -371,11 +371,11 @@ const char* func_name(D3d9TraceFunc func) {
     case D3d9TraceFunc::DeviceSetSoftwareVertexProcessing:
       return "Device::SetSoftwareVertexProcessing";
     case D3d9TraceFunc::DeviceSetCursorProperties:
-      return "Device::SetCursorProperties (stub)";
+      return "Device::SetCursorProperties";
     case D3d9TraceFunc::DeviceSetCursorPosition:
-      return "Device::SetCursorPosition (stub)";
+      return "Device::SetCursorPosition";
     case D3d9TraceFunc::DeviceShowCursor:
-      return "Device::ShowCursor (stub)";
+      return "Device::ShowCursor";
     case D3d9TraceFunc::DeviceSetPaletteEntries:
       return "Device::SetPaletteEntries";
     case D3d9TraceFunc::DeviceSetCurrentTexturePalette:
@@ -397,7 +397,7 @@ const char* func_name(D3d9TraceFunc func) {
     case D3d9TraceFunc::DeviceGetRasterStatus:
       return "Device::GetRasterStatus";
     case D3d9TraceFunc::DeviceSetDialogBoxMode:
-      return "Device::SetDialogBoxMode (stub)";
+      return "Device::SetDialogBoxMode";
     case D3d9TraceFunc::DeviceDrawIndexedPrimitiveUP:
       return "Device::DrawIndexedPrimitiveUP";
     case D3d9TraceFunc::DeviceGetSoftwareVertexProcessing:
@@ -457,13 +457,13 @@ const char* func_name(D3d9TraceFunc func) {
     case D3d9TraceFunc::DeviceGetShaderConstB:
       return "Device::GetShaderConstB";
     case D3d9TraceFunc::DeviceSetConvolutionMonoKernel:
-      return "Device::SetConvolutionMonoKernel (stub)";
+      return "Device::SetConvolutionMonoKernel";
     case D3d9TraceFunc::DeviceSetAutoGenFilterType:
       return "Device::SetAutoGenFilterType";
     case D3d9TraceFunc::DeviceGetAutoGenFilterType:
       return "Device::GetAutoGenFilterType";
     case D3d9TraceFunc::DeviceGenerateMipSubLevels:
-      return "Device::GenerateMipSubLevels (stub)";
+      return "Device::GenerateMipSubLevels";
     case D3d9TraceFunc::DeviceSetPriority:
       return "Device::SetPriority";
     case D3d9TraceFunc::DeviceGetPriority:

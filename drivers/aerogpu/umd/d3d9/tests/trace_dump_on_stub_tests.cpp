@@ -24,18 +24,18 @@ int main() {
  
   // Use an entrypoint that is intentionally stubbed in the bring-up UMD.
   {
-    aerogpu::D3d9TraceCall trace(aerogpu::D3d9TraceFunc::DeviceSetCursorProperties, 0xabc, 0, 0, 0);
+    aerogpu::D3d9TraceCall trace(aerogpu::D3d9TraceFunc::DeviceProcessVertices, 0xabc, 0, 0, 0);
     trace.ret(S_OK);
   }
  
   std::fflush(stderr);
  
   const std::string output = slurp_file(out_path);
-  if (output.find("dump reason=Device::SetCursorProperties (stub)") == std::string::npos) {
-    std::fprintf(stdout, "FAIL: expected dump reason Device::SetCursorProperties (stub) (log=%s)\n", out_path.c_str());
+  if (output.find("dump reason=Device::ProcessVertices (stub)") == std::string::npos) {
+    std::fprintf(stdout, "FAIL: expected dump reason Device::ProcessVertices (stub) (log=%s)\n", out_path.c_str());
     return 1;
   }
-  if (output.find("Device::SetCursorProperties (stub)") == std::string::npos) {
+  if (output.find("Device::ProcessVertices (stub)") == std::string::npos) {
     std::fprintf(stdout, "FAIL: expected entrypoint name to appear in dump (log=%s)\n", out_path.c_str());
     return 1;
   }

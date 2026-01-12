@@ -267,13 +267,13 @@ See:
 Notes:
 
 - On Windows, trace dumps are emitted via `OutputDebugStringA` by default (view with DebugView/WinDbg). If you want to capture trace output to a console/CI log, set `AEROGPU_D3D9_TRACE_STDERR=1` to also echo the output to `stderr`.
-- `AEROGPU_D3D9_TRACE_DUMP_ON_STUB=1` is useful for early bring-up: it dumps once on the first stubbed DDI hit (even when the stub returns `S_OK`).
+- `AEROGPU_D3D9_TRACE_DUMP_ON_STUB=1` is useful for early bring-up: it dumps once on the first stubbed DDI hit (e.g. unsupported patch rendering).
 
 ## Crash-proof D3D9UMDDI vtables (Win7 runtime)
 
 The Win7 D3D9 runtime (and `dwm.exe`) can call a wider set of DDIs than the initial AeroGPU bring-up implementation provides. The UMD **must never** return a partially-populated `D3D9DDI_DEVICEFUNCS` / `D3D9DDI_ADAPTERFUNCS` table where the runtime can call a **NULL** function pointer (that would crash the process before we can even trace the call).
 
-In WDK builds (`AEROGPU_D3D9_USE_WDK_DDI=1`), the UMD populates every *known* function-table member with either a real implementation or a safe stub:
+In WDK builds (`AEROGPU_D3D9_USE_WDK_DDI=1`), the UMD populates every *known* function-table member with either a real implementation, a safe no-op, or a safe stub:
 
 - Stubs log once (`aerogpu-d3d9: stub <name>`)
 - Stubs emit a `D3d9TraceCall` record so trace dumps show which missing DDI was exercised
@@ -282,11 +282,22 @@ In WDK builds (`AEROGPU_D3D9_USE_WDK_DDI=1`), the UMD populates every *known* fu
 
 ### Currently stubbed DDIs
 
-These DDIs are present in the Win7 D3D9UMDDI surface but are not implemented yet.
+These DDIs are present in the Win7 D3D9UMDDI surface but are not implemented yet (they currently return `D3DERR_NOTAVAILABLE`):
 
-Note: several legacy fixed-function/resource state paths are cached (Set*/Get*
-round-trip) but are not currently emitted to the AeroGPU command stream. This
-includes:
+- `pfnDrawRectPatch` / `pfnDrawTriPatch` / `pfnDeletePatch` / `pfnProcessVertices`
+
+### Bring-up no-op DDIs
+
+These DDIs are treated as benign no-ops for bring-up (returning `S_OK`) and are **not** tagged as stubs in the trace output:
+
+- `pfnSetConvolutionMonoKernel`
+- `pfnGenerateMipSubLevels`
+- `pfnSetCursorProperties` / `pfnSetCursorPosition` / `pfnShowCursor`
+- `pfnSetDialogBoxMode`
+
+### Cached legacy state (Set*/Get* round-trip)
+
+Several fixed-function/resource state paths are cached for deterministic `Get*` queries and state-block compatibility, but are not currently emitted to the AeroGPU command stream. This includes:
 
 - texture stage state (D3DTSS_*)
 - transforms / clip planes / N-patch mode
@@ -295,13 +306,6 @@ includes:
 - palettes / clip status / gamma ramp
 - resource priority
 - autogen filter type
-- `pfnSetConvolutionMonoKernel` (no-op, returns `S_OK`)
-- `pfnGenerateMipSubLevels` (stubbed for completeness)
-- `pfnSetCursorProperties` / `pfnSetCursorPosition` / `pfnShowCursor`,
-  (no-op, returns `S_OK`)
-- `pfnDrawRectPatch` / `pfnDrawTriPatch` / `pfnDeletePatch` / `pfnProcessVertices`
-  (returns `D3DERR_NOTAVAILABLE`)
-- `pfnSetDialogBoxMode` (no-op, returns `S_OK`)
 
 ### Caps/feature gating
 
