@@ -1785,4 +1785,30 @@ mod tests {
         // Drain semantics.
         assert!(m.mem.take_dirty_pages().is_empty());
     }
+
+    #[test]
+    fn dirty_snapshot_includes_device_writes_to_ram() {
+        let cfg = MachineConfig {
+            ram_size_bytes: 16 * 1024 * 1024,
+            ..Default::default()
+        };
+
+        let mut src = Machine::new(cfg.clone()).unwrap();
+        let base = src.take_snapshot_full().unwrap();
+
+        // Simulate a DMA/device write by bypassing `SystemMemory` and writing directly to the
+        // physical bus RAM backend.
+        let addr = 0x2000u64;
+        let data = [0xAAu8, 0xBB, 0xCC, 0xDD];
+        src.mem.inner.borrow_mut().write_physical(addr, &data);
+
+        // Take a dirty snapshot diff and ensure the restored VM observes the change.
+        let diff = src.take_snapshot_dirty().unwrap();
+
+        let mut restored = Machine::new(cfg).unwrap();
+        restored.restore_snapshot_bytes(&base).unwrap();
+        restored.restore_snapshot_bytes(&diff).unwrap();
+
+        assert_eq!(restored.read_physical_bytes(addr, data.len()), data);
+    }
 }
