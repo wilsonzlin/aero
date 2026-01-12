@@ -1755,6 +1755,81 @@ impl PcPlatform {
         hda.controller_mut().process(&mut mem, output_frames);
     }
 
+    /// Reset the platform back to a deterministic "power-on" baseline.
+    ///
+    /// This is intended for higher layers that need a repeatable reset sequence (e.g.
+    /// `aero_machine::Machine::reset()` and snapshot restore flows).
+    ///
+    /// # Semantics
+    ///
+    /// - Guest RAM is **not** reallocated or cleared. The underlying RAM backing and its contents
+    ///   are preserved.
+    /// - Chipset state is reset (A20 is disabled).
+    /// - Deterministic time sources are reset (`ManualClock` set to `0`) and timer devices are
+    ///   reset (PIT, RTC, HPET, LAPIC timer).
+    /// - Interrupt routing is reset to the initial legacy-PIC mode (`PlatformInterrupts::reset`).
+    /// - PCI core state is reset:
+    ///   - PCI config address latch (port `0xCF8`) is cleared.
+    ///   - `PciIntxRouter` bookkeeping is cleared.
+    ///   - `bios_post(...)` is rerun to reset PCI devices and deterministically reassign BARs.
+    /// - ACPI PM and i8042 controller state is reset via their port-level reset hooks.
+    /// - Any pending [`ResetEvent`]s are cleared.
+    pub fn reset(&mut self) {
+        // Reset deterministic time first so any device re-initialization sees `t=0`.
+        self.clock.set_ns(0);
+
+        // Reset interrupt controller complex (PIC/IOAPIC/LAPIC + IMCR + LAPIC timer clock).
+        self.interrupts.borrow_mut().reset();
+
+        // Reset chipset-level state (A20 starts disabled on a PC reset).
+        self.chipset.a20().set_enabled(false);
+
+        // Reset port-mapped devices that provide `PortIoDevice::reset` (i8042, ACPI PM, reset ctrl,
+        // A20 gate, PCI I/O window handlers, etc). This intentionally does *not* rebuild the port
+        // map.
+        self.io.reset();
+
+        // Reset PIT while preserving IRQ wiring (reconnect after recreating the device state).
+        {
+            let mut pit = self.pit.borrow_mut();
+            *pit = Pit8254::new();
+            pit.connect_irq0_to_platform_interrupts(self.interrupts.clone());
+        }
+
+        // Reset RTC CMOS to a deterministic baseline and re-publish the RAM size fields.
+        {
+            let irq8 = PlatformIrqLine::isa(self.interrupts.clone(), 8);
+            let mut rtc = self.rtc.borrow_mut();
+            *rtc = RtcCmos::new(self.clock.clone(), irq8);
+            rtc.set_memory_size_bytes(self.memory.ram().size());
+        }
+
+        // Reset HPET state (MMIO mapping retains the same shared `Rc`).
+        {
+            let mut hpet = self.hpet.borrow_mut();
+            *hpet = hpet::Hpet::new_default(self.clock.clone());
+        }
+
+        // Reset PCI config-mechanism latch state (0xCF8) and rerun BIOS POST for deterministic BAR
+        // allocation / device reset.
+        {
+            self.pci_cfg
+                .borrow_mut()
+                .io_write(aero_devices::pci::PCI_CFG_ADDR_PORT, 4, 0);
+
+            self.pci_intx = PciIntxRouter::new(PciIntxRouterConfig::default());
+
+            let mut pci_cfg = self.pci_cfg.borrow_mut();
+            bios_post(pci_cfg.bus_mut(), &mut self.pci_allocator).unwrap();
+        }
+
+        // Reset host-side tick accumulators.
+        self.uhci_ns_remainder = 0;
+
+        // Clear any reset requests that were pending before the reset was processed.
+        self.reset_events.borrow_mut().clear();
+    }
+
     pub fn process_nvme(&mut self) {
         let Some(nvme) = self.nvme.as_ref() else {
             return;
