@@ -9093,17 +9093,28 @@ HRESULT AEROGPU_D3D9_CALL device_set_scissor(
     dev->scissor_rect = *pRect;
   }
   dev->scissor_enabled = enabled;
+  // Keep D3DRS_SCISSORTESTENABLE (174) in sync with the dedicated scissor state,
+  // since some D3D9 runtimes route SCISSORTESTENABLE through SetScissorRect DDIs.
+  //
+  // Use the numeric value to avoid requiring the Windows SDK/WDK in portable
+  // builds.
+  constexpr uint32_t kD3dRsScissorTestEnable = 174u;
+  if (kD3dRsScissorTestEnable < 256) {
+    dev->render_states[kD3dRsScissorTestEnable] = dev->scissor_enabled ? 1u : 0u;
+    stateblock_record_render_state_locked(dev, kD3dRsScissorTestEnable, dev->render_states[kD3dRsScissorTestEnable]);
+  }
   stateblock_record_scissor_locked(dev, dev->scissor_rect, dev->scissor_enabled);
 
   int32_t x = 0;
   int32_t y = 0;
   int32_t w = 0x7FFFFFFF;
   int32_t h = 0x7FFFFFFF;
-  if (enabled && pRect) {
-    x = static_cast<int32_t>(pRect->left);
-    y = static_cast<int32_t>(pRect->top);
-    w = static_cast<int32_t>(pRect->right - pRect->left);
-    h = static_cast<int32_t>(pRect->bottom - pRect->top);
+  if (enabled) {
+    const RECT& rect = dev->scissor_rect;
+    x = static_cast<int32_t>(rect.left);
+    y = static_cast<int32_t>(rect.top);
+    w = static_cast<int32_t>(rect.right - rect.left);
+    h = static_cast<int32_t>(rect.bottom - rect.top);
   }
 
   auto* cmd = append_fixed_locked<aerogpu_cmd_set_scissor>(dev, AEROGPU_CMD_SET_SCISSOR);
@@ -9212,6 +9223,40 @@ HRESULT AEROGPU_D3D9_CALL device_set_render_state(
     dev->render_states[state] = value;
   }
   stateblock_record_render_state_locked(dev, state, value);
+
+  // Some D3D9 runtimes may treat SCISSORTESTENABLE as a plain render state (DDI),
+  // while the AeroGPU command stream uses an explicit scissor packet. Keep the
+  // cached scissor enable flag in sync and emit the matching scissor command so
+  // rendering and GetRenderState stay consistent.
+  constexpr uint32_t kD3dRsScissorTestEnable = 174u; // D3DRS_SCISSORTESTENABLE
+  if (state == kD3dRsScissorTestEnable) {
+    const BOOL enabled = value ? TRUE : FALSE;
+    if ((dev->scissor_enabled ? TRUE : FALSE) != (enabled ? TRUE : FALSE)) {
+      dev->scissor_enabled = enabled;
+      stateblock_record_scissor_locked(dev, dev->scissor_rect, dev->scissor_enabled);
+
+      int32_t x = 0;
+      int32_t y = 0;
+      int32_t w = 0x7FFFFFFF;
+      int32_t h = 0x7FFFFFFF;
+      if (dev->scissor_enabled) {
+        const RECT& rect = dev->scissor_rect;
+        x = static_cast<int32_t>(rect.left);
+        y = static_cast<int32_t>(rect.top);
+        w = static_cast<int32_t>(rect.right - rect.left);
+        h = static_cast<int32_t>(rect.bottom - rect.top);
+      }
+
+      auto* sc = append_fixed_locked<aerogpu_cmd_set_scissor>(dev, AEROGPU_CMD_SET_SCISSOR);
+      if (!sc) {
+        return trace.ret(E_OUTOFMEMORY);
+      }
+      sc->x = x;
+      sc->y = y;
+      sc->width = w;
+      sc->height = h;
+    }
+  }
 
   auto* cmd = append_fixed_locked<aerogpu_cmd_set_render_state>(dev, AEROGPU_CMD_SET_RENDER_STATE);
   if (!cmd) {
@@ -9980,6 +10025,12 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
     dev->scissor_rect = sb->scissor_rect;
     dev->scissor_enabled = sb->scissor_enabled;
 
+    // Keep D3DRS_SCISSORTESTENABLE (174) in sync with the dedicated scissor state
+    // so GetRenderState and state blocks observe consistent values.
+    constexpr uint32_t kD3dRsScissorTestEnable = 174u;
+    dev->render_states[kD3dRsScissorTestEnable] = dev->scissor_enabled ? 1u : 0u;
+    stateblock_record_render_state_locked(dev, kD3dRsScissorTestEnable, dev->render_states[kD3dRsScissorTestEnable]);
+
     int32_t x = 0;
     int32_t y = 0;
     int32_t w = 0x7FFFFFFF;
@@ -10008,6 +10059,39 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
       continue;
     }
     dev->render_states[i] = sb->render_state_values[i];
+
+    // SCISSORTESTENABLE (174) is consumed via the dedicated scissor packet. When
+    // it is applied via a state block, propagate the enable bit to the scissor
+    // state and emit an updated scissor packet using the current scissor rect.
+    if (i == 174u) {
+      const BOOL enabled = sb->render_state_values[i] ? TRUE : FALSE;
+      if ((dev->scissor_enabled ? TRUE : FALSE) != (enabled ? TRUE : FALSE)) {
+        dev->scissor_enabled = enabled;
+
+        int32_t x = 0;
+        int32_t y = 0;
+        int32_t w = 0x7FFFFFFF;
+        int32_t h = 0x7FFFFFFF;
+        if (dev->scissor_enabled) {
+          const RECT& rect = dev->scissor_rect;
+          x = static_cast<int32_t>(rect.left);
+          y = static_cast<int32_t>(rect.top);
+          w = static_cast<int32_t>(rect.right - rect.left);
+          h = static_cast<int32_t>(rect.bottom - rect.top);
+        }
+
+        auto* sc = append_fixed_locked<aerogpu_cmd_set_scissor>(dev, AEROGPU_CMD_SET_SCISSOR);
+        if (!sc) {
+          return E_OUTOFMEMORY;
+        }
+        sc->x = x;
+        sc->y = y;
+        sc->width = w;
+        sc->height = h;
+        stateblock_record_scissor_locked(dev, dev->scissor_rect, dev->scissor_enabled);
+      }
+    }
+
     auto* cmd = append_fixed_locked<aerogpu_cmd_set_render_state>(dev, AEROGPU_CMD_SET_RENDER_STATE);
     if (!cmd) {
       return E_OUTOFMEMORY;
