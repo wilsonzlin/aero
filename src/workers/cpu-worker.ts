@@ -111,6 +111,46 @@ function i64ToBigInt(v: bigint): bigint {
   return BigInt.asIntN(64, v);
 }
 
+function readMaybeNumber(vm: unknown, key: string): number {
+  try {
+    if (!vm || (typeof vm !== 'object' && typeof vm !== 'function')) return 0;
+
+    let value: unknown;
+    try {
+      value = (vm as Record<string, unknown>)[key];
+    } catch {
+      return 0;
+    }
+
+    // wasm-bindgen has shipped both `get foo()` and `foo()` styles for similar APIs;
+    // accept either shape without throwing.
+    if (typeof value === 'function') {
+      try {
+        value = (value as (...args: never[]) => unknown).call(vm);
+      } catch {
+        return 0;
+      }
+    }
+
+    if (typeof value === 'number') {
+      return Number.isFinite(value) ? value : 0;
+    }
+
+    if (typeof value === 'bigint') {
+      return u64AsNumber(value);
+    }
+
+    if (typeof value === 'string') {
+      const n = Number(value);
+      return Number.isFinite(n) ? n : 0;
+    }
+
+    return 0;
+  } catch {
+    return 0;
+  }
+}
+
 async function runTieredVm(iterations: number, threshold: number) {
   let memory: WebAssembly.Memory;
   try {
