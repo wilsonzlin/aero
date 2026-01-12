@@ -187,6 +187,7 @@ class _QuietHandler(http.server.BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
             self.send_header("Connection", "close")
+            self.close_connection = True
             self.end_headers()
             try:
                 self.wfile.write(body)
