@@ -500,6 +500,13 @@ pub struct E1000Device {
 
     rx_pending: VecDeque<Vec<u8>>,
     tx_out: VecDeque<Vec<u8>>,
+
+    // Work flags set by register-only MMIO/PIO writes.
+    //
+    // These exist so that `poll()` (the only DMA-capable entrypoint) can cheaply
+    // skip work when no doorbell-like register writes have occurred.
+    tx_needs_poll: bool,
+    rx_needs_flush: bool,
 }
 
 impl E1000Device {
@@ -539,6 +546,8 @@ impl E1000Device {
             other_regs: HashMap::new(),
             rx_pending: VecDeque::new(),
             tx_out: VecDeque::new(),
+            tx_needs_poll: false,
+            rx_needs_flush: false,
         };
         dev.init_eeprom_from_mac();
         dev.init_phy();
@@ -713,8 +722,15 @@ impl E1000Device {
     }
 
     pub fn poll(&mut self, mem: &mut dyn MemoryBus) {
-        self.process_tx(mem);
-        self.flush_rx_pending(mem);
+        if self.tx_needs_poll || self.tx_work_pending() {
+            self.process_tx(mem);
+            self.tx_needs_poll = self.tx_work_pending();
+        }
+
+        if self.rx_needs_flush || !self.rx_pending.is_empty() {
+            self.flush_rx_pending(mem);
+            self.rx_needs_flush = !self.rx_pending.is_empty();
+        }
     }
 
     /// Queue a host→guest Ethernet frame for later delivery.
@@ -731,6 +747,7 @@ impl E1000Device {
             self.rx_pending.pop_front();
         }
         self.rx_pending.push_back(frame);
+        self.rx_needs_flush = true;
     }
 
     /// Host → guest path.
@@ -785,10 +802,20 @@ impl E1000Device {
         self.ra_valid = true;
         self.init_eeprom_from_mac();
         self.init_phy();
+
+        self.tx_needs_poll = false;
+        self.rx_needs_flush = false;
     }
 
     fn update_irq_level(&mut self) {
         self.irq_level = (self.icr & self.ims) != 0;
+    }
+
+    fn tx_work_pending(&self) -> bool {
+        match self.tx_ring_desc_count() {
+            Some(desc_count) if desc_count != 0 => self.tdh % desc_count != self.tdt % desc_count,
+            _ => self.tdh != self.tdt,
+        }
     }
 
     fn mmio_peek_u32(&self, offset: u32) -> u32 {
@@ -906,6 +933,7 @@ impl E1000Device {
 
             REG_RCTL => {
                 self.rctl = value;
+                self.rx_needs_flush = true;
             }
             REG_TCTL => self.tctl = value,
 
@@ -915,6 +943,7 @@ impl E1000Device {
             REG_RDH => self.rdh = value,
             REG_RDT => {
                 self.rdt = value;
+                self.rx_needs_flush = true;
             }
 
             REG_TDBAL => self.tdbal = value,
@@ -923,6 +952,7 @@ impl E1000Device {
             REG_TDH => self.tdh = value,
             REG_TDT => {
                 self.tdt = value;
+                self.tx_needs_poll = true;
             }
 
             REG_RAL0 => {
@@ -1736,6 +1766,10 @@ impl IoSnapshot for E1000Device {
             }
         }
 
+        // Derive DMA work flags from restored state.
+        dev.tx_needs_poll = dev.tx_work_pending();
+        dev.rx_needs_flush = !dev.rx_pending.is_empty();
+
         *self = dev;
         Ok(())
     }
@@ -1849,6 +1883,18 @@ mod tests {
         fn write_physical(&mut self, paddr: u64, buf: &[u8]) {
             let addr = paddr as usize;
             self.mem[addr..addr + buf.len()].copy_from_slice(buf);
+        }
+    }
+
+    struct PanicMem;
+
+    impl MemoryBus for PanicMem {
+        fn read_physical(&mut self, _paddr: u64, _buf: &mut [u8]) {
+            panic!("unexpected DMA read");
+        }
+
+        fn write_physical(&mut self, _paddr: u64, _buf: &[u8]) {
+            panic!("unexpected DMA write");
         }
     }
 
@@ -1986,6 +2032,100 @@ mod tests {
         let updated = TxDesc::from_bytes(read_desc::<{ TxDesc::LEN }>(&mut mem, 0x1000));
         assert_ne!(updated.status & TXD_STAT_DD, 0);
         assert!(dev.irq_level());
+    }
+
+    #[test]
+    fn register_only_doorbells_do_not_touch_guest_memory_until_poll() {
+        let mut mem = TestMem::new(0x40_000);
+        let mut dev = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
+        let mut panic_mem = PanicMem;
+
+        // --- TX: REG_TDT doorbell sets pending work, but must not DMA until poll.
+        dev.mmio_write_u32_reg(REG_TDBAL, 0x1000);
+        dev.mmio_write_u32_reg(REG_TDLEN, (TxDesc::LEN as u32) * 4);
+        dev.mmio_write_u32_reg(REG_TDH, 0);
+        dev.mmio_write_u32_reg(REG_TDT, 0);
+        dev.mmio_write_u32_reg(REG_TCTL, TCTL_EN);
+
+        let pkt = [0x11u8; MIN_L2_FRAME_LEN];
+        mem.write_bytes(0x2000, &pkt);
+        let desc0 = TxDesc {
+            buffer_addr: 0x2000,
+            length: pkt.len() as u16,
+            cso: 0,
+            cmd: TXD_CMD_EOP | TXD_CMD_RS,
+            status: 0,
+            css: 0,
+            special: 0,
+        };
+        mem.write_bytes(0x1000, &desc0.to_bytes());
+
+        // Register-only doorbell.
+        dev.mmio_write_u32_reg(REG_TDT, 1);
+
+        // No DMA yet.
+        assert!(dev.pop_tx_frame().is_none());
+        let unchanged = TxDesc::from_bytes(read_desc::<{ TxDesc::LEN }>(&mut mem, 0x1000));
+        assert_eq!(unchanged.status & TXD_STAT_DD, 0);
+
+        // Polling is the only place DMA should occur.
+        let err = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            dev.poll(&mut panic_mem);
+        }));
+        assert!(err.is_err());
+
+        dev.poll(&mut mem);
+        assert_eq!(dev.pop_tx_frame().as_deref(), Some(pkt.as_slice()));
+        let updated = TxDesc::from_bytes(read_desc::<{ TxDesc::LEN }>(&mut mem, 0x1000));
+        assert_ne!(updated.status & TXD_STAT_DD, 0);
+
+        // --- RX: REG_RCTL/REG_RDT must not DMA until poll.
+        dev.mmio_write_u32_reg(REG_RDBAL, 0x3000);
+        dev.mmio_write_u32_reg(REG_RDLEN, (RxDesc::LEN as u32) * 2);
+        dev.mmio_write_u32_reg(REG_RDH, 0);
+        dev.mmio_write_u32_reg(REG_RDT, 1);
+
+        let desc0 = RxDesc {
+            buffer_addr: 0x4000,
+            length: 0,
+            checksum: 0,
+            status: 0,
+            errors: 0,
+            special: 0,
+        };
+        let desc1 = RxDesc {
+            buffer_addr: 0x5000,
+            ..desc0
+        };
+        mem.write_bytes(0x3000, &desc0.to_bytes());
+        mem.write_bytes(0x3010, &desc1.to_bytes());
+
+        // Sentinel to detect unexpected writes.
+        mem.write_bytes(0x4000, &[0x5a; 32]);
+
+        let frame = vec![0x22u8; MIN_L2_FRAME_LEN];
+        dev.enqueue_rx_frame(frame.clone());
+
+        dev.mmio_write_u32_reg(REG_RCTL, RCTL_EN);
+
+        // No DMA yet.
+        assert_eq!(mem.read_bytes(0x4000, 32), vec![0x5a; 32]);
+        let unchanged = RxDesc::from_bytes(read_desc::<{ RxDesc::LEN }>(&mut mem, 0x3000));
+        assert_eq!(unchanged.status, 0);
+
+        let err = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            dev.poll(&mut panic_mem);
+        }));
+        assert!(err.is_err());
+
+        dev.poll(&mut mem);
+        assert_eq!(mem.read_bytes(0x4000, frame.len()), frame);
+        let updated = RxDesc::from_bytes(read_desc::<{ RxDesc::LEN }>(&mut mem, 0x3000));
+        assert_eq!(updated.length as usize, frame.len());
+        assert_eq!(
+            updated.status & (RXD_STAT_DD | RXD_STAT_EOP),
+            RXD_STAT_DD | RXD_STAT_EOP
+        );
     }
 
     #[test]
