@@ -1,4 +1,5 @@
 use aero_devices::pci::profile::SATA_AHCI_ICH9;
+use aero_devices::pci::PciDevice;
 use aero_devices_storage::ata::{ATA_CMD_IDENTIFY, ATA_CMD_READ_DMA_EXT};
 use aero_interrupts::apic::IOAPIC_MMIO_BASE;
 use aero_pc_platform::PcPlatform;
@@ -171,6 +172,31 @@ fn pc_platform_gates_ahci_mmio_on_pci_command_register() {
     // Re-enable decoding: state should reflect that the write above did not reach the device.
     write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0002);
     assert_eq!(pc.memory.read_u32(bar5_base + HBA_GHC) & (GHC_AE | GHC_IE), GHC_AE | GHC_IE);
+}
+
+#[test]
+fn pc_platform_ahci_mmio_syncs_device_command_before_each_access() {
+    let mut pc = PcPlatform::new_with_ahci(2 * 1024 * 1024);
+    let bdf = SATA_AHCI_ICH9.bdf;
+    let bar5_base = read_ahci_bar5_base(&mut pc);
+
+    let command = read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04) & 0xffff;
+    assert_ne!(command & 0x2, 0, "BIOS POST should enable memory decoding");
+
+    // Simulate a stale device-side PCI command register copy (the platform maintains a separate
+    // guest-facing PCI config space for enumeration).
+    let ahci = pc.ahci.as_ref().expect("AHCI is enabled").clone();
+    ahci.borrow_mut().config_mut().set_command(0);
+
+    // With COMMAND.MEM disabled in the device model, direct MMIO reads return 0xFFFF_FFFF.
+    assert_eq!(ahci.borrow_mut().mmio_read(0x10, 4) as u32, 0xFFFF_FFFF);
+
+    // But through the platform's MMIO bus, accesses should still succeed because the MMIO router
+    // syncs the live PCI command register into the device model before dispatch.
+    assert_eq!(pc.memory.read_u32(bar5_base + 0x10), 0x0001_0300);
+
+    // The above access should have resynchronized the device model's command register.
+    assert_eq!(ahci.borrow_mut().mmio_read(0x10, 4) as u32, 0x0001_0300);
 }
 
 #[test]
