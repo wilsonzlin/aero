@@ -70,20 +70,39 @@ struct WasmPhysBus {
 
 impl WasmPhysBus {
     #[inline]
-    fn ptr(&self, paddr: u64, len: usize) -> Option<*const u8> {
-        let len_u64 = len as u64;
-        let end = paddr.checked_add(len_u64)?;
-        if end > self.guest_size {
-            return None;
+    fn ram_offset(&self, paddr: u64, len: usize) -> Option<u64> {
+        match crate::guest_phys::translate_guest_paddr_range(self.guest_size, paddr, len) {
+            crate::guest_phys::GuestRamRange::Ram { ram_offset } => Some(ram_offset),
+            crate::guest_phys::GuestRamRange::Hole | crate::guest_phys::GuestRamRange::OutOfBounds => {
+                None
+            }
         }
+    }
 
-        let linear = (self.guest_base as u64).checked_add(paddr)?;
-        Some(linear as *const u8)
+    #[inline]
+    fn ptr(&self, paddr: u64, len: usize) -> Option<*const u8> {
+        let ram_offset = self.ram_offset(paddr, len)?;
+        let linear = (self.guest_base as u64).checked_add(ram_offset)?;
+        let linear_u32 = u32::try_from(linear).ok()?;
+        Some(linear_u32 as *const u8)
     }
 
     #[inline]
     fn ptr_mut(&self, paddr: u64, len: usize) -> Option<*mut u8> {
         Some(self.ptr(paddr, len)? as *mut u8)
+    }
+
+    #[inline]
+    fn any_ram_byte(&self, paddr: u64, len: usize) -> bool {
+        for i in 0..len {
+            let Some(addr) = paddr.checked_add(i as u64) else {
+                return false;
+            };
+            if self.ram_offset(addr, 1).is_some() {
+                return true;
+            }
+        }
+        false
     }
 
     #[inline]
@@ -123,7 +142,20 @@ impl MemoryBus for WasmPhysBus {
     fn read_u16(&mut self, paddr: u64) -> u16 {
         match self.read_scalar::<2>(paddr) {
             Some(bytes) => u16::from_le_bytes(bytes),
-            None => js_mmio_read(paddr, 2) as u16,
+            None => {
+                if !self.any_ram_byte(paddr, 2) {
+                    return js_mmio_read(paddr, 2) as u16;
+                }
+                let mut bytes = [0u8; 2];
+                for (i, slot) in bytes.iter_mut().enumerate() {
+                    let Some(addr) = paddr.checked_add(i as u64) else {
+                        *slot = 0xFF;
+                        continue;
+                    };
+                    *slot = self.read_u8(addr);
+                }
+                u16::from_le_bytes(bytes)
+            }
         }
     }
 
@@ -131,7 +163,20 @@ impl MemoryBus for WasmPhysBus {
     fn read_u32(&mut self, paddr: u64) -> u32 {
         match self.read_scalar::<4>(paddr) {
             Some(bytes) => u32::from_le_bytes(bytes),
-            None => js_mmio_read(paddr, 4),
+            None => {
+                if !self.any_ram_byte(paddr, 4) {
+                    return js_mmio_read(paddr, 4);
+                }
+                let mut bytes = [0u8; 4];
+                for (i, slot) in bytes.iter_mut().enumerate() {
+                    let Some(addr) = paddr.checked_add(i as u64) else {
+                        *slot = 0xFF;
+                        continue;
+                    };
+                    *slot = self.read_u8(addr);
+                }
+                u32::from_le_bytes(bytes)
+            }
         }
     }
 
@@ -140,6 +185,17 @@ impl MemoryBus for WasmPhysBus {
         match self.read_scalar::<8>(paddr) {
             Some(bytes) => u64::from_le_bytes(bytes),
             None => {
+                if self.any_ram_byte(paddr, 8) {
+                    let mut bytes = [0u8; 8];
+                    for (i, slot) in bytes.iter_mut().enumerate() {
+                        let Some(addr) = paddr.checked_add(i as u64) else {
+                            *slot = 0xFF;
+                            continue;
+                        };
+                        *slot = self.read_u8(addr);
+                    }
+                    return u64::from_le_bytes(bytes);
+                }
                 let lo = js_mmio_read(paddr, 4) as u64;
                 let hi_addr = match paddr.checked_add(4) {
                     Some(v) => v,
@@ -164,7 +220,17 @@ impl MemoryBus for WasmPhysBus {
         if self.write_scalar::<2>(paddr, value.to_le_bytes()) {
             return;
         }
-        js_mmio_write(paddr, 2, u32::from(value));
+        if !self.any_ram_byte(paddr, 2) {
+            js_mmio_write(paddr, 2, u32::from(value));
+            return;
+        }
+        let bytes = value.to_le_bytes();
+        for (i, byte) in bytes.into_iter().enumerate() {
+            let Some(addr) = paddr.checked_add(i as u64) else {
+                continue;
+            };
+            self.write_u8(addr, byte);
+        }
     }
 
     #[inline]
@@ -172,12 +238,32 @@ impl MemoryBus for WasmPhysBus {
         if self.write_scalar::<4>(paddr, value.to_le_bytes()) {
             return;
         }
-        js_mmio_write(paddr, 4, value);
+        if !self.any_ram_byte(paddr, 4) {
+            js_mmio_write(paddr, 4, value);
+            return;
+        }
+        let bytes = value.to_le_bytes();
+        for (i, byte) in bytes.into_iter().enumerate() {
+            let Some(addr) = paddr.checked_add(i as u64) else {
+                continue;
+            };
+            self.write_u8(addr, byte);
+        }
     }
 
     #[inline]
     fn write_u64(&mut self, paddr: u64, value: u64) {
         if self.write_scalar::<8>(paddr, value.to_le_bytes()) {
+            return;
+        }
+        if self.any_ram_byte(paddr, 8) {
+            let bytes = value.to_le_bytes();
+            for (i, byte) in bytes.into_iter().enumerate() {
+                let Some(addr) = paddr.checked_add(i as u64) else {
+                    continue;
+                };
+                self.write_u8(addr, byte);
+            }
             return;
         }
         let lo = value as u32;
@@ -245,9 +331,11 @@ impl WasmVm {
         } else {
             guest_size as u64
         };
-        // Keep guest RAM below the PCI MMIO BAR window. This ensures that any future
-        // MMIO forwarding based on "addr >= guest_size" cannot be corrupted by a
-        // huge guest RAM size overlapping PCI BAR space.
+        // Keep the *backing* guest RAM below the PCI MMIO BAR allocation window so the JS-side PCI
+        // bus never overlaps the shared wasm linear memory guest region.
+        //
+        // Note: the guest physical layout may still remap "high RAM" above 4GiB when the backing
+        // RAM size exceeds the PCIe ECAM base (PC/Q35 E820 layout).
         let guest_size_u64 = guest_size_u64.min(crate::guest_layout::GUEST_PCI_MMIO_BASE);
 
         let end = (guest_base as u64)

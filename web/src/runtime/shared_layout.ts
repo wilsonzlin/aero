@@ -201,6 +201,18 @@ export interface GuestRamLayout {
   wasm_pages: number;
 }
 
+/**
+ * Guest physical address layout (PC/Q35 E820) used by the wasm web runtime.
+ *
+ * When the configured guest RAM exceeds {@link LOW_RAM_END}, the "extra" bytes are remapped above
+ * 4GiB and the region {@link LOW_RAM_END}..4GiB becomes a hole (ECAM + PCI/MMIO).
+ *
+ * Keep these constants in sync with the Rust-side mapping helper in
+ * `crates/aero-wasm/src/guest_phys.rs`.
+ */
+export const LOW_RAM_END = 0xb000_0000;
+export const HIGH_RAM_START = 0x1_0000_0000;
+
 // -----------------------------------------------------------------------------
 // Demo guest-memory layout (temporary)
 // -----------------------------------------------------------------------------
@@ -314,6 +326,18 @@ function toU32(value: number): number {
   return int >>> 0;
 }
 
+function toU64(value: number): number {
+  // JS numbers are IEEE754 doubles; we can exactly represent up to 2^53-1.
+  if (!Number.isFinite(value)) {
+    throw new RangeError(`Expected a finite integer address, got ${String(value)}`);
+  }
+  const int = Math.trunc(value);
+  if (int < 0 || int > Number.MAX_SAFE_INTEGER) {
+    throw new RangeError(`Expected an integer in [0, 2^53), got ${String(value)}`);
+  }
+  return int;
+}
+
 export function computeGuestRamLayout(desiredGuestBytes: number): GuestRamLayout {
   const desired = clampToU32(desiredGuestBytes);
   const guestBase = align(RUNTIME_RESERVED_BYTES, WASM_PAGE_BYTES);
@@ -340,12 +364,45 @@ export function computeGuestRamLayout(desiredGuestBytes: number): GuestRamLayout
   };
 }
 
-export function guestToLinear(layout: GuestRamLayout, paddr: number): number {
-  const addr = toU32(paddr);
-  if (addr >= layout.guest_size) {
-    throw new RangeError(`Guest physical address out of bounds: 0x${addr.toString(16)} (guest_size=${layout.guest_size})`);
+/**
+ * Translate a guest physical address into a backing-RAM offset (0..guest_size) when (and only
+ * when) the address is backed by RAM.
+ *
+ * Returns `null` for ECAM/PCI holes or out-of-range addresses.
+ *
+ * This mirrors the PC/Q35 address translation in `crates/aero-wasm/src/guest_phys.rs`.
+ */
+export function guestPaddrToRamOffset(layout: GuestRamLayout, paddr: number): number | null {
+  const addr = toU64(paddr);
+  const ramBytes = toU64(layout.guest_size);
+
+  if (ramBytes <= LOW_RAM_END) {
+    return addr < ramBytes ? addr : null;
   }
-  return layout.guest_base + addr;
+
+  // Low RAM.
+  if (addr < LOW_RAM_END) return addr;
+
+  // High RAM remap.
+  const highLen = ramBytes - LOW_RAM_END;
+  const highEnd = HIGH_RAM_START + highLen;
+  if (addr >= HIGH_RAM_START && addr < highEnd) {
+    return LOW_RAM_END + (addr - HIGH_RAM_START);
+  }
+
+  // Hole or out-of-range.
+  return null;
+}
+
+export function guestToLinear(layout: GuestRamLayout, paddr: number): number {
+  const addr = toU64(paddr);
+  const ramOffset = guestPaddrToRamOffset(layout, addr);
+  if (ramOffset === null) {
+    throw new RangeError(
+      `Guest physical address is not backed by RAM: 0x${addr.toString(16)} (guest_size=0x${layout.guest_size.toString(16)})`,
+    );
+  }
+  return layout.guest_base + ramOffset;
 }
 
 export function guestRangeInBounds(layout: GuestRamLayout, paddr: number, byteLength: number): boolean {

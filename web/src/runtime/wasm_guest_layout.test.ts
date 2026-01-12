@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { GUEST_PCI_MMIO_BASE, computeGuestRamLayout, guestToLinear } from "./shared_layout";
+import {
+  GUEST_PCI_MMIO_BASE,
+  HIGH_RAM_START,
+  LOW_RAM_END,
+  computeGuestRamLayout,
+  guestPaddrToRamOffset,
+  guestToLinear,
+} from "./shared_layout";
 import { assertWasmMemoryWiring } from "./wasm_memory_probe";
 import { initWasm } from "./wasm_loader";
 
@@ -21,6 +28,31 @@ describe("runtime/wasm_guest_layout", () => {
     const layout = computeGuestRamLayout(0xffff_ffff);
     expect(layout.guest_size).toBe(GUEST_PCI_MMIO_BASE);
     expect(layout.guest_base + layout.guest_size).toBeLessThanOrEqual(0x1_0000_0000);
+  });
+
+  it("guestPaddrToRamOffset maps small RAM configurations identity", () => {
+    const layout = { guest_base: 0x1000, guest_size: 0x2000, runtime_reserved: 0, wasm_pages: 0 };
+    expect(guestPaddrToRamOffset(layout, 0)).toBe(0);
+    expect(guestPaddrToRamOffset(layout, 0x1234)).toBe(0x1234);
+    expect(guestPaddrToRamOffset(layout, layout.guest_size - 1)).toBe(layout.guest_size - 1);
+    expect(guestPaddrToRamOffset(layout, layout.guest_size)).toBeNull();
+    expect(guestToLinear(layout, 0x10)).toBe(layout.guest_base + 0x10);
+  });
+
+  it("guestPaddrToRamOffset rejects the ECAM/PCI hole and maps high RAM above 4GiB", () => {
+    const layout = {
+      guest_base: 0x1000,
+      guest_size: LOW_RAM_END + 0x2000,
+      runtime_reserved: 0,
+      wasm_pages: 0,
+    };
+
+    expect(guestPaddrToRamOffset(layout, 0)).toBe(0);
+    expect(guestPaddrToRamOffset(layout, LOW_RAM_END)).toBeNull();
+    expect(guestPaddrToRamOffset(layout, HIGH_RAM_START)).toBe(LOW_RAM_END);
+
+    expect(() => guestToLinear(layout, LOW_RAM_END)).toThrow();
+    expect(guestToLinear(layout, HIGH_RAM_START)).toBe(layout.guest_base + LOW_RAM_END);
   });
 
   it("maps guest physical memory into wasm linear memory after the runtime reserved region", async () => {
