@@ -1973,7 +1973,7 @@ def main() -> int:
                             result_code = 1
                             break
 
-                    print(f"FAIL: QEMU exited before selftest result marker (exit code: {proc.returncode})")
+                    print(f"FAIL: QEMU_EXITED: QEMU exited before selftest result marker (exit code: {proc.returncode})")
                     _print_tail(serial_log)
                     _print_qemu_stderr_tail(qemu_stderr_log)
                     result_code = 3
@@ -1982,7 +1982,7 @@ def main() -> int:
                 time.sleep(0.25)
 
             if result_code is None:
-                print("FAIL: timed out waiting for AERO_VIRTIO_SELFTEST result marker")
+                print("FAIL: TIMEOUT: timed out waiting for AERO_VIRTIO_SELFTEST result marker")
                 _print_tail(serial_log)
                 result_code = 2
         finally:
