@@ -478,6 +478,9 @@ fn restore_snapshot_impl<R: Read, T: SnapshotTarget>(
                     let mut cpus = Vec::with_capacity(count.min(64));
                     for _ in 0..count {
                         let entry_len = section_reader.read_u64_le()?;
+                        if entry_len > section_reader.limit() {
+                            return Err(SnapshotError::Corrupt("truncated CPU entry"));
+                        }
                         let mut entry_reader = (&mut section_reader).take(entry_len);
                         let cpu = VcpuSnapshot::decode_v1(&mut entry_reader, 64 * 1024 * 1024)?;
                         // Skip any forward-compatible additions to the vCPU entry.
@@ -507,6 +510,9 @@ fn restore_snapshot_impl<R: Read, T: SnapshotTarget>(
                     let mut cpus = Vec::with_capacity(count.min(64));
                     for _ in 0..count {
                         let entry_len = section_reader.read_u64_le()?;
+                        if entry_len > section_reader.limit() {
+                            return Err(SnapshotError::Corrupt("truncated CPU entry"));
+                        }
                         let mut entry_reader = (&mut section_reader).take(entry_len);
                         let cpu = VcpuSnapshot::decode_v2(&mut entry_reader, 64 * 1024 * 1024)?;
                         // Skip any forward-compatible additions to the vCPU entry.

@@ -9,6 +9,7 @@ const MAX_DISK_PATH_LEN: u32 = 64 * 1024;
 const MAX_DISK_REFS: usize = 256;
 const MAX_VCPU_INTERNAL_LEN: u64 = 64 * 1024 * 1024;
 const MAX_DEVICE_ENTRY_LEN: u64 = 64 * 1024 * 1024;
+const MAX_PENDING_INTERRUPTS: u32 = 1024 * 1024;
 const FXSAVE_AREA_SIZE: usize = 512;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -797,13 +798,15 @@ impl CpuInternalState {
             .len()
             .try_into()
             .map_err(|_| SnapshotError::Corrupt("too many pending interrupts"))?;
+        if len > MAX_PENDING_INTERRUPTS {
+            return Err(SnapshotError::Corrupt("too many pending interrupts"));
+        }
         w.write_u32_le(len)?;
         w.write_bytes(&self.pending_external_interrupts)?;
         Ok(())
     }
 
     pub fn decode<R: Read>(r: &mut R) -> Result<Self> {
-        const MAX_PENDING_INTERRUPTS: u32 = 1024 * 1024;
         let interrupt_inhibit = r.read_u8()?;
         let len = r.read_u32_le()?;
         if len > MAX_PENDING_INTERRUPTS {

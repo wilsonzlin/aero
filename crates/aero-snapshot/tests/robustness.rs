@@ -3,9 +3,9 @@
 use std::io::{Cursor, ErrorKind};
 
 use aero_snapshot::{
-    inspect_snapshot, restore_snapshot, save_snapshot, Compression, CpuState, DeviceId,
-    DeviceState, DiskOverlayRef, DiskOverlayRefs, MmuState, RamMode, RamWriteOptions, Result,
-    SaveOptions, SectionId, SnapshotError, SnapshotMeta, SnapshotSource, SnapshotTarget,
+    inspect_snapshot, restore_snapshot, save_snapshot, Compression, CpuInternalState, CpuState,
+    DeviceId, DeviceState, DiskOverlayRef, DiskOverlayRefs, MmuState, RamMode, RamWriteOptions,
+    Result, SaveOptions, SectionId, SnapshotError, SnapshotMeta, SnapshotSource, SnapshotTarget,
     VcpuSnapshot, SNAPSHOT_ENDIANNESS_LITTLE, SNAPSHOT_MAGIC, SNAPSHOT_VERSION_V1,
 };
 
@@ -508,6 +508,19 @@ fn minimal_snapshot_with_ram_payload(ram_payload: &[u8]) -> Vec<u8> {
     push_section(&mut bytes, SectionId::CPU, 1, 0, &cpu_payload);
     push_section(&mut bytes, SectionId::RAM, 1, 0, ram_payload);
     bytes
+}
+
+#[test]
+fn cpu_internal_state_encode_rejects_too_many_pending_interrupts() {
+    let state = CpuInternalState {
+        interrupt_inhibit: 0,
+        pending_external_interrupts: vec![0u8; 1024 * 1024 + 1],
+    };
+    let err = state.to_device_state().unwrap_err();
+    assert!(matches!(
+        err,
+        SnapshotError::Corrupt("too many pending interrupts")
+    ));
 }
 
 #[test]
@@ -1064,6 +1077,39 @@ fn restore_snapshot_rejects_truncated_unknown_section_payload() {
         SnapshotError::Io(e) => assert_eq!(e.kind(), ErrorKind::UnexpectedEof),
         other => panic!("expected io UnexpectedEof, got {other:?}"),
     }
+}
+
+#[test]
+fn restore_snapshot_rejects_truncated_cpus_entry_len() {
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(SNAPSHOT_MAGIC);
+    bytes.extend_from_slice(&SNAPSHOT_VERSION_V1.to_le_bytes());
+    bytes.push(SNAPSHOT_ENDIANNESS_LITTLE);
+    bytes.push(0);
+    bytes.extend_from_slice(&0u32.to_le_bytes());
+
+    let vcpu = VcpuSnapshot {
+        apic_id: 0,
+        cpu: CpuState::default(),
+        internal_state: Vec::new(),
+    };
+    let mut entry = Vec::new();
+    vcpu.encode_v2(&mut entry).unwrap();
+
+    // Declare an entry_len larger than the bytes present in the section. Previously, restore would
+    // accept this (since it didn't validate entry_len against section bounds).
+    let mut cpus_payload = Vec::new();
+    cpus_payload.extend_from_slice(&1u32.to_le_bytes());
+    cpus_payload.extend_from_slice(&((entry.len() as u64) + 1).to_le_bytes());
+    cpus_payload.extend_from_slice(&entry);
+    push_section(&mut bytes, SectionId::CPUS, 2, 0, &cpus_payload);
+
+    let mut target = DummyTarget::new(0);
+    let err = restore_snapshot(&mut Cursor::new(bytes), &mut target).unwrap_err();
+    assert!(matches!(
+        err,
+        SnapshotError::Corrupt("truncated CPU entry")
+    ));
 }
 
 #[test]
