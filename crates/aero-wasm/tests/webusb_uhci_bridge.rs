@@ -9,6 +9,7 @@ mod common;
 
 const REG_USBCMD: u32 = 0x00;
 const REG_USBINTR: u32 = 0x04;
+const REG_FRNUM: u32 = 0x06;
 const REG_FRBASEADD: u32 = 0x08;
 const REG_PORTSC1: u32 = 0x10;
 
@@ -265,4 +266,33 @@ fn webusb_uhci_bridge_ticks_port_reset_without_pci_bus_master_enable() {
         0,
         "expected PORTSC.PR to clear after 50ms reset window"
     );
+}
+
+#[wasm_bindgen_test]
+fn uhci_controller_bridge_advances_frnum_without_pci_bus_master_enable() {
+    let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x4000);
+
+    let mut bridge =
+        UhciControllerBridge::new(guest_base, guest_size).expect("UhciControllerBridge::new ok");
+
+    bridge.io_write(REG_FRNUM as u16, 2, 0);
+    bridge.io_write(REG_USBCMD as u16, 2, USBCMD_RUN);
+    bridge.step_frames(5);
+
+    let frnum = bridge.io_read(REG_FRNUM as u16, 2) & 0x7ff;
+    assert_eq!(frnum, 5, "expected FRNUM to advance while RUN is set");
+}
+
+#[wasm_bindgen_test]
+fn webusb_uhci_bridge_advances_frnum_without_pci_bus_master_enable() {
+    let (guest_base, _guest_size) = common::alloc_guest_region_bytes(0x4000);
+
+    let mut bridge = WebUsbUhciBridge::new(guest_base);
+
+    bridge.io_write(REG_FRNUM, 2, 0);
+    bridge.io_write(REG_USBCMD, 2, USBCMD_RUN);
+    bridge.step_frames(5);
+
+    let frnum = bridge.io_read(REG_FRNUM, 2) & 0x7ff;
+    assert_eq!(frnum, 5, "expected FRNUM to advance while RUN is set");
 }
