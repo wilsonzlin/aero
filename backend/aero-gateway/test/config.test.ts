@@ -4,6 +4,10 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { loadConfig } from '../src/config.js';
+import {
+  L2_TUNNEL_DEFAULT_MAX_CONTROL_PAYLOAD_BYTES,
+  L2_TUNNEL_DEFAULT_MAX_FRAME_PAYLOAD_BYTES,
+} from '../src/protocol/l2Tunnel.js';
 
 test('loadConfig applies defaults and derives ALLOWED_ORIGINS from PUBLIC_BASE_URL', () => {
   const config = loadConfig({});
@@ -120,4 +124,13 @@ test('loadConfig surfaces L2 tunnel payload limits from aero-l2-proxy env var al
   });
   assert.equal(config.L2_MAX_FRAME_PAYLOAD_BYTES, 9000);
   assert.equal(config.L2_MAX_CONTROL_PAYLOAD_BYTES, 321);
+});
+
+test('loadConfig treats zero L2 payload limit env vars as unset (defaults apply)', () => {
+  const config = loadConfig({
+    AERO_L2_MAX_FRAME_PAYLOAD: '0',
+    AERO_L2_MAX_CONTROL_PAYLOAD: '0',
+  });
+  assert.equal(config.L2_MAX_FRAME_PAYLOAD_BYTES, L2_TUNNEL_DEFAULT_MAX_FRAME_PAYLOAD_BYTES);
+  assert.equal(config.L2_MAX_CONTROL_PAYLOAD_BYTES, L2_TUNNEL_DEFAULT_MAX_CONTROL_PAYLOAD_BYTES);
 });
