@@ -174,6 +174,10 @@ type AudioOutputHdaPciDeviceStartMessage = {
   gain?: number;
 };
 
+type AudioOutputHdaPciDeviceStopMessage = {
+  type: "audioOutputHdaPciDevice.stop";
+};
+
 type AudioOutputHdaPciDeviceReadyMessage = {
   type: "audioOutputHdaPciDevice.ready";
   pci: { bus: number; device: number; function: number };
@@ -248,6 +252,7 @@ let hdaDemoClock: AudioFrameClock | null = null;
 let hdaDemoClockStarted = false;
 
 let pendingHdaPciDeviceStart: AudioOutputHdaPciDeviceStartMessage | null = null;
+let hdaPciDeviceBar0Base: bigint | null = null;
 
 function hdaDemoTargetFrames(capacityFrames: number, sampleRate: number): number {
   // Default to ~200ms buffered, but scale up for larger ring buffers so the demo has
@@ -470,11 +475,51 @@ function guestBoundsCheck(offset: number, len: number): void {
   }
 }
 
+// MMIO register offsets used by the HDA PCI playback harness.
+const HDA_REG_INTCTL = 0x20n;
+const HDA_REG_CORBCTL = 0x4cn;
+const HDA_REG_RIRBCTL = 0x5cn;
+const HDA_REG_SD0_CTL = 0x80n;
+
+function stopHdaPciDevice(): void {
+  // Best-effort: stop any in-flight start request first.
+  pendingHdaPciDeviceStart = null;
+
+  const client = io;
+  const bar0Base = hdaPciDeviceBar0Base;
+  hdaPciDeviceBar0Base = null;
+
+  if (!client || bar0Base === null) return;
+
+  try {
+    // Stop the stream DMA engine.
+    client.mmioWrite(bar0Base + HDA_REG_SD0_CTL, 4, 0);
+  } catch {
+    // ignore
+  }
+  try {
+    // Stop CORB/RIRB DMA engines.
+    client.mmioWrite(bar0Base + HDA_REG_CORBCTL, 1, 0);
+    client.mmioWrite(bar0Base + HDA_REG_RIRBCTL, 1, 0);
+  } catch {
+    // ignore
+  }
+  try {
+    // Disable interrupts (best-effort).
+    client.mmioWrite(bar0Base + HDA_REG_INTCTL, 4, 0);
+  } catch {
+    // ignore
+  }
+}
+
 async function startHdaPciDevice(msg: AudioOutputHdaPciDeviceStartMessage): Promise<void> {
   const client = io;
   if (!client) {
     throw new Error("I/O client is not initialized yet");
   }
+
+  // Ensure any previous stream started by this harness is stopped before reprogramming.
+  stopHdaPciDevice();
 
   // Stream descriptor control bits (subset).
   const SD_CTL_SRST = 1 << 0;
@@ -542,6 +587,7 @@ async function startHdaPciDevice(msg: AudioOutputHdaPciDeviceStartMessage): Prom
   if (bar0Base === 0n) {
     throw new Error("HDA BAR0 is zero after enabling MEM decoding.");
   }
+  hdaPciDeviceBar0Base = bar0Base;
 
   // MMIO register offsets (subset).
   const REG_GCTL = 0x08n;
@@ -1573,6 +1619,11 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
 
   if ((msg as Partial<AudioHdaCaptureSyntheticStartMessage>).type === "audioHdaCaptureSynthetic.start") {
     void startHdaCaptureSynthetic(msg as AudioHdaCaptureSyntheticStartMessage);
+    return;
+  }
+
+  if ((msg as Partial<AudioOutputHdaPciDeviceStopMessage>).type === "audioOutputHdaPciDevice.stop") {
+    stopHdaPciDevice();
     return;
   }
 

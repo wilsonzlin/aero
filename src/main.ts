@@ -940,6 +940,13 @@ function renderAudioPanel(): HTMLElement {
       window.clearInterval(hdaPciDeviceTimer);
       hdaPciDeviceTimer = null;
     }
+    // Best-effort: ask the CPU worker to stop the HDA playback stream so it doesn't keep running
+    // in the background while other harness demos reuse the same worker runtime.
+    try {
+      workerCoordinator.getWorker("cpu")?.postMessage({ type: "audioOutputHdaPciDevice.stop" });
+    } catch {
+      // ignore
+    }
     // Detach the AudioWorklet ring from the worker runtime and restore the default
     // demo-mode routing (CPU worker owns audio output).
     try {
