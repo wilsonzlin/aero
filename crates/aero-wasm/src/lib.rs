@@ -1957,6 +1957,22 @@ impl Machine {
         self.inner.inject_browser_key(code, pressed);
     }
 
+    pub fn inject_mouse_motion(&mut self, dx: i32, dy: i32, wheel: i32) {
+        self.inner.inject_mouse_motion(dx, dy, wheel);
+    }
+
+    pub fn inject_mouse_left(&mut self, pressed: bool) {
+        self.inner.inject_mouse_left(pressed);
+    }
+
+    pub fn inject_mouse_right(&mut self, pressed: bool) {
+        self.inner.inject_mouse_right(pressed);
+    }
+
+    pub fn inject_mouse_middle(&mut self, pressed: bool) {
+        self.inner.inject_mouse_middle(pressed);
+    }
+
     // -------------------------------------------------------------------------
     // Snapshots (canonical machine)
     // -------------------------------------------------------------------------
