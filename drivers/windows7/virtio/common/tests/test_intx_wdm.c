@@ -280,6 +280,56 @@ static void test_spurious_interrupt(void)
     assert(intx.IsrStatusRegister == NULL);
 }
 
+static void test_isr_defensive_null_service_context(void)
+{
+    VIRTIO_INTX intx;
+    volatile UCHAR isr_reg = 0;
+    CM_PARTIAL_RESOURCE_DESCRIPTOR desc;
+    NTSTATUS status;
+
+    desc = make_int_desc();
+
+    status = VirtioIntxConnect(NULL, &desc, &isr_reg, NULL, NULL, NULL, NULL, &intx);
+    assert(status == STATUS_SUCCESS);
+
+    /* Corrupt the stored service context to NULL: ISR should just return FALSE. */
+    assert(intx.InterruptObject != NULL);
+    intx.InterruptObject->ServiceContext = NULL;
+
+    isr_reg = VIRTIO_PCI_ISR_QUEUE_INTERRUPT;
+    assert(WdkTestTriggerInterrupt(intx.InterruptObject) == FALSE);
+
+    /* Without a service context, the ISR can't ACK (it doesn't know the register). */
+    assert(isr_reg == VIRTIO_PCI_ISR_QUEUE_INTERRUPT);
+
+    VirtioIntxDisconnect(&intx);
+}
+
+static void test_isr_defensive_null_isr_register(void)
+{
+    VIRTIO_INTX intx;
+    volatile UCHAR isr_reg = 0;
+    CM_PARTIAL_RESOURCE_DESCRIPTOR desc;
+    NTSTATUS status;
+
+    desc = make_int_desc();
+
+    status = VirtioIntxConnect(NULL, &desc, &isr_reg, NULL, NULL, NULL, NULL, &intx);
+    assert(status == STATUS_SUCCESS);
+
+    /* Corrupt IsrStatusRegister: ISR should return FALSE without touching memory. */
+    intx.IsrStatusRegister = NULL;
+
+    isr_reg = VIRTIO_PCI_ISR_QUEUE_INTERRUPT;
+    assert(WdkTestTriggerInterrupt(intx.InterruptObject) == FALSE);
+    assert(isr_reg == VIRTIO_PCI_ISR_QUEUE_INTERRUPT);
+    assert(intx.SpuriousCount == 0);
+    assert(intx.IsrCount == 0);
+    assert(intx.DpcInFlight == 0);
+
+    VirtioIntxDisconnect(&intx);
+}
+
 static void test_null_callbacks_safe(void)
 {
     VIRTIO_INTX intx;
@@ -729,6 +779,8 @@ int main(void)
     test_disconnect_uninitialized_is_safe();
     test_disconnect_is_idempotent();
     test_spurious_interrupt();
+    test_isr_defensive_null_service_context();
+    test_isr_defensive_null_isr_register();
     test_null_callbacks_safe();
     test_spurious_interrupt_does_not_affect_pending();
     test_unknown_isr_bits_no_callbacks_without_evt_dpc();
