@@ -1,6 +1,11 @@
 // Binary IPC protocol shared by coordinator and workers.
 //
 // This mirrors `crates/aero-ipc/src/protocol.rs`.
+//
+// Note: diskRead/diskWrite `guestOffset` values are guest physical addresses (GPAs). On PC/Q35,
+// guest RAM is non-contiguous once it exceeds the PCIe ECAM base (`0xB000_0000`) due to the
+// ECAM/PCI/MMIO hole + high-RAM remap above 4 GiB; servers must translate GPAs back into their
+// flat guest-RAM backing store before indexing a `Uint8Array`.
 
 export type Command =
   | { kind: "nop"; seq: number }
