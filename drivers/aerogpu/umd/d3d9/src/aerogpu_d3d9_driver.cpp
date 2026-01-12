@@ -1136,28 +1136,15 @@ AEROGPU_D3D9_DEFINE_DDI_STUB(
     pfnGetSoftwareVertexProcessing, D3d9TraceFunc::DeviceGetSoftwareVertexProcessing, D3DERR_NOTAVAILABLE);
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetTransform, D3d9TraceFunc::DeviceGetTransform, D3DERR_NOTAVAILABLE);
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetClipPlane, D3d9TraceFunc::DeviceGetClipPlane, D3DERR_NOTAVAILABLE);
-AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetViewport, D3d9TraceFunc::DeviceGetViewport, D3DERR_NOTAVAILABLE);
-AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetScissorRect, D3d9TraceFunc::DeviceGetScissorRect, D3DERR_NOTAVAILABLE);
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetMaterial, D3d9TraceFunc::DeviceGetMaterial, D3DERR_NOTAVAILABLE);
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetLight, D3d9TraceFunc::DeviceGetLight, D3DERR_NOTAVAILABLE);
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetLightEnable, D3d9TraceFunc::DeviceGetLightEnable, D3DERR_NOTAVAILABLE);
-AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetRenderTarget, D3d9TraceFunc::DeviceGetRenderTarget, D3DERR_NOTAVAILABLE);
-AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetDepthStencil, D3d9TraceFunc::DeviceGetDepthStencil, D3DERR_NOTAVAILABLE);
-AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetTexture, D3d9TraceFunc::DeviceGetTexture, D3DERR_NOTAVAILABLE);
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetTextureStageState, D3d9TraceFunc::DeviceGetTextureStageState, D3DERR_NOTAVAILABLE);
-AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetSamplerState, D3d9TraceFunc::DeviceGetSamplerState, D3DERR_NOTAVAILABLE);
-AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetRenderState, D3d9TraceFunc::DeviceGetRenderState, D3DERR_NOTAVAILABLE);
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetPaletteEntries, D3d9TraceFunc::DeviceGetPaletteEntries, D3DERR_NOTAVAILABLE);
 AEROGPU_D3D9_DEFINE_DDI_STUB(
     pfnGetCurrentTexturePalette, D3d9TraceFunc::DeviceGetCurrentTexturePalette, D3DERR_NOTAVAILABLE);
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetNPatchMode, D3d9TraceFunc::DeviceGetNPatchMode, D3DERR_NOTAVAILABLE);
-AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetFVF, D3d9TraceFunc::DeviceGetFVF, D3DERR_NOTAVAILABLE);
-AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetVertexDecl, D3d9TraceFunc::DeviceGetVertexDecl, D3DERR_NOTAVAILABLE);
-AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetStreamSource, D3d9TraceFunc::DeviceGetStreamSource, D3DERR_NOTAVAILABLE);
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetStreamSourceFreq, D3d9TraceFunc::DeviceGetStreamSourceFreq, D3DERR_NOTAVAILABLE);
-AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetIndices, D3d9TraceFunc::DeviceGetIndices, D3DERR_NOTAVAILABLE);
-AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetShader, D3d9TraceFunc::DeviceGetShader, D3DERR_NOTAVAILABLE);
-AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetShaderConstF, D3d9TraceFunc::DeviceGetShaderConstF, D3DERR_NOTAVAILABLE);
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetShaderConstI, D3d9TraceFunc::DeviceGetShaderConstI, D3DERR_NOTAVAILABLE);
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetShaderConstB, D3d9TraceFunc::DeviceGetShaderConstB, D3DERR_NOTAVAILABLE);
 
@@ -10329,6 +10316,12 @@ HRESULT device_get_shader_const_f_impl(
   const uint32_t st = d3d9_to_u32(stage);
   const uint32_t start = d3d9_to_u32(start_reg);
   const uint32_t count = d3d9_to_u32(vec4_count);
+  if (pData && count != 0) {
+    // Keep behavior deterministic even if the caller ignores a failure HRESULT.
+    // Cap the memset to a sane upper bound (the register file is 256 float4s).
+    const uint32_t init_regs = std::min(count, 256u);
+    std::memset(pData, 0, static_cast<size_t>(init_regs) * 4 * sizeof(float));
+  }
   D3d9TraceCall trace(D3d9TraceFunc::DeviceGetShaderConstF,
                       d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
                       static_cast<uint64_t>(st),
