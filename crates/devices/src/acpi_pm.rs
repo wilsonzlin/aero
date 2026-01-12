@@ -13,10 +13,13 @@
 //! [`crate::reset_ctrl`], not this module.
 
 use crate::irq::{IrqLine, NoIrq};
+use crate::{clock::Clock, clock::NullClock};
+use aero_io_snapshot::io::state::{
+    IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
+};
 use aero_platform::io::{IoPortBus, PortIoDevice};
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::time::Instant;
 
 /// `PM1a_CNT.SCI_EN` (ACPI spec).
 pub const PM1_CNT_SCI_EN: u16 = 1 << 0;
@@ -109,9 +112,10 @@ impl Default for AcpiPmCallbacks {
 }
 
 /// ACPI PM I/O device model.
-pub struct AcpiPmIo {
+pub struct AcpiPmIo<C: Clock = NullClock> {
     cfg: AcpiPmConfig,
     callbacks: AcpiPmCallbacks,
+    clock: C,
 
     pm1_sts: u16,
     pm1_en: u16,
@@ -121,28 +125,40 @@ pub struct AcpiPmIo {
     gpe0_en: Vec<u8>,
 
     sci_level: bool,
-    timer_start: Instant,
+    timer_base_ns: u64,
 }
 
-impl AcpiPmIo {
+impl AcpiPmIo<NullClock> {
     pub fn new(cfg: AcpiPmConfig) -> Self {
         Self::new_with_callbacks(cfg, AcpiPmCallbacks::default())
     }
 
     pub fn new_with_callbacks(cfg: AcpiPmConfig, callbacks: AcpiPmCallbacks) -> Self {
+        Self::new_with_callbacks_and_clock(cfg, callbacks, NullClock)
+    }
+}
+
+impl<C: Clock> AcpiPmIo<C> {
+    pub fn new_with_callbacks_and_clock(
+        cfg: AcpiPmConfig,
+        callbacks: AcpiPmCallbacks,
+        clock: C,
+    ) -> Self {
         let half = (cfg.gpe0_blk_len as usize) / 2;
         let mut dev = Self {
             cfg,
             callbacks,
+            clock,
             pm1_sts: 0,
             pm1_en: 0,
             pm1_cnt: 0,
             gpe0_sts: vec![0; half],
             gpe0_en: vec![0; half],
             sci_level: false,
-            timer_start: Instant::now(),
+            timer_base_ns: 0,
         };
 
+        dev.reset_timer_base();
         if dev.cfg.start_enabled {
             dev.pm1_cnt |= PM1_CNT_SCI_EN;
         }
@@ -180,6 +196,14 @@ impl AcpiPmIo {
         self.trigger_pm1_event(PM1_STS_PWRBTN);
     }
 
+    /// Inject bits into a GPE0 status byte and refresh SCI.
+    pub fn trigger_gpe0(&mut self, byte_index: usize, sts_bits: u8) {
+        if let Some(slot) = self.gpe0_sts.get_mut(byte_index) {
+            *slot |= sts_bits;
+            self.update_sci();
+        }
+    }
+
     fn drive_sci_level(&mut self, level: bool) {
         if level == self.sci_level {
             return;
@@ -204,9 +228,17 @@ impl AcpiPmIo {
     }
 
     fn pm_timer_value(&self) -> u32 {
-        let nanos = self.timer_start.elapsed().as_nanos();
-        let ticks = nanos.saturating_mul(PM_TIMER_FREQUENCY_HZ) / 1_000_000_000u128;
+        let elapsed_ns = self.clock.now_ns().wrapping_sub(self.timer_base_ns) as u128;
+        let ticks = elapsed_ns.saturating_mul(PM_TIMER_FREQUENCY_HZ) / 1_000_000_000u128;
         (ticks as u32) & PM_TIMER_MASK_24BIT
+    }
+
+    fn timer_elapsed_ns(&self) -> u64 {
+        self.clock.now_ns().wrapping_sub(self.timer_base_ns)
+    }
+
+    fn reset_timer_base(&mut self) {
+        self.timer_base_ns = self.clock.now_ns();
     }
 
     fn set_acpi_enabled(&mut self, enabled: bool) {
@@ -366,12 +398,85 @@ impl AcpiPmIo {
         for b in &mut self.gpe0_en {
             *b = 0;
         }
-        self.timer_start = Instant::now();
+        self.reset_timer_base();
         self.drive_sci_level(false);
     }
 }
 
-impl PortIoDevice for AcpiPmIo {
+impl<C: Clock> IoSnapshot for AcpiPmIo<C> {
+    const DEVICE_ID: [u8; 4] = *b"ACPM";
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
+
+    fn save_state(&self) -> Vec<u8> {
+        const TAG_PM1_STS: u16 = 1;
+        const TAG_PM1_EN: u16 = 2;
+        const TAG_PM1_CNT: u16 = 3;
+        const TAG_GPE0_STS: u16 = 4;
+        const TAG_GPE0_EN: u16 = 5;
+        const TAG_PM_TIMER_ELAPSED_NS: u16 = 6;
+
+        let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
+        w.field_u16(TAG_PM1_STS, self.pm1_sts);
+        w.field_u16(TAG_PM1_EN, self.pm1_en);
+        w.field_u16(TAG_PM1_CNT, self.pm1_cnt);
+        w.field_bytes(TAG_GPE0_STS, self.gpe0_sts.clone());
+        w.field_bytes(TAG_GPE0_EN, self.gpe0_en.clone());
+        w.field_u64(TAG_PM_TIMER_ELAPSED_NS, self.timer_elapsed_ns());
+
+        // Host wiring (`callbacks`) and the clock itself are intentionally not serialized.
+        w.finish()
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
+        const TAG_PM1_STS: u16 = 1;
+        const TAG_PM1_EN: u16 = 2;
+        const TAG_PM1_CNT: u16 = 3;
+        const TAG_GPE0_STS: u16 = 4;
+        const TAG_GPE0_EN: u16 = 5;
+        const TAG_PM_TIMER_ELAPSED_NS: u16 = 6;
+
+        let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
+        r.ensure_device_major(Self::DEVICE_VERSION.major)?;
+
+        // Reset dynamic state while keeping `cfg`, `callbacks`, and `clock` attached.
+        self.reset_state();
+
+        if let Some(v) = r.u16(TAG_PM1_STS)? {
+            self.pm1_sts = v;
+        }
+        if let Some(v) = r.u16(TAG_PM1_EN)? {
+            self.pm1_en = v;
+        }
+        if let Some(v) = r.u16(TAG_PM1_CNT)? {
+            self.pm1_cnt = v;
+        }
+
+        if let Some(buf) = r.bytes(TAG_GPE0_STS) {
+            if buf.len() != self.gpe0_sts.len() {
+                return Err(SnapshotError::InvalidFieldEncoding("gpe0_sts"));
+            }
+            self.gpe0_sts.copy_from_slice(buf);
+        }
+        if let Some(buf) = r.bytes(TAG_GPE0_EN) {
+            if buf.len() != self.gpe0_en.len() {
+                return Err(SnapshotError::InvalidFieldEncoding("gpe0_en"));
+            }
+            self.gpe0_en.copy_from_slice(buf);
+        }
+
+        if let Some(elapsed) = r.u64(TAG_PM_TIMER_ELAPSED_NS)? {
+            let now = self.clock.now_ns();
+            self.timer_base_ns = now.wrapping_sub(elapsed);
+        }
+
+        // Re-drive SCI based on the restored latch/enabled state.
+        self.update_sci();
+
+        Ok(())
+    }
+}
+
+impl<C: Clock + 'static> PortIoDevice for AcpiPmIo<C> {
     fn read(&mut self, port: u16, size: u8) -> u32 {
         self.port_read(port, size)
     }
@@ -385,21 +490,21 @@ impl PortIoDevice for AcpiPmIo {
     }
 }
 
-pub type SharedAcpiPmIo = Rc<RefCell<AcpiPmIo>>;
+pub type SharedAcpiPmIo<C = NullClock> = Rc<RefCell<AcpiPmIo<C>>>;
 
 #[derive(Clone)]
-pub struct AcpiPmPort {
-    pm: SharedAcpiPmIo,
+pub struct AcpiPmPort<C: Clock = NullClock> {
+    pm: SharedAcpiPmIo<C>,
     port: u16,
 }
 
-impl AcpiPmPort {
-    fn new(pm: SharedAcpiPmIo, port: u16) -> Self {
+impl<C: Clock> AcpiPmPort<C> {
+    fn new(pm: SharedAcpiPmIo<C>, port: u16) -> Self {
         Self { pm, port }
     }
 }
 
-impl PortIoDevice for AcpiPmPort {
+impl<C: Clock + 'static> PortIoDevice for AcpiPmPort<C> {
     fn read(&mut self, port: u16, size: u8) -> u32 {
         debug_assert_eq!(port, self.port);
         self.pm.borrow_mut().read(port, size)
@@ -416,7 +521,7 @@ impl PortIoDevice for AcpiPmPort {
 }
 
 /// Register the ACPI PM fixed-feature I/O ports on an [`IoPortBus`].
-pub fn register_acpi_pm(bus: &mut IoPortBus, pm: SharedAcpiPmIo) {
+pub fn register_acpi_pm<C: Clock + 'static>(bus: &mut IoPortBus, pm: SharedAcpiPmIo<C>) {
     let cfg = pm.borrow().cfg();
 
     for port in cfg.pm1a_evt_blk..cfg.pm1a_evt_blk + PM1_EVT_LEN {

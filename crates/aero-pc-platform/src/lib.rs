@@ -427,7 +427,7 @@ pub struct PcPlatform {
 
     pub pci_cfg: SharedPciConfigPorts,
     pub pci_intx: PciIntxRouter,
-    pub acpi_pm: SharedAcpiPmIo,
+    pub acpi_pm: SharedAcpiPmIo<ManualClock>,
 
     pub hda: Option<Rc<RefCell<HdaPciDevice>>>,
     pub ahci: Option<Rc<RefCell<AhciPciDevice>>>,
@@ -530,12 +530,13 @@ impl PcPlatform {
         );
 
         let sci_irq = PlatformIrqLine::isa(interrupts.clone(), 9);
-        let acpi_pm = Rc::new(RefCell::new(AcpiPmIo::new_with_callbacks(
+        let acpi_pm = Rc::new(RefCell::new(AcpiPmIo::new_with_callbacks_and_clock(
             AcpiPmConfig::default(),
             AcpiPmCallbacks {
                 sci_irq: Box::new(sci_irq),
                 request_power_off: None,
             },
+            clock.clone(),
         )));
         aero_devices::acpi_pm::register_acpi_pm(&mut io, acpi_pm.clone());
 
