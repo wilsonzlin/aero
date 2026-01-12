@@ -164,7 +164,8 @@ test("IO-worker HDA PCI audio does not fast-forward after worker snapshot restor
         let burstBaselineWrite: number | null = null;
         let burstStartAtMs: number | null = null;
         let burstSampleScheduled = false;
-        const originalPostMessage = io.postMessage.bind(io);
+        // Preserve the exact original method so cleanup restores the same function identity.
+        const originalPostMessage = io.postMessage;
         let postMessageWrapped = false;
         let postMessageRestorePending = false;
 
@@ -258,7 +259,8 @@ test("IO-worker HDA PCI audio does not fast-forward after worker snapshot restor
               // ignore
             }
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            return originalPostMessage(message as any, transfer as any);
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            return (originalPostMessage as any).call(io, message as any, transfer as any);
           };
           postMessageWrapped = true;
           postMessageRestorePending = true;
