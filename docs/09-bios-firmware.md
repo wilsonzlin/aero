@@ -140,9 +140,10 @@ pub struct BiosDataArea {
 To support PCIe-friendly PCI configuration space access (required by many Windows drivers), the
 platform maps a 256MiB ECAM window at `0xB000_0000..0xC000_0000` and publishes it via ACPI `MCFG`.
 
-The BIOS also reserves the ECAM range in its E820 map (type 2) and treats `0xB000_0000` as the end
-of low RAM. Any configured guest RAM above that point is remapped above 4GiB so the guest does not
-silently lose memory.
+The BIOS reserves the ECAM window **and** the rest of the below-4 GiB PCI/MMIO hole
+(`0xC000_0000..0x1_0000_0000`) in its E820 map (type 2) and treats `0xB000_0000`
+(`aero_pc_constants::PCIE_ECAM_BASE`) as the end of low RAM. Any configured guest RAM above that
+point is remapped above 4 GiB so the guest does not silently lose memory.
 
 ### POST Implementation
 
