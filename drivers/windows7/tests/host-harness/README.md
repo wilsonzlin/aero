@@ -122,8 +122,8 @@ Note: If the guest was provisioned without `--test-input-events`, it will emit:
 The host harness only requires `virtio-input-events|PASS` when `-WithInputEvents` / `--with-input-events` is set.
 
 Note: If the guest selftest is too old (or otherwise misconfigured) and does not emit any `virtio-input-events`
-marker at all (READY/SKIP/PASS/FAIL) after completing `virtio-input`, the harness fails early with a
-failure (PowerShell: `MISSING_VIRTIO_INPUT_EVENTS`; Python: prints an error message). Update/re-provision the guest selftest binary.
+marker at all (READY/SKIP/PASS/FAIL) after completing `virtio-input`, the harness fails early
+(PowerShell: `MISSING_VIRTIO_INPUT_EVENTS`; Python: prints an error message). Update/re-provision the guest selftest binary.
 ### virtio-snd (audio)
 
 If your test image includes the virtio-snd driver, you can ask the harness to attach a virtio-snd PCI device:
