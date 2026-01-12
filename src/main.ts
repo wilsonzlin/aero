@@ -1627,6 +1627,9 @@ function renderAudioPanel(): HTMLElement {
 
         workerCoordinator.start(workerConfig);
         workerCoordinator.getIoWorker()?.postMessage({ type: 'setBootDisks', mounts: {}, hdd: null, cd: null });
+        // Demo mode defaults the mic ring consumer to the CPU worker, but HDA capture lives in the IO worker.
+        // Route the microphone ring explicitly so the IO worker is the sole SPSC consumer.
+        workerCoordinator.setMicrophoneRingBufferOwner("io");
         workerCoordinator.setMicrophoneRingBuffer(syntheticMic.ringBuffer, syntheticMic.sampleRate);
 
         const statusView = workerCoordinator.getStatusView();
