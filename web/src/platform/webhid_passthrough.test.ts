@@ -462,7 +462,9 @@ describe("WebHID guest path allocation (external hub on root port 0)", () => {
 
     await manager.attachKnownDevice(devA);
     await manager.attachKnownDevice(devB);
-    await expect(manager.attachKnownDevice(devC)).rejects.toThrow(getNoFreeGuestUsbPortsMessage({ externalHubPortCount: 5 }));
+    await expect(manager.attachKnownDevice(devC)).rejects.toThrow(
+      getNoFreeGuestUsbPortsMessage({ externalHubPortCount: 5, reservedExternalHubPorts: 3 }),
+    );
 
     expect(target.messages).toHaveLength(3);
     expect(target.messages[0]).toMatchObject({ type: "hid:attachHub", guestPath: [0], portCount: 5 });

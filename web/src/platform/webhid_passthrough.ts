@@ -26,9 +26,29 @@ export { UHCI_ROOT_PORTS, EXTERNAL_HUB_ROOT_PORT, DEFAULT_EXTERNAL_HUB_PORT_COUN
 // Root port 1 is reserved for the guest-visible WebUSB passthrough device (see `io.worker.ts`).
 const DEFAULT_NUMERIC_DEVICE_ID_BASE = 0x4000_0000;
 
-export function getNoFreeGuestUsbPortsMessage(options: { externalHubPortCount?: number } = {}): string {
+export function getNoFreeGuestUsbPortsMessage(
+  options: { externalHubPortCount?: number; reservedExternalHubPorts?: number } = {},
+): string {
   const hubPortCount = options.externalHubPortCount ?? DEFAULT_EXTERNAL_HUB_PORT_COUNT;
-  return `No free guest USB attachment paths (${hubPortCount} total behind the external hub). Detach an existing device first.`;
+  const reserved = (() => {
+    const requested = options.reservedExternalHubPorts;
+    if (typeof requested !== "number" || !Number.isFinite(requested) || !Number.isInteger(requested) || requested <= 0) {
+      return 0;
+    }
+    return Math.max(0, Math.min(hubPortCount, Math.min(255, requested | 0)));
+  })();
+  const usable = Math.max(0, hubPortCount - reserved);
+
+  if (reserved === 0) {
+    return `No free guest USB attachment paths (${hubPortCount} total behind the external hub). Detach an existing device first.`;
+  }
+  return (
+    `No free guest USB attachment paths (` +
+    `${usable} usable for WebHID passthrough; ` +
+    `${reserved} reserved for synthetic HID; ` +
+    `${hubPortCount} total behind the external hub). ` +
+    `Detach an existing device first.`
+  );
 }
 
 export type WebHidPassthroughAttachment = {
@@ -86,6 +106,7 @@ export class WebHidPassthroughManager {
   readonly #hid: HidLike | null;
   readonly #target: HidPassthroughTarget;
   readonly #externalHubPortCount: number;
+  readonly #reservedExternalHubPorts: number;
 
   #inputReportRing: RingBuffer | null = null;
   #status: Int32Array | null = null;
@@ -109,7 +130,12 @@ export class WebHidPassthroughManager {
   readonly #onDisconnect: ((event: Event) => void) | null;
 
   constructor(
-    options: { hid?: HidLike | null; target?: HidPassthroughTarget; externalHubPortCount?: number } = {},
+    options: {
+      hid?: HidLike | null;
+      target?: HidPassthroughTarget;
+      externalHubPortCount?: number;
+      reservedExternalHubPorts?: number;
+    } = {},
   ) {
     this.#hid = options.hid ?? getNavigatorHid();
     this.#target = options.target ?? NOOP_TARGET;
@@ -119,6 +145,16 @@ export class WebHidPassthroughManager {
         return DEFAULT_EXTERNAL_HUB_PORT_COUNT;
       }
       return Math.min(255, requested | 0);
+    })();
+    this.#reservedExternalHubPorts = (() => {
+      const requested = options.reservedExternalHubPorts;
+      const base =
+        typeof requested === "number" && Number.isFinite(requested) && Number.isInteger(requested) && requested >= 0
+          ? requested
+          : UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT - 1;
+      // Never allocate passthrough devices in the synthetic-device port range (ports 1..3).
+      const clamped = Math.max(UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT - 1, base | 0);
+      return Math.max(0, Math.min(this.#externalHubPortCount, Math.min(255, clamped)));
     })();
 
     if (this.#hid) {
@@ -325,7 +361,12 @@ export class WebHidPassthroughManager {
 
     const guestPath = this.#allocatePath();
     if (!guestPath) {
-      throw new Error(getNoFreeGuestUsbPortsMessage({ externalHubPortCount: this.#externalHubPortCount }));
+      throw new Error(
+        getNoFreeGuestUsbPortsMessage({
+          externalHubPortCount: this.#externalHubPortCount,
+          reservedExternalHubPorts: this.#reservedExternalHubPorts,
+        }),
+      );
     }
 
     if (guestPath[0] === EXTERNAL_HUB_ROOT_PORT && guestPath.length >= 2) {
@@ -484,7 +525,11 @@ export class WebHidPassthroughManager {
 
   #allocatePath(): GuestUsbPath | null {
     // Prefer attaching behind the emulated external hub (root port 0).
-    for (let hubPort = UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT; hubPort <= this.#externalHubPortCount; hubPort += 1) {
+    for (
+      let hubPort = this.#reservedExternalHubPorts + 1;
+      hubPort <= this.#externalHubPortCount;
+      hubPort += 1
+    ) {
       if (this.#usedExternalHubPorts.has(hubPort)) continue;
       return [EXTERNAL_HUB_ROOT_PORT, hubPort];
     }
@@ -550,6 +595,10 @@ export class WebHidPassthroughManager {
   getExternalHubPortCount(): number {
     return this.#externalHubPortCount;
   }
+
+  getReservedExternalHubPorts(): number {
+    return this.#reservedExternalHubPorts;
+  }
 }
 
 function compareGuestPaths(a: GuestUsbPath, b: GuestUsbPath): number {
@@ -599,11 +648,15 @@ function el<K extends keyof HTMLElementTagNameMap>(
  */
 export function mountWebHidPassthroughPanel(host: HTMLElement, manager: WebHidPassthroughManager): () => void {
   const hubPortCount = manager.getExternalHubPortCount();
+  const reservedPorts = manager.getReservedExternalHubPorts();
   const portHint = el("div", {
     class: "mono",
     text:
       `Guest UHCI root port 0 hosts an emulated external USB hub (${hubPortCount} ports). ` +
-      "Passthrough devices attach behind it using paths like 0.3. " +
+      (reservedPorts > 0
+        ? `Ports 1..=${reservedPorts} are reserved for synthetic HID devices (keyboard/mouse/gamepad). ` +
+          `Passthrough devices attach behind it using paths like 0.${reservedPorts + 1}. `
+        : "Passthrough devices attach behind it using paths like 0.3. ") +
       "UHCI root port 1 is reserved for the guest-visible WebUSB passthrough device.",
   });
 

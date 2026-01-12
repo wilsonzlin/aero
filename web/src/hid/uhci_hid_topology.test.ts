@@ -72,14 +72,14 @@ describe("hid/UhciHidTopologyManager", () => {
 
     mgr.setUhciBridge(uhci);
 
-    mgr.attachDevice(1, [0, 1], "webhid", dev1);
-    expect(uhci.attach_webhid_device).toHaveBeenCalledWith([0, 1], dev1);
+    mgr.attachDevice(1, [0, 4], "webhid", dev1);
+    expect(uhci.attach_webhid_device).toHaveBeenCalledWith([0, 4], dev1);
 
-    mgr.attachDevice(1, [0, 2], "webhid", dev2);
+    mgr.attachDevice(1, [0, 5], "webhid", dev2);
 
     // Detach old path (0.1) first, then clear/attach the new path (0.2).
-    expect(uhci.detach_at_path).toHaveBeenCalledWith([0, 1]);
-    expect(uhci.attach_webhid_device).toHaveBeenCalledWith([0, 2], dev2);
+    expect(uhci.detach_at_path).toHaveBeenCalledWith([0, 4]);
+    expect(uhci.attach_webhid_device).toHaveBeenCalledWith([0, 5], dev2);
   });
 
   it("defers device attachment until the UHCI bridge is available", () => {
@@ -87,15 +87,15 @@ describe("hid/UhciHidTopologyManager", () => {
     const uhci = createFakeUhci();
     const dev = { kind: "device" };
 
-    mgr.attachDevice(1, [0, 3], "webhid", dev);
+    mgr.attachDevice(1, [0, 6], "webhid", dev);
     expect(uhci.attach_hub).not.toHaveBeenCalled();
 
     mgr.setUhciBridge(uhci);
 
     expect(uhci.attach_hub).toHaveBeenCalledTimes(1);
     expect(uhci.attach_hub).toHaveBeenCalledWith(0, 16);
-    expect(uhci.detach_at_path).toHaveBeenCalledWith([0, 3]);
-    expect(uhci.attach_webhid_device).toHaveBeenCalledWith([0, 3], dev);
+    expect(uhci.detach_at_path).toHaveBeenCalledWith([0, 6]);
+    expect(uhci.attach_webhid_device).toHaveBeenCalledWith([0, 6], dev);
   });
 
   it("uses explicit hub config when provided", () => {
@@ -104,7 +104,7 @@ describe("hid/UhciHidTopologyManager", () => {
     const dev = { kind: "device" };
 
     mgr.setHubConfig([0], 8);
-    mgr.attachDevice(1, [0, 2], "webhid", dev);
+    mgr.attachDevice(1, [0, 5], "webhid", dev);
     mgr.setUhciBridge(uhci);
 
     expect(uhci.attach_hub).toHaveBeenCalledWith(0, 8);
@@ -142,7 +142,7 @@ describe("hid/UhciHidTopologyManager", () => {
     const dev = { kind: "device" };
 
     mgr.setUhciBridge(uhci);
-    mgr.attachDevice(1, [0, 1], "webhid", dev);
+    mgr.attachDevice(1, [0, 4], "webhid", dev);
     expect(uhci.attach_hub).toHaveBeenCalledTimes(1);
 
     // Updating the config after the hub has been attached should not replace it.
@@ -156,7 +156,7 @@ describe("hid/UhciHidTopologyManager", () => {
     const uhci2 = createFakeUhci();
     const dev = { kind: "device" };
 
-    mgr.attachDevice(1, [0, 1], "webhid", dev);
+    mgr.attachDevice(1, [0, 4], "webhid", dev);
     mgr.setUhciBridge(uhci1);
     expect(uhci1.attach_hub).toHaveBeenCalledTimes(1);
 
@@ -172,7 +172,7 @@ describe("hid/UhciHidTopologyManager", () => {
     const dev2 = { kind: "device-2" };
 
     mgr.setUhciBridge(uhci);
-    mgr.attachDevice(1, [0, 1], "webhid", dev1);
+    mgr.attachDevice(1, [0, 4], "webhid", dev1);
     expect(uhci.attach_hub).toHaveBeenCalledTimes(1);
     expect(uhci.attach_hub).toHaveBeenCalledWith(0, 16);
 

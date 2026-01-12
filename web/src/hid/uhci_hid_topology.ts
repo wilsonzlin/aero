@@ -1,5 +1,9 @@
 import type { GuestUsbPath } from "../platform/hid_passthrough_protocol";
-import { DEFAULT_EXTERNAL_HUB_PORT_COUNT, remapLegacyRootPortToExternalHubPort } from "../usb/uhci_external_hub";
+import {
+  DEFAULT_EXTERNAL_HUB_PORT_COUNT,
+  UHCI_SYNTHETIC_HID_HUB_PORT_COUNT,
+  remapLegacyRootPortToExternalHubPort,
+} from "../usb/uhci_external_hub";
 
 export type UhciHidPassthroughDeviceKind = "webhid" | "usb-hid-passthrough";
 
@@ -196,6 +200,12 @@ export class UhciHidTopologyManager {
 
   #requiredHubPortCount(rootPort: number): number {
     let required = this.#hubPortCountByRoot.get(rootPort) ?? this.#defaultHubPortCount;
+    // Root port 0 hosts the external hub that also carries synthetic HID devices on fixed ports.
+    // Ensure the hub descriptor always has enough downstream ports to accommodate that reserved range,
+    // even before any synthetic device is attached.
+    if (rootPort === 0) {
+      required = Math.max(required, UHCI_SYNTHETIC_HID_HUB_PORT_COUNT);
+    }
     for (const rec of this.#devices.values()) {
       const root = rec.path[0] ?? 0;
       if (root !== rootPort) continue;
@@ -216,4 +226,5 @@ export class UhciHidTopologyManager {
       this.#maybeAttachDevice(deviceId);
     }
   }
+
 }
