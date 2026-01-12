@@ -268,6 +268,94 @@ fn ata_bus_master_dma_read_write_roundtrip() {
 }
 
 #[test]
+fn ata_bus_master_dma_ext_read_write_256_sectors_roundtrip() {
+    // Exercise 48-bit sector count handling for DMA EXT commands by transferring 256 sectors
+    // (requires writing a non-zero high byte to the sector count register).
+    let sectors: u16 = 256;
+    let byte_len = sectors as usize * SECTOR_SIZE;
+    let capacity = byte_len as u64;
+    let disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
+
+    let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
+    ide.borrow_mut()
+        .controller
+        .attach_primary_master_ata(AtaDrive::new(Box::new(disk)).unwrap());
+    ide.borrow_mut().config_mut().set_command(0x0005); // IO decode + Bus Master
+
+    let mut ioports = IoPortBus::new();
+    register_piix3_ide_ports(&mut ioports, ide.clone());
+
+    // Use a larger guest memory region so we can keep separate write/read buffers.
+    let mut mem = Bus::new(0x50_000);
+
+    let prd_addr = 0x1000u64;
+    let write_buf = 0x2000u64;
+    let read_buf = write_buf + byte_len as u64;
+
+    // Fill the write buffer with a deterministic pattern.
+    let mut pattern = vec![0u8; byte_len];
+    for (i, b) in pattern.iter_mut().enumerate() {
+        *b = (i as u8).wrapping_mul(5).wrapping_add(7);
+    }
+    mem.write_physical(write_buf, &pattern);
+
+    let bm_base = ide.borrow().bus_master_base();
+
+    // PRD table: 2 entries, 64KiB each (byte_count=0 encodes 64KiB).
+    assert_eq!(byte_len, 2 * 65536);
+    mem.write_u32(prd_addr, write_buf as u32);
+    mem.write_u16(prd_addr + 4, 0);
+    mem.write_u16(prd_addr + 6, 0x0000);
+    mem.write_u32(prd_addr + 8, (write_buf + 0x10000) as u32);
+    mem.write_u16(prd_addr + 12, 0);
+    mem.write_u16(prd_addr + 14, 0x8000);
+    ioports.write(bm_base + 4, 4, prd_addr as u32);
+
+    // WRITE DMA EXT (LBA 0, 256 sectors).
+    ioports.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
+    // sector count (48-bit): high then low.
+    ioports.write(PRIMARY_PORTS.cmd_base + 2, 1, (sectors >> 8) as u32);
+    ioports.write(PRIMARY_PORTS.cmd_base + 2, 1, (sectors & 0xFF) as u32);
+    // LBA = 0 (48-bit): high then low for each byte register.
+    for reg in 3..=5 {
+        ioports.write(PRIMARY_PORTS.cmd_base + reg, 1, 0);
+        ioports.write(PRIMARY_PORTS.cmd_base + reg, 1, 0);
+    }
+    ioports.write(PRIMARY_PORTS.cmd_base + 7, 1, 0x35); // WRITE DMA EXT
+
+    // Start bus master (direction = from memory).
+    ioports.write(bm_base, 1, 0x01);
+    ide.borrow_mut().tick(&mut mem);
+
+    // PRD table for the read-back buffer.
+    mem.write_u32(prd_addr, read_buf as u32);
+    mem.write_u16(prd_addr + 4, 0);
+    mem.write_u16(prd_addr + 6, 0x0000);
+    mem.write_u32(prd_addr + 8, (read_buf + 0x10000) as u32);
+    mem.write_u16(prd_addr + 12, 0);
+    mem.write_u16(prd_addr + 14, 0x8000);
+    ioports.write(bm_base + 4, 4, prd_addr as u32);
+
+    // READ DMA EXT (LBA 0, 256 sectors).
+    ioports.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 2, 1, (sectors >> 8) as u32);
+    ioports.write(PRIMARY_PORTS.cmd_base + 2, 1, (sectors & 0xFF) as u32);
+    for reg in 3..=5 {
+        ioports.write(PRIMARY_PORTS.cmd_base + reg, 1, 0);
+        ioports.write(PRIMARY_PORTS.cmd_base + reg, 1, 0);
+    }
+    ioports.write(PRIMARY_PORTS.cmd_base + 7, 1, 0x25); // READ DMA EXT
+
+    // Start bus master (direction = to memory).
+    ioports.write(bm_base, 1, 0x09);
+    ide.borrow_mut().tick(&mut mem);
+
+    let mut out = vec![0u8; byte_len];
+    mem.read_physical(read_buf, &mut out);
+    assert_eq!(out, pattern);
+}
+
+#[test]
 fn bus_master_registers_mask_command_bits_and_require_dword_prd_writes() {
     let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
     ide.borrow_mut().config_mut().set_command(0x0001); // IO decode
