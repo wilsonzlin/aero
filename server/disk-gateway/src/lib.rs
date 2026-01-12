@@ -292,6 +292,13 @@ fn apply_cors_headers(
     }
 
     if is_preflight {
+        // Even when `Access-Control-Allow-Origin: *`, varying on the preflight request headers is a
+        // safe default for caches and avoids surprising behavior if deployments later move to an
+        // allowlist.
+        resp.headers_mut().insert(
+            VARY,
+            HeaderValue::from_static("Origin, Access-Control-Request-Method, Access-Control-Request-Headers"),
+        );
         resp.headers_mut().insert(
             ACCESS_CONTROL_ALLOW_METHODS,
             HeaderValue::from_static(allow_methods),

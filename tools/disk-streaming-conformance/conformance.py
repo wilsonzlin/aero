@@ -651,6 +651,42 @@ def _test_options_preflight(
             f"expected Allow-Headers to include {sorted(required_headers)} (or '*'); missing {sorted(missing_required)}; got {allow_headers!r}",
         )
 
+        warnings: list[str] = []
+
+        max_age = _header(resp, "Access-Control-Max-Age")
+        if max_age is None:
+            warnings.append("missing Access-Control-Max-Age (preflight caching recommended)")
+        else:
+            try:
+                max_age_i = int(max_age.strip())
+                if max_age_i <= 0:
+                    warnings.append(f"Access-Control-Max-Age should be > 0, got {max_age!r}")
+                elif max_age_i < 600:
+                    warnings.append(
+                        f"Access-Control-Max-Age is low ({max_age_i}s); consider >=600 to reduce preflight overhead"
+                    )
+            except ValueError:
+                warnings.append(f"invalid Access-Control-Max-Age {max_age!r}")
+
+        vary = _header(resp, "Vary")
+        if vary is None:
+            warnings.append(
+                "missing Vary (recommended: Access-Control-Request-Method, Access-Control-Request-Headers, and Origin when varying by Origin)"
+            )
+        else:
+            vary_tokens = _csv_tokens(vary)
+            recommended = {"access-control-request-method", "access-control-request-headers"}
+            # Only require `Vary: Origin` when the preflight response varies by Origin (i.e. not
+            # wildcard allow-origin).
+            if allow_origin != "*":
+                recommended.add("origin")
+            missing_vary = recommended.difference(vary_tokens)
+            if missing_vary and "*" not in vary_tokens:
+                warnings.append(f"Vary missing {sorted(missing_vary)} (got {vary!r})")
+
+        if warnings:
+            return TestResult(name=name, status="WARN", details="; ".join(warnings))
+
         return TestResult(name=name, status="PASS", details=f"status={resp.status}")
     except TestFailure as e:
         return TestResult(name=name, status="FAIL", details=str(e))
@@ -730,6 +766,20 @@ def _test_options_preflight_if_modified_since(
                     details=f"missing Allow-Headers {sorted(missing)}; got {allow_headers!r}",
                 )
 
+        warnings: list[str] = []
+
+        max_age = _header(resp, "Access-Control-Max-Age")
+        if max_age is None:
+            warnings.append("missing Access-Control-Max-Age (preflight caching recommended)")
+        vary = _header(resp, "Vary")
+        if vary is None:
+            warnings.append(
+                "missing Vary (recommended: Access-Control-Request-Method, Access-Control-Request-Headers, and Origin when varying by Origin)"
+            )
+
+        if warnings:
+            return TestResult(name=name, status="WARN", details="; ".join(warnings))
+
         return TestResult(name=name, status="PASS", details=f"status={resp.status}")
     except TestFailure as e:
         return TestResult(name=name, status="WARN", details=str(e))
@@ -782,7 +832,8 @@ def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
         help=(
             "Fail on 'WARN' conditions (e.g. Transfer-Encoding: chunked on 206, "
             "missing Cross-Origin-Resource-Policy, private caching without no-store, "
-            "If-Range mismatch behavior, CORS misconfigurations like Allow-Credentials with '*')"
+            "If-Range mismatch behavior, CORS misconfigurations like Allow-Credentials with '*', "
+            "or missing preflight caching headers like Access-Control-Max-Age)"
         ),
     )
     parser.add_argument(

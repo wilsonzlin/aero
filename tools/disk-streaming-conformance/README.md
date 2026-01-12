@@ -25,6 +25,9 @@ Validates that a disk image streaming endpoint is compatible with Aero’s brows
   - `Range`, `If-Range` (and `Authorization` when testing private images)
   - `If-None-Match` when an `ETag` is advertised (so conditional revalidation is usable from browsers)
   - (Optional) `If-Modified-Since` when `Last-Modified` is advertised (WARN if not)
+- CORS preflight caching sanity:
+  - Warn if `Access-Control-Max-Age` is missing or very low (preflights can be expensive for many small range reads)
+  - Warn if `Vary` is missing (recommended for safe caching of preflight responses)
 - CORS responses expose required headers (`Access-Control-Expose-Headers` for `Accept-Ranges`, `Content-Length`, `Content-Range`, `ETag`, `Last-Modified`)
 - CORS sanity checks:
   - Warn if `Access-Control-Allow-Credentials: true` is used with `Access-Control-Allow-Origin: *`
@@ -135,6 +138,7 @@ Summary: 18 passed, 0 failed, 0 warned, 2 skipped
 - Private responses missing `Cache-Control: no-store`
 - `If-Range` mismatch returning `412` instead of `200`
 - `If-Modified-Since` not returning `304` (this check is WARN-only by default)
+- Preflight caching issues like missing/low `Access-Control-Max-Age` or missing `Vary`
 - CORS header issues like:
   - `Access-Control-Allow-Credentials: true` with `Access-Control-Allow-Origin: *`
   - missing `Vary: Origin` when echoing a specific `Access-Control-Allow-Origin`
