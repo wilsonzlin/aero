@@ -571,7 +571,7 @@ function renderMachinePanel(): HTMLElement {
   const inputHint = el("div", {
     class: "mono",
     text:
-      "Tip: click the canvas to focus it; keyboard/mouse events will be forwarded to the guest via Machine.inject_browser_key()/inject_mouse_* when available.",
+      "Tip: click the canvas to focus it (keyboard/mouse will be forwarded to the guest). Double-click to request pointer lock (if supported).",
   });
   const canvas = el("canvas", { id: "canonical-machine-vga-canvas" }) as HTMLCanvasElement;
   canvas.tabIndex = 0;
@@ -581,6 +581,15 @@ function renderMachinePanel(): HTMLElement {
   canvas.style.background = "#000";
   canvas.style.imageRendering = "pixelated";
   canvas.addEventListener("click", () => canvas.focus());
+  canvas.addEventListener("dblclick", () => {
+    const fn = (canvas as unknown as { requestPointerLock?: unknown }).requestPointerLock;
+    if (typeof fn !== "function") return;
+    try {
+      fn.call(canvas);
+    } catch {
+      // ignore
+    }
+  });
 
   const output = el("pre", { text: "" });
   const error = el("pre", { text: "" });
