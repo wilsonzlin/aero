@@ -196,9 +196,32 @@ const DISK_ERROR_IO_FAILURE = 4;
 const DISK_ERROR_READ_ONLY = 5;
 const DISK_ERROR_DISK_OOB = 6;
 
-// Snapshot kind string for PCI core state (`aero_snapshot::DeviceId::PCI = 5`).
-// See `docs/16-snapshots.md`.
-const VM_SNAPSHOT_DEVICE_PCI_KIND = "device.5";
+// Snapshot kind strings for PCI config/bus state (web runtime).
+//
+// - Canonical: `aero_snapshot::DeviceId::PCI_CFG` (`14`)
+// - Legacy/compat: some older web snapshots stored PCI config state under `DeviceId::PCI` (`5`)
+//
+// Note: We *only* treat legacy `device.5` blobs as PCI config state if they contain the expected
+// inner `aero-io-snapshot` DEVICE_ID (`PCIB`). This avoids misinterpreting unrelated legacy
+// `DeviceId::PCI` payloads (e.g. Rust `PCIC` / `PCPT` blobs) as the JS PCI bus snapshot.
+const VM_SNAPSHOT_DEVICE_PCI_CFG_KIND = `${VM_SNAPSHOT_DEVICE_KIND_PREFIX_ID}14`;
+const VM_SNAPSHOT_DEVICE_PCI_LEGACY_KIND = `${VM_SNAPSHOT_DEVICE_KIND_PREFIX_ID}5`;
+
+function isPciBusSnapshot(bytes: Uint8Array): boolean {
+  // `web/src/io/bus/pci.ts` uses an `aero-io-snapshot`-shaped 16-byte header and sets
+  // device_id="PCIB".
+  return (
+    bytes.byteLength >= 12 &&
+    bytes[0] === 0x41 &&
+    bytes[1] === 0x45 &&
+    bytes[2] === 0x52 &&
+    bytes[3] === 0x4f &&
+    bytes[8] === 0x50 &&
+    bytes[9] === 0x43 &&
+    bytes[10] === 0x49 &&
+    bytes[11] === 0x42
+  );
+}
 
 let deviceManager: DeviceManager | null = null;
 
@@ -785,7 +808,7 @@ function snapshotPciDeviceState(): { kind: string; bytes: Uint8Array } | null {
   if (!mgr) return null;
   try {
     const bytes = mgr.pciBus.saveState();
-    if (bytes instanceof Uint8Array) return { kind: VM_SNAPSHOT_DEVICE_PCI_KIND, bytes };
+    if (bytes instanceof Uint8Array) return { kind: VM_SNAPSHOT_DEVICE_PCI_CFG_KIND, bytes };
   } catch (err) {
     console.warn("[io.worker] PCI saveState failed:", err);
   }
@@ -2744,14 +2767,17 @@ async function handleVmSnapshotRestoreFromOpfs(path: string): Promise<{
         if (typeof e.kind !== "string") continue;
         if (!(e.bytes instanceof Uint8Array)) continue;
 
-        const kind = normalizeRestoredDeviceKind(e.kind);
+        let kind = normalizeRestoredDeviceKind(e.kind);
+        if (kind === VM_SNAPSHOT_DEVICE_PCI_LEGACY_KIND && isPciBusSnapshot(e.bytes)) {
+          kind = VM_SNAPSHOT_DEVICE_PCI_CFG_KIND;
+        }
         cachedDevices.push({ kind, bytes: e.bytes });
         devices.push({ kind, bytes: copyU8ToArrayBuffer(e.bytes) });
 
         if (kind === VM_SNAPSHOT_DEVICE_USB_KIND) usbBytes = e.bytes;
         if (kind === VM_SNAPSHOT_DEVICE_I8042_KIND) i8042Bytes = e.bytes;
         if (kind === VM_SNAPSHOT_DEVICE_AUDIO_HDA_KIND) hdaBytes = e.bytes;
-        if (kind === VM_SNAPSHOT_DEVICE_PCI_KIND) pciBytes = e.bytes;
+        if (kind === VM_SNAPSHOT_DEVICE_PCI_CFG_KIND) pciBytes = e.bytes;
         if (kind === VM_SNAPSHOT_DEVICE_E1000_KIND) e1000Bytes = e.bytes;
         if (kind === VM_SNAPSHOT_DEVICE_NET_STACK_KIND) netStackBytes = e.bytes;
       }
@@ -2816,27 +2842,29 @@ async function handleVmSnapshotRestoreFromOpfs(path: string): Promise<{
 
         const kind = vmSnapshotDeviceIdToKind(e.id);
         if (!kind) continue;
+        const kindIsLegacyPci = kind === VM_SNAPSHOT_DEVICE_PCI_LEGACY_KIND && isPciBusSnapshot(e.data);
+        const canonicalKind = kindIsLegacyPci ? VM_SNAPSHOT_DEVICE_PCI_CFG_KIND : kind;
 
-        if (kind === VM_SNAPSHOT_DEVICE_USB_KIND) {
+        if (canonicalKind === VM_SNAPSHOT_DEVICE_USB_KIND) {
           usbBytes = e.data;
         }
-        if (kind === VM_SNAPSHOT_DEVICE_I8042_KIND) {
+        if (canonicalKind === VM_SNAPSHOT_DEVICE_I8042_KIND) {
           i8042Bytes = e.data;
         }
-        if (kind === VM_SNAPSHOT_DEVICE_AUDIO_HDA_KIND) {
+        if (canonicalKind === VM_SNAPSHOT_DEVICE_AUDIO_HDA_KIND) {
           hdaBytes = e.data;
         }
-        if (kind === VM_SNAPSHOT_DEVICE_PCI_KIND) {
+        if (canonicalKind === VM_SNAPSHOT_DEVICE_PCI_CFG_KIND) {
           pciBytes = e.data;
         }
-        if (kind === VM_SNAPSHOT_DEVICE_E1000_KIND) {
+        if (canonicalKind === VM_SNAPSHOT_DEVICE_E1000_KIND) {
           e1000Bytes = e.data;
         }
-        if (kind === VM_SNAPSHOT_DEVICE_NET_STACK_KIND) {
+        if (canonicalKind === VM_SNAPSHOT_DEVICE_NET_STACK_KIND) {
           netStackBytes = e.data;
         }
-        cachedDevices.push({ kind, bytes: e.data });
-        devices.push({ kind, bytes: copyU8ToArrayBuffer(e.data) });
+        cachedDevices.push({ kind: canonicalKind, bytes: e.data });
+        devices.push({ kind: canonicalKind, bytes: copyU8ToArrayBuffer(e.data) });
       }
 
       if (usbBytes) {
