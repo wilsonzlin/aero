@@ -156,6 +156,7 @@ describe("io/devices/E1000PciDevice", () => {
     // snapshot restore because the pending host-side buffer is intentionally cleared.
     const txQueue: Uint8Array[] = [new Uint8Array([0x01]), new Uint8Array([0x02])];
     let irq = false;
+    const popTxFrame = vi.fn(() => txQueue.shift());
     const bridge: E1000BridgeLike = {
       mmio_read: vi.fn(() => 0),
       mmio_write: vi.fn(),
@@ -163,7 +164,7 @@ describe("io/devices/E1000PciDevice", () => {
       io_write: vi.fn(),
       poll: vi.fn(),
       receive_frame: vi.fn(),
-      pop_tx_frame: vi.fn(() => txQueue.shift()),
+      pop_tx_frame: popTxFrame,
       irq_level: vi.fn(() => irq),
       free: vi.fn(),
     };
@@ -172,7 +173,7 @@ describe("io/devices/E1000PciDevice", () => {
     const dev = new E1000PciDevice({ bridge, irqSink, netTxRing: netTx, netRxRing: netRx });
 
     dev.tick(0);
-    expect(bridge.pop_tx_frame).toHaveBeenCalledTimes(1);
+    expect(popTxFrame).toHaveBeenCalledTimes(1);
 
     // Snapshot restore should clear transient state and re-drive the INTx level.
     irq = true;
@@ -187,7 +188,7 @@ describe("io/devices/E1000PciDevice", () => {
     // `E1000PciDevice` drains TX by popping until `null`/`undefined`. Depending on implementation
     // details, it may probe for an additional frame after flushing. Avoid depending on an exact
     // call count; assert it advanced beyond the initial "pending" pop.
-    expect(vi.mocked(bridge.pop_tx_frame).mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(popTxFrame.mock.calls.length).toBeGreaterThanOrEqual(2);
     expect(Array.from(netTx.tryPop()!)).toEqual([0x02]);
   });
 

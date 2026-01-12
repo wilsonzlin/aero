@@ -719,6 +719,18 @@ function snapshotAudioHdaDeviceState(): { kind: string; bytes: Uint8Array } | nu
   const save =
     (bridge as unknown as { save_state?: unknown }).save_state ?? (bridge as unknown as { snapshot_state?: unknown }).snapshot_state;
   if (typeof save !== "function") return null;
+
+  const load =
+    (bridge as unknown as { load_state?: unknown }).load_state ?? (bridge as unknown as { restore_state?: unknown }).restore_state;
+  const canLoad = typeof load === "function";
+  if (!canLoad) {
+    // If we restored a snapshot previously and the current bridge can't restore HDA state (older
+    // WASM build), prefer preserving the cached blob rather than overwriting it with a potentially
+    // incompatible "fresh" snapshot from a non-restorable device instance.
+    if (snapshotRestoredDeviceBlobs.some((d) => d.kind === VM_SNAPSHOT_DEVICE_AUDIO_HDA_KIND)) {
+      return null;
+    }
+  }
   try {
     const bytes = save.call(bridge) as unknown;
     if (bytes instanceof Uint8Array) return { kind: VM_SNAPSHOT_DEVICE_AUDIO_HDA_KIND, bytes };
