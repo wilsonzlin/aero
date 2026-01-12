@@ -300,6 +300,54 @@ describe("io/devices/HdaPciDevice audio ring attachment", () => {
 
     expect(totalFrames).toBe(44_100 * 600);
   });
+
+  it("tracks the bridge-reported output_sample_rate_hz when set_output_rate_hz clamps the requested rate", () => {
+    const irq: IrqSink = { raiseIrq: () => {}, lowerIrq: () => {} };
+    let totalFrames = 0;
+
+    // Simulate a WASM bridge that clamps the output rate (e.g. to MAX_HOST_SAMPLE_RATE_HZ)
+    // and exposes the effective rate via `output_sample_rate_hz`.
+    let reportedRate = 0;
+
+    const bridge: HdaControllerBridgeLike = {
+      mmio_read: () => 0,
+      mmio_write: () => {},
+      step_frames: (frames) => {
+        totalFrames += frames >>> 0;
+      },
+      irq_level: () => false,
+      set_mic_ring_buffer: () => {},
+      set_capture_sample_rate_hz: () => {},
+      set_output_rate_hz: () => {
+        // Clamp 96kHz down to 48kHz.
+        reportedRate = 48_000;
+      },
+      free: () => {},
+    };
+
+    Object.defineProperty(bridge, "output_sample_rate_hz", {
+      get: () => reportedRate,
+      configurable: true,
+    });
+
+    const dev = new HdaPciDevice({ bridge, irqSink: irq });
+
+    // Configure a high output rate (96kHz); the bridge reports it clamped to 48kHz.
+    dev.setAudioRingBuffer({ ringBuffer: null, capacityFrames: 0, channelCount: 0, dstSampleRateHz: 96_000 });
+
+    dev.onPciCommandWrite?.(1 << 2);
+    dev.tick(0);
+
+    // Tick for 1 second at 60Hz with deterministic nanosecond deltas.
+    let nowNs = 0n;
+    for (let tick = 0; tick < 60; tick++) {
+      nowNs += tick60HzNs(tick);
+      dev.tick(Number(nowNs) / 1e6);
+    }
+
+    // The device should advance based on the effective (clamped) sample rate.
+    expect(totalFrames).toBe(48_000);
+  });
 });
 
 describe("io/devices/HdaPciDevice microphone ring attachment", () => {
