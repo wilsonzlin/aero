@@ -30,7 +30,17 @@ test("WASM HDA snapshot restores AudioWorklet ring indices and clears samples", 
     }
 
     const Hda = api.HdaControllerBridge as any;
-    const hda = new Hda(1, 1);
+    // wasm-bindgen glue may enforce constructor arity; accept both old and new signatures.
+    let hda: any;
+    try {
+      hda = new Hda(1, 1, undefined);
+    } catch {
+      try {
+        hda = new Hda(1, 1);
+      } catch {
+        hda = new Hda(1);
+      }
+    }
 
     if (typeof hda.attach_audio_ring !== "function" || typeof hda.detach_audio_ring !== "function") {
       return { ok: false, reason: "HdaControllerBridge ring attach exports unavailable" };
