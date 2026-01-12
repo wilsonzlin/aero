@@ -229,6 +229,11 @@ mod tests {
         let mut buf = [0u8; SECTOR_SIZE];
         let err = adapter.read_at_aligned(cap, &mut buf).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+
+        // Offset arithmetic overflow (but still sector-aligned).
+        let offset = u64::MAX - (SECTOR_SIZE as u64 - 1);
+        let err = adapter.read_at_aligned(offset, &mut buf).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
     }
 
     #[test]
