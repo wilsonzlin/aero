@@ -4,6 +4,8 @@ import os from "node:os";
 import path from "node:path";
 
 test("D3D9 shader translation is persisted and skipped on next run", async ({}, testInfo) => {
+  const baseUrl = testInfo.project.use.baseURL ?? "http://127.0.0.1:5173";
+
   // Use Chromium only: relies on OffscreenCanvas + worker + IDB/OPFS persistence,
   // and we only need to validate the behavior once.
   if (testInfo.project.name !== "chromium") test.skip();
@@ -30,7 +32,7 @@ test("D3D9 shader translation is persisted and skipped on next run", async ({}, 
     const page = await context.newPage();
     page.on("console", (msg) => logs.push(msg.text()));
 
-    await page.goto("http://127.0.0.1:5173/web/gpu-worker-d3d9-shader-cache.html");
+    await page.goto(`${baseUrl}/web/gpu-worker-d3d9-shader-cache.html`);
     await page.waitForFunction(() => (window as any).__d3d9ShaderCacheDemo !== undefined);
 
     const result = await page.evaluate(() => (window as any).__d3d9ShaderCacheDemo);
