@@ -182,6 +182,23 @@ set_target_properties(aerogpu_d3d9_trace_dump_present_tests PROPERTIES
 
 add_test(NAME aerogpu_d3d9_trace_dump_present_tests COMMAND aerogpu_d3d9_trace_dump_present_tests)
 
+add_executable(aerogpu_d3d9_trace_dump_present_force_record_tests
+    trace_dump_present_force_record_tests.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/../src/aerogpu_trace.cpp
+)
+
+target_include_directories(aerogpu_d3d9_trace_dump_present_force_record_tests PRIVATE
+    ${CMAKE_CURRENT_LIST_DIR}/../src
+    ${CMAKE_CURRENT_LIST_DIR}/../include
+)
+
+set_target_properties(aerogpu_d3d9_trace_dump_present_force_record_tests PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED YES
+)
+
+add_test(NAME aerogpu_d3d9_trace_dump_present_force_record_tests COMMAND aerogpu_d3d9_trace_dump_present_force_record_tests)
+
 add_executable(aerogpu_d3d9_trace_dump_present_inflight_hr_tests
     trace_dump_present_inflight_hr_tests.cpp
     ${CMAKE_CURRENT_LIST_DIR}/../src/aerogpu_trace.cpp

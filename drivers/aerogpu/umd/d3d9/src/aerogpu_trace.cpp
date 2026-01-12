@@ -728,6 +728,38 @@ void d3d9_trace_maybe_dump_on_present(uint32_t present_count) {
   }
 }
 
+void d3d9_trace_maybe_dump_on_present_with_call(D3d9TraceFunc func,
+                                                uint64_t arg0,
+                                                uint64_t arg1,
+                                                uint64_t arg2,
+                                                uint64_t arg3,
+                                                HRESULT hr,
+                                                bool call_recorded,
+                                                uint32_t present_count) {
+  if (g_trace_dump_present_count == 0 || present_count != g_trace_dump_present_count) {
+    return;
+  }
+
+  if (!g_trace_enabled.load(std::memory_order_acquire)) {
+    return;
+  }
+
+  bool expected = false;
+  if (!g_trace_dumped.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
+    return;
+  }
+
+  // Ensure the triggering Present/PresentEx call is present in the trace dump,
+  // even if TRACE_MODE=unique suppressed it.
+  if (!call_recorded) {
+    if (D3d9TraceRecord* rec = alloc_record_force(func, arg0, arg1, arg2, arg3)) {
+      rec->hr = hr;
+    }
+  }
+
+  dump_trace_impl("present_count");
+}
+
 D3d9TraceCall::D3d9TraceCall(D3d9TraceFunc func, uint64_t arg0, uint64_t arg1, uint64_t arg2, uint64_t arg3) {
   func_ = func;
   arg0_ = arg0;

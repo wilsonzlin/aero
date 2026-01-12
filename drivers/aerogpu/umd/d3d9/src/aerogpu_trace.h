@@ -196,6 +196,14 @@ struct D3d9TraceRecord {
 void d3d9_trace_init_from_env();
 void d3d9_trace_on_process_detach();
 void d3d9_trace_maybe_dump_on_present(uint32_t present_count);
+void d3d9_trace_maybe_dump_on_present_with_call(D3d9TraceFunc func,
+                                                uint64_t arg0,
+                                                uint64_t arg1,
+                                                uint64_t arg2,
+                                                uint64_t arg3,
+                                                HRESULT hr,
+                                                bool call_recorded,
+                                                uint32_t present_count);
 bool d3d9_trace_enabled();
 
 // Helper for instrumenting entrypoints:
@@ -224,6 +232,11 @@ public:
       record_->hr = hr;
     }
     return hr;
+  }
+
+  void maybe_dump_on_present(uint32_t present_count) const {
+    d3d9_trace_maybe_dump_on_present_with_call(
+        func_, arg0_, arg1_, arg2_, arg3_, hr_, record_ != nullptr, present_count);
   }
 
  private:
