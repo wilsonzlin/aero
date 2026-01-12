@@ -132,6 +132,79 @@ mod wasm {
         DiskError::Io(format!("{err:?}"))
     }
 
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use js_sys::{Array, Function, Reflect};
+        use wasm_bindgen::JsCast;
+        use wasm_bindgen::JsValue;
+        use wasm_bindgen_test::wasm_bindgen_test;
+
+        wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
+
+        fn dom_exception(name: &str, message: &str) -> JsValue {
+            // `new DOMException(message, name)`
+            let ctor = Reflect::get(&js_sys::global(), &JsValue::from_str("DOMException"))
+                .expect("DOMException global should exist");
+            let ctor: Function = ctor.dyn_into().expect("DOMException should be a constructor");
+            let args = Array::new();
+            args.push(&JsValue::from_str(message));
+            args.push(&JsValue::from_str(name));
+            Reflect::construct(&ctor, &args).expect("construct DOMException")
+        }
+
+        #[wasm_bindgen_test]
+        fn dom_exception_security_error_maps_to_backend_unavailable() {
+            let err = dom_exception("SecurityError", "blocked");
+            assert!(matches!(
+                disk_error_from_js(err),
+                DiskError::BackendUnavailable
+            ));
+        }
+
+        #[wasm_bindgen_test]
+        fn dom_exception_not_allowed_error_maps_to_backend_unavailable() {
+            let err = dom_exception("NotAllowedError", "blocked");
+            assert!(matches!(
+                disk_error_from_js(err),
+                DiskError::BackendUnavailable
+            ));
+        }
+
+        #[wasm_bindgen_test]
+        fn dom_exception_quota_exceeded_maps_to_quota_exceeded() {
+            let err = dom_exception("QuotaExceededError", "quota exceeded");
+            assert!(matches!(disk_error_from_js(err), DiskError::QuotaExceeded));
+        }
+
+        #[wasm_bindgen_test]
+        fn dom_exception_not_supported_maps_to_not_supported() {
+            let err = dom_exception("NotSupportedError", "nope");
+            assert!(matches!(
+                disk_error_from_js(err),
+                DiskError::NotSupported(msg) if msg == "nope"
+            ));
+        }
+
+        #[wasm_bindgen_test]
+        fn js_type_error_maps_to_not_supported() {
+            let err = js_sys::TypeError::new("bad").into();
+            assert!(matches!(
+                disk_error_from_js(err),
+                DiskError::NotSupported(msg) if msg == "bad"
+            ));
+        }
+
+        #[wasm_bindgen_test]
+        fn js_error_maps_to_io() {
+            let err = js_sys::Error::new("boom").into();
+            assert!(matches!(
+                disk_error_from_js(err),
+                DiskError::Io(msg) if msg == "boom"
+            ));
+        }
+    }
+
     async fn await_promise(promise: Promise) -> core::result::Result<JsValue, DiskError> {
         JsFuture::from(promise).await.map_err(disk_error_from_js)
     }
