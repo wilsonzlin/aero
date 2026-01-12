@@ -984,7 +984,10 @@ fn aerogpu_cmd_shared_surface_double_destroy_of_original_handle_is_idempotent() 
             .expect("expected a presented render target");
         assert_eq!(presented, TEX);
 
-        let pixels = exec.read_texture_rgba8(ALIAS).await.unwrap();
+        // The host reports the underlying handle as the presented render target. Even if the
+        // original handle was destroyed, the underlying ID remains valid for host-side use as long
+        // as aliases keep it alive.
+        let pixels = exec.read_texture_rgba8(presented).await.unwrap();
         for px in pixels.chunks_exact(4) {
             assert_eq!(px, &[0, 255, 0, 255]);
         }

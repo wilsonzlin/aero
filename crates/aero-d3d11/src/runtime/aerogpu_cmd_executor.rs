@@ -864,9 +864,11 @@ impl AerogpuD3d11Executor {
     }
 
     pub fn texture_size(&self, texture_id: u32) -> Result<(u32, u32)> {
-        let texture_id = self
-            .shared_surfaces
-            .resolve_cmd_handle(texture_id, "texture_size")?;
+        // Test/emulator helper: accept either an alias handle or the underlying ID. In particular,
+        // when an original shared-surface handle is destroyed while aliases are still alive, the
+        // underlying ID remains valid for internal host bookkeeping (e.g. PRESENT reports) even
+        // though it is no longer a "live" guest handle.
+        let texture_id = self.shared_surfaces.resolve_handle(texture_id);
         let texture = self
             .resources
             .textures
@@ -876,9 +878,8 @@ impl AerogpuD3d11Executor {
     }
 
     pub async fn read_texture_rgba8(&self, texture_id: u32) -> Result<Vec<u8>> {
-        let texture_id = self
-            .shared_surfaces
-            .resolve_cmd_handle(texture_id, "read_texture_rgba8")?;
+        // Test/emulator helper: see `texture_size`.
+        let texture_id = self.shared_surfaces.resolve_handle(texture_id);
         let texture = self
             .resources
             .textures
