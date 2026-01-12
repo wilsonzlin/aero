@@ -61,6 +61,142 @@ fn disk_backend_state_rejects_excessive_string_length() {
 }
 
 #[test]
+fn disk_backend_state_rejects_invalid_utf8_string() {
+    // local backend, opfs kind, key length=1, key byte is invalid utf-8.
+    let mut bytes = Vec::new();
+    bytes.push(0); // kind = local
+    bytes.push(0); // backend_kind = opfs
+    bytes.extend_from_slice(&1u32.to_le_bytes());
+    bytes.push(0xff);
+
+    let err = DiskBackendState::decode(&bytes).expect_err("should reject invalid utf8");
+    assert_eq!(err, SnapshotError::InvalidFieldEncoding("string utf8"));
+}
+
+#[test]
+fn disk_backend_state_rejects_invalid_overlay_present_byte() {
+    // local backend, opfs kind, key="k", then invalid overlay_present=2.
+    let mut bytes = Vec::new();
+    bytes.push(0); // kind = local
+    bytes.push(0); // backend_kind = opfs
+    bytes.extend_from_slice(&1u32.to_le_bytes());
+    bytes.extend_from_slice(b"k");
+    bytes.push(2); // invalid overlay_present
+
+    let err =
+        DiskBackendState::decode(&bytes).expect_err("should reject invalid overlay_present byte");
+    assert_eq!(err, SnapshotError::InvalidFieldEncoding("overlay_present"));
+}
+
+#[test]
+fn disk_backend_state_rejects_excessive_overlay_block_size() {
+    // Keep in sync with `MAX_OVERLAY_BLOCK_SIZE_BYTES` (64 MiB).
+    const MAX_BLOCK: u32 = 64 * 1024 * 1024;
+
+    let mut bytes = Vec::new();
+    bytes.push(0); // kind = local
+    bytes.push(0); // backend_kind = opfs
+
+    // key = "k"
+    bytes.extend_from_slice(&1u32.to_le_bytes());
+    bytes.extend_from_slice(b"k");
+
+    // overlay present
+    bytes.push(1);
+
+    // overlay.file_name = "o"
+    bytes.extend_from_slice(&1u32.to_le_bytes());
+    bytes.extend_from_slice(b"o");
+    // overlay.disk_size_bytes = 4096
+    bytes.extend_from_slice(&4096u64.to_le_bytes());
+    // overlay.block_size_bytes = 128 MiB (invalid: too large, but still power-of-two and aligned)
+    bytes.extend_from_slice(&(MAX_BLOCK * 2).to_le_bytes());
+
+    let err =
+        DiskBackendState::decode(&bytes).expect_err("should reject excessive overlay block size");
+    assert_eq!(
+        err,
+        SnapshotError::InvalidFieldEncoding("overlay block_size too large")
+    );
+}
+
+#[test]
+fn disk_backend_state_rejects_invalid_validator_kind() {
+    // remote backend with validator_kind=3 is invalid.
+    let mut bytes = Vec::new();
+    bytes.push(1); // kind = remote
+
+    // image_id = "i"
+    bytes.extend_from_slice(&1u32.to_le_bytes());
+    bytes.extend_from_slice(b"i");
+    // version = "v"
+    bytes.extend_from_slice(&1u32.to_le_bytes());
+    bytes.extend_from_slice(b"v");
+    // delivery_type = "r"
+    bytes.extend_from_slice(&1u32.to_le_bytes());
+    bytes.extend_from_slice(b"r");
+
+    // validator_kind = 3 (invalid)
+    bytes.push(3);
+
+    let err = DiskBackendState::decode(&bytes).expect_err("should reject invalid validator kind");
+    assert_eq!(err, SnapshotError::InvalidFieldEncoding("validator_kind"));
+}
+
+#[test]
+fn disk_backend_state_rejects_chunk_size_not_multiple_of_512() {
+    // remote backend with chunk_size not aligned to 512 should fail before decoding overlay/cache.
+    let mut bytes = Vec::new();
+    bytes.push(1); // kind = remote
+
+    // image_id = "i"
+    bytes.extend_from_slice(&1u32.to_le_bytes());
+    bytes.extend_from_slice(b"i");
+    // version = "v"
+    bytes.extend_from_slice(&1u32.to_le_bytes());
+    bytes.extend_from_slice(b"v");
+    // delivery_type = "r"
+    bytes.extend_from_slice(&1u32.to_le_bytes());
+    bytes.extend_from_slice(b"r");
+
+    bytes.push(0); // validator_kind = none
+    bytes.extend_from_slice(&513u32.to_le_bytes()); // chunk_size (invalid alignment)
+
+    let err = DiskBackendState::decode(&bytes).expect_err("should reject unaligned chunk_size");
+    assert_eq!(
+        err,
+        SnapshotError::InvalidFieldEncoding("chunk_size not multiple of 512")
+    );
+}
+
+#[test]
+fn disk_backend_state_rejects_excessive_chunk_size() {
+    // Keep in sync with `MAX_REMOTE_CHUNK_SIZE_BYTES` (64 MiB).
+    const MAX_CHUNK: u32 = 64 * 1024 * 1024;
+
+    // remote backend with chunk_size too large should fail before decoding overlay/cache.
+    let mut bytes = Vec::new();
+    bytes.push(1); // kind = remote
+
+    // image_id = "i"
+    bytes.extend_from_slice(&1u32.to_le_bytes());
+    bytes.extend_from_slice(b"i");
+    // version = "v"
+    bytes.extend_from_slice(&1u32.to_le_bytes());
+    bytes.extend_from_slice(b"v");
+    // delivery_type = "r"
+    bytes.extend_from_slice(&1u32.to_le_bytes());
+    bytes.extend_from_slice(b"r");
+
+    bytes.push(0); // validator_kind = none
+    // Pick a value that remains 512-byte aligned but exceeds the maximum.
+    bytes.extend_from_slice(&(MAX_CHUNK + 512).to_le_bytes());
+
+    let err = DiskBackendState::decode(&bytes).expect_err("should reject excessive chunk_size");
+    assert_eq!(err, SnapshotError::InvalidFieldEncoding("chunk_size too large"));
+}
+
+#[test]
 fn disk_backend_state_rejects_invalid_overlay_block_size() {
     let mut bytes = Vec::new();
     bytes.push(0); // kind = local
