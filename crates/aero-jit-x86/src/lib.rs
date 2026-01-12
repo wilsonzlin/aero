@@ -43,6 +43,16 @@ pub const JIT_TLB_INDEX_MASK: u64 = (JIT_TLB_ENTRIES as u64) - 1;
 /// Size of a single TLB entry in bytes (`tag: u64` + `data: u64`).
 pub const JIT_TLB_ENTRY_SIZE: u32 = 16;
 
+const _: () = {
+    // The JIT TLB is indexed either with a mask or modulo; keep the mask path valid.
+    assert!(JIT_TLB_ENTRIES > 0);
+    assert!(JIT_TLB_ENTRIES.is_power_of_two());
+    assert!(JIT_TLB_INDEX_MASK == (JIT_TLB_ENTRIES as u64) - 1);
+
+    // The inline TLB layout is `{ tag: u64, data: u64 }`.
+    assert!(JIT_TLB_ENTRY_SIZE as usize == core::mem::size_of::<[u64; 2]>());
+};
+
 /// Entry flags packed into the low 12 bits of the translation `data` word.
 pub const TLB_FLAG_READ: u64 = 1 << 0;
 pub const TLB_FLAG_WRITE: u64 = 1 << 1;
