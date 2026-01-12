@@ -1,13 +1,18 @@
 /**
  * IRQ refcount helper used by the browser worker runtime.
  *
- * Aero's worker-to-worker IRQ transport is *level* based, but multiple devices
- * may share a single IRQ line (legacy PIC / PCI INTx). To model "wire-OR"
+ * Aero's worker-to-worker IRQ transport is *level* based (assert/deassert), but
+ * multiple devices may share a single IRQ line (legacy PIC / PCI INTx). To model "wire-OR"
  * semantics safely, each IRQ line is tracked as a small unsigned refcount:
  *
  * - `raise`  => increment the refcount
  * - `lower`  => decrement the refcount
  * - line is considered asserted when `refcount > 0`
+ *
+ * Edge-triggered interrupt sources are represented as explicit pulses (0→1→0)
+ * by calling `raise` then `lower` immediately.
+ *
+ * See `docs/irq-semantics.md`.
  *
  * The implementation clamps to the range `[0, 0xffff]` to avoid silent typed
  * array wraparound.
@@ -53,4 +58,3 @@ export function applyIrqRefCountChange(refCounts: Uint16Array, idx: number, leve
   refCounts[idx] = next;
   return next === 0 ? IRQ_REFCOUNT_DEASSERT : 0;
 }
-
