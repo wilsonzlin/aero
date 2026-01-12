@@ -1132,4 +1132,39 @@ mod tests {
         let err = ctl.load_state(&w.finish()).unwrap_err();
         assert_eq!(err, SnapshotError::InvalidFieldEncoding("idep pio index"));
     }
+
+    #[test]
+    fn snapshot_preserves_irq_latch_while_interrupts_disabled() {
+        let (mut ctl, irq14, _irq15) = setup_controller();
+
+        // Disable interrupts (nIEN).
+        ctl.write_u8(PRIMARY_CTRL, 0x02);
+
+        // Issue IDENTIFY; this sets the internal IRQ latch but should not raise the line while
+        // interrupts are disabled.
+        ctl.write_u8(PRIMARY_BASE + 6, 0xE0);
+        ctl.write_u8(PRIMARY_BASE + 7, ATA_CMD_IDENTIFY);
+        assert!(
+            !irq14.level(),
+            "IRQ line must remain low while nIEN is set"
+        );
+
+        let snap = ctl.save_state();
+
+        let irq14_2 = TestIrqLine::default();
+        let irq15_2 = TestIrqLine::default();
+        let mut restored = IdeController::new(Box::new(irq14_2.clone()), Box::new(irq15_2));
+        restored.load_state(&snap).unwrap();
+
+        // Still disabled after restore; line remains low.
+        assert!(!irq14_2.level());
+
+        // Re-enable interrupts; the latched IRQ should surface.
+        restored.write_u8(PRIMARY_CTRL, 0x00);
+        assert!(irq14_2.level());
+
+        // Reading status clears the IRQ.
+        let _ = restored.read_u8(PRIMARY_BASE + 7);
+        assert!(!irq14_2.level());
+    }
 }
