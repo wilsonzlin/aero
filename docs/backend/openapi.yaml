@@ -93,6 +93,29 @@ paths:
                       l2:
                         maxFramePayloadBytes: 2048
                         maxControlPayloadBytes: 256
+                basePathExample:
+                  summary: Example when the gateway is served behind a base path
+                  value:
+                    session:
+                      expiresAt: '2026-01-10T00:00:00Z'
+                    endpoints:
+                      tcp: /aero/tcp
+                      tcpMux: /aero/tcp-mux
+                      dnsQuery: /aero/dns-query
+                      dnsJson: /aero/dns-json
+                      l2: /aero/l2
+                      udpRelayToken: /aero/udp-relay/token
+                    limits:
+                      tcp:
+                        maxConnections: 64
+                        maxMessageBytes: 1048576
+                        connectTimeoutMs: 10000
+                        idleTimeoutMs: 300000
+                      dns:
+                        maxQueryBytes: 4096
+                      l2:
+                        maxFramePayloadBytes: 2048
+                        maxControlPayloadBytes: 256
         '400':
           $ref: '#/components/responses/ErrorResponse'
 

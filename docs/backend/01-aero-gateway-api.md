@@ -119,6 +119,21 @@ These paths are rooted at the gateway’s configured base path (the `.pathname` 
 }
 ```
 
+Example when the gateway is served behind `/aero` (e.g. `PUBLIC_BASE_URL=https://gateway.example.com/aero`):
+
+```json
+{
+  "endpoints": {
+    "tcp": "/aero/tcp",
+    "tcpMux": "/aero/tcp-mux",
+    "dnsQuery": "/aero/dns-query",
+    "dnsJson": "/aero/dns-json",
+    "l2": "/aero/l2",
+    "udpRelayToken": "/aero/udp-relay/token"
+  }
+}
+```
+
 Notes:
 
 - `endpoints.l2` is routed by the **edge reverse proxy** to `aero-l2-proxy` (the Rust L2 tunnel proxy). It is not served by the `backend/aero-gateway` Node.js process.
