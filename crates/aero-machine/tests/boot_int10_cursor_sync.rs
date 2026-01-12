@@ -28,13 +28,18 @@ fn build_int10_set_cursor_pos_boot_sector(row: u8, col: u8) -> [u8; 512] {
 }
 
 fn run_until_halt(m: &mut Machine) {
+    let mut halted = false;
     for _ in 0..100 {
         match m.run_slice(10_000) {
-            RunExit::Halted { .. } => break,
+            RunExit::Halted { .. } => {
+                halted = true;
+                break;
+            }
             RunExit::Completed { .. } => continue,
             other => panic!("unexpected exit: {other:?}"),
         }
     }
+    assert!(halted, "guest never reached HLT");
 }
 
 #[test]

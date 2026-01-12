@@ -247,15 +247,6 @@ impl BusMasterChannel {
         self.status |= 0x04; // interrupt
     }
 
-    /// Reset Bus Master IDE register state back to its power-on baseline.
-    ///
-    /// This preserves `drive_dma_capable`, which is derived from the currently attached drives.
-    pub fn reset(&mut self) {
-        self.cmd = 0;
-        self.status = 0;
-        self.prd_addr = 0;
-    }
-
     pub fn snapshot_state(&self) -> IdeBusMasterChannelState {
         IdeBusMasterChannelState {
             cmd: self.cmd,
