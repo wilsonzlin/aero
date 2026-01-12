@@ -3,6 +3,7 @@
 use aero_machine::pc::PcMachine;
 use aero_machine::RunExit;
 use aero_platform::interrupts::{InterruptInput, PlatformInterruptMode};
+use memory::MemoryBus as _;
 
 fn write_u16_le(pc: &mut PcMachine, paddr: u64, value: u16) {
     pc.bus
@@ -151,6 +152,79 @@ fn pc_machine_delivers_ioapic_interrupt_to_real_mode_ivt_handler() {
 
     panic!(
         "real-mode IOAPIC interrupt handler did not run (flag=0x{:02x})",
+        pc.bus.platform.memory.read_u8(u64::from(flag_addr))
+    );
+}
+
+#[test]
+fn pc_machine_delivers_e1000_pci_intx_via_legacy_pic() {
+    const RAM_SIZE: usize = 2 * 1024 * 1024;
+
+    // Create the PC machine, but swap in a platform that includes the E1000 device.
+    let mut pc = PcMachine::new(RAM_SIZE);
+    pc.bus = aero_pc_platform::PcCpuBus::new(aero_pc_platform::PcPlatform::new_with_e1000(RAM_SIZE));
+
+    // E1000 device 00:05.0 INTA# => (pin+device)%4 = (0+5)%4 = 1 => PIRQB => GSI11 (default config).
+    // With PIC offsets 0x20/0x28: IRQ11 => vector 0x2B.
+    let vector = 0x2B_u8;
+
+    let handler_addr = 0x1200u64;
+    let code_base = 0x2200u64;
+    let flag_addr = 0x0502u16;
+    let flag_value = 0xC3u8;
+
+    install_real_mode_handler(&mut pc, handler_addr, flag_addr, flag_value);
+    install_hlt_loop(&mut pc, code_base);
+    write_ivt_entry(&mut pc, vector, 0x0000, handler_addr as u16);
+
+    setup_real_mode_cpu(&mut pc, code_base);
+
+    // Stop in HLT so the interrupt must be delivered to wake the CPU.
+    assert!(matches!(pc.run_slice(16), RunExit::Halted { .. }));
+
+    // Enable IRQ11 delivery through the legacy PIC.
+    {
+        let mut ints = pc.bus.platform.interrupts.borrow_mut();
+        ints.pic_mut().set_offsets(0x20, 0x28);
+        // Unmask cascade + IRQ11.
+        ints.pic_mut().set_masked(2, false);
+        ints.pic_mut().set_masked(11, false);
+    }
+
+    // Locate BAR0 for the E1000 MMIO window (assigned during BIOS POST).
+    let bar0_base = {
+        let bdf = aero_devices::pci::profile::NIC_E1000_82540EM.bdf;
+        let mut pci_cfg = pc.bus.platform.pci_cfg.borrow_mut();
+        let cfg = pci_cfg
+            .bus_mut()
+            .device_config(bdf)
+            .expect("E1000 config function must exist");
+        assert_ne!(cfg.command() & 0x2, 0, "E1000 MMIO decoding must be enabled");
+        cfg.bar_range(0).expect("E1000 BAR0 must exist").base
+    };
+    assert_ne!(bar0_base, 0, "E1000 BAR0 should be assigned during BIOS POST");
+
+    // Trigger an interrupt inside the E1000 model by enabling IMS and setting ICS.
+    //
+    // We use ICR_TXDW (bit 0) as an arbitrary interrupt cause; this avoids having to program
+    // descriptor rings. Writing to ICS sets the corresponding bit in ICR and asserts INTx when
+    // unmasked in IMS.
+    const REG_ICS: u64 = 0x00C8;
+    const REG_IMS: u64 = 0x00D0;
+    const ICR_TXDW: u32 = 1 << 0;
+    pc.bus.platform.memory.write_u32(bar0_base + REG_IMS, ICR_TXDW);
+    pc.bus.platform.memory.write_u32(bar0_base + REG_ICS, ICR_TXDW);
+
+    // Run until the handler executes.
+    for _ in 0..10 {
+        let _ = pc.run_slice(256);
+        if pc.bus.platform.memory.read_u8(u64::from(flag_addr)) == flag_value {
+            return;
+        }
+    }
+
+    panic!(
+        "real-mode E1000 INTx handler did not run (flag=0x{:02x})",
         pc.bus.platform.memory.read_u8(u64::from(flag_addr))
     );
 }
