@@ -2378,6 +2378,8 @@ pub enum MouseButton {
     Left = 0,
     Middle = 1,
     Right = 2,
+    Back = 3,
+    Forward = 4,
 }
 
 /// Mouse buttons bit values matching `MouseEvent.buttons`.
@@ -2387,12 +2389,16 @@ pub enum MouseButton {
 /// - bit0 (`0x01`): left
 /// - bit1 (`0x02`): right
 /// - bit2 (`0x04`): middle
+/// - bit3 (`0x08`): back
+/// - bit4 (`0x10`): forward
 #[wasm_bindgen]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MouseButtons {
     Left = 0x01,
     Right = 0x02,
     Middle = 0x04,
+    Back = 0x08,
+    Forward = 0x10,
 }
 
 /// Canonical full-system Aero VM exported to JS via wasm-bindgen.
@@ -2405,7 +2411,7 @@ pub enum MouseButtons {
 #[wasm_bindgen]
 pub struct Machine {
     inner: aero_machine::Machine,
-    // Tracks the last injected mouse button state (bit0=left, bit1=right, bit2=middle).
+    // Tracks the last injected mouse button state (low 5 bits = DOM `MouseEvent.buttons`).
     //
     // This exists solely to support the ergonomic JS-side `inject_mouse_buttons_mask` API without
     // emitting redundant button transition packets.
@@ -2633,6 +2639,8 @@ impl Machine {
     /// - `0`: left
     /// - `1`: middle
     /// - `2`: right
+    /// - `3`: back
+    /// - `4`: forward
     ///
     /// Other values are ignored.
     pub fn inject_mouse_button(&mut self, button: u8, pressed: bool) {
@@ -2640,11 +2648,13 @@ impl Machine {
             0 => self.inject_mouse_left(pressed),
             1 => self.inject_mouse_middle(pressed),
             2 => self.inject_mouse_right(pressed),
+            3 => self.inject_mouse_back(pressed),
+            4 => self.inject_mouse_forward(pressed),
             _ => {}
         }
     }
 
-    /// Set PS/2 mouse button state as a bitmask (bit0=left, bit1=right, bit2=middle).
+    /// Set PS/2 mouse button state as a bitmask matching DOM `MouseEvent.buttons` (low 5 bits).
     ///
     /// This mirrors the PS/2 packet button bits (and also DOM `MouseEvent.buttons`).
     pub fn inject_ps2_mouse_buttons(&mut self, buttons: u8) {
@@ -2655,10 +2665,12 @@ impl Machine {
     /// - bit0 (`0x01`): left
     /// - bit1 (`0x02`): right
     /// - bit2 (`0x04`): middle
+    /// - bit3 (`0x08`): back/side (only emitted in PS/2 packets if the guest enabled device ID 0x04)
+    /// - bit4 (`0x10`): forward/extra (same note as bit3)
     ///
-    /// Bits above `0x07` are ignored.
+    /// Bits above `0x1f` are ignored.
     pub fn inject_mouse_buttons_mask(&mut self, mask: u8) {
-        let next = mask & 0x07;
+        let next = mask & 0x1f;
         // Delegate to the canonical machine helper so we compute deltas using authoritative guest
         // device state. The guest can reset the PS/2 mouse independently, making a purely
         // host-side "previous buttons" cache stale (and potentially turning this into a no-op even
@@ -2671,7 +2683,7 @@ impl Machine {
 
     /// Convenience wrapper: set the left mouse button state.
     pub fn inject_mouse_left(&mut self, pressed: bool) {
-        // Only `inject_mouse_buttons_mask` can fully synchronize all 3 buttons at once. If our
+        // Only `inject_mouse_buttons_mask` can fully synchronize all 5 buttons at once. If our
         // cached button state is currently "unknown" (e.g. after snapshot restore), individual
         // transitions shouldn't flip that flag back to "known".
         let known = self.mouse_buttons_known;
@@ -2704,6 +2716,32 @@ impl Machine {
             self.mouse_buttons |= 0x04;
         } else {
             self.mouse_buttons &= !0x04;
+        }
+        self.mouse_buttons_known = known;
+    }
+
+    /// Convenience wrapper: set the back/side mouse button state.
+    pub fn inject_mouse_back(&mut self, pressed: bool) {
+        let known = self.mouse_buttons_known;
+        self.inner
+            .inject_mouse_button(aero_machine::Ps2MouseButton::Side, pressed);
+        if pressed {
+            self.mouse_buttons |= 0x08;
+        } else {
+            self.mouse_buttons &= !0x08;
+        }
+        self.mouse_buttons_known = known;
+    }
+
+    /// Convenience wrapper: set the forward/extra mouse button state.
+    pub fn inject_mouse_forward(&mut self, pressed: bool) {
+        let known = self.mouse_buttons_known;
+        self.inner
+            .inject_mouse_button(aero_machine::Ps2MouseButton::Extra, pressed);
+        if pressed {
+            self.mouse_buttons |= 0x10;
+        } else {
+            self.mouse_buttons &= !0x10;
         }
         self.mouse_buttons_known = known;
     }
@@ -3022,10 +3060,19 @@ mod machine_mouse_button_cache_tests {
         m.inject_mouse_left(false);
         assert_eq!(m.mouse_buttons, 0x02);
 
+        m.inject_mouse_back(true);
+        assert_eq!(m.mouse_buttons, 0x0a);
+
+        m.inject_mouse_forward(true);
+        assert_eq!(m.mouse_buttons, 0x1a);
+
+        m.inject_mouse_back(false);
+        assert_eq!(m.mouse_buttons, 0x12);
+
         // Absolute mask injection should update the cache as well.
-        m.inject_mouse_buttons_mask(0x07);
+        m.inject_mouse_buttons_mask(0x1f);
         assert!(m.mouse_buttons_known);
-        assert_eq!(m.mouse_buttons, 0x07);
+        assert_eq!(m.mouse_buttons, 0x1f);
 
         // Taking/restoring a snapshot should invalidate the cache because device state rewinds.
         let snap = m.snapshot_full().expect("snapshot_full ok");
@@ -3036,7 +3083,7 @@ mod machine_mouse_button_cache_tests {
         assert!(!m.mouse_buttons_known);
 
         // Individual transitions should not flip the state back to "known" (we only know the state
-        // of the specific button we touched; the other 2 may differ inside the restored guest).
+        // of the specific button we touched; other buttons may differ inside the restored guest).
         m.inject_mouse_right(true);
         assert!(!m.mouse_buttons_known);
 

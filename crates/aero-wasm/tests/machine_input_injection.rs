@@ -4,10 +4,14 @@ fn machine_mouse_injection_exports_forward_without_panicking() {
     assert_eq!(aero_wasm::MouseButton::Left as u8, 0);
     assert_eq!(aero_wasm::MouseButton::Middle as u8, 1);
     assert_eq!(aero_wasm::MouseButton::Right as u8, 2);
+    assert_eq!(aero_wasm::MouseButton::Back as u8, 3);
+    assert_eq!(aero_wasm::MouseButton::Forward as u8, 4);
 
     assert_eq!(aero_wasm::MouseButtons::Left as u8, 0x01);
     assert_eq!(aero_wasm::MouseButtons::Right as u8, 0x02);
     assert_eq!(aero_wasm::MouseButtons::Middle as u8, 0x04);
+    assert_eq!(aero_wasm::MouseButtons::Back as u8, 0x08);
+    assert_eq!(aero_wasm::MouseButtons::Forward as u8, 0x10);
 
     // Keep the RAM size small-ish for a fast smoke test while still being large enough for the
     // canonical PC machine configuration.
@@ -33,17 +37,25 @@ fn machine_mouse_injection_exports_forward_without_panicking() {
     m.inject_mouse_button(aero_wasm::MouseButton::Middle as u8, false);
     m.inject_mouse_button(aero_wasm::MouseButton::Right as u8, true);
     m.inject_mouse_button(aero_wasm::MouseButton::Right as u8, false);
+    m.inject_mouse_button(aero_wasm::MouseButton::Back as u8, true);
+    m.inject_mouse_button(aero_wasm::MouseButton::Back as u8, false);
+    m.inject_mouse_button(aero_wasm::MouseButton::Forward as u8, true);
+    m.inject_mouse_button(aero_wasm::MouseButton::Forward as u8, false);
 
     // Unknown button codes should be ignored.
     m.inject_mouse_button(0xFF, true);
 
-    // Mask injection (bit0=left, bit1=right, bit2=middle).
+    // Mask injection (matches DOM `MouseEvent.buttons`).
     m.inject_mouse_buttons_mask(aero_wasm::MouseButtons::Left as u8);
+    m.inject_mouse_buttons_mask(0x00);
+    m.inject_mouse_buttons_mask(aero_wasm::MouseButtons::Back as u8);
     m.inject_mouse_buttons_mask(0x00);
     m.inject_mouse_buttons_mask(
         (aero_wasm::MouseButtons::Left as u8)
             | (aero_wasm::MouseButtons::Right as u8)
-            | (aero_wasm::MouseButtons::Middle as u8),
+            | (aero_wasm::MouseButtons::Middle as u8)
+            | (aero_wasm::MouseButtons::Back as u8)
+            | (aero_wasm::MouseButtons::Forward as u8),
     );
     m.inject_mouse_buttons_mask(0x00);
     // PS/2 alias (same bit mapping).
@@ -57,4 +69,8 @@ fn machine_mouse_injection_exports_forward_without_panicking() {
     m.inject_mouse_right(false);
     m.inject_mouse_middle(true);
     m.inject_mouse_middle(false);
+    m.inject_mouse_back(true);
+    m.inject_mouse_back(false);
+    m.inject_mouse_forward(true);
+    m.inject_mouse_forward(false);
 }

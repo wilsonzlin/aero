@@ -193,13 +193,13 @@ export interface WasmApi {
      *
      * Optional for older WASM builds.
      */
-    MouseButton?: WasmEnum<"Left" | "Middle" | "Right">;
+    MouseButton?: WasmEnum<"Left" | "Middle" | "Right" | "Back" | "Forward">;
     /**
      * Mouse button bit values matching `MouseEvent.buttons` (bitmask).
      *
      * Optional for older WASM builds.
      */
-    MouseButtons?: WasmEnum<"Left" | "Right" | "Middle">;
+    MouseButtons?: WasmEnum<"Left" | "Right" | "Middle" | "Back" | "Forward">;
 
     /**
      * Guest-visible virtio-input device exposed via virtio-pci (BAR0 MMIO).
