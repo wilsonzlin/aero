@@ -155,6 +155,7 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
             host_sample_rate_hz > 0,
             "host_sample_rate_hz must be non-zero"
         );
+        let host_sample_rate_hz = host_sample_rate_hz.min(aero_audio::MAX_HOST_SAMPLE_RATE_HZ);
         Self {
             output,
             capture_source,
@@ -191,6 +192,7 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
             host_sample_rate_hz > 0,
             "host_sample_rate_hz must be non-zero"
         );
+        let host_sample_rate_hz = host_sample_rate_hz.min(aero_audio::MAX_HOST_SAMPLE_RATE_HZ);
         if self.host_sample_rate_hz == host_sample_rate_hz {
             return;
         }
@@ -223,6 +225,8 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
             capture_sample_rate_hz > 0,
             "capture_sample_rate_hz must be non-zero"
         );
+        let capture_sample_rate_hz =
+            capture_sample_rate_hz.min(aero_audio::MAX_HOST_SAMPLE_RATE_HZ);
         if self.capture_sample_rate_hz == capture_sample_rate_hz {
             return;
         }
@@ -1002,6 +1006,28 @@ mod tests {
 
     fn status(resp: &[u8]) -> u32 {
         u32::from_le_bytes(resp[0..4].try_into().unwrap())
+    }
+
+    #[test]
+    fn virtio_snd_clamps_host_and_capture_sample_rates_to_avoid_oom() {
+        let mut snd = VirtioSnd::new_with_host_sample_rate(
+            aero_audio::ring::AudioRingBuffer::new_stereo(8),
+            u32::MAX,
+        );
+        assert_eq!(snd.host_sample_rate_hz(), aero_audio::MAX_HOST_SAMPLE_RATE_HZ);
+        assert_eq!(
+            snd.capture_sample_rate_hz(),
+            aero_audio::MAX_HOST_SAMPLE_RATE_HZ
+        );
+
+        snd.set_host_sample_rate_hz(u32::MAX);
+        assert_eq!(snd.host_sample_rate_hz(), aero_audio::MAX_HOST_SAMPLE_RATE_HZ);
+
+        snd.set_capture_sample_rate_hz(u32::MAX);
+        assert_eq!(
+            snd.capture_sample_rate_hz(),
+            aero_audio::MAX_HOST_SAMPLE_RATE_HZ
+        );
     }
 
     #[test]

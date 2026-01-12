@@ -855,6 +855,7 @@ impl HdaController {
 
     pub fn new_with_output_rate(output_rate_hz: u32) -> Self {
         assert!(output_rate_hz > 0, "output_rate_hz must be non-zero");
+        let output_rate_hz = output_rate_hz.min(crate::MAX_HOST_SAMPLE_RATE_HZ);
         let num_output_streams: usize = 1;
         let num_input_streams: usize = 1;
         let num_bidir_streams: usize = 0;
@@ -931,6 +932,7 @@ impl HdaController {
     /// output sink.
     pub fn set_output_rate_hz(&mut self, output_rate_hz: u32) {
         assert!(output_rate_hz > 0, "output_rate_hz must be non-zero");
+        let output_rate_hz = output_rate_hz.min(crate::MAX_HOST_SAMPLE_RATE_HZ);
         if self.output_rate_hz == output_rate_hz {
             return;
         }
@@ -981,6 +983,7 @@ impl HdaController {
             capture_sample_rate_hz > 0,
             "capture_sample_rate_hz must be non-zero"
         );
+        let capture_sample_rate_hz = capture_sample_rate_hz.min(crate::MAX_HOST_SAMPLE_RATE_HZ);
         if self.capture_sample_rate_hz == capture_sample_rate_hz {
             return;
         }
