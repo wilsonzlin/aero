@@ -27,20 +27,14 @@ fn read_cfg_u32(m: &mut Machine, bus: u8, device: u8, function: u8, offset: u8) 
 
 #[test]
 fn machine_win7_storage_has_ahci_and_ide_on_canonical_bdfs() {
-    let mut m = Machine::new(MachineConfig {
-        ram_size_bytes: 2 * 1024 * 1024,
-        enable_pc_platform: true,
-        enable_ahci: true,
-        enable_ide: true,
-        // Keep the machine deterministic for PCI topology assertions.
-        enable_serial: false,
-        enable_i8042: false,
-        enable_a20_gate: false,
-        enable_reset_ctrl: false,
-        enable_e1000: false,
-        ..Default::default()
-    })
-    .unwrap();
+    let mut cfg = MachineConfig::win7_storage(2 * 1024 * 1024);
+    // Keep the machine deterministic/focused for PCI topology assertions.
+    cfg.enable_serial = false;
+    cfg.enable_i8042 = false;
+    cfg.enable_a20_gate = false;
+    cfg.enable_reset_ctrl = false;
+
+    let mut m = Machine::new(cfg).unwrap();
 
     // AHCI at 00:02.0
     {

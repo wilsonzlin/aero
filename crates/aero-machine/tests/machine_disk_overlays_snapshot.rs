@@ -50,18 +50,12 @@ impl snapshot::SnapshotTarget for CaptureDiskOverlaysTarget {
 
 #[test]
 fn machine_snapshot_writes_and_restores_disk_overlay_refs_with_stable_disk_ids() {
-    let cfg = MachineConfig {
-        ram_size_bytes: 2 * 1024 * 1024,
-        enable_pc_platform: true,
-        enable_ahci: true,
-        enable_ide: true,
-        // Keep the test focused on snapshot disk overlay plumbing.
-        enable_serial: false,
-        enable_i8042: false,
-        enable_a20_gate: false,
-        enable_reset_ctrl: false,
-        ..Default::default()
-    };
+    let mut cfg = MachineConfig::win7_storage(2 * 1024 * 1024);
+    // Keep the test focused on snapshot disk overlay plumbing.
+    cfg.enable_serial = false;
+    cfg.enable_i8042 = false;
+    cfg.enable_a20_gate = false;
+    cfg.enable_reset_ctrl = false;
 
     let mut src = Machine::new(cfg.clone()).unwrap();
 

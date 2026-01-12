@@ -41,9 +41,12 @@ and the corresponding tests:
 Rationale: Windows 7 requires hotfixes and/or vendor drivers for NVMe (e.g. KB2990941). For
 compatibility-first defaults, keep NVMe disabled unless explicitly opted into by a config/feature.
 
-Implementation note (Rust): `aero_pc_platform::PcPlatform::new_with_win7_storage(...)` is a
-convenience constructor that enables this controller set at the canonical BDFs for integration
-tests and bring-up.
+Implementation note (Rust): `aero_machine::Machine::new_with_win7_storage(...)` /
+`aero_machine::MachineConfig::win7_storage(...)` are convenience helpers that enable this controller
+set at the canonical BDFs for integration tests and bring-up.
+
+Lower-level platform-only tests may use `aero_pc_platform::PcPlatform::new_with_win7_storage(...)`
+instead.
 
 `aero_pc_platform::PcPlatform::new_with_windows7_storage_topology(...)` additionally attaches an
 AHCI HDD (port 0) and an IDE/ATAPI CD-ROM (secondary master) so tests can validate real I/O.

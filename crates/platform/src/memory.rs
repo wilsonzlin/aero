@@ -3,7 +3,7 @@ use crate::chipset::A20GateHandle;
 use crate::dirty_memory::{DirtyTrackingHandle, DirtyTrackingMemory, DEFAULT_DIRTY_PAGE_SIZE};
 use aero_pc_constants::PCIE_ECAM_BASE;
 use memory::{
-    DenseMemory, GuestMemory, GuestMemoryMapping, MapError, MmioHandler, MappedGuestMemory,
+    DenseMemory, GuestMemory, GuestMemoryMapping, MapError, MappedGuestMemory, MmioHandler,
     PhysicalMemoryBus,
 };
 use std::sync::Arc;
