@@ -208,3 +208,16 @@ test("ACMD FLUSH rejects undersized packets", () => {
   const state = createAerogpuCpuExecutorState();
   assert.throws(() => executeAerogpuCmdStream(state, bytes.buffer, { allocTable: null, guestU8: null }), /FLUSH/);
 });
+
+test("ACMD CREATE_TEXTURE2D rejects unsupported formats (e.g. BC) at creation time", () => {
+  const w = new AerogpuCmdWriter();
+  // Use a format value that is not in the CPU executor's allow-list. This is representative of
+  // ABI 1.2+ block-compressed formats, which require the GPU backend.
+  w.createTexture2d(1, 0, 0xffff_ffff, 1, 1, 1, 1, 0, 0, 0);
+
+  const state = createAerogpuCpuExecutorState();
+  assert.throws(
+    () => executeAerogpuCmdStream(state, w.finish().buffer, { allocTable: null, guestU8: null }),
+    /aerogpu: CREATE_TEXTURE2D unsupported format .*BC formats require GPU backend/,
+  );
+});
