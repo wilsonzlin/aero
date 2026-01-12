@@ -22,6 +22,7 @@ const EXTERNAL_HUB_ROOT_PORT: usize = 0;
 const DEFAULT_EXTERNAL_HUB_PORT_COUNT: u8 = 16;
 const WEBUSB_ROOT_PORT: usize = 1;
 const MAX_USB_SNAPSHOT_BYTES: usize = 4 * 1024 * 1024;
+const MAX_WEBHID_SNAPSHOT_DEVICES: usize = 1024;
 
 const UHCI_RUNTIME_DEVICE_ID: [u8; 4] = *b"UHRT";
 const UHCI_RUNTIME_DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
@@ -731,16 +732,25 @@ impl UhciRuntime {
             r.bytes(TAG_WEBHID_DEVICES)
         {
             let mut d = Decoder::new(buf);
-            let records = d.vec_bytes().map_err(|e| {
+            let count = d.u32().map_err(|e| {
                 js_error(&format!("Invalid UHCI runtime snapshot WebHID list: {e}"))
-            })?;
-            d.finish().map_err(|e| {
-                js_error(&format!("Invalid UHCI runtime snapshot WebHID list: {e}"))
-            })?;
+            })? as usize;
+            if count > MAX_WEBHID_SNAPSHOT_DEVICES {
+                return Err(js_error(&format!(
+                    "UHCI runtime snapshot has too many WebHID devices ({count}, max {MAX_WEBHID_SNAPSHOT_DEVICES})"
+                )));
+            }
 
-            let mut out = Vec::with_capacity(records.len());
-            for (idx, rec) in records.into_iter().enumerate() {
-                let mut rd = Decoder::new(&rec);
+            let mut out = Vec::with_capacity(count);
+            for idx in 0..count {
+                let rec_len = d.u32().map_err(|e| {
+                    js_error(&format!("Invalid UHCI runtime snapshot WebHID list: {e}"))
+                })? as usize;
+                let rec = d.bytes(rec_len).map_err(|e| {
+                    js_error(&format!("Invalid UHCI runtime snapshot WebHID list: {e}"))
+                })?;
+
+                let mut rd = Decoder::new(rec);
                 let device_id = rd
                     .u32()
                     .map_err(|e| js_error(&format!("Invalid WebHID record #{idx}: {e}")))?;
@@ -809,6 +819,9 @@ impl UhciRuntime {
                     state,
                 });
             }
+            d.finish().map_err(|e| {
+                js_error(&format!("Invalid UHCI runtime snapshot WebHID list: {e}"))
+            })?;
             out
         } else {
             Vec::new()

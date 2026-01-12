@@ -1,6 +1,8 @@
 #![cfg(target_arch = "wasm32")]
 
 use aero_wasm::{UhciControllerBridge, UhciRuntime, UsbHidPassthroughBridge, WebUsbUhciBridge};
+use aero_io_snapshot::io::state::{IoSnapshot, SnapshotVersion, SnapshotWriter};
+use aero_usb::uhci::UhciController;
 use wasm_bindgen_test::wasm_bindgen_test;
 
 const MIN_REPORT_DESCRIPTOR: &[u8] = &[
@@ -252,4 +254,31 @@ fn usb_snapshot_restore_rejects_truncated_bytes() {
             );
         }
     }
+}
+
+#[wasm_bindgen_test]
+fn uhci_runtime_snapshot_restore_rejects_too_many_webhid_devices() {
+    // Must match the runtime snapshot decoder limit.
+    const MAX_WEBHID_SNAPSHOT_DEVICES: u32 = 1024;
+
+    let mut guest = vec![0u8; 0x8000];
+    let guest_base = guest.as_mut_ptr() as u32;
+    let mut runtime = UhciRuntime::new(guest_base, guest.len() as u32).expect("new UhciRuntime");
+
+    // Build a minimal snapshot with a valid controller payload but an invalid WebHID list count.
+    let ctrl = UhciController::new(0x5000, 11);
+    let ctrl_snapshot = ctrl.save_state();
+
+    let mut webhid_list = Vec::new();
+    webhid_list.extend_from_slice(&(MAX_WEBHID_SNAPSHOT_DEVICES + 1).to_le_bytes());
+
+    let mut w = SnapshotWriter::new(*b"UHRT", SnapshotVersion::new(1, 0));
+    w.field_bytes(1, ctrl_snapshot); // TAG_CONTROLLER
+    w.field_bytes(6, webhid_list); // TAG_WEBHID_DEVICES
+    let snapshot = w.finish();
+
+    assert!(
+        runtime.restore_state(&snapshot).is_err(),
+        "expected restore_state to reject snapshots with too many WebHID devices"
+    );
 }
