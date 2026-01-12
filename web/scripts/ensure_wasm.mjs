@@ -28,9 +28,14 @@ function ensureVariant(variant) {
         path.join(outDirAeroGpu, "aero_gpu_wasm_bg.wasm"),
     ];
 
+    // Optional: the Tier-1 JIT compiler wasm-pack package. Only require it when the
+    // crate exists (e.g. downstream forks may not include it).
     const jitCratePath = path.join(repoRoot, "crates/aero-jit-wasm", "Cargo.toml");
     if (existsSync(jitCratePath)) {
-        expectedFiles.push(path.join(outDirAeroJit, "aero_jit_wasm.js"), path.join(outDirAeroJit, "aero_jit_wasm_bg.wasm"));
+        expectedFiles.push(
+            path.join(outDirAeroJit, "aero_jit_wasm.js"),
+            path.join(outDirAeroJit, "aero_jit_wasm_bg.wasm"),
+        );
     }
 
     if (expectedFiles.every((file) => existsSync(file))) {
@@ -40,6 +45,17 @@ function ensureVariant(variant) {
     const result = spawnSync("node", [path.join(__dirname, "build_wasm.mjs"), variant], { stdio: "inherit" });
     if ((result.status ?? 1) !== 0) {
         process.exit(result.status ?? 1);
+    }
+
+    // Defensive: verify the build produced the required artifacts so callers can
+    // rely on `wasm:ensure` guaranteeing the outputs exist.
+    const missing = expectedFiles.filter((file) => !existsSync(file));
+    if (missing.length !== 0) {
+        console.error(
+            `[wasm] Build succeeded but some expected wasm-pack outputs are still missing (${variant}):\n` +
+                missing.map((p) => `- ${path.relative(repoRoot, p)}`).join("\n"),
+        );
+        process.exit(1);
     }
 }
 

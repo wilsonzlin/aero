@@ -27,15 +27,23 @@ npm run wasm:size
 
 ## Outputs
 
-The build produces **two** WASM variants:
+The build produces **two** WASM variants (**single-threaded** and **threaded/shared-memory**).
 
-- **Single-threaded** (no `SharedArrayBuffer` requirement): `web/src/wasm/pkg-single/`
-- **Threaded** (shared memory + atomics): `web/src/wasm/pkg-threaded/`
+Each variant emits multiple wasm-pack packages under `web/src/wasm/`:
+
+- Core VM/runtime (`aero-wasm`):
+  - **Single-threaded**: `web/src/wasm/pkg-single/`
+  - **Threaded** (shared memory + atomics): `web/src/wasm/pkg-threaded/`
+- GPU runtime (`aero-gpu-wasm`):
+  - **Single-threaded**: `web/src/wasm/pkg-single-gpu/`
+  - **Threaded**: `web/src/wasm/pkg-threaded-gpu/`
+- Tier-1 compiler / JIT support (`aero-jit-wasm`):
+  - **Single-threaded**: `web/src/wasm/pkg-jit-single/`
+  - **Threaded**: `web/src/wasm/pkg-jit-threaded/`
 
 Dev builds are written to:
 
-- `web/src/wasm/pkg-single-dev/`
-- `web/src/wasm/pkg-threaded-dev/` (supported, but typically slower due to `build-std`)
+- `web/src/wasm/*-dev/` (e.g. `pkg-single-dev/`, `pkg-threaded-gpu-dev/`)
 
 ## Toolchains
 
