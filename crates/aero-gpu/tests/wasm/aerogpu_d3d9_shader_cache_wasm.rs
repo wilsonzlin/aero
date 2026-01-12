@@ -12,6 +12,57 @@ use wasm_bindgen_test::*;
 
 wasm_bindgen_test_configure!(run_in_browser);
 
+struct PersistentCacheApiGuard {
+    prev_api: Option<JsValue>,
+    prev_store: Option<JsValue>,
+}
+
+impl PersistentCacheApiGuard {
+    fn install(api: &JsValue, store: &JsValue) -> Self {
+        let global = js_sys::global();
+        let api_key = JsValue::from_str("AeroPersistentGpuCache");
+        let store_key = JsValue::from_str("__aeroTestPersistentCache");
+
+        let prev_api = Reflect::get(&global, &api_key)
+            .ok()
+            .and_then(|v| (!v.is_undefined()).then_some(v));
+        let prev_store = Reflect::get(&global, &store_key)
+            .ok()
+            .and_then(|v| (!v.is_undefined()).then_some(v));
+
+        Reflect::set(&global, &api_key, api).unwrap();
+        Reflect::set(&global, &store_key, store).unwrap();
+
+        Self { prev_api, prev_store }
+    }
+}
+
+impl Drop for PersistentCacheApiGuard {
+    fn drop(&mut self) {
+        let global = js_sys::global();
+        let api_key = JsValue::from_str("AeroPersistentGpuCache");
+        let store_key = JsValue::from_str("__aeroTestPersistentCache");
+
+        match &self.prev_api {
+            Some(prev) => {
+                let _ = Reflect::set(&global, &api_key, prev);
+            }
+            None => {
+                let _ = Reflect::delete_property(&global, &api_key);
+            }
+        }
+
+        match &self.prev_store {
+            Some(prev) => {
+                let _ = Reflect::set(&global, &store_key, prev);
+            }
+            None => {
+                let _ = Reflect::delete_property(&global, &store_key);
+            }
+        }
+    }
+}
+
 fn inc_counter(obj: &JsValue, field: &str) {
     let v = Reflect::get(obj, &JsValue::from_str(field))
         .ok()
@@ -20,15 +71,7 @@ fn inc_counter(obj: &JsValue, field: &str) {
     let _ = Reflect::set(obj, &JsValue::from_str(field), &JsValue::from_f64(v + 1.0));
 }
 
-fn install_persistent_cache_stub() {
-    // Idempotent install: if another test already installed it, keep it.
-    let global = js_sys::global();
-    if Reflect::has(&global, &JsValue::from_str("__aeroTestPersistentCache"))
-        .unwrap_or(false)
-    {
-        return;
-    }
-
+fn make_persistent_cache_stub() -> (JsValue, JsValue) {
     let store = Object::new();
     let map = Map::new();
     Reflect::set(&store, &JsValue::from_str("map"), &map).unwrap();
@@ -46,8 +89,6 @@ fn install_persistent_cache_stub() {
         &JsValue::from_f64(0.0),
     )
     .unwrap();
-    Reflect::set(&global, &JsValue::from_str("__aeroTestPersistentCache"), &store).unwrap();
-
     let api = Object::new();
 
     // computeShaderCacheKey(dxbc, flags) -> string
@@ -141,7 +182,7 @@ fn install_persistent_cache_stub() {
     )
     .unwrap();
 
-    Reflect::set(&global, &JsValue::from_str("AeroPersistentGpuCache"), &api).unwrap();
+    (api.into(), store.into())
 }
 
 fn read_f64(obj: &JsValue, field: &str) -> f64 {
@@ -193,7 +234,12 @@ fn assemble_vs_pos_only() -> Vec<u8> {
 
 #[wasm_bindgen_test(async)]
 async fn d3d9_executor_uses_persistent_shader_cache_on_wasm() {
-    install_persistent_cache_stub();
+    // Install a minimal stub `AeroPersistentGpuCache` so the Rust wasm persistent cache wrapper
+    // can exercise the real "persistent hit" codepath in the executor.
+    //
+    // Use a guard to ensure this test doesn't pollute other wasm tests.
+    let (api, store) = make_persistent_cache_stub();
+    let _guard = PersistentCacheApiGuard::install(&api, &store);
 
     let mut exec = match AerogpuD3d9Executor::new_headless().await {
         Ok(exec) => exec,
@@ -219,9 +265,6 @@ async fn d3d9_executor_uses_persistent_shader_cache_on_wasm() {
         .await
         .expect("second shader create succeeds");
 
-    let global = js_sys::global();
-    let store = Reflect::get(&global, &JsValue::from_str("__aeroTestPersistentCache")).unwrap();
-
     let get_calls = read_f64(&store, "getCalls") as u32;
     let put_calls = read_f64(&store, "putCalls") as u32;
     let open_calls = read_f64(&store, "openCalls") as u32;
@@ -233,4 +276,3 @@ async fn d3d9_executor_uses_persistent_shader_cache_on_wasm() {
     // The cache wrapper is recreated on reset, so it should reopen the persistent cache.
     assert_eq!(open_calls, 2);
 }
-
