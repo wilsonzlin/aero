@@ -4,6 +4,8 @@
 // - `backend/aero-gateway` (production)
 // - `tools/net-proxy-server` (dev relay)
 
+import { buildWebSocketUrl } from "./wsUrl.ts";
+
 export const TCP_MUX_SUBPROTOCOL = "aero-tcp-mux-v1";
 
 export const TCP_MUX_HEADER_BYTES = 9;
@@ -356,10 +358,7 @@ export class WebSocketTcpMuxProxyClient {
       maxPayloadBytes: opts.maxIncomingFramePayloadBytes ?? 16 * 1024 * 1024,
     });
 
-    const url = new URL(gatewayBaseUrl);
-    if (url.protocol === "http:") url.protocol = "ws:";
-    if (url.protocol === "https:") url.protocol = "wss:";
-    url.pathname = `${url.pathname.replace(/\/$/, "")}/tcp-mux`;
+    const url = buildWebSocketUrl(gatewayBaseUrl, "/tcp-mux");
     if (opts.authToken) {
       url.searchParams.set("token", opts.authToken);
     }

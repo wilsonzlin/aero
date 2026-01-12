@@ -1,4 +1,5 @@
 import { decodeUdpRelayFrame, encodeUdpRelayV1Datagram, encodeUdpRelayV2Datagram } from "../shared/udpRelayProtocol";
+import { buildWebSocketUrl } from "./wsUrl.ts";
 
 export type UdpProxyEvent = {
   srcIp: string;
@@ -168,10 +169,7 @@ export class WebSocketUdpProxyClient {
   connect(): Promise<void> {
     this.close();
 
-    const url = new URL(this.proxyBaseUrl);
-    if (url.protocol === "http:") url.protocol = "ws:";
-    else if (url.protocol === "https:") url.protocol = "wss:";
-    url.pathname = `${url.pathname.replace(/\/$/, "")}/udp`;
+    const url = buildWebSocketUrl(this.proxyBaseUrl, "/udp");
 
     const auth = this.opts.auth;
     const authMode = auth?.mode ?? "first_message";

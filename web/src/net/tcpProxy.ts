@@ -1,4 +1,5 @@
 import { WebSocketTcpMuxProxyClient, type TcpMuxProxyOptions } from "./tcpMuxProxy.ts";
+import { buildWebSocketUrl } from "./wsUrl.ts";
 
 export type TcpProxyEvent =
   | { type: "connected"; connectionId: number }
@@ -28,8 +29,7 @@ export class WebSocketTcpProxyClient {
   connect(connectionId: number, remoteIp: string, remotePort: number): void {
     if (this.sockets.has(connectionId)) return;
 
-    const url = new URL(this.proxyBaseUrl);
-    url.pathname = `${url.pathname.replace(/\/$/, "")}/tcp`;
+    const url = buildWebSocketUrl(this.proxyBaseUrl, "/tcp");
     url.searchParams.set("v", "1");
     // `remoteIp` may be an IPv6 literal. For the canonical host+port form we do
     // NOT require bracket syntax, but callers may already provide it.

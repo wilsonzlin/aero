@@ -61,6 +61,7 @@ describe("WebSocketUdpProxyClient", () => {
       const connectPromise = client.connect();
 
       expect(lastSocket).not.toBeNull();
+      expect(lastSocket!.url).toBe("ws://example.com/udp");
       lastSocket!.triggerOpen();
 
       expect(lastSocket!.sent[0]).toBe(JSON.stringify({ type: "auth", token: "secret", apiKey: "secret" }));
@@ -76,6 +77,53 @@ describe("WebSocketUdpProxyClient", () => {
     } finally {
       if (originalWebSocket === undefined) delete g.WebSocket;
       else g.WebSocket = originalWebSocket;
+    }
+  });
+
+  it("normalizes https:// base URLs to wss:// and appends /udp", async () => {
+    const g = globalThis as unknown as Record<string, unknown>;
+    const originalWebSocket = g.WebSocket;
+    g.WebSocket = FakeWebSocket;
+
+    try {
+      const client = new WebSocketUdpProxyClient("https://example.com/base", () => {});
+      const connectPromise = client.connect();
+
+      expect(lastSocket).not.toBeNull();
+      expect(lastSocket!.url).toBe("wss://example.com/base/udp");
+
+      lastSocket!.triggerOpen();
+      lastSocket!.triggerMessage(JSON.stringify({ type: "ready" }));
+      await connectPromise;
+    } finally {
+      if (originalWebSocket === undefined) delete g.WebSocket;
+      else g.WebSocket = originalWebSocket;
+    }
+  });
+
+  it("resolves same-origin /path base URLs against location.href when available", async () => {
+    const g = globalThis as unknown as Record<string, unknown>;
+    const originalWebSocket = g.WebSocket;
+    const originalLocation = (g as { location?: unknown }).location;
+
+    g.WebSocket = FakeWebSocket;
+    (g as { location?: unknown }).location = { href: "https://example.com/app/index.html" };
+
+    try {
+      const client = new WebSocketUdpProxyClient("/gw", () => {});
+      const connectPromise = client.connect();
+
+      expect(lastSocket).not.toBeNull();
+      expect(lastSocket!.url).toBe("wss://example.com/gw/udp");
+
+      lastSocket!.triggerOpen();
+      lastSocket!.triggerMessage(JSON.stringify({ type: "ready" }));
+      await connectPromise;
+    } finally {
+      if (originalWebSocket === undefined) delete g.WebSocket;
+      else g.WebSocket = originalWebSocket;
+      if (originalLocation === undefined) delete (g as { location?: unknown }).location;
+      else (g as { location?: unknown }).location = originalLocation;
     }
   });
 });
