@@ -77,6 +77,9 @@ and block devices.
 
 **What it does**
 - Guest physical memory backends and the physical memory bus (`PhysicalMemoryBus`).
+  - Includes `MappedGuestMemory` for PC/Q35-style **non-contiguous** RAM layouts (ECAM + PCI/MMIO
+    holes + >4 GiB remap) with **open-bus** semantics for holes (reads return `0xFF`, writes
+    ignored).
 
 **How it fits**
 - Used by `aero-machine` as the canonical physical address space implementation.
