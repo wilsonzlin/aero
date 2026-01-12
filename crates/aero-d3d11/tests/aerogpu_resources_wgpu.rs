@@ -8,7 +8,7 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
     AEROGPU_RESOURCE_USAGE_TEXTURE, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
 };
 use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 
 async fn create_device_queue() -> Result<(wgpu::Device, wgpu::Queue)> {
     #[cfg(unix)]
@@ -186,6 +186,65 @@ async fn read_texture_rgba8(
     drop(mapped);
     staging.unmap();
     Ok(out)
+}
+
+async fn create_device_queue_with_features(
+    required_features: wgpu::Features,
+) -> Result<(wgpu::Device, wgpu::Queue)> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let needs_runtime_dir = std::env::var("XDG_RUNTIME_DIR")
+            .ok()
+            .map(|v| v.is_empty())
+            .unwrap_or(true);
+
+        if needs_runtime_dir {
+            let dir =
+                std::env::temp_dir().join(format!("aero-d3d11-xdg-runtime-{}", std::process::id()));
+            let _ = std::fs::create_dir_all(&dir);
+            let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+            std::env::set_var("XDG_RUNTIME_DIR", &dir);
+        }
+    }
+
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+        // Prefer GL on Linux CI to avoid crashes in some Vulkan software adapters.
+        backends: if cfg!(target_os = "linux") {
+            wgpu::Backends::GL
+        } else {
+            wgpu::Backends::PRIMARY
+        },
+        ..Default::default()
+    });
+
+    let adapter = instance
+        .request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::LowPower,
+            compatible_surface: None,
+            force_fallback_adapter: true,
+        })
+        .await
+        .ok_or_else(|| anyhow!("wgpu: no suitable adapter found"))?;
+
+    if !adapter.features().contains(required_features) {
+        bail!("wgpu: adapter does not support required_features={required_features:?}");
+    }
+
+    let (device, queue) = adapter
+        .request_device(
+            &wgpu::DeviceDescriptor {
+                label: Some("aero-d3d11 aerogpu_resources test device (with features)"),
+                required_features,
+                required_limits: wgpu::Limits::downlevel_defaults(),
+            },
+            None,
+        )
+        .await
+        .map_err(|e| anyhow!("wgpu: request_device failed: {e:?}"))?;
+
+    Ok((device, queue))
 }
 
 #[test]
@@ -378,6 +437,58 @@ fn upload_resource_bc1_srgb_texture_roundtrip_cpu_fallback() -> Result<()> {
         let readback =
             read_texture_rgba8(resources.device(), resources.queue(), &tex.texture, 4, 4).await?;
         assert_eq!(readback, expected_rgba8);
+
+        Ok(())
+    })
+}
+
+#[test]
+fn upload_resource_bc1_direct_when_bc_feature_enabled() -> Result<()> {
+    pollster::block_on(async {
+        let (device, queue) = match create_device_queue_with_features(wgpu::Features::TEXTURE_COMPRESSION_BC).await {
+            Ok(v) => v,
+            Err(err) => {
+                // Optional: only run when BC compression is available and can be enabled.
+                common::skip_or_panic(module_path!(), &format!("{err:#}"));
+                return Ok(());
+            }
+        };
+        let mut resources = AerogpuResourceManager::new(device, queue);
+
+        let tex_handle = 9;
+        resources.create_texture2d(
+            tex_handle,
+            Texture2dCreateDesc {
+                usage_flags: AEROGPU_RESOURCE_USAGE_TEXTURE,
+                format: AerogpuFormat::BC1RgbaUnorm as u32,
+                width: 4,
+                height: 4,
+                mip_levels: 1,
+                array_layers: 1,
+                row_pitch_bytes: 8,
+                backing_alloc_id: 0,
+                backing_offset_bytes: 0,
+            },
+        )?;
+
+        let bc1_data: Vec<u8> = vec![
+            0xff, 0xff, // color0
+            0x00, 0x00, // color1
+            0x00, 0x55, 0xaa, 0xff, // indices
+        ];
+
+        resources.upload_resource(
+            tex_handle,
+            DirtyRange {
+                offset_bytes: 0,
+                size_bytes: bc1_data.len() as u64,
+            },
+            &bc1_data,
+        )?;
+
+        let tex = resources.texture2d(tex_handle)?;
+        assert_eq!(tex.desc.format, wgpu::TextureFormat::Bc1RgbaUnorm);
+        assert_eq!(tex.desc.texture_format, wgpu::TextureFormat::Bc1RgbaUnorm);
 
         Ok(())
     })
