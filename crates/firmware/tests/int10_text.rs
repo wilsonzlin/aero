@@ -18,7 +18,9 @@ fn int10_text_mode_teletype_updates_text_buffer_and_cursor() {
 
     assert_eq!(BiosDataArea::read_video_mode(&mut mem), 0x03);
     assert_eq!(BiosDataArea::read_screen_cols(&mut mem), 80);
+    assert_eq!(BiosDataArea::read_text_rows(&mut mem), 25);
     assert_eq!(BiosDataArea::read_page_size(&mut mem), 80 * 25 * 2);
+    assert_eq!(BiosDataArea::read_video_page_offset(&mut mem), 0);
     assert_eq!(BiosDataArea::read_active_page(&mut mem), 0);
     assert_eq!(BiosDataArea::read_crtc_base(&mut mem), 0x3D4);
 

@@ -34,7 +34,9 @@ impl VgaDevice {
     pub fn set_text_mode_03h(&mut self, mem: &mut impl MemoryBus, clear: bool) {
         BiosDataArea::write_video_mode(mem, 0x03);
         BiosDataArea::write_screen_cols(mem, 80);
+        BiosDataArea::write_text_rows(mem, 25);
         BiosDataArea::write_page_size(mem, 80 * 25 * 2);
+        BiosDataArea::write_video_page_offset(mem, 0);
         BiosDataArea::write_active_page(mem, 0);
         // Color CRTC base I/O port.
         BiosDataArea::write_crtc_base(mem, 0x3D4);
@@ -66,7 +68,7 @@ impl VgaDevice {
 
     pub fn teletype_output(&mut self, mem: &mut impl MemoryBus, page: u8, ch: u8, attr: u8) {
         let cols = BiosDataArea::read_screen_cols(mem) as u8;
-        let rows = 25u8;
+        let rows = BiosDataArea::read_text_rows(mem).max(1);
         let (mut row, mut col) = BiosDataArea::read_cursor_pos(mem, page);
         let base = self.text_base_for_page(mem, page);
 
@@ -127,7 +129,7 @@ impl VgaDevice {
         window: TextWindow,
     ) {
         let cols = BiosDataArea::read_screen_cols(mem);
-        let rows = 25u16;
+        let rows = u16::from(BiosDataArea::read_text_rows(mem).max(1));
         let base = self.text_base_for_page(mem, page);
         let top_row = window.top_row as u16;
         let top_col = window.top_col as u16;
@@ -175,7 +177,7 @@ impl VgaDevice {
         window: TextWindow,
     ) {
         let cols = BiosDataArea::read_screen_cols(mem);
-        let rows = 25u16;
+        let rows = u16::from(BiosDataArea::read_text_rows(mem).max(1));
         let base = self.text_base_for_page(mem, page);
         let top_row = window.top_row as u16;
         let top_col = window.top_col as u16;
@@ -226,7 +228,7 @@ impl VgaDevice {
         }
 
         let cols = BiosDataArea::read_screen_cols(mem).max(1) as u8;
-        let rows = 25u8;
+        let rows = BiosDataArea::read_text_rows(mem).max(1);
         let (row0, col0) = BiosDataArea::read_cursor_pos(mem, page);
         let base = self.text_base_for_page(mem, page);
 
@@ -249,7 +251,7 @@ impl VgaDevice {
         }
 
         let cols = BiosDataArea::read_screen_cols(mem).max(1) as u8;
-        let rows = 25u8;
+        let rows = BiosDataArea::read_text_rows(mem).max(1);
         let (row0, col0) = BiosDataArea::read_cursor_pos(mem, page);
         let base = self.text_base_for_page(mem, page);
 

@@ -6,6 +6,8 @@ pub const BDA_VIDEO_MODE_ADDR: u64 = 0x0449;
 pub const BDA_SCREEN_COLS_ADDR: u64 = 0x044A;
 /// BIOS Data Area: bytes per text page (word).
 pub const BDA_PAGE_SIZE_ADDR: u64 = 0x044C;
+/// BIOS Data Area: offset (in bytes) of the active video page within text memory (word).
+pub const BDA_VIDEO_PAGE_OFFSET_ADDR: u64 = 0x044E;
 /// BIOS Data Area: cursor position for page 0 (word; row in high byte, column in low byte).
 pub const BDA_CURSOR_POS_PAGE0_ADDR: u64 = 0x0450;
 /// BIOS Data Area: cursor shape (word; start scanline in high byte, end scanline in low byte).
@@ -17,6 +19,8 @@ pub const BDA_ACTIVE_PAGE_ADDR: u64 = 0x0462;
 /// This is typically `0x3D4` for color adapters (modes using `0xB8000`) and `0x3B4` for monochrome
 /// adapters (modes using `0xB0000`).
 pub const BDA_CRTC_BASE_ADDR: u64 = 0x0463;
+/// BIOS Data Area: number of text rows minus 1 (byte).
+pub const BDA_TEXT_ROWS_MINUS_ONE_ADDR: u64 = 0x0484;
 
 pub struct BiosDataArea;
 
@@ -45,6 +49,14 @@ impl BiosDataArea {
         mem.write_u16(BDA_PAGE_SIZE_ADDR, bytes);
     }
 
+    pub fn read_video_page_offset(mem: &mut impl MemoryBus) -> u16 {
+        mem.read_u16(BDA_VIDEO_PAGE_OFFSET_ADDR)
+    }
+
+    pub fn write_video_page_offset(mem: &mut impl MemoryBus, offset: u16) {
+        mem.write_u16(BDA_VIDEO_PAGE_OFFSET_ADDR, offset);
+    }
+
     pub fn read_active_page(mem: &mut impl MemoryBus) -> u8 {
         mem.read_u8(BDA_ACTIVE_PAGE_ADDR)
     }
@@ -59,6 +71,14 @@ impl BiosDataArea {
 
     pub fn write_crtc_base(mem: &mut impl MemoryBus, base: u16) {
         mem.write_u16(BDA_CRTC_BASE_ADDR, base);
+    }
+
+    pub fn read_text_rows(mem: &mut impl MemoryBus) -> u8 {
+        mem.read_u8(BDA_TEXT_ROWS_MINUS_ONE_ADDR).wrapping_add(1)
+    }
+
+    pub fn write_text_rows(mem: &mut impl MemoryBus, rows: u8) {
+        mem.write_u8(BDA_TEXT_ROWS_MINUS_ONE_ADDR, rows.saturating_sub(1));
     }
 
     pub fn read_cursor_pos(mem: &mut impl MemoryBus, page: u8) -> (u8, u8) {
