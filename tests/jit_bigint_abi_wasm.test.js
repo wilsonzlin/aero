@@ -13,7 +13,10 @@ test("jit i64 BigInt ABI: wasm fixture imports/returns use BigInt", async () => 
     jit_exit: 0,
   };
 
-  const memory = new WebAssembly.Memory({ initial: 1, maximum: 4096, shared: true });
+  // Keep the shared memory max tiny: for shared memories, engines may allocate the full maximum
+  // upfront (SharedArrayBuffer is not resizable). The wasm fixture's import type allows a larger
+  // maximum, so we can safely pass the minimal 1-page memory here.
+  const memory = new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true });
 
   const env = {
     memory,
@@ -116,4 +119,3 @@ test("jit i64 BigInt ABI: code_page_version import uses BigInt", async () => {
   assert.equal(typeof ret, "bigint");
   assert.equal(seenPage, -1n);
 });
-
