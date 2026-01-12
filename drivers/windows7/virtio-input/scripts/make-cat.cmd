@@ -15,6 +15,7 @@ set INF_DIR=%ROOT_DIR%\inf
 set CONTRACT_INF=%INF_DIR%\aero_virtio_input.inf
 set ALIAS_INF=%INF_DIR%\virtio-input.inf
 set CAT_FILE=%INF_DIR%\aero_virtio_input.cat
+set SYS_FILE=%INF_DIR%\aero_virtio_input.sys
 set ALIAS_INF_DISABLED=%INF_DIR%\virtio-input.inf.disabled
 
 set INF_SELECTED=
@@ -53,6 +54,13 @@ if not exist "%ALIAS_INF%" if exist "%ALIAS_INF_DISABLED%" (
   echo         "%ALIAS_INF_DISABLED%"
   echo       to:
   echo         "%ALIAS_INF%"
+)
+
+if not exist "%SYS_FILE%" (
+  echo ERROR: Driver binary not found: "%SYS_FILE%"
+  echo        Build the driver and copy aero_virtio_input.sys into the inf\ directory.
+  echo        Alternatively run: powershell -ExecutionPolicy Bypass -File "%SCRIPT_DIR%stage-built-sys.ps1" -Arch amd64
+  exit /b 1
 )
 
 where Inf2Cat.exe >nul 2>nul
