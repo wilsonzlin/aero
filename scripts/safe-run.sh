@@ -378,6 +378,18 @@ should_retry_rustc_thread_error() {
         return 0
     fi
 
+    # Some environments hit transient EAGAIN failures inside `git` itself (e.g. when Cargo fetches
+    # git dependencies), which surface as:
+    #
+    #   fatal: unable to create threaded lstat: Resource temporarily unavailable
+    #
+    # This is also fixed by retry/backoff.
+    if grep -q "unable to create threaded lstat" "${stderr_log}" \
+        && grep -Eq "Resource temporarily unavailable|WouldBlock|os error 11|EAGAIN" "${stderr_log}"
+    then
+        return 0
+    fi
+
     # Some failures show up wrapped as a thread pool build error rather than the direct rustc
     # "failed to spawn helper thread" signature (e.g. Rayon global pool init).
     if grep -q "ThreadPoolBuildError" "${stderr_log}" \
