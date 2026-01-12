@@ -398,6 +398,9 @@ impl<C: Clock> AcpiPmIo<C> {
     }
 
     fn port_read(&mut self, port: u16, size: u8) -> u32 {
+        if size == 0 {
+            return 0;
+        }
         let size = size.clamp(1, 4);
         let pm_tmr_base = self.cfg.pm_tmr_blk;
         let pm_tmr_end = pm_tmr_base + PM_TMR_LEN;
@@ -429,6 +432,9 @@ impl<C: Clock> AcpiPmIo<C> {
     }
 
     fn port_write(&mut self, port: u16, size: u8, value: u32) {
+        if size == 0 {
+            return;
+        }
         let size = size.clamp(1, 4);
         for i in 0..(size as u32) {
             let b = ((value >> (i * 8)) & 0xFF) as u8;
@@ -750,4 +756,32 @@ pub fn register_acpi_pm<C: Clock + 'static>(bus: &mut IoPortBus, pm: SharedAcpiP
         cfg.smi_cmd_port,
         Box::new(AcpiPmPort::new(pm, cfg.smi_cmd_port)),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn port_io_size0_is_noop() {
+        let mut pm = AcpiPmIo::new(AcpiPmConfig::default());
+        let cfg = pm.cfg();
+
+        // Prime a readable register so we can prove size-0 reads don't get clamped to 1.
+        // PM1_EN low byte lives at PM1a_EVT_BLK + 2.
+        PortIoDevice::write(&mut pm, cfg.pm1a_evt_blk + 2, 1, 0xAA);
+        assert_eq!(
+            PortIoDevice::read(&mut pm, cfg.pm1a_evt_blk + 2, 1) & 0xFF,
+            0xAA
+        );
+
+        // Regression: previously `size=0` would be clamped to 1 and would read/write the register.
+        assert_eq!(PortIoDevice::read(&mut pm, cfg.pm1a_evt_blk + 2, 0), 0);
+        PortIoDevice::write(&mut pm, cfg.pm1a_evt_blk + 2, 0, 0x55);
+
+        assert_eq!(
+            PortIoDevice::read(&mut pm, cfg.pm1a_evt_blk + 2, 1) & 0xFF,
+            0xAA
+        );
+    }
 }
