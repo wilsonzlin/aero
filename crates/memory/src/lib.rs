@@ -16,7 +16,8 @@ pub use dirty::{DirtyGuestMemory, DirtyTracker};
 pub use mapped::{GuestMemoryMapping, MappedGuestMemory, MappedGuestMemoryError};
 pub use mmu::{AccessType, Mmu, TranslateError};
 pub use phys::{
-    DenseMemory, GuestMemory, GuestMemoryError, GuestMemoryResult, MappedRegion, SparseMemory,
+    DenseMemory, GuestMemory, GuestMemoryError, GuestMemoryResult,
+    MappedGuestMemory as RegionMappedGuestMemory, MappedRegion, SparseMemory,
 };
 pub use tlb::{PageSize, Tlb, TlbEntry};
 
