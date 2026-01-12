@@ -156,7 +156,7 @@ To support SMP guests, the CPU emulation worker hosts **2+ vCPUs**:
 |-----------|----------------|----------------|
 | **Storage** | AHCI/NVMe/virtio-blk emulation | `Read(lba, sectors)`, `Write(lba, data)` |
 | **Network** | E1000/virtio-net emulation | `Send(packet)`, `Receive() -> packet` |
-| **Audio** | HD Audio/AC97 emulation | `PlaySamples(buf)`, `GetMixerState()` |
+| **Audio** | Guest audio device models (HDA/virtio-snd) + Web Audio bridging (AC'97 is legacy-only) | PCI/MMIO + virtio queues, `SharedArrayBuffer` rings ↔ `AudioWorklet` |
 | **USB** | UHCI emulation + USB device models (optional WebHID/WebUSB passthrough) | `crates/aero-usb` (`UhciController`), `UsbHostAction` bridge (see [ADR 0015](./adr/0015-canonical-usb-stack.md)) |
 
 ### JIT Compilation Worker
