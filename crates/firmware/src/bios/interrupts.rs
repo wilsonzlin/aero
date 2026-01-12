@@ -630,6 +630,20 @@ fn handle_int13(
             bios.last_int13_status = 0;
             cpu.rflags &= !FLAG_CF;
         }
+        0x09 => {
+            // Initialize drive parameters.
+            //
+            // Real BIOS implementations may use this to configure controller timing based on drive
+            // type. Our disk interface is fully emulated in software, so this is a no-op that
+            // validates drive presence.
+            if !drive_present(bus, drive) {
+                set_error(bios, cpu, 0x01);
+                return;
+            }
+            bios.last_int13_status = 0;
+            cpu.rflags &= !FLAG_CF;
+            cpu.gpr[gpr::RAX] &= !0xFF00u64; // AH=0
+        }
         0x0C => {
             // Seek (CHS).
             //
@@ -686,6 +700,19 @@ fn handle_int13(
             // Alternate disk reset (often used for hard disks).
             //
             // Treat this as equivalent to AH=00h reset.
+            if !drive_present(bus, drive) {
+                set_error(bios, cpu, 0x01);
+                return;
+            }
+            bios.last_int13_status = 0;
+            cpu.rflags &= !FLAG_CF;
+            cpu.gpr[gpr::RAX] &= !0xFF00u64; // AH=0
+        }
+        0x14 => {
+            // Controller diagnostics.
+            //
+            // Hardware BIOSes use this to run controller self-tests. We treat the emulated
+            // controller as always healthy.
             if !drive_present(bus, drive) {
                 set_error(bios, cpu, 0x01);
                 return;
@@ -1740,6 +1767,42 @@ mod tests {
         let mut cpu = CpuState::new(CpuMode::Real);
         cpu.gpr[gpr::RAX] = 0x1000; // AH=10h
         cpu.gpr[gpr::RDX] = 0x0000; // DL=0
+
+        let mut mem = TestMemory::new(2 * 1024 * 1024);
+        ivt::init_bda(&mut mem, 0x00);
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
+
+        assert_eq!(cpu.rflags & FLAG_CF, 0);
+        assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0);
+    }
+
+    #[test]
+    fn int13_initialize_drive_parameters_reports_success() {
+        let mut bios = Bios::new(super::super::BiosConfig::default());
+        let disk_bytes = vec![0u8; 512 * 2880];
+        let mut disk = InMemoryDisk::new(disk_bytes);
+
+        let mut cpu = CpuState::new(CpuMode::Real);
+        cpu.gpr[gpr::RAX] = 0x0900; // AH=09h initialize drive parameters
+        cpu.gpr[gpr::RDX] = 0x0000; // DL=floppy 0
+
+        let mut mem = TestMemory::new(2 * 1024 * 1024);
+        ivt::init_bda(&mut mem, 0x00);
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
+
+        assert_eq!(cpu.rflags & FLAG_CF, 0);
+        assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0);
+    }
+
+    #[test]
+    fn int13_controller_diagnostics_reports_success() {
+        let mut bios = Bios::new(super::super::BiosConfig::default());
+        let disk_bytes = vec![0u8; 512 * 2880];
+        let mut disk = InMemoryDisk::new(disk_bytes);
+
+        let mut cpu = CpuState::new(CpuMode::Real);
+        cpu.gpr[gpr::RAX] = 0x1400; // AH=14h controller diagnostic
+        cpu.gpr[gpr::RDX] = 0x0000; // DL=floppy 0
 
         let mut mem = TestMemory::new(2 * 1024 * 1024);
         ivt::init_bda(&mut mem, 0x00);
