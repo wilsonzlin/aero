@@ -1,36 +1,17 @@
 import { expect, test } from "@playwright/test";
 
+import { probeOpfsSyncAccessHandle } from "./util/opfs";
+
 const PREVIEW_ORIGIN = process.env.AERO_PLAYWRIGHT_PREVIEW_ORIGIN ?? "http://127.0.0.1:4173";
 
 test("AudioWorklet producer does not burst after worker-VM snapshot restore", async ({ page }) => {
   test.setTimeout(180_000);
   test.skip(test.info().project.name !== "chromium", "Snapshot + AudioWorklet test only runs on Chromium.");
 
-  // Use the minimum allowed guest RAM (256 MiB) to keep the snapshot file small enough for CI,
-  // while still exercising the worker snapshot protocol.
-  await page.goto(`${PREVIEW_ORIGIN}/web/?mem=256`, { waitUntil: "load" });
-
   // Worker VM snapshots require OPFS SyncAccessHandle. Probe early so unsupported browser variants
-  // skip without paying the cost of starting the workers + AudioWorklet graph.
-  const snapshotSupport = await page.evaluate(async () => {
-    try {
-      const storage = navigator.storage as StorageManager & { getDirectory?: () => Promise<FileSystemDirectoryHandle> };
-      if (typeof storage?.getDirectory !== "function") {
-        return { ok: true as const, supported: false as const, reason: "navigator.storage.getDirectory unavailable" };
-      }
-
-      const root = await storage.getDirectory();
-      const handle = await root.getFileHandle("aero-sync-access-handle-probe.tmp", { create: true });
-      const supported = typeof (handle as unknown as { createSyncAccessHandle?: unknown }).createSyncAccessHandle === "function";
-      return {
-        ok: true as const,
-        supported,
-        reason: supported ? undefined : "FileSystemFileHandle.createSyncAccessHandle unavailable",
-      };
-    } catch (err) {
-      return { ok: false as const, supported: false as const, reason: err instanceof Error ? err.message : String(err) };
-    }
-  });
+  // skip without paying the cost of loading the full `/web/` app (which kicks off main-thread WASM init).
+  await page.goto(`${PREVIEW_ORIGIN}/`, { waitUntil: "load" });
+  const snapshotSupport = await probeOpfsSyncAccessHandle(page);
 
   if (!snapshotSupport.ok || !snapshotSupport.supported) {
     test.skip(
@@ -40,6 +21,10 @@ test("AudioWorklet producer does not burst after worker-VM snapshot restore", as
         : `Failed to probe OPFS SyncAccessHandle support (${snapshotSupport.reason ?? "unknown error"}).`,
     );
   }
+
+  // Use the minimum allowed guest RAM (256 MiB) to keep the snapshot file small enough for CI,
+  // while still exercising the worker snapshot protocol.
+  await page.goto(`${PREVIEW_ORIGIN}/web/?mem=256`, { waitUntil: "load" });
 
   await page.click("#init-audio-output-worker");
 

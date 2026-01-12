@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
 
+import { probeOpfsSyncAccessHandle } from "./util/opfs";
+
 const PREVIEW_ORIGIN = process.env.AERO_PLAYWRIGHT_PREVIEW_ORIGIN ?? "http://127.0.0.1:4173";
 
 test("IO-worker HDA PCI audio does not fast-forward after worker snapshot restore", async ({ page }) => {
@@ -11,33 +13,7 @@ test("IO-worker HDA PCI audio does not fast-forward after worker snapshot restor
 
   await page.goto(`${PREVIEW_ORIGIN}/`, { waitUntil: "load" });
 
-  // Worker VM snapshots require OPFS SyncAccessHandle. Probe early so unsupported browser variants
-  // skip without paying the cost of starting the workers + AudioWorklet graph.
-  const snapshotSupport = await page.evaluate(async () => {
-    try {
-      const storage = navigator.storage as StorageManager & { getDirectory?: () => Promise<FileSystemDirectoryHandle> };
-      if (typeof storage?.getDirectory !== "function") {
-        return { ok: true, supported: false, reason: "navigator.storage.getDirectory unavailable" };
-      }
-
-      const root = await storage.getDirectory();
-      // Ensure the snapshot directory exists (WorkerCoordinator writes under `state/` by default).
-      try {
-        await root.getDirectoryHandle("state", { create: true });
-      } catch {
-        // ignore best-effort
-      }
-      const handle = await root.getFileHandle("aero-sync-access-handle-probe.tmp", { create: true });
-      const supported = typeof (handle as unknown as { createSyncAccessHandle?: unknown }).createSyncAccessHandle === "function";
-      return {
-        ok: true,
-        supported,
-        reason: supported ? undefined : "FileSystemFileHandle.createSyncAccessHandle unavailable",
-      };
-    } catch (err) {
-      return { ok: false, supported: false, reason: err instanceof Error ? err.message : String(err) };
-    }
-  });
+  const snapshotSupport = await probeOpfsSyncAccessHandle(page);
 
   if (!snapshotSupport.ok || !snapshotSupport.supported) {
     test.skip(
