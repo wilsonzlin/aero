@@ -24,10 +24,13 @@ const FRAME_LIST_BASE: u32 = 0x1000;
 const QH_ADDR: u32 = 0x2000;
 const TD0: u32 = 0x3000;
 const TD1: u32 = 0x3020;
+const TD2: u32 = 0x3040;
 const BUF_SETUP: u32 = 0x4000;
 const BUF_INT: u32 = 0x5000;
+const BUF_CTRL: u32 = 0x6000;
 
 const PID_IN: u8 = 0x69;
+const PID_OUT: u8 = 0xe1;
 const PID_SETUP: u8 = 0x2d;
 
 const TD_STATUS_ACTIVE: u32 = 1 << 23;
@@ -127,6 +130,15 @@ fn td_status(active: bool) -> u32 {
     v
 }
 
+fn td_actlen(ctrl_sts: u32) -> usize {
+    let field = ctrl_sts & 0x7ff;
+    if field == 0x7ff {
+        0
+    } else {
+        (field as usize) + 1
+    }
+}
+
 fn write_td(pc: &mut PcPlatform, addr: u32, link: u32, status: u32, token: u32, buffer: u32) {
     pc.memory.write_u32(addr as u64, link);
     pc.memory.write_u32(addr.wrapping_add(4) as u64, status);
@@ -208,6 +220,107 @@ fn control_no_data(pc: &mut PcPlatform, devaddr: u8, setup: [u8; 8]) {
     assert_eq!(st1 & TD_STATUS_ACTIVE, 0);
     assert_eq!(st0 & ERR_MASK, 0, "setup TD should complete without error");
     assert_eq!(st1 & ERR_MASK, 0, "status TD should complete without error");
+}
+
+fn control_in(pc: &mut PcPlatform, devaddr: u8, setup: [u8; 8], data_buf: u32) -> Vec<u8> {
+    let w_length = u16::from_le_bytes([setup[6], setup[7]]) as usize;
+    assert!(w_length > 0, "control_in helper requires wLength>0");
+
+    pc.memory.write_physical(BUF_SETUP as u64, &setup);
+    write_td(
+        pc,
+        TD0,
+        TD1,
+        td_status(true),
+        td_token(PID_SETUP, devaddr, 0, 0, 8),
+        BUF_SETUP,
+    );
+    // DATA stage: IN, DATA1.
+    write_td(
+        pc,
+        TD1,
+        TD2,
+        td_status(true),
+        td_token(PID_IN, devaddr, 0, 1, w_length),
+        data_buf,
+    );
+    // Status stage: OUT ZLP, DATA1.
+    write_td(
+        pc,
+        TD2,
+        1,
+        td_status(true),
+        td_token(PID_OUT, devaddr, 0, 1, 0),
+        0,
+    );
+    run_one_frame(pc, TD0);
+
+    const ERR_MASK: u32 = TD_STATUS_STALLED | TD_STATUS_DATA_BUFFER_ERROR | TD_STATUS_CRC_TIMEOUT;
+    let st0 = pc.memory.read_u32(TD0 as u64 + 4);
+    let st1 = pc.memory.read_u32(TD1 as u64 + 4);
+    let st2 = pc.memory.read_u32(TD2 as u64 + 4);
+    assert_eq!(st0 & TD_STATUS_ACTIVE, 0);
+    assert_eq!(st1 & TD_STATUS_ACTIVE, 0);
+    assert_eq!(st2 & TD_STATUS_ACTIVE, 0);
+    assert_eq!(st0 & ERR_MASK, 0, "setup TD should complete without error");
+    assert_eq!(st1 & ERR_MASK, 0, "data TD should complete without error");
+    assert_eq!(st2 & ERR_MASK, 0, "status TD should complete without error");
+
+    let got = td_actlen(st1);
+    let mut out = vec![0u8; got];
+    pc.memory.read_physical(data_buf as u64, &mut out);
+    out
+}
+
+fn control_out(pc: &mut PcPlatform, devaddr: u8, setup: [u8; 8], data: &[u8]) {
+    let w_length = u16::from_le_bytes([setup[6], setup[7]]) as usize;
+    assert_eq!(
+        data.len(),
+        w_length,
+        "control_out helper expects data.len == wLength"
+    );
+
+    pc.memory.write_physical(BUF_SETUP as u64, &setup);
+    pc.memory.write_physical(BUF_CTRL as u64, data);
+
+    write_td(
+        pc,
+        TD0,
+        TD1,
+        td_status(true),
+        td_token(PID_SETUP, devaddr, 0, 0, 8),
+        BUF_SETUP,
+    );
+    // DATA stage: OUT, DATA1.
+    write_td(
+        pc,
+        TD1,
+        TD2,
+        td_status(true),
+        td_token(PID_OUT, devaddr, 0, 1, data.len()),
+        BUF_CTRL,
+    );
+    // Status stage: IN ZLP, DATA1.
+    write_td(
+        pc,
+        TD2,
+        1,
+        td_status(true),
+        td_token(PID_IN, devaddr, 0, 1, 0),
+        0,
+    );
+    run_one_frame(pc, TD0);
+
+    const ERR_MASK: u32 = TD_STATUS_STALLED | TD_STATUS_DATA_BUFFER_ERROR | TD_STATUS_CRC_TIMEOUT;
+    let st0 = pc.memory.read_u32(TD0 as u64 + 4);
+    let st1 = pc.memory.read_u32(TD1 as u64 + 4);
+    let st2 = pc.memory.read_u32(TD2 as u64 + 4);
+    assert_eq!(st0 & TD_STATUS_ACTIVE, 0);
+    assert_eq!(st1 & TD_STATUS_ACTIVE, 0);
+    assert_eq!(st2 & TD_STATUS_ACTIVE, 0);
+    assert_eq!(st0 & ERR_MASK, 0, "setup TD should complete without error");
+    assert_eq!(st1 & ERR_MASK, 0, "data TD should complete without error");
+    assert_eq!(st2 & ERR_MASK, 0, "status TD should complete without error");
 }
 
 #[test]
@@ -990,6 +1103,74 @@ fn pc_platform_uhci_interrupt_in_reads_hid_keyboard_reports_via_dma() {
     let st = pc.memory.read_u32(TD0 as u64 + 4);
     assert_ne!(st & TD_STATUS_ACTIVE, 0);
     assert_ne!(st & TD_STATUS_NAK, 0);
+}
+
+#[test]
+fn pc_platform_uhci_control_transfers_can_set_and_get_keyboard_led_report_via_dma() {
+    let mut pc = PcPlatform::new(2 * 1024 * 1024);
+    let bdf = USB_UHCI_PIIX3.bdf;
+    let bar4_base = read_uhci_bar4_base(&mut pc);
+
+    let keyboard = UsbHidKeyboardHandle::new();
+    pc.uhci
+        .as_ref()
+        .expect("UHCI should be enabled")
+        .borrow_mut()
+        .controller_mut()
+        .hub_mut()
+        .attach(0, Box::new(keyboard));
+
+    // Enable Bus Mastering so UHCI can DMA the schedule/TD state.
+    let command = read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04) as u16;
+    write_cfg_u16(
+        &mut pc,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        0x04,
+        command | (1 << 2),
+    );
+    pc.tick(0);
+
+    init_frame_list(&mut pc);
+    reset_port(&mut pc, bar4_base, REG_PORTSC1);
+
+    pc.io.write(bar4_base + REG_FLBASEADD, 4, FRAME_LIST_BASE);
+    pc.io.write(bar4_base + REG_FRNUM, 2, 0);
+    pc.io.write(
+        bar4_base + REG_USBCMD,
+        2,
+        u32::from(USBCMD_RS | USBCMD_MAXP),
+    );
+
+    // Enumerate keyboard at address 5.
+    control_no_data(
+        &mut pc,
+        0,
+        [0x00, 0x05, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00], // SET_ADDRESS(5)
+    );
+    control_no_data(
+        &mut pc,
+        5,
+        [0x00, 0x09, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00], // SET_CONFIGURATION(1)
+    );
+
+    // HID SET_REPORT (Output, reportId=0) with 1 byte of LED state.
+    control_out(
+        &mut pc,
+        5,
+        [0x21, 0x09, 0x00, 0x02, 0x00, 0x00, 0x01, 0x00], // SET_REPORT(Output)
+        &[0x01],
+    );
+
+    // HID GET_REPORT (Output) should return the LED byte we just set.
+    let got = control_in(
+        &mut pc,
+        5,
+        [0xA1, 0x01, 0x00, 0x02, 0x00, 0x00, 0x01, 0x00], // GET_REPORT(Output)
+        BUF_CTRL,
+    );
+    assert_eq!(got, vec![0x01]);
 }
 
 #[test]
