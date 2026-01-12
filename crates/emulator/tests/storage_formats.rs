@@ -762,19 +762,15 @@ fn vhd_dynamic_rejects_block_overlapping_metadata() {
     let footer = make_vhd_footer(virtual_size, 3, dyn_header_offset);
     storage.write_at(new_footer_offset, &footer).unwrap();
 
-    let mut drive = VirtualDrive::open_with_format(
+    let res = VirtualDrive::open_with_format(
         DiskFormat::Vhd,
         storage,
         512,
         WriteCachePolicy::WriteThrough,
-    )
-    .unwrap();
-
-    let mut sector = [0u8; SECTOR_SIZE];
-    let err = drive.read_sectors(0, &mut sector).unwrap_err();
+    );
     assert!(matches!(
-        err,
-        DiskError::CorruptImage("vhd block overlaps metadata")
+        res,
+        Err(DiskError::CorruptImage("vhd block overlaps metadata"))
     ));
 }
 
