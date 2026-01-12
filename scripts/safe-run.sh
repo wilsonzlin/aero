@@ -359,6 +359,7 @@ should_retry_rustc_thread_error() {
     # - "Unable to install ctrlc handler: ... Resource temporarily unavailable"
     # - "fork: retry: Resource temporarily unavailable"
     # - "failed to fork: Resource temporarily unavailable" (observed from some native tools)
+    # - "could not exec the linker `cc`: ... Resource temporarily unavailable"
     # - "ThreadPoolBuildError { ... Resource temporarily unavailable }" (Rayon thread pool init)
     # - "std::system_error: Resource temporarily unavailable" (observed from linkers like lld)
     if grep -q "Unable to install ctrlc handler" "${stderr_log}"; then
