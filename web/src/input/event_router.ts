@@ -41,7 +41,10 @@ export class InputEventRouter {
     this.boundPointerUp = (e) => this.handlePointer(e, "pointerup");
     this.boundPointerMove = (e) => this.handlePointer(e, "pointermove");
     this.boundWheel = (e) => this.handleWheel(e);
-    this.boundContextMenu = (e) => e.preventDefault();
+    this.boundContextMenu = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+    };
 
     this.target.addEventListener("keydown", this.boundKeyDown as EventListener);
     this.target.addEventListener("keyup", this.boundKeyUp as EventListener);
@@ -75,6 +78,7 @@ export class InputEventRouter {
 
   private handleKeyboard(e: KeyboardEvent, kind: InputEventKind) {
     e.preventDefault();
+    e.stopPropagation();
 
     const id = this.nextId++;
     const t_capture_ms = performance.now();
@@ -103,6 +107,7 @@ export class InputEventRouter {
 
   private handlePointer(e: PointerEvent, kind: InputEventKind) {
     e.preventDefault();
+    e.stopPropagation();
 
     const id = this.nextId++;
     const t_capture_ms = performance.now();
@@ -134,6 +139,7 @@ export class InputEventRouter {
 
   private handleWheel(e: WheelEvent) {
     e.preventDefault();
+    e.stopPropagation();
 
     const id = this.nextId++;
     const kind: InputEventKind = "wheel";
