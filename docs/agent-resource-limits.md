@@ -131,6 +131,8 @@ These don't enforce hard limits but reduce memory spikes:
 ```bash
 export CARGO_BUILD_JOBS=1       # Limit parallel rustc (agent default; raise if your sandbox allows)
 export RUSTC_WORKER_THREADS=1   # Limit rustc's internal worker pool (avoid "WouldBlock" rustc ICEs)
+export RAYON_NUM_THREADS=1      # Keep rustc/Rayon pools aligned with Cargo parallelism
+export RUST_TEST_THREADS=1      # Limit Rust's built-in test harness parallelism (libtest)
 export AERO_RUST_CODEGEN_UNITS=1  # Optional: reduce per-crate parallelism (slower, but can help under tight thread/process limits); alias: AERO_CODEGEN_UNITS
 ```
 
@@ -177,6 +179,7 @@ Recommended memory-friendly Cargo settings live in environment variables (next s
 export CARGO_BUILD_JOBS=1
 export RUSTC_WORKER_THREADS=1   # Limit rustc internal worker threads (reliability under contention)
 export RAYON_NUM_THREADS=1      # Keep rayon pools aligned with Cargo parallelism
+export RUST_TEST_THREADS=1      # Limit libtest parallelism (helps when per-user thread limits are tight)
 export CARGO_INCREMENTAL=1
 
 # Node (if running JS/TS tooling)
