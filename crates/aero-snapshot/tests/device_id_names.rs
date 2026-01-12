@@ -12,29 +12,21 @@ fn usb_device_id_has_stable_name() {
 }
 
 #[test]
-fn i8042_device_id_has_stable_name() {
-    assert_eq!(DeviceId::I8042.name(), Some("I8042"));
+fn platform_device_ids_have_stable_names_and_numbers() {
+    let cases = [
+        (DeviceId::I8042, 13u32, "I8042"),
+        (DeviceId::PCI_CFG, 14u32, "PCI_CFG"),
+        (DeviceId::PCI_INTX, 15u32, "PCI_INTX"),
+        (DeviceId::ACPI_PM, 16u32, "ACPI_PM"),
+        (DeviceId::HPET, 17u32, "HPET"),
+    ];
 
-    let display = format!("{}", DeviceId::I8042);
-    assert!(
-        display.contains("I8042("),
-        "DeviceId::I8042 Display should include name, got: {display}"
-    );
-}
-
-#[test]
-fn canonical_platform_device_ids_have_stable_names() {
-    for (id, name) in [
-        (DeviceId::PCI_CFG, "PCI_CFG"),
-        (DeviceId::PCI_INTX, "PCI_INTX"),
-        (DeviceId::ACPI_PM, "ACPI_PM"),
-        (DeviceId::HPET, "HPET"),
-    ] {
-        assert_eq!(id.name(), Some(name));
-        let display = format!("{id}");
-        assert!(
-            display.contains(&format!("{name}(")),
-            "DeviceId::{name} Display should include name, got: {display}"
+    for (id, expected_num, expected_name) in cases {
+        assert_eq!(
+            id.0, expected_num,
+            "{expected_name} DeviceId number changed; must remain stable"
         );
+        assert_eq!(id.name(), Some(expected_name));
+        assert_eq!(format!("{id}"), format!("{expected_name}({expected_num})"));
     }
 }

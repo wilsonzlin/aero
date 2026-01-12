@@ -90,7 +90,7 @@ To keep restore behavior deterministic and avoid ambiguous state merges, the dec
 | `CPU` | Architectural CPU state (v1: minimal; v2: `aero_cpu_core::state::CpuState` compatible) |
 | `CPUS` | Multi-vCPU CPU state (v1: minimal; v2: `aero_cpu_core::state::CpuState` compatible) |
 | `MMU` | System/MMU state (v1: minimal; v2: control/debug/MSR + descriptor tables) |
-| `DEVICES` | List of device states (PIC/APIC/PIT/RTC/PCI/Disk/VGA/etc) as typed TLVs |
+| `DEVICES` | List of device states (PIC/APIC/PIT/RTC/I8042/HPET/ACPI_PM/PCI_CFG/PCI_INTX/Disk/VGA/etc) as typed TLVs |
 | `DISKS` | References to disk base images + overlay images |
 | `RAM` | Guest RAM contents (either full snapshot or dirty-page diff) |
 
@@ -101,6 +101,15 @@ To keep restore behavior deterministic and avoid ambiguous state merges, the dec
 - `DeviceState.id`: the *outer* Aero `DeviceId` (assigned by the coordinator)
 - `DeviceState.data`: the raw `aero-io-snapshot` TLV blob returned by `IoSnapshot::save_state()` (including the inner header)
 - `DeviceState.version` / `DeviceState.flags`: mirror the inner `SnapshotVersion` `(major, minor)` from the `aero-io-snapshot` header
+
+#### Common platform device ids (outer `DeviceId`)
+
+Some platform devices are snapshotted as their own `DEVICES` entries and use dedicated `DeviceId` constants:
+
+- `DeviceId::PCI_CFG` (`14`) — PCI config I/O ports (`PciConfigPorts`)
+- `DeviceId::PCI_INTX` (`15`) — PCI INTx router (`PciIntxRouter`)
+- `DeviceId::ACPI_PM` (`16`) — ACPI power management registers (PM1 + PM timer)
+- `DeviceId::HPET` (`17`) — HPET timer state
 
 #### USB (`DeviceId::USB`)
 
@@ -138,10 +147,10 @@ The PCI core in `crates/devices` snapshots only **guest-visible PCI-layer state*
 
 Canonical full-machine snapshots store these as **separate** `DEVICES` entries with distinct outer `DeviceId`s:
 
-- `DeviceId::PCI_CFG` for the `PciConfigPorts` TLV blob (`DEVICE_ID = PCPT`)
-- `DeviceId::PCI_INTX` for the `PciIntxRouter` TLV blob (`DEVICE_ID = INTX`)
+- `DeviceId::PCI_CFG` (`14`) for the `PciConfigPorts` TLV blob (`DEVICE_ID = PCPT`)
+- `DeviceId::PCI_INTX` (`15`) for the `PciIntxRouter` TLV blob (`DEVICE_ID = INTX`)
 
-This split avoids `DEVICES` duplicate key collisions, since the section rejects duplicate `(device_id, version, flags)` tuples and both PCI TLVs currently share the same inner snapshot `(major, minor)` (e.g. v1.0).
+This split avoids `DEVICES` duplicate key collisions, since the section rejects duplicate `(device_id, version, flags)` tuples and both PCI TLVs commonly share the same inner snapshot `(major, minor)` (e.g. v1.0). It also reflects different restore orchestration: `PciIntxRouter` requires a post-restore `sync_levels_to_sink()` call once the platform interrupt controller/sink is restored (see note below), while `PCI_CFG` can be restored earlier.
 
 Other canonical platform device entries also have dedicated outer `DeviceId`s (e.g. `DeviceId::ACPI_PM`, `DeviceId::HPET`).
 
