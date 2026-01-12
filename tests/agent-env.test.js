@@ -331,6 +331,78 @@ test("agent-env: AERO_TOKIO_WORKER_THREADS defaults to CARGO_BUILD_JOBS", { skip
   }
 });
 
+test("agent-env: NEXTEST_TEST_THREADS defaults to CARGO_BUILD_JOBS", { skip: process.platform === "win32" }, () => {
+  const repoRoot = setupTempRepo();
+  try {
+    const env = { ...process.env };
+    env.AERO_CARGO_BUILD_JOBS = "2";
+    delete env.NEXTEST_TEST_THREADS;
+
+    const stdout = execFileSync(
+      "bash",
+      ["-c", 'source scripts/agent-env.sh >/dev/null; printf "%s" "$NEXTEST_TEST_THREADS"'],
+      {
+        cwd: repoRoot,
+        encoding: "utf8",
+        env,
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+
+    assert.equal(stdout, "2");
+  } finally {
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("agent-env: sanitizes invalid NEXTEST_TEST_THREADS", { skip: process.platform === "win32" }, () => {
+  const repoRoot = setupTempRepo();
+  try {
+    const env = { ...process.env };
+    env.AERO_CARGO_BUILD_JOBS = "2";
+    env.NEXTEST_TEST_THREADS = "nope";
+
+    const stdout = execFileSync(
+      "bash",
+      ["-c", 'source scripts/agent-env.sh >/dev/null; printf "%s" "$NEXTEST_TEST_THREADS"'],
+      {
+        cwd: repoRoot,
+        encoding: "utf8",
+        env,
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+
+    assert.equal(stdout, "2");
+  } finally {
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("agent-env: preserves NEXTEST_TEST_THREADS=num-cpus opt-out", { skip: process.platform === "win32" }, () => {
+  const repoRoot = setupTempRepo();
+  try {
+    const env = { ...process.env };
+    env.AERO_CARGO_BUILD_JOBS = "2";
+    env.NEXTEST_TEST_THREADS = "num-cpus";
+
+    const stdout = execFileSync(
+      "bash",
+      ["-c", 'source scripts/agent-env.sh >/dev/null; printf "%s" "$NEXTEST_TEST_THREADS"'],
+      {
+        cwd: repoRoot,
+        encoding: "utf8",
+        env,
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+
+    assert.equal(stdout, "num-cpus");
+  } finally {
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
 test("agent-env: preserves an explicit AERO_TOKIO_WORKER_THREADS", { skip: process.platform === "win32" }, () => {
   const repoRoot = setupTempRepo();
   try {
@@ -591,6 +663,16 @@ test("agent-env: strips lld --threads from CARGO_ENCODED_RUSTFLAGS (nested wasm 
   try {
     const sep = String.fromCharCode(0x1f);
     const encoded = ["-C", "link-arg=-Wl,--threads=99", "-Clink-arg=--threads=100", "-C", "opt-level=2"].join(sep);
+    const env = {
+      ...process.env,
+      AERO_CARGO_BUILD_JOBS: "2",
+      CARGO_ENCODED_RUSTFLAGS: encoded,
+    };
+    // `safe-run.sh` (and some CI/agent sandboxes) can inject per-target rustflags into the outer
+    // environment. This test validates that `agent-env.sh` computes the wasm32 threads cap from
+    // scratch, so ensure the variable is unset for determinism.
+    delete env.CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS;
+    delete env.CARGO_BUILD_TARGET;
 
     const stdout = execFileSync(
       "bash",
@@ -601,11 +683,7 @@ test("agent-env: strips lld --threads from CARGO_ENCODED_RUSTFLAGS (nested wasm 
       {
         cwd: repoRoot,
         encoding: "utf8",
-        env: {
-          ...process.env,
-          AERO_CARGO_BUILD_JOBS: "2",
-          CARGO_ENCODED_RUSTFLAGS: encoded,
-        },
+        env,
         stdio: ["ignore", "pipe", "pipe"],
       },
     );
