@@ -129,3 +129,74 @@ describe("io/devices/HdaPciDevice", () => {
     expect(irqSink.raiseIrq).toHaveBeenCalledTimes(2);
   });
 });
+
+describe("io/devices/HdaPciDevice audio ring attachment", () => {
+  it("plumbs output sample rate and attaches/detaches the worklet ring when exports are available", () => {
+    const attach = vi.fn();
+    const detach = vi.fn();
+    const setOutputRate = vi.fn();
+
+    const bridge: HdaControllerBridgeLike = {
+      mmio_read: vi.fn(() => 0),
+      mmio_write: vi.fn(),
+      step_frames: vi.fn(),
+      irq_level: vi.fn(() => false),
+      set_mic_ring_buffer: vi.fn(),
+      set_capture_sample_rate_hz: vi.fn(),
+      attach_audio_ring: attach,
+      detach_audio_ring: detach,
+      set_output_rate_hz: setOutputRate,
+      free: vi.fn(),
+    };
+    const irqSink: IrqSink = { raiseIrq: vi.fn(), lowerIrq: vi.fn() };
+    const dev = new HdaPciDevice({ bridge, irqSink });
+
+    const ringBuffer =
+      typeof SharedArrayBuffer === "function" ? new SharedArrayBuffer(256) : ({} as unknown as SharedArrayBuffer);
+
+    dev.setAudioRingBuffer({ ringBuffer, capacityFrames: 128, channelCount: 2, dstSampleRateHz: 48_000 });
+    expect(setOutputRate).toHaveBeenCalledWith(48_000);
+    expect(attach).toHaveBeenCalledWith(ringBuffer, 128, 2);
+
+    dev.setAudioRingBuffer({ ringBuffer: null, capacityFrames: 0, channelCount: 0, dstSampleRateHz: 0 });
+    expect(detach).toHaveBeenCalled();
+  });
+
+  it("uses the configured output sample rate as the tick time base when set_output_rate_hz is available", () => {
+    const irq: IrqSink = { raiseIrq: () => {}, lowerIrq: () => {} };
+    let totalFrames = 0;
+
+    const setOutputRate = vi.fn();
+    const bridge: HdaControllerBridgeLike = {
+      mmio_read: () => 0,
+      mmio_write: () => {},
+      step_frames: (frames) => {
+        totalFrames += frames >>> 0;
+      },
+      irq_level: () => false,
+      set_mic_ring_buffer: () => {},
+      set_capture_sample_rate_hz: () => {},
+      set_output_rate_hz: setOutputRate,
+      free: () => {},
+    };
+
+    const dev = new HdaPciDevice({ bridge, irqSink: irq });
+
+    // Configure before the first tick so the clock initializes at 44.1kHz.
+    dev.setAudioRingBuffer({ ringBuffer: null, capacityFrames: 0, channelCount: 0, dstSampleRateHz: 44_100 });
+    expect(setOutputRate).toHaveBeenCalledWith(44_100);
+
+    // First tick initializes the internal clock.
+    dev.tick(0);
+
+    let nowNs = 0n;
+    for (let second = 0; second < 600; second++) {
+      for (let tick = 0; tick < 60; tick++) {
+        nowNs += tick60HzNs(tick);
+        dev.tick(Number(nowNs) / 1e6);
+      }
+    }
+
+    expect(totalFrames).toBe(44_100 * 600);
+  });
+});
