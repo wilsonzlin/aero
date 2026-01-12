@@ -17,15 +17,34 @@ export function isPublicIpAddress(ip: string): boolean {
 }
 
 function parseIpv4(ip: string): Uint8Array | null {
-  const parts = ip.split(".");
-  if (parts.length !== 4) return null;
+  // Manual parser: avoid allocations and regex overhead in this hot path.
   const bytes = new Uint8Array(4);
-  for (let i = 0; i < 4; i++) {
-    if (!/^\d{1,3}$/.test(parts[i] ?? "")) return null;
-    const n = Number(parts[i]);
-    if (!Number.isInteger(n) || n < 0 || n > 255) return null;
-    bytes[i] = n;
+  let part = 0;
+  let value = 0;
+  let digits = 0;
+
+  for (let i = 0; i < ip.length; i++) {
+    const c = ip.charCodeAt(i);
+
+    if (c === 0x2e /* '.' */) {
+      if (digits === 0) return null;
+      if (part >= 4) return null;
+      bytes[part] = value;
+      part += 1;
+      value = 0;
+      digits = 0;
+      continue;
+    }
+
+    if (c < 0x30 /* '0' */ || c > 0x39 /* '9' */) return null;
+    if (digits >= 3) return null;
+    value = value * 10 + (c - 0x30);
+    if (value > 255) return null;
+    digits += 1;
   }
+
+  if (part !== 3 || digits === 0) return null;
+  bytes[part] = value;
   return bytes;
 }
 
@@ -124,9 +143,22 @@ function parseIpv6(ip: string): Uint8Array | null {
 }
 
 function parseHex16(s: string): number | null {
-  if (!/^[0-9a-fA-F]{1,4}$/.test(s)) return null;
-  const n = Number.parseInt(s, 16);
-  if (!Number.isInteger(n) || n < 0 || n > 0xffff) return null;
+  if (s.length < 1 || s.length > 4) return null;
+  let n = 0;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    let v: number;
+    if (c >= 0x30 /* '0' */ && c <= 0x39 /* '9' */) {
+      v = c - 0x30;
+    } else if (c >= 0x61 /* 'a' */ && c <= 0x66 /* 'f' */) {
+      v = c - 0x61 + 10;
+    } else if (c >= 0x41 /* 'A' */ && c <= 0x46 /* 'F' */) {
+      v = c - 0x41 + 10;
+    } else {
+      return null;
+    }
+    n = (n << 4) | v;
+  }
   return n;
 }
 
@@ -157,4 +189,3 @@ function isPublicIpv6(bytes: Uint8Array): boolean {
 
   return true;
 }
-
