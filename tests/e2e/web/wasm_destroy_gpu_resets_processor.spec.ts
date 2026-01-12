@@ -8,18 +8,30 @@ test("aero-gpu-wasm: destroy_gpu resets submit_aerogpu command processor state",
 
   const thisDir = dirname(fileURLToPath(import.meta.url));
   const repoRoot = dirname(dirname(dirname(thisDir)));
-  const wasmPaths = [
-    join(repoRoot, "web", "src", "wasm", "pkg-single-gpu", "aero_gpu_wasm_bg.wasm"),
-    join(repoRoot, "web", "src", "wasm", "pkg-threaded-gpu", "aero_gpu_wasm_bg.wasm"),
-    join(repoRoot, "web", "src", "wasm", "pkg-single-gpu-dev", "aero_gpu_wasm_bg.wasm"),
-    join(repoRoot, "web", "src", "wasm", "pkg-threaded-gpu-dev", "aero_gpu_wasm_bg.wasm"),
+  const bundles = [
+    {
+      js: join(repoRoot, "web", "src", "wasm", "pkg-single-gpu", "aero_gpu_wasm.js"),
+      wasm: join(repoRoot, "web", "src", "wasm", "pkg-single-gpu", "aero_gpu_wasm_bg.wasm"),
+    },
+    {
+      js: join(repoRoot, "web", "src", "wasm", "pkg-threaded-gpu", "aero_gpu_wasm.js"),
+      wasm: join(repoRoot, "web", "src", "wasm", "pkg-threaded-gpu", "aero_gpu_wasm_bg.wasm"),
+    },
+    {
+      js: join(repoRoot, "web", "src", "wasm", "pkg-single-gpu-dev", "aero_gpu_wasm.js"),
+      wasm: join(repoRoot, "web", "src", "wasm", "pkg-single-gpu-dev", "aero_gpu_wasm_bg.wasm"),
+    },
+    {
+      js: join(repoRoot, "web", "src", "wasm", "pkg-threaded-gpu-dev", "aero_gpu_wasm.js"),
+      wasm: join(repoRoot, "web", "src", "wasm", "pkg-threaded-gpu-dev", "aero_gpu_wasm_bg.wasm"),
+    },
   ];
-  if (!wasmPaths.some((p) => existsSync(p))) {
+  if (!bundles.some(({ js, wasm }) => existsSync(js) && existsSync(wasm))) {
     const message = [
       "aero-gpu-wasm bundle is missing.",
       "",
       "Expected one of:",
-      ...wasmPaths.map((p) => `- ${p}`),
+      ...bundles.flatMap(({ js, wasm }) => [`- ${wasm}`, `  ${js}`]),
       "",
       "Build it with (from the repo root):",
       "  npm -w web run wasm:build",
