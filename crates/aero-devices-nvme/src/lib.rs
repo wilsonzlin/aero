@@ -457,6 +457,9 @@ impl NvmeController {
         // access 64-bit registers via two 32-bit operations (e.g. CAP, ASQ, ACQ).
         //
         // Implement reads by slicing bytes out of the containing 32-bit word.
+        if size == 0 {
+            return 0;
+        }
         let size = size.clamp(1, 8);
         let mut out = 0u64;
 
@@ -480,6 +483,9 @@ impl NvmeController {
         // This supports:
         // - 64-bit registers written via two 32-bit operations (ASQ/ACQ)
         // - sub-word accesses where the bus chooses 1/2-byte operations.
+        if size == 0 {
+            return;
+        }
         let size = size.clamp(1, 8);
 
         let mut idx = 0usize;
@@ -1542,6 +1548,9 @@ impl PciDevice for NvmePciDevice {
 
 impl MmioHandler for NvmePciDevice {
     fn read(&mut self, offset: u64, size: usize) -> u64 {
+        if size == 0 {
+            return 0;
+        }
         let size = size.clamp(1, 8);
         if (self.config.command() & PCI_COMMAND_MEM_ENABLE) == 0 {
             return all_ones(size);
@@ -1550,6 +1559,9 @@ impl MmioHandler for NvmePciDevice {
     }
 
     fn write(&mut self, offset: u64, size: usize, value: u64) {
+        if size == 0 {
+            return;
+        }
         let size = size.clamp(1, 8);
         if (self.config.command() & PCI_COMMAND_MEM_ENABLE) == 0 {
             return;
@@ -1897,6 +1909,47 @@ mod tests {
         let cap_hi = ctrl.mmio_read(0x0004, 4) as u32;
         let cap32 = (cap_lo as u64) | ((cap_hi as u64) << 32);
         assert_eq!(cap64, cap32);
+    }
+
+    #[test]
+    fn mmio_read_size0_returns_zero() {
+        let disk = TestDisk::new(1024);
+        let mut dev = NvmePciDevice::new(from_virtual_disk(Box::new(disk)).unwrap());
+
+        assert_eq!(MmioHandler::read(&mut dev, 0x0000, 0), 0);
+    }
+
+    #[test]
+    fn mmio_write_size0_is_noop() {
+        let disk = TestDisk::new(1024);
+        let mut dev = NvmePciDevice::new(from_virtual_disk(Box::new(disk)).unwrap());
+        dev.config_mut().set_command(PCI_COMMAND_MEM_ENABLE);
+
+        // Prepare a valid enable sequence, but attempt to flip CC.EN using a size-0 write.
+        MmioHandler::write(&mut dev, 0x0024, 4, 0x000f_000f); // 16/16 queues
+        MmioHandler::write(&mut dev, 0x0028, 8, 0x10000);
+        MmioHandler::write(&mut dev, 0x0030, 8, 0x20000);
+
+        assert_eq!(
+            MmioHandler::read(&mut dev, 0x001c, 4) & 1,
+            0,
+            "CSTS.RDY should start cleared"
+        );
+
+        // Regression: previously `size=0` was clamped to 1, which would set CC.EN and transition
+        // CSTS.RDY to 1.
+        MmioHandler::write(&mut dev, 0x0014, 0, 1); // CC (EN bit)
+
+        assert_eq!(
+            MmioHandler::read(&mut dev, 0x0014, 4) & 1,
+            0,
+            "CC.EN must remain unchanged"
+        );
+        assert_eq!(
+            MmioHandler::read(&mut dev, 0x001c, 4) & 1,
+            0,
+            "CSTS.RDY must remain unchanged"
+        );
     }
 
     #[test]

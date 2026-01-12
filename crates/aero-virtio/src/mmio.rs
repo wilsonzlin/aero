@@ -23,6 +23,9 @@ impl<M: GuestMemory> VirtioBar0Mmio<M> {
 
 impl<M: GuestMemory> aero_memory::MmioHandler for VirtioBar0Mmio<M> {
     fn read(&mut self, offset: u64, size: usize) -> u64 {
+        if size == 0 {
+            return 0;
+        }
         let size = size.clamp(1, 8);
         let mut buf = [0u8; 8];
         self.pci.bar0_read(offset, &mut buf[..size]);
@@ -30,6 +33,9 @@ impl<M: GuestMemory> aero_memory::MmioHandler for VirtioBar0Mmio<M> {
     }
 
     fn write(&mut self, offset: u64, size: usize, value: u64) {
+        if size == 0 {
+            return;
+        }
         let size = size.clamp(1, 8);
         let bytes = value.to_le_bytes();
         self.pci.bar0_write(offset, &bytes[..size]);

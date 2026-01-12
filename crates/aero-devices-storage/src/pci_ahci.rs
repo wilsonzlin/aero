@@ -91,6 +91,9 @@ impl AhciPciDevice {
 
     /// Reads from the AHCI ABAR MMIO region.
     pub fn mmio_read(&mut self, offset: u64, size: usize) -> u64 {
+        if size == 0 {
+            return 0;
+        }
         let size = size.clamp(1, 8);
         if (self.config.command() & PCI_COMMAND_MEM_ENABLE) == 0 {
             return all_ones(size);
@@ -120,6 +123,9 @@ impl AhciPciDevice {
 
     /// Writes to the AHCI ABAR MMIO region.
     pub fn mmio_write(&mut self, offset: u64, size: usize, value: u64) {
+        if size == 0 {
+            return;
+        }
         let size = size.clamp(1, 8);
         if (self.config.command() & PCI_COMMAND_MEM_ENABLE) == 0 {
             return;
@@ -313,5 +319,45 @@ fn all_ones(size: usize) -> u64 {
         6 => 0x00ff_ffff_ffff,
         7 => 0x00ff_ffff_ffff_ffff,
         _ => u64::MAX,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mmio_read_size0_returns_zero() {
+        let mut dev = AhciPciDevice::new(1);
+
+        // Even if the PCI function is not enabled for MMIO decoding, a size-0 access is a no-op.
+        assert_eq!(dev.mmio_read(0, 0), 0);
+    }
+
+    #[test]
+    fn mmio_write_size0_is_noop_and_does_not_clear_w1c_or_irq() {
+        let mut dev = AhciPciDevice::new(1);
+        dev.config_mut().set_command(PCI_COMMAND_MEM_ENABLE);
+
+        // Synthesize an asserted interrupt by setting PxIS + PxIE with GHC.IE enabled.
+        let mut state = dev.controller.snapshot_state();
+        state.hba.ghc |= 1 << 1; // GHC.IE
+        state.ports[0].is = 1; // PxIS.DHRS
+        state.ports[0].ie = 1; // PxIE.DHRE (enable)
+        dev.controller.restore_state(&state);
+
+        assert!(dev.intx_level(), "interrupt should be asserted before the write");
+
+        let px_is_off = 0x100 + 0x10; // PxIS for port 0.
+        let before = dev.mmio_read(px_is_off, 4);
+        assert_eq!(before, 1);
+
+        // Regression: previously `size=0` was clamped to 1, which would perform a 1-byte W1C write
+        // and clear the interrupt status/level.
+        dev.mmio_write(px_is_off, 0, 0xff);
+
+        let after = dev.mmio_read(px_is_off, 4);
+        assert_eq!(after, before, "size-0 MMIO write must not change PxIS");
+        assert!(dev.intx_level(), "size-0 MMIO write must not change IRQ level");
     }
 }
