@@ -35,7 +35,7 @@ export function normalizeDnsName(name: string): string {
   while (end > 0 && trimmed.charCodeAt(end - 1) === 0x2e /* '.' */) {
     end -= 1;
   }
-  const withoutTrailingDot = trimmed.slice(0, end);
+  const withoutTrailingDot = end === trimmed.length ? trimmed : trimmed.slice(0, end);
   // Avoid allocating in the common case where the name is already lowercase.
   return /[A-Z]/.test(withoutTrailingDot) ? withoutTrailingDot.toLowerCase() : withoutTrailingDot;
 }
