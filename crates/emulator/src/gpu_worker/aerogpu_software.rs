@@ -363,6 +363,38 @@ impl AeroGpuSoftwareExecutor {
         handle
     }
 
+    /// Resolves a handle coming from an AeroGPU command stream.
+    ///
+    /// This differs from [`Self::resolve_handle`] by treating "reserved underlying IDs" as
+    /// invalid: when the original handle has been destroyed while shared-surface aliases still
+    /// exist, the underlying numeric ID remains present in `texture_refcounts` (to prevent handle
+    /// reuse) but the original handle value must not be accepted for subsequent commands.
+    fn resolve_cmd_handle(&self, regs: &mut AeroGpuRegs, handle: u32) -> Option<u32> {
+        if handle == 0 {
+            return Some(0);
+        }
+        if !self.resource_aliases.contains_key(&handle)
+            && self.texture_refcounts.contains_key(&handle)
+        {
+            Self::record_error(regs);
+            return None;
+        }
+        Some(self.resolve_handle(handle))
+    }
+
+    fn sanitize_cmd_handle(&self, regs: &mut AeroGpuRegs, handle: u32) -> u32 {
+        if handle == 0 {
+            return 0;
+        }
+        if !self.resource_aliases.contains_key(&handle)
+            && self.texture_refcounts.contains_key(&handle)
+        {
+            Self::record_error(regs);
+            return 0;
+        }
+        handle
+    }
+
     fn retire_shared_surface_tokens_for_resource(&mut self, resource_handle: u32) {
         let tokens: Vec<u64> = self
             .shared_surfaces
@@ -2899,7 +2931,9 @@ impl AeroGpuSoftwareExecutor {
                 let handle = u32::from_le(packet_cmd.resource_handle);
                 let offset = u64::from_le(packet_cmd.offset_bytes);
                 let size = u64::from_le(packet_cmd.size_bytes);
-                let handle = self.resolve_handle(handle);
+                let Some(handle) = self.resolve_cmd_handle(regs, handle) else {
+                    return true;
+                };
                 if size == 0 {
                     return true;
                 }
@@ -2958,7 +2992,9 @@ impl AeroGpuSoftwareExecutor {
                         return true;
                     }
                 };
-                let handle = self.resolve_handle(packet_cmd.resource_handle);
+                let Some(handle) = self.resolve_cmd_handle(regs, packet_cmd.resource_handle) else {
+                    return true;
+                };
                 let offset = packet_cmd.offset_bytes;
                 let size = packet_cmd.size_bytes;
 
@@ -3185,8 +3221,12 @@ impl AeroGpuSoftwareExecutor {
                     return true;
                 }
 
-                let dst_handle = self.resolve_handle(dst);
-                let src_handle = self.resolve_handle(src);
+                let Some(dst_handle) = self.resolve_cmd_handle(regs, dst) else {
+                    return true;
+                };
+                let Some(src_handle) = self.resolve_cmd_handle(regs, src) else {
+                    return true;
+                };
 
                 let (src_format, src_region) = {
                     let Some(src_tex) = self.textures.get(&src_handle) else {
@@ -3653,7 +3693,7 @@ impl AeroGpuSoftwareExecutor {
 
                 let shader_stage = u32::from_le(packet_cmd.shader_stage);
                 let slot = u32::from_le(packet_cmd.slot) as usize;
-                let texture = u32::from_le(packet_cmd.texture);
+                let texture = self.sanitize_cmd_handle(regs, u32::from_le(packet_cmd.texture));
                 if slot >= MAX_TEXTURE_SLOTS {
                     return true;
                 }
@@ -3787,11 +3827,16 @@ impl AeroGpuSoftwareExecutor {
                     };
 
                 // color_count ignored for now; we accept RT0 and clear the rest.
-                self.state.depth_stencil = u32::from_le(packet_cmd.depth_stencil);
+                let depth_stencil =
+                    self.sanitize_cmd_handle(regs, u32::from_le(packet_cmd.depth_stencil));
+                let mut render_targets = [0u32; cmd::AEROGPU_MAX_RENDER_TARGETS];
+                // Copy out of the packed command struct to avoid unaligned references.
                 let colors = packet_cmd.colors;
-                for (dst, &src) in self.state.render_targets.iter_mut().zip(colors.iter()) {
-                    *dst = u32::from_le(src);
+                for (dst, &src) in render_targets.iter_mut().zip(colors.iter()) {
+                    *dst = self.sanitize_cmd_handle(regs, u32::from_le(src));
                 }
+                self.state.depth_stencil = depth_stencil;
+                self.state.render_targets = render_targets;
             }
             cmd::AerogpuCmdOpcode::SetViewport => {
                 let packet_cmd =

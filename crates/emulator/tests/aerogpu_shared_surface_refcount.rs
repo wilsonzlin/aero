@@ -649,6 +649,249 @@ fn shared_surface_double_destroy_of_original_handle_is_idempotent() {
 }
 
 #[test]
+fn shared_surface_set_render_targets_using_destroyed_original_handle_is_an_error() {
+    let mut mem = VecMemory::new(0x20_000);
+    let mut regs = AeroGpuRegs::default();
+    let mut exec = AeroGpuSoftwareExecutor::new();
+
+    let alloc_table_gpa = 0x1000u64;
+    let backing_gpa = 0x8000u64;
+    let alloc_table_size_bytes = write_alloc_table(
+        &mut mem,
+        alloc_table_gpa,
+        regs.abi_version,
+        backing_gpa,
+        0x1000,
+    );
+
+    let cmd_gpa = 0x2000u64;
+    let (width, height) = (2u32, 2u32);
+    let share_token = 0xD00D_F00Du64;
+
+    let stream = build_stream(
+        |out| {
+            emit_packet(out, AerogpuCmdOpcode::CreateTexture2d as u32, |out| {
+                push_u32(out, 1); // texture_handle
+                push_u32(out, 0); // usage_flags
+                push_u32(out, AerogpuFormat::R8G8B8A8Unorm as u32); // format
+                push_u32(out, width);
+                push_u32(out, height);
+                push_u32(out, 1); // mip_levels
+                push_u32(out, 1); // array_layers
+                push_u32(out, 0); // row_pitch_bytes (auto)
+                push_u32(out, 1); // backing_alloc_id
+                push_u32(out, 0); // backing_offset_bytes
+                push_u64(out, 0); // reserved0
+            });
+
+            // Clear original handle red.
+            emit_packet(out, AerogpuCmdOpcode::SetRenderTargets as u32, |out| {
+                push_u32(out, 1); // color_count
+                push_u32(out, 0); // depth_stencil
+                push_u32(out, 1); // colors[0]
+                for _ in 0..7 {
+                    push_u32(out, 0);
+                }
+            });
+            emit_packet(out, AerogpuCmdOpcode::Clear as u32, |out| {
+                push_u32(out, AEROGPU_CLEAR_COLOR);
+                push_u32(out, 1.0f32.to_bits());
+                push_u32(out, 0.0f32.to_bits());
+                push_u32(out, 0.0f32.to_bits());
+                push_u32(out, 1.0f32.to_bits());
+                push_u32(out, 1.0f32.to_bits()); // depth
+                push_u32(out, 0); // stencil
+            });
+
+            // Create an alias to keep the underlying alive.
+            emit_packet(out, AerogpuCmdOpcode::ExportSharedSurface as u32, |out| {
+                push_u32(out, 1); // resource_handle
+                push_u32(out, 0); // reserved0
+                push_u64(out, share_token);
+            });
+            emit_packet(out, AerogpuCmdOpcode::ImportSharedSurface as u32, |out| {
+                push_u32(out, 2); // out_resource_handle
+                push_u32(out, 0); // reserved0
+                push_u64(out, share_token);
+            });
+
+            // Destroy the original handle; the underlying remains alive via handle 2.
+            emit_packet(out, AerogpuCmdOpcode::DestroyResource as u32, |out| {
+                push_u32(out, 1); // resource_handle
+                push_u32(out, 0); // reserved0
+            });
+
+            // Buggy guest behavior: bind the destroyed original handle as a render target.
+            emit_packet(out, AerogpuCmdOpcode::SetRenderTargets as u32, |out| {
+                push_u32(out, 1); // color_count
+                push_u32(out, 0); // depth_stencil
+                push_u32(out, 1); // colors[0] (destroyed original)
+                for _ in 0..7 {
+                    push_u32(out, 0);
+                }
+            });
+            // Attempt to clear blue; this must be ignored (no-op) because RT is invalid.
+            emit_packet(out, AerogpuCmdOpcode::Clear as u32, |out| {
+                push_u32(out, AEROGPU_CLEAR_COLOR);
+                push_u32(out, 0.0f32.to_bits());
+                push_u32(out, 0.0f32.to_bits());
+                push_u32(out, 1.0f32.to_bits());
+                push_u32(out, 1.0f32.to_bits());
+                push_u32(out, 1.0f32.to_bits()); // depth
+                push_u32(out, 0); // stencil
+            });
+        },
+        regs.abi_version,
+    );
+
+    mem.write_physical(cmd_gpa, &stream);
+
+    let desc = AeroGpuSubmitDesc {
+        desc_size_bytes: AeroGpuSubmitDesc::SIZE_BYTES,
+        flags: 0,
+        context_id: 0,
+        engine_id: 0,
+        cmd_gpa,
+        cmd_size_bytes: stream.len() as u32,
+        alloc_table_gpa,
+        alloc_table_size_bytes,
+        signal_fence: 0,
+    };
+
+    exec.execute_submission(&mut regs, &mut mem, &desc);
+
+    assert_eq!(regs.stats.malformed_submissions, 1);
+    assert_ne!(regs.irq_status & irq_bits::ERROR, 0);
+
+    // The last clear should have been ignored; backing memory stays red.
+    let mut out = vec![0u8; (width * height * 4) as usize];
+    mem.read_physical(backing_gpa, &mut out);
+    for px in out.chunks_exact(4) {
+        assert_eq!(px, [255, 0, 0, 255]);
+    }
+}
+
+#[test]
+fn shared_surface_upload_using_destroyed_original_handle_is_an_error() {
+    let mut mem = VecMemory::new(0x20_000);
+    let mut regs = AeroGpuRegs::default();
+    let mut exec = AeroGpuSoftwareExecutor::new();
+
+    let alloc_table_gpa = 0x1000u64;
+    let backing_gpa = 0x8000u64;
+    let alloc_table_size_bytes = write_alloc_table(
+        &mut mem,
+        alloc_table_gpa,
+        regs.abi_version,
+        backing_gpa,
+        0x1000,
+    );
+
+    let cmd_gpa = 0x2000u64;
+    let (width, height) = (2u32, 2u32);
+    let share_token = 0xBEEF_1234u64;
+    let upload_size = (width * height * 4) as u64;
+    let upload_size_u32: u32 = upload_size.try_into().unwrap();
+
+    let blue: Vec<u8> = (0..(width * height))
+        .flat_map(|_| [0u8, 0u8, 255u8, 255u8])
+        .collect();
+
+    let stream = build_stream(
+        |out| {
+            emit_packet(out, AerogpuCmdOpcode::CreateTexture2d as u32, |out| {
+                push_u32(out, 1); // texture_handle
+                push_u32(out, 0); // usage_flags
+                push_u32(out, AerogpuFormat::R8G8B8A8Unorm as u32); // format
+                push_u32(out, width);
+                push_u32(out, height);
+                push_u32(out, 1); // mip_levels
+                push_u32(out, 1); // array_layers
+                push_u32(out, 0); // row_pitch_bytes (auto)
+                push_u32(out, 1); // backing_alloc_id
+                push_u32(out, 0); // backing_offset_bytes
+                push_u64(out, 0); // reserved0
+            });
+
+            // Clear original handle red.
+            emit_packet(out, AerogpuCmdOpcode::SetRenderTargets as u32, |out| {
+                push_u32(out, 1); // color_count
+                push_u32(out, 0); // depth_stencil
+                push_u32(out, 1); // colors[0]
+                for _ in 0..7 {
+                    push_u32(out, 0);
+                }
+            });
+            emit_packet(out, AerogpuCmdOpcode::Clear as u32, |out| {
+                push_u32(out, AEROGPU_CLEAR_COLOR);
+                push_u32(out, 1.0f32.to_bits());
+                push_u32(out, 0.0f32.to_bits());
+                push_u32(out, 0.0f32.to_bits());
+                push_u32(out, 1.0f32.to_bits());
+                push_u32(out, 1.0f32.to_bits()); // depth
+                push_u32(out, 0); // stencil
+            });
+
+            // Keep the underlying alive via an alias.
+            emit_packet(out, AerogpuCmdOpcode::ExportSharedSurface as u32, |out| {
+                push_u32(out, 1); // resource_handle
+                push_u32(out, 0); // reserved0
+                push_u64(out, share_token);
+            });
+            emit_packet(out, AerogpuCmdOpcode::ImportSharedSurface as u32, |out| {
+                push_u32(out, 2); // out_resource_handle
+                push_u32(out, 0); // reserved0
+                push_u64(out, share_token);
+            });
+
+            // Destroy the original handle.
+            emit_packet(out, AerogpuCmdOpcode::DestroyResource as u32, |out| {
+                push_u32(out, 1); // resource_handle
+                push_u32(out, 0); // reserved0
+            });
+
+            // Buggy guest behavior: upload into the destroyed original handle ID.
+            emit_packet(out, AerogpuCmdOpcode::UploadResource as u32, |out| {
+                push_u32(out, 1); // resource_handle (destroyed original)
+                push_u32(out, 0); // reserved0
+                push_u64(out, 0); // offset_bytes
+                push_u64(out, upload_size);
+                out.extend_from_slice(&blue);
+                // Payload must be 4-byte aligned.
+                assert_eq!(upload_size_u32 % 4, 0);
+            });
+        },
+        regs.abi_version,
+    );
+
+    mem.write_physical(cmd_gpa, &stream);
+
+    let desc = AeroGpuSubmitDesc {
+        desc_size_bytes: AeroGpuSubmitDesc::SIZE_BYTES,
+        flags: 0,
+        context_id: 0,
+        engine_id: 0,
+        cmd_gpa,
+        cmd_size_bytes: stream.len() as u32,
+        alloc_table_gpa,
+        alloc_table_size_bytes,
+        signal_fence: 0,
+    };
+
+    exec.execute_submission(&mut regs, &mut mem, &desc);
+
+    assert_eq!(regs.stats.malformed_submissions, 1);
+    assert_ne!(regs.irq_status & irq_bits::ERROR, 0);
+
+    // Upload must be rejected; backing memory stays red from the clear.
+    let mut out = vec![0u8; (width * height * 4) as usize];
+    mem.read_physical(backing_gpa, &mut out);
+    for px in out.chunks_exact(4) {
+        assert_eq!(px, [255, 0, 0, 255]);
+    }
+}
+
+#[test]
 fn shared_surface_release_invalidates_token_but_existing_alias_still_works() {
     let mut mem = VecMemory::new(0x20_000);
     let mut regs = AeroGpuRegs::default();
