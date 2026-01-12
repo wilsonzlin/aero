@@ -339,7 +339,7 @@ Devices MAY expose a PCI MSI-X capability and MAY use `msix_config` / `queue_msi
 If MSI-X is implemented, it MUST preserve INTx/ISR semantics as a fallback:
 
 - When MSI-X is enabled and a valid vector is assigned, the device MAY signal MSI-X instead of asserting INTx.
-- When MSI-X is disabled or vectors are unassigned (`0xFFFF`), the device MUST use INTx + ISR as described above.
+- When MSI-X is disabled or vectors are unassigned (`VIRTIO_PCI_MSI_NO_VECTOR` / `0xFFFF`), the device MUST use INTx + ISR as described above.
 
 ## 2. Virtqueue contract (split ring only)
 
