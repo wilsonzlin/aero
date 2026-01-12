@@ -61,6 +61,8 @@ test("large shader payload spills to OPFS when available", async ({}, testInfo) 
       cacheHit: boolean;
       opfsAvailable: boolean;
       opfsFileExists: boolean;
+      opfsFileSize: number | null;
+      opfsWgslBytes: number | null;
       idbShaderRecord: { storage: string | null; opfsFile: string | null; hasWgsl: boolean } | null;
       logs: string[];
     }> {
@@ -81,6 +83,35 @@ test("large shader payload spills to OPFS when available", async ({}, testInfo) 
         if (result?.error) {
           throw new Error(`demo page failed: ${result.error}`);
         }
+
+        const opfsInfo = await page.evaluate(async (key: string) => {
+          if (!navigator.storage || typeof navigator.storage.getDirectory !== "function") {
+            return { fileSize: null, wgslBytes: null };
+          }
+
+          try {
+            const root = await navigator.storage.getDirectory();
+            const dir = await root.getDirectoryHandle("aero-gpu-cache", { create: true });
+            const shadersDir = await dir.getDirectoryHandle("shaders");
+            const handle = await shadersDir.getFileHandle(`${key}.json`);
+            const file = await handle.getFile();
+            const text = await file.text();
+
+            let wgslBytes: number | null = null;
+            try {
+              const parsed = JSON.parse(text);
+              if (parsed && typeof parsed.wgsl === "string") {
+                wgslBytes = new TextEncoder().encode(parsed.wgsl).byteLength;
+              }
+            } catch {
+              wgslBytes = null;
+            }
+
+            return { fileSize: typeof file.size === "number" ? file.size : null, wgslBytes };
+          } catch {
+            return { fileSize: null, wgslBytes: null };
+          }
+        }, result.key);
 
         const idbShaderRecord = await page.evaluate(async (key: string) => {
           const DB_NAME = "aero-gpu-cache";
@@ -124,6 +155,8 @@ test("large shader payload spills to OPFS when available", async ({}, testInfo) 
           cacheHit: !!result.cacheHit,
           opfsAvailable: !!result.opfsAvailable,
           opfsFileExists: !!result.opfsFileExists,
+          opfsFileSize: opfsInfo.fileSize ?? null,
+          opfsWgslBytes: opfsInfo.wgslBytes ?? null,
           idbShaderRecord: idbShaderRecord ?? null,
           logs,
         };
@@ -145,6 +178,10 @@ test("large shader payload spills to OPFS when available", async ({}, testInfo) 
     }
     expect(first.cacheHit).toBe(false);
     expect(first.opfsFileExists).toBe(true);
+    expect(first.opfsFileSize).not.toBeNull();
+    expect(first.opfsFileSize ?? 0).toBeGreaterThan(256 * 1024);
+    expect(first.opfsWgslBytes).not.toBeNull();
+    expect(first.opfsWgslBytes ?? 0).toBeGreaterThan(300 * 1024);
     expect(first.logs.some((l) => l.includes("shader_translate: begin"))).toBe(true);
     expect(first.idbShaderRecord?.storage).toBe("opfs");
     expect(first.idbShaderRecord?.opfsFile).toBe(`${first.key}.json`);
@@ -154,6 +191,10 @@ test("large shader payload spills to OPFS when available", async ({}, testInfo) 
     expect(second.key).toBe(first.key);
     expect(second.cacheHit).toBe(true);
     expect(second.opfsFileExists).toBe(true);
+    expect(second.opfsFileSize).not.toBeNull();
+    expect(second.opfsFileSize ?? 0).toBeGreaterThan(256 * 1024);
+    expect(second.opfsWgslBytes).not.toBeNull();
+    expect(second.opfsWgslBytes ?? 0).toBeGreaterThan(300 * 1024);
     expect(second.logs.some((l) => l.includes("shader_translate: begin"))).toBe(false);
     expect(second.idbShaderRecord?.storage).toBe("opfs");
   } finally {
