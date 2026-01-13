@@ -60,6 +60,7 @@ Usage:
   cargo xtask input [--e2e] [-- <extra playwright args>]
   cargo xtask snapshot inspect <path>
   cargo xtask snapshot validate [--deep] <path>
+  cargo xtask snapshot diff <path_a> <path_b> [--deep]
   cargo xtask test-all [options] [-- <extra playwright args>]
   cargo xtask wasm [single|threaded|both] [dev|release]
   cargo xtask web dev|build|preview
@@ -68,7 +69,7 @@ Commands:
   fixtures   Generate tiny, deterministic in-repo fixtures (boot sectors + firmware blobs).
   conformance Run instruction conformance / differential tests (x86_64 unix only).
   input      Run the USB/input-focused test suite (Rust + web; optional Playwright subset).
-  snapshot   Inspect/validate an `aero-snapshot` file without loading multi-GB RAM payloads.
+  snapshot   Inspect/validate/diff an `aero-snapshot` file without loading multi-GB RAM payloads.
   test-all   Run the full test stack (Rust, WASM, TypeScript, Playwright). Also validates
              deterministic in-repo fixtures when Rust tests are enabled.
   wasm       Build the Rust→WASM packages used by the web app.

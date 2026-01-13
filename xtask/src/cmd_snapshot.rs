@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::io::{Read, Seek, SeekFrom};
 
@@ -17,12 +17,16 @@ Inspect and validate Aero snapshots (`aero-snapshot`).
 Usage:
   cargo xtask snapshot inspect <path>
   cargo xtask snapshot validate [--deep] <path>
+  cargo xtask snapshot diff <path_a> <path_b> [--deep]
 
 Subcommands:
   inspect    Print header, META fields, section table, and per-section summaries
             (CPU/MMU/DEVICES/CPUS/MMUS/DISKS/RAM when present).
   validate   Structural validation without decompressing RAM.
             Use --deep to fully restore/decompress into a dummy target (small files only).
+  diff       Compare two snapshots and print meaningful differences (header/META/sections,
+            DEVICES blobs, and RAM header fields).
+            Use --deep to restore/decompress (small files only) and compare RAM page hashes.
 "
     );
 }
@@ -42,6 +46,7 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
     match sub.as_str() {
         "inspect" => cmd_inspect(it.collect()),
         "validate" => cmd_validate(it.collect()),
+        "diff" => cmd_diff(it.collect()),
         other => Err(XtaskError::Message(format!(
             "unknown `snapshot` subcommand `{other}` (run `cargo xtask snapshot --help`)"
         ))),
@@ -1891,6 +1896,654 @@ fn cmd_validate(args: Vec<String>) -> Result<()> {
 
     println!("valid snapshot");
     Ok(())
+}
+
+fn cmd_diff(args: Vec<String>) -> Result<()> {
+    let mut deep = false;
+    let mut paths: Vec<String> = Vec::new();
+
+    for arg in args {
+        match arg.as_str() {
+            "--deep" => deep = true,
+            other if other.starts_with('-') => {
+                return Err(XtaskError::Message(format!(
+                    "unknown flag for `snapshot diff`: `{other}`"
+                )));
+            }
+            other => paths.push(other.to_string()),
+        }
+    }
+
+    let [path_a, path_b] = paths.as_slice() else {
+        return Err(XtaskError::Message(
+            "usage: cargo xtask snapshot diff <path_a> <path_b> [--deep]".to_string(),
+        ));
+    };
+
+    let file_len_a = fs::metadata(path_a)
+        .map_err(|e| XtaskError::Message(format!("stat {path_a:?}: {e}")))?
+        .len();
+    let file_len_b = fs::metadata(path_b)
+        .map_err(|e| XtaskError::Message(format!("stat {path_b:?}: {e}")))?
+        .len();
+
+    let mut file_a = fs::File::open(path_a)
+        .map_err(|e| XtaskError::Message(format!("open {path_a:?}: {e}")))?;
+    let mut file_b = fs::File::open(path_b)
+        .map_err(|e| XtaskError::Message(format!("open {path_b:?}: {e}")))?;
+
+    let index_a = aero_snapshot::inspect_snapshot(&mut file_a)
+        .map_err(|e| XtaskError::Message(format!("inspect snapshot A: {e}")))?;
+    let index_b = aero_snapshot::inspect_snapshot(&mut file_b)
+        .map_err(|e| XtaskError::Message(format!("inspect snapshot B: {e}")))?;
+
+    println!("Snapshot diff:");
+    println!("  A: {path_a} ({file_len_a} bytes)");
+    println!("  B: {path_b} ({file_len_b} bytes)");
+
+    let mut out = DiffOutput::default();
+
+    // Header (file header fields returned by `inspect_snapshot`).
+    if index_a.version != index_b.version {
+        out.diff("header.version", index_a.version, index_b.version);
+    }
+    if index_a.endianness != index_b.endianness {
+        out.diff(
+            "header.endianness",
+            fmt_endianness(index_a.endianness),
+            fmt_endianness(index_b.endianness),
+        );
+    }
+
+    // META fields.
+    diff_meta(&mut out, index_a.meta.as_ref(), index_b.meta.as_ref());
+
+    // Section list (id/version/flags/len).
+    diff_section_table(&mut out, &index_a.sections, &index_b.sections);
+
+    // DEVICES section (device ids/versions/blob lengths + hash).
+    diff_devices_section(
+        &mut out,
+        &mut file_a,
+        &index_a.sections,
+        &mut file_b,
+        &index_b.sections,
+    )?;
+
+    // RAM header summary (mode/compression/page_size/chunk_size/dirty_count).
+    diff_ram_header(&mut out, index_a.ram.as_ref(), index_b.ram.as_ref());
+
+    if deep {
+        deep_diff_ram(&mut out, path_a, &index_a, path_b, &index_b)?;
+    }
+
+    if out.diffs == 0 {
+        println!("No differences found.");
+        Ok(())
+    } else {
+        println!("Found {} differing field(s).", out.diffs);
+        Err(XtaskError::Message("snapshots differ".to_string()))
+    }
+}
+
+#[derive(Debug, Default)]
+struct DiffOutput {
+    diffs: usize,
+}
+
+impl DiffOutput {
+    fn diff(&mut self, key: &str, a: impl std::fmt::Display, b: impl std::fmt::Display) {
+        self.diffs += 1;
+        println!("diff {key}: A={a} B={b}");
+    }
+
+    fn diff_msg(&mut self, key: &str, msg: impl std::fmt::Display) {
+        self.diffs += 1;
+        println!("diff {key}: {msg}");
+    }
+}
+
+fn diff_meta(
+    out: &mut DiffOutput,
+    a: Option<&aero_snapshot::SnapshotMeta>,
+    b: Option<&aero_snapshot::SnapshotMeta>,
+) {
+    match (a, b) {
+        (None, None) => {}
+        (Some(_), None) => out.diff_msg("META", "A=present B=<missing>"),
+        (None, Some(_)) => out.diff_msg("META", "A=<missing> B=present"),
+        (Some(a), Some(b)) => {
+            if a.snapshot_id != b.snapshot_id {
+                out.diff("META.snapshot_id", a.snapshot_id, b.snapshot_id);
+            }
+            if a.parent_snapshot_id != b.parent_snapshot_id {
+                out.diff(
+                    "META.parent_snapshot_id",
+                    fmt_opt_u64(a.parent_snapshot_id),
+                    fmt_opt_u64(b.parent_snapshot_id),
+                );
+            }
+            if a.created_unix_ms != b.created_unix_ms {
+                out.diff("META.created_unix_ms", a.created_unix_ms, b.created_unix_ms);
+            }
+            if a.label.as_deref() != b.label.as_deref() {
+                out.diff(
+                    "META.label",
+                    fmt_opt_str(a.label.as_deref()),
+                    fmt_opt_str(b.label.as_deref()),
+                );
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SectionDigest {
+    id: SectionId,
+    version: u16,
+    flags: u16,
+    len: u64,
+}
+
+impl std::fmt::Display for SectionDigest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} v{} flags={} len={}",
+            self.id, self.version, self.flags, self.len
+        )
+    }
+}
+
+fn diff_section_table(
+    out: &mut DiffOutput,
+    a: &[SnapshotSectionInfo],
+    b: &[SnapshotSectionInfo],
+) {
+    let a: Vec<SectionDigest> = a
+        .iter()
+        .map(|s| SectionDigest {
+            id: s.id,
+            version: s.version,
+            flags: s.flags,
+            len: s.len,
+        })
+        .collect();
+    let b: Vec<SectionDigest> = b
+        .iter()
+        .map(|s| SectionDigest {
+            id: s.id,
+            version: s.version,
+            flags: s.flags,
+            len: s.len,
+        })
+        .collect();
+
+    if a == b {
+        return;
+    }
+
+    out.diff_msg("sections", "section table differs");
+
+    println!("Sections A:");
+    for (idx, s) in a.iter().enumerate() {
+        println!("  [{idx}] {s}");
+    }
+    println!("Sections B:");
+    for (idx, s) in b.iter().enumerate() {
+        println!("  [{idx}] {s}");
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct DeviceDigest {
+    id: DeviceId,
+    version: u16,
+    flags: u16,
+    len: u64,
+    hash: u64,
+}
+
+impl DeviceDigest {
+    fn key(&self) -> (u32, u16, u16) {
+        (self.id.0, self.version, self.flags)
+    }
+}
+
+fn diff_devices_section(
+    out: &mut DiffOutput,
+    file_a: &mut fs::File,
+    sections_a: &[SnapshotSectionInfo],
+    file_b: &mut fs::File,
+    sections_b: &[SnapshotSectionInfo],
+) -> Result<()> {
+    let sec_a = sections_a.iter().find(|s| s.id == SectionId::DEVICES);
+    let sec_b = sections_b.iter().find(|s| s.id == SectionId::DEVICES);
+
+    match (sec_a, sec_b) {
+        (None, None) => return Ok(()),
+        (Some(_), None) => {
+            out.diff_msg("DEVICES", "A=present B=<missing>");
+            return Ok(());
+        }
+        (None, Some(_)) => {
+            out.diff_msg("DEVICES", "A=<missing> B=present");
+            return Ok(());
+        }
+        (Some(sec_a), Some(sec_b)) => {
+            if sec_a.version != sec_b.version {
+                out.diff("DEVICES.version", sec_a.version, sec_b.version);
+                // If versions differ, the payload format might differ; don't attempt to decode.
+                return Ok(());
+            }
+            if sec_a.version != 1 {
+                out.diff_msg(
+                    "DEVICES",
+                    format!("unsupported DEVICES section version {}", sec_a.version),
+                );
+                return Ok(());
+            }
+
+            let devs_a = read_devices_digests(file_a, sec_a, "A")?;
+            let devs_b = read_devices_digests(file_b, sec_b, "B")?;
+
+            // Compare by key in sorted order so output is stable and doesn't cascade on missing
+            // entries.
+            let mut map_a: BTreeMap<(u32, u16, u16), DeviceDigest> = BTreeMap::new();
+            let mut map_b: BTreeMap<(u32, u16, u16), DeviceDigest> = BTreeMap::new();
+            for d in devs_a.iter().copied() {
+                map_a.insert(d.key(), d);
+            }
+            for d in devs_b.iter().copied() {
+                map_b.insert(d.key(), d);
+            }
+
+            // Detect ordering differences separately (the file-order list is often important when
+            // debugging determinism).
+            let order_a: Vec<(u32, u16, u16)> = devs_a.iter().map(|d| d.key()).collect();
+            let order_b: Vec<(u32, u16, u16)> = devs_b.iter().map(|d| d.key()).collect();
+            if order_a != order_b && map_a == map_b {
+                out.diff_msg("DEVICES.order", "same entries, different on-disk ordering");
+            }
+
+            // Compare entries.
+            let all_keys: BTreeMap<(u32, u16, u16), ()> = map_a
+                .keys()
+                .chain(map_b.keys())
+                .map(|&k| (k, ()))
+                .collect();
+
+            for (key, ()) in all_keys {
+                match (map_a.get(&key), map_b.get(&key)) {
+                    (Some(a), Some(b)) => {
+                        if a.len != b.len {
+                            out.diff(
+                                &format!(
+                                    "DEVICES[{} v{} flags={}].len",
+                                    DeviceId(key.0),
+                                    key.1,
+                                    key.2
+                                ),
+                                a.len,
+                                b.len,
+                            );
+                        }
+                        if a.hash != b.hash {
+                            out.diff(
+                                &format!(
+                                    "DEVICES[{} v{} flags={}].hash",
+                                    DeviceId(key.0),
+                                    key.1,
+                                    key.2
+                                ),
+                                format!("0x{:016x}", a.hash),
+                                format!("0x{:016x}", b.hash),
+                            );
+                        }
+                    }
+                    (Some(_), None) => {
+                        out.diff_msg(
+                            &format!(
+                                "DEVICES[{} v{} flags={}]",
+                                DeviceId(key.0),
+                                key.1,
+                                key.2
+                            ),
+                            "present in A, missing in B",
+                        );
+                    }
+                    (None, Some(_)) => {
+                        out.diff_msg(
+                            &format!(
+                                "DEVICES[{} v{} flags={}]",
+                                DeviceId(key.0),
+                                key.1,
+                                key.2
+                            ),
+                            "missing in A, present in B",
+                        );
+                    }
+                    (None, None) => {}
+                }
+            }
+
+            Ok(())
+        }
+    }
+}
+
+fn read_devices_digests(
+    file: &mut fs::File,
+    section: &SnapshotSectionInfo,
+    tag: &str,
+) -> Result<Vec<DeviceDigest>> {
+    let section_end = section
+        .offset
+        .checked_add(section.len)
+        .ok_or_else(|| XtaskError::Message("section length overflow".to_string()))?;
+    file.seek(SeekFrom::Start(section.offset))
+        .map_err(|e| XtaskError::Message(format!("seek DEVICES {tag}: {e}")))?;
+
+    ensure_section_remaining(file, section_end, 4, "device count")?;
+    let count = read_u32_le(file)?;
+    if count > limits::MAX_DEVICE_COUNT {
+        return Err(XtaskError::Message(format!(
+            "DEVICES {tag}: too many devices ({count})"
+        )));
+    }
+
+    let mut out = Vec::with_capacity(count as usize);
+    for _ in 0..count {
+        ensure_section_remaining(file, section_end, 16, "device entry header")?;
+        let id = DeviceId(read_u32_le(file)?);
+        let version = read_u16_le(file)?;
+        let flags = read_u16_le(file)?;
+        let len = read_u64_le(file)?;
+        if len > limits::MAX_DEVICE_ENTRY_LEN {
+            return Err(XtaskError::Message(format!(
+                "DEVICES {tag}: device entry too large ({len} bytes)"
+            )));
+        }
+        ensure_section_remaining(file, section_end, len, "device entry data")?;
+        let hash = fnv1a64_hash_reader(file, len).map_err(|e| {
+            XtaskError::Message(format!("DEVICES {tag}: failed to hash device blob: {e}"))
+        })?;
+        out.push(DeviceDigest {
+            id,
+            version,
+            flags,
+            len,
+            hash,
+        });
+    }
+
+    Ok(out)
+}
+
+fn diff_ram_header(
+    out: &mut DiffOutput,
+    a: Option<&aero_snapshot::RamHeaderSummary>,
+    b: Option<&aero_snapshot::RamHeaderSummary>,
+) {
+    match (a, b) {
+        (None, None) => {}
+        (Some(_), None) => out.diff_msg("RAM", "A=present B=<missing>"),
+        (None, Some(_)) => out.diff_msg("RAM", "A=<missing> B=present"),
+        (Some(a), Some(b)) => {
+            if a.total_len != b.total_len {
+                out.diff("RAM.total_len", a.total_len, b.total_len);
+            }
+            if a.page_size != b.page_size {
+                out.diff("RAM.page_size", a.page_size, b.page_size);
+            }
+            if a.mode != b.mode {
+                out.diff("RAM.mode", fmt_ram_mode(a.mode), fmt_ram_mode(b.mode));
+            }
+            if a.compression != b.compression {
+                out.diff(
+                    "RAM.compression",
+                    fmt_compression(a.compression),
+                    fmt_compression(b.compression),
+                );
+            }
+            if a.chunk_size != b.chunk_size {
+                out.diff(
+                    "RAM.chunk_size",
+                    fmt_opt_u32(a.chunk_size),
+                    fmt_opt_u32(b.chunk_size),
+                );
+            }
+            if a.dirty_count != b.dirty_count {
+                out.diff(
+                    "RAM.dirty_count",
+                    fmt_opt_u64(a.dirty_count),
+                    fmt_opt_u64(b.dirty_count),
+                );
+            }
+        }
+    }
+}
+
+fn deep_diff_ram(
+    out: &mut DiffOutput,
+    path_a: &str,
+    index_a: &SnapshotIndex,
+    path_b: &str,
+    index_b: &SnapshotIndex,
+) -> Result<()> {
+    const MAX_DEEP_RAM_BYTES: u64 = 256 * 1024 * 1024;
+
+    let Some(ram_a) = index_a.ram else {
+        return Err(XtaskError::Message(
+            "--deep requires a readable RAM header in snapshot A".to_string(),
+        ));
+    };
+    let Some(ram_b) = index_b.ram else {
+        return Err(XtaskError::Message(
+            "--deep requires a readable RAM header in snapshot B".to_string(),
+        ));
+    };
+
+    if ram_a.total_len > MAX_DEEP_RAM_BYTES {
+        return Err(XtaskError::Message(format!(
+            "--deep refuses to restore snapshots with RAM > {MAX_DEEP_RAM_BYTES} bytes (snapshot A has {})",
+            ram_a.total_len
+        )));
+    }
+    if ram_b.total_len > MAX_DEEP_RAM_BYTES {
+        return Err(XtaskError::Message(format!(
+            "--deep refuses to restore snapshots with RAM > {MAX_DEEP_RAM_BYTES} bytes (snapshot B has {})",
+            ram_b.total_len
+        )));
+    }
+
+    if ram_a.total_len != ram_b.total_len || ram_a.page_size != ram_b.page_size {
+        out.diff_msg(
+            "RAM.deep",
+            "skipped page hash comparison due to mismatched total_len/page_size",
+        );
+        return Ok(());
+    }
+
+    let ram_len: usize = ram_a
+        .total_len
+        .try_into()
+        .map_err(|_| XtaskError::Message("snapshot RAM size does not fit in usize".to_string()))?;
+    let page_size: usize = ram_a
+        .page_size
+        .try_into()
+        .map_err(|_| XtaskError::Message("snapshot page_size does not fit in usize".to_string()))?;
+    if page_size == 0 {
+        return Err(XtaskError::Message("invalid RAM page_size".to_string()));
+    }
+
+    let mut ram_bytes_a = vec![0u8; ram_len];
+    let mut ram_bytes_b = vec![0u8; ram_len];
+
+    {
+        let mut file_a = fs::File::open(path_a)
+            .map_err(|e| XtaskError::Message(format!("open {path_a:?}: {e}")))?;
+        let mut target = RamCaptureTarget::new(&mut ram_bytes_a);
+        aero_snapshot::restore_snapshot(&mut file_a, &mut target)
+            .map_err(|e| XtaskError::Message(format!("restore snapshot A: {e}")))?;
+    }
+    {
+        let mut file_b = fs::File::open(path_b)
+            .map_err(|e| XtaskError::Message(format!("open {path_b:?}: {e}")))?;
+        let mut target = RamCaptureTarget::new(&mut ram_bytes_b);
+        aero_snapshot::restore_snapshot(&mut file_b, &mut target)
+            .map_err(|e| XtaskError::Message(format!("restore snapshot B: {e}")))?;
+    }
+
+    // Compare page digests.
+    let page_count = ram_len.div_ceil(page_size);
+    let mut diff_pages: u64 = 0;
+    const MAX_PAGE_DIFF_PRINT: usize = 32;
+    let mut printed = 0usize;
+
+    for page_idx in 0..page_count {
+        let start = page_idx * page_size;
+        let end = (start + page_size).min(ram_len);
+        let ha = fnv1a64_hash_bytes(&ram_bytes_a[start..end]);
+        let hb = fnv1a64_hash_bytes(&ram_bytes_b[start..end]);
+        if ha != hb {
+            diff_pages += 1;
+            if printed < MAX_PAGE_DIFF_PRINT {
+                println!(
+                    "diff RAM.page[{page_idx}]: A=0x{ha:016x} B=0x{hb:016x}"
+                );
+                printed += 1;
+            }
+        }
+    }
+
+    if diff_pages != 0 {
+        out.diff_msg(
+            "RAM.deep.pages",
+            format!(
+                "{diff_pages} / {page_count} pages differ (showing first {printed})"
+            ),
+        );
+    }
+
+    Ok(())
+}
+
+struct RamCaptureTarget<'a> {
+    ram: &'a mut [u8],
+}
+
+impl<'a> RamCaptureTarget<'a> {
+    fn new(ram: &'a mut [u8]) -> Self {
+        Self { ram }
+    }
+}
+
+impl SnapshotTarget for RamCaptureTarget<'_> {
+    fn restore_cpu_state(&mut self, _state: aero_snapshot::CpuState) {}
+
+    fn restore_cpu_states(
+        &mut self,
+        states: Vec<aero_snapshot::VcpuSnapshot>,
+    ) -> aero_snapshot::Result<()> {
+        if states.is_empty() {
+            return Err(SnapshotError::Corrupt("missing CPU entry"));
+        }
+        Ok(())
+    }
+
+    fn restore_mmu_state(&mut self, _state: aero_snapshot::MmuState) {}
+
+    fn restore_device_states(&mut self, _states: Vec<aero_snapshot::DeviceState>) {}
+
+    fn restore_disk_overlays(&mut self, _overlays: aero_snapshot::DiskOverlayRefs) {}
+
+    fn ram_len(&self) -> usize {
+        self.ram.len()
+    }
+
+    fn write_ram(&mut self, offset: u64, data: &[u8]) -> aero_snapshot::Result<()> {
+        let offset: usize = offset
+            .try_into()
+            .map_err(|_| SnapshotError::Corrupt("ram offset overflow"))?;
+        if offset + data.len() > self.ram.len() {
+            return Err(SnapshotError::Corrupt("ram write out of bounds"));
+        }
+        self.ram[offset..offset + data.len()].copy_from_slice(data);
+        Ok(())
+    }
+}
+
+const FNV1A_64_OFFSET_BASIS: u64 = 0xcbf29ce484222325;
+const FNV1A_64_PRIME: u64 = 0x100000001b3;
+
+fn fnv1a64_hash_bytes(bytes: &[u8]) -> u64 {
+    let mut hash = FNV1A_64_OFFSET_BASIS;
+    for &b in bytes {
+        hash ^= u64::from(b);
+        hash = hash.wrapping_mul(FNV1A_64_PRIME);
+    }
+    hash
+}
+
+fn fnv1a64_hash_reader(r: &mut impl Read, len: u64) -> std::io::Result<u64> {
+    let mut remaining = len;
+    let mut hash = FNV1A_64_OFFSET_BASIS;
+    let mut buf = [0u8; 16 * 1024];
+
+    while remaining != 0 {
+        let chunk_len: usize = (remaining.min(buf.len() as u64)) as usize;
+        r.read_exact(&mut buf[..chunk_len])?;
+        for &b in &buf[..chunk_len] {
+            hash ^= u64::from(b);
+            hash = hash.wrapping_mul(FNV1A_64_PRIME);
+        }
+        remaining -= chunk_len as u64;
+    }
+
+    Ok(hash)
+}
+
+fn fmt_endianness(tag: u8) -> String {
+    match tag {
+        aero_snapshot::SNAPSHOT_ENDIANNESS_LITTLE => "little".to_string(),
+        other => format!("unknown({other})"),
+    }
+}
+
+fn fmt_opt_u64(v: Option<u64>) -> String {
+    match v {
+        Some(v) => v.to_string(),
+        None => "<none>".to_string(),
+    }
+}
+
+fn fmt_opt_u32(v: Option<u32>) -> String {
+    match v {
+        Some(v) => v.to_string(),
+        None => "<none>".to_string(),
+    }
+}
+
+fn fmt_opt_str(v: Option<&str>) -> String {
+    match v {
+        Some(v) => format!("{v:?}"),
+        None => "<none>".to_string(),
+    }
+}
+
+fn fmt_ram_mode(mode: RamMode) -> &'static str {
+    match mode {
+        RamMode::Full => "full",
+        RamMode::Dirty => "dirty",
+    }
+}
+
+fn fmt_compression(c: Compression) -> &'static str {
+    match c {
+        Compression::None => "none",
+        Compression::Lz4 => "lz4",
+    }
 }
 
 fn validate_index(path: &str, index: &SnapshotIndex) -> Result<()> {
