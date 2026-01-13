@@ -90,6 +90,15 @@ typedef struct _VIRTIO_NET_HDR {
 } VIRTIO_NET_HDR;
 
 C_ASSERT(sizeof(VIRTIO_NET_HDR) == 10);
+
+// Receive header when VIRTIO_NET_F_MRG_RXBUF is negotiated.
+// The driver must read NumBuffers from the first buffer of each received packet.
+typedef struct _VIRTIO_NET_HDR_MRG_RXBUF {
+  VIRTIO_NET_HDR Hdr;
+  USHORT NumBuffers;
+} VIRTIO_NET_HDR_MRG_RXBUF;
+
+C_ASSERT(sizeof(VIRTIO_NET_HDR_MRG_RXBUF) == 12);
 // virtio-net per-packet header flags (virtio spec `virtio_net_hdr.flags`).
 // These are used on both TX and RX when checksum/GSO features are negotiated.
 #define VIRTIO_NET_HDR_F_NEEDS_CSUM 0x01u
@@ -112,6 +121,12 @@ typedef struct _AEROVNET_RX_BUFFER {
   PMDL Mdl;
   PNET_BUFFER_LIST Nbl;
   PNET_BUFFER Nb;
+
+  // When mergeable RX buffers are used, a single received frame may span
+  // multiple posted buffers. The buffers are linked via PacketNext and are
+  // returned to the free list together when the indicated NBL is returned.
+  struct _AEROVNET_RX_BUFFER* PacketNext;
+  ULONG PacketBytes;
 
   BOOLEAN Indicated;
 } AEROVNET_RX_BUFFER;
@@ -227,6 +242,7 @@ typedef struct _AEROVNET_ADAPTER {
 
   ULONG Mtu;
   ULONG MaxFrameSize;
+  ULONG RxHeaderBytes;
   ULONG RxBufferDataBytes;
   ULONG RxBufferTotalBytes;
 

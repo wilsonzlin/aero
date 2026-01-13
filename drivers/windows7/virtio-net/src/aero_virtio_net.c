@@ -563,6 +563,7 @@ static VOID AerovNetFreeRxBuffer(_Inout_ AEROVNET_RX_BUFFER* Rx) {
   }
 
   if (Rx->Mdl) {
+    Rx->Mdl->Next = NULL;
     IoFreeMdl(Rx->Mdl);
     Rx->Mdl = NULL;
   }
@@ -574,6 +575,49 @@ static VOID AerovNetFreeRxBuffer(_Inout_ AEROVNET_RX_BUFFER* Rx) {
     Rx->BufferVa = NULL;
     Rx->BufferBytes = 0;
     Rx->BufferPa.QuadPart = 0;
+  }
+}
+
+static VOID AerovNetResetRxBufferForReuse(_Inout_ AEROVNET_ADAPTER* Adapter, _Inout_ AEROVNET_RX_BUFFER* Rx) {
+  if (!Adapter || !Rx) {
+    return;
+  }
+
+  Rx->Indicated = FALSE;
+  Rx->PacketNext = NULL;
+  Rx->PacketBytes = 0;
+
+  if (Rx->Nbl) {
+    NET_BUFFER_LIST_INFO(Rx->Nbl, TcpIpChecksumNetBufferListInfo) = NULL;
+  }
+
+  if (Rx->Mdl) {
+    Rx->Mdl->Next = NULL;
+    Rx->Mdl->ByteCount = Adapter->RxBufferDataBytes;
+  }
+
+  if (Rx->Nb) {
+    // Ensure the NET_BUFFER points at the payload MDL with a clean offset/length.
+    NET_BUFFER_CURRENT_MDL(Rx->Nb) = Rx->Mdl;
+    NET_BUFFER_CURRENT_MDL_OFFSET(Rx->Nb) = 0;
+    NET_BUFFER_DATA_OFFSET(Rx->Nb) = 0;
+    NET_BUFFER_DATA_LENGTH(Rx->Nb) = 0;
+  }
+}
+
+static VOID AerovNetRecycleRxPacketLocked(_Inout_ AEROVNET_ADAPTER* Adapter, _Inout_ AEROVNET_RX_BUFFER* RxHead) {
+  AEROVNET_RX_BUFFER* Rx;
+
+  if (!Adapter || !RxHead) {
+    return;
+  }
+
+  Rx = RxHead;
+  while (Rx) {
+    AEROVNET_RX_BUFFER* Next = (AEROVNET_RX_BUFFER*)Rx->PacketNext;
+    AerovNetResetRxBufferForReuse(Adapter, Rx);
+    InsertTailList(&Adapter->RxFreeList, &Rx->Link);
+    Rx = Next;
   }
 }
 
@@ -694,6 +738,7 @@ static VOID AerovNetFillRxQueueLocked(_Inout_ AEROVNET_ADAPTER* Adapter) {
     uint16_t Head;
     virtio_bool_t UseIndirect;
     int VqRes;
+    ULONG RxHdrBytes;
 
     // Each receive buffer is posted as a header + payload descriptor chain.
     if (Adapter->RxVq.QueueSize == 0) {
@@ -704,16 +749,20 @@ static VOID AerovNetFillRxQueueLocked(_Inout_ AEROVNET_ADAPTER* Adapter) {
     Rx = CONTAINING_RECORD(Entry, AEROVNET_RX_BUFFER, Link);
 
     Rx->Indicated = FALSE;
+    Rx->PacketNext = NULL;
+    Rx->PacketBytes = 0;
+
+    RxHdrBytes = Adapter->RxHeaderBytes;
     // Ensure the virtio-net header doesn't retain stale data if the device
     // chooses not to write some header fields for a particular packet.
-    RtlZeroMemory(Rx->BufferVa, sizeof(VIRTIO_NET_HDR));
+    RtlZeroMemory(Rx->BufferVa, RxHdrBytes);
 
     Sg[0].addr = (uint64_t)Rx->BufferPa.QuadPart;
-    Sg[0].len = (uint32_t)sizeof(VIRTIO_NET_HDR);
+    Sg[0].len = (uint32_t)RxHdrBytes;
     Sg[0].device_writes = VIRTIO_TRUE;
 
-    Sg[1].addr = (uint64_t)Rx->BufferPa.QuadPart + (uint64_t)sizeof(VIRTIO_NET_HDR);
-    Sg[1].len = (uint32_t)(Rx->BufferBytes - sizeof(VIRTIO_NET_HDR));
+    Sg[1].addr = (uint64_t)Rx->BufferPa.QuadPart + (uint64_t)RxHdrBytes;
+    Sg[1].len = (uint32_t)(Rx->BufferBytes - RxHdrBytes);
     Sg[1].device_writes = VIRTIO_TRUE;
 
     UseIndirect = (Adapter->RxVq.Vq.indirect_desc != VIRTIO_FALSE) ? VIRTIO_TRUE : VIRTIO_FALSE;
@@ -943,13 +992,18 @@ static NDIS_STATUS AerovNetAllocateRxResources(_Inout_ AEROVNET_ADAPTER* Adapter
 
     Rx->BufferPa = MmGetPhysicalAddress(Rx->BufferVa);
 
-    Rx->Mdl = IoAllocateMdl(Rx->BufferVa, Rx->BufferBytes, FALSE, FALSE, NULL);
+    Rx->PacketNext = NULL;
+    Rx->PacketBytes = 0;
+
+    // Expose only the Ethernet frame bytes to NDIS: the virtio-net header is
+    // internal to the device/driver contract and is not part of the indicated frame.
+    Rx->Mdl = IoAllocateMdl(Rx->BufferVa + Adapter->RxHeaderBytes, Rx->BufferBytes - Adapter->RxHeaderBytes, FALSE, FALSE, NULL);
     if (!Rx->Mdl) {
       return NDIS_STATUS_RESOURCES;
     }
     MmBuildMdlForNonPagedPool(Rx->Mdl);
 
-    Rx->Nbl = NdisAllocateNetBufferAndNetBufferList(Adapter->NblPool, 0, 0, Rx->Mdl, sizeof(VIRTIO_NET_HDR), 0);
+    Rx->Nbl = NdisAllocateNetBufferAndNetBufferList(Adapter->NblPool, 0, 0, Rx->Mdl, 0, 0);
     if (!Rx->Nbl) {
       return NDIS_STATUS_RESOURCES;
     }
@@ -1707,8 +1761,9 @@ static NDIS_STATUS AerovNetVirtioStart(_Inout_ AEROVNET_ADAPTER* Adapter) {
   //   flags (e.g. VIRTIO_NET_HDR_F_DATA_VALID).
   // - request the optional control virtqueue so we can issue runtime MAC/VLAN
   //   commands when supported (including RX mode toggles via CTRL_RX).
+  // - MRG_RXBUF: allow a single received packet to span multiple buffers.
   WantedFeatures = AEROVNET_FEATURE_RING_EVENT_IDX | VIRTIO_NET_F_CSUM | VIRTIO_NET_F_GUEST_CSUM | VIRTIO_NET_F_HOST_TSO4 | VIRTIO_NET_F_HOST_TSO6 |
-                  VIRTIO_NET_F_CTRL_VQ | VIRTIO_NET_F_CTRL_MAC_ADDR | VIRTIO_NET_F_CTRL_VLAN | VIRTIO_NET_F_CTRL_RX;
+                   VIRTIO_NET_F_CTRL_VQ | VIRTIO_NET_F_CTRL_MAC_ADDR | VIRTIO_NET_F_CTRL_VLAN | VIRTIO_NET_F_CTRL_RX | VIRTIO_NET_F_MRG_RXBUF;
   NegotiatedFeatures = 0;
 
   NtStatus = VirtioPciNegotiateFeatures(&Adapter->Vdev, RequiredFeatures, WantedFeatures, &NegotiatedFeatures);
@@ -1717,6 +1772,9 @@ static NDIS_STATUS AerovNetVirtioStart(_Inout_ AEROVNET_ADAPTER* Adapter) {
   }
 
   Adapter->GuestFeatures = (UINT64)NegotiatedFeatures;
+
+  Adapter->RxHeaderBytes =
+      (Adapter->GuestFeatures & VIRTIO_NET_F_MRG_RXBUF) ? (ULONG)sizeof(VIRTIO_NET_HDR_MRG_RXBUF) : (ULONG)sizeof(VIRTIO_NET_HDR);
 
   // Offload support depends on negotiated virtio-net features.
   Adapter->TxChecksumSupported = (Adapter->GuestFeatures & VIRTIO_NET_F_CSUM) ? TRUE : FALSE;
@@ -1826,7 +1884,7 @@ static NDIS_STATUS AerovNetVirtioStart(_Inout_ AEROVNET_ADAPTER* Adapter) {
   Adapter->MaxFrameSize = Adapter->Mtu + 22;
 
   Adapter->RxBufferDataBytes = 2048;
-  Adapter->RxBufferTotalBytes = sizeof(VIRTIO_NET_HDR) + Adapter->RxBufferDataBytes;
+  Adapter->RxBufferTotalBytes = Adapter->RxHeaderBytes + Adapter->RxBufferDataBytes;
 
   Status = AerovNetAllocateRxResources(Adapter);
   if (Status != NDIS_STATUS_SUCCESS) {
@@ -2109,10 +2167,18 @@ static VOID AerovNetInterruptDpcWork(_Inout_ AEROVNET_ADAPTER* Adapter, _In_ BOO
       if (DoRx) {
         // RX completions.
         for (;;) {
+          const ULONG RxHdrBytes = Adapter->RxHeaderBytes;
+          const BOOLEAN Mergeable = (Adapter->GuestFeatures & VIRTIO_NET_F_MRG_RXBUF) ? TRUE : FALSE;
           PVOID Cookie;
           uint32_t UsedLen;
-          AEROVNET_RX_BUFFER* Rx;
-          ULONG PayloadLen;
+          AEROVNET_RX_BUFFER* RxHead;
+          AEROVNET_RX_BUFFER* RxTail;
+          AEROVNET_RX_BUFFER* RxCur;
+          USHORT NumBuffers;
+          USHORT BufIndex;
+          ULONG TotalPayloadLen;
+          BOOLEAN Drop;
+          BOOLEAN AbortRxDrain;
 
           Cookie = NULL;
           UsedLen = 0;
@@ -2125,74 +2191,162 @@ static VOID AerovNetInterruptDpcWork(_Inout_ AEROVNET_ADAPTER* Adapter, _In_ BOO
             break;
           }
 
-          Rx = (AEROVNET_RX_BUFFER*)Cookie;
-
-          if (!Rx) {
+          RxHead = (AEROVNET_RX_BUFFER*)Cookie;
+          if (!RxHead) {
             continue;
           }
 
-          if (UsedLen < sizeof(VIRTIO_NET_HDR) || UsedLen > Rx->BufferBytes) {
+          RxHead->PacketNext = NULL;
+          RxHead->PacketBytes = 0;
+          RxTail = RxHead;
+          NumBuffers = 1;
+          TotalPayloadLen = 0;
+          Drop = FALSE;
+          AbortRxDrain = FALSE;
+
+          if (UsedLen < RxHdrBytes || UsedLen > RxHead->BufferBytes) {
             Adapter->StatRxErrors++;
-            InsertTailList(&Adapter->RxFreeList, &Rx->Link);
+            AerovNetResetRxBufferForReuse(Adapter, RxHead);
+            InsertTailList(&Adapter->RxFreeList, &RxHead->Link);
             continue;
           }
 
-          PayloadLen = UsedLen - sizeof(VIRTIO_NET_HDR);
-
-          // Contract v1: drop undersized/oversized Ethernet frames but always recycle.
-          if (PayloadLen < 14 || PayloadLen > 1522) {
-            Adapter->StatRxErrors++;
-            InsertTailList(&Adapter->RxFreeList, &Rx->Link);
-            continue;
-          }
-
-          if (Adapter->State != AerovNetAdapterRunning) {
-            InsertTailList(&Adapter->RxFreeList, &Rx->Link);
-            continue;
-          }
-
-          if (!AerovNetAcceptFrame(Adapter, Rx->BufferVa + sizeof(VIRTIO_NET_HDR), PayloadLen)) {
-            InsertTailList(&Adapter->RxFreeList, &Rx->Link);
-            continue;
-          }
-
-          Rx->Indicated = TRUE;
-
-          NET_BUFFER_DATA_OFFSET(Rx->Nb) = sizeof(VIRTIO_NET_HDR);
-          NET_BUFFER_DATA_LENGTH(Rx->Nb) = PayloadLen;
-          NET_BUFFER_LIST_STATUS(Rx->Nbl) = NDIS_STATUS_SUCCESS;
-          NET_BUFFER_LIST_NEXT_NBL(Rx->Nbl) = NULL;
-
-          NET_BUFFER_LIST_INFO(Rx->Nbl, TcpIpChecksumNetBufferListInfo) = (PVOID)0;
-
-          // Translate virtio-net checksum validation results (if present) into NDIS
-          // checksum offload indicators so the Windows network stack can skip
-          // software checksum validation.
-          {
-            const VIRTIO_NET_HDR* VirtioHdr = (const VIRTIO_NET_HDR*)Rx->BufferVa;
-            ULONG CsumValue = AerovNetGetRxChecksumValue(VirtioHdr, Rx->BufferVa + sizeof(VIRTIO_NET_HDR), PayloadLen);
-            if (CsumValue != 0) {
-              NET_BUFFER_LIST_INFO(Rx->Nbl, TcpIpChecksumNetBufferListInfo) = (PVOID)(ULONG_PTR)CsumValue;
+          if (Mergeable) {
+            const VIRTIO_NET_HDR_MRG_RXBUF* Hdr = (const VIRTIO_NET_HDR_MRG_RXBUF*)RxHead->BufferVa;
+            NumBuffers = Hdr->NumBuffers;
+            if (NumBuffers == 0 || NumBuffers > Adapter->RxVq.QueueSize) {
+              Adapter->StatRxErrors++;
+              AerovNetResetRxBufferForReuse(Adapter, RxHead);
+              InsertTailList(&Adapter->RxFreeList, &RxHead->Link);
+              continue;
             }
           }
 
-          AerovNetIndicateRxChecksum(Adapter,
-                                    Rx->Nbl,
-                                    Rx->BufferVa + sizeof(VIRTIO_NET_HDR),
-                                    PayloadLen,
-                                    (const VIRTIO_NET_HDR*)Rx->BufferVa);
+          RxHead->PacketBytes = UsedLen - RxHdrBytes;
+          TotalPayloadLen = RxHead->PacketBytes;
+
+          // Pull remaining buffers for this packet if the device used more than one.
+          for (BufIndex = 1; BufIndex < NumBuffers; BufIndex++) {
+            PVOID Cookie2;
+            uint32_t UsedLen2;
+            AEROVNET_RX_BUFFER* Rx2;
+
+            Cookie2 = NULL;
+            UsedLen2 = 0;
+
+            if (virtqueue_split_pop_used(&Adapter->RxVq.Vq, &Cookie2, &UsedLen2) == VIRTIO_FALSE) {
+              Adapter->StatRxErrors++;
+              AerovNetRecycleRxPacketLocked(Adapter, RxHead);
+              // Cannot safely continue parsing the used ring without the full packet.
+              AbortRxDrain = TRUE;
+              break;
+            }
+
+            Rx2 = (AEROVNET_RX_BUFFER*)Cookie2;
+            if (!Rx2) {
+              Adapter->StatRxErrors++;
+              Drop = TRUE;
+              continue;
+            }
+
+            Rx2->PacketNext = NULL;
+            Rx2->PacketBytes = 0;
+            RxTail->PacketNext = Rx2;
+            RxTail = Rx2;
+
+            if (UsedLen2 < RxHdrBytes || UsedLen2 > Rx2->BufferBytes) {
+              Adapter->StatRxErrors++;
+              Drop = TRUE;
+              continue;
+            }
+
+            Rx2->PacketBytes = UsedLen2 - RxHdrBytes;
+            TotalPayloadLen += Rx2->PacketBytes;
+          }
+
+          if (AbortRxDrain) {
+            break;
+          }
+
+          // Contract v1: drop undersized/oversized Ethernet frames but always recycle.
+          if (TotalPayloadLen < 14 || TotalPayloadLen > Adapter->MaxFrameSize) {
+            Adapter->StatRxErrors++;
+            Drop = TRUE;
+          }
+
+          if (!Drop && Adapter->State != AerovNetAdapterRunning) {
+            Drop = TRUE;
+          }
+
+          // Packet filter / destination MAC check.
+          if (!Drop) {
+            if (RxHead->PacketBytes >= 14) {
+              if (!AerovNetAcceptFrame(Adapter, RxHead->BufferVa + RxHdrBytes, TotalPayloadLen)) {
+                Drop = TRUE;
+              }
+            } else {
+              UCHAR EthHdr[14];
+              ULONG Copied;
+
+              RtlZeroMemory(EthHdr, sizeof(EthHdr));
+              Copied = 0;
+              for (RxCur = RxHead; RxCur && Copied < sizeof(EthHdr); RxCur = RxCur->PacketNext) {
+                ULONG ToCopy = min(RxCur->PacketBytes, (ULONG)sizeof(EthHdr) - Copied);
+                if (ToCopy) {
+                  RtlCopyMemory(EthHdr + Copied, RxCur->BufferVa + RxHdrBytes, ToCopy);
+                  Copied += ToCopy;
+                }
+              }
+
+              if (Copied < sizeof(EthHdr)) {
+                Adapter->StatRxErrors++;
+                Drop = TRUE;
+              } else if (!AerovNetAcceptFrame(Adapter, EthHdr, TotalPayloadLen)) {
+                Drop = TRUE;
+              }
+            }
+          }
+
+          if (Drop) {
+            AerovNetRecycleRxPacketLocked(Adapter, RxHead);
+            continue;
+          }
+
+          // Chain payload MDLs and indicate a single NBL for the whole packet.
+          for (RxCur = RxHead; RxCur; RxCur = RxCur->PacketNext) {
+            RxCur->Indicated = TRUE;
+            if (RxCur->Mdl) {
+              RxCur->Mdl->ByteCount = RxCur->PacketBytes;
+              RxCur->Mdl->Next = RxCur->PacketNext ? RxCur->PacketNext->Mdl : NULL;
+            }
+          }
+
+          NET_BUFFER_CURRENT_MDL(RxHead->Nb) = RxHead->Mdl;
+          NET_BUFFER_CURRENT_MDL_OFFSET(RxHead->Nb) = 0;
+          NET_BUFFER_DATA_OFFSET(RxHead->Nb) = 0;
+          NET_BUFFER_DATA_LENGTH(RxHead->Nb) = TotalPayloadLen;
+          NET_BUFFER_LIST_STATUS(RxHead->Nbl) = NDIS_STATUS_SUCCESS;
+          NET_BUFFER_LIST_NEXT_NBL(RxHead->Nbl) = NULL;
+          NET_BUFFER_LIST_INFO(RxHead->Nbl, TcpIpChecksumNetBufferListInfo) = NULL;
+
+          // Note: mergeable RX buffers may scatter a single packet across multiple
+          // buffers, making the frame non-contiguous in memory. For now, only
+          // indicate checksum status when the packet fits in a single buffer.
+          if (NumBuffers == 1) {
+            AerovNetIndicateRxChecksum(Adapter, RxHead->Nbl, RxHead->BufferVa + RxHdrBytes, TotalPayloadLen, (const VIRTIO_NET_HDR*)RxHead->BufferVa);
+          }
 
           if (IndicateTail) {
-            NET_BUFFER_LIST_NEXT_NBL(IndicateTail) = Rx->Nbl;
-            IndicateTail = Rx->Nbl;
+            NET_BUFFER_LIST_NEXT_NBL(IndicateTail) = RxHead->Nbl;
+            IndicateTail = RxHead->Nbl;
           } else {
-            IndicateHead = Rx->Nbl;
-            IndicateTail = Rx->Nbl;
+            IndicateHead = RxHead->Nbl;
+            IndicateTail = RxHead->Nbl;
           }
 
           IndicateCount++;
           Adapter->StatRxPackets++;
-          Adapter->StatRxBytes += PayloadLen;
+          Adapter->StatRxBytes += TotalPayloadLen;
         }
 
         // Refill RX queue with any buffers we dropped.
@@ -3398,13 +3552,7 @@ static VOID AerovNetMiniportReturnNetBufferLists(_In_ NDIS_HANDLE MiniportAdapte
     if (!Rx) {
       continue;
     }
-
-    Rx->Indicated = FALSE;
-    NET_BUFFER_DATA_OFFSET(Rx->Nb) = sizeof(VIRTIO_NET_HDR);
-    NET_BUFFER_DATA_LENGTH(Rx->Nb) = 0;
-    NET_BUFFER_LIST_INFO(Nbl, TcpIpChecksumNetBufferListInfo) = (PVOID)0;
-
-    InsertTailList(&Adapter->RxFreeList, &Rx->Link);
+    AerovNetRecycleRxPacketLocked(Adapter, Rx);
   }
 
   if (Adapter->State == AerovNetAdapterRunning) {
