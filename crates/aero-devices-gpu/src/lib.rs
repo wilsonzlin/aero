@@ -4,8 +4,8 @@
 //! (MMIO/shared-memory protocols), while still providing the abstraction boundary between:
 //! - the device-model side (rings, guest memory), and
 //! - the host-side GPU command executor.
-
 pub mod backend;
+pub mod regs;
 pub mod ring;
 pub mod scanout;
 
