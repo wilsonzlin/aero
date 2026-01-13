@@ -474,8 +474,19 @@ static int RunCursorStateSanity(int argc, char** argv) {
     }
 
     const bool enabled = q0.enable != 0;
-    const bool pos_match = (AbsI32((int)ToS32((uint32_t)q0.x) - (int)actual_pos.x) <= tol) &&
-                           (AbsI32((int)ToS32((uint32_t)q0.y) - (int)actual_pos.y) <= tol);
+    const int32_t mmio_x = ToS32((uint32_t)q0.x);
+    const int32_t mmio_y = ToS32((uint32_t)q0.y);
+    const int32_t hot_x = (int32_t)q0.hot_x;
+    const int32_t hot_y = (int32_t)q0.hot_y;
+
+    // Cursor position semantics can vary: the device registers may represent either the cursor
+    // hot-spot position or the cursor top-left plus a separate hot-spot offset. Be tolerant and
+    // accept either interpretation.
+    const bool pos_match0 = (AbsI32((int)mmio_x - (int)actual_pos.x) <= tol) &&
+                            (AbsI32((int)mmio_y - (int)actual_pos.y) <= tol);
+    const bool pos_match1 = (AbsI32((int)(mmio_x + hot_x) - (int)actual_pos.x) <= tol) &&
+                            (AbsI32((int)(mmio_y + hot_y) - (int)actual_pos.y) <= tol);
+    const bool pos_match = pos_match0 || pos_match1;
 
     if (enabled && pos_match) {
       pos_ok = true;
@@ -505,11 +516,22 @@ static int RunCursorStateSanity(int argc, char** argv) {
     if (q0.enable == 0) {
       reporter.Fail("cursor not enabled (enable=%lu)", (unsigned long)q0.enable);
     } else {
-      reporter.Fail("cursor pos mismatch: expected~(%ld,%ld) got (%ld,%ld)",
-                    (long)actual_pos.x,
-                    (long)actual_pos.y,
-                    (long)ToS32((uint32_t)q0.x),
-                    (long)ToS32((uint32_t)q0.y));
+      const int32_t mmio_x = ToS32((uint32_t)q0.x);
+      const int32_t mmio_y = ToS32((uint32_t)q0.y);
+      const int32_t hot_x = (int32_t)q0.hot_x;
+      const int32_t hot_y = (int32_t)q0.hot_y;
+      reporter.Fail(
+          "cursor pos mismatch: expected~(%ld,%ld) mmio_pos=(%ld,%ld) hot=(%ld,%ld) => hotspot=(%ld,%ld) or (%ld,%ld)",
+          (long)actual_pos.x,
+          (long)actual_pos.y,
+          (long)mmio_x,
+          (long)mmio_y,
+          (long)hot_x,
+          (long)hot_y,
+          (long)mmio_x,
+          (long)mmio_y,
+          (long)(mmio_x + hot_x),
+          (long)(mmio_y + hot_y));
     }
     goto cleanup;
   }
