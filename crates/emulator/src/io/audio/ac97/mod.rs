@@ -217,43 +217,133 @@ impl Ac97Controller {
 
     /// Read from NABM (bus master) register space.
     pub fn nabm_read(&self, offset: u64, size: usize) -> u32 {
-        match (offset, size) {
-            (NABM_PO_BDBAR, 4) => self.pcm_out.bdbar,
-            (NABM_PO_CIV, 1) => self.pcm_out.civ() as u32,
-            (NABM_PO_LVI, 1) => self.pcm_out.lvi() as u32,
-            (NABM_PO_SR, 2) => self.pcm_out.sr() as u32,
-            (NABM_PO_PICB, 2) => self.pcm_out.picb() as u32,
-            (NABM_PO_PIV, 1) => self.pcm_out.piv() as u32,
-            (NABM_PO_CR, 1) => self.pcm_out.cr() as u32,
-            (NABM_GLOB_CNT, 4) => self.glob_cnt,
-            (NABM_GLOB_STA, 4) => self.glob_sta,
-            (NABM_ACC_SEMA, 1) => self.acc_sema as u32,
+        match size {
+            1 => u32::from(self.nabm_read_u8(offset)),
+            2 => {
+                let b0 = u32::from(self.nabm_read_u8(offset));
+                let b1 = u32::from(self.nabm_read_u8(offset.wrapping_add(1)));
+                b0 | (b1 << 8)
+            }
+            4 => {
+                let mut out = 0u32;
+                for i in 0..4u64 {
+                    out |= u32::from(self.nabm_read_u8(offset.wrapping_add(i))) << (i * 8);
+                }
+                out
+            }
             _ => 0,
         }
     }
 
     /// Write to NABM (bus master) register space.
     pub fn nabm_write(&mut self, offset: u64, size: usize, value: u32) {
-        match (offset, size) {
-            (NABM_PO_BDBAR, 4) => self.pcm_out.write_bdbar(value),
-            (NABM_PO_LVI, 1) => self.pcm_out.write_lvi(value as u8),
-            (NABM_PO_SR, 2) => self.pcm_out.write_sr(value as u16),
-            (NABM_PO_CR, 1) => self.pcm_out.write_cr(value as u8),
-            (NABM_GLOB_CNT, 4) => {
-                self.glob_cnt = value;
-                if (value & (GLOB_CNT_COLD_RESET | GLOB_CNT_WARM_RESET)) != 0 {
-                    self.reset();
-                    return;
+        let mut did_reset = false;
+        match size {
+            1 => {
+                did_reset = self.nabm_write_u8(offset, value as u8);
+            }
+            2 => {
+                for i in 0..2u64 {
+                    let byte = ((value >> (i * 8)) & 0xff) as u8;
+                    did_reset = self.nabm_write_u8(offset.wrapping_add(i), byte);
+                    if did_reset {
+                        break;
+                    }
                 }
             }
-            (NABM_ACC_SEMA, 1) => {
+            4 => {
+                for i in 0..4u64 {
+                    let byte = ((value >> (i * 8)) & 0xff) as u8;
+                    did_reset = self.nabm_write_u8(offset.wrapping_add(i), byte);
+                    if did_reset {
+                        break;
+                    }
+                }
+            }
+            _ => {}
+        }
+        if !did_reset {
+            self.update_irq_level();
+        }
+    }
+
+    fn nabm_read_u8(&self, offset: u64) -> u8 {
+        const PO_BDBAR_END: u64 = NABM_PO_BDBAR + 3;
+        const PO_SR_HI: u64 = NABM_PO_SR + 1;
+        const PO_PICB_HI: u64 = NABM_PO_PICB + 1;
+        const GLOB_CNT_END: u64 = NABM_GLOB_CNT + 3;
+        const GLOB_STA_END: u64 = NABM_GLOB_STA + 3;
+
+        match offset {
+            // PCM out stream registers.
+            NABM_PO_BDBAR..=PO_BDBAR_END => {
+                let shift = (offset - NABM_PO_BDBAR) * 8;
+                ((self.pcm_out.bdbar >> shift) & 0xff) as u8
+            }
+            NABM_PO_CIV => self.pcm_out.civ(),
+            NABM_PO_LVI => self.pcm_out.lvi(),
+            NABM_PO_SR => (self.pcm_out.sr() & 0x00ff) as u8,
+            PO_SR_HI => (self.pcm_out.sr() >> 8) as u8,
+            NABM_PO_PICB => (self.pcm_out.picb() & 0x00ff) as u8,
+            PO_PICB_HI => (self.pcm_out.picb() >> 8) as u8,
+            NABM_PO_PIV => self.pcm_out.piv(),
+            NABM_PO_CR => self.pcm_out.cr(),
+
+            // Global registers.
+            NABM_GLOB_CNT..=GLOB_CNT_END => {
+                let shift = (offset - NABM_GLOB_CNT) * 8;
+                ((self.glob_cnt >> shift) & 0xff) as u8
+            }
+            NABM_GLOB_STA..=GLOB_STA_END => {
+                let shift = (offset - NABM_GLOB_STA) * 8;
+                ((self.glob_sta >> shift) & 0xff) as u8
+            }
+            NABM_ACC_SEMA => self.acc_sema,
+
+            _ => 0,
+        }
+    }
+
+    /// Returns `true` if the write triggers a full controller reset.
+    fn nabm_write_u8(&mut self, offset: u64, value: u8) -> bool {
+        const PO_BDBAR_END: u64 = NABM_PO_BDBAR + 3;
+        const PO_SR_HI: u64 = NABM_PO_SR + 1;
+        const GLOB_CNT_END: u64 = NABM_GLOB_CNT + 3;
+
+        match offset {
+            // PCM out stream registers.
+            NABM_PO_BDBAR..=PO_BDBAR_END => {
+                let shift = (offset - NABM_PO_BDBAR) * 8;
+                let mask = !(0xffu32 << shift);
+                let next = (self.pcm_out.bdbar & mask) | (u32::from(value) << shift);
+                self.pcm_out.write_bdbar(next);
+            }
+            NABM_PO_LVI => self.pcm_out.write_lvi(value),
+            NABM_PO_SR => self.pcm_out.write_sr(u16::from(value)),
+            PO_SR_HI => self.pcm_out.write_sr(u16::from(value) << 8),
+            NABM_PO_CR => self.pcm_out.write_cr(value),
+
+            // Global registers.
+            NABM_GLOB_CNT..=GLOB_CNT_END => {
+                let shift = (offset - NABM_GLOB_CNT) * 8;
+                let mask = !(0xffu32 << shift);
+                self.glob_cnt = (self.glob_cnt & mask) | (u32::from(value) << shift);
+
+                if (self.glob_cnt & (GLOB_CNT_COLD_RESET | GLOB_CNT_WARM_RESET)) != 0 {
+                    self.reset();
+                    return true;
+                }
+            }
+            NABM_ACC_SEMA => {
                 let _ = value;
                 // Writes are ignored; semaphore always immediately available.
                 self.acc_sema = 0x01;
             }
+
             _ => {}
         }
-        self.update_irq_level();
+
+        false
     }
 }
 
@@ -441,6 +531,43 @@ impl PortIO for Ac97PciDevice {
 mod tests {
     use super::*;
     use crate::io::PortIO;
+    use memory::Bus;
+
+    #[derive(Default)]
+    struct NullSink;
+
+    impl AudioSink for NullSink {
+        fn push_interleaved_f32(&mut self, _samples: &[f32]) {}
+    }
+
+    fn program_single_descriptor(mem: &mut Bus, bdbar: u64, buf_addr: u32, len_words: u16, ioc: bool) {
+        mem.write_u32(bdbar, buf_addr);
+        let mut ctl = u32::from(len_words);
+        if ioc {
+            ctl |= BDL_IOC;
+        }
+        mem.write_u32(bdbar + 4, ctl);
+    }
+
+    fn controller_with_sr_irq_bits_set() -> Ac97Controller {
+        let mut ctrl = Ac97Controller::new();
+        let mut mem = Bus::new(0x4000);
+
+        let bdl_addr = 0x1000u64;
+        program_single_descriptor(&mut mem, bdl_addr, 0x2000, 0, true);
+
+        ctrl.nabm_write(NABM_PO_BDBAR, 4, bdl_addr as u32);
+        ctrl.nabm_write(NABM_PO_LVI, 1, 0);
+        ctrl.nabm_write(NABM_PO_CR, 1, u32::from(CR_RPBM));
+
+        let mut sink = NullSink;
+        ctrl.poll(&mut mem, &mut sink, 0);
+
+        let sr = ctrl.nabm_read(NABM_PO_SR, 2) as u16;
+        assert_eq!(sr & (SR_BCIS | SR_LVBCI), SR_BCIS | SR_LVBCI);
+
+        ctrl
+    }
 
     #[test]
     fn mixer_vendor_ids_are_exposed() {
@@ -474,6 +601,84 @@ mod tests {
     fn mixer_vendor_ids_can_be_read_as_packed_dword() {
         let dev = Ac97Controller::new();
         assert_eq!(dev.nam_read(NAM_VENDOR_ID1, 4), 0x7600_8384);
+    }
+
+    #[test]
+    fn nabm_word_reads_pack_civ_and_lvi() {
+        let mut ctrl = Ac97Controller::new();
+        let mut mem = Bus::new(0x4000);
+
+        let bdl_addr = 0x1000u64;
+        // Use a zero-length buffer so the DMA engine completes immediately and increments CIV.
+        program_single_descriptor(&mut mem, bdl_addr, 0x2000, 0, false);
+
+        ctrl.nabm_write(NABM_PO_BDBAR, 4, bdl_addr as u32);
+        ctrl.nabm_write(NABM_PO_LVI, 1, 0);
+        ctrl.nabm_write(NABM_PO_CR, 1, u32::from(CR_RPBM));
+
+        let mut sink = NullSink;
+        ctrl.poll(&mut mem, &mut sink, 0);
+
+        // Program LVI after the engine has advanced CIV to ensure both bytes are non-zero.
+        ctrl.nabm_write(NABM_PO_LVI, 1, 5);
+
+        let got = ctrl.nabm_read(NABM_PO_CIV, 2) as u16;
+        assert_eq!(got, u16::from_le_bytes([1, 5]));
+    }
+
+    #[test]
+    fn nabm_dword_reads_pack_stream_regs_little_endian() {
+        let mut ctrl = Ac97Controller::new();
+        let mut mem = Bus::new(0x4000);
+
+        let bdl_addr = 0x1000u64;
+        // Use IOC+zero-length so SR has known W1C bits set and CIV advances.
+        program_single_descriptor(&mut mem, bdl_addr, 0x2000, 0, true);
+
+        ctrl.nabm_write(NABM_PO_BDBAR, 4, bdl_addr as u32);
+        ctrl.nabm_write(NABM_PO_LVI, 1, 0);
+        ctrl.nabm_write(NABM_PO_CR, 1, u32::from(CR_RPBM));
+
+        let mut sink = NullSink;
+        ctrl.poll(&mut mem, &mut sink, 0);
+
+        // Distinct LVI makes byte ordering obvious.
+        ctrl.nabm_write(NABM_PO_LVI, 1, 5);
+
+        // 32-bit read at CIV spans CIV/LVI/SR (2 bytes).
+        let got = ctrl.nabm_read(NABM_PO_CIV, 4);
+        let expected_sr = (SR_BCIS | SR_LVBCI | SR_DCH) as u16;
+        let expected =
+            u32::from_le_bytes([1, 5, (expected_sr & 0xff) as u8, (expected_sr >> 8) as u8]);
+        assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn nabm_status_w1c_works_for_1_2_and_4_byte_writes() {
+        // 1-byte write to SR low byte.
+        {
+            let mut ctrl = controller_with_sr_irq_bits_set();
+            ctrl.nabm_write(NABM_PO_SR, 1, u32::from(SR_BCIS as u8));
+            let sr = ctrl.nabm_read(NABM_PO_SR, 2) as u16;
+            assert_eq!(sr & SR_BCIS, 0);
+            assert_ne!(sr & SR_LVBCI, 0);
+        }
+
+        // 2-byte write to SR (natural width).
+        {
+            let mut ctrl = controller_with_sr_irq_bits_set();
+            ctrl.nabm_write(NABM_PO_SR, 2, u32::from(SR_BCIS | SR_LVBCI));
+            let sr = ctrl.nabm_read(NABM_PO_SR, 2) as u16;
+            assert_eq!(sr & (SR_BCIS | SR_LVBCI), 0);
+        }
+
+        // 4-byte write starting at CIV, spanning into SR.
+        {
+            let mut ctrl = controller_with_sr_irq_bits_set();
+            ctrl.nabm_write(NABM_PO_CIV, 4, u32::from((SR_BCIS | SR_LVBCI) as u32) << 16);
+            let sr = ctrl.nabm_read(NABM_PO_SR, 2) as u16;
+            assert_eq!(sr & (SR_BCIS | SR_LVBCI), 0);
+        }
     }
 
     #[test]
