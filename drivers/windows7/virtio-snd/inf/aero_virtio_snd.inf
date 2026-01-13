@@ -55,6 +55,25 @@ Needs    = KS.Registration, WDMAUDIO.Registration
 CopyFiles = AeroVirtioSnd.CopyFiles
 AddReg    = AeroVirtioSnd.AddReg
 
+;------------------------------------------------------------------------------
+; Interrupt Management (MSI/MSI-X)
+;------------------------------------------------------------------------------
+; Request message-signaled interrupts for better performance. The driver prefers
+; MSI/MSI-X when present and falls back to legacy INTx automatically.
+;
+; virtio-snd contract v1 uses 4 virtqueues + a config interrupt. Request at least
+; 5 messages so the driver can map:
+;   vector 0: config
+;   vector 1..4: queues 0..3 (control/event/tx/rx)
+; Use a small future-proof limit.
+[AeroVirtioSnd_Install.NT.HW]
+AddReg = AeroVirtioSnd_InterruptManagement_AddReg
+
+[AeroVirtioSnd_InterruptManagement_AddReg]
+HKR, "Interrupt Management",,0x00000010
+HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MSISupported,        0x00010001, 1
+HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MessageNumberLimit,  0x00010001, 8
+
 ; Register the KS device interfaces that the Windows audio stack enumerates.
 ; Reference strings match the PortCls subdevice names ("Wave" / "Topology").
 [AeroVirtioSnd_Install.NT.Interfaces]

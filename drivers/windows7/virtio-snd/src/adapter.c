@@ -240,7 +240,7 @@ VirtIoSndDispatchPnp(_In_ PDEVICE_OBJECT DeviceObject, _In_ PIRP Irp)
             for (q = 0; q < VIRTIOSND_QUEUE_COUNT; ++q) {
                 dx->QueueSplit[q].NotifyAddr = NULL;
             }
-            VirtIoSndIntxDisconnect(dx);
+            VirtIoSndInterruptDisconnect(dx);
         }
 
         status = PcDispatchIrp(DeviceObject, Irp);
@@ -429,8 +429,8 @@ static NTSTATUS VirtIoSndStartDevice(PDEVICE_OBJECT DeviceObject, PIRP Irp, PRES
     dx->Self = DeviceObject;
     dx->Removed = FALSE;
 
-    /* Initialize INTx DPC state before any best-effort StopHardware calls. */
-    VirtIoSndIntxInitialize(dx);
+    /* Initialize interrupt state before any best-effort StopHardware calls. */
+    VirtIoSndInterruptInitialize(dx);
 
     if (dx->LowerDeviceObject == NULL || dx->Pdo == NULL) {
         PDEVICE_OBJECT base = IoGetDeviceAttachmentBaseRef(DeviceObject);

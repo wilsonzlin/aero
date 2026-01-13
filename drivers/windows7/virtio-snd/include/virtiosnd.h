@@ -155,7 +155,21 @@ typedef struct _VIRTIOSND_DEVICE_EXTENSION {
     VIRTIOSND_RX_ENGINE Rx;
     volatile LONG RxEngineInitialized;
 
-    /* INTx plumbing */
+    /*
+     * Interrupt plumbing.
+     *
+     * - Prefer message-signaled interrupts (MSI/MSI-X) when provided by PnP/INF.
+     * - Fall back to legacy INTx (contract v1 default).
+     *
+     * When MSI-X is active, the driver programs virtio-pci MSI-X vectors using
+     * the OS message numbers:
+     *   - If MessageCount >= 1 + VIRTIOSND_QUEUE_COUNT:
+     *       vector 0: config
+     *       vector 1..4: queues 0..3 (control/event/tx/rx)
+     *   - Otherwise: all on vector 0 (config + all queues)
+     */
+
+    /* Legacy INTx plumbing (shared helper in virtio_pci_intx_wdm.c). */
     VIRTIO_INTX Intx;
     CM_PARTIAL_RESOURCE_DESCRIPTOR InterruptDesc;
     BOOLEAN InterruptDescPresent;
@@ -170,6 +184,27 @@ typedef struct _VIRTIOSND_DEVICE_EXTENSION {
      * Default: 0 / FALSE (set by the INF; contract v1 remains INTx-strict).
      */
     BOOLEAN AllowPollingOnly;
+
+    /* Message-signaled (MSI/MSI-X) plumbing. */
+    CM_PARTIAL_RESOURCE_DESCRIPTOR MessageInterruptDesc;
+    BOOLEAN MessageInterruptDescPresent;
+    BOOLEAN MessageInterruptsConnected;
+    BOOLEAN MessageInterruptsActive; /* TRUE when using MSI/MSI-X instead of INTx. */
+
+    /* IoConnectInterruptEx(CONNECT_MESSAGE_BASED) outputs. */
+    PVOID MessageInterruptConnectionContext;
+    PKINTERRUPT* MessageInterruptObjects;
+    ULONG MessageInterruptCount;
+
+    /* MSI/MSI-X DPC coalescing (similar semantics to VIRTIO_INTX::DpcInFlight). */
+    KDPC MessageDpc;
+    volatile LONG MessageDpcInFlight;
+    volatile LONG MessagePendingMask; /* bitmask of pending MessageID values */
+
+    /* Device vector routing when MessageInterruptsActive==TRUE. */
+    BOOLEAN MsixAllOnVector0;
+    USHORT MsixConfigVector;
+    USHORT MsixQueueVectors[VIRTIOSND_QUEUE_COUNT];
 
     VIRTIOSND_DMA_CONTEXT DmaCtx;
 

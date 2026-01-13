@@ -865,14 +865,6 @@ static NTSTATUS VirtIoSndSetupQueues(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx)
             return status;
         }
 
-        /*
-         * Disable MSI-X for this queue; INTx/ISR is required by contract v1.
-         *
-         * Use a best-effort call here: if the device/transport rejects MSI-X
-         * programming (read-back mismatch) we still proceed with INTx.
-         */
-        (void)VirtioPciModernTransportSetQueueMsixVector(&Dx->Transport, (USHORT)q, VIRTIO_PCI_MSI_NO_VECTOR);
-
         status = VirtioPciModernTransportSetupQueue(&Dx->Transport, (USHORT)q, descPa, availPa, usedPa);
         if (!NT_SUCCESS(status)) {
             return status;
@@ -936,7 +928,15 @@ VOID VirtIoSndStopHardware(PVIRTIOSND_DEVICE_EXTENSION Dx)
 
     cancelStatus = Dx->Removed ? STATUS_DEVICE_REMOVED : STATUS_CANCELLED;
 
-    VirtIoSndIntxDisconnect(Dx);
+    /*
+     * If MSI/MSI-X is active, clear device vector routing before reset so the
+     * device stops targeting message vectors while teardown is in progress.
+     */
+    if (!Dx->Removed) {
+        VirtIoSndInterruptDisableDeviceVectors(Dx);
+    }
+
+    VirtIoSndInterruptDisconnect(Dx);
 
     /*
      * On SURPRISE_REMOVAL the device may already be gone from the PCI bus. Avoid
@@ -1016,10 +1016,17 @@ VOID VirtIoSndHwResetDeviceForTeardown(PVIRTIOSND_DEVICE_EXTENSION Dx)
     }
 
     /*
-     * Disconnect INTx and wait for any in-flight DPC to complete. This prevents
-     * further completion delivery while higher layers free their DMA buffers.
+     * If MSI/MSI-X is active, clear device vector routing before reset so the
+     * device stops targeting message vectors while teardown is in progress.
+     *
+     * Then disconnect interrupts and wait for any in-flight DPC to complete.
+     * This prevents further completion delivery while higher layers free their
+     * DMA buffers.
      */
-    VirtIoSndIntxDisconnect(Dx);
+    if (!Dx->Removed) {
+        VirtIoSndInterruptDisableDeviceVectors(Dx);
+    }
+    VirtIoSndInterruptDisconnect(Dx);
 
     /*
      * On SURPRISE_REMOVAL the device may already be gone from the PCI bus. Avoid
@@ -1155,14 +1162,6 @@ NTSTATUS VirtIoSndStartHardware(
             Dx->NegotiatedFeatures &= allowedFeatures;
         }
     }
-
-    /*
-     * Disable MSI-X config interrupt vector; INTx/ISR is required by contract v1.
-     *
-     * Best-effort: any failure here should not prevent INTx bring-up.
-     */
-    (void)VirtioPciModernTransportSetConfigMsixVector(&Dx->Transport, VIRTIO_PCI_MSI_NO_VECTOR);
-
     VIRTIOSND_TRACE("features negotiated: 0x%I64x\n", Dx->NegotiatedFeatures);
 
     status = VirtIoSndValidateDeviceCfg(Dx);
@@ -1177,15 +1176,111 @@ NTSTATUS VirtIoSndStartHardware(
         goto fail;
     }
 
-    status = VirtIoSndIntxCaptureResources(Dx, TranslatedResources);
+    status = VirtIoSndInterruptCaptureResources(Dx, TranslatedResources);
     if (!NT_SUCCESS(status)) {
+        VIRTIOSND_TRACE_ERROR("failed to locate interrupt resource: 0x%08X\n", (UINT)status);
         if (Dx->AllowPollingOnly && (status == STATUS_RESOURCE_TYPE_NOT_FOUND || status == STATUS_NOT_SUPPORTED)) {
-            VIRTIOSND_TRACE(
-                "AllowPollingOnly=1: INTx unavailable (%!STATUS!) - continuing in polling-only mode\n",
-                status);
+            VIRTIOSND_TRACE("AllowPollingOnly=1: interrupts unavailable (%!STATUS!) - continuing in polling-only mode\n", status);
         } else {
-            VIRTIOSND_TRACE_ERROR("failed to locate INTx resource: 0x%08X\n", (UINT)status);
             goto fail;
+        }
+    }
+
+    /*
+     * Prefer MSI/MSI-X when present in the resource list. If MSI/MSI-X connection
+     * or vector programming fails, fall back to legacy INTx when available.
+     */
+    {
+        NTSTATUS msiStatus;
+        ULONG q;
+
+        msiStatus = STATUS_RESOURCE_TYPE_NOT_FOUND;
+        if (Dx->MessageInterruptDescPresent) {
+            msiStatus = VirtIoSndInterruptConnectMessage(Dx);
+            if (!NT_SUCCESS(msiStatus)) {
+                VIRTIOSND_TRACE_ERROR("MSI/MSI-X connect failed: 0x%08X (falling back to INTx)\n", (UINT)msiStatus);
+            }
+        }
+
+        if (Dx->MessageInterruptsActive) {
+            BOOLEAN fallbackToVector0;
+            BOOLEAN vectorsOk;
+
+            vectorsOk = TRUE;
+
+            status = VirtioPciModernTransportSetConfigMsixVector(&Dx->Transport, Dx->MsixConfigVector);
+            if (!NT_SUCCESS(status)) {
+                VIRTIOSND_TRACE_ERROR(
+                    "MSI/MSI-X: failed to set config MSI-X vector=%u: 0x%08X\n",
+                    (UINT)Dx->MsixConfigVector,
+                    (UINT)status);
+                vectorsOk = FALSE;
+            }
+
+            /*
+             * Program queue MSI-X vectors.
+             *
+             * If the device rejects per-queue vectors (readback mismatch),
+             * degrade to a single-vector mapping (all queues vector 0).
+             */
+            fallbackToVector0 = FALSE;
+            if (vectorsOk) {
+                for (q = 0; q < VIRTIOSND_QUEUE_COUNT; ++q) {
+                    status = VirtioPciModernTransportSetQueueMsixVector(&Dx->Transport, (USHORT)q, Dx->MsixQueueVectors[q]);
+                    if (!NT_SUCCESS(status)) {
+                        fallbackToVector0 = TRUE;
+                        break;
+                    }
+                }
+            }
+
+            if (fallbackToVector0 && !Dx->MsixAllOnVector0) {
+                VIRTIOSND_TRACE_ERROR("MSI/MSI-X: per-queue vector assignment failed, falling back to vector 0\n");
+                Dx->MsixAllOnVector0 = TRUE;
+                for (q = 0; q < VIRTIOSND_QUEUE_COUNT; ++q) {
+                    Dx->MsixQueueVectors[q] = 0;
+                }
+
+                for (q = 0; q < VIRTIOSND_QUEUE_COUNT; ++q) {
+                    status = VirtioPciModernTransportSetQueueMsixVector(&Dx->Transport, (USHORT)q, 0);
+                    if (!NT_SUCCESS(status)) {
+                        vectorsOk = FALSE;
+                        break;
+                    }
+                }
+            }
+
+            if (!vectorsOk || (fallbackToVector0 && Dx->MsixAllOnVector0 && !NT_SUCCESS(status))) {
+                VIRTIOSND_TRACE_ERROR("MSI/MSI-X: vector programming failed, falling back to INTx\n");
+                VirtIoSndInterruptDisconnect(Dx);
+            }
+        }
+
+        if (!Dx->MessageInterruptsActive) {
+            if (!Dx->InterruptDescPresent) {
+                if (Dx->AllowPollingOnly) {
+                    VIRTIOSND_TRACE(
+                        "AllowPollingOnly=1: no usable interrupt resource (MSI/MSI-X unavailable and INTx missing) - continuing in polling-only mode\n");
+                } else {
+                    status = (msiStatus != STATUS_RESOURCE_TYPE_NOT_FOUND) ? msiStatus : STATUS_RESOURCE_TYPE_NOT_FOUND;
+                    VIRTIOSND_TRACE_ERROR("no usable interrupt resource (MSI/MSI-X unavailable and INTx missing)\n");
+                    goto fail;
+                }
+            }
+
+            /*
+             * INTx mode: disable MSI-X vectors so the device uses legacy virtio ISR
+             * semantics (read-to-ack ISR status byte).
+             *
+             * Best-effort: if the device/transport rejects MSI-X programming we still
+             * proceed with INTx.
+             */
+            if (!Dx->MessageInterruptsActive) {
+                (void)VirtioPciModernTransportSetConfigMsixVector(&Dx->Transport, VIRTIO_PCI_MSI_NO_VECTOR);
+                for (q = 0; q < VIRTIOSND_QUEUE_COUNT; ++q) {
+                    (void)VirtioPciModernTransportSetQueueMsixVector(&Dx->Transport, (USHORT)q, VIRTIO_PCI_MSI_NO_VECTOR);
+                }
+            }
         }
     }
 
@@ -1205,30 +1300,32 @@ NTSTATUS VirtIoSndStartHardware(
     RtlZeroMemory(&Dx->Rx, sizeof(Dx->Rx));
     Dx->RxEngineInitialized = 0;
 
-    if (Dx->InterruptDescPresent) {
-        status = VirtIoSndIntxConnect(Dx);
-        if (!NT_SUCCESS(status)) {
-            if (Dx->AllowPollingOnly) {
-                VIRTIOSND_TRACE(
-                    "AllowPollingOnly=1: INTx connect failed (%!STATUS!) - continuing in polling-only mode\n",
-                    status);
-                status = STATUS_SUCCESS;
-            } else {
-                VIRTIOSND_TRACE_ERROR("failed to connect INTx: 0x%08X\n", (UINT)status);
-                goto fail;
+    if (!Dx->MessageInterruptsActive) {
+        if (Dx->InterruptDescPresent) {
+            status = VirtIoSndInterruptConnectIntx(Dx);
+            if (!NT_SUCCESS(status)) {
+                if (Dx->AllowPollingOnly) {
+                    VIRTIOSND_TRACE(
+                        "AllowPollingOnly=1: INTx connect failed (%!STATUS!) - continuing in polling-only mode\n",
+                        status);
+                    status = STATUS_SUCCESS;
+                } else {
+                    VIRTIOSND_TRACE_ERROR("failed to connect INTx: 0x%08X\n", (UINT)status);
+                    goto fail;
+                }
             }
+        } else if (Dx->AllowPollingOnly) {
+            VIRTIOSND_TRACE("AllowPollingOnly=1: skipping INTx connect; relying on used-ring polling\n");
+        } else {
+            /*
+             * Should be unreachable (capture resources would have failed and the
+             * strict path would have aborted above). Treat as a hard failure anyway
+             * to keep the contract-v1 default strict.
+             */
+            VIRTIOSND_TRACE_ERROR("INTx resource missing and AllowPollingOnly=0\n");
+            status = STATUS_RESOURCE_TYPE_NOT_FOUND;
+            goto fail;
         }
-    } else if (Dx->AllowPollingOnly) {
-        VIRTIOSND_TRACE("AllowPollingOnly=1: skipping INTx connect; relying on used-ring polling\n");
-    } else {
-        /*
-         * Should be unreachable (capture resources would have failed and the
-         * strict path would have aborted above). Treat as a hard failure anyway
-         * to keep the contract-v1 default strict.
-         */
-        VIRTIOSND_TRACE_ERROR("INTx resource missing and AllowPollingOnly=0\n");
-        status = STATUS_RESOURCE_TYPE_NOT_FOUND;
-        goto fail;
     }
 
     /*
@@ -1238,7 +1335,7 @@ NTSTATUS VirtIoSndStartHardware(
      *
      * Completion delivery is handled by used-ring polling instead.
      */
-    if (Dx->AllowPollingOnly && Dx->Intx.InterruptObject == NULL) {
+    if (Dx->AllowPollingOnly && Dx->Intx.InterruptObject == NULL && !Dx->MessageInterruptsActive) {
         VirtioSndQueueDisableInterrupts(&Dx->Queues[VIRTIOSND_QUEUE_EVENT]);
         VirtioSndQueueDisableInterrupts(&Dx->Queues[VIRTIOSND_QUEUE_CONTROL]);
         VirtioSndQueueDisableInterrupts(&Dx->Queues[VIRTIOSND_QUEUE_TX]);
@@ -1422,7 +1519,7 @@ VOID VirtIoSndUninitTxEngine(PVIRTIOSND_DEVICE_EXTENSION Dx)
     InterlockedExchange(&Dx->TxEngineInitialized, 0);
 
     delay.QuadPart = -10 * 1000; /* 1ms */
-    while (InterlockedCompareExchange(&Dx->Intx.DpcInFlight, 0, 0) > 0) {
+    while (VirtIoSndInterruptGetDpcInFlight(Dx) > 0) {
         KeDelayExecutionThread(KernelMode, FALSE, &delay);
     }
 
@@ -1515,7 +1612,7 @@ VOID VirtIoSndUninitRxEngine(PVIRTIOSND_DEVICE_EXTENSION Dx)
     InterlockedExchange(&Dx->RxEngineInitialized, 0);
 
     delay.QuadPart = -10 * 1000; /* 1ms */
-    while (InterlockedCompareExchange(&Dx->Intx.DpcInFlight, 0, 0) > 0) {
+    while (VirtIoSndInterruptGetDpcInFlight(Dx) > 0) {
         KeDelayExecutionThread(KernelMode, FALSE, &delay);
     }
 
