@@ -46,8 +46,8 @@ use aero_devices::hpet;
 use aero_devices::i8042::{I8042Ports, SharedI8042Controller};
 use aero_devices::irq::{IrqLine, PlatformIrqLine};
 use aero_devices::pci::{
-    bios_post, register_pci_config_ports, PciBarDefinition, PciBarMmioHandler, PciBarMmioRouter,
-    PciBdf, PciConfigPorts, PciConfigSyncedMmioBar, PciCoreSnapshot, PciDevice,
+    bios_post, register_pci_config_ports, MsiCapability, PciBarDefinition, PciBarMmioHandler,
+    PciBarMmioRouter, PciBdf, PciConfigPorts, PciConfigSyncedMmioBar, PciCoreSnapshot, PciDevice,
     PciEcamConfig, PciEcamMmio, PciInterruptPin, PciIntxRouter, PciIntxRouterConfig,
     PciResourceAllocator, PciResourceAllocatorConfig, SharedPciConfigPorts,
 };
@@ -1057,6 +1057,7 @@ impl NvmePciConfigDevice {
                 prefetchable: false,
             },
         );
+        cfg.add_capability(Box::new(MsiCapability::new()));
         Self { cfg }
     }
 }
@@ -3644,25 +3645,21 @@ impl Machine {
                 let bdf: PciBdf = aero_devices::pci::profile::NVME_CONTROLLER.bdf;
                 let pin = PciInterruptPin::IntA;
 
-                let (command, bar0_base) = self
-                    .pci_cfg
+                let pci_state = self.pci_cfg.as_ref().and_then(|pci_cfg| {
+                    let mut pci_cfg = pci_cfg.borrow_mut();
+                    pci_cfg
+                        .bus_mut()
+                        .device_config(bdf)
+                        .map(|cfg| cfg.snapshot_state())
+                });
+                let command = pci_state
                     .as_ref()
-                    .map(|pci_cfg| {
-                        let mut pci_cfg = pci_cfg.borrow_mut();
-                        let cfg = pci_cfg.bus_mut().device_config(bdf);
-                        let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
-                        let bar0_base = cfg
-                            .and_then(|cfg| cfg.bar_range(0))
-                            .map(|range| range.base)
-                            .unwrap_or(0);
-                        (command, bar0_base)
-                    })
-                    .unwrap_or((0, 0));
+                    .map(|state| u16::from_le_bytes([state.bytes[0x04], state.bytes[0x05]]))
+                    .unwrap_or(0);
 
                 let mut nvme_dev = nvme.borrow_mut();
-                nvme_dev.config_mut().set_command(command);
-                if bar0_base != 0 {
-                    nvme_dev.config_mut().set_bar_base(0, bar0_base);
+                if let Some(ref state) = pci_state {
+                    nvme_dev.config_mut().restore_state(state);
                 }
 
                 let mut level = nvme_dev.irq_level();
@@ -4454,13 +4451,20 @@ impl Machine {
                         // Reset in-place while keeping the `Rc` identity stable for any persistent
                         // MMIO mappings.
                         nvme.borrow_mut().reset();
+                        // Ensure an MSI sink is attached so the device can deliver MSI when the
+                        // guest enables it.
+                        nvme.borrow_mut()
+                            .set_msi_target(Some(Box::new(interrupts.clone())));
                         Some(nvme.clone())
                     }
                     None => {
                         let dev =
                             NvmePciDevice::try_new_from_virtual_disk(Box::new(self.disk.clone()))
                                 .expect("machine disk should be 512-byte aligned");
-                        Some(Rc::new(RefCell::new(dev)))
+                        let nvme = Rc::new(RefCell::new(dev));
+                        nvme.borrow_mut()
+                            .set_msi_target(Some(Box::new(interrupts.clone())));
+                        Some(nvme)
                     }
                 }
             } else {
@@ -5144,27 +5148,19 @@ impl Machine {
         };
 
         let bdf = aero_devices::pci::profile::NVME_CONTROLLER.bdf;
-        let (command, bar0_base) = {
+        let pci_state = {
             let mut pci_cfg = pci_cfg.borrow_mut();
-            let cfg = pci_cfg.bus_mut().device_config(bdf);
-            let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
-            let bar0_base = cfg
-                .and_then(|cfg| cfg.bar_range(0))
-                .map(|range| range.base)
-                .unwrap_or(0);
-            (command, bar0_base)
+            pci_cfg
+                .bus_mut()
+                .device_config(bdf)
+                .map(|cfg| cfg.snapshot_state())
         };
 
-        let bus_master_enabled = (command & (1 << 2)) != 0;
-
         let mut dev = nvme.borrow_mut();
-        dev.config_mut().set_command(command);
-        if bar0_base != 0 {
-            dev.config_mut().set_bar_base(0, bar0_base);
+        if let Some(state) = pci_state {
+            dev.config_mut().restore_state(&state);
         }
-        if bus_master_enabled {
-            dev.process(&mut self.mem);
-        }
+        dev.process(&mut self.mem);
     }
 
     /// Allow the virtio-blk controller (if present) to make forward progress (DMA).

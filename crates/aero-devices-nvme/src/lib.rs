@@ -16,14 +16,16 @@
 //! - Limited SGL support for READ/WRITE (Data Block + Segment/Last Segment chaining)
 //!
 //! Interrupts:
-//! - Only legacy INTx is modelled here (via [`NvmeController::intx_level`]).
-//!   MSI/MSI-X are intentionally omitted for now.
+//! - Legacy INTx is modelled via [`NvmeController::intx_level`].
+//! - The PCI wrapper [`NvmePciDevice`] also supports a single-vector MSI capability; when the
+//!   guest enables MSI and the platform attaches an [`aero_platform::interrupts::msi::MsiTrigger`]
+//!   sink, NVMe completions trigger MSI deliveries instead of asserting INTx.
 
 use std::collections::{BTreeMap, HashMap};
 
 use aero_devices::pci::capabilities::PCI_CONFIG_SPACE_SIZE;
 use aero_devices::pci::{
-    profile, PciBarDefinition, PciConfigSpace, PciConfigSpaceState, PciDevice,
+    profile, MsiCapability, PciBarDefinition, PciConfigSpace, PciConfigSpaceState, PciDevice,
 };
 use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
 use aero_io_snapshot::io::state::{
@@ -32,6 +34,7 @@ use aero_io_snapshot::io::state::{
 use aero_io_snapshot::io::storage::state::{
     NvmeCompletionQueueState, NvmeControllerState, NvmeSubmissionQueueState,
 };
+use aero_platform::interrupts::msi::MsiTrigger;
 use aero_storage::DiskError as StorageDiskError;
 /// Adapter allowing [`aero_storage::VirtualDisk`] implementations (e.g. `RawDisk`,
 /// `AeroSparseDisk`, `BlockCachedDisk`) to be used as an NVMe [`DiskBackend`].
@@ -429,7 +432,10 @@ pub struct NvmeController {
     /// explicit [`NvmeController::process`] step performed by the platform.
     pending_sq_tail: BTreeMap<u16, u16>,
 
-    /// Legacy INTx level (asserted = true). MSI/MSI-X are not modelled.
+    /// Legacy INTx derived level (asserted = true).
+    ///
+    /// This controller model only derives the legacy level from queue state; the PCI wrapper
+    /// (`NvmePciDevice`) may translate this into edge-triggered MSI deliveries when MSI is enabled.
     pub intx_level: bool,
 }
 
@@ -2163,6 +2169,7 @@ fn dma_segments(
 pub struct NvmePciDevice {
     config: PciConfigSpace,
     pub controller: NvmeController,
+    msi_target: Option<Box<dyn MsiTrigger>>,
 }
 
 impl NvmePciDevice {
@@ -2176,7 +2183,12 @@ impl NvmePciDevice {
                 prefetchable: false,
             },
         );
-        Self { config, controller }
+        config.add_capability(Box::new(MsiCapability::new()));
+        Self {
+            config,
+            controller,
+            msi_target: None,
+        }
     }
 
     /// Construct an NVMe PCI device from an [`aero_storage::VirtualDisk`].
@@ -2214,6 +2226,16 @@ impl NvmePciDevice {
     }
 
     pub fn irq_level(&self) -> bool {
+        // If MSI is enabled and the platform has attached an MSI sink, suppress legacy INTx.
+        if self.msi_target.is_some()
+            && self
+                .config
+                .capability::<MsiCapability>()
+                .is_some_and(|msi| msi.enabled())
+        {
+            return false;
+        }
+
         // PCI command bit 10 disables legacy INTx assertion.
         let intx_disabled = (self.config.command() & (1 << 10)) != 0;
         if intx_disabled {
@@ -2238,6 +2260,11 @@ impl NvmePciDevice {
         &mut self.controller
     }
 
+    /// Attach or detach an MSI sink used to deliver interrupts when the guest enables MSI.
+    pub fn set_msi_target(&mut self, target: Option<Box<dyn MsiTrigger>>) {
+        self.msi_target = target;
+    }
+
     /// Process any DMA work that was made pending by MMIO doorbell writes.
     pub fn process(&mut self, memory: &mut dyn MemoryBus) {
         // Only allow the device to DMA when PCI Bus Mastering is enabled (PCI command bit 2).
@@ -2250,7 +2277,20 @@ impl NvmePciDevice {
         if !bus_master_enabled {
             return;
         }
+        let prev_intx = self.controller.intx_level;
         self.controller.process(memory);
+
+        // NVMe interrupt requests are edge-triggered when delivered via MSI. Use the legacy INTx
+        // derived level (`NvmeController::intx_level`) as an internal "interrupt requested" signal
+        // and trigger MSI on a rising edge (empty -> non-empty completion queue).
+        if !prev_intx && self.controller.intx_level {
+            if let (Some(target), Some(msi)) = (
+                self.msi_target.as_mut(),
+                self.config.capability_mut::<MsiCapability>(),
+            ) {
+                let _ = msi.trigger(target.as_mut());
+            }
+        }
     }
 }
 

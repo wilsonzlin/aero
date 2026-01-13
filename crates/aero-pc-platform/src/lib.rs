@@ -10,9 +10,10 @@ use aero_devices::i8042::{register_i8042, I8042Ports, SharedI8042Controller};
 use aero_devices::irq::{IrqLine, PlatformIrqLine};
 use aero_devices::pci::profile::{AHCI_ABAR_BAR_INDEX, AHCI_ABAR_SIZE_U32};
 use aero_devices::pci::{
-    bios_post, register_pci_config_ports, msix::PCI_CAP_ID_MSIX, MsixCapability, PciBarDefinition,
-    PciBdf, PciConfigPorts, PciDevice, PciEcamConfig, PciEcamMmio, PciInterruptPin, PciIntxRouter,
-    PciIntxRouterConfig, PciResourceAllocator, PciResourceAllocatorConfig, SharedPciConfigPorts,
+    bios_post, register_pci_config_ports, msix::PCI_CAP_ID_MSIX, MsiCapability, MsixCapability,
+    PciBarDefinition, PciBdf, PciConfigPorts, PciDevice, PciEcamConfig, PciEcamMmio,
+    PciInterruptPin, PciIntxRouter, PciIntxRouterConfig, PciResourceAllocator,
+    PciResourceAllocatorConfig, SharedPciConfigPorts,
 };
 use aero_devices::pic8259::register_pic8259_on_platform_interrupts;
 use aero_devices::pit8254::{register_pit8254, Pit8254, SharedPit8254};
@@ -290,6 +291,7 @@ impl NvmePciConfigDevice {
                 prefetchable: false,
             },
         );
+        config.add_capability(Box::new(MsiCapability::new()));
         Self { config }
     }
 }
@@ -1429,6 +1431,10 @@ impl PcPlatform {
                 NvmePciDevice::try_new_from_virtual_disk(disk)
                     .expect("NVMe disk should be 512-byte aligned"),
             ));
+            // Provide an MSI sink so the NVMe device model can deliver MSI when the guest enables
+            // it via PCI config space.
+            nvme.borrow_mut()
+                .set_msi_target(Some(Box::new(interrupts.clone())));
 
             {
                 let nvme_for_intx = nvme.clone();
@@ -1436,19 +1442,20 @@ impl PcPlatform {
                     bdf,
                     pin: PciInterruptPin::IntA,
                     query_level: Box::new(move |pc| {
-                        let command = {
+                        let pci_state = {
                             let mut pci_cfg = pc.pci_cfg.borrow_mut();
                             pci_cfg
                                 .bus_mut()
                                 .device_config(bdf)
-                                .map(|cfg| cfg.command())
-                                .unwrap_or(0)
+                                .map(|cfg| cfg.snapshot_state())
                         };
 
                         // Keep device-side gating consistent when the same device model is also used
                         // outside the platform (e.g. in unit tests).
                         let mut nvme = nvme_for_intx.borrow_mut();
-                        nvme.config_mut().set_command(command);
+                        if let Some(state) = pci_state {
+                            nvme.config_mut().restore_state(&state);
+                        }
 
                         nvme.irq_level()
                     }),
@@ -2325,31 +2332,19 @@ impl PcPlatform {
         };
 
         let bdf = aero_devices::pci::profile::NVME_CONTROLLER.bdf;
-        let command = {
+        let pci_state = {
             let mut pci_cfg = self.pci_cfg.borrow_mut();
             pci_cfg
                 .bus_mut()
                 .device_config(bdf)
-                .map(|cfg| cfg.command())
-                .unwrap_or(0)
-        };
-
-        // Keep the device's internal view of the PCI command register in sync so it can apply
-        // COMMAND.MEM gating in its MMIO handler (and COMMAND.INTX_DISABLE gating for IRQ level) when
-        // used standalone.
-        {
-            let mut nvme = nvme.borrow_mut();
-            nvme.config_mut().set_command(command);
-        }
-
-        // Only allow the device to DMA when Bus Mastering is enabled (PCI command bit 2).
-        let bus_master_enabled = (command & (1 << 2)) != 0;
-        if !bus_master_enabled {
-            return;
+                .map(|cfg| cfg.snapshot_state())
         };
 
         let mut nvme = nvme.borrow_mut();
-        nvme.controller_mut().process(&mut self.memory);
+        if let Some(state) = pci_state {
+            nvme.config_mut().restore_state(&state);
+        }
+        nvme.process(&mut self.memory);
     }
 
     pub fn process_ahci(&mut self) {

@@ -1,3 +1,4 @@
+use aero_devices::pci::msi::PCI_CAP_ID_MSI;
 use aero_devices::pci::{
     profile::NVME_CONTROLLER, PciDevice as _, PciInterruptPin, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT,
 };
@@ -25,7 +26,25 @@ fn read_cfg_u32(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: 
         4,
         cfg_addr(bus, device, function, offset),
     );
-    pc.io.read(PCI_CFG_DATA_PORT, 4)
+    pc.io.read(PCI_CFG_DATA_PORT + u16::from(offset & 3), 4)
+}
+
+fn read_cfg_u16(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8) -> u16 {
+    pc.io.write(
+        PCI_CFG_ADDR_PORT,
+        4,
+        cfg_addr(bus, device, function, offset),
+    );
+    pc.io.read(PCI_CFG_DATA_PORT + u16::from(offset & 3), 2) as u16
+}
+
+fn read_cfg_u8(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8) -> u8 {
+    pc.io.write(
+        PCI_CFG_ADDR_PORT,
+        4,
+        cfg_addr(bus, device, function, offset),
+    );
+    pc.io.read(PCI_CFG_DATA_PORT + u16::from(offset & 3), 1) as u8
 }
 
 fn write_cfg_u16(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8, value: u16) {
@@ -34,7 +53,11 @@ fn write_cfg_u16(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset:
         4,
         cfg_addr(bus, device, function, offset),
     );
-    pc.io.write(PCI_CFG_DATA_PORT, 2, u32::from(value));
+    pc.io.write(
+        PCI_CFG_DATA_PORT + u16::from(offset & 3),
+        2,
+        u32::from(value),
+    );
 }
 
 fn write_cfg_u32(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8, value: u32) {
@@ -43,7 +66,32 @@ fn write_cfg_u32(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset:
         4,
         cfg_addr(bus, device, function, offset),
     );
-    pc.io.write(PCI_CFG_DATA_PORT, 4, value);
+    pc.io
+        .write(PCI_CFG_DATA_PORT + u16::from(offset & 3), 4, value);
+}
+
+fn find_capability(
+    pc: &mut PcPlatform,
+    bus: u8,
+    device: u8,
+    function: u8,
+    cap_id: u8,
+) -> Option<u8> {
+    let mut off = read_cfg_u8(pc, bus, device, function, 0x34);
+    let mut seen = [false; 256];
+    while off != 0 {
+        let idx = off as usize;
+        if idx >= seen.len() || seen[idx] {
+            break;
+        }
+        seen[idx] = true;
+        let id = read_cfg_u8(pc, bus, device, function, off);
+        if id == cap_id {
+            return Some(off);
+        }
+        off = read_cfg_u8(pc, bus, device, function, off.wrapping_add(1));
+    }
+    None
 }
 
 fn read_nvme_bar0_base(pc: &mut PcPlatform) -> u64 {
@@ -380,6 +428,107 @@ fn pc_platform_nvme_admin_identify_produces_completion_and_intx() {
         .vector_to_irq(pending)
         .expect("pending vector should decode to an IRQ number");
     assert_eq!(irq, expected_irq);
+}
+
+#[test]
+fn pc_platform_nvme_admin_identify_produces_msi_when_enabled() {
+    let mut pc = PcPlatform::new_with_config(
+        2 * 1024 * 1024,
+        PcPlatformConfig {
+            enable_nvme: true,
+            enable_ahci: false,
+            enable_uhci: false,
+            ..Default::default()
+        },
+    );
+    let bdf = NVME_CONTROLLER.bdf;
+
+    // Switch the platform into APIC mode so `PlatformInterrupts::get_pending` observes LAPIC state,
+    // and MSI destinations can resolve to the LAPIC.
+    pc.io.write_u8(IMCR_SELECT_PORT, IMCR_INDEX);
+    pc.io.write_u8(IMCR_DATA_PORT, 0x01);
+    assert_eq!(pc.interrupts.borrow().mode(), PlatformInterruptMode::Apic);
+
+    // Enable Memory Space + Bus Mastering so the platform allows DMA processing.
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0006);
+
+    // Program MSI capability for a single vector.
+    let cap = find_capability(&mut pc, bdf.bus, bdf.device, bdf.function, PCI_CAP_ID_MSI)
+        .expect("NVMe should expose MSI capability");
+    write_cfg_u32(
+        &mut pc,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        cap.wrapping_add(0x04),
+        0xfee0_0000,
+    );
+    write_cfg_u32(
+        &mut pc,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        cap.wrapping_add(0x08),
+        0,
+    );
+    let vector: u16 = 0x0066;
+    write_cfg_u16(
+        &mut pc,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        cap.wrapping_add(0x0c),
+        vector,
+    );
+    let ctrl = read_cfg_u16(
+        &mut pc,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        cap.wrapping_add(0x02),
+    );
+    write_cfg_u16(
+        &mut pc,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        cap.wrapping_add(0x02),
+        ctrl | 0x0001,
+    );
+
+    let bar0_base = read_nvme_bar0_base(&mut pc);
+    let asq = 0x10000u64;
+    let acq = 0x20000u64;
+    let id_buf = 0x30000u64;
+
+    // Configure + enable controller.
+    pc.memory.write_u32(bar0_base + 0x0024, 0x000f_000f); // AQA
+    pc.memory.write_u64(bar0_base + 0x0028, asq); // ASQ
+    pc.memory.write_u64(bar0_base + 0x0030, acq); // ACQ
+    pc.memory.write_u32(bar0_base + 0x0014, 1); // CC.EN
+
+    // Admin IDENTIFY (controller) command in SQ0 entry 0.
+    let mut cmd = [0u8; 64];
+    cmd[0] = 0x06; // IDENTIFY
+    cmd[2..4].copy_from_slice(&0x1234u16.to_le_bytes()); // CID
+    cmd[24..32].copy_from_slice(&id_buf.to_le_bytes()); // PRP1
+    cmd[40..44].copy_from_slice(&0x01u32.to_le_bytes()); // CDW10: CNS=1 (controller)
+    pc.memory.write_physical(asq, &cmd);
+
+    // Ring SQ0 tail doorbell.
+    pc.memory.write_u32(bar0_base + 0x1000, 1);
+    pc.process_nvme();
+
+    // MSI should have been delivered into the LAPIC.
+    assert_eq!(pc.interrupts.borrow().get_pending(), Some(vector as u8));
+
+    // And legacy INTx should not be asserted while MSI is enabled.
+    assert!(!pc
+        .nvme
+        .as_ref()
+        .expect("nvme should be enabled")
+        .borrow()
+        .irq_level());
 }
 
 #[test]

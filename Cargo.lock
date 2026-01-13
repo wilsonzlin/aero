@@ -187,6 +187,7 @@ dependencies = [
  "aero-devices",
  "aero-devices-storage",
  "aero-io-snapshot",
+ "aero-platform",
  "aero-storage",
  "aero-storage-adapters",
  "criterion",

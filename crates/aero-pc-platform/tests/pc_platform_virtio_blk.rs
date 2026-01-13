@@ -3,6 +3,7 @@ use aero_devices::pci::profile::{
     VIRTIO_BLK, VIRTIO_CAP_COMMON, VIRTIO_CAP_DEVICE, VIRTIO_CAP_ISR, VIRTIO_CAP_NOTIFY,
 };
 use aero_devices::pci::{
+    msix::PCI_CAP_ID_MSIX,
     PciInterruptPin, PciIntxRouter, PciIntxRouterConfig, PciResourceAllocatorConfig,
     PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT,
 };
@@ -1136,6 +1137,7 @@ fn pc_platform_virtio_blk_processes_queue_and_raises_intx() {
     while cap_ptr != 0 {
         guard += 1;
         assert!(guard <= 16, "capability list too long or cyclic");
+        let cap_id = read_cfg_u8(&mut pc, bdf.bus, bdf.device, bdf.function, cap_ptr);
         let next = read_cfg_u8(
             &mut pc,
             bdf.bus,
@@ -1143,23 +1145,26 @@ fn pc_platform_virtio_blk_processes_queue_and_raises_intx() {
             bdf.function,
             cap_ptr.wrapping_add(1),
         );
-        let cap_id = read_cfg_u8(&mut pc, bdf.bus, bdf.device, bdf.function, cap_ptr);
-        if cap_id == 0x09 {
-            let cap_len = read_cfg_u8(
-                &mut pc,
-                bdf.bus,
-                bdf.device,
-                bdf.function,
-                cap_ptr.wrapping_add(2),
-            );
-            assert!(cap_len >= 2, "invalid vendor-specific capability length");
-            let payload_len = usize::from(cap_len - 2);
-            let mut payload = vec![0u8; payload_len];
-            for (i, b) in payload.iter_mut().enumerate() {
-                let off = cap_ptr.wrapping_add(2).wrapping_add(i as u8);
-                *b = read_cfg_u8(&mut pc, bdf.bus, bdf.device, bdf.function, off);
+        match cap_id {
+            0x09 => {
+                let cap_len = read_cfg_u8(
+                    &mut pc,
+                    bdf.bus,
+                    bdf.device,
+                    bdf.function,
+                    cap_ptr.wrapping_add(2),
+                );
+                assert!(cap_len >= 2, "invalid vendor-specific capability length");
+                let payload_len = usize::from(cap_len - 2);
+                let mut payload = vec![0u8; payload_len];
+                for (i, b) in payload.iter_mut().enumerate() {
+                    let off = cap_ptr.wrapping_add(2).wrapping_add(i as u8);
+                    *b = read_cfg_u8(&mut pc, bdf.bus, bdf.device, bdf.function, off);
+                }
+                caps.push(payload);
             }
-            caps.push(payload);
+            PCI_CAP_ID_MSIX => {}
+            other => panic!("unexpected capability ID {other:#x} at {cap_ptr:#x}"),
         }
         cap_ptr = next;
     }

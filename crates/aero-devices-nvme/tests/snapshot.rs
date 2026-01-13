@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex};
 
-use aero_devices::pci::PciDevice;
+use aero_devices::pci::{msi::PCI_CAP_ID_MSI, MsiCapability, PciDevice};
 use aero_devices_nvme::{AeroStorageDiskAdapter, NvmePciDevice};
 use aero_io_snapshot::io::state::codec::Encoder;
 use aero_io_snapshot::io::state::{IoSnapshot, SnapshotVersion, SnapshotWriter};
@@ -664,4 +664,34 @@ fn snapshot_restore_preserves_pci_interrupt_disable_masking() {
         restored.irq_level(),
         "clearing PCI Interrupt Disable should re-expose the pending INTx level"
     );
+}
+
+#[test]
+fn snapshot_restore_preserves_msi_capability_programming() {
+    let mut dev = NvmePciDevice::default();
+
+    // Program MSI capability registers in config space.
+    let cap = dev
+        .config_mut()
+        .find_capability(PCI_CAP_ID_MSI)
+        .expect("NVMe device should expose MSI capability") as u16;
+    dev.config_mut().write(cap + 0x04, 4, 0xfee0_0000);
+    dev.config_mut().write(cap + 0x08, 4, 0);
+    dev.config_mut().write(cap + 0x0c, 2, 0x0045);
+    let ctrl = dev.config_mut().read(cap + 0x02, 2) as u16;
+    dev.config_mut()
+        .write(cap + 0x02, 2, u32::from(ctrl | 0x0001));
+
+    let snap = dev.save_state();
+
+    let mut restored = NvmePciDevice::default();
+    restored.load_state(&snap).unwrap();
+
+    let msi = restored
+        .config()
+        .capability::<MsiCapability>()
+        .expect("restored device should have MSI capability");
+    assert!(msi.enabled());
+    assert_eq!(msi.message_address(), 0xfee0_0000);
+    assert_eq!(msi.message_data(), 0x0045);
 }
