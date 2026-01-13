@@ -9,11 +9,15 @@
 //!
 //! The controller implementation itself is intentionally minimal for now and may not be wired up to
 //! any MMIO model yet.
+//!
+//! In addition, `transfer` provides a small, deterministic transfer-ring executor that can process
+//! Normal TRBs for non-control endpoints (sufficient for HID interrupt IN/OUT).
 
 pub mod context;
 pub mod regs;
 pub mod ring;
 pub mod trb;
+pub mod transfer;
 
 use aero_io_snapshot::io::state::{
     IoSnapshot, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
