@@ -174,41 +174,46 @@ impl AerogpuShaderStage {
         }
     }
 }
-
-/// Extended shader stage selector encoded via the `reserved0` field in some packets when
-/// `shader_stage == AerogpuShaderStage::Compute`.
+/// Extended shader stage encoding (`stage_ex`).
 ///
-/// Encoding invariant (mirrors `drivers/aerogpu/protocol/aerogpu_cmd.h`):
-/// - If `shader_stage != Compute`, then `reserved0` MUST be 0 and is ignored.
-/// - If `shader_stage == Compute`:
-///   - `reserved0 == 0` means the real Compute stage (legacy behavior).
-///   - `reserved0 != 0` means an extended stage is present and `reserved0` encodes a non-zero
-///     [`AerogpuShaderStageEx`].
+/// Some packets contain a `shader_stage` (or `stage`) field whose base enum supports VS/PS/CS (+ GS).
+/// To represent additional D3D10+ stages (HS/DS) without changing packet layouts, when
+/// `shader_stage == AerogpuShaderStage::Compute` the packet's `reserved0` field is repurposed as a
+/// `stage_ex` override. If `shader_stage != Compute`, `reserved0` MUST be 0 and is ignored.
 ///
-/// Note: values intentionally do **not** match [`AerogpuShaderStage`] (legacy stage enum).
+/// Canonical rules:
+/// - `reserved0 == 0` means "no stage_ex override" and MUST be interpreted as the legacy Compute
+///   stage (older guests always wrote 0 into reserved fields).
+/// - Non-zero `reserved0` values are interpreted as [`AerogpuShaderStageEx`].
 ///
 /// Note: Geometry is also representable directly as [`AerogpuShaderStage::Geometry`] in the legacy
 /// stage enum; `stage_ex` is primarily needed for HS/DS (and as a compatibility encoding for GS).
 ///
-/// Numeric values intentionally match DXBC program type values for non-zero types:
-///   1=vs, 2=gs, 3=hs, 4=ds, 5=cs.
+/// Numeric values intentionally match the D3D DXBC "program type" numbers used in the shader
+/// version token: Pixel=0, Vertex=1, Geometry=2, Hull=3, Domain=4, Compute=5.
 ///
-/// Pixel shaders are intentionally not representable here because `0` is reserved for legacy
-/// compute packets.
+/// Because `reserved0 == 0` is reserved for "no override", `stage_ex` cannot encode Pixel (0).
+/// This is not a limitation in practice because Pixel/Vertex shaders are already expressible via
+/// [`AerogpuShaderStage`].
+///
+/// [`AerogpuShaderStageEx::Compute`] (5) is accepted by [`resolve_stage`] and treated the same as
+/// "no override" (Compute). Writers should emit 0 for Compute to preserve legacy packet semantics.
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AerogpuShaderStageEx {
-    Vertex = 1,
+    /// 0 = no stage_ex override (legacy Compute).
+    None = 0,
     Geometry = 2,
     Hull = 3,
     Domain = 4,
+    /// Optional alias for Compute (see docs above).
     Compute = 5,
 }
 
 impl AerogpuShaderStageEx {
     pub const fn from_u32(v: u32) -> Option<Self> {
         match v {
-            1 => Some(Self::Vertex),
+            0 => Some(Self::None),
             2 => Some(Self::Geometry),
             3 => Some(Self::Hull),
             4 => Some(Self::Domain),
@@ -216,41 +221,104 @@ impl AerogpuShaderStageEx {
             _ => None,
         }
     }
-
-    /// Convert from a DXBC program type value (`D3D10_SB_PROGRAM_TYPE` / `D3D11_SB_PROGRAM_TYPE`).
-    ///
-    /// Note: this only accepts non-zero program types because `0` is reserved for legacy compute
-    /// packets in the `stage_ex` encoding.
-    pub const fn from_dxbc_program_type(v: u32) -> Option<Self> {
-        Self::from_u32(v)
-    }
-
-    pub const fn to_dxbc_program_type(self) -> u32 {
-        self as u32
-    }
 }
 
-/// Decode an extended shader stage encoded in a packet's `reserved0` field.
+/// Decode the extended shader stage ("stage_ex") from a `(shader_stage, reserved0)` pair.
 ///
-/// Returns `None` for the legacy case (`reserved0 == 0`) and for packets that are not using the
-/// compute-stage extension mechanism.
+/// The "stage_ex" ABI extension overloads the `reserved0` field of certain commands that already
+/// include a legacy `shader_stage`/`stage` field (e.g. `SET_TEXTURE`, `SET_SAMPLERS`,
+/// `SET_CONSTANT_BUFFERS`, `SET_SHADER_CONSTANTS_F`).
+///
+/// The overload is only active when `shader_stage == AEROGPU_SHADER_STAGE_COMPUTE`.
 pub fn decode_stage_ex(shader_stage: u32, reserved0: u32) -> Option<AerogpuShaderStageEx> {
-    // The `stage_ex` overload is only active when `shader_stage == COMPUTE` *and* the reserved
-    // field is non-zero. `reserved0 == 0` must remain the legacy/default encoding (old guests
-    // always wrote 0 into reserved fields), so it cannot be interpreted as DXBC program-type 0
-    // (Pixel).
-    if shader_stage != AerogpuShaderStage::Compute as u32 || reserved0 == 0 {
-        return None;
+    if shader_stage == AerogpuShaderStage::Compute as u32 {
+        AerogpuShaderStageEx::from_u32(reserved0)
+    } else {
+        None
     }
-    AerogpuShaderStageEx::from_u32(reserved0)
 }
 
 /// Encode the extended shader stage ("stage_ex") into `(shader_stage, reserved0)`.
 ///
-/// The returned `shader_stage` is always `AEROGPU_SHADER_STAGE_COMPUTE` and `reserved0` is always
-/// non-zero.
+/// The returned `shader_stage` is always `AEROGPU_SHADER_STAGE_COMPUTE`.
+///
+/// Note: Compute is canonicalized to legacy encoding (`reserved0 == 0`) to preserve backwards
+/// compatibility with older guests.
 pub fn encode_stage_ex(stage_ex: AerogpuShaderStageEx) -> (u32, u32) {
-    (AerogpuShaderStage::Compute as u32, stage_ex as u32)
+    let reserved0 = match stage_ex {
+        AerogpuShaderStageEx::None => 0,
+        // Canonicalize Compute to legacy encoding (`reserved0==0`).
+        AerogpuShaderStageEx::Compute => 0,
+        _ => stage_ex as u32,
+    };
+    (AerogpuShaderStage::Compute as u32, reserved0)
+}
+
+/// Effective shader stage after applying `stage_ex` override rules.
+///
+/// Numeric values match the D3D DXBC "program type" numbers (Pixel=0..Compute=5).
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AerogpuD3dShaderStage {
+    Pixel = 0,
+    Vertex = 1,
+    Geometry = 2,
+    Hull = 3,
+    Domain = 4,
+    Compute = 5,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AerogpuStageResolveError {
+    UnknownShaderStage { shader_stage: u32 },
+    UnknownStageEx { stage_ex: u32 },
+    InvalidStageEx { stage_ex: u32 },
+}
+
+impl fmt::Display for AerogpuStageResolveError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match *self {
+            Self::UnknownShaderStage { shader_stage } => {
+                write!(f, "unknown shader_stage value {shader_stage}")
+            }
+            Self::UnknownStageEx { stage_ex } => write!(f, "unknown stage_ex value {stage_ex}"),
+            Self::InvalidStageEx { stage_ex } => write!(
+                f,
+                "invalid stage_ex value {stage_ex} (Pixel/Vertex must be encoded via shader_stage)"
+            ),
+        }
+    }
+}
+
+/// Resolve the effective D3D shader stage, applying the `stage_ex` override rules described in
+/// [`AerogpuShaderStageEx`].
+///
+/// - `shader_stage` is the packet's base `enum aerogpu_shader_stage` value.
+/// - `reserved0` is the packet's `reserved0` field (repurposed as `stage_ex` when
+///   `shader_stage == Compute`).
+pub fn resolve_stage(
+    shader_stage: u32,
+    reserved0: u32,
+) -> Result<AerogpuD3dShaderStage, AerogpuStageResolveError> {
+    match shader_stage {
+        0 => Ok(AerogpuD3dShaderStage::Vertex),
+        1 => Ok(AerogpuD3dShaderStage::Pixel),
+        3 => Ok(AerogpuD3dShaderStage::Geometry),
+        2 => match reserved0 {
+            0 => Ok(AerogpuD3dShaderStage::Compute),
+            2 => Ok(AerogpuD3dShaderStage::Geometry),
+            3 => Ok(AerogpuD3dShaderStage::Hull),
+            4 => Ok(AerogpuD3dShaderStage::Domain),
+            // Compute program type (5) is accepted as an alias for legacy Compute.
+            5 => Ok(AerogpuD3dShaderStage::Compute),
+            // Vertex program type (1) must be encoded via shader_stage for clarity.
+            1 => Err(AerogpuStageResolveError::InvalidStageEx { stage_ex: reserved0 }),
+            other => Err(AerogpuStageResolveError::UnknownStageEx { stage_ex: other }),
+        },
+        other => Err(AerogpuStageResolveError::UnknownShaderStage {
+            shader_stage: other,
+        }),
+    }
 }
 
 /// Effective shader stage resolved from a legacy `shader_stage` (VS/PS/CS/GS) plus an optional
@@ -288,11 +356,12 @@ pub fn resolve_shader_stage_with_ex(
                 return AerogpuShaderStageResolved::Compute;
             }
             match AerogpuShaderStageEx::from_u32(reserved0) {
-                Some(AerogpuShaderStageEx::Vertex) => AerogpuShaderStageResolved::Vertex,
                 Some(AerogpuShaderStageEx::Geometry) => AerogpuShaderStageResolved::Geometry,
                 Some(AerogpuShaderStageEx::Hull) => AerogpuShaderStageResolved::Hull,
                 Some(AerogpuShaderStageEx::Domain) => AerogpuShaderStageResolved::Domain,
                 Some(AerogpuShaderStageEx::Compute) => AerogpuShaderStageResolved::Compute,
+                // `reserved0 == 0` is handled above, but keep this arm for completeness.
+                Some(AerogpuShaderStageEx::None) => AerogpuShaderStageResolved::Compute,
                 None => AerogpuShaderStageResolved::Unknown {
                     shader_stage,
                     stage_ex: reserved0,
@@ -308,20 +377,26 @@ pub fn resolve_shader_stage_with_ex(
 
 /// Encode the `reserved0` value for packets that support `stage_ex`.
 ///
-/// Writers must never emit `stage_ex == 0`; `0` is reserved for legacy compute packets.
+/// `reserved0` is only interpreted as a `stage_ex` tag when `shader_stage == Compute`.
+///
+/// Writers should emit `reserved0 = 0` for legacy/no-override Compute packets.
 pub fn encode_stage_ex_reserved0(
     shader_stage: AerogpuShaderStage,
     stage_ex: Option<AerogpuShaderStageEx>,
 ) -> u32 {
-    match (shader_stage, stage_ex) {
-        (AerogpuShaderStage::Compute, Some(ex)) => ex as u32,
-        (AerogpuShaderStage::Compute, None) => 0,
-        (_, None) => 0,
-        (other, Some(ex)) => {
-            panic!(
+    match shader_stage {
+        AerogpuShaderStage::Compute => match stage_ex {
+            None | Some(AerogpuShaderStageEx::None) => 0,
+            // Canonicalize Compute to legacy encoding.
+            Some(AerogpuShaderStageEx::Compute) => 0,
+            Some(ex) => ex as u32,
+        },
+        other => match stage_ex {
+            None | Some(AerogpuShaderStageEx::None) => 0,
+            Some(ex) => panic!(
                 "stage_ex ({ex:?}) may only be encoded when shader_stage==COMPUTE (got {other:?})"
-            );
-        }
+            ),
+        },
     }
 }
 
@@ -550,7 +625,7 @@ pub struct AerogpuCmdCreateShaderDxbc {
     /// extending the legacy `stage` enum.
     ///
     /// Encoding:
-    /// - Legacy: `stage = VERTEX/PIXEL/COMPUTE` and `stage_ex = 0`.
+    /// - Legacy: `stage = VERTEX/PIXEL/GEOMETRY/COMPUTE` and `stage_ex = 0`.
     /// - Stage-ex: set `stage = COMPUTE` and set `stage_ex` to a non-zero DXBC program type:
     ///   - GS: `stage_ex = GEOMETRY` (2) (alternative to legacy `stage = GEOMETRY` where supported)
     ///   - HS: `stage_ex = HULL`     (3)
@@ -564,6 +639,10 @@ pub struct AerogpuCmdCreateShaderDxbc {
 
 impl AerogpuCmdCreateShaderDxbc {
     pub const SIZE_BYTES: usize = 24;
+
+    pub fn resolved_stage(&self) -> Result<AerogpuD3dShaderStage, AerogpuStageResolveError> {
+        resolve_stage(self.stage, self.reserved0)
+    }
 }
 
 #[repr(C, packed)]
@@ -648,7 +727,7 @@ pub struct AerogpuCmdSetShaderConstantsF {
     pub stage: u32,
     pub start_register: u32,
     pub vec4_count: u32,
-    /// `stage_ex` ABI extension tag.
+    /// `stage_ex` when `stage == AEROGPU_SHADER_STAGE_COMPUTE`.
     ///
     /// See [`AerogpuShaderStageEx`] for encoding rules.
     pub reserved0: u32,
@@ -656,6 +735,10 @@ pub struct AerogpuCmdSetShaderConstantsF {
 
 impl AerogpuCmdSetShaderConstantsF {
     pub const SIZE_BYTES: usize = 24;
+
+    pub fn resolved_stage(&self) -> Result<AerogpuD3dShaderStage, AerogpuStageResolveError> {
+        resolve_stage(self.stage, self.reserved0)
+    }
 }
 
 pub const AEROGPU_INPUT_LAYOUT_BLOB_MAGIC: u32 = 0x5941_4C49; // "ILAY" LE
@@ -979,7 +1062,7 @@ pub struct AerogpuCmdSetTexture {
     pub shader_stage: u32,
     pub slot: u32,
     pub texture: AerogpuHandle,
-    /// `stage_ex` ABI extension tag.
+    /// `stage_ex` when `shader_stage == AEROGPU_SHADER_STAGE_COMPUTE`.
     ///
     /// See [`AerogpuShaderStageEx`] for encoding rules.
     pub reserved0: u32,
@@ -987,6 +1070,10 @@ pub struct AerogpuCmdSetTexture {
 
 impl AerogpuCmdSetTexture {
     pub const SIZE_BYTES: usize = 24;
+
+    pub fn resolved_shader_stage(&self) -> Result<AerogpuD3dShaderStage, AerogpuStageResolveError> {
+        resolve_stage(self.shader_stage, self.reserved0)
+    }
 }
 
 #[repr(C, packed)]
@@ -1050,7 +1137,7 @@ pub struct AerogpuCmdSetSamplers {
     pub shader_stage: u32,
     pub start_slot: u32,
     pub sampler_count: u32,
-    /// `stage_ex` ABI extension tag.
+    /// `stage_ex` when `shader_stage == AEROGPU_SHADER_STAGE_COMPUTE`.
     ///
     /// See [`AerogpuShaderStageEx`] for encoding rules.
     pub reserved0: u32,
@@ -1058,6 +1145,10 @@ pub struct AerogpuCmdSetSamplers {
 
 impl AerogpuCmdSetSamplers {
     pub const SIZE_BYTES: usize = 24;
+
+    pub fn resolved_shader_stage(&self) -> Result<AerogpuD3dShaderStage, AerogpuStageResolveError> {
+        resolve_stage(self.shader_stage, self.reserved0)
+    }
 }
 
 #[repr(C, packed)]
@@ -1081,7 +1172,7 @@ pub struct AerogpuCmdSetConstantBuffers {
     pub shader_stage: u32,
     pub start_slot: u32,
     pub buffer_count: u32,
-    /// `stage_ex` ABI extension tag.
+    /// `stage_ex` when `shader_stage == AEROGPU_SHADER_STAGE_COMPUTE`.
     ///
     /// See [`AerogpuShaderStageEx`] for encoding rules.
     pub reserved0: u32,
@@ -1089,6 +1180,10 @@ pub struct AerogpuCmdSetConstantBuffers {
 
 impl AerogpuCmdSetConstantBuffers {
     pub const SIZE_BYTES: usize = 24;
+
+    pub fn resolved_shader_stage(&self) -> Result<AerogpuD3dShaderStage, AerogpuStageResolveError> {
+        resolve_stage(self.shader_stage, self.reserved0)
+    }
 }
 
 #[repr(C, packed)]

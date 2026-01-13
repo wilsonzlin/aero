@@ -49,8 +49,8 @@ fn encode_shader_stage_with_ex(
     stage_ex: Option<AerogpuShaderStageEx>,
 ) -> (u32, u32) {
     match stage_ex {
+        None | Some(AerogpuShaderStageEx::None) => (shader_stage as u32, 0),
         Some(stage_ex) => encode_stage_ex(stage_ex),
-        None => (shader_stage as u32, 0),
     }
 }
 
@@ -488,18 +488,24 @@ impl AerogpuCmdWriter {
 
     /// Stage-ex aware variant of [`Self::create_shader_dxbc`].
     ///
-    /// Encodes `stage_ex` using the ABI `stage_ex` mechanism (see `drivers/aerogpu/protocol/aerogpu_cmd.h`):
-    /// - The legacy `stage` field is forced to `COMPUTE`.
-    /// - The `reserved0` field carries the non-zero `stage_ex` discriminator.
+    /// Encodes `stage_ex` using the `stage_ex` ABI rules:
+    /// - `None`/`Compute` encode legacy Compute (`stage = COMPUTE`, `reserved0 = 0`).
+    /// - `Geometry`/`Hull`/`Domain` are encoded as `stage = COMPUTE` with a non-zero `reserved0` tag
+    ///   (DXBC program type 2/3/4).
     ///
-    /// Pixel shaders are not representable via `stage_ex` (0 is reserved for legacy compute). Emit pixel
-    /// shaders via [`Self::create_shader_dxbc`] using `stage = PIXEL` and `reserved0 = 0`.
+    /// Pixel/Vertex shaders must be encoded via [`Self::create_shader_dxbc`] because `reserved0 == 0`
+    /// is reserved for "no override" and cannot represent Pixel (DXBC program type 0).
     pub fn create_shader_dxbc_ex(
         &mut self,
         shader_handle: AerogpuHandle,
         stage_ex: AerogpuShaderStageEx,
         dxbc_bytes: &[u8],
     ) {
+        assert!(
+            stage_ex != AerogpuShaderStageEx::None,
+            "CREATE_SHADER_DXBC stage_ex must be non-zero (0 is reserved for legacy/default)"
+        );
+
         // Delegate to the stageEx-optional variant with `stage = COMPUTE` to avoid duplicating the
         // variable-length packet encoding logic.
         self.create_shader_dxbc_with_stage_ex(

@@ -576,7 +576,7 @@ For all of the following packets:
 - the struct is `#pragma pack(push, 1)` packed,
 - `hdr.size_bytes` must include the header + any trailing payload arrays, and
 - `reserved0` is interpreted as `stage_ex` **only** when the legacy `shader_stage`/`stage` field
-  equals `COMPUTE` and `reserved0 != 0`.
+  equals `COMPUTE` (`reserved0 == 0` means "no stage_ex override"/legacy compute).
 
 | Packet | Packed struct header | Trailing payload |
 |---|---|---|
@@ -592,19 +592,20 @@ Implementers should copy the exact struct definitions (and sizes) from
 `drivers/aerogpu/protocol/aerogpu_cmd.h` (source of truth). The table above exists so readers can
 understand the extension pattern without having to jump to the header.
 
-**Definition (matches DXBC program type values for non-zero types):**
+**Definition (numeric values match DXBC program type values):**
 
 ```c
 // New: used when binding resources for GS/HS/DS (and optionally compute).
 //
-// Values match DXBC program-type IDs (`D3D10_SB_PROGRAM_TYPE` / `D3D11_SB_PROGRAM_TYPE`) for
-// non-zero types:
-//   1 = Vertex, 2 = Geometry, 3 = Hull, 4 = Domain, 5 = Compute.
+// Values match DXBC program-type IDs (`D3D10_SB_PROGRAM_TYPE` / `D3D11_SB_PROGRAM_TYPE`):
+//   Pixel=0, Vertex=1, Geometry=2, Hull=3, Domain=4, Compute=5.
 enum aerogpu_shader_stage_ex {
-   AEROGPU_SHADER_STAGE_EX_VERTEX   = 1,
+   // 0 = no stage_ex override (legacy Compute).
+   AEROGPU_SHADER_STAGE_EX_NONE     = 0,
    AEROGPU_SHADER_STAGE_EX_GEOMETRY = 2,
    AEROGPU_SHADER_STAGE_EX_HULL     = 3,
    AEROGPU_SHADER_STAGE_EX_DOMAIN   = 4,
+   // Optional alias for Compute. Writers should emit 0 for Compute to preserve legacy semantics.
    AEROGPU_SHADER_STAGE_EX_COMPUTE  = 5,
 };
 
@@ -641,9 +642,10 @@ struct aerogpu_cmd_set_texture {
   - GS resources: `shader_stage = COMPUTE`, `stage_ex = GEOMETRY` (2)
   - HS resources: `shader_stage = COMPUTE`, `stage_ex = HULL`     (3)
   - DS resources: `shader_stage = COMPUTE`, `stage_ex = DOMAIN`   (4)
-  - `stage_ex = COMPUTE` (5) is allowed but redundant; producers should prefer the legacy encoding
-    (`stage_ex = 0`) for compute bindings.
-  - `stage_ex = VERTEX` (1) is currently unused/reserved in binding commands.
+  - `stage_ex = 1` (Vertex DXBC program type) is invalid and must not be used; VS must be encoded
+    via the legacy `shader_stage` field.
+  - `stage_ex = 5` (Compute DXBC program type) may be accepted by decoders as an alias for legacy
+    Compute, but writers should emit `stage_ex = 0`.
 
 **GS note:** because `enum aerogpu_shader_stage` includes `GEOMETRY = 3`, GS resource bindings may be
 encoded either as:

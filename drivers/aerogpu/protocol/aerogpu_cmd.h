@@ -164,38 +164,41 @@ enum aerogpu_shader_stage {
 };
 
 /*
- * Extended shader stage selector.
+ * Extended shader stage encoding (`stage_ex`).
  *
- * The baseline AeroGPU shader stage ABI largely mirrors WebGPU (VS/PS/CS) and also includes the
- * D3D10+ geometry shader stage (GS).
- * To support APIs that have additional programmable stages (e.g. D3D11 GS/HS/DS),
- * some packets reuse their `reserved0` field as an "extended stage" selector when
- * `shader_stage == AEROGPU_SHADER_STAGE_COMPUTE`.
+ * Some packets contain a `shader_stage` (or `stage`) field whose base enum supports VS/PS/CS (+ GS).
+ * To represent additional D3D10+ stages (HS/DS) without changing packet layouts, when
+ * `shader_stage == AEROGPU_SHADER_STAGE_COMPUTE` the packet's `reserved0` field is repurposed as a
+ * `stage_ex` override. If `shader_stage != COMPUTE`, `reserved0` MUST be 0 and is ignored.
+ *
+ * Canonical rules:
+ * - `reserved0 == 0` means "no stage_ex override" and MUST be interpreted as the legacy Compute stage
+ *   (older guests always wrote 0 into reserved fields).
+ * - Non-zero `reserved0` values are interpreted as `enum aerogpu_shader_stage_ex`.
  *
  * Note: GS is representable either via the legacy stage enum (`shader_stage = AEROGPU_SHADER_STAGE_GEOMETRY`,
  * `reserved0 = 0`) or via `stage_ex` (`shader_stage = COMPUTE`, `reserved0 = GEOMETRY`). The `stage_ex`
  * mechanism is primarily required for non-legacy stages like HS/DS.
  *
- * Note: values intentionally do **not** match `enum aerogpu_shader_stage` (legacy stage enum).
+ * Numeric values intentionally match the D3D DXBC "program type" numbers used in
+ * the shader version token:
+ *   Pixel=0, Vertex=1, Geometry=2, Hull=3, Domain=4, Compute=5.
  *
- * Encoding invariant (must be enforced by writers and hosts):
- * - If `shader_stage != AEROGPU_SHADER_STAGE_COMPUTE`, then `reserved0` MUST be 0 and is ignored.
- * - If `shader_stage == AEROGPU_SHADER_STAGE_COMPUTE`:
- *   - `reserved0 == 0` means the real Compute stage (legacy behavior).
- *   - `reserved0 != 0` means an extended stage is present and `reserved0` encodes a non-zero
- *     `enum aerogpu_shader_stage_ex`.
+ * Because `reserved0 == 0` is reserved for "no override", `stage_ex` cannot
+ * encode Pixel (0). This is not a limitation in practice because Pixel/Vertex
+ * shaders are already expressible via `enum aerogpu_shader_stage`.
  *
- * Numeric values intentionally match DXBC program type values for non-zero types:
- *   1=vs, 2=gs, 3=hs, 4=ds, 5=cs.
- *
- * Note: Pixel shaders use `AEROGPU_SHADER_STAGE_PIXEL` and are intentionally not representable
- * here because 0 is reserved for legacy compute.
+ * `AEROGPU_SHADER_STAGE_EX_COMPUTE` (5) is accepted by decoders and treated the
+ * same as "no override" (Compute). Writers should emit 0 for Compute to preserve
+ * legacy packet semantics.
  */
-enum aerogpu_shader_stage_ex {
-  AEROGPU_SHADER_STAGE_EX_VERTEX = 1,
+ enum aerogpu_shader_stage_ex {
+  /* 0 = no stage_ex override (legacy Compute). */
+  AEROGPU_SHADER_STAGE_EX_NONE = 0,
   AEROGPU_SHADER_STAGE_EX_GEOMETRY = 2,
   AEROGPU_SHADER_STAGE_EX_HULL = 3,
   AEROGPU_SHADER_STAGE_EX_DOMAIN = 4,
+  /* Optional alias for Compute (see above). */
   AEROGPU_SHADER_STAGE_EX_COMPUTE = 5,
 };
 
@@ -527,7 +530,7 @@ struct aerogpu_cmd_create_shader_dxbc {
    * without extending the legacy `stage` enum.
    *
    * Encoding:
-   * - Legacy: `stage = VERTEX/PIXEL/COMPUTE` and `stage_ex = 0`.
+   * - Legacy: `stage = VERTEX/PIXEL/GEOMETRY/COMPUTE` and `stage_ex = 0`.
    * - Stage-ex: set `stage = COMPUTE` and set `stage_ex` to a non-zero DXBC program type:
    *   - GS: stage_ex = GEOMETRY (2) (alternative to legacy `stage = GEOMETRY` where supported)
    *   - HS: stage_ex = HULL     (3)
@@ -636,7 +639,7 @@ struct aerogpu_cmd_set_shader_constants_f {
   uint32_t stage; /* enum aerogpu_shader_stage */
   uint32_t start_register;
   uint32_t vec4_count;
-  uint32_t reserved0; /* stage_ex: enum aerogpu_shader_stage_ex (0 = legacy/default; see aerogpu_shader_stage_ex docs) */
+  uint32_t reserved0; /* stage_ex (enum aerogpu_shader_stage_ex) when stage==AEROGPU_SHADER_STAGE_COMPUTE */
 };
 #pragma pack(pop)
 
@@ -963,7 +966,7 @@ struct aerogpu_cmd_set_texture {
   uint32_t shader_stage; /* enum aerogpu_shader_stage */
   uint32_t slot;
   aerogpu_handle_t texture; /* 0 = unbind */
-  uint32_t reserved0; /* stage_ex selector (enum aerogpu_shader_stage_ex) when shader_stage==COMPUTE; 0=legacy */
+  uint32_t reserved0; /* stage_ex (enum aerogpu_shader_stage_ex) when shader_stage==AEROGPU_SHADER_STAGE_COMPUTE; 0=no override (legacy Compute) */
 };
 #pragma pack(pop)
 
@@ -1026,7 +1029,7 @@ struct aerogpu_cmd_set_samplers {
   uint32_t shader_stage; /* enum aerogpu_shader_stage */
   uint32_t start_slot;
   uint32_t sampler_count;
-  uint32_t reserved0; /* stage_ex selector (enum aerogpu_shader_stage_ex) when shader_stage==COMPUTE; 0=legacy */
+  uint32_t reserved0; /* stage_ex (enum aerogpu_shader_stage_ex) when shader_stage==AEROGPU_SHADER_STAGE_COMPUTE; 0=no override (legacy Compute) */
 };
 #pragma pack(pop)
 
@@ -1068,7 +1071,7 @@ struct aerogpu_cmd_set_constant_buffers {
   uint32_t shader_stage; /* enum aerogpu_shader_stage */
   uint32_t start_slot;
   uint32_t buffer_count;
-  uint32_t reserved0; /* stage_ex selector (enum aerogpu_shader_stage_ex) when shader_stage==COMPUTE; 0=legacy */
+  uint32_t reserved0; /* stage_ex (enum aerogpu_shader_stage_ex) when shader_stage==AEROGPU_SHADER_STAGE_COMPUTE; 0=no override (legacy Compute) */
 };
 #pragma pack(pop)
 

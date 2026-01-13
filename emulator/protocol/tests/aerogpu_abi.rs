@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::OnceLock;
+use std::time::Duration;
 
 use aero_protocol::aerogpu::aerogpu_cmd::{
     decode_cmd_hdr_le, AerogpuBlendFactor, AerogpuBlendOp, AerogpuBlendState,
@@ -126,9 +127,25 @@ fn compile_and_run_c_abi_dump() -> AbiDump {
         .expect("failed to spawn C compiler");
     assert!(status.success(), "C compiler failed with status {status}");
 
-    let output = Command::new(&out_path)
-        .output()
-        .expect("failed to run compiled C ABI dump helper");
+    // `ETXTBSY` ("text file busy") can happen on some filesystems if the compiler/linker still has
+    // the output file open when we immediately attempt to execute it. Retry a few times with small
+    // backoff to make this test robust under parallel `cargo test` runs.
+    let output = {
+        let mut attempt = 0u32;
+        loop {
+            match Command::new(&out_path).output() {
+                Ok(output) => break output,
+                Err(err)
+                    if err.kind() == std::io::ErrorKind::ExecutableFileBusy && attempt < 10 =>
+                {
+                    attempt += 1;
+                    std::thread::sleep(Duration::from_millis(5 * attempt as u64));
+                    continue;
+                }
+                Err(err) => panic!("failed to run compiled C ABI dump helper: {err}"),
+            }
+        }
+    };
     assert!(
         output.status.success(),
         "C ABI dump helper failed: {}",
@@ -4303,8 +4320,8 @@ fn rust_layout_matches_c_headers() {
 
     check_const(
         &mut cmd_consts_seen,
-        "AEROGPU_SHADER_STAGE_EX_VERTEX",
-        AerogpuShaderStageEx::Vertex as u64,
+        "AEROGPU_SHADER_STAGE_EX_NONE",
+        AerogpuShaderStageEx::None as u64,
     );
     check_const(
         &mut cmd_consts_seen,

@@ -356,7 +356,6 @@ static bool ReadAeroGpuNonLocalMemorySizeMbFromRegistry(uint32_t* out_mb, std::s
       }
       is_aerogpu = true;
     }
-
     if (!is_aerogpu) {
       continue;
     }
