@@ -35,6 +35,16 @@ impl VbeMode {
 pub struct VbeDevice {
     pub current_mode: Option<u16>,
     pub lfb_base: u32,
+    /// Total video memory reported via VBE "Get Controller Info" (AX=4F00h), in 64KiB blocks.
+    ///
+    /// The VBE spec stores this as a 16-bit count of 64KiB blocks (`TotalMemory`), so the maximum
+    /// representable value is just under 4GiB.
+    ///
+    /// By default, Aero reports 16MiB to match the canonical `aero_gpu_vga` boot display device
+    /// model. Machine integrations that place the linear framebuffer inside a larger VRAM
+    /// aperture (e.g. AeroGPU BAR1) should override this so guests that sanity-check the VBE
+    /// memory size observe a consistent value.
+    pub total_memory_64kb_blocks: u16,
     pub bank: u16,
     pub logical_width_pixels: u16,
     pub bytes_per_scan_line: u16,
@@ -164,6 +174,8 @@ impl VbeDevice {
         Self {
             current_mode: None,
             lfb_base: Self::LFB_BASE_DEFAULT,
+            // 16MiB / 64KiB = 256 blocks.
+            total_memory_64kb_blocks: 256,
             bank: 0,
             logical_width_pixels: 0,
             bytes_per_scan_line: 0,
@@ -221,8 +233,8 @@ impl VbeDevice {
         buf[10..14].copy_from_slice(&1u32.to_le_bytes());
         buf[14..18].copy_from_slice(&mode_ptr.to_le_bytes());
 
-        // Total memory in 64KB blocks. Provide 16MB.
-        buf[18..20].copy_from_slice(&256u16.to_le_bytes());
+        // Total memory in 64KB blocks.
+        buf[18..20].copy_from_slice(&self.total_memory_64kb_blocks.to_le_bytes());
 
         // VBE 2.0+ fields.
         buf[20..22].copy_from_slice(&0x0001u16.to_le_bytes()); // OEM software rev
@@ -363,9 +375,10 @@ impl VbeDevice {
     }
 
     pub fn max_scan_lines(&self) -> u16 {
-        // Report a conservative maximum based on 16MB of video memory.
+        // Report a conservative maximum based on the advertised VBE total memory.
         let bytes_per_line = self.bytes_per_scan_line.max(1) as u32;
-        let max_lines = (16u32 * 1024 * 1024) / bytes_per_line;
+        let total_bytes = u32::from(self.total_memory_64kb_blocks) * 64 * 1024;
+        let max_lines = total_bytes / bytes_per_line;
         max_lines.min(u16::MAX as u32) as u16
     }
 }

@@ -5241,6 +5241,17 @@ impl Machine {
             vbe_lfb_base: use_legacy_vga.then_some(aero_gpu_vga::SVGA_LFB_BASE),
             ..Default::default()
         });
+        // Patch the BIOS's VBE controller `TotalMemory` reporting when the active framebuffer is
+        // backed by a device-owned VRAM aperture (e.g. AeroGPU BAR1) rather than the firmware test
+        // default in guest RAM.
+        if self.cfg.enable_aerogpu {
+            let blocks = aero_devices::pci::profile::AEROGPU_VRAM_SIZE.div_ceil(64 * 1024);
+            self.bios.video.vbe.total_memory_64kb_blocks = blocks.min(u64::from(u16::MAX)) as u16;
+        } else if use_legacy_vga {
+            let vram_bytes = aero_gpu_vga::DEFAULT_VRAM_SIZE as u64;
+            let blocks = vram_bytes.div_ceil(64 * 1024);
+            self.bios.video.vbe.total_memory_64kb_blocks = blocks.min(u64::from(u16::MAX)) as u16;
+        }
         let bus: &mut dyn BiosBus = &mut self.mem;
         if let Some(pci_cfg) = &self.pci_cfg {
             let mut pci = SharedPciConfigPortsBiosAdapter::new(pci_cfg.clone());
@@ -6563,6 +6574,17 @@ impl snapshot::SnapshotTarget for Machine {
                     self.bios.restore_snapshot(snapshot, &mut self.mem);
                 }
             }
+        }
+        // Keep the BIOS VBE `TotalMemory` field coherent with whichever VRAM aperture the machine
+        // configuration intends to expose, even if the snapshot did not include a BIOS section (or
+        // it failed to decode).
+        if self.cfg.enable_aerogpu {
+            let blocks = aero_devices::pci::profile::AEROGPU_VRAM_SIZE.div_ceil(64 * 1024);
+            self.bios.video.vbe.total_memory_64kb_blocks = blocks.min(u64::from(u16::MAX)) as u16;
+        } else if use_legacy_vga {
+            let vram_bytes = aero_gpu_vga::DEFAULT_VRAM_SIZE as u64;
+            let blocks = vram_bytes.div_ceil(64 * 1024);
+            self.bios.video.vbe.total_memory_64kb_blocks = blocks.min(u64::from(u16::MAX)) as u16;
         }
 
         // Memory/chipset glue.
