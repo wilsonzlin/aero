@@ -1,0 +1,1056 @@
+//! Minimal software implementation of the SM2/3 (D3D9) programmable pipeline.
+//!
+//! This is a reference interpreter for the structured `sm3::ir::ShaderIr` used by the
+//! new shader pipeline. It is intended for deterministic, headless regression tests
+//! (pixel hash comparisons) on CI where a GPU/WebGPU adapter may be missing.
+
+use std::collections::HashMap;
+
+use crate::software::{RenderTarget, Texture2D, Vec4};
+use crate::state::{
+    BlendFactor, BlendOp, BlendState, SamplerState, VertexDecl, VertexElementType,
+};
+
+use crate::sm3::decode::{ResultShift, SrcModifier, Swizzle, SwizzleComponent, WriteMask};
+use crate::sm3::ir::{
+    Block, CompareOp, Cond, Dst, InstModifiers, IrOp, PredicateRef, RegFile, RegRef, Src, Stmt,
+    TexSampleKind,
+};
+
+const MAX_LOOP_ITERS: usize = 1_024;
+const MAX_CONTROL_FLOW_DEPTH: usize = 64;
+const CONST_INT_REGS: usize = 16;
+const CONST_BOOL_REGS: usize = 16;
+
+#[derive(Debug, Clone)]
+struct ConstBank {
+    f32: [Vec4; 256],
+    i32: [Vec4; CONST_INT_REGS],
+    bool: [Vec4; CONST_BOOL_REGS],
+}
+
+fn swizzle(v: Vec4, swz: Swizzle) -> Vec4 {
+    let a = [v.x, v.y, v.z, v.w];
+    let idx = |c: SwizzleComponent| match c {
+        SwizzleComponent::X => a[0],
+        SwizzleComponent::Y => a[1],
+        SwizzleComponent::Z => a[2],
+        SwizzleComponent::W => a[3],
+    };
+    Vec4::new(idx(swz.0[0]), idx(swz.0[1]), idx(swz.0[2]), idx(swz.0[3]))
+}
+
+fn apply_src_modifier(v: Vec4, modifier: SrcModifier) -> Vec4 {
+    match modifier {
+        SrcModifier::None => v,
+        SrcModifier::Negate => -v,
+        SrcModifier::Bias => v - Vec4::splat(0.5),
+        SrcModifier::BiasNegate => -(v - Vec4::splat(0.5)),
+        SrcModifier::Sign => v.mul_scalar(2.0) - Vec4::splat(1.0),
+        SrcModifier::SignNegate => -(v.mul_scalar(2.0) - Vec4::splat(1.0)),
+        SrcModifier::Comp => Vec4::splat(1.0) - v,
+        SrcModifier::X2 => v.mul_scalar(2.0),
+        SrcModifier::X2Negate => -v.mul_scalar(2.0),
+        SrcModifier::Dz => {
+            let z = v.z.max(f32::EPSILON);
+            v.div_scalar(z)
+        }
+        SrcModifier::Dw => {
+            let w = v.w.max(f32::EPSILON);
+            v.div_scalar(w)
+        }
+        SrcModifier::Abs => v.abs(),
+        SrcModifier::AbsNegate => -v.abs(),
+        SrcModifier::Not => Vec4::splat(1.0) - v,
+        SrcModifier::Unknown(_) => v,
+    }
+}
+
+fn apply_result_modifier(v: Vec4, modifiers: &InstModifiers) -> Vec4 {
+    let v = match modifiers.shift {
+        ResultShift::None => v,
+        ResultShift::Mul2 => v.mul_scalar(2.0),
+        ResultShift::Mul4 => v.mul_scalar(4.0),
+        ResultShift::Mul8 => v.mul_scalar(8.0),
+        ResultShift::Div2 => v.mul_scalar(0.5),
+        ResultShift::Div4 => v.mul_scalar(0.25),
+        ResultShift::Div8 => v.mul_scalar(0.125),
+        ResultShift::Unknown(_) => v,
+    };
+    if modifiers.saturate {
+        v.clamp01()
+    } else {
+        v
+    }
+}
+
+fn apply_write_mask(dst: &mut Vec4, mask: WriteMask, value: Vec4) {
+    if mask.contains(SwizzleComponent::X) {
+        dst.x = value.x;
+    }
+    if mask.contains(SwizzleComponent::Y) {
+        dst.y = value.y;
+    }
+    if mask.contains(SwizzleComponent::Z) {
+        dst.z = value.z;
+    }
+    if mask.contains(SwizzleComponent::W) {
+        dst.w = value.w;
+    }
+}
+
+fn component(v: Vec4, c: SwizzleComponent) -> f32 {
+    match c {
+        SwizzleComponent::X => v.x,
+        SwizzleComponent::Y => v.y,
+        SwizzleComponent::Z => v.z,
+        SwizzleComponent::W => v.w,
+    }
+}
+
+fn compare(op: CompareOp, a: f32, b: f32) -> bool {
+    match op {
+        CompareOp::Gt => a > b,
+        CompareOp::Ge => a >= b,
+        CompareOp::Eq => a == b,
+        CompareOp::Ne => a != b,
+        CompareOp::Lt => a < b,
+        CompareOp::Le => a <= b,
+        CompareOp::Unknown(_) => false,
+    }
+}
+
+fn predicate_truth(pred: &PredicateRef, preds: &[Vec4]) -> bool {
+    let idx = pred.reg.index as usize;
+    let v = preds.get(idx).copied().unwrap_or(Vec4::ZERO);
+    let truth = component(v, pred.component) != 0.0;
+    if pred.negate { !truth } else { truth }
+}
+
+fn resolve_reg_index(
+    reg: &RegRef,
+    temps: &[Vec4],
+    addrs: &[Vec4],
+    loops: &[Vec4],
+    preds: &[Vec4],
+) -> Option<u32> {
+    let mut idx = reg.index as i32;
+    if let Some(rel) = &reg.relative {
+        // Relative addressing is defined in D3D9 in terms of integer offsets.
+        // The hardware behaviour is somewhat subtle; we use truncation towards
+        // zero (`as i32`) as a deterministic and reasonable approximation.
+        let rel_val = read_reg_raw(&rel.reg, temps, addrs, loops, preds).unwrap_or(Vec4::ZERO);
+        let offset = component(rel_val, rel.component) as i32;
+        idx = idx.saturating_add(offset);
+    }
+    if idx < 0 {
+        None
+    } else {
+        Some(idx as u32)
+    }
+}
+
+fn read_reg_raw(
+    reg: &RegRef,
+    temps: &[Vec4],
+    addrs: &[Vec4],
+    loops: &[Vec4],
+    preds: &[Vec4],
+) -> Option<Vec4> {
+    let idx = resolve_reg_index(reg, temps, addrs, loops, preds)?;
+    let idx_usize = idx as usize;
+    Some(match reg.file {
+        RegFile::Temp => temps.get(idx_usize).copied().unwrap_or(Vec4::ZERO),
+        RegFile::Addr => addrs.get(idx_usize).copied().unwrap_or(Vec4::ZERO),
+        RegFile::Loop => loops.get(idx_usize).copied().unwrap_or(Vec4::ZERO),
+        RegFile::Predicate => preds.get(idx_usize).copied().unwrap_or(Vec4::ZERO),
+        _ => Vec4::ZERO,
+    })
+}
+
+fn exec_src(
+    src: &Src,
+    temps: &[Vec4],
+    addrs: &[Vec4],
+    loops: &[Vec4],
+    preds: &[Vec4],
+    inputs_v: &HashMap<u16, Vec4>,
+    inputs_t: &HashMap<u16, Vec4>,
+    constants: &ConstBank,
+) -> Vec4 {
+    let idx = resolve_reg_index(&src.reg, temps, addrs, loops, preds);
+    let v = match (src.reg.file, idx) {
+        (RegFile::Temp, Some(i)) => temps.get(i as usize).copied().unwrap_or(Vec4::ZERO),
+        (RegFile::Addr, Some(i)) => addrs.get(i as usize).copied().unwrap_or(Vec4::ZERO),
+        (RegFile::Loop, Some(i)) => loops.get(i as usize).copied().unwrap_or(Vec4::ZERO),
+        (RegFile::Predicate, Some(i)) => preds.get(i as usize).copied().unwrap_or(Vec4::ZERO),
+        (RegFile::Input, Some(i)) => inputs_v.get(&(i as u16)).copied().unwrap_or(Vec4::ZERO),
+        (RegFile::Texture, Some(i)) => inputs_t.get(&(i as u16)).copied().unwrap_or(Vec4::ZERO),
+        (RegFile::Const, Some(i)) => constants.f32.get(i as usize).copied().unwrap_or(Vec4::ZERO),
+        (RegFile::ConstInt, Some(i)) => constants.i32.get(i as usize).copied().unwrap_or(Vec4::ZERO),
+        (RegFile::ConstBool, Some(i)) => constants.bool.get(i as usize).copied().unwrap_or(Vec4::ZERO),
+        _ => Vec4::ZERO,
+    };
+    let v = swizzle(v, src.swizzle);
+    apply_src_modifier(v, src.modifier)
+}
+
+fn exec_dst(
+    dst: &Dst,
+    temps: &mut [Vec4],
+    addrs: &mut [Vec4],
+    loops: &mut [Vec4],
+    preds: &mut [Vec4],
+    o_pos: &mut Vec4,
+    o_attr: &mut HashMap<u16, Vec4>,
+    o_tex: &mut HashMap<u16, Vec4>,
+    o_color: &mut Vec4,
+    value: Vec4,
+) {
+    let idx = resolve_reg_index(&dst.reg, temps, addrs, loops, preds);
+    let idx_u16 = idx.and_then(|i| u16::try_from(i).ok());
+    match dst.reg.file {
+        RegFile::Temp => {
+            if let Some(i) = idx {
+                if let Some(v) = temps.get_mut(i as usize) {
+                    apply_write_mask(v, dst.mask, value);
+                }
+            }
+        }
+        RegFile::Addr => {
+            if let Some(i) = idx {
+                if let Some(v) = addrs.get_mut(i as usize) {
+                    apply_write_mask(v, dst.mask, value);
+                }
+            }
+        }
+        RegFile::Loop => {
+            if let Some(i) = idx {
+                if let Some(v) = loops.get_mut(i as usize) {
+                    apply_write_mask(v, dst.mask, value);
+                }
+            }
+        }
+        RegFile::Predicate => {
+            if let Some(i) = idx {
+                if let Some(v) = preds.get_mut(i as usize) {
+                    apply_write_mask(v, dst.mask, value);
+                }
+            }
+        }
+        RegFile::RastOut => {
+            apply_write_mask(o_pos, dst.mask, value);
+        }
+        RegFile::AttrOut => {
+            if let Some(i) = idx_u16 {
+                let v = o_attr.entry(i).or_insert(Vec4::ZERO);
+                apply_write_mask(v, dst.mask, value);
+            }
+        }
+        RegFile::TexCoordOut => {
+            if let Some(i) = idx_u16 {
+                let v = o_tex.entry(i).or_insert(Vec4::ZERO);
+                apply_write_mask(v, dst.mask, value);
+            }
+        }
+        RegFile::ColorOut => {
+            apply_write_mask(o_color, dst.mask, value);
+        }
+        // VS 3.0 uses generic `o#` outputs. We don't have enough context to
+        // map them to varyings here, so ignore them for now.
+        RegFile::Output
+        | RegFile::DepthOut
+        | RegFile::Const
+        | RegFile::ConstInt
+        | RegFile::ConstBool
+        | RegFile::Label
+        | RegFile::MiscType
+        | RegFile::Input
+        | RegFile::Texture
+        | RegFile::Sampler => {}
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Flow {
+    Continue,
+    Break,
+    Discard,
+}
+
+fn eval_cond(
+    cond: &Cond,
+    temps: &[Vec4],
+    addrs: &[Vec4],
+    loops: &[Vec4],
+    preds: &[Vec4],
+    inputs_v: &HashMap<u16, Vec4>,
+    inputs_t: &HashMap<u16, Vec4>,
+    constants: &ConstBank,
+) -> bool {
+    match cond {
+        Cond::NonZero { src } => {
+            exec_src(src, temps, addrs, loops, preds, inputs_v, inputs_t, constants).x != 0.0
+        }
+        Cond::Compare { op, src0, src1 } => {
+            let a = exec_src(src0, temps, addrs, loops, preds, inputs_v, inputs_t, constants).x;
+            let b = exec_src(src1, temps, addrs, loops, preds, inputs_v, inputs_t, constants).x;
+            compare(*op, a, b)
+        }
+        Cond::Predicate { pred } => predicate_truth(pred, preds),
+    }
+}
+
+fn exec_block(
+    block: &Block,
+    depth: usize,
+    temps: &mut [Vec4],
+    addrs: &mut [Vec4],
+    loops: &mut [Vec4],
+    preds: &mut [Vec4],
+    inputs_v: &HashMap<u16, Vec4>,
+    inputs_t: &HashMap<u16, Vec4>,
+    constants: &ConstBank,
+    textures: &HashMap<u16, Texture2D>,
+    sampler_states: &HashMap<u16, SamplerState>,
+    o_pos: &mut Vec4,
+    o_attr: &mut HashMap<u16, Vec4>,
+    o_tex: &mut HashMap<u16, Vec4>,
+    o_color: &mut Vec4,
+) -> Flow {
+    if depth > MAX_CONTROL_FLOW_DEPTH {
+        return Flow::Continue;
+    }
+
+    for stmt in &block.stmts {
+        let flow = match stmt {
+            Stmt::Op(op) => {
+                exec_op(
+                    op,
+                    temps,
+                    addrs,
+                    loops,
+                    preds,
+                    inputs_v,
+                    inputs_t,
+                    constants,
+                    textures,
+                    sampler_states,
+                    o_pos,
+                    o_attr,
+                    o_tex,
+                    o_color,
+                );
+                Flow::Continue
+            }
+            Stmt::If {
+                cond,
+                then_block,
+                else_block,
+            } => {
+                let take_then =
+                    eval_cond(cond, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+                let flow = if take_then {
+                    exec_block(
+                        then_block,
+                        depth + 1,
+                        temps,
+                        addrs,
+                        loops,
+                        preds,
+                        inputs_v,
+                        inputs_t,
+                        constants,
+                        textures,
+                        sampler_states,
+                        o_pos,
+                        o_attr,
+                        o_tex,
+                        o_color,
+                    )
+                } else if let Some(else_block) = else_block {
+                    exec_block(
+                        else_block,
+                        depth + 1,
+                        temps,
+                        addrs,
+                        loops,
+                        preds,
+                        inputs_v,
+                        inputs_t,
+                        constants,
+                        textures,
+                        sampler_states,
+                        o_pos,
+                        o_attr,
+                        o_tex,
+                        o_color,
+                    )
+                } else {
+                    Flow::Continue
+                };
+                flow
+            }
+            Stmt::Loop { body } => {
+                let mut discarded = false;
+                for _ in 0..MAX_LOOP_ITERS {
+                    match exec_block(
+                        body,
+                        depth + 1,
+                        temps,
+                        addrs,
+                        loops,
+                        preds,
+                        inputs_v,
+                        inputs_t,
+                        constants,
+                        textures,
+                        sampler_states,
+                        o_pos,
+                        o_attr,
+                        o_tex,
+                        o_color,
+                    ) {
+                        Flow::Continue => {}
+                        Flow::Break => break,
+                        Flow::Discard => {
+                            discarded = true;
+                            break;
+                        }
+                    }
+                }
+                if discarded {
+                    Flow::Discard
+                } else {
+                    Flow::Continue
+                }
+            }
+            Stmt::Break => Flow::Break,
+            Stmt::BreakIf { cond } => {
+                if eval_cond(cond, temps, addrs, loops, preds, inputs_v, inputs_t, constants) {
+                    Flow::Break
+                } else {
+                    Flow::Continue
+                }
+            }
+            Stmt::Discard { src } => {
+                let v = exec_src(src, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+                if v.x < 0.0 || v.y < 0.0 || v.z < 0.0 || v.w < 0.0 {
+                    Flow::Discard
+                } else {
+                    Flow::Continue
+                }
+            }
+        };
+
+        match flow {
+            Flow::Continue => {}
+            other => return other,
+        }
+    }
+
+    Flow::Continue
+}
+
+fn exec_op(
+    op: &IrOp,
+    temps: &mut [Vec4],
+    addrs: &mut [Vec4],
+    loops: &mut [Vec4],
+    preds: &mut [Vec4],
+    inputs_v: &HashMap<u16, Vec4>,
+    inputs_t: &HashMap<u16, Vec4>,
+    constants: &ConstBank,
+    textures: &HashMap<u16, Texture2D>,
+    sampler_states: &HashMap<u16, SamplerState>,
+    o_pos: &mut Vec4,
+    o_attr: &mut HashMap<u16, Vec4>,
+    o_tex: &mut HashMap<u16, Vec4>,
+    o_color: &mut Vec4,
+) {
+    let (dst, modifiers) = match op {
+        IrOp::Mov { dst, modifiers, .. }
+        | IrOp::Mova { dst, modifiers, .. }
+        | IrOp::Add { dst, modifiers, .. }
+        | IrOp::Sub { dst, modifiers, .. }
+        | IrOp::Mul { dst, modifiers, .. }
+        | IrOp::Mad { dst, modifiers, .. }
+        | IrOp::Lrp { dst, modifiers, .. }
+        | IrOp::Dp3 { dst, modifiers, .. }
+        | IrOp::Dp4 { dst, modifiers, .. }
+        | IrOp::Rcp { dst, modifiers, .. }
+        | IrOp::Rsq { dst, modifiers, .. }
+        | IrOp::Frc { dst, modifiers, .. }
+        | IrOp::Exp { dst, modifiers, .. }
+        | IrOp::Log { dst, modifiers, .. }
+        | IrOp::Min { dst, modifiers, .. }
+        | IrOp::Max { dst, modifiers, .. }
+        | IrOp::SetCmp { dst, modifiers, .. }
+        | IrOp::Select { dst, modifiers, .. }
+        | IrOp::Pow { dst, modifiers, .. }
+        | IrOp::TexSample { dst, modifiers, .. } => (dst, modifiers),
+    };
+
+    if let Some(pred) = &modifiers.predicate {
+        if !predicate_truth(pred, preds) {
+            return;
+        }
+    }
+
+    let v = match op {
+        IrOp::Mov { src, .. } => exec_src(src, temps, addrs, loops, preds, inputs_v, inputs_t, constants),
+        IrOp::Mova { src, .. } => {
+            let a = exec_src(src, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            let to_i32 = |v: f32| (v as i32) as f32;
+            Vec4::new(to_i32(a.x), to_i32(a.y), to_i32(a.z), to_i32(a.w))
+        }
+        IrOp::Add { src0, src1, .. } => {
+            let a = exec_src(src0, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            let b = exec_src(src1, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            a + b
+        }
+        IrOp::Sub { src0, src1, .. } => {
+            let a = exec_src(src0, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            let b = exec_src(src1, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            a - b
+        }
+        IrOp::Mul { src0, src1, .. } => {
+            let a = exec_src(src0, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            let b = exec_src(src1, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            a * b
+        }
+        IrOp::Mad { src0, src1, src2, .. } => {
+            let a = exec_src(src0, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            let b = exec_src(src1, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            let c = exec_src(src2, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            a * b + c
+        }
+        IrOp::Lrp { src0, src1, src2, .. } => {
+            let t = exec_src(src0, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            let a = exec_src(src1, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            let b = exec_src(src2, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            // D3D9 `lrp`: dst = t*a + (1-t)*b.
+            t * a + (Vec4::splat(1.0) - t) * b
+        }
+        IrOp::Dp3 { src0, src1, .. } => {
+            let a = exec_src(src0, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            let b = exec_src(src1, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            Vec4::splat(a.dot3(b))
+        }
+        IrOp::Dp4 { src0, src1, .. } => {
+            let a = exec_src(src0, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            let b = exec_src(src1, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            Vec4::splat(a.dot4(b))
+        }
+        IrOp::Rcp { src, .. } => {
+            let a = exec_src(src, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            Vec4::new(1.0 / a.x, 1.0 / a.y, 1.0 / a.z, 1.0 / a.w)
+        }
+        IrOp::Rsq { src, .. } => {
+            let a = exec_src(src, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            let inv_sqrt = |v: f32| 1.0 / v.sqrt();
+            Vec4::new(inv_sqrt(a.x), inv_sqrt(a.y), inv_sqrt(a.z), inv_sqrt(a.w))
+        }
+        IrOp::Frc { src, .. } => {
+            let a = exec_src(src, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            let fract = |v: f32| v - v.floor();
+            Vec4::new(fract(a.x), fract(a.y), fract(a.z), fract(a.w))
+        }
+        IrOp::Exp { src, .. } => {
+            let a = exec_src(src, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            let exp2 = |v: f32| 2.0_f32.powf(v);
+            Vec4::new(exp2(a.x), exp2(a.y), exp2(a.z), exp2(a.w))
+        }
+        IrOp::Log { src, .. } => {
+            let a = exec_src(src, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            let log2 = |v: f32| v.log2();
+            Vec4::new(log2(a.x), log2(a.y), log2(a.z), log2(a.w))
+        }
+        IrOp::Min { src0, src1, .. } => {
+            let a = exec_src(src0, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            let b = exec_src(src1, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            Vec4::new(a.x.min(b.x), a.y.min(b.y), a.z.min(b.z), a.w.min(b.w))
+        }
+        IrOp::Max { src0, src1, .. } => {
+            let a = exec_src(src0, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            let b = exec_src(src1, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            Vec4::new(a.x.max(b.x), a.y.max(b.y), a.z.max(b.z), a.w.max(b.w))
+        }
+        IrOp::SetCmp { op, src0, src1, .. } => {
+            let a = exec_src(src0, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            let b = exec_src(src1, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            let cmp = |av: f32, bv: f32| compare(*op, av, bv) as u8 as f32;
+            Vec4::new(cmp(a.x, b.x), cmp(a.y, b.y), cmp(a.z, b.z), cmp(a.w, b.w))
+        }
+        IrOp::Select {
+            cond,
+            src_ge,
+            src_lt,
+            ..
+        } => {
+            let cond = exec_src(cond, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            let ge = exec_src(src_ge, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            let lt = exec_src(src_lt, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            let pick = |cond: f32, ge: f32, lt: f32| if cond >= 0.0 { ge } else { lt };
+            Vec4::new(
+                pick(cond.x, ge.x, lt.x),
+                pick(cond.y, ge.y, lt.y),
+                pick(cond.z, ge.z, lt.z),
+                pick(cond.w, ge.w, lt.w),
+            )
+        }
+        IrOp::Pow { src0, src1, .. } => {
+            let a = exec_src(src0, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            let b = exec_src(src1, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            let pow = |a: f32, b: f32| a.powf(b);
+            Vec4::new(pow(a.x, b.x), pow(a.y, b.y), pow(a.z, b.z), pow(a.w, b.w))
+        }
+        IrOp::TexSample {
+            kind,
+            coord,
+            ddx: _,
+            ddy: _,
+            sampler,
+            ..
+        } => {
+            // Reference model: use `software::Texture2D` sampling.
+            let coord_v = exec_src(coord, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            let sampler_u16 = u16::try_from(*sampler).ok();
+            let (u, v) = match kind {
+                TexSampleKind::ImplicitLod { project: true } => {
+                    let w = coord_v.w.max(f32::EPSILON);
+                    (coord_v.x / w, coord_v.y / w)
+                }
+                TexSampleKind::ImplicitLod { project: false }
+                | TexSampleKind::ExplicitLod
+                | TexSampleKind::Grad => (coord_v.x, coord_v.y),
+            };
+
+            if let Some(s) = sampler_u16 {
+                let tex = textures.get(&s);
+                let samp = sampler_states.get(&s).copied().unwrap_or_default();
+                tex.map(|t| t.sample(samp, (u, v))).unwrap_or(Vec4::ZERO)
+            } else {
+                Vec4::ZERO
+            }
+        }
+    };
+
+    let v = apply_result_modifier(v, modifiers);
+    exec_dst(
+        dst,
+        temps,
+        addrs,
+        loops,
+        preds,
+        o_pos,
+        o_attr,
+        o_tex,
+        o_color,
+        v,
+    );
+}
+
+fn blend_factor(factor: BlendFactor, src: Vec4, dst: Vec4) -> Vec4 {
+    match factor {
+        BlendFactor::Zero => Vec4::splat(0.0),
+        BlendFactor::One => Vec4::splat(1.0),
+        BlendFactor::SrcColor => src,
+        BlendFactor::OneMinusSrcColor => Vec4::splat(1.0) - src,
+        BlendFactor::SrcAlpha => Vec4::splat(src.w),
+        BlendFactor::OneMinusSrcAlpha => Vec4::splat(1.0 - src.w),
+        BlendFactor::DstColor => dst,
+        BlendFactor::OneMinusDstColor => Vec4::splat(1.0) - dst,
+        BlendFactor::DstAlpha => Vec4::splat(dst.w),
+        BlendFactor::OneMinusDstAlpha => Vec4::splat(1.0 - dst.w),
+    }
+}
+
+fn blend(state: BlendState, src: Vec4, dst: Vec4) -> Vec4 {
+    if !state.enabled {
+        return src;
+    }
+    let sf = blend_factor(state.src_factor, src, dst);
+    let df = blend_factor(state.dst_factor, src, dst);
+    let s = src * sf;
+    let d = dst * df;
+    match state.op {
+        BlendOp::Add => s + d,
+        BlendOp::Subtract => s - d,
+        BlendOp::ReverseSubtract => d - s,
+    }
+}
+
+fn read_f32(bytes: &[u8]) -> f32 {
+    f32::from_le_bytes(bytes.try_into().unwrap())
+}
+
+fn read_vertex_element(bytes: &[u8], ty: VertexElementType) -> Vec4 {
+    match ty {
+        VertexElementType::Float1 => Vec4::new(read_f32(&bytes[0..4]), 0.0, 0.0, 1.0),
+        VertexElementType::Float2 => Vec4::new(read_f32(&bytes[0..4]), read_f32(&bytes[4..8]), 0.0, 1.0),
+        VertexElementType::Float3 => Vec4::new(
+            read_f32(&bytes[0..4]),
+            read_f32(&bytes[4..8]),
+            read_f32(&bytes[8..12]),
+            1.0,
+        ),
+        VertexElementType::Float4 => Vec4::new(
+            read_f32(&bytes[0..4]),
+            read_f32(&bytes[4..8]),
+            read_f32(&bytes[8..12]),
+            read_f32(&bytes[12..16]),
+        ),
+        VertexElementType::Color => {
+            // D3DCOLOR is BGRA8.
+            let b = bytes[0] as f32 / 255.0;
+            let g = bytes[1] as f32 / 255.0;
+            let r = bytes[2] as f32 / 255.0;
+            let a = bytes[3] as f32 / 255.0;
+            Vec4::new(r, g, b, a)
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct VsOut {
+    clip_pos: Vec4,
+    attr: HashMap<u16, Vec4>,
+    tex: HashMap<u16, Vec4>,
+}
+
+fn prepare_constants(
+    constants_in: &[Vec4; 256],
+    ir: &crate::sm3::ir::ShaderIr,
+) -> ConstBank {
+    let mut f32 = *constants_in;
+    for def in &ir.const_defs_f32 {
+        if let Some(slot) = f32.get_mut(def.index as usize) {
+            *slot = Vec4::new(def.value[0], def.value[1], def.value[2], def.value[3]);
+        }
+    }
+
+    let mut i32 = [Vec4::ZERO; CONST_INT_REGS];
+    for def in &ir.const_defs_i32 {
+        if let Some(slot) = i32.get_mut(def.index as usize) {
+            *slot = Vec4::new(
+                def.value[0] as f32,
+                def.value[1] as f32,
+                def.value[2] as f32,
+                def.value[3] as f32,
+            );
+        }
+    }
+
+    let mut bool = [Vec4::ZERO; CONST_BOOL_REGS];
+    for def in &ir.const_defs_bool {
+        if let Some(slot) = bool.get_mut(def.index as usize) {
+            let v = def.value as u8 as f32;
+            *slot = Vec4::splat(v);
+        }
+    }
+
+    ConstBank { f32, i32, bool }
+}
+
+fn run_vertex_shader(
+    ir: &crate::sm3::ir::ShaderIr,
+    inputs: &HashMap<u16, Vec4>,
+    constants: &ConstBank,
+) -> VsOut {
+    let mut temps = vec![Vec4::ZERO; 32];
+    let mut addrs = vec![Vec4::ZERO; 4];
+    let mut loops = vec![Vec4::ZERO; 4];
+    let mut preds = vec![Vec4::ZERO; 16];
+
+    let mut o_pos = Vec4::ZERO;
+    let mut o_attr = HashMap::<u16, Vec4>::new();
+    let mut o_tex = HashMap::<u16, Vec4>::new();
+    let mut dummy_color = Vec4::ZERO;
+    let empty_t = HashMap::new();
+    let empty_tex = HashMap::new();
+
+    exec_block(
+        &ir.body,
+        0,
+        &mut temps,
+        &mut addrs,
+        &mut loops,
+        &mut preds,
+        inputs,
+        &empty_t,
+        constants,
+        &empty_tex,
+        &HashMap::new(),
+        &mut o_pos,
+        &mut o_attr,
+        &mut o_tex,
+        &mut dummy_color,
+    );
+
+    VsOut {
+        clip_pos: o_pos,
+        attr: o_attr,
+        tex: o_tex,
+    }
+}
+
+fn run_pixel_shader(
+    ir: &crate::sm3::ir::ShaderIr,
+    inputs_v: &HashMap<u16, Vec4>,
+    inputs_t: &HashMap<u16, Vec4>,
+    constants: &ConstBank,
+    textures: &HashMap<u16, Texture2D>,
+    sampler_states: &HashMap<u16, SamplerState>,
+) -> Option<Vec4> {
+    let mut temps = vec![Vec4::ZERO; 32];
+    let mut addrs = vec![Vec4::ZERO; 4];
+    let mut loops = vec![Vec4::ZERO; 4];
+    let mut preds = vec![Vec4::ZERO; 16];
+
+    let mut dummy_pos = Vec4::ZERO;
+    let mut dummy_attr = HashMap::<u16, Vec4>::new();
+    let mut dummy_tex = HashMap::<u16, Vec4>::new();
+    let mut o_color = Vec4::ZERO;
+
+    let flow = exec_block(
+        &ir.body,
+        0,
+        &mut temps,
+        &mut addrs,
+        &mut loops,
+        &mut preds,
+        inputs_v,
+        inputs_t,
+        constants,
+        textures,
+        sampler_states,
+        &mut dummy_pos,
+        &mut dummy_attr,
+        &mut dummy_tex,
+        &mut o_color,
+    );
+
+    match flow {
+        Flow::Discard => None,
+        Flow::Continue | Flow::Break => Some(o_color),
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ScreenVertex {
+    x: f32,
+    y: f32,
+    inv_w: f32,
+    attr: HashMap<u16, Vec4>,
+    tex: HashMap<u16, Vec4>,
+}
+
+fn edge(ax: f32, ay: f32, bx: f32, by: f32, px: f32, py: f32) -> f32 {
+    (px - ax) * (by - ay) - (py - ay) * (bx - ax)
+}
+
+pub struct DrawParams<'a> {
+    pub vs: &'a crate::sm3::ir::ShaderIr,
+    pub ps: &'a crate::sm3::ir::ShaderIr,
+    pub vertex_decl: &'a VertexDecl,
+    pub vertex_buffer: &'a [u8],
+    pub indices: Option<&'a [u16]>,
+    pub constants: &'a [Vec4; 256],
+    pub textures: &'a HashMap<u16, Texture2D>,
+    pub sampler_states: &'a HashMap<u16, SamplerState>,
+    pub blend_state: BlendState,
+}
+
+struct PixelContext<'a> {
+    ps: &'a crate::sm3::ir::ShaderIr,
+    constants: ConstBank,
+    textures: &'a HashMap<u16, Texture2D>,
+    sampler_states: &'a HashMap<u16, SamplerState>,
+    blend_state: BlendState,
+}
+
+/// Draw a triangle list using SM2/3 bytecode lowered to `sm3::ir::ShaderIr`.
+#[allow(clippy::too_many_arguments)]
+pub fn draw(target: &mut RenderTarget, params: DrawParams<'_>) {
+    let DrawParams {
+        vs,
+        ps,
+        vertex_decl,
+        vertex_buffer,
+        indices,
+        constants,
+        textures,
+        sampler_states,
+        blend_state,
+    } = params;
+
+    let vs_constants = prepare_constants(constants, vs);
+    let ps_constants = prepare_constants(constants, ps);
+
+    let fetch_vertex = |vertex_index: u32| -> HashMap<u16, Vec4> {
+        let base = vertex_index as usize * vertex_decl.stride as usize;
+        let mut inputs = HashMap::<u16, Vec4>::new();
+        for (slot, element) in vertex_decl.elements.iter().enumerate() {
+            let off = base + element.offset as usize;
+            let bytes = &vertex_buffer[off..off + element.ty.byte_size()];
+            inputs.insert(slot as u16, read_vertex_element(bytes, element.ty));
+        }
+        inputs
+    };
+
+    let mut verts = Vec::<ScreenVertex>::new();
+    let mut emit_vertex = |vertex_index: u32| {
+        let inputs = fetch_vertex(vertex_index);
+        let out = run_vertex_shader(vs, &inputs, &vs_constants);
+        let cp = out.clip_pos;
+        let inv_w = 1.0 / cp.w.max(f32::EPSILON);
+        let ndc_x = cp.x * inv_w;
+        let ndc_y = cp.y * inv_w;
+        let sx = (ndc_x * 0.5 + 0.5) * target.width as f32;
+        let sy = (-ndc_y * 0.5 + 0.5) * target.height as f32;
+        verts.push(ScreenVertex {
+            x: sx,
+            y: sy,
+            inv_w,
+            attr: out.attr,
+            tex: out.tex,
+        });
+    };
+
+    let ctx = PixelContext {
+        ps,
+        constants: ps_constants,
+        textures,
+        sampler_states,
+        blend_state,
+    };
+
+    match indices {
+        Some(idx) => {
+            let max = idx.iter().copied().max().unwrap_or(0) as u32;
+            for i in 0..=max {
+                emit_vertex(i);
+            }
+
+            for tri in idx.chunks_exact(3) {
+                let a = &verts[tri[0] as usize];
+                let b = &verts[tri[1] as usize];
+                let c = &verts[tri[2] as usize];
+                rasterize_triangle(target, &ctx, a, b, c);
+            }
+        }
+        None => {
+            let vertex_count = (vertex_buffer.len() / vertex_decl.stride as usize) as u32;
+            for i in 0..vertex_count {
+                emit_vertex(i);
+            }
+            for tri in (0..vertex_count).collect::<Vec<_>>().chunks_exact(3) {
+                let a = &verts[tri[0] as usize];
+                let b = &verts[tri[1] as usize];
+                let c = &verts[tri[2] as usize];
+                rasterize_triangle(target, &ctx, a, b, c);
+            }
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn rasterize_triangle(
+    target: &mut RenderTarget,
+    ctx: &PixelContext<'_>,
+    a: &ScreenVertex,
+    b: &ScreenVertex,
+    c: &ScreenVertex,
+) {
+    let min_x = a.x.min(b.x).min(c.x).floor().max(0.0) as i32;
+    let max_x = a
+        .x
+        .max(b.x)
+        .max(c.x)
+        .ceil()
+        .min(target.width as f32 - 1.0) as i32;
+    let min_y = a.y.min(b.y).min(c.y).floor().max(0.0) as i32;
+    let max_y = a
+        .y
+        .max(b.y)
+        .max(c.y)
+        .ceil()
+        .min(target.height as f32 - 1.0) as i32;
+
+    let area = edge(a.x, a.y, b.x, b.y, c.x, c.y);
+    if area.abs() < f32::EPSILON {
+        return;
+    }
+
+    for y in min_y..=max_y {
+        for x in min_x..=max_x {
+            let px = x as f32 + 0.5;
+            let py = y as f32 + 0.5;
+
+            let w0 = edge(b.x, b.y, c.x, c.y, px, py);
+            let w1 = edge(c.x, c.y, a.x, a.y, px, py);
+            let w2 = edge(a.x, a.y, b.x, b.y, px, py);
+
+            if (w0 >= 0.0 && w1 >= 0.0 && w2 >= 0.0) || (w0 <= 0.0 && w1 <= 0.0 && w2 <= 0.0)
+            {
+                let b0 = w0 / area;
+                let b1 = w1 / area;
+                let b2 = w2 / area;
+
+                let inv_w = a.inv_w * b0 + b.inv_w * b1 + c.inv_w * b2;
+                let inv_w = inv_w.max(f32::EPSILON);
+                let w = 1.0 / inv_w;
+
+                let interp_map = |map_a: &HashMap<u16, Vec4>,
+                                  map_b: &HashMap<u16, Vec4>,
+                                  map_c: &HashMap<u16, Vec4>| {
+                    let mut keys = map_a.keys().copied().collect::<Vec<_>>();
+                    keys.extend(map_b.keys().copied());
+                    keys.extend(map_c.keys().copied());
+                    keys.sort_unstable();
+                    keys.dedup();
+
+                    let mut out = HashMap::<u16, Vec4>::new();
+                    for k in keys {
+                        let va = map_a
+                            .get(&k)
+                            .copied()
+                            .unwrap_or(Vec4::ZERO)
+                            .mul_scalar(a.inv_w);
+                        let vb = map_b
+                            .get(&k)
+                            .copied()
+                            .unwrap_or(Vec4::ZERO)
+                            .mul_scalar(b.inv_w);
+                        let vc = map_c
+                            .get(&k)
+                            .copied()
+                            .unwrap_or(Vec4::ZERO)
+                            .mul_scalar(c.inv_w);
+                        let v = (va.mul_scalar(b0) + vb.mul_scalar(b1) + vc.mul_scalar(b2))
+                            .mul_scalar(w);
+                        out.insert(k, v);
+                    }
+                    out
+                };
+
+                let attr = interp_map(&a.attr, &b.attr, &c.attr);
+                let tex = interp_map(&a.tex, &b.tex, &c.tex);
+
+                if let Some(color) = run_pixel_shader(
+                    ctx.ps,
+                    &attr,
+                    &tex,
+                    &ctx.constants,
+                    ctx.textures,
+                    ctx.sampler_states,
+                ) {
+                    let dst = target.get(x as u32, y as u32);
+                    let out = blend(ctx.blend_state, color, dst).clamp01();
+                    target.set(x as u32, y as u32, out);
+                }
+            }
+        }
+    }
+}

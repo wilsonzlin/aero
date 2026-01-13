@@ -6,8 +6,9 @@ use aero_dxbc::{
     parse_ctab_chunk, parse_rdef_chunk, parse_signature_chunk, test_utils as dxbc_test_utils,
     FourCC as DxbcFourCC,
 };
+
 use crate::shader_limits::MAX_D3D9_SHADER_BYTECODE_BYTES;
-use crate::{dxbc, shader, software, state};
+use crate::{dxbc, shader, sm3, software, state};
 use crate::sm3::decode::TextureType;
 
 fn enc_reg_type(ty: u8) -> u32 {
@@ -325,6 +326,173 @@ fn assemble_ps3_predicated_lrp() -> Vec<u32> {
     out.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)]));
     out.push(0x0000FFFF);
     out
+}
+
+fn assemble_ps3_predicated_mov() -> Vec<u32> {
+    // ps_3_0
+    let mut out = vec![0xFFFF0300];
+    // def c0, 0.5, 0.0, 0.0, 0.0 (threshold)
+    out.extend(enc_inst(
+        0x0051,
+        &[
+            enc_dst(2, 0, 0xF),
+            0x3F00_0000,
+            0x0000_0000,
+            0x0000_0000,
+            0x0000_0000,
+        ],
+    ));
+    // def c1, 1.0, 0.0, 0.0, 1.0 (red)
+    out.extend(enc_inst(
+        0x0051,
+        &[
+            enc_dst(2, 1, 0xF),
+            0x3F80_0000,
+            0x0000_0000,
+            0x0000_0000,
+            0x3F80_0000,
+        ],
+    ));
+    // def c2, 0.0, 0.0, 1.0, 1.0 (blue)
+    out.extend(enc_inst(
+        0x0051,
+        &[
+            enc_dst(2, 2, 0xF),
+            0x0000_0000,
+            0x0000_0000,
+            0x3F80_0000,
+            0x3F80_0000,
+        ],
+    ));
+
+    // setp_gt p0.x, v0.x, c0.x (compare op 0 = gt)
+    out.extend(enc_inst(
+        0x004E,
+        &[
+            enc_dst(19, 0, 0x1), // p0.x
+            enc_src(1, 0, 0x00), // v0.x
+            enc_src(2, 0, 0x00), // c0.x
+        ],
+    ));
+
+    // mov oC0, c2 (default blue)
+    out.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(2, 2, 0xE4)]));
+
+    // (p0.x) mov oC0, c1 (predicated)
+    out.extend(enc_inst_with_extra(
+        0x0001,
+        0x1000_0000, // predicated flag
+        &[
+            enc_dst(8, 0, 0xF),
+            enc_src(2, 1, 0xE4),
+            enc_src(19, 0, 0x00), // p0.x predicate token
+        ],
+    ));
+
+    out.push(0x0000FFFF);
+    out
+}
+
+fn assemble_ps3_loop_accumulate() -> Vec<u32> {
+    // ps_3_0
+    let mut out = vec![0xFFFF0300];
+    // def c0, 0.0, 0.0, 0.0, 1.0 (base)
+    out.extend(enc_inst(
+        0x0051,
+        &[
+            enc_dst(2, 0, 0xF),
+            0x0000_0000,
+            0x0000_0000,
+            0x0000_0000,
+            0x3F80_0000,
+        ],
+    ));
+    // def c1, 0.1, 0.2, 0.3, 0.0 (increment)
+    out.extend(enc_inst(
+        0x0051,
+        &[
+            enc_dst(2, 1, 0xF),
+            0x3DCC_CCCD, // 0.1
+            0x3E4C_CCCD, // 0.2
+            0x3E99_999A, // 0.3
+            0x0000_0000,
+        ],
+    ));
+    // def c2, 1.0, 0.0, 0.0, 0.0 (counter step)
+    out.extend(enc_inst(
+        0x0051,
+        &[
+            enc_dst(2, 2, 0xF),
+            0x3F80_0000,
+            0x0000_0000,
+            0x0000_0000,
+            0x0000_0000,
+        ],
+    ));
+    // def c3, 4.0, 0.0, 0.0, 0.0 (loop count)
+    out.extend(enc_inst(
+        0x0051,
+        &[
+            enc_dst(2, 3, 0xF),
+            0x4080_0000,
+            0x0000_0000,
+            0x0000_0000,
+            0x0000_0000,
+        ],
+    ));
+
+    // mov r0, c0
+    out.extend(enc_inst(0x0001, &[enc_dst(0, 0, 0xF), enc_src(2, 0, 0xE4)]));
+    // mov r1.x, c0.x
+    out.extend(enc_inst(0x0001, &[enc_dst(0, 1, 0x1), enc_src(2, 0, 0x00)]));
+
+    // loop aL, i0 (operands ignored by IR builder for now)
+    out.extend(enc_inst(
+        0x001B,
+        &[
+            enc_src(15, 0, 0xE4), // aL
+            enc_src(7, 0, 0xE4),  // i0
+        ],
+    ));
+    // add r0, r0, c1
+    out.extend(enc_inst(
+        0x0002,
+        &[
+            enc_dst(0, 0, 0xF),
+            enc_src(0, 0, 0xE4),
+            enc_src(2, 1, 0xE4),
+        ],
+    ));
+    // add r1.x, r1.x, c2.x
+    out.extend(enc_inst(
+        0x0002,
+        &[
+            enc_dst(0, 1, 0x1),
+            enc_src(0, 1, 0x00),
+            enc_src(2, 2, 0x00),
+        ],
+    ));
+    // breakc_ge r1.x, c3.x (compare op 2 = ge)
+    out.extend(enc_inst_with_extra(
+        0x002D,
+        2u32 << 16,
+        &[enc_src(0, 1, 0x00), enc_src(2, 3, 0x00)],
+    ));
+    // endloop
+    out.extend(enc_inst(0x001D, &[]));
+
+    // mov oC0, r0
+    out.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)]));
+
+    out.push(0x0000FFFF);
+    out
+}
+
+fn build_sm3_ir(words: &[u32]) -> sm3::ShaderIr {
+    let decoded = sm3::decode_u32_tokens(words).unwrap();
+    let ir = sm3::build_ir(&decoded).unwrap();
+    sm3::verify_ir(&ir).unwrap();
+    ir
 }
 
 fn to_bytes(words: &[u32]) -> Vec<u8> {
@@ -760,6 +928,106 @@ fn micro_ps3_ifc_def_pixel_compare() {
     assert_eq!(
         hash.to_hex().as_str(),
         "fa291c33b86c387331d23b7163e6622bb9553e866980db89570ac967770c0ee3"
+    );
+}
+
+#[test]
+fn sm3_predicated_mov_pixel_compare() {
+    let vs = build_sm3_ir(&assemble_vs_passthrough());
+    let ps = build_sm3_ir(&assemble_ps3_predicated_mov());
+
+    let decl = build_vertex_decl_pos_tex_color();
+
+    let quad = [
+        (software::Vec4::new(-1.0, -1.0, 0.0, 1.0), (0.0, 1.0), software::Vec4::new(1.0, 0.0, 0.0, 1.0)), // bottom-left red
+        (software::Vec4::new(1.0, -1.0, 0.0, 1.0), (1.0, 1.0), software::Vec4::new(0.0, 0.0, 0.0, 1.0)),  // bottom-right black
+        (software::Vec4::new(1.0, 1.0, 0.0, 1.0), (1.0, 0.0), software::Vec4::new(0.0, 0.0, 0.0, 1.0)),   // top-right black
+        (software::Vec4::new(-1.0, 1.0, 0.0, 1.0), (0.0, 0.0), software::Vec4::new(1.0, 0.0, 0.0, 1.0)),   // top-left red
+    ];
+    let indices: [u16; 6] = [0, 1, 2, 0, 2, 3];
+
+    let mut vb = Vec::new();
+    for (pos, (u, v), color) in quad {
+        push_vec4(&mut vb, pos);
+        push_vec2(&mut vb, u, v);
+        push_vec4(&mut vb, color);
+    }
+
+    let mut rt = software::RenderTarget::new(8, 8, software::Vec4::ZERO);
+    let constants = zero_constants();
+    sm3::software::draw(
+        &mut rt,
+        sm3::software::DrawParams {
+            vs: &vs,
+            ps: &ps,
+            vertex_decl: &decl,
+            vertex_buffer: &vb,
+            indices: Some(&indices),
+            constants: &constants,
+            textures: &HashMap::new(),
+            sampler_states: &HashMap::new(),
+            blend_state: state::BlendState::default(),
+        },
+    );
+
+    // Left side: v0.x = 1.0 so predicate is true, output red.
+    assert_eq!(rt.get(1, 4).to_rgba8(), [255, 0, 0, 255]);
+    // Right side: v0.x = 0.0 so predicate is false, output blue.
+    assert_eq!(rt.get(6, 4).to_rgba8(), [0, 0, 255, 255]);
+
+    let hash = blake3::hash(&rt.to_rgba8());
+    assert_eq!(
+        hash.to_hex().as_str(),
+        "96055b069d3aa23d0ac33ad4f4a7d443a8d511620cf2d63269d89e5fd0c2bf2b"
+    );
+}
+
+#[test]
+fn sm3_bounded_loop_accumulate_pixel_compare() {
+    let vs = build_sm3_ir(&assemble_vs_passthrough());
+    let ps = build_sm3_ir(&assemble_ps3_loop_accumulate());
+
+    let decl = build_vertex_decl_pos_tex_color();
+
+    let quad = [
+        (software::Vec4::new(-1.0, -1.0, 0.0, 1.0), (0.0, 1.0), software::Vec4::new(1.0, 1.0, 1.0, 1.0)),
+        (software::Vec4::new(1.0, -1.0, 0.0, 1.0), (1.0, 1.0), software::Vec4::new(1.0, 1.0, 1.0, 1.0)),
+        (software::Vec4::new(1.0, 1.0, 0.0, 1.0), (1.0, 0.0), software::Vec4::new(1.0, 1.0, 1.0, 1.0)),
+        (software::Vec4::new(-1.0, 1.0, 0.0, 1.0), (0.0, 0.0), software::Vec4::new(1.0, 1.0, 1.0, 1.0)),
+    ];
+    let indices: [u16; 6] = [0, 1, 2, 0, 2, 3];
+
+    let mut vb = Vec::new();
+    for (pos, (u, v), color) in quad {
+        push_vec4(&mut vb, pos);
+        push_vec2(&mut vb, u, v);
+        push_vec4(&mut vb, color);
+    }
+
+    let mut rt = software::RenderTarget::new(8, 8, software::Vec4::ZERO);
+    let constants = zero_constants();
+    sm3::software::draw(
+        &mut rt,
+        sm3::software::DrawParams {
+            vs: &vs,
+            ps: &ps,
+            vertex_decl: &decl,
+            vertex_buffer: &vb,
+            indices: Some(&indices),
+            constants: &constants,
+            textures: &HashMap::new(),
+            sampler_states: &HashMap::new(),
+            blend_state: state::BlendState::default(),
+        },
+    );
+
+    // Loop accumulates c1 four times and keeps alpha at 1.0.
+    assert_eq!(rt.get(4, 4).to_rgba8(), [102, 204, 255, 255]);
+
+    let hash = blake3::hash(&rt.to_rgba8());
+    assert_eq!(
+        hash.to_hex().as_str(),
+        "ecbe30cb268c55a1e0a425e36314cfc0759f659cb777deee88ab0250e8ebb275"
     );
 }
 

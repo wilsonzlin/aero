@@ -3,6 +3,7 @@
 pub mod decode;
 pub mod ir;
 pub mod ir_builder;
+pub mod software;
 pub mod types;
 pub mod verify;
 pub mod wgsl;
