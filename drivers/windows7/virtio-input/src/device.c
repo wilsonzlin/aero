@@ -904,6 +904,16 @@ static VOID VirtioInputEvtDeviceSurpriseRemoval(_In_ WDFDEVICE Device)
     VirtioInputUpdateStatusQActiveState(ctx);
 
     /*
+     * Synchronize with any in-flight queue DPC that may have already started
+     * draining the event virtqueue before we cleared VirtioStarted. The DPC's
+     * event processing and report delivery execute under this per-queue lock.
+     */
+    if (ctx->Interrupts.QueueLocks != NULL && ctx->Interrupts.QueueCount > 0) {
+        WdfSpinLockAcquire(ctx->Interrupts.QueueLocks[0]);
+        WdfSpinLockRelease(ctx->Interrupts.QueueLocks[0]);
+    }
+
+    /*
      * Emit the release report after clearing InD0 so any in-flight event
      * processing (interrupt/DPC) will no longer translate additional events
      * that could re-latch key state after the reset.
@@ -2126,6 +2136,15 @@ NTSTATUS VirtioInputEvtDeviceD0Exit(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVICE
 
     (VOID)InterlockedExchange(&deviceContext->VirtioStarted, 0);
     deviceContext->InD0 = FALSE;
+
+    /*
+     * Synchronize with any in-flight queue DPC that may have already started
+     * draining the event virtqueue before we cleared VirtioStarted.
+     */
+    if (deviceContext->Interrupts.QueueLocks != NULL && deviceContext->Interrupts.QueueCount > 0) {
+        WdfSpinLockAcquire(deviceContext->Interrupts.QueueLocks[0]);
+        WdfSpinLockRelease(deviceContext->Interrupts.QueueLocks[0]);
+    }
 
     /*
      * Policy: if HID has been activated, emit an all-zero report before stopping

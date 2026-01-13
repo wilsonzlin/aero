@@ -67,6 +67,15 @@ NTSTATUS VirtioInputHidDeactivateDevice(_In_ WDFDEVICE Device)
     VirtioInputUpdateStatusQActiveState(ctx);
     if (emitResetReports && ctx->InD0) {
         /*
+         * Synchronize with any in-flight queue DPC that may have already started
+         * draining the event virtqueue before we cleared HidActivated.
+         */
+        if (ctx->Interrupts.QueueLocks != NULL && ctx->Interrupts.QueueCount > 0) {
+            WdfSpinLockAcquire(ctx->Interrupts.QueueLocks[0]);
+            WdfSpinLockRelease(ctx->Interrupts.QueueLocks[0]);
+        }
+
+        /*
          * Drop any queued input reports so the release report is the next thing
          * the HID stack observes during deactivation.
          */
