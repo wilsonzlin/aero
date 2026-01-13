@@ -68,9 +68,8 @@ fn aerogpu_is_exposed_at_canonical_bdf_without_transitional_vga_stub_when_enable
         ram_size_bytes: 2 * 1024 * 1024,
         enable_pc_platform: true,
         enable_aerogpu: true,
-        // Intentionally request VGA too: `enable_aerogpu` must suppress the transitional VGA PCI
-        // stub at `00:0c.0` even if callers forget to flip `enable_vga` off.
-        enable_vga: true,
+        // AeroGPU and the legacy VGA/VBE device are mutually exclusive.
+        enable_vga: false,
         // Keep the machine minimal for the contract check.
         enable_serial: false,
         enable_i8042: false,
