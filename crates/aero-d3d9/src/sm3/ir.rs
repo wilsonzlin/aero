@@ -718,8 +718,18 @@ fn format_src(src: &Src) -> String {
     match src.modifier {
         SrcModifier::None => {}
         SrcModifier::Negate => out.push('-'),
+        SrcModifier::Bias => out.push_str("bias("),
+        SrcModifier::BiasNegate => out.push_str("-bias("),
+        SrcModifier::Sign => out.push_str("sign("),
+        SrcModifier::SignNegate => out.push_str("-sign("),
+        SrcModifier::Comp => out.push_str("comp("),
+        SrcModifier::X2 => out.push_str("x2("),
+        SrcModifier::X2Negate => out.push_str("-x2("),
+        SrcModifier::Dz => out.push_str("dz("),
+        SrcModifier::Dw => out.push_str("dw("),
         SrcModifier::Abs => out.push_str("abs("),
         SrcModifier::AbsNegate => out.push_str("-abs("),
+        SrcModifier::Not => out.push_str("not("),
         SrcModifier::Unknown(m) => out.push_str(&format!("mod{m}(")),
     }
 
@@ -731,8 +741,20 @@ fn format_src(src: &Src) -> String {
     }
 
     match src.modifier {
-        SrcModifier::Abs | SrcModifier::AbsNegate | SrcModifier::Unknown(_) => out.push(')'),
-        _ => {}
+        SrcModifier::None | SrcModifier::Negate => {}
+        SrcModifier::Bias
+        | SrcModifier::BiasNegate
+        | SrcModifier::Sign
+        | SrcModifier::SignNegate
+        | SrcModifier::Comp
+        | SrcModifier::X2
+        | SrcModifier::X2Negate
+        | SrcModifier::Dz
+        | SrcModifier::Dw
+        | SrcModifier::Abs
+        | SrcModifier::AbsNegate
+        | SrcModifier::Not
+        | SrcModifier::Unknown(_) => out.push(')'),
     }
     out
 }

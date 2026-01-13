@@ -156,6 +156,38 @@ fn assemble_ps_mov_sat_neg_c0() -> Vec<u32> {
     out
 }
 
+fn assemble_ps2_src_modifiers_bias_x2neg_dz() -> Vec<u32> {
+    // ps_2_0
+    let mut out = vec![0xFFFF0200];
+    // mov r0, c0_bias
+    out.extend(enc_inst(
+        0x0001,
+        &[enc_dst(0, 0, 0xF), enc_src_mod(2, 0, 0xE4, 2)],
+    ));
+    // add r0, r0, c1_x2neg
+    out.extend(enc_inst(
+        0x0002,
+        &[
+            enc_dst(0, 0, 0xF),
+            enc_src(0, 0, 0xE4),
+            enc_src_mod(2, 1, 0xE4, 8),
+        ],
+    ));
+    // mul r0, r0, c2_dz
+    out.extend(enc_inst(
+        0x0005,
+        &[
+            enc_dst(0, 0, 0xF),
+            enc_src(0, 0, 0xE4),
+            enc_src_mod(2, 2, 0xE4, 9),
+        ],
+    ));
+    // mov oC0, r0
+    out.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)]));
+    out.push(0x0000FFFF);
+    out
+}
+
 fn assemble_ps_mrt_solid_color() -> Vec<u32> {
     // ps_3_0
     let mut out = vec![0xFFFF0300];
@@ -753,6 +785,29 @@ fn micro_ps2_src_and_result_modifiers_pixel_compare() {
         hash.to_hex().as_str(),
         "ab477a03b69b374481c3b6cba362a9b6e9cfb0dd038252a06a610b4c058e3f26"
     );
+}
+
+#[test]
+fn sm3_translates_additional_src_modifiers_to_wgsl() {
+    let words = assemble_ps2_src_modifiers_bias_x2neg_dz();
+
+    let decoded = crate::sm3::decode_u32_tokens(&words).expect("decode");
+    let ir = crate::sm3::build_ir(&decoded).expect("build_ir");
+    crate::sm3::verify_ir(&ir).expect("verify_ir");
+    let wgsl = crate::sm3::generate_wgsl(&ir).expect("generate_wgsl");
+
+    let module = naga::front::wgsl::parse_str(&wgsl.wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+
+    // Spot-check that the modifiers were lowered (not ignored).
+    assert!(wgsl.wgsl.contains("vec4<f32>(0.5)"), "{}", wgsl.wgsl);
+    assert!(wgsl.wgsl.contains("* 2.0"), "{}", wgsl.wgsl);
+    assert!(wgsl.wgsl.contains(").z"), "{}", wgsl.wgsl);
 }
 
 #[test]

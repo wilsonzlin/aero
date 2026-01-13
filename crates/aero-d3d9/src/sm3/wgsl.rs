@@ -350,6 +350,19 @@ fn src_expr(src: &Src) -> Result<(String, ScalarTy), WgslError> {
             format!("-({expr})")
         }
         (ScalarTy::Bool, SrcModifier::Negate) => format!("!({expr})"),
+        (ScalarTy::F32, SrcModifier::Bias) => format!("(({expr}) - vec4<f32>(0.5))"),
+        (ScalarTy::F32, SrcModifier::BiasNegate) => format!("-(({expr}) - vec4<f32>(0.5))"),
+        (ScalarTy::F32, SrcModifier::Sign) => format!("(({expr}) * 2.0 - vec4<f32>(1.0))"),
+        (ScalarTy::F32, SrcModifier::SignNegate) => {
+            format!("-(({expr}) * 2.0 - vec4<f32>(1.0))")
+        }
+        (ScalarTy::F32, SrcModifier::Comp) | (ScalarTy::F32, SrcModifier::Not) => {
+            format!("(vec4<f32>(1.0) - ({expr}))")
+        }
+        (ScalarTy::F32, SrcModifier::X2) => format!("(({expr}) * 2.0)"),
+        (ScalarTy::F32, SrcModifier::X2Negate) => format!("-(({expr}) * 2.0)"),
+        (ScalarTy::F32, SrcModifier::Dz) => format!("(({expr}) / ({expr}).z)"),
+        (ScalarTy::F32, SrcModifier::Dw) => format!("(({expr}) / ({expr}).w)"),
         (ScalarTy::F32, SrcModifier::Abs) | (ScalarTy::I32, SrcModifier::Abs) => {
             format!("abs({expr})")
         }
@@ -358,6 +371,30 @@ fn src_expr(src: &Src) -> Result<(String, ScalarTy), WgslError> {
             format!("-abs({expr})")
         }
         (ScalarTy::Bool, SrcModifier::AbsNegate) => return Err(err("absnegate on bool source")),
+        (ScalarTy::I32, SrcModifier::Bias)
+        | (ScalarTy::I32, SrcModifier::BiasNegate)
+        | (ScalarTy::I32, SrcModifier::Sign)
+        | (ScalarTy::I32, SrcModifier::SignNegate)
+        | (ScalarTy::I32, SrcModifier::Comp)
+        | (ScalarTy::I32, SrcModifier::X2)
+        | (ScalarTy::I32, SrcModifier::X2Negate)
+        | (ScalarTy::I32, SrcModifier::Dz)
+        | (ScalarTy::I32, SrcModifier::Dw)
+        | (ScalarTy::I32, SrcModifier::Not) => {
+            return Err(err("float-only source modifier used on integer source"))
+        }
+        (ScalarTy::Bool, SrcModifier::Bias)
+        | (ScalarTy::Bool, SrcModifier::BiasNegate)
+        | (ScalarTy::Bool, SrcModifier::Sign)
+        | (ScalarTy::Bool, SrcModifier::SignNegate)
+        | (ScalarTy::Bool, SrcModifier::Comp)
+        | (ScalarTy::Bool, SrcModifier::X2)
+        | (ScalarTy::Bool, SrcModifier::X2Negate)
+        | (ScalarTy::Bool, SrcModifier::Dz)
+        | (ScalarTy::Bool, SrcModifier::Dw)
+        | (ScalarTy::Bool, SrcModifier::Not) => {
+            return Err(err("float-only source modifier used on boolean source"))
+        }
         (_, SrcModifier::Unknown(_)) => return Err(err("unknown source modifier")),
     };
 

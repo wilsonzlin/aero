@@ -420,8 +420,18 @@ pub enum SwizzleComponent {
 pub enum SrcModifier {
     None,
     Negate,
+    Bias,
+    BiasNegate,
+    Sign,
+    SignNegate,
+    Comp,
+    X2,
+    X2Negate,
+    Dz,
+    Dw,
     Abs,
     AbsNegate,
+    Not,
     Unknown(u8),
 }
 
@@ -1228,8 +1238,18 @@ fn decode_src_modifier(modifier: u8) -> SrcModifier {
     match modifier {
         0 => SrcModifier::None,
         1 => SrcModifier::Negate,
+        2 => SrcModifier::Bias,
+        3 => SrcModifier::BiasNegate,
+        4 => SrcModifier::Sign,
+        5 => SrcModifier::SignNegate,
+        6 => SrcModifier::Comp,
+        7 => SrcModifier::X2,
+        8 => SrcModifier::X2Negate,
+        9 => SrcModifier::Dz,
+        10 => SrcModifier::Dw,
         11 => SrcModifier::Abs,
         12 => SrcModifier::AbsNegate,
+        13 => SrcModifier::Not,
         other => SrcModifier::Unknown(other),
     }
 }
