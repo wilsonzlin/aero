@@ -303,18 +303,17 @@ fn collect_files(
             );
         }
 
-        // Skip hidden files such as `.DS_Store` to keep outputs stable across hosts.
-        let file_name = entry.file_name().to_string_lossy();
-        if file_name.starts_with('.') {
-            continue;
-        }
-
         let rel = entry
             .path()
             .strip_prefix(&config.guest_tools_dir)
             .expect("walkdir under guest_tools_dir");
         let rel_str = path_to_slash(rel, entry.path())?;
         if rel_str.eq_ignore_ascii_case("config/devices.cmd") {
+            continue;
+        }
+        // Skip hidden files such as `.DS_Store` to keep outputs stable across hosts.
+        let file_name = rel_str.rsplit('/').next().unwrap_or(rel_str.as_str());
+        if file_name.starts_with('.') {
             continue;
         }
         out.push(FileToPackage {
@@ -350,18 +349,17 @@ fn collect_files(
                 );
             }
 
-            // Skip hidden files such as `.DS_Store` (and placeholder `.keep`) to keep outputs
-            // stable across hosts.
-            let file_name = entry.file_name().to_string_lossy();
-            if file_name.starts_with('.') {
-                continue;
-            }
-
             let rel = entry
                 .path()
                 .strip_prefix(&config.guest_tools_dir)
                 .expect("walkdir under guest_tools_dir");
             let rel_str = path_to_slash(rel, entry.path())?;
+            // Skip hidden files such as `.DS_Store` (and placeholder `.keep`) to keep outputs
+            // stable across hosts.
+            let file_name = rel_str.rsplit('/').next().unwrap_or(rel_str.as_str());
+            if file_name.starts_with('.') {
+                continue;
+            }
             out.push(FileToPackage {
                 rel_path: rel_str,
                 bytes: fs::read(entry.path())
