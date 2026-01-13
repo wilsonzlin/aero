@@ -104,6 +104,7 @@
 #define VIRTIO_INPUT_VID 0x1AF4
 #define VIRTIO_INPUT_PID_KEYBOARD 0x0001
 #define VIRTIO_INPUT_PID_MOUSE 0x0002
+#define VIRTIO_INPUT_PID_TABLET 0x0003
 // Legacy/alternate product IDs (e.g. older builds that reused the PCI virtio IDs).
 #define VIRTIO_INPUT_PID_MODERN 0x1052
 #define VIRTIO_INPUT_PID_TRANSITIONAL 0x1011
@@ -116,10 +117,13 @@
 // Mouse report descriptor advertises 8 buttons (no padding bits) and includes
 // a Consumer/AC Pan field for horizontal scrolling. Total: 57 bytes.
 #define VIRTIO_INPUT_EXPECTED_MOUSE_REPORT_DESC_LEN 57
+// Tablet report descriptor advertises 8 buttons and absolute X/Y. Total: 47 bytes.
+#define VIRTIO_INPUT_EXPECTED_TABLET_REPORT_DESC_LEN 47
 #define VIRTIO_INPUT_EXPECTED_KBD_INPUT_LEN 9
 #define VIRTIO_INPUT_EXPECTED_KBD_OUTPUT_LEN 2
 // Mouse input report (ReportID=2) is 6 bytes: [id][buttons][x][y][wheel][AC Pan].
 #define VIRTIO_INPUT_EXPECTED_MOUSE_INPUT_LEN 6
+#define VIRTIO_INPUT_EXPECTED_TABLET_INPUT_LEN 6
 
 /*
  * Aero virtio-input driver diagnostics (see `src/log.h` in the driver sources).
@@ -232,6 +236,7 @@ enum {
     VIOINPUT_DEVICE_KIND_UNKNOWN = 0,
     VIOINPUT_DEVICE_KIND_KEYBOARD = 1,
     VIOINPUT_DEVICE_KIND_MOUSE = 2,
+    VIOINPUT_DEVICE_KIND_TABLET = 3,
 };
 
 #pragma pack(push, 1)
@@ -290,6 +295,7 @@ typedef struct OPTIONS {
     int quiet;
     int want_keyboard;
     int want_mouse;
+    int want_tablet;
     USHORT vid;
     USHORT pid;
     DWORD index;
@@ -348,6 +354,7 @@ static int is_virtio_input_device(const HIDD_ATTRIBUTES *attr)
 
     return (attr->ProductID == VIRTIO_INPUT_PID_KEYBOARD) ||
            (attr->ProductID == VIRTIO_INPUT_PID_MOUSE) ||
+           (attr->ProductID == VIRTIO_INPUT_PID_TABLET) ||
            (attr->ProductID == VIRTIO_INPUT_PID_MODERN) ||
            (attr->ProductID == VIRTIO_INPUT_PID_TRANSITIONAL);
 }
@@ -660,6 +667,8 @@ static const wchar_t *vioinput_device_kind_to_string(ULONG kind)
         return L"keyboard";
     case VIOINPUT_DEVICE_KIND_MOUSE:
         return L"mouse";
+    case VIOINPUT_DEVICE_KIND_TABLET:
+        return L"tablet";
     default:
         return L"unknown";
     }
@@ -927,7 +936,7 @@ static void dump_tablet_report(const BYTE *buf, DWORD len, int assume_report_id)
     y = (USHORT)(buf[off + 3] | ((USHORT)buf[off + 4] << 8));
 
     if (report_id != 0) {
-    wprintf(L"tablet: id=%u ", report_id);
+        wprintf(L"tablet: id=%u ", report_id);
     } else {
         wprintf(L"tablet: ");
     }
@@ -1292,7 +1301,7 @@ static void print_usage(void)
     wprintf(L"Usage:\n");
     wprintf(L"  hidtest.exe [--list [--json]]\n");
     wprintf(L"  hidtest.exe --selftest [--keyboard|--mouse] [--json]\n");
-    wprintf(L"  hidtest.exe [--keyboard|--mouse] [--index N] [--vid 0x1234] [--pid 0x5678]\n");
+    wprintf(L"  hidtest.exe [--keyboard|--mouse|--tablet] [--index N] [--vid 0x1234] [--pid 0x5678]\n");
     wprintf(L"             [--led 0x07 | --led-hidd 0x07 | --led-ioctl-set-output 0x07 | --led-cycle | --led-spam N] [--dump-desc]\n");
     wprintf(L"             [--duration SECS] [--count N]\n");
     wprintf(L"             [--dump-collection-desc]\n");
@@ -1317,6 +1326,7 @@ static void print_usage(void)
     wprintf(L"  --quiet         Suppress enumeration / device summary output (keeps stdout clean for scraping)\n");
     wprintf(L"  --keyboard      Prefer/select the keyboard top-level collection (Usage=Keyboard)\n");
     wprintf(L"  --mouse         Prefer/select the mouse top-level collection (Usage=Mouse)\n");
+    wprintf(L"  --tablet        Prefer/select the virtio-input tablet interface (VID 0x1AF4, PID 0x0003)\n");
     wprintf(L"  --index N       Open HID interface at enumeration index N\n");
     wprintf(L"  --vid 0xVID     Filter by vendor ID (hex)\n");
     wprintf(L"  --pid 0xPID     Filter by product ID (hex)\n");
@@ -1391,7 +1401,7 @@ static void print_usage(void)
     wprintf(L"                 (negative test for IOCTL_HID_SET_OUTPUT_REPORT path; should fail, no crash)\n");
     wprintf(L"\n");
     wprintf(L"Notes:\n");
-    wprintf(L"  - virtio-input detection: VID 0x1AF4, PID 0x0001 (keyboard) / 0x0002 (mouse)\n");
+    wprintf(L"  - virtio-input detection: VID 0x1AF4, PID 0x0001 (keyboard) / 0x0002 (mouse) / 0x0003 (tablet)\n");
     wprintf(L"    (legacy/alternate PIDs: 0x1052 / 0x1011).\n");
     wprintf(L"  - Without filters, the tool prefers a virtio-input keyboard interface.\n");
     wprintf(L"  - Press Ctrl+C to exit the report read loop (a summary is printed on exit).\n");
@@ -2038,6 +2048,7 @@ static int run_selftest_json(const OPTIONS *opt)
         int is_virtio = 0;
         int is_keyboard = 0;
         int is_mouse = 0;
+        int is_tablet = 0;
 
         ZeroMemory(&iface, sizeof(iface));
         iface.cbSize = sizeof(iface);
@@ -2097,6 +2108,13 @@ static int run_selftest_json(const OPTIONS *opt)
             } else if (attr.ProductID == VIRTIO_INPUT_PID_MOUSE) {
                 is_mouse = 1;
             }
+        }
+
+        is_tablet = attr_valid && (attr.ProductID == VIRTIO_INPUT_PID_TABLET);
+        if (is_tablet) {
+            // Selftest covers the contract v1 keyboard+mouse devices only. Avoid
+            // accidentally selecting a virtio-input tablet as the "mouse".
+            is_mouse = 0;
         }
 
         if (is_virtio && is_keyboard && need_keyboard && !kbd.found) {
@@ -2358,7 +2376,7 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
 
     iface_index = 0;
     have_hard_filters = opt->have_index || opt->have_vid || opt->have_pid;
-    have_usage_filter = opt->want_keyboard || opt->want_mouse;
+    have_usage_filter = opt->want_keyboard || opt->want_mouse || opt->want_tablet;
     usage_only = have_usage_filter && !have_hard_filters;
     for (;;) {
         DWORD required = 0;
@@ -2379,6 +2397,7 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
         int is_virtio = 0;
         int is_keyboard = 0;
         int is_mouse = 0;
+        int is_tablet = 0;
 
         ZeroMemory(&iface, sizeof(iface));
         iface.cbSize = sizeof(iface);
@@ -2473,6 +2492,12 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
 
         is_keyboard = caps_valid && caps.UsagePage == 0x01 && caps.Usage == 0x06;
         is_mouse = caps_valid && caps.UsagePage == 0x01 && caps.Usage == 0x02;
+        is_tablet = attr_valid && (attr.ProductID == VIRTIO_INPUT_PID_TABLET);
+        if (is_tablet) {
+            // Tablet uses the same top-level usage as Mouse (0x01:0x02). Keep it
+            // distinct so --mouse/selftest don't accidentally select the tablet.
+            is_mouse = 0;
+        }
 
         if (is_keyboard) {
             virtio_expected_desc_len = VIRTIO_INPUT_EXPECTED_KBD_REPORT_DESC_LEN;
@@ -2480,11 +2505,17 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
         } else if (is_mouse) {
             virtio_expected_desc_len = VIRTIO_INPUT_EXPECTED_MOUSE_REPORT_DESC_LEN;
             virtio_expected_desc_valid = 1;
+        } else if (is_tablet) {
+            virtio_expected_desc_len = VIRTIO_INPUT_EXPECTED_TABLET_REPORT_DESC_LEN;
+            virtio_expected_desc_valid = 1;
         } else if (attr_valid && attr.ProductID == VIRTIO_INPUT_PID_KEYBOARD) {
             virtio_expected_desc_len = VIRTIO_INPUT_EXPECTED_KBD_REPORT_DESC_LEN;
             virtio_expected_desc_valid = 1;
         } else if (attr_valid && attr.ProductID == VIRTIO_INPUT_PID_MOUSE) {
             virtio_expected_desc_len = VIRTIO_INPUT_EXPECTED_MOUSE_REPORT_DESC_LEN;
+            virtio_expected_desc_valid = 1;
+        } else if (attr_valid && attr.ProductID == VIRTIO_INPUT_PID_TABLET) {
+            virtio_expected_desc_len = VIRTIO_INPUT_EXPECTED_TABLET_REPORT_DESC_LEN;
             virtio_expected_desc_valid = 1;
         }
 
@@ -2494,6 +2525,8 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
                     wprintf(L"      Detected: virtio-input keyboard\n");
                 } else if (is_mouse) {
                     wprintf(L"      Detected: virtio-input mouse\n");
+                } else if (is_tablet) {
+                    wprintf(L"      Detected: virtio-input tablet\n");
                 } else {
                     wprintf(L"      Detected: virtio-input\n");
                 }
@@ -2542,6 +2575,11 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
                         wprintf(L"      [WARN] unexpected virtio-input mouse input report length (expected %u)\n",
                                 (unsigned)VIRTIO_INPUT_EXPECTED_MOUSE_INPUT_LEN);
                     }
+                } else if (caps_valid && is_tablet) {
+                    if (caps.InputReportByteLength != VIRTIO_INPUT_EXPECTED_TABLET_INPUT_LEN) {
+                        wprintf(L"      [WARN] unexpected virtio-input tablet input report length (expected %u)\n",
+                                (unsigned)VIRTIO_INPUT_EXPECTED_TABLET_INPUT_LEN);
+                    }
                 }
             }
 
@@ -2573,6 +2611,9 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
         if (match && opt->want_mouse) {
             match = is_mouse;
         }
+        if (match && opt->want_tablet) {
+            match = is_tablet;
+        }
 
         if (opt->list_only) {
             CloseHandle(handle);
@@ -2583,7 +2624,7 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
 
         // Selection rules:
         // - With hard filters (--index/--vid/--pid): pick the first match.
-        // - With only usage filters (--keyboard/--mouse): prefer a matching virtio interface,
+        // - With only usage filters (--keyboard/--mouse/--tablet): prefer a matching virtio interface,
         //   otherwise fall back to the first matching interface of that usage.
         // - With no filters: prefer virtio keyboard, then first virtio, then first HID interface.
         if (have_hard_filters) {
@@ -3390,6 +3431,11 @@ static int ioctl_get_input_report(const SELECTED_DEVICE *dev)
         }
     }
 
+    if (report_id == 2 && dev->attr_valid && dev->attr.ProductID == VIRTIO_INPUT_PID_TABLET) {
+        report_id = 4;
+        expected_len = VIRTIO_INPUT_EXPECTED_TABLET_INPUT_LEN;
+    }
+
     if (report_id == 0 && dev->attr_valid) {
         if (dev->attr.ProductID == VIRTIO_INPUT_PID_KEYBOARD) {
             report_id = 1;
@@ -3397,12 +3443,15 @@ static int ioctl_get_input_report(const SELECTED_DEVICE *dev)
         } else if (dev->attr.ProductID == VIRTIO_INPUT_PID_MOUSE) {
             report_id = 2;
             expected_len = VIRTIO_INPUT_EXPECTED_MOUSE_INPUT_LEN;
+        } else if (dev->attr.ProductID == VIRTIO_INPUT_PID_TABLET) {
+            report_id = 4;
+            expected_len = VIRTIO_INPUT_EXPECTED_TABLET_INPUT_LEN;
         }
     }
 
     if (report_id == 0 || expected_len == 0) {
         wprintf(L"Cannot infer expected report ID/length for this device.\n");
-        wprintf(L"Hint: select a keyboard/mouse interface explicitly.\n");
+        wprintf(L"Hint: select a keyboard/mouse/tablet interface explicitly.\n");
         return 1;
     }
 
@@ -3452,6 +3501,8 @@ static int ioctl_get_input_report(const SELECTED_DEVICE *dev)
         dump_keyboard_report(report, bytes);
     } else if (report_id == 2) {
         dump_mouse_report(report, bytes, 1);
+    } else if (report_id == 4) {
+        dump_tablet_report(report, bytes, 1);
     }
 
     /*
@@ -3562,6 +3613,11 @@ static int hidd_get_input_report(const SELECTED_DEVICE *dev)
         }
     }
 
+    if (report_id == 2 && dev->attr_valid && dev->attr.ProductID == VIRTIO_INPUT_PID_TABLET) {
+        report_id = 4;
+        expected_len = VIRTIO_INPUT_EXPECTED_TABLET_INPUT_LEN;
+    }
+
     if (report_id == 0 && dev->attr_valid) {
         if (dev->attr.ProductID == VIRTIO_INPUT_PID_KEYBOARD) {
             report_id = 1;
@@ -3569,12 +3625,15 @@ static int hidd_get_input_report(const SELECTED_DEVICE *dev)
         } else if (dev->attr.ProductID == VIRTIO_INPUT_PID_MOUSE) {
             report_id = 2;
             expected_len = VIRTIO_INPUT_EXPECTED_MOUSE_INPUT_LEN;
+        } else if (dev->attr.ProductID == VIRTIO_INPUT_PID_TABLET) {
+            report_id = 4;
+            expected_len = VIRTIO_INPUT_EXPECTED_TABLET_INPUT_LEN;
         }
     }
 
     if (report_id == 0 || expected_len == 0) {
         wprintf(L"Cannot infer expected report ID/length for this device.\n");
-        wprintf(L"Hint: select a keyboard/mouse interface explicitly.\n");
+        wprintf(L"Hint: select a keyboard/mouse/tablet interface explicitly.\n");
         return 1;
     }
 
@@ -3606,6 +3665,8 @@ static int hidd_get_input_report(const SELECTED_DEVICE *dev)
         dump_keyboard_report(report, expected_len);
     } else if (report_id == 2) {
         dump_mouse_report(report, expected_len, 1);
+    } else if (report_id == 4) {
+        dump_tablet_report(report, expected_len, 1);
     }
 
     /*
@@ -4234,6 +4295,11 @@ int wmain(int argc, wchar_t **argv)
             continue;
         }
 
+        if (wcscmp(argv[i], L"--tablet") == 0) {
+            opt.want_tablet = 1;
+            continue;
+        }
+
         if (wcscmp(argv[i], L"--dump-desc") == 0) {
             opt.dump_desc = 1;
             continue;
@@ -4489,8 +4555,8 @@ int wmain(int argc, wchar_t **argv)
         return 2;
     }
 
-    if (opt.want_keyboard && opt.want_mouse) {
-        wprintf(L"--keyboard and --mouse are mutually exclusive.\n");
+    if ((opt.want_keyboard + opt.want_mouse + opt.want_tablet) > 1) {
+        wprintf(L"--keyboard, --mouse, and --tablet are mutually exclusive.\n");
         return 2;
     }
     if (opt.query_counters && opt.reset_counters) {
@@ -4513,7 +4579,7 @@ int wmain(int argc, wchar_t **argv)
          opt.ioctl_bad_get_device_descriptor || opt.ioctl_bad_get_string || opt.ioctl_bad_get_indexed_string ||
          opt.ioctl_bad_get_string_out || opt.ioctl_bad_get_indexed_string_out || opt.ioctl_query_counters_short ||
          opt.ioctl_get_input_report || opt.hidd_get_input_report || opt.hidd_bad_set_output_report || opt.have_led_ioctl_set_output ||
-         opt.query_counters || opt.query_counters_json || opt.reset_counters)) {
+         opt.query_counters || opt.query_counters_json || opt.reset_counters || opt.want_tablet)) {
         wprintf(
             L"--selftest cannot be combined with --state, --list, descriptor dump options, --vid/--pid/--index, counters, LED, or negative-test options.\n");
         return 2;

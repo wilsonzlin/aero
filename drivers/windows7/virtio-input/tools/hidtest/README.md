@@ -42,6 +42,7 @@ The in-tree Aero virtio-input Win7 driver exposes **separate** HID devices:
 
 - Keyboard: VID:PID `1AF4:0001` (ReportID `1`)
 - Mouse: VID:PID `1AF4:0002` (ReportID `2`)
+- Tablet: VID:PID `1AF4:0003` (ReportID `4`)
 
 `hidtest` uses these IDs to auto-prefer the virtio-input keyboard/mouse when multiple HID devices are present.
 
@@ -49,12 +50,16 @@ The tool also sanity-checks report descriptor lengths against the in-tree driver
 
 - Keyboard report descriptor: 104 bytes (keyboard + LEDs + Consumer Control/media keys)
 - Mouse report descriptor: 57 bytes (8 buttons + X/Y/Wheel + Consumer/AC Pan)
+- Tablet report descriptor: 47 bytes (8 buttons + absolute X/Y)
 
 Mouse input reports (`ReportID=2`) are 6 bytes:
 
 `[id][buttons][dx][dy][wheel][AC Pan]`
 
 Older/alternate builds may use PCI-style virtio IDs (PID `1052`/`1011`); `hidtest` still recognizes these as virtio-input.
+
+Note: `--selftest` currently validates the **keyboard + mouse** descriptor contract. Tablet support is included for
+enumeration and report decoding, but is not yet covered by `--selftest`.
 
 ## Build (MSVC)
 
