@@ -1249,6 +1249,141 @@ mod tests {
     }
 
     #[test]
+    fn virtio_snd_snapshot_restore_roundtrip_stream_state_and_params() {
+        let mut snd = VirtioSnd::new_with_host_sample_rate(
+            aero_audio::ring::AudioRingBuffer::new_stereo(8),
+            44_100,
+        );
+        snd.set_capture_sample_rate_hz(32_000);
+
+        snd.playback = PcmStream {
+            state: StreamState::Running,
+            params: Some(PcmParams {
+                buffer_bytes: 4096,
+                period_bytes: 1024,
+                channels: PLAYBACK_CHANNELS,
+                format: VIRTIO_SND_PCM_FMT_S16,
+                rate: VIRTIO_SND_PCM_RATE_48000,
+            }),
+        };
+        snd.capture = PcmStream {
+            state: StreamState::Prepared,
+            params: Some(PcmParams {
+                buffer_bytes: 2048,
+                period_bytes: 512,
+                channels: CAPTURE_CHANNELS,
+                format: VIRTIO_SND_PCM_FMT_S16,
+                rate: VIRTIO_SND_PCM_RATE_48000,
+            }),
+        };
+        snd.capture_telemetry = CaptureTelemetry {
+            dropped_samples: 7,
+            underrun_samples: 11,
+            underrun_responses: 13,
+        };
+
+        let state = snd.snapshot_state();
+
+        let mut restored = VirtioSnd::new(aero_audio::ring::AudioRingBuffer::new_stereo(8));
+        restored.restore_state(&state);
+        assert_eq!(restored.host_sample_rate_hz(), 44_100);
+        assert_eq!(restored.capture_sample_rate_hz(), 32_000);
+
+        let reencoded = restored.snapshot_state();
+        assert_eq!(reencoded, state);
+    }
+
+    #[test]
+    fn virtio_snd_restore_state_defaults_and_clamps_sample_rates() {
+        // Legacy/corrupted snapshots may contain 0 sample rates. Treat 0 as the guest contract
+        // rate (48kHz), and default capture to the restored host rate.
+        let state_zero_rates = io_state::VirtioSndState {
+            host_sample_rate_hz: 0,
+            capture_sample_rate_hz: 0,
+            ..io_state::VirtioSndState::default()
+        };
+
+        let mut snd = VirtioSnd::new_with_host_sample_rate(
+            aero_audio::ring::AudioRingBuffer::new_stereo(8),
+            44_100,
+        );
+        snd.set_capture_sample_rate_hz(32_000);
+        snd.restore_state(&state_zero_rates);
+        assert_eq!(snd.host_sample_rate_hz(), PCM_SAMPLE_RATE_HZ);
+        assert_eq!(snd.capture_sample_rate_hz(), PCM_SAMPLE_RATE_HZ);
+
+        // Clamp absurd sample rates to avoid multi-gigabyte allocations on restore.
+        let state_absurd_rates = io_state::VirtioSndState {
+            host_sample_rate_hz: u32::MAX,
+            capture_sample_rate_hz: u32::MAX,
+            ..io_state::VirtioSndState::default()
+        };
+        let mut snd = VirtioSnd::new(aero_audio::ring::AudioRingBuffer::new_stereo(8));
+        snd.restore_state(&state_absurd_rates);
+        assert_eq!(snd.host_sample_rate_hz(), aero_audio::MAX_HOST_SAMPLE_RATE_HZ);
+        assert_eq!(
+            snd.capture_sample_rate_hz(),
+            aero_audio::MAX_HOST_SAMPLE_RATE_HZ
+        );
+    }
+
+    #[test]
+    fn virtio_snd_restore_state_clears_runtime_event_queues() {
+        let mut snd = VirtioSnd::new(aero_audio::ring::AudioRingBuffer::new_stereo(8));
+
+        let mut mem = GuestRam::new(0x10000);
+        let desc_table = 0x1000;
+        let avail = 0x2000;
+        let used = 0x3000;
+
+        let qsize = 1u16;
+        let mut queue = VirtQueue::new(
+            VirtQueueConfig {
+                size: qsize,
+                desc_addr: desc_table,
+                avail_addr: avail,
+                used_addr: used,
+            },
+            false,
+        )
+        .unwrap();
+
+        // Seed a single write-only descriptor so we can create a real `DescriptorChain`.
+        write_desc(&mut mem, desc_table, 0, 0x4000, 8, VIRTQ_DESC_F_WRITE, 0);
+        write_u16_le(&mut mem, avail, 0).unwrap();
+        write_u16_le(&mut mem, avail + 2, 1).unwrap();
+        write_u16_le(&mut mem, avail + 4, 0).unwrap();
+        write_u16_le(&mut mem, used, 0).unwrap();
+        write_u16_le(&mut mem, used + 2, 0).unwrap();
+
+        let chain = match queue
+            .pop_descriptor_chain(&mem)
+            .unwrap()
+            .expect("expected descriptor chain")
+        {
+            PoppedDescriptorChain::Chain(chain) => chain,
+            PoppedDescriptorChain::Invalid { error, .. } => {
+                panic!("unexpected descriptor chain parse error: {error:?}")
+            }
+        };
+
+        snd.event_buffers.push_back(chain);
+        snd.pending_events.push_back(vec![1, 2, 3, 4]);
+        assert!(!snd.event_buffers.is_empty());
+        assert!(!snd.pending_events.is_empty());
+
+        snd.restore_state(&io_state::VirtioSndState::default());
+        assert!(
+            snd.event_buffers.is_empty(),
+            "restore_state must clear guest-provided event buffers"
+        );
+        assert!(
+            snd.pending_events.is_empty(),
+            "restore_state must clear pending event payloads"
+        );
+    }
+
+    #[test]
     fn virtio_snd_config_reports_two_streams() {
         let snd = VirtioSnd::new(aero_audio::ring::AudioRingBuffer::new_stereo(8));
         let mut cfg = [0u8; 12];
