@@ -92,7 +92,7 @@ You can view these via:
 certlm.msc
 ```
 
-> The in-tree helper script `scripts/install-test-cert.ps1` installs to these two LocalMachine stores.
+> The in-tree helper script `./scripts/install-test-cert.ps1` installs to these two LocalMachine stores.
 
 ### 3) SHA-1 vs SHA-2 (Win7 update dependency)
 

@@ -92,7 +92,7 @@ Quick map:
 - Repo root `index.html` + `src/` – **canonical** browser host app (Vite; used by CI/Playwright)
 - `vite.harness.config.ts` – Vite config for the repo-root app (sets COOP/COEP + CSP for tests)
 - `web/` – shared runtime modules + WASM build tooling (and a legacy/experimental Vite entrypoint at `web/index.html`)
-- `crates/` – Rust workspace crates (emulator core + supporting libs)
+- `crates/` – Rust workspace crates (canonical `aero-machine` stack + supporting libs; `crates/emulator` is legacy/compat)
 - `backend/`, `services/` – maintained backend services
 - `proxy/` – maintained networking relays (e.g. `proxy/webrtc-udp-relay`)
 - `net-proxy/` – local-dev WebSocket TCP/UDP relay + DNS-over-HTTPS endpoints (run alongside `vite dev`)

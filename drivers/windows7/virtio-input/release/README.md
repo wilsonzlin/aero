@@ -126,7 +126,7 @@ If you pass `-IncludeTestCert`, `package-release.ps1` will copy a public certifi
 
 It searches in this order:
 
-1. `drivers/windows7/virtio-input/cert/aero-virtio-input-test.cer` (created by `scripts/make-cert.ps1`), otherwise
+1. `drivers/windows7/virtio-input/cert/aero-virtio-input-test.cer` (created by `drivers/windows7/virtio-input/scripts/make-cert.ps1`), otherwise
 2. any `*.cer` found under `-InputDir`
 
 The private key (`*.pfx`) is **never** included.
