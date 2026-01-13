@@ -124,6 +124,66 @@ impl HdaController {
     }
 
     pub fn mmio_write(&mut self, offset: u32, size: usize, value: u64) {
+        // Some guests use a 32-bit write to SDnCTL where the upper byte is used as a write-1-to-clear
+        // mask for SDnSTS. If the low 24 bits are all zero, treat it as a status-only write so we
+        // don't accidentally stop the stream (matches canonical `aero-audio` behaviour).
+        if size == 4 {
+            let v = value as u32;
+            let sts_clear = (v >> 24) as u8;
+            let ctl = v & 0x00ff_ffff;
+            match offset {
+                HDA_SD0CTL => {
+                    if sts_clear != 0 {
+                        self.out_stream0.mmio_write_byte(
+                            StreamReg::CtlSts,
+                            3,
+                            sts_clear,
+                            &mut self.intsts,
+                        );
+                    }
+                    if ctl != 0 || sts_clear == 0 {
+                        for i in 0..3u8 {
+                            self.out_stream0.mmio_write_byte(
+                                StreamReg::CtlSts,
+                                i,
+                                ((ctl >> (u32::from(i) * 8)) & 0xff) as u8,
+                                &mut self.intsts,
+                            );
+                        }
+                    }
+
+                    self.recalc_intsts_summary();
+                    self.update_irq_line();
+                    return;
+                }
+                HDA_SD1CTL => {
+                    if sts_clear != 0 {
+                        self.in_stream0.mmio_write_byte(
+                            StreamReg::CtlSts,
+                            3,
+                            sts_clear,
+                            &mut self.intsts,
+                        );
+                    }
+                    if ctl != 0 || sts_clear == 0 {
+                        for i in 0..3u8 {
+                            self.in_stream0.mmio_write_byte(
+                                StreamReg::CtlSts,
+                                i,
+                                ((ctl >> (u32::from(i) * 8)) & 0xff) as u8,
+                                &mut self.intsts,
+                            );
+                        }
+                    }
+
+                    self.recalc_intsts_summary();
+                    self.update_irq_line();
+                    return;
+                }
+                _ => {}
+            }
+        }
+
         let capped = size.min(8);
         for i in 0..capped {
             let b = ((value >> (i * 8)) & 0xff) as u8;
@@ -444,6 +504,33 @@ mod tests {
 
         // A 32-bit access at SD0LVI spans LVI + FIFOW.
         assert_eq!(hda.mmio_read(HDA_SD0LVI, 4) as u32, 0x5678_0034);
+    }
+
+    #[test]
+    fn stream_status_dword_write_does_not_clear_ctl_bits() {
+        let mut hda = HdaController::new();
+
+        // Set some control bits, and a status byte with BCIS set.
+        hda.mmio_write(
+            HDA_SD0CTL,
+            4,
+            (SD_CTL_SRST | SD_CTL_RUN | SD_CTL_IOCE) as u64,
+        );
+        hda.out_stream0.test_set_sts(0b111);
+
+        let before = hda.mmio_read(HDA_SD0CTL, 4) as u32;
+        let before_ctl = before & 0x00ff_ffff;
+        assert_ne!(before_ctl, 0);
+
+        // Clear BCIS via a dword write that only sets the status byte.
+        hda.mmio_write(HDA_SD0CTL, 4, (SD_STS_BCIS as u64) << 24);
+
+        let after = hda.mmio_read(HDA_SD0CTL, 4) as u32;
+        let after_ctl = after & 0x00ff_ffff;
+        let after_sts = (after >> 24) as u8;
+
+        assert_eq!(after_ctl, before_ctl);
+        assert_eq!(after_sts, 0b011);
     }
 
     #[test]
