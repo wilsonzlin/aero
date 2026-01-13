@@ -178,6 +178,17 @@ contents (and `SOURCE_DATE_EPOCH`, if set) are identical.
 - Falls back to the legacy IMAPI2-based PowerShell implementation on Windows if `cargo` is missing.
 - Use `-LegacyIso` to force the IMAPI2 path (Windows only).
 
+### Signing policy
+
+- `-SigningPolicy test` (default):
+  - Requires `-CertPath` (`out/certs/aero-test.cer` by default).
+  - Bundles `aero-test.cer` into the ZIP/ISO roots.
+  - `INSTALL.txt` includes certificate installation + test signing instructions.
+- `-SigningPolicy production` (or `none`):
+  - Does **not** require `-CertPath`.
+  - Does **not** bundle `aero-test.cer`.
+  - `INSTALL.txt` omits certificate/test signing steps and notes that drivers are expected to be production/WHQL signed.
+
 Artifacts (typical):
 
 - `AeroVirtIO-Win7-<version>-x86.zip`
@@ -272,10 +283,12 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File ci/package-guest-tools.ps1 -SpecPa
 
 Creates a **mountable FAT32 VHD** containing a prepared driver package directory:
 
-- `aero-test.cer`
+- `aero-test.cer` (SigningPolicy=test only)
 - `INSTALL.txt`
 - `x86/`
 - `x64/`
+
+`aero-test.cer` is optional when `-SigningPolicy production` (or `none`).
 
 Notes:
 

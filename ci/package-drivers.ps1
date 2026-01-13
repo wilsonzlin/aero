@@ -1,6 +1,20 @@
 [CmdletBinding()]
 param(
     [string] $InputRoot = "out/packages",
+
+    # Driver signing / boot policy for the packaged media.
+    #
+    # - test: media is intended for test-signed/custom-signed drivers (default)
+    # - production: media is intended for WHQL/production-signed drivers (no cert injection)
+    # - none: same as production (development use)
+    #
+    # Legacy aliases accepted:
+    # - testsigning / test-signing -> test
+    # - nointegritychecks / no-integrity-checks -> none
+    # - prod / whql -> production
+    [ValidateSet("test", "production", "none", "testsigning", "test-signing", "nointegritychecks", "no-integrity-checks", "prod", "whql")]
+    [string] $SigningPolicy = "test",
+
     [string] $CertPath = "out/certs/aero-test.cer",
     [string] $OutDir = "out/artifacts",
     # By default, the script only allows OutDir under <repo>/out to avoid accidental deletion of
@@ -86,6 +100,21 @@ function Assert-SafeOutDir {
     }
 
     throw "Refusing to use -OutDir outside '$repoOut': $outFull`r`nPass -AllowUnsafeOutDir to override."
+}
+
+function Normalize-SigningPolicy {
+    param([Parameter(Mandatory = $true)][string] $Policy)
+
+    $p = $Policy.Trim().ToLowerInvariant()
+    switch ($p) {
+        "testsigning" { return "test" }
+        "test-signing" { return "test" }
+        "nointegritychecks" { return "none" }
+        "no-integrity-checks" { return "none" }
+        "prod" { return "production" }
+        "whql" { return "production" }
+        default { return $p }
+    }
 }
 
 function Assert-CiPackagedDriversOnly {
@@ -438,59 +467,99 @@ function Assert-ContainsFileExtension {
 }
 
 function Write-InstallTxt {
-    param([Parameter(Mandatory = $true)][string] $DestPath)
-
-    $lines = @(
-        "AeroVirtIO Windows 7 Driver Package",
-        "",
-        "This folder contains signed driver packages for Windows 7 (x86 + x64).",
-        "These drivers are signed with a TEST certificate and are not suitable for production use.",
-        "",
-        "1) Enable test signing (Windows 7 x64 only)",
-        "-------------------------------------------",
-        "Open an elevated Command Prompt and run:",
-        "  bcdedit /set testsigning on",
-        "Reboot the machine.",
-        "",
-        "To disable later:",
-        "  bcdedit /set testsigning off",
-        "",
-        "2) Import the signing certificate",
-        "---------------------------------",
-        "The certificate is included as: aero-test.cer",
-        "",
-        "Option A (GUI):",
-        "  - Run: certmgr.msc",
-        "  - Import aero-test.cer into BOTH:",
-        "      * Trusted Root Certification Authorities",
-        "      * Trusted Publishers",
-        "",
-        "Option B (Command line, elevated):",
-        "  certutil -addstore -f Root aero-test.cer",
-        "  certutil -addstore -f TrustedPublisher aero-test.cer",
-        "",
-        "3) Install drivers (PnPUtil)",
-        "----------------------------",
-        "Open an elevated Command Prompt in the folder containing the driver files and run:",
-        "  pnputil -i -a <path-to-driver.inf>",
-        "",
-        "Example (bundle ZIP/ISO layout):",
-        "  pnputil -i -a drivers\\<driver>\\x64\\<something>.inf",
-        "",
-        "Example (FAT disk image layout):",
-        "  pnputil -i -a x64\\<driver>\\<something>.inf",
-        "",
-        "4) Windows Setup: \"Load driver\"",
-        "--------------------------------",
-        "Mount the ISO (if produced) or attach the FAT driver disk image (if produced).",
-        "Then choose:",
-        "  Install Windows -> Load driver -> Browse",
-        "",
-        "Driver locations:",
-        "  - Bundle ZIP/ISO: drivers\\<driver>\\x86\\*.inf or drivers\\<driver>\\x64\\*.inf",
-        "  - FAT disk image: x86\\<driver>\\*.inf or x64\\<driver>\\*.inf",
-        ""
+    param(
+        [Parameter(Mandatory = $true)][string] $DestPath,
+        [Parameter(Mandatory = $true)][string] $SigningPolicy
     )
+
+    $normalizedPolicy = Normalize-SigningPolicy -Policy $SigningPolicy
+
+    if ($normalizedPolicy -eq "test") {
+        $lines = @(
+            "AeroVirtIO Windows 7 Driver Package",
+            "",
+            "This folder contains signed driver packages for Windows 7 (x86 + x64).",
+            "These drivers are signed with a TEST certificate and are not suitable for production use.",
+            "",
+            "1) Enable test signing (Windows 7 x64 only)",
+            "-------------------------------------------",
+            "Open an elevated Command Prompt and run:",
+            "  bcdedit /set testsigning on",
+            "Reboot the machine.",
+            "",
+            "To disable later:",
+            "  bcdedit /set testsigning off",
+            "",
+            "2) Import the signing certificate",
+            "---------------------------------",
+            "The certificate is included as: aero-test.cer",
+            "",
+            "Option A (GUI):",
+            "  - Run: certmgr.msc",
+            "  - Import aero-test.cer into BOTH:",
+            "      * Trusted Root Certification Authorities",
+            "      * Trusted Publishers",
+            "",
+            "Option B (Command line, elevated):",
+            "  certutil -addstore -f Root aero-test.cer",
+            "  certutil -addstore -f TrustedPublisher aero-test.cer",
+            "",
+            "3) Install drivers (PnPUtil)",
+            "----------------------------",
+            "Open an elevated Command Prompt in the folder containing the driver files and run:",
+            "  pnputil -i -a <path-to-driver.inf>",
+            "",
+            "Example (bundle ZIP/ISO layout):",
+            "  pnputil -i -a drivers\\<driver>\\x64\\<something>.inf",
+            "",
+            "Example (FAT disk image layout):",
+            "  pnputil -i -a x64\\<driver>\\<something>.inf",
+            "",
+            "4) Windows Setup: \"Load driver\"",
+            "--------------------------------",
+            "Mount the ISO (if produced) or attach the FAT driver disk image (if produced).",
+            "Then choose:",
+            "  Install Windows -> Load driver -> Browse",
+            "",
+            "Driver locations:",
+            "  - Bundle ZIP/ISO: drivers\\<driver>\\x86\\*.inf or drivers\\<driver>\\x64\\*.inf",
+            "  - FAT disk image: x86\\<driver>\\*.inf or x64\\<driver>\\*.inf",
+            ""
+        )
+    } else {
+        $lines = @(
+            "AeroVirtIO Windows 7 Driver Package",
+            "",
+            "This folder contains signed driver packages for Windows 7 (x86 + x64).",
+            "These drivers are expected to be production/WHQL signed.",
+            "No custom test certificate is included in this package.",
+            "",
+            "1) Install drivers (PnPUtil)",
+            "----------------------------",
+            "Open an elevated Command Prompt in the folder containing the driver files and run:",
+            "  pnputil -i -a <path-to-driver.inf>",
+            "",
+            "Example (bundle ZIP/ISO layout):",
+            "  pnputil -i -a drivers\\<driver>\\x64\\<something>.inf",
+            "",
+            "Example (FAT disk image layout):",
+            "  pnputil -i -a x64\\<driver>\\<something>.inf",
+            "",
+            "2) Windows Setup: \"Load driver\"",
+            "--------------------------------",
+            "Mount the ISO (if produced) or attach the FAT driver disk image (if produced).",
+            "Then choose:",
+            "  Install Windows -> Load driver -> Browse",
+            "",
+            "Driver locations:",
+            "  - Bundle ZIP/ISO: drivers\\<driver>\\x86\\*.inf or drivers\\<driver>\\x64\\*.inf",
+            "  - FAT disk image: x86\\<driver>\\*.inf or x64\\<driver>\\*.inf",
+            "",
+            "If you are using test-signed drivers, re-run packaging with -SigningPolicy test to",
+            "include aero-test.cer and test signing instructions.",
+            ""
+        )
+    }
 
     $dir = Split-Path -Parent $DestPath
     New-Item -ItemType Directory -Force -Path $dir | Out-Null
@@ -505,12 +574,19 @@ function Write-InstallTxt {
 function New-DriverArtifactRoot {
     param(
         [Parameter(Mandatory = $true)][string] $DestRoot,
-        [Parameter(Mandatory = $true)][string] $CertSourcePath
+        [Parameter(Mandatory = $true)][string] $SigningPolicy,
+        [string] $CertSourcePath,
+        [switch] $IncludeCerts
     )
 
     New-Item -ItemType Directory -Force -Path $DestRoot | Out-Null
-    Copy-Item -Path $CertSourcePath -Destination (Join-Path $DestRoot "aero-test.cer") -Force
-    Write-InstallTxt -DestPath (Join-Path $DestRoot "INSTALL.txt")
+    if ($IncludeCerts) {
+        if ([string]::IsNullOrWhiteSpace($CertSourcePath)) {
+            throw "New-DriverArtifactRoot: CertSourcePath is required when IncludeCerts is set."
+        }
+        Copy-Item -Path $CertSourcePath -Destination (Join-Path $DestRoot "aero-test.cer") -Force
+    }
+    Write-InstallTxt -DestPath (Join-Path $DestRoot "INSTALL.txt") -SigningPolicy $SigningPolicy
 }
 
 function Copy-DriversForArch {
@@ -580,11 +656,13 @@ function Copy-DriversForArch {
 function New-FatImageInputFromBundle {
     param(
         [Parameter(Mandatory = $true)][string] $BundleRoot,
-        [Parameter(Mandatory = $true)][string] $CertSourcePath,
-        [Parameter(Mandatory = $true)][string] $DestRoot
+        [Parameter(Mandatory = $true)][string] $SigningPolicy,
+        [string] $CertSourcePath,
+        [Parameter(Mandatory = $true)][string] $DestRoot,
+        [switch] $IncludeCerts
     )
 
-    New-DriverArtifactRoot -DestRoot $DestRoot -CertSourcePath $CertSourcePath
+    New-DriverArtifactRoot -DestRoot $DestRoot -SigningPolicy $SigningPolicy -CertSourcePath $CertSourcePath -IncludeCerts:$IncludeCerts
 
     $x86Root = Join-Path $DestRoot "x86"
     $x64Root = Join-Path $DestRoot "x64"
@@ -890,6 +968,7 @@ function Write-IntegrityManifest {
 function Invoke-PackageDrivers {
     param(
         [Parameter(Mandatory = $true)][string] $InputRoot,
+        [Parameter(Mandatory = $true)][string] $SigningPolicy,
         [Parameter(Mandatory = $true)][string] $CertPath,
         [Parameter(Mandatory = $true)][string] $OutDir,
         [Parameter(Mandatory = $true)][string] $RepoRoot,
@@ -907,13 +986,18 @@ function Invoke-PackageDrivers {
     $outDirResolved = Resolve-RepoPath -Path $OutDir
     $repoRootResolved = Resolve-RepoPath -Path $RepoRoot
 
+    $SigningPolicy = Normalize-SigningPolicy -Policy $SigningPolicy
+    $includeCerts = $SigningPolicy -eq "test"
+
     Assert-SafeOutDir -RepoRoot $repoRootResolved -OutDir $outDirResolved -AllowUnsafeOutDir:$AllowUnsafeOutDir
 
     if (-not (Test-Path $inputRootResolved)) {
         throw "InputRoot does not exist: '$inputRootResolved'."
     }
-    if (-not (Test-Path $certPathResolved)) {
-        throw "CertPath does not exist: '$certPathResolved'."
+    if ($includeCerts) {
+        if (-not (Test-Path -LiteralPath $certPathResolved -PathType Leaf)) {
+            throw "CertPath does not exist: '$certPathResolved'."
+        }
     }
 
     Assert-CiPackagedDriversOnly -InputRoot $inputRootResolved -RepoRoot $repoRootResolved
@@ -950,9 +1034,9 @@ function Invoke-PackageDrivers {
     $stageBundle = Join-Path $stagingBase "bundle"
     $stageFat = Join-Path $stagingBase "fat"
 
-    New-DriverArtifactRoot -DestRoot $stageX86 -CertSourcePath $certPathResolved
-    New-DriverArtifactRoot -DestRoot $stageX64 -CertSourcePath $certPathResolved
-    New-DriverArtifactRoot -DestRoot $stageBundle -CertSourcePath $certPathResolved
+    New-DriverArtifactRoot -DestRoot $stageX86 -SigningPolicy $SigningPolicy -CertSourcePath $certPathResolved -IncludeCerts:$includeCerts
+    New-DriverArtifactRoot -DestRoot $stageX64 -SigningPolicy $SigningPolicy -CertSourcePath $certPathResolved -IncludeCerts:$includeCerts
+    New-DriverArtifactRoot -DestRoot $stageBundle -SigningPolicy $SigningPolicy -CertSourcePath $certPathResolved -IncludeCerts:$includeCerts
 
     Copy-DriversForArch -InputRoot $inputRootResolved -Arches @("x86") -DestRoot $stageX86
     Copy-DriversForArch -InputRoot $inputRootResolved -Arches @("x64") -DestRoot $stageX64
@@ -1000,14 +1084,14 @@ function Invoke-PackageDrivers {
         }
 
         if ($shouldMakeFatImage) {
-            New-FatImageInputFromBundle -BundleRoot $stageBundle -CertSourcePath $certPathResolved -DestRoot $stageFat
+            New-FatImageInputFromBundle -BundleRoot $stageBundle -SigningPolicy $SigningPolicy -CertSourcePath $certPathResolved -DestRoot $stageFat -IncludeCerts:$includeCerts
 
             $helper = Join-Path $PSScriptRoot "make-fat-image.ps1"
             if (-not (Test-Path $helper)) {
                 throw "Missing helper script: '$helper'."
             }
 
-            & $helper -SourceDir $stageFat -OutFile $fatVhd -SizeMB $FatImageSizeMB -Strict:$FatImageStrict
+            & $helper -SourceDir $stageFat -OutFile $fatVhd -SizeMB $FatImageSizeMB -Strict:$FatImageStrict -SigningPolicy $SigningPolicy
         }
 
         if ($shouldWriteManifests) {
@@ -1069,6 +1153,7 @@ function Invoke-PackageDrivers {
 function Invoke-DeterminismSelfTest {
     param(
         [Parameter(Mandatory = $true)][string] $InputRoot,
+        [Parameter(Mandatory = $true)][string] $SigningPolicy,
         [Parameter(Mandatory = $true)][string] $CertPath,
         [Parameter(Mandatory = $true)][string] $RepoRoot,
         [string] $Version
@@ -1101,8 +1186,8 @@ function Invoke-DeterminismSelfTest {
         # external FAT image tooling.
         $env:AERO_MAKE_FAT_IMAGE = "0"
 
-        $r1 = Invoke-PackageDrivers -InputRoot $inputCandidate -CertPath $certCandidate -OutDir $out1 -RepoRoot $repoRootResolved -Version $Version -NoIso -MakeFatImage:$false -NoManifest -AllowUnsafeOutDir
-        $r2 = Invoke-PackageDrivers -InputRoot $inputCandidate -CertPath $certCandidate -OutDir $out2 -RepoRoot $repoRootResolved -Version $Version -NoIso -MakeFatImage:$false -NoManifest -AllowUnsafeOutDir
+        $r1 = Invoke-PackageDrivers -InputRoot $inputCandidate -SigningPolicy $SigningPolicy -CertPath $certCandidate -OutDir $out1 -RepoRoot $repoRootResolved -Version $Version -NoIso -MakeFatImage:$false -NoManifest -AllowUnsafeOutDir
+        $r2 = Invoke-PackageDrivers -InputRoot $inputCandidate -SigningPolicy $SigningPolicy -CertPath $certCandidate -OutDir $out2 -RepoRoot $repoRootResolved -Version $Version -NoIso -MakeFatImage:$false -NoManifest -AllowUnsafeOutDir
 
         $h1 = (Get-FileHash -Algorithm SHA256 -LiteralPath $r1.ZipBundle).Hash
         $h2 = (Get-FileHash -Algorithm SHA256 -LiteralPath $r2.ZipBundle).Hash
@@ -1123,8 +1208,8 @@ function Invoke-DeterminismSelfTest {
 }
 
 if ($DeterminismSelfTest) {
-    Invoke-DeterminismSelfTest -InputRoot $InputRoot -CertPath $CertPath -RepoRoot "." -Version $Version
+    Invoke-DeterminismSelfTest -InputRoot $InputRoot -SigningPolicy $SigningPolicy -CertPath $CertPath -RepoRoot "." -Version $Version
     exit 0
 }
 
-$null = Invoke-PackageDrivers -InputRoot $InputRoot -CertPath $CertPath -OutDir $OutDir -RepoRoot "." -Version $Version -NoIso:$NoIso -MakeFatImage:$MakeFatImage -FatImageStrict:$FatImageStrict -FatImageSizeMB $FatImageSizeMB -NoManifest:$NoManifest -AllowUnsafeOutDir:$AllowUnsafeOutDir
+$null = Invoke-PackageDrivers -InputRoot $InputRoot -SigningPolicy $SigningPolicy -CertPath $CertPath -OutDir $OutDir -RepoRoot "." -Version $Version -NoIso:$NoIso -MakeFatImage:$MakeFatImage -FatImageStrict:$FatImageStrict -FatImageSizeMB $FatImageSizeMB -NoManifest:$NoManifest -AllowUnsafeOutDir:$AllowUnsafeOutDir

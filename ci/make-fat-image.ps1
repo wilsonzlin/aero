@@ -2,12 +2,26 @@
 param(
     # Directory containing the signed driver package root.
     # Expected layout:
-    #   aero-test.cer
+    #   aero-test.cer (SigningPolicy=test only)
     #   INSTALL.txt
     #   x86/...
     #   x64/...
     [Parameter(Mandatory = $true)]
     [string]$SourceDir,
+
+    # Driver signing / boot policy for the packaged media. Controls whether the source
+    # directory is expected to include aero-test.cer.
+    #
+    # - test: media is intended for test-signed/custom-signed drivers (default)
+    # - production: media is intended for WHQL/production-signed drivers (no cert injection)
+    # - none: same as production (development use)
+    #
+    # Legacy aliases accepted:
+    # - testsigning / test-signing -> test
+    # - nointegritychecks / no-integrity-checks -> none
+    # - prod / whql -> production
+    [ValidateSet("test", "production", "none", "testsigning", "test-signing", "nointegritychecks", "no-integrity-checks", "prod", "whql")]
+    [string]$SigningPolicy = "test",
 
     # Destination FAT disk image. VHD is used because it's createable with built-in
     # Windows tools (DiskPart) without external dependencies.
@@ -30,6 +44,21 @@ function Test-IsWindowsPlatform {
 }
 
 $isWindows = Test-IsWindowsPlatform
+
+function Normalize-SigningPolicy {
+    param([Parameter(Mandatory = $true)][string] $Policy)
+
+    $p = $Policy.Trim().ToLowerInvariant()
+    switch ($p) {
+        "testsigning" { return "test" }
+        "test-signing" { return "test" }
+        "nointegritychecks" { return "none" }
+        "no-integrity-checks" { return "none" }
+        "prod" { return "production" }
+        "whql" { return "production" }
+        default { return $p }
+    }
+}
 
 function Test-IsAdministrator {
     if (-not $isWindows) {
@@ -95,7 +124,15 @@ if (-not (Test-Path -LiteralPath $sourceDirPath -PathType Container)) {
     throw "SourceDir '$SourceDir' does not exist or is not a directory."
 }
 
-foreach ($rel in @("aero-test.cer", "INSTALL.txt", "x86", "x64")) {
+$SigningPolicy = Normalize-SigningPolicy -Policy $SigningPolicy
+$includeCerts = $SigningPolicy -eq "test"
+
+$requiredPaths = @("INSTALL.txt", "x86", "x64")
+if ($includeCerts) {
+    $requiredPaths = @("aero-test.cer") + $requiredPaths
+}
+
+foreach ($rel in $requiredPaths) {
     $p = Join-Path $sourceDirPath $rel
     if (-not (Test-Path -LiteralPath $p)) {
         throw "SourceDir is missing required path '$rel' ($p)."
@@ -182,7 +219,7 @@ exit
         Copy-Item -Path (Join-Path $sourceDirPath "*") -Destination $destRoot -Recurse -Force
     }
 
-    foreach ($rel in @("aero-test.cer", "INSTALL.txt", "x86", "x64")) {
+    foreach ($rel in $requiredPaths) {
         $p = Join-Path $destRoot $rel
         if (-not (Test-Path -LiteralPath $p)) {
             throw "FAT image verification failed: missing '$rel' in mounted image ($p)."
