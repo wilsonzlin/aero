@@ -674,6 +674,41 @@ mod tests {
     }
 
     #[test]
+    fn pipeline_bindings_info_allows_geometry_group_3() {
+        pollster::block_on(async {
+            let rt = match crate::runtime::aerogpu_execute::AerogpuCmdRuntime::new_for_tests().await
+            {
+                Ok(rt) => rt,
+                Err(err) => {
+                    skip_or_panic(module_path!(), &format!("wgpu unavailable ({err:#})"));
+                    return;
+                }
+            };
+            let device = rt.device();
+            let mut layout_cache = BindGroupLayoutCache::new();
+
+            let gs = vec![crate::Binding {
+                group: 3,
+                binding: BINDING_BASE_TEXTURE,
+                // Geometry shaders are emulated through compute passes; the binding model marks
+                // their resources as compute-visible.
+                visibility: wgpu::ShaderStages::COMPUTE,
+                kind: crate::BindingKind::Texture2D { slot: 0 },
+            }];
+
+            let info =
+                build_pipeline_bindings_info(device, &mut layout_cache, [gs.as_slice()]).unwrap();
+
+            assert_eq!(info.group_layouts.len(), 4);
+            assert_eq!(info.group_bindings.len(), 4);
+            assert!(info.group_bindings[0].is_empty());
+            assert!(info.group_bindings[1].is_empty());
+            assert!(info.group_bindings[2].is_empty());
+            assert_eq!(info.group_bindings[3], gs);
+        });
+    }
+
+    #[test]
     fn pipeline_bindings_info_deduplicates_and_unions_visibility() {
         pollster::block_on(async {
             let rt = match crate::runtime::aerogpu_execute::AerogpuCmdRuntime::new_for_tests().await
