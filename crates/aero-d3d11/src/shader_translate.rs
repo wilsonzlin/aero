@@ -292,7 +292,13 @@ fn translate_cs(module: &Sm4Module, rdef: Option<RdefChunk>) -> Result<ShaderTra
     let used_sivs = scan_used_compute_sivs(module, &io);
 
     let mut w = WgslWriter::new();
-    resources.emit_decls(&mut w, ShaderStage::Compute)?;
+    // The `protocol_d3d11` executor builds compute pipelines with a single bind group layout at
+    // `@group(0)`. Emit compute resources in group 0 so translated compute shaders can be executed
+    // by the protocol runtime.
+    //
+    // Note: The signature-driven AeroGPU binding model reserves `@group(2)` for compute resources;
+    // this is currently only exercised by the higher-level `aerogpu_cmd_executor`.
+    resources.emit_decls(&mut w, ShaderStage::Vertex)?;
 
     if !used_sivs.is_empty() {
         w.line("struct CsIn {");
@@ -2585,11 +2591,49 @@ fn emit_instructions(
                     opcode: "ld_raw".to_owned(),
                 });
             }
-            Sm4Inst::StoreRaw { .. } => {
-                return Err(ShaderTranslateError::UnsupportedInstruction {
-                    inst_index,
-                    opcode: "store_raw".to_owned(),
-                });
+            Sm4Inst::StoreRaw {
+                uav,
+                addr,
+                value,
+                mask,
+            } => {
+                if ctx.stage != ShaderStage::Compute {
+                    return Err(ShaderTranslateError::UnsupportedInstruction {
+                        inst_index,
+                        opcode: "store_raw".to_owned(),
+                    });
+                }
+
+                let addr_vec = emit_src_vec4(addr, inst_index, "store_raw", ctx)?;
+                let value_vec = emit_src_vec4(value, inst_index, "store_raw", ctx)?;
+
+                let mask_bits = mask.0 & 0xF;
+                if mask_bits == 0 {
+                    return Err(ShaderTranslateError::UnsupportedWriteMask {
+                        inst_index,
+                        opcode: "store_raw",
+                        mask: *mask,
+                    });
+                }
+
+                // `addr` is a raw byte offset into the UAV. Our internal register model is
+                // `vec4<f32>`, so interpret the lane as a raw u32 bit pattern.
+                let base_index = format!("(bitcast<u32>(({addr_vec}).x) >> 2u)");
+
+                for (bit, comp, lane_offset) in [
+                    (1u8, 'x', 0u32),
+                    (2u8, 'y', 1u32),
+                    (4u8, 'z', 2u32),
+                    (8u8, 'w', 3u32),
+                ] {
+                    if (mask_bits & bit) == 0 {
+                        continue;
+                    }
+                    w.line(&format!(
+                        "u{}.data[{base_index} + {lane_offset}u] = bitcast<u32>(({value_vec}).{comp});",
+                        uav.slot
+                    ));
+                }
             }
             Sm4Inst::LdStructured { .. } => {
                 return Err(ShaderTranslateError::UnsupportedInstruction {

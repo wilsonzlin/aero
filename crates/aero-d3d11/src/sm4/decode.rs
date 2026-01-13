@@ -320,10 +320,12 @@ mod tests {
         assert!(matches!(module.instructions[0], Sm4Inst::Mov { .. }));
         assert!(matches!(module.instructions[1], Sm4Inst::Ret));
         assert!(
-            !module
-                .instructions
-                .iter()
-                .any(|i| matches!(i, Sm4Inst::Unknown { opcode: OPCODE_CUSTOMDATA })),
+            !module.instructions.iter().any(|i| matches!(
+                i,
+                Sm4Inst::Unknown {
+                    opcode: OPCODE_CUSTOMDATA
+                }
+            )),
             "customdata must not be decoded as an executable instruction"
         );
 
@@ -396,10 +398,12 @@ mod tests {
         assert!(matches!(module.instructions[0], Sm4Inst::Mov { .. }));
         assert!(matches!(module.instructions[1], Sm4Inst::Ret));
         assert!(
-            !module
-                .instructions
-                .iter()
-                .any(|i| matches!(i, Sm4Inst::Unknown { opcode: OPCODE_CUSTOMDATA })),
+            !module.instructions.iter().any(|i| matches!(
+                i,
+                Sm4Inst::Unknown {
+                    opcode: OPCODE_CUSTOMDATA
+                }
+            )),
             "customdata must not be decoded as an executable instruction"
         );
 
@@ -434,7 +438,10 @@ mod tests {
 
         let err = decode_program(&program).expect_err("decode should fail");
         assert!(
-            matches!(err.kind, Sm4DecodeErrorKind::InstructionOutOfBounds { start: 2, .. }),
+            matches!(
+                err.kind,
+                Sm4DecodeErrorKind::InstructionOutOfBounds { start: 2, .. }
+            ),
             "expected InstructionOutOfBounds at dword 2, got {err:?}"
         );
     }
