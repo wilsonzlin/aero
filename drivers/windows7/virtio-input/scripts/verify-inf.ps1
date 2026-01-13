@@ -360,10 +360,12 @@ if ($sections.ContainsKey('Strings')) {
 
   $kbdLines = Get-MatchingLines -Lines $stringsLines -Regex '(?i)^AeroVirtioKeyboard\.DeviceDesc\s*='
   $mouseLines = Get-MatchingLines -Lines $stringsLines -Regex '(?i)^AeroVirtioMouse\.DeviceDesc\s*='
+  $genericLines = Get-MatchingLines -Lines $stringsLines -Regex '(?i)^AeroVirtioInput\.DeviceDesc\s*='
 
   if ($kbdLines.Count -ge 1 -and $mouseLines.Count -ge 1) {
     $kbdVal = $null
     $mouseVal = $null
+    $genericVal = $null
 
     if ($kbdLines[0] -match '(?i)^AeroVirtioKeyboard\.DeviceDesc\s*=\s*(?<val>.+)$') {
       $kbdVal = Unquote-InfString -Text $Matches['val']
@@ -371,11 +373,21 @@ if ($sections.ContainsKey('Strings')) {
     if ($mouseLines[0] -match '(?i)^AeroVirtioMouse\.DeviceDesc\s*=\s*(?<val>.+)$') {
       $mouseVal = Unquote-InfString -Text $Matches['val']
     }
+    if ($genericLines.Count -ge 1 -and ($genericLines[0] -match '(?i)^AeroVirtioInput\.DeviceDesc\s*=\s*(?<val>.+)$')) {
+      $genericVal = Unquote-InfString -Text $Matches['val']
+    }
 
     if (($null -ne $kbdVal) -and ($null -ne $mouseVal)) {
       if ($kbdVal -eq $mouseVal) {
         Add-Failure -Failures $failures -Message ("Keyboard and mouse DeviceDesc strings are identical ('{0}'); they should be distinct so the devices can be distinguished in Device Manager." -f $kbdVal)
       }
+    }
+
+    if (($null -ne $genericVal) -and ($null -ne $kbdVal) -and ($genericVal -eq $kbdVal)) {
+      Add-Failure -Failures $failures -Message ("Generic DeviceDesc string AeroVirtioInput.DeviceDesc must not equal AeroVirtioKeyboard.DeviceDesc ('{0}')." -f $genericVal)
+    }
+    if (($null -ne $genericVal) -and ($null -ne $mouseVal) -and ($genericVal -eq $mouseVal)) {
+      Add-Failure -Failures $failures -Message ("Generic DeviceDesc string AeroVirtioInput.DeviceDesc must not equal AeroVirtioMouse.DeviceDesc ('{0}')." -f $genericVal)
     }
   }
 }
