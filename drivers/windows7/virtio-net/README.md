@@ -22,13 +22,16 @@ This directory contains a clean-room, spec-based **virtio-net** driver for **Win
 ## Features (minimal bring-up)
 
 - Virtio handshake: `RESET → ACK → DRIVER → FEATURES_OK → DRIVER_OK`
-- Feature negotiation (minimal):
+- Feature negotiation:
   - Required: `VIRTIO_F_VERSION_1`, `VIRTIO_F_RING_INDIRECT_DESC`, `VIRTIO_NET_F_MAC`, `VIRTIO_NET_F_STATUS`
+  - Optional (wanted): `VIRTIO_NET_F_CSUM`, `VIRTIO_NET_F_HOST_TSO4`, `VIRTIO_NET_F_HOST_TSO6`
 - 1 RX/TX queue pair (queue 0 RX, queue 1 TX)
 - Interrupts:
   - INTx (via virtio ISR status register; read-to-ack, spurious-safe)
   - Optional MSI/MSI-X (message-signaled) when enabled via INF. The driver programs virtio MSI-X vectors for config/RX/TX and falls back to sharing vector 0 if Windows grants fewer messages.
-- No checksum offloads / TSO / LRO
+- TX offloads (when offered by the host and enabled by Windows):
+  - TCP checksum offload (IPv4/IPv6) via `VIRTIO_NET_F_CSUM`
+  - TCP segmentation offload (TSO/LSO, IPv4/IPv6) via `VIRTIO_NET_F_HOST_TSO4` / `VIRTIO_NET_F_HOST_TSO6`
 
 ## MSI / MSI-X interrupts (optional)
 

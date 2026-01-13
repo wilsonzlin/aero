@@ -1,8 +1,11 @@
 #include "../include/aero_virtio_net.h"
+#include "../include/aero_virtio_net_offload.h"
 
 #include "virtio_pci_aero_layout_miniport.h"
 
 #define AEROVNET_TAG 'tNvA'
+
+C_ASSERT(sizeof(VIRTIO_NET_HDR) == sizeof(AEROVNET_VIRTIO_NET_HDR));
 
 #ifndef PCI_WHICHSPACE_CONFIG
 #define PCI_WHICHSPACE_CONFIG 0
@@ -42,6 +45,9 @@ static const NDIS_OID g_SupportedOids[] = {
     OID_802_3_CURRENT_ADDRESS,
     OID_802_3_MULTICAST_LIST,
     OID_802_3_MAXIMUM_LIST_SIZE,
+
+    // TX offloads (Win7 NDIS 6.20)
+    OID_TCP_OFFLOAD_PARAMETERS,
 };
 
 // 1 Gbps default link speed.
@@ -1192,7 +1198,7 @@ static NDIS_STATUS AerovNetVirtioStart(_Inout_ AEROVNET_ADAPTER* Adapter) {
   RequiredFeatures = VIRTIO_NET_F_MAC | VIRTIO_NET_F_STATUS | AEROVNET_FEATURE_RING_INDIRECT_DESC;
   // Optional: allow the device to report receive checksum status via virtio-net
   // header flags (e.g. VIRTIO_NET_HDR_F_DATA_VALID).
-  WantedFeatures = VIRTIO_NET_F_CSUM | VIRTIO_NET_F_GUEST_CSUM;
+  WantedFeatures = VIRTIO_NET_F_CSUM | VIRTIO_NET_F_GUEST_CSUM | VIRTIO_NET_F_HOST_TSO4 | VIRTIO_NET_F_HOST_TSO6;
   NegotiatedFeatures = 0;
 
   NtStatus = VirtioPciNegotiateFeatures(&Adapter->Vdev, RequiredFeatures, WantedFeatures, &NegotiatedFeatures);
@@ -1201,6 +1207,18 @@ static NDIS_STATUS AerovNetVirtioStart(_Inout_ AEROVNET_ADAPTER* Adapter) {
   }
 
   Adapter->GuestFeatures = (UINT64)NegotiatedFeatures;
+
+  // Offload support depends on negotiated virtio-net features.
+  Adapter->TxChecksumSupported = (Adapter->GuestFeatures & VIRTIO_NET_F_CSUM) ? TRUE : FALSE;
+  Adapter->TxTsoV4Supported = (Adapter->TxChecksumSupported && (Adapter->GuestFeatures & VIRTIO_NET_F_HOST_TSO4)) ? TRUE : FALSE;
+  Adapter->TxTsoV6Supported = (Adapter->TxChecksumSupported && (Adapter->GuestFeatures & VIRTIO_NET_F_HOST_TSO6)) ? TRUE : FALSE;
+
+  // Enable all negotiated offloads by default; NDIS can toggle them via OID_TCP_OFFLOAD_PARAMETERS.
+  Adapter->TxChecksumV4Enabled = Adapter->TxChecksumSupported;
+  Adapter->TxChecksumV6Enabled = Adapter->TxChecksumSupported;
+  Adapter->TxTsoV4Enabled = Adapter->TxTsoV4Supported;
+  Adapter->TxTsoV6Enabled = Adapter->TxTsoV6Supported;
+  Adapter->TxTsoMaxOffloadSize = 0x00010000u; // 64KiB total packet size.
 
   if (Adapter->UseMsix) {
     // MSI/MSI-X: route config-change interrupts to the selected vector.
@@ -1742,8 +1760,119 @@ static VOID AerovNetProcessSgList(_In_ PDEVICE_OBJECT DeviceObject, _In_opt_ PVO
     TxReq->State = AerovNetTxPendingSubmit;
     InsertTailList(&Adapter->TxPendingList, &TxReq->Link);
   } else {
-    // Prepare virtio descriptors: header + payload SG elements.
-    RtlZeroMemory(TxReq->HeaderVa, sizeof(VIRTIO_NET_HDR));
+    // Prepare virtio descriptors: virtio-net header + payload SG elements.
+    //
+    // Populate VIRTIO_NET_HDR based on NDIS offload metadata when enabled.
+    {
+      NDIS_STATUS TxStatus;
+      AEROVNET_VIRTIO_NET_HDR BuiltHdr;
+      AEROVNET_TX_OFFLOAD_INTENT Intent;
+      AEROVNET_OFFLOAD_PARSE_INFO Info;
+      ULONG FrameLen;
+      UCHAR HeaderBytes[256];
+      ULONG CopyLen;
+      PVOID FramePtr;
+      AEROVNET_OFFLOAD_RESULT OffRes;
+
+      RtlZeroMemory(&Intent, sizeof(Intent));
+      RtlZeroMemory(&BuiltHdr, sizeof(BuiltHdr));
+      RtlZeroMemory(&Info, sizeof(Info));
+
+      // LSO/TSO request (per-NBL).
+      {
+        ULONG_PTR LsoVal = (ULONG_PTR)NET_BUFFER_LIST_INFO(TxReq->Nbl, TcpLargeSendNetBufferListInfo);
+        if (LsoVal != 0) {
+          USHORT Mss = (USHORT)(LsoVal & 0xFFFFFu); // MSS is stored in the low 20 bits.
+          Intent.WantTso = 1;
+          Intent.TsoMss = Mss;
+        }
+      }
+
+      // TCP checksum offload request (per-NBL).
+      if (!Intent.WantTso) {
+        NDIS_TCP_IP_CHECKSUM_NET_BUFFER_LIST_INFO CsumInfo;
+        CsumInfo.Value = (ULONG_PTR)NET_BUFFER_LIST_INFO(TxReq->Nbl, TcpIpChecksumNetBufferListInfo);
+
+        if (CsumInfo.Transmit.TcpChecksum) {
+          Intent.WantTcpChecksum = 1;
+        }
+
+        // Do not accept unsupported checksum requests (we only advertise TCP checksum).
+        if (CsumInfo.Transmit.UdpChecksum || CsumInfo.Transmit.IpHeaderChecksum) {
+          Intent.WantTcpChecksum = 0;
+          TxStatus = NDIS_STATUS_INVALID_PACKET;
+          goto CompleteBadOffload;
+        }
+      }
+
+      if (!Intent.WantTso && !Intent.WantTcpChecksum) {
+        // Normal packet: all zeros.
+        RtlZeroMemory(TxReq->HeaderVa, sizeof(VIRTIO_NET_HDR));
+      } else {
+        FrameLen = NET_BUFFER_DATA_LENGTH(TxReq->Nb);
+        CopyLen = (FrameLen < sizeof(HeaderBytes)) ? FrameLen : (ULONG)sizeof(HeaderBytes);
+
+        FramePtr = NdisGetDataBuffer(TxReq->Nb, CopyLen, HeaderBytes, 1, 0);
+        if (!FramePtr) {
+          TxStatus = NDIS_STATUS_INVALID_PACKET;
+          goto CompleteBadOffload;
+        }
+
+        OffRes = AerovNetBuildTxVirtioNetHdr((const uint8_t*)FramePtr, (size_t)CopyLen, &Intent, &BuiltHdr, &Info);
+        if (OffRes != AEROVNET_OFFLOAD_OK) {
+          TxStatus = NDIS_STATUS_INVALID_PACKET;
+          goto CompleteBadOffload;
+        }
+
+        // Enforce current offload enablement.
+        if (Intent.WantTso) {
+          if (Intent.TsoMss == 0) {
+            TxStatus = NDIS_STATUS_INVALID_PACKET;
+            goto CompleteBadOffload;
+          }
+          if (Info.IpVersion == 4) {
+            if (!Adapter->TxTsoV4Enabled) {
+              TxStatus = NDIS_STATUS_INVALID_PACKET;
+              goto CompleteBadOffload;
+            }
+          } else if (Info.IpVersion == 6) {
+            if (!Adapter->TxTsoV6Enabled) {
+              TxStatus = NDIS_STATUS_INVALID_PACKET;
+              goto CompleteBadOffload;
+            }
+          } else {
+            TxStatus = NDIS_STATUS_INVALID_PACKET;
+            goto CompleteBadOffload;
+          }
+        } else {
+          if (Info.IpVersion == 4) {
+            if (!Adapter->TxChecksumV4Enabled) {
+              TxStatus = NDIS_STATUS_INVALID_PACKET;
+              goto CompleteBadOffload;
+            }
+          } else if (Info.IpVersion == 6) {
+            if (!Adapter->TxChecksumV6Enabled) {
+              TxStatus = NDIS_STATUS_INVALID_PACKET;
+              goto CompleteBadOffload;
+            }
+          } else {
+            TxStatus = NDIS_STATUS_INVALID_PACKET;
+            goto CompleteBadOffload;
+          }
+        }
+
+        RtlCopyMemory(TxReq->HeaderVa, &BuiltHdr, sizeof(BuiltHdr));
+      }
+
+      goto HeaderDone;
+
+    CompleteBadOffload:
+      AerovNetCompleteTxRequest(Adapter, TxReq, TxStatus, &CompleteHead, &CompleteTail);
+      CompleteNow = TRUE;
+      goto ReleaseAndExit;
+
+    HeaderDone:;
+    }
 
     Sg[0].addr = (uint64_t)TxReq->HeaderPa.QuadPart;
     Sg[0].len = (uint32_t)sizeof(VIRTIO_NET_HDR);
@@ -1775,6 +1904,7 @@ static VOID AerovNetProcessSgList(_In_ PDEVICE_OBJECT DeviceObject, _In_opt_ PVO
     }
   }
 
+ReleaseAndExit:
   NdisReleaseSpinLock(&Adapter->Lock);
 
   if (CompleteNow) {
@@ -1799,6 +1929,94 @@ static VOID AerovNetProcessSgList(_In_ PDEVICE_OBJECT DeviceObject, _In_opt_ PVO
   if (InterlockedDecrement(&Adapter->OutstandingSgMappings) == 0) {
     KeSetEvent(&Adapter->OutstandingSgEvent, IO_NO_INCREMENT, FALSE);
   }
+}
+
+static VOID AerovNetBuildNdisOffload(_In_ const AEROVNET_ADAPTER* Adapter, _In_ BOOLEAN UseCurrentConfig, _Out_ NDIS_OFFLOAD* Offload) {
+  BOOLEAN CsumV4;
+  BOOLEAN CsumV6;
+  BOOLEAN TsoV4;
+  BOOLEAN TsoV6;
+
+  RtlZeroMemory(Offload, sizeof(*Offload));
+  Offload->Header.Type = NDIS_OBJECT_TYPE_OFFLOAD;
+  Offload->Header.Revision = NDIS_OFFLOAD_REVISION_1;
+  Offload->Header.Size = (USHORT)sizeof(*Offload);
+
+  if (UseCurrentConfig) {
+    CsumV4 = Adapter->TxChecksumV4Enabled;
+    CsumV6 = Adapter->TxChecksumV6Enabled;
+    TsoV4 = Adapter->TxTsoV4Enabled;
+    TsoV6 = Adapter->TxTsoV6Enabled;
+  } else {
+    CsumV4 = Adapter->TxChecksumSupported;
+    CsumV6 = Adapter->TxChecksumSupported;
+    TsoV4 = Adapter->TxTsoV4Supported;
+    TsoV6 = Adapter->TxTsoV6Supported;
+  }
+
+  // Checksum offload (TX only).
+  Offload->Checksum.IPv4Transmit.Encapsulation = NDIS_ENCAPSULATION_IEEE_802_3;
+  Offload->Checksum.IPv4Transmit.IpOptionsSupported = NDIS_OFFLOAD_NOT_SUPPORTED;
+  Offload->Checksum.IPv4Transmit.TcpOptionsSupported = CsumV4 ? NDIS_OFFLOAD_SUPPORTED : NDIS_OFFLOAD_NOT_SUPPORTED;
+  Offload->Checksum.IPv4Transmit.TcpChecksum = CsumV4 ? NDIS_OFFLOAD_SUPPORTED : NDIS_OFFLOAD_NOT_SUPPORTED;
+  Offload->Checksum.IPv4Transmit.UdpChecksum = NDIS_OFFLOAD_NOT_SUPPORTED;
+  Offload->Checksum.IPv4Transmit.IpChecksum = NDIS_OFFLOAD_NOT_SUPPORTED;
+
+  Offload->Checksum.IPv4Receive.Encapsulation = NDIS_ENCAPSULATION_IEEE_802_3;
+  Offload->Checksum.IPv4Receive.IpOptionsSupported = NDIS_OFFLOAD_NOT_SUPPORTED;
+  Offload->Checksum.IPv4Receive.TcpOptionsSupported = NDIS_OFFLOAD_NOT_SUPPORTED;
+  Offload->Checksum.IPv4Receive.TcpChecksum = NDIS_OFFLOAD_NOT_SUPPORTED;
+  Offload->Checksum.IPv4Receive.UdpChecksum = NDIS_OFFLOAD_NOT_SUPPORTED;
+  Offload->Checksum.IPv4Receive.IpChecksum = NDIS_OFFLOAD_NOT_SUPPORTED;
+
+  Offload->Checksum.IPv6Transmit.Encapsulation = NDIS_ENCAPSULATION_IEEE_802_3;
+  Offload->Checksum.IPv6Transmit.IpExtensionHeadersSupported = NDIS_OFFLOAD_NOT_SUPPORTED;
+  Offload->Checksum.IPv6Transmit.TcpOptionsSupported = CsumV6 ? NDIS_OFFLOAD_SUPPORTED : NDIS_OFFLOAD_NOT_SUPPORTED;
+  Offload->Checksum.IPv6Transmit.TcpChecksum = CsumV6 ? NDIS_OFFLOAD_SUPPORTED : NDIS_OFFLOAD_NOT_SUPPORTED;
+  Offload->Checksum.IPv6Transmit.UdpChecksum = NDIS_OFFLOAD_NOT_SUPPORTED;
+
+  Offload->Checksum.IPv6Receive.Encapsulation = NDIS_ENCAPSULATION_IEEE_802_3;
+  Offload->Checksum.IPv6Receive.IpExtensionHeadersSupported = NDIS_OFFLOAD_NOT_SUPPORTED;
+  Offload->Checksum.IPv6Receive.TcpOptionsSupported = NDIS_OFFLOAD_NOT_SUPPORTED;
+  Offload->Checksum.IPv6Receive.TcpChecksum = NDIS_OFFLOAD_NOT_SUPPORTED;
+  Offload->Checksum.IPv6Receive.UdpChecksum = NDIS_OFFLOAD_NOT_SUPPORTED;
+
+  // Large send offload v2 (TX only).
+  Offload->LsoV2.IPv4.Encapsulation = NDIS_ENCAPSULATION_IEEE_802_3;
+  Offload->LsoV2.IPv4.MaxOffLoadSize = TsoV4 ? Adapter->TxTsoMaxOffloadSize : 0;
+  Offload->LsoV2.IPv4.MinSegmentCount = TsoV4 ? 2 : 0;
+  Offload->LsoV2.IPv4.TcpOptionsSupported = TsoV4 ? NDIS_OFFLOAD_SUPPORTED : NDIS_OFFLOAD_NOT_SUPPORTED;
+  Offload->LsoV2.IPv4.IpOptionsSupported = NDIS_OFFLOAD_NOT_SUPPORTED;
+
+  Offload->LsoV2.IPv6.Encapsulation = NDIS_ENCAPSULATION_IEEE_802_3;
+  Offload->LsoV2.IPv6.MaxOffLoadSize = TsoV6 ? Adapter->TxTsoMaxOffloadSize : 0;
+  Offload->LsoV2.IPv6.MinSegmentCount = TsoV6 ? 2 : 0;
+  Offload->LsoV2.IPv6.TcpOptionsSupported = TsoV6 ? NDIS_OFFLOAD_SUPPORTED : NDIS_OFFLOAD_NOT_SUPPORTED;
+  Offload->LsoV2.IPv6.IpExtensionHeadersSupported = NDIS_OFFLOAD_NOT_SUPPORTED;
+}
+
+static NDIS_STATUS AerovNetSetOffloadAttributes(_Inout_ AEROVNET_ADAPTER* Adapter) {
+  NDIS_STATUS Status;
+  NDIS_OFFLOAD HwOffload;
+  NDIS_OFFLOAD DefaultOffload;
+  NDIS_MINIPORT_ADAPTER_OFFLOAD_ATTRIBUTES OffloadAttr;
+
+  if (!Adapter) {
+    return NDIS_STATUS_FAILURE;
+  }
+
+  AerovNetBuildNdisOffload(Adapter, FALSE, &HwOffload);
+  AerovNetBuildNdisOffload(Adapter, TRUE, &DefaultOffload);
+
+  RtlZeroMemory(&OffloadAttr, sizeof(OffloadAttr));
+  OffloadAttr.Header.Type = NDIS_OBJECT_TYPE_MINIPORT_ADAPTER_OFFLOAD_ATTRIBUTES;
+  OffloadAttr.Header.Revision = NDIS_MINIPORT_ADAPTER_OFFLOAD_ATTRIBUTES_REVISION_1;
+  OffloadAttr.Header.Size = (USHORT)sizeof(OffloadAttr);
+  OffloadAttr.DefaultOffloadConfiguration = &DefaultOffload;
+  OffloadAttr.HardwareOffloadCapabilities = &HwOffload;
+
+  Status = NdisMSetMiniportAttributes(Adapter->MiniportAdapterHandle, (PNDIS_MINIPORT_ADAPTER_ATTRIBUTES)&OffloadAttr);
+  return Status;
 }
 
 static NDIS_STATUS AerovNetOidQuery(_Inout_ AEROVNET_ADAPTER* Adapter, _Inout_ PNDIS_OID_REQUEST OidRequest) {
@@ -2159,6 +2377,119 @@ static NDIS_STATUS AerovNetOidSet(_Inout_ AEROVNET_ADAPTER* Adapter, _Inout_ PND
   ULONG BytesNeeded = 0;
 
   switch (Oid) {
+    case OID_TCP_OFFLOAD_PARAMETERS: {
+      NDIS_OFFLOAD_PARAMETERS* Params;
+      ULONG MinSize;
+
+      if (InLen < sizeof(NDIS_OBJECT_HEADER)) {
+        return NDIS_STATUS_INVALID_LENGTH;
+      }
+
+      Params = (NDIS_OFFLOAD_PARAMETERS*)InBuffer;
+      BytesNeeded = Params->Header.Size;
+      if (BytesNeeded == 0) {
+        return NDIS_STATUS_INVALID_DATA;
+      }
+      if (InLen < BytesNeeded) {
+        break;
+      }
+
+      // We only rely on fields present in revision 1.
+      MinSize = FIELD_OFFSET(NDIS_OFFLOAD_PARAMETERS, LsoV2IPv6) + sizeof(UCHAR);
+      if (Params->Header.Size < MinSize) {
+        return NDIS_STATUS_INVALID_DATA;
+      }
+
+      {
+        BOOLEAN TxCsumV4;
+        BOOLEAN TxCsumV6;
+        BOOLEAN TxTsoV4;
+        BOOLEAN TxTsoV6;
+
+        TxCsumV4 = Adapter->TxChecksumV4Enabled;
+        TxCsumV6 = Adapter->TxChecksumV6Enabled;
+        TxTsoV4 = Adapter->TxTsoV4Enabled;
+        TxTsoV6 = Adapter->TxTsoV6Enabled;
+
+        // NDIS_OFFLOAD_PARAMETERS fields are UCHAR enums:
+        // 0 = no change, 1 = disabled, 2 = tx enabled, 3 = rx enabled, 4 = tx+rx enabled.
+        // We only support transmit offloads.
+        {
+          UCHAR V = Params->TCPIPv4Checksum;
+          if (V != 0) {
+            if (V == 1 || V == 3) {
+              TxCsumV4 = FALSE;
+            } else if (V == 2 || V == 4) {
+              TxCsumV4 = TRUE;
+            } else {
+              return NDIS_STATUS_INVALID_DATA;
+            }
+          }
+        }
+
+        {
+          UCHAR V = Params->TCPIPv6Checksum;
+          if (V != 0) {
+            if (V == 1 || V == 3) {
+              TxCsumV6 = FALSE;
+            } else if (V == 2 || V == 4) {
+              TxCsumV6 = TRUE;
+            } else {
+              return NDIS_STATUS_INVALID_DATA;
+            }
+          }
+        }
+
+        {
+          UCHAR V = Params->LsoV2IPv4;
+          if (V != 0) {
+            if (V == 1 || V == 3) {
+              TxTsoV4 = FALSE;
+            } else if (V == 2 || V == 4) {
+              TxTsoV4 = TRUE;
+            } else {
+              return NDIS_STATUS_INVALID_DATA;
+            }
+          }
+        }
+
+        {
+          UCHAR V = Params->LsoV2IPv6;
+          if (V != 0) {
+            if (V == 1 || V == 3) {
+              TxTsoV6 = FALSE;
+            } else if (V == 2 || V == 4) {
+              TxTsoV6 = TRUE;
+            } else {
+              return NDIS_STATUS_INVALID_DATA;
+            }
+          }
+        }
+
+        // Clamp enablement by negotiated capabilities.
+        if (!Adapter->TxChecksumSupported) {
+          TxCsumV4 = FALSE;
+          TxCsumV6 = FALSE;
+        }
+        if (!Adapter->TxTsoV4Supported) {
+          TxTsoV4 = FALSE;
+        }
+        if (!Adapter->TxTsoV6Supported) {
+          TxTsoV6 = FALSE;
+        }
+
+        NdisAcquireSpinLock(&Adapter->Lock);
+        Adapter->TxChecksumV4Enabled = TxCsumV4;
+        Adapter->TxChecksumV6Enabled = TxCsumV6;
+        Adapter->TxTsoV4Enabled = TxTsoV4;
+        Adapter->TxTsoV6Enabled = TxTsoV6;
+        NdisReleaseSpinLock(&Adapter->Lock);
+      }
+
+      BytesRead = BytesNeeded;
+      break;
+    }
+
     case OID_GEN_CURRENT_PACKET_FILTER: {
       ULONG Filter;
       BytesNeeded = sizeof(Filter);
@@ -2322,16 +2653,37 @@ static VOID AerovNetMiniportSendNetBufferLists(_In_ NDIS_HANDLE MiniportAdapterC
         continue;
       }
 
-      // Contract v1 frame size rules: drop undersized/oversized frames.
-      // Complete the send successfully (Ethernet has no delivery guarantee).
+      // Contract v1 frame size rules:
+      // - Without TSO/LSO, drop undersized/oversized frames (<= 1522, incl. VLAN).
+      // - With negotiated + enabled TSO, allow larger packets when NDIS requests LSO.
+      //
+      // For plain Ethernet frames we complete successfully (no delivery guarantee).
       {
         ULONG FrameLen = NET_BUFFER_DATA_LENGTH(Nb);
-        if (FrameLen < 14 || FrameLen > 1522) {
-        Adapter->StatTxErrors++;
-        AerovNetTxNblCompleteOneNetBufferLocked(Adapter, Nbl, NDIS_STATUS_SUCCESS, &CompleteHead, &CompleteTail);
-        NdisReleaseSpinLock(&Adapter->Lock);
-        continue;
-      }
+        ULONG MaxLen = 1522;
+        BOOLEAN WantsLso = (NET_BUFFER_LIST_INFO(Nbl, TcpLargeSendNetBufferListInfo) != NULL) ? TRUE : FALSE;
+
+        if (WantsLso && (Adapter->TxTsoV4Enabled || Adapter->TxTsoV6Enabled)) {
+          MaxLen = Adapter->TxTsoMaxOffloadSize;
+        }
+
+        if (FrameLen < 14) {
+          Adapter->StatTxErrors++;
+          AerovNetTxNblCompleteOneNetBufferLocked(Adapter, Nbl, NDIS_STATUS_SUCCESS, &CompleteHead, &CompleteTail);
+          NdisReleaseSpinLock(&Adapter->Lock);
+          continue;
+        }
+
+        if (FrameLen > MaxLen) {
+          Adapter->StatTxErrors++;
+          if (WantsLso) {
+            AerovNetTxNblCompleteOneNetBufferLocked(Adapter, Nbl, NDIS_STATUS_INVALID_PACKET, &CompleteHead, &CompleteTail);
+          } else {
+            AerovNetTxNblCompleteOneNetBufferLocked(Adapter, Nbl, NDIS_STATUS_SUCCESS, &CompleteHead, &CompleteTail);
+          }
+          NdisReleaseSpinLock(&Adapter->Lock);
+          continue;
+        }
       }
 
       if (IsListEmpty(&Adapter->TxFreeList)) {
@@ -2737,6 +3089,13 @@ static NDIS_STATUS AerovNetMiniportInitializeEx(_In_ NDIS_HANDLE MiniportAdapter
   Gen.SupportedOidListLength = sizeof(g_SupportedOids);
 
   Status = NdisMSetMiniportAttributes(MiniportAdapterHandle, (PNDIS_MINIPORT_ADAPTER_ATTRIBUTES)&Gen);
+  if (Status != NDIS_STATUS_SUCCESS) {
+    AerovNetCleanupAdapter(Adapter);
+    return Status;
+  }
+
+  // Offload capabilities (only advertise negotiated virtio-net features).
+  Status = AerovNetSetOffloadAttributes(Adapter);
   if (Status != NDIS_STATUS_SUCCESS) {
     AerovNetCleanupAdapter(Adapter);
     return Status;

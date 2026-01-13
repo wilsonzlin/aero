@@ -1,0 +1,215 @@
+/* SPDX-License-Identifier: MIT OR Apache-2.0 */
+
+#include <assert.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "aero_virtio_net_offload.h"
+
+/*
+ * Keep assert() active even in Release builds (CMake defines NDEBUG).
+ * See drivers/windows7/virtio/common/tests/test_main.c for rationale.
+ */
+#undef assert
+#define assert(expr)                                                                                                   \
+    do {                                                                                                               \
+        if (!(expr)) {                                                                                                 \
+            fprintf(stderr, "ASSERT failed at %s:%d: %s\n", __FILE__, __LINE__, #expr);                                \
+            abort();                                                                                                   \
+        }                                                                                                              \
+    } while (0)
+
+static void build_eth(uint8_t *dst, uint16_t ethertype)
+{
+    /* dst/src mac */
+    memset(dst, 0x11, 6);
+    memset(dst + 6, 0x22, 6);
+    dst[12] = (uint8_t)(ethertype >> 8);
+    dst[13] = (uint8_t)(ethertype & 0xff);
+}
+
+static void build_ipv4_tcp(uint8_t *dst, size_t payload_len)
+{
+    /* IPv4 header */
+    const uint16_t total_len = (uint16_t)(20 + 20 + payload_len);
+    memset(dst, 0, 20);
+    dst[0] = (4u << 4) | 5u;
+    dst[2] = (uint8_t)(total_len >> 8);
+    dst[3] = (uint8_t)(total_len & 0xff);
+    dst[8] = 64;
+    dst[9] = 6; /* TCP */
+    /* src/dst */
+    dst[12] = 192;
+    dst[13] = 0;
+    dst[14] = 2;
+    dst[15] = 1;
+    dst[16] = 198;
+    dst[17] = 51;
+    dst[18] = 100;
+    dst[19] = 2;
+}
+
+static void build_ipv6_tcp(uint8_t *dst, size_t payload_len)
+{
+    /* IPv6 header */
+    const uint16_t payload = (uint16_t)(20 + payload_len); /* TCP header + payload */
+    memset(dst, 0, 40);
+    dst[0] = (6u << 4);
+    dst[4] = (uint8_t)(payload >> 8);
+    dst[5] = (uint8_t)(payload & 0xff);
+    dst[6] = 6;  /* TCP */
+    dst[7] = 64; /* hop limit */
+    /* src/dst addresses left as zero */
+}
+
+static void build_tcp_header(uint8_t *dst)
+{
+    memset(dst, 0, 20);
+    /* data offset = 5 (20 bytes) */
+    dst[12] = 5u << 4;
+}
+
+static void test_ipv4_tcp_checksum_only(void)
+{
+    uint8_t pkt[14 + 20 + 20];
+    AEROVNET_TX_OFFLOAD_INTENT intent;
+    AEROVNET_VIRTIO_NET_HDR hdr;
+    AEROVNET_OFFLOAD_PARSE_INFO info;
+    AEROVNET_OFFLOAD_RESULT res;
+
+    build_eth(pkt, 0x0800);
+    build_ipv4_tcp(pkt + 14, 0);
+    build_tcp_header(pkt + 14 + 20);
+
+    memset(&intent, 0, sizeof(intent));
+    intent.WantTcpChecksum = 1;
+
+    res = AerovNetBuildTxVirtioNetHdr(pkt, sizeof(pkt), &intent, &hdr, &info);
+    assert(res == AEROVNET_OFFLOAD_OK);
+
+    assert(hdr.Flags == AEROVNET_VIRTIO_NET_HDR_F_NEEDS_CSUM);
+    assert(hdr.GsoType == AEROVNET_VIRTIO_NET_HDR_GSO_NONE);
+    assert(hdr.HdrLen == 0);
+    assert(hdr.GsoSize == 0);
+    assert(hdr.CsumStart == (uint16_t)(14 + 20));
+    assert(hdr.CsumOffset == 16);
+    assert(info.IpVersion == 4);
+    assert(info.L4Protocol == 6);
+}
+
+static void test_ipv6_tcp_checksum_only(void)
+{
+    uint8_t pkt[14 + 40 + 20];
+    AEROVNET_TX_OFFLOAD_INTENT intent;
+    AEROVNET_VIRTIO_NET_HDR hdr;
+    AEROVNET_OFFLOAD_PARSE_INFO info;
+    AEROVNET_OFFLOAD_RESULT res;
+
+    build_eth(pkt, 0x86DD);
+    build_ipv6_tcp(pkt + 14, 0);
+    build_tcp_header(pkt + 14 + 40);
+
+    memset(&intent, 0, sizeof(intent));
+    intent.WantTcpChecksum = 1;
+
+    res = AerovNetBuildTxVirtioNetHdr(pkt, sizeof(pkt), &intent, &hdr, &info);
+    assert(res == AEROVNET_OFFLOAD_OK);
+
+    assert(hdr.Flags == AEROVNET_VIRTIO_NET_HDR_F_NEEDS_CSUM);
+    assert(hdr.GsoType == AEROVNET_VIRTIO_NET_HDR_GSO_NONE);
+    assert(hdr.HdrLen == 0);
+    assert(hdr.GsoSize == 0);
+    assert(hdr.CsumStart == (uint16_t)(14 + 40));
+    assert(hdr.CsumOffset == 16);
+    assert(info.IpVersion == 6);
+    assert(info.L4Protocol == 6);
+}
+
+static void test_ipv4_tcp_lso(void)
+{
+    uint8_t pkt[14 + 20 + 20 + 4000];
+    AEROVNET_TX_OFFLOAD_INTENT intent;
+    AEROVNET_VIRTIO_NET_HDR hdr;
+    AEROVNET_OFFLOAD_PARSE_INFO info;
+    AEROVNET_OFFLOAD_RESULT res;
+
+    build_eth(pkt, 0x0800);
+    build_ipv4_tcp(pkt + 14, 4000);
+    build_tcp_header(pkt + 14 + 20);
+
+    memset(&intent, 0, sizeof(intent));
+    intent.WantTso = 1;
+    intent.TsoMss = 1460;
+
+    res = AerovNetBuildTxVirtioNetHdr(pkt, sizeof(pkt), &intent, &hdr, &info);
+    assert(res == AEROVNET_OFFLOAD_OK);
+
+    assert(hdr.Flags == AEROVNET_VIRTIO_NET_HDR_F_NEEDS_CSUM);
+    assert(hdr.GsoType == AEROVNET_VIRTIO_NET_HDR_GSO_TCPV4);
+    assert(hdr.HdrLen == (uint16_t)(14 + 20 + 20));
+    assert(hdr.GsoSize == 1460);
+    assert(hdr.CsumStart == (uint16_t)(14 + 20));
+    assert(hdr.CsumOffset == 16);
+    assert(info.IpVersion == 4);
+}
+
+static void test_ipv6_tcp_lso(void)
+{
+    uint8_t pkt[14 + 40 + 20 + 4000];
+    AEROVNET_TX_OFFLOAD_INTENT intent;
+    AEROVNET_VIRTIO_NET_HDR hdr;
+    AEROVNET_OFFLOAD_PARSE_INFO info;
+    AEROVNET_OFFLOAD_RESULT res;
+
+    build_eth(pkt, 0x86DD);
+    build_ipv6_tcp(pkt + 14, 4000);
+    build_tcp_header(pkt + 14 + 40);
+
+    memset(&intent, 0, sizeof(intent));
+    intent.WantTso = 1;
+    intent.TsoMss = 1440;
+
+    res = AerovNetBuildTxVirtioNetHdr(pkt, sizeof(pkt), &intent, &hdr, &info);
+    assert(res == AEROVNET_OFFLOAD_OK);
+
+    assert(hdr.Flags == AEROVNET_VIRTIO_NET_HDR_F_NEEDS_CSUM);
+    assert(hdr.GsoType == AEROVNET_VIRTIO_NET_HDR_GSO_TCPV6);
+    assert(hdr.HdrLen == (uint16_t)(14 + 40 + 20));
+    assert(hdr.GsoSize == 1440);
+    assert(hdr.CsumStart == (uint16_t)(14 + 40));
+    assert(hdr.CsumOffset == 16);
+    assert(info.IpVersion == 6);
+}
+
+static void test_unsupported_protocol(void)
+{
+    uint8_t pkt[14 + 20 + 8];
+    AEROVNET_TX_OFFLOAD_INTENT intent;
+    AEROVNET_VIRTIO_NET_HDR hdr;
+    AEROVNET_OFFLOAD_RESULT res;
+
+    build_eth(pkt, 0x0800);
+    /* IPv4 header but with UDP protocol (17). */
+    memset(pkt + 14, 0, 20);
+    pkt[14] = (4u << 4) | 5u;
+    pkt[14 + 9] = 17u;
+
+    memset(&intent, 0, sizeof(intent));
+    intent.WantTcpChecksum = 1;
+
+    res = AerovNetBuildTxVirtioNetHdr(pkt, sizeof(pkt), &intent, &hdr, NULL);
+    assert(res == AEROVNET_OFFLOAD_ERR_UNSUPPORTED_L4_PROTOCOL);
+}
+
+int main(void)
+{
+    test_ipv4_tcp_checksum_only();
+    test_ipv6_tcp_checksum_only();
+    test_ipv4_tcp_lso();
+    test_ipv6_tcp_lso();
+    test_unsupported_protocol();
+    return 0;
+}
+

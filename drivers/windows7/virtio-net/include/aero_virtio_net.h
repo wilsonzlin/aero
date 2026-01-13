@@ -167,6 +167,18 @@ typedef struct _AEROVNET_ADAPTER {
   UINT64 HostFeatures;
   UINT64 GuestFeatures;
 
+  // Negotiated virtio offload feature flags and current enablement state.
+  BOOLEAN TxChecksumSupported;
+  BOOLEAN TxTsoV4Supported;
+  BOOLEAN TxTsoV6Supported;
+
+  BOOLEAN TxChecksumV4Enabled;
+  BOOLEAN TxChecksumV6Enabled;
+  BOOLEAN TxTsoV4Enabled;
+  BOOLEAN TxTsoV6Enabled;
+
+  ULONG TxTsoMaxOffloadSize;
+
   BOOLEAN LinkUp;
 
   UCHAR PermanentMac[ETH_LENGTH_OF_ADDRESS];
