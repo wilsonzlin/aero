@@ -567,6 +567,8 @@ fn decode_instruction(
         OPCODE_LD => decode_ld(saturate, &mut r),
         OPCODE_LD_RAW => decode_ld_raw(saturate, &mut r),
         OPCODE_STORE_RAW => decode_store_raw(&mut r),
+        OPCODE_LD_STRUCTURED => decode_ld_structured(saturate, &mut r),
+        OPCODE_STORE_STRUCTURED => decode_store_structured(&mut r),
         other => {
             // Structural fallback for sample/sample_l when opcode IDs differ.
             if let Some(sample) = try_decode_sample_like(saturate, inst_toks, at)? {
@@ -656,12 +658,57 @@ fn decode_store_raw(r: &mut InstrReader<'_>) -> Result<Sm4Inst, Sm4DecodeError> 
     })
 }
 
+fn decode_ld_structured(saturate: bool, r: &mut InstrReader<'_>) -> Result<Sm4Inst, Sm4DecodeError> {
+    let mut dst = decode_dst(r)?;
+    dst.saturate = saturate;
+    let index = decode_src(r)?;
+    let offset = decode_src(r)?;
+    let buffer = decode_buffer_ref(r)?;
+    if !r.is_eof() {
+        return Ok(Sm4Inst::Unknown {
+            opcode: OPCODE_LD_STRUCTURED,
+        });
+    }
+    Ok(Sm4Inst::LdStructured {
+        dst,
+        index,
+        offset,
+        buffer,
+    })
+}
+
+fn decode_store_structured(r: &mut InstrReader<'_>) -> Result<Sm4Inst, Sm4DecodeError> {
+    let (uav, mask) = decode_uav_ref(r)?;
+    let index = decode_src(r)?;
+    let offset = decode_src(r)?;
+    let value = decode_src(r)?;
+    if !r.is_eof() {
+        return Ok(Sm4Inst::Unknown {
+            opcode: OPCODE_STORE_STRUCTURED,
+        });
+    }
+    Ok(Sm4Inst::StoreStructured {
+        uav,
+        index,
+        offset,
+        value,
+        mask,
+    })
+}
 fn decode_decl(opcode: u32, inst_toks: &[u32], at: usize) -> Result<Sm4Decl, Sm4DecodeError> {
     let mut r = InstrReader::new(inst_toks, at);
     let opcode_token = r.read_u32()?;
     // Declarations can also have extended opcode tokens; consume them even if we don't
     // understand the contents.
     let _ = decode_extended_opcode_modifiers(&mut r, opcode_token)?;
+
+    if opcode == OPCODE_DCL_THREAD_GROUP {
+        let x = r.read_u32()?;
+        let y = r.read_u32()?;
+        let z = r.read_u32()?;
+        r.expect_eof()?;
+        return Ok(Sm4Decl::ThreadGroupSize { x, y, z });
+    }
 
     if r.is_eof() {
         return Ok(Sm4Decl::Unknown { opcode });

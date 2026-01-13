@@ -990,7 +990,6 @@ fn sm5_uav_and_raw_buffer_opcode_constants_match_d3d11_tokenized_format() {
 
 #[test]
 fn decodes_sm5_compute_thread_group_and_raw_uav_ops() {
-    // Build a minimal compute shader that declares a thread-group size and uses raw load/store.
     let mut body = Vec::<u32>::new();
 
     // dcl_thread_group 8, 8, 1
@@ -1041,9 +1040,7 @@ fn decodes_sm5_compute_thread_group_and_raw_uav_ops() {
     assert!(module
         .decls
         .iter()
-        .any(|d| matches!(d, Sm4Decl::ThreadGroupSize { .. })
-            || matches!(d, Sm4Decl::Unknown { opcode } if *opcode == OPCODE_DCL_THREAD_GROUP)));
-
+        .any(|d| matches!(d, Sm4Decl::ThreadGroupSize { x: 8, y: 8, z: 1 })));
     assert!(module
         .instructions
         .iter()
