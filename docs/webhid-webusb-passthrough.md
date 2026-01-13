@@ -281,8 +281,10 @@ Semantics / guarantees:
 - **Fallback on ring overflow/corruption:** the SAB rings are an optimization, not a correctness
   requirement. If a report cannot be enqueued (ring full, record too large), the I/O worker falls
   back to `postMessage` (`hid.sendReport`) for that report so guest→device reports are not silently
-  lost. If the consumer detects ring corruption and can no longer drain, the ring fast path may stop
-  making progress and subsequent reports will likewise use the `postMessage` path.
+  lost. If the output ring becomes corrupted such that the main thread can no longer drain it, there
+  is no explicit `hid.ringDetach` protocol today; any reports already queued in the ring may be
+  abandoned. In that case the ring fast path may stop making progress and, once the ring fills up,
+  subsequent reports will fall back to the `postMessage` path.
 - **Size limits:** the SAB `HidReportRing` record format stores `len` as a `u16` and the default
   ring size is 64 KiB. Feature reports larger than the maximum ring record payload (≈64 KiB) are
   forwarded via `postMessage` even when rings are enabled.
