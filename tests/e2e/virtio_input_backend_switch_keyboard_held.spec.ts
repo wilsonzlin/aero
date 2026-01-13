@@ -574,14 +574,19 @@ test("IO worker does not switch keyboard backend while a key is held (prevents s
   });
 
   // Sanity: we should see i8042 scancodes before virtio is allowed to take over.
-  expect(result.keyAPressBytes).toEqual([0x1c]);
+  //
+  // The i8042 defaults to Set-2 -> Set-1 translation (command byte bit 6), so
+  // KeyA make (Set-2 0x1c) becomes Set-1 0x1e.
+  expect(result.keyAPressBytes).toEqual([0x1e]);
 
   // While KeyA is held, the backend must remain PS/2 even after virtio DRIVER_OK.
-  expect(result.keyBWhileHeldBytes).toEqual([0x32, 0xf0, 0x32]);
+  // KeyB make/break (Set-2 0x32 / 0xf0 0x32) becomes Set-1 0x30 / 0xb0.
+  expect(result.keyBWhileHeldBytes).toEqual([0x30, 0xb0]);
   expect(result.virtioUsedIdxAfterHold).toBe(result.virtioUsedIdxInitial);
 
   // Release KeyA is still injected via PS/2 (the backend switch happens after the batch).
-  expect(result.keyAReleaseBytes).toEqual([0xf0, 0x1c]);
+  // Set-1 break adds 0x80: 0x1e | 0x80 = 0x9e.
+  expect(result.keyAReleaseBytes).toEqual([0x9e]);
 
   // After KeyA is released, KeyB should route via virtio and i8042 must stay quiet.
   expect(result.i8042AfterVirtioBytes).toEqual([]);
@@ -593,4 +598,3 @@ test("IO worker does not switch keyboard backend while a key is held (prevents s
     { type: 0, code: 0, value: 0 },
   ]);
 });
-
