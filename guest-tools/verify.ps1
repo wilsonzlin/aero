@@ -1210,6 +1210,10 @@ try {
                         if ($rel.StartsWith("./")) { $rel = $rel.Substring(2) }
                         while ($rel.StartsWith("/")) { $rel = $rel.Substring(1) }
                         if (-not $rel -or $rel.Length -eq 0) { continue }
+                        # tools\ is an optional diagnostics payload; it may be present/absent and may
+                        # not be listed in manifest.json depending on packaging mode. Treat it as
+                        # out-of-scope for the mixed-media warning so we don't generate noisy WARNs.
+                        if ($rel.ToLower().StartsWith("tools/")) { continue }
                         $diskFiles += $rel
                     }
 
