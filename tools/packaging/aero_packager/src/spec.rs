@@ -30,6 +30,7 @@ pub struct PackagingSpec {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DriverSpec {
     pub name: String,
     /// If true, missing driver artifacts are fatal. If false, missing driver
@@ -83,6 +84,7 @@ pub struct DriverSpec {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct PackagingSpecRaw {
     #[serde(default)]
     fail_on_unlisted_driver_dirs: bool,
@@ -96,6 +98,7 @@ struct PackagingSpecRaw {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct LegacyRequiredDriver {
     name: String,
     #[serde(default)]
