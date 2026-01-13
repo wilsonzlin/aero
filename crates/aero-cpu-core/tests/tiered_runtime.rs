@@ -1,6 +1,8 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use aero_cpu_core::exec::{
     ExecCpu, ExecDispatcher, ExecutedTier, Interpreter, InterpreterBlockExit, StepOutcome,
@@ -8,9 +10,9 @@ use aero_cpu_core::exec::{
 use aero_cpu_core::jit::cache::{CodeCache, CompiledBlockHandle, CompiledBlockMeta};
 use aero_cpu_core::jit::profile::HotnessProfile;
 use aero_cpu_core::jit::runtime::{
-    CompileRequestSink, JitBackend, JitBlockExit, JitConfig, JitRuntime,
-    DEFAULT_CODE_VERSION_MAX_PAGES,
+    CompileRequestSink, JitBackend, JitBlockExit, JitConfig, JitRuntime, DEFAULT_CODE_VERSION_MAX_PAGES,
 };
+use aero_cpu_core::jit::JitMetricsSink;
 
 type JitBlockFn = Box<dyn FnMut(&mut TestCpu) -> JitBlockExit>;
 type InterpreterStepFn = Box<dyn FnMut(&mut TestCpu) -> u64>;
@@ -80,6 +82,75 @@ impl CompileRequestSink for RecordingCompileSink {
     }
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct JitMetricCounts {
+    cache_hits: u64,
+    cache_misses: u64,
+    installs: u64,
+    evictions: u64,
+    invalidations: u64,
+    stale_install_rejects: u64,
+    compile_requests: u64,
+}
+
+#[derive(Debug, Default)]
+struct RecordingMetricsSink {
+    cache_hits: AtomicU64,
+    cache_misses: AtomicU64,
+    installs: AtomicU64,
+    evictions: AtomicU64,
+    invalidations: AtomicU64,
+    stale_install_rejects: AtomicU64,
+    compile_requests: AtomicU64,
+}
+
+impl RecordingMetricsSink {
+    fn snapshot(&self) -> JitMetricCounts {
+        JitMetricCounts {
+            cache_hits: self.cache_hits.load(Ordering::Relaxed),
+            cache_misses: self.cache_misses.load(Ordering::Relaxed),
+            installs: self.installs.load(Ordering::Relaxed),
+            evictions: self.evictions.load(Ordering::Relaxed),
+            invalidations: self.invalidations.load(Ordering::Relaxed),
+            stale_install_rejects: self.stale_install_rejects.load(Ordering::Relaxed),
+            compile_requests: self.compile_requests.load(Ordering::Relaxed),
+        }
+    }
+}
+
+impl JitMetricsSink for RecordingMetricsSink {
+    fn record_cache_hit(&self) {
+        self.cache_hits.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn record_cache_miss(&self) {
+        self.cache_misses.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn record_install(&self) {
+        self.installs.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn record_evict(&self, n: u64) {
+        self.evictions.fetch_add(n, Ordering::Relaxed);
+    }
+
+    fn record_invalidate(&self) {
+        self.invalidations.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn record_stale_install_reject(&self) {
+        self.stale_install_rejects
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn record_compile_request(&self) {
+        self.compile_requests.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn set_cache_bytes(&self, _used: u64, _capacity: u64) {}
+}
+
 #[derive(Default)]
 struct TestJitBackend {
     blocks: HashMap<u32, JitBlockFn>,
@@ -142,18 +213,32 @@ fn hotness_threshold_triggers_compile_request_once() {
         code_version_max_pages: DEFAULT_CODE_VERSION_MAX_PAGES,
     };
     let compile = RecordingCompileSink::default();
+    let metrics = Arc::new(RecordingMetricsSink::default());
     let mut jit = JitRuntime::new(config, TestJitBackend::default(), compile.clone());
+    jit.set_metrics_sink(Some(metrics.clone()));
 
     for _ in 0..5 {
         assert!(jit.prepare_block(0).is_none());
     }
 
     assert_eq!(compile.snapshot(), vec![0]);
-
     let stats = jit.stats().snapshot();
     assert_eq!(stats.cache_hit, 0);
     assert_eq!(stats.cache_miss, 5);
     assert_eq!(stats.compile_requests, 1);
+
+    assert_eq!(
+        metrics.snapshot(),
+        JitMetricCounts {
+            cache_hits: 0,
+            cache_misses: 5,
+            installs: 0,
+            evictions: 0,
+            invalidations: 0,
+            stale_install_rejects: 0,
+            compile_requests: 1,
+        }
+    );
 }
 
 #[test]
@@ -323,7 +408,9 @@ fn page_version_invalidation_evicts_and_requests_recompile() {
         code_version_max_pages: DEFAULT_CODE_VERSION_MAX_PAGES,
     };
     let compile = RecordingCompileSink::default();
+    let metrics = Arc::new(RecordingMetricsSink::default());
     let mut jit = JitRuntime::new(config, TestJitBackend::default(), compile.clone());
+    jit.set_metrics_sink(Some(metrics.clone()));
 
     jit.install_block(0, 0, 0x1000, 8);
     assert!(jit.is_compiled(0));
@@ -336,12 +423,24 @@ fn page_version_invalidation_evicts_and_requests_recompile() {
     assert!(!jit.is_compiled(0));
 
     assert_eq!(compile.snapshot(), vec![0]);
-
     let stats = jit.stats().snapshot();
     assert_eq!(stats.install_ok, 1);
     assert_eq!(stats.cache_hit, 1);
     assert_eq!(stats.cache_miss, 1);
     assert_eq!(stats.compile_requests, 1);
+
+    assert_eq!(
+        metrics.snapshot(),
+        JitMetricCounts {
+            cache_hits: 1,
+            cache_misses: 1,
+            installs: 1,
+            evictions: 0,
+            invalidations: 1,
+            stale_install_rejects: 0,
+            compile_requests: 1,
+        }
+    );
 }
 
 #[test]
@@ -355,7 +454,9 @@ fn stale_page_version_snapshot_rejected_on_install() {
     };
 
     let compile = RecordingCompileSink::default();
+    let metrics = Arc::new(RecordingMetricsSink::default());
     let mut jit = JitRuntime::new(config, TestJitBackend::default(), compile.clone());
+    jit.set_metrics_sink(Some(metrics.clone()));
 
     let meta = jit.snapshot_meta(0x6000, 8);
     jit.on_guest_write(0x6000, 1);
@@ -369,11 +470,23 @@ fn stale_page_version_snapshot_rejected_on_install() {
 
     assert!(!jit.is_compiled(0));
     assert_eq!(compile.snapshot(), vec![0]);
-
     let stats = jit.stats().snapshot();
     assert_eq!(stats.install_ok, 0);
     assert_eq!(stats.install_rejected_stale, 1);
     assert_eq!(stats.compile_requests, 1);
+
+    assert_eq!(
+        metrics.snapshot(),
+        JitMetricCounts {
+            cache_hits: 0,
+            cache_misses: 0,
+            installs: 0,
+            evictions: 0,
+            invalidations: 0,
+            stale_install_rejects: 1,
+            compile_requests: 1,
+        }
+    );
 }
 
 #[test]
@@ -387,7 +500,9 @@ fn stale_install_does_not_evict_newer_valid_block() {
     };
 
     let compile = RecordingCompileSink::default();
+    let metrics = Arc::new(RecordingMetricsSink::default());
     let mut jit = JitRuntime::new(config, TestJitBackend::default(), compile.clone());
+    jit.set_metrics_sink(Some(metrics.clone()));
 
     // Capture a snapshot before the code page changes (simulating a background compilation job).
     let stale_meta = jit.snapshot_meta(0x7000, 8);
@@ -409,12 +524,23 @@ fn stale_install_does_not_evict_newer_valid_block() {
 
     assert!(jit.prepare_block(0).is_some());
     assert!(compile.snapshot().is_empty());
-
     let stats = jit.stats().snapshot();
     assert_eq!(stats.install_ok, 1);
     assert_eq!(stats.install_rejected_stale, 1);
     assert_eq!(stats.cache_hit, 2);
     assert_eq!(stats.compile_requests, 0);
+    assert_eq!(
+        metrics.snapshot(),
+        JitMetricCounts {
+            cache_hits: 2,
+            cache_misses: 0,
+            installs: 1,
+            evictions: 0,
+            invalidations: 0,
+            stale_install_rejects: 1,
+            compile_requests: 0,
+        }
+    );
 }
 
 #[test]
@@ -526,6 +652,74 @@ fn runtime_reset_allows_retriggering_compile_requests() {
         assert!(jit.prepare_block(0x42).is_none());
     }
     assert_eq!(compile.snapshot(), vec![0x42, 0x42]);
+}
+
+#[test]
+fn jit_metrics_record_eviction_and_explicit_invalidation() {
+    let config = JitConfig {
+        enabled: true,
+        hot_threshold: 1_000,
+        cache_max_blocks: 1,
+        cache_max_bytes: 0,
+        code_version_max_pages: DEFAULT_CODE_VERSION_MAX_PAGES,
+    };
+
+    let compile = RecordingCompileSink::default();
+    let metrics = Arc::new(RecordingMetricsSink::default());
+    let mut jit = JitRuntime::new(config, TestJitBackend::default(), compile.clone());
+    jit.set_metrics_sink(Some(metrics.clone()));
+
+    // First install: no eviction.
+    jit.install_block(0, 0, 0x1000, 4);
+    // Second install forces eviction due to max_blocks=1.
+    jit.install_block(1, 1, 0x2000, 4);
+
+    assert_eq!(jit.cache_len(), 1);
+
+    // Explicit invalidation should record an invalidation event.
+    assert!(jit.invalidate_block(1));
+    assert!(!jit.invalidate_block(1));
+
+    assert!(compile.snapshot().is_empty());
+    assert_eq!(
+        metrics.snapshot(),
+        JitMetricCounts {
+            cache_hits: 0,
+            cache_misses: 0,
+            installs: 2,
+            evictions: 1,
+            invalidations: 1,
+            stale_install_rejects: 0,
+            compile_requests: 0,
+        }
+    );
+}
+
+#[test]
+fn jit_metrics_sink_none_emits_no_events() {
+    let config = JitConfig {
+        enabled: true,
+        hot_threshold: 2,
+        cache_max_blocks: 1,
+        cache_max_bytes: 0,
+        code_version_max_pages: DEFAULT_CODE_VERSION_MAX_PAGES,
+    };
+
+    let compile = RecordingCompileSink::default();
+    let metrics = Arc::new(RecordingMetricsSink::default());
+
+    // Run through some typical runtime events, but do not install a metrics sink.
+    let mut jit = JitRuntime::new(config, TestJitBackend::default(), compile.clone());
+    assert!(jit.prepare_block(0).is_none());
+    assert!(jit.prepare_block(0).is_none());
+    jit.install_block(0, 0, 0x1000, 4);
+    assert!(jit.prepare_block(0).is_some());
+    assert!(jit.invalidate_block(0));
+
+    // The runtime should still have performed its normal compile-request bookkeeping...
+    assert_eq!(compile.snapshot(), vec![0]);
+    // ...but the external metrics sink must observe nothing.
+    assert_eq!(metrics.snapshot(), JitMetricCounts::default());
 }
 
 #[test]
