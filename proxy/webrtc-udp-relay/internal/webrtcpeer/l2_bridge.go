@@ -489,6 +489,9 @@ func (b *l2Bridge) shutdown(closeDataChannel bool, info l2BridgeShutdownInfo) {
 				"reason", string(info.reason),
 				"session_id", b.sessionID(),
 			}
+			if backendURL := sanitizeWSURLForLog(b.dialCfg.BackendWSURL); backendURL != "" {
+				attrs = append(attrs, "backend_ws_url", backendURL)
+			}
 			if info.direction != "" {
 				attrs = append(attrs, "direction", info.direction)
 			}
