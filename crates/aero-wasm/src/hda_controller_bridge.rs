@@ -380,6 +380,16 @@ impl HdaControllerBridge {
             .unwrap_or(0)
     }
 
+    /// If an audio ring is attached, returns its total consumer underrun counter (missing frames).
+    ///
+    /// Returns 0 if no ring is attached.
+    pub fn underrun_count(&self) -> u32 {
+        self.audio_ring
+            .as_ref()
+            .map(|r| r.underrun_count())
+            .unwrap_or(0)
+    }
+
     /// Serialize the current HDA controller state into a deterministic snapshot blob.
     ///
     /// If an AudioWorklet ring is attached, its indices are included for determinism.
@@ -699,5 +709,18 @@ mod tests {
 
         bridge.load_state(&bytes).unwrap();
         assert_eq!(bridge.mmio_read(0x08, 4), before);
+    }
+
+    #[wasm_bindgen_test]
+    fn audio_ring_metrics_return_zero_when_unattached() {
+        let mut guest = vec![0u8; 0x4000];
+        let guest_base = guest.as_mut_ptr() as u32;
+        let guest_size = guest.len() as u32;
+
+        let bridge = HdaControllerBridge::new(guest_base, guest_size, None).unwrap();
+
+        assert_eq!(bridge.buffer_level_frames(), 0);
+        assert_eq!(bridge.underrun_count(), 0);
+        assert_eq!(bridge.overrun_count(), 0);
     }
 }

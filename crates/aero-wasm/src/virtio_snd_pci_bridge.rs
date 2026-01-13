@@ -587,6 +587,39 @@ impl VirtioSndPciBridge {
         self.irq_asserted.get()
     }
 
+    /// If an AudioWorklet ring is attached, returns its current buffered level (frames).
+    ///
+    /// Returns 0 if no ring is attached.
+    pub fn buffer_level_frames(&mut self) -> u32 {
+        self.snd_mut()
+            .output_mut()
+            .worklet_ring()
+            .map(|r| r.buffer_level_frames())
+            .unwrap_or(0)
+    }
+
+    /// If an AudioWorklet ring is attached, returns its total consumer underrun counter (missing frames).
+    ///
+    /// Returns 0 if no ring is attached.
+    pub fn underrun_count(&mut self) -> u32 {
+        self.snd_mut()
+            .output_mut()
+            .worklet_ring()
+            .map(|r| r.underrun_count())
+            .unwrap_or(0)
+    }
+
+    /// If an AudioWorklet ring is attached, returns its total producer overrun counter (frames dropped).
+    ///
+    /// Returns 0 if no ring is attached.
+    pub fn overrun_count(&mut self) -> u32 {
+        self.snd_mut()
+            .output_mut()
+            .worklet_ring()
+            .map(|r| r.overrun_count())
+            .unwrap_or(0)
+    }
+
     /// Attach the AudioWorklet output ring buffer (producer side; AudioWorklet is the consumer).
     pub fn attach_audio_ring(
         &mut self,
@@ -800,5 +833,14 @@ mod tests {
             bridge.snd_mut().capture_sample_rate_hz(),
             aero_audio::MAX_HOST_SAMPLE_RATE_HZ
         );
+    }
+
+    #[wasm_bindgen_test]
+    fn audio_ring_metrics_return_zero_when_unattached() {
+        let mut bridge = VirtioSndPciBridge::new(0x1000, 0, None).unwrap();
+
+        assert_eq!(bridge.buffer_level_frames(), 0);
+        assert_eq!(bridge.underrun_count(), 0);
+        assert_eq!(bridge.overrun_count(), 0);
     }
 }
