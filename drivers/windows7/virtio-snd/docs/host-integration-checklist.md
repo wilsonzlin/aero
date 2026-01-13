@@ -44,6 +44,8 @@ If any required item is missing/mismatched, the driver will typically fail `STAR
 - [ ] Device offers `VIRTIO_F_VERSION_1` (**bit 32**).
 - [ ] Device offers `VIRTIO_F_RING_INDIRECT_DESC` (**bit 28**).
 - [ ] Device implements **64-bit** feature negotiation via `*_feature_select` (`0` = low 32 bits, `1` = high 32 bits).
+- [ ] Feature negotiation status handshake works:
+  - After the driver writes `device_status |= FEATURES_OK`, the device must keep `FEATURES_OK` set (otherwise the driver fails initialization).
 - [ ] Device does **not** require `VIRTIO_F_RING_EVENT_IDX` / packed rings.
   - The Win7 driver will **not negotiate** `EVENT_IDX` or `PACKED`.
   - The device must operate correctly without them (the driver never enables them).
