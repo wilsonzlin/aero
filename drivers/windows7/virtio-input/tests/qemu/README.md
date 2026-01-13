@@ -335,9 +335,9 @@ Copy `hidtest.exe` into the guest and run it from an elevated Command Prompt.
    - [`tools/hidtest/README.md` → Counters interpretation](../../tools/hidtest/README.md#counters-interpretation)
 
 8. (Optional) negative tests (invalid user pointers; should fail cleanly without crashing the guest):
-   ```bat
-   hidtest.exe --keyboard --ioctl-bad-xfer-packet
-   hidtest.exe --keyboard --ioctl-bad-write-report
+    ```bat
+    hidtest.exe --keyboard --ioctl-bad-xfer-packet
+    hidtest.exe --keyboard --ioctl-bad-write-report
     hidtest.exe --keyboard --ioctl-bad-read-xfer-packet
     hidtest.exe --keyboard --ioctl-bad-read-report
     hidtest.exe --keyboard --ioctl-bad-set-output-xfer-packet
