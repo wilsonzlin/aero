@@ -134,7 +134,7 @@ impl Default for PcPlatformConfig {
             enable_ehci: false,
             enable_xhci: false,
             enable_virtio_blk: false,
-            enable_virtio_msix: false,
+            enable_virtio_msix: true,
         }
     }
 }
