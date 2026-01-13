@@ -1,4 +1,9 @@
+use aero_cpu_core::state::gpr;
 use aero_machine::{Machine, MachineConfig, RunExit};
+use firmware::bios::{BIOS_SEGMENT, VGA_FONT_8X16_OFFSET};
+
+const CP437_GLYPH: u8 = 0xC3; // "├"
+const GLYPH_HEIGHT_BYTES: u16 = 16;
 
 fn build_int10_get_font_and_read_cp437_glyph_boot_sector() -> [u8; 512] {
     // This boot sector:
@@ -77,6 +82,25 @@ fn boot_int10_font_cp437() {
         .unwrap();
     m.reset();
     run_until_halt(&mut m);
+
+    // Validate that INT 10h returned a pointer into the BIOS ROM segment, and that CX advertises
+    // the expected glyph height (bytes per character) for the 8x16 font.
+    assert_eq!(
+        m.cpu().segments.es.selector, BIOS_SEGMENT,
+        "INT 10h AX=1130h returned ES != BIOS segment"
+    );
+    let bp = (m.cpu().gpr[gpr::RBP] & 0xFFFF) as u16;
+    let expected_bp =
+        VGA_FONT_8X16_OFFSET.wrapping_add(u16::from(CP437_GLYPH).saturating_mul(GLYPH_HEIGHT_BYTES));
+    assert_eq!(
+        bp, expected_bp,
+        "INT 10h AX=1130h returned unexpected font pointer (ES:BP)"
+    );
+    let cx = (m.cpu().gpr[gpr::RCX] & 0xFFFF) as u16;
+    assert_eq!(
+        cx, GLYPH_HEIGHT_BYTES,
+        "INT 10h AX=1130h returned unexpected glyph height in CX"
+    );
 
     let glyph_byte = m.read_physical_u8(0x0500);
     assert!(
