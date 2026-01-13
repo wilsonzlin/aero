@@ -1,18 +1,17 @@
 //! xHCI (USB 3.x) controller exposed as a PCI function.
 //!
-//! This module is intentionally minimal: it provides a PCI wrapper plus a small BAR0 MMIO register
-//! backing store so platform integrations can expose an xHCI controller as a PCI MMIO device and
-//! validate enumeration/interrupt wiring.
-//!
-//! Today it includes:
-//! - QEMU-compatible PCI identity (`profile::USB_XHCI_QEMU`)
-//! - BAR0 MMIO decoding via a simple read/write byte array (enough for smoke tests)
-//! - legacy INTx level signalling (`irq_level`) with COMMAND.INTX_DISABLE gating
-//! - optional single-vector MSI delivery when the guest enables MSI
-//! - snapshot/restore of PCI config + interrupt latch state
-//!
-//! A full xHCI register model is not implemented yet.
+//! This module provides the canonical "PCI glue" needed to instantiate the shared
+//! [`aero_usb::xhci::XhciController`] model on a PCI bus:
+//! - PCI config space identity + BAR0 definition
+//! - MMIO read/write dispatch into the controller register model
+//! - PCI `COMMAND` gating:
+//!   - MMIO decode is gated on `COMMAND.MEM` (bit 1)
+//!   - DMA is gated on `COMMAND.BME` (bit 2)
+//!   - legacy INTx signalling is gated on `COMMAND.INTX_DISABLE` (bit 10)
+//! - Optional MSI delivery via the device's MSI capability
 
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
@@ -24,22 +23,13 @@ use aero_io_snapshot::io::state::{
 };
 use aero_platform::interrupts::msi::MsiTrigger;
 use aero_platform::memory::MemoryBus;
-use memory::{MemoryBus as _, MmioHandler};
+use memory::MmioHandler;
 
 use crate::irq::IrqLine;
 use crate::pci::capabilities::PCI_CONFIG_SPACE_SIZE;
-use crate::pci::{profile, MsiCapability, PciBarKind, PciConfigSpace, PciConfigSpaceState, PciDevice};
+use crate::pci::{profile, MsiCapability, PciConfigSpace, PciConfigSpaceState, PciDevice};
 
-// Minimal xHCI register offsets / bits used by the platform integration tests.
-//
-// We keep these local to avoid coupling `aero-devices` to the canonical xHCI register model living
-// in `aero-usb`.
-const REG_USBCMD: usize = 0x40;
-const REG_USBSTS: usize = 0x44;
-const REG_CRCR: usize = 0x58;
-
-const USBCMD_RUN: u32 = 1 << 0;
-const USBSTS_EINT: u32 = 1 << 3;
+pub use aero_usb::xhci::{regs, XhciController};
 
 /// Minimal IRQ line implementation that can be shared with an underlying controller.
 #[derive(Clone, Default)]
@@ -63,89 +53,70 @@ impl IrqLine for AtomicIrqLine {
 ///
 /// The wrapper maintains:
 /// - PCI configuration space (including MSI capability state)
-/// - A minimal BAR0 MMIO register backing store
 /// - An internal interrupt condition that can be surfaced via:
 ///   - legacy INTx (`irq_level()`), or
 ///   - MSI (`service_interrupts()` when MSI is enabled and a target is configured).
 pub struct XhciPciDevice {
     config: PciConfigSpace,
-    mmio: Vec<u8>,
+    controller: XhciController,
     irq: AtomicIrqLine,
+    dma_mem: Option<Rc<RefCell<dyn memory::MemoryBus>>>,
     msi_target: Option<Box<dyn MsiTrigger>>,
     last_irq_level: bool,
-    run_edge_pending: bool,
 }
 
 impl XhciPciDevice {
     /// xHCI MMIO BAR size (BAR0).
+    ///
+    /// Keep in sync with [`crate::pci::profile::XHCI_MMIO_BAR_SIZE_U32`].
     pub const MMIO_BAR_SIZE: u32 = profile::XHCI_MMIO_BAR_SIZE_U32;
     /// xHCI MMIO BAR index (BAR0).
     pub const MMIO_BAR_INDEX: u8 = profile::XHCI_MMIO_BAR_INDEX;
 
-    /// Create a new xHCI PCI device wrapper with a QEMU-compatible PCI identity.
+    /// Create a new xHCI PCI device wrapper with the canonical controller model.
     pub fn new() -> Self {
+        Self::new_with_controller(XhciController::new())
+    }
+
+    /// Create a new xHCI PCI device wrapper around the provided controller instance.
+    pub fn new_with_controller(controller: XhciController) -> Self {
         let irq = AtomicIrqLine::default();
 
         // Start from the canonical QEMU-style xHCI PCI profile so BAR definitions, class code, and
-        // capabilities (MSI) are consistent with the guest-visible config-space stub used by
-        // `PcPlatform`.
-        let config = profile::USB_XHCI_QEMU.build_config_space();
+        // MSI capability layout match other platform integrations.
+        let mut config = profile::USB_XHCI_QEMU.build_config_space();
 
-        let mut dev = Self {
+        // Backwards compatibility: older profiles may omit MSI. Ensure we always expose at least a
+        // single-vector MSI capability so platforms/tests can route interrupts without extra
+        // vendor-specific plumbing.
+        if config.capability::<MsiCapability>().is_none() {
+            config.add_capability(Box::new(MsiCapability::new()));
+        }
+
+        Self {
             config,
-            mmio: vec![0; Self::MMIO_BAR_SIZE as usize],
+            controller,
             irq,
+            dma_mem: None,
             msi_target: None,
             last_irq_level: false,
-            run_edge_pending: false,
-        };
-        dev.reset_mmio_image();
-        dev
-    }
-
-    fn mmio_u32(&self, offset: usize) -> u32 {
-        let mut buf = [0u8; 4];
-        buf.copy_from_slice(&self.mmio[offset..offset + 4]);
-        u32::from_le_bytes(buf)
-    }
-
-    fn mmio_u64(&self, offset: usize) -> u64 {
-        let mut buf = [0u8; 8];
-        buf.copy_from_slice(&self.mmio[offset..offset + 8]);
-        u64::from_le_bytes(buf)
-    }
-
-    fn set_mmio_u32(&mut self, offset: usize, value: u32) {
-        self.mmio[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
-    }
-
-    fn set_usbsts_bits(&mut self, bits: u32) {
-        let v = self.mmio_u32(REG_USBSTS) | bits;
-        self.set_mmio_u32(REG_USBSTS, v);
-    }
-
-    fn clear_usbsts_bits(&mut self, bits: u32) {
-        let v = self.mmio_u32(REG_USBSTS) & !bits;
-        self.set_mmio_u32(REG_USBSTS, v);
-    }
-
-    fn reset_mmio_image(&mut self) {
-        self.mmio.fill(0);
-        self.run_edge_pending = false;
-
-        // xHCI capability registers (spec 5.3.3).
-        //
-        // CAPLENGTH (offset 0x00, byte 0): length of the capability register block in bytes.
-        // HCIVERSION (offset 0x02, u16): xHCI version number.
-        //
-        // Initialize these to sane defaults so platform-level smoke tests can locate the
-        // operational register block at `BAR0 + CAPLENGTH`.
-        if self.mmio.len() >= 4 {
-            const CAPLENGTH: u8 = 0x40;
-            const HCIVERSION: u16 = 0x0100;
-            self.mmio[0] = CAPLENGTH;
-            self.mmio[2..4].copy_from_slice(&HCIVERSION.to_le_bytes());
         }
+    }
+
+    /// Configure the memory bus used for controller DMA.
+    ///
+    /// This is optional; when unset, DMA accesses are treated as disabled (reads return `0xFF`,
+    /// writes are ignored) even if PCI bus mastering is enabled.
+    pub fn set_dma_memory_bus(&mut self, bus: Option<Rc<RefCell<dyn memory::MemoryBus>>>) {
+        self.dma_mem = bus;
+    }
+
+    pub fn controller(&self) -> &XhciController {
+        &self.controller
+    }
+
+    pub fn controller_mut(&mut self) -> &mut XhciController {
+        &mut self.controller
     }
 
     /// Configure the target used for MSI interrupt delivery.
@@ -171,7 +142,7 @@ impl XhciPciDevice {
     }
 
     fn service_interrupts(&mut self) {
-        let level = self.irq.level();
+        let level = self.irq.level() || self.controller.irq_level();
 
         // MSI delivery is edge-triggered. Fire on a rising edge of the interrupt condition.
         if level && !self.last_irq_level {
@@ -202,7 +173,7 @@ impl XhciPciDevice {
             return false;
         }
 
-        self.irq.level()
+        self.irq.level() || self.controller.irq_level()
     }
 
     /// Raises the internal interrupt condition, and delivers an MSI message if configured.
@@ -210,58 +181,20 @@ impl XhciPciDevice {
     /// Platform integrations that model the full xHCI register set should call this when the xHCI
     /// interrupt condition becomes asserted (e.g. upon adding an event TRB).
     pub fn raise_event_interrupt(&mut self) {
-        // Expose the interrupt state to guests via the USBSTS.EINT latch. Real xHCI controllers
-        // have per-interrupter IMAN/IP modelling; this simplified device ties the interrupt source
-        // directly to the global USBSTS bit.
-        self.set_usbsts_bits(USBSTS_EINT);
         self.irq.set_level(true);
         self.service_interrupts();
     }
 
     /// Clears the internal interrupt condition.
     pub fn clear_event_interrupt(&mut self) {
-        self.clear_usbsts_bits(USBSTS_EINT);
         self.irq.set_level(false);
         self.service_interrupts();
     }
 
-    fn mmio_decode_enabled(&self) -> bool {
-        (self.config.command() & 0x2) != 0
-    }
-
-    fn bar0_range(&self) -> Option<(u64, u64)> {
-        let range = self.config.bar_range(Self::MMIO_BAR_INDEX)?;
-        if !matches!(range.kind, PciBarKind::Mmio32 | PciBarKind::Mmio64) {
-            return None;
-        }
-        Some((range.base, range.size))
-    }
-
-    /// Advance the device by 1ms. For now this is used primarily to service MSI edge delivery if
-    /// the interrupt condition is toggled by an underlying controller via the shared IRQ line.
-    pub fn tick_1ms(&mut self, mem: &mut MemoryBus) {
-        if self.run_edge_pending {
-            self.run_edge_pending = false;
-
-            // If the controller is still running, perform a single bus-master DMA read and then
-            // surface an interrupt via USBSTS.EINT. This is intentionally minimal but gives tests
-            // something deterministic to observe.
-            if (self.mmio_u32(REG_USBCMD) & USBCMD_RUN) != 0 {
-                self.dma_on_run(mem);
-                self.raise_event_interrupt();
-            }
-        }
+    /// Advance the device by 1ms.
+    pub fn tick_1ms(&mut self, _mem: &mut MemoryBus) {
+        self.controller.tick_1ms();
         self.service_interrupts();
-    }
-
-    fn dma_on_run(&mut self, mem: &mut MemoryBus) {
-        // Gate DMA on PCI Bus Master Enable (bit 2).
-        if (self.config.command() & (1 << 2)) == 0 {
-            return;
-        }
-
-        let paddr = self.mmio_u64(REG_CRCR);
-        let _ = mem.read_u32(paddr);
     }
 }
 
@@ -283,10 +216,30 @@ impl PciDevice for XhciPciDevice {
     fn reset(&mut self) {
         // Preserve BAR programming but disable decoding.
         self.config.set_command(0);
-
+        self.controller = XhciController::new();
         self.irq.set_level(false);
         self.last_irq_level = false;
-        self.reset_mmio_image();
+    }
+}
+
+enum AeroUsbMemoryBus<'a> {
+    Dma(&'a mut dyn memory::MemoryBus),
+    NoDma,
+}
+
+impl aero_usb::MemoryBus for AeroUsbMemoryBus<'_> {
+    fn read_physical(&mut self, paddr: u64, buf: &mut [u8]) {
+        match self {
+            AeroUsbMemoryBus::Dma(inner) => inner.read_physical(paddr, buf),
+            AeroUsbMemoryBus::NoDma => buf.fill(0xFF),
+        }
+    }
+
+    fn write_physical(&mut self, paddr: u64, buf: &[u8]) {
+        match self {
+            AeroUsbMemoryBus::Dma(inner) => inner.write_physical(paddr, buf),
+            AeroUsbMemoryBus::NoDma => {}
+        }
     }
 }
 
@@ -295,115 +248,81 @@ impl MmioHandler for XhciPciDevice {
         if size == 0 {
             return 0;
         }
-        if !(1..=8).contains(&size) {
+        if size > 8 {
+            return u64::MAX;
+        }
+
+        // Gate MMIO decoding on PCI command Memory Space Enable (bit 1).
+        if (self.config.command() & (1 << 1)) == 0 {
             return all_ones(size);
         }
 
-        // Apply COMMAND.MEM gating when the device is used standalone (outside a platform router).
-        if !self.mmio_decode_enabled() {
+        // Treat out-of-range BAR offsets as unmapped/open bus. This mirrors what the PCI BAR MMIO
+        // router enforces, but keeping the check here makes direct unit tests deterministic.
+        let end = offset.saturating_add(size as u64);
+        if end > u64::from(Self::MMIO_BAR_SIZE) {
             return all_ones(size);
         }
 
-        // Treat BAR0 base == 0 as unmapped, matching PCI routing behavior.
-        if self.bar0_range().map(|(base, _)| base).unwrap_or(0) == 0 {
-            return all_ones(size);
+        let dma_enabled = (self.config.command() & (1 << 2)) != 0;
+
+        if dma_enabled {
+            if let Some(mem) = self.dma_mem.as_ref() {
+                let mut mem_ref = mem.borrow_mut();
+                let mut adapter = AeroUsbMemoryBus::Dma(&mut *mem_ref);
+                return xhci_mmio_read(&mut self.controller, &mut adapter, offset, size);
+            }
         }
 
-        let offset_usize = match usize::try_from(offset) {
-            Ok(v) => v,
-            Err(_) => return all_ones(size),
-        };
-        let end = match offset_usize.checked_add(size) {
-            Some(v) => v,
-            None => return all_ones(size),
-        };
-        if end > self.mmio.len() {
-            return all_ones(size);
-        }
-
-        let mut buf = [0u8; 8];
-        buf[..size].copy_from_slice(&self.mmio[offset_usize..end]);
-        u64::from_le_bytes(buf)
+        let mut adapter = AeroUsbMemoryBus::NoDma;
+        xhci_mmio_read(&mut self.controller, &mut adapter, offset, size)
     }
 
     fn write(&mut self, offset: u64, size: usize, value: u64) {
-        if size == 0 {
-            return;
-        }
-        if !(1..=8).contains(&size) {
+        if size == 0 || size > 8 {
             return;
         }
 
-        if !self.mmio_decode_enabled() {
+        // Gate MMIO decoding on PCI command Memory Space Enable (bit 1).
+        if (self.config.command() & (1 << 1)) == 0 {
             return;
         }
 
-        if self.bar0_range().map(|(base, _)| base).unwrap_or(0) == 0 {
+        let end = offset.saturating_add(size as u64);
+        if end > u64::from(Self::MMIO_BAR_SIZE) {
             return;
         }
 
-        let offset_usize = match usize::try_from(offset) {
-            Ok(v) => v,
-            Err(_) => return,
-        };
-        let end = match offset_usize.checked_add(size) {
-            Some(v) => v,
-            None => return,
-        };
-        if end > self.mmio.len() {
-            return;
-        }
+        let dma_enabled = (self.config.command() & (1 << 2)) != 0;
+        let masked = value & all_ones(size);
 
-        let usbcmd_range = REG_USBCMD..REG_USBCMD + 4;
-        let usbsts_range = REG_USBSTS..REG_USBSTS + 4;
-
-        let overlaps_usbcmd = offset_usize < usbcmd_range.end && end > usbcmd_range.start;
-        let overlaps_usbsts = offset_usize < usbsts_range.end && end > usbsts_range.start;
-
-        let prev_usbcmd = overlaps_usbcmd.then(|| self.mmio_u32(REG_USBCMD)).unwrap_or(0);
-        let prev_usbsts = overlaps_usbsts.then(|| self.mmio_u32(REG_USBSTS)).unwrap_or(0);
-
-        let bytes = value.to_le_bytes();
-        for i in 0..size {
-            let idx = offset_usize + i;
-            let byte = bytes[i];
-
-            // USBSTS is RW1C: writing 1 clears the bit, writing 0 has no effect.
-            if (REG_USBSTS..REG_USBSTS + 4).contains(&idx) {
-                self.mmio[idx] &= !byte;
-            } else {
-                self.mmio[idx] = byte;
+        if dma_enabled {
+            if let Some(mem) = self.dma_mem.as_ref() {
+                {
+                    let mut mem_ref = mem.borrow_mut();
+                    let mut adapter = AeroUsbMemoryBus::Dma(&mut *mem_ref);
+                    xhci_mmio_write(&mut self.controller, &mut adapter, offset, size, masked);
+                }
+                self.service_interrupts();
+                return;
             }
         }
 
-        if overlaps_usbcmd {
-            let new_usbcmd = self.mmio_u32(REG_USBCMD);
-            let was_running = (prev_usbcmd & USBCMD_RUN) != 0;
-            let now_running = (new_usbcmd & USBCMD_RUN) != 0;
-            if !was_running && now_running {
-                self.run_edge_pending = true;
-            }
-        }
-
-        if overlaps_usbsts {
-            let new_usbsts = self.mmio_u32(REG_USBSTS);
-            let was_eint = (prev_usbsts & USBSTS_EINT) != 0;
-            let now_eint = (new_usbsts & USBSTS_EINT) != 0;
-            if was_eint && !now_eint {
-                self.clear_event_interrupt();
-            }
-        }
+        let mut adapter = AeroUsbMemoryBus::NoDma;
+        xhci_mmio_write(&mut self.controller, &mut adapter, offset, size, masked);
+        self.service_interrupts();
     }
 }
 
 impl IoSnapshot for XhciPciDevice {
     const DEVICE_ID: [u8; 4] = *b"XHCP";
-    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 1);
 
     fn save_state(&self) -> Vec<u8> {
         const TAG_PCI: u16 = 1;
         const TAG_IRQ: u16 = 2;
         const TAG_LAST_IRQ: u16 = 3;
+        const TAG_CONTROLLER: u16 = 4;
 
         let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
 
@@ -416,6 +335,7 @@ impl IoSnapshot for XhciPciDevice {
 
         w.field_bytes(TAG_IRQ, Encoder::new().bool(self.irq.level()).finish());
         w.field_bytes(TAG_LAST_IRQ, Encoder::new().bool(self.last_irq_level).finish());
+        w.field_bytes(TAG_CONTROLLER, self.controller.save_state());
 
         w.finish()
     }
@@ -424,9 +344,14 @@ impl IoSnapshot for XhciPciDevice {
         const TAG_PCI: u16 = 1;
         const TAG_IRQ: u16 = 2;
         const TAG_LAST_IRQ: u16 = 3;
+        const TAG_CONTROLLER: u16 = 4;
 
         let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
         r.ensure_device_major(Self::DEVICE_VERSION.major)?;
+
+        self.controller = XhciController::new();
+        self.irq.set_level(false);
+        self.last_irq_level = false;
 
         if let Some(buf) = r.bytes(TAG_PCI) {
             let mut d = Decoder::new(buf);
@@ -452,8 +377,6 @@ impl IoSnapshot for XhciPciDevice {
             let mut d = Decoder::new(buf);
             self.irq.set_level(d.bool()?);
             d.finish()?;
-        } else {
-            self.irq.set_level(false);
         }
 
         if let Some(buf) = r.bytes(TAG_LAST_IRQ) {
@@ -466,11 +389,56 @@ impl IoSnapshot for XhciPciDevice {
             self.last_irq_level = self.irq.level();
         }
 
-        // MMIO register model is currently minimal and not snapshotted; restore to a deterministic
-        // baseline.
-        self.reset_mmio_image();
+        if let Some(buf) = r.bytes(TAG_CONTROLLER) {
+            // Older snapshots may omit the controller field. Default controller state is fine.
+            self.controller.load_state(buf)?;
+        }
 
         Ok(())
+    }
+}
+
+fn xhci_mmio_read(
+    controller: &mut XhciController,
+    bus: &mut dyn aero_usb::MemoryBus,
+    offset: u64,
+    size: usize,
+) -> u64 {
+    // `XhciController` models 1/2/4-byte reads. Synthesize larger reads by composing byte-sized
+    // accesses to preserve little-endian semantics.
+    let mut out = 0u64;
+    for i in 0..size {
+        let b = controller.mmio_read(bus, offset + i as u64, 1);
+        out |= (b as u64) << (i * 8);
+    }
+    out & all_ones(size)
+}
+
+fn xhci_mmio_write(
+    controller: &mut XhciController,
+    bus: &mut dyn aero_usb::MemoryBus,
+    offset: u64,
+    size: usize,
+    value: u64,
+) {
+    // Prefer natural 4-byte writes when possible to avoid spurious side effects from decomposing
+    // wide writes into byte writes (e.g. RUN bit edges).
+    match size {
+        1 | 2 | 4 => controller.mmio_write(bus, offset, size, value as u32),
+        8 if (offset & 3) == 0 => {
+            controller.mmio_write(bus, offset, 4, value as u32);
+            controller.mmio_write(bus, offset + 4, 4, (value >> 32) as u32);
+        }
+        _ => {
+            for i in 0..size {
+                controller.mmio_write(
+                    bus,
+                    offset + i as u64,
+                    1,
+                    ((value >> (i * 8)) & 0xff) as u32,
+                );
+            }
+        }
     }
 }
 
