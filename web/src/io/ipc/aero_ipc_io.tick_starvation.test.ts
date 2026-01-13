@@ -35,7 +35,7 @@ async function sleep0(): Promise<void> {
 
 describe("io/ipc/aero_ipc_io tick fairness", () => {
   it("runAsync ticks while draining (no tick starvation under sustained command traffic)", async () => {
-    const { buffer: ipcBuffer } = createIpcBuffer([
+    const { buffer: ipcBuffer, queues } = createIpcBuffer([
       { kind: queueKind.CMD, capacityBytes: 1 << 16 },
       { kind: queueKind.EVT, capacityBytes: 1 << 16 },
     ]);
@@ -43,7 +43,9 @@ describe("io/ipc/aero_ipc_io tick fairness", () => {
     const evtQ = openRingByKind(ipcBuffer, queueKind.EVT);
 
     const cmdBytes = encodeCommand({ kind: "portWrite", id: 1, port: 0, size: 1, value: 0 });
-    const cmdCtrl = (cmdQ as unknown as { ctrl: Int32Array }).ctrl;
+    const cmdOffset = queues.find((q) => q.kind === queueKind.CMD)?.offsetBytes;
+    if (cmdOffset == null) throw new Error("CMD ring not found in IPC buffer");
+    const cmdCtrl = new Int32Array(ipcBuffer, cmdOffset, ringCtrl.WORDS);
 
     let tickCount = 0;
     let tickSawCmdData = false;

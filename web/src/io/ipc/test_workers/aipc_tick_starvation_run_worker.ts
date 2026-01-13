@@ -1,6 +1,6 @@
 import { parentPort, workerData } from "node:worker_threads";
 
-import { openRingByKind } from "../../../ipc/ipc.ts";
+import { openRingByKind, parseIpcBuffer } from "../../../ipc/ipc.ts";
 import { queueKind, ringCtrl } from "../../../ipc/layout.ts";
 import { AeroIpcIoServer, type AeroIpcIoDispatchTarget } from "../aero_ipc_io.ts";
 
@@ -15,9 +15,12 @@ const { ipcBuffer, tickCounter, tickSawCmdData, tickIntervalMs, workIters } = wo
 const cmdQ = openRingByKind(ipcBuffer, queueKind.CMD);
 const evtQ = openRingByKind(ipcBuffer, queueKind.EVT);
 
-// Access RingBuffer's private header view. This is safe in tests and lets us verify
-// whether tick() fired while the command ring still had pending data.
-const cmdCtrl = (cmdQ as unknown as { ctrl: Int32Array }).ctrl;
+// Introspect the ring control header so the test can assert that tick() fired while
+// commands were still queued (i.e. not only when the ring became empty).
+const { queues } = parseIpcBuffer(ipcBuffer);
+const cmdOffset = queues.find((q) => q.kind === queueKind.CMD)?.offsetBytes;
+if (cmdOffset == null) throw new Error("CMD ring not found in IPC buffer");
+const cmdCtrl = new Int32Array(ipcBuffer, cmdOffset, ringCtrl.WORDS);
 
 const tickCounterI32 = new Int32Array(tickCounter);
 const tickSawCmdDataI32 = new Int32Array(tickSawCmdData);
@@ -49,4 +52,3 @@ new AeroIpcIoServer(cmdQ, evtQ, target, {
   // on a full event ring.
   emitEvent: () => {},
 }).run();
-
