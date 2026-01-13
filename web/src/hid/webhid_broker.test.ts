@@ -708,6 +708,136 @@ describe("hid/WebHidBroker", () => {
     broker.destroy();
   });
 
+  it("executes hid.sendReport messages sequentially per device", async () => {
+    const manager = new WebHidPassthroughManager({ hid: null });
+    const broker = new WebHidBroker({ manager });
+    const port = new FakePort();
+    broker.attachWorkerPort(port as unknown as MessagePort);
+
+    const device = new FakeHidDevice();
+    const first = deferred<void>();
+    device.sendReport.mockImplementationOnce(() => first.promise);
+    const id = await broker.attachDevice(device as unknown as HIDDevice);
+
+    port.emit({ type: "hid.sendReport", deviceId: id, reportType: "output", reportId: 1, data: Uint8Array.of(1) });
+    port.emit({ type: "hid.sendReport", deviceId: id, reportType: "output", reportId: 2, data: Uint8Array.of(2) });
+
+    await new Promise((r) => setTimeout(r, 0));
+    expect(device.sendReport).toHaveBeenCalledTimes(1);
+
+    first.resolve(undefined);
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(device.sendReport).toHaveBeenCalledTimes(2);
+    expect(device.sendReport).toHaveBeenNthCalledWith(1, 1, Uint8Array.of(1));
+    expect(device.sendReport).toHaveBeenNthCalledWith(2, 2, Uint8Array.of(2));
+
+    broker.destroy();
+  });
+
+  it("executes output ring reports sequentially per device", async () => {
+    Object.defineProperty(globalThis, "crossOriginIsolated", { value: true, configurable: true });
+
+    const manager = new WebHidPassthroughManager({ hid: null });
+    const broker = new WebHidBroker({ manager });
+    const port = new FakePort();
+    broker.attachWorkerPort(port as unknown as MessagePort);
+
+    const ringAttach = port.posted.find((p) => (p.msg as { type?: unknown }).type === "hid.ringAttach")?.msg as
+      | { inputRing: SharedArrayBuffer; outputRing: SharedArrayBuffer }
+      | undefined;
+    expect(ringAttach).toBeTruthy();
+    const outputRing = new HidReportRing(ringAttach!.outputRing);
+
+    const device = new FakeHidDevice();
+    const first = deferred<void>();
+    device.sendReport.mockImplementationOnce(() => first.promise);
+    const id = await broker.attachDevice(device as unknown as HIDDevice);
+
+    expect(outputRing.push(id, HidReportType.Output, 1, Uint8Array.of(1))).toBe(true);
+    expect(outputRing.push(id, HidReportType.Output, 2, Uint8Array.of(2))).toBe(true);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(device.sendReport).toHaveBeenCalledTimes(1);
+
+    first.resolve(undefined);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(device.sendReport).toHaveBeenCalledTimes(2);
+    expect(device.sendReport).toHaveBeenNthCalledWith(1, 1, Uint8Array.of(1));
+    expect(device.sendReport).toHaveBeenNthCalledWith(2, 2, Uint8Array.of(2));
+
+    broker.destroy();
+  });
+
+  it("queues hid.sendReport behind output ring sends for the same device", async () => {
+    Object.defineProperty(globalThis, "crossOriginIsolated", { value: true, configurable: true });
+
+    const manager = new WebHidPassthroughManager({ hid: null });
+    const broker = new WebHidBroker({ manager });
+    const port = new FakePort();
+    broker.attachWorkerPort(port as unknown as MessagePort);
+
+    const ringAttach = port.posted.find((p) => (p.msg as { type?: unknown }).type === "hid.ringAttach")?.msg as
+      | { inputRing: SharedArrayBuffer; outputRing: SharedArrayBuffer }
+      | undefined;
+    expect(ringAttach).toBeTruthy();
+    const outputRing = new HidReportRing(ringAttach!.outputRing);
+
+    const device = new FakeHidDevice();
+    const first = deferred<void>();
+    device.sendReport.mockImplementationOnce(() => first.promise);
+    const id = await broker.attachDevice(device as unknown as HIDDevice);
+
+    expect(outputRing.push(id, HidReportType.Output, 1, Uint8Array.of(1))).toBe(true);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(device.sendReport).toHaveBeenCalledTimes(1);
+
+    port.emit({ type: "hid.sendReport", deviceId: id, reportType: "feature", reportId: 2, data: Uint8Array.of(2) });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(device.sendFeatureReport).toHaveBeenCalledTimes(0);
+
+    first.resolve(undefined);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(device.sendFeatureReport).toHaveBeenCalledTimes(1);
+
+    broker.destroy();
+  });
+
+  it("does not block other devices when output ring sends are pending", async () => {
+    Object.defineProperty(globalThis, "crossOriginIsolated", { value: true, configurable: true });
+
+    const manager = new WebHidPassthroughManager({ hid: null });
+    const broker = new WebHidBroker({ manager });
+    const port = new FakePort();
+    broker.attachWorkerPort(port as unknown as MessagePort);
+
+    const ringAttach = port.posted.find((p) => (p.msg as { type?: unknown }).type === "hid.ringAttach")?.msg as
+      | { inputRing: SharedArrayBuffer; outputRing: SharedArrayBuffer }
+      | undefined;
+    expect(ringAttach).toBeTruthy();
+    const outputRing = new HidReportRing(ringAttach!.outputRing);
+
+    const deviceA = new FakeHidDevice();
+    const deviceB = new FakeHidDevice();
+    const first = deferred<void>();
+    deviceA.sendReport.mockImplementationOnce(() => first.promise);
+
+    const idA = await broker.attachDevice(deviceA as unknown as HIDDevice);
+    const idB = await broker.attachDevice(deviceB as unknown as HIDDevice);
+
+    expect(outputRing.push(idA, HidReportType.Output, 1, Uint8Array.of(1))).toBe(true);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(deviceA.sendReport).toHaveBeenCalledTimes(1);
+    expect(deviceB.sendReport).toHaveBeenCalledTimes(0);
+
+    expect(outputRing.push(idB, HidReportType.Output, 1, Uint8Array.of(2))).toBe(true);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(deviceB.sendReport).toHaveBeenCalledTimes(1);
+
+    first.resolve(undefined);
+    await new Promise((r) => setTimeout(r, 0));
+    broker.destroy();
+  });
+
   it("does not serialize report sends across devices", async () => {
     const manager = new WebHidPassthroughManager({ hid: null });
     const broker = new WebHidBroker({ manager });
