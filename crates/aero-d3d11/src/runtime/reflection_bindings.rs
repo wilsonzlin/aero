@@ -1043,7 +1043,7 @@ mod tests {
             let dummy_uniform = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("reflection_bindings test dummy uniform"),
                 size: 256,
-                usage: wgpu::BufferUsages::UNIFORM,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::STORAGE,
                 mapped_at_creation: false,
             });
             let dummy_storage = device.create_buffer(&wgpu::BufferDescriptor {
@@ -1125,11 +1125,11 @@ mod tests {
                     None
                 }
 
-                fn sampler(&self, _slot: u32) -> Option<&CachedSampler> {
+                fn srv_buffer(&self, _slot: u32) -> Option<BufferBinding<'_>> {
                     None
                 }
 
-                fn srv_buffer(&self, _slot: u32) -> Option<BufferBinding<'_>> {
+                fn sampler(&self, _slot: u32) -> Option<&CachedSampler> {
                     None
                 }
 
@@ -1192,6 +1192,137 @@ mod tests {
     }
 
     #[test]
+    fn build_bind_group_falls_back_to_dummy_for_missing_srv_uav_buffers() {
+        pollster::block_on(async {
+            let rt = match crate::runtime::aerogpu_execute::AerogpuCmdRuntime::new_for_tests().await
+            {
+                Ok(rt) => rt,
+                Err(err) => {
+                    skip_or_panic(module_path!(), &format!("wgpu unavailable ({err:#})"));
+                    return;
+                }
+            };
+
+            let device = rt.device();
+            if device.limits().max_storage_buffers_per_shader_stage == 0 {
+                skip_or_panic(module_path!(), "storage buffers are not supported by this adapter");
+                return;
+            }
+
+            let dummy_uniform = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("reflection_bindings test dummy uniform"),
+                size: 256,
+                usage: wgpu::BufferUsages::UNIFORM,
+                mapped_at_creation: false,
+            });
+            let dummy_storage = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("reflection_bindings test dummy storage"),
+                size: 256,
+                usage: wgpu::BufferUsages::STORAGE,
+                mapped_at_creation: false,
+            });
+
+            let dummy_texture = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("reflection_bindings test dummy texture"),
+                size: wgpu::Extent3d {
+                    width: 1,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            });
+            let dummy_texture_view = dummy_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+            let mut sampler_cache = SamplerCache::new();
+            let default_sampler =
+                sampler_cache.get_or_create(device, &wgpu::SamplerDescriptor::default());
+
+            let srv = crate::Binding {
+                group: 0,
+                binding: BINDING_BASE_TEXTURE,
+                visibility: wgpu::ShaderStages::VERTEX,
+                kind: crate::BindingKind::SrvBuffer { slot: 0 },
+            };
+            let uav = crate::Binding {
+                group: 0,
+                binding: BINDING_BASE_UAV,
+                visibility: wgpu::ShaderStages::VERTEX,
+                kind: crate::BindingKind::UavBuffer { slot: 0 },
+            };
+
+            let entries = [
+                binding_to_layout_entry(&srv).unwrap(),
+                binding_to_layout_entry(&uav).unwrap(),
+            ];
+            let mut layout_cache = BindGroupLayoutCache::new();
+            let layout = layout_cache.get_or_create(device, &entries);
+
+            struct DummyProvider<'a> {
+                dummy_uniform: &'a wgpu::Buffer,
+                dummy_storage: &'a wgpu::Buffer,
+                dummy_texture_view: &'a wgpu::TextureView,
+                default_sampler: &'a CachedSampler,
+            }
+
+            impl BindGroupResourceProvider for DummyProvider<'_> {
+                fn constant_buffer(&self, _slot: u32) -> Option<BufferBinding<'_>> {
+                    None
+                }
+
+                fn constant_buffer_scratch(&self, _slot: u32) -> Option<(BufferId, &wgpu::Buffer)> {
+                    None
+                }
+
+                fn texture2d(&self, _slot: u32) -> Option<(TextureViewId, &wgpu::TextureView)> {
+                    None
+                }
+
+                fn sampler(&self, _slot: u32) -> Option<&CachedSampler> {
+                    None
+                }
+
+                fn dummy_uniform(&self) -> &wgpu::Buffer {
+                    self.dummy_uniform
+                }
+
+                fn dummy_storage(&self) -> &wgpu::Buffer {
+                    self.dummy_storage
+                }
+
+                fn dummy_texture_view(&self) -> &wgpu::TextureView {
+                    self.dummy_texture_view
+                }
+
+                fn default_sampler(&self) -> &CachedSampler {
+                    self.default_sampler
+                }
+            }
+
+            let provider = DummyProvider {
+                dummy_uniform: &dummy_uniform,
+                dummy_storage: &dummy_storage,
+                dummy_texture_view: &dummy_texture_view,
+                default_sampler: &default_sampler,
+            };
+
+            let mut bind_group_cache = BindGroupCache::new(16);
+            build_bind_group(
+                device,
+                &mut bind_group_cache,
+                &layout,
+                &[srv, uav],
+                &provider,
+            )
+            .expect("bind group should build with dummy storage-buffer fallback");
+        });
+    }
+
+    #[test]
     fn build_bind_group_uses_scratch_for_unaligned_uniform_offsets() {
         pollster::block_on(async {
             let rt = match crate::runtime::aerogpu_execute::AerogpuCmdRuntime::new_for_tests().await
@@ -1219,7 +1350,7 @@ mod tests {
             let dummy_uniform = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("reflection_bindings test dummy uniform"),
                 size: 256,
-                usage: wgpu::BufferUsages::UNIFORM,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::STORAGE,
                 mapped_at_creation: false,
             });
             let dummy_storage = device.create_buffer(&wgpu::BufferDescriptor {
@@ -1314,11 +1445,11 @@ mod tests {
                     None
                 }
 
-                fn sampler(&self, _slot: u32) -> Option<&CachedSampler> {
+                fn srv_buffer(&self, _slot: u32) -> Option<BufferBinding<'_>> {
                     None
                 }
 
-                fn srv_buffer(&self, _slot: u32) -> Option<BufferBinding<'_>> {
+                fn sampler(&self, _slot: u32) -> Option<&CachedSampler> {
                     None
                 }
 
@@ -1821,7 +1952,7 @@ mod tests {
             let dummy_uniform = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("reflection_bindings test dummy uniform"),
                 size: 256,
-                usage: wgpu::BufferUsages::UNIFORM,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::STORAGE,
                 mapped_at_creation: false,
             });
             let dummy_storage = device.create_buffer(&wgpu::BufferDescriptor {
@@ -1872,11 +2003,11 @@ mod tests {
                     None
                 }
 
-                fn sampler(&self, _slot: u32) -> Option<&CachedSampler> {
+                fn srv_buffer(&self, _slot: u32) -> Option<BufferBinding<'_>> {
                     None
                 }
 
-                fn srv_buffer(&self, _slot: u32) -> Option<BufferBinding<'_>> {
+                fn sampler(&self, _slot: u32) -> Option<&CachedSampler> {
                     None
                 }
 

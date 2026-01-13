@@ -1315,15 +1315,23 @@ impl reflection_bindings::BindGroupResourceProvider for RuntimeBindGroupProvider
         Some((TextureViewId(handle as u64), &tex.view))
     }
 
+    fn srv_buffer(&self, slot: u32) -> Option<reflection_bindings::BufferBinding<'_>> {
+        let stage = self.stage_state?;
+        let handle = stage.textures.get(slot as usize).copied().flatten()?;
+        let buf = self.resources.buffers.get(&handle)?;
+        Some(reflection_bindings::BufferBinding {
+            id: BufferId(handle as u64),
+            buffer: &buf.buffer,
+            offset: 0,
+            size: None,
+            total_size: buf.size,
+        })
+    }
+
     fn sampler(&self, slot: u32) -> Option<&aero_gpu::bindings::samplers::CachedSampler> {
         let stage = self.stage_state?;
         let handle = stage.samplers.get(slot as usize).copied().flatten()?;
         self.resources.samplers.get(&handle)
-    }
-
-    fn srv_buffer(&self, _slot: u32) -> Option<reflection_bindings::BufferBinding<'_>> {
-        // The aerogpu test runtime does not currently model buffer SRV bindings.
-        None
     }
 
     fn uav_buffer(&self, _slot: u32) -> Option<reflection_bindings::BufferBinding<'_>> {

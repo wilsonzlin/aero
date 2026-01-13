@@ -56,7 +56,7 @@ pub enum Builtin {
     FrontFacing,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Binding {
     pub group: u32,
     pub binding: u32,
@@ -64,7 +64,7 @@ pub struct Binding {
     pub kind: BindingKind,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BindingKind {
     ConstantBuffer {
         slot: u32,
