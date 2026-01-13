@@ -115,18 +115,18 @@ impl Tier1WasmOptions {
 
 #[derive(Clone, Copy, Default)]
 struct ImportedFuncs {
-    mem_read_u8: u32,
-    mem_read_u16: u32,
-    mem_read_u32: u32,
-    mem_read_u64: u32,
-    mem_write_u8: u32,
-    mem_write_u16: u32,
-    mem_write_u32: u32,
-    mem_write_u64: u32,
+    mem_read_u8: Option<u32>,
+    mem_read_u16: Option<u32>,
+    mem_read_u32: Option<u32>,
+    mem_read_u64: Option<u32>,
+    mem_write_u8: Option<u32>,
+    mem_write_u16: Option<u32>,
+    mem_write_u32: Option<u32>,
+    mem_write_u64: Option<u32>,
     mmu_translate: Option<u32>,
-    _page_fault: u32,
+    _page_fault: Option<u32>,
     jit_exit_mmio: Option<u32>,
-    _jit_exit: u32,
+    jit_exit: Option<u32>,
     count: u32,
 }
 
@@ -263,18 +263,50 @@ impl Tier1WasmCodegen {
         {
             options.inline_tlb = false;
         }
-        if options.inline_tlb {
-            let uses_inline_tlb = block.insts.iter().any(|inst| match inst {
-                IrInst::Load { .. } => true,
-                IrInst::Store { .. } => options.inline_tlb_stores,
-                _ => false,
-            });
-            if !uses_inline_tlb {
-                // Inline-TLB is a pure memory fast-path; blocks with no inline-TLB-eligible memory
-                // ops don't need the extra imports/locals.
-                options.inline_tlb = false;
+
+        let mut needs_mem_read_u8 = false;
+        let mut needs_mem_read_u16 = false;
+        let mut needs_mem_read_u32 = false;
+        let mut needs_mem_read_u64 = false;
+        let mut needs_mem_write_u8 = false;
+        let mut needs_mem_write_u16 = false;
+        let mut needs_mem_write_u32 = false;
+        let mut needs_mem_write_u64 = false;
+        let mut needs_jit_exit = false;
+        let mut uses_inline_tlb = false;
+        for inst in &block.insts {
+            match inst {
+                IrInst::Load { width, .. } => {
+                    uses_inline_tlb = true;
+                    match *width {
+                        Width::W8 => needs_mem_read_u8 = true,
+                        Width::W16 => needs_mem_read_u16 = true,
+                        Width::W32 => needs_mem_read_u32 = true,
+                        Width::W64 => needs_mem_read_u64 = true,
+                    }
+                }
+                IrInst::Store { width, .. } => {
+                    if options.inline_tlb_stores {
+                        uses_inline_tlb = true;
+                    }
+                    match *width {
+                        Width::W8 => needs_mem_write_u8 = true,
+                        Width::W16 => needs_mem_write_u16 = true,
+                        Width::W32 => needs_mem_write_u32 = true,
+                        Width::W64 => needs_mem_write_u64 = true,
+                    }
+                }
+                IrInst::CallHelper { .. } => needs_jit_exit = true,
+                _ => {}
             }
         }
+
+        // Enabling the inline-TLB fast-path only matters if the block contains a memory operation
+        // eligible for it.
+        if options.inline_tlb && !uses_inline_tlb {
+            options.inline_tlb = false;
+        }
+
         let mut module = Module::new();
 
         let mut types = TypeSection::new();
@@ -377,61 +409,77 @@ impl Tier1WasmCodegen {
         let func_base = 0u32;
         let mut next_func = func_base;
         let imported = ImportedFuncs {
-            mem_read_u8: next(&mut next_func),
-            mem_read_u16: next(&mut next_func),
-            mem_read_u32: next(&mut next_func),
-            mem_read_u64: next(&mut next_func),
-            mem_write_u8: next(&mut next_func),
-            mem_write_u16: next(&mut next_func),
-            mem_write_u32: next(&mut next_func),
-            mem_write_u64: next(&mut next_func),
+            mem_read_u8: needs_mem_read_u8.then(|| next(&mut next_func)),
+            mem_read_u16: needs_mem_read_u16.then(|| next(&mut next_func)),
+            mem_read_u32: needs_mem_read_u32.then(|| next(&mut next_func)),
+            mem_read_u64: needs_mem_read_u64.then(|| next(&mut next_func)),
+            mem_write_u8: needs_mem_write_u8.then(|| next(&mut next_func)),
+            mem_write_u16: needs_mem_write_u16.then(|| next(&mut next_func)),
+            mem_write_u32: needs_mem_write_u32.then(|| next(&mut next_func)),
+            mem_write_u64: needs_mem_write_u64.then(|| next(&mut next_func)),
             mmu_translate: options.inline_tlb.then(|| next(&mut next_func)),
-            _page_fault: next(&mut next_func),
+            _page_fault: options.inline_tlb.then(|| next(&mut next_func)),
             jit_exit_mmio: options.inline_tlb.then(|| next(&mut next_func)),
-            _jit_exit: next(&mut next_func),
+            jit_exit: needs_jit_exit.then(|| next(&mut next_func)),
             count: next_func - func_base,
         };
 
-        imports.import(
-            IMPORT_MODULE,
-            IMPORT_MEM_READ_U8,
-            EntityType::Function(ty_mem_read_u8),
-        );
-        imports.import(
-            IMPORT_MODULE,
-            IMPORT_MEM_READ_U16,
-            EntityType::Function(ty_mem_read_u16),
-        );
-        imports.import(
-            IMPORT_MODULE,
-            IMPORT_MEM_READ_U32,
-            EntityType::Function(ty_mem_read_u32),
-        );
-        imports.import(
-            IMPORT_MODULE,
-            IMPORT_MEM_READ_U64,
-            EntityType::Function(ty_mem_read_u64),
-        );
-        imports.import(
-            IMPORT_MODULE,
-            IMPORT_MEM_WRITE_U8,
-            EntityType::Function(ty_mem_write_u8),
-        );
-        imports.import(
-            IMPORT_MODULE,
-            IMPORT_MEM_WRITE_U16,
-            EntityType::Function(ty_mem_write_u16),
-        );
-        imports.import(
-            IMPORT_MODULE,
-            IMPORT_MEM_WRITE_U32,
-            EntityType::Function(ty_mem_write_u32),
-        );
-        imports.import(
-            IMPORT_MODULE,
-            IMPORT_MEM_WRITE_U64,
-            EntityType::Function(ty_mem_write_u64),
-        );
+        if needs_mem_read_u8 {
+            imports.import(
+                IMPORT_MODULE,
+                IMPORT_MEM_READ_U8,
+                EntityType::Function(ty_mem_read_u8),
+            );
+        }
+        if needs_mem_read_u16 {
+            imports.import(
+                IMPORT_MODULE,
+                IMPORT_MEM_READ_U16,
+                EntityType::Function(ty_mem_read_u16),
+            );
+        }
+        if needs_mem_read_u32 {
+            imports.import(
+                IMPORT_MODULE,
+                IMPORT_MEM_READ_U32,
+                EntityType::Function(ty_mem_read_u32),
+            );
+        }
+        if needs_mem_read_u64 {
+            imports.import(
+                IMPORT_MODULE,
+                IMPORT_MEM_READ_U64,
+                EntityType::Function(ty_mem_read_u64),
+            );
+        }
+        if needs_mem_write_u8 {
+            imports.import(
+                IMPORT_MODULE,
+                IMPORT_MEM_WRITE_U8,
+                EntityType::Function(ty_mem_write_u8),
+            );
+        }
+        if needs_mem_write_u16 {
+            imports.import(
+                IMPORT_MODULE,
+                IMPORT_MEM_WRITE_U16,
+                EntityType::Function(ty_mem_write_u16),
+            );
+        }
+        if needs_mem_write_u32 {
+            imports.import(
+                IMPORT_MODULE,
+                IMPORT_MEM_WRITE_U32,
+                EntityType::Function(ty_mem_write_u32),
+            );
+        }
+        if needs_mem_write_u64 {
+            imports.import(
+                IMPORT_MODULE,
+                IMPORT_MEM_WRITE_U64,
+                EntityType::Function(ty_mem_write_u64),
+            );
+        }
         if options.inline_tlb {
             imports.import(
                 IMPORT_MODULE,
@@ -439,11 +487,13 @@ impl Tier1WasmCodegen {
                 EntityType::Function(ty_mmu_translate.expect("type for mmu_translate")),
             );
         }
-        imports.import(
-            IMPORT_MODULE,
-            IMPORT_PAGE_FAULT,
-            EntityType::Function(ty_page_fault),
-        );
+        if options.inline_tlb {
+            imports.import(
+                IMPORT_MODULE,
+                IMPORT_PAGE_FAULT,
+                EntityType::Function(ty_page_fault),
+            );
+        }
         if options.inline_tlb {
             imports.import(
                 IMPORT_MODULE,
@@ -451,11 +501,13 @@ impl Tier1WasmCodegen {
                 EntityType::Function(ty_jit_exit_mmio.expect("type for jit_exit_mmio")),
             );
         }
-        imports.import(
-            IMPORT_MODULE,
-            IMPORT_JIT_EXIT,
-            EntityType::Function(ty_jit_exit),
-        );
+        if needs_jit_exit {
+            imports.import(
+                IMPORT_MODULE,
+                IMPORT_JIT_EXIT,
+                EntityType::Function(ty_jit_exit),
+            );
+        }
         module.section(&imports);
 
         let mut funcs = FunctionSection::new();
@@ -782,23 +834,35 @@ impl Emitter<'_> {
                         .instruction(&Instruction::LocalGet(self.layout.value_local(*addr)));
                     match *width {
                         Width::W8 => {
-                            self.func
-                                .instruction(&Instruction::Call(self.imported.mem_read_u8));
+                            self.func.instruction(&Instruction::Call(
+                                self.imported
+                                    .mem_read_u8
+                                    .expect("mem_read_u8 import missing"),
+                            ));
                             self.func.instruction(&Instruction::I64ExtendI32U);
                         }
                         Width::W16 => {
-                            self.func
-                                .instruction(&Instruction::Call(self.imported.mem_read_u16));
+                            self.func.instruction(&Instruction::Call(
+                                self.imported
+                                    .mem_read_u16
+                                    .expect("mem_read_u16 import missing"),
+                            ));
                             self.func.instruction(&Instruction::I64ExtendI32U);
                         }
                         Width::W32 => {
-                            self.func
-                                .instruction(&Instruction::Call(self.imported.mem_read_u32));
+                            self.func.instruction(&Instruction::Call(
+                                self.imported
+                                    .mem_read_u32
+                                    .expect("mem_read_u32 import missing"),
+                            ));
                             self.func.instruction(&Instruction::I64ExtendI32U);
                         }
                         Width::W64 => {
-                            self.func
-                                .instruction(&Instruction::Call(self.imported.mem_read_u64));
+                            self.func.instruction(&Instruction::Call(
+                                self.imported
+                                    .mem_read_u64
+                                    .expect("mem_read_u64 import missing"),
+                            ));
                         }
                     }
                     self.emit_trunc(*width);
@@ -819,6 +883,7 @@ impl Emitter<'_> {
                     Width::W32 => (4u32, self.imported.mem_read_u32),
                     Width::W64 => (8u32, self.imported.mem_read_u64),
                 };
+                let slow_read = slow_read.expect("memory read helper import missing");
 
                 // Cross-page accesses use the slow helper for correctness.
                 let cross_limit =
@@ -945,23 +1010,39 @@ impl Emitter<'_> {
                             self.emit_trunc(Width::W8);
                             self.func.instruction(&Instruction::I32WrapI64);
                             self.func
-                                .instruction(&Instruction::Call(self.imported.mem_write_u8));
+                                .instruction(&Instruction::Call(
+                                    self.imported
+                                        .mem_write_u8
+                                        .expect("mem_write_u8 import missing"),
+                                ));
                         }
                         Width::W16 => {
                             self.emit_trunc(Width::W16);
                             self.func.instruction(&Instruction::I32WrapI64);
                             self.func
-                                .instruction(&Instruction::Call(self.imported.mem_write_u16));
+                                .instruction(&Instruction::Call(
+                                    self.imported
+                                        .mem_write_u16
+                                        .expect("mem_write_u16 import missing"),
+                                ));
                         }
                         Width::W32 => {
                             self.emit_trunc(Width::W32);
                             self.func.instruction(&Instruction::I32WrapI64);
                             self.func
-                                .instruction(&Instruction::Call(self.imported.mem_write_u32));
+                                .instruction(&Instruction::Call(
+                                    self.imported
+                                        .mem_write_u32
+                                        .expect("mem_write_u32 import missing"),
+                                ));
                         }
                         Width::W64 => {
                             self.func
-                                .instruction(&Instruction::Call(self.imported.mem_write_u64));
+                                .instruction(&Instruction::Call(
+                                    self.imported
+                                        .mem_write_u64
+                                        .expect("mem_write_u64 import missing"),
+                                ));
                         }
                     }
                     return;
@@ -978,6 +1059,7 @@ impl Emitter<'_> {
                     Width::W32 => (4u32, self.imported.mem_write_u32),
                     Width::W64 => (8u32, self.imported.mem_write_u64),
                 };
+                let slow_write = slow_write.expect("memory write helper import missing");
 
                 let cross_limit =
                     crate::PAGE_OFFSET_MASK.saturating_sub(size_bytes.saturating_sub(1) as u64);
@@ -1236,7 +1318,9 @@ impl Emitter<'_> {
                 self.func
                     .instruction(&Instruction::LocalGet(self.layout.rip_local()));
                 self.func
-                    .instruction(&Instruction::Call(self.imported._jit_exit));
+                    .instruction(&Instruction::Call(
+                        self.imported.jit_exit.expect("jit_exit import missing"),
+                    ));
                 // `jit_exit` returns the RIP to resume at while we use the sentinel return value to
                 // request an interpreter step.
                 self.func

@@ -336,9 +336,20 @@ fn wasm_tier1_inline_tlb_option_is_ignored_for_memory_free_blocks() {
     );
     validate_wasm(&wasm);
 
-    // This instantiation intentionally does not define `env.mmu_translate` / `env.jit_exit_mmio`,
-    // so it will fail if the code generator still emits inline-TLB imports for a memory-free block.
-    let (mut store, memory, func) = instantiate(&wasm);
+    // This instantiation intentionally does not define *any* tier1 helper imports, so it will fail
+    // if the code generator still emits unnecessary imports for a memory-free block.
+    let engine = Engine::default();
+    let module = Module::new(&engine, &wasm).unwrap();
+    let mut store = Store::new(&engine, ());
+    let mut linker = Linker::new(&engine);
+    // Guest memory in page 0, CpuState at CPU_PTR in page 1, and room for the JIT context.
+    let memory = Memory::new(&mut store, MemoryType::new(4, None)).unwrap();
+    linker.define(IMPORT_MODULE, IMPORT_MEMORY, memory).unwrap();
+
+    let instance = linker.instantiate_and_start(&mut store, &module).unwrap();
+    let func = instance
+        .get_typed_func::<(i32, i32), i64>(&store, EXPORT_TIER1_BLOCK_FN)
+        .unwrap();
 
     let cpu = CpuState {
         rip: 0x1000,
