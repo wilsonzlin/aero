@@ -3419,6 +3419,7 @@ static NDIS_STATUS AerovNetMiniportRestart(_In_ NDIS_HANDLE MiniportAdapterConte
 
 static VOID AerovNetMiniportHaltEx(_In_ NDIS_HANDLE MiniportAdapterContext, _In_ NDIS_HALT_ACTION HaltAction) {
   AEROVNET_ADAPTER* Adapter = (AEROVNET_ADAPTER*)MiniportAdapterContext;
+  NDIS_HANDLE InterruptHandle;
 
   UNREFERENCED_PARAMETER(HaltAction);
 
@@ -3428,7 +3429,16 @@ static VOID AerovNetMiniportHaltEx(_In_ NDIS_HANDLE MiniportAdapterContext, _In_
 
   NdisAcquireSpinLock(&Adapter->Lock);
   Adapter->State = AerovNetAdapterStopped;
+  InterruptHandle = Adapter->InterruptHandle;
+  Adapter->InterruptHandle = NULL;
   NdisReleaseSpinLock(&Adapter->Lock);
+
+  // Ensure no ISR/DPC is still running before we start tearing down virtqueues and
+  // TX request storage. NDIS can still have a DPC in-flight even after the
+  // adapter state transitions to stopped.
+  if (InterruptHandle) {
+    NdisMDeregisterInterruptEx(InterruptHandle);
+  }
 
   AerovNetVirtioStop(Adapter);
   AerovNetCleanupAdapter(Adapter);
