@@ -76,6 +76,7 @@ class FakeHidDevice {
 
   readonly sendReport = vi.fn(async () => {});
   readonly sendFeatureReport = vi.fn(async () => {});
+  readonly receiveFeatureReport = vi.fn(async () => new DataView(new ArrayBuffer(0)));
 
   readonly #listeners = new Map<string, Set<DeviceListener>>();
 
@@ -786,6 +787,59 @@ describe("hid/WebHidBroker", () => {
     await new Promise((r) => setTimeout(r, 0));
 
     expect(device.sendReport).toHaveBeenCalledTimes(1);
+  });
+
+  it("handles hid.getFeatureReport requests from the worker with ordered request processing", async () => {
+    const manager = new WebHidPassthroughManager({ hid: null });
+    const broker = new WebHidBroker({ manager });
+    const port = new FakePort();
+    broker.attachWorkerPort(port as unknown as MessagePort);
+
+    const device = new FakeHidDevice();
+    const first = deferred<DataView<ArrayBuffer>>();
+    device.receiveFeatureReport
+      .mockImplementationOnce(async () => first.promise)
+      .mockImplementationOnce(async () => {
+        const backing = new ArrayBuffer(8);
+        new Uint8Array(backing, 2, 2).set([9, 10]);
+        return new DataView(backing, 2, 2);
+      });
+    const id = await broker.attachDevice(device as unknown as HIDDevice);
+
+    port.emit({ type: "hid.getFeatureReport", requestId: 1, deviceId: id, reportId: 7 });
+    port.emit({ type: "hid.getFeatureReport", requestId: 2, deviceId: id, reportId: 7 });
+
+    await new Promise((r) => setTimeout(r, 0));
+    // Second request must not start until the first finishes.
+    expect(device.receiveFeatureReport).toHaveBeenCalledTimes(1);
+
+    first.resolve(new DataView(Uint8Array.of(1, 2, 3).buffer));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(device.receiveFeatureReport).toHaveBeenCalledTimes(2);
+
+    const results = port.posted.filter((p) => (p.msg as { type?: unknown }).type === "hid.featureReportResult") as Array<{
+      msg: any;
+      transfer?: Transferable[];
+    }>;
+    expect(results).toHaveLength(2);
+
+    expect(results[0].msg).toMatchObject({ requestId: 1, deviceId: id, reportId: 7, ok: true });
+    expect(Array.from(results[0].msg.data)).toEqual([1, 2, 3]);
+    expect(results[0].transfer?.[0]).toBe(results[0].msg.data.buffer);
+
+    // Second response should use an ArrayBuffer-backed Uint8Array with the DataView slice copied out.
+    expect(results[1].msg).toMatchObject({ requestId: 2, deviceId: id, reportId: 7, ok: true });
+    expect(Array.from(results[1].msg.data)).toEqual([9, 10]);
+    expect(results[1].transfer?.[0]).toBe(results[1].msg.data.buffer);
+
+    // Detached/unknown device should respond with ok:false.
+    port.emit({ type: "hid.getFeatureReport", requestId: 3, deviceId: id + 999, reportId: 1 });
+    await new Promise((r) => setTimeout(r, 0));
+    const failed = port.posted
+      .slice()
+      .reverse()
+      .find((p) => (p.msg as { type?: unknown }).type === "hid.featureReportResult" && (p.msg as any).requestId === 3) as any;
+    expect(failed.msg).toMatchObject({ requestId: 3, ok: false });
   });
 
   it("does not auto-attach devices when the worker port is replaced", async () => {

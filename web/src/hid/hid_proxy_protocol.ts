@@ -95,6 +95,31 @@ export type HidSendReportMessage = {
   data: Uint8Array<ArrayBuffer>;
 };
 
+export type HidGetFeatureReportMessage = {
+  /**
+   * Worker -> main: request `HIDDevice.receiveFeatureReport(reportId)`.
+   */
+  type: "hid.getFeatureReport";
+  requestId: number;
+  deviceId: number;
+  reportId: number;
+};
+
+export type HidFeatureReportResultMessage = {
+  /**
+   * Main -> worker: response to {@link HidGetFeatureReportMessage}.
+   */
+  type: "hid.featureReportResult";
+  requestId: number;
+  deviceId: number;
+  reportId: number;
+  ok: boolean;
+  // This buffer is transferred between threads; it should always be backed by an ArrayBuffer
+  // (not a SharedArrayBuffer).
+  data?: Uint8Array<ArrayBuffer>;
+  error?: string;
+};
+
 export type HidLogMessage = {
   type: "hid.log";
   message: string;
@@ -116,6 +141,8 @@ export type HidProxyMessage =
   | HidRingDetachMessage
   | HidInputReportMessage
   | HidSendReportMessage
+  | HidGetFeatureReportMessage
+  | HidFeatureReportResultMessage
   | HidLogMessage
   | HidErrorMessage;
 
@@ -284,6 +311,27 @@ export function isHidSendReportMessage(value: unknown): value is HidSendReportMe
   return true;
 }
 
+export function isHidGetFeatureReportMessage(value: unknown): value is HidGetFeatureReportMessage {
+  if (!isRecord(value) || value.type !== "hid.getFeatureReport") return false;
+  if (!isUint32(value.requestId)) return false;
+  if (!isUint32(value.deviceId) || !isUint8(value.reportId)) return false;
+  return true;
+}
+
+export function isHidFeatureReportResultMessage(value: unknown): value is HidFeatureReportResultMessage {
+  if (!isRecord(value) || value.type !== "hid.featureReportResult") return false;
+  if (!isUint32(value.requestId)) return false;
+  if (!isUint32(value.deviceId) || !isUint8(value.reportId)) return false;
+  if (!isBoolean(value.ok)) return false;
+  if (value.error !== undefined && typeof value.error !== "string") return false;
+
+  if (value.ok) {
+    return isArrayBufferBackedUint8Array(value.data);
+  }
+
+  return value.data === undefined;
+}
+
 export function isHidLogMessage(value: unknown): value is HidLogMessage {
   if (!isRecord(value) || value.type !== "hid.log") return false;
   if (typeof value.message !== "string") return false;
@@ -308,6 +356,8 @@ export function isHidProxyMessage(value: unknown): value is HidProxyMessage {
     isHidRingDetachMessage(value) ||
     isHidInputReportMessage(value) ||
     isHidSendReportMessage(value) ||
+    isHidGetFeatureReportMessage(value) ||
+    isHidFeatureReportResultMessage(value) ||
     isHidLogMessage(value) ||
     isHidErrorMessage(value)
   );

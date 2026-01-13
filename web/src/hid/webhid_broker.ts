@@ -7,12 +7,15 @@ import { computeInputReportPayloadByteLengths } from "./hid_report_sizes";
 import {
   isHidAttachResultMessage,
   isHidErrorMessage,
+  isHidGetFeatureReportMessage,
   isHidLogMessage,
   isHidRingDetachMessage,
   isHidSendReportMessage,
   type HidAttachMessage,
   type HidAttachResultMessage,
   type HidDetachMessage,
+  type HidFeatureReportResultMessage,
+  type HidGetFeatureReportMessage,
   type HidInputReportMessage,
   type HidProxyMessage,
   type HidRingAttachMessage,
@@ -281,6 +284,11 @@ export class WebHidBroker {
 
       if (isHidSendReportMessage(data)) {
         this.#handleSendReportRequest(data);
+        return;
+      }
+
+      if (isHidGetFeatureReportMessage(data)) {
+        this.#handleGetFeatureReportRequest(data, port);
         return;
       }
 
@@ -845,6 +853,52 @@ export class WebHidBroker {
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         console.warn(`[webhid] Failed to send ${reportType} reportId=${reportId} deviceId=${deviceId}: ${message}`);
+      }
+    });
+  }
+
+  #handleGetFeatureReportRequest(msg: HidGetFeatureReportMessage, worker: MessagePort | Worker): void {
+    const deviceId = msg.deviceId >>> 0;
+    const reportId = msg.reportId >>> 0;
+    // Use the same per-device FIFO as output/feature report sends so receiveFeatureReport
+    // requests are serialized relative to any queued report I/O for that device.
+    this.#enqueueDeviceSend(deviceId, async () => {
+      const base = {
+        type: "hid.featureReportResult" as const,
+        requestId: msg.requestId,
+        deviceId,
+        reportId,
+      };
+
+      if (!this.#attachedToWorker.has(deviceId)) {
+        const res: HidFeatureReportResultMessage = { ...base, ok: false, error: `DeviceId=${deviceId} is not attached.` };
+        this.#postToWorker(worker, res);
+        return;
+      }
+
+      const device = this.#deviceById.get(deviceId);
+      if (!device) {
+        const res: HidFeatureReportResultMessage = { ...base, ok: false, error: `Unknown deviceId=${deviceId}.` };
+        this.#postToWorker(worker, res);
+        return;
+      }
+
+      try {
+        const view = await device.receiveFeatureReport(reportId);
+        if (!(view instanceof DataView)) {
+          const res: HidFeatureReportResultMessage = { ...base, ok: false, error: "receiveFeatureReport returned non-DataView value." };
+          this.#postToWorker(worker, res);
+          return;
+        }
+        const src = new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
+        const data = new Uint8Array(src.byteLength);
+        data.set(src);
+        const res: HidFeatureReportResultMessage = { ...base, ok: true, data };
+        this.#postToWorker(worker, res, [data.buffer]);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        const res: HidFeatureReportResultMessage = { ...base, ok: false, error: message };
+        this.#postToWorker(worker, res);
       }
     });
   }

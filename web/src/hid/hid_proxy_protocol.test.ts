@@ -5,6 +5,8 @@ import {
   isHidAttachMessage,
   isHidAttachResultMessage,
   isHidErrorMessage,
+  isHidFeatureReportResultMessage,
+  isHidGetFeatureReportMessage,
   isHidInputReportMessage,
   isHidLogMessage,
   isHidRingAttachMessage,
@@ -14,6 +16,8 @@ import {
   isHidSendReportMessage,
   type HidAttachMessage,
   type HidAttachResultMessage,
+  type HidFeatureReportResultMessage,
+  type HidGetFeatureReportMessage,
   type HidInputReportMessage,
   type HidRingAttachMessage,
   type HidRingDetachMessage,
@@ -162,6 +166,44 @@ describe("hid/hid_proxy_protocol", () => {
     expect(isHidAttachResultMessage({ type: "hid.attachResult", ok: true })).toBe(false);
   });
 
+  it("validates hid.getFeatureReport and hid.featureReportResult", () => {
+    const req: HidGetFeatureReportMessage = {
+      type: "hid.getFeatureReport",
+      requestId: 123,
+      deviceId: 1,
+      reportId: 7,
+    };
+    expect(isHidGetFeatureReportMessage(req)).toBe(true);
+    expect(isHidProxyMessage(req)).toBe(true);
+
+    const ok: HidFeatureReportResultMessage = {
+      type: "hid.featureReportResult",
+      requestId: 123,
+      deviceId: 1,
+      reportId: 7,
+      ok: true,
+      data: Uint8Array.of(1, 2, 3),
+    };
+    expect(isHidFeatureReportResultMessage(ok)).toBe(true);
+    expect(isHidProxyMessage(ok)).toBe(true);
+
+    const err: HidFeatureReportResultMessage = {
+      type: "hid.featureReportResult",
+      requestId: 123,
+      deviceId: 1,
+      reportId: 7,
+      ok: false,
+      error: "Nope",
+    };
+    expect(isHidFeatureReportResultMessage(err)).toBe(true);
+    expect(isHidProxyMessage(err)).toBe(true);
+
+    // When ok=true, data is required.
+    expect(isHidFeatureReportResultMessage({ ...ok, data: undefined } as unknown)).toBe(false);
+    // When ok=false, data must be omitted (responses should carry the error instead).
+    expect(isHidFeatureReportResultMessage({ ...err, data: Uint8Array.of(1) } as unknown)).toBe(false);
+  });
+
   it("validates hid.ringAttach", () => {
     const msg: HidRingAttachMessage = {
       type: "hid.ringAttach",
@@ -237,6 +279,24 @@ describe("hid/hid_proxy_protocol", () => {
 
     const attachResult: HidAttachResultMessage = { type: "hid.attachResult", deviceId: 7, ok: true };
     expect(isHidProxyMessage(structuredClone(attachResult) as unknown)).toBe(true);
+
+    const get: HidGetFeatureReportMessage = {
+      type: "hid.getFeatureReport",
+      requestId: 99,
+      deviceId: 7,
+      reportId: 3,
+    };
+    expect(isHidProxyMessage(structuredClone(get) as unknown)).toBe(true);
+
+    const result: HidFeatureReportResultMessage = {
+      type: "hid.featureReportResult",
+      requestId: 99,
+      deviceId: 7,
+      reportId: 3,
+      ok: true,
+      data: Uint8Array.of(4, 5),
+    };
+    expect(isHidProxyMessage(structuredClone(result) as unknown)).toBe(true);
 
     const rings: HidRingAttachMessage = {
       type: "hid.ringAttach",
