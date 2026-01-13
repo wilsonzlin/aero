@@ -1,6 +1,6 @@
 use super::pic::Pic8259;
 use crate::io::{IoPortBus, PortIoDevice};
-use aero_interrupts::apic::{IoApic, IoApicId, LapicInterruptSink, LocalApic};
+use aero_interrupts::apic::{IcrNotifier, IoApic, IoApicId, LapicInterruptSink, LocalApic};
 use aero_interrupts::clock::Clock;
 use aero_interrupts::pic8259::{MASTER_DATA, SLAVE_DATA};
 use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
@@ -122,6 +122,7 @@ impl std::fmt::Debug for PlatformInterrupts {
             .field("mode", &self.mode)
             .field("isa_irq_to_gsi", &self.isa_irq_to_gsi)
             .field("gsi_level", &self.gsi_level)
+            .field("lapics", &self.lapics.len())
             .field("pic", &self.pic)
             .field("imcr_select", &self.imcr_select)
             .field("imcr", &self.imcr)
@@ -415,6 +416,24 @@ impl PlatformInterrupts {
             return;
         };
         lapic.mmio_write(offset, data);
+    }
+
+    /// Returns the LAPIC for `apic_id` if present.
+    ///
+    /// This returns a cloned [`Arc`] rather than exposing internal references, so callers cannot
+    /// mutate the `PlatformInterrupts` LAPIC collection.
+    pub fn lapic_by_apic_id(&self, apic_id: u8) -> Option<Arc<LocalApic>> {
+        self.lapics
+            .iter()
+            .find(|lapic| lapic.apic_id() == apic_id)
+            .cloned()
+    }
+
+    /// Register a callback that is invoked when the guest writes to `ICR_LOW` on the given LAPIC.
+    pub fn register_icr_notifier(&self, apic_id: u8, notifier: IcrNotifier) {
+        if let Some(lapic) = self.lapic_by_apic_id(apic_id) {
+            lapic.register_icr_notifier(notifier);
+        }
     }
 
     pub fn tick(&self, delta_ns: u64) {
@@ -1161,5 +1180,26 @@ mod tests {
         assert_eq!(ints.lapics.len(), 4);
         let reset_ids: Vec<u8> = ints.lapics.iter().map(|lapic| lapic.apic_id()).collect();
         assert_eq!(reset_ids, vec![0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn lapic_icr_notifier_fires_with_decoded_vector_and_destination() {
+        let ints = PlatformInterrupts::new_with_cpu_count(2);
+
+        let seen = Arc::new(Mutex::new(Vec::<aero_interrupts::apic::Icr>::new()));
+        let seen_clone = seen.clone();
+        ints.register_icr_notifier(0, Arc::new(move |icr| {
+            seen_clone.lock().unwrap().push(icr);
+        }));
+
+        // Program destination APIC ID = 1 in ICR_HIGH.
+        ints.lapic_mmio_write_for_apic(0, 0x310, &((1u32 << 24).to_le_bytes()));
+        // Send fixed IPI vector 0x45.
+        ints.lapic_mmio_write_for_apic(0, 0x300, &(0x45u32.to_le_bytes()));
+
+        let events = seen.lock().unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].destination, 1);
+        assert_eq!(events[0].vector, 0x45);
     }
 }
