@@ -43,10 +43,13 @@ graphics and does **not** yet instantiate the full AeroGPU BAR0 WDDM/MMIO/ring d
   - **`00:07.0`** is reserved for the canonical AeroGPU PCI identity (`VID:DID = A3A0:0001`) and is
     exposed when AeroGPU is enabled.
   - In `aero_machine` today, BAR1 is backed by a dedicated VRAM buffer and the legacy VGA window
-    (`0xA0000..0xBFFFF`) is aliased into it (minimal legacy VGA decode).
-  - The full AeroGPU BAR0 WDDM/MMIO/ring protocol implementation currently lives under
-    [`crates/emulator/src/devices/pci/aerogpu.rs`](../crates/emulator/src/devices/pci/aerogpu.rs)
-    and is integrated separately (not yet wired into `aero_machine::Machine`).
+    (`0xA0000..0xBFFFF`) is aliased into the first 128KiB (`VRAM[0x00000..0x1FFFF]`) with
+    permissive legacy VGA port decode.
+  - BAR0 implements only a minimal MMIO + ring/fence transport stub (no-op command execution;
+    enough for the Win7 KMD to initialize and advance fences).
+  - The full versioned-AeroGPU device model (command execution + scanout + vblank pacing) currently
+    lives under [`crates/emulator/src/devices/pci/aerogpu.rs`](../crates/emulator/src/devices/pci/aerogpu.rs)
+    and is not yet wired into `aero_machine::Machine`.
 
 See [`docs/abi/aerogpu-pci-identity.md`](./abi/aerogpu-pci-identity.md) for the canonical PCI
 identity contract and a summary of the current wiring.

@@ -10,10 +10,12 @@ Note: the canonical `aero_machine::Machine` supports **two mutually-exclusive** 
 
 - `MachineConfig::enable_aerogpu=true`: expose the **AeroGPU PCI identity** at `00:07.0`
   (`A3A0:0001`) with the canonical BAR layout (BAR0 regs + BAR1 VRAM aperture). This is the
-  canonical Windows driver binding target (`PCI\VEN_A3A0&DEV_0001`). In `aero_machine` today BAR1 is
-  backed by a dedicated VRAM buffer and the legacy VGA window (`0xA0000..0xBFFFF`) is aliased into
-  it (minimal legacy VGA decode); the full BAR0 WDDM/MMIO/ring protocol + scanout are integrated
-  separately.
+  canonical Windows driver binding target (`PCI\VEN_A3A0&DEV_0001`). In `aero_machine` today:
+
+  - BAR1 is backed by a dedicated VRAM buffer, and the legacy VGA window (`0xA0000..0xBFFFF`) is
+    aliased into the first 128KiB (`VRAM[0x00000..0x1FFFF]`) with permissive legacy VGA port decode.
+  - BAR0 implements a minimal MMIO + ring/fence transport stub (enough for the Win7 KMD to
+    initialize and advance fences), but does **not** yet execute commands or drive scanout.
 - `MachineConfig::enable_vga=true`: expose the standalone legacy VGA/VBE implementation
   (`aero_gpu_vga`) plus a **transitional** PCI VGA stub at `00:0c.0` (`1234:1111`) used only for
   boot display / VBE LFB routing. This stub is not part of the long-term Windows paravirtual device
@@ -50,7 +52,8 @@ We assume a single PCI bus (`bus 0`) with stable device numbers. Not all devices
 - With `MachineConfig::enable_aerogpu=true`, the machine exposes the AeroGPU PCI identity at
   `00:07.0` (`A3A0:0001`) for driver binding. In the intended AeroGPU-owned VGA/VBE boot display
   path (see [`16-aerogpu-vga-vesa-compat.md`](./16-aerogpu-vga-vesa-compat.md)), firmware derives
-  the VBE mode-info `PhysBasePtr` from AeroGPU BAR1: `PhysBasePtr = BAR1_BASE + 0x40000`.
+  the VBE mode-info `PhysBasePtr` from AeroGPU BAR1: `PhysBasePtr = BAR1_BASE + 0x20000` (see
+  `crates/aero-machine/src/lib.rs::VBE_LFB_OFFSET`).
 - With `MachineConfig::enable_vga=true` (and `enable_aerogpu=false`), boot display is provided by
   the standalone `aero_gpu_vga` VGA/VBE device model, and the machine exposes a minimal PCI VGA
   function at `00:0c.0` (`1234:1111`) so the VBE LFB is reachable via the PCI MMIO router (with an

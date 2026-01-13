@@ -20,9 +20,22 @@ The canonical `aero_machine::Machine` supports **two mutually-exclusive** displa
 - **AeroGPU (canonical / long-term):** `MachineConfig::enable_aerogpu=true` exposes the canonical
   AeroGPU PCI identity at `00:07.0` (`A3A0:0001`) with the canonical BAR layout (BAR0 regs + BAR1
   VRAM aperture). In `aero_machine` today this wires the **BAR1 VRAM aperture** to a dedicated
-  host-backed VRAM buffer and implements minimal **legacy VGA decode** (VGA port I/O +
-  `0xA0000..0xBFFFF` aliasing into VRAM). The full AeroGPU WDDM/MMIO/ring device model (BAR0 regs +
-  command submission + scanout + VBE mode set) is integrated separately.
+  host-backed VRAM buffer and implements minimal **legacy VGA decode** (permissive VGA port I/O +
+  `0xA0000..0xBFFFF` aliasing into VRAM).
+
+  Concretely:
+
+  - VRAM backing + legacy decode: `crates/aero-machine/src/lib.rs` (`AeroGpuDevice`,
+    `AeroGpuLegacyVgaMmio`, `AeroGpuVgaPortWindow`)
+  - BAR0 MMIO + ring/fence transport (no-op command execution): `crates/aero-machine/src/aerogpu.rs`
+    (`AeroGpuMmioDevice`)
+
+  The BIOS VBE implementation uses a linear framebuffer inside BAR1. `aero_machine` sets the VBE
+  `PhysBasePtr` to `BAR1_BASE + 0x20000` (see `crates/aero-machine/src/lib.rs::VBE_LFB_OFFSET`) so
+  INT 10h VBE mode set/clear writes land in BAR1-backed VRAM.
+
+  The full WDDM command execution + scanout + vblank pacing device model still lives in
+  `crates/emulator` and is not yet wired into `aero_machine::Machine`.
 - **Legacy VGA/VBE (transitional):** `MachineConfig::enable_vga=true` uses the standalone
   `aero_gpu_vga` VGA/VBE device model for boot display, and exposes a minimal Bochs/QEMU “Standard
   VGA”-like PCI stub at `00:0c.0` (`1234:1111`) so the VBE linear framebuffer (LFB) aperture is
@@ -115,41 +128,32 @@ For determinism and to avoid conflicts with guest RAM paging, legacy VGA/VBE use
 BAR1 (VRAM aperture) base: BAR1_BASE (assigned by BIOS)
 
 VRAM offset    Purpose
-0x00000..0x0FFFF  Legacy VGA plane 0 (64KB)
-0x10000..0x1FFFF  Legacy VGA plane 1 (64KB)
-0x20000..0x2FFFF  Legacy VGA plane 2 (64KB)
-0x30000..0x3FFFF  Legacy VGA plane 3 (64KB)
-0x40000..          VBE linear framebuffer (LFB) base (packed-pixel VBE modes)
+0x00000..0x1FFFF  Legacy VGA window backing for 0xA0000..0xBFFFF (128KB)
+0x20000..          VBE linear framebuffer (LFB) base (packed-pixel VBE modes)
 ...                Optional: WDDM allocations in VRAM (if implemented)
 ```
 
 ### Legacy window aliasing
 
-The guest-visible legacy VGA decode range is still the standard aperture:
+The guest-visible legacy VGA decode range is still the standard 128KiB aperture:
 
 - `0xA0000–0xBFFFF` (128KB)
 
-This is a *window* into the four 64KB legacy planes reserved above. Which subrange is active and how
-CPU addresses map to planes is controlled by the VGA register file (memory map select, chain-4,
-odd/even, planar read/write modes).
+In the canonical `aero_machine` implementation today, this range is a simple linear alias into BAR1
+VRAM:
 
-Examples (what matters for early boot):
+```text
+0xA0000..0xBFFFF  <->  VRAM[0x00000..0x1FFFF]
+```
 
-- **Text mode (0x03):** `0xB8000` accesses use odd/even addressing across planes 0 and 1:
-  - `0xB8000` → plane 0, offset 0 (character byte)
-  - `0xB8001` → plane 1, offset 0 (attribute byte)
-- **Mode 13h (chain-4):** `0xA0000 + n` maps to `plane = n & 3`, `offset = n >> 2`.
-
-Note: even though the physical legacy window is at most 128KB, the backing store reserves the full
-256KB planar region (4×64KB). Some VGA memory map configurations expose a 128KB window; real VGA
-hardware effectively wraps addresses within each 64KB plane, and the emulator should mirror that
-behavior.
+This is sufficient for BIOS POST + bootloader text output and for the firmware VBE implementation
+to share the same VRAM backing store.
 
 ### VBE LFB base address
 
 When AeroGPU is enabled, VBE mode info must report:
 
-`PhysBasePtr = BAR1_BASE + 0x40000` (aligned to 64KB).
+`PhysBasePtr = BAR1_BASE + 0x20000` (aligned to 64KB; `VBE_LFB_OFFSET` in `aero_machine`).
 
 Windows 7 boot graphics and installer UI will draw directly into this linear framebuffer.
 
@@ -157,8 +161,9 @@ Windows 7 boot graphics and installer UI will draw directly into this linear fra
 
 The recommended rule is:
 
-- **Legacy VGA uses a fixed reserved planar subregion of VRAM** (`0x00000..0x3FFFF`).
-- **The VBE packed-pixel linear framebuffer starts at `0x40000`** and consumes `width * height * bytes_per_pixel` bytes (depending on the active VBE mode).
+- **Legacy VGA uses a fixed reserved subregion of VRAM** (`0x00000..0x1FFFF`).
+- **The VBE packed-pixel linear framebuffer starts at `0x20000`** and consumes
+  `width * height * bytes_per_pixel` bytes (depending on the active VBE mode).
 - **WDDM allocations may use the remaining VRAM space** (not overlapping the active legacy/VBE region), or may live in pinned guest RAM (system memory), depending on the design of AeroGPU-EMU-DEV-001.
 
 To keep the handoff simple, the scanout logic treats the WDDM-programmed scanout base as a *guest physical address* that can point to either:
@@ -306,7 +311,7 @@ If a broader AeroGPU protocol already exists, this section defines the *minimum 
 ### When legacy VGA/VBE owns scanout
 
 - At reset/power-on: `source = LegacyText`, base points at the legacy text buffer (or can be implicit)
-- When BIOS/bootloader sets a VBE LFB mode: `source = LegacyVbeLfb`, base = `BAR1_BASE + 0x40000`, width/height/pitch filled
+- When BIOS/bootloader sets a VBE LFB mode: `source = LegacyVbeLfb`, base = `BAR1_BASE + 0x20000`, width/height/pitch filled
 
 ### When WDDM owns scanout
 

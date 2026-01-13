@@ -13,13 +13,23 @@ The canonical full-system machine (`crates/aero-machine`, `aero_machine::Machine
 The canonical machine supports **two mutually-exclusive** display configurations:
 
 - `MachineConfig::enable_aerogpu=true`: expose the canonical AeroGPU PCI identity at `00:07.0`
-  (`A3A0:0001`) with the canonical BAR layout (BAR0 regs + BAR1 VRAM aperture). In `aero_machine`
-  today BAR1 is backed by a dedicated VRAM buffer and the legacy VGA window (`0xA0000..0xBFFFF`) is
-  aliased into it (plus minimal VGA port decode). The full AeroGPU device model (BAR0 WDDM/MMIO/ring
-  protocol + scanout + VBE mode set) is integrated separately.
+  (`A3A0:0001`) with the canonical BAR layout (BAR0 regs + BAR1 VRAM aperture).
+
+  In `aero_machine` today this provides:
+
+  - **BAR1 VRAM aperture:** backed by a dedicated VRAM buffer, with the legacy VGA window
+    (`0xA0000..0xBFFFF`) aliased into the first 128KiB (`VRAM[0x00000..0x1FFFF]`) plus permissive
+    legacy VGA port decode.
+  - **BAR0 regs:** a **minimal** implementation of the versioned MMIO + ring/fence transport (enough
+    for the in-tree Win7 KMD to initialize and advance fences), but **no** command execution or
+    scanout yet in `aero_machine`.
+
+  The reference/full versioned-AeroGPU device model (command execution + scanout + vblank pacing)
+  still lives in `crates/emulator` and is not yet wired into `aero_machine::Machine`.
 
   When the AeroGPU-owned VGA/VBE boot display path is active, firmware derives the VBE linear
-  framebuffer base from AeroGPU BAR1: `PhysBasePtr = BAR1_BASE + 0x40000`.
+  framebuffer base from AeroGPU BAR1: `PhysBasePtr = BAR1_BASE + 0x20000` (see
+  `crates/aero-machine/src/lib.rs::VBE_LFB_OFFSET`).
 - `MachineConfig::enable_vga=true` (and `enable_aerogpu=false`): provide boot display via the
   standalone `aero_gpu_vga` VGA/VBE implementation, plus a minimal Bochs/QEMU “Standard VGA”-like
   PCI stub at `00:0c.0` (`1234:1111`) used only to route the VBE linear framebuffer through the PCI

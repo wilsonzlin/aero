@@ -570,7 +570,7 @@ Separately, VBE graphics modes use a linear framebuffer (LFB) at a different phy
   MMIO router so the LFB is reachable via PCI MMIO.
 - In the intended AeroGPU-owned VGA/VBE path (`MachineConfig::enable_aerogpu=true`), the firmware
   VBE mode-info `PhysBasePtr` is derived from AeroGPU BAR1:
-  `PhysBasePtr = BAR1_BASE + 0x40000`.
+  `PhysBasePtr = BAR1_BASE + 0x20000` (see `crates/aero-machine/src/lib.rs::VBE_LFB_OFFSET`).
 
 See: [AeroGPU Legacy VGA/VBE Compatibility](./16-aerogpu-vga-vesa-compat.md)
 and [AeroGPU PCI identity](./abi/aerogpu-pci-identity.md) (AeroGPU vs transitional VGA stub).

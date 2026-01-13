@@ -243,8 +243,11 @@ Note on boot display vs AeroGPU:
 - With `MachineConfig::enable_aerogpu=true`, the canonical machine exposes the AeroGPU PCI identity
   (`A3A0:0001`) at `00:07.0` with the canonical BAR layout (BAR0 regs + BAR1 VRAM aperture) for
   stable Windows driver binding. In `aero_machine` today BAR1 is backed by a dedicated VRAM buffer
-  and the legacy VGA window (`0xA0000..0xBFFFF`) is aliased into it (minimal legacy VGA decode); the
-  full BAR0 WDDM/MMIO/ring protocol + scanout are integrated separately.
+  and the legacy VGA window (`0xA0000..0xBFFFF`) is aliased into the first 128KiB
+  (`VRAM[0x00000..0x1FFFF]`) with permissive legacy VGA port decode. BAR0 implements only a minimal
+  MMIO + ring/fence transport stub (no-op command execution; enough for the Win7 KMD to initialize
+  and advance fences). The full versioned-AeroGPU device model (command execution + scanout + vblank
+  pacing) lives in `crates/emulator` and is not yet wired into `aero_machine::Machine`.
 - The long-term plan is for the AeroGPU WDDM device (`PCI\\VEN_A3A0&DEV_0001`) to also provide
   VGA/VBE compatibility; see:
   - [`abi/aerogpu-pci-identity.md`](./abi/aerogpu-pci-identity.md)

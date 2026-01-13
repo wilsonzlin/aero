@@ -20,8 +20,12 @@ The canonical machine (`aero_machine::Machine`) supports **two mutually-exclusiv
 - `MachineConfig::enable_aerogpu=true`: expose the canonical AeroGPU PCI identity at `00:07.0`
   (`A3A0:0001`) with the canonical BAR layout (BAR0 regs + BAR1 VRAM aperture). In `aero_machine`
   today BAR1 is backed by a dedicated VRAM buffer and the legacy VGA window (`0xA0000..0xBFFFF`) is
-  aliased into it (minimal legacy VGA decode), but the BAR0 WDDM/MMIO/ring protocol is implemented
-  by the full emulator AeroGPU device model in `crates/emulator`.
+  aliased into the first 128KiB (`VRAM[0x00000..0x1FFFF]`) with permissive legacy VGA port decode.
+  BAR0 implements only a minimal MMIO + ring/fence transport stub (no-op command execution; enough
+  for the Win7 KMD to initialize and advance fences).
+
+  The full versioned-AeroGPU device model (command execution + scanout + vblank pacing) lives in
+  `crates/emulator` and is not yet wired into `aero_machine::Machine`.
 - `MachineConfig::enable_vga=true` (and `enable_aerogpu=false`): boot display is provided by
   `aero_gpu_vga` (VGA + Bochs VBE), plus a minimal Bochs/QEMU “Standard VGA”-like PCI stub at
   `00:0c.0` (`1234:1111`) used only for VBE LFB MMIO routing.
