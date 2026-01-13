@@ -56,6 +56,7 @@ func New(cfg config.Config, logger *slog.Logger, build BuildInfo) *Server {
 		recoverMiddleware(s.log),
 		requestIDMiddleware(),
 		requestLoggerMiddleware(s.log),
+		noStoreICEHeadersMiddleware(),
 		s.originMiddleware(),
 	)
 
@@ -68,6 +69,26 @@ func New(cfg config.Config, logger *slog.Logger, build BuildInfo) *Server {
 	}
 
 	return s
+}
+
+// noStoreICEHeadersMiddleware ensures that the ICE discovery endpoint
+// (`GET /webrtc/ice`) is never cached by browsers or intermediaries. Responses may
+// contain sensitive TURN credentials (e.g. TURN REST ephemeral creds), and stale
+// caching can also cause ICE failures.
+func noStoreICEHeadersMiddleware() Middleware {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Only apply to the ICE discovery endpoint. Apply this as middleware (not
+			// inside the handler) so that error responses returned by earlier
+			// middleware (e.g. Origin policy) also inherit the same no-store headers.
+			if r.Method == http.MethodGet && r.URL != nil && r.URL.Path == "/webrtc/ice" {
+				w.Header().Set("Cache-Control", "no-store")
+				w.Header().Set("Pragma", "no-cache")
+				w.Header().Set("Expires", "0")
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
 }
 
 // SetMetrics wires a shared metrics registry into the server. When set, certain

@@ -161,6 +161,8 @@ func TestICEEndpointSchema(t *testing.T) {
 		t.Fatalf("expected 200, got %d", resp.StatusCode)
 	}
 
+	assertICENoStoreHeaders(t, resp)
+
 	var payload struct {
 		ICEServers []map[string]any `json:"iceServers"`
 	}
@@ -172,6 +174,22 @@ func TestICEEndpointSchema(t *testing.T) {
 	}
 	if _, ok := payload.ICEServers[0]["urls"]; !ok {
 		t.Fatalf("expected urls field on first server: %#v", payload.ICEServers[0])
+	}
+}
+
+func assertICENoStoreHeaders(t *testing.T, resp *http.Response) {
+	t.Helper()
+	if resp == nil {
+		t.Fatalf("nil response")
+	}
+	if got := resp.Header.Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("Cache-Control=%q, want %q", got, "no-store")
+	}
+	if got := resp.Header.Get("Pragma"); got != "no-cache" {
+		t.Fatalf("Pragma=%q, want %q", got, "no-cache")
+	}
+	if got := resp.Header.Get("Expires"); got != "0" {
+		t.Fatalf("Expires=%q, want %q", got, "0")
 	}
 }
 
@@ -197,6 +215,8 @@ func TestICEEndpoint_EmptyListNotNull(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", resp.StatusCode)
 	}
+
+	assertICENoStoreHeaders(t, resp)
 
 	var payload map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
@@ -235,6 +255,7 @@ func TestICEEndpoint_AuthAPIKey(t *testing.T) {
 		if resp.StatusCode != http.StatusUnauthorized {
 			t.Fatalf("status=%d, want %d", resp.StatusCode, http.StatusUnauthorized)
 		}
+		assertICENoStoreHeaders(t, resp)
 		if m.Get(metrics.AuthFailure) != 1 {
 			t.Fatalf("auth_failure=%d, want %d", m.Get(metrics.AuthFailure), 1)
 		}
@@ -254,6 +275,7 @@ func TestICEEndpoint_AuthAPIKey(t *testing.T) {
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("status=%d, want %d", resp.StatusCode, http.StatusOK)
 		}
+		assertICENoStoreHeaders(t, resp)
 	})
 
 	t.Run("valid Authorization ApiKey header", func(t *testing.T) {
@@ -270,6 +292,7 @@ func TestICEEndpoint_AuthAPIKey(t *testing.T) {
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("status=%d, want %d", resp.StatusCode, http.StatusOK)
 		}
+		assertICENoStoreHeaders(t, resp)
 	})
 
 	t.Run("valid query", func(t *testing.T) {
@@ -281,6 +304,7 @@ func TestICEEndpoint_AuthAPIKey(t *testing.T) {
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("status=%d, want %d", resp.StatusCode, http.StatusOK)
 		}
+		assertICENoStoreHeaders(t, resp)
 	})
 
 	t.Run("valid query alias token", func(t *testing.T) {
@@ -292,6 +316,7 @@ func TestICEEndpoint_AuthAPIKey(t *testing.T) {
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("status=%d, want %d", resp.StatusCode, http.StatusOK)
 		}
+		assertICENoStoreHeaders(t, resp)
 	})
 }
 
@@ -318,6 +343,7 @@ func TestICEEndpoint_AuthJWT(t *testing.T) {
 		if resp.StatusCode != http.StatusUnauthorized {
 			t.Fatalf("status=%d, want %d", resp.StatusCode, http.StatusUnauthorized)
 		}
+		assertICENoStoreHeaders(t, resp)
 		if m.Get(metrics.AuthFailure) != 1 {
 			t.Fatalf("auth_failure=%d, want %d", m.Get(metrics.AuthFailure), 1)
 		}
@@ -339,6 +365,7 @@ func TestICEEndpoint_AuthJWT(t *testing.T) {
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("status=%d, want %d", resp.StatusCode, http.StatusOK)
 		}
+		assertICENoStoreHeaders(t, resp)
 	})
 
 	t.Run("valid query", func(t *testing.T) {
@@ -350,6 +377,7 @@ func TestICEEndpoint_AuthJWT(t *testing.T) {
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("status=%d, want %d", resp.StatusCode, http.StatusOK)
 		}
+		assertICENoStoreHeaders(t, resp)
 	})
 
 	t.Run("valid query alias apiKey", func(t *testing.T) {
@@ -361,6 +389,7 @@ func TestICEEndpoint_AuthJWT(t *testing.T) {
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("status=%d, want %d", resp.StatusCode, http.StatusOK)
 		}
+		assertICENoStoreHeaders(t, resp)
 	})
 }
 
@@ -398,6 +427,8 @@ func TestICEEndpoint_TURNRESTInjectsCredentials(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", resp.StatusCode)
 	}
+
+	assertICENoStoreHeaders(t, resp)
 
 	var payload struct {
 		ICEServers []webrtc.ICEServer `json:"iceServers"`
@@ -482,6 +513,9 @@ func TestICEEndpoint_RejectsCrossOrigin(t *testing.T) {
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("expected 403, got %d", resp.StatusCode)
 	}
+
+	// ICE endpoint responses must be non-cacheable even on error.
+	assertICENoStoreHeaders(t, resp)
 }
 
 func TestOriginMiddleware_RejectsInvalidOrigin(t *testing.T) {
@@ -512,6 +546,9 @@ func TestOriginMiddleware_RejectsInvalidOrigin(t *testing.T) {
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("expected 403, got %d", resp.StatusCode)
 	}
+
+	// ICE endpoint responses must be non-cacheable even on error.
+	assertICENoStoreHeaders(t, resp)
 }
 
 func TestOriginMiddleware_RejectsNonHTTPOrigin(t *testing.T) {
@@ -542,6 +579,9 @@ func TestOriginMiddleware_RejectsNonHTTPOrigin(t *testing.T) {
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("expected 403, got %d", resp.StatusCode)
 	}
+
+	// ICE endpoint responses must be non-cacheable even on error.
+	assertICENoStoreHeaders(t, resp)
 }
 
 func TestICEEndpoint_AllowsConfiguredOrigin(t *testing.T) {
@@ -573,6 +613,8 @@ func TestICEEndpoint_AllowsConfiguredOrigin(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", resp.StatusCode)
 	}
+
+	assertICENoStoreHeaders(t, resp)
 
 	if got := resp.Header.Get("Access-Control-Allow-Origin"); got != "https://app.example.com" {
 		t.Fatalf("Access-Control-Allow-Origin=%q, want %q", got, "https://app.example.com")
