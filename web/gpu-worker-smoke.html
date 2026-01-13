@@ -19,13 +19,19 @@
         font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New',
           monospace;
       }
+      #telemetry {
+        margin-top: 8px;
+        white-space: pre-wrap;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New',
+          monospace;
+      }
     </style>
   </head>
   <body>
     <canvas id="frame"></canvas>
     <div id="backend"></div>
+    <div id="telemetry"></div>
     <div id="status"></div>
     <script type="module" src="./gpu-worker-smoke.ts"></script>
   </body>
 </html>
-

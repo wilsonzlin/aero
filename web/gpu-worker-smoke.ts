@@ -82,6 +82,20 @@ function safeJsonStringify(value: unknown): string {
   }
 }
 
+function fmtScanoutSource(source: unknown): string {
+  const n = typeof source === "number" ? source : NaN;
+  switch (n) {
+    case 0:
+      return "LegacyText";
+    case 1:
+      return "LegacyVbeLfb";
+    case 2:
+      return "Wddm";
+    default:
+      return typeof source === "number" ? String(source) : "n/a";
+  }
+}
+
 function createExpectedTestPattern(width: number, height: number): Uint8Array {
   const halfW = Math.floor(width / 2);
   const halfH = Math.floor(height / 2);
@@ -135,6 +149,7 @@ async function main() {
   const GPU_MESSAGE_BASE = { protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION } as const;
 
   const status = $("status");
+  const telemetryEl = $("telemetry");
   const backendEl = $("backend");
   let loggedFrameTimings = false;
 
@@ -185,6 +200,33 @@ async function main() {
         // Print a small preview of WASM telemetry so the page can be used as a
         // diagnostics wiring check (particularly for the wgpu-backed WebGL2 presenter).
         window.__aeroTest = { ...(window.__aeroTest ?? {}), lastStats: msg, lastWasmStats: msg.wasm };
+
+        if (telemetryEl) {
+          const scanout = (msg as any).scanout as any;
+          const outputSource = (msg as any).outputSource as any;
+          const presentUpload = (msg as any).presentUpload as any;
+          const lines: string[] = [];
+          if (typeof outputSource === "string") {
+            lines.push(`outputSource=${outputSource}`);
+          }
+          if (presentUpload && typeof presentUpload === "object") {
+            const kind = typeof presentUpload.kind === "string" ? presentUpload.kind : "n/a";
+            const n = typeof presentUpload.dirtyRectCount === "number" ? presentUpload.dirtyRectCount : null;
+            lines.push(`presentUpload=${kind}${kind === "dirty_rects" ? ` (n=${n ?? "?"})` : ""}`);
+          }
+          if (scanout && typeof scanout === "object") {
+            const src = fmtScanoutSource(scanout.source);
+            const base = typeof scanout.base_paddr === "string" ? scanout.base_paddr : "n/a";
+            const w = typeof scanout.width === "number" ? scanout.width : "?";
+            const h = typeof scanout.height === "number" ? scanout.height : "?";
+            const pitch = typeof scanout.pitchBytes === "number" ? scanout.pitchBytes : "?";
+            const fmt = typeof scanout.format === "number" ? scanout.format : "?";
+            const gen = typeof scanout.generation === "number" ? scanout.generation : "?";
+            lines.push(`scanout=${src} gen=${gen} base=${base} ${w}x${h} pitch=${pitch} fmt=${fmt}`);
+          }
+          telemetryEl.textContent = lines.join("\n");
+        }
+
         if (msg.backendKind === "webgl2_wgpu" && !loggedFrameTimings) {
           const frameTimings = (msg.wasm as any)?.frameTimings;
           if (frameTimings) {

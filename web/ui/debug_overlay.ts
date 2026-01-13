@@ -31,6 +31,20 @@ function fmtPct(value: number | null): string {
   return `${fmtFixed(value * 100, 1)}%`;
 }
 
+function fmtScanoutSource(source: number | null): string {
+  if (source == null || !Number.isFinite(source)) return "n/a";
+  switch (source | 0) {
+    case 0:
+      return "LegacyText";
+    case 1:
+      return "LegacyVbeLfb";
+    case 2:
+      return "Wddm";
+    default:
+      return String(source);
+  }
+}
+
 type GpuTelemetrySnapshot = any;
 
 export type DebugOverlayOptions = {
@@ -186,6 +200,30 @@ export class DebugOverlay {
         `Frame pacing: received ${framesReceived ?? "n/a"}  presented ${framesPresented ?? "n/a"}  dropped ${framesDropped ?? "n/a"}`,
       );
     }
+
+    const outputSource = typeof s.outputSource === "string" ? s.outputSource : null;
+    const presentUpload = s.presentUpload && typeof s.presentUpload === "object" ? (s.presentUpload as any) : null;
+    if (outputSource || presentUpload) {
+      const uploadKind = typeof presentUpload?.kind === "string" ? (presentUpload.kind as string) : "n/a";
+      const uploadDirtyCount = typeof presentUpload?.dirtyRectCount === "number" ? presentUpload.dirtyRectCount : null;
+      const uploadDesc = uploadKind === "dirty_rects" ? `dirty_rects(n=${uploadDirtyCount ?? "?"})` : uploadKind;
+      lines.push(`Presenter: source ${outputSource ?? "n/a"}  upload ${uploadDesc}`);
+    }
+
+    const scanout = s.scanout && typeof s.scanout === "object" ? (s.scanout as any) : null;
+    if (scanout) {
+      const base = typeof scanout.base_paddr === "string" ? scanout.base_paddr : "n/a";
+      const gen = typeof scanout.generation === "number" ? scanout.generation : null;
+      const src = typeof scanout.source === "number" ? scanout.source : null;
+      const w = typeof scanout.width === "number" ? scanout.width : null;
+      const h = typeof scanout.height === "number" ? scanout.height : null;
+      const pitch = typeof scanout.pitchBytes === "number" ? scanout.pitchBytes : null;
+      const fmt = typeof scanout.format === "number" ? scanout.format : null;
+      lines.push(
+        `Scanout: ${fmtScanoutSource(src)} gen=${gen ?? "n/a"} base=${base} ${w ?? "?"}x${h ?? "?"} pitch=${pitch ?? "?"} fmt=${fmt ?? "?"}`,
+      );
+    }
+
     lines.push(
       `Frames: ${frame?.count ?? 0}  Dropped: ${s.droppedFrames ?? 0}  FPS(avg): ${
         fps ? fmtFixed(fps, 1) : "n/a"

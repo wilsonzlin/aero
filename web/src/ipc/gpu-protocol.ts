@@ -36,6 +36,48 @@ export interface GpuAdapterInfo {
   description?: string;
 }
 
+// -----------------------------------------------------------------------------
+// Optional scanout / presentation source telemetry.
+// -----------------------------------------------------------------------------
+
+/**
+ * Which buffer the GPU worker is currently presenting from.
+ *
+ * - `framebuffer`: legacy SharedArrayBuffer-backed framebuffer (VGA/VBE path).
+ * - `aerogpu`: AeroGPU host-side executor output (ACMD).
+ * - `wddm_scanout`: a WDDM-programmed scanout buffer selected via `ScanoutState` (future/optional).
+ */
+export type GpuRuntimeOutputSource = "framebuffer" | "aerogpu" | "wddm_scanout";
+
+/**
+ * Best-effort snapshot of the shared `ScanoutState`.
+ *
+ * Notes:
+ * - `base_paddr` is stringified (hex) to preserve full u64 precision without requiring BigInt
+ *   handling in all telemetry consumers.
+ */
+export type GpuRuntimeScanoutSnapshotV1 = {
+  source: number;
+  base_paddr: string;
+  width: number;
+  height: number;
+  pitchBytes: number;
+  format: number;
+  generation: number;
+};
+
+export type GpuRuntimePresentUploadV1 = {
+  /**
+   * How the presenter uploaded pixels for the most recent present.
+   *
+   * - `none`: no upload occurred (e.g. reusing the previous output).
+   * - `full`: full-frame upload.
+   * - `dirty_rects`: uploaded only dirty rectangles.
+   */
+  kind: "none" | "full" | "dirty_rects";
+  dirtyRectCount?: number;
+};
+
 export interface FrameTimingsReport {
   frame_index: number;
   backend: BackendKind;
@@ -283,6 +325,12 @@ export type GpuRuntimeMetricsMessage = GpuWorkerMessageBase & {
   framesPresented: number;
   framesDropped: number;
   telemetry?: unknown;
+  /**
+   * Optional scanout/presentation diagnostics.
+   */
+  scanout?: GpuRuntimeScanoutSnapshotV1;
+  outputSource?: GpuRuntimeOutputSource;
+  presentUpload?: GpuRuntimePresentUploadV1;
 };
 
 export type GpuRuntimeErrorMessage = GpuWorkerMessageBase & {
@@ -385,6 +433,12 @@ export type GpuRuntimeStatsMessage = GpuWorkerMessageBase & {
    * Optional richer stats returned by the WASM runtime (best-effort).
    */
   wasm?: unknown;
+  /**
+   * Optional scanout/presentation diagnostics.
+   */
+  scanout?: GpuRuntimeScanoutSnapshotV1;
+  outputSource?: GpuRuntimeOutputSource;
+  presentUpload?: GpuRuntimePresentUploadV1;
 };
 
 export type GpuRuntimeErrorEventSeverity = "info" | "warn" | "error" | "fatal";

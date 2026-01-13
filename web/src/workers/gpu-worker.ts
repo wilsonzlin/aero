@@ -41,6 +41,9 @@ import {
   type GpuRuntimeScreenshotRequestMessage,
   type GpuRuntimeScreenshotPresentedRequestMessage,
   type GpuRuntimeSubmitAerogpuMessage,
+  type GpuRuntimeOutputSource,
+  type GpuRuntimePresentUploadV1,
+  type GpuRuntimeScanoutSnapshotV1,
   type GpuRuntimeStatsCountersV1,
 } from "../ipc/gpu-protocol";
 
@@ -225,7 +228,7 @@ type AerogpuLastPresentedFrame = NonNullable<AerogpuCpuExecutorState["lastPresen
 let aerogpuLastPresentedFrame: AerogpuLastPresentedFrame | null = null;
 let aerogpuPresentCount = 0n;
 let aerogpuWasmPresentCount = 0n;
-let aerogpuLastOutputSource: "framebuffer" | "aerogpu" = "framebuffer";
+let aerogpuLastOutputSource: GpuRuntimeOutputSource = "framebuffer";
 
 const getAerogpuContextState = (contextId: number): AerogpuCpuExecutorState => {
   const key = contextId >>> 0;
@@ -417,6 +420,8 @@ let framesDropped = 0;
 let lastSeenSeq = 0;
 let lastPresentedSeq = 0;
 let lastUploadDirtyRects: DirtyRect[] | null = null;
+let lastPresentUploadKind: GpuRuntimePresentUploadV1["kind"] = "none";
+let lastPresentUploadDirtyRectCount = 0;
 
 let lastMetricsPostAtMs = 0;
 const METRICS_POST_INTERVAL_MS = 250;
@@ -793,12 +798,16 @@ const maybePostMetrics = () => {
   perf.counter("framesReceived", framesReceived);
   perf.counter("framesPresented", framesPresented);
   perf.counter("framesDropped", framesDropped);
+  const scanout = snapshotScanoutForTelemetry();
   postToMain({
     type: 'metrics',
     framesReceived,
     framesPresented,
     framesDropped,
     telemetry: telemetry.snapshot(),
+    outputSource: aerogpuLastOutputSource,
+    presentUpload: presentUploadForTelemetry(),
+    ...(scanout ? { scanout } : {}),
   });
 };
 
@@ -1068,10 +1077,42 @@ function getStatsCounters(): GpuRuntimeStatsCountersV1 {
   };
 }
 
+function formatU64Hex(hi: number, lo: number): string {
+  // Keep the value JSON-friendly (no BigInt) and stable-width for debugging.
+  const v = (BigInt(hi >>> 0) << 32n) | BigInt(lo >>> 0);
+  return `0x${v.toString(16).padStart(16, "0")}`;
+}
+
+function snapshotScanoutForTelemetry(): GpuRuntimeScanoutSnapshotV1 | undefined {
+  if (!scanoutState) return undefined;
+  try {
+    const snap = snapshotScanoutState(scanoutState);
+    return {
+      source: snap.source,
+      base_paddr: formatU64Hex(snap.basePaddrHi, snap.basePaddrLo),
+      width: snap.width,
+      height: snap.height,
+      pitchBytes: snap.pitchBytes,
+      format: snap.format,
+      generation: snap.generation,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+function presentUploadForTelemetry(): GpuRuntimePresentUploadV1 {
+  if (lastPresentUploadKind === "dirty_rects") {
+    return { kind: "dirty_rects", dirtyRectCount: lastPresentUploadDirtyRectCount };
+  }
+  return { kind: lastPresentUploadKind };
+}
+
 function postStatsMessage(wasmStats?: unknown): void {
   const backendKind = presenter?.backend ?? (runtimeCanvas ? undefined : "headless");
   const sanitizedWasmStats = wasmStats === undefined ? undefined : sanitizeForPostMessage(wasmStats);
   const sanitizedFrameTimings = latestFrameTimings ? sanitizeForPostMessage(latestFrameTimings) : undefined;
+  const scanout = snapshotScanoutForTelemetry();
 
   let wasm: unknown | undefined = sanitizedWasmStats;
   if (sanitizedFrameTimings !== undefined) {
@@ -1090,6 +1131,9 @@ function postStatsMessage(wasmStats?: unknown): void {
     ...(backendKind ? { backendKind } : {}),
     counters: getStatsCounters(),
     ...(wasm === undefined ? {} : { wasm }),
+    outputSource: aerogpuLastOutputSource,
+    presentUpload: presentUploadForTelemetry(),
+    ...(scanout ? { scanout } : {}),
   });
 }
 
@@ -1581,6 +1625,8 @@ const getCurrentFrameInfo = (): CurrentFrameInfo | null => {
 const presentOnce = async (): Promise<boolean> => {
   const t0 = performance.now();
   lastUploadDirtyRects = null;
+  lastPresentUploadKind = "none";
+  lastPresentUploadDirtyRectCount = 0;
 
   try {
     const frame = getCurrentFrameInfo();
@@ -1617,12 +1663,18 @@ const presentOnce = async (): Promise<boolean> => {
           ? dirtyRects
           : chooseDirtyRectsForUpload(frame.sharedLayout, dirtyRects, bytesPerRowAlignment);
       lastUploadDirtyRects = chosenDirtyRects;
+      const predictedKind: GpuRuntimePresentUploadV1["kind"] =
+        chosenDirtyRects && chosenDirtyRects.length > 0 ? "dirty_rects" : "full";
+      const predictedDirtyCount = chosenDirtyRects ? chosenDirtyRects.length : 0;
       const result = await presentFn(chosenDirtyRects);
-      if (typeof result === "boolean" ? result : true) {
+      const didPresent = typeof result === "boolean" ? result : true;
+      if (didPresent) {
+        lastPresentUploadKind = predictedKind;
+        lastPresentUploadDirtyRectCount = predictedKind === "dirty_rects" ? predictedDirtyCount : 0;
         aerogpuLastOutputSource = "framebuffer";
         clearSharedFramebufferDirty();
       }
-      return typeof result === "boolean" ? result : true;
+      return didPresent;
     }
 
     if (presenter) {
@@ -1643,6 +1695,7 @@ const presentOnce = async (): Promise<boolean> => {
           if (presenterNeedsFullUpload || aerogpuLastOutputSource !== "aerogpu") {
             presenter.present(last.rgba8, last.width * BYTES_PER_PIXEL_RGBA8);
             presenterNeedsFullUpload = false;
+            lastPresentUploadKind = "full";
           }
           aerogpuLastOutputSource = "aerogpu";
           clearSharedFramebufferDirty();
@@ -1667,6 +1720,7 @@ const presentOnce = async (): Promise<boolean> => {
       if (needsFullUpload) {
         presenter.present(frame.pixels, frame.strideBytes);
         presenterNeedsFullUpload = false;
+        lastPresentUploadKind = "full";
       } else if (typeof dirtyPresenter.presentDirtyRects === "function") {
         const bytesPerRowAlignment = bytesPerRowAlignmentForPresenterBackend(presenter.backend);
         const chosenDirtyRects =
@@ -1676,11 +1730,15 @@ const presentOnce = async (): Promise<boolean> => {
         if (chosenDirtyRects && chosenDirtyRects.length > 0) {
           dirtyPresenter.presentDirtyRects(frame.pixels, frame.strideBytes, chosenDirtyRects);
           lastUploadDirtyRects = chosenDirtyRects;
+          lastPresentUploadKind = "dirty_rects";
+          lastPresentUploadDirtyRectCount = chosenDirtyRects.length;
         } else {
           presenter.present(frame.pixels, frame.strideBytes);
+          lastPresentUploadKind = "full";
         }
       } else {
         presenter.present(frame.pixels, frame.strideBytes);
+        lastPresentUploadKind = "full";
       }
       aerogpuLastOutputSource = "framebuffer";
       clearSharedFramebufferDirty();
@@ -1722,6 +1780,7 @@ const presentAerogpuTexture = (tex: AeroGpuCpuTexture): void => {
   aerogpuLastOutputSource = "aerogpu";
   presenter.present(tex.data, tex.width * 4);
   presenterNeedsFullUpload = false;
+  lastPresentUploadKind = "full";
 };
 
 type AerogpuCmdStreamAnalysis = { vsyncPaced: boolean; presentCount: bigint; requiresD3d9: boolean };
@@ -1877,19 +1936,20 @@ const handleSubmitAerogpu = async (req: GpuRuntimeSubmitAerogpuMessage): Promise
             aerogpuLastOutputSource = "aerogpu";
 
             if (presenter) {
-              if (shot.width !== presenterSrcWidth || shot.height !== presenterSrcHeight) {
-                presenterSrcWidth = shot.width;
-                presenterSrcHeight = shot.height;
-                if (presenter.backend === "webgpu") surfaceReconfigures += 1;
-                presenter.resize(shot.width, shot.height, outputDpr);
-                presenterNeedsFullUpload = true;
-              }
-              presenter.present(shot.rgba8, shot.width * BYTES_PER_PIXEL_RGBA8);
-              presenterNeedsFullUpload = false;
-            }
-          } else {
-            aerogpuLastOutputSource = "aerogpu";
-          }
+               if (shot.width !== presenterSrcWidth || shot.height !== presenterSrcHeight) {
+                 presenterSrcWidth = shot.width;
+                 presenterSrcHeight = shot.height;
+                 if (presenter.backend === "webgpu") surfaceReconfigures += 1;
+                 presenter.resize(shot.width, shot.height, outputDpr);
+                 presenterNeedsFullUpload = true;
+               }
+               presenter.present(shot.rgba8, shot.width * BYTES_PER_PIXEL_RGBA8);
+               presenterNeedsFullUpload = false;
+               lastPresentUploadKind = "full";
+             }
+           } else {
+             aerogpuLastOutputSource = "aerogpu";
+           }
         }
 
         submitOk = true;
@@ -1960,13 +2020,36 @@ const handleTick = async () => {
       if (lastFrameStartMs !== null) {
         telemetry.beginFrame(lastFrameStartMs);
 
-        const frame = getCurrentFrameInfo();
         const bytesPerRowAlignment = bytesPerRowAlignmentForPresenterBackend(presenter?.backend ?? null);
-        const textureUploadBytes = frame?.sharedLayout
-          ? estimateTextureUploadBytes(frame.sharedLayout, lastUploadDirtyRects, bytesPerRowAlignment)
-          : frame
-            ? estimateFullFrameUploadBytes(frame.width, frame.height, bytesPerRowAlignment)
-            : 0;
+        let textureUploadBytes = 0;
+        if (lastPresentUploadKind !== "none") {
+          switch (aerogpuLastOutputSource) {
+            case "aerogpu": {
+              const last = aerogpuLastPresentedFrame;
+              textureUploadBytes = last
+                ? estimateFullFrameUploadBytes(last.width, last.height, bytesPerRowAlignment)
+                : 0;
+              break;
+            }
+            case "wddm_scanout": {
+              const scanout = snapshotScanoutForTelemetry();
+              textureUploadBytes = scanout
+                ? estimateFullFrameUploadBytes(scanout.width, scanout.height, bytesPerRowAlignment)
+                : 0;
+              break;
+            }
+            case "framebuffer":
+            default: {
+              const frame = getCurrentFrameInfo();
+              textureUploadBytes = frame?.sharedLayout
+                ? estimateTextureUploadBytes(frame.sharedLayout, lastUploadDirtyRects, bytesPerRowAlignment)
+                : frame
+                  ? estimateFullFrameUploadBytes(frame.width, frame.height, bytesPerRowAlignment)
+                  : 0;
+              break;
+            }
+          }
+        }
         telemetry.recordTextureUploadBytes(textureUploadBytes);
         perf.counter("textureUploadBytes", textureUploadBytes);
         if (perfEnabled) perfUploadBytes += textureUploadBytes;
