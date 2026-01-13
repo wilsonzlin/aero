@@ -118,6 +118,11 @@ pub fn verify_gateway_session_token(
     }
 
     let provided_sig = decode_base64url(sig_b64, MAX_SESSION_TOKEN_SIG_B64_LEN)?;
+    // HMAC-SHA256 output is always 32 bytes; reject signatures of other lengths without doing any
+    // HMAC work.
+    if provided_sig.len() != 32 {
+        return None;
+    }
     let expected_sig = hmac_sha256(secret, &[payload_b64.as_bytes()]);
     if !constant_time_equal(&provided_sig, &expected_sig) {
         return None;
@@ -214,6 +219,9 @@ pub fn verify_hs256_jwt(token: &str, secret: &[u8], now_sec: i64) -> Option<Clai
     }
 
     let provided_sig = decode_base64url(sig_b64, MAX_JWT_SIG_B64_LEN)?;
+    if provided_sig.len() != 32 {
+        return None;
+    }
     let expected_sig = hmac_sha256(
         secret,
         &[header_b64.as_bytes(), b".", payload_b64.as_bytes()],
