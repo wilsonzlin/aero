@@ -11,7 +11,12 @@ optionally a signed CAT and KMDF coinstaller DLL, then emits:
 
 The zip always includes:
   - INSTALL.txt with minimal test-signing + "Have Disk..." install steps
+  - INSTALL_CERT.cmd + INSTALL_DRIVER.cmd (guest-side helper scripts)
   - manifest.json listing file hashes and metadata
+  - SHA256SUMS (SHA-256 for every file in the zip, for easy integrity checks)
+
+Optionally includes:
+  - aero-virtio-input-test.cer when -IncludeTestCert is specified
 #>
 
 [CmdletBinding()]
