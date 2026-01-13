@@ -484,6 +484,8 @@ fn exec_op(
         | IrOp::Frc { dst, modifiers, .. }
         | IrOp::Exp { dst, modifiers, .. }
         | IrOp::Log { dst, modifiers, .. }
+        | IrOp::Ddx { dst, modifiers, .. }
+        | IrOp::Ddy { dst, modifiers, .. }
         | IrOp::Min { dst, modifiers, .. }
         | IrOp::Max { dst, modifiers, .. }
         | IrOp::SetCmp { dst, modifiers, .. }
@@ -573,6 +575,11 @@ fn exec_op(
             let a = exec_src(src, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
             let log2 = |v: f32| v.log2();
             Vec4::new(log2(a.x), log2(a.y), log2(a.z), log2(a.w))
+        }
+        IrOp::Ddx { .. } | IrOp::Ddy { .. } => {
+            // Screen-space derivatives require neighboring pixels, which the software interpreter
+            // does not currently model. Treat as zero to keep the reference path deterministic.
+            Vec4::ZERO
         }
         IrOp::Min { src0, src1, .. } => {
             let a = exec_src(src0, temps, addrs, loops, preds, inputs_v, inputs_t, constants);

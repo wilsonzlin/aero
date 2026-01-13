@@ -296,7 +296,9 @@ fn collect_op_usage(op: &IrOp, usage: &mut RegUsage) {
         | IrOp::Rsq { dst, src, modifiers }
         | IrOp::Frc { dst, src, modifiers }
         | IrOp::Exp { dst, src, modifiers }
-        | IrOp::Log { dst, src, modifiers } => {
+        | IrOp::Log { dst, src, modifiers }
+        | IrOp::Ddx { dst, src, modifiers }
+        | IrOp::Ddy { dst, src, modifiers } => {
             collect_dst_usage(dst, usage);
             collect_src_usage(src, usage);
             collect_mods_usage(modifiers, usage);
@@ -783,9 +785,42 @@ fn emit_op_line(op: &IrOp, f32_defs: &BTreeMap<u32, [f32; 4]>) -> Result<String,
             let e = apply_float_result_modifiers(format!("fract({s})"), modifiers)?;
             emit_assign(dst, e)
         }
-        IrOp::Exp { dst, src, modifiers } => emit_float_func1(dst, src, modifiers, f32_defs, "exp2"),
-        IrOp::Log { dst, src, modifiers } => emit_float_func1(dst, src, modifiers, f32_defs, "log2"),
-        IrOp::Dp2 { dst, src0, src1, modifiers } => {
+        IrOp::Exp { dst, src, modifiers } => {
+            emit_float_func1(dst, src, modifiers, f32_defs, "exp2")
+        }
+        IrOp::Log { dst, src, modifiers } => {
+            emit_float_func1(dst, src, modifiers, f32_defs, "log2")
+        }
+        IrOp::Ddx { dst, src, modifiers } => {
+            let (s, ty) = src_expr(src, f32_defs)?;
+            if ty != ScalarTy::F32 {
+                return Err(err("dsx only supports float sources in WGSL lowering"));
+            }
+            let dst_ty = reg_scalar_ty(dst.reg.file).ok_or_else(|| err("unsupported dst file"))?;
+            if dst_ty != ScalarTy::F32 {
+                return Err(err("dsx destination must be float"));
+            }
+            let e = apply_float_result_modifiers(format!("dpdx({s})"), modifiers)?;
+            emit_assign(dst, e)
+        }
+        IrOp::Ddy { dst, src, modifiers } => {
+            let (s, ty) = src_expr(src, f32_defs)?;
+            if ty != ScalarTy::F32 {
+                return Err(err("dsy only supports float sources in WGSL lowering"));
+            }
+            let dst_ty = reg_scalar_ty(dst.reg.file).ok_or_else(|| err("unsupported dst file"))?;
+            if dst_ty != ScalarTy::F32 {
+                return Err(err("dsy destination must be float"));
+            }
+            let e = apply_float_result_modifiers(format!("dpdy({s})"), modifiers)?;
+            emit_assign(dst, e)
+        }
+        IrOp::Dp2 {
+            dst,
+            src0,
+            src1,
+            modifiers,
+        } => {
             let (a, aty) = src_expr(src0, f32_defs)?;
             let (b, bty) = src_expr(src1, f32_defs)?;
             if aty != ScalarTy::F32 || bty != ScalarTy::F32 {
@@ -1080,6 +1115,8 @@ fn op_modifiers(op: &IrOp) -> &InstModifiers {
         | IrOp::Frc { modifiers, .. }
         | IrOp::Exp { modifiers, .. }
         | IrOp::Log { modifiers, .. }
+        | IrOp::Ddx { modifiers, .. }
+        | IrOp::Ddy { modifiers, .. }
         | IrOp::Min { modifiers, .. }
         | IrOp::Max { modifiers, .. }
         | IrOp::SetCmp { modifiers, .. }

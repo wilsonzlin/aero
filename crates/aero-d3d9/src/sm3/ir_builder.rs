@@ -273,6 +273,26 @@ pub fn build_ir(shader: &DecodedShader) -> Result<ShaderIr, BuildError> {
                 src,
                 modifiers,
             })?,
+            Opcode::Dsx => {
+                if version.stage != ShaderStage::Pixel {
+                    return Err(err(inst, "dsx is only valid in pixel shaders"));
+                }
+                push_unop(&mut stack, inst, |dst, src, modifiers| IrOp::Ddx {
+                    dst,
+                    src,
+                    modifiers,
+                })?
+            }
+            Opcode::Dsy => {
+                if version.stage != ShaderStage::Pixel {
+                    return Err(err(inst, "dsy is only valid in pixel shaders"));
+                }
+                push_unop(&mut stack, inst, |dst, src, modifiers| IrOp::Ddy {
+                    dst,
+                    src,
+                    modifiers,
+                })?
+            }
             Opcode::Min => push_binop(&mut stack, inst, |dst, src0, src1, modifiers| IrOp::Min {
                 dst,
                 src0,
@@ -601,6 +621,16 @@ fn collect_used_input_regs_op(op: &IrOp, out: &mut BTreeSet<u32>) {
             dst,
             src,
             modifiers,
+        }
+        | IrOp::Ddx {
+            dst,
+            src,
+            modifiers,
+        }
+        | IrOp::Ddy {
+            dst,
+            src,
+            modifiers,
         } => {
             collect_used_input_regs_dst(dst, out);
             collect_used_input_regs_src(src, out);
@@ -822,6 +852,16 @@ fn remap_input_regs_in_op(op: &mut IrOp, remap: &HashMap<u32, u32>) {
             modifiers,
         }
         | IrOp::Log {
+            dst,
+            src,
+            modifiers,
+        }
+        | IrOp::Ddx {
+            dst,
+            src,
+            modifiers,
+        }
+        | IrOp::Ddy {
             dst,
             src,
             modifiers,

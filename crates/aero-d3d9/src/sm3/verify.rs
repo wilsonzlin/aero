@@ -1,5 +1,6 @@
 use crate::sm3::decode::{ResultShift, SrcModifier};
 use crate::sm3::ir::{Block, CompareOp, Cond, IrOp, RegFile, ShaderIr, Src, Stmt};
+use crate::sm3::types::ShaderStage;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VerifyError {
@@ -15,25 +16,25 @@ impl std::fmt::Display for VerifyError {
 impl std::error::Error for VerifyError {}
 
 pub fn verify_ir(ir: &ShaderIr) -> Result<(), VerifyError> {
-    verify_block(&ir.body)
+    verify_block(&ir.body, ir.version.stage)
 }
 
-fn verify_block(block: &Block) -> Result<(), VerifyError> {
+fn verify_block(block: &Block, stage: ShaderStage) -> Result<(), VerifyError> {
     for stmt in &block.stmts {
         match stmt {
-            Stmt::Op(op) => verify_op(op)?,
+            Stmt::Op(op) => verify_op(op, stage)?,
             Stmt::If {
                 cond,
                 then_block,
                 else_block,
             } => {
                 verify_cond(cond)?;
-                verify_block(then_block)?;
+                verify_block(then_block, stage)?;
                 if let Some(else_block) = else_block {
-                    verify_block(else_block)?;
+                    verify_block(else_block, stage)?;
                 }
             }
-            Stmt::Loop { body } => verify_block(body)?,
+            Stmt::Loop { body } => verify_block(body, stage)?,
             Stmt::Break => {}
             Stmt::BreakIf { cond } => verify_cond(cond)?,
             Stmt::Discard { src } => verify_src(src)?,
@@ -42,14 +43,21 @@ fn verify_block(block: &Block) -> Result<(), VerifyError> {
     Ok(())
 }
 
-fn verify_op(op: &IrOp) -> Result<(), VerifyError> {
+fn verify_op(op: &IrOp, stage: ShaderStage) -> Result<(), VerifyError> {
     match op {
         IrOp::Mov { dst: _, src, modifiers }
         | IrOp::Rcp { dst: _, src, modifiers }
         | IrOp::Rsq { dst: _, src, modifiers }
         | IrOp::Frc { dst: _, src, modifiers }
         | IrOp::Exp { dst: _, src, modifiers }
-        | IrOp::Log { dst: _, src, modifiers } => {
+        | IrOp::Log { dst: _, src, modifiers }
+        | IrOp::Ddx { dst: _, src, modifiers }
+        | IrOp::Ddy { dst: _, src, modifiers } => {
+            if matches!(op, IrOp::Ddx { .. } | IrOp::Ddy { .. }) && stage != ShaderStage::Pixel {
+                return Err(VerifyError {
+                    message: "derivative instructions are only valid in pixel shaders".to_owned(),
+                });
+            }
             verify_src(src)?;
             verify_modifiers(modifiers)?;
         }

@@ -185,6 +185,18 @@ pub enum IrOp {
         src: Src,
         modifiers: InstModifiers,
     },
+    /// Screen-space derivative w.r.t. X (`dsx` / `ddx`).
+    Ddx {
+        dst: Dst,
+        src: Src,
+        modifiers: InstModifiers,
+    },
+    /// Screen-space derivative w.r.t. Y (`dsy` / `ddy`).
+    Ddy {
+        dst: Dst,
+        src: Src,
+        modifiers: InstModifiers,
+    },
     Min {
         dst: Dst,
         src0: Src,
@@ -670,6 +682,24 @@ fn format_op(op: &IrOp) -> String {
         } => format!(
             "{} {}",
             format_inst("log", modifiers),
+            format_dst_src(dst, std::slice::from_ref(src))
+        ),
+        IrOp::Ddx {
+            dst,
+            src,
+            modifiers,
+        } => format!(
+            "{} {}",
+            format_inst("dsx", modifiers),
+            format_dst_src(dst, std::slice::from_ref(src))
+        ),
+        IrOp::Ddy {
+            dst,
+            src,
+            modifiers,
+        } => format!(
+            "{} {}",
+            format_inst("dsy", modifiers),
             format_dst_src(dst, std::slice::from_ref(src))
         ),
         IrOp::Min {

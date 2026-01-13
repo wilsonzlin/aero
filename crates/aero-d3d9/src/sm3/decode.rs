@@ -74,6 +74,10 @@ pub enum Opcode {
     Slt,
     Seq,
     Sne,
+    /// D3D9 `dsx` (aka `ddx`): screen-space derivative w.r.t. x, pixel shaders only.
+    Dsx,
+    /// D3D9 `dsy` (aka `ddy`): screen-space derivative w.r.t. y, pixel shaders only.
+    Dsy,
     /// D3D9 `cmp`: per-component select `dst = (src0 >= 0) ? src1 : src2`.
     Cmp,
     If,
@@ -148,6 +152,8 @@ impl Opcode {
             // else is treated as `Unknown`.
             84 => Self::Seq, // 0x54
             85 => Self::Sne, // 0x55
+            86 => Self::Dsx, // 0x56
+            87 => Self::Dsy, // 0x57
             88 => Self::Cmp, // 0x58
             90 => Self::Dp2, // 0x5A
             0xFFFE => Self::Comment,
@@ -180,6 +186,8 @@ impl Opcode {
             Self::Slt => "slt",
             Self::Seq => "seq",
             Self::Sne => "sne",
+            Self::Dsx => "dsx",
+            Self::Dsy => "dsy",
             Self::Cmp => "cmp",
             Self::If => "if",
             Self::Ifc => "ifc",
@@ -766,6 +774,25 @@ fn decode_operands_and_extras(
                     ),
                 });
             }
+        }
+        Opcode::Dsx | Opcode::Dsy => {
+            if stage != ShaderStage::Pixel {
+                return Err(DecodeError {
+                    token_index: 0,
+                    message: format!(
+                        "opcode {} is only valid in pixel shaders",
+                        opcode.name()
+                    ),
+                });
+            }
+            parse_fixed_operands(
+                opcode,
+                stage,
+                major,
+                operand_tokens,
+                &[OperandKind::Dst, OperandKind::Src],
+                &mut operands,
+            )?;
         }
         Opcode::Frc => {
             parse_fixed_operands(

@@ -336,3 +336,83 @@ fn wgsl_dp2_compiles_and_uses_xy() {
     .validate(&module)
     .expect("wgsl validate");
 }
+
+#[test]
+fn wgsl_dsx_dsy_derivatives_compile() {
+    // ps_3_0:
+    //   def c0, 0.25, 0.5, 0.75, 1.0
+    //   def c1, 1.0, 1.0, 1.0, 1.0
+    //   def c2, 0.0, 0.0, 0.0, 0.0
+    //   setp_ge p0, c1.x, c2.x
+    //   dsx (p0) r0, c0
+    //   dsy_sat_x2 r1, c0
+    //   add r2, r0, r1
+    //   mov oC0, r2
+    //   end
+    let tokens = vec![
+        version_token(ShaderStage::Pixel, 3, 0),
+        // def c0, 0.25, 0.5, 0.75, 1.0
+        opcode_token(81, 5),
+        dst_token(2, 0, 0xF),
+        0x3E80_0000,
+        0x3F00_0000,
+        0x3F40_0000,
+        0x3F80_0000,
+        // def c1, 1.0, 1.0, 1.0, 1.0
+        opcode_token(81, 5),
+        dst_token(2, 1, 0xF),
+        0x3F80_0000,
+        0x3F80_0000,
+        0x3F80_0000,
+        0x3F80_0000,
+        // def c2, 0.0, 0.0, 0.0, 0.0
+        opcode_token(81, 5),
+        dst_token(2, 2, 0xF),
+        0x0000_0000,
+        0x0000_0000,
+        0x0000_0000,
+        0x0000_0000,
+        // setp_ge p0, c1.x, c2.x  (compare op 2 = ge)
+        opcode_token(78, 3) | (2u32 << 16),
+        dst_token(19, 0, 0xF),
+        src_token(2, 1, 0x00, 0), // c1.xxxx
+        src_token(2, 2, 0x00, 0), // c2.xxxx
+        // dsx (p0) r0, c0
+        opcode_token(86, 3) | 0x1000_0000, // predicated
+        dst_token(0, 0, 0xF),
+        src_token(2, 0, 0xE4, 0),
+        src_token(19, 0, 0x00, 0), // p0.x
+        // dsy_sat_x2 r1, c0  (saturate + mul2)
+        opcode_token(87, 2) | (3u32 << 20),
+        dst_token(0, 1, 0xF),
+        src_token(2, 0, 0xE4, 0),
+        // add r2, r0, r1
+        opcode_token(2, 3),
+        dst_token(0, 2, 0xF),
+        src_token(0, 0, 0xE4, 0),
+        src_token(0, 1, 0xE4, 0),
+        // mov oC0, r2
+        opcode_token(1, 2),
+        dst_token(8, 0, 0xF),
+        src_token(0, 2, 0xE4, 0),
+        // end
+        0x0000_FFFF,
+    ];
+
+    let decoded = decode_u32_tokens(&tokens).unwrap();
+    let ir = build_ir(&decoded).unwrap();
+    verify_ir(&ir).unwrap();
+
+    let wgsl = generate_wgsl(&ir).unwrap().wgsl;
+    assert!(wgsl.contains("dpdx("), "{wgsl}");
+    assert!(wgsl.contains("dpdy("), "{wgsl}");
+    assert!(wgsl.contains("clamp("), "{wgsl}");
+
+    let module = naga::front::wgsl::parse_str(&wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+}
