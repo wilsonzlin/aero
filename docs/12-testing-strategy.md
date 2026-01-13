@@ -949,6 +949,10 @@ Use a simple **test card** (grayscale ramp + alpha gradient + corner markers) an
 presented pixels per backend. See `web/src/gpu/validation-scene.ts` and the Playwright spec
 `tests/e2e/web/gpu_color.spec.ts`.
 
+> Terminology note: this test hashes the **presented output** (post color-space/alpha policy). The GPU worker
+> screenshot API (`type: "screenshot"`) is defined separately as a deterministic readback of the **source framebuffer**
+> bytes for hashing guest frames (see `web/src/gpu/presenter.ts`).
+
 ### CSP/COOP/COEP regression tests (implemented)
 
 This repo includes a small WASM/JIT CSP PoC app plus Playwright coverage that asserts:

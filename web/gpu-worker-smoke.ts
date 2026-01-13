@@ -185,6 +185,9 @@ async function main() {
     }
 
     gpu.presentTestPattern();
+    // Note: worker screenshots are defined as a deterministic readback of the *source framebuffer* bytes
+    // (pre-scaling / pre-color-management). Hash-based tests rely on this contract; it is intentionally
+    // not a "what the user sees" capture of the presented canvas.
     const screenshot = await gpu.requestScreenshot();
 
     const rgba8 = new Uint8Array(screenshot.rgba8);

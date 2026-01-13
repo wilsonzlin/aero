@@ -878,6 +878,10 @@ Add a GPU validation scene that renders:
 
 Automate this using Playwright by hashing the presented pixel output per backend and ensuring WebGPU and WebGL2 match.
 
+> Terminology note: this validation hashes the **presented output** (after the presenter's color-space/alpha policy).
+> This is distinct from the GPU worker / `Presenter.screenshot()` contract in `web/src/gpu/presenter.ts`, which is
+> defined as a deterministic readback of the **source framebuffer bytes** for hash-based tests.
+
 ### Double Buffering
 
 ```rust
