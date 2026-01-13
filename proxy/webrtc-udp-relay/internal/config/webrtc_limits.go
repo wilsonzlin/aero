@@ -4,7 +4,8 @@ package config
 // for a single UDP relay DataChannel message on top of MAX_DATAGRAM_PAYLOAD_BYTES.
 //
 // This accounts for the v2 header carrying an IPv6 address (see udpproto.EncodeV2):
-//   magic+version+af+type (4) + guest_port (2) + ipv6 (16) + remote_port (2) = 24
+//
+//	magic+version+af+type (4) + guest_port (2) + ipv6 (16) + remote_port (2) = 24
 const webrtcDataChannelUDPFrameOverheadBytes = 24
 
 func minWebRTCDataChannelMaxMessageBytes(maxDatagramPayloadBytes, l2MaxMessageBytes int) int {
@@ -52,4 +53,3 @@ func defaultWebRTCSCTPMaxReceiveBufferBytes(maxMessageBytes int) int {
 	}
 	return buf
 }
-

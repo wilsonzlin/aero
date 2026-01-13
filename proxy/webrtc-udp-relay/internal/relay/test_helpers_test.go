@@ -28,4 +28,3 @@ func startIPv6UDPEchoServer(t *testing.T) (*net.UDPConn, netip.AddrPort) {
 
 	return conn, addr
 }
-

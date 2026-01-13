@@ -163,4 +163,3 @@ func FuzzDecodeStrictJSON(f *testing.F) {
 		}
 	})
 }
-

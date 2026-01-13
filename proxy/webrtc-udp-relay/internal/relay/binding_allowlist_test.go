@@ -92,4 +92,3 @@ func TestUdpPortBinding_AllowRemote_EvictsOldest(t *testing.T) {
 		t.Fatalf("eviction metric=%d, want 1", got)
 	}
 }
-

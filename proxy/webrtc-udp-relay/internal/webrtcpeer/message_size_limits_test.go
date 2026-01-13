@@ -174,4 +174,3 @@ func forceSDPMaxMessageSize(sdp string, max uint64) string {
 	}
 	return strings.Join(lines, "\n")
 }
-

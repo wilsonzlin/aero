@@ -100,4 +100,3 @@ func TestL2Bridge_QuotaDropIncrementsMetric(t *testing.T) {
 		t.Fatalf("%s=%d, want %d", metrics.L2BridgeDroppedRateLimitedTotal, got, 1)
 	}
 }
-

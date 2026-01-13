@@ -94,10 +94,10 @@ func DefaultConfig() Config {
 		MaxDatagramPayloadBytes:   udpproto.DefaultMaxPayload,
 		// Allocate only enough to detect oversized payloads (Max+1), rather than a
 		// full 64KiB UDP payload per binding.
-		UDPReadBufferBytes:        udpproto.DefaultMaxPayload + 1,
-		L2BackendAuthForwardMode:  config.L2BackendAuthForwardModeQuery,
-		L2MaxMessageBytes:         4096,
-		InboundFilterMode:         InboundFilterAddressAndPort,
+		UDPReadBufferBytes:          udpproto.DefaultMaxPayload + 1,
+		L2BackendAuthForwardMode:    config.L2BackendAuthForwardModeQuery,
+		L2MaxMessageBytes:           4096,
+		InboundFilterMode:           InboundFilterAddressAndPort,
 		MaxAllowedRemotesPerBinding: 1024,
 	}
 }

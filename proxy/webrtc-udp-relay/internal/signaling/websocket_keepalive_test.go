@@ -95,4 +95,3 @@ func TestWebSocketSignaling_PongKeepsConnectionOpenBeyondIdleTimeout(t *testing.
 		t.Fatalf("timeout waiting for read goroutine to exit")
 	}
 }
-

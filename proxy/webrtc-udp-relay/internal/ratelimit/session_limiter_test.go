@@ -35,4 +35,3 @@ func TestSessionLimiter_BoundsPerDestBucketCount(t *testing.T) {
 		t.Fatalf("evictions=%d, want %d", evictions, 6)
 	}
 }
-

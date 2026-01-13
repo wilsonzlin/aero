@@ -44,4 +44,3 @@ func TestDefaultWebRTCSCTPMaxReceiveBufferBytes_AtLeastMessageSize(t *testing.T)
 		t.Fatalf("got=%d, want >= %d", got, 4*1024*1024)
 	}
 }
-

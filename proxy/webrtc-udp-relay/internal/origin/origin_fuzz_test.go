@@ -164,4 +164,3 @@ func splitAllowedOriginsForFuzz(s string) []string {
 	}
 	return parts
 }
-

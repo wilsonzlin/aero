@@ -122,16 +122,16 @@ var gatheringCompletePromise = webrtc.GatheringCompletePromise
 
 func NewServer(cfg Config) *Server {
 	return &Server{
-		Sessions:             cfg.Sessions,
-		WebRTC:               cfg.WebRTC,
-		ICEServers:           cfg.ICEServers,
-		RelayConfig:          cfg.RelayConfig,
-		Policy:               cfg.Policy,
-		AllowedOrigins:       cfg.AllowedOrigins,
-		Authorizer:           cfg.Authorizer,
-		ICEGatheringTimeout:  cfg.ICEGatheringTimeout,
-		SessionPreallocTTL:   cfg.SessionPreallocTTL,
-		SignalingAuthTimeout: cfg.SignalingAuthTimeout,
+		Sessions:                cfg.Sessions,
+		WebRTC:                  cfg.WebRTC,
+		ICEServers:              cfg.ICEServers,
+		RelayConfig:             cfg.RelayConfig,
+		Policy:                  cfg.Policy,
+		AllowedOrigins:          cfg.AllowedOrigins,
+		Authorizer:              cfg.Authorizer,
+		ICEGatheringTimeout:     cfg.ICEGatheringTimeout,
+		SessionPreallocTTL:      cfg.SessionPreallocTTL,
+		SignalingAuthTimeout:    cfg.SignalingAuthTimeout,
 		SignalingWSIdleTimeout:  cfg.SignalingWSIdleTimeout,
 		SignalingWSPingInterval: cfg.SignalingWSPingInterval,
 
