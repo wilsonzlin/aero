@@ -413,11 +413,16 @@ static bool WaitForScanoutMatch(const D3DKMT_FUNCS* kmt,
     }
 
     const unsigned long long row_bytes = (unsigned long long)expected_w * 4ull;
+    bool format_ok = true;
+    if (q.cached_format != 0 && q.mmio_format != 0 && q.cached_format != q.mmio_format) {
+      format_ok = false;
+    }
     const bool match =
         ok && (q.cached_enable != 0) && (q.mmio_enable != 0) && (q.cached_width == expected_w) &&
         (q.cached_height == expected_h) && (q.mmio_width == expected_w) && (q.mmio_height == expected_h) &&
         (q.mmio_fb_gpa != 0) && (q.cached_pitch_bytes != 0) && (q.mmio_pitch_bytes != 0) &&
-        (q.cached_pitch_bytes == q.mmio_pitch_bytes) && ((unsigned long long)q.cached_pitch_bytes >= row_bytes);
+        (q.cached_pitch_bytes == q.mmio_pitch_bytes) && ((unsigned long long)q.cached_pitch_bytes >= row_bytes) &&
+        format_ok;
     if (match) {
       if (out_last) {
         *out_last = q;
@@ -446,15 +451,17 @@ static bool WaitForScanoutMatch(const D3DKMT_FUNCS* kmt,
                                         (unsigned long)last_status);
     } else {
       *err = aerogpu_test::FormatString(
-          "scanout did not match within %lu ms (want=%lux%lu cached=%lux%lu pitch=%lu mmio=%lux%lu pitch=%lu fb_gpa=0x%I64X)",
+          "scanout did not match within %lu ms (want=%lux%lu cached=%lux%lu fmt=%lu pitch=%lu mmio=%lux%lu fmt=%lu pitch=%lu fb_gpa=0x%I64X)",
           (unsigned long)timeout_ms,
           (unsigned long)expected_w,
           (unsigned long)expected_h,
           (unsigned long)last.cached_width,
           (unsigned long)last.cached_height,
+          (unsigned long)last.cached_format,
           (unsigned long)last.cached_pitch_bytes,
           (unsigned long)last.mmio_width,
           (unsigned long)last.mmio_height,
+          (unsigned long)last.mmio_format,
           (unsigned long)last.mmio_pitch_bytes,
           (unsigned long long)last.mmio_fb_gpa);
     }
