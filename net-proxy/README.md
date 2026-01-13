@@ -21,6 +21,12 @@ Health check:
 curl http://127.0.0.1:8081/healthz
 ```
 
+Metrics (Prometheus text format):
+
+```bash
+curl http://127.0.0.1:8081/metrics
+```
+
 ### DNS-over-HTTPS (DoH) endpoints
 
 `net-proxy` also implements two DNS-over-HTTPS endpoints that are compatible with the production gateway API:

@@ -1155,6 +1155,8 @@ async function handleTcpRelay(
   config: ProxyConfig,
   metrics: ProxyServerMetrics
 ): Promise<void> {
+  if (ws.readyState !== ws.OPEN) return;
+
   const wsStream = createWebSocketStream(ws, { highWaterMark: config.wsStreamHighWaterMarkBytes });
 
   metrics.connectionActiveInc("tcp");
@@ -1262,6 +1264,8 @@ async function handleUdpRelay(
   config: ProxyConfig,
   metrics: ProxyServerMetrics
 ): Promise<void> {
+  if (ws.readyState !== ws.OPEN) return;
+
   const socket = dgram.createSocket(family === 6 ? "udp6" : "udp4");
   socket.connect(port, address);
 
