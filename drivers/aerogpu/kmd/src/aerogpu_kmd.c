@@ -8397,7 +8397,8 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
             io->status = (uint32_t)STATUS_INVALID_PARAMETER;
             return STATUS_SUCCESS;
         }
-        if (gpa > (~0ull - (ULONGLONG)reqBytes)) {
+        /* Validate `gpa .. gpa+reqBytes-1` does not overflow. */
+        if (gpa > (~0ull - ((ULONGLONG)reqBytes - 1ull))) {
             io->status = (uint32_t)STATUS_INVALID_PARAMETER;
             return STATUS_SUCCESS;
         }
