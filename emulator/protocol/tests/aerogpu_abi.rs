@@ -2381,6 +2381,7 @@ fn rust_layout_matches_c_headers() {
     assert_eq!(abi.size("aerogpu_escape_query_device_out"), 24);
     assert_eq!(abi.size("aerogpu_escape_query_device_v2_out"), 48);
     assert_eq!(abi.size("aerogpu_escape_query_fence_out"), 32);
+    assert_eq!(abi.size("aerogpu_escape_query_perf_out"), 144);
     assert_eq!(
         abi.size("aerogpu_escape_dump_ring_inout"),
         40 + (32 * 24),
@@ -2420,6 +2421,46 @@ fn rust_layout_matches_c_headers() {
     assert_eq!(
         abi.offset("aerogpu_escape_query_device_v2_out", "reserved0"),
         40
+    );
+
+    assert_eq!(
+        abi.offset("aerogpu_escape_query_perf_out", "last_submitted_fence"),
+        16
+    );
+    assert_eq!(
+        abi.offset("aerogpu_escape_query_perf_out", "last_completed_fence"),
+        24
+    );
+    assert_eq!(abi.offset("aerogpu_escape_query_perf_out", "ring0_head"), 32);
+    assert_eq!(abi.offset("aerogpu_escape_query_perf_out", "ring0_tail"), 36);
+    assert_eq!(
+        abi.offset("aerogpu_escape_query_perf_out", "ring0_size_bytes"),
+        40
+    );
+    assert_eq!(
+        abi.offset("aerogpu_escape_query_perf_out", "ring0_entry_count"),
+        44
+    );
+    assert_eq!(
+        abi.offset("aerogpu_escape_query_perf_out", "total_submissions"),
+        48
+    );
+    assert_eq!(
+        abi.offset("aerogpu_escape_query_perf_out", "irq_fence_delivered"),
+        80
+    );
+    assert_eq!(
+        abi.offset("aerogpu_escape_query_perf_out", "reset_from_timeout_count"),
+        104
+    );
+    assert_eq!(abi.offset("aerogpu_escape_query_perf_out", "vblank_seq"), 120);
+    assert_eq!(
+        abi.offset("aerogpu_escape_query_perf_out", "vblank_period_ns"),
+        136
+    );
+    assert_eq!(
+        abi.offset("aerogpu_escape_query_perf_out", "reserved0"),
+        140
     );
 
     assert_eq!(
@@ -2506,6 +2547,8 @@ fn rust_layout_matches_c_headers() {
         abi.offset("aerogpu_escape_map_shared_handle_inout", "reserved0"),
         28
     );
+
+    assert_eq!(abi.konst("AEROGPU_ESCAPE_OP_QUERY_PERF"), 12);
 
     // UMD-private discovery blob (UMDRIVERPRIVATE).
     assert_off!(

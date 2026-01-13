@@ -1564,6 +1564,10 @@ static VOID AeroGpuEmitReleaseSharedSurface(_Inout_ AEROGPU_ADAPTER* Adapter, _I
         return;
     }
 
+    /* Track internal submissions for dbgctl perf counters. */
+    InterlockedIncrement64(&Adapter->PerfTotalSubmissions);
+    InterlockedIncrement64(&Adapter->PerfTotalInternalSubmits);
+
     AEROGPU_PENDING_INTERNAL_SUBMISSION* internal =
         (AEROGPU_PENDING_INTERNAL_SUBMISSION*)ExAllocatePoolWithTag(NonPagedPool, sizeof(*internal), AEROGPU_POOL_TAG);
     if (!internal) {
@@ -4742,6 +4746,14 @@ static NTSTATUS APIENTRY AeroGpuDdiSubmitCommand(_In_ const HANDLE hAdapter,
         return ringSt;
     }
 
+    /* Track successful submissions for dbgctl perf counters. */
+    InterlockedIncrement64(&adapter->PerfTotalSubmissions);
+    if (type == AEROGPU_SUBMIT_PRESENT) {
+        InterlockedIncrement64(&adapter->PerfTotalPresents);
+    } else if (type == AEROGPU_SUBMIT_RENDER) {
+        InterlockedIncrement64(&adapter->PerfTotalRenderSubmits);
+    }
+
     if (meta) {
         ExFreePoolWithTag(meta, AEROGPU_POOL_TAG);
     }
@@ -4766,8 +4778,10 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
         const ULONG status = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_IRQ_STATUS);
         const ULONG known = (AEROGPU_IRQ_FENCE | AEROGPU_IRQ_SCANOUT_VBLANK | AEROGPU_IRQ_ERROR);
         const ULONG handled = status & known;
+        const ULONG unknown = status & ~known;
         if (handled == 0) {
             if (status != 0) {
+                InterlockedIncrement64(&adapter->PerfIrqSpurious);
                 /*
                  * Defensive: if the device reports an IRQ_STATUS bit we don't understand,
                  * still ACK it to avoid interrupt storms from a stuck level-triggered line.
@@ -4783,6 +4797,10 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
                 return TRUE;
             }
             return FALSE;
+        }
+
+        if (unknown != 0) {
+            InterlockedIncrement64(&adapter->PerfIrqSpurious);
         }
 
         /* Ack in the ISR to deassert the (level-triggered) interrupt line. */
@@ -4801,6 +4819,7 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
         }
 
         if ((handled & AEROGPU_IRQ_FENCE) != 0) {
+            InterlockedIncrement64(&adapter->PerfIrqFenceDelivered);
             const ULONGLONG completedFence64 = AeroGpuReadCompletedFence(adapter);
 
             /*
@@ -4834,6 +4853,7 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
         }
 
         if ((handled & AEROGPU_IRQ_SCANOUT_VBLANK) != 0) {
+            InterlockedIncrement64(&adapter->PerfIrqVblankDelivered);
             /*
              * Keep a guest-time anchor of the most recent vblank so GetScanLine callers don't
              * need to poll the vblank sequence counter at high frequency.
@@ -4887,8 +4907,10 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
         }
     } else {
         const ULONG legacyStatus = AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_INT_STATUS);
+        const ULONG legacyKnown = AEROGPU_LEGACY_INT_FENCE;
         if ((legacyStatus & AEROGPU_LEGACY_INT_FENCE) == 0) {
             if (legacyStatus != 0) {
+                InterlockedIncrement64(&adapter->PerfIrqSpurious);
                 AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_INT_ACK, legacyStatus);
                 static LONG g_UnexpectedLegacyIrqWarned = 0;
                 if (InterlockedExchange(&g_UnexpectedLegacyIrqWarned, 1) == 0) {
@@ -4900,6 +4922,10 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
                 any = TRUE;
             }
         } else {
+            if ((legacyStatus & ~legacyKnown) != 0) {
+                InterlockedIncrement64(&adapter->PerfIrqSpurious);
+            }
+            InterlockedIncrement64(&adapter->PerfIrqFenceDelivered);
             const ULONGLONG completedFence64 =
                 (ULONGLONG)AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_FENCE_COMPLETED);
             AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_INT_ACK, legacyStatus);
@@ -4944,6 +4970,7 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
                 const ULONG known = AEROGPU_IRQ_SCANOUT_VBLANK | AEROGPU_IRQ_ERROR;
                 const ULONG unknown = pending & ~known;
                 if (unknown != 0) {
+                    InterlockedIncrement64(&adapter->PerfIrqSpurious);
                     static LONG g_UnexpectedLegacyMmioIrqWarned = 0;
                     if (InterlockedExchange(&g_UnexpectedLegacyMmioIrqWarned, 1) == 0) {
                         DbgPrintEx(DPFLTR_IHVVIDEO_ID,
@@ -4970,6 +4997,7 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
                 }
 
                 if ((pending & AEROGPU_IRQ_SCANOUT_VBLANK) != 0 && adapter->SupportsVblank) {
+                    InterlockedIncrement64(&adapter->PerfIrqVblankDelivered);
                     const BOOLEAN haveVblankRegs =
                         adapter->Bar0Length >= (AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS + sizeof(ULONG));
                     if (!haveVblankRegs) {
@@ -5215,6 +5243,10 @@ static NTSTATUS APIENTRY AeroGpuDdiResetFromTimeout(_In_ const HANDLE hAdapter)
     if (!adapter) {
         return STATUS_INVALID_PARAMETER;
     }
+
+    /* dbgctl perf counters: record resets (TDR recovery path). */
+    InterlockedIncrement64(&adapter->PerfResetFromTimeoutCount);
+    InterlockedExchange64(&adapter->PerfLastResetTime100ns, (LONGLONG)KeQueryInterruptTime());
 
     /*
      * Keep recovery simple: clear the ring pointers and treat all in-flight
@@ -5733,6 +5765,77 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
         out->hdr.reserved0 = 0;
         out->last_submitted_fence = (uint64_t)adapter->LastSubmittedFence;
         out->last_completed_fence = (uint64_t)completedFence;
+        return STATUS_SUCCESS;
+    }
+
+    if (hdr->op == AEROGPU_ESCAPE_OP_QUERY_PERF) {
+        if (pEscape->PrivateDriverDataSize < sizeof(aerogpu_escape_query_perf_out)) {
+            return STATUS_BUFFER_TOO_SMALL;
+        }
+
+        aerogpu_escape_query_perf_out* out = (aerogpu_escape_query_perf_out*)pEscape->pPrivateDriverData;
+        RtlZeroMemory(out, sizeof(*out));
+        out->hdr.version = AEROGPU_ESCAPE_VERSION;
+        out->hdr.op = AEROGPU_ESCAPE_OP_QUERY_PERF;
+        out->hdr.size = sizeof(*out);
+        out->hdr.reserved0 = 0;
+
+        ULONGLONG lastSubmittedFence = 0;
+        {
+            KIRQL pendingIrql;
+            KeAcquireSpinLock(&adapter->PendingLock, &pendingIrql);
+            lastSubmittedFence = adapter->LastSubmittedFence;
+            KeReleaseSpinLock(&adapter->PendingLock, pendingIrql);
+        }
+
+        ULONGLONG lastCompletedFence = adapter->LastCompletedFence;
+        if (adapter->Bar0) {
+            lastCompletedFence = AeroGpuReadCompletedFence(adapter);
+        }
+
+        out->last_submitted_fence = (uint64_t)lastSubmittedFence;
+        out->last_completed_fence = (uint64_t)lastCompletedFence;
+
+        out->ring0_size_bytes = (uint32_t)adapter->RingSizeBytes;
+        out->ring0_entry_count = (uint32_t)adapter->RingEntryCount;
+
+        {
+            KIRQL ringIrql;
+            KeAcquireSpinLock(&adapter->RingLock, &ringIrql);
+
+            ULONG head = 0;
+            ULONG tail = 0;
+            if (adapter->AbiKind == AEROGPU_ABI_KIND_V1 && adapter->RingHeader) {
+                head = adapter->RingHeader->head;
+                tail = adapter->RingHeader->tail;
+            } else if (adapter->Bar0) {
+                head = AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_RING_HEAD);
+                tail = AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_RING_TAIL);
+            }
+
+            out->ring0_head = (uint32_t)head;
+            out->ring0_tail = (uint32_t)tail;
+
+            KeReleaseSpinLock(&adapter->RingLock, ringIrql);
+        }
+
+        out->total_submissions = (uint64_t)InterlockedCompareExchange64(&adapter->PerfTotalSubmissions, 0, 0);
+        out->total_presents = (uint64_t)InterlockedCompareExchange64(&adapter->PerfTotalPresents, 0, 0);
+        out->total_render_submits = (uint64_t)InterlockedCompareExchange64(&adapter->PerfTotalRenderSubmits, 0, 0);
+        out->total_internal_submits = (uint64_t)InterlockedCompareExchange64(&adapter->PerfTotalInternalSubmits, 0, 0);
+
+        out->irq_fence_delivered = (uint64_t)InterlockedCompareExchange64(&adapter->PerfIrqFenceDelivered, 0, 0);
+        out->irq_vblank_delivered = (uint64_t)InterlockedCompareExchange64(&adapter->PerfIrqVblankDelivered, 0, 0);
+        out->irq_spurious = (uint64_t)InterlockedCompareExchange64(&adapter->PerfIrqSpurious, 0, 0);
+
+        out->reset_from_timeout_count = (uint64_t)InterlockedCompareExchange64(&adapter->PerfResetFromTimeoutCount, 0, 0);
+        out->last_reset_time_100ns = (uint64_t)InterlockedCompareExchange64(&adapter->PerfLastResetTime100ns, 0, 0);
+
+        out->vblank_seq = (uint64_t)AeroGpuAtomicReadU64(&adapter->LastVblankSeq);
+        out->last_vblank_time_ns = (uint64_t)AeroGpuAtomicReadU64(&adapter->LastVblankTimeNs);
+        out->vblank_period_ns = (uint32_t)adapter->VblankPeriodNs;
+        out->reserved0 = 0;
+
         return STATUS_SUCCESS;
     }
 

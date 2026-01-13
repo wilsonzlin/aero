@@ -34,6 +34,8 @@ extern "C" {
 #define AEROGPU_ESCAPE_OP_DUMP_CREATEALLOCATION 9u
 #define AEROGPU_ESCAPE_OP_QUERY_SCANOUT 10u
 #define AEROGPU_ESCAPE_OP_QUERY_CURSOR 11u
+/* Query performance/health counters snapshot. */
+#define AEROGPU_ESCAPE_OP_QUERY_PERF 12u
 
 #define AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS 32u
 #define AEROGPU_DBGCTL_MAX_RECENT_ALLOCATIONS 32u
@@ -104,6 +106,68 @@ typedef struct aerogpu_escape_query_fence_out {
 
 /* Must remain stable across x86/x64. */
 AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_escape_query_fence_out) == 32);
+
+/*
+ * Query performance/health counters snapshot.
+ *
+ * This is intended to be a low-friction, stable "first glance" dump that helps
+ * diagnose:
+ * - stuck fences / forward progress
+ * - ring queue depth
+ * - interrupt delivery (fence vsync) and unexpected/spurious interrupts
+ * - TDR/reset frequency
+ *
+ * All counters are best-effort snapshots and may change concurrently while the
+ * escape is being processed.
+ */
+typedef struct aerogpu_escape_query_perf_out {
+  aerogpu_escape_header hdr;
+
+  aerogpu_escape_u64 last_submitted_fence;
+  aerogpu_escape_u64 last_completed_fence;
+
+  /* Ring 0 snapshot (AGPU ring when supported; 0 if unknown). */
+  aerogpu_escape_u32 ring0_head;
+  aerogpu_escape_u32 ring0_tail;
+  aerogpu_escape_u32 ring0_size_bytes;
+  aerogpu_escape_u32 ring0_entry_count;
+
+  /* Submission counters. */
+  aerogpu_escape_u64 total_submissions;
+  aerogpu_escape_u64 total_presents;
+  aerogpu_escape_u64 total_render_submits;
+  aerogpu_escape_u64 total_internal_submits;
+
+  /* Interrupt counters. */
+  aerogpu_escape_u64 irq_fence_delivered;
+  aerogpu_escape_u64 irq_vblank_delivered;
+  aerogpu_escape_u64 irq_spurious;
+
+  /* Reset/TDR counters. */
+  aerogpu_escape_u64 reset_from_timeout_count;
+  aerogpu_escape_u64 last_reset_time_100ns;
+
+  /* VBlank snapshot. */
+  aerogpu_escape_u64 vblank_seq;
+  aerogpu_escape_u64 last_vblank_time_ns;
+  aerogpu_escape_u32 vblank_period_ns;
+  aerogpu_escape_u32 reserved0;
+} aerogpu_escape_query_perf_out;
+
+/* Must remain stable across x86/x64. */
+AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_escape_query_perf_out) == 144);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, last_submitted_fence) == 16);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, last_completed_fence) == 24);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, ring0_head) == 32);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, ring0_tail) == 36);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, ring0_size_bytes) == 40);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, ring0_entry_count) == 44);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, total_submissions) == 48);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, irq_fence_delivered) == 80);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, reset_from_timeout_count) == 104);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, vblank_seq) == 120);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, vblank_period_ns) == 136);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, reserved0) == 140);
 
 /*
  * Must remain stable across x86/x64.

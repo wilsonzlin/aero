@@ -220,6 +220,21 @@ typedef struct _AEROGPU_ADAPTER {
     ULONGLONG LastSubmittedFence;
     ULONGLONG LastCompletedFence;
 
+    /* ---- dbgctl performance/health counters ------------------------------ */
+
+    /* Monotonic counters updated via interlocked operations. */
+    DECLSPEC_ALIGN(8) volatile LONGLONG PerfTotalSubmissions;
+    DECLSPEC_ALIGN(8) volatile LONGLONG PerfTotalPresents;
+    DECLSPEC_ALIGN(8) volatile LONGLONG PerfTotalRenderSubmits;
+    DECLSPEC_ALIGN(8) volatile LONGLONG PerfTotalInternalSubmits;
+
+    DECLSPEC_ALIGN(8) volatile LONGLONG PerfIrqFenceDelivered;
+    DECLSPEC_ALIGN(8) volatile LONGLONG PerfIrqVblankDelivered;
+    DECLSPEC_ALIGN(8) volatile LONGLONG PerfIrqSpurious;
+
+    DECLSPEC_ALIGN(8) volatile LONGLONG PerfResetFromTimeoutCount;
+    DECLSPEC_ALIGN(8) volatile LONGLONG PerfLastResetTime100ns;
+
     LIST_ENTRY PendingMetaHandles;
     KSPIN_LOCK MetaHandleLock;
     ULONGLONG NextMetaHandle;

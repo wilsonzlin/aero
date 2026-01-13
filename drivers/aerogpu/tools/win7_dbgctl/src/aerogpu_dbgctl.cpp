@@ -198,6 +198,7 @@ static void PrintUsage() {
            L"  --query-umd-private\n"
            L"  --query-fence\n"
            L"  --watch-fence  (requires: --samples N --interval-ms M)\n"
+           L"  --query-perf  (alias: --perf)\n"
            L"  --query-scanout\n"
            L"  --query-cursor  (alias: --dump-cursor)\n"
            L"  --dump-ring\n"
@@ -1088,6 +1089,93 @@ static int DoWatchFence(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t 
       }
     }
   }
+
+  return 0;
+}
+
+static int DoQueryPerf(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
+  aerogpu_escape_query_perf_out q;
+  ZeroMemory(&q, sizeof(q));
+  q.hdr.version = AEROGPU_ESCAPE_VERSION;
+  q.hdr.op = AEROGPU_ESCAPE_OP_QUERY_PERF;
+  q.hdr.size = sizeof(q);
+  q.hdr.reserved0 = 0;
+
+  NTSTATUS st = SendAerogpuEscape(f, hAdapter, &q, sizeof(q));
+  if (!NT_SUCCESS(st)) {
+    if (st == STATUS_NOT_SUPPORTED) {
+      wprintf(L"QueryPerf: (not supported by this KMD; upgrade AeroGPU driver)\n");
+      return 2;
+    }
+    PrintNtStatus(L"D3DKMTEscape(query-perf) failed", f, st);
+    return 2;
+  }
+
+  const uint64_t submitted = (uint64_t)q.last_submitted_fence;
+  const uint64_t completed = (uint64_t)q.last_completed_fence;
+  const uint64_t pendingFences = (submitted >= completed) ? (submitted - completed) : 0;
+
+  uint32_t ringPending = 0;
+  if (q.ring0_entry_count != 0) {
+    const uint32_t head = q.ring0_head;
+    const uint32_t tail = q.ring0_tail;
+    if (tail >= head) {
+      ringPending = tail - head;
+    } else {
+      ringPending = tail + q.ring0_entry_count - head;
+    }
+    if (ringPending > q.ring0_entry_count) {
+      ringPending = q.ring0_entry_count;
+    }
+  }
+
+  wprintf(L"Perf counters (snapshot):\n");
+  wprintf(L"  fences: submitted=0x%I64x completed=0x%I64x pending=%I64u\n",
+          (unsigned long long)submitted,
+          (unsigned long long)completed,
+          (unsigned long long)pendingFences);
+  wprintf(L"  ring0:  head=%lu tail=%lu pending=%lu entry_count=%lu size_bytes=%lu\n",
+          (unsigned long)q.ring0_head,
+          (unsigned long)q.ring0_tail,
+          (unsigned long)ringPending,
+          (unsigned long)q.ring0_entry_count,
+          (unsigned long)q.ring0_size_bytes);
+  wprintf(L"  submits: total=%I64u render=%I64u present=%I64u internal=%I64u\n",
+          (unsigned long long)q.total_submissions,
+          (unsigned long long)q.total_render_submits,
+          (unsigned long long)q.total_presents,
+          (unsigned long long)q.total_internal_submits);
+  wprintf(L"  irqs: fence=%I64u vblank=%I64u spurious=%I64u\n",
+          (unsigned long long)q.irq_fence_delivered,
+          (unsigned long long)q.irq_vblank_delivered,
+          (unsigned long long)q.irq_spurious);
+  wprintf(L"  resets: ResetFromTimeout=%I64u last_reset_time_100ns=%I64u\n",
+          (unsigned long long)q.reset_from_timeout_count,
+          (unsigned long long)q.last_reset_time_100ns);
+  wprintf(L"  vblank: seq=0x%I64x last_time_ns=0x%I64x period_ns=%lu\n",
+          (unsigned long long)q.vblank_seq,
+          (unsigned long long)q.last_vblank_time_ns,
+          (unsigned long)q.vblank_period_ns);
+
+  wprintf(L"Raw:\n");
+  wprintf(L"  last_submitted_fence=%I64u\n", (unsigned long long)q.last_submitted_fence);
+  wprintf(L"  last_completed_fence=%I64u\n", (unsigned long long)q.last_completed_fence);
+  wprintf(L"  ring0_head=%lu\n", (unsigned long)q.ring0_head);
+  wprintf(L"  ring0_tail=%lu\n", (unsigned long)q.ring0_tail);
+  wprintf(L"  ring0_size_bytes=%lu\n", (unsigned long)q.ring0_size_bytes);
+  wprintf(L"  ring0_entry_count=%lu\n", (unsigned long)q.ring0_entry_count);
+  wprintf(L"  total_submissions=%I64u\n", (unsigned long long)q.total_submissions);
+  wprintf(L"  total_presents=%I64u\n", (unsigned long long)q.total_presents);
+  wprintf(L"  total_render_submits=%I64u\n", (unsigned long long)q.total_render_submits);
+  wprintf(L"  total_internal_submits=%I64u\n", (unsigned long long)q.total_internal_submits);
+  wprintf(L"  irq_fence_delivered=%I64u\n", (unsigned long long)q.irq_fence_delivered);
+  wprintf(L"  irq_vblank_delivered=%I64u\n", (unsigned long long)q.irq_vblank_delivered);
+  wprintf(L"  irq_spurious=%I64u\n", (unsigned long long)q.irq_spurious);
+  wprintf(L"  reset_from_timeout_count=%I64u\n", (unsigned long long)q.reset_from_timeout_count);
+  wprintf(L"  last_reset_time_100ns=%I64u\n", (unsigned long long)q.last_reset_time_100ns);
+  wprintf(L"  vblank_seq=%I64u\n", (unsigned long long)q.vblank_seq);
+  wprintf(L"  last_vblank_time_ns=%I64u\n", (unsigned long long)q.last_vblank_time_ns);
+  wprintf(L"  vblank_period_ns=%lu\n", (unsigned long)q.vblank_period_ns);
 
   return 0;
 }
@@ -2223,6 +2311,7 @@ int wmain(int argc, wchar_t **argv) {
     CMD_QUERY_UMD_PRIVATE,
     CMD_QUERY_FENCE,
     CMD_WATCH_FENCE,
+    CMD_QUERY_PERF,
     CMD_QUERY_SCANOUT,
     CMD_QUERY_CURSOR,
     CMD_DUMP_RING,
@@ -2389,6 +2478,12 @@ int wmain(int argc, wchar_t **argv) {
       }
       continue;
     }
+    if (wcscmp(a, L"--query-perf") == 0 || wcscmp(a, L"--perf") == 0) {
+      if (!SetCommand(CMD_QUERY_PERF)) {
+        return 1;
+      }
+      continue;
+    }
     if (wcscmp(a, L"--query-scanout") == 0) {
       if (!SetCommand(CMD_QUERY_SCANOUT)) {
         return 1;
@@ -2536,6 +2631,9 @@ int wmain(int argc, wchar_t **argv) {
     break;
   case CMD_WATCH_FENCE:
     rc = DoWatchFence(&f, open.hAdapter, watchSamples, watchIntervalMs, timeoutMsSet ? timeoutMs : 0);
+    break;
+  case CMD_QUERY_PERF:
+    rc = DoQueryPerf(&f, open.hAdapter);
     break;
   case CMD_QUERY_SCANOUT:
     rc = DoQueryScanout(&f, open.hAdapter, (uint32_t)open.VidPnSourceId);
