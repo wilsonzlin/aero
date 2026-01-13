@@ -63,11 +63,35 @@ export class RuntimeDiskClient {
         entry.reject(err);
       }
     };
+
+    this.worker.onerror = (event) => {
+      const message =
+        typeof (event as ErrorEvent | undefined)?.message === "string"
+          ? (event as ErrorEvent).message
+          : "runtime disk worker error";
+      this.rejectAll(new Error(message));
+    };
+
+    this.worker.onmessageerror = () => {
+      this.rejectAll(new Error("runtime disk worker message deserialization failed"));
+    };
   }
 
   close(): void {
     this.worker.terminate();
+    this.rejectAll(new Error("RuntimeDiskClient closed"));
+  }
+
+  private rejectAll(err: Error): void {
+    const entries = Array.from(this.pending.values());
     this.pending.clear();
+    for (const entry of entries) {
+      try {
+        entry.reject(err);
+      } catch {
+        // ignore
+      }
+    }
   }
 
   private request<T>(op: RuntimeDiskRequestMessage["op"], payload: any, transfer?: Transferable[]): Promise<T> {

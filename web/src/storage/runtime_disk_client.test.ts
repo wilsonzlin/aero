@@ -213,3 +213,27 @@ describe("RuntimeDiskClient.restoreFromSnapshot", () => {
     client.close();
   });
 });
+
+describe("RuntimeDiskClient error handling", () => {
+  it("rejects pending requests when the worker errors", async () => {
+    const w = new MockWorker();
+    const client = new RuntimeDiskClient(w as unknown as Worker);
+
+    const p = client.openRemote("https://example.invalid/disk.img");
+    (w as any).onerror?.({ message: "boom" });
+
+    await expect(p).rejects.toThrow(/boom/);
+    expect(((client as any).pending as Map<number, unknown>).size).toBe(0);
+    client.close();
+  });
+
+  it("rejects pending requests when the client is closed", async () => {
+    const w = new MockWorker();
+    const client = new RuntimeDiskClient(w as unknown as Worker);
+
+    const p = client.openRemote("https://example.invalid/disk.img");
+    client.close();
+
+    await expect(p).rejects.toThrow(/closed/);
+  });
+});
