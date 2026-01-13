@@ -3148,6 +3148,26 @@ static BOOLEAN AeroGpuIsSupportedVidPnPixelFormat(_In_ D3DDDIFORMAT Format)
     }
 }
 
+static BOOLEAN AeroGpuIsSupportedVidPnVSyncFrequency(_In_ ULONG Numerator, _In_ ULONG Denominator)
+{
+    /*
+     * AeroGPU MVP exposes only a 60 Hz vblank cadence; keep VidPN validation
+     * conservative and reject other refresh rates.
+     *
+     * Treat 0/0 as uninitialized (allow) since some dxgkrnl helper paths may
+     * leave frequency fields unset during intermediate VidPN construction.
+     */
+    if (Numerator == 0 && Denominator == 0) {
+        return TRUE;
+    }
+
+    if (Numerator == 0 || Denominator == 0) {
+        return FALSE;
+    }
+
+    return ((ULONGLONG)Numerator == (ULONGLONG)60ull * (ULONGLONG)Denominator) ? TRUE : FALSE;
+}
+
 static NTSTATUS APIENTRY AeroGpuDdiIsSupportedVidPn(_In_ const HANDLE hAdapter, _Inout_ DXGKARG_ISSUPPORTEDVIDPN* pIsSupportedVidPn)
 {
     AEROGPU_ADAPTER* adapter = (AEROGPU_ADAPTER*)hAdapter;
@@ -3306,7 +3326,14 @@ static NTSTATUS APIENTRY AeroGpuDdiIsSupportedVidPn(_In_ const HANDLE hAdapter, 
             const D3DKMDT_VIDPN_SOURCE_MODE* mode = NULL;
             status = sms.pfnAcquireFirstModeInfo(hSourceModeSet, &mode);
             if (mode == NULL) {
-                supported = FALSE;
+                /*
+                 * Some VidPN construction paths can temporarily leave the mode
+                 * set empty while still having a pinned mode selection. Accept
+                 * the proposal iff we have a valid pinned mode.
+                 */
+                if (!havePinnedSourceDims) {
+                    supported = FALSE;
+                }
             } else {
                 for (;;) {
                     BOOLEAN ok = FALSE;
@@ -3381,7 +3408,9 @@ static NTSTATUS APIENTRY AeroGpuDdiIsSupportedVidPn(_In_ const HANDLE hAdapter, 
             pinnedTargetH = pinned->VideoSignalInfo.ActiveSize.cy;
             const D3DKMDT_VIDEO_SIGNAL_SCANLINE_ORDERING order = pinned->VideoSignalInfo.ScanLineOrdering;
             if (!AeroGpuIsSupportedVidPnModeDimensions(pinnedTargetW, pinnedTargetH) ||
-                (order != D3DKMDT_VSSLO_PROGRESSIVE && order != D3DKMDT_VSSLO_UNINITIALIZED)) {
+                (order != D3DKMDT_VSSLO_PROGRESSIVE && order != D3DKMDT_VSSLO_UNINITIALIZED) ||
+                !AeroGpuIsSupportedVidPnVSyncFrequency(pinned->VideoSignalInfo.VSyncFreq.Numerator,
+                                                      pinned->VideoSignalInfo.VSyncFreq.Denominator)) {
                 supported = FALSE;
             } else {
                 havePinnedTargetDims = TRUE;
@@ -3402,7 +3431,9 @@ static NTSTATUS APIENTRY AeroGpuDdiIsSupportedVidPn(_In_ const HANDLE hAdapter, 
             const D3DKMDT_VIDPN_TARGET_MODE* mode = NULL;
             status = tms.pfnAcquireFirstModeInfo(hTargetModeSet, &mode);
             if (mode == NULL) {
-                supported = FALSE;
+                if (!havePinnedTargetDims) {
+                    supported = FALSE;
+                }
             } else {
                 for (;;) {
                     BOOLEAN ok = FALSE;
@@ -3410,7 +3441,9 @@ static NTSTATUS APIENTRY AeroGpuDdiIsSupportedVidPn(_In_ const HANDLE hAdapter, 
                     const ULONG h = mode->VideoSignalInfo.ActiveSize.cy;
                     const D3DKMDT_VIDEO_SIGNAL_SCANLINE_ORDERING order = mode->VideoSignalInfo.ScanLineOrdering;
                     if (AeroGpuIsSupportedVidPnModeDimensions(w, h) &&
-                        (order == D3DKMDT_VSSLO_PROGRESSIVE || order == D3DKMDT_VSSLO_UNINITIALIZED)) {
+                        (order == D3DKMDT_VSSLO_PROGRESSIVE || order == D3DKMDT_VSSLO_UNINITIALIZED) &&
+                        AeroGpuIsSupportedVidPnVSyncFrequency(mode->VideoSignalInfo.VSyncFreq.Numerator,
+                                                             mode->VideoSignalInfo.VSyncFreq.Denominator)) {
                         ok = TRUE;
                         AeroGpuModeListAddUnique(targetDims,
                                                  &targetDimCount,
