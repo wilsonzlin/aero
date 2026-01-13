@@ -22,6 +22,10 @@ pub use aero_storage_adapters::AeroVirtualDiskAsDeviceBackend as AeroStorageDisk
 /// Prefer passing `Box<dyn aero_storage::VirtualDisk>` through high-level wiring and adapt as
 /// needed using [`AeroStorageDiskAdapter`].
 ///
+/// If you need the reverse direction (treating an existing device backend as an `aero-storage`
+/// [`aero_storage::VirtualDisk`] so you can layer disk wrappers on top), use
+/// [`DeviceBackendAsAeroVirtualDisk`].
+///
 /// See `docs/20-storage-trait-consolidation.md`.
 pub trait DiskBackend: Send {
     /// Total disk size in bytes.

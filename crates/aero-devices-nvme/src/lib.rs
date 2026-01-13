@@ -155,6 +155,10 @@ pub type DiskResult<T> = Result<T, DiskError>;
 /// but most call sites should construct an NVMe backend from an `aero_storage` disk via
 /// [`from_virtual_disk`] / [`NvmeController::try_new_from_virtual_disk`].
 ///
+/// If you need the reverse direction (treating an existing NVMe backend as an `aero-storage`
+/// [`aero_storage::VirtualDisk`] so you can layer disk wrappers on top), use
+/// [`NvmeBackendAsAeroVirtualDisk`].
+///
 /// See `docs/20-storage-trait-consolidation.md`.
 #[cfg(not(target_arch = "wasm32"))]
 pub trait DiskBackend: Send {
