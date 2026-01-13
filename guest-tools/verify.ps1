@@ -937,6 +937,8 @@ try {
         hash_mismatch_files = @()
         unreadable_files = @()
         file_results = @()
+        disk_files_scanned = 0
+        extra_files_not_in_manifest = @()
     }
 
     if (-not (Test-Path $manifestPath)) {
@@ -1105,6 +1107,94 @@ try {
                 if ($mStatus -ne "PASS") {
                     $mDetails += "Remediation: Replace the Guest Tools ISO/zip with a fresh copy (do not mix driver folders across versions)."
                     $mDetails += "See: docs/windows7-driver-troubleshooting.md#issue-guest-tools-media-integrity-check-fails-manifest-hash-mismatch"
+                }
+
+                # Mixed-media advisory: detect extra files that exist on disk but are not listed
+                # in manifest.json. These often happen when users merge folders from different
+                # Guest Tools versions, which can lead to subtle driver binding issues.
+                try {
+                    $expected = @{}
+                    foreach ($r in $mediaIntegrity.file_results) {
+                        if (-not $r -or -not $r.path) { continue }
+                        $p = ("" + $r.path).Trim()
+                        if ($p.Length -eq 0) { continue }
+                        $p = $p.Replace("\", "/")
+                        if ($p.StartsWith("./")) { $p = $p.Substring(2) }
+                        while ($p.StartsWith("/")) { $p = $p.Substring(1) }
+                        if ($p.Length -eq 0) { continue }
+                        $expected[$p.ToLower()] = $true
+                    }
+                    # manifest.json itself is intentionally treated as expected even if the
+                    # manifest's files[] list does not include it.
+                    $expected["manifest.json"] = $true
+
+                    $rootItem = Get-Item -LiteralPath $scriptDir -ErrorAction Stop
+                    $rootFull = "" + $rootItem.FullName
+                    $prefix = $rootFull
+                    if (-not ($prefix.EndsWith("\") -or $prefix.EndsWith("/"))) { $prefix += "\" }
+                    $prefixLower = $prefix.ToLower()
+
+                    $diskFiles = @()
+                    foreach ($it in (Get-ChildItem -LiteralPath $rootFull -Recurse -Force -ErrorAction Stop)) {
+                        if ($it.PSIsContainer) { continue }
+                        $full = "" + $it.FullName
+                        $rel = $null
+                        if ($full -and ($full.ToLower().StartsWith($prefixLower))) {
+                            $rel = $full.Substring($prefix.Length)
+                        } else {
+                            $rel = "" + $it.Name
+                        }
+                        $rel = $rel.Replace("\", "/")
+                        if ($rel.StartsWith("./")) { $rel = $rel.Substring(2) }
+                        while ($rel.StartsWith("/")) { $rel = $rel.Substring(1) }
+                        if (-not $rel -or $rel.Length -eq 0) { continue }
+                        $diskFiles += $rel
+                    }
+
+                    $extra = @()
+                    foreach ($p in $diskFiles) {
+                        $k = ("" + $p).ToLower()
+                        if (-not $expected.ContainsKey($k)) { $extra += $p }
+                    }
+                    $extra = @($extra | Sort-Object)
+
+                    $mediaIntegrity.disk_files_scanned = $diskFiles.Count
+                    $mediaIntegrity.extra_files_not_in_manifest = $extra
+
+                    $extraStatus = "PASS"
+                    if ($extra.Count -gt 0) { $extraStatus = "WARN" }
+
+                    $extraSummary = "Extra files not in manifest: " + $extra.Count + " (disk files scanned: " + $diskFiles.Count + ")"
+                    $extraDetails = @()
+                    if ($extra.Count -gt 0) {
+                        $extraDetails += ($extra.Count.ToString() + " extra file(s) exist on disk but are not listed in manifest.json. This can indicate mixed media (merged Guest Tools versions), which can cause subtle driver binding issues.")
+                        $maxList = 25
+                        $shown = 0
+                        foreach ($p in $extra) {
+                            if ($shown -ge $maxList) { break }
+                            $extraDetails += ("Extra: " + $p)
+                            $shown++
+                        }
+                        if ($extra.Count -gt $maxList) {
+                            $extraDetails += ("... and " + ($extra.Count - $maxList).ToString() + " more (see report.json for the full list).")
+                        }
+                        $extraDetails += "Remediation: Replace the Guest Tools ISO/zip with a fresh copy; do not mix driver folders across versions."
+                    } else {
+                        $extraDetails += "No extra files found under Guest Tools root."
+                    }
+
+                    $extraData = @{
+                        guest_tools_root = $rootFull
+                        manifest_path = $manifestPath
+                        expected_paths_count = $expected.Count
+                        disk_files_scanned = $diskFiles.Count
+                        extra_files = $extra
+                    }
+
+                    Add-Check "extra_files_not_in_manifest" "Extra Files Not In Manifest (mixed media check)" $extraStatus $extraSummary $extraData $extraDetails
+                } catch {
+                    $mediaIntegrity.extra_files_not_in_manifest_error = $_.Exception.Message
+                    Add-Check "extra_files_not_in_manifest" "Extra Files Not In Manifest (mixed media check)" "WARN" ("Failed: " + $_.Exception.Message) $null @("Remediation: Replace the Guest Tools ISO/zip with a fresh copy; do not mix driver folders across versions.")
                 }
             }
         }
