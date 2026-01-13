@@ -16,6 +16,17 @@
 
 #include <stddef.h>
 
+#if defined(_WIN32)
+/*
+ * In the Win7 KMDF driver build, pull the virtio-input ABI constants from the
+ * existing kernel header to avoid drift and macro redefinition warnings.
+ *
+ * (This header is not portable to host builds due to WDK dependencies, so
+ * include it only on Windows.)
+ */
+#include "virtio_input_proto.h"
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -30,6 +41,7 @@ extern "C" {
  * redefinition warnings when building the driver.
  */
 
+#if !defined(_WIN32)
 #ifndef VIRTIO_INPUT_EV_LED
 #define VIRTIO_INPUT_EV_LED 0x11
 #endif
@@ -49,6 +61,7 @@ extern "C" {
 #ifndef VIRTIO_INPUT_LED_KANA
 #define VIRTIO_INPUT_LED_KANA 4
 #endif
+#endif /* !_WIN32 */
 
 enum { LED_TRANSLATE_EVENT_COUNT = 6 };
 
