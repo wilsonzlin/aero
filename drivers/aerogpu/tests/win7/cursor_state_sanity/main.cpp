@@ -10,6 +10,38 @@ static int32_t ToS32(uint32_t v) { return (int32_t)v; }
 
 static int AbsI32(int v) { return (v < 0) ? -v : v; }
 
+static bool WantsJsonReport(int argc, char** argv) {
+  for (int i = 1; i < argc; ++i) {
+    const char* arg = argv[i];
+    if (!arg) {
+      continue;
+    }
+    // Match both `--json` and `--json=PATH`.
+    if (aerogpu_test::StrIStartsWith(arg, "--json") && (arg[6] == 0 || arg[6] == '=')) {
+      return true;
+    }
+  }
+  return false;
+}
+
+static void DiagAppendV(std::string* out, const char* fmt, va_list ap) {
+  if (!out || !fmt) {
+    return;
+  }
+  out->append(aerogpu_test::FormatStringV(fmt, ap));
+  out->push_back('\n');
+}
+
+static void DiagAppend(std::string* out, const char* fmt, ...) {
+  if (!out || !fmt) {
+    return;
+  }
+  va_list ap;
+  va_start(ap, fmt);
+  DiagAppendV(out, fmt, ap);
+  va_end(ap);
+}
+
 struct TestCursorSpec {
   int width;
   int height;
@@ -232,6 +264,30 @@ static void PrintCursorQuery(const char* test_name, const aerogpu_escape_query_c
       (unsigned long long)q.fb_gpa);
 }
 
+static void DiagAppendCursorQuery(std::string* diag, const char* label, const aerogpu_escape_query_cursor_out& q) {
+  if (!diag || !label) {
+    return;
+  }
+  const bool flags_valid = (q.flags & AEROGPU_DBGCTL_QUERY_CURSOR_FLAGS_VALID) != 0;
+  const bool supported = flags_valid ? ((q.flags & AEROGPU_DBGCTL_QUERY_CURSOR_FLAG_CURSOR_SUPPORTED) != 0) : true;
+  DiagAppend(diag,
+             "%s: flags=0x%08lX%s%s enable=%lu pos=(%ld,%ld) hot=(%lu,%lu) size=%lux%lu format=%lu pitch=%lu fb_gpa=0x%I64X",
+             label,
+             (unsigned long)q.flags,
+             flags_valid ? " (valid)" : " (legacy)",
+             supported ? "" : " (unsupported)",
+             (unsigned long)q.enable,
+             (long)ToS32((uint32_t)q.x),
+             (long)ToS32((uint32_t)q.y),
+             (unsigned long)q.hot_x,
+             (unsigned long)q.hot_y,
+             (unsigned long)q.width,
+             (unsigned long)q.height,
+             (unsigned long)q.format,
+             (unsigned long)q.pitch_bytes,
+             (unsigned long long)q.fb_gpa);
+}
+
 static int RunCursorStateSanity(int argc, char** argv) {
   const char* kTestName = "cursor_state_sanity";
   if (aerogpu_test::HasHelpArg(argc, argv)) {
@@ -243,6 +299,11 @@ static int RunCursorStateSanity(int argc, char** argv) {
   }
 
   aerogpu_test::TestReporter reporter(kTestName, argc, argv);
+  const bool want_diag = WantsJsonReport(argc, argv);
+  std::string diag;
+  if (want_diag) {
+    DiagAppend(&diag, "test=%s", kTestName);
+  }
 
   const bool allow_remote = aerogpu_test::HasArg(argc, argv, "--allow-remote");
   if (GetSystemMetrics(SM_REMOTESESSION)) {
@@ -267,12 +328,22 @@ static int RunCursorStateSanity(int argc, char** argv) {
     return reporter.Fail("%s", show_err.c_str());
   }
   aerogpu_test::PrintfStdout("INFO: %s: initial cursor showing=%s", kTestName, orig_showing ? "true" : "false");
+  if (want_diag) {
+    DiagAppend(&diag, "initial_cursor_showing=%s", orig_showing ? "true" : "false");
+    DiagAppend(&diag, "orig_pos=(%ld,%ld)", (long)orig_pos.x, (long)orig_pos.y);
+  }
 
   int ensure_show_calls = 0;
   int ensure_hide_calls = 0;
   if (!SetCursorShowing(true, &ensure_show_calls, &ensure_hide_calls, &show_err)) {
     RestoreCursorShowing(ensure_show_calls, ensure_hide_calls);
     return reporter.Fail("%s", show_err.c_str());
+  }
+  if (want_diag) {
+    DiagAppend(&diag,
+               "ensure_showing: show_calls=%d hide_calls=%d",
+               ensure_show_calls,
+               ensure_hide_calls);
   }
 
   HWND hwnd = aerogpu_test::CreateBasicWindow(L"AeroGpuCursorStateSanityWnd",
@@ -306,6 +377,16 @@ static int RunCursorStateSanity(int argc, char** argv) {
                             cursor_spec.height,
                             cursor_spec.hot_x,
                             cursor_spec.hot_y);
+  if (want_diag) {
+    DiagAppend(&diag,
+               "custom_cursor_spec=%dx%d hot=(%d,%d) SM_CXCURSOR=%d SM_CYCURSOR=%d",
+               cursor_spec.width,
+               cursor_spec.height,
+               cursor_spec.hot_x,
+               cursor_spec.hot_y,
+               GetSystemMetrics(SM_CXCURSOR),
+               GetSystemMetrics(SM_CYCURSOR));
+  }
 
   HCURSOR custom_cursor = CreateTestCursor(cursor_spec, &cursor_err);
   if (!custom_cursor) {
@@ -351,6 +432,9 @@ static int RunCursorStateSanity(int argc, char** argv) {
                             target_y,
                             screen_w,
                             screen_h);
+  if (want_diag) {
+    DiagAppend(&diag, "screen=%dx%d target_pos=(%d,%d)", screen_w, screen_h, target_x, target_y);
+  }
   if (!SetCursorPos(target_x, target_y)) {
     reporter.Fail("SetCursorPos failed: %s", aerogpu_test::Win32ErrorToString(GetLastError()).c_str());
     goto cleanup;
@@ -410,6 +494,9 @@ static int RunCursorStateSanity(int argc, char** argv) {
   }
 
   PrintCursorQuery(kTestName, q0);
+  if (want_diag) {
+    DiagAppendCursorQuery(&diag, "q0", q0);
+  }
 
   if (!pos_ok) {
     POINT actual_pos;
@@ -497,6 +584,9 @@ static int RunCursorStateSanity(int argc, char** argv) {
   }
 
   PrintCursorQuery(kTestName, q1);
+  if (want_diag) {
+    DiagAppendCursorQuery(&diag, "q1", q1);
+  }
 
   if (!shape_ok) {
     reporter.Fail("cursor state did not reflect custom cursor within retry window");
@@ -543,6 +633,9 @@ static int RunCursorStateSanity(int argc, char** argv) {
     Sleep(50);
   }
   PrintCursorQuery(kTestName, q_hidden);
+  if (want_diag) {
+    DiagAppendCursorQuery(&diag, "q_hidden", q_hidden);
+  }
   if (!hidden_ok) {
     RestoreCursorShowing(show_calls, hide_calls);
     reporter.Fail("cursor enable did not clear after hide (enable=%lu)", (unsigned long)q_hidden.enable);
@@ -572,6 +665,9 @@ static int RunCursorStateSanity(int argc, char** argv) {
     Sleep(50);
   }
   PrintCursorQuery(kTestName, q_shown);
+  if (want_diag) {
+    DiagAppendCursorQuery(&diag, "q_shown", q_shown);
+  }
   if (!shown_ok) {
     reporter.Fail("cursor enable did not restore after show (enable=%lu)", (unsigned long)q_shown.enable);
     goto cleanup;
@@ -603,6 +699,18 @@ cleanup:
 
   // Restore the cursor display counter if we changed it at the start.
   RestoreCursorShowing(ensure_show_calls, ensure_hide_calls);
+
+  if (want_diag) {
+    const std::wstring dir = aerogpu_test::GetModuleDir();
+    const std::wstring diag_path = aerogpu_test::JoinPath(dir, L"cursor_state_sanity_diag.txt");
+    std::string write_err;
+    if (aerogpu_test::WriteFileStringW(diag_path, diag, &write_err)) {
+      reporter.AddArtifactPathW(diag_path);
+      aerogpu_test::PrintfStdout("INFO: %s: wrote diagnostics: %ls", kTestName, diag_path.c_str());
+    } else {
+      aerogpu_test::PrintfStdout("INFO: %s: failed to write diagnostics: %s", kTestName, write_err.c_str());
+    }
+  }
 
   return result;
 }
