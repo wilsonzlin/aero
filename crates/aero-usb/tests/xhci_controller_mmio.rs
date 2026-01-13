@@ -68,6 +68,16 @@ fn xhci_controller_caplength_hciversion_reads() {
         ctrl.mmio_read(&mut mem, regs::REG_CAPLENGTH_HCIVERSION + 3, 1),
         0x01
     );
+
+    // Cross-dword reads should behave like little-endian memory.
+    assert_eq!(
+        ctrl.mmio_read(&mut mem, regs::REG_CAPLENGTH_HCIVERSION + 3, 2),
+        0x2001
+    );
+    assert_eq!(
+        ctrl.mmio_read(&mut mem, regs::REG_CAPLENGTH_HCIVERSION + 1, 4),
+        0x2001_0000
+    );
 }
 
 #[test]
@@ -141,6 +151,21 @@ fn xhci_controller_run_triggers_dma_and_w1c_clears_irq() {
         ctrl.mmio_read(&mut mem, regs::REG_USBSTS, 4) & regs::USBSTS_EINT,
         0
     );
+}
+
+#[test]
+fn xhci_controller_cross_dword_write_splits_into_bytes() {
+    let mut ctrl = XhciController::new();
+    let mut mem = CountingMem::new(0x4000);
+
+    ctrl.mmio_write(&mut mem, regs::REG_CRCR_LO, 4, 0x1122_3344);
+    ctrl.mmio_write(&mut mem, regs::REG_CRCR_HI, 4, 0x5566_7788);
+
+    // Write a u16 spanning CRCR_LO byte 3 and CRCR_HI byte 0.
+    ctrl.mmio_write(&mut mem, regs::REG_CRCR_LO + 3, 2, 0xaaaa);
+
+    assert_eq!(ctrl.mmio_read(&mut mem, regs::REG_CRCR_LO, 4), 0xaa22_3344);
+    assert_eq!(ctrl.mmio_read(&mut mem, regs::REG_CRCR_HI, 4), 0x5566_77aa);
 }
 
 #[test]

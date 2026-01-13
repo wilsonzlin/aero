@@ -599,22 +599,7 @@ impl XhciController {
         caps
     }
 
-    /// Read from the controller's MMIO register space.
-    pub fn mmio_read(&mut self, _mem: &mut dyn MemoryBus, offset: u64, size: usize) -> u32 {
-        // Treat out-of-range reads as open bus.
-        let open_bus = match size {
-            1 => 0xff,
-            2 => 0xffff,
-            4 => u32::MAX,
-            _ => 0,
-        };
-        let Some(end) = offset.checked_add(size as u64) else {
-            return open_bus;
-        };
-        if size == 0 || end > u64::from(Self::MMIO_SIZE) {
-            return open_bus;
-        }
-
+    fn mmio_read_u8(&self, offset: u64) -> u8 {
         let aligned = offset & !3;
         let shift = (offset & 3) * 8;
 
@@ -681,20 +666,65 @@ impl XhciController {
             _ => 0,
         };
 
-        match size {
-            1 => (value32 >> shift) & 0xff,
-            2 => (value32 >> shift) & 0xffff,
-            4 => value32,
+        ((value32 >> shift) & 0xff) as u8
+    }
+
+    /// Read from the controller's MMIO register space.
+    pub fn mmio_read(&mut self, _mem: &mut dyn MemoryBus, offset: u64, size: usize) -> u32 {
+        // Treat out-of-range reads as open bus.
+        let open_bus = match size {
+            1 => 0xff,
+            2 => 0xffff,
+            4 => u32::MAX,
             _ => 0,
+        };
+        if !matches!(size, 1 | 2 | 4) {
+            return open_bus;
         }
+        let Some(end) = offset.checked_add(size as u64) else {
+            return open_bus;
+        };
+        if end > u64::from(Self::MMIO_SIZE) {
+            return open_bus;
+        }
+
+        // Read per-byte so unaligned/cross-dword reads behave like normal little-endian memory.
+        // This is more robust against guests doing odd-sized or misaligned accesses.
+        let mut out = 0u32;
+        for i in 0..size {
+            let Some(off) = offset.checked_add(i as u64) else {
+                break;
+            };
+            let byte = self.mmio_read_u8(off);
+            out |= (byte as u32) << (i * 8);
+        }
+
+        out
     }
 
     /// Write to the controller's MMIO register space.
     pub fn mmio_write(&mut self, mem: &mut dyn MemoryBus, offset: u64, size: usize, value: u32) {
+        if !matches!(size, 1 | 2 | 4) {
+            return;
+        }
         let Some(end) = offset.checked_add(size as u64) else {
             return;
         };
-        if size == 0 || end > u64::from(Self::MMIO_SIZE) {
+        if end > u64::from(Self::MMIO_SIZE) {
+            return;
+        }
+
+        // Split cross-dword writes into byte writes so we don't lose bytes when a multi-byte access
+        // spans two registers.
+        let start_in_dword = (offset & 3) as usize;
+        if start_in_dword + size > 4 && size > 1 {
+            for i in 0..size {
+                let Some(off) = offset.checked_add(i as u64) else {
+                    break;
+                };
+                let byte = ((value >> (i * 8)) & 0xff) as u32;
+                self.mmio_write(mem, off, 1, byte);
+            }
             return;
         }
 
