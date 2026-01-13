@@ -548,6 +548,10 @@ export class WebHidBroker {
     if (deviceId !== undefined) {
       this.#unbridgeDevice(deviceId, { sendDetach: true });
       this.#attachedToWorker.delete(deviceId);
+      // Fully forget this device so the HIDDevice object can be garbage-collected.
+      // Device IDs are monotonic and do not need to be re-used.
+      this.#deviceIdByDevice.delete(device);
+      this.#deviceById.delete(deviceId);
       this.#emit();
     }
 
@@ -558,11 +562,13 @@ export class WebHidBroker {
     const deviceId = this.#deviceIdByDevice.get(device);
     if (deviceId === undefined) return;
 
-    if (this.#attachedToWorker.has(deviceId)) {
-      this.#unbridgeDevice(deviceId, { sendDetach: true });
-      this.#attachedToWorker.delete(deviceId);
-      this.#emit();
-    }
+    const sendDetach = this.#attachedToWorker.has(deviceId);
+    this.#unbridgeDevice(deviceId, { sendDetach });
+    this.#attachedToWorker.delete(deviceId);
+    // The manager already considers the device detached, so release our references.
+    this.#deviceIdByDevice.delete(device);
+    this.#deviceById.delete(deviceId);
+    this.#emit();
   }
 
   #unbridgeDevice(deviceId: number, options: { sendDetach: boolean }): void {

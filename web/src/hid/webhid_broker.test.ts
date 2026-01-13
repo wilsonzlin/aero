@@ -330,6 +330,40 @@ describe("hid/WebHidBroker", () => {
     expect(port.posted.length).toBe(before);
   });
 
+  it("forgets deviceId mappings on explicit detaches so HIDDevice objects are not retained", async () => {
+    const manager = new WebHidPassthroughManager({ hid: null });
+    const broker = new WebHidBroker({ manager });
+    const port = new FakePort();
+    broker.attachWorkerPort(port as unknown as MessagePort);
+
+    const device = new FakeHidDevice();
+    const firstId = await broker.attachDevice(device as unknown as HIDDevice);
+
+    await broker.detachDevice(device as unknown as HIDDevice);
+    const secondId = broker.getDeviceId(device as unknown as HIDDevice);
+    expect(secondId).not.toBe(firstId);
+
+    // Detach is idempotent: it must not throw when called again.
+    await expect(broker.detachDevice(device as unknown as HIDDevice)).resolves.toBeUndefined();
+  });
+
+  it("forgets deviceId mappings when the manager reports a device detached", async () => {
+    const manager = new WebHidPassthroughManager({ hid: null });
+    const broker = new WebHidBroker({ manager });
+    const port = new FakePort();
+    broker.attachWorkerPort(port as unknown as MessagePort);
+
+    const device = new FakeHidDevice();
+    const firstId = await broker.attachDevice(device as unknown as HIDDevice);
+
+    await manager.detachDevice(device as unknown as HIDDevice);
+    // The broker reacts to manager detaches asynchronously.
+    await new Promise((r) => setTimeout(r, 0));
+
+    const secondId = broker.getDeviceId(device as unknown as HIDDevice);
+    expect(secondId).not.toBe(firstId);
+  });
+
   it("handles hid.sendReport requests from the worker", async () => {
     const manager = new WebHidPassthroughManager({ hid: null });
     const broker = new WebHidBroker({ manager });
