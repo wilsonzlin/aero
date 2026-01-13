@@ -3085,10 +3085,29 @@ try {
                     $invErrors += ("Failed to compute SHA-256 for: " + $rel)
                 }
 
+                $vi = $null
+                try {
+                    $vi = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($full)
+                } catch { $vi = $null }
+                $fileVersion = $null
+                $productVersion = $null
+                $fileDescription = $null
+                $originalFilename = $null
+                if ($vi) {
+                    try { if ($vi.FileVersion) { $fileVersion = "" + $vi.FileVersion } } catch { }
+                    try { if ($vi.ProductVersion) { $productVersion = "" + $vi.ProductVersion } } catch { }
+                    try { if ($vi.FileDescription) { $fileDescription = "" + $vi.FileDescription } } catch { }
+                    try { if ($vi.OriginalFilename) { $originalFilename = "" + $vi.OriginalFilename } } catch { }
+                }
+
                 $exeFiles += @{
                     relative_path = $rel
                     sha256 = $sha
                     size_bytes = $f.Length
+                    file_version = $fileVersion
+                    product_version = $productVersion
+                    file_description = $fileDescription
+                    original_filename = $originalFilename
                 }
             }
             $exeFiles = @($exeFiles | Sort-Object { $_.relative_path })
@@ -3105,6 +3124,7 @@ try {
             foreach ($e in $exeFiles) {
                 $line = "" + $e.relative_path
                 if ($e.sha256) { $line += " sha256=" + $e.sha256 } else { $line += " sha256=<error>" }
+                if ($e.file_version) { $line += " filever=" + $e.file_version }
                 $toolsDetails += $line
             }
             foreach ($m in $invErrors) {
