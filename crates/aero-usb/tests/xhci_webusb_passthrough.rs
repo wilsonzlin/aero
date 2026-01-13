@@ -1,349 +1,361 @@
-//! xHCI + WebUSB passthrough integration smoke test.
+//! xHCI + WebUSB passthrough integration test.
 //!
-//! The production USB stack currently exposes a UHCI controller model, but our async passthrough
-//! devices (`UsbWebUsbPassthroughDevice` / `UsbPassthroughDevice`) are intentionally host-controller
-//! agnostic: they surface *pending* I/O as `NAK` and complete later when the host pushes a matching
-//! `UsbHostCompletion`.
+//! `UsbWebUsbPassthroughDevice` / `UsbPassthroughDevice` model asynchronous host I/O by queueing a
+//! `UsbHostAction` and returning `NAK` until the host pushes a matching `UsbHostCompletion`.
 //!
-//! This test encodes the expected xHCI transfer-engine behaviour against that async device model:
-//! a control transfer should issue exactly one `UsbHostAction`, then remain pending until a
-//! completion is injected, at which point the transfer completes and the IN data is DMA'd into the
-//! guest buffer.
+//! This test drives that device model through a minimal **xHCI-style** flow using the canonical
+//! xHCI TRB/ring helpers in `aero_usb::xhci`:
+//! - command ring setup (Enable Slot → Address Device → Configure Endpoint),
+//! - an EP0 control-IN transfer (GET_DESCRIPTOR) built from Setup/Data/Status stage TRBs,
+//! - retries while the host completion is pending (without duplicating actions),
+//! - completion handling + guest-memory DMA of the returned data.
 //!
-//! Note: This is a *logical* xHCI transfer-engine harness (Enable Slot / Address Device / Configure
-//! Endpoint + transfer progression). It intentionally does not model the full xHCI register block
-//! or TRB ring mechanics; the contract under test is the interaction between a "retry until ready"
-//! host controller and the async passthrough device model.
+//! The crate does not yet have a full xHCI MMIO controller model; this is a logical transfer-engine
+//! harness that consumes TRBs from guest memory and drives the existing `AttachedUsbDevice` control
+//! pipe state machine.
 
 use std::collections::VecDeque;
 
 use aero_usb::device::{AttachedUsbDevice, UsbInResult, UsbOutResult};
-use aero_usb::hub::RootHub;
 use aero_usb::passthrough::{
     SetupPacket as HostSetupPacket, UsbHostAction, UsbHostCompletion, UsbHostCompletionIn,
     UsbHostCompletionOut,
 };
-use aero_usb::{SetupPacket, UsbDeviceModel, UsbWebUsbPassthroughDevice};
+use aero_usb::xhci::ring::{RingCursor, RingPoll};
+use aero_usb::xhci::trb::{Trb, TrbType, TRB_LEN};
+use aero_usb::{SetupPacket, UsbWebUsbPassthroughDevice};
 
 mod util;
 
 use util::{Alloc, TestMemory};
 
-#[derive(Clone, Copy, Debug)]
-struct Slot {
-    root_port: usize,
-    address: u8,
-    configured: bool,
-}
-
-#[derive(Clone, Debug)]
-struct ControlInTransfer {
-    slot_id: u8,
-    setup: SetupPacket,
-    buf_ptr: u64,
-    len: usize,
-    stage: ControlInStage,
-    actual_len: usize,
+fn setup_packet_bytes(setup: SetupPacket) -> [u8; 8] {
+    [
+        setup.bm_request_type,
+        setup.b_request,
+        setup.w_value.to_le_bytes()[0],
+        setup.w_value.to_le_bytes()[1],
+        setup.w_index.to_le_bytes()[0],
+        setup.w_index.to_le_bytes()[1],
+        setup.w_length.to_le_bytes()[0],
+        setup.w_length.to_le_bytes()[1],
+    ]
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ControlInStage {
-    Setup,
-    Data,
-    Status,
-}
-
-#[derive(Clone, Debug)]
-enum PendingTransfer {
-    ControlIn(ControlInTransfer),
-    BulkIn {
-        slot_id: u8,
-        ep: u8,
-        buf_ptr: u64,
-        len: usize,
-    },
-    BulkOut {
-        slot_id: u8,
-        ep: u8,
-        buf_ptr: u64,
-        len: usize,
-    },
+enum CompletionKind {
+    ControlIn,
+    BulkOut,
+    BulkIn,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct CompletedTransfer {
-    slot_id: u8,
+struct Completion {
+    kind: CompletionKind,
     bytes_transferred: usize,
 }
 
-/// Minimal xHCI-ish controller harness:
-/// - root hub ports
-/// - slot enabling
-/// - Address Device (SET_ADDRESS) command
-/// - endpoint configuration gate (for bulk)
-/// - transfer progression with "retry on NAK" semantics
+#[derive(Debug)]
+struct Ep0PendingControlIn {
+    buf_ptr: u64,
+    len: usize,
+}
+
+#[derive(Debug)]
+struct BulkOutPending {
+    ep: u8,
+    data: Vec<u8>,
+}
+
+#[derive(Debug)]
+struct BulkInPending {
+    ep: u8,
+    buf_ptr: u64,
+    len: usize,
+}
+
+/// A minimal xHCI-style command + transfer engine harness.
+///
+/// This intentionally focuses on:
+/// - consuming TRBs from guest memory via `RingCursor`,
+/// - driving the existing `AttachedUsbDevice` transaction helpers, and
+/// - verifying correct interaction with the async WebUSB passthrough model.
 struct XhciHarness {
-    hub: RootHub,
-    slot: Option<Slot>,
-    pending: VecDeque<PendingTransfer>,
-    completed: VecDeque<CompletedTransfer>,
+    dev: AttachedUsbDevice,
+    slot_id: Option<u8>,
+    endpoints_configured: bool,
+    ep0_pending: Option<Ep0PendingControlIn>,
+    bulk_out_pending: Option<BulkOutPending>,
+    bulk_in_pending: Option<BulkInPending>,
+    completions: VecDeque<Completion>,
 }
 
 impl XhciHarness {
-    fn new() -> Self {
+    fn new(dev: AttachedUsbDevice) -> Self {
         Self {
-            hub: RootHub::new(),
-            slot: None,
-            pending: VecDeque::new(),
-            completed: VecDeque::new(),
+            dev,
+            slot_id: None,
+            endpoints_configured: false,
+            ep0_pending: None,
+            bulk_out_pending: None,
+            bulk_in_pending: None,
+            completions: VecDeque::new(),
         }
     }
 
-    fn attach_root_port(&mut self, port: usize, model: Box<dyn UsbDeviceModel>) {
-        self.hub.attach(port, model);
-        // The UHCI root hub model disables the port on attach until the guest performs a reset +
-        // enable sequence. For this harness, force the port enabled so the device is reachable.
-        self.hub.force_enable_for_tests(port);
+    fn pop_completion(&mut self) -> Option<Completion> {
+        self.completions.pop_front()
     }
 
-    fn enable_slot(&mut self, port: usize) -> u8 {
-        assert!(self.slot.is_none(), "harness supports a single slot");
-        let slot_id = 1u8;
-        self.slot = Some(Slot {
-            root_port: port,
-            address: 0,
-            configured: false,
-        });
-        slot_id
-    }
+    fn process_command_ring(&mut self, mem: &mut TestMemory, cursor: &mut RingCursor) {
+        loop {
+            let item = match cursor.poll(mem, 64) {
+                RingPoll::Ready(item) => item,
+                RingPoll::NotReady => break,
+                RingPoll::Err(err) => panic!("command ring error: {err:?}"),
+            };
 
-    fn address_device(&mut self, slot_id: u8) {
-        let slot = self
-            .slot
-            .as_mut()
-            .expect("slot must be enabled before Address Device");
-        assert_eq!(slot_id, 1, "harness supports a single slot id=1");
-
-        // xHCI "Address Device" conceptually performs SET_ADDRESS over EP0 and updates its device
-        // context. We drive the existing AttachedUsbDevice control-pipe state machine directly.
-        let set_address = SetupPacket {
-            bm_request_type: 0x00, // HostToDevice | Standard | Device
-            b_request: 0x05,       // SET_ADDRESS
-            w_value: slot_id as u16,
-            w_index: 0,
-            w_length: 0,
-        };
-
-        let dev = self
-            .hub
-            .device_mut_for_address(0)
-            .expect("device should be reachable at address 0");
-
-        assert_eq!(dev.handle_setup(set_address), UsbOutResult::Ack);
-        // STATUS stage: IN ZLP.
-        assert_eq!(dev.handle_in(0, 0), UsbInResult::Data(Vec::new()));
-
-        slot.address = slot_id;
-    }
-
-    fn configure_endpoints(&mut self, slot_id: u8) {
-        let slot = self
-            .slot
-            .as_mut()
-            .expect("slot must be enabled before Configure Endpoint");
-        assert_eq!(slot_id, 1, "harness supports a single slot id=1");
-        slot.configured = true;
-    }
-
-    fn submit_control_in(&mut self, slot_id: u8, setup: SetupPacket, buf_ptr: u64, len: usize) {
-        self.pending.push_back(PendingTransfer::ControlIn(ControlInTransfer {
-            slot_id,
-            setup,
-            buf_ptr,
-            len,
-            stage: ControlInStage::Setup,
-            actual_len: 0,
-        }));
-    }
-
-    fn submit_bulk_out(&mut self, slot_id: u8, ep: u8, buf_ptr: u64, len: usize) {
-        self.pending
-            .push_back(PendingTransfer::BulkOut { slot_id, ep, buf_ptr, len });
-    }
-
-    fn submit_bulk_in(&mut self, slot_id: u8, ep: u8, buf_ptr: u64, len: usize) {
-        self.pending
-            .push_back(PendingTransfer::BulkIn { slot_id, ep, buf_ptr, len });
-    }
-
-    fn pop_completed(&mut self) -> Option<CompletedTransfer> {
-        self.completed.pop_front()
-    }
-
-    fn device_mut_for_slot(&mut self, slot_id: u8) -> &mut AttachedUsbDevice {
-        let slot = self.slot.expect("slot not enabled");
-        assert_eq!(slot_id, 1, "harness supports a single slot id=1");
-        self.hub
-            .device_mut_for_address(slot.address)
-            .expect("device should be reachable at addressed slot")
-    }
-
-    fn tick(&mut self, mem: &mut TestMemory) {
-        // Tick device timers to mirror how real controllers drive time-based state machines.
-        self.hub.tick_1ms();
-
-        let Some(mut transfer) = self.pending.pop_front() else {
-            return;
-        };
-
-        match &mut transfer {
-            PendingTransfer::ControlIn(t) => {
-                let dev = self.device_mut_for_slot(t.slot_id);
-                match t.stage {
-                    ControlInStage::Setup => {
-                        match dev.handle_setup(t.setup) {
-                            UsbOutResult::Ack => {
-                                t.stage = ControlInStage::Data;
-                            }
-                            UsbOutResult::Nak => unreachable!(
-                                "AttachedUsbDevice::handle_setup should not return NAK"
-                            ),
-                            UsbOutResult::Stall | UsbOutResult::Timeout => {
-                                self.completed.push_back(CompletedTransfer {
-                                    slot_id: t.slot_id,
-                                    bytes_transferred: 0,
-                                });
-                                return;
-                            }
-                        }
-                    }
-                    ControlInStage::Data => {}
-                    ControlInStage::Status => {}
+            match item.trb.trb_type() {
+                TrbType::EnableSlotCommand => {
+                    assert!(
+                        self.slot_id.is_none(),
+                        "harness supports a single slot; Enable Slot issued twice"
+                    );
+                    self.slot_id = Some(1);
                 }
+                TrbType::AddressDeviceCommand => {
+                    let slot_id = item.trb.slot_id();
+                    assert_eq!(
+                        Some(slot_id),
+                        self.slot_id,
+                        "Address Device should reference the enabled slot"
+                    );
 
-                if t.stage == ControlInStage::Data {
-                    match dev.handle_in(0, t.len) {
-                        UsbInResult::Data(data) => {
-                            t.actual_len = data.len();
-                            mem.write(t.buf_ptr as u32, &data);
-                            t.stage = ControlInStage::Status;
-                        }
-                        UsbInResult::Nak => {
-                            // Retry later.
-                            self.pending.push_front(transfer);
-                            return;
-                        }
-                        UsbInResult::Stall | UsbInResult::Timeout => {
-                            self.completed.push_back(CompletedTransfer {
-                                slot_id: t.slot_id,
-                                bytes_transferred: 0,
-                            });
-                            return;
-                        }
-                    }
+                    // xHCI Address Device performs SET_ADDRESS on EP0.
+                    let set_address = SetupPacket {
+                        bm_request_type: 0x00, // HostToDevice | Standard | Device
+                        b_request: 0x05,       // SET_ADDRESS
+                        w_value: slot_id as u16,
+                        w_index: 0,
+                        w_length: 0,
+                    };
+                    assert_eq!(self.dev.handle_setup(set_address), UsbOutResult::Ack);
+                    assert_eq!(self.dev.handle_in(0, 0), UsbInResult::Data(Vec::new()));
+                    assert_eq!(self.dev.address(), slot_id);
                 }
-
-                if t.stage == ControlInStage::Status {
-                    match dev.handle_out(0, &[]) {
-                        UsbOutResult::Ack => {
-                            self.completed.push_back(CompletedTransfer {
-                                slot_id: t.slot_id,
-                                bytes_transferred: t.actual_len,
-                            });
-                        }
-                        UsbOutResult::Nak => {
-                            self.pending.push_front(transfer);
-                        }
-                        UsbOutResult::Stall | UsbOutResult::Timeout => {
-                            self.completed.push_back(CompletedTransfer {
-                                slot_id: t.slot_id,
-                                bytes_transferred: 0,
-                            });
-                        }
-                    }
+                TrbType::ConfigureEndpointCommand => {
+                    let slot_id = item.trb.slot_id();
+                    assert_eq!(
+                        Some(slot_id),
+                        self.slot_id,
+                        "Configure Endpoint should reference the enabled slot"
+                    );
+                    self.endpoints_configured = true;
                 }
+                TrbType::NoOpCommand => {}
+                other => panic!("unexpected command TRB type: {other:?}"),
             }
-            PendingTransfer::BulkOut {
-                slot_id,
-                ep,
-                buf_ptr,
-                len,
-            } => {
-                let slot = self.slot.expect("slot not enabled");
-                assert!(
-                    slot.configured,
-                    "bulk endpoints must be configured before use"
+        }
+    }
+
+    fn tick_ep0_control_in(&mut self, mem: &mut TestMemory, cursor: &mut RingCursor) {
+        if self.ep0_pending.is_none() {
+            let setup_trb = match cursor.poll(mem, 64) {
+                RingPoll::Ready(item) => item.trb,
+                RingPoll::NotReady => return,
+                RingPoll::Err(err) => panic!("ep0 ring error: {err:?}"),
+            };
+            assert_eq!(
+                setup_trb.trb_type(),
+                TrbType::SetupStage,
+                "expected Setup Stage TRB"
+            );
+            let setup = SetupPacket::from_bytes(setup_trb.parameter.to_le_bytes());
+
+            // Ensure enumeration ran first (Address Device).
+            assert!(
+                self.dev.address() != 0,
+                "device must be addressed before xHCI transfers are issued"
+            );
+
+            assert_eq!(self.dev.handle_setup(setup), UsbOutResult::Ack);
+
+            let data_trb = match cursor.poll(mem, 64) {
+                RingPoll::Ready(item) => item.trb,
+                RingPoll::NotReady => panic!("missing Data Stage TRB"),
+                RingPoll::Err(err) => panic!("ep0 ring error: {err:?}"),
+            };
+            assert_eq!(
+                data_trb.trb_type(),
+                TrbType::DataStage,
+                "expected Data Stage TRB"
+            );
+            self.ep0_pending = Some(Ep0PendingControlIn {
+                buf_ptr: data_trb.parameter,
+                len: data_trb.status as usize,
+            });
+        }
+
+        let pending = self.ep0_pending.as_ref().expect("pending must exist");
+        match self.dev.handle_in(0, pending.len) {
+            UsbInResult::Nak => return,
+            UsbInResult::Data(data) => {
+                mem.write(pending.buf_ptr as u32, &data);
+
+                // STATUS stage: for control-IN, the status stage is an OUT ZLP.
+                let status_trb = match cursor.poll(mem, 64) {
+                    RingPoll::Ready(item) => item.trb,
+                    RingPoll::NotReady => panic!("missing Status Stage TRB"),
+                    RingPoll::Err(err) => panic!("ep0 ring error: {err:?}"),
+                };
+                assert_eq!(
+                    status_trb.trb_type(),
+                    TrbType::StatusStage,
+                    "expected Status Stage TRB"
                 );
-                assert_eq!(*slot_id, 1);
 
-                let mut buf = vec![0u8; *len];
-                mem.read(*buf_ptr as u32, &mut buf);
-
-                let dev = self.device_mut_for_slot(*slot_id);
-                match dev.handle_out(*ep, &buf) {
-                    UsbOutResult::Ack => {
-                        self.completed.push_back(CompletedTransfer {
-                            slot_id: *slot_id,
-                            bytes_transferred: *len,
-                        });
-                    }
-                    UsbOutResult::Nak => self.pending.push_front(transfer),
-                    UsbOutResult::Stall | UsbOutResult::Timeout => {
-                        self.completed.push_back(CompletedTransfer {
-                            slot_id: *slot_id,
-                            bytes_transferred: 0,
-                        });
-                    }
-                }
+                assert_eq!(self.dev.handle_out(0, &[]), UsbOutResult::Ack);
+                self.completions.push_back(Completion {
+                    kind: CompletionKind::ControlIn,
+                    bytes_transferred: data.len(),
+                });
+                self.ep0_pending = None;
             }
-            PendingTransfer::BulkIn {
-                slot_id,
-                ep,
-                buf_ptr,
-                len,
-            } => {
-                let slot = self.slot.expect("slot not enabled");
-                assert!(
-                    slot.configured,
-                    "bulk endpoints must be configured before use"
-                );
-                assert_eq!(*slot_id, 1);
+            UsbInResult::Stall | UsbInResult::Timeout => {
+                self.completions.push_back(Completion {
+                    kind: CompletionKind::ControlIn,
+                    bytes_transferred: 0,
+                });
+                self.ep0_pending = None;
+            }
+        }
+    }
 
-                let dev = self.device_mut_for_slot(*slot_id);
-                match dev.handle_in(*ep, *len) {
-                    UsbInResult::Data(data) => {
-                        mem.write(*buf_ptr as u32, &data);
-                        self.completed.push_back(CompletedTransfer {
-                            slot_id: *slot_id,
-                            bytes_transferred: data.len(),
-                        });
-                    }
-                    UsbInResult::Nak => self.pending.push_front(transfer),
-                    UsbInResult::Stall | UsbInResult::Timeout => {
-                        self.completed.push_back(CompletedTransfer {
-                            slot_id: *slot_id,
-                            bytes_transferred: 0,
-                        });
-                    }
-                }
+    fn tick_bulk_out(&mut self, mem: &mut TestMemory, cursor: &mut RingCursor, ep: u8) {
+        assert!(
+            self.endpoints_configured,
+            "bulk transfers require Configure Endpoint first"
+        );
+
+        if self.bulk_out_pending.is_none() {
+            let trb = match cursor.poll(mem, 64) {
+                RingPoll::Ready(item) => item.trb,
+                RingPoll::NotReady => return,
+                RingPoll::Err(err) => panic!("bulk out ring error: {err:?}"),
+            };
+            assert_eq!(trb.trb_type(), TrbType::Normal, "expected Normal TRB");
+
+            let len = trb.status as usize;
+            let mut data = vec![0u8; len];
+            mem.read(trb.parameter as u32, &mut data);
+            self.bulk_out_pending = Some(BulkOutPending { ep, data });
+        }
+
+        let pending = self
+            .bulk_out_pending
+            .as_ref()
+            .expect("pending bulk out must exist");
+        match self.dev.handle_out(pending.ep, &pending.data) {
+            UsbOutResult::Nak => return,
+            UsbOutResult::Ack => {
+                self.completions.push_back(Completion {
+                    kind: CompletionKind::BulkOut,
+                    bytes_transferred: pending.data.len(),
+                });
+                self.bulk_out_pending = None;
+            }
+            UsbOutResult::Stall | UsbOutResult::Timeout => {
+                self.completions.push_back(Completion {
+                    kind: CompletionKind::BulkOut,
+                    bytes_transferred: 0,
+                });
+                self.bulk_out_pending = None;
+            }
+        }
+    }
+
+    fn tick_bulk_in(&mut self, mem: &mut TestMemory, cursor: &mut RingCursor, ep: u8) {
+        assert!(
+            self.endpoints_configured,
+            "bulk transfers require Configure Endpoint first"
+        );
+
+        if self.bulk_in_pending.is_none() {
+            let trb = match cursor.poll(mem, 64) {
+                RingPoll::Ready(item) => item.trb,
+                RingPoll::NotReady => return,
+                RingPoll::Err(err) => panic!("bulk in ring error: {err:?}"),
+            };
+            assert_eq!(trb.trb_type(), TrbType::Normal, "expected Normal TRB");
+            self.bulk_in_pending = Some(BulkInPending {
+                ep,
+                buf_ptr: trb.parameter,
+                len: trb.status as usize,
+            });
+        }
+
+        let pending = self
+            .bulk_in_pending
+            .as_ref()
+            .expect("pending bulk in must exist");
+        match self.dev.handle_in(pending.ep, pending.len) {
+            UsbInResult::Nak => return,
+            UsbInResult::Data(data) => {
+                mem.write(pending.buf_ptr as u32, &data);
+                self.completions.push_back(Completion {
+                    kind: CompletionKind::BulkIn,
+                    bytes_transferred: data.len(),
+                });
+                self.bulk_in_pending = None;
+            }
+            UsbInResult::Stall | UsbInResult::Timeout => {
+                self.completions.push_back(Completion {
+                    kind: CompletionKind::BulkIn,
+                    bytes_transferred: 0,
+                });
+                self.bulk_in_pending = None;
             }
         }
     }
 }
 
 #[test]
-fn xhci_control_in_get_descriptor_completes_after_host_completion_and_dmas_data() {
-    let mut xhci = XhciHarness::new();
+fn xhci_control_in_get_descriptor_queues_action_then_completes_and_dmas_data() {
     let dev = UsbWebUsbPassthroughDevice::new();
-    xhci.attach_root_port(0, Box::new(dev.clone()));
-
-    let slot_id = xhci.enable_slot(0);
-    xhci.address_device(slot_id);
-    xhci.configure_endpoints(slot_id);
+    let attached = AttachedUsbDevice::new(Box::new(dev.clone()));
+    let mut xhci = XhciHarness::new(attached);
 
     let mut mem = TestMemory::new(0x10000);
     let mut alloc = Alloc::new(0x1000);
 
+    // Command ring: Enable Slot → Address Device → Configure Endpoint.
+    let cmd_ring = alloc.alloc((TRB_LEN * 3) as u32, 0x10) as u64;
+
+    let mut enable_slot = Trb::default();
+    enable_slot.set_cycle(true);
+    enable_slot.set_trb_type(TrbType::EnableSlotCommand);
+    enable_slot.write_to(&mut mem, cmd_ring);
+
+    let mut address_device = Trb::default();
+    address_device.set_cycle(true);
+    address_device.set_trb_type(TrbType::AddressDeviceCommand);
+    address_device.set_slot_id(1);
+    address_device.write_to(&mut mem, cmd_ring + TRB_LEN as u64);
+
+    let mut configure_ep = Trb::default();
+    configure_ep.set_cycle(true);
+    configure_ep.set_trb_type(TrbType::ConfigureEndpointCommand);
+    configure_ep.set_slot_id(1);
+    configure_ep.write_to(&mut mem, cmd_ring + 2 * TRB_LEN as u64);
+
+    let mut cmd_cursor = RingCursor::new(cmd_ring, true);
+    xhci.process_command_ring(&mut mem, &mut cmd_cursor);
+
+    assert_eq!(xhci.slot_id, Some(1));
+    assert!(xhci.endpoints_configured);
+    assert_eq!(xhci.dev.address(), 1);
+
+    // EP0 control-IN GET_DESCRIPTOR via Setup/Data/Status stage TRBs.
     let setup = SetupPacket {
         bm_request_type: 0x80, // DeviceToHost | Standard | Device
         b_request: 0x06,       // GET_DESCRIPTOR
@@ -352,20 +364,44 @@ fn xhci_control_in_get_descriptor_completes_after_host_completion_and_dmas_data(
         w_length: 18,
     };
 
-    let buf_ptr = alloc.alloc(64, 0x10) as u64;
-    xhci.submit_control_in(slot_id, setup, buf_ptr, setup.w_length as usize);
+    let ep0_ring = alloc.alloc((TRB_LEN * 3) as u32, 0x10) as u64;
+    let dma_buf = alloc.alloc(64, 0x10) as u64;
 
-    // Tick #1: SETUP is issued and the DATA stage sees NAK (pending), so the passthrough model
-    // should have queued exactly one host action.
-    xhci.tick(&mut mem);
+    let mut setup_trb = Trb::default();
+    setup_trb.parameter = u64::from_le_bytes(setup_packet_bytes(setup));
+    setup_trb.set_cycle(true);
+    setup_trb.set_trb_type(TrbType::SetupStage);
+    setup_trb.write_to(&mut mem, ep0_ring);
+
+    let mut data_trb = Trb::default();
+    data_trb.parameter = dma_buf;
+    data_trb.status = setup.w_length as u32;
+    data_trb.set_cycle(true);
+    data_trb.set_trb_type(TrbType::DataStage);
+    // Data Stage TRB DIR bit (bit 16) = 1 indicates IN.
+    data_trb.control |= 1 << 16;
+    data_trb.write_to(&mut mem, ep0_ring + TRB_LEN as u64);
+
+    let mut status_trb = Trb::default();
+    status_trb.set_cycle(true);
+    status_trb.set_trb_type(TrbType::StatusStage);
+    status_trb.write_to(&mut mem, ep0_ring + 2 * TRB_LEN as u64);
+
+    let mut ep0_cursor = RingCursor::new(ep0_ring, true);
+
+    // Tick #1: SETUP is executed, DATA stage NAKs (pending), and the passthrough model queues a
+    // single host action.
+    xhci.tick_ep0_control_in(&mut mem, &mut ep0_cursor);
 
     let mut actions = dev.drain_actions();
     assert_eq!(actions.len(), 1, "expected exactly one queued host action");
     let action = actions.pop().unwrap();
+
     let (id, got_setup) = match action {
         UsbHostAction::ControlIn { id, setup } => (id, setup),
         other => panic!("unexpected action: {other:?}"),
     };
+
     assert_eq!(
         got_setup,
         HostSetupPacket {
@@ -378,12 +414,11 @@ fn xhci_control_in_get_descriptor_completes_after_host_completion_and_dmas_data(
     );
 
     assert!(
-        xhci.pop_completed().is_none(),
+        xhci.pop_completion().is_none(),
         "transfer should still be pending without a host completion"
     );
 
-    // Provide a deterministic completion payload and re-tick: transfer should complete and DMA data
-    // into the guest buffer.
+    // Inject completion with deterministic payload.
     let payload: Vec<u8> = (0u8..18u8).collect();
     dev.push_completion(UsbHostCompletion::ControlIn {
         id,
@@ -392,16 +427,19 @@ fn xhci_control_in_get_descriptor_completes_after_host_completion_and_dmas_data(
         },
     });
 
-    xhci.tick(&mut mem);
+    // Tick #2: DATA stage completes and DMA writes into guest memory; STATUS stage completes.
+    xhci.tick_ep0_control_in(&mut mem, &mut ep0_cursor);
 
-    let completed = xhci
-        .pop_completed()
-        .expect("expected transfer completion after host completion");
-    assert_eq!(completed.slot_id, slot_id);
-    assert_eq!(completed.bytes_transferred, payload.len());
+    assert_eq!(
+        xhci.pop_completion(),
+        Some(Completion {
+            kind: CompletionKind::ControlIn,
+            bytes_transferred: payload.len(),
+        })
+    );
 
     let mut got = vec![0u8; payload.len()];
-    mem.read(buf_ptr as u32, &mut got);
+    mem.read(dma_buf as u32, &mut got);
     assert_eq!(got, payload);
 
     assert!(
@@ -411,24 +449,53 @@ fn xhci_control_in_get_descriptor_completes_after_host_completion_and_dmas_data(
 }
 
 #[test]
-fn xhci_bulk_in_out_normal_trb_roundtrip() {
-    let mut xhci = XhciHarness::new();
+fn xhci_bulk_in_out_normal_trb_queues_actions_and_consumes_completions() {
     let dev = UsbWebUsbPassthroughDevice::new();
-    xhci.attach_root_port(0, Box::new(dev.clone()));
-
-    let slot_id = xhci.enable_slot(0);
-    xhci.address_device(slot_id);
-    xhci.configure_endpoints(slot_id);
+    let attached = AttachedUsbDevice::new(Box::new(dev.clone()));
+    let mut xhci = XhciHarness::new(attached);
 
     let mut mem = TestMemory::new(0x10000);
     let mut alloc = Alloc::new(0x2000);
 
-    // Bulk OUT (endpoint 1 OUT).
+    // Enumeration command ring.
+    let cmd_ring = alloc.alloc((TRB_LEN * 3) as u32, 0x10) as u64;
+
+    let mut enable_slot = Trb::default();
+    enable_slot.set_cycle(true);
+    enable_slot.set_trb_type(TrbType::EnableSlotCommand);
+    enable_slot.write_to(&mut mem, cmd_ring);
+
+    let mut address_device = Trb::default();
+    address_device.set_cycle(true);
+    address_device.set_trb_type(TrbType::AddressDeviceCommand);
+    address_device.set_slot_id(1);
+    address_device.write_to(&mut mem, cmd_ring + TRB_LEN as u64);
+
+    let mut configure_ep = Trb::default();
+    configure_ep.set_cycle(true);
+    configure_ep.set_trb_type(TrbType::ConfigureEndpointCommand);
+    configure_ep.set_slot_id(1);
+    configure_ep.write_to(&mut mem, cmd_ring + 2 * TRB_LEN as u64);
+
+    let mut cmd_cursor = RingCursor::new(cmd_ring, true);
+    xhci.process_command_ring(&mut mem, &mut cmd_cursor);
+
+    // Bulk OUT Normal TRB (endpoint 1 OUT).
     let out_payload = [0xAAu8, 0xBB, 0xCC, 0xDD];
     let out_buf = alloc.alloc(out_payload.len() as u32, 0x10) as u64;
     mem.write(out_buf as u32, &out_payload);
-    xhci.submit_bulk_out(slot_id, 1, out_buf, out_payload.len());
-    xhci.tick(&mut mem);
+
+    let bulk_out_ring = alloc.alloc(TRB_LEN as u32, 0x10) as u64;
+    let mut bulk_out_trb = Trb::default();
+    bulk_out_trb.parameter = out_buf;
+    bulk_out_trb.status = out_payload.len() as u32;
+    bulk_out_trb.set_cycle(true);
+    bulk_out_trb.set_trb_type(TrbType::Normal);
+    bulk_out_trb.write_to(&mut mem, bulk_out_ring);
+
+    let mut bulk_out_cursor = RingCursor::new(bulk_out_ring, true);
+
+    xhci.tick_bulk_out(&mut mem, &mut bulk_out_cursor, 1);
 
     let mut actions = dev.drain_actions();
     assert_eq!(actions.len(), 1);
@@ -445,20 +512,29 @@ fn xhci_bulk_in_out_normal_trb_roundtrip() {
             bytes_written: out_payload.len() as u32,
         },
     });
-    xhci.tick(&mut mem);
+    xhci.tick_bulk_out(&mut mem, &mut bulk_out_cursor, 1);
     assert_eq!(
-        xhci.pop_completed(),
-        Some(CompletedTransfer {
-            slot_id,
+        xhci.pop_completion(),
+        Some(Completion {
+            kind: CompletionKind::BulkOut,
             bytes_transferred: out_payload.len(),
         })
     );
 
-    // Bulk IN (endpoint 1 IN).
+    // Bulk IN Normal TRB (endpoint 1 IN).
     let in_payload = [1u8, 2, 3, 4, 5];
     let in_buf = alloc.alloc(in_payload.len() as u32, 0x10) as u64;
-    xhci.submit_bulk_in(slot_id, 1, in_buf, in_payload.len());
-    xhci.tick(&mut mem);
+
+    let bulk_in_ring = alloc.alloc(TRB_LEN as u32, 0x10) as u64;
+    let mut bulk_in_trb = Trb::default();
+    bulk_in_trb.parameter = in_buf;
+    bulk_in_trb.status = in_payload.len() as u32;
+    bulk_in_trb.set_cycle(true);
+    bulk_in_trb.set_trb_type(TrbType::Normal);
+    bulk_in_trb.write_to(&mut mem, bulk_in_ring);
+
+    let mut bulk_in_cursor = RingCursor::new(bulk_in_ring, true);
+    xhci.tick_bulk_in(&mut mem, &mut bulk_in_cursor, 1);
 
     let mut actions = dev.drain_actions();
     assert_eq!(actions.len(), 1);
@@ -475,11 +551,11 @@ fn xhci_bulk_in_out_normal_trb_roundtrip() {
             data: in_payload.to_vec(),
         },
     });
-    xhci.tick(&mut mem);
+    xhci.tick_bulk_in(&mut mem, &mut bulk_in_cursor, 1);
     assert_eq!(
-        xhci.pop_completed(),
-        Some(CompletedTransfer {
-            slot_id,
+        xhci.pop_completion(),
+        Some(Completion {
+            kind: CompletionKind::BulkIn,
             bytes_transferred: in_payload.len(),
         })
     );
@@ -488,3 +564,4 @@ fn xhci_bulk_in_out_normal_trb_roundtrip() {
     mem.read(in_buf as u32, &mut got);
     assert_eq!(got, in_payload);
 }
+
