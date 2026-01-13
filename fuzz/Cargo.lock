@@ -75,6 +75,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "aero-dxbc"
+version = "0.1.0"
+
+[[package]]
 name = "aero-gpu"
 version = "0.1.0"
 dependencies = [
@@ -1231,6 +1235,7 @@ version = "0.0.0"
 dependencies = [
  "aero-devices",
  "aero-devices-storage",
+ "aero-dxbc",
  "aero-gpu",
  "aero-http-range",
  "aero-io-snapshot",
