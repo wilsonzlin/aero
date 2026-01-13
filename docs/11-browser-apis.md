@@ -1119,6 +1119,13 @@ function runEmulationLoop() {
 > (`readFrameIndex := writeFrameIndex`). This is used by `createAudioOutput({ discardOnResume: true })`
 > to avoid stale latency after `AudioContext` suspend/resume cycles.
 >
+> In addition to explicit `ring.reset`, the worklet supports an optional **auto-discard** heuristic:
+> if `processorOptions.discardOnResume === true` is set on `AudioWorkletNode` construction, the worklet
+> will discard buffered backlog after detecting a large wall-clock gap between `process()` callbacks
+> (a proxy for suspend/resume or extreme scheduling stalls). This is separate from the main-thread
+> `discardOnResume` logic and is mainly useful for integrations that want the worklet to be
+> self-healing even when main-thread events are delayed.
+>
 > The canonical Aero worklet can also post `type: "underrun"` messages for debugging/telemetry, but
 > these are disabled by default (and rate-limited when enabled) to avoid overhead under persistent
 > underrun. See `CreateAudioOutputOptions.sendUnderrunMessages` /
