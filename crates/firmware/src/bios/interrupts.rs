@@ -560,9 +560,21 @@ fn handle_int13(
                     return;
                 }
                 if (cpu.gpr[gpr::RBX] & 0xFFFF) == 0x55AA {
-                    // Report EDD 3.0 (AH=0x30) and that we support 42h + 48h.
+                    // EDD extensions installation check.
+                    //
+                    // Strategy A: We advertise EDD 3.0 (AH=0x30) and implement the 0x42-byte
+                    // "Drive Parameter Table" returned by AH=48h when the caller provides a large
+                    // enough buffer.
+                    //
+                    // Some bootloaders/OS probes treat a mismatch between the reported EDD version
+                    // (AH=41h) and the returned AH=48h table size as a BIOS bug and will refuse to
+                    // use EDD services.
                     cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & !0xFFFF) | (0x30u64 << 8);
                     cpu.gpr[gpr::RBX] = (cpu.gpr[gpr::RBX] & !0xFFFF) | 0xAA55;
+                    // Feature bitmap (Phoenix EDD spec):
+                    // - bit 0: functions 42h-44h supported (extended read/write/verify)
+                    // - bit 1: functions 45h-47h supported (lock/eject/seek)
+                    // - bit 2: function 48h supported (drive parameter table)
                     cpu.gpr[gpr::RCX] = (cpu.gpr[gpr::RCX] & !0xFFFF) | 0x0005;
                     bios.last_int13_status = 0;
                     cpu.rflags &= !FLAG_CF;
@@ -679,6 +691,50 @@ fn handle_int13(
                 cpu.rflags |= FLAG_CF;
                 cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & !0xFFFF) | (0x03u64 << 8);
             }
+            0x44 => {
+                // Extended verify via Disk Address Packet (EDD) for CD-ROM media (2048-byte
+                // sectors).
+                //
+                // We treat this as a bounds check: if the requested ISO LBA range is valid,
+                // succeed.
+                if !drive_present(bios, bus, drive) {
+                    set_error(bios, cpu, 0x01);
+                    return;
+                }
+
+                let si = cpu.gpr[gpr::RSI] & 0xFFFF;
+                let dap_addr = cpu.apply_a20(cpu.segments.ds.base.wrapping_add(si));
+                let dap_size = bus.read_u8(dap_addr);
+                if dap_size != 0x10 && dap_size != 0x18 {
+                    set_error(bios, cpu, 0x01);
+                    return;
+                }
+                if bus.read_u8(dap_addr + 1) != 0 {
+                    set_error(bios, cpu, 0x01);
+                    return;
+                }
+
+                let count_2048 = bus.read_u16(dap_addr + 2) as u64;
+                if count_2048 == 0 {
+                    set_error(bios, cpu, 0x01);
+                    return;
+                }
+                let lba_2048 = bus.read_u64(dap_addr + 8);
+
+                let iso_total_2048 = disk.size_in_sectors() / 4;
+                let Some(end_2048) = lba_2048.checked_add(count_2048) else {
+                    set_error(bios, cpu, 0x04);
+                    return;
+                };
+                if end_2048 > iso_total_2048 {
+                    set_error(bios, cpu, 0x04);
+                    return;
+                }
+
+                bios.last_int13_status = 0;
+                cpu.rflags &= !FLAG_CF;
+                cpu.gpr[gpr::RAX] &= !0xFF00u64;
+            }
             0x48 => {
                 // Extended get drive parameters (EDD) for CD-ROM media (2048-byte sectors).
                 if !drive_present(bios, bus, drive) {
@@ -693,33 +749,92 @@ fn handle_int13(
                 let si = cpu.gpr[gpr::RSI] & 0xFFFF;
                 let table_addr = cpu.apply_a20(cpu.segments.ds.base.wrapping_add(si));
                 let buf_size = bus.read_u16(table_addr) as usize;
-                if buf_size < 0x1A {
+                const EDD_PARAMS_MIN_SIZE: usize = 0x1A;
+                const EDD_PARAMS_V2_SIZE: usize = 0x1E;
+                const EDD_PARAMS_V3_SIZE: usize = 0x42;
+                if buf_size < EDD_PARAMS_MIN_SIZE {
                     set_error(bios, cpu, 0x01);
                     return;
                 }
 
-                let write_len = buf_size.min(0x1E) as u16;
-                bus.write_u16(table_addr, write_len);
-                if buf_size >= 4 {
+                // Fill the EDD drive parameter table.
+                //
+                // EDD 3.0 defines a 0x42-byte structure. For compatibility with older callers we
+                // also support (and may return) smaller table sizes (down to 0x1A bytes).
+                //
+                // To avoid claiming a size we didn't fully populate, we only ever return:
+                // - 0x42 (EDD 3.0) when the caller provides >= 0x42 bytes
+                // - 0x1E (EDD 2.x) when the caller provides >= 0x1E bytes but < 0x42
+                // - the caller's size for 0x1A..0x1D (legacy/minimal callers)
+                let write_len = if buf_size >= EDD_PARAMS_V3_SIZE {
+                    EDD_PARAMS_V3_SIZE
+                } else if buf_size >= EDD_PARAMS_V2_SIZE {
+                    EDD_PARAMS_V2_SIZE
+                } else {
+                    buf_size
+                };
+                bus.write_u16(table_addr, write_len as u16);
+
+                if write_len >= 4 {
                     bus.write_u16(table_addr + 2, 0); // flags
                 }
-                if buf_size >= 8 {
+                if write_len >= 8 {
                     bus.write_u32(table_addr + 4, 1024); // cylinders (placeholder)
                 }
-                if buf_size >= 12 {
+                if write_len >= 12 {
                     bus.write_u32(table_addr + 8, 16); // heads (placeholder)
                 }
-                if buf_size >= 16 {
+                if write_len >= 16 {
                     bus.write_u32(table_addr + 12, 63); // sectors/track (placeholder)
                 }
-                if buf_size >= 24 {
+                if write_len >= 24 {
                     bus.write_u64(table_addr + 16, total_2048);
                 }
-                if buf_size >= 26 {
+                if write_len >= 26 {
                     bus.write_u16(table_addr + 24, 2048); // bytes/sector
                 }
-                if buf_size >= 30 {
+                if write_len >= 30 {
                     bus.write_u32(table_addr + 26, 0); // DPTE pointer (unused)
+                }
+
+                if write_len >= EDD_PARAMS_V3_SIZE {
+                    // EDD 3.0 drive parameter table extension.
+                    //
+                    // Offsets and layout follow the Phoenix EDD 3.0 spec, as implemented by common
+                    // BIOSes and consumed by OS probes (e.g. Linux's `edd_device_params`).
+                    let interface_type: [u8; 8] = *b"ATAPI   ";
+
+                    bus.write_u16(table_addr + 0x1E, 0xBEDD); // key
+                    bus.write_u8(table_addr + 0x20, 0x1E); // device path info length
+                    bus.write_u8(table_addr + 0x21, 0x00); // reserved
+                    bus.write_u16(table_addr + 0x22, 0x0000); // reserved
+
+                    // Host bus type (4 bytes) and interface type (8 bytes) strings.
+                    for (i, b) in b"PCI ".iter().copied().enumerate() {
+                        bus.write_u8(table_addr + 0x24 + i as u64, b);
+                    }
+                    for (i, b) in interface_type.iter().copied().enumerate() {
+                        bus.write_u8(table_addr + 0x28 + i as u64, b);
+                    }
+
+                    // interface_path (8), device_path (8) and reserved (1) are all zero.
+                    for off in 0x30u64..0x40 {
+                        bus.write_u8(table_addr + off, 0);
+                    }
+                    bus.write_u8(table_addr + 0x40, 0);
+
+                    // Compute the 8-bit checksum so that the sum of the device path info bytes
+                    // (host bus type .. checksum) is 0 modulo 256.
+                    let mut sum: u8 = 0;
+                    for off in 0x24..0x42 {
+                        // Skip checksum byte while summing; it's at the last byte (0x41).
+                        if off == 0x41 {
+                            continue;
+                        }
+                        sum = sum.wrapping_add(bus.read_u8(table_addr + off));
+                    }
+                    let checksum = (0u8).wrapping_sub(sum);
+                    bus.write_u8(table_addr + 0x41, checksum);
                 }
 
                 bios.last_int13_status = 0;
@@ -1095,9 +1210,21 @@ fn handle_int13(
                 return;
             }
             if (cpu.gpr[gpr::RBX] & 0xFFFF) == 0x55AA && drive >= 0x80 {
-                // Report EDD 3.0 (AH=0x30) and that we support 42h + 48h.
+                // EDD extensions installation check.
+                //
+                // Strategy A: We advertise EDD 3.0 (AH=0x30) and implement the 0x42-byte
+                // "Drive Parameter Table" returned by AH=48h when the caller provides a large
+                // enough buffer.
+                //
+                // Some bootloaders/OS probes treat a mismatch between the reported EDD version
+                // (AH=41h) and the returned AH=48h table size as a BIOS bug and will refuse to
+                // use EDD services.
                 cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & !0xFFFF) | (0x30u64 << 8);
                 cpu.gpr[gpr::RBX] = (cpu.gpr[gpr::RBX] & !0xFFFF) | 0xAA55;
+                // Feature bitmap (Phoenix EDD spec):
+                // - bit 0: functions 42h-44h supported (extended read/write/verify)
+                // - bit 1: functions 45h-47h supported (lock/eject/seek)
+                // - bit 2: function 48h supported (drive parameter table)
                 cpu.gpr[gpr::RCX] = (cpu.gpr[gpr::RCX] & !0xFFFF) | 0x0005;
                 bios.last_int13_status = 0;
                 cpu.rflags &= !FLAG_CF;
@@ -1189,6 +1316,51 @@ fn handle_int13(
             cpu.rflags |= FLAG_CF;
             cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & !0xFFFF) | (0x03u64 << 8);
         }
+        0x44 => {
+            // Extended verify via Disk Address Packet (EDD).
+            //
+            // We treat this as a bounds check: if the requested LBA range is valid, succeed.
+            if !drive_present(bios, bus, drive) {
+                set_error(bios, cpu, 0x01);
+                return;
+            }
+            if drive < 0x80 {
+                set_error(bios, cpu, 0x01);
+                return;
+            }
+
+            let si = cpu.gpr[gpr::RSI] & 0xFFFF;
+            let dap_addr = cpu.apply_a20(cpu.segments.ds.base.wrapping_add(si));
+            let dap_size = bus.read_u8(dap_addr);
+            if dap_size != 0x10 && dap_size != 0x18 {
+                set_error(bios, cpu, 0x01);
+                return;
+            }
+            if bus.read_u8(dap_addr + 1) != 0 {
+                set_error(bios, cpu, 0x01);
+                return;
+            }
+
+            let count = bus.read_u16(dap_addr + 2) as u64;
+            if count == 0 {
+                set_error(bios, cpu, 0x01);
+                return;
+            }
+            let lba = bus.read_u64(dap_addr + 8);
+
+            let Some(end) = lba.checked_add(count) else {
+                set_error(bios, cpu, 0x04);
+                return;
+            };
+            if end > disk.size_in_sectors() {
+                set_error(bios, cpu, 0x04);
+                return;
+            }
+
+            bios.last_int13_status = 0;
+            cpu.rflags &= !FLAG_CF;
+            cpu.gpr[gpr::RAX] &= !0xFF00u64;
+        }
         0x48 => {
             // Extended get drive parameters (EDD).
             //
@@ -1206,35 +1378,99 @@ fn handle_int13(
             let si = cpu.gpr[gpr::RSI] & 0xFFFF;
             let table_addr = cpu.apply_a20(cpu.segments.ds.base.wrapping_add(si));
             let buf_size = bus.read_u16(table_addr) as usize;
-            if buf_size < 0x1A {
+            const EDD_PARAMS_MIN_SIZE: usize = 0x1A;
+            const EDD_PARAMS_V2_SIZE: usize = 0x1E;
+            const EDD_PARAMS_V3_SIZE: usize = 0x42;
+            if buf_size < EDD_PARAMS_MIN_SIZE {
                 set_error(bios, cpu, 0x01);
                 return;
             }
 
-            // Fill the EDD drive parameter table (subset).
-            // We write as much as the caller says they can accept.
-            let write_len = buf_size.min(0x1E) as u16;
-            bus.write_u16(table_addr, write_len);
-            if buf_size >= 4 {
+            // Fill the EDD drive parameter table.
+            //
+            // EDD 3.0 defines a 0x42-byte structure. For compatibility with older callers we
+            // also support (and may return) smaller table sizes (down to 0x1A bytes).
+            //
+            // To avoid claiming a size we didn't fully populate, we only ever return:
+            // - 0x42 (EDD 3.0) when the caller provides >= 0x42 bytes
+            // - 0x1E (EDD 2.x) when the caller provides >= 0x1E bytes but < 0x42
+            // - the caller's size for 0x1A..0x1D (legacy/minimal callers)
+            let write_len = if buf_size >= EDD_PARAMS_V3_SIZE {
+                EDD_PARAMS_V3_SIZE
+            } else if buf_size >= EDD_PARAMS_V2_SIZE {
+                EDD_PARAMS_V2_SIZE
+            } else {
+                buf_size
+            };
+            bus.write_u16(table_addr, write_len as u16);
+
+            if write_len >= 4 {
                 bus.write_u16(table_addr + 2, 0); // flags
             }
-            if buf_size >= 8 {
+            if write_len >= 8 {
                 bus.write_u32(table_addr + 4, 1024); // cylinders
             }
-            if buf_size >= 12 {
+            if write_len >= 12 {
                 bus.write_u32(table_addr + 8, 16); // heads
             }
-            if buf_size >= 16 {
+            if write_len >= 16 {
                 bus.write_u32(table_addr + 12, 63); // sectors/track
             }
-            if buf_size >= 24 {
+            if write_len >= 24 {
                 bus.write_u64(table_addr + 16, disk.size_in_sectors());
             }
-            if buf_size >= 26 {
+            if write_len >= 26 {
                 bus.write_u16(table_addr + 24, 512); // bytes/sector
             }
-            if buf_size >= 30 {
+            if write_len >= 30 {
                 bus.write_u32(table_addr + 26, 0); // DPTE pointer (unused)
+            }
+
+            if write_len >= EDD_PARAMS_V3_SIZE {
+                // EDD 3.0 drive parameter table extension.
+                //
+                // Offsets and layout follow the Phoenix EDD 3.0 spec, as implemented by common
+                // BIOSes and consumed by OS probes (e.g. Linux's `edd_device_params`).
+                //
+                // We fill only identification strings; the interface/device path fields are left
+                // as zeroes (sufficient for most callers).
+                let interface_type: [u8; 8] = if drive >= 0xE0 {
+                    *b"ATAPI   "
+                } else {
+                    *b"ATA     "
+                };
+
+                bus.write_u16(table_addr + 0x1E, 0xBEDD); // key
+                bus.write_u8(table_addr + 0x20, 0x1E); // device path info length
+                bus.write_u8(table_addr + 0x21, 0x00); // reserved
+                bus.write_u16(table_addr + 0x22, 0x0000); // reserved
+
+                // Host bus type (4 bytes) and interface type (8 bytes) strings.
+                for (i, b) in b"PCI ".iter().copied().enumerate() {
+                    bus.write_u8(table_addr + 0x24 + i as u64, b);
+                }
+                for (i, b) in interface_type.iter().copied().enumerate() {
+                    bus.write_u8(table_addr + 0x28 + i as u64, b);
+                }
+
+                // interface_path (8), device_path (8) and reserved (1) are all zero.
+                for off in 0x30u64..0x40 {
+                    bus.write_u8(table_addr + off, 0);
+                }
+                bus.write_u8(table_addr + 0x40, 0);
+
+                // Compute the 8-bit checksum so that the sum of the device path info bytes
+                // (host bus type .. checksum) is 0 modulo 256.
+                let mut sum: u8 = 0;
+                for off in 0x24..0x42 {
+                    // Skip checksum byte while summing; it's at the last byte (0x41).
+                    if off == 0x41 {
+                        continue;
+                    }
+                    sum = sum.wrapping_add(bus.read_u8(table_addr + off));
+                }
+                let checksum = (0u8).wrapping_sub(sum);
+                bus.write_u8(table_addr + 0x41, checksum);
             }
 
             bios.last_int13_status = 0;
@@ -2520,6 +2756,71 @@ mod tests {
         assert_eq!(mem.read_u8(0x0510), 0);
         assert_eq!(mem.read_u8(0x0511), 0);
         assert_eq!(mem.read_u8(0x0512), 0);
+    }
+
+    #[test]
+    fn int13_edd30_extension_check_and_drive_params_table_are_consistent() {
+        // AH=41h advertises EDD 3.0 (AH=0x30). When the caller supplies a 0x42-byte buffer for
+        // AH=48h, BIOS must return a 0x42-byte parameter table (including the 0xBEDD key) or
+        // stricter OS probes may treat the BIOS as buggy.
+        for drive in [0x80u8, 0xE0u8] {
+            let mut bios = Bios::new(BiosConfig {
+                boot_drive: drive,
+                ..BiosConfig::default()
+            });
+            // CD-ROM drives use 2048-byte sectors internally, but the BIOS disk backend is defined
+            // in terms of 512-byte sectors. Keep the test buffer simple and let INT 13h handle the
+            // conversion logic for CD drives.
+            let disk_bytes = vec![0u8; 512 * 8];
+            let mut disk = InMemoryDisk::new(disk_bytes);
+            let mut cpu = CpuState::new(CpuMode::Real);
+            let mut mem = TestMemory::new(2 * 1024 * 1024);
+            ivt::init_bda(&mut mem, drive);
+            cpu.a20_enabled = mem.a20_enabled();
+
+            cpu.gpr[gpr::RAX] = 0x4100; // AH=41h
+            cpu.gpr[gpr::RBX] = 0x55AA;
+            cpu.gpr[gpr::RDX] = drive as u64; // DL
+            handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk, None);
+
+            assert_eq!(cpu.rflags & FLAG_CF, 0);
+            assert_eq!(((cpu.gpr[gpr::RAX] >> 8) & 0xFF) as u8, 0x30);
+
+            set_real_mode_seg(&mut cpu.segments.ds, 0);
+            cpu.gpr[gpr::RSI] = 0x0600;
+            cpu.gpr[gpr::RDX] = drive as u64; // DL
+            cpu.gpr[gpr::RAX] = 0x4800; // AH=48h
+
+            let table_addr = cpu.apply_a20(cpu.segments.ds.base + 0x0600);
+            for i in 0..0x42u64 {
+                mem.write_u8(table_addr + i, 0xCC);
+            }
+            mem.write_u16(table_addr, 0x42); // buffer size
+
+            handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk, None);
+
+            assert_eq!(cpu.rflags & FLAG_CF, 0);
+            assert_eq!(mem.read_u16(table_addr), 0x42);
+            assert_eq!(mem.read_u16(table_addr + 0x1E), 0xBEDD);
+            assert_eq!(mem.read_u8(table_addr + 0x20), 0x1E);
+
+            assert_eq!(mem.read_bytes(table_addr + 0x24, 4), b"PCI ".to_vec());
+
+            let expected_iface = if drive >= 0xE0 {
+                b"ATAPI   ".to_vec()
+            } else {
+                b"ATA     ".to_vec()
+            };
+            assert_eq!(mem.read_bytes(table_addr + 0x28, 8), expected_iface);
+            assert_eq!(mem.read_bytes(table_addr + 0x30, 16), vec![0u8; 16]);
+
+            // Verify checksum: sum(host_bus..checksum) must be 0 mod 256.
+            let mut sum: u8 = 0;
+            for b in mem.read_bytes(table_addr + 0x24, 0x1E) {
+                sum = sum.wrapping_add(b);
+            }
+            assert_eq!(sum, 0);
+        }
     }
 
     #[test]
