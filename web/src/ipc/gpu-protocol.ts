@@ -171,6 +171,24 @@ export type GpuRuntimeScreenshotRequestMessage = GpuWorkerMessageBase & {
   includeCursor?: boolean;
 };
 
+/**
+ * Debug-only: read back the *presented* pixels (after presentation policy such as sRGB encoding,
+ * opaque-alpha, and any Y-flip conventions).
+ *
+ * This is distinct from `screenshot`, which is allowed to return the source framebuffer bytes
+ * (used by existing smoke tests).
+ */
+export type GpuRuntimeScreenshotPresentedRequestMessage = GpuWorkerMessageBase & {
+  type: "screenshot_presented";
+  requestId: number;
+  /**
+   * Whether the readback should include the cursor overlay.
+   *
+   * Default: false (cursor excluded) so hashes remain deterministic.
+   */
+  includeCursor?: boolean;
+};
+
 export type GpuRuntimeCursorSetImageMessage = GpuWorkerMessageBase & {
   type: "cursor_set_image";
   width: number;
@@ -236,6 +254,7 @@ export type GpuRuntimeInMessage =
   | GpuRuntimeResizeMessage
   | GpuRuntimeTickMessage
   | GpuRuntimeScreenshotRequestMessage
+  | GpuRuntimeScreenshotPresentedRequestMessage
   | GpuRuntimeCursorSetImageMessage
   | GpuRuntimeCursorSetStateMessage
   | GpuRuntimeSubmitAerogpuMessage
@@ -299,6 +318,16 @@ export type GpuRuntimeScreenshotResponseMessage = GpuWorkerMessageBase & {
    * Optional producer frame sequence number when the framebuffer layout exposes
    * one.
    */
+  frameSeq?: number;
+};
+
+export type GpuRuntimeScreenshotPresentedResponseMessage = GpuWorkerMessageBase & {
+  type: "screenshot_presented";
+  requestId: number;
+  width: number;
+  height: number;
+  rgba8: ArrayBuffer;
+  origin: "top-left";
   frameSeq?: number;
 };
 
@@ -367,6 +396,7 @@ export type GpuRuntimeOutMessage =
   | GpuRuntimeMetricsMessage
   | GpuRuntimeErrorMessage
   | GpuRuntimeScreenshotResponseMessage
+  | GpuRuntimeScreenshotPresentedResponseMessage
   | GpuRuntimeSubmitCompleteMessage
   | GpuRuntimeStatsMessage
   | GpuRuntimeEventsMessage;

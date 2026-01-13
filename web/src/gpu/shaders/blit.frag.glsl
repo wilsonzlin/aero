@@ -50,11 +50,8 @@ void main() {
     }
   }
 
-  // Cursor blending happens in linear space. Apply manual sRGB encoding only after
-  // cursor composition to match the WebGPU presenter output and avoid double-gamma.
+  // Presentation policy: output is sRGB with opaque alpha.
   color.rgb = srgbEncode(color.rgb);
-
-  // Presented output should be opaque (Windows scanout semantics; avoid blending
-  // with the page background).
-  outColor = vec4(color.rgb, 1.0);
+  color.a = 1.0;
+  outColor = color;
 }

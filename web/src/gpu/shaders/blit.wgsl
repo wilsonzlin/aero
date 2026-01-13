@@ -86,6 +86,5 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
   if ((flags & FLAG_APPLY_SRGB_ENCODE) != 0u) {
     color = vec4<f32>(srgb_encode(color.rgb), color.a);
   }
-
   return color;
 }

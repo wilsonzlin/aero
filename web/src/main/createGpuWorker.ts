@@ -19,6 +19,7 @@ import {
   type GpuRuntimeOutMessage,
   type GpuRuntimeReadyMessage,
   type GpuRuntimeScreenshotResponseMessage,
+  type GpuRuntimeScreenshotPresentedResponseMessage,
   type GpuRuntimeSubmitCompleteMessage,
   type GpuRuntimeStatsMessage,
 } from "../ipc/gpu-protocol";
@@ -40,6 +41,10 @@ export interface GpuWorkerHandle {
   ready: Promise<GpuRuntimeReadyMessage>;
   resize(width: number, height: number, devicePixelRatio: number): void;
   presentTestPattern(): void;
+  /**
+   * Publish an RGBA8 frame (top-left origin) into the shared framebuffer and trigger a tick.
+   */
+  presentRgba8(rgba8: Uint8Array): void;
   submitAerogpu(
     cmdStream: ArrayBuffer,
     signalFence: bigint,
@@ -53,6 +58,10 @@ export interface GpuWorkerHandle {
    * (pre-scaling / pre-color-management), not a capture of the presented canvas.
    */
   requestScreenshot(): Promise<GpuRuntimeScreenshotResponseMessage>;
+  /**
+   * Debug-only: read back the *presented* pixels from the worker's output canvas (RGBA8, top-left origin).
+   */
+  requestPresentedScreenshot(): Promise<GpuRuntimeScreenshotPresentedResponseMessage>;
   shutdown(): void;
 }
 
@@ -183,6 +192,10 @@ export function createGpuWorker(params: CreateGpuWorkerParams): GpuWorkerHandle 
     number,
     { resolve: (msg: GpuRuntimeScreenshotResponseMessage) => void; reject: (err: unknown) => void }
   >();
+  const presentedScreenshotRequests = new Map<
+    number,
+    { resolve: (msg: GpuRuntimeScreenshotPresentedResponseMessage) => void; reject: (err: unknown) => void }
+  >();
   const submitRequests = new Map<
     number,
     { resolve: (msg: GpuRuntimeSubmitCompleteMessage) => void; reject: (err: unknown) => void }
@@ -193,6 +206,10 @@ export function createGpuWorker(params: CreateGpuWorkerParams): GpuWorkerHandle 
       pending.reject(err);
     }
     screenshotRequests.clear();
+    for (const [, pending] of presentedScreenshotRequests) {
+      pending.reject(err);
+    }
+    presentedScreenshotRequests.clear();
     for (const [, pending] of submitRequests) {
       pending.reject(err);
     }
@@ -215,6 +232,13 @@ export function createGpuWorker(params: CreateGpuWorkerParams): GpuWorkerHandle 
         if (!pending) return;
         screenshotRequests.delete(typed.requestId);
         pending.resolve(typed);
+        break;
+      }
+      case "screenshot_presented": {
+        const pending = presentedScreenshotRequests.get(typed.requestId);
+        if (!pending) return;
+        presentedScreenshotRequests.delete(typed.requestId);
+        pending.resolve(typed as GpuRuntimeScreenshotPresentedResponseMessage);
         break;
       }
       case "submit_complete": {
@@ -283,6 +307,11 @@ export function createGpuWorker(params: CreateGpuWorkerParams): GpuWorkerHandle 
     worker.postMessage({ ...GPU_MESSAGE_BASE, type: "tick", frameTimeMs: performance.now() });
   }
 
+  function presentRgba8(rgba8: Uint8Array): void {
+    publishFrame(rgba8);
+    worker.postMessage({ ...GPU_MESSAGE_BASE, type: "tick", frameTimeMs: performance.now() });
+  }
+
   function submitAerogpu(
     cmdStream: ArrayBuffer,
     signalFence: bigint,
@@ -328,6 +357,19 @@ export function createGpuWorker(params: CreateGpuWorkerParams): GpuWorkerHandle 
     );
   }
 
+  function requestPresentedScreenshot(): Promise<GpuRuntimeScreenshotPresentedResponseMessage> {
+    return ready.then(
+      () => {
+        const requestId = nextRequestId++;
+        worker.postMessage({ ...GPU_MESSAGE_BASE, type: "screenshot_presented", requestId });
+        return new Promise<GpuRuntimeScreenshotPresentedResponseMessage>((resolve, reject) => {
+          presentedScreenshotRequests.set(requestId, { resolve, reject });
+        });
+      },
+      (err) => Promise.reject(err),
+    );
+  }
+
   function shutdown(): void {
     worker.postMessage({ ...GPU_MESSAGE_BASE, type: "shutdown" });
     worker.terminate();
@@ -338,8 +380,10 @@ export function createGpuWorker(params: CreateGpuWorkerParams): GpuWorkerHandle 
     ready,
     resize,
     presentTestPattern,
+    presentRgba8,
     submitAerogpu,
     requestScreenshot,
+    requestPresentedScreenshot,
     shutdown,
   };
 }

@@ -39,6 +39,7 @@ import {
   type GpuRuntimeInMessage,
   type GpuRuntimeOutMessage,
   type GpuRuntimeScreenshotRequestMessage,
+  type GpuRuntimeScreenshotPresentedRequestMessage,
   type GpuRuntimeSubmitAerogpuMessage,
   type GpuRuntimeStatsCountersV1,
 } from "../ipc/gpu-protocol";
@@ -2997,6 +2998,139 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
             handleDeviceLost(
               err instanceof Error ? err.message : String(err),
               { source: "screenshot", code: deviceLostCode, error: err },
+              startRecovery,
+            );
+          } else {
+            emitGpuEvent({
+              time_ms: performance.now(),
+              backend_kind: backendKindForEvent(),
+              severity: "error",
+              category: "Screenshot",
+              message: err instanceof Error ? err.message : String(err),
+              details: err instanceof Error ? { message: err.message, stack: err.stack } : String(err),
+            });
+          }
+          postStub(typeof seqNow === "number" ? seqNow : undefined);
+        }
+      })();
+      break;
+    }
+
+    case "screenshot_presented": {
+      const req = msg as GpuRuntimeScreenshotPresentedRequestMessage;
+      void (async () => {
+        const postStub = (seq?: number) => {
+          const rgba8 = new Uint8Array([0, 0, 0, 255]).buffer;
+          postToMain(
+            {
+              type: "screenshot_presented",
+              requestId: req.requestId,
+              width: 1,
+              height: 1,
+              rgba8,
+              origin: "top-left",
+              ...(typeof seq === "number" ? { frameSeq: seq } : {}),
+            },
+            [rgba8],
+          );
+        };
+
+        const waitForNotPresenting = async (timeoutMs: number): Promise<boolean> => {
+          const deadline = performance.now() + timeoutMs;
+          while (presenting && performance.now() < deadline) {
+            await new Promise((resolve) => setTimeout(resolve, 0));
+          }
+          return !presenting;
+        };
+
+        try {
+          await maybeSendReady();
+
+          if (isDeviceLost && recoveryPromise) {
+            await Promise.race([
+              recoveryPromise,
+              new Promise((resolve) => setTimeout(resolve, 750)),
+            ]);
+            await maybeSendReady();
+          }
+
+          const includeCursor = req.includeCursor === true;
+
+          if (frameState) {
+            if (!(await waitForNotPresenting(1000))) {
+              const seqNow = frameState ? lastPresentedSeq : getCurrentFrameInfo()?.frameSeq;
+              postStub(typeof seqNow === "number" ? seqNow : undefined);
+              return;
+            }
+
+            // Best-effort: ensure the worker has presented the latest dirty frame before readback.
+            if (!isDeviceLost && aerogpuLastOutputSource === "framebuffer" && shouldPresentWithSharedState()) {
+              await handleTick();
+            }
+
+            if (!(await waitForNotPresenting(1000))) {
+              const seqNow = frameState ? lastPresentedSeq : getCurrentFrameInfo()?.frameSeq;
+              postStub(typeof seqNow === "number" ? seqNow : undefined);
+              return;
+            }
+          }
+
+          const seq = frameState ? lastPresentedSeq : getCurrentFrameInfo()?.frameSeq;
+
+          if (!runtimeCanvas || !presenter || isDeviceLost) {
+            postStub(typeof seq === "number" ? seq : undefined);
+            return;
+          }
+
+          const prevCursorRenderEnabled = cursorRenderEnabled;
+          if (!includeCursor && cursorRenderEnabled) {
+            cursorRenderEnabled = false;
+            syncCursorToPresenter();
+          }
+
+           try {
+             const shot = await (async () => {
+               if (!presenter) {
+                 throw new PresenterError("not_initialized", "Presenter not initialized");
+               }
+               const p = presenter as Presenter & {
+                 screenshotPresented?: () => Promise<{ width: number; height: number; pixels: ArrayBuffer }>;
+               };
+               if (typeof p.screenshotPresented === "function") {
+                 return await p.screenshotPresented();
+               }
+
+               // Best-effort fallback when a backend can't read back presented output yet.
+               return await presenter.screenshot();
+             })();
+
+            postToMain(
+              {
+                type: "screenshot_presented",
+                requestId: req.requestId,
+                width: shot.width,
+                height: shot.height,
+                rgba8: shot.pixels,
+                origin: "top-left",
+                ...(typeof seq === "number" ? { frameSeq: seq } : {}),
+              },
+              [shot.pixels],
+            );
+          } finally {
+            if (!includeCursor && cursorRenderEnabled !== prevCursorRenderEnabled) {
+              cursorRenderEnabled = prevCursorRenderEnabled;
+              syncCursorToPresenter();
+              getCursorPresenter()?.redraw?.();
+            }
+          }
+        } catch (err) {
+          const seqNow = frameState ? lastPresentedSeq : getCurrentFrameInfo()?.frameSeq;
+          const deviceLostCode = getDeviceLostCode(err);
+          if (deviceLostCode) {
+            const startRecovery = deviceLostCode !== "webgl_context_lost";
+            handleDeviceLost(
+              err instanceof Error ? err.message : String(err),
+              { source: "screenshot_presented", code: deviceLostCode, error: err },
               startRecovery,
             );
           } else {

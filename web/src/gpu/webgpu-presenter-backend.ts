@@ -40,6 +40,19 @@ function computeViewport(
   return { x, y, w, h };
 }
 
+function isBgraFormat(format: GPUTextureFormat): boolean {
+  return format === 'bgra8unorm' || format === 'bgra8unorm-srgb';
+}
+
+function bgraToRgbaInPlace(bytes: Uint8Array) {
+  for (let i = 0; i < bytes.length; i += 4) {
+    const b = bytes[i + 0];
+    const r = bytes[i + 2];
+    bytes[i + 0] = r;
+    bytes[i + 2] = b;
+  }
+}
+
 export class WebGpuPresenterBackend implements Presenter {
   public readonly backend = 'webgpu' as const;
 
@@ -415,6 +428,151 @@ export class WebGpuPresenterBackend implements Presenter {
     return { width: this.srcWidth, height: this.srcHeight, pixels: out.buffer };
   }
 
+  /**
+   * Debug-only: read back the *presented* canvas pixels as RGBA8 (top-left origin).
+   *
+   * Unlike `screenshot()`, which returns the source framebuffer texture bytes, this captures the
+   * final post-blit output (including gamma/alpha policy and letterboxing).
+   */
+  public async screenshotPresented(): Promise<PresenterScreenshot> {
+    if (
+      !this.canvas ||
+      !this.device ||
+      !this.queue ||
+      !this.ctx ||
+      !this.pipeline ||
+      !this.bindGroup ||
+      !this.cursorUniformBuffer
+    ) {
+      throw new PresenterError('not_initialized', 'WebGpuPresenterBackend.screenshotPresented() called before init()');
+    }
+
+    const width = this.canvas.width;
+    const height = this.canvas.height;
+    if (width <= 0 || height <= 0) {
+      throw new PresenterError('invalid_size', `canvas has invalid size ${width}x${height}`);
+    }
+
+    // WebGPU requires bytesPerRow to be a multiple of 256.
+    const unpaddedBytesPerRow = width * 4;
+    const bytesPerRow = alignUp(unpaddedBytesPerRow, 256);
+    const bufferSize = bytesPerRow * height;
+
+    const readback = this.device.createBuffer({
+      size: bufferSize,
+      usage: ((globalThis as any).GPUBufferUsage?.COPY_DST ?? 0x08) | ((globalThis as any).GPUBufferUsage?.MAP_READ ?? 0x01),
+    });
+
+    const flags =
+      WebGpuPresenterBackend.FLAG_FORCE_OPAQUE_ALPHA |
+      (this.srgbEncodeInShader ? WebGpuPresenterBackend.FLAG_APPLY_SRGB_ENCODE : 0);
+
+    const cursorEnable =
+      this.cursorRenderEnabled && this.cursorEnabled && this.cursorWidth > 0 && this.cursorHeight > 0 ? 1 : 0;
+    const cursorParams = new Int32Array([
+      this.srcWidth | 0,
+      this.srcHeight | 0,
+      cursorEnable,
+      flags | 0,
+      this.cursorX | 0,
+      this.cursorY | 0,
+      this.cursorHotX | 0,
+      this.cursorHotY | 0,
+      this.cursorWidth | 0,
+      this.cursorHeight | 0,
+      0,
+      0,
+    ]);
+    this.queue.writeBuffer(this.cursorUniformBuffer, 0, cursorParams);
+
+    const scaleMode = this.opts.scaleMode ?? 'fit';
+    const vp = computeViewport(width, height, this.srcWidth, this.srcHeight, scaleMode);
+    const [r, g, b] = this.opts.clearColor ?? [0, 0, 0, 1];
+
+    let currentTexture: any = null;
+    let currentTextureError: unknown = null;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        currentTexture = this.ctx.getCurrentTexture();
+        currentTextureError = null;
+        break;
+      } catch (err) {
+        currentTextureError = err;
+        if (attempt === 0) {
+          // Surface errors (Lost/Outdated) are expected. Reconfigure and retry once.
+          try {
+            this.configureContext();
+          } catch {
+            // Ignore and retry acquire; if it still fails we'll surface the original error.
+          }
+          continue;
+        }
+      }
+    }
+
+    if (!currentTexture) {
+      const message =
+        currentTextureError instanceof Error
+          ? currentTextureError.message
+          : currentTextureError
+            ? String(currentTextureError)
+            : 'Unknown error';
+      throw new PresenterError('webgpu_surface_error', `WebGPU getCurrentTexture() failed: ${message}`, currentTextureError);
+    }
+
+    const view =
+      this.viewFormat && this.canvasFormat && this.viewFormat !== this.canvasFormat
+        ? currentTexture.createView({ format: this.viewFormat as any })
+        : currentTexture.createView();
+
+    const encoder = this.device.createCommandEncoder();
+    const pass = encoder.beginRenderPass({
+      colorAttachments: [
+        {
+          view,
+          // Alpha is forced opaque in shader; keep clear alpha opaque too so letterboxing doesn't
+          // accidentally blend with the page background.
+          clearValue: { r, g, b, a: 1 },
+          loadOp: 'clear',
+          storeOp: 'store',
+        },
+      ],
+    });
+
+    pass.setPipeline(this.pipeline);
+    pass.setBindGroup(0, this.bindGroup);
+    pass.setViewport(vp.x, vp.y, vp.w, vp.h, 0, 1);
+    pass.draw(3);
+    pass.end();
+
+    encoder.copyTextureToBuffer(
+      { texture: currentTexture },
+      { buffer: readback, bytesPerRow, rowsPerImage: height },
+      { width, height, depthOrArrayLayers: 1 },
+    );
+
+    this.queue.submit([encoder.finish()]);
+
+    const mapModeRead = (globalThis as any).GPUMapMode?.READ ?? 0x0001;
+    await readback.mapAsync(mapModeRead);
+    const mapped = new Uint8Array(readback.getMappedRange());
+
+    const out = new Uint8Array(unpaddedBytesPerRow * height);
+    for (let y = 0; y < height; y++) {
+      out.set(mapped.subarray(y * bytesPerRow, y * bytesPerRow + unpaddedBytesPerRow), y * unpaddedBytesPerRow);
+    }
+
+    readback.unmap();
+    readback.destroy?.();
+
+    // Convert swapchain storage order -> RGBA8 for stable hashing.
+    if (isBgraFormat(this.canvasFormat as GPUTextureFormat)) {
+      bgraToRgbaInPlace(out);
+    }
+
+    return { width, height, pixels: out.buffer };
+  }
+
   public destroy(): void {
     this.destroyed = true;
     this.uninstallUncapturedErrorHandler();
@@ -549,6 +707,9 @@ export class WebGpuPresenterBackend implements Presenter {
       // Ignore.
     }
 
+    const renderUsage = (globalThis as any).GPUTextureUsage?.RENDER_ATTACHMENT ?? 0x10;
+    const copySrcUsage = (globalThis as any).GPUTextureUsage?.COPY_SRC ?? 0x01;
+
     const toSrgbFormat = (format: unknown): unknown => {
       if (format === 'bgra8unorm') return 'bgra8unorm-srgb';
       if (format === 'rgba8unorm') return 'rgba8unorm-srgb';
@@ -568,6 +729,7 @@ export class WebGpuPresenterBackend implements Presenter {
         (this.ctx as any).configure({
           device: this.device,
           format: this.canvasFormat,
+          usage: renderUsage | copySrcUsage,
           alphaMode: 'opaque',
           // TS libdefs may not include `viewFormats` yet.
           viewFormats: [srgbFormat],
@@ -579,6 +741,7 @@ export class WebGpuPresenterBackend implements Presenter {
         (this.ctx as any).configure({
           device: this.device,
           format: this.canvasFormat,
+          usage: renderUsage | copySrcUsage,
           alphaMode: 'opaque',
         });
         viewFormat = this.canvasFormat;
@@ -588,6 +751,7 @@ export class WebGpuPresenterBackend implements Presenter {
       (this.ctx as any).configure({
         device: this.device,
         format: this.canvasFormat,
+        usage: renderUsage | copySrcUsage,
         alphaMode: 'opaque',
       });
       viewFormat = this.canvasFormat;

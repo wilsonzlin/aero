@@ -278,6 +278,37 @@ export class RawWebGl2Presenter implements Presenter {
     this.draw();
   }
 
+  /**
+   * Debug-only: read back the *presented* canvas pixels as RGBA8 (top-left origin).
+   *
+   * Unlike `screenshot()`, which is defined as a readback of the source framebuffer,
+   * this captures the final post-blit output (including sRGB encode policy, opaque alpha,
+   * scaling/letterboxing, and cursor composition).
+   */
+  public screenshotPresented(): PresenterScreenshot {
+    const gl = this.gl;
+    const canvas = this.canvas;
+    if (!canvas || !gl || !this.program || !this.vao || !this.frameTexture) {
+      throw new PresenterError('not_initialized', 'RawWebGl2Presenter.screenshotPresented() called before init()');
+    }
+    if (this.isContextLost) {
+      throw new PresenterError('webgl_context_lost', 'Cannot take presented screenshot while WebGL context is lost');
+    }
+
+    // Ensure we have a fresh draw reflecting the latest cursor state / uniforms.
+    this.draw();
+
+    const w = canvas.width;
+    const h = canvas.height;
+    const pixels = new Uint8Array(w * h * 4);
+    gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+    assertWebGlOk(gl, 'readPixels');
+
+    // WebGL readPixels has a bottom-left origin; convert to top-left for stable hashing.
+    const flipped = flipImageVertically(pixels, w, h);
+    return { width: w, height: h, pixels: flipped.buffer as ArrayBuffer };
+  }
+
   // Screenshot reads back the source frame texture (not the presented/canvas output).
   // This avoids scaling/color-space ambiguity and matches the deterministic hashing
   // contract described by `PresenterScreenshot`.
@@ -451,6 +482,10 @@ export class RawWebGl2Presenter implements Presenter {
     gl.disable(gl.DEPTH_TEST);
     gl.disable(gl.BLEND);
     gl.disable(gl.CULL_FACE);
+    gl.disable(gl.DITHER);
+    // Deterministic presentation: we do manual sRGB encoding in the blit shader, so ensure
+    // fixed-function framebuffer sRGB conversion (when present) is disabled to avoid double-gamma.
+    gl.disable((gl as any).FRAMEBUFFER_SRGB ?? 0x8DB9);
 
     assertWebGlOk(gl, 'recreateResources');
 
@@ -520,9 +555,10 @@ export class RawWebGl2Presenter implements Presenter {
     // Clear full canvas for non-stretch modes so letterboxing is deterministic.
     const scaleMode = this.opts.scaleMode ?? 'fit';
     if (scaleMode !== 'stretch') {
-      const [r, g, b, a] = this.opts.clearColor ?? DEFAULT_CLEAR_COLOR;
+      const [r, g, b] = this.opts.clearColor ?? DEFAULT_CLEAR_COLOR;
       gl.viewport(0, 0, canvasW, canvasH);
-      gl.clearColor(r, g, b, a);
+      // Presentation alpha policy: output is opaque.
+      gl.clearColor(r, g, b, 1);
       gl.clear(gl.COLOR_BUFFER_BIT);
     }
 
