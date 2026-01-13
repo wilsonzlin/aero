@@ -100,6 +100,14 @@ pub enum Sm4Decl {
     GsMaxOutputVertexCount {
         max: u32,
     },
+    /// Geometry shader instance count (SM5: `[instance(n)]` / `dcl_gsinstancecount`).
+    ///
+    /// The corresponding `SV_GSInstanceID` declaration is represented via
+    /// [`Sm4Decl::InputSiv`], since it uses the same operand+sysvalue form as
+    /// other input system-value declarations.
+    GsInstanceCount {
+        count: u32,
+    },
     /// Compute shader thread group size (`dcl_thread_group x, y, z`).
     ///
     /// WGSL requires this information to emit `@workgroup_size(x, y, z)` on the
@@ -590,4 +598,45 @@ pub struct BufferRef {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct UavRef {
     pub slot: u32,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gs_ir_nodes_are_debug_and_eq_roundtrippable() {
+        let decls = [
+            Sm4Decl::GsInputPrimitive { primitive: 5 },
+            Sm4Decl::GsOutputTopology { topology: 2 },
+            Sm4Decl::GsMaxOutputVertexCount { max: 42 },
+            Sm4Decl::GsInstanceCount { count: 3 },
+        ];
+        for decl in decls {
+            let cloned = decl.clone();
+            assert_eq!(decl, cloned);
+            assert_eq!(format!("{decl:?}"), format!("{cloned:?}"));
+        }
+
+        let insts = [
+            Sm4Inst::Emit { stream: 0 },
+            Sm4Inst::Cut { stream: 0 },
+            Sm4Inst::Emit { stream: 1 },
+            Sm4Inst::Cut { stream: 2 },
+        ];
+        for inst in insts {
+            let cloned = inst.clone();
+            assert_eq!(inst, cloned);
+            assert_eq!(format!("{inst:?}"), format!("{cloned:?}"));
+        }
+
+        let op = SrcOperand {
+            kind: SrcKind::GsInput { reg: 2, vertex: 1 },
+            swizzle: Swizzle::XYZW,
+            modifier: OperandModifier::None,
+        };
+        let cloned = op.clone();
+        assert_eq!(op, cloned);
+        assert_eq!(format!("{op:?}"), format!("{cloned:?}"));
+    }
 }

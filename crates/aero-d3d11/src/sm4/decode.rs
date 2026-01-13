@@ -1070,6 +1070,14 @@ pub fn decode_decl(opcode: u32, inst_toks: &[u32], at: usize) -> Result<Sm4Decl,
             r.expect_eof()?;
             return Ok(Sm4Decl::GsMaxOutputVertexCount { max });
         }
+        OPCODE_DCL_GS_INSTANCE_COUNT => {
+            if r.is_eof() {
+                return Ok(Sm4Decl::Unknown { opcode });
+            }
+            let count = r.read_u32()?;
+            r.expect_eof()?;
+            return Ok(Sm4Decl::GsInstanceCount { count });
+        }
         _ => {}
     }
 

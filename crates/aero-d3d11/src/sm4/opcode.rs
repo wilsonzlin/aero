@@ -141,6 +141,10 @@ pub const OPCODE_DCL_GS_INPUT_PRIMITIVE: u32 = 0x10c;
 pub const OPCODE_DCL_GS_OUTPUT_TOPOLOGY: u32 = 0x10d;
 /// `dcl_maxout` / `dcl_maxvertexcount` (geometry shader max output vertex count).
 pub const OPCODE_DCL_GS_MAX_OUTPUT_VERTEX_COUNT: u32 = 0x10e;
+/// `dcl_gsinstancecount` / geometry shader instance count (SM5).
+///
+/// Upstream: `D3D11_SB_OPCODE_DCL_GS_INSTANCE_COUNT`.
+pub const OPCODE_DCL_GS_INSTANCE_COUNT: u32 = 0x10f;
 
 /// `dcl_thread_group` declaration.
 ///

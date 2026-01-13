@@ -179,6 +179,41 @@ fn src_imm(bits: [u32; 4]) -> SrcOperand {
 }
 
 #[test]
+fn decodes_geometry_shader_input_with_vertex_index() {
+    // mov r0, v0[1]
+    let mut body = Vec::<u32>::new();
+
+    let mut mov = vec![opcode_token(OPCODE_MOV, 1 + 2 + 1 + 2)];
+    mov.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::XYZW));
+    mov.extend_from_slice(&reg_src(
+        OPERAND_TYPE_INPUT,
+        &[0, 1],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    body.extend_from_slice(&mov);
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    // Stage type 2 is geometry shader.
+    let tokens = make_sm5_program_tokens(2, &body);
+    let program =
+        Sm4Program::parse_program_tokens(&tokens_to_bytes(&tokens)).expect("parse_program_tokens");
+    let module = decode_program(&program).expect("decode");
+
+    assert_eq!(
+        module.instructions[0],
+        Sm4Inst::Mov {
+            dst: dst(RegFile::Temp, 0, WriteMask::XYZW),
+            src: SrcOperand {
+                kind: SrcKind::GsInput { reg: 0, vertex: 1 },
+                swizzle: Swizzle::XYZW,
+                modifier: OperandModifier::None,
+            }
+        }
+    );
+}
+
+#[test]
 fn decodes_arithmetic_and_skips_decls() {
     const DCL_DUMMY: u32 = 0x100;
 
