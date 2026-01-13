@@ -668,6 +668,14 @@ fn validate_drivers(
         }
     }
 
+    fn driver_dir_candidates(arch_dir: &Path, name: &str) -> Vec<PathBuf> {
+        let mut out = vec![arch_dir.join(name)];
+        for alias in legacy_driver_dir_aliases(name) {
+            out.push(arch_dir.join(alias));
+        }
+        out
+    }
+
     fn resolve_driver_dir(arch: &str, arch_dir: &Path, name: &str) -> Result<Option<PathBuf>> {
         let mut matches: Vec<(&'static str, PathBuf)> = Vec::new();
         let primary = arch_dir.join(name);
@@ -716,40 +724,71 @@ fn validate_drivers(
     }
 
     for drv in &spec.drivers {
-        for (arch, arch_dir, out) in [
-            ("x86", &drivers_x86_dir, &mut plan.x86),
-            ("amd64", &drivers_amd64_dir, &mut plan.amd64),
-        ] {
-            let Some(driver_dir) = resolve_driver_dir(arch, arch_dir, &drv.name)? else {
-                if drv.required {
-                    let mut tried = vec![arch_dir.join(&drv.name)];
-                    for alias in legacy_driver_dir_aliases(&drv.name) {
-                        tried.push(arch_dir.join(alias));
-                    }
-                    let tried = tried
-                        .iter()
-                        .map(|p| p.display().to_string())
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    bail!(
-                        "required driver directory missing: {} ({}); tried: {}",
-                        drv.name,
-                        arch,
-                        tried
-                    );
-                }
-                eprintln!(
-                    "warning: optional driver directory missing: {} ({})",
-                    drv.name, arch
-                );
-                continue;
-            };
+        let x86_driver_dir = resolve_driver_dir("x86", &drivers_x86_dir, &drv.name)?;
+        let amd64_driver_dir = resolve_driver_dir("amd64", &drivers_amd64_dir, &drv.name)?;
 
-            validate_driver_dir(drv, arch, &driver_dir, devices_cmd_vars)?;
-            out.push(DriverToInclude {
+        if !drv.required
+            && spec.require_optional_drivers_on_all_arches
+            && (x86_driver_dir.is_some() ^ amd64_driver_dir.is_some())
+        {
+            let (present_arch, missing_arch, missing_arch_dir) = if x86_driver_dir.is_some() {
+                ("x86", "amd64", &drivers_amd64_dir)
+            } else {
+                ("amd64", "x86", &drivers_x86_dir)
+            };
+            let tried = driver_dir_candidates(missing_arch_dir, &drv.name)
+                .iter()
+                .map(|p| p.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            bail!(
+                "optional driver directory is present for {present_arch} but missing for {missing_arch}: {} (require_optional_drivers_on_all_arches=true); tried: {tried}",
+                drv.name
+            );
+        }
+
+        // x86
+        if let Some(driver_dir) = x86_driver_dir {
+            validate_driver_dir(drv, "x86", &driver_dir, devices_cmd_vars)?;
+            plan.x86.push(DriverToInclude {
                 spec: drv.clone(),
                 dir: driver_dir,
             });
+        } else if drv.required {
+            let tried = driver_dir_candidates(&drivers_x86_dir, &drv.name)
+                .iter()
+                .map(|p| p.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            bail!(
+                "required driver directory missing: {} (x86); tried: {}",
+                drv.name,
+                tried
+            );
+        } else {
+            eprintln!("warning: optional driver directory missing: {} (x86)", drv.name);
+        }
+
+        // amd64
+        if let Some(driver_dir) = amd64_driver_dir {
+            validate_driver_dir(drv, "amd64", &driver_dir, devices_cmd_vars)?;
+            plan.amd64.push(DriverToInclude {
+                spec: drv.clone(),
+                dir: driver_dir,
+            });
+        } else if drv.required {
+            let tried = driver_dir_candidates(&drivers_amd64_dir, &drv.name)
+                .iter()
+                .map(|p| p.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            bail!(
+                "required driver directory missing: {} (amd64); tried: {}",
+                drv.name,
+                tried
+            );
+        } else {
+            eprintln!("warning: optional driver directory missing: {} (amd64)", drv.name);
         }
     }
 
@@ -1807,6 +1846,7 @@ mod tests {
 
     fn make_test_spec(fail_on_unlisted_driver_dirs: bool) -> PackagingSpec {
         PackagingSpec {
+            require_optional_drivers_on_all_arches: false,
             drivers: vec![DriverSpec {
                 name: "testdrv".to_string(),
                 required: true,

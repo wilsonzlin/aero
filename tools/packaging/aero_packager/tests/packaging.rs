@@ -2103,6 +2103,62 @@ fn duplicate_driver_names_in_spec_are_rejected() -> anyhow::Result<()> {
 }
 
 #[test]
+fn optional_drivers_must_be_present_on_all_arches_when_strict_flag_is_enabled() -> anyhow::Result<()> {
+    let repo_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let testdata = repo_root.join("testdata");
+    let guest_tools_dir = testdata.join("guest-tools");
+
+    let spec_dir = tempfile::tempdir()?;
+    let spec_path = spec_dir.path().join("spec.json");
+    let spec = serde_json::json!({
+        "require_optional_drivers_on_all_arches": true,
+        "drivers": [
+            {
+                "name": "optdrv",
+                "required": false,
+                "expected_hardware_ids": [r"PCI\\VEN_1234&DEV_5678"],
+            },
+        ],
+    });
+    fs::write(&spec_path, serde_json::to_vec_pretty(&spec)?)?;
+
+    let drivers_tmp = tempfile::tempdir()?;
+    write_stub_pci_driver(
+        &drivers_tmp.path().join("x86").join("optdrv"),
+        "optdrv",
+        "optdrv",
+        r"PCI\VEN_1234&DEV_5678",
+    )?;
+    // Ensure the amd64 arch root exists but does not contain the optional driver directory.
+    fs::create_dir_all(drivers_tmp.path().join("amd64"))?;
+
+    let out = tempfile::tempdir()?;
+    let config = aero_packager::PackageConfig {
+        drivers_dir: drivers_tmp.path().to_path_buf(),
+        guest_tools_dir,
+        windows_device_contract_path: device_contract_path(),
+        out_dir: out.path().to_path_buf(),
+        spec_path,
+        version: "0.0.0".to_string(),
+        build_id: "test".to_string(),
+        volume_id: "AERO_GUEST_TOOLS".to_string(),
+        signing_policy: aero_packager::SigningPolicy::Test,
+        source_date_epoch: 0,
+    };
+
+    let err = aero_packager::package_guest_tools(&config).unwrap_err();
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("optional driver directory is present for x86 but missing for amd64")
+            && msg.contains("optdrv")
+            && msg.contains("require_optional_drivers_on_all_arches=true"),
+        "unexpected error: {msg}"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn driver_names_with_whitespace_are_rejected() -> anyhow::Result<()> {
     let repo_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let testdata = repo_root.join("testdata");

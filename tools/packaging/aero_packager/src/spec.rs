@@ -24,6 +24,12 @@ pub(crate) fn normalize_driver_name(name: &str) -> String {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(from = "PackagingSpecRaw")]
 pub struct PackagingSpec {
+    /// If true, optional drivers (i.e. `required=false`) must be present for both x86 and amd64.
+    ///
+    /// This prevents producing Guest Tools media where a driver is shipped for only one guest
+    /// architecture, which can lead to confusing and inconsistent behaviour across x86/x64
+    /// Windows guests.
+    pub require_optional_drivers_on_all_arches: bool,
     pub drivers: Vec<DriverSpec>,
     #[serde(default)]
     pub fail_on_unlisted_driver_dirs: bool,
@@ -87,6 +93,8 @@ pub struct DriverSpec {
 #[serde(deny_unknown_fields)]
 struct PackagingSpecRaw {
     #[serde(default)]
+    require_optional_drivers_on_all_arches: bool,
+    #[serde(default)]
     fail_on_unlisted_driver_dirs: bool,
     /// New schema: unified driver list containing both required and optional drivers.
     #[serde(default)]
@@ -109,6 +117,7 @@ struct LegacyRequiredDriver {
 
 impl From<PackagingSpecRaw> for PackagingSpec {
     fn from(raw: PackagingSpecRaw) -> Self {
+        let require_optional_drivers_on_all_arches = raw.require_optional_drivers_on_all_arches;
         let fail_on_unlisted_driver_dirs = raw.fail_on_unlisted_driver_dirs;
         // Merge legacy `required_drivers` into the unified `drivers` list while
         // preserving the (already stable) JSON ordering:
@@ -167,6 +176,7 @@ impl From<PackagingSpecRaw> for PackagingSpec {
         }
 
         PackagingSpec {
+            require_optional_drivers_on_all_arches,
             drivers: out,
             fail_on_unlisted_driver_dirs,
         }

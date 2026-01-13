@@ -1,4 +1,5 @@
 {
+  "require_optional_drivers_on_all_arches": true,
   "drivers": [
     {
       "name": "viostor",
