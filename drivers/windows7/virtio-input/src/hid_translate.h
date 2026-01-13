@@ -64,6 +64,20 @@ typedef unsigned char bool;
 #endif
 #endif
 
+/*
+ * Compile-time assertions.
+ *
+ * WDK 7.1-era toolchains do not support C11 `_Static_assert`, so prefer `C_ASSERT`
+ * when available. For host-side unit tests (gcc/clang), provide a compatible
+ * fallback definition.
+ */
+#ifndef C_ASSERT
+#define HID_TRANSLATE_C_ASSERT_GLUE(a, b) a##b
+#define HID_TRANSLATE_C_ASSERT_XGLUE(a, b) HID_TRANSLATE_C_ASSERT_GLUE(a, b)
+#define C_ASSERT(expr)                                                                                                       \
+  typedef char HID_TRANSLATE_C_ASSERT_XGLUE(hid_translate_c_assert_, __LINE__)[(expr) ? 1 : -1]
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -286,6 +300,9 @@ enum hid_translate_report_size {
   HID_TRANSLATE_MOUSE_REPORT_SIZE = 5,
   HID_TRANSLATE_CONSUMER_REPORT_SIZE = 2,
 };
+
+C_ASSERT(HID_TRANSLATE_KEYBOARD_REPORT_SIZE == 9);
+C_ASSERT(HID_TRANSLATE_MOUSE_REPORT_SIZE == 5);
 
 /*
  * Optional: keep additional pressed keys beyond the 6-key boot protocol

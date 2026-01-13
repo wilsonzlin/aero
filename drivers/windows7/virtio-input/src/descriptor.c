@@ -1,5 +1,15 @@
 #include "descriptor.h"
 
+#include "virtio_input.h"
+
+/*
+ * Keep ring buffer sizing in sync with the largest possible translator output.
+ * (virtio_input.h uses VIRTIO_INPUT_REPORT_MAX_SIZE to size report storage.)
+ */
+C_ASSERT(VIRTIO_INPUT_REPORT_MAX_SIZE ==
+         ((HID_TRANSLATE_KEYBOARD_REPORT_SIZE > HID_TRANSLATE_MOUSE_REPORT_SIZE) ? HID_TRANSLATE_KEYBOARD_REPORT_SIZE
+                                                                                 : HID_TRANSLATE_MOUSE_REPORT_SIZE));
+
 const UCHAR VirtioInputKeyboardReportDescriptor[] = {
     //
     // Report ID 1: Keyboard (8 modifier bits + reserved + 6-key array)
@@ -65,6 +75,11 @@ const UCHAR VirtioInputKeyboardReportDescriptor[] = {
     0xC0,              // End Collection
 };
 
+/*
+ * Keep in sync with tools/hidtest (VIRTIO_INPUT_EXPECTED_KBD_REPORT_DESC_LEN).
+ */
+C_ASSERT(sizeof(VirtioInputKeyboardReportDescriptor) == 65);
+
 const USHORT VirtioInputKeyboardReportDescriptorLength = (USHORT)sizeof(VirtioInputKeyboardReportDescriptor);
 
 const HID_DESCRIPTOR VirtioInputKeyboardHidDescriptor = {
@@ -106,6 +121,11 @@ const UCHAR VirtioInputMouseReportDescriptor[] = {
     0xC0,              //   End Collection
     0xC0,              // End Collection
 };
+
+/*
+ * Keep in sync with tools/hidtest (VIRTIO_INPUT_EXPECTED_MOUSE_REPORT_DESC_LEN).
+ */
+C_ASSERT(sizeof(VirtioInputMouseReportDescriptor) == 54);
 
 const USHORT VirtioInputMouseReportDescriptorLength = (USHORT)sizeof(VirtioInputMouseReportDescriptor);
 
