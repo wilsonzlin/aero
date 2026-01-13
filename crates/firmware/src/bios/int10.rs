@@ -163,6 +163,92 @@ impl Bios {
                 cpu.set_al(ch);
                 cpu.set_ah(attr);
             }
+            0x0C => {
+                // Write Graphics Pixel
+                //
+                // VGA: AL = pixel value, CX = x, DX = y, BH = page (ignored for now).
+                // VBE 32bpp direct-color: EBX = BGRX pixel value, CX = x, DX = y.
+                let x = cpu.cx();
+                let y = cpu.dx();
+
+                // VBE packed-pixel/direct-color modes.
+                if let Some(mode) = self
+                    .video
+                    .vbe
+                    .current_mode
+                    .and_then(|m| self.video.vbe.find_mode(m))
+                {
+                    if mode.bpp == 32 && mode.bytes_per_pixel() == 4 {
+                        let width = mode.width.max(1);
+                        let height = mode.height.max(1);
+                        let x = x.min(width.saturating_sub(1));
+                        let y = y.min(height.saturating_sub(1));
+
+                        let base = u64::from(self.video.vbe.lfb_base);
+                        let pitch = u64::from(self.video.vbe.bytes_per_scan_line.max(1));
+                        let off = u64::from(y)
+                            .saturating_mul(pitch)
+                            .saturating_add(u64::from(x).saturating_mul(4));
+                        if let Some(addr) = base.checked_add(off) {
+                            let color = cpu.rbx as u32;
+                            memory.write_u32(addr, color);
+                        }
+                    }
+
+                    return;
+                }
+
+                // VGA mode 13h.
+                if BiosDataArea::read_video_mode(memory) == 0x13 {
+                    let x = u32::from(x).min(319);
+                    let y = u32::from(y).min(199);
+                    let off = y.saturating_mul(320).saturating_add(x);
+                    let addr = 0xA0000u64 + off as u64;
+                    memory.write_u8(addr, cpu.al());
+                }
+            }
+            0x0D => {
+                // Read Graphics Pixel
+                //
+                // VGA: returns AL = pixel value.
+                // VBE 32bpp direct-color: returns EBX = BGRX pixel value.
+                let x = cpu.cx();
+                let y = cpu.dx();
+
+                if let Some(mode) = self
+                    .video
+                    .vbe
+                    .current_mode
+                    .and_then(|m| self.video.vbe.find_mode(m))
+                {
+                    if mode.bpp == 32 && mode.bytes_per_pixel() == 4 {
+                        let width = mode.width.max(1);
+                        let height = mode.height.max(1);
+                        let x = x.min(width.saturating_sub(1));
+                        let y = y.min(height.saturating_sub(1));
+
+                        let base = u64::from(self.video.vbe.lfb_base);
+                        let pitch = u64::from(self.video.vbe.bytes_per_scan_line.max(1));
+                        let off = u64::from(y)
+                            .saturating_mul(pitch)
+                            .saturating_add(u64::from(x).saturating_mul(4));
+                        if let Some(addr) = base.checked_add(off) {
+                            let color = memory.read_u32(addr);
+                            cpu.rbx = (cpu.rbx & !0xFFFF_FFFF) | u64::from(color);
+                        }
+                    }
+
+                    return;
+                }
+
+                if BiosDataArea::read_video_mode(memory) == 0x13 {
+                    let x = u32::from(x).min(319);
+                    let y = u32::from(y).min(199);
+                    let off = y.saturating_mul(320).saturating_add(x);
+                    let addr = 0xA0000u64 + off as u64;
+                    cpu.set_al(memory.read_u8(addr));
+                }
+            }
             0x1A => {
                 // Display Combination Code (VGA).
                 //
