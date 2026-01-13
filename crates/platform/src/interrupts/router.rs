@@ -257,6 +257,60 @@ impl PlatformInterrupts {
         }
     }
 
+    /// Like [`InterruptController::get_pending`], but scoped to a specific vCPU.
+    pub fn get_pending_for_cpu(&self, cpu_index: u8) -> Option<u8> {
+        match self.mode {
+            // Legacy PIC mode only routes interrupts to the bootstrap processor (CPU0).
+            PlatformInterruptMode::LegacyPic => {
+                if cpu_index != 0 {
+                    return None;
+                }
+                self.pic.get_pending_vector()
+            }
+            PlatformInterruptMode::Apic => {
+                let lapic = self.lapics.get(cpu_index as usize)?;
+                lapic.get_pending_vector()
+            }
+        }
+    }
+
+    /// Like [`InterruptController::acknowledge`], but scoped to a specific vCPU.
+    pub fn acknowledge_for_cpu(&mut self, cpu_index: u8, vector: u8) {
+        match self.mode {
+            PlatformInterruptMode::LegacyPic => {
+                if cpu_index != 0 {
+                    return;
+                }
+                self.pic.acknowledge(vector);
+            }
+            PlatformInterruptMode::Apic => {
+                let Some(lapic) = self.lapics.get(cpu_index as usize) else {
+                    return;
+                };
+                let _ = lapic.ack(vector);
+            }
+        }
+    }
+
+    /// Like [`InterruptController::eoi`], but scoped to a specific vCPU.
+    pub fn eoi_for_cpu(&mut self, cpu_index: u8, vector: u8) {
+        match self.mode {
+            PlatformInterruptMode::LegacyPic => {
+                if cpu_index != 0 {
+                    return;
+                }
+                self.pic.eoi(vector);
+            }
+            PlatformInterruptMode::Apic => {
+                let _ = vector;
+                let Some(lapic) = self.lapics.get(cpu_index as usize) else {
+                    return;
+                };
+                lapic.eoi();
+            }
+        }
+    }
+
     /// Reset the interrupt controller complex back to its power-on state.
     pub fn reset(&mut self) {
         // Preserve the shared IRQ line generation counter so existing `PlatformIrqLine` handles

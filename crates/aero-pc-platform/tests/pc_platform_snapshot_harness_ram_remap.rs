@@ -14,6 +14,7 @@ fn pc_platform_snapshot_harness_translates_dense_ram_offsets_when_remap_is_activ
     let mut pc = PcPlatform::new_with_config_and_ram(
         Box::new(ram),
         PcPlatformConfig {
+            cpu_count: 1,
             enable_hda: false,
             enable_nvme: false,
             enable_ahci: false,

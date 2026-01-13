@@ -3,27 +3,36 @@ use aero_cpu_core::interrupts::InterruptController as CpuInterruptController;
 use aero_cpu_core::mem::CpuBus;
 use aero_cpu_core::Exception;
 use aero_mmu::{AccessType, Mmu, TranslateFault};
-use aero_platform::interrupts::{
-    InterruptController as PlatformInterruptController, SharedPlatformInterrupts,
-};
+use aero_platform::interrupts::SharedPlatformInterrupts;
 
 const PAGE_SIZE: u64 = 4096;
 
 pub struct PcInterruptController {
     interrupts: SharedPlatformInterrupts,
+    cpu_index: u8,
 }
 
 impl PcInterruptController {
     pub fn new(interrupts: SharedPlatformInterrupts) -> Self {
-        Self { interrupts }
+        Self {
+            interrupts,
+            cpu_index: 0,
+        }
+    }
+
+    pub fn new_for_cpu(interrupts: SharedPlatformInterrupts, cpu_index: u8) -> Self {
+        Self {
+            interrupts,
+            cpu_index,
+        }
     }
 }
 
 impl CpuInterruptController for PcInterruptController {
     fn poll_interrupt(&mut self) -> Option<u8> {
         let mut interrupts = self.interrupts.borrow_mut();
-        let vector = PlatformInterruptController::get_pending(&*interrupts)?;
-        PlatformInterruptController::acknowledge(&mut *interrupts, vector);
+        let vector = interrupts.get_pending_for_cpu(self.cpu_index)?;
+        interrupts.acknowledge_for_cpu(self.cpu_index, vector);
         Some(vector)
     }
 }
@@ -60,7 +69,11 @@ impl PcCpuBus {
     }
 
     pub fn interrupt_controller(&self) -> PcInterruptController {
-        PcInterruptController::new(self.platform.interrupts.clone())
+        PcInterruptController::new_for_cpu(self.platform.interrupts.clone(), 0)
+    }
+
+    pub fn interrupt_controller_for_cpu(&self, cpu_index: u8) -> PcInterruptController {
+        PcInterruptController::new_for_cpu(self.platform.interrupts.clone(), cpu_index)
     }
 
     pub fn mmu(&self) -> &Mmu {

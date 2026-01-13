@@ -32,9 +32,13 @@ use crate::{GuestTime, MachineError, RunExit, SharedDisk, SPARSE_RAM_THRESHOLD_B
 pub struct PcMachineConfig {
     /// Guest RAM size in bytes.
     pub ram_size_bytes: u64,
-    /// Number of vCPUs exposed via firmware tables (SMBIOS + ACPI).
+    /// Number of vCPUs exposed via firmware tables (SMBIOS + ACPI MADT).
     ///
     /// Must be >= 1.
+    ///
+    /// Note: `PcMachine` currently executes only the bootstrap processor (CPU0). Application
+    /// processors are not scheduled yet; setting `cpu_count > 1` is intended for SMP firmware/OS
+    /// bring-up experimentation.
     pub cpu_count: u8,
     /// Deterministic seed used to generate the SMBIOS Type 1 "System UUID".
     ///
@@ -170,7 +174,6 @@ impl PcMachine {
         if cfg.cpu_count == 0 {
             return Err(MachineError::InvalidCpuCount(cfg.cpu_count));
         }
-
         let ram_size_bytes = cfg.ram_size_bytes;
         let ram: Box<dyn GuestMemory> = if ram_size_bytes <= SPARSE_RAM_THRESHOLD_BYTES {
             let ram = DenseMemory::new(ram_size_bytes)
@@ -185,6 +188,7 @@ impl PcMachine {
         let platform = PcPlatform::new_with_config_and_ram(
             ram,
             PcPlatformConfig {
+                cpu_count: cfg.cpu_count,
                 enable_hda: cfg.enable_hda,
                 enable_e1000: cfg.enable_e1000,
                 mac_addr: e1000_mac_addr,

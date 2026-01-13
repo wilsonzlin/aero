@@ -499,6 +499,7 @@ fn pc_platform_reset_preserves_nvme_disk_backend() {
     let mut pc = PcPlatform::new_with_config_and_nvme_disk(
         2 * 1024 * 1024,
         PcPlatformConfig {
+            cpu_count: 1,
             enable_hda: false,
             enable_nvme: true,
             enable_ahci: false,
@@ -541,6 +542,7 @@ fn pc_platform_reset_preserves_ide_disk_backend() {
     let mut pc = PcPlatform::new_with_config(
         2 * 1024 * 1024,
         PcPlatformConfig {
+            cpu_count: 1,
             enable_hda: false,
             enable_nvme: false,
             enable_ahci: false,
@@ -586,6 +588,7 @@ fn pc_platform_reset_preserves_ide_iso_backend() {
     let mut pc = PcPlatform::new_with_config(
         2 * 1024 * 1024,
         PcPlatformConfig {
+            cpu_count: 1,
             enable_hda: false,
             enable_nvme: false,
             enable_ahci: false,

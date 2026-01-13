@@ -13,6 +13,7 @@ fn pc_platform_remaps_ram_above_4gib_when_total_ram_exceeds_ecam_base() {
     let mut platform = PcPlatform::new_with_config_and_ram(
         Box::new(ram),
         PcPlatformConfig {
+            cpu_count: 1,
             enable_hda: false,
             enable_nvme: false,
             enable_ahci: false,

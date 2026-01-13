@@ -89,6 +89,12 @@ pub enum ResetEvent {
 
 #[derive(Debug, Clone, Copy)]
 pub struct PcPlatformConfig {
+    /// Number of virtual CPUs exposed by the platform.
+    ///
+    /// This value is currently used to size per-vCPU platform infrastructure like the interrupt
+    /// controller complex (LAPIC state). The `PcPlatform` integration remains single-threaded; a
+    /// `cpu_count > 1` primarily exists so firmware can publish SMP-capable ACPI/SMBIOS tables.
+    pub cpu_count: u8,
     /// Enable the Intel HDA controller (ICH6 model).
     ///
     /// Note: the actual HDA device integration is feature-gated behind the crate feature `hda`.
@@ -120,6 +126,7 @@ pub struct PcPlatformConfig {
 impl Default for PcPlatformConfig {
     fn default() -> Self {
         Self {
+            cpu_count: 1,
             enable_hda: false,
             enable_nvme: false,
             // The canonical PC platform always includes an ICH9 AHCI controller so guests can
@@ -1454,7 +1461,9 @@ impl PcPlatform {
             None => MemoryBus::with_ram(filter, ram),
         };
 
-        let interrupts = Rc::new(RefCell::new(PlatformInterrupts::new()));
+        let interrupts = Rc::new(RefCell::new(PlatformInterrupts::new_with_cpu_count(
+            config.cpu_count,
+        )));
         let ide_irq14_line = PlatformIrqLine::isa(interrupts.clone(), 14);
         let ide_irq15_line = PlatformIrqLine::isa(interrupts.clone(), 15);
 
@@ -3063,6 +3072,7 @@ mod tests {
         let mut pc = PcPlatform::new_with_config_and_ram(
             Box::new(ram),
             PcPlatformConfig {
+                cpu_count: 1,
                 enable_hda: false,
                 enable_nvme: false,
                 enable_ahci: false,
