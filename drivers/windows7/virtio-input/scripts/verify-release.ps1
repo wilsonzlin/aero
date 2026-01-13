@@ -209,6 +209,87 @@ function Assert-FilesMatchManifest($Manifest, [string]$ExtractDir) {
     }
 }
 
+$script:Sha256SumsFileName = 'SHA256SUMS'
+
+function Assert-Sha256SumsFile([string]$ExtractDir) {
+    $sumsPath = Join-Path $ExtractDir $script:Sha256SumsFileName
+    if (-not (Test-Path -LiteralPath $sumsPath -PathType Leaf)) {
+        Write-Warning ("{0} not found in zip; skipping SHA256SUMS validation." -f $script:Sha256SumsFileName)
+        return
+    }
+
+    $comparison = if ($env:OS -eq 'Windows_NT') {
+        [System.StringComparer]::OrdinalIgnoreCase
+    }
+    else {
+        [System.StringComparer]::Ordinal
+    }
+
+    $seen = New-Object 'System.Collections.Generic.Dictionary[string,string]' $comparison
+
+    $raw = Get-Content -LiteralPath $sumsPath -Raw -ErrorAction Stop
+    $lines = $raw -split "`n"
+    $lineNo = 0
+    foreach ($line in $lines) {
+        $lineNo += 1
+        $trimmed = $line.TrimEnd("`r")
+        if ([string]::IsNullOrWhiteSpace($trimmed)) {
+            continue
+        }
+
+        $m = [regex]::Match($trimmed, '^\s*([0-9a-fA-F]{64})\s\s(.+?)\s*$')
+        if (-not $m.Success) {
+            throw ("Invalid {0} line {1}: '{2}'" -f $script:Sha256SumsFileName, $lineNo, $trimmed)
+        }
+
+        $expectedHash = $m.Groups[1].Value.ToLowerInvariant()
+        $fileName = $m.Groups[2].Value
+
+        if ($fileName -match '[\\/]') {
+            throw ("Invalid filename in {0} (line {1}): '{2}' (paths are not allowed)" -f $script:Sha256SumsFileName, $lineNo, $fileName)
+        }
+        if ($fileName -ieq $script:Sha256SumsFileName) {
+            throw ("{0} must not list itself (line {1})." -f $script:Sha256SumsFileName, $lineNo)
+        }
+
+        if ($seen.ContainsKey($fileName)) {
+            throw ("Duplicate {0} entry for '{1}' (line {2})." -f $script:Sha256SumsFileName, $fileName, $lineNo)
+        }
+        $seen[$fileName] = $expectedHash
+
+        $candidatePath = Join-Path $ExtractDir $fileName
+        Assert-PathIsWithinDirectory -RootDir $ExtractDir -CandidatePath $candidatePath -Context ("{0} entry '{1}'" -f $script:Sha256SumsFileName, $fileName)
+
+        if (-not (Test-Path -LiteralPath $candidatePath -PathType Leaf)) {
+            throw ("Missing file referenced by {0}: '{1}'" -f $script:Sha256SumsFileName, $fileName)
+        }
+
+        $actualHash = (Get-FileHash -LiteralPath $candidatePath -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant()
+        if ($actualHash -ne $expectedHash) {
+            throw ("SHA256SUMS mismatch for '{0}': expected {1}, got {2}." -f $fileName, $expectedHash, $actualHash)
+        }
+    }
+
+    if (-not $seen.ContainsKey('manifest.json')) {
+        throw ("{0} is missing an entry for manifest.json." -f $script:Sha256SumsFileName)
+    }
+
+    $allFiles = @(
+        Get-ChildItem -LiteralPath $ExtractDir -File -ErrorAction Stop |
+            Where-Object { $_.Name -ne $script:Sha256SumsFileName }
+    )
+    $missing = @()
+    foreach ($f in $allFiles) {
+        if (-not $seen.ContainsKey($f.Name)) {
+            $missing += $f.Name
+        }
+    }
+    if ($missing.Count -gt 0) {
+        $list = ($missing | Sort-Object | ForEach-Object { "  - $_" }) -join "`r`n"
+        throw ("{0} is missing entries for one or more files:`r`n{1}" -f $script:Sha256SumsFileName, $list)
+    }
+}
+
 $exitCode = 0
 $tempDir = $null
 
@@ -221,6 +302,7 @@ try {
     $manifest = Load-Manifest -ExtractDir $tempDir
     Assert-ManifestIdentity -Manifest $manifest
     Assert-FilesMatchManifest -Manifest $manifest -ExtractDir $tempDir
+    Assert-Sha256SumsFile -ExtractDir $tempDir
 
     Write-Host "OK: release zip matches manifest.json"
 }
