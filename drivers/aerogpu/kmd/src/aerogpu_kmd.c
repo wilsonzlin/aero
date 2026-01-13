@@ -3569,14 +3569,64 @@ static NTSTATUS APIENTRY AeroGpuDdiQueryVidPnHardwareCapability(_In_ const HANDL
 static NTSTATUS APIENTRY AeroGpuDdiRecommendFunctionalVidPn(_In_ const HANDLE hAdapter,
                                                             _Inout_ DXGKARG_RECOMMENDFUNCTIONALVIDPN* pRecommend)
 {
-    UNREFERENCED_PARAMETER(hAdapter);
-    UNREFERENCED_PARAMETER(pRecommend);
-    /*
-     * For bring-up we rely on EDID + dxgkrnl's VidPN construction. This driver
-     * supports a single source/target and accepts whatever functional VidPN the
-     * OS chooses.
-     */
-    return STATUS_GRAPHICS_NO_RECOMMENDED_FUNCTIONAL_VIDPN;
+    AEROGPU_ADAPTER* adapter = (AEROGPU_ADAPTER*)hAdapter;
+    if (!adapter || !pRecommend) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    if (!adapter->DxgkInterface.DxgkCbQueryVidPnInterface || !pRecommend->hFunctionalVidPn) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    DXGK_VIDPN_INTERFACE vidpn;
+    RtlZeroMemory(&vidpn, sizeof(vidpn));
+    NTSTATUS status =
+        adapter->DxgkInterface.DxgkCbQueryVidPnInterface(adapter->StartInfo.hDxgkHandle, pRecommend->hFunctionalVidPn, &vidpn);
+    if (!NT_SUCCESS(status)) {
+        return status;
+    }
+
+    if (!vidpn.pfnCreateNewTopology || !vidpn.pfnGetTopologyInterface || !vidpn.pfnAssignTopology || !vidpn.pfnReleaseTopology) {
+        return STATUS_NOT_SUPPORTED;
+    }
+
+    D3DKMDT_HVIDPNTOPOLOGY hTopology = 0;
+    status = vidpn.pfnCreateNewTopology(pRecommend->hFunctionalVidPn, &hTopology);
+    if (!NT_SUCCESS(status) || !hTopology) {
+        return status;
+    }
+
+    DXGK_VIDPNTOPOLOGY_INTERFACE topo;
+    RtlZeroMemory(&topo, sizeof(topo));
+    status = vidpn.pfnGetTopologyInterface(pRecommend->hFunctionalVidPn, hTopology, &topo);
+    if (!NT_SUCCESS(status) || !topo.pfnCreateNewPathInfo || !topo.pfnAddPath || !topo.pfnReleasePathInfo) {
+        vidpn.pfnReleaseTopology(pRecommend->hFunctionalVidPn, hTopology);
+        return STATUS_NOT_SUPPORTED;
+    }
+
+    D3DKMDT_VIDPN_PRESENT_PATH* path = NULL;
+    status = topo.pfnCreateNewPathInfo(hTopology, &path);
+    if (!NT_SUCCESS(status) || !path) {
+        vidpn.pfnReleaseTopology(pRecommend->hFunctionalVidPn, hTopology);
+        return NT_SUCCESS(status) ? STATUS_INSUFFICIENT_RESOURCES : status;
+    }
+
+    RtlZeroMemory(path, sizeof(*path));
+    path->VidPnSourceId = AEROGPU_VIDPN_SOURCE_ID;
+    path->VidPnTargetId = AEROGPU_VIDPN_TARGET_ID;
+    path->ContentTransformation.Rotation = D3DKMDT_VPPR_IDENTITY;
+    path->ContentTransformation.Scaling = D3DKMDT_VPPS_IDENTITY;
+
+    status = topo.pfnAddPath(hTopology, path);
+    topo.pfnReleasePathInfo(hTopology, path);
+    if (!NT_SUCCESS(status)) {
+        vidpn.pfnReleaseTopology(pRecommend->hFunctionalVidPn, hTopology);
+        return status;
+    }
+
+    status = vidpn.pfnAssignTopology(pRecommend->hFunctionalVidPn, hTopology);
+    vidpn.pfnReleaseTopology(pRecommend->hFunctionalVidPn, hTopology);
+    return status;
 }
 
 static NTSTATUS APIENTRY AeroGpuDdiEnumVidPnCofuncModality(_In_ const HANDLE hAdapter,
@@ -3612,6 +3662,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEnumVidPnCofuncModality(_In_ const HANDLE hAd
 
     /* Preserve pinned source mode (if any), so dxgkrnl can keep its selection stable across enumeration calls. */
     {
+        /* Also use this as the preferred pin target when we build a fresh mode set. */
         ULONG pinnedW = 0;
         ULONG pinnedH = 0;
 
@@ -3640,6 +3691,24 @@ static NTSTATUS APIENTRY AeroGpuDdiEnumVidPnCofuncModality(_In_ const HANDLE hAd
         if (pinnedW != 0 && pinnedH != 0) {
             AeroGpuModeListAddUnique(modes, &modeCount, (UINT)(sizeof(modes) / sizeof(modes[0])), pinnedW, pinnedH);
         }
+
+        /*
+         * If we found a pinned mode, bubble it to the front of the list so our
+         * newly-built mode sets preserve dxgkrnl's selection. This avoids
+         * unnecessary mode churn during cofunctional modality enumeration.
+         */
+        if (pinnedW != 0 && pinnedH != 0) {
+            for (UINT i = 0; i < modeCount; ++i) {
+                if (modes[i].Width == pinnedW && modes[i].Height == pinnedH) {
+                    if (i != 0) {
+                        const AEROGPU_DISPLAY_MODE tmp = modes[0];
+                        modes[0] = modes[i];
+                        modes[i] = tmp;
+                    }
+                    break;
+                }
+            }
+        }
     }
 
     /* Create and assign a fresh source mode set. */
@@ -3651,6 +3720,8 @@ static NTSTATUS APIENTRY AeroGpuDdiEnumVidPnCofuncModality(_In_ const HANDLE hAd
             RtlZeroMemory(&sms, sizeof(sms));
             status = vidpn.pfnGetSourceModeSetInterface(pEnum->hFunctionalVidPn, hSourceModeSet, &sms);
             if (NT_SUCCESS(status) && sms.pfnCreateNewModeInfo && sms.pfnAddMode && sms.pfnReleaseModeInfo) {
+                const ULONG pinW = modes[0].Width;
+                const ULONG pinH = modes[0].Height;
                 for (UINT i = 0; i < modeCount; ++i) {
                     const ULONG w = modes[i].Width;
                     const ULONG h = modes[i].Height;
@@ -3671,6 +3742,9 @@ static NTSTATUS APIENTRY AeroGpuDdiEnumVidPnCofuncModality(_In_ const HANDLE hAd
                     modeInfo->Format.Graphics.PixelFormat = D3DDDIFMT_X8R8G8B8;
 
                     st2 = sms.pfnAddMode(hSourceModeSet, modeInfo);
+                    if (NT_SUCCESS(st2) && sms.pfnPinMode && w == pinW && h == pinH) {
+                        (void)sms.pfnPinMode(hSourceModeSet, modeInfo);
+                    }
                     sms.pfnReleaseModeInfo(hSourceModeSet, modeInfo);
                     if (!NT_SUCCESS(st2)) {
                         /* Ignore add failures to keep bring-up tolerant. */
@@ -3692,6 +3766,8 @@ static NTSTATUS APIENTRY AeroGpuDdiEnumVidPnCofuncModality(_In_ const HANDLE hAd
             RtlZeroMemory(&tms, sizeof(tms));
             status = vidpn.pfnGetTargetModeSetInterface(pEnum->hFunctionalVidPn, hTargetModeSet, &tms);
             if (NT_SUCCESS(status) && tms.pfnCreateNewModeInfo && tms.pfnAddMode && tms.pfnReleaseModeInfo) {
+                const ULONG pinW = modes[0].Width;
+                const ULONG pinH = modes[0].Height;
                 for (UINT i = 0; i < modeCount; ++i) {
                     const ULONG w = modes[i].Width;
                     const ULONG h = modes[i].Height;
@@ -3724,6 +3800,9 @@ static NTSTATUS APIENTRY AeroGpuDdiEnumVidPnCofuncModality(_In_ const HANDLE hAd
                     modeInfo->VideoSignalInfo.ScanLineOrdering = D3DKMDT_VSSLO_PROGRESSIVE;
 
                     st2 = tms.pfnAddMode(hTargetModeSet, modeInfo);
+                    if (NT_SUCCESS(st2) && tms.pfnPinMode && w == pinW && h == pinH) {
+                        (void)tms.pfnPinMode(hTargetModeSet, modeInfo);
+                    }
                     tms.pfnReleaseModeInfo(hTargetModeSet, modeInfo);
                     if (!NT_SUCCESS(st2)) {
                         /* Ignore add failures to keep bring-up tolerant. */
@@ -4050,16 +4129,119 @@ static NTSTATUS APIENTRY AeroGpuDdiGetScanLine(_In_ const HANDLE hAdapter, _Inou
 static NTSTATUS APIENTRY AeroGpuDdiUpdateActiveVidPnPresentPath(_In_ const HANDLE hAdapter,
                                                                  _Inout_ DXGKARG_UPDATEACTIVEVIDPNPRESENTPATH* pUpdate)
 {
-    UNREFERENCED_PARAMETER(hAdapter);
-    UNREFERENCED_PARAMETER(pUpdate);
+    AEROGPU_ADAPTER* adapter = (AEROGPU_ADAPTER*)hAdapter;
+    if (!adapter || !pUpdate) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    const D3DKMDT_VIDPN_PRESENT_PATH* path = &pUpdate->VidPnPresentPathInfo;
+
+    if (path->VidPnSourceId != AEROGPU_VIDPN_SOURCE_ID || path->VidPnTargetId != AEROGPU_VIDPN_TARGET_ID) {
+        return STATUS_GRAPHICS_INVALID_VIDPN_TOPOLOGY;
+    }
+
+    const D3DKMDT_VIDPN_PRESENT_PATH_ROTATION rot = path->ContentTransformation.Rotation;
+    if (rot != D3DKMDT_VPPR_IDENTITY && rot != D3DKMDT_VPPR_UNINITIALIZED) {
+        return STATUS_NOT_SUPPORTED;
+    }
+
+    const D3DKMDT_VIDPN_PRESENT_PATH_SCALING sc = path->ContentTransformation.Scaling;
+    if (sc != D3DKMDT_VPPS_IDENTITY && sc != D3DKMDT_VPPS_UNINITIALIZED) {
+        return STATUS_NOT_SUPPORTED;
+    }
+
     return STATUS_SUCCESS;
 }
 
 static NTSTATUS APIENTRY AeroGpuDdiRecommendMonitorModes(_In_ const HANDLE hAdapter,
                                                          _Inout_ DXGKARG_RECOMMENDMONITORMODES* pRecommend)
 {
-    UNREFERENCED_PARAMETER(hAdapter);
-    UNREFERENCED_PARAMETER(pRecommend);
+    AEROGPU_ADAPTER* adapter = (AEROGPU_ADAPTER*)hAdapter;
+    if (!adapter || !pRecommend) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    if (pRecommend->ChildUid != AEROGPU_CHILD_UID) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    if (!pRecommend->hMonitorSourceModeSet || !pRecommend->pMonitorSourceModeSetInterface) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    const DXGK_MONITORSOURCEMODESET_INTERFACE* msi = pRecommend->pMonitorSourceModeSetInterface;
+    if (!msi->pfnCreateNewModeInfo || !msi->pfnAddMode || !msi->pfnReleaseModeInfo) {
+        return STATUS_NOT_SUPPORTED;
+    }
+
+    AEROGPU_DISPLAY_MODE modes[16];
+    UINT modeCount = AeroGpuBuildModeList(modes, (UINT)(sizeof(modes) / sizeof(modes[0])));
+
+    /* Avoid failing on duplicates if dxgkrnl already populated the set from EDID. */
+    AEROGPU_DISPLAY_MODE existing[32];
+    UINT existingCount = 0;
+    RtlZeroMemory(existing, sizeof(existing));
+
+    if (msi->pfnAcquireFirstModeInfo && msi->pfnAcquireNextModeInfo) {
+        const D3DKMDT_MONITOR_SOURCE_MODE* cur = NULL;
+        NTSTATUS st = msi->pfnAcquireFirstModeInfo(pRecommend->hMonitorSourceModeSet, &cur);
+        while (NT_SUCCESS(st) && cur) {
+            AeroGpuModeListAddUnique(existing,
+                                     &existingCount,
+                                     (UINT)(sizeof(existing) / sizeof(existing[0])),
+                                     cur->VideoSignalInfo.ActiveSize.cx,
+                                     cur->VideoSignalInfo.ActiveSize.cy);
+
+            const D3DKMDT_MONITOR_SOURCE_MODE* next = NULL;
+            st = msi->pfnAcquireNextModeInfo(pRecommend->hMonitorSourceModeSet, cur, &next);
+            msi->pfnReleaseModeInfo(pRecommend->hMonitorSourceModeSet, cur);
+            cur = next;
+        }
+    }
+
+    for (UINT i = 0; i < modeCount; ++i) {
+        const ULONG w = modes[i].Width;
+        const ULONG h = modes[i].Height;
+        if (w == 0 || h == 0) {
+            continue;
+        }
+
+        if (AeroGpuModeListContains(existing, existingCount, w, h)) {
+            continue;
+        }
+
+        D3DKMDT_MONITOR_SOURCE_MODE* modeInfo = NULL;
+        NTSTATUS st2 = msi->pfnCreateNewModeInfo(pRecommend->hMonitorSourceModeSet, &modeInfo);
+        if (!NT_SUCCESS(st2) || !modeInfo) {
+            return NT_SUCCESS(st2) ? STATUS_INSUFFICIENT_RESOURCES : st2;
+        }
+
+        RtlZeroMemory(modeInfo, sizeof(*modeInfo));
+        modeInfo->VideoSignalInfo.VideoStandard = D3DKMDT_VSS_OTHER;
+        modeInfo->VideoSignalInfo.ActiveSize.cx = w;
+        modeInfo->VideoSignalInfo.ActiveSize.cy = h;
+        modeInfo->VideoSignalInfo.TotalSize = modeInfo->VideoSignalInfo.ActiveSize;
+        modeInfo->VideoSignalInfo.VSyncFreq.Numerator = 60;
+        modeInfo->VideoSignalInfo.VSyncFreq.Denominator = 1;
+        modeInfo->VideoSignalInfo.HSyncFreq.Numerator = 60 * h;
+        modeInfo->VideoSignalInfo.HSyncFreq.Denominator = 1;
+        {
+            ULONGLONG pixelRate = (ULONGLONG)60ull * (ULONGLONG)w * (ULONGLONG)h;
+            if (pixelRate > (ULONGLONG)0xFFFFFFFFu) {
+                pixelRate = 0;
+            }
+            modeInfo->VideoSignalInfo.PixelRate = (ULONG)pixelRate;
+        }
+        modeInfo->VideoSignalInfo.ScanLineOrdering = D3DKMDT_VSSLO_PROGRESSIVE;
+
+        st2 = msi->pfnAddMode(pRecommend->hMonitorSourceModeSet, modeInfo);
+        msi->pfnReleaseModeInfo(pRecommend->hMonitorSourceModeSet, modeInfo);
+
+        if (!NT_SUCCESS(st2)) {
+            /* Treat duplicates/ordering issues as non-fatal. */
+        }
+    }
+
     return STATUS_SUCCESS;
 }
 
