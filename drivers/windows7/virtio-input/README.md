@@ -390,6 +390,7 @@ All of these use the virtio-input transport and should enumerate with `VEN_1AF4`
 - User-mode HID verification tool: `tools/hidtest/README.md`
 - Manual QEMU test plan: `tests/qemu/README.md`
 - Offline/slipstream install notes (DISM): `tests/offline-install/README.md`
+- Common failure modes / troubleshooting: [`docs/troubleshooting.md`](./docs/troubleshooting.md)
 
 ## Release packaging (optional)
 

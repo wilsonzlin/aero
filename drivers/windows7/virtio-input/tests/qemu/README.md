@@ -313,28 +313,6 @@ Copy `hidtest.exe` into the guest and run it from an elevated Command Prompt.
 
 ## Troubleshooting
 
-### Device Manager shows an error code
+For the common Win7 bring-up failure modes (Device Manager error codes, signature/test-signing issues, contract mismatches, `hidtest` access problems, and PS/2 vs virtio input confusion), see:
 
-- **Code 28**: driver not installed
-  - Re-run **Update Driver...** and ensure you pointed to a directory containing the correct `aero_virtio_input.inf` + `aero_virtio_input.sys` for that guest architecture.
-- **Code 52**: Windows cannot verify the digital signature
-  - Ensure `bcdedit /set testsigning on` was applied and the VM rebooted.
-  - Ensure you installed the correct x86 vs x64 build of the driver.
-- **Code 10**: device cannot start
-  - Confirm the guest is binding the expected hardware ID (see “Verifying HWID”).
-  - Confirm the QEMU device type matches what the driver expects (modern/non-transitional vs transitional).
-  - This driver is built against the **Aero Win7 virtio contract v1** and uses the virtio-input `ID_NAME`
-    config string to classify the device as keyboard vs mouse. If the device model does not report the
-    expected names (`"Aero Virtio Keyboard"` / `"Aero Virtio Mouse"`), the driver will refuse to start.
-
-### `hidtest` cannot open the device
-
-- Some HID devices cannot be opened with `GENERIC_WRITE`; try running without `--led`.
-- If `--led` fails, try `--led-hidd` (it uses a different HID output path).
-- If `hidtest` fails to read:
-  - Confirm the device is present and enabled in Device Manager.
-  - Try selecting the other collection (keyboard vs mouse).
-
-### Input works in Windows but `hidtest` prints nothing
-
-- Verify you are not testing PS/2 input unintentionally; after the driver works, re-run QEMU with `-machine ... ,i8042=off` to force virtio-only input.
+- [`drivers/windows7/virtio-input/docs/troubleshooting.md`](../../docs/troubleshooting.md)
