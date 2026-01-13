@@ -60,7 +60,8 @@ For the consolidated virtio-input end-to-end validation plan (device model + dri
     - Enable with `--test-input-tablet-events` (or env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_TABLET_EVENTS=1`).
     - The selftest opens the virtio tablet HID interface and reads input reports via `ReadFile` (no window focus required).
     - Expected injected sequence (used by the host harness via QMP `input-send-event`):
-      - absolute move to (10000,20000)
+      - absolute move to (0,0) (reset)
+      - absolute move to (10000,20000) (target)
       - left click down + up
     - When enabled, the test emits a readiness marker (`AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|READY`), then waits
       (with a hard timeout) for host-injected events and emits `...|PASS|...` or `...|FAIL|reason=...|...`.
