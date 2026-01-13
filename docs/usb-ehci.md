@@ -341,7 +341,7 @@ Minimum set of causes implemented:
 
 - `USBINT` (transaction completion; typically IOC-driven)
 - `USBERRINT` (transaction error)
-- `PORT_CHANGE` (root hub port change bits)
+- `PCD` (Port Change Detect; root hub port change bits)
 - `IAA` (interrupt on async advance; if the doorbell is implemented)
 
 Deassertion occurs once the guest clears the relevant `USBSTS` bits (W1C) and no other enabled
