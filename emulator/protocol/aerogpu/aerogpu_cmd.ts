@@ -1508,7 +1508,14 @@ export class AerogpuCmdWriter {
     this.bindShadersWithGs(vs, 0, ps, cs);
   }
 
-  bindShadersEx(vs: AerogpuHandle, ps: AerogpuHandle, cs: AerogpuHandle, gs: AerogpuHandle, hs: AerogpuHandle, ds: AerogpuHandle): void {
+  bindShadersEx(
+    vs: AerogpuHandle,
+    ps: AerogpuHandle,
+    cs: AerogpuHandle,
+    gs: AerogpuHandle,
+    hs: AerogpuHandle,
+    ds: AerogpuHandle,
+  ): void {
     const base = this.appendRaw(AerogpuCmdOpcode.BindShaders, AEROGPU_CMD_BIND_SHADERS_SIZE + 3 * 4);
     this.view.setUint32(base + 8, vs, true);
     this.view.setUint32(base + 12, ps, true);
@@ -1519,7 +1526,12 @@ export class AerogpuCmdWriter {
     this.view.setUint32(base + AEROGPU_CMD_BIND_SHADERS_SIZE + 8, ds, true);
   }
 
-  setShaderConstantsF(stage: AerogpuShaderStage, startRegister: number, data: Float32Array | readonly number[]): void {
+  setShaderConstantsF(
+    stage: AerogpuShaderStage,
+    startRegister: number,
+    data: Float32Array | readonly number[],
+    stageEx?: AerogpuShaderStageEx,
+  ): void {
     if (data.length % 4 !== 0) {
       throw new Error(`SET_SHADER_CONSTANTS_F data must be float4-aligned (got ${data.length} floats)`);
     }
@@ -1527,7 +1539,13 @@ export class AerogpuCmdWriter {
     const vec4Count = data.length / 4;
     const unpadded = AEROGPU_CMD_SET_SHADER_CONSTANTS_F_SIZE + data.length * 4;
     const base = this.appendRaw(AerogpuCmdOpcode.SetShaderConstantsF, unpadded);
-    this.view.setUint32(base + 8, stage, true);
+    if (stageEx !== undefined) {
+      this.view.setUint32(base + 8, AerogpuShaderStage.Compute, true);
+      this.view.setUint32(base + 20, stageEx, true);
+    } else {
+      this.view.setUint32(base + 8, stage, true);
+      this.view.setUint32(base + 20, 0, true);
+    }
     this.view.setUint32(base + 12, startRegister, true);
     this.view.setUint32(base + 16, vec4Count, true);
     for (let i = 0; i < data.length; i++) {
@@ -1700,9 +1718,15 @@ export class AerogpuCmdWriter {
     this.view.setUint32(base + 8, topology, true);
   }
 
-  setTexture(shaderStage: AerogpuShaderStage, slot: number, texture: AerogpuHandle): void {
+  setTexture(shaderStage: AerogpuShaderStage, slot: number, texture: AerogpuHandle, stageEx?: AerogpuShaderStageEx): void {
     const base = this.appendRaw(AerogpuCmdOpcode.SetTexture, AEROGPU_CMD_SET_TEXTURE_SIZE);
-    this.view.setUint32(base + 8, shaderStage, true);
+    if (stageEx !== undefined) {
+      this.view.setUint32(base + 8, AerogpuShaderStage.Compute, true);
+      this.view.setUint32(base + 20, stageEx, true);
+    } else {
+      this.view.setUint32(base + 8, shaderStage, true);
+      this.view.setUint32(base + 20, 0, true);
+    }
     this.view.setUint32(base + 12, slot, true);
     this.view.setUint32(base + 16, texture, true);
   }
@@ -1752,10 +1776,21 @@ export class AerogpuCmdWriter {
     this.view.setUint32(base + 8, samplerHandle, true);
   }
 
-  setSamplers(shaderStage: AerogpuShaderStage, startSlot: number, handles: ArrayLike<AerogpuHandle>): void {
+  setSamplers(
+    shaderStage: AerogpuShaderStage,
+    startSlot: number,
+    handles: ArrayLike<AerogpuHandle>,
+    stageEx?: AerogpuShaderStageEx,
+  ): void {
     const unpadded = AEROGPU_CMD_SET_SAMPLERS_SIZE + handles.length * 4;
     const base = this.appendRaw(AerogpuCmdOpcode.SetSamplers, unpadded);
-    this.view.setUint32(base + 8, shaderStage, true);
+    if (stageEx !== undefined) {
+      this.view.setUint32(base + 8, AerogpuShaderStage.Compute, true);
+      this.view.setUint32(base + 20, stageEx, true);
+    } else {
+      this.view.setUint32(base + 8, shaderStage, true);
+      this.view.setUint32(base + 20, 0, true);
+    }
     this.view.setUint32(base + 12, startSlot, true);
     this.view.setUint32(base + 16, handles.length, true);
     for (let i = 0; i < handles.length; i++) {
@@ -1788,10 +1823,17 @@ export class AerogpuCmdWriter {
     shaderStage: AerogpuShaderStage,
     startSlot: number,
     bindings: readonly AerogpuConstantBufferBinding[],
+    stageEx?: AerogpuShaderStageEx,
   ): void {
     const unpadded = AEROGPU_CMD_SET_CONSTANT_BUFFERS_SIZE + bindings.length * 16;
     const base = this.appendRaw(AerogpuCmdOpcode.SetConstantBuffers, unpadded);
-    this.view.setUint32(base + 8, shaderStage, true);
+    if (stageEx !== undefined) {
+      this.view.setUint32(base + 8, AerogpuShaderStage.Compute, true);
+      this.view.setUint32(base + 20, stageEx, true);
+    } else {
+      this.view.setUint32(base + 8, shaderStage, true);
+      this.view.setUint32(base + 20, 0, true);
+    }
     this.view.setUint32(base + 12, startSlot, true);
     this.view.setUint32(base + 16, bindings.length, true);
     for (let i = 0; i < bindings.length; i++) {
