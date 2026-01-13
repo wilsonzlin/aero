@@ -113,6 +113,12 @@ class WebGl2Backend {
   }
 
   async screenshotRgba() {
+    // Smoke-test screenshot: read back the *rendered output*.
+    //
+    // This worker is a standalone GPU backend smoke test (WebGPU vs WebGL2) and
+    // intentionally captures "what was rendered" (default framebuffer) for hashing.
+    // It is not the same contract as the runtime `Presenter.screenshot()` API, which
+    // is defined as a deterministic readback of the source framebuffer bytes.
     const gl = this.gl;
     const rowBytes = this.width * 4;
     const raw = new Uint8Array(this.width * this.height * 4);
@@ -369,6 +375,12 @@ class WebGpuBackend {
       throw new Error('No rendered frame available (present_test_pattern not called yet)');
     }
 
+    // Smoke-test screenshot: read back the *rendered output*.
+    //
+    // We render the test pattern into an internal `readbackTexture` so we can copy it
+    // into a mappable buffer. This captures the same pixels as the canvas output.
+    // It is not the same contract as the runtime `Presenter.screenshot()` API, which
+    // is defined as a deterministic readback of the source framebuffer bytes.
     const bytesPerPixel = 4;
     const unpaddedBytesPerRow = this.width * bytesPerPixel;
     const paddedBytesPerRow = Math.ceil(unpaddedBytesPerRow / 256) * 256;

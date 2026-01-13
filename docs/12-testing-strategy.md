@@ -524,7 +524,7 @@ The smoke test does:
 
 - create a canvas and transfer it to the worker (`OffscreenCanvas`)
 - `present_test_pattern` (renders a deterministic quadrant pattern)
-- `request_screenshot` (GPU readback into an RGBA buffer)
+- `request_screenshot` (GPU readback of the rendered output into an RGBA buffer)
 - SHA-256 hash compare against an expected value
 
 WebGPU is treated as **optional** (gated on capability detection); the forced WebGL2 fallback smoke test is **required** so CI continues to validate the fallback path even if headless WebGPU is unavailable.
