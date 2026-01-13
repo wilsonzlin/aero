@@ -88,6 +88,51 @@ The BIOS uses the following **drive numbers** in `DL`:
 - Keyboard input:
   - Push keys into the BIOS buffer via [`Bios::push_key`] (`(scan_code << 8) | ascii`).
 
+### Boot drive numbering (DL) + CD-ROM/ISO boot (El Torito)
+
+The BIOS boot drive number is configured via [`BiosConfig::boot_drive`] and is placed in `DL` when
+firmware transfers control to the bootloader (both during POST and via INT 19h).
+
+Boot drive numbering follows the conventional PC/BIOS ranges:
+
+- `DL=0x80` — first fixed disk (**HDD0**)
+- `DL=0xE0` — first CD-ROM drive (**CD0**; El Torito)
+
+#### CD boot expectations (no-emulation + EDD)
+
+For CD/ISO boots Aero expects an **El Torito _no-emulation_** boot entry. In no-emulation mode, the
+boot image is expected to use **INT 13h Extensions / EDD** rather than CHS reads.
+
+When `DL` is in the CD-ROM range (`0xE0..=0xEF`), Aero’s INT 13h implementation supports:
+
+- `AH=41h` — check extensions present
+- `AH=42h` — extended read (Disk Address Packet)
+- `AH=48h` — extended get drive parameters (must report `bytes_per_sector = 2048`)
+
+For CD drives, these EDD functions operate in **2048-byte logical blocks** (i.e. the DAP `lba` and
+`count` are in units of 2048-byte sectors, not 512-byte sectors). Internally, the firmware-side
+[`BlockDevice`] interface remains 512-byte based; the BIOS translates by mapping ISO LBA `n` to
+`BlockDevice` LBA `n * 4`.
+
+CHS functions like `AH=02h` (read sectors) are 512-byte/CHS-oriented and are not expected to work
+for CD drives in Aero BIOS; the EDD path is the compatibility surface.
+
+#### VM integration note (wiring a disk vs an ISO)
+
+[`Bios::post`] and [`Bios::dispatch_interrupt`] take a single `&mut dyn BlockDevice`. This BIOS
+models **exactly one** INT 13h “boot device” at a time: the embedding VM is responsible for passing
+the correct `BlockDevice` backend depending on the configured `boot_drive`.
+
+- If booting from HDD (`boot_drive = 0x80`), pass the HDD backend (512-byte sectors).
+- If booting from CD (`boot_drive = 0xE0`), pass the ISO backend and expose CD semantics via EDD
+  (`AH=41/42/48`, `bytes_per_sector=2048`). The ISO backend should be exposed as **raw ISO bytes**
+  addressable in 512-byte chunks (i.e. `read_sector(lba)` reads at `lba * 512`); BIOS handles the
+  2048-byte sector translation.
+
+For the canonical Windows 7 topology (AHCI HDD + IDE/ATAPI CD-ROM) and the CD-first boot/install
+flow, see [`docs/05-storage-topology-win7.md`](../../docs/05-storage-topology-win7.md).
+For more BIOS/INT 13h background, see [`docs/09-bios-firmware.md`](../../docs/09-bios-firmware.md).
+
 In the canonical full-system VM stack, [`aero_machine::Machine`](../aero-machine/src/lib.rs)
 handles this automatically by dispatching BIOS interrupts when Tier-0 reports a `BiosInterrupt`
 exit.
