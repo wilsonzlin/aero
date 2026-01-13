@@ -6,6 +6,17 @@
 //!
 //! The host backend is intentionally limited to "safe" user-mode instructions and does not attempt
 //! to cover privileged instructions, system registers, or architecturally-undefined behaviour.
+//!
+//! ## Environment variables
+//!
+//! When running via [`run_from_env`], the following environment variables are recognised:
+//!
+//! - `AERO_CONFORMANCE_CASES` (default: `512`): total number of generated test cases to execute.
+//! - `AERO_CONFORMANCE_SEED` (default: `0x52c6_71d9_a4f2_31b9`): RNG seed for deterministic runs.
+//! - `AERO_CONFORMANCE_FILTER` (optional): only run templates whose `name` or `coverage_key`
+//!   contains this substring (case-insensitive).
+//! - `AERO_CONFORMANCE_REPORT_PATH` (optional): write a JSON conformance report to this path
+//!   (on first failure and again at the end of the run).
 
 mod aero;
 mod corpus;
@@ -71,9 +82,7 @@ pub fn run_from_env() -> Result<ConformanceReport, String> {
         .unwrap_or(0x_52c6_71d9_a4f2_31b9);
     let report_path =
         std::env::var_os("AERO_CONFORMANCE_REPORT_PATH").map(std::path::PathBuf::from);
-
-    let report = run(cases, seed, report_path.as_deref())?;
-    Ok(report)
+    run(cases, seed, report_path.as_deref())
 }
 
 fn parse_cases_env(input: &str) -> Option<usize> {
@@ -138,9 +147,9 @@ pub fn run(
     let memory_fault_signal = detect_memory_fault_signal(&mut reference, &templates);
     let mut aero = aero::AeroBackend::new(memory_fault_signal);
 
-    let mut rng = corpus::XorShift64::new(seed);
-    let mut report = ConformanceReport::new(cases);
     let mem_base = reference.memory_base();
+    let mut rng = corpus::XorShift64::new(seed);
+    let mut report = ConformanceReport::new_for_templates(cases, &templates);
 
     for (case_idx, template) in templates.iter().cycle().take(cases).enumerate() {
         let test_case = TestCase::generate(case_idx, template, &mut rng, mem_base);
@@ -192,7 +201,7 @@ fn templates_for_run() -> Result<Vec<InstructionTemplate>, String> {
 
     let filtered: Vec<InstructionTemplate> = templates
         .into_iter()
-        .filter(|t| template_matches_filter(t, &terms, &coverage_keys))
+        .filter(|t| template_matches_filter(t, &terms))
         .collect();
 
     if filtered.is_empty() {
@@ -200,7 +209,8 @@ fn templates_for_run() -> Result<Vec<InstructionTemplate>, String> {
         return Err(format!(
             "AERO_CONFORMANCE_FILTER={filter:?} matched 0 templates.\n\
 known coverage_key values:\n  - {keys}\n\
-hint: terms that match a coverage_key select that coverage_key exactly; use `name:<substring>` to match template names."
+hint: filter terms match substrings in template name or coverage_key.\n\
+      use `key:<coverage_key>` to match a coverage_key exactly, or `name:<substring>` to match template names only."
         ));
     }
 
@@ -216,15 +226,10 @@ fn parse_filter_terms(filter: &str) -> Vec<String> {
         .collect()
 }
 
-fn template_matches_filter(
-    template: &InstructionTemplate,
-    terms: &[String],
-    coverage_keys: &std::collections::BTreeSet<String>,
-) -> bool {
+fn template_matches_filter(template: &InstructionTemplate, terms: &[String]) -> bool {
     let name = template.name.to_ascii_lowercase();
     let coverage_key = template.coverage_key.to_ascii_lowercase();
-    // If a filter term matches a known coverage key, interpret it as a coverage-key selector.
-    // Otherwise, treat it as a substring match on the template name.
+    // Default behaviour: substring match against template name or coverage_key (case-insensitive).
     //
     // Use `key:<coverage_key>` or `name:<substring>` to disambiguate explicitly.
     terms.iter().any(|term| {
@@ -247,13 +252,7 @@ fn template_matches_filter(
         match mode {
             "key" => coverage_key == term,
             "name" => name.contains(term),
-            _ => {
-                if coverage_keys.contains(term) {
-                    coverage_key == term
-                } else {
-                    name.contains(term)
-                }
-            }
+            _ => name.contains(term) || coverage_key.contains(term),
         }
     })
 }
@@ -353,8 +352,10 @@ mod tests {
         );
         assert!(!filtered.is_empty());
         for template in filtered {
+            let name = template.name.to_ascii_lowercase();
+            let coverage_key = template.coverage_key.to_ascii_lowercase();
             assert!(
-                template.coverage_key.eq_ignore_ascii_case("add"),
+                name.contains("add") || coverage_key.contains("add"),
                 "template unexpectedly matched filter: {:?} (coverage_key={})",
                 template.name,
                 template.coverage_key

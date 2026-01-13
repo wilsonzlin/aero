@@ -16,14 +16,14 @@ pub struct ConformanceReport {
 
 impl ConformanceReport {
     pub fn new(total_cases: usize) -> Self {
-        let expected: Vec<String> = {
-            let mut keys = BTreeSet::new();
-            for template in crate::corpus::templates() {
-                keys.insert(template.coverage_key.to_string());
-            }
-            keys.into_iter().collect()
-        };
+        Self::new_for_templates(total_cases, &crate::corpus::templates())
+    }
 
+    pub fn new_for_templates(total_cases: usize, templates: &[InstructionTemplate]) -> Self {
+        Self::new_with_expected(total_cases, expected_coverage_keys_for_templates(templates))
+    }
+
+    pub fn new_with_expected(total_cases: usize, expected: Vec<String>) -> Self {
         Self {
             total_cases,
             failures: 0,
@@ -61,6 +61,14 @@ impl ConformanceReport {
         let contents = serde_json::to_string_pretty(self).map_err(io::Error::other)?;
         std::fs::write(path, contents)
     }
+}
+
+fn expected_coverage_keys_for_templates(templates: &[InstructionTemplate]) -> Vec<String> {
+    let mut keys = BTreeSet::new();
+    for template in templates {
+        keys.insert(template.coverage_key.to_string());
+    }
+    keys.into_iter().collect()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -144,12 +152,14 @@ pub fn format_failure(
     let effective_rip = case.init.rip;
     let decoded = decode_instruction_iced(bytes, effective_rip);
     let aero_decoded = decode_instruction_aero(bytes, effective_rip);
+    let failure_kind = failure_kind(template, expected, actual);
 
     let _ = writeln!(
         &mut out,
         "conformance mismatch (case {}): {} (coverage_key={})",
         case.case_idx, template.name, template.coverage_key
     );
+    let _ = writeln!(&mut out, "template_kind: {:?}", template.kind);
     let _ = writeln!(&mut out, "bytes: {byte_hex}");
     let _ = writeln!(&mut out, "effective_rip: {effective_rip:#x}");
     if template.mem_compare_len > 0 {
@@ -223,7 +233,35 @@ pub fn format_failure(
         );
     }
 
+    let _ = writeln!(
+        &mut out,
+        "FAIL kind={} case={} template_kind={:?} coverage_key={} name=\"{}\"",
+        failure_kind, case.case_idx, template.kind, template.coverage_key, template.name
+    );
     out
+}
+
+fn failure_kind(
+    template: &InstructionTemplate,
+    expected: &ExecOutcome,
+    actual: &ExecOutcome,
+) -> &'static str {
+    if expected.fault != actual.fault {
+        return "fault";
+    }
+    if expected.fault.is_some() {
+        // Should be unreachable: callers only invoke `format_failure` on mismatches.
+        return "fault";
+    }
+    if !states_equal(&expected.state, &actual.state, template.flags_mask) {
+        return "state";
+    }
+    if template.mem_compare_len > 0
+        && !memory_equal(&expected.memory, &actual.memory, template.mem_compare_len)
+    {
+        return "memory";
+    }
+    "unknown"
 }
 
 fn decode_instruction_iced(bytes: &[u8], ip: u64) -> Option<String> {
@@ -415,30 +453,128 @@ fn format_memory_dump(out: &mut String, label: &str, memory: &[u8], base: u64, l
 }
 
 fn format_memory_diff(out: &mut String, expected: &[u8], actual: &[u8], base: u64, len: usize) {
-    let expected = expected.get(..len).unwrap_or(expected);
-    let actual = actual.get(..len).unwrap_or(actual);
-    let compared_len = expected.len().min(actual.len());
+    let exp_len = expected.len().min(len);
+    let act_len = actual.len().min(len);
+    let compare_len = exp_len.min(act_len);
+    let expected = &expected[..exp_len];
+    let actual = &actual[..act_len];
 
     let mut diffs = Vec::new();
-    for (idx, (&exp, &act)) in expected.iter().zip(actual.iter()).enumerate() {
+    for (idx, (&exp, &act)) in expected[..compare_len]
+        .iter()
+        .zip(actual[..compare_len].iter())
+        .enumerate()
+    {
         if exp != act {
             diffs.push((idx, exp, act));
         }
     }
 
-    if diffs.is_empty() {
+    let len_mismatch = exp_len != act_len;
+    if diffs.is_empty() && !len_mismatch {
         return;
     }
 
+    let len_note = if len_mismatch {
+        format!(" (len mismatch: expected={} actual={})", exp_len, act_len)
+    } else {
+        String::new()
+    };
+
     let _ = writeln!(
         out,
-        "memory diff (compared {compared_len} bytes; showing first 16 mismatches):"
+        "memory diff (compared {compare_len} bytes; showing first 16 mismatches):{len_note}"
     );
-    for (idx, exp, act) in diffs.into_iter().take(16) {
+    for (idx, exp, act) in diffs.iter().copied().take(16) {
         let addr = base.wrapping_add(idx as u64);
         let _ = writeln!(
             out,
-            "  +0x{idx:02x} ({addr:#018x}): expected={exp:02x} actual={act:02x}"
+            "  +0x{idx:04x} ({addr:#018x}): expected={exp:02x} actual={act:02x}"
         );
+    }
+
+    if len_mismatch {
+        let idx = compare_len;
+        let addr = base.wrapping_add(idx as u64);
+        let exp = expected.get(idx).copied();
+        let act = actual.get(idx).copied();
+        let _ = writeln!(
+            out,
+            "  +0x{idx:04x} ({addr:#018x}): expected={} actual={}",
+            exp.map(|b| format!("{b:02x}"))
+                .unwrap_or_else(|| "<eof>".to_string()),
+            act.map(|b| format!("{b:02x}"))
+                .unwrap_or_else(|| "<eof>".to_string()),
+        );
+    }
+
+    let first_diff_idx = diffs
+        .first()
+        .map(|(idx, _, _)| *idx)
+        .unwrap_or(compare_len);
+    format_memory_window(out, expected, actual, base, len, first_diff_idx);
+}
+
+fn format_memory_window(
+    out: &mut String,
+    expected: &[u8],
+    actual: &[u8],
+    base: u64,
+    len: usize,
+    first_diff_idx: usize,
+) {
+    let exp = expected.get(first_diff_idx).copied();
+    let act = actual.get(first_diff_idx).copied();
+    let addr = base.wrapping_add(first_diff_idx as u64);
+    let _ = writeln!(
+        out,
+        "memory window around first mismatch at +0x{first_diff_idx:04x} ({addr:#018x}) (expected={} actual={}):",
+        exp.map(|b| format!("{b:02x}"))
+            .unwrap_or_else(|| "<eof>".to_string()),
+        act.map(|b| format!("{b:02x}"))
+            .unwrap_or_else(|| "<eof>".to_string()),
+    );
+
+    // Show up to 32 bytes (two 16-byte lines) around the first mismatch.
+    let window = 32usize;
+    let row = 16usize;
+
+    let mut start = first_diff_idx.saturating_sub(window / 2);
+    start -= start % row;
+    let end = (start + window).min(len);
+
+    for row_start in (start..end).step_by(row) {
+        let addr = base.wrapping_add(row_start as u64);
+        let _ = write!(out, "  +0x{row_start:04x} ({addr:#018x}) exp:");
+        for i in row_start..(row_start + row) {
+            if i >= end {
+                let _ = write!(out, "   ");
+                continue;
+            }
+            match expected.get(i).copied() {
+                Some(b) => {
+                    let _ = write!(out, " {b:02x}");
+                }
+                None => {
+                    let _ = write!(out, " --");
+                }
+            }
+        }
+        let _ = write!(out, " | act:");
+        for i in row_start..(row_start + row) {
+            if i >= end {
+                let _ = write!(out, "   ");
+                continue;
+            }
+            match actual.get(i).copied() {
+                Some(b) => {
+                    let _ = write!(out, " {b:02x}");
+                }
+                None => {
+                    let _ = write!(out, " --");
+                }
+            }
+        }
+        let _ = writeln!(out);
     }
 }
