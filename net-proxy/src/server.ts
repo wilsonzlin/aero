@@ -38,6 +38,8 @@ type MetricsErrorKind = "denied" | "error";
 interface ProxyServerMetrics {
   connectionActiveInc: (proto: MetricsProto) => void;
   connectionActiveDec: (proto: MetricsProto) => void;
+  tcpMuxStreamsActiveInc: () => void;
+  tcpMuxStreamsActiveDec: (delta?: number) => void;
   udpBindingsActiveInc: () => void;
   udpBindingsActiveDec: (delta?: number) => void;
   addBytesIn: (proto: MetricsProto, bytes: number) => void;
@@ -67,6 +69,7 @@ function createProxyServerMetrics(): ProxyServerMetrics {
     error: 0n
   };
   let udpBindingsActive = 0;
+  let tcpMuxStreamsActive = 0;
 
   const clampNonNegative = (n: number): number => (n < 0 ? 0 : n);
 
@@ -78,6 +81,11 @@ function createProxyServerMetrics(): ProxyServerMetrics {
     lines.push(`net_proxy_connections_active{proto="tcp"} ${connectionsActive.tcp}`);
     lines.push(`net_proxy_connections_active{proto="tcp_mux"} ${connectionsActive.tcp_mux}`);
     lines.push(`net_proxy_connections_active{proto="udp"} ${connectionsActive.udp}`);
+
+    lines.push("# HELP net_proxy_tcp_connections_active Active TCP relay connections (outbound TCP sockets).");
+    lines.push("# TYPE net_proxy_tcp_connections_active gauge");
+    lines.push(`net_proxy_tcp_connections_active{proto="tcp"} ${connectionsActive.tcp}`);
+    lines.push(`net_proxy_tcp_connections_active{proto="tcp_mux"} ${tcpMuxStreamsActive}`);
 
     lines.push("# HELP net_proxy_udp_bindings_active Active UDP bindings in multiplexed /udp mode.");
     lines.push("# TYPE net_proxy_udp_bindings_active gauge");
@@ -109,6 +117,12 @@ function createProxyServerMetrics(): ProxyServerMetrics {
     },
     connectionActiveDec: (proto) => {
       connectionsActive[proto] = clampNonNegative(connectionsActive[proto] - 1);
+    },
+    tcpMuxStreamsActiveInc: () => {
+      tcpMuxStreamsActive = clampNonNegative(tcpMuxStreamsActive + 1);
+    },
+    tcpMuxStreamsActiveDec: (delta = 1) => {
+      tcpMuxStreamsActive = clampNonNegative(tcpMuxStreamsActive - delta);
     },
     udpBindingsActiveInc: () => {
       udpBindingsActive = clampNonNegative(udpBindingsActive + 1);
@@ -801,6 +815,7 @@ function handleTcpMuxRelay(
       clearTimeout(stream.connectTimer);
     }
     if (stream.socket) {
+      metrics.tcpMuxStreamsActiveDec();
       stream.socket.removeAllListeners();
       stream.socket.destroy();
     }
@@ -928,6 +943,7 @@ function handleTcpMuxRelay(
         allowHalfOpen: true
       });
       tcpSocket.setNoDelay(true);
+      metrics.tcpMuxStreamsActiveInc();
 
       current.socket = tcpSocket;
       if (pausedForWsBackpressure) {
@@ -980,6 +996,7 @@ function handleTcpMuxRelay(
       });
 
       tcpSocket.on("close", () => {
+        metrics.tcpMuxStreamsActiveDec();
         streams.delete(current.id);
         if (current.connectTimer) {
           clearTimeout(current.connectTimer);

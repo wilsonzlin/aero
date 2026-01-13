@@ -27,6 +27,7 @@ test("proxy exposes /metrics with expected metric names", async () => {
 
     for (const name of [
       "net_proxy_connections_active",
+      "net_proxy_tcp_connections_active",
       "net_proxy_udp_bindings_active",
       "net_proxy_bytes_in_total",
       "net_proxy_bytes_out_total",
@@ -38,4 +39,3 @@ test("proxy exposes /metrics with expected metric names", async () => {
     await proxy.close();
   }
 });
-
