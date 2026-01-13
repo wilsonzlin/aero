@@ -2650,9 +2650,7 @@ fn opfs_io_error_to_js(operation: &str, path: &str, err: std::io::Error) -> JsVa
 
 #[wasm_bindgen]
 impl Machine {
-    #[wasm_bindgen(constructor)]
-    pub fn new(ram_size_bytes: u32) -> Result<Self, JsValue> {
-        let cfg = aero_machine::MachineConfig::browser_defaults(ram_size_bytes as u64);
+    fn new_with_native_config(cfg: aero_machine::MachineConfig) -> Result<Self, JsValue> {
         let inner =
             aero_machine::Machine::new(cfg).map_err(|e| JsValue::from_str(&e.to_string()))?;
         Ok(Self {
@@ -2660,6 +2658,30 @@ impl Machine {
             mouse_buttons: 0,
             mouse_buttons_known: true,
         })
+    }
+
+    #[wasm_bindgen(constructor)]
+    pub fn new(ram_size_bytes: u32) -> Result<Self, JsValue> {
+        let cfg = aero_machine::MachineConfig::browser_defaults(ram_size_bytes as u64);
+        Self::new_with_native_config(cfg)
+    }
+
+    /// Construct a machine with explicit graphics configuration.
+    ///
+    /// `enable_aerogpu` is forwarded to [`aero_machine::MachineConfig::enable_aerogpu`].
+    ///
+    /// When `enable_aerogpu` is `true`, VGA is disabled by default to avoid multiple scanout paths.
+    /// Pass `enable_vga=true` explicitly to keep VGA enabled.
+    #[wasm_bindgen]
+    pub fn new_with_config(
+        ram_size_bytes: u32,
+        enable_aerogpu: bool,
+        enable_vga: Option<bool>,
+    ) -> Result<Self, JsValue> {
+        let mut cfg = aero_machine::MachineConfig::browser_defaults(ram_size_bytes as u64);
+        cfg.enable_aerogpu = enable_aerogpu;
+        cfg.enable_vga = enable_vga.unwrap_or(!enable_aerogpu);
+        Self::new_with_native_config(cfg)
     }
 
     pub fn reset(&mut self) {

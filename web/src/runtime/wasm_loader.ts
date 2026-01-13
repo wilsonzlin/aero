@@ -22,6 +22,251 @@ export type SharedRingBufferHandle = {
     free(): void;
 };
 
+/**
+ * Canonical full-system VM handle (`aero_machine::Machine`).
+ *
+ * This is the browser-facing, wasm-bindgen-exported machine wrapper from `crates/aero-wasm`.
+ */
+export type MachineHandle = {
+    reset(): void;
+    set_disk_image(bytes: Uint8Array): void;
+    /**
+     * Open (or create) an OPFS-backed disk image and attach it as the machine's canonical disk.
+     *
+     * This enables large disk images without loading the entire contents into RAM.
+     *
+     * Optional for older WASM builds.
+     */
+    set_disk_opfs?(path: string, create: boolean, sizeBytes: bigint): Promise<void>;
+    /**
+     * Open an existing OPFS-backed disk image (using the file's current size) and attach it as
+     * the machine's canonical disk.
+     *
+     * Optional for older WASM builds.
+     */
+    set_disk_opfs_existing?(path: string): Promise<void>;
+    run_slice(maxInsts: number): { kind: number; executed: number; detail: string; free(): void };
+    serial_output(): Uint8Array;
+    /**
+     * Returns the number of bytes currently buffered in the serial output log.
+     *
+     * Optional for older WASM builds.
+     */
+    serial_output_len?(): number;
+
+    /**
+     * Unified display scanout (boot display + WDDM / modern scanout).
+     *
+     * Prefer these APIs over the legacy {@link vga_present} exports when available.
+     *
+     * Call {@link display_present} before reading the framebuffer pointer/length or before sampling
+     * {@link display_width}/{@link display_height} after the guest changes display modes.
+     *
+     * Optional for older WASM builds.
+     */
+    display_present?(): void;
+    /** Current display output width in pixels (0 when the display is not present). */
+    display_width?(): number;
+    /** Current display output height in pixels (0 when the display is not present). */
+    display_height?(): number;
+    /** Byte stride of a single scanline in the returned framebuffer (RGBA8888). */
+    display_stride_bytes?(): number;
+    /**
+     * Pointer (byte offset) into WASM linear memory for the current display front buffer.
+     *
+     * The buffer is RGBA8888 (`width * height * 4` bytes). Pair with {@link display_framebuffer_len_bytes}.
+     */
+    display_framebuffer_ptr?(): number;
+    /** Length in bytes of the current display front buffer (RGBA8888). */
+    display_framebuffer_len_bytes?(): number;
+    /**
+     * Convenience helper: copy the framebuffer bytes into JS (RGBA8888).
+     *
+     * Slower than using {@link display_framebuffer_ptr} + {@link display_framebuffer_len_bytes}.
+     */
+    display_framebuffer_copy_rgba8888?(): Uint8Array;
+
+    /**
+     * VGA/SVGA scanout (BIOS text mode + VBE graphics).
+     *
+     * Call {@link vga_present} before reading the framebuffer pointer/length or before sampling
+     * {@link vga_width}/{@link vga_height} after the guest changes video modes.
+     *
+     * Optional for older WASM builds.
+     */
+    vga_present?(): void;
+    /** Current VGA output width in pixels (0 when VGA is not present). */
+    vga_width?(): number;
+    /** Current VGA output height in pixels (0 when VGA is not present). */
+    vga_height?(): number;
+    /** Byte stride of a single scanline in the returned framebuffer (RGBA8888, tightly packed). */
+    vga_stride_bytes?(): number;
+    /**
+     * Pointer (byte offset) into WASM linear memory for the current VGA front buffer.
+     *
+     * The buffer is RGBA8888 (`width * height * 4` bytes). Pair with {@link vga_framebuffer_len_bytes}.
+     */
+    vga_framebuffer_ptr?(): number;
+    /** Length in bytes of the current VGA front buffer (RGBA8888). */
+    vga_framebuffer_len_bytes?(): number;
+    /**
+     * Convenience helper: copy the framebuffer bytes into JS (RGBA8888).
+     *
+     * Slower than using {@link vga_framebuffer_ptr} + {@link vga_framebuffer_len_bytes}.
+     */
+    vga_framebuffer_copy_rgba8888?(): Uint8Array;
+    /**
+     * Legacy helper: copy the framebuffer bytes into JS (RGBA8888).
+     *
+     * Optional for older WASM builds.
+     */
+    vga_framebuffer_rgba8888_copy?(): Uint8Array | null;
+    inject_browser_key(code: string, pressed: boolean): void;
+    /**
+     * Inject up to 4 raw PS/2 Set-2 scancode bytes.
+     *
+     * Format matches `InputEventType.KeyScancode` (`web/src/input/event_queue.ts`):
+     * - `packed`: little-endian packed bytes (b0 in bits 0..7)
+     * - `len`: number of valid bytes (1..=4)
+     *
+     * Optional for older WASM builds.
+     */
+    inject_key_scancode_bytes?(packed: number, len: number): void;
+    /**
+     * Inject an arbitrary-length raw PS/2 Set-2 scancode byte sequence.
+     *
+     * Optional for older WASM builds.
+     */
+    inject_keyboard_bytes?(bytes: Uint8Array): void;
+    /**
+     * PS/2 mouse injection helpers (optional for older WASM builds).
+     */
+    inject_mouse_motion?(dx: number, dy: number, wheel: number): void;
+    /**
+     * Inject mouse motion using PS/2 coordinate conventions:
+     * - `dx`: positive is right
+     * - `dy`: positive is up (PS/2 convention)
+     * - `wheel`: positive is wheel up
+     *
+     * Optional for older WASM builds; prefer {@link inject_mouse_motion} when your input source
+     * uses browser-style +Y down (e.g. `MouseEvent.movementY`).
+     */
+    inject_ps2_mouse_motion?(dx: number, dy: number, wheel: number): void;
+    /**
+     * Inject a mouse button transition using DOM `MouseEvent.button` mapping:
+     * - `0`: left
+     * - `1`: middle
+     * - `2`: right
+     * - `3`: back
+     * - `4`: forward
+     *
+     * Tip: when available, prefer `api.MouseButton.Left/Middle/Right/Back/Forward` for a stable
+     * mapping reference.
+     */
+    inject_mouse_button?(button: number, pressed: boolean): void;
+    /**
+     * Set all mouse buttons at once using a bitmask matching DOM `MouseEvent.buttons`:
+     * - bit0 (`0x01`): left
+     * - bit1 (`0x02`): right
+     * - bit2 (`0x04`): middle
+     * - bit3 (`0x08`): back
+     * - bit4 (`0x10`): forward
+     *
+     * Tip: when available, prefer building masks by OR'ing `api.MouseButtons.Left/Right/Middle/Back/Forward`.
+     */
+    inject_mouse_buttons_mask?(mask: number): void;
+    /**
+     * Set mouse button state using PS/2 packet bit conventions (also matches DOM `MouseEvent.buttons`):
+     * - bit0 (`0x01`): left
+     * - bit1 (`0x02`): right
+     * - bit2 (`0x04`): middle
+     * - bit3 (`0x08`): back / side (only emitted if the guest enabled IntelliMouse Explorer, device ID `0x04`)
+     * - bit4 (`0x10`): forward / extra (same note as bit3)
+     *
+     * Optional for older WASM builds; prefer {@link inject_mouse_buttons_mask} (same mapping).
+     */
+    inject_ps2_mouse_buttons?(buttons: number): void;
+    inject_mouse_left?(pressed: boolean): void;
+    inject_mouse_right?(pressed: boolean): void;
+    inject_mouse_middle?(pressed: boolean): void;
+    inject_mouse_back?(pressed: boolean): void;
+    inject_mouse_forward?(pressed: boolean): void;
+    /**
+     * Attach/detach the canonical machine network backend via Aero IPC rings.
+     *
+     * Optional for older WASM builds.
+     */
+    attach_l2_tunnel_rings?(tx: SharedRingBufferHandle, rx: SharedRingBufferHandle): void;
+    attach_l2_tunnel_from_io_ipc_sab?(ioIpc: SharedArrayBuffer): void;
+    detach_network?(): void;
+    /**
+     * Legacy/alternate naming for attaching NET_TX/NET_RX rings.
+     *
+     * Optional for older WASM builds; prefer {@link attach_l2_tunnel_rings} when available.
+     */
+    attach_net_rings?(netTx: SharedRingBufferHandle, netRx: SharedRingBufferHandle): void;
+    /**
+     * Legacy/alternate naming for detaching the network backend.
+     *
+     * Optional for older WASM builds; prefer {@link detach_network} when available.
+     */
+    detach_net_rings?(): void;
+    /**
+     * Poll network devices and bridge frames to/from any attached network backend.
+     *
+     * Optional for older WASM builds.
+     */
+    poll_network?(): void;
+    /**
+     * Network backend statistics (if exposed by the WASM build).
+     *
+     * Optional for older WASM builds.
+     */
+    net_stats?():
+        | {
+              tx_pushed_frames: bigint;
+              tx_pushed_bytes?: bigint;
+              tx_dropped_oversize: bigint;
+              tx_dropped_oversize_bytes?: bigint;
+              tx_dropped_full: bigint;
+              tx_dropped_full_bytes?: bigint;
+              rx_popped_frames: bigint;
+              rx_popped_bytes?: bigint;
+              rx_dropped_oversize: bigint;
+              rx_dropped_oversize_bytes?: bigint;
+              rx_corrupt: bigint;
+          }
+        | null;
+    /**
+     * Optional for older WASM builds; canonical machine snapshot support.
+     */
+    snapshot_full?(): Uint8Array;
+    snapshot_dirty?(): Uint8Array;
+    restore_snapshot?(bytes: Uint8Array): void;
+    snapshot_full_to_opfs?(path: string): Promise<void>;
+    snapshot_dirty_to_opfs?(path: string): Promise<void>;
+    restore_snapshot_from_opfs?(path: string): Promise<void>;
+    /**
+     * Snapshot `DISKS` section support (disk overlay refs).
+     *
+     * Optional for older WASM builds.
+     */
+    set_ahci_port0_disk_overlay_ref?(base_image: string, overlay_image: string): void;
+    clear_ahci_port0_disk_overlay_ref?(): void;
+    set_ide_secondary_master_atapi_overlay_ref?(base_image: string, overlay_image: string): void;
+    clear_ide_secondary_master_atapi_overlay_ref?(): void;
+    set_ide_primary_master_ata_overlay_ref?(base_image: string, overlay_image: string): void;
+    clear_ide_primary_master_ata_overlay_ref?(): void;
+    take_restored_disk_overlays?():
+        | {
+              disk_id: number;
+              base_image: string;
+              overlay_image: string;
+          }[]
+        | null;
+    free(): void;
+};
+
 export type WasmEnum<K extends string> = Readonly<Record<K, number>>;
 
 // wasm-bindgen represents Rust enums as numeric discriminants in JS/TS type defs.
@@ -817,245 +1062,15 @@ export interface WasmApi {
      * Canonical full-system VM (`aero_machine::Machine`).
      */
     Machine: {
-        new (ramSizeBytes: number): {
-        reset(): void;
-        set_disk_image(bytes: Uint8Array): void;
+        new (ramSizeBytes: number): MachineHandle;
         /**
-         * Open (or create) an OPFS-backed disk image and attach it as the machine's canonical disk.
+         * Create a machine with explicit graphics configuration.
          *
-         * This enables large disk images without loading the entire contents into RAM.
+         * When `enableAerogpu=true`, VGA is disabled by default; pass `enableVga=true` explicitly to keep VGA enabled.
          *
          * Optional for older WASM builds.
          */
-        set_disk_opfs?(path: string, create: boolean, sizeBytes: bigint): Promise<void>;
-        /**
-         * Open an existing OPFS-backed disk image (using the file's current size) and attach it as
-         * the machine's canonical disk.
-         *
-         * Optional for older WASM builds.
-         */
-        set_disk_opfs_existing?(path: string): Promise<void>;
-        run_slice(maxInsts: number): { kind: number; executed: number; detail: string; free(): void };
-        serial_output(): Uint8Array;
-        /**
-         * Returns the number of bytes currently buffered in the serial output log.
-         *
-         * Optional for older WASM builds.
-         */
-        serial_output_len?(): number;
-
-        /**
-          * Unified display scanout (boot display + WDDM / modern scanout).
-          *
-          * Prefer these APIs over the legacy {@link vga_present} exports when available.
-          *
-          * Call {@link display_present} before reading the framebuffer pointer/length or before sampling
-          * {@link display_width}/{@link display_height} after the guest changes display modes.
-          *
-          * Optional for older WASM builds.
-          */
-         display_present?(): void;
-         /** Current display output width in pixels (0 when the display is not present). */
-         display_width?(): number;
-         /** Current display output height in pixels (0 when the display is not present). */
-         display_height?(): number;
-         /** Byte stride of a single scanline in the returned framebuffer (RGBA8888). */
-         display_stride_bytes?(): number;
-         /**
-          * Pointer (byte offset) into WASM linear memory for the current display front buffer.
-          *
-          * The buffer is RGBA8888 (`width * height * 4` bytes). Pair with {@link display_framebuffer_len_bytes}.
-          */
-         display_framebuffer_ptr?(): number;
-         /** Length in bytes of the current display front buffer (RGBA8888). */
-         display_framebuffer_len_bytes?(): number;
-         /**
-          * Convenience helper: copy the framebuffer bytes into JS (RGBA8888).
-          *
-          * Slower than using {@link display_framebuffer_ptr} + {@link display_framebuffer_len_bytes}.
-          */
-         display_framebuffer_copy_rgba8888?(): Uint8Array;
-
-         /**
-         * VGA/SVGA scanout (BIOS text mode + VBE graphics).
-         *
-         * Call {@link vga_present} before reading the framebuffer pointer/length or before sampling
-         * {@link vga_width}/{@link vga_height} after the guest changes video modes.
-         *
-         * Optional for older WASM builds.
-         */
-        vga_present?(): void;
-        /** Current VGA output width in pixels (0 when VGA is not present). */
-        vga_width?(): number;
-        /** Current VGA output height in pixels (0 when VGA is not present). */
-        vga_height?(): number;
-        /** Byte stride of a single scanline in the returned framebuffer (RGBA8888, tightly packed). */
-        vga_stride_bytes?(): number;
-        /**
-         * Pointer (byte offset) into WASM linear memory for the current VGA front buffer.
-         *
-         * The buffer is RGBA8888 (`width * height * 4` bytes). Pair with {@link vga_framebuffer_len_bytes}.
-         */
-        vga_framebuffer_ptr?(): number;
-        /** Length in bytes of the current VGA front buffer (RGBA8888). */
-        vga_framebuffer_len_bytes?(): number;
-        /**
-         * Convenience helper: copy the framebuffer bytes into JS (RGBA8888).
-         *
-         * Slower than using {@link vga_framebuffer_ptr} + {@link vga_framebuffer_len_bytes}.
-         */
-        vga_framebuffer_copy_rgba8888?(): Uint8Array;
-        /**
-         * Legacy helper: copy the framebuffer bytes into JS (RGBA8888).
-         *
-         * Optional for older WASM builds.
-         */
-        vga_framebuffer_rgba8888_copy?(): Uint8Array | null;
-        inject_browser_key(code: string, pressed: boolean): void;
-        /**
-         * Inject up to 4 raw PS/2 Set-2 scancode bytes.
-         *
-         * Format matches `InputEventType.KeyScancode` (`web/src/input/event_queue.ts`):
-         * - `packed`: little-endian packed bytes (b0 in bits 0..7)
-         * - `len`: number of valid bytes (1..=4)
-         *
-         * Optional for older WASM builds.
-         */
-        inject_key_scancode_bytes?(packed: number, len: number): void;
-        /**
-         * Inject an arbitrary-length raw PS/2 Set-2 scancode byte sequence.
-         *
-         * Optional for older WASM builds.
-         */
-        inject_keyboard_bytes?(bytes: Uint8Array): void;
-        /**
-         * PS/2 mouse injection helpers (optional for older WASM builds).
-         */
-        inject_mouse_motion?(dx: number, dy: number, wheel: number): void;
-        /**
-         * Inject mouse motion using PS/2 coordinate conventions:
-         * - `dx`: positive is right
-         * - `dy`: positive is up (PS/2 convention)
-         * - `wheel`: positive is wheel up
-         *
-         * Optional for older WASM builds; prefer {@link inject_mouse_motion} when your input source
-         * uses browser-style +Y down (e.g. `MouseEvent.movementY`).
-         */
-        inject_ps2_mouse_motion?(dx: number, dy: number, wheel: number): void;
-        /**
-         * Inject a mouse button transition using DOM `MouseEvent.button` mapping:
-         * - `0`: left
-         * - `1`: middle
-         * - `2`: right
-         * - `3`: back
-         * - `4`: forward
-         *
-         * Tip: when available, prefer `api.MouseButton.Left/Middle/Right/Back/Forward` for a stable
-         * mapping reference.
-         */
-        inject_mouse_button?(button: number, pressed: boolean): void;
-        /**
-         * Set all mouse buttons at once using a bitmask matching DOM `MouseEvent.buttons`:
-         * - bit0 (`0x01`): left
-         * - bit1 (`0x02`): right
-         * - bit2 (`0x04`): middle
-         * - bit3 (`0x08`): back
-         * - bit4 (`0x10`): forward
-         *
-         * Tip: when available, prefer building masks by OR'ing `api.MouseButtons.Left/Right/Middle/Back/Forward`.
-         */
-        inject_mouse_buttons_mask?(mask: number): void;
-        /**
-         * Set mouse button state using PS/2 packet bit conventions (also matches DOM `MouseEvent.buttons`):
-         * - bit0 (`0x01`): left
-         * - bit1 (`0x02`): right
-         * - bit2 (`0x04`): middle
-         * - bit3 (`0x08`): back / side (only emitted if the guest enabled IntelliMouse Explorer, device ID `0x04`)
-         * - bit4 (`0x10`): forward / extra (same note as bit3)
-         *
-         * Optional for older WASM builds; prefer {@link inject_mouse_buttons_mask} (same mapping).
-         */
-        inject_ps2_mouse_buttons?(buttons: number): void;
-        inject_mouse_left?(pressed: boolean): void;
-        inject_mouse_right?(pressed: boolean): void;
-        inject_mouse_middle?(pressed: boolean): void;
-        inject_mouse_back?(pressed: boolean): void;
-        inject_mouse_forward?(pressed: boolean): void;
-        /**
-         * Attach/detach the canonical machine network backend via Aero IPC rings.
-         *
-         * Optional for older WASM builds.
-         */
-        attach_l2_tunnel_rings?(tx: SharedRingBufferHandle, rx: SharedRingBufferHandle): void;
-        attach_l2_tunnel_from_io_ipc_sab?(ioIpc: SharedArrayBuffer): void;
-        detach_network?(): void;
-        /**
-         * Legacy/alternate naming for attaching NET_TX/NET_RX rings.
-         *
-         * Optional for older WASM builds; prefer {@link attach_l2_tunnel_rings} when available.
-         */
-        attach_net_rings?(netTx: SharedRingBufferHandle, netRx: SharedRingBufferHandle): void;
-        /**
-         * Legacy/alternate naming for detaching the network backend.
-         *
-         * Optional for older WASM builds; prefer {@link detach_network} when available.
-         */
-        detach_net_rings?(): void;
-        /**
-         * Poll network devices and bridge frames to/from any attached network backend.
-         *
-         * Optional for older WASM builds.
-         */
-        poll_network?(): void;
-        /**
-         * Network backend statistics (if exposed by the WASM build).
-         *
-         * Optional for older WASM builds.
-         */
-        net_stats?():
-            | {
-                   tx_pushed_frames: bigint;
-                   tx_pushed_bytes?: bigint;
-                   tx_dropped_oversize: bigint;
-                   tx_dropped_oversize_bytes?: bigint;
-                   tx_dropped_full: bigint;
-                   tx_dropped_full_bytes?: bigint;
-                   rx_popped_frames: bigint;
-                   rx_popped_bytes?: bigint;
-                   rx_dropped_oversize: bigint;
-                   rx_dropped_oversize_bytes?: bigint;
-                   rx_corrupt: bigint;
-               }
-            | null;
-        /**
-         * Optional for older WASM builds; canonical machine snapshot support.
-         */
-        snapshot_full?(): Uint8Array;
-        snapshot_dirty?(): Uint8Array;
-        restore_snapshot?(bytes: Uint8Array): void;
-        snapshot_full_to_opfs?(path: string): Promise<void>;
-        snapshot_dirty_to_opfs?(path: string): Promise<void>;
-        restore_snapshot_from_opfs?(path: string): Promise<void>;
-        /**
-         * Snapshot `DISKS` section support (disk overlay refs).
-         *
-         * Optional for older WASM builds.
-         */
-        set_ahci_port0_disk_overlay_ref?(base_image: string, overlay_image: string): void;
-        clear_ahci_port0_disk_overlay_ref?(): void;
-        set_ide_secondary_master_atapi_overlay_ref?(base_image: string, overlay_image: string): void;
-        clear_ide_secondary_master_atapi_overlay_ref?(): void;
-        set_ide_primary_master_ata_overlay_ref?(base_image: string, overlay_image: string): void;
-        clear_ide_primary_master_ata_overlay_ref?(): void;
-        take_restored_disk_overlays?():
-            | {
-                  disk_id: number;
-                  base_image: string;
-                  overlay_image: string;
-              }[]
-            | null;
-        free(): void;
-        };
+        new_with_config?: (ramSizeBytes: number, enableAerogpu: boolean, enableVga?: boolean) => MachineHandle;
         /**
          * Stable snapshot `disk_id` helpers for the canonical Win7 storage topology.
          *

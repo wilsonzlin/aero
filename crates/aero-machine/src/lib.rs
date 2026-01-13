@@ -174,8 +174,9 @@ pub struct MachineConfig {
     pub enable_vga: bool,
     /// Whether to expose the canonical AeroGPU PCI identity at `00:07.0` (`A3A0:0001`).
     ///
-    /// This is a PCI config-space exposure only (IDs/class/BAR definitions); the full AeroGPU MMIO
-    /// device model is intentionally out of scope for `aero_machine` today.
+    /// This is intended to back the canonical browser GPU path. Today this flag wires only the PCI
+    /// config-space identity (IDs/class/BAR definitions); the full AeroGPU MMIO device model may be
+    /// integrated later.
     ///
     /// Requires [`MachineConfig::enable_pc_platform`] and is mutually exclusive with
     /// [`MachineConfig::enable_vga`].

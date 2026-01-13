@@ -575,7 +575,8 @@ function renderMachinePanel(): HTMLElement {
     class: "mono",
     text:
       "Tip: click the canvas to focus + request pointer lock (keyboard/mouse will be forwarded to the guest). " +
-      "VBE mode test: add ?machineVbe=1280x720 to the URL to boot straight into a Bochs VBE 32bpp mode.",
+      "VBE mode test: add ?machineVbe=1280x720 to the URL to boot straight into a Bochs VBE 32bpp mode. " +
+      "AeroGPU config test: add ?machineAerogpu=1 to request the AeroGPU device model (VGA disabled by default).",
   });
   const canvas = el("canvas", { id: "canonical-machine-vga-canvas" }) as HTMLCanvasElement;
   canvas.tabIndex = 0;
@@ -757,9 +758,29 @@ function renderMachinePanel(): HTMLElement {
 
   wasmInitPromise
     .then(({ api, variant, wasmMemory }) => {
-      const machine = new api.Machine(2 * 1024 * 1024);
+      const ramSizeBytes = 2 * 1024 * 1024;
       const bootMessage = "Hello from aero-machine\\n";
       const search = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : new URLSearchParams();
+      const enableAerogpu = (() => {
+        const raw = search.get("machineAerogpu");
+        if (raw === null) return false;
+        const normalized = raw.trim().toLowerCase();
+        if (normalized === "" || normalized === "1" || normalized === "true") return true;
+        if (normalized === "0" || normalized === "false") return false;
+        return true;
+      })();
+      const enableVgaOverride = (() => {
+        const raw = search.get("machineVga");
+        if (raw === null) return undefined;
+        const normalized = raw.trim().toLowerCase();
+        if (normalized === "" || normalized === "1" || normalized === "true") return true;
+        if (normalized === "0" || normalized === "false") return false;
+        return true;
+      })();
+      const machine =
+        enableAerogpu && typeof api.Machine.new_with_config === "function"
+          ? api.Machine.new_with_config(ramSizeBytes, true, enableVgaOverride)
+          : new api.Machine(ramSizeBytes);
       const vbeRaw = search.get("machineVbe");
       let diskImage = buildSerialBootSector(bootMessage);
       if (vbeRaw) {
