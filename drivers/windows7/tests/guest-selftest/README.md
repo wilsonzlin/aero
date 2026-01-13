@@ -132,6 +132,8 @@ The host harness parses these markers from COM1 serial:
 ```
  AERO_VIRTIO_SELFTEST|START|...
  AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS
+ # Optional: virtio-blk interrupt diagnostics (from IOCTL query):
+ # AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS|irq_mode=intx/msi/msix|msix_config_vector=0x....|msix_queue_vector=0x....
  AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS|...
  AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|SKIP|flag_not_set
 
@@ -163,6 +165,10 @@ AERO_VIRTIO_SELFTEST|RESULT|FAIL
 ```
 
 Notes:
+- The selftest may also emit standalone IRQ diagnostic lines (informational) such as:
+  - `virtio-blk-irq|INFO|mode=...|message_count=...|msix_config_vector=...|msix_queue0_vector=...`
+  - `virtio-<dev>-irq|INFO/WARN|...`
+  The host harness mirrors these as `AERO_VIRTIO_WIN7_HOST|VIRTIO_*_IRQ_DIAG|...` markers for log scraping.
 - If no supported virtio-snd PCI function is detected (and no capture flags are set), the tool emits
   `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP` and `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|flag_not_set`.
 - The optional virtio-input event delivery marker is always emitted:

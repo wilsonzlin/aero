@@ -368,7 +368,7 @@ AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_LARGE|PASS/FAIL/INFO|large_ok=...|large_bytes=.
 
 This mirrors the guest's virtio-net marker fields when present and does not affect overall PASS/FAIL.
 
-The harnesses may also surface interrupt mode diagnostics when the guest selftest emits them:
+The harnesses may also surface interrupt mode diagnostics when the guest selftest emits them (informational; does not affect overall PASS/FAIL):
 
 - Standalone guest lines:
   - `virtio-<dev>-irq|INFO|...`
@@ -376,7 +376,14 @@ The harnesses may also surface interrupt mode diagnostics when the guest selftes
 - Mirrored host markers (for log scraping):
   - `AERO_VIRTIO_WIN7_HOST|VIRTIO_<DEV>_IRQ_DIAG|INFO/WARN|...`
 
-These IRQ diagnostics are informational by default and do not affect overall PASS/FAIL.
+When the guest includes `irq_*` fields on its `AERO_VIRTIO_SELFTEST|TEST|...` markers, the harness may also emit stable per-device host markers:
+
+```
+AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_IRQ|PASS/FAIL/INFO|irq_mode=...|msix_config_vector=...|msix_queue_vector=...
+AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_IRQ|PASS/FAIL/INFO|irq_mode=...|irq_message_count=...
+AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_IRQ|PASS/FAIL/INFO|irq_mode=...|irq_message_count=...
+AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_IRQ|PASS/FAIL/INFO|irq_mode=...|irq_message_count=...
+```
 
 ### Why `x-pci-revision=0x01`?
 
