@@ -1384,7 +1384,7 @@ function renderMachinePanel(): HTMLElement {
   return el(
     "div",
     { class: "panel" },
-    el("h2", { text: "Machine (canonical VM) – serial + VGA demo" }),
+    el("h2", { text: "Machine (canonical VM) – serial + display scanout demo" }),
     status,
     inputHint,
     el("div", { class: "row" }, canvas),
@@ -1705,11 +1705,12 @@ function renderMachineWorkerPanel(): HTMLElement {
   return el(
     "div",
     { class: "panel" },
-    el("h2", { text: "Machine (canonical VM) – worker VGA scanout demo" }),
+    el("h2", { text: "Machine (canonical VM) – worker display scanout demo" }),
     el("div", {
       class: "hint",
       text:
-        "Runs the canonical aero-machine VM inside a Dedicated Worker and publishes VGA scanout via the framebuffer protocol. " +
+        "Runs the canonical aero-machine VM inside a Dedicated Worker and publishes display scanout via the framebuffer protocol. " +
+        "(Prefers unified display_* exports when present; falls back to legacy vga_*.) " +
         "VBE mode test: add ?machineWorkerVbe=1280x720 to the URL to boot the worker into a Bochs VBE 32bpp mode.",
     }),
     el("div", { class: "row" }, startButton, stopButton),

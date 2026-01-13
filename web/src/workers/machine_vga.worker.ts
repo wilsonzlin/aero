@@ -75,7 +75,8 @@ type MachineVgaWorkerReadyMessage = {
   type: "machineVga.ready";
   transport: "shared" | "copy";
   /**
-   * Present-only shared framebuffer region (RGBA8888 + framebuffer_protocol header).
+   * Present-only shared framebuffer region (RGBA8888 + framebuffer_protocol header) containing
+   * the machine's display scanout.
    *
    * Present when `transport === "shared"`.
    */
@@ -107,6 +108,10 @@ type MachineVgaWorkerMessage =
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 
 const encoder = new TextEncoder();
+
+// Note: this file is still named `machine_vga.worker.ts` and uses `machineVga.*` message types for
+// back-compat with existing demos/tests, but it now prefers the unified `display_*` scanout exports
+// when present (falling back to legacy `vga_*`).
 
 let api: WasmApi | null = null;
 let wasmMemory: WebAssembly.Memory | null = null;
