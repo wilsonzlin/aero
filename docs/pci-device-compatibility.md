@@ -40,6 +40,7 @@ We assume a single PCI bus (`bus 0`) with stable device numbers. Not all devices
 | 00:0A.1  | vInput | 1AF4:1052     | 09/80/00                 | INTA     | virtio-input mouse (Aero Win7 contract v1: `SUBSYS_00111AF4`, `REV_01`) |
 | 00:0B.0  | vSnd   | 1AF4:1059     | 04/01/00                 | INTA     | virtio-snd (Aero Win7 contract v1: modern-only, `REV_01`) |
 | 00:0c.0  | VGA    | 1234:1111     | 03/00/00                 | -        | **Transitional boot display** (Bochs/QEMU "Standard VGA"-like PCI identity) used by the canonical `aero_machine::Machine` when `enable_vga=true` (and `enable_aerogpu=false`). This is distinct from AeroGPU and intentionally does not occupy `00:07.0`. |
+| 00:0d.0  | USB3   | 1B36:000D     | 0C/03/30                 | INTA     | xHCI (USB 3.x) controller (QEMU xHCI identity). **Not wired by default** yet; intended for modern guests and future high-speed/superspeed passthrough. See [`docs/usb-xhci.md`](./usb-xhci.md). |
 | 00:12.0  | USB2   | 8086:293A     | 0C/03/20                 | INTA     | EHCI (USB 2.0) controller (ICH9-family identity; Windows 7 in-box `usbehci.sys`) |
 
 ### Notes on display (AeroGPU vs VGA/VBE boot display)

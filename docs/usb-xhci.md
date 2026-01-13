@@ -17,6 +17,8 @@ Status:
 
 - xHCI support is **in progress** and is not expected to be feature-complete.
 - UHCI remains the “known-good” controller for Windows 7 in-box driver binding today.
+- Windows 7 does **not** include an in-box xHCI (USB 3.x) driver; xHCI is primarily targeted at
+  modern guests (or Windows 7 only when an xHCI driver is installed).
 - EHCI bring-up exists (regs + root hub), but schedule walking and snapshot support are still
   staged; see [`docs/usb-ehci.md`](./usb-ehci.md).
 - The web runtime currently exposes an xHCI *placeholder* (a minimal MMIO register file + snapshot

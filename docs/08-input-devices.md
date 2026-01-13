@@ -733,6 +733,9 @@ For EHCI (USB 2.0) host controller emulation design notes and emulator/runtime c
 root hub ports, async/periodic schedules, IRQ and snapshot requirements), see
 [`docs/usb-ehci.md`](./usb-ehci.md).
 
+For xHCI (USB 3.x) host controller scaffolding, PCI identity, and current limitations, see
+[`docs/usb-xhci.md`](./usb-xhci.md).
+
 ### Browser runtime wiring (current implementation)
 
 In the web runtime, browser keyboard/mouse/gamepad events can be exposed to the guest as
