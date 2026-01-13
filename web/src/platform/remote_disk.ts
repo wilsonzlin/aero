@@ -619,28 +619,71 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
       return disk;
     }
 
-    const manager = await RemoteCacheManager.openOpfs();
-    // Ensure the cache directory is bound to the current validators (ETag/Last-Modified/size).
-    // If the remote image changed, this will clear any previously cached bytes.
-    await manager.openCache(parts, { chunkSizeBytes: resolved.blockSize, validators });
+    // OPFS cache init is best-effort: if OPFS is unavailable/buggy, fall back to IDB or no-cache so
+    // remote streaming can continue to work.
+    try {
+      const manager = await RemoteCacheManager.openOpfs();
+      // Ensure the cache directory is bound to the current validators (ETag/Last-Modified/size).
+      // If the remote image changed, this will clear any previously cached bytes.
+      await manager.openCache(parts, { chunkSizeBytes: resolved.blockSize, validators });
 
-    const opfsCache = await OpfsLruChunkCache.open({
-      cacheKey,
-      chunkSize: resolved.blockSize,
-      maxBytes: resolved.cacheLimitBytes,
-    });
+      const opfsCache = await OpfsLruChunkCache.open({
+        cacheKey,
+        chunkSize: resolved.blockSize,
+        maxBytes: resolved.cacheLimitBytes,
+      });
 
-    const disk = new RemoteStreamingDisk(parts.imageId, params.lease, probe.size, resolved, opfsCache);
-    disk.remoteEtag = probe.etag;
-    disk.remoteLastModified = probe.lastModified;
-    const indices = await opfsCache.getChunkIndices();
-    for (const idx of indices) {
-      const r = disk.blockRange(idx);
-      disk.rangeSet.insert(r.start, r.end);
+      const disk = new RemoteStreamingDisk(parts.imageId, params.lease, probe.size, resolved, opfsCache);
+      disk.remoteEtag = probe.etag;
+      disk.remoteLastModified = probe.lastModified;
+      const indices = await opfsCache.getChunkIndices();
+      for (const idx of indices) {
+        const r = disk.blockRange(idx);
+        disk.rangeSet.insert(r.start, r.end);
+      }
+      disk.cachedBytes = (await opfsCache.getStats()).totalBytes;
+      disk.leaseRefresher.start();
+      return disk;
+    } catch {
+      // Fall back to IDB when available.
+      if (typeof indexedDB !== "undefined") {
+        let idbCache: IdbRemoteChunkCache | null = null;
+        try {
+          const fallback: ResolvedRemoteDiskOptions = { ...resolved, cacheBackend: "idb" };
+          const disk = new RemoteStreamingDisk(parts.imageId, params.lease, probe.size, fallback);
+          disk.remoteEtag = probe.etag;
+          disk.remoteLastModified = probe.lastModified;
+          idbCache = await IdbRemoteChunkCache.open({
+            cacheKey,
+            signature: {
+              imageId: parts.imageId,
+              version: parts.version,
+              etag: resolvedEtag,
+              lastModified: probe.lastModified,
+              sizeBytes: probe.size,
+              chunkSize: resolved.blockSize,
+            },
+            cacheLimitBytes: resolved.cacheLimitBytes,
+          });
+          disk.idbCache = idbCache;
+          const status = await idbCache.getStatus();
+          disk.cachedBytes = status.bytesUsed;
+          disk.leaseRefresher.start();
+          return disk;
+        } catch {
+          idbCache?.close();
+          // swallow and fall through to cache-disabled mode
+        }
+      }
+
+      // Final fallback: cache-disabled mode. Do not touch OPFS/IDB further.
+      const disabled: ResolvedRemoteDiskOptions = { ...resolved, cacheLimitBytes: 0 };
+      const disk = new RemoteStreamingDisk(parts.imageId, params.lease, probe.size, disabled);
+      disk.remoteEtag = probe.etag;
+      disk.remoteLastModified = probe.lastModified;
+      disk.leaseRefresher.start();
+      return disk;
     }
-    disk.cachedBytes = (await opfsCache.getStats()).totalBytes;
-    disk.leaseRefresher.start();
-    return disk;
   }
 
   async getCacheStatus(): Promise<RemoteDiskCacheStatus> {

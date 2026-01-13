@@ -1,9 +1,10 @@
 import "../../test/fake_indexeddb_auto.ts";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { clearIdb } from "../storage/metadata";
 import { IdbRemoteChunkCache, IdbRemoteChunkCacheQuotaError } from "../storage/idb_remote_chunk_cache";
+import { RemoteCacheManager } from "../storage/remote_cache_manager";
 import { RemoteStreamingDisk } from "./remote_disk";
 
 function makeTestImage(size: number): Uint8Array {
@@ -168,6 +169,7 @@ describe("RemoteStreamingDisk (IndexedDB cache)", () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     await clearIdb();
   });
 
@@ -226,6 +228,39 @@ describe("RemoteStreamingDisk (IndexedDB cache)", () => {
 
     const second = await disk.read(0, 16);
     expect(Array.from(second)).toEqual(Array.from(image.subarray(0, 16)));
+    expect(mock.stats.chunkRangeCalls).toBe(before + 1);
+
+    disk.close();
+    mock.restore();
+  });
+
+  it("falls back to IndexedDB when OPFS cache init fails", async () => {
+    const blockSize = 1024 * 1024;
+    const cacheLimitBytes = blockSize * 8;
+    const image = makeTestImage(blockSize * 2);
+    const mock = installMockRangeFetch(image, { etag: '"e1"' });
+
+    const openOpfsSpy = vi.spyOn(RemoteCacheManager, "openOpfs").mockRejectedValue(new Error("OPFS unavailable"));
+    const idbOpenSpy = vi.spyOn(IdbRemoteChunkCache, "open");
+
+    const disk = await RemoteStreamingDisk.open("https://example.test/disk.img", {
+      blockSize,
+      cacheBackend: "opfs",
+      cacheLimitBytes,
+      prefetchSequentialBlocks: 0,
+    });
+
+    expect(openOpfsSpy).toHaveBeenCalled();
+    expect(idbOpenSpy).toHaveBeenCalled();
+
+    const before = mock.stats.chunkRangeCalls;
+    const first = await disk.read(0, 16);
+    expect(Array.from(first)).toEqual(Array.from(image.subarray(0, 16)));
+    expect(mock.stats.chunkRangeCalls).toBe(before + 1);
+
+    const second = await disk.read(0, 16);
+    expect(Array.from(second)).toEqual(Array.from(image.subarray(0, 16)));
+    // If we successfully fell back to the IDB cache, the second read should be a cache hit.
     expect(mock.stats.chunkRangeCalls).toBe(before + 1);
 
     disk.close();
