@@ -334,7 +334,12 @@ impl HdaStream {
                 let _ = value;
             }
             StreamReg::Cbl => self.cbl = value as u32,
-            StreamReg::Lvi => self.lvi = value as u16,
+            StreamReg::Lvi => {
+                // SDnLVI is architecturally an 8-bit "last valid index" into the 256-entry BDL.
+                // Mask the guest-provided value to prevent pathological writes (e.g. 0xffff)
+                // from driving unbounded loops or out-of-range descriptor indexing.
+                self.lvi = (value as u16) & 0x00ff;
+            }
             StreamReg::Fifow => self.fifow = value as u16,
             StreamReg::Fifos => {
                 let _ = value;
@@ -487,8 +492,60 @@ fn read_u64(mem: &mut dyn MemoryBus, addr: u64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::AudioRingBuffer;
+    use super::HdaStream;
     use super::StreamFormat;
     use crate::io::audio::dsp::pcm::PcmSampleFormat;
+    use memory::MemoryBus;
+
+    #[derive(Clone, Debug)]
+    struct CountingMem {
+        data: Vec<u8>,
+        reads: usize,
+        max_reads: usize,
+        max_read_addr: u64,
+    }
+
+    impl CountingMem {
+        fn new(size: usize, max_reads: usize) -> Self {
+            Self {
+                data: vec![0; size],
+                reads: 0,
+                max_reads,
+                max_read_addr: 0,
+            }
+        }
+    }
+
+    impl MemoryBus for CountingMem {
+        fn read_physical(&mut self, addr: u64, dst: &mut [u8]) {
+            self.reads += 1;
+            assert!(
+                self.reads <= self.max_reads,
+                "excessive guest memory reads: {} > {}",
+                self.reads,
+                self.max_reads
+            );
+            if !dst.is_empty() {
+                self.max_read_addr = self
+                    .max_read_addr
+                    .max(addr.saturating_add(dst.len() as u64 - 1));
+            }
+
+            let base = addr as usize;
+            for (i, slot) in dst.iter_mut().enumerate() {
+                *slot = self.data.get(base + i).copied().unwrap_or(0);
+            }
+        }
+
+        fn write_physical(&mut self, addr: u64, src: &[u8]) {
+            let base = addr as usize;
+            for (i, byte) in src.iter().copied().enumerate() {
+                if let Some(slot) = self.data.get_mut(base + i) {
+                    *slot = byte;
+                }
+            }
+        }
+    }
 
     #[test]
     fn ring_buffer_push_and_drain_roundtrip() {
@@ -538,5 +595,80 @@ mod tests {
         assert_eq!(spec.format, PcmSampleFormat::I16);
         assert_eq!(spec.channels, 2);
         assert_eq!(spec.sample_rate, 48_000);
+    }
+
+    #[test]
+    fn stream_lvi_write_masks_to_8_bit() {
+        let mut stream = HdaStream::new(super::StreamId::Out0);
+        let mut intsts = 0u32;
+
+        stream.mmio_write(super::StreamReg::Lvi, 2, 0xffff, &mut intsts);
+        assert_eq!(stream.mmio_read(super::StreamReg::Lvi, 2), 0x00ff);
+
+        stream.mmio_write(super::StreamReg::Lvi, 2, 0x1234, &mut intsts);
+        assert_eq!(stream.mmio_read(super::StreamReg::Lvi, 2), 0x0034);
+    }
+
+    #[test]
+    fn stream_process_is_bounded_with_large_lvi_and_empty_descriptors() {
+        const BDL_BASE: u64 = 0x1000;
+
+        let mut stream = HdaStream::new(super::StreamId::Out0);
+        let mut stream_intsts = 0u32;
+        stream.mmio_write(super::StreamReg::Bdpl, 4, BDL_BASE, &mut stream_intsts);
+        stream.mmio_write(super::StreamReg::Bdpu, 4, 0, &mut stream_intsts);
+        stream.mmio_write(super::StreamReg::Cbl, 4, 16, &mut stream_intsts);
+        stream.mmio_write(super::StreamReg::Lvi, 2, 0xffff, &mut stream_intsts);
+        stream.mmio_write(
+            super::StreamReg::CtlSts,
+            4,
+            (super::SD_CTL_RUN | super::SD_CTL_SRST) as u64,
+            &mut stream_intsts,
+        );
+
+        let mut mem = CountingMem::new(0x2000, 2048);
+        let mut audio = AudioRingBuffer::new(64);
+        let mut intsts = 0u32;
+
+        stream.process(&mut mem, &mut audio, &mut intsts);
+
+        assert_eq!(stream.mmio_read(super::StreamReg::Lvi, 2), 0x00ff);
+        let max_bdl_index = mem.max_read_addr.saturating_sub(BDL_BASE) / 16;
+        assert!(
+            max_bdl_index <= 0xff,
+            "BDL index exceeded architectural 8-bit range: {max_bdl_index:#x}"
+        );
+        assert!(audio.is_empty());
+    }
+
+    #[test]
+    fn stream_process_capture_is_bounded_with_large_lvi_and_empty_descriptors() {
+        const BDL_BASE: u64 = 0x1000;
+
+        let mut stream = HdaStream::new(super::StreamId::In0);
+        let mut stream_intsts = 0u32;
+        stream.mmio_write(super::StreamReg::Bdpl, 4, BDL_BASE, &mut stream_intsts);
+        stream.mmio_write(super::StreamReg::Bdpu, 4, 0, &mut stream_intsts);
+        stream.mmio_write(super::StreamReg::Cbl, 4, 16, &mut stream_intsts);
+        stream.mmio_write(super::StreamReg::Lvi, 2, 0xffff, &mut stream_intsts);
+        stream.mmio_write(
+            super::StreamReg::CtlSts,
+            4,
+            (super::SD_CTL_RUN | super::SD_CTL_SRST) as u64,
+            &mut stream_intsts,
+        );
+
+        let mut mem = CountingMem::new(0x2000, 2048);
+        let mut capture = AudioRingBuffer::new(64);
+        let mut intsts = 0u32;
+
+        stream.process_capture(&mut mem, &mut capture, &mut intsts);
+
+        assert_eq!(stream.mmio_read(super::StreamReg::Lvi, 2), 0x00ff);
+        let max_bdl_index = mem.max_read_addr.saturating_sub(BDL_BASE) / 16;
+        assert!(
+            max_bdl_index <= 0xff,
+            "BDL index exceeded architectural 8-bit range: {max_bdl_index:#x}"
+        );
     }
 }
