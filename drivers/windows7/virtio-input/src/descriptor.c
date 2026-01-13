@@ -6,9 +6,11 @@
  * Keep ring buffer sizing in sync with the largest possible translator output.
  * (virtio_input.h uses VIRTIO_INPUT_REPORT_MAX_SIZE to size report storage.)
  */
+#define VIOINPUT_MAX2(a, b) ((a) > (b) ? (a) : (b))
 C_ASSERT(VIRTIO_INPUT_REPORT_MAX_SIZE ==
-         ((HID_TRANSLATE_KEYBOARD_REPORT_SIZE > HID_TRANSLATE_MOUSE_REPORT_SIZE) ? HID_TRANSLATE_KEYBOARD_REPORT_SIZE
-                                                                                 : HID_TRANSLATE_MOUSE_REPORT_SIZE));
+         VIOINPUT_MAX2(VIOINPUT_MAX2(HID_TRANSLATE_KEYBOARD_REPORT_SIZE, HID_TRANSLATE_MOUSE_REPORT_SIZE),
+                       VIOINPUT_MAX2(HID_TRANSLATE_CONSUMER_REPORT_SIZE, HID_TRANSLATE_TABLET_REPORT_SIZE)));
+#undef VIOINPUT_MAX2
 
 const UCHAR VirtioInputKeyboardReportDescriptor[] = {
     //
