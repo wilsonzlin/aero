@@ -45,6 +45,16 @@ use memory::{DenseMemory, GuestMemory, MmioHandler};
 use std::cell::RefCell;
 use std::rc::Rc;
 
+#[cfg(not(target_arch = "wasm32"))]
+type NvmeDisk = Box<dyn VirtualDisk + Send>;
+#[cfg(target_arch = "wasm32")]
+type NvmeDisk = Box<dyn VirtualDisk>;
+
+#[cfg(not(target_arch = "wasm32"))]
+type VirtioBlkDisk = Box<dyn VirtualDisk + Send>;
+#[cfg(target_arch = "wasm32")]
+type VirtioBlkDisk = Box<dyn VirtualDisk>;
+
 mod cpu_core;
 pub use aero_devices::pci::{PciBarMmioHandler, PciBarMmioRouter, PciConfigSyncedMmioBar};
 pub use aero_devices::pci::{PciIoBarHandler, PciIoBarRouter};
@@ -1066,6 +1076,7 @@ impl PcPlatform {
         )
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn new_with_nvme_disk(ram_size: usize, disk: Box<dyn VirtualDisk + Send>) -> Self {
         Self::new_with_config_and_nvme_disk(
             ram_size,
@@ -1077,10 +1088,41 @@ impl PcPlatform {
         )
     }
 
+    #[cfg(target_arch = "wasm32")]
+    pub fn new_with_nvme_disk(ram_size: usize, disk: Box<dyn VirtualDisk>) -> Self {
+        Self::new_with_config_and_nvme_disk(
+            ram_size,
+            PcPlatformConfig {
+                enable_nvme: true,
+                ..Default::default()
+            },
+            disk,
+        )
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn new_with_config_and_nvme_disk(
         ram_size: usize,
         mut config: PcPlatformConfig,
         disk: Box<dyn VirtualDisk + Send>,
+    ) -> Self {
+        config.enable_nvme = true;
+        let ram = DenseMemory::new(ram_size as u64).expect("failed to allocate guest RAM");
+        Self::new_with_config_and_ram_inner(
+            ram_size as u64,
+            Box::new(ram),
+            config,
+            None,
+            Some(disk),
+            None,
+        )
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub fn new_with_config_and_nvme_disk(
+        ram_size: usize,
+        mut config: PcPlatformConfig,
+        disk: Box<dyn VirtualDisk>,
     ) -> Self {
         config.enable_nvme = true;
         let ram = DenseMemory::new(ram_size as u64).expect("failed to allocate guest RAM");
@@ -1212,6 +1254,7 @@ impl PcPlatform {
         )
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn new_with_virtio_blk_disk(ram_size: usize, disk: Box<dyn VirtualDisk + Send>) -> Self {
         Self::new_with_config_and_virtio_blk_disk(
             ram_size,
@@ -1223,10 +1266,41 @@ impl PcPlatform {
         )
     }
 
+    #[cfg(target_arch = "wasm32")]
+    pub fn new_with_virtio_blk_disk(ram_size: usize, disk: Box<dyn VirtualDisk>) -> Self {
+        Self::new_with_config_and_virtio_blk_disk(
+            ram_size,
+            PcPlatformConfig {
+                enable_virtio_blk: true,
+                ..Default::default()
+            },
+            disk,
+        )
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn new_with_config_and_virtio_blk_disk(
         ram_size: usize,
         mut config: PcPlatformConfig,
         disk: Box<dyn VirtualDisk + Send>,
+    ) -> Self {
+        config.enable_virtio_blk = true;
+        let ram = DenseMemory::new(ram_size as u64).expect("failed to allocate guest RAM");
+        Self::new_with_config_and_ram_inner(
+            ram_size as u64,
+            Box::new(ram),
+            config,
+            None,
+            None,
+            Some(disk),
+        )
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub fn new_with_config_and_virtio_blk_disk(
+        ram_size: usize,
+        mut config: PcPlatformConfig,
+        disk: Box<dyn VirtualDisk>,
     ) -> Self {
         config.enable_virtio_blk = true;
         let ram = DenseMemory::new(ram_size as u64).expect("failed to allocate guest RAM");
@@ -1280,8 +1354,8 @@ impl PcPlatform {
         ram: Box<dyn GuestMemory>,
         config: PcPlatformConfig,
         dirty_page_size: Option<u32>,
-        nvme_disk_override: Option<Box<dyn VirtualDisk + Send>>,
-        virtio_blk_disk_override: Option<Box<dyn VirtualDisk + Send>>,
+        nvme_disk_override: Option<NvmeDisk>,
+        virtio_blk_disk_override: Option<VirtioBlkDisk>,
     ) -> Self {
         let chipset = ChipsetState::new(false);
         let filter = AddressFilter::new(chipset.a20());
@@ -1694,13 +1768,12 @@ impl PcPlatform {
 
             // Use an `aero-storage` disk image so callers can reuse the same disk abstraction across
             // different controllers without bespoke glue.
-            let backend: Box<dyn VirtualDisk + Send> =
-                virtio_blk_disk_override.unwrap_or_else(|| {
-                    Box::new(
-                        RawDisk::create(MemBackend::new(), (16 * 1024 * 1024) as u64)
-                            .expect("failed to allocate in-memory virtio-blk disk"),
-                    )
-                });
+            let backend: VirtioBlkDisk = virtio_blk_disk_override.unwrap_or_else(|| {
+                Box::new(
+                    RawDisk::create(MemBackend::new(), (16 * 1024 * 1024) as u64)
+                        .expect("failed to allocate in-memory virtio-blk disk"),
+                )
+            });
 
             let interrupts_sink: Box<dyn VirtioInterruptSink> = if config.enable_virtio_msix {
                 Box::new(VirtioPlatformInterruptSink {

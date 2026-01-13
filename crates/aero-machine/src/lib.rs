@@ -108,6 +108,11 @@ const FOUR_GIB: u64 = 0x1_0000_0000;
 // allocating multi-GB buffers in tests and constrained environments.
 const SPARSE_RAM_THRESHOLD_BYTES: u64 = 512 * 1024 * 1024;
 
+#[cfg(not(target_arch = "wasm32"))]
+type NvmeDisk = Box<dyn aero_storage::VirtualDisk + Send>;
+#[cfg(target_arch = "wasm32")]
+type NvmeDisk = Box<dyn aero_storage::VirtualDisk>;
+
 pub mod pc;
 pub use pc::{PcMachine, PcMachineConfig};
 
@@ -3325,20 +3330,45 @@ impl Machine {
 
     /// Attach a disk backend to the NVMe controller, if present.
     ///
-    /// Unlike AHCI/IDE, the NVMe device model requires a `Send` disk backend.
+    /// On non-`wasm32` targets, the NVMe device model requires a `Send` disk backend for thread
+    /// safety.
     ///
-    /// On `wasm32`, some disk backends (e.g. OPFS) are `!Send` because they hold JS values, so the
-    /// machine's canonical BIOS disk may not be usable for NVMe. Callers can use this method to
-    /// attach a separate `Send` backend.
+    /// On `wasm32`, disk backends do not need to be `Send` (browser disk handles are often
+    /// `!Send`).
     ///
     /// This method preserves the NVMe controller's guest-visible state (PCI config + controller
     /// registers/queues) by snapshotting the current device model state and re-loading it after
     /// swapping the host disk backend. This is intended for host-managed snapshot restore flows
     /// where the disk contents live outside the snapshot blob.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn attach_nvme_disk(
         &mut self,
         disk: Box<dyn aero_storage::VirtualDisk + Send>,
     ) -> Result<(), MachineError> {
+        self.attach_nvme_disk_impl(disk)
+    }
+
+    /// Attach a disk backend to the NVMe controller, if present.
+    ///
+    /// On non-`wasm32` targets, the NVMe device model requires a `Send` disk backend for thread
+    /// safety.
+    ///
+    /// On `wasm32`, disk backends do not need to be `Send` (browser disk handles are often
+    /// `!Send`).
+    ///
+    /// This method preserves the NVMe controller's guest-visible state (PCI config + controller
+    /// registers/queues) by snapshotting the current device model state and re-loading it after
+    /// swapping the host disk backend. This is intended for host-managed snapshot restore flows
+    /// where the disk contents live outside the snapshot blob.
+    #[cfg(target_arch = "wasm32")]
+    pub fn attach_nvme_disk(
+        &mut self,
+        disk: Box<dyn aero_storage::VirtualDisk>,
+    ) -> Result<(), MachineError> {
+        self.attach_nvme_disk_impl(disk)
+    }
+
+    fn attach_nvme_disk_impl(&mut self, disk: NvmeDisk) -> Result<(), MachineError> {
         let Some(nvme) = &self.nvme else {
             return Ok(());
         };
