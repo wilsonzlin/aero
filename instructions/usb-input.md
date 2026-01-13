@@ -141,7 +141,9 @@ const scancodeMap: Record<string, number[]> = {
 
 Per ADR 0015, `crates/aero-usb` is the **canonical USB stack**. It provides:
 
-- UHCI controller emulation
+- UHCI controller emulation (USB 1.1, full/low-speed)
+- EHCI bring-up (USB 2.0, high-speed; regs + root hub; schedule engine staged)
+- xHCI bring-up (USB 3.x; in progress)
 - USB device enumeration
 - HID class driver
 - Passthrough bridge for WebUSB/WebHID

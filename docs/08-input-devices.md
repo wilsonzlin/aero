@@ -113,7 +113,7 @@ For the canonical USB stack selection for the browser runtime, see [ADR 0015](./
 │       ▼                                                          │
 │  ┌────────────────────┐  ┌────────────────────┐  ┌─────────────┐│
 │  │   PS/2 Controller  │  │   USB Controller   │  │ virtio-input ││
-│  │   (i8042)          │  │   (UHCI/EHCI)      │  │ (kbd + mouse)││
+│  │   (i8042)          │  │ (UHCI/EHCI/xHCI)   │  │ (kbd + mouse)││
 │  └────────────────────┘  └────────────────────┘  └─────────────┘│
 │                                                                  │
 └─────────────────────────────────────────────────────────────────┘
