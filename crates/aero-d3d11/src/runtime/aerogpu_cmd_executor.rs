@@ -894,6 +894,15 @@ impl AerogpuD3d11Executor {
         Ok((texture.desc.width, texture.desc.height))
     }
 
+    pub fn shader_entry_point(&self, shader_id: u32) -> Result<&'static str> {
+        let shader = self
+            .resources
+            .shaders
+            .get(&shader_id)
+            .ok_or_else(|| anyhow!("unknown shader {shader_id}"))?;
+        Ok(shader.entry_point)
+    }
+
     pub async fn read_texture_rgba8(&self, texture_id: u32) -> Result<Vec<u8>> {
         // Test/emulator helper: see `texture_size`.
         let texture_id = self.shared_surfaces.resolve_handle(texture_id);
@@ -5649,7 +5658,8 @@ impl AerogpuD3d11Executor {
         }
 
         let signatures = parse_signatures(&dxbc).context("parse DXBC signatures")?;
-        let signature_driven = signatures.isgn.is_some() && signatures.osgn.is_some();
+        let signature_driven = stage == ShaderStage::Compute
+            || (signatures.isgn.is_some() && signatures.osgn.is_some());
         let (wgsl, reflection) = if signature_driven {
             let translated = try_translate_sm4_signature_driven(&dxbc, &program, &signatures)?;
             (translated.wgsl, translated.reflection)

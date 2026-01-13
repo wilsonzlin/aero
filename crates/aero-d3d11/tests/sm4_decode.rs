@@ -1030,7 +1030,7 @@ fn decodes_sm5_compute_thread_group_and_raw_uav_ops_as_unknown() {
         Sm4Program::parse_program_tokens(&tokens_to_bytes(&tokens)).expect("parse_program_tokens");
     assert_eq!(program.stage, aero_d3d11::ShaderStage::Compute);
 
-    let module = program.decode().expect("decode");
+    let module = decode_program(&program).expect("decode");
     assert_eq!(module.stage, aero_d3d11::ShaderStage::Compute);
 
     assert!(module

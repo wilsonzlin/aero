@@ -544,7 +544,7 @@ fn decodes_and_translates_minimal_compute_shader_without_signatures() {
     assert_eq!(program.stage, aero_d3d11::ShaderStage::Compute);
 
     // Compute shaders frequently omit ISGN/OSGN signature chunks; decoding should still succeed.
-    let module = program.decode().expect("SM4 decode");
+    let module = decode_program(&program).expect("SM4 decode");
     assert_eq!(module.stage, ShaderStage::Compute);
     assert_eq!(module.instructions, vec![Sm4Inst::Ret]);
 

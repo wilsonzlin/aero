@@ -342,7 +342,7 @@ mod tests {
             tokens,
         };
 
-        let module = program.decode().expect("decode should succeed");
+        let module = super::decode_program(&program).expect("decode should succeed");
         assert_eq!(module.instructions.len(), 2);
         assert!(matches!(module.instructions[0], Sm4Inst::Mov { .. }));
         assert!(matches!(module.instructions[1], Sm4Inst::Ret));
@@ -383,7 +383,7 @@ mod tests {
             tokens,
         };
 
-        let err = program.decode().expect_err("decode should fail");
+        let err = super::decode_program(&program).expect_err("decode should fail");
         assert!(
             matches!(err.kind, Sm4DecodeErrorKind::InstructionOutOfBounds { start: 2, .. }),
             "expected InstructionOutOfBounds at dword 2, got {err:?}"
@@ -407,7 +407,7 @@ mod tests {
             tokens,
         };
 
-        let err = program.decode().expect_err("decode should fail");
+        let err = super::decode_program(&program).expect_err("decode should fail");
         assert!(
             matches!(err.kind, Sm4DecodeErrorKind::InstructionLengthZero),
             "expected InstructionLengthZero, got {err:?}"
