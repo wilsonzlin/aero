@@ -46,6 +46,7 @@ cargo +"$nightly" fuzz run fuzz_tier0_step
 cargo +"$nightly" fuzz run fuzz_dxbc_sm4_parse
 cargo +"$nightly" fuzz run fuzz_dxbc_parse
 cargo +"$nightly" fuzz run fuzz_d3d9_sm3_decode
+cargo +"$nightly" fuzz run fuzz_d3d9_sm3_wgsl
 
 # Networking
 cargo +"$nightly" fuzz run fuzz_l2_protocol_decode
@@ -158,6 +159,9 @@ cd fuzz && cargo fuzz run fuzz_dxbc_sm4_parse -- -runs=10000 -dict=fuzz_targets/
 # D3D9 SM2/SM3 bytecode decode + IR build
 cd fuzz && cargo fuzz run fuzz_d3d9_sm3_decode -- -runs=10000
 
+# D3D9 SM2/SM3 IR -> WGSL generation
+cd fuzz && cargo fuzz run fuzz_d3d9_sm3_wgsl -- -runs=10000
+ 
 # Networking (quick sanity)
 cd fuzz && cargo fuzz run fuzz_l2_protocol_decode -- -runs=1000
 cd fuzz && cargo fuzz run fuzz_net_stack_outbound_ethernet -- -runs=1000

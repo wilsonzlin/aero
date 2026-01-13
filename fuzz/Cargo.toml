@@ -171,6 +171,12 @@ test = false
 doc = false
 
 [[bin]]
+name = "fuzz_d3d9_sm3_wgsl"
+path = "fuzz_targets/fuzz_d3d9_sm3_wgsl.rs"
+test = false
+doc = false
+
+[[bin]]
 name = "fuzz_hda_mmio"
 path = "fuzz_targets/fuzz_hda_mmio.rs"
 test = false
