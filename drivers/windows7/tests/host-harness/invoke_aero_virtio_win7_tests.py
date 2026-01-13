@@ -1393,6 +1393,7 @@ def main() -> int:
         try:
             pos = 0
             tail = b""
+            irq_diag_markers: dict[str, dict[str, str]] = {}
             saw_virtio_blk_pass = False
             saw_virtio_blk_fail = False
             saw_virtio_input_pass = False
@@ -1432,6 +1433,10 @@ def main() -> int:
                         sys.stdout.flush()
 
                     tail += chunk
+                    # Capture standalone guest IRQ diagnostics markers (`virtio-<dev>-irq|INFO/WARN|...`)
+                    # before the rolling tail buffer is truncated so early markers are not lost.
+                    for dev, fields in _parse_virtio_irq_markers(tail).items():
+                        irq_diag_markers[dev] = fields
                     if len(tail) > 131072:
                         tail = tail[-131072:]
 
@@ -1954,6 +1959,8 @@ def main() -> int:
                     chunk2, pos = _read_new_bytes(serial_log, pos)
                     if chunk2:
                         tail += chunk2
+                        for dev, fields in _parse_virtio_irq_markers(tail).items():
+                            irq_diag_markers[dev] = fields
                         if not saw_virtio_blk_pass and b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS" in tail:
                             saw_virtio_blk_pass = True
                         if not saw_virtio_blk_fail and b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk|FAIL" in tail:
@@ -2354,7 +2361,7 @@ def main() -> int:
         _emit_virtio_net_irq_host_marker(tail)
         _emit_virtio_snd_irq_host_marker(tail)
         _emit_virtio_input_irq_host_marker(tail)
-        _emit_virtio_irq_host_markers(tail)
+        _emit_virtio_irq_host_markers(tail, markers=irq_diag_markers)
 
         return result_code if result_code is not None else 2
 
@@ -2862,13 +2869,16 @@ def _parse_virtio_irq_markers(tail: bytes) -> dict[str, dict[str, str]]:
     return out
 
 
-def _emit_virtio_irq_host_markers(tail: bytes) -> None:
+def _emit_virtio_irq_host_markers(
+    tail: bytes, *, markers: Optional[dict[str, dict[str, str]]] = None
+) -> None:
     """
     Best-effort: emit host-side markers mirroring the guest `virtio-<dev>-irq|...` diagnostics.
 
     This does not affect harness PASS/FAIL; it's only for log scraping/diagnostics.
     """
-    markers = _parse_virtio_irq_markers(tail)
+    if markers is None:
+        markers = _parse_virtio_irq_markers(tail)
     if not markers:
         return
 

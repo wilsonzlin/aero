@@ -72,6 +72,23 @@ class VirtioIrqMarkerTests(unittest.TestCase):
             ],
         )
 
+    def test_emits_host_markers_from_parsed_dict(self) -> None:
+        markers = {
+            "virtio-net": {"level": "INFO", "mode": "msix", "vectors": "4"},
+            "virtio-blk": {"level": "WARN", "mode": "intx"},
+        }
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            self.harness._emit_virtio_irq_host_markers(b"", markers=markers)
+        lines = [line for line in buf.getvalue().splitlines() if line.strip()]
+        self.assertEqual(
+            lines,
+            [
+                "AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_IRQ_DIAG|WARN|mode=intx",
+                "AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_IRQ_DIAG|INFO|mode=msix|vectors=4",
+            ],
+        )
+
     def test_emits_msg_field_for_non_kv_tokens(self) -> None:
         tail = b"virtio-net-irq|WARN|msix disabled by policy\n"
         buf = io.StringIO()
