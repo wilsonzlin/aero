@@ -57,6 +57,7 @@ export const StatusIndex = {
   IoInputMouseBackend: 21,
   IoInputVirtioKeyboardDriverOk: 22,
   IoInputVirtioMouseDriverOk: 23,
+  // Synthetic USB HID guest readiness (i.e. device configured by the guest stack).
   IoInputUsbKeyboardOk: 24,
   IoInputUsbMouseOk: 25,
   IoInputKeyboardHeldCount: 26,

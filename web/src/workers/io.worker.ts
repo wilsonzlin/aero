@@ -4822,7 +4822,11 @@ function maybeUpdateKeyboardInputBackend(opts: { virtioKeyboardOk: boolean }): v
 function maybeUpdateMouseInputBackend(opts: { virtioMouseOk: boolean }): void {
   const ps2Available = !!(i8042Wasm || i8042Ts);
   const syntheticUsbMouseConfigured = syntheticUsbHidAttached && !!usbHid && safeSyntheticUsbHidConfigured(syntheticUsbMouse);
-  mouseUsbOk = !!usbHid && (!ps2Available || syntheticUsbMouseConfigured);
+  // Expose "configured" (not merely selected) status for diagnostics/HUDs.
+  // When PS/2 is unavailable we may still route input through the USB path
+  // before the guest configures the synthetic HID device, but input reports
+  // are dropped until configuration completes.
+  mouseUsbOk = syntheticUsbMouseConfigured;
   const prevBackend = mouseInputBackend;
   const force = currentConfig?.forceMouseBackend;
   const virtioOk = opts.virtioMouseOk && !!virtioInputMouse;
