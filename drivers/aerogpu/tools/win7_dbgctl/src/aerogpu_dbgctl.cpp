@@ -2104,11 +2104,57 @@ static int DoStatusJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, std::stri
     w.Bool(true);
     JsonWriteU64HexDec(w, "last_submitted_fence", qf.last_submitted_fence);
     JsonWriteU64HexDec(w, "last_completed_fence", qf.last_completed_fence);
+    JsonWriteU64HexDec(w, "error_irq_count", qf.error_irq_count);
+    JsonWriteU64HexDec(w, "last_error_fence", qf.last_error_fence);
   } else {
     w.Key("supported");
     w.Bool(false);
     w.Key("error");
     JsonWriteNtStatusError(w, f, stFence);
+  }
+  w.EndObject();
+
+  // Segment budget summary (QueryAdapterInfo probing).
+  w.Key("segments");
+  w.BeginObject();
+  if (!f->QueryAdapterInfo) {
+    w.Key("available");
+    w.Bool(false);
+    w.Key("reason");
+    w.String("missing_gdi32_export");
+  } else {
+    w.Key("available");
+    w.Bool(true);
+    DXGK_QUERYSEGMENTOUT *segments = NULL;
+    UINT queryType = 0;
+    const bool haveSegments = FindQuerySegmentTypeAndData(f, hAdapter, /*segmentCapacity=*/32, &queryType, &segments, NULL);
+    if (haveSegments) {
+      w.Key("query_segment_type");
+      w.Uint32(queryType);
+      w.Key("count");
+      w.Uint32(segments->NbSegments);
+    } else {
+      w.Key("count");
+      w.Null();
+    }
+    DXGK_SEGMENTGROUPSIZE groupSizes;
+    UINT groupType = 0;
+    const bool haveGroupSizes = FindSegmentGroupSizeTypeAndData(f, hAdapter, haveSegments ? segments : NULL, &groupType, &groupSizes);
+    if (haveGroupSizes) {
+      w.Key("group_sizes");
+      w.BeginObject();
+      w.Key("type");
+      w.Uint32(groupType);
+      JsonWriteBytesAndMiB(w, "local_memory_size", (uint64_t)groupSizes.LocalMemorySize);
+      JsonWriteBytesAndMiB(w, "non_local_memory_size", (uint64_t)groupSizes.NonLocalMemorySize);
+      w.EndObject();
+    } else {
+      w.Key("group_sizes");
+      w.Null();
+    }
+    if (segments) {
+      HeapFree(GetProcessHeap(), 0, segments);
+    }
   }
   w.EndObject();
 
@@ -2308,6 +2354,41 @@ static int DoStatusJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, std::stri
     w.Bool(false);
     w.Key("error");
     JsonWriteNtStatusError(w, f, stRing);
+  }
+  w.EndObject();
+
+  // Last error snapshot.
+  w.Key("last_error");
+  w.BeginObject();
+  aerogpu_escape_query_error_out qe;
+  ZeroMemory(&qe, sizeof(qe));
+  qe.hdr.version = AEROGPU_ESCAPE_VERSION;
+  qe.hdr.op = AEROGPU_ESCAPE_OP_QUERY_ERROR;
+  qe.hdr.size = sizeof(qe);
+  qe.hdr.reserved0 = 0;
+  const NTSTATUS stErr = SendAerogpuEscape(f, hAdapter, &qe, sizeof(qe));
+  if (!NT_SUCCESS(stErr)) {
+    w.Key("supported");
+    w.Bool(false);
+    w.Key("error");
+    JsonWriteNtStatusError(w, f, stErr);
+  } else {
+    bool supported = true;
+    if ((qe.flags & AEROGPU_DBGCTL_QUERY_ERROR_FLAGS_VALID) != 0) {
+      supported = (qe.flags & AEROGPU_DBGCTL_QUERY_ERROR_FLAG_ERROR_SUPPORTED) != 0;
+    }
+    w.Key("supported");
+    w.Bool(supported);
+    JsonWriteU32Hex(w, "flags_u32_hex", qe.flags);
+    if (supported) {
+      w.Key("error_code");
+      w.Uint32(qe.error_code);
+      w.Key("error_code_name");
+      w.String(WideToUtf8(AerogpuErrorCodeName(qe.error_code)));
+      JsonWriteU64HexDec(w, "error_fence", qe.error_fence);
+      w.Key("error_count");
+      w.Uint32(qe.error_count);
+    }
   }
   w.EndObject();
 
@@ -5727,6 +5808,8 @@ static int DoQueryFenceJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, std::
   w.BeginObject();
   JsonWriteU64HexDec(w, "last_submitted_fence", q.last_submitted_fence);
   JsonWriteU64HexDec(w, "last_completed_fence", q.last_completed_fence);
+  JsonWriteU64HexDec(w, "error_irq_count", q.error_irq_count);
+  JsonWriteU64HexDec(w, "last_error_fence", q.last_error_fence);
   w.EndObject();
   w.EndObject();
   out->push_back('\n');
