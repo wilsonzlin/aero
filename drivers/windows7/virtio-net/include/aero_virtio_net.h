@@ -174,6 +174,7 @@ typedef struct _AEROVNET_ADAPTER {
   AEROVNET_ADAPTER_STATE State;
   volatile BOOLEAN SurpriseRemoved;
   volatile LONG IsrStatus;
+
   volatile LONG OutstandingSgMappings;
   KEVENT OutstandingSgEvent;
 

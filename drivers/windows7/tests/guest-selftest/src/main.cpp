@@ -3750,6 +3750,7 @@ static VirtioInputTabletEventsTestResult VirtioInputTabletEventsTest(Logger& log
 }
 
 struct VirtioNetAdapter {
+  DEVINST devinst = 0; // CM devnode instance handle (for resource queries)
   std::wstring instance_id;   // e.g. "{GUID}"
   std::wstring friendly_name; // optional
   std::wstring service;       // SPDRP_SERVICE (bound driver service name)
@@ -3777,6 +3778,7 @@ static std::vector<VirtioNetAdapter> DetectVirtioNetAdapters(Logger& log) {
     if (!IsVirtioHardwareId(hwids)) continue;
 
     VirtioNetAdapter adapter{};
+    adapter.devinst = dev.DevInst;
     adapter.hardware_ids = hwids;
     if (auto inst = GetDevicePropertyString(devinfo, &dev, SPDRP_NETCFG_INSTANCE_ID)) {
       adapter.instance_id = *inst;
@@ -3803,6 +3805,67 @@ static std::vector<VirtioNetAdapter> DetectVirtioNetAdapters(Logger& log) {
 
   SetupDiDestroyDeviceInfoList(devinfo);
   return out;
+}
+
+static std::optional<unsigned> QueryAllocatedMessageInterruptCount(Logger& log, DEVINST devinst) {
+  ULONG reg_type = 0;
+  ULONG size = 0;
+
+  CONFIGRET cr =
+      CM_Get_DevNode_Registry_PropertyW(devinst, CM_DRP_ALLOC_CONFIG, &reg_type, nullptr, &size, 0);
+  if (cr != CR_SUCCESS && cr != CR_BUFFER_SMALL) {
+    log.Logf("virtio-net: CM_Get_DevNode_Registry_Property(CM_DRP_ALLOC_CONFIG) failed cr=%lu",
+             static_cast<unsigned long>(cr));
+    return std::nullopt;
+  }
+  if (size == 0) return std::nullopt;
+
+  std::vector<BYTE> buf(size);
+  cr = CM_Get_DevNode_Registry_PropertyW(devinst, CM_DRP_ALLOC_CONFIG, &reg_type, buf.data(), &size, 0);
+  if (cr != CR_SUCCESS) {
+    log.Logf("virtio-net: CM_Get_DevNode_Registry_Property(CM_DRP_ALLOC_CONFIG) read failed cr=%lu",
+             static_cast<unsigned long>(cr));
+    return std::nullopt;
+  }
+  if (size < sizeof(CM_RESOURCE_LIST)) {
+    return std::nullopt;
+  }
+
+  const BYTE* p = buf.data();
+  const BYTE* end = buf.data() + size;
+
+  const auto* list = reinterpret_cast<const CM_RESOURCE_LIST*>(p);
+  ULONG full_count = list->Count;
+
+  const BYTE* cur = p + offsetof(CM_RESOURCE_LIST, List);
+  for (ULONG i = 0; i < full_count; i++) {
+    if (cur + offsetof(CM_FULL_RESOURCE_DESCRIPTOR, PartialResourceList.PartialDescriptors) > end) {
+      break;
+    }
+
+    const auto* full = reinterpret_cast<const CM_FULL_RESOURCE_DESCRIPTOR*>(cur);
+    const ULONG partial_count = full->PartialResourceList.Count;
+
+    const BYTE* pd_base = cur + offsetof(CM_FULL_RESOURCE_DESCRIPTOR, PartialResourceList.PartialDescriptors);
+    const size_t pd_bytes = static_cast<size_t>(partial_count) * sizeof(CM_PARTIAL_RESOURCE_DESCRIPTOR);
+    if (pd_base + pd_bytes > end) {
+      break;
+    }
+
+    for (ULONG j = 0; j < partial_count; j++) {
+      const auto* d = reinterpret_cast<const CM_PARTIAL_RESOURCE_DESCRIPTOR*>(
+          pd_base + (static_cast<size_t>(j) * sizeof(CM_PARTIAL_RESOURCE_DESCRIPTOR)));
+      if (d->Type != CmResourceTypeInterrupt) continue;
+
+      if ((d->Flags & CM_RESOURCE_INTERRUPT_MESSAGE) != 0) {
+        return static_cast<unsigned>(d->u.MessageInterrupt.MessageCount);
+      }
+    }
+
+    cur = pd_base + pd_bytes;
+  }
+
+  return 0u;
 }
 
 static bool IsApipaV4(const IN_ADDR& addr) {
@@ -4467,6 +4530,9 @@ struct VirtioNetTestResult {
   bool upload_ok = false;
   uint64_t upload_bytes = 0;
   double upload_mbps = 0.0;
+  // Best-effort diagnostic: number of allocated message-signaled interrupt
+  // vectors (0 means INTx; -1 means query failed).
+  int msi_messages = -1;
 };
 
 static VirtioNetTestResult VirtioNetTest(Logger& log, const Options& opt) {
@@ -4558,6 +4624,17 @@ static VirtioNetTestResult VirtioNetTest(Logger& log, const Options& opt) {
   log.Logf("virtio-net: adapter up name=%s guid=%s ipv4=%u.%u.%u.%u",
            WideToUtf8(chosen_friendly).c_str(), WideToUtf8(chosen->instance_id).c_str(), a, b, c,
            d);
+
+  {
+    const auto msg_count = QueryAllocatedMessageInterruptCount(log, chosen->devinst);
+    if (msg_count.has_value()) {
+      out.msi_messages = static_cast<int>(*msg_count);
+      log.Logf("virtio-net: interrupt mode=%s message_count=%d", (*msg_count > 0) ? "MSI" : "INTx",
+               out.msi_messages);
+    } else {
+      log.LogLine("virtio-net: interrupt mode query failed");
+    }
+  }
 
   if (!DnsResolveWithFallback(log, opt.dns_host)) return out;
   if (!HttpGet(log, opt.http_url)) return out;
@@ -7857,10 +7934,11 @@ int wmain(int argc, wchar_t** argv) {
     const auto net = VirtioNetTest(log, opt);
     log.Logf(
         "AERO_VIRTIO_SELFTEST|TEST|virtio-net|%s|large_ok=%d|large_bytes=%llu|large_fnv1a64=0x%016I64x|large_mbps=%.2f|"
-        "upload_ok=%d|upload_bytes=%llu|upload_mbps=%.2f",
+        "upload_ok=%d|upload_bytes=%llu|upload_mbps=%.2f|msi=%d|msi_messages=%d",
         net.ok ? "PASS" : "FAIL", net.large_ok ? 1 : 0,
         static_cast<unsigned long long>(net.large_bytes), static_cast<unsigned long long>(net.large_hash),
-        net.large_mbps, net.upload_ok ? 1 : 0, static_cast<unsigned long long>(net.upload_bytes), net.upload_mbps);
+        net.large_mbps, net.upload_ok ? 1 : 0, static_cast<unsigned long long>(net.upload_bytes), net.upload_mbps,
+        (net.msi_messages < 0) ? -1 : (net.msi_messages > 0 ? 1 : 0), net.msi_messages);
     all_ok = all_ok && net.ok;
     WSACleanup();
   }

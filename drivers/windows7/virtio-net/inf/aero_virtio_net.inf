@@ -4,6 +4,11 @@
 ; virtio-net PCI device (AERO-W7-VIRTIO contract v1 modern PCI ID space).
 ;
 ; Note: Windows 7 x64 requires driver signing unless test mode is enabled.
+;
+; Interrupts (MSI/MSI-X):
+; Enable message-signaled interrupts so Windows can allocate multiple interrupt
+; vectors (config + RX + TX). If MSI cannot be allocated, Windows falls back to
+; legacy INTx and the driver remains functional.
 
 [Version]
 Signature   = "$Windows NT$"
@@ -68,11 +73,13 @@ HKR, Ndi, Service, 0, "aero_virtio_net"
 HKR, Ndi\Interfaces, UpperRange, 0, "ndis6"
 HKR, Ndi\Interfaces, LowerRange, 0, "ethernet"
 
+;------------------------------------------------------------------------------
 ; Interrupt Management (MSI/MSI-X)
+;------------------------------------------------------------------------------
 ;
-; virtio-net benefits from message-signaled interrupts (config + RX + TX). Request
-; a future-proof value; Windows may grant fewer messages and the driver will
-; fall back to sharing vector 0.
+; virtio-net benefits from at least 3 vectors (config + RX + TX). Request a small,
+; future-proof value; Windows may grant fewer messages and the driver will fall
+; back to sharing vector 0.
 [AeroVirtioNet_InterruptManagement_AddReg]
 HKR, "Interrupt Management",,0x00000010
 HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MSISupported,        0x00010001, 1
