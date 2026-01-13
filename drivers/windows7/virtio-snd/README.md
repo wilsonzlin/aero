@@ -340,6 +340,12 @@ Find `<DeviceInstancePath>` via **Device Manager → device → Details → “D
 
 After changing a toggle value, reboot the guest or disable/enable the device so Windows re-runs `START_DEVICE`.
 
+Example (elevated `cmd.exe`, replace `<DeviceInstancePath>`):
+
+```cmd
+reg add "HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Parameters" /v ForceNullBackend /t REG_DWORD /d 1 /f
+```
+
 ## Offline / slipstream installation (optional)
 
 If you want virtio-snd to bind automatically on first boot (for example when building unattended Win7 images), see:
