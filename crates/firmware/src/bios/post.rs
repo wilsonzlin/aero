@@ -3,8 +3,8 @@ use std::sync::Arc;
 use aero_cpu_core::state::{gpr, CpuMode, CpuState, RFLAGS_IF};
 
 use super::{
-    ivt, pci::PciConfigSpace, rom, set_real_mode_seg, Bios, BiosBus, BiosMemoryBus, BlockDevice,
-    BIOS_ALIAS_BASE, BIOS_BASE, BIOS_SEGMENT, EBDA_BASE,
+    eltorito, ivt, pci::PciConfigSpace, rom, set_real_mode_seg, Bios, BiosBus, BiosMemoryBus,
+    BlockDevice, BIOS_ALIAS_BASE, BIOS_BASE, BIOS_SEGMENT, EBDA_BASE,
 };
 use crate::smbios::{SmbiosConfig, SmbiosTables};
 
@@ -125,6 +125,19 @@ impl Bios {
         bus: &mut dyn BiosBus,
         disk: &mut dyn BlockDevice,
     ) -> Result<(), &'static str> {
+        if (0xE0..=0xEF).contains(&self.config.boot_drive) {
+            return self.boot_eltorito(cpu, bus, disk);
+        }
+
+        self.boot_mbr(cpu, bus, disk)
+    }
+
+    fn boot_mbr(
+        &mut self,
+        cpu: &mut CpuState,
+        bus: &mut dyn BiosBus,
+        disk: &mut dyn BlockDevice,
+    ) -> Result<(), &'static str> {
         let mut sector = [0u8; 512];
         disk.read_sector(0, &mut sector)
             .map_err(|_| "Disk read error")?;
@@ -150,6 +163,52 @@ impl Bios {
         set_real_mode_seg(&mut cpu.segments.es, 0x0000);
         set_real_mode_seg(&mut cpu.segments.ss, 0x0000);
         cpu.set_rip(0x7C00);
+
+        Ok(())
+    }
+
+    fn boot_eltorito(
+        &mut self,
+        cpu: &mut CpuState,
+        bus: &mut dyn BiosBus,
+        disk: &mut dyn BlockDevice,
+    ) -> Result<(), &'static str> {
+        let entry = eltorito::parse_boot_image(disk)?;
+
+        let start_lba = u64::from(entry.load_rba)
+            .checked_mul(4)
+            .ok_or("El Torito boot image load past end-of-image")?;
+        let count = u64::from(entry.sector_count);
+        let end_lba = start_lba
+            .checked_add(count)
+            .ok_or("El Torito boot image load past end-of-image")?;
+        if end_lba > disk.size_in_sectors() {
+            return Err("El Torito boot image load past end-of-image");
+        }
+
+        let dst = (u64::from(entry.load_segment)) << 4;
+        for i in 0..count {
+            let mut buf = [0u8; 512];
+            disk.read_sector(start_lba + i, &mut buf)
+                .map_err(|_| "Disk read error")?;
+            bus.write_physical(dst + i * 512, &buf);
+        }
+
+        // Register setup per BIOS conventions (matches the MBR boot path, except CS:IP).
+        cpu.gpr[gpr::RAX] = 0;
+        cpu.gpr[gpr::RBX] = 0;
+        cpu.gpr[gpr::RCX] = 0;
+        cpu.gpr[gpr::RDX] = self.config.boot_drive as u64; // DL
+        cpu.gpr[gpr::RSI] = 0;
+        cpu.gpr[gpr::RDI] = 0;
+        cpu.gpr[gpr::RBP] = 0;
+        cpu.gpr[gpr::RSP] = 0x7C00;
+
+        set_real_mode_seg(&mut cpu.segments.cs, entry.load_segment);
+        set_real_mode_seg(&mut cpu.segments.ds, 0x0000);
+        set_real_mode_seg(&mut cpu.segments.es, 0x0000);
+        set_real_mode_seg(&mut cpu.segments.ss, 0x0000);
+        cpu.set_rip(0x0000);
 
         Ok(())
     }

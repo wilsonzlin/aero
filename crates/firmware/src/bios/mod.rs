@@ -16,6 +16,7 @@
 
 mod acpi;
 mod bda_time;
+mod eltorito;
 mod int10;
 mod int10_vbe;
 mod int1a;
