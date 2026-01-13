@@ -1729,6 +1729,51 @@ struct DdiNoopStub<Ret(AEROGPU_APIENTRY*)(Args...)> {
   }
 };
 
+// Validates that the runtime will never see a NULL DDI function pointer.
+//
+// This is intentionally enabled in release builds. If our stub-fill lists ever
+// fall out of sync with WDK header revisions, this check should fail fast
+// (CreateDevice returns `E_NOINTERFACE`) instead of allowing a later NULL-call
+// crash inside the D3D runtime.
+static bool ValidateNoNullDdiTable(const char* name, const void* table, size_t bytes) {
+  if (!table || bytes == 0) {
+    return false;
+  }
+
+  // These tables are expected to contain only function pointers, densely packed.
+  if ((bytes % sizeof(void*)) != 0) {
+    return false;
+  }
+
+  const auto* raw = reinterpret_cast<const unsigned char*>(table);
+  const size_t count = bytes / sizeof(void*);
+  for (size_t i = 0; i < count; ++i) {
+    const size_t offset = i * sizeof(void*);
+    bool all_zero = true;
+    for (size_t j = 0; j < sizeof(void*); ++j) {
+      if (raw[offset + j] != 0) {
+        all_zero = false;
+        break;
+      }
+    }
+    if (!all_zero) {
+      continue;
+    }
+
+#if defined(_WIN32)
+    char buf[256] = {};
+    snprintf(buf, sizeof(buf), "aerogpu-d3d10_1: NULL DDI entry in %s at index=%zu\n", name ? name : "?", i);
+    OutputDebugStringA(buf);
+#endif
+
+#if !defined(NDEBUG)
+    assert(false && "NULL DDI function pointer");
+#endif
+    return false;
+  }
+  return true;
+}
+
 template <typename FuncsT>
 void InitDeviceFuncsWithStubs(FuncsT* funcs) {
   if (!funcs) {
@@ -6317,6 +6362,14 @@ HRESULT AEROGPU_APIENTRY CreateDevice(D3D10DDI_HADAPTER hAdapter, D3D10_1DDIARG_
   }
 
   InitDeviceFuncsWithStubs(pCreateDevice->pDeviceFuncs);
+  if (!ValidateNoNullDdiTable("D3D10_1DDI_DEVICEFUNCS (stubs)", pCreateDevice->pDeviceFuncs, sizeof(*pCreateDevice->pDeviceFuncs))) {
+#if defined(_WIN32)
+    OutputDebugStringA("aerogpu-d3d10_1: CreateDevice: device function table has NULL entries after stub fill\n");
+#endif
+    DestroyKernelDeviceContext(device);
+    device->~AeroGpuDevice();
+    return E_NOINTERFACE;
+  }
 
   pCreateDevice->pDeviceFuncs->pfnDestroyDevice = &DestroyDevice;
   pCreateDevice->pDeviceFuncs->pfnCalcPrivateResourceSize = &CalcPrivateResourceSize;
@@ -6466,6 +6519,15 @@ HRESULT AEROGPU_APIENTRY CreateDevice(D3D10DDI_HADAPTER hAdapter, D3D10_1DDIARG_
 
   #undef AEROGPU_D3D10_ASSIGN_STUB
 
+  if (!ValidateNoNullDdiTable("D3D10_1DDI_DEVICEFUNCS", pCreateDevice->pDeviceFuncs, sizeof(*pCreateDevice->pDeviceFuncs))) {
+#if defined(_WIN32)
+    OutputDebugStringA("aerogpu-d3d10_1: CreateDevice: device function table has NULL entries after overrides\n");
+#endif
+    DestroyKernelDeviceContext(device);
+    device->~AeroGpuDevice();
+    return E_NOINTERFACE;
+  }
+
   AEROGPU_D3D10_RET_HR(S_OK);
 }
 
@@ -6518,6 +6580,14 @@ HRESULT AEROGPU_APIENTRY CreateDevice10(D3D10DDI_HADAPTER hAdapter, D3D10DDIARG_
   }
 
   InitDeviceFuncsWithStubs(pCreateDevice->pDeviceFuncs);
+  if (!ValidateNoNullDdiTable("D3D10DDI_DEVICEFUNCS (stubs)", pCreateDevice->pDeviceFuncs, sizeof(*pCreateDevice->pDeviceFuncs))) {
+#if defined(_WIN32)
+    OutputDebugStringA("aerogpu-d3d10_1: CreateDevice10: device function table has NULL entries after stub fill\n");
+#endif
+    DestroyKernelDeviceContext(device);
+    device->~AeroGpuDevice();
+    return E_NOINTERFACE;
+  }
 
   pCreateDevice->pDeviceFuncs->pfnDestroyDevice = &DestroyDevice;
   pCreateDevice->pDeviceFuncs->pfnCalcPrivateResourceSize = &CalcPrivateResourceSize;
@@ -6633,6 +6703,15 @@ HRESULT AEROGPU_APIENTRY CreateDevice10(D3D10DDI_HADAPTER hAdapter, D3D10DDIARG_
       &CopyResourceImpl<decltype(pCreateDevice->pDeviceFuncs->pfnCopyResource)>::Call;
   pCreateDevice->pDeviceFuncs->pfnCopySubresourceRegion =
       &CopySubresourceRegionImpl<decltype(pCreateDevice->pDeviceFuncs->pfnCopySubresourceRegion)>::Call;
+
+  if (!ValidateNoNullDdiTable("D3D10DDI_DEVICEFUNCS", pCreateDevice->pDeviceFuncs, sizeof(*pCreateDevice->pDeviceFuncs))) {
+#if defined(_WIN32)
+    OutputDebugStringA("aerogpu-d3d10_1: CreateDevice10: device function table has NULL entries after overrides\n");
+#endif
+    DestroyKernelDeviceContext(device);
+    device->~AeroGpuDevice();
+    return E_NOINTERFACE;
+  }
 
   AEROGPU_D3D10_RET_HR(S_OK);
 }
