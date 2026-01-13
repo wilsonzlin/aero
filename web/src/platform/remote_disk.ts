@@ -1081,18 +1081,20 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
         return buf;
       }
 
-      try {
-        await this.idbCache!.put(blockIndex, buf);
-        const status = await this.idbCache!.getStatus();
-        this.cachedBytes = status.bytesUsed;
-      } catch (err) {
-        if (err instanceof IdbRemoteChunkCacheQuotaError) {
-          // Cache write failures (quota) should never fail the caller's remote read. Disable
-          // caching for the remainder of the disk lifetime so we don't retry failing writes.
-          this.idbCacheDisabled = true;
-          this.cachedBytes = 0;
-        } else {
-          throw err;
+      if (!this.idbCacheDisabled) {
+        try {
+          await this.idbCache!.put(blockIndex, buf);
+          const status = await this.idbCache!.getStatus();
+          this.cachedBytes = status.bytesUsed;
+        } catch (err) {
+          if (err instanceof IdbRemoteChunkCacheQuotaError) {
+            // Cache write failures (quota) should never fail the caller's remote read. Disable
+            // caching for the remainder of the disk lifetime so we don't retry failing writes.
+            this.idbCacheDisabled = true;
+            this.cachedBytes = 0;
+          } else {
+            throw err;
+          }
         }
       }
       this.telemetry.bytesDownloaded += buf.byteLength;

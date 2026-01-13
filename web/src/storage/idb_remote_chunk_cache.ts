@@ -456,7 +456,10 @@ export class IdbRemoteChunkCache {
       // in environments where quota checks happen before we can commit the same-tx
       // eviction (or where the effective quota is smaller than our configured cap).
       try {
-        await this.evictForQuotaInTx(Math.max(0, this.cacheLimitBytes - data.byteLength));
+        // Evict aggressively: we don't know the true available quota (and it may be far smaller
+        // than our configured cacheLimitBytes), so clearing the cache gives the best chance of
+        // storing at least the currently requested chunk.
+        await this.evictForQuotaInTx(0);
       } catch {
         // Best-effort eviction only; we'll retry once and then surface a typed error.
       }
