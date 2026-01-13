@@ -129,6 +129,9 @@ impl VirtioBlkConfig {
 /// Avoid introducing new backend traits in other crates; prefer adapting from
 /// `aero_storage::VirtualDisk` instead.
 ///
+/// If you need the reverse direction (wrapping an existing `BlockBackend` so you can layer
+/// `aero-storage` disk wrappers on top), use [`BlockBackendAsAeroVirtualDisk`].
+///
 /// See `docs/20-storage-trait-consolidation.md`.
 pub trait BlockBackend {
     fn len(&self) -> u64;

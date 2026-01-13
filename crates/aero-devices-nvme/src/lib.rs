@@ -59,6 +59,10 @@ mod aero_storage_adapter;
 pub use aero_storage_adapter::NvmeDiskFromAeroStorage;
 
 mod nvme_as_aero_storage;
+/// Reverse adapter for layering `aero-storage` disk wrappers (cache/sparse/overlay/etc) on top of
+/// an existing NVMe [`DiskBackend`] implementation.
+///
+/// This is the inverse of [`from_virtual_disk`] / [`NvmeDiskFromAeroStorage`].
 pub use nvme_as_aero_storage::NvmeBackendAsAeroVirtualDisk;
 
 const PAGE_SIZE: usize = 4096;
