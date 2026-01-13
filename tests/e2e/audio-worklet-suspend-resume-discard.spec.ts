@@ -36,11 +36,12 @@ test("AudioContext suspend/resume discards playback ring backlog (stale latency 
   // Ensure we have a user gesture to satisfy autoplay policies.
   await page.click("#init-audio-output");
 
+  // Wait for the harness to publish the audio output handle (it can be disabled if browser APIs
+  // are missing or initialization fails).
   await page.waitForFunction(() => {
-    // Exposed by the audio UI entrypoint (`src/main.ts` in the root app).
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const out = (globalThis as any).__aeroAudioOutput;
-    return out?.enabled === true && out?.context?.state === "running";
+    return out && typeof out.enabled === "boolean";
   });
 
   const initResult = await page.evaluate(() => {
@@ -50,11 +51,21 @@ test("AudioContext suspend/resume discards playback ring backlog (stale latency 
     if (!out.enabled) {
       return { ok: false as const, reason: typeof out.message === "string" ? out.message : "Audio output disabled." };
     }
-    return { ok: true as const };
+    return { ok: true as const, state: out?.context?.state ?? null };
   });
 
   if (!initResult.ok) {
     test.skip(true, `Audio output unavailable: ${initResult.reason}`);
+  }
+
+  // Ensure the context is actually running (autoplay policies can leave it suspended even after
+  // the output is enabled).
+  if (initResult.state !== "running") {
+    await page.waitForFunction(() => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const out = (globalThis as any).__aeroAudioOutput;
+      return out?.enabled === true && out?.context?.state === "running";
+    });
   }
 
   // Sanity check: ensure the AudioWorklet consumer is actually running (read index advances)
