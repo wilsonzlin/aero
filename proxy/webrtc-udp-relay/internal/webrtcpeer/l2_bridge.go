@@ -579,6 +579,7 @@ func (b *l2Bridge) sanitizeStringForLog(msg string) string {
 	msg = redactQueryParamValue(msg, "token")
 	msg = redactQueryParamValue(msg, "apiKey")
 	msg = redactQueryParamValue(msg, "aero_session")
+	msg = redactPrefixedValue(msg, l2tunnel.TokenSubprotocolPrefix)
 
 	return msg
 }
@@ -589,6 +590,20 @@ func redactQueryParamValue(msg, key string) string {
 	}
 
 	needle := key + "="
+	return redactValueAfterNeedle(msg, needle)
+}
+
+func redactPrefixedValue(msg, prefix string) string {
+	if msg == "" || prefix == "" {
+		return msg
+	}
+	return redactValueAfterNeedle(msg, prefix)
+}
+
+func redactValueAfterNeedle(msg, needle string) string {
+	if msg == "" || needle == "" {
+		return msg
+	}
 	const replacement = "<redacted>"
 
 	i := 0
@@ -604,6 +619,9 @@ func redactQueryParamValue(msg, key string) string {
 		for end < len(msg) {
 			switch msg[end] {
 			case '&', ' ', '\n', '\r', '\t', '"', '\'', '>', '<', ')', ']', '}', ';':
+				goto replace
+			case ',':
+				// Commas are common in header lists like Sec-WebSocket-Protocol.
 				goto replace
 			default:
 				end++

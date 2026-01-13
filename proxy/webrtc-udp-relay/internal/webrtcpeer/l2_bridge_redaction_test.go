@@ -70,3 +70,15 @@ func TestL2Bridge_SanitizeStringForLog_RedactsAeroSessionCookieEvenWhenValueUnkn
 		t.Fatalf("expected aero_session cookie value to be redacted: %q", s)
 	}
 }
+
+func TestL2Bridge_SanitizeStringForLog_RedactsL2TokenSubprotocolEvenWhenValueUnknown(t *testing.T) {
+	b := &l2Bridge{}
+	msg := "Sec-WebSocket-Protocol: aero-l2-tunnel-v1, aero-l2-token.sekrit"
+	s := b.sanitizeStringForLog(msg)
+	if strings.Contains(s, "sekrit") {
+		t.Fatalf("sanitized message still contains l2 token subprotocol value: %q", s)
+	}
+	if !strings.Contains(s, "aero-l2-token.<redacted>") {
+		t.Fatalf("expected l2 token subprotocol to be redacted: %q", s)
+	}
+}
