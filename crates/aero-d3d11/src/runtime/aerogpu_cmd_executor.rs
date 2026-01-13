@@ -765,7 +765,9 @@ impl AerogpuD3d11Executor {
         let dummy_uniform = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("aerogpu_cmd dummy uniform buffer"),
             size: LEGACY_CONSTANTS_SIZE_BYTES,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            usage: wgpu::BufferUsages::UNIFORM
+                | wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
         {

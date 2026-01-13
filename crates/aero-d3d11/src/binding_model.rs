@@ -14,7 +14,7 @@
 
 /// Base `@binding` offset for `b#` constant buffers.
 pub const BINDING_BASE_CBUFFER: u32 = 0;
-/// Base `@binding` offset for `t#` textures.
+/// Base `@binding` offset for `t#` SRVs (textures and buffers).
 pub const BINDING_BASE_TEXTURE: u32 = 32;
 /// Base `@binding` offset for `s#` samplers.
 pub const BINDING_BASE_SAMPLER: u32 = 160;
@@ -44,7 +44,7 @@ pub const MAX_CBUFFER_SLOTS: u32 = BINDING_BASE_TEXTURE - BINDING_BASE_CBUFFER;
 /// scheme (and exists to prevent `@binding` range collisions).
 pub const D3D11_MAX_CONSTANT_BUFFER_SLOTS: u32 = 14;
 
-/// Maximum number of texture slots that can be represented without colliding with the sampler
+/// Maximum number of SRV (`t#`) slots that can be represented without colliding with the sampler
 /// binding range.
 ///
 /// Valid slots are `0..MAX_TEXTURE_SLOTS` (inclusive max slot is `MAX_TEXTURE_SLOTS - 1`).

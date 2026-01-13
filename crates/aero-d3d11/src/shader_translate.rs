@@ -58,9 +58,13 @@ pub enum BindingKind {
     ConstantBuffer { slot: u32, reg_count: u32 },
     Texture2D { slot: u32 },
     /// A `t#` SRV that is backed by a buffer (e.g. `ByteAddressBuffer`, `StructuredBuffer`).
+    ///
+    /// In WGSL this maps to a `var<storage, read>` binding.
     SrvBuffer { slot: u32 },
     Sampler { slot: u32 },
     /// A `u#` UAV that is backed by a buffer (e.g. `RWByteAddressBuffer`, `RWStructuredBuffer`).
+    ///
+    /// In WGSL this maps to a `var<storage, read_write>` binding.
     UavBuffer { slot: u32 },
 }
 
@@ -164,7 +168,11 @@ impl fmt::Display for ShaderTranslateError {
                     ),
                     "texture" => write!(
                         f,
-                        "texture slot {slot} is out of range (max {max}); t# slots map to @binding({BINDING_BASE_TEXTURE} + slot) and must stay below the sampler base @binding({BINDING_BASE_SAMPLER})"
+                        "t# SRV slot {slot} is out of range (max {max}); t# slots map to @binding({BINDING_BASE_TEXTURE} + slot) and must stay below the sampler base @binding({BINDING_BASE_SAMPLER})"
+                    ),
+                    "srv_buffer" => write!(
+                        f,
+                        "t# SRV buffer slot {slot} is out of range (max {max}); t# slots map to @binding({BINDING_BASE_TEXTURE} + slot) and must stay below the sampler base @binding({BINDING_BASE_SAMPLER})"
                     ),
                     "uav" => write!(
                         f,
@@ -173,6 +181,10 @@ impl fmt::Display for ShaderTranslateError {
                     "sampler" => write!(
                         f,
                         "sampler slot {slot} is out of range (max {max}); s# slots map to @binding({BINDING_BASE_SAMPLER} + slot)"
+                    ),
+                    "uav_buffer" => write!(
+                        f,
+                        "u# UAV buffer slot {slot} is out of range (max {max}); u# slots map to @binding({BINDING_BASE_UAV} + slot)"
                     ),
                     _ => write!(f, "{kind} slot {slot} is out of range (max {max})"),
                 }
