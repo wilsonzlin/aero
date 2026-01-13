@@ -72,7 +72,15 @@ enables the same canonical controller set in the full-system `Machine` integrati
 
 1. BIOS boot order is configured to boot from **CD-ROM (El Torito)** first.
 2. The boot ISO is presented as an **ATAPI CD-ROM** on **PIIX3 IDE secondary master**.
-3. Windows Setup enumerates the **AHCI disk** on **ICH9 AHCI port 0** and installs Windows onto it.
+3. BIOS selects the CD by using a **CD boot drive number** in `DL` (recommend **`DL=0xE0`** for the
+   first CD-ROM drive) and performs an **El Torito no-emulation** boot.
+4. If the CD is absent or unbootable (no ISO, empty tray, invalid boot catalog, etc.), BIOS falls
+   back to the primary HDD boot path and enters the HDD boot sector with **`DL=0x80`**.
+5. Windows Setup enumerates the **AHCI disk** on **ICH9 AHCI port 0** and installs Windows onto it.
+
+Implementation note (Rust): in `aero_machine`, the Win7 install preset / install flow should set
+the BIOS boot drive to the CD drive number (e.g. `Machine::set_boot_drive(0xE0)`) so firmware boots
+the install ISO first, then switch back to `0x80` for normal HDD boots after installation.
 
 ### 2) Normal boot (after installation)
 

@@ -243,6 +243,25 @@ Windows 7 boot and setup rely on **VBE (VESA BIOS Extensions)** for early boot g
 - legacy VGA text services (e.g. AH=0x0E TTY write), and
 - VBE services (AX=4Fxx) to set a linear framebuffer mode (see [AeroGPU Legacy VGA/VBE Compatibility](./16-aerogpu-vga-vesa-compat.md)).
 
+#### INT 13h (disk services): sector sizes + El Torito CD-ROM
+
+BIOS disk I/O has two relevant "block sizes":
+
+- **HDD/floppy:** 512-byte sectors (traditional INT 13h semantics, CHS read/write/verify, and the
+  default sector size used by most boot sectors).
+- **CD-ROM (El Torito):** 2048-byte logical blocks (ISO-9660 / CD-ROM sector size).
+
+For the Windows 7 install ISO boot path, firmware is expected to support **El Torito (no-emulation)**
+booting from a CD drive number (recommend **`DL=0xE0`** for the first CD), and provide **EDD-style**
+INT 13h services for that drive. At minimum, CD boot loaders are expected to be able to use:
+
+- `AH=41h` — **Check Extensions Present** (EDD)
+- `AH=42h` — **Extended Read** (EDD, Disk Address Packet)
+- `AH=48h` — **Extended Get Drive Parameters** (EDD; must report `bytes_per_sector = 2048` for CD)
+
+CHS-based functions like `AH=02h` (read sectors) are 512-byte/CHS-oriented and should not be relied
+on for CD media; failing them cleanly for CD drives is acceptable as long as the EDD path works.
+
 ```rust
 impl Bios {
     pub fn handle_int10(&mut self, cpu: &mut CpuState, memory: &mut MemoryBus) {
