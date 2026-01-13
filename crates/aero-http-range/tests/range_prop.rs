@@ -16,24 +16,24 @@ fn valid_spec() -> impl Strategy<Value = (ByteRangeSpec, String)> {
     // whitespace differences).
     prop_oneof![
         // start-end
-        (0u64..10_000u64, 0u64..10_000u64, ows(), ows(), ows()).prop_filter_map(
+        (0u64..10_000u64, 0u64..10_000u64, ows(), ows(), ows(), ows()).prop_filter_map(
             "end must be >= start",
-            |(start, end, ws1, ws2, ws3)| {
+            |(start, end, ws0, ws1, ws2, ws3)| {
                 if end < start {
                     return None;
                 }
-                let s = format!("{start}{ws1}-{ws2}{end}{ws3}");
+                let s = format!("{ws0}{start}{ws1}-{ws2}{end}{ws3}");
                 Some((ByteRangeSpec::FromTo { start, end }, s))
             },
         ),
         // start-
-        (0u64..10_000u64, ows(), ows()).prop_map(|(start, ws1, ws2)| {
-            let s = format!("{start}{ws1}-{ws2}");
+        (0u64..10_000u64, ows(), ows(), ows()).prop_map(|(start, ws0, ws1, ws2)| {
+            let s = format!("{ws0}{start}{ws1}-{ws2}");
             (ByteRangeSpec::From { start }, s)
         }),
         // -suffix
-        (1u64..10_000u64, ows(), ows()).prop_map(|(len, ws1, ws2)| {
-            let s = format!("-{ws1}{len}{ws2}");
+        (1u64..10_000u64, ows(), ows(), ows()).prop_map(|(len, ws0, ws1, ws2)| {
+            let s = format!("{ws0}-{ws1}{len}{ws2}");
             (ByteRangeSpec::Suffix { len }, s)
         }),
     ]
