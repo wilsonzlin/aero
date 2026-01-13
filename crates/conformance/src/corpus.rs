@@ -128,6 +128,9 @@ pub enum TemplateKind {
     GuardedOobLoad,
     GuardedOobStore,
     DivRbxByZero,
+    #[cfg(feature = "qemu-reference")]
+    /// A 16-bit real-mode snippet exercised via the QEMU reference backend.
+    RealModeFarJump,
 }
 
 impl TemplateKind {
@@ -1058,6 +1061,39 @@ pub fn templates() -> Vec<InstructionTemplate> {
     ]
 }
 
+#[cfg(feature = "qemu-reference")]
+pub fn templates_qemu() -> Vec<InstructionTemplate> {
+    let all_flags = FLAG_CF | FLAG_PF | FLAG_AF | FLAG_ZF | FLAG_SF | FLAG_OF;
+
+    const CODE_BASE: u16 = 0x0700;
+    const TARGET_OFF: u16 = CODE_BASE + 5;
+    const REAL_MODE_LJMP_SNIPPET: &[u8] = &[
+        // ljmp 0x0000:0x0705 (far control transfer; not host-user-mode safe)
+        0xEA,
+        (TARGET_OFF & 0xFF) as u8,
+        (TARGET_OFF >> 8) as u8,
+        0x00,
+        0x00,
+        // mov ax, 0x1234
+        0xB8,
+        0x34,
+        0x12,
+        // ret
+        0xC3,
+    ];
+
+    vec![InstructionTemplate {
+        name: "ljmp 0:0705; mov ax,0x1234; ret",
+        coverage_key: "rm_far_jmp",
+        bytes: REAL_MODE_LJMP_SNIPPET,
+        kind: TemplateKind::RealModeFarJump,
+        flags_mask: all_flags,
+        // QEMU harness only reports a scratch memory hash, not the full bytes.
+        mem_compare_len: 4,
+        init: InitPreset::None,
+    }]
+}
+
 #[derive(Clone, Debug)]
 pub struct TestCase {
     pub case_idx: usize,
@@ -1096,6 +1132,24 @@ impl TestCase {
             rip: mem_base.wrapping_add(CODE_OFF as u64),
         };
 
+        #[cfg(feature = "qemu-reference")]
+        if matches!(template.kind, TemplateKind::RealModeFarJump) {
+            // The QEMU harness only initializes 16-bit registers; keep the rest zero so the state
+            // round-trips cleanly.
+            init = CpuState {
+                rax: rng.next_u64() as u16 as u64,
+                rbx: rng.next_u64() as u16 as u64,
+                rcx: rng.next_u64() as u16 as u64,
+                rdx: rng.next_u64() as u16 as u64,
+                rsi: rng.next_u64() as u16 as u64,
+                rdi: rng.next_u64() as u16 as u64,
+                rflags: FLAG_FIXED_1,
+                // QEMU executes the snippet at 0x0000:0x0700.
+                rip: 0x0700,
+                ..CpuState::default()
+            };
+        }
+
         let relevant_flags = FLAG_CF | FLAG_PF | FLAG_AF | FLAG_ZF | FLAG_SF | FLAG_OF;
         init.rflags |= rng.next_u64() & relevant_flags;
 
@@ -1103,11 +1157,36 @@ impl TestCase {
         if let Some(required) = template.init.required_memory_len() {
             memory_len = memory_len.max(required);
         }
-        let min_len = CODE_OFF
+        let code_off = {
+            #[cfg(feature = "qemu-reference")]
+            if matches!(template.kind, TemplateKind::RealModeFarJump) {
+                0x0700usize
+                    .checked_sub(mem_base as usize)
+                    .expect("qemu code base must be >= mem_base")
+            } else {
+                CODE_OFF
+            }
+            #[cfg(not(feature = "qemu-reference"))]
+            {
+                CODE_OFF
+            }
+        };
+        let min_len = code_off
             .checked_add(template.bytes.len())
             .and_then(|v| v.checked_add(1))
             .expect("memory length overflow");
         memory_len = memory_len.max(min_len);
+
+        #[cfg(feature = "qemu-reference")]
+        if matches!(template.kind, TemplateKind::RealModeFarJump) {
+            // Ensure the synthetic stack slot (0x8FFE) exists so the `ret` in the snippet can
+            // return cleanly.
+            let required = 0x8FFFusize
+                .checked_sub(mem_base as usize)
+                .and_then(|v| v.checked_add(1))
+                .expect("stack length overflow");
+            memory_len = memory_len.max(required);
+        }
         if memory_len > MAX_TEST_MEMORY_LEN {
             panic!(
                 "testcase memory length {memory_len} exceeds MAX_TEST_MEMORY_LEN={MAX_TEST_MEMORY_LEN}"
@@ -1117,7 +1196,7 @@ impl TestCase {
         for byte in &mut memory {
             *byte = rng.next_u8();
         }
-        memory[CODE_OFF..CODE_OFF + template.bytes.len()].copy_from_slice(template.bytes);
+        memory[code_off..code_off + template.bytes.len()].copy_from_slice(template.bytes);
 
         template.init.apply(&mut init, mem_base);
         apply_auto_fixups(case_idx, template, &mut init, &mut memory, mem_base, rng);

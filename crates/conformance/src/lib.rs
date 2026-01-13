@@ -122,7 +122,25 @@ pub fn run(
     seed: u64,
     report_path: Option<&std::path::Path>,
 ) -> Result<ConformanceReport, String> {
-    let templates = templates_for_run()?;
+    let mut reference =
+        ReferenceBackend::new().map_err(|e| format!("reference backend unavailable: {e}"))?;
+    let mem_base = reference.memory_base();
+    let base_templates = {
+        #[cfg(feature = "qemu-reference")]
+        {
+            if reference.is_qemu() {
+                corpus::templates_qemu()
+            } else {
+                corpus::templates()
+            }
+        }
+        #[cfg(not(feature = "qemu-reference"))]
+        {
+            corpus::templates()
+        }
+    };
+    let templates = templates_for_run(base_templates)?;
+
     // Fault templates intentionally crash in user mode on the host reference backend.
     // If isolation is disabled, fail fast with a clear message instead of taking down
     // the entire test runner process.
@@ -136,12 +154,9 @@ pub fn run(
         );
     }
 
-    let mut reference =
-        ReferenceBackend::new().map_err(|e| format!("reference backend unavailable: {e}"))?;
     let memory_fault_signal = detect_memory_fault_signal(&mut reference, &templates);
     let mut aero = aero::AeroBackend::new(memory_fault_signal);
 
-    let mem_base = reference.memory_base();
     let mut rng = corpus::XorShift64::new(seed);
     // Coverage "expected" must remain the full set even when a template filter is active,
     // so `ConformanceReport::new()` always uses the complete template corpus to build the
@@ -213,8 +228,7 @@ fn shell_quote_single(s: &str) -> String {
     format!("'{escaped}'")
 }
 
-fn templates_for_run() -> Result<Vec<InstructionTemplate>, String> {
-    let templates = corpus::templates();
+fn templates_for_run(templates: Vec<InstructionTemplate>) -> Result<Vec<InstructionTemplate>, String> {
     let filter = std::env::var("AERO_CONFORMANCE_FILTER")
         .ok()
         .map(|v| v.trim().to_string())
@@ -377,7 +391,8 @@ mod tests {
         let all = crate::corpus::templates();
         let _guard = EnvGuard::set("AERO_CONFORMANCE_FILTER", "add");
 
-        let filtered = templates_for_run().expect("filter should match at least one template");
+        let filtered =
+            templates_for_run(all.clone()).expect("filter should match at least one template");
 
         assert!(
             filtered.len() < all.len(),
@@ -401,7 +416,8 @@ mod tests {
     #[test]
     fn template_filter_can_force_name_substring() {
         let _guard = EnvGuard::set("AERO_CONFORMANCE_FILTER", "name:add");
-        let filtered = templates_for_run().expect("name:add should match at least one template");
+        let filtered =
+            templates_for_run(crate::corpus::templates()).expect("name:add should match at least one template");
 
         assert!(
             filtered.iter().all(|t| t.name.contains("add")),

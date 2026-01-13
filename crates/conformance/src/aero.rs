@@ -22,6 +22,14 @@ impl AeroBackend {
     }
 
     pub fn execute(&mut self, case: &TestCase) -> ExecOutcome {
+        #[cfg(feature = "qemu-reference")]
+        if matches!(
+            case.template.kind,
+            crate::corpus::TemplateKind::RealModeFarJump
+        ) {
+            return self.execute_real_mode(case);
+        }
+
         let mut bus = ConformanceBus {
             base: case.mem_base,
             mem: case.memory.clone(),
@@ -47,6 +55,87 @@ impl AeroBackend {
         ExecOutcome {
             state,
             memory,
+            fault,
+        }
+    }
+
+    #[cfg(feature = "qemu-reference")]
+    fn execute_real_mode(&mut self, case: &TestCase) -> ExecOutcome {
+        // The QEMU reference harness executes a 16-bit snippet starting at 0x0700 and returns to
+        // its caller via `ret`. Tier-0 stops at branch boundaries, so we step until the snippet
+        // returns to a synthetic address.
+        const RETURN_IP: u16 = 0x0000;
+        const STACK_SP: u16 = 0x8FFE;
+
+        let mut bus = ConformanceBus {
+            base: case.mem_base,
+            mem: case.memory.clone(),
+        };
+
+        // Seed a synthetic return address on the stack so the snippet's `ret` has somewhere to go.
+        let ret_addr = (STACK_SP as u64)
+            .checked_sub(case.mem_base)
+            .and_then(|v| usize::try_from(v).ok());
+        if let Some(ret_off) = ret_addr {
+            if ret_off + 2 <= bus.mem.len() {
+                bus.mem[ret_off..ret_off + 2].copy_from_slice(&RETURN_IP.to_le_bytes());
+            }
+        }
+
+        let mut cpu = CpuCore::new(CpuMode::Real);
+        import_state(&case.init, &mut cpu.state);
+
+        // Real-mode flat segments.
+        cpu.state.segments.cs = Default::default();
+        cpu.state.segments.ds = Default::default();
+        cpu.state.segments.es = Default::default();
+        cpu.state.segments.ss = Default::default();
+        cpu.state.segments.cs.limit = 0xFFFF;
+        cpu.state.segments.ds.limit = 0xFFFF;
+        cpu.state.segments.es.limit = 0xFFFF;
+        cpu.state.segments.ss.limit = 0xFFFF;
+
+        // Stack pointer for the `ret` at the end of the snippet.
+        cpu.state.write_gpr64(gpr::RSP, STACK_SP as u64);
+
+        let mut fault = None;
+        for _ in 0..16 {
+            if cpu.state.rip() as u16 == RETURN_IP {
+                break;
+            }
+
+            let step = aero_cpu_core::interp::tier0::exec::step_with_config(
+                &self.cfg,
+                &mut cpu.state,
+                &mut bus,
+            );
+            match step {
+                Ok(StepExit::Assist { .. }) => {
+                    fault = Some(Fault::Unsupported("tier-0 assist exit"));
+                    break;
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    fault = Some(map_exception(e, self.mem_fault_signal));
+                    break;
+                }
+            }
+        }
+
+        if fault.is_none() && cpu.state.rip() as u16 != RETURN_IP {
+            fault = Some(Fault::Unsupported("tier-0 real-mode snippet did not return"));
+        }
+
+        let mut state = export_state(&cpu.state);
+        // The QEMU harness does not report IP/CS directly; match the host backend convention so we
+        // have a stable comparison value.
+        state.rip = case.init.rip.wrapping_add(case.template.bytes.len() as u64);
+
+        let mem_hash = fnv1a_hash_256(&bus.mem);
+
+        ExecOutcome {
+            state,
+            memory: mem_hash.to_le_bytes().to_vec(),
             fault,
         }
     }
@@ -107,6 +196,17 @@ fn export_state(core: &CoreState) -> CpuState {
         rflags: core.rflags(),
         rip: core.rip(),
     }
+}
+
+#[cfg(feature = "qemu-reference")]
+fn fnv1a_hash_256(bytes: &[u8]) -> u32 {
+    let mut hash: u32 = 0x811c_9dc5;
+    for idx in 0..256usize {
+        let b = bytes.get(idx).copied().unwrap_or(0);
+        hash ^= b as u32;
+        hash = hash.wrapping_mul(0x0100_0193);
+    }
+    hash
 }
 
 #[derive(Debug)]

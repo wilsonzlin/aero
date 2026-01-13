@@ -8,8 +8,12 @@ aero-cpu-core = { path = "../aero-cpu-core" }
 aero-cpu-decoder = { path = "../aero-cpu-decoder" }
 iced-x86 = "1.21.0"
 libc = "0.2"
+qemu-diff = { path = "../../tools/qemu_diff", optional = true }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+
+[features]
+qemu-reference = ["dep:qemu-diff"]
 
 [dev-dependencies]
 aero-auth-tokens = { path = "../aero-auth-tokens" }

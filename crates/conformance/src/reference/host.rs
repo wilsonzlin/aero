@@ -5,13 +5,13 @@ use std::io::Read;
 use std::mem::size_of;
 use std::os::unix::io::{FromRawFd, RawFd};
 
-pub struct ReferenceBackend {
+pub struct HostReferenceBackend {
     code: ExecutablePage,
     memory: GuardedMemory,
     isolate: bool,
 }
 
-impl ReferenceBackend {
+impl HostReferenceBackend {
     pub fn new() -> Result<Self, &'static str> {
         let isolate = std::env::var("AERO_CONFORMANCE_REFERENCE_ISOLATE")
             .map(|v| v != "0")

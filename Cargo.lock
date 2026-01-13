@@ -1462,6 +1462,7 @@ dependencies = [
  "aero-udp-relay-protocol",
  "iced-x86",
  "libc",
+ "qemu-diff",
  "serde",
  "serde_json",
 ]
