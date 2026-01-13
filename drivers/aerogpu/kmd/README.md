@@ -81,9 +81,11 @@ Where to set it:
 
 1. Override `NonLocalMemorySizeMB` to a larger value (e.g., 1024 or 2048 on x64).
 2. Reboot the guest (or disable/enable the AeroGPU device).
-3. Run a D3D11 workload that allocates multiple large textures (for example, repeatedly call
+3. Run `drivers/aerogpu/tests/win7/segment_budget_sanity` to confirm the new WDDM budget is visible from user mode
+   (it queries `D3DKMTQueryAdapterInfo(GETSEGMENTGROUPSIZE)` and prints the segment size in MiB).
+4. Run a D3D11 workload that allocates multiple large textures (for example, repeatedly call
    `ID3D11Device::CreateTexture2D` for 4096×4096 RGBA textures in a loop).
-4. Confirm the workload no longer fails early due to segment budget/`E_OUTOFMEMORY` when configured larger (until you hit
+5. Confirm the workload no longer fails early due to segment budget/`E_OUTOFMEMORY` when configured larger (until you hit
    actual guest RAM limits).
 
 ## Device ABI status (versioned vs legacy)
