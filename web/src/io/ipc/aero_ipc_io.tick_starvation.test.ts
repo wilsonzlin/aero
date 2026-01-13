@@ -100,7 +100,11 @@ describe("io/ipc/aero_ipc_io tick fairness", () => {
     ]);
 
     const tickCounterSab = new SharedArrayBuffer(4);
-    const tickSawCmdDataSab = new SharedArrayBuffer(4);
+    // 2x i32:
+    //  - [0] set to 1 if any tick() fired while cmd ring still had pending data
+    //  - [1] optional sink for the worker to store a checksum / busy accumulator (prevents
+    //        the command handler from being optimized away as "pure work" in JIT)
+    const tickSawCmdDataSab = new SharedArrayBuffer(8);
     const tickCounter = new Int32Array(tickCounterSab);
     const tickSawCmdData = new Int32Array(tickSawCmdDataSab);
 

@@ -32,7 +32,10 @@ const target: AeroIpcIoDispatchTarget = {
   portWrite: () => {
     // Add deterministic work so draining takes long enough that ticks would
     // starve without the opportunistic tick-in-drain behavior.
-    for (let i = 0; i < (workIters >>> 0); i++) busyAcc = (busyAcc + i) | 0;
+    for (let i = 0; i < (workIters >>> 0); i++) busyAcc = Math.imul(busyAcc + i, 0x9e37_79b1);
+    // Store the accumulator into shared memory so this work remains observable (and cannot be
+    // optimized away as a pure computation).
+    if (tickSawCmdDataI32.length > 1) Atomics.store(tickSawCmdDataI32, 1, busyAcc | 0);
   },
   mmioRead: () => 0,
   mmioWrite: () => {},
