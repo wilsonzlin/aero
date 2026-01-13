@@ -2188,10 +2188,13 @@ async function initPresenterForRuntime(canvas: OffscreenCanvas, width: number, h
   if (forceBackend) {
     backends = [forceBackend];
   } else {
-    backends = preferWebGpu ? ["webgpu", "webgl2_wgpu", "webgl2_raw"] : ["webgl2_wgpu", "webgl2_raw", "webgpu"];
+    // Prefer the raw WebGL2 presenter as the WebGL2 fallback path. The wgpu-backed WebGL2 presenter
+    // is useful for exercising the Rust/WASM GPU stack, but it can be less reliable in some
+    // headless environments.
+    backends = preferWebGpu ? ["webgpu", "webgl2_raw", "webgl2_wgpu"] : ["webgl2_raw", "webgl2_wgpu", "webgpu"];
     if (disableWebGpu && !preferWebGpu) {
       // When WebGPU is disabled and WebGL2 is preferred, never attempt WebGPU.
-      backends = ["webgl2_wgpu", "webgl2_raw"];
+      backends = ["webgl2_raw", "webgl2_wgpu"];
     }
   }
 

@@ -725,6 +725,8 @@ export class WebGpuPresenterBackend implements Presenter {
       if (format === 'rgba8unorm') return 'rgba8unorm-srgb';
       return null;
     };
+    const isSrgbFormat = (format: unknown): boolean =>
+      typeof format === 'string' && (format as string).toLowerCase().endsWith('-srgb');
 
     // Explicit presentation color policy (docs/04):
     // - Input framebuffer is linear (`rgba8unorm`)
@@ -734,7 +736,17 @@ export class WebGpuPresenterBackend implements Presenter {
     let viewFormat: any = this.canvasFormat;
     let srgbEncodeInShader = true;
 
-    if (srgbFormat) {
+    if (isSrgbFormat(this.canvasFormat)) {
+      // Some future implementations may return an sRGB canvas format directly.
+      // In that case, the surface itself will perform encoding; do not double-encode in shader.
+      (this.ctx as any).configure({
+        device: this.device,
+        format: this.canvasFormat,
+        alphaMode: 'opaque',
+      });
+      viewFormat = this.canvasFormat;
+      srgbEncodeInShader = false;
+    } else if (srgbFormat) {
       try {
         (this.ctx as any).configure({
           device: this.device,
@@ -879,6 +891,19 @@ export class WebGpuPresenterBackend implements Presenter {
     const vp = computeViewport(canvasW, canvasH, this.srcWidth, this.srcHeight, scaleMode);
     const [r, g, b] = this.opts.clearColor ?? [0, 0, 0, 1];
 
+    // The canvas swapchain is usually configured with a linear format (`bgra8unorm`) even when
+    // the presentation pipeline expects sRGB output. When we are in the "shader encodes sRGB"
+    // fallback path, make sure letterboxing clear colors follow the same policy (encode on CPU),
+    // otherwise non-black clear colors would appear washed out.
+    const srgbEncodeChannel = (x: number): number => {
+      const v = Math.min(1, Math.max(0, x));
+      if (v <= 0.0031308) return v * 12.92;
+      return 1.055 * Math.pow(v, 1.0 / 2.4) - 0.055;
+    };
+    const clearR = this.srgbEncodeInShader ? srgbEncodeChannel(r) : r;
+    const clearG = this.srgbEncodeInShader ? srgbEncodeChannel(g) : g;
+    const clearB = this.srgbEncodeInShader ? srgbEncodeChannel(b) : b;
+
     let currentTexture: any = null;
     let currentTextureError: unknown = null;
     for (let attempt = 0; attempt < 2; attempt++) {
@@ -925,7 +950,7 @@ export class WebGpuPresenterBackend implements Presenter {
           view,
           // Alpha is forced opaque in shader; keep clear alpha opaque too so letterboxing doesn't
           // accidentally blend with the page background.
-          clearValue: { r, g, b, a: 1 },
+          clearValue: { r: clearR, g: clearG, b: clearB, a: 1 },
           loadOp: 'clear',
           storeOp: 'store',
         },
