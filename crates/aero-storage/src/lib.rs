@@ -78,6 +78,8 @@ mod tests;
 mod range_set;
 #[cfg(not(target_arch = "wasm32"))]
 mod streaming;
+#[cfg(not(target_arch = "wasm32"))]
+mod chunked_streaming;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use range_set::{ByteRange, RangeSet};
@@ -86,4 +88,9 @@ pub use streaming::{
     CacheStatus, ChunkManifest, ChunkStore, DirectoryChunkStore, SparseFileChunkStore,
     StreamingCacheBackend, StreamingDisk, StreamingDiskConfig, StreamingDiskError,
     StreamingDiskOptions, StreamingTelemetrySnapshot, DEFAULT_CHUNK_SIZE, DEFAULT_SECTOR_SIZE,
+};
+#[cfg(not(target_arch = "wasm32"))]
+pub use chunked_streaming::{
+    ChunkedDiskManifestV1, ChunkedStreamingDisk, ChunkedStreamingDiskConfig,
+    ChunkedStreamingDiskError, ChunkedStreamingDiskOptions, ChunkedStreamingTelemetrySnapshot,
 };
