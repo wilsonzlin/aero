@@ -24,7 +24,10 @@ param(
   [ValidateSet('auto', 'x86', 'amd64')]
   [string]$Arch = 'auto',
 
-  [ValidateSet('contract', 'legacy')]
+  # - contract:   packages aero_virtio_snd.sys (canonical INF)
+  # - legacy:     packages virtiosnd_legacy.sys (transitional/QEMU)
+  # - debuglogs:  packages aero_virtio_snd.sys as staged from the DebugLogs/DBG=1 build
+  [ValidateSet('contract', 'legacy', 'debuglogs', 'dbg')]
   [string]$Variant = 'contract',
 
   [ValidateNotNullOrEmpty()]
@@ -39,8 +42,11 @@ param(
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
-$script:DriverId = if ($Variant -eq 'legacy') { 'aero-virtio-snd-legacy' } else { 'aero_virtio_snd' }
-$script:SysFileName = if ($Variant -eq 'legacy') { 'virtiosnd_legacy.sys' } else { 'aero_virtio_snd.sys' }
+$variantNormalized = if ($Variant -eq 'dbg') { 'debuglogs' } else { $Variant }
+$isLegacy = ($variantNormalized -eq 'legacy')
+
+$script:DriverId = if ($isLegacy) { 'aero-virtio-snd-legacy' } else { 'aero_virtio_snd' }
+$script:SysFileName = if ($isLegacy) { 'virtiosnd_legacy.sys' } else { 'aero_virtio_snd.sys' }
 $script:TargetOs = 'win7'
 $script:FixedZipTimestamp = [DateTimeOffset]::new(1980, 1, 1, 0, 0, 0, [TimeSpan]::Zero)
 
@@ -182,7 +188,7 @@ if (-not (Test-Path -LiteralPath $infDir -PathType Container)) {
   throw "INF directory not found: $infDir"
 }
 
-$preferred = switch ($Variant) {
+$preferred = switch ($variantNormalized) {
   'legacy' {
     @(
       (Join-Path $infDir 'aero-virtio-snd-legacy.inf')
@@ -204,12 +210,12 @@ foreach ($p in $preferred) {
 }
 
 if ($infCandidates.Count -eq 0) {
-  throw "INF not found for variant '$Variant' under: $infDir"
+  throw "INF not found for variant '$variantNormalized' under: $infDir"
 }
 
 if ($infCandidates.Count -gt 1) {
   $list = $infCandidates | ForEach-Object { "  - $($_.Name)" } | Out-String
-  throw ("Multiple INF files found under {0} for variant '{1}'. Expected only one.`r`nFound:`r`n{2}" -f $infDir, $Variant, $list.TrimEnd())
+  throw ("Multiple INF files found under {0} for variant '{1}'. Expected only one.`r`nFound:`r`n{2}" -f $infDir, $variantNormalized, $list.TrimEnd())
 }
 
 $infFiles = @($infCandidates[0])
@@ -264,7 +270,7 @@ if ($payload.Count -eq 0) {
 }
 
 $releaseRootResolved = Resolve-OrCreateDirectory -Path $ReleaseRoot -ArgName '-ReleaseRoot'
-$folderName = if ($Variant -eq 'legacy') { 'virtio-snd-legacy' } else { 'virtio-snd' }
+$folderName = if ($isLegacy) { 'virtio-snd-legacy' } else { 'virtio-snd' }
 $stageDir = Join-Path $releaseRootResolved (Join-Path $resolvedArch $folderName)
 
 if (Test-Path -LiteralPath $stageDir) {

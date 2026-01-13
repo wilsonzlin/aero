@@ -147,6 +147,9 @@ To build a signed `release/` package in one step (stages SYS → Inf2Cat → sig
 # Contract v1 (default):
 powershell -ExecutionPolicy Bypass -File .\scripts\build-release.ps1 -Arch both -InputDir <build-output-root>
 
+# DebugLogs (DBG=1 / VIRTIOSND_TRACE* enabled):
+powershell -ExecutionPolicy Bypass -File .\scripts\build-release.ps1 -Arch both -Variant debuglogs -InputDir <build-output-root>
+
 # Transitional/QEMU:
 powershell -ExecutionPolicy Bypass -File .\scripts\build-release.ps1 -Arch both -Variant legacy -InputDir <build-output-root>
 ```

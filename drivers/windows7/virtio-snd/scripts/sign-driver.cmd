@@ -19,7 +19,7 @@ rem   inf\virtiosnd_legacy.sys
 rem   inf\aero-virtio-snd-legacy.cat
 rem
 rem Usage:
-rem   sign-driver.cmd [contract|legacy|all] [PFX_PASSWORD]
+rem   sign-driver.cmd [contract|debuglogs|legacy|all] [PFX_PASSWORD]
 rem
 rem Backwards compatible: if the first argument is not a variant, it is treated
 rem as the PFX password:
@@ -46,6 +46,14 @@ set VARIANT=contract
 set PASS_ARG=%~1
 
 if /I "%~1"=="contract" (
+  set VARIANT=contract
+  set PASS_ARG=%~2
+) else if /I "%~1"=="debuglogs" (
+  rem DebugLogs is an alias for the contract package; the SYS is still staged as aero_virtio_snd.sys.
+  set VARIANT=contract
+  set PASS_ARG=%~2
+) else if /I "%~1"=="dbg" (
+  rem Alias for debuglogs.
   set VARIANT=contract
   set PASS_ARG=%~2
 ) else if /I "%~1"=="legacy" (

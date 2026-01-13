@@ -5,10 +5,11 @@ setlocal EnableExtensions
 rem Generates driver catalogs for Windows 7 (x86 + x64) using Inf2Cat.
 rem
 rem Usage:
-rem   make-cat.cmd [contract|legacy|all]
+rem   make-cat.cmd [contract|debuglogs|legacy|all]
 rem
 rem Variants:
 rem   - contract (default): aero_virtio_snd.inf -> aero_virtio_snd.sys
+rem   - debuglogs:          alias for contract (aero_virtio_snd.sys staged from DebugLogs build)
 rem   - legacy:             aero-virtio-snd-legacy.inf -> virtiosnd_legacy.sys
 rem   - all:                generate both catalogs (requires both SYS files)
 rem
@@ -35,13 +36,15 @@ set ALIAS_INF_DISABLED=%INF_DIR%\virtio-snd.inf.disabled
 
 set VARIANT=%~1
 if "%VARIANT%"=="" set VARIANT=contract
+if /I "%VARIANT%"=="dbg" set VARIANT=debuglogs
+if /I "%VARIANT%"=="debuglogs" set VARIANT=contract
 
 if /I "%VARIANT%"=="contract" goto :variant_ok
 if /I "%VARIANT%"=="legacy" goto :variant_ok
 if /I "%VARIANT%"=="all" goto :variant_ok
 
 echo ERROR: Unknown variant "%VARIANT%".
-echo Usage: make-cat.cmd [contract^|legacy^|all]
+echo Usage: make-cat.cmd [contract^|debuglogs^|legacy^|all]
 exit /b 1
 
 :variant_ok

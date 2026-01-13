@@ -25,7 +25,11 @@ param(
   [ValidateSet('x86', 'amd64', 'both')]
   [string]$Arch = 'both',
 
-  [ValidateSet('contract', 'legacy')]
+  # - contract:   stages aero_virtio_snd.sys
+  # - legacy:     stages virtiosnd_legacy.sys (transitional/QEMU)
+  # - debuglogs:  stages aero_virtio_snd_dbg.sys (DebugLogs/DBG=1 build), but renames it to
+  #               aero_virtio_snd.sys to match the canonical INF.
+  [ValidateSet('contract', 'legacy', 'debuglogs', 'dbg')]
   [string]$Variant = 'contract',
 
   [ValidateNotNullOrEmpty()]
@@ -87,13 +91,15 @@ $archList = if ($Arch -eq 'both') { @('x86', 'amd64') } else { @($Arch) }
 $oldPfxEnv = $env:PFX_PASSWORD
 $env:PFX_PASSWORD = $PfxPassword
 try {
+  $variantNormalized = if ($Variant -eq 'dbg') { 'debuglogs' } else { $Variant }
+
   foreach ($a in $archList) {
     Invoke-CheckedCommand ("stage-built-sys.ps1 ({0})" -f $a) {
-      & $stageSys -Arch $a -Variant $Variant -InputDir $InputDir
+      & $stageSys -Arch $a -Variant $variantNormalized -InputDir $InputDir
     }
 
     Invoke-CheckedCommand "make-cat.cmd" {
-      if ($Variant -eq 'legacy') {
+      if ($variantNormalized -eq 'legacy') {
         & $makeCat legacy
       }
       else {
@@ -102,7 +108,7 @@ try {
     }
 
     Invoke-CheckedCommand "sign-driver.cmd" {
-      if ($Variant -eq 'legacy') {
+      if ($variantNormalized -eq 'legacy') {
         & $signDriver legacy
       }
       else {
@@ -111,7 +117,7 @@ try {
     }
 
     Invoke-CheckedCommand ("package-release.ps1 ({0})" -f $a) {
-      & $packageRelease -Arch $a -Variant $Variant -Zip:$Zip
+      & $packageRelease -Arch $a -Variant $variantNormalized -Zip:$Zip
     }
   }
 }
@@ -121,7 +127,7 @@ finally {
 
 Write-Host ""
 Write-Host "Done. Output staged under:"
-$folderName = if ($Variant -eq 'legacy') { 'virtio-snd-legacy' } else { 'virtio-snd' }
+$folderName = if ($variantNormalized -eq 'legacy') { 'virtio-snd-legacy' } else { 'virtio-snd' }
 foreach ($a in $archList) {
   Write-Host ("  release\\{0}\\{1}\\" -f $a, $folderName)
 }
