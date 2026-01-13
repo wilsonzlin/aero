@@ -82,7 +82,6 @@ pub const OPCODE_IBFE: u32 = 0x69;
 // ---- Integer comparison opcodes (SM4/SM5) ----
 //
 // These produce a per-component predicate mask: 0xffffffff for true, 0x00000000 for false.
-//
 // Note: keep these distinct from the integer/bitwise arithmetic opcodes; the decoder relies on
 // unique opcode IDs.
 pub const OPCODE_IEQ: u32 = 0x4d;

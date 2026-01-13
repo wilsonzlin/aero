@@ -5096,8 +5096,8 @@ fn emit_instructions(
 
 fn emit_src_vec4(
     src: &crate::sm4_ir::SrcOperand,
-    _inst_index: usize,
-    _opcode: &'static str,
+    inst_index: usize,
+    opcode: &'static str,
     ctx: &EmitCtx<'_>,
 ) -> Result<String, ShaderTranslateError> {
     let base = match &src.kind {
@@ -5143,8 +5143,8 @@ fn emit_src_vec4(
 
 fn emit_src_vec4_u32(
     src: &crate::sm4_ir::SrcOperand,
-    _inst_index: usize,
-    _opcode: &'static str,
+    inst_index: usize,
+    opcode: &'static str,
     ctx: &EmitCtx<'_>,
 ) -> Result<String, ShaderTranslateError> {
     let base = match &src.kind {
@@ -5157,7 +5157,12 @@ fn emit_src_vec4_u32(
             };
             format!("bitcast<vec4<u32>>({expr})")
         }
-        SrcKind::GsInput { .. } => return Err(ShaderTranslateError::UnsupportedStage(ctx.stage)),
+        SrcKind::GsInput { .. } => {
+            return Err(ShaderTranslateError::UnsupportedInstruction {
+                inst_index,
+                opcode: format!("{opcode} (gs per-vertex input)"),
+            });
+        }
         SrcKind::ConstantBuffer { slot, reg } => {
             let _ = ctx.resources.cbuffers.get(slot);
             format!("cb{slot}.regs[{reg}]")
@@ -5201,8 +5206,8 @@ fn emit_src_vec4_u32_int(
 }
 fn emit_src_vec4_i32(
     src: &crate::sm4_ir::SrcOperand,
-    _inst_index: usize,
-    _opcode: &'static str,
+    inst_index: usize,
+    opcode: &'static str,
     ctx: &EmitCtx<'_>,
 ) -> Result<String, ShaderTranslateError> {
     let base = match &src.kind {
@@ -5215,7 +5220,12 @@ fn emit_src_vec4_i32(
             };
             format!("bitcast<vec4<i32>>({expr})")
         }
-        SrcKind::GsInput { .. } => return Err(ShaderTranslateError::UnsupportedStage(ctx.stage)),
+        SrcKind::GsInput { .. } => {
+            return Err(ShaderTranslateError::UnsupportedInstruction {
+                inst_index,
+                opcode: format!("{opcode} (gs per-vertex input)"),
+            });
+        }
         SrcKind::ConstantBuffer { slot, reg } => {
             let _ = ctx.resources.cbuffers.get(slot);
             format!("bitcast<vec4<i32>>(cb{slot}.regs[{reg}])")

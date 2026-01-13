@@ -23,28 +23,9 @@ use std::collections::HashMap;
 
 use crate::sm4::ShaderStage;
 use crate::sm4_ir::{
-    OperandModifier, RegFile, RegisterRef, Sm4Decl, Sm4Inst, Sm4Module, SrcKind, Swizzle, WriteMask,
+    GsInputPrimitive, GsOutputTopology, OperandModifier, RegFile, RegisterRef, Sm4Decl, Sm4Inst,
+    Sm4Module, SrcKind, Swizzle, WriteMask,
 };
-
-/// D3D10 tokenized program format: `D3D10_SB_PRIMITIVE`.
-///
-/// The input-primitive payload in `dcl_inputprimitive` uses a small numeric enum that matches the
-/// D3D10 tokenized shader format. The project has historically seen FXC emit values that align
-/// with the D3D primitive-topology constants (e.g. triangle=4), so the translator accepts multiple
-/// common encodings to stay robust across toolchains.
-const D3D10_SB_PRIMITIVE_POINT: u32 = 1;
-const D3D10_SB_PRIMITIVE_LINE: u32 = 2;
-const D3D10_SB_PRIMITIVE_TRIANGLE: u32 = 3;
-const D3D10_SB_PRIMITIVE_LINE_ADJ: u32 = 6;
-const D3D10_SB_PRIMITIVE_TRIANGLE_ADJ: u32 = 7;
-
-/// D3D10 tokenized program format: `D3D10_SB_PRIMITIVE_TOPOLOGY`.
-///
-/// Values are sourced from the Windows SDK header `d3d10tokenizedprogramformat.h`.
-// Note: `dcl_outputtopology` uses a small enum (point/line/triangle_strip).
-// - Tokenized shader format encodes `triangle_strip` as 3.
-// - Some toolchains/fixtures use D3D primitive-topology constants (`triangle_strip` = 5).
-const D3D10_SB_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP: u32 = 3;
 
 // D3D system-value IDs used by `Sm4Decl::InputSiv`.
 // Values match the tokenized shader format (`d3d10tokenizedprogramformat.h` / `d3d11tokenizedprogramformat.h`)
@@ -70,7 +51,7 @@ pub enum GsTranslateError {
     UnsupportedStream {
         inst_index: usize,
         opcode: &'static str,
-        stream: u32,
+        stream: u8,
     },
     InvalidGsInputVertexIndex {
         inst_index: usize,
@@ -209,8 +190,8 @@ pub fn translate_gs_module_to_wgsl_compute_prepass(
         return Err(GsTranslateError::NotGeometryStage(module.stage));
     }
 
-    let mut input_primitive: Option<u32> = None;
-    let mut output_topology: Option<u32> = None;
+    let mut input_primitive: Option<GsInputPrimitive> = None;
+    let mut output_topology: Option<GsOutputTopology> = None;
     let mut max_output_vertices: Option<u32> = None;
     let mut gs_instance_count: Option<u32> = None;
     let mut input_sivs: HashMap<u32, InputSivInfo> = HashMap::new();
@@ -252,23 +233,28 @@ pub fn translate_gs_module_to_wgsl_compute_prepass(
     let gs_instance_count = gs_instance_count.unwrap_or(1).max(1);
 
     let verts_per_primitive = match input_primitive {
-        D3D10_SB_PRIMITIVE_POINT => 1,
-        D3D10_SB_PRIMITIVE_LINE => 2,
-        // Triangle (accept both the tokenized-format value (3) and the D3D topology value
-        // `D3D10_PRIMITIVE_TOPOLOGY_TRIANGLELIST` (4) as seen in some fixtures).
-        D3D10_SB_PRIMITIVE_TRIANGLE | 4 => 3,
-        // Line adjacency (accept tokenized-format value (6) and D3D topology values
-        // `LINELIST_ADJ` (10) / `LINESTRIP_ADJ` (11)).
-        D3D10_SB_PRIMITIVE_LINE_ADJ | 10 | 11 => 4,
-        // Triangle adjacency (accept tokenized-format value (7) and D3D topology values
-        // `TRIANGLELIST_ADJ` (12) / `TRIANGLESTRIP_ADJ` (13)).
-        D3D10_SB_PRIMITIVE_TRIANGLE_ADJ | 12 | 13 => 6,
-        other => return Err(GsTranslateError::UnsupportedInputPrimitive { primitive: other }),
+        GsInputPrimitive::Point => 1,
+        GsInputPrimitive::Line => 2,
+        GsInputPrimitive::Triangle => 3,
+        GsInputPrimitive::LineAdjacency => 4,
+        GsInputPrimitive::TriangleAdjacency => 6,
+        GsInputPrimitive::Unknown(other) => {
+            return Err(GsTranslateError::UnsupportedInputPrimitive { primitive: other })
+        }
     };
 
-    if output_topology != D3D10_SB_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP && output_topology != 5 {
+    fn output_topology_token(t: GsOutputTopology) -> u32 {
+        match t {
+            GsOutputTopology::Point => 1,
+            GsOutputTopology::LineStrip => 2,
+            GsOutputTopology::TriangleStrip => 5,
+            GsOutputTopology::Unknown(other) => other,
+        }
+    }
+
+    if output_topology != GsOutputTopology::TriangleStrip {
         return Err(GsTranslateError::UnsupportedOutputTopology {
-            topology: output_topology,
+            topology: output_topology_token(output_topology),
         });
     }
 
@@ -663,7 +649,7 @@ fn bump_reg_max(reg: RegisterRef, max_temp_reg: &mut i32, max_output_reg: &mut i
     match reg.file {
         RegFile::Temp => *max_temp_reg = (*max_temp_reg).max(reg.index as i32),
         RegFile::Output => *max_output_reg = (*max_output_reg).max(reg.index as i32),
-        _ => {}
+        RegFile::OutputDepth | RegFile::Input => {}
     }
 }
 
@@ -962,10 +948,10 @@ mod tests {
             model: ShaderModel { major: 4, minor: 0 },
             decls: vec![
                 Sm4Decl::GsInputPrimitive {
-                    primitive: D3D10_SB_PRIMITIVE_POINT,
+                    primitive: GsInputPrimitive::Point,
                 },
                 Sm4Decl::GsOutputTopology {
-                    topology: D3D10_SB_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
+                    topology: GsOutputTopology::TriangleStrip,
                 },
                 Sm4Decl::GsMaxOutputVertexCount { max: 1 },
                 Sm4Decl::InputSiv {

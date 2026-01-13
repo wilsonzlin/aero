@@ -3,7 +3,8 @@ use std::fs;
 use aero_d3d11::sm4::{decode_program, opcode::OPCODE_ADD};
 use aero_d3d11::{
     parse_signatures, translate_sm4_to_wgsl, translate_sm4_to_wgsl_bootstrap, BindingKind,
-    DxbcFile, FourCC, RegFile, ShaderStage, Sm4Decl, Sm4Inst, Sm4Program, SrcKind,
+    DxbcFile, FourCC, GsInputPrimitive, GsOutputTopology, RegFile, ShaderStage, Sm4Decl, Sm4Inst,
+    Sm4Program, SrcKind,
 };
 
 const FOURCC_ISGN: FourCC = FourCC(*b"ISGN");
@@ -392,14 +393,24 @@ fn parses_and_decodes_sm4_gs_passthrough_fixture() {
         module
             .decls
             .iter()
-            .any(|d| matches!(d, Sm4Decl::GsInputPrimitive { primitive: 3 })),
+            .any(|d| matches!(
+                d,
+                Sm4Decl::GsInputPrimitive {
+                    primitive: GsInputPrimitive::Triangle
+                }
+            )),
         "expected triangle input primitive decl"
     );
     assert!(
         module
             .decls
             .iter()
-            .any(|d| matches!(d, Sm4Decl::GsOutputTopology { topology: 5 })),
+            .any(|d| matches!(
+                d,
+                Sm4Decl::GsOutputTopology {
+                    topology: GsOutputTopology::TriangleStrip
+                }
+            )),
         "expected triangle strip output topology decl"
     );
     assert!(

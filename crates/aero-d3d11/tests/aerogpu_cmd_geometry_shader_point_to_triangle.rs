@@ -110,17 +110,17 @@ fn assert_gs_dxbc_decodes_as_geometry_and_has_emit(dxbc_bytes: &[u8]) {
     let has_emit = module.instructions.iter().any(|inst| {
         matches!(inst, Sm4Inst::Emit { .. } | Sm4Inst::EmitThenCut { .. })
     });
-    assert!(
-        has_emit,
-        "GS DXBC should contain an Emit instruction (or EmitThenCut) (module.instructions={:?})",
-        module.instructions
-    );
     let has_cut = module.instructions.iter().any(|inst| {
         matches!(inst, Sm4Inst::Cut { .. } | Sm4Inst::EmitThenCut { .. })
     });
     assert!(
+        has_emit,
+        "GS DXBC should contain an Emit-like instruction (Emit/EmitThenCut) (module.instructions={:?})",
+        module.instructions
+    );
+    assert!(
         has_cut,
-        "GS DXBC should contain a Cut instruction (or EmitThenCut) (module.instructions={:?})",
+        "GS DXBC should contain a Cut-like instruction (Cut/EmitThenCut) (module.instructions={:?})",
         module.instructions
     );
 }

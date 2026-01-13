@@ -2,10 +2,11 @@ use core::fmt;
 use std::collections::BTreeMap;
 
 use crate::sm4_ir::{
-    BufferKind, BufferRef, CmpOp, CmpType, ComputeBuiltin, DstOperand, HsDomain, HsOutputTopology,
-    HsPartitioning, OperandModifier, PredicateDstOperand, PredicateOperand, PredicateRef, RegFile,
-    RegisterRef, SamplerRef, Sm4CmpOp, Sm4Decl, Sm4Inst, Sm4Module, Sm4TestBool, SrcKind,
-    SrcOperand, Swizzle, TextureRef, UavRef, WriteMask,
+    BufferKind, BufferRef, CmpOp, CmpType, ComputeBuiltin, DstOperand, GsInputPrimitive,
+    GsOutputTopology, HsDomain, HsOutputTopology, HsPartitioning, OperandModifier,
+    PredicateDstOperand, PredicateOperand, PredicateRef, RegFile, RegisterRef, SamplerRef,
+    Sm4CmpOp, Sm4Decl, Sm4Inst, Sm4Module, Sm4TestBool, SrcKind, SrcOperand, Swizzle, TextureRef,
+    UavRef, WriteMask,
 };
 
 use super::opcode::*;
@@ -1327,7 +1328,7 @@ fn decode_setp_cmp(opcode_token: u32) -> Option<Sm4CmpOp> {
     }
 }
 
-fn decode_stream_index(r: &mut InstrReader<'_>) -> Result<u32, Sm4DecodeError> {
+fn decode_stream_index(r: &mut InstrReader<'_>) -> Result<u8, Sm4DecodeError> {
     // `emit_stream` / `cut_stream` / `emitthen_cut_stream` take a single immediate operand
     // indicating the stream index (0..=3).
     //
@@ -1347,7 +1348,18 @@ fn decode_stream_index(r: &mut InstrReader<'_>) -> Result<u32, Sm4DecodeError> {
             ),
         });
     };
-    Ok(imm[0])
+    let stream_raw = imm[0];
+    let stream = u8::try_from(stream_raw).map_err(|_| Sm4DecodeError {
+        at_dword: r.base_at + r.pos.saturating_sub(1),
+        kind: Sm4DecodeErrorKind::UnsupportedOperand("stream index out of range"),
+    })?;
+    if stream > 3 {
+        return Err(Sm4DecodeError {
+            at_dword: r.base_at + r.pos.saturating_sub(1),
+            kind: Sm4DecodeErrorKind::UnsupportedOperand("stream index out of range"),
+        });
+    }
+    Ok(stream)
 }
 
 fn decode_bufinfo(saturate: bool, r: &mut InstrReader<'_>) -> Result<Sm4Inst, Sm4DecodeError> {
@@ -1649,7 +1661,7 @@ pub fn decode_decl(opcode: u32, inst_toks: &[u32], at: usize) -> Result<Sm4Decl,
             if r.is_eof() {
                 return Ok(Sm4Decl::Unknown { opcode });
             }
-            let primitive = r.read_u32()?;
+            let primitive = GsInputPrimitive::from_token(r.read_u32()?);
             r.expect_eof()?;
             return Ok(Sm4Decl::GsInputPrimitive { primitive });
         }
@@ -1657,7 +1669,7 @@ pub fn decode_decl(opcode: u32, inst_toks: &[u32], at: usize) -> Result<Sm4Decl,
             if r.is_eof() {
                 return Ok(Sm4Decl::Unknown { opcode });
             }
-            let topology = r.read_u32()?;
+            let topology = GsOutputTopology::from_token(r.read_u32()?);
             r.expect_eof()?;
             return Ok(Sm4Decl::GsOutputTopology { topology });
         }
@@ -2388,8 +2400,8 @@ fn decode_src(r: &mut InstrReader<'_>) -> Result<SrcOperand, Sm4DecodeError> {
                     file: RegFile::Input,
                     index: *idx,
                 }),
-                // Geometry shaders index inputs by (register, vertex) and encode
-                // them as 2D-indexed input operands.
+                // Geometry shader per-vertex input (`v{reg}[{vertex}]`), encoded as a 2D-indexed
+                // input operand.
                 [reg, vertex] => SrcKind::GsInput {
                     reg: *reg,
                     vertex: *vertex,

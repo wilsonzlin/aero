@@ -33,6 +33,32 @@ pub enum Sm4TestBool {
     NonZero,
 }
 
+/// Geometry-shader input primitive type.
+///
+/// This corresponds to `dcl_inputprimitive` in SM4/SM5 assembly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum GsInputPrimitive {
+    Point,
+    Line,
+    Triangle,
+    LineAdjacency,
+    TriangleAdjacency,
+    /// Unknown/unsupported input primitive encoding.
+    Unknown(u32),
+}
+
+/// Geometry-shader output topology.
+///
+/// This corresponds to `dcl_outputtopology` in SM4/SM5 assembly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum GsOutputTopology {
+    Point,
+    LineStrip,
+    TriangleStrip,
+    /// Unknown/unsupported output topology encoding.
+    Unknown(u32),
+}
+
 /// A single SM4/SM5 declaration.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Sm4Decl {
@@ -54,6 +80,16 @@ pub enum Sm4Decl {
         mask: WriteMask,
         sys_value: u32,
     },
+    /// Geometry-shader input primitive.
+    GsInputPrimitive { primitive: GsInputPrimitive },
+    /// Geometry-shader output topology.
+    GsOutputTopology { topology: GsOutputTopology },
+    /// Geometry-shader maximum number of vertices that can be emitted per invocation.
+    GsMaxOutputVertexCount { max: u32 },
+    /// Geometry-shader instance count.
+    ///
+    /// This declaration is optional; if omitted, the instance count is implicitly 1.
+    GsInstanceCount { count: u32 },
     ConstantBuffer {
         slot: u32,
         reg_count: u32,
@@ -90,32 +126,6 @@ pub enum Sm4Decl {
         slot: u32,
         /// DXGI_FORMAT value.
         format: u32,
-    },
-    /// Geometry shader input primitive type (e.g. point/line/triangle).
-    ///
-    /// Encoded by `dcl_inputprimitive` in SM4/SM5 token streams.
-    GsInputPrimitive {
-        primitive: u32,
-    },
-    /// Geometry shader output topology (e.g. point/line/triangle_strip).
-    ///
-    /// Encoded by `dcl_outputtopology` in SM4/SM5 token streams.
-    GsOutputTopology {
-        topology: u32,
-    },
-    /// Geometry shader maximum number of vertices that can be emitted.
-    ///
-    /// Encoded by `dcl_maxout` / `dcl_maxvertexcount` in SM4/SM5 token streams.
-    GsMaxOutputVertexCount {
-        max: u32,
-    },
-    /// Geometry shader instance count (SM5: `[instance(n)]` / `dcl_gsinstancecount`).
-    ///
-    /// The corresponding `SV_GSInstanceID` declaration is represented via
-    /// [`Sm4Decl::InputSiv`], since it uses the same operand+sysvalue form as
-    /// other input system-value declarations.
-    GsInstanceCount {
-        count: u32,
     },
     /// Hull shader tessellator domain (e.g. `tri`, `quad`, `isoline`).
     ///
@@ -706,34 +716,33 @@ pub enum Sm4Inst {
         addr: SrcOperand,
         value: SrcOperand,
     },
+    /// Geometry-shader `emit` / `emit_stream`.
+    ///
+    /// `stream` selects the output stream; for plain `emit`, the decoder should use `stream = 0`.
+    Emit {
+        stream: u8,
+    },
+    /// Geometry-shader `cut` / `cut_stream`.
+    ///
+    /// `stream` selects the output stream; for plain `cut`, the decoder should use `stream = 0`.
+    Cut {
+        stream: u8,
+    },
+    /// Geometry-shader `emit_then_cut` / `emit_then_cut_stream`.
+    ///
+    /// This is a compact encoding equivalent to `emit` followed by `cut` on the same stream.
+    ///
+    /// `stream` selects the output stream; for plain `emit_then_cut`, the decoder should use
+    /// `stream = 0`.
+    EmitThenCut {
+        stream: u8,
+    },
     /// A decoded instruction that the IR producer does not model yet.
     ///
     /// This allows the WGSL backend to fail with a precise opcode + instruction
     /// index, instead of the decoder having to reject the entire shader up
     /// front.
-    Unknown {
-        opcode: u32,
-    },
-    /// Geometry shader `emit` / `emit_stream`.
-    ///
-    /// `stream` is always 0 for `emit`, and 0..=3 for `emit_stream`.
-    Emit {
-        stream: u32,
-    },
-    /// Geometry shader `cut` / `cut_stream`.
-    ///
-    /// `stream` is always 0 for `cut`, and 0..=3 for `cut_stream`.
-    Cut {
-        stream: u32,
-    },
-    /// Geometry shader `emit_then_cut` / `emit_then_cut_stream`.
-    ///
-    /// This is a compact encoding equivalent to `emit` followed by `cut` on the same stream.
-    ///
-    /// `stream` is always 0 for `emit_then_cut`, and 0..=3 for `emit_then_cut_stream`.
-    EmitThenCut {
-        stream: u32,
-    },
+    Unknown { opcode: u32 },
     /// Structured `switch` statement.
     ///
     /// The SM4/SM5 token stream encodes structured control flow as a linear stream of opcodes
@@ -797,6 +806,43 @@ pub enum Sm4Inst {
         stride_bytes: u32,
     },
     Ret,
+}
+
+impl GsInputPrimitive {
+    /// Decodes a `dcl_inputprimitive` payload value.
+    pub fn from_token(value: u32) -> Self {
+        // In the tokenized SM4 format this is documented as `D3D10_SB_PRIMITIVE` (see
+        // `d3d10tokenizedprogramformat.h`), but in practice some toolchains appear to emit
+        // `D3D10_PRIMITIVE_TOPOLOGY` values instead (e.g. triangle list as 4 instead of 3).
+        //
+        // To avoid decoding failures across fixtures, accept both encodings when unambiguous.
+        match value {
+            1 => Self::Point,
+            2 => Self::Line,
+            3 | 4 => Self::Triangle,
+            6 | 10 | 11 => Self::LineAdjacency,
+            7 | 12 | 13 => Self::TriangleAdjacency,
+            other => Self::Unknown(other),
+        }
+    }
+}
+
+impl GsOutputTopology {
+    /// Decodes a `dcl_outputtopology` payload value.
+    pub fn from_token(value: u32) -> Self {
+        // In the tokenized SM4 format this is documented as `D3D10_SB_PRIMITIVE_TOPOLOGY` (see
+        // `d3d10tokenizedprogramformat.h`). Some toolchains appear to use
+        // `D3D10_PRIMITIVE_TOPOLOGY` values instead (e.g. trianglestrip=5).
+        //
+        // The only topology currently required by our GS compute-emulation path is triangle strip,
+        // so we accept both common encodings.
+        match value {
+            1 => Self::Point,
+            2 => Self::LineStrip,
+            3 | 5 => Self::TriangleStrip,
+            other => Self::Unknown(other),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -933,7 +979,8 @@ pub struct SrcOperand {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SrcKind {
     Register(RegisterRef),
-    /// Geometry shader per-vertex input operand (`v#[]`), e.g. `v0[2]`.
+    /// Geometry-shader per-vertex input operand (`v#[]`), indexed by vertex within the input
+    /// primitive (e.g. `v0[2]`).
     ///
     /// In DXBC this is encoded as an `OPERAND_TYPE_INPUT` operand with
     /// `OPERAND_INDEX_DIMENSION_2D`:
@@ -981,8 +1028,12 @@ mod tests {
     #[test]
     fn gs_ir_nodes_are_debug_and_eq_roundtrippable() {
         let decls = [
-            Sm4Decl::GsInputPrimitive { primitive: 5 },
-            Sm4Decl::GsOutputTopology { topology: 2 },
+            Sm4Decl::GsInputPrimitive {
+                primitive: GsInputPrimitive::Unknown(5),
+            },
+            Sm4Decl::GsOutputTopology {
+                topology: GsOutputTopology::Unknown(2),
+            },
             Sm4Decl::GsMaxOutputVertexCount { max: 42 },
             Sm4Decl::GsInstanceCount { count: 3 },
         ];

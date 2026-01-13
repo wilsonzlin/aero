@@ -1,7 +1,7 @@
 use aero_d3d11::sm4::opcode::*;
 use aero_d3d11::{
-    OperandModifier, RegFile, RegisterRef, ShaderModel, ShaderStage, Sm4Decl, Sm4Inst, Sm4Module,
-    Sm4Program, SrcKind, Swizzle, WriteMask,
+    GsInputPrimitive, GsOutputTopology, OperandModifier, RegFile, RegisterRef, ShaderModel,
+    ShaderStage, Sm4Decl, Sm4Inst, Sm4Module, Sm4Program, SrcKind, Swizzle, WriteMask,
 };
 
 fn make_sm4_program_tokens(stage_type: u16, body_tokens: &[u32]) -> Vec<u32> {
@@ -115,8 +115,7 @@ fn imm32_scalar(value: u32) -> Vec<u32> {
 
 #[test]
 fn decodes_geometry_shader_decls_and_emit_cut() {
-    // These enum values are not interpreted by the decoder today; they are carried through so
-    // later stages can decide whether to emulate geometry shaders.
+    // Use representative primitive/topology payloads for GS declarations.
     const PRIM_TRIANGLE: u32 = 0x4;
     const TOPO_TRIANGLE_STRIP: u32 = 0x5;
     const MAX_VERTS: u32 = 3;
@@ -185,10 +184,10 @@ fn decodes_geometry_shader_decls_and_emit_cut() {
             model: ShaderModel { major: 4, minor: 0 },
             decls: vec![
                 Sm4Decl::GsInputPrimitive {
-                    primitive: PRIM_TRIANGLE
+                    primitive: GsInputPrimitive::Triangle
                 },
                 Sm4Decl::GsOutputTopology {
-                    topology: TOPO_TRIANGLE_STRIP
+                    topology: GsOutputTopology::TriangleStrip
                 },
                 Sm4Decl::GsMaxOutputVertexCount { max: MAX_VERTS },
                 Sm4Decl::Input {
@@ -269,8 +268,8 @@ fn decodes_geometry_shader_emit_cut_stream_variants() {
     // emit_stream l(2)
     let mut body = Vec::<u32>::new();
 
-    let stream = 2u32;
-    let stream_op = imm32_scalar(stream);
+    let stream: u8 = 2;
+    let stream_op = imm32_scalar(stream as u32);
 
     body.push(opcode_token(
         OPCODE_EMIT_STREAM,

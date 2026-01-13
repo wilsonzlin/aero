@@ -1,8 +1,8 @@
 use std::fs;
 
 use aero_d3d11::{
-    OperandModifier, RegFile, RegisterRef, ShaderModel, ShaderStage, Sm4Decl, Sm4Inst, Sm4Program,
-    SrcKind, SrcOperand, Swizzle, WriteMask,
+    GsInputPrimitive, GsOutputTopology, OperandModifier, RegFile, RegisterRef, ShaderModel,
+    ShaderStage, Sm4Decl, Sm4Inst, Sm4Program, SrcKind, SrcOperand, Swizzle, WriteMask,
 };
 
 fn load_fixture(name: &str) -> Vec<u8> {
@@ -24,7 +24,12 @@ fn decodes_geometry_shader_decls_and_emit_cut() {
         module
             .decls
             .iter()
-            .any(|d| matches!(d, Sm4Decl::GsInputPrimitive { primitive: 4 })),
+            .any(|d| matches!(
+                d,
+                Sm4Decl::GsInputPrimitive {
+                    primitive: GsInputPrimitive::Triangle
+                }
+            )),
         "expected dcl_inputprimitive in decls: {:#?}",
         module.decls
     );
@@ -32,7 +37,12 @@ fn decodes_geometry_shader_decls_and_emit_cut() {
         module
             .decls
             .iter()
-            .any(|d| matches!(d, Sm4Decl::GsOutputTopology { topology: 5 })),
+            .any(|d| matches!(
+                d,
+                Sm4Decl::GsOutputTopology {
+                    topology: GsOutputTopology::TriangleStrip
+                }
+            )),
         "expected dcl_outputtopology in decls: {:#?}",
         module.decls
     );
@@ -83,7 +93,12 @@ fn decodes_geometry_shader_emit_stream_and_cut_stream() {
         module
             .decls
             .iter()
-            .any(|d| matches!(d, Sm4Decl::GsInputPrimitive { primitive: 4 })),
+            .any(|d| matches!(
+                d,
+                Sm4Decl::GsInputPrimitive {
+                    primitive: GsInputPrimitive::Triangle
+                }
+            )),
         "expected dcl_inputprimitive in decls: {:#?}",
         module.decls
     );
@@ -91,7 +106,12 @@ fn decodes_geometry_shader_emit_stream_and_cut_stream() {
         module
             .decls
             .iter()
-            .any(|d| matches!(d, Sm4Decl::GsOutputTopology { topology: 5 })),
+            .any(|d| matches!(
+                d,
+                Sm4Decl::GsOutputTopology {
+                    topology: GsOutputTopology::TriangleStrip
+                }
+            )),
         "expected dcl_outputtopology in decls: {:#?}",
         module.decls
     );
