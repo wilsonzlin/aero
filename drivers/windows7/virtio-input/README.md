@@ -157,7 +157,9 @@ If Windows grants fewer than `1 + numQueues` messages, the driver falls back to:
   - MSI/MSI-X often shows a very large IRQ number (e.g. `42949672xx`) and may show multiple IRQ entries.
 - **`aero-virtio-selftest.exe` markers**:
   - The selftest logs to `C:\\aero-virtio-selftest.log` and emits `AERO_VIRTIO_SELFTEST|TEST|virtio-input|...` markers on stdout/COM1.
-  - Once the MSI diagnostics update lands, the `virtio-input` marker will include additional fields indicating whether MSI/MSI-X was used and how many messages were allocated.
+  - The selftest also emits a `virtio-input-irq|INFO|...` line indicating which interrupt mode Windows assigned:
+    - `virtio-input-irq|INFO|mode=intx`
+    - `virtio-input-irq|INFO|mode=msi|messages=<n>` (message-signaled interrupts; MSI/MSI-X)
   - See `../tests/guest-selftest/README.md` for how to build/run the tool.
 
 ## Build
