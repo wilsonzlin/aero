@@ -483,6 +483,93 @@ fn boolean_simplify_eliminates_double_negation_on_boolean_values() {
 }
 
 #[test]
+fn boolean_simplify_collapses_triple_negation_on_non_boolean_values() {
+    // Triple-negation of a non-boolean value should collapse down to a single `Eq(x, 0)` test.
+    let trace = TraceIr {
+        prologue: vec![],
+        body: vec![
+            Instr::LoadReg {
+                dst: v(0),
+                reg: Gpr::Rax,
+            },
+            // is_zero = (rax == 0)
+            Instr::BinOp {
+                dst: v(1),
+                op: BinOp::Eq,
+                lhs: Operand::Value(v(0)),
+                rhs: Operand::Const(0),
+                flags: FlagSet::EMPTY,
+            },
+            // is_nonzero = (is_zero == 0)
+            Instr::BinOp {
+                dst: v(2),
+                op: BinOp::Eq,
+                lhs: Operand::Value(v(1)),
+                rhs: Operand::Const(0),
+                flags: FlagSet::EMPTY,
+            },
+            // back_to_zero = (is_nonzero == 0)
+            Instr::BinOp {
+                dst: v(3),
+                op: BinOp::Eq,
+                lhs: Operand::Value(v(2)),
+                rhs: Operand::Const(0),
+                flags: FlagSet::EMPTY,
+            },
+            Instr::StoreReg {
+                reg: Gpr::Rbx,
+                src: Operand::Value(v(3)),
+            },
+        ],
+        kind: TraceKind::Linear,
+    };
+
+    let mut optimized = trace.clone();
+    optimize_trace(&mut optimized, &OptConfig::default());
+
+    // Should collapse to just one `Eq` (testing rax==0), and avoid materializing `!=0`.
+    let eq_count = optimized
+        .iter_instrs()
+        .filter(|i| matches!(i, Instr::BinOp { op: BinOp::Eq, .. }))
+        .count();
+    let ltu_count = optimized
+        .iter_instrs()
+        .filter(|i| matches!(i, Instr::BinOp { op: BinOp::LtU, .. }))
+        .count();
+    assert_eq!(eq_count, 1);
+    assert_eq!(ltu_count, 0);
+
+    let env = RuntimeEnv::default();
+    for rax in [0u64, 5u64, u64::MAX] {
+        let mut base_state = T2State::default();
+        base_state.cpu.gpr[Gpr::Rax.as_u8() as usize] = rax;
+        let mut opt_state = base_state.clone();
+
+        let baseline = run_trace(
+            &trace,
+            &env,
+            &mut SimpleBus::new(256),
+            &mut base_state,
+            1,
+        );
+        let optimized_run = run_trace(
+            &optimized,
+            &env,
+            &mut SimpleBus::new(256),
+            &mut opt_state,
+            1,
+        );
+
+        assert_eq!(baseline.exit, optimized_run.exit);
+        assert_eq!(base_state, opt_state);
+        assert_eq!(
+            opt_state.cpu.gpr[Gpr::Rbx.as_u8() as usize],
+            (rax == 0) as u64
+        );
+    }
+}
+
+#[test]
 fn addr_simplify_folds_nested_displacements() {
     let mut trace = TraceIr {
         prologue: vec![],

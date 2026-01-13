@@ -166,7 +166,21 @@ pub fn run(trace: &mut TraceIr) -> bool {
                         // 2) Rewrite boolean NOT: `Eq(b, 0)` => `Xor(b, 1)` when `b` is boolean.
                         if new == old {
                             if let Some(other) = eq_zero_other(lhs, rhs) {
-                                if is_bool_operand(other, &bool_values) {
+                                // Special-case `Eq(LtU(0, x), 0)` => `Eq(x, 0)` so we don't
+                                // materialize a `!= 0` value only to negate it again.
+                                if let Operand::Value(inner) = other {
+                                    if let Some(x) = ltu_zero.get(&inner).copied() {
+                                        new = Instr::BinOp {
+                                            dst,
+                                            op: BinOp::Eq,
+                                            lhs: x,
+                                            rhs: Operand::Const(0),
+                                            flags: FlagSet::EMPTY,
+                                        };
+                                    }
+                                }
+
+                                if new == old && is_bool_operand(other, &bool_values) {
                                     new = Instr::BinOp {
                                         dst,
                                         op: BinOp::Xor,
@@ -176,6 +190,62 @@ pub fn run(trace: &mut TraceIr) -> bool {
                                     };
                                 }
                             }
+                        }
+
+                        // 3) `Eq(b, 1)` is redundant for boolean values: it is just `b`.
+                        if new == old {
+                            if let Some((other, 1)) = eq_const(lhs, rhs) {
+                                if is_bool_operand(other, &bool_values) {
+                                    new = Instr::BinOp {
+                                        dst,
+                                        op: BinOp::Xor,
+                                        lhs: other,
+                                        rhs: Operand::Const(0),
+                                        flags: FlagSet::EMPTY,
+                                    };
+                                }
+                            }
+                        }
+                    }
+                    BinOp::Xor => {
+                        // `Xor(!b, 1)` is a redundant double-negation for boolean `b`.
+                        if let Some((other, 1)) = eq_const(lhs, rhs) {
+                            if let Operand::Value(inner) = other {
+                                if let Some(x) = not_bool.get(&inner).copied() {
+                                    if is_bool_operand(x, &bool_values) {
+                                        new = Instr::BinOp {
+                                            dst,
+                                            op: BinOp::Xor,
+                                            lhs: x,
+                                            rhs: Operand::Const(0),
+                                            flags: FlagSet::EMPTY,
+                                        };
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    BinOp::LtU => {
+                        // `LtU(0, b)` is redundant for boolean `b` and equals `b`.
+                        if lhs == Operand::Const(0) && is_bool_operand(rhs, &bool_values) {
+                            new = Instr::BinOp {
+                                dst,
+                                op: BinOp::Xor,
+                                lhs: rhs,
+                                rhs: Operand::Const(0),
+                                flags: FlagSet::EMPTY,
+                            };
+                        }
+
+                        // For boolean `b`, `LtU(b, 1)` is `b == 0` (NOT).
+                        if new == old && rhs == Operand::Const(1) && is_bool_operand(lhs, &bool_values) {
+                            new = Instr::BinOp {
+                                dst,
+                                op: BinOp::Xor,
+                                lhs,
+                                rhs: Operand::Const(1),
+                                flags: FlagSet::EMPTY,
+                            };
                         }
                     }
                     _ => {}
