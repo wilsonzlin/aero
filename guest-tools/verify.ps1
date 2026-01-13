@@ -73,12 +73,26 @@ function Find-AeroGpuDbgctl([string]$scriptDir, [bool]$is64) {
     $preferred += (Join-Path $scriptDir "aerogpu_dbgctl.exe")
     $fallback += (Join-Path $scriptDir "aerogpu_dbgctl.exe")
 
+    # Optional tools payload (may be packaged under tools\).
+    $preferred += (Join-Path $scriptDir "tools\aerogpu_dbgctl.exe")
+    $fallback += (Join-Path $scriptDir "tools\aerogpu_dbgctl.exe")
+
     if ($is64) {
+        $preferred += (Join-Path $scriptDir "tools\amd64\aerogpu_dbgctl.exe")
+        $preferred += (Join-Path $scriptDir "tools\x64\aerogpu_dbgctl.exe")
+        $fallback += (Join-Path $scriptDir "tools\x86\aerogpu_dbgctl.exe")
+        $fallback += (Join-Path $scriptDir "tools\i386\aerogpu_dbgctl.exe")
+
         $preferred += (Join-Path $scriptDir "drivers\amd64\aerogpu\tools\aerogpu_dbgctl.exe")
         $preferred += (Join-Path $scriptDir "drivers\amd64\aerogpu\aerogpu_dbgctl.exe")
         $fallback += (Join-Path $scriptDir "drivers\x86\aerogpu\tools\aerogpu_dbgctl.exe")
         $fallback += (Join-Path $scriptDir "drivers\x86\aerogpu\aerogpu_dbgctl.exe")
     } else {
+        $preferred += (Join-Path $scriptDir "tools\x86\aerogpu_dbgctl.exe")
+        $preferred += (Join-Path $scriptDir "tools\i386\aerogpu_dbgctl.exe")
+        $fallback += (Join-Path $scriptDir "tools\amd64\aerogpu_dbgctl.exe")
+        $fallback += (Join-Path $scriptDir "tools\x64\aerogpu_dbgctl.exe")
+
         $preferred += (Join-Path $scriptDir "drivers\x86\aerogpu\tools\aerogpu_dbgctl.exe")
         $preferred += (Join-Path $scriptDir "drivers\x86\aerogpu\aerogpu_dbgctl.exe")
         $fallback += (Join-Path $scriptDir "drivers\amd64\aerogpu\tools\aerogpu_dbgctl.exe")
@@ -97,6 +111,18 @@ function Find-AeroGpuDbgctl([string]$scriptDir, [bool]$is64) {
         if (Test-Path $p) {
             return @{ found = $true; path = $p; searched = $searched }
         }
+    }
+
+    # Last resort: recursive search under tools\ (layout may vary between packagers).
+    $toolsDir = Join-Path $scriptDir "tools"
+    if (Test-Path $toolsDir) {
+        try {
+            $searched += ($toolsDir + " (recursive search)")
+            $hit = Get-ChildItem -Path $toolsDir -Recurse -Filter aerogpu_dbgctl.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($hit -and $hit.FullName) {
+                return @{ found = $true; path = ("" + $hit.FullName); searched = $searched }
+            }
+        } catch { }
     }
 
     return @{ found = $false; path = $null; searched = $searched }
@@ -3204,6 +3230,28 @@ try {
 
 # --- AeroGPU dbgctl (optional in-guest diagnostics) ---
 try {
+    # Only attempt dbgctl when AeroGPU appears present + healthy, to avoid generating noisy
+    # warnings on guests that are intentionally using baseline VGA graphics.
+    $gpuHealthy = $false
+    try {
+        if ($report -and $report.checks -and $report.checks.ContainsKey("device_binding_graphics")) {
+            $chk = $report.checks["device_binding_graphics"]
+            if ($chk -and $chk.data -and $chk.data.matched_devices) {
+                foreach ($d in $chk.data.matched_devices) {
+                    if ($d -and ($d.config_manager_error_code -eq 0)) { $gpuHealthy = $true; break }
+                }
+            }
+        }
+    } catch { $gpuHealthy = $false }
+
+    if (-not $gpuHealthy) {
+        $data = @{
+            skipped = $true
+            gpu_healthy = $false
+            reason = "Skipped: no healthy Aero/virtio GPU device detected (see device_binding_graphics)."
+        }
+        Add-Check "aerogpu_dbgctl" "AeroGPU dbgctl (optional diagnostics)" "PASS" "Skipped: no healthy Aero/virtio GPU binding detected." $data @()
+    } else {
     $is64 = ("" + $env:PROCESSOR_ARCHITECTURE) -match '64'
     $dbgctlInfo = Find-AeroGpuDbgctl $scriptDir $is64
     $dbgctlPath = $dbgctlInfo.path
@@ -3211,6 +3259,7 @@ try {
     if (-not $dbgctlInfo.found -or -not $dbgctlPath) {
         $data = @{
             found = $false
+            gpu_healthy = $true
             searched = $dbgctlInfo.searched
         }
         Add-Check "aerogpu_dbgctl" "AeroGPU dbgctl (optional diagnostics)" "WARN" "aerogpu_dbgctl.exe not found on Guest Tools media; skipping AeroGPU dbgctl diagnostics." $data @()
@@ -3251,11 +3300,13 @@ try {
 
         $data = @{
             found = $true
+            gpu_healthy = $true
             path = $dbgctlPath
             searched = $dbgctlInfo.searched
             status = @{
                 exit_code = $statusCap.exit_code
                 output_path = $statusFile
+                output = $statusCap.output
             }
             dump_ring = @{
                 exit_code = $ringCap.exit_code
@@ -3268,6 +3319,7 @@ try {
         }
 
         Add-Check "aerogpu_dbgctl" "AeroGPU dbgctl (optional diagnostics)" $dbgStatus $summary $data $details
+    }
     }
 } catch {
     Add-Check "aerogpu_dbgctl" "AeroGPU dbgctl (optional diagnostics)" "WARN" ("Failed: " + $_.Exception.Message) $null @()
