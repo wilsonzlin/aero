@@ -675,6 +675,105 @@ function Get-FileSha256Hex([string]$path) {
     }
 }
 
+function Read-TextFileWithEncodingDetection([string]$path) {
+    # PowerShell 2.0-compatible text reader with BOM + UTF-16 heuristic detection.
+    #
+    # Why: Some driver INFs ship as UTF-16LE/BE without BOM. Get-Content treats BOM-less
+    # files as ANSI, which makes INF parsing miss AddService/HWIDs (and breaks media
+    # inventory/correlation).
+    #
+    # Behavior:
+    # - Detect BOM: UTF-8, UTF-16LE, UTF-16BE.
+    # - Heuristic detect BOM-less UTF-16: if lots of NUL bytes in either even or odd
+    #   positions (sampled), treat as UTF-16. Prefer LE unless strong evidence for BE.
+    # - Fallback: system default encoding (matches legacy Get-Content behavior for
+    #   BOM-less ASCII/ANSI files).
+    # - Strip any leading U+FEFF (BOM char) after decoding.
+    $bytes = $null
+    try {
+        $bytes = [System.IO.File]::ReadAllBytes($path)
+    } catch {
+        throw
+    }
+
+    if (-not $bytes) { return "" }
+
+    $enc = $null
+    $offset = 0
+
+    # BOM detection.
+    if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {
+        $enc = [System.Text.Encoding]::UTF8
+        $offset = 3
+    } elseif ($bytes.Length -ge 2 -and $bytes[0] -eq 0xFF -and $bytes[1] -eq 0xFE) {
+        # UTF-16LE
+        $enc = [System.Text.Encoding]::Unicode
+        $offset = 2
+    } elseif ($bytes.Length -ge 2 -and $bytes[0] -eq 0xFE -and $bytes[1] -eq 0xFF) {
+        # UTF-16BE
+        $enc = [System.Text.Encoding]::BigEndianUnicode
+        $offset = 2
+    } else {
+        # BOM-less heuristic for UTF-16.
+        if (($bytes.Length % 2) -eq 0 -and $bytes.Length -ge 2) {
+            $evenZero = 0
+            $oddZero = 0
+
+            # Sample up to 4KiB for speed; INF files are small but keep this bounded.
+            $sampleLen = $bytes.Length
+            if ($sampleLen -gt 4096) { $sampleLen = 4096 }
+
+            $i = 0
+            while ($i -lt $sampleLen) {
+                if ($bytes[$i] -eq 0) { $evenZero++ }
+                if ($bytes[$i + 1] -eq 0) { $oddZero++ }
+                $i += 2
+            }
+
+            $pairs = ($sampleLen / 2)
+            if ($pairs -gt 0) {
+                $evenFrac = ($evenZero / [double]$pairs)
+                $oddFrac = ($oddZero / [double]$pairs)
+
+                # "Large fraction" threshold; tuned for typical BOM-less UTF-16 INFs
+                # where ASCII dominates (so every other byte is NUL).
+                $nulThreshold = 0.30
+
+                if ($evenFrac -ge $nulThreshold -or $oddFrac -ge $nulThreshold) {
+                    # If even bytes are *significantly* more likely to be NUL, assume BE.
+                    # Otherwise default to LE.
+                    if ($evenFrac -gt ($oddFrac + 0.15) -and $evenFrac -gt 0.40) {
+                        $enc = [System.Text.Encoding]::BigEndianUnicode
+                    } else {
+                        $enc = [System.Text.Encoding]::Unicode
+                    }
+                }
+            }
+        }
+
+        if (-not $enc) {
+            # Match legacy Get-Content behavior for BOM-less files.
+            $enc = [System.Text.Encoding]::Default
+        }
+    }
+
+    $text = $null
+    if ($offset -gt 0) {
+        $text = $enc.GetString($bytes, $offset, ($bytes.Length - $offset))
+    } else {
+        $text = $enc.GetString($bytes)
+    }
+
+    # Strip any leading BOM char that may have been decoded.
+    try {
+        if ($text -and $text.Length -gt 0 -and ([int]$text[0] -eq 0xFEFF)) {
+            $text = $text.Substring(1)
+        }
+    } catch { }
+
+    return $text
+}
+
 function Resolve-InfStringValue([string]$value, [hashtable]$strings) {
     # Best-effort expansion for values like %Foo% using the INF [Strings] section.
     if (-not $value) { return $null }
@@ -713,7 +812,9 @@ function Parse-InfMetadata([string]$path) {
 
     $lines = $null
     try {
-        $lines = Get-Content -Path $path -ErrorAction Stop
+        $raw = Read-TextFileWithEncodingDetection $path
+        # Split like Get-Content would (support CRLF/LF/CR).
+        $lines = $raw -split "\r\n|\n|\r"
     } catch {
         $out.parse_errors += ("Failed to read: " + $_.Exception.Message)
         return $out
