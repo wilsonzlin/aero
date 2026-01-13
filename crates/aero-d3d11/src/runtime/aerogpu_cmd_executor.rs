@@ -10684,9 +10684,17 @@ fn get_or_create_render_pipeline_for_expanded_draw<'a>(
         ));
     }
 
-    // Trim fragment shader outputs to the currently-bound render target slots.
-    let keep_output_locations: BTreeSet<u32> = (0..state.render_targets.len() as u32).collect();
-    let declared_outputs = super::wgsl_link::declared_ps_output_locations(linked_ps_wgsl.as_ref())?;
+    // Trim fragment shader outputs to the currently-bound render target slots. This mirrors the
+    // main pipeline path: D3D discards writes to unbound RTVs, but WebGPU requires outputs to have
+    // a matching `ColorTargetState`.
+    let keep_output_locations: BTreeSet<u32> = state
+        .render_targets
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, rt)| rt.is_some().then_some(idx as u32))
+        .collect();
+    let declared_outputs =
+        super::wgsl_link::declared_ps_output_locations(linked_ps_wgsl.as_ref())?;
     let missing_outputs: BTreeSet<u32> = declared_outputs
         .difference(&keep_output_locations)
         .copied()
@@ -12336,6 +12344,131 @@ mod tests {
             );
 
             assert_eq!(exec.state.primitive_topology, CmdPrimitiveTopology::TriangleListAdj);
+        });
+    }
+
+    #[test]
+    fn expanded_draw_pipeline_trims_unbound_pixel_shader_outputs() {
+        // Regression test: the expanded-draw (GS prepass) path must apply the same MRT output
+        // trimming as the normal pipeline builder.
+        //
+        // wgpu/WebGPU requires that every `@location(N)` output has a matching `ColorTargetState`.
+        // D3D discards writes to unbound targets.
+        pollster::block_on(async {
+            let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+                Ok(exec) => exec,
+                Err(e) => {
+                    skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                    return;
+                }
+            };
+
+            // Minimal render target so the expanded pipeline has only one color target (slot 0).
+            const RT: u32 = 1;
+            let tex = exec.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("expanded_draw mrt trim RT"),
+                size: wgpu::Extent3d {
+                    width: 1,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                view_formats: &[],
+            });
+            let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+            exec.resources.textures.insert(
+                RT,
+                Texture2dResource {
+                    texture: tex,
+                    view,
+                    desc: Texture2dDesc {
+                        width: 1,
+                        height: 1,
+                        mip_level_count: 1,
+                        array_layers: 1,
+                        format: wgpu::TextureFormat::Rgba8Unorm,
+                    },
+                    format_u32: aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat::R8G8B8A8Unorm
+                        as u32,
+                    backing: None,
+                    row_pitch_bytes: 0,
+                    dirty: false,
+                    guest_backing_is_current: true,
+                    host_shadow: None,
+                },
+            );
+
+            // Pixel shader writes to @location(0) and @location(2), but only RT0 is bound.
+            const PS: u32 = 2;
+            let fs_wgsl = r#"
+                struct PsOut {
+                    @location(0) o0: vec4<f32>,
+                    @location(2) o2: vec4<f32>,
+                };
+
+                @fragment
+                fn fs_main() -> PsOut {
+                    var out: PsOut;
+                    out.o0 = vec4<f32>(1.0, 0.0, 0.0, 1.0);
+                    out.o2 = vec4<f32>(0.0, 1.0, 0.0, 1.0);
+                    return out;
+                }
+            "#;
+
+            let (ps_hash, _module) = exec.pipeline_cache.get_or_create_shader_module(
+                &exec.device,
+                map_pipeline_cache_stage(ShaderStage::Pixel),
+                fs_wgsl,
+                Some("expanded_draw mrt trim PS"),
+            );
+            exec.resources.shaders.insert(
+                PS,
+                ShaderResource {
+                    stage: ShaderStage::Pixel,
+                    wgsl_hash: ps_hash,
+                    depth_clamp_wgsl_hash: None,
+                    dxbc_hash_fnv1a64: 0,
+                    entry_point: "fs_main",
+                    vs_input_signature: Vec::new(),
+                    reflection: ShaderReflection::default(),
+                    wgsl_source: fs_wgsl.to_owned(),
+                },
+            );
+
+            exec.state.ps = Some(PS);
+            exec.state.render_targets = vec![Some(RT)];
+            exec.state.depth_stencil = None;
+
+            let layout_key = PipelineLayoutKey::empty();
+            let pipeline_layout = exec
+                .device
+                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("expanded_draw mrt trim pipeline layout"),
+                    bind_group_layouts: &[],
+                    push_constant_ranges: &[],
+                });
+
+            exec.device.push_error_scope(wgpu::ErrorFilter::Validation);
+            let res = super::get_or_create_render_pipeline_for_expanded_draw(
+                &exec.device,
+                &mut exec.pipeline_cache,
+                &pipeline_layout,
+                &exec.resources,
+                &exec.state,
+                layout_key,
+            );
+            exec.device.poll(wgpu::Maintain::Wait);
+            let err = exec.device.pop_error_scope().await;
+
+            assert!(
+                err.is_none(),
+                "unexpected wgpu validation error while creating expanded draw pipeline: {err:?}"
+            );
+            res.expect("expanded draw pipeline creation should succeed with trimmed PS outputs");
         });
     }
 
