@@ -2993,11 +2993,11 @@ int wmain(int argc, wchar_t **argv)
         return 2;
     }
     if (opt.query_counters && opt.reset_counters) {
-        wprintf(L"--counters and --reset-counters are mutually exclusive.\n");
+        wprintf(L"--counters/--counters-json and --reset-counters are mutually exclusive.\n");
         return 2;
     }
     if (opt.list_only && (opt.query_counters || opt.reset_counters)) {
-        wprintf(L"--list is mutually exclusive with --counters/--reset-counters.\n");
+        wprintf(L"--list is mutually exclusive with --counters/--counters-json/--reset-counters.\n");
         return 2;
     }
     if (opt.selftest &&
