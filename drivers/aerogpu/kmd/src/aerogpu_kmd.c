@@ -6977,6 +6977,253 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
         return STATUS_SUCCESS;
     }
 
+    if (hdr->op == AEROGPU_ESCAPE_OP_READ_GPA) {
+        if (pEscape->PrivateDriverDataSize < sizeof(aerogpu_escape_read_gpa_inout)) {
+            return STATUS_BUFFER_TOO_SMALL;
+        }
+        aerogpu_escape_read_gpa_inout* io = (aerogpu_escape_read_gpa_inout*)pEscape->pPrivateDriverData;
+
+        io->hdr.version = AEROGPU_ESCAPE_VERSION;
+        io->hdr.op = AEROGPU_ESCAPE_OP_READ_GPA;
+        io->hdr.size = sizeof(*io);
+        io->hdr.reserved0 = 0;
+
+        io->reserved0 = 0;
+        io->status = (uint32_t)STATUS_INVALID_PARAMETER;
+        io->bytes_copied = 0;
+        RtlZeroMemory(io->data, sizeof(io->data));
+
+        const ULONGLONG gpa = (ULONGLONG)io->gpa;
+        const ULONG reqBytes = (ULONG)io->size_bytes;
+
+        if (reqBytes == 0) {
+            io->status = (uint32_t)STATUS_SUCCESS;
+            return STATUS_SUCCESS;
+        }
+        if (reqBytes > AEROGPU_DBGCTL_READ_GPA_MAX_BYTES) {
+            io->status = (uint32_t)STATUS_INVALID_PARAMETER;
+            return STATUS_SUCCESS;
+        }
+        if (gpa > (~0ull - (ULONGLONG)reqBytes)) {
+            io->status = (uint32_t)STATUS_INVALID_PARAMETER;
+            return STATUS_SUCCESS;
+        }
+
+        /* Best-effort: if the address resolves to a driver-tracked buffer, copy from its kernel VA under lock. */
+        {
+            KIRQL pendingIrql;
+            KeAcquireSpinLock(&adapter->PendingLock, &pendingIrql);
+
+            BOOLEAN found = FALSE;
+            NTSTATUS opSt = STATUS_SUCCESS;
+            ULONG bytesToCopy = reqBytes;
+            const PUCHAR out = (PUCHAR)io->data;
+
+            for (PLIST_ENTRY entry = adapter->PendingSubmissions.Flink; entry != &adapter->PendingSubmissions; entry = entry->Flink) {
+                const AEROGPU_SUBMISSION* sub = CONTAINING_RECORD(entry, AEROGPU_SUBMISSION, ListEntry);
+                if (!sub) {
+                    continue;
+                }
+
+                struct range {
+                    ULONGLONG Base;
+                    ULONGLONG Size;
+                    const void* Va;
+                } ranges[] = {
+                    {(ULONGLONG)sub->DmaCopyPa.QuadPart, (ULONGLONG)sub->DmaCopySize, sub->DmaCopyVa},
+                    {(ULONGLONG)sub->DescPa.QuadPart, (ULONGLONG)sub->DescSize, sub->DescVa},
+                    {(ULONGLONG)sub->AllocTablePa.QuadPart, (ULONGLONG)sub->AllocTableSizeBytes, sub->AllocTableVa},
+                };
+
+                for (UINT i = 0; i < (UINT)(sizeof(ranges) / sizeof(ranges[0])); ++i) {
+                    if (!ranges[i].Va || ranges[i].Size == 0) {
+                        continue;
+                    }
+                    const ULONGLONG base = ranges[i].Base;
+                    const ULONGLONG size = ranges[i].Size;
+                    if (gpa < base) {
+                        continue;
+                    }
+                    const ULONGLONG offset = gpa - base;
+                    if (offset >= size) {
+                        continue;
+                    }
+                    const ULONGLONG maxBytesU64 = size - offset;
+                    bytesToCopy = (maxBytesU64 < (ULONGLONG)reqBytes) ? (ULONG)maxBytesU64 : reqBytes;
+                    if (bytesToCopy != reqBytes) {
+                        opSt = STATUS_PARTIAL_COPY;
+                    }
+                    RtlCopyMemory(out, (const PUCHAR)ranges[i].Va + (SIZE_T)offset, bytesToCopy);
+                    found = TRUE;
+                    break;
+                }
+                if (found) {
+                    break;
+                }
+            }
+
+            if (!found) {
+                for (PLIST_ENTRY entry = adapter->PendingInternalSubmissions.Flink;
+                     entry != &adapter->PendingInternalSubmissions;
+                     entry = entry->Flink) {
+                    const AEROGPU_PENDING_INTERNAL_SUBMISSION* sub =
+                        CONTAINING_RECORD(entry, AEROGPU_PENDING_INTERNAL_SUBMISSION, ListEntry);
+                    if (!sub || !sub->CmdVa || sub->CmdSizeBytes == 0) {
+                        continue;
+                    }
+
+                    const ULONGLONG base = (ULONGLONG)MmGetPhysicalAddress(sub->CmdVa).QuadPart;
+                    const ULONGLONG size = (ULONGLONG)sub->CmdSizeBytes;
+                    if (gpa < base) {
+                        continue;
+                    }
+                    const ULONGLONG offset = gpa - base;
+                    if (offset >= size) {
+                        continue;
+                    }
+                    const ULONGLONG maxBytesU64 = size - offset;
+                    bytesToCopy = (maxBytesU64 < (ULONGLONG)reqBytes) ? (ULONG)maxBytesU64 : reqBytes;
+                    if (bytesToCopy != reqBytes) {
+                        opSt = STATUS_PARTIAL_COPY;
+                    }
+                    RtlCopyMemory(out, (const PUCHAR)sub->CmdVa + (SIZE_T)offset, bytesToCopy);
+                    found = TRUE;
+                    break;
+                }
+            }
+
+            KeReleaseSpinLock(&adapter->PendingLock, pendingIrql);
+
+            if (found) {
+                io->status = (uint32_t)opSt;
+                io->bytes_copied = (uint32_t)bytesToCopy;
+                return STATUS_SUCCESS;
+            }
+        }
+
+        /*
+         * Driver-owned ring buffer / fence page (contiguous allocations with stable kernel VAs).
+         *
+         * For scanout we fall back to physical translation via MmGetVirtualForPhysical below.
+         */
+        {
+            struct range {
+                ULONGLONG Base;
+                ULONGLONG Size;
+                const void* Va;
+            } ranges[] = {
+                {(ULONGLONG)adapter->RingPa.QuadPart, (ULONGLONG)adapter->RingSizeBytes, adapter->RingVa},
+                {(ULONGLONG)adapter->FencePagePa.QuadPart, (ULONGLONG)PAGE_SIZE, adapter->FencePageVa},
+            };
+
+            for (UINT i = 0; i < (UINT)(sizeof(ranges) / sizeof(ranges[0])); ++i) {
+                if (!ranges[i].Va || ranges[i].Size == 0) {
+                    continue;
+                }
+                const ULONGLONG base = ranges[i].Base;
+                const ULONGLONG size = ranges[i].Size;
+                if (gpa < base) {
+                    continue;
+                }
+                const ULONGLONG offset = gpa - base;
+                if (offset >= size) {
+                    continue;
+                }
+
+                const ULONGLONG maxBytesU64 = size - offset;
+                const ULONG bytesToCopy =
+                    (maxBytesU64 < (ULONGLONG)reqBytes) ? (ULONG)maxBytesU64 : reqBytes;
+                const NTSTATUS opSt = (bytesToCopy == reqBytes) ? STATUS_SUCCESS : STATUS_PARTIAL_COPY;
+
+                RtlCopyMemory(io->data, (const PUCHAR)ranges[i].Va + (SIZE_T)offset, bytesToCopy);
+                io->status = (uint32_t)opSt;
+                io->bytes_copied = (uint32_t)bytesToCopy;
+                return STATUS_SUCCESS;
+            }
+        }
+
+        /* Scanout framebuffer (best-effort): allow reads within the current SCANOUT0 framebuffer region. */
+        if (adapter->Bar0) {
+            ULONGLONG fbGpa = 0;
+            ULONG fbPitchBytes = 0;
+            ULONG fbHeight = 0;
+
+            if ((adapter->UsingNewAbi || adapter->AbiKind == AEROGPU_ABI_KIND_V1) &&
+                adapter->Bar0Length >= (AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_HI + sizeof(ULONG))) {
+                fbPitchBytes = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_SCANOUT0_PITCH_BYTES);
+                fbHeight = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_SCANOUT0_HEIGHT);
+                const ULONG lo = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_LO);
+                const ULONG hi = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_HI);
+                fbGpa = ((ULONGLONG)hi << 32) | (ULONGLONG)lo;
+            } else if (adapter->Bar0Length >= (AEROGPU_LEGACY_REG_SCANOUT_FB_HI + sizeof(ULONG))) {
+                fbPitchBytes = AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_SCANOUT_PITCH);
+                fbHeight = AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_SCANOUT_HEIGHT);
+                const ULONG lo = AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_SCANOUT_FB_LO);
+                const ULONG hi = AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_SCANOUT_FB_HI);
+                fbGpa = ((ULONGLONG)hi << 32) | (ULONGLONG)lo;
+            }
+
+            ULONGLONG fbSizeBytes = 0;
+            if (fbGpa != 0 && fbPitchBytes != 0 && fbHeight != 0) {
+                if ((ULONGLONG)fbPitchBytes <= (~0ull / (ULONGLONG)fbHeight)) {
+                    fbSizeBytes = (ULONGLONG)fbPitchBytes * (ULONGLONG)fbHeight;
+                }
+            }
+
+            /*
+             * The KMD reports a 512MB system segment. Reject implausibly large
+             * scanout sizes to avoid inadvertently turning this into a generic
+             * physical memory read primitive if registers are corrupted.
+             */
+            if (fbSizeBytes != 0 && fbSizeBytes <= (512ull * 1024ull * 1024ull) &&
+                fbGpa <= (~0ull - fbSizeBytes) &&
+                gpa >= fbGpa && gpa < (fbGpa + fbSizeBytes)) {
+                const ULONGLONG offset = gpa - fbGpa;
+                const ULONGLONG maxBytesU64 = fbSizeBytes - offset;
+                const ULONG bytesToCopy =
+                    (maxBytesU64 < (ULONGLONG)reqBytes) ? (ULONG)maxBytesU64 : reqBytes;
+                NTSTATUS opSt = (bytesToCopy == reqBytes) ? STATUS_SUCCESS : STATUS_PARTIAL_COPY;
+
+                ULONG copied = 0;
+                ULONGLONG cur = gpa;
+                while (copied < bytesToCopy) {
+                    const ULONG remaining = bytesToCopy - copied;
+                    const ULONG pageOff = (ULONG)(cur & (PAGE_SIZE - 1));
+                    ULONG chunk = PAGE_SIZE - pageOff;
+                    if (chunk > remaining) {
+                        chunk = remaining;
+                    }
+
+                    PHYSICAL_ADDRESS pa;
+                    pa.QuadPart = (LONGLONG)cur;
+                    const PUCHAR src = (const PUCHAR)MmGetVirtualForPhysical(pa);
+                    if (!src) {
+                        opSt = (copied != 0) ? STATUS_PARTIAL_COPY : STATUS_UNSUCCESSFUL;
+                        break;
+                    }
+
+                    __try {
+                        RtlCopyMemory(io->data + copied, src, chunk);
+                    } __except (EXCEPTION_EXECUTE_HANDLER) {
+                        opSt = (copied != 0) ? STATUS_PARTIAL_COPY : STATUS_UNSUCCESSFUL;
+                        break;
+                    }
+
+                    copied += chunk;
+                    cur += (ULONGLONG)chunk;
+                }
+
+                io->status = (uint32_t)opSt;
+                io->bytes_copied = (uint32_t)copied;
+                return STATUS_SUCCESS;
+            }
+        }
+
+        /* Not within any allowed/tracked device GPA region. */
+        io->status = (uint32_t)STATUS_ACCESS_DENIED;
+        return STATUS_SUCCESS;
+    }
+
     if (hdr->op == AEROGPU_ESCAPE_OP_DUMP_CREATEALLOCATION) {
         if (pEscape->PrivateDriverDataSize < sizeof(aerogpu_escape_dump_createallocation_inout)) {
             return STATUS_BUFFER_TOO_SMALL;

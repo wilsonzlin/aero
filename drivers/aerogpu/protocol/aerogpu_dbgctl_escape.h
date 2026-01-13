@@ -36,9 +36,13 @@ extern "C" {
 #define AEROGPU_ESCAPE_OP_QUERY_CURSOR 11u
 /* Query performance/health counters snapshot. */
 #define AEROGPU_ESCAPE_OP_QUERY_PERF 12u
+#define AEROGPU_ESCAPE_OP_READ_GPA 13u
 
 #define AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS 32u
 #define AEROGPU_DBGCTL_MAX_RECENT_ALLOCATIONS 32u
+
+/* Maximum payload size for AEROGPU_ESCAPE_OP_READ_GPA (bounded guest physical reads). */
+#define AEROGPU_DBGCTL_READ_GPA_MAX_BYTES 4096u
 
 #define AEROGPU_DBGCTL_CONCAT2_(a, b) a##b
 #define AEROGPU_DBGCTL_CONCAT_(a, b) AEROGPU_DBGCTL_CONCAT2_(a, b)
@@ -465,6 +469,40 @@ AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_escape_map_shared_handle_inout) == 3
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_map_shared_handle_inout, shared_handle) == 16);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_map_shared_handle_inout, share_token) == 24);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_map_shared_handle_inout, reserved0) == 28);
+
+/*
+ * Read a bounded slice of guest physical memory (GPA).
+ *
+ * Security model:
+ * - The KMD must validate that `gpa` refers to a device/guest-owned buffer (for
+ *   example: ring buffers, scanout framebuffer, driver-owned DMA buffers) and
+ *   must never allow arbitrary physical memory reads.
+ * - `size_bytes` is strictly bounded by AEROGPU_DBGCTL_READ_GPA_MAX_BYTES.
+ *
+ * Result reporting:
+ * - The escape call itself may return STATUS_SUCCESS even if the read fails;
+ *   consult `status` for the operation result (NTSTATUS value).
+ * - `bytes_copied` is the number of bytes written into `data[]`.
+ */
+typedef struct aerogpu_escape_read_gpa_inout {
+  aerogpu_escape_header hdr;
+  /* Input */
+  aerogpu_escape_u64 gpa;
+  aerogpu_escape_u32 size_bytes;
+  aerogpu_escape_u32 reserved0;
+  /* Output */
+  aerogpu_escape_u32 status; /* NTSTATUS */
+  aerogpu_escape_u32 bytes_copied;
+  unsigned char data[AEROGPU_DBGCTL_READ_GPA_MAX_BYTES];
+} aerogpu_escape_read_gpa_inout;
+
+AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_escape_read_gpa_inout) == (40 + AEROGPU_DBGCTL_READ_GPA_MAX_BYTES));
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_read_gpa_inout, gpa) == 16);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_read_gpa_inout, size_bytes) == 24);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_read_gpa_inout, reserved0) == 28);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_read_gpa_inout, status) == 32);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_read_gpa_inout, bytes_copied) == 36);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_read_gpa_inout, data) == 40);
 
 #pragma pack(pop)
 

@@ -48,6 +48,15 @@ typedef LONG NTSTATUS;
 #define STATUS_BUFFER_TOO_SMALL ((NTSTATUS)0xC0000023L)
 #endif
 
+#ifndef STATUS_ACCESS_DENIED
+#define STATUS_ACCESS_DENIED ((NTSTATUS)0xC0000022L)
+#endif
+
+#ifndef STATUS_PARTIAL_COPY
+// Warning status (still non-success for NT_SUCCESS).
+#define STATUS_PARTIAL_COPY ((NTSTATUS)0x8000000DL)
+#endif
+
 typedef UINT D3DKMT_HANDLE;
 
 static const uint32_t kAerogpuIrqFence = (1u << 0);
@@ -195,14 +204,6 @@ static volatile LONG g_skip_close_adapter = 0;
 #endif
 
 #pragma pack(push, 1)
-typedef struct aerogpu_dbgctl_read_gpa_inout {
-  aerogpu_escape_header hdr;
-  aerogpu_escape_u64 gpa;
-  aerogpu_escape_u32 size_bytes;
-  aerogpu_escape_u32 reserved0;
-  /* Followed by `size_bytes` of output data. */
-} aerogpu_dbgctl_read_gpa_inout;
-
 typedef struct bmp_file_header {
   uint16_t bfType;      /* "BM" */
   uint32_t bfSize;      /* total file size */
@@ -259,7 +260,8 @@ static void PrintUsage() {
            L"Usage:\n"
            L"  aerogpu_dbgctl [--display \\\\.\\DISPLAY1] [--ring-id N] [--timeout-ms N]\n"
            L"               [--vblank-samples N] [--vblank-interval-ms N]\n"
-           L"               [--samples N] [--interval-ms N] <command>\n"
+           L"               [--samples N] [--interval-ms N]\n"
+           L"               [--size N] [--out FILE] [--force] <command>\n"
            L"\n"
            L"Commands:\n"
            L"  --list-displays\n"
@@ -281,6 +283,7 @@ static void PrintUsage() {
            L"  --wait-vblank  (D3DKMTWaitForVerticalBlankEvent)\n"
            L"  --query-scanline  (D3DKMTGetScanLine)\n"
            L"  --map-shared-handle HANDLE\n"
+           L"  --read-gpa GPA --size N [--out FILE] [--force]\n"
            L"  --selftest\n");
 }
 
@@ -305,6 +308,60 @@ static void PrintNtStatus(const wchar_t *prefix, const D3DKMT_FUNCS *f, NTSTATUS
   }
 
   fwprintf(stderr, L"%s: NTSTATUS=0x%08lx\n", prefix, (unsigned long)st);
+}
+
+static void HexDumpBytes(const void *data, uint32_t len, uint64_t base) {
+  const uint8_t *p = (const uint8_t *)data;
+  const uint32_t kBytesPerLine = 16;
+
+  for (uint32_t i = 0; i < len; i += kBytesPerLine) {
+    const uint32_t lineLen = (len - i < kBytesPerLine) ? (len - i) : kBytesPerLine;
+    wprintf(L"%016I64x: ", (unsigned long long)(base + (uint64_t)i));
+    for (uint32_t j = 0; j < kBytesPerLine; ++j) {
+      if (j < lineLen) {
+        wprintf(L"%02x ", (unsigned)p[i + j]);
+      } else {
+        wprintf(L"   ");
+      }
+    }
+    wprintf(L"|");
+    for (uint32_t j = 0; j < lineLen; ++j) {
+      const uint8_t c = p[i + j];
+      const wchar_t wc = (c >= 32 && c <= 126) ? (wchar_t)c : L'.';
+      wprintf(L"%c", wc);
+    }
+    wprintf(L"|\n");
+  }
+}
+
+static bool WriteBinaryFile(const wchar_t *path, const void *data, uint32_t len) {
+  if (!path) {
+    return false;
+  }
+
+  HANDLE h =
+      CreateFileW(path, GENERIC_WRITE, FILE_SHARE_READ, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+  if (h == INVALID_HANDLE_VALUE) {
+    fwprintf(stderr, L"Failed to open output file %s (GetLastError=%lu)\n", path, (unsigned long)GetLastError());
+    return false;
+  }
+
+  DWORD written = 0;
+  const BOOL ok = WriteFile(h, data, (DWORD)len, &written, NULL);
+  const DWORD lastErr = GetLastError();
+  CloseHandle(h);
+
+  if (!ok || written != len) {
+    fwprintf(stderr,
+             L"Failed to write output file %s (written=%lu/%lu, GetLastError=%lu)\n",
+             path,
+             (unsigned long)written,
+             (unsigned long)len,
+             (unsigned long)lastErr);
+    return false;
+  }
+
+  return true;
 }
 
 static bool LoadD3DKMT(D3DKMT_FUNCS *out) {
@@ -1459,30 +1516,43 @@ static NTSTATUS ReadGpa(const D3DKMT_FUNCS *f,
     return STATUS_INVALID_PARAMETER;
   }
 
-  const uint32_t headerBytes = (uint32_t)sizeof(aerogpu_dbgctl_read_gpa_inout);
-  if (escapeBufCapacity < headerBytes || sizeBytes > (escapeBufCapacity - headerBytes)) {
+  if (sizeBytes > AEROGPU_DBGCTL_READ_GPA_MAX_BYTES) {
     return STATUS_INVALID_PARAMETER;
   }
+  if (escapeBufCapacity < (uint32_t)sizeof(aerogpu_escape_read_gpa_inout)) {
+    return STATUS_BUFFER_TOO_SMALL;
+  }
 
-  const uint32_t packetBytes = headerBytes + sizeBytes;
-  ZeroMemory(escapeBuf, packetBytes);
+  aerogpu_escape_read_gpa_inout *io = (aerogpu_escape_read_gpa_inout *)escapeBuf;
+  ZeroMemory(io, sizeof(*io));
 
-  aerogpu_dbgctl_read_gpa_inout *io = (aerogpu_dbgctl_read_gpa_inout *)escapeBuf;
   io->hdr.version = AEROGPU_ESCAPE_VERSION;
   io->hdr.op = AEROGPU_ESCAPE_OP_READ_GPA;
-  io->hdr.size = packetBytes;
+  io->hdr.size = sizeof(*io);
   io->hdr.reserved0 = 0;
   io->gpa = (aerogpu_escape_u64)gpa;
   io->size_bytes = (aerogpu_escape_u32)sizeBytes;
   io->reserved0 = 0;
 
-  NTSTATUS st = SendAerogpuEscapeDirect(f, hAdapter, io, io->hdr.size);
+  const NTSTATUS st = SendAerogpuEscapeDirect(f, hAdapter, io, io->hdr.size);
   if (!NT_SUCCESS(st)) {
     return st;
   }
 
-  memcpy(dst, escapeBuf + headerBytes, sizeBytes);
-  return st;
+  const NTSTATUS op = (NTSTATUS)io->status;
+  uint32_t copied = io->bytes_copied;
+  if (copied > sizeBytes) {
+    copied = sizeBytes;
+  }
+  if (copied != 0) {
+    memcpy(dst, io->data, copied);
+  }
+
+  // For this helper (used by --dump-scanout-bmp), we expect full reads; treat any truncation as failure.
+  if (NT_SUCCESS(op) && copied != sizeBytes) {
+    return STATUS_PARTIAL_COPY;
+  }
+  return op;
 }
 
 static int DoDumpScanoutBmp(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t vidpnSourceId, const wchar_t *path) {
@@ -1670,9 +1740,7 @@ static int DoDumpScanoutBmp(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint3
 
   // Escape buffer for READ_GPA: reuse a single buffer to avoid per-chunk allocations.
   uint32_t maxReadChunk = 64u * 1024u;
-  const uint32_t escapeHdrBytes = (uint32_t)sizeof(aerogpu_dbgctl_read_gpa_inout);
-  const uint32_t escapeBufCap =
-      escapeHdrBytes + ((maxReadChunk > 0x100u) ? maxReadChunk : 0x100u); /* ensure some room */
+  const uint32_t escapeBufCap = (uint32_t)sizeof(aerogpu_escape_read_gpa_inout);
   uint8_t *escapeBuf = (uint8_t *)HeapAlloc(GetProcessHeap(), 0, (size_t)escapeBufCap);
   if (!escapeBuf) {
     fwprintf(stderr, L"Out of memory allocating escape buffer (%lu bytes)\n", (unsigned long)escapeBufCap);
@@ -2846,6 +2914,59 @@ static int DoSelftest(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t ti
   return q.passed ? 0 : 3;
 }
 
+static int DoReadGpa(const D3DKMT_FUNCS *f,
+                     D3DKMT_HANDLE hAdapter,
+                     uint64_t gpa,
+                     uint32_t sizeBytes,
+                     const wchar_t *outFile) {
+  aerogpu_escape_read_gpa_inout io;
+  ZeroMemory(&io, sizeof(io));
+  io.hdr.version = AEROGPU_ESCAPE_VERSION;
+  io.hdr.op = AEROGPU_ESCAPE_OP_READ_GPA;
+  io.hdr.size = sizeof(io);
+  io.hdr.reserved0 = 0;
+  io.gpa = gpa;
+  io.size_bytes = sizeBytes;
+  io.reserved0 = 0;
+
+  NTSTATUS st = SendAerogpuEscape(f, hAdapter, &io, sizeof(io));
+  if (!NT_SUCCESS(st)) {
+    PrintNtStatus(L"D3DKMTEscape(read-gpa) failed", f, st);
+    return 2;
+  }
+
+  const NTSTATUS op = (NTSTATUS)io.status;
+  const uint32_t copied = (io.bytes_copied <= AEROGPU_DBGCTL_READ_GPA_MAX_BYTES) ? io.bytes_copied : AEROGPU_DBGCTL_READ_GPA_MAX_BYTES;
+
+  wprintf(L"read-gpa: gpa=0x%I64x req=%lu status=0x%08lx copied=%lu\n",
+          (unsigned long long)gpa,
+          (unsigned long)sizeBytes,
+          (unsigned long)op,
+          (unsigned long)copied);
+
+  if (!NT_SUCCESS(op) && op != STATUS_PARTIAL_COPY) {
+    PrintNtStatus(L"read-gpa operation failed", f, op);
+  } else if (op == STATUS_PARTIAL_COPY) {
+    PrintNtStatus(L"read-gpa partial copy", f, op);
+  }
+
+  if (outFile && *outFile) {
+    if (!WriteBinaryFile(outFile, io.data, copied)) {
+      return 2;
+    }
+    wprintf(L"Wrote %lu bytes to %s\n", (unsigned long)copied, outFile);
+  }
+
+  if (copied != 0) {
+    HexDumpBytes(io.data, copied, gpa);
+  }
+
+  if (op == STATUS_PARTIAL_COPY) {
+    return 3;
+  }
+  return NT_SUCCESS(op) ? 0 : 2;
+}
+
 int wmain(int argc, wchar_t **argv) {
   const wchar_t *displayNameOpt = NULL;
   uint32_t ringId = 0;
@@ -2861,6 +2982,10 @@ int wmain(int argc, wchar_t **argv) {
   const wchar_t *createAllocCsvPath = NULL;
   const wchar_t *createAllocJsonPath = NULL;
   const wchar_t *dumpScanoutBmpPath = NULL;
+  uint64_t readGpa = 0;
+  uint32_t readGpaSizeBytes = 0;
+  const wchar_t *readGpaOutFile = NULL;
+  bool readGpaForce = false;
   enum {
     CMD_NONE = 0,
     CMD_LIST_DISPLAYS,
@@ -2879,6 +3004,7 @@ int wmain(int argc, wchar_t **argv) {
     CMD_WAIT_VBLANK,
     CMD_QUERY_SCANLINE,
     CMD_MAP_SHARED_HANDLE,
+    CMD_READ_GPA,
     CMD_SELFTEST
   } cmd = CMD_NONE;
 
@@ -2930,6 +3056,38 @@ int wmain(int argc, wchar_t **argv) {
       continue;
     }
 
+    if (wcscmp(a, L"--size") == 0) {
+      if (i + 1 >= argc) {
+        fwprintf(stderr, L"--size requires an argument\n");
+        PrintUsage();
+        return 1;
+      }
+      const wchar_t *arg = argv[++i];
+      wchar_t *end = NULL;
+      const unsigned long v = wcstoul(arg, &end, 0);
+      if (!end || end == arg || *end != 0) {
+        fwprintf(stderr, L"Invalid --size value: %s\n", arg);
+        return 1;
+      }
+      readGpaSizeBytes = (uint32_t)v;
+      continue;
+    }
+
+    if (wcscmp(a, L"--out") == 0) {
+      if (i + 1 >= argc) {
+        fwprintf(stderr, L"--out requires an argument\n");
+        PrintUsage();
+        return 1;
+      }
+      readGpaOutFile = argv[++i];
+      continue;
+    }
+
+    if (wcscmp(a, L"--force") == 0) {
+      readGpaForce = true;
+      continue;
+    }
+
     if (wcscmp(a, L"--map-shared-handle") == 0) {
       if (i + 1 >= argc) {
         fwprintf(stderr, L"--map-shared-handle requires an argument\n");
@@ -2944,6 +3102,25 @@ int wmain(int argc, wchar_t **argv) {
       mapSharedHandle = (uint64_t)_wcstoui64(arg, &end, 0);
       if (!end || end == arg || *end != 0) {
         fwprintf(stderr, L"Invalid --map-shared-handle value: %s\n", arg);
+        return 1;
+      }
+      continue;
+    }
+
+    if (wcscmp(a, L"--read-gpa") == 0) {
+      if (i + 1 >= argc) {
+        fwprintf(stderr, L"--read-gpa requires an argument\n");
+        PrintUsage();
+        return 1;
+      }
+      if (!SetCommand(CMD_READ_GPA)) {
+        return 1;
+      }
+      const wchar_t *arg = argv[++i];
+      wchar_t *end = NULL;
+      readGpa = (uint64_t)_wcstoui64(arg, &end, 0);
+      if (!end || end == arg || *end != 0) {
+        fwprintf(stderr, L"Invalid --read-gpa value: %s\n", arg);
         return 1;
       }
       continue;
@@ -3170,6 +3347,30 @@ int wmain(int argc, wchar_t **argv) {
     }
   }
 
+  if (cmd == CMD_READ_GPA) {
+    if (readGpaSizeBytes == 0) {
+      fwprintf(stderr, L"--read-gpa requires --size N\n");
+      PrintUsage();
+      return 1;
+    }
+    if (readGpaSizeBytes > AEROGPU_DBGCTL_READ_GPA_MAX_BYTES) {
+      fwprintf(stderr,
+               L"Refusing --read-gpa size=%lu (max=%lu)\n",
+               (unsigned long)readGpaSizeBytes,
+               (unsigned long)AEROGPU_DBGCTL_READ_GPA_MAX_BYTES);
+      return 1;
+    }
+    const uint32_t kMaxWithoutForce = 256;
+    if (!readGpaForce && readGpaSizeBytes > kMaxWithoutForce) {
+      fwprintf(stderr,
+               L"Refusing --read-gpa size=%lu without --force (max without --force is %lu, ABI max is %lu)\n",
+               (unsigned long)readGpaSizeBytes,
+               (unsigned long)kMaxWithoutForce,
+               (unsigned long)AEROGPU_DBGCTL_READ_GPA_MAX_BYTES);
+      return 1;
+    }
+  }
+
   D3DKMT_FUNCS f;
   if (!LoadD3DKMT(&f)) {
     return 1;
@@ -3249,6 +3450,9 @@ int wmain(int argc, wchar_t **argv) {
     break;
   case CMD_MAP_SHARED_HANDLE:
     rc = DoMapSharedHandle(&f, open.hAdapter, mapSharedHandle);
+    break;
+  case CMD_READ_GPA:
+    rc = DoReadGpa(&f, open.hAdapter, readGpa, readGpaSizeBytes, readGpaOutFile);
     break;
   case CMD_SELFTEST:
     rc = DoSelftest(&f, open.hAdapter, timeoutMs);

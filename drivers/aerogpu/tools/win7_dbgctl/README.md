@@ -78,6 +78,15 @@ Minimum supported commands:
   
   Useful for diagnosing Win7 hardware cursor bring-up (e.g. cursor enabled but off-screen, wrong hot spot, wrong pitch).
 
+- `aerogpu_dbgctl --read-gpa GPA --size N [--out FILE] [--force]`  
+  Reads a **bounded** slice of guest physical memory (GPA) from buffers that the KMD/device tracks (for example: scanout framebuffer,
+  ring buffers, and driver-owned DMA buffers for pending submissions).
+  
+  Notes:
+  - The KMD enforces a hard ABI maximum of `AEROGPU_DBGCTL_READ_GPA_MAX_BYTES` (currently 4096 bytes).
+  - dbgctl refuses reads larger than 256 bytes unless `--force` is specified.
+  - By default dbgctl prints a hex dump to stdout; use `--out` to also write raw bytes to a file.
+
 - `aerogpu_dbgctl --dump-ring`  
   Dumps ring head/tail + recent submissions. Fields include:
   - `signal_fence`
@@ -138,7 +147,8 @@ Minimum supported commands:
 ```
 aerogpu_dbgctl [--display \\.\DISPLAY1] [--ring-id N] [--timeout-ms N] \
                [--vblank-samples N] [--vblank-interval-ms N] \
-               [--samples N] [--interval-ms N] <command>
+               [--samples N] [--interval-ms N] \
+               [--size N] [--out FILE] [--force] <command>
 ```
 
 Examples:
@@ -153,6 +163,8 @@ aerogpu_dbgctl --watch-fence --samples 120 --interval-ms 250 --timeout-ms 30000
 aerogpu_dbgctl --query-perf
 aerogpu_dbgctl --query-scanout
 aerogpu_dbgctl --dump-scanout-bmp C:\scanout.bmp
+aerogpu_dbgctl --read-gpa 0x12340000 --size 256
+aerogpu_dbgctl --read-gpa 0x12340000 --size 4096 --force --out dump.bin
 aerogpu_dbgctl --query-cursor
 aerogpu_dbgctl --dump-ring --ring-id 0
 aerogpu_dbgctl --watch-ring --ring-id 0 --samples 200 --interval-ms 50
@@ -181,6 +193,23 @@ Notes:
 - Some environments may return a non-zero `VidPnSourceId` from `D3DKMTOpenAdapterFromHdc`; dbgctl retries `--dump-vblank`, `--wait-vblank`, and `--query-scanline` with source 0 if needed (AeroGPU currently implements a single source).
 - If `vblank_interrupt_type` prints `(not enabled or not reported)`, either dxgkrnl has not enabled vblank interrupt delivery for the adapter yet *or* the installed KMD predates `vblank_interrupt_type` reporting.
 - `--timeout-ms` also bounds driver-private `D3DKMTEscape` calls used by commands like `--query-fence` / `--dump-ring`, and `D3DKMTQueryAdapterInfo` calls used by `--query-umd-private`. On timeout, dbgctl may skip `D3DKMTCloseAdapter` to avoid deadlocking inside a stuck kernel thunk.
+
+## Manual validation: dumping scanout framebuffer bytes
+
+The most common use of `--read-gpa` is to inspect the scanout framebuffer without a kernel debugger:
+
+1. Run `aerogpu_dbgctl --query-scanout` and note `mmio_fb_gpa` and `mmio_pitch_bytes`.
+2. Dump a small header slice (first cache line/page):
+   ```
+   aerogpu_dbgctl --read-gpa <mmio_fb_gpa> --size 256
+   ```
+3. Optionally dump a full page to a file for offline analysis:
+   ```
+   aerogpu_dbgctl --read-gpa <mmio_fb_gpa> --size 4096 --force --out scanout_page0.bin
+   ```
+
+If scanout is configured for `B8G8R8X8`, the first pixels should match the expected desktop contents (little-endian BGRA/XRGB).
+If the dump is all zeros, check that scanout is enabled/visible and that `mmio_fb_gpa` is non-zero.
 
 ## Build (Windows 7)
 
@@ -226,8 +255,8 @@ Escape ops used:
 - `AEROGPU_ESCAPE_OP_QUERY_FENCE` → `--query-fence`, `--watch-fence`
 - `AEROGPU_ESCAPE_OP_QUERY_PERF` → `--query-perf`
 - `AEROGPU_ESCAPE_OP_QUERY_SCANOUT` → `--query-scanout`, `--dump-scanout-bmp`
-- `AEROGPU_ESCAPE_OP_READ_GPA` → `--dump-scanout-bmp`
 - `AEROGPU_ESCAPE_OP_QUERY_CURSOR` → `--query-cursor`
+- `AEROGPU_ESCAPE_OP_READ_GPA` → `--read-gpa`, `--dump-scanout-bmp`
 - `AEROGPU_ESCAPE_OP_DUMP_RING_V2` (fallback: `AEROGPU_ESCAPE_OP_DUMP_RING`) → `--dump-ring` / `--watch-ring`
 - `AEROGPU_ESCAPE_OP_DUMP_CREATEALLOCATION` → `--dump-createalloc`
 - `AEROGPU_ESCAPE_OP_QUERY_VBLANK` (alias: `AEROGPU_ESCAPE_OP_DUMP_VBLANK`) → `--dump-vblank`
