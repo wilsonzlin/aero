@@ -299,6 +299,9 @@ Each check produces a `PASS` / `WARN` / `FAIL` result:
   - Graphics (Aero GPU / virtio-gpu)
   - Audio (virtio-snd)
   - Input (virtio-input)
+- **AeroGPU registry configuration (segment budget override)**: when an AeroGPU device is detected, reads:
+  - `HKR\Parameters\NonLocalMemorySizeMB` (REG_DWORD) — if missing, the driver default is used.
+  - Appears in `report.txt` under **Device Binding: Graphics** details and in `report.json` under `aerogpu.non_local_memory_size_mb` + `aerogpu.non_local_memory_size_mb_note`.
 - **AeroGPU D3D9 UMD DLL placement**: when an AeroGPU device is detected, verifies that the expected D3D9 UMD DLL(s) exist.
   - On Win7 x64 this includes the WOW64 D3D9 UMD under `C:\Windows\SysWOW64\` (required for 32-bit D3D9 apps).
 - **AeroGPU D3D10/11 UMD DLL placement (optional)**: if any AeroGPU D3D10/11 UMD DLLs are detected, verifies that the expected D3D10/11 UMD DLL(s) exist.
@@ -325,3 +328,4 @@ In addition to the per-check `checks` object, newer versions of `verify.ps1` inc
 - `media_integrity`
 - `packaged_drivers_summary`
 - `installed_driver_binding_summary`
+- `aerogpu` (including `non_local_memory_size_mb`)

@@ -230,6 +230,126 @@ function Get-RegistryString([string]$path, [string]$name) {
     }
 }
 
+function Resolve-DisplayAdapterRegistryKey([string]$pnpDeviceId) {
+    # Best-effort mapping from a PNP device instance ID (e.g. PCI\VEN_...&DEV_...\...)
+    # to the registry key where display miniport driver parameters are commonly stored.
+    #
+    # Preferred: display class key referenced by Enum\<pnp>\Driver:
+    #   HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4D36E968-E325-11CE-BFC1-08002BE10318}\XXXX
+    #
+    # Fallback: Control\Video instance key (some stacks read config from here):
+    #   HKLM:\SYSTEM\CurrentControlSet\Control\Video\{VideoID}\0000
+    #
+    # This is used to surface informational AeroGPU driver settings such as:
+    #   HKR\Parameters\NonLocalMemorySizeMB (REG_DWORD)
+    $out = @{
+        pnp_device_id = $pnpDeviceId
+        enum_key_path = $null
+        enum_key_exists = $false
+        driver_value = $null
+        display_class_key_path = $null
+        display_class_key_exists = $false
+        video_id = $null
+        control_video_base_path = $null
+        control_video_key_path = $null
+        control_video_key_exists = $false
+        resolved_key_path = $null
+        resolved_key_kind = $null # display_class | control_video
+    }
+
+    $pnp = $null
+    if ($pnpDeviceId) { $pnp = ("" + $pnpDeviceId).Trim() }
+    if (-not $pnp -or $pnp.Length -eq 0) { return $out }
+
+    # 1) Enum -> Driver -> Control\Class\{GUID}\XXXX (best-effort)
+    $enumKey = "HKLM:\SYSTEM\CurrentControlSet\Enum\" + $pnp
+    $out.enum_key_path = $enumKey
+    $out.enum_key_exists = (Test-Path $enumKey)
+    if ($out.enum_key_exists) {
+        $drv = Get-RegistryString $enumKey "Driver"
+        if ($drv -and $drv.Trim().Length -gt 0) {
+            $out.driver_value = $drv
+            $classKey = "HKLM:\SYSTEM\CurrentControlSet\Control\Class\" + $drv
+            $out.display_class_key_path = $classKey
+            $out.display_class_key_exists = (Test-Path $classKey)
+            if ($out.display_class_key_exists) {
+                $out.resolved_key_path = $classKey
+                $out.resolved_key_kind = "display_class"
+
+                # If present, VideoID can be used to locate Control\Video key.
+                $vid = Get-RegistryString $classKey "VideoID"
+                if ($vid -and $vid.Trim().Length -gt 0) {
+                    $out.video_id = $vid
+                    $videoBase = "HKLM:\SYSTEM\CurrentControlSet\Control\Video\" + $vid
+                    $out.control_video_base_path = $videoBase
+                    if (Test-Path $videoBase) {
+                        $candidate = Join-Path $videoBase "0000"
+                        if (-not (Test-Path $candidate)) {
+                            # Fall back to the first numeric subkey (0000, 0001, ...).
+                            $children = $null
+                            try { $children = Get-ChildItem -Path $videoBase -ErrorAction Stop } catch { $children = $null }
+                            if ($children) {
+                                $names = @()
+                                foreach ($ch in $children) {
+                                    $n = "" + $ch.PSChildName
+                                    if ($n -match '^\d{4}$') { $names += $n }
+                                }
+                                if ($names.Count -gt 0) {
+                                    $sorted = $names | Sort-Object
+                                    $candidate = Join-Path $videoBase $sorted[0]
+                                }
+                            }
+                        }
+                        $out.control_video_key_path = $candidate
+                        $out.control_video_key_exists = (Test-Path $candidate)
+                    }
+                }
+            }
+        }
+    }
+
+    # 2) Fallback scan: Control\Video -> *\0000 -> DeviceInstanceID == PNPDeviceID
+    # If we already found a Control\Video key via VideoID, skip the scan.
+    if (-not $out.control_video_key_path) {
+        $videoRoot = "HKLM:\SYSTEM\CurrentControlSet\Control\Video"
+        if (Test-Path $videoRoot) {
+            $guidKeys = $null
+            try { $guidKeys = Get-ChildItem -Path $videoRoot -ErrorAction Stop } catch { $guidKeys = $null }
+            if ($guidKeys) {
+                foreach ($g in $guidKeys) {
+                    $guidName = "" + $g.PSChildName
+                    if (-not $guidName -or $guidName.Length -eq 0) { continue }
+                    $gPath = Join-Path $videoRoot $guidName
+                    $sub = $null
+                    try { $sub = Get-ChildItem -Path $gPath -ErrorAction Stop } catch { $sub = $null }
+                    if (-not $sub) { continue }
+                    foreach ($s in $sub) {
+                        $childName = "" + $s.PSChildName
+                        if (-not ($childName -match '^\d{4}$')) { continue }
+                        $sPath = Join-Path $gPath $childName
+                        $devInst = Get-RegistryString $sPath "DeviceInstanceID"
+                        if (-not $devInst) { continue }
+                        if ($devInst.Trim().ToLower() -eq $pnp.ToLower()) {
+                            $out.video_id = $guidName
+                            $out.control_video_base_path = $gPath
+                            $out.control_video_key_path = $sPath
+                            $out.control_video_key_exists = $true
+                            if (-not $out.resolved_key_path) {
+                                $out.resolved_key_path = $sPath
+                                $out.resolved_key_kind = "control_video"
+                            }
+                            break
+                        }
+                    }
+                    if ($out.control_video_key_path) { break }
+                }
+            }
+        }
+    }
+
+    return $out
+}
+
 function StartType-FromStartValue($startValue) {
     # https://learn.microsoft.com/en-us/windows-hardware/drivers/install/inf-addservice-directive
     switch ($startValue) {
@@ -849,8 +969,8 @@ $storagePreseedSkipped = (Test-Path $storagePreseedSkipMarker)
 
 $report = @{
     schema_version = 1
-     tool = @{
-          name = "Aero Guest Tools Verify"
+    tool = @{
+         name = "Aero Guest Tools Verify"
          version = "2.5.0"
          started_utc = $started.ToUniversalTime().ToString("o")
          ended_utc = $null
@@ -880,6 +1000,14 @@ $report = @{
     media_integrity = $null
     packaged_drivers_summary = $null
     installed_driver_binding_summary = $null
+    aerogpu = @{
+        detected = $false
+        pnp_device_id = $null
+        adapter_registry_key = $null
+        non_local_memory_size_mb = $null
+        non_local_memory_size_mb_note = $null
+        non_local_memory_size_mb_registry_path = $null
+    }
 }
 
 function Add-Check([string]$key, [string]$title, [string]$status, [string]$summary, $data, [string[]]$details) {
@@ -2356,6 +2484,98 @@ try {
         $gpuRegex `
         @("aero","virtio","gpu") `
         "No Aero/virtio GPU devices detected (system may still be using VGA/baseline graphics)."
+
+    # --- AeroGPU configuration (registry) ---
+    # Surface the segment-budget override if present:
+    #   HKR\Parameters\NonLocalMemorySizeMB (REG_DWORD)
+    # This is informational: missing value implies the driver default.
+    try {
+        $gpuDevice = $null
+        if ($report.checks.ContainsKey("device_binding_graphics")) {
+            $chk = $report.checks["device_binding_graphics"]
+            if ($chk -and $chk.data -and ($chk.data -is [hashtable]) -and $chk.data.matched_devices) {
+                $md = $chk.data.matched_devices
+                if ($md -and $md.Count -gt 0) { $gpuDevice = $md[0] }
+            }
+        }
+
+        if (-not $report.aerogpu -or -not ($report.aerogpu -is [hashtable])) {
+            $report.aerogpu = @{
+                detected = $false
+                pnp_device_id = $null
+                adapter_registry_key = $null
+                non_local_memory_size_mb = $null
+                non_local_memory_size_mb_note = $null
+                non_local_memory_size_mb_registry_path = $null
+            }
+        }
+
+        if (-not $gpuDevice) {
+            $report.aerogpu.detected = $false
+            $report.aerogpu.non_local_memory_size_mb_note = "No AeroGPU device detected."
+        } else {
+            $report.aerogpu.detected = $true
+            $pnpid = "" + $gpuDevice.pnp_device_id
+            $report.aerogpu.pnp_device_id = $pnpid
+
+            $reg = Resolve-DisplayAdapterRegistryKey $pnpid
+            $report.aerogpu.adapter_registry_key = $reg
+
+            $value = $null
+            $valuePath = $null
+            $resolvedAny = $false
+
+            # Prefer the Display class key, but check Control\Video as a fallback.
+            if ($reg -and $reg.display_class_key_exists -and $reg.display_class_key_path) {
+                $resolvedAny = $true
+                $paramKey = Join-Path $reg.display_class_key_path "Parameters"
+                $v = Get-RegistryDword $paramKey "NonLocalMemorySizeMB"
+                if ($v -ne $null) { $value = $v; $valuePath = $paramKey }
+            }
+            if ($value -eq $null -and $reg -and $reg.control_video_key_exists -and $reg.control_video_key_path) {
+                $resolvedAny = $true
+                $paramKey = Join-Path $reg.control_video_key_path "Parameters"
+                $v = Get-RegistryDword $paramKey "NonLocalMemorySizeMB"
+                if ($v -ne $null) { $value = $v; $valuePath = $paramKey }
+            }
+
+            $report.aerogpu.non_local_memory_size_mb = $value
+            $report.aerogpu.non_local_memory_size_mb_registry_path = $valuePath
+
+            if (-not $resolvedAny) {
+                $report.aerogpu.non_local_memory_size_mb_note = "Unable to resolve AeroGPU adapter registry key; cannot query NonLocalMemorySizeMB."
+            } elseif ($value -eq $null) {
+                $report.aerogpu.non_local_memory_size_mb_note = "Not set (driver default)."
+            } else {
+                $report.aerogpu.non_local_memory_size_mb_note = "Configured registry override (HKR\\Parameters\\NonLocalMemorySizeMB)."
+            }
+
+            # Surface in report.txt under the existing graphics binding check.
+            if ($report.checks.ContainsKey("device_binding_graphics")) {
+                $chk = $report.checks["device_binding_graphics"]
+                if (-not $chk.details) { $chk.details = @() }
+
+                if ($reg -and $reg.resolved_key_path) {
+                    $chk.details += ("Adapter registry key: " + $reg.resolved_key_path + " (" + $reg.resolved_key_kind + ")")
+                } else {
+                    $chk.details += "Adapter registry key: <unresolved>"
+                }
+
+                if (-not $resolvedAny) {
+                    $chk.details += "NonLocalMemorySizeMB: <unknown> (unable to locate adapter registry key)"
+                } elseif ($value -eq $null) {
+                    $chk.details += "NonLocalMemorySizeMB: not set (driver default)"
+                } else {
+                    $chk.details += ("NonLocalMemorySizeMB: " + $value + " MB (override)")
+                }
+            }
+        }
+    } catch {
+        # Informational only (do not affect overall PASS/WARN/FAIL).
+        if ($report.aerogpu -and ($report.aerogpu -is [hashtable])) {
+            $report.aerogpu.non_local_memory_size_mb_note = "Failed to query NonLocalMemorySizeMB: " + $_.Exception.Message
+        }
+    }
 
     # --- AeroGPU UMD DLL placement (WOW64 completeness) ---
     try {
