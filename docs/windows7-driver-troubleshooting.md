@@ -542,6 +542,9 @@ If the OS boots far enough that you can run tools (local console preferred; RDP 
   - Dumps the scanout framebuffer to an uncompressed 32bpp BMP (requires the installed KMD to support `AEROGPU_ESCAPE_OP_READ_GPA`).
   - Useful when the guest “seems alive” but the screen is blank/corrupted and you need a pixel artifact without relying on host-side capture.
 
+- `aerogpu_dbgctl --dump-scanout-png C:\\scanout.png`
+  - Same as `--dump-scanout-bmp`, but writes a PNG (RGBA8). Useful when you want a smaller artifact than BMP.
+
 - `aerogpu_dbgctl --query-cursor`
   - Dumps the hardware cursor MMIO state (`CURSOR_*` registers): enable, position/hotspot, size/format/pitch, and the cursor framebuffer GPA.
   - Useful when the desktop is running but the cursor is missing/stuck/off-screen.
@@ -549,6 +552,9 @@ If the OS boots far enough that you can run tools (local console preferred; RDP 
 - `aerogpu_dbgctl --dump-cursor-bmp C:\\cursor.bmp`
   - Dumps the current cursor image to an uncompressed 32bpp BMP (requires the installed KMD to support `AEROGPU_ESCAPE_OP_READ_GPA`).
   - Useful for debugging cursor image/pitch/fb_gpa issues without relying on host-side capture.
+
+- `aerogpu_dbgctl --dump-cursor-png C:\\cursor.png`
+  - Same as `--dump-cursor-bmp`, but writes a PNG (RGBA8).
 
 If you have the Win7 guest-side validation suite available, you can also run:
 
