@@ -11,10 +11,15 @@ use std::io;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-const REGEN_CMD: &str = "cargo run -p firmware --bin gen_dsdt --locked";
+// Preferred regeneration command (covers all deterministic in-repo fixtures).
+const REGEN_CMD: &str = "cargo xtask fixtures";
+const CHECK_CMD: &str = "cargo xtask fixtures --check";
+
+// Convenience for regenerating/checking just this DSDT fixture.
+const REGEN_CMD_ALT: &str = "cargo run -p firmware --bin gen_dsdt --locked";
 // When invoking `--check` via `cargo run`, the `--` separator is required so Cargo forwards the
 // flag to the binary rather than trying to parse it itself.
-const CHECK_CMD: &str = "cargo run -p firmware --bin gen_dsdt --locked -- --check";
+const CHECK_CMD_ALT: &str = "cargo run -p firmware --bin gen_dsdt --locked -- --check";
 
 #[derive(Debug)]
 enum Error {
@@ -44,7 +49,7 @@ impl fmt::Display for Error {
             ),
             Error::OutOfDate { path } => write!(
                 f,
-                "{} is out of date; regenerate it with: {REGEN_CMD}",
+                "{} is out of date; regenerate it with: {REGEN_CMD} (or: {REGEN_CMD_ALT})",
                 path.display()
             ),
         }
@@ -91,7 +96,7 @@ fn run() -> Result<(), Error> {
 
 fn print_usage() {
     println!(
-        "Usage: gen_dsdt [--check]\n\nRegenerates the checked-in ACPI DSDT fixture at crates/firmware/acpi/dsdt.aml.\n\nExamples:\n  {REGEN_CMD}\n  {CHECK_CMD}"
+        "Usage: gen_dsdt [--check]\n\nRegenerates the checked-in ACPI DSDT fixture at crates/firmware/acpi/dsdt.aml.\n\nExamples:\n  {REGEN_CMD}\n  {CHECK_CMD}\n  {REGEN_CMD_ALT}\n  {CHECK_CMD_ALT}"
     );
 }
 

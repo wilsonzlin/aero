@@ -3,6 +3,16 @@ use std::fs;
 use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 
+// Preferred regeneration command (covers all deterministic in-repo fixtures).
+const REGEN_CMD: &str = "cargo xtask fixtures";
+const CHECK_CMD: &str = "cargo xtask fixtures --check";
+
+// Convenience for regenerating/checking just the BIOS ROM fixture.
+const REGEN_CMD_ALT: &str = "cargo run -p firmware --bin gen_bios_rom --locked";
+// When invoking `--check` via `cargo run`, the `--` separator is required so Cargo forwards the
+// flag to the binary rather than trying to parse it itself.
+const CHECK_CMD_ALT: &str = "cargo run -p firmware --bin gen_bios_rom --locked -- --check";
+
 fn repo_root() -> PathBuf {
     // `CARGO_MANIFEST_DIR` for this binary is `<repo>/crates/firmware`.
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -18,6 +28,14 @@ fn usage(bin_name: &str) -> String {
 \n\
 Generate the canonical 64KiB BIOS ROM image via `firmware::bios::build_bios_rom()` and write it\n\
 to `<repo>/assets/bios.bin`.\n\
+\n\
+Preferred (regen/check all deterministic fixtures):\n\
+    {REGEN_CMD}\n\
+    {CHECK_CMD}\n\
+\n\
+This binary is a convenience for regenerating just the BIOS ROM fixture:\n\
+    {REGEN_CMD_ALT}\n\
+    {CHECK_CMD_ALT}\n\
 \n\
 Options:\n\
     --check   Verify `<repo>/assets/bios.bin` matches the generator output and exit non-zero if it differs.\n"
@@ -100,7 +118,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     io::ErrorKind::Other,
                     format!(
                         "{} does not match the canonical generator output ({} bytes vs {} bytes).\n\
-Regenerate with: cargo run -p firmware --bin gen_bios_rom",
+Regenerate with: {REGEN_CMD} (or: {REGEN_CMD_ALT})",
                         out_path.display(),
                         existing.len(),
                         rom.len()
@@ -112,7 +130,7 @@ Regenerate with: cargo run -p firmware --bin gen_bios_rom",
                 return Err(io::Error::new(
                     io::ErrorKind::NotFound,
                     format!(
-                        "{} does not exist.\nRegenerate with: cargo run -p firmware --bin gen_bios_rom",
+                        "{} does not exist.\nRegenerate with: {REGEN_CMD} (or: {REGEN_CMD_ALT})",
                         out_path.display()
                     ),
                 )
@@ -125,4 +143,3 @@ Regenerate with: cargo run -p firmware --bin gen_bios_rom",
     atomic_write(&out_path, &rom)?;
     Ok(())
 }
-
