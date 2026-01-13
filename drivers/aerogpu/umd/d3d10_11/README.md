@@ -9,11 +9,25 @@ owns the submission transport and supports both the versioned (`aerogpu_pci.h` +
 (`legacy/aerogpu_protocol_legacy.h`) device ABIs, auto-detected via MMIO magic; see `drivers/aerogpu/kmd/README.md`.
 (The in-tree Win7 driver package binds only to the versioned device by default; legacy uses `drivers/aerogpu/packaging/win7/legacy/`.)
 
-## Status / scope (initial)
+## Status / scope
 
 This section started as the initial milestone scope; it is kept updated as feature coverage expands.
 
-This implementation started as “minimum viable triangle”, but it now includes additional coverage needed by the Win7 runtime and by the current AeroGPU protocol (notably: **mip chains**, **state encoding**, and protocol support for **B5 formats** + **MRT**).
+This UMD is still bring-up oriented and targets **D3D_FEATURE_LEVEL_10_0** (FL10\_0) behavior on Windows 7 (WDDM 1.1).
+
+### Supported (summary)
+
+Feature matrix for the Win7 WDK-backed UMDs:
+
+| Feature | D3D10 (`src/aerogpu_d3d10_umd_wdk.cpp`) | D3D10.1 (`src/aerogpu_d3d10_1_umd_wdk.cpp`) | D3D11 (`src/aerogpu_d3d11_umd_wdk.cpp`) |
+| --- | --- | --- | --- |
+| MRT (multiple render targets) | Up to `AEROGPU_MAX_RENDER_TARGETS` (8)\* | Up to `AEROGPU_MAX_RENDER_TARGETS` (8)\* | Up to `AEROGPU_MAX_RENDER_TARGETS` (8)\* |
+| Pipeline state encoding (blend / raster / depth) | **Supported** | **Blend only** (raster/depth are stubs) | **Supported** |
+| Vertex buffer binding | **Single slot** only (`StartSlot=0, NumBuffers=1`) | **Single slot** only (`StartSlot=0, NumBuffers=1`) | **Multiple slots** supported (`StartSlot/NumBuffers` forwarded) |
+| Constant buffers | VS/PS supported (14 slots, whole-buffer binding) | Not yet wired up (ignored) | VS/PS supported (14 slots, `{FirstConstant, NumConstants}` ranges supported) |
+| Samplers | VS/PS supported (16 slots; `CREATE_SAMPLER` + `SET_SAMPLERS`) | Not yet wired up (dummy sampler objects; no protocol emission) | VS/PS supported (16 slots; basic filter/address modes) |
+
+\* Current host executors require RTV bindings to be a contiguous prefix (no gaps). The UMD normalizes away gaps by truncating at the first null RTV slot.
 
 ### Implemented
 
@@ -24,24 +38,32 @@ This implementation started as “minimum viable triangle”, but it now include
   - Block-compressed formats (BC1/BC2/BC3/BC7) and explicit sRGB variants are supported when the host ABI is new enough (ABI 1.2+; see `aerogpu_umd_private_v1.device_abi_version_u32`)
 - Vertex/pixel shaders (DXBC payload passthrough)
 - Input layout + vertex/index buffers, primitive topology
-- VS/PS binding tables: constant buffers, shader-resource views, samplers
-- Render target + depth-stencil binding (currently RT0 + optional DSV), Clear, Draw/DrawIndexed
+- VS/PS binding tables:
+  - D3D10 + D3D11: constant buffers, shader-resource views, samplers
+  - D3D10.1: shader-resource views (constant buffers and samplers are currently stubbed)
+- Render target + depth-stencil binding (MRT up to `AEROGPU_MAX_RENDER_TARGETS`, contiguous prefix), Clear, Draw/DrawIndexed
 - Viewport + scissor
 - Resource updates + readback:
   - `Map`/`Unmap` for buffers and Texture2D subresources (uploads via `AEROGPU_CMD_RESOURCE_DIRTY_RANGE` / `AEROGPU_CMD_UPLOAD_RESOURCE`)
   - Staging readback uses `AEROGPU_CMD_COPY_*` + `AEROGPU_COPY_FLAG_WRITEBACK_DST` when the host exposes `AEROGPU_FEATURE_TRANSFER` (ABI 1.1+)
-- Pipeline state **encoding** into the command stream (D3D11 DDI path):
-  - `AEROGPU_CMD_SET_BLEND_STATE`, `AEROGPU_CMD_SET_RASTERIZER_STATE`, `AEROGPU_CMD_SET_DEPTH_STENCIL_STATE`
+- Pipeline state **encoding** into the command stream:
+  - D3D10: `AEROGPU_CMD_SET_BLEND_STATE`, `AEROGPU_CMD_SET_RASTERIZER_STATE`, `AEROGPU_CMD_SET_DEPTH_STENCIL_STATE`
+  - D3D10.1: `AEROGPU_CMD_SET_BLEND_STATE` (raster/depth state is currently stubbed)
+  - D3D11: `AEROGPU_CMD_SET_BLEND_STATE`, `AEROGPU_CMD_SET_RASTERIZER_STATE`, `AEROGPU_CMD_SET_DEPTH_STENCIL_STATE`
 - DXGI swapchain bring-up: `Present` + backbuffer identity rotation (`RotateResourceIdentities`), with presentation via `AEROGPU_CMD_PRESENT` (sync interval 0 vs non-zero)
 
-### Still stubbed / known gaps (incl. protocol-limited)
+### Not yet supported / requires protocol changes
+
+- **Subresource view selection** (SRV/RTV/DSV mip level + array slice): view descriptors are currently ignored and bindings resolve to the underlying texture handle only. Supporting per-view subresource selection requires protocol representation of “views” (or subresource selectors) rather than just raw texture handles.
+- **Unordered access views (UAVs) and compute shaders** (FL11+): the D3D11 UMD reports `E_NOTIMPL` for CS/UAV binding; the protocol currently has no UAV binding or compute pipeline representation.
+- **DXGI format expansion** beyond the protocol’s current `enum aerogpu_format` list: only formats representable in the protocol can be encoded. Adding more DXGI formats requires extending `drivers/aerogpu/protocol/aerogpu_pci.h` + host support.
+- Stencil ops are protocol-limited: the current `aerogpu_depth_stencil_state` only carries enable + masks; it does **not** encode stencil funcs/ops (or separate front/back face state).
+- Blend factors are protocol-limited: only `{Zero, One, SrcAlpha, InvSrcAlpha, DestAlpha, InvDestAlpha, Constant, InvConstant}` are representable. Other D3D10/11 blend factors are mapped to conservative fallbacks.
+
+### Still stubbed / known gaps
 
 - Geometry shaders are **accepted but ignored** (no GS stage in the AeroGPU/WebGPU pipeline yet). This is sufficient for the Win7 smoke test’s pass-through GS that only renames varyings.
 - D3D11-only features outside FL10_0 (compute/tessellation/UAV) are unsupported; related DDIs should fail cleanly (`E_NOTIMPL` / `SetErrorCb`).
-- MRT: the protocol supports up to `AEROGPU_MAX_RENDER_TARGETS` (8), but the D3D10/11 UMD currently only forwards RT0.
-- D3D10/D3D10.1 state binding remains stubbed in the Win7 WDK builds: `SetBlendState` / `SetRasterizerState` / `SetDepthStencilState` are currently no-op stubs on those DDIs (state is only forwarded on the D3D11 DDI path).
-- Stencil ops are protocol-limited: the current `aerogpu_depth_stencil_state` only carries enable + masks; it does **not** encode stencil funcs/ops (or separate front/back face state).
-- Blend factors are protocol-limited: only `{Zero, One, SrcAlpha, InvSrcAlpha, DestAlpha, InvDestAlpha, Constant, InvConstant}` are representable. Other D3D10/11 blend factors are mapped to conservative fallbacks.
 
 Unsupported functionality must fail cleanly (returning `E_NOTIMPL` / `E_INVALIDARG`) rather than crashing or dereferencing null DDI function pointers.
 
@@ -61,6 +83,7 @@ For a full “bring-up spec” (Win7 driver model overview, minimal D3D10DDI/D3D
 - [`docs/graphics/win7-d3d10-11-umd-allocations.md`](../../../../docs/graphics/win7-d3d10-11-umd-allocations.md) (resource allocation contract: `CreateResource` → `pfnAllocateCb` + `D3DDDI_ALLOCATIONINFO`)
 - [`docs/graphics/win7-d3d11-map-unmap.md`](../../../../docs/graphics/win7-d3d11-map-unmap.md) (`Map`/`Unmap` contract: `LockCb`/`UnlockCb`, DO_NOT_WAIT, staging readback sync)
 - [`docs/graphics/win7-dxgi-swapchain-backbuffer.md`](../../../../docs/graphics/win7-dxgi-swapchain-backbuffer.md) (trace guide: swapchain backbuffer `CreateResource` parameters and allocation flags)
+- [`docs/graphics/aerogpu-protocols.md`](../../../../docs/graphics/aerogpu-protocols.md) (protocol header overview: where `aerogpu_cmd.h` and `aerogpu_format` live)
 
 ## Bring-up tracing (Win7)
 
