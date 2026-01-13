@@ -38,6 +38,10 @@ pub const VIRTIO_BLK_MAX_REQUEST_DESCRIPTORS: usize = 1024;
 /// This matches the 4MiB cap used by Aero's NVMe model (`NVME_MAX_DMA_BYTES`).
 pub const VIRTIO_BLK_MAX_REQUEST_DATA_BYTES: u64 = 4 * 1024 * 1024;
 
+/// Maximum number of 512-byte sectors that may be affected by a single request.
+pub const VIRTIO_BLK_MAX_REQUEST_SECTORS: u64 =
+    VIRTIO_BLK_MAX_REQUEST_DATA_BYTES / VIRTIO_BLK_SECTOR_SIZE;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BlockBackendError {
     OutOfBounds,
@@ -85,12 +89,13 @@ impl VirtioBlkConfig {
         // Discard / write zeroes limits. These are safe upper bounds for our current best-effort
         // implementation; they mainly exist so in-guest drivers can enable the operations when the
         // corresponding feature bits are negotiated.
-        cfg[36..40].copy_from_slice(&u32::MAX.to_le_bytes()); // max_discard_sectors
+        let max_sectors = u32::try_from(VIRTIO_BLK_MAX_REQUEST_SECTORS).unwrap_or(u32::MAX);
+        cfg[36..40].copy_from_slice(&max_sectors.to_le_bytes()); // max_discard_sectors
         cfg[40..44].copy_from_slice(&self.seg_max.to_le_bytes()); // max_discard_seg
         let align_sectors = (u64::from(self.blk_size) / VIRTIO_BLK_SECTOR_SIZE).max(1);
         let align_sectors_u32 = u32::try_from(align_sectors).unwrap_or(1);
         cfg[44..48].copy_from_slice(&align_sectors_u32.to_le_bytes()); // discard_sector_alignment
-        cfg[48..52].copy_from_slice(&u32::MAX.to_le_bytes()); // max_write_zeroes_sectors
+        cfg[48..52].copy_from_slice(&max_sectors.to_le_bytes()); // max_write_zeroes_sectors
         cfg[52..56].copy_from_slice(&self.seg_max.to_le_bytes()); // max_write_zeroes_seg
                                                                   // write_zeroes_may_unmap: 0 (false); unused1 is zeroed.
 
@@ -229,9 +234,9 @@ impl BlockBackendAsAeroVirtualDisk {
                 len,
                 capacity,
             },
-            BlockBackendError::IoError => aero_storage::DiskError::Io(format!(
-                "BlockBackendError::{err:?}"
-            )),
+            BlockBackendError::IoError => {
+                aero_storage::DiskError::Io(format!("BlockBackendError::{err:?}"))
+            }
         }
     }
 }
@@ -259,9 +264,9 @@ impl aero_storage::VirtualDisk for BlockBackendAsAeroVirtualDisk {
 
     fn flush(&mut self) -> aero_storage::Result<()> {
         self.backend.flush().map_err(|e| match e {
-            BlockBackendError::IoError => aero_storage::DiskError::Io(format!(
-                "BlockBackendError::{e:?}"
-            )),
+            BlockBackendError::IoError => {
+                aero_storage::DiskError::Io(format!("BlockBackendError::{e:?}"))
+            }
             // `flush` is not expected to return `OutOfBounds`; map it to an I/O error.
             BlockBackendError::OutOfBounds => aero_storage::DiskError::Io(format!(
                 "unexpected BlockBackendError::{e:?} during flush"
@@ -723,7 +728,8 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
 
             match typ {
                 VIRTIO_BLK_T_IN => {
-                    if data_segs.is_empty() || !total_data_len.is_multiple_of(VIRTIO_BLK_SECTOR_SIZE)
+                    if data_segs.is_empty()
+                        || !total_data_len.is_multiple_of(VIRTIO_BLK_SECTOR_SIZE)
                     {
                         status = VIRTIO_BLK_S_IOERR;
                     } else if let Some(sector_off) = sector.checked_mul(VIRTIO_BLK_SECTOR_SIZE) {
@@ -767,7 +773,8 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
                     }
                 }
                 VIRTIO_BLK_T_OUT => {
-                    if data_segs.is_empty() || !total_data_len.is_multiple_of(VIRTIO_BLK_SECTOR_SIZE)
+                    if data_segs.is_empty()
+                        || !total_data_len.is_multiple_of(VIRTIO_BLK_SECTOR_SIZE)
                     {
                         status = VIRTIO_BLK_S_IOERR;
                     } else if let Some(sector_off) = sector.checked_mul(VIRTIO_BLK_SECTOR_SIZE) {
@@ -869,9 +876,11 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
                         };
 
                         if status == VIRTIO_BLK_S_OK {
-                            let blk_size = u64::from(self.config.blk_size).max(VIRTIO_BLK_SECTOR_SIZE);
+                            let blk_size =
+                                u64::from(self.config.blk_size).max(VIRTIO_BLK_SECTOR_SIZE);
                             let align_sectors = (blk_size / VIRTIO_BLK_SECTOR_SIZE).max(1);
                             let disk_len = self.backend.len();
+                            let mut budget = VIRTIO_BLK_MAX_REQUEST_DATA_BYTES;
 
                             for seg in &segs {
                                 let num_sectors = u64::from(seg.num_sectors);
@@ -882,14 +891,22 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
                                     break;
                                 }
 
-                                let Some(byte_off) = seg.sector.checked_mul(VIRTIO_BLK_SECTOR_SIZE) else {
+                                let Some(byte_off) = seg.sector.checked_mul(VIRTIO_BLK_SECTOR_SIZE)
+                                else {
                                     status = VIRTIO_BLK_S_IOERR;
                                     break;
                                 };
-                                let Some(byte_len) = num_sectors.checked_mul(VIRTIO_BLK_SECTOR_SIZE) else {
+                                let Some(byte_len) =
+                                    num_sectors.checked_mul(VIRTIO_BLK_SECTOR_SIZE)
+                                else {
                                     status = VIRTIO_BLK_S_IOERR;
                                     break;
                                 };
+                                if byte_len > budget {
+                                    status = VIRTIO_BLK_S_IOERR;
+                                    break;
+                                }
+                                budget = budget.saturating_sub(byte_len);
                                 let Some(end_off) = byte_off.checked_add(byte_len) else {
                                     status = VIRTIO_BLK_S_IOERR;
                                     break;
@@ -921,9 +938,11 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
                         };
 
                         if status == VIRTIO_BLK_S_OK {
-                            let blk_size = u64::from(self.config.blk_size).max(VIRTIO_BLK_SECTOR_SIZE);
+                            let blk_size =
+                                u64::from(self.config.blk_size).max(VIRTIO_BLK_SECTOR_SIZE);
                             let align_sectors = (blk_size / VIRTIO_BLK_SECTOR_SIZE).max(1);
                             let disk_len = self.backend.len();
+                            let mut budget = VIRTIO_BLK_MAX_REQUEST_DATA_BYTES;
 
                             // Buffer used for chunked zero writes. Use a block-size-aligned chunk
                             // so backends that care about write alignment are not penalized.
@@ -946,14 +965,23 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
                                     break;
                                 }
 
-                                let Some(mut byte_off) = seg.sector.checked_mul(VIRTIO_BLK_SECTOR_SIZE) else {
+                                let Some(mut byte_off) =
+                                    seg.sector.checked_mul(VIRTIO_BLK_SECTOR_SIZE)
+                                else {
                                     status = VIRTIO_BLK_S_IOERR;
                                     break;
                                 };
-                                let Some(mut remaining) = num_sectors.checked_mul(VIRTIO_BLK_SECTOR_SIZE) else {
+                                let Some(mut remaining) =
+                                    num_sectors.checked_mul(VIRTIO_BLK_SECTOR_SIZE)
+                                else {
                                     status = VIRTIO_BLK_S_IOERR;
                                     break;
                                 };
+                                if remaining > budget {
+                                    status = VIRTIO_BLK_S_IOERR;
+                                    break;
+                                }
+                                budget = budget.saturating_sub(remaining);
                                 let Some(end_off) = byte_off.checked_add(remaining) else {
                                     status = VIRTIO_BLK_S_IOERR;
                                     break;

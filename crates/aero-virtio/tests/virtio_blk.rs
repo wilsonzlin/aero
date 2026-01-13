@@ -620,6 +620,49 @@ fn virtio_blk_write_zeroes_rejects_out_of_bounds_requests() {
 }
 
 #[test]
+fn virtio_blk_write_zeroes_rejects_oversize_requests() {
+    let max_sectors = VIRTIO_BLK_MAX_REQUEST_DATA_BYTES / VIRTIO_BLK_SECTOR_SIZE;
+    let num_sectors = u32::try_from(max_sectors + 1).unwrap();
+    let disk_len = usize::try_from(u64::from(num_sectors) * VIRTIO_BLK_SECTOR_SIZE).unwrap();
+
+    let (mut dev, caps, mut mem, backing, _flushes) = setup_with_sizes(disk_len, 0x10000);
+
+    let header = 0x7000;
+    let seg = 0x8000;
+    let status = 0x9000;
+
+    // Mark the whole disk so we can validate the failed request doesn't modify it.
+    backing.borrow_mut().fill(0xa5);
+
+    write_u32_le(&mut mem, header, VIRTIO_BLK_T_WRITE_ZEROES).unwrap();
+    write_u32_le(&mut mem, header + 4, 0).unwrap();
+    write_u64_le(&mut mem, header + 8, 0).unwrap();
+
+    // Request WRITE_ZEROES over the entire disk, but exceed the device's per-request cap.
+    write_u64_le(&mut mem, seg, 0).unwrap();
+    write_u32_le(&mut mem, seg + 8, num_sectors).unwrap();
+    write_u32_le(&mut mem, seg + 12, 0).unwrap();
+
+    mem.write(status, &[0xff]).unwrap();
+
+    write_desc(&mut mem, DESC_TABLE, 0, header, 16, 0x0001, 1);
+    write_desc(&mut mem, DESC_TABLE, 1, seg, 16, 0x0001, 2);
+    write_desc(&mut mem, DESC_TABLE, 2, status, 1, 0x0002, 0);
+
+    write_u16_le(&mut mem, AVAIL_RING, 0).unwrap();
+    write_u16_le(&mut mem, AVAIL_RING + 2, 1).unwrap();
+    write_u16_le(&mut mem, AVAIL_RING + 4, 0).unwrap();
+    write_u16_le(&mut mem, USED_RING, 0).unwrap();
+    write_u16_le(&mut mem, USED_RING + 2, 0).unwrap();
+
+    kick_queue0(&mut dev, &caps, &mut mem);
+
+    assert_eq!(mem.get_slice(status, 1).unwrap()[0], VIRTIO_BLK_S_IOERR);
+    assert_eq!(dev.debug_queue_used_idx(&mem, 0), Some(1));
+    assert!(backing.borrow().iter().all(|b| *b == 0xa5));
+}
+
+#[test]
 fn virtio_blk_flush_calls_backend_flush() {
     let (mut dev, caps, mut mem, _backing, flushes) = setup();
 
