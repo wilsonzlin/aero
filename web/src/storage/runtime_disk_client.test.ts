@@ -227,6 +227,18 @@ describe("RuntimeDiskClient error handling", () => {
     client.close();
   });
 
+  it("rejects pending requests when the worker message deserialization fails", async () => {
+    const w = new MockWorker();
+    const client = new RuntimeDiskClient(w as unknown as Worker);
+
+    const p = client.openRemote("https://example.invalid/disk.img");
+    (w as any).onmessageerror?.({});
+
+    await expect(p).rejects.toThrow(/deserialization failed/);
+    expect(((client as any).pending as Map<number, unknown>).size).toBe(0);
+    client.close();
+  });
+
   it("rejects pending requests when the client is closed", async () => {
     const w = new MockWorker();
     const client = new RuntimeDiskClient(w as unknown as Worker);
