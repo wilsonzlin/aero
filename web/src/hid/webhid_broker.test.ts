@@ -182,6 +182,57 @@ describe("hid/WebHidBroker", () => {
     }
   });
 
+  it("clamps oversized inputreport payloads before writing to the SharedArrayBuffer input report ring", async () => {
+    Object.defineProperty(globalThis, "crossOriginIsolated", { value: true, configurable: true });
+
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const manager = new WebHidPassthroughManager({ hid: null });
+      const broker = new WebHidBroker({ manager });
+      const port = new FakePort();
+      broker.attachWorkerPort(port as unknown as MessagePort);
+
+      const ringInit = port.posted.find((p) => (p.msg as { type?: unknown }).type === "hid.ring.init")?.msg as
+        | { sab: SharedArrayBuffer; offsetBytes: number }
+        | undefined;
+      expect(ringInit).toBeTruthy();
+      const inputReportRing = new RingBuffer(ringInit!.sab, ringInit!.offsetBytes);
+
+      const device = new FakeHidDevice();
+      device.collections = [
+        {
+          usagePage: 1,
+          usage: 2,
+          type: "application",
+          children: [],
+          inputReports: [
+            {
+              reportId: 1,
+              items: [{ reportSize: 8, reportCount: 4 }],
+            },
+          ],
+          outputReports: [],
+          featureReports: [],
+        },
+      ] as unknown as HIDCollectionInfo[];
+      const id = await broker.attachDevice(device as unknown as HIDDevice);
+
+      const huge = new Uint8Array(1024 * 1024);
+      huge.set([1, 2, 3, 4], 0);
+      device.dispatchInputReport(1, huge);
+
+      const payload = inputReportRing.tryPop();
+      expect(payload).toBeTruthy();
+      const decoded = decodeHidInputReportRingRecord(payload!);
+      expect(decoded).toBeTruthy();
+      expect(decoded).toMatchObject({ deviceId: id, reportId: 1 });
+      expect(decoded!.data.byteLength).toBe(4);
+      expect(Array.from(decoded!.data)).toEqual([1, 2, 3, 4]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("forwards reports via SharedArrayBuffer rings when crossOriginIsolated", async () => {
     Object.defineProperty(globalThis, "crossOriginIsolated", { value: true, configurable: true });
 
