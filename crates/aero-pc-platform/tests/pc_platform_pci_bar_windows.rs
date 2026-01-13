@@ -258,6 +258,20 @@ fn pci_mmio_bars_stay_within_acpi_mmio_window_and_do_not_overlap_ecam() {
         "test expected at least one MMIO BAR to be allocated"
     );
 
+    // Basic sanity: PCI BAR bases should be naturally aligned to their size.
+    for (bdf, bar, range) in &mmio_bars {
+        assert!(
+            range.size != 0,
+            "PCI MMIO BAR has zero size: {bdf:?} BAR{bar} {range:?}"
+        );
+        assert!(
+            range.base % range.size == 0,
+            "PCI MMIO BAR base is not aligned to its size: {bdf:?} BAR{bar} base=0x{:x} size=0x{:x}",
+            range.base,
+            range.size
+        );
+    }
+
     let acpi_cfg = AcpiConfig {
         // Enable PCIe-friendly config space access via MMCONFIG/ECAM. This must match the PC
         // platform memory map (`aero-pc-constants`).
@@ -310,7 +324,7 @@ fn pci_mmio_bars_stay_within_acpi_mmio_window_and_do_not_overlap_ecam() {
         "PciResourceAllocatorConfig::default() MMIO window overlaps ECAM: allocator=[0x{alloc_start:x}..0x{alloc_end:x}) ecam=[0x{ecam_start:x}..0x{ecam_end:x})",
     );
 
-    for (bdf, bar, range) in mmio_bars {
+    for &(bdf, bar, range) in &mmio_bars {
         let start = range.base;
         let end = range
             .base
@@ -331,6 +345,27 @@ fn pci_mmio_bars_stay_within_acpi_mmio_window_and_do_not_overlap_ecam() {
         assert!(
             !ranges_overlap(start, end, ecam_start, ecam_end),
             "PCI MMIO BAR overlaps ECAM window: {bdf:?} BAR{bar} [0x{start:x}..0x{end:x}) overlaps ECAM [0x{ecam_start:x}..0x{ecam_end:x})",
+        );
+    }
+
+    // Ensure BAR ranges don't overlap each other (a regression in the allocator could violate
+    // this even if everything still falls within the larger ACPI window).
+    let mut bar_ranges = mmio_bars
+        .iter()
+        .copied()
+        .map(|(bdf, bar, range)| {
+            let start = range.base;
+            let end = range.base.saturating_add(range.size);
+            (start, end, bdf, bar)
+        })
+        .collect::<Vec<_>>();
+    bar_ranges.sort_by_key(|(start, _, _, _)| *start);
+    for win in bar_ranges.windows(2) {
+        let (a_start, a_end, a_bdf, a_bar) = win[0];
+        let (b_start, _b_end, b_bdf, b_bar) = win[1];
+        assert!(
+            a_end <= b_start,
+            "PCI MMIO BAR ranges overlap: {a_bdf:?} BAR{a_bar} [0x{a_start:x}..0x{a_end:x}) overlaps {b_bdf:?} BAR{b_bar} starting at 0x{b_start:x}"
         );
     }
 }
