@@ -617,7 +617,11 @@ def _check_profiles_against_contract(
 
     profiles_by_key: dict[PciProfileKey, ParsedPciDeviceProfile] = {p.key: p for p in parsed_profiles}
 
-    # Enforce that virtio devices use the shared bars/caps and contract v1 revision ID.
+    # Enforce that virtio devices use the shared bars and contract v1 revision ID.
+    #
+    # Capabilities are now per-device because MSI-X table sizing depends on virtqueue count.
+    # The profiles must still reference the canonical per-device cap arrays declared in
+    # `crates/devices/src/pci/profile.rs` so identities don't drift.
     for p in parsed_profiles:
         if p.key.vendor_id != 0x1AF4:
             continue
@@ -625,9 +629,24 @@ def _check_profiles_against_contract(
             errors.append(f"profile.rs:{p.const_name}: virtio profiles must use revision_id=1 (contract v1), got {p.key.revision_id}")
         if p.bars_ref != "&VIRTIO_BARS":
             errors.append(f"profile.rs:{p.const_name}: virtio profiles must use bars: &VIRTIO_BARS, got {p.bars_ref!r}")
-        if p.caps_ref != "&VIRTIO_CAPS":
+
+        expected_caps_ref_by_profile = {
+            "VIRTIO_NET": "&VIRTIO_NET_CAPS",
+            "VIRTIO_BLK": "&VIRTIO_BLK_CAPS",
+            # virtio-input is exposed as a keyboard+mouse multifunction pair (contract v1).
+            "VIRTIO_INPUT_KEYBOARD": "&VIRTIO_INPUT_CAPS",
+            "VIRTIO_INPUT_MOUSE": "&VIRTIO_INPUT_CAPS",
+            "VIRTIO_SND": "&VIRTIO_SND_CAPS",
+        }
+        expected_caps_ref = expected_caps_ref_by_profile.get(p.const_name)
+        if expected_caps_ref is None:
             errors.append(
-                f"profile.rs:{p.const_name}: virtio profiles must use capabilities: &VIRTIO_CAPS, got {p.caps_ref!r}"
+                f"profile.rs:{p.const_name}: unexpected virtio profile name (update check-windows-virtio-contract.py)"
+            )
+            continue
+        if p.caps_ref != expected_caps_ref:
+            errors.append(
+                f"profile.rs:{p.const_name}: virtio profiles must use capabilities: {expected_caps_ref}, got {p.caps_ref!r}"
             )
 
     # Compute expected PCI identities from the contract.
