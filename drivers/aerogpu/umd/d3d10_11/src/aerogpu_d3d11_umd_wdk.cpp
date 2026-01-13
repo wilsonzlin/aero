@@ -4087,7 +4087,9 @@ HRESULT AEROGPU_APIENTRY CreateDepthStencilState11(D3D11DDI_HDEVICE hDevice,
   }
   if (!filled) {
     __if_exists(D3D11DDIARG_CREATEDEPTHSTENCILSTATE::DepthStencilDesc) {
-      const auto& desc = pDesc->DepthStencilDesc;
+      // Copy the descriptor so `decltype(desc)` is a value type (not a reference),
+      // which is required for `__if_exists(decltype(desc)::...)` member probes on MSVC.
+      const auto desc = pDesc->DepthStencilDesc;
       state->depth_enable = desc.DepthEnable ? 1u : 0u;
       state->depth_write_mask = static_cast<uint32_t>(desc.DepthWriteMask);
       state->depth_func = static_cast<uint32_t>(desc.DepthFunc);
@@ -4103,7 +4105,9 @@ HRESULT AEROGPU_APIENTRY CreateDepthStencilState11(D3D11DDI_HDEVICE hDevice,
   }
   if (!filled) {
     __if_exists(D3D11DDIARG_CREATEDEPTHSTENCILSTATE::Desc) {
-      const auto& desc = pDesc->Desc;
+      // Copy the descriptor so `decltype(desc)` is a value type (not a reference),
+      // which is required for `__if_exists(decltype(desc)::...)` member probes on MSVC.
+      const auto desc = pDesc->Desc;
       state->depth_enable = desc.DepthEnable ? 1u : 0u;
       state->depth_write_mask = static_cast<uint32_t>(desc.DepthWriteMask);
       state->depth_func = static_cast<uint32_t>(desc.DepthFunc);
@@ -4120,7 +4124,9 @@ HRESULT AEROGPU_APIENTRY CreateDepthStencilState11(D3D11DDI_HDEVICE hDevice,
   if (!filled) {
     __if_exists(D3D11DDIARG_CREATEDEPTHSTENCILSTATE::pDepthStencilDesc) {
       if (pDesc->pDepthStencilDesc) {
-        const auto& desc = *pDesc->pDepthStencilDesc;
+        // Copy the descriptor so `decltype(desc)` is a value type (not a reference),
+        // which is required for `__if_exists(decltype(desc)::...)` member probes on MSVC.
+        const auto desc = *pDesc->pDepthStencilDesc;
         state->depth_enable = desc.DepthEnable ? 1u : 0u;
         state->depth_write_mask = static_cast<uint32_t>(desc.DepthWriteMask);
         state->depth_func = static_cast<uint32_t>(desc.DepthFunc);
