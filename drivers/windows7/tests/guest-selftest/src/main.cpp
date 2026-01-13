@@ -1977,6 +1977,11 @@ struct HidReportDescriptorSummary {
   int keyboard_app_collections = 0;
   int mouse_app_collections = 0;
   int tablet_app_collections = 0;
+  // For mouse/pointer (Generic Desktop Page) application collections, count how many contain X/Y inputs
+  // marked as Relative vs Absolute. This is used to distinguish relative mice from absolute pointer/tablet
+  // devices when multiple virtio-input pointing devices are present.
+  int mouse_xy_relative_collections = 0;
+  int mouse_xy_absolute_collections = 0;
 };
 
 static HidReportDescriptorSummary SummarizeHidReportDescriptor(const std::vector<uint8_t>& desc) {
@@ -1988,7 +1993,7 @@ static HidReportDescriptorSummary SummarizeHidReportDescriptor(const std::vector
   std::optional<uint32_t> local_usage_min;
   std::optional<uint32_t> local_usage_max;
 
-  // Track Application collections so we can classify "Mouse" vs "absolute pointer" (tablet-like) devices.
+  // Track collections so we can classify "Mouse" vs "absolute pointer" (tablet-like) devices.
   struct CollectionCtx {
     bool is_application = false;
     uint32_t usage_page = 0;
@@ -2001,7 +2006,7 @@ static HidReportDescriptorSummary SummarizeHidReportDescriptor(const std::vector
       Tablet,
     } kind = Kind::Unknown;
 
-    // Only used for Kind::MouseOrPointer to detect absolute X/Y (tablet-like).
+    // Only used for Kind::MouseOrPointer to detect absolute/relative X/Y.
     bool saw_x_abs = false;
     bool saw_y_abs = false;
     bool saw_x_rel = false;
@@ -2013,6 +2018,49 @@ static HidReportDescriptorSummary SummarizeHidReportDescriptor(const std::vector
     local_usages.clear();
     local_usage_min.reset();
     local_usage_max.reset();
+  };
+
+  auto local_usage_includes = [&](uint32_t u) -> bool {
+    if (std::find(local_usages.begin(), local_usages.end(), u) != local_usages.end()) return true;
+    if (local_usage_min.has_value() && local_usage_max.has_value()) {
+      return *local_usage_min <= u && u <= *local_usage_max;
+    }
+    if (local_usage_min.has_value() && !local_usage_max.has_value()) {
+      // Best-effort: some descriptors use a single Usage Minimum without a matching maximum.
+      return *local_usage_min == u;
+    }
+    return false;
+  };
+
+  auto finalize_collection = [&](const CollectionCtx& ctx) {
+    if (!ctx.is_application) return;
+    switch (ctx.kind) {
+      case CollectionCtx::Kind::Keyboard:
+        out.keyboard_app_collections++;
+        break;
+      case CollectionCtx::Kind::Tablet:
+        out.tablet_app_collections++;
+        break;
+      case CollectionCtx::Kind::MouseOrPointer: {
+        const bool has_rel_xy = (ctx.saw_x_rel && ctx.saw_y_rel);
+        const bool abs_only = (ctx.saw_x_abs && ctx.saw_y_abs) && !(ctx.saw_x_rel || ctx.saw_y_rel);
+
+        if (has_rel_xy) out.mouse_xy_relative_collections++;
+        if (abs_only) out.mouse_xy_absolute_collections++;
+
+        // Treat "absolute-only" Generic Desktop pointer devices as tablet-like, so we don't misclassify
+        // them as relative mice.
+        if (abs_only) {
+          out.tablet_app_collections++;
+        } else {
+          out.mouse_app_collections++;
+        }
+        break;
+      }
+      case CollectionCtx::Kind::Unknown:
+      default:
+        break;
+    }
   };
 
   size_t i = 0;
@@ -2043,8 +2091,7 @@ static HidReportDescriptorSummary SummarizeHidReportDescriptor(const std::vector
 
     switch (type) {
       case 0: { // Main
-        // Collection (tag 0xA). Track Application collections (0x01) so we can later reclassify
-        // mouse-like collections as tablets when they advertise absolute X/Y.
+        // Collection (tag 0xA), End Collection (0xC), Input (0x8)
         if (tag == 0xA) {
           const uint8_t collection_type = static_cast<uint8_t>(value & 0xFF);
 
@@ -2067,68 +2114,25 @@ static HidReportDescriptorSummary SummarizeHidReportDescriptor(const std::vector
             } else if (ctx.usage_page == 0x01 && (ctx.usage == 0x02 || ctx.usage == 0x01)) {
               ctx.kind = CollectionCtx::Kind::MouseOrPointer;
             } else if (ctx.usage_page == 0x0D) {
-              // Digitizers (0x0D): treat as "tablet-like" so optional tablet support doesn't break PASS criteria.
-              // Common usages include Touch Screen (0x04), Pen (0x02), Stylus (0x20), etc.
+              // Digitizers (0x0D): treat as "tablet-like".
               ctx.kind = CollectionCtx::Kind::Tablet;
             }
           }
 
           collection_stack.push_back(ctx);
         } else if (tag == 0xC) {
-          // End Collection.
           if (!collection_stack.empty()) {
             const CollectionCtx ctx = collection_stack.back();
             collection_stack.pop_back();
-
-            if (ctx.is_application) {
-              switch (ctx.kind) {
-                case CollectionCtx::Kind::Keyboard:
-                  out.keyboard_app_collections++;
-                  break;
-                case CollectionCtx::Kind::Tablet:
-                  out.tablet_app_collections++;
-                  break;
-                case CollectionCtx::Kind::MouseOrPointer: {
-                  const bool is_absolute_pointer =
-                      (ctx.saw_x_abs && ctx.saw_y_abs) && !(ctx.saw_x_rel || ctx.saw_y_rel);
-                  if (is_absolute_pointer) {
-                    out.tablet_app_collections++;
-                  } else {
-                    out.mouse_app_collections++;
-                  }
-                  break;
-                }
-                case CollectionCtx::Kind::Unknown:
-                default:
-                  break;
-              }
-            }
+            finalize_collection(ctx);
           }
         } else if (tag == 0x8) {
-          // Input. Use local usages to detect X/Y and value bits to detect Absolute vs Relative.
-          //
           // HID "Input" item flags bit 2: Absolute(0) / Relative(1).
           const bool is_relative = (value & 0x04u) != 0;
 
           // Detect X/Y (Generic Desktop page).
-          bool has_x = false;
-          bool has_y = false;
-          if (usage_page == 0x01) {
-            for (const uint32_t u : local_usages) {
-              if (u == 0x30) has_x = true; // X
-              if (u == 0x31) has_y = true; // Y
-            }
-            if (local_usage_min.has_value() && local_usage_max.has_value()) {
-              const uint32_t lo = *local_usage_min;
-              const uint32_t hi = *local_usage_max;
-              if (lo <= 0x30 && 0x30 <= hi) has_x = true;
-              if (lo <= 0x31 && 0x31 <= hi) has_y = true;
-            } else if (local_usage_min.has_value() && !local_usage_max.has_value()) {
-              // Best-effort: some descriptors use a single Usage Minimum without a matching maximum.
-              if (*local_usage_min == 0x30) has_x = true;
-              if (*local_usage_min == 0x31) has_y = true;
-            }
-          }
+          const bool has_x = (usage_page == 0x01) && local_usage_includes(0x30); // X
+          const bool has_y = (usage_page == 0x01) && local_usage_includes(0x31); // Y
 
           if (has_x || has_y) {
             // Attribute the axis flags to the nearest enclosing Application collection.
@@ -2154,6 +2158,7 @@ static HidReportDescriptorSummary SummarizeHidReportDescriptor(const std::vector
             }
           }
         }
+
         // Local items are cleared after each main item per HID spec.
         clear_locals();
         break;
@@ -2184,6 +2189,13 @@ static HidReportDescriptorSummary SummarizeHidReportDescriptor(const std::vector
       default:
         break;
     }
+  }
+
+  // Best-effort: close any unterminated collections so we still compute classification.
+  while (!collection_stack.empty()) {
+    const CollectionCtx ctx = collection_stack.back();
+    collection_stack.pop_back();
+    finalize_collection(ctx);
   }
 
   return out;
@@ -2361,6 +2373,10 @@ static VirtioInputHidPaths FindVirtioInputHidPaths(Logger& log) {
   }
 
   bool had_error = false;
+  std::wstring absolute_pointer_path;
+  std::wstring unknown_pointer_path;
+  int absolute_pointer_candidates = 0;
+  int unknown_pointer_candidates = 0;
 
   for (DWORD idx = 0;; idx++) {
     SP_DEVICE_INTERFACE_DATA iface{};
@@ -2410,13 +2426,36 @@ static VirtioInputHidPaths FindVirtioInputHidPaths(Logger& log) {
     const auto summary = SummarizeHidReportDescriptor(*report_desc);
     const bool has_keyboard = summary.keyboard_app_collections > 0;
     const bool has_mouse = summary.mouse_app_collections > 0;
+    const bool has_tablet = summary.tablet_app_collections > 0;
+    const bool has_relative_xy = summary.mouse_xy_relative_collections > 0;
+    const bool has_absolute_xy = summary.mouse_xy_absolute_collections > 0;
 
     if (has_keyboard && !has_mouse && out.keyboard_path.empty()) {
       out.keyboard_path = device_path;
       log.Logf("virtio-input-events: selected keyboard HID interface: %s", WideToUtf8(device_path).c_str());
-    } else if (has_mouse && !has_keyboard && out.mouse_path.empty()) {
-      out.mouse_path = device_path;
-      log.Logf("virtio-input-events: selected mouse HID interface: %s", WideToUtf8(device_path).c_str());
+    } else if (!has_keyboard) {
+      if (has_mouse) {
+        if (has_relative_xy && out.mouse_path.empty()) {
+          out.mouse_path = device_path;
+          log.Logf("virtio-input-events: selected relative mouse HID interface: %s",
+                   WideToUtf8(device_path).c_str());
+        } else if (!has_relative_xy && (has_absolute_xy || has_tablet)) {
+          absolute_pointer_candidates++;
+          if (absolute_pointer_path.empty()) absolute_pointer_path = device_path;
+          log.Logf("virtio-input-events: found absolute pointer/tablet HID interface (not a mouse): %s",
+                   WideToUtf8(device_path).c_str());
+        } else {
+          unknown_pointer_candidates++;
+          if (unknown_pointer_path.empty()) unknown_pointer_path = device_path;
+          log.Logf("virtio-input-events: found mouse-like HID interface with unknown XY mode: %s",
+                   WideToUtf8(device_path).c_str());
+        }
+      } else if (has_tablet) {
+        absolute_pointer_candidates++;
+        if (absolute_pointer_path.empty()) absolute_pointer_path = device_path;
+        log.Logf("virtio-input-events: found tablet HID interface (not a mouse): %s",
+                 WideToUtf8(device_path).c_str());
+      }
     }
 
     if (!out.keyboard_path.empty() && !out.mouse_path.empty()) break;
@@ -2424,20 +2463,41 @@ static VirtioInputHidPaths FindVirtioInputHidPaths(Logger& log) {
 
   SetupDiDestroyDeviceInfoList(devinfo);
 
-  if (had_error) {
-    out.reason = "ioctl_or_open_failed";
-    // Best-effort: `ReadHidReportDescriptor` already logs details, so this is informational only.
-    return out;
-  }
   if (out.keyboard_path.empty()) {
+    if (had_error) {
+      out.reason = "ioctl_or_open_failed";
+      // Best-effort: `ReadHidReportDescriptor` already logs details, so this is informational only.
+      return out;
+    }
     out.reason = "missing_keyboard_device";
     return out;
   }
   if (out.mouse_path.empty()) {
-    out.reason = "missing_mouse_device";
+    if (!absolute_pointer_path.empty()) {
+      out.reason = "no_relative_mouse_device_found_only_absolute_pointer";
+      out.win32_error = ERROR_NOT_FOUND;
+      log.Logf(
+          "virtio-input-events: no relative mouse HID interface found (absolute_pointer_candidates=%d); "
+          "example_absolute_pointer=%s",
+          absolute_pointer_candidates, WideToUtf8(absolute_pointer_path).c_str());
+    } else if (!unknown_pointer_path.empty()) {
+      out.reason = "no_relative_mouse_device_found_unknown_pointer";
+      out.win32_error = ERROR_NOT_FOUND;
+      log.Logf(
+          "virtio-input-events: no relative mouse HID interface found (unknown_pointer_candidates=%d); "
+          "example_unknown_pointer=%s",
+          unknown_pointer_candidates, WideToUtf8(unknown_pointer_path).c_str());
+    } else if (had_error) {
+      out.reason = "ioctl_or_open_failed";
+      // Best-effort: `ReadHidReportDescriptor` already logs details, so this is informational only.
+    } else {
+      out.reason = "missing_mouse_device";
+    }
     return out;
   }
 
+  // If we successfully selected both interfaces, ignore errors from unrelated devices. This keeps the
+  // end-to-end input events test robust in environments with multiple virtio-input devices.
   return out;
 }
 
@@ -2578,15 +2638,52 @@ static VirtioInputEventsTestResult VirtioInputEventsTest(Logger& log, const Virt
 
   std::wstring keyboard_path = input.keyboard_device_path;
   std::wstring mouse_path = input.mouse_device_path;
+
+  // If `VirtioInputTest` selected a pointing device, validate that it is actually a *relative* mouse.
+  // When both a mouse and a tablet are attached, both may advertise a Mouse application collection,
+  // but the tablet reports X/Y as Absolute and cannot satisfy this end-to-end relative mouse event test.
+  if (!mouse_path.empty()) {
+    HANDLE h = OpenHidDeviceForIoctl(mouse_path.c_str());
+    if (h != INVALID_HANDLE_VALUE) {
+      const auto report_desc = ReadHidReportDescriptor(log, h);
+      CloseHandle(h);
+      if (report_desc.has_value()) {
+        const auto summary = SummarizeHidReportDescriptor(*report_desc);
+        const bool has_keyboard = summary.keyboard_app_collections > 0;
+        const bool has_mouse = summary.mouse_app_collections > 0;
+        const bool has_relative_xy = summary.mouse_xy_relative_collections > 0;
+        const bool has_absolute_xy = summary.mouse_xy_absolute_collections > 0;
+
+        if (!(has_mouse && !has_keyboard && has_relative_xy)) {
+          if (has_mouse && !has_keyboard && has_absolute_xy && !has_relative_xy) {
+            log.Logf("virtio-input-events: input-selected mouse interface is absolute; searching for relative mouse: %s",
+                     WideToUtf8(mouse_path).c_str());
+          } else {
+            log.Logf("virtio-input-events: input-selected mouse interface is not a relative mouse; searching again: %s",
+                     WideToUtf8(mouse_path).c_str());
+          }
+          mouse_path.clear();
+        }
+      } else {
+        // If we can't read the descriptor, fall back to SetupDi enumeration below.
+        mouse_path.clear();
+      }
+    } else {
+      mouse_path.clear();
+    }
+  }
+
   if (keyboard_path.empty() || mouse_path.empty()) {
     const auto paths = FindVirtioInputHidPaths(log);
-    if (!paths.reason.empty()) {
+    // Only treat "missing_keyboard_device" as fatal if we don't already have a keyboard path from the
+    // earlier virtio-input probe.
+    if (!paths.reason.empty() && !(paths.reason == "missing_keyboard_device" && !keyboard_path.empty())) {
       out.reason = paths.reason;
       out.win32_error = paths.win32_error;
       return out;
     }
-    keyboard_path = paths.keyboard_path;
-    mouse_path = paths.mouse_path;
+    if (keyboard_path.empty()) keyboard_path = paths.keyboard_path;
+    if (mouse_path.empty()) mouse_path = paths.mouse_path;
   }
 
   HidOverlappedReader kbd{};
