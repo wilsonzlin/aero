@@ -6955,9 +6955,15 @@ static HRESULT MapLocked11(Device* dev,
     if (res->kind == ResourceKind::Texture2D) {
       pMapped->RowPitch = sub_layout.row_pitch_bytes;
       pMapped->DepthPitch = static_cast<UINT>(sub_layout.size_bytes);
+    } else if (res->kind == ResourceKind::Buffer) {
+      // D3D11[DDI] defines RowPitch/DepthPitch only for texture resources. For
+      // buffers the fields are undefined; returning the buffer size can confuse
+      // callers that treat a non-zero pitch as "texture-like" memory.
+      pMapped->RowPitch = 0;
+      pMapped->DepthPitch = 0;
     } else {
-      pMapped->RowPitch = static_cast<UINT>(res->storage.size());
-      pMapped->DepthPitch = static_cast<UINT>(res->storage.size());
+      pMapped->RowPitch = 0;
+      pMapped->DepthPitch = 0;
     }
 
     res->mapped = true;
@@ -7171,9 +7177,13 @@ static HRESULT MapLocked11(Device* dev,
   if (res->kind == ResourceKind::Texture2D) {
     pMapped->RowPitch = sub_layout.row_pitch_bytes;
     pMapped->DepthPitch = static_cast<UINT>(sub_layout.size_bytes);
+  } else if (res->kind == ResourceKind::Buffer) {
+    // Undefined for buffers; keep deterministic zeroes for spec-friendly behavior.
+    pMapped->RowPitch = 0;
+    pMapped->DepthPitch = 0;
   } else {
-    pMapped->RowPitch = static_cast<UINT>(res->storage.size());
-    pMapped->DepthPitch = static_cast<UINT>(res->storage.size());
+    pMapped->RowPitch = 0;
+    pMapped->DepthPitch = 0;
   }
 
   res->mapped = true;

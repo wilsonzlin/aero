@@ -821,6 +821,12 @@ bool TestHostOwnedBufferUnmapUploads() {
   if (!Check(mapped.pData != nullptr, "Map returned non-null pData")) {
     return false;
   }
+  if (!Check(mapped.RowPitch == 0, "Map(buffer) should return RowPitch=0")) {
+    return false;
+  }
+  if (!Check(mapped.DepthPitch == 0, "Map(buffer) should return DepthPitch=0")) {
+    return false;
+  }
 
   const uint8_t expected[16] = {
       0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF};
@@ -1078,6 +1084,12 @@ bool TestGuestBackedBufferUnmapDirtyRange() {
     return false;
   }
   if (!Check(mapped.pData != nullptr, "Map returned non-null pData")) {
+    return false;
+  }
+  if (!Check(mapped.RowPitch == 0, "Map(buffer) should return RowPitch=0")) {
+    return false;
+  }
+  if (!Check(mapped.DepthPitch == 0, "Map(buffer) should return DepthPitch=0")) {
     return false;
   }
 
