@@ -106,6 +106,7 @@ dependencies = [
  "aero-protocol",
  "anyhow",
  "bytemuck",
+ "criterion",
  "futures-intrusive",
  "naga 24.0.0",
  "pollster",
