@@ -42,18 +42,53 @@ pub const REG_INTR0_ERDP_HI: u64 = REG_INTR0_BASE + 0x1c;
 pub const USBCMD_RUN: u32 = 1 << 0;
 /// USBCMD bit 1 (Host Controller Reset).
 pub const USBCMD_HCRST: u32 = 1 << 1;
+/// USBCMD bit 2 (Interrupter Enable).
+pub const USBCMD_INTE: u32 = 1 << 2;
+/// USBCMD bit 3 (Host System Error Enable).
+pub const USBCMD_HSEE: u32 = 1 << 3;
+/// USBCMD bit 7 (Light Host Controller Reset).
+pub const USBCMD_LHCRST: u32 = 1 << 7;
+/// USBCMD bit 8 (Controller Save State).
+pub const USBCMD_CSS: u32 = 1 << 8;
+/// USBCMD bit 9 (Controller Restore State).
+pub const USBCMD_CRS: u32 = 1 << 9;
+/// USBCMD bit 10 (Enable Wrap Event).
+pub const USBCMD_EWE: u32 = 1 << 10;
+/// USBCMD bit 11 (Enable U3 MFINDEX Stop).
+pub const USBCMD_EU3S: u32 = 1 << 11;
+
+/// Bits we preserve for controller snapshots.
+///
+/// Reset bits (`HCRST`, `LHCRST`) are excluded since they are self-clearing in hardware and are
+/// modelled as side effects, not latched state.
+pub const USBCMD_SNAPSHOT_MASK: u32 =
+    USBCMD_RUN | USBCMD_INTE | USBCMD_HSEE | USBCMD_CSS | USBCMD_CRS | USBCMD_EWE | USBCMD_EU3S;
+
 /// PAGESIZE register value: 4KiB page size supported.
 pub const PAGESIZE_4K: u32 = 1 << 0;
+
 /// USBSTS bit 0 (Host Controller Halted).
 ///
 /// The controller model derives this bit from `USBCMD.RUN` (RUN=0 => halted).
 pub const USBSTS_HCHALTED: u32 = 1 << 0;
 /// Alias for [`USBSTS_HCHALTED`].
 pub const USBSTS_HCH: u32 = USBSTS_HCHALTED;
+/// USBSTS bit 2 (Host System Error).
+pub const USBSTS_HSE: u32 = 1 << 2;
 /// USBSTS bit 3 (Event Interrupt).
 ///
 /// The controller models this bit as "interrupt pending", derived from interrupter 0's `IMAN.IP`.
 pub const USBSTS_EINT: u32 = 1 << 3;
+/// USBSTS bit 4 (Port Change Detect).
+pub const USBSTS_PCD: u32 = 1 << 4;
+/// USBSTS bit 8 (Save State Status).
+pub const USBSTS_SSS: u32 = 1 << 8;
+/// USBSTS bit 9 (Restore State Status).
+pub const USBSTS_RSS: u32 = 1 << 9;
+/// USBSTS bit 10 (Save/Restore Error).
+pub const USBSTS_SRE: u32 = 1 << 10;
+/// USBSTS bit 11 (Controller Not Ready).
+pub const USBSTS_CNR: u32 = 1 << 11;
 /// USBSTS bit 12 (Host Controller Error).
 ///
 /// This bit is sticky and is set when the controller detects an unrecoverable internal error.
@@ -61,6 +96,49 @@ pub const USBSTS_EINT: u32 = 1 << 3;
 /// The Aero xHCI model uses this bit to report malformed guest Event Ring configuration
 /// (e.g. ERST/ERDP values that cannot be mapped safely).
 pub const USBSTS_HCE: u32 = 1 << 12;
+
+/// Bits we persist for controller snapshots.
+///
+/// Includes derived bits that are part of the software-visible USBSTS register (e.g. `HCHalted`,
+/// `EINT`, `HCE`) so older snapshots that relied on them can be restored.
+pub const USBSTS_SNAPSHOT_MASK: u32 =
+    USBSTS_HCHALTED | USBSTS_HSE | USBSTS_EINT | USBSTS_PCD | USBSTS_SSS | USBSTS_RSS | USBSTS_SRE | USBSTS_CNR
+        | USBSTS_HCE;
+
+/// CRCR fields (subset): preserve cycle state / control bits and the ring pointer.
+///
+/// The command ring is composed of 16-byte TRBs, so the pointer is at least 16-byte aligned and
+/// the low bits may carry flags. The minimal controller model therefore preserves all bits while
+/// still providing a pointer mask for consumers that want the aligned address.
+pub const CRCR_RCS: u64 = 1 << 0;
+pub const CRCR_CS: u64 = 1 << 1;
+pub const CRCR_CA: u64 = 1 << 2;
+pub const CRCR_CRR: u64 = 1 << 3;
+pub const CRCR_PTR_MASK: u64 = !0x3f;
+pub const CRCR_SNAPSHOT_MASK: u64 = CRCR_RCS | CRCR_CS | CRCR_CA | CRCR_CRR | CRCR_PTR_MASK;
+
+/// DCBAAP pointer mask (64B aligned).
+pub const DCBAAP_SNAPSHOT_MASK: u64 = !0x3f;
+
+/// CONFIG register snapshot mask.
+pub const CONFIG_SNAPSHOT_MASK: u32 = 0x3ff;
+
+/// xHCI Interrupter Management (IMAN) bits.
+pub const IMAN_IP: u32 = 1 << 0;
+pub const IMAN_IE: u32 = 1 << 1;
+pub const IMAN_MASK: u32 = IMAN_IP | IMAN_IE;
+
+/// Event Ring Segment Table Size (ERSTSZ) mask (16-bit size).
+pub const ERSTSZ_MASK: u32 = 0xffff;
+
+/// Event Ring Segment Table Base Address (ERSTBA) pointer mask (64-byte alignment).
+pub const ERSTBA_MASK: u64 = !0x3f;
+
+/// Event Ring Dequeue Pointer (ERDP) mask: preserve EHB (bit 3) and pointer (16-byte alignment).
+pub const ERDP_EHB: u64 = 1 << 3;
+pub const ERDP_PTR_MASK: u64 = !0x0f;
+pub const ERDP_MASK: u64 = ERDP_EHB | ERDP_PTR_MASK;
+
 /// HCCPARAMS1 Context Size (CSZ) bit.
 ///
 /// When set (`1`), contexts are 64 bytes. When clear (`0`), contexts are 32 bytes.

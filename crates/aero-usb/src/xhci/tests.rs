@@ -976,13 +976,19 @@ fn controller_snapshot_roundtrip_is_deterministic() {
 
     // State should round-trip (spot-check a few representative fields).
     assert_eq!(restored.port_count, xhci.port_count);
-    assert_eq!(restored.usbcmd, xhci.usbcmd);
-    assert_eq!(restored.usbsts, xhci.usbsts);
+    assert_eq!(restored.usbcmd, xhci.usbcmd & regs::USBCMD_SNAPSHOT_MASK);
+    assert_eq!(
+        restored.usbsts,
+        xhci.usbsts & regs::USBSTS_SNAPSHOT_MASK & !(regs::USBSTS_EINT | regs::USBSTS_HCH | regs::USBSTS_HCE)
+    );
     assert_eq!(restored.host_controller_error, xhci.host_controller_error);
-    assert_eq!(restored.crcr, xhci.crcr);
-    assert_eq!(restored.dcbaap, xhci.dcbaap);
-    assert_eq!(restored.config, xhci.config);
-    assert_eq!(restored.mfindex, xhci.mfindex);
+    assert_eq!(restored.crcr, xhci.crcr & regs::CRCR_SNAPSHOT_MASK);
+    assert_eq!(restored.dcbaap, xhci.dcbaap & regs::DCBAAP_SNAPSHOT_MASK);
+    assert_eq!(restored.config, xhci.config & regs::CONFIG_SNAPSHOT_MASK);
+    assert_eq!(
+        restored.mfindex,
+        xhci.mfindex & regs::runtime::MFINDEX_MASK
+    );
     assert_eq!(restored.dnctrl, xhci.dnctrl);
     assert_eq!(restored.command_ring, xhci.command_ring);
     assert_eq!(restored.cmd_kick, xhci.cmd_kick);

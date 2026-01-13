@@ -333,15 +333,15 @@ impl IoSnapshot for XhciController {
         let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
 
         // Architectural registers.
-        w.field_u32(TAG_USBCMD, self.usbcmd);
+        w.field_u32(TAG_USBCMD, self.usbcmd & regs::USBCMD_SNAPSHOT_MASK);
         // Store the derived USBSTS view so older snapshots that relied on USBSTS.EINT can still be
         // mapped back into `IMAN.IP` on restore.
-        w.field_u32(TAG_USBSTS, self.usbsts_read());
-        w.field_u64(TAG_CRCR, self.crcr);
+        w.field_u32(TAG_USBSTS, self.usbsts_read() & regs::USBSTS_SNAPSHOT_MASK);
+        w.field_u64(TAG_CRCR, self.crcr & regs::CRCR_SNAPSHOT_MASK);
         w.field_u8(TAG_PORT_COUNT, self.port_count);
-        w.field_u64(TAG_DCBAAP, self.dcbaap);
-        w.field_u32(TAG_CONFIG, self.config);
-        w.field_u32(TAG_MFINDEX, self.mfindex);
+        w.field_u64(TAG_DCBAAP, self.dcbaap & regs::DCBAAP_SNAPSHOT_MASK);
+        w.field_u32(TAG_CONFIG, self.config & regs::CONFIG_SNAPSHOT_MASK);
+        w.field_u32(TAG_MFINDEX, self.mfindex & regs::runtime::MFINDEX_MASK);
         w.field_u32(TAG_DNCTRL, self.dnctrl);
 
         // Interrupter 0 registers + internal generation counters.
@@ -384,8 +384,9 @@ impl IoSnapshot for XhciController {
         //
         // Version 0.4 swapped those tags to resolve a collision introduced in 0.3. Some historical
         // snapshots used the 0.4 header while still encoding fields using the 0.3 tag mapping, so:
-        // 1) choose a default mapping based on snapshot minor version
-        // 2) override it when field "shapes" clearly indicate the opposite mapping.
+        // - choose a default mapping based on snapshot minor version, and
+        // - disambiguate based on field shape (host_controller_error is a bool; ports is a
+        //   vec-bytes blob).
         let mut tag_host_controller_error = if r.header().device_version.minor <= 3 {
             11u16
         } else {
@@ -458,23 +459,23 @@ impl IoSnapshot for XhciController {
         }
 
         // Architectural registers.
-        self.usbcmd = r.u32(TAG_USBCMD)?.unwrap_or(0);
-        let saved_usbsts = r.u32(TAG_USBSTS)?.unwrap_or(0);
+        self.usbcmd = r.u32(TAG_USBCMD)?.unwrap_or(0) & regs::USBCMD_SNAPSHOT_MASK;
+        let saved_usbsts = r.u32(TAG_USBSTS)?.unwrap_or(0) & regs::USBSTS_SNAPSHOT_MASK;
         // USBSTS.EINT/HCH/HCE are derived bits in the controller model.
         self.usbsts = saved_usbsts & !(regs::USBSTS_EINT | regs::USBSTS_HCH | regs::USBSTS_HCE);
         self.host_controller_error = r
             .bool(tag_host_controller_error)?
             .unwrap_or((saved_usbsts & regs::USBSTS_HCE) != 0);
-        self.crcr = r.u64(TAG_CRCR)?.unwrap_or(0);
+        self.crcr = r.u64(TAG_CRCR)?.unwrap_or(0) & regs::CRCR_SNAPSHOT_MASK;
         // Keep the internal command ring cursor consistent with CRCR. If a newer snapshot provides
         // an explicit cursor image, it will be applied below.
         self.sync_command_ring_from_crcr();
-        self.dcbaap = r.u64(TAG_DCBAAP)?.unwrap_or(0) & !0x3f;
-        self.config = r.u32(TAG_CONFIG)?.unwrap_or(0) & 0x3ff;
+        self.dcbaap = r.u64(TAG_DCBAAP)?.unwrap_or(0) & regs::DCBAAP_SNAPSHOT_MASK;
+        self.config = r.u32(TAG_CONFIG)?.unwrap_or(0) & regs::CONFIG_SNAPSHOT_MASK;
         // Clamp to ensure `CONFIG.MaxSlotsEn` remains consistent with `HCSPARAMS1.MaxSlots`.
         let max_slots_en = (self.config & 0xff) as u8;
         self.config = (self.config & !0xff) | u32::from(max_slots_en.min(regs::MAX_SLOTS));
-        self.mfindex = r.u32(TAG_MFINDEX)?.unwrap_or(0) & 0x3fff;
+        self.mfindex = r.u32(TAG_MFINDEX)?.unwrap_or(0) & regs::runtime::MFINDEX_MASK;
         self.dnctrl = r.u32(TAG_DNCTRL)?.unwrap_or(0);
 
         if let Some(v) = r.u32(TAG_INTR0_IMAN)? {

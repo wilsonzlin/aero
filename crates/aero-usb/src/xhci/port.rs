@@ -10,10 +10,10 @@ use super::regs::{
 use crate::device::AttachedUsbDevice;
 use crate::{UsbDeviceModel, UsbSpeed};
 
+const MAX_USB_DEVICE_SNAPSHOT_BYTES: usize = 4 * 1024 * 1024;
+
 // Reset signalling for USB2 ports is ~50ms (similar to the UHCI root hub model).
 const RESET_DURATION_MS: u16 = 50;
-
-const MAX_USB_DEVICE_SNAPSHOT_BYTES: usize = 4 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum XhciUsb2LinkState {
@@ -124,6 +124,9 @@ impl XhciPort {
         self.device.is_some()
     }
 
+    pub(crate) fn device(&self) -> Option<&AttachedUsbDevice> {
+        self.device.as_ref()
+    }
     pub(crate) fn device_mut(&mut self) -> Option<&mut AttachedUsbDevice> {
         self.device.as_mut()
     }

@@ -15,6 +15,7 @@
 //! - a level-triggered `irq_level()` surface (to validate PCI INTx disable gating)
 //! - DCBAAP register storage + controller-local slot allocation (Enable Slot scaffolding)
 //! - a minimal runtime interrupter 0 register block + guest event ring producer (ERST-based)
+//! - snapshot/restore support (including basic USB topology) for VM save/restore
 //!
 //! Full xHCI semantics (doorbells, command ring execution, device contexts, multi-interrupter
 //! MSI/MSI-X, etc) remain future work.
@@ -643,7 +644,7 @@ impl XhciController {
     ///
     /// The base address is 64-byte aligned; low bits are masked away.
     pub fn set_dcbaap(&mut self, paddr: u64) {
-        self.dcbaap = paddr & !0x3f;
+        self.dcbaap = paddr & regs::DCBAAP_SNAPSHOT_MASK;
     }
 
     fn dcbaap_entry_paddr(&self, slot_id: u8) -> Option<u64> {
@@ -1868,6 +1869,19 @@ impl XhciController {
         self.dropped_event_trbs
     }
 
+    /// Returns the device currently attached to the specified root hub port (0-based).
+    ///
+    /// This accessor ignores port enable state and is intended for host-side topology management
+    /// and tests.
+    pub fn port_device(&self, port: usize) -> Option<&AttachedUsbDevice> {
+        self.ports.get(port)?.device()
+    }
+
+    /// Mutable variant of [`XhciController::port_device`].
+    pub fn port_device_mut(&mut self, port: usize) -> Option<&mut AttachedUsbDevice> {
+        self.ports.get_mut(port)?.device_mut()
+    }
+
     pub fn read_portsc(&self, port: usize) -> u32 {
         self.ports.get(port).map(|p| p.read_portsc()).unwrap_or(0)
     }
@@ -2304,12 +2318,12 @@ impl XhciController {
             regs::REG_DCBAAP_LO => {
                 let lo = merge(self.dcbaap as u32) as u64;
                 self.dcbaap = (self.dcbaap & 0xffff_ffff_0000_0000) | lo;
-                self.dcbaap &= !0x3f;
+                self.dcbaap &= regs::DCBAAP_SNAPSHOT_MASK;
             }
             regs::REG_DCBAAP_HI => {
                 let hi = merge((self.dcbaap >> 32) as u32) as u64;
                 self.dcbaap = (self.dcbaap & 0x0000_0000_ffff_ffff) | (hi << 32);
-                self.dcbaap &= !0x3f;
+                self.dcbaap &= regs::DCBAAP_SNAPSHOT_MASK;
             }
             regs::REG_CONFIG => {
                 let mut v = merge(self.config);
