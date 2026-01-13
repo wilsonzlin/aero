@@ -648,4 +648,115 @@ describe("RemoteStreamingDisk (IndexedDB cache)", () => {
       globalThis.fetch = original;
     }
   });
+
+  it("treats 416 responses as validator mismatches and retries successfully", async () => {
+    const original = globalThis.fetch;
+    const blockSize = 1024 * 1024;
+    const cacheLimitBytes = blockSize * 8;
+    const image = makeTestImage(blockSize * 2);
+    let etag = '"e1"';
+    const seenChunkIfRanges: Array<string | null> = [];
+    let mismatch416Calls = 0;
+
+    function headerValue(init: RequestInit | undefined, name: string): string | null {
+      const h = init?.headers;
+      if (!h) return null;
+      if (h instanceof Headers) return h.get(name);
+      if (Array.isArray(h)) {
+        for (const [k, v] of h) {
+          if (k.toLowerCase() === name.toLowerCase()) return v;
+        }
+        return null;
+      }
+      const rec = h as Record<string, string>;
+      for (const [k, v] of Object.entries(rec)) {
+        if (k.toLowerCase() === name.toLowerCase()) return v;
+      }
+      return null;
+    }
+
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (method === "HEAD") {
+        return new Response(null, {
+          status: 200,
+          headers: {
+            "Content-Length": String(image.byteLength),
+            "Accept-Ranges": "bytes",
+            ETag: etag,
+          },
+        });
+      }
+
+      const range = headerValue(init, "Range");
+      if (!range) {
+        return new Response(image.slice().buffer, {
+          status: 200,
+          headers: {
+            "Content-Length": String(image.byteLength),
+            "Accept-Ranges": "bytes",
+            ETag: etag,
+          },
+        });
+      }
+
+      const match = /^bytes=(\d+)-(\d+)$/.exec(range);
+      if (!match) {
+        return new Response(null, { status: 416, headers: { "Content-Range": `bytes */${image.byteLength}` } });
+      }
+      const start = Number(match[1]);
+      const endInclusive = Number(match[2]);
+      const body = image.slice(start, endInclusive + 1);
+
+      const ifRange = headerValue(init, "If-Range");
+      if (body.byteLength !== 1) {
+        seenChunkIfRanges.push(ifRange);
+      }
+
+      // Model servers that respond 416 when an If-Range validator does not match the
+      // current representation.
+      if (ifRange && ifRange !== etag) {
+        mismatch416Calls += 1;
+        return new Response(null, { status: 416, headers: { "Content-Range": `bytes */${image.byteLength}` } });
+      }
+
+      return new Response(body.buffer, {
+        status: 206,
+        headers: {
+          "Accept-Ranges": "bytes",
+          "Content-Range": `bytes ${start}-${endInclusive}/${image.byteLength}`,
+          "Content-Length": String(body.byteLength),
+          ETag: etag,
+        },
+      });
+    }) as typeof fetch;
+
+    try {
+      const disk = await RemoteStreamingDisk.open("https://example.test/disk.img", {
+        blockSize,
+        cacheBackend: "idb",
+        cacheLimitBytes,
+        prefetchSequentialBlocks: 0,
+      });
+
+      // Cache chunk 0 under ETag e1.
+      await disk.read(0, 16);
+
+      // Mutate the server: new ETag but the same content/size.
+      etag = '"e2"';
+
+      // Read chunk 1: first attempt returns 416 due to If-Range=e1 mismatch,
+      // client treats 416 as a validator mismatch, re-probes, and retries with If-Range=e2.
+      const chunk1 = await disk.read(blockSize, 16);
+      expect(Array.from(chunk1)).toEqual(Array.from(image.subarray(blockSize, blockSize + 16)));
+
+      expect(mismatch416Calls).toBeGreaterThanOrEqual(1);
+      expect(seenChunkIfRanges).toContain('"e1"');
+      expect(seenChunkIfRanges).toContain('"e2"');
+
+      disk.close();
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
 });

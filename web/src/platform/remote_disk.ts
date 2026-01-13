@@ -1146,6 +1146,13 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
     await this.maybeRefreshLease();
     const resp = await fetchWithDiskAccessLease(this.lease, { headers }, { retryAuthOnce: true });
 
+    if (resp.status === 416) {
+      await cancelBody(resp);
+      // Some servers/CDNs can respond 416 for representation drift (e.g. If-Range
+      // mismatch). Treat it like a validator mismatch so we reprobe and retry.
+      throw new RemoteValidatorMismatchError(416);
+    }
+
     if (resp.status === 200 || resp.status === 412) {
       await cancelBody(resp);
       // A server will return 200 (full representation) when an If-Range validator does not match.
