@@ -5,7 +5,7 @@ use aero_devices::a20_gate::A20_GATE_PORT;
 use aero_devices::pci::profile::{
     AHCI_ABAR_CFG_OFFSET, IDE_PIIX3, NVME_CONTROLLER, SATA_AHCI_ICH9, USB_UHCI_PIIX3, VIRTIO_BLK,
 };
-use aero_devices::pci::{PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
+use aero_devices::pci::{PciIntxRouterConfig, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
 use aero_devices::reset_ctrl::{RESET_CTRL_PORT, RESET_CTRL_RESET_VALUE};
 use aero_devices_storage::ata::AtaDrive;
 use aero_devices_storage::ata::ATA_CMD_READ_DMA_EXT;
@@ -60,10 +60,30 @@ fn read_cfg_u32(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: 
     pc.io.read(PCI_CFG_DATA_PORT, 4)
 }
 
+fn read_cfg_u8(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8) -> u8 {
+    pc.io.write(
+        PCI_CFG_ADDR_PORT,
+        4,
+        cfg_addr(bus, device, function, offset),
+    );
+    let port = PCI_CFG_DATA_PORT + u16::from(offset & 3);
+    pc.io.read(port, 1) as u8
+}
+
 fn read_io_bar_base(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, bar: u8) -> u16 {
     let off = 0x10 + bar * 4;
     let val = read_cfg_u32(pc, bus, device, function, off);
     u16::try_from(val & 0xFFFF_FFFC).unwrap()
+}
+
+fn write_cfg_u8(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8, value: u8) {
+    pc.io.write(
+        PCI_CFG_ADDR_PORT,
+        4,
+        cfg_addr(bus, device, function, offset),
+    );
+    let port = PCI_CFG_DATA_PORT + u16::from(offset & 3);
+    pc.io.write(port, 1, u32::from(value));
 }
 
 fn write_cfg_u16(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8, value: u16) {
@@ -265,6 +285,57 @@ fn pc_platform_reset_restores_deterministic_power_on_state() {
     let cap = pc.memory.read_u32(bar5_base_after);
     assert_ne!(cap, 0xFFFF_FFFF);
     assert_ne!(cap & 0x8000_0000, 0);
+}
+
+#[test]
+fn pc_platform_reset_restores_pci_intx_interrupt_line_and_pin_registers() {
+    let mut pc = PcPlatform::new(2 * 1024 * 1024);
+
+    // Pick a device that is wired through `pci_intx_sources` so `PcPlatform::reset_pci` must
+    // repopulate its INTx routing metadata in config space.
+    let bdf = SATA_AHCI_ICH9.bdf;
+
+    let pin_before = read_cfg_u8(&mut pc, bdf.bus, bdf.device, bdf.function, 0x3d);
+    let line_before = read_cfg_u8(&mut pc, bdf.bus, bdf.device, bdf.function, 0x3c);
+
+    let expected_pin = SATA_AHCI_ICH9
+        .interrupt_pin
+        .expect("AHCI profile should provide an interrupt pin")
+        .to_config_u8();
+    assert_eq!(pin_before, expected_pin);
+    assert!(
+        (1..=4).contains(&pin_before),
+        "interrupt pin must be in PCI config-space encoding (1=INTA..4=INTD)"
+    );
+
+    // Explicitly validate the PCI swizzle:
+    // line == pirq_to_gsi[(device + (pin-1)) & 3]
+    let pirq_to_gsi = PciIntxRouterConfig::default().pirq_to_gsi;
+    let pirq_index = (usize::from(bdf.device) + usize::from(pin_before - 1)) & 3;
+    let expected_line = u8::try_from(pirq_to_gsi[pirq_index]).unwrap();
+    assert_eq!(line_before, expected_line);
+
+    // Smash the guest-visible INTx routing metadata.
+    write_cfg_u8(&mut pc, bdf.bus, bdf.device, bdf.function, 0x3c, 0x5a);
+    write_cfg_u8(&mut pc, bdf.bus, bdf.device, bdf.function, 0x3d, 0x04);
+    assert_eq!(
+        read_cfg_u8(&mut pc, bdf.bus, bdf.device, bdf.function, 0x3c),
+        0x5a
+    );
+    assert_eq!(
+        read_cfg_u8(&mut pc, bdf.bus, bdf.device, bdf.function, 0x3d),
+        0x04
+    );
+
+    pc.reset();
+
+    let pin_after = read_cfg_u8(&mut pc, bdf.bus, bdf.device, bdf.function, 0x3d);
+    let line_after = read_cfg_u8(&mut pc, bdf.bus, bdf.device, bdf.function, 0x3c);
+    assert_eq!(pin_after, expected_pin);
+
+    let pirq_index_after = (usize::from(bdf.device) + usize::from(pin_after - 1)) & 3;
+    let expected_line_after = u8::try_from(pirq_to_gsi[pirq_index_after]).unwrap();
+    assert_eq!(line_after, expected_line_after);
 }
 
 #[test]
