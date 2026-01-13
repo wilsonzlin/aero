@@ -1,0 +1,6 @@
+{
+  "$schema": "../../ci/driver-package.schema.json",
+  "infFiles": ["packaging/win7/your-driver.inf"],
+  "toolFiles": ["tools/your-helper.exe"],
+  "additionalFiles": ["README.md"]
+}
