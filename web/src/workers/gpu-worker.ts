@@ -59,6 +59,7 @@ import {
 } from "../ipc/shared-layout";
 
 import {
+  SCANOUT_FORMAT_B8G8R8A8,
   SCANOUT_FORMAT_B8G8R8X8,
   SCANOUT_SOURCE_WDDM,
   ScanoutStateIndex,
@@ -133,6 +134,8 @@ import {
   AerogpuCmdOpcode,
   AerogpuCmdStreamIter,
 } from "../../../emulator/protocol/aerogpu/aerogpu_cmd.ts";
+
+import { convertScanoutToRgba8, type ScanoutSwizzleKind } from "./scanout_swizzle.ts";
 
 type PresentFn = (dirtyRects?: DirtyRect[] | null) => void | boolean | Promise<void | boolean>;
 
@@ -1795,7 +1798,15 @@ type WddmScanoutFrameInfo = {
 const tryReadWddmScanoutFrame = (snap: ScanoutStateSnapshot): WddmScanoutFrameInfo | null => {
   if (snap.source !== SCANOUT_SOURCE_WDDM) return null;
   if ((snap.basePaddrLo | snap.basePaddrHi) === 0) return null;
-  if (snap.format !== SCANOUT_FORMAT_B8G8R8X8) return null;
+  let kind: ScanoutSwizzleKind;
+  const fmt = snap.format >>> 0;
+  if (fmt === SCANOUT_FORMAT_B8G8R8X8) {
+    kind = "bgrx";
+  } else if (fmt === SCANOUT_FORMAT_B8G8R8A8) {
+    kind = "bgra";
+  } else {
+    return null;
+  }
 
   const layout = guestLayout;
   const ram = guestU8;
@@ -1813,6 +1824,7 @@ const tryReadWddmScanoutFrame = (snap: ScanoutStateSnapshot): WddmScanoutFrameIn
   // base_paddr is a guest physical address (u64). Clamp to the safe-integer subset
   // so we can index into JS typed arrays.
   const basePaddr = (BigInt(snap.basePaddrHi >>> 0) << 32n) | BigInt(snap.basePaddrLo >>> 0);
+  if (basePaddr === 0n) return null;
   if (basePaddr > BigInt(Number.MAX_SAFE_INTEGER)) return null;
   const basePaddrNum = Number(basePaddr);
 
@@ -1833,9 +1845,35 @@ const tryReadWddmScanoutFrame = (snap: ScanoutStateSnapshot): WddmScanoutFrameIn
   }
   const out = wddmScanoutRgba;
 
-  // Translate each row's guest physical address into a contiguous RAM offset (handles the
-  // PC/Q35 low-RAM + high-RAM remap when guest RAM exceeds the PCI hole).
   const ramBytes = ram.byteLength;
+  const requiredSrcBytes = pitchBytes * height;
+  if (!Number.isSafeInteger(requiredSrcBytes) || requiredSrcBytes <= 0) return null;
+
+  // Fast path: scanout surface is backed by contiguous guest RAM (i.e. does not cross PCI holes).
+  try {
+    if (guestRangeInBoundsRaw(ramBytes, basePaddrNum, requiredSrcBytes)) {
+      const ramOffset = guestPaddrToRamOffsetRaw(ramBytes, basePaddrNum);
+      if (ramOffset === null) return null;
+      const end = ramOffset + requiredSrcBytes;
+      if (!Number.isSafeInteger(end) || end > ram.byteLength) return null;
+      const src = ram.subarray(ramOffset, end);
+      convertScanoutToRgba8({
+        src,
+        srcStrideBytes: pitchBytes,
+        dst: out,
+        dstStrideBytes: rowBytes,
+        width,
+        height,
+        kind,
+      });
+      return { width, height, strideBytes: rowBytes, pixels: out };
+    }
+  } catch {
+    // Ignore and fall back to per-row translation.
+  }
+
+  // Fallback: translate each row's guest physical address into a contiguous RAM offset (handles the
+  // PC/Q35 low-RAM + high-RAM remap when guest RAM exceeds the PCI hole).
   for (let y = 0; y < height; y += 1) {
     const rowPaddr = basePaddrNum + y * pitchBytes;
     if (!Number.isSafeInteger(rowPaddr)) return null;
@@ -1847,21 +1885,20 @@ const tryReadWddmScanoutFrame = (snap: ScanoutStateSnapshot): WddmScanoutFrameIn
 
     const rowOffset = guestPaddrToRamOffsetRaw(ramBytes, rowPaddr);
     if (rowOffset === null) return null;
-    const rowStart = rowOffset;
-    const rowEnd = rowStart + rowBytes;
-    if (rowStart < 0 || rowEnd > ram.byteLength) return null;
+    const rowEnd = rowOffset + rowBytes;
+    if (rowEnd < rowOffset || rowEnd > ram.byteLength) return null;
 
-    const src = ram.subarray(rowStart, rowEnd);
-    const dstBase = y * rowBytes;
-    for (let x = 0; x < width; x += 1) {
-      const s = x * 4;
-      const d = dstBase + x * 4;
-      // B8G8R8X8 -> RGBA8 with forced alpha=255.
-      out[d + 0] = src[s + 2] ?? 0;
-      out[d + 1] = src[s + 1] ?? 0;
-      out[d + 2] = src[s + 0] ?? 0;
-      out[d + 3] = 0xff;
-    }
+    const srcRow = ram.subarray(rowOffset, rowEnd);
+    const dstRow = out.subarray(y * rowBytes, y * rowBytes + rowBytes);
+    convertScanoutToRgba8({
+      src: srcRow,
+      srcStrideBytes: rowBytes,
+      dst: dstRow,
+      dstStrideBytes: rowBytes,
+      width,
+      height: 1,
+      kind,
+    });
   }
 
   return { width, height, strideBytes: rowBytes, pixels: out };

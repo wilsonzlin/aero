@@ -31,6 +31,7 @@ pub const SCANOUT_SOURCE_WDDM: u32 = 2;
 ///
 /// This must stay in sync with `aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat`.
 pub const SCANOUT_FORMAT_B8G8R8X8: u32 = AerogpuFormat::B8G8R8X8Unorm as u32;
+pub const SCANOUT_FORMAT_B8G8R8A8: u32 = AerogpuFormat::B8G8R8A8Unorm as u32;
 
 /// Internal bit used to mark `generation` as "being updated".
 ///
