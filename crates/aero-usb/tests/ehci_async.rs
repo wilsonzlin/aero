@@ -189,6 +189,48 @@ impl UsbDeviceModel for ShortControlInDevice {
     }
 }
 
+#[derive(Default, Debug)]
+struct ChunkedInState {
+    calls: usize,
+}
+
+#[derive(Clone, Debug)]
+struct ChunkedInDevice(Rc<RefCell<ChunkedInState>>);
+
+impl ChunkedInDevice {
+    fn new(state: Rc<RefCell<ChunkedInState>>) -> Self {
+        Self(state)
+    }
+}
+
+impl UsbDeviceModel for ChunkedInDevice {
+    fn speed(&self) -> UsbSpeed {
+        UsbSpeed::High
+    }
+
+    fn handle_control_request(
+        &mut self,
+        _setup: SetupPacket,
+        _data_stage: Option<&[u8]>,
+    ) -> ControlResponse {
+        ControlResponse::Ack
+    }
+
+    fn handle_in_transfer(&mut self, ep: u8, max_len: usize) -> UsbInResult {
+        if ep != 0x81 {
+            return UsbInResult::Stall;
+        }
+        let mut st = self.0.borrow_mut();
+        st.calls += 1;
+        match st.calls {
+            1 => UsbInResult::Data(vec![1u8, 2, 3, 4][..max_len.min(4)].to_vec()),
+            2 => UsbInResult::Nak,
+            3 => UsbInResult::Data(vec![5u8, 6, 7, 8][..max_len.min(4)].to_vec()),
+            _ => UsbInResult::Nak,
+        }
+    }
+}
+
 #[test]
 fn ehci_async_executes_control_and_bulk_transfers() {
     let mut mem = TestMemory::new(0x20000);
@@ -494,6 +536,75 @@ fn ehci_async_short_packet_uses_alt_next_to_skip_remaining_qtds() {
             0x01, 0x01, 0x02, 0x03, 0x01
         ]
     );
+}
+
+#[test]
+fn ehci_async_partial_progress_then_nak_updates_total_bytes_and_retries() {
+    let mut mem = TestMemory::new(0x40000);
+    let mut ctrl = EhciController::new();
+    let state = Rc::new(RefCell::new(ChunkedInState::default()));
+    ctrl.hub_mut().attach(0, Box::new(ChunkedInDevice::new(state)));
+
+    ctrl.mmio_write(reg_portsc(0), 4, PORTSC_PP | PORTSC_PR);
+    for _ in 0..50 {
+        ctrl.tick_1ms(&mut mem);
+    }
+
+    ctrl.mmio_write(REG_USBINTR, 4, USBINTR_USBINT | USBINTR_USBERRINT);
+    ctrl.mmio_write(REG_USBCMD, 4, USBCMD_RS | USBCMD_ASE);
+
+    let mut alloc = Alloc::new(0x1000);
+    let qh_addr = alloc.alloc(0x40, 0x20);
+    let qtd = alloc.alloc(0x20, 0x20);
+    let buf = alloc.alloc(0x1000, 0x1000);
+
+    ctrl.mmio_write(REG_ASYNCLISTADDR, 4, qh_addr);
+
+    mem.write(buf, &[0u8; 16]);
+    write_qtd(
+        &mut mem,
+        qtd,
+        LINK_TERMINATE,
+        LINK_TERMINATE,
+        qtd_token(PID_IN, 8, true, true),
+        buf,
+    );
+    write_qh(&mut mem, qh_addr, qh_ep_char(0, 1, 4), qtd);
+
+    // Tick once: we should transfer 4 bytes then observe NAK, leaving the qTD active with 4 bytes
+    // remaining and no interrupt asserted.
+    ctrl.mmio_write(REG_USBSTS, 4, USBSTS_USBINT | USBSTS_USBERRINT);
+    ctrl.tick_1ms(&mut mem);
+
+    let tok = mem.read_u32(qtd + QTD_TOKEN);
+    assert_ne!(tok & QTD_STS_ACTIVE, 0, "NAK should leave qTD active");
+    assert_eq!(
+        (tok >> QTD_TOTAL_BYTES_SHIFT) & 0x7fff,
+        4,
+        "partial progress should update remaining bytes"
+    );
+
+    let mut got = [0u8; 4];
+    mem.read(buf, &mut got);
+    assert_eq!(got, [1, 2, 3, 4]);
+
+    let sts = ctrl.mmio_read(REG_USBSTS, 4);
+    assert_eq!(sts & USBSTS_USBINT, 0);
+    assert_eq!(sts & USBSTS_USBERRINT, 0);
+    assert!(!ctrl.irq_level());
+
+    // Tick again: device returns the remaining 4 bytes and the qTD should complete (IOC=1).
+    ctrl.tick_1ms(&mut mem);
+    let tok = mem.read_u32(qtd + QTD_TOKEN);
+    assert_eq!(tok & QTD_STS_ACTIVE, 0, "qTD should complete after retry");
+    assert_eq!((tok >> QTD_TOTAL_BYTES_SHIFT) & 0x7fff, 0);
+
+    let mut got = [0u8; 8];
+    mem.read(buf, &mut got);
+    assert_eq!(got, [1, 2, 3, 4, 5, 6, 7, 8]);
+
+    assert_ne!(ctrl.mmio_read(REG_USBSTS, 4) & USBSTS_USBINT, 0);
+    assert!(ctrl.irq_level());
 }
 
 #[test]
