@@ -42,6 +42,20 @@ The implementation emits a `EV_SYN / SYN_REPORT` event after each logical batch,
 
 ---
 
+## Code map (where things live)
+
+Virtio-input spans both the Rust device model and the current browser/worker runtime wiring:
+
+- **Virtio-input device model (Rust):** `crates/aero-virtio/src/devices/input.rs`
+- **Browser runtime wiring (today):**
+  - TypeScript PCI wrapper + event injection: `web/src/io/devices/virtio_input.ts`
+  - PCI registration helper (canonical BDF for the keyboard function): `web/src/workers/io_virtio_input_register.ts`
+  - IO worker integration + routing decisions: `web/src/workers/io.worker.ts`
+- **Canonical-machine wiring (planned):**
+  - As the web runtime migrates to the canonical `aero_machine::Machine` stack (ADR 0014), virtio-input is expected to be enabled/disabled via a `Machine` configuration flag and wired through the machine’s Rust-owned PCI/device graph rather than the JS worker PCI bus.
+
+---
+
 ## Config space queries (required by the virtio-input driver)
 
 Virtio-input uses a small device-specific config region where the driver:

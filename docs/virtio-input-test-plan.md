@@ -533,6 +533,12 @@ The backend selection policy is factored into a small pure helper (with unit tes
   npm -w web run test:unit -- src/input/input_backend_selection.test.ts
   ```
 
+Current (browser runtime) selection order, for reference:
+
+- **Keyboard:** virtio-input (when `DRIVER_OK`) → synthetic USB keyboard (once the guest configures it) → PS/2.
+- **Mouse:** PS/2 until the synthetic USB mouse is configured (to avoid duplicate active mice), then USB; virtio-input (when `DRIVER_OK`) always wins.
+- Backend switching is **gated on held-state** (`keysHeld` / `buttonsHeld`): the worker will not switch while any key or mouse button is held down.
+
 The `driverOk()` signal is derived from the virtio status register:
 
 - [`web/src/io/devices/virtio_input.ts`](../web/src/io/devices/virtio_input.ts) (`VirtioInputPciFunction::driverOk`)
@@ -546,7 +552,8 @@ Validation steps:
 2. After the driver is installed and the guest is fully booted, verify:
    - the driver reaches `DRIVER_OK` (virtio status bit 2, value `0x04`)
    - keyboard/mouse input continues working
-3. Confirm that new input is being sent via virtio-input (not the fallback path).
+3. Ensure no keys/buttons are held (held-state gating), then confirm that new input is being sent via virtio-input (not the fallback path).
+   - Practically: after you see the `driver_ok` log(s), release all keys/buttons and generate a fresh input batch (e.g. press+release a key, move the mouse with no buttons held). The backend may not switch *immediately* if the guest hits `DRIVER_OK` mid-press.
 
 If you need an explicit “device-ready” signal, `DRIVER_OK` is the virtio status bit `0x04` in the virtio common config `device_status` register (AERO-W7-VIRTIO v1 uses the common config at BAR0 + `0x0000`, and `device_status` at offset `0x14` within that common config block).
 
@@ -555,6 +562,11 @@ If you need an explicit “device-ready” signal, `DRIVER_OK` is the virtio sta
 For web runtime bring-up, the default debug signal is the one-time console log emitted when the guest sets `DRIVER_OK`:
 
 - `"[virtio-input] keyboard driver_ok"` / `"[virtio-input] mouse driver_ok"` (see `VirtioInputPciFunction::driverOk()` in [`web/src/io/devices/virtio_input.ts`](../web/src/io/devices/virtio_input.ts)).
+
+Notes:
+
+- This log is emitted via `console.info(...)`; make sure the browser console is showing **Info** logs.
+- `DRIVER_OK` indicates the guest driver has finished virtio init, but the web runtime may delay switching until **no keys/buttons are held**.
 
 If you need a *routing* signal (not just `DRIVER_OK`), add a one-line log when the backend changes in:
 
