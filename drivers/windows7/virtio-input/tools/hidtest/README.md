@@ -42,8 +42,8 @@ The in-tree Aero virtio-input Win7 driver exposes **separate** HID devices:
 
 The tool also sanity-checks report descriptor lengths against the in-tree driver:
 
-- Keyboard report descriptor: 65 bytes
-- Mouse report descriptor: 48 bytes
+- Keyboard report descriptor: 104 bytes (keyboard + LEDs + Consumer Control/media keys)
+- Mouse report descriptor: 57 bytes (8 buttons + X/Y/Wheel + Consumer/AC Pan)
 
 Older/alternate builds may use PCI-style virtio IDs (PID `1052`/`1011`); `hidtest` still recognizes these as virtio-input.
 

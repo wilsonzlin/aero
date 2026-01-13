@@ -720,6 +720,7 @@ static void dump_mouse_report(const BYTE *buf, DWORD len, int assume_report_id)
     char dx;
     char dy;
     char wheel;
+    char pan;
 
     if (len == 0) {
         wprintf(L"mouse: <empty>\n");
@@ -729,6 +730,7 @@ static void dump_mouse_report(const BYTE *buf, DWORD len, int assume_report_id)
     // Common layouts:
     // - Boot mouse: 3 bytes (no ReportID) => [btn][x][y]
     // - Wheel mouse: 4 bytes              => [btn][x][y][wheel]
+    // - Wheel+Pan mouse: 5 bytes          => [btn][x][y][wheel][pan] (HID Consumer/AC Pan)
     // - With ReportID: one extra byte at front.
     if (assume_report_id && len >= 4 && buf[0] != 0) {
         report_id = buf[0];
@@ -746,8 +748,12 @@ static void dump_mouse_report(const BYTE *buf, DWORD len, int assume_report_id)
     dx = (char)buf[off + 1];
     dy = (char)buf[off + 2];
     wheel = 0;
+    pan = 0;
     if (len >= off + 4) {
         wheel = (char)buf[off + 3];
+    }
+    if (len >= off + 5) {
+        pan = (char)buf[off + 4];
     }
 
     if (report_id != 0) {
@@ -759,6 +765,9 @@ static void dump_mouse_report(const BYTE *buf, DWORD len, int assume_report_id)
     wprintf(L"buttons=0x%02X dx=%d dy=%d", buttons, (int)dx, (int)dy);
     if (len >= off + 4) {
         wprintf(L" wheel=%d", (int)wheel);
+    }
+    if (len >= off + 5) {
+        wprintf(L" pan=%d", (int)pan);
     }
     wprintf(L"\n");
 }
