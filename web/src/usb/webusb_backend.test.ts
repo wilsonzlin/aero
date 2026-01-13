@@ -403,3 +403,103 @@ describe("WebUsbBackend.execute controlOut translations", () => {
     });
   });
 });
+
+describe("WebUsbBackend.execute bulk endpoint validation", () => {
+  it("rejects bulkIn actions with an OUT endpoint address", async () => {
+    await withFakeNavigatorUsb(async () => {
+      const transferIn = vi.fn<[number, number], Promise<USBInTransferResult>>();
+      transferIn.mockResolvedValueOnce({ status: "ok", data: dataViewFromBytes([0x00]) });
+
+      const transferOut = vi.fn<[number, BufferSource], Promise<USBOutTransferResult>>();
+      transferOut.mockResolvedValueOnce({ status: "ok", bytesWritten: 1 });
+
+      const open = vi.fn(async () => {});
+      const selectConfiguration = vi.fn(async () => {});
+      const claimInterface = vi.fn(async () => {});
+
+      const device: Partial<USBDevice> = {
+        opened: false,
+        configuration: null,
+        configurations: [],
+        open,
+        selectConfiguration,
+        claimInterface,
+        transferIn,
+        transferOut,
+      };
+
+      const backend = new WebUsbBackend(device as USBDevice);
+      const res = await backend.execute({ kind: "bulkIn", id: 1, endpoint: 0x02, length: 1 });
+      expect(res.kind).toBe("bulkIn");
+      expect(res.status).toBe("error");
+      expect(transferIn).not.toHaveBeenCalled();
+      expect(open).not.toHaveBeenCalled();
+      expect(selectConfiguration).not.toHaveBeenCalled();
+      expect(claimInterface).not.toHaveBeenCalled();
+    });
+  });
+
+  it("rejects bulkOut actions with an IN endpoint address", async () => {
+    await withFakeNavigatorUsb(async () => {
+      const transferIn = vi.fn<[number, number], Promise<USBInTransferResult>>();
+      transferIn.mockResolvedValueOnce({ status: "ok", data: dataViewFromBytes([0x00]) });
+
+      const transferOut = vi.fn<[number, BufferSource], Promise<USBOutTransferResult>>();
+      transferOut.mockResolvedValueOnce({ status: "ok", bytesWritten: 1 });
+
+      const open = vi.fn(async () => {});
+      const selectConfiguration = vi.fn(async () => {});
+      const claimInterface = vi.fn(async () => {});
+
+      const device: Partial<USBDevice> = {
+        opened: false,
+        configuration: null,
+        configurations: [],
+        open,
+        selectConfiguration,
+        claimInterface,
+        transferIn,
+        transferOut,
+      };
+
+      const backend = new WebUsbBackend(device as USBDevice);
+      const res = await backend.execute({ kind: "bulkOut", id: 2, endpoint: 0x81, data: new Uint8Array([1]) });
+      expect(res).toMatchObject({ kind: "bulkOut", id: 2, status: "error" });
+      expect(transferOut).not.toHaveBeenCalled();
+      expect(open).not.toHaveBeenCalled();
+      expect(selectConfiguration).not.toHaveBeenCalled();
+      expect(claimInterface).not.toHaveBeenCalled();
+    });
+  });
+
+  it("rejects endpoint 0 for bulkIn and bulkOut", async () => {
+    await withFakeNavigatorUsb(async () => {
+      const transferIn = vi.fn<[number, number], Promise<USBInTransferResult>>();
+      transferIn.mockResolvedValueOnce({ status: "ok", data: dataViewFromBytes([0x00]) });
+
+      const transferOut = vi.fn<[number, BufferSource], Promise<USBOutTransferResult>>();
+      transferOut.mockResolvedValueOnce({ status: "ok", bytesWritten: 1 });
+
+      const device: Partial<USBDevice> = {
+        opened: true,
+        configuration: null,
+        configurations: [],
+        open: vi.fn(async () => {}),
+        selectConfiguration: vi.fn(async () => {}),
+        claimInterface: vi.fn(async () => {}),
+        transferIn,
+        transferOut,
+      };
+
+      const backend = new WebUsbBackend(device as USBDevice);
+
+      const inRes = await backend.execute({ kind: "bulkIn", id: 3, endpoint: 0x80, length: 1 });
+      expect(inRes).toMatchObject({ kind: "bulkIn", id: 3, status: "error" });
+      expect(transferIn).not.toHaveBeenCalled();
+
+      const outRes = await backend.execute({ kind: "bulkOut", id: 4, endpoint: 0x00, data: new Uint8Array([1]) });
+      expect(outRes).toMatchObject({ kind: "bulkOut", id: 4, status: "error" });
+      expect(transferOut).not.toHaveBeenCalled();
+    });
+  });
+});

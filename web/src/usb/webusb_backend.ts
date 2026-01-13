@@ -321,6 +321,33 @@ export class WebUsbBackend {
   async execute(action: UsbHostAction): Promise<UsbHostCompletion> {
     assertWebUsbSupported();
 
+    // Bulk transfers use USB endpoint *addresses*, while WebUSB wants the endpoint number.
+    // Validate the address before opening/claiming the device so malformed actions can't
+    // trigger nonsensical WebUSB calls.
+    if (action.kind === "bulkIn") {
+      const endpoint = action.endpoint;
+      const endpointNumber = endpoint & 0x0f;
+      const valid = (endpoint & 0x80) !== 0 && (endpoint & 0x70) === 0 && endpointNumber !== 0;
+      if (!valid) {
+        return errorCompletion(
+          action.kind,
+          action.id,
+          `Invalid bulkIn endpoint address ${hex8(endpoint)} (expected IN endpoint address with reserved bits clear and endpoint number 1-15)`,
+        );
+      }
+    } else if (action.kind === "bulkOut") {
+      const endpoint = action.endpoint;
+      const endpointNumber = endpoint & 0x0f;
+      const valid = (endpoint & 0x80) === 0 && (endpoint & 0x70) === 0 && endpointNumber !== 0;
+      if (!valid) {
+        return errorCompletion(
+          action.kind,
+          action.id,
+          `Invalid bulkOut endpoint address ${hex8(endpoint)} (expected OUT endpoint address with reserved bits clear and endpoint number 1-15)`,
+        );
+      }
+    }
+
     if (action.kind === "controlOut") {
       const setup = action.setup;
       const emptyData = action.data.byteLength === 0;
@@ -487,8 +514,8 @@ export class WebUsbBackend {
           };
         }
         case "bulkIn": {
-          const ep = endpointAddressToEndpointNumber(action.endpoint);
-          const result = await this.device.transferIn(ep, action.length);
+          const endpointNumber = action.endpoint & 0x0f;
+          const result = await this.device.transferIn(endpointNumber, action.length);
           if (result.status === "ok") {
             const data = result.data ? dataViewToUint8Array(result.data) : new Uint8Array();
             return { kind: "bulkIn", id: action.id, status: "success", data };
@@ -504,8 +531,8 @@ export class WebUsbBackend {
           };
         }
         case "bulkOut": {
-          const ep = endpointAddressToEndpointNumber(action.endpoint);
-          const result = await this.device.transferOut(ep, ensureArrayBufferBacked(action.data));
+          const endpointNumber = action.endpoint & 0x0f;
+          const result = await this.device.transferOut(endpointNumber, ensureArrayBufferBacked(action.data));
           if (result.status === "ok") {
             return { kind: "bulkOut", id: action.id, status: "success", bytesWritten: result.bytesWritten };
           }
