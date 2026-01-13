@@ -79,6 +79,7 @@ d3d11_texture
 d3d11_caps_smoke
 d3d11_rs_om_state_sanity
 d3d11_geometry_shader_smoke
+d3d11_geometry_shader_restart_strip
 dxgi_swapchain_probe
 d3d11_swapchain_rotate_sanity
 d3d11_map_dynamic_buffer_sanity

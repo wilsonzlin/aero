@@ -388,6 +388,11 @@ aerogpu_add_win7_test(d3d11_geometry_shader_smoke
 )
 target_link_libraries(d3d11_geometry_shader_smoke PRIVATE d3d11 dxgi)
 
+aerogpu_add_win7_test(d3d11_geometry_shader_restart_strip
+  d3d11_geometry_shader_restart_strip/main.cpp
+)
+target_link_libraries(d3d11_geometry_shader_restart_strip PRIVATE d3d11 dxgi)
+
 aerogpu_add_win7_test(dxgi_swapchain_probe
   dxgi_swapchain_probe/main.cpp
 )
