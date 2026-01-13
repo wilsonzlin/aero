@@ -12091,8 +12091,22 @@ fn main() {
                 device, queue, backend, false,
             );
 
+            // Register a compute shader module so that if the compute-capability check ever stops
+            // short-circuiting, the pipeline builder would be invoked (and the test would panic).
+            const CS_WGSL: &str = r#"
+                @compute @workgroup_size(1)
+                fn cs_main() {
+                }
+            "#;
+            let (cs_hash, _module) = exec.pipeline_cache.get_or_create_shader_module(
+                &exec.device,
+                aero_gpu::pipeline_key::ShaderStage::Compute,
+                CS_WGSL,
+                Some("aerogpu_cmd test CS"),
+            );
+
             let key = ComputePipelineKey {
-                shader: 0,
+                shader: cs_hash,
                 layout: PipelineLayoutKey::empty(),
             };
             let err = exec
