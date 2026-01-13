@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex};
 
-use aero_devices::pci::{msi::PCI_CAP_ID_MSI, MsiCapability, PciDevice};
+use aero_devices::pci::{msi::PCI_CAP_ID_MSI, MsiCapability, MsixCapability, PciDevice};
 use aero_devices_nvme::{AeroStorageDiskAdapter, NvmePciDevice};
 use aero_io_snapshot::io::state::codec::Encoder;
 use aero_io_snapshot::io::state::{IoSnapshot, SnapshotVersion, SnapshotWriter};
@@ -694,4 +694,85 @@ fn snapshot_restore_preserves_msi_capability_programming() {
     assert!(msi.enabled());
     assert_eq!(msi.message_address(), 0xfee0_0000);
     assert_eq!(msi.message_data(), 0x0045);
+}
+
+#[test]
+fn snapshot_restore_preserves_msix_table_and_pba_state() {
+    let disk = SharedDisk::new(1024);
+
+    let mut dev = NvmePciDevice::new(Box::new(AeroStorageDiskAdapter::new(Box::new(
+        disk.clone(),
+    ))));
+
+    // Add an MSI-X capability with a single table entry, backed by BAR0.
+    let msix_cap_off = dev
+        .config_mut()
+        .add_capability(Box::new(MsixCapability::new(1, 0, 0x2000, 0, 0x3000)))
+        as u16;
+
+    // Enable MSI-X via the Message Control enable bit.
+    let ctrl = dev.config_mut().read(msix_cap_off + 0x02, 2) as u16;
+    dev.config_mut()
+        .write(msix_cap_off + 0x02, 2, (ctrl | (1 << 15)) as u32);
+
+    // Program table entry 0 and set a pending bit (PBA) by triggering a masked vector.
+    {
+        let msix = dev
+            .config_mut()
+            .capability_mut::<MsixCapability>()
+            .expect("MSI-X capability should exist");
+
+        // Table entry 0: addr=0xfee0_0000, data=0x45, vector masked.
+        msix.table_write(0, &0xfee0_0000u32.to_le_bytes());
+        msix.table_write(0x4, &0u32.to_le_bytes());
+        msix.table_write(0x8, &0x0045u32.to_le_bytes());
+        msix.table_write(0xc, &1u32.to_le_bytes()); // mask bit
+
+        // Triggering a masked vector sets the corresponding PBA bit.
+        assert!(msix.enabled(), "MSI-X should be enabled after config write");
+        assert!(msix.trigger(0).is_none());
+    }
+
+    let msix = dev
+        .config()
+        .capability::<MsixCapability>()
+        .expect("MSI-X capability should exist");
+    let expected_table = msix.snapshot_table().to_vec();
+    let expected_pba: Vec<u8> = msix
+        .snapshot_pba()
+        .iter()
+        .flat_map(|word| word.to_le_bytes())
+        .collect();
+
+    let snap = dev.save_state();
+
+    let mut restored = NvmePciDevice::new(Box::new(AeroStorageDiskAdapter::new(Box::new(
+        disk.clone(),
+    ))));
+    let msix_cap_off2 = restored
+        .config_mut()
+        .add_capability(Box::new(MsixCapability::new(1, 0, 0x2000, 0, 0x3000)))
+        as u16;
+    restored.load_state(&snap).unwrap();
+
+    // MSI-X enable bit should be preserved via PCI config-space snapshot.
+    let ctrl2 = restored.config_mut().read(msix_cap_off2 + 0x02, 2) as u16;
+    assert_ne!(ctrl2 & (1 << 15), 0);
+
+    // MSI-X table + PBA should be preserved via dedicated snapshot tags.
+    let msix2 = restored
+        .config()
+        .capability::<MsixCapability>()
+        .expect("MSI-X capability should exist");
+
+    assert_eq!(msix2.snapshot_table(), expected_table.as_slice());
+    let restored_pba: Vec<u8> = msix2
+        .snapshot_pba()
+        .iter()
+        .flat_map(|word| word.to_le_bytes())
+        .collect();
+    assert_eq!(restored_pba, expected_pba);
+
+    // Pending bit 0 should still be set.
+    assert_eq!(msix2.snapshot_pba()[0] & 1, 1);
 }
