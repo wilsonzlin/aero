@@ -199,11 +199,10 @@ impl CpuBus for ConformanceBus {
     }
 
     fn io_read(&mut self, _port: u16, _size: u32) -> Result<u64, Exception> {
-        Ok(0)
+        Err(Exception::Unimplemented("io"))
     }
 
     fn io_write(&mut self, _port: u16, _size: u32, _val: u64) -> Result<(), Exception> {
-        Ok(())
+        Err(Exception::Unimplemented("io"))
     }
 }
-
