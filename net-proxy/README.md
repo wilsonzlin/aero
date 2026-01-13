@@ -52,21 +52,29 @@ Use the **HTTP base URL** for `net-proxy`:
 
 - `http://127.0.0.1:8081`
 
+This is also the value you typically set for Aero’s `proxyUrl` (Settings panel → “Proxy URL”, or URL query param
+`?proxy=http%3A%2F%2F127.0.0.1%3A8081`).
+
 If you're using the browser networking clients in `web/src/net`:
 
 - Pass this base URL to the TCP/UDP WebSocket clients (they auto-convert `http://` → `ws://`).
-- Build absolute DoH URLs from the same base:
+- For DoH, prefer a **same-origin** path (`/dns-query`) to avoid CORS (e.g. via a frontend dev-server proxy).
+  - If your frontend is served from the same origin as `net-proxy` (or you have permissive CORS), you can also use an
+    absolute DoH URL.
 
 ```ts
 import { WebSocketTcpProxyClient, WebSocketUdpProxyClient, resolveAOverDoh } from "./net";
 
-const baseUrl = "http://127.0.0.1:8081";
+const proxyUrl = "http://127.0.0.1:8081";
 
-const tcp = new WebSocketTcpProxyClient(baseUrl, (ev) => console.log("tcp", ev));
-const udp = new WebSocketUdpProxyClient(baseUrl, (ev) => console.log("udp", ev));
+const tcp = new WebSocketTcpProxyClient(proxyUrl, (ev) => console.log("tcp", ev));
+const udp = new WebSocketUdpProxyClient(proxyUrl, (ev) => console.log("udp", ev));
 
-const dohQueryUrl = new URL("/dns-query", baseUrl).toString();
-const result = await resolveAOverDoh("localhost", dohQueryUrl);
+// Same-origin DoH (recommended; e.g. via Vite proxy below):
+const result = await resolveAOverDoh("localhost", "/dns-query");
+
+// Or: absolute DoH (requires same-origin or permissive CORS):
+// const result = await resolveAOverDoh("localhost", new URL("/dns-query", proxyUrl).toString());
 console.log(result);
 ```
 
@@ -81,14 +89,13 @@ console.log(result);
 >
 > ```ts
 > // vite.harness.config.ts
-> export default defineConfig({
->   server: {
->     proxy: {
->       "/dns-query": "http://127.0.0.1:8081",
->       "/dns-json": "http://127.0.0.1:8081",
->     },
+> // Add this under `server` (alongside the existing `headers` config):
+> server: {
+>   proxy: {
+>     "/dns-query": "http://127.0.0.1:8081",
+>     "/dns-json": "http://127.0.0.1:8081",
 >   },
-> });
+> },
 > ```
 
 #### Security caveats (open mode vs allowlist)
