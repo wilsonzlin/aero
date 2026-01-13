@@ -1215,8 +1215,10 @@ mod tests {
         // MAX_TOTAL_BYTES guard.
         let chunk = vec![0u8; MAX_DATA_BYTES];
 
-        let mut enc = Encoder::new().u32(1).u32(5);
-        for i in 0..4u32 {
+        // Include buffers across both the action and completion sections to ensure the running
+        // `total_bytes` guard applies globally.
+        let mut enc = Encoder::new().u32(1).u32(2);
+        for i in 0..2u32 {
             enc = enc
                 .u8(4) // BulkOut action
                 .u32(i + 1)
@@ -1225,8 +1227,18 @@ mod tests {
                 .bytes(&chunk);
         }
 
-        // This fifth buffer would push total_bytes over MAX_TOTAL_BYTES.
-        enc = enc.u8(4).u32(99).u8(0x01).u32(1);
+        enc = enc.u32(3); // completion_count
+        for i in 0..2u32 {
+            enc = enc
+                .u32(100 + i)
+                .u8(1) // OkIn
+                .u32(MAX_DATA_BYTES as u32)
+                .bytes(&chunk);
+        }
+
+        // This final completion would push total_bytes over MAX_TOTAL_BYTES. Intentionally omit the
+        // trailing byte; the decoder should error before reading it.
+        enc = enc.u32(200).u8(1).u32(1);
         let bytes = enc.finish();
         let err = snapshot_load_err(bytes);
         assert_invalid_field_encoding(err);
