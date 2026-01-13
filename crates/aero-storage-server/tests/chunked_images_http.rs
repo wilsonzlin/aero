@@ -750,6 +750,53 @@ async fn overly_long_raw_chunked_version_segment_is_rejected_early() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn overly_long_raw_chunk_name_segment_is_rejected_early() {
+    let (app, _dir, _manifest) = setup_app(None).await;
+
+    // `CHUNK_NAME_LEN` in the handler is 12, so reject anything longer than 12*3 raw chars.
+    let too_long_raw = "a".repeat(12 * 3 + 1);
+    let uri = format!("/v1/images/disk/chunked/chunks/{too_long_raw}");
+
+    let resp = app
+        .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    assert_eq!(
+        resp.headers()["access-control-allow-origin"]
+            .to_str()
+            .unwrap(),
+        "*"
+    );
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    assert!(body.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn overly_long_raw_chunk_name_segment_is_rejected_early_for_versioned_route() {
+    let (app, _dir, _manifest) = setup_app(None).await;
+
+    let too_long_raw = "a".repeat(12 * 3 + 1);
+    let uri = format!("/v1/images/disk/chunked/v1/chunks/{too_long_raw}");
+
+    let resp = app
+        .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    assert_eq!(
+        resp.headers()["access-control-allow-origin"]
+            .to_str()
+            .unwrap(),
+        "*"
+    );
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    assert!(body.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn chunk_larger_than_limit_is_rejected() {
     let dir = tempdir().expect("tempdir");
 
