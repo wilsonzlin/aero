@@ -153,6 +153,12 @@ struct BlockStateUsage {
     /// Whether a GPR may be written by the block and therefore must be spilled back to `CpuState`
     /// at block exit.
     gpr_written: [bool; 16],
+    /// Whether the block's RIP local must be initialized from `CpuState.rip` at block entry.
+    ///
+    /// Tier-1 blocks always write back `next_rip` at exit, but loading the *current* RIP is only
+    /// needed when the IR reads it directly or when Tier-1 needs to pass it to runtime exit
+    /// helpers (MMIO exits / `CallHelper` bailouts).
+    rip_used: bool,
     /// Whether the block reads and/or writes RFLAGS.
     uses_rflags: bool,
 }
@@ -161,6 +167,7 @@ fn analyze_state_usage(block: &IrBlock, options: Tier1WasmOptions) -> BlockState
     let mut usage = BlockStateUsage::default();
     let mut initialized = [false; 16];
     let mut first_write_idx: [Option<usize>; 16] = [None; 16];
+    let mut rip_initialized = false;
 
     let mut earliest_may_exit: Option<usize> = None;
 
@@ -190,7 +197,12 @@ fn analyze_state_usage(block: &IrBlock, options: Tier1WasmOptions) -> BlockState
                     }
                 }
                 GuestReg::Flag(_) => usage.uses_rflags = true,
-                GuestReg::Rip => {}
+                GuestReg::Rip => {
+                    if !rip_initialized {
+                        usage.rip_used = true;
+                        rip_initialized = true;
+                    }
+                }
             },
             IrInst::WriteReg { reg, .. } => match *reg {
                 GuestReg::Gpr { reg, width, high8 } => {
@@ -209,7 +221,7 @@ fn analyze_state_usage(block: &IrBlock, options: Tier1WasmOptions) -> BlockState
                     initialized[idx] = true;
                 }
                 GuestReg::Flag(_) => usage.uses_rflags = true,
-                GuestReg::Rip => {}
+                GuestReg::Rip => rip_initialized = true,
             },
             IrInst::BinOp { flags, .. }
             | IrInst::CmpFlags { flags, .. }
@@ -224,9 +236,28 @@ fn analyze_state_usage(block: &IrBlock, options: Tier1WasmOptions) -> BlockState
                 }
             }
             IrInst::CallHelper { .. } => {
+                // Helper-call bailouts pass the current RIP to the host.
+                if !rip_initialized {
+                    usage.rip_used = true;
+                }
                 // Tier-1 treats helper calls as a runtime exit; the remainder of the IR block is
                 // unreachable (both in the IR interpreter and in Tier-1 WASM codegen).
                 break;
+            }
+            IrInst::Load { .. } => {
+                // Inline-TLB loads may take an MMIO exit and must pass the current RIP.
+                if options.inline_tlb && !rip_initialized {
+                    usage.rip_used = true;
+                    rip_initialized = true;
+                }
+            }
+            IrInst::Store { .. } => {
+                // Inline-TLB stores may take an MMIO exit (when store fast-path is enabled) and
+                // must pass the current RIP.
+                if options.inline_tlb && options.inline_tlb_stores && !rip_initialized {
+                    usage.rip_used = true;
+                    rip_initialized = true;
+                }
             }
             _ => {}
         }
@@ -533,19 +564,17 @@ impl Tier1WasmCodegen {
                 func.instruction(&Instruction::LocalSet(layout.gpr_local(gpr)));
             }
         }
-        func.instruction(&Instruction::LocalGet(layout.cpu_ptr_local()));
-        func.instruction(&Instruction::I64Load(memarg(abi::CPU_RIP_OFF, 3)));
-        func.instruction(&Instruction::LocalSet(layout.rip_local()));
+        if state_usage.rip_used {
+            func.instruction(&Instruction::LocalGet(layout.cpu_ptr_local()));
+            func.instruction(&Instruction::I64Load(memarg(abi::CPU_RIP_OFF, 3)));
+            func.instruction(&Instruction::LocalSet(layout.rip_local()));
+        }
 
         if state_usage.uses_rflags {
             func.instruction(&Instruction::LocalGet(layout.cpu_ptr_local()));
             func.instruction(&Instruction::I64Load(memarg(abi::CPU_RFLAGS_OFF, 3)));
             func.instruction(&Instruction::LocalSet(layout.rflags_local()));
         }
-
-        // Default next_rip = current RIP (overwritten by terminator emission).
-        func.instruction(&Instruction::LocalGet(layout.rip_local()));
-        func.instruction(&Instruction::LocalSet(layout.next_rip_local()));
 
         if options.inline_tlb {
             let has_store_mem = options.inline_tlb_stores
@@ -1006,7 +1035,6 @@ impl Emitter<'_> {
                             this.emit_trunc(*width);
                             this.func
                                 .instruction(&Instruction::LocalSet(this.layout.value_local(*dst)));
-                        };
 
                         // Page 0: translate.
                         self.emit_translate_and_cache(MMU_ACCESS_READ, crate::TLB_FLAG_READ);
@@ -1251,40 +1279,36 @@ impl Emitter<'_> {
                         Width::W8 => {
                             self.emit_trunc(Width::W8);
                             self.func.instruction(&Instruction::I32WrapI64);
-                            self.func
-                                .instruction(&Instruction::Call(
-                                    self.imported
-                                        .mem_write_u8
-                                        .expect("mem_write_u8 import missing"),
-                                ));
+                            self.func.instruction(&Instruction::Call(
+                                self.imported
+                                    .mem_write_u8
+                                    .expect("mem_write_u8 import missing"),
+                            ));
                         }
                         Width::W16 => {
                             self.emit_trunc(Width::W16);
                             self.func.instruction(&Instruction::I32WrapI64);
-                            self.func
-                                .instruction(&Instruction::Call(
-                                    self.imported
-                                        .mem_write_u16
-                                        .expect("mem_write_u16 import missing"),
-                                ));
+                            self.func.instruction(&Instruction::Call(
+                                self.imported
+                                    .mem_write_u16
+                                    .expect("mem_write_u16 import missing"),
+                            ));
                         }
                         Width::W32 => {
                             self.emit_trunc(Width::W32);
                             self.func.instruction(&Instruction::I32WrapI64);
-                            self.func
-                                .instruction(&Instruction::Call(
-                                    self.imported
-                                        .mem_write_u32
-                                        .expect("mem_write_u32 import missing"),
-                                ));
+                            self.func.instruction(&Instruction::Call(
+                                self.imported
+                                    .mem_write_u32
+                                    .expect("mem_write_u32 import missing"),
+                            ));
                         }
                         Width::W64 => {
-                            self.func
-                                .instruction(&Instruction::Call(
-                                    self.imported
-                                        .mem_write_u64
-                                        .expect("mem_write_u64 import missing"),
-                                ));
+                            self.func.instruction(&Instruction::Call(
+                                self.imported
+                                    .mem_write_u64
+                                    .expect("mem_write_u64 import missing"),
+                            ));
                         }
                     }
                     return;
@@ -1381,7 +1405,6 @@ impl Emitter<'_> {
                                             .instruction(&Instruction::I64Store32(memarg(0, 2))),
                                         _ => unreachable!("invalid store chunk size: {nbytes}"),
                                     };
-                                };
 
                             let emit_store_page1_chunk =
                                 |this: &mut Self, mem_off: u32, nbytes: u32, shift_bits: u32| {
@@ -1983,10 +2006,9 @@ impl Emitter<'_> {
                 self.func.instruction(&Instruction::I32Const(0));
                 self.func
                     .instruction(&Instruction::LocalGet(self.layout.rip_local()));
-                self.func
-                    .instruction(&Instruction::Call(
-                        self.imported.jit_exit.expect("jit_exit import missing"),
-                    ));
+                self.func.instruction(&Instruction::Call(
+                    self.imported.jit_exit.expect("jit_exit import missing"),
+                ));
                 // `jit_exit` returns the RIP to resume at while we use the sentinel return value to
                 // request an interpreter step.
                 self.func
