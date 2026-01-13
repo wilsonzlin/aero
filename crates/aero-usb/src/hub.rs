@@ -1598,10 +1598,7 @@ mod tests {
             let mut hub = RootHub::new();
             hub.attach(0, Box::new(SpeedModel { speed }));
             let portsc = hub.read_portsc(0);
-            let expected_lsda = match speed {
-                UsbSpeed::Low => true,
-                UsbSpeed::Full | UsbSpeed::High => false,
-            };
+            let expected_lsda = matches!(speed, UsbSpeed::Low);
             assert_eq!((portsc & LSDA) != 0, expected_lsda, "speed={speed:?}");
         }
     }
