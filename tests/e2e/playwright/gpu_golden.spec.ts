@@ -15,9 +15,28 @@ const GOLDEN_WEBGL2_QUADRANTS = 'webgl2_quadrants_64';
 const GOLDEN_WEBGPU_QUADRANTS = 'webgpu_quadrants_64';
 const GOLDEN_GPU_SMOKE_QUADRANTS = 'gpu_smoke_quadrants_64';
 const GOLDEN_GPU_TRACE_TRIANGLE_RED = 'gpu_trace_triangle_red_64';
+const GOLDEN_GPU_TRACE_AEROGPU_A3A0_CLEAR_RED = 'gpu_trace_aerogpu_a3a0_clear_red_64';
+const GOLDEN_GPU_TRACE_AEROGPU_CMD_TRIANGLE = 'gpu_trace_aerogpu_cmd_triangle_64';
 
 function base64ToBuffer(base64: string): Buffer {
   return Buffer.from(base64, 'base64');
+}
+
+function resolveGoldenPngPath(goldenName: string): string {
+  return path.resolve(TEST_DIR, '..', '..', 'golden', `${goldenName}.png`);
+}
+
+function tryReadPngSize(filePath: string): { width: number; height: number } | null {
+  if (!fs.existsSync(filePath)) return null;
+  const buf = fs.readFileSync(filePath);
+  // PNG signature: 89 50 4E 47 0D 0A 1A 0A
+  if (buf.length < 24 || buf[0] !== 0x89 || buf.toString('ascii', 1, 4) !== 'PNG') {
+    throw new Error(`Invalid PNG file: ${filePath}`);
+  }
+  // IHDR starts at offset 8 (sig) + 4 (len) + 4 (type). Width/height are big-endian.
+  const width = buf.readUInt32BE(16);
+  const height = buf.readUInt32BE(20);
+  return { width, height };
 }
 
 function browserUint8ToBase64Source(): string {
@@ -395,50 +414,84 @@ test('GPU backend smoke: WebGPU presents expected frame (golden) @webgpu', async
   }
 });
 
-test('GPU trace replay: triangle trace renders deterministically (golden)', async ({ page }, testInfo) => {
-  const toolPath = path.resolve(TEST_DIR, '../../../web/tools/gpu_trace_replay.ts');
-  const tracePath = path.resolve(TEST_DIR, '../../fixtures/triangle.aerogputrace');
-  const traceB64 = fs.readFileSync(tracePath).toString('base64');
+async function captureGpuTraceReplayFrameRGBA(
+  page: Page,
+  args: {
+    traceB64: string;
+    frameIndex?: number;
+    backend?: 'webgl2' | 'webgpu';
+  }
+): Promise<RgbaImage> {
+  const result = await page.evaluate(
+    async ({ traceB64, frameIndex, backend }: { traceB64: string; frameIndex?: number; backend?: 'webgl2' | 'webgpu' }) => {
+      const raw = atob(traceB64);
+      const bytes = new Uint8Array(raw.length);
+      for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
 
-  await page.setContent(`<canvas id="c" width="64" height="64"></canvas>`);
-  await page.addScriptTag({ path: toolPath });
+      const canvas = document.getElementById('c');
+      if (!(canvas instanceof HTMLCanvasElement)) throw new Error('missing canvas');
 
-  const result = await page.evaluate(async (b64) => {
-    const raw = atob(b64);
-    const bytes = new Uint8Array(raw.length);
-    for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+      const replayer = await (window as any).AeroGpuTraceReplay.load(bytes, canvas, { backend: backend ?? 'webgl2' });
+      await replayer.replayFrame(frameIndex ?? 0);
 
-    const canvas = document.getElementById('c');
-    if (!(canvas instanceof HTMLCanvasElement)) throw new Error('missing canvas');
-    const gl = canvas.getContext('webgl2');
-    if (!gl) throw new Error('WebGL2 unavailable in test environment');
+      const w = canvas.width;
+      const h = canvas.height;
+      const pixels = replayer.readPixels();
 
-    const replayer = await (window as any).AeroGpuTraceReplay.load(bytes, canvas, { backend: 'webgl2' });
-    await replayer.replayFrame(0);
+      // WebGL origin is bottom-left; flip to top-left.
+      const flipped = new Uint8Array(w * h * 4);
+      const rowSize = w * 4;
+      for (let y = 0; y < h; y++) {
+        const srcStart = y * rowSize;
+        const dstStart = (h - 1 - y) * rowSize;
+        flipped.set(pixels.subarray(srcStart, srcStart + rowSize), dstStart);
+      }
 
-    const w = canvas.width;
-    const h = canvas.height;
-    const pixels = new Uint8Array(w * h * 4);
-    gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+      const rgbaBase64 = (window as any).__aeroUint8ToBase64(flipped);
+      return { width: w, height: h, rgbaBase64 };
+    },
+    args
+  );
 
-    // WebGL origin is bottom-left; flip to top-left.
-    const flipped = new Uint8Array(w * h * 4);
-    const rowSize = w * 4;
-    for (let y = 0; y < h; y++) {
-      const srcStart = y * rowSize;
-      const dstStart = (h - 1 - y) * rowSize;
-      flipped.set(pixels.subarray(srcStart, srcStart + rowSize), dstStart);
-    }
-
-    const rgbaBase64 = (window as any).__aeroUint8ToBase64(flipped);
-    return { width: w, height: h, rgbaBase64 };
-  }, traceB64);
-
-  const actual: RgbaImage = {
+  return {
     width: result.width,
     height: result.height,
     rgba: base64ToBuffer(result.rgbaBase64),
   };
+}
 
-  await expectRgbaToMatchGolden(testInfo, GOLDEN_GPU_TRACE_TRIANGLE_RED, actual, { maxDiffPixels: 0, threshold: 0 });
-});
+const TRACE_FIXTURE_DIR = path.resolve(TEST_DIR, '../../fixtures');
+const TRACE_TOOL_PATH = path.resolve(TEST_DIR, '../../../web/tools/gpu_trace_replay.ts');
+
+// Map fixture filename -> golden override. Anything not listed here is expected to
+// use a golden named `gpu_trace_<fixture_basename>_64.png` (frame 0, strict diff).
+const TRACE_GOLDEN_OVERRIDES: Record<string, string> = {
+  // Historical name (kept for compatibility with existing committed goldens).
+  'triangle.aerogputrace': GOLDEN_GPU_TRACE_TRIANGLE_RED,
+  // Explicitly listed for clarity.
+  'aerogpu_a3a0_clear_red.aerogputrace': GOLDEN_GPU_TRACE_AEROGPU_A3A0_CLEAR_RED,
+  'aerogpu_cmd_triangle.aerogputrace': GOLDEN_GPU_TRACE_AEROGPU_CMD_TRIANGLE,
+};
+
+for (const traceFile of fs
+  .readdirSync(TRACE_FIXTURE_DIR)
+  .filter((f) => f.endsWith('.aerogputrace'))
+  .sort()) {
+  const goldenName =
+    TRACE_GOLDEN_OVERRIDES[traceFile] ??
+    `gpu_trace_${path.basename(traceFile, '.aerogputrace')}_64`;
+  const goldenSize = tryReadPngSize(resolveGoldenPngPath(goldenName));
+  const canvasWidth = goldenSize?.width ?? 64;
+  const canvasHeight = goldenSize?.height ?? 64;
+
+  test(`GPU trace replay: ${traceFile} renders deterministically (golden)`, async ({ page }, testInfo) => {
+    const tracePath = path.resolve(TRACE_FIXTURE_DIR, traceFile);
+    const traceB64 = fs.readFileSync(tracePath).toString('base64');
+
+    await page.setContent(`<canvas id="c" width="${canvasWidth}" height="${canvasHeight}"></canvas>`);
+    await page.addScriptTag({ path: TRACE_TOOL_PATH });
+
+    const actual = await captureGpuTraceReplayFrameRGBA(page, { traceB64, frameIndex: 0, backend: 'webgl2' });
+    await expectRgbaToMatchGolden(testInfo, goldenName, actual, { maxDiffPixels: 0, threshold: 0 });
+  });
+}

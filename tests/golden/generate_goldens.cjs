@@ -94,6 +94,9 @@ function main() {
   // Trace replay "triangle" fixture is expected to clear/present solid red.
   const traceRed64 = generateSolidColorRGBA(64, 64, 255, 0, 0, 255);
   writePng(path.join(outDir, 'gpu_trace_triangle_red_64.png'), 64, 64, traceRed64);
+  // Trace replay fixtures using the AeroGPU A3A0 command stream ABI are also expected to render solid red.
+  writePng(path.join(outDir, 'gpu_trace_aerogpu_cmd_triangle_64.png'), 64, 64, traceRed64);
+  writePng(path.join(outDir, 'gpu_trace_aerogpu_a3a0_clear_red_64.png'), 64, 64, traceRed64);
 
   // eslint-disable-next-line no-console
   console.log(`Wrote goldens to ${outDir}`);
