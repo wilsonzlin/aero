@@ -82,7 +82,9 @@
 // Current Aero virtio-input Win7 driver exposes *separate* keyboard/mouse HID
 // devices, each with its own report descriptor.
 #define VIRTIO_INPUT_EXPECTED_KBD_REPORT_DESC_LEN 65
-#define VIRTIO_INPUT_EXPECTED_MOUSE_REPORT_DESC_LEN 54
+// Mouse report descriptor advertises 8 buttons (no padding bits), reducing the
+// descriptor size vs the older 5-button+padding variant.
+#define VIRTIO_INPUT_EXPECTED_MOUSE_REPORT_DESC_LEN 48
 #define VIRTIO_INPUT_EXPECTED_KBD_INPUT_LEN 9
 #define VIRTIO_INPUT_EXPECTED_KBD_OUTPUT_LEN 2
 #define VIRTIO_INPUT_EXPECTED_MOUSE_INPUT_LEN 5
