@@ -2727,6 +2727,7 @@ fn emit_src_vec4_u32(
             };
             format!("bitcast<vec4<u32>>({expr})")
         }
+        SrcKind::GsInput { .. } => return Err(ShaderTranslateError::UnsupportedStage(ctx.stage)),
         SrcKind::ConstantBuffer { slot, reg } => {
             let _ = ctx.resources.cbuffers.get(slot);
             format!("cb{slot}.regs[{reg}]")
