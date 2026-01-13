@@ -614,7 +614,7 @@ function renderMachinePanel(): HTMLElement {
   // Avoid pathological allocations if the guest (or a buggy WASM build) reports
   // an absurd scanout mode. Keep the UI responsive rather than attempting to
   // allocate multi-gigabyte buffers.
-  const MAX_VGA_FRAME_BYTES = 32 * 1024 * 1024; // ~4K@60-ish upper bound for a demo panel.
+  const MAX_FRAME_BYTES = 32 * 1024 * 1024; // ~4K@60-ish upper bound for a demo panel.
 
   function buildSerialBootSector(message: string): Uint8Array {
     const msgBytes = encoder.encode(message);
@@ -775,7 +775,7 @@ function renderMachinePanel(): HTMLElement {
             height > 0 &&
             Number.isFinite(requiredBytes) &&
             requiredBytes > 0 &&
-            requiredBytes <= MAX_VGA_FRAME_BYTES
+            requiredBytes <= MAX_FRAME_BYTES
           ) {
             diskImage = buildVbeBootSector({ message: bootMessage, width, height });
           }
@@ -1021,6 +1021,18 @@ function renderMachinePanel(): HTMLElement {
         };
       }
 
+      const hasDisplayPresent = typeof (machine as unknown as { display_present?: unknown }).display_present === "function";
+      const hasDisplaySize =
+        typeof (machine as unknown as { display_width?: unknown }).display_width === "function" &&
+        typeof (machine as unknown as { display_height?: unknown }).display_height === "function";
+      const hasDisplayPtr =
+        !!wasmMemory &&
+        typeof (machine as unknown as { display_framebuffer_ptr?: unknown }).display_framebuffer_ptr === "function" &&
+        typeof (machine as unknown as { display_framebuffer_len_bytes?: unknown }).display_framebuffer_len_bytes === "function";
+      const hasDisplayCopy =
+        typeof (machine as unknown as { display_framebuffer_copy_rgba8888?: unknown }).display_framebuffer_copy_rgba8888 === "function";
+      const hasDisplay = hasDisplayPresent && hasDisplaySize && (hasDisplayPtr || hasDisplayCopy);
+
       const hasVgaPresent = typeof machine.vga_present === "function";
       const hasVgaSize = typeof machine.vga_width === "function" && typeof machine.vga_height === "function";
       const hasVgaPtr =
@@ -1032,8 +1044,13 @@ function renderMachinePanel(): HTMLElement {
         typeof machine.vga_framebuffer_rgba8888_copy === "function";
       const hasVga = hasVgaPresent && hasVgaSize && (hasVgaPtr || hasVgaCopy);
 
-      testState.vgaSupported = hasVga;
-      vgaInfo.textContent = hasVga ? "vga: ready" : "vga: unavailable (WASM build missing scanout exports)";
+      testState.vgaSupported = hasDisplay || hasVga;
+      vgaInfo.textContent =
+        hasDisplay
+          ? "vga: ready (using display_* scanout)"
+          : hasVga
+            ? "vga: ready"
+            : "vga: unavailable (WASM build missing scanout exports)";
 
       let imageData: ImageData | null = null;
       let imageDataBytes: Uint8ClampedArray<ArrayBuffer> | null = null;
@@ -1057,7 +1074,7 @@ function renderMachinePanel(): HTMLElement {
         } catch {
           return null;
         }
-        if (!Number.isFinite(requiredBytes) || requiredBytes <= 0 || requiredBytes > MAX_VGA_FRAME_BYTES + 4096) {
+        if (!Number.isFinite(requiredBytes) || requiredBytes <= 0 || requiredBytes > MAX_FRAME_BYTES + 4096) {
           return null;
         }
 
@@ -1108,138 +1125,184 @@ function renderMachinePanel(): HTMLElement {
         return sharedVga;
       }
 
-      function presentVgaFrame(): void {
-        if (!hasVga || vgaFailed) return;
+      function tryPresentScanoutFrame(kind: "display" | "vga"): boolean {
+        if (kind === "display") {
+          if (!hasDisplayPresent || !hasDisplaySize || (!hasDisplayPtr && !hasDisplayCopy)) return false;
+        } else {
+          if (!hasVga || vgaFailed) return false;
+        }
 
-        try {
-          // Trigger WASM-side VGA/VBE scanout. This populates an RGBA framebuffer in
-          // WASM linear memory which we then blit onto the HTML canvas.
-          machine.vga_present?.();
+        const presentFn =
+          kind === "display"
+            ? (machine as unknown as { display_present?: () => void }).display_present
+            : (machine as unknown as { vga_present?: () => void }).vga_present;
+        const widthFn =
+          kind === "display"
+            ? (machine as unknown as { display_width?: () => number }).display_width
+            : (machine as unknown as { vga_width?: () => number }).vga_width;
+        const heightFn =
+          kind === "display"
+            ? (machine as unknown as { display_height?: () => number }).display_height
+            : (machine as unknown as { vga_height?: () => number }).vga_height;
+        if (typeof presentFn !== "function" || typeof widthFn !== "function" || typeof heightFn !== "function") return false;
 
-          const width = machine.vga_width?.() ?? 0;
-          const height = machine.vga_height?.() ?? 0;
-          // Some older WASM builds may not expose a stride helper; assume tightly packed RGBA8888.
-          let strideBytes = machine.vga_stride_bytes?.() ?? width * 4;
+        presentFn.call(machine);
 
-          if (!Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0) return;
-          if (!Number.isInteger(strideBytes) || strideBytes < width * 4) return;
+        const width = widthFn.call(machine) >>> 0;
+        const height = heightFn.call(machine) >>> 0;
+        if (width === 0 || height === 0) return false;
 
-          const requiredDstBytes = width * height * 4;
-          let requiredSrcBytes = strideBytes * height;
-          if (
-            !Number.isFinite(requiredDstBytes) ||
-            requiredDstBytes <= 0 ||
-            requiredDstBytes > MAX_VGA_FRAME_BYTES ||
-            !Number.isFinite(requiredSrcBytes) ||
-            requiredSrcBytes <= 0 ||
-            requiredSrcBytes > MAX_VGA_FRAME_BYTES
-          ) {
-            return;
-          }
-          let src: Uint8Array | null = null;
-          let transport: "ptr" | "copy" | "none" = "none";
-          if (hasVgaPtr && wasmMemory) {
-            const ptr = machine.vga_framebuffer_ptr?.() ?? 0;
-            const lenBytes = machine.vga_framebuffer_len_bytes?.() ?? 0;
-            if (Number.isSafeInteger(ptr) && Number.isSafeInteger(lenBytes) && ptr > 0 && lenBytes >= 0) {
-              let effectiveStrideBytes = strideBytes;
-              let effectiveRequiredSrcBytes = requiredSrcBytes;
-              // Some builds may report a stride but still expose a tightly-packed framebuffer length.
-              // If the length matches `width*height*4`, treat it as tightly packed to avoid rejecting
-              // the scanout entirely.
-              if (lenBytes < effectiveRequiredSrcBytes && lenBytes === requiredDstBytes) {
-                effectiveStrideBytes = width * 4;
-                effectiveRequiredSrcBytes = requiredDstBytes;
-              }
-              if (lenBytes >= effectiveRequiredSrcBytes) {
-                const buf = wasmMemory.buffer;
-                if (ptr <= buf.byteLength && lenBytes <= buf.byteLength - ptr) {
-                  strideBytes = effectiveStrideBytes;
-                  requiredSrcBytes = effectiveRequiredSrcBytes;
-                  src = new Uint8Array(buf, ptr, requiredSrcBytes);
-                  transport = "ptr";
-                }
-              }
+        const strideFn =
+          kind === "display"
+            ? (machine as unknown as { display_stride_bytes?: () => number }).display_stride_bytes
+            : (machine as unknown as { vga_stride_bytes?: () => number }).vga_stride_bytes;
+        // Some older WASM builds may not expose a stride helper; assume tightly packed RGBA8888.
+        let strideBytes = (typeof strideFn === "function" ? strideFn.call(machine) : width * 4) >>> 0;
+        if (strideBytes < width * 4) return false;
+
+        const requiredDstBytes = width * height * 4;
+        let requiredSrcBytes = strideBytes * height;
+        if (
+          !Number.isFinite(requiredDstBytes) ||
+          requiredDstBytes <= 0 ||
+          requiredDstBytes > MAX_FRAME_BYTES ||
+          !Number.isFinite(requiredSrcBytes) ||
+          requiredSrcBytes <= 0 ||
+          requiredSrcBytes > MAX_FRAME_BYTES
+        ) {
+          return false;
+        }
+
+        let src: Uint8Array | null = null;
+        let transport: "ptr" | "copy" | "none" = "none";
+
+        const ptrFn =
+          kind === "display"
+            ? (machine as unknown as { display_framebuffer_ptr?: () => number }).display_framebuffer_ptr
+            : (machine as unknown as { vga_framebuffer_ptr?: () => number }).vga_framebuffer_ptr;
+        const lenFn =
+          kind === "display"
+            ? (machine as unknown as { display_framebuffer_len_bytes?: () => number }).display_framebuffer_len_bytes
+            : (machine as unknown as { vga_framebuffer_len_bytes?: () => number }).vga_framebuffer_len_bytes;
+
+        if (wasmMemory && typeof ptrFn === "function" && typeof lenFn === "function") {
+          const ptr = ptrFn.call(machine) >>> 0;
+          const lenBytes = lenFn.call(machine) >>> 0;
+          if (ptr !== 0) {
+            let effectiveStrideBytes = strideBytes;
+            let effectiveRequiredSrcBytes = requiredSrcBytes;
+            // Some builds may report a stride but still expose a tightly-packed framebuffer length.
+            // If the length matches `width*height*4`, treat it as tightly packed to avoid rejecting
+            // the scanout entirely.
+            if (lenBytes < effectiveRequiredSrcBytes && lenBytes === requiredDstBytes) {
+              effectiveStrideBytes = width * 4;
+              effectiveRequiredSrcBytes = requiredDstBytes;
             }
-          }
-          if (!src && hasVgaCopy) {
-            // Fall back to a JS-owned copy if we cannot access WASM linear memory (or if the ptr/len
-            // fast path fails validation).
-            const copied =
-              machine.vga_framebuffer_copy_rgba8888?.() ?? machine.vga_framebuffer_rgba8888_copy?.() ?? null;
-            if (copied && copied.byteLength) {
-              let effectiveStrideBytes = strideBytes;
-              let effectiveRequiredSrcBytes = requiredSrcBytes;
-              if (copied.byteLength < effectiveRequiredSrcBytes && copied.byteLength === requiredDstBytes) {
-                // Some helpers return tight-packed buffers even if a stride is reported.
-                effectiveStrideBytes = width * 4;
-                effectiveRequiredSrcBytes = requiredDstBytes;
-              }
-              if (copied.byteLength >= effectiveRequiredSrcBytes) {
+            if (lenBytes >= effectiveRequiredSrcBytes) {
+              const buf = wasmMemory.buffer;
+              if (ptr + effectiveRequiredSrcBytes <= buf.byteLength) {
                 strideBytes = effectiveStrideBytes;
                 requiredSrcBytes = effectiveRequiredSrcBytes;
-                src = copied;
-                transport = "copy";
+                src = new Uint8Array(buf, ptr, requiredSrcBytes);
+                transport = "ptr";
               }
             }
           }
-          if (!src) return;
-          testState.transport = transport;
+        }
 
-          if (canvas.width !== width || canvas.height !== height) {
-            canvas.width = width;
-            canvas.height = height;
-          }
+        if (!src) {
+          const copyFn =
+            kind === "display"
+              ? (machine as unknown as { display_framebuffer_copy_rgba8888?: () => Uint8Array }).display_framebuffer_copy_rgba8888
+              : (machine as unknown as { vga_framebuffer_copy_rgba8888?: () => Uint8Array }).vga_framebuffer_copy_rgba8888;
+          const legacyFn =
+            kind === "vga"
+              ? (machine as unknown as { vga_framebuffer_rgba8888_copy?: () => Uint8Array | null }).vga_framebuffer_rgba8888_copy
+              : undefined;
 
-          if (
-            !imageDataBytes ||
-            dstWidth !== width ||
-            dstHeight !== height ||
-            imageDataBytes.byteLength !== requiredDstBytes
-          ) {
-            dstWidth = width;
-            dstHeight = height;
-            imageDataBytes = new Uint8ClampedArray(requiredDstBytes);
-            imageData = new ImageData(imageDataBytes, width, height);
-          }
-          if (!imageData || !imageDataBytes) return;
-
-          // Optional: also publish the scanout into a SharedArrayBuffer-backed framebuffer so
-          // existing shared-framebuffer plumbing can consume it (e.g. GPU-worker harnesses).
-          const shared = ensureSharedVga(width, height, strideBytes);
-          if (shared) {
-            shared.pixelsU8.set(src.subarray(0, requiredSrcBytes));
-            sharedVgaFrameCounter = (sharedVgaFrameCounter + 1) >>> 0;
-            storeHeaderI32(shared.header, HEADER_INDEX_FRAME_COUNTER, sharedVgaFrameCounter);
-            testState.sharedFramesPublished += 1;
-          }
-
-          if (strideBytes === width * 4) {
-            imageDataBytes.set(src.subarray(0, requiredDstBytes));
-          } else {
-            for (let y = 0; y < height; y++) {
-              const srcOff = y * strideBytes;
-              const dstOff = y * width * 4;
-              imageDataBytes.set(src.subarray(srcOff, srcOff + width * 4), dstOff);
+          // Fall back to a JS-owned copy if we cannot access WASM linear memory (or if the ptr/len
+          // fast path fails validation).
+          const copied =
+            typeof copyFn === "function" ? copyFn.call(machine) : typeof legacyFn === "function" ? legacyFn.call(machine) : null;
+          if (copied && copied.byteLength) {
+            let effectiveStrideBytes = strideBytes;
+            let effectiveRequiredSrcBytes = requiredSrcBytes;
+            if (copied.byteLength < effectiveRequiredSrcBytes && copied.byteLength === requiredDstBytes) {
+              // Some helpers return tight-packed buffers even if a stride is reported.
+              effectiveStrideBytes = width * 4;
+              effectiveRequiredSrcBytes = requiredDstBytes;
+            }
+            if (copied.byteLength >= effectiveRequiredSrcBytes) {
+              strideBytes = effectiveStrideBytes;
+              requiredSrcBytes = effectiveRequiredSrcBytes;
+              src = copied;
+              transport = "copy";
             }
           }
+        }
 
-          ctx2.putImageData(imageData, 0, 0);
-          testState.framesPresented += 1;
-          testState.width = width;
-          testState.height = height;
-          testState.strideBytes = strideBytes;
-          const pointerLock = typeof document !== "undefined" && document.pointerLockElement === canvas ? "yes" : "no";
-          vgaInfo.textContent =
-            `vga: ${width}x${height} stride=${strideBytes} ` +
-            `frames=${testState.framesPresented} transport=${testState.transport}` +
-            (testState.sharedFramesPublished ? ` shared=${testState.sharedFramesPublished}` : "") +
-            ` pointerLock=${pointerLock}`;
+        if (!src) return false;
+
+        testState.transport = transport;
+
+        if (canvas.width !== width || canvas.height !== height) {
+          canvas.width = width;
+          canvas.height = height;
+        }
+
+        if (!imageDataBytes || dstWidth !== width || dstHeight !== height || imageDataBytes.byteLength !== requiredDstBytes) {
+          dstWidth = width;
+          dstHeight = height;
+          imageDataBytes = new Uint8ClampedArray(requiredDstBytes);
+          imageData = new ImageData(imageDataBytes, width, height);
+        }
+        if (!imageData || !imageDataBytes) return false;
+
+        // Optional: also publish the scanout into a SharedArrayBuffer-backed framebuffer so
+        // existing shared-framebuffer plumbing can consume it (e.g. GPU-worker harnesses).
+        const shared = ensureSharedVga(width, height, strideBytes);
+        if (shared) {
+          shared.pixelsU8.set(src.subarray(0, requiredSrcBytes));
+          sharedVgaFrameCounter = (sharedVgaFrameCounter + 1) >>> 0;
+          storeHeaderI32(shared.header, HEADER_INDEX_FRAME_COUNTER, sharedVgaFrameCounter);
+          testState.sharedFramesPublished += 1;
+        }
+
+        if (strideBytes === width * 4) {
+          imageDataBytes.set(src.subarray(0, requiredDstBytes));
+        } else {
+          for (let y = 0; y < height; y++) {
+            const srcOff = y * strideBytes;
+            const dstOff = y * width * 4;
+            imageDataBytes.set(src.subarray(srcOff, srcOff + width * 4), dstOff);
+          }
+        }
+
+        ctx2.putImageData(imageData, 0, 0);
+        testState.framesPresented += 1;
+        testState.width = width;
+        testState.height = height;
+        testState.strideBytes = strideBytes;
+        const pointerLock = typeof document !== "undefined" && document.pointerLockElement === canvas ? "yes" : "no";
+        vgaInfo.textContent =
+          `vga: ${width}x${height} stride=${strideBytes} ` +
+          `frames=${testState.framesPresented} transport=${testState.transport} src=${kind}` +
+          (testState.sharedFramesPublished ? ` shared=${testState.sharedFramesPublished}` : "") +
+          ` pointerLock=${pointerLock}`;
+        return true;
+      }
+
+      function presentVgaFrame(): void {
+        if (vgaFailed) return;
+        try {
+          // Prefer unified `display_*` scanout when available; fall back to legacy VGA scanout exports.
+          if (tryPresentScanoutFrame("display")) return;
+          void tryPresentScanoutFrame("vga");
         } catch (err) {
           vgaFailed = true;
           const message = err instanceof Error ? err.message : String(err);
           vgaInfo.textContent = `vga: error (${message})`;
-          setError(`Machine demo VGA present failed: ${message}`);
+          setError(`Machine demo scanout present failed: ${message}`);
         }
       }
 

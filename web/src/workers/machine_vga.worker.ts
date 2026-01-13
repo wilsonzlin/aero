@@ -126,7 +126,7 @@ let copyFrameCounter = 0;
 let lastExitDetail: string | null = null;
 
 // Avoid pathological allocations/copies if a buggy guest or WASM build reports absurd scanout modes.
-const MAX_VGA_FRAME_BYTES = 32 * 1024 * 1024;
+const MAX_FRAME_BYTES = 32 * 1024 * 1024;
 const RUNTIME_RESERVED_BYTES = 128 * 1024 * 1024;
 const WASM_PAGE_BYTES = 64 * 1024;
 
@@ -307,7 +307,7 @@ function ensureSharedFramebuffer(): ReturnType<typeof wrapSharedFramebuffer> | n
   if (typeof Sab === "undefined") return null;
 
   // Allocate an initial SharedArrayBuffer sized for a "modest" SVGA mode, but allow the
-  // framebuffer to grow dynamically (up to `MAX_VGA_FRAME_BYTES`) when the guest switches to a
+  // framebuffer to grow dynamically (up to `MAX_FRAME_BYTES`) when the guest switches to a
   // larger VBE mode.
   //
   // This keeps memory usage reasonable for the typical BIOS/VGA text-mode demo while still
@@ -343,7 +343,7 @@ function publishSharedFrame(width: number, height: number, strideBytes: number, 
   if (!fb) return false;
 
   const requiredBytes = strideBytes * height;
-  if (requiredBytes > MAX_VGA_FRAME_BYTES) return false;
+  if (requiredBytes > MAX_FRAME_BYTES) return false;
 
   if (requiredBytes > fb.pixelsU8.byteLength) {
     const Sab = globalThis.SharedArrayBuffer;
@@ -416,7 +416,7 @@ function publishSharedFrame(width: number, height: number, strideBytes: number, 
 
 function postCopyFrame(width: number, height: number, strideBytes: number, pixels: Uint8Array): void {
   const requiredBytes = strideBytes * height;
-  if (requiredBytes > MAX_VGA_FRAME_BYTES) return;
+  if (requiredBytes > MAX_FRAME_BYTES) return;
   const copy = new Uint8Array(requiredBytes);
   copy.set(pixels.subarray(0, requiredBytes));
   copyFrameCounter = (copyFrameCounter + 1) >>> 0;
@@ -433,34 +433,52 @@ function postCopyFrame(width: number, height: number, strideBytes: number, pixel
   post(msg, [copy.buffer]);
 }
 
-function presentVgaFrame(): void {
+function tryPresentScanoutFrame(kind: "display" | "vga"): boolean {
   const m = machine;
-  if (!m) return;
+  if (!m) return false;
 
-  const presentFn = (m as unknown as { vga_present?: () => void }).vga_present;
-  const widthFn = (m as unknown as { vga_width?: () => number }).vga_width;
-  const heightFn = (m as unknown as { vga_height?: () => number }).vga_height;
-  if (typeof presentFn !== "function" || typeof widthFn !== "function" || typeof heightFn !== "function") return;
+  const presentFn =
+    kind === "display"
+      ? (m as unknown as { display_present?: () => void }).display_present
+      : (m as unknown as { vga_present?: () => void }).vga_present;
+  const widthFn =
+    kind === "display"
+      ? (m as unknown as { display_width?: () => number }).display_width
+      : (m as unknown as { vga_width?: () => number }).vga_width;
+  const heightFn =
+    kind === "display"
+      ? (m as unknown as { display_height?: () => number }).display_height
+      : (m as unknown as { vga_height?: () => number }).vga_height;
+  if (typeof presentFn !== "function" || typeof widthFn !== "function" || typeof heightFn !== "function") return false;
 
-  // Update the WASM-side VGA front buffer.
+  // Update the WASM-side scanout front buffer.
   presentFn.call(m);
 
   const width = widthFn.call(m) >>> 0;
   const height = heightFn.call(m) >>> 0;
-  if (width === 0 || height === 0) return;
+  if (width === 0 || height === 0) return false;
 
-  const strideFn = (m as unknown as { vga_stride_bytes?: () => number }).vga_stride_bytes;
+  const strideFn =
+    kind === "display"
+      ? (m as unknown as { display_stride_bytes?: () => number }).display_stride_bytes
+      : (m as unknown as { vga_stride_bytes?: () => number }).vga_stride_bytes;
   let strideBytes = (typeof strideFn === "function" ? strideFn.call(m) : width * 4) >>> 0;
-  if (strideBytes < width * 4) return;
+  if (strideBytes < width * 4) return false;
 
   const requiredDstBytes = width * height * 4;
   let requiredBytes = strideBytes * height;
-  if (requiredBytes > MAX_VGA_FRAME_BYTES) return;
+  if (requiredBytes > MAX_FRAME_BYTES) return false;
 
   let pixels: Uint8Array | null = null;
   const mem = wasmMemory;
-  const ptrFn = (m as unknown as { vga_framebuffer_ptr?: () => number }).vga_framebuffer_ptr;
-  const lenFn = (m as unknown as { vga_framebuffer_len_bytes?: () => number }).vga_framebuffer_len_bytes;
+  const ptrFn =
+    kind === "display"
+      ? (m as unknown as { display_framebuffer_ptr?: () => number }).display_framebuffer_ptr
+      : (m as unknown as { vga_framebuffer_ptr?: () => number }).vga_framebuffer_ptr;
+  const lenFn =
+    kind === "display"
+      ? (m as unknown as { display_framebuffer_len_bytes?: () => number }).display_framebuffer_len_bytes
+      : (m as unknown as { vga_framebuffer_len_bytes?: () => number }).vga_framebuffer_len_bytes;
   if (mem && typeof ptrFn === "function" && typeof lenFn === "function") {
     const ptr = ptrFn.call(m) >>> 0;
     const len = lenFn.call(m) >>> 0;
@@ -482,8 +500,12 @@ function presentVgaFrame(): void {
   }
 
   if (!pixels) {
-    const copyFn = (m as unknown as { vga_framebuffer_copy_rgba8888?: () => Uint8Array }).vga_framebuffer_copy_rgba8888;
-    const legacyFn = (m as unknown as { vga_framebuffer_rgba8888_copy?: () => Uint8Array | null }).vga_framebuffer_rgba8888_copy;
+    const copyFn =
+      kind === "display"
+        ? (m as unknown as { display_framebuffer_copy_rgba8888?: () => Uint8Array }).display_framebuffer_copy_rgba8888
+        : (m as unknown as { vga_framebuffer_copy_rgba8888?: () => Uint8Array }).vga_framebuffer_copy_rgba8888;
+    const legacyFn =
+      kind === "vga" ? (m as unknown as { vga_framebuffer_rgba8888_copy?: () => Uint8Array | null }).vga_framebuffer_rgba8888_copy : undefined;
     if (typeof copyFn === "function") {
       pixels = copyFn.call(m);
     } else if (typeof legacyFn === "function") {
@@ -495,7 +517,7 @@ function presentVgaFrame(): void {
     strideBytes = width * 4;
     requiredBytes = requiredDstBytes;
   }
-  if (!pixels || pixels.byteLength < requiredBytes) return;
+  if (!pixels || pixels.byteLength < requiredBytes) return false;
 
   if (transport === "shared") {
     const ok = publishSharedFrame(width, height, strideBytes, pixels);
@@ -503,10 +525,18 @@ function presentVgaFrame(): void {
       // Shared transport failed and downgraded to copy mode.
       postCopyFrame(width, height, strideBytes, pixels);
     }
-    return;
+    return true;
   }
 
   postCopyFrame(width, height, strideBytes, pixels);
+  return true;
+}
+
+function presentScanoutFrame(): void {
+  // Prefer the unified display scanout APIs when present, but fall back to the legacy VGA exports
+  // for older WASM builds.
+  if (tryPresentScanoutFrame("display")) return;
+  void tryPresentScanoutFrame("vga");
 }
 
 function tick(): void {
@@ -554,7 +584,7 @@ function tick(): void {
     }
   }
 
-  presentVgaFrame();
+  presentScanoutFrame();
 
   try {
     (exit as unknown as { free?: () => void }).free?.();
@@ -610,7 +640,7 @@ async function start(msg: MachineVgaWorkerStartMessage): Promise<void> {
       height > 0 &&
       Number.isFinite(requiredBytes) &&
       requiredBytes > 0 &&
-      requiredBytes <= MAX_VGA_FRAME_BYTES
+      requiredBytes <= MAX_FRAME_BYTES
     ) {
       diskImage = buildVbeBootSector({ message: bootMessage, width, height });
     } else {

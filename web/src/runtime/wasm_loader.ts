@@ -845,6 +845,38 @@ export interface WasmApi {
         serial_output_len?(): number;
 
         /**
+          * Unified display scanout (boot display + WDDM / modern scanout).
+          *
+          * Prefer these APIs over the legacy {@link vga_present} exports when available.
+          *
+          * Call {@link display_present} before reading the framebuffer pointer/length or before sampling
+          * {@link display_width}/{@link display_height} after the guest changes display modes.
+          *
+          * Optional for older WASM builds.
+          */
+         display_present?(): void;
+         /** Current display output width in pixels (0 when the display is not present). */
+         display_width?(): number;
+         /** Current display output height in pixels (0 when the display is not present). */
+         display_height?(): number;
+         /** Byte stride of a single scanline in the returned framebuffer (RGBA8888). */
+         display_stride_bytes?(): number;
+         /**
+          * Pointer (byte offset) into WASM linear memory for the current display front buffer.
+          *
+          * The buffer is RGBA8888 (`width * height * 4` bytes). Pair with {@link display_framebuffer_len_bytes}.
+          */
+         display_framebuffer_ptr?(): number;
+         /** Length in bytes of the current display front buffer (RGBA8888). */
+         display_framebuffer_len_bytes?(): number;
+         /**
+          * Convenience helper: copy the framebuffer bytes into JS (RGBA8888).
+          *
+          * Slower than using {@link display_framebuffer_ptr} + {@link display_framebuffer_len_bytes}.
+          */
+         display_framebuffer_copy_rgba8888?(): Uint8Array;
+
+         /**
          * VGA/SVGA scanout (BIOS text mode + VBE graphics).
          *
          * Call {@link vga_present} before reading the framebuffer pointer/length or before sampling
