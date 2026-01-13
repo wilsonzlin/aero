@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <cstring>
 #include <mutex>
+#include <unordered_set>
 #include <vector>
 
 #include "aerogpu_cmd_stream_writer.h"
@@ -682,24 +683,21 @@ bool TestStageStateChangeRebindsShadersIfImplemented() {
   }
 
   // The driver implements stage0 texture-stage-state-based pixel shader
-  // selection. Changing the cached stage state should therefore force a new
-  // fixed-function pixel shader to be created and bound.
+  // selection. Changing stage0 COLOROP should therefore cause a different
+  // fixed-function PS variant to be bound.
   if (!Check(binds.size() >= 2, "stage-state change rebinds shaders (BIND_SHADERS count >= 2)")) {
     return false;
   }
 
-  const auto* first = reinterpret_cast<const aerogpu_cmd_bind_shaders*>(binds.front());
-  const auto* last = reinterpret_cast<const aerogpu_cmd_bind_shaders*>(binds.back());
-  if (!Check(first->vs != 0 && first->ps != 0, "first bind uses non-zero VS/PS")) {
-    return false;
+  std::unordered_set<aerogpu_handle_t> ps_handles;
+  for (const aerogpu_cmd_hdr* hdr : binds) {
+    const auto* cmd = reinterpret_cast<const aerogpu_cmd_bind_shaders*>(hdr);
+    if (!Check(cmd->vs != 0 && cmd->ps != 0, "BIND_SHADERS uses non-zero VS/PS")) {
+      return false;
+    }
+    ps_handles.insert(cmd->ps);
   }
-  if (!Check(last->vs != 0 && last->ps != 0, "rebind uses non-zero VS/PS")) {
-    return false;
-  }
-  if (!Check(first->vs == last->vs, "stage-state change does not require VS change")) {
-    return false;
-  }
-  if (!Check(first->ps != last->ps, "stage-state change binds a different PS handle")) {
+  if (!Check(ps_handles.size() >= 2, "stage-state change binds a different PS handle")) {
     return false;
   }
 

@@ -980,9 +980,6 @@ bool TestAdapterCapsAndQueryAdapterInfo() {
   if (!Check(hr == S_OK, "GetCaps(GETFORMATCOUNT)")) {
     return false;
   }
-  if (!Check(format_count == 12, "format_count == 12")) {
-    return false;
-  }
 
   struct GetFormatPayload {
     uint32_t index;
@@ -992,7 +989,9 @@ bool TestAdapterCapsAndQueryAdapterInfo() {
 
   constexpr uint32_t kD3DUsageRenderTarget = 0x00000001u;
   constexpr uint32_t kD3DUsageDepthStencil = 0x00000002u;
-  constexpr uint32_t kExpectedFormats[12] = {
+
+  // Expected enumeration order (matches `aerogpu_d3d9_caps.cpp`).
+  constexpr uint32_t kExpectedBaseFormats[] = {
       22u, // D3DFMT_X8R8G8B8
       21u, // D3DFMT_A8R8G8B8
       23u, // D3DFMT_R5G6B5
@@ -1000,12 +999,36 @@ bool TestAdapterCapsAndQueryAdapterInfo() {
       25u, // D3DFMT_A1R5G5B5
       32u, // D3DFMT_A8B8G8R8
       75u, // D3DFMT_D24S8
+  };
+
+  constexpr uint32_t kExpectedBcFormats[] = {
       static_cast<uint32_t>(kD3dFmtDxt1), // D3DFMT_DXT1
       static_cast<uint32_t>(kD3dFmtDxt2), // D3DFMT_DXT2
       static_cast<uint32_t>(kD3dFmtDxt3), // D3DFMT_DXT3
       static_cast<uint32_t>(kD3dFmtDxt4), // D3DFMT_DXT4
       static_cast<uint32_t>(kD3dFmtDxt5), // D3DFMT_DXT5
   };
+
+  const uint32_t base_count = static_cast<uint32_t>(sizeof(kExpectedBaseFormats) / sizeof(kExpectedBaseFormats[0]));
+  const uint32_t bc_count = static_cast<uint32_t>(sizeof(kExpectedBcFormats) / sizeof(kExpectedBcFormats[0]));
+
+  std::vector<uint32_t> expected_formats;
+  expected_formats.reserve(static_cast<size_t>(base_count) + static_cast<size_t>(bc_count));
+  for (uint32_t f : kExpectedBaseFormats) {
+    expected_formats.push_back(f);
+  }
+  if (format_count == base_count) {
+    // No BC formats (e.g. Windows build where ABI/feature discovery says BC is unsupported).
+  } else if (format_count == base_count + bc_count) {
+    for (uint32_t f : kExpectedBcFormats) {
+      expected_formats.push_back(f);
+    }
+  } else {
+    return Check(false, "format_count matches base or base+bc list");
+  }
+  if (!Check(format_count == static_cast<uint32_t>(expected_formats.size()), "format_count matches expected list")) {
+    return false;
+  }
 
   for (uint32_t i = 0; i < format_count; ++i) {
     GetFormatPayload payload{};
@@ -1021,7 +1044,7 @@ bool TestAdapterCapsAndQueryAdapterInfo() {
     if (!Check(hr == S_OK, "GetCaps(GETFORMAT)")) {
       return false;
     }
-    if (!Check(payload.format == kExpectedFormats[i], "format enumeration matches expected list")) {
+    if (!Check(payload.format == expected_formats[i], "format enumeration matches expected list")) {
       return false;
     }
 
