@@ -77,7 +77,11 @@ impl std::error::Error for PcmError {}
 fn ensure_capacity_and_len(out: &mut Vec<f32>, len: usize) {
     out.clear();
     if out.capacity() < len {
-        out.reserve(len - out.capacity());
+        // NOTE: `Vec::reserve` takes an "additional" count relative to the current length,
+        // not a delta to the current capacity. Since we `clear()` above, `len` is always
+        // the correct additional amount needed to ensure `capacity >= len` before the
+        // `set_len` below.
+        out.reserve(len);
     }
     // SAFETY: we fully initialise all elements below.
     unsafe {
@@ -252,6 +256,19 @@ mod tests {
         assert!((out[0] - (-1.0)).abs() < 1e-6);
         assert!((out[1] - 0.0).abs() < 1e-6);
         assert!((out[2] - 0.999_969_5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn decode_grows_output_vec_safely_when_capacity_is_small() {
+        // Two 16-bit samples: 0, 32767.
+        let input = [0x00, 0x00, 0xFF, 0x7F];
+        // Start with a nonzero capacity that is *smaller* than the required output length.
+        // This exercises the `reserve` logic used by the reuse-oriented decoder.
+        let mut out = Vec::with_capacity(1);
+        decode_interleaved_to_f32(&input, PcmSampleFormat::I16, 1, &mut out).unwrap();
+        assert_eq!(out.len(), 2);
+        assert!((out[0] - 0.0).abs() < 1e-6);
+        assert!((out[1] - 0.999_969_5).abs() < 1e-6);
     }
 
     #[test]
