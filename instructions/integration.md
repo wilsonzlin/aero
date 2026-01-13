@@ -48,6 +48,7 @@ Older docs may still read like “bring your own BIOS binary” or like the mach
 **Must read:**
 
 - [`docs/09-bios-firmware.md`](../docs/09-bios-firmware.md) — BIOS and ACPI
+- [`docs/09b-eltorito-cd-boot.md`](../docs/09b-eltorito-cd-boot.md) — El Torito CD boot + INT 13h extensions (Win7 install media)
 - [`docs/01-architecture-overview.md`](../docs/01-architecture-overview.md) — System architecture
 - [`docs/16-snapshots.md`](../docs/16-snapshots.md) — Snapshot format
 - [`docs/05-storage-topology-win7.md`](../docs/05-storage-topology-win7.md) — Canonical Windows 7 storage topology (stable PCI BDFs + media attachment mapping + IRQ routing)
