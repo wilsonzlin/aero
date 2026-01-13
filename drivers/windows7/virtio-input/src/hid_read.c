@@ -205,7 +205,8 @@ static NTSTATUS VirtioInputFillPreparedReadRequest(
 
 static BOOLEAN VirtioInputIsValidReportId(_In_ UCHAR ReportId)
 {
-    return (ReportId == VIRTIO_INPUT_REPORT_ID_KEYBOARD) || (ReportId == VIRTIO_INPUT_REPORT_ID_MOUSE);
+    return (ReportId == VIRTIO_INPUT_REPORT_ID_KEYBOARD) || (ReportId == VIRTIO_INPUT_REPORT_ID_MOUSE) ||
+           (ReportId == VIRTIO_INPUT_REPORT_ID_CONSUMER);
 }
 
 static UCHAR VirtioInputDetermineReadQueueReportId(
@@ -250,6 +251,9 @@ static UCHAR VirtioInputDetermineReadQueueReportId(
         if (fileCtx->HasCollectionEa) {
             if (reportLenHint == VIRTIO_INPUT_KBD_INPUT_REPORT_SIZE) {
                 return VIRTIO_INPUT_REPORT_ID_KEYBOARD;
+            }
+            if (reportLenHint == VIRTIO_INPUT_CONSUMER_INPUT_REPORT_SIZE) {
+                return VIRTIO_INPUT_REPORT_ID_CONSUMER;
             }
             if (reportLenHint == VIRTIO_INPUT_MOUSE_INPUT_REPORT_SIZE) {
                 return VIRTIO_INPUT_REPORT_ID_MOUSE;
@@ -450,7 +454,9 @@ NTSTATUS VirtioInputReportArrived(
     devCtx = VirtioInputGetDeviceContext(Device);
 
     if (devCtx->DeviceKind == VioInputDeviceKindKeyboard && ReportId != VIRTIO_INPUT_REPORT_ID_KEYBOARD) {
-        return STATUS_NOT_SUPPORTED;
+        if (ReportId != VIRTIO_INPUT_REPORT_ID_CONSUMER) {
+            return STATUS_NOT_SUPPORTED;
+        }
     }
     if (devCtx->DeviceKind == VioInputDeviceKindMouse && ReportId != VIRTIO_INPUT_REPORT_ID_MOUSE) {
         return STATUS_NOT_SUPPORTED;
@@ -513,6 +519,8 @@ NTSTATUS VirtioInputHandleHidReadReport(_In_ WDFQUEUE Queue, _In_ WDFREQUEST Req
         WdfSpinLockAcquire(devCtx->ReadReportLock);
         if (devCtx->PendingReportRing[VIRTIO_INPUT_REPORT_ID_KEYBOARD].count != 0) {
             haveReport = VirtioInputPendingRingPop(&devCtx->PendingReportRing[VIRTIO_INPUT_REPORT_ID_KEYBOARD], &report);
+        } else if (devCtx->PendingReportRing[VIRTIO_INPUT_REPORT_ID_CONSUMER].count != 0) {
+            haveReport = VirtioInputPendingRingPop(&devCtx->PendingReportRing[VIRTIO_INPUT_REPORT_ID_CONSUMER], &report);
         } else if (devCtx->PendingReportRing[VIRTIO_INPUT_REPORT_ID_MOUSE].count != 0) {
             haveReport = VirtioInputPendingRingPop(&devCtx->PendingReportRing[VIRTIO_INPUT_REPORT_ID_MOUSE], &report);
         }
@@ -557,6 +565,7 @@ NTSTATUS VirtioInputHandleHidReadReport(_In_ WDFQUEUE Queue, _In_ WDFREQUEST Req
         WdfWaitLockRelease(devCtx->ReadReportWaitLock);
 
         VirtioInputDrainReadRequestsForReportId(device, VIRTIO_INPUT_REPORT_ID_KEYBOARD);
+        VirtioInputDrainReadRequestsForReportId(device, VIRTIO_INPUT_REPORT_ID_CONSUMER);
         VirtioInputDrainReadRequestsForReportId(device, VIRTIO_INPUT_REPORT_ID_MOUSE);
         return STATUS_SUCCESS;
     }

@@ -4,6 +4,7 @@ const UCHAR VirtioInputKeyboardReportDescriptor[] = {
     //
     // Report ID 1: Keyboard (8 modifier bits + reserved + 6-key array)
     // Report ID 1: Keyboard LEDs (output)
+    // Report ID 3: Consumer Control (media keys)
     //
     0x05, 0x01,        // Usage Page (Generic Desktop)
     0x09, 0x06,        // Usage (Keyboard)
@@ -37,6 +38,30 @@ const UCHAR VirtioInputKeyboardReportDescriptor[] = {
     0x95, 0x01,        //   Report Count (1)
     0x75, 0x03,        //   Report Size (3)
     0x91, 0x01,        //   Output (Const,Array,Abs) ; Padding
+    0xC0,              // End Collection
+
+    //
+    // Report ID 3: Consumer Control (media keys)
+    //
+    0x05, 0x0C,        // Usage Page (Consumer)
+    0x09, 0x01,        // Usage (Consumer Control)
+    0xA1, 0x01,        // Collection (Application)
+    0x85, 0x03,        //   Report ID (3)
+    0x15, 0x00,        //   Logical Minimum (0)
+    0x25, 0x01,        //   Logical Maximum (1)
+    0x75, 0x01,        //   Report Size (1)
+    0x95, 0x07,        //   Report Count (7)
+    0x09, 0xE2,        //   Usage (Mute)
+    0x09, 0xEA,        //   Usage (Volume Decrement)
+    0x09, 0xE9,        //   Usage (Volume Increment)
+    0x09, 0xCD,        //   Usage (Play/Pause)
+    0x09, 0xB5,        //   Usage (Scan Next Track)
+    0x09, 0xB6,        //   Usage (Scan Previous Track)
+    0x09, 0xB7,        //   Usage (Stop)
+    0x81, 0x02,        //   Input (Data,Var,Abs)
+    0x95, 0x01,        //   Report Count (1)
+    0x75, 0x01,        //   Report Size (1)
+    0x81, 0x01,        //   Input (Const,Array,Abs) ; Padding
     0xC0,              // End Collection
 };
 

@@ -354,6 +354,80 @@ static void hid_translate_handle_keyboard_key(struct hid_translate *t, uint16_t 
 }
 
 /* -------------------------------------------------------------------------- */
+/* Consumer Control (media keys) handling                                     */
+/* -------------------------------------------------------------------------- */
+
+enum {
+  HID_TRANSLATE_CONSUMER_BIT_MUTE = 1u << 0,
+  HID_TRANSLATE_CONSUMER_BIT_VOLUME_DOWN = 1u << 1,
+  HID_TRANSLATE_CONSUMER_BIT_VOLUME_UP = 1u << 2,
+  HID_TRANSLATE_CONSUMER_BIT_PLAY_PAUSE = 1u << 3,
+  HID_TRANSLATE_CONSUMER_BIT_NEXT_TRACK = 1u << 4,
+  HID_TRANSLATE_CONSUMER_BIT_PREV_TRACK = 1u << 5,
+  HID_TRANSLATE_CONSUMER_BIT_STOP = 1u << 6,
+};
+
+static uint8_t hid_translate_linux_key_to_consumer_bit(uint16_t linux_key_code) {
+  switch (linux_key_code) {
+  case VIRTIO_INPUT_KEY_MUTE:
+    return HID_TRANSLATE_CONSUMER_BIT_MUTE;
+  case VIRTIO_INPUT_KEY_VOLUMEDOWN:
+    return HID_TRANSLATE_CONSUMER_BIT_VOLUME_DOWN;
+  case VIRTIO_INPUT_KEY_VOLUMEUP:
+    return HID_TRANSLATE_CONSUMER_BIT_VOLUME_UP;
+  case VIRTIO_INPUT_KEY_PLAYPAUSE:
+    return HID_TRANSLATE_CONSUMER_BIT_PLAY_PAUSE;
+  case VIRTIO_INPUT_KEY_NEXTSONG:
+    return HID_TRANSLATE_CONSUMER_BIT_NEXT_TRACK;
+  case VIRTIO_INPUT_KEY_PREVIOUSSONG:
+    return HID_TRANSLATE_CONSUMER_BIT_PREV_TRACK;
+  case VIRTIO_INPUT_KEY_STOPCD:
+    return HID_TRANSLATE_CONSUMER_BIT_STOP;
+  default:
+    return 0;
+  }
+}
+
+static void hid_translate_emit_consumer_report(struct hid_translate *t) {
+  if ((t->enabled_reports & HID_TRANSLATE_REPORT_MASK_CONSUMER) == 0) {
+    t->consumer_dirty = false;
+    return;
+  }
+
+  uint8_t report[HID_TRANSLATE_CONSUMER_REPORT_SIZE];
+  report[0] = HID_TRANSLATE_REPORT_ID_CONSUMER;
+  report[1] = t->consumer_bits;
+
+  if (t->emit_report) {
+    t->emit_report(t->emit_report_context, report, sizeof(report));
+  }
+  t->consumer_dirty = false;
+}
+
+static bool hid_translate_handle_consumer_key(struct hid_translate *t, uint16_t linux_key_code, uint32_t value) {
+  uint8_t bit = hid_translate_linux_key_to_consumer_bit(linux_key_code);
+  if (bit == 0) {
+    return false;
+  }
+
+  bool pressed = (value != 0);
+
+  uint8_t new_bits = t->consumer_bits;
+  if (pressed) {
+    new_bits |= bit;
+  } else {
+    new_bits &= (uint8_t)~bit;
+  }
+
+  if (new_bits != t->consumer_bits) {
+    t->consumer_bits = new_bits;
+    t->consumer_dirty = true;
+  }
+
+  return true;
+}
+
+/* -------------------------------------------------------------------------- */
 /* Mouse handling                                                             */
 /* -------------------------------------------------------------------------- */
 
@@ -459,6 +533,9 @@ void hid_translate_reset(struct hid_translate *t, bool emit_reports) {
   t->keyboard_pressed_len = 0;
   t->keyboard_dirty = false;
 
+  t->consumer_bits = 0;
+  t->consumer_dirty = false;
+
   t->mouse_buttons = 0;
   t->mouse_rel_x = 0;
   t->mouse_rel_y = 0;
@@ -472,6 +549,9 @@ void hid_translate_reset(struct hid_translate *t, bool emit_reports) {
   /* Emit all-zero reports to release any latched state in the HID stacks. */
   if ((t->enabled_reports & HID_TRANSLATE_REPORT_MASK_KEYBOARD) != 0) {
     hid_translate_emit_keyboard_report(t);
+  }
+  if ((t->enabled_reports & HID_TRANSLATE_REPORT_MASK_CONSUMER) != 0) {
+    hid_translate_emit_consumer_report(t);
   }
   if ((t->enabled_reports & HID_TRANSLATE_REPORT_MASK_MOUSE) != 0) {
     t->mouse_dirty = true;
@@ -534,7 +614,9 @@ void hid_translate_handle_event(struct hid_translate *t, const struct virtio_inp
       }
       break;
     default:
-      hid_translate_handle_keyboard_key(t, ev->code, ev->value);
+      if (!hid_translate_handle_consumer_key(t, ev->code, ev->value)) {
+        hid_translate_handle_keyboard_key(t, ev->code, ev->value);
+      }
       break;
     }
     break;
@@ -565,6 +647,9 @@ void hid_translate_handle_event(struct hid_translate *t, const struct virtio_inp
     if (ev->code == VIRTIO_INPUT_SYN_REPORT) {
       if (t->keyboard_dirty) {
         hid_translate_emit_keyboard_report(t);
+      }
+      if (t->consumer_dirty) {
+        hid_translate_emit_consumer_report(t);
       }
       hid_translate_emit_mouse_reports(t);
     }

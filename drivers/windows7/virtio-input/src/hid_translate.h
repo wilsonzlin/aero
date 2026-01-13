@@ -13,6 +13,16 @@
  *       Byte 1: Modifier bitmask (E0..E7 -> bits 0..7)
  *       Byte 2: Reserved (0)
  *       Byte 3..8: Up to 6 concurrent key usages
+ *   - ReportID 3: Consumer Control (media keys)
+ *       Byte 0: ReportID = 0x03
+ *       Byte 1: Bitmask
+ *           bit0: Mute
+ *           bit1: Volume Down
+ *           bit2: Volume Up
+ *           bit3: Play/Pause
+ *           bit4: Next Track
+ *           bit5: Previous Track
+ *           bit6: Stop
  *   - ReportID 2: Mouse
  *       Byte 0: ReportID = 0x02
  *       Byte 1: Buttons bitmask (bit0=Button1/left .. bit7=Button8)
@@ -217,6 +227,9 @@ enum virtio_input_key_code {
   VIRTIO_INPUT_KEY_DELETE = 111,
 
   /* System + GUI. */
+  VIRTIO_INPUT_KEY_MUTE = 113,
+  VIRTIO_INPUT_KEY_VOLUMEDOWN = 114,
+  VIRTIO_INPUT_KEY_VOLUMEUP = 115,
   VIRTIO_INPUT_KEY_KPEQUAL = 117,
   VIRTIO_INPUT_KEY_PAUSE = 119,
   VIRTIO_INPUT_KEY_KPCOMMA = 121,
@@ -224,6 +237,12 @@ enum virtio_input_key_code {
   VIRTIO_INPUT_KEY_LEFTMETA = 125,
   VIRTIO_INPUT_KEY_RIGHTMETA = 126,
   VIRTIO_INPUT_KEY_MENU = 139,
+
+  /* Consumer/media keys. */
+  VIRTIO_INPUT_KEY_NEXTSONG = 163,
+  VIRTIO_INPUT_KEY_PLAYPAUSE = 164,
+  VIRTIO_INPUT_KEY_PREVIOUSSONG = 165,
+  VIRTIO_INPUT_KEY_STOPCD = 166,
 
   /* Mouse buttons (EV_KEY). */
   VIRTIO_INPUT_BTN_LEFT = 272,
@@ -240,6 +259,7 @@ enum virtio_input_key_code {
 enum hid_translate_report_id {
   HID_TRANSLATE_REPORT_ID_KEYBOARD = 0x01,
   HID_TRANSLATE_REPORT_ID_MOUSE = 0x02,
+  HID_TRANSLATE_REPORT_ID_CONSUMER = 0x03,
 };
 
 /*
@@ -256,13 +276,15 @@ enum hid_translate_report_id {
 enum hid_translate_report_mask {
   HID_TRANSLATE_REPORT_MASK_KEYBOARD = 0x01,
   HID_TRANSLATE_REPORT_MASK_MOUSE = 0x02,
-  HID_TRANSLATE_REPORT_MASK_ALL = HID_TRANSLATE_REPORT_MASK_KEYBOARD | HID_TRANSLATE_REPORT_MASK_MOUSE,
+  HID_TRANSLATE_REPORT_MASK_CONSUMER = 0x04,
+  HID_TRANSLATE_REPORT_MASK_ALL = HID_TRANSLATE_REPORT_MASK_KEYBOARD | HID_TRANSLATE_REPORT_MASK_MOUSE | HID_TRANSLATE_REPORT_MASK_CONSUMER,
 };
 
 /* Sizes (bytes) of input reports emitted by the translator. */
 enum hid_translate_report_size {
   HID_TRANSLATE_KEYBOARD_REPORT_SIZE = 9,
   HID_TRANSLATE_MOUSE_REPORT_SIZE = 5,
+  HID_TRANSLATE_CONSUMER_REPORT_SIZE = 2,
 };
 
 /*
@@ -287,6 +309,10 @@ struct hid_translate {
   uint8_t keyboard_pressed[HID_TRANSLATE_MAX_PRESSED_KEYS]; /* HID usages, in press order. */
   uint8_t keyboard_pressed_len;
   bool keyboard_dirty;
+
+  /* Consumer Control (media keys) state. */
+  uint8_t consumer_bits;
+  bool consumer_dirty;
 
   /* Mouse state. */
   uint8_t mouse_buttons; /* HID button bits. */

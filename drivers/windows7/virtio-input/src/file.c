@@ -146,6 +146,13 @@ static VOID VirtioInputEvtDeviceFileCreate(_In_ WDFDEVICE Device, _In_ WDFREQUES
             fileCtx->DefaultReportId = VIRTIO_INPUT_REPORT_ID_ANY;
         }
         break;
+    case 2:
+        if (devCtx->DeviceKind == VioInputDeviceKindKeyboard) {
+            fileCtx->DefaultReportId = VIRTIO_INPUT_REPORT_ID_CONSUMER;
+        } else {
+            fileCtx->DefaultReportId = VIRTIO_INPUT_REPORT_ID_ANY;
+        }
+        break;
     default:
         fileCtx->DefaultReportId = VIRTIO_INPUT_REPORT_ID_ANY;
         break;

@@ -159,6 +159,15 @@ static void test_linux_keycode_abi_values(void) {
   assert(VIRTIO_INPUT_KEY_RIGHTMETA == 126);
   assert(VIRTIO_INPUT_KEY_MENU == 139);
 
+  /* Consumer/media keys. */
+  assert(VIRTIO_INPUT_KEY_MUTE == 113);
+  assert(VIRTIO_INPUT_KEY_VOLUMEDOWN == 114);
+  assert(VIRTIO_INPUT_KEY_VOLUMEUP == 115);
+  assert(VIRTIO_INPUT_KEY_NEXTSONG == 163);
+  assert(VIRTIO_INPUT_KEY_PLAYPAUSE == 164);
+  assert(VIRTIO_INPUT_KEY_PREVIOUSSONG == 165);
+  assert(VIRTIO_INPUT_KEY_STOPCD == 166);
+
   /* Mouse buttons (Linux input-event-codes.h ABI). */
   assert(VIRTIO_INPUT_BTN_LEFT == 272);
   assert(VIRTIO_INPUT_BTN_RIGHT == 273);
@@ -831,6 +840,62 @@ static void test_mouse_reports(void) {
   expect_report(&cap, 1, expect6, sizeof(expect6));
 }
 
+static void test_consumer_control_reports(void) {
+  struct captured_reports cap;
+  struct hid_translate t;
+
+  cap_clear(&cap);
+  hid_translate_init(&t, capture_emit, &cap);
+
+  /* Volume Up */
+  send_key(&t, VIRTIO_INPUT_KEY_VOLUMEUP, 1);
+  send_syn(&t);
+  uint8_t expect1[HID_TRANSLATE_CONSUMER_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_CONSUMER, 0x04};
+  expect_report(&cap, 0, expect1, sizeof(expect1));
+
+  send_key(&t, VIRTIO_INPUT_KEY_VOLUMEUP, 0);
+  send_syn(&t);
+  uint8_t expect2[HID_TRANSLATE_CONSUMER_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_CONSUMER, 0x00};
+  expect_report(&cap, 1, expect2, sizeof(expect2));
+
+  /* Mute + Volume Down together. */
+  send_key(&t, VIRTIO_INPUT_KEY_MUTE, 1);
+  send_key(&t, VIRTIO_INPUT_KEY_VOLUMEDOWN, 1);
+  send_syn(&t);
+  uint8_t expect3[HID_TRANSLATE_CONSUMER_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_CONSUMER, 0x03};
+  expect_report(&cap, 2, expect3, sizeof(expect3));
+
+  /* Release Mute only. */
+  send_key(&t, VIRTIO_INPUT_KEY_MUTE, 0);
+  send_syn(&t);
+  uint8_t expect4[HID_TRANSLATE_CONSUMER_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_CONSUMER, 0x02};
+  expect_report(&cap, 3, expect4, sizeof(expect4));
+
+  /* Release Volume Down. */
+  send_key(&t, VIRTIO_INPUT_KEY_VOLUMEDOWN, 0);
+  send_syn(&t);
+  uint8_t expect5[HID_TRANSLATE_CONSUMER_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_CONSUMER, 0x00};
+  expect_report(&cap, 4, expect5, sizeof(expect5));
+
+  /* Transport controls (Play/Pause, Next, Previous, Stop). */
+  send_key(&t, VIRTIO_INPUT_KEY_PLAYPAUSE, 1);
+  send_key(&t, VIRTIO_INPUT_KEY_NEXTSONG, 1);
+  send_key(&t, VIRTIO_INPUT_KEY_PREVIOUSSONG, 1);
+  send_key(&t, VIRTIO_INPUT_KEY_STOPCD, 1);
+  send_syn(&t);
+  uint8_t expect6[HID_TRANSLATE_CONSUMER_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_CONSUMER, 0x78};
+  expect_report(&cap, 5, expect6, sizeof(expect6));
+
+  /* Release all transport controls. */
+  send_key(&t, VIRTIO_INPUT_KEY_PLAYPAUSE, 0);
+  send_key(&t, VIRTIO_INPUT_KEY_NEXTSONG, 0);
+  send_key(&t, VIRTIO_INPUT_KEY_PREVIOUSSONG, 0);
+  send_key(&t, VIRTIO_INPUT_KEY_STOPCD, 0);
+  send_syn(&t);
+  uint8_t expect7[HID_TRANSLATE_CONSUMER_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_CONSUMER, 0x00};
+  expect_report(&cap, 6, expect7, sizeof(expect7));
+}
+
 static void test_reset_emits_release_reports(void) {
   struct captured_reports cap;
   struct hid_translate t;
@@ -845,12 +910,14 @@ static void test_reset_emits_release_reports(void) {
 
   cap_clear(&cap);
   hid_translate_reset(&t, true);
-  assert(cap.count == 2);
+  assert(cap.count == 3);
 
   uint8_t expect_kb[HID_TRANSLATE_KEYBOARD_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_KEYBOARD, 0, 0, 0, 0, 0, 0, 0, 0};
+  uint8_t expect_cc[HID_TRANSLATE_CONSUMER_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_CONSUMER, 0};
   uint8_t expect_mouse[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0, 0, 0, 0};
   expect_report(&cap, 0, expect_kb, sizeof(expect_kb));
-  expect_report(&cap, 1, expect_mouse, sizeof(expect_mouse));
+  expect_report(&cap, 1, expect_cc, sizeof(expect_cc));
+  expect_report(&cap, 2, expect_mouse, sizeof(expect_mouse));
 }
 
 static void test_keyboard_only_enable(void) {
@@ -931,6 +998,7 @@ int main(void) {
   test_keyboard_overflow_queue_does_not_emit_on_queued_press();
   test_mouse_reports();
   test_mouse_reports_le();
+  test_consumer_control_reports();
   test_reset_emits_release_reports();
   test_keyboard_only_enable();
   test_mouse_only_enable();
