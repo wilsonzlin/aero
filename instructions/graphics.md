@@ -71,6 +71,7 @@ Graphics is what makes Windows 7 "usable." The Aero glass interface, DWM composi
 **Must read:**
 
 - [`docs/04-graphics-subsystem.md`](../docs/04-graphics-subsystem.md) — Graphics architecture overview
+- [`docs/graphics/status.md`](../docs/graphics/status.md) — Single source of truth for “what works today” vs Win7 UX gaps
 - [`docs/16-d3d9ex-dwm-compatibility.md`](../docs/16-d3d9ex-dwm-compatibility.md) — D3D9Ex for DWM/Aero
 - [`docs/16-d3d10-11-translation.md`](../docs/16-d3d10-11-translation.md) — D3D10/11 details
 - [`docs/16-aerogpu-vga-vesa-compat.md`](../docs/16-aerogpu-vga-vesa-compat.md) — VGA/VBE boot compatibility

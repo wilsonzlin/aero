@@ -2,6 +2,10 @@
 
 This directory contains “graphics stack” implementation notes and bring-up checklists for the AeroGPU project, mostly focused on Windows 7 (WDDM 1.1) and DirectX translation.
 
+## Current status (single source of truth)
+
+- [`status.md`](./status.md) — implemented vs missing checklist for the Windows 7 user experience
+
 ## Windows 7 / AeroGPU driver stack
 
 - `aerogpu-protocols.md` — overview of the different “AeroGPU” ABIs in-tree and which one is the Win7/WDDM target.

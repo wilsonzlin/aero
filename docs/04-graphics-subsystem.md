@@ -4,6 +4,10 @@
 
 The graphics subsystem is one of the most challenging components. Windows 7 uses DirectX 9, 10, and 11 for rendering, plus the legacy VGA/SVGA stack for boot. We must translate all of these to WebGPU.
 
+For the current “what works today vs what’s missing for Win7 usability” checklist, see:
+
+- [`docs/graphics/status.md`](./graphics/status.md)
+
 ## Current status (reality check)
 
 This repository already contains substantial, *implemented* graphics infrastructure. The rest of this document mixes architecture discussion with historical sketches; treat any code blocks in this file as **illustrative pseudo-code unless they explicitly reference a real path in-tree**.
