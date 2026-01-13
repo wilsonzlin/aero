@@ -7,7 +7,7 @@ use aero_storage_server::{
 };
 use axum::{
     body::Body,
-    http::{header, Request, StatusCode},
+    http::{header, Method, Request, StatusCode},
 };
 use http_body_util::BodyExt;
 use std::sync::Arc;
@@ -392,6 +392,104 @@ async fn versioned_chunked_endpoints_have_expected_headers() {
 
     let body = resp.into_body().collect().await.unwrap().to_bytes();
     assert_eq!(&body[..], b"hi");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn chunked_options_preflight_includes_cors_and_corp_headers() {
+    let (app, _dir, _manifest) = setup_app(None).await;
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method(Method::OPTIONS)
+                .uri("/v1/images/disk/chunked/manifest.json")
+                .header(header::ORIGIN, "https://example.com")
+                .header(header::ACCESS_CONTROL_REQUEST_METHOD, "GET")
+                .header(header::ACCESS_CONTROL_REQUEST_HEADERS, "authorization")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+    assert_eq!(
+        resp.headers()["access-control-allow-origin"]
+            .to_str()
+            .unwrap(),
+        "*"
+    );
+    assert_eq!(
+        resp.headers()["access-control-allow-methods"]
+            .to_str()
+            .unwrap(),
+        "GET, HEAD, OPTIONS"
+    );
+    assert_eq!(
+        resp.headers()["access-control-allow-headers"]
+            .to_str()
+            .unwrap(),
+        "Range, If-Range, If-None-Match, If-Modified-Since, Authorization, Content-Type"
+    );
+    assert_eq!(
+        resp.headers()["access-control-max-age"].to_str().unwrap(),
+        "86400"
+    );
+    assert_eq!(
+        resp.headers()["cross-origin-resource-policy"]
+            .to_str()
+            .unwrap(),
+        "same-site"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn versioned_chunked_options_preflight_includes_cors_and_corp_headers() {
+    let (app, _dir, _manifest) = setup_app(None).await;
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method(Method::OPTIONS)
+                .uri("/v1/images/disk/chunked/v1/manifest.json")
+                .header(header::ORIGIN, "https://example.com")
+                .header(header::ACCESS_CONTROL_REQUEST_METHOD, "GET")
+                .header(header::ACCESS_CONTROL_REQUEST_HEADERS, "authorization")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+    assert_eq!(
+        resp.headers()["access-control-allow-origin"]
+            .to_str()
+            .unwrap(),
+        "*"
+    );
+    assert_eq!(
+        resp.headers()["access-control-allow-methods"]
+            .to_str()
+            .unwrap(),
+        "GET, HEAD, OPTIONS"
+    );
+    assert_eq!(
+        resp.headers()["access-control-allow-headers"]
+            .to_str()
+            .unwrap(),
+        "Range, If-Range, If-None-Match, If-Modified-Since, Authorization, Content-Type"
+    );
+    assert_eq!(
+        resp.headers()["access-control-max-age"].to_str().unwrap(),
+        "86400"
+    );
+    assert_eq!(
+        resp.headers()["cross-origin-resource-policy"]
+            .to_str()
+            .unwrap(),
+        "same-site"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
