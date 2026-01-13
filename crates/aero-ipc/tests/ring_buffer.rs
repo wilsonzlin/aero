@@ -173,3 +173,20 @@ fn ring_buffer_rejects_too_large_record() {
     assert_eq!(rb.try_push(&payload), Err(PushError::TooLarge));
     assert!(record_size(payload_len) > rb.capacity_bytes());
 }
+
+#[test]
+fn ring_buffer_try_pop_capped_drops_oversize_without_allocating_payload_len() {
+    // Ensure we can enqueue an oversize record, then a valid one, and the capped pop advances past
+    // the oversize record without wedging the queue.
+    let rb = RingBuffer::new(64);
+
+    rb.try_push(&vec![0xaa; 10]).unwrap();
+    rb.try_push(&[0x42]).unwrap();
+
+    assert_eq!(
+        rb.try_pop_capped(1),
+        Err(PopError::TooLarge { len: 10, max: 1 })
+    );
+    assert_eq!(rb.try_pop_capped(1), Ok(vec![0x42]));
+    assert_eq!(rb.try_pop_capped(1), Err(PopError::Empty));
+}
