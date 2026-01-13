@@ -9,8 +9,8 @@ use crate::signature::{DxbcSignature, DxbcSignatureParameter, ShaderSignatures};
 use crate::sm4::opcode::opcode_name;
 use crate::sm4::ShaderStage;
 use crate::sm4_ir::{
-    BufferKind, OperandModifier, RegFile, RegisterRef, Sm4Decl, Sm4Inst, Sm4Module, SrcKind, Swizzle,
-    WriteMask,
+    BufferKind, CmpOp, CmpType, OperandModifier, RegFile, RegisterRef, Sm4Decl, Sm4Inst, Sm4Module,
+    SrcKind, Swizzle, WriteMask,
 };
 use crate::DxbcFile;
 use aero_dxbc::RdefChunk;
@@ -1011,6 +1011,10 @@ fn scan_used_input_registers(module: &Sm4Module) -> BTreeSet<u32> {
             | Sm4Inst::FirstbitShi { dst: _, src }
             | Sm4Inst::INeg { dst: _, src } => {
                 scan_src_regs(src, &mut scan_reg)
+            }
+            Sm4Inst::Cmp { a, b, .. } => {
+                scan_src_regs(a, &mut scan_reg);
+                scan_src_regs(b, &mut scan_reg);
             }
             Sm4Inst::Sample {
                 dst: _,
@@ -2113,7 +2117,8 @@ fn scan_resources(
                 dst_rem: _,
                 a,
                 b,
-            } => {
+            }
+            | Sm4Inst::Cmp { dst: _, a, b, .. } => {
                 scan_src(a)?;
                 scan_src(b)?;
             }
@@ -2474,7 +2479,8 @@ fn emit_temp_and_output_decls(
             | Sm4Inst::IMin { dst, a, b }
             | Sm4Inst::IMax { dst, a, b }
             | Sm4Inst::UMin { dst, a, b }
-            | Sm4Inst::UMax { dst, a, b } => {
+            | Sm4Inst::UMax { dst, a, b }
+            | Sm4Inst::Cmp { dst, a, b, .. } => {
                 scan_reg(dst.reg);
                 scan_src_regs(a, &mut scan_reg);
                 scan_src_regs(b, &mut scan_reg);
@@ -3360,6 +3366,32 @@ fn emit_instructions(
                     out[0], out[1], out[2], out[3]
                 );
                 emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "ibfe", ctx)?;
+            }
+            Sm4Inst::Cmp { dst, a, b, op, ty } => {
+                let (a, b) = match ty {
+                    CmpType::I32 => (
+                        emit_src_vec4_i32(a, inst_index, "cmp", ctx)?,
+                        emit_src_vec4_i32(b, inst_index, "cmp", ctx)?,
+                    ),
+                    CmpType::U32 => (
+                        emit_src_vec4_u32(a, inst_index, "cmp", ctx)?,
+                        emit_src_vec4_u32(b, inst_index, "cmp", ctx)?,
+                    ),
+                };
+
+                let cmp = match op {
+                    CmpOp::Eq => format!("({a}) == ({b})"),
+                    CmpOp::Ne => format!("({a}) != ({b})"),
+                    CmpOp::Lt => format!("({a}) < ({b})"),
+                    CmpOp::Le => format!("({a}) <= ({b})"),
+                    CmpOp::Gt => format!("({a}) > ({b})"),
+                    CmpOp::Ge => format!("({a}) >= ({b})"),
+                };
+
+                // Convert the bool vector result into D3D-style predicate mask bits.
+                let mask = format!("select(vec4<u32>(0u), vec4<u32>(0xffffffffu), {cmp})");
+                let expr = format!("bitcast<vec4<f32>>({mask})");
+                emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "cmp", ctx)?;
             }
             Sm4Inst::Bfrev { dst, src } => {
                 let src_u = emit_src_vec4_u32(src, inst_index, "bfrev", ctx)?;

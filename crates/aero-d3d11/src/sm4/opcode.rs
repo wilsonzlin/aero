@@ -66,6 +66,17 @@ pub const OPCODE_UBFE: u32 = 0x68;
 /// `ibfe` (signed bitfield extract).
 pub const OPCODE_IBFE: u32 = 0x69;
 
+// ---- Integer comparison opcodes (SM4/SM5) ----
+//
+// These produce a per-component predicate mask: 0xffffffff for true, 0x00000000 for false.
+// The numeric values match `D3D10_SB_OPCODE_*` from `d3d11tokenizedprogramformat.h`.
+pub const OPCODE_IEQ: u32 = 0x20;
+pub const OPCODE_IGE: u32 = 0x21;
+pub const OPCODE_ILT: u32 = 0x22;
+pub const OPCODE_INE: u32 = 0x27;
+pub const OPCODE_ULT: u32 = 0x4f;
+pub const OPCODE_UGE: u32 = 0x50;
+
 /// Non-executable custom data / comment block.
 ///
 /// Used for embedded comments, debug data, and immediate constant buffers.

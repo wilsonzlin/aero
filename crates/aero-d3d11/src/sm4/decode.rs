@@ -2,8 +2,9 @@ use core::fmt;
 use std::collections::BTreeMap;
 
 use crate::sm4_ir::{
-    BufferKind, BufferRef, DstOperand, OperandModifier, RegFile, RegisterRef, SamplerRef, Sm4Decl,
-    Sm4Inst, Sm4Module, Sm4TestBool, SrcKind, SrcOperand, Swizzle, TextureRef, UavRef, WriteMask,
+    BufferKind, BufferRef, CmpOp, CmpType, DstOperand, OperandModifier, RegFile, RegisterRef,
+    SamplerRef, Sm4Decl, Sm4Inst, Sm4Module, Sm4TestBool, SrcKind, SrcOperand, Swizzle, TextureRef,
+    UavRef, WriteMask,
 };
 
 use super::opcode::*;
@@ -893,6 +894,25 @@ pub fn decode_instruction(
                 offset,
                 src,
             })
+        }
+        OPCODE_IEQ | OPCODE_INE | OPCODE_ILT | OPCODE_IGE | OPCODE_ULT | OPCODE_UGE => {
+            let mut dst = decode_dst(&mut r)?;
+            dst.saturate = saturate;
+            let a = decode_src(&mut r)?;
+            let b = decode_src(&mut r)?;
+            r.expect_eof()?;
+
+            let (op, ty) = match opcode {
+                OPCODE_IEQ => (CmpOp::Eq, CmpType::I32),
+                OPCODE_INE => (CmpOp::Ne, CmpType::I32),
+                OPCODE_ILT => (CmpOp::Lt, CmpType::I32),
+                OPCODE_IGE => (CmpOp::Ge, CmpType::I32),
+                OPCODE_ULT => (CmpOp::Lt, CmpType::U32),
+                OPCODE_UGE => (CmpOp::Ge, CmpType::U32),
+                _ => unreachable!("opcode match ensures exhaustive"),
+            };
+
+            Ok(Sm4Inst::Cmp { dst, a, b, op, ty })
         }
         OPCODE_SWITCH => {
             let selector = decode_src(&mut r)?;

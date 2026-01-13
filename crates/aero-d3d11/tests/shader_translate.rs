@@ -3,7 +3,8 @@ use aero_d3d11::binding_model::{
     D3D11_MAX_CONSTANT_BUFFER_SLOTS, MAX_SAMPLER_SLOTS, MAX_TEXTURE_SLOTS,
 };
 use aero_d3d11::{
-    parse_signatures, translate_sm4_module_to_wgsl, BindingKind, BufferKind, Builtin, DxbcFile,
+    parse_signatures, translate_sm4_module_to_wgsl, BindingKind, BufferKind, Builtin, CmpOp,
+    CmpType, DxbcFile,
     DxbcSignatureParameter, FourCC, OperandModifier, RegFile, RegisterRef, SamplerRef, ShaderModel,
     ShaderStage, ShaderTranslateError, Sm4Decl, Sm4Inst, Sm4Module, Sm4TestBool, SrcKind,
     SrcOperand, Swizzle, TextureRef, UavRef, WriteMask,
@@ -2367,6 +2368,74 @@ fn translates_bfi_to_insert_bits() {
     assert!(
         translated.wgsl.contains("insertBits"),
         "expected bfi translation to use WGSL insertBits:\n{}",
+        translated.wgsl
+    );
+}
+
+#[test]
+fn translates_unsigned_integer_compare_to_predicate_mask() {
+    let osgn_params = vec![sig_param("SV_Target", 0, 0, 0b1111)];
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, Vec::new()),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (FOURCC_OSGN, build_signature_chunk(&osgn_params)),
+    ]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    // Compare raw integer bits: 1u < 2u.
+    let imm_u32 = |v: u32| SrcOperand {
+        kind: SrcKind::ImmediateF32([v; 4]),
+        swizzle: Swizzle::XYZW,
+        modifier: OperandModifier::None,
+    };
+
+    let module = Sm4Module {
+        stage: ShaderStage::Pixel,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: Vec::new(),
+        instructions: vec![
+            Sm4Inst::Mov {
+                dst: dst(RegFile::Temp, 0, WriteMask::XYZW),
+                src: imm_u32(1),
+            },
+            Sm4Inst::Mov {
+                dst: dst(RegFile::Temp, 1, WriteMask::XYZW),
+                src: imm_u32(2),
+            },
+            Sm4Inst::Cmp {
+                dst: dst(RegFile::Temp, 2, WriteMask::XYZW),
+                a: src_reg(RegFile::Temp, 0),
+                b: src_reg(RegFile::Temp, 1),
+                op: CmpOp::Lt,
+                ty: CmpType::U32,
+            },
+            Sm4Inst::Mov {
+                dst: dst(RegFile::Output, 0, WriteMask::XYZW),
+                src: src_reg(RegFile::Temp, 2),
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+
+    assert!(
+        translated.wgsl.contains("bitcast<vec4<u32>>"),
+        "expected compare operands to be interpreted as u32 via bitcast:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated
+            .wgsl
+            .contains("select(vec4<u32>(0u), vec4<u32>(0xffffffffu)"),
+        "expected bool->mask conversion in WGSL:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated.wgsl.contains("bitcast<vec4<f32>>"),
+        "expected predicate mask stored as vec4<f32> bitcast:\n{}",
         translated.wgsl
     );
 }

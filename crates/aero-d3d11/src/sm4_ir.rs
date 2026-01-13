@@ -356,6 +356,18 @@ pub enum Sm4Inst {
         offset: SrcOperand,
         src: SrcOperand,
     },
+    /// Integer compare (`ieq/ine/ilt/ige/ult/uge`).
+    ///
+    /// Produces a per-component predicate mask: `0xffffffff` for true, `0x00000000` for false.
+    /// The result is stored in the untyped register file, which the current IR models as
+    /// `vec4<f32>` (bit patterns preserved).
+    Cmp {
+        dst: DstOperand,
+        a: SrcOperand,
+        b: SrcOperand,
+        op: CmpOp,
+        ty: CmpType,
+    },
     /// `bfrev dest, src` (bit reverse).
     Bfrev {
         dst: DstOperand,
@@ -520,6 +532,22 @@ pub enum Sm4Inst {
         stride_bytes: u32,
     },
     Ret,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CmpOp {
+    Eq,
+    Ne,
+    Lt,
+    Le,
+    Gt,
+    Ge,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CmpType {
+    I32,
+    U32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
