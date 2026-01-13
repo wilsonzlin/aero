@@ -632,6 +632,14 @@ fn assert_l2_tunnel_vectors_match(
 ) {
     let mut legacy_by_name: BTreeMap<&str, &LegacyVector> = BTreeMap::new();
     for v in &legacy.vectors {
+        if let (Some(wire_b64), Some(frame_b64)) = (v.wire_b64.as_deref(), v.frame_b64.as_deref())
+        {
+            let ctx = format!("legacy l2-tunnel vector {:?}: wire_b64 vs frame_b64", v.name);
+            let wire = decode_b64(&format!("{ctx}.wire_b64"), wire_b64);
+            let frame = decode_b64(&format!("{ctx}.frame_b64"), frame_b64);
+            assert_bytes_eq(&ctx, &wire, &frame);
+        }
+
         if legacy_by_name.insert(v.name.as_str(), v).is_some() {
             panic!("duplicate legacy vector name: {}", v.name);
         }
