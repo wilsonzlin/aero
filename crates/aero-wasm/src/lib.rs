@@ -4960,6 +4960,94 @@ mod machine_opfs_disk_tests {
         disk.read_sectors(7, &mut read_overlay).unwrap();
         assert_eq!(read_overlay, overlay_contents);
     }
+
+    #[wasm_bindgen_test(async)]
+    async fn machine_disk_aerospar_opfs_create_rejects_invalid_block_size() {
+        let path = unique_path("machine-aerospar-invalid-block", "aerospar");
+
+        let mut m = Machine::new(2 * 1024 * 1024).expect("Machine::new");
+
+        // 24KiB is a multiple of 512 but *not* a power of two; it should be rejected by the
+        // AeroSparse header validator.
+        let res = m
+            .set_disk_aerospar_opfs_create(path, 1024 * 1024, 24 * 1024)
+            .await;
+
+        match res {
+            Ok(()) => panic!("expected invalid block size to be rejected"),
+            Err(err) => {
+                let msg = js_error_to_string(&err);
+                if should_skip_opfs(&msg) {
+                    return;
+                }
+                assert!(
+                    msg.contains("block_size") && msg.contains("power of two"),
+                    "unexpected error message: {msg}"
+                );
+            }
+        }
+    }
+
+    #[wasm_bindgen_test(async)]
+    async fn machine_disk_cow_opfs_open_rejects_overlay_size_mismatch() {
+        let base_path = unique_path("machine-cow-base-mismatch", "img");
+        let overlay_path = unique_path("machine-cow-overlay-mismatch", "aerospar");
+        let size_bytes = 1024 * 1024u64;
+
+        // Create a small raw base disk.
+        let base_storage = match aero_opfs::OpfsByteStorage::open(&base_path, true).await {
+            Ok(s) => s,
+            Err(e) => {
+                let msg = e.to_string();
+                if should_skip_opfs(&msg) {
+                    return;
+                }
+                panic!("OpfsByteStorage::open(base) failed unexpectedly: {msg}");
+            }
+        };
+        let mut base_disk = aero_storage::RawDisk::create(base_storage, size_bytes).unwrap();
+        base_disk.flush().unwrap();
+        drop(base_disk);
+
+        // Create an overlay with a *different* virtual disk size.
+        let overlay_storage = match aero_opfs::OpfsByteStorage::open(&overlay_path, true).await {
+            Ok(s) => s,
+            Err(e) => {
+                let msg = e.to_string();
+                if should_skip_opfs(&msg) {
+                    return;
+                }
+                panic!("OpfsByteStorage::open(overlay) failed unexpectedly: {msg}");
+            }
+        };
+        let mut overlay_disk = aero_storage::AeroSparseDisk::create(
+            overlay_storage,
+            aero_storage::AeroSparseConfig {
+                disk_size_bytes: size_bytes * 2,
+                block_size_bytes: 32 * 1024,
+            },
+        )
+        .unwrap();
+        overlay_disk.flush().unwrap();
+        drop(overlay_disk);
+
+        let mut m = Machine::new(2 * 1024 * 1024).expect("Machine::new");
+        let res = m.set_disk_cow_opfs_open(base_path, overlay_path).await;
+
+        match res {
+            Ok(()) => panic!("expected overlay size mismatch to be rejected"),
+            Err(err) => {
+                let msg = js_error_to_string(&err);
+                if should_skip_opfs(&msg) {
+                    return;
+                }
+                assert!(
+                    msg.contains("overlay size does not match base disk size"),
+                    "unexpected error message: {msg}"
+                );
+            }
+        }
+    }
 }
 
 #[cfg(test)]
