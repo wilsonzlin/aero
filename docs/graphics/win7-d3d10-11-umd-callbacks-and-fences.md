@@ -154,6 +154,7 @@ The runtime associates the error with the originating API call.
 Use **specific** errors. The common “safe set” for Win7 bring-up:
 
 - `E_OUTOFMEMORY` — allocation failure (including inability to get a DMA buffer).
+  - AeroGPU note: if you see `E_OUTOFMEMORY` “too early” (while the guest still has free RAM), you may be hitting Win7’s WDDM segment budget. AeroGPU is system-memory-backed, but dxgkrnl still enforces the KMD-reported non-local segment size; tune `HKR\Parameters\NonLocalMemorySizeMB` (see `docs/graphics/win7-aerogpu-validation.md` appendix and `drivers/aerogpu/kmd/README.md`).
 - `E_INVALIDARG` — runtime provided invalid arguments (should be rare; runtime usually validates).
 - `E_NOTIMPL` — feature not implemented but the call was reached anyway.
 

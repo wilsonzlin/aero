@@ -527,6 +527,7 @@ Strategy:
 * For **unimplemented state**, prefer “accept + ignore + return `S_OK`”.
 * For **unimplemented features**, avoid advertising the cap so the runtime never calls it.
 * For **true allocation failures**, `E_OUTOFMEMORY` / `D3DERR_OUTOFVIDEOMEMORY` is better than generic `E_FAIL`, but expect DWM to potentially disable composition if resources can’t be created.
+  * AeroGPU note: if allocations fail “too early” (while the guest still has free RAM), you may be hitting Win7’s WDDM segment budget rather than true exhaustion. AeroGPU is system-memory-backed, but dxgkrnl still enforces the KMD-reported non-local segment size; tune `HKR\Parameters\NonLocalMemorySizeMB` (see `docs/graphics/win7-aerogpu-validation.md` appendix and `drivers/aerogpu/kmd/README.md`).
 
 ---
 
