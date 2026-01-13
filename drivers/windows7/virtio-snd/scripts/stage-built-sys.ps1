@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 <#
 .SYNOPSIS
-  Copies a built aero_virtio_snd.sys from a WDK/MSBuild output directory into inf/.
+  Copies a built SYS from a WDK/MSBuild output directory into inf/.
 
 .DESCRIPTION
   The signing workflow expects the driver binary to be staged next to the INF(s):
@@ -23,7 +23,11 @@ param(
   [ValidateSet('x86', 'amd64')]
   [string]$Arch,
 
-  [ValidateSet('contract', 'legacy')]
+  # - contract:   stages aero_virtio_snd.sys
+  # - legacy:     stages virtiosnd_legacy.sys (transitional/QEMU)
+  # - debuglogs:  stages aero_virtio_snd_dbg.sys (MSBuild DebugLogs configuration),
+  #               but renames it to aero_virtio_snd.sys to match the canonical INF.
+  [ValidateSet('contract', 'legacy', 'debuglogs', 'dbg')]
   [string]$Variant = 'contract',
 
   [ValidateNotNullOrEmpty()]
@@ -90,14 +94,32 @@ $infDirResolved = Resolve-ExistingDirectory -Path $InfDir -ArgName '-InfDir'
 
 $expectedMachine = Get-ExpectedPeMachine -ArchValue $Arch
 
-$sysName = if ($Variant -eq 'legacy') { 'virtiosnd_legacy.sys' } else { 'aero_virtio_snd.sys' }
+$variantNormalized = if ($Variant -eq 'dbg') { 'debuglogs' } else { $Variant }
+
+$srcSysName = $null
+$dstSysName = $null
+switch ($variantNormalized) {
+  'legacy' {
+    $srcSysName = 'virtiosnd_legacy.sys'
+    $dstSysName = 'virtiosnd_legacy.sys'
+  }
+  'contract' {
+    $srcSysName = 'aero_virtio_snd.sys'
+    $dstSysName = 'aero_virtio_snd.sys'
+  }
+  'debuglogs' {
+    $srcSysName = 'aero_virtio_snd_dbg.sys'
+    $dstSysName = 'aero_virtio_snd.sys'
+  }
+  default { throw "Unhandled variant '$variantNormalized'." }
+}
 
 $candidates = @(
-  Get-ChildItem -LiteralPath $inputDirResolved -Recurse -File -Filter $sysName -ErrorAction SilentlyContinue
+  Get-ChildItem -LiteralPath $inputDirResolved -Recurse -File -Filter $srcSysName -ErrorAction SilentlyContinue
 )
 
 if ($candidates.Count -eq 0) {
-  throw "Could not find $sysName under -InputDir '$inputDirResolved'. Build the driver first."
+  throw "Could not find $srcSysName under -InputDir '$inputDirResolved'. Build the driver first."
 }
 
 function Is-UnderDirectory([string]$Path, [string]$Dir) {
@@ -130,26 +152,32 @@ foreach ($c in $candidates) {
 
 if ($archMatches.Count -eq 0) {
   $paths = $candidates | ForEach-Object { $_.FullName }
-  throw ("Found {0} under -InputDir '{1}', but none match architecture '{2}'. Candidates:`r`n{3}" -f $sysName, $inputDirResolved, $Arch, (Format-PathList $paths))
+  throw ("Found {0} under -InputDir '{1}', but none match architecture '{2}'. Candidates:`r`n{3}" -f $srcSysName, $inputDirResolved, $Arch, (Format-PathList $paths))
 }
 
 if ($archMatches.Count -gt 1) {
   $paths = $archMatches | ForEach-Object { $_.FullName }
-  throw ("Found multiple {0} builds matching architecture '{1}'. Clean old builds or point -InputDir at a single build output.`r`n{2}" -f $sysName, $Arch, (Format-PathList $paths))
+  throw ("Found multiple {0} builds matching architecture '{1}'. Clean old builds or point -InputDir at a single build output.`r`n{2}" -f $srcSysName, $Arch, (Format-PathList $paths))
 }
 
 $srcPath = $archMatches[0].FullName
-$dstPath = Join-Path $infDirResolved $sysName
+$dstPath = Join-Path $infDirResolved $dstSysName
 
 Copy-Item -LiteralPath $srcPath -Destination $dstPath -Force
 
-Write-Host "Staged driver binary:"
+if ($variantNormalized -eq 'debuglogs') {
+  Write-Host "Staged driver binary (DebugLogs build):"
+  Write-Host ("  Note: {0} is staged as {1} to match the canonical INF." -f $srcSysName, $dstSysName)
+}
+else {
+  Write-Host "Staged driver binary:"
+}
 Write-Host ("  From: {0}" -f $srcPath)
 Write-Host ("  To:   {0}" -f $dstPath)
 Write-Host ""
 Write-Host "Next:"
-$variantArg = if ($Variant -eq 'legacy') { ' legacy' } else { '' }
-$packageVariantArg = if ($Variant -eq 'legacy') { ' -Variant legacy' } else { '' }
+$variantArg = if ($variantNormalized -eq 'legacy') { ' legacy' } else { '' }
+$packageVariantArg = if ($variantNormalized -eq 'legacy') { ' -Variant legacy' } else { '' }
 Write-Host ("  1) scripts\\make-cat.cmd{0}" -f $variantArg)
 Write-Host ("  2) scripts\\sign-driver.cmd{0}" -f $variantArg)
 Write-Host ("  3) scripts\\package-release.ps1{0}" -f $packageVariantArg)

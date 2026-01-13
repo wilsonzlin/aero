@@ -93,12 +93,14 @@ To stage an installable/signable package, copy the appropriate `aero_virtio_snd.
 drivers/windows7/virtio-snd/inf/aero_virtio_snd.sys
 ```
 
-For the DebugLogs build, the MSBuild output file is named `aero_virtio_snd_dbg.sys`. The
-existing `inf/aero_virtio_snd.inf` references `aero_virtio_snd.sys`, so you must either:
+For the DebugLogs build, the MSBuild output file is named `aero_virtio_snd_dbg.sys`, but the
+canonical `inf/aero_virtio_snd.inf` references `aero_virtio_snd.sys`. When staging into `inf/`,
+you must either:
 
-- **Rename** `aero_virtio_snd_dbg.sys` → `aero_virtio_snd.sys` when copying into `inf/` (simplest), or
-- Create a new INF that references `aero_virtio_snd_dbg.sys` (and ideally uses a distinct
-  service name) if you want to keep both binaries in the same staging folder.
+- **Rename** `aero_virtio_snd_dbg.sys` → `aero_virtio_snd.sys` when copying, or
+- Use `scripts/stage-built-sys.ps1 -Variant debuglogs`, which performs the rename automatically, or
+- Create a new INF that references `aero_virtio_snd_dbg.sys` (and ideally uses a distinct service
+  name) if you want to keep both binaries in the same staging folder.
 
 For the optional QEMU/transitional package, stage the legacy binary instead:
 
@@ -124,6 +126,13 @@ Instead of copying manually, you can use:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\stage-built-sys.ps1 -Arch amd64
+```
+
+For the DebugLogs (DBG=1) build output (`aero_virtio_snd_dbg.sys`), stage it as the canonical INF
+name (`aero_virtio_snd.sys`) with:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\stage-built-sys.ps1 -Arch amd64 -Variant debuglogs
 ```
 
 For the optional transitional/QEMU package:
