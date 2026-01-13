@@ -102,3 +102,17 @@ test("gpu worker smoke: presenter errors emit structured events", async ({ page,
   expect(counts.errors).toBeGreaterThanOrEqual(2);
   expect(counts.events).toBe(1);
 });
+
+test("gpu worker smoke: init failure emits structured Init fatal event", async ({ page, browserName }) => {
+  test.skip(browserName !== "chromium", "OffscreenCanvas + WebGL2-in-worker coverage is Chromium-only for now.");
+
+  await page.goto("/web/gpu-worker-smoke.html?expectInitFailure=1&forceBackend=webgpu&disableWebGpu=1", {
+    waitUntil: "load",
+  });
+  await waitForReady(page);
+
+  await page.waitForFunction(() => {
+    const text = document.getElementById("status")?.textContent ?? "";
+    return text.includes("gpu_event fatal Init:") && text.includes("WebGPU backend was disabled");
+  });
+});

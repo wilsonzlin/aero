@@ -42,6 +42,13 @@ function getBoolParam(name: string): boolean {
   return value !== "0" && value !== "false";
 }
 
+function getStringParam(name: string): string | null {
+  const url = new URL(window.location.href);
+  const value = url.searchParams.get(name);
+  if (value == null || value === "") return null;
+  return value;
+}
+
 function getBackendParam(): "auto" | "webgpu" | "webgl2" {
   const url = new URL(window.location.href);
   const value = url.searchParams.get("backend");
@@ -51,7 +58,15 @@ function getBackendParam(): "auto" | "webgpu" | "webgl2" {
 
 function renderError(message: string) {
   const status = $("status");
-  if (status) status.textContent = message;
+  if (status) {
+    // Preserve earlier diagnostics lines (gpu_event/gpu_error) when we fail after already
+    // receiving events from the worker.
+    if (status.textContent && status.textContent.length > 0) {
+      status.textContent += `${message}\n`;
+    } else {
+      status.textContent = message;
+    }
+  }
   window.__aeroTest = { ready: true, error: message };
 }
 
@@ -137,18 +152,25 @@ async function main() {
     const requestedBackend = getBackendParam();
     const disableWebGpu = getBoolParam("disableWebGpu");
     const triggerPresenterError = getBoolParam("triggerPresenterError");
+    const expectInitFailure = getBoolParam("expectInitFailure");
+    const forceBackendRaw = getStringParam("forceBackend");
     // In practice, WebGPU-in-worker can be flaky in headless Chromium unless
     // launched with the dedicated WebGPU project flags. Prefer WebGL2 for the
     // default smoke test, but still allow forcing WebGPU (or testing fallback)
     // via query params.
     const preferWebGpu = requestedBackend === "webgpu" || disableWebGpu;
 
+    const forceBackend =
+      forceBackendRaw === "webgpu" || forceBackendRaw === "webgl2_wgpu" || forceBackendRaw === "webgl2_raw"
+        ? (forceBackendRaw as "webgpu" | "webgl2_wgpu" | "webgl2_raw")
+        : undefined;
+
     const gpu = createGpuWorker({
       canvas,
       width: cssWidth,
       height: cssHeight,
       devicePixelRatio,
-      gpuOptions: { preferWebGpu, disableWebGpu },
+      gpuOptions: { preferWebGpu, disableWebGpu, ...(forceBackend ? { forceBackend } : {}) },
       onError: (msg) => {
         if (!status) return;
         status.textContent += `gpu_error msg=${msg.message}${msg.code ? ` code=${msg.code}` : ""}\n`;
@@ -182,7 +204,17 @@ async function main() {
       },
     });
 
-    const ready = await gpu.ready;
+    let ready: Awaited<typeof gpu.ready>;
+    try {
+      ready = await gpu.ready;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (expectInitFailure) {
+        renderError(message);
+        return;
+      }
+      throw err;
+    }
     if (backendEl) backendEl.textContent = ready.backendKind;
     if (ready.fallback && status) {
       status.textContent += `fallback ${ready.fallback.from} -> ${ready.fallback.to}: ${ready.fallback.reason}\n`;
