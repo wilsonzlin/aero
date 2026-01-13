@@ -294,19 +294,57 @@ export class RawWebGl2Presenter implements Presenter {
       throw new PresenterError('webgl_context_lost', 'Cannot take screenshot while WebGL context is lost');
     }
 
-    // Ensure the latest texture content is rendered into the default framebuffer
-    // immediately before readback.
-    this.draw();
-
-    const w = canvas.width;
-    const h = canvas.height;
+    // Screenshot contract: return the *source* texture bytes (RGBA8) with a top-left
+    // origin. Do not read back from the default framebuffer; the presentation shader
+    // applies manual sRGB encoding + cursor composition which would break deterministic
+    // screenshot hashing tests.
+    const w = this.srcWidth;
+    const h = this.srcHeight;
 
     const pixels = new Uint8Array(w * h * 4);
-    gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
-    assertWebGlOk(gl, 'readPixels');
 
-    const flipped = flipImageVertically(pixels, w, h);
-    return { width: w, height: h, pixels: flipped.buffer as ArrayBuffer };
+    // Read back from an FBO backed by the source frame texture.
+    const prevReadFbo = gl.getParameter(gl.READ_FRAMEBUFFER_BINDING) as WebGLFramebuffer | null;
+    const prevDrawFbo = gl.getParameter(gl.DRAW_FRAMEBUFFER_BINDING) as WebGLFramebuffer | null;
+    const prevReadBuffer = gl.getParameter(gl.READ_BUFFER) as number;
+
+    const fbo = gl.createFramebuffer();
+    if (!fbo) {
+      throw new PresenterError('webgl_resource_failed', 'Failed to create framebuffer for screenshot readback');
+    }
+
+    try {
+      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, fbo);
+      gl.framebufferTexture2D(gl.READ_FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.frameTexture, 0);
+      gl.readBuffer(gl.COLOR_ATTACHMENT0);
+
+      const status = gl.checkFramebufferStatus(gl.READ_FRAMEBUFFER);
+      if (status !== gl.FRAMEBUFFER_COMPLETE) {
+        throw new PresenterError(
+          'webgl_framebuffer_incomplete',
+          `Screenshot framebuffer incomplete: ${glEnumToString(gl, status)} (${status})`,
+        );
+      }
+
+      gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+      assertWebGlOk(gl, 'readPixels');
+    } finally {
+      // Restore state to avoid leaking FBO bindings into future draws.
+      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, prevReadFbo);
+      gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, prevDrawFbo);
+      try {
+        gl.readBuffer(prevReadBuffer);
+      } catch {
+        // Ignore; some browsers are strict about readBuffer when switching between
+        // default framebuffers and FBOs.
+      }
+      gl.deleteFramebuffer(fbo);
+    }
+
+    // With our "top-left UV + UNPACK_FLIP_Y_WEBGL=0" convention, the vertical flip
+    // applied during texture upload cancels out WebGL's bottom-left readPixels origin,
+    // so the returned bytes already match the caller's top-to-bottom row order.
+    return { width: w, height: h, pixels: pixels.buffer as ArrayBuffer };
   }
 
   public destroy(): void {

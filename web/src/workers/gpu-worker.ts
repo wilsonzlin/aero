@@ -2636,87 +2636,49 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
               }
             }
 
-            const prevCursorRenderEnabled = cursorRenderEnabled;
-            // Some presenter backends (notably the raw WebGL2 path) implement screenshot by
-            // readback of the *presented* framebuffer where cursor compositing happens. For
-            // cursor-less screenshots we temporarily disable cursor rendering so the result is
-            // deterministic and matches the source-framebuffer-oriented screenshot contract.
-            const needsCursorDisabledForScreenshot = !includeCursor && presenter.backend !== "webgpu";
-            if (needsCursorDisabledForScreenshot) {
-              cursorRenderEnabled = false;
-              syncCursorToPresenter();
-            }
+            const shot = await presenter.screenshot();
+            let pixels = shot.pixels;
 
-            try {
-              const shot = await presenter.screenshot();
-              let pixels = shot.pixels;
-
-              // WebGPU and the wgpu WebGL2 backend read back the *source texture* only (not the
-              // presented/canvas output), so cursor composition must be applied explicitly when
-              // requested.
-              if (includeCursor && presenter.backend === "webgpu") {
-                try {
-                  const out = new Uint8Array(pixels);
-                  compositeCursorOverRgba8(
-                    out,
-                    shot.width,
-                    shot.height,
-                    cursorEnabled,
-                    cursorImage,
-                    cursorWidth,
-                    cursorHeight,
-                    cursorX,
-                    cursorY,
-                    cursorHotX,
-                    cursorHotY,
-                  );
-                  pixels = out.buffer;
-                } catch {
-                  // Ignore; screenshot cursor compositing is best-effort.
-                }
-              }
-
-              if (includeCursor && presenter.backend === "webgl2_wgpu") {
-                try {
-                  const out = new Uint8Array(pixels);
-                  compositeCursorOverRgba8(
-                    out,
-                    shot.width,
-                    shot.height,
-                    cursorEnabled,
-                    cursorImage,
-                    cursorWidth,
-                    cursorHeight,
-                    cursorX,
-                    cursorY,
-                    cursorHotX,
-                    cursorHotY,
-                  );
-                  pixels = out.buffer;
-                } catch {
-                  // Ignore; screenshot cursor compositing is best-effort.
-                }
-              }
-              postToMain(
-                {
-                  type: "screenshot",
-                  requestId: req.requestId,
-                  width: shot.width,
-                  height: shot.height,
-                  rgba8: pixels,
-                  origin: "top-left",
-                  ...(typeof seq === "number" ? { frameSeq: seq } : {}),
-                },
-                [pixels],
-              );
-              return true;
-            } finally {
-              if (needsCursorDisabledForScreenshot) {
-                cursorRenderEnabled = prevCursorRenderEnabled;
-                syncCursorToPresenter();
-                getCursorPresenter()?.redraw?.();
+            // WebGPU, the wgpu-backed WebGL2 presenter, and the raw WebGL2 presenter all read back
+            // the *source texture* only (not the presented/canvas output). Cursor composition must
+            // therefore be applied explicitly when requested.
+            if (
+              includeCursor &&
+              (presenter.backend === "webgpu" || presenter.backend === "webgl2_wgpu" || presenter.backend === "webgl2_raw")
+            ) {
+              try {
+                const out = new Uint8Array(pixels);
+                compositeCursorOverRgba8(
+                  out,
+                  shot.width,
+                  shot.height,
+                  cursorEnabled,
+                  cursorImage,
+                  cursorWidth,
+                  cursorHeight,
+                  cursorX,
+                  cursorY,
+                  cursorHotX,
+                  cursorHotY,
+                );
+                pixels = out.buffer;
+              } catch {
+                // Ignore; screenshot cursor compositing is best-effort.
               }
             }
+            postToMain(
+              {
+                type: "screenshot",
+                requestId: req.requestId,
+                width: shot.width,
+                height: shot.height,
+                rgba8: pixels,
+                origin: "top-left",
+                ...(typeof seq === "number" ? { frameSeq: seq } : {}),
+              },
+              [pixels],
+            );
+            return true;
           };
 
           const tryScreenshot = async (forceUpload: boolean): Promise<boolean> => {

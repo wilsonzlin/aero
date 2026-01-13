@@ -15,6 +15,20 @@ uniform ivec2 u_cursor_size;
 
 out vec4 outColor;
 
+float srgbEncodeChannel(float x) {
+  float v = clamp(x, 0.0, 1.0);
+  if (v <= 0.0031308) return v * 12.92;
+  return 1.055 * pow(v, 1.0 / 2.4) - 0.055;
+}
+
+vec3 srgbEncode(vec3 rgb) {
+  return vec3(
+    srgbEncodeChannel(rgb.r),
+    srgbEncodeChannel(rgb.g),
+    srgbEncodeChannel(rgb.b)
+  );
+}
+
 void main() {
   vec4 color = texture(u_frame, v_uv);
 
@@ -36,5 +50,11 @@ void main() {
     }
   }
 
-  outColor = color;
+  // Cursor blending happens in linear space. Apply manual sRGB encoding only after
+  // cursor composition to match the WebGPU presenter output and avoid double-gamma.
+  color.rgb = srgbEncode(color.rgb);
+
+  // Presented output should be opaque (Windows scanout semantics; avoid blending
+  // with the page background).
+  outColor = vec4(color.rgb, 1.0);
 }
