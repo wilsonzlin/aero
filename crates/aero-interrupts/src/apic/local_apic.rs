@@ -410,11 +410,11 @@ impl LocalApic {
         }
     }
 
-    /// Reset the LAPIC's internal register state in-place.
+    /// Reset the LAPIC register state back to its power-on baseline.
     ///
-    /// This is used to model SMP INIT/reset semantics where the LAPIC state must be cleared
-    /// without changing the [`Arc<LocalApic>`] identity (e.g. because an IOAPIC routes interrupts
-    /// to existing sinks).
+    /// This is used to model INIT IPI delivery / CPU reset semantics where the LAPIC state must be
+    /// cleared without changing the [`Arc<LocalApic>`] identity (e.g. because an IOAPIC routes
+    /// interrupts to existing sinks).
     ///
     /// Note: Any registered EOI/ICR notifiers are preserved so IOAPIC Remote-IRR wiring continues
     /// to function across LAPIC resets.

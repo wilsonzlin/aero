@@ -2342,6 +2342,62 @@ mod tests {
     }
 
     #[test]
+    fn tx_rejects_when_header_too_short() {
+        let mut snd = VirtioSnd::new(aero_audio::ring::AudioRingBuffer::new_stereo(8));
+        drive_playback_to_running(&mut snd);
+
+        let mut mem = GuestRam::new(0x10000);
+        let desc_table = 0x1000;
+        let avail = 0x2000;
+        let used = 0x3000;
+
+        let hdr_addr = 0x4000;
+        let resp_addr = 0x5000;
+
+        // Only 7 bytes total (< 8-byte header).
+        write_bytes(&mut mem, hdr_addr, &[0u8; 7]);
+
+        let chain = build_chain(
+            &mut mem,
+            desc_table,
+            avail,
+            used,
+            &[(hdr_addr, 7, false), (resp_addr, 8, true)],
+        );
+
+        let status = snd.handle_tx_chain(&mut mem, &chain);
+        assert_eq!(status, VIRTIO_SND_S_BAD_MSG);
+        assert_eq!(snd.output_mut().available_frames(), 0);
+    }
+
+    #[test]
+    fn tx_rejects_when_guest_memory_read_fails() {
+        let mut snd = VirtioSnd::new(aero_audio::ring::AudioRingBuffer::new_stereo(8));
+        drive_playback_to_running(&mut snd);
+
+        let mut mem = GuestRam::new(0x10000);
+        let desc_table = 0x1000;
+        let avail = 0x2000;
+        let used = 0x3000;
+
+        // Point the readable header descriptor beyond the end of guest memory so `get_slice` fails.
+        let invalid_hdr_addr = mem.len() - 4;
+        let resp_addr = 0x5000;
+
+        let chain = build_chain(
+            &mut mem,
+            desc_table,
+            avail,
+            used,
+            &[(invalid_hdr_addr, 8, false), (resp_addr, 8, true)],
+        );
+
+        let status = snd.handle_tx_chain(&mut mem, &chain);
+        assert_eq!(status, VIRTIO_SND_S_BAD_MSG);
+        assert_eq!(snd.output_mut().available_frames(), 0);
+    }
+
+    #[test]
     fn tx_accepts_header_split_across_descriptors() {
         let mut snd = VirtioSnd::new(aero_audio::ring::AudioRingBuffer::new_stereo(8));
         drive_playback_to_running(&mut snd);
