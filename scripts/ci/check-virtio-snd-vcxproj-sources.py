@@ -20,6 +20,7 @@ If files are renamed during migration, update REQUIRED_SOURCES / FORBIDDEN_*.
 
 from __future__ import annotations
 
+import difflib
 import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -89,6 +90,66 @@ def warn(message: str) -> None:
 
 def read_text(path: Path) -> str:
     return path.read_text(encoding="utf-8", errors="replace")
+
+
+def extract_inf_functional_bytes(path: Path) -> bytes:
+    """
+    Return the byte content of an INF starting from the first section header.
+
+    We intentionally ignore the leading comment/header block so that legacy
+    filename alias INFs can have a different banner, while remaining byte-for-byte
+    identical in all functional sections (everything from `[Version]` onward).
+    """
+
+    data = path.read_bytes()
+    lines = data.splitlines(keepends=True)
+
+    for i, line in enumerate(lines):
+        stripped = line.lstrip(b" \t")
+
+        # First section header (e.g. "[Version]") starts the functional region.
+        if stripped.startswith(b"["):
+            return b"".join(lines[i:])
+
+        # Ignore leading comments and blank lines.
+        if stripped.startswith(b";") or stripped in (b"\n", b"\r\n", b"\r"):
+            continue
+
+        # Unexpected preamble content (not comment, not blank, not section):
+        # treat it as functional to avoid masking drift.
+        return b"".join(lines[i:])
+
+    fail(f"{path.as_posix()}: could not find an INF section header (expected e.g. [Version])")
+
+
+def validate_inf_alias_equivalent(*, canonical: Path, alias: Path) -> None:
+    canonical_body = extract_inf_functional_bytes(canonical)
+    alias_body = extract_inf_functional_bytes(alias)
+
+    if canonical_body == alias_body:
+        return
+
+    canonical_lines = canonical_body.decode("utf-8", errors="replace").splitlines(keepends=True)
+    alias_lines = alias_body.decode("utf-8", errors="replace").splitlines(keepends=True)
+
+    diff = difflib.unified_diff(
+        canonical_lines,
+        alias_lines,
+        fromfile=canonical.as_posix(),
+        tofile=alias.as_posix(),
+        lineterm="",
+    )
+    diff_text = "\n".join(diff)
+    if diff_text:
+        diff_text = "\n\n" + diff_text
+
+    fail(
+        "virtio-snd legacy alias INF drift detected.\n"
+        "The alias INF must be byte-for-byte identical to the canonical INF from [Version] onward.\n"
+        "Only the leading comment/header block may differ.\n"
+        "Fix: copy the functional changes from the canonical INF into the alias INF."
+        f"{diff_text}"
+    )
 
 
 def iter_inf_non_comment_lines(text: str) -> list[str]:
@@ -439,9 +500,11 @@ def main() -> None:
     # must not be a hard requirement.
     legacy_expected = expected.lower()
     legacy_checked = False
+    legacy_alias_path: Path | None = None
 
     if (name := extract_inf_ntmpdriver_optional(LEGACY_ALIAS_INF)) is not None:
         legacy_checked = True
+        legacy_alias_path = LEGACY_ALIAS_INF
         validate_virtio_snd_inf_hwid_policy(LEGACY_ALIAS_INF)
         if name.lower() != legacy_expected:
             fail(
@@ -452,6 +515,7 @@ def main() -> None:
 
     elif (name := extract_inf_ntmpdriver_optional(LEGACY_ALIAS_INF_DISABLED)) is not None:
         legacy_checked = True
+        legacy_alias_path = LEGACY_ALIAS_INF_DISABLED
         validate_virtio_snd_inf_hwid_policy(LEGACY_ALIAS_INF_DISABLED)
         if name.lower() != legacy_expected:
             fail(
@@ -459,6 +523,9 @@ def main() -> None:
                 f"  {LEGACY_ALIAS_INF_DISABLED.as_posix()}: NTMPDriver={name}\n"
                 f"  {AERO_INF.as_posix()}: NTMPDriver={expected}"
             )
+
+    if legacy_alias_path is not None:
+        validate_inf_alias_equivalent(canonical=AERO_INF, alias=legacy_alias_path)
 
     if not legacy_checked and LEGACY_ALIAS_INF_DISABLED.exists():
         # File exists but didn't pass best-effort validation (e.g. missing
