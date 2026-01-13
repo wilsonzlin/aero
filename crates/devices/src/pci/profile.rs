@@ -664,7 +664,9 @@ pub const NIC_RTL8139: PciDeviceProfile = PciDeviceProfile {
 /// Note: this is a PCI identity/profile only (IDs/class/BAR definitions).
 ///
 /// - `aero_machine::Machine` exposes this identity at `00:07.0` when
-///   `MachineConfig::enable_aerogpu=true` (PCI config-space exposure).
+///   `MachineConfig::enable_aerogpu=true`. In `aero_machine` today BAR1 is backed by a dedicated
+///   VRAM buffer and the legacy VGA window (`0xA0000..0xBFFFF`) is aliased into it (minimal legacy
+///   VGA decode); the full BAR0 WDDM/MMIO/ring protocol is integrated separately.
 /// - Boot display in the canonical machine is still provided by the standalone `aero_gpu_vga`
 ///   VGA/VBE device model when `MachineConfig::enable_vga=true`. In that mode the machine also
 ///   exposes a separate Bochs/QEMU-compatible VGA PCI stub at `00:0c.0` so the fixed VBE linear
