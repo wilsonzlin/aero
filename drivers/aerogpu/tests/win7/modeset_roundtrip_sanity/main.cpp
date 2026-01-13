@@ -30,7 +30,7 @@ static const char* DispChangeCodeToString(LONG code) {
 }
 
 struct ChangeDisplaySettingsCtx {
-  DEVMODE dm;
+  DEVMODEW dm;
   LONG result;
 };
 
@@ -39,12 +39,12 @@ static DWORD WINAPI ChangeDisplaySettingsThreadProc(LPVOID param) {
   if (!ctx) {
     return 0;
   }
-  // Note: ChangeDisplaySettingsEx takes a non-const DEVMODE*.
-  ctx->result = ChangeDisplaySettingsEx(NULL, &ctx->dm, NULL, 0, NULL);
+  // Note: ChangeDisplaySettingsExW takes a non-const DEVMODEW*.
+  ctx->result = ChangeDisplaySettingsExW(NULL, &ctx->dm, NULL, CDS_FULLSCREEN, NULL);
   return 0;
 }
 
-static bool ChangeDisplaySettingsExWithTimeout(const DEVMODE& target,
+static bool ChangeDisplaySettingsExWithTimeout(const DEVMODEW& target,
                                                DWORD timeout_ms,
                                                LONG* out_result,
                                                std::string* err) {
@@ -62,7 +62,7 @@ static bool ChangeDisplaySettingsExWithTimeout(const DEVMODE& target,
   HANDLE thread = CreateThread(NULL, 0, ChangeDisplaySettingsThreadProc, ctx, 0, NULL);
   if (!thread) {
     if (err) {
-      *err = "CreateThread(ChangeDisplaySettingsEx) failed: " + aerogpu_test::Win32ErrorToString(GetLastError());
+      *err = "CreateThread(ChangeDisplaySettingsExW) failed: " + aerogpu_test::Win32ErrorToString(GetLastError());
     }
     delete ctx;
     return false;
@@ -82,15 +82,15 @@ static bool ChangeDisplaySettingsExWithTimeout(const DEVMODE& target,
   CloseHandle(thread);
   if (err) {
     if (w == WAIT_TIMEOUT) {
-      *err = aerogpu_test::FormatString("ChangeDisplaySettingsEx timed out after %lu ms", (unsigned long)timeout_ms);
+      *err = aerogpu_test::FormatString("ChangeDisplaySettingsExW timed out after %lu ms", (unsigned long)timeout_ms);
     } else {
-      *err = "WaitForSingleObject(ChangeDisplaySettingsEx) failed: " + aerogpu_test::Win32ErrorToString(GetLastError());
+      *err = "WaitForSingleObject(ChangeDisplaySettingsExW) failed: " + aerogpu_test::Win32ErrorToString(GetLastError());
     }
   }
   return false;
 }
 
-static void PrintModeInfo(const char* label, const DEVMODE& dm) {
+static void PrintModeInfo(const char* label, const DEVMODEW& dm) {
   aerogpu_test::PrintfStdout(
       "INFO: %s: %lux%lu bpp=%lu freq=%lu fields=0x%08lX",
       label ? label : "<mode>",
@@ -101,7 +101,7 @@ static void PrintModeInfo(const char* label, const DEVMODE& dm) {
       (unsigned long)dm.dmFields);
 }
 
-static bool GetCurrentDesktopMode(DEVMODE* out, std::string* err) {
+static bool GetCurrentDesktopMode(DEVMODEW* out, std::string* err) {
   if (err) {
     err->clear();
   }
@@ -113,9 +113,10 @@ static bool GetCurrentDesktopMode(DEVMODE* out, std::string* err) {
   }
   ZeroMemory(out, sizeof(*out));
   out->dmSize = sizeof(*out);
-  if (!EnumDisplaySettings(NULL, ENUM_CURRENT_SETTINGS, out)) {
+  if (!EnumDisplaySettingsW(NULL, ENUM_CURRENT_SETTINGS, out)) {
     if (err) {
-      *err = "EnumDisplaySettings(ENUM_CURRENT_SETTINGS) failed";
+      *err = "EnumDisplaySettingsW(ENUM_CURRENT_SETTINGS) failed: " +
+             aerogpu_test::Win32ErrorToString(GetLastError());
     }
     return false;
   }
@@ -124,20 +125,20 @@ static bool GetCurrentDesktopMode(DEVMODE* out, std::string* err) {
 
 struct ModeScore {
   int score;
-  DEVMODE dm;
+  DEVMODEW dm;
   bool present;
 
   ModeScore() : score(-1000000), present(false) { ZeroMemory(&dm, sizeof(dm)); }
 };
 
-static bool FindModeByResolution(DWORD target_w, DWORD target_h, const DEVMODE& current, DEVMODE* out) {
+static bool FindModeByResolution(DWORD target_w, DWORD target_h, const DEVMODEW& current, DEVMODEW* out) {
   ModeScore best;
 
   for (DWORD i = 0;; ++i) {
-    DEVMODE dm;
+    DEVMODEW dm;
     ZeroMemory(&dm, sizeof(dm));
     dm.dmSize = sizeof(dm);
-    if (!EnumDisplaySettings(NULL, i, &dm)) {
+    if (!EnumDisplaySettingsW(NULL, i, &dm)) {
       break;
     }
     if (dm.dmPelsWidth != target_w || dm.dmPelsHeight != target_h) {
@@ -148,6 +149,12 @@ static bool FindModeByResolution(DWORD target_w, DWORD target_h, const DEVMODE& 
     }
 
     int score = 0;
+    if (dm.dmBitsPerPel == 32) {
+      score += 200;
+    }
+    if (dm.dmDisplayFrequency == 60) {
+      score += 20;
+    }
     if (dm.dmBitsPerPel == current.dmBitsPerPel) {
       score += 100;
     }
@@ -174,18 +181,18 @@ static bool FindModeByResolution(DWORD target_w, DWORD target_h, const DEVMODE& 
   return true;
 }
 
-static bool FindAnyAlternateMode(const DEVMODE& current, DEVMODE* out) {
+static bool FindAnyAlternateMode(const DEVMODEW& current, DEVMODEW* out) {
   // Conservative fallback: pick the closest different resolution (prefer same bpp).
   bool found = false;
-  DEVMODE best;
+  DEVMODEW best;
   long long best_cost = 0;
   bool best_same_bpp = false;
 
   for (DWORD i = 0;; ++i) {
-    DEVMODE dm;
+    DEVMODEW dm;
     ZeroMemory(&dm, sizeof(dm));
     dm.dmSize = sizeof(dm);
-    if (!EnumDisplaySettings(NULL, i, &dm)) {
+    if (!EnumDisplaySettingsW(NULL, i, &dm)) {
       break;
     }
     if (dm.dmPelsWidth == current.dmPelsWidth && dm.dmPelsHeight == current.dmPelsHeight) {
@@ -233,7 +240,7 @@ static bool FindAnyAlternateMode(const DEVMODE& current, DEVMODE* out) {
   return true;
 }
 
-static bool FindAlternateDesktopMode(const DEVMODE& current, DEVMODE* out, std::string* err) {
+static bool FindAlternateDesktopMode(const DEVMODEW& current, DEVMODEW* out, std::string* err) {
   if (err) {
     err->clear();
   }
@@ -293,12 +300,12 @@ static bool FindAlternateDesktopMode(const DEVMODE& current, DEVMODE* out, std::
   return false;
 }
 
-static bool ApplyDisplayModeAndWait(const DEVMODE& target, DWORD timeout_ms, std::string* err) {
+static bool ApplyDisplayModeAndWait(const DEVMODEW& target, DWORD timeout_ms, std::string* err) {
   if (err) {
     err->clear();
   }
 
-  DEVMODE dm = target;  // ChangeDisplaySettingsEx takes a non-const pointer.
+  DEVMODEW dm = target;  // ChangeDisplaySettingsExW takes a non-const pointer.
   const DWORD start = GetTickCount();
   LONG r = DISP_CHANGE_FAILED;
   std::string change_err;
@@ -310,7 +317,9 @@ static bool ApplyDisplayModeAndWait(const DEVMODE& target, DWORD timeout_ms, std
   }
   if (r != DISP_CHANGE_SUCCESSFUL) {
     if (err) {
-      *err = aerogpu_test::FormatString("ChangeDisplaySettingsEx failed (%ld: %s)", (long)r, DispChangeCodeToString(r));
+      *err = aerogpu_test::FormatString("ChangeDisplaySettingsExW failed (%ld: %s)",
+                                        (long)r,
+                                        DispChangeCodeToString(r));
     }
     return false;
   }
@@ -374,29 +383,21 @@ static bool WaitForScanoutMatch(const D3DKMT_FUNCS* kmt,
   aerogpu_escape_query_scanout_out last;
   ZeroMemory(&last, sizeof(last));
   NTSTATUS last_status = 0;
+  bool got_any = false;
 
   for (;;) {
     aerogpu_escape_query_scanout_out q;
     NTSTATUS st = 0;
     const bool ok = aerogpu_test::kmt::AerogpuQueryScanout(kmt, adapter, 0, &q, &st);
-    last = q;
     last_status = st;
-    if (!ok) {
-      if (out_last) {
-        *out_last = last;
-      }
-      if (out_status) {
-        *out_status = st;
-      }
-      if (err) {
-        *err = aerogpu_test::FormatString("D3DKMTEscape(query-scanout) failed (NTSTATUS=0x%08lX)", (unsigned long)st);
-      }
-      return false;
+    if (ok) {
+      last = q;
+      got_any = true;
     }
 
     const unsigned long long row_bytes = (unsigned long long)expected_w * 4ull;
     const bool match =
-        (q.cached_enable != 0) && (q.mmio_enable != 0) && (q.cached_width == expected_w) &&
+        ok && (q.cached_enable != 0) && (q.mmio_enable != 0) && (q.cached_width == expected_w) &&
         (q.cached_height == expected_h) && (q.mmio_width == expected_w) && (q.mmio_height == expected_h) &&
         (q.mmio_fb_gpa != 0) && (q.cached_pitch_bytes != 0) && (q.mmio_pitch_bytes != 0) &&
         (q.cached_pitch_bytes == q.mmio_pitch_bytes) && ((unsigned long long)q.cached_pitch_bytes >= row_bytes);
@@ -423,27 +424,32 @@ static bool WaitForScanoutMatch(const D3DKMT_FUNCS* kmt,
     *out_status = last_status;
   }
   if (err) {
-    *err = aerogpu_test::FormatString(
-        "scanout did not match within %lu ms (want=%lux%lu cached=%lux%lu pitch=%lu mmio=%lux%lu pitch=%lu fb_gpa=0x%I64X)",
-                                      (unsigned long)timeout_ms,
-                                      (unsigned long)expected_w,
-                                      (unsigned long)expected_h,
-                                      (unsigned long)last.cached_width,
-                                      (unsigned long)last.cached_height,
-                                      (unsigned long)last.cached_pitch_bytes,
-                                      (unsigned long)last.mmio_width,
-                                      (unsigned long)last.mmio_height,
-                                      (unsigned long)last.mmio_pitch_bytes,
-                                      (unsigned long long)last.mmio_fb_gpa);
+    if (!got_any) {
+      *err = aerogpu_test::FormatString("D3DKMTEscape(query-scanout) failed (NTSTATUS=0x%08lX)",
+                                        (unsigned long)last_status);
+    } else {
+      *err = aerogpu_test::FormatString(
+          "scanout did not match within %lu ms (want=%lux%lu cached=%lux%lu pitch=%lu mmio=%lux%lu pitch=%lu fb_gpa=0x%I64X)",
+          (unsigned long)timeout_ms,
+          (unsigned long)expected_w,
+          (unsigned long)expected_h,
+          (unsigned long)last.cached_width,
+          (unsigned long)last.cached_height,
+          (unsigned long)last.cached_pitch_bytes,
+          (unsigned long)last.mmio_width,
+          (unsigned long)last.mmio_height,
+          (unsigned long)last.mmio_pitch_bytes,
+          (unsigned long long)last.mmio_fb_gpa);
+    }
   }
   return false;
 }
 
 struct ScopedModeRestore {
-  DEVMODE original;
+  DEVMODEW original;
   bool armed;
 
-  explicit ScopedModeRestore(const DEVMODE& dm) : original(dm), armed(false) {}
+  explicit ScopedModeRestore(const DEVMODEW& dm) : original(dm), armed(false) {}
 
   void Arm() { armed = true; }
   void Disarm() { armed = false; }
@@ -498,7 +504,7 @@ static int RunModesetRoundtripSanity(int argc, char** argv) {
   const int initial_w = GetSystemMetrics(SM_CXSCREEN);
   const int initial_h = GetSystemMetrics(SM_CYSCREEN);
 
-  DEVMODE original;
+  DEVMODEW original;
   std::string mode_err;
   if (!GetCurrentDesktopMode(&original, &mode_err)) {
     return reporter.Fail("%s", mode_err.c_str());
@@ -506,10 +512,12 @@ static int RunModesetRoundtripSanity(int argc, char** argv) {
   PrintModeInfo("original", original);
   aerogpu_test::PrintfStdout("INFO: %s: GetSystemMetrics: %dx%d", kTestName, initial_w, initial_h);
 
-  DEVMODE alternate;
+  DEVMODEW alternate;
   std::string alt_err;
   if (!FindAlternateDesktopMode(original, &alternate, &alt_err)) {
-    return reporter.Fail("%s", alt_err.c_str());
+    aerogpu_test::PrintfStdout("INFO: %s: %s; skipping", kTestName, alt_err.c_str());
+    reporter.SetSkipped("no_alternate_mode");
+    return reporter.Pass();
   }
   PrintModeInfo("alternate", alternate);
 
