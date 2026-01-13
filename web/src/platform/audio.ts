@@ -706,7 +706,11 @@ export async function createAudioOutput(options: CreateAudioOutputOptions = {}):
   // running implies a suspend/resume cycle (tab backgrounding, interruption, etc.). Discard any
   // buffered backlog so playback is "live".
   let onContextStateChange: (() => void) | null = null;
-  if (discardOnResume) {
+  const canWatchStateChange =
+    discardOnResume &&
+    typeof (context as unknown as { addEventListener?: unknown }).addEventListener === "function" &&
+    typeof (context as unknown as { removeEventListener?: unknown }).removeEventListener === "function";
+  if (canWatchStateChange) {
     let hasEverBeenRunning = context.state === "running";
     let lastState: AudioContextState = context.state;
     onContextStateChange = () => {
@@ -732,7 +736,13 @@ export async function createAudioOutput(options: CreateAudioOutputOptions = {}):
     },
     async close() {
       if (onContextStateChange) {
-        context.removeEventListener("statechange", onContextStateChange);
+        // The watcher is only installed when `removeEventListener` exists, but keep this robust
+        // for any exotic/stub AudioContext implementations.
+        try {
+          context.removeEventListener("statechange", onContextStateChange);
+        } catch {
+          // Ignore.
+        }
         onContextStateChange = null;
       }
       try {
