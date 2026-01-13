@@ -243,6 +243,11 @@ impl BiosSnapshot {
     pub fn decode<R: Read>(r: &mut R) -> std::io::Result<Self> {
         const MAX_E820_ENTRIES: u32 = 1024;
         const MAX_KEYBOARD_QUEUE: u32 = 8192;
+        // Maximum number of bytes we'll read for the legacy BIOS TTY buffer from a snapshot.
+        //
+        // Snapshots are primarily an internal format, but treating them as untrusted input is
+        // cheap. If a snapshot claims an absurd length, fail fast instead of attempting to
+        // allocate or stream-read gigabytes.
         const MAX_TTY_OUTPUT: u32 = 4 * 1024 * 1024;
 
         let mut buf8 = [0u8; 8];
@@ -290,15 +295,27 @@ impl BiosSnapshot {
         let video_mode = b[0];
 
         r.read_exact(&mut buf4)?;
-        let tty_len = u32::from_le_bytes(buf4).min(MAX_TTY_OUTPUT) as usize;
-        let mut tty_output = Vec::new();
-        tty_output.try_reserve_exact(tty_len).map_err(|_| {
-            std::io::Error::new(
-                std::io::ErrorKind::OutOfMemory,
-                "failed to allocate BIOS TTY output buffer",
-            )
-        })?;
-        tty_output.resize(tty_len, 0);
+        let tty_len_raw = u32::from_le_bytes(buf4);
+        if tty_len_raw > MAX_TTY_OUTPUT {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "BIOS TTY output buffer in snapshot is too large",
+            ));
+        }
+        let tty_len = tty_len_raw as usize;
+        // The runtime BIOS keeps a rolling `MAX_TTY_OUTPUT_BYTES` window; preserve only the tail
+        // when decoding older snapshots that may have captured more output.
+        let keep_len = tty_len.min(super::MAX_TTY_OUTPUT_BYTES);
+        let mut tty_output = vec![0u8; keep_len];
+        if tty_len > keep_len {
+            let mut discard = tty_len - keep_len;
+            let mut scratch = [0u8; 4096];
+            while discard != 0 {
+                let n = discard.min(scratch.len());
+                r.read_exact(&mut scratch[..n])?;
+                discard -= n;
+            }
+        }
         r.read_exact(&mut tty_output)?;
 
         r.read_exact(&mut b)?;
@@ -473,6 +490,24 @@ mod tests {
     use std::io::Cursor;
 
     use super::*;
+    use crate::bios::MAX_TTY_OUTPUT_BYTES;
+
+    #[test]
+    fn bios_snapshot_decode_truncates_tty_output_to_a_rolling_tail_window() {
+        let bios = Bios::new(BiosConfig::default());
+        let mut snapshot = bios.snapshot();
+
+        let total = MAX_TTY_OUTPUT_BYTES + 1024;
+        snapshot.tty_output = (0..total).map(|i| (i % 256) as u8).collect();
+
+        let mut buf = Vec::new();
+        snapshot.encode(&mut buf).unwrap();
+
+        let decoded = BiosSnapshot::decode(&mut Cursor::new(&buf)).unwrap();
+        assert_eq!(decoded.tty_output.len(), MAX_TTY_OUTPUT_BYTES);
+        assert_eq!(decoded.tty_output[0], ((total - MAX_TTY_OUTPUT_BYTES) % 256) as u8);
+        assert_eq!(decoded.tty_output[decoded.tty_output.len() - 1], ((total - 1) % 256) as u8);
+    }
 
     #[test]
     fn bios_snapshot_encode_decode_preserves_vbe_lfb_base_config_override() {
