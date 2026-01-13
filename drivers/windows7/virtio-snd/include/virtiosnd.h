@@ -161,13 +161,13 @@ typedef struct _VIRTIOSND_DEVICE_EXTENSION {
     BOOLEAN InterruptDescPresent;
 
     /*
-     * Registry: AllowPollingOnly (REG_DWORD)
+     * Registry: HKR\Parameters\AllowPollingOnly (REG_DWORD)
      *
      * When TRUE, the driver is permitted to start even if an INTx resource cannot
      * be discovered/connected. In that case, higher layers are expected to rely
      * on polling used rings for completion delivery.
      *
-     * Default: FALSE (contract v1 remains INTx-strict).
+     * Default: 0 / FALSE (set by the INF; contract v1 remains INTx-strict).
      */
     BOOLEAN AllowPollingOnly;
 
