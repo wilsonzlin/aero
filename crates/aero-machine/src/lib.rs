@@ -154,9 +154,17 @@ pub struct MachineConfig {
     pub enable_uhci: bool,
     /// Whether to attach the legacy VGA/VBE device model.
     ///
+    /// This is the transitional standalone VGA/VBE path used for BIOS/boot display and VGA-focused
+    /// integration tests. It is mutually exclusive with [`MachineConfig::enable_aerogpu`].
+    ///
     /// When enabled, guest physical accesses to the legacy VGA window (`0xA0000..0xC0000`), the
     /// Bochs VBE linear framebuffer (LFB) at [`aero_gpu_vga::SVGA_LFB_BASE`], and VGA/VBE port I/O
     /// are routed to an [`aero_gpu_vga::VgaDevice`].
+    ///
+    /// When the PC platform is enabled ([`MachineConfig::enable_pc_platform`]), the canonical
+    /// machine also exposes a transitional Bochs/QEMU-compatible VGA PCI function (currently at
+    /// `00:0c.0`) so the fixed VBE LFB can be routed through the PCI MMIO window. This PCI stub is
+    /// not present when [`MachineConfig::enable_aerogpu`] is enabled.
     ///
     /// Port mappings:
     ///
@@ -164,6 +172,14 @@ pub struct MachineConfig {
     ///   `0x3B4/0x3B5` and `0x3D4/0x3D5`)
     /// - Bochs VBE: `0x01CE/0x01CF`
     pub enable_vga: bool,
+    /// Whether to expose the canonical AeroGPU PCI identity at `00:07.0` (`A3A0:0001`).
+    ///
+    /// This is a PCI config-space exposure only (IDs/class/BAR definitions); the full AeroGPU MMIO
+    /// device model is intentionally out of scope for `aero_machine` today.
+    ///
+    /// Requires [`MachineConfig::enable_pc_platform`] and is mutually exclusive with
+    /// [`MachineConfig::enable_vga`].
+    pub enable_aerogpu: bool,
     /// Whether to attach a COM1 16550 serial device at `0x3F8`.
     pub enable_serial: bool,
     /// Whether to attach a legacy i8042 controller at ports `0x60/0x64`.
@@ -198,6 +214,7 @@ impl Default for MachineConfig {
             enable_virtio_blk: false,
             enable_uhci: false,
             enable_vga: true,
+            enable_aerogpu: false,
             enable_serial: true,
             enable_i8042: true,
             enable_a20_gate: true,
@@ -227,7 +244,7 @@ impl MachineConfig {
     /// - i8042 enabled (keyboard/mouse)
     /// - fast A20 gate enabled (port `0x92`)
     /// - reset control enabled (port `0xCF9`)
-    /// - VGA enabled
+    /// - VGA enabled (transitional; for AeroGPU PCI identity, use [`MachineConfig::win7_graphics`])
     /// - E1000 disabled
     #[must_use]
     pub fn win7_storage(ram_size_bytes: u64) -> Self {
@@ -241,6 +258,7 @@ impl MachineConfig {
             enable_virtio_blk: false,
             enable_uhci: false,
             enable_vga: true,
+            enable_aerogpu: false,
             enable_serial: true,
             enable_i8042: true,
             enable_a20_gate: true,
@@ -250,6 +268,22 @@ impl MachineConfig {
             enable_virtio_net: false,
             virtio_net_mac_addr: None,
         }
+    }
+
+    /// Configuration preset for the canonical Windows 7 storage topology with AeroGPU enabled.
+    ///
+    /// This is equivalent to [`MachineConfig::win7_storage`], but:
+    /// - exposes the canonical AeroGPU PCI identity at `00:07.0` (`A3A0:0001`), and
+    /// - disables the transitional standalone VGA/VBE path (`enable_vga=false`).
+    ///
+    /// Note: this preset only changes PCI enumeration. The AeroGPU device model itself is not
+    /// implemented by `aero_machine` yet.
+    #[must_use]
+    pub fn win7_graphics(ram_size_bytes: u64) -> Self {
+        let mut cfg = Self::win7_storage(ram_size_bytes);
+        cfg.enable_aerogpu = true;
+        cfg.enable_vga = false;
+        cfg
     }
 
     /// Alias for [`MachineConfig::win7_storage`].
@@ -1236,10 +1270,36 @@ impl MmioHandler for VgaMmio {
 // (`VID:DID = A3A0:0001`, `PCI\VEN_A3A0&DEV_0001`). See `docs/abi/aerogpu-pci-identity.md`.
 //
 // The VGA/VBE device model used for boot display (`aero_gpu_vga`) is *not* AeroGPU and must not
-// occupy that BDF. We expose a minimal, Bochs/QEMU-compatible VGA PCI function on a different slot
-// so the SVGA linear framebuffer can be routed via the PCI MMIO window.
+// occupy that BDF.
+//
+// When `MachineConfig::enable_vga` is enabled (and `enable_aerogpu` is not), we also expose a
+// minimal Bochs/QEMU-compatible VGA PCI function on a different slot so the fixed SVGA linear
+// framebuffer can be routed via the PCI MMIO window. When AeroGPU is enabled, this transitional
+// PCI stub is intentionally not installed.
 const VGA_PCI_BDF: PciBdf = PciBdf::new(0, 0x0c, 0);
 const VGA_PCI_BAR_INDEX: u8 = 0;
+
+struct AerogpuPciConfigDevice {
+    cfg: aero_devices::pci::PciConfigSpace,
+}
+
+impl AerogpuPciConfigDevice {
+    fn new() -> Self {
+        Self {
+            cfg: aero_devices::pci::profile::AEROGPU.build_config_space(),
+        }
+    }
+}
+
+impl PciDevice for AerogpuPciConfigDevice {
+    fn config(&self) -> &aero_devices::pci::PciConfigSpace {
+        &self.cfg
+    }
+
+    fn config_mut(&mut self) -> &mut aero_devices::pci::PciConfigSpace {
+        &mut self.cfg
+    }
+}
 
 struct VgaPciConfigDevice {
     cfg: aero_devices::pci::PciConfigSpace,
@@ -3564,7 +3624,14 @@ impl Machine {
             };
             register_pci_config_ports(&mut self.io, pci_cfg.clone());
 
-            if self.cfg.enable_vga {
+            if self.cfg.enable_aerogpu {
+                pci_cfg.borrow_mut().bus_mut().add_device(
+                    aero_devices::pci::profile::AEROGPU.bdf,
+                    Box::new(AerogpuPciConfigDevice::new()),
+                );
+            }
+
+            if self.cfg.enable_vga && !self.cfg.enable_aerogpu {
                 // VGA-compatible PCI device so the linear framebuffer is reachable via the PCI
                 // MMIO router at `PciResourceAllocatorConfig::mmio_base` (0xE000_0000).
                 pci_cfg
