@@ -74,3 +74,51 @@ test("EnabledAudioOutput.getMetrics() includes Web Audio baseLatency/outputLaten
   await output.close();
 });
 
+test("EnabledAudioOutput.getMetrics() omits non-finite or negative Web Audio latency values", async () => {
+  class FakeAudioWorklet {
+    addModule = vi.fn(async () => undefined);
+  }
+
+  class FakeAudioContext {
+    readonly sampleRate: number;
+    state: AudioContextState = "suspended";
+    readonly destination = {};
+    readonly audioWorklet = new FakeAudioWorklet();
+    readonly baseLatency = Number.NaN;
+    readonly outputLatency = -1;
+
+    resume = vi.fn(async () => {
+      this.state = "running";
+    });
+    close = vi.fn(async () => {
+      this.state = "closed";
+    });
+
+    constructor(opts: { sampleRate?: number; latencyHint?: unknown } = {}) {
+      this.sampleRate = opts.sampleRate ?? 48_000;
+    }
+  }
+
+  class FakeAudioWorkletNode {
+    connect = vi.fn(() => undefined);
+    disconnect = vi.fn(() => undefined);
+    port = { addEventListener: vi.fn(), removeEventListener: vi.fn(), start: vi.fn() };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    constructor(_context: unknown, _name: string, _options?: any) {}
+  }
+
+  GLOBALS.AudioContext = FakeAudioContext;
+  GLOBALS.AudioWorkletNode = FakeAudioWorkletNode;
+
+  const output = await createAudioOutput({ sampleRate: 48_000 });
+  expect(output.enabled).toBe(true);
+  if (!output.enabled) throw new Error("Expected enabled audio output");
+
+  const metrics = output.getMetrics();
+  expect(metrics.baseLatencySeconds).toBeUndefined();
+  expect(metrics.outputLatencySeconds).toBeUndefined();
+  expect(Object.prototype.hasOwnProperty.call(metrics, "baseLatencySeconds")).toBe(false);
+  expect(Object.prototype.hasOwnProperty.call(metrics, "outputLatencySeconds")).toBe(false);
+
+  await output.close();
+});
