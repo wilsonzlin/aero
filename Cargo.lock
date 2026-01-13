@@ -225,6 +225,7 @@ dependencies = [
 name = "aero-dxbc"
 version = "0.1.0"
 dependencies = [
+ "criterion",
  "md5",
 ]
 
