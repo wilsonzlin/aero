@@ -194,6 +194,12 @@ static void test_linux_keycode_abi_values(void) {
   assert(VIRTIO_INPUT_BTN_BACK == 278);
   assert(VIRTIO_INPUT_BTN_TASK == 279);
 
+  /* Relative axes (Linux input userspace ABI). */
+  assert(VIRTIO_INPUT_REL_X == 0);
+  assert(VIRTIO_INPUT_REL_Y == 1);
+  assert(VIRTIO_INPUT_REL_HWHEEL == 6);
+  assert(VIRTIO_INPUT_REL_WHEEL == 8);
+
   /* Tablet-related event and ABS codes (Linux input userspace ABI). */
   assert(VIRTIO_INPUT_EV_ABS == 0x03);
   assert(VIRTIO_INPUT_ABS_X == 0);
@@ -852,21 +858,6 @@ static void test_mouse_buttons_reports_le(void) {
   expect_report(&cap, 7, expect8, sizeof(expect8));
 }
 
-static void test_mouse_hwheel_reports(void) {
-  struct captured_reports cap;
-  struct hid_translate t;
-
-  cap_clear(&cap);
-  hid_translate_init(&t, capture_emit, &cap);
-
-  /* Horizontal wheel (AC Pan). */
-  send_rel(&t, VIRTIO_INPUT_REL_HWHEEL, 7);
-  send_syn(&t);
-
-  uint8_t expect1[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0x00, 0x00, 0x00, 0x00, 0x07};
-  expect_report(&cap, 0, expect1, sizeof(expect1));
-}
-
 static void test_mouse_wheel_and_hwheel_one_syn(void) {
   struct captured_reports cap;
   struct hid_translate t;
@@ -1065,6 +1056,50 @@ static void test_mouse_reports(void) {
   expect_report(&cap, 1, expect11, sizeof(expect11));
 }
 
+static void test_mouse_hwheel_reports(void) {
+  struct captured_reports cap;
+  struct hid_translate t;
+
+  cap_clear(&cap);
+  hid_translate_init(&t, capture_emit, &cap);
+  hid_translate_set_enabled_reports(&t, HID_TRANSLATE_REPORT_MASK_MOUSE);
+
+  /* Horizontal wheel delta alone. */
+  send_rel(&t, VIRTIO_INPUT_REL_HWHEEL, 5);
+  send_syn(&t);
+  assert(cap.count == 1);
+
+  uint8_t expect1[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0x00, 0x00, 0x00, 0x00, 0x05};
+  expect_report(&cap, 0, expect1, sizeof(expect1));
+
+  /* Coalesces with X/Y/Wheel on a single SYN_REPORT. */
+  cap_clear(&cap);
+  hid_translate_init(&t, capture_emit, &cap);
+  hid_translate_set_enabled_reports(&t, HID_TRANSLATE_REPORT_MASK_MOUSE);
+  send_rel(&t, VIRTIO_INPUT_REL_X, 1);
+  send_rel(&t, VIRTIO_INPUT_REL_Y, 2);
+  send_rel(&t, VIRTIO_INPUT_REL_WHEEL, 3);
+  send_rel(&t, VIRTIO_INPUT_REL_HWHEEL, 4);
+  send_syn(&t);
+  assert(cap.count == 1);
+
+  uint8_t expect2[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0x00, 0x01, 0x02, 0x03, 0x04};
+  expect_report(&cap, 0, expect2, sizeof(expect2));
+
+  /* Large delta is split into multiple reports (same policy as REL_X/Y/WHEEL). */
+  cap_clear(&cap);
+  hid_translate_init(&t, capture_emit, &cap);
+  hid_translate_set_enabled_reports(&t, HID_TRANSLATE_REPORT_MASK_MOUSE);
+  send_rel(&t, VIRTIO_INPUT_REL_HWHEEL, 200);
+  send_syn(&t);
+  assert(cap.count == 2);
+
+  uint8_t expect3[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0x00, 0x00, 0x00, 0x00, 0x7F};
+  uint8_t expect4[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0x00, 0x00, 0x00, 0x00, 0x49};
+  expect_report(&cap, 0, expect3, sizeof(expect3));
+  expect_report(&cap, 1, expect4, sizeof(expect4));
+}
+
 static void test_consumer_control_reports(void) {
   struct captured_reports cap;
   struct hid_translate t;
@@ -1135,20 +1170,6 @@ static void test_consumer_control_disabled_does_not_emit(void) {
   send_key(&t, VIRTIO_INPUT_KEY_VOLUMEUP, 1);
   send_syn(&t);
   assert(cap.count == 0);
-}
-
-static void test_mouse_horizontal_wheel_reports(void) {
-  struct captured_reports cap;
-  struct hid_translate t;
-
-  cap_clear(&cap);
-  hid_translate_init(&t, capture_emit, &cap);
-
-  send_rel(&t, VIRTIO_INPUT_REL_HWHEEL, -4);
-  send_syn(&t);
-
-  uint8_t expect1[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0x00, 0x00, 0x00, 0x00, 0xFC};
-  expect_report(&cap, 0, expect1, sizeof(expect1));
 }
 
 static void test_reset_emits_release_reports(void) {
@@ -1535,7 +1556,6 @@ int main(void) {
   test_keyboard_overflow_queue();
   test_keyboard_overflow_queue_does_not_emit_on_queued_press();
   test_mouse_reports();
-  test_mouse_horizontal_wheel_reports();
   test_mouse_reports_le();
   test_mouse_hwheel_reports();
   test_mouse_wheel_and_hwheel_one_syn();

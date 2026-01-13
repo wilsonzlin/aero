@@ -117,12 +117,13 @@
 // Mouse report descriptor advertises 8 buttons (no padding bits) and includes
 // a Consumer/AC Pan field for horizontal scrolling. Total: 57 bytes.
 #define VIRTIO_INPUT_EXPECTED_MOUSE_REPORT_DESC_LEN 57
-// Tablet report descriptor advertises 8 buttons and absolute X/Y. Total: 47 bytes.
+// Tablet (absolute pointer) report descriptor advertises 8 buttons and absolute X/Y. Total: 47 bytes.
 #define VIRTIO_INPUT_EXPECTED_TABLET_REPORT_DESC_LEN 47
 #define VIRTIO_INPUT_EXPECTED_KBD_INPUT_LEN 9
 #define VIRTIO_INPUT_EXPECTED_KBD_OUTPUT_LEN 2
 // Mouse input report (ReportID=2) is 6 bytes: [id][buttons][x][y][wheel][AC Pan].
 #define VIRTIO_INPUT_EXPECTED_MOUSE_INPUT_LEN 6
+// Tablet input report (ReportID=4) is 6 bytes: [id][buttons][x_lo][x_hi][y_lo][y_hi].
 #define VIRTIO_INPUT_EXPECTED_TABLET_INPUT_LEN 6
 
 /*
@@ -921,7 +922,6 @@ static void dump_consumer_report(const BYTE *buf, DWORD len, int assume_report_i
 
     wprintf(L"\n");
 }
-
 static void dump_tablet_report(const BYTE *buf, DWORD len, int assume_report_id)
 {
     DWORD off = 0;
@@ -938,7 +938,7 @@ static void dump_tablet_report(const BYTE *buf, DWORD len, int assume_report_id)
     // Driver layout:
     // - Tablet: 5 bytes (no ReportID) => [btn][x_lo][x_hi][y_lo][y_hi]
     // - With ReportID: one extra byte at front.
-    if (assume_report_id && len >= 2 && buf[0] != 0) {
+    if (assume_report_id && len >= 6 && buf[0] != 0) {
         report_id = buf[0];
         off = 1;
     }
@@ -2521,10 +2521,21 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
 
         is_keyboard = caps_valid && caps.UsagePage == 0x01 && caps.Usage == 0x06;
         is_mouse = caps_valid && caps.UsagePage == 0x01 && caps.Usage == 0x02;
-        is_tablet = attr_valid && (attr.ProductID == VIRTIO_INPUT_PID_TABLET);
+        is_tablet = 0;
+        if (is_virtio && attr_valid && attr.ProductID == VIRTIO_INPUT_PID_TABLET) {
+            is_tablet = 1;
+        } else if (is_virtio) {
+            // Heuristic for virtio-input tablet (absolute pointer): currently shares
+            // the mouse top-level usage, so distinguish by report descriptor length.
+            if (report_desc_valid && report_desc_len == VIRTIO_INPUT_EXPECTED_TABLET_REPORT_DESC_LEN) {
+                is_tablet = 1;
+            } else if (hid_report_desc_valid && hid_report_desc_len == VIRTIO_INPUT_EXPECTED_TABLET_REPORT_DESC_LEN) {
+                is_tablet = 1;
+            }
+        }
         if (is_tablet) {
-            // Tablet uses the same top-level usage as Mouse (0x01:0x02). Keep it
-            // distinct so --mouse/selftest don't accidentally select the tablet.
+            // Tablet uses the same top-level usage as Mouse (0x01:0x02). Keep it distinct so --mouse/selftest
+            // don't accidentally select the tablet.
             is_mouse = 0;
         }
 
@@ -2532,7 +2543,8 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
             virtio_expected_desc_len = VIRTIO_INPUT_EXPECTED_KBD_REPORT_DESC_LEN;
             virtio_expected_desc_valid = 1;
         } else if (is_mouse) {
-            virtio_expected_desc_len = VIRTIO_INPUT_EXPECTED_MOUSE_REPORT_DESC_LEN;
+            virtio_expected_desc_len =
+                is_tablet ? VIRTIO_INPUT_EXPECTED_TABLET_REPORT_DESC_LEN : VIRTIO_INPUT_EXPECTED_MOUSE_REPORT_DESC_LEN;
             virtio_expected_desc_valid = 1;
         } else if (is_tablet) {
             virtio_expected_desc_len = VIRTIO_INPUT_EXPECTED_TABLET_REPORT_DESC_LEN;
@@ -2541,7 +2553,8 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
             virtio_expected_desc_len = VIRTIO_INPUT_EXPECTED_KBD_REPORT_DESC_LEN;
             virtio_expected_desc_valid = 1;
         } else if (attr_valid && attr.ProductID == VIRTIO_INPUT_PID_MOUSE) {
-            virtio_expected_desc_len = VIRTIO_INPUT_EXPECTED_MOUSE_REPORT_DESC_LEN;
+            virtio_expected_desc_len =
+                is_tablet ? VIRTIO_INPUT_EXPECTED_TABLET_REPORT_DESC_LEN : VIRTIO_INPUT_EXPECTED_MOUSE_REPORT_DESC_LEN;
             virtio_expected_desc_valid = 1;
         } else if (attr_valid && attr.ProductID == VIRTIO_INPUT_PID_TABLET) {
             virtio_expected_desc_len = VIRTIO_INPUT_EXPECTED_TABLET_REPORT_DESC_LEN;
@@ -2552,6 +2565,8 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
             if (is_virtio) {
                 if (is_keyboard) {
                     wprintf(L"      Detected: virtio-input keyboard\n");
+                } else if (is_mouse && is_tablet) {
+                    wprintf(L"      Detected: virtio-input tablet\n");
                 } else if (is_mouse) {
                     wprintf(L"      Detected: virtio-input mouse\n");
                 } else if (is_tablet) {
@@ -2598,6 +2613,11 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
                     if (caps.OutputReportByteLength != VIRTIO_INPUT_EXPECTED_KBD_OUTPUT_LEN) {
                         wprintf(L"      [WARN] unexpected virtio-input keyboard output report length (expected %u)\n",
                                 (unsigned)VIRTIO_INPUT_EXPECTED_KBD_OUTPUT_LEN);
+                    }
+                } else if (caps_valid && is_mouse && is_tablet) {
+                    if (caps.InputReportByteLength != VIRTIO_INPUT_EXPECTED_TABLET_INPUT_LEN) {
+                        wprintf(L"      [WARN] unexpected virtio-input tablet input report length (expected %u)\n",
+                                (unsigned)VIRTIO_INPUT_EXPECTED_TABLET_INPUT_LEN);
                     }
                 } else if (caps_valid && is_mouse) {
                     if (caps.InputReportByteLength != VIRTIO_INPUT_EXPECTED_MOUSE_INPUT_LEN) {
