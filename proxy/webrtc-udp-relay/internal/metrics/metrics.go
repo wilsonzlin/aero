@@ -31,6 +31,23 @@ const (
 	UDPWSDroppedDeniedByPolicy = "udp_ws_dropped_denied_by_policy"
 )
 
+// WebRTC UDP relay (DataChannel label "udp") counters.
+//
+// These mirror the /udp WebSocket fallback counters but allow operators to
+// distinguish traffic and drop reasons on the primary WebRTC transport.
+const (
+	WebRTCUDPDatagramsIn            = "webrtc_udp_datagrams_in"
+	WebRTCUDPDatagramsOut           = "webrtc_udp_datagrams_out"
+	WebRTCUDPDropped                = "webrtc_udp_dropped"
+	WebRTCUDPDroppedBackpressure    = "webrtc_udp_dropped_backpressure"
+	WebRTCUDPDroppedMalformed       = "webrtc_udp_dropped_malformed"
+	WebRTCUDPDroppedOversized       = "webrtc_udp_dropped_oversized"
+	WebRTCUDPDroppedRateLimited     = "webrtc_udp_dropped_rate_limited"
+	WebRTCUDPDroppedQuotaExceeded   = "webrtc_udp_dropped_quota_exceeded"
+	WebRTCUDPDroppedDeniedByPolicy  = "webrtc_udp_dropped_denied_by_policy"
+	WebRTCUDPDroppedTooManyBindings = "webrtc_udp_dropped_too_many_bindings"
+)
+
 // Metrics is a minimal, concurrency-safe counter registry.
 //
 // The production relay is expected to plug into a real metrics backend; this

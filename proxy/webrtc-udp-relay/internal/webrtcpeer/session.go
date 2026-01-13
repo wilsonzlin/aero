@@ -73,6 +73,7 @@ func NewSession(api *webrtc.API, iceServers []webrtc.ICEServer, relayCfg relay.C
 			}
 
 			r := relay.NewSessionRelay(dc, relayCfg, destPolicy, quota)
+			r.EnableWebRTCUDPMetrics()
 
 			s.mu.Lock()
 			if s.r != nil {

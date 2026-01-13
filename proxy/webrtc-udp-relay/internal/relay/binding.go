@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/metrics"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/udpproto"
 )
 
@@ -169,6 +170,11 @@ func (b *UdpPortBinding) readLoop() {
 }
 
 func (b *UdpPortBinding) readLoopConn(conn *net.UDPConn) {
+	var metricsSink *metrics.Metrics
+	if b.session != nil {
+		metricsSink = b.session.metrics
+	}
+
 	buf := make([]byte, b.cfg.UDPReadBufferBytes)
 	for {
 		n, remote, err := conn.ReadFromUDP(buf)
@@ -213,9 +219,17 @@ func (b *UdpPortBinding) readLoopConn(conn *net.UDPConn) {
 			continue
 		}
 		if b.session != nil && !b.session.HandleInboundToClient(out) {
+			if metricsSink != nil {
+				metricsSink.Inc(metrics.WebRTCUDPDropped)
+				metricsSink.Inc(metrics.WebRTCUDPDroppedRateLimited)
+			}
 			continue
 		}
-		b.queue.Enqueue(out)
+		if b.queue.Enqueue(out) {
+			if metricsSink != nil {
+				metricsSink.Inc(metrics.WebRTCUDPDatagramsOut)
+			}
+		}
 	}
 }
 

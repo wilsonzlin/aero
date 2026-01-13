@@ -2,12 +2,15 @@ package relay
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/netip"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/metrics"
+	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/ratelimit"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/udpproto"
 )
 
@@ -92,6 +95,22 @@ func (s *SessionRelay) Stats() SessionRelayStats {
 	return SessionRelayStats{
 		OutboundSendQueueDrops: s.queue.DropCount(),
 	}
+}
+
+// EnableWebRTCUDPMetrics configures the send queue drop hook used to track
+// backpressure drops on the primary WebRTC DataChannel relay path.
+//
+// When the relay is running without a quota/session manager (s.session == nil),
+// this method is a no-op.
+func (s *SessionRelay) EnableWebRTCUDPMetrics() {
+	if s == nil || s.queue == nil || s.session == nil || s.session.metrics == nil {
+		return
+	}
+	m := s.session.metrics
+	s.queue.SetOnDrop(func() {
+		m.Inc(metrics.WebRTCUDPDropped)
+		m.Inc(metrics.WebRTCUDPDroppedBackpressure)
+	})
 }
 
 func (s *SessionRelay) Close() {
@@ -230,8 +249,24 @@ func (s *SessionRelay) HandleDataChannelMessage(msg []byte) {
 		return
 	}
 
+	var metricsSink *metrics.Metrics
+	if s.session != nil {
+		metricsSink = s.session.metrics
+	}
+	if metricsSink != nil {
+		metricsSink.Inc(metrics.WebRTCUDPDatagramsIn)
+	}
+
 	f, err := s.codec.DecodeFrame(msg)
 	if err != nil {
+		if metricsSink != nil {
+			metricsSink.Inc(metrics.WebRTCUDPDropped)
+			if errors.Is(err, udpproto.ErrPayloadTooLarge) {
+				metricsSink.Inc(metrics.WebRTCUDPDroppedOversized)
+			} else {
+				metricsSink.Inc(metrics.WebRTCUDPDroppedMalformed)
+			}
+		}
 		return
 	}
 
@@ -241,11 +276,19 @@ func (s *SessionRelay) HandleDataChannelMessage(msg []byte) {
 
 	if s.policy == nil {
 		// Fail closed: a nil policy would turn the relay into an open UDP proxy.
+		if metricsSink != nil {
+			metricsSink.Inc(metrics.WebRTCUDPDropped)
+			metricsSink.Inc(metrics.WebRTCUDPDroppedDeniedByPolicy)
+		}
 		return
 	}
 
 	remoteIP := net.IP(f.RemoteIP.AsSlice())
 	if err := s.policy.AllowUDP(remoteIP, f.RemotePort); err != nil {
+		if metricsSink != nil {
+			metricsSink.Inc(metrics.WebRTCUDPDropped)
+			metricsSink.Inc(metrics.WebRTCUDPDroppedDeniedByPolicy)
+		}
 		return
 	}
 
@@ -253,13 +296,28 @@ func (s *SessionRelay) HandleDataChannelMessage(msg []byte) {
 
 	if s.session != nil {
 		destKey := netip.AddrPortFrom(f.RemoteIP, f.RemotePort).String()
-		if !s.session.HandleClientDatagram(f.GuestPort, destKey, f.Payload) {
+		allowed, reason := s.session.AllowClientDatagramWithReason(destKey, f.Payload)
+		if !allowed {
+			if metricsSink != nil {
+				metricsSink.Inc(metrics.WebRTCUDPDropped)
+				if reason == ratelimit.DropReasonTooManyDestinations {
+					metricsSink.Inc(metrics.WebRTCUDPDroppedQuotaExceeded)
+				} else {
+					metricsSink.Inc(metrics.WebRTCUDPDroppedRateLimited)
+				}
+			}
 			return
 		}
 	}
 
 	b, err := s.getOrCreateBinding(f.GuestPort)
 	if err != nil {
+		if metricsSink != nil {
+			metricsSink.Inc(metrics.WebRTCUDPDropped)
+			if errors.Is(err, ErrTooManyBindings) {
+				metricsSink.Inc(metrics.WebRTCUDPDroppedTooManyBindings)
+			}
+		}
 		return
 	}
 
