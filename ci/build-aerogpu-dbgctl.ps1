@@ -1,42 +1,47 @@
 #Requires -Version 5.1
+
 <#
 .SYNOPSIS
-  Build AeroGPU Win7 dbgctl tool (aerogpu_dbgctl.exe) for CI packaging.
+  Builds the Windows 7 AeroGPU debug/control utility (aerogpu_dbgctl.exe).
 
 .DESCRIPTION
-  Builds `drivers/aerogpu/tools/win7_dbgctl` using `cl.exe` from a Visual Studio toolchain.
-  This tool intentionally does not require the WDK; it dynamically loads the required D3DKMT*
-  entrypoints from gdi32.dll (see the tool README).
+  The Win7 AeroGPU dbgctl tool is built via the in-tree batch file:
+    drivers/aerogpu/tools/win7_dbgctl/build_vs2010.cmd
 
-  Outputs are staged into the driver build output tree so `ci/make-catalogs.ps1` copies them
-  into `out/packages/**` and downstream Guest Tools / driver bundle packaging picks them up:
+  This script loads a toolchain manifest (default: out/toolchain.json) produced by
+  `ci/install-wdk.ps1`, imports a Visual Studio developer environment for an x86 target so
+  `cl.exe` is available, invokes the build script, and verifies the expected output exists:
+    drivers/aerogpu/tools/win7_dbgctl/bin/aerogpu_dbgctl.exe
 
+  For CI/local packaging runs, if `out/drivers/aerogpu/<arch>/` exists (i.e. after
+  `ci/build-drivers.ps1`), the tool is copied into:
     out/drivers/aerogpu/x86/tools/aerogpu_dbgctl.exe
     out/drivers/aerogpu/x64/tools/aerogpu_dbgctl.exe
 
+  so downstream `ci/make-catalogs.ps1` stages it into `out/packages/**` and Guest Tools / driver
+  bundle packaging can ship it.
+
 .PARAMETER ToolchainJson
   Path to a toolchain manifest produced by `ci/install-wdk.ps1` (default: out/toolchain.json).
-
-.PARAMETER OutDriversRoot
-  Output root for driver build outputs (default: out/drivers).
-
-.PARAMETER ObjRoot
-  Output root for intermediate object files (default: out/obj/tools).
-
-.PARAMETER Platforms
-  Platforms to build (default: Win32 + x64).
 #>
 
 [CmdletBinding()]
 param(
-  [string]$ToolchainJson = "out/toolchain.json",
-  [string]$OutDriversRoot = "out/drivers",
-  [string]$ObjRoot = "out/obj/tools",
-  [string[]]$Platforms = @("Win32", "x64")
+  [Parameter()]
+  [ValidateNotNullOrEmpty()]
+  [string]$ToolchainJson = 'out/toolchain.json'
 )
 
 Set-StrictMode -Version Latest
-$ErrorActionPreference = "Stop"
+$ErrorActionPreference = 'Stop'
+
+function Resolve-RepoRoot {
+  $ciDir = $PSScriptRoot
+  if ([string]::IsNullOrWhiteSpace($ciDir)) {
+    throw "Unable to determine script directory (PSScriptRoot is empty)."
+  }
+  return (Resolve-Path -LiteralPath (Join-Path $ciDir '..')).Path
+}
 
 function Resolve-RepoPath {
   param([Parameter(Mandatory = $true)][string]$Path)
@@ -45,38 +50,22 @@ function Resolve-RepoPath {
     return [System.IO.Path]::GetFullPath($Path)
   }
 
-  $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+  $repoRoot = Resolve-RepoRoot
   return [System.IO.Path]::GetFullPath((Join-Path $repoRoot $Path))
 }
 
-function Ensure-EmptyDirectory {
-  param([Parameter(Mandatory = $true)][string]$Path)
-
-  if (Test-Path -LiteralPath $Path) {
-    Remove-Item -LiteralPath $Path -Recurse -Force
-  }
-  New-Item -ItemType Directory -Force -Path $Path | Out-Null
-}
-
-function Ensure-Directory {
-  param([Parameter(Mandatory = $true)][string]$Path)
-
-  if (-not (Test-Path -LiteralPath $Path)) {
-    New-Item -ItemType Directory -Force -Path $Path | Out-Null
-  }
-}
-
 function Read-ToolchainJson {
-  param([string]$ToolchainJsonPath)
+  param([Parameter(Mandatory = $true)][string]$ToolchainJsonPath)
 
-  if (-not $ToolchainJsonPath) { return $null }
   if (-not (Test-Path -LiteralPath $ToolchainJsonPath -PathType Leaf)) {
     throw "ToolchainJson not found: $ToolchainJsonPath"
   }
+
   $raw = Get-Content -LiteralPath $ToolchainJsonPath -Raw
   if ([string]::IsNullOrWhiteSpace($raw)) {
     throw "ToolchainJson is empty: $ToolchainJsonPath"
   }
+
   return ($raw | ConvertFrom-Json)
 }
 
@@ -95,6 +84,7 @@ function Get-ToolchainPropertyValue {
       return $value
     }
   }
+
   return $null
 }
 
@@ -119,6 +109,7 @@ function Import-EnvironmentFromBatchFile {
   $argString = ($quotedArgs -join ' ')
 
   # cmd.exe returns all environment variables; we then apply them to the current PowerShell process.
+  # Suppress the batch file's normal output so `set` is the only emitted stdout (stable parsing).
   $cmd = "call `"$BatchPath`" $argString >nul 2>nul && set"
   $lines = & cmd.exe /d /s /c $cmd
   if ($LASTEXITCODE -ne 0) {
@@ -135,146 +126,144 @@ function Import-EnvironmentFromBatchFile {
   }
 }
 
-function Normalize-Platform {
-  param([Parameter(Mandatory = $true)][string]$Platform)
-  switch ($Platform.Trim().ToLowerInvariant()) {
-    'win32' { return 'Win32' }
-    'x86' { return 'Win32' }
-    'ia32' { return 'Win32' }
-    'x64' { return 'x64' }
-    'amd64' { return 'x64' }
-    default { throw "Unsupported platform '$Platform'. Supported: Win32/x86, x64/amd64." }
-  }
-}
-
-function Platform-ToArch {
-  param([Parameter(Mandatory = $true)][string]$Platform)
-  switch ($Platform) {
-    'Win32' { return 'x86' }
-    'x64' { return 'x64' }
-    default { throw "Unsupported normalized platform '$Platform'." }
-  }
-}
-
-function Initialize-ToolchainEnvironment {
+function Initialize-VcEnvironmentX86 {
   param(
-    $Toolchain,
-    [Parameter(Mandatory = $true)][string]$Platform
+    [Parameter(Mandatory = $true)]$Toolchain,
+    [Parameter(Mandatory = $true)][string]$ToolchainJsonPath
   )
 
-  if ($null -eq $Toolchain) { return }
+  $vsDevCmdRaw = Get-ToolchainPropertyValue -Toolchain $Toolchain -Names @('VsDevCmd', 'vsDevCmd', 'vsdevcmd')
+  $vcVarsAllRaw = Get-ToolchainPropertyValue -Toolchain $Toolchain -Names @('VcVarsAll', 'vcVarsAll', 'vcvarsall')
 
-  $vsDevCmd = Get-ToolchainPropertyValue -Toolchain $Toolchain -Names @('VsDevCmd', 'vsDevCmd', 'vsdevcmd')
-  $vcVarsAll = Get-ToolchainPropertyValue -Toolchain $Toolchain -Names @('VcVarsAll', 'vcVarsAll', 'vcvarsall')
+  $vsDevCmd = if ($vsDevCmdRaw) { [Environment]::ExpandEnvironmentVariables($vsDevCmdRaw).Trim() } else { $null }
+  $vcVarsAll = if ($vcVarsAllRaw) { [Environment]::ExpandEnvironmentVariables($vcVarsAllRaw).Trim() } else { $null }
 
-  # If we have a dev-environment batch file, use it to populate PATH/INCLUDE/LIB/etc.
-  # We import an environment per *target* platform so building both Win32 and x64 works reliably.
-  if ($vsDevCmd) {
-    $hostVsArch = 'x64'
-    $procArch = [string]$env:PROCESSOR_ARCHITECTURE
-    if ($procArch -and $procArch.Trim().ToLowerInvariant() -eq 'x86') {
-      $hostVsArch = 'x86'
+  if (-not [string]::IsNullOrWhiteSpace($vsDevCmd) -and (Test-Path -LiteralPath $vsDevCmd -PathType Leaf)) {
+    $args = @('-arch=x86', '-host_arch=x64')
+    Write-Host "Importing Visual Studio environment via VsDevCmd.bat: $vsDevCmd ($($args -join ' '))"
+    Import-EnvironmentFromBatchFile -BatchPath $vsDevCmd -Arguments $args
+    return [pscustomobject]@{
+      Kind = 'VsDevCmd'
+      Path = $vsDevCmd
+      Arguments = $args
     }
-
-    $targetVsArch = if ($Platform -eq 'Win32') { 'x86' } else { 'x64' }
-    Write-Host "Importing Visual Studio environment via VsDevCmd: $vsDevCmd (-arch=$targetVsArch -host_arch=$hostVsArch)"
-    Import-EnvironmentFromBatchFile -BatchPath $vsDevCmd -Arguments @("-arch=$targetVsArch", "-host_arch=$hostVsArch")
-    return
   }
 
-  if ($vcVarsAll) {
-    $hostVcArch = 'amd64'
-    $procArch = [string]$env:PROCESSOR_ARCHITECTURE
-    if ($procArch -and $procArch.Trim().ToLowerInvariant() -eq 'x86') {
-      $hostVcArch = 'x86'
-    }
+  if (-not [string]::IsNullOrWhiteSpace($vsDevCmd)) {
+    throw @"
+ToolchainJson provides VsDevCmd='$vsDevCmdRaw', but the path does not exist:
+  $vsDevCmd
 
-    if ($Platform -eq 'Win32') {
-      $archArg = if ($hostVcArch -eq 'amd64') { 'amd64_x86' } else { 'x86' }
-    } else {
-      $archArg = if ($hostVcArch -eq 'amd64') { 'amd64' } else { 'x86_amd64' }
-    }
+Remediation:
+  - Re-run: pwsh -NoProfile -ExecutionPolicy Bypass -File ci/install-wdk.ps1
+  - Ensure Visual Studio Build Tools (MSVC C++ toolchain) are installed.
+  - Inspect: $ToolchainJsonPath
+"@
+  }
 
-    Write-Host "Importing Visual Studio environment via vcvarsall: $vcVarsAll ($archArg)"
+  if (-not [string]::IsNullOrWhiteSpace($vcVarsAll) -and (Test-Path -LiteralPath $vcVarsAll -PathType Leaf)) {
+    $procArch = ([string]$env:PROCESSOR_ARCHITECTURE).Trim().ToLowerInvariant()
+    $hostVcArch = if ($procArch -eq 'x86') { 'x86' } else { 'amd64' }
+    $archArg = if ($hostVcArch -eq 'amd64') { 'amd64_x86' } else { 'x86' }
+
+    Write-Host "Importing Visual Studio environment via vcvarsall.bat: $vcVarsAll ($archArg)"
     Import-EnvironmentFromBatchFile -BatchPath $vcVarsAll -Arguments @($archArg)
-    return
+    return [pscustomobject]@{
+      Kind = 'VcVarsAll'
+      Path = $vcVarsAll
+      Arguments = @($archArg)
+    }
   }
 
-  Write-Warning "ToolchainJson did not contain VsDevCmd/VcVarsAll; assuming cl.exe is already available in PATH."
+  if (-not [string]::IsNullOrWhiteSpace($vcVarsAll)) {
+    throw @"
+ToolchainJson provides VcVarsAll='$vcVarsAllRaw', but the path does not exist:
+  $vcVarsAll
+
+Remediation:
+  - Re-run: pwsh -NoProfile -ExecutionPolicy Bypass -File ci/install-wdk.ps1
+  - Ensure Visual Studio Build Tools (MSVC C++ toolchain) are installed.
+  - Inspect: $ToolchainJsonPath
+"@
+  }
+
+  throw @"
+No Visual Studio developer environment batch file was found in ToolchainJson.
+
+Expected one of:
+  - VsDevCmd (preferred): <VS>\Common7\Tools\VsDevCmd.bat
+  - VcVarsAll:            <VS>\VC\Auxiliary\Build\vcvarsall.bat
+
+Toolchain manifest:
+  $ToolchainJsonPath
+
+Remediation:
+  - Run: pwsh -NoProfile -ExecutionPolicy Bypass -File ci/install-wdk.ps1
+  - Ensure Visual Studio Build Tools are installed with the MSVC C++ toolchain.
+"@
 }
 
-$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-$toolchainJsonAbs = if ($ToolchainJson) { Resolve-RepoPath -Path $ToolchainJson } else { $null }
+$repoRoot = Resolve-RepoRoot
+$toolchainJsonAbs = Resolve-RepoPath -Path $ToolchainJson
 $toolchain = Read-ToolchainJson -ToolchainJsonPath $toolchainJsonAbs
 
-$srcFile = Join-Path $repoRoot "drivers\aerogpu\tools\win7_dbgctl\src\aerogpu_dbgctl.cpp"
-$includeDir = Join-Path $repoRoot "drivers\aerogpu\protocol"
+$envInfo = Initialize-VcEnvironmentX86 -Toolchain $toolchain -ToolchainJsonPath $toolchainJsonAbs
 
-if (-not (Test-Path -LiteralPath $srcFile -PathType Leaf)) {
-  throw "AeroGPU dbgctl source file not found: $srcFile"
-}
-if (-not (Test-Path -LiteralPath $includeDir -PathType Container)) {
-  throw "AeroGPU protocol include dir not found: $includeDir"
-}
+$cl = Get-Command cl.exe -ErrorAction SilentlyContinue
+if (-not $cl) {
+  throw @"
+cl.exe was not found on PATH after importing the Visual Studio environment.
 
-$normalizedPlatforms = @()
-foreach ($p in $Platforms) { $normalizedPlatforms += (Normalize-Platform -Platform $p) }
-$normalizedPlatforms = @($normalizedPlatforms | Select-Object -Unique)
+Environment import:
+  $($envInfo.Kind): $($envInfo.Path)
+  args: $($envInfo.Arguments -join ' ')
 
-Write-Host "Building aerogpu_dbgctl.exe for: $($normalizedPlatforms -join ', ')"
-
-foreach ($platform in $normalizedPlatforms) {
-  Initialize-ToolchainEnvironment -Toolchain $toolchain -Platform $platform
-
-  $arch = Platform-ToArch -Platform $platform
-  $outDir = Resolve-RepoPath -Path (Join-Path $OutDriversRoot (Join-Path "aerogpu\$arch" "tools"))
-  $exePath = Join-Path $outDir "aerogpu_dbgctl.exe"
-
-  $objDir = Resolve-RepoPath -Path (Join-Path $ObjRoot (Join-Path "aerogpu_dbgctl" $arch))
-  Ensure-EmptyDirectory -Path $objDir
-  Ensure-Directory -Path $outDir
-
-  $clCmd = Get-Command -Name "cl.exe" -ErrorAction SilentlyContinue
-  if (-not $clCmd) {
-    throw "cl.exe not found. Ensure Visual Studio Build Tools are installed and ToolchainJson contains VsDevCmd/VcVarsAll (or run from a VS Developer Command Prompt)."
-  }
-
-  Write-Host ""
-  Write-Host "==> aerogpu_dbgctl ($arch)"
-  Write-Host "    src: $srcFile"
-  Write-Host "    out: $exePath"
-
-  Push-Location $objDir
-  try {
-    $args = @(
-      "/nologo",
-      "/W4",
-      "/EHsc",
-      "/O2",
-      "/MT",
-      "/DUNICODE",
-      "/D_UNICODE",
-      "/I", $includeDir,
-      $srcFile,
-      "/link",
-      "/OUT:$exePath",
-      "user32.lib",
-      "gdi32.lib"
-    )
-
-    & $clCmd.Source @args
-    if ($LASTEXITCODE -ne 0) {
-      throw "cl.exe failed for aerogpu_dbgctl ($arch) (exit code $LASTEXITCODE)."
-    }
-  } finally {
-    Pop-Location
-  }
-
-  if (-not (Test-Path -LiteralPath $exePath -PathType Leaf)) {
-    throw "Expected dbgctl output missing after build: $exePath"
-  }
+Remediation:
+  - Ensure Visual Studio Build Tools are installed with the MSVC C++ toolchain (Desktop development with C++).
+  - Re-run: pwsh -NoProfile -ExecutionPolicy Bypass -File ci/install-wdk.ps1
+  - Inspect: $toolchainJsonAbs
+"@
 }
 
-Write-Host ""
-Write-Host "AeroGPU dbgctl build complete."
+Write-Host "Using cl.exe: $($cl.Source)"
+
+$buildCmd = Join-Path $repoRoot 'drivers\aerogpu\tools\win7_dbgctl\build_vs2010.cmd'
+if (-not (Test-Path -LiteralPath $buildCmd -PathType Leaf)) {
+  throw "Expected dbgctl build script not found: $buildCmd"
+}
+
+Write-Host "Building AeroGPU dbgctl tool..."
+& $buildCmd
+if ($LASTEXITCODE -ne 0) {
+  throw "Dbgctl build script failed with exit code $LASTEXITCODE: $buildCmd"
+}
+
+$dbgctlExe = Join-Path $repoRoot 'drivers\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe'
+if (-not (Test-Path -LiteralPath $dbgctlExe -PathType Leaf)) {
+  throw "Expected dbgctl output was not produced: $dbgctlExe"
+}
+$dbgctlFile = Get-Item -LiteralPath $dbgctlExe
+if ($dbgctlFile.Length -le 0) {
+  throw "Dbgctl output exists but is empty: $dbgctlExe"
+}
+
+Write-Host ("OK: built dbgctl: {0} ({1} bytes)" -f $dbgctlExe, $dbgctlFile.Length)
+
+# Best-effort staging into the driver build output directories so downstream `ci/make-catalogs.ps1`
+# (and thus driver packages + Guest Tools) can include the tool.
+foreach ($arch in @('x86', 'x64')) {
+  $driverOutDir = Join-Path $repoRoot (Join-Path 'out\drivers\aerogpu' $arch)
+  if (-not (Test-Path -LiteralPath $driverOutDir -PathType Container)) {
+    Write-Host "NOTE: not staging dbgctl into '$driverOutDir' (directory not found). Run ci/build-drivers.ps1 first to produce out/drivers."
+    continue
+  }
+
+  $toolsDir = Join-Path $driverOutDir 'tools'
+  New-Item -ItemType Directory -Force -Path $toolsDir | Out-Null
+
+  $dest = Join-Path $toolsDir 'aerogpu_dbgctl.exe'
+  Copy-Item -LiteralPath $dbgctlExe -Destination $dest -Force
+  $destFile = Get-Item -LiteralPath $dest
+  Write-Host ("Staged dbgctl for packaging: {0} ({1} bytes)" -f $destFile.FullName, $destFile.Length)
+}
 

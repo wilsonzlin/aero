@@ -22,6 +22,7 @@ Example local usage:
 ```powershell
 pwsh -File ci/install-wdk.ps1
 pwsh -File ci/build-drivers.ps1 -ToolchainJson out/toolchain.json
+pwsh -File ci/build-aerogpu-dbgctl.ps1 -ToolchainJson out/toolchain.json
 pwsh -File ci/make-catalogs.ps1 -ToolchainJson out/toolchain.json
 pwsh -File ci/sign-drivers.ps1 -ToolchainJson out/toolchain.json
 pwsh -File ci/package-drivers.ps1 -MakeFatImage
@@ -31,6 +32,17 @@ pwsh -File ci/package-guest-tools.ps1
 ## `ci/build-drivers.ps1`
 
 Builds driver projects under `drivers/` for the requested platforms/configuration using `msbuild.exe`.
+
+## `ci/build-aerogpu-dbgctl.ps1`
+
+Builds the standalone Win7 AeroGPU debug/control tool (`aerogpu_dbgctl.exe`) using `cl.exe` (not MSBuild).
+
+- Build script: `drivers/aerogpu/tools/win7_dbgctl/build_vs2010.cmd`
+- Output (in-tree): `drivers/aerogpu/tools/win7_dbgctl/bin/aerogpu_dbgctl.exe`
+
+In CI, this script is run after `ci/build-drivers.ps1` so it can also copy the built tool into
+`out/drivers/aerogpu/<arch>/tools/aerogpu_dbgctl.exe`, allowing downstream catalog/sign/package steps to
+ship it inside driver packages and Guest Tools media.
 
 ### CI packaging gate (`ci-package.json`)
 

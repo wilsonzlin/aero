@@ -559,16 +559,6 @@ jobs:
           }
           pwsh -NoProfile -ExecutionPolicy Bypass -File 'ci\build-drivers.ps1' -ToolchainJson 'out\toolchain.json'
 
-      - name: Build AeroGPU dbgctl tool (ci/build-aerogpu-dbgctl.ps1)
-        if: steps.detect.outputs.skip != 'true'
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          if (!(Test-Path -LiteralPath 'ci\build-aerogpu-dbgctl.ps1')) {
-            throw "Expected script ci\build-aerogpu-dbgctl.ps1 to exist."
-          }
-          pwsh -NoProfile -ExecutionPolicy Bypass -File 'ci\build-aerogpu-dbgctl.ps1' -ToolchainJson 'out\toolchain.json'
-
       - name: Detect built driver binaries
         id: built
         if: steps.detect.outputs.skip != 'true'
@@ -592,6 +582,16 @@ jobs:
 
           Write-Host "Found driver binary: $($sys.FullName)"
           "has_sys=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Build AeroGPU dbgctl tool (ci/build-aerogpu-dbgctl.ps1)
+        if: steps.detect.outputs.skip != 'true' && steps.built.outputs.has_sys == 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (!(Test-Path -LiteralPath 'ci\build-aerogpu-dbgctl.ps1')) {
+            throw "Expected script ci\build-aerogpu-dbgctl.ps1 to exist."
+          }
+          pwsh -NoProfile -ExecutionPolicy Bypass -File 'ci\build-aerogpu-dbgctl.ps1' -ToolchainJson 'out\toolchain.json'
 
       - name: Generate catalogs (ci/make-catalogs.ps1)
         if: steps.detect.outputs.skip != 'true' && steps.built.outputs.has_sys == 'true'
