@@ -13,13 +13,17 @@ driver stack and the Aero emulator’s virtual GPU device model.
 
 ## Current status (canonical machine)
 
-This document describes the **AeroGPU** ABI for the `A3A0:0001` PCI device model. The canonical
-full-system machine (`aero_machine::Machine`) reserves `00:07.0` for that identity, but does **not**
-yet expose the full AeroGPU WDDM PCI device function.
+This document describes the **AeroGPU** ABI for the `A3A0:0001` PCI device model.
 
-Today, boot display in the canonical machine is provided by `aero_gpu_vga` (VGA + Bochs VBE), plus
-a minimal Bochs/QEMU “Standard VGA”-like PCI stub at `00:0c.0` (`1234:1111`) used only for VBE LFB
-MMIO routing.
+The canonical machine (`aero_machine::Machine`) supports **two mutually-exclusive** display configurations:
+
+- `MachineConfig::enable_aerogpu=true`: expose the canonical AeroGPU PCI identity at `00:07.0`
+  (`A3A0:0001`) with the canonical BAR layout (BAR0 regs + BAR1 VRAM aperture). In `aero_machine`
+  today this is PCI config-space exposure only; the full AeroGPU device model lives in
+  `crates/emulator`.
+- `MachineConfig::enable_vga=true` (and `enable_aerogpu=false`): boot display is provided by
+  `aero_gpu_vga` (VGA + Bochs VBE), plus a minimal Bochs/QEMU “Standard VGA”-like PCI stub at
+  `00:0c.0` (`1234:1111`) used only for VBE LFB MMIO routing.
 
 See:
 
@@ -68,6 +72,8 @@ Defined in `aerogpu_pci.h`:
 BARs:
 
 - BAR0: MMIO register block, **64 KiB** (`AEROGPU_PCI_BAR0_SIZE_BYTES`)
+- BAR1: optional prefetchable VRAM aperture used for VGA/VBE compatibility (outside the WDDM ABI
+  defined by `aerogpu_pci.h`; see `docs/16-aerogpu-vga-vesa-compat.md`)
 
 ---
 

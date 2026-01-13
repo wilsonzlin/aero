@@ -97,9 +97,13 @@ For BIOS, boot loader, and legacy applications:
 For Windows 7 specifically, the **primary boot display** must be provided by the same virtual GPU that will later run WDDM. In Aero, long-term this means the AeroGPU virtual PCI device must be **VGA/VBE-compatible** (legacy VGA ports + legacy VRAM window + VBE linear framebuffer modes) and the emulator must present that framebuffer on the canvas until the WDDM driver claims scanout.
 
 Current status: the canonical `aero_machine::Machine` boot display is still provided by the
-standalone `aero_gpu_vga` VGA/VBE implementation (with a minimal “Standard VGA”-like PCI stub for
-VBE LFB routing). AeroGPU itself is reserved at `00:07.0` but not yet wired into the canonical
-machine.
+standalone `aero_gpu_vga` VGA/VBE implementation (with a minimal “Standard VGA”-like PCI stub at
+`00:0c.0` for VBE LFB routing) when `MachineConfig::enable_vga=true`.
+
+The canonical AeroGPU PCI identity (`A3A0:0001` at `00:07.0`) can be exposed via
+`MachineConfig::enable_aerogpu=true` for stable Windows driver binding and BAR enumeration;
+integrating the full AeroGPU device model (including VGA/VBE compatibility + scanout handoff) is
+tracked separately.
 
 See: [AeroGPU Legacy VGA/VBE Compatibility](./16-aerogpu-vga-vesa-compat.md)
 
