@@ -6802,12 +6802,59 @@ static NTSTATUS APIENTRY AeroGpuDdiRestartFromTimeout(_In_ const HANDLE hAdapter
         }
 
         adapter->IrqEnableMask = enable;
-        AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE, enable);
+        /*
+         * Only unmask the device interrupt line when we have successfully registered an ISR with
+         * dxgkrnl. This mirrors StartDevice: if RegisterInterrupt failed, enabling the device IRQ
+         * mask can create an interrupt storm that the OS cannot route back to this miniport.
+         */
+        AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE, adapter->InterruptRegistered ? enable : 0);
         KeReleaseSpinLock(&adapter->IrqEnableLock, irqIrql);
 
         if (haveIrqRegs) {
             /* Drop any stale pending bits that may have latched while masked. */
             AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ACK, 0xFFFFFFFFu);
+        }
+    }
+
+    /*
+     * Best-effort: reapply scanout/cursor programming after the restart.
+     *
+     * The emulator device model keeps scanout state across ring resets today, but a real device
+     * (or future emulator versions) may drop mode/scanout/cursor registers when the backend is
+     * wedged and recovers. Restoring these registers helps the desktop remain visible post-TDR.
+     */
+    if (!adapter->PostDisplayOwnershipReleased) {
+        AeroGpuProgramScanout(adapter, adapter->CurrentScanoutFbPa);
+
+        if ((adapter->DeviceFeatures & (ULONGLONG)AEROGPU_FEATURE_CURSOR) != 0 &&
+            adapter->Bar0Length >= (AEROGPU_MMIO_REG_CURSOR_PITCH_BYTES + sizeof(ULONG))) {
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_ENABLE, 0);
+            if (adapter->CursorShapeValid && adapter->CursorFbVa && adapter->CursorFbSizeBytes != 0) {
+                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_X, (ULONG)adapter->CursorX);
+                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_Y, (ULONG)adapter->CursorY);
+                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_HOT_X, adapter->CursorHotX);
+                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_HOT_Y, adapter->CursorHotY);
+                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_WIDTH, adapter->CursorWidth);
+                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_HEIGHT, adapter->CursorHeight);
+                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_FORMAT, adapter->CursorFormat);
+                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_PITCH_BYTES, adapter->CursorPitchBytes);
+                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_FB_GPA_LO, adapter->CursorFbPa.LowPart);
+                AeroGpuWriteRegU32(adapter,
+                                   AEROGPU_MMIO_REG_CURSOR_FB_GPA_HI,
+                                   (ULONG)(adapter->CursorFbPa.QuadPart >> 32));
+                KeMemoryBarrier();
+                AeroGpuWriteRegU32(adapter,
+                                   AEROGPU_MMIO_REG_CURSOR_ENABLE,
+                                   (adapter->CursorVisible && adapter->CursorShapeValid) ? 1u : 0u);
+            } else {
+                /* Ensure the device does not DMA from a stale cursor GPA. */
+                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_FB_GPA_LO, 0);
+                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_FB_GPA_HI, 0);
+                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_WIDTH, 0);
+                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_HEIGHT, 0);
+                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_FORMAT, 0);
+                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_PITCH_BYTES, 0);
+            }
         }
     }
 
