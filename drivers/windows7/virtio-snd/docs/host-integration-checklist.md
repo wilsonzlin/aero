@@ -62,6 +62,7 @@ If any required item is missing/mismatched, the driver will typically fail `STAR
   - [ ] `3 rxq`: `64`
 - [ ] `queue_notify_off` is valid for each queue (maps to a doorbell address within the NOTIFY region).
 - [ ] (Contract/strict mode) `queue_notify_off(q) == q` for queues `0..3` (driver treats mismatches as unsupported).
+- [ ] `queue_notify_off` is stable (driver reads it before and after enabling the queue and expects the same value).
 - [ ] `queue_enable` readback works: after the driver programs a queue and writes `queue_enable=1`, reading `queue_enable` returns `1`.
 - [ ] Notify “doorbell” accepts a **16-bit** write of the queue index (this driver uses 16-bit MMIO writes).
 - [ ] Device correctly supports **indirect descriptors** (`VRING_DESC_F_INDIRECT`) on all queues (the Win7 driver uses indirect descriptors for submissions).
