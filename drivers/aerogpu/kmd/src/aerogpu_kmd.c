@@ -1215,6 +1215,12 @@ static NTSTATUS AeroGpuLegacyRingPushSubmit(_Inout_ AEROGPU_ADAPTER* Adapter,
     ring[Adapter->RingTail].submit.desc_gpa = (uint64_t)DescPa.QuadPart;
 
     KeMemoryBarrier();
+    /*
+     * Publish the submitted fence before ringing the doorbell so the ISR can
+     * associate any immediately-delivered IRQ_ERROR/IRQ_FENCE with a meaningful
+     * LastSubmittedFence value.
+     */
+    Adapter->LastSubmittedFence = (ULONGLONG)Fence;
     Adapter->RingTail = nextTail;
     AeroGpuWriteRegU32(Adapter, AEROGPU_LEGACY_REG_RING_TAIL, Adapter->RingTail);
     AeroGpuWriteRegU32(Adapter, AEROGPU_LEGACY_REG_RING_DOORBELL, 1);
@@ -1275,6 +1281,13 @@ static NTSTATUS AeroGpuV1RingPushSubmit(_Inout_ AEROGPU_ADAPTER* Adapter,
     Adapter->RingTail = tail + 1;
     Adapter->RingHeader->tail = Adapter->RingTail;
     KeMemoryBarrier();
+
+    /*
+     * Publish the submitted fence before ringing the doorbell so the ISR can
+     * associate any immediately-delivered IRQ_ERROR/IRQ_FENCE with a meaningful
+     * LastSubmittedFence value.
+     */
+    Adapter->LastSubmittedFence = SignalFence;
 
     AeroGpuWriteRegU32(Adapter, AEROGPU_MMIO_REG_DOORBELL, 1);
 
