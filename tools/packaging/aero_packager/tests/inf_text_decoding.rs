@@ -2,7 +2,7 @@ use std::fs;
 
 #[test]
 fn packaging_succeeds_for_utf16le_inf_without_bom() -> anyhow::Result<()> {
-    let inf_text = make_test_inf_text();
+    let inf_text = make_test_inf_text(1);
     let inf_bytes = encode_utf16_no_bom(&inf_text, true);
     assert!(nul_ratio(&inf_bytes) < 0.3, "expected <30% NUL bytes");
     assert!(nul_ratio(&inf_bytes) > 0.2, "expected >20% NUL bytes");
@@ -12,10 +12,42 @@ fn packaging_succeeds_for_utf16le_inf_without_bom() -> anyhow::Result<()> {
 
 #[test]
 fn packaging_succeeds_for_utf16be_inf_without_bom() -> anyhow::Result<()> {
-    let inf_text = make_test_inf_text();
+    let inf_text = make_test_inf_text(1);
     let inf_bytes = encode_utf16_no_bom(&inf_text, false);
     assert!(nul_ratio(&inf_bytes) < 0.3, "expected <30% NUL bytes");
     assert!(nul_ratio(&inf_bytes) > 0.2, "expected >20% NUL bytes");
+
+    package_with_inf_bytes(&inf_bytes)
+}
+
+#[test]
+fn packaging_succeeds_for_utf16le_inf_without_bom_with_large_unicode_tail() -> anyhow::Result<()> {
+    let inf_text = make_test_inf_text(4);
+    let inf_bytes = encode_utf16_no_bom(&inf_text, true);
+    assert!(
+        nul_ratio(&inf_bytes) < 0.2,
+        "expected overall <20% NUL bytes"
+    );
+    assert!(
+        nul_ratio_prefix(&inf_bytes, 128) >= 0.2,
+        "expected first 128 bytes to still look UTF-16-ish"
+    );
+
+    package_with_inf_bytes(&inf_bytes)
+}
+
+#[test]
+fn packaging_succeeds_for_utf16be_inf_without_bom_with_large_unicode_tail() -> anyhow::Result<()> {
+    let inf_text = make_test_inf_text(4);
+    let inf_bytes = encode_utf16_no_bom(&inf_text, false);
+    assert!(
+        nul_ratio(&inf_bytes) < 0.2,
+        "expected overall <20% NUL bytes"
+    );
+    assert!(
+        nul_ratio_prefix(&inf_bytes, 128) >= 0.2,
+        "expected first 128 bytes to still look UTF-16-ish"
+    );
 
     package_with_inf_bytes(&inf_bytes)
 }
@@ -70,7 +102,7 @@ fn package_with_inf_bytes(inf_bytes: &[u8]) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn make_test_inf_text() -> String {
+fn make_test_inf_text(unicode_multiplier: usize) -> String {
     let hwid = r"PCI\VEN_1234&DEV_5678";
     let base = format!(
         concat!(
@@ -113,7 +145,7 @@ fn make_test_inf_text() -> String {
 
     // Ensure the overall file isn't "too ASCII-heavy" by appending a large non-ASCII string.
     // This is still a valid INF, but reduces the NUL-byte ratio below the strict `>= 30%` rule.
-    let unicode_payload = "Ω".repeat(base.len());
+    let unicode_payload = "Ω".repeat(base.len() * unicode_multiplier);
     format!("{base}ExtraDesc=\"{unicode_payload}\"\n")
 }
 
@@ -132,6 +164,15 @@ fn encode_utf16_no_bom(text: &str, little_endian: bool) -> Vec<u8> {
 fn nul_ratio(bytes: &[u8]) -> f64 {
     let nul_count = bytes.iter().filter(|b| **b == 0).count();
     nul_count as f64 / bytes.len() as f64
+}
+
+fn nul_ratio_prefix(bytes: &[u8], prefix_len: usize) -> f64 {
+    let len = bytes.len().min(prefix_len);
+    if len == 0 {
+        return 0.0;
+    }
+    let nul_count = bytes[..len].iter().filter(|b| **b == 0).count();
+    nul_count as f64 / len as f64
 }
 
 fn device_contract_path() -> std::path::PathBuf {

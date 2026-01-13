@@ -1673,54 +1673,49 @@ fn read_inf_text(path: &Path) -> Result<String> {
     } else if bytes.len() >= 4 && bytes.len() % 2 == 0 {
         // Some Windows tooling produces UTF-16 INFs without a BOM. Detect by looking for a high
         // ratio of NUL bytes (common for mostly-ASCII UTF-16 text) and decode best-effort.
-        // Guess endianness by checking whether the NUL bytes are concentrated in either the even
-        // or odd positions (UTF-16BE tends to have NULs in even bytes for ASCII text, UTF-16LE
-        // tends to have NULs in odd bytes).
-        let mut even_nuls = 0usize;
-        let mut odd_nuls = 0usize;
-        for (idx, b) in bytes.iter().enumerate() {
-            if *b != 0 {
-                continue;
+        //
+        // Use a small set of prefix windows to avoid missing UTF-16 when the file contains large
+        // non-ASCII string tables (which reduce the overall NUL-byte ratio).
+        let likely_utf16 = [128usize, 512, 2048].into_iter().any(|prefix_len| {
+            let mut len = bytes.len().min(prefix_len);
+            len -= len % 2;
+            if len < 4 {
+                return false;
             }
-            if idx % 2 == 0 {
-                even_nuls += 1;
-            } else {
-                odd_nuls += 1;
-            }
-        }
-        let nul_ratio = (even_nuls + odd_nuls) as f64 / bytes.len() as f64;
-        if nul_ratio >= 0.2 {
-            let half = bytes.len() / 2;
-            let even_ratio = even_nuls as f64 / half as f64;
-            let odd_ratio = odd_nuls as f64 / half as f64;
+            let nuls = bytes[..len].iter().filter(|b| **b == 0).count();
+            // "High proportion of NUL bytes": >= 20%.
+            nuls * 5 >= len
+        });
 
-            enum Utf16Guess {
-                Little,
-                Big,
-                Ambiguous,
-            }
-            let guess = if odd_ratio > even_ratio + 0.2 {
-                Utf16Guess::Little
-            } else if even_ratio > odd_ratio + 0.2 {
-                Utf16Guess::Big
-            } else {
-                Utf16Guess::Ambiguous
-            };
-
+        if likely_utf16 {
             let le = decode_utf16(&bytes, true);
             let be = decode_utf16(&bytes, false);
 
-            fn decode_score(s: &str) -> (usize, usize) {
+            fn decode_score(s: &str) -> (usize, usize, usize, usize) {
                 let mut replacement = 0usize;
                 let mut nul = 0usize;
+                let mut ascii = 0usize;
+                let mut newlines = 0usize;
+                let mut total = 0usize;
                 for c in s.chars() {
+                    total += 1;
                     if c == '\u{FFFD}' {
                         replacement += 1;
                     } else if c == '\u{0000}' {
                         nul += 1;
                     }
+                    if c.is_ascii() {
+                        ascii += 1;
+                        if c == '\n' {
+                            newlines += 1;
+                        }
+                    }
                 }
-                (replacement, nul)
+                // Lower is better: prefer fewer replacement/NULs; then prefer decodes that yield
+                // more ASCII/newlines (which strongly correlates with correct endianness for INFs).
+                let ascii_penalty = total.saturating_sub(ascii);
+                let newline_penalty = total.saturating_sub(newlines);
+                (replacement, nul, ascii_penalty, newline_penalty)
             }
 
             let le_score = decode_score(&le);
@@ -1730,12 +1725,8 @@ fn read_inf_text(path: &Path) -> Result<String> {
             } else if be_score < le_score {
                 be
             } else {
-                // When both decodes are equally "good", fall back to byte-pattern heuristics, and
-                // prefer little-endian when still ambiguous (Windows commonly uses UTF-16LE).
-                match guess {
-                    Utf16Guess::Big => be,
-                    Utf16Guess::Little | Utf16Guess::Ambiguous => le,
-                }
+                // Prefer little-endian when ambiguous (Windows commonly uses UTF-16LE).
+                le
             }
         } else {
             String::from_utf8_lossy(&bytes).to_string()
