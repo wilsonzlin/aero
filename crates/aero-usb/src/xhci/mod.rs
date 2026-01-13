@@ -58,7 +58,7 @@ use crate::device::AttachedUsbDevice;
 use crate::{MemoryBus, UsbDeviceModel};
 
 use self::port::XhciPort;
-use self::trb::{Trb, TrbType};
+use self::trb::{CompletionCode, Trb, TrbType};
 
 use event_ring::EventRingProducer;
 use interrupter::InterrupterRegs;
@@ -72,8 +72,10 @@ const COMPLETION_CODE_SUCCESS: u8 = 1;
 /// Maximum number of event TRBs written into the guest event ring per controller tick.
 pub const EVENT_ENQUEUE_BUDGET_PER_TICK: usize = 64;
 
-use self::context::{Dcbaa, DeviceContext32, EndpointContext, SlotContext};
-use self::ring::RingCursor;
+use self::context::{
+    Dcbaa, DeviceContext32, EndpointContext, InputControlContext, SlotContext, CONTEXT_SIZE,
+};
+use self::ring::{RingCursor, RingPoll};
 
 /// xHCI command completion codes (subset).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -219,6 +221,9 @@ pub struct XhciController {
     // Root hub ports.
     ports: Vec<XhciPort>,
 
+    // Command ring cursor (host-side harness until a full guest-facing command ring model exists).
+    command_ring: Option<RingCursor>,
+
     // Runtime registers: interrupter 0 + guest event ring delivery.
     interrupter0: InterrupterRegs,
     event_ring: EventRingProducer,
@@ -238,6 +243,7 @@ impl fmt::Debug for XhciController {
             .field("crcr", &self.crcr)
             .field("dcbaap", &self.dcbaap)
             .field("slots", &self.slots.len())
+            .field("command_ring", &self.command_ring)
             .field("pending_events", &self.pending_events.len())
             .field("dropped_event_trbs", &self.dropped_event_trbs)
             .field("interrupter0", &self.interrupter0)
@@ -278,6 +284,7 @@ impl XhciController {
             dcbaap: 0,
             slots,
             ports: (0..port_count).map(|_| XhciPort::new()).collect(),
+            command_ring: None,
             interrupter0: InterrupterRegs::default(),
             event_ring: EventRingProducer::default(),
             pending_events: VecDeque::new(),
@@ -357,6 +364,170 @@ impl XhciController {
         };
 
         CommandCompletion::success(slot_id)
+    }
+
+    /// Configure the command ring cursor (dequeue pointer + cycle state).
+    ///
+    /// This is a host-side harness used by unit tests and early bring-up while a full guest-facing
+    /// command ring model is still in flux.
+    pub fn set_command_ring(&mut self, dequeue_ptr: u64, cycle: bool) {
+        self.command_ring = Some(RingCursor::new(dequeue_ptr, cycle));
+    }
+
+    /// Process up to `max_trbs` command TRBs from the configured command ring.
+    pub fn process_command_ring(&mut self, mem: &mut impl MemoryBus, max_trbs: usize) {
+        let Some(mut cursor) = self.command_ring else {
+            return;
+        };
+
+        const STEP_BUDGET: usize = 256;
+        for _ in 0..max_trbs {
+            match cursor.poll(mem, STEP_BUDGET) {
+                RingPoll::Ready(item) => self.handle_command(mem, item.paddr, item.trb),
+                RingPoll::NotReady => break,
+                RingPoll::Err(_) => break,
+            }
+        }
+
+        self.command_ring = Some(cursor);
+    }
+
+    fn handle_command(&mut self, mem: &mut impl MemoryBus, cmd_paddr: u64, trb: Trb) {
+        match trb.trb_type() {
+            TrbType::EnableSlotCommand => self.cmd_enable_slot(mem, cmd_paddr),
+            TrbType::AddressDeviceCommand => self.cmd_address_device(mem, cmd_paddr, trb),
+            TrbType::NoOpCommand => self.queue_command_completion_event(
+                cmd_paddr,
+                CompletionCode::Success,
+                trb.slot_id(),
+            ),
+            _ => self.queue_command_completion_event(cmd_paddr, CompletionCode::TrbError, trb.slot_id()),
+        }
+    }
+
+    fn cmd_enable_slot(&mut self, mem: &mut impl MemoryBus, cmd_paddr: u64) {
+        let result = self.enable_slot(mem);
+        let (code, slot_id) = match result.completion_code {
+            CommandCompletionCode::Success => (CompletionCode::Success, result.slot_id),
+            CommandCompletionCode::ContextStateError => (CompletionCode::ContextStateError, 0),
+            CommandCompletionCode::ParameterError => (CompletionCode::ParameterError, 0),
+            CommandCompletionCode::NoSlotsAvailableError => (CompletionCode::NoSlotsAvailableError, 0),
+            CommandCompletionCode::Unknown(_) => (CompletionCode::TrbError, 0),
+        };
+        self.queue_command_completion_event(cmd_paddr, code, slot_id);
+    }
+
+    fn cmd_address_device(&mut self, mem: &mut impl MemoryBus, cmd_paddr: u64, trb: Trb) {
+        const CONTROL_BSR: u32 = 1 << 9;
+        let slot_id = trb.slot_id();
+        let slot_idx = usize::from(slot_id);
+
+        if slot_id == 0 || slot_idx >= self.slots.len() || !self.slots[slot_idx].enabled {
+            self.queue_command_completion_event(
+                cmd_paddr,
+                CompletionCode::SlotNotEnabledError,
+                slot_id,
+            );
+            return;
+        }
+
+        // Input Context Pointer is 64-byte aligned; low bits are reserved.
+        let input_ctx_raw = trb.parameter;
+        let input_ctx_ptr = input_ctx_raw & !0x3f;
+        if input_ctx_ptr == 0 || (input_ctx_raw & 0x3f) != 0 {
+            self.queue_command_completion_event(cmd_paddr, CompletionCode::ParameterError, slot_id);
+            return;
+        }
+
+        let _bsr = (trb.control & CONTROL_BSR) != 0;
+
+        let icc = InputControlContext::read_from(mem, input_ctx_ptr);
+        if icc.drop_flags() != 0 {
+            self.queue_command_completion_event(cmd_paddr, CompletionCode::ParameterError, slot_id);
+            return;
+        }
+
+        const REQUIRED_ADD: u32 = 0b11;
+        if icc.add_flags() != REQUIRED_ADD {
+            self.queue_command_completion_event(cmd_paddr, CompletionCode::ParameterError, slot_id);
+            return;
+        }
+
+        let mut slot_ctx = SlotContext::read_from(mem, input_ctx_ptr + CONTEXT_SIZE as u64);
+        let ep0_ctx = EndpointContext::read_from(mem, input_ctx_ptr + (2 * CONTEXT_SIZE) as u64);
+
+        let port_id = slot_ctx.root_hub_port_number();
+        if port_id == 0 || port_id > self.port_count {
+            self.queue_command_completion_event(cmd_paddr, CompletionCode::ParameterError, slot_id);
+            return;
+        }
+
+        let route = match slot_ctx
+            .parsed_route_string()
+            .map(|rs| rs.ports_from_root())
+        {
+            Ok(route) => route,
+            Err(_) => {
+                self.queue_command_completion_event(cmd_paddr, CompletionCode::ParameterError, slot_id);
+                return;
+            }
+        };
+
+        let expected_speed = match self.find_device_by_topology(port_id, &route) {
+            Some(dev) => port::port_speed_id(dev.speed()),
+            None => {
+                self.queue_command_completion_event(
+                    cmd_paddr,
+                    CompletionCode::ContextStateError,
+                    slot_id,
+                );
+                return;
+            }
+        };
+        slot_ctx.set_speed(expected_speed);
+
+        let Some(dcbaa_entry) = self.dcbaap_entry_paddr(slot_id) else {
+            self.queue_command_completion_event(cmd_paddr, CompletionCode::ContextStateError, slot_id);
+            return;
+        };
+        let dev_ctx_raw = mem.read_u64(dcbaa_entry);
+        let dev_ctx_ptr = dev_ctx_raw & !0x3f;
+        if dev_ctx_ptr == 0 || (dev_ctx_raw & 0x3f) != 0 {
+            self.queue_command_completion_event(cmd_paddr, CompletionCode::ContextStateError, slot_id);
+            return;
+        }
+
+        // Mirror contexts to the output Device Context.
+        slot_ctx.write_to(mem, dev_ctx_ptr);
+        ep0_ctx.write_to(mem, dev_ctx_ptr + CONTEXT_SIZE as u64);
+
+        let slot_state = &mut self.slots[slot_idx];
+        slot_state.port_id = Some(port_id);
+        slot_state.device_attached = true;
+        slot_state.device_context_ptr = dev_ctx_ptr;
+        slot_state.slot_context = slot_ctx;
+        slot_state.endpoint_contexts[0] = ep0_ctx;
+        slot_state.transfer_rings[0] =
+            Some(RingCursor::new(ep0_ctx.tr_dequeue_pointer(), ep0_ctx.dcs()));
+
+        self.queue_command_completion_event(cmd_paddr, CompletionCode::Success, slot_id);
+    }
+
+    fn queue_command_completion_event(
+        &mut self,
+        command_trb_ptr: u64,
+        code: CompletionCode,
+        slot_id: u8,
+    ) {
+        let mut trb = Trb::new(
+            command_trb_ptr & !0x0f,
+            (u32::from(code.as_u8())) << Trb::STATUS_COMPLETION_CODE_SHIFT,
+            0,
+        );
+        trb.set_cycle(true);
+        trb.set_trb_type(TrbType::CommandCompletionEvent);
+        trb.set_slot_id(slot_id);
+        self.queue_event(trb);
     }
 
     /// Resolve an attached USB device by xHCI topology information.
