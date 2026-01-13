@@ -16,3 +16,7 @@ Currently:
   - Useful for stressing the keyboard LED/statusq path when `StatusQDropOnFull` is enabled:
     - `hidtest.exe --keyboard --led-spam 10000`
     - `hidtest.exe --keyboard --counters` (watch `VirtioStatusDrops`)
+  - Useful for diagnosing buffered input when there are no pending `IOCTL_HID_READ_REPORT` IRPs:
+    - `hidtest.exe --counters`
+      - watch `PendingRingDepth`/`PendingRingDrops` (READ_REPORT backlog in `PendingReportRing[]`)
+      - compare with `ReportRingDepth`/`ReportRingDrops` (translation-layer ring)
