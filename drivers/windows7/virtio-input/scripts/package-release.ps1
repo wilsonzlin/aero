@@ -59,7 +59,10 @@ function Normalize-Arch([string]$ArchValue) {
 }
 
 function Format-PathList([string[]]$Paths) {
-    return ($Paths | ForEach-Object { "  - $_" }) -join "`r`n"
+    # Keep diagnostics deterministic: filesystem enumeration order is not stable.
+    $arr = @($Paths)
+    [System.Array]::Sort($arr, [System.StringComparer]::OrdinalIgnoreCase)
+    return ($arr | ForEach-Object { "  - $_" }) -join "`r`n"
 }
 
 function Resolve-ExistingDirectory([string]$Path, [string]$ArgName) {
