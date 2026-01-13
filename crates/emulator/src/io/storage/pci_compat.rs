@@ -18,6 +18,14 @@ const PCI_BAR_OFF_START: u16 = 0x10;
 const PCI_BAR_OFF_END: u16 = 0x27;
 
 #[inline]
+fn validate_access(offset: u16, size: usize) -> bool {
+    matches!(size, 1 | 2 | 4)
+        && usize::from(offset)
+            .checked_add(size)
+            .is_some_and(|end| end <= PCI_CONFIG_SPACE_SIZE)
+}
+
+#[inline]
 fn is_pci_bar_offset(offset: u16) -> bool {
     (PCI_BAR_OFF_START..=PCI_BAR_OFF_END).contains(&offset)
 }
@@ -86,6 +94,87 @@ fn read_bar_dword_programmed(cfg: &mut PciConfigSpace, aligned_offset: u16) -> u
     cfg.read(aligned_offset, 4)
 }
 
+/// Read from a canonical [`PciConfigSpace`] using the emulator's forgiving semantics.
+///
+/// This performs bounds checks (to avoid panics) and applies special handling for reads that
+/// partially overlap the BAR register block.
+pub fn config_read(cfg: &mut PciConfigSpace, offset: u16, size: usize) -> u32 {
+    if !validate_access(offset, size) {
+        return 0;
+    }
+
+    // Canonical config-space reads only apply BAR special handling when the access begins inside
+    // the BAR window and does not cross a dword boundary. If a hostile guest performs an
+    // unaligned/cross-dword access that overlaps BAR registers, read byte-by-byte so:
+    // - BAR bytes are still sourced from the BAR state machine (incl. probe masks), and
+    // - reads that span two BAR dwords return bytes from both dwords, rather than truncating.
+    if access_overlaps_pci_bar(offset, size) {
+        let crosses_dword = (offset & 0x3) as usize + size > 4;
+        if crosses_dword || !is_pci_bar_offset(offset) {
+            let mut out = 0u32;
+            for i in 0..size {
+                let byte_off = offset + i as u16;
+                let byte = cfg.read(byte_off, 1) & 0xFF;
+                out |= byte << (8 * i);
+            }
+            return out;
+        }
+    }
+
+    cfg.read(offset, size)
+}
+
+/// Write to a canonical [`PciConfigSpace`] using the emulator's forgiving semantics.
+///
+/// This converts subword/misaligned BAR writes into safe aligned 32-bit writes, avoiding
+/// `assert!()`s in the canonical config-space model.
+pub fn config_write(cfg: &mut PciConfigSpace, offset: u16, size: usize, value: u32) {
+    if !validate_access(offset, size) {
+        return;
+    }
+
+    // Canonical config-space writes only treat an access as a BAR write if the access begins
+    // inside the BAR window; cross-dword accesses can therefore partially clobber BAR bytes
+    // without updating BAR state. Handle any access that overlaps BAR registers (except for
+    // the canonical aligned dword BAR write) via byte-splitting.
+    let is_canonical_bar_dword = is_pci_bar_offset(offset) && (offset & 0x3) == 0 && size == 4;
+    if access_overlaps_pci_bar(offset, size) && !is_canonical_bar_dword {
+        // Perform a byte-granular write split across dword boundaries, issuing canonical 32-bit
+        // writes for any bytes that land in the BAR window. This avoids panics from the canonical
+        // BAR alignment assertions while still behaving like real hardware for hostile/unaligned
+        // config accesses.
+        let bytes = value.to_le_bytes();
+        for i in 0..size {
+            let byte_off = offset.wrapping_add(i as u16);
+            let byte_val = u32::from(bytes[i]);
+
+            if !validate_access(byte_off, 1) {
+                continue;
+            }
+
+            if is_pci_bar_offset(byte_off) {
+                let aligned = align_pci_dword(byte_off);
+                if !validate_access(aligned, 4) {
+                    continue;
+                }
+
+                let old = read_bar_dword_programmed(cfg, aligned);
+                let shift = u32::from(byte_off - aligned) * 8;
+                let merged = (old & !(0xFF << shift)) | (byte_val << shift);
+                cfg.write(aligned, 4, merged);
+            } else {
+                // The original access started in the BAR window but can still spill into the next
+                // dword outside the BAR registers (e.g. offset=0x27 size=2). For those bytes, fall
+                // back to a normal byte write.
+                cfg.write(byte_off, 1, byte_val);
+            }
+        }
+        return;
+    }
+
+    cfg.write(offset, size, value);
+}
+
 /// Wraps a canonical [`aero_devices::pci::PciConfigSpace`] to be safely accessed through the
 /// emulator's legacy PCI config-space access pattern.
 ///
@@ -120,44 +209,14 @@ impl PciConfigSpaceCompat {
         self.0.into_inner()
     }
 
-    fn validate_access(offset: u16, size: usize) -> bool {
-        matches!(size, 1 | 2 | 4)
-            && usize::from(offset)
-                .checked_add(size)
-                .is_some_and(|end| end <= PCI_CONFIG_SPACE_SIZE)
-    }
-
     /// Reads a config-space value, returning a zero-extended `u32`.
     ///
     /// Invalid sizes/offsets return 0.
     pub fn read_u32(&self, offset: u16, size: usize) -> u32 {
-        if !Self::validate_access(offset, size) {
-            return 0;
-        }
-
         let Ok(mut cfg) = self.0.try_borrow_mut() else {
             return 0;
         };
-
-        // Canonical config-space reads only apply BAR special handling when the access begins
-        // inside the BAR window and does not cross a dword boundary. If a hostile guest performs
-        // an unaligned/cross-dword access that overlaps BAR registers, read byte-by-byte so:
-        // - BAR bytes are still sourced from the BAR state machine (incl. probe masks), and
-        // - reads that span two BAR dwords return bytes from both dwords, rather than truncating.
-        if access_overlaps_pci_bar(offset, size) {
-            let crosses_dword = (offset & 0x3) as usize + size > 4;
-            if crosses_dword || !is_pci_bar_offset(offset) {
-                let mut out = 0u32;
-                for i in 0..size {
-                    let byte_off = offset + i as u16;
-                    let byte = cfg.read(byte_off, 1) & 0xFF;
-                    out |= byte << (8 * i);
-                }
-                return out;
-            }
-        }
-
-        cfg.read(offset, size)
+        config_read(&mut cfg, offset, size)
     }
 
     /// Writes a config-space value.
@@ -165,54 +224,10 @@ impl PciConfigSpaceCompat {
     /// - Invalid sizes/offsets are ignored.
     /// - Subword/unaligned BAR writes are converted into an aligned 32-bit read-modify-write.
     pub fn write_u32(&self, offset: u16, size: usize, value: u32) {
-        if !Self::validate_access(offset, size) {
-            return;
-        }
-
         let Ok(mut cfg) = self.0.try_borrow_mut() else {
             return;
         };
-
-        // Canonical config-space writes only treat an access as a BAR write if the access begins
-        // inside the BAR window; cross-dword accesses can therefore partially clobber BAR bytes
-        // without updating BAR state. Handle any access that overlaps BAR registers (except for
-        // the canonical aligned dword BAR write) via byte-splitting.
-        let is_canonical_bar_dword = is_pci_bar_offset(offset) && (offset & 0x3) == 0 && size == 4;
-        if access_overlaps_pci_bar(offset, size) && !is_canonical_bar_dword {
-            // Perform a byte-granular write split across dword boundaries, issuing canonical
-            // 32-bit writes for any bytes that land in the BAR window. This avoids panics from the
-            // canonical BAR alignment assertions while still behaving like real hardware for
-            // hostile/unaligned config accesses.
-            let bytes = value.to_le_bytes();
-            for i in 0..size {
-                let byte_off = offset.wrapping_add(i as u16);
-                let byte_val = u32::from(bytes[i]);
-
-                if !Self::validate_access(byte_off, 1) {
-                    continue;
-                }
-
-                if is_pci_bar_offset(byte_off) {
-                    let aligned = align_pci_dword(byte_off);
-                    if !Self::validate_access(aligned, 4) {
-                        continue;
-                    }
-
-                    let old = read_bar_dword_programmed(&mut cfg, aligned);
-                    let shift = u32::from(byte_off - aligned) * 8;
-                    let merged = (old & !(0xFF << shift)) | (byte_val << shift);
-                    cfg.write(aligned, 4, merged);
-                } else {
-                    // The original access started in the BAR window but can still spill into the
-                    // next dword outside the BAR registers (e.g. offset=0x27 size=2). For those
-                    // bytes, fall back to a normal byte write.
-                    cfg.write(byte_off, 1, byte_val);
-                }
-            }
-            return;
-        }
-
-        cfg.write(offset, size, value);
+        config_write(&mut cfg, offset, size, value);
     }
 }
 
