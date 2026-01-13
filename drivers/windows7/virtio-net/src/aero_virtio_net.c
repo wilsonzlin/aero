@@ -878,32 +878,30 @@ static NDIS_STATUS AerovNetBuildTxHeader(_Inout_ AEROVNET_ADAPTER* Adapter, _Ino
     return NDIS_STATUS_INVALID_PACKET;
   }
 
-  // Enforce current offload enablement.
+  // Validate negotiated capabilities. Offload metadata is per-packet; do not
+  // reject based on the current global enable flags (those can change via OID
+  // while packets are already in-flight/pending). If NDIS requests an offload
+  // for a packet, honor it as long as the virtio device negotiated support.
   if (Intent.WantTso) {
     if (Intent.TsoMss == 0) {
       return NDIS_STATUS_INVALID_PACKET;
     }
     if (Info.IpVersion == 4) {
-      if (!Adapter->TxTsoV4Enabled) {
+      if (!Adapter->TxTsoV4Supported) {
         return NDIS_STATUS_INVALID_PACKET;
       }
     } else if (Info.IpVersion == 6) {
-      if (!Adapter->TxTsoV6Enabled) {
+      if (!Adapter->TxTsoV6Supported) {
         return NDIS_STATUS_INVALID_PACKET;
       }
     } else {
       return NDIS_STATUS_INVALID_PACKET;
     }
   } else {
-    if (Info.IpVersion == 4) {
-      if (!Adapter->TxChecksumV4Enabled) {
-        return NDIS_STATUS_INVALID_PACKET;
-      }
-    } else if (Info.IpVersion == 6) {
-      if (!Adapter->TxChecksumV6Enabled) {
-        return NDIS_STATUS_INVALID_PACKET;
-      }
-    } else {
+    if (!Adapter->TxChecksumSupported) {
+      return NDIS_STATUS_INVALID_PACKET;
+    }
+    if (Info.IpVersion != 4 && Info.IpVersion != 6) {
       return NDIS_STATUS_INVALID_PACKET;
     }
   }
@@ -2662,7 +2660,7 @@ static VOID AerovNetMiniportSendNetBufferLists(_In_ NDIS_HANDLE MiniportAdapterC
         ULONG MaxLen = 1522;
         BOOLEAN WantsLso = (NET_BUFFER_LIST_INFO(Nbl, TcpLargeSendNetBufferListInfo) != NULL) ? TRUE : FALSE;
 
-        if (WantsLso && (Adapter->TxTsoV4Enabled || Adapter->TxTsoV6Enabled)) {
+        if (WantsLso && (Adapter->TxTsoV4Supported || Adapter->TxTsoV6Supported)) {
           MaxLen = Adapter->TxTsoMaxOffloadSize;
         }
 
