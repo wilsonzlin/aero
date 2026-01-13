@@ -19,6 +19,8 @@ function isOutputReport(value: unknown): value is NonNullable<OutputReportResult
   );
 }
 
+const MAX_HID_INPUT_REPORT_PAYLOAD_BYTES = 64;
+
 /**
  * IO worker-side glue for managing WebHID passthrough devices.
  *
@@ -89,7 +91,13 @@ export class IoWorkerHidPassthrough {
   inputReport(msg: HidInputReportMessage): void {
     const bridge = this.#devices.get(msg.deviceId);
     if (!bridge) return;
-    bridge.push_input_report(msg.reportId, msg.data);
+    const data = (() => {
+      if (msg.data.byteLength <= MAX_HID_INPUT_REPORT_PAYLOAD_BYTES) return msg.data;
+      const out = new Uint8Array(MAX_HID_INPUT_REPORT_PAYLOAD_BYTES);
+      out.set(msg.data.subarray(0, MAX_HID_INPUT_REPORT_PAYLOAD_BYTES));
+      return out as Uint8Array<ArrayBuffer>;
+    })();
+    bridge.push_input_report(msg.reportId, data);
   }
 
   tick(): void {

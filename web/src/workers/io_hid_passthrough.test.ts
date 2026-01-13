@@ -160,4 +160,44 @@ describe("workers/IoWorkerHidPassthrough", () => {
       },
     ]);
   });
+
+  it("clamps oversized input reports before forwarding to push_input_report", () => {
+    let bridgeInstance: FakeBridge | null = null;
+    class FakeBridge {
+      readonly push_input_report = vi.fn();
+      readonly drain_next_output_report = vi.fn(() => null);
+      readonly configured = vi.fn(() => false);
+      readonly free = vi.fn();
+      constructor() {
+        bridgeInstance = this;
+      }
+    }
+
+    const wasm = { WebHidPassthroughBridge: FakeBridge } as unknown as WasmApi;
+    const mgr = new IoWorkerHidPassthrough(wasm, () => {});
+
+    mgr.attach({
+      type: "hid.attach",
+      deviceId: 1,
+      vendorId: 0x1234,
+      productId: 0x5678,
+      collections: [],
+      hasInterruptOut: false,
+    });
+
+    const huge = new Uint8Array(1024 * 1024);
+    huge.set([1, 2, 3], 0);
+    mgr.inputReport({
+      type: "hid.inputReport",
+      deviceId: 1,
+      reportId: 7,
+      data: huge as Uint8Array<ArrayBuffer>,
+    });
+
+    expect(bridgeInstance).not.toBeNull();
+    expect(bridgeInstance!.push_input_report).toHaveBeenCalledTimes(1);
+    const payload = bridgeInstance!.push_input_report.mock.calls[0]![1] as Uint8Array;
+    expect(payload.byteLength).toBe(64);
+    expect(Array.from(payload.slice(0, 3))).toEqual([1, 2, 3]);
+  });
 });
