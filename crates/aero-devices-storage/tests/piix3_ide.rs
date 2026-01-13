@@ -375,10 +375,13 @@ fn ata_slave_absent_floats_bus_high_and_does_not_raise_irq() {
     assert_eq!(io.read(PRIMARY_PORTS.ctrl_base, 1) as u8, 0xFF);
     assert_eq!(io.read(PRIMARY_PORTS.ctrl_base, 2) as u16, 0xFFFF);
     assert_eq!(io.read(PRIMARY_PORTS.ctrl_base, 4), 0xFFFF_FFFF);
-    // Drive Address should also float high.
-    assert_eq!(io.read(PRIMARY_PORTS.ctrl_base + 1, 1) as u8, 0xFF);
-    assert_eq!(io.read(PRIMARY_PORTS.ctrl_base + 1, 2) as u16, 0xFFFF);
-    assert_eq!(io.read(PRIMARY_PORTS.ctrl_base + 1, 4), 0xFFFF_FFFF);
+    // Drive Address is allowed to reflect channel-level presence/selection even when the selected
+    // device slot is empty.
+    let dadr = io.read(PRIMARY_PORTS.ctrl_base + 1, 1) as u8;
+    assert_ne!(dadr, 0xFF);
+    assert_eq!(dadr & 0x10, 0x10, "slave should still be reflected as selected");
+    assert_eq!(dadr & (1 << 6), 0, "master present bit should be cleared (active low)");
+    assert_eq!(dadr & (1 << 5), 1 << 5, "slave absent bit should be set (active low)");
 
     // Commands to an absent device should be ignored (no IRQ side effects).
     io.write(PRIMARY_PORTS.cmd_base + 7, 1, 0xEC); // IDENTIFY DEVICE
@@ -436,8 +439,12 @@ fn drive_address_slave_absent_reports_presence_bits() {
     // Even with the slave selected, the Drive Address register should reflect channel-level
     // presence information for diagnostics.
     assert_ne!(v, 0xFF, "DADR should not float high when any device is present");
-    assert_eq!(v & (1 << 6), 1 << 6, "master present bit should remain set");
-    assert_eq!(v & (1 << 7), 0, "slave present bit should remain clear");
+    assert_eq!(v & (1 << 6), 0, "master present bit should be cleared (active low)");
+    assert_eq!(
+        v & (1 << 5),
+        1 << 5,
+        "slave absent bit should be set (active low)"
+    );
 }
 
 #[test]
