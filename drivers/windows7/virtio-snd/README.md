@@ -354,6 +354,14 @@ Kernel drivers cannot run in CI, but parts of the virtio-snd protocol engines ca
 be compiled and unit tested on the host (descriptor/SG building, framing, and
 status/state handling).
 
+Prerequisites:
+
+- CMake (which provides `ctest`)
+- A C compiler toolchain
+  - On Linux/macOS, Clang/GCC should work.
+  - On Windows, a POSIX-like toolchain (for example MSYS2/MinGW-w64 or clang + ninja) may be required.
+    MSVC/Visual Studio support depends on the Task 83 "MSVC portability" work.
+
 ### Full host-buildable suite (recommended)
 
 Build the top-level CMake project at `drivers/windows7/virtio-snd/tests/`. This is the
@@ -372,7 +380,7 @@ From the repo root:
 On Windows:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File drivers/windows7/virtio-snd/scripts/run-host-tests.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File drivers/windows7/virtio-snd/scripts/run-host-tests.ps1
 ```
 
 To force a clean rebuild:
@@ -382,7 +390,7 @@ To force a clean rebuild:
 ```
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File drivers/windows7/virtio-snd/scripts/run-host-tests.ps1 -Clean
+pwsh -NoProfile -ExecutionPolicy Bypass -File drivers/windows7/virtio-snd/scripts/run-host-tests.ps1 -Clean
 ```
 
 The default build directory is `out/virtiosnd-tests`. Override with:
@@ -392,7 +400,7 @@ The default build directory is `out/virtiosnd-tests`. Override with:
 ```
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File drivers/windows7/virtio-snd/scripts/run-host-tests.ps1 -BuildDir out/my-virtiosnd-tests
+pwsh -NoProfile -ExecutionPolicy Bypass -File drivers/windows7/virtio-snd/scripts/run-host-tests.ps1 -BuildDir out/my-virtiosnd-tests
 ```
 
 Or run directly:
@@ -417,7 +425,7 @@ suite above):
 ```
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File drivers/windows7/virtio-snd/scripts/run-host-tests.ps1 -HostOnly
+pwsh -NoProfile -ExecutionPolicy Bypass -File drivers/windows7/virtio-snd/scripts/run-host-tests.ps1 -HostOnly
 ```
 
 The default build directory for `--host-only` is `out/virtiosnd-host-tests`. Override with:
@@ -427,7 +435,7 @@ The default build directory for `--host-only` is `out/virtiosnd-host-tests`. Ove
 ```
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File drivers/windows7/virtio-snd/scripts/run-host-tests.ps1 -HostOnly -BuildDir out/my-virtiosnd-host-tests
+pwsh -NoProfile -ExecutionPolicy Bypass -File drivers/windows7/virtio-snd/scripts/run-host-tests.ps1 -HostOnly -BuildDir out/my-virtiosnd-host-tests
 ```
 
 Or run directly:
