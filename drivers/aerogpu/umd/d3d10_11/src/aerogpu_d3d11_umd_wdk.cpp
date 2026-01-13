@@ -2080,6 +2080,12 @@ HRESULT AEROGPU_APIENTRY GetCaps11(D3D10DDI_HADAPTER hAdapter, const D3D11DDIARG
                                      D3D11_FORMAT_SUPPORT_CPU_LOCKABLE | D3D11_FORMAT_SUPPORT_DISPLAY)
                                  : 0;
           break;
+        case kDxgiFormatB5G6R5Unorm:
+        case kDxgiFormatB5G5R5A1Unorm:
+          support = D3D11_FORMAT_SUPPORT_TEXTURE2D | D3D11_FORMAT_SUPPORT_RENDER_TARGET |
+                    D3D11_FORMAT_SUPPORT_SHADER_SAMPLE | D3D11_FORMAT_SUPPORT_BLENDABLE |
+                    D3D11_FORMAT_SUPPORT_CPU_LOCKABLE | D3D11_FORMAT_SUPPORT_DISPLAY;
+          break;
         case kDxgiFormatBc1Typeless:
         case kDxgiFormatBc1Unorm:
         case kDxgiFormatBc1UnormSrgb:
@@ -2158,6 +2164,8 @@ HRESULT AEROGPU_APIENTRY GetCaps11(D3D10DDI_HADAPTER hAdapter, const D3D11DDIARG
       out->SampleCount = in.SampleCount;
       bool supported_format = false;
       switch (static_cast<uint32_t>(in.Format)) {
+        case kDxgiFormatB5G6R5Unorm:
+        case kDxgiFormatB5G5R5A1Unorm:
         case kDxgiFormatB8G8R8A8Unorm:
         case kDxgiFormatB8G8R8A8Typeless:
         case kDxgiFormatB8G8R8X8Unorm:

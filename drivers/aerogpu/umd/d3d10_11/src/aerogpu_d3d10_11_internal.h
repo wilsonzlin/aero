@@ -84,6 +84,8 @@ constexpr uint32_t kDxgiFormatR32Uint = 42;
 constexpr uint32_t kDxgiFormatD32Float = 40;
 constexpr uint32_t kDxgiFormatD24UnormS8Uint = 45;
 constexpr uint32_t kDxgiFormatR16Uint = 57;
+constexpr uint32_t kDxgiFormatB5G6R5Unorm = 85;
+constexpr uint32_t kDxgiFormatB5G5R5A1Unorm = 86;
 constexpr uint32_t kDxgiFormatB8G8R8A8Unorm = 87;
 constexpr uint32_t kDxgiFormatB8G8R8X8Unorm = 88;
 constexpr uint32_t kDxgiFormatB8G8R8A8Typeless = 90;
@@ -141,6 +143,10 @@ inline uint32_t dxgi_format_to_aerogpu(uint32_t dxgi_format) {
       return AEROGPU_FORMAT_R8G8B8A8_UNORM;
     case kDxgiFormatR8G8B8A8UnormSrgb:
       return AEROGPU_FORMAT_R8G8B8A8_UNORM_SRGB;
+    case kDxgiFormatB5G6R5Unorm:
+      return AEROGPU_FORMAT_B5G6R5_UNORM;
+    case kDxgiFormatB5G5R5A1Unorm:
+      return AEROGPU_FORMAT_B5G5R5A1_UNORM;
     case kDxgiFormatBc1Typeless:
     case kDxgiFormatBc1Unorm:
       return AEROGPU_FORMAT_BC1_RGBA_UNORM;
