@@ -486,6 +486,9 @@ struct ScopedModeRestore {
       // while the timed-out worker thread may still be executing.
       if (timed_out) {
         armed = false;
+        // Mirror the safety behavior in aerogpu_test_kmt.h: if a timed call may still be executing
+        // inside gdi/user32 paths, avoid teardown that can deadlock (CloseAdapter/FreeLibrary).
+        InterlockedExchange(&aerogpu_test::kmt::g_skip_close_adapter, 1);
       }
       if (err) {
         *err = tmp;
@@ -614,6 +617,7 @@ static int RunModesetRoundtripSanity(int argc, char** argv) {
     } else {
       // Avoid spawning a second concurrent mode-set while the timed-out worker thread may still be running.
       restore.Disarm();
+      InterlockedExchange(&aerogpu_test::kmt::g_skip_close_adapter, 1);
     }
     aerogpu_test::kmt::CloseAdapter(&kmt, adapter);
     aerogpu_test::kmt::UnloadD3DKMT(&kmt);
@@ -657,6 +661,7 @@ static int RunModesetRoundtripSanity(int argc, char** argv) {
     if (restore_timed_out) {
       // Avoid retrying in a destructor while the timed-out worker thread may still be executing.
       restore.Disarm();
+      InterlockedExchange(&aerogpu_test::kmt::g_skip_close_adapter, 1);
     }
     aerogpu_test::kmt::CloseAdapter(&kmt, adapter);
     aerogpu_test::kmt::UnloadD3DKMT(&kmt);
