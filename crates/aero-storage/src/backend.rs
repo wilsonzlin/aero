@@ -296,6 +296,21 @@ impl StdFileBackend {
         }
     }
 
+    /// Configure whether this backend should treat the underlying file as read-only.
+    ///
+    /// This only affects the pre-flight checks in [`StorageBackend::set_len`] and
+    /// [`StorageBackend::write_at`]; it does **not** change OS-level file permissions.
+    #[must_use]
+    pub fn with_read_only(mut self, read_only: bool) -> Self {
+        self.read_only = read_only;
+        self
+    }
+
+    #[must_use]
+    pub fn is_read_only(&self) -> bool {
+        self.read_only
+    }
+
     fn path_str(&self) -> String {
         self.path
             .as_ref()
