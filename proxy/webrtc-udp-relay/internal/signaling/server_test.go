@@ -437,6 +437,92 @@ func TestServer_Offer_ICEGatheringTimeoutReturnsAnswer(t *testing.T) {
 	}
 }
 
+func TestServer_WebRTCOffer_ICEGatheringTimeoutReturnsAnswer(t *testing.T) {
+	// Force GatheringCompletePromise to never resolve so the test is deterministic.
+	oldPromise := gatheringCompletePromise
+	gatheringCompletePromise = func(*webrtc.PeerConnection) <-chan struct{} {
+		return make(chan struct{})
+	}
+	t.Cleanup(func() { gatheringCompletePromise = oldPromise })
+
+	api := webrtc.NewAPI()
+
+	srv := NewServer(Config{
+		WebRTC:              api,
+		RelayConfig:         relay.DefaultConfig(),
+		Policy:              policy.NewDevDestinationPolicy(),
+		Authorizer:          AllowAllAuthorizer{},
+		ICEGatheringTimeout: 1 * time.Millisecond,
+	})
+
+	mux := http.NewServeMux()
+	srv.RegisterRoutes(mux)
+	ts := httptest.NewServer(mux)
+	t.Cleanup(func() {
+		srv.Close()
+		ts.Close()
+	})
+
+	pc, err := api.NewPeerConnection(webrtc.Configuration{})
+	if err != nil {
+		t.Fatalf("new peerconnection: %v", err)
+	}
+	t.Cleanup(func() { _ = pc.Close() })
+
+	ordered := false
+	maxRetransmits := uint16(0)
+	if _, err := pc.CreateDataChannel("udp", &webrtc.DataChannelInit{Ordered: &ordered, MaxRetransmits: &maxRetransmits}); err != nil {
+		t.Fatalf("create datachannel: %v", err)
+	}
+
+	offer, err := pc.CreateOffer(nil)
+	if err != nil {
+		t.Fatalf("create offer: %v", err)
+	}
+	if err := pc.SetLocalDescription(offer); err != nil {
+		t.Fatalf("set local description: %v", err)
+	}
+	local := pc.LocalDescription()
+	if local == nil {
+		t.Fatalf("missing local description")
+	}
+
+	body, err := json.Marshal(httpOfferRequest{SDP: SDPFromPion(*local)})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	client := &http.Client{Timeout: 250 * time.Millisecond}
+	start := time.Now()
+	resp, err := client.Post(ts.URL+"/webrtc/offer", "application/json", bytes.NewReader(body))
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("post: %v (elapsed=%s)", err, elapsed)
+	}
+	t.Cleanup(func() { _ = resp.Body.Close() })
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d, want %d", resp.StatusCode, http.StatusOK)
+	}
+
+	var got httpOfferResponse
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if strings.TrimSpace(got.SessionID) == "" {
+		t.Fatalf("expected non-empty sessionId")
+	}
+	if got.SDP.Type != "answer" {
+		t.Fatalf("unexpected sdp.type=%q", got.SDP.Type)
+	}
+	if strings.TrimSpace(got.SDP.SDP) == "" {
+		t.Fatalf("expected non-empty answer sdp")
+	}
+	if elapsed > 250*time.Millisecond {
+		t.Fatalf("request took too long: %s", elapsed)
+	}
+}
+
 func TestServer_WebRTCOffer_CanceledRequestClosesSession(t *testing.T) {
 	cfg := config.Config{MaxSessions: 1}
 	m := metrics.New()
