@@ -40,7 +40,10 @@ DBGCTL_SRC = ROOT / "drivers" / "aerogpu" / "tools" / "win7_dbgctl" / "src" / "a
 DBGCTL_README = ROOT / "drivers" / "aerogpu" / "tools" / "win7_dbgctl" / "README.md"
 WIN7_VALIDATION_DOC = ROOT / "docs" / "graphics" / "win7-aerogpu-validation.md"
 
-CPP_FLAG_RE = re.compile(r'L"(--[A-Za-z0-9][A-Za-z0-9-]*)"')
+# Extract flags from the actual argument parsing logic, not from the usage text,
+# so we catch cases where someone updates the help/README but forgets to plumb
+# the flag through the parser.
+CPP_FLAG_RE = re.compile(r'wcscmp\(\s*a\s*,\s*L"(--[A-Za-z0-9][A-Za-z0-9-]*)"\s*\)')
 MD_FLAG_RE = re.compile(r"--[A-Za-z0-9][A-Za-z0-9-]*")
 
 # We only scan markdown files in these dirs for dbgctl invocations.
