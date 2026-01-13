@@ -7128,11 +7128,14 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
             }
 
             BOOLEAN scanoutEnabled = FALSE;
-            if (adapter->Bar0Length >= (AEROGPU_MMIO_REG_SCANOUT0_ENABLE + sizeof(ULONG))) {
-                scanoutEnabled |= (AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_SCANOUT0_ENABLE) != 0);
-            }
-            if (adapter->Bar0Length >= (AEROGPU_LEGACY_REG_SCANOUT_ENABLE + sizeof(ULONG))) {
-                scanoutEnabled |= (AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_SCANOUT_ENABLE) != 0);
+            if (adapter->UsingNewAbi || adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
+                if (adapter->Bar0Length >= (AEROGPU_MMIO_REG_SCANOUT0_ENABLE + sizeof(ULONG))) {
+                    scanoutEnabled = (AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_SCANOUT0_ENABLE) != 0);
+                }
+            } else {
+                if (adapter->Bar0Length >= (AEROGPU_LEGACY_REG_SCANOUT_ENABLE + sizeof(ULONG))) {
+                    scanoutEnabled = (AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_SCANOUT_ENABLE) != 0);
+                }
             }
 
             if (scanoutEnabled) {
@@ -7183,6 +7186,39 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                         KeReleaseSpinLock(&adapter->IrqEnableLock, oldIrql);
                     }
 
+                    /*
+                     * Keep OS interrupt delivery disabled only briefly. A long disable window can
+                     * starve dxgkrnl of DMA completion interrupts.
+                     */
+                    ULONG periodNs = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS);
+                    if (periodNs == 0) {
+                        periodNs = AEROGPU_VBLANK_PERIOD_NS_DEFAULT;
+                    }
+                    ULONG periodMs = (periodNs + 999999u) / 1000000u;
+                    if (periodMs == 0) {
+                        periodMs = 1;
+                    }
+                    ULONG irqWaitMs = periodMs * 3u;
+                    if (irqWaitMs < 10u) {
+                        irqWaitMs = 10u;
+                    }
+                    if (irqWaitMs > 250u) {
+                        irqWaitMs = 250u;
+                    }
+                    const ULONGLONG irqNow = KeQueryInterruptTime();
+                    ULONGLONG irqDeadline = irqNow + ((ULONGLONG)irqWaitMs * 10000ull);
+                    if (irqDeadline > deadline) {
+                        irqDeadline = deadline;
+                    }
+
+                    if (irqDeadline <= irqNow) {
+                        /*
+                         * No time budget remaining. Skip the optional IRQ status/ack test rather
+                         * than leaving interrupts disabled.
+                         */
+                        goto skip_vblank_irq_test;
+                    }
+
                     adapter->DxgkInterface.DxgkCbDisableInterrupt(adapter->StartInfo.hDxgkHandle);
                     BOOLEAN ok = FALSE;
 
@@ -7211,7 +7247,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                     }
 
                     ULONG status = 0;
-                    while (KeQueryInterruptTime() < deadline) {
+                    while (KeQueryInterruptTime() < irqDeadline) {
                         status = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_IRQ_STATUS);
                         if ((status & AEROGPU_IRQ_SCANOUT_VBLANK) != 0) {
                             break;
@@ -7239,6 +7275,12 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
 
                         AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ACK, AEROGPU_IRQ_SCANOUT_VBLANK);
                         status = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_IRQ_STATUS);
+                        while ((status & AEROGPU_IRQ_SCANOUT_VBLANK) != 0 && KeQueryInterruptTime() < irqDeadline) {
+                            LARGE_INTEGER interval;
+                            interval.QuadPart = -10000; /* 1ms */
+                            KeDelayExecutionThread(KernelMode, FALSE, &interval);
+                            status = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_IRQ_STATUS);
+                        }
                         if ((status & AEROGPU_IRQ_SCANOUT_VBLANK) != 0) {
                             io->error_code = AEROGPU_DBGCTL_SELFTEST_ERR_VBLANK_IRQ_NOT_CLEARED;
                         } else {
@@ -7262,6 +7304,8 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                         return STATUS_SUCCESS;
                     }
                 }
+
+            skip_vblank_irq_test:;
             }
         }
 
