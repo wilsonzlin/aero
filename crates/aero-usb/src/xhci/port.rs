@@ -43,12 +43,12 @@ impl XhciUsb2LinkState {
 
 pub(crate) fn port_speed_id(speed: UsbSpeed) -> u8 {
     // xHCI spec uses speed IDs. For USB2:
-    // - 1: low-speed
-    // - 2: full-speed
+    // - 1: full-speed
+    // - 2: low-speed
     // - 3: high-speed
     match speed {
-        UsbSpeed::Low => 1,
-        UsbSpeed::Full => 2,
+        UsbSpeed::Full => 1,
+        UsbSpeed::Low => 2,
         UsbSpeed::High => 3,
     }
 }

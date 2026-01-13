@@ -556,7 +556,22 @@ impl XhciController {
         let aligned = offset & !3;
         let shift = (offset & 3) * 8;
 
+        // Operational registers base is at CAPLENGTH. xHCI port registers begin at
+        // `OperationalBase + 0x400` with 0x10 bytes per port.
+        let port_regs_base = u64::from(regs::CAPLENGTH_BYTES) + 0x400;
+        let port_regs_end =
+            port_regs_base.saturating_add(u64::from(self.port_count) * 0x10 /*stride*/);
+
         let value32 = match aligned {
+            off if off >= port_regs_base && off < port_regs_end => {
+                let rel = off - port_regs_base;
+                let port = (rel / 0x10) as usize;
+                let reg_off = rel % 0x10;
+                match reg_off {
+                    0x00 => self.ports.get(port).map(|p| p.read_portsc()).unwrap_or(0),
+                    _ => 0,
+                }
+            }
             regs::REG_CAPLENGTH_HCIVERSION => regs::CAPLENGTH_HCIVERSION,
             regs::REG_HCSPARAMS1 => {
                 // HCSPARAMS1: MaxSlots (7:0), MaxIntrs (18:8), MaxPorts (31:24).
@@ -614,7 +629,26 @@ impl XhciController {
 
         let merge = |cur: u32| (cur & !mask) | (value_shifted & mask);
 
+        // Operational registers base is at CAPLENGTH. xHCI port registers begin at
+        // `OperationalBase + 0x400` with 0x10 bytes per port.
+        let port_regs_base = u64::from(regs::CAPLENGTH_BYTES) + 0x400;
+        let port_regs_end =
+            port_regs_base.saturating_add(u64::from(self.port_count) * 0x10 /*stride*/);
+
         match aligned {
+            off if off >= port_regs_base && off < port_regs_end => {
+                let rel = off - port_regs_base;
+                let port = (rel / 0x10) as usize;
+                let reg_off = rel % 0x10;
+                if reg_off == 0x00 {
+                    // Merge partial writes against the current PORTSC value.
+                    let cur = self.ports.get(port).map(|p| p.read_portsc()).unwrap_or(0);
+                    let next = merge(cur);
+                    if port < self.ports.len() {
+                        self.write_portsc(port, next);
+                    }
+                }
+            }
             regs::REG_USBCMD => {
                 let prev = self.usbcmd;
                 self.usbcmd = merge(self.usbcmd);
