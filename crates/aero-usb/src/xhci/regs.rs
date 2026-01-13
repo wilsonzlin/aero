@@ -4,7 +4,7 @@
 //! implementation. It is not a complete model of the xHCI register set.
 
 /// Size of the exposed xHCI MMIO region for the current skeleton controller.
-pub const XHCI_MMIO_SIZE: u32 = 0x1000;
+pub const XHCI_MMIO_SIZE: u32 = 0x10000;
 
 /// Minimal register offsets used by the controller skeleton in [`super::XhciController`].
 ///
@@ -22,6 +22,17 @@ pub const REG_CRCR_LO: u64 = (CAPLENGTH_BYTES as u64) + (op::CRCR as u64);
 pub const REG_CRCR_HI: u64 = REG_CRCR_LO + 4;
 pub const REG_DCBAAP_LO: u64 = (CAPLENGTH_BYTES as u64) + (op::DCBAAP as u64);
 pub const REG_DCBAAP_HI: u64 = REG_DCBAAP_LO + 4;
+
+/// Runtime register absolute offsets (subset).
+pub const REG_MFINDEX: u64 = RTSOFF_VALUE as u64 + runtime::MFINDEX as u64;
+pub const REG_INTR0_BASE: u64 = RTSOFF_VALUE as u64 + runtime::INTERRUPTER_STRIDE as u64;
+pub const REG_INTR0_IMAN: u64 = REG_INTR0_BASE + 0x00;
+pub const REG_INTR0_IMOD: u64 = REG_INTR0_BASE + 0x04;
+pub const REG_INTR0_ERSTSZ: u64 = REG_INTR0_BASE + 0x08;
+pub const REG_INTR0_ERSTBA_LO: u64 = REG_INTR0_BASE + 0x10;
+pub const REG_INTR0_ERSTBA_HI: u64 = REG_INTR0_BASE + 0x14;
+pub const REG_INTR0_ERDP_LO: u64 = REG_INTR0_BASE + 0x18;
+pub const REG_INTR0_ERDP_HI: u64 = REG_INTR0_BASE + 0x1c;
 
 /// USBCMD bit 0 (Run/Stop).
 pub const USBCMD_RUN: u32 = 1 << 0;

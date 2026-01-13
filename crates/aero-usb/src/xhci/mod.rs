@@ -31,6 +31,8 @@
 pub mod command;
 pub mod command_ring;
 pub mod context;
+mod event_ring;
+pub mod interrupter;
 pub mod regs;
 pub mod ring;
 pub mod transfer;
@@ -44,6 +46,7 @@ use alloc::boxed::Box;
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
 use core::fmt;
+
 use aero_io_snapshot::io::state::{
     IoSnapshot, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
 };
@@ -54,9 +57,15 @@ use crate::{MemoryBus, UsbDeviceModel};
 use self::port::XhciPort;
 use self::trb::{Trb, TrbType};
 
+use event_ring::EventRingProducer;
+use interrupter::InterrupterRegs;
+
 const DEFAULT_PORT_COUNT: u8 = 2;
 const MAX_PENDING_EVENTS: usize = 256;
 const COMPLETION_CODE_SUCCESS: u8 = 1;
+
+/// Maximum number of event TRBs written into the guest event ring per controller tick.
+pub const EVENT_ENQUEUE_BUDGET_PER_TICK: usize = 64;
 
 use self::context::{EndpointContext, SlotContext};
 use self::ring::RingCursor;
@@ -205,7 +214,11 @@ pub struct XhciController {
     // Root hub ports.
     ports: Vec<XhciPort>,
 
-    // Host-side event buffering (until a real guest event ring is implemented).
+    // Runtime registers: interrupter 0 + guest event ring delivery.
+    interrupter0: InterrupterRegs,
+    event_ring: EventRingProducer,
+
+    // Host-side event buffering.
     pending_events: VecDeque<Trb>,
     dropped_event_trbs: u64,
 }
@@ -222,6 +235,7 @@ impl fmt::Debug for XhciController {
             .field("slots", &self.slots.len())
             .field("pending_events", &self.pending_events.len())
             .field("dropped_event_trbs", &self.dropped_event_trbs)
+            .field("interrupter0", &self.interrupter0)
             .finish()
     }
 }
@@ -259,6 +273,8 @@ impl XhciController {
             dcbaap: 0,
             slots,
             ports: (0..port_count).map(|_| XhciPort::new()).collect(),
+            interrupter0: InterrupterRegs::default(),
+            event_ring: EventRingProducer::default(),
             pending_events: VecDeque::new(),
             dropped_event_trbs: 0,
         };
@@ -425,12 +441,49 @@ impl XhciController {
     }
 
     pub fn irq_level(&self) -> bool {
+        // Preserve the skeleton's existing "DMA-on-RUN asserts EINT" behaviour while also exposing
+        // a functional interrupter/event-ring driven interrupt condition.
         (self.usbsts & regs::USBSTS_EINT) != 0
+            || (self.interrupter0.interrupt_enable() && self.interrupter0.interrupt_pending())
     }
 
     /// Returns true if there are pending event TRBs queued in host memory.
     pub fn irq_pending(&self) -> bool {
         !self.pending_events.is_empty()
+    }
+
+    /// Read-only view of interrupter 0 runtime registers.
+    pub fn interrupter0(&self) -> &InterrupterRegs {
+        &self.interrupter0
+    }
+
+    /// Queue an event TRB for delivery through the guest-configured event ring.
+    pub fn post_event(&mut self, trb: Trb) {
+        if self.pending_events.len() >= MAX_PENDING_EVENTS {
+            return;
+        }
+        self.pending_events.push_back(trb);
+    }
+
+    /// Drain queued events into the guest event ring with a bounded per-tick budget.
+    pub fn service_event_ring(&mut self, mem: &mut dyn MemoryBus) {
+        self.event_ring.refresh(mem, &self.interrupter0);
+
+        for _ in 0..EVENT_ENQUEUE_BUDGET_PER_TICK {
+            let Some(&trb) = self.pending_events.front() else {
+                break;
+            };
+
+            match self.event_ring.try_enqueue(mem, &self.interrupter0, trb) {
+                Ok(()) => {
+                    self.pending_events.pop_front();
+                    self.interrupter0.set_interrupt_pending(true);
+                }
+                Err(event_ring::EnqueueError::NotConfigured)
+                | Err(event_ring::EnqueueError::RingFull)
+                | Err(event_ring::EnqueueError::InvalidConfig) => break,
+            }
+        }
     }
 
     pub fn dropped_event_trbs(&self) -> u64 {
@@ -570,6 +623,13 @@ impl XhciController {
         let port_regs_base = u64::from(regs::CAPLENGTH_BYTES) + 0x400;
         let port_regs_end =
             port_regs_base.saturating_add(u64::from(self.port_count) * 0x10 /*stride*/);
+        // Reflect interrupter pending in USBSTS.EINT for drivers.
+        let usbsts = self.usbsts
+            | if self.interrupter0.interrupt_pending() {
+                regs::USBSTS_EINT
+            } else {
+                0
+            };
 
         let value32 = match aligned {
             off if off >= port_regs_base && off < port_regs_end => {
@@ -601,12 +661,23 @@ impl XhciController {
                 let idx = (off - regs::EXT_CAPS_OFFSET_BYTES as u64) / 4;
                 self.ext_caps.get(idx as usize).copied().unwrap_or(0)
             }
+
             regs::REG_USBCMD => self.usbcmd,
-            regs::REG_USBSTS => self.usbsts,
+            regs::REG_USBSTS => usbsts,
             regs::REG_CRCR_LO => (self.crcr & 0xffff_ffff) as u32,
             regs::REG_CRCR_HI => (self.crcr >> 32) as u32,
             regs::REG_DCBAAP_LO => (self.dcbaap & 0xffff_ffff) as u32,
             regs::REG_DCBAAP_HI => (self.dcbaap >> 32) as u32,
+
+            // Runtime interrupter 0 registers.
+            regs::REG_INTR0_IMAN => self.interrupter0.iman_raw(),
+            regs::REG_INTR0_IMOD => self.interrupter0.imod_raw(),
+            regs::REG_INTR0_ERSTSZ => self.interrupter0.erstsz_raw(),
+            regs::REG_INTR0_ERSTBA_LO => self.interrupter0.erstba_raw() as u32,
+            regs::REG_INTR0_ERSTBA_HI => (self.interrupter0.erstba_raw() >> 32) as u32,
+            regs::REG_INTR0_ERDP_LO => self.interrupter0.erdp_raw() as u32,
+            regs::REG_INTR0_ERDP_HI => (self.interrupter0.erdp_raw() >> 32) as u32,
+
             _ => 0,
         };
 
@@ -698,6 +769,40 @@ impl XhciController {
                 self.dcbaap = (self.dcbaap & 0x0000_0000_ffff_ffff) | (hi << 32);
                 self.dcbaap &= !0x3f;
             }
+
+            // Runtime interrupter 0 registers.
+            regs::REG_INTR0_IMAN => {
+                self.interrupter0.write_iman_masked(value_shifted, mask);
+            }
+            regs::REG_INTR0_IMOD => {
+                let v = merge(self.interrupter0.imod_raw());
+                self.interrupter0.write_imod(v);
+            }
+            regs::REG_INTR0_ERSTSZ => {
+                let v = merge(self.interrupter0.erstsz_raw());
+                self.interrupter0.write_erstsz(v);
+            }
+            regs::REG_INTR0_ERSTBA_LO => {
+                let lo = merge(self.interrupter0.erstba_raw() as u32) as u64;
+                let v = (self.interrupter0.erstba_raw() & 0xffff_ffff_0000_0000) | lo;
+                self.interrupter0.write_erstba(v);
+            }
+            regs::REG_INTR0_ERSTBA_HI => {
+                let hi = merge((self.interrupter0.erstba_raw() >> 32) as u32) as u64;
+                let v = (self.interrupter0.erstba_raw() & 0x0000_0000_ffff_ffff) | (hi << 32);
+                self.interrupter0.write_erstba(v);
+            }
+            regs::REG_INTR0_ERDP_LO => {
+                let lo = merge(self.interrupter0.erdp_raw() as u32) as u64;
+                let v = (self.interrupter0.erdp_raw() & 0xffff_ffff_0000_0000) | lo;
+                self.interrupter0.write_erdp(v);
+            }
+            regs::REG_INTR0_ERDP_HI => {
+                let hi = merge((self.interrupter0.erdp_raw() >> 32) as u32) as u64;
+                let v = (self.interrupter0.erdp_raw() & 0x0000_0000_ffff_ffff) | (hi << 32);
+                self.interrupter0.write_erdp(v);
+            }
+
             _ => {}
         }
     }
@@ -750,6 +855,11 @@ impl IoSnapshot for XhciController {
         const TAG_CRCR: u16 = 3;
         const TAG_PORT_COUNT: u16 = 4;
         const TAG_DCBAAP: u16 = 5;
+        const TAG_INTR0_IMAN: u16 = 6;
+        const TAG_INTR0_IMOD: u16 = 7;
+        const TAG_INTR0_ERSTSZ: u16 = 8;
+        const TAG_INTR0_ERSTBA: u16 = 9;
+        const TAG_INTR0_ERDP: u16 = 10;
 
         let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
         w.field_u32(TAG_USBCMD, self.usbcmd);
@@ -757,6 +867,11 @@ impl IoSnapshot for XhciController {
         w.field_u64(TAG_CRCR, self.crcr);
         w.field_u8(TAG_PORT_COUNT, self.port_count);
         w.field_u64(TAG_DCBAAP, self.dcbaap);
+        w.field_u32(TAG_INTR0_IMAN, self.interrupter0.iman_raw());
+        w.field_u32(TAG_INTR0_IMOD, self.interrupter0.imod_raw());
+        w.field_u32(TAG_INTR0_ERSTSZ, self.interrupter0.erstsz_raw());
+        w.field_u64(TAG_INTR0_ERSTBA, self.interrupter0.erstba_raw());
+        w.field_u64(TAG_INTR0_ERDP, self.interrupter0.erdp_raw());
         w.finish()
     }
 
@@ -766,6 +881,11 @@ impl IoSnapshot for XhciController {
         const TAG_CRCR: u16 = 3;
         const TAG_PORT_COUNT: u16 = 4;
         const TAG_DCBAAP: u16 = 5;
+        const TAG_INTR0_IMAN: u16 = 6;
+        const TAG_INTR0_IMOD: u16 = 7;
+        const TAG_INTR0_ERSTSZ: u16 = 8;
+        const TAG_INTR0_ERSTBA: u16 = 9;
+        const TAG_INTR0_ERDP: u16 = 10;
 
         let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
         r.ensure_device_major(Self::DEVICE_VERSION.major)?;
@@ -777,6 +897,23 @@ impl IoSnapshot for XhciController {
         self.usbsts = r.u32(TAG_USBSTS)?.unwrap_or(0);
         self.crcr = r.u64(TAG_CRCR)?.unwrap_or(0);
         self.dcbaap = r.u64(TAG_DCBAAP)?.unwrap_or(0) & !0x3f;
+
+        if let Some(v) = r.u32(TAG_INTR0_IMAN)? {
+            self.interrupter0.restore_iman(v);
+        }
+        if let Some(v) = r.u32(TAG_INTR0_IMOD)? {
+            self.interrupter0.restore_imod(v);
+        }
+        if let Some(v) = r.u32(TAG_INTR0_ERSTSZ)? {
+            self.interrupter0.restore_erstsz(v);
+        }
+        if let Some(v) = r.u64(TAG_INTR0_ERSTBA)? {
+            self.interrupter0.restore_erstba(v);
+        }
+        if let Some(v) = r.u64(TAG_INTR0_ERDP)? {
+            self.interrupter0.restore_erdp(v);
+        }
+
         Ok(())
     }
 }
