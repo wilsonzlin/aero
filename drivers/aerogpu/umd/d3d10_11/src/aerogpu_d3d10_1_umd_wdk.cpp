@@ -1430,6 +1430,10 @@ static void InitUnlockForWrite(D3DDDICB_UNLOCK* unlock) {
   __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) { unlock->SubResourceIndex = 0; }
 }
 
+// Declared later alongside Map/Unmap helpers, but also needed for LockCb-backed
+// texture upload paths.
+static bool ValidateWddmTexturePitch(const AeroGpuResource* res, uint32_t wddm_pitch);
+
 void emit_upload_resource_locked(AeroGpuDevice* dev,
                                  const AeroGpuResource* res,
                                  uint64_t offset_bytes,
@@ -1498,6 +1502,26 @@ void emit_upload_resource_locked(AeroGpuDevice* dev,
   HRESULT hr = CallCbMaybeHandle(cb->pfnLockCb, dev->hrt_device, &lock_args);
   if (FAILED(hr) || !lock_args.pData) {
     set_error(dev, FAILED(hr) ? hr : E_FAIL);
+    return;
+  }
+
+  uint32_t wddm_pitch = 0;
+  __if_exists(D3DDDICB_LOCK::Pitch) {
+    wddm_pitch = lock_args.Pitch;
+  }
+  if (res->kind == ResourceKind::Texture2D && !ValidateWddmTexturePitch(res, wddm_pitch)) {
+    // Our subresource packing (and the host's interpretation of guest memory) assumes the
+    // allocation pitch matches `res->row_pitch_bytes`. If the runtime reports a different
+    // pitch, we cannot safely treat the allocation as a packed linear buffer.
+    D3DDDICB_UNLOCK unlock_args = {};
+    unlock_args.hAllocation = lock_args.hAllocation;
+    InitUnlockForWrite(&unlock_args);
+    const HRESULT unlock_hr = CallCbMaybeHandle(cb->pfnUnlockCb, dev->hrt_device, &unlock_args);
+    if (FAILED(unlock_hr)) {
+      set_error(dev, unlock_hr);
+    } else {
+      set_error(dev, E_FAIL);
+    }
     return;
   }
 
