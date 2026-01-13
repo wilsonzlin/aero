@@ -41,6 +41,50 @@ pub enum TemplateKind {
     SubM64Rax,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InitPreset {
+    /// No fixups; keep whatever random state was generated.
+    None,
+    /// Force `CL` to a bounded value (typically used for shifts/rotates).
+    ///
+    /// This only modifies the low byte of `RCX` (i.e. `CL`), leaving the upper bits unchanged.
+    #[allow(dead_code)]
+    ShiftCountCl { mask: u8 },
+    /// Force `RCX` into a small non-zero range (typically used for REP/LOOP style instructions).
+    ///
+    /// The resulting value is always in `1..=max` (or `1` if `max == 0`).
+    #[allow(dead_code)]
+    SmallRcx { max: u32 },
+    /// Force `RDI` to point at `mem_base + data_off`.
+    MemAtRdi { data_off: u32 },
+}
+
+impl InitPreset {
+    fn apply(self, init: &mut CpuState, mem_base: u64) {
+        match self {
+            InitPreset::None => {}
+            InitPreset::ShiftCountCl { mask } => {
+                let cl = (init.rcx as u8) & mask;
+                init.rcx = (init.rcx & !0xff) | (cl as u64);
+            }
+            InitPreset::SmallRcx { max } => {
+                let max = (max as u64).max(1);
+                init.rcx = (init.rcx % max) + 1;
+            }
+            InitPreset::MemAtRdi { data_off } => {
+                init.rdi = mem_base + data_off as u64;
+            }
+        }
+    }
+
+    fn required_memory_len(self) -> Option<usize> {
+        match self {
+            InitPreset::MemAtRdi { data_off } => Some(data_off as usize + 64),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct InstructionTemplate {
     pub name: &'static str,
@@ -49,6 +93,7 @@ pub struct InstructionTemplate {
     pub kind: TemplateKind,
     pub flags_mask: u64,
     pub mem_compare_len: usize,
+    pub init: InitPreset,
 }
 
 pub fn templates() -> Vec<InstructionTemplate> {
@@ -63,6 +108,7 @@ pub fn templates() -> Vec<InstructionTemplate> {
             kind: TemplateKind::MovRaxRbx,
             flags_mask: all_flags,
             mem_compare_len: 0,
+            init: InitPreset::None,
         },
         InstructionTemplate {
             name: "mov rbx, rax",
@@ -71,6 +117,7 @@ pub fn templates() -> Vec<InstructionTemplate> {
             kind: TemplateKind::MovRbxRax,
             flags_mask: all_flags,
             mem_compare_len: 0,
+            init: InitPreset::None,
         },
         InstructionTemplate {
             name: "add rax, rbx",
@@ -79,6 +126,7 @@ pub fn templates() -> Vec<InstructionTemplate> {
             kind: TemplateKind::AddRaxRbx,
             flags_mask: all_flags,
             mem_compare_len: 0,
+            init: InitPreset::None,
         },
         InstructionTemplate {
             name: "sub rax, rbx",
@@ -87,6 +135,7 @@ pub fn templates() -> Vec<InstructionTemplate> {
             kind: TemplateKind::SubRaxRbx,
             flags_mask: all_flags,
             mem_compare_len: 0,
+            init: InitPreset::None,
         },
         InstructionTemplate {
             name: "xor rax, rbx",
@@ -95,6 +144,7 @@ pub fn templates() -> Vec<InstructionTemplate> {
             kind: TemplateKind::XorRaxRbx,
             flags_mask: logic_flags,
             mem_compare_len: 0,
+            init: InitPreset::None,
         },
         InstructionTemplate {
             name: "and rax, rbx",
@@ -103,6 +153,7 @@ pub fn templates() -> Vec<InstructionTemplate> {
             kind: TemplateKind::AndRaxRbx,
             flags_mask: logic_flags,
             mem_compare_len: 0,
+            init: InitPreset::None,
         },
         InstructionTemplate {
             name: "or rax, rbx",
@@ -111,6 +162,7 @@ pub fn templates() -> Vec<InstructionTemplate> {
             kind: TemplateKind::OrRaxRbx,
             flags_mask: logic_flags,
             mem_compare_len: 0,
+            init: InitPreset::None,
         },
         InstructionTemplate {
             name: "cmp rax, rbx",
@@ -119,6 +171,7 @@ pub fn templates() -> Vec<InstructionTemplate> {
             kind: TemplateKind::CmpRaxRbx,
             flags_mask: all_flags,
             mem_compare_len: 0,
+            init: InitPreset::None,
         },
         InstructionTemplate {
             name: "inc rax",
@@ -127,6 +180,7 @@ pub fn templates() -> Vec<InstructionTemplate> {
             kind: TemplateKind::IncRax,
             flags_mask: all_flags,
             mem_compare_len: 0,
+            init: InitPreset::None,
         },
         InstructionTemplate {
             name: "dec rax",
@@ -135,6 +189,7 @@ pub fn templates() -> Vec<InstructionTemplate> {
             kind: TemplateKind::DecRax,
             flags_mask: all_flags,
             mem_compare_len: 0,
+            init: InitPreset::None,
         },
         InstructionTemplate {
             name: "mov qword ptr [rdi], rax",
@@ -143,6 +198,7 @@ pub fn templates() -> Vec<InstructionTemplate> {
             kind: TemplateKind::MovM64Rax,
             flags_mask: all_flags,
             mem_compare_len: 16,
+            init: InitPreset::MemAtRdi { data_off: 0 },
         },
         InstructionTemplate {
             name: "mov rax, qword ptr [rdi]",
@@ -151,6 +207,7 @@ pub fn templates() -> Vec<InstructionTemplate> {
             kind: TemplateKind::MovRaxM64,
             flags_mask: all_flags,
             mem_compare_len: 0,
+            init: InitPreset::MemAtRdi { data_off: 0 },
         },
         InstructionTemplate {
             name: "add qword ptr [rdi], rax",
@@ -159,6 +216,7 @@ pub fn templates() -> Vec<InstructionTemplate> {
             kind: TemplateKind::AddM64Rax,
             flags_mask: all_flags,
             mem_compare_len: 16,
+            init: InitPreset::MemAtRdi { data_off: 0 },
         },
         InstructionTemplate {
             name: "sub qword ptr [rdi], rax",
@@ -167,6 +225,7 @@ pub fn templates() -> Vec<InstructionTemplate> {
             kind: TemplateKind::SubM64Rax,
             flags_mask: all_flags,
             mem_compare_len: 16,
+            init: InitPreset::MemAtRdi { data_off: 0 },
         },
     ]
 }
@@ -208,27 +267,110 @@ impl TestCase {
         let relevant_flags = FLAG_CF | FLAG_PF | FLAG_AF | FLAG_ZF | FLAG_SF | FLAG_OF;
         init.rflags |= rng.next_u64() & relevant_flags;
 
-        let memory_len = 64usize.max(template.mem_compare_len);
+        let mut memory_len = 64usize.max(template.mem_compare_len);
+        if let Some(required) = template.init.required_memory_len() {
+            memory_len = memory_len.max(required);
+        }
         let mut memory = vec![0u8; memory_len];
         for byte in &mut memory {
             *byte = rng.next_u8();
         }
 
-        match template.kind {
-            TemplateKind::MovM64Rax
-            | TemplateKind::MovRaxM64
-            | TemplateKind::AddM64Rax
-            | TemplateKind::SubM64Rax => {
-                init.rdi = mem_base;
-            }
-            _ => {}
-        }
+        template.init.apply(&mut init, mem_base);
 
         Self {
             case_idx,
             template: *template,
             init,
             memory,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn init_preset_shift_count_cl_masks_low_byte() {
+        let template = InstructionTemplate {
+            name: "test",
+            coverage_key: "test",
+            bytes: &[0x90],
+            kind: TemplateKind::MovRaxRbx,
+            flags_mask: 0,
+            mem_compare_len: 0,
+            init: InitPreset::ShiftCountCl { mask: 0x1f },
+        };
+        let mut rng = XorShift64::new(1);
+
+        for case_idx in 0..256 {
+            let case = TestCase::generate(case_idx, &template, &mut rng, 0x1000);
+            let cl = case.init.rcx as u8;
+            assert!(cl <= 0x1f, "CL={cl:#x} should be <= 0x1f");
+        }
+    }
+
+    #[test]
+    fn init_preset_small_rcx_bounds_non_zero() {
+        let max = 17u32;
+        let template = InstructionTemplate {
+            name: "test",
+            coverage_key: "test",
+            bytes: &[0x90],
+            kind: TemplateKind::MovRaxRbx,
+            flags_mask: 0,
+            mem_compare_len: 0,
+            init: InitPreset::SmallRcx { max },
+        };
+        let mut rng = XorShift64::new(1);
+
+        for case_idx in 0..256 {
+            let case = TestCase::generate(case_idx, &template, &mut rng, 0x1000);
+            assert!(
+                (1..=(max as u64)).contains(&case.init.rcx),
+                "RCX={} should be in 1..={}",
+                case.init.rcx,
+                max
+            );
+        }
+    }
+
+    #[test]
+    fn init_preset_mem_at_rdi_sets_pointer() {
+        let mem_base = 0x0123_4567_89ab_c000u64;
+        let data_off = 128u32;
+        let template = InstructionTemplate {
+            name: "test",
+            coverage_key: "test",
+            bytes: &[0x90],
+            kind: TemplateKind::MovRaxRbx,
+            flags_mask: 0,
+            mem_compare_len: 0,
+            init: InitPreset::MemAtRdi { data_off },
+        };
+        let mut rng = XorShift64::new(1);
+        let case = TestCase::generate(0, &template, &mut rng, mem_base);
+        assert_eq!(case.init.rdi, mem_base + data_off as u64);
+        assert!(case.memory.len() >= data_off as usize + 64);
+    }
+
+    #[test]
+    fn existing_memory_templates_still_pin_rdi_to_mem_base() {
+        let mem_base = 0x1000u64;
+        let mut rng = XorShift64::new(1);
+
+        for template in templates() {
+            let case = TestCase::generate(0, &template, &mut rng, mem_base);
+            match template.kind {
+                TemplateKind::MovM64Rax
+                | TemplateKind::MovRaxM64
+                | TemplateKind::AddM64Rax
+                | TemplateKind::SubM64Rax => {
+                    assert_eq!(case.init.rdi, mem_base);
+                }
+                _ => {}
+            }
         }
     }
 }
