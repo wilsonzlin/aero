@@ -249,6 +249,7 @@ Key options (in addition to the existing `sampleRate`/`latencyHint`/`ringBufferF
 - `startupPrefillFrames?: number`
   - **What it does:** if the playback ring is empty at graph startup, pre-fills it with *silence* up to this many frames.
     (Default: `512` frames.)
+    - Frames are **per-channel** (same unit as `ringBufferFrames`) and are clamped to the ring’s `capacityFrames`.
   - **Why it exists:** avoids an initial “startup underrun” window between `AudioWorkletNode` start and the first producer write,
     and gives slow-starting producers a small grace period.
   - **Trade-off:** increases time-to-first-audible-sample by roughly `startupPrefillFrames / AudioContext.sampleRate` seconds.
@@ -262,6 +263,14 @@ Key options (in addition to the existing `sampleRate`/`latencyHint`/`ringBufferF
   - **Trade-off:** drops buffered frames across the suspension boundary (you get an audio discontinuity, but latency stays bounded).
   - **Implementation detail:** the discard happens on the **AudioWorklet consumer** (via a control message) so we do not violate
     the playback ring’s SPSC ownership rules (normally only the worklet advances `readFrameIndex`).
+    - The discard is intentionally *not* applied to the **first** transition to `AudioContext.state === "running"` so that the
+      startup silence prefill can still mask initial underruns.
+
+Related diagnostics knobs (not latency controls, but useful when tuning):
+
+- `sendUnderrunMessages?: boolean` / `underrunMessageIntervalMs?: number`
+  - When enabled, the AudioWorklet posts periodic `type: "underrun"` messages to the main thread for debugging/telemetry.
+  - These are disabled by default because posting every render quantum can be expensive under persistent underrun.
 
 #### AudioContext construction fallbacks (Safari/WebKit)
 
